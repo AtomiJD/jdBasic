@@ -1,0 +1,98 @@
+' Break Arcade: the rules of 2048 (sliding, joining once, the four
+' directions, a move that changes nothing), seeded tiles, the end of a
+' game, the best score, the clock, the keys, and the window playing
+' itself.
+
+IMPORT TESTKIT, ARCADE
+
+FUNC BadDirection(x)
+    RETURN ARCADE.MOVE(ARCADE.EMPTY_BOARD(), "sideways")
+ENDFUNC
+
+FUNC RowOf(r)
+    DIM slid = ARCADE.SLIDE_ROW(r)
+    RETURN slid{"row"}
+ENDFUNC
+
+FUNC GainOf(r)
+    DIM slid = ARCADE.SLIDE_ROW(r)
+    RETURN slid{"gain"}
+ENDFUNC
+
+TESTKIT.SUITE("one row")
+TESTKIT.EQARRAY(RowOf([0, 2, 0, 2]), [4, 0, 0, 0], "two equal tiles join")
+TESTKIT.EQ(GainOf([0, 2, 0, 2]), 4, "and score the new tile")
+TESTKIT.EQARRAY(RowOf([2, 2, 2, 2]), [4, 4, 0, 0], "a tile joins only once")
+TESTKIT.EQARRAY(RowOf([4, 4, 8, 0]), [8, 8, 0, 0], "a new tile does not join again")
+TESTKIT.EQARRAY(RowOf([2, 4, 2, 4]), [2, 4, 2, 4], "different tiles stay")
+TESTKIT.EQARRAY(RowOf([0, 0, 0, 8]), [8, 0, 0, 0], "a tile slides all the way")
+TESTKIT.EQ(GainOf([2, 4, 8, 16]), 0, "no join, no points")
+
+TESTKIT.SUITE("the board")
+DIM b = [[2, 0, 0, 2], [0, 4, 0, 4], [0, 0, 0, 0], [8, 0, 0, 0]]
+DIM l = ARCADE.MOVE(b, "left")
+TESTKIT.EQARRAY(l{"board"}[0], [4, 0, 0, 0], "left joins the first row")
+TESTKIT.EQ(l{"gain"}, 12, "and the second, for 4 and 8 points")
+DIM rt = ARCADE.MOVE(b, "right")
+TESTKIT.EQARRAY(rt{"board"}[3], [0, 0, 0, 8], "right slides to the right edge")
+DIM up = ARCADE.MOVE(b, "up")
+TESTKIT.EQARRAY(up{"board"}[0], [2, 4, 0, 2], "up moves the columns")
+DIM dn = ARCADE.MOVE(b, "DOWN")
+TESTKIT.EQARRAY(dn{"board"}[3], [8, 4, 0, 4], "down, in any case")
+DIM still = ARCADE.MOVE([[2, 4, 8, 16], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], "left")
+TESTKIT.ISFALSE(still{"moved"}, "a move that changes nothing is no move")
+TESTKIT.THROWS(BadDirection@, 0, "an unknown direction is an error")
+
+TESTKIT.SUITE("new tiles")
+DIM g1 = ARCADE.NEW_GAME(42)
+DIM g2 = ARCADE.NEW_GAME(42)
+TESTKIT.ISTRUE(ARCADE.SAME(g1{"board"}, g2{"board"}), "the same seed gives the same game")
+TESTKIT.EQ(LEN(ARCADE.EMPTY_CELLS(g1{"board"})), 14, "a new game has two tiles")
+TESTKIT.EQ(g1{"score"}, 0, "and no points yet")
+DIM full = [[2, 4, 2, 4], [4, 2, 4, 2], [2, 4, 2, 4], [4, 2, 4, 2]]
+DIM sp = ARCADE.SPAWN(full, 5)
+TESTKIT.ISTRUE(ARCADE.SAME(sp{"board"}, full), "a full board gets no tile")
+DIM fours = 0
+DIM s = 1
+DIM k = 0
+FOR k = 1 TO 200
+    DIM one = ARCADE.SPAWN(ARCADE.EMPTY_BOARD(), s)
+    s = one{"seed"}
+    IF ARCADE.TOP_TILE(one{"board"}) = 4 THEN fours = fours + 1
+NEXT k
+TESTKIT.ISTRUE(fours > 5 ANDALSO fours < 50, "now and then a 4 instead of a 2")
+DIM t = ARCADE.TURN(g1, "left")
+DIM tiles_after = 16 - LEN(ARCADE.EMPTY_CELLS(t{"board"}))
+TESTKIT.ISTRUE(tiles_after >= 2, "a turn that moved adds a tile")
+
+TESTKIT.SUITE("the end")
+TESTKIT.ISFALSE(ARCADE.CAN_MOVE(full), "a full board without pairs is over")
+TESTKIT.ISTRUE(ARCADE.CAN_MOVE([[2, 2, 4, 8], [4, 8, 2, 4], [2, 4, 8, 2], [4, 2, 4, 8]]), "a pair keeps it going")
+TESTKIT.EQ(ARCADE.TOP_TILE(b), 8, "the top tile")
+
+TESTKIT.SUITE("the rest")
+DIM best$ = MKTEMP$("arcadetest") + ".txt"
+TESTKIT.EQ(ARCADE.BEST(best$), 0, "no best score yet")
+TESTKIT.ISTRUE(ARCADE.KEEP_BEST(best$, 320), "a first score is the best")
+TESTKIT.ISFALSE(ARCADE.KEEP_BEST(best$, 100), "a lower one is not")
+TESTKIT.EQ(ARCADE.BEST(best$), 320, "and the best is kept")
+KILL best$
+TESTKIT.EQ(ARCADE.CLOCK$(125000), "2:05", "the clock")
+TESTKIT.EQ(ARCADE.CLOCK$(-5), "0:00", "and never below zero")
+TESTKIT.EQ(ARCADE.KEY_DIR$("Left"), "left", "the arrow keys")
+TESTKIT.EQ(ARCADE.KEY_DIR$("w"), "up", "and W, A, S, D")
+TESTKIT.EQ(ARCADE.KEY_DIR$("Space"), "", "other keys do nothing")
+
+DIM jdbasic$ = PATH.NORMALIZE$("../../../build/jdBasic.exe")
+DIM here$ = "recipes/easy/E17_break_arcade/break_arcade.jdb"
+IF FILE.EXISTS(jdbasic$) ANDALSO FILE.EXISTS(here$) THEN
+    TESTKIT.SUITE("the window")
+    DIM w = OS.EXEC(jdbasic$, [here$, "--selftest"])
+    TESTKIT.EQ(w{"EXIT_CODE"}, 0, "the game plays itself")
+    TESTKIT.ISTRUE(INSTR(w{"OUTPUT"}, "ALL ARCADE WINDOW TESTS PASSED") >= 0, _
+        "and every check of it passes")
+ELSE
+    TESTKIT.SKIP("the window test needs the book folder and jdbasic")
+ENDIF
+
+TESTKIT.REPORT()

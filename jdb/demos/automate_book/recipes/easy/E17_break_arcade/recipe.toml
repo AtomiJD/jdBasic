@@ -1,0 +1,22 @@
+# What the setup wizard knows about this recipe.
+
+id = "E17"
+name = "Break Arcade"
+program = "break_arcade.jdb"
+summary = "A round of 2048 for your break, which ends when the break does"
+minutes_per_week = 0
+schedule = "manual"
+section = "break_arcade"
+modules = ["arcade.jdb"]
+
+[[setting]]
+key = "minutes"
+label = "Length of a break in minutes"
+kind = "number"
+default = 3
+
+[[setting]]
+key = "best_file"
+label = "File that keeps your best score"
+kind = "file"
+default = "~/Documents/AutomateWork/arcade_best.txt"

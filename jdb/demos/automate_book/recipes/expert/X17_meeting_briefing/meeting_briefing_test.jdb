@@ -1,0 +1,172 @@
+' BRIEFING with a fixture calendar, mails and notes and a fake chat
+' server in this process: the day's meetings in order with their
+' people, the mails and open items that belong to each, the summary
+' with a retry on a busy server, and the PDF with one page per meeting.
+
+IMPORT TESTKIT, BRIEFING, JDWEB, MAIL
+
+DIM LF$ = CHR$(10)
+DIM gCalls = 0
+DIM gBusy = 0
+DIM gLastBody$ = ""
+
+FUNC Chat(text$)
+    DIM msg AS MAP
+    msg{"role"} = "assistant"
+    msg{"content"} = text$
+    DIM choice AS MAP
+    choice{"index"} = 0
+    choice{"message"} = msg
+    choice{"finish_reason"} = "stop"
+    DIM out AS MAP
+    out{"choices"} = [choice]
+    RETURN out
+ENDFUNC
+
+FUNC FakeChat(request)
+    gCalls = gCalls + 1
+    gLastBody$ = request{"BODY"}
+    IF INSTR(gLastBody$, "Busy review") >= 0 ANDALSO gBusy < 1 THEN
+        gBusy = gBusy + 1
+        RETURN JDWEB.REPLY("try later", 503, "text/plain")
+    ENDIF
+    IF INSTR(gLastBody$, "Wrong key") >= 0 THEN
+        RETURN JDWEB.REPLY("bad key", 401, "text/plain")
+    ENDIF
+    RETURN JDWEB.REPLY_JSON(Chat("Anna waits for the Q3 figures. Bring the sheet."))
+ENDFUNC
+
+FUNC FreePort(seed$)
+    DIM hex$ = CODEC.SHA256$(seed$)
+    DIM port = 0
+    DIM i = 0
+    FOR i = 0 TO 3
+        port = port * 16 + INSTR("0123456789abcdef", MID$(hex$, i, 1))
+    NEXT i
+    port = 20000 + port MOD 30000
+    DIM last_port = port + 50
+    DO WHILE NOT JDWEB.LISTEN(port) ANDALSO port < last_port
+        port = port + 1
+    LOOP
+    RETURN port
+ENDFUNC
+
+FUNC Saved(folder$, name$, from$, to$, subject$, date$, text$)
+    DIM msg = MAIL.MESSAGE(from$, to$, subject$)
+    MAIL.SETDATE(msg, date$)
+    MAIL.PLAIN(msg, text$)
+    DIM path$ = PATH.JOIN$(folder$, name$ + ".eml")
+    MAIL.WRITEEML(msg, path$)
+    RETURN path$
+ENDFUNC
+
+FUNC WrongKey(ai)
+    RETURN BRIEFING.SUMMARY$(ai, "Wrong key")
+ENDFUNC
+
+DIM folder$ = MKTEMP$("briefing")
+MKDIR folder$
+DIM ics$ = PATH.JOIN$(folder$, "calendar.ics")
+DIM cal$ = "BEGIN:VCALENDAR" + LF$ + "VERSION:2.0" + LF$ + "PRODID:-//test//EN" + LF$
+cal$ = cal$ + "BEGIN:VEVENT" + LF$ + "UID:m2@example.com" + LF$
+cal$ = cal$ + "DTSTAMP:20261001T080000Z" + LF$
+cal$ = cal$ + "DTSTART:20261005T140000" + LF$ + "DTEND:20261005T150000" + LF$
+cal$ = cal$ + "SUMMARY:Supplier call" + LF$
+cal$ = cal$ + "ATTENDEE;CN=Tom Weber:mailto:tom@example.com" + LF$
+cal$ = cal$ + "END:VEVENT" + LF$
+cal$ = cal$ + "BEGIN:VEVENT" + LF$ + "UID:m1@example.com" + LF$
+cal$ = cal$ + "DTSTAMP:20261001T080000Z" + LF$
+cal$ = cal$ + "DTSTART:20261005T090000" + LF$ + "DTEND:20261005T100000" + LF$
+cal$ = cal$ + "SUMMARY:Budget review" + LF$ + "LOCATION:Room 3" + LF$
+cal$ = cal$ + "ATTENDEE;CN=Anna Berg:mailto:anna@example.com" + LF$
+cal$ = cal$ + "ATTENDEE;ROLE=REQ-PARTICIPANT;CN=" + CHR$(34) + "Tom Weber" + CHR$(34) + ":mailto:tom@example.com" + LF$
+cal$ = cal$ + "END:VEVENT" + LF$
+cal$ = cal$ + "BEGIN:VEVENT" + LF$ + "UID:off@example.com" + LF$
+cal$ = cal$ + "DTSTAMP:20261001T080000Z" + LF$
+cal$ = cal$ + "DTSTART;VALUE=DATE:20261005" + LF$ + "DTEND;VALUE=DATE:20261006" + LF$
+cal$ = cal$ + "SUMMARY:Offsite" + LF$ + "END:VEVENT" + LF$
+cal$ = cal$ + "BEGIN:VEVENT" + LF$ + "UID:m3@example.com" + LF$
+cal$ = cal$ + "DTSTAMP:20261001T080000Z" + LF$
+cal$ = cal$ + "DTSTART:20261006T090000" + LF$ + "DTEND:20261006T100000" + LF$
+cal$ = cal$ + "SUMMARY:Next day" + LF$ + "END:VEVENT" + LF$
+cal$ = cal$ + "END:VCALENDAR" + LF$
+TXTWRITER ics$, cal$
+
+DIM mail_dir$ = PATH.JOIN$(folder$, "saved mail")
+MKDIR mail_dir$
+DIM a1$ = Saved(mail_dir$, "a1", "Anna Berg <anna@example.com>", "lena@example.com", "Q3 figures", "Thu, 01 Oct 2026 09:15:00 +0200", "Could you bring the Q3 figures?")
+DIM a2$ = Saved(mail_dir$, "a2", "lena@example.com", "anna@example.com", "Re: Q3 figures", "Fri, 02 Oct 2026 11:30:00 +0200", "Yes, on Monday.")
+DIM a3$ = Saved(mail_dir$, "a3", "Anna Berg <anna@example.com>", "lena@example.com", "Old topic", "Mon, 21 Sep 2026 08:00:00 +0200", "Last month.")
+DIM n1$ = Saved(mail_dir$, "n1", "news@example.com", "lena@example.com", "Newsletter", "Fri, 02 Oct 2026 12:00:00 +0200", "Ten tips.")
+DIM notes$ = PATH.JOIN$(folder$, "todo.txt")
+TXTWRITER notes$, "- [ ] Send Anna the Q3 sheet" + LF$ + "- [x] Ask Tom about prices" + LF$ + "- [ ] Budget review: check travel line" + LF$ + "- [ ] Water the plants" + LF$
+
+TESTKIT.SUITE("the day's meetings")
+DIM names = BRIEFING.NAMES(cal$)
+TESTKIT.EQ(names{"anna@example.com"}, "Anna Berg", "a name from the CN of an attendee")
+TESTKIT.EQ(names{"tom@example.com"}, "Tom Weber", "also with other parameters and quotes")
+DIM meetings = BRIEFING.MEETINGS(ics$, "2026-10-05")
+TESTKIT.EQ(LEN(meetings), 2, "two meetings; the whole-day block and the next day are left out")
+DIM first = meetings[0]
+TESTKIT.EQ(first{"title"}, "Budget review", "in order of their start")
+TESTKIT.EQ(first{"start"}, "09:00", "the start as the file writes it")
+TESTKIT.EQ(first{"end"}, "10:00", "and the end")
+TESTKIT.EQ(first{"location"}, "Room 3", "the place")
+DIM people = first{"people"}
+TESTKIT.EQ(LEN(people), 2, "both people")
+DIM anna = people[0]
+TESTKIT.EQ(anna{"name"}, "Anna Berg", "by name")
+TESTKIT.EQ(anna{"mail"}, "anna@example.com", "and address")
+
+TESTKIT.SUITE("mails and open items")
+TESTKIT.EQ(BRIEFING.SORTDATE$("Thu, 01 Oct 2026 09:15:00 +0200"), "2026-10-01 09:15", "a mail date that sorts")
+DIM mails = BRIEFING.MAILS([mail_dir$, PATH.JOIN$(folder$, "missing")], first, 2)
+TESTKIT.EQ(LEN(mails), 2, "at most two mails, from a missing folder none")
+DIM newest = mails[0]
+TESTKIT.EQ(newest{"subject"}, "Re: Q3 figures", "the newest first, also mails Lena sent")
+DIM second = mails[1]
+TESTKIT.EQ(second{"subject"}, "Q3 figures", "then the one before")
+DIM other = BRIEFING.MAILS([mail_dir$], meetings[1], 5)
+TESTKIT.EQ(LEN(other), 0, "no mail with Tom, the newsletter is not his")
+DIM items = BRIEFING.ITEMS(notes$, first)
+TESTKIT.EQ(LEN(items), 2, "open items that name Anna or the meeting; done ones and others not")
+TESTKIT.EQ(items[0], "Send Anna the Q3 sheet", "the text of the item")
+DIM prompt$ = BRIEFING.PROMPT$(first, mails, items)
+TESTKIT.ISTRUE(INSTR(prompt$, "Budget review") >= 0, "the prompt names the meeting")
+TESTKIT.ISTRUE(INSTR(prompt$, "Send Anna the Q3 sheet") >= 0, "and the open items")
+TESTKIT.ISTRUE(INSTR(BRIEFING.PLAN_LINE$(first, 2, 2), "2 mails, 2 open items") >= 0, "a dry run line")
+
+TESTKIT.SUITE("the summary")
+JDWEB.POST("/v1/chat/completions", FakeChat@)
+DIM port = FreePort(folder$)
+DIM base$ = "http://127.0.0.1:" + STR$(port) + "/v1"
+DIM ai = BRIEFING.CLIENT("openai", "test-model", base$, "sk-test")
+DIM s$ = BRIEFING.SUMMARY$(ai, prompt$)
+TESTKIT.EQ(s$, "Anna waits for the Q3 figures. Bring the sheet.", "the model's answer")
+TESTKIT.ISTRUE(INSTR(gLastBody$, "do not invent") >= 0, "the rules go along")
+DIM before = gCalls
+DIM busy$ = BRIEFING.SUMMARY$(ai, "Busy review")
+TESTKIT.EQ(gCalls - before, 2, "a busy server is asked again")
+TESTKIT.THROWS(WrongKey@, ai, "a refused key stops at once")
+HTTP.SERVER.STOP()
+
+TESTKIT.SUITE("the PDF")
+DIM pages = []
+DIM k = 0
+FOR k = 0 TO LEN(meetings) - 1
+    DIM pg AS MAP
+    pg{"meeting"} = meetings[k]
+    pg{"mails"} = BRIEFING.MAILS([mail_dir$], meetings[k], 3)
+    pg{"items"} = BRIEFING.ITEMS(notes$, meetings[k])
+    pg{"summary"} = ""
+    IF k = 0 THEN pg{"summary"} = s$
+    PUSH(pages, pg)
+NEXT k
+DIM pdf$ = PATH.JOIN$(folder$, "briefing.pdf")
+BRIEFING.WRITE_PDF(pdf$, "2026-10-05", pages)
+DIM bytes$ = BINREADER$(pdf$)
+TESTKIT.ISTRUE(STARTSWITH(bytes$, "%PDF"), "a PDF")
+TESTKIT.ISTRUE(INSTR(bytes$, "/Count 2") >= 0, "one page per meeting")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(folder$, "/", "\")])
+TESTKIT.REPORT()

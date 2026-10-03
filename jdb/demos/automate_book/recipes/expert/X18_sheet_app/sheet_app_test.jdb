@@ -1,0 +1,140 @@
+' SHEETAPP with a fixture workbook and the app served in this process:
+' the kinds it guesses, search, filter and sorting, a change and a new
+' row saved into the workbook with a copy before, the other sheet kept,
+' and the changes it refuses.
+
+IMPORT TESTKIT, SHEETAPP, JDWEB, XLSX
+
+DIM LF$ = CHR$(10)
+DIM FORM = {"Content-Type": "application/x-www-form-urlencoded"}
+
+FUNC FreePort(seed$)
+    DIM hex$ = CODEC.SHA256$(seed$)
+    DIM port = 0
+    DIM i = 0
+    FOR i = 0 TO 3
+        port = port * 16 + INSTR("0123456789abcdef", MID$(hex$, i, 1))
+    NEXT i
+    port = 20000 + port MOD 30000
+    DIM last_port = port + 50
+    DO WHILE NOT JDWEB.LISTEN(port) ANDALSO port < last_port
+        port = port + 1
+    LOOP
+    RETURN port
+ENDFUNC
+
+FUNC Saved(r)
+    IF r{"status"} = 303 THEN RETURN TRUE
+    RETURN r{"status"} = 200 ANDALSO INSTR(r{"body"}, "class=msg>Saved") >= 0
+ENDFUNC
+
+FUNC RowOrder$(html$)
+    DIM out = []
+    DIM ids = ["A-101", "A-102", "A-103", "A-104", "A-105"]
+    DIM pos = []
+    DIM k = 0
+    FOR k = 0 TO LEN(ids) - 1
+        DIM id$ = ids[k]
+        DIM at = INSTR(html$, "<td>" + id$ + "</td>")
+        IF at >= 0 THEN PUSH(pos, RIGHT$("000000" + STR$(at), 7) + id$)
+    NEXT k
+    pos = SORT(pos)
+    FOR k = 0 TO LEN(pos) - 1
+        DIM p$ = pos[k]
+        PUSH(out, MID$(p$, 7))
+    NEXT k
+    RETURN JOIN(out, " ")
+ENDFUNC
+
+DIM folder$ = MKTEMP$("sheetapp")
+MKDIR folder$
+DIM book$ = PATH.JOIN$(folder$, "orders.xlsx")
+DIM backups$ = PATH.JOIN$(folder$, "backups")
+DIM orders = [["Id", "Customer", "Status", "Amount", "Due date"]]
+PUSH(orders, ["A-101", "Miller Ltd", "open", 1200.5, 46300])
+PUSH(orders, ["A-102", "Berg GmbH", "done", 80, 46290])
+PUSH(orders, ["A-103", "Miller Ltd", "open", 455, 46310])
+PUSH(orders, ["A-104", "Kraus AG", "waiting", 3100, 46305])
+PUSH(orders, ["A-105", "Ito & Co", "done", 99.9, 46280])
+DIM wb = XLSX.NEW()
+DIM s1 = XLSX.SHEET(wb, "Orders", orders)
+DIM s2 = XLSX.SHEET(wb, "Notes", [["Note"], ["keep me"]])
+XLSX.WRITE(book$, wb)
+
+TESTKIT.SUITE("what the columns hold")
+TESTKIT.EQ(SHEETAPP.KIND$("Amount", [1, 2.5, 3]), "number", "numbers")
+TESTKIT.EQ(SHEETAPP.KIND$("Due date", [46300, 46290]), "date", "day numbers under a date header")
+TESTKIT.EQ(SHEETAPP.KIND$("Start", ["2026-10-01", "2026-10-02"]), "date", "ISO dates")
+TESTKIT.EQ(SHEETAPP.KIND$("Status", ["open", "done", "open", "done", "open"]), "choice", "a few values that repeat")
+TESTKIT.EQ(SHEETAPP.KIND$("Customer", ["a", "b", "c", "d"]), "text", "text otherwise")
+TESTKIT.EQ(SHEETAPP.SERIAL_DATE$(46300), "2026-10-05", "a day number as a date")
+TESTKIT.EQ(SHEETAPP.DATE_SERIAL("2026-10-05"), 46300, "and back")
+SHEETAPP.OPEN(book$, "", ["Id"], backups$)
+SHEETAPP.LOG_TO(PATH.JOIN$(folder$, "sheet_app.log"))
+TESTKIT.EQ(JOIN(SHEETAPP.KINDS(), ","), "text,text,choice,number,date", "the guesses for the fixture")
+TESTKIT.EQ(SHEETAPP.ROW_COUNT(), 5, "five rows from the first sheet")
+TESTKIT.EQ(SHEETAPP.SHOWN$(0, 4), "2026-10-05", "a date shown as a date")
+
+TESTKIT.SUITE("the list")
+SHEETAPP.MOUNT()
+DIM port = FreePort(folder$)
+DIM r = JDWEB.FETCH(port, "GET", "/")
+TESTKIT.EQ(r{"status"}, 200, "the list page")
+TESTKIT.ISTRUE(INSTR(r{"body"}, "Ito &amp; Co") >= 0, "with every row, the text escaped")
+r = JDWEB.FETCH(port, "GET", "/?q=miller")
+TESTKIT.EQ(RowOrder$(r{"body"}), "A-101 A-103", "a search in any column, any case")
+r = JDWEB.FETCH(port, "GET", "/?f2=done")
+TESTKIT.EQ(RowOrder$(r{"body"}), "A-102 A-105", "a filter on a choice column")
+r = JDWEB.FETCH(port, "GET", "/?sort=3&dir=desc")
+TESTKIT.EQ(RowOrder$(r{"body"}), "A-104 A-101 A-103 A-105 A-102", "sorted by a number, largest first")
+r = JDWEB.FETCH(port, "GET", "/?sort=4&dir=asc")
+TESTKIT.EQ(RowOrder$(r{"body"}), "A-105 A-102 A-101 A-104 A-103", "sorted by date")
+
+TESTKIT.SUITE("changing a row")
+r = JDWEB.FETCH(port, "GET", "/edit/2")
+TESTKIT.ISTRUE(INSTR(r{"body"}, "name=version value=1") >= 0, "the form carries the row's version")
+TESTKIT.ISTRUE(INSTR(r{"body"}, "<option selected>open</option>") >= 0, "a choice as a list")
+DIM body$ = "row=2&version=1&c0=X-999&c1=Miller+Ltd&c2=done&c3=470&c4=2026-10-20"
+r = JDWEB.FETCH(port, "POST", "/save", body$, FORM)
+TESTKIT.ISTRUE(Saved(r), "a saved change goes back to the list")
+DIM after = XLSX.READ(book$)
+DIM sheet = after{"Orders"}
+DIM row3 = sheet[3]
+TESTKIT.EQ(row3[2], "done", "the change is in the workbook")
+TESTKIT.EQ(row3[3], 470, "a number stays a number")
+TESTKIT.EQ(row3[4], 46315, "a date goes back as a day number")
+TESTKIT.EQ(row3[0], "A-103", "a read-only column keeps its value")
+TESTKIT.EQ(after{"Notes"}[1][0], "keep me", "the other sheet is kept")
+TESTKIT.EQ(LEN(DIR$(PATH.JOIN$(backups$, "*.xlsx"))), 1, "a copy of the workbook before")
+TESTKIT.ISTRUE(INSTR(TXTREADER$(PATH.JOIN$(folder$, "sheet_app.log")), "Status: open -> done") >= 0, "and a log line")
+
+TESTKIT.SUITE("what it refuses")
+r = JDWEB.FETCH(port, "POST", "/save", body$, FORM)
+TESTKIT.EQ(r{"status"}, 409, "an old version of the row")
+TESTKIT.ISTRUE(INSTR(r{"body"}, "in the meantime") >= 0, "with the reason")
+r = JDWEB.FETCH(port, "POST", "/save", "row=2&version=2&c2=done&c3=lots", FORM)
+TESTKIT.EQ(r{"status"}, 400, "a word in a number column")
+r = JDWEB.FETCH(port, "POST", "/save", "row=2&version=2&c2=lost", FORM)
+TESTKIT.EQ(r{"status"}, 400, "a value that is not one of the choices")
+r = JDWEB.FETCH(port, "POST", "/save", "row=2&version=2&c4=20.10.2026", FORM)
+TESTKIT.EQ(r{"status"}, 400, "a date in another form")
+
+TESTKIT.SUITE("adding a row")
+r = JDWEB.FETCH(port, "POST", "/save", "row=-1&version=0&c0=A-106&c1=New+Client&c2=open&c3=10&c4=2026-11-02", FORM)
+TESTKIT.ISTRUE(Saved(r), "a new row is saved")
+DIM sheet2 = XLSX.READ(book$){"Orders"}
+TESTKIT.EQ(LEN(sheet2), 7, "the sheet has one more row")
+DIM last = sheet2[6]
+TESTKIT.EQ(last[1], "New Client", "with its values")
+
+TESTKIT.SUITE("the workbook changed by someone else")
+DIM wb2 = XLSX.NEW()
+DIM s3 = XLSX.SHEET(wb2, "Orders", orders)
+SLEEP 1100
+XLSX.WRITE(book$, wb2)
+r = JDWEB.FETCH(port, "POST", "/save", "row=0&version=1&c2=done", FORM)
+TESTKIT.EQ(r{"status"}, 409, "is not overwritten")
+HTTP.SERVER.STOP()
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(folder$, "/", "\")])
+TESTKIT.REPORT()

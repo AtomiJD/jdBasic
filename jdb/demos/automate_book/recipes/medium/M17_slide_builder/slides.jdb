@@ -1,0 +1,280 @@
+' slides.jdb: the work of the Slide Builder. It reads an outline in
+' Markdown or the rows of a sheet into a list of slides, prints them
+' for a dry run, and writes them as a PowerPoint file with PPTX.
+'
+'   IMPORT SLIDES
+'   DIM got = SLIDES.FROM_OUTLINE(TXTREADER$("review.md"), ".")
+'   PRINT SLIDES.BUILD(got{"slides"}, "Review", "review.pptx")
+'
+' A slide is a map: "kind" ("title" or "content"), "title",
+' "subtitle", "bullets", "image" (a path, "" for none), "table" (rows
+' of texts) and "notes".
+
+EXPORT MODULE SLIDES
+
+IMPORT PPTX
+
+FUNC NewSlide(kind$, title$)
+    DIM s AS MAP
+    s{"kind"} = kind$
+    s{"title"} = title$
+    s{"subtitle"} = ""
+    s{"bullets"} = []
+    s{"image"} = ""
+    s{"table"} = []
+    s{"notes"} = ""
+    RETURN s
+ENDFUNC
+
+' The cells of a Markdown table line, trimmed.
+FUNC Cells(t$)
+    DIM inner$ = TRIM$(t$)
+    IF LEFT$(inner$, 1) = "|" THEN inner$ = MID$(inner$, 1)
+    IF RIGHT$(inner$, 1) = "|" THEN
+        inner$ = LEFT$(inner$, LEN(inner$) - 1)
+    ENDIF
+    DIM parts = SPLIT(inner$, "|")
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM cell$ = TRIM$(parts[k])
+        PUSH(out, cell$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Whether a table line only separates the header, such as |---|---|.
+FUNC IsRule(t$)
+    DIM rest$ = REPLACE$(REPLACE$(TRIM$(t$), "|", ""), "-", "")
+    rest$ = REPLACE$(rest$, ":", "")
+    RETURN TRIM$(rest$) = ""
+ENDFUNC
+
+' The slides of an outline: "# Title" starts the title slide (the next
+' plain line is its subtitle), "## Title" a slide, "- point" a bullet
+' point ("  - point" one level in), "![text](file)" a picture, lines
+' of "| a | b |" a table, and "> text" the speaker notes. Pictures are
+' looked up from base$. Answers "slides" and "errors".
+EXPORT FUNC FROM_OUTLINE(text$, base$)
+    DIM slides = []
+    DIM errors = []
+    DIM src = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    DIM cur AS MAP
+    DIM have = FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(src) - 1
+        DIM raw$ = src[k]
+        DIM t$ = TRIM$(raw$)
+        DIM where$ = "line " + STR$(k + 1) + ": "
+        IF t$ = "" THEN CONTINUEFOR
+        IF STARTSWITH(t$, "## ") THEN
+            IF have THEN PUSH(slides, cur)
+            cur = NewSlide("content", TRIM$(MID$(t$, 3)))
+            have = TRUE
+        ELSEIF STARTSWITH(t$, "# ") THEN
+            IF have THEN PUSH(slides, cur)
+            cur = NewSlide("title", TRIM$(MID$(t$, 2)))
+            have = TRUE
+        ELSEIF NOT have THEN
+            PUSH(errors, where$ + "text before the first title")
+        ELSEIF STARTSWITH(t$, "- ") ORELSE STARTSWITH(t$, "* ") THEN
+            DIM point$ = TRIM$(MID$(t$, 2))
+            IF STARTSWITH(raw$, "  ") THEN point$ = "  " + point$
+            DIM points = cur{"bullets"}
+            PUSH(points, point$)
+            cur{"bullets"} = points
+        ELSEIF STARTSWITH(t$, "![") ANDALSO INSTR(t$, "](") > 0 THEN
+            DIM open_at = INSTR(t$, "](")
+            DIM file$ = MID$(t$, open_at + 2, LEN(t$) - open_at - 3)
+            DIM pic$ = PATH.JOIN$(base$, file$)
+            IF NOT FILE.EXISTS(pic$) THEN
+                PUSH(errors, where$ + "no picture " + file$)
+            ELSE
+                cur{"image"} = pic$
+            ENDIF
+        ELSEIF STARTSWITH(t$, "|") THEN
+            IF NOT IsRule(t$) THEN
+                DIM rows = cur{"table"}
+                PUSH(rows, Cells(t$))
+                cur{"table"} = rows
+            ENDIF
+        ELSEIF STARTSWITH(t$, ">") THEN
+            DIM note$ = TRIM$(MID$(t$, 1))
+            DIM before$ = cur{"notes"}
+            IF before$ <> "" THEN note$ = before$ + CHR$(10) + note$
+            cur{"notes"} = note$
+        ELSEIF cur{"kind"} = "title" ANDALSO cur{"subtitle"} = "" THEN
+            cur{"subtitle"} = t$
+        ELSE
+            PUSH(errors, where$ + "not a point, picture, table, note")
+        ENDIF
+    NEXT k
+    IF have THEN PUSH(slides, cur)
+    IF LEN(slides) = 0 THEN PUSH(errors, "the outline has no title")
+    RETURN {"slides": slides, "errors": errors}
+ENDFUNC
+
+' The number of the column named name$ in a header row, -1 if none.
+FUNC ColumnOf(header, name$)
+    DIM k = 0
+    FOR k = 0 TO LEN(header) - 1
+        DIM h$ = LCASE$(TRIM$("" + header[k]))
+        IF h$ = name$ THEN RETURN k
+    NEXT k
+    RETURN -1
+ENDFUNC
+
+FUNC CellOf$(row, col)
+    IF col < 0 ORELSE col >= LEN(row) THEN RETURN ""
+    RETURN TRIM$("" + row[col])
+ENDFUNC
+
+' The slides of a sheet with the columns Title, Points, Picture and
+' Notes (Points separated by ";"). The first row under the header is
+' the title slide, its Points the line below the title.
+EXPORT FUNC FROM_ROWS(rows, base$)
+    DIM slides = []
+    DIM errors = []
+    IF LEN(rows) < 2 THEN
+        PUSH(errors, "the sheet needs a header and a row per slide")
+        RETURN {"slides": slides, "errors": errors}
+    ENDIF
+    DIM header = rows[0]
+    DIM c_title = ColumnOf(header, "title")
+    DIM c_points = ColumnOf(header, "points")
+    DIM c_pic = ColumnOf(header, "picture")
+    DIM c_notes = ColumnOf(header, "notes")
+    IF c_title < 0 THEN
+        PUSH(errors, "the sheet has no column Title")
+        RETURN {"slides": slides, "errors": errors}
+    ENDIF
+    DIM r = 0
+    FOR r = 1 TO LEN(rows) - 1
+        DIM row = rows[r]
+        DIM title$ = CellOf$(row, c_title)
+        IF title$ = "" THEN CONTINUEFOR
+        DIM points$ = CellOf$(row, c_points)
+        DIM s AS MAP
+        IF LEN(slides) = 0 THEN
+            s = NewSlide("title", title$)
+            s{"subtitle"} = points$
+        ELSE
+            s = NewSlide("content", title$)
+            DIM points = []
+            IF points$ <> "" THEN
+                DIM parts = SPLIT(points$, ";")
+                DIM p = 0
+                FOR p = 0 TO LEN(parts) - 1
+                    DIM one$ = TRIM$(parts[p])
+                    IF one$ <> "" THEN PUSH(points, one$)
+                NEXT p
+            ENDIF
+            s{"bullets"} = points
+        ENDIF
+        DIM file$ = CellOf$(row, c_pic)
+        IF file$ <> "" THEN
+            DIM pic$ = PATH.JOIN$(base$, file$)
+            IF FILE.EXISTS(pic$) THEN
+                s{"image"} = pic$
+            ELSE
+                DIM row$ = "row " + STR$(r + 1)
+                PUSH(errors, row$ + ": no picture " + file$)
+            ENDIF
+        ENDIF
+        s{"notes"} = CellOf$(row, c_notes)
+        PUSH(slides, s)
+    NEXT r
+    IF LEN(slides) = 0 THEN PUSH(errors, "no row has a title")
+    RETURN {"slides": slides, "errors": errors}
+ENDFUNC
+
+' One line per slide for a dry run.
+EXPORT FUNC PLAN_LINES(slides)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(slides) - 1
+        DIM s = slides[k]
+        DIM line$ = STR$(k + 1) + " " + s{"title"}
+        IF s{"kind"} = "title" THEN line$ = line$ + " (title slide)"
+        DIM parts = []
+        DIM n_points = LEN(s{"bullets"})
+        IF n_points > 0 THEN PUSH(parts, STR$(n_points) + " points")
+        DIM pic$ = s{"image"}
+        DIM pic_name$ = PATH.BASENAME$(pic$)
+        IF pic$ <> "" THEN PUSH(parts, "picture " + pic_name$)
+        DIM n_rows = LEN(s{"table"})
+        IF n_rows > 0 THEN PUSH(parts, STR$(n_rows) + " table rows")
+        IF s{"notes"} <> "" THEN PUSH(parts, "notes")
+        IF LEN(parts) > 0 THEN
+            line$ = line$ + ": " + JOIN(parts, ", ")
+        ENDIF
+        PUSH(out, line$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Writes the slides as a PowerPoint file; answers how many.
+EXPORT FUNC BUILD(slides, title$, path$)
+    DIM deck = PPTX.NEW(title$)
+    DIM k = 0
+    FOR k = 0 TO LEN(slides) - 1
+        DIM s = slides[k]
+        DIM n = 0
+        IF s{"kind"} = "title" THEN
+            n = PPTX.TITLE_SLIDE(deck, s{"title"}, s{"subtitle"})
+        ELSE
+            n = PPTX.SLIDE(deck, s{"title"}, s{"bullets"})
+        ENDIF
+        DIM pic$ = s{"image"}
+        IF pic$ <> "" THEN PPTX.IMAGE(deck, pic$)
+        DIM rows = s{"table"}
+        IF LEN(rows) > 0 THEN PPTX.TABLE(deck, rows, TRUE)
+        DIM notes$ = s{"notes"}
+        IF notes$ <> "" THEN PPTX.NOTES(deck, notes$)
+    NEXT k
+    RETURN PPTX.WRITE(deck, path$)
+ENDFUNC
+
+' The PowerPoint file for a source file: the same name with .pptx, in
+' out_dir$ when it is not "".
+EXPORT FUNC TARGET$(source$, out_dir$)
+    DIM name$ = PATH.BASENAME$(source$)
+    DIM dot = -1
+    DIM k = 0
+    FOR k = 0 TO LEN(name$) - 1
+        IF MID$(name$, k, 1) = "." THEN dot = k
+    NEXT k
+    IF dot > 0 THEN name$ = LEFT$(name$, dot)
+    DIM folder$ = out_dir$
+    IF folder$ = "" THEN folder$ = PATH.DIRNAME$(source$)
+    IF folder$ = "" THEN RETURN name$ + ".pptx"
+    RETURN PATH.JOIN$(folder$, name$ + ".pptx")
+ENDFUNC
+
+' A path that does not exist yet: path$ itself, or the same name with
+' " (2)", " (3)" and so on before the extension.
+EXPORT FUNC FREE_PATH$(path$)
+    IF NOT FILE.EXISTS(path$) THEN RETURN path$
+    DIM stem$ = LEFT$(path$, LEN(path$) - 5)
+    DIM n = 2
+    DO WHILE FILE.EXISTS(stem$ + " (" + STR$(n) + ").pptx")
+        n = n + 1
+    LOOP
+    RETURN stem$ + " (" + STR$(n) + ").pptx"
+ENDFUNC
+
+' The first argument on the command line that is not an option.
+EXPORT FUNC SOURCE_ARG$(argv)
+    DIM k = 1
+    DO WHILE k < LEN(argv)
+        DIM a$ = argv[k]
+        IF a$ = "--config" THEN
+            k = k + 2
+        ELSEIF STARTSWITH(a$, "--") THEN
+            k = k + 1
+        ELSE
+            RETURN a$
+        ENDIF
+    LOOP
+    RETURN ""
+ENDFUNC

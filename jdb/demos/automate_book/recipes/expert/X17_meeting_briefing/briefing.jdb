@@ -1,0 +1,421 @@
+' briefing.jdb: the work of the Meeting Briefing. It reads the day's
+' meetings from a calendar file, finds the latest mails with the
+' people who attend and the open items of your notes that name them,
+' asks a language model for a short summary, and sets one page per
+' meeting into a PDF.
+'
+'   IMPORT BRIEFING
+'   DIM meetings = BRIEFING.MEETINGS("calendar.ics", "2026-10-05")
+'   DIM mails = BRIEFING.MAILS(["C:/mail"], meetings[0], 3)
+'   DIM items = BRIEFING.ITEMS("todo.txt", meetings[0])
+
+EXPORT MODULE BRIEFING
+
+IMPORT ICAL, DF, MAIL, LLMAPI, RETRY, PDFGEN
+
+DIM gLF$ = CHR$(10)
+DIM gMonths$ = "JanFebMarAprMayJunJulAugSepOctNovDec"
+
+' The names of the people in a calendar file, from the CN parameter
+' of its ATTENDEE and ORGANIZER lines: lower case address to name.
+EXPORT FUNC NAMES(ics_text$)
+    DIM out AS MAP
+    DIM flat$ = REPLACE$(ics_text$, CHR$(13), "")
+    flat$ = REPLACE$(flat$, gLF$ + " ", "")
+    flat$ = REPLACE$(flat$, gLF$ + CHR$(9), "")
+    DIM rows = SPLIT(flat$, gLF$)
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = rows[k]
+        DIM up$ = UCASE$(row$)
+        DIM person = STARTSWITH(up$, "ATTENDEE")
+        IF STARTSWITH(up$, "ORGANIZER") THEN person = TRUE
+        DIM at = INSTR(up$, "MAILTO:")
+        DIM cn = INSTR(up$, "CN=")
+        IF person ANDALSO at > 0 ANDALSO cn > 0 ANDALSO cn < at THEN
+            DIM mail$ = LCASE$(TRIM$(MID$(row$, at + 7)))
+            DIM rest$ = MID$(row$, cn + 3, at - cn - 3)
+            DIM cut = INSTR(rest$, ";")
+            IF cut < 0 THEN cut = INSTR(rest$, ":")
+            IF cut >= 0 THEN rest$ = LEFT$(rest$, cut)
+            out{mail$} = TRIM$(REPLACE$(rest$, CHR$(34), ""))
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Whether an event's time names a zone (Z or TZID). A time without
+' one is shown as the file writes it.
+FUNC Zoned(cal, ev, prop$)
+    DIM raw$ = ICAL.RAW$(cal, ev, prop$)
+    IF RIGHT$(raw$, 1) = "Z" THEN RETURN TRUE
+    RETURN ICAL.PARAM$(cal, ev, prop$, "TZID") <> ""
+ENDFUNC
+
+' The clock time of an event's start or end as HH:MM.
+FUNC Clock$(cal, ev, prop$, t_in)
+    DIM t = CDBL(t_in)
+    IF Zoned(cal, ev, prop$) THEN RETURN FORMAT_DATE(t, "%H:%M")
+    RETURN FORMAT_DATE(t, "%H:%M", 0)
+ENDFUNC
+
+' The date an event starts on, as YYYY-MM-DD.
+FUNC Day$(cal, ev, t_in)
+    DIM t = CDBL(t_in)
+    DIM fmt$ = "%Y-%m-%d"
+    IF Zoned(cal, ev, "DTSTART") THEN RETURN FORMAT_DATE(t, fmt$)
+    RETURN FORMAT_DATE(t, fmt$, 0)
+ENDFUNC
+
+' The people of an event as maps with name and mail.
+FUNC People(cal, ev, names)
+    DIM out = []
+    DIM who = ICAL.VALUES(cal, ev, "ATTENDEE")
+    DIM j = 0
+    FOR j = 0 TO LEN(who) - 1
+        DIM w$ = who[j]
+        DIM addr$ = LCASE$(w$)
+        IF STARTSWITH(addr$, "mailto:") THEN addr$ = MID$(addr$, 7)
+        DIM shown$ = addr$
+        IF MAP.EXISTS(names, addr$) THEN shown$ = names{addr$}
+        PUSH(out, {"name": shown$, "mail": addr$})
+    NEXT j
+    RETURN out
+ENDFUNC
+
+' The meetings of a day (YYYY-MM-DD) in a calendar file, in order of
+' their start: maps with title, start, end, location and people, a
+' list of maps with name and mail. Days blocked whole are left out.
+EXPORT FUNC MEETINGS(ics_path$, day$)
+    IF NOT FILE.EXISTS(ics_path$) THEN
+        THROW "No calendar file at " + ics_path$
+    ENDIF
+    DIM text$ = TXTREADER$(ics_path$)
+    DIM names = NAMES(text$)
+    DIM cal = ICAL.PARSE(text$)
+    DIM noon = CDATE(day$ + " 12:00:00")
+    DIM t_from = CDBL(DATEADD("D", -1, noon))
+    DIM t_to = CDBL(DATEADD("D", 1, noon))
+    DIM frame = ICAL.EXPAND(cal, t_from, t_to)
+    DIM found = []
+    DIM keys = []
+    DIM k = 0
+    FOR k = 0 TO DF.NROWS(frame) - 1
+        DIM r = DF.ROW(frame, k)
+        DIM ev = r{"event"}
+        DIM today = Day$(cal, ev, r{"start"}) = day$
+        IF today ANDALSO NOT ICAL.ALLDAY(cal, ev) THEN
+            DIM m AS MAP
+            m{"title"} = r{"summary"}
+            m{"start"} = Clock$(cal, ev, "DTSTART", r{"start"})
+            m{"end"} = Clock$(cal, ev, "DTEND", r{"end"})
+            m{"location"} = ICAL.PROP$(cal, ev, "LOCATION", "")
+            m{"people"} = People(cal, ev, names)
+            PUSH(found, m)
+            PUSH(keys, m{"start"} + CHR$(1) + STR$(LEN(found) - 1))
+        ENDIF
+    NEXT k
+    RETURN InOrder(found, keys, FALSE, LEN(found))
+ENDFUNC
+
+' The items in the order of their keys (each ending in CHR$(1) and
+' the item's number), newest first when backwards, at most most.
+FUNC InOrder(items, keys, backwards, most)
+    DIM order = SORT(keys)
+    IF backwards THEN order = REVERSE(order)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(order) - 1
+        IF LEN(out) < most THEN
+            DIM key$ = order[k]
+            DIM at = CINT(MID$(key$, INSTR(key$, CHR$(1)) + 1))
+            PUSH(out, items[at])
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The mail addresses of a meeting's people, lower case.
+FUNC Addresses(meeting)
+    DIM out = []
+    DIM people = meeting{"people"}
+    DIM k = 0
+    FOR k = 0 TO LEN(people) - 1
+        DIM p = people[k]
+        DIM a$ = p{"mail"}
+        PUSH(out, a$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The date header of a mail as YYYY-MM-DD HH:MM, so mails sort by it.
+EXPORT FUNC SORTDATE$(date$)
+    DIM parts = SPLIT(TRIM$(date$), " ")
+    DIM first = 0
+    IF LEN(parts) > 0 ANDALSO ENDSWITH(parts[0], ",") THEN first = 1
+    IF LEN(parts) < first + 4 THEN RETURN ""
+    DIM d$ = RIGHT$("0" + parts[first], 2)
+    DIM mon$ = parts[first + 1]
+    DIM y$ = parts[first + 2]
+    DIM clock$ = LEFT$(parts[first + 3], 5)
+    DIM m = INSTR(gMonths$, LEFT$(mon$, 3))
+    IF m < 0 THEN RETURN ""
+    DIM mm$ = RIGHT$("0" + STR$(m / 3 + 1), 2)
+    RETURN y$ + "-" + mm$ + "-" + d$ + " " + clock$
+ENDFUNC
+
+' Whether a parsed mail is from or to one of the addresses.
+FUNC Involves(parsed, addresses)
+    DIM all = [MAIL.BAREADDRESS$(parsed{"from"})]
+    DIM lists = [parsed{"to"}, parsed{"cc"}]
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(lists) - 1
+        DIM one = lists[k]
+        IF TYPEOF(one) = "ARRAY" THEN
+            FOR j = 0 TO LEN(one) - 1
+                DIM to$ = one[j]
+                PUSH(all, MAIL.BAREADDRESS$(to$))
+            NEXT j
+        ENDIF
+    NEXT k
+    FOR k = 0 TO LEN(all) - 1
+        DIM a$ = LCASE$(all[k])
+        FOR j = 0 TO LEN(addresses) - 1
+            DIM want$ = addresses[j]
+            IF a$ = want$ THEN RETURN TRUE
+        NEXT j
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+' A parsed mail as a map with from, subject, date and text (its
+' first 300 characters on one line).
+FUNC Summed(parsed)
+    DIM m AS MAP
+    m{"from"} = parsed{"from"}
+    m{"subject"} = parsed{"subject"}
+    m{"date"} = SORTDATE$(parsed{"date"})
+    DIM body$ = REPLACE$(TRIM$(parsed{"text"}), CHR$(13), "")
+    m{"text"} = LEFT$(REPLACE$(body$, gLF$, " "), 300)
+    RETURN m
+ENDFUNC
+
+' The newest mails with the meeting's people from the .eml files of
+' the folders, at most most of them, as maps from Summed.
+EXPORT FUNC MAILS(folders, meeting, most)
+    DIM addresses = Addresses(meeting)
+    DIM found = []
+    DIM keys = []
+    DIM f = 0
+    DIM k = 0
+    FOR f = 0 TO LEN(folders) - 1
+        DIM folder$ = folders[f]
+        IF FILE.ISDIR(folder$) THEN
+            DIM names = DIR$(PATH.JOIN$(folder$, "*.eml"))
+            FOR k = 0 TO LEN(names) - 1
+                DIM file$ = names[k]
+                DIM path$ = PATH.JOIN$(folder$, file$)
+                DIM parsed = MAIL.PARSEFILE(path$)
+                IF Involves(parsed, addresses) THEN
+                    DIM m = Summed(parsed)
+                    PUSH(found, m)
+                    DIM n$ = STR$(LEN(found) - 1)
+                    PUSH(keys, m{"date"} + CHR$(1) + n$)
+                ENDIF
+            NEXT k
+        ENDIF
+    NEXT f
+    RETURN InOrder(found, keys, TRUE, most)
+ENDFUNC
+
+' The open items (- [ ] lines) of a notes file that name one of the
+' meeting's people by first name or the meeting's title.
+EXPORT FUNC ITEMS(notes_path$, meeting)
+    DIM out = []
+    IF NOT FILE.EXISTS(notes_path$) THEN RETURN out
+    DIM words = [LCASE$(meeting{"title"})]
+    DIM people = meeting{"people"}
+    DIM k = 0
+    FOR k = 0 TO LEN(people) - 1
+        DIM p = people[k]
+        DIM name$ = p{"name"}
+        DIM first$ = LCASE$(SPLIT(name$, " ")[0])
+        DIM real = LEN(first$) >= 3 ANDALSO INSTR(first$, "@") < 0
+        IF real THEN PUSH(words, first$)
+    NEXT k
+    DIM text$ = REPLACE$(TXTREADER$(notes_path$), CHR$(13), "")
+    DIM rows = SPLIT(text$, gLF$)
+    DIM j = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = TRIM$(rows[k])
+        IF STARTSWITH(row$, "- [ ]") THEN
+            DIM item$ = TRIM$(MID$(row$, 5))
+            DIM low$ = LCASE$(item$)
+            DIM hit = FALSE
+            FOR j = 0 TO LEN(words) - 1
+                DIM w$ = words[j]
+                IF INSTR(low$, w$) >= 0 THEN hit = TRUE
+            NEXT j
+            IF hit THEN PUSH(out, item$)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The names of a meeting's people, joined by commas.
+FUNC NameList$(meeting)
+    DIM people = meeting{"people"}
+    DIM names = []
+    DIM k = 0
+    FOR k = 0 TO LEN(people) - 1
+        DIM one = people[k]
+        DIM n$ = one{"name"}
+        PUSH(names, n$)
+    NEXT k
+    RETURN JOIN(names, ", ")
+ENDFUNC
+
+' What the language model reads about one meeting.
+EXPORT FUNC PROMPT$(meeting, mails, items)
+    DIM p$ = "Meeting: " + meeting{"title"} + ", " + meeting{"start"}
+    p$ = p$ + " to " + meeting{"end"} + gLF$
+    p$ = p$ + "People: " + NameList$(meeting) + gLF$ + gLF$
+    p$ = p$ + "Recent mails:" + gLF$
+    DIM k = 0
+    FOR k = 0 TO LEN(mails) - 1
+        DIM m = mails[k]
+        p$ = p$ + "- " + m{"date"} + " from " + m{"from"} + ": "
+        p$ = p$ + m{"subject"} + ". " + m{"text"} + gLF$
+    NEXT k
+    p$ = p$ + gLF$ + "Open items:" + gLF$
+    FOR k = 0 TO LEN(items) - 1
+        DIM item$ = items[k]
+        p$ = p$ + "- " + item$ + gLF$
+    NEXT k
+    RETURN p$
+ENDFUNC
+
+' The instructions the model gets with every meeting.
+EXPORT FUNC RULES$()
+    DIM r$ = "You prepare a person for a meeting. From the meeting, "
+    r$ = r$ + "the recent mails and the open items, write at most "
+    r$ = r$ + "four short sentences: what the meeting is about, what "
+    r$ = r$ + "the others are waiting for, and what to bring. Only "
+    r$ = r$ + "use what the text says; do not invent dates or "
+    RETURN r$ + "numbers."
+ENDFUNC
+
+' The language model client: provider, model and base URL from the
+' settings; an empty key$ leaves the key to the environment.
+EXPORT FUNC CLIENT(provider$, model$, base$, key$)
+    DIM ai = LLMAPI.NEW(provider$, model$, key$, base$)
+    LLMAPI.SET(ai, "temperature", 0.2)
+    LLMAPI.SYSTEM(ai, RULES$())
+    RETURN ai
+ENDFUNC
+
+' The model's summary of a prompt; a busy or unreachable server is
+' asked again up to three times.
+EXPORT FUNC SUMMARY$(ai, prompt$)
+    DIM why$ = ""
+    DIM tries = 0
+    FOR tries = 1 TO 3
+        DIM text$ = ""
+        DIM got = FALSE
+        TRY
+            text$ = LLMAPI.ASK$(ai, prompt$)
+            got = TRUE
+        CATCH
+            why$ = ERRMSG$
+            IF NOT RETRY.TRANSIENT(why$) THEN THROW why$
+        ENDTRY
+        IF got THEN RETURN TRIM$(text$)
+        IF tries < 3 THEN SLEEP 500 * tries
+    NEXT tries
+    THROW why$
+ENDFUNC
+
+' A count with its word, "1 mail" or "3 mails".
+FUNC Count$(n, one$, many$)
+    IF n = 1 THEN RETURN "1 " + one$
+    RETURN STR$(n) + " " + many$
+ENDFUNC
+
+' One line per meeting for a dry run.
+EXPORT FUNC PLAN_LINE$(meeting, n_mails, n_items)
+    DIM t$ = meeting{"start"} + "-" + meeting{"end"} + "  "
+    t$ = t$ + meeting{"title"} + "  ("
+    t$ = t$ + Count$(LEN(meeting{"people"}), "person", "people")
+    t$ = t$ + ", " + Count$(n_mails, "mail", "mails") + ", "
+    RETURN t$ + Count$(n_items, "open item", "open items") + ")"
+ENDFUNC
+
+' A heading and a block of text at the cursor, wrapped to the page.
+SUB Section(pdf, title$, text$)
+    PDFGEN.USEFONT(pdf, "helvetica", "B", 11)
+    PDFGEN.LN(pdf, 4)
+    PDFGEN.CELL(pdf, 170, 6, title$)
+    PDFGEN.LN(pdf, 6)
+    PDFGEN.USEFONT(pdf, "helvetica", "", 10)
+    PDFGEN.MULTICELL(pdf, 170, 5, text$)
+ENDSUB
+
+' The mails of a page, one line each.
+FUNC MailText$(mails)
+    IF LEN(mails) = 0 THEN RETURN "No recent mails with these people."
+    DIM lines = []
+    DIM j = 0
+    FOR j = 0 TO LEN(mails) - 1
+        DIM ml = mails[j]
+        DIM who$ = MAIL.ADDRESSNAME$(ml{"from"})
+        IF who$ = "" THEN who$ = ml{"from"}
+        DIM line$ = ml{"date"} + "  " + who$ + ": "
+        PUSH(lines, line$ + ml{"subject"})
+    NEXT j
+    RETURN JOIN(lines, gLF$)
+ENDFUNC
+
+' The open items of a page, one line each.
+FUNC ItemText$(items)
+    IF LEN(items) = 0 THEN RETURN "No open items name this meeting."
+    DIM rows = []
+    DIM j = 0
+    FOR j = 0 TO LEN(items) - 1
+        DIM it$ = items[j]
+        PUSH(rows, "[ ] " + it$)
+    NEXT j
+    RETURN JOIN(rows, gLF$)
+ENDFUNC
+
+' The briefing as a PDF: one page per meeting with its time, place,
+' people, summary, mails and open items. Each entry of pages is a map
+' with meeting, mails, items and summary.
+EXPORT SUB WRITE_PDF(path$, day$, pages)
+    DIM pdf = PDFGEN.DOC()
+    PDFGEN.SETINFO(pdf, "Briefing " + day$, "Meeting Briefing")
+    PDFGEN.SETFOOTER(pdf, "Briefing " + day$ + ", page {page}")
+    DIM k = 0
+    FOR k = 0 TO LEN(pages) - 1
+        DIM pg = pages[k]
+        DIM m = pg{"meeting"}
+        PDFGEN.ADDPAGE(pdf)
+        PDFGEN.USEFONT(pdf, "helvetica", "B", 16)
+        PDFGEN.TEXTAT(pdf, 20, 25, m{"title"})
+        PDFGEN.USEFONT(pdf, "helvetica", "", 10)
+        DIM when$ = day$ + ", " + m{"start"} + " to " + m{"end"}
+        DIM place$ = m{"location"}
+        IF place$ <> "" THEN when$ = when$ + ", " + place$
+        PDFGEN.TEXTAT(pdf, 20, 32, when$)
+        PDFGEN.SETDRAW(pdf, 180, 180, 180)
+        PDFGEN.DRAWLINE(pdf, 20, 35, 190, 35)
+        PDFGEN.SETXY(pdf, 20, 40)
+        Section(pdf, "People", NameList$(m))
+        DIM summary$ = pg{"summary"}
+        IF summary$ = "" THEN summary$ = "(written without a summary)"
+        Section(pdf, "In short", summary$)
+        Section(pdf, "Latest mails", MailText$(pg{"mails"}))
+        Section(pdf, "Open items", ItemText$(pg{"items"}))
+    NEXT k
+    PDFGEN.WRITEFILE(pdf, path$)
+ENDSUB

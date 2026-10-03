@@ -1,8 +1,8 @@
 # The book: what the build reads.
 
 [book]
-title = "Automate Your Work for a Better Life Balance"
-subtitle = "48 jdBasic programs that give you your hours back"
+title = "Office Automation with jdBasic"
+subtitle = "50+ Programs Bringing BASIC Back to Business and Your Hours Back to You"
 authors = ["Achim Christ", "Claude"]
 version = "0.4 (chapters 1 to 4)"
 language = "en-US"
@@ -43,6 +43,7 @@ files = [
     "manuscript/03_easy_E14.md",
     "manuscript/03_easy_E15.md",
     "manuscript/03_easy_E16.md",
+    "manuscript/03_easy_E17.md",
     "manuscript/04_medium.md",
     "manuscript/04_medium_M01.md",
     "manuscript/04_medium_M02.md",
@@ -60,6 +61,7 @@ files = [
     "manuscript/04_medium_M14.md",
     "manuscript/04_medium_M15.md",
     "manuscript/04_medium_M16.md",
+    "manuscript/04_medium_M17.md",
     "manuscript/04_medium_close.md",
     "manuscript/05_expert.md",
     "manuscript/05_expert_X01.md",
@@ -78,6 +80,8 @@ files = [
     "manuscript/05_expert_X14.md",
     "manuscript/05_expert_X15.md",
     "manuscript/05_expert_X16.md",
+    "manuscript/05_expert_X17.md",
+    "manuscript/05_expert_X18.md",
     "manuscript/05_expert_close.md",
     "manuscript/06_living.md",
     "manuscript/06_living_1.md",

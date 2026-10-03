@@ -1,0 +1,268 @@
+' arcade.jdb: the rules of 2048 as plain functions. A board is a
+' list of four rows of four numbers, 0 for an empty cell. A move
+' slides every tile as far as it goes, joins two equal tiles into
+' one, and scores the value of each new tile. Random tiles come from
+' a seed, so a game can be played again exactly.
+'
+'   IMPORT ARCADE
+'   DIM game = ARCADE.NEW_GAME(42)
+'   DIM turn = ARCADE.MOVE(game{"board"}, "left")
+
+EXPORT MODULE ARCADE
+
+CONST SIZE = 4
+
+' The next number of the random sequence, from 1 to 2147483646.
+EXPORT FUNC NEXT_SEED(seed)
+    DIM s = seed MOD 2147483647
+    IF s <= 0 THEN s = s + 2147483646
+    RETURN (s * 16807) MOD 2147483647
+ENDFUNC
+
+' An empty board.
+EXPORT FUNC EMPTY_BOARD()
+    DIM rows = []
+    DIM r = 0
+    FOR r = 1 TO SIZE
+        PUSH(rows, [0, 0, 0, 0])
+    NEXT r
+    RETURN rows
+ENDFUNC
+
+' One row slid to the left: answers "row" and "gain", the points the
+' joined tiles bring. A tile joins at most once per move.
+EXPORT FUNC SLIDE_ROW(row)
+    DIM tiles = []
+    DIM k = 0
+    FOR k = 0 TO LEN(row) - 1
+        IF row[k] <> 0 THEN PUSH(tiles, row[k])
+    NEXT k
+    DIM out = []
+    DIM gain = 0
+    k = 0
+    DO WHILE k < LEN(tiles)
+        DIM here = tiles[k]
+        IF k + 1 < LEN(tiles) ANDALSO tiles[k + 1] = here THEN
+            PUSH(out, here * 2)
+            gain = gain + here * 2
+            k = k + 2
+        ELSE
+            PUSH(out, here)
+            k = k + 1
+        ENDIF
+    LOOP
+    DO WHILE LEN(out) < LEN(row)
+        PUSH(out, 0)
+    LOOP
+    RETURN {"row": out, "gain": gain}
+ENDFUNC
+
+' A row in the opposite order.
+FUNC Reversed(row)
+    DIM out = []
+    DIM k = 0
+    FOR k = LEN(row) - 1 TO 0 STEP -1
+        PUSH(out, row[k])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The board with rows and columns swapped.
+FUNC Flipped(board)
+    DIM out = []
+    DIM r = 0
+    DIM c = 0
+    FOR c = 0 TO SIZE - 1
+        DIM col = []
+        FOR r = 0 TO SIZE - 1
+            DIM cells = board[r]
+            PUSH(col, cells[c])
+        NEXT r
+        PUSH(out, col)
+    NEXT c
+    RETURN out
+ENDFUNC
+
+' Whether two boards hold the same tiles.
+EXPORT FUNC SAME(a, b)
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO SIZE - 1
+        DIM ra = a[r]
+        DIM rb = b[r]
+        FOR c = 0 TO SIZE - 1
+            IF ra[c] <> rb[c] THEN RETURN FALSE
+        NEXT c
+    NEXT r
+    RETURN TRUE
+ENDFUNC
+
+' One move of the whole board, dir$ "left", "right", "up" or "down".
+' Answers "board", "gain" and "moved" (FALSE when nothing changed).
+EXPORT FUNC MOVE(board, dir$)
+    DIM d$ = LCASE$(dir$)
+    IF NOT (d$ IN ["left", "right", "up", "down"]) THEN
+        THROW "ARCADE: no direction " + dir$
+    ENDIF
+    DIM work = board
+    IF d$ = "up" ORELSE d$ = "down" THEN work = Flipped(board)
+    DIM rows = []
+    DIM gain = 0
+    DIM r = 0
+    FOR r = 0 TO SIZE - 1
+        DIM row = work[r]
+        IF d$ = "right" ORELSE d$ = "down" THEN row = Reversed(row)
+        DIM slid = SLIDE_ROW(row)
+        DIM new_row = slid{"row"}
+        IF d$ = "right" ORELSE d$ = "down" THEN
+            new_row = Reversed(new_row)
+        ENDIF
+        PUSH(rows, new_row)
+        gain = gain + slid{"gain"}
+    NEXT r
+    IF d$ = "up" ORELSE d$ = "down" THEN rows = Flipped(rows)
+    DIM result AS MAP
+    result{"board"} = rows
+    result{"gain"} = gain
+    result{"moved"} = NOT SAME(board, rows)
+    RETURN result
+ENDFUNC
+
+' The empty cells of a board as [row, column] pairs, row by row.
+EXPORT FUNC EMPTY_CELLS(board)
+    DIM out = []
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO SIZE - 1
+        DIM cells = board[r]
+        FOR c = 0 TO SIZE - 1
+            IF cells[c] = 0 THEN PUSH(out, [r, c])
+        NEXT c
+    NEXT r
+    RETURN out
+ENDFUNC
+
+' A new tile in a random empty cell: a 2, or a 4 one time in ten.
+' Answers "board" and "seed", the seed for the next tile.
+EXPORT FUNC SPAWN(board, seed)
+    DIM free = EMPTY_CELLS(board)
+    DIM result AS MAP
+    result{"board"} = board
+    result{"seed"} = seed
+    IF LEN(free) = 0 THEN RETURN result
+    DIM s1 = NEXT_SEED(seed)
+    DIM s2 = NEXT_SEED(s1)
+    DIM spot = free[s1 MOD LEN(free)]
+    DIM value = 2
+    IF s2 MOD 10 = 0 THEN value = 4
+    DIM rows = []
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO SIZE - 1
+        DIM old = board[r]
+        DIM row = []
+        FOR c = 0 TO SIZE - 1
+            IF r = spot[0] ANDALSO c = spot[1] THEN
+                PUSH(row, value)
+            ELSE
+                PUSH(row, old[c])
+            ENDIF
+        NEXT c
+        PUSH(rows, row)
+    NEXT r
+    result{"board"} = rows
+    result{"seed"} = s2
+    RETURN result
+ENDFUNC
+
+' A new game: two tiles on an empty board. Answers "board", "seed"
+' and "score".
+EXPORT FUNC NEW_GAME(seed)
+    DIM first = SPAWN(EMPTY_BOARD(), seed)
+    DIM second = SPAWN(first{"board"}, first{"seed"})
+    DIM game AS MAP
+    game{"board"} = second{"board"}
+    game{"seed"} = second{"seed"}
+    game{"score"} = 0
+    RETURN game
+ENDFUNC
+
+' One turn: the move, and a new tile when the move changed the board.
+' Answers the game with "moved" added.
+EXPORT FUNC TURN(game, dir$)
+    DIM m = MOVE(game{"board"}, dir$)
+    DIM after AS MAP
+    after{"board"} = m{"board"}
+    after{"seed"} = game{"seed"}
+    after{"score"} = game{"score"} + m{"gain"}
+    after{"moved"} = m{"moved"}
+    IF m{"moved"} THEN
+        DIM s = SPAWN(m{"board"}, game{"seed"})
+        after{"board"} = s{"board"}
+        after{"seed"} = s{"seed"}
+    ENDIF
+    RETURN after
+ENDFUNC
+
+' Whether any move can still change the board.
+EXPORT FUNC CAN_MOVE(board)
+    IF LEN(EMPTY_CELLS(board)) > 0 THEN RETURN TRUE
+    DIM d = 0
+    DIM dirs = ["left", "right", "up", "down"]
+    FOR d = 0 TO 3
+        DIM m = MOVE(board, dirs[d])
+        IF m{"moved"} THEN RETURN TRUE
+    NEXT d
+    RETURN FALSE
+ENDFUNC
+
+' The largest tile on the board.
+EXPORT FUNC TOP_TILE(board)
+    DIM best = 0
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO SIZE - 1
+        DIM cells = board[r]
+        FOR c = 0 TO SIZE - 1
+            IF cells[c] > best THEN best = cells[c]
+        NEXT c
+    NEXT r
+    RETURN best
+ENDFUNC
+
+' The direction a key name stands for, "" for any other key.
+EXPORT FUNC KEY_DIR$(key$)
+    DIM k$ = UCASE$(key$)
+    IF k$ = "LEFT" ORELSE k$ = "A" THEN RETURN "left"
+    IF k$ = "RIGHT" ORELSE k$ = "D" THEN RETURN "right"
+    IF k$ = "UP" ORELSE k$ = "W" THEN RETURN "up"
+    IF k$ = "DOWN" ORELSE k$ = "S" THEN RETURN "down"
+    RETURN ""
+ENDFUNC
+
+' The best score kept in a file, 0 when there is none yet.
+EXPORT FUNC BEST(path$)
+    IF NOT FILE.EXISTS(path$) THEN RETURN 0
+    DIM t$ = TRIM$(TXTREADER$(path$))
+    IF t$ = "" THEN RETURN 0
+    RETURN VAL(t$)
+ENDFUNC
+
+' Keeps score as the best when it beats the one in the file; answers
+' TRUE for a new best.
+EXPORT FUNC KEEP_BEST(path$, score)
+    IF score <= BEST(path$) THEN RETURN FALSE
+    MKDIR PATH.DIRNAME$(path$)
+    TXTWRITER path$, STR$(score) + CHR$(10)
+    RETURN TRUE
+ENDFUNC
+
+' The text of the clock: minutes and seconds left, such as "2:05".
+EXPORT FUNC CLOCK$(ms_left)
+    DIM s = INT(ms_left / 1000)
+    IF s < 0 THEN s = 0
+    DIM sec = s MOD 60
+    DIM sec$ = STR$(sec)
+    IF sec < 10 THEN sec$ = "0" + sec$
+    RETURN STR$(INT(s / 60)) + ":" + sec$
+ENDFUNC

@@ -1,0 +1,40 @@
+# What the setup wizard knows about this recipe.
+
+id = "X18"
+name = "Spreadsheet to Web App"
+program = "sheet_app.jdb"
+summary = "An Excel table as a browser app: search, edit, save back"
+minutes_per_week = 40
+schedule = "manual"
+section = "sheet_app"
+modules = ["sheetapp.jdb"]
+
+[[setting]]
+key = "workbook"
+label = "The Excel workbook"
+kind = "file"
+default = "~/Documents/AutomateWork/orders.xlsx"
+
+[[setting]]
+key = "sheet"
+label = "The sheet (empty: the first)"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "port"
+label = "Port of the app on this computer"
+kind = "number"
+default = 8770
+
+[[setting]]
+key = "read_only"
+label = "Columns the app shows but does not change"
+kind = "list"
+default = []
+
+[[setting]]
+key = "backups"
+label = "Folder for the copies before each save"
+kind = "folder"
+default = "~/Documents/AutomateWork/backups"

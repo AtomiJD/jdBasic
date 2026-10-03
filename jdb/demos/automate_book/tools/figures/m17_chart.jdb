@@ -1,0 +1,33 @@
+' Sample picture for recipe M17: a bar chart of revenue per quarter,
+' drawn in the book's typefaces and saved as PNG next to the recipe's
+' sample outline.
+'
+'   jdbasic tools/figures/m17_chart.jdb    (from the book folder)
+
+DIM out$ = "recipes/medium/M17_slide_builder/chart.png"
+DIM bold$ = "fonts/SourceSerif4-Bold.ttf"
+DIM plain$ = "fonts/SourceSerif4-Regular.ttf"
+DIM labels = ["Q1", "Q2", "Q3", "Q4"]
+DIM values = [1.9, 2.1, 2.2, 2.4]
+DIM w = 800
+DIM h = 500
+SCREEN w, h, "chart"
+CLS 255, 255, 255
+SETFONT bold$, 26
+TEXT 40, 24, "Revenue per quarter, million EUR", 31, 78, 121
+SETFONT plain$, 18
+DIM base = 430
+DIM top = 90
+DIM k = 0
+FOR k = 0 TO 3
+    DIM bar_h = (values[k] / 2.6) * (base - top)
+    DIM x = 90 + k * 170
+    RECT x, base - bar_h, 110, bar_h, TRUE, 68, 114, 196
+    TEXT x + 34, base + 12, labels[k], 80, 80, 80
+    TEXT x + 34, base - bar_h - 30, STR$(values[k]), 80, 80, 80
+NEXT k
+LINE 60, base, w - 40, base, 160, 160, 160
+GFX.SAVE_SCREENSHOT(out$)
+SCREENFLIP
+GFX.CLOSE()
+PRINT "wrote "; out$

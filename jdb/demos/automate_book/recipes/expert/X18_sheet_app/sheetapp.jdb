@@ -1,0 +1,593 @@
+' sheetapp.jdb: the work of Spreadsheet to Web App. It reads one sheet
+' of a workbook, guesses what each column holds, and serves the table
+' as a small app on this computer: a list with search, filters and
+' sorting, a form to change a row or add one, and saving back to the
+' workbook with a copy of the version before.
+'
+'   IMPORT SHEETAPP
+'   SHEETAPP.OPEN("C:/data/orders.xlsx", "", ["Id"], "C:/backups")
+'   SHEETAPP.MOUNT()
+'   JDWEB.SERVE(8770)
+
+EXPORT MODULE SHEETAPP
+
+IMPORT XLSX, JDWEB, LOGGER
+
+DIM gQ$ = CHR$(34)
+DIM gHeaders = []
+DIM gRows = []
+DIM gKinds = []
+DIM gChoices = []
+DIM gSerial = []
+DIM gVersions = []
+DIM gReadOnly = []
+DIM gPath$ = ""
+DIM gSheet$ = ""
+DIM gBackups$ = ""
+DIM gStamp$ = ""
+DIM gLog$ = ""
+
+' ── reading the sheet ─────────────────────────────────────────
+
+' A text safe to put into HTML.
+EXPORT FUNC ESC$(t$)
+    DIM s$ = REPLACE$(t$, "&", "&amp;")
+    s$ = REPLACE$(REPLACE$(s$, "<", "&lt;"), ">", "&gt;")
+    RETURN REPLACE$(s$, gQ$, "&quot;")
+ENDFUNC
+
+' The state of a file on disk, to notice a change by someone else.
+EXPORT FUNC STAMP$(path$)
+    IF NOT FILE.EXISTS(path$) THEN RETURN ""
+    DIM info = FILE.STAT(path$)
+    RETURN info{"mtime"} + "/" + STR$(info{"size"})
+ENDFUNC
+
+' An Excel day number as YYYY-MM-DD.
+EXPORT FUNC SERIAL_DATE$(serial)
+    DIM base = CDATE("1899-12-30 12:00:00")
+    DIM day = DATEADD("D", INT(serial), base)
+    RETURN FORMAT_DATE(day, "%Y-%m-%d")
+ENDFUNC
+
+' A YYYY-MM-DD date as an Excel day number.
+EXPORT FUNC DATE_SERIAL(iso$)
+    DIM base = CDATE("1899-12-30 12:00:00")
+    RETURN ROUND(DATEDIFF("D", base, CDATE(iso$ + " 12:00:00")))
+ENDFUNC
+
+FUNC IsIso(t$)
+    DIM iso$ = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    RETURN LEN(REGEX.FINDALL(iso$, t$)) > 0
+ENDFUNC
+
+FUNC IsNumber(v)
+    RETURN TYPEOF(v) = "INT64" ORELSE TYPEOF(v) = "FLOAT64"
+ENDFUNC
+
+' What a column holds: "number", "date", "choice" or "text", from its
+' header and its values. Day numbers under a header that says date or
+' due are dates; a text column whose few values repeat is a choice.
+EXPORT FUNC KIND$(header$, values)
+    DIM n = 0
+    DIM numbers = 0
+    DIM isos = 0
+    DIM seen AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(values) - 1
+        DIM v = values[k]
+        IF TYPEOF(v) <> "NONE" THEN
+            DIM t$ = TRIM$("" + v)
+            IF t$ <> "" THEN
+                n = n + 1
+                IF IsNumber(v) THEN numbers = numbers + 1
+                IF IsIso(t$) THEN isos = isos + 1
+                seen{t$} = TRUE
+            ENDIF
+        ENDIF
+    NEXT k
+    IF n = 0 THEN RETURN "text"
+    DIM low$ = LCASE$(header$)
+    DIM dated = INSTR(low$, "date") >= 0
+    IF INSTR(low$, "due") >= 0 THEN dated = TRUE
+    IF isos = n THEN RETURN "date"
+    IF numbers = n ANDALSO dated THEN RETURN "date"
+    IF numbers = n THEN RETURN "number"
+    DIM distinct = LEN(MAP.KEYS(seen))
+    IF n < 4 ORELSE distinct > 6 THEN RETURN "text"
+    IF distinct * 2 <= n + 1 THEN RETURN "choice"
+    RETURN "text"
+ENDFUNC
+
+' The values of one column of the rows.
+FUNC ColumnValues(c)
+    DIM out = []
+    DIM r = 0
+    FOR r = 0 TO LEN(gRows) - 1
+        DIM row = gRows[r]
+        PUSH(out, row[c])
+    NEXT r
+    RETURN out
+ENDFUNC
+
+' The different texts of a column, sorted.
+FUNC Distinct(values)
+    DIM seen AS MAP
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(values) - 1
+        DIM v = values[k]
+        IF TYPEOF(v) <> "NONE" THEN
+            DIM t$ = TRIM$("" + v)
+            IF t$ <> "" ANDALSO NOT MAP.EXISTS(seen, t$) THEN
+                seen{t$} = TRUE
+                PUSH(out, t$)
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN SORT(out)
+ENDFUNC
+
+' Reads the sheet (the first one when sheet$ is "") into the app.
+' read_only names columns the form shows but does not change.
+EXPORT SUB OPEN(path$, sheet$, read_only, backups$)
+    DIM book = XLSX.READ(path$)
+    DIM name$ = sheet$
+    IF name$ = "" THEN name$ = XLSX.SHEETS(path$)[0]
+    IF NOT MAP.EXISTS(book, name$) THEN
+        THROW "No sheet " + name$ + " in " + path$
+    ENDIF
+    DIM table = book{name$}
+    IF LEN(table) = 0 THEN THROW "The sheet " + name$ + " is empty"
+    gPath$ = path$
+    gSheet$ = name$
+    gBackups$ = backups$
+    gReadOnly = read_only
+    gStamp$ = STAMP$(path$)
+    gHeaders = []
+    DIM head = table[0]
+    DIM c = 0
+    FOR c = 0 TO LEN(head) - 1
+        PUSH(gHeaders, TRIM$("" + head[c]))
+    NEXT c
+    gRows = DROP(1, table)
+    gKinds = []
+    gChoices = []
+    gSerial = []
+    gVersions = []
+    FOR c = 0 TO LEN(gHeaders) - 1
+        DIM values = ColumnValues(c)
+        DIM kind$ = KIND$(gHeaders[c], values)
+        PUSH(gKinds, kind$)
+        DIM numeric = FALSE
+        IF kind$ = "date" ANDALSO LEN(values) > 0 THEN
+            numeric = IsNumber(values[0])
+        ENDIF
+        PUSH(gSerial, numeric)
+        DIM opts = []
+        IF kind$ = "choice" THEN opts = Distinct(values)
+        PUSH(gChoices, opts)
+    NEXT c
+    DIM r = 0
+    FOR r = 0 TO LEN(gRows) - 1
+        PUSH(gVersions, 1)
+    NEXT r
+ENDSUB
+
+' The sheet's column names, kinds and number of rows.
+EXPORT FUNC HEADERS()
+    RETURN gHeaders
+ENDFUNC
+
+EXPORT FUNC KINDS()
+    RETURN gKinds
+ENDFUNC
+
+EXPORT FUNC ROW_COUNT()
+    RETURN LEN(gRows)
+ENDFUNC
+
+' A cell as the app shows it.
+EXPORT FUNC SHOWN$(r, c)
+    DIM row = gRows[r]
+    IF c >= LEN(row) THEN RETURN ""
+    DIM v = row[c]
+    IF TYPEOF(v) = "NONE" THEN RETURN ""
+    IF gKinds[c] = "date" ANDALSO gSerial[c] ANDALSO IsNumber(v) THEN
+        RETURN SERIAL_DATE$(v)
+    ENDIF
+    RETURN "" + v
+ENDFUNC
+
+' ── the list ──────────────────────────────────────────────────
+
+' Whether a row holds the search text in any cell and passes the
+' filters, a map of column number to the value it must have.
+FUNC Matches(r, q$, filters)
+    DIM keys = MAP.KEYS(filters)
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM key$ = keys[k]
+        DIM want$ = filters{key$}
+        DIM have$ = SHOWN$(r, CINT(key$))
+        IF want$ <> "" ANDALSO have$ <> want$ THEN RETURN FALSE
+    NEXT k
+    IF q$ = "" THEN RETURN TRUE
+    DIM c = 0
+    FOR c = 0 TO LEN(gHeaders) - 1
+        DIM cell$ = LCASE$(SHOWN$(r, c))
+        IF INSTR(cell$, LCASE$(q$)) >= 0 THEN RETURN TRUE
+    NEXT c
+    RETURN FALSE
+ENDFUNC
+
+' The row numbers to show, in order: search text, filters, and the
+' column to sort by (-1 for the sheet's order).
+EXPORT FUNC VIEW(q$, filters, sort_col, descending)
+    DIM out = []
+    DIM keys = []
+    DIM r = 0
+    FOR r = 0 TO LEN(gRows) - 1
+        IF Matches(r, q$, filters) THEN
+            PUSH(out, r)
+            DIM key$ = RIGHT$("000000" + STR$(r), 6)
+            IF sort_col >= 0 THEN
+                DIM s$ = LCASE$(SHOWN$(r, sort_col))
+                IF gKinds[sort_col] = "number" ANDALSO s$ <> "" THEN
+                    DIM big = VAL(s$) + 1000000000
+                    s$ = FORMAT$("{:020.4f}", big)
+                ENDIF
+                key$ = s$ + CHR$(1) + key$
+            ENDIF
+            PUSH(keys, key$)
+        ENDIF
+    NEXT r
+    IF sort_col < 0 THEN RETURN out
+    DIM order = SORT(keys)
+    DIM sorted = []
+    DIM k = 0
+    FOR k = 0 TO LEN(order) - 1
+        DIM one$ = order[k]
+        PUSH(sorted, CINT(MID$(one$, LEN(one$) - 6)))
+    NEXT k
+    IF descending THEN sorted = REVERSE(sorted)
+    RETURN sorted
+ENDFUNC
+
+' name="value", with the value escaped.
+FUNC Attr$(name$, value$)
+    RETURN " " + name$ + "=" + gQ$ + ESC$(value$) + gQ$
+ENDFUNC
+
+' An option of a list, selected when it is the one chosen.
+FUNC Opt$(text$, chosen$)
+    DIM sel$ = ""
+    IF text$ = chosen$ THEN sel$ = " selected"
+    RETURN "<option" + sel$ + ">" + ESC$(text$) + "</option>"
+ENDFUNC
+
+FUNC Style$()
+    DIM s$ = "body{font:15px/1.4 Segoe UI,Arial,sans-serif;"
+    s$ = s$ + "margin:24px;color:#222}"
+    s$ = s$ + "table{border-collapse:collapse;margin-top:12px}"
+    s$ = s$ + "th,td{border-bottom:1px solid #ddd;padding:6px 10px;"
+    s$ = s$ + "text-align:left}"
+    s$ = s$ + "th a{color:#1f3864;text-decoration:none}"
+    s$ = s$ + "tr:hover{background:#f3f6fb}"
+    s$ = s$ + ".msg{background:#eaf1fb;border-left:5px solid #2e74b5;"
+    s$ = s$ + "padding:8px 12px}.err{background:#fbeaea;"
+    s$ = s$ + "border-left:5px solid #b52e2e;padding:8px 12px}"
+    s$ = s$ + "input,select{font:inherit;padding:4px}"
+    RETURN s$ + "label{display:block;margin-top:10px}"
+ENDFUNC
+
+FUNC Page$(title$, body$)
+    DIM h$ = "<!doctype html><html><head><meta charset=utf-8>"
+    h$ = h$ + "<title>" + ESC$(title$) + "</title><style>"
+    h$ = h$ + Style$() + "</style></head><body><h1>"
+    RETURN h$ + ESC$(title$) + "</h1>" + body$ + "</body></html>"
+ENDFUNC
+
+' The list page: search box, a filter per choice column, the table
+' with sortable headers, an edit link per row and a link to add one.
+EXPORT FUNC LIST_HTML$(q$, filters, sort_col, descending, message$)
+    DIM rows = VIEW(q$, filters, sort_col, descending)
+    DIM b$ = ""
+    IF message$ <> "" THEN
+        b$ = "<p class=msg>" + ESC$(message$) + "</p>"
+    ENDIF
+    b$ = b$ + "<form method=get action=/>Search <input"
+    b$ = b$ + Attr$("name", "q") + Attr$("value", q$) + ">"
+    DIM c = 0
+    DIM k = 0
+    FOR c = 0 TO LEN(gHeaders) - 1
+        IF gKinds[c] = "choice" THEN
+            b$ = b$ + " " + ESC$(gHeaders[c]) + " <select"
+            b$ = b$ + Attr$("name", "f" + STR$(c)) + ">"
+            b$ = b$ + "<option value=" + gQ$ + gQ$ + ">all</option>"
+            DIM chosen$ = ""
+            DIM fk$ = STR$(c)
+            IF MAP.EXISTS(filters, fk$) THEN chosen$ = filters{fk$}
+            DIM opts = gChoices[c]
+            FOR k = 0 TO LEN(opts) - 1
+                b$ = b$ + Opt$(opts[k], chosen$)
+            NEXT k
+            b$ = b$ + "</select>"
+        ENDIF
+    NEXT c
+    b$ = b$ + " <button>Show</button>"
+    b$ = b$ + " <a href=/new>Add a row</a></form>"
+    b$ = b$ + "<p>" + STR$(LEN(rows)) + " of " + STR$(LEN(gRows))
+    b$ = b$ + " rows</p><table><tr>"
+    FOR c = 0 TO LEN(gHeaders) - 1
+        DIM dir$ = "asc"
+        IF c = sort_col ANDALSO NOT descending THEN dir$ = "desc"
+        DIM link$ = "/?sort=" + STR$(c) + "&dir=" + dir$ + "&q=" + q$
+        b$ = b$ + "<th><a" + Attr$("href", link$) + ">"
+        b$ = b$ + ESC$(gHeaders[c]) + "</a></th>"
+    NEXT c
+    b$ = b$ + "<th></th></tr>"
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r = rows[k]
+        b$ = b$ + "<tr>"
+        FOR c = 0 TO LEN(gHeaders) - 1
+            b$ = b$ + "<td>" + ESC$(SHOWN$(r, c)) + "</td>"
+        NEXT c
+        b$ = b$ + "<td><a href=/edit/" + STR$(r) + ">Edit</a>"
+        b$ = b$ + "</td></tr>"
+    NEXT k
+    RETURN Page$(gSheet$, b$ + "</table>")
+ENDFUNC
+
+' ── the form ──────────────────────────────────────────────────
+
+' Whether a column is one the form must not change.
+EXPORT FUNC READ_ONLY(c)
+    DIM k = 0
+    FOR k = 0 TO LEN(gReadOnly) - 1
+        DIM name$ = gReadOnly[k]
+        IF LCASE$(name$) = LCASE$(gHeaders[c]) THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+' The field of column c in the form, holding the text v$.
+FUNC Field$(c, v$)
+    DIM nm$ = Attr$("name", "c" + STR$(c))
+    IF READ_ONLY(c) THEN
+        RETURN "<input" + nm$ + Attr$("value", v$) + " readonly>"
+    ENDIF
+    IF gKinds[c] = "choice" THEN
+        DIM f$ = "<select" + nm$ + ">"
+        DIM opts = gChoices[c]
+        DIM k = 0
+        FOR k = 0 TO LEN(opts) - 1
+            f$ = f$ + Opt$(opts[k], v$)
+        NEXT k
+        RETURN f$ + "</select>"
+    ENDIF
+    DIM kind$ = "text"
+    IF gKinds[c] = "number" THEN kind$ = "number step=any"
+    IF gKinds[c] = "date" THEN kind$ = "date"
+    RETURN "<input type=" + kind$ + nm$ + Attr$("value", v$) + ">"
+ENDFUNC
+
+' The form for row r, or for a new row when r is -1, with the values
+' given (a map of column number to text) or the row's own.
+EXPORT FUNC FORM_HTML$(r, given, message$)
+    DIM title$ = "New row"
+    IF r >= 0 THEN title$ = "Row " + STR$(r + 2)
+    DIM b$ = ""
+    IF message$ <> "" THEN
+        b$ = "<p class=err>" + ESC$(message$) + "</p>"
+    ENDIF
+    DIM version = 0
+    IF r >= 0 THEN version = gVersions[r]
+    b$ = b$ + "<form method=post action=/save>"
+    b$ = b$ + "<input type=hidden name=row value=" + STR$(r) + ">"
+    b$ = b$ + "<input type=hidden name=version value="
+    b$ = b$ + STR$(version) + ">"
+    DIM c = 0
+    FOR c = 0 TO LEN(gHeaders) - 1
+        DIM v$ = ""
+        IF MAP.EXISTS(given, STR$(c)) THEN
+            v$ = given{STR$(c)}
+        ELSEIF r >= 0 THEN
+            v$ = SHOWN$(r, c)
+        ENDIF
+        b$ = b$ + "<label>" + ESC$(gHeaders[c]) + "</label>"
+        b$ = b$ + Field$(c, v$)
+    NEXT c
+    b$ = b$ + "<p><button>Save</button> <a href=/>Back</a></p></form>"
+    RETURN Page$(title$, b$)
+ENDFUNC
+
+' "" when a text fits its column, else what is wrong with it.
+EXPORT FUNC CHECK$(c, t$)
+    IF t$ = "" THEN RETURN ""
+    DIM kind$ = gKinds[c]
+    DIM pattern$ = "^-?[0-9]+([.][0-9]+)?$"
+    DIM fits = LEN(REGEX.FINDALL(pattern$, t$)) > 0
+    IF kind$ = "number" ANDALSO NOT fits THEN
+        RETURN gHeaders[c] + " needs a number, such as 12.5"
+    ENDIF
+    IF kind$ = "date" ANDALSO NOT IsIso(t$) THEN
+        RETURN gHeaders[c] + " needs a date as YYYY-MM-DD"
+    ENDIF
+    IF kind$ = "choice" THEN
+        DIM opts = gChoices[c]
+        DIM k = 0
+        FOR k = 0 TO LEN(opts) - 1
+            DIM o$ = opts[k]
+            IF o$ = t$ THEN RETURN ""
+        NEXT k
+        RETURN gHeaders[c] + " is one of " + JOIN(opts, ", ")
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' A text as the cell the workbook stores for its column.
+FUNC CellOf(c, t$)
+    IF t$ = "" THEN RETURN ""
+    IF gKinds[c] = "number" THEN RETURN VAL(t$)
+    IF gKinds[c] = "date" ANDALSO gSerial[c] THEN
+        RETURN DATE_SERIAL(t$)
+    ENDIF
+    RETURN t$
+ENDFUNC
+
+' Changes row r (or adds one when r is -1) from the texts given, a map
+' of column number to text. version is the row's version the form
+' showed. Answers "" on success, else the reason; a row changed in
+' the meantime is refused.
+EXPORT FUNC APPLY$(r, version, given)
+    IF r >= LEN(gRows) THEN RETURN "There is no row " + STR$(r + 2)
+    IF r >= 0 ANDALSO gVersions[r] <> version THEN
+        RETURN "Changed by someone else in the meantime; reopen it"
+    ENDIF
+    DIM c = 0
+    FOR c = 0 TO LEN(gHeaders) - 1
+        IF MAP.EXISTS(given, STR$(c)) THEN
+            DIM why$ = CHECK$(c, given{STR$(c)})
+            IF why$ <> "" THEN RETURN why$
+        ENDIF
+    NEXT c
+    DIM row = []
+    DIM changes = []
+    FOR c = 0 TO LEN(gHeaders) - 1
+        DIM old$ = ""
+        IF r >= 0 THEN old$ = SHOWN$(r, c)
+        DIM new$ = old$
+        IF MAP.EXISTS(given, STR$(c)) ANDALSO NOT READ_ONLY(c) THEN
+            new$ = given{STR$(c)}
+        ENDIF
+        IF new$ <> old$ THEN
+            PUSH(changes, gHeaders[c] + ": " + old$ + " -> " + new$)
+        ENDIF
+        PUSH(row, CellOf(c, new$))
+    NEXT c
+    DIM what$ = JOIN(changes, "; ")
+    IF r < 0 THEN
+        PUSH(gRows, row)
+        PUSH(gVersions, 1)
+        Note("added row " + STR$(LEN(gRows) + 1) + ": " + what$)
+    ELSE
+        gRows[r] = row
+        gVersions[r] = gVersions[r] + 1
+        IF what$ <> "" THEN Note("row " + STR$(r + 2) + ": " + what$)
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' ── saving ────────────────────────────────────────────────────
+
+SUB Note(text$)
+    IF gLog$ = "" THEN RETURN
+    DIM lg = LOGGER.NEW("sheet_app")
+    LOGGER.TO_FILE(lg, gLog$)
+    LOGGER.INFO(lg, text$)
+ENDSUB
+
+' Where the app writes its log.
+EXPORT SUB LOG_TO(path$)
+    gLog$ = path$
+ENDSUB
+
+' Writes the sheet back into the workbook, keeping the other sheets,
+' after copying the file into the backups folder. A workbook changed
+' on disk by someone else is refused.
+EXPORT FUNC SAVE$()
+    IF STAMP$(gPath$) <> gStamp$ THEN
+        RETURN "The workbook changed on disk; restart the app"
+    ENDIF
+    DIM book = XLSX.READ(gPath$)
+    DIM names = XLSX.SHEETS(gPath$)
+    MKDIR gBackups$
+    DIM when$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H%M%S")
+    DIM copy$ = PATH.BASENAME$(gPath$) + " " + when$ + ".xlsx"
+    FILE.COPY(gPath$, PATH.JOIN$(gBackups$, copy$), TRUE)
+    DIM wb = XLSX.NEW()
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM name$ = names[k]
+        IF name$ = gSheet$ THEN
+            DIM table = [gHeaders]
+            table = APPEND(table, gRows)
+            DIM s = XLSX.SHEET(wb, name$, table)
+        ELSE
+            DIM other = XLSX.SHEET(wb, name$, book{name$})
+        ENDIF
+    NEXT k
+    XLSX.WRITE(gPath$, wb)
+    gStamp$ = STAMP$(gPath$)
+    RETURN ""
+ENDFUNC
+
+' ── the web routes ────────────────────────────────────────────
+
+' The filters of a request: f0, f1 ... as column number to value.
+FUNC FiltersOf(request)
+    DIM out AS MAP
+    DIM c = 0
+    FOR c = 0 TO LEN(gHeaders) - 1
+        DIM v$ = JDWEB.PARAM$(request, "f" + STR$(c))
+        IF v$ <> "" THEN out{STR$(c)} = v$
+    NEXT c
+    RETURN out
+ENDFUNC
+
+FUNC OnList(request)
+    DIM sort_col = -1
+    DIM s$ = JDWEB.PARAM$(request, "sort")
+    IF s$ <> "" THEN sort_col = CINT(s$)
+    IF sort_col >= LEN(gHeaders) THEN sort_col = -1
+    DIM down = (JDWEB.PARAM$(request, "dir") = "desc")
+    DIM q$ = JDWEB.PARAM$(request, "q")
+    DIM msg$ = JDWEB.PARAM$(request, "msg")
+    DIM f = FiltersOf(request)
+    RETURN JDWEB.REPLY(LIST_HTML$(q$, f, sort_col, down, msg$))
+ENDFUNC
+
+FUNC OnEdit(request)
+    DIM r = CINT(VAL(JDWEB.PARAM$(request, "n")))
+    IF r < 0 ORELSE r >= LEN(gRows) THEN
+        RETURN JDWEB.REPLY("No such row", 404, "text/plain")
+    ENDIF
+    DIM blank AS MAP
+    RETURN JDWEB.REPLY(FORM_HTML$(r, blank, ""))
+ENDFUNC
+
+FUNC OnNew(request)
+    DIM blank AS MAP
+    RETURN JDWEB.REPLY(FORM_HTML$(-1, blank, ""))
+ENDFUNC
+
+FUNC OnSave(request)
+    DIM r = CINT(VAL(JDWEB.PARAM$(request, "row")))
+    DIM version = CINT(VAL(JDWEB.PARAM$(request, "version")))
+    DIM given AS MAP
+    DIM c = 0
+    FOR c = 0 TO LEN(gHeaders) - 1
+        DIM v$ = TRIM$(JDWEB.PARAM$(request, "c" + STR$(c)))
+        given{STR$(c)} = v$
+    NEXT c
+    DIM why$ = APPLY$(r, version, given)
+    IF why$ = "" THEN why$ = SAVE$()
+    IF why$ <> "" THEN
+        DIM status = 400
+        IF INSTR(why$, "meantime") >= 0 THEN status = 409
+        IF INSTR(why$, "on disk") >= 0 THEN status = 409
+        RETURN JDWEB.REPLY(FORM_HTML$(r, given, why$), status)
+    ENDIF
+    DIM back = JDWEB.REPLY("", 303)
+    RETURN JDWEB.HEADER(back, "Location", "/?msg=Saved")
+ENDFUNC
+
+' Puts the app's pages on the web server: the list at /, the form at
+' /edit/n and /new, and /save for the form.
+EXPORT SUB MOUNT()
+    JDWEB.GET("/", OnList@)
+    JDWEB.GET("/edit/:n", OnEdit@)
+    JDWEB.GET("/new", OnNew@)
+    JDWEB.POST("/save", OnSave@)
+ENDSUB

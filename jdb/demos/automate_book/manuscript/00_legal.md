@@ -1,6 +1,7 @@
 # Copyright and Disclaimer
 
-*Automate Your Work for a Better Life Balance*, by Achim Christ and
+*Office Automation with jdBasic: 50+ Programs Bringing BASIC Back to
+Business and Your Hours Back to You*, by Achim Christ and
 Claude. Text and pictures copyright © 2026 Achim Christ. Program
 code copyright © 2026 Computerwelt AI Solutions LLC.
 

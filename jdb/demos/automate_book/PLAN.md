@@ -1,4 +1,4 @@
-# Automate Your Work for a Better Life Balance
+# Office Automation with jdBasic
 
 Project plan for a book of at least 300 pages: 45 jdBasic programs in three
 levels (easy, medium, expert) that take routine office work off the reader's
@@ -413,7 +413,9 @@ and can run alongside the easy recipes.
 Taken on 2026-10-01:
 
 1. **Language**: English.
-2. **Title**: "Automate Your Work for a Better Life Balance".
+2. **Title**: "Office Automation with jdBasic: 50+ Programs Bringing BASIC
+   Back to Business and Your Hours Back to You" (decided 2026-10-02;
+   first working title "Automate Your Work for a Better Life Balance").
 3. **Authors**: Achim Christ and Claude. The book shows that a whole
    production, from code to typeset pages, can be automated at high quality;
    the colophon describes how it was made.

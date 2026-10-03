@@ -23,7 +23,7 @@ The setup wizard writes `[user]` and `[paths]`, and `[mail]` when you give a mai
 
 | Key | What it is | Read by |
 |---|---|---|
-| `work` | the work folder | X01, X02, X04, X06, X10, X14, X16 |
+| `work` | the work folder | X01, X02, X04, X06, X10, X14, X16, X17, X18 |
 | `jdbasic` | the jdbasic program the scheduled tasks start | X01, X06, X07, X10, X12 |
 
 ### `[mail]`
@@ -186,6 +186,13 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `window` | Title of the form's window (empty: the window in front) | text | `""` |
 | `countdown` | Seconds to wait before typing | number | `5` |
 | `submit` | Press Enter after the last field | bool | `false` |
+
+### E17 Break Arcade: `[break_arcade]`
+
+| Key | What it is | Kind | Default |
+|---|---|---|---|
+| `minutes` | Length of a break in minutes | number | `3` |
+| `best_file` | File that keeps your best score | file | `"~/Documents/AutomateWork/arcade_best.txt"` |
 
 ## Chapter 4: the medium recipes
 
@@ -362,6 +369,14 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `folder` | Folder of your macros | folder | `"~/Documents/AutomateWork/macros"` |
 | `countdown` | Seconds to wait before a macro starts | number | `5` |
 
+### M17 Slide Builder: `[slide_builder]`
+
+| Key | What it is | Kind | Default |
+|---|---|---|---|
+| `folder` | Folder of your outlines and sheets | folder | `"~/Documents/AutomateWork/slides"` |
+| `out_folder` | Folder for the presentations (empty: next to the outline) | folder | `""` |
+| `tab` | Sheet of a workbook to read (empty: the first) | text | `""` |
+
 ## Chapter 5: the expert recipes
 
 ### X01 Personal Job Server: `[job_server]`
@@ -520,3 +535,28 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 |---|---|---|---|
 | `job` | The job file of the robot | file | `"~/Documents/AutomateWork/robot/order_entry.toml"` |
 | `countdown` | Seconds to wait before the robot starts | number | `5` |
+
+### X17 Meeting Briefing: `[meeting_briefing]`
+
+| Key | What it is | Kind | Default |
+|---|---|---|---|
+| `calendar` | Your calendar as an .ics file | file | `"~/Documents/AutomateWork/calendar.ics"` |
+| `mail_folders` | Folders with saved mails (.eml) | list | `["~/Documents/AutomateWork/saved mail"]` |
+| `notes` | Your notes file with open items (- [ ] lines) | file | `"~/Documents/AutomateWork/todo.txt"` |
+| `folder` | Folder for the briefings | folder | `"~/Documents/AutomateWork/briefings"` |
+| `mails_per_meeting` | Latest mails per meeting | number | `3` |
+| `use_model` | Ask a language model for a summary | bool | `true` |
+| `provider` | Language model service (openai or anthropic) | text | `"openai"` |
+| `model` | Model name | text | `"gpt-4o-mini"` |
+| `base_url` | Own model server (empty: the service) | text | `""` |
+| `mail_to_self` | Put the briefing into the outbox as a mail to yourself | bool | `false` |
+
+### X18 Spreadsheet to Web App: `[sheet_app]`
+
+| Key | What it is | Kind | Default |
+|---|---|---|---|
+| `workbook` | The Excel workbook | file | `"~/Documents/AutomateWork/orders.xlsx"` |
+| `sheet` | The sheet (empty: the first) | text | `""` |
+| `port` | Port of the app on this computer | number | `8770` |
+| `read_only` | Columns the app shows but does not change | list | `[]` |
+| `backups` | Folder for the copies before each save | folder | `"~/Documents/AutomateWork/backups"` |

@@ -1,0 +1,93 @@
+' Slide Builder: an outline with every kind of line, the mistakes it
+' reports, a sheet with one row per slide, the dry run lines, the file
+' written and read back, and the name that never overwrites a file.
+
+IMPORT TESTKIT, SLIDES, PPTX, XLSX
+
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("slidetest")
+MKDIR folder$
+DIM pic$ = PATH.JOIN$(folder$, "chart.png")
+FILE.COPY("recipes/medium/M17_slide_builder/chart.png", pic$)
+
+DIM md$ = "# Team Review" + LF$ + "Sales team" + LF$ + LF$
+md$ = md$ + "## Highlights" + LF$ + "- Revenue up" + LF$ + "  - in the north" + LF$
+md$ = md$ + "![chart](chart.png)" + LF$ + "> Thank the team." + LF$ + "> Then the numbers." + LF$
+md$ = md$ + "## By region" + LF$ + "| Region | Q4 |" + LF$ + "|---|---|" + LF$ + "| North | 1.3 M |" + LF$
+
+TESTKIT.SUITE("the outline")
+DIM got = SLIDES.FROM_OUTLINE(md$, folder$)
+TESTKIT.EQ(LEN(got{"errors"}), 0, "a good outline has no mistakes")
+DIM slides = got{"slides"}
+TESTKIT.EQ(LEN(slides), 3, "a title slide and two slides")
+DIM s1 = slides[0]
+TESTKIT.EQ(s1{"kind"}, "title", "# makes the title slide")
+TESTKIT.EQ(s1{"subtitle"}, "Sales team", "the line under it is its subtitle")
+DIM s2 = slides[1]
+TESTKIT.EQARRAY(s2{"bullets"}, ["Revenue up", "  in the north"], "points, one indented")
+TESTKIT.EQ(s2{"image"}, pic$, "the picture, found next to the outline")
+TESTKIT.EQ(s2{"notes"}, "Thank the team." + LF$ + "Then the numbers.", "notes from > lines")
+DIM s3 = slides[2]
+DIM rows = s3{"table"}
+TESTKIT.EQ(LEN(rows), 2, "the table without its rule line")
+TESTKIT.EQARRAY(rows[1], ["North", "1.3 M"], "the cells, trimmed")
+
+TESTKIT.SUITE("mistakes in an outline")
+DIM bad = SLIDES.FROM_OUTLINE("- a point first" + LF$ + "## Slide" + LF$ + "![x](missing.png)" + LF$ + "plain text", folder$)
+DIM errors = bad{"errors"}
+TESTKIT.EQ(LEN(errors), 3, "three mistakes")
+TESTKIT.EQ(errors[0], "line 1: text before the first title", "with their line")
+TESTKIT.EQ(errors[1], "line 3: no picture missing.png", "a missing picture")
+TESTKIT.EQ(errors[2], "line 4: not a point, picture, table, note", "a line it cannot read")
+DIM empty = SLIDES.FROM_OUTLINE("", folder$)
+TESTKIT.EQ(empty{"errors"}[0], "the outline has no title", "an empty outline")
+
+TESTKIT.SUITE("a sheet")
+DIM sheet_rows = [["Title", "Points", "Picture", "Notes"], ["Plan 2027", "Jonas Example", "", ""], ["Goals", "Grow; Hire", "chart.png", "Short."], ["", "skipped", "", ""], ["Risks", "", "", ""]]
+DIM from_rows = SLIDES.FROM_ROWS(sheet_rows, folder$)
+TESTKIT.EQ(LEN(from_rows{"errors"}), 0, "a good sheet")
+DIM rs = from_rows{"slides"}
+TESTKIT.EQ(LEN(rs), 3, "one slide per row with a title")
+DIM r1 = rs[0]
+TESTKIT.EQ(r1{"kind"}, "title", "the first row is the title slide")
+TESTKIT.EQ(r1{"subtitle"}, "Jonas Example", "its points the line below")
+DIM r2 = rs[1]
+TESTKIT.EQARRAY(r2{"bullets"}, ["Grow", "Hire"], "points split at ;")
+TESTKIT.EQ(r2{"notes"}, "Short.", "the notes")
+DIM no_title = SLIDES.FROM_ROWS([["Name"], ["x"]], folder$)
+TESTKIT.EQ(no_title{"errors"}[0], "the sheet has no column Title", "a sheet without Title")
+DIM book$ = PATH.JOIN$(folder$, "plan.xlsx")
+DIM wb = XLSX.NEW()
+DIM sh = XLSX.SHEET(wb, "Slides", sheet_rows)
+XLSX.WRITE(book$, wb)
+DIM read_back = XLSX.READ(book$)
+DIM again = SLIDES.FROM_ROWS(read_back{"Slides"}, folder$)
+TESTKIT.EQ(LEN(again{"slides"}), 3, "the same from a real workbook")
+
+TESTKIT.SUITE("the dry run")
+DIM plan = SLIDES.PLAN_LINES(slides)
+TESTKIT.EQ(plan[0], "1 Team Review (title slide)", "the title slide")
+TESTKIT.EQ(plan[1], "2 Highlights: 2 points, picture chart.png, notes", "what a slide holds")
+TESTKIT.EQ(plan[2], "3 By region: 2 table rows", "a table")
+
+TESTKIT.SUITE("the file")
+DIM target$ = SLIDES.TARGET$(PATH.JOIN$(folder$, "review.md"), "")
+TESTKIT.EQ(PATH.BASENAME$(target$), "review.pptx", "the name of the outline with .pptx")
+TESTKIT.EQ(SLIDES.BUILD(slides, "Team Review", target$), 3, "three slides written")
+DIM deck = PPTX.READ(target$)
+DIM d2 = deck[1]
+TESTKIT.EQ(d2{"title"}, "Highlights", "read back: the title")
+TESTKIT.EQ(d2{"pictures"}, 1, "the picture")
+TESTKIT.EQ(d2{"notes"}, "Thank the team." + LF$ + "Then the numbers.", "the notes")
+DIM d3 = deck[2]
+TESTKIT.EQ(LEN(d3{"table"}), 2, "and the table")
+DIM next$ = SLIDES.FREE_PATH$(target$)
+TESTKIT.EQ(PATH.BASENAME$(next$), "review (2).pptx", "a second run gets a new name")
+TESTKIT.EQ(SLIDES.TARGET$("plan.xlsx", "C:/out"), PATH.JOIN$("C:/out", "plan.pptx"), "or goes into the out folder")
+
+TESTKIT.SUITE("the command line")
+TESTKIT.EQ(SLIDES.SOURCE_ARG$(["prog", "--config", "w.conf", "review.md", "--dry-run"]), "review.md", "the file after the options")
+TESTKIT.EQ(SLIDES.SOURCE_ARG$(["prog", "--dry-run"]), "", "no file")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(folder$, "/", "\")])
+TESTKIT.REPORT()

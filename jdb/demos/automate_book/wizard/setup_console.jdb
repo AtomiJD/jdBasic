@@ -80,7 +80,7 @@ IF "--uninstall" IN argv THEN
     END
 ENDIF
 
-PRINT "Setup for Automate Your Work for a Better Life Balance"
+PRINT "Setup for Office Automation with jdBasic"
 PRINT "Your files and mail stay here unless you turn on a recipe that sends mail."
 PRINT
 a{"work"} = Ask$("Work folder", a{"work"})

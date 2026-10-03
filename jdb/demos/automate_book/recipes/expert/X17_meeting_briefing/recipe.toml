@@ -1,0 +1,70 @@
+# What the setup wizard knows about this recipe.
+
+id = "X17"
+name = "Meeting Briefing"
+program = "meeting_briefing.jdb"
+summary = "Each morning a page per meeting: people, mails, open items"
+minutes_per_week = 45
+schedule = "weekdays 07:30"
+section = "meeting_briefing"
+modules = ["briefing.jdb"]
+
+[[setting]]
+key = "calendar"
+label = "Your calendar as an .ics file"
+kind = "file"
+default = "~/Documents/AutomateWork/calendar.ics"
+
+[[setting]]
+key = "mail_folders"
+label = "Folders with saved mails (.eml)"
+kind = "list"
+default = ["~/Documents/AutomateWork/saved mail"]
+
+[[setting]]
+key = "notes"
+label = "Your notes file with open items (- [ ] lines)"
+kind = "file"
+default = "~/Documents/AutomateWork/todo.txt"
+
+[[setting]]
+key = "folder"
+label = "Folder for the briefings"
+kind = "folder"
+default = "~/Documents/AutomateWork/briefings"
+
+[[setting]]
+key = "mails_per_meeting"
+label = "Latest mails per meeting"
+kind = "number"
+default = 3
+
+[[setting]]
+key = "use_model"
+label = "Ask a language model for a summary"
+kind = "bool"
+default = true
+
+[[setting]]
+key = "provider"
+label = "Language model service (openai or anthropic)"
+kind = "text"
+default = "openai"
+
+[[setting]]
+key = "model"
+label = "Model name"
+kind = "text"
+default = "gpt-4o-mini"
+
+[[setting]]
+key = "base_url"
+label = "Own model server (empty: the service)"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "mail_to_self"
+label = "Put the briefing into the outbox as a mail to yourself"
+kind = "bool"
+default = false

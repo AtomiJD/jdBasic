@@ -1,0 +1,125 @@
+' Meeting Briefing: every morning one page per meeting of the day,
+' with the people, the latest mails with them, the open items of your
+' notes and a short summary by a language model, as a PDF in your
+' work folder. The settings are the [meeting_briefing] part of
+' work.conf.
+'
+'   jdbasic meeting_briefing.jdb                   today's meetings
+'   jdbasic meeting_briefing.jdb --day 2026-10-05  another day
+'   jdbasic meeting_briefing.jdb --dry-run         show, ask nothing
+'   jdbasic meeting_briefing.jdb --no-model        without a summary
+'   jdbasic meeting_briefing.jdb --send            send the outbox
+
+IMPORT WORKCONF, BRIEFING, OUTBOX, MAIL, LOGGER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+IF WORKCONF.FLAG("send") THEN
+    DIM result = OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
+    PRINT result{"sent"}; " sent"
+    END
+ENDIF
+
+DIM key$ = "meeting_briefing."
+DIM home$ = "~/Documents/AutomateWork"
+DIM ics_home$ = home$ + "/calendar.ics"
+DIM ics$ = WORKCONF.FOLDER$(cfg, key$ + "calendar", ics_home$)
+DIM todo$ = home$ + "/todo.txt"
+DIM notes$ = WORKCONF.FOLDER$(cfg, key$ + "notes", todo$)
+DIM out_home$ = home$ + "/briefings"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", out_home$)
+DIM saved = [home$ + "/saved mail"]
+DIM listed = WORKCONF.VALUE(cfg, key$ + "mail_folders", saved)
+DIM folders = []
+DIM k = 0
+FOR k = 0 TO LEN(listed) - 1
+    DIM one$ = listed[k]
+    PUSH(folders, WORKCONF.EXPAND$(one$))
+NEXT k
+PUSH(folders, PATH.JOIN$(OUTBOX.FOLDER$(cfg), "sent"))
+DIM most = WORKCONF.VALUE(cfg, key$ + "mails_per_meeting", 3)
+DIM use_model = WORKCONF.VALUE(cfg, key$ + "use_model", TRUE)
+DIM to_self = WORKCONF.VALUE(cfg, key$ + "mail_to_self", FALSE)
+DIM day$ = WORKCONF.ARG$("day")
+IF day$ = "" THEN day$ = FORMAT_DATE(NOW(), "%Y-%m-%d")
+DIM dry_run = WORKCONF.FLAG("dry-run")
+IF WORKCONF.FLAG("no-model") THEN use_model = FALSE
+
+DIM work$ = WORKCONF.FOLDER$(cfg, "paths.work", home$)
+DIM log_dir$ = PATH.JOIN$(work$, "logs")
+MKDIR log_dir$
+DIM lg = LOGGER.NEW("meeting_briefing")
+LOGGER.TO_FILE(lg, PATH.JOIN$(log_dir$, "meeting_briefing.log"))
+
+DIM meetings = BRIEFING.MEETINGS(ics$, day$)
+IF LEN(meetings) = 0 THEN
+    PRINT "No meetings on "; day$
+    LOGGER.INFO(lg, "no meetings on " + day$)
+    END
+ENDIF
+
+DIM provider$ = WORKCONF.VALUE(cfg, key$ + "provider", "openai")
+DIM model$ = WORKCONF.VALUE(cfg, key$ + "model", "gpt-4o-mini")
+DIM base$ = WORKCONF.VALUE(cfg, key$ + "base_url", "")
+DIM has_key = GETENV$("OPENAI_API_KEY") <> "" ORELSE _
+    GETENV$("ANTHROPIC_API_KEY") <> ""
+IF use_model ANDALSO base$ = "" ANDALSO NOT has_key THEN
+    PRINT "No API key in the environment: no summaries this time."
+    LOGGER.WARN(lg, "no API key, writing without summaries")
+    use_model = FALSE
+ENDIF
+DIM ai AS MAP
+IF use_model ANDALSO NOT dry_run THEN
+    ai = BRIEFING.CLIENT(provider$, model$, base$, "")
+ENDIF
+
+DIM pages = []
+FOR k = 0 TO LEN(meetings) - 1
+    DIM m = meetings[k]
+    DIM mails = BRIEFING.MAILS(folders, m, most)
+    DIM items = BRIEFING.ITEMS(notes$, m)
+    IF dry_run THEN
+        PRINT BRIEFING.PLAN_LINE$(m, LEN(mails), LEN(items))
+    ELSE
+        DIM summary$ = ""
+        IF use_model THEN
+            TRY
+                DIM prompt$ = BRIEFING.PROMPT$(m, mails, items)
+                summary$ = BRIEFING.SUMMARY$(ai, prompt$)
+            CATCH
+                PRINT m{"title"}; ": no summary, "; ERRMSG$
+                DIM fail AS MAP
+                fail{"meeting"} = m{"title"}
+                fail{"error"} = ERRMSG$
+                LOGGER.ERROR(lg, "summary failed", fail)
+            ENDTRY
+        ENDIF
+        DIM pg AS MAP
+        pg{"meeting"} = m
+        pg{"mails"} = mails
+        pg{"items"} = items
+        pg{"summary"} = summary$
+        PUSH(pages, pg)
+        PRINT m{"start"}; "  "; m{"title"}
+    ENDIF
+NEXT k
+IF dry_run THEN
+    PRINT LEN(meetings); " meeting(s); nothing written"
+    END
+ENDIF
+
+MKDIR folder$
+DIM pdf$ = PATH.JOIN$(folder$, "briefing " + day$ + ".pdf")
+BRIEFING.WRITE_PDF(pdf$, day$, pages)
+PRINT "wrote "; pdf$
+DIM done AS MAP
+done{"day"} = day$
+done{"meetings"} = LEN(pages)
+LOGGER.INFO(lg, "briefing written", done)
+IF to_self THEN
+    DIM me$ = OUTBOX.FROM$(cfg)
+    DIM msg = MAIL.MESSAGE(me$, me$, "Briefing " + day$)
+    MAIL.PLAIN(msg, "Your meetings of " + day$ + " are in the PDF.")
+    MAIL.ATTACH(msg, pdf$)
+    DIM eml$ = "briefing " + day$ + ".eml"
+    PRINT "outbox  "; OUTBOX.PUT$(msg, cfg, eml$)
+ENDIF

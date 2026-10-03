@@ -98,6 +98,7 @@ port 465 with `smtps`, or 587 with `smtp` and STARTTLS.
 | M14 Contract Diff | A readable report of what changed between two Word files |
 | M15 Timesheet for the Boss | The monthly timesheet from the time tracker, mailed |
 | M16 Macro Player (bonus) | Clicks and keystrokes for programs that offer nothing else |
+| M17 Slide Builder (bonus) | A PowerPoint presentation from an outline or a sheet |
 
 The order is a suggestion, not a path. Each recipe stands on its own;
 where one builds on another, such as the timesheet on the time tracker

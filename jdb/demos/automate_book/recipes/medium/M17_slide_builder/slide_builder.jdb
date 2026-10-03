@@ -1,0 +1,67 @@
+' Slide Builder: turns an outline in Markdown, or a sheet in Excel
+' with one row per slide, into a PowerPoint presentation. The
+' settings are the [slide_builder] part of work.conf.
+'
+'   jdbasic slide_builder.jdb review.md            review.pptx
+'   jdbasic slide_builder.jdb plan.xlsx            one slide per row
+'   jdbasic slide_builder.jdb review.md --dry-run  show the slides
+
+IMPORT WORKCONF, XLSX, SLIDES
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "slide_builder."
+DIM home$ = "~/Documents/AutomateWork/slides"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", home$)
+DIM out_dir$ = WORKCONF.FOLDER$(cfg, key$ + "out_folder", "")
+DIM tab$ = WORKCONF.VALUE(cfg, key$ + "tab", "")
+DIM dry_run = WORKCONF.FLAG("dry-run")
+
+DIM source$ = SLIDES.SOURCE_ARG$(OS.ARGS())
+IF source$ = "" THEN
+    PRINT "Name an outline (.md) or a sheet (.xlsx), for example:"
+    PRINT "  jdbasic slide_builder.jdb review.md"
+    END 1
+ENDIF
+IF NOT FILE.EXISTS(source$) THEN
+    source$ = PATH.JOIN$(folder$, source$)
+ENDIF
+IF NOT FILE.EXISTS(source$) THEN
+    PRINT "No file "; source$
+    END 1
+ENDIF
+
+DIM base$ = PATH.DIRNAME$(source$)
+DIM got AS MAP
+IF LCASE$(RIGHT$(source$, 5)) = ".xlsx" THEN
+    DIM book = XLSX.READ(source$)
+    IF tab$ = "" THEN
+        DIM tabs = XLSX.SHEETS(source$)
+        tab$ = tabs[0]
+    ENDIF
+    IF NOT MAP.EXISTS(book, tab$) THEN
+        PRINT "The workbook has no sheet "; tab$
+        END 1
+    ENDIF
+    got = SLIDES.FROM_ROWS(book{tab$}, base$)
+ELSE
+    got = SLIDES.FROM_OUTLINE(TXTREADER$(source$), base$)
+ENDIF
+
+DIM errors = got{"errors"}
+IF LEN(errors) > 0 THEN
+    PRINT "The slides cannot be built:"
+    PRINT "  "; JOIN(errors, CHR$(10) + "  ")
+    END 1
+ENDIF
+DIM slides = got{"slides"}
+PRINT JOIN(SLIDES.PLAN_LINES(slides), CHR$(10))
+IF dry_run THEN
+    PRINT "Nothing written (dry run)."
+    END
+ENDIF
+
+DIM target$ = SLIDES.FREE_PATH$(SLIDES.TARGET$(source$, out_dir$))
+IF out_dir$ <> "" THEN MKDIR out_dir$
+DIM first = slides[0]
+DIM n = SLIDES.BUILD(slides, first{"title"}, target$)
+PRINT "Wrote "; target$; " ("; n; " slides)"

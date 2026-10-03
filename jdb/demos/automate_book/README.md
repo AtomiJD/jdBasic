@@ -1,7 +1,7 @@
-# Automate Your Work for a Better Life Balance
+# Office Automation with jdBasic
 
 The manuscript, the recipes and the build of a book about automating office
-work with jdBasic: 48 programs in three levels and a setup wizard for
+work with jdBasic: 50+ programs in three levels and a setup wizard for
 readers who have never programmed.
 
 The plan, the outline and the page budget are in [PLAN.md](PLAN.md).

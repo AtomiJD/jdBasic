@@ -24,6 +24,7 @@ Each recipe follows the same order:
 10. **Balance dividend**: the time it gives back.
 
 
-After the fifteen comes a bonus, E16 Form Filler. It types into a form
-for you, which means it takes over your keyboard for a few seconds, so
-the wizard leaves it switched off until you choose it.
+After the fifteen come two bonus recipes. E16 Form Filler types into a
+form for you, which means it takes over your keyboard for a few seconds,
+so the wizard leaves it switched off until you choose it. E17 Break
+Arcade is a game of 2048 for the length of a break.

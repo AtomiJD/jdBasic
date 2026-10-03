@@ -1,0 +1,50 @@
+' Spreadsheet to Web App: one sheet of a workbook as a small app in
+' the browser on this computer, with search, filters, sorting, a form
+' to change a row or add one, and saving back into the workbook. The
+' settings are the [sheet_app] part of work.conf.
+'
+'   jdbasic sheet_app.jdb            start the app
+'   jdbasic sheet_app.jdb --dry-run  show the columns, start nothing
+
+IMPORT WORKCONF, SHEETAPP, JDWEB
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "sheet_app."
+DIM home$ = "~/Documents/AutomateWork"
+DIM book_home$ = home$ + "/orders.xlsx"
+DIM book$ = WORKCONF.FOLDER$(cfg, key$ + "workbook", book_home$)
+DIM sheet$ = WORKCONF.VALUE(cfg, key$ + "sheet", "")
+DIM port = WORKCONF.VALUE(cfg, key$ + "port", 8770)
+DIM fixed = WORKCONF.VALUE(cfg, key$ + "read_only", [])
+DIM save_home$ = home$ + "/backups"
+DIM backups$ = WORKCONF.FOLDER$(cfg, key$ + "backups", save_home$)
+DIM work$ = WORKCONF.FOLDER$(cfg, "paths.work", home$)
+
+IF NOT FILE.EXISTS(book$) THEN
+    PRINT "No workbook at "; book$
+    END
+ENDIF
+SHEETAPP.OPEN(book$, sheet$, fixed, backups$)
+DIM names = SHEETAPP.HEADERS()
+DIM kinds = SHEETAPP.KINDS()
+DIM c = 0
+FOR c = 0 TO LEN(names) - 1
+    DIM name$ = names[c]
+    DIM kind$ = kinds[c]
+    DIM shown$ = name$ + " (" + kind$ + ")"
+    IF SHEETAPP.READ_ONLY(c) THEN shown$ = shown$ + ", read only"
+    PRINT shown$
+NEXT c
+PRINT SHEETAPP.ROW_COUNT(); " rows in "; book$
+IF WORKCONF.FLAG("dry-run") THEN END
+
+DIM log_dir$ = PATH.JOIN$(work$, "logs")
+MKDIR log_dir$
+SHEETAPP.LOG_TO(PATH.JOIN$(log_dir$, "sheet_app.log"))
+SHEETAPP.MOUNT()
+IF NOT JDWEB.LISTEN(port) THEN
+    PRINT "Port "; port; " is taken; set another port in [sheet_app]."
+    END
+ENDIF
+PRINT "The app: http://localhost:"; port; "/   (Ctrl+C stops it)"
+HTTP.SERVER.WAIT

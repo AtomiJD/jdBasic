@@ -45,7 +45,7 @@ NEXT ai
 
 ' ── the window ────────────────────────────────────────────────
 
-DIM frm = FORM.CREATE("Automate Your Work: Setup", 660, 500, "WIZ")
+DIM frm = FORM.CREATE("Office Automation: Setup", 660, 500, "WIZ")
 DIM lblStep = FORM.LABEL(frm, "lblStep", "", 20, 15, 620, 24)
 DIM btnBack = FORM.BUTTON(frm, "btnBack", "< Back", 380, 450, 80, 30)
 DIM btnNext = FORM.BUTTON(frm, "btnNext", "Next >", 470, 450, 80, 30)
@@ -301,7 +301,7 @@ ENDSUB
 SUB Shot(n)
     IF gShots$ = "" THEN RETURN
     MKDIR gShots$
-    DIM got = OS.SCREENSHOT(PATH.JOIN$(gShots$, "wizard" + STR$(n) + ".png"), "client", "Automate Your Work: Setup")
+    DIM got = OS.SCREENSHOT(PATH.JOIN$(gShots$, "wizard" + STR$(n) + ".png"), "client", "Office Automation: Setup")
 ENDSUB
 
 SUB TMRSELF_TICK(e)

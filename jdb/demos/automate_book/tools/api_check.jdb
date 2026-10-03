@@ -209,8 +209,9 @@ FUNC Uses(code$)
 ENDFUNC
 
 ' The number of arguments of the call whose bracket opens at open_at;
-' -1 when the bracket does not close in the text.
+' -1 when the bracket does not close in the text or holds only "...".
 FUNC ArgCount(code$, open_at)
+    IF MID$(code$, open_at, 5) = "(...)" THEN RETURN -1
     DIM depth = 0
     DIM commas = 0
     DIM any = FALSE

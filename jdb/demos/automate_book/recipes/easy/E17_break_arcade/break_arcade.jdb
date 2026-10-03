@@ -1,0 +1,189 @@
+' Break Arcade: a round of 2048 for your break. The arrow keys slide
+' the tiles; when the break is over, the game says so and closes. The
+' settings are the [break_arcade] part of work.conf.
+'
+'   jdbasic break_arcade.jdb             play until the break ends
+'   jdbasic break_arcade.jdb --selftest  play itself and check
+'   jdbasic break_arcade.jdb --selftest --shots out/arcade
+
+IMPORT WORKCONF, CONF, ARCADE
+
+DIM selftest = WORKCONF.FLAG("selftest")
+DIM shots$ = WORKCONF.ARG$("shots")
+DIM cfg = CONF.TOML_TEXT("")
+IF NOT selftest THEN cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "break_arcade."
+DIM minutes = WORKCONF.VALUE(cfg, key$ + "minutes", 3)
+DIM home$ = "~/Documents/AutomateWork/arcade_best.txt"
+DIM best_file$ = WORKCONF.FOLDER$(cfg, key$ + "best_file", home$)
+IF selftest THEN best_file$ = MKTEMP$("arcade") + ".txt"
+
+CONST W = 420
+CONST H = 600
+CONST GAP = 12
+CONST CELL = 80
+CONST TOP = 170
+DIM bold$ = "C:/Windows/Fonts/arialbd.ttf"
+DIM plain$ = "C:/Windows/Fonts/arial.ttf"
+
+' The colour of a tile as [r, g, b].
+FUNC TileColour(v)
+    IF v = 0 THEN RETURN [205, 193, 180]
+    IF v = 2 THEN RETURN [238, 228, 218]
+    IF v = 4 THEN RETURN [237, 224, 200]
+    IF v = 8 THEN RETURN [242, 177, 121]
+    IF v = 16 THEN RETURN [245, 149, 99]
+    IF v = 32 THEN RETURN [246, 124, 95]
+    IF v = 64 THEN RETURN [246, 94, 59]
+    IF v <= 512 THEN RETURN [237, 204, 97]
+    RETURN [237, 194, 46]
+ENDFUNC
+
+SUB Font(bold, size)
+    DIM path$ = plain$
+    IF bold THEN path$ = bold$
+    IF FILE.EXISTS(path$) THEN SETFONT path$, size
+ENDSUB
+
+' Text centred on x.
+SUB Centred(x, y, t$, r, g, b)
+    DIM size = GFX.TEXTSIZE(t$)
+    TEXT x - size[0] / 2, y, t$, r, g, b
+ENDSUB
+
+SUB DrawGame(game, ms_left, best, note$)
+    CLS 250, 248, 239
+    Font(TRUE, 44)
+    TEXT 20, 20, "2048", 119, 110, 101
+    Font(FALSE, 17)
+    TEXT 20, 80, "Score " + STR$(game{"score"}), 119, 110, 101
+    TEXT 20, 104, "Best " + STR$(best), 119, 110, 101
+    Font(TRUE, 30)
+    TEXT W - 110, 30, ARCADE.CLOCK$(ms_left), 119, 110, 101
+    Font(FALSE, 14)
+    TEXT W - 150, 72, "of your break left", 150, 140, 130
+    TEXT 20, 136, note$, 150, 140, 130
+    ROUNDED_RECT 20, TOP, W - 40, W - 40, 10, TRUE, 187, 173, 160
+    DIM board = game{"board"}
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO 3
+        DIM cells = board[r]
+        FOR c = 0 TO 3
+            DIM v = cells[c]
+            DIM x = 20 + GAP + c * (CELL + GAP)
+            DIM y = TOP + GAP + r * (CELL + GAP)
+            DIM col = TileColour(v)
+            ROUNDED_RECT x, y, CELL, CELL, 6, TRUE, _
+                col[0], col[1], col[2]
+            IF v > 0 THEN
+                DIM size = 32
+                IF v >= 128 THEN size = 26
+                IF v >= 1024 THEN size = 21
+                Font(TRUE, size)
+                DIM tx = x + CELL / 2
+                DIM ty = y + CELL / 2 - size * 0.6
+                IF v <= 4 THEN
+                    Centred(tx, ty, STR$(v), 119, 110, 101)
+                ELSE
+                    Centred(tx, ty, STR$(v), 249, 246, 242)
+                ENDIF
+            ENDIF
+        NEXT c
+    NEXT r
+ENDSUB
+
+SUB DrawEnd(game, best, new_best)
+    CLS 250, 248, 239
+    Font(TRUE, 34)
+    Centred(W / 2, 170, "Break is over", 119, 110, 101)
+    Font(FALSE, 20)
+    DIM top$ = STR$(ARCADE.TOP_TILE(game{"board"}))
+    DIM line$ = "Score " + STR$(game{"score"}) + ", top tile " + top$
+    Centred(W / 2, 230, line$, 119, 110, 101)
+    IF new_best THEN
+        Centred(W / 2, 262, "A new best score!", 246, 124, 95)
+    ELSE
+        DIM so_far$ = "Best so far " + STR$(best)
+        Centred(W / 2, 262, so_far$, 119, 110, 101)
+    ENDIF
+    Font(TRUE, 24)
+    Centred(W / 2, 340, "Back to work, and well done.", 119, 110, 101)
+ENDSUB
+
+SUB Shot(name$)
+    IF shots$ = "" THEN RETURN
+    MKDIR shots$
+    GFX.SAVE_SCREENSHOT(PATH.JOIN$(shots$, name$))
+ENDSUB
+
+DIM seed = (TICK() MOD 2147483645) + 1
+IF selftest THEN seed = 7
+DIM game = ARCADE.NEW_GAME(seed)
+DIM best = ARCADE.BEST(best_file$)
+DIM length_ms = minutes * 60000
+IF selftest THEN length_ms = 4000
+DIM script = ["left", "up", "right", "down"]
+DIM fed = 0
+DIM moves = 0
+DIM over = FALSE
+
+SCREEN W, H, "Break Arcade"
+DIM started = TICK()
+DO
+    DIM left_ms = length_ms - (TICK() - started)
+    IF left_ms <= 0 THEN EXITDO
+    DIM k$ = INKEY$()
+    IF k$ = CHR$(27) THEN EXITDO
+    DIM dir$ = ARCADE.KEY_DIR$(k$)
+    IF selftest ANDALSO fed < 40 THEN
+        dir$ = script[fed MOD 4]
+        fed = fed + 1
+    ENDIF
+    IF over ANDALSO k$ = CHR$(13) THEN
+        game = ARCADE.NEW_GAME((TICK() MOD 2147483645) + 1)
+        over = FALSE
+    ENDIF
+    IF dir$ <> "" ANDALSO NOT over THEN
+        DIM after = ARCADE.TURN(game, dir$)
+        IF after{"moved"} THEN moves = moves + 1
+        game = after
+        over = NOT ARCADE.CAN_MOVE(game{"board"})
+    ENDIF
+    DIM note$ = "Arrow keys slide the tiles. Esc ends the game."
+    IF over THEN note$ = "No move left. Enter starts a new game."
+    DrawGame(game, left_ms, best, note$)
+    IF selftest ANDALSO fed = 38 THEN Shot("arcade_game.png")
+    SCREENFLIP
+    SLEEP 16
+LOOP
+
+DIM new_best = ARCADE.KEEP_BEST(best_file$, game{"score"})
+DIM best_now = ARCADE.BEST(best_file$)
+DrawEnd(game, best_now, new_best)
+Shot("arcade_end.png")
+SCREENFLIP
+DIM pause_ms = 4000
+IF selftest THEN pause_ms = 600
+SLEEP pause_ms
+GFX.CLOSE()
+PRINT "Score "; game{"score"}; ", best "; best_now
+
+IF selftest THEN
+    DIM failed = 0
+    IF moves < 10 THEN
+        PRINT "FAIL: only "; moves; " moves changed the board"
+        failed = failed + 1
+    ENDIF
+    IF game{"score"} <= 0 THEN
+        PRINT "FAIL: no points after "; moves; " moves"
+        failed = failed + 1
+    ENDIF
+    IF best_now <> game{"score"} THEN
+        PRINT "FAIL: the best score was not kept"
+        failed = failed + 1
+    ENDIF
+    IF FILE.EXISTS(best_file$) THEN KILL best_file$
+    IF failed > 0 THEN END 1
+    PRINT "ALL ARCADE WINDOW TESTS PASSED"
+ENDIF

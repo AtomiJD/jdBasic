@@ -1,0 +1,29 @@
+# What the setup wizard knows about this recipe.
+
+id = "M17"
+name = "Slide Builder"
+program = "slide_builder.jdb"
+summary = "PowerPoint slides from an outline in Markdown or a sheet in Excel"
+minutes_per_week = 30
+schedule = "manual"
+section = "slide_builder"
+modules = ["slides.jdb"]
+files = ["review.md", "chart.png"]
+
+[[setting]]
+key = "folder"
+label = "Folder of your outlines and sheets"
+kind = "folder"
+default = "~/Documents/AutomateWork/slides"
+
+[[setting]]
+key = "out_folder"
+label = "Folder for the presentations (empty: next to the outline)"
+kind = "folder"
+default = ""
+
+[[setting]]
+key = "tab"
+label = "Sheet of a workbook to read (empty: the first)"
+kind = "text"
+default = ""

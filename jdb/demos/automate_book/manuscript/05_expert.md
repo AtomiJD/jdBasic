@@ -78,6 +78,8 @@ department before you use it at work.
 | X14 Secrets and Audit Trail | Passwords out of scripts, and a signed record of each run |
 | X15 Balance Score | Your week in one number, and the trend |
 | X16 Desktop Robot (bonus) | An old program driven by keyboard and mouse, checked by screenshots |
+| X17 Meeting Briefing (bonus) | One page per meeting of the day, with mails, open items and a summary |
+| X18 Spreadsheet to Web App (bonus) | An Excel table as a small app in the browser, saved back to Excel |
 
 X01 is the backbone: the other recipes can run under it instead of the
 Windows Task Scheduler. X13 and X14 make that backbone safe to rely on.
