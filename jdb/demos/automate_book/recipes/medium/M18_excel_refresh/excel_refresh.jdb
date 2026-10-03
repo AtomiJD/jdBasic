@@ -1,0 +1,72 @@
+' Excel Refresh: opens the report workbook in Excel, refreshes its
+' data and pivot tables, recalculates and saves it, makes PDFs of the
+' chosen sheets, and can put them into the outbox as a mail. The
+' settings are the [excel_refresh] part of work.conf.
+'
+'   jdbasic excel_refresh.jdb            refresh now
+'   jdbasic excel_refresh.jdb --dry-run  show what it would do
+'   jdbasic excel_refresh.jdb --send     send the outbox
+
+IMPORT WORKCONF, REFRESH, OUTBOX
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+
+IF WORKCONF.FLAG("send") THEN
+    DIM result = OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
+    PRINT result{"sent"}; " sent"
+    DIM f = 0
+    FOR f = 0 TO LEN(result{"failed"}) - 1
+        PRINT "  not sent: "; result{"failed"}[f]
+    NEXT f
+    END
+ENDIF
+
+DIM key$ = "excel_refresh."
+DIM book$ = WORKCONF.FOLDER$(cfg, key$ + "workbook", "")
+DIM listed = WORKCONF.VALUE(cfg, key$ + "sheets", [])
+DIM pdf_home$ = "~/Documents/AutomateWork/reports"
+DIM pdf_dir$ = WORKCONF.FOLDER$(cfg, key$ + "pdf_folder", pdf_home$)
+DIM mail_to$ = WORKCONF.VALUE(cfg, key$ + "mail_to", "")
+DIM day$ = FORMAT_DATE(NOW(), "%Y-%m-%d")
+
+IF book$ = "" ORELSE NOT FILE.EXISTS(book$) THEN
+    PRINT "No workbook at '"; book$; "'."
+    PRINT "Set the workbook in the [excel_refresh] part of work.conf."
+    END 1
+ENDIF
+IF WORKCONF.FLAG("dry-run") THEN
+    PRINT "would refresh, recalculate and save "; book$
+    IF LEN(listed) = 0 THEN
+        PRINT "would make a PDF of every sheet in "; pdf_dir$
+    ELSE
+        PRINT "would make PDFs of "; JOIN(listed, ", ")
+        PRINT "  in "; pdf_dir$
+    ENDIF
+    IF mail_to$ <> "" THEN PRINT "would put a mail to "; mail_to$
+    END
+ENDIF
+
+DIM done = {"pdfs": [], "unknown": []}
+TRY
+    done = REFRESH.RUN(book$, listed, pdf_dir$, day$)
+CATCH
+    PRINT "Excel Refresh stopped: "; ERRMSG$
+    END 1
+ENDTRY
+
+DIM pdfs = done{"pdfs"}
+DIM unknown = done{"unknown"}
+DIM k = 0
+FOR k = 0 TO LEN(unknown) - 1
+    PRINT "no sheet named "; unknown[k]
+NEXT k
+PRINT "Refreshed and saved "; book$
+FOR k = 0 TO LEN(pdfs) - 1
+    PRINT "made "; pdfs[k]
+NEXT k
+IF mail_to$ <> "" ANDALSO LEN(pdfs) > 0 THEN
+    DIM from$ = OUTBOX.FROM$(cfg)
+    DIM msg = REFRESH.MESSAGE(from$, mail_to$, book$, day$, pdfs)
+    DIM eml$ = PATH.BASENAME$(book$) + " " + day$ + ".eml"
+    PRINT "In the outbox: "; OUTBOX.PUT$(msg, cfg, eml$)
+ENDIF

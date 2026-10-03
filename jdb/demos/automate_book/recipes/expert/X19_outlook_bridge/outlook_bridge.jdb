@@ -1,0 +1,75 @@
+' Outlook Bridge: reads the appointments of the next days and the
+' newest mails from classic Outlook and writes them as an .ics file
+' and .eml files, the shapes the Meeting Briefing and other recipes
+' read. With --send it sends the outbox through Outlook. The settings
+' are the [outlook_bridge] part of work.conf.
+'
+'   jdbasic outlook_bridge.jdb            export calendar and mails
+'   jdbasic outlook_bridge.jdb --dry-run  show what it would do
+'   jdbasic outlook_bridge.jdb --send     send the outbox by Outlook
+
+IMPORT WORKCONF, OLBRIDGE, OUTBOX
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+
+IF WORKCONF.FLAG("send") THEN
+    DIM result = OUTBOX.SEND_OUTLOOK(cfg)
+    PRINT result{"sent"}; " sent through Outlook"
+    DIM f = 0
+    FOR f = 0 TO LEN(result{"failed"}) - 1
+        PRINT "  not sent: "; result{"failed"}[f]
+    NEXT f
+    END
+ENDIF
+
+DIM key$ = "outlook_bridge."
+DIM ics_home$ = "~/Documents/AutomateWork/calendar.ics"
+DIM ics$ = WORKCONF.FOLDER$(cfg, key$ + "calendar_file", ics_home$)
+DIM mail_home$ = "~/Documents/AutomateWork/saved mail"
+DIM mail_key$ = key$ + "mail_folder"
+DIM mail_dir$ = WORKCONF.FOLDER$(cfg, mail_key$, mail_home$)
+DIM days = WORKCONF.VALUE(cfg, key$ + "days", 1)
+DIM most = WORKCONF.VALUE(cfg, key$ + "mails", 50)
+
+DIM today$ = FORMAT_DATE(NOW(), "%Y-%m-%d")
+DIM t_from = CDBL(CDATE(today$ + " 00:00:00"))
+DIM t_to = CDBL(DATEADD("D", days, CDATE(today$ + " 00:00:00")))
+
+IF WORKCONF.FLAG("dry-run") THEN
+    PRINT "would read "; days; " day(s) of appointments from "; today$
+    PRINT "  into "; ics$
+    PRINT "would save the newest "; most; " mails of the inbox"
+    PRINT "  into "; mail_dir$
+    END
+ENDIF
+
+DIM ol = CREATEOBJECT("Outlook.Application")
+DIM events = []
+DIM mails = []
+TRY
+    events = OLBRIDGE.EVENTS(ol, t_from, t_to)
+    IF most > 0 THEN mails = OLBRIDGE.MAILS(ol, most)
+CATCH
+    DIM why$ = ERRMSG$
+    RELEASEOBJECT(ol)
+    PRINT "Outlook Bridge stopped: "; why$
+    END 1
+ENDTRY
+RELEASEOBJECT(ol)
+
+MKDIR PATH.DIRNAME$(ics$)
+TXTWRITER ics$, OLBRIDGE.ICS$(events)
+PRINT LEN(events); " appointment(s) in "; ics$
+
+MKDIR mail_dir$
+DIM saved = 0
+DIM k = 0
+FOR k = 0 TO LEN(mails) - 1
+    DIM m = mails[k]
+    DIM path$ = PATH.JOIN$(mail_dir$, OLBRIDGE.FILE_NAME$(m))
+    IF NOT FILE.EXISTS(path$) THEN
+        TXTWRITER path$, OLBRIDGE.EML$(m)
+        saved = saved + 1
+    ENDIF
+NEXT k
+PRINT saved; " new mail(s) in "; mail_dir$

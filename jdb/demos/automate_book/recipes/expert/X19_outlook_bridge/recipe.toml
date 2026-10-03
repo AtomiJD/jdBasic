@@ -1,0 +1,36 @@
+# What the setup wizard knows about this recipe.
+
+id = "X19"
+name = "Outlook Bridge"
+program = "outlook_bridge.jdb"
+summary = "Today's appointments and the newest mails from Outlook as .ics and .eml files, and the outbox sent by Outlook"
+minutes_per_week = 20
+schedule = "weekdays 07:00"
+# Needs classic Outlook, so the wizard leaves it off at first.
+off_by_default = true
+section = "outlook_bridge"
+modules = ["olbridge.jdb"]
+
+[[setting]]
+key = "calendar_file"
+label = "Calendar file to write (.ics)"
+kind = "file"
+default = "~/Documents/AutomateWork/calendar.ics"
+
+[[setting]]
+key = "mail_folder"
+label = "Folder for the saved mails (.eml)"
+kind = "folder"
+default = "~/Documents/AutomateWork/saved mail"
+
+[[setting]]
+key = "days"
+label = "Days of appointments, from today"
+kind = "number"
+default = 1
+
+[[setting]]
+key = "mails"
+label = "Newest mails to save"
+kind = "number"
+default = 50

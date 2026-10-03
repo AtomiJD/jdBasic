@@ -1,0 +1,337 @@
+' officekit.jdb: Word, Excel, PowerPoint and classic Outlook through
+' COM, the way a person would use them but without a window. A program
+' starts an application with CREATEOBJECT, hides it with PREPARE,
+' does its work and quits it with CLOSE_APP, also when something goes
+' wrong.
+' Outlook is never quit: it may be the Outlook the person works in.
+'
+'   IMPORT OFFICEKIT
+'   IF OFFICEKIT.INSTALLED("Word.Application") THEN
+'       DIM wd = CREATEOBJECT("Word.Application")
+'       OFFICEKIT.PREPARE(wd, "Word.Application")
+'       OFFICEKIT.SAVE_PDF(wd, "word", "C:/a.docx", "C:/a.pdf")
+'       OFFICEKIT.CLOSE_APP(wd, "Word.Application")
+'   ENDIF
+'
+' Office has to be installed and licensed. Outlook means classic
+' Outlook; the new Outlook for Windows has no COM.
+
+EXPORT MODULE OFFICEKIT
+
+IMPORT MAIL
+
+CONST WD_FORMAT_PDF = 17
+CONST WD_NO_SAVE = 0
+CONST PP_SAVE_AS_PDF = 32
+CONST PP_ALERTS_NONE = 1
+CONST XL_TYPE_PDF = 0
+CONST OL_MAIL_ITEM = 0
+CONST OL_BY_VALUE = 1
+
+DIM gShortDate$ = ""
+
+' TRUE when Windows knows the COM class, such as "Excel.Application".
+' Only the registration is looked up; nothing is started.
+EXPORT FUNC INSTALLED(prog_id$)
+    DIM look$ = "[type]::GetTypeFromProgID('" + prog_id$ + "')"
+    DIM ask$ = "if (" + look$ + ") { 'yes' }"
+    DIM r = OS.EXEC("powershell", ["-NoProfile", "-Command", ask$])
+    RETURN INSTR(r{"OUTPUT"}, "yes") >= 0
+ENDFUNC
+
+' Makes an Office application that CREATEOBJECT started work without
+' a window and without dialogs.
+EXPORT SUB PREPARE(app, prog_id$)
+    DIM id$ = UCASE$(prog_id$)
+    IF STARTSWITH(id$, "OUTLOOK") THEN RETURN
+    IF STARTSWITH(id$, "WORD") THEN
+        app.Visible = FALSE
+        app.DisplayAlerts = 0
+    ELSEIF STARTSWITH(id$, "EXCEL") THEN
+        app.Visible = FALSE
+        app.DisplayAlerts = FALSE
+        app.ScreenUpdating = FALSE
+    ELSEIF STARTSWITH(id$, "POWERPOINT") THEN
+        app.DisplayAlerts = PP_ALERTS_NONE
+    ENDIF
+ENDSUB
+
+' Quits an Office application and lets go of it; Outlook is left
+' running.
+EXPORT SUB CLOSE_APP(app, prog_id$)
+    IF STARTSWITH(UCASE$(prog_id$), "OUTLOOK") THEN RETURN
+    TRY
+        app.Quit()
+    CATCH
+    ENDTRY
+    RELEASEOBJECT(app)
+ENDSUB
+
+' The Office program for a file: "word", "powerpoint", "excel" or ""
+' for a file Office does not make PDFs of.
+EXPORT FUNC KIND$(path$)
+    DIM ext$ = LCASE$(PATH.EXT$(path$))
+    IF ext$ IN [".docx", ".doc", ".rtf", ".odt"] THEN RETURN "word"
+    IF ext$ IN [".pptx", ".ppt", ".odp"] THEN RETURN "powerpoint"
+    IF ext$ IN [".xlsx", ".xls", ".xlsm", ".ods"] THEN RETURN "excel"
+    RETURN ""
+ENDFUNC
+
+' The COM class of an Office program named by KIND$.
+EXPORT FUNC PROG_ID$(kind$)
+    IF kind$ = "word" THEN RETURN "Word.Application"
+    IF kind$ = "powerpoint" THEN RETURN "PowerPoint.Application"
+    IF kind$ = "excel" THEN RETURN "Excel.Application"
+    RETURN ""
+ENDFUNC
+
+' The PDF that belongs to a document: same name, in out_dir$.
+EXPORT FUNC PDF_PATH$(src$, out_dir$)
+    DIM base$ = PATH.BASENAME$(src$)
+    DIM ext$ = PATH.EXT$(src$)
+    DIM stem$ = LEFT$(base$, LEN(base$) - LEN(ext$))
+    RETURN PATH.JOIN$(out_dir$, stem$ + ".pdf")
+ENDFUNC
+
+' TRUE when the PDF is missing or older than the document.
+EXPORT FUNC NEEDS_PDF(src$, pdf$)
+    IF NOT FILE.EXISTS(pdf$) THEN RETURN TRUE
+    DIM s = FILE.STAT(src$)
+    DIM p = FILE.STAT(pdf$)
+    DIM src_time$ = s{"mtime"}
+    DIM pdf_time$ = p{"mtime"}
+    RETURN src_time$ > pdf_time$
+ENDFUNC
+
+' Saves a document as PDF with its own Office program, opened read-
+' only, closed and let go again; an error names the file and the
+' reason.
+EXPORT SUB SAVE_PDF(app, kind$, src$, pdf$)
+    DIM full$ = REPLACE$(src$, "/", "\")
+    DIM out$ = REPLACE$(pdf$, "/", "\")
+    TRY
+        IF kind$ = "word" THEN
+            DIM docs = app.Documents
+            DIM doc = docs.Open(full$, FALSE, TRUE)
+            doc.ExportAsFixedFormat(out$, WD_FORMAT_PDF)
+            doc.Close(WD_NO_SAVE)
+            RELEASEOBJECT(doc)
+            RELEASEOBJECT(docs)
+        ELSEIF kind$ = "powerpoint" THEN
+            DIM pres_list = app.Presentations
+            DIM pres = pres_list.Open(full$, -1, 0, 0)
+            pres.SaveAs(out$, PP_SAVE_AS_PDF)
+            pres.Close()
+            RELEASEOBJECT(pres)
+            RELEASEOBJECT(pres_list)
+        ELSEIF kind$ = "excel" THEN
+            DIM books = app.Workbooks
+            DIM wb = books.Open(full$, 0, TRUE)
+            wb.ExportAsFixedFormat(XL_TYPE_PDF, out$)
+            wb.Close(FALSE)
+            RELEASEOBJECT(wb)
+            RELEASEOBJECT(books)
+        ELSE
+            THROW "not an Office document"
+        ENDIF
+    CATCH
+        THROW PATH.BASENAME$(src$) + ": " + ERRMSG$
+    ENDTRY
+ENDSUB
+
+' The short date of Windows for this user, such as "dd.MM.yyyy" or
+' "M/d/yyyy", read once from the registry.
+EXPORT FUNC SHORT_DATE$()
+    IF gShortDate$ <> "" THEN RETURN gShortDate$
+    DIM key$ = "HKCU\Control Panel\International"
+    DIM r = OS.EXEC("reg", ["query", key$, "/v", "sShortDate"])
+    DIM found$ = "yyyy-MM-dd"
+    DIM rows = SPLIT(REPLACE$(r{"OUTPUT"}, CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = TRIM$(rows[k])
+        DIM at = INSTR(row$, "REG_SZ")
+        IF STARTSWITH(row$, "sShortDate") ANDALSO at > 0 THEN
+            found$ = TRIM$(MID$(row$, at + 6))
+        ENDIF
+    NEXT k
+    gShortDate$ = found$
+    RETURN found$
+ENDFUNC
+
+' A time as Outlook's filters read it: the date in the short date
+' pattern, then the clock as HH:MM.
+EXPORT FUNC LOCAL_DATE$(t, pattern$)
+    DIM out$ = ""
+    DIM n = LEN(pattern$)
+    DIM k = 0
+    DO WHILE k < n
+        DIM c$ = MID$(pattern$, k, 1)
+        DIM run = 1
+        DO WHILE k + run < n ANDALSO MID$(pattern$, k + run, 1) = c$
+            run = run + 1
+        LOOP
+        out$ = out$ + DatePart$(t, c$, run)
+        k = k + run
+    LOOP
+    RETURN out$ + " " + FORMAT_DATE(t, "%H:%M")
+ENDFUNC
+
+' One run of a date pattern, such as "yyyy", "MM" or "d", for a time;
+' any other character as it is.
+FUNC DatePart$(t, c$, run)
+    IF c$ = "y" ANDALSO run >= 4 THEN RETURN FORMAT_DATE(t, "%Y")
+    IF c$ = "y" THEN RETURN FORMAT_DATE(t, "%y")
+    DIM m = VAL(FORMAT_DATE(t, "%m"))
+    DIM d = VAL(FORMAT_DATE(t, "%d"))
+    IF c$ = "M" ANDALSO run >= 2 THEN RETURN Two$(m)
+    IF c$ = "M" THEN RETURN STR$(m)
+    IF c$ = "d" ANDALSO run >= 2 THEN RETURN Two$(d)
+    IF c$ = "d" THEN RETURN STR$(d)
+    DIM same$ = ""
+    DIM k = 0
+    FOR k = 1 TO run
+        same$ = same$ + c$
+    NEXT k
+    RETURN same$
+ENDFUNC
+
+' The time in a date text as Office writes it for this user (the
+' short date pattern, then HH:MM:SS, maybe with AM or PM), as a date
+' value; 0 when the text is no date.
+EXPORT FUNC PARSE_DATE(text$, pattern$)
+    DIM t$ = TRIM$(text$)
+    IF t$ = "" THEN RETURN 0.0
+    DIM sp = INSTR(t$, " ")
+    DIM date_part$ = t$
+    DIM clock$ = "00:00:00"
+    IF sp > 0 THEN
+        date_part$ = LEFT$(t$, sp)
+        clock$ = TRIM$(MID$(t$, sp + 1))
+    ENDIF
+    DIM nums = Numbers(date_part$)
+    IF LEN(nums) < 3 THEN RETURN 0.0
+    DIM order$ = Order$(pattern$)
+    DIM y = 0
+    DIM m = 0
+    DIM d = 0
+    DIM k = 0
+    FOR k = 0 TO 2
+        DIM part$ = MID$(order$, k, 1)
+        IF part$ = "y" THEN y = nums[k]
+        IF part$ = "M" THEN m = nums[k]
+        IF part$ = "d" THEN d = nums[k]
+    NEXT k
+    IF y < 100 THEN y = y + 2000
+    DIM hms = Numbers(clock$)
+    DIM h = 0
+    DIM mi = 0
+    DIM s = 0
+    IF LEN(hms) > 0 THEN h = hms[0]
+    IF LEN(hms) > 1 THEN mi = hms[1]
+    IF LEN(hms) > 2 THEN s = hms[2]
+    DIM up$ = UCASE$(clock$)
+    IF INSTR(up$, "PM") >= 0 ANDALSO h < 12 THEN h = h + 12
+    IF INSTR(up$, "AM") >= 0 ANDALSO h = 12 THEN h = 0
+    DIM iso$ = STR$(y) + "-" + Two$(m) + "-" + Two$(d) + " "
+    iso$ = iso$ + Two$(h) + ":" + Two$(mi) + ":" + Two$(s)
+    RETURN CDBL(CDATE(iso$))
+ENDFUNC
+
+' The order of year, month and day in a date pattern, such as "dMy".
+FUNC Order$(pattern$)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(pattern$) - 1
+        DIM c$ = MID$(pattern$, k, 1)
+        DIM part = c$ = "y" ORELSE c$ = "M" ORELSE c$ = "d"
+        IF part ANDALSO INSTR(out$, c$) < 0 THEN out$ = out$ + c$
+    NEXT k
+    IF LEN(out$) < 3 THEN RETURN "yMd"
+    RETURN out$
+ENDFUNC
+
+' The whole numbers in a text, in order.
+FUNC Numbers(text$)
+    DIM out = []
+    DIM cur$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(text$)
+        DIM c$ = ""
+        IF k < LEN(text$) THEN c$ = MID$(text$, k, 1)
+        IF c$ >= "0" ANDALSO c$ <= "9" ANDALSO c$ <> "" THEN
+            cur$ = cur$ + c$
+        ELSEIF cur$ <> "" THEN
+            PUSH(out, VAL(cur$))
+            cur$ = ""
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A number with two digits.
+FUNC Two$(n)
+    RETURN RIGHT$("0" + STR$(INT(n)), 2)
+ENDFUNC
+
+' What an Outlook mail made from a parsed .eml file holds: "to", "cc"
+' (addresses joined with "; "), "subject", "body", "html" and the
+' number of attachments.
+EXPORT FUNC MAIL_FIELDS(parsed)
+    DIM f AS MAP
+    f{"to"} = Joined$(parsed{"to"})
+    f{"cc"} = Joined$(parsed{"cc"})
+    f{"subject"} = "" + parsed{"subject"}
+    f{"body"} = "" + parsed{"text"}
+    f{"html"} = "" + parsed{"html"}
+    DIM names = parsed{"att_names"}
+    f{"attachments"} = 0
+    IF TYPEOF(names) = "ARRAY" THEN f{"attachments"} = LEN(names)
+    RETURN f
+ENDFUNC
+
+' Addresses as Outlook takes them in To and Cc.
+FUNC Joined$(list)
+    IF TYPEOF(list) <> "ARRAY" THEN RETURN ""
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(list) - 1
+        DIM one$ = list[k]
+        PUSH(out, one$)
+    NEXT k
+    RETURN JOIN(out, "; ")
+ENDFUNC
+
+' Sends a parsed .eml file through Outlook: a new mail with its
+' fields and attachments, sent from the account Outlook uses.
+' temp_dir$ holds the attachments while Outlook reads them.
+EXPORT SUB OUTLOOK_SEND(ol, parsed, temp_dir$)
+    DIM f = MAIL_FIELDS(parsed)
+    DIM item = ol.CreateItem(OL_MAIL_ITEM)
+    item.To = f{"to"}
+    IF f{"cc"} <> "" THEN item.CC = f{"cc"}
+    item.Subject = f{"subject"}
+    IF f{"html"} <> "" THEN
+        item.HTMLBody = f{"html"}
+    ELSE
+        item.Body = f{"body"}
+    ENDIF
+    DIM n = f{"attachments"}
+    IF n > 0 THEN
+        MKDIR temp_dir$
+        DIM names = parsed{"att_names"}
+        DIM atts = item.Attachments
+        DIM k = 0
+        FOR k = 0 TO n - 1
+            DIM one$ = names[k]
+            DIM joined$ = PATH.JOIN$(temp_dir$, one$)
+            DIM path$ = REPLACE$(joined$, "/", "\")
+            MAIL.SAVEATTACHMENT(parsed, k, path$)
+            DIM a = atts.Add(path$, OL_BY_VALUE)
+            RELEASEOBJECT(a)
+        NEXT k
+        RELEASEOBJECT(atts)
+    ENDIF
+    item.Send()
+    RELEASEOBJECT(item)
+ENDSUB

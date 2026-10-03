@@ -1,0 +1,30 @@
+# What the setup wizard knows about this recipe.
+
+id = "E18"
+name = "Office to PDF"
+program = "office_to_pdf.jdb"
+summary = "A PDF of every Word and PowerPoint file in a folder, made by Office itself"
+minutes_per_week = 15
+schedule = "daily 12:00"
+# Needs Microsoft Office, so the wizard leaves it off at first.
+off_by_default = true
+section = "office_to_pdf"
+modules = ["topdf.jdb"]
+
+[[setting]]
+key = "source"
+label = "Folder with the documents"
+kind = "folder"
+default = "~/Documents/AutomateWork/to_pdf"
+
+[[setting]]
+key = "target"
+label = "Folder for the PDFs (empty: next to the documents)"
+kind = "folder"
+default = ""
+
+[[setting]]
+key = "programs"
+label = "Which documents: word, powerpoint, excel"
+kind = "list"
+default = ["word", "powerpoint"]

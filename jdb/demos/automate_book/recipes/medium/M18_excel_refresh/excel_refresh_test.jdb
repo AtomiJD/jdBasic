@@ -1,0 +1,111 @@
+' Excel Refresh: the names of the PDFs, which sheets are chosen, the
+' mail with the PDFs, and, when Excel is installed, a real refresh of
+' a workbook the test makes itself: the formula stays and the chosen
+' sheet becomes a PDF. Nothing is sent.
+
+IMPORT TESTKIT, REFRESH, MAIL
+
+DIM folder$ = MKTEMP$("xlrefresh")
+MKDIR folder$
+
+TESTKIT.SUITE("names and sheets")
+DIM name$ = REFRESH.PDF_NAME$("C:/Reports/sales.xlsx", "Summary", "2026-10-05")
+TESTKIT.EQ(name$, "sales Summary 2026-10-05.pdf", "workbook, sheet and day")
+DIM have = ["Summary", "Data", "Notes"]
+DIM all = REFRESH.CHOOSE([], have)
+TESTKIT.EQ(LEN(all{"sheets"}), 3, "no list means every sheet")
+DIM some = REFRESH.CHOOSE(["summary", "Missing", "Notes"], have)
+DIM picked = some{"sheets"}
+TESTKIT.EQ(LEN(picked), 2, "two of three are there")
+DIM first$ = picked[0]
+TESTKIT.EQ(first$, "Summary", "written as the workbook writes it")
+DIM gone = some{"unknown"}
+DIM missing$ = gone[0]
+TESTKIT.EQ(missing$, "Missing", "and the one it lacks is named")
+
+TESTKIT.SUITE("the mail")
+DIM pdf$ = PATH.JOIN$(folder$, "sales Summary 2026-10-05.pdf")
+TXTWRITER pdf$, "%PDF-1.4 test"
+DIM msg = REFRESH.MESSAGE("Jonas <jonas@example.com>", "anna@example.com", "C:/Reports/sales.xlsx", "2026-10-05", [pdf$])
+DIM parsed = MAIL.PARSE(MAIL.BUILD$(msg))
+TESTKIT.EQ(parsed{"subject"}, "sales.xlsx, 2026-10-05", "the subject names the report")
+TESTKIT.EQ(LEN(parsed{"att_names"}), 1, "the PDF is attached")
+
+TESTKIT.SUITE("with Excel")
+DIM ask$ = "if ([type]::GetTypeFromProgID('Excel.Application')) { 'yes' }"
+DIM probe = OS.EXEC("powershell", ["-NoProfile", "-Command", ask$])
+IF INSTR(probe{"OUTPUT"}, "yes") < 0 THEN
+    TESTKIT.SKIP("Excel is not installed")
+ELSE
+    DIM book$ = PATH.JOIN$(folder$, "report.xlsx")
+    MakeBook(book$)
+    DIM out$ = PATH.JOIN$(folder$, "pdf")
+    DIM done = REFRESH.RUN(book$, ["sales", "Nope"], out$, "2026-10-05")
+    DIM made = done{"pdfs"}
+    TESTKIT.EQ(LEN(made), 1, "one PDF for the one sheet that is there")
+    DIM first_pdf$ = made[0]
+    TESTKIT.EQ(LEFT$(BINREADER$(first_pdf$), 4), "%PDF", "a real PDF")
+    DIM lost = done{"unknown"}
+    TESTKIT.EQ(LEN(lost), 1, "the missing sheet is reported")
+    TESTKIT.EQ(FormulaOf$(book$), "=B2+B3", "the formula is still a formula")
+ENDIF
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(folder$, "/", "\")])
+TESTKIT.REPORT()
+
+' A workbook with a sheet of numbers and a formula, and a second sheet.
+SUB MakeBook(path$)
+    DIM xl = CREATEOBJECT("Excel.Application")
+    xl.Visible = FALSE
+    xl.DisplayAlerts = FALSE
+    DIM books = xl.Workbooks
+    DIM wb = books.Add()
+    DIM all_sheets = wb.Worksheets
+    DIM sh = all_sheets.Item(1)
+    sh.Name = "Sales"
+    DIM a1 = sh.Range("A1")
+    a1.Value = "Revenue"
+    DIM b2 = sh.Range("B2")
+    b2.Value = 1200
+    DIM b3 = sh.Range("B3")
+    b3.Value = 800
+    DIM b4 = sh.Range("B4")
+    b4.Formula = "=B2+B3"
+    DIM notes = all_sheets.Add()
+    notes.Name = "Notes"
+    wb.SaveAs(REPLACE$(path$, "/", "\"), 51)
+    wb.Close(FALSE)
+    xl.Quit()
+    RELEASEOBJECT(notes)
+    RELEASEOBJECT(all_sheets)
+    RELEASEOBJECT(a1)
+    RELEASEOBJECT(b2)
+    RELEASEOBJECT(b3)
+    RELEASEOBJECT(b4)
+    RELEASEOBJECT(sh)
+    RELEASEOBJECT(wb)
+    RELEASEOBJECT(books)
+    RELEASEOBJECT(xl)
+ENDSUB
+
+' The formula in Sales!B4 of a workbook, read by Excel.
+FUNC FormulaOf$(path$)
+    DIM xl = CREATEOBJECT("Excel.Application")
+    xl.Visible = FALSE
+    xl.DisplayAlerts = FALSE
+    DIM books = xl.Workbooks
+    DIM wb = books.Open(REPLACE$(path$, "/", "\"), 0, TRUE)
+    DIM all_sheets = wb.Worksheets
+    DIM sh = all_sheets.Item("Sales")
+    DIM cell = sh.Range("B4")
+    DIM f$ = cell.Formula
+    wb.Close(FALSE)
+    xl.Quit()
+    RELEASEOBJECT(cell)
+    RELEASEOBJECT(sh)
+    RELEASEOBJECT(all_sheets)
+    RELEASEOBJECT(wb)
+    RELEASEOBJECT(books)
+    RELEASEOBJECT(xl)
+    RETURN f$
+ENDFUNC

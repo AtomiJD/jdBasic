@@ -1,0 +1,114 @@
+' OFFICEKIT: file kinds and PDF names, dates in the formats Windows
+' writes, the fields of an Outlook mail made from an .eml file, and,
+' when Office is installed, real PDFs from Word, PowerPoint and Excel
+' in a folder of the test's own. Nothing is sent and Outlook is not
+' used.
+
+IMPORT TESTKIT, OFFICEKIT, MAIL, DOCX, PPTX, XLSX
+
+DIM folder$ = MKTEMP$("officekit")
+MKDIR folder$
+
+FUNC Stamp$(t)
+    RETURN FORMAT_DATE(t, "%Y-%m-%d %H:%M:%S")
+ENDFUNC
+
+TESTKIT.SUITE("files")
+TESTKIT.EQ(OFFICEKIT.KIND$("Offer.DOCX"), "word", "a Word file, whatever the case")
+TESTKIT.EQ(OFFICEKIT.KIND$("review.pptx"), "powerpoint", "a presentation")
+TESTKIT.EQ(OFFICEKIT.KIND$("report.xlsx"), "excel", "a workbook")
+TESTKIT.EQ(OFFICEKIT.KIND$("scan.pdf"), "", "a PDF is not converted again")
+TESTKIT.EQ(OFFICEKIT.PROG_ID$("powerpoint"), "PowerPoint.Application", "the COM class")
+DIM pdf$ = OFFICEKIT.PDF_PATH$("C:/docs/offer.v2.docx", "C:/out")
+TESTKIT.EQ(PATH.BASENAME$(pdf$), "offer.v2.pdf", "only the last extension changes")
+DIM doc_path$ = PATH.JOIN$(folder$, "note.txt")
+TXTWRITER doc_path$, "x"
+TESTKIT.ISTRUE(OFFICEKIT.NEEDS_PDF(doc_path$, PATH.JOIN$(folder$, "none.pdf")), "no PDF yet")
+SLEEP 1100
+DIM fresh$ = PATH.JOIN$(folder$, "note.pdf")
+TXTWRITER fresh$, "%PDF"
+TESTKIT.ISFALSE(OFFICEKIT.NEEDS_PDF(doc_path$, fresh$), "a newer PDF is kept")
+
+TESTKIT.SUITE("dates")
+DIM de = OFFICEKIT.PARSE_DATE("02.10.2026 22:49:21", "dd.MM.yyyy")
+TESTKIT.EQ(Stamp$(de), "2026-10-02 22:49:21", "German date and clock")
+DIM us = OFFICEKIT.PARSE_DATE("10/2/2026 10:49:21 PM", "M/d/yyyy")
+TESTKIT.EQ(Stamp$(us), "2026-10-02 22:49:21", "US date with PM")
+DIM noon = OFFICEKIT.PARSE_DATE("10/2/2026 12:05:00 AM", "M/d/yyyy")
+TESTKIT.EQ(Stamp$(noon), "2026-10-02 00:05:00", "12 AM is just after midnight")
+TESTKIT.EQ(OFFICEKIT.PARSE_DATE("", "dd.MM.yyyy"), 0, "an empty text is no date")
+DIM t = CDATE("2026-10-03 08:05:00")
+TESTKIT.EQ(OFFICEKIT.LOCAL_DATE$(t, "dd.MM.yyyy"), "03.10.2026 08:05", "a filter date in German")
+TESTKIT.EQ(OFFICEKIT.LOCAL_DATE$(t, "M/d/yyyy"), "10/3/2026 08:05", "and in US form")
+TESTKIT.ISTRUE(LEN(OFFICEKIT.SHORT_DATE$()) >= 6, "Windows names its short date")
+
+TESTKIT.SUITE("a mail for Outlook")
+DIM msg = MAIL.MESSAGE("Lena <lena@example.com>", ["anna@example.com", "tom@example.com"], "Weekly report")
+MAIL.CC(msg, ["boss@example.com"])
+MAIL.PLAIN(msg, "The report is attached.")
+MAIL.ATTACHDATA(msg, "report.txt", "numbers")
+DIM parsed = MAIL.PARSE(MAIL.BUILD$(msg))
+DIM fields = OFFICEKIT.MAIL_FIELDS(parsed)
+TESTKIT.EQ(fields{"to"}, "anna@example.com; tom@example.com", "To as Outlook takes it")
+TESTKIT.EQ(fields{"cc"}, "boss@example.com", "and Cc")
+TESTKIT.EQ(fields{"subject"}, "Weekly report", "the subject")
+TESTKIT.ISTRUE(INSTR(fields{"body"}, "The report is attached.") >= 0, "the text")
+TESTKIT.EQ(fields{"attachments"}, 1, "one attachment")
+
+TESTKIT.SUITE("PDFs from Office")
+DIM docx$ = PATH.JOIN$(folder$, "offer.docx")
+DIM d = DOCX.NEW()
+DOCX.HEADING(d, "Offer", 1)
+DOCX.PARAGRAPH(d, "Price 1,200 EUR")
+DOCX.WRITE(d, docx$)
+DIM pptx$ = PATH.JOIN$(folder$, "review.pptx")
+DIM p = PPTX.NEW("Review")
+PPTX.TITLE_SLIDE(p, "Quarterly review", "Team")
+PPTX.WRITE(p, pptx$)
+DIM xlsx$ = PATH.JOIN$(folder$, "sales.xlsx")
+DIM wb = XLSX.NEW()
+DIM sh = XLSX.SHEET(wb, "Sales", [["Region", "Revenue"], ["North", 1200]])
+XLSX.WRITE(xlsx$, wb)
+DIM files = [docx$, pptx$, xlsx$]
+DIM k = 0
+FOR k = 0 TO LEN(files) - 1
+    DIM src$ = files[k]
+    DIM kind$ = OFFICEKIT.KIND$(src$)
+    DIM prog$ = OFFICEKIT.PROG_ID$(kind$)
+    IF NOT OFFICEKIT.INSTALLED(prog$) THEN
+        TESTKIT.SKIP(prog$ + " is not installed")
+    ELSE
+        DIM out$ = OFFICEKIT.PDF_PATH$(src$, folder$)
+        DIM app = CREATEOBJECT(prog$)
+        OFFICEKIT.PREPARE(app, prog$)
+        TRY
+            OFFICEKIT.SAVE_PDF(app, kind$, src$, out$)
+        CATCH
+            PRINT ERRMSG$
+        ENDTRY
+        OFFICEKIT.CLOSE_APP(app, prog$)
+        DIM made = FILE.EXISTS(out$)
+        TESTKIT.ISTRUE(made, kind$ + " made a PDF")
+        IF made THEN TESTKIT.EQ(LEFT$(BINREADER$(out$), 4), "%PDF", "a real one")
+    ENDIF
+NEXT k
+FUNC MissingFile(x)
+    DIM wd = CREATEOBJECT("Word.Application")
+    OFFICEKIT.PREPARE(wd, "Word.Application")
+    TRY
+        OFFICEKIT.SAVE_PDF(wd, "word", "C:/no/such/offer.docx", "C:/no/such/offer.pdf")
+    CATCH
+        OFFICEKIT.CLOSE_APP(wd, "Word.Application")
+        THROW ERRMSG$
+    ENDTRY
+    OFFICEKIT.CLOSE_APP(wd, "Word.Application")
+    RETURN 0
+ENDFUNC
+IF OFFICEKIT.INSTALLED("Word.Application") THEN
+    TESTKIT.THROWS(MissingFile@, 0, "a missing document is an error")
+ELSE
+    TESTKIT.SKIP("Word is not installed")
+ENDIF
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(folder$, "/", "\")])
+TESTKIT.REPORT()

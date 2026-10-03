@@ -35,6 +35,7 @@ The setup wizard writes `[user]` and `[paths]`, and `[mail]` when you give a mai
 | `from` | the sender of every message; without it your name and address from `[user]` | OUTBOX |
 | `outbox` | the folder the messages wait in | OUTBOX |
 | `starttls` | `true` when the server wants STARTTLS on port 587 | OUTBOX |
+| `send_with` | read by a program, not written by the wizard | OUTBOX |
 
 The mail password is never part of `work.conf`. The recipes ask for it when you send, or take it from the Windows Credential Manager under `AutomateWork/mail` (Chapter 4 and X14).
 
@@ -193,6 +194,14 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 |---|---|---|---|
 | `minutes` | Length of a break in minutes | number | `3` |
 | `best_file` | File that keeps your best score | file | `"~/Documents/AutomateWork/arcade_best.txt"` |
+
+### E18 Office to PDF: `[office_to_pdf]`
+
+| Key | What it is | Kind | Default |
+|---|---|---|---|
+| `source` | Folder with the documents | folder | `"~/Documents/AutomateWork/to_pdf"` |
+| `target` | Folder for the PDFs (empty: next to the documents) | folder | `""` |
+| `programs` | Which documents: word, powerpoint, excel | list | `["word", "powerpoint"]` |
 
 ## Chapter 4: the medium recipes
 
@@ -377,6 +386,15 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `out_folder` | Folder for the presentations (empty: next to the outline) | folder | `""` |
 | `tab` | Sheet of a workbook to read (empty: the first) | text | `""` |
 
+### M18 Excel Refresh: `[excel_refresh]`
+
+| Key | What it is | Kind | Default |
+|---|---|---|---|
+| `workbook` | The report workbook | file | `""` |
+| `sheets` | Sheets to make PDFs of (empty: all) | list | `[]` |
+| `pdf_folder` | Folder for the PDFs | folder | `"~/Documents/AutomateWork/reports"` |
+| `mail_to` | Mail the PDFs to (empty: no mail) | text | `""` |
+
 ## Chapter 5: the expert recipes
 
 ### X01 Personal Job Server: `[job_server]`
@@ -560,3 +578,12 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `port` | Port of the app on this computer | number | `8770` |
 | `read_only` | Columns the app shows but does not change | list | `[]` |
 | `backups` | Folder for the copies before each save | folder | `"~/Documents/AutomateWork/backups"` |
+
+### X19 Outlook Bridge: `[outlook_bridge]`
+
+| Key | What it is | Kind | Default |
+|---|---|---|---|
+| `calendar_file` | Calendar file to write (.ics) | file | `"~/Documents/AutomateWork/calendar.ics"` |
+| `mail_folder` | Folder for the saved mails (.eml) | folder | `"~/Documents/AutomateWork/saved mail"` |
+| `days` | Days of appointments, from today | number | `1` |
+| `mails` | Newest mails to save | number | `50` |

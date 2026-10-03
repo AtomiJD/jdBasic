@@ -10,11 +10,13 @@
 '   IF WORKCONF.FLAG("send") THEN OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
 '
 ' A message in the outbox reaches the To and Cc addresses of its
-' headers; Bcc addresses are not part of an .eml file.
+' headers; Bcc addresses are not part of an .eml file. With [mail]
+' send_with = "outlook" the outbox goes out through classic Outlook
+' instead, and no password is asked for.
 
 EXPORT MODULE OUTBOX
 
-IMPORT WORKCONF, MAIL, VAULT
+IMPORT WORKCONF, MAIL, VAULT, OFFICEKIT
 
 ' The outbox folder, [mail] outbox in work.conf.
 EXPORT FUNC FOLDER$(cfg)
@@ -66,10 +68,18 @@ EXPORT FUNC PENDING(cfg)
     RETURN out
 ENDFUNC
 
+' How the outbox is sent: "smtp" (the default, through [mail] server)
+' or "outlook" (through classic Outlook), from [mail] send_with.
+EXPORT FUNC SENDS_WITH$(cfg)
+    RETURN LCASE$(WORKCONF.VALUE(cfg, "mail.send_with", "smtp"))
+ENDFUNC
+
 ' The mail password: from the Windows Credential Manager when you
 ' stored it there as AutomateWork/mail, otherwise asked for without
-' showing what you type. Nothing is written down.
+' showing what you type. Nothing is written down, and Outlook needs
+' none.
 EXPORT FUNC ASK$(cfg)
+    IF SENDS_WITH$(cfg) = "outlook" THEN RETURN ""
     DIM user$ = WORKCONF.VALUE(cfg, "mail.user", "")
     DIM ask$ = "Mail password for " + user$ + ": "
     RETURN VAULT.FIND$("AutomateWork/mail", "", ask$)
@@ -91,6 +101,7 @@ ENDFUNC
 ' Sends every message of the outbox and moves each one that went out
 ' into outbox/sent. Answers {"sent": n, "failed": [lines]}.
 EXPORT FUNC SEND_ALL(cfg, password$)
+    IF SENDS_WITH$(cfg) = "outlook" THEN RETURN SEND_OUTLOOK(cfg)
     DIM server = SERVER(cfg, password$)
     DIM sent_dir$ = PATH.JOIN$(FOLDER$(cfg), "sent")
     MKDIR sent_dir$
@@ -115,5 +126,37 @@ EXPORT FUNC SEND_ALL(cfg, password$)
         ENDIF
     NEXT k
     KILL config_path$
+    RETURN {"sent": n, "failed": failed}
+ENDFUNC
+
+' Sends every message of the outbox through classic Outlook, from the
+' account Outlook uses, and moves each one that went out into
+' outbox/sent. Answers {"sent": n, "failed": [lines]}.
+EXPORT FUNC SEND_OUTLOOK(cfg)
+    DIM files = PENDING(cfg)
+    DIM failed = []
+    DIM n = 0
+    IF LEN(files) = 0 THEN RETURN {"sent": n, "failed": failed}
+    DIM sent_dir$ = PATH.JOIN$(FOLDER$(cfg), "sent")
+    MKDIR sent_dir$
+    DIM temp$ = MKTEMP$("outlook")
+    DIM ol = CREATEOBJECT("Outlook.Application")
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM path$ = files[k]
+        TRY
+            DIM parsed = MAIL.PARSEFILE(path$)
+            OFFICEKIT.OUTLOOK_SEND(ol, parsed, temp$)
+            FILE.MOVE(path$, sent_dir$, TRUE)
+            n = n + 1
+        CATCH
+            PUSH(failed, PATH.BASENAME$(path$) + ": " + ERRMSG$)
+        ENDTRY
+    NEXT k
+    RELEASEOBJECT(ol)
+    IF FILE.ISDIR(temp$) THEN
+        DIM gone$ = REPLACE$(temp$, "/", "\")
+        OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", gone$])
+    ENDIF
     RETURN {"sent": n, "failed": failed}
 ENDFUNC

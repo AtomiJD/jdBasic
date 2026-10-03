@@ -46,5 +46,17 @@ TESTKIT.EQ(r{"sent"}, 0, "nothing goes out without a server")
 TESTKIT.EQ(LEN(r{"failed"}), 1, "the failure is reported")
 TESTKIT.ISTRUE(FILE.EXISTS(path$), "and the message stays in the outbox")
 
+TESTKIT.SUITE("sending with Outlook")
+TESTKIT.EQ(OUTBOX.SENDS_WITH$(cfg), "smtp", "SMTP is the default")
+DIM empty$ = REPLACE$(PATH.JOIN$(folder$, "empty"), "\", "/")
+DIM ol_toml$ = "[mail]" + LF$ + "send_with = " + Q$ + "Outlook" + Q$ + LF$
+ol_toml$ = ol_toml$ + "outbox = " + Q$ + empty$ + Q$ + LF$
+DIM ol_cfg = CONF.TOML_TEXT(ol_toml$)
+TESTKIT.EQ(OUTBOX.SENDS_WITH$(ol_cfg), "outlook", "send_with chooses Outlook")
+TESTKIT.EQ(OUTBOX.ASK$(ol_cfg), "", "and no password is asked for")
+DIM none = OUTBOX.SEND_ALL(ol_cfg, "")
+TESTKIT.EQ(none{"sent"}, 0, "an empty outbox leaves Outlook alone")
+TESTKIT.EQ(LEN(none{"failed"}), 0, "and nothing fails")
+
 OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
 TESTKIT.REPORT()

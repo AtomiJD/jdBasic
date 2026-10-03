@@ -1,0 +1,32 @@
+' Office to PDF: makes a PDF of every Word and PowerPoint file in a
+' folder that has none yet or has changed since, with the Office
+' programs themselves, so the PDF looks exactly like the document.
+' The settings are the [office_to_pdf] part of work.conf.
+'
+'   jdbasic office_to_pdf.jdb            make the PDFs
+'   jdbasic office_to_pdf.jdb --dry-run  show which PDFs it would make
+
+IMPORT WORKCONF, TOPDF
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "office_to_pdf."
+DIM home$ = "~/Documents/AutomateWork/to_pdf"
+DIM source$ = WORKCONF.FOLDER$(cfg, key$ + "source", home$)
+DIM target$ = WORKCONF.FOLDER$(cfg, key$ + "target", "")
+DIM wanted = ["word", "powerpoint"]
+DIM programs = WORKCONF.VALUE(cfg, key$ + "programs", wanted)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+
+DIM plan = TOPDF.PLAN(source$, target$, programs)
+DIM n_new = TOPDF.TO_MAKE(plan)
+IF n_new = 0 THEN
+    PRINT "Every PDF in "; source$; " is up to date."
+    END
+ENDIF
+DIM done = TOPDF.APPLY(plan, dry_run)
+IF dry_run THEN
+    PRINT n_new; " PDFs would be made. Run without --dry-run."
+ELSE
+    DIM n_skipped = LEN(done{"failed"})
+    PRINT done{"made"}; " PDFs made, "; n_skipped; " skipped."
+ENDIF

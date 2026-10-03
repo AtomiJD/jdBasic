@@ -1,0 +1,132 @@
+' topdf.jdb: the work of Office to PDF. PLAN looks at a folder and
+' decides which documents need a new PDF; APPLY makes them with Word,
+' PowerPoint or Excel, each started once and without a window.
+'
+'   IMPORT TOPDF
+'   DIM plan = TOPDF.PLAN("C:/Users/mia/Offers", "", ["word"])
+'   DIM done = TOPDF.APPLY(plan, FALSE)
+
+EXPORT MODULE TOPDF
+
+IMPORT OFFICEKIT
+
+' The documents of a folder as maps with "src", "pdf", "kind" and
+' "action": "convert" when the PDF is missing or older, "current"
+' when it is up to date. Only the kinds in programs count; Office's
+' own lock files (~$name) are left out. out_dir$ "" means the folder
+' itself.
+EXPORT FUNC PLAN(folder$, out_dir$, programs)
+    DIM out = []
+    IF NOT FILE.ISDIR(folder$) THEN RETURN out
+    DIM target$ = out_dir$
+    IF target$ = "" THEN target$ = folder$
+    DIM names = SORT(DIR$(PATH.JOIN$(folder$, "*")))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM file_name$ = names[k]
+        DIM src$ = PATH.JOIN$(folder$, file_name$)
+        DIM kind$ = OFFICEKIT.KIND$(file_name$)
+        DIM wanted = Listed(programs, kind$)
+        DIM is_lock = STARTSWITH(file_name$, "~$")
+        DIM is_dir = FILE.ISDIR(src$)
+        IF wanted ANDALSO NOT is_lock ANDALSO NOT is_dir THEN
+            DIM pdf$ = OFFICEKIT.PDF_PATH$(src$, target$)
+            DIM item AS MAP
+            item{"src"} = src$
+            item{"pdf"} = pdf$
+            item{"kind"} = kind$
+            item{"action"} = "current"
+            IF OFFICEKIT.NEEDS_PDF(src$, pdf$) THEN
+                item{"action"} = "convert"
+            ENDIF
+            PUSH(out, item)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Whether a kind is one of the programs.
+FUNC Listed(programs, kind$)
+    IF kind$ = "" THEN RETURN FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(programs) - 1
+        DIM p$ = LCASE$(programs[k])
+        IF p$ = kind$ THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+' How many documents of a plan need a PDF.
+EXPORT FUNC TO_MAKE(plan)
+    DIM n = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(plan) - 1
+        DIM item = plan[k]
+        IF item{"action"} = "convert" THEN n = n + 1
+    NEXT k
+    RETURN n
+ENDFUNC
+
+' Makes the PDFs of a plan, or with dry_run only prints them. Every
+' Office program is started once and quit at the end. Answers
+' {"made": n, "failed": [lines]}; a document Office cannot open is
+' named and left out.
+EXPORT FUNC APPLY(plan, dry_run)
+    DIM made = 0
+    DIM failed = []
+    DIM kinds = ["word", "powerpoint", "excel"]
+    DIM j = 0
+    DIM k = 0
+    FOR j = 0 TO LEN(kinds) - 1
+        DIM kind$ = kinds[j]
+        DIM todo = []
+        FOR k = 0 TO LEN(plan) - 1
+            DIM item = plan[k]
+            DIM due = item{"action"} = "convert"
+            IF item{"kind"} = kind$ ANDALSO due THEN PUSH(todo, item)
+        NEXT k
+        IF LEN(todo) > 0 THEN
+            IF dry_run THEN
+                FOR k = 0 TO LEN(todo) - 1
+                    DIM one = todo[k]
+                    PRINT "would make "; PATH.BASENAME$(one{"pdf"})
+                NEXT k
+            ELSE
+                DIM r = Convert(kind$, todo)
+                made = made + r{"made"}
+                DIM lost = r{"failed"}
+                FOR k = 0 TO LEN(lost) - 1
+                    DIM why$ = lost[k]
+                    PUSH(failed, why$)
+                NEXT k
+            ENDIF
+        ENDIF
+    NEXT j
+    RETURN {"made": made, "failed": failed}
+ENDFUNC
+
+' The PDFs of one Office program, with the program started once.
+FUNC Convert(kind$, todo)
+    DIM made = 0
+    DIM failed = []
+    DIM prog$ = OFFICEKIT.PROG_ID$(kind$)
+    DIM app = CREATEOBJECT(prog$)
+    OFFICEKIT.PREPARE(app, prog$)
+    DIM k = 0
+    FOR k = 0 TO LEN(todo) - 1
+        DIM item = todo[k]
+        DIM src$ = item{"src"}
+        DIM pdf$ = item{"pdf"}
+        TRY
+            MKDIR PATH.DIRNAME$(pdf$)
+            OFFICEKIT.SAVE_PDF(app, kind$, src$, pdf$)
+            PRINT "made "; PATH.BASENAME$(pdf$)
+            made = made + 1
+        CATCH
+            PRINT "skipped "; ERRMSG$
+            PUSH(failed, ERRMSG$)
+        ENDTRY
+    NEXT k
+    OFFICEKIT.CLOSE_APP(app, prog$)
+    RETURN {"made": made, "failed": failed}
+ENDFUNC

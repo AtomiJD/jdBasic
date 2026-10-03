@@ -80,6 +80,7 @@ department before you use it at work.
 | X16 Desktop Robot (bonus) | An old program driven by keyboard and mouse, checked by screenshots |
 | X17 Meeting Briefing (bonus) | One page per meeting of the day, with mails, open items and a summary |
 | X18 Spreadsheet to Web App (bonus) | An Excel table as a small app in the browser, saved back to Excel |
+| X19 Outlook Bridge (bonus) | Mail sent through Outlook without a password, and Outlook as a source |
 
 X01 is the backbone: the other recipes can run under it instead of the
 Windows Task Scheduler. X13 and X14 make that backbone safe to rely on.

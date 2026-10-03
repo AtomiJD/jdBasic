@@ -99,6 +99,7 @@ port 465 with `smtps`, or 587 with `smtp` and STARTTLS.
 | M15 Timesheet for the Boss | The monthly timesheet from the time tracker, mailed |
 | M16 Macro Player (bonus) | Clicks and keystrokes for programs that offer nothing else |
 | M17 Slide Builder (bonus) | A PowerPoint presentation from an outline or a sheet |
+| M18 Excel Refresh (bonus) | The Monday report refreshed in Excel itself, formulas and charts intact |
 
 The order is a suggestion, not a path. Each recipe stands on its own;
 where one builds on another, such as the timesheet on the time tracker

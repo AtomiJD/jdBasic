@@ -27,4 +27,6 @@ Each recipe follows the same order:
 After the fifteen come two bonus recipes. E16 Form Filler types into a
 form for you, which means it takes over your keyboard for a few seconds,
 so the wizard leaves it switched off until you choose it. E17 Break
-Arcade is a game of 2048 for the length of a break.
+Arcade is a game of 2048 for the length of a break. E18 Office to PDF
+turns a folder of Word and PowerPoint files into PDFs through Office
+itself; it needs Office installed, so it also starts switched off.

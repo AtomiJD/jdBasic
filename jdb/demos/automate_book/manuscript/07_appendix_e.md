@@ -1,6 +1,6 @@
 <!-- pagebreak -->
 
-# Appendix E: All 52 Recipes at a Glance
+# Appendix E: All 55 Recipes at a Glance
 
 The minutes (*Min.*) are the time each recipe gives back in a normal week, as its page explains in the box at its end. The schedule is the one the wizard suggests; *by hand* means you start the recipe yourself or let the job server of X01 start it. The libraries are the ones the recipe imports besides its own modules and WORKCONF, which every recipe uses to read its settings.
 
@@ -23,6 +23,7 @@ The minutes (*Min.*) are the time each recipe gives back in a normal week, as it
 | E15 Guest Wi-Fi Card | 5 | by hand | QR, PDFGEN | {{page:E15 Guest Wi-Fi Card}} |
 | E16 Form Filler | 15 | by hand | INPUTKIT | {{page:Bonus: E16 Form Filler}} |
 | E17 Break Arcade | 0 | by hand | CONF | {{page:Bonus: E17 Break Arcade}} |
+| E18 Office to PDF | 15 | daily 12:00 | OFFICEKIT | {{page:Bonus: E18 Office to PDF}} |
 | M01 Invoice Generator | 10 | by hand | XLSX, OUTBOX, MAIL, PDFGEN, DOCX | {{page:M01 Invoice Generator}} |
 | M02 Report Merger | 15 | by hand | XLSX | {{page:M02 Report Merger}} |
 | M03 Mail Merge | 5 | by hand | XLSX, MAIL, OUTBOX, DOCX | {{page:M03 Mail Merge}} |
@@ -40,6 +41,7 @@ The minutes (*Min.*) are the time each recipe gives back in a normal week, as it
 | M15 Timesheet for the Boss | 15 | monthly 1 08:00 | OUTBOX, DOCX, MAIL | {{page:M15 Timesheet for the Boss}} |
 | M16 Macro Player | 30 | by hand | INPUTKIT | {{page:Bonus: M16 Macro Player}} |
 | M17 Slide Builder | 30 | by hand | XLSX, PPTX | {{page:Bonus: M17 Slide Builder}} |
+| M18 Excel Refresh | 30 | weekly mon 07:00 | OUTBOX, MAIL | {{page:Bonus: M18 Excel Refresh}} |
 | X01 Personal Job Server | 30 | at logon | JOBSTATE, LOGGER, VAULT, DT, SCHED, RETRY, AUDIT | {{page:X01 Personal Job Server}} |
 | X02 Inbox Assistant | 60 | by hand | MAIL, OUTBOX, LOGGER, LLMAPI, RETRY | {{page:X02 Inbox Assistant}} |
 | X03 Find Anything | 40 | daily 12:30; at logon | JDWEB, LOGGER, SEARCH, DOCX, HTMLDOM | {{page:X03 Find Anything}} |
@@ -58,12 +60,13 @@ The minutes (*Min.*) are the time each recipe gives back in a normal week, as it
 | X16 Desktop Robot | 60 | by hand | LOGGER, INPUTKIT, CONF, IMG | {{page:Bonus: X16 Desktop Robot}} |
 | X17 Meeting Briefing | 45 | weekdays 07:30 | OUTBOX, MAIL, LOGGER, ICAL, DF, LLMAPI, RETRY, PDFGEN | {{page:Bonus: X17 Meeting Briefing}} |
 | X18 Spreadsheet to Web App | 40 | by hand | JDWEB, XLSX, LOGGER | {{page:Bonus: X18 Spreadsheet to Web App}} |
+| X19 Outlook Bridge | 20 | weekdays 07:00 | OUTBOX, ICAL, MAIL, OFFICEKIT | {{page:Bonus: X19 Outlook Bridge}} |
 
 | Level | Recipes | Minutes a week |
 |---|---:|---:|
-| Easy | 17 | 220 |
-| Medium | 17 | 390 |
-| Expert | 18 | 605 |
-| **All** | **52** | **1215** |
+| Easy | 18 | 235 |
+| Medium | 18 | 420 |
+| Expert | 19 | 625 |
+| **All** | **55** | **1280** |
 
-All recipes together come to 1215 minutes, about 20.2 hours a week. Nobody needs all of them; the ones you switch on are the number that counts, and Chapter 1 shows how to keep track of it.
+All recipes together come to 1280 minutes, about 21.3 hours a week. Nobody needs all of them; the ones you switch on are the number that counts, and Chapter 1 shows how to keep track of it.

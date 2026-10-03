@@ -1,0 +1,124 @@
+' refresh.jdb: the work of Excel Refresh. A report workbook is opened
+' in the real Excel, its data connections and pivot tables refreshed,
+' recalculated and saved, so its formulas, formats and charts stay;
+' then the chosen sheets become PDFs.
+'
+'   IMPORT REFRESH
+'   DIM book$ = "C:/Reports/sales.xlsx"
+'   DIM r = REFRESH.RUN(book$, ["Summary"], "C:/Reports", day$)
+
+EXPORT MODULE REFRESH
+
+IMPORT MAIL
+
+CONST XL_TYPE_PDF = 0
+
+' The PDF of one sheet: the workbook's name, the sheet and the day.
+EXPORT FUNC PDF_NAME$(workbook$, sheet$, day$)
+    DIM base$ = PATH.BASENAME$(workbook$)
+    DIM stem$ = LEFT$(base$, LEN(base$) - LEN(PATH.EXT$(base$)))
+    RETURN stem$ + " " + sheet$ + " " + day$ + ".pdf"
+ENDFUNC
+
+' The sheets to export, written as the workbook writes them: the
+' listed ones in their order, or all sheets when listed is empty.
+' Answers {"sheets": [...], "unknown": [names not in the workbook]}.
+EXPORT FUNC CHOOSE(listed, available)
+    DIM sheets = []
+    DIM unknown = []
+    DIM k = 0
+    DIM j = 0
+    IF LEN(listed) = 0 THEN
+        FOR k = 0 TO LEN(available) - 1
+            DIM all$ = available[k]
+            PUSH(sheets, all$)
+        NEXT k
+        RETURN {"sheets": sheets, "unknown": unknown}
+    ENDIF
+    FOR k = 0 TO LEN(listed) - 1
+        DIM want$ = listed[k]
+        DIM hit$ = ""
+        FOR j = 0 TO LEN(available) - 1
+            DIM have$ = available[j]
+            IF LCASE$(have$) = LCASE$(want$) THEN hit$ = have$
+        NEXT j
+        IF hit$ = "" THEN PUSH(unknown, want$) ELSE PUSH(sheets, hit$)
+    NEXT k
+    RETURN {"sheets": sheets, "unknown": unknown}
+ENDFUNC
+
+' Refreshes, recalculates and saves a workbook in Excel, started
+' without a window and quit at the end, and writes a PDF of each
+' chosen sheet into out_dir$. Answers {"pdfs": [paths], "unknown":
+' [sheet names the workbook does not have]}.
+EXPORT FUNC RUN(workbook$, listed, out_dir$, day$)
+    DIM full$ = REPLACE$(workbook$, "/", "\")
+    DIM xl = CREATEOBJECT("Excel.Application")
+    xl.Visible = FALSE
+    xl.DisplayAlerts = FALSE
+    DIM books = xl.Workbooks
+    DIM wb = books.Open(full$, 0, FALSE)
+    DIM pdfs = []
+    DIM unknown = []
+    TRY
+        wb.RefreshAll()
+        xl.CalculateUntilAsyncQueriesDone()
+        xl.CalculateFull()
+        wb.Save()
+        DIM wb_sheets = wb.Worksheets
+        DIM have = []
+        DIM k = 0
+        FOR k = 1 TO wb_sheets.Count
+            DIM ws = wb_sheets.Item(k)
+            DIM ws_name$ = ws.Name
+            PUSH(have, ws_name$)
+            RELEASEOBJECT(ws)
+        NEXT k
+        DIM picked = CHOOSE(listed, have)
+        unknown = picked{"unknown"}
+        DIM names = picked{"sheets"}
+        MKDIR out_dir$
+        FOR k = 0 TO LEN(names) - 1
+            DIM sheet$ = names[k]
+            DIM file$ = PDF_NAME$(workbook$, sheet$, day$)
+            DIM pdf$ = PATH.JOIN$(out_dir$, file$)
+            DIM sh = wb_sheets.Item(sheet$)
+            DIM win$ = REPLACE$(pdf$, "/", "\")
+            sh.ExportAsFixedFormat(XL_TYPE_PDF, win$)
+            RELEASEOBJECT(sh)
+            PUSH(pdfs, pdf$)
+        NEXT k
+        RELEASEOBJECT(wb_sheets)
+    CATCH
+        DIM why$ = ERRMSG$
+        wb.Close(FALSE)
+        RELEASEOBJECT(wb)
+        RELEASEOBJECT(books)
+        xl.Quit()
+        RELEASEOBJECT(xl)
+        THROW PATH.BASENAME$(workbook$) + ": " + why$
+    ENDTRY
+    wb.Close(FALSE)
+    RELEASEOBJECT(wb)
+    RELEASEOBJECT(books)
+    xl.Quit()
+    RELEASEOBJECT(xl)
+    RETURN {"pdfs": pdfs, "unknown": unknown}
+ENDFUNC
+
+' The mail that carries the PDFs of a run to the people in to$.
+EXPORT FUNC MESSAGE(from$, to$, workbook$, day$, pdfs)
+    DIM base$ = PATH.BASENAME$(workbook$)
+    DIM subject$ = base$ + ", " + day$
+    DIM msg = MAIL.MESSAGE(from$, SPLIT(to$, ","), subject$)
+    DIM body$ = "Good morning," + CHR$(10) + CHR$(10)
+    body$ = body$ + "the refreshed report " + base$ + " of " + day$
+    body$ = body$ + " is attached." + CHR$(10)
+    MAIL.PLAIN(msg, body$)
+    DIM k = 0
+    FOR k = 0 TO LEN(pdfs) - 1
+        DIM one$ = pdfs[k]
+        MAIL.ATTACH(msg, one$)
+    NEXT k
+    RETURN msg
+ENDFUNC

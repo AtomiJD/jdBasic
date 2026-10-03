@@ -1,0 +1,34 @@
+# What the setup wizard knows about this recipe.
+
+id = "M18"
+name = "Excel Refresh"
+program = "excel_refresh.jdb"
+summary = "The report workbook refreshed, recalculated and saved by Excel, with PDFs of its sheets"
+minutes_per_week = 30
+schedule = "weekly mon 07:00"
+section = "excel_refresh"
+modules = ["refresh.jdb"]
+
+[[setting]]
+key = "workbook"
+label = "The report workbook"
+kind = "file"
+default = ""
+
+[[setting]]
+key = "sheets"
+label = "Sheets to make PDFs of (empty: all)"
+kind = "list"
+default = []
+
+[[setting]]
+key = "pdf_folder"
+label = "Folder for the PDFs"
+kind = "folder"
+default = "~/Documents/AutomateWork/reports"
+
+[[setting]]
+key = "mail_to"
+label = "Mail the PDFs to (empty: no mail)"
+kind = "text"
+default = ""

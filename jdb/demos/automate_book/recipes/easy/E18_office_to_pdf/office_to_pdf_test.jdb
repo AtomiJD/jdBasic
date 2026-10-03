@@ -1,0 +1,78 @@
+' Office to PDF: the plan for a folder of documents (new, current,
+' left out), the dry run, and, when Word and PowerPoint are installed,
+' real PDFs made in a folder of the test's own.
+
+IMPORT TESTKIT, TOPDF, DOCX, PPTX
+
+DIM folder$ = MKTEMP$("topdf")
+MKDIR folder$
+DIM offer$ = PATH.JOIN$(folder$, "offer.docx")
+DIM d = DOCX.NEW()
+DOCX.HEADING(d, "Offer for Miller Ltd", 1)
+DOCX.PARAGRAPH(d, "Price: 1,200 EUR.")
+DOCX.WRITE(d, offer$)
+DIM review$ = PATH.JOIN$(folder$, "review.pptx")
+DIM p = PPTX.NEW("Review")
+PPTX.TITLE_SLIDE(p, "Quarterly review", "Team Sales")
+PPTX.WRITE(p, review$)
+TXTWRITER PATH.JOIN$(folder$, "~$offer.docx"), "lock"
+TXTWRITER PATH.JOIN$(folder$, "notes.txt"), "not Office"
+DIM old$ = PATH.JOIN$(folder$, "letter.docx")
+DOCX.WRITE(d, old$)
+SLEEP 1100
+TXTWRITER PATH.JOIN$(folder$, "letter.pdf"), "%PDF newer"
+
+FUNC Find(plan, file$)
+    DIM k = 0
+    FOR k = 0 TO LEN(plan) - 1
+        DIM item = plan[k]
+        IF PATH.BASENAME$(item{"src"}) = file$ THEN RETURN item
+    NEXT k
+    RETURN {"action": "none"}
+ENDFUNC
+
+TESTKIT.SUITE("the plan")
+DIM plan = TOPDF.PLAN(folder$, "", ["word", "powerpoint"])
+TESTKIT.EQ(LEN(plan), 3, "three Office documents, the lock file and the text left out")
+DIM a = Find(plan, "offer.docx")
+TESTKIT.EQ(a{"action"}, "convert", "a document without a PDF")
+DIM b = Find(plan, "letter.docx")
+TESTKIT.EQ(b{"action"}, "current", "a newer PDF is kept")
+TESTKIT.EQ(TOPDF.TO_MAKE(plan), 2, "two PDFs to make")
+DIM only = TOPDF.PLAN(folder$, "", ["powerpoint"])
+TESTKIT.EQ(LEN(only), 1, "only the programs asked for")
+DIM out_dir$ = PATH.JOIN$(folder$, "pdf")
+DIM elsewhere = TOPDF.PLAN(folder$, out_dir$, ["word"])
+DIM c = Find(elsewhere, "letter.docx")
+TESTKIT.EQ(c{"action"}, "convert", "in another folder the letter has no PDF yet")
+TESTKIT.EQ(PATH.DIRNAME$(c{"pdf"}), out_dir$, "and its PDF goes there")
+TESTKIT.EQ(LEN(TOPDF.PLAN(PATH.JOIN$(folder$, "none"), "", ["word"])), 0, "a missing folder gives an empty plan")
+
+TESTKIT.SUITE("the dry run")
+OUTPUT.CAPTURE_BEGIN
+DIM dry = TOPDF.APPLY(plan, TRUE)
+DIM said$ = OUTPUT.CAPTURE_END$()
+TESTKIT.EQ(dry{"made"}, 0, "nothing is made")
+TESTKIT.ISTRUE(INSTR(said$, "would make offer.pdf") >= 0, "the plan is printed")
+TESTKIT.ISFALSE(FILE.EXISTS(PATH.JOIN$(folder$, "offer.pdf")), "and no PDF appears")
+
+TESTKIT.SUITE("with Office")
+DIM ask$ = "if (([type]::GetTypeFromProgID('Word.Application')) -and ([type]::GetTypeFromProgID('PowerPoint.Application'))) { 'yes' }"
+DIM probe = OS.EXEC("powershell", ["-NoProfile", "-Command", ask$])
+IF INSTR(probe{"OUTPUT"}, "yes") < 0 THEN
+    TESTKIT.SKIP("Word or PowerPoint is not installed")
+ELSE
+    OUTPUT.CAPTURE_BEGIN
+    DIM done = TOPDF.APPLY(plan, FALSE)
+    DIM log$ = OUTPUT.CAPTURE_END$()
+    TESTKIT.EQ(done{"made"}, 2, "two PDFs made")
+    TESTKIT.EQ(LEN(done{"failed"}), 0, "none skipped")
+    DIM made$ = PATH.JOIN$(folder$, "offer.pdf")
+    TESTKIT.EQ(LEFT$(BINREADER$(made$), 4), "%PDF", "a real PDF of the offer")
+    TESTKIT.ISTRUE(INSTR(log$, "made review.pdf") >= 0, "one line per PDF")
+    DIM again = TOPDF.PLAN(folder$, "", ["word", "powerpoint"])
+    TESTKIT.EQ(TOPDF.TO_MAKE(again), 0, "a second run has nothing to do")
+ENDIF
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(folder$, "/", "\")])
+TESTKIT.REPORT()

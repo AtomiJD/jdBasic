@@ -1,0 +1,54 @@
+' Outlook Bridge: appointments become an .ics file with the people as
+' ATTENDEE lines, mails become .eml files with sender, recipients and
+' a Date line in local time, and the file names stay safe. The test
+' makes up its own appointments and mails; Outlook is not started.
+
+IMPORT TESTKIT, OLBRIDGE, ICAL, MAIL, DF
+
+DIM t0 = CDBL(CDATE("2026-10-05 09:30:00"))
+DIM t1 = CDBL(CDATE("2026-10-05 10:15:00"))
+DIM anna = {"name": "Anna Example", "mail": "anna@example.com"}
+DIM odd = {"name": "Ben; the: " + CHR$(34) + "Boss", "mail": "ben@example.com"}
+DIM review = {"title": "Budget review", "start": t0, "end": t1, "location": "Room 2, east wing", "all_day": FALSE, "people": [anna, odd]}
+DIM day_start = CDBL(CDATE("2026-10-05 00:00:00"))
+DIM holiday = {"title": "Team day", "start": day_start, "end": day_start + 86400, "location": "", "all_day": TRUE, "people": []}
+
+TESTKIT.SUITE("the calendar file")
+DIM text$ = OLBRIDGE.ICS$([review, holiday])
+DIM flat$ = REPLACE$(REPLACE$(text$, CHR$(13) + CHR$(10) + " ", ""), CHR$(13), "")
+TESTKIT.ISTRUE(INSTR(flat$, "ATTENDEE;CN=" + CHR$(34) + "Anna Example" + CHR$(34) + ":mailto:anna@example.com") >= 0, "a person is an ATTENDEE with the name in CN")
+TESTKIT.ISTRUE(INSTR(flat$, "CN=" + CHR$(34) + "Ben the Boss" + CHR$(34) + ":mailto:ben@example.com") >= 0, "a name loses what would end the parameter")
+DIM cal = ICAL.PARSE(text$)
+DIM evs = ICAL.EVENTS(cal)
+TESTKIT.EQ(LEN(evs), 2, "both appointments are there")
+DIM first = evs[0]
+TESTKIT.EQ(ICAL.PROP$(cal, first, "SUMMARY"), "Budget review", "the title")
+TESTKIT.EQ(ICAL.PROP$(cal, first, "LOCATION"), "Room 2, east wing", "the location, comma and all")
+TESTKIT.EQ(ICAL.STARTAT(cal, first), t0, "the start is the same moment")
+TESTKIT.EQ(FORMAT_DATE(ICAL.STARTAT(cal, first), "%H:%M"), "09:30", "and reads as 09:30 here")
+DIM second = evs[1]
+TESTKIT.ISTRUE(ICAL.ALLDAY(cal, second), "an all-day appointment stays all-day")
+TESTKIT.EQ(ICAL.RAW$(cal, second, "DTSTART"), "20261005", "on its own date")
+DIM frame = ICAL.EXPAND(cal, day_start, day_start + 86400)
+TESTKIT.EQ(DF.NROWS(frame), 2, "the day shows both, as the Meeting Briefing reads it")
+
+TESTKIT.SUITE("a mail file")
+DIM mail = {"from": OLBRIDGE.PERSON$("Anna Example", "Anna@Example.com"), "to": [OLBRIDGE.PERSON$("Jonas", "jonas@example.com")], "cc": ["boss@example.com"], "subject": "Budget 2027: the numbers", "text": "Here they are.", "received": t0}
+TESTKIT.EQ(mail{"from"}, CHR$(34) + "Anna Example" + CHR$(34) + " <anna@example.com>", "a name and a lower case address")
+TESTKIT.EQ(OLBRIDGE.PERSON$("", "x@example.com"), "x@example.com", "no name, the bare address")
+DIM parsed = MAIL.PARSE(OLBRIDGE.EML$(mail))
+TESTKIT.EQ(MAIL.BAREADDRESS$(parsed{"from"}), "anna@example.com", "the sender")
+DIM to_list = parsed{"to"}
+TESTKIT.EQ(MAIL.BAREADDRESS$(to_list[0]), "jonas@example.com", "the recipient")
+DIM cc_list = parsed{"cc"}
+TESTKIT.EQ(LEN(cc_list), 1, "and the copy")
+TESTKIT.EQ(parsed{"subject"}, "Budget 2027: the numbers", "the subject")
+TESTKIT.ISTRUE(INSTR(parsed{"text"}, "Here they are.") >= 0, "the text")
+DIM date$ = parsed{"date"}
+TESTKIT.ISTRUE(INSTR(date$, "05 Oct 2026 09:30:00") >= 0, "the Date line in local time")
+DIM name$ = OLBRIDGE.FILE_NAME$(mail)
+TESTKIT.EQ(name$, "2026-10-05 0930 Budget 2027 the numbers.eml", "a safe file name")
+DIM blank = {"subject": "???", "received": t0}
+TESTKIT.EQ(OLBRIDGE.FILE_NAME$(blank), "2026-10-05 0930 mail.eml", "a subject of only signs")
+
+TESTKIT.REPORT()

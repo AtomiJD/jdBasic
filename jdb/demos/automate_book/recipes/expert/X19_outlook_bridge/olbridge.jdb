@@ -1,0 +1,270 @@
+' olbridge.jdb: the work of the Outlook Bridge. It reads appointments
+' and the newest mails of classic Outlook and writes them in the open
+' shapes the other recipes read: a calendar as an .ics file and mails
+' as .eml files.
+'
+'   IMPORT OLBRIDGE
+'   DIM ol = CREATEOBJECT("Outlook.Application")
+'   DIM events = OLBRIDGE.EVENTS(ol, t_from, t_to)
+'   TXTWRITER "today.ics", OLBRIDGE.ICS$(events)
+'   RELEASEOBJECT(ol)
+
+EXPORT MODULE OLBRIDGE
+
+IMPORT ICAL, MAIL, OFFICEKIT
+
+CONST OL_CALENDAR = 9
+CONST OL_INBOX = 6
+CONST OL_MAIL = 43
+CONST OL_RESOURCE = 3
+CONST MOST_ITEMS = 100000
+
+' The appointments of the default calendar that overlap the time
+' from t_from to t_to, repeating ones included, in order of start:
+' maps with title, start, end, location, all_day and people (maps
+' with name and mail). Outlook is only read.
+EXPORT FUNC EVENTS(ol, t_from, t_to)
+    DIM pattern$ = OFFICEKIT.SHORT_DATE$()
+    DIM q$ = "[Start] < '" + OFFICEKIT.LOCAL_DATE$(t_to, pattern$)
+    q$ = q$ + "' AND [End] > '"
+    q$ = q$ + OFFICEKIT.LOCAL_DATE$(t_from, pattern$) + "'"
+    DIM ns = ol.GetNamespace("MAPI")
+    DIM folder = ns.GetDefaultFolder(OL_CALENDAR)
+    DIM items = folder.Items
+    items.Sort("[Start]")
+    items.IncludeRecurrences = TRUE
+    DIM found = items.Restrict(q$)
+    DIM out = []
+    DIM it = found.GetFirst()
+    DIM n = 0
+    FOR n = 1 TO MOST_ITEMS
+        IF TYPEOF(it) = "NONE" THEN EXITFOR
+        DIM ev AS MAP
+        ev{"title"} = "" + it.Subject
+        ev{"start"} = OFFICEKIT.PARSE_DATE(it.Start, pattern$)
+        ev{"end"} = OFFICEKIT.PARSE_DATE(it.End, pattern$)
+        ev{"location"} = "" + it.Location
+        ev{"all_day"} = it.AllDayEvent
+        DIM people = []
+        DIM rcpts = it.Recipients
+        DIM k = 0
+        FOR k = 1 TO rcpts.Count
+            DIM r = rcpts.Item(k)
+            DIM addr$ = "" + r.Address
+            IF INSTR(addr$, "@") < 0 THEN
+                TRY
+                    DIM entry = r.AddressEntry
+                    DIM user = entry.GetExchangeUser()
+                    IF TYPEOF(user) <> "NONE" THEN
+                        addr$ = "" + user.PrimarySmtpAddress
+                        RELEASEOBJECT(user)
+                    ENDIF
+                    RELEASEOBJECT(entry)
+                CATCH
+                    addr$ = ""
+                ENDTRY
+            ENDIF
+            DIM who$ = "" + r.Name
+            DIM kind = r.Type
+            IF kind <> OL_RESOURCE ANDALSO INSTR(addr$, "@") > 0 THEN
+                PUSH(people, {"name": who$, "mail": LCASE$(addr$)})
+            ENDIF
+            RELEASEOBJECT(r)
+        NEXT k
+        RELEASEOBJECT(rcpts)
+        ev{"people"} = people
+        IF ev{"start"} < t_to ANDALSO ev{"end"} > t_from THEN
+            PUSH(out, ev)
+        ENDIF
+        RELEASEOBJECT(it)
+        it = found.GetNext()
+    NEXT n
+    RELEASEOBJECT(found)
+    RELEASEOBJECT(items)
+    RELEASEOBJECT(folder)
+    RELEASEOBJECT(ns)
+    RETURN out
+ENDFUNC
+
+' The newest mails of the inbox, at most most of them: maps with
+' from, to, cc (lists of addresses), subject, text and received.
+' Outlook is only read; meeting requests and reports are left out.
+EXPORT FUNC MAILS(ol, most)
+    DIM pattern$ = OFFICEKIT.SHORT_DATE$()
+    DIM ns = ol.GetNamespace("MAPI")
+    DIM folder = ns.GetDefaultFolder(OL_INBOX)
+    DIM items = folder.Items
+    items.Sort("[ReceivedTime]", TRUE)
+    DIM out = []
+    DIM it = items.GetFirst()
+    DIM n = 0
+    FOR n = 1 TO items.Count
+        IF TYPEOF(it) = "NONE" ORELSE LEN(out) >= most THEN EXITFOR
+        IF it.Class = OL_MAIL THEN
+            DIM m AS MAP
+            DIM from$ = "" + it.SenderEmailAddress
+            IF INSTR(from$, "@") < 0 THEN
+                TRY
+                    DIM sender = it.Sender
+                    DIM boss = sender.GetExchangeUser()
+                    IF TYPEOF(boss) <> "NONE" THEN
+                        from$ = "" + boss.PrimarySmtpAddress
+                        RELEASEOBJECT(boss)
+                    ENDIF
+                    RELEASEOBJECT(sender)
+                CATCH
+                    from$ = ""
+                ENDTRY
+            ENDIF
+            m{"from"} = PERSON$("" + it.SenderName, from$)
+            DIM to_list = []
+            DIM cc_list = []
+            DIM rcpts = it.Recipients
+            DIM k = 0
+            FOR k = 1 TO rcpts.Count
+                DIM r = rcpts.Item(k)
+                DIM addr$ = "" + r.Address
+                IF INSTR(addr$, "@") < 0 THEN
+                    TRY
+                        DIM entry = r.AddressEntry
+                        DIM user = entry.GetExchangeUser()
+                        IF TYPEOF(user) <> "NONE" THEN
+                            addr$ = "" + user.PrimarySmtpAddress
+                            RELEASEOBJECT(user)
+                        ENDIF
+                        RELEASEOBJECT(entry)
+                    CATCH
+                        addr$ = ""
+                    ENDTRY
+                ENDIF
+                DIM one$ = PERSON$("" + r.Name, addr$)
+                IF INSTR(addr$, "@") > 0 ANDALSO r.Type = 1 THEN
+                    PUSH(to_list, one$)
+                ENDIF
+                IF INSTR(addr$, "@") > 0 ANDALSO r.Type = 2 THEN
+                    PUSH(cc_list, one$)
+                ENDIF
+                RELEASEOBJECT(r)
+            NEXT k
+            RELEASEOBJECT(rcpts)
+            m{"to"} = to_list
+            m{"cc"} = cc_list
+            m{"subject"} = "" + it.Subject
+            m{"text"} = "" + it.Body
+            DIM came$ = "" + it.ReceivedTime
+            m{"received"} = OFFICEKIT.PARSE_DATE(came$, pattern$)
+            PUSH(out, m)
+        ENDIF
+        RELEASEOBJECT(it)
+        it = items.GetNext()
+    NEXT n
+    RELEASEOBJECT(items)
+    RELEASEOBJECT(folder)
+    RELEASEOBJECT(ns)
+    RETURN out
+ENDFUNC
+
+' A name and an address as one mail address: "Name <addr>", or the
+' bare address when there is no name.
+EXPORT FUNC PERSON$(name$, addr$)
+    DIM shown$ = TRIM$(REPLACE$(name$, CHR$(34), ""))
+    DIM bare$ = LCASE$(TRIM$(addr$))
+    IF shown$ = "" ORELSE shown$ = bare$ THEN RETURN bare$
+    IF bare$ = "" THEN RETURN ""
+    RETURN CHR$(34) + shown$ + CHR$(34) + " <" + bare$ + ">"
+ENDFUNC
+
+' Events from EVENTS as the text of an .ics file. Each person becomes
+' an ATTENDEE line with the name in CN, as calendars write it.
+EXPORT FUNC ICS$(events)
+    DIM cal = ICAL.NEW("-//AutomateWork//Outlook Bridge//EN")
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(events) - 1
+        DIM e = events[k]
+        DIM t0 = CDBL(e{"start"})
+        DIM t1 = CDBL(e{"end"})
+        DIM ev = 0
+        IF e{"all_day"} THEN
+            DIM days = MAX([1, ROUND((t1 - t0) / 86400)])
+            ev = ICAL.ADDALLDAY(cal, e{"title"}, t0 + 43200, days)
+        ELSE
+            ev = ICAL.ADDEVENT(cal, e{"title"}, t0, t1)
+        ENDIF
+        IF e{"location"} <> "" THEN
+            ICAL.SETTEXT(cal, ev, "LOCATION", e{"location"})
+        ENDIF
+        DIM people = e{"people"}
+        FOR j = 0 TO LEN(people) - 1
+            DIM p = people[j]
+            DIM cn$ = CHR$(34) + Plain$(p{"name"}) + CHR$(34)
+            DIM to$ = "mailto:" + p{"mail"}
+            ICAL.ADDPROP(cal, ev, "ATTENDEE", to$, "CN=" + cn$)
+        NEXT j
+    NEXT k
+    RETURN ICAL.TEXT$(cal)
+ENDFUNC
+
+' A name without the characters that end a parameter in an .ics line.
+FUNC Plain$(name$)
+    DIM out$ = name$
+    DIM bad = [CHR$(34), ";", ":", ",", CHR$(13), CHR$(10)]
+    DIM k = 0
+    FOR k = 0 TO LEN(bad) - 1
+        DIM c$ = bad[k]
+        out$ = REPLACE$(out$, c$, " ")
+    NEXT k
+    DO WHILE INSTR(out$, "  ") >= 0
+        out$ = REPLACE$(out$, "  ", " ")
+    LOOP
+    RETURN TRIM$(out$)
+ENDFUNC
+
+' A time as the Date line of a mail, in local time with the offset
+' from UTC, such as "Mon, 05 Oct 2026 09:30:00 +0200".
+EXPORT FUNC DATE_LINE$(t)
+    DIM p = DATE.PARTS(t)
+    DIM y = CLNG(p{"year"})
+    DIM mo = CLNG(p{"month"})
+    DIM d = CLNG(p{"day"})
+    DIM h = CLNG(p{"hour"})
+    DIM mi = CLNG(p{"minute"})
+    DIM s = CLNG(p{"second"})
+    DIM wall = DATE.UTC(y, mo, d, h, mi, s)
+    DIM offset = CLNG(ROUND((wall - t) / 60))
+    RETURN MAIL.DATETEXT$(y, mo, d, h, mi, s, offset)
+ENDFUNC
+
+' A mail from MAILS as the text of an .eml file.
+EXPORT FUNC EML$(mail)
+    DIM msg = MAIL.MESSAGE(mail{"from"}, mail{"to"}, mail{"subject"})
+    IF LEN(mail{"cc"}) > 0 THEN MAIL.CC(msg, mail{"cc"})
+    MAIL.PLAIN(msg, mail{"text"})
+    MAIL.SETDATE(msg, DATE_LINE$(CDBL(mail{"received"})))
+    RETURN MAIL.BUILD$(msg)
+ENDFUNC
+
+' The file name of a mail: when it came and its subject, with only
+' letters, digits, spaces, dots and dashes, such as
+' "2026-10-05 0930 Budget 2027.eml".
+EXPORT FUNC FILE_NAME$(mail)
+    DIM t = CDBL(mail{"received"})
+    DIM day$ = FORMAT_DATE(t, "%Y-%m-%d %H%M")
+    DIM subject$ = mail{"subject"}
+    DIM keep$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(subject$) - 1
+        DIM c$ = MID$(subject$, k, 1)
+        DIM ok = (c$ >= "a" ANDALSO c$ <= "z") ORELSE c$ = " "
+        IF c$ >= "A" ANDALSO c$ <= "Z" THEN ok = TRUE
+        IF c$ >= "0" ANDALSO c$ <= "9" THEN ok = TRUE
+        IF c$ = "." ORELSE c$ = "-" THEN ok = TRUE
+        IF ok THEN keep$ = keep$ + c$ ELSE keep$ = keep$ + " "
+    NEXT k
+    DO WHILE INSTR(keep$, "  ") >= 0
+        keep$ = REPLACE$(keep$, "  ", " ")
+    LOOP
+    keep$ = TRIM$(LEFT$(TRIM$(keep$), 60))
+    IF keep$ = "" THEN keep$ = "mail"
+    RETURN day$ + " " + keep$ + ".eml"
+ENDFUNC
