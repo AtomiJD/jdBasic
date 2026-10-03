@@ -662,6 +662,14 @@ void LLVMCodegen::declare_runtime_functions() {
     // Unified tagged dispatchers (handle both native map + VM handles)
     reg("jdrt_tagged_get",     "__jdrt_tagged_get",     i32_type,
         {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    // Members of runtime objects (COM properties and methods, VM fields).
+    reg("jdrt_member_get",  "__jdrt_member_get",  i32_type,
+        {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdrt_member_set",  "__jdrt_member_set",  void_type,
+        {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i64_type, i32_type}, -1);
+    reg("jdrt_member_call", "__jdrt_member_call", i32_type,
+        {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i8_ptr_type, i8_ptr_type,
+         i32_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_tagged_arr_get", "__jdrt_tagged_arr_get", i32_type,
         {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_tagged_arr_set", "__jdrt_tagged_arr_set", void_type,
@@ -1016,14 +1024,25 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (e.kind == ExprKind::ARRAY_LITERAL) return JD_TAG_ARR;
         if (e.kind == ExprKind::MAP_LITERAL)   return JD_TAG_NATIVE_MAP;
         if (e.kind == ExprKind::LITERAL_STRING) return JD_TAG_STR;
+        // A member of a variable that holds an object is known only at run time.
+        auto on_object = [&](const std::string& dotted) {
+            size_t dp = dotted.find('.');
+            if (dp == std::string::npos || dp == 0) return false;
+            if (decls.count(dotted) || builtin_sig(dotted)) return false;
+            auto hit = pre_var_tags.find(dotted.substr(0, dp));
+            return hit != pre_var_tags.end() &&
+                   (hit->second == JD_TAG_VM_HANDLE || hit->second == JD_TAG_RUNTIME);
+        };
         if (e.kind == ExprKind::VARIABLE) {
             if (!e.str_val.empty() && e.str_val.back() == '$') return JD_TAG_STR;
             auto it = pre_var_tags.find(e.str_val);
             if (it != pre_var_tags.end()) return it->second;
+            if (on_object(e.str_val)) return JD_TAG_RUNTIME;
             return JD_TAG_F64;
         }
         if (e.kind == ExprKind::CALL) {
             if (!e.func_name.empty() && e.func_name.back() == '$') return JD_TAG_STR;
+            if (on_object(e.func_name)) return JD_TAG_RUNTIME;
             auto rit = runtime_funcs.find(e.func_name);
             if (rit != runtime_funcs.end()) return rit->second.return_tag;
             auto fit = decls.find(e.func_name);
@@ -1037,6 +1056,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 return fit->second.return_tag;
             }
             if (builtin_is(e.func_name, BuiltinRet::Arr)) return JD_TAG_ARR;
+            if (is_handle_returner(e.func_name)) return JD_TAG_VM_HANDLE;
         }
         return JD_TAG_F64;
     };
@@ -2694,7 +2714,31 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         bool index_hit = false;
         for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++)
             local_kind[decl.stmt->params()[pi].name] = decl.tags[pi];
+        // A member read off an object (a COM object or a VM value) is
+        // runtime-typed: a dotted name on a parameter, local or global that
+        // holds one, a member of such a read, or a method called on it.
+        std::function<bool(const Expr&)> member_read = [&](const Expr& x) -> bool {
+            if (x.kind == ExprKind::MEMBER_ACCESS && x.left) return member_read(*x.left);
+            if (x.kind == ExprKind::CALL && x.func_name == "__METHOD__" && x.left)
+                return member_read(*x.left);
+            std::string dotted;
+            if (x.kind == ExprKind::CALL) dotted = x.func_name;
+            else if (x.kind == ExprKind::VARIABLE) dotted = x.str_val;
+            else return false;
+            size_t dp = dotted.find('.');
+            if (dp == std::string::npos || dp == 0) return false;
+            if (decls.count(dotted) || builtin_sig(dotted)) return false;
+            std::string head = dotted.substr(0, dp);
+            if (var_udt_type.count(head)) return false;
+            auto lk = local_kind.find(head);
+            if (lk != local_kind.end())
+                return lk->second == JD_TAG_VM_HANDLE || lk->second == JD_TAG_RUNTIME;
+            auto gk = pre_var_tags.find(head);
+            return gk != pre_var_tags.end() &&
+                   (gk->second == JD_TAG_VM_HANDLE || gk->second == JD_TAG_RUNTIME);
+        };
         auto kind_of = [&](const Expr& e) -> int {
+            if (member_read(e)) return JD_TAG_RUNTIME;
             switch (e.kind) {
                 case ExprKind::MAP_LITERAL:    return JD_TAG_NATIVE_MAP;
                 case ExprKind::ARRAY_LITERAL:  return JD_TAG_ARR;
@@ -3825,6 +3869,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             if (dp != std::string::npos) {
                 std::string prefix = stmt->var_name.substr(0, dp);
                 if (udt_var_names.count(prefix) || var_udt_type.count(prefix)) continue;
+                std::vector<std::string> mparts;
+                if (member_chain(stmt->var_name, mparts)) continue;
             }
             // Don't shadow the math constants.
             {
@@ -3868,6 +3914,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             if (uit_pre->second.is_async) return JD_TAG_I64;
                             return uit_pre->second.return_tag;
                         }
+                        {
+                            std::vector<std::string> mparts;
+                            if (member_chain(e->func_name, mparts)) return JD_TAG_RUNTIME;
+                        }
                         std::string upper = e->func_name;
                         std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
                         for (auto& a : e->args) {
@@ -3894,6 +3944,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     if (e->kind == ExprKind::VARIABLE) {
                         VarInfo* v = lookup_var(e->str_val);
                         if (v) return v->tag;
+                        {
+                            std::vector<std::string> mparts;
+                            if (member_chain(e->str_val, mparts)) return JD_TAG_RUNTIME;
+                        }
                         // Bare-identifier constants like PI, E
                         std::string up = e->str_val;
                         std::transform(up.begin(), up.end(), up.begin(), ::toupper);
@@ -5243,6 +5297,11 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 }
                 return;
             }
+        }
+        std::vector<std::string> mparts;
+        if (member_chain(stmt.var_name, mparts)) {
+            member_set(mparts, codegen_expr(*stmt.expr), stmt.line);
+            return;
         }
     }
 
@@ -7025,6 +7084,12 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     if (!stmt.print_exprs.empty() && !stmt.label.empty()) {
         TypedValue obj = codegen_expr(*stmt.print_exprs[0]);
         TypedValue val = codegen_expr(*stmt.expr);
+        if (expr_udt_type(*stmt.print_exprs[0]).empty() &&
+            (obj.tag == JD_TAG_VM_HANDLE ||
+             (obj.tag == JD_TAG_RUNTIME && member_expr(*stmt.print_exprs[0])))) {
+            member_set_value(obj, stmt.label, val);
+            return;
+        }
         LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, stmt.label.c_str(), ".fld");
 
         // Decode ptr from f64/i64 if needed (e.g. array element holding UDT)
@@ -8708,6 +8773,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // compile error. Dotted names (module.var) are skipped -
                 // those land here when the module target isn't a known UDT
                 // and are better reported at their specific use site.
+                {
+                    std::vector<std::string> mparts;
+                    if (member_chain(expr.str_val, mparts))
+                        return member_walk(mparts, mparts.size(), expr.line);
+                }
                 if (is_explicit_here(m_current_stmt_file) &&
                     expr.str_val.find('.') == std::string::npos) {
                     report_error(m_current_stmt_file, expr.line,
@@ -8756,6 +8826,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             TypedValue obj = codegen_expr(*expr.left);
             std::string field_name = expr.str_val;
             LLVMValueRef obj_ptr = obj.val;
+
+            // A member of a runtime object (a COM object or a VM value) is
+            // read through the bridge.
+            {
+                bool udt_owner = !expr_udt_type(*expr.left).empty();
+                if (!udt_owner && (obj.tag == JD_TAG_VM_HANDLE ||
+                                   (obj.tag == JD_TAG_RUNTIME && member_expr(*expr.left))))
+                    return member_get(obj, field_name);
+            }
 
             // Decode ptr from f64/i64 if needed (e.g. array element)
             if (obj.tag == JD_TAG_F64) {
@@ -10971,6 +11050,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // taken for the base of that step and rejected as a scalar.
     ScopedPtrResult _args_no_ptr(this, false);
 
+    if (name.find('.') != std::string::npos) {
+        std::vector<std::string> mparts;
+        if (member_chain(name, mparts)) return member_call(mparts, expr);
+    }
+
     // CHAN.* and the FILE.* streaming primitives route through the generic
     // VM-bridge dispatch (jdrt_call_typed_*), so the runtime DLL serves them
     // from its in-process VM like any other native. The return-type
@@ -11143,6 +11227,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
         // Evaluate the object expression
         TypedValue obj = codegen_expr(*member.left);
+        if (expr_udt_type(*member.left).empty() &&
+            (obj.tag == JD_TAG_VM_HANDLE ||
+             (obj.tag == JD_TAG_RUNTIME && member_expr(*member.left))))
+            return member_call_on(obj, method_name, expr.args);
         LLVMValueRef obj_ptr = obj.val;
         // Decode ptr from f64/i64 if needed (e.g. array element)
         if (obj.tag == JD_TAG_F64) {
@@ -14061,6 +14149,149 @@ LLVMValueRef LLVMCodegen::runtime_to_text(LLVMValueRef bits, LLVMValueRef rtag) 
     LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "rtt");
     LLVMAddIncoming(phi, vals, ends, n);
     return phi;
+}
+
+// Whether a dotted name is a member chain on a runtime object: its first
+// part is a variable in scope that holds an object, and the whole name is
+// no variable, function or builtin of its own. parts gets the segments.
+bool LLVMCodegen::member_chain(const std::string& dotted, std::vector<std::string>& parts) {
+    if (dotted.find('.') == std::string::npos) return false;
+    if (user_functions.count(dotted) || runtime_funcs.count(dotted)) return false;
+    if (builtin_sig(dotted)) return false;
+    if (lookup_var(dotted)) return false;
+    parts.clear();
+    for (size_t st = 0;;) {
+        size_t nd = dotted.find('.', st);
+        parts.push_back(dotted.substr(st, nd == std::string::npos ? std::string::npos : nd - st));
+        if (nd == std::string::npos) break;
+        st = nd + 1;
+    }
+    if (parts.size() < 2 || parts[0].empty()) return false;
+    for (auto& p : parts) if (p.empty()) return false;
+    if (var_udt_type.count(parts[0])) return false;
+    VarInfo* vi = lookup_var(parts[0]);
+    if (!vi) return false;
+    return vi->tag == JD_TAG_VM_HANDLE || vi->tag == JD_TAG_RUNTIME;
+}
+
+// A member of a runtime object, read through the bridge.
+LLVMCodegen::TypedValue LLVMCodegen::member_get(const TypedValue& obj, const std::string& name) {
+    LLVMValueRef bits = nullptr, tag = nullptr;
+    to_bits_tag(obj, bits, tag);
+    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+    LLVMValueRef name_ptr = LLVMBuildGlobalStringPtr(builder, name.c_str(), ".mbr");
+    LLVMValueRef out = scratch_alloca(i64_type, "mbr_out");
+    auto& fn = runtime_funcs["__jdrt_member_get"];
+    LLVMValueRef args[] = { rt, bits, tag, name_ptr, out };
+    LLVMValueRef rtag = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 5, "mbr_tag");
+    LLVMValueRef rval = LLVMBuildLoad2(builder, i64_type, out, "mbr_val");
+    emit_err_check();
+    return { rval, JD_TAG_RUNTIME, rtag };
+}
+
+// The object a member chain ends on: the head variable, then every part
+// before index upto read as a member.
+LLVMCodegen::TypedValue LLVMCodegen::member_walk(const std::vector<std::string>& parts,
+                                                 size_t upto, int line) {
+    Expr head;
+    head.kind = ExprKind::VARIABLE;
+    head.str_val = parts[0];
+    head.line = line;
+    TypedValue cur = codegen_expr(head);
+    for (size_t i = 1; i < upto && i < parts.size(); i++) cur = member_get(cur, parts[i]);
+    return cur;
+}
+
+// Calls the last part of a member chain as a method with the arguments
+// of the call expression.
+LLVMCodegen::TypedValue LLVMCodegen::member_call(const std::vector<std::string>& parts,
+                                                 const Expr& call) {
+    return member_call_on(member_walk(parts, parts.size() - 1, call.line), parts.back(), call.args);
+}
+
+// Calls a method of a runtime object with the given argument expressions.
+LLVMCodegen::TypedValue LLVMCodegen::member_call_on(const TypedValue& obj, const std::string& method,
+                                                    const std::vector<ExprPtr>& call_args) {
+    LLVMValueRef obits = nullptr, otag = nullptr;
+    to_bits_tag(obj, obits, otag);
+    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+    int nargs = (int)call_args.size();
+    LLVMValueRef args_ptr = LLVMConstNull(i8_ptr_type);
+    LLVMValueRef tags_ptr = LLVMConstNull(i8_ptr_type);
+    if (nargs > 0) {
+        LLVMTypeRef args_ty = LLVMArrayType(i64_type, nargs);
+        LLVMTypeRef tags_ty = LLVMArrayType(i32_type, nargs);
+        args_ptr = scratch_alloca(args_ty, "mbr_args");
+        tags_ptr = scratch_alloca(tags_ty, "mbr_tags");
+        for (int i = 0; i < nargs; i++) {
+            TypedValue av = codegen_expr(*call_args[i]);
+            LLVMValueRef bits = nullptr, tag = nullptr;
+            if (av.tag == JD_TAG_NATIVE_MAP) {
+                if (auto* boxer = get_runtime_func("__jdrt_map_to_handle")) {
+                    LLVMValueRef bargs[] = { rt, av.val };
+                    bits = LLVMBuildCall2(builder, boxer->fn_type, boxer->fn, bargs, 2, "mbr_mtoh");
+                    tag = LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0);
+                }
+            }
+            if (!bits) to_bits_tag(av, bits, tag);
+            LLVMValueRef ix[] = { LLVMConstInt(i32_type, 0, 0), LLVMConstInt(i32_type, i, 0) };
+            LLVMBuildStore(builder, bits,
+                LLVMBuildInBoundsGEP2(builder, args_ty, args_ptr, ix, 2, "mbr_aslot"));
+            LLVMBuildStore(builder, tag,
+                LLVMBuildInBoundsGEP2(builder, tags_ty, tags_ptr, ix, 2, "mbr_tslot"));
+        }
+    }
+    LLVMValueRef name_ptr = LLVMBuildGlobalStringPtr(builder, method.c_str(), ".mth");
+    LLVMValueRef out = scratch_alloca(i64_type, "mth_out");
+    auto& fn = runtime_funcs["__jdrt_member_call"];
+    LLVMValueRef cargs[] = { rt, obits, otag, name_ptr, args_ptr, tags_ptr,
+                             LLVMConstInt(i32_type, nargs, 0), out };
+    LLVMValueRef rtag = LLVMBuildCall2(builder, fn.fn_type, fn.fn, cargs, 8, "mth_tag");
+    LLVMValueRef rval = LLVMBuildLoad2(builder, i64_type, out, "mth_val");
+    emit_err_check();
+    return { rval, JD_TAG_RUNTIME, rtag };
+}
+
+// Whether an expression reads a member chain: a dotted call or name on a
+// runtime object, or a member of one.
+bool LLVMCodegen::member_expr(const Expr& x) {
+    std::vector<std::string> mp;
+    if (x.kind == ExprKind::CALL && x.func_name == "__METHOD__" && x.left)
+        return member_expr(*x.left);
+    if (x.kind == ExprKind::CALL) return member_chain(x.func_name, mp);
+    if (x.kind == ExprKind::VARIABLE) return member_chain(x.str_val, mp);
+    if (x.kind == ExprKind::MEMBER_ACCESS && x.left) return member_expr(*x.left);
+    return false;
+}
+
+// Writes the last part of a member chain with a value.
+void LLVMCodegen::member_set(const std::vector<std::string>& parts, const TypedValue& val, int line) {
+    member_set_value(member_walk(parts, parts.size() - 1, line), parts.back(), val);
+}
+
+// Writes a member of a runtime object with a value.
+void LLVMCodegen::member_set_value(const TypedValue& obj, const std::string& name,
+                                   const TypedValue& val) {
+    LLVMValueRef obits = nullptr, otag = nullptr;
+    to_bits_tag(obj, obits, otag);
+    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+    LLVMValueRef vbits = nullptr, vtag = nullptr;
+    if (val.tag == JD_TAG_NATIVE_MAP) {
+        if (auto* boxer = get_runtime_func("__jdrt_map_to_handle")) {
+            LLVMValueRef bargs[] = { rt, val.val };
+            vbits = LLVMBuildCall2(builder, boxer->fn_type, boxer->fn, bargs, 2, "mbs_mtoh");
+            vtag = LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0);
+        }
+    }
+    if (!vbits) to_bits_tag(val, vbits, vtag);
+    LLVMValueRef name_ptr = LLVMBuildGlobalStringPtr(builder, name.c_str(), ".mbs");
+    auto& fn = runtime_funcs["__jdrt_member_set"];
+    LLVMValueRef args[] = { rt, obits, otag, name_ptr, vbits, vtag };
+    LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 6, "");
+    emit_err_check();
 }
 
 void LLVMCodegen::to_bits_tag(const TypedValue& tv, LLVMValueRef& bits, LLVMValueRef& tag) {

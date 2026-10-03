@@ -212,6 +212,9 @@ Returns `"INT64"` for 64-bit integers and `"FLOAT64"` for floating point values.
 * `VT_I8` maps to jdBasic **INTEGER**
 * `VT_UI8` maps to **INTEGER** when ≤ `2^63-1`, otherwise to **DOUBLE**
 * Other COM numeric types map to **DOUBLE**
+* `CREATEOBJECT(progID$)` answers the object; properties are read and written and methods called with dots, also in chains: `xl.Visible = FALSE`, `DIM wb = xl.Workbooks.Add()`, `PRINT sh.Cells(1, 1).Value`.
+* Compiled with `-c`, the same code runs natively when both `build.bat` and `build_rt.bat` were built with `COM`: a dotted name whose first part is a variable holding an object is resolved at run time through the runtime DLL. A variable that takes such a member is runtime-typed, so `OPTION "STRICT"` accepts `DIM wb = xl.Workbooks.Add()`.
+* An array a COM method answers (a SAFEARRAY, such as `Scripting.Dictionary.Keys()`) arrives empty in both backends.
 
 ### Examples
 

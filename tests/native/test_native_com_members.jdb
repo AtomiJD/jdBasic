@@ -1,0 +1,58 @@
+' COM objects in both backends: properties read and written, methods
+' called with and without arguments, a chain of members, an object handed
+' to a function, and Excel when it is installed (it stays invisible).
+OPTION "EXPLICIT"
+
+FUNC Size(dict)
+    RETURN dict.Count
+ENDFUNC
+
+SUB AddAll(dict, keys)
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        dict.Add(keys[k], k * 10)
+    NEXT k
+ENDSUB
+
+DIM d = CREATEOBJECT("Scripting.Dictionary")
+d.CompareMode = 1
+PRINT "mode "; d.CompareMode
+d.Add("one", 1)
+d.Add("two", "zwei")
+PRINT "count "; d.Count
+PRINT "item "; d.Item("two")
+PRINT "exists "; d.Exists("one"); " "; d.Exists("three")
+AddAll(d, ["a", "b", "c"])
+PRINT "size "; Size(d)
+d.Remove("a")
+PRINT "after remove "; d.Count
+DIM keys = d.Keys()
+PRINT "keys "; LEN(keys)
+d.RemoveAll()
+PRINT "empty "; d.Count
+
+TRY
+    DIM bogus = d.NoSuchMethod()
+    PRINT "no error"
+CATCH
+    PRINT "unknown member caught"
+ENDTRY
+
+DIM excel_state$ = "excel: not installed"
+TRY
+    DIM xl = CREATEOBJECT("Excel.Application")
+    xl.Visible = FALSE
+    xl.DisplayAlerts = FALSE
+    DIM wb = xl.Workbooks.Add()
+    DIM sh = wb.Worksheets(1)
+    DIM a1 = sh.Cells(1, 1)
+    a1.Value = 19
+    DIM a2 = sh.Cells(2, 1)
+    a2.Formula = "=A1*2+4"
+    excel_state$ = "excel: " + STR$(a2.Value) + " in sheet " + wb.Worksheets(1).Name
+    wb.Close(FALSE)
+    xl.Quit()
+CATCH
+    excel_state$ = "excel: not installed"
+ENDTRY
+PRINT excel_state$

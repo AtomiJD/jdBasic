@@ -58,6 +58,7 @@ extern void register_sql_builtins(VM& vm);
 #endif
 #ifdef COM
 extern void register_com_builtins(VM& vm);
+#include "com.h"
 #endif
 #ifdef HTTP
 extern void register_http_builtins(VM& vm);
@@ -1201,6 +1202,136 @@ JDRT_API int32_t jdrt_val_kind(JdRT handle, int64_t h) {
 
 // Pull `key` out of the VM Value stored at handle `h` and return it as a
 // (tag, bits) pair. Used by the tag-7 dispatch path in compiled code.
+// A VM value as the bits and tag native code reads: strings as native
+// strings, flat numeric arrays as JdbArray, objects and mixed arrays as
+// VM handles, integers and booleans with their own tag.
+static int32_t value_to_tagged(JdRTImpl* rt, const Value& v, int64_t* out_val) {
+    *out_val = 0;
+    union { double d; int64_t i; } u;
+    switch (v.type) {
+        case ValueType::STRING:
+            *out_val = (int64_t)(intptr_t)native_str_from_string(v.as_string()->data);
+            return jd_tag(JdTag::STR);
+        case ValueType::ARRAY: {
+            auto* arr = v.as_array();
+            bool pure_numeric = true;
+            for (auto& e : arr->elements) {
+                if (e.type == ValueType::STRING || e.type == ValueType::OBJECT ||
+                    e.type == ValueType::ARRAY) {
+                    pure_numeric = false; break;
+                }
+            }
+            if (pure_numeric) {
+                *out_val = (int64_t)(intptr_t)value_to_jdbarray(v);
+                return jd_tag(JdTag::ARR);
+            }
+            *out_val = rt->store_value(v);
+            return jd_tag(JdTag::VM_HANDLE);
+        }
+        case ValueType::OBJECT:
+            *out_val = rt->store_value(v);
+            return jd_tag(JdTag::VM_HANDLE);
+        case ValueType::INT64:
+            *out_val = v.to_int();
+            return jd_tag(JdTag::I64);
+        case ValueType::BOOLEAN:
+            *out_val = v.to_int() ? 1 : 0;
+            return jd_tag(JdTag::BOOL);
+        case ValueType::NONE:
+            return jd_tag(JdTag::NONE);
+        default:
+            if (is_numeric(v.type)) {
+                u.d = v.to_double();
+                *out_val = u.i;
+                return jd_tag(JdTag::F64);
+            }
+            *out_val = rt->store_value(v);
+            return jd_tag(JdTag::VM_HANDLE);
+    }
+}
+
+// A member of a runtime value: a COM property, or a field of a VM object.
+// Answers the tag and writes the bits to out_val; an error is kept for
+// the caller's error check and answers NONE.
+JDRT_API int32_t jdrt_member_get(JdRT handle, int64_t obj_bits, int32_t obj_tag,
+                                 const char* name, int64_t* out_val) {
+    *out_val = 0;
+    auto* rt = resolve_rt(handle);
+    try {
+        Value obj = typed_args_to_values(rt, &obj_bits, &obj_tag, 1)[0];
+        Value r;
+#ifdef COM
+        if (com_try_get_field(obj, name, r)) {
+            rt->last_error.clear();
+            return value_to_tagged(rt, r, out_val);
+        }
+#endif
+        if (obj_tag == jd_tag(JdTag::VM_HANDLE)) {
+            const Value* v = obj_field(rt, obj_bits, name);
+            if (v) {
+                rt->last_error.clear();
+                return value_to_tagged(rt, *v, out_val);
+            }
+        }
+        throw std::runtime_error(std::string("no member '") + name + "'");
+    } catch (const std::exception& e) {
+        rt->last_error = e.what();
+        return jd_tag(JdTag::NONE);
+    }
+}
+
+// Sets a member of a runtime value: a COM property, or a field of a VM
+// object.
+JDRT_API void jdrt_member_set(JdRT handle, int64_t obj_bits, int32_t obj_tag,
+                              const char* name, int64_t val_bits, int32_t val_tag) {
+    auto* rt = resolve_rt(handle);
+    try {
+        Value obj = typed_args_to_values(rt, &obj_bits, &obj_tag, 1)[0];
+        Value val = typed_args_to_values(rt, &val_bits, &val_tag, 1)[0];
+#ifdef COM
+        if (com_try_set_field(obj, name, val)) {
+            rt->last_error.clear();
+            return;
+        }
+#endif
+        if (obj_tag == jd_tag(JdTag::VM_HANDLE)) {
+            jdrt_obj_set_tagged(handle, obj_bits, name, val_bits, val_tag);
+            return;
+        }
+        throw std::runtime_error(std::string("cannot set member '") + name + "'");
+    } catch (const std::exception& e) {
+        rt->last_error = e.what();
+    }
+}
+
+// Calls a method of a runtime value (a COM object) with typed arguments;
+// answers the result's tag and writes its bits to out_val.
+JDRT_API int32_t jdrt_member_call(JdRT handle, int64_t obj_bits, int32_t obj_tag,
+                                  const char* name, const int64_t* args,
+                                  const int32_t* tags, int nargs, int64_t* out_val) {
+    *out_val = 0;
+    auto* rt = resolve_rt(handle);
+    try {
+        Value obj = typed_args_to_values(rt, &obj_bits, &obj_tag, 1)[0];
+        auto vargs = typed_args_to_values(rt, args, tags, nargs);
+        Value r;
+#ifdef COM
+        if (com_try_call_method(obj, name, vargs, r)) {
+            rt->last_error.clear();
+            return value_to_tagged(rt, r, out_val);
+        }
+        if (vargs.empty() && com_try_get_field(obj, name, r)) {
+            rt->last_error.clear();
+            return value_to_tagged(rt, r, out_val);
+        }
+#endif
+        throw std::runtime_error(std::string("no method '") + name + "'");
+    } catch (const std::exception& e) {
+        rt->last_error = e.what();
+        return jd_tag(JdTag::NONE);
+    }
+}
+
 JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, int64_t* out_val) {
     *out_val = 0;
     auto* rt = resolve_rt(handle);

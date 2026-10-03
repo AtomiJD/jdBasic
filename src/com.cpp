@@ -283,6 +283,12 @@ void register_com_builtins(VM& vm) {
     vm.register_native("CREATEOBJECT", [](const std::vector<Value>& args) -> Value {
         std::string progId = args[0].as_string()->data;
         std::wstring wProgId = to_wide(progId);
+        // COM is set up once per thread; a host that already did so keeps its mode.
+        static thread_local bool com_ready = false;
+        if (!com_ready) {
+            CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+            com_ready = true;
+        }
 
         CLSID clsid;
         HRESULT hr = CLSIDFromProgID(wProgId.c_str(), &clsid);

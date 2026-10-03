@@ -167,6 +167,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"CONVOLVE", BuiltinRet::Arr, BF_NO_VEC},
     {"COPYV", BuiltinRet::Unknown, BF_NO_VEC},
     {"COUNT", BuiltinRet::I64, BF_NO_VEC},
+    {"CREATEOBJECT", BuiltinRet::Handle, BF_NO_VEC},
     {"CROSS", BuiltinRet::F64, BF_NO_VEC},
     {"CSVHEADER", BuiltinRet::Arr, BF_NO_VEC},
     {"CSVREADER", BuiltinRet::Arr, BF_NO_VEC},

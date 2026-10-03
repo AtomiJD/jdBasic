@@ -22,7 +22,7 @@ jdBasic uses a modular feature-flag build system: you pick the features you want
 | `ONNX`      | ONNX Runtime (`AI.LOAD`, `AI.RUN`)                           | links `onnxruntime`. Env `JDB_ONNX_PROVIDER={cuda,tensorrt}` switches execution provider at session creation |
 | `NATIVEC`   | LLVM-based native compiler: `jdBasic -c file.jdb -> file.exe`| `src/llvm_codegen.cpp` (links LLVM-C) |
 | `MCPSERVER` | `jdBasic --mcp` mode (stdio MCP server, persistent VM)       | `src/mcp_stdio.cpp` |
-| `COM`       | Windows COM automation (`CreateObject(...)`)                 | `src/com.cpp` (Windows only) |
+| `COM`       | Windows COM automation (`CreateObject(...)`); for `-c` also in `build_rt.bat` | `src/com.cpp` (Windows only) |
 | `SERIAL`    | Serial port I/O                                              | `src/serial.cpp` |
 | `RELEASE`   | Stamps a build number + date into the binary                 | bumps `build_number.txt` |
 

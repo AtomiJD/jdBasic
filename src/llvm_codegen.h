@@ -519,6 +519,15 @@ private:
                               const std::function<TypedValue()>& getter);
     // Any value as (i64 bits, i32 tag), the pair a runtime-tagged slot holds.
     void to_bits_tag(const TypedValue& tv, LLVMValueRef& bits, LLVMValueRef& tag);
+    bool member_chain(const std::string& dotted, std::vector<std::string>& parts);
+    TypedValue member_get(const TypedValue& obj, const std::string& name);
+    TypedValue member_walk(const std::vector<std::string>& parts, size_t upto, int line);
+    TypedValue member_call(const std::vector<std::string>& parts, const Expr& call);
+    TypedValue member_call_on(const TypedValue& obj, const std::string& method,
+                              const std::vector<ExprPtr>& call_args);
+    void member_set(const std::vector<std::string>& parts, const TypedValue& val, int line);
+    void member_set_value(const TypedValue& obj, const std::string& name, const TypedValue& val);
+    bool member_expr(const Expr& x);
     // A runtime-tagged value rendered the way PRINT would show it.
     LLVMValueRef runtime_to_text(LLVMValueRef bits, LLVMValueRef rtag);
     RuntimeFunc* get_runtime_func(const std::string& name);
