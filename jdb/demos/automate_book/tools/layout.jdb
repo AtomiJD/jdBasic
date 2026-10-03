@@ -633,13 +633,18 @@ SUB TableBlock(ctx, b)
         IF LEN(rows[r]) > n_cols THEN n_cols = LEN(rows[r])
     NEXT r
     DIM natural = ZEROS(n_cols)
+    DIM longest = ZEROS(n_cols)
     FOR r = 0 TO LEN(rows) - 1
+        DIM row_sty$ = ""
+        IF r = 0 THEN row_sty$ = "B"
         FOR c = 0 TO LEN(rows[r]) - 1
             DIM cell_w = 0
             DIM ws = Words(rows[r][c])
             DIM k = 0
             FOR k = 0 TO LEN(ws) - 1
-                cell_w = cell_w + WordWidth(ctx, ws[k], pt, "") + 1.2
+                DIM one_w = WordWidth(ctx, ws[k], pt, row_sty$)
+                cell_w = cell_w + one_w + 1.2
+                IF one_w + 2 * pad + 0.5 > longest[c] THEN longest[c] = one_w + 2 * pad + 0.5
             NEXT k
             IF cell_w > natural[c] THEN natural[c] = cell_w
         NEXT c
@@ -654,6 +659,7 @@ SUB TableBlock(ctx, b)
             col_w[c] = avail * (natural[c] + 8) / (total + 8 * n_cols)
         ENDIF
     NEXT c
+    WidenToLongest(col_w, longest, avail)
     ctx{"y"} = ctx{"y"} + 1.5
     DIM header_lines = TableRowLines(ctx, rows[0], col_w, pt, pad, "B")
     FOR r = 0 TO LEN(rows) - 1
@@ -673,13 +679,84 @@ SUB TableBlock(ctx, b)
     ctx{"y"} = ctx{"y"} + 3.5
 ENDSUB
 
+' Widens every column that is narrower than its longest word, taking the
+' room from the columns that have more than their longest word needs.
+' When the page is too narrow for all of them, the words are broken.
+SUB WidenToLongest(col_w, longest, avail)
+    IF SUM(longest) > avail THEN RETURN
+    DIM n = LEN(col_w)
+    DIM c = 0
+    DIM need = 0
+    DIM spare = 0
+    FOR c = 0 TO n - 1
+        IF col_w[c] < longest[c] THEN
+            need = need + longest[c] - col_w[c]
+        ELSE
+            spare = spare + col_w[c] - longest[c]
+        ENDIF
+    NEXT c
+    IF need <= 0 ORELSE spare <= 0 THEN RETURN
+    DIM share = need / spare
+    FOR c = 0 TO n - 1
+        IF col_w[c] < longest[c] THEN
+            col_w[c] = longest[c]
+        ELSE
+            col_w[c] = col_w[c] - (col_w[c] - longest[c]) * share
+        ENDIF
+    NEXT c
+ENDSUB
+
+' The words of a cell with every word that is wider than wd broken into
+' parts that fit, after a "/", "." or "_" where one is near, otherwise
+' between two characters.
+FUNC SplitLong(ctx, words, wd, pt, sty$)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(words) - 1
+        DIM w = words[k]
+        IF WordWidth(ctx, w, pt, sty$) <= wd THEN
+            PUSH(out, w)
+        ELSE
+            DIM chars = []
+            DIM j = 0
+            FOR j = 0 TO LEN(w) - 1
+                DIM p = w[j]
+                DIM cs = -(p{"t"})
+                DIM i = 0
+                FOR i = 0 TO LEN(cs) - 1
+                    PUSH(chars, {"t": cs[i], "sty": p{"sty"}, "href": p{"href"}})
+                NEXT i
+            NEXT j
+            DIM part = []
+            DIM cut_after = -1
+            FOR j = 0 TO LEN(chars) - 1
+                DIM ch = chars[j]
+                PUSH(part, ch)
+                IF WordWidth(ctx, part, pt, sty$) > wd ANDALSO LEN(part) > 1 THEN
+                    DIM keep = LEN(part) - 1
+                    IF cut_after >= 0 THEN keep = cut_after + 1
+                    PUSH(out, TAKE(keep, part))
+                    part = DROP(keep, part)
+                    cut_after = -1
+                ENDIF
+                DIM t$ = ch{"t"}
+                IF t$ = "/" ORELSE t$ = "." ORELSE t$ = "_" THEN cut_after = LEN(part) - 1
+            NEXT j
+            IF LEN(part) > 0 THEN PUSH(out, part)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
 FUNC TableRowLines(ctx, row, col_w, pt, pad, sty$)
     DIM out = []
     DIM c = 0
     FOR c = 0 TO LEN(col_w) - 1
         DIM txt$ = ""
         IF c < LEN(row) THEN txt$ = row[c]
-        PUSH(out, BreakLines(ctx, Words(txt$), col_w[c] - 2 * pad, pt, sty$))
+        DIM cell_wd = col_w[c] - 2 * pad
+        DIM cell_words = SplitLong(ctx, Words(txt$), cell_wd, pt, sty$)
+        PUSH(out, BreakLines(ctx, cell_words, cell_wd, pt, sty$))
     NEXT c
     RETURN out
 ENDFUNC
@@ -723,6 +800,7 @@ ENDSUB
 ' leaders to the page numbers; in the screen mode every entry is a link.
 SUB Contents(ctx)
     DIM s = ctx{"s"}
+    ctx{"chapter"} = "Contents"
     DIM doc = ctx{"doc"}
     DIM entries = ctx{"toc"}
     DIM title_lines = BreakLines(ctx, Words("Contents"), TextWidth(ctx), 22, "B")

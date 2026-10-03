@@ -460,14 +460,14 @@ FUNC RecipeTable$(r)
             key$ = MID$(key$, LEN(row{"part"}) + 1, LEN(key$))
             others = others + 1
         ELSEIF NOT row{"declared"} THEN
-            label$ = "read by the program, not asked by the wizard \*"
+            label$ = "read by the program, not asked by the wizard (see below)"
             notes = notes + 1
         ENDIF
         PUSH(out, "| `" + key$ + "` | " + label$ + " | " + row{"kind"} + " | " + row{"default"} + " |")
     NEXT k
     IF notes > 0 THEN
         PUSH(out, "")
-        PUSH(out, "\* Add the key to `[" + r{"section"} + "]` yourself to change it; the default is the program's.")
+        PUSH(out, "For a key marked *see below*, add it to `[" + r{"section"} + "]` yourself to change it; the default is the program's.")
     ENDIF
     RETURN JOIN(out, gLF$)
 ENDFUNC

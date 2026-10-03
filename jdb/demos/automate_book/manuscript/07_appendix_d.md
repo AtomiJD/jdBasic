@@ -48,9 +48,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `source` | Folder to tidy | folder | `"~/Downloads"` |
 | `target` | Folder to sort into | folder | `"~/Downloads/Sorted"` |
 | `min_age_hours` | Leave files younger than (hours) | number | `24` |
-| `rules` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `rules` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[downloads_butler]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[downloads_butler]` yourself to change it; the default is the program's.
 
 ### E02 Morning Launcher: `[morning_launcher]`
 
@@ -86,9 +86,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `every_minutes` | Remind me every (minutes) | number | `50` |
 | `workdays_only` | Only Monday to Friday | bool | `true` |
 | `message` | The reminder text | text | `"Time for a break: stand up, stretch, drink some water."` |
-| `state_file` | read by the program, not asked by the wizard \* |  | `"~/Documents/AutomateWork/logs/break_reminder.txt"` |
+| `state_file` | read by the program, not asked by the wizard (see below) |  | `"~/Documents/AutomateWork/logs/break_reminder.txt"` |
 
-\* Add the key to `[break_reminder]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[break_reminder]` yourself to change it; the default is the program's.
 
 ### E06 Shutdown Ritual: `[shutdown_ritual]`
 
@@ -110,9 +110,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `folder` | Folder with your templates | folder | `"~/Documents/AutomateWork/templates"` |
 | `me` | Your name under the mail | text | `""` |
 | `signature` | The line before your name | text | `"Kind regards"` |
-| `values` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `values` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[mail_templates]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[mail_templates]` yourself to change it; the default is the program's.
 
 ### E09 Meeting Notes Starter: `[meeting_notes]`
 
@@ -121,9 +121,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `calendar` | Calendar file (.ics) | file | `"~/Documents/AutomateWork/calendar.ics"` |
 | `folder` | Folder for the notes | folder | `"~/Documents/Meeting notes"` |
 | `lookahead_days` | Look ahead (days) | number | `7` |
-| `utc_offset` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `utc_offset` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[meeting_notes]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[meeting_notes]` yourself to change it; the default is the program's.
 
 ### E10 Duplicate Finder: `[duplicate_finder]`
 
@@ -164,9 +164,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | Key | What it is | Kind | Default |
 |---|---|---|---|
 | `store` | Folder for the copies of the watched pages | folder | `"~/Documents/AutomateWork/watch"` |
-| `page` | read by the program, not asked by the wizard \* |  | `[]` |
+| `page` | read by the program, not asked by the wizard (see below) |  | `[]` |
 
-\* Add the key to `[page_watcher]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[page_watcher]` yourself to change it; the default is the program's.
 
 ### E15 Guest Wi-Fi Card: `[guest_wifi]`
 
@@ -237,9 +237,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `mail` | Put a mail into the outbox for each letter | bool | `true` |
 | `tab` | Sheet tab with the contacts (empty: the first) | text | `""` |
 | `file_name` | Name of each letter's file | text | `"{{name}}"` |
-| `body` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `body` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[mail_merge]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[mail_merge]` yourself to change it; the default is the program's.
 
 ### M04 Receipt Sorter: `[receipt_sorter]`
 
@@ -248,9 +248,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `inbox` | Folder where new receipts land | folder | `"~/Documents/AutomateWork/receipts/inbox"` |
 | `folder` | Folder to file the receipts in | folder | `"~/Documents/AutomateWork/receipts"` |
 | `rules` | Rules: word in the file name = category | list | `["fuel = Travel", "rail = Travel", "hotel = Travel", "taxi = Travel", "office = Office", "lunch = Meals"]` |
-| `kinds` | read by the program, not asked by the wizard \* |  | `["pdf", "jpg", "jpeg", "png"]` |
+| `kinds` | read by the program, not asked by the wizard (see below) |  | `["pdf", "jpg", "jpeg", "png"]` |
 
-\* Add the key to `[receipt_sorter]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[receipt_sorter]` yourself to change it; the default is the program's.
 
 ### M05 Shift and Vacation Planner: `[shift_planner]`
 
@@ -271,9 +271,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `to` | Who gets the status mail | list | `[]` |
 | `subject` | Subject ({week} becomes the week) | text | `"Status {week}"` |
 | `clear_done` | Remove done notes after the mail (true or false) | bool | `false` |
-| `template` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `template` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[friday_status]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[friday_status]` yourself to change it; the default is the program's.
 
 ### M07 Inbox Unpacker: `[inbox_unpacker]`
 
@@ -282,9 +282,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `inbox_folder` | Folder where you save mails (.eml) | folder | `"~/Documents/AutomateWork/saved mail"` |
 | `target_folder` | Folder for the attachments | folder | `"~/Documents/AutomateWork/attachments"` |
 | `keep_inline` | Also save pictures inside the text (true or false) | bool | `false` |
-| `done_folder` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `done_folder` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[inbox_unpacker]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[inbox_unpacker]` yourself to change it; the default is the program's.
 
 ### M08 Personal Dashboard: `[dashboard]`
 
@@ -294,9 +294,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `downloads` | Downloads folder | folder | `"~/Downloads"` |
 | `port` | Port of the page on this computer | number | `8765` |
 | `folder` | set in `[time_tracker]`, read here too |  | `"~/Documents/AutomateWork/time"` |
-| `template` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `template` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[dashboard]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[dashboard]` yourself to change it; the default is the program's.
 
 ### M09 Log Detective: `[log_detective]`
 
@@ -316,9 +316,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `rename` | New names ({date}, {time}, {name}) | text | `"{date} {name}"` |
 | `separator` | Separator in CSV files | text | `";"` |
 | `settle_seconds` | Seconds a file must rest before it is handled | number | `60` |
-| `rule` | read by the program, not asked by the wizard \* |  | `[]` |
+| `rule` | read by the program, not asked by the wizard (see below) |  | `[]` |
 
-\* Add the key to `[hot_folder]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[hot_folder]` yourself to change it; the default is the program's.
 
 ### M11 Data Cleaner: `[data_cleaner]`
 
@@ -330,10 +330,10 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `name_column` | Column with customer names to compare | text | `"Customer"` |
 | `similar` | How alike two names must be (0 to 100) | number | `85` |
 | `decimal` | Decimal mark in the files (auto, or , or .) | text | `"auto"` |
-| `columns` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
-| `output` | read by the program, not asked by the wizard \* |  | `""` |
+| `columns` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
+| `output` | read by the program, not asked by the wizard (see below) |  | `""` |
 
-\* Add the key to `[data_cleaner]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[data_cleaner]` yourself to change it; the default is the program's.
 
 ### M12 Meeting Cost Meter: `[meeting_cost]`
 
@@ -351,9 +351,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | Key | What it is | Kind | Default |
 |---|---|---|---|
 | `folder` | Folder for the snippets | folder | `"~/Documents/AutomateWork/snippets"` |
-| `values` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `values` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[snippet_tool]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[snippet_tool]` yourself to change it; the default is the program's.
 
 ### M14 Contract Diff: `[contract_diff]`
 
@@ -444,11 +444,11 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `label` | What a busy block is called | text | `"Busy (work)"` |
 | `show_titles` | Show meeting subjects (never for private ones) | bool | `false` |
 | `output` | Calendar file your personal calendar subscribes to | file | `"~/Documents/AutomateWork/calendar/work-busy.ics"` |
-| `authority` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
-| `api` | read by the program, not asked by the wizard \* |  | `"https://graph.microsoft.com/v1.0"` |
-| `token_file` | read by the program, not asked by the wizard \* |  | `"~/.automatework/calendar_token.json"` |
+| `authority` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
+| `api` | read by the program, not asked by the wizard (see below) |  | `"https://graph.microsoft.com/v1.0"` |
+| `token_file` | read by the program, not asked by the wizard (see below) |  | `"~/.automatework/calendar_token.json"` |
 
-\* Add the key to `[calendar_bridge]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[calendar_bridge]` yourself to change it; the default is the program's.
 
 ### X06 Work Cockpit: `[work_cockpit]`
 
@@ -486,9 +486,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | Key | What it is | Kind | Default |
 |---|---|---|---|
 | `allow` | Recipes the agent may run for real (ids, such as E11) | list | `[]` |
-| `module` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `module` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[ai_drive]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[ai_drive]` yourself to change it; the default is the program's.
 
 ### X11 Web Harvester: `[web_harvester]`
 
@@ -497,9 +497,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `folder` | Folder for the targets, the CSV file and the cache | folder | `"~/Documents/AutomateWork/harvest"` |
 | `delay_seconds` | Seconds between two requests to the same site | number | `5` |
 | `cache_hours` | Hours a page read once is kept | number | `12` |
-| `targets` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `targets` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[web_harvester]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[web_harvester]` yourself to change it; the default is the program's.
 
 ### X12 Tested Automations: `[tested_automations]`
 
@@ -525,9 +525,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | Key | What it is | Kind | Default |
 |---|---|---|---|
 | `summary_days` | Days the audit summary looks back | number | `7` |
-| `names` | read by the program, not asked by the wizard \* |  | `[]` |
+| `names` | read by the program, not asked by the wizard (see below) |  | `[]` |
 
-\* Add the key to `[secrets_audit]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[secrets_audit]` yourself to change it; the default is the program's.
 
 ### X15 Balance Score: `[balance_score]`
 
@@ -543,9 +543,9 @@ The mail password is never part of `work.conf`. The recipes ask for it when you 
 | `port` | Port of the page on this computer | number | `8766` |
 | `weeks` | Weeks in the trend | number | `8` |
 | `folder` | set in `[time_tracker]`, read here too |  | `"~/Documents/AutomateWork/time"` |
-| `template` | read by the program, not asked by the wizard \* |  | *worked out by the program* |
+| `template` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
 
-\* Add the key to `[balance_score]` yourself to change it; the default is the program's.
+For a key marked *see below*, add it to `[balance_score]` yourself to change it; the default is the program's.
 
 ### X16 Desktop Robot: `[desktop_robot]`
 
