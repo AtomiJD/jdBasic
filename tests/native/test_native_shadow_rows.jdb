@@ -1,0 +1,19 @@
+' A module function's local that has the name of a top-level array of
+' strings in the main program keeps its own kind: the rows a CSV file
+' gives stay rows, every time.
+IMPORT SHADOWROWS
+
+DIM rows = ["time,event,project", "2026-10-16 09:00:00,start,Old", _
+    "2026-10-16 10:00:00,stop,", "2026-10-19 08:00:00,start,Miller", _
+    "2026-10-19 10:30:00,start,Budget", "2026-10-19 12:00:00,stop,", _
+    "2026-10-23 14:00:00,start,Miller"]
+DIM path$ = MKTEMP$("shadow") + ".csv"
+TXTWRITER path$, JOIN(rows, CHR$(10)) + CHR$(10)
+DIM want$ = "Budget=1.5;Miller=4.5;"
+DIM good = 0
+DIM k = 0
+FOR k = 1 TO 30
+    IF SHADOWROWS.HOURS$(path$, "2026-10-19", "2026-10-23 16:00:00") = want$ THEN good = good + 1
+NEXT k
+PRINT good; " of 30 right"
+KILL path$

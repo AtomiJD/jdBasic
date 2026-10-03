@@ -1,0 +1,45 @@
+' Helper module for test_native_shadow_rows.jdb.
+EXPORT MODULE SHADOWROWS
+
+SUB AddBlock(per, monday$, start$, stop$, project$)
+    DIM col = DATEDIFF("D", CDATE(monday$), CDATE(start$))
+    IF col < 0 ORELSE col > 6 THEN RETURN
+    DIM minutes = DATEDIFF("N", CDATE(start$), CDATE(stop$))
+    DIM had = 0
+    IF MAP.EXISTS(per, project$) THEN had = per{project$}
+    per{project$} = had + minutes / 60
+ENDSUB
+
+' Hours per project from a time log (time,event,project) for the week
+' from monday$, as "project=hours;" text sorted by project.
+EXPORT FUNC HOURS$(log_path$, monday$, now$)
+    DIM per AS MAP
+    DIM rows = []
+    IF FILE.EXISTS(log_path$) THEN
+        DIM kinds = ["STRING", "STRING", "STRING"]
+        rows = CSVREADER(log_path$, ",", TRUE, kinds)
+    ENDIF
+    DIM start$ = ""
+    DIM project$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r = rows[k]
+        DIM when$ = r[0]
+        DIM what$ = r[1]
+        IF start$ <> "" THEN AddBlock(per, monday$, start$, when$, project$)
+        start$ = ""
+        IF what$ = "start" THEN
+            start$ = when$
+            project$ = ""
+            IF LEN(r) > 2 THEN project$ = r[2]
+        ENDIF
+    NEXT k
+    IF start$ <> "" THEN AddBlock(per, monday$, start$, now$, project$)
+    DIM names = SORT(MAP.KEYS(per))
+    DIM out$ = ""
+    FOR k = 0 TO LEN(names) - 1
+        DIM p$ = names[k]
+        out$ = out$ + p$ + "=" + STR$(per{p$}) + ";"
+    NEXT k
+    RETURN out$
+ENDFUNC

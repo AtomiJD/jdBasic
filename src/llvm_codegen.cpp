@@ -1102,6 +1102,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 }
                 if (all_str) string_array_vars.insert(s.var_name);
                 else if (any_str && !any_nested) mixed_array_vars.insert(s.var_name);
+                if (all_str || (any_str && !any_nested)) top_literal_arrays.insert(s.var_name);
             }
         }
     };
@@ -3734,6 +3735,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
         // the cells answer with their own tag.
         for (auto& name : pushed_str) {
             if (ambiguous.count(name)) continue;
+            pushed_arrays.insert(name);
             if (pushed_num.count(name)) mixed_array_vars.insert(name);
             else string_array_vars.insert(name);
         }
@@ -4883,6 +4885,27 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     auto saved_mixed_array = mixed_array_vars;
     auto saved_map_array = map_array_vars;
     auto saved_vm_array = vm_array_vars;
+    {
+        // A parameter or DIM of this function is a slot of its own: a
+        // top-level array literal of the same name says nothing about it.
+        auto forget = [&](const std::string& n) {
+            if (top_literal_arrays.count(n) && !pushed_arrays.count(n)) {
+                string_array_vars.erase(n);
+                mixed_array_vars.erase(n);
+            }
+        };
+        for (auto& pn : stmt.params()) forget(pn.name);
+        std::function<void(const Stmt&)> forget_dims = [&](const Stmt& s) {
+            if (s.kind == StmtKind::DIM && !s.var_name.empty()) forget(s.var_name);
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) return;
+            for (auto& b : s.body)         if (b) forget_dims(*b);
+            for (auto& b : s.catch_body())   if (b) forget_dims(*b);
+            for (auto& b : s.finally_body()) if (b) forget_dims(*b);
+            for (auto& br : s.branches)
+                for (auto& b : br.body) if (b) forget_dims(*b);
+        };
+        for (auto& b : stmt.body) if (b) forget_dims(*b);
+    }
     {
         std::unordered_set<std::string> dyn_dims;
         std::unordered_set<std::string> map_dims;

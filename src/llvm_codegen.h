@@ -304,6 +304,11 @@ private:
     std::unordered_set<std::string> field_array_vars;
     // The pre-pass entries for the locals and parameters of one FUNC/SUB,
     // keyed by function name; codegen_function adds them for its body only.
+    // Names marked as string or mixed arrays by a top-level array literal,
+    // and names the PUSH pre-pass marked; a function's own local or
+    // parameter of the first kind does not inherit the mark.
+    std::unordered_set<std::string> top_literal_arrays;
+    std::unordered_set<std::string> pushed_arrays;
     std::unordered_map<std::string, std::unordered_set<std::string>> local_array_array_by_fn;
     std::unordered_map<std::string, std::unordered_set<std::string>> local_field_array_by_fn;
 
