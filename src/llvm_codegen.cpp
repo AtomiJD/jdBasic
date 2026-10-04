@@ -391,6 +391,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_map_get_str","__map_get_str",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_map_has",    "__map_has",    i64_type,    {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_map_delete", "__map_delete", i64_type,    {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_map_count",  "__map_count",  i64_type,    {i8_ptr_type}, JD_TAG_I64);
     reg("jdb_map_get_obj","__map_get_obj",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_NATIVE_MAP);
     reg("jdb_str_sub",    "__str_sub",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_str_slice",  "__str_slice",  i8_ptr_type, {i8_ptr_type, i64_type, i32_type}, JD_TAG_STR);
@@ -12918,6 +12919,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { av.val };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "alen"), JD_TAG_I64 };
         }
+        if (av.tag == JD_TAG_NATIVE_MAP) {
+            auto& fn = runtime_funcs["__map_count"];
+            LLVMValueRef mptr = LLVMGetTypeKind(LLVMTypeOf(av.val)) == LLVMPointerTypeKind
+                ? av.val : LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "mptr");
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, &mptr, 1, "mlen"), JD_TAG_I64 };
+        }
         if (av.tag == JD_TAG_VM_HANDLE) {
             auto* fn = get_runtime_func("__jdrt_val_length");
             if (fn) {
@@ -12960,6 +12967,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMBasicBlockRef bb_arr_end = LLVMGetInsertBlock(builder);
 
             LLVMPositionBuilderAtEnd(builder, bb_vm);
+            LLVMValueRef is_map = LLVMBuildICmp(builder, LLVMIntEQ,
+                av.runtime_tag, LLVMConstInt(i32_type, JD_TAG_NATIVE_MAP, 0), "is_map");
+            LLVMBasicBlockRef bb_map = LLVMAppendBasicBlock(current_fn, "len7.map");
+            LLVMBasicBlockRef bb_handle = LLVMAppendBasicBlock(current_fn, "len7.handle");
+            LLVMBuildCondBr(builder, is_map, bb_map, bb_handle);
+
+            LLVMPositionBuilderAtEnd(builder, bb_map);
+            LLVMValueRef mptr = LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "mptr");
+            auto& fn_map = runtime_funcs["__map_count"];
+            LLVMValueRef mlen = LLVMBuildCall2(builder, fn_map.fn_type, fn_map.fn, &mptr, 1, "mlen");
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_map_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_handle);
             auto* fn_vm = get_runtime_func("__jdrt_val_length");
             LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
             LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
@@ -12972,9 +12993,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
             LLVMPositionBuilderAtEnd(builder, bb_join);
             LLVMValueRef phi = LLVMBuildPhi(builder, i64_type, "len7");
-            LLVMValueRef vals[] = { slen, alen, vlen };
-            LLVMBasicBlockRef bbs[] = { bb_str_end, bb_arr_end, bb_vm_end };
-            LLVMAddIncoming(phi, vals, bbs, 3);
+            LLVMValueRef vals[] = { slen, alen, mlen, vlen };
+            LLVMBasicBlockRef bbs[] = { bb_str_end, bb_arr_end, bb_map_end, bb_vm_end };
+            LLVMAddIncoming(phi, vals, bbs, 4);
             return { phi, JD_TAG_I64 };
         }
         // Fallback

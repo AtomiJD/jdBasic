@@ -1,0 +1,48 @@
+' LEN of a map is its number of keys, for a map in a variable, a map
+' a function returns, a map stored inside another map and an empty map.
+
+FUNC Pair()
+    DIM m AS MAP
+    m{"a"} = 1
+    m{"b"} = "two"
+    RETURN m
+ENDFUNC
+
+FUNC Wrapped()
+    DIM inner AS MAP
+    inner{"x.txt"} = 10
+    inner{"y.txt"} = 20
+    inner{"z.txt"} = 30
+    DIM outer AS MAP
+    outer{"entries"} = inner
+    outer{"name"} = "backup"
+    RETURN outer
+ENDFUNC
+
+DIM fails = 0
+SUB Check(got, want, what$)
+    IF got = want THEN
+        PRINT "PASS "; what$
+    ELSE
+        PRINT "FAIL "; what$; ": got "; got; ", want "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM m AS MAP
+m{"one"} = 1
+m{"two"} = 2
+Check LEN(m), 2, "a map in a variable"
+Check LEN(m), LEN(MAP.KEYS(m)), "the same as its keys"
+DIM gone = MAP.DELETE(m, "one")
+Check LEN(m), 1, "after a delete"
+Check LEN(Pair()), 2, "a map a function returns"
+DIM w = Wrapped()
+DIM entries = w{"entries"}
+Check LEN(entries), 3, "a map inside a map"
+Check LEN(w), 2, "the outer map"
+DIM empty AS MAP
+Check LEN(empty), 0, "an empty map"
+Check LEN("abc"), 3, "a string still counts bytes"
+Check LEN([1, 2, 3, 4]), 4, "an array still counts elements"
+IF fails = 0 THEN PRINT "ALL TESTS PASSED!" ELSE PRINT fails; " failed"

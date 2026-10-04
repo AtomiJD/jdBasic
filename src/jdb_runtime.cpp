@@ -2104,6 +2104,11 @@ int64_t jdb_map_delete(JdbMap* m, const char* key) {
     return 1;
 }
 
+// Number of keys in a map.
+int64_t jdb_map_count(JdbMap* m) {
+    return m ? m->count : 0;
+}
+
 // Used by the codegen for nested-map / array-typed fields. The caller is
 // responsible for knowing the real type - the map itself doesn't expose
 // per-field tags through this entry point.

@@ -63,6 +63,8 @@ void VM::register_string_builtins() {
             return Value::make_i64(args[0].as_string()->data.size());
         if (args[0].type == ValueType::ARRAY)
             return Value::make_i64(args[0].as_array()->elements.size());
+        if (args[0].type == ValueType::OBJECT)
+            return Value::make_i64(args[0].as_object()->fields.size());
         return Value::make_i64(0);
     });
     register_native("LENV", 1, 1, [](const std::vector<Value>& args) -> Value {
