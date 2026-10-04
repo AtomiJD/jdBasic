@@ -1612,7 +1612,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             // saved; run, then any key reopens it on the error line.
             int err_line = 0;
             try { run_on_vm(vm, program_buffer); }
-            catch (const jdError& e) { print_error(e.code, e.what(), e.line); err_line = e.line; }
+            catch (const jdError& e) { print_error(e.code, e.what(), e.line, e.file); err_line = e.line; }
             catch (const std::exception& e) {
                 print_error(ErrCode::RUNTIME_ERROR, e.what());
             }
@@ -1635,7 +1635,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
         run_on_vm(vm, cmd + "\n");
         vm.is_halted = false;
     } catch (const jdError& e) {
-        print_error(e.code, e.what(), e.line);
+        print_error(e.code, e.what(), e.line, e.file);
     } catch (const std::runtime_error& e) {
         std::string msg = e.what();
         // Classify common errors
@@ -2521,7 +2521,7 @@ int main(int argc, char* argv[]) {
         std::string source = read_file(filename);
         return run_source(source, timing);
     } catch (const jdError& e) {
-        print_error(e.code, e.what(), e.line);
+        print_error(e.code, e.what(), e.line, e.file);
         return 1;
     } catch (const std::exception& e) {
         print_error(ErrCode::RUNTIME_ERROR, e.what());

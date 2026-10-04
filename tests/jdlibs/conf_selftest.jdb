@@ -15,6 +15,20 @@ FUNC BadToml(text$)
     RETURN CONF.TOML_TEXT(text$)
 ENDFUNC
 
+' The message a TOML text raises, or "" when it reads.
+FUNC TomlError$(text$)
+    TRY
+        DIM ok = CONF.TOML_TEXT(text$)
+    CATCH
+        RETURN ERRMSG$
+    ENDTRY
+    RETURN ""
+ENDFUNC
+
+FUNC Has(text$, part$)
+    RETURN INSTR(text$, part$) >= 0
+ENDFUNC
+
 TESTKIT.SUITE("dotenv")
 DIM env_text$ = "# database" + NL$ + _
     "DB_URL=postgres://localhost/app" + NL$ + _
@@ -121,6 +135,35 @@ TESTKIT.EQ(multi{"files"}[2][1], 2, "a nested array that spans lines")
 TESTKIT.EQ(multi{"after"}, 1, "the line after the array")
 TESTKIT.EQ(multi{"next"}{"x"}, 2, "and the table after it")
 
+TESTKIT.SUITE("TOML escapes and mistakes")
+DIM esc_text$ = "u = " + Q$ + "5 " + BS$ + "u20AC" + Q$ + NL$ + _
+    "e = " + Q$ + "caf" + BS$ + "u00E9" + Q$ + NL$ + _
+    "path = " + Q$ + "C:" + BS$ + BS$ + "Users" + BS$ + BS$ + "mia" + Q$ + NL$ + _
+    "lit = 'C:" + BS$ + "Users" + BS$ + "mia'" + NL$ + _
+    "[box]  # a heading with a comment" + NL$ + _
+    "x = 1" + NL$
+DIM esc = CONF.TOML_TEXT(esc_text$)
+TESTKIT.EQ(esc{"u"}, "5 " + CHR$(8364), "a \u escape gives the character in UTF-8")
+TESTKIT.EQ(esc{"e"}, "caf" + CHR$(195) + CHR$(169), "also below 256")
+TESTKIT.EQ(esc{"path"}, "C:" + BS$ + "Users" + BS$ + "mia", "doubled backslashes are one each")
+TESTKIT.EQ(esc{"lit"}, "C:" + BS$ + "Users" + BS$ + "mia", "single quotes keep backslashes")
+TESTKIT.EQ(esc{"box"}{"x"}, 1, "a heading may carry a comment")
+DIM win$ = TomlError$("a = 1" + NL$ + "dir = " + Q$ + "C:" + BS$ + "Users" + BS$ + "mia" + Q$ + NL$)
+TESTKIT.ISTRUE(Has(win$, "line 2"), "a Windows path in double quotes names its line")
+TESTKIT.ISTRUE(Has(win$, "C:/Users/mia"), "and shows the forward slashes")
+DIM tab$ = TomlError$("dir = " + Q$ + "D:" + BS$ + "temp" + Q$)
+TESTKIT.ISTRUE(Has(tab$, "Windows path"), "even when the backslash looks like an escape")
+DIM odd$ = TomlError$("x = " + Q$ + "a" + BS$ + "q" + Q$)
+TESTKIT.ISTRUE(Has(odd$, "line 1") ANDALSO Has(odd$, "not an escape"), "an unknown escape raises")
+DIM open$ = TomlError$("[a]" + NL$ + "x = 1" + NL$ + "[scans" + NL$ + "y = 2")
+TESTKIT.ISTRUE(Has(open$, "line 3") ANDALSO Has(open$, "closing bracket"), "a heading without ] raises")
+DIM quote$ = TomlError$("list = [" + NL$ + "  1," + NL$ + "]" + NL$ + "name = " + Q$ + "abc")
+TESTKIT.ISTRUE(Has(quote$, "line 4") ANDALSO Has(quote$, "closing quote"), "lines count after an array over several lines")
+DIM bare$ = TomlError$("[user]" + NL$ + "name = Mia Example")
+TESTKIT.ISTRUE(Has(bare$, "line 2") ANDALSO Has(bare$, Q$ + "Mia Example" + Q$), "text without quotes raises and shows the quoted form")
+DIM when = CONF.TOML_TEXT("day = 2026-10-04" + NL$ + "at = 07:30:00" + NL$ + "big = inf")
+TESTKIT.EQ(when{"day"} + " " + when{"at"} + " " + when{"big"}, "2026-10-04 07:30:00 inf", "dates, times and inf stay bare")
+
 TESTKIT.SUITE("GET")
 TESTKIT.EQ(CONF.GET(toml, "server.tls.enabled", FALSE), TRUE, "a dotted path")
 TESTKIT.EQ(CONF.GET(toml, "server.port"), 8080, "two levels")
@@ -137,5 +180,13 @@ TXTWRITER work$ + "/app.toml", toml_text$
 TESTKIT.EQ(CONF.ENV(work$ + "/.env"){"API_KEY"}, "abc123", "ENV reads a file")
 TESTKIT.EQ(CONF.INI(work$ + "/app.ini"){"server"}{"port"}, "9090", "INI reads a file")
 TESTKIT.EQ(CONF.TOML(work$ + "/app.toml"){"server"}{"port"}, 8080, "TOML reads a file")
+TXTWRITER work$ + "/bad.toml", "[a]" + NL$ + "x = " + Q$ + "open" + NL$
+DIM file_err$ = ""
+TRY
+    DIM bad = CONF.TOML(work$ + "/bad.toml")
+CATCH
+    file_err$ = ERRMSG$
+ENDTRY
+TESTKIT.ISTRUE(Has(file_err$, "bad.toml line 2"), "a mistake in a file names the file and the line")
 
 PRINT TESTKIT.REPORT()

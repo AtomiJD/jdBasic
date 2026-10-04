@@ -189,7 +189,22 @@ void VM::register_string_builtins() {
         return Value::make_string(args[0].to_string());
     });
     register_native("CHR$", [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(std::string(1, (char)args[0].to_int()));
+        // 0..255 is one raw byte, a code above 255 is that Unicode character in UTF-8.
+        int64_t code = args[0].to_int();
+        if (code <= 255 || code > 0x10FFFF) return Value::make_string(std::string(1, (char)code));
+        std::string s;
+        if (code < 0x800) {
+            s += (char)(0xC0 | (code >> 6));
+        } else if (code < 0x10000) {
+            s += (char)(0xE0 | (code >> 12));
+            s += (char)(0x80 | ((code >> 6) & 0x3F));
+        } else {
+            s += (char)(0xF0 | (code >> 18));
+            s += (char)(0x80 | ((code >> 12) & 0x3F));
+            s += (char)(0x80 | ((code >> 6) & 0x3F));
+        }
+        s += (char)(0x80 | (code & 0x3F));
+        return Value::make_string(s);
     });
     register_native("INSTR$", [](const std::vector<Value>& args) -> Value {
         // Same as INSTR

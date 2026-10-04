@@ -26,13 +26,19 @@ enum class ErrCode {
 // Global config
 inline bool g_color_errors = true;   // false for VS Code / plain text mode
 
-inline void print_error(ErrCode code, const std::string& msg, int line = 0) {
+// The line is followed by the file's name when it is set, that is when
+// the error comes from an imported module.
+inline void print_error(ErrCode code, const std::string& msg, int line = 0,
+                        const std::string& file = "") {
     if (g_color_errors)
         std::cerr << "\033[91mError #" << (int)code << ":\033[0m ";
     else
         std::cerr << "Error #" << (int)code << ": ";
     std::cerr << msg;
-    if (line > 0) std::cerr << " at line " << line;
+    if (line > 0) {
+        std::cerr << " at line " << line;
+        if (!file.empty()) std::cerr << " of " << file;
+    }
     std::cerr << std::endl;
 }
 
@@ -41,6 +47,7 @@ class jdError : public std::runtime_error {
 public:
     ErrCode code;
     int line;
-    jdError(ErrCode c, const std::string& msg, int ln = 0)
-        : std::runtime_error(msg), code(c), line(ln) {}
+    std::string file;   // module file name, empty for the main program
+    jdError(ErrCode c, const std::string& msg, int ln = 0, const std::string& f = "")
+        : std::runtime_error(msg), code(c), line(ln), file(f) {}
 };

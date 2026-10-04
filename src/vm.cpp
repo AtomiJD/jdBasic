@@ -3007,13 +3007,19 @@ void VM::run() {
         } else {
             // Re-throw with line number so the caller can display it
             int err_line = 0;
-            if (!frames.empty() && frame().ip > 0)
+            std::string err_file;
+            if (!frames.empty() && frame().ip > 0) {
                 err_line = frame().chunk->line_at(frame().ip - 1);
+                const std::string& f = frame().chunk->file_at(frame().ip - 1);
+                if (!f.empty() && f != frames.front().chunk->source_file)
+                    err_file = f.substr(f.find_last_of("/\\") + 1);
+            }
             // If it's already a jdError, preserve code and add line if missing
             if (auto* je = dynamic_cast<const jdError*>(&e)) {
-                throw jdError(je->code, je->what(), je->line > 0 ? je->line : err_line);
+                if (je->line > 0) throw jdError(je->code, je->what(), je->line, je->file);
+                throw jdError(je->code, je->what(), err_line, err_file);
             }
-            throw jdError(ErrCode::RUNTIME_ERROR, e.what(), err_line);
+            throw jdError(ErrCode::RUNTIME_ERROR, e.what(), err_line, err_file);
         }
       }
     }

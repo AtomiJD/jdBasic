@@ -19,9 +19,10 @@
 ' according to the policy argument ("last", "first", "error"). TOML: the
 ' subset that configuration files use - [table] and [a.b] headers,
 ' [[array.of.tables]], basic and literal strings, integers, floats,
-' booleans, arrays, inline tables, and date or time values kept as the
-' string that was written. Multi-line strings and every escape beyond
-' the dotenv set are not supported.
+' booleans, arrays, inline tables, and date or time values kept as
+' text. Basic strings know the TOML escapes, \u and
+' \U included; any other backslash is an error. Multi-line strings are
+' not supported. A mistake is an error that names the line.
 
 EXPORT MODULE CONF
 
@@ -35,8 +36,18 @@ EXPORT FUNC INI(path$, policy$ = "last")
     RETURN INI_TEXT(TXTREADER$(path$), policy$)
 ENDFUNC
 
+' A mistake in the file is an error that names the file and its line.
 EXPORT FUNC TOML(path$)
-    RETURN TOML_TEXT(TXTREADER$(path$))
+    DIM text$ = TXTREADER$(path$)
+    DIM cfg = {}
+    TRY
+        cfg = TOML_TEXT(text$)
+    CATCH
+        DIM why$ = ERRMSG$
+        IF STARTSWITH(why$, "CONF.TOML ") THEN why$ = MID$(why$, 10, LEN(why$) - 10)
+        THROW "CONF.TOML " + path$ + " " + why$
+    ENDTRY
+    RETURN cfg
 ENDFUNC
 
 ' A nested read with a dotted path and a fallback for a missing key.
@@ -213,24 +224,33 @@ FUNC Depth(row$)
     RETURN d
 ENDFUNC
 
-' The lines with an array that spans several lines joined into one.
+' The lines with an array that spans several lines joined into one. The
+' joined row stays at the index of its first line and the lines it took
+' in are left empty, so row k is still line k + 1 of the file.
 FUNC JoinedRows(rows)
     DIM out = []
     DIM k = 0
     DO WHILE k < LEN(rows)
         DIM row$ = rows[k]
         k = k + 1
-        DIM depth = Depth(row$)
+        DIM taken = 0
+        DIM depth = 0
+        IF NOT STARTSWITH(Strip$(row$), "[") THEN depth = Depth(row$)
         IF depth > 0 THEN
             row$ = NoComment$(row$)
             DO WHILE depth > 0 ANDALSO k < LEN(rows)
                 DIM more$ = NoComment$(rows[k])
                 k = k + 1
+                taken = taken + 1
                 row$ = row$ + " " + more$
                 depth = depth + Depth(more$)
             LOOP
         ENDIF
         PUSH(out, row$)
+        DIM t = 0
+        FOR t = 1 TO taken
+            PUSH(out, "")
+        NEXT t
     LOOP
     RETURN out
 ENDFUNC
@@ -243,21 +263,32 @@ EXPORT FUNC TOML_TEXT(text$)
     FOR i = 0 TO LEN(rows) - 1
         DIM row$ = Strip$(rows[i])
         IF LEN(row$) = 0 ORELSE STARTSWITH(row$, "#") THEN CONTINUEFOR
-        IF STARTSWITH(row$, "[[") ANDALSO ENDSWITH(row$, "]]") THEN
-            DIM list_path$ = Strip$(MID$(row$, 2, LEN(row$) - 4))
-            current = NewTableEntry(root, list_path$)
-            CONTINUEFOR
-        ENDIF
-        IF STARTSWITH(row$, "[") ANDALSO ENDSWITH(row$, "]") THEN
-            DIM table_path$ = Strip$(MID$(row$, 1, LEN(row$) - 2))
-            current = Table(root, table_path$)
+        DIM where$ = "CONF.TOML line " + STR$(i + 1) + ": "
+        IF STARTSWITH(row$, "[") THEN
+            DIM head$ = Strip$(NoComment$(row$))
+            IF STARTSWITH(head$, "[[") ANDALSO ENDSWITH(head$, "]]") THEN
+                DIM list_path$ = Strip$(MID$(head$, 2, LEN(head$) - 4))
+                current = NewTableEntry(root, list_path$)
+            ELSEIF ENDSWITH(head$, "]") ANDALSO NOT STARTSWITH(head$, "[[") THEN
+                DIM table_path$ = Strip$(MID$(head$, 1, LEN(head$) - 2))
+                current = Table(root, table_path$)
+            ELSE
+                THROW where$ + "a section heading needs its closing bracket: " + row$
+            ENDIF
             CONTINUEFOR
         ENDIF
         DIM eq = KeyEnd(row$)
-        IF eq < 0 THEN THROW "CONF.TOML: cannot read line " + STR$(i + 1) + ": " + row$
+        IF eq < 0 THEN THROW where$ + "a setting needs the form name = value: " + row$
         DIM key$ = BareKey$(Strip$(LEFT$(row$, eq)))
         DIM rest$ = Strip$(MID$(row$, eq + 1, LEN(row$) - eq - 1))
-        DIM parsed = ReadValue(rest$, 0)
+        DIM parsed = {}
+        TRY
+            parsed = ReadValue(rest$, 0)
+        CATCH
+            DIM why$ = ERRMSG$
+            IF STARTSWITH(why$, "CONF.TOML: ") THEN why$ = MID$(why$, 11, LEN(why$) - 11)
+            THROW where$ + why$
+        ENDTRY
         current{key$} = parsed{"value"}
     NEXT i
     RETURN root
@@ -368,13 +399,57 @@ FUNC ReadBasicString(text$, pos)
             raw$ = raw$ + ch$ + MID$(text$, i + 1, 1)
             i = i + 2
         ELSEIF ch$ = CHR$(34) THEN
-            RETURN {"value": Unescape$(raw$), "end": i + 1}
+            RETURN {"value": TomlUnescape$(raw$), "end": i + 1}
         ELSE
             raw$ = raw$ + ch$
             i = i + 1
         ENDIF
     LOOP
-    THROW "CONF.TOML: unterminated string"
+    THROW "CONF.TOML: the text has no closing quote"
+ENDFUNC
+
+' The escapes of a TOML basic string: \b \t \n \f \r \" \\ \uXXXX and
+' \UXXXXXXXX. A Windows path written with single backslashes is an error
+' that shows the two ways to write it.
+FUNC TomlUnescape$(raw$)
+    DIM bs$ = CHR$(92)
+    DIM hint$ = "write the path with forward slashes, " + CHR$(34) + "C:/Users/mia" + CHR$(34) + ", or in single quotes, 'C:" + bs$ + "Users" + bs$ + "mia'"
+    IF LEN(raw$) > 3 ANDALSO MID$(raw$, 1, 1) = ":" ANDALSO MID$(raw$, 2, 1) = bs$ ANDALSO MID$(raw$, 3, 1) <> bs$ THEN
+        THROW "CONF.TOML: " + CHR$(34) + raw$ + CHR$(34) + " is a Windows path in double quotes, where a backslash starts an escape; " + hint$
+    ENDIF
+    DIM out$ = ""
+    DIM i = 0
+    DO WHILE i < LEN(raw$)
+        DIM ch$ = MID$(raw$, i, 1)
+        IF ch$ <> bs$ THEN
+            out$ = out$ + ch$
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM nx$ = MID$(raw$, i + 1, 1)
+        DIM at = INSTR("btnfr" + CHR$(34) + bs$, nx$)
+        IF nx$ <> "" ANDALSO at >= 0 THEN
+            out$ = out$ + MID$(CHR$(8) + CHR$(9) + CHR$(10) + CHR$(12) + CHR$(13) + CHR$(34) + bs$, at, 1)
+            i = i + 2
+        ELSEIF nx$ = "u" ORELSE nx$ = "U" THEN
+            DIM width = 4
+            IF nx$ = "U" THEN width = 8
+            DIM digits$ = MID$(raw$, i + 2, width)
+            IF LEN(digits$) < width ORELSE NOT REGEX.MATCH("[0-9A-Fa-f]+", digits$) THEN
+                THROW "CONF.TOML: " + bs$ + nx$ + " needs " + STR$(width) + " hex digits; to write a path, " + hint$
+            ENDIF
+            DIM code = VAL("0x" + digits$)
+            IF code >= 128 ANDALSO code <= 255 THEN
+                out$ = out$ + CHR$(192 + INT(code / 64)) + CHR$(128 + code MOD 64)
+            ELSE
+                out$ = out$ + CHR$(code)
+            ENDIF
+            i = i + 2 + width
+        ELSE
+            THROW "CONF.TOML: " + bs$ + nx$ + " is not an escape TOML knows; to write a path, " + hint$
+        ENDIF
+    LOOP
+    RETURN out$
 ENDFUNC
 
 FUNC ReadArray(text$, pos)
@@ -409,11 +484,13 @@ FUNC ReadInline(text$, pos)
 ENDFUNC
 
 ' A bare token: boolean, integer, float, or a date or time kept as text.
+' Any other bare word is an error.
 FUNC Scalar(token$)
     IF token$ = "true" THEN RETURN TRUE
     IF token$ = "false" THEN RETURN FALSE
     DIM plain$ = REPLACE$(token$, "_", "")
     IF REGEX.MATCH("^[+-]?[0-9]+$", plain$) THEN RETURN CINT(VAL(plain$))
     IF REGEX.MATCH("^[+-]?[0-9]+(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?$", plain$) THEN RETURN VAL(plain$)
-    RETURN token$
+    IF REGEX.MATCH("[0-9]{4}-[0-9]{2}-[0-9]{2}.*|[0-9]{2}:[0-9]{2}.*|[+-]?(?:inf|nan)", token$) THEN RETURN token$
+    THROW "CONF.TOML: text needs quotes, " + CHR$(34) + token$ + CHR$(34)
 ENDFUNC

@@ -2911,6 +2911,24 @@ char* jdb_trim(const char* s) {
 }
 
 char* jdb_chr(int64_t code) {
+    // 0..255 is one raw byte, a code above 255 is that Unicode character in UTF-8.
+    if (code > 255 && code <= 0x10FFFF) {
+        char u[5] = { 0 };
+        if (code < 0x800) {
+            u[0] = (char)(0xC0 | (code >> 6));
+            u[1] = (char)(0x80 | (code & 0x3F));
+        } else if (code < 0x10000) {
+            u[0] = (char)(0xE0 | (code >> 12));
+            u[1] = (char)(0x80 | ((code >> 6) & 0x3F));
+            u[2] = (char)(0x80 | (code & 0x3F));
+        } else {
+            u[0] = (char)(0xF0 | (code >> 18));
+            u[1] = (char)(0x80 | ((code >> 12) & 0x3F));
+            u[2] = (char)(0x80 | ((code >> 6) & 0x3F));
+            u[3] = (char)(0x80 | (code & 0x3F));
+        }
+        return _strdup(u);
+    }
     char buf[2] = { (char)code, '\0' };
     char* r = _strdup(buf);
     // CHR$(0) is a 1-byte string whose only byte is 0x00. strlen would

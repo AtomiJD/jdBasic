@@ -96,10 +96,11 @@ summary_weekday = 5
 
 ### When it goes wrong
 
-- **The answers go nowhere**: on Windows, write the path in `work.conf`
-  with forward slashes, as above. Inside double quotes a backslash
-  starts a special character in a TOML file, so `"C:\Users\mia"` does
-  not reach the program as written. Single quotes keep backslashes:
+- **"is a Windows path in double quotes"**: the program stops before
+  the first question and names the line in `work.conf`. Inside double
+  quotes a backslash starts a special character in a TOML file, so
+  `"C:\Users\mia"` cannot stay as written. Write the path with forward
+  slashes, as above, or in single quotes, which keep backslashes:
   `'C:\Users\mia\journal.md'`.
 - **No summary on Friday**: the summary counts the days of this week
   only. Entries from last week stay in the journal but do not appear.

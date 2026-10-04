@@ -104,9 +104,11 @@ and it reads switches such as `--dry-run`. When you see
 
 > **Backslashes in TOML**
 > Inside double quotes TOML reads a backslash as the start of an escape,
-> so `"C:\Users\mia"` does not mean what it says. Write paths with
-> forward slashes, `"C:/Users/mia/Documents"`, or start them with `~`.
-> Windows accepts forward slashes everywhere a program opens a file.
+> so `"C:\Users\mia"` does not mean what it says. `CONF.TOML` stops
+> at such a path with an error that names the file and the line. Write
+> paths with forward slashes, `"C:/Users/mia/Documents"`, or start them
+> with `~`. Windows accepts forward slashes everywhere a program opens a
+> file.
 
 ### WORKCONF: the book's own settings module
 

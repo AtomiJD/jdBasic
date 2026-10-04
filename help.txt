@@ -539,8 +539,10 @@ Syntax: CHR(ascii_code)
 Description: Alias of CHR$.
 
 [CHR$]
-Syntax: CHR$(ascii_code)
-Description: Returns the character corresponding to an ASCII code.
+Syntax: CHR$(code)
+Description: Returns the character for a code. 0 to 255 give that single byte;
+a code above 255 gives the Unicode character in UTF-8 (CHR$(8364) is the euro
+sign).
 
 [CHUNK]
 Syntax: CHUNK(array, size)
