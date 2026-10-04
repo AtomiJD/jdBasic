@@ -1185,6 +1185,7 @@ FUNC Typeset(cfg, chapters, base$, out_mode$, toc, terms, ix_in, ix_main_in)
     DIM ix_main AS MAP
     ctx{"ix_main"} = ix_main
     ctx{"block_page"} = 0
+    ctx{"break_due"} = FALSE
     DIM cache AS MAP
     ctx{"wcache"} = cache
     TitlePages(ctx)
@@ -1197,6 +1198,13 @@ FUNC Typeset(cfg, chapters, base$, out_mode$, toc, terms, ix_in, ix_main_in)
         FOR j = 0 TO LEN(blocks) - 1
             DIM b = blocks[j]
             DIM kind$ = b{"kind"}
+            IF ctx{"break_due"} ANDALSO kind$ <> "pagebreak" THEN
+                ctx{"break_due"} = FALSE
+                DIM opens_chapter = (kind$ = "heading")
+                IF opens_chapter THEN opens_chapter = (b{"level"} = 1)
+                IF kind$ = "toc" THEN opens_chapter = TRUE
+                IF NOT opens_chapter THEN NewPage(ctx, TRUE)
+            ENDIF
             ctx{"page_empty"} = (ctx{"y"} <= s{"top"} + 0.01)
             ctx{"page_top"} = ctx{"page_empty"}
             ctx{"block_page"} = -1
@@ -1218,7 +1226,7 @@ FUNC Typeset(cfg, chapters, base$, out_mode$, toc, terms, ix_in, ix_main_in)
             ELSEIF kind$ = "table" THEN
                 TableBlock(ctx, TableRefs(ctx, b))
             ELSEIF kind$ = "pagebreak" THEN
-                NewPage(ctx, TRUE)
+                ctx{"break_due"} = TRUE
             ELSEIF kind$ = "toc" THEN
                 IF ctx{"page"} > 0 ANDALSO NOT ctx{"page_empty"} THEN NewPage(ctx, FALSE)
                 IF ctx{"page"} = 0 THEN NewPage(ctx, FALSE)

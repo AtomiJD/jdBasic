@@ -200,18 +200,20 @@ ENDSUB
 
 ' The prose findings in the chapters, in the comments of every listing
 ' they print (only the part an include names), and in the extra files
-' book.toml names under [prose].
+' book.toml names under [prose]. A text by a guest author, listed under
+' [prose] guests, keeps its own wording.
 FUNC ProseFindings(cfg, base$)
     DIM out = []
     DIM files = CONF.GET(cfg, "chapters.files", [])
     DIM extra = CONF.GET(cfg, "prose.extra", [])
     DIM docs = APPEND(files, extra)
+    DIM guests = CONF.GET(cfg, "prose.guests", [])
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(docs) - 1
         DIM rel$ = docs[k]
         DIM text$ = TXTREADER$(PATH.JOIN$(base$, rel$))
-        out = APPEND(out, PROSE.MARKDOWN(text$, rel$))
+        IF NOT (rel$ IN guests) THEN out = APPEND(out, PROSE.MARKDOWN(text$, rel$))
         DIM src = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
         FOR j = 0 TO LEN(src) - 1
             DIM t$ = TRIM$(src[j])
