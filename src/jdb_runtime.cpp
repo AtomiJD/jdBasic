@@ -4720,11 +4720,90 @@ const char* jdb_udt_get_str(JdbObject* obj, const char* field) {
 typedef double (*JdbMapFn)(double);
 typedef double (*JdbReduceFn)(double, double);
 
+// The element a higher-order loop hands to a lambda, as tag and bits, and
+// the tag of the lambda's answer, valid only at the loop's own depth.
+static thread_local int32_t g_hof_elem_tag = JD_TAG_F64;
+static thread_local int64_t g_hof_elem_bits = 0;
+static thread_local int32_t g_hof_depth = 0;
+static thread_local int32_t g_hof_ret_tag = -1;
+static thread_local int32_t g_hof_ret_depth = -1;
+
+// Publishes element i of arr for the lambda about to be called.
+static void hof_publish(JdbArray* arr, int64_t i) {
+    int32_t t = (arr->flags & 8) && arr->elem_tags ? (int32_t)arr->elem_tags[i]
+                                                   : (int32_t)jdb_tag_from_flags(arr->flags, arr->data[i]);
+    union { double d; int64_t i; } u; u.d = arr->data[i];
+    g_hof_elem_tag = t;
+    g_hof_elem_bits = (t == JD_TAG_I64 || t == JD_TAG_BOOL) ? (int64_t)arr->data[i] : u.i;
+    g_hof_ret_tag = -1;
+}
+
+int32_t jdb_hof_elem_tag(void) { return g_hof_elem_tag; }
+int64_t jdb_hof_elem_bits(void) { return g_hof_elem_bits; }
+void jdb_hof_set_ret(int32_t tag) { g_hof_ret_tag = tag; g_hof_ret_depth = g_hof_depth; }
+
+// A runtime-typed lambda answer as the f64 slot of the call, with its tag reported.
+double jdb_hof_ret_tagged(int64_t bits, int32_t tag) {
+    if (tag == JD_TAG_I64 || tag == JD_TAG_BOOL) {
+        jdb_hof_set_ret(JD_TAG_F64);
+        return (double)bits;
+    }
+    jdb_hof_set_ret(tag);
+    union { double d; int64_t i; } u; u.i = bits;
+    return u.d;
+}
+
+// The tag the lambda reported for its answer, -1 when it reported none.
+static int32_t hof_answer_tag(void) {
+    return g_hof_ret_depth == g_hof_depth ? g_hof_ret_tag : -1;
+}
+
+// Gives r one tag per cell from tags, and the array-wide flags they imply.
+static void hof_tag_cells(JdbArray* r, const std::vector<int8_t>& tags) {
+    if (r->length == 0) return;
+    r->elem_tags = (int8_t*)malloc((size_t)r->length);
+    bool ptr = false, all_str = true;
+    for (int64_t i = 0; i < r->length; i++) {
+        r->elem_tags[i] = tags[(size_t)i];
+        int t = tags[(size_t)i];
+        if (t == JD_TAG_STR || t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP) ptr = true;
+        if (t != JD_TAG_STR) all_str = false;
+    }
+    r->flags |= 8;
+    if (ptr) r->flags |= 1;
+    if (all_str) r->flags |= 2;
+}
+
+// The cells of arr chosen by keep, with their per-cell tags.
+static JdbArray* hof_pick(JdbArray* arr, const std::vector<int64_t>& keep) {
+    auto* r = jdb_array_new((int64_t)keep.size());
+    for (size_t j = 0; j < keep.size(); j++) r->data[j] = arr->data[keep[j]];
+    r->flags = arr->flags & ~(int32_t)8;
+    if ((arr->flags & 8) && arr->elem_tags && !keep.empty()) {
+        r->elem_tags = (int8_t*)malloc(keep.size());
+        for (size_t j = 0; j < keep.size(); j++) r->elem_tags[j] = arr->elem_tags[keep[j]];
+        r->flags |= 8;
+    }
+    return r;
+}
+
 JdbArray* jdb_select_fn(JdbMapFn fn, JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
     auto* r = jdb_array_new(arr->length);
-    for (int64_t i = 0; i < arr->length; i++)
+    std::vector<int8_t> tags((size_t)arr->length, (int8_t)JD_TAG_F64);
+    bool tagged = false;
+    g_hof_depth++;
+    for (int64_t i = 0; i < arr->length; i++) {
+        hof_publish(arr, i);
         r->data[i] = fn(arr->data[i]);
+        int32_t t = hof_answer_tag();
+        if (t >= 0) {
+            tags[(size_t)i] = (int8_t)t;
+            if (t != JD_TAG_F64) tagged = true;
+        }
+    }
+    g_hof_depth--;
+    if (tagged) hof_tag_cells(r, tags);
     return r;
 }
 
@@ -4796,53 +4875,57 @@ JdbArray* jdb_agg_fn(JdbMapFn reducer, JdbArray* keys, JdbArray* vals, int32_t r
 }
 
 JdbArray* jdb_filter_fn(JdbMapFn fn, JdbArray* arr) {
-    // Predicate returns double: non-zero = true
     if (!arr) return jdb_array_new(0);
-    int64_t count = 0;
-    for (int64_t i = 0; i < arr->length; i++)
-        if (fn(arr->data[i]) != 0.0) count++;
-    auto* r = jdb_array_new(count);
-    int64_t j = 0;
-    for (int64_t i = 0; i < arr->length; i++)
-        if (fn(arr->data[i]) != 0.0) r->data[j++] = arr->data[i];
-    // Preserve element-type flags (string / nested-ptr / bool) - FILTER
-    // returns source elements verbatim, so they keep their type. Exclude the
-    // per-cell-tags bit (8): the source's elem_tags is indexed by the ORIGINAL
-    // positions and would be wrong post-filter; the flag-based classifier
-    // recovers strings/arrays without it.
-    r->flags = arr->flags & ~(int32_t)8;
-    return r;
+    std::vector<int64_t> keep;
+    g_hof_depth++;
+    for (int64_t i = 0; i < arr->length; i++) {
+        hof_publish(arr, i);
+        if (fn(arr->data[i]) != 0.0) keep.push_back(i);
+    }
+    g_hof_depth--;
+    return hof_pick(arr, keep);
 }
 
 double jdb_reduce_fn(JdbReduceFn fn, JdbArray* arr, double init) {
     if (!arr) return init;
     double acc = init;
-    for (int64_t i = 0; i < arr->length; i++)
+    g_hof_depth++;
+    for (int64_t i = 0; i < arr->length; i++) {
+        hof_publish(arr, i);
         acc = fn(acc, arr->data[i]);
+    }
+    g_hof_depth--;
     return acc;
 }
 
 // TAKE_WHILE(pred@, arr): longest prefix where pred(elem) is true.
 JdbArray* jdb_take_while_fn(JdbMapFn pred, JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
-    int64_t n = 0;
-    while (n < arr->length && pred(arr->data[n]) != 0.0) n++;
-    auto* r = jdb_array_new(n);
-    for (int64_t i = 0; i < n; i++) r->data[i] = arr->data[i];
-    r->flags = arr->flags & ~(int32_t)8;  // keep type flags; drop per-cell tags
-    return r;
+    std::vector<int64_t> keep;
+    g_hof_depth++;
+    for (int64_t i = 0; i < arr->length; i++) {
+        hof_publish(arr, i);
+        if (pred(arr->data[i]) == 0.0) break;
+        keep.push_back(i);
+    }
+    g_hof_depth--;
+    return hof_pick(arr, keep);
 }
 
 // DROP_WHILE(pred@, arr): drop the longest true-prefix, return the remainder.
 JdbArray* jdb_drop_while_fn(JdbMapFn pred, JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
     int64_t start = 0;
-    while (start < arr->length && pred(arr->data[start]) != 0.0) start++;
-    int64_t n = arr->length - start;
-    auto* r = jdb_array_new(n);
-    for (int64_t i = 0; i < n; i++) r->data[i] = arr->data[start + i];
-    r->flags = arr->flags & ~(int32_t)8;
-    return r;
+    g_hof_depth++;
+    while (start < arr->length) {
+        hof_publish(arr, start);
+        if (pred(arr->data[start]) == 0.0) break;
+        start++;
+    }
+    g_hof_depth--;
+    std::vector<int64_t> keep;
+    for (int64_t i = start; i < arr->length; i++) keep.push_back(i);
+    return hof_pick(arr, keep);
 }
 
 // OUTER(a, b, op) with a user funcref operator: a 2D table whose cell [i][j]

@@ -1,0 +1,60 @@
+' SELECT, FILTER, REDUCE, TAKE_WHILE and DROP_WHILE with a LAMBDA over numbers,
+' strings, maps, CSVREADER rows and JSON.PARSE$ objects give the same answers
+' in both backends.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+FUNC Longer(words, n)
+    RETURN FILTER(LAMBDA USE(n) w -> LEN(w) > n, words)
+ENDFUNC
+
+FUNC Names(rows)
+    RETURN SELECT(LAMBDA r -> r{"n"}, rows)
+ENDFUNC
+
+FUNC Above(nums, lim)
+    DIM sep$ = "-"
+    PRINT JSON.STRINGIFY$(SELECT(LAMBDA USE(sep$) x -> sep$ + STR$(x), nums))
+    RETURN FILTER(LAMBDA USE(lim) x -> x > lim, nums)
+ENDFUNC
+
+DIM nums = [3, 1, 4, 1, 5]
+DIM words = ["pdf", "docx", "xlsx", "eml"]
+DIM rows = [{"n": "a", "h": 2}, {"n": "b", "h": 5}]
+DIM values = [" x", "y ", " x "]
+PRINT JSON.STRINGIFY$(SELECT(LAMBDA x -> x * 10, nums))
+PRINT JSON.STRINGIFY$(FILTER(LAMBDA x -> x > 2, nums))
+PRINT STR$(REDUCE(LAMBDA a, b -> a + b, nums, 0))
+PRINT JSON.STRINGIFY$(FILTER(LAMBDA w$ -> LEN(w$) = 3, words))
+PRINT JSON.STRINGIFY$(SELECT(LAMBDA w$ -> UCASE$(w$), words))
+PRINT JSON.STRINGIFY$(FILTER(LAMBDA w -> LEN(w) > 3, words))
+PRINT JSON.STRINGIFY$(SELECT(LAMBDA w -> w + "!", words))
+PRINT JSON.STRINGIFY$(TAKE_WHILE(LAMBDA w -> LEN(w) = 3, words))
+PRINT JSON.STRINGIFY$(DROP_WHILE(LAMBDA w -> LEN(w) = 3, words))
+PRINT JSON.STRINGIFY$(SELECT(LAMBDA r -> r{"n"}, rows))
+PRINT JSON.STRINGIFY$(FILTER(LAMBDA r -> r{"h"} > 3, rows))
+PRINT STR$(REDUCE(LAMBDA a, r -> a + r{"h"}, rows, 0))
+PRINT REDUCE(LAMBDA acc$, w$ -> acc$ + w$ + ";", words, "")
+PRINT REDUCE(LAMBDA acc$, r -> acc$ + r{"n"}, rows, ">")
+DIM groups = [["a", "bb"], ["ccc"], ["dd", "e", "f"]]
+PRINT JSON.STRINGIFY$(FILTER(LAMBDA g -> LEN(FILTER(LAMBDA s$ -> LEN(s$) = 1, g)) > 0, groups))
+PRINT JSON.STRINGIFY$(SORT(UNIQUE(SELECT(LAMBDA v -> TRIM$("" + v), values))))
+DIM path$ = MKTEMP$("lk")
+TXTWRITER path$, "name;size" + CHR$(10) + "a.pdf;12" + CHR$(10) + "b.eml;3" + CHR$(10) + "c.pdf;40" + CHR$(10)
+DIM table = CSVREADER(path$, ";", TRUE)
+PRINT JSON.STRINGIFY$(SELECT(LAMBDA t -> t[0], table))
+PRINT JSON.STRINGIFY$(FILTER(LAMBDA t -> t[1] > 10, table))
+PRINT STR$(REDUCE(LAMBDA a, t -> a + t[1], table, 0))
+KILL path$
+DIM doc = JSON.PARSE$("[{" + CHR$(34) + "k" + CHR$(34) + ": 1}, {" + CHR$(34) + "k" + CHR$(34) + ": 7}]")
+PRINT JSON.STRINGIFY$(SELECT(LAMBDA d -> d{"k"} * 2, doc))
+PRINT JSON.STRINGIFY$(FILTER(LAMBDA d -> d{"k"} > 5, doc))
+DIM lim = 3
+PRINT JSON.STRINGIFY$(FILTER(LAMBDA x -> x > lim, nums))
+DIM suffix$ = "#"
+PRINT JSON.STRINGIFY$(SELECT(LAMBDA w$ -> w$ + suffix$, words))
+PRINT JSON.STRINGIFY$(Above(nums, 2))
+PRINT JSON.STRINGIFY$(Longer(words, 3))
+PRINT JSON.STRINGIFY$(Names(rows))
+PRINT JSON.STRINGIFY$(REDUCE(LAMBDA acc, w -> APPEND(acc, UCASE$(w)), words, []))
+PRINT REDUCE(LAMBDA n, w -> n + LEN(w), words, 0)

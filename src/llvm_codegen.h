@@ -328,6 +328,17 @@ private:
     // unwind path has a target to jump to. nullptr when codegen is in main.
     LLVMBasicBlockRef current_exit_bb = nullptr;
     bool              in_lambda = false;       // codegen is inside a LAMBDA body
+    // A LAMBDA written as the function argument of SELECT, FILTER, TAKE_WHILE,
+    // DROP_WHILE (1) or REDUCE (2): its parameters take the element kind the
+    // loop publishes; 0 when the next lambda is not such an argument.
+    int               hof_lambda_mode = 0;
+    int               hof_elem_hint = 0;       // JdTag of the elements, or JD_TAG_RUNTIME
+    int               hof_acc_hint = 0;        // JdTag of the REDUCE accumulator
+    // A USE(...) value of such a lambda inside a FUNC: the module slot the
+    // lambda reads it from, and the slot's previous content, put back once
+    // the loop returns.
+    struct HofCapture { LLVMValueRef slot; LLVMValueRef keep; LLVMTypeRef ty; };
+    std::vector<HofCapture> hof_captures;
     LLVMValueRef      current_retval_alloca = nullptr; // null for void / main
 
     // Emit either "store val→retval; br exit_bb" (inside a user FUNC/SUB,

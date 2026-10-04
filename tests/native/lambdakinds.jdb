@@ -1,0 +1,60 @@
+' Helper module for test_native_lambda_kinds_mod.jdb: the lambda calls of
+' test_native_lambda_kinds.jdb inside an EXPORT FUNC.
+EXPORT MODULE LAMBDAKINDS
+
+DIM gLim = 3
+DIM gSuffix$ = "#"
+
+FUNC Longer(words, n)
+    RETURN FILTER(LAMBDA USE(n) w -> LEN(w) > n, words)
+ENDFUNC
+
+FUNC Names(rows)
+    RETURN SELECT(LAMBDA r -> r{"n"}, rows)
+ENDFUNC
+
+EXPORT FUNC RUN$()
+    DIM nums = [3, 1, 4, 1, 5]
+    DIM words = ["pdf", "docx", "xlsx", "eml"]
+    DIM rows = [{"n": "a", "h": 2}, {"n": "b", "h": 5}]
+    DIM values = [" x", "y ", " x "]
+    DIM out$ = ""
+    out$ = out$ + JSON.STRINGIFY$(SELECT(LAMBDA x -> x * 10, nums)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA x -> x > 2, nums)) + CHR$(10)
+    out$ = out$ + STR$(REDUCE(LAMBDA a, b -> a + b, nums, 0)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA w$ -> LEN(w$) = 3, words)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(SELECT(LAMBDA w$ -> UCASE$(w$), words)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA w -> LEN(w) > 3, words)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(SELECT(LAMBDA w -> w + "!", words)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(TAKE_WHILE(LAMBDA w -> LEN(w) = 3, words)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(DROP_WHILE(LAMBDA w -> LEN(w) = 3, words)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(SELECT(LAMBDA r -> r{"n"}, rows)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA r -> r{"h"} > 3, rows)) + CHR$(10)
+    out$ = out$ + STR$(REDUCE(LAMBDA a, r -> a + r{"h"}, rows, 0)) + CHR$(10)
+    out$ = out$ + REDUCE(LAMBDA acc$, w$ -> acc$ + w$ + ";", words, "") + CHR$(10)
+    out$ = out$ + REDUCE(LAMBDA acc$, r -> acc$ + r{"n"}, rows, ">") + CHR$(10)
+    DIM groups = [["a", "bb"], ["ccc"], ["dd", "e", "f"]]
+    out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA g -> LEN(FILTER(LAMBDA s$ -> LEN(s$) = 1, g)) > 0, groups)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(SORT(UNIQUE(SELECT(LAMBDA v -> TRIM$("" + v), values)))) + CHR$(10)
+    DIM path$ = MKTEMP$("lk")
+    TXTWRITER path$, "name;size" + CHR$(10) + "a.pdf;12" + CHR$(10) + "b.eml;3" + CHR$(10) + "c.pdf;40" + CHR$(10)
+    DIM table = CSVREADER(path$, ";", TRUE)
+    out$ = out$ + JSON.STRINGIFY$(SELECT(LAMBDA t -> t[0], table)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA t -> t[1] > 10, table)) + CHR$(10)
+    out$ = out$ + STR$(REDUCE(LAMBDA a, t -> a + t[1], table, 0)) + CHR$(10)
+    KILL path$
+    DIM doc = JSON.PARSE$("[{" + CHR$(34) + "k" + CHR$(34) + ": 1}, {" + CHR$(34) + "k" + CHR$(34) + ": 7}]")
+    out$ = out$ + JSON.STRINGIFY$(SELECT(LAMBDA d -> d{"k"} * 2, doc)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA d -> d{"k"} > 5, doc)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA x -> x > gLim, nums)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(SELECT(LAMBDA w$ -> w$ + gSuffix$, words)) + CHR$(10)
+    DIM lim = 2
+    DIM sep$ = "-"
+    out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA USE(lim) x -> x > lim, nums)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(SELECT(LAMBDA USE(sep$) w$ -> sep$ + w$, words)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(Longer(words, 3)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(Names(rows)) + CHR$(10)
+    out$ = out$ + JSON.STRINGIFY$(REDUCE(LAMBDA acc, w -> APPEND(acc, UCASE$(w)), words, [])) + CHR$(10)
+    out$ = out$ + STR$(REDUCE(LAMBDA n, w -> n + LEN(w), words, 0))
+    RETURN out$
+ENDFUNC

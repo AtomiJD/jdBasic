@@ -1,0 +1,3 @@
+' The lambda calls of test_native_lambda_kinds.jdb inside an EXPORT FUNC of a module.
+IMPORT LAMBDAKINDS
+PRINT LAMBDAKINDS.RUN$()

@@ -692,6 +692,58 @@ JDRT_API int64_t jdrt_promote_handle(JdRT handle, int64_t h) {
     return rt->store_persistent(it->second);
 }
 
+// A VM array as a native array for SELECT, FILTER and the other loops that
+// call a function per element: strings and numbers become native cells,
+// every other element a persistent VM handle, each cell with its own tag.
+JDRT_API void* jdrt_handle_to_hof_array(JdRT handle, int64_t h) {
+    auto* rt = resolve_rt(handle);
+    auto* r = (JdbArrayFwd*)malloc(sizeof(JdbArrayFwd));
+    r->data = nullptr;
+    r->length = 0;
+    r->flags = 0;
+    r->elem_tags = nullptr;
+    r->capacity = 0;
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) return r;
+    Value whole = it->second;
+    auto* arr = whole.as_array();
+    int64_t n = (int64_t)arr->elements.size();
+    r->length = n;
+    r->capacity = n > 0 ? n : 1;
+    r->data = (double*)calloc((size_t)r->capacity, sizeof(double));
+    r->elem_tags = (int8_t*)malloc((size_t)r->capacity);
+    bool any_ptr = false;
+    for (int64_t i = 0; i < n; i++) {
+        const Value& e = arr->elements[(size_t)i];
+        union { int64_t i; double d; } u;
+        if (e.type == ValueType::STRING) {
+            u.i = (int64_t)(intptr_t)native_str_from_string(e.as_string()->data);
+            r->data[i] = u.d;
+            r->elem_tags[i] = (int8_t)jd_tag(JdTag::STR);
+            any_ptr = true;
+        } else if (e.type == ValueType::NONE) {
+            r->data[i] = 0.0;
+            r->elem_tags[i] = (int8_t)jd_tag(JdTag::NONE);
+        } else if (e.type == ValueType::BOOLEAN) {
+            r->data[i] = e.to_int() ? 1.0 : 0.0;
+            r->elem_tags[i] = (int8_t)jd_tag(JdTag::BOOL);
+        } else if (e.type == ValueType::INT64 || e.type == ValueType::INT32 ||
+                   e.type == ValueType::INT16 || e.type == ValueType::BYTE) {
+            r->data[i] = (double)e.to_int();
+            r->elem_tags[i] = (int8_t)jd_tag(JdTag::I64);
+        } else if (e.type == ValueType::ARRAY || e.type == ValueType::OBJECT) {
+            u.i = rt->store_persistent(e);
+            r->data[i] = u.d;
+            r->elem_tags[i] = (int8_t)jd_tag(JdTag::VM_HANDLE);
+        } else {
+            r->data[i] = e.to_double();
+            r->elem_tags[i] = (int8_t)jd_tag(JdTag::F64);
+        }
+    }
+    r->flags = 8 | (any_ptr ? 1 : 0);
+    return r;
+}
+
 // Every obj_get_* returns a safe default on unknown-handle or missing-key
 // so a typo in compiled code never crashes the exe.
 static const Value* obj_field(JdRTImpl* rt, int64_t h, const char* key) {

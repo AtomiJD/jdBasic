@@ -898,6 +898,26 @@ PRINT "100 + 10 = "; Add100(10)  ' Output: 110
 PRINT
 ```
 
+**Lambda parameters under `-c`**
+
+The interpreter gives a lambda parameter whatever value arrives. The native compiler has to fix a kind for each parameter, and decides it like this:
+
+* A parameter whose name ends in `$` is a string, everywhere.
+* A `LAMBDA` written in place as the function argument of `SELECT`, `FILTER`, `TAKE_WHILE`, `DROP_WHILE` or `REDUCE` takes the element kind of the array it walks. The element is a number when the array is visibly numeric (a literal of numbers, `IOTA`, `ZEROS`, `ONES`, `LINSPACE`, `RANGE`, `CUMSUM`, `GRADE` or arithmetic on arrays), a string when it is a literal of strings, `SPLIT` or a variable known to hold strings, and otherwise runtime-typed: each call receives the element with its own kind, so numbers, strings, maps and the rows of `CSVREADER` or `JSON.PARSE$` all arrive intact.
+* The accumulator of `REDUCE` is a string when the start value is a string literal, a `$` variable or a `$` function call, an array when it is an array literal such as `[]`, otherwise a number. `REDUCE` then answers a string or an array.
+* Every other lambda parameter is a number. That includes a lambda stored in a variable first (`DIM f = LAMBDA w -> LEN(w)`) and handed to `SELECT` later: write it in place, or name the parameter `w$` when it receives strings.
+
+What a lambda answers keeps its kind as well: `SELECT(LAMBDA r -> r{"name"}, rows)` gives an array of strings, and `FILTER` returns the elements it keeps unchanged.
+
+```basic
+DIM rows = [{"n": "a", "h": 2}, {"n": "b", "h": 5}]
+PRINT SELECT(LAMBDA r -> r{"n"}, rows)                 ' [a, b]
+PRINT FILTER(LAMBDA w -> LEN(w) = 3, ["pdf", "docx"])  ' [pdf]
+PRINT REDUCE(LAMBDA acc$, r -> acc$ + r{"n"}, rows, "")  ' ab
+```
+
+Inside a `FUNC`, a loop lambda reads the function's locals through `USE(...)`, as in the interpreter: `FILTER(LAMBDA USE(lim) x -> x > lim, nums)`. Under `-c` this works for a lambda handed straight to one of the five functions above; a lambda stored in a variable or returned from a `FUNC` with `USE` (the `MakeAdder` example) does not compile native yet.
+
 ### Function as operators
 
 ```basic
@@ -1983,7 +2003,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`SELECT(function@, array, [row_wise_bool]) -> array`**: Applies a user-defined function to each element of an array, returning a new array with the same dimensions containing the transformed elements. The provided function must accept exactly one argument. If the optional third argument 'row_wise_bool' is TRUE, it applies the function to each row of a 2D matrix instead. The result of a row-wise select is always a 1D array.
 * **`FILTER(function@, array) -> array`**: Filters an array by applying a user-defined predicate function to each element. It returns a new 1D array containing only the elements for which the predicate function returned `TRUE`. The provided function must accept one argument and should return a boolean value.
 
-  > **Native (`-c`) and string arrays:** `SELECT`/`FILTER` over string arrays compile native, including string-returning mappers (`SELECT(upper$@, names)`) and predicates over strings; `FILTER` preserves the element type of its source. The one rule the compiler can't infer: a mapper/predicate that *receives* a string must declare its parameter as a string (`FUNC f(s$)` or `AS STRING`). An untyped parameter (`FUNC f(s)`) is treated as a number under `-c` and reads the string as garbage. The interpreter is loose here, native is strict. (`AGG` with a function reference stays interpreter-only: its reducer runs in the bridged VM, which can't call a natively-compiled function.)
+  > **Native (`-c`) and string arrays:** `SELECT`/`FILTER` over string arrays compile native, including string-returning mappers (`SELECT(upper$@, names)`) and predicates over strings; `FILTER` preserves the element type of its source. A named `FUNC` used as mapper or predicate that *receives* a string must declare its parameter as a string (`FUNC f(s$)` or `AS STRING`); an untyped `FUNC` parameter (`FUNC f(s)`) is treated as a number under `-c` and reads the string as garbage. A `LAMBDA` written in place needs no such declaration: see *Lambda parameters under `-c`* in the lambda section. (`AGG` with a function reference stays interpreter-only: its reducer runs in the bridged VM, which can't call a natively-compiled function.)
 * **`REDUCE(function@, array, [initial_value]) -> value`**: Performs a cumulative reduction on an array using a user-provided function.
 * **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.
 * **`TAKE_WHILE(predicate@, array) -> array`**: Returns the longest prefix of `array` for which `predicate(element)` is true. Stops at the first false. Compiles native (the predicate runs through its funcref wrapper).
