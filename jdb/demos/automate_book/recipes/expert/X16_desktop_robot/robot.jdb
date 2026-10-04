@@ -149,14 +149,9 @@ ENDFUNC
 
 ' Every step of a job as a line of a plan.
 EXPORT FUNC PLAN_LINES(job)
-    DIM out = []
-    DIM steps = job{"steps"}
     DIM window$ = job{"window"}
-    DIM k = 0
-    FOR k = 0 TO LEN(steps) - 1
-        PUSH(out, PLAN_LINE$(steps[k], window$))
-    NEXT k
-    RETURN out
+    RETURN SELECT(LAMBDA USE(window$) s -> PLAN_LINE$(s, window$), _
+        job{"steps"})
 ENDFUNC
 
 ' A point inside the window as a point of the screen.

@@ -54,17 +54,20 @@ letters and mails:
    column. A number in the sheet, such as a postcode, becomes text
    without a decimal point.
 2. **Checking the template.** `UNFILLED` asks `DOCX.PLACEHOLDERS` for
-   the placeholders in the template and names the ones no column
-   fills. The letters are written all the same; the placeholder stays
-   in them as it is, which you will notice when you open one.
+   the placeholders in the template and keeps with `FILTER` the ones
+   no column fills. The letters are written all the same; the
+   placeholder stays in them as it is, which you will notice when you
+   open one.
 3. **Filling.** `WRITE` builds the values for `DOCX.FILL` from the
    contact. `DOCX.FILL` replaces each `{{name}}` in the body, the
    headers and the footers, also where Word has split it into several
    runs after an edit, and keeps all formatting of the template.
-4. **File names.** `FILE_NAME$` fills the `file_name` pattern the same
-   way and replaces the characters Windows does not allow in file
-   names. Two contacts with the same name get the row number added,
-   so no letter overwrites another.
+4. **File names.** `FILE_NAME$` fills the `file_name` pattern with
+   `FILL$`, which goes through the columns of the contact with
+   `REDUCE` and replaces one placeholder after the other, and then
+   replaces the characters Windows does not allow in file names. Two
+   contacts with the same name get the row number added, so no letter
+   overwrites another.
 5. **Mails.** `MAIL_FOR` fills the subject and the text from the same
    contact, attaches the letter, and the program puts the message into
    the outbox under the name of the letter.
@@ -127,13 +130,7 @@ Changes in the code:
   only the contacts with `yes`:
 
   ```
-  DIM invited = []
-  DIM j = 0
-  FOR j = 0 TO LEN(people) - 1
-      DIM yes$ = LCASE$(people[j]{"invite"})
-      IF yes$ = "yes" THEN PUSH(invited, people[j])
-  NEXT j
-  people = invited
+  people = FILTER(LAMBDA p -> LCASE$(p{"invite"}) = "yes", people)
   ```
 - **A placeholder that is not a column,** such as today's date: in the
   program, before the loop, add

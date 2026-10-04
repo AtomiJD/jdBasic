@@ -47,9 +47,14 @@ how to sum up a week:
    replacing it. The journal is a plain text file you can open in any
    editor.
 4. On the summary day `PARSE` reads the journal back into a list of
-   entries, `WEEK` keeps the ones from Monday to Sunday of this week,
-   and `SUMMARY$` writes the look back.
-5. `MONDAY$` finds the start of the week from the weekday number that
+   entries, and `WEEK` keeps the ones from Monday to Sunday of this
+   week with `FILTER`. Its lambda compares each day with the first
+   and the last day of the week; `USE(first$, last$)` hands it those
+   two values of the function.
+5. `SUMMARY$` writes the look back. `SELECT` takes the mood out of
+   every entry and `FILTER` drops the days without one, so the average
+   is `SUM` divided by `LEN`. The same pair collects what got done.
+6. `MONDAY$` finds the start of the week from the weekday number that
    `FORMAT_DATE` gives with `%w`: 0 for Sunday, 1 for Monday, and so on.
 
 ### Run it

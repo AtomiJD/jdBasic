@@ -58,7 +58,9 @@ The module plans the work first and then talks to Office:
    last saved with the time of its PDF. A missing or older PDF means
    `convert`, a newer one `current`.
 3. `TOPDF.APPLY` groups the documents by program, so Word starts once
-   for all Word files and PowerPoint once for all slides.
+   for all Word files and PowerPoint once for all slides. For each
+   program `FILTER` keeps the documents of that kind that need a PDF;
+   `USE(kind$)` hands the lambda the program it looks for.
    `CREATEOBJECT` starts the program, and `OFFICEKIT.PREPARE` hides
    its window and turns off its questions.
 4. `OFFICEKIT.SAVE_PDF` opens the document read only, so it is never

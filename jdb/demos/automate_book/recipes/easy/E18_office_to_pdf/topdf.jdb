@@ -48,23 +48,12 @@ ENDFUNC
 ' Whether a kind is one of the programs.
 FUNC Listed(programs, kind$)
     IF kind$ = "" THEN RETURN FALSE
-    DIM k = 0
-    FOR k = 0 TO LEN(programs) - 1
-        DIM p$ = LCASE$(programs[k])
-        IF p$ = kind$ THEN RETURN TRUE
-    NEXT k
-    RETURN FALSE
+    RETURN kind$ IN SELECT(LAMBDA p$ -> LCASE$(p$), programs)
 ENDFUNC
 
 ' How many documents of a plan need a PDF.
 EXPORT FUNC TO_MAKE(plan)
-    DIM n = 0
-    DIM k = 0
-    FOR k = 0 TO LEN(plan) - 1
-        DIM item = plan[k]
-        IF item{"action"} = "convert" THEN n = n + 1
-    NEXT k
-    RETURN n
+    RETURN LEN(FILTER(LAMBDA i -> i{"action"} = "convert", plan))
 ENDFUNC
 
 ' Makes the PDFs of a plan, or with dry_run only prints them. Every
@@ -79,12 +68,8 @@ EXPORT FUNC APPLY(plan, dry_run)
     DIM k = 0
     FOR j = 0 TO LEN(kinds) - 1
         DIM kind$ = kinds[j]
-        DIM todo = []
-        FOR k = 0 TO LEN(plan) - 1
-            DIM item = plan[k]
-            DIM due = item{"action"} = "convert"
-            IF item{"kind"} = kind$ ANDALSO due THEN PUSH(todo, item)
-        NEXT k
+        DIM todo = FILTER(LAMBDA USE(kind$) i -> _
+            i{"kind"} = kind$ ANDALSO i{"action"} = "convert", plan)
         IF LEN(todo) > 0 THEN
             IF dry_run THEN
                 FOR k = 0 TO LEN(todo) - 1

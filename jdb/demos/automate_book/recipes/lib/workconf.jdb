@@ -41,12 +41,7 @@ ENDFUNC
 
 ' TRUE when --name is on the command line.
 EXPORT FUNC FLAG(name$)
-    DIM argv = OS.ARGS()
-    DIM k = 1
-    FOR k = 1 TO LEN(argv) - 1
-        IF argv[k] = "--" + name$ THEN RETURN TRUE
-    NEXT k
-    RETURN FALSE
+    RETURN ("--" + name$) IN DROP(1, OS.ARGS())
 ENDFUNC
 
 ' Where work.conf is.

@@ -40,8 +40,11 @@ The module walks the folders and writes the report:
    its subfolders. Each file is also noted with its size.
 2. Hidden folders, such as the settings Windows keeps in `AppData`, are
    left out. Their size is not yours to clean up.
-3. `LARGEST` orders a list by size with `GRADE` and keeps the first
-   entries.
+3. `LARGEST` takes the size out of every entry with `SELECT`, with a
+   minus in front so the largest comes first. `GRADE` gives the order
+   of those numbers, `TAKE` keeps the first `n` places, and a second
+   `SELECT` picks the entries at those places. `USE(col)` and
+   `USE(pairs)` hand each lambda a value of the function.
 4. `HUMAN$` shows a size the way Explorer does: bytes, KB, MB or GB.
 5. `REPORT$` puts it together and adds the warning when the total is above
    `warn_gb`.

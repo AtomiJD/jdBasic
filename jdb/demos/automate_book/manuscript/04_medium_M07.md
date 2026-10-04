@@ -65,9 +65,11 @@ The module does the work:
    A mail without a readable date goes into an `undated` folder.
 4. `SAFE$` makes any text usable as a file name. Windows does not
    allow `\ / : * ? " < > |` in names, and a subject such as
-   *Invoice: October/2026* contains two of them. They become spaces.
-   `-t$` splits the text into characters, so the cut to 60
-   characters never breaks a letter such as *ü* in half.
+   *Invoice: October/2026* contains two of them. They become spaces:
+   `REDUCE` hands the text from one `REPLACE$` to the next, once for
+   each forbidden character. `-t$` splits the text into characters,
+   so the cut to 60 characters never breaks a letter such as *ü* in
+   half.
 5. A picture inside the text of a mail carries a Content-ID, which
    `att_cids` lists. Attachments with a Content-ID are left out
    unless `keep_inline` is on.

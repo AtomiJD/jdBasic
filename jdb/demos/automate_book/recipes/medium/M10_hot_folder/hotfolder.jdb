@@ -169,12 +169,9 @@ ENDFUNC
 EXPORT FUNC CSV_TO_XLSX(src$, dest$, sep$)
     DIM text$ = REPLACE$(TXTREADER$(src$), CHR$(13), "")
     DIM lines = SPLIT(text$, CHR$(10))
-    DIM rows = []
-    DIM k = 0
-    FOR k = 0 TO LEN(lines) - 1
-        DIM one$ = lines[k]
-        IF TRIM$(one$) <> "" THEN PUSH(rows, CSV_FIELDS(one$, sep$))
-    NEXT k
+    DIM filled = FILTER(LAMBDA l$ -> TRIM$(l$) <> "", lines)
+    DIM rows = SELECT(LAMBDA USE(sep$) l$ -> CSV_FIELDS(l$, sep$), _
+        filled)
     DIM wb = XLSX.NEW()
     DIM sheet = XLSX.SHEET(wb, "Data", rows)
     XLSX.FREEZE(sheet, 1)

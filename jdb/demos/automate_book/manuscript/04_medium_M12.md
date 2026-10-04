@@ -82,11 +82,15 @@ put together.
    yourself goes wrong at exactly these edges, so leave it to the
    library.
 
-4. **From totals to answers.** `TOP_SERIES` sorts the titles by their
-   hours. It does that with `GRADE`, which answers the order in which
-   the values would be sorted; negating the hours turns *smallest
-   first* into *largest first*. `REPORT$` and `WRITE_XLSX` then present
-   the same summary twice, once as text and once as a workbook.
+4. **From totals to answers.** `TOP_SERIES` takes the hours of each
+   title with a `SELECT` and sorts the titles by them. It does that
+   with `GRADE`, which answers the order in which the values would be
+   sorted; negating the hours turns *smallest first* into *largest
+   first*, and a second `SELECT` turns the positions back into titles.
+   `REPORT$` and `WRITE_XLSX` then present the same summary twice,
+   once as text and once as a workbook. `REPORT$` makes the lines per
+   week and per month with a `SELECT` each, and `TAKE` keeps the
+   first `top` series.
 
 Each function takes what it needs as parameters and returns its result.
 None of them reads settings or prints anything. That is what makes the

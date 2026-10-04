@@ -14,12 +14,9 @@ IMPORT MAIL, DT
 ' Windows forbids become spaces, runs of spaces one, and it is cut to
 ' max_chars characters.
 EXPORT FUNC SAFE$(text$, max_chars)
-    DIM t$ = text$
     DIM bad = ["\", "/", ":", "*", "?", CHR$(34), "<", ">", "|"]
-    DIM k = 0
-    FOR k = 0 TO LEN(bad) - 1
-        t$ = REPLACE$(t$, bad[k], " ")
-    NEXT k
+    DIM t$ = REDUCE(LAMBDA acc$, b$ -> REPLACE$(acc$, b$, " "), bad, _
+        text$)
     t$ = REGEX.REPLACE("[\x00-\x1f]", t$, " ")
     t$ = TRIM$(REGEX.REPLACE(" +", t$, " "))
     DIM chars = -t$

@@ -337,14 +337,13 @@ ENDFUNC
 
 ' A line of CSV, quoting the cells that need it.
 EXPORT FUNC CSVLINE$(cells)
+    RETURN JOIN(SELECT(CsvCell$@, cells), ",")
+ENDFUNC
+
+' One cell, in quotes when it holds a comma or a quote.
+FUNC CsvCell$(s$)
     DIM q$ = CHR$(34)
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(cells) - 1
-        DIM c$ = cells[k]
-        DIM quote = INSTR(c$, ",") >= 0 ORELSE INSTR(c$, q$) >= 0
-        IF quote THEN c$ = q$ + REPLACE$(c$, q$, q$ + q$) + q$
-        PUSH(out, c$)
-    NEXT k
-    RETURN JOIN(out, ",")
+    DIM quote = INSTR(s$, ",") >= 0 ORELSE INSTR(s$, q$) >= 0
+    IF quote THEN RETURN q$ + REPLACE$(s$, q$, q$ + q$) + q$
+    RETURN s$
 ENDFUNC

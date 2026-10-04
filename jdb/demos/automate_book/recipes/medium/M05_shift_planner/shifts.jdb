@@ -102,33 +102,25 @@ ENDFUNC
 ' "names", sorted by day.
 EXPORT FUNC CLASHES(entries, away_kinds, max_away)
     DIM away AS MAP
-    DIM low = []
+    DIM low = SELECT(LAMBDA a$ -> LCASE$(a$), away_kinds)
+    DIM gone = FILTER(LAMBDA USE(low) e -> LCASE$(e{"kind"}) IN low, _
+        entries)
     DIM k = 0
     DIM j = 0
-    FOR k = 0 TO LEN(away_kinds) - 1
-        PUSH(low, LCASE$(away_kinds[k]))
+    FOR k = 0 TO LEN(gone) - 1
+        DIM e = gone[k]
+        DIM t = DT.PARSE(e{"from"})
+        FOR j = 1 TO DAYS(e)
+            DIM day$ = DT.FMT$(t, "%Y-%m-%d", 0)
+            DIM who = []
+            IF MAP.EXISTS(away, day$) THEN who = away{day$}
+            IF NOT (e{"name"} IN who) THEN PUSH(who, e{"name"})
+            away{day$} = who
+            t = t + 86400
+        NEXT j
     NEXT k
-    FOR k = 0 TO LEN(entries) - 1
-        DIM e = entries[k]
-        IF LCASE$(e{"kind"}) IN low THEN
-            DIM t = DT.PARSE(e{"from"})
-            FOR j = 1 TO DAYS(e)
-                DIM day$ = DT.FMT$(t, "%Y-%m-%d", 0)
-                DIM who = []
-                IF MAP.EXISTS(away, day$) THEN who = away{day$}
-                IF NOT (e{"name"} IN who) THEN PUSH(who, e{"name"})
-                away{day$} = who
-                t = t + 86400
-            NEXT j
-        ENDIF
-    NEXT k
-    DIM out = []
-    DIM sorted_days = SORT(MAP.KEYS(away))
-    FOR k = 0 TO LEN(sorted_days) - 1
-        DIM names = away{sorted_days[k]}
-        IF LEN(names) > max_away THEN
-            PUSH(out, {"day": sorted_days[k], "names": names})
-        ENDIF
-    NEXT k
-    RETURN out
+    DIM busy = FILTER(LAMBDA USE(away, max_away) d$ -> _
+        LEN(away{d$}) > max_away, SORT(MAP.KEYS(away)))
+    RETURN SELECT(LAMBDA USE(away) d$ -> _
+        {"day": d$, "names": away{d$}}, busy)
 ENDFUNC

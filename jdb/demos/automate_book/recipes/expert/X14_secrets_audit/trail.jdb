@@ -142,10 +142,7 @@ EXPORT FUNC REPORT_LINES(check, summary)
     ELSE
         PUSH(out, "The audit trail was changed:")
         DIM problems = check{"problems"}
-        DIM k = 0
-        FOR k = 0 TO LEN(problems) - 1
-            PUSH(out, "  " + problems[k])
-        NEXT k
+        out = APPEND(out, SELECT(LAMBDA s$ -> "  " + s$, problems))
     ENDIF
     DIM names = SORT(MAP.KEYS(summary))
     DIM j = 0

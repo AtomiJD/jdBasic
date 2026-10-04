@@ -112,14 +112,10 @@ EXPORT FUNC DIFF(alerts, problems, now)
         ENDIF
         open{key$} = entry
     NEXT k
-    DIM gone = []
-    DIM keys = MAP.KEYS(alerts)
-    FOR k = 0 TO LEN(keys) - 1
-        DIM old$ = keys[k]
-        IF NOT MAP.EXISTS(open, old$) THEN
-            PUSH(gone, {"key": old$, "text": alerts{old$}{"text"}})
-        ENDIF
-    NEXT k
+    DIM over = FILTER(LAMBDA USE(open) k$ -> _
+        NOT MAP.EXISTS(open, k$), MAP.KEYS(alerts))
+    DIM gone = SELECT(LAMBDA USE(alerts) k$ -> _
+        {"key": k$, "text": alerts{k$}{"text"}}, over)
     DIM out AS MAP
     out{"new"} = fresh
     out{"resolved"} = gone
@@ -132,17 +128,10 @@ EXPORT FUNC TEXT$(change)
     DIM lines = []
     DIM fresh = change{"new"}
     DIM gone = change{"resolved"}
-    DIM k = 0
     IF LEN(fresh) > 0 THEN PUSH(lines, "New problems:")
-    FOR k = 0 TO LEN(fresh) - 1
-        DIM p = fresh[k]
-        PUSH(lines, "  " + p{"text"})
-    NEXT k
+    lines = APPEND(lines, SELECT(LAMBDA p -> "  " + p{"text"}, fresh))
     IF LEN(gone) > 0 THEN PUSH(lines, "Over now:")
-    FOR k = 0 TO LEN(gone) - 1
-        DIM g = gone[k]
-        PUSH(lines, "  " + g{"text"})
-    NEXT k
+    lines = APPEND(lines, SELECT(LAMBDA g -> "  " + g{"text"}, gone))
     PUSH(lines, "Still open: " + STR$(LEN(MAP.KEYS(change{"open"}))))
     RETURN JOIN(lines, CHR$(10))
 ENDFUNC

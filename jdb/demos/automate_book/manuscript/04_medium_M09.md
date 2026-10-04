@@ -71,12 +71,15 @@ The module knows how to read a log line and keeps the counters:
    after # s on job #" and are counted together. This one line of code
    is what turns a log into a list of problems.
 
-5. **Putting it together.** `TOP_MESSAGES` sorts the error messages by
-   their count with `GRADE`, as M12 does with meeting hours.
-   `WORST_HOUR$` finds the hour with the most errors. `REPORT$` writes
-   the text, and `CHART` draws the stacked bar chart with the SVG
-   library: one bar per hour, the errors at the bottom and the warnings
-   on top.
+5. **Putting it together.** `TOTAL` adds up one level over all hours
+   with `SUM` over a `SELECT`. `TOP_MESSAGES` sorts the error messages
+   by their count with `GRADE`, as M12 does with meeting hours: the
+   counts are negated so the most frequent comes first. `WORST_HOUR$`
+   takes the `MAX` of the errors per hour and keeps the first hour
+   with that many with a `FILTER`. `REPORT$` writes the text, `TAKE`
+   cuts the list of messages to `top`, and `CHART` draws the stacked
+   bar chart with the SVG library: one bar per hour, the errors at the
+   bottom and the warnings on top.
 
 The chart is an SVG file, a drawing any web browser shows. Double-click
 it, or put it on a page next to the report.

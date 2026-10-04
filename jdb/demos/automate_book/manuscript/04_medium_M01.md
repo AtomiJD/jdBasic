@@ -74,21 +74,23 @@ folder:
    customer starts an invoice; every further row adds a line to it.
    Rows without a customer, such as an empty line at the end, are left
    out.
-5. **Adding up.** `TOTALS` multiplies quantity and price per line,
-   adds the lines, and rounds to cents. The VAT is computed from the
-   unrounded net amount and rounded once, which is how a calculator
-   would do it.
+5. **Adding up.** `TOTALS` multiplies quantity and price of every line
+   in one `SELECT`, adds the results with `SUM`, and rounds to cents.
+   The VAT is computed from the unrounded net amount and rounded once,
+   which is how a calculator would do it.
 6. **Numbers.** `NEXT_NUMBERS` reads the last number used from
-   `last_number.txt` in the invoice folder and hands out the next ones,
-   such as `RE-2026-0007`. The program writes the new last number back
-   only after all invoices are written, so a run that stops halfway
-   does not burn numbers.
+   `last_number.txt` in the invoice folder and hands out the next ones:
+   `last + IOTA(n)` is the list of the next n numbers, and a `SELECT`
+   turns each into a text such as `RE-2026-0007`. The program writes
+   the new last number back only after all invoices are written, so a
+   run that stops halfway does not burn numbers.
 7. **Files.** `INVOICE_PDF.WRITE` places the parts on an A4 page with
    PDFGEN: your company at the top, the customer, the number and the
    date, the table of lines and the three totals. `INVOICE_WORD.WRITE`
    writes the same content as a Word file, for customers who want to
-   edit it. Both take their rows from `TABLE_ROWS` and `TOTAL_LINES`,
-   so the two files always agree.
+   edit it. Both take their rows from `TABLE_ROWS`, which makes one row
+   per line with a `SELECT`, and from `TOTAL_LINES`, so the two files
+   always agree.
 8. **Mail.** `MAIL_FOR` builds the message with the invoice attached,
    and `OUTBOX.PUT$` writes it into the outbox under the invoice's
    number.

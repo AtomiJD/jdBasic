@@ -110,7 +110,6 @@ EXPORT FUNC PLAN(state, files)
     DIM seen AS MAP
     DIM add = []
     DIM change = []
-    DIM gone = []
     DIM k = 0
     FOR k = 0 TO LEN(files) - 1
         DIM f = files[k]
@@ -129,10 +128,8 @@ EXPORT FUNC PLAN(state, files)
         ENDIF
     NEXT k
     DIM known = MAP.KEYS(catalog)
-    FOR k = 0 TO LEN(known) - 1
-        DIM old$ = known[k]
-        IF NOT MAP.EXISTS(seen, old$) THEN PUSH(gone, old$)
-    NEXT k
+    DIM gone = FILTER(LAMBDA USE(seen) old$ -> _
+        NOT MAP.EXISTS(seen, old$), known)
     RETURN {"add": add, "change": change, "remove": gone}
 ENDFUNC
 

@@ -64,10 +64,8 @@ PUSH(lines, "  " + STR$(totals{"files"}) + " files, " + _
     STR$(INT(ms)) + " ms")
 DIM total$ = CRUNCH.MONEY$(totals{"cents"})
 PUSH(lines, "  total " + total$ + ", report " + report$)
-DIM k = 0
-FOR k = 0 TO LEN(failed) - 1
-    PUSH(lines, "  not read: " + failed[k])
-NEXT k
+DIM not_read = SELECT(LAMBDA s$ -> "  not read: " + s$, failed)
+lines = APPEND(lines, not_read)
 DIM text$ = JOIN(lines, CHR$(10)) + CHR$(10)
 PRINT text$;
 TXTWRITER PATH.JOIN$(out$, "parallel_crunching.log"), text$, TRUE

@@ -77,9 +77,10 @@ library: `{{ week }}` is replaced by the week, and
    at the end. Blocked items come first, because they are the ones
    someone has to act on.
 5. `HTML$` hands a map with the week, the people and the totals to
-   `TMPL.RENDER$`, which fills the template. TMPL writes every value
-   escaped for HTML, so an item such as *Miller & Co* cannot break
-   the table.
+   `TMPL.RENDER$`, which fills the template. `TOTAL` counts the notes
+   of one kind with `SUM` over a `SELECT` of the list lengths. TMPL
+   writes every value escaped for HTML, so an item such as
+   *Miller & Co* cannot break the table.
 6. `MAIL.MESSAGE` creates the message with the sender from the `[mail]`
    part, and `OUTBOX.PUT$` writes it as `status-2026-W43.eml` into the
    outbox. The same week always gives the same file name, so running
@@ -87,7 +88,8 @@ library: `{{ week }}` is replaced by the week, and
    second one.
 7. With `clear_done = true`, the program then rewrites every notes file
    without its done lines, ready for the next week. `WITHOUT_DONE$`
-   keeps every other line as it was.
+   keeps every other line as it was, with a `FILTER` on the first five
+   characters.
 
 ### Run it
 

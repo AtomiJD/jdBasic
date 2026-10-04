@@ -33,14 +33,7 @@ FUNC Cells(t$)
     IF RIGHT$(inner$, 1) = "|" THEN
         inner$ = LEFT$(inner$, LEN(inner$) - 1)
     ENDIF
-    DIM parts = SPLIT(inner$, "|")
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(parts) - 1
-        DIM cell$ = TRIM$(parts[k])
-        PUSH(out, cell$)
-    NEXT k
-    RETURN out
+    RETURN SELECT(LAMBDA c$ -> TRIM$(c$), SPLIT(inner$, "|"))
 ENDFUNC
 
 ' Whether a table line only separates the header, such as |---|---|.
@@ -160,16 +153,9 @@ EXPORT FUNC FROM_ROWS(rows, base$)
             s{"subtitle"} = points$
         ELSE
             s = NewSlide("content", title$)
-            DIM points = []
-            IF points$ <> "" THEN
-                DIM parts = SPLIT(points$, ";")
-                DIM p = 0
-                FOR p = 0 TO LEN(parts) - 1
-                    DIM one$ = TRIM$(parts[p])
-                    IF one$ <> "" THEN PUSH(points, one$)
-                NEXT p
-            ENDIF
-            s{"bullets"} = points
+            DIM parts = SELECT(LAMBDA p$ -> TRIM$(p$), _
+                SPLIT(points$, ";"))
+            s{"bullets"} = FILTER(LAMBDA p$ -> p$ <> "", parts)
         ENDIF
         DIM file$ = CellOf$(row, c_pic)
         IF file$ <> "" THEN

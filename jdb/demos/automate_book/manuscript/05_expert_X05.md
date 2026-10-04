@@ -101,10 +101,12 @@ The module does the talking to Microsoft and the turning into blocks:
    Any other answer, such as a revoked sign-in, stops at once with
    the message of the server.
 6. `Event` turns each API event into a small map with the times as DT
-   instants (seconds since 1970 in UTC), and `BLOCKS` decides what
-   your family sees. The id of each block is a hash of the event's id,
-   so the same meeting has the same id in every run and a calendar
-   moves it instead of adding a second one.
+   instants (seconds since 1970 in UTC). `BLOCKS` keeps the events
+   that make you busy with `FILTER` and the function `Busy`, and
+   `SELECT` turns each one into a block with `Block`, which decides
+   what your family sees. The id of each block is a hash of the
+   event's id, so the same meeting has the same id in every run and
+   a calendar moves it instead of adding a second one.
 7. `ICS$` writes the blocks with ICAL: a meeting as an event from
    start to end, an all-day event as a day, marked busy.
 8. `CHANGES` reads the file of the last run and counts the blocks that
@@ -164,10 +166,10 @@ except for private and confidential meetings, which always stay
 Changes in the code:
 
 - **Only the core hours.** To leave out early and late meetings, add
-  a condition in `BLOCKS` next to the one for free time, for example
+  a condition in `Busy` next to the one for free time, for example
   with `DT.FMT$(ev{"start"}, "%H", 2)` for the hour in UTC+2.
 - **Mark home office days.** If you mark them with an all-day event
-  called *Home office*, let `BLOCKS` give such events their subject
+  called *Home office*, let `Block` give such events their subject
   even when `show_titles` is off. Put this line before the one that
   checks for `"tentative"`:
 

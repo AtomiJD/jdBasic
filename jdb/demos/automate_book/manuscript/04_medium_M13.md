@@ -62,8 +62,10 @@ The module knows the folder and the placeholders:
 
 3. **Finding the placeholders.** `PLACEHOLDERS` asks `REGEX.FINDALL`
    for every `{{name}}` in the text. The pattern allows spaces inside
-   the braces, so `{{ name }}` counts as well. Each name is kept once,
-   in the order it first appears, which is the order `list` shows.
+   the braces, so `{{ name }}` counts as well. A `SELECT` takes the
+   name out of each hit in small letters, and `UNIQUE` keeps each name
+   once, in the order it first appears, which is the order `list`
+   shows.
 
 4. **Filling them in.** `FILL` walks through the text from one `{{` to
    the next `}}` and builds the result piece by piece. A placeholder

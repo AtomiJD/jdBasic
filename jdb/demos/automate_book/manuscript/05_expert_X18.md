@@ -66,9 +66,10 @@ The module holds the table, builds the pages and saves the changes:
    1899. `SERIAL_DATE$` turns it into a date for the page and
    `DATE_SERIAL` back into a day number for the workbook, so Excel
    still shows a date after the app saved it.
-3. `VIEW` answers the row numbers to show: those that hold the search
-   text and pass the filters, sorted by the column you clicked.
-   Numbers sort as numbers, so 1890 comes after 455.
+3. `VIEW` answers the row numbers to show. `FILTER` keeps those that
+   hold the search text and pass the filters, and `SORT` orders them
+   by the key `SortKey$` builds from the column you clicked. Numbers
+   sort as numbers, so 1890 comes after 455.
 4. `LIST_HTML$` and `FORM_HTML$` build the pages. Every text goes
    through `ESC$`, so a customer called "Ito & Co" stays a name and
    never becomes part of the page's code.

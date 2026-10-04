@@ -208,15 +208,10 @@ ENDFUNC
 ' Seconds until the next job is due, at least 5 and at most 60, so the
 ' server marks the lock at least once a minute.
 EXPORT FUNC NEXT_WAKE(jobs, now, offset)
-    DIM wait = 60
-    DIM k = 0
-    FOR k = 0 TO LEN(jobs) - 1
-        DIM job = jobs[k]
-        IF job{"enabled"} THEN
-            DIM gap = SCHED.NEXTRUN(job{"when"}, now, offset) - now
-            IF gap < wait THEN wait = gap
-        ENDIF
-    NEXT k
+    DIM active = FILTER(LAMBDA job -> job{"enabled"}, jobs)
+    DIM gaps = SELECT(LAMBDA USE(now, offset) job -> _
+        SCHED.NEXTRUN(job{"when"}, now, offset) - now, active)
+    DIM wait = MIN(APPEND([60], gaps))
     IF wait < 5 THEN wait = 5
     RETURN wait
 ENDFUNC

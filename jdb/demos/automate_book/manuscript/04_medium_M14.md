@@ -49,8 +49,8 @@ The module reads the paragraphs, pairs them up and writes the report:
 
 1. **From a file to paragraphs.** `DOCX.PARAGRAPHS` answers the text of
    every paragraph in the document, without the formatting. `PARAGRAPHS`
-   trims each one and leaves out the empty ones, so an extra blank line
-   in the new version is no change.
+   trims each one with a `SELECT` and leaves out the empty ones with a
+   `FILTER`, so an extra blank line in the new version is no change.
 
 2. **What both versions share.** `TEXTDIFF.OPCODES` is the same
    comparison that programmers use for source code, applied to
@@ -79,7 +79,9 @@ The module reads the paragraphs, pairs them up and writes the report:
    the new version, so you can read the report next to the new
    document. `OrderKey` gives each change its place: its paragraph
    number in the new version, or, for a removed paragraph, a place
-   just before where its old number would be.
+   just before where its old number would be. A `SELECT` takes the
+   place of every change, `GRADE` answers their order, and a second
+   `SELECT` picks the changes in that order.
 
 6. **Two reports from one list.** `REPORT$` writes the text you see on
    the screen and `REPORT_DOCX` the Word file. Both read the same list
@@ -146,10 +148,12 @@ Three changes in the code are worth knowing:
 
 - **Leave out page lines.** Some documents carry "Page 3 of 12" as
   paragraphs, and every new page in the new version then counts as a
-  change. In `PARAGRAPHS`, change the line that keeps a paragraph into:
+  change. In `PARAGRAPHS`, change the `FILTER` that keeps a paragraph
+  into:
 
   ```basic
-  IF p$ <> "" ANDALSO NOT STARTSWITH(p$, "Page ") THEN PUSH(out, p$)
+  RETURN FILTER(LAMBDA p$ -> p$ <> "" ANDALSO _
+      NOT STARTSWITH(p$, "Page "), cleaned)
   ```
 
 - **Send the report to legal.** Put the report into the outbox, by the

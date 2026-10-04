@@ -58,13 +58,7 @@ ENDFUNC
 
 ' How many notes of a kind all people have together.
 EXPORT FUNC TOTAL(people, kind$)
-    DIM n = 0
-    DIM k = 0
-    FOR k = 0 TO LEN(people) - 1
-        DIM items = people[k]{kind$}
-        n = n + LEN(items)
-    NEXT k
-    RETURN n
+    RETURN SUM(SELECT(LAMBDA USE(kind$) p -> LEN(p{kind$}), people))
 ENDFUNC
 
 SUB AddList(out, title$, items)
@@ -110,11 +104,7 @@ ENDFUNC
 ' The notes with the done ones taken out, for the next week.
 EXPORT FUNC WITHOUT_DONE$(text$)
     DIM rows = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
-    DIM kept = []
-    DIM k = 0
-    FOR k = 0 TO LEN(rows) - 1
-        DIM t$ = LCASE$(LEFT$(TRIM$(rows[k]), 5))
-        IF t$ <> "- [x]" THEN PUSH(kept, rows[k])
-    NEXT k
+    DIM kept = FILTER(LAMBDA r$ -> _
+        LCASE$(LEFT$(TRIM$(r$), 5)) <> "- [x]", rows)
     RETURN JOIN(kept, gLF$)
 ENDFUNC

@@ -242,15 +242,9 @@ EXPORT FUNC SIMILAR(rows, column$, cutoff)
     NEXT r
     DIM out = []
     IF col < 0 THEN RETURN out
-    DIM names = []
-    DIM known AS MAP
-    FOR r = 1 TO LEN(rows) - 1
-        DIM one$ = "" + rows[r][col]
-        IF one$ <> "" ANDALSO NOT MAP.EXISTS(known, one$) THEN
-            known{one$} = TRUE
-            PUSH(names, one$)
-        ENDIF
-    NEXT r
+    DIM cells = SELECT(LAMBDA USE(col) row -> "" + row[col], _
+        DROP(1, rows))
+    DIM names = UNIQUE(FILTER(LAMBDA v$ -> v$ <> "", cells))
     DIM i = 0
     DIM j = 0
     FOR i = 0 TO LEN(names) - 1

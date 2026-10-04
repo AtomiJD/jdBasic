@@ -130,31 +130,28 @@ EXPORT FUNC READ_LOG(log_file$)
     IF NOT FILE.EXISTS(log_file$) THEN RETURN out
     DIM text$ = REPLACE$(TXTREADER$(log_file$), CHR$(13), "")
     DIM lines = SPLIT(text$, gLF$)
-    DIM k = 0
-    FOR k = 0 TO LEN(lines) - 1
-        DIM parts = SPLIT(lines[k], gTab$)
-        IF LEN(parts) = 5 THEN
-            DIM row AS MAP
-            row{"time"} = parts[0]
-            row{"id"} = parts[1]
-            row{"mode"} = parts[2]
-            row{"exit"} = CINT(VAL(parts[3]))
-            row{"message"} = parts[4]
-            PUSH(out, row)
-        ENDIF
-    NEXT k
-    RETURN out
+    DIM whole = FILTER(LAMBDA s$ -> LEN(SPLIT(s$, gTab$)) = 5, lines)
+    RETURN SELECT(LAMBDA s$ -> LogRow(s$), whole)
+ENDFUNC
+
+' One line of the log as a map.
+FUNC LogRow(line$)
+    DIM parts = SPLIT(line$, gTab$)
+    DIM row AS MAP
+    row{"time"} = parts[0]
+    row{"id"} = parts[1]
+    row{"mode"} = parts[2]
+    row{"exit"} = CINT(VAL(parts[3]))
+    row{"message"} = parts[4]
+    RETURN row
 ENDFUNC
 
 ' The last row of the log for an id; an empty map when it never ran.
 EXPORT FUNC LAST(rows, id$)
     DIM found AS MAP
-    DIM k = 0
-    FOR k = 0 TO LEN(rows) - 1
-        DIM row = rows[k]
-        IF row{"id"} = id$ THEN found = row
-    NEXT k
-    RETURN found
+    DIM mine = FILTER(LAMBDA USE(id$) row -> row{"id"} = id$, rows)
+    IF LEN(mine) = 0 THEN RETURN found
+    RETURN mine[LEN(mine) - 1]
 ENDFUNC
 
 ' How the last run ended, in words for the window.

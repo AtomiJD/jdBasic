@@ -607,6 +607,118 @@ all sorted
 > If a program of yours seems to hang, press Ctrl+C in its window to stop
 > it, and check that something inside the loop changes the condition.
 
+### Whole lists at once
+
+Many loops do one of three simple things: they turn every entry of a
+list into something else, they keep the entries that pass a test, or
+they add numbers up. jdBasic does each of these for the whole list in
+one line, and the line says what it does without a loop around it.
+
+Arithmetic and the functions for numbers work on a whole list.
+`IOTA(n)` makes the list of the numbers from 1 to n:
+
+```basic
+DIM hours = [7.5, 8, 6.25, 9]
+PRINT SUM(hours)
+PRINT MAX(hours) - MIN(hours)
+PRINT hours * 60
+PRINT IOTA(5)
+```
+
+```text
+30.75
+2.75
+[450, 480, 375, 540]
+[1, 2, 3, 4, 5]
+```
+
+`SELECT` turns every entry into something else, and `FILTER` keeps the
+entries that pass a test. What happens to each entry is written as a
+`LAMBDA`: a small function without a name, with its parameter before
+the arrow and its result after it. `LAMBDA f$ -> UCASE$(f$)` reads as
+"take f$ and answer it in capitals":
+
+```basic
+DIM files = ["offer.pdf", "photo.jpg", "budget.xlsx", "notes.pdf"]
+PRINT SELECT(LAMBDA f$ -> UCASE$(f$), files)
+PRINT FILTER(LAMBDA f$ -> ENDSWITH(f$, ".pdf"), files)
+PRINT LEN(FILTER(LAMBDA f$ -> ENDSWITH(f$, ".pdf"), files))
+```
+
+```text
+[OFFER.PDF, PHOTO.JPG, BUDGET.XLSX, NOTES.PDF]
+[offer.pdf, notes.pdf]
+2
+```
+
+When the test is longer than one expression, write it as a function of
+its own and hand it over with `@` after its name:
+
+```basic
+FUNC IsWorkday(day$)
+    RETURN NOT (day$ IN ["Sat", "Sun"])
+ENDFUNC
+DIM days = ["Mon", "Tue", "Sat", "Sun", "Fri"]
+PRINT FILTER(IsWorkday@, days)
+```
+
+```text
+[Mon, Tue, Fri]
+```
+
+`GRADE` answers the positions of the entries in sorted order. With
+that list in the brackets, another list comes out sorted the same way,
+so names can be sorted by their hours. `UNIQUE` drops repeated
+entries:
+
+```basic
+DIM names = ["Mia", "Jonas", "Lena"]
+DIM hours = [6.5, 9, 7.25]
+PRINT GRADE(hours)
+PRINT names[GRADE(hours)]
+PRINT UNIQUE(["pdf", "jpg", "pdf", "docx", "jpg"])
+```
+
+```text
+[0, 2, 1]
+[Mia, Lena, Jonas]
+[pdf, jpg, docx]
+```
+
+The same works on a list of maps, which is how the recipes hold rows
+of a sheet or entries of a log:
+
+```basic
+DIM team = [{"name": "Mia", "hours": 6.5}, _
+    {"name": "Jonas", "hours": 9}]
+PRINT SELECT(LAMBDA p -> p{"name"}, team)
+PRINT SUM(SELECT(LAMBDA p -> p{"hours"}, team))
+DIM busy = FILTER(LAMBDA p -> p{"hours"} > 8, team)
+PRINT busy[0]{"name"}
+```
+
+```text
+[Mia, Jonas]
+15.5
+Jonas
+```
+
+`REDUCE` folds a list into one value, starting from the value after
+the list. Here it turns hours into minutes and adds them up in one go:
+
+```basic
+PRINT REDUCE(LAMBDA total, h -> total + h * 60, [1.5, 2], 0)
+```
+
+```text
+210
+```
+
+A loop is still the right tool when each step does something outside
+the list: it reads or writes a file, prints a line, starts a program,
+or stops early once it found what it looked for. The recipes use both:
+the list functions to decide, a loop to act on the decision.
+
 ### Dates and times
 
 Half of the recipes in Chapter 3 ask what day it is: the break reminder

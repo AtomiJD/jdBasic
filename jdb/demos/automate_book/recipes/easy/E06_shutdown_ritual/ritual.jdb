@@ -88,28 +88,18 @@ EXPORT FUNC WEEK(entries, day$)
     DIM first$ = MONDAY$(day$)
     DIM sunday = DATEADD("D", 6, CDATE(first$))
     DIM last$ = FORMAT_DATE(sunday, "%Y-%m-%d")
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(entries) - 1
-        DIM e = entries[k]
-        DIM d$ = e{"day"}
-        IF d$ >= first$ ANDALSO d$ <= last$ THEN PUSH(out, e)
-    NEXT k
-    RETURN out
+    RETURN FILTER(LAMBDA USE(first$, last$) e -> _
+        e{"day"} >= first$ ANDALSO e{"day"} <= last$, entries)
 ENDFUNC
 
 ' A summary of a week's entries: days written, the average mood, the
 ' things done and what is still open from the last day.
 EXPORT FUNC SUMMARY$(week)
     IF LEN(week) = 0 THEN RETURN "No entries this week."
-    DIM moods = []
-    DIM done = []
-    DIM k = 0
-    FOR k = 0 TO LEN(week) - 1
-        DIM e = week[k]
-        IF e{"mood"} > 0 THEN PUSH(moods, e{"mood"})
-        IF e{"done"} <> "" THEN PUSH(done, "- " + e{"done"})
-    NEXT k
+    DIM all_moods = SELECT(LAMBDA e -> e{"mood"}, week)
+    DIM moods = FILTER(LAMBDA m -> m > 0, all_moods)
+    DIM written = FILTER(LAMBDA e -> e{"done"} <> "", week)
+    DIM done = SELECT(LAMBDA e -> "- " + e{"done"}, written)
     DIM out$ = "Week of " + MONDAY$(week[0]{"day"}) + ": "
     out$ = out$ + STR$(LEN(week)) + " days in the journal"
     IF LEN(moods) > 0 THEN

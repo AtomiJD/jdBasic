@@ -19,16 +19,11 @@ IMPORT JWT
 
 ' The lines of the trail, without empty ones.
 EXPORT FUNC LINES(path$)
-    DIM out = []
-    IF NOT FILE.EXISTS(path$) THEN RETURN out
+    IF NOT FILE.EXISTS(path$) THEN RETURN []
     DIM text$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
     DIM raw = SPLIT(text$, CHR$(10))
-    DIM k = 0
-    FOR k = 0 TO LEN(raw) - 1
-        DIM line$ = TRIM$(raw[k])
-        IF line$ <> "" THEN PUSH(out, line$)
-    NEXT k
-    RETURN out
+    DIM trimmed = SELECT(LAMBDA s$ -> TRIM$(s$), raw)
+    RETURN FILTER(LAMBDA s$ -> s$ <> "", trimmed)
 ENDFUNC
 
 ' Adds an entry with the fields of the map; answers its seq.

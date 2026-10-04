@@ -59,13 +59,7 @@ EXPORT FUNC PARSE(text$)
     IF LEN(rows) > 0 ANDALSO rows[LEN(rows) - 1] = "" THEN
         rows = DROP(-1, rows)
     ENDIF
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(rows) - 1
-        DIM row$ = rows[k]
-        PUSH(out, ParseLine(row$))
-    NEXT k
-    RETURN out
+    RETURN SELECT(LAMBDA row$ -> ParseLine(row$), rows)
 ENDFUNC
 
 FUNC ParseLine(row$)
@@ -100,12 +94,7 @@ ENDFUNC
 
 ' The whole to-do file from its items.
 EXPORT FUNC RENDER$(items)
-    DIM out$ = ""
-    DIM k = 0
-    FOR k = 0 TO LEN(items) - 1
-        out$ = out$ + TASK_LINE$(items[k]) + gLF$
-    NEXT k
-    RETURN out$
+    RETURN JOIN(SELECT(LAMBDA it -> TASK_LINE$(it) + gLF$, items), "")
 ENDFUNC
 
 ' The changes that bring the file and the tracker together, as a map

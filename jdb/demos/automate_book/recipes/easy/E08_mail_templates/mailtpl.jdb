@@ -16,12 +16,7 @@ EXPORT FUNC NAMES(folder$)
     DIM out = []
     IF NOT FILE.ISDIR(folder$) THEN RETURN out
     DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.txt")))
-    DIM k = 0
-    FOR k = 0 TO LEN(files) - 1
-        DIM file$ = files[k]
-        PUSH(out, LEFT$(file$, LEN(file$) - 4))
-    NEXT k
-    RETURN out
+    RETURN SELECT(LAMBDA f$ -> LEFT$(f$, LEN(f$) - 4), files)
 ENDFUNC
 
 ' The text of the template called name$ in the folder.

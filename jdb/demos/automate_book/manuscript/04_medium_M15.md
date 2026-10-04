@@ -83,12 +83,16 @@ The module turns the log into weeks, tables and the Word file:
    work on them is not counted twice, once in September's sheet and
    once in October's. `WEEK_ROWS` turns the hours into a table: a
    header with the day and the date (no date for the days outside the
-   month), a row per project, and the totals.
+   month), a row per project, and the totals. A `SELECT` writes the
+   seven cells of a project, empty for a day without hours, and `SUM`
+   adds up its row; the row of totals is a `SELECT` over the sums of
+   the days.
 
 5. **The document.** `DOCUMENT` writes the title, your name, a heading
    and a table for every week that has work in it, the totals of the
-   month from `TOTAL_ROWS`, and the two signature lines. It answers the
-   hours of the month, which the mail mentions.
+   month from `TOTAL_ROWS`, which makes a row per project with a
+   `SELECT`, and the two signature lines. It answers the hours of the
+   month, which the mail mentions.
 
 6. **The mail.** `MESSAGE` writes a short text to your boss and
    attaches the file. The program puts it into the outbox with

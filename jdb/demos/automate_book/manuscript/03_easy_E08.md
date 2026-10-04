@@ -40,8 +40,10 @@ One of the templates that come with the book:
 
 ### How it works
 
-1. `NAMES` lists the `.txt` files of the templates folder; without a
-   template name the program shows that list.
+1. `NAMES` lists the `.txt` files of the templates folder and takes
+   the ending off every name in one line, with `SELECT` and a `LAMBDA`
+   as in Chapter 2. Without a template name the program shows that
+   list.
 2. `VALUES` collects what a template can use: `me` and `signature`
    from `work.conf`, `to` from the command line, and the date written
    out, such as `2 October 2026`, with its weekday.

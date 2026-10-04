@@ -55,13 +55,15 @@ The module `MERGER` reads, compares, adds up and writes:
    in name order and reads each one with `XLSX.READ`. The person is
    the file name without `.xlsx`. Files that start with `~$` are the
    lock files Excel leaves while a workbook is open; they are skipped.
-3. **Who is missing.** `MISSING` compares the names of the files with
-   the `team` list from the settings, without regard to case. An empty
-   list means that nobody is checked.
+3. **Who is missing.** `MISSING` turns the reports into a list of
+   their names in small letters with `SELECT`, and keeps with `FILTER`
+   the people of the `team` list from the settings who are not in it.
+   An empty list means that nobody is checked.
 4. **Odd columns.** `ODD_HEADERS` joins each header row into one text
-   and compares it with the first report's. A report with a column
-   more, a column less or the columns in another order is named, and
-   its numbers still count by position.
+   and keeps with `FILTER` the reports whose text differs from the
+   first report's; a `SELECT` answers their names. A report with a
+   column more, a column less or the columns in another order is
+   named, and its numbers still count by position.
 5. **Adding up.** `TOTALS` keeps a map from the first column to the
    position of its row in the totals. The first time a project appears
    it gets a row of empty cells; after that every number in a report

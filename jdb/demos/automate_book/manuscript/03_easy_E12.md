@@ -54,9 +54,11 @@ anniversary, and builds the calendar with the ICAL library:
 2. `NEXT_DATE` puts the day and month of a date into this year. If that
    day has passed, it takes next year. A birthday on 29 February falls on
    the 28th in years that have no 29th.
-3. `UPCOMING` keeps the dates within the next `days` days and orders them
-   with `GRADE`, the nearest first. The age is the year of the next date
-   minus the year of birth.
+3. `UPCOMING` keeps the dates within the next `days` days. `SELECT`
+   takes out the days to wait, `GRADE` gives their order, the nearest
+   first, and a second `SELECT` picks the entries in that order;
+   `USE(found)` hands that lambda the list of the function. The age is
+   the year of the next date minus the year of birth.
 4. `ENTRY$` writes one line for each, such as "Sat 03 Oct  Ann Miller
    turns 41 (in 2 days)".
 5. `CALENDAR` writes an all-day event for each date that repeats every

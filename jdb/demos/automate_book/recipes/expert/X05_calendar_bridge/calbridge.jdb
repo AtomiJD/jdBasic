@@ -180,31 +180,35 @@ ENDFUNC
 ' is label$, or the subject when show_titles is on and the meeting is
 ' not private; a tentative meeting says so.
 EXPORT FUNC BLOCKS(events, label$, show_titles)
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(events) - 1
-        DIM ev = events[k]
-        DIM show$ = ev{"show_as"}
-        IF NOT ev{"cancelled"} ANDALSO show$ <> "free" THEN
-            DIM b AS MAP
-            DIM id$ = ev{"id"}
-            DIM hash$ = LEFT$(CODEC.SHA256$(id$), 24)
-            b{"uid"} = hash$ + "@calendar-bridge"
-            DIM summary$ = label$
-            IF show_titles ANDALSO NOT ev{"private"} THEN
-                summary$ = ev{"subject"}
-            ENDIF
-            IF show$ = "tentative" THEN
-                summary$ = summary$ + " (tentative)"
-            ENDIF
-            b{"summary"} = summary$
-            b{"start"} = ev{"start"}
-            b{"end"} = ev{"end"}
-            b{"all_day"} = ev{"all_day"}
-            PUSH(out, b)
-        ENDIF
-    NEXT k
-    RETURN out
+    DIM busy = FILTER(LAMBDA ev -> Busy(ev), events)
+    RETURN SELECT(LAMBDA USE(label$, show_titles) ev -> _
+        Block(ev, label$, show_titles), busy)
+ENDFUNC
+
+' Whether an event makes you busy.
+FUNC Busy(ev)
+    DIM show$ = ev{"show_as"}
+    RETURN NOT ev{"cancelled"} ANDALSO show$ <> "free"
+ENDFUNC
+
+' One event as a block.
+FUNC Block(ev, label$, show_titles)
+    DIM b AS MAP
+    DIM id$ = ev{"id"}
+    DIM hash$ = LEFT$(CODEC.SHA256$(id$), 24)
+    b{"uid"} = hash$ + "@calendar-bridge"
+    DIM summary$ = label$
+    IF show_titles ANDALSO NOT ev{"private"} THEN
+        summary$ = ev{"subject"}
+    ENDIF
+    IF ev{"show_as"} = "tentative" THEN
+        summary$ = summary$ + " (tentative)"
+    ENDIF
+    b{"summary"} = summary$
+    b{"start"} = ev{"start"}
+    b{"end"} = ev{"end"}
+    b{"all_day"} = ev{"all_day"}
+    RETURN b
 ENDFUNC
 
 ' The blocks as the text of an .ics calendar.
@@ -264,10 +268,8 @@ EXPORT FUNC CHANGES(path$, blocks)
             changed = changed + 1
         ENDIF
     NEXT j
-    DIM removed = 0
-    DIM old = MAP.KEYS(before)
-    FOR j = 0 TO LEN(old) - 1
-        IF NOT MAP.EXISTS(seen, old[j]) THEN removed = removed + 1
-    NEXT j
+    DIM gone = FILTER(LAMBDA USE(seen) id$ -> _
+        NOT MAP.EXISTS(seen, id$), MAP.KEYS(before))
+    DIM removed = LEN(gone)
     RETURN {"added": added, "changed": changed, "removed": removed}
 ENDFUNC

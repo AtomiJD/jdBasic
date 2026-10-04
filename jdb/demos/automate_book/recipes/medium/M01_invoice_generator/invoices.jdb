@@ -62,13 +62,8 @@ ENDFUNC
 ' The invoice with "net", "vat" and "gross" added, each rounded to
 ' cents; vat_percent such as 19.
 EXPORT FUNC TOTALS(inv, vat_percent)
-    DIM net = 0
-    DIM k = 0
-    FOR k = 0 TO LEN(inv{"lines"}) - 1
-        DIM ln = inv{"lines"}[k]
-        DIM amount = ln{"quantity"} * ln{"price"}
-        net = net + amount
-    NEXT k
+    DIM net = SUM(SELECT(LAMBDA ln -> ln{"quantity"} * ln{"price"}, _
+        inv{"lines"}))
     inv{"net"} = ROUND(net * 100) / 100
     inv{"vat"} = ROUND(net * vat_percent) / 100
     inv{"gross"} = inv{"net"} + inv{"vat"}
@@ -82,13 +77,9 @@ EXPORT FUNC NEXT_NUMBERS(counter$, prefix$, year$, n)
     DIM last = 0
     IF FILE.EXISTS(counter$) THEN _
         last = VAL(TRIM$(TXTREADER$(counter$)))
-    DIM out = []
-    DIM k = 0
-    FOR k = 1 TO n
-        DIM digits$ = RIGHT$("000" + STR$(last + k), 4)
-        PUSH(out, prefix$ + year$ + "-" + digits$)
-    NEXT k
-    RETURN out
+    RETURN SELECT(LAMBDA USE(prefix$, year$) v -> _
+        prefix$ + year$ + "-" + RIGHT$("000" + STR$(v), 4), _
+        last + IOTA(n))
 ENDFUNC
 
 EXPORT FUNC MONEY$(v)
@@ -97,15 +88,10 @@ ENDFUNC
 
 ' The rows of the invoice table, the header first.
 EXPORT FUNC TABLE_ROWS(inv)
-    DIM rows = [["Item", "Quantity", "Price", "Amount"]]
-    DIM k = 0
-    FOR k = 0 TO LEN(inv{"lines"}) - 1
-        DIM ln = inv{"lines"}[k]
-        DIM amount = ln{"quantity"} * ln{"price"}
-        PUSH(rows, [ln{"item"}, STR$(ln{"quantity"}), _
-            MONEY$(ln{"price"}), MONEY$(amount)])
-    NEXT k
-    RETURN rows
+    DIM body = SELECT(LAMBDA ln -> _
+        [ln{"item"}, STR$(ln{"quantity"}), MONEY$(ln{"price"}), _
+        MONEY$(ln{"quantity"} * ln{"price"})], inv{"lines"})
+    RETURN APPEND([["Item", "Quantity", "Price", "Amount"]], body)
 ENDFUNC
 
 EXPORT FUNC TOTAL_LINES(inv)

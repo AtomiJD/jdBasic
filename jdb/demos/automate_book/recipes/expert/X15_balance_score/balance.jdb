@@ -155,11 +155,7 @@ EXPORT FUNC SCORE(w, rules)
         DIM mails = w{"late_mails"} * rules{"weight_mail"}
         PUSH(parts, ["late mails", mails])
     ENDIF
-    DIM lost = 0.0
-    DIM k = 0
-    FOR k = 0 TO LEN(parts) - 1
-        lost = lost + parts[k][1]
-    NEXT k
+    DIM lost = SUM(SELECT(LAMBDA p -> p[1], parts))
     DIM score = ROUND(100 - lost)
     IF score < 0 THEN score = 0
     RETURN {"score": score, "parts": parts}
@@ -195,15 +191,8 @@ ENDFUNC
 
 ' The scores of the weeks as a line chart, SVG markup.
 EXPORT FUNC CHART$(weeks)
-    DIM labels = []
-    DIM values = []
-    DIM k = 0
-    FOR k = 0 TO LEN(weeks) - 1
-        DIM w = weeks[k]
-        DIM key$ = w{"week"}
-        PUSH(labels, MID$(key$, 5, 4))
-        PUSH(values, w{"score"})
-    NEXT k
+    DIM labels = SELECT(LAMBDA w -> MID$(w{"week"}, 5, 4), weeks)
+    DIM values = SELECT(LAMBDA w -> w{"score"}, weeks)
     DIM c = SVG.CHART("line", 560, 260)
     SVG.SETOPT(c, "legend", "none")
     SVG.SETOPT(c, "values", 1)
@@ -227,13 +216,8 @@ ENDFUNC
 ' The page: this week's score and its parts, the trend and the rules.
 EXPORT FUNC PAGE$(weeks, rules, template$)
     DIM now_w = weeks[LEN(weeks) - 1]
-    DIM lost = []
-    DIM k = 0
-    FOR k = 0 TO LEN(now_w{"parts"}) - 1
-        DIM p = now_w{"parts"}[k]
-        DIM why$ = p[0]
-        PUSH(lost, {"why": why$, "points": One$(p[1])})
-    NEXT k
+    DIM lost = SELECT(LAMBDA p -> _
+        {"why": p[0], "points": One$(p[1])}, now_w{"parts"})
     DIM model = {"week": now_w{"week"}, "score": now_w{"score"}}
     model{"hours"} = One$(now_w{"hours"})
     model{"meeting_hours"} = One$(now_w{"meeting_hours"})

@@ -29,12 +29,7 @@ DIM out_home$ = home$ + "/briefings"
 DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", out_home$)
 DIM saved = [home$ + "/saved mail"]
 DIM listed = WORKCONF.VALUE(cfg, key$ + "mail_folders", saved)
-DIM folders = []
-DIM k = 0
-FOR k = 0 TO LEN(listed) - 1
-    DIM one$ = listed[k]
-    PUSH(folders, WORKCONF.EXPAND$(one$))
-NEXT k
+DIM folders = SELECT(LAMBDA s$ -> WORKCONF.EXPAND$(s$), listed)
 PUSH(folders, PATH.JOIN$(OUTBOX.FOLDER$(cfg), "sent"))
 DIM most = WORKCONF.VALUE(cfg, key$ + "mails_per_meeting", 3)
 DIM use_model = WORKCONF.VALUE(cfg, key$ + "use_model", TRUE)
@@ -73,6 +68,7 @@ IF use_model ANDALSO NOT dry_run THEN
 ENDIF
 
 DIM pages = []
+DIM k = 0
 FOR k = 0 TO LEN(meetings) - 1
     DIM m = meetings[k]
     DIM mails = BRIEFING.MAILS(folders, m, most)

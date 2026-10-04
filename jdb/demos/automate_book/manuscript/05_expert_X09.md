@@ -194,7 +194,8 @@ for a month, you can let the job server send them too.
 
 - **A warning line of your own.** `OVER_BUDGET` lists cost centers
   above 100 percent. To hear about them a little earlier, compare with
-  `90` instead and change the words to *close to its budget*.
+  `90` instead and change the words in `OverLine$` to *close to its
+  budget*.
 
 ### When it goes wrong
 

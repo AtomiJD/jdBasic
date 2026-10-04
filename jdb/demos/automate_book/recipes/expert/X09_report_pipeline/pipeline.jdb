@@ -130,18 +130,17 @@ ENDFUNC
 
 ' The cost centers over budget, as text lines.
 EXPORT FUNC OVER_BUDGET(report)
-    DIM out = []
     DIM names = DF.COL(report, "cost_center")
     DIM pct = DF.COL(report, "percent")
-    DIM k = 0
-    FOR k = 0 TO LEN(names) - 1
-        IF pct[k] > 100 THEN
-            DIM cc$ = names[k]
-            DIM line$ = cc$ + " at " + STR$(pct[k]) + " %"
-            PUSH(out, line$ + " of budget")
-        ENDIF
-    NEXT k
-    RETURN out
+    DIM over = FILTER(LAMBDA USE(pct) k -> pct[k] > 100, _
+        IOTA(LEN(names)) - 1)
+    RETURN SELECT(LAMBDA USE(names, pct) k -> _
+        OverLine$(names[k], pct[k]), over)
+ENDFUNC
+
+' The line for a cost center over its budget.
+FUNC OverLine$(cc$, pct)
+    RETURN cc$ + " at " + STR$(pct) + " % of budget"
 ENDFUNC
 
 ' Spent and budget per cost center as a bar chart, SVG markup.
@@ -227,12 +226,9 @@ EXPORT FUNC MESSAGE(from$, to$, report, week, pdf$, docx$)
     body$ = body$ + "the team costs of the " + LCASE$(week{"label"})
     body$ = body$ + ": " + total[1] + " EUR of "
     body$ = body$ + total[2] + " EUR budget." + LF$
-    DIM over = OVER_BUDGET(report)
-    DIM k = 0
-    FOR k = 0 TO LEN(over) - 1
-        DIM over$ = over[k]
-        body$ = body$ + "Over budget: " + over$ + LF$
-    NEXT k
+    DIM over = SELECT(LAMBDA USE(LF$) s$ -> _
+        "Over budget: " + s$ + LF$, OVER_BUDGET(report))
+    body$ = body$ + JOIN(over, "")
     body$ = body$ + LF$ + "The report is attached as PDF and Word."
     MAIL.PLAIN(msg, body$ + LF$)
     MAIL.ATTACH(msg, pdf$)

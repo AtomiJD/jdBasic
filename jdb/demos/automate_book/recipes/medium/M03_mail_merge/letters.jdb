@@ -16,12 +16,9 @@ IMPORT DOCX, MAIL
 EXPORT FUNC CONTACTS(rows)
     DIM out = []
     IF LEN(rows) = 0 THEN RETURN out
-    DIM keys = []
+    DIM keys = SELECT(LAMBDA h -> LCASE$(TRIM$("" + h)), rows[0])
     DIM k = 0
     DIM c = 0
-    FOR c = 0 TO LEN(rows[0]) - 1
-        PUSH(keys, LCASE$(TRIM$("" + rows[0][c])))
-    NEXT c
     FOR k = 1 TO LEN(rows) - 1
         DIM person AS MAP
         DIM filled = FALSE
@@ -47,28 +44,18 @@ ENDFUNC
 ' The placeholders of the template that no column of the contacts
 ' fills.
 EXPORT FUNC UNFILLED(template$, contacts)
-    DIM out = []
-    IF LEN(contacts) = 0 THEN RETURN out
-    DIM wanted = DOCX.PLACEHOLDERS(template$)
-    DIM k = 0
-    FOR k = 0 TO LEN(wanted) - 1
-        DIM nm$ = wanted[k]
-        IF NOT MAP.EXISTS(contacts[0], LCASE$(nm$)) THEN _
-            PUSH(out, nm$)
-    NEXT k
-    RETURN out
+    IF LEN(contacts) = 0 THEN RETURN []
+    DIM first = contacts[0]
+    RETURN FILTER(LAMBDA USE(first) nm$ -> _
+        NOT MAP.EXISTS(first, LCASE$(nm$)), _
+        DOCX.PLACEHOLDERS(template$))
 ENDFUNC
 
 ' A text with its {{name}} placeholders filled from the contact.
 EXPORT FUNC FILL$(text$, person)
-    DIM out$ = text$
-    DIM keys = MAP.KEYS(person)
-    DIM k = 0
-    FOR k = 0 TO LEN(keys) - 1
-        DIM mark$ = "{{" + keys[k] + "}}"
-        out$ = REPLACE$(out$, mark$, person{keys[k]})
-    NEXT k
-    RETURN out$
+    RETURN REDUCE(LAMBDA USE(person) acc$, key$ -> _
+        REPLACE$(acc$, "{{" + key$ + "}}", person{key$}), _
+        MAP.KEYS(person), text$)
 ENDFUNC
 
 ' A file name from the pattern, without characters Windows forbids.

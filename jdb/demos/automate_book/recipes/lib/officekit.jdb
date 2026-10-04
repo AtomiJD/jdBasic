@@ -293,13 +293,7 @@ ENDFUNC
 ' Addresses as Outlook takes them in To and Cc.
 FUNC Joined$(list)
     IF TYPEOF(list) <> "ARRAY" THEN RETURN ""
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(list) - 1
-        DIM one$ = list[k]
-        PUSH(out, one$)
-    NEXT k
-    RETURN JOIN(out, "; ")
+    RETURN JOIN(list, "; ")
 ENDFUNC
 
 ' Sends a parsed .eml file through Outlook: a new mail with its

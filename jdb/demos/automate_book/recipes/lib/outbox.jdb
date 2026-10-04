@@ -59,13 +59,8 @@ EXPORT FUNC PENDING(cfg)
     DIM folder$ = FOLDER$(cfg)
     IF NOT FILE.ISDIR(folder$) THEN RETURN []
     DIM names = SORT(DIR$(PATH.JOIN$(folder$, "*.eml")))
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(names) - 1
-        DIM file_name$ = names[k]
-        PUSH(out, PATH.JOIN$(folder$, file_name$))
-    NEXT k
-    RETURN out
+    RETURN SELECT(LAMBDA USE(folder$) n$ -> _
+        PATH.JOIN$(folder$, n$), names)
 ENDFUNC
 
 ' How the outbox is sent: "smtp" (the default, through [mail] server)

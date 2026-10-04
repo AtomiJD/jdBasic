@@ -43,13 +43,15 @@ a window:
 ### How it works
 
 1. A board is a list of four rows of four numbers, 0 for an empty
-   cell. `ARCADE.SLIDE_ROW` slides one row to the left: it gathers
-   the tiles, joins two equal neighbours into one, and fills the rest
-   with zeros. A tile that was just made by a join does not join again
-   in the same move, which is what makes 2048 a game of planning.
+   cell. `ARCADE.SLIDE_ROW` slides one row to the left: `FILTER`
+   gathers the tiles that are not 0, the loop joins two equal
+   neighbours into one, and zeros fill the rest. A tile that was just
+   made by a join does not join again in the same move, which is what
+   makes 2048 a game of planning.
 2. `ARCADE.MOVE` uses that one function for all four directions. For a
-   move to the right it turns each row around, slides it, and turns it
-   back. For up and down it swaps rows and columns first.
+   move to the right `REVERSE` turns each row around, it slides, and
+   `REVERSE` turns it back. For up and down `TRANSPOSE` swaps rows and
+   columns first.
 3. After every move that changed something, `ARCADE.SPAWN` puts a 2,
    or now and then a 4, into a free cell. The cell comes from a
    seeded sequence of numbers, so the same seed always gives the same

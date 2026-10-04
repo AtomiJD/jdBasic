@@ -101,31 +101,14 @@ ENDFUNC
 
 ' The values of one column of the rows.
 FUNC ColumnValues(c)
-    DIM out = []
-    DIM r = 0
-    FOR r = 0 TO LEN(gRows) - 1
-        DIM row = gRows[r]
-        PUSH(out, row[c])
-    NEXT r
-    RETURN out
+    RETURN SELECT(LAMBDA USE(c) row -> row[c], gRows)
 ENDFUNC
 
 ' The different texts of a column, sorted.
 FUNC Distinct(values)
-    DIM seen AS MAP
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(values) - 1
-        DIM v = values[k]
-        IF TYPEOF(v) <> "NONE" THEN
-            DIM t$ = TRIM$("" + v)
-            IF t$ <> "" ANDALSO NOT MAP.EXISTS(seen, t$) THEN
-                seen{t$} = TRUE
-                PUSH(out, t$)
-            ENDIF
-        ENDIF
-    NEXT k
-    RETURN SORT(out)
+    DIM given = FILTER(LAMBDA v -> TYPEOF(v) <> "NONE", values)
+    DIM texts = SELECT(LAMBDA v -> TRIM$("" + v), given)
+    RETURN SORT(UNIQUE(FILTER(LAMBDA t$ -> t$ <> "", texts)))
 ENDFUNC
 
 ' Reads the sheet (the first one when sheet$ is "") into the app.
@@ -154,7 +137,6 @@ EXPORT SUB OPEN(path$, sheet$, read_only, backups$)
     gKinds = []
     gChoices = []
     gSerial = []
-    gVersions = []
     FOR c = 0 TO LEN(gHeaders) - 1
         DIM values = ColumnValues(c)
         DIM kind$ = KIND$(gHeaders[c], values)
@@ -168,10 +150,7 @@ EXPORT SUB OPEN(path$, sheet$, read_only, backups$)
         IF kind$ = "choice" THEN opts = Distinct(values)
         PUSH(gChoices, opts)
     NEXT c
-    DIM r = 0
-    FOR r = 0 TO LEN(gRows) - 1
-        PUSH(gVersions, 1)
-    NEXT r
+    gVersions = ONES(LEN(gRows))
 ENDSUB
 
 ' The sheet's column names, kinds and number of rows.
@@ -224,34 +203,25 @@ ENDFUNC
 ' The row numbers to show, in order: search text, filters, and the
 ' column to sort by (-1 for the sheet's order).
 EXPORT FUNC VIEW(q$, filters, sort_col, descending)
-    DIM out = []
-    DIM keys = []
-    DIM r = 0
-    FOR r = 0 TO LEN(gRows) - 1
-        IF Matches(r, q$, filters) THEN
-            PUSH(out, r)
-            DIM key$ = RIGHT$("000000" + STR$(r), 6)
-            IF sort_col >= 0 THEN
-                DIM s$ = LCASE$(SHOWN$(r, sort_col))
-                IF gKinds[sort_col] = "number" ANDALSO s$ <> "" THEN
-                    DIM big = VAL(s$) + 1000000000
-                    s$ = FORMAT$("{:020.4f}", big)
-                ENDIF
-                key$ = s$ + CHR$(1) + key$
-            ENDIF
-            PUSH(keys, key$)
-        ENDIF
-    NEXT r
+    DIM out = FILTER(LAMBDA USE(q$, filters) r -> _
+        Matches(r, q$, filters), IOTA(LEN(gRows)) - 1)
     IF sort_col < 0 THEN RETURN out
-    DIM order = SORT(keys)
-    DIM sorted = []
-    DIM k = 0
-    FOR k = 0 TO LEN(order) - 1
-        DIM one$ = order[k]
-        PUSH(sorted, CINT(MID$(one$, LEN(one$) - 6)))
-    NEXT k
+    DIM keys = SELECT(LAMBDA USE(sort_col) r -> _
+        SortKey$(r, sort_col), out)
+    DIM sorted = SELECT(LAMBDA s$ -> _
+        CINT(MID$(s$, LEN(s$) - 6)), SORT(keys))
     IF descending THEN sorted = REVERSE(sorted)
     RETURN sorted
+ENDFUNC
+
+' The sort key of a row: the cell of the column, numbers padded so
+' they sort as numbers, then the row number.
+FUNC SortKey$(r, sort_col)
+    DIM s$ = LCASE$(SHOWN$(r, sort_col))
+    IF gKinds[sort_col] = "number" ANDALSO s$ <> "" THEN
+        s$ = FORMAT$("{:020.4f}", VAL(s$) + 1000000000)
+    ENDIF
+    RETURN s$ + CHR$(1) + RIGHT$("000000" + STR$(r), 6)
 ENDFUNC
 
 ' name="value", with the value escaped.

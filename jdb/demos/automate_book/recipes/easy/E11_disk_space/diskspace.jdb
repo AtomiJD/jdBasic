@@ -63,17 +63,9 @@ ENDFUNC
 ' The n largest entries of a list of pairs by the pair element at col.
 EXPORT FUNC LARGEST(pairs, col, n)
     IF LEN(pairs) = 0 THEN RETURN []
-    DIM sizes = []
-    DIM k = 0
-    FOR k = 0 TO LEN(pairs) - 1
-        PUSH(sizes, -pairs[k][col])
-    NEXT k
-    DIM order = GRADE(sizes)
-    DIM out = []
-    FOR k = 0 TO LEN(order) - 1
-        IF k < n THEN PUSH(out, pairs[order[k]])
-    NEXT k
-    RETURN out
+    DIM sizes = SELECT(LAMBDA USE(col) p -> 0 - p[col], pairs)
+    DIM order = TAKE(n, GRADE(sizes))
+    RETURN SELECT(LAMBDA USE(pairs) i -> pairs[i], order)
 ENDFUNC
 
 ' A size in bytes as "812 KB", "4.3 MB" or "1.25 GB".

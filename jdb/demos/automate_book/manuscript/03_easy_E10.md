@@ -45,9 +45,12 @@ file with the XLSX library:
    `CODEC.SHA256$`, a fingerprint that is the same for equal content and
    different for any change, however small. Files with the same
    fingerprint form a group.
-4. `WASTED` adds up what the copies take beyond one file of each group.
+4. `WasteOf` works out for every group what its copies take beyond one
+   file, with `SELECT` and a `LAMBDA`. `WASTED` is the `SUM` of that
+   list.
 5. `REPORT` writes the two sheets. `GRADE` orders the groups by the space
-   they waste, so the worst offenders come first.
+   they waste, so the worst offenders come first: the minus in
+   `0 - WasteOf(groups)` turns the smallest-first order around.
 
 ### Run it
 

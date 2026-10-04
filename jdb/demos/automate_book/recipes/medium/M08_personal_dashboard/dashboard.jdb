@@ -60,34 +60,21 @@ EXPORT FUNC HOURS(log_path$, monday$, now$)
         AddBlock(per, monday$, start$, now$, project$)
     ENDIF
     DIM names = MAP.KEYS(per)
-    DIM totals = []
-    FOR k = 0 TO LEN(names) - 1
-        DIM p$ = names[k]
-        PUSH(totals, ROUND(per{p$} * 10) / 10)
-    NEXT k
-    DIM out = []
-    DIM order = REVERSE(GRADE(totals))
-    FOR k = 0 TO LEN(order) - 1
-        DIM i = order[k]
-        DIM top$ = names[i]
-        PUSH(out, {"project": top$, "hours": totals[i]})
-    NEXT k
-    RETURN out
+    DIM totals = SELECT(LAMBDA USE(per) p$ -> _
+        ROUND(per{p$} * 10) / 10, names)
+    RETURN SELECT(LAMBDA USE(names, totals) i -> _
+        {"project": names[i], "hours": totals[i]}, _
+        REVERSE(GRADE(totals)))
 ENDFUNC
 
 ' The open items (lines starting "- [ ]") of a notes file.
 EXPORT FUNC TODO(file$)
-    DIM out = []
-    IF NOT FILE.EXISTS(file$) THEN RETURN out
+    IF NOT FILE.EXISTS(file$) THEN RETURN []
     DIM lines = SPLIT(TXTREADER$(file$), CHR$(10))
-    DIM k = 0
-    FOR k = 0 TO LEN(lines) - 1
-        DIM l$ = TRIM$(lines[k])
-        IF LEFT$(l$, 5) = "- [ ]" THEN
-            PUSH(out, TRIM$(MID$(l$, 5, LEN(l$))))
-        ENDIF
-    NEXT k
-    RETURN out
+    DIM open = FILTER(LAMBDA l$ -> LEFT$(TRIM$(l$), 5) = "- [ ]", _
+        lines)
+    RETURN SELECT(LAMBDA l$ -> TRIM$(MID$(TRIM$(l$), 5, LEN(l$))), _
+        open)
 ENDFUNC
 
 ' The files directly in a folder: a map with "files" and "bytes".
@@ -127,12 +114,7 @@ ENDFUNC
 EXPORT FUNC NUMBERS(sources, now$)
     DIM monday$ = MONDAY$(LEFT$(now$, 10))
     DIM hours = HOURS(sources{"log"}, monday$, now$)
-    DIM total = 0
-    DIM k = 0
-    FOR k = 0 TO LEN(hours) - 1
-        DIM one = hours[k]
-        total = total + one{"hours"}
-    NEXT k
+    DIM total = SUM(SELECT(LAMBDA h -> h{"hours"}, hours))
     DIM down = FOLDER(sources{"downloads"})
     DIM out = {"week_of": monday$, "hours": hours}
     out{"total_hours"} = ROUND(total * 10) / 10
@@ -146,18 +128,11 @@ ENDFUNC
 ' The hours as a bar chart, SVG markup.
 EXPORT FUNC CHART$(numbers)
     DIM hours = numbers{"hours"}
-    DIM labels = []
-    DIM values = []
-    DIM k = 0
-    FOR k = 0 TO LEN(hours) - 1
-        DIM one = hours[k]
-        DIM p$ = one{"project"}
-        PUSH(labels, p$)
-        PUSH(values, one{"hours"})
-    NEXT k
+    DIM labels = SELECT(LAMBDA h -> h{"project"}, hours)
+    DIM values = SELECT(LAMBDA h -> h{"hours"}, hours)
     IF LEN(labels) = 0 THEN
-        PUSH(labels, "no hours yet")
-        PUSH(values, 0)
+        labels = ["no hours yet"]
+        values = [0]
     ENDIF
     DIM c = SVG.CHART("bar", 560, 300)
     SVG.SETOPT(c, "legend", "none")

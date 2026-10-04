@@ -63,13 +63,16 @@ numbers.
    minutes between two lines belong to the project of the first.
    `AddBlock` adds them up per project, but only for blocks that
    started this week. A block still running counts until now.
-3. `GRADE` answers the positions of the totals from small to large;
-   `REVERSE` turns that around, so the project with the most hours
-   comes first.
-4. `TODO` keeps the lines that start with an empty box, and `FOLDER`
-   adds up the files of the downloads folder with `FILE.STAT`.
+3. A `SELECT` rounds the total of each project. `GRADE` answers the
+   positions of the totals from small to large; `REVERSE` turns that
+   around, so the project with the most hours comes first. A second
+   `SELECT` turns each position into a map with project and hours.
+4. `TODO` keeps the lines that start with an empty box with a
+   `FILTER` and cuts the box off with a `SELECT`. `FOLDER` adds up
+   the files of the downloads folder with `FILE.STAT`.
    `LEN(OUTBOX.PENDING(cfg))` is the number of mails waiting.
-5. `CHART$` draws the bar chart with `SVG.CHART`, `SVG.LABELS` and
+5. `CHART$` takes the names and the hours with two `SELECT`s and
+   draws the bar chart with `SVG.CHART`, `SVG.LABELS` and
    `SVG.SERIES`. SVG is a picture written as text, so it goes
    straight into the page.
 6. `MOUNT` tells JDWEB which function answers which address: `/` for

@@ -109,9 +109,11 @@ workbook:
    point: *Müller GmbH* with *1.234,50* and *Müller GmbH* with
    *1234.50* are the same row once both are cleaned.
 
-7. **Names that look alike.** `SIMILAR` compares every name with
-   every other one using `FUZZY.SCORE` from the fuzzy library. The
-   method `token_sort` sorts the words first, so *GmbH Müller* and
+7. **Names that look alike.** `SIMILAR` takes the cells of the name
+   column with a `SELECT`, drops the empty ones with a `FILTER` and
+   keeps each name once with `UNIQUE`. Then it compares every name
+   with every other one using `FUZZY.SCORE` from the fuzzy library.
+   The method `token_sort` sorts the words first, so *GmbH Müller* and
    *Müller GmbH* score 100. *Müller GmbH* and *Mueller GmbH* score 87,
    above the cutoff of 85. The recipe only lists such pairs; deciding
    whether they are one customer is your job.

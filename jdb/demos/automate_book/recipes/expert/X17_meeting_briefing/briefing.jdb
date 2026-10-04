@@ -69,18 +69,17 @@ ENDFUNC
 
 ' The people of an event as maps with name and mail.
 FUNC People(cal, ev, names)
-    DIM out = []
     DIM who = ICAL.VALUES(cal, ev, "ATTENDEE")
-    DIM j = 0
-    FOR j = 0 TO LEN(who) - 1
-        DIM w$ = who[j]
-        DIM addr$ = LCASE$(w$)
-        IF STARTSWITH(addr$, "mailto:") THEN addr$ = MID$(addr$, 7)
-        DIM shown$ = addr$
-        IF MAP.EXISTS(names, addr$) THEN shown$ = names{addr$}
-        PUSH(out, {"name": shown$, "mail": addr$})
-    NEXT j
-    RETURN out
+    RETURN SELECT(LAMBDA USE(names) w$ -> Person(w$, names), who)
+ENDFUNC
+
+' One ATTENDEE value as a map with name and mail.
+FUNC Person(w$, names)
+    DIM addr$ = LCASE$(w$)
+    IF STARTSWITH(addr$, "mailto:") THEN addr$ = MID$(addr$, 7)
+    DIM shown$ = addr$
+    IF MAP.EXISTS(names, addr$) THEN shown$ = names{addr$}
+    RETURN {"name": shown$, "mail": addr$}
 ENDFUNC
 
 ' The meetings of a day (YYYY-MM-DD) in a calendar file, in order of
@@ -123,29 +122,19 @@ ENDFUNC
 FUNC InOrder(items, keys, backwards, most)
     DIM order = SORT(keys)
     IF backwards THEN order = REVERSE(order)
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(order) - 1
-        IF LEN(out) < most THEN
-            DIM key$ = order[k]
-            DIM at = CINT(MID$(key$, INSTR(key$, CHR$(1)) + 1))
-            PUSH(out, items[at])
-        ENDIF
-    NEXT k
-    RETURN out
+    DIM picked = TAKE(most, order)
+    RETURN SELECT(LAMBDA USE(items) key$ -> _
+        items[ItemNo(key$)], picked)
+ENDFUNC
+
+' The item number at the end of a key.
+FUNC ItemNo(key$)
+    RETURN CINT(MID$(key$, INSTR(key$, CHR$(1)) + 1))
 ENDFUNC
 
 ' The mail addresses of a meeting's people, lower case.
 FUNC Addresses(meeting)
-    DIM out = []
-    DIM people = meeting{"people"}
-    DIM k = 0
-    FOR k = 0 TO LEN(people) - 1
-        DIM p = people[k]
-        DIM a$ = p{"mail"}
-        PUSH(out, a$)
-    NEXT k
-    RETURN out
+    RETURN SELECT(LAMBDA p -> p{"mail"}, meeting{"people"})
 ENDFUNC
 
 ' The date header of a mail as YYYY-MM-DD HH:MM, so mails sort by it.
@@ -234,45 +223,34 @@ ENDFUNC
 EXPORT FUNC ITEMS(notes_path$, meeting)
     DIM out = []
     IF NOT FILE.EXISTS(notes_path$) THEN RETURN out
-    DIM words = [LCASE$(meeting{"title"})]
-    DIM people = meeting{"people"}
-    DIM k = 0
-    FOR k = 0 TO LEN(people) - 1
-        DIM p = people[k]
-        DIM name$ = p{"name"}
-        DIM first$ = LCASE$(SPLIT(name$, " ")[0])
-        DIM real = LEN(first$) >= 3 ANDALSO INSTR(first$, "@") < 0
-        IF real THEN PUSH(words, first$)
-    NEXT k
+    DIM firsts = SELECT(LAMBDA p -> FirstName$(p{"name"}), _
+        meeting{"people"})
+    DIM real = FILTER(LAMBDA s$ -> _
+        LEN(s$) >= 3 ANDALSO INSTR(s$, "@") < 0, firsts)
+    DIM words = APPEND([LCASE$(meeting{"title"})], real)
     DIM text$ = REPLACE$(TXTREADER$(notes_path$), CHR$(13), "")
-    DIM rows = SPLIT(text$, gLF$)
-    DIM j = 0
-    FOR k = 0 TO LEN(rows) - 1
-        DIM row$ = TRIM$(rows[k])
-        IF STARTSWITH(row$, "- [ ]") THEN
-            DIM item$ = TRIM$(MID$(row$, 5))
-            DIM low$ = LCASE$(item$)
-            DIM hit = FALSE
-            FOR j = 0 TO LEN(words) - 1
-                DIM w$ = words[j]
-                IF INSTR(low$, w$) >= 0 THEN hit = TRUE
-            NEXT j
-            IF hit THEN PUSH(out, item$)
-        ENDIF
-    NEXT k
-    RETURN out
+    DIM rows = SELECT(LAMBDA s$ -> TRIM$(s$), SPLIT(text$, gLF$))
+    DIM open = FILTER(LAMBDA s$ -> STARTSWITH(s$, "- [ ]"), rows)
+    DIM texts = SELECT(LAMBDA s$ -> TRIM$(MID$(s$, 5)), open)
+    RETURN FILTER(LAMBDA USE(words) s$ -> Mentions(s$, words), texts)
+ENDFUNC
+
+' The first name of a person, lower case.
+FUNC FirstName$(name$)
+    RETURN LCASE$(SPLIT(name$, " ")[0])
+ENDFUNC
+
+' Whether an item names one of the words.
+FUNC Mentions(item$, words)
+    DIM low$ = LCASE$(item$)
+    DIM hits = FILTER(LAMBDA USE(low$) w$ -> _
+        INSTR(low$, w$) >= 0, words)
+    RETURN LEN(hits) > 0
 ENDFUNC
 
 ' The names of a meeting's people, joined by commas.
 FUNC NameList$(meeting)
-    DIM people = meeting{"people"}
-    DIM names = []
-    DIM k = 0
-    FOR k = 0 TO LEN(people) - 1
-        DIM one = people[k]
-        DIM n$ = one{"name"}
-        PUSH(names, n$)
-    NEXT k
+    DIM names = SELECT(LAMBDA p -> p{"name"}, meeting{"people"})
     RETURN JOIN(names, ", ")
 ENDFUNC
 
@@ -289,11 +267,7 @@ EXPORT FUNC PROMPT$(meeting, mails, items)
         p$ = p$ + m{"subject"} + ". " + m{"text"} + gLF$
     NEXT k
     p$ = p$ + gLF$ + "Open items:" + gLF$
-    FOR k = 0 TO LEN(items) - 1
-        DIM item$ = items[k]
-        p$ = p$ + "- " + item$ + gLF$
-    NEXT k
-    RETURN p$
+    RETURN p$ + JOIN(SELECT(LAMBDA s$ -> "- " + s$ + gLF$, items), "")
 ENDFUNC
 
 ' The instructions the model gets with every meeting.
@@ -364,28 +338,20 @@ ENDSUB
 ' The mails of a page, one line each.
 FUNC MailText$(mails)
     IF LEN(mails) = 0 THEN RETURN "No recent mails with these people."
-    DIM lines = []
-    DIM j = 0
-    FOR j = 0 TO LEN(mails) - 1
-        DIM ml = mails[j]
-        DIM who$ = MAIL.ADDRESSNAME$(ml{"from"})
-        IF who$ = "" THEN who$ = ml{"from"}
-        DIM line$ = ml{"date"} + "  " + who$ + ": "
-        PUSH(lines, line$ + ml{"subject"})
-    NEXT j
-    RETURN JOIN(lines, gLF$)
+    RETURN JOIN(SELECT(LAMBDA ml -> MailLine$(ml), mails), gLF$)
+ENDFUNC
+
+' One mail of a page as a line.
+FUNC MailLine$(ml)
+    DIM who$ = MAIL.ADDRESSNAME$(ml{"from"})
+    IF who$ = "" THEN who$ = ml{"from"}
+    RETURN ml{"date"} + "  " + who$ + ": " + ml{"subject"}
 ENDFUNC
 
 ' The open items of a page, one line each.
 FUNC ItemText$(items)
     IF LEN(items) = 0 THEN RETURN "No open items name this meeting."
-    DIM rows = []
-    DIM j = 0
-    FOR j = 0 TO LEN(items) - 1
-        DIM it$ = items[j]
-        PUSH(rows, "[ ] " + it$)
-    NEXT j
-    RETURN JOIN(rows, gLF$)
+    RETURN JOIN(SELECT(LAMBDA s$ -> "[ ] " + s$, items), gLF$)
 ENDFUNC
 
 ' The briefing as a PDF: one page per meeting with its time, place,

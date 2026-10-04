@@ -94,13 +94,13 @@ ENDFUNC
 
 ' The bytes the copies take beyond one file of each group.
 EXPORT FUNC WASTED(groups)
-    DIM total = 0
-    DIM k = 0
-    FOR k = 0 TO LEN(groups) - 1
-        DIM g = groups[k]
-        total = total + g{"size"} * (LEN(g{"files"}) - 1)
-    NEXT k
-    RETURN total
+    RETURN SUM(WasteOf(groups))
+ENDFUNC
+
+' For every group the bytes its copies take.
+FUNC WasteOf(groups)
+    RETURN SELECT(LAMBDA g -> _
+        g{"size"} * (LEN(g{"files"}) - 1), groups)
 ENDFUNC
 
 ' Writes the report: a summary sheet and a sheet with a row per file,
@@ -139,12 +139,6 @@ ENDFUNC
 ' The group numbers ordered by the space their copies waste, largest
 ' first.
 FUNC SortedByWaste(groups)
-    DIM waste = []
-    DIM k = 0
-    FOR k = 0 TO LEN(groups) - 1
-        DIM g = groups[k]
-        PUSH(waste, -g{"size"} * (LEN(g{"files"}) - 1))
-    NEXT k
-    IF LEN(waste) = 0 THEN RETURN []
-    RETURN GRADE(waste)
+    IF LEN(groups) = 0 THEN RETURN []
+    RETURN GRADE(0 - WasteOf(groups))
 ENDFUNC

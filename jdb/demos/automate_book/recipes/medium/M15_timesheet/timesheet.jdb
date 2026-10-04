@@ -91,6 +91,12 @@ FUNC Two$(h)
     RETURN FORMAT$("{:.2f}", h)
 ENDFUNC
 
+' Hours with two decimals, or an empty cell for none.
+FUNC Cell$(h)
+    IF h = 0 THEN RETURN ""
+    RETURN Two$(h)
+ENDFUNC
+
 ' Hours per project and day for one week: a map from project to seven
 ' numbers, Monday first; days outside the month stay 0.
 EXPORT FUNC WEEK_HOURS(sessions, monday$, month$, now$)
@@ -133,27 +139,17 @@ EXPORT FUNC WEEK_ROWS(table, monday$, month$)
     DIM projects = SORT(MAP.KEYS(table))
     DIM p = 0
     FOR p = 0 TO LEN(projects) - 1
-        DIM project$ = projects[p]
-        DIM out = [project$]
-        DIM row_sum = 0.0
+        DIM hours = table{projects[p]}
         FOR d = 0 TO 6
-            DIM h = table{project$}[d]
-            day_sums[d] = day_sums[d] + h
-            row_sum = row_sum + h
-            IF h = 0 THEN PUSH(out, "") ELSE PUSH(out, Two$(h))
+            day_sums[d] = day_sums[d] + hours[d]
         NEXT d
-        PUSH(out, Two$(row_sum))
-        PUSH(rows, out)
+        DIM cells = SELECT(LAMBDA h -> Cell$(h), hours)
+        PUSH(rows, APPEND([projects[p]], _
+            APPEND(cells, [Two$(SUM(hours))])))
     NEXT p
-    DIM foot = ["Total"]
-    DIM total_h = 0.0
-    FOR d = 0 TO 6
-        DIM day_h = day_sums[d]
-        total_h = total_h + day_h
-        PUSH(foot, Two$(day_h))
-    NEXT d
-    PUSH(foot, Two$(total_h))
-    PUSH(rows, foot)
+    DIM foot = SELECT(LAMBDA h -> Two$(h), day_sums)
+    PUSH(rows, APPEND(["Total"], _
+        APPEND(foot, [Two$(SUM(day_sums))])))
     RETURN rows
 ENDFUNC
 
@@ -175,27 +171,17 @@ ENDFUNC
 
 ' The hours of all projects together.
 FUNC MonthHours(totals)
-    DIM names = MAP.KEYS(totals)
-    DIM total_h = 0.0
-    DIM k = 0
-    FOR k = 0 TO LEN(names) - 1
-        DIM h = totals{names[k]}
-        total_h = total_h + h
-    NEXT k
-    RETURN total_h
+    RETURN SUM(SELECT(LAMBDA USE(totals) n$ -> totals{n$}, _
+        MAP.KEYS(totals)))
 ENDFUNC
 
 ' The table of the month: a row per project with its hours and a
 ' row with the total.
 EXPORT FUNC TOTAL_ROWS(totals)
-    DIM head = ["Project", "Hours"]
-    DIM rows = [head]
     DIM names = SORT(MAP.KEYS(totals))
-    DIM k = 0
-    FOR k = 0 TO LEN(names) - 1
-        DIM out = [names[k], Two$(totals{names[k]})]
-        PUSH(rows, out)
-    NEXT k
+    DIM body = SELECT(LAMBDA USE(totals) n$ -> _
+        [n$, Two$(totals{n$})], names)
+    DIM rows = APPEND([["Project", "Hours"]], body)
     DIM foot = ["Total", Two$(MonthHours(totals))]
     PUSH(rows, foot)
     RETURN rows

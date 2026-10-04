@@ -67,8 +67,10 @@ hands them to the library PPTX, which writes the PowerPoint file:
 2. For a `.xlsx` file, `XLSX.READ` reads the workbook and
    `SLIDES.FROM_ROWS` takes one slide per row with a title. The columns
    are `Title`, `Points` (separated by `;`), `Picture` and `Notes`;
-   the first row under the header becomes the title slide. Any other
-   file is read as an outline by `SLIDES.FROM_OUTLINE`.
+   the first row under the header becomes the title slide. A `SELECT`
+   trims the points and a `FILTER` drops the empty ones. Any other
+   file is read as an outline by `SLIDES.FROM_OUTLINE`, where `Cells`
+   trims the cells of a table line with a `SELECT`.
 3. Both answer the slides and a list of mistakes, each with its line
    or row. A picture that is not there, or text before the first
    title, stops the program before anything is written.

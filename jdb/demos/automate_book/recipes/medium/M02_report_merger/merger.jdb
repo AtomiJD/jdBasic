@@ -38,32 +38,18 @@ ENDFUNC
 
 ' The names of the team that have no report in the folder.
 EXPORT FUNC MISSING(reports, team)
-    DIM have = []
-    DIM k = 0
-    FOR k = 0 TO LEN(reports) - 1
-        PUSH(have, LCASE$(reports[k]{"person"}))
-    NEXT k
-    DIM out = []
-    FOR k = 0 TO LEN(team) - 1
-        DIM who$ = team[k]
-        IF NOT (LCASE$(who$) IN have) THEN PUSH(out, who$)
-    NEXT k
-    RETURN out
+    DIM have = SELECT(LAMBDA r -> LCASE$(r{"person"}), reports)
+    RETURN FILTER(LAMBDA USE(have) w$ -> NOT (LCASE$(w$) IN have), _
+        team)
 ENDFUNC
 
 ' The reports whose header row differs from the first one's.
 EXPORT FUNC ODD_HEADERS(reports)
-    DIM out = []
-    IF LEN(reports) = 0 THEN RETURN out
-    DIM first$ = JOIN(reports[0]{"rows"}[0], "|")
-    DIM k = 0
-    FOR k = 1 TO LEN(reports) - 1
-        DIM head$ = JOIN(reports[k]{"rows"}[0], "|")
-        IF LCASE$(head$) <> LCASE$(first$) THEN
-            PUSH(out, reports[k]{"person"})
-        ENDIF
-    NEXT k
-    RETURN out
+    IF LEN(reports) = 0 THEN RETURN []
+    DIM first$ = LCASE$(JOIN(reports[0]{"rows"}[0], "|"))
+    DIM odd = FILTER(LAMBDA USE(first$) r -> _
+        LCASE$(JOIN(r{"rows"}[0], "|")) <> first$, DROP(1, reports))
+    RETURN SELECT(LAMBDA r -> r{"person"}, odd)
 ENDFUNC
 
 ' The totals: the header of the first report, then one row per value

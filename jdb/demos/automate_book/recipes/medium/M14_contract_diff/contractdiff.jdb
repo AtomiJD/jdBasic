@@ -17,13 +17,9 @@ DIM gLF$ = CHR$(10)
 EXPORT FUNC PARAGRAPHS(path$)
     IF NOT FILE.EXISTS(path$) THEN THROW "No such document: " + path$
     DIM all = DOCX.PARAGRAPHS(path$)
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(all) - 1
-        DIM p$ = TRIM$(REPLACE$(all[k], CHR$(13), ""))
-        IF p$ <> "" THEN PUSH(out, p$)
-    NEXT k
-    RETURN out
+    DIM cleaned = SELECT(LAMBDA p$ -> _
+        TRIM$(REPLACE$(p$, CHR$(13), "")), all)
+    RETURN FILTER(LAMBDA p$ -> p$ <> "", cleaned)
 ENDFUNC
 
 ' How alike two paragraphs are, from 0 to 1, by their words.
@@ -129,17 +125,8 @@ FUNC OrderKey(c)
 ENDFUNC
 
 FUNC SortChanges(changes)
-    DIM keys = ZEROS(LEN(changes))
-    DIM k = 0
-    FOR k = 0 TO LEN(changes) - 1
-        keys[k] = OrderKey(changes[k])
-    NEXT k
-    DIM order = GRADE(keys)
-    DIM out = []
-    FOR k = 0 TO LEN(order) - 1
-        PUSH(out, changes[order[k]])
-    NEXT k
-    RETURN out
+    DIM keys = SELECT(LAMBDA c -> OrderKey(c), changes)
+    RETURN SELECT(LAMBDA USE(changes) i -> changes[i], GRADE(keys))
 ENDFUNC
 
 ' How many changes of each kind there are.
@@ -200,11 +187,7 @@ EXPORT FUNC REPORT_DOCX(changes, old_name$, new_name$, _
     DOCX.PARAGRAPH(doc, from$)
     DIM s = SUMMARY(changes)
     DIM kinds = ["changed", "added", "removed", "moved"]
-    DIM counts = []
-    DIM j = 0
-    FOR j = 0 TO 3
-        PUSH(counts, STR$(s{kinds[j]}))
-    NEXT j
+    DIM counts = SELECT(LAMBDA USE(s) k$ -> STR$(s{k$}), kinds)
     DOCX.TABLE(doc, [kinds, counts])
     DIM k = 0
     FOR k = 0 TO LEN(changes) - 1

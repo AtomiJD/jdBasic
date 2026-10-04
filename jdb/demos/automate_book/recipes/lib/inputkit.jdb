@@ -355,12 +355,7 @@ ENDFUNC
 
 ' Every step as a line of a plan, for a dry run.
 EXPORT FUNC PLAN_LINES(steps)
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(steps) - 1
-        PUSH(out, PLAN_LINE$(steps[k]))
-    NEXT k
-    RETURN out
+    RETURN SELECT(LAMBDA s -> PLAN_LINE$(s), steps)
 ENDFUNC
 
 ' ── Windows ───────────────────────────────────────────────────

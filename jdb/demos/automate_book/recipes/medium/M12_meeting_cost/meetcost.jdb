@@ -80,19 +80,9 @@ ENDFUNC
 EXPORT FUNC TOP_SERIES(summary)
     DIM series = summary{"series"}
     DIM titles = MAP.KEYS(series)
-    DIM hours = []
-    DIM k = 0
-    FOR k = 0 TO LEN(titles) - 1
-        DIM t$ = titles[k]
-        PUSH(hours, -series{t$}{"hours"})
-    NEXT k
-    DIM order = GRADE(hours)
-    DIM out = []
-    FOR k = 0 TO LEN(order) - 1
-        DIM pick$ = titles[order[k]]
-        PUSH(out, pick$)
-    NEXT k
-    RETURN out
+    DIM hours = SELECT(LAMBDA USE(series) t$ -> series{t$}{"hours"}, _
+        titles)
+    RETURN SELECT(LAMBDA USE(titles) i -> titles[i], GRADE(-hours))
 ENDFUNC
 
 FUNC Hours$(h)
@@ -116,30 +106,25 @@ EXPORT FUNC REPORT$(summary, rate, currency$, top_n)
     PUSH(out, "")
     PUSH(out, "By week")
     DIM weeks = summary{"weeks"}
-    DIM keys = SORT(MAP.KEYS(weeks))
-    DIM k = 0
-    FOR k = 0 TO LEN(keys) - 1
-        PUSH(out, "  " + keys[k] + "  " + Hours$(weeks{keys[k]}))
-    NEXT k
+    out = APPEND(out, SELECT(LAMBDA USE(weeks) w$ -> _
+        "  " + w$ + "  " + Hours$(weeks{w$}), SORT(MAP.KEYS(weeks))))
     PUSH(out, "")
     PUSH(out, "By month")
     DIM months = summary{"months"}
-    keys = SORT(MAP.KEYS(months))
-    FOR k = 0 TO LEN(keys) - 1
-        PUSH(out, "  " + keys[k] + "   " + Hours$(months{keys[k]}))
-    NEXT k
+    out = APPEND(out, SELECT(LAMBDA USE(months) m$ -> _
+        "  " + m$ + "   " + Hours$(months{m$}), _
+        SORT(MAP.KEYS(months))))
     PUSH(out, "")
     PUSH(out, "Largest series")
-    DIM top = TOP_SERIES(summary)
+    DIM top = TAKE(top_n, TOP_SERIES(summary))
+    DIM k = 0
     FOR k = 0 TO LEN(top) - 1
-        IF k < top_n THEN
-            DIM t$ = top[k]
-            DIM s = summary{"series"}{t$}
-            DIM times$ = STR$(s{"times"}) + " times"
-            IF s{"times"} = 1 THEN times$ = "once"
-            PUSH(out, "  " + Hours$(s{"hours"}) + "  " + t$ + _
-                " (" + times$ + ")")
-        ENDIF
+        DIM t$ = top[k]
+        DIM s = summary{"series"}{t$}
+        DIM times$ = STR$(s{"times"}) + " times"
+        IF s{"times"} = 1 THEN times$ = "once"
+        PUSH(out, "  " + Hours$(s{"hours"}) + "  " + t$ + _
+            " (" + times$ + ")")
     NEXT k
     RETURN JOIN(out, CHR$(10))
 ENDFUNC

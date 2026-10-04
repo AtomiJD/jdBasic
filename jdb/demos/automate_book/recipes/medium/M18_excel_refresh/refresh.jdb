@@ -26,15 +26,11 @@ ENDFUNC
 EXPORT FUNC CHOOSE(listed, available)
     DIM sheets = []
     DIM unknown = []
+    IF LEN(listed) = 0 THEN
+        RETURN {"sheets": available, "unknown": unknown}
+    ENDIF
     DIM k = 0
     DIM j = 0
-    IF LEN(listed) = 0 THEN
-        FOR k = 0 TO LEN(available) - 1
-            DIM all$ = available[k]
-            PUSH(sheets, all$)
-        NEXT k
-        RETURN {"sheets": sheets, "unknown": unknown}
-    ENDIF
     FOR k = 0 TO LEN(listed) - 1
         DIM want$ = listed[k]
         DIM hit$ = ""

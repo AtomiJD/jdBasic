@@ -96,51 +96,28 @@ ENDSUB
 ' The total of one level over all hours.
 EXPORT FUNC TOTAL(stats, level$)
     DIM hours = stats{"hours"}
-    DIM keys = MAP.KEYS(hours)
-    DIM n = 0
-    DIM k = 0
-    FOR k = 0 TO LEN(keys) - 1
-        DIM slot = hours{keys[k]}
-        DIM add = slot{level$}
-        n = n + add
-    NEXT k
-    RETURN n
+    RETURN SUM(SELECT(LAMBDA USE(hours, level$) h$ -> _
+        hours{h$}{level$}, MAP.KEYS(hours)))
 ENDFUNC
 
 ' The error messages, the most frequent first.
 EXPORT FUNC TOP_MESSAGES(stats)
     DIM messages = stats{"messages"}
     DIM keys = MAP.KEYS(messages)
-    DIM minus = []
-    DIM k = 0
-    FOR k = 0 TO LEN(keys) - 1
-        PUSH(minus, -messages{keys[k]})
-    NEXT k
-    DIM order = GRADE(minus)
-    DIM out = []
-    FOR k = 0 TO LEN(order) - 1
-        DIM pick$ = keys[order[k]]
-        PUSH(out, pick$)
-    NEXT k
-    RETURN out
+    DIM counts = SELECT(LAMBDA USE(messages) m$ -> messages{m$}, keys)
+    RETURN SELECT(LAMBDA USE(keys) i -> keys[i], GRADE(-counts))
 ENDFUNC
 
 ' The busiest hour for errors, "" without any error.
 EXPORT FUNC WORST_HOUR$(stats)
     DIM hours = stats{"hours"}
     DIM keys = SORT(MAP.KEYS(hours))
-    DIM best$ = ""
-    DIM most = 0
-    DIM k = 0
-    FOR k = 0 TO LEN(keys) - 1
-        DIM slot = hours{keys[k]}
-        DIM n = slot{"ERROR"}
-        IF n > most THEN
-            most = n
-            best$ = keys[k]
-        ENDIF
-    NEXT k
-    RETURN best$
+    IF LEN(keys) = 0 THEN RETURN ""
+    DIM most = MAX(SELECT(LAMBDA USE(hours) h$ -> _
+        hours{h$}{"ERROR"}, keys))
+    IF most = 0 THEN RETURN ""
+    RETURN FILTER(LAMBDA USE(hours, most) h$ -> _
+        hours{h$}{"ERROR"} = most, keys)[0]
 ENDFUNC
 
 ' The report as text: the totals, the worst hour, the top_n error
@@ -155,24 +132,17 @@ EXPORT FUNC REPORT$(stats, top_n)
     IF worst$ <> "" THEN PUSH(out, "Most errors: " + worst$ + ":00")
     PUSH(out, "")
     PUSH(out, "Most frequent errors")
-    DIM top = TOP_MESSAGES(stats)
+    DIM top = TAKE(top_n, TOP_MESSAGES(stats))
     DIM messages = stats{"messages"}
-    DIM k = 0
-    FOR k = 0 TO LEN(top) - 1
-        IF k < top_n THEN
-            DIM sig$ = top[k]
-            PUSH(out, FORMAT$("{:>5}  ", messages{sig$}) + sig$)
-        ENDIF
-    NEXT k
+    out = APPEND(out, SELECT(LAMBDA USE(messages) s$ -> _
+        FORMAT$("{:>5}  ", messages{s$}) + s$, top))
     PUSH(out, "")
     PUSH(out, "Per hour          errors  warnings")
     DIM hours = stats{"hours"}
-    DIM keys = SORT(MAP.KEYS(hours))
-    FOR k = 0 TO LEN(keys) - 1
-        DIM slot = hours{keys[k]}
-        PUSH(out, "  " + keys[k] + ":00" + _
-            FORMAT$("{:>7}{:>10}", slot{"ERROR"}, slot{"WARN"}))
-    NEXT k
+    DIM per_hour = SELECT(LAMBDA USE(hours) h$ -> _
+        "  " + h$ + ":00" + FORMAT$("{:>7}{:>10}", _
+        hours{h$}{"ERROR"}, hours{h$}{"WARN"}), SORT(MAP.KEYS(hours)))
+    out = APPEND(out, per_hour)
     RETURN JOIN(out, CHR$(10))
 ENDFUNC
 
@@ -180,17 +150,11 @@ ENDFUNC
 EXPORT SUB CHART(stats, path$)
     DIM hours = stats{"hours"}
     DIM keys = SORT(MAP.KEYS(hours))
-    DIM labels = []
-    DIM errors = []
-    DIM warnings = []
-    DIM k = 0
-    FOR k = 0 TO LEN(keys) - 1
-        DIM h$ = keys[k]
-        DIM slot = hours{h$}
-        PUSH(labels, MID$(h$, 5, 8) + "h")
-        PUSH(errors, slot{"ERROR"})
-        PUSH(warnings, slot{"WARN"})
-    NEXT k
+    DIM labels = SELECT(LAMBDA h$ -> MID$(h$, 5, 8) + "h", keys)
+    DIM errors = SELECT(LAMBDA USE(hours) h$ -> hours{h$}{"ERROR"}, _
+        keys)
+    DIM warnings = SELECT(LAMBDA USE(hours) h$ -> hours{h$}{"WARN"}, _
+        keys)
     DIM c = SVG.CHART("stackedbar", 640, 320)
     SVG.SETOPT(c, "title", "Errors and warnings per hour")
     SVG.LABELS(c, labels)

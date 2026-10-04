@@ -84,7 +84,9 @@ The module holds the rules, the lock and the work on each file:
    character, so a quoted field like `"Weber; Sohn & Co"` keeps its
    semicolon, and two quotes in a row stand for one. A field made of
    digits with an optional decimal point becomes a number, which lets
-   Excel add up the column. `CSV_TO_XLSX` writes the rows as a sheet.
+   Excel add up the column. `CSV_TO_XLSX` drops the empty lines with a
+   `FILTER`, splits the others with a `SELECT` over `CSV_FIELDS` and
+   writes the rows as a sheet.
 
 6. **Never lose a file.** `FreePath$` adds ` (2)` to a name that is
    already taken in the target folder, so a second `orders.csv` on the

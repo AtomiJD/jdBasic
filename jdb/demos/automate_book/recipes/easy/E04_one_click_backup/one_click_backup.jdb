@@ -10,11 +10,7 @@ IMPORT WORKCONF, BACKUP
 DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
 DIM key$ = "one_click_backup."
 DIM listed = WORKCONF.VALUE(cfg, key$ + "folders", ["~/Documents"])
-DIM folders = []
-DIM k = 0
-FOR k = 0 TO LEN(listed) - 1
-    PUSH(folders, WORKCONF.EXPAND$(listed[k]))
-NEXT k
+DIM folders = SELECT(LAMBDA f$ -> WORKCONF.EXPAND$(f$), listed)
 DIM home$ = "~/Documents/AutomateWork/backups"
 DIM target$ = WORKCONF.FOLDER$(cfg, key$ + "target", home$)
 DIM keep = WORKCONF.VALUE(cfg, key$ + "keep", 10)
@@ -26,6 +22,7 @@ DIM entries = picked{"entries"}
 DIM skipped = picked{"skipped"}
 DIM zip_name$ = BACKUP.ARCHIVE_NAME$("backup", NOW())
 DIM zip_path$ = PATH.JOIN$(target$, zip_name$)
+DIM k = 0
 FOR k = 0 TO LEN(skipped) - 1
     PRINT "too large, left out: "; skipped[k]
 NEXT k

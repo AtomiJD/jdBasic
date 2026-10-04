@@ -22,13 +22,9 @@ ENDFUNC
 ' The agenda points of an invitation text, one per line, or three
 ' headings for notes when the text has none.
 EXPORT FUNC AGENDA(description$)
-    DIM points = []
     DIM rows = SPLIT(REPLACE$(description$, CHR$(13), ""), CHR$(10))
-    DIM k = 0
-    FOR k = 0 TO LEN(rows) - 1
-        DIM one$ = TRIM$(rows[k])
-        IF one$ <> "" THEN PUSH(points, one$)
-    NEXT k
+    DIM trimmed = SELECT(LAMBDA s$ -> TRIM$(s$), rows)
+    DIM points = FILTER(LAMBDA s$ -> s$ <> "", trimmed)
     IF LEN(points) = 0 THEN
         points = ["Updates", "Decisions", "Next steps"]
     ENDIF
@@ -51,12 +47,7 @@ EXPORT FUNC NEXT_MEETING(cal, now, days)
             found{"end"} = r{"end"}
             found{"location"} = ICAL.PROP$(cal, ev, "LOCATION", "")
             DIM who = ICAL.VALUES(cal, ev, "ATTENDEE")
-            DIM people = []
-            DIM j = 0
-            FOR j = 0 TO LEN(who) - 1
-                PUSH(people, Address$(who[j]))
-            NEXT j
-            found{"attendees"} = people
+            found{"attendees"} = SELECT(Address$@, who)
             DIM desc$ = ICAL.PROP$(cal, ev, "DESCRIPTION", "")
             found{"agenda"} = AGENDA(desc$)
             RETURN found

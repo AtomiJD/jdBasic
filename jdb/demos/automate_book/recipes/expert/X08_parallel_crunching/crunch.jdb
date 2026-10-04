@@ -17,13 +17,9 @@ EXPORT FUNC FILES(folder$)
     DIM out = []
     IF NOT FILE.ISDIR(folder$) THEN RETURN out
     DIM names = SORT(DIR$(PATH.JOIN$(folder$, "*.csv")))
-    DIM k = 0
-    FOR k = 0 TO LEN(names) - 1
-        DIM file_name$ = names[k]
-        DIM path$ = PATH.JOIN$(folder$, file_name$)
-        IF NOT FILE.ISDIR(path$) THEN PUSH(out, path$)
-    NEXT k
-    RETURN out
+    DIM paths = SELECT(LAMBDA USE(folder$) n$ -> _
+        PATH.JOIN$(folder$, n$), names)
+    RETURN FILTER(LAMBDA p$ -> NOT FILE.ISDIR(p$), paths)
 ENDFUNC
 
 ' One export as text: "rows;cents;bad;cat=cents,cat=cents". The file
@@ -209,12 +205,9 @@ ENDFUNC
 EXPORT FUNC REPORT_CSV$(totals, sep$)
     DIM by = totals{"by"}
     DIM cats = SORT(MAP.KEYS(by))
-    DIM lines = ["category" + sep$ + "amount"]
-    DIM k = 0
-    FOR k = 0 TO LEN(cats) - 1
-        DIM name$ = cats[k]
-        PUSH(lines, name$ + sep$ + MONEY$(by{name$}))
-    NEXT k
+    DIM rows = SELECT(LAMBDA USE(by, sep$) n$ -> _
+        n$ + sep$ + MONEY$(by{n$}), cats)
+    DIM lines = APPEND(["category" + sep$ + "amount"], rows)
     PUSH(lines, "total" + sep$ + MONEY$(totals{"cents"}))
     RETURN JOIN(lines, CHR$(10)) + CHR$(10)
 ENDFUNC

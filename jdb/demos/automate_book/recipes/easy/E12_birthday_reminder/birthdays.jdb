@@ -78,16 +78,9 @@ EXPORT FUNC UPCOMING(people, today$, horizon)
             today$, horizon)
     NEXT k
     IF LEN(found) = 0 THEN RETURN found
-    DIM waits = []
-    FOR k = 0 TO LEN(found) - 1
-        PUSH(waits, found[k]{"in_days"})
-    NEXT k
+    DIM waits = SELECT(LAMBDA e -> e{"in_days"}, found)
     DIM order = GRADE(waits)
-    DIM out = []
-    FOR k = 0 TO LEN(order) - 1
-        PUSH(out, found[order[k]])
-    NEXT k
-    RETURN out
+    RETURN SELECT(LAMBDA USE(found) i -> found[i], order)
 ENDFUNC
 
 ' One line for an entry, such as

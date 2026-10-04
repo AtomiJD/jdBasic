@@ -100,14 +100,9 @@ ENDFUNC
 EXPORT FUNC SEEN(drafts$)
     DIM path$ = PATH.JOIN$(drafts$, "seen.txt")
     IF NOT FILE.EXISTS(path$) THEN RETURN []
-    DIM out = []
     DIM rows = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), gLF$)
-    DIM k = 0
-    FOR k = 0 TO LEN(rows) - 1
-        DIM row$ = TRIM$(rows[k])
-        IF row$ <> "" THEN PUSH(out, row$)
-    NEXT k
-    RETURN out
+    DIM names = SELECT(LAMBDA s$ -> TRIM$(s$), rows)
+    RETURN FILTER(LAMBDA s$ -> s$ <> "", names)
 ENDFUNC
 
 ' Adds a mail's file name to the seen file.

@@ -28,13 +28,7 @@ ENDFUNC
 EXPORT FUNC LIST(folder$)
     IF NOT FILE.ISDIR(folder$) THEN RETURN []
     DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.txt")))
-    DIM out = []
-    DIM k = 0
-    FOR k = 0 TO LEN(files) - 1
-        DIM f$ = files[k]
-        PUSH(out, LEFT$(f$, LEN(f$) - 4))
-    NEXT k
-    RETURN out
+    RETURN SELECT(LAMBDA f$ -> LEFT$(f$, LEN(f$) - 4), files)
 ENDFUNC
 
 ' A macro file read and checked: {"steps": [...], "errors": [...]}.

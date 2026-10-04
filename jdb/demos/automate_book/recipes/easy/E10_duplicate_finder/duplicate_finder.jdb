@@ -13,11 +13,7 @@ DIM report_default$ = "~/Documents/AutomateWork/duplicates.xlsx"
 DIM report$ = WORKCONF.FOLDER$(cfg, key$ + "report", report_default$)
 DIM min_kb = WORKCONF.VALUE(cfg, key$ + "min_size_kb", 1)
 
-DIM roots = []
-DIM k = 0
-FOR k = 0 TO LEN(folders) - 1
-    PUSH(roots, WORKCONF.EXPAND$(folders[k]))
-NEXT k
+DIM roots = SELECT(LAMBDA f$ -> WORKCONF.EXPAND$(f$), folders)
 DIM paths = DUPES.FILES(roots)
 PRINT LEN(paths); " files looked at"
 DIM groups = DUPES.GROUPS(paths, min_kb * 1024)

@@ -80,9 +80,12 @@ entries into calendar events, and counts who is away on which day:
    with `CODEC.SHA256$`, so the same entry has the same UID on every
    run. Without that, every subscriber would see the vacation twice
    after the next update.
-6. `SHIFTS.CLASHES` walks through every day of every absence and
-   collects the names per day in a map. Days with more names than
-   `max_away` come back sorted, and the program prints them.
+6. `SHIFTS.CLASHES` lowercases the kinds that mean away with a
+   `SELECT` and keeps the absences among the entries with a `FILTER`.
+   A loop walks through every day of every absence and collects the
+   names per day in a map. A second `FILTER` keeps the days with more
+   names than `max_away`, a `SELECT` turns each into a map with "day"
+   and "names", and the program prints them.
 
 ### Run it
 
@@ -144,10 +147,7 @@ Three changes in the code that teams ask for:
   file:
 
   ```
-  DIM mine = []
-  FOR k = 0 TO LEN(entries) - 1
-      IF entries[k]{"name"} = "Ann" THEN PUSH(mine, entries[k])
-  NEXT k
+  DIM mine = FILTER(LAMBDA e -> e{"name"} = "Ann", entries)
   ICAL.WRITEFILE(SHIFTS.CALENDAR(mine, "Ann"), "ann.ics")
   ```
 

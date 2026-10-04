@@ -51,29 +51,19 @@ EXPORT FUNC RECIPES(work$)
 ENDFUNC
 
 FUNC FindRecipe(recipes, id$)
-    DIM found = -1
-    DIM k = 0
-    FOR k = 0 TO LEN(recipes) - 1
-        DIM r = recipes[k]
-        DIM rid$ = r{"id"}
-        IF UCASE$(rid$) = UCASE$(id$) THEN found = k
-    NEXT k
+    DIM hits = FILTER(LAMBDA USE(id$) r -> _
+        UCASE$(r{"id"}) = UCASE$(id$), recipes)
     DIM hint$ = "; list_recipes names them."
-    IF found < 0 THEN THROW "No recipe " + id$ + hint$
+    IF LEN(hits) = 0 THEN THROW "No recipe " + id$ + hint$
     DIM hit AS MAP
-    hit = recipes[found]
+    hit = hits[LEN(hits) - 1]
     RETURN hit
 ENDFUNC
 
 ' TRUE when [ai_drive] allow names the recipe for real runs.
 EXPORT FUNC ALLOWED(cfg, id$)
     DIM allow = CONF.GET(cfg, "ai_drive.allow", [])
-    DIM k = 0
-    FOR k = 0 TO LEN(allow) - 1
-        DIM each$ = allow[k]
-        IF UCASE$(each$) = UCASE$(id$) THEN RETURN TRUE
-    NEXT k
-    RETURN FALSE
+    RETURN UCASE$(id$) IN SELECT(LAMBDA s$ -> UCASE$(s$), allow)
 ENDFUNC
 
 ' Writes one line about a tool call to logs/ai_drive.jsonl.

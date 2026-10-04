@@ -48,9 +48,12 @@ writes the Word file with the DOCX library:
    the order they start.
 2. `NEXT_MEETING` takes the first one that has not started yet and leaves
    out all-day entries such as holidays, which are not meetings.
-3. The attendees come from the `ATTENDEE` lines of the invitation, the
-   agenda from its description, one point per line. An invitation without
-   a description gets three headings: Updates, Decisions, Next steps.
+3. The attendees come from the `ATTENDEE` lines of the invitation:
+   `SELECT(Address$@, who)` turns every line into an address. The
+   agenda comes from the description, one point per line: `SELECT`
+   trims the lines and `FILTER` drops the empty ones. An invitation
+   without a description gets three headings: Updates, Decisions, Next
+   steps.
 4. `FILE_NAME$` builds the name from the date and the title and leaves out
    the characters Windows does not allow in a file name, such as `:` and
    `?`.

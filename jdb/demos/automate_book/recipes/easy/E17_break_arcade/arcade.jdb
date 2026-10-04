@@ -32,14 +32,10 @@ ENDFUNC
 ' One row slid to the left: answers "row" and "gain", the points the
 ' joined tiles bring. A tile joins at most once per move.
 EXPORT FUNC SLIDE_ROW(row)
-    DIM tiles = []
-    DIM k = 0
-    FOR k = 0 TO LEN(row) - 1
-        IF row[k] <> 0 THEN PUSH(tiles, row[k])
-    NEXT k
+    DIM tiles = FILTER(LAMBDA x -> x <> 0, row)
     DIM out = []
     DIM gain = 0
-    k = 0
+    DIM k = 0
     DO WHILE k < LEN(tiles)
         DIM here = tiles[k]
         IF k + 1 < LEN(tiles) ANDALSO tiles[k + 1] = here THEN
@@ -55,32 +51,6 @@ EXPORT FUNC SLIDE_ROW(row)
         PUSH(out, 0)
     LOOP
     RETURN {"row": out, "gain": gain}
-ENDFUNC
-
-' A row in the opposite order.
-FUNC Reversed(row)
-    DIM out = []
-    DIM k = 0
-    FOR k = LEN(row) - 1 TO 0 STEP -1
-        PUSH(out, row[k])
-    NEXT k
-    RETURN out
-ENDFUNC
-
-' The board with rows and columns swapped.
-FUNC Flipped(board)
-    DIM out = []
-    DIM r = 0
-    DIM c = 0
-    FOR c = 0 TO SIZE - 1
-        DIM col = []
-        FOR r = 0 TO SIZE - 1
-            DIM cells = board[r]
-            PUSH(col, cells[c])
-        NEXT r
-        PUSH(out, col)
-    NEXT c
-    RETURN out
 ENDFUNC
 
 ' Whether two boards hold the same tiles.
@@ -105,22 +75,22 @@ EXPORT FUNC MOVE(board, dir$)
         THROW "ARCADE: no direction " + dir$
     ENDIF
     DIM work = board
-    IF d$ = "up" ORELSE d$ = "down" THEN work = Flipped(board)
+    IF d$ = "up" ORELSE d$ = "down" THEN work = TRANSPOSE(board)
     DIM rows = []
     DIM gain = 0
     DIM r = 0
     FOR r = 0 TO SIZE - 1
         DIM row = work[r]
-        IF d$ = "right" ORELSE d$ = "down" THEN row = Reversed(row)
+        IF d$ = "right" ORELSE d$ = "down" THEN row = REVERSE(row)
         DIM slid = SLIDE_ROW(row)
         DIM new_row = slid{"row"}
         IF d$ = "right" ORELSE d$ = "down" THEN
-            new_row = Reversed(new_row)
+            new_row = REVERSE(new_row)
         ENDIF
         PUSH(rows, new_row)
         gain = gain + slid{"gain"}
     NEXT r
-    IF d$ = "up" ORELSE d$ = "down" THEN rows = Flipped(rows)
+    IF d$ = "up" ORELSE d$ = "down" THEN rows = TRANSPOSE(rows)
     DIM result AS MAP
     result{"board"} = rows
     result{"gain"} = gain
@@ -218,16 +188,7 @@ ENDFUNC
 
 ' The largest tile on the board.
 EXPORT FUNC TOP_TILE(board)
-    DIM best = 0
-    DIM r = 0
-    DIM c = 0
-    FOR r = 0 TO SIZE - 1
-        DIM cells = board[r]
-        FOR c = 0 TO SIZE - 1
-            IF cells[c] > best THEN best = cells[c]
-        NEXT c
-    NEXT r
-    RETURN best
+    RETURN MAX(SELECT(LAMBDA row -> MAX(row), board))
 ENDFUNC
 
 ' The direction a key name stands for, "" for any other key.
