@@ -19,6 +19,7 @@
 #include <mutex>
 #include <cstdlib>
 #include <thread>
+#include <atomic>
 #include <memory>
 #include <iostream>
 #include "async_task.h"
@@ -182,7 +183,12 @@ static bool apply_rich_response(const Value& result, RespT& res) {
 // Compact one-line console log for an incoming request - body is clipped to
 // keep the server console scannable. Pulls Mcp-Session-Id out separately
 // because that's the header we care about most for MCP debugging.
+// Whether requests are logged: HTTP.SERVER.LOG(TRUE) or JDBASIC_HTTP_LOG=1.
+static std::atomic<bool> g_log_requests{ std::getenv("JDBASIC_HTTP_LOG") != nullptr &&
+                                         std::string(std::getenv("JDBASIC_HTTP_LOG")) == "1" };
+
 static void log_request(const httplib::Request& req) {
+    if (!g_log_requests) return;
     constexpr size_t kMax = 240;
     std::string body_short = req.body.size() <= kMax
                                  ? req.body
@@ -577,15 +583,22 @@ void register_http_builtins(VM& vm) {
 
     // ── Server functions ─────────────────────────────────────
 
-    vm.register_native("HTTP.SERVER.ON_GET", [](const std::vector<Value>& args) -> Value {
+    // Handler names are case-insensitive like every jdBasic name.
+    auto handler_name = [](const Value& v) {
+        std::string s = v.as_string()->data;
+        for (auto& c : s) c = (char)std::toupper((unsigned char)c);
+        return s;
+    };
+
+    vm.register_native("HTTP.SERVER.ON_GET", [handler_name](const std::vector<Value>& args) -> Value {
         std::lock_guard<std::mutex> lock(g_server_mutex);
-        g_get_handlers[args[0].as_string()->data] = args[1].as_string()->data;
+        g_get_handlers[args[0].as_string()->data] = handler_name(args[1]);
         return Value::make_none();
     });
 
-    vm.register_native("HTTP.SERVER.ON_POST", [](const std::vector<Value>& args) -> Value {
+    vm.register_native("HTTP.SERVER.ON_POST", [handler_name](const std::vector<Value>& args) -> Value {
         std::lock_guard<std::mutex> lock(g_server_mutex);
-        g_post_handlers[args[0].as_string()->data] = args[1].as_string()->data;
+        g_post_handlers[args[0].as_string()->data] = handler_name(args[1]);
         return Value::make_none();
     });
 
@@ -593,9 +606,9 @@ void register_http_builtins(VM& vm) {
     // handler receives the request map and may return HTML or a rich-response
     // map ({__http_status, __http_body, ...}); it is wired via set_error_handler
     // and only fires for 404 (other error statuses keep their handler output).
-    vm.register_native("HTTP.SERVER.ON_NOTFOUND", [](const std::vector<Value>& args) -> Value {
+    vm.register_native("HTTP.SERVER.ON_NOTFOUND", [handler_name](const std::vector<Value>& args) -> Value {
         std::lock_guard<std::mutex> lock(g_server_mutex);
-        g_notfound_handler = args[0].as_string()->data;
+        g_notfound_handler = handler_name(args[0]);
         return Value::make_none();
     });
 
@@ -733,6 +746,12 @@ void register_http_builtins(VM& vm) {
         (void)args;
         std::lock_guard<std::mutex> lock(g_server_mutex);
         shutdown_server_locked();
+        return Value::make_none();
+    });
+
+    // Turns the one-line console log of each request on or off.
+    vm.register_native("HTTP.SERVER.LOG", 1, 1, [](const std::vector<Value>& args) -> Value {
+        g_log_requests = args[0].to_bool();
         return Value::make_none();
     });
 

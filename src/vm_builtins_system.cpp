@@ -2,6 +2,38 @@
 
 #include "vm_internal.h"
 
+#if defined(_WIN32)
+// The output of a console program as UTF-8: text that is valid UTF-8 stays
+// as it is, anything else is read in the OEM codepage that Windows console
+// tools such as schtasks write.
+static std::string console_text_to_utf8(const std::string& s) {
+    size_t i = 0;
+    bool valid = true;
+    while (i < s.size() && valid) {
+        unsigned char c = s[i];
+        size_t need = c < 0x80 ? 0 : (c >> 5) == 0x6 ? 1 : (c >> 4) == 0xE ? 2 : (c >> 3) == 0x1E ? 3 : 9;
+        if (need == 9 || (need > 0 && i + need >= s.size())) { valid = false; break; }
+        for (size_t k = 1; k <= need; k++)
+            if (((unsigned char)s[i + k] >> 6) != 0x2) { valid = false; break; }
+        i += need + 1;
+    }
+    if (valid) return s;
+    // The system locale's OEM codepage; CP_OEMCP is UTF-8 under our manifest.
+    DWORD oem = 0;
+    if (GetLocaleInfoW(LOCALE_SYSTEM_DEFAULT, LOCALE_IDEFAULTCODEPAGE | LOCALE_RETURN_NUMBER,
+                       reinterpret_cast<LPWSTR>(&oem), sizeof(oem) / sizeof(WCHAR)) == 0 || oem == 0)
+        oem = 850;
+    int wlen = MultiByteToWideChar(oem, 0, s.data(), (int)s.size(), nullptr, 0);
+    if (wlen <= 0) return s;
+    std::wstring w(wlen, L'\0');
+    MultiByteToWideChar(oem, 0, s.data(), (int)s.size(), &w[0], wlen);
+    int ulen = WideCharToMultiByte(CP_UTF8, 0, w.data(), wlen, nullptr, 0, nullptr, nullptr);
+    std::string out(ulen, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.data(), wlen, &out[0], ulen, nullptr, nullptr);
+    return out;
+}
+#endif
+
 void VM::register_system_builtins() {
     // ── System / Environment ─────────────────────────────────
 
@@ -222,7 +254,7 @@ void VM::register_system_builtins() {
             }
             CloseHandle(rd);
             Value result = Value::make_object();
-            result.as_object()->set("OUTPUT", Value::make_string(output));
+            result.as_object()->set("OUTPUT", Value::make_string(console_text_to_utf8(output)));
             result.as_object()->set("EXIT_CODE", Value::make_i64(exit_code));
             return result;
 #else
@@ -258,6 +290,9 @@ void VM::register_system_builtins() {
 #endif
         }
         Value result = Value::make_object();
+#if defined(_WIN32)
+        output = console_text_to_utf8(output);
+#endif
         result.as_object()->set("OUTPUT", Value::make_string(output));
         result.as_object()->set("EXIT_CODE", Value::make_i64(exit_code));
         return result;

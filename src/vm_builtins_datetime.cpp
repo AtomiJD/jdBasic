@@ -69,6 +69,28 @@ static int jdb_days_in_month(int64_t y, int64_t m) {
     return len[m - 1];
 }
 
+// The parts of a date text: YYYY-MM-DD or DD.MM.YYYY, optionally followed
+// by a time HH:MM[:SS] after a space or a T. False when the text is no
+// date or the month or day is out of range.
+static bool jdb_parse_date_text(const std::string& s, int& y, int& mo, int& d,
+                                int& h, int& mi, int& se) {
+    h = mi = se = 0;
+    int n = std::sscanf(s.c_str(), "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &se);
+    if (n == 3) {
+        int ty, tmo, td, th = 0, tmi = 0, tse = 0;
+        if (std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d", &ty, &tmo, &td, &th, &tmi, &tse) > 3) {
+            h = th; mi = tmi; se = tse;
+        }
+    }
+    if (n < 3) {
+        n = std::sscanf(s.c_str(), "%d.%d.%d %d:%d:%d", &d, &mo, &y, &h, &mi, &se);
+        if (n >= 3 && y < 100) return false;
+    }
+    if (n < 3) return false;
+    return mo >= 1 && mo <= 12 && d >= 1 && d <= jdb_days_in_month(y, mo) &&
+           h >= 0 && h <= 23 && mi >= 0 && mi <= 59 && se >= 0 && se <= 60;
+}
+
 // Split an epoch into UTC civil components. Only used when the CRT's
 // localtime cannot represent the value (negative epochs on Windows).
 static void jdb_epoch_to_civil_utc(double epoch, int64_t& y, int64_t& mo, int64_t& d,
@@ -232,17 +254,12 @@ void VM::register_datetime_builtins() {
                     out->elements.push_back(one(e));
                 return arr;
             }
-            // String input → parse ISO "YYYY-MM-DD[ HH:MM:SS]".
             std::string s = v.as_string()->data;
             std::tm tm = {};
             int y = 0, mo = 0, d = 0, h = 0, mi = 0, se = 0;
-            int matched = std::sscanf(s.c_str(), "%d-%d-%d %d:%d:%d",
-                                      &y, &mo, &d, &h, &mi, &se);
-            if (matched < 3) {
-                matched = std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d",
-                                      &y, &mo, &d, &h, &mi, &se);
-            }
-            if (matched < 3) return Value::make_date(0);
+            if (!jdb_parse_date_text(s, y, mo, d, h, mi, se))
+                throw std::runtime_error("CDATE: \"" + s +
+                    "\" is not a date; write YYYY-MM-DD or DD.MM.YYYY, with HH:MM:SS after a space if needed");
             tm.tm_year = y - 1900;
             tm.tm_mon  = mo - 1;
             tm.tm_mday = d;

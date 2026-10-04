@@ -1,0 +1,49 @@
+' CSV fields in quotes: a comma, a doubled quote and a line break inside
+' a field are read as one field, by CSVREADER and CSVHEADER, and what
+' CSVWRITER writes reads back the same.
+DIM Q$ = CHR$(34)
+DIM NL$ = CHR$(10)
+DIM bad = 0
+
+SUB Check(got$, want$, what$)
+    IF got$ = want$ THEN
+        PRINT "PASS "; what$
+    ELSE
+        PRINT "FAIL "; what$; ": got ["; got$; "], want ["; want$; "]"
+        bad = bad + 1
+    ENDIF
+ENDSUB
+
+DIM path$ = MKTEMP$("csvq") + ".csv"
+DIM text$ = "name," + Q$ + "note, short" + Q$ + ",hours" + CHR$(13) + NL$
+text$ = text$ + "Mia," + Q$ + "Miller, project" + Q$ + ",2.5" + CHR$(13) + NL$
+text$ = text$ + "Ben," + Q$ + "say " + Q$ + Q$ + "hi" + Q$ + Q$ + Q$ + ",1" + NL$
+text$ = text$ + "Cleo," + Q$ + "two" + NL$ + "lines" + Q$ + ",3" + NL$
+text$ = text$ + "Dan,,4" + NL$
+TXTWRITER path$, CHR$(239) + CHR$(187) + CHR$(191) + text$
+
+DIM head = CSVHEADER(path$)
+Check STR$(LEN(head)), "3", "the header has three fields"
+Check head[0], "name", "a byte order mark is skipped"
+Check head[1], "note, short", "a quoted header field keeps its comma"
+
+DIM rows = CSVREADER(path$, ",", TRUE)
+Check STR$(LEN(rows)), "4", "four records, one of them over two lines"
+Check rows[0][1], "Miller, project", "a comma inside quotes"
+Check STR$(rows[0][2]), "2.5", "the column after it stays in place"
+Check rows[1][1], "say " + Q$ + "hi" + Q$, "a doubled quote is one quote"
+Check rows[2][1], "two" + NL$ + "lines", "a line break inside quotes"
+Check STR$(rows[2][2]), "3", "and the record goes on after it"
+Check rows[3][1], "", "an empty field"
+
+DIM back$ = MKTEMP$("csvq") + ".csv"
+CSVWRITER back$, rows, ",", head
+DIM again = CSVREADER(back$, ",", TRUE)
+Check CSVHEADER(back$)[1], "note, short", "the written header reads back"
+Check again[1][1], rows[1][1], "a written quote reads back"
+Check again[2][1], rows[2][1], "a written line break reads back"
+Check again[0][1], rows[0][1], "a written comma reads back"
+KILL path$
+KILL back$
+
+IF bad = 0 THEN PRINT "ALL TESTS PASSED!" ELSE PRINT bad; " failed"

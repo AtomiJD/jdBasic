@@ -18,6 +18,10 @@ FUNC BadSchedule(r)
     RETURN WIZARD.SCHEDULE_ARGS(r, "sometimes", "j", "p", "c")
 ENDFUNC
 
+FUNC LateNight(r)
+    RETURN WIZARD.SCHEDULE_ARGS(r, "daily 25:00", "j", "p", "c")
+ENDFUNC
+
 FUNC Monthly$(r, when$)
     DIM args = WIZARD.SCHEDULE_ARGS(r, when$, "j", "p", "c")
     RETURN JOIN(TAKE(-6, args), " ")
@@ -79,6 +83,8 @@ TESTKIT.EQ(JOIN(TAKE(-4, WIZARD.SCHEDULE_ARGS(e01, "every 50 minutes", "j", "p",
 TESTKIT.EQ(JOIN(TAKE(-2, WIZARD.SCHEDULE_ARGS(e01, "at logon", "j", "p", "c")), " "), "/SC ONLOGON", "at logon")
 TESTKIT.EQ(LEN(WIZARD.SCHEDULE_ARGS(e01, "manual", "j", "p", "c")), 0, "manual means no task")
 TESTKIT.THROWS(BadSchedule@, e01, "a schedule it cannot read is refused")
+TESTKIT.THROWS(LateNight@, e01, "and a time past 23:59")
+TESTKIT.EQ(JOIN(TAKE(-2, WIZARD.SCHEDULE_ARGS(e01, "daily 8:30", "j", "p", "c")), " "), "/ST 08:30", "a one digit hour gets a leading zero")
 TESTKIT.EQARRAY(WIZARD.UNSCHEDULE_ARGS(e01), ["/Delete", "/F", "/TN", "AutomateWork\E01 Downloads Butler"], "and removed")
 TESTKIT.EQ(JOIN(TAKE(-4, WIZARD.SCHEDULE_ARGS(e01, "every 2 hours", "j", "p", "c")), " "), "/SC HOURLY /MO 2", "every few hours")
 DIM once$ = Monthly$(e01, "monthly 1 08:00")

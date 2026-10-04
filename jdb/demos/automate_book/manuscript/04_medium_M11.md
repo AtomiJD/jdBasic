@@ -63,9 +63,10 @@ workbook:
    split at every semicolon would cut the name in two. `CSV_FIELDS`
    walks the line character by character and remembers whether it is
    inside quotes. Two quotes in a row inside a quoted field stand for
-   one quote character. The CSV reader built into jdBasic does not
-   handle quoted separators yet, which is why the recipe brings its
-   own.
+   one quote character. `CSVREADER` handles quotes as well, but it
+   turns a cell that looks like a number into a number. The cleaner
+   wants every cell exactly as written, a postcode with its leading
+   zero included, so it reads the text itself.
 
 2. **One kind per column.** `GUESS_KINDS` looks at the column names:
    a name with *dat* in it is a date, *Amount* or *Betrag* a number,

@@ -448,7 +448,7 @@ Description: Changes the current working directory.
 
 [CDATE]
 Syntax: CDATE(date_string$ [, tz_hours])
-Description: Parses a string ("YYYY-MM-DD" optionally with time) into a DateTime value. Alias for CVDATE. With tz_hours, the string is interpreted as wall-clock time in that UTC offset.
+Description: Parses a date text into a DateTime value: "YYYY-MM-DD" or "DD.MM.YYYY", optionally followed by a time "HH:MM[:SS]" after a space (or a T for the ISO form). Any other text is an error that names it. Alias for CVDATE. With tz_hours, the string is interpreted as wall-clock time in that UTC offset.
 
 [CHAN.OPEN]
 Syntax: CHAN.OPEN(capacity) -> handle
@@ -524,7 +524,7 @@ Description: Cumulative sum along the last axis.
 
 [CVDATE]
 Syntax: CVDATE(date_string$ [, tz_hours])
-Description: Parses a string ("YYYY-MM-DD" optionally with time) into a DateTime value. With tz_hours, the string is interpreted as wall-clock time in that UTC offset (e.g. CVDATE("2024-01-15 14:00:00", 2) yields the same instant as CVDATE("2024-01-15 12:00:00", 0)).
+Description: Parses a string ("YYYY-MM-DD" or "DD.MM.YYYY", optionally with a time) into a DateTime value; any other text is an error. With tz_hours, the string is interpreted as wall-clock time in that UTC offset (e.g. CVDATE("2024-01-15 14:00:00", 2) yields the same instant as CVDATE("2024-01-15 12:00:00", 0)).
 
 [CDBL]
 Syntax: CDBL(x)
@@ -679,11 +679,11 @@ Description: Returns the first CSV line as a string array of column names.
 
 [CSVREADER]
 Syntax: CSVREADER(filename$, [delimiter$], [has_header], [types])
-Description: Reads a CSV file into a 2D array with per-cell type inference (int, double, string). Optional types array forces column types using the AS type names: AUTO, STRING, INTEGER, DOUBLE, DATE, BOOLEAN.
+Description: Reads a CSV file into a 2D array with per-cell type inference (int, double, string). Optional types array forces column types using the AS type names: AUTO, STRING, INTEGER, DOUBLE, DATE, BOOLEAN. A field in double quotes may hold the delimiter, line breaks and "" for a quote (RFC 4180).
 
 [CSVWRITER]
 Syntax: CSVWRITER filename$, array, [delimiter$], [header_array]
-Description: Writes a 2D array to a CSV file.
+Description: Writes a 2D array to a CSV file. A text field that holds the delimiter, a quote or a line break is written in double quotes, with "" for a quote.
 
 [CURSOR]
 Syntax: CURSOR state
@@ -1010,7 +1010,7 @@ Description: Begins a loop that repeats a specific number of times.
 
 [FORMAT$]
 Syntax: FORMAT$(format_string$, arg1, ...)
-Description: Formats a string using C++20-style format specifiers: {}, {0}, {:spec} with spec = [[fill]align][sign][width][.precision][type]; type is d, f, e, E, g, G, x, X, s or % (the value times 100 with a % sign); sign + or a space marks positive numbers. Any other spec is an error. A compiled program formats at most four arguments per call.
+Description: Formats a string using C++20-style format specifiers: {}, {0}, {:spec} with spec = [[fill]align][sign][#][0][width][.precision][type]; type is d, f, e, E, g, G, x, X, s or % (the value times 100 with a % sign); sign + or a space marks positive numbers; # puts 0x before x and X; 0 pads a number with zeros after its sign, so FORMAT$("{:04X}", 375) is 0177. Any other spec is an error. A compiled program formats at most four values per call; more is a compile error.
 
 [FORMAT_DATE]
 Syntax: FORMAT_DATE(date, format_string$ [, tz_hours])
@@ -1972,6 +1972,10 @@ Description: Starts the built-in non-blocking HTTP server on a specified port. h
 Syntax: HTTP.SERVER.STOP
 Description: Stops the built-in HTTP server.
 
+[HTTP.SERVER.LOG]
+Syntax: HTTP.SERVER.LOG(on)
+Description: Turns a one-line console log of each request (method, path, the start of the body) on with TRUE or off with FALSE. Off by default, since a body can hold a password from a form; JDBASIC_HTTP_LOG=1 in the environment turns it on from the start.
+
 [HTTP.SETCOOKIE]
 Syntax: HTTP.SETCOOKIE(name$, value$)
 Description: Stores a client-side cookie that will be sent on subsequent requests.
@@ -2498,7 +2502,7 @@ Description: Returns a 1D array of command-line arguments.
 
 [OS.EXEC]
 Syntax: OS.EXEC(command$, [args_array$])
-Description: Executes an external command and captures its output. Without args_array$ the command line goes to the shell (cmd /c, sh) as written. With args_array$ command$ names the program and each element reaches it as one argument, read by no shell, so & | > ; and $ in an argument stay text; a .cmd or .bat file runs under cmd with every argument quoted, and an argument holding % or a double quote is refused there.
+Description: Executes an external command and captures its output. Without args_array$ the command line goes to the shell (cmd /c, sh) as written. With args_array$ command$ names the program and each element reaches it as one argument, read by no shell, so & | > ; and $ in an argument stay text; a .cmd or .bat file runs under cmd with every argument quoted, and an argument holding % or a double quote is refused there. On Windows the output arrives as UTF-8: output in the OEM codepage of console tools such as schtasks is converted, UTF-8 output stays as it is.
 
 [OS.GETOS]
 Syntax: OS.GETOS()

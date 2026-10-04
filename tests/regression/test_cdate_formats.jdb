@@ -1,0 +1,41 @@
+' CDATE reads YYYY-MM-DD and DD.MM.YYYY, each with an optional time,
+' and stops with an error that names the text for anything else.
+DIM bad = 0
+
+SUB Check(got$, want$, what$)
+    IF got$ = want$ THEN
+        PRINT "PASS "; what$
+    ELSE
+        PRINT "FAIL "; what$; ": got ["; got$; "], want ["; want$; "]"
+        bad = bad + 1
+    ENDIF
+ENDSUB
+
+FUNC Shown$(text$)
+    RETURN FORMAT_DATE(CDATE(text$), "%Y-%m-%d %H:%M")
+ENDFUNC
+
+FUNC Problem$(text$)
+    DIM msg$ = ""
+    TRY
+        DIM d$ = Shown$(text$)
+    CATCH
+        msg$ = ERRMSG$
+    ENDTRY
+    RETURN msg$
+ENDFUNC
+
+Check Shown$("2026-10-05"), "2026-10-05 00:00", "an ISO date"
+Check Shown$("2026-10-05 14:30:00"), "2026-10-05 14:30", "with a time"
+Check Shown$("2026-10-05T14:30:00"), "2026-10-05 14:30", "with a T"
+Check Shown$("05.10.2026"), "2026-10-05 00:00", "a date with dots, day first"
+Check Shown$("05.10.2026 08:15"), "2026-10-05 08:15", "and with a time"
+Check Shown$("29.02.2028"), "2028-02-29 00:00", "a leap day"
+DIM odd$ = Problem$("10/05/2026")
+Check STR$(INSTR(odd$, "10/05/2026") >= 0), STR$(TRUE), "a date with slashes is an error that names it"
+Check STR$(INSTR(Problem$("2026-13-01"), "not a date") >= 0), STR$(TRUE), "month 13 is an error"
+Check STR$(INSTR(Problem$("30.02.2026"), "not a date") >= 0), STR$(TRUE), "the 30th of February is an error"
+Check STR$(INSTR(Problem$("Monday"), "not a date") >= 0), STR$(TRUE), "a word is an error"
+Check STR$(INSTR(Problem$("05.10.26"), "not a date") >= 0), STR$(TRUE), "a two digit year is an error"
+
+IF bad = 0 THEN PRINT "ALL TESTS PASSED!" ELSE PRINT bad; " failed"

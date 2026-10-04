@@ -1,0 +1,15 @@
+' A server handler named in mixed case is found; the request log stays
+' off by default.
+FUNC Hello(req)
+    RETURN "hi"
+ENDFUNC
+
+HTTP.SERVER.ON_GET "/hello", "Hello"
+DIM up = HTTP.SERVER.START(18767)
+DIM got$ = HTTP.GET$("http://127.0.0.1:18767/hello")
+HTTP.SERVER.STOP
+IF got$ = "hi" THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "FAIL: the handler answered ["; got$; "]"
+ENDIF

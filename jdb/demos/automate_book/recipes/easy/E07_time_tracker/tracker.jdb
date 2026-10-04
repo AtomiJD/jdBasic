@@ -13,11 +13,19 @@ IMPORT XLSX
 
 DIM gLF$ = CHR$(10)
 
-' A project name that fits into one CSV field: commas and line breaks
-' become spaces.
+' A project name on one line: line breaks become spaces.
 EXPORT FUNC CLEAN$(project$)
-    DIM p$ = REPLACE$(REPLACE$(project$, ",", " "), CHR$(13), " ")
+    DIM p$ = REPLACE$(project$, CHR$(13), " ")
     RETURN TRIM$(REPLACE$(p$, gLF$, " "))
+ENDFUNC
+
+' A name as one CSV field: in quotes when it holds a comma or a quote,
+' with a quote inside written twice.
+FUNC Field$(name$)
+    DIM q$ = CHR$(34)
+    DIM plain = INSTR(name$, ",") < 0 ANDALSO INSTR(name$, q$) < 0
+    IF plain THEN RETURN name$
+    RETURN q$ + REPLACE$(name$, q$, q$ + q$) + q$
 ENDFUNC
 
 ' Adds one event ("start" or "stop") to the log, with a header line
@@ -28,7 +36,7 @@ EXPORT SUB RECORD(log_path$, when$, event$, project$)
         IF folder$ <> "" THEN MKDIR folder$
         TXTWRITER log_path$, "time,event,project" + gLF$
     ENDIF
-    DIM row$ = when$ + "," + event$ + "," + CLEAN$(project$)
+    DIM row$ = when$ + "," + event$ + "," + Field$(CLEAN$(project$))
     TXTWRITER log_path$, row$ + gLF$, TRUE
 ENDSUB
 

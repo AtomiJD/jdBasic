@@ -2575,8 +2575,15 @@ static int jdb_format_one_arg(char* out, int cap,
     } else if (slen >= 1 && (spec[0] == '<' || spec[0] == '>' || spec[0] == '^')) {
         align = spec[0]; sp = 1;
     }
+    const bool explicit_align = align != '\0';
     char sign = 0;
     if (sp < slen && (spec[sp] == '+' || spec[sp] == '-' || spec[sp] == ' ')) sign = spec[sp++];
+    // # asks for a 0x prefix, before the width or after the precision
+    bool hash_flag = false;
+    if (sp < slen && spec[sp] == '#') { hash_flag = true; sp++; }
+    // A 0 before the width pads a number with zeros after its sign
+    bool zero_pad = false;
+    if (sp < slen && spec[sp] == '0') { zero_pad = true; sp++; }
     int width = 0;
     while (sp < slen && spec[sp] >= '0' && spec[sp] <= '9')
         width = width * 10 + (spec[sp++] - '0');
@@ -2586,7 +2593,6 @@ static int jdb_format_one_arg(char* out, int cap,
         while (sp < slen && spec[sp] >= '0' && spec[sp] <= '9')
             prec = prec * 10 + (spec[sp++] - '0');
     }
-    bool hash_flag = false;
     if (sp < slen && spec[sp] == '#') { hash_flag = true; sp++; }
     char type = (sp < slen) ? spec[sp] : 0;
     bool known_type = type == 0 || type == 'd' || type == 'f' || type == 'x' ||
@@ -2595,7 +2601,7 @@ static int jdb_format_one_arg(char* out, int cap,
     if (!known_type || sp + (type ? 1 : 0) != slen) {
         char msg[200];
         snprintf(msg, sizeof(msg),
-                 "FORMAT$: unknown format spec \"{:%.60s}\"; use [[fill]align][sign][width][.precision][d|f|e|g|x|X|s|%%]",
+                 "FORMAT$: unknown format spec \"{:%.60s}\"; use [[fill]align][sign][#][0][width][.precision][d|f|e|g|x|X|s|%%]",
                  spec ? spec : "");
         jdb_err_set(msg, 1);
         out[0] = 0;
@@ -2638,6 +2644,18 @@ static int jdb_format_one_arg(char* out, int cap,
         memmove(raw + 1, raw, (size_t)raw_len + 1);
         raw[0] = sign;
         raw_len++;
+    }
+    if (zero_pad && width > 0 && raw_len < width && width < (int)sizeof(raw)) {
+        if (!explicit_align && !is_str) {
+            int at = (raw_len > 0 && (raw[0] == '+' || raw[0] == '-' || raw[0] == ' ')) ? 1 : 0;
+            if (raw_len >= at + 2 && raw[at] == '0' && raw[at + 1] == 'x') at += 2;
+            int pad = width - raw_len;
+            memmove(raw + at + pad, raw + at, (size_t)(raw_len - at) + 1);
+            memset(raw + at, '0', (size_t)pad);
+            raw_len = width;
+        } else if (!explicit_align || fill == ' ') {
+            fill = '0';
+        }
     }
 
     int written = 0;
@@ -4083,9 +4101,41 @@ static char* format_iso_date(const struct tm* tm, bool include_time) {
 }
 
 // CVDATE: parse ISO string, return normalized ISO string (always with time).
+// Accepts YYYY-MM-DD and DD.MM.YYYY with an optional time; anything else
+// is an error.
 char* jdb_cvdate(const char* datestr) {
+    const char* s = datestr ? datestr : "";
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0, se = 0;
+    int n = sscanf(s, "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &se);
+    if (n == 3) {
+        int ty, tmo, td, th = 0, tmi = 0, tse = 0;
+        if (sscanf(s, "%d-%d-%dT%d:%d:%d", &ty, &tmo, &td, &th, &tmi, &tse) > 3) {
+            h = th; mi = tmi; se = tse;
+        }
+    }
+    if (n < 3) {
+        n = sscanf(s, "%d.%d.%d %d:%d:%d", &d, &mo, &y, &h, &mi, &se);
+        if (n >= 3 && y < 100) n = 0;
+    }
+    static const int len[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    bool ok = n >= 3 && mo >= 1 && mo <= 12 && d >= 1 &&
+              d <= (mo == 2 && leap ? 29 : len[mo >= 1 && mo <= 12 ? mo - 1 : 0]) &&
+              h >= 0 && h <= 23 && mi >= 0 && mi <= 59 && se >= 0 && se <= 60;
+    if (!ok) {
+        std::string msg = std::string("CDATE: \"") + s +
+            "\" is not a date; write YYYY-MM-DD or DD.MM.YYYY, with HH:MM:SS after a space if needed";
+        jdb_err_set(msg.c_str(), 99);
+        return _strdup("");
+    }
     struct tm t = {0};
-    if (!parse_iso_date(datestr, &t)) return _strdup("");
+    t.tm_year = y - 1900;
+    t.tm_mon = mo - 1;
+    t.tm_mday = d;
+    t.tm_hour = h;
+    t.tm_min = mi;
+    t.tm_sec = se;
+    t.tm_isdst = -1;
     return format_iso_date(&t, true);
 }
 

@@ -37,7 +37,8 @@ hours:
 
 1. `RECORD` adds one line to the log, such as
    `2026-10-01 09:00:00,start,Miller offer`. The log only ever grows,
-   so nothing is lost when the program stops halfway.
+   so nothing is lost when the program stops halfway. A name with a
+   comma goes in quotes, `"Miller, offer"`, so it stays one field.
 2. `EVENTS` reads the log with `CSVREADER`. The list of column types
    keeps every field as text, so a date stays a date as written.
 3. `SESSIONS` pairs the events into blocks of work. A `start` while
@@ -90,8 +91,6 @@ folder = "~/Documents/AutomateWork/time"
 
 ### When it goes wrong
 
-- **Commas vanished from a project name**: commas separate the
-  columns of the log, so the tracker turns them into spaces.
 - **A block that lasted all night**: you forgot `stop`. Edit the time
   of the next line in `log.csv`, or add a `stop` line with the right
   time.

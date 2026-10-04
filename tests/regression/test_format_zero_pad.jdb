@@ -1,0 +1,25 @@
+' FORMAT$ with a 0 before the width pads a number with zeros after its
+' sign and after a 0x prefix; with an alignment the 0 is the fill.
+DIM bad = 0
+
+SUB Check(got$, want$, what$)
+    IF got$ = want$ THEN
+        PRINT "PASS "; what$
+    ELSE
+        PRINT "FAIL "; what$; ": got ["; got$; "], want ["; want$; "]"
+        bad = bad + 1
+    ENDIF
+ENDSUB
+
+Check FORMAT$("{:04X}", 375), "0177", "hex with zeros"
+Check FORMAT$("{:05}", 42), "00042", "an integer"
+Check FORMAT$("{:05}", -42), "-0042", "zeros after the minus"
+Check FORMAT$("{:+05}", 42), "+0042", "and after the plus"
+Check FORMAT$("{:08.2f}", 3.14159), "00003.14", "a fixed point number"
+Check FORMAT$("{:#06x}", 255), "0x00ff", "zeros after 0x"
+Check FORMAT$("{:<05}", 42), "42000", "with an alignment the 0 is the fill"
+Check FORMAT$("{:03}", 12345), "12345", "a wider number is not cut"
+Check FORMAT$("{:5}", 42), "   42", "without the 0 the fill stays a space"
+Check FORMAT$("{:02}:{:02}", 7, 5), "07:05", "two fields"
+
+IF bad = 0 THEN PRINT "ALL TESTS PASSED!" ELSE PRINT bad; " failed"

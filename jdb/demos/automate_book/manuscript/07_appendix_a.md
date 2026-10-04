@@ -218,7 +218,7 @@ TRUE
 | Call | Answers |
 |---|---|
 | `NOW()` | The date and time of this moment |
-| `CDATE(text$)` | A date from `"2026-10-05"` or `"2026-10-05 08:30:00"` |
+| `CDATE(text$)` | A date from `"2026-10-05"`, `"05.10.2026"` or `"2026-10-05 08:30:00"` |
 | `FORMAT_DATE(d, fmt$)` | Text with `%Y %m %d %H %M %S %A %B` filled in |
 | `DATEADD(unit$, n, d)` | `d` moved by `n` units: `"Y" "M" "W" "D" "H" "N" "S"` |
 | `DATEDIFF(unit$, a, b)` | From `a` to `b` in `"D" "H" "N"` or `"S"` |

@@ -6,6 +6,68 @@
 #include <utime.h>
 #endif
 
+// Skips a UTF-8 byte order mark at the start of a stream.
+static void skip_utf8_bom(std::istream& f) {
+    char b[3] = { 0, 0, 0 };
+    f.read(b, 3);
+    if (f.gcount() == 3 && (unsigned char)b[0] == 0xEF &&
+        (unsigned char)b[1] == 0xBB && (unsigned char)b[2] == 0xBF) return;
+    f.clear();
+    f.seekg(0);
+}
+
+// One CSV record as in RFC 4180: a field that starts with a quote runs to
+// the closing quote, may hold the delimiter and line breaks, and writes a
+// quote as "". Answers false at the end of the stream.
+static bool read_csv_record(std::istream& f, const std::string& delim,
+                            std::vector<std::string>& cells) {
+    cells.clear();
+    std::string line;
+    if (!std::getline(f, line)) return false;
+    auto chop_cr = [](std::string& s) { if (!s.empty() && s.back() == '\r') s.pop_back(); };
+    chop_cr(line);
+    const std::string sep = delim.empty() ? std::string(",") : delim;
+    std::string cell;
+    bool in_quotes = false;
+    bool at_start = true;
+    size_t i = 0;
+    while (true) {
+        if (i >= line.size()) {
+            if (!in_quotes) break;
+            if (!std::getline(f, line)) break;
+            chop_cr(line);
+            cell += '\n';
+            i = 0;
+            continue;
+        }
+        char c = line[i];
+        if (in_quotes) {
+            if (c == '"') {
+                if (i + 1 < line.size() && line[i + 1] == '"') { cell += '"'; i += 2; }
+                else { in_quotes = false; i++; }
+            } else {
+                cell += c;
+                i++;
+            }
+        } else if (at_start && c == '"') {
+            in_quotes = true;
+            at_start = false;
+            i++;
+        } else if (line.compare(i, sep.size(), sep) == 0) {
+            cells.push_back(cell);
+            cell.clear();
+            at_start = true;
+            i += sep.size();
+        } else {
+            cell += c;
+            at_start = false;
+            i++;
+        }
+    }
+    cells.push_back(cell);
+    return true;
+}
+
 void VM::register_file_builtins() {
     // ── File I/O ─────────────────────────────────────────────
 
@@ -159,13 +221,7 @@ void VM::register_file_builtins() {
         return Value::make_string(cell);
     };
 
-    auto strip_utf8_bom = [](std::string& line) {
-        if (line.size() >= 3 && (unsigned char)line[0] == 0xEF &&
-            (unsigned char)line[1] == 0xBB && (unsigned char)line[2] == 0xBF)
-            line.erase(0, 3);
-    };
-
-    register_native("CSVREADER", [csv_cell_value, strip_utf8_bom](const std::vector<Value>& args) -> Value {
+    register_native("CSVREADER", [csv_cell_value](const std::vector<Value>& args) -> Value {
         std::string fname = args[0].as_string()->data;
         std::string delim = (args.size() >= 2) ? args[1].as_string()->data : ",";
         bool has_header = (args.size() >= 3) ? args[2].to_bool() : false;
@@ -178,35 +234,20 @@ void VM::register_file_builtins() {
                 col_types.push_back(u);
             }
         }
-        std::ifstream f(fname);
+        std::ifstream f(fname, std::ios::binary);
         if (!f) throw std::runtime_error("Cannot open file: " + fname);
+        skip_utf8_bom(f);
         Value result = Value::make_array();
-        std::string line;
+        std::vector<std::string> cells;
         bool first = true;
         static const std::string kAuto = "AUTO";
-        while (std::getline(f, line)) {
-            if (first) strip_utf8_bom(line);
-            // Skip header row
+        while (read_csv_record(f, delim, cells)) {
             if (first && has_header) { first = false; continue; }
             first = false;
-            // Remove trailing \r
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            // Split by delimiter
             Value row = Value::make_array();
-            size_t pos = 0;
-            size_t col = 0;
-            while (true) {
-                size_t found = line.find(delim, pos);
-                std::string cell = (found == std::string::npos)
-                    ? line.substr(pos) : line.substr(pos, found - pos);
-                // Strip quotes
-                if (cell.size() >= 2 && cell.front() == '"' && cell.back() == '"')
-                    cell = cell.substr(1, cell.size() - 2);
+            for (size_t col = 0; col < cells.size(); col++) {
                 const std::string& want = (col < col_types.size()) ? col_types[col] : kAuto;
-                row.as_array()->elements.push_back(csv_cell_value(cell, want));
-                col++;
-                if (found == std::string::npos) break;
-                pos = found + delim.size();
+                row.as_array()->elements.push_back(csv_cell_value(cells[col], want));
             }
             result.as_array()->elements.push_back(std::move(row));
         }
@@ -214,27 +255,16 @@ void VM::register_file_builtins() {
     });
 
     // Header row as a string array (CSVREADER discards it on skip).
-    register_native("CSVHEADER", [strip_utf8_bom](const std::vector<Value>& args) -> Value {
+    register_native("CSVHEADER", [](const std::vector<Value>& args) -> Value {
         std::string fname = args[0].as_string()->data;
         std::string delim = (args.size() >= 2) ? args[1].as_string()->data : ",";
-        std::ifstream f(fname);
+        std::ifstream f(fname, std::ios::binary);
         if (!f) throw std::runtime_error("Cannot open file: " + fname);
+        skip_utf8_bom(f);
         Value r = Value::make_array();
-        std::string line;
-        if (!std::getline(f, line)) return r;
-        strip_utf8_bom(line);
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        size_t pos = 0;
-        while (true) {
-            size_t found = line.find(delim, pos);
-            std::string cell = (found == std::string::npos)
-                ? line.substr(pos) : line.substr(pos, found - pos);
-            if (cell.size() >= 2 && cell.front() == '"' && cell.back() == '"')
-                cell = cell.substr(1, cell.size() - 2);
-            r.as_array()->elements.push_back(Value::make_string(cell));
-            if (found == std::string::npos) break;
-            pos = found + delim.size();
-        }
+        std::vector<std::string> cells;
+        if (!read_csv_record(f, delim, cells)) return r;
+        for (auto& cell : cells) r.as_array()->elements.push_back(Value::make_string(cell));
         return r;
     });
 
@@ -244,12 +274,21 @@ void VM::register_file_builtins() {
         std::string delim = (args.size() >= 3) ? args[2].as_string()->data : ",";
         std::ofstream f(fname);
         if (!f) throw std::runtime_error("Cannot write file: " + fname);
+        // A text field quoted as RFC 4180 asks when it holds the delimiter,
+        // a quote or a line break; a quote inside becomes "".
+        auto field = [&delim](const std::string& s) {
+            if (s.find(delim) == std::string::npos && s.find_first_of("\"\r\n") == std::string::npos)
+                return s;
+            std::string q = "\"";
+            for (char c : s) { if (c == '"') q += '"'; q += c; }
+            return q + "\"";
+        };
         // Optional header array
         if (args.size() >= 4 && args[3].type == ValueType::ARRAY) {
             auto* hdr = args[3].as_array();
             for (size_t i = 0; i < hdr->elements.size(); i++) {
                 if (i > 0) f << delim;
-                f << hdr->elements[i].to_string();
+                f << field(hdr->elements[i].to_string());
             }
             f << "\n";
         }
@@ -260,10 +299,7 @@ void VM::register_file_builtins() {
                     if (i > 0) f << delim;
                     auto& cell = row.as_array()->elements[i];
                     if (cell.type == ValueType::STRING) {
-                        std::string s = cell.as_string()->data;
-                        if (s.find(delim) != std::string::npos || s.find('"') != std::string::npos)
-                            f << "\"" << s << "\"";
-                        else f << s;
+                        f << field(cell.as_string()->data);
                     } else {
                         f << cell.to_string();
                     }

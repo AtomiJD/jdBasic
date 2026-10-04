@@ -413,11 +413,18 @@ void VM::register_string_builtins() {
                     } else if (!fmt_spec.empty() && (fmt_spec[0] == '<' || fmt_spec[0] == '>' || fmt_spec[0] == '^')) {
                         align = fmt_spec[0]; fp = 1;
                     }
+                    const bool explicit_align = fp > 0;
                     // Parse sign: + always, space for a positive number, - only for a negative
                     char sign = 0;
                     if (fp < fmt_spec.size() &&
                         (fmt_spec[fp] == '+' || fmt_spec[fp] == '-' || fmt_spec[fp] == ' '))
                         sign = fmt_spec[fp++];
+                    // # asks for a 0x prefix, before the width or after the precision
+                    bool hash_flag = false;
+                    if (fp < fmt_spec.size() && fmt_spec[fp] == '#') { hash_flag = true; fp++; }
+                    // A 0 before the width pads a number with zeros after its sign
+                    bool zero_pad = false;
+                    if (fp < fmt_spec.size() && fmt_spec[fp] == '0') { zero_pad = true; fp++; }
                     // Parse width
                     int width = 0;
                     while (fp < fmt_spec.size() && std::isdigit(fmt_spec[fp]))
@@ -430,7 +437,6 @@ void VM::register_string_builtins() {
                             prec = prec * 10 + (fmt_spec[fp++] - '0');
                     }
                     // Parse # flag and type
-                    bool hash_flag = false;
                     char type = 0;
                     if (fp < fmt_spec.size() && fmt_spec[fp] == '#') { hash_flag = true; fp++; }
                     if (fp < fmt_spec.size()) type = fmt_spec[fp];
@@ -440,7 +446,7 @@ void VM::register_string_builtins() {
                     if (!known_type || fp + (type ? 1 : 0) != fmt_spec.size())
                         throw jdError(ErrCode::WRONG_ARG_TYPE,
                             "FORMAT$: unknown format spec \"{" + spec +
-                            "}\"; use [[fill]align][sign][width][.precision][d|f|e|g|x|X|s|%]");
+                            "}\"; use [[fill]align][sign][#][0][width][.precision][d|f|e|g|x|X|s|%]");
 
                     // Format the value
                     std::string sv;
@@ -475,6 +481,15 @@ void VM::register_string_builtins() {
 
                     if ((sign == '+' || sign == ' ') && is_numeric(v.type) && !sv.empty() && sv[0] != '-')
                         sv = std::string(1, sign) + sv;
+                    if (zero_pad && width > 0 && (int)sv.size() < width) {
+                        if (!explicit_align && is_numeric(v.type)) {
+                            size_t at = (!sv.empty() && (sv[0] == '+' || sv[0] == '-' || sv[0] == ' ')) ? 1 : 0;
+                            if (sv.compare(at, 2, "0x") == 0) at += 2;
+                            sv.insert(at, std::string(width - sv.size(), '0'));
+                        } else if (!explicit_align || fill == ' ') {
+                            fill = '0';
+                        }
+                    }
                     // Apply width and alignment
                     if (width > 0 && (int)sv.size() < width) {
                         int pad = width - (int)sv.size();

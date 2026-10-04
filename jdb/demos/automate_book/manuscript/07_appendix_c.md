@@ -10,9 +10,10 @@ lines here; on the screen it is one line. jdBasic prints the word
 *Error* and its number in color, and the rest as shown.
 
 When a message is not in this list, read it from the end: the part
-after `at line` names the line of the program where it happened, and
-the words before it usually name the file, the setting or the value
-that was wrong.
+after `at line` names the line where it happened. When `of` and a file
+name such as `CONF.jdb` follow, that line is in a shared library, and
+the words before it tell you more than the number. Those words usually
+name the file, the setting or the value that was wrong.
 
 ## Installing and starting
 
@@ -68,48 +69,60 @@ and for handing programs to colleagues, as Chapter 2 explains under
 ```text
 Error #99: No settings found at C:/Users/mia/Documents/AutomateWork/
 config/work.conf. Run the setup wizard first, or name the file with
---config. at line 63
+--config. at line 58 of WORKCONF.jdb
 ```
 
 A recipe looks for `work.conf` after `--config` on the command line,
 then in the environment variable `AUTOMATEWORK_CONF`, then in the
 `config` folder of the work folder. Run the setup wizard, or give the
-file with `--config`. The `line 63` belongs to the shared module
-WORKCONF and says nothing about your program.
+file with `--config`. The `line 58 of WORKCONF.jdb` belongs to the
+shared module that reads the settings and says nothing about your
+program.
 
 ### 5. A folder with backslashes
 
 ```text
-Error #99: No folder C:UsersmiaReports\2026-09 at line 33
+Error #99: CONF.TOML C:/Users/mia/Documents/AutomateWork/config/
+work.conf line 5: "C:\Users\mia\Reports" is a Windows path in double
+quotes, where a backslash starts an escape; write the path with
+forward slashes, "C:/Users/mia", or in single quotes, 'C:\Users\mia'
+at line 48 of CONF.jdb
 ```
 
 Inside double quotes a TOML file reads a backslash as the start of a
-special character, so `"C:\Users\mia\Reports"` arrives without its
-backslashes and the recipe looks for a folder that does not exist.
-Write folders with forward slashes, `"C:/Users/mia/Reports"`, which
-Windows understands as well. A backslash before `t` or `n` is worse:
-`"C:\temp\new"` turns into a tab and a line break and gives no
-message at all, so check every folder in `work.conf` for backslashes.
+special character, so `"C:\Users\mia\Reports"` cannot stay as it is
+written. The message names the line in `work.conf`, here line 5.
+Write the folder with forward slashes, `"C:/Users/mia/Reports"`, which
+Windows understands as well, or in single quotes,
+`'C:\Users\mia\Reports'`, which keep every backslash.
 
 ### 6. A quote that is not closed
 
 ```text
-Error #99: CONF.TOML: unterminated string at line 377
+Error #99: CONF.TOML C:/Users/mia/Documents/AutomateWork/config/
+work.conf line 2: the text has no closing quote at line 48 of CONF.jdb
 ```
 
 A value in `work.conf` starts with a double quote and has no second
-one on the same line. The line number is the one of the library that
-reads the file, not of `work.conf`, so look through `work.conf` for
-the value yourself; a folder that ends without its quote is the usual
-case.
+one on the same line. Open `work.conf` at the line the message names,
+here line 2, and add the quote at the end of the value; a folder that
+ends without its quote is the usual case.
 
-### 7. A setting that is ignored
+### 7. A heading without its bracket
 
-No message: the recipe runs, but with its default instead of your
-value. Two typing mistakes cause this. A missing closing bracket,
-`[downloads_butler` instead of `[downloads_butler]`, makes the lines
-below it part of no recipe. A key with a different spelling,
-`min_age_hour` instead of `min_age_hours`, is read by nobody.
+```text
+Error #99: CONF.TOML C:/Users/mia/Documents/AutomateWork/config/
+work.conf line 3: a section heading needs its closing bracket:
+[downloads_butler at line 48 of CONF.jdb
+```
+
+A heading in `work.conf` is missing its `]`: `[downloads_butler`
+instead of `[downloads_butler]`. Text without quotes gives a message
+of the same kind, *text needs quotes*: write `name = "Mia Example"`,
+not `name = Mia Example`. One mistake gives no message at all. A key
+with a different spelling, `min_age_hour` instead of `min_age_hours`,
+is read by nobody, and the recipe runs with its default instead of
+your value.
 Compare the part with Appendix D, which lists every key a recipe
 reads, and run the recipe with `--dry-run` to see the values it uses.
 
@@ -323,19 +336,19 @@ line 1
 the unit. When a builtin answers with a message about a strange
 value, compare the order of its arguments with the reference.
 
-### 24. Dates and numbers in German form
+### 24. Dates and numbers in other forms
 
 ```text
-1969-12-31 16:00:00
+Error #99: CDATE: "10/05/2026" is not a date; write YYYY-MM-DD or
+DD.MM.YYYY, with HH:MM:SS after a space if needed at line 1
 ```
 
-That is what `PRINT CDATE("05.10.2026")` prints: CDATE did not
-understand the date and gave the first moment of its calendar,
-shifted into your time zone, without a message. jdBasic reads dates
-as `2026-10-05` and numbers with a decimal point, so `VAL("12,5")`
-answers 12. Convert the form first, for example with
-`REPLACE$(t$, ",", ".")` for numbers, and check a date that comes
-before 1970.
+`CDATE` reads `2026-10-05` and the German form `05.10.2026`, each with
+a time if needed. A date with slashes can mean the 10th of May or the
+5th of October, so `CDATE` stops with this message instead of
+guessing. Bring such a date into one of the two forms first. Numbers
+need a decimal point: `VAL("12,5")` answers 12 without a message, so
+convert the form first with `REPLACE$(t$, ",", ".")`.
 
 ## Compiling
 

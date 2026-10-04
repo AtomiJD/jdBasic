@@ -372,10 +372,10 @@ Ben Ortiz was born on 1975-11-02
 
 > **Commas inside a field**
 > `CSVWRITER` puts a field that holds a comma in quotes, as the CSV
-> format asks: `"Miller, Ann"`. The current `CSVREADER` and
-> `DF.READCSV` do not understand those quotes yet and split the field
-> at the comma. Until that is fixed, keep commas out of the values you
-> write, as E07 does with the names of projects.
+> format asks: `"Miller, Ann"`. A quote inside the field is written
+> twice. `CSVREADER` and `DF.READCSV` read such a field back as one
+> field, and a field in quotes may even span several lines, as a
+> spreadsheet writes a cell with a line break.
 
 **Where the recipes use it.** E07 Time Tracker keeps its log with
 `CSVWRITER` and reads it back with `CSVREADER`. E12 Birthday Reminder

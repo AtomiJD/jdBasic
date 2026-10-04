@@ -11926,7 +11926,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // FORMAT$(fmt_string, arg1, [arg2, [arg3, [arg4]]])
         TypedValue fmt_tv = codegen_expr(*expr.args[0]);
         int nargs = (int)expr.args.size() - 1;
-        if (nargs > 4) nargs = 4;
+        if (nargs > 4) {
+            report_error("", expr.line,
+                "FORMAT$ takes at most four values in a compiled program, got " +
+                std::to_string(nargs) + "; split it into two calls joined with +");
+            nargs = 4;
+        }
 
         // Pre-evaluate args; route to __formatN_t when any arg's type can't
         // be reduced to a plain f64 at codegen time. Three triggers:
