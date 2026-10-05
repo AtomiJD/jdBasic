@@ -26,7 +26,9 @@ than you might fear.
   system of X04 or the calendar of X05, which needs an app registration
   or a token that IT issues.
 - **Before a recipe sends company data to an outside service**, such
-  as the language model of X02.
+  as the language model of X02 and X17.
+- **Before a recipe types or clicks for you**, as E16, M16 and X16 do.
+  Some companies forbid programs that send key strokes.
 
 ### What to show
 
@@ -65,8 +67,10 @@ These are the ones that reach further:
 | Recipe | Talks to | When |
 |---|---|---|
 | E14 Page Watcher | the web pages you name | on its schedule |
-| M01, M03, M06, M15, X02, X09, X12 | your mail server | only with `--send` |
+| M01, M03, M06, M15, M18, X02, X09, X12, X17 | your mail server | only with `--send` |
+| X19 Outlook Bridge | your mail server, through Outlook | only with `--send` |
 | X02 Inbox Assistant | a language model service, or one on your computer | when you run it |
+| X17 Meeting Briefing | the same, unless `use_model = false` | on its schedule |
 | X04 Ticket Sync | the ticket system | when you run it |
 | X05 Calendar Bridge | Microsoft 365 | on its schedule |
 | X11 Web Harvester | the web pages you name | on its schedule |
@@ -74,12 +78,24 @@ These are the ones that reach further:
 | X13 Health Checks | your mail server | only with `send_alerts` on |
 
 **What listens.** The Personal Dashboard (M08), the search page of
-Find Anything (X03) and the Balance Score (X15) show a page in your
-browser. They listen on `localhost` only, on a port set in
-`work.conf`; no other computer can open them. The AI tools of X10 run
+Find Anything (X03), the Balance Score (X15) and the Spreadsheet to Web
+App (X18) show a page in your browser. They listen on `localhost` only,
+on a port set in `work.conf`; no other computer can open them. The AI tools of X10 run
 over a pipe between the agent and jdBasic, not over the network, and
 they start with `--tools-only`, so the agent sees only the tools you
 wrote and none of jdBasic's own.
+
+**What drives other programs.** A few recipes work through programs
+you already have instead of through files. E18 Office to PDF, M18
+Excel Refresh and X19 Outlook Bridge start Word, Excel or classic
+Outlook through COM, the interface Office offers other programs for
+this purpose. They do what you could do by hand, under your account
+and with your rights. E16 Form Filler, M16 Macro Player and X16 Desktop
+Robot type and click into windows through the same Windows input a
+keyboard uses. They stop as soon as the mouse is pushed into the
+top-left corner of the screen, and they belong on a screen that nobody
+else can see or use. Outlook may ask before a program sends mail
+through it; whether that question stays is for IT to decide.
 
 **Passwords and keys.** No recipe writes a password into `work.conf`
 or any other file of the work folder.
@@ -121,9 +137,9 @@ exception for the release folder on the shared drive. Do not look for
 a way around it.
 
 **"What data leaves the computer?"** Only what the table above lists,
-and only for the recipes you switched on. For X02 the text of your
-mail goes to the language model service you configured, unless you run
-a model on your own computer; that is a question for your data
+and only for the recipes you switched on. For X02 and X17 the text of
+your mail goes to the language model service you configured, unless
+you run a model on your own computer; that is a question for your data
 protection rules before you start, not after.
 
 **"What if it goes wrong?"** The recipes do not overwrite files, show

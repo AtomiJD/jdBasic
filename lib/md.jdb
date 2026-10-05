@@ -222,9 +222,11 @@ FUNC Blocks$(lines, raw)
     RETURN JOIN(out, NL$)
 ENDFUNC
 
-' The lines of a paragraph joined, with hard breaks kept.
+' The lines of a paragraph joined, with hard breaks kept. The lines
+' between two hard breaks are read as one text, so emphasis may span them.
 FUNC Paragraph$(para, raw)
-    DIM parts = []
+    DIM out$ = ""
+    DIM run$ = ""
     DIM i = 0
     FOR i = 0 TO LEN(para) - 1
         DIM t$ = TRIM$(para[i])
@@ -236,11 +238,14 @@ FUNC Paragraph$(para, raw)
                 t$ = LEFT$(t$, LEN(t$) - 1)
             ENDIF
         ENDIF
-        DIM piece$ = Spans$(t$, raw)
-        IF hard THEN piece$ = piece$ + "<br />"
-        PUSH(parts, piece$)
+        IF run$ <> "" THEN run$ = run$ + NL$
+        run$ = run$ + t$
+        IF hard THEN
+            out$ = out$ + Spans$(run$, raw) + "<br />" + NL$
+            run$ = ""
+        ENDIF
     NEXT i
-    RETURN JOIN(parts, NL$)
+    RETURN out$ + Spans$(run$, raw)
 ENDFUNC
 
 ' ── lists ──────────────────────────────────────────────────────

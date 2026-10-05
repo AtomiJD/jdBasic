@@ -34,6 +34,7 @@ TESTKIT.EQ(MD.RENDER$("####### seven"), "<p>####### seven</p>", "seven hashes ar
 TESTKIT.EQ(MD.RENDER$("one" + NL$ + "two"), "<p>one" + NL$ + "two</p>", "lines join in a paragraph")
 TESTKIT.EQ(MD.RENDER$("one  " + NL$ + "two"), "<p>one<br />" + NL$ + "two</p>", "two spaces make a hard break")
 TESTKIT.EQ(MD.RENDER$("one" + CHR$(92) + NL$ + "two"), "<p>one<br />" + NL$ + "two</p>", "a backslash makes a hard break")
+TESTKIT.EQ(MD.RENDER$("one *two" + NL$ + "three* four"), "<p>one <em>two" + NL$ + "three</em> four</p>", "emphasis may span two lines")
 TESTKIT.EQ(MD.RENDER$("a" + NL$ + NL$ + "b"), "<p>a</p>" + NL$ + "<p>b</p>", "a blank line separates paragraphs")
 TESTKIT.EQ(MD.RENDER$("---"), "<hr />", "a rule")
 TESTKIT.EQ(MD.RENDER$("* * *"), "<hr />", "a spaced rule")

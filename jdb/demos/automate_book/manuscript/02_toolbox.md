@@ -41,7 +41,8 @@ The answer names the version and the parts the release was built with.
 > **Watch out**
 > Some offices do not allow programs outside the folders IT installs. If
 > Windows refuses to start `jdbasic.exe`, ask IT before you look for a
-> way around it. Chapter 6 has a page on that conversation.
+> way around it. *Talking to IT and Security* in Chapter 6 is about
+> that conversation.
 
 The recipes of the book come with the book: the folder `recipes` next to
 the manuscript, or the download that goes with your copy. Unpack it

@@ -49,8 +49,8 @@ your colleagues one with the part of the recipe, or start it with
 
 Ask your IT department before you hand out programs. Many companies
 allow only programs from known publishers; a program you compiled
-yourself is not one of them until IT says so. Chapter 6 has a page on
-that conversation.
+yourself is not one of them until IT says so. The section
+*Talking to IT and Security* in Chapter 6 is about that conversation.
 
 ### The program
 
