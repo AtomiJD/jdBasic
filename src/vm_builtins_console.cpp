@@ -160,6 +160,54 @@ void VM::register_console_builtins() {
         return Value::make_i64(1);
     });
 
+    // INPUT_HIDDEN$([prompt$]) - a line the terminal does not show. The
+    // console keeps doing the line editing, so backspace and a pasted
+    // password work as they do for INPUT; only the echo is off. Nothing is
+    // printed in its place, not even stars: a row of stars tells a shoulder
+    // how long the secret is.
+    //
+    // When stdin is not a terminal there is no echo to turn off and nothing
+    // to hide, so a piped line is read as INPUT reads it - which is what
+    // lets a test feed one.
+    register_native("INPUT_HIDDEN$", 0, 1, [this](const std::vector<Value>& args) -> Value {
+        if (!args.empty()) {
+            emit(args[0].to_string());
+            std::fflush(stdout);
+        }
+        std::string line;
+        is_waiting_input = true;
+#if defined(_WIN32)
+        // GetConsoleMode fails on a redirected handle, so it is the terminal
+        // test as well as the way to change the mode.
+        HANDLE in_h = GetStdHandle(STD_INPUT_HANDLE);
+        DWORD saved_mode = 0;
+        bool echo_off = GetConsoleMode(in_h, &saved_mode) != 0;
+        if (echo_off) SetConsoleMode(in_h, saved_mode & ~(DWORD)ENABLE_ECHO_INPUT);
+        std::getline(std::cin, line);
+        if (echo_off) SetConsoleMode(in_h, saved_mode);
+#elif defined(JDB_MCU) || defined(__EMSCRIPTEN__)
+        // No terminal to silence on a board or in the browser; reading at all
+        // is the best that can be done, and the readme says so.
+        std::getline(std::cin, line);
+#else
+        struct termios saved_tio;
+        bool echo_off = isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &saved_tio) == 0;
+        if (echo_off) {
+            struct termios quiet = saved_tio;
+            quiet.c_lflag &= ~(tcflag_t)ECHO;
+            tcsetattr(STDIN_FILENO, TCSAFLUSH, &quiet);
+        }
+        std::getline(std::cin, line);
+        if (echo_off) tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved_tio);
+#endif
+        is_waiting_input = false;
+        // The Enter was not echoed either, so the cursor is still on the
+        // prompt line.
+        emit("\n");
+        std::fflush(stdout);
+        return Value::make_string(line);
+    });
+
     register_native("INKEY$", 0, -1, [](const std::vector<Value>& args) -> Value {
         (void)args;
 #ifdef GFX

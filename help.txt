@@ -2012,6 +2012,10 @@ Description: Keyword used in a FOR EACH loop to specify the collection to iterat
 Syntax: value IN collection
 Description: An operator that returns TRUE if a value exists within an array or as a key in a map.
 
+[INPUT_HIDDEN$]
+Syntax: INPUT_HIDDEN$([prompt$])
+Description: Reads one line the terminal does not show, for a password or a token. The optional prompt is printed first. The console still does the line editing, so backspace and a pasted secret work as they do for INPUT; only the echo is off, and nothing is printed in its place - not even stars, which would tell a watcher the length. Returns what was typed, without the newline, as UTF-8. When standard input is not a terminal (a pipe, a file, a test harness) there is nothing to hide and the line is read the way INPUT reads it; end of input answers an empty string.
+
 [INKEY$]
 Syntax: INKEY$()
 Description: Non-blocking check for a key press. Returns the key or an empty string. While a SCREEN window is open it reads the window's keys: the SDL key name ("A" for the A key, "Space", "Left"), CHR$(27) for Escape or for closing the window, CHR$(13) for Enter, CHR$(8) for Backspace, CHR$(9) for Tab. Only the last key since the previous call is kept.

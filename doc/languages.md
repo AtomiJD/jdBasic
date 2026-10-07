@@ -961,6 +961,7 @@ print apply(dec@,12) ' Should return 11
 ### Console I/O Functions
 
 * **`INPUT [Prompt], variable`**: Prompts the user for a line input. Value is returned in variable. A `$` variable, or one declared `AS STRING`, receives the line as text; any other variable receives a number when the line reads as one, and the text otherwise.
+* **`INPUT_HIDDEN$([prompt$]) -> string`**: One line the terminal does not show, for a password or a token. Backspace and a paste work as they do for `INPUT`; only the echo is off, and nothing is printed in its place. Details below.
 * **`PRINT [Vairable,String,function,...] [;|,] ...`**: Prints the given arguments on screen "," places a tab between arguments ";" for direct concating or at the end of PRINT supresses the Newline
 
 #### `LOCATE row, col`
@@ -1028,6 +1029,33 @@ Pauses program execution and waits for the user to press any key. This function 
 PRINT "Press any key to continue..."
 AnyKey$ = WAITKEY$()
 PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
+```
+
+#### `INPUT_HIDDEN$([prompt$]) -> String`
+
+Reads one line the terminal does not show, for a password or a token. The
+optional prompt is printed first.
+
+The console keeps doing the line editing, so backspace and a pasted secret
+work the way they do for `INPUT`; only the echo is off. Nothing is printed in
+its place, not even stars - a row of stars tells anyone watching how long the
+secret is.
+
+* **Returns**: what was typed, without the newline. Text arrives as UTF-8, so
+  a password with umlauts or a euro sign survives.
+* **When standard input is not a terminal** - a pipe, a file, a test harness -
+  there is no echo to turn off and nothing to hide, so the line is read the
+  way `INPUT` reads it. End of input answers an empty string.
+* On a board or in the browser there is no terminal to silence and the line is
+  read as it arrives.
+
+```basic
+DIM pass$ = INPUT_HIDDEN$("Password: ")
+IF LEN(pass$) = 0 THEN
+    PRINT "nothing entered"
+ELSE
+    PRINT "read "; LEN(pass$); " bytes"
+ENDIF
 ```
 
 -----
@@ -4554,7 +4582,7 @@ Every documented builtin, linked to the section that describes it.
 
 **H** · [HELP](#type-inspection) · [HELP$](#type-inspection) · [HISTEDGES](#array--matrix-functions) · [HISTOGRAM](#array--matrix-functions) · [HOUR](#system-and-time-functions) · [HTTP.CLEARCOOKIES](#http-functions) · [HTTP.CLEARHEADERS](#http-functions) · [HTTP.CLEARPARAMS](#http-functions) · [HTTP.DELETE$](#http-functions) · [HTTP.FOLLOWREDIRECTS](#http-functions) · [HTTP.GET$](#http-functions) · [HTTP.GETCOOKIE$](#http-functions) · [HTTP.GET_ASYNC$](#http-functions) · [HTTP.POST$](#http-functions) · [HTTP.POST_ASYNC$](#http-functions) · [HTTP.PUT$](#http-functions) · [HTTP.PUT_ASYNC$](#http-functions) · [HTTP.REQUEST](#http-functions) · [HTTP.SERVER.LOG](#http-functions) · [HTTP.SERVER.ON_GET](#http-functions) · [HTTP.SERVER.ON_NOTFOUND](#http-functions) · [HTTP.SERVER.ON_POST](#http-functions) · [HTTP.SERVER.START](#http-functions) · [HTTP.SERVER.STOP](#http-functions) · [HTTP.SERVER.WAIT](#http-functions) · [HTTP.SETCOOKIE](#http-functions) · [HTTP.SETHEADER](#http-functions) · [HTTP.SETPARAM](#http-functions) · [HTTP.SETTIMEOUT](#http-functions) · [HTTP.STATUSCODE](#http-functions)
 
-**I** · [IF](#system--flow-control) · [IIF](#matharithmeticround-functions) · [IMPORT](#system--flow-control) · [INDEXOF](#array--matrix-functions) · [INPUT](#console-io-functions) · [INPUTBOX$](#native-windows-forms-form) · [INSERT$](#string-functions) · [INSTR](#string-functions) · [INT](#matharithmeticround-functions) · [INTEGRATE](#array--matrix-functions) · [INVERT](#array--matrix-functions) · [IOTA](#array--matrix-functions) · [ISARR](#type-inspection) · [ISBOOL](#type-inspection) · [ISMAP](#type-inspection) · [ISNONE](#type-inspection) · [ISNUM](#type-inspection) · [ISSTR](#type-inspection)
+**I** · [IF](#system--flow-control) · [IIF](#matharithmeticround-functions) · [IMPORT](#system--flow-control) · [INDEXOF](#array--matrix-functions) · [INPUT](#console-io-functions) · [INPUTBOX$](#native-windows-forms-form) · [INPUT_HIDDEN$](#console-io-functions) · [INSERT$](#string-functions) · [INSTR](#string-functions) · [INT](#matharithmeticround-functions) · [INTEGRATE](#array--matrix-functions) · [INVERT](#array--matrix-functions) · [IOTA](#array--matrix-functions) · [ISARR](#type-inspection) · [ISBOOL](#type-inspection) · [ISMAP](#type-inspection) · [ISNONE](#type-inspection) · [ISNUM](#type-inspection) · [ISSTR](#type-inspection)
 
 **J** · [JDB.CHECK$](#type-inspection) · [JDB.GLOBAL_GET](#type-inspection) · [JOIN](#string-functions) · [JOY.AXIS](#mouse--joystick--gamepad-input) · [JOY.BUTTON](#mouse--joystick--gamepad-input) · [JOY.COUNT](#mouse--joystick--gamepad-input) · [JOY.HAT](#mouse--joystick--gamepad-input) · [JOY.NAME$](#mouse--joystick--gamepad-input) · [JSON.PARSE$](#json-functions) · [JSON.STRINGIFY$](#json-functions)
 

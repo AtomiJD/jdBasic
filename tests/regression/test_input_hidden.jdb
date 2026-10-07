@@ -1,0 +1,42 @@
+' INPUT_HIDDEN$ reads a line the terminal does not show. What a test harness
+' can check is the half that does not need a terminal: the prompt is printed,
+' end of input answers an empty string rather than hanging or throwing, and
+' the call does not disturb the console it leaves behind. Reading a real
+' keystroke with the echo off needs a TTY, which no harness has - that half
+' is in the readme and was confirmed by hand.
+DIM bad = 0
+
+' Standard input is /dev/null here, so every read ends at once.
+DIM first$ = INPUT_HIDDEN$()
+IF TYPEOF(first$) <> "STRING" THEN
+    bad = bad + 1
+    PRINT "type: "; TYPEOF(first$)
+ENDIF
+IF LEN(first$) <> 0 THEN
+    bad = bad + 1
+    PRINT "end of input gave ["; first$; "]"
+ENDIF
+
+' A prompt is still printed, and a second call still returns
+DIM second$ = INPUT_HIDDEN$("secret: ")
+IF LEN(second$) <> 0 THEN
+    bad = bad + 1
+    PRINT "second read gave ["; second$; "]"
+ENDIF
+
+' The console still works afterwards: the mode was put back
+PRINT "console alive"
+
+' An over-long argument list is an error, not a silent extra read
+DIM threw = 0
+TRY
+    DIM third$ = INPUT_HIDDEN$("a", "b")
+CATCH
+    threw = 1
+ENDTRY
+IF threw <> 1 THEN
+    bad = bad + 1
+    PRINT "two arguments were accepted"
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

@@ -400,6 +400,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"INDEXOF", BuiltinRet::I64, BF_NO_VEC},
     {"INKEY$", BuiltinRet::Str, BF_NO_VEC},
     {"INPUTBOX$", BuiltinRet::Unknown, BF_NO_VEC},
+    {"INPUT_HIDDEN$", BuiltinRet::Str, BF_NO_VEC},
     {"INSERT$", BuiltinRet::Unknown, BF_NO_VEC | BF_READS_ARGS | BF_FRESH_STR},
     {"INSTR", BuiltinRet::Unknown, BF_READS_ARGS},
     {"INTEGRATE", BuiltinRet::Arr, BF_NO_VEC},
