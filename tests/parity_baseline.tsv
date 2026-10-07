@@ -38,7 +38,7 @@ tests/eval/test_eval_twice.jdb	OK	OK	OK
 tests/eval/test_execute_in_try.jdb	OK	OK	OK
 tests/eval/test_execute_no_try.jdb	FAIL:1	FAIL:1	BOTH_RED
 tests/ffi/test_com.jdb	OK	OK	OK
-tests/ffi/test_com2.jdb	TIMEOUT	CFAIL	BOTH_RED
+tests/ffi/test_com2.jdb	OK	CFAIL	GAP
 tests/ffi/test_com329.jdb	FAIL:1	CFAIL	BOTH_RED
 tests/ffi/test_ffi_native_diag.jdb	OK	CFAIL	GAP
 tests/ffi/test_ffi_return.jdb	OK	OK	OK

@@ -26,10 +26,9 @@
 #
 # A test whose runtime depends on something outside the compiler is recorded
 # at its WORST state, so it can only ever report FIXED and never a false
-# regression. Three are: demos/demo_group_d and demos/dupfinder sit near the
-# timeout under load, and ffi/test_com2 starts Excel over COM - measured at
-# 3 s warm and over 60 s cold, with the default timeout in between, so it
-# flips on nothing but whether Office was already running.
+# regression. demos/demo_group_d and demos/dupfinder sit near the timeout
+# under load. A test that drives Office over COM gets COM_TIMEOUT instead and
+# stays a real signal - see the note there.
 #
 # Result columns: TEST | INTERP | NATIVE | VERDICT
 #   INTERP/NATIVE: PASS (assert marker) OK (exit 0) FAIL FAIL:<code> TIMEOUT CFAIL
@@ -42,6 +41,12 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JDB="$REPO/build/jdBasic.exe"
 
 TIMEOUT=20
+# A test that starts an Office application over COM is waiting on Office, not
+# on jdBasic. Measured on one machine: 3 s with Excel already running, 66 s
+# and 61 s cold. The ordinary timeout sits inside that spread, so a cold start
+# would be reported as a regression. Only these tests pay the longer wait, and
+# only when Office really is cold.
+COM_TIMEOUT=180
 JOBS=8
 OUT=""
 PATTERN=""
@@ -102,10 +107,15 @@ run_one() {
     # declaration is itself a command and would overwrite $? before it is read.
     local istat nstat verdict irc crc nrc
 
+    # Read from the source rather than a list of file names, which would go
+    # stale the next time a COM test is added.
+    local tmo="$TIMEOUT"
+    if grep -qiI 'CREATEOBJECT' "$abs" 2>/dev/null; then tmo="$COM_TIMEOUT"; fi
+
     # Run from the repo root, the way the gate does - tests reference their
     # fixtures repo-relative ("tests/foo.json"), so a per-test cwd breaks
     # working tests and makes them look like parity failures.
-    ( cd "$REPO" && timeout -k 2 "$TIMEOUT" "$JDB" "$rel" ) >"$ilog" 2>&1 </dev/null
+    ( cd "$REPO" && timeout -k 2 "$tmo" "$JDB" "$rel" ) >"$ilog" 2>&1 </dev/null
     irc=$?
     istat=$(classify "$irc" "$ilog")
 
@@ -115,7 +125,7 @@ run_one() {
         nstat="CFAIL"
         : >"$nlog"
     else
-        ( cd "$REPO" && timeout -k 2 "$TIMEOUT" "$exe" ) >"$nlog" 2>&1 </dev/null
+        ( cd "$REPO" && timeout -k 2 "$tmo" "$exe" ) >"$nlog" 2>&1 </dev/null
         nrc=$?
         nstat=$(classify "$nrc" "$nlog")
     fi
@@ -138,7 +148,7 @@ run_one() {
 }
 
 export -f run_one classify green
-export REPO JDB WORK TIMEOUT
+export REPO JDB WORK TIMEOUT COM_TIMEOUT
 
 cd "$REPO" || exit 1
 # tests/_scratch holds retired files that run in neither backend (see the
@@ -168,7 +178,7 @@ fi
 [ -n "$PATTERN" ] && LIST=$(printf '%s\n' "$LIST" | grep -- "$PATTERN")
 
 TOTAL=$(printf '%s\n' "$LIST" | grep -c .)
-echo "parity: $TOTAL tests, timeout ${TIMEOUT}s, jobs $JOBS, work $WORK" >&2
+echo "parity: $TOTAL tests, timeout ${TIMEOUT}s (COM ${COM_TIMEOUT}s), jobs $JOBS, work $WORK" >&2
 
 RESULTS="$WORK/results.tsv"
 if [ "$JOBS" -gt 1 ]; then
