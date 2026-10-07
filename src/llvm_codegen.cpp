@@ -5772,6 +5772,23 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
 
+    // A right-hand side that raised must not reach the slot. The check after
+    // the statement comes too late: the store has run, and the variable then
+    // holds whatever the failed call answered - an empty string for
+    // `x$ = HTTP.GET$(...)` - with the old value gone before CATCH can see
+    // it. The VM throws at the call, so its assignment never happens.
+    // Only worth the two branches when the right-hand side can raise at all.
+    if (stmt.expr) {
+        std::function<bool(const Expr&)> can_raise = [&](const Expr& e) -> bool {
+            if (e.kind == ExprKind::CALL) return true;
+            if (e.left && can_raise(*e.left)) return true;
+            if (e.right && can_raise(*e.right)) return true;
+            for (auto& a : e.args) if (a && can_raise(*a)) return true;
+            return false;
+        };
+        if (can_raise(*stmt.expr)) emit_err_check();
+    }
+
     // The referenced function is an LLVM constant right here; once it has been
     // stored and loaded back it is just a pointer, so capture the name now.
     std::string fr_name;

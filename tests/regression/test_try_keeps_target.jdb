@@ -1,0 +1,59 @@
+' A right-hand side that raised must not reach the slot: the old value is
+' what CATCH has to work with. Natively the error was checked after the whole
+' statement, so the store had already written whatever the failed call
+' answered - an empty string, or a zero.
+DIM bad = 0
+
+DIM s$ = "keep me"
+TRY
+    s$ = HTTP.GET$("http://127.0.0.1:1/nope")
+CATCH
+ENDTRY
+IF s$ <> "keep me" THEN
+    bad = bad + 1
+    PRINT "string: ["; s$; "]"
+ENDIF
+
+DIM n = 42.0
+TRY
+    n = VAL(HTTP.GET$("http://127.0.0.1:1/nope"))
+CATCH
+ENDTRY
+IF n <> 42.0 THEN
+    bad = bad + 1
+    PRINT "number: "; n
+ENDIF
+
+' A right-hand side that does not raise still assigns
+DIM ok$ = "before"
+TRY
+    ok$ = UCASE$("after")
+CATCH
+ENDTRY
+IF ok$ <> "AFTER" THEN
+    bad = bad + 1
+    PRINT "plain assign: ["; ok$; "]"
+ENDIF
+
+' The CATCH branch still runs, and the message is there
+DIM caught = 0
+DIM msg$ = ""
+TRY
+    s$ = HTTP.GET$("http://127.0.0.1:1/nope")
+CATCH
+    caught = 1
+    msg$ = ERRMSG$
+ENDTRY
+IF caught <> 1 THEN
+    bad = bad + 1
+    PRINT "catch did not run"
+ENDIF
+IF LEN(msg$) = 0 THEN
+    bad = bad + 1
+    PRINT "no message in the catch"
+ENDIF
+
+' An error outside any TRY still ends the program, so the guard did not
+' swallow it: that case is covered by the gate rather than here.
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
