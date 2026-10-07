@@ -39,6 +39,12 @@ enum class JdTag : int32_t {
     // reads as this; NaN does not - the interpreter calls SQR(-1) a
     // FLOAT64 and only a key that is not there a NONE.
     NONE       = 9,
+    // Epoch seconds that are a date. Backed by an f64 with no ABI
+    // difference, the way BOOL is backed by an i64, so every numeric
+    // path keeps working - but unlike BOOL it rides the wire and the
+    // containers, because a map field and an array cell have to say
+    // DATE too.
+    DATE       = 10,
 };
 
 constexpr int32_t jd_tag(JdTag t) { return static_cast<int32_t>(t); }
@@ -61,3 +67,16 @@ constexpr int32_t jd_tag(JdTag t) { return static_cast<int32_t>(t); }
 // this to JD_TAG_I64 on bridge marshalling so the wire never carries it.
 #define JD_TAG_BOOL       8
 #define JD_TAG_NONE       9
+// A date: epoch seconds, bit-identical to JD_TAG_F64. See JdTag::DATE.
+#define JD_TAG_DATE       10
+
+// A date is a number, so everything that asks "is this an f64" has to say
+// yes to one. Only the places that render a value, report its type, or
+// decide which representation to produce look at JD_TAG_DATE itself.
+#ifdef __cplusplus
+constexpr bool jd_is_f64_tag(int32_t t) {
+    return t == JD_TAG_F64 || t == JD_TAG_DATE;
+}
+#else
+#define jd_is_f64_tag(t) ((t) == JD_TAG_F64 || (t) == JD_TAG_DATE)
+#endif

@@ -114,7 +114,7 @@ LLVMTypeRef LLVMCodegen::param_slot_type(int tag) const {
 }
 
 LLVMCodegen::VarInfo& LLVMCodegen::create_var(const std::string& name, int tag) {
-    LLVMTypeRef var_type = (tag == JD_TAG_F64)        ? f64_type :
+    LLVMTypeRef var_type = jd_is_f64_tag(tag)         ? f64_type :
                            (tag == JD_TAG_STR)        ? i8_ptr_type :
                            (tag == JD_TAG_ARR)        ? i8_ptr_type :
                            (tag == JD_TAG_NATIVE_MAP) ? i8_ptr_type :
@@ -5363,7 +5363,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     int rhs_leaf_hint = -1;
     {
         VarInfo* dest = lookup_var(stmt.var_name);
-        if (dest && (dest->tag == JD_TAG_I64 || dest->tag == JD_TAG_F64 || dest->tag == JD_TAG_STR || dest->tag == JD_TAG_ARR))
+        if (dest && (dest->tag == JD_TAG_I64 || jd_is_f64_tag(dest->tag) || dest->tag == JD_TAG_STR || dest->tag == JD_TAG_ARR))
             rhs_leaf_hint = dest->tag;
         else if (dest && dest->tag == JD_TAG_RUNTIME)
             // The slot keeps whatever the element is, so the read has to
@@ -5856,7 +5856,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             }
             return;
         }
-        if (v.tag == JD_TAG_F64) {
+        if (jd_is_f64_tag(v.tag)) {
             auto& fn = runtime_funcs["__double_to_str"];
             LLVMValueRef args[] = { v.val };
             v.val = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "f2s");
@@ -5908,7 +5908,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // below picks up the slot's tag and promotes via SIToFP. The reverse
         // direction (DOUBLE → INTEGER) IS lossy and stays flagged.
         bool int_to_double_widen =
-            (vi->tag == JD_TAG_F64 && rhs.tag == JD_TAG_I64);
+            (jd_is_f64_tag(vi->tag) && rhs.tag == JD_TAG_I64);
         if (is_strict_here(stmt.source_file()) && stmt.kind == StmtKind::ASSIGN &&
             vi->tag != rhs.tag && !bool_int_pair && !int_to_double_widen &&
             // Pointer-typed slot can legitimately be retagged (e.g. a MAP
@@ -5938,9 +5938,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             std::string hint;
             if (vi->tag == JD_TAG_I64 && rhs.tag == JD_TAG_BOOL)
                 hint = "; declare it AS BOOLEAN, or wrap with CINT() to store 0/1";
-            else if (vi->tag == JD_TAG_I64 && rhs.tag == JD_TAG_F64)
+            else if (vi->tag == JD_TAG_I64 && jd_is_f64_tag(rhs.tag))
                 hint = "; wrap with CINT() to assign explicitly";
-            else if (vi->tag == JD_TAG_F64 && rhs.tag == JD_TAG_I64)
+            else if (jd_is_f64_tag(vi->tag) && rhs.tag == JD_TAG_I64)
                 hint = "; wrap with CDBL() to assign explicitly";
             else if (rhs.tag == JD_TAG_STR)
                 hint = "; wrap with VAL() to parse the string";
@@ -5973,7 +5973,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 if (vi->tag == JD_TAG_STR) {
                     rhs.val = coerce_to(rhs, i8_ptr_type);
                     rhs.tag = JD_TAG_STR;
-                } else if (vi->tag == JD_TAG_F64 || vi->tag == JD_TAG_I64 ||
+                } else if (jd_is_f64_tag(vi->tag) || vi->tag == JD_TAG_I64 ||
                            vi->tag == JD_TAG_BOOL) {
                     rhs.val = coerce_to(rhs, f64_type);
                     rhs.tag = JD_TAG_F64;
@@ -5983,14 +5983,14 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                     }
                 }
             }
-            if (vi->tag == JD_TAG_F64 && rhs.tag == JD_TAG_I64) {
+            if (jd_is_f64_tag(vi->tag) && rhs.tag == JD_TAG_I64) {
                 rhs.val = LLVMBuildSIToFP(builder, rhs.val, f64_type, "itof");
                 rhs.tag = JD_TAG_F64;
-            } else if (vi->tag == JD_TAG_I64 && rhs.tag == JD_TAG_F64) {
+            } else if (vi->tag == JD_TAG_I64 && jd_is_f64_tag(rhs.tag)) {
                 rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi");
                 rhs.tag = JD_TAG_I64;
             } else if (vi->tag == JD_TAG_STR &&
-                       (rhs.tag == JD_TAG_I64 || rhs.tag == JD_TAG_F64 ||
+                       (rhs.tag == JD_TAG_I64 || jd_is_f64_tag(rhs.tag) ||
                         rhs.tag == JD_TAG_BOOL || rhs.tag == JD_TAG_VM_HANDLE)) {
                 // VM_HANDLE → STR materialises through __jdrt_val_to_str,
                 // not through the tag-overwrite branch below - the slot
@@ -6725,7 +6725,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             }
 
             TypedValue size_val = codegen_expr(*shape_args[0]);
-            LLVMValueRef n = size_val.tag == JD_TAG_F64
+            LLVMValueRef n = jd_is_f64_tag(size_val.tag)
                 ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi") : size_val.val;
 
             // Pre-size the array to N and write into the fixed-size buffer.
@@ -6814,7 +6814,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             if (shape_args.size() == 1) {
                 // 1D: jdb_array_new(N)
                 TypedValue size_val = codegen_expr(*shape_args[0]);
-                LLVMValueRef size_i64 = size_val.tag == JD_TAG_F64
+                LLVMValueRef size_i64 = jd_is_f64_tag(size_val.tag)
                     ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi")
                     : size_val.val;
                 LLVMValueRef args[] = { size_i64 };
@@ -6827,9 +6827,9 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 // Outer array with shape_args[0] elements, each is an inner array of shape_args[1] elements
                 TypedValue rows_val = codegen_expr(*shape_args[0]);
                 TypedValue cols_val = codegen_expr(*shape_args[1]);
-                LLVMValueRef rows = rows_val.tag == JD_TAG_F64
+                LLVMValueRef rows = jd_is_f64_tag(rows_val.tag)
                     ? LLVMBuildFPToSI(builder, rows_val.val, i64_type, "ftoi") : rows_val.val;
-                LLVMValueRef cols = cols_val.tag == JD_TAG_F64
+                LLVMValueRef cols = jd_is_f64_tag(cols_val.tag)
                     ? LLVMBuildFPToSI(builder, cols_val.val, i64_type, "ftoi") : cols_val.val;
 
                 // Create outer array (empty, will be filled with inner arrays)
@@ -7029,7 +7029,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         if (rhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_ARR ||
             rhs.tag == JD_TAG_NATIVE_MAP || rhs.tag == JD_TAG_FUNCREF) {
             val_for_storage = LLVMBuildPtrToInt(builder, rhs.val, i64_type, "ptr2i");
-        } else if (rhs.tag == JD_TAG_F64) {
+        } else if (jd_is_f64_tag(rhs.tag)) {
             val_for_storage = pun_f64_to_i64(rhs.val);
         } else {
             val_for_storage = rhs.val;
@@ -7061,7 +7061,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     // `x = x + 0.00628` (with a CONST DOUBLE) then loads x as i64,
     // truncates 0.00628 to int 0, and the add is a no-op - the wavi.jdb
     // animation froze on exactly this. We coerce the RHS to f64 here so
-    // the create_var call below sees rhs.tag == JD_TAG_F64. Mirror update
+    // the create_var call below sees jd_is_f64_tag(rhs.tag). Mirror update
     // for an existing vi: upgrade its tag too so subsequent loads use
     // f64. See feedback_native_dim_init_array.md.
     if ((stmt.var_type == VarType::FLOAT16 ||
@@ -7083,7 +7083,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         rhs.val = take_string_ownership(stmt.var_name, rhs, fresh);
     }
     if (vi) {
-        if (rhs.tag == JD_TAG_F64 && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_F64;
+        if (jd_is_f64_tag(rhs.tag) && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_F64;
         if (untyped_bool_init && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_BOOL;
         vi->funcref_name = dim_funcref_name(rhs);
         vi->funcref_return_tag = fr_ret_tag;
@@ -7125,7 +7125,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
 
         // Decode ptr from f64/i64 if needed (e.g. array element holding UDT)
         LLVMValueRef obj_ptr = obj.val;
-        if (obj.tag == JD_TAG_F64) {
+        if (jd_is_f64_tag(obj.tag)) {
             LLVMValueRef as_i64 = pun_f64_to_i64(obj.val);
             obj_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
         } else if (obj.tag == JD_TAG_I64) {
@@ -7182,7 +7182,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     // is a map write, a position an array write. Before this, a literal
     // position wrote nothing at all and a computed one reached the map setter
     // with an array pointer.
-    if (vi && vi->tag == JD_TAG_F64 && stmt.index_chain.size() == 1) {
+    if (vi && jd_is_f64_tag(vi->tag) && stmt.index_chain.size() == 1) {
         if (stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING ||
             expr_involves_strings(*stmt.index_chain[0]))
             punned_map_slot = true;
@@ -7198,7 +7198,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         if (v.tag == JD_TAG_RUNTIME && v.runtime_tag) {
             bits = v.val;
             tag = v.runtime_tag;
-        } else if (v.tag == JD_TAG_F64) {
+        } else if (jd_is_f64_tag(v.tag)) {
             bits = pun_f64_to_i64(v.val);
             tag = LLVMConstInt(i32_type, JD_TAG_F64, 0);
         } else if (v.tag == JD_TAG_I64 || v.tag == JD_TAG_VM_HANDLE) {
@@ -7244,7 +7244,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         if (v.tag == JD_TAG_RUNTIME && v.runtime_tag) {
             bits = v.val;
             tag = v.runtime_tag;
-        } else if (v.tag == JD_TAG_F64) {
+        } else if (jd_is_f64_tag(v.tag)) {
             bits = pun_f64_to_i64(v.val);
             tag = LLVMConstInt(i32_type, JD_TAG_F64, 0);
         } else if (v.tag == JD_TAG_I64 || v.tag == JD_TAG_VM_HANDLE) {
@@ -7561,7 +7561,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             arr_ptr = LLVMBuildCall2(builder, map_get_obj.fn_type, map_get_obj.fn,
                                      get_args, 2, "inner");
         } else {
-            LLVMValueRef idx = idx_tv.tag == JD_TAG_F64
+            LLVMValueRef idx = jd_is_f64_tag(idx_tv.tag)
                 ? LLVMBuildFPToSI(builder, idx_tv.val, i64_type, "ftoi") : idx_tv.val;
             LLVMValueRef get_args[] = { arr_ptr, idx };
             LLVMValueRef elem = LLVMBuildCall2(builder, arr_get.fn_type, arr_get.fn, get_args, 2, "elem");
@@ -7721,7 +7721,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
             TypedValue arr = codegen_expr(*pe.left);
             if (arr.tag == JD_TAG_ARR) {
                 TypedValue idx = codegen_expr(*pe.right);
-                LLVMValueRef idx_i64 = idx.tag == JD_TAG_F64
+                LLVMValueRef idx_i64 = jd_is_f64_tag(idx.tag)
                     ? LLVMBuildFPToSI(builder, idx.val, i64_type, "ftoi") : idx.val;
                 auto* fn = get_runtime_func("__print_arr_elem");
                 if (fn) {
@@ -7762,7 +7762,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
         } else if (tv.tag == JD_TAG_I64) {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_int.fn_type, pr_int.fn, args, 1, "");
-        } else if (tv.tag == JD_TAG_F64) {
+        } else if (jd_is_f64_tag(tv.tag)) {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_double.fn_type, pr_double.fn, args, 1, "");
         } else if (tv.tag == JD_TAG_ARR) {
@@ -7852,7 +7852,7 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
     bool use_f64 = false;
     if (vi) {
         var_alloca = vi->alloca_val;
-        use_f64 = (vi->tag == JD_TAG_F64);
+        use_f64 = (jd_is_f64_tag(vi->tag));
         if (vi->tag == JD_TAG_RUNTIME && vi->runtime_tag_alloca)
             LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_I64, 0), vi->runtime_tag_alloca);
     } else {
@@ -7865,7 +7865,7 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
         if (use_f64) return promote_to_f64(tv).val;
         if (tv.tag == JD_TAG_RUNTIME && tv.runtime_tag)
             return LLVMBuildFPToSI(builder, coerce_to(tv, f64_type), i64_type, name);
-        return tv.tag == JD_TAG_F64
+        return jd_is_f64_tag(tv.tag)
             ? LLVMBuildFPToSI(builder, tv.val, i64_type, name) : tv.val;
     };
 
@@ -8088,7 +8088,7 @@ void LLVMCodegen::codegen_switch(const Stmt& stmt) {
             return LLVMBuildICmp(builder, LLVMIntNE,
                 LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "eq"),
                 LLVMConstInt(i64_type, 0, 0), "cmp");
-        } else if (sv.tag == JD_TAG_F64 || cv.tag == JD_TAG_F64) {
+        } else if (jd_is_f64_tag(sv.tag) || jd_is_f64_tag(cv.tag)) {
             TypedValue svf = promote_to_f64(sv);
             TypedValue cvf = promote_to_f64(cv);
             LLVMRealPredicate p = op_kind == 0 ? LLVMRealOEQ
@@ -8818,7 +8818,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             }
             LLVMTypeRef load_type;
             int tag = vi->tag;
-            if (tag == JD_TAG_F64)             load_type = f64_type;
+            if (jd_is_f64_tag(tag))            load_type = f64_type;
             else if (tag == JD_TAG_STR)        load_type = i8_ptr_type;
             else if (tag == JD_TAG_ARR)        load_type = i8_ptr_type;
             else if (tag == JD_TAG_NATIVE_MAP) load_type = i8_ptr_type;
@@ -8868,7 +8868,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             }
 
             // Decode ptr from f64/i64 if needed (e.g. array element)
-            if (obj.tag == JD_TAG_F64) {
+            if (jd_is_f64_tag(obj.tag)) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(obj.val);
                 obj_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
             } else if (obj.tag == JD_TAG_I64) {
@@ -9036,7 +9036,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     pipe_var = &nv;
                 }
                 LLVMValueRef store_val = left_val.val;
-                if (left_val.tag == JD_TAG_I64 && pipe_var->tag == JD_TAG_F64)
+                if (left_val.tag == JD_TAG_I64 && jd_is_f64_tag(pipe_var->tag))
                     store_val = LLVMBuildSIToFP(builder, store_val, f64_type, "itof");
                 LLVMBuildStore(builder, store_val, pipe_var->alloca_val);
                 return codegen_expr(*expr.right);
@@ -9050,7 +9050,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // ? in pipe context → load __PIPE_TMP__
             VarInfo* vi = lookup_var("__PIPE_TMP__");
             if (vi) {
-                LLVMTypeRef load_type = (vi->tag == JD_TAG_F64) ? f64_type :
+                LLVMTypeRef load_type = (jd_is_f64_tag(vi->tag)) ? f64_type :
                                         (vi->tag == JD_TAG_STR) ? i8_ptr_type :
                                         (vi->tag == JD_TAG_ARR) ? i8_ptr_type : i64_type;
                 return { LLVMBuildLoad2(builder, load_type, vi->alloca_val, "pipe_val"), vi->tag };
@@ -9372,7 +9372,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 }
                 // Decode ptr from f64 if needed
                 LLVMValueRef obj_ptr = arr_tv.val;
-                if (arr_tv.tag == JD_TAG_F64) {
+                if (jd_is_f64_tag(arr_tv.tag)) {
                     LLVMValueRef as_i64 = pun_f64_to_i64(arr_tv.val);
                     obj_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
                 } else if (arr_tv.tag == JD_TAG_I64) {
@@ -9505,7 +9505,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
 
             // Get array pointer - may need to convert from encoded param
             LLVMValueRef arr_ptr = arr_tv.val;
-            if (arr_tv.tag == JD_TAG_F64) {
+            if (jd_is_f64_tag(arr_tv.tag)) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(arr_tv.val);
                 arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
             } else if (arr_tv.tag == JD_TAG_I64) {
@@ -9534,11 +9534,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                      // A map handed to an untyped parameter sits in an f64
                      // slot with the pointer punned in. An array never does,
                      // so an index on one is a key.
-                     base_vi->tag == JD_TAG_F64);
+                     jd_is_f64_tag(base_vi->tag));
                 // A punned slot with a runtime-typed index: the index tag
                 // decides at run time whether this is a map key or an
                 // array position, since the slot may hold either.
-                if (base_is_map && base_vi->tag == JD_TAG_F64 &&
+                if (base_is_map && jd_is_f64_tag(base_vi->tag) &&
                     idx_tv.tag == JD_TAG_RUNTIME && idx_tv.runtime_tag) {
                     LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, idx_tv.runtime_tag,
                         LLVMConstInt(i32_type, JD_TAG_STR, 0), "pidx_isstr");
@@ -9583,7 +9583,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // a plain number, since it may still be an array.
                 if (base_is_map &&
                     (base_vi->tag == JD_TAG_NATIVE_MAP ||
-                     (idx_tv.tag != JD_TAG_I64 && idx_tv.tag != JD_TAG_F64))) {
+                     (idx_tv.tag != JD_TAG_I64 && !jd_is_f64_tag(idx_tv.tag)))) {
                     LLVMValueRef key = to_string_ptr(idx_tv);
                     auto& gtag = runtime_funcs["__map_get_tagged"];
                     LLVMValueRef out = scratch_alloca(i64_type, "tv_out");
@@ -9596,7 +9596,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             }
 
             LLVMValueRef idx = idx_tv.val;
-            if (idx_tv.tag == JD_TAG_F64)
+            if (jd_is_f64_tag(idx_tv.tag))
                 idx = LLVMBuildFPToSI(builder, idx, i64_type, "ftoi");
             else if (idx_tv.tag == JD_TAG_RUNTIME) {
                 LLVMValueRef as_f64 = coerce_to(idx_tv, f64_type);
@@ -9975,7 +9975,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 LLVMValueRef args[] = { tv.val };
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "itostr");
             }
-            if (tv.tag == JD_TAG_F64) {
+            if (jd_is_f64_tag(tv.tag)) {
                 owns = true;
                 auto& fn = runtime_funcs["__double_to_str"];
                 LLVMValueRef args[] = { tv.val };
@@ -10004,7 +10004,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     // String comparison with array element: arr[i] = "str" means arr[i]
     // is a ptr-encoded string. Decode the f64 back to ptr, then compare.
     if ((expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN || expr.op == TokenType::NE) &&
-        ((lhs.tag == JD_TAG_F64 && rhs.tag == JD_TAG_STR) || (lhs.tag == JD_TAG_STR && rhs.tag == JD_TAG_F64))) {
+        ((jd_is_f64_tag(lhs.tag) && rhs.tag == JD_TAG_STR) || (lhs.tag == JD_TAG_STR && jd_is_f64_tag(rhs.tag)))) {
         // Decode the f64 side as ptr (it's likely a ptr-encoded string from an array)
         auto decode_ptr = [&](TypedValue tv) -> LLVMValueRef {
             if (tv.tag == JD_TAG_STR) return tv.val;
@@ -10168,7 +10168,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ahs"), JD_TAG_BOOL };
         }
         // Number in array
-        if ((lhs.tag == JD_TAG_I64 || lhs.tag == JD_TAG_F64) && rhs.tag == JD_TAG_ARR) {
+        if ((lhs.tag == JD_TAG_I64 || jd_is_f64_tag(lhs.tag)) && rhs.tag == JD_TAG_ARR) {
             auto& fn = runtime_funcs["__arr_has_num"];
             LLVMValueRef num = coerce_to(lhs, f64_type);
             LLVMValueRef args[] = { rhs.val, num };
@@ -10273,7 +10273,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         bool l_rt = lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag;
         bool r_rt = rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag;
         auto is_num = [](const TypedValue& t) {
-            return t.tag == JD_TAG_F64 || t.tag == JD_TAG_I64 || t.tag == JD_TAG_BOOL;
+            return jd_is_f64_tag(t.tag) || t.tag == JD_TAG_I64 || t.tag == JD_TAG_BOOL;
         };
         int32_t aop = -1;
         switch (expr.op) {
@@ -10286,7 +10286,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         if (aop >= 0 && ((l_rt && is_num(rhs)) || (r_rt && is_num(lhs)))) {
             TypedValue dyn = l_rt ? lhs : rhs;
             TypedValue num = l_rt ? rhs : lhs;
-            LLVMValueRef scalar = num.tag == JD_TAG_F64
+            LLVMValueRef scalar = jd_is_f64_tag(num.tag)
                 ? num.val : LLVMBuildSIToFP(builder, num.val, f64_type, "itof");
             LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, dyn.runtime_tag,
                 LLVMConstInt(i32_type, JD_TAG_ARR, 0), "dop_isarr");
@@ -10454,7 +10454,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 LLVMValueRef args[] = { tv.val };
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "itostr");
             }
-            if (tv.tag == JD_TAG_F64) {
+            if (jd_is_f64_tag(tv.tag)) {
                 auto& fn = runtime_funcs["__double_to_str"];
                 LLVMValueRef args[] = { tv.val };
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ftostr");
@@ -10523,7 +10523,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     // Tag 7 (runtime-tagged) must be materialised to f64 before arithmetic.
     if (lhs.tag == JD_TAG_RUNTIME) { lhs.val = coerce_to(lhs, f64_type); lhs.tag = JD_TAG_F64; }
     if (rhs.tag == JD_TAG_RUNTIME) { rhs.val = coerce_to(rhs, f64_type); rhs.tag = JD_TAG_F64; }
-    bool use_float = (lhs.tag == JD_TAG_F64 || rhs.tag == JD_TAG_F64);
+    bool use_float = (jd_is_f64_tag(lhs.tag) || jd_is_f64_tag(rhs.tag));
     // BASIC `/` is always float division (vs `\` which is integer);
     // `^` (power) also returns float even on integer inputs.
     if (expr.op == TokenType::SLASH || expr.op == TokenType::CARET) {
@@ -10535,8 +10535,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     if (expr.op == TokenType::SHL || expr.op == TokenType::SHR ||
         expr.op == TokenType::BAND || expr.op == TokenType::BOR ||
         expr.op == TokenType::XOR || expr.op == TokenType::BXOR) {
-        if (lhs.tag == JD_TAG_F64) { lhs.val = LLVMBuildFPToSI(builder, lhs.val, i64_type, "ftoi"); lhs.tag = JD_TAG_I64; }
-        if (rhs.tag == JD_TAG_F64) { rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi"); rhs.tag = JD_TAG_I64; }
+        if (jd_is_f64_tag(lhs.tag)) { lhs.val = LLVMBuildFPToSI(builder, lhs.val, i64_type, "ftoi"); lhs.tag = JD_TAG_I64; }
+        if (jd_is_f64_tag(rhs.tag)) { rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi"); rhs.tag = JD_TAG_I64; }
         use_float = false;
     }
     if (use_float) {
@@ -10616,7 +10616,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
         operand.tag = JD_TAG_F64;
     }
     if (expr.op == TokenType::MINUS) {
-        if (operand.tag == JD_TAG_F64)
+        if (jd_is_f64_tag(operand.tag))
             return { LLVMBuildFNeg(builder, operand.val, "fneg"), JD_TAG_F64 };
         if (operand.tag == JD_TAG_STR) {
             // -"abc" → ["a","b","c"] (UTF-8 char split), matching the
@@ -10657,7 +10657,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
                      JD_TAG_ARR };
         }
         // Scalar: coerce to i64 then bit-flip.
-        LLVMValueRef ival = (operand.tag == JD_TAG_F64)
+        LLVMValueRef ival = (jd_is_f64_tag(operand.tag))
             ? LLVMBuildFPToSI(builder, operand.val, i64_type, "ftoi")
             : operand.val;
         return { LLVMBuildNot(builder, ival, "bnot"), JD_TAG_I64 };
@@ -11228,7 +11228,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         if (a.tag == JD_TAG_ARR) {
             LLVMValueRef bf = b.tag == JD_TAG_I64
                 ? LLVMBuildSIToFP(builder, b.val, f64_type, "itof")
-                : (b.tag == JD_TAG_F64 ? b.val : coerce_to(b, f64_type));
+                : (jd_is_f64_tag(b.tag) ? b.val : coerce_to(b, f64_type));
             auto& fn = runtime_funcs["APPEND"];
             LLVMValueRef args[] = { a.val, bf };
             LLVMValueRef appended = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "app");
@@ -11265,7 +11265,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
         if (shape_args.size() == 1) {
             TypedValue size_val = codegen_expr(*shape_args[0]);
-            LLVMValueRef size_i64 = size_val.tag == JD_TAG_F64
+            LLVMValueRef size_i64 = jd_is_f64_tag(size_val.tag)
                 ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi") : size_val.val;
             LLVMValueRef args[] = { size_i64 };
             LLVMValueRef arr;
@@ -11280,9 +11280,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& arr_append = runtime_funcs["APPEND"];
             TypedValue rows_val = codegen_expr(*shape_args[0]);
             TypedValue cols_val = codegen_expr(*shape_args[1]);
-            LLVMValueRef rows = rows_val.tag == JD_TAG_F64
+            LLVMValueRef rows = jd_is_f64_tag(rows_val.tag)
                 ? LLVMBuildFPToSI(builder, rows_val.val, i64_type, "ftoi") : rows_val.val;
-            LLVMValueRef cols = cols_val.tag == JD_TAG_F64
+            LLVMValueRef cols = jd_is_f64_tag(cols_val.tag)
                 ? LLVMBuildFPToSI(builder, cols_val.val, i64_type, "ftoi") : cols_val.val;
 
             LLVMValueRef zero_args[] = { LLVMConstInt(i64_type, 0, 0) };
@@ -11345,7 +11345,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return member_call_on(obj, method_name, expr.args);
         LLVMValueRef obj_ptr = obj.val;
         // Decode ptr from f64/i64 if needed (e.g. array element)
-        if (obj.tag == JD_TAG_F64) {
+        if (jd_is_f64_tag(obj.tag)) {
             LLVMValueRef as_i64 = pun_f64_to_i64(obj.val);
             obj_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
         } else if (obj.tag == JD_TAG_I64) {
@@ -11572,7 +11572,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return { vphi, JD_TAG_RUNTIME, tphi };
             }
         }
-        if (vi_fn && (vi_fn->tag == JD_TAG_FUNCREF || vi_fn->tag == JD_TAG_F64 ||
+        if (vi_fn && (vi_fn->tag == JD_TAG_FUNCREF || jd_is_f64_tag(vi_fn->tag) ||
                       vi_fn->tag == JD_TAG_RUNTIME)) {
             return indirect_call();
         }
@@ -11612,7 +11612,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 for (int i = 0; i < arity; i++) {
                     TypedValue av = codegen_expr(*expr.args[i]);
                     LLVMValueRef as_f64;
-                    if (av.tag == JD_TAG_F64) {
+                    if (jd_is_f64_tag(av.tag)) {
                         as_f64 = av.val;
                     } else if (av.tag == JD_TAG_I64 || av.tag == JD_TAG_BOOL) {
                         as_f64 = LLVMBuildSIToFP(builder, av.val, f64_type, "i2f");
@@ -11747,7 +11747,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                            av.tag == JD_TAG_NATIVE_MAP || av.tag == JD_TAG_FUNCREF) {
                     val_i64 = LLVMBuildPtrToInt(builder, av.val, i64_type, "av_pti");
                     tag_i32 = LLVMConstInt(i32_type, av.tag, 0);
-                } else if (av.tag == JD_TAG_F64) {
+                } else if (jd_is_f64_tag(av.tag)) {
                     val_i64 = pun_f64_to_i64(av.val);
                     tag_i32 = LLVMConstInt(i32_type, JD_TAG_F64, 0);
                 } else if (av.tag == JD_TAG_BOOL) {
@@ -12073,7 +12073,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         store_tag(i, 'd');
                         LLVMValueRef as_d = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
                         arg_raws[i] = pun_f64_to_i64(as_d);
-                    } else if (av.tag == JD_TAG_F64) {
+                    } else if (jd_is_f64_tag(av.tag)) {
                         store_tag(i, 'd');
                         arg_raws[i] = pun_f64_to_i64(av.val);
                     } else {
@@ -12109,7 +12109,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // Route through coerce_to so handle-deref / pun goes through
                 // the right runtime helper.
                 LLVMValueRef val;
-                if (av.tag == JD_TAG_F64) {
+                if (jd_is_f64_tag(av.tag)) {
                     val = av.val;
                 } else if (av.tag == JD_TAG_I64 || av.tag == JD_TAG_BOOL) {
                     val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
@@ -12180,7 +12180,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             TypedValue a_val = codegen_expr(*expr.args[0]);
             TypedValue b_val = codegen_expr(*expr.args[1]);
             auto to_ptr = [&](TypedValue tv) -> LLVMValueRef {
-                if (tv.tag == JD_TAG_F64) {
+                if (jd_is_f64_tag(tv.tag)) {
                     LLVMValueRef as_i = pun_f64_to_i64(tv.val);
                     return LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "itoptr");
                 }
@@ -12267,7 +12267,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return LLVMBuildCall2(builder, conv->fn_type, conv->fn, a, 2, "hofarr");
         };
         if (v.tag == JD_TAG_VM_HANDLE && conv && hg) return to_native(v.val);
-        if (v.tag == JD_TAG_F64) {
+        if (jd_is_f64_tag(v.tag)) {
             LLVMValueRef as_i64 = pun_f64_to_i64(v.val);
             return LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
         }
@@ -12344,7 +12344,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 TypedValue iv = codegen_expr(*expr.args[2]);
                 if (iv.tag == JD_TAG_I64 || iv.tag == JD_TAG_BOOL)
                     init_val = LLVMBuildSIToFP(builder, iv.val, f64_type, "itof");
-                else if (iv.tag == JD_TAG_F64)
+                else if (jd_is_f64_tag(iv.tag))
                     init_val = iv.val;
                 else if (iv.tag == JD_TAG_RUNTIME)
                     init_val = coerce_to(iv, f64_type);
@@ -12405,7 +12405,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // reduced value reads back as a string/array, not a number.
                 rv = pun_i64_to_f64(LLVMBuildPtrToInt(builder, rv, i64_type, "r2i"));
                 reduced_tag = body.tag;
-            } else if (body.tag != JD_TAG_F64) {
+            } else if (!jd_is_f64_tag(body.tag)) {
                 rv = coerce_to(body, f64_type);
             }
             LLVMBuildRet(builder, rv);
@@ -12460,7 +12460,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             TypedValue keys_tv = codegen_expr(*expr.args[0]);
             TypedValue vals_tv = codegen_expr(*expr.args[1]);
             auto to_ptr = [&](TypedValue tv) -> LLVMValueRef {
-                if (tv.tag == JD_TAG_F64) {
+                if (jd_is_f64_tag(tv.tag)) {
                     LLVMValueRef as_i = pun_f64_to_i64(tv.val);
                     return LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "itoptr");
                 }
@@ -12513,7 +12513,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         } else if (val_tv.tag == JD_TAG_VM_HANDLE) {
             fval = pun_i64_to_f64(val_tv.val);
             tag_v = LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0);
-        } else if (val_tv.tag == JD_TAG_F64) {
+        } else if (jd_is_f64_tag(val_tv.tag)) {
             fval = val_tv.val;
             tag_v = LLVMConstInt(i32_type, JD_TAG_F64, 0);
         } else {
@@ -12525,7 +12525,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // parameter carries it as punned bits, never as a number. The
         // push grows the array in place, so every holder sees the element.
         LLVMValueRef arr_ptr;
-        if (arr_tv.tag == JD_TAG_F64)
+        if (jd_is_f64_tag(arr_tv.tag))
             arr_ptr = LLVMBuildIntToPtr(builder, pun_f64_to_i64(arr_tv.val), i8_ptr_type, "push_arr");
         else
             arr_ptr = coerce_to(arr_tv, i8_ptr_type);
@@ -12738,7 +12738,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { av.val, fmt, tz };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "fdv"), JD_TAG_ARR };
         }
-        if (av.tag == JD_TAG_F64 || av.tag == JD_TAG_I64) {
+        if (jd_is_f64_tag(av.tag) || av.tag == JD_TAG_I64) {
             LLVMValueRef fmt = expr.args.size() >= 2
                 ? coerce_to(codegen_expr(*expr.args[1]), i8_ptr_type)
                 : LLVMConstNull(i8_ptr_type);
@@ -12769,7 +12769,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { av.val };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "cvda"), JD_TAG_ARR };
         }
-        if (av.tag == JD_TAG_I64 || av.tag == JD_TAG_F64) {
+        if (av.tag == JD_TAG_I64 || jd_is_f64_tag(av.tag)) {
             auto& fn = runtime_funcs["__cvdate_num"];
             LLVMValueRef args[] = { coerce_to(av, f64_type) };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "cvdn"), JD_TAG_STR };
@@ -12827,7 +12827,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (upper == "POP" && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
         // An untyped parameter carries the array as its pointer bits, as in PUSH.
-        if (av.tag == JD_TAG_F64) {
+        if (jd_is_f64_tag(av.tag)) {
             av.val = LLVMBuildIntToPtr(builder, pun_f64_to_i64(av.val), i8_ptr_type, "pop_arr");
             av.tag = JD_TAG_ARR;
         }
@@ -13029,10 +13029,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 bool base_is_var = (arg.left->kind == ExprKind::VARIABLE);
                 LLVMValueRef has = nullptr;
                 if (base.tag == JD_TAG_NATIVE_MAP ||
-                    (base_is_var && (base.tag == JD_TAG_F64 || base.tag == JD_TAG_I64))) {
+                    (base_is_var && (jd_is_f64_tag(base.tag) || base.tag == JD_TAG_I64))) {
                     LLVMValueRef mptr;
                     if (base.tag == JD_TAG_NATIVE_MAP) mptr = coerce_to(base, i8_ptr_type);
-                    else if (base.tag == JD_TAG_F64) {
+                    else if (jd_is_f64_tag(base.tag)) {
                         LLVMValueRef ai = pun_f64_to_i64(base.val);
                         mptr = LLVMBuildIntToPtr(builder, ai, i8_ptr_type, "itoptr");
                     } else mptr = LLVMBuildIntToPtr(builder, base.val, i8_ptr_type, "itoptr");
@@ -13107,7 +13107,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 || arg.kind == ExprKind::LITERAL_BOOL) result = true;
             else if (arg.kind == ExprKind::VARIABLE) {
                 VarInfo* v = lookup_var(arg.str_val);
-                if (v && (v->tag == JD_TAG_I64 || v->tag == JD_TAG_F64)) result = true;
+                if (v && (v->tag == JD_TAG_I64 || jd_is_f64_tag(v->tag))) result = true;
             }
         } else if (upper == "ISSTR") {
             if (arg.kind == ExprKind::LITERAL_STRING) result = true;
@@ -13164,7 +13164,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         ScopedLeafTag _tof_lt(this, expr.args[0]->kind == ExprKind::INDEX ? JD_TAG_RUNTIME : -1);
         TypedValue av = codegen_expr(*expr.args[0]);
         // f64 values may be the NaN sentinel from EXITFUNC - dispatch at runtime.
-        if (av.tag == JD_TAG_F64) {
+        if (jd_is_f64_tag(av.tag)) {
             auto& fn = runtime_funcs["__typeof_f64"];
             LLVMValueRef args[] = { av.val };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "tof_f");
@@ -13230,7 +13230,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // CDATE values) arrive as epoch seconds; coerce_to would pun those bits
     // into a char* and the runtime would dereference them.
     auto date_str_arg = [&](TypedValue av) -> LLVMValueRef {
-        if (av.tag == JD_TAG_I64 || av.tag == JD_TAG_F64) {
+        if (av.tag == JD_TAG_I64 || jd_is_f64_tag(av.tag)) {
             auto& cv = runtime_funcs["__cvdate_num"];
             LLVMValueRef one[] = { coerce_to(av, f64_type) };
             return LLVMBuildCall2(builder, cv.fn_type, cv.fn, one, 1, "epoch2iso");
@@ -13549,7 +13549,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMValueRef encoded; int32_t tg;
                 if (av.tag == JD_TAG_STR || av.tag == JD_TAG_ARR) {
                     encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi"); tg = av.tag;
-                } else if (av.tag == JD_TAG_F64) {
+                } else if (jd_is_f64_tag(av.tag)) {
                     encoded = pun_f64_to_i64(av.val); tg = JD_TAG_F64;
                 } else {
                     // I64: pass through unchanged with tag I64.
@@ -13636,7 +13636,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     LLVMValueRef a[] = { tv.val };
                     return LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "itostr");
                 }
-                if (tv.tag == JD_TAG_F64) {
+                if (jd_is_f64_tag(tv.tag)) {
                     auto& fn = runtime_funcs["__double_to_str"];
                     LLVMValueRef a[] = { tv.val };
                     return LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "ftostr");
@@ -13689,7 +13689,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         if (ait != runtime_funcs.end()) {
             TypedValue av = arg_cache[0];
             LLVMValueRef arr_ptr = av.val;
-            if (av.tag == JD_TAG_F64) {
+            if (jd_is_f64_tag(av.tag)) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(av.val);
                 arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
             } else if (av.tag == JD_TAG_RUNTIME) {
@@ -13724,7 +13724,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         if (mtv.tag == JD_TAG_NATIVE_MAP) {
             return { native_del(coerce_to(mtv, i8_ptr_type)), JD_TAG_I64 };
         }
-        if (is_var && mtv.tag == JD_TAG_F64) {
+        if (is_var && jd_is_f64_tag(mtv.tag)) {
             LLVMValueRef as_i64 = pun_f64_to_i64(mtv.val);
             return { native_del(LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr")), JD_TAG_I64 };
         }
@@ -13764,13 +13764,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (upper == "MAP.EXISTS" && expr.args.size() == 2) {
         TypedValue mtv = arg_cache[0];
         bool is_var = (expr.args[0]->kind == ExprKind::VARIABLE);
-        if (mtv.tag == JD_TAG_NATIVE_MAP || (is_var && mtv.tag == JD_TAG_F64) || (is_var && mtv.tag == JD_TAG_I64)) {
+        if (mtv.tag == JD_TAG_NATIVE_MAP || (is_var && jd_is_f64_tag(mtv.tag)) || (is_var && mtv.tag == JD_TAG_I64)) {
             TypedValue ktv = arg_cache[1];
             LLVMValueRef kptr = coerce_to(ktv, i8_ptr_type);
             LLVMValueRef mptr;
             if (mtv.tag == JD_TAG_NATIVE_MAP) {
                 mptr = coerce_to(mtv, i8_ptr_type);
-            } else if (mtv.tag == JD_TAG_F64) {
+            } else if (jd_is_f64_tag(mtv.tag)) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(mtv.val);
                 mptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
             } else {
@@ -13836,7 +13836,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // Handle VAL with pointer-encoded doubles (from OS.ARGS array elements)
     if (upper == "VAL" && expr.args.size() == 1) {
         TypedValue av = arg_cache[0];
-        if (av.tag == JD_TAG_F64) {
+        if (jd_is_f64_tag(av.tag)) {
             // f64 value - might be a pointer-encoded string from OS.ARGS
             auto& fn = runtime_funcs["__val_ptr"];
             LLVMValueRef args[] = { av.val };
@@ -14055,7 +14055,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     } else if (av.tag == JD_TAG_VM_HANDLE) {
                         encoded = av.val;
                         tag = JD_TAG_VM_HANDLE;
-                    } else if (av.tag == JD_TAG_F64) {
+                    } else if (jd_is_f64_tag(av.tag)) {
                         encoded = pun_f64_to_i64(av.val);
                         tag = JD_TAG_F64;
                     } else if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
@@ -14190,7 +14190,7 @@ LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
         return LLVMBuildFCmp(builder, LLVMRealONE, f,
                              LLVMConstReal(f64_type, 0.0), "dyn_tobool");
     }
-    if (tv.tag == JD_TAG_F64)
+    if (jd_is_f64_tag(tv.tag))
         return LLVMBuildFCmp(builder, LLVMRealONE, tv.val,
                              LLVMConstReal(f64_type, 0.0), "tobool");
     if (tv.tag == JD_TAG_ARR) {
@@ -14223,7 +14223,7 @@ LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
 }
 
 LLVMCodegen::TypedValue LLVMCodegen::promote_to_f64(TypedValue tv) {
-    if (tv.tag == JD_TAG_F64) return tv;
+    if (jd_is_f64_tag(tv.tag)) return tv;
     // BOOL is bit-identical to I64 (0/1) - same conversion path.
     if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_BOOL)
         return { LLVMBuildSIToFP(builder, tv.val, f64_type, "itof"), JD_TAG_F64 };
@@ -14538,7 +14538,7 @@ void LLVMCodegen::to_bits_tag(const TypedValue& tv, LLVMValueRef& bits, LLVMValu
                tv.tag == JD_TAG_NATIVE_MAP || tv.tag == JD_TAG_FUNCREF) {
         bits = LLVMBuildPtrToInt(builder, tv.val, i64_type, "bt_pti");
         tag = LLVMConstInt(i32_type, tv.tag, 0);
-    } else if (tv.tag == JD_TAG_F64) {
+    } else if (jd_is_f64_tag(tv.tag)) {
         bits = pun_f64_to_i64(tv.val);
         tag = LLVMConstInt(i32_type, JD_TAG_F64, 0);
     } else {
@@ -14737,7 +14737,7 @@ LLVMValueRef LLVMCodegen::udt_walk_path(LLVMValueRef root_ptr, const std::string
 }
 
 LLVMValueRef LLVMCodegen::udt_ptr_from(TypedValue tv) {
-    if (tv.tag == JD_TAG_F64) {
+    if (jd_is_f64_tag(tv.tag)) {
         LLVMValueRef as_i64 = pun_f64_to_i64(tv.val);
         return LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
     }
@@ -15310,7 +15310,7 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
         return tv.val;
     }
     if (target == i64_type) {
-        if (tv.tag == JD_TAG_F64) return LLVMBuildFPToSI(builder, tv.val, i64_type, "ftoi");
+        if (jd_is_f64_tag(tv.tag)) return LLVMBuildFPToSI(builder, tv.val, i64_type, "ftoi");
         if (tv.tag == JD_TAG_STR || tv.tag == JD_TAG_ARR || tv.tag == JD_TAG_NATIVE_MAP || tv.tag == JD_TAG_FUNCREF)
             return LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
         if (tv.tag == JD_TAG_VM_HANDLE) {
@@ -15326,7 +15326,7 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
     }
     if (target == i8_ptr_type) {
         if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_BOOL) return LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "itoptr");
-        if (tv.tag == JD_TAG_F64) {
+        if (jd_is_f64_tag(tv.tag)) {
             LLVMValueRef as_i64 = pun_f64_to_i64(tv.val);
             return LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "ftoptr");
         }
@@ -15408,7 +15408,8 @@ LLVMCodegen::TypedValue LLVMCodegen::unpack_dyn_ret(LLVMValueRef pair) {
 
 LLVMCodegen::TypedValue LLVMCodegen::coerce_to_tag(TypedValue tv, int target_tag) {
     if (tv.tag == target_tag) return tv;
-    if (target_tag == JD_TAG_F64) return { coerce_to(tv, f64_type), JD_TAG_F64 };
+    // A date wants the f64 conversion and then says it is a date.
+    if (jd_is_f64_tag(target_tag)) return { coerce_to(tv, f64_type), target_tag };
     if (target_tag == JD_TAG_I64) return { coerce_to(tv, i64_type), JD_TAG_I64 };
     if (target_tag == JD_TAG_STR || target_tag == JD_TAG_ARR) return { coerce_to(tv, i8_ptr_type), target_tag };
     return tv;
@@ -15416,7 +15417,7 @@ LLVMCodegen::TypedValue LLVMCodegen::coerce_to_tag(TypedValue tv, int target_tag
 
 LLVMValueRef LLVMCodegen::to_string_ptr(TypedValue tv) {
     if (tv.tag == JD_TAG_STR) return tv.val;  // already a string ptr
-    if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_F64) {
+    if (tv.tag == JD_TAG_I64 || jd_is_f64_tag(tv.tag)) {
         LLVMValueRef d = (tv.tag == JD_TAG_I64)
             ? LLVMBuildSIToFP(builder, tv.val, f64_type, "itof") : tv.val;
         auto* fn = get_runtime_func("__double_to_str");
@@ -15448,7 +15449,7 @@ void LLVMCodegen::emit_trace(int line, const std::string& source_file) {
 
 void LLVMCodegen::emit_div_zero_check(TypedValue rhs) {
     LLVMValueRef is_zero;
-    if (rhs.tag == JD_TAG_F64) {
+    if (jd_is_f64_tag(rhs.tag)) {
         is_zero = LLVMBuildFCmp(builder, LLVMRealOEQ, rhs.val,
                                 LLVMConstReal(f64_type, 0.0), "iszero");
     } else {

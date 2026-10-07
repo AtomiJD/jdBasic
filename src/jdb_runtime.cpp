@@ -4100,12 +4100,12 @@ static char* format_iso_date(const struct tm* tm, bool include_time) {
     return _strdup(buf);
 }
 
-// CVDATE: parse ISO string, return normalized ISO string (always with time).
-// Accepts YYYY-MM-DD and DD.MM.YYYY with an optional time; anything else
-// is an error.
-char* jdb_cvdate(const char* datestr) {
+// The text CDATE accepts: YYYY-MM-DD or DD.MM.YYYY, with an optional time
+// after a space or a T. Answers false and raises CDATE's error otherwise.
+static bool rt_parse_cdate_text(const char* datestr, int& y, int& mo, int& d,
+                                int& h, int& mi, int& se) {
     const char* s = datestr ? datestr : "";
-    int y = 0, mo = 0, d = 0, h = 0, mi = 0, se = 0;
+    y = mo = d = h = mi = se = 0;
     int n = sscanf(s, "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &se);
     if (n == 3) {
         int ty, tmo, td, th = 0, tmi = 0, tse = 0;
@@ -4126,8 +4126,17 @@ char* jdb_cvdate(const char* datestr) {
         std::string msg = std::string("CDATE: \"") + s +
             "\" is not a date; write YYYY-MM-DD or DD.MM.YYYY, with HH:MM:SS after a space if needed";
         jdb_err_set(msg.c_str(), 99);
-        return _strdup("");
+        return false;
     }
+    return true;
+}
+
+// CVDATE: parse ISO string, return normalized ISO string (always with time).
+// Accepts YYYY-MM-DD and DD.MM.YYYY with an optional time; anything else
+// is an error.
+char* jdb_cvdate(const char* datestr) {
+    int y, mo, d, h, mi, se;
+    if (!rt_parse_cdate_text(datestr, y, mo, d, h, mi, se)) return _strdup("");
     struct tm t = {0};
     t.tm_year = y - 1900;
     t.tm_mon = mo - 1;
@@ -4137,6 +4146,76 @@ char* jdb_cvdate(const char* datestr) {
     t.tm_sec = se;
     t.tm_isdst = -1;
     return format_iso_date(&t, true);
+}
+
+// The unit letter of DATEADD or DATEDIFF, in either case; 0 after raising an
+// error when part is not one of the letters in allowed.
+static char rt_date_unit(const char* part, const char* allowed, const char* fn, const char* hint) {
+    if (part && part[0] && !part[1]) {
+        char p = (char)toupper((unsigned char)part[0]);
+        if (strchr(allowed, p)) return p;
+    }
+    char msg[200];
+    snprintf(msg, sizeof(msg), "%s: unknown unit \"%.40s\"; use %s", fn, part ? part : "", hint);
+    jdb_err_set(msg, 1);
+    return 0;
+}
+
+// ── Dates as epoch seconds (JD_TAG_DATE) ────────────────────
+// The same three operations the string forms above provide, over the
+// representation the VM uses: a date is seconds since 1970-01-01 UTC. The
+// extraction and formatting halves already exist as jdb_year, jdb_month,
+// jdb_day, jdb_hour, jdb_minute, jdb_second, jdb_weekday, jdb_date_str and
+// jdb_format_date_num.
+
+// CDATE text to epoch seconds. 0 after raising the error, as the string form
+// answers "" after raising it.
+double jdb_cvdate_to_num(const char* datestr) {
+    int y, mo, d, h, mi, se;
+    if (!rt_parse_cdate_text(datestr, y, mo, d, h, mi, se)) return 0.0;
+    return rt_local_civil_to_epoch(y, mo, d, h, mi, se);
+}
+
+// DATEADD over an epoch. D, W, M and Y move the local calendar and keep the
+// wall clock; H, N and S add elapsed time.
+double jdb_dateadd_num(const char* part, double amount, double epoch) {
+    char p = rt_date_unit(part, "YMWDHNS", "DATEADD", "Y, M, W, D, H, N or S");
+    if (!p) return epoch;
+    if (p == 'H') return epoch + amount * 3600.0;
+    if (p == 'N') return epoch + amount * 60.0;
+    if (p == 'S') return epoch + amount;
+    int64_t y, mo, d, h, mi, se, wd;
+    rt_epoch_to_civil_local(epoch, y, mo, d, h, mi, se, wd);
+    double frac = epoch - floor(epoch);
+    if (p == 'Y' || p == 'M') {
+        rt_add_months(y, mo, d, (int64_t)amount * (p == 'Y' ? 12 : 1));
+        return rt_local_civil_to_epoch(y, mo, d, h, mi, se) + frac;
+    }
+    double days = amount * (p == 'W' ? 7.0 : 1.0);
+    double whole = trunc(days);
+    rt_civil_from_days(rt_days_from_civil(y, mo, d) + (int64_t)whole, y, mo, d);
+    return rt_local_civil_to_epoch(y, mo, d, h, mi, se) + frac +
+           (days - whole) * 86400.0;
+}
+
+// DATEDIFF over two epochs. D counts days on the local wall clock so two
+// midnights are a whole number apart; H, N and S count elapsed time.
+double jdb_datediff_num(const char* part, double epoch1, double epoch2) {
+    char p = rt_date_unit(part, "DHNS", "DATEDIFF", "D, H, N or S");
+    if (!p) return 0;
+    if (p == 'D') {
+        auto wall = [](double e) {
+            int64_t y, mo, d, h, mi, se, wd;
+            rt_epoch_to_civil_local(e, y, mo, d, h, mi, se, wd);
+            return (double)(rt_days_from_civil(y, mo, d) * 86400 +
+                            h * 3600 + mi * 60 + se) + (e - floor(e));
+        };
+        return (wall(epoch2) - wall(epoch1)) / 86400.0;
+    }
+    double diff = epoch2 - epoch1;
+    if (p == 'H') return diff / 3600.0;
+    if (p == 'N') return diff / 60.0;
+    return diff;
 }
 
 // CVDATE for numeric input - interpret as Unix epoch seconds and format
@@ -4172,19 +4251,6 @@ JdbArray* jdb_cvdate_arr(JdbArray* in) {
 
 // DATEADD: add num units of part ("Y","M","D","H","N","S") to an ISO date string.
 // Returns a new ISO date string.
-// The unit letter of DATEADD or DATEDIFF, in either case; 0 after raising an
-// error when part is not one of the letters in allowed.
-static char rt_date_unit(const char* part, const char* allowed, const char* fn, const char* hint) {
-    if (part && part[0] && !part[1]) {
-        char p = (char)toupper((unsigned char)part[0]);
-        if (strchr(allowed, p)) return p;
-    }
-    char msg[200];
-    snprintf(msg, sizeof(msg), "%s: unknown unit \"%.40s\"; use %s", fn, part ? part : "", hint);
-    jdb_err_set(msg, 1);
-    return 0;
-}
-
 char* jdb_dateadd(const char* part, double amount, const char* date_str) {
     char p = rt_date_unit(part, "YMWDHNS", "DATEADD", "Y, M, W, D, H, N or S");
     if (!p) return _strdup("");
