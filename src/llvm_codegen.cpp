@@ -77,27 +77,50 @@ static bool is_handle_returner(const std::string& fn_name) {
 
 // True when a FUNC answers a map it builds itself: a RETURN of a map literal,
 // of a local declared from one or AS MAP, or of a parameter declared AS MAP.
-static bool returns_native_map(const Stmt& fn) {
+// What an `AS MAP` FUNC hands back, as a JD_TAG_*.
+//
+// A map literal and a variable the body knows as a map are a native JdbMap*.
+// A call whose signature answers a VM Value is a store handle. Everything
+// else - a map field read, a parameter passed through - is only known when it
+// runs, and an i64 return cannot say which: the two shapes are told apart by
+// nothing, so a caller with `DIM w AS MAP` read the bits as a pointer while a
+// caller with a plain `DIM w` read the same bits as a store key. One of them
+// was always wrong. RUNTIME makes the function answer with its value and the
+// value's own tag, and then both callers decode it.
+static int map_return_tag(const Stmt& fn) {
     std::unordered_set<std::string> maps;
     for (auto& p : fn.params())
         if (p.type == VarType::OBJECT) maps.insert(p.name);
-    bool found = false;
+    bool any_return = false, all_native = true, all_handle = true;
     std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
         if (s.kind == StmtKind::DIM && !s.var_name.empty() &&
             (s.var_type == VarType::OBJECT ||
              (s.expr && s.expr->kind == ExprKind::MAP_LITERAL)))
             maps.insert(s.var_name);
-        if (s.kind == StmtKind::RETURN && s.expr &&
-            (s.expr->kind == ExprKind::MAP_LITERAL ||
-             (s.expr->kind == ExprKind::VARIABLE && maps.count(s.expr->str_val))))
-            found = true;
+        if (s.kind == StmtKind::RETURN && s.expr) {
+            any_return = true;
+            const Expr& e = *s.expr;
+            bool native = e.kind == ExprKind::MAP_LITERAL ||
+                          (e.kind == ExprKind::VARIABLE && maps.count(e.str_val));
+            bool handle = false;
+            if (e.kind == ExprKind::CALL) {
+                std::string up = e.func_name;
+                std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                handle = builtin_ret(up) == BuiltinRet::Handle;
+            }
+            if (!native) all_native = false;
+            if (!handle) all_handle = false;
+        }
         for (auto& b : s.body) if (b) walk(*b);
         for (auto& br : s.branches) for (auto& b : br.body) if (b) walk(*b);
         for (auto& c : s.catch_body()) if (c) walk(*c);
         for (auto& f : s.finally_body()) if (f) walk(*f);
     };
     for (auto& b : fn.body) if (b) walk(*b);
-    return found;
+    if (!any_return) return JD_TAG_VM_HANDLE;
+    if (all_native) return JD_TAG_NATIVE_MAP;
+    if (all_handle) return JD_TAG_VM_HANDLE;
+    return JD_TAG_RUNTIME;
 }
 
 LLVMTypeRef LLVMCodegen::param_slot_type(int tag) const {
@@ -932,7 +955,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 case VarType::ARRAY:
                 case VarType::TENSOR:  ret_tag = JD_TAG_ARR;  break;
                 case VarType::OBJECT:
-                    ret_tag = returns_native_map(*stmt) ? JD_TAG_NATIVE_MAP : JD_TAG_VM_HANDLE;
+                    ret_tag = map_return_tag(*stmt);
                     break;
                 case VarType::BYTE: case VarType::INT16:
                 case VarType::INT32: case VarType::INT64: ret_tag = JD_TAG_I64; break;

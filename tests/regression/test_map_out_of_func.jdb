@@ -1,0 +1,65 @@
+' A map read out of a map field and handed back by a FUNC. The field answers
+' its own kind at runtime - tag 4 and a JdbArray-style pointer - but an
+' i64-returning function means "store handle", so the caller used to read the
+' pointer bits as one: TYPEOF said NONE and every field came back 0.
+DIM bad = 0
+
+DIM weeks AS MAP
+DIM inner AS MAP
+inner{"hours"} = 1.0
+inner{"note"} = "first"
+weeks{"w1"} = inner
+
+FUNC Pick(src, k$) AS MAP
+    RETURN src{k$}
+ENDFUNC
+
+DIM w = Pick(weeks, "w1")
+IF TYPEOF(w) <> "OBJECT" THEN
+    bad = bad + 1
+    PRINT "typeof: "; TYPEOF(w)
+ENDIF
+IF w{"hours"} <> 1.0 THEN
+    bad = bad + 1
+    PRINT "read: "; w{"hours"}
+ENDIF
+IF w{"note"} <> "first" THEN
+    bad = bad + 1
+    PRINT "string field: "; w{"note"}
+ENDIF
+w{"hours"} = w{"hours"} + 0.25
+IF w{"hours"} <> 1.25 THEN
+    bad = bad + 1
+    PRINT "after add: "; w{"hours"}
+ENDIF
+
+' The declared slot was never broken - it stays right
+DIM w2 AS MAP = Pick(weeks, "w1")
+IF w2{"hours"} <> 1.25 THEN
+    bad = bad + 1
+    PRINT "AS MAP slot: "; w2{"hours"}
+ENDIF
+
+' A map the FUNC builds itself still travels
+FUNC Fresh()
+    DIM m AS MAP
+    m{"k"} = 7
+    RETURN m
+ENDFUNC
+DIM f = Fresh()
+IF f{"k"} <> 7 THEN
+    bad = bad + 1
+    PRINT "locally built: "; f{"k"}
+ENDIF
+
+' A FUNC that answers a number out of a map field is still a number
+FUNC Hours(src, k$)
+    DIM one = src{k$}
+    RETURN one{"hours"}
+ENDFUNC
+IF Hours(weeks, "w1") <> 1.25 THEN
+    bad = bad + 1
+    PRINT "number through: "; Hours(weeks, "w1")
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
