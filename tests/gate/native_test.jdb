@@ -1845,7 +1845,8 @@ IF OS.FEATURE("INTERPRETER") THEN
     Assert(2900,TYPEOF(dte_map{"when"}) = "DATE")
     Assert(2901,TYPEOF(dte_cell) = "DATE")
     Assert(2902,TYPEOF(dte_span[0]) = "DATE")
-    Assert(2903,CLNG(dte_diff) = 172800)
+    ' The difference of two dates is a duration, not a date
+    Assert(2903,TYPEOF(dte_diff) = "FLOAT64")
 ELSE
     Assert(2900,TYPEOF(dte_map{"when"}) = "STRING")
     Assert(2901,TYPEOF(dte_cell) = "FLOAT64")
@@ -1853,6 +1854,11 @@ ELSE
     Assert(2903,TYPEOF(dte_diff) = "STRING")
 ENDIF
 Assert(2904,FORMAT_DATE(dte_map{"when"}, "%Y-%m-%d") = "2026-03-28")
+' Whole calendar days read the same in every time zone. The seconds of
+' dte_diff do not: between those two noons a zone that moves its clocks
+' counts 169200 and one that does not counts 172800, which is why only the
+' day count is asserted on a value.
+Assert(2905,DATEDIFF("D", dte_a, dte_b) = 2)
 
 
 ' ══════════════════════════════════════════════════════════════════

@@ -1367,6 +1367,17 @@ void VM::run() {
                 // Fast path: both FLOAT64
                 if (fa.type == ValueType::FLOAT64 && fb.type == ValueType::FLOAT64 &&
                     op != OpCode::POW) {
+                    if (fa.subtype == ValueSubtype::DATE || fb.subtype == ValueSubtype::DATE) {
+                        Value dr;
+                        if (jdb_date_arith(fa, fb, op, dr)) {
+                            fa = dr;
+                            sp--;
+                            break;
+                        }
+                        // A date in an operator that means nothing for one:
+                        // the slot is reused, so the subtype has to go.
+                        fa.subtype = ValueSubtype::NONE;
+                    }
                     double x = fa.f64, y = fb.f64, r;
                     bool want_int = false;
                     switch (op) {
@@ -3028,6 +3039,12 @@ void VM::run() {
 // ── Arithmetic helper ────────────────────────────────────────
 
 Value VM::arithmetic(const Value& a, const Value& b, OpCode op) {
+    // A date is a wall clock: the difference of two is a count of seconds
+    // and a number added to one moves the clock on the wall.
+    {
+        Value dr;
+        if (jdb_date_arith(a, b, op, dr)) return dr;
+    }
     // Bitwise / shift ops are integer-only: coerce both sides through
     // to_int() and do the op directly. Float operands match the existing
     // function-form (`SHL(1.5, 2)` → `int64_t(1) << int64_t(2)`).

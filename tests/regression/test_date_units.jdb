@@ -1,0 +1,92 @@
+' Calendar units and clock units, over every day of a year so both clock
+' changes are covered. A calendar day stays a day in any time zone; an hour
+' stays 3600 seconds. The two answers differ on exactly the two days the
+' clocks move, and that is the design.
+DIM bad = 0
+DIM k = 0
+DIM cur = CDATE("2026-01-01 12:00:00")
+DIM moved = 0
+
+FOR k = 1 TO 364
+    DIM nxt = DATEADD("D", 1, cur)
+
+    ' A calendar day keeps the time of day, so DATEDIFF("D") is a whole 1
+    IF DATEDIFF("D", cur, nxt) <> 1 THEN
+        bad = bad + 1
+        PRINT "diff D "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; DATEDIFF("D", cur, nxt)
+    ENDIF
+    IF FORMAT_DATE(nxt, "%H:%M:%S") <> "12:00:00" THEN
+        bad = bad + 1
+        PRINT "time of day "; FORMAT_DATE(nxt, "%Y-%m-%d %H:%M:%S")
+    ENDIF
+
+    ' Elapsed hours are 24 except on the two days the clocks move, where
+    ' they are 23 or 25, and subtracting the two dates says the same.
+    ' Natively a date is an ISO string with no tag, so one date minus
+    ' another answers 0 - trakr #493, which waits on #491 and #492.
+    DIM hrs = DATEDIFF("H", cur, nxt)
+    IF hrs <> 24 THEN moved = moved + 1
+    IF hrs <> 23 ANDALSO hrs <> 24 ANDALSO hrs <> 25 THEN
+        bad = bad + 1
+        PRINT "diff H "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; hrs
+    ENDIF
+    IF OS.FEATURE("INTERPRETER") THEN
+        IF CLNG(nxt - cur) <> CLNG(hrs * 3600) THEN
+            bad = bad + 1
+            PRINT "subtract vs diff H "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; _
+                  CLNG(nxt - cur); " vs "; CLNG(hrs * 3600)
+        ENDIF
+    ENDIF
+
+    ' Adding elapsed hours and adding a calendar day agree on every other day
+    IF hrs = 24 THEN
+        IF FORMAT_DATE(DATEADD("H", 24, cur), "%Y-%m-%d %H:%M:%S") <> _
+           FORMAT_DATE(nxt, "%Y-%m-%d %H:%M:%S") THEN
+            bad = bad + 1
+            PRINT "addH vs addD "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; _
+                  FORMAT_DATE(DATEADD("H", 24, cur), "%Y-%m-%d %H:%M:%S")
+        ENDIF
+    ENDIF
+
+    ' A plain number added to a date is elapsed seconds and keeps the type.
+    ' Natively a date is an ISO string with no tag, so the number is
+    ' appended to the text instead - trakr #493, which waits on #491, #492.
+    IF OS.FEATURE("INTERPRETER") THEN
+        IF CLNG(DATEADD("S", 90, cur)) <> CLNG(cur + 90) THEN
+            bad = bad + 1
+            PRINT "plus 90 "; FORMAT_DATE(cur, "%Y-%m-%d")
+        ENDIF
+        IF TYPEOF(cur + 90) <> "DATE" THEN
+            bad = bad + 1
+            PRINT "plus type "; TYPEOF(cur + 90)
+        ENDIF
+    ENDIF
+
+    cur = nxt
+NEXT k
+
+' A zone that moves its clocks does so twice a year; one that does not,
+' never. Anything else means the calendar walk lost a day.
+IF moved <> 0 ANDALSO moved <> 2 THEN
+    bad = bad + 1
+    PRINT "clock changes seen "; moved
+ENDIF
+
+' The difference of two dates is a duration, not a date
+DIM span = CDATE("2026-03-30 12:00:00") - CDATE("2026-03-28 12:00:00")
+IF OS.FEATURE("INTERPRETER") THEN
+    IF TYPEOF(span) <> "FLOAT64" THEN
+        bad = bad + 1
+        PRINT "span type "; TYPEOF(span)
+    ENDIF
+ELSE
+    ' Natively a date is an ISO string with no tag, so the two concatenate
+    ' instead of subtracting - trakr #493, which waits on #491 and #492
+    IF TYPEOF(span) <> "STRING" THEN
+        bad = bad + 1
+        PRINT "span type "; TYPEOF(span)
+    ENDIF
+ENDIF
+
+PRINT "last "; FORMAT_DATE(cur, "%Y-%m-%d %H:%M:%S"); "  clock changes "; moved
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

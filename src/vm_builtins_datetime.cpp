@@ -161,6 +161,44 @@ static double jdb_add_days_local(double epoch, double days) {
            (days - whole) * 86400.0;
 }
 
+// A date read as the clock on the wall: seconds on a timeline that has no
+// zone and therefore no daylight saving time. Counting whole calendar days
+// between two dates happens here, so that two midnights are a whole number
+// of days apart on the days a clock change makes one of them 23 or 25 hours.
+double jdb_date_wall_seconds(double epoch) {
+    int64_t y, mo, d, h, mi, se, wd;
+    jdb_epoch_to_civil_local(epoch, y, mo, d, h, mi, se, wd);
+    return (double)(jdb_days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se) +
+           (epoch - std::floor(epoch));
+}
+
+// Arithmetic where at least one side is a date. Answers false when the
+// operands are plain numbers and the caller should do the ordinary thing.
+//
+// A date is an instant, so the difference of two of them is elapsed seconds,
+// the same number DATEDIFF("S", ...) answers. What that difference is not is
+// a date: it is a duration, and it carries no DATE subtype. Nor does the
+// result of an operator for which a date means nothing.
+bool jdb_date_arith(const Value& a, const Value& b, OpCode op, Value& out) {
+    const bool a_date = a.type == ValueType::FLOAT64 && a.subtype == ValueSubtype::DATE;
+    const bool b_date = b.type == ValueType::FLOAT64 && b.subtype == ValueSubtype::DATE;
+    if (!a_date && !b_date) return false;
+
+    if (op == OpCode::SUB && a_date && b_date) {
+        out = Value::make_f64(a.to_double() - b.to_double());
+        return true;
+    }
+    if (op == OpCode::SUB && a_date) {
+        out = Value::make_date(a.to_double() - b.to_double());
+        return true;
+    }
+    if (op == OpCode::ADD && a_date != b_date) {
+        out = Value::make_date(a.to_double() + b.to_double());
+        return true;
+    }
+    return false;
+}
+
 static auto g_program_start = std::chrono::steady_clock::now();
 
 void VM::register_datetime_builtins() {
@@ -282,8 +320,9 @@ void VM::register_datetime_builtins() {
 
     register_native("DATEADD", 3, 4, [value_to_epoch](const std::vector<Value>& args) -> Value {
         // DATEADD(part$, num, date_epoch, [tz]). D, W, M and Y move the local
-        // calendar and keep the wall clock; H, N and S add elapsed time. TZ is
-        // accepted for API symmetry and unused.
+        // calendar and keep the wall clock; H, N and S add elapsed time,
+        // because the wall clock has no continuous hour to add across a
+        // clock change. TZ is accepted for API symmetry and unused.
         std::string part = args[0].as_string()->data;
         double num = args[1].to_double();
         double epoch = value_to_epoch(args[2]);
@@ -310,19 +349,11 @@ void VM::register_datetime_builtins() {
                 "DATEDIFF: unknown unit \"" + args[0].as_string()->data + "\"; use D, H, N or S");
         double d1 = value_to_epoch(args[1]);
         double d2 = value_to_epoch(args[2]);
+        if (part == "D")
+            return Value::make_f64((jdb_date_wall_seconds(d2) - jdb_date_wall_seconds(d1)) / 86400);
         double diff = d2 - d1;
-        if (part == "D") {
-            auto wall = [](double epoch) {
-                int64_t y, mo, d, h, mi, se, wd;
-                jdb_epoch_to_civil_local(epoch, y, mo, d, h, mi, se, wd);
-                return (double)(jdb_days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se) +
-                       (epoch - std::floor(epoch));
-            };
-            return Value::make_f64((wall(d2) - wall(d1)) / 86400);
-        }
-        else if (part == "H") return Value::make_f64(diff / 3600);
+        if (part == "H")      return Value::make_f64(diff / 3600);
         else if (part == "N") return Value::make_f64(diff / 60);
-        else if (part == "S") return Value::make_f64(diff);
         return Value::make_f64(diff);
     });
 

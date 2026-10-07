@@ -699,11 +699,11 @@ Description: Returns the current system date as a string in "YYYY-MM-DD" format.
 
 [DATEADD]
 Syntax: DATEADD(part$, number, date [, tz_hours])
-Description: Adds a time interval to a date. part$ is Y, M, W, D, H, N or S, in upper or lower case; any other part$ is an error. Y and M are whole calendar units counted from the date given, the day of the month clamped to the length of the month it lands in; the rest are exact seconds and take a fraction. Optional tz_hours (numeric UTC offset in hours) is accepted for symmetry but has no effect on the arithmetic.
+Description: Adds a time interval to a date. part$ is Y, M, W, D, H, N or S, in upper or lower case; any other part$ is an error. Y, M, W and D are calendar units: they move the local calendar and keep the wall clock, so a day added across a daylight saving change is still the same time of day. Y and M are counted from the date given, the day of the month clamped to the length of the month it lands in. H, N and S add elapsed time and take a fraction. Optional tz_hours (numeric UTC offset in hours) is accepted for symmetry but has no effect on the arithmetic.
 
 [DATEDIFF]
 Syntax: DATEDIFF(part$, date1, date2 [, tz_hours])
-Description: Returns the difference between two dates in a specified time unit: D (days), H (hours), N (minutes), S (seconds). The letter may be upper or lower case; any other part$ is an error. D counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; H, N and S count elapsed time. Optional tz_hours is accepted but has no effect.
+Description: Returns the difference between two dates in a specified time unit: D (days), H (hours), N (minutes), S (seconds). The letter may be upper or lower case; any other part$ is an error. D counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; H, N and S count elapsed time, as does subtracting one date from another. To count days use DATEDIFF("D", a, b), not (b - a) / 86400. Optional tz_hours is accepted but has no effect.
 
 [DATERANGE]
 Syntax: DATERANGE(start, end [, unit$="D"] [, step=1])

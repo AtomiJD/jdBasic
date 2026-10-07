@@ -92,6 +92,12 @@ inline int64_t jdb_days_from_civil(int64_t y, int64_t m, int64_t d) {
     return era * 146097 + doe - 719468;
 }
 
+// Defined in vm_builtins_datetime.cpp. jdb_date_arith answers false when
+// neither operand is a date, and the caller then does ordinary numeric
+// arithmetic on a result that carries no DATE subtype.
+double jdb_date_wall_seconds(double epoch);
+bool jdb_date_arith(const Value& a, const Value& b, OpCode op, Value& out);
+
 #include <mutex>
 #include "async_task.h"
 

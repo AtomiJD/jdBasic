@@ -2161,7 +2161,7 @@ SQL.CLOSE(db)
 * **`DATE$()` / `TIME$()`**: Returns the current system date/time as a string.
 * **`NOW()`**: Returns a `DateTime` object for the current moment.
 * **`NOW_EPOCH()`**: Returns the current wallclock time as plain seconds since 1970-01-01 UTC. Unlike `TICK()` it is comparable across program runs; unlike `NOW()` it is an untagged number, safe to store in databases or JSON.
-* **`DATEADD(part$, num, date [, tz_hours])`**: Adds an interval to a `DateTime` object. Interval part$: `S` seconds, `N` minutes, `H` hours, `D` days, `W` weeks, `M` months, `Y` years (`M` and `Y` move along the local calendar and clamp the day, see below). The letter may be upper or lower case; any other part is an error. Optional numeric UTC offset (hours, may be fractional e.g. `5.5`) is accepted for symmetry but has no effect on the arithmetic.
+* **`DATEADD(part$, num, date [, tz_hours])`**: Adds an interval to a `DateTime` object. Interval part$: `S` seconds, `N` minutes, `H` hours, `D` days, `W` weeks, `M` months, `Y` years (`M` and `Y` move along the local calendar and clamp the day, see below). The letter may be upper or lower case; any other part is an error. `D`, `W`, `M` and `Y` are calendar units and keep the wall clock; `H`, `N` and `S` add elapsed time (see **Calendar units and clock units** below). Optional numeric UTC offset (hours, may be fractional e.g. `5.5`) is accepted for symmetry but has no effect on the arithmetic.
 * **`DATEDIFF(part$, date1, date2 [, tz_hours]) -> number`**: Calculates the difference between two dates in the specified unit. Interval part$: `D`, `H`, `N`, `S` only, in upper or lower case; any other part (`M`, `W`, `Y`) is an error. The result is fractional where the span is not a whole number of units. `D` counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; `H`, `N` and `S` count elapsed time. Optional `tz_hours` is accepted but has no effect.
 * **`CVDATE(date_string$ [, tz_hours])`**: Converts a string (`"YYYY-MM-DD[ HH:MM[:SS]]"` or `"DD.MM.YYYY[ HH:MM[:SS]]"`) to a `DateTime` object; any other text is an error. When `tz_hours` is given, the input string is interpreted as wall-clock time in that UTC offset (e.g. `CVDATE("2024-01-15 14:00:00", 2)` yields the same instant as `CVDATE("2024-01-15 12:00:00", 0)`).
 * **`FORMAT_DATE(date, format_string$ [, tz_hours]) -> string$`**: Formats a `DateTime` using C-style specifiers (`%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, ...). Without `tz_hours` the wall-clock is local time; with `tz_hours` the output reflects the chosen UTC offset (`0` = UTC, `2` = UTC+2, `-5` = UTC−5, `5.5` = UTC+5:30).
@@ -2172,6 +2172,39 @@ SQL.CLOSE(db)
 * **`WEEKDAY(date) -> number`**: Returns the day of the week (0=Sunday ... 6=Saturday).
 * **`EOMONTH(date [, offset_months]) -> DateTime`**: Returns the last day (midnight, local) of the month `offset_months` away from `date` (Excel-style; `offset` defaults to 0). Days-in-month is then just `DAY(EOMONTH(d))`, with leap years handled and no lookup table. Vectorises element-wise over a date array.
 * **`DATERANGE(start, end [, unit$="D"] [, step=1]) -> array`**: Array of `DateTime`s from `start` to `end` **inclusive**, stepping by `step` units. Calendar units `D`/`W`/`M`/`Y` advance by whole local calendar days/weeks/months/years (DST-safe: a "day" never drifts by an hour); clock units `H`/`N`/`S` advance by fixed seconds. A negative `step` counts down. Example: `DATERANGE(checkin, checkout, "D")`.
+
+**Calendar units and clock units are different questions.** A `DateTime` is an
+instant, stored as seconds since 1970-01-01 UTC. Two kinds of arithmetic act
+on it and they do not agree across a daylight saving change, by design:
+
+| | counts | across a clock change |
+|---|---|---|
+| `D`, `W`, `M`, `Y` | the local calendar | a day stays a day |
+| `H`, `N`, `S`, and `date - date` | elapsed time | an hour stays 3600 seconds |
+
+```basic
+DIM a = CVDATE("2026-03-28 12:00:00")   ' the EU clocks go forward on 03-29
+DIM b = CVDATE("2026-03-30 12:00:00")
+PRINT DATEDIFF("D", a, b)               ' 2    - two calendar days
+PRINT DATEDIFF("H", a, b)               ' 47   - and 47 hours really passed
+PRINT b - a                             ' 169200 seconds, the same span
+PRINT DATEADD("D", 2, a) = b            ' TRUE - noon to noon
+```
+
+So `DATEADD("D", 2, a) - a` is **not** `2 * 86400` on the two days a year the
+clocks change: it answers how much time those two calendar days took. That is
+the same split `java.time` draws between `ChronoUnit.DAYS.between` and
+`Duration.between`.
+
+**To count days, ask for days.** `(b - a) / 86400` is a stopwatch reading
+divided by a nominal day and lands on `1.958333` twice a year. Use
+`DATEDIFF("D", a, b)`.
+
+Subtracting two dates answers a **duration in seconds**, a plain number and
+not a `DateTime`, so `TYPEOF(b - a)` is `FLOAT64`. Adding or subtracting a
+plain number moves the instant by that many seconds and keeps the `DATE` type.
+To measure how long something took, prefer `TICK()` (milliseconds since the
+program started) or `TIMER`.
 
 **Months and years are counted from the start, not from the step before.**
 `DATEADD("M", 1, ...)` and a `"M"` range keep the day of the month where the
