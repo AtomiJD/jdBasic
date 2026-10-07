@@ -1715,6 +1715,12 @@ void jdb_array_set_bool_elems(JdbArray* arr) {
     if (arr) arr->flags |= 4;  // bit 2 (bool)
 }
 
+// Bit 4: every cell is epoch seconds that are a date. The bridge sets the
+// same bit for an array of dates coming out of the VM.
+void jdb_array_set_date_elems(JdbArray* arr) {
+    if (arr) arr->flags |= 16;
+}
+
 // Classify a single cell of a mixed-type array. Used by the codegen for
 // INDEX access on arrays that contain *both* numeric and pointer (string
 // or nested-array) elements: the array-wide flags say "has pointers" but
@@ -1743,6 +1749,8 @@ int32_t jdb_array_classify_elem(JdbArray* arr, double d) {
             if (arr->data[i] == d) return (int32_t)arr->elem_tags[i];
         }
     }
+    // Every cell is a date, so a plain number out of one is still a date.
+    if ((arr->flags & 16) != 0) return JD_TAG_DATE;
     union { double d; uint64_t u; } u; u.d = d;
     bool looks_ptr = (u.u != 0 && u.u < (1ULL << 47));
     if (!looks_ptr) return 1;  // F64
@@ -2178,7 +2186,10 @@ int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
     // missing key is.
     if (t == JD_TAG_NONE) return JD_TAG_NONE;
     *out_val = u.i;
-    return (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP || t == JD_TAG_VM_HANDLE) ? t : JD_TAG_F64;
+    // A date is epoch seconds like any f64, but it has to keep saying so or
+    // the read renders the number.
+    return (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP || t == JD_TAG_VM_HANDLE ||
+            t == JD_TAG_DATE) ? t : JD_TAG_F64;
 }
 
 // String - String → remove all occurrences: "abcabc" - "bc" → "aa"
@@ -4599,6 +4610,7 @@ char* jdb_typeof_tag(int64_t tag) {
         case JdTag::FUNCREF:    return interned_word("FUNCREF");
         case JdTag::VM_HANDLE:  return interned_word("OBJECT");
         case JdTag::BOOL:       return interned_word("BOOLEAN");
+        case JdTag::DATE:       return interned_word("DATE");
         case JdTag::NONE:       return interned_word("NONE");
         case JdTag::RUNTIME:
         default:                return interned_word("UNKNOWN");

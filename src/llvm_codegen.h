@@ -249,6 +249,8 @@ private:
     // (decoded char*) for these. Currently populated for the data param of
     // event handler SUBs.
     std::unordered_set<std::string> string_array_vars;
+    // Arrays every cell of which is a date, so a cell read answers one.
+    std::unordered_set<std::string> date_array_vars;
 
     // User-defined FUNCs whose RETURN value is an ARR-tagged array whose
     // cells are i8* string pointers. Populated by a Phase-1 fixpoint pass

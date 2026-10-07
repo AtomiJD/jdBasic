@@ -1295,6 +1295,11 @@ static int32_t value_to_tagged(JdRTImpl* rt, const Value& v, int64_t* out_val) {
             if (is_numeric(v.type)) {
                 u.d = v.to_double();
                 *out_val = u.i;
+                // A date is epoch seconds like any other f64, but it has to
+                // keep saying it is one or the compiled side renders the
+                // number instead of the wall clock.
+                if (v.type == ValueType::FLOAT64 && v.subtype == ValueSubtype::DATE)
+                    return jd_tag(JdTag::DATE);
                 return jd_tag(JdTag::F64);
             }
             *out_val = rt->store_value(v);

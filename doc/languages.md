@@ -2174,8 +2174,10 @@ SQL.CLOSE(db)
 * **`DATERANGE(start, end [, unit$="D"] [, step=1]) -> array`**: Array of `DateTime`s from `start` to `end` **inclusive**, stepping by `step` units. Calendar units `D`/`W`/`M`/`Y` advance by whole local calendar days/weeks/months/years (DST-safe: a "day" never drifts by an hour); clock units `H`/`N`/`S` advance by fixed seconds. A negative `step` counts down. Example: `DATERANGE(checkin, checkout, "D")`.
 
 **Calendar units and clock units are different questions.** A `DateTime` is an
-instant, stored as seconds since 1970-01-01 UTC. Two kinds of arithmetic act
-on it and they do not agree across a daylight saving change, by design:
+instant, stored as seconds since 1970-01-01 UTC - the same representation
+interpreted and compiled, so `TYPEOF` answers `DATE` in both, through a map
+field and an array cell as well. Two kinds of arithmetic act on it and they do
+not agree across a daylight saving change, by design:
 
 | | counts | across a clock change |
 |---|---|---|

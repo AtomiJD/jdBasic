@@ -379,6 +379,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
     reg("jdb_array_set_string_elems", "__arr_set_string_elems", void_type, {i8_ptr_type}, -1);
     reg("jdb_array_set_bool_elems", "__arr_set_bool_elems", void_type, {i8_ptr_type}, -1);
+    reg("jdb_array_set_date_elems", "__arr_set_date_elems", void_type, {i8_ptr_type}, -1);
     reg("jdb_array_classify_elem", "__arr_classify", i32_type, {i8_ptr_type, f64_type}, JD_TAG_STR);
     reg("jdb_str_repeat", "__str_repeat", i8_ptr_type, {i8_ptr_type, i64_type}, JD_TAG_STR);
     reg("jdb_setlocale",  "SETLOCALE",    void_type, {i8_ptr_type}, -1);
@@ -530,7 +531,9 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_path_normalize",  "PATH.NORMALIZE$", i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
 
     // Date/Time
-    reg("jdb_now",         "NOW",         i8_ptr_type, {}, JD_TAG_STR);
+    // NOW is a date, NOW_EPOCH the same instant as a plain number that a
+    // database or a JSON document can hold.
+    reg("jdb_now_epoch",   "NOW",         f64_type, {}, JD_TAG_DATE);
     reg("jdb_now_epoch",   "NOW_EPOCH",   f64_type, {}, JD_TAG_F64);
     reg("jdb_date_str",    "DATE$",       i8_ptr_type, {f64_type}, JD_TAG_STR);
     reg("jdb_time_str",    "TIME$",       i8_ptr_type, {f64_type}, JD_TAG_STR);
@@ -700,12 +703,17 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type}, -1);
 
     // Date Add/Diff
-    // Dates are ISO strings in the native runtime (not epochs like the VM).
-    reg("jdb_dateadd",  "DATEADD",  i8_ptr_type, {i8_ptr_type, f64_type, i8_ptr_type}, JD_TAG_STR);
-    reg("jdb_datediff", "DATEDIFF", f64_type,    {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
+    // A date is epoch seconds tagged JD_TAG_DATE, as it is in the VM, so the
+    // name a program calls answers one. The __*_iso forms are the ISO-string
+    // versions, which still serve text coming from a file or a map field.
+    reg("jdb_dateadd_num",  "DATEADD",  f64_type, {i8_ptr_type, f64_type, f64_type}, JD_TAG_DATE);
+    reg("jdb_datediff_num", "DATEDIFF", f64_type, {i8_ptr_type, f64_type, f64_type}, JD_TAG_F64);
+    reg("jdb_cvdate_to_num", "CVDATE",  f64_type, {i8_ptr_type}, JD_TAG_DATE);
+    reg("jdb_cvdate_to_num", "CDATE",   f64_type, {i8_ptr_type}, JD_TAG_DATE);
+    reg("jdb_dateadd",  "__dateadd_iso",  i8_ptr_type, {i8_ptr_type, f64_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_datediff", "__datediff_iso", f64_type,    {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_cvdate",   "__cvdate_iso",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_datediff_vec", "__datediff_vec", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
-    reg("jdb_cvdate",     "CVDATE",       i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
-    reg("jdb_cvdate",     "CDATE",        i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_cvdate_num", "__cvdate_num", i8_ptr_type, {f64_type}, JD_TAG_STR);
     reg("jdb_cvdate_arr", "__cvdate_arr", i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
 
@@ -1028,6 +1036,22 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     std::unordered_map<std::string, std::vector<std::map<int, int>>> arg_tag_line;
 
     std::unordered_map<std::string, int> pre_var_tags;
+    // An expression that is a date: a call to a builtin flagged BF_DATE, or a
+    // variable a date-producing DIM bound.
+    auto is_date_expr = [&](const Expr& e) -> bool {
+        if (e.kind == ExprKind::CALL) {
+            std::string up = e.func_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            return builtin_returns_date(up);
+        }
+        if (e.kind == ExprKind::VARIABLE) {
+            // date_vars is filled during codegen, which is after this walk;
+            // pre_var_tags is what this pass has already decided.
+            auto it = pre_var_tags.find(e.str_val);
+            return it != pre_var_tags.end() && it->second == JD_TAG_DATE;
+        }
+        return false;
+    };
     std::function<int(const Expr&)> infer_expr_tag = [&](const Expr& e) -> int {
         if (e.kind == ExprKind::ARRAY_LITERAL) return JD_TAG_ARR;
         if (e.kind == ExprKind::MAP_LITERAL)   return JD_TAG_NATIVE_MAP;
@@ -1102,12 +1126,15 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (s.kind == StmtKind::DIM && s.expr &&
                 s.expr->kind == ExprKind::ARRAY_LITERAL && !s.expr->args.empty()) {
                 bool all_str = true, any_str = false, any_nested = false;
+                bool all_date = true;
                 for (auto& a : s.expr->args) {
                     if (!a) continue;
                     bool is_s = a->kind == ExprKind::LITERAL_STRING;
                     if (a->kind == ExprKind::ARRAY_LITERAL) any_nested = true;
                     if (is_s) any_str = true; else all_str = false;
+                    if (!is_date_expr(*a)) all_date = false;
                 }
+                if (all_date) date_array_vars.insert(s.var_name);
                 if (all_str) string_array_vars.insert(s.var_name);
                 else if (any_str && !any_nested) mixed_array_vars.insert(s.var_name);
                 if (all_str || (any_str && !any_nested)) top_literal_arrays.insert(s.var_name);
@@ -1714,6 +1741,29 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (decl.return_tag == JD_TAG_F64 && decl.stmt &&
             any_return_returns_string(*decl.stmt))
             decl.return_tag = JD_TAG_STR;
+    }
+    // The same reading for a date: a body whose every RETURN answers one makes
+    // the function date-returning, so the caller's slot keeps the kind instead
+    // of flattening it to a number. A single RETURN of something else is
+    // enough to leave it a number, since one tag has to cover them all.
+    std::function<bool(const Stmt&, bool&, bool&)> scan_date_returns =
+        [&](const Stmt& s, bool& any, bool& all) -> bool {
+        if (s.kind == StmtKind::RETURN && s.expr) {
+            any = true;
+            if (!is_date_expr(*s.expr)) all = false;
+        }
+        for (auto& b : s.body) if (b) scan_date_returns(*b, any, all);
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b) scan_date_returns(*b, any, all);
+        for (auto& c : s.catch_body())   if (c) scan_date_returns(*c, any, all);
+        for (auto& f : s.finally_body()) if (f) scan_date_returns(*f, any, all);
+        return any;
+    };
+    for (auto& [name, decl] : decls) {
+        if (!decl.stmt || decl.return_tag != JD_TAG_F64) continue;
+        bool any = false, all = true;
+        scan_date_returns(*decl.stmt, any, all);
+        if (any && all) decl.return_tag = JD_TAG_DATE;
     }
     // `FUNC h(s) RETURN s` handed a string-tagged parameter returns a string,
     // even though the name carries no $ and the body has no literal. Without
@@ -3935,6 +3985,11 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                                 return JD_TAG_ARR;
                             }
                         }
+                        // BF_DATE outranks the table's Str: the signature
+                        // records what the ISO-string form answered, the flag
+                        // records that the value is a date, and a date is
+                        // epoch seconds.
+                        if (builtin_returns_date(upper)) return JD_TAG_DATE;
                         switch (builtin_ret(upper)) {
                             case BuiltinRet::Arr:  return JD_TAG_ARR;
                             case BuiltinRet::Bool: return JD_TAG_BOOL;
@@ -7405,7 +7460,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                 auto& set_fn = runtime_funcs["__map_set_str"];
                 LLVMValueRef args[] = { obj_ptr, field_str, val_tv.val };
                 LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
-            } else if (val_tv.tag == JD_TAG_ARR || val_tv.tag == JD_TAG_NATIVE_MAP || val_tv.tag == JD_TAG_VM_HANDLE) {
+            } else if (val_tv.tag == JD_TAG_ARR || val_tv.tag == JD_TAG_NATIVE_MAP || val_tv.tag == JD_TAG_VM_HANDLE || val_tv.tag == JD_TAG_DATE) {
                 // Preserve ptr-like tag (array, map, VM handle) so the
                 // tagged getter can return the right type identity. For
                 // VM_HANDLE specifically we promote the handle to a
@@ -7579,7 +7634,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             auto& fn = runtime_funcs["__map_set_str"];
             LLVMValueRef args[] = { arr_ptr, idx_tv.val, val_tv.val };
             LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "");
-        } else if (val_tv.tag == JD_TAG_ARR || val_tv.tag == JD_TAG_NATIVE_MAP || val_tv.tag == JD_TAG_VM_HANDLE) {
+        } else if (val_tv.tag == JD_TAG_ARR || val_tv.tag == JD_TAG_NATIVE_MAP || val_tv.tag == JD_TAG_VM_HANDLE || val_tv.tag == JD_TAG_DATE) {
             LLVMValueRef fv;
             if (val_tv.tag == JD_TAG_VM_HANDLE) {
                 auto* prom = get_runtime_func("__jdrt_promote_handle");
@@ -7762,6 +7817,14 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
         } else if (tv.tag == JD_TAG_I64) {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_int.fn_type, pr_int.fn, args, 1, "");
+        } else if (tv.tag == JD_TAG_DATE) {
+            // Epoch seconds, so the double printer would show the number.
+            auto& fd = runtime_funcs["__format_date_num"];
+            LLVMValueRef fargs[] = { tv.val, LLVMConstNull(i8_ptr_type),
+                LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
+            LLVMValueRef ds = LLVMBuildCall2(builder, fd.fn_type, fd.fn, fargs, 3, "dprt");
+            LLVMValueRef args[] = { ds };
+            LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
         } else if (jd_is_f64_tag(tv.tag)) {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_double.fn_type, pr_double.fn, args, 1, "");
@@ -8521,6 +8584,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             bool has_ptr_elems = false;
             bool has_string_elems = false;
             bool all_bool_elems = !expr.args.empty();
+            bool all_date_elems = !expr.args.empty();
             // Pre-scan: any INDEX-typed element forces tagged storage so
             // each cell carries its own JdTag and arr[i] reads can recover
             // the real type at runtime instead of statically guessing. A
@@ -8586,6 +8650,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 for (size_t i = 0; i < elems.size(); i++) {
                     TypedValue elem = elems[i];
                     if (elem.tag != JD_TAG_BOOL) all_bool_elems = false;
+                    if (elem.tag != JD_TAG_DATE) all_date_elems = false;
                     LLVMValueRef fval = elem.val;
                     int store_tag = elem.tag;
                     if (elem.tag == JD_TAG_I64 || elem.tag == JD_TAG_BOOL) {
@@ -8653,6 +8718,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     if (set_bool) {
                         LLVMValueRef sb[] = { arr };
                         LLVMBuildCall2(builder, set_bool->fn_type, set_bool->fn, sb, 1, "");
+                    }
+                } else if (all_date_elems) {
+                    auto* set_date = get_runtime_func("__arr_set_date_elems");
+                    if (set_date) {
+                        LLVMValueRef sd[] = { arr };
+                        LLVMBuildCall2(builder, set_date->fn_type, set_date->fn, sd, 1, "");
                     }
                 }
             }
@@ -9647,6 +9718,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_s");
                 return { as_ptr, JD_TAG_STR };
             }
+            // Every cell a date: the double is the epoch, it only needs the tag.
+            if (expr.left && expr.left->kind == ExprKind::VARIABLE &&
+                date_array_vars.count(expr.left->str_val)) {
+                return { result, JD_TAG_DATE };
+            }
             // Map-bearing array: decode the punned-f64 back to a JdbMap* and
             // return tag=4 so subsequent `q{"k"} = v` mutates the shared map.
             if (expr.left && expr.left->kind == ExprKind::VARIABLE &&
@@ -10523,6 +10599,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     // Tag 7 (runtime-tagged) must be materialised to f64 before arithmetic.
     if (lhs.tag == JD_TAG_RUNTIME) { lhs.val = coerce_to(lhs, f64_type); lhs.tag = JD_TAG_F64; }
     if (rhs.tag == JD_TAG_RUNTIME) { rhs.val = coerce_to(rhs, f64_type); rhs.tag = JD_TAG_F64; }
+    // Adding or subtracting seconds leaves a date a date; the difference of
+    // two is a duration, and so is every other operator over one. Read
+    // before promote_to_f64 below rewrites both tags to F64.
+    const bool lhs_date = lhs.tag == JD_TAG_DATE;
+    const bool rhs_date = rhs.tag == JD_TAG_DATE;
+    const int add_tag = (lhs_date != rhs_date) ? JD_TAG_DATE : JD_TAG_F64;
+    const int sub_tag = (lhs_date && !rhs_date) ? JD_TAG_DATE : JD_TAG_F64;
     bool use_float = (jd_is_f64_tag(lhs.tag) || jd_is_f64_tag(rhs.tag));
     // BASIC `/` is always float division (vs `\` which is integer);
     // `^` (power) also returns float even on integer inputs.
@@ -10555,8 +10638,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
 
     if (use_float) {
         switch (expr.op) {
-            case TokenType::PLUS:  return { LLVMBuildFAdd(builder, lhs.val, rhs.val, "fadd"), JD_TAG_F64 };
-            case TokenType::MINUS: return { LLVMBuildFSub(builder, lhs.val, rhs.val, "fsub"), JD_TAG_F64 };
+            case TokenType::PLUS:  return { LLVMBuildFAdd(builder, lhs.val, rhs.val, "fadd"), add_tag };
+            case TokenType::MINUS: return { LLVMBuildFSub(builder, lhs.val, rhs.val, "fsub"), sub_tag };
             case TokenType::STAR:  return { LLVMBuildFMul(builder, lhs.val, rhs.val, "fmul"), JD_TAG_F64 };
             case TokenType::SLASH: emit_div_zero_check(rhs); return { LLVMBuildFDiv(builder, lhs.val, rhs.val, "fdiv"), JD_TAG_F64 };
             // `\` divides first and truncates the quotient toward zero, which
@@ -12769,15 +12852,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { av.val };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "cvda"), JD_TAG_ARR };
         }
-        if (av.tag == JD_TAG_I64 || jd_is_f64_tag(av.tag)) {
-            auto& fn = runtime_funcs["__cvdate_num"];
-            LLVMValueRef args[] = { coerce_to(av, f64_type) };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "cvdn"), JD_TAG_STR };
-        }
+        // A number already is the epoch the date wants; it only needs saying
+        // that it is one.
+        if (av.tag == JD_TAG_I64 || jd_is_f64_tag(av.tag))
+            return { coerce_to(av, f64_type), JD_TAG_DATE };
         // String / fallback
         auto& fn = runtime_funcs["CVDATE"];
         LLVMValueRef args[] = { coerce_to(av, i8_ptr_type) };
-        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "cvds"), JD_TAG_STR };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "cvds"), JD_TAG_DATE };
     }
 
     // ROUND(x, places) → native 2-arg form
@@ -13163,6 +13245,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // An element read asks for the cell's own tag instead.
         ScopedLeafTag _tof_lt(this, expr.args[0]->kind == ExprKind::INDEX ? JD_TAG_RUNTIME : -1);
         TypedValue av = codegen_expr(*expr.args[0]);
+        // The tag on the value, which beats the guesses above: those read the
+        // name of the producing call, so a variable passing the value on lost
+        // the answer.
+        if (av.tag == JD_TAG_DATE) {
+            return { LLVMBuildGlobalStringPtr(builder, "DATE", ".tof"), JD_TAG_STR };
+        }
         // f64 values may be the NaN sentinel from EXITFUNC - dispatch at runtime.
         if (jd_is_f64_tag(av.tag)) {
             auto& fn = runtime_funcs["__typeof_f64"];
@@ -13236,6 +13324,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return LLVMBuildCall2(builder, cv.fn_type, cv.fn, one, 1, "epoch2iso");
         }
         return coerce_to(av, i8_ptr_type);
+    };
+
+    // The same argument as epoch seconds: a date and a number already are
+    // one, text has to be parsed.
+    auto date_num_arg = [&](TypedValue av) -> LLVMValueRef {
+        if (av.tag == JD_TAG_STR) {
+            auto& cv = runtime_funcs["CVDATE"];
+            LLVMValueRef one[] = { av.val };
+            return LLVMBuildCall2(builder, cv.fn_type, cv.fn, one, 1, "iso2epoch");
+        }
+        return coerce_to(av, f64_type);
     };
 
     // SORT(array, descending)
@@ -13332,8 +13431,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& fn = runtime_funcs["DATEDIFF"];
             LLVMValueRef args[] = {
                 coerce_to(p, i8_ptr_type),
-                date_str_arg(d1),
-                date_str_arg(d2)
+                date_num_arg(d1),
+                date_num_arg(d2)
             };
             LLVMValueRef dd = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "dd");
             emit_err_code_branch();
@@ -13351,11 +13450,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = {
                 coerce_to(p, i8_ptr_type),
                 coerce_to(n, f64_type),
-                date_str_arg(dv)
+                date_num_arg(dv)
             };
             LLVMValueRef da = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "da");
             emit_err_code_branch();
-            return { da, JD_TAG_STR };
+            return { da, JD_TAG_DATE };
         }
     }
 
@@ -14158,6 +14257,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_obj"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmobj");
                 return { result, JD_TAG_VM_HANDLE };
+            } else if (builtin_returns_date(upper)) {
+                // The signature says Str because that is what the ISO-string
+                // form answered. A date rides the f64 variant as its epoch,
+                // which is what the bridge hands back for a DATE Value.
+                auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
+                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmdate");
+                return { result, JD_TAG_DATE };
             } else if (is_string_fn) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_str"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
@@ -15241,6 +15347,22 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
                 LLVMValueRef bstr = LLVMBuildCall2(builder, b2s->fn_type, b2s->fn, &tv.val, 1, "b2s");
                 fstr = LLVMBuildSelect(builder, is_bool_s, bstr, fstr, "str_oth");
             }
+            // A date renders as its wall clock rather than as its epoch.
+            // A date renders as its wall clock rather than as its epoch. A
+            // select evaluates both arms, so the formatter is handed epoch 0
+            // unless the cell really is a date: on a cell that holds a
+            // pointer, the punned bits are an epoch no calendar can answer
+            // and the error it raises escapes the enclosing TRY.
+            if (auto* fdn = get_runtime_func("__format_date_num")) {
+                LLVMValueRef is_date_s = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_DATE, 0), "str_isdate");
+                LLVMValueRef safe_epoch = LLVMBuildSelect(builder, is_date_s, f_pun,
+                    LLVMConstReal(f64_type, 0.0), "str_date_in");
+                LLVMValueRef dargs[] = { safe_epoch, LLVMConstNull(i8_ptr_type),
+                    LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
+                LLVMValueRef dstr = LLVMBuildCall2(builder, fdn->fn_type, fdn->fn, dargs, 3, "d2s");
+                fstr = LLVMBuildSelect(builder, is_date_s, dstr, fstr, "str_date");
+            }
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_other_end = LLVMGetInsertBlock(builder);
 
@@ -15326,6 +15448,16 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
     }
     if (target == i8_ptr_type) {
         if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_BOOL) return LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "itoptr");
+        // Text wanted from a date is its wall clock, the way the interpreter
+        // reads one. Punning the epoch bits as a pointer is the shape that
+        // segfaulted LEFT$(a_date, 10).
+        if (tv.tag == JD_TAG_DATE) {
+            if (auto* fdn = get_runtime_func("__format_date_num")) {
+                LLVMValueRef args[] = { tv.val, LLVMConstNull(i8_ptr_type),
+                    LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
+                return LLVMBuildCall2(builder, fdn->fn_type, fdn->fn, args, 3, "dt2s");
+            }
+        }
         if (jd_is_f64_tag(tv.tag)) {
             LLVMValueRef as_i64 = pun_f64_to_i64(tv.val);
             return LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "ftoptr");
@@ -15417,6 +15549,14 @@ LLVMCodegen::TypedValue LLVMCodegen::coerce_to_tag(TypedValue tv, int target_tag
 
 LLVMValueRef LLVMCodegen::to_string_ptr(TypedValue tv) {
     if (tv.tag == JD_TAG_STR) return tv.val;  // already a string ptr
+    if (tv.tag == JD_TAG_DATE) {
+        auto* fd = get_runtime_func("__format_date_num");
+        if (fd) {
+            LLVMValueRef args[] = { tv.val, LLVMConstNull(i8_ptr_type),
+                LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
+            return LLVMBuildCall2(builder, fd->fn_type, fd->fn, args, 3, "d2s");
+        }
+    }
     if (tv.tag == JD_TAG_I64 || jd_is_f64_tag(tv.tag)) {
         LLVMValueRef d = (tv.tag == JD_TAG_I64)
             ? LLVMBuildSIToFP(builder, tv.val, f64_type, "itof") : tv.val;

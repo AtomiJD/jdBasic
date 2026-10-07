@@ -22,20 +22,16 @@ FOR k = 1 TO 364
 
     ' Elapsed hours are 24 except on the two days the clocks move, where
     ' they are 23 or 25, and subtracting the two dates says the same.
-    ' Natively a date is an ISO string with no tag, so one date minus
-    ' another answers 0 - trakr #493, which waits on #491 and #492.
     DIM hrs = DATEDIFF("H", cur, nxt)
     IF hrs <> 24 THEN moved = moved + 1
     IF hrs <> 23 ANDALSO hrs <> 24 ANDALSO hrs <> 25 THEN
         bad = bad + 1
         PRINT "diff H "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; hrs
     ENDIF
-    IF OS.FEATURE("INTERPRETER") THEN
-        IF CLNG(nxt - cur) <> CLNG(hrs * 3600) THEN
-            bad = bad + 1
-            PRINT "subtract vs diff H "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; _
-                  CLNG(nxt - cur); " vs "; CLNG(hrs * 3600)
-        ENDIF
+    IF CLNG(nxt - cur) <> CLNG(hrs * 3600) THEN
+        bad = bad + 1
+        PRINT "subtract vs diff H "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; _
+              CLNG(nxt - cur); " vs "; CLNG(hrs * 3600)
     ENDIF
 
     ' Adding elapsed hours and adding a calendar day agree on every other day
@@ -48,18 +44,14 @@ FOR k = 1 TO 364
         ENDIF
     ENDIF
 
-    ' A plain number added to a date is elapsed seconds and keeps the type.
-    ' Natively a date is an ISO string with no tag, so the number is
-    ' appended to the text instead - trakr #493, which waits on #491, #492.
-    IF OS.FEATURE("INTERPRETER") THEN
-        IF CLNG(DATEADD("S", 90, cur)) <> CLNG(cur + 90) THEN
-            bad = bad + 1
-            PRINT "plus 90 "; FORMAT_DATE(cur, "%Y-%m-%d")
-        ENDIF
-        IF TYPEOF(cur + 90) <> "DATE" THEN
-            bad = bad + 1
-            PRINT "plus type "; TYPEOF(cur + 90)
-        ENDIF
+    ' A plain number added to a date is elapsed seconds and keeps the type
+    IF CLNG(DATEADD("S", 90, cur)) <> CLNG(cur + 90) THEN
+        bad = bad + 1
+        PRINT "plus 90 "; FORMAT_DATE(cur, "%Y-%m-%d")
+    ENDIF
+    IF TYPEOF(cur + 90) <> "DATE" THEN
+        bad = bad + 1
+        PRINT "plus type "; TYPEOF(cur + 90)
     ENDIF
 
     cur = nxt
@@ -74,18 +66,13 @@ ENDIF
 
 ' The difference of two dates is a duration, not a date
 DIM span = CDATE("2026-03-30 12:00:00") - CDATE("2026-03-28 12:00:00")
-IF OS.FEATURE("INTERPRETER") THEN
-    IF TYPEOF(span) <> "FLOAT64" THEN
-        bad = bad + 1
-        PRINT "span type "; TYPEOF(span)
-    ENDIF
-ELSE
-    ' Natively a date is an ISO string with no tag, so the two concatenate
-    ' instead of subtracting - trakr #493, which waits on #491 and #492
-    IF TYPEOF(span) <> "STRING" THEN
-        bad = bad + 1
-        PRINT "span type "; TYPEOF(span)
-    ENDIF
+IF TYPEOF(span) <> "FLOAT64" THEN
+    bad = bad + 1
+    PRINT "span type "; TYPEOF(span)
+ENDIF
+IF CLNG(span) <> CLNG(DATEDIFF("S", CDATE("2026-03-28 12:00:00"), CDATE("2026-03-30 12:00:00"))) THEN
+    bad = bad + 1
+    PRINT "span seconds "; CLNG(span)
 ENDIF
 
 PRINT "last "; FORMAT_DATE(cur, "%Y-%m-%d %H:%M:%S"); "  clock changes "; moved
