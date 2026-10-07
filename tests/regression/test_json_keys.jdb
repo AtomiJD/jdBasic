@@ -1,0 +1,63 @@
+' An object key is a string and carries the same escapes a value does: a
+' Windows path, a quote, a newline and a \u sequence all have to survive
+' STRINGIFY and PARSE. The key reader used to copy bytes up to the next
+' quote, so every escape stayed in the key and a key holding a quote ended
+' in the middle.
+DIM bad = 0
+
+SUB CheckKey(label$, key$)
+    DIM m AS MAP
+    m{key$} = 1
+    DIM back = JSON.PARSE$(JSON.STRINGIFY$(m))
+    DIM ks = MAP.KEYS(back)
+    IF LEN(ks) <> 1 THEN
+        bad = bad + 1
+        PRINT label$; ": "; LEN(ks); " keys"
+        EXITSUB
+    ENDIF
+    IF ks[0] <> key$ THEN
+        bad = bad + 1
+        PRINT label$; ": got "; ks[0]
+    ENDIF
+    IF back{key$} <> 1 THEN
+        bad = bad + 1
+        PRINT label$; ": value not reachable under its own key"
+    ENDIF
+ENDSUB
+
+CheckKey("backslashes", "C:\a\b")
+CheckKey("quote", "say " + CHR$(34) + "hi" + CHR$(34))
+CheckKey("newline", "one" + CHR$(10) + "two")
+CheckKey("tab", "a" + CHR$(9) + "b")
+CheckKey("plain", "ordinary")
+
+' A value keeps working the same way
+DIM v AS MAP
+v{"p"} = "C:\x\y"
+DIM vback = JSON.PARSE$(JSON.STRINGIFY$(v))
+IF vback{"p"} <> "C:\x\y" THEN
+    bad = bad + 1
+    PRINT "value: got "; vback{"p"}
+ENDIF
+
+' Escapes a reader hands over directly, not only ones STRINGIFY wrote
+DIM lit = JSON.PARSE$("{" + CHR$(34) + "a\\b" + CHR$(34) + ": " + CHR$(34) + "v\\w" + CHR$(34) + "}")
+DIM lk = MAP.KEYS(lit)
+IF lk[0] <> "a\b" THEN
+    bad = bad + 1
+    PRINT "literal key: got "; lk[0]
+ENDIF
+IF lit{"a\b"} <> "v\w" THEN
+    bad = bad + 1
+    PRINT "literal value: got "; lit{"a\b"}
+ENDIF
+
+' \uXXXX in a key
+DIM uni = JSON.PARSE$("{" + CHR$(34) + "e\u20ac" + CHR$(34) + ": 7}")
+DIM uk = MAP.KEYS(uni)
+IF uk[0] <> "e" + CHR$(8364) THEN
+    bad = bad + 1
+    PRINT "unicode key: got "; uk[0]
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

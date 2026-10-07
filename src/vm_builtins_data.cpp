@@ -212,49 +212,57 @@ void VM::register_data_builtins() {
         }
         auto skip_ws = [&]() { while (p < s.size() && std::isspace((unsigned char)s[p])) p++; };
 
+        // A JSON string from the opening quote through the closing one. Object
+        // keys read through this too: they are strings and carry the same
+        // escapes, and a key holding a quote ends where the escape says, not
+        // at the first quote byte.
+        auto parse_string = [&]() -> std::string {
+            p++; std::string r;
+            while (p < s.size() && s[p] != '"') {
+                if (s[p] == '\\' && p+1 < s.size()) {
+                    p++;
+                    switch(s[p]) {
+                        case 'n': r += '\n'; break;
+                        case 't': r += '\t'; break;
+                        case 'r': r += '\r'; break;
+                        case 'b': r += '\b'; break;
+                        case 'f': r += '\f'; break;
+                        case '/': r += '/'; break;
+                        case '\\': r += '\\'; break;
+                        case '"': r += '"'; break;
+                        case 'u': {
+                            // \uXXXX → UTF-8
+                            if (p + 4 < s.size()) {
+                                std::string hex = s.substr(p+1, 4);
+                                unsigned int cp = 0;
+                                for (char h : hex) {
+                                    cp <<= 4;
+                                    if (h >= '0' && h <= '9') cp |= (h - '0');
+                                    else if (h >= 'a' && h <= 'f') cp |= (h - 'a' + 10);
+                                    else if (h >= 'A' && h <= 'F') cp |= (h - 'A' + 10);
+                                }
+                                p += 4;
+                                if (cp < 0x80) { r += (char)cp; }
+                                else if (cp < 0x800) { r += (char)(0xC0 | (cp >> 6)); r += (char)(0x80 | (cp & 0x3F)); }
+                                else { r += (char)(0xE0 | (cp >> 12)); r += (char)(0x80 | ((cp >> 6) & 0x3F)); r += (char)(0x80 | (cp & 0x3F)); }
+                            } else { r += s[p]; }
+                            break;
+                        }
+                        default: r += s[p];
+                    }
+                }
+                else r += s[p];
+                p++;
+            }
+            if (p < s.size()) p++;
+            return r;
+        };
+
         std::function<Value()> parse_value = [&]() -> Value {
             skip_ws();
             if (p >= s.size()) return Value::make_none();
             char c = s[p];
-            if (c == '"') {
-                p++; std::string r;
-                while (p < s.size() && s[p] != '"') {
-                    if (s[p] == '\\' && p+1 < s.size()) {
-                        p++;
-                        switch(s[p]) {
-                            case 'n': r += '\n'; break;
-                            case 't': r += '\t'; break;
-                            case 'r': r += '\r'; break;
-                            case '/': r += '/'; break;
-                            case '\\': r += '\\'; break;
-                            case '"': r += '"'; break;
-                            case 'u': {
-                                // \uXXXX → UTF-8
-                                if (p + 4 < s.size()) {
-                                    std::string hex = s.substr(p+1, 4);
-                                    unsigned int cp = 0;
-                                    for (char h : hex) {
-                                        cp <<= 4;
-                                        if (h >= '0' && h <= '9') cp |= (h - '0');
-                                        else if (h >= 'a' && h <= 'f') cp |= (h - 'a' + 10);
-                                        else if (h >= 'A' && h <= 'F') cp |= (h - 'A' + 10);
-                                    }
-                                    p += 4;
-                                    if (cp < 0x80) { r += (char)cp; }
-                                    else if (cp < 0x800) { r += (char)(0xC0 | (cp >> 6)); r += (char)(0x80 | (cp & 0x3F)); }
-                                    else { r += (char)(0xE0 | (cp >> 12)); r += (char)(0x80 | ((cp >> 6) & 0x3F)); r += (char)(0x80 | (cp & 0x3F)); }
-                                } else { r += s[p]; }
-                                break;
-                            }
-                            default: r += s[p];
-                        }
-                    }
-                    else r += s[p];
-                    p++;
-                }
-                if (p < s.size()) p++;
-                return Value::make_string(r);
-            }
+            if (c == '"') return Value::make_string(parse_string());
             if (c == '{') {
                 p++;
                 Value m = Value::make_object();
@@ -264,9 +272,7 @@ void VM::register_data_builtins() {
                 while (p < s.size()) {
                     skip_ws();
                     if (s[p] != '"') break;
-                    p++; std::string key;
-                    while (p < s.size() && s[p] != '"') { key += s[p++]; }
-                    if (p < s.size()) p++;
+                    std::string key = parse_string();
                     skip_ws(); if (p < s.size() && s[p] == ':') p++;
                     o->set(key, parse_value());
                     skip_ws(); if (p < s.size() && s[p] == ',') p++; else break;
