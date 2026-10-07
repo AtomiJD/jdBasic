@@ -37,7 +37,41 @@ PRINT JOIN(XLSX.SHEETS("sales.xlsx"), ", ")
 | `WRITE(path$, wb)` | Writes the file; returns the number of archive parts. |
 | `READ(path$)` | Every sheet as a 2D array, keyed by sheet name. |
 | `SHEETS(path$)` | The sheet names in workbook order. |
+| `EDIT(path$)` | Opens a workbook that exists, for changing single cells. See **Editing**. |
+| `SETCELL(h, sheet$, ref$, value)` | Writes one cell of an opened workbook. |
+| `SAVEAS(h, path$)` | Writes the opened workbook back; returns the number of archive parts. |
 | `COL_INDEX(letters$)` / `COL_LETTERS$(index)` | `"AA"` is 27 and back. |
+
+## Editing
+
+`READ` answers values and `WRITE` builds an archive from scratch, so reading a
+workbook, changing a number and writing it back keeps the numbers and nothing
+else: formulas, fills, column widths, charts and every sheet the caller did
+not rebuild are gone, because the new archive was never told about them.
+
+`EDIT` keeps the archive instead and patches only the cells asked for, so the
+parts it never looks at travel unchanged.
+
+```basic
+DIM h = XLSX.EDIT("report.xlsx")
+XLSX.SETCELL(h, "Sales", "B2", 99)
+XLSX.SETCELL(h, "Sales", "D2", "=B2*C2")
+XLSX.SETCELL(h, "Sales", "A9", "a new row")
+XLSX.SAVEAS(h, "report.xlsx")
+```
+
+A number, a boolean and `NONE` write as themselves; text writes as an inline
+string, which leaves `sharedStrings.xml` and its counts alone; text that
+starts with `=` writes a formula. A cell keeps its own style, so a value set
+into a filled, formatted cell still looks the way the sheet was designed.
+Setting a value on a formula cell drops the formula - that is what asking for
+a literal there means. A cell or a row that is not in the sheet yet is
+created in order, which Excel requires. A sheet name that is not in the
+workbook throws.
+
+What `EDIT` does not do: add or remove sheets, change a style, or recalculate
+anything. A formula cell it writes carries no cached value, so a reader that
+does not calculate shows it empty until Excel opens the file.
 
 ## Cells
 

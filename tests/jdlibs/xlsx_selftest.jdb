@@ -17,6 +17,11 @@ FUNC CellStyle(xml$, ref$)
     RETURN VAL(MID$(xml$, at + LEN(ref$) + 11))
 ENDFUNC
 
+FUNC MissingSheet(h)
+    XLSX.SETCELL(h, "Nope", "A1", 1)
+    RETURN 0
+ENDFUNC
+
 FUNC BadRef(sheet)
     XLSX.STYLE(sheet, "77", {"fill": "FFFFFF"})
     RETURN 0
@@ -125,5 +130,71 @@ IF FILE.EXISTS(fixture$) THEN
 ELSE
     TESTKIT.SKIP("fixture not found")
 ENDIF
+
+TESTKIT.SUITE("editing a workbook that exists")
+
+' READ answers values and WRITE builds from scratch, so reading a workbook,
+' changing a number and writing it back used to drop every formula, fill and
+' column width. EDIT keeps the archive and patches only what is asked for.
+DIM ed_path$ = work$ + "/edit.xlsx"
+DIM ed_wb = XLSX.NEW()
+DIM ed_sheet = XLSX.SHEET(ed_wb, "Sales", [ _
+    ["Item", "Qty", "Price", "Total"], _
+    ["Bolt", 40, 0.15, "=B2*C2"], _
+    ["Nut", 12, 0.05, "=B3*C3"]])
+XLSX.COLUMN(ed_sheet, "A", {"width": 24})
+XLSX.COLUMN(ed_sheet, "C", {"width": 12, "format": "#,##0.00"})
+XLSX.STYLE(ed_sheet, "A2", {"fill": "FFE08A", "bold": TRUE})
+XLSX.FREEZE(ed_sheet, 1)
+DIM ed_notes = XLSX.SHEET(ed_wb, "Notes", [["note"], ["keep me"]])
+XLSX.WRITE(ed_path$, ed_wb)
+DIM ed_style_before = CellStyle(ZIP.READ(ed_path$){"xl/worksheets/sheet1.xml"}, "A2")
+
+DIM ed_out$ = work$ + "/edited.xlsx"
+DIM ed_h = XLSX.EDIT(ed_path$)
+XLSX.SETCELL(ed_h, "Sales", "B2", 99)
+XLSX.SETCELL(ed_h, "Sales", "A2", "Bolt M6")
+XLSX.SETCELL(ed_h, "Sales", "E1", "Extra")
+XLSX.SETCELL(ed_h, "Sales", "A5", 5)
+XLSX.SETCELL(ed_h, "Sales", "A4", 4)
+XLSX.SETCELL(ed_h, "Sales", "D4", "=A4+A5")
+TESTKIT.EQ(XLSX.SAVEAS(ed_h, ed_out$), 8, "the archive keeps its eight entries")
+
+DIM ed_parts = ZIP.READ(ed_out$)
+DIM ed_xml$ = ed_parts{"xl/worksheets/sheet1.xml"}
+TESTKIT.EQ(LEN(REGEX.FINDALL("<f>", ed_xml$)), 3, "the two formulas survive and the new one is there")
+TESTKIT.EQ(LEN(REGEX.FINDALL("<col ", ed_xml$)), 2, "both column widths survive")
+TESTKIT.EQ(LEN(REGEX.FINDALL("<patternFill", ed_parts{"xl/styles.xml"})), 3, "the fill survives")
+TESTKIT.ISTRUE(INSTR(ed_xml$, "<pane") >= 0, "the frozen pane survives")
+TESTKIT.EQ(CellStyle(ed_xml$, "A2"), ed_style_before, "a patched cell keeps its own style")
+
+DIM ed_book = XLSX.READ(ed_out$)
+DIM ed_rows = ed_book{"Sales"}
+TESTKIT.EQ(ed_rows[1][1], 99, "the number changed")
+TESTKIT.EQ(ed_rows[1][0], "Bolt M6", "and so did the text")
+TESTKIT.EQ(ed_rows[0][0], "Item", "an untouched cell is untouched")
+TESTKIT.EQ(ed_rows[0][4], "Extra", "a cell added to an existing row")
+TESTKIT.EQ(ed_rows[3][0], 4, "a row added before a later one")
+TESTKIT.EQ(ed_rows[4][0], 5, "and the later one is still there")
+TESTKIT.EQ(ed_book{"Notes"}[1][0], "keep me", "a sheet never touched keeps its cells")
+TESTKIT.EQ(JOIN(XLSX.SHEETS(ed_out$), ","), "Sales,Notes", "both sheets, in order")
+
+' Excel wants rows and cells in ascending order, whatever order they were set
+DIM ed_rownos = REGEX.FINDALL("<row\b[^>]*\br=" + CHR$(34) + "([0-9]+)" + CHR$(34), ed_xml$)
+DIM ed_seq$ = ""
+DIM ed_i = 0
+FOR ed_i = 0 TO LEN(ed_rownos) - 1
+    ed_seq$ = ed_seq$ + ed_rownos[ed_i][0] + " "
+NEXT ed_i
+TESTKIT.EQ(TRIM$(ed_seq$), "1 2 3 4 5", "rows stay in ascending order")
+DIM ed_cells = REGEX.FINDALL("<c\s+r=" + CHR$(34) + "([A-Z]+)1" + CHR$(34), ed_xml$)
+DIM ed_cseq$ = ""
+FOR ed_i = 0 TO LEN(ed_cells) - 1
+    ed_cseq$ = ed_cseq$ + ed_cells[ed_i][0] + " "
+NEXT ed_i
+TESTKIT.EQ(TRIM$(ed_cseq$), "A B C D E", "cells in a row stay in column order")
+
+' A sheet that is not there is an error, not a silent no-op
+TESTKIT.THROWS(MissingSheet@, ed_h, "SETCELL on a sheet that is not there throws")
 
 PRINT TESTKIT.REPORT()

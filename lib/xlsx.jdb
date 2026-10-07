@@ -537,3 +537,177 @@ FUNC CellValue(attrs$, inner$, strings)
     IF t$ = "str" OR t$ = "e" THEN RETURN Unescape$(raw$)
     RETURN VAL(raw$)
 ENDFUNC
+
+' ── editing a workbook that already exists ───────────────────
+' READ answers values and WRITE builds an archive from scratch, so reading a
+' workbook, changing a number and writing it back loses everything this
+' module does not model: formulas, fills, column widths, charts, and every
+' sheet the caller did not rebuild. EDIT keeps the archive and patches only
+' the cells asked for, so the parts it never looks at travel unchanged.
+'
+'   DIM h = XLSX.EDIT("report.xlsx")
+'   XLSX.SETCELL(h, "Sales", "B2", 99)
+'   XLSX.SETCELL(h, "Sales", "D2", "=B2*C2")
+'   XLSX.SAVEAS(h, "report.xlsx")
+'
+' A number, a boolean and NONE write as themselves; text writes as an inline
+' string, which keeps sharedStrings.xml and its counts untouched; text that
+' starts with = writes a formula. The cell keeps its style, so a value set
+' into a filled, formatted cell still looks the way the sheet was designed.
+' Setting a value on a formula cell drops the formula - that is what asking
+' for a literal there means.
+
+EXPORT FUNC EDIT(path$)
+    DIM h AS MAP
+    DIM parts = ZIP.READ(path$)
+    h{"parts"} = parts
+    h{"sheets"} = SheetList(parts)
+    RETURN h
+ENDFUNC
+
+' The archive entry a sheet name points to.
+FUNC EntryOf$(h, sheet$, who$)
+    DIM found = h{"sheets"}
+    DIM i = 0
+    FOR i = 0 TO LEN(found) - 1
+        DIM row = found[i]
+        IF row{"name"} = sheet$ THEN RETURN row{"entry"}
+    NEXT i
+    THROW who$ + ": no sheet named " + sheet$
+ENDFUNC
+
+EXPORT SUB SETCELL(h, sheet$, ref$, value)
+    DIM entry$ = EntryOf$(h, sheet$, "XLSX.SETCELL")
+    ' A chained write (h{"parts"}{entry$} = ...) segfaults compiled, so the
+    ' inner map is taken into a variable first - maps are references, so the
+    ' write reaches the archive either way (trakr #514).
+    DIM parts = h{"parts"}
+    parts{entry$} = PatchCell$(parts{entry$}, UCASE$(TRIM$(ref$)), value)
+ENDSUB
+
+EXPORT FUNC SAVEAS(h, path$)
+    RETURN ZIP.WRITE(path$, h{"parts"})
+ENDFUNC
+
+' The letters and the row number of a reference: "BC12" -> "BC" and 12.
+FUNC RefCol$(ref$)
+    DIM i = 0
+    FOR i = 0 TO LEN(ref$) - 1
+        DIM ch$ = MID$(ref$, i, 1)
+        IF ch$ < "A" ORELSE ch$ > "Z" THEN RETURN LEFT$(ref$, i)
+    NEXT i
+    RETURN ref$
+ENDFUNC
+
+FUNC RefRow(ref$)
+    DIM letters$ = RefCol$(ref$)
+    RETURN CINT(VAL(MID$(ref$, LEN(letters$), LEN(ref$))))
+ENDFUNC
+
+' One cell element, carrying over the style index the sheet already had.
+FUNC CellXml$(ref$, style$, value)
+    DIM head$ = "<c r=" + CHR$(34) + ref$ + CHR$(34) + style$
+    DIM kind$ = TYPEOF(value)
+    IF kind$ = "NONE" THEN RETURN head$ + "/>"
+    IF kind$ = "BOOLEAN" THEN
+        DIM b$ = "0"
+        IF value THEN b$ = "1"
+        RETURN head$ + " t=" + CHR$(34) + "b" + CHR$(34) + "><v>" + b$ + "</v></c>"
+    ENDIF
+    IF kind$ = "STRING" THEN
+        DIM text$ = "" + value
+        IF LEFT$(text$, 1) = "=" THEN
+            RETURN head$ + "><f>" + Escape$(MID$(text$, 1, LEN(text$))) + "</f></c>"
+        ENDIF
+        RETURN head$ + " t=" + CHR$(34) + "inlineStr" + CHR$(34) + "><is><t>" + _
+               Escape$(text$) + "</t></is></c>"
+    ENDIF
+    RETURN head$ + "><v>" + STR$(value) + "</v></c>"
+ENDFUNC
+
+' The sheet XML with one cell replaced, the cell created when it is absent
+' and its row created when that is absent too. Rows and cells stay in order,
+' which Excel requires.
+FUNC PatchCell$(xml$, ref$, value)
+    DIM letters$ = RefCol$(ref$)
+    DIM row_no = RefRow(ref$)
+    IF letters$ = "" ORELSE row_no <= 0 THEN THROW "XLSX.SETCELL: " + ref$ + " is not a cell reference"
+    DIM col_no = COL_INDEX(letters$)
+
+    ' the row this cell belongs to
+    DIM rows = REGEX.FINDALL("<row\b[^>]*\br=" + CHR$(34) + STR$(row_no) + CHR$(34) + "[^>]*>[\s\S]*?</row>", xml$)
+    IF LEN(rows) = 0 THEN
+        DIM fresh$ = "<row r=" + CHR$(34) + STR$(row_no) + CHR$(34) + ">" + _
+                     CellXml$(ref$, "", value) + "</row>"
+        RETURN InsertRow$(xml$, row_no, fresh$)
+    ENDIF
+    DIM row$ = rows[0]
+
+    ' the cell inside it
+    DIM cells = REGEX.FINDALL("<c\s+r=" + CHR$(34) + ref$ + CHR$(34) + "([^>]*?)(?:/>|>[\s\S]*?</c>)", row$)
+    DIM patched$ = ""
+    IF LEN(cells) > 0 THEN
+        DIM whole$ = CellMatch$(row$, ref$)
+        DIM style$ = StyleOf$(cells[0][0])
+        patched$ = REPLACE$(row$, whole$, CellXml$(ref$, style$, value))
+    ELSE
+        patched$ = InsertCell$(row$, col_no, CellXml$(ref$, "", value))
+    ENDIF
+    RETURN REPLACE$(xml$, row$, patched$)
+ENDFUNC
+
+' Only the style attribute survives a rewrite; t and the value are replaced.
+FUNC StyleOf$(attrs$)
+    DIM s$ = AttrOf$(attrs$, "s")
+    IF s$ = "" THEN RETURN ""
+    RETURN " s=" + CHR$(34) + s$ + CHR$(34)
+ENDFUNC
+
+' The whole <c .../> or <c ...>...</c> element for a reference.
+FUNC CellMatch$(row$, ref$)
+    DIM found = REGEX.FINDALL("(<c\s+r=" + CHR$(34) + ref$ + CHR$(34) + "[^>]*?(?:/>|>[\s\S]*?</c>))", row$)
+    IF LEN(found) = 0 THEN RETURN ""
+    RETURN found[0][0]
+ENDFUNC
+
+' A cell put in column order inside a row element.
+FUNC InsertCell$(row$, col_no, cell$)
+    DIM cells = REGEX.FINDALL("<c\s+r=" + CHR$(34) + "([A-Z]+)[0-9]+" + CHR$(34) + "[^>]*?(?:/>|>[\s\S]*?</c>)", row$)
+    DIM i = 0
+    FOR i = 0 TO LEN(cells) - 1
+        IF COL_INDEX(cells[i][0]) > col_no THEN
+            DIM ahead$ = CellMatch2$(row$, cells[i][0])
+            RETURN REPLACE$(row$, ahead$, cell$ + ahead$)
+        ENDIF
+    NEXT i
+    DIM close_at = CINT(INSTR(row$, "</row>"))
+    RETURN LEFT$(row$, close_at) + cell$ + MID$(row$, close_at, LEN(row$))
+ENDFUNC
+
+' The cell element whose reference starts with these letters, in this row.
+FUNC CellMatch2$(row$, letters$)
+    DIM found = REGEX.FINDALL("(<c\s+r=" + CHR$(34) + letters$ + "[0-9]+" + CHR$(34) + "[^>]*?(?:/>|>[\s\S]*?</c>))", row$)
+    IF LEN(found) = 0 THEN RETURN ""
+    RETURN found[0][0]
+ENDFUNC
+
+' A row put in row order inside sheetData.
+FUNC InsertRow$(xml$, row_no, row$)
+    DIM rows = REGEX.FINDALL("<row\b[^>]*\br=" + CHR$(34) + "([0-9]+)" + CHR$(34) + "[^>]*>[\s\S]*?</row>", xml$)
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        IF CINT(VAL(rows[i][0])) > row_no THEN
+            DIM ahead$ = RowMatch$(xml$, rows[i][0])
+            RETURN REPLACE$(xml$, ahead$, row$ + ahead$)
+        ENDIF
+    NEXT i
+    DIM close_at = CINT(INSTR(xml$, "</sheetData>"))
+    IF close_at < 0 THEN THROW "XLSX.SETCELL: the sheet has no sheetData"
+    RETURN LEFT$(xml$, close_at) + row$ + MID$(xml$, close_at, LEN(xml$))
+ENDFUNC
+
+FUNC RowMatch$(xml$, row_no$)
+    DIM found = REGEX.FINDALL("(<row\b[^>]*\br=" + CHR$(34) + row_no$ + CHR$(34) + "[^>]*>[\s\S]*?</row>)", xml$)
+    IF LEN(found) = 0 THEN RETURN ""
+    RETURN found[0][0]
+ENDFUNC

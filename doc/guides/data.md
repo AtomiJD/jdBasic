@@ -475,6 +475,20 @@ DIM book = XLSX.READ("sales.xlsx")
 PRINT book{"Sales"}[1]
 ```
 
+`READ` answers values, so reading a workbook someone else designed, changing a
+number and writing it back with `WRITE` would keep the numbers and drop the
+formulas, fills and column widths - the new file was never told about them.
+To change cells in a workbook that exists, open it instead:
+
+```basic
+DIM h = XLSX.EDIT("report.xlsx")
+XLSX.SETCELL(h, "Sales", "B2", 99)
+XLSX.SAVEAS(h, "report.xlsx")
+```
+
+Everything the module does not touch travels unchanged, including the sheets
+it never looked at.
+
 ### SQLite
 
 A build with the `SQLITE` flag has the `SQL.*` functions; `OS.FEATURE("SQLITE")`
