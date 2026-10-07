@@ -1,0 +1,99 @@
+' Biome tilemap generator: rock, grass, sand, water, deep water
+' Shows all 64 transition tiles in an SDL3 window
+
+FUNC MakeTransitionTile(mask, r1, g1, b1, r2, g2, b2)
+    DIM buf[256]
+    DIM x, y, i = 0
+
+    FOR y = 0 TO 7
+        FOR x = 0 TO 7
+            ' A wider jitter than the two-colour version, so sand and rock
+            ' break up more than a coastline does
+            DIM jx = x + (RND() * 2.5 - 1.25)
+            DIM jy = y + (RND() * 2.5 - 1.25)
+
+            DIM bit = 0
+            IF jx < 4 AND jy < 4 THEN bit = 1
+            IF jx >= 4 AND jy < 4 THEN bit = 2
+            IF jx >= 4 AND jy >= 4 THEN bit = 4
+            IF jx < 4 AND jy >= 4 THEN bit = 8
+
+            DIM isType1 = (mask BAND bit) <> 0
+            DIM noise = INT(RND() * 20) - 10
+
+            IF isType1 THEN
+                buf[i]   = CLAMP(r1 + noise, 0, 255)
+                buf[i+1] = CLAMP(g1 + noise, 0, 255)
+                buf[i+2] = CLAMP(b1 + noise, 0, 255)
+            ELSE
+                buf[i]   = CLAMP(r2 + noise, 0, 255)
+                buf[i+1] = CLAMP(g2 + noise, 0, 255)
+                buf[i+2] = CLAMP(b2 + noise, 0, 255)
+            ENDIF
+
+            buf[i+3] = 255
+            i = i + 4
+        NEXT x
+    NEXT y
+
+    DIM spr = SPRITE.CREATE(8, 8)
+    SPRITE.SETBUFFER spr, buf
+    RETURN spr
+ENDFUNC
+
+' Scale factor 1: the tiles are placed by hand, not by the screen scaler
+SCREEN 1280, 720, "Biome RPG Tile Generator", 1
+
+' Four layers of 16 masks each
+DIM tiles[64]
+DIM s, m
+DIM r1, g1, b1, r2, g2, b2
+
+PRINT "Generating 64 tiles across the biomes..."
+
+FOR s = 0 TO 3
+    IF s = 0 THEN
+        ' rock -> grass
+        r1=110: g1=110: b1=115 : r2=40: g2=150: b2=50
+    ELSEIF s = 1 THEN
+        ' grass -> sand
+        r1=40: g1=150: b1=50   : r2=220: g2=190: b2=110
+    ELSEIF s = 2 THEN
+        ' sand -> water
+        r1=220: g1=190: b1=110 : r2=30: g2=120: b2=210
+    ELSE
+        ' water -> deep water
+        r1=30: g1=120: b1=210  : r2=20: g2=80: b2=160
+    ENDIF
+
+    FOR m = 0 TO 15
+        DIM idx = s * 16 + m
+        tiles[idx] = MakeTransitionTile(m, r1, g1, b1, r2, g2, b2)
+
+        ' One row of 16 per layer
+        DIM px = 40 + m * 75
+        DIM py = 80 + s * 140
+
+        SPRITE.POS tiles[idx], px, py
+        SPRITE.SCALE tiles[idx], 8
+    NEXT m
+NEXT s
+
+PRINT "Press Q in the console window to quit."
+
+DO
+    DRAWCOLOR 20, 20, 25
+    CLS
+
+    SPRITE.DRAW_ALL()
+    SCREENFLIP
+
+    DIM k$ = UCASE$(INKEY$())
+    IF k$ = "Q" THEN EXITDO
+
+    SLEEP 16
+LOOP
+
+FOR m = 0 TO 63
+    SPRITE.DELETE tiles[m]
+NEXT m

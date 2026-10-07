@@ -1,0 +1,76 @@
+' 16-tile transition generator with an SDL3 render loop
+
+FUNC MakeTransitionTile(mask, r1, g1, b1, r2, g2, b2)
+    DIM buf[256]
+    DIM x, y, i = 0
+
+    FOR y = 0 TO 7
+        FOR x = 0 TO 7
+            ' Jitter gives the coastline an organic edge
+            DIM jx = x + (RND() * 2.0 - 1.0)
+            DIM jy = y + (RND() * 2.0 - 1.0)
+
+            DIM bit = 0
+            IF jx < 4 AND jy < 4 THEN bit = 1
+            IF jx >= 4 AND jy < 4 THEN bit = 2
+            IF jx >= 4 AND jy >= 4 THEN bit = 4
+            IF jx < 4 AND jy >= 4 THEN bit = 8
+
+            DIM isType1 = (mask BAND bit) <> 0
+            DIM noise = INT(RND() * 20) - 10
+
+            IF isType1 THEN
+                buf[i]   = CLAMP(r1 + noise, 0, 255)
+                buf[i+1] = CLAMP(g1 + noise, 0, 255)
+                buf[i+2] = CLAMP(b1 + noise, 0, 255)
+            ELSE
+                buf[i]   = CLAMP(r2 + noise, 0, 255)
+                buf[i+1] = CLAMP(g2 + noise, 0, 255)
+                buf[i+2] = CLAMP(b2 + noise, 0, 255)
+            ENDIF
+
+            buf[i+3] = 255
+            i = i + 4
+        NEXT x
+    NEXT y
+
+    DIM spr = SPRITE.CREATE(8, 8)
+    SPRITE.SETBUFFER spr, buf
+    RETURN spr
+ENDFUNC
+
+
+SCREEN 1280, 720, "8x8 Tilemap Generator", 2
+
+' The sprites are kept in an array so they outlive the generating loop
+DIM tiles[16]
+DIM m
+
+FOR m = 0 TO 15
+    tiles[m] = MakeTransitionTile(m, 30, 150, 40, 20, 100, 200)
+
+    DIM gridX = (m MOD 4)
+    DIM gridY = INT(m / 4)
+
+    SPRITE.POS tiles[m], 100 + gridX * 80, 100 + gridY * 80
+
+    ' Factor 8 makes the 8x8 pixels readable at 64x64 on screen
+    SPRITE.SCALE tiles[m], 8
+NEXT m
+
+PRINT "Press Q in the console window to quit."
+
+DO
+    SPRITE.DRAW_ALL()
+    SCREENFLIP
+
+    ' INKEY$ reads the keyboard buffer without blocking
+    DIM k$ = UCASE$(INKEY$())
+    IF k$ = "Q" THEN EXITDO
+
+    SLEEP 16
+LOOP
+
+FOR m = 0 TO 15
+    SPRITE.DELETE tiles[m]
+NEXT

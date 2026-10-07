@@ -1,0 +1,148 @@
+' ImGui live editor for biome tiles, with a spritesheet export
+
+SCREEN 1280, 720, "Biome RPG Tile Generator", 1
+
+DIM noiseLevel = 15
+DIM jitterLevel = 1.25
+DIM detailLevel = 0.02
+
+' GUI.COLOR edits these [R, G, B, A] arrays in place
+DIM cRock  = [110, 110, 115, 255]
+DIM cGrass = [ 40, 150,  50, 255]
+DIM cSand  = [220, 190, 110, 255]
+DIM cWater = [ 30, 120, 210, 255]
+DIM cDeep  = [ 20,  80, 160, 255]
+
+' The 64 sprites are created once and only their buffers change afterwards
+DIM tiles[64]
+DIM s, m
+FOR s = 0 TO 3
+    FOR m = 0 TO 15
+        DIM idx = s * 16 + m
+        tiles[idx] = SPRITE.CREATE(8, 8)
+
+        DIM px = 400 + m * 50
+        DIM py = 80 + s * 50
+        SPRITE.POS tiles[idx], px, py
+        SPRITE.SCALE tiles[idx], 6
+    NEXT m
+NEXT s
+
+SUB UpdateTile(sprId, mask, c1, c2, noise, jitter, detail)
+    DIM buf[256]
+    DIM x, y, i = 0
+
+    FOR y = 0 TO 7
+        FOR x = 0 TO 7
+            DIM jx = x + (RND() * jitter * 2.0 - jitter)
+            DIM jy = y + (RND() * jitter * 2.0 - jitter)
+
+            ' Which of the four quadrants this pixel falls into
+            DIM bit = 0
+            IF jx < 4 AND jy < 4 THEN bit = 1
+            IF jx >= 4 AND jy < 4 THEN bit = 2
+            IF jx >= 4 AND jy >= 4 THEN bit = 4
+            IF jx < 4 AND jy >= 4 THEN bit = 8
+
+            DIM isType1 = (mask BAND bit) <> 0
+            DIM n = INT(RND() * noise * 2) - noise
+
+            DIM r, g, b
+            IF isType1 THEN
+                r = c1[0]: g = c1[1]: b = c1[2]
+            ELSE
+                r = c2[0]: g = c2[1]: b = c2[2]
+            ENDIF
+
+            ' Scattered bright pixels read as flowers, pebbles or foam
+            IF RND() < detail THEN
+                r = r + 50: g = g + 50: b = b + 50
+            ENDIF
+
+            buf[i]   = CLAMP(r + n, 0, 255)
+            buf[i+1] = CLAMP(g + n, 0, 255)
+            buf[i+2] = CLAMP(b + n, 0, 255)
+            buf[i+3] = 255
+            i = i + 4
+        NEXT x
+    NEXT y
+
+    ' Reloading the texture is cheaper than recreating the sprite
+    SPRITE.SETBUFFER sprId, buf
+ENDSUB
+
+SUB RefreshAllTiles()
+    DIM m
+    FOR m = 0 TO 15 : UpdateTile(tiles[m], m, cRock, cGrass, noiseLevel, jitterLevel, detailLevel) : NEXT m
+    FOR m = 0 TO 15 : UpdateTile(tiles[16+m], m, cGrass, cSand, noiseLevel, jitterLevel, detailLevel) : NEXT m
+    FOR m = 0 TO 15 : UpdateTile(tiles[32+m], m, cSand, cWater, noiseLevel, jitterLevel, detailLevel) : NEXT m
+    FOR m = 0 TO 15 : UpdateTile(tiles[48+m], m, cWater, cDeep, noiseLevel, jitterLevel, detailLevel) : NEXT m
+ENDSUB
+
+
+RefreshAllTiles()
+
+PRINT "Live editor started. Press Q to quit."
+
+DO
+    DRAWCOLOR 20, 20, 25
+    CLS
+
+    DIM needsUpdate = FALSE
+
+    IF GUI.BEGIN("Tilemap Editor", 10, 10, 350, 600) THEN
+
+        GUI.TEXT_WRAPPED("Set up the biomes here. The textures are computed live.")
+        GUI.SEPARATOR()
+
+        DIM oldNoise = noiseLevel
+        noiseLevel = GUI.SLIDER("Noise", noiseLevel, 0, 40)
+        IF noiseLevel <> oldNoise THEN needsUpdate = TRUE
+
+        DIM oldJitter = jitterLevel
+        jitterLevel = GUI.SLIDER("Edge jitter", jitterLevel, 0.0, 3.0)
+        IF jitterLevel <> oldJitter THEN needsUpdate = TRUE
+
+        DIM oldDetail = detailLevel
+        detailLevel = GUI.SLIDER("Detail pixels (%)", detailLevel, 0.0, 0.1)
+        IF detailLevel <> oldDetail THEN needsUpdate = TRUE
+
+        GUI.SEPARATOR()
+        GUI.TEXT("Biome colours:")
+
+        ' GUI.COLOR answers TRUE on the frame the colour changed
+        IF GUI.COLOR("Rock", cRock) THEN needsUpdate = TRUE
+        IF GUI.COLOR("Grass", cGrass) THEN needsUpdate = TRUE
+        IF GUI.COLOR("Sand", cSand) THEN needsUpdate = TRUE
+        IF GUI.COLOR("Shallow water", cWater) THEN needsUpdate = TRUE
+        IF GUI.COLOR("Deep water", cDeep) THEN needsUpdate = TRUE
+
+        GUI.SEPARATOR()
+        GUI.DUMMY(0, 20)
+
+        IF GUI.BUTTON("Export spritesheet (PNG)", 320, 40) THEN
+            ' The crop matches the tile grid: 16 columns of 50 by 4 rows of 50
+            GFX.SAVE_SCREENSHOT("rpg_spritesheet.png", 400, 80, 800, 200)
+            PRINT "Spritesheet written to rpg_spritesheet.png"
+        ENDIF
+
+    ENDIF
+    GUI.END()
+
+    IF needsUpdate THEN
+        RefreshAllTiles()
+    ENDIF
+
+    SPRITE.DRAW_ALL()
+    SCREENFLIP
+
+    DIM k$ = UCASE$(INKEY$())
+    IF k$ = "Q" THEN EXITDO
+
+    SLEEP 16
+LOOP
+
+DIM idx
+FOR idx = 0 TO 63
+    SPRITE.DELETE tiles[idx]
+NEXT idx
