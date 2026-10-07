@@ -33,5 +33,8 @@ doc\languages.md is read by jdb_doc at runtime;
 it's looked up next to the EXE first, so no "cwd"
 configuration is required in your MCP client.
 
+Example programs: see examples\README.txt.
+Modules for IMPORT live in lib\ and are found next to the EXE.
+
 Full client-config and tool reference: see doc\MCP.md.
 Source / issues: https://github.com/AtomiJD/jdBasic
