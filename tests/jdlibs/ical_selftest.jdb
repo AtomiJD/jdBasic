@@ -269,4 +269,56 @@ FOR j = 0 TO LEN(reference) - 1
 NEXT j
 TESTKIT.EQ(SameRows$(OccurrenceRows(round_trip, "ical_outlook.ics", range_from, range_to), round_wanted), "", "the Outlook export written and read again keeps every occurrence")
 
+
+TESTKIT.SUITE("floating times")
+
+' A value with neither Z nor a TZID names a wall clock, not an instant
+' (RFC 5545 3.3.5): it reads the same in whatever zone it is read. The
+' module used to answer those components as if they were UTC, so a floating
+' noon and a UTC noon came back as the same instant.
+DIM float_src$ = "BEGIN:VCALENDAR" + CRLF$ + "VERSION:2.0" + CRLF$ + _
+    "BEGIN:VEVENT" + CRLF$ + "UID:float-noon" + CRLF$ + _
+    "SUMMARY:floating noon" + CRLF$ + "DTSTART:20260328T120000" + CRLF$ + _
+    "DTEND:20260328T130000" + CRLF$ + "END:VEVENT" + CRLF$ + _
+    "BEGIN:VEVENT" + CRLF$ + "UID:utc-noon" + CRLF$ + _
+    "SUMMARY:utc noon" + CRLF$ + "DTSTART:20260328T120000Z" + CRLF$ + _
+    "END:VEVENT" + CRLF$ + _
+    "BEGIN:VEVENT" + CRLF$ + "UID:float-weekly" + CRLF$ + _
+    "SUMMARY:floating weekly" + CRLF$ + "DTSTART:20260325T090000" + CRLF$ + _
+    "DTEND:20260325T093000" + CRLF$ + _
+    "RRULE:FREQ=WEEKLY;COUNT=3;BYDAY=WE" + CRLF$ + "END:VEVENT" + CRLF$ + _
+    "END:VCALENDAR"
+DIM fcal = ICAL.PARSE(float_src$)
+DIM fevs = ICAL.EVENTS(fcal)
+TESTKIT.EQ(LEN(fevs), 3, "three events read")
+
+DIM f_noon = fevs[0]
+TESTKIT.EQ(FORMAT_DATE(ICAL.STARTAT(fcal, f_noon), "%Y-%m-%d %H:%M:%S"), _
+           "2026-03-28 12:00:00", "a floating noon is local noon")
+TESTKIT.EQ(ICAL.ENDAT(fcal, f_noon) - ICAL.STARTAT(fcal, f_noon), 3600, _
+           "and its end floats with it")
+
+' A UTC value is still an instant, so it only reads as noon in UTC
+DIM u_noon = fevs[1]
+TESTKIT.EQ(FORMAT_DATE(ICAL.STARTAT(fcal, u_noon), "%Y-%m-%d %H:%M:%S", 0), _
+           "2026-03-28 12:00:00", "a Z value stays UTC")
+TESTKIT.ISTRUE(ICAL.STARTAT(fcal, f_noon) <> ICAL.STARTAT(fcal, u_noon) ORELSE _
+               ABS(DT.LOCAL_OFFSET()) < 0.001, _
+               "floating and UTC are the same instant only where the offset is zero")
+
+' A floating rule recurs on the wall clock: every occurrence reads 09:00
+' locally, including across a clock change. 2026-03-25, 04-01 and 04-08
+' straddle the European change on 03-29.
+DIM f_weekly = fevs[2]
+DIM f_occ = ICAL.OCCURRENCES(fcal, f_weekly, CDBL(CDATE("2026-03-01 00:00:00")), _
+                             CDBL(CDATE("2026-05-01 00:00:00")))
+TESTKIT.EQ(LEN(f_occ), 3, "three floating occurrences")
+DIM f_clocks$ = ""
+DIM fo = 0
+FOR fo = 0 TO LEN(f_occ) - 1
+    f_clocks$ = f_clocks$ + FORMAT_DATE(f_occ[fo], "%H:%M") + " "
+NEXT fo
+TESTKIT.EQ(TRIM$(f_clocks$), "09:00 09:00 09:00", _
+           "a floating rule keeps its wall clock across the clock change")
+
 TESTKIT.REPORT()

@@ -535,12 +535,23 @@ FUNC LocalSecs(value$)
     RETURN days * DAY_SECS + VAL(MID$(v$, 9, 2)) * 3600 + VAL(MID$(v$, 11, 2)) * 60 + VAL(MID$(v$, 13, 2))
 ENDFUNC
 
-' The instant of a value: Z is UTC, a TZID is read in that zone, a date or
-' a floating time counts as UTC.
+' A value with neither Z nor a TZID is floating (RFC 5545 3.3.5): it names a
+' wall clock, not an instant, and means the same reading in whatever zone it
+' is read. LocalSecs answers those components as if they were UTC, so
+' formatting them back in UTC recovers the wall clock and CDATE reads it in
+' the machine's own zone - which is what floating asks for.
+FUNC FloatingInstant(civil_secs)
+    RETURN CDBL(CDATE(FORMAT_DATE(civil_secs, "%Y-%m-%d %H:%M:%S", 0)))
+ENDFUNC
+
+' The instant of a value: Z is UTC, a TZID is read in that zone, a floating
+' time is read locally. A date with no time stays a UTC midnight - all-day
+' components carry no clock to float.
 FUNC InstantOf(cal, value$, tzid$)
     DIM v$ = TRIM$(value$)
     DIM local = LocalSecs(v$)
-    IF LEN(v$) < 15 ORELSE RIGHT$(v$, 1) = "Z" ORELSE tzid$ = "" THEN RETURN local
+    IF LEN(v$) < 15 ORELSE RIGHT$(v$, 1) = "Z" THEN RETURN local
+    IF tzid$ = "" THEN RETURN FloatingInstant(local)
     DIM zone_key$ = ZoneKey$(cal, tzid$)
     RETURN local - ZoneOffsetAt(zone_key$, local, 1)
 ENDFUNC
@@ -955,6 +966,10 @@ FUNC OccurrencesOf(comp, t_from, t_to)
     DIM tzid$ = ParamIn$(start_params$, "TZID")
     DIM zone_key$ = ""
     IF LEN(start_value$) >= 15 ANDALSO RIGHT$(start_value$, 1) <> "Z" ANDALSO tzid$ <> "" THEN zone_key$ = ZoneKey$(cal, tzid$)
+    ' A floating start recurs on the wall clock, so each occurrence is read
+    ' locally the way the start is.
+    DIM is_floating = 0
+    IF LEN(start_value$) >= 15 ANDALSO RIGHT$(start_value$, 1) <> "Z" ANDALSO tzid$ = "" THEN is_floating = 1
     DIM begins = TimeOfProp(comp, "DTSTART")
     DIM length = EndOf(comp) - begins
     DIM start_local = LocalSecs(start_value$)
@@ -979,7 +994,11 @@ FUNC OccurrencesOf(comp, t_from, t_to)
         DIM locals = ExpandLocal(rule$, start_local, t_to + 50400, until_local, 1000000)
         FOR k = 0 TO LEN(locals) - 1
             DIM lk = locals[k]
-            PUSH(starts, lk - ZoneOffsetAt(zone_key$, lk, 1))
+            IF is_floating = 1 THEN
+                PUSH(starts, FloatingInstant(lk))
+            ELSE
+                PUSH(starts, lk - ZoneOffsetAt(zone_key$, lk, 1))
+            ENDIF
         NEXT k
     ENDIF
     ' dates added by RDATE
