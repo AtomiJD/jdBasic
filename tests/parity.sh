@@ -24,6 +24,13 @@
 # while another is fixed leaves the totals unchanged. Re-record the baseline
 # with --update-baseline once a change is understood and intended.
 #
+# A test whose runtime depends on something outside the compiler is recorded
+# at its WORST state, so it can only ever report FIXED and never a false
+# regression. Three are: demos/demo_group_d and demos/dupfinder sit near the
+# timeout under load, and ffi/test_com2 starts Excel over COM - measured at
+# 3 s warm and over 60 s cold, with the default timeout in between, so it
+# flips on nothing but whether Office was already running.
+#
 # Result columns: TEST | INTERP | NATIVE | VERDICT
 #   INTERP/NATIVE: PASS (assert marker) OK (exit 0) FAIL FAIL:<code> TIMEOUT CFAIL
 #   VERDICT:       OK | GAP (interp green, native not) | BOTH_RED | NATIVE_ONLY
