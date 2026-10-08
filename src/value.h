@@ -447,6 +447,8 @@ struct Value {
             case ValueType::FLOAT32: return format_float_locale(f32);
             case ValueType::FLOAT64:
                 if (subtype == ValueSubtype::DATE) {
+                    // A date that was declared and never set has no text.
+                    if (f64 != f64) return std::string();
                     std::time_t t = static_cast<std::time_t>(f64);
                     if (auto* tm = std::localtime(&t)) {
                         char buf[32];

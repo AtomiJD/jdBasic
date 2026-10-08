@@ -7,6 +7,7 @@
 #include <cmath>
 #include <functional>
 #include <algorithm>
+#include <limits>
 
 // Process-global native-slot registry (defined in vm.cpp).
 int jdb_native_slot(const std::string& name);
@@ -781,6 +782,18 @@ void Compiler::compile_let(const Stmt& stmt) {
 }
 
 void Compiler::compile_dim(const Stmt& stmt) {
+    // AS DATE has no VarType of its own; the parser leaves the type name in
+    // the label. The slot holds epoch seconds with the date subtype, so a
+    // CAST to the string VarType would turn it into text and TYPEOF would
+    // answer STRING for a declaration while answering DATE for a plain
+    // assignment. A declaration that sets nothing holds a quiet NaN, which
+    // renders as empty.
+    bool date_typed = false;
+    {
+        std::string lbl = stmt.label;
+        std::transform(lbl.begin(), lbl.end(), lbl.begin(), ::toupper);
+        date_typed = (lbl == "DATE");
+    }
     // ── STATIC DIM <name> [AS T] [= init] ─────────────────────────
     // Function-scoped persistent slot. Init runs once on the first
     // execution of THIS line; subsequent executions skip past it via
@@ -840,14 +853,18 @@ void Compiler::compile_dim(const Stmt& stmt) {
                     current_chunk().emit_u16(0, stmt.line);
                     break;
                 case VarType::STRING:
-                    emit_constant(Value::make_string(""), stmt.line);
+                    if (date_typed)
+                        emit_constant(Value::make_date(
+                            std::numeric_limits<double>::quiet_NaN()), stmt.line);
+                    else
+                        emit_constant(Value::make_string(""), stmt.line);
                     break;
                 default:
                     emit_constant(Value::make_i64(0), stmt.line);
                     break;
             }
         }
-        if (stmt.var_type != VarType::NONE && stmt.var_type != VarType::ARRAY &&
+        if (!date_typed && stmt.var_type != VarType::NONE && stmt.var_type != VarType::ARRAY &&
             stmt.var_type != VarType::ANY && stmt.var_type != VarType::OBJECT) {
             current_chunk().emit(OpCode::CAST, stmt.line);
             current_chunk().emit_u8(vartype_to_valuetype_byte(stmt.var_type), stmt.line);
@@ -913,14 +930,18 @@ void Compiler::compile_dim(const Stmt& stmt) {
                 current_chunk().emit_u16(0, stmt.line);
                 break;
             case VarType::STRING:
-                emit_constant(Value::make_string(""), stmt.line);
+                if (date_typed)
+                    emit_constant(Value::make_date(
+                        std::numeric_limits<double>::quiet_NaN()), stmt.line);
+                else
+                    emit_constant(Value::make_string(""), stmt.line);
                 break;
             default:
                 emit_constant(Value::make_i64(0), stmt.line);
                 break;
         }
     }
-    if (stmt.var_type != VarType::NONE && stmt.var_type != VarType::ARRAY &&
+    if (!date_typed && stmt.var_type != VarType::NONE && stmt.var_type != VarType::ARRAY &&
         stmt.var_type != VarType::ANY && stmt.var_type != VarType::OBJECT) {
         current_chunk().emit(OpCode::CAST, stmt.line);
         current_chunk().emit_u8(vartype_to_valuetype_byte(stmt.var_type), stmt.line);

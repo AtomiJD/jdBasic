@@ -1159,7 +1159,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             // in the f64 fallback below and the i8* string handle would
             // get bit-pun'd into a numeric slot.
             bool dollar_string = !s.var_name.empty() && s.var_name.back() == '$';
-            if (s.var_type == VarType::ARRAY || is_udt_label) t = JD_TAG_ARR;
+            // AS DATE arrives as a label, not a VarType, and the slot holds
+            // epoch seconds - without this the UDT catch-all below reads it
+            // as an array.
+            std::string lbl_dt = s.label;
+            std::transform(lbl_dt.begin(), lbl_dt.end(), lbl_dt.begin(), ::toupper);
+            if (lbl_dt == "DATE") t = JD_TAG_DATE;
+            else if (s.var_type == VarType::ARRAY || is_udt_label) t = JD_TAG_ARR;
             else if (s.var_type == VarType::STRING) t = JD_TAG_STR;
             else if (s.var_type == VarType::OBJECT) t = JD_TAG_NATIVE_MAP;
             else if (dollar_string) t = JD_TAG_STR;
@@ -6218,6 +6224,18 @@ void LLVMCodegen::codegen_static_dim(const Stmt& stmt) {
     if (!stmt.var_name.empty() && stmt.var_name.back() == '$') {
         tag = JD_TAG_STR; slot_type = i8_ptr_type;
     }
+    // AS DATE reaches here as a label, not a VarType. The slot holds epoch
+    // seconds and carries the date tag, so what it answers renders as a date.
+    {
+        std::string lbl_up = stmt.label;
+        std::transform(lbl_up.begin(), lbl_up.end(), lbl_up.begin(), ::toupper);
+        if (lbl_up == "DATE") {
+            tag = JD_TAG_DATE; slot_type = f64_type;
+            std::string up = stmt.var_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            date_vars.insert(up);
+        }
+    }
 
     static unsigned long st_counter = 0;
     std::string slot_name = "__st." + stmt.var_name + "." +
@@ -6256,6 +6274,10 @@ void LLVMCodegen::codegen_static_dim(const Stmt& stmt) {
     } else {
         switch (tag) {
             case JD_TAG_F64: init_val = LLVMConstReal(f64_type, 0.0); break;
+            case JD_TAG_DATE:
+                init_val = LLVMConstReal(f64_type,
+                                         std::numeric_limits<double>::quiet_NaN());
+                break;
             case JD_TAG_STR:
                 init_val = LLVMBuildGlobalStringPtr(builder, "", ".st_s_init");
                 break;
@@ -6370,20 +6392,31 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     }
 
     // DATE has no token-level VarType, so the parser stuffs it into
-    // stmt.label. Treat the slot as STRING since CVDATE returns char*.
+    // stmt.label. The slot holds epoch seconds and carries the date tag, so
+    // what it answers renders as a date rather than the number. A slot that
+    // was never set holds a quiet NaN, which reads as empty text.
     {
         std::string lbl_up = stmt.label;
         std::transform(lbl_up.begin(), lbl_up.end(), lbl_up.begin(), ::toupper);
-        if (lbl_up == "DATE" && !stmt.expr) {
-            LLVMValueRef init = LLVMBuildGlobalStringPtr(builder, "", ".dim_dt");
-            VarInfo* vi = dim_slot();
-            if (vi) {
-                vi->tag = JD_TAG_STR;
-                LLVMBuildStore(builder, init, vi->alloca_val);
+        if (lbl_up == "DATE") {
+            LLVMValueRef init;
+            if (!stmt.expr) {
+                init = LLVMConstReal(f64_type,
+                                     std::numeric_limits<double>::quiet_NaN());
             } else {
-                VarInfo& nv = create_var(stmt.var_name, JD_TAG_STR);
-                LLVMBuildStore(builder, init, nv.alloca_val);
+                TypedValue rhs = codegen_expr(*stmt.expr);
+                if (rhs.tag == JD_TAG_STR) {
+                    // Text names a date, so parse it instead of storing a
+                    // pointer where epoch seconds belong.
+                    auto& cv = runtime_funcs["CVDATE"];
+                    LLVMValueRef ca[] = { rhs.val };
+                    init = LLVMBuildCall2(builder, cv.fn_type, cv.fn, ca, 1, "dim_dt");
+                } else {
+                    init = coerce_to(rhs, f64_type);
+                }
             }
+            VarInfo& nv = create_var(stmt.var_name, JD_TAG_DATE);
+            LLVMBuildStore(builder, init, nv.alloca_val);
             std::string up = stmt.var_name;
             std::transform(up.begin(), up.end(), up.begin(), ::toupper);
             date_vars.insert(up);

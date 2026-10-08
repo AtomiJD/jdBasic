@@ -3784,6 +3784,8 @@ char* jdb_format_date(const char* date_str, const char* fmt, double tz_hours) {
 // through the bridge inside an array is a number on this side, and the
 // string form would read those bits as an address.
 char* jdb_format_date_num(double epoch, const char* fmt, double tz_hours) {
+    // A date that was declared and never set has no text.
+    if (epoch != epoch) return _strdup("");
     if (!fmt || !*fmt) fmt = "%Y-%m-%d %H:%M:%S";
     struct tm out_tm;
     if (tz_hours != tz_hours) rt_fill_tm(epoch, true, &out_tm);

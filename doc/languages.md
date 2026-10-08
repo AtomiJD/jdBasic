@@ -260,6 +260,8 @@ DIM A AS INTEGER = 2
 DIM M AS MAP = {"Name":"Atomi"}
 ```
 
+`AS DATE` declares a slot that holds a point in time: it reads and prints as a date on both backends, `TYPEOF` answers `DATE`, and one that was declared without a value reads as empty text until something is assigned.
+
 **`DIM array[size1, size2, ...]`**
 Declares an N-dimensional array with given sizes.
 

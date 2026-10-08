@@ -1,7 +1,88 @@
-' Atomi's repro of the DATE DIM bug
+' A variable declared AS DATE. The slot holds epoch seconds with the date
+' kind, so reads and PRINT render a date. Compiled it was a string slot:
+' TYPEOF said DATE while PRINT showed the epoch number, and a declaration
+' that also set a value (DIM d AS DATE = CVDate(..)) stored the epoch where
+' a pointer belonged and crashed. The test carried no assert, so the parity
+' sweep - which compares exit codes, not output - read it as green.
+DIM bad = 0
+
 DIM deadline AS DATE
-DIM name AS STRING
-name = "Project Apollo"
+DIM proj AS STRING
+proj = "Project Apollo"
 deadline = CVDate("2025-07-01")
-PRINT "Deadline for "; name; " is "; deadline
-END
+IF TYPEOF(deadline) <> "DATE" THEN
+    bad = bad + 1
+    PRINT "assigned kind: "; TYPEOF(deadline)
+ENDIF
+IF FORMAT_DATE(deadline, "%Y-%m-%d") <> "2025-07-01" THEN
+    bad = bad + 1
+    PRINT "assigned text: "; FORMAT_DATE(deadline, "%Y-%m-%d")
+ENDIF
+OUTPUT.CAPTURE_BEGIN
+PRINT "Deadline for "; proj; " is "; deadline
+DIM shown$ = OUTPUT.CAPTURE_END$()
+IF INSTR(shown$, "Deadline for Project Apollo is 2025-07-01 00:00:00") < 0 THEN
+    bad = bad + 1
+    PRINT "printed: ["; shown$; "]"
+ENDIF
+
+' A declaration that sets a value in the same line
+DIM started AS DATE = CVDate("2025-07-01")
+IF TYPEOF(started) <> "DATE" THEN
+    bad = bad + 1
+    PRINT "declared kind: "; TYPEOF(started)
+ENDIF
+IF DATEDIFF("D", started, CVDate("2025-07-05")) <> 4 THEN
+    bad = bad + 1
+    PRINT "declared diff: "; DATEDIFF("D", started, CVDate("2025-07-05"))
+ENDIF
+
+' A declaration that sets nothing reads as a date with no text
+DIM unset AS DATE
+IF TYPEOF(unset) <> "DATE" THEN
+    bad = bad + 1
+    PRINT "unset kind: "; TYPEOF(unset)
+ENDIF
+OUTPUT.CAPTURE_BEGIN
+PRINT "["; unset; "]"
+DIM shown2$ = OUTPUT.CAPTURE_END$()
+IF INSTR(shown2$, "[]") < 0 THEN
+    bad = bad + 1
+    PRINT "unset text: ["; shown2$; "]"
+ENDIF
+
+' An undeclared binding from a date builtin was already a date
+DIM plain = CVDate("2025-07-01")
+IF TYPEOF(plain) <> "DATE" ORELSE DATEDIFF("D", plain, started) <> 0 THEN
+    bad = bad + 1
+    PRINT "undeclared: "; TYPEOF(plain)
+ENDIF
+
+
+' A DATE declared inside a function, and one that outlives its calls
+FUNC Span(d)
+    DIM later AS DATE = DATEADD("D", 7, d)
+    RETURN DATEDIFF("D", d, later)
+ENDFUNC
+IF Span(started) <> 7 THEN
+    bad = bad + 1
+    PRINT "in a function: "; Span(started)
+ENDIF
+
+' A DATE that outlives its calls. SUB writes are local, so the check comes
+' back as the answer.
+FUNC Remember()
+    STATIC DIM seen AS DATE
+    IF TYPEOF(seen) <> "DATE" THEN RETURN 1
+    seen = CVDate("2025-01-01")
+    IF FORMAT_DATE(seen, "%Y-%m-%d") <> "2025-01-01" THEN RETURN 2
+    RETURN 0
+ENDFUNC
+DIM first_call = Remember()
+DIM second_call = Remember()
+IF first_call <> 0 ORELSE second_call <> 0 THEN
+    bad = bad + 1
+    PRINT "static date: "; first_call; " "; second_call
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
