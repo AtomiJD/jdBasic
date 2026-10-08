@@ -1,0 +1,84 @@
+' What a call answers, used straight away instead of through a variable.
+' Compiled, the cell kind of an array a FUNC answers was unknown at the
+' index step, so `Words()[0] + " at"` read the cell's pointer bits and
+' answered "0 at". A map in a function-local assigned from a call, and a
+' call written in place as an argument, reached the callee punned into a
+' double: TYPEOF read FLOAT64 and a library guard refused the value.
+DIM bad = 0
+
+FUNC Words()
+    RETURN ["alpha", "beta"]
+ENDFUNC
+
+' An array a call answers, indexed inline
+IF Words()[0] + " at" <> "alpha at" THEN
+    bad = bad + 1
+    PRINT "inline index: "; Words()[0] + " at"
+ENDIF
+IF LEN(Words()[1]) <> 4 THEN
+    bad = bad + 1
+    PRINT "inline len: "; LEN(Words()[1])
+ENDIF
+' and the same through a variable, which always worked
+DIM w = Words()
+IF w[0] + " at" <> "alpha at" THEN
+    bad = bad + 1
+    PRINT "via a variable: "; w[0] + " at"
+ENDIF
+
+' An array handed straight from a call to a parameter
+FUNC Has(items, what$)
+    RETURN what$ IN items
+ENDFUNC
+IF Has(Words(), "beta") <> TRUE THEN
+    bad = bad + 1
+    PRINT "IN on a call result: "; Has(Words(), "beta")
+ENDIF
+
+' A map in a function-local assigned from a call, passed on
+FUNC Pack(n, items)
+    RETURN {"n": n, "items": items}
+ENDFUNC
+FUNC Narrow(box, n)
+    DIM c = box{"n"}
+    RETURN Pack(n, ZEROS(n))
+ENDFUNC
+FUNC Items(box)
+    IF TYPEOF(box) <> "OBJECT" THEN RETURN -1
+    RETURN LEN(box{"items"})
+ENDFUNC
+FUNC Shrink(box)
+    DIM q = Narrow(box, 2)
+    RETURN Items(q)
+ENDFUNC
+DIM start = Pack(4, ZEROS(4))
+IF Shrink(start) <> 2 THEN
+    bad = bad + 1
+    PRINT "map in a local: "; Shrink(start)
+ENDIF
+
+' A call written in place as an argument
+FUNC HowMany(box)
+    DIM q = Narrow(box, 3)
+    RETURN Items(q)
+ENDFUNC
+IF HowMany(Pack(4, ZEROS(4))) <> 3 THEN
+    bad = bad + 1
+    PRINT "call as an argument: "; HowMany(Pack(4, ZEROS(4)))
+ENDIF
+IF Items(Pack(5, ZEROS(5))) <> 5 THEN
+    bad = bad + 1
+    PRINT "map call as an argument: "; Items(Pack(5, ZEROS(5)))
+ENDIF
+
+' A map argument among others, written in place
+FUNC Blend(a, b, x)
+    IF TYPEOF(a) <> "OBJECT" ORELSE TYPEOF(b) <> "OBJECT" THEN RETURN -1
+    RETURN LEN(a{"items"}) + LEN(b{"items"}) + x
+ENDFUNC
+IF Blend(start, Pack(2, ZEROS(2)), 1) <> 7 THEN
+    bad = bad + 1
+    PRINT "map among arguments: "; Blend(start, Pack(2, ZEROS(2)), 1)
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

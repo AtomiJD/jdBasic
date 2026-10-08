@@ -2079,6 +2079,113 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         }
     }
 
+
+    // A local assigned from a call is only known to hold a map or an array
+    // once the fixpoint above has run, so a call site that hands such a local
+    // on was scanned too early: the callee's parameter stayed a double and
+    // the pointer arrived punned into it, where TYPEOF read FLOAT64. Promote
+    // those parameters now, and only where no other call site asks for a
+    // different kind - the conflict machinery above stays in charge of those.
+    {
+        std::function<void(const Stmt&, std::unordered_map<std::string,int>&)> promote_args =
+            [&](const Stmt& s, std::unordered_map<std::string,int>& kinds) {
+            std::function<void(const Expr&)> walk_e = [&](const Expr& e) {
+                if (e.kind == ExprKind::CALL) {
+                    auto cit = decls.find(e.func_name);
+                    if (cit != decls.end()) {
+                        for (size_t i = 0; i < e.args.size() && i < cit->second.tags.size(); i++) {
+                            if (!e.args[i]) continue;
+                            int want = -1;
+                            if (e.args[i]->kind == ExprKind::VARIABLE) {
+                                auto kit = kinds.find(e.args[i]->str_val);
+                                if (kit != kinds.end()) want = kit->second;
+                            } else if (e.args[i]->kind == ExprKind::CALL) {
+                                // An argument written as a call in place: the
+                                // kind comes from what that call answers.
+                                auto ait = decls.find(e.args[i]->func_name);
+                                if (ait != decls.end() &&
+                                    (ait->second.return_tag == JD_TAG_ARR ||
+                                     ait->second.return_tag == JD_TAG_NATIVE_MAP ||
+                                     ait->second.return_tag == JD_TAG_VM_HANDLE))
+                                    want = ait->second.return_tag;
+                            }
+                            if (want < 0) continue;
+                            if (cit->second.tags[i] != JD_TAG_F64) continue;
+                            auto sit = arg_tag_seen.find(e.func_name);
+                            if (sit != arg_tag_seen.end() && i < sit->second.size() &&
+                                !sit->second[i].empty() &&
+                                !(sit->second[i].size() == 1 &&
+                                  *sit->second[i].begin() == want))
+                                continue;
+                            cit->second.tags[i] = want;
+                        }
+                    }
+                }
+                if (e.left) walk_e(*e.left);
+                if (e.right) walk_e(*e.right);
+                for (auto& a : e.args) if (a) walk_e(*a);
+            };
+            // The right-hand side is read with the kinds as they were, so
+            // `m = Shrink(m)` hands the old m on.
+            if (s.expr) walk_e(*s.expr);
+            for (auto& pe : s.print_exprs) if (pe) walk_e(*pe);
+            for (auto& ic : s.index_chain) if (ic) walk_e(*ic);
+            if (s.loop_cond) walk_e(*s.loop_cond);
+            if (s.end_expr) walk_e(*s.end_expr);
+            if (s.step_expr) walk_e(*s.step_expr);
+            if ((s.kind == StmtKind::DIM || s.kind == StmtKind::LET ||
+                 s.kind == StmtKind::ASSIGN) && !s.var_name.empty() &&
+                s.expr && s.expr->kind == ExprKind::CALL) {
+                auto cit = decls.find(s.expr->func_name);
+                if (cit != decls.end() &&
+                    (cit->second.return_tag == JD_TAG_ARR ||
+                     cit->second.return_tag == JD_TAG_NATIVE_MAP ||
+                     cit->second.return_tag == JD_TAG_VM_HANDLE))
+                    kinds[s.var_name] = cit->second.return_tag;
+                else
+                    kinds.erase(s.var_name);
+            }
+            for (auto& b : s.body) if (b) promote_args(*b, kinds);
+            for (auto& br : s.branches) {
+                if (br.condition) walk_e(*br.condition);
+                for (auto& b : br.body) if (b) promote_args(*b, kinds);
+            }
+            for (auto& c : s.catch_body()) if (c) promote_args(*c, kinds);
+            for (auto& f : s.finally_body()) if (f) promote_args(*f, kinds);
+        };
+        // Promoting one function's parameter can make a local inside it a
+        // map, which promotes the next one, so this runs to a fixpoint. The
+        // top level counts as a body too: that is where most call sites are.
+        for (int pass = 0; pass < 4; pass++) {
+            for (auto& [pname, pdecl] : decls) {
+                if (!pdecl.stmt) continue;
+                std::unordered_map<std::string,int> kinds;
+                for (size_t pi = 0; pi < pdecl.stmt->params().size() &&
+                                    pi < pdecl.tags.size(); pi++)
+                    if (pdecl.tags[pi] == JD_TAG_ARR ||
+                        pdecl.tags[pi] == JD_TAG_NATIVE_MAP ||
+                        pdecl.tags[pi] == JD_TAG_VM_HANDLE)
+                        kinds[pdecl.stmt->params()[pi].name] = pdecl.tags[pi];
+                for (auto& b : pdecl.stmt->body) if (b) promote_args(*b, kinds);
+            }
+            std::unordered_map<std::string,int> top_kinds;
+            for (auto& s : program) if (s) promote_args(*s, top_kinds);
+        }
+    }
+    // --trace names what each function was inferred to answer. The kind of a
+    // call's result decides how the caller stores and reads it, and nothing
+    // else makes that visible.
+    if (debug_log) {
+        for (auto& [name, decl] : decls) {
+            std::string ps;
+            for (size_t i = 0; i < decl.tags.size(); i++)
+                ps += (i ? "," : "") + std::to_string(decl.tags[i]);
+            if (decl.return_tag == JD_TAG_F64 && ps.find_first_not_of("1,") == std::string::npos)
+                continue;
+            std::cerr << "[trace] FUNC " << name << " returns tag "
+                      << decl.return_tag << " params [" << ps << "]" << std::endl;
+        }
+    }
     // Phase 3.5: among the FUNCs that return ARR, determine which ones
     // return a *string*-array specifically. Scan the body assignments and
     // RETURNs, flowing string-array-ness through known string builtins,
@@ -9911,6 +10018,28 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "mix_gt_tag");
                 LLVMValueRef as_i64 = pun_f64_to_i64(val);
                 return { as_i64, JD_TAG_RUNTIME, tag_v };
+            }
+            // The array a call answers has no variable to carry the cell
+            // kind, so the kind comes from the function. Without this
+            // `Words()[0] + " at"` read the cell's pointer bits as a number
+            // and answered "0 at"; through a variable it was always right.
+            if (expr.left && expr.left->kind == ExprKind::CALL) {
+                std::string fn = expr.left->func_name;
+                int kind = -1;
+                auto ask = [&](const std::string& n) {
+                    if (kind >= 0 || n.empty()) return;
+                    if (string_array_returning_funcs.count(n)) kind = JD_TAG_STR;
+                    else if (nested_array_returning_funcs.count(n)) kind = JD_TAG_ARR;
+                };
+                ask(fn);
+                size_t dp = fn.rfind('.');
+                if (dp != std::string::npos) ask(fn.substr(dp + 1));
+                if (kind == JD_TAG_STR || kind == JD_TAG_ARR) {
+                    LLVMValueRef as_i64 = pun_f64_to_i64(result);
+                    LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64,
+                                                            i8_ptr_type, "elem_c");
+                    return { as_ptr, kind };
+                }
             }
             // If the source array is known to hold strings (e.g. event handler
             // data param), pun the f64-encoded ptr back to char* and tag as
