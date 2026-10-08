@@ -2409,6 +2409,15 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
             printf("]");
             return;
         }
+        if (t == JD_TAG_NATIVE_MAP) {
+            union { double d; int64_t i; } u; u.d = val;
+            JdbMap* m = (JdbMap*)(intptr_t)u.i;
+            if (!m) return;
+            extern char* jdb_map_str(JdbMap*);
+            char* s = jdb_map_str(m);
+            if (s) { fputs(s, stdout); free(s); }
+            return;
+        }
         if (t == 8) {  // BOOL
             printf("%s", val != 0.0 ? "TRUE" : "FALSE");
             return;
@@ -4652,6 +4661,14 @@ char* jdb_frmv(JdbArray* arr) {
                 char* sub = jdb_frmv((JdbArray*)(intptr_t)u.i);
                 emit(sub ? sub : "[]");
                 free(sub);
+            } else if (t == JD_TAG_NATIVE_MAP) {
+                char* ms = jdb_map_str((JdbMap*)(intptr_t)u.i);
+                emit(ms ? ms : "{}");
+                free(ms);
+            } else if (t == JD_TAG_VM_HANDLE) {
+                const char* vs = g_jdrt_handle
+                    ? jdrt_val_to_str(g_jdrt_handle, u.i) : nullptr;
+                emit(vs ? vs : "");
             } else if (t == 8) {  // BOOL
                 emit(arr->data[i] != 0.0 ? "TRUE" : "FALSE");
             } else {       // F64 / I64 / unknown

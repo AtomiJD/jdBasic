@@ -6041,8 +6041,12 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             // value the codegen produces for UDT-field reads / map_get_tagged
             // - it carries its own runtime tag, so silently coercing into a
             // typed slot is safe (the runtime helper picks the right path).
+            // A number into a string slot is none of that: it is stringified,
+            // so `c + 1` concatenates where the interpreter adds.
             !(vi->tag == JD_TAG_NATIVE_MAP || vi->tag == JD_TAG_VM_HANDLE ||
-              vi->tag == JD_TAG_ARR || vi->tag == JD_TAG_STR ||
+              vi->tag == JD_TAG_ARR ||
+              (vi->tag == JD_TAG_STR && rhs.tag != JD_TAG_I64 &&
+               rhs.tag != JD_TAG_BOOL && rhs.tag != JD_TAG_F64) ||
               vi->tag == JD_TAG_RUNTIME ||
               rhs.tag == JD_TAG_RUNTIME)) {
             auto tag_name = [](int t) -> const char* {
@@ -6054,6 +6058,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                     case JD_TAG_ARR: return "ARRAY";
                     case JD_TAG_NATIVE_MAP: return "MAP";
                     case JD_TAG_VM_HANDLE: return "OBJECT";
+                    case JD_TAG_DATE: return "DATE";
                     case JD_TAG_FUNCREF: return "FUNCREF";
                     default: return "?";
                 }
@@ -11457,6 +11462,27 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         if (a.tag == JD_TAG_RUNTIME && a.runtime_tag)
             a = { coerce_to(a, i8_ptr_type), JD_TAG_ARR };
         if (a.tag == JD_TAG_ARR && b.tag == JD_TAG_RUNTIME && b.runtime_tag) {
+            // An array argument flattens, a scalar becomes one cell, and only
+            // the running program knows which this is: both are emitted and
+            // the tag decides. Guessing "scalar" appended a nested array
+            // instead of its elements.
+            LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, b.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_ARR, 0), "app_isarr");
+            LLVMBasicBlockRef bb_flat = LLVMAppendBasicBlock(current_fn, "app.flat");
+            LLVMBasicBlockRef bb_cell = LLVMAppendBasicBlock(current_fn, "app.cell");
+            LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "app.join");
+            LLVMBuildCondBr(builder, is_arr, bb_flat, bb_cell);
+
+            LLVMPositionBuilderAtEnd(builder, bb_flat);
+            auto& fn_flat = runtime_funcs["__append_arr"];
+            LLVMValueRef fargs[] = { a.val,
+                LLVMBuildIntToPtr(builder, b.val, i8_ptr_type, "app_aptr") };
+            LLVMValueRef flat = LLVMBuildCall2(builder, fn_flat.fn_type, fn_flat.fn,
+                                               fargs, 2, "appf");
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef flat_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_cell);
             // Stored the way PUSH stores a cell: an integer as the number
             // it is, everything else as its bits with its own tag.
             LLVMValueRef is_int = LLVMBuildICmp(builder, LLVMIntEQ, b.runtime_tag,
@@ -11471,7 +11497,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMConstInt(i32_type, JD_TAG_F64, 0), b.runtime_tag, "app_tag");
             auto& fn = runtime_funcs["__arr_append_tagged"];
             LLVMValueRef args[] = { a.val, fval, tag_v };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "appt"), JD_TAG_ARR };
+            LLVMValueRef cell = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "appt");
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef cell_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_join);
+            LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "app_res");
+            LLVMValueRef vals[] = { flat, cell };
+            LLVMBasicBlockRef bbs[] = { flat_end, cell_end };
+            LLVMAddIncoming(phi, vals, bbs, 2);
+            return { phi, JD_TAG_ARR };
         }
         if (a.tag == JD_TAG_ARR && b.tag == JD_TAG_STR) {
             // The cell carries its own tag, so a name list that started
@@ -11481,6 +11516,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { a.val, pun_i64_to_f64(bits),
                                     LLVMConstInt(i32_type, JD_TAG_STR, 0) };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "apps"), JD_TAG_ARR };
+        }
+        if (a.tag == JD_TAG_ARR &&
+            (b.tag == JD_TAG_NATIVE_MAP || b.tag == JD_TAG_VM_HANDLE)) {
+            // A map cell is a pointer like a string cell, and nothing about
+            // the bits says which. Without its own tag the readers classify
+            // it as a nested array and PRINT shows a number.
+            LLVMValueRef bits = b.tag == JD_TAG_VM_HANDLE
+                ? b.val
+                : LLVMBuildPtrToInt(builder, b.val, i64_type, "app_m2i");
+            auto& fn = runtime_funcs["__arr_append_tagged"];
+            LLVMValueRef args[] = { a.val, pun_i64_to_f64(bits),
+                                    LLVMConstInt(i32_type, (unsigned)b.tag, 0) };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "appm"), JD_TAG_ARR };
         }
         if (a.tag == JD_TAG_ARR) {
             LLVMValueRef bf = b.tag == JD_TAG_I64

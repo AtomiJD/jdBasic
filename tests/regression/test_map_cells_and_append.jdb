@@ -1,0 +1,74 @@
+' Cells of an array that hold maps, and APPEND with a value whose kind only
+' the running program knows. Compiled, a map cell printed as 0 because the
+' formatter had no branch for it, APPEND stored a map untagged so readers
+' classified it as a nested array, and a map value that turned out to be an
+' array was appended as one cell instead of its elements.
+DIM bad = 0
+
+' An array literal of map literals prints its maps
+DIM rows = [{"n": "a", "h": 2}, {"n": "b", "h": 5}]
+OUTPUT.CAPTURE_BEGIN
+PRINT rows
+DIM shown$ = OUTPUT.CAPTURE_END$()
+DIM want$ = "[" + CHR$(123) + CHR$(34) + "n" + CHR$(34) + ": " + CHR$(34) + "a" + CHR$(34) + ", " + CHR$(34) + "h" + CHR$(34) + ": 2" + CHR$(125) + ", " + CHR$(123) + CHR$(34) + "n" + CHR$(34) + ": " + CHR$(34) + "b" + CHR$(34) + ", " + CHR$(34) + "h" + CHR$(34) + ": 5" + CHR$(125) + "]"
+IF INSTR(shown$, want$) < 0 THEN
+    bad = bad + 1
+    PRINT "array of maps: ["; shown$; "]"
+ENDIF
+IF TYPEOF(rows[0]) <> "OBJECT" ORELSE rows[1]{"n"} <> "b" THEN
+    bad = bad + 1
+    PRINT "cell kind: "; TYPEOF(rows[0]); " "; rows[1]{"n"}
+ENDIF
+
+' A map appended to an array keeps its kind
+DIM built = []
+DIM one AS MAP
+one{"k"} = 1
+built = APPEND(built, one)
+IF TYPEOF(built[0]) <> "OBJECT" ORELSE built[0]{"k"} <> 1 THEN
+    bad = bad + 1
+    PRINT "appended map: "; TYPEOF(built[0])
+ENDIF
+OUTPUT.CAPTURE_BEGIN
+PRINT built
+DIM shown2$ = OUTPUT.CAPTURE_END$()
+IF INSTR(shown2$, "[" + CHR$(123) + CHR$(34) + "k" + CHR$(34) + ": 1" + CHR$(125) + "]") < 0 THEN
+    bad = bad + 1
+    PRINT "appended map text: ["; shown2$; "]"
+ENDIF
+
+' A map value that holds an array flattens, like a plain array argument
+DIM src AS MAP
+src{"problems"} = ["x", "y"]
+DIM listed = APPEND([["a", "b"]], src{"problems"})
+IF LEN(listed) <> 3 ORELSE listed[1] <> "x" ORELSE listed[2] <> "y" THEN
+    bad = bad + 1
+    PRINT "flattened: "; LEN(listed); " "; listed
+ENDIF
+
+' A map value that holds a scalar stays one cell
+DIM src2 AS MAP
+src2{"n"} = 7
+DIM withnum = APPEND([1, 2], src2{"n"})
+IF LEN(withnum) <> 3 ORELSE withnum[2] <> 7 THEN
+    bad = bad + 1
+    PRINT "scalar cell: "; LEN(withnum); " "; withnum
+ENDIF
+
+' A map value that holds a string stays one cell
+DIM src3 AS MAP
+src3{"s"} = "z"
+DIM withstr = APPEND(["a"], src3{"s"})
+IF LEN(withstr) <> 2 ORELSE withstr[1] <> "z" THEN
+    bad = bad + 1
+    PRINT "string cell: "; LEN(withstr); " "; withstr
+ENDIF
+
+' A plain array argument still flattens
+DIM plain = APPEND([["a", "b"]], ["x", "y"])
+IF LEN(plain) <> 3 THEN
+    bad = bad + 1
+    PRINT "plain flatten: "; LEN(plain)
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

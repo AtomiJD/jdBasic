@@ -1492,6 +1492,7 @@ fails silently at runtime. The interpreter runs all of it.
 | `HELP`, `HELP$` | the help text ships with the REPL, not with your `.exe` | run in the interpreter |
 | `JSON.STRINGIFY$(<UDT>)` | a UDT instance does not marshal across the bridge | pass a MAP or ARRAY, or build the JSON from the fields |
 | `name@` that resolves to nothing | there is no FUNC of that name and no builtin with a matching scalar signature | check the name and arity |
+| a number into a slot a string DIMmed (`DIM c = ""` then `c = 2.5`) | the slot stays a string, so the number is stringified and `c + 1` concatenates | `c = STR$(2.5)`, or DIM the slot as a number |
 
 **`-c` is also STRICT + EXPLICIT, always.** Every variable must be declared and
 every type must line up; there is no flag to turn that off for the main file
