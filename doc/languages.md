@@ -916,7 +916,7 @@ PRINT FILTER(LAMBDA w -> LEN(w) = 3, ["pdf", "docx"])  ' [pdf]
 PRINT REDUCE(LAMBDA acc$, r -> acc$ + r{"n"}, rows, "")  ' ab
 ```
 
-Inside a `FUNC`, a loop lambda reads the function's locals through `USE(...)`, as in the interpreter: `FILTER(LAMBDA USE(lim) x -> x > lim, nums)`. Under `-c` this works for a lambda handed straight to one of the five functions above; a lambda stored in a variable or returned from a `FUNC` with `USE` (the `MakeAdder` example) does not compile native yet.
+Inside a `FUNC`, a lambda reads the function's locals through `USE(...)`, as in the interpreter: `FILTER(LAMBDA USE(lim) x -> x > lim, nums)`. Under `-c` each closure carries its own copy of the captured values, so the `MakeAdder` example above compiles and `Add5` and `Add100` answer 15 and 110. A capture may be a number, a string, an array or a map, and a lambda built once per loop iteration keeps the value that iteration gave it.
 
 ### Function as operators
 

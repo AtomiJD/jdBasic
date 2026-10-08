@@ -1,0 +1,136 @@
+' A LAMBDA USE(...) written inside a function keeps a copy of the captured
+' values per closure, so two closures of the same lambda answer differently.
+' Compiled, the captures used to be read from the enclosing function's own
+' frame, which is not valid IR: the documented MakeAdder could not be built
+' at all, and a loop lambda's captures lived in one shared slot.
+DIM bad = 0
+
+FUNC MakeAdder(base_value)
+    RETURN LAMBDA USE(base_value) x -> x + base_value
+ENDFUNC
+
+' Two instances alive at once, each with its own capture
+DIM add5 = MakeAdder(5)
+DIM add100 = MakeAdder(100)
+IF add5(10) <> 15 THEN
+    bad = bad + 1
+    PRINT "add5(10): "; add5(10)
+ENDIF
+IF add100(10) <> 110 THEN
+    bad = bad + 1
+    PRINT "add100(10): "; add100(10)
+ENDIF
+' calling one does not disturb the other
+IF add5(1) <> 6 ORELSE add100(1) <> 101 ORELSE add5(2) <> 7 THEN
+    bad = bad + 1
+    PRINT "second round: "; add5(1); " "; add100(1); " "; add5(2)
+ENDIF
+
+' One closure per iteration
+DIM made = ZEROS(3)
+FOR i = 0 TO 2
+    DIM fi = MakeAdder(i * 100)
+    made[i] = fi(1)
+NEXT i
+IF made[0] <> 1 ORELSE made[1] <> 101 ORELSE made[2] <> 201 THEN
+    bad = bad + 1
+    PRINT "per iteration: "; made
+ENDIF
+
+' An array and a map ride along as captures
+FUNC MakeLooker(items)
+    RETURN LAMBDA USE(items) i -> items[i]
+ENDFUNC
+DIM look = MakeLooker([10, 20, 30])
+IF look(1) <> 20 THEN
+    bad = bad + 1
+    PRINT "array capture: "; look(1)
+ENDIF
+
+FUNC MakeOffset(conf)
+    RETURN LAMBDA USE(conf) k -> conf{"n"} + k
+ENDFUNC
+DIM cfg AS MAP
+cfg{"n"} = 5
+DIM off = MakeOffset(cfg)
+IF off(2) <> 7 THEN
+    bad = bad + 1
+    PRINT "map capture: "; off(2)
+ENDIF
+
+' A closure called inside the function that built it
+FUNC Nested(a)
+    DIM inner = LAMBDA USE(a) b -> a * b
+    RETURN inner(3)
+ENDFUNC
+IF Nested(4) <> 12 THEN
+    bad = bad + 1
+    PRINT "nested: "; Nested(4)
+ENDIF
+
+' The same capture driving a higher-order call from inside a function
+FUNC ScaleAll(factor, items)
+    RETURN SELECT(LAMBDA USE(factor) x -> x * factor, items)
+ENDFUNC
+DIM scaled = ScaleAll(3, [1, 2, 3])
+IF scaled[0] <> 3 ORELSE scaled[2] <> 9 THEN
+    bad = bad + 1
+    PRINT "SELECT capture: "; scaled
+ENDIF
+
+FUNC KeepOver(lim, items)
+    RETURN FILTER(LAMBDA USE(lim) x -> x > lim, items)
+ENDFUNC
+DIM kept = KeepOver(2, [1, 2, 3, 4])
+IF LEN(kept) <> 2 ORELSE kept[0] <> 3 THEN
+    bad = bad + 1
+    PRINT "FILTER capture: "; kept
+ENDIF
+
+FUNC SumWith(bonus, items)
+    RETURN REDUCE(LAMBDA USE(bonus) a, x -> a + x + bonus, items, 0)
+ENDFUNC
+IF SumWith(10, [1, 2, 3]) <> 36 THEN
+    bad = bad + 1
+    PRINT "REDUCE capture: "; SumWith(10, [1, 2, 3])
+ENDIF
+
+' Two scaling runs in a row keep their own factor
+DIM s1 = ScaleAll(2, [1, 2])
+DIM s2 = ScaleAll(10, [1, 2])
+IF s1[1] <> 4 ORELSE s2[1] <> 20 THEN
+    bad = bad + 1
+    PRINT "two runs: "; s1; " "; s2
+ENDIF
+
+' A capture at top level still reads the global directly
+DIM shift = 7
+DIM bump = LAMBDA USE(shift) x -> x + shift
+IF bump(1) <> 8 THEN
+    bad = bad + 1
+    PRINT "global capture: "; bump(1)
+ENDIF
+
+' A lambda without captures is unaffected
+FUNC MkDouble()
+    RETURN LAMBDA x -> x * 2
+ENDFUNC
+DIM dbl = MkDouble()
+IF dbl(21) <> 42 THEN
+    bad = bad + 1
+    PRINT "no capture: "; dbl(21)
+ENDIF
+
+
+' A string capture survives the same way
+FUNC MakeMatcher(needle$)
+    RETURN LAMBDA USE(needle$) s$ -> LEN(needle$) + LEN(s$)
+ENDFUNC
+DIM m1 = MakeMatcher("ab")
+DIM m2 = MakeMatcher("abcd")
+IF m1("xyz") <> 5 ORELSE m2("xyz") <> 7 THEN
+    bad = bad + 1
+    PRINT "string capture: "; m1("xyz"); " "; m2("xyz")
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

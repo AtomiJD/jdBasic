@@ -182,11 +182,13 @@ tests/regression/test_alias_isolated.jdb	OK	OK	OK
 tests/regression/test_apl.jdb	OK	OK	OK
 tests/regression/test_arr_idx_method.jdb	OK	OK	OK
 tests/regression/test_arr_idx_method_deep.jdb	OK	OK	OK
+tests/regression/test_array_dyn_operand.jdb	PASS	PASS	OK
 tests/regression/test_array_row_alias.jdb	OK	OK	OK
 tests/regression/test_array_row_alias2.jdb	OK	OK	OK
 tests/regression/test_bitops_vector.jdb	OK	OK	OK
 tests/regression/test_bnot.jdb	PASS	CFAIL	GAP
 tests/regression/test_bool_render.jdb	PASS	PASS	OK
+tests/regression/test_closures.jdb	PASS	PASS	OK
 tests/regression/test_cmds.jdb	PASS	PASS	OK
 tests/regression/test_codec.jdb	PASS	PASS	OK
 tests/regression/test_codegen_hint_leak.jdb	OK	OK	OK
@@ -285,7 +287,7 @@ tests/strict/test_strict_func_in_block_bad.jdb	OK	CFAIL	XFAIL
 tests/strict/test_strict_type_bad.jdb	OK	CFAIL	XFAIL
 tests/strict/test_strict_type_good.jdb	OK	OK	OK
 tests/test_dotted_store.jdb	PASS	CFAIL	GAP
-tests/test_numerics.jdb	PASS	CFAIL	GAP
+tests/test_numerics.jdb	PASS	PASS	OK
 tests/tutorial/test_cvdate.jdb	OK	OK	OK
 tests/tutorial/test_letters.jdb	OK	CFAIL	GAP
 tests/tutorial/test_strings.jdb	PASS	PASS	OK

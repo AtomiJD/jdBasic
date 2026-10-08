@@ -12,6 +12,7 @@
 #include <regex>
 #include <algorithm>
 #include <vector>
+#include <atomic>
 
 #include "jdb_tags.h"
 #include "jdb_encoding.h"
@@ -4863,6 +4864,93 @@ const char* jdb_udt_get_str(JdbObject* obj, const char* field) {
         if (it != obj->str_fields.end()) return it->second;
     }
     return "";
+}
+
+// ── Lambda closures ─────────────────────────────────────────
+
+// A LAMBDA USE(...) written inside a function keeps its own copy of the
+// captured values, so two closures of the same lambda can hold different
+// ones. The value handed around is a pointer to the closure; a call site
+// resolves it to the lambda's function pointer and makes that copy readable
+// for the duration of the call.
+struct JdbClosure {
+    uint64_t magic;
+    void*    fn;
+    int32_t  n;
+    int64_t* bits;
+    int32_t* tags;
+};
+
+static const uint64_t JDB_CLOSURE_MAGIC = 0x6a64436c6f737231ULL;
+
+// A funcref is either a closure pointer or a plain function pointer. Code
+// addresses never fall inside the heap span the closures were cut from, so
+// the span plus the header word tells the two apart without dereferencing
+// anything that might not be ours.
+static std::atomic<uintptr_t> g_clo_lo{ (uintptr_t)-1 };
+static std::atomic<uintptr_t> g_clo_hi{ 0 };
+static thread_local std::vector<JdbClosure*> g_closure_stack;
+
+void* jdb_closure_new(void* fn, int32_t n) {
+    if (n < 0) n = 0;
+    JdbClosure* c = (JdbClosure*)calloc(1, sizeof(JdbClosure));
+    if (!c) return fn;
+    c->magic = JDB_CLOSURE_MAGIC;
+    c->fn = fn;
+    c->n = n;
+    if (n > 0) {
+        c->bits = (int64_t*)calloc((size_t)n, sizeof(int64_t));
+        c->tags = (int32_t*)calloc((size_t)n, sizeof(int32_t));
+        if (!c->bits || !c->tags) { c->n = 0; }
+    }
+    uintptr_t a = (uintptr_t)c;
+    uintptr_t lo = g_clo_lo.load(std::memory_order_relaxed);
+    while (a < lo && !g_clo_lo.compare_exchange_weak(lo, a, std::memory_order_relaxed)) {}
+    uintptr_t hi = g_clo_hi.load(std::memory_order_relaxed);
+    while (a > hi && !g_clo_hi.compare_exchange_weak(hi, a, std::memory_order_relaxed)) {}
+    return c;
+}
+
+void jdb_closure_set(void* h, int32_t i, int64_t bits, int32_t tag) {
+    JdbClosure* c = (JdbClosure*)h;
+    if (!c || c->magic != JDB_CLOSURE_MAGIC || i < 0 || i >= c->n) return;
+    c->bits[i] = bits;
+    c->tags[i] = tag;
+}
+
+// Answers the function pointer to call, and keeps the captured values of a
+// closure reachable until the matching leave.
+void* jdb_closure_enter(void* p) {
+    JdbClosure* c = nullptr;
+    uintptr_t a = (uintptr_t)p;
+    if (p && a >= g_clo_lo.load(std::memory_order_relaxed) &&
+             a <= g_clo_hi.load(std::memory_order_relaxed)) {
+        JdbClosure* cand = (JdbClosure*)p;
+        if (cand->magic == JDB_CLOSURE_MAGIC) c = cand;
+    }
+    g_closure_stack.push_back(c);
+    return c ? c->fn : p;
+}
+
+void jdb_closure_leave(void) {
+    if (!g_closure_stack.empty()) g_closure_stack.pop_back();
+}
+
+// Capture i of the closure whose call is innermost. A lambda body only reads
+// a slot its own closure filled; anything else answers zero rather than the
+// captures of an unrelated call.
+int64_t jdb_closure_get(int32_t i) {
+    if (g_closure_stack.empty()) return 0;
+    JdbClosure* c = g_closure_stack.back();
+    if (!c || i < 0 || i >= c->n) return 0;
+    return c->bits[i];
+}
+
+int32_t jdb_closure_get_tag(int32_t i) {
+    if (g_closure_stack.empty()) return JD_TAG_F64;
+    JdbClosure* c = g_closure_stack.back();
+    if (!c || i < 0 || i >= c->n) return JD_TAG_F64;
+    return c->tags[i];
 }
 
 // ── Higher-order Array Functions (with native function pointers) ─

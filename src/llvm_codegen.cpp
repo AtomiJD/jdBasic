@@ -626,6 +626,14 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_hof_elem_bits", "__hof_elem_bits", i64_type, {}, JD_TAG_I64);
     reg("jdb_hof_set_ret", "__hof_set_ret", void_type, {i32_type}, -1);
     reg("jdb_hof_ret_tagged", "__hof_ret_tagged", f64_type, {i64_type, i32_type}, JD_TAG_F64);
+    // The captured values of a LAMBDA USE(...): one closure per instance, the
+    // values readable inside the lambda between enter and leave.
+    reg("jdb_closure_new", "__closure_new", i8_ptr_type, {i8_ptr_type, i32_type}, JD_TAG_I64);
+    reg("jdb_closure_set", "__closure_set", void_type, {i8_ptr_type, i32_type, i64_type, i32_type}, -1);
+    reg("jdb_closure_enter", "__closure_enter", i8_ptr_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_closure_leave", "__closure_leave", void_type, {}, -1);
+    reg("jdb_closure_get", "__closure_get", i64_type, {i32_type}, JD_TAG_I64);
+    reg("jdb_closure_get_tag", "__closure_get_tag", i32_type, {i32_type}, JD_TAG_I64);
     // jdb_filter_fn(fn_ptr, array) -> array
     reg("jdb_filter_fn", "__filter_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_take_while_fn", "__take_while_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
@@ -9195,40 +9203,51 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             int acc_hint = hof_acc_hint;
             hof_lambda_mode = 0;
 
-            // USE(...) values of a loop lambda inside a FUNC: copied into a
-            // module slot here, read from that slot inside the lambda.
+            // USE(...) values: each closure instance holds its own copy,
+            // filled in the enclosing function and read back inside the
+            // lambda, so two closures of one lambda keep different values.
+            // A capture that already lives in a module global needs none -
+            // there the lambda reads the global directly.
             std::vector<std::pair<std::string, VarInfo>> captured;
-            if (hof_mode != 0 && scopes.size() > 1) {
-                static int capture_counter = 0;
-                auto to_slot = [&](LLVMValueRef local) -> LLVMValueRef {
-                    LLVMTypeRef ty = LLVMGetAllocatedType(local);
-                    std::string gname = "__lcap_" + std::to_string(capture_counter++);
-                    LLVMValueRef g = LLVMAddGlobal(module, ty, gname.c_str());
-                    LLVMSetInitializer(g, LLVMConstNull(ty));
-                    LLVMSetLinkage(g, LLVMInternalLinkage);
-                    LLVMValueRef keep = scratch_alloca(ty, "lcap_keep");
-                    LLVMBuildStore(builder, LLVMBuildLoad2(builder, ty, g, "lcap_old"), keep);
-                    LLVMBuildStore(builder, LLVMBuildLoad2(builder, ty, local, "lcap_v"), g);
-                    hof_captures.push_back({ g, keep, ty });
-                    return g;
-                };
-                for (auto& cname : expr.lambda_captures) {
-                    VarInfo* ov = lookup_var(cname);
-                    if (!ov || !ov->alloca_val || !LLVMIsAAllocaInst(ov->alloca_val)) continue;
-                    VarInfo nv = *ov;
-                    nv.alloca_val = to_slot(ov->alloca_val);
-                    if (ov->runtime_tag_alloca && LLVMIsAAllocaInst(ov->runtime_tag_alloca))
-                        nv.runtime_tag_alloca = to_slot(ov->runtime_tag_alloca);
-                    captured.push_back({ cname, nv });
-                }
+            for (auto& cname : expr.lambda_captures) {
+                VarInfo* ov = lookup_var(cname);
+                if (!ov || !ov->alloca_val || !LLVMIsAAllocaInst(ov->alloca_val)) continue;
+                captured.push_back({ cname, *ov });
             }
 
             current_fn = lambda_fn;
             scopes.push_back(Scope{});
-            for (auto& c : captured) scopes.back().vars[c.first] = c.second;
 
             LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, lambda_fn, "entry");
             LLVMPositionBuilderAtEnd(builder, entry);
+
+            // The captured copies come first: a parameter sharing a name with
+            // a capture has to win, and it is created after these.
+            for (size_t ci = 0; ci < captured.size(); ci++) {
+                const std::string& cname = captured[ci].first;
+                int ctag = captured[ci].second.tag;
+                LLVMValueRef idx = LLVMConstInt(i32_type, (unsigned long long)ci, 0);
+                auto* gb = get_runtime_func("__closure_get");
+                LLVMValueRef bits = LLVMBuildCall2(builder, gb->fn_type, gb->fn,
+                                                   &idx, 1, "cap_bits");
+                VarInfo& cvi = create_var(cname, ctag);
+                if (ctag == JD_TAG_STR || ctag == JD_TAG_ARR ||
+                    ctag == JD_TAG_NATIVE_MAP || ctag == JD_TAG_FUNCREF) {
+                    LLVMBuildStore(builder, LLVMBuildIntToPtr(builder, bits,
+                                   i8_ptr_type, "cap_ptr"), cvi.alloca_val);
+                } else if (jd_is_f64_tag(ctag)) {
+                    LLVMBuildStore(builder, pun_i64_to_f64(bits), cvi.alloca_val);
+                } else {
+                    LLVMBuildStore(builder, bits, cvi.alloca_val);
+                }
+                if (ctag == JD_TAG_RUNTIME) {
+                    auto* gt = get_runtime_func("__closure_get_tag");
+                    cvi.runtime_tag_alloca = scratch_alloca(i32_type,
+                                                            (cname + ".rtag").c_str());
+                    LLVMBuildStore(builder, LLVMBuildCall2(builder, gt->fn_type, gt->fn,
+                                   &idx, 1, "cap_tag"), cvi.runtime_tag_alloca);
+                }
+            }
 
             // Parameter kinds: a name ending in $ is a string; inside
             // SELECT/FILTER/TAKE_WHILE/DROP_WHILE/REDUCE the element parameter
@@ -9317,7 +9336,43 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             in_lambda = saved_in_lambda;
             LLVMPositionBuilderAtEnd(builder, saved_bb);
 
-            return { lambda_fn, JD_TAG_FUNCREF };
+            if (captured.empty())
+                return { lambda_fn, JD_TAG_FUNCREF };
+
+            // Without captures the funcref is the lambda itself; with them it
+            // is a closure carrying the copies, which a call site resolves.
+            auto* cnew = get_runtime_func("__closure_new");
+            auto* cset = get_runtime_func("__closure_set");
+            LLVMValueRef nargs[] = {
+                LLVMBuildBitCast(builder, lambda_fn, i8_ptr_type, "lam_ptr"),
+                LLVMConstInt(i32_type, (unsigned long long)captured.size(), 0)
+            };
+            LLVMValueRef clo = LLVMBuildCall2(builder, cnew->fn_type, cnew->fn,
+                                              nargs, 2, "closure");
+            for (size_t ci = 0; ci < captured.size(); ci++) {
+                const VarInfo& src = captured[ci].second;
+                int ctag = src.tag;
+                LLVMTypeRef sty = LLVMGetAllocatedType(src.alloca_val);
+                LLVMValueRef v = LLVMBuildLoad2(builder, sty, src.alloca_val, "cap_v");
+                LLVMValueRef bits;
+                if (ctag == JD_TAG_STR || ctag == JD_TAG_ARR ||
+                    ctag == JD_TAG_NATIVE_MAP || ctag == JD_TAG_FUNCREF) {
+                    bits = LLVMBuildPtrToInt(builder, v, i64_type, "cap_p2i");
+                } else if (jd_is_f64_tag(ctag)) {
+                    bits = pun_f64_to_i64(v);
+                } else {
+                    bits = v;
+                }
+                LLVMValueRef tagv = LLVMConstInt(i32_type, (unsigned)ctag, 0);
+                if (ctag == JD_TAG_RUNTIME && src.runtime_tag_alloca)
+                    tagv = LLVMBuildLoad2(builder, i32_type, src.runtime_tag_alloca,
+                                          "cap_rtag");
+                LLVMValueRef sargs[] = {
+                    clo, LLVMConstInt(i32_type, (unsigned long long)ci, 0), bits, tagv
+                };
+                LLVMBuildCall2(builder, cset->fn_type, cset->fn, sargs, 4, "");
+            }
+            return { clo, JD_TAG_FUNCREF };
         }
 
         case ExprKind::INDEX: {
@@ -11677,9 +11732,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 bool ask_channel = (rt == JD_TAG_RUNTIME) || (rt == -1);
                 if (ask_channel)
                     LLVMBuildStore(builder, LLVMConstInt(i32_type, -1, 1), funcref_ret_channel());
+                // The holder may carry a closure rather than the function
+                // itself; entering it answers the function to call and makes
+                // its captured values readable for the length of the call.
+                auto* c_in = get_runtime_func("__closure_enter");
+                auto* c_out = get_runtime_func("__closure_leave");
+                LLVMValueRef ca[] = { fn_ptr };
+                fn_ptr = LLVMBuildCall2(builder, c_in->fn_type, c_in->fn, ca, 1, "fn_resolved");
                 LLVMValueRef result = LLVMBuildCall2(builder, fn_ty, fn_ptr,
                     args.empty() ? nullptr : args.data(),
                     (unsigned)args.size(), "icall");
+                LLVMBuildCall2(builder, c_out->fn_type, c_out->fn, nullptr, 0, "");
                 // An error raised inside the referenced function reaches the
                 // enclosing TRY or unwinds this frame, as after a direct call.
                 emit_err_check();
@@ -12350,6 +12413,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         auto it = user_functions.find(e.str_val);
         return it != user_functions.end() && it->second.return_tag == JD_TAG_STR;
     };
+    // A funcref argument may be a closure rather than a function. The helper
+    // has to be called with the function the closure carries, and the closure
+    // stays entered until the helper returns, so the lambda it calls per
+    // element finds the captured values.
+    auto closure_enter = [&](LLVMValueRef fnp) -> LLVMValueRef {
+        auto* c_in = get_runtime_func("__closure_enter");
+        LLVMValueRef a[] = { fnp };
+        return LLVMBuildCall2(builder, c_in->fn_type, c_in->fn, a, 1, "fn_resolved");
+    };
+    auto closure_leave = [&]() {
+        auto* c_out = get_runtime_func("__closure_leave");
+        LLVMBuildCall2(builder, c_out->fn_type, c_out->fn, nullptr, 0, "");
+    };
     // OUTER(a, b, op@) with a USER funcref operator → native jdb_outer_fn.
     // The string-operator form (OUTER(a, b, "+")) leaves op as a STRING and
     // falls through to the VM bridge, which knows the operator codes.
@@ -12366,8 +12442,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return tv.val;
             };
             auto& fn = runtime_funcs["__outer_fn"];
-            LLVMValueRef args[] = { to_ptr(a_val), to_ptr(b_val), op_val.val };
+            LLVMValueRef args[] = { to_ptr(a_val), to_ptr(b_val), closure_enter(op_val.val) };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "outer");
+            closure_leave();
             return { result, JD_TAG_ARR };
         }
     }
@@ -12427,14 +12504,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         hof_lambda_mode = 0;
         return r;
     };
-    // Puts back the module slots of the USE(...) values from index mark on.
-    auto hof_restore = [&](size_t mark) {
-        for (size_t i = mark; i < hof_captures.size(); i++) {
-            auto& c = hof_captures[i];
-            LLVMBuildStore(builder, LLVMBuildLoad2(builder, c.ty, c.keep, "lcap_back"), c.slot);
-        }
-        hof_captures.resize(mark);
-    };
     // The array argument of a higher-order call as a native array pointer;
     // a VM array becomes a native one whose cells keep their kinds.
     auto hof_array_ptr = [&](TypedValue v) -> LLVMValueRef {
@@ -12476,10 +12545,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if ((upper == "SELECT" || upper == "FILTER" ||
          upper == "TAKE_WHILE" || upper == "DROP_WHILE") && expr.args.size() >= 2) {
         int elem = expr.args[1] ? hof_elem_kind(*expr.args[1]) : JD_TAG_RUNTIME;
-        size_t cap_mark = hof_captures.size();
         TypedValue fn_val = hof_funcref(*expr.args[0], 1, 1, elem, 0);
         TypedValue arr_val = codegen_expr(*expr.args[1]);
-        if (fn_val.tag != JD_TAG_FUNCREF) hof_captures.resize(cap_mark);
         if (fn_val.tag == JD_TAG_FUNCREF) {
             LLVMValueRef arr_ptr = hof_array_ptr(arr_val);
             std::string rt_name = (upper == "SELECT")     ? "__select_fn"     :
@@ -12487,9 +12554,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                                   (upper == "TAKE_WHILE") ? "__take_while_fn" :
                                                             "__drop_while_fn";
             auto& fn = runtime_funcs[rt_name];
-            LLVMValueRef args[] = { fn_val.val, arr_ptr };
+            LLVMValueRef args[] = { closure_enter(fn_val.val), arr_ptr };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "hof");
-            hof_restore(cap_mark);
+            closure_leave();
             // SELECT mapping to strings → flag the result array so reads/PRINT
             // decode the per-cell ptrs instead of showing the f64 bits as 0.
             // FILTER returns source elements, so it inherits the source's flag
@@ -12508,10 +12575,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         int elem = expr.args[1] ? hof_elem_kind(*expr.args[1]) : JD_TAG_RUNTIME;
         int acc = (expr.args.size() >= 3 && expr.args[2]) ? hof_acc_kind(*expr.args[2])
                                                           : JD_TAG_F64;
-        size_t cap_mark = hof_captures.size();
         TypedValue fn_val = hof_funcref(*expr.args[0], 2, 2, elem, acc);
         TypedValue arr_val = codegen_expr(*expr.args[1]);
-        if (fn_val.tag != JD_TAG_FUNCREF) hof_captures.resize(cap_mark);
         if (fn_val.tag == JD_TAG_FUNCREF) {
             LLVMValueRef arr_ptr = hof_array_ptr(arr_val);
             // Evaluate the accumulator init exactly once and coerce to the f64
@@ -12534,9 +12599,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 init_val = LLVMConstReal(f64_type, 0.0);
             }
             auto& fn = runtime_funcs["__reduce_fn"];
-            LLVMValueRef args[] = { fn_val.val, arr_ptr, init_val };
+            LLVMValueRef args[] = { closure_enter(fn_val.val), arr_ptr, init_val };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "red");
-            hof_restore(cap_mark);
+            closure_leave();
             if (acc == JD_TAG_STR || acc == JD_TAG_ARR) {
                 LLVMValueRef p = LLVMBuildIntToPtr(builder, pun_f64_to_i64(result),
                                                    i8_ptr_type, "red_s");
