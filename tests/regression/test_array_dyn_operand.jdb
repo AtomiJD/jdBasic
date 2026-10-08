@@ -1,0 +1,58 @@
+' An array meeting a value that only names its kind when it runs - a map
+' value, a cell of a mixed array. Guessing "scalar" at compile time handed
+' the cell's pointer bits to a function expecting a double, which is invalid
+' IR: ZEROS(3) + m{"v"} could not be compiled at all, and an intermediate
+' variable did not help.
+DIM bad = 0
+
+DIM zr = ZEROS(3)
+DIM mm AS MAP
+mm{"v"} = [1, 2, 3]
+mm{"n"} = 5
+
+' element-wise, both ways round
+DIM sum1 = zr + mm{"v"}
+IF LEN(sum1) <> 3 ORELSE sum1[0] <> 1 ORELSE sum1[2] <> 3 THEN
+    bad = bad + 1
+    PRINT "array + map array: "; sum1
+ENDIF
+DIM sum2 = mm{"v"} + zr
+IF LEN(sum2) <> 3 ORELSE sum2[2] <> 3 THEN
+    bad = bad + 1
+    PRINT "map array + array: "; sum2
+ENDIF
+
+' the same shape, but the cell holds a number: array with a scalar
+DIM ones = [10, 20, 30]
+DIM sum3 = ones + mm{"n"}
+IF LEN(sum3) <> 3 ORELSE sum3[0] <> 15 ORELSE sum3[2] <> 35 THEN
+    bad = bad + 1
+    PRINT "array + map number: "; sum3
+ENDIF
+DIM sum4 = mm{"n"} + ones
+IF LEN(sum4) <> 3 ORELSE sum4[0] <> 15 THEN
+    bad = bad + 1
+    PRINT "map number + array: "; sum4
+ENDIF
+
+' subtraction keeps the operand order
+DIM diff = ones - mm{"n"}
+IF diff[0] <> 5 THEN
+    bad = bad + 1
+    PRINT "array - map number: "; diff
+ENDIF
+DIM rdiff = mm{"n"} - ones
+IF rdiff[0] <> -5 THEN
+    bad = bad + 1
+    PRINT "map number - array: "; rdiff
+ENDIF
+
+' an intermediate variable reaches the same answers
+DIM mv = mm{"v"}
+DIM sum5 = zr + mv
+IF LEN(sum5) <> 3 ORELSE sum5[1] <> 2 THEN
+    bad = bad + 1
+    PRINT "via a variable: "; sum5
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

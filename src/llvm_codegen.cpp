@@ -10302,15 +10302,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 LLVMValueRef args[] = { lhs.val, rhs.val, LLVMConstInt(i32_type, POW_OP, 0) };
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "apow"), JD_TAG_ARR };
             } else if (lhs.tag == JD_TAG_ARR) {
-                LLVMValueRef scalar = rhs.tag == JD_TAG_I64
-                    ? LLVMBuildSIToFP(builder, rhs.val, f64_type, "itof") : rhs.val;
+                LLVMValueRef scalar = coerce_to(rhs, f64_type);
                 auto& fn = runtime_funcs["__arr_scalar_op"];
                 LLVMValueRef args[] = { lhs.val, scalar, LLVMConstInt(i32_type, POW_OP, 0),
                                          LLVMConstInt(i32_type, 0, 0) };
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "aspow"), JD_TAG_ARR };
             } else {
-                LLVMValueRef scalar = lhs.tag == JD_TAG_I64
-                    ? LLVMBuildSIToFP(builder, lhs.val, f64_type, "itof") : lhs.val;
+                LLVMValueRef scalar = coerce_to(lhs, f64_type);
                 auto& fn = runtime_funcs["__arr_scalar_op"];
                 LLVMValueRef args[] = { rhs.val, scalar, LLVMConstInt(i32_type, POW_OP, 0),
                                          LLVMConstInt(i32_type, 1, 0) };
@@ -10485,6 +10483,66 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             default: break;
         }
 
+        // An array meeting a cell that only names its kind when it runs - a
+        // map value, an element of a mixed array. Whether this is
+        // element-wise or array-with-a-scalar is not known at compile time,
+        // and guessing scalar handed the cell's pointer bits to a function
+        // expecting a double: invalid IR, so `ZEROS(3) + m{"v"}` could not be
+        // compiled at all. Both answers are arrays, so the choice can be made
+        // at runtime and the result is still one value.
+        if ((arith_op >= 0 || cmp_op >= 0) &&
+            (lhs.tag == JD_TAG_ARR) != (rhs.tag == JD_TAG_ARR)) {
+            bool arr_is_lhs = (lhs.tag == JD_TAG_ARR);
+            TypedValue arr_tv = arr_is_lhs ? lhs : rhs;
+            TypedValue dyn_tv = arr_is_lhs ? rhs : lhs;
+            if (dyn_tv.tag == JD_TAG_RUNTIME && dyn_tv.runtime_tag) {
+                LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, dyn_tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_ARR, 0), "dynop_isarr");
+                LLVMBasicBlockRef bb_arr  = LLVMAppendBasicBlock(current_fn, "dynop.arr");
+                LLVMBasicBlockRef bb_scal = LLVMAppendBasicBlock(current_fn, "dynop.scalar");
+                LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "dynop.join");
+                LLVMBuildCondBr(builder, is_arr, bb_arr, bb_scal);
+
+                LLVMPositionBuilderAtEnd(builder, bb_arr);
+                LLVMValueRef other = LLVMBuildIntToPtr(builder, dyn_tv.val, i8_ptr_type, "dynop_ptr");
+                LLVMValueRef a_l = arr_is_lhs ? arr_tv.val : other;
+                LLVMValueRef a_r = arr_is_lhs ? other : arr_tv.val;
+                auto& afn = runtime_funcs[arith_op >= 0 ? "__arr_binop" : "__arr_cmp_arr"];
+                LLVMValueRef aargs[] = { a_l, a_r,
+                    LLVMConstInt(i32_type, arith_op >= 0 ? arith_op : cmp_op, 0) };
+                LLVMValueRef a_res = LLVMBuildCall2(builder, afn.fn_type, afn.fn, aargs, 3, "dynop_aa");
+                LLVMBuildBr(builder, bb_join);
+                LLVMBasicBlockRef arr_end = LLVMGetInsertBlock(builder);
+
+                LLVMPositionBuilderAtEnd(builder, bb_scal);
+                // coerce_to on a runtime value emits its own blocks, so the
+                // one the builder ends in is what the phi must name.
+                LLVMValueRef s_val = coerce_to(dyn_tv, f64_type);
+                LLVMValueRef s_res;
+                if (arith_op >= 0) {
+                    auto& sfn = runtime_funcs["__arr_scalar_op"];
+                    LLVMValueRef sargs[] = { arr_tv.val, s_val,
+                        LLVMConstInt(i32_type, arith_op, 0),
+                        LLVMConstInt(i32_type, arr_is_lhs ? 0 : 1, 0) };
+                    s_res = LLVMBuildCall2(builder, sfn.fn_type, sfn.fn, sargs, 4, "dynop_as");
+                } else {
+                    auto& sfn = runtime_funcs["__arr_cmp_scalar"];
+                    LLVMValueRef sargs[] = { arr_tv.val, s_val,
+                        LLVMConstInt(i32_type, cmp_op, 0) };
+                    s_res = LLVMBuildCall2(builder, sfn.fn_type, sfn.fn, sargs, 3, "dynop_cs");
+                }
+                LLVMBuildBr(builder, bb_join);
+                LLVMBasicBlockRef scal_end = LLVMGetInsertBlock(builder);
+
+                LLVMPositionBuilderAtEnd(builder, bb_join);
+                LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "dynop");
+                LLVMValueRef vals[] = { a_res, s_res };
+                LLVMBasicBlockRef bbs[] = { arr_end, scal_end };
+                LLVMAddIncoming(phi, vals, bbs, 2);
+                return { phi, JD_TAG_ARR };
+            }
+        }
+
         if (lhs.tag == JD_TAG_ARR && rhs.tag == JD_TAG_ARR) {
             // arr OP arr
             if (arith_op >= 0) {
@@ -10511,8 +10569,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                                         LLVMConstInt(i32_type, cmp_op, 0) };
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmps"), JD_TAG_ARR };
             }
-            LLVMValueRef scalar = rhs.tag == JD_TAG_I64
-                ? LLVMBuildSIToFP(builder, rhs.val, f64_type, "itof") : rhs.val;
+            LLVMValueRef scalar = coerce_to(rhs, f64_type);
             if (arith_op >= 0) {
                 auto& fn = runtime_funcs["__arr_scalar_op"];
                 LLVMValueRef args[] = { lhs.val, scalar, LLVMConstInt(i32_type, arith_op, 0),
@@ -10534,8 +10591,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                                         LLVMConstInt(i32_type, cmp_op, 0) };
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmps"), JD_TAG_ARR };
             }
-            LLVMValueRef scalar = lhs.tag == JD_TAG_I64
-                ? LLVMBuildSIToFP(builder, lhs.val, f64_type, "itof") : lhs.val;
+            LLVMValueRef scalar = coerce_to(lhs, f64_type);
             if (arith_op >= 0) {
                 auto& fn = runtime_funcs["__arr_scalar_op"];
                 LLVMValueRef args[] = { rhs.val, scalar, LLVMConstInt(i32_type, arith_op, 0),
