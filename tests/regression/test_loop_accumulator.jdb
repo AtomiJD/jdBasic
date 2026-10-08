@@ -1,0 +1,49 @@
+' An accumulator fed from a nested index inside a loop. The read of the
+' accumulator is emitted once, before the store that gives its slot a tag,
+' so the first pass was right and the second read the stored double's bits
+' as an integer: 4613937818241073152 is 0x4008000000000000, the bits of 3.0.
+' A cell reached through two index steps has no kind the source names, which
+' is what the pre-pass has to see.
+DIM bad = 0
+
+DIM folders = [["a", 3], ["b", 4], ["c", 5]]
+DIM total = 0
+FOR k = 0 TO 2
+    total = total + folders[k][1]
+NEXT k
+IF total <> 12 THEN
+    bad = bad + 1
+    PRINT "summed: "; total
+ENDIF
+
+' The same outside a loop, and with a literal position
+DIM once = 0
+once = once + folders[0][1]
+once = once + folders[1][1]
+IF once <> 7 THEN
+    bad = bad + 1
+    PRINT "twice by hand: "; once
+ENDIF
+
+' A running accumulator over the same shape
+DIM running = 1
+FOR k = 0 TO 2
+    running = running * folders[k][1]
+NEXT k
+IF running <> 60 THEN
+    bad = bad + 1
+    PRINT "multiplied: "; running
+ENDIF
+
+' A single index step is unaffected
+DIM flat = [3, 4, 5]
+DIM plain = 0.0
+FOR k = 0 TO 2
+    plain = plain + flat[k]
+NEXT k
+IF plain <> 12 THEN
+    bad = bad + 1
+    PRINT "single step: "; plain
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

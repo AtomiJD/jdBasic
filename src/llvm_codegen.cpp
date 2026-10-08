@@ -3857,8 +3857,13 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     if (x.kind == ExprKind::VARIABLE) return tagged_name(x.str_val);
                     if (x.kind == ExprKind::INDEX) {
                         if (x.right && x.right->kind == ExprKind::LITERAL_STRING) return true;
+                        // A cell reached through two index steps has no kind
+                        // the source names, the same as a bare index on the
+                        // right-hand side: `t = t + rows[k][1]` has to hold
+                        // its answer with a tag, or the read emitted before
+                        // the store reads the next pass's bits as an integer.
+                        if (x.left && x.left->kind == ExprKind::INDEX) return true;
                         const Expr* base = x.left.get();
-                        while (base && base->kind == ExprKind::INDEX) base = base->left.get();
                         return base && base->kind == ExprKind::VARIABLE &&
                                (tagged_name(base->str_val) || map_dims.count(base->str_val));
                     }
