@@ -2120,9 +2120,13 @@ Description: Concatenates the elements of an array into one string, with delimit
 Syntax: DIM variable AS JSON
 Description: Declares a variable to hold a parsed JSON object.
 
+[JSON.PARSE]
+Syntax: JSON.PARSE(json_string$)
+Description: Parses a JSON string into a map or an array. The same function as JSON.PARSE$ - the plain name is the one to use, since the $ elsewhere in the language marks a function that answers a string and this one answers a container. Declaring the target AS MAP works only with the plain name; `DIM m AS MAP = JSON.PARSE$(..)` is a type error under -c.
+
 [JSON.PARSE$]
 Syntax: JSON.PARSE$(json_string$)
-Description: Parses a JSON string into a special JsonObject.
+Description: Parses a JSON string into a map or an array. Kept for the code that uses it; JSON.PARSE is the same function under the honest name.
 
 [JSON.STRINGIFY$]
 Syntax: JSON.STRINGIFY$(map_or_array)

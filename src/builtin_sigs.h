@@ -423,6 +423,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"JOY.COUNT", BuiltinRet::Unknown, BF_NO_VEC},
     {"JOY.HAT", BuiltinRet::Unknown, BF_NO_VEC},
     {"JOY.NAME$", BuiltinRet::Unknown, BF_NO_VEC},
+    {"JSON.PARSE", BuiltinRet::Handle, BF_NO_VEC},
     {"JSON.PARSE$", BuiltinRet::Handle, BF_NO_VEC},
     {"JSON.STRINGIFY$", BuiltinRet::Unknown, BF_NO_VEC | BF_KEEPS_ARGS},
     {"KILL", BuiltinRet::Unknown, BF_NO_VEC},

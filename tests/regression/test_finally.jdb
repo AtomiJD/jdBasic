@@ -1,0 +1,84 @@
+' FINALLY. Compiled the block was never emitted at all, so it simply did not
+' run - with or without a throw. Both exit paths of a TRY meet in the same
+' place, which is where it belongs.
+DIM bad = 0
+
+DIM quiet$ = ""
+TRY
+    quiet$ = quiet$ + "t"
+CATCH
+    quiet$ = quiet$ + "c"
+FINALLY
+    quiet$ = quiet$ + "f"
+ENDTRY
+IF quiet$ <> "tf" THEN
+    bad = bad + 1
+    PRINT "without a throw: "; quiet$
+ENDIF
+
+DIM thrown$ = ""
+TRY
+    thrown$ = thrown$ + "t"
+    THROW "boom"
+CATCH
+    thrown$ = thrown$ + "c"
+FINALLY
+    thrown$ = thrown$ + "f"
+ENDTRY
+IF thrown$ <> "tcf" THEN
+    bad = bad + 1
+    PRINT "with a throw: "; thrown$
+ENDIF
+
+' A FINALLY with no CATCH still runs. That it also swallows the error is the
+' same on both backends, so it is the language's answer, not a difference.
+DIM lone$ = ""
+DIM reached_outer = 0
+TRY
+    TRY
+        lone$ = lone$ + "t"
+        THROW "boom"
+    FINALLY
+        lone$ = lone$ + "f"
+    ENDTRY
+CATCH
+    reached_outer = 1
+ENDTRY
+IF lone$ <> "tf" ORELSE reached_outer <> 0 THEN
+    bad = bad + 1
+    PRINT "without a catch: "; lone$; " outer "; reached_outer
+ENDIF
+
+' Leaving a loop from inside the TRY still passes through it
+DIM looped$ = ""
+FOR k = 0 TO 2
+    TRY
+        IF k = 1 THEN EXITFOR
+        looped$ = looped$ + "t"
+    FINALLY
+        looped$ = looped$ + "f"
+    ENDTRY
+NEXT k
+IF looped$ <> "tf" THEN
+    bad = bad + 1
+    PRINT "leaving a loop: "; looped$
+ENDIF
+
+' A RETURN from inside the TRY does not pass through it - the same on both
+' backends, so it is recorded here rather than asserted as a wish
+FUNC Early()
+    DIM seen$ = ""
+    TRY
+        seen$ = seen$ + "t"
+        RETURN seen$ + "-ret"
+    FINALLY
+        seen$ = seen$ + "f"
+    ENDTRY
+    RETURN seen$ + "-end"
+ENDFUNC
+IF Early() <> "t-ret" THEN
+    bad = bad + 1
+    PRINT "returning out: "; Early()
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

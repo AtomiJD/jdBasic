@@ -196,7 +196,11 @@ void VM::register_data_builtins() {
 
     // ── JSON functions ───────────────────────────────────────
 
-    register_native("JSON.PARSE$", [](const std::vector<Value>& args) -> Value {
+    // JSON.PARSE and JSON.PARSE$ are the same function. The $ says "answers a
+    // string" everywhere else in the language, and this one answers a map or an
+    // array, so the plain name is the honest one; the $ form stays for the code
+    // that already uses it.
+    auto json_parse = [](const std::vector<Value>& args) -> Value {
         // Reuse MAP.FROM for objects, also handle arrays
         std::string s = args[0].as_string()->data;
         size_t p = 0;
@@ -320,7 +324,9 @@ void VM::register_data_builtins() {
         };
 
         return parse_value();
-    });
+    };
+    register_native("JSON.PARSE", json_parse);
+    register_native("JSON.PARSE$", json_parse);
 
     register_native("JSON.STRINGIFY$", [](const std::vector<Value>& args) -> Value {
         // RFC 8259-compliant string escape: " \ and the C0 control range

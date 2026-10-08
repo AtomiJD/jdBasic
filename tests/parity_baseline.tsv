@@ -212,6 +212,7 @@ tests/regression/test_dyn_array_ops.jdb	PASS	PASS	OK
 tests/regression/test_env_neg.jdb	OK	OK	OK
 tests/regression/test_errors.jdb	PASS	PASS	OK
 tests/regression/test_fileio.jdb	PASS	PASS	OK
+tests/regression/test_finally.jdb	PASS	PASS	OK
 tests/regression/test_for.jdb	OK	OK	OK
 tests/regression/test_for_step_neg.jdb	OK	CFAIL	GAP
 tests/regression/test_for_step_neg2.jdb	OK	CFAIL	GAP

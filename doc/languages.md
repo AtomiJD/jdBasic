@@ -1879,6 +1879,7 @@ Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"
 
 ### JSON Functions
 
+* **`JSON.PARSE(json_string$)`**: Parses a JSON string and returns a `Map` or an `Array`, accessed the usual way. The same function as `JSON.PARSE$`; the plain name is the one to reach for, because a `$` elsewhere in the language marks a function that answers a string and this one answers a container. That matters under `-c`: `DIM m AS MAP` followed by `m = JSON.PARSE$(..)` is a type error, while the plain name assigns.
 * **`JSON.PARSE$(json_string$)`**: Parses a JSON string and returns a special `JsonObject`. This object can be accessed like a `Map` or an `Array`.
 * **`JSON.STRINGIFY$(map_or_array)`**: Takes a `Map` or `Array` variable and returns its compact JSON string representation. Use it to build API payloads. **Native (`-c`):** only `Map`/`Array` are supported. A UDT instance does not marshal across the VM bridge and is rejected at compile time (the interpreter still stringifies a UDT to `{"__TYPE__":...}`). To serialise a UDT under `-c`, copy its fields into a `Map` first, or build the JSON string from the fields directly.
 
@@ -4593,7 +4594,7 @@ Every documented builtin, linked to the section that describes it.
 
 **I** · [IF](#system--flow-control) · [IIF](#matharithmeticround-functions) · [IMPORT](#system--flow-control) · [INDEXOF](#array--matrix-functions) · [INPUT](#console-io-functions) · [INPUTBOX$](#native-windows-forms-form) · [INPUT_HIDDEN$](#console-io-functions) · [INSERT$](#string-functions) · [INSTR](#string-functions) · [INT](#matharithmeticround-functions) · [INTEGRATE](#array--matrix-functions) · [INVERT](#array--matrix-functions) · [IOTA](#array--matrix-functions) · [ISARR](#type-inspection) · [ISBOOL](#type-inspection) · [ISMAP](#type-inspection) · [ISNONE](#type-inspection) · [ISNUM](#type-inspection) · [ISSTR](#type-inspection)
 
-**J** · [JDB.CHECK$](#type-inspection) · [JDB.GLOBAL_GET](#type-inspection) · [JOIN](#string-functions) · [JOY.AXIS](#mouse--joystick--gamepad-input) · [JOY.BUTTON](#mouse--joystick--gamepad-input) · [JOY.COUNT](#mouse--joystick--gamepad-input) · [JOY.HAT](#mouse--joystick--gamepad-input) · [JOY.NAME$](#mouse--joystick--gamepad-input) · [JSON.PARSE$](#json-functions) · [JSON.STRINGIFY$](#json-functions)
+**J** · [JDB.CHECK$](#type-inspection) · [JDB.GLOBAL_GET](#type-inspection) · [JOIN](#string-functions) · [JOY.AXIS](#mouse--joystick--gamepad-input) · [JOY.BUTTON](#mouse--joystick--gamepad-input) · [JOY.COUNT](#mouse--joystick--gamepad-input) · [JOY.HAT](#mouse--joystick--gamepad-input) · [JOY.NAME$](#mouse--joystick--gamepad-input) · [JSON.PARSE](#json-functions) · [JSON.PARSE$](#json-functions) · [JSON.STRINGIFY$](#json-functions)
 
 **K** · [KILL](#filesystem)
 

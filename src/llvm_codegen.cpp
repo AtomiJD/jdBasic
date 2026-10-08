@@ -4684,6 +4684,10 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             }
 
             LLVMPositionBuilderAtEnd(builder, after_bb);
+            // FINALLY runs on the way out, which is where both paths meet:
+            // the body finishing and the catch body finishing. It was not
+            // emitted at all before, so the block simply never ran.
+            for (auto& s : stmt.finally_body()) { if (s) codegen_stmt(*s); }
             break;
         }
         case StmtKind::ENUM_DECL:

@@ -136,7 +136,7 @@ inline const std::unordered_set<std::string>& native_names() {
         "OPEN_TAIL", "OPTION", "OS", "OUT",
         "OUTER", "OUTPUT", "PACK$", "PACKSIZE",
         "PADRATE", "PALETTE", "PAN", "PANELREG",
-        "PANELREGAT", "PANELSTATE", "PARAGRAPH", "PARSE$",
+        "PANELREGAT", "PANELSTATE", "PARAGRAPH", "PARSE", "PARSE$",
         "PARTICLE", "PARTS", "PATH", "PAUSE",
         "PAUSEMUS", "PBKDF2$", "PDF", "PEEK",
         "PEER$", "PENDING", "PENDOWN", "PENUP",
