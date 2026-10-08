@@ -1594,6 +1594,10 @@ static JdbArray* arr_scalar_op(JdbArray* a, double s, int op, bool scalar_left) 
     return r;
 }
 
+// The result of a comparison is a truth value per element; the flag is what
+// makes PRINT say TRUE/FALSE and TYPEOF say BOOLEAN while the stored 0/1
+// still adds and multiplies.
+extern "C" void jdb_array_set_bool_elems(JdbArray* arr);
 // arr CMP scalar (recursive)
 static JdbArray* arr_cmp_scalar(JdbArray* a, double s, int op) {
     if (!a) return jdb_array_new(0);
@@ -1607,6 +1611,7 @@ static JdbArray* arr_cmp_scalar(JdbArray* a, double s, int op) {
     } else {
         for (int64_t i = 0; i < a->length; i++)
             r->data[i] = scalar_cmp(a->data[i], s, op);
+        jdb_array_set_bool_elems(r);
     }
     return r;
 }
@@ -1634,6 +1639,7 @@ static JdbArray* arr_cmp_arr(JdbArray* a, JdbArray* b, int op) {
             }
             r->data[i] = res;
         }
+        jdb_array_set_bool_elems(r);
         return r;
     }
     bool nested = ((a->flags & 1) && !(a->flags & 2)) ||
@@ -1647,6 +1653,7 @@ static JdbArray* arr_cmp_arr(JdbArray* a, JdbArray* b, int op) {
     } else {
         for (int64_t i = 0; i < n; i++)
             r->data[i] = scalar_cmp(a->data[i], b->data[i], op);
+        jdb_array_set_bool_elems(r);
     }
     return r;
 }
@@ -1752,6 +1759,8 @@ int32_t jdb_array_classify_elem(JdbArray* arr, double d) {
     }
     // Every cell is a date, so a plain number out of one is still a date.
     if ((arr->flags & 16) != 0) return JD_TAG_DATE;
+    // Every cell is a truth value, so a plain 0/1 out of one is boolean.
+    if ((arr->flags & 4) != 0) return JD_TAG_BOOL;
     union { double d; uint64_t u; } u; u.d = d;
     bool looks_ptr = (u.u != 0 && u.u < (1ULL << 47));
     if (!looks_ptr) return 1;  // F64

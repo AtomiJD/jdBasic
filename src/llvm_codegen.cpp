@@ -7893,6 +7893,25 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
             TypedValue arr = codegen_expr(*pe.left);
             if (arr.tag == JD_TAG_ARR) {
                 TypedValue idx = codegen_expr(*pe.right);
+                // An array of positions gathers, the way the generic index
+                // path does; handing it to the element printer passed a
+                // pointer where a position belongs and the IR verifier
+                // rejected the whole compile.
+                if (idx.tag == JD_TAG_ARR) {
+                    auto& gather = runtime_funcs["__array_gather"];
+                    LLVMValueRef gargs[] = { arr.val, idx.val };
+                    LLVMValueRef gres = LLVMBuildCall2(builder, gather.fn_type,
+                                                       gather.fn, gargs, 2, "pgather");
+                    auto* frmv = get_runtime_func("FRMV$");
+                    if (frmv) {
+                        LLVMValueRef fargs[] = { gres };
+                        LLVMValueRef fs = LLVMBuildCall2(builder, frmv->fn_type,
+                                                         frmv->fn, fargs, 1, "pgfmt");
+                        LLVMValueRef pargs[] = { fs };
+                        LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, pargs, 1, "");
+                        continue;
+                    }
+                }
                 LLVMValueRef idx_i64 = jd_is_f64_tag(idx.tag)
                     ? LLVMBuildFPToSI(builder, idx.val, i64_type, "ftoi") : idx.val;
                 auto* fn = get_runtime_func("__print_arr_elem");
@@ -10154,7 +10173,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         ScopedLeafTag _lr(this, cell_hint(*expr.right));
         rhs = codegen_expr(*expr.right);
     }
+    // An array on either side compares element-wise, so it belongs to the
+    // array block below; answering one truth value for the whole array is
+    // what a scalar comparison does. The runtime-tagged side may turn out
+    // to be an array itself, which that block decides when it runs.
     if (is_compare && lhs.tag != JD_TAG_STR && rhs.tag != JD_TAG_STR &&
+        lhs.tag != JD_TAG_ARR && rhs.tag != JD_TAG_ARR &&
         ((lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag) ||
          (rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag))) {
         LLVMValueRef lb, lt, rb, rt;
@@ -10963,6 +10987,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
         return { LLVMBuildNeg(builder, operand.val, "neg"), JD_TAG_I64 };
     }
     if (expr.op == TokenType::NOT) {
+        if (operand.tag == JD_TAG_ARR) {
+            // Element-wise: a cell is negated by asking whether it is zero,
+            // which the comparison helper answers as a truth value per cell.
+            auto& fn = runtime_funcs["__arr_cmp_scalar"];
+            LLVMValueRef args[] = { operand.val, LLVMConstReal(f64_type, 0.0),
+                                    LLVMConstInt(i32_type, 0, 0) };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "not_arr"),
+                     JD_TAG_ARR };
+        }
         LLVMValueRef b = to_i1(operand);
         LLVMValueRef notb = LLVMBuildNot(builder, b, "not");
         return { LLVMBuildZExt(builder, notb, i64_type, "ext"), JD_TAG_BOOL };

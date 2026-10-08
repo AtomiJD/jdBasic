@@ -1,0 +1,119 @@
+' Comparing an array, and what the result is. Compiled, a comparison where
+' one side only names its kind when it runs took the scalar path and answered
+' one truth value for the whole array; the element-wise result was a plain
+' 0/1 array rather than truth values, so it printed [0, 1, 1] and a cell read
+' as FLOAT64; NOT had no element-wise form at all; and PRINT of an array
+' indexed by a mask handed the mask where a position belongs, which the IR
+' verifier rejected.
+DIM bad = 0
+
+DIM ones = [10, 20, 30]
+DIM cfg AS MAP
+cfg{"n"} = 15
+
+' A map value on the right is a scalar the running program names
+DIM over = ones > cfg{"n"}
+IF LEN(over) <> 3 ORELSE over[0] <> FALSE ORELSE over[1] <> TRUE THEN
+    bad = bad + 1
+    PRINT "array vs map value: "; over
+ENDIF
+DIM under = ones < cfg{"n"}
+IF LEN(under) <> 3 ORELSE under[0] <> TRUE ORELSE under[2] <> FALSE THEN
+    bad = bad + 1
+    PRINT "less than: "; under
+ENDIF
+
+' The same through a variable that holds the map value
+DIM lim = cfg{"n"}
+DIM over2 = ones > lim
+IF LEN(over2) <> 3 ORELSE over2[1] <> TRUE THEN
+    bad = bad + 1
+    PRINT "via a variable: "; over2
+ENDIF
+
+' The result carries truth values, not 0 and 1
+DIM mask = ones > 15
+IF TYPEOF(mask[0]) <> "BOOLEAN" THEN
+    bad = bad + 1
+    PRINT "cell kind: "; TYPEOF(mask[0])
+ENDIF
+OUTPUT.CAPTURE_BEGIN
+PRINT mask
+DIM shown$ = OUTPUT.CAPTURE_END$()
+IF INSTR(shown$, "[FALSE, TRUE, TRUE]") < 0 THEN
+    bad = bad + 1
+    PRINT "printed mask: ["; shown$; "]"
+ENDIF
+
+' and still counts and multiplies as 0 and 1
+IF SUM(mask) <> 2 THEN
+    bad = bad + 1
+    PRINT "sum of mask: "; SUM(mask)
+ENDIF
+DIM kept = ones * mask
+IF kept[0] <> 0 ORELSE kept[2] <> 30 THEN
+    bad = bad + 1
+    PRINT "masked product: "; kept
+ENDIF
+
+' Two arrays, strings, and a nested array
+DIM a = [1, 2, 3]
+DIM b = [3, 2, 1]
+DIM ab = a > b
+IF ab[0] <> FALSE ORELSE ab[2] <> TRUE THEN
+    bad = bad + 1
+    PRINT "array vs array: "; ab
+ENDIF
+DIM words = ["ab", "cd"]
+DIM hit = words = "ab"
+IF hit[0] <> TRUE ORELSE hit[1] <> FALSE THEN
+    bad = bad + 1
+    PRINT "string compare: "; hit
+ENDIF
+DIM grid = [[1, 2], [3, 4]]
+DIM gmask = grid > 2
+IF gmask[0][0] <> FALSE ORELSE gmask[1][1] <> TRUE THEN
+    bad = bad + 1
+    PRINT "nested: "; gmask
+ENDIF
+
+' AND / OR stay element-wise
+DIM both = (a > 1) AND (a < 3)
+IF both[0] <> FALSE ORELSE both[1] <> TRUE ORELSE both[2] <> FALSE THEN
+    bad = bad + 1
+    PRINT "AND: "; both
+ENDIF
+
+' NOT negates each cell
+DIM flipped = NOT (a > 1)
+IF flipped[0] <> TRUE ORELSE flipped[1] <> FALSE THEN
+    bad = bad + 1
+    PRINT "NOT of a mask: "; flipped
+ENDIF
+DIM flipped2 = NOT [1, 0, 5]
+IF flipped2[0] <> FALSE ORELSE flipped2[1] <> TRUE THEN
+    bad = bad + 1
+    PRINT "NOT of numbers: "; flipped2
+ENDIF
+
+' A mask gathers, printed inline as well as through a variable
+DIM picked = a[a > 1]
+IF LEN(picked) <> 3 ORELSE picked[0] <> 1 ORELSE picked[2] <> 2 THEN
+    bad = bad + 1
+    PRINT "gathered: "; picked
+ENDIF
+OUTPUT.CAPTURE_BEGIN
+PRINT a[a > 1]
+DIM shown2$ = OUTPUT.CAPTURE_END$()
+IF INSTR(shown2$, "[1, 2, 2]") < 0 THEN
+    bad = bad + 1
+    PRINT "printed gather: ["; shown2$; "]"
+ENDIF
+
+' A scalar comparison still answers one truth value
+IF (1 = 2) <> FALSE ORELSE NOT (1 = 2) <> TRUE THEN
+    bad = bad + 1
+    PRINT "scalar compare changed"
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

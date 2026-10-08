@@ -182,6 +182,7 @@ tests/regression/test_alias_isolated.jdb	OK	OK	OK
 tests/regression/test_apl.jdb	OK	OK	OK
 tests/regression/test_arr_idx_method.jdb	OK	OK	OK
 tests/regression/test_arr_idx_method_deep.jdb	OK	OK	OK
+tests/regression/test_array_compare.jdb	PASS	PASS	OK
 tests/regression/test_array_dyn_operand.jdb	PASS	PASS	OK
 tests/regression/test_array_row_alias.jdb	OK	OK	OK
 tests/regression/test_array_row_alias2.jdb	OK	OK	OK
