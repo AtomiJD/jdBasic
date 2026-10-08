@@ -11842,8 +11842,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // bits back to a ptr. Uniform signature is (double, double, ...) → double.
     std::string name_uc = name;
     for (auto& c : name_uc) c = (char)toupper((unsigned char)c);
+    // known_natives holds what a probe VM happened to register, which leaves
+    // out every builtin registered from outside the VM constructor (QR, SVD,
+    // EIG, FFT and the rest). The signature table is the declared set, so a
+    // call to a builtin is a call to the builtin even when a variable of that
+    // name exists - without it the call went through the variable's slot,
+    // which is a null function pointer.
     if (!user_functions.count(name) && !runtime_funcs.count(name) &&
-        !known_natives.count(name_uc)) {
+        !known_natives.count(name_uc) && !builtin_sig(name_uc)) {
         VarInfo* vi_fn = lookup_var(name);
         auto indirect_call = [&]() -> TypedValue {
 

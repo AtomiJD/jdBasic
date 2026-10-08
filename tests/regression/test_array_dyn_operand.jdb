@@ -23,25 +23,25 @@ IF LEN(sum2) <> 3 ORELSE sum2[2] <> 3 THEN
 ENDIF
 
 ' the same shape, but the cell holds a number: array with a scalar
-DIM ones = [10, 20, 30]
-DIM sum3 = ones + mm{"n"}
+DIM vals = [10, 20, 30]
+DIM sum3 = vals + mm{"n"}
 IF LEN(sum3) <> 3 ORELSE sum3[0] <> 15 ORELSE sum3[2] <> 35 THEN
     bad = bad + 1
     PRINT "array + map number: "; sum3
 ENDIF
-DIM sum4 = mm{"n"} + ones
+DIM sum4 = mm{"n"} + vals
 IF LEN(sum4) <> 3 ORELSE sum4[0] <> 15 THEN
     bad = bad + 1
     PRINT "map number + array: "; sum4
 ENDIF
 
 ' subtraction keeps the operand order
-DIM diff = ones - mm{"n"}
-IF diff[0] <> 5 THEN
+DIM delta = vals - mm{"n"}
+IF delta[0] <> 5 THEN
     bad = bad + 1
-    PRINT "array - map number: "; diff
+    PRINT "array - map number: "; delta
 ENDIF
-DIM rdiff = mm{"n"} - ones
+DIM rdiff = mm{"n"} - vals
 IF rdiff[0] <> -5 THEN
     bad = bad + 1
     PRINT "map number - array: "; rdiff

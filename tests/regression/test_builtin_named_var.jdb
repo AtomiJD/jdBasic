@@ -1,0 +1,64 @@
+' A variable whose name a builtin already carries. A call to the builtin has
+' to reach the builtin: the codegen's set of known builtins came from a probe
+' VM that never got the ones registered from outside its constructor (QR,
+' SVD, EIG, FFT), so DIM qr = QR(A) compiled the call as an indirect call
+' through the variable's own slot - a null function pointer, and a segfault.
+DIM bad = 0
+
+DIM mat = [[1.0, 2.0], [3.0, 4.0]]
+
+' The name of the builtin, carried by the variable it is assigned to
+DIM qr = QR(mat)
+IF TYPEOF(qr) <> "OBJECT" THEN
+    bad = bad + 1
+    PRINT "QR kind: "; TYPEOF(qr)
+ENDIF
+IF ABS(qr{"R"}[0][0] + 3.1622777) > 0.00001 THEN
+    bad = bad + 1
+    PRINT "QR R00: "; qr{"R"}[0][0]
+ENDIF
+
+' The other builtins registered the same way
+DIM svd = SVD(mat)
+IF ABS(svd{"S"}[0] - 5.4649857) > 0.00001 THEN
+    bad = bad + 1
+    PRINT "SVD S0: "; svd{"S"}[0]
+ENDIF
+DIM det = DET(mat)
+IF ABS(det + 2.0) > 0.000000001 THEN
+    bad = bad + 1
+    PRINT "DET: "; det
+ENDIF
+DIM eig = EIG(mat)
+DIM ev = eig{"EIGENVALUES"}
+IF ABS(ev[0][0] + ev[1][0] - 5.0) > 0.000001 THEN
+    bad = bad + 1
+    PRINT "EIG trace: "; ev[0][0] + ev[1][0]
+ENDIF
+DIM fft = FFT([1.0, 1.0, 1.0, 1.0])
+IF ABS(fft[0][0] - 4.0) > 0.000000001 THEN
+    bad = bad + 1
+    PRINT "FFT DC: "; fft[0][0]
+ENDIF
+
+' A plain scalar of a builtin's name reads and writes as itself
+DIM sum = 5
+DIM nums = [3, 1, 2]
+IF sum <> 5 ORELSE SUM(nums) <> 6 THEN
+    bad = bad + 1
+    PRINT "scalar shadow: "; sum; " "; SUM(nums)
+ENDIF
+sum = sum + 1
+IF sum <> 6 THEN
+    bad = bad + 1
+    PRINT "after a write: "; sum
+ENDIF
+
+' and the builtin is still callable on the next line
+DIM sorted = SORT(nums)
+IF sorted[0] <> 1 ORELSE sorted[2] <> 3 THEN
+    bad = bad + 1
+    PRINT "SORT after shadow: "; sorted
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

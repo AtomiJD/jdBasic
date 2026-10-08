@@ -43,23 +43,23 @@ ENDIF
 
 ' Three levels
 DIM root AS MAP
-DIM mid AS MAP
+DIM middle AS MAP
 DIM leaf AS MAP
 leaf{"x"} = 1
-mid{"leaf"} = leaf
-root{"mid"} = mid
-root{"mid"}{"leaf"}{"x"} = 9
-IF root{"mid"}{"leaf"}{"x"} <> 9 THEN
+middle{"leaf"} = leaf
+root{"middle"} = middle
+root{"middle"}{"leaf"}{"x"} = 9
+IF root{"middle"}{"leaf"}{"x"} <> 9 THEN
     bad = bad + 1
-    PRINT "three levels: "; root{"mid"}{"leaf"}{"x"}
+    PRINT "three levels: "; root{"middle"}{"leaf"}{"x"}
 ENDIF
 
 ' A computed key names the same step
-DIM which$ = "mid"
+DIM which$ = "middle"
 root{which$}{"leaf"}{"x"} = 42
-IF root{"mid"}{"leaf"}{"x"} <> 42 THEN
+IF root{"middle"}{"leaf"}{"x"} <> 42 THEN
     bad = bad + 1
-    PRINT "computed key: "; root{"mid"}{"leaf"}{"x"}
+    PRINT "computed key: "; root{"middle"}{"leaf"}{"x"}
 ENDIF
 
 ' A map holding an array, written by position

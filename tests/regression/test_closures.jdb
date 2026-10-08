@@ -104,8 +104,8 @@ IF s1[1] <> 4 ORELSE s2[1] <> 20 THEN
 ENDIF
 
 ' A capture at top level still reads the global directly
-DIM shift = 7
-DIM bump = LAMBDA USE(shift) x -> x + shift
+DIM bump_by = 7
+DIM bump = LAMBDA USE(bump_by) x -> x + bump_by
 IF bump(1) <> 8 THEN
     bad = bad + 1
     PRINT "global capture: "; bump(1)

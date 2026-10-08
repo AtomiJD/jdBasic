@@ -2227,7 +2227,7 @@ Description: Performs linear interpolation between two values or arrays.
 
 [LINT]
 Syntax: LINT
-Description: Static analysis over the loaded buffer. Reports parse stats, which files have OPTION "EXPLICIT"/"STRICT" active, and any assignment or reference to an undeclared name under EXPLICIT. Also usable from the command line via `jdBasic --lint file.jdb`.
+Description: Static analysis over the loaded buffer. Reports parse stats, which files have OPTION "EXPLICIT"/"STRICT" active, and any assignment or reference to an undeclared name under EXPLICIT. Also lists any variable, parameter or loop variable whose name a builtin already carries, which runs but costs a debugging session when a statement-shaped builtin such as CD swallows the line that indexes it. Also usable from the command line via `jdBasic --lint file.jdb`.
 
 [LIST]
 Syntax: LIST

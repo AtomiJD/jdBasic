@@ -7,17 +7,17 @@
 ' verifier rejected.
 DIM bad = 0
 
-DIM ones = [10, 20, 30]
+DIM vals = [10, 20, 30]
 DIM cfg AS MAP
 cfg{"n"} = 15
 
 ' A map value on the right is a scalar the running program names
-DIM over = ones > cfg{"n"}
+DIM over = vals > cfg{"n"}
 IF LEN(over) <> 3 ORELSE over[0] <> FALSE ORELSE over[1] <> TRUE THEN
     bad = bad + 1
     PRINT "array vs map value: "; over
 ENDIF
-DIM under = ones < cfg{"n"}
+DIM under = vals < cfg{"n"}
 IF LEN(under) <> 3 ORELSE under[0] <> TRUE ORELSE under[2] <> FALSE THEN
     bad = bad + 1
     PRINT "less than: "; under
@@ -25,14 +25,14 @@ ENDIF
 
 ' The same through a variable that holds the map value
 DIM lim = cfg{"n"}
-DIM over2 = ones > lim
+DIM over2 = vals > lim
 IF LEN(over2) <> 3 ORELSE over2[1] <> TRUE THEN
     bad = bad + 1
     PRINT "via a variable: "; over2
 ENDIF
 
 ' The result carries truth values, not 0 and 1
-DIM mask = ones > 15
+DIM mask = vals > 15
 IF TYPEOF(mask[0]) <> "BOOLEAN" THEN
     bad = bad + 1
     PRINT "cell kind: "; TYPEOF(mask[0])
@@ -50,7 +50,7 @@ IF SUM(mask) <> 2 THEN
     bad = bad + 1
     PRINT "sum of mask: "; SUM(mask)
 ENDIF
-DIM kept = ones * mask
+DIM kept = vals * mask
 IF kept[0] <> 0 ORELSE kept[2] <> 30 THEN
     bad = bad + 1
     PRINT "masked product: "; kept

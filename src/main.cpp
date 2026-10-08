@@ -12,6 +12,7 @@
 #include "parser.h"
 #include "compiler.h"
 #include "undeclared_check.h"
+#include "builtin_sigs.h"
 #include "pcode.h"
 #include "vm.h"
 #include "console.h"
@@ -1536,6 +1537,16 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 for (auto& u : find_undeclared(ast, is_builtin, &defined_funcs))
                     undeclared.push_back(u.name + " (line " + std::to_string(u.line) + ")");
             }
+            // Variables that carry a builtin's name. The signature table is
+            // the declared set of builtins, which is wider than whatever this
+            // build happened to register.
+            std::vector<std::string> shadows;
+            for (auto& s : find_builtin_shadows(ast, [](const std::string& n) {
+                    std::string up = n;
+                    std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                    return builtin_sig(up) != nullptr;
+                }))
+                shadows.push_back(s.name + " (line " + std::to_string(s.line) + ")");
 
             vm.emit("LINT: Parsed OK.\n");
             vm.emit("  " + std::to_string(ast.size()) + " top-level statements\n");
@@ -1566,6 +1577,20 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                         break;
                     }
                     vm.emit("    " + u + "\n");
+                }
+            }
+            if (!shadows.empty()) {
+                warnings += (int)shadows.size();
+                vm.emit("  Names a builtin already carries: " +
+                        std::to_string(shadows.size()) + "\n");
+                int shown = 0;
+                for (auto& s : shadows) {
+                    if (++shown > 10) {
+                        vm.emit("    ... (+" + std::to_string(shadows.size() - 10) +
+                                " more)\n");
+                        break;
+                    }
+                    vm.emit("    " + s + "\n");
                 }
             }
             if (warnings == 0) vm.emit("  No warnings.\n");

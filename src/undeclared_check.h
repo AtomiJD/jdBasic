@@ -135,3 +135,65 @@ inline std::vector<UndeclaredRef> find_undeclared(
     walk(ast);
     return out;
 }
+
+// Variables, parameters and loop variables whose name is also a builtin's.
+// The program still runs - the name shadows nothing the reader can see - but
+// a statement-shaped builtin (CD, for one) swallows the line that indexes
+// such a variable, and the error that comes back names the index rather than
+// the name. The caller decides what counts as a builtin name.
+inline std::vector<UndeclaredRef> find_builtin_shadows(
+        const std::vector<StmtPtr>& ast,
+        const std::function<bool(const std::string&)>& is_builtin_name) {
+    std::vector<UndeclaredRef> out;
+    std::set<std::string> seen;
+    auto note = [&](const std::string& n, int line, const std::string& file) {
+        if (n.empty() || !is_builtin_name(n)) return;
+        std::string up = n;
+        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+        if (!seen.insert(up).second) return;
+        out.push_back({ n, line, file });
+    };
+    std::function<void(const Expr*, int, const std::string&)> walk_expr =
+            [&](const Expr* e, int line, const std::string& file) {
+        if (!e) return;
+        if (e->kind == ExprKind::LAMBDA_EXPR)
+            for (auto& p : e->lambda_params) note(p, line, file);
+        walk_expr(e->left.get(), line, file);
+        walk_expr(e->right.get(), line, file);
+        for (auto& a : e->args) walk_expr(a.get(), line, file);
+    };
+    std::function<void(const std::vector<StmtPtr>&)> walk =
+            [&](const std::vector<StmtPtr>& stmts) {
+        for (auto& s : stmts) {
+            if (!s) continue;
+            switch (s->kind) {
+                case StmtKind::LET:
+                case StmtKind::DIM:
+                case StmtKind::REACT_ASSIGN:
+                case StmtKind::FOR_LOOP:
+                    note(s->var_name, s->line, s->source_file());
+                    break;
+                case StmtKind::FOR_EACH:
+                    note(s->var_name, s->line, s->source_file());
+                    note(s->label, s->line, s->source_file());
+                    break;
+                case StmtKind::DESTRUCTURE:
+                    for (auto& v : s->destruct_vars()) note(v, s->line, s->source_file());
+                    break;
+                case StmtKind::SUB:
+                case StmtKind::FUNCTION:
+                    for (auto& p : s->params()) note(p.name, s->line, s->source_file());
+                    break;
+                default: break;
+            }
+            walk_expr(s->expr.get(), s->line, s->source_file());
+            for (auto& pe : s->print_exprs) walk_expr(pe.get(), s->line, s->source_file());
+            walk(s->body);
+            walk(s->catch_body());
+            walk(s->finally_body());
+            for (auto& br : s->branches) walk(br.body);
+        }
+    };
+    walk(ast);
+    return out;
+}

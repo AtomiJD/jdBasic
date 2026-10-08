@@ -1688,6 +1688,8 @@ compiled program bakes the modules it imports into the executable.
 
 **Reserved names:** every built-in function name is reserved. Defining a `FUNC` or `SUB` whose name matches a builtin (e.g. `SUB Outer()` vs the APL builtin `OUTER`) is rejected at load time with `collides with the builtin function ... - choose another name`, because call dispatch always resolves builtins first and the user definition could never be reached. The interpreter and the native compiler reject the same names, in every build: a name stays reserved when a build leaves its feature out, so `FUNC MsgBox` fails without the `FORMS` flag too.
 
+A **variable** of that name is accepted, by both backends, and a call to the builtin still reaches the builtin. It is still worth avoiding: `DIM cd = ZEROS(3, 3)` then `cd[1][2] = 7` has `CD` swallow the line, and the error names the index rather than the name. `jdBasic --lint` lists every variable, parameter and loop variable whose name a builtin already carries.
+
 **Declared return type:** `FUNC name(...) AS INTEGER` (or `BYTE`, `INT16`, `INT32`, `INT64`, `BOOLEAN`) converts what `RETURN` hands back to that type, as `DIM x AS INTEGER = value` does: `RETURN 2.7` from an `AS INTEGER` function answers `2`. Arrays, maps, strings and `NONE` pass through unchanged.
 
 **Without a declared return type under `-c`:** an undeclared numeric parameter is a double, so a function built from it answers a double and `TYPEOF` says `FLOAT64` where the interpreter, which reads the value it actually holds, says `INT64`. Every value is the same either way, down to a 16-digit integer, and `\`, `MOD`, `PRINT` and `STR$` all agree. Declare the function `AS INTEGER` when a caller branches on `TYPEOF`.
