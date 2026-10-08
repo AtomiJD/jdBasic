@@ -1,0 +1,44 @@
+' FRMV$ as the language documents it: a 1-D array becomes one element per
+' line, a 2-D array a right-aligned column matrix. Compiled it answered the
+' bracketed one-line form PRINT uses for an array - the same helper under
+' the FRMV$ name - so every shape read differently from the interpreter.
+DIM bad = 0
+DIM nl$ = CHR$(10)
+
+IF FRMV$([1, 2, 3]) <> "1" + nl$ + "2" + nl$ + "3" + nl$ THEN
+    bad = bad + 1
+    PRINT "1-D numbers: ["; FRMV$([1, 2, 3]); "]"
+ENDIF
+IF FRMV$(["a", "b"]) <> "a" + nl$ + "b" + nl$ THEN
+    bad = bad + 1
+    PRINT "1-D strings: ["; FRMV$(["a", "b"]); "]"
+ENDIF
+IF FRMV$([[1, 2], [3, 4]]) <> "1 2" + nl$ + "3 4" + nl$ THEN
+    bad = bad + 1
+    PRINT "2-D: ["; FRMV$([[1, 2], [3, 4]]); "]"
+ENDIF
+
+' The columns are right-aligned to their widest cell
+IF FRMV$([[1, 200], [30, 4]]) <> " 1 200" + nl$ + "30   4" + nl$ THEN
+    bad = bad + 1
+    PRINT "aligned: ["; FRMV$([[1, 200], [30, 4]]); "]"
+ENDIF
+
+' A map cell renders its entries
+DIM rows = [{"n": "a"}, {"n": "b"}]
+DIM shown$ = FRMV$(rows)
+IF INSTR(shown$, CHR$(34) + "n" + CHR$(34) + ": " + CHR$(34) + "a" + CHR$(34)) < 0 THEN
+    bad = bad + 1
+    PRINT "map cells: ["; shown$; "]"
+ENDIF
+
+' PRINT of an array keeps the bracketed form, which is a different job
+OUTPUT.CAPTURE_BEGIN
+PRINT [1, 2, 3]
+DIM printed$ = OUTPUT.CAPTURE_END$()
+IF INSTR(printed$, "[1, 2, 3]") < 0 THEN
+    bad = bad + 1
+    PRINT "printed: ["; printed$; "]"
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

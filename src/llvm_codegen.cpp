@@ -814,7 +814,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_typeof_f64", "__typeof_f64", i8_ptr_type, {f64_type}, JD_TAG_STR);
 
     // FRMV$ (format array)
-    reg("jdb_frmv", "FRMV$", i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_frmv", "__arr_text", i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_frmv_matrix", "FRMV$", i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
 
     // Misc
     reg("jdb_cdbl",     "CDBL",       f64_type, {f64_type}, JD_TAG_F64);
@@ -8059,7 +8060,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                     LLVMValueRef gargs[] = { arr.val, idx.val };
                     LLVMValueRef gres = LLVMBuildCall2(builder, gather.fn_type,
                                                        gather.fn, gargs, 2, "pgather");
-                    auto* frmv = get_runtime_func("FRMV$");
+                    auto* frmv = get_runtime_func("__arr_text");
                     if (frmv) {
                         LLVMValueRef fargs[] = { gres };
                         LLVMValueRef fs = LLVMBuildCall2(builder, frmv->fn_type,
@@ -8123,7 +8124,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
             LLVMBuildCall2(builder, pr_double.fn_type, pr_double.fn, args, 1, "");
         } else if (tv.tag == JD_TAG_ARR) {
             // Array → format via FRMV$ ("[a, b, c]") and print as string.
-            auto* fmt = get_runtime_func("FRMV$");
+            auto* fmt = get_runtime_func("__arr_text");
             if (fmt) {
                 LLVMValueRef fargs[] = { tv.val };
                 LLVMValueRef fs = LLVMBuildCall2(builder, fmt->fn_type, fmt->fn, fargs, 1, "afmt");
@@ -8148,7 +8149,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMBuildCondBr(builder, is_arr, bb_arr, bb_else);
 
                 LLVMPositionBuilderAtEnd(builder, bb_arr);
-                auto* frmv = get_runtime_func("FRMV$");
+                auto* frmv = get_runtime_func("__arr_text");
                 LLVMValueRef arr_ptr = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "pr_aptr");
                 LLVMValueRef args_a[] = { arr_ptr };
                 LLVMValueRef str_a = frmv
@@ -12898,7 +12899,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         arg_raws[i] = LLVMBuildPtrToInt(builder, s, i64_type, "ptoi");
                     } else if (av.tag == JD_TAG_ARR) {
                         store_tag(i, 's');
-                        auto& fv = runtime_funcs["FRMV$"];
+                        auto& fv = runtime_funcs["__arr_text"];
                         LLVMValueRef fargs[] = { av.val };
                         LLVMValueRef s = LLVMBuildCall2(builder, fv.fn_type, fv.fn, fargs, 1, "fmt_arr");
                         arg_raws[i] = LLVMBuildPtrToInt(builder, s, i64_type, "ptoi");
@@ -15313,7 +15314,7 @@ LLVMValueRef LLVMCodegen::runtime_to_text(LLVMValueRef bits, LLVMValueRef rtag) 
 
     LLVMPositionBuilderAtEnd(builder, bb_arr);
     {
-        auto& fn = runtime_funcs["FRMV$"];
+        auto& fn = runtime_funcs["__arr_text"];
         LLVMValueRef args[] = { LLVMBuildIntToPtr(builder, bits, i8_ptr_type, "rtt_aptr") };
         leg(bb_arr, LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "rtt_arr"));
     }

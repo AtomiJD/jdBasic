@@ -218,6 +218,7 @@ tests/regression/test_for_step_neg3.jdb	OK	CFAIL	GAP
 tests/regression/test_for_step_neg4.jdb	OK	CFAIL	GAP
 tests/regression/test_format_vmh.jdb	OK	OK	OK
 tests/regression/test_frmv.jdb	OK	OK	OK
+tests/regression/test_frmv_matrix.jdb	PASS	PASS	OK
 tests/regression/test_fs.jdb	FAIL:1	FAIL:1	BOTH_RED
 tests/regression/test_func_array_param.jdb	OK	OK	OK
 tests/regression/test_func_local_array.jdb	OK	OK	OK

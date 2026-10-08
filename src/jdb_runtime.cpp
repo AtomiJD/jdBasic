@@ -4822,6 +4822,70 @@ char* jdb_frmv(JdbArray* arr) {
     return _strdup(buf);
 }
 
+// FRMV$ as the language documents it: a 1-D array becomes one element per
+// line, a 2-D array a right-aligned column matrix. jdb_frmv is the bracketed
+// one-line form PRINT uses for an array, which is a different job.
+char* jdb_frmv_matrix(JdbArray* arr) {
+    if (!arr) return _strdup("");
+    auto cell_text = [](JdbArray* a, int64_t i) -> std::string {
+        int32_t t = (a->flags & 8) && a->elem_tags ? (int32_t)a->elem_tags[i]
+                                                   : jdb_array_classify_elem(a, a->data[i]);
+        union { double d; int64_t i; } u; u.d = a->data[i];
+        if (t == JD_TAG_STR) {
+            const char* s = (const char*)(intptr_t)u.i;
+            return s ? std::string(s) : std::string();
+        }
+        if (t == JD_TAG_BOOL) return a->data[i] != 0.0 ? "TRUE" : "FALSE";
+        if (t == JD_TAG_NATIVE_MAP) {
+            char* ms = jdb_map_str((JdbMap*)(intptr_t)u.i);
+            std::string out = ms ? ms : "{}";
+            free(ms);
+            return out;
+        }
+        if (t == JD_TAG_DATE) {
+            char* iso = jdb_cvdate_num(a->data[i]);
+            std::string out = iso ? iso : "";
+            free(iso);
+            return out;
+        }
+        char num[64];
+        jdb_format_double(num, sizeof num, a->data[i]);
+        return num;
+    };
+    bool is_2d = false;
+    if (arr->length > 0 && (arr->flags & 1) && !(arr->flags & 2)) {
+        union { double d; int64_t i; } u; u.d = arr->data[0];
+        is_2d = u.i != 0;
+    }
+    std::string out;
+    if (!is_2d) {
+        for (int64_t i = 0; i < arr->length; i++) out += cell_text(arr, i) + "\n";
+        return _strdup(out.c_str());
+    }
+    std::vector<std::vector<std::string>> cells;
+    std::vector<size_t> widths;
+    for (int64_t r = 0; r < arr->length; r++) {
+        union { double d; int64_t i; } u; u.d = arr->data[r];
+        JdbArray* row = (JdbArray*)(intptr_t)u.i;
+        std::vector<std::string> line;
+        if (row)
+            for (int64_t c = 0; c < row->length; c++) line.push_back(cell_text(row, c));
+        if (widths.size() < line.size()) widths.resize(line.size(), 0);
+        for (size_t c = 0; c < line.size(); c++)
+            if (line[c].size() > widths[c]) widths[c] = line[c].size();
+        cells.push_back(std::move(line));
+    }
+    for (auto& line : cells) {
+        for (size_t c = 0; c < line.size(); c++) {
+            if (widths[c] > line[c].size()) out.append(widths[c] - line[c].size(), ' ');
+            out += line[c];
+            if (c + 1 < line.size()) out += " ";
+        }
+        out += "\n";
+    }
+    return _strdup(out.c_str());
+}
+
 // ── PACK$/UNPACK (binary data) ──────────────────────────────
 
 char* jdb_pack(const char* fmt, JdbArray* values) {
