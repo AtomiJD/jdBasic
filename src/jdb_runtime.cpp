@@ -481,7 +481,7 @@ double jdb_ceil(double x)      { return ceil(x); }
 double jdb_pow(double x, double y) { return pow(x, y); }
 int64_t jdb_int(double x)      { return (int64_t)x; }
 double jdb_val(const char* s)   { return atof(s); }
-double jdb_rnd()                { return (double)rand() / RAND_MAX; }
+double jdb_rnd(double ignored)  { (void)ignored; return (double)rand() / RAND_MAX; }
 double jdb_random2(double lo, double hi) { return lo + (double)rand() / RAND_MAX * (hi - lo); }
 
 // Extended math

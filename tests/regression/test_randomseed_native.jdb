@@ -1,0 +1,27 @@
+' The same seed gives the same sequence. RND accepts and ignores an
+' argument, so RND(1) draws from the generator RANDOMSEED seeds instead of a
+' second one with its own state.
+DIM bad = 0
+
+RANDOMSEED(11)
+DIM first = RND(1)
+DIM second = RND(1)
+RANDOMSEED(11)
+IF RND(1) <> first THEN
+    bad = bad + 1
+    PRINT "RND(1) after a reseed: "; first
+ENDIF
+IF first = second THEN
+    bad = bad + 1
+    PRINT "RND(1) repeated itself: "; first
+ENDIF
+
+RANDOMSEED(3)
+DIM bare = RND()
+RANDOMSEED(3)
+IF RND() <> bare THEN
+    bad = bad + 1
+    PRINT "RND() after a reseed: "; bare
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

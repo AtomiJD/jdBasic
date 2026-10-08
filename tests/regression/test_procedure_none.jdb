@@ -1,0 +1,38 @@
+' A builtin that does something and answers nothing answers NONE. The kind
+' comes from the signature table, so neither the name nor the argument kinds
+' decide it, and the compiled form agrees with the interpreter.
+DIM bad = 0
+
+DIM ch = CHAN.OPEN(8)
+DIM sent = CHAN.SEND(ch, 7)
+IF TYPEOF(sent) <> "NONE" THEN
+    bad = bad + 1
+    PRINT "CHAN.SEND answered "; TYPEOF(sent)
+ENDIF
+
+IF TYPEOF(SETENV("JDB_PROCEDURE_NONE", "1")) <> "NONE" THEN
+    bad = bad + 1
+    PRINT "SETENV answered "; TYPEOF(SETENV("JDB_PROCEDURE_NONE", "2"))
+ENDIF
+
+DIM seeded = RANDOMSEED(7)
+IF TYPEOF(seeded) <> "NONE" THEN
+    bad = bad + 1
+    PRINT "RANDOMSEED answered "; TYPEOF(seeded)
+ENDIF
+
+' An array argument does not turn a procedure into an array answer.
+DIM three = [1, 2, 3]
+DIM mapped = RANDOMSEED(three[0])
+IF TYPEOF(mapped) <> "NONE" THEN
+    bad = bad + 1
+    PRINT "RANDOMSEED of an array cell answered "; TYPEOF(mapped)
+ENDIF
+
+' The absent value is false in a condition.
+IF sent THEN
+    bad = bad + 1
+    PRINT "NONE was true in a condition"
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

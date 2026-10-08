@@ -1,0 +1,155 @@
+' Reports what every native builtin actually answers. For each
+' register_native() in src/*.cpp it brace-matches the registered lambda and
+' classifies the kind of every return statement in it, skipping returns that
+' belong to nested lambdas. The result is compared against the BuiltinRet
+' column in src/builtin_sigs.h. Run from the repository root.
+
+DIM q$ = CHR$(34)
+DIM nl$ = CHR$(10)
+
+DIM sigs$ = TXTREADER$("src/builtin_sigs.h")
+
+FUNC SigOf(n$)
+    DIM at = INSTR(sigs$, CHR$(34) + n$ + CHR$(34) + ", BuiltinRet::")
+    IF at < 0 THEN RETURN "-"
+    DIM rest$ = MID$(sigs$, at + LEN(n$) + 16, 14)
+    DIM cut = INSTR(rest$, ",")
+    DIM found$ = rest$
+    IF cut >= 0 THEN found$ = LEFT$(rest$, cut)
+    ' An Unknown entry is as unclassified as an absent one.
+    IF found$ = "Unknown" THEN RETURN "-"
+    RETURN found$
+ENDFUNC
+
+FUNC NumOf(s$, ch$)
+    RETURN LEN(SPLIT(s$, ch$)) - 1
+ENDFUNC
+
+FUNC HasLambda(s$)
+    RETURN INSTR(s$, "[]") >= 0 ORELSE INSTR(s$, "[&]") >= 0 ORELSE INSTR(s$, "[=]") >= 0 ORELSE INSTR(s$, "[&,") >= 0 ORELSE INSTR(s$, "[this") >= 0 ORELSE INSTR(s$, "[&this") >= 0
+ENDFUNC
+
+' The kind a single return statement answers, read off the Value factory.
+FUNC RetKind(s$)
+    IF INSTR(s$, "make_none") >= 0 THEN RETURN "NONE"
+    IF INSTR(s$, "make_string") >= 0 THEN RETURN "STR"
+    IF INSTR(s$, "make_bool") >= 0 THEN RETURN "BOOL"
+    IF INSTR(s$, "make_i64") >= 0 ORELSE INSTR(s$, "make_int") >= 0 THEN RETURN "I64"
+    IF INSTR(s$, "make_f64") >= 0 ORELSE INSTR(s$, "make_double") >= 0 THEN RETURN "F64"
+    IF INSTR(s$, "make_array") >= 0 ORELSE INSTR(s$, "make_tensor") >= 0 THEN RETURN "ARR"
+    IF INSTR(s$, "make_object") >= 0 ORELSE INSTR(s$, "make_map") >= 0 THEN RETURN "OBJ"
+    RETURN "?"
+ENDFUNC
+
+DIM names = []
+DIM kinds = []
+DIM srcs = []
+
+DIM srcfiles = DIR$("src/*.cpp")
+FOR EACH f$ IN srcfiles
+    DIM text$ = TXTREADER$("src/" + f$)
+    IF INSTR(text$, "register_native(" + q$) < 0 THEN CONTINUEFOR
+    DIM src_lines = SPLIT(text$, nl$)
+    DIM n_lines = LEN(src_lines)
+    DIM i = 0
+    WHILE i < n_lines
+        DIM ln$ = src_lines[i]
+        DIM at = INSTR(ln$, "register_native(" + q$)
+        IF at < 0 THEN
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM tail$ = MID$(ln$, at + 17)
+        DIM reg_name$ = LEFT$(tail$, INSTR(tail$, q$))
+
+        ' The lambda introducer is on the registration line or just below it.
+        DIM lam = -1
+        DIM k = i
+        WHILE k < n_lines AND k < i + 4
+            IF HasLambda(src_lines[k]) THEN
+                lam = k
+                EXITDO
+            ENDIF
+            k = k + 1
+        WEND
+        IF lam < 0 THEN
+            names = APPEND(names, reg_name$)
+            kinds = APPEND(kinds, "nolambda")
+            srcs = APPEND(srcs, f$)
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+
+        DIM depth = 0
+        DIM started = FALSE
+        DIM skip_at = -1
+        DIM seen$ = ""
+        DIM j = lam
+        WHILE j < n_lines
+            DIM bl$ = src_lines[j]
+            DIM d0 = depth
+            IF skip_at >= 0 AND d0 < skip_at THEN skip_at = -1
+            IF skip_at < 0 AND (started ORELSE j = lam) THEN
+                DIM rat = INSTR(bl$, "return ")
+                IF rat >= 0 THEN
+                    DIM rk$ = RetKind(MID$(bl$, rat))
+                    IF INSTR(seen$, rk$) < 0 THEN seen$ = seen$ + rk$ + " "
+                ENDIF
+            ENDIF
+            depth = depth + NumOf(bl$, "{") - NumOf(bl$, "}")
+            IF depth > 0 THEN started = TRUE
+            IF skip_at < 0 AND j > lam AND depth > d0 AND HasLambda(bl$) THEN skip_at = depth
+            IF started AND depth <= 0 THEN EXITDO
+            j = j + 1
+        WEND
+
+        names = APPEND(names, reg_name$)
+        kinds = APPEND(kinds, RTRIM$(seen$))
+        srcs = APPEND(srcs, f$)
+        i = j + 1
+    WEND
+NEXT
+
+PRINT "scanned "; LEN(names); " registrations"
+PRINT ""
+
+DIM n_none_new = 0
+DIM n_kind_new = 0
+
+PRINT "== answers NONE only, signature not listed =="
+FOR i = 0 TO LEN(names) - 1
+    IF kinds[i] = "NONE" AND SigOf(names[i]) = "-" THEN
+        PRINT names[i]; "  ("; srcs[i]; ")"
+        n_none_new = n_none_new + 1
+    ENDIF
+NEXT
+
+PRINT ""
+PRINT "== answers NONE only, but a signature says otherwise =="
+FOR i = 0 TO LEN(names) - 1
+    IF kinds[i] = "NONE" AND SigOf(names[i]) <> "-" THEN
+        PRINT names[i]; "  sig="; SigOf(names[i]); "  ("; srcs[i]; ")"
+    ENDIF
+NEXT
+
+PRINT ""
+PRINT "== answers one kind, signature not listed =="
+FOR i = 0 TO LEN(names) - 1
+    DIM kk$ = kinds[i]
+    IF kk$ <> "NONE" AND kk$ <> "nolambda" AND kk$ <> "" AND INSTR(kk$, " ") < 0 AND kk$ <> "?" AND SigOf(names[i]) = "-" THEN
+        PRINT names[i]; "  -> "; kk$; "  ("; srcs[i]; ")"
+        n_kind_new = n_kind_new + 1
+    ENDIF
+NEXT
+
+PRINT ""
+PRINT "== several kinds or opaque, signature not listed =="
+FOR i = 0 TO LEN(names) - 1
+    DIM km$ = kinds[i]
+    DIM many = INSTR(km$, " ") >= 0 ORELSE km$ = "?" ORELSE km$ = "" ORELSE km$ = "nolambda"
+    IF many AND SigOf(names[i]) = "-" THEN PRINT names[i]; "  -> ["; km$; "]  ("; srcs[i]; ")"
+NEXT
+
+PRINT ""
+PRINT "NONE-only and unlisted: "; n_none_new
+PRINT "single-kind and unlisted: "; n_kind_new

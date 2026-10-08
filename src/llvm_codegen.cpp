@@ -324,8 +324,8 @@ void LLVMCodegen::declare_runtime_functions() {
     // Math (special)
     reg("jdb_int",    "INT",    i64_type, {f64_type}, JD_TAG_I64);
     reg("jdb_val",    "VAL",    f64_type, {i8_ptr_type}, JD_TAG_F64);
-    reg("jdb_rnd",    "RND",    f64_type, {}, JD_TAG_F64);
-    reg("jdb_rnd",    "RANDOM", f64_type, {}, JD_TAG_F64);
+    reg("jdb_rnd",    "RND",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_rnd",    "RANDOM", f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_random2","__random2", f64_type, {f64_type, f64_type}, JD_TAG_F64);
 
     // System
@@ -4182,6 +4182,9 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         }
                         std::string upper = e->func_name;
                         std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                        // A procedure answers nothing whatever it is given,
+                        // so neither the argument kinds nor the name decide.
+                        if (builtin_ret(upper) == BuiltinRet::None) return JD_TAG_RUNTIME;
                         for (auto& a : e->args) {
                             if (a && infer_tag(a.get()) == JD_TAG_ARR && !builtin_no_vectorize(upper)) {
                                 return JD_TAG_ARR;
@@ -14901,6 +14904,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMBuildCall2(builder, rf.fn_type, rf.fn,
                            args.empty() ? nullptr : args.data(),
                            (unsigned)args.size(), "");
+            if (builtin_ret(upper) == BuiltinRet::None) {
+                TypedValue none;
+                none.val = LLVMConstInt(i64_type, 0, 0);
+                none.tag = JD_TAG_RUNTIME;
+                none.runtime_tag = LLVMConstInt(i32_type, JD_TAG_NONE, 0);
+                return none;
+            }
             return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
         } else {
             LLVMValueRef result = LLVMBuildCall2(builder, rf.fn_type, rf.fn,
@@ -15112,7 +15122,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef call_args[] = { handle, name_str, args_ptr, tags_ptr,
                 LLVMConstInt(i32_type, nargs, 0) };
 
-            if (is_void_fn) {
+            if (sig_ret == BuiltinRet::None) {
+                // A procedure. The interpreter answers NONE, so the compiled
+                // form answers the same shape a NONE literal does: a
+                // runtime-tagged zero.
+                auto& fn = runtime_funcs["__jdrt_call_typed_void"];
+                LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "");
+                TypedValue none;
+                none.val = LLVMConstInt(i64_type, 0, 0);
+                none.tag = JD_TAG_RUNTIME;
+                none.runtime_tag = LLVMConstInt(i32_type, JD_TAG_NONE, 0);
+                return none;
+            } else if (is_void_fn) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_void"];
                 LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "");
                 return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
