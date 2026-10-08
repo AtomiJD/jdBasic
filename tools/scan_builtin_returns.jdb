@@ -9,35 +9,71 @@ DIM nl$ = CHR$(10)
 
 DIM sigs$ = TXTREADER$("src/builtin_sigs.h")
 
-FUNC SigOf(n$)
+' The table entry for a name, from the return kind to the end of the line.
+FUNC EntryOf(n$)
     DIM at = INSTR(sigs$, CHR$(34) + n$ + CHR$(34) + ", BuiltinRet::")
-    IF at < 0 THEN RETURN "-"
-    DIM rest$ = MID$(sigs$, at + LEN(n$) + 16, 14)
-    DIM cut = INSTR(rest$, ",")
-    DIM found$ = rest$
-    IF cut >= 0 THEN found$ = LEFT$(rest$, cut)
+    IF at < 0 THEN RETURN ""
+    DIM rest$ = MID$(sigs$, at + LEN(n$) + 16, 90)
+    DIM cut = INSTR(rest$, "}")
+    IF cut < 0 THEN RETURN rest$
+    RETURN LEFT$(rest$, cut)
+ENDFUNC
+
+FUNC SigOf(n$)
+    DIM entry$ = EntryOf(n$)
+    IF entry$ = "" THEN RETURN "-"
+    DIM cut = INSTR(entry$, ",")
+    DIM found$ = entry$
+    IF cut >= 0 THEN found$ = LEFT$(entry$, cut)
     ' An Unknown entry is as unclassified as an absent one.
     IF found$ = "Unknown" THEN RETURN "-"
     RETURN found$
+ENDFUNC
+
+' The signature a scanned kind asks for. BF_DATE outranks the return kind:
+' the table records what the ISO-string form answered, the flag records that
+' the value is a date, and a date rides the f64 variant.
+FUNC WantsSig(kind$)
+    IF kind$ = "NONE" THEN RETURN "None"
+    IF kind$ = "STR" THEN RETURN "Str"
+    IF kind$ = "BOOL" THEN RETURN "Bool"
+    IF kind$ = "I64" THEN RETURN "I64"
+    IF kind$ = "F64" THEN RETURN "F64"
+    IF kind$ = "ARR" THEN RETURN "Arr"
+    IF kind$ = "OBJ" THEN RETURN "Handle"
+    RETURN ""
 ENDFUNC
 
 FUNC NumOf(s$, ch$)
     RETURN LEN(SPLIT(s$, ch$)) - 1
 ENDFUNC
 
+' A lambda introducer of any capture list: the closing bracket of the
+' capture is followed by the parameter list, and the line goes on to open a
+' body or name a return type.
 FUNC HasLambda(s$)
-    RETURN INSTR(s$, "[]") >= 0 ORELSE INSTR(s$, "[&]") >= 0 ORELSE INSTR(s$, "[=]") >= 0 ORELSE INSTR(s$, "[&,") >= 0 ORELSE INSTR(s$, "[this") >= 0 ORELSE INSTR(s$, "[&this") >= 0
+    IF INSTR(s$, "](") < 0 THEN RETURN FALSE
+    RETURN INSTR(s$, "{") >= 0 ORELSE INSTR(s$, "->") >= 0
 ENDFUNC
 
 ' The kind a single return statement answers, read off the Value factory.
 FUNC RetKind(s$)
-    IF INSTR(s$, "make_none") >= 0 THEN RETURN "NONE"
-    IF INSTR(s$, "make_string") >= 0 THEN RETURN "STR"
-    IF INSTR(s$, "make_bool") >= 0 THEN RETURN "BOOL"
-    IF INSTR(s$, "make_i64") >= 0 ORELSE INSTR(s$, "make_int") >= 0 THEN RETURN "I64"
-    IF INSTR(s$, "make_f64") >= 0 ORELSE INSTR(s$, "make_double") >= 0 THEN RETURN "F64"
-    IF INSTR(s$, "make_array") >= 0 ORELSE INSTR(s$, "make_tensor") >= 0 THEN RETURN "ARR"
-    IF INSTR(s$, "make_object") >= 0 ORELSE INSTR(s$, "make_map") >= 0 THEN RETURN "OBJ"
+    DIM expr$ = LTRIM$(MID$(s$, 7))
+    IF LEFT$(expr$, 2) = "{}" THEN RETURN "NONE"
+    IF LEFT$(expr$, 7) = "Value()" THEN RETURN "NONE"
+    ' The kind is whatever the returned expression itself is, so a factory
+    ' that only fills an argument of a helper call decides nothing.
+    IF LEFT$(expr$, 12) <> "Value::make_" THEN RETURN "?"
+    DIM head$ = MID$(expr$, 7)
+    DIM paren = INSTR(head$, "(")
+    IF paren >= 0 THEN head$ = LEFT$(head$, paren)
+    IF head$ = "make_none" THEN RETURN "NONE"
+    IF head$ = "make_string" THEN RETURN "STR"
+    IF head$ = "make_bool" THEN RETURN "BOOL"
+    IF head$ = "make_i64" ORELSE head$ = "make_int" THEN RETURN "I64"
+    IF head$ = "make_f64" ORELSE head$ = "make_double" THEN RETURN "F64"
+    IF head$ = "make_array" ORELSE head$ = "make_tensor" THEN RETURN "ARR"
+    IF head$ = "make_object" ORELSE head$ = "make_map" THEN RETURN "OBJ"
     RETURN "?"
 ENDFUNC
 
@@ -113,6 +149,32 @@ FOR EACH f$ IN srcfiles
     WEND
 NEXT
 
+' --check reports only the contradictions and fails on them, which is what
+' CI needs. The unlisted names are a backlog, not a breakage.
+DIM check_only = FALSE
+FOR EACH arg IN OS.ARGS()
+    IF arg = "--check" THEN check_only = TRUE
+NEXT
+
+IF check_only THEN
+    DIM found = 0
+    FOR i = 0 TO LEN(names) - 1
+        DIM s2$ = SigOf(names[i])
+        DIM w2$ = WantsSig(kinds[i])
+        IF s2$ <> "-" AND w2$ <> "" AND w2$ <> s2$ AND INSTR(EntryOf(names[i]), "BF_DATE") < 0 THEN
+            PRINT names[i]; " answers "; kinds[i]; ", builtin_sigs.h says "; s2$; " ("; srcs[i]; ")"
+            found = found + 1
+        ENDIF
+    NEXT
+    IF found = 0 THEN
+        PRINT "builtin returns: "; LEN(names); " registrations, none contradicts the table"
+    ELSE
+        PRINT found; " builtin(s) answer a kind the table does not record"
+        END 1
+    ENDIF
+    END
+ENDIF
+
 PRINT "scanned "; LEN(names); " registrations"
 PRINT ""
 
@@ -128,10 +190,18 @@ FOR i = 0 TO LEN(names) - 1
 NEXT
 
 PRINT ""
-PRINT "== answers NONE only, but a signature says otherwise =="
+PRINT "== one kind, and the signature says another =="
+DIM n_conflict = 0
 FOR i = 0 TO LEN(names) - 1
-    IF kinds[i] = "NONE" AND SigOf(names[i]) <> "-" THEN
-        PRINT names[i]; "  sig="; SigOf(names[i]); "  ("; srcs[i]; ")"
+    DIM sig$ = SigOf(names[i])
+    DIM wants$ = WantsSig(kinds[i])
+    IF sig$ <> "-" AND wants$ <> "" AND wants$ <> sig$ THEN
+        ' A name carrying BF_DATE answers a date, whatever the kind the
+        ' factory in its body names.
+        IF INSTR(EntryOf(names[i]), "BF_DATE") < 0 THEN
+            PRINT names[i]; "  answers "; kinds[i]; ", table says "; sig$; "  ("; srcs[i]; ")"
+            n_conflict = n_conflict + 1
+        ENDIF
     ENDIF
 NEXT
 
@@ -156,3 +226,4 @@ NEXT
 PRINT ""
 PRINT "NONE-only and unlisted: "; n_none_new
 PRINT "single-kind and unlisted: "; n_kind_new
+PRINT "conflicts with the table: "; n_conflict

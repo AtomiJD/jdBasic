@@ -57,6 +57,12 @@ jobs:
           & build/jdBasic.exe tools/check_builtin_sigs.jdb
           if ($LASTEXITCODE -ne 0) { throw "builtin_sigs.h names an undocumented builtin" }
 
+      - name: Builtin return kinds
+        shell: pwsh
+        run: |
+          & build/jdBasic.exe tools/scan_builtin_returns.jdb --check
+          if ($LASTEXITCODE -ne 0) { throw "a builtin answers a kind builtin_sigs.h does not record" }
+
       - name: Language reference contents and index
         shell: pwsh
         run: |
