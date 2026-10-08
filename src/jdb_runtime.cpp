@@ -3183,6 +3183,18 @@ int64_t jdb_str_ne(const char* a, const char* b) {
 // native string ordering operators (<,>,<=,>=) and string-array compares.
 // Three-way compare of two tagged values: two strings compare by content,
 // anything else as numbers (a string operand counts by its numeric value).
+
+// The same comparison with the operands the other way round. Codes are
+// 0=eq, 1=ne, 4=lt, 5=le, 6=gt, 7=ge.
+static inline int32_t jdb_cmp_op_flipped(int32_t op) {
+    switch (op) {
+        case 4: return 6;
+        case 6: return 4;
+        case 5: return 7;
+        case 7: return 5;
+        default: return op;
+    }
+}
 int64_t jdb_dyn_cmp(int64_t a, int32_t ta, int64_t b, int32_t tb) {
     // A VM value behind a handle is read through the bridge: as text
     // against a string, as a number otherwise.
@@ -3214,6 +3226,35 @@ int64_t jdb_dyn_cmp(int64_t a, int32_t ta, int64_t b, int32_t tb) {
     };
     double x = as_num(a, ta), y = as_num(b, tb);
     return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+// A comparison where an array hides behind one of the tags: it answers a
+// truth value per element, so the caller needs the kind of the answer too.
+// Anything else falls through to the three-way compare above, which the
+// caller turns into a single truth value.
+int64_t jdb_dyn_cmp_arr(int64_t a, int32_t ta, int64_t b, int32_t tb,
+                        int32_t op, int32_t* out_tag) {
+    auto as_num = [](int64_t bits, int32_t t) -> double {
+        if (t == JD_TAG_I64 || t == JD_TAG_BOOL) return (double)bits;
+        if (t == JD_TAG_VM_HANDLE && g_jdrt_handle)
+            return jdrt_val_to_f64(g_jdrt_handle, bits);
+        union { double d; int64_t i; } u; u.i = bits; return u.d;
+    };
+    bool a_arr = (ta == JD_TAG_ARR), b_arr = (tb == JD_TAG_ARR);
+    if (a_arr || b_arr) {
+        if (out_tag) *out_tag = JD_TAG_ARR;
+        JdbArray* out = nullptr;
+        if (a_arr && b_arr)
+            out = jdb_array_cmp_arr((JdbArray*)(intptr_t)a, (JdbArray*)(intptr_t)b, op);
+        else if (a_arr)
+            out = jdb_array_cmp_scalar((JdbArray*)(intptr_t)a, as_num(b, tb), op);
+        else
+            out = jdb_array_cmp_scalar((JdbArray*)(intptr_t)b, as_num(a, ta),
+                                       jdb_cmp_op_flipped(op));
+        return (int64_t)(intptr_t)out;
+    }
+    if (out_tag) *out_tag = JD_TAG_BOOL;
+    return jdb_dyn_cmp(a, ta, b, tb);
 }
 
 // Arithmetic where both operands only name their kind when they run - two

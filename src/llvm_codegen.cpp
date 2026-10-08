@@ -567,6 +567,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_str_cmp",  "__str_cmp", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_dyn_cmp",  "__dyn_cmp", i64_type, {i64_type, i32_type, i64_type, i32_type}, JD_TAG_I64);
     reg("jdb_dyn_arith", "__dyn_arith", i64_type, {i64_type, i32_type, i64_type, i32_type, i32_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_dyn_cmp_arr", "__dyn_cmp_arr", i64_type, {i64_type, i32_type, i64_type, i32_type, i32_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_str_ne",   "__str_ne",  i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_ltrim",    "LTRIM$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_rtrim",    "RTRIM$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
@@ -9937,6 +9938,54 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 return { LLVMBuildCall2(builder, gather.fn_type, gather.fn,
                                         gargs, 2, "gather7"), JD_TAG_ARR };
             }
+            // The index is a mask or a list of positions whose kind only the
+            // running program knows - what a comparison on a runtime-tagged
+            // array answers. An array there gathers; a single position reads
+            // one cell, as below.
+            if (arr_tv.tag == JD_TAG_RUNTIME && arr_tv.runtime_tag &&
+                idx_tv.tag == JD_TAG_RUNTIME && idx_tv.runtime_tag) {
+                LLVMValueRef idx_is_arr = LLVMBuildICmp(builder, LLVMIntEQ,
+                    idx_tv.runtime_tag, LLVMConstInt(i32_type, JD_TAG_ARR, 0),
+                    "gat_isarr");
+                LLVMBasicBlockRef bb_g = LLVMAppendBasicBlock(current_fn, "gat.arr");
+                LLVMBasicBlockRef bb_o = LLVMAppendBasicBlock(current_fn, "gat.one");
+                LLVMBasicBlockRef bb_j = LLVMAppendBasicBlock(current_fn, "gat.join");
+                LLVMBuildCondBr(builder, idx_is_arr, bb_g, bb_o);
+
+                LLVMPositionBuilderAtEnd(builder, bb_g);
+                auto& gather = runtime_funcs["__array_gather"];
+                LLVMValueRef gargs[] = {
+                    LLVMBuildIntToPtr(builder, arr_tv.val, i8_ptr_type, "gat_base"),
+                    LLVMBuildIntToPtr(builder, idx_tv.val, i8_ptr_type, "gat_idx") };
+                LLVMValueRef gres = LLVMBuildCall2(builder, gather.fn_type, gather.fn,
+                                                   gargs, 2, "gather7d");
+                LLVMValueRef gbits = LLVMBuildPtrToInt(builder, gres, i64_type, "gat_bits");
+                LLVMBuildBr(builder, bb_j);
+                LLVMBasicBlockRef g_end = LLVMGetInsertBlock(builder);
+
+                LLVMPositionBuilderAtEnd(builder, bb_o);
+                auto& gi = runtime_funcs["__jdrt_tagged_index"];
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef out = scratch_alloca(i64_type, "gat_out");
+                LLVMValueRef targs[] = { rt, arr_tv.val, arr_tv.runtime_tag,
+                                         idx_tv.val, idx_tv.runtime_tag, out };
+                LLVMValueRef otag = LLVMBuildCall2(builder, gi.fn_type, gi.fn,
+                                                   targs, 6, "gat_itag");
+                LLVMValueRef oval = LLVMBuildLoad2(builder, i64_type, out, "gat_ival");
+                LLVMBuildBr(builder, bb_j);
+                LLVMBasicBlockRef o_end = LLVMGetInsertBlock(builder);
+
+                LLVMPositionBuilderAtEnd(builder, bb_j);
+                LLVMValueRef pv = LLVMBuildPhi(builder, i64_type, "gat_v");
+                LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "gat_t");
+                LLVMValueRef vals[] = { gbits, oval };
+                LLVMValueRef tags[] = { LLVMConstInt(i32_type, JD_TAG_ARR, 0), otag };
+                LLVMBasicBlockRef bbs[] = { g_end, o_end };
+                LLVMAddIncoming(pv, vals, bbs, 2);
+                LLVMAddIncoming(pt, tags, bbs, 2);
+                return { pv, JD_TAG_RUNTIME, pt };
+            }
             // A tagged key on a tag-7 base: the dispatcher decides at
             // runtime whether the key names a map entry or an array cell.
             if (arr_tv.tag == JD_TAG_RUNTIME && arr_tv.runtime_tag &&
@@ -10422,9 +10471,36 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         LLVMValueRef lb, lt, rb, rt;
         to_bits_tag(lhs, lb, lt);
         to_bits_tag(rhs, rb, rt);
-        auto& fn = runtime_funcs["__dyn_cmp"];
-        LLVMValueRef args[] = { lb, lt, rb, rt };
-        LLVMValueRef c = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "dyncmp");
+        int32_t cop = 0;
+        switch (expr.op) {
+            case TokenType::NE: cop = 1; break;
+            case TokenType::LT: cop = 4; break;
+            case TokenType::LE: cop = 5; break;
+            case TokenType::GT: cop = 6; break;
+            case TokenType::GE: cop = 7; break;
+            default: cop = 0; break;
+        }
+        // An array behind either tag compares element-wise and answers an
+        // array of truth values; anything else answers one. Only the running
+        // program knows which, so the helper reports the kind of its answer.
+        auto& fn = runtime_funcs["__dyn_cmp_arr"];
+        LLVMValueRef out_tag = scratch_alloca(i32_type, "dcmp_tag");
+        LLVMValueRef args[] = { lb, lt, rb, rt,
+            LLVMConstInt(i32_type, (unsigned)cop, 0), out_tag };
+        LLVMValueRef bits = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 6, "dyncmp");
+        LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "dcmp_tagv");
+        LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, tag_v,
+            LLVMConstInt(i32_type, JD_TAG_ARR, 0), "dcmp_isarr");
+        LLVMBasicBlockRef bb_a = LLVMAppendBasicBlock(current_fn, "dcmp.arr");
+        LLVMBasicBlockRef bb_s = LLVMAppendBasicBlock(current_fn, "dcmp.scalar");
+        LLVMBasicBlockRef bb_j = LLVMAppendBasicBlock(current_fn, "dcmp.join");
+        LLVMBuildCondBr(builder, is_arr, bb_a, bb_s);
+
+        LLVMPositionBuilderAtEnd(builder, bb_a);
+        LLVMBuildBr(builder, bb_j);
+        LLVMBasicBlockRef a_end = LLVMGetInsertBlock(builder);
+
+        LLVMPositionBuilderAtEnd(builder, bb_s);
         LLVMIntPredicate p = LLVMIntEQ;
         switch (expr.op) {
             case TokenType::NE: p = LLVMIntNE;  break;
@@ -10434,8 +10510,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::GE: p = LLVMIntSGE; break;
             default: break;
         }
-        LLVMValueRef cmp = LLVMBuildICmp(builder, p, c, LLVMConstInt(i64_type, 0, 0), "dcmp");
-        return { LLVMBuildZExt(builder, cmp, i64_type, "ext"), JD_TAG_BOOL };
+        LLVMValueRef cmp = LLVMBuildICmp(builder, p, bits, LLVMConstInt(i64_type, 0, 0), "dcmp");
+        LLVMValueRef sb = LLVMBuildZExt(builder, cmp, i64_type, "ext");
+        LLVMBuildBr(builder, bb_j);
+        LLVMBasicBlockRef s_end = LLVMGetInsertBlock(builder);
+
+        LLVMPositionBuilderAtEnd(builder, bb_j);
+        LLVMValueRef pv = LLVMBuildPhi(builder, i64_type, "dcmp_v");
+        LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "dcmp_t");
+        LLVMValueRef vals[] = { bits, sb };
+        LLVMValueRef tags[] = { LLVMConstInt(i32_type, JD_TAG_ARR, 0),
+                                LLVMConstInt(i32_type, JD_TAG_BOOL, 0) };
+        LLVMBasicBlockRef bbs[] = { a_end, s_end };
+        LLVMAddIncoming(pv, vals, bbs, 2);
+        LLVMAddIncoming(pt, tags, bbs, 2);
+        return { pv, JD_TAG_RUNTIME, pt };
     }
 
     // VM_HANDLE materialisation for binary ops. A handle on either side
@@ -14279,6 +14368,50 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         auto dit = direct_array_unary.find(upper);
         if (dit != direct_array_unary.end() && expr.args.size() == 1) {
             TypedValue av = arg_cache[0];
+            // The argument may only name its kind when it runs - a map value,
+            // the answer of arithmetic between two such. An array there is
+            // mapped element-wise; a number goes the scalar way below.
+            if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
+                auto rit = runtime_funcs.find(dit->second);
+                if (rit != runtime_funcs.end()) {
+                    LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ,
+                        av.runtime_tag, LLVMConstInt(i32_type, JD_TAG_ARR, 0),
+                        "vec_isarr");
+                    LLVMBasicBlockRef bb_v = LLVMAppendBasicBlock(current_fn, "vec.arr");
+                    LLVMBasicBlockRef bb_s = LLVMAppendBasicBlock(current_fn, "vec.scalar");
+                    LLVMBasicBlockRef bb_j = LLVMAppendBasicBlock(current_fn, "vec.join");
+                    LLVMBuildCondBr(builder, is_arr, bb_v, bb_s);
+
+                    LLVMPositionBuilderAtEnd(builder, bb_v);
+                    LLVMValueRef vargs[] = {
+                        LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "vec_ptr") };
+                    LLVMValueRef vres = LLVMBuildCall2(builder, rit->second.fn_type,
+                        rit->second.fn, vargs, 1, "vecd");
+                    LLVMValueRef vbits = LLVMBuildPtrToInt(builder, vres, i64_type, "vec_bits");
+                    LLVMBuildBr(builder, bb_j);
+                    LLVMBasicBlockRef v_end = LLVMGetInsertBlock(builder);
+
+                    LLVMPositionBuilderAtEnd(builder, bb_s);
+                    auto& sfn = runtime_funcs[upper];
+                    LLVMValueRef sargs[] = { coerce_to(av, f64_type) };
+                    LLVMValueRef sres = LLVMBuildCall2(builder, sfn.fn_type, sfn.fn,
+                                                       sargs, 1, "vecs");
+                    LLVMValueRef sbits = pun_f64_to_i64(sres);
+                    LLVMBuildBr(builder, bb_j);
+                    LLVMBasicBlockRef s_end = LLVMGetInsertBlock(builder);
+
+                    LLVMPositionBuilderAtEnd(builder, bb_j);
+                    LLVMValueRef pv = LLVMBuildPhi(builder, i64_type, "vec_v");
+                    LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "vec_t");
+                    LLVMValueRef vals[] = { vbits, sbits };
+                    LLVMValueRef tags[] = { LLVMConstInt(i32_type, JD_TAG_ARR, 0),
+                                            LLVMConstInt(i32_type, JD_TAG_F64, 0) };
+                    LLVMBasicBlockRef bbs[] = { v_end, s_end };
+                    LLVMAddIncoming(pv, vals, bbs, 2);
+                    LLVMAddIncoming(pt, tags, bbs, 2);
+                    return { pv, JD_TAG_RUNTIME, pt };
+                }
+            }
             if (av.tag == JD_TAG_ARR) {
                 auto rit = runtime_funcs.find(dit->second);
                 if (rit != runtime_funcs.end()) {

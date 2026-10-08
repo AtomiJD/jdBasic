@@ -1,0 +1,78 @@
+' An array that only names itself when it runs - a map value, or what
+' arithmetic between two of them answers. A comparison on it gave one truth
+' value instead of a mask, so indexing with that mask read a position; and an
+' element-wise builtin took it for a number and answered 0.
+DIM bad = 0
+
+DIM box AS MAP
+box{"a"} = [10, 20, 30]
+box{"b"} = [1, 2, 3]
+box{"same"} = [15, 15, 15]
+DIM aa = box{"a"}
+DIM bb = box{"b"}
+
+' A comparison answers a mask
+DIM over = aa > 15
+IF LEN(over) <> 3 ORELSE over[0] <> FALSE ORELSE over[2] <> TRUE THEN
+    bad = bad + 1
+    PRINT "mask: "; over
+ENDIF
+DIM against = aa > box{"same"}
+IF against[0] <> FALSE ORELSE against[1] <> TRUE THEN
+    bad = bad + 1
+    PRINT "against an array: "; against
+ENDIF
+
+' and that mask indexes
+DIM picked = aa[aa > 15]
+IF LEN(picked) <> 3 ORELSE picked[0] <> 10 ORELSE picked[2] <> 20 THEN
+    bad = bad + 1
+    PRINT "indexed by a mask: "; picked
+ENDIF
+
+' A comparison between two numbers of unknown kind still answers one value
+DIM one = box{"a"}[1]
+IF (one > 15) <> TRUE ORELSE (one > 25) <> FALSE THEN
+    bad = bad + 1
+    PRINT "two numbers: "; one > 15; " "; one > 25
+ENDIF
+
+' An element-wise builtin maps over it
+DIM taken = ABS(aa)
+IF taken[0] <> 10 ORELSE taken[2] <> 30 THEN
+    bad = bad + 1
+    PRINT "ABS of a map value: "; taken
+ENDIF
+DIM spread = ABS(aa - bb)
+IF spread[0] <> 9 ORELSE spread[2] <> 27 THEN
+    bad = bad + 1
+    PRINT "ABS of a difference: "; spread
+ENDIF
+IF SUM(ABS(aa - bb)) <> 54 THEN
+    bad = bad + 1
+    PRINT "summed: "; SUM(ABS(aa - bb))
+ENDIF
+IF ROUND(SUM(ABS(aa - bb)) / LEN(aa)) <> 18 THEN
+    bad = bad + 1
+    PRINT "averaged: "; SUM(ABS(aa - bb)) / LEN(aa)
+ENDIF
+
+' and the same inside a function
+FUNC Spread(m)
+    DIM x = m{"a"}
+    DIM y = m{"b"}
+    RETURN SUM(ABS(x - y)) / LEN(x)
+ENDFUNC
+IF ROUND(Spread(box)) <> 18 THEN
+    bad = bad + 1
+    PRINT "in a function: "; Spread(box)
+ENDIF
+
+' a number of unknown kind still goes the scalar way
+DIM lone = ABS(box{"b"}[0] - 5)
+IF lone <> 4 THEN
+    bad = bad + 1
+    PRINT "ABS of a number: "; lone
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
