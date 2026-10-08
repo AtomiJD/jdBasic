@@ -9919,6 +9919,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "ugetf"), JD_TAG_F64 };
             }
 
+            // An array of positions gathers, whatever the base's own kind is
+            // only known at run time: the tagged read below takes one
+            // position, so the index array's pointer went in as if it were
+            // one and the answer was a cell at a pointer-sized offset.
+            if (arr_tv.tag == JD_TAG_RUNTIME && arr_tv.runtime_tag &&
+                idx_tv.tag == JD_TAG_ARR) {
+                auto& gather = runtime_funcs["__array_gather"];
+                LLVMValueRef base = LLVMBuildIntToPtr(builder, arr_tv.val,
+                                                      i8_ptr_type, "gat_base");
+                LLVMValueRef gargs[] = { base, idx_tv.val };
+                return { LLVMBuildCall2(builder, gather.fn_type, gather.fn,
+                                        gargs, 2, "gather7"), JD_TAG_ARR };
+            }
             // A tagged key on a tag-7 base: the dispatcher decides at
             // runtime whether the key names a map entry or an array cell.
             if (arr_tv.tag == JD_TAG_RUNTIME && arr_tv.runtime_tag &&

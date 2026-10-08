@@ -224,6 +224,7 @@ tests/regression/test_funcref.jdb	OK	OK	OK
 tests/regression/test_funcref_throw_unwind.jdb	OK	OK	OK
 tests/regression/test_funcref_untyped_param.jdb	PASS	PASS	OK
 tests/regression/test_functional.jdb	OK	CFAIL	GAP
+tests/regression/test_gather_dyn_base.jdb	PASS	PASS	OK
 tests/regression/test_getos.jdb	OK	OK	OK
 tests/regression/test_goto_native.jdb	PASS	PASS	OK
 tests/regression/test_help.jdb	OK	CFAIL	GAP

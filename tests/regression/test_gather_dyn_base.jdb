@@ -1,0 +1,42 @@
+' An array of positions gathers from a base whose own kind only the running
+' program knows - a list taken out of a map value. The tagged read that
+' claimed the statement takes one position, so the index array's pointer
+' went in as if it were one: the answer was 0 and the next read raised a
+' phantom out-of-bounds with a pointer-sized index.
+DIM bad = 0
+
+DIM box AS MAP
+box{"pairs"} = [10, 20, 30]
+DIM top = box{"pairs"}
+
+DIM sorted = top[GRADE([3, 1, 2])]
+IF LEN(sorted) <> 3 ORELSE sorted[0] <> 20 ORELSE sorted[2] <> 10 THEN
+    bad = bad + 1
+    PRINT "gather at top level: "; sorted
+ENDIF
+
+FUNC Pick(m)
+    DIM pairs = m{"pairs"}
+    RETURN pairs[GRADE([3, 1, 2])]
+ENDFUNC
+DIM inside = Pick(box)
+IF LEN(inside) <> 3 ORELSE inside[0] <> 20 THEN
+    bad = bad + 1
+    PRINT "gather in a function: "; inside
+ENDIF
+
+' A plain position still reads one cell
+IF top[1] <> 20 THEN
+    bad = bad + 1
+    PRINT "single position: "; top[1]
+ENDIF
+
+' and a base that is plainly an array is unaffected
+DIM plain = [10, 20, 30]
+DIM pgathered = plain[GRADE([3, 1, 2])]
+IF pgathered[0] <> 20 ORELSE pgathered[2] <> 10 THEN
+    bad = bad + 1
+    PRINT "plain base: "; pgathered
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
