@@ -1,0 +1,113 @@
+' Writing through two index levels at once: h{"a"}{"b"} = v. Compiled, the
+' single-key branch fired whatever the chain length and used only the first
+' key, so the value landed on the inner map itself - h{"parts"} became the
+' string, and the next read of h{"parts"}{"b"} crashed. Printing a map that
+' lives inside a map answered nothing for the same family of reasons, and a
+' chained write into an entry that does not exist was dropped in silence
+' where the interpreter says so.
+DIM bad = 0
+
+DIM h AS MAP
+DIM inner AS MAP
+inner{"a"} = "alt"
+h{"parts"} = inner
+
+' A write through an intermediate variable always worked; maps are
+' references, so it shows up in h
+DIM p = h{"parts"}
+p{"a"} = "neu"
+IF h{"parts"}{"a"} <> "neu" THEN
+    bad = bad + 1
+    PRINT "via a variable: "; h{"parts"}{"a"}
+ENDIF
+
+' The chained write reaches the inner map and leaves it a map
+h{"parts"}{"b"} = "direkt"
+IF h{"parts"}{"b"} <> "direkt" THEN
+    bad = bad + 1
+    PRINT "chained read: "; h{"parts"}{"b"}
+ENDIF
+IF TYPEOF(h{"parts"}) <> "OBJECT" ORELSE h{"parts"}{"a"} <> "neu" THEN
+    bad = bad + 1
+    PRINT "inner map after: "; TYPEOF(h{"parts"}); " "; h{"parts"}{"a"}
+ENDIF
+
+' A map inside a map prints its entries
+OUTPUT.CAPTURE_BEGIN
+PRINT h{"parts"}
+DIM shown$ = OUTPUT.CAPTURE_END$()
+IF INSTR(shown$, CHR$(34) + "a" + CHR$(34) + ": " + CHR$(34) + "neu" + CHR$(34)) < 0 THEN
+    bad = bad + 1
+    PRINT "printed map: ["; shown$; "]"
+ENDIF
+
+' Three levels
+DIM root AS MAP
+DIM mid AS MAP
+DIM leaf AS MAP
+leaf{"x"} = 1
+mid{"leaf"} = leaf
+root{"mid"} = mid
+root{"mid"}{"leaf"}{"x"} = 9
+IF root{"mid"}{"leaf"}{"x"} <> 9 THEN
+    bad = bad + 1
+    PRINT "three levels: "; root{"mid"}{"leaf"}{"x"}
+ENDIF
+
+' A computed key names the same step
+DIM which$ = "mid"
+root{which$}{"leaf"}{"x"} = 42
+IF root{"mid"}{"leaf"}{"x"} <> 42 THEN
+    bad = bad + 1
+    PRINT "computed key: "; root{"mid"}{"leaf"}{"x"}
+ENDIF
+
+' A map holding an array, written by position
+DIM box AS MAP
+box{"rows"} = [10, 20, 30]
+box{"rows"}[1] = 99
+DIM rows = box{"rows"}
+IF rows[1] <> 99 ORELSE rows[0] <> 10 THEN
+    bad = bad + 1
+    PRINT "map of array: "; rows
+ENDIF
+
+' An array of maps, written by key
+DIM cells = [{"k": 1}, {"k": 2}]
+cells[0]{"k"} = 7
+IF cells[0]{"k"} <> 7 ORELSE cells[1]{"k"} <> 2 THEN
+    bad = bad + 1
+    PRINT "array of maps: "; cells[0]{"k"}; " "; cells[1]{"k"}
+ENDIF
+
+' A plain two-level array is unaffected
+DIM grid = [[1, 2], [3, 4]]
+grid[1][0] = 8
+IF grid[1][0] <> 8 ORELSE grid[0][1] <> 2 THEN
+    bad = bad + 1
+    PRINT "grid: "; grid
+ENDIF
+
+' A chained write into an entry that does not exist is an error, not a
+' dropped write
+DIM caught = 0
+TRY
+    h{"nothing_here"}{"b"} = "x"
+CATCH
+    caught = 1
+ENDTRY
+IF caught <> 1 THEN
+    bad = bad + 1
+    PRINT "missing entry was accepted"
+ENDIF
+
+' and the map still works afterwards
+DIM later AS MAP
+h{"later"} = later
+h{"later"}{"b"} = "y"
+IF h{"later"}{"b"} <> "y" THEN
+    bad = bad + 1
+    PRINT "after the error: "; h{"later"}{"b"}
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

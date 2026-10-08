@@ -2152,6 +2152,17 @@ void jdb_err_set_if_clear(const char* msg, int64_t code) {
     jdb_err_set(msg, code);
 }
 
+// The same read for a step of an assignment chain. A missing entry is not a
+// NONE to carry on with here: there is nothing to write into, which is what
+// the interpreter says too.
+void* jdb_map_get_obj_for_write(JdbMap* m, const char* key) {
+    if (m && map_find(m, key) < 0) {
+        jdb_err_set("Multi-index assignment: leaf is not array or object", 99);
+        return nullptr;
+    }
+    return jdb_map_get_obj(m, key);
+}
+
 // Forward decl - the unified dispatcher that picks between this and
 // jdrt_obj_get_tagged based on val_tag.
 int32_t jdb_tagged_get(int64_t val_bits, int32_t val_tag, const char* key, int64_t* out_val);

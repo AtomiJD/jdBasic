@@ -436,6 +436,9 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_map_delete", "__map_delete", i64_type,    {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_map_count",  "__map_count",  i64_type,    {i8_ptr_type}, JD_TAG_I64);
     reg("jdb_map_get_obj","__map_get_obj",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_NATIVE_MAP);
+    // The same step inside an assignment chain, where a missing entry is an
+    // error rather than a NONE to carry on with.
+    reg("jdb_map_get_obj_for_write","__map_step_write",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_NATIVE_MAP);
     reg("jdb_str_sub",    "__str_sub",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_str_slice",  "__str_slice",  i8_ptr_type, {i8_ptr_type, i64_type, i32_type}, JD_TAG_STR);
     // Native generic vectorization helpers (avoid VM bridge overhead)
@@ -7524,7 +7527,11 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         return;
     }
 
-    if (!stmt.index_chain.empty() &&
+    // One key names an entry of this variable's own map. A longer chain
+    // ("h{"a"}{"b"} = v") names an entry of a map the variable holds, so it
+    // falls through to the chain walk below - treating it as one key wrote
+    // the value over the inner map and the next read of it crashed.
+    if (stmt.index_chain.size() == 1 &&
         (stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING || key_is_string_expr)) {
         // RUNTIME alloca is i64 (the JdbMap* punned); NATIVE_MAP/ARR is i8_ptr.
         LLVMValueRef obj_ptr;
@@ -7717,13 +7724,14 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     // each index except the last does array_get / map_get_obj + ptr decode.
     // String indices route to map_get_obj (the target is dynamically a map).
     auto& arr_get = runtime_funcs["__array_get"];
-    auto& map_get_obj = runtime_funcs["__map_get_obj"];
+    auto& map_get_obj = runtime_funcs["__map_step_write"];
     for (size_t ic = 0; ic + 1 < stmt.index_chain.size(); ic++) {
         TypedValue idx_tv = codegen_expr(*stmt.index_chain[ic]);
         if (idx_tv.tag == JD_TAG_STR) {
             LLVMValueRef get_args[] = { arr_ptr, idx_tv.val };
             arr_ptr = LLVMBuildCall2(builder, map_get_obj.fn_type, map_get_obj.fn,
                                      get_args, 2, "inner");
+            emit_err_check();
         } else {
             LLVMValueRef idx = jd_is_f64_tag(idx_tv.tag)
                 ? LLVMBuildFPToSI(builder, idx_tv.val, i64_type, "ftoi") : idx_tv.val;
@@ -7990,6 +7998,26 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMBuildBr(builder, bb_join);
 
                 LLVMPositionBuilderAtEnd(builder, bb_rest);
+                LLVMValueRef is_map = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_NATIVE_MAP, 0), "pr_ismap");
+                LLVMBasicBlockRef bb_map   = LLVMAppendBasicBlock(current_fn, "pr.map");
+                LLVMBasicBlockRef bb_rest2 = LLVMAppendBasicBlock(current_fn, "pr.rest2");
+                LLVMBuildCondBr(builder, is_map, bb_map, bb_rest2);
+
+                // A map renders as its entries; the generic string coerce
+                // answers nothing for one.
+                LLVMPositionBuilderAtEnd(builder, bb_map);
+                auto* mstr = get_runtime_func("__map_str");
+                LLVMValueRef mptr = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "pr_mptr");
+                LLVMValueRef args_m[] = { mptr };
+                LLVMValueRef str_m = mstr
+                    ? LLVMBuildCall2(builder, mstr->fn_type, mstr->fn, args_m, 1, "pr_map_s")
+                    : mptr;
+                LLVMValueRef pm[] = { str_m };
+                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, pm, 1, "");
+                LLVMBuildBr(builder, bb_join);
+
+                LLVMPositionBuilderAtEnd(builder, bb_rest2);
                 LLVMValueRef args_e[] = { coerce_to(tv, i8_ptr_type) };
                 LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args_e, 1, "");
                 LLVMBuildBr(builder, bb_join);
