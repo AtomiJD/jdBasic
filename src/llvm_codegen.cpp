@@ -309,8 +309,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_round_p","__round_p", f64_type, {f64_type, f64_type}, JD_TAG_F64);
     reg("jdb_join_arr","JOIN",     i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_trunc",  "TRUNC",  f64_type, {f64_type}, JD_TAG_F64);
-    reg("jdb_sign",   "SIGN",   f64_type, {f64_type}, JD_TAG_F64);
-    reg("jdb_sign",   "SGN",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_sign_i", "SIGN",   i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_sign_i", "SGN",    i64_type, {f64_type}, JD_TAG_I64);
     reg("jdb_clamp",  "CLAMP",  f64_type, {f64_type, f64_type, f64_type}, JD_TAG_F64);
     reg("jdb_fac",    "FAC",    f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_fmod",   "FMOD",   f64_type, {f64_type, f64_type}, JD_TAG_F64);
@@ -15159,6 +15159,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_str"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
                 return { result, JD_TAG_STR };
+            } else if (sig_ret == BuiltinRet::I64) {
+                // Integers ride the f64 variant too, so a count, an index or
+                // a handle answers the kind the interpreter answers instead
+                // of a double that happens to be whole.
+                auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
+                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmint");
+                return { LLVMBuildFPToSI(builder, result, i64_type, "vmint_i"), JD_TAG_I64 };
             } else if (sig_ret == BuiltinRet::Bool) {
                 // Bools ride the f64 variant; narrow the double back to the
                 // i64 0/1 that JD_TAG_BOOL is represented as.

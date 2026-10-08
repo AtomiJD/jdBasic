@@ -41,6 +41,24 @@ IF ISARR(nums) <> TRUE ORELSE ISSTR(nums) <> FALSE THEN
     PRINT "ISARR/ISSTR: "; ISARR(nums); " "; ISSTR(nums)
 ENDIF
 
+DIM bag_size = MAP.SIZE(bag)
+bad = bad + SameKind("MAP.SIZE", TYPEOF(bag_size), "INT64")
+bad = bad + SameKind("GCD", TYPEOF(GCD(12, 8)), "INT64")
+bad = bad + SameKind("LCM", TYPEOF(LCM(4, 6)), "INT64")
+bad = bad + SameKind("SGN", TYPEOF(SGN(-3)), "INT64")
+bad = bad + SameKind("SHL", TYPEOF(SHL(1, 2)), "INT64")
+bad = bad + SameKind("CODEC.CRC32", TYPEOF(CODEC.CRC32("abc")), "INT64")
+bad = bad + SameKind("FIND_IN_ARRAY", TYPEOF(FIND_IN_ARRAY(nums, 2)), "INT64")
+
+IF SGN(-3) <> -1 ORELSE SHL(1, 2) <> 4 ORELSE GCD(12, 8) <> 4 THEN
+    bad = bad + 1
+    PRINT "integer answers: "; SGN(-3); " "; SHL(1, 2); " "; GCD(12, 8)
+ENDIF
+IF MAP.SIZE(bag) <> 1 ORELSE FIND_IN_ARRAY(nums, 2) <> 1 THEN
+    bad = bad + 1
+    PRINT "counts: "; MAP.SIZE(bag); " "; FIND_IN_ARRAY(nums, 2)
+ENDIF
+
 bad = bad + SameKind("ABS", TYPEOF(ABS(-2)), "FLOAT64")
 bad = bad + SameKind("CEIL", TYPEOF(CEIL(1.2)), "FLOAT64")
 

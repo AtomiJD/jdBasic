@@ -496,6 +496,7 @@ double jdb_round_p(double x, double places) {
 }
 double jdb_trunc(double x)     { return trunc(x); }
 double jdb_sign(double x)      { return (x > 0) ? 1.0 : (x < 0) ? -1.0 : 0.0; }
+int64_t jdb_sign_i(double x)   { return (x > 0) ? 1 : (x < 0) ? -1 : 0; }
 double jdb_clamp(double x, double lo, double hi) { return x < lo ? lo : (x > hi ? hi : x); }
 double jdb_fac(double n) {
     int64_t k = (int64_t)n;
