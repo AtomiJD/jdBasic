@@ -81,4 +81,60 @@ IF Blend(start, Pack(2, ZEROS(2)), 1) <> 7 THEN
     PRINT "map among arguments: "; Blend(start, Pack(2, ZEROS(2)), 1)
 ENDIF
 
+
+' A cell of an array a call answers, when nothing says what the cells hold:
+' the cell carries its own kind, so a map cell survives JSON.STRINGIFY$
+FUNC Entries()
+    DIM a AS MAP
+    a{"k"} = 1
+    RETURN [a]
+ENDFUNC
+IF INSTR(JSON.STRINGIFY$(Entries()[0]), CHR$(34) + "k" + CHR$(34)) < 0 THEN
+    bad = bad + 1
+    PRINT "map cell of a call result: "; JSON.STRINGIFY$(Entries()[0])
+ENDIF
+
+' A SELECT whose lambda answers a string marks the result, so a cell of it
+' reaches APPEND as a string rather than as its pointer bits
+DIM made = SELECT(LAMBDA n -> "w" + STR$(n), [1, 2])
+DIM collected = []
+collected = APPEND(collected, made[0])
+IF collected[0] <> "w1" THEN
+    bad = bad + 1
+    PRINT "SELECT cell appended: "; collected
+ENDIF
+DIM boxed AS MAP
+boxed{"items"} = []
+boxed{"items"} = APPEND(boxed{"items"}, made[1])
+DIM back = boxed{"items"}
+IF back[0] <> "w2" THEN
+    bad = bad + 1
+    PRINT "SELECT cell into a map: "; back
+ENDIF
+
+' INDEXOF over a string array matches by content, whatever the needle came
+' from - the numeric search compared the cells' pointer bits
+DIM names = ["x", "7", "y"]
+DIM parts = SPLIT("a,7", ",")
+IF INDEXOF(names, "7") <> 1 THEN
+    bad = bad + 1
+    PRINT "INDEXOF literal: "; INDEXOF(names, "7")
+ENDIF
+IF INDEXOF(names, parts[1]) <> 1 THEN
+    bad = bad + 1
+    PRINT "INDEXOF split cell: "; INDEXOF(names, parts[1])
+ENDIF
+IF INDEXOF(names, REGEX.FINDALL("a(\d)b", "a7b")[0][0]) <> 1 THEN
+    bad = bad + 1
+    PRINT "INDEXOF nested cell: "; INDEXOF(names, REGEX.FINDALL("a(\d)b", "a7b")[0][0])
+ENDIF
+IF INDEXOF(names, "zz") <> -1 THEN
+    bad = bad + 1
+    PRINT "INDEXOF missing: "; INDEXOF(names, "zz")
+ENDIF
+DIM counts = [10, 20, 30]
+IF INDEXOF(counts, 20) <> 1 THEN
+    bad = bad + 1
+    PRINT "INDEXOF numeric: "; INDEXOF(counts, 20)
+ENDIF
 IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

@@ -439,6 +439,7 @@ private:
 
     std::string dim_funcref_name(const TypedValue& tv);
     static const Expr* stored_lambda_src(const Expr* e);
+    bool hof_fn_answers_str(const Expr& fn_arg) const;
     void record_stored_lambda(VarInfo& vi, const Expr* e, const TypedValue& rhs);
 
     // Setup

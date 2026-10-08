@@ -1179,6 +1179,19 @@ int64_t jdb_array_indexof(JdbArray* arr, double val) {
     return -1;
 }
 
+// INDEXOF over a string array: the cells are pointers, so the match is by
+// content. Comparing the punned bits only ever found a needle that happened
+// to be the same interned literal.
+int64_t jdb_array_indexof_str(JdbArray* arr, const char* needle) {
+    if (!arr || !needle) return -1;
+    for (int64_t i = 0; i < arr->length; i++) {
+        union { double d; int64_t i; } u; u.d = arr->data[i];
+        const char* s = (const char*)(intptr_t)u.i;
+        if (s && strcmp(s, needle) == 0) return i;
+    }
+    return -1;
+}
+
 // IN operator on arrays: returns 1 if needle is a member, else 0.
 int64_t jdb_array_has_str(JdbArray* arr, const char* needle) {
     if (!arr || !needle) return 0;

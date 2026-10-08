@@ -78,6 +78,33 @@ const Expr* LLVMCodegen::stored_lambda_src(const Expr* e) {
     return e;
 }
 
+// A higher-order call's function argument answers a string: a $-suffixed
+// funcref name, or a lambda whose body is a string literal, a $-suffixed
+// call, a FUNC declared to answer one, or a concatenation with any of those.
+// The caller marks the result array so a later cell read decodes the pointer
+// instead of reading it as a number.
+bool LLVMCodegen::hof_fn_answers_str(const Expr& fn_arg) const {
+    if (fn_arg.kind == ExprKind::LITERAL_STRING && fn_arg.is_funcref_lit)
+        return !fn_arg.str_val.empty() && fn_arg.str_val.back() == '$';
+    if (fn_arg.kind != ExprKind::LAMBDA_EXPR || !fn_arg.right) return false;
+    std::function<bool(const Expr&)> says_str = [&](const Expr& b) -> bool {
+        if (b.kind == ExprKind::LITERAL_STRING) return true;
+        if (b.kind == ExprKind::CALL) {
+            if (!b.func_name.empty() && b.func_name.back() == '$') return true;
+            auto uit = user_functions.find(b.func_name);
+            return uit != user_functions.end() &&
+                   uit->second.return_tag == JD_TAG_STR;
+        }
+        if (b.kind == ExprKind::BINARY && b.op == TokenType::PLUS)
+            return (b.left && says_str(*b.left)) ||
+                   (b.right && says_str(*b.right));
+        if (b.kind == ExprKind::VARIABLE)
+            return !b.str_val.empty() && b.str_val.back() == '$';
+        return false;
+    };
+    return says_str(*fn_arg.right);
+}
+
 // Remembers the lambda a slot was just given, together with the instance that
 // went into it. Both or neither: without the instance there is no way to tell
 // later whether the slot still holds this lambda.
@@ -393,6 +420,7 @@ void LLVMCodegen::declare_runtime_functions() {
         f64_type, {i8_ptr_type, i64_type, i8_ptr_type}, -1);
     reg("jdb_array_count","COUNT",        i64_type, {i8_ptr_type, f64_type}, JD_TAG_I64);
     reg("jdb_array_indexof","INDEXOF",    i64_type, {i8_ptr_type, f64_type}, JD_TAG_I64);
+    reg("jdb_array_indexof_str","__indexof_str", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_array_has_str","__arr_has_str", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_array_has_num","__arr_has_num", i64_type, {i8_ptr_type, f64_type}, JD_TAG_I64);
     reg("jdb_array_unique","UNIQUE",      i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
@@ -5765,13 +5793,8 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // or a user FUNC already known to return a string array (FUNCs
         // returning a single string also count - apply per element).
         if (u == "SELECT" && !stmt.expr->args.empty() && stmt.expr->args[0]) {
-            auto& fn_arg = *stmt.expr->args[0];
-            bool fn_returns_str = false;
-            if (fn_arg.kind == ExprKind::LITERAL_STRING && fn_arg.is_funcref_lit &&
-                !fn_arg.str_val.empty() && fn_arg.str_val.back() == '$') {
-                fn_returns_str = true;
-            }
-            if (fn_returns_str) string_array_vars.insert(stmt.var_name);
+            if (hof_fn_answers_str(*stmt.expr->args[0]))
+                string_array_vars.insert(stmt.var_name);
         }
         // UNIQUE(string_arr) and similar 1D filters preserve element type.
         // The source may also be spelled out as a literal of strings or come
@@ -6836,11 +6859,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
         // SELECT(fn@, arr) - see codegen_let_or_assign for rationale.
         if (u == "SELECT" && !stmt.expr->args.empty() && stmt.expr->args[0]) {
-            auto& fn_arg = *stmt.expr->args[0];
-            if (fn_arg.kind == ExprKind::LITERAL_STRING && fn_arg.is_funcref_lit &&
-                !fn_arg.str_val.empty() && fn_arg.str_val.back() == '$') {
+            if (hof_fn_answers_str(*stmt.expr->args[0]))
                 string_array_vars.insert(stmt.var_name);
-            }
         }
         // The source may be a variable, a literal of strings, or a builtin
         // that answers strings - SORT(["b", "a"]) read its cells as numbers
@@ -10040,6 +10060,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                                                             i8_ptr_type, "elem_c");
                     return { as_ptr, kind };
                 }
+                // The function answers an array but nothing says what its
+                // cells hold - a map, a date, a mix. The cell carries its own
+                // tag, so read that rather than guessing a number.
+                auto fit = user_functions.find(fn);
+                if (fit != user_functions.end() && fit->second.return_tag == JD_TAG_ARR) {
+                    auto& gtg = runtime_funcs["__arr_get_tagged"];
+                    LLVMValueRef out_tag = scratch_alloca(i32_type, "c_gt_tag");
+                    LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
+                    LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
+                                                      getargs, 3, "c_gt");
+                    LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag,
+                                                        "c_gt_tagv");
+                    return { pun_f64_to_i64(val), JD_TAG_RUNTIME, tag_v };
+                }
             }
             // If the source array is known to hold strings (e.g. event handler
             // data param), pun the f64-encoded ptr back to char* and tag as
@@ -11672,6 +11706,57 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // APPEND(arr, arr) flattens; APPEND(arr, scalar) appends one element.
+    // INDEXOF over a string array compares by content; the numeric helper
+    // compares the cells' punned pointer bits and only ever matched a needle
+    // that was the same interned literal.
+    if (name == "INDEXOF" && expr.args.size() == 2) {
+        TypedValue a = codegen_expr(*expr.args[0]);
+        TypedValue b = codegen_expr(*expr.args[1]);
+        if (a.tag == JD_TAG_ARR && b.tag == JD_TAG_RUNTIME && b.runtime_tag) {
+            // Only the running program knows whether the needle is text, so
+            // both searches are emitted and the tag picks between them.
+            LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, b.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_STR, 0), "idx_isstr");
+            LLVMBasicBlockRef bb_s = LLVMAppendBasicBlock(current_fn, "idx.str");
+            LLVMBasicBlockRef bb_n = LLVMAppendBasicBlock(current_fn, "idx.num");
+            LLVMBasicBlockRef bb_j = LLVMAppendBasicBlock(current_fn, "idx.join");
+            LLVMBuildCondBr(builder, is_str, bb_s, bb_n);
+
+            LLVMPositionBuilderAtEnd(builder, bb_s);
+            auto& fs = runtime_funcs["__indexof_str"];
+            LLVMValueRef sargs[] = { a.val,
+                LLVMBuildIntToPtr(builder, b.val, i8_ptr_type, "idx_sptr") };
+            LLVMValueRef rs = LLVMBuildCall2(builder, fs.fn_type, fs.fn, sargs, 2, "idxs");
+            LLVMBuildBr(builder, bb_j);
+            LLVMBasicBlockRef s_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_n);
+            auto& fnn = runtime_funcs["INDEXOF"];
+            LLVMValueRef nargs[] = { a.val, coerce_to(b, f64_type) };
+            LLVMValueRef rn = LLVMBuildCall2(builder, fnn.fn_type, fnn.fn, nargs, 2, "idxn");
+            LLVMBuildBr(builder, bb_j);
+            LLVMBasicBlockRef n_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_j);
+            LLVMValueRef phi = LLVMBuildPhi(builder, i64_type, "idx_res");
+            LLVMValueRef vals[] = { rs, rn };
+            LLVMBasicBlockRef bbs[] = { s_end, n_end };
+            LLVMAddIncoming(phi, vals, bbs, 2);
+            return { phi, JD_TAG_I64 };
+        }
+        if (a.tag == JD_TAG_ARR && b.tag == JD_TAG_STR) {
+            auto& fn = runtime_funcs["__indexof_str"];
+            LLVMValueRef args[] = { a.val, b.val };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "idxs"),
+                     JD_TAG_I64 };
+        }
+        if (a.tag == JD_TAG_ARR) {
+            auto& fn = runtime_funcs["INDEXOF"];
+            LLVMValueRef args[] = { a.val, coerce_to(b, f64_type) };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "idxn"),
+                     JD_TAG_I64 };
+        }
+    }
     if (name == "APPEND" && expr.args.size() == 2) {
         TypedValue a = codegen_expr(*expr.args[0]);
         TypedValue b = codegen_expr(*expr.args[1]);
