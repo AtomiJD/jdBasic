@@ -906,7 +906,7 @@ The interpreter gives a lambda parameter whatever value arrives. The native comp
 
 * A parameter whose name ends in `$` is a string, everywhere.
 * A `LAMBDA` written in place as the function argument of `SELECT`, `FILTER`, `TAKE_WHILE`, `DROP_WHILE` or `REDUCE` takes the element kind of the array it walks. The element is a number when the array is visibly numeric (a literal of numbers, `IOTA`, `ZEROS`, `ONES`, `LINSPACE`, `RANGE`, `CUMSUM`, `GRADE` or arithmetic on arrays), a string when it is a literal of strings, `SPLIT` or a variable known to hold strings, and otherwise runtime-typed: each call receives the element with its own kind, so numbers, strings, maps and the rows of `CSVREADER` or `JSON.PARSE$` all arrive intact.
-* The accumulator of `REDUCE` is a string when the start value is a string literal, a `$` variable or a `$` function call, an array when it is an array literal such as `[]`, otherwise a number. `REDUCE` then answers a string or an array.
+* The accumulator of `REDUCE` is a string when the start value is a string literal, a `$` variable or a `$` function call, an array when it is an array literal such as `[]`, a map when it is a map literal such as `{}`, and otherwise the kind the start value's own variable carries, or a number. `REDUCE` then answers a string or an array.
 * A capture-free `LAMBDA` stored in a variable and handed to one of those five later is treated the same way: the compiler emits a second instance for the array it walks, and uses it while the variable still holds that lambda. Re-point the variable at another lambda and the call follows the variable.
 * Every other lambda parameter is a number. A named `FUNC` behind a funcref (`SELECT(Up@, words)`) keeps the kinds of its own declaration, so give it a typed or `$`-suffixed parameter when it receives strings.
 
@@ -1495,6 +1495,7 @@ fails silently at runtime. The interpreter runs all of it.
 | `JSON.STRINGIFY$(<UDT>)` | a UDT instance does not marshal across the bridge | pass a MAP or ARRAY, or build the JSON from the fields |
 | `name@` that resolves to nothing | there is no FUNC of that name and no builtin with a matching scalar signature | check the name and arity |
 | a number into a slot a string DIMmed (`DIM c = ""` then `c = 2.5`) | the slot stays a string, so the number is stringified and `c + 1` concatenates | `c = STR$(2.5)`, or DIM the slot as a number |
+| a `LAMBDA` inside a `FUNC` that reads one of its locals without naming it | the lambda is its own function, so the local is in another frame | name it: `LAMBDA USE(n) x -> x + n` |
 
 **`-c` is also STRICT + EXPLICIT, always.** Every variable must be declared and
 every type must line up; there is no flag to turn that off for the main file

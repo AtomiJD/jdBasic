@@ -258,6 +258,7 @@ tests/regression/test_react.jdb	PASS	PASS	OK
 tests/regression/test_react_cache.jdb	OK	OK	OK
 tests/regression/test_react_udt.jdb	OK	OK	OK
 tests/regression/test_react_udt2.jdb	OK	OK	OK
+tests/regression/test_reduce_acc_kind.jdb	PASS	PASS	OK
 tests/regression/test_reduce_axis.jdb	PASS	PASS	OK
 tests/regression/test_regex.jdb	PASS	PASS	OK
 tests/regression/test_reshape.jdb	OK	OK	OK

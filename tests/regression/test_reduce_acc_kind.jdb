@@ -1,0 +1,54 @@
+' What REDUCE's accumulator is, taken from the start value. A map literal
+' had no case at all, so `{}` made the accumulator a number and TYPEOF read
+' FLOAT64; a variable as the start value was read the same way. The answer
+' was also lost on the way into a DIM whose slot the pre-pass had guessed
+' numeric - the pointer went into a numeric slot and read back as 0.
+DIM bad = 0
+DIM rows = [1, 2, 3]
+
+' A map literal, empty and filled
+DIM empty_acc = REDUCE(LAMBDA a, x -> a, rows, {})
+IF TYPEOF(empty_acc) <> "OBJECT" THEN
+    bad = bad + 1
+    PRINT "empty map start: "; TYPEOF(empty_acc)
+ENDIF
+DIM filled = REDUCE(LAMBDA a, x -> a, rows, {"k": 1})
+IF TYPEOF(filled) <> "OBJECT" ORELSE filled{"k"} <> 1 THEN
+    bad = bad + 1
+    PRINT "filled map start: "; TYPEOF(filled)
+ENDIF
+
+' A variable as the start value carries its own kind
+DIM seed AS MAP
+seed{"n"} = 7
+DIM from_var = REDUCE(LAMBDA a, x -> a, rows, seed)
+IF TYPEOF(from_var) <> "OBJECT" ORELSE from_var{"n"} <> 7 THEN
+    bad = bad + 1
+    PRINT "map variable start: "; TYPEOF(from_var)
+ENDIF
+
+' A string start value reaches an untyped destination as a string
+DIM joined = REDUCE(LAMBDA a$, x -> a$ + STR$(x), rows, "")
+IF TYPEOF(joined) <> "STRING" ORELSE joined <> "123" THEN
+    bad = bad + 1
+    PRINT "string start: "; TYPEOF(joined); " ["; joined; "]"
+ENDIF
+DIM joined2$ = REDUCE(LAMBDA a$, x -> a$ + STR$(x), rows, "")
+IF joined2$ <> "123" THEN
+    bad = bad + 1
+    PRINT "string start into a $ name: ["; joined2$; "]"
+ENDIF
+
+' An array start value and a number still answer what they always did
+DIM gathered = REDUCE(LAMBDA a, x -> APPEND(a, x), rows, [])
+IF TYPEOF(gathered) <> "ARRAY" ORELSE LEN(gathered) <> 3 ORELSE gathered[2] <> 3 THEN
+    bad = bad + 1
+    PRINT "array start: "; TYPEOF(gathered); " "; gathered
+ENDIF
+DIM total = REDUCE(LAMBDA a, x -> a + x, rows, 0)
+IF total <> 6 THEN
+    bad = bad + 1
+    PRINT "number start: "; total
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

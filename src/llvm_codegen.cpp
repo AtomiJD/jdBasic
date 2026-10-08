@@ -7386,6 +7386,21 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     if (vi) {
         if (jd_is_f64_tag(rhs.tag) && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_F64;
         if (untyped_bool_init && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_BOOL;
+        // The pre-pass may have guessed a number for a slot whose initializer
+        // turns out to be a pointer kind - what a REDUCE with a string or map
+        // start value answers, for one. Keeping the numeric slot stored the
+        // pointer as a number and TYPEOF read FLOAT64, so the name is rebound
+        // to a slot of the right type.
+        if ((rhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_ARR ||
+             rhs.tag == JD_TAG_NATIVE_MAP) &&
+            (jd_is_f64_tag(vi->tag) || vi->tag == JD_TAG_I64)) {
+            VarInfo& nv = create_var(stmt.var_name, rhs.tag);
+            nv.funcref_name = dim_funcref_name(rhs);
+            record_stored_lambda(nv, stmt.expr ? &*stmt.expr : nullptr, rhs);
+            nv.funcref_return_tag = fr_ret_tag;
+            LLVMBuildStore(builder, rhs.val, nv.alloca_val);
+            return;
+        }
         vi->funcref_name = dim_funcref_name(rhs);
         record_stored_lambda(*vi, stmt.expr ? &*stmt.expr : nullptr, rhs);
         vi->funcref_return_tag = fr_ret_tag;
@@ -9452,6 +9467,39 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // lambda, so two closures of one lambda keep different values.
             // A capture that already lives in a module global needs none -
             // there the lambda reads the global directly.
+            // A name in the body that belongs to the function being compiled
+            // is a local of the enclosing frame. Reading it from the lambda is
+            // not valid IR, so say what is missing instead of letting the
+            // verifier abort the whole compile with a message about an
+            // instruction in another function.
+            if (scopes.size() > 1 && expr.right) {
+                std::set<std::string> known(expr.lambda_params.begin(),
+                                            expr.lambda_params.end());
+                for (auto& c : expr.lambda_captures) known.insert(c);
+                std::set<std::string> missing;
+                std::function<void(const Expr&)> scan_body = [&](const Expr& b) {
+                    if (b.kind == ExprKind::VARIABLE && !known.count(b.str_val)) {
+                        VarInfo* ov = lookup_var(b.str_val);
+                        if (ov && ov->alloca_val && LLVMIsAAllocaInst(ov->alloca_val)) {
+                            LLVMBasicBlockRef bb = LLVMGetInstructionParent(ov->alloca_val);
+                            if (bb && LLVMGetBasicBlockParent(bb) == current_fn)
+                                missing.insert(b.str_val);
+                        }
+                    }
+                    if (b.kind == ExprKind::LAMBDA_EXPR) return;
+                    if (b.left) scan_body(*b.left);
+                    if (b.right) scan_body(*b.right);
+                    for (auto& a : b.args) if (a) scan_body(*a);
+                };
+                scan_body(*expr.right);
+                if (!missing.empty()) {
+                    std::string names;
+                    for (auto& n : missing) names += (names.empty() ? "" : ", ") + n;
+                    report_error(m_current_stmt_file, expr.line,
+                        "a LAMBDA reads the enclosing function's local '" + names +
+                        "' without naming it: write LAMBDA USE(" + names + ") ...");
+                }
+            }
             std::vector<std::pair<std::string, VarInfo>> captured;
             for (auto& cname : expr.lambda_captures) {
                 VarInfo* ov = lookup_var(cname);
@@ -12932,6 +12980,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         if (a.kind == ExprKind::CALL && !a.func_name.empty() && a.func_name.back() == '$')
             return JD_TAG_STR;
         if (a.kind == ExprKind::ARRAY_LITERAL) return JD_TAG_ARR;
+        if (a.kind == ExprKind::MAP_LITERAL) return JD_TAG_NATIVE_MAP;
+        // A variable as the start value carries the kind in its own slot.
+        if (a.kind == ExprKind::VARIABLE) {
+            VarInfo* sv = lookup_var(a.str_val);
+            if (sv && (sv->tag == JD_TAG_NATIVE_MAP || sv->tag == JD_TAG_ARR ||
+                       sv->tag == JD_TAG_STR))
+                return sv->tag;
+            if (map_scalar_vars.count(a.str_val)) return JD_TAG_NATIVE_MAP;
+        }
         return JD_TAG_F64;
     };
     // The lambda a higher-order call will actually run: the expression itself,
@@ -13098,7 +13155,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { closure_enter(fn_val.val), arr_ptr, init_val };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "red");
             closure_leave();
-            if (acc == JD_TAG_STR || acc == JD_TAG_ARR) {
+            if (acc == JD_TAG_STR || acc == JD_TAG_ARR || acc == JD_TAG_NATIVE_MAP) {
                 LLVMValueRef p = LLVMBuildIntToPtr(builder, pun_f64_to_i64(result),
                                                    i8_ptr_type, "red_s");
                 return { p, acc };
