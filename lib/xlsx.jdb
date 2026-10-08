@@ -578,9 +578,8 @@ ENDFUNC
 
 EXPORT SUB SETCELL(h, sheet$, ref$, value)
     DIM entry$ = EntryOf$(h, sheet$, "XLSX.SETCELL")
-    ' A chained write (h{"parts"}{entry$} = ...) segfaults compiled, so the
-    ' inner map is taken into a variable first - maps are references, so the
-    ' write reaches the archive either way (trakr #514).
+    ' The parts map is a reference, so patching an entry in place updates
+    ' the archive the handle carries.
     DIM parts = h{"parts"}
     parts{entry$} = PatchCell$(parts{entry$}, UCASE$(TRIM$(ref$)), value)
 ENDSUB
