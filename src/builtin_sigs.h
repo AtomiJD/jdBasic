@@ -395,6 +395,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"HISTEDGES", BuiltinRet::Arr, BF_NO_VEC},
     {"HISTOGRAM", BuiltinRet::Arr, BF_NO_VEC},
     {"HTTP.REQUEST", BuiltinRet::Handle, BF_NONE},
+    {"HTTP.SERVER.START", BuiltinRet::Bool, BF_NONE},
     {"IFFT", BuiltinRet::Arr, BF_NO_VEC},
     {"IIF", BuiltinRet::Unknown, BF_NO_VEC},
     {"INDEXOF", BuiltinRet::I64, BF_NO_VEC},

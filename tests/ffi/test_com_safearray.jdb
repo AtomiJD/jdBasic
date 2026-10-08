@@ -1,0 +1,37 @@
+' A COM method that answers a SAFEARRAY. There was no VT_ARRAY case in the
+' VARIANT conversion at all, so every one of them fell through to the
+' default and arrived as NONE - Scripting.Dictionary.Keys as much as an
+' Excel range. Scripting.Dictionary needs no Office, so this runs wherever
+' COM is built in.
+DIM bad = 0
+
+DIM d = CREATEOBJECT("Scripting.Dictionary")
+d.Add("a", 1)
+d.Add("b", 2)
+d.Add("c", 3)
+
+DIM ks = d.Keys()
+IF TYPEOF(ks) <> "ARRAY" THEN
+    bad = bad + 1
+    PRINT "keys kind: "; TYPEOF(ks)
+ENDIF
+IF LEN(ks) <> 3 ORELSE ks[0] <> "a" ORELSE ks[2] <> "c" THEN
+    bad = bad + 1
+    PRINT "keys: "; ks
+ENDIF
+
+DIM vs = d.Items()
+IF LEN(vs) <> 3 ORELSE vs[0] <> 1 ORELSE vs[2] <> 3 THEN
+    bad = bad + 1
+    PRINT "items: "; vs
+ENDIF
+
+' An empty dictionary answers an empty array, not NONE
+DIM e = CREATEOBJECT("Scripting.Dictionary")
+DIM none_keys = e.Keys()
+IF TYPEOF(none_keys) <> "ARRAY" ORELSE LEN(none_keys) <> 0 THEN
+    bad = bad + 1
+    PRINT "empty: "; TYPEOF(none_keys); " "; LEN(none_keys)
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

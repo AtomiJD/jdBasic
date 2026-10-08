@@ -1,0 +1,50 @@
+' A path that cannot be opened, and a builtin whose answer is a truth value.
+' TXTREADER$ on a directory answered an empty string compiled, so a typo
+' looked like an empty file; the interpreter has always raised. And
+' HTTP.SERVER.START had no entry in the signature table at all, so its
+' answer was read as a number and TYPEOF said FLOAT64 instead of BOOLEAN.
+DIM bad = 0
+
+DIM caught = 0
+TRY
+    DIM folder$ = TXTREADER$(".")
+CATCH
+    caught = 1
+ENDTRY
+IF caught <> 1 THEN
+    bad = bad + 1
+    PRINT "a directory was accepted"
+ENDIF
+
+DIM caught2 = 0
+TRY
+    DIM gone$ = TXTREADER$("no_such_file_at_all.txt")
+CATCH
+    caught2 = 1
+ENDTRY
+IF caught2 <> 1 THEN
+    bad = bad + 1
+    PRINT "a missing file was accepted"
+ENDIF
+
+' a real file still reads
+TXTWRITER "test_reader_probe.txt", "hello"
+IF TXTREADER$("test_reader_probe.txt") <> "hello" THEN
+    bad = bad + 1
+    PRINT "real file: ["; TXTREADER$("test_reader_probe.txt"); "]"
+ENDIF
+KILL "test_reader_probe.txt"
+
+' the server answers a truth value
+DIM started = HTTP.SERVER.START(18799)
+IF TYPEOF(started) <> "BOOLEAN" THEN
+    bad = bad + 1
+    PRINT "server kind: "; TYPEOF(started)
+ENDIF
+IF started <> TRUE THEN
+    bad = bad + 1
+    PRINT "server value: "; started
+ENDIF
+HTTP.SERVER.STOP
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

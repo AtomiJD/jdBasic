@@ -122,6 +122,69 @@ static Value variant_to_value(const VARIANT& var) {
         }
         return Value::make_none();
     }
+    // A SAFEARRAY result becomes an array: one dimension a list, two a list
+    // of rows. COM hands Scripting.Dictionary.Keys and an Excel range back
+    // this way, and without a case here every one of them arrived as NONE.
+    if (var.vt & VT_ARRAY) {
+        SAFEARRAY* sa = var.parray;
+        if (!sa) return Value::make_none();
+        VARTYPE et = VT_VARIANT;
+        if (FAILED(SafeArrayGetVartype(sa, &et))) et = VT_VARIANT;
+        UINT dims = SafeArrayGetDim(sa);
+        auto cell = [&](LONG* idx) -> Value {
+            VARIANT e; VariantInit(&e);
+            if (et == VT_VARIANT) {
+                if (FAILED(SafeArrayGetElement(sa, idx, &e))) return Value::make_none();
+                Value v = variant_to_value(e);
+                VariantClear(&e);
+                return v;
+            }
+            // A typed array: read the element into a VARIANT of that type and
+            // let the conversion above decide what it is.
+            e.vt = et;
+            void* slot = nullptr;
+            switch (et) {
+                case VT_BSTR: slot = &e.bstrVal; break;
+                case VT_BOOL: slot = &e.boolVal; break;
+                case VT_I2:   slot = &e.iVal;    break;
+                case VT_I4:   slot = &e.lVal;    break;
+                case VT_I8:   slot = &e.llVal;   break;
+                case VT_R4:   slot = &e.fltVal;  break;
+                case VT_R8:   slot = &e.dblVal;  break;
+                case VT_DATE: slot = &e.date;    break;
+                default: return Value::make_none();
+            }
+            if (FAILED(SafeArrayGetElement(sa, idx, slot))) return Value::make_none();
+            Value v = variant_to_value(e);
+            VariantClear(&e);
+            return v;
+        };
+        LONG lo1 = 0, hi1 = 0;
+        if (dims < 1 || FAILED(SafeArrayGetLBound(sa, 1, &lo1)) ||
+            FAILED(SafeArrayGetUBound(sa, 1, &hi1)))
+            return Value::make_none();
+        Value out = Value::make_array();
+        if (dims == 1) {
+            for (LONG i = lo1; i <= hi1; i++) {
+                LONG idx[1] = { i };
+                out.as_array()->elements.push_back(cell(idx));
+            }
+            return out;
+        }
+        LONG lo2 = 0, hi2 = 0;
+        if (FAILED(SafeArrayGetLBound(sa, 2, &lo2)) ||
+            FAILED(SafeArrayGetUBound(sa, 2, &hi2)))
+            return Value::make_none();
+        for (LONG r = lo1; r <= hi1; r++) {
+            Value row = Value::make_array();
+            for (LONG c = lo2; c <= hi2; c++) {
+                LONG idx[2] = { r, c };
+                row.as_array()->elements.push_back(cell(idx));
+            }
+            out.as_array()->elements.push_back(row);
+        }
+        return out;
+    }
     switch (var.vt) {
         case VT_EMPTY: case VT_NULL:
             return Value::make_none();

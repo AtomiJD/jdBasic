@@ -40,6 +40,7 @@ tests/eval/test_execute_no_try.jdb	FAIL:1	FAIL:1	BOTH_RED
 tests/ffi/test_com.jdb	OK	OK	OK
 tests/ffi/test_com2.jdb	OK	CFAIL	GAP
 tests/ffi/test_com329.jdb	FAIL:1	CFAIL	BOTH_RED
+tests/ffi/test_com_safearray.jdb	PASS	PASS	OK
 tests/ffi/test_ffi_native_diag.jdb	OK	CFAIL	GAP
 tests/ffi/test_ffi_return.jdb	OK	OK	OK
 tests/ffi/test_ffi_smoke.jdb	OK	CFAIL	GAP
@@ -262,6 +263,7 @@ tests/regression/test_react.jdb	PASS	PASS	OK
 tests/regression/test_react_cache.jdb	OK	OK	OK
 tests/regression/test_react_udt.jdb	OK	OK	OK
 tests/regression/test_react_udt2.jdb	OK	OK	OK
+tests/regression/test_reader_and_sigs.jdb	PASS	PASS	OK
 tests/regression/test_reduce_acc_kind.jdb	PASS	PASS	OK
 tests/regression/test_reduce_axis.jdb	PASS	PASS	OK
 tests/regression/test_regex.jdb	PASS	PASS	OK

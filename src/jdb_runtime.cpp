@@ -3452,7 +3452,15 @@ char* jdb_insert_str(const char* target, const char* insert, int64_t pos) {
 
 char* jdb_txtreader(const char* path) {
     FILE* f = fopen(path, "rb");
-    if (!f) return _strdup("");
+    if (!f) {
+        // A path that cannot be opened - a directory, a missing file - is an
+        // error, the way the interpreter has it. Answering an empty string
+        // made a typo look like an empty file.
+        std::string msg = "TXTREADER$: Cannot open file: ";
+        msg += path ? path : "";
+        jdb_err_set(msg.c_str(), 99);
+        return _strdup("");
+    }
     // Stream to EOF rather than sizing via ftell: /proc and /sys pseudo-files
     // report length 0, so a size-based read would return an empty string.
     std::string raw;
@@ -3493,7 +3501,15 @@ void jdb_txtwriter3(const char* path, const char* content, int64_t append) {
 // platforms only support pass-through.
 char* jdb_txtreader_enc(const char* path, const char* encoding) {
     FILE* f = fopen(path, "rb");
-    if (!f) return _strdup("");
+    if (!f) {
+        // A path that cannot be opened - a directory, a missing file - is an
+        // error, the way the interpreter has it. Answering an empty string
+        // made a typo look like an empty file.
+        std::string msg = "TXTREADER$: Cannot open file: ";
+        msg += path ? path : "";
+        jdb_err_set(msg.c_str(), 99);
+        return _strdup("");
+    }
     // Stream to EOF (see jdb_txtreader) so /proc and /sys files read fully.
     std::string raw;
     char buf[65536];
