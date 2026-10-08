@@ -23,8 +23,8 @@ fails = fails + chk("SVD S0", sv[0], 5.4649857, 0.00001)
 fails = fails + chk("SVD S1", sv[1], 0.3659662, 0.00001)
 
 ' QR: R[0][0] = -||first column|| = -sqrt(1+9) = -3.1622777
-DIM qr = QR(A)
-fails = fails + chk("QR R00", qr{"R"}[0][0], -3.1622777, 0.00001)
+DIM fac = QR(A)
+fails = fails + chk("QR R00", fac{"R"}[0][0], -3.1622777, 0.00001)
 
 ' EIG: eigenvalues of A are (5 +/- sqrt(33))/2; their real parts sum to the
 ' trace (5) and their product equals the determinant (-2).
