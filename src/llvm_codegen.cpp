@@ -635,7 +635,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_setenv",  "SETENV",   void_type,   {i8_ptr_type, i8_ptr_type}, -1);
     reg("jdb_mktemp",  "MKTEMP$",  i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_iif",     "IIF",      f64_type, {i64_type, f64_type, f64_type}, JD_TAG_F64);
-    reg("jdb_isnum",   "ISNUM",    i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_isnum",   "ISNUM",    i64_type, {f64_type}, JD_TAG_BOOL);
 
     // Bit rotation (2-arg, implicit 64-bit width; 3-arg falls back to VM bridge)
     reg("jdb_rotl2",   "ROTL",     i64_type, {i64_type, i64_type}, JD_TAG_I64);
@@ -823,7 +823,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_clng",     "CLNG",       i64_type, {f64_type}, JD_TAG_I64);
     reg("jdb_csng",     "CSNG",       f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_conv_str", "__CONV_STR", f64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
-    reg("jdb_cbool",    "CBOOL",      i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_cbool",    "CBOOL",      i64_type, {f64_type}, JD_TAG_BOOL);
     reg("jdb_tostr",    "TOSTR",      i8_ptr_type, {f64_type}, JD_TAG_STR);
     reg("jdb_cstr",     "CSTR",       i8_ptr_type, {f64_type}, JD_TAG_STR);
     reg("jdb_tonum",    "TONUM",      f64_type, {i8_ptr_type}, JD_TAG_F64);
@@ -13963,7 +13963,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     return { LLVMBuildZExt(builder, isn, i64_type, "ext"), JD_TAG_BOOL };
                 }
                 // RUNTIME / unknown base: can't tell - conservatively not none.
-                return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+                return { LLVMConstInt(i64_type, 0, 0), JD_TAG_BOOL };
             }
             // Not an index: fall through to the handle check below. If that
             // does not apply either, native has no NONE representation for
@@ -14007,7 +14007,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
 
         if (upper == "ISNONE" || upper == "ISNULL")
-            return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+            return { LLVMConstInt(i64_type, 0, 0), JD_TAG_BOOL };
 
         bool result = false;
         if (upper == "ISBOOL") {
@@ -14040,7 +14040,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             }
         }
         // ISNONE / ISNULL: not natively supported, default to false
-        return { LLVMConstInt(i64_type, result ? 1 : 0, 0), JD_TAG_I64 };
+        return { LLVMConstInt(i64_type, result ? 1 : 0, 0), JD_TAG_BOOL };
     }
 
     if (upper == "TYPEOF" && !expr.args.empty()) {

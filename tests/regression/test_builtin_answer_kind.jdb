@@ -1,0 +1,47 @@
+' The kind a builtin answers comes from the signature table, so the two
+' backends name the same kind. The dollar-less spellings of the string
+' functions are strings, and the predicates are booleans rather than the
+' 0 and 1 they are built from.
+DIM bad = 0.0
+
+FUNC SameKind(label$, kind$, want$)
+    IF kind$ = want$ THEN RETURN 0
+    PRINT label$; " answered "; kind$; ", not "; want$
+    RETURN 1
+ENDFUNC
+
+bad = bad + SameKind("TRIM", TYPEOF(TRIM("  x  ")), "STRING")
+bad = bad + SameKind("UCASE", TYPEOF(UCASE("ab")), "STRING")
+bad = bad + SameKind("LCASE", TYPEOF(LCASE("AB")), "STRING")
+bad = bad + SameKind("CSTR", TYPEOF(CSTR(1)), "STRING")
+bad = bad + SameKind("TOSTR", TYPEOF(TOSTR(7)), "STRING")
+
+IF TRIM("  x  ") <> "x" THEN
+    bad = bad + 1
+    PRINT "TRIM gave ["; TRIM("  x  "); "]"
+ENDIF
+IF UCASE("ab") <> "AB" ORELSE LCASE("AB") <> "ab" THEN
+    bad = bad + 1
+    PRINT "UCASE/LCASE gave "; UCASE("ab"); " "; LCASE("AB")
+ENDIF
+
+DIM nums = [1, 2, 3]
+DIM bag AS MAP
+bag{"a"} = 1
+
+bad = bad + SameKind("ISARR", TYPEOF(ISARR(nums)), "BOOLEAN")
+bad = bad + SameKind("ISMAP", TYPEOF(ISMAP(bag)), "BOOLEAN")
+bad = bad + SameKind("ISNUM", TYPEOF(ISNUM(1)), "BOOLEAN")
+bad = bad + SameKind("ISSTR", TYPEOF(ISSTR("a")), "BOOLEAN")
+bad = bad + SameKind("CBOOL", TYPEOF(CBOOL(1)), "BOOLEAN")
+
+' A boolean still reads as the number it is built from.
+IF ISARR(nums) <> TRUE ORELSE ISSTR(nums) <> FALSE THEN
+    bad = bad + 1
+    PRINT "ISARR/ISSTR: "; ISARR(nums); " "; ISSTR(nums)
+ENDIF
+
+bad = bad + SameKind("ABS", TYPEOF(ABS(-2)), "FLOAT64")
+bad = bad + SameKind("CEIL", TYPEOF(CEIL(1.2)), "FLOAT64")
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

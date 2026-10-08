@@ -63,9 +63,12 @@ FOR EACH f$ IN srcfiles
         DIM reg_name$ = LEFT$(tail$, INSTR(tail$, q$))
 
         ' The lambda introducer is on the registration line or just below it.
+        ' The lambda belongs to this registration only until the next one
+        ' starts: a registration that passes a named function has none.
         DIM lam = -1
         DIM k = i
         WHILE k < n_lines AND k < i + 4
+            IF k > i AND INSTR(src_lines[k], "register_native(") >= 0 THEN EXITDO
             IF HasLambda(src_lines[k]) THEN
                 lam = k
                 EXITDO
