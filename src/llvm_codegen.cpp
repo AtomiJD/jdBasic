@@ -566,6 +566,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_str_eq",   "__str_eq",  i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_str_cmp",  "__str_cmp", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_dyn_cmp",  "__dyn_cmp", i64_type, {i64_type, i32_type, i64_type, i32_type}, JD_TAG_I64);
+    reg("jdb_dyn_arith", "__dyn_arith", i64_type, {i64_type, i32_type, i64_type, i32_type, i32_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_str_ne",   "__str_ne",  i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_ltrim",    "LTRIM$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_rtrim",    "RTRIM$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
@@ -5612,7 +5613,15 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     int rhs_leaf_hint = -1;
     {
         VarInfo* dest = lookup_var(stmt.var_name);
-        if (dest && (dest->tag == JD_TAG_I64 || jd_is_f64_tag(dest->tag) || dest->tag == JD_TAG_STR || dest->tag == JD_TAG_ARR))
+        // The hint is for a leaf read - an index or a map key - so that
+        // `x = arr[i]` hands back what the cell holds. An arithmetic
+        // expression is not a leaf: an ARRAY hint reaching its operands
+        // made `acc = acc + other` answer a number where the same
+        // expression in a DIM answered the array.
+        bool rhs_is_arith = stmt.expr &&
+            (stmt.expr->kind == ExprKind::BINARY || stmt.expr->kind == ExprKind::UNARY);
+        if (dest && (dest->tag == JD_TAG_I64 || jd_is_f64_tag(dest->tag) || dest->tag == JD_TAG_STR ||
+                     (dest->tag == JD_TAG_ARR && !rhs_is_arith)))
             rhs_leaf_hint = dest->tag;
         else if (dest && dest->tag == JD_TAG_RUNTIME)
             // The slot keeps whatever the element is, so the read has to
@@ -10666,50 +10675,70 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         return { result, JD_TAG_ARR };
     }
 
-    // Two runtime-typed operands joined with +: a string on either side
-    // makes it a join, anything else a sum. Without this the bits of two
-    // pointers were added as numbers and the answer was nothing.
-    if (expr.op == TokenType::PLUS &&
-        lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag &&
-        rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
-        LLVMValueRef l_str = LLVMBuildICmp(builder, LLVMIntEQ, lhs.runtime_tag,
-            LLVMConstInt(i32_type, JD_TAG_STR, 0), "dyy_lstr");
-        LLVMValueRef r_str = LLVMBuildICmp(builder, LLVMIntEQ, rhs.runtime_tag,
-            LLVMConstInt(i32_type, JD_TAG_STR, 0), "dyy_rstr");
-        LLVMValueRef any_str = LLVMBuildOr(builder, l_str, r_str, "dyy_str");
-        LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "dyy.join");
-        LLVMBasicBlockRef bb_sum = LLVMAppendBasicBlock(current_fn, "dyy.sum");
-        LLVMBasicBlockRef bb_end = LLVMAppendBasicBlock(current_fn, "dyy.end");
-        LLVMBuildCondBr(builder, any_str, bb_join, bb_sum);
+    // Two runtime-typed operands: with + a string on either side makes it a
+    // join, and otherwise the runtime decides, because an array behind either
+    // tag makes the operation element-wise and answers an array. Reading the
+    // two bit patterns as numbers answered nothing for a string and 0 for an
+    // array, and the other three operators had no path of their own at all.
+    {
+        int32_t dyn_op = -1;
+        switch (expr.op) {
+            case TokenType::PLUS:  dyn_op = 0; break;
+            case TokenType::MINUS: dyn_op = 1; break;
+            case TokenType::STAR:  dyn_op = 2; break;
+            case TokenType::SLASH: dyn_op = 3; break;
+            default: break;
+        }
+        if (dyn_op >= 0 &&
+            lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag &&
+            rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
+            auto& dyna = runtime_funcs["__dyn_arith"];
+            LLVMValueRef out_tag = scratch_alloca(i32_type, "dyy_tag");
+            LLVMValueRef dargs[] = { lhs.val, lhs.runtime_tag, rhs.val, rhs.runtime_tag,
+                LLVMConstInt(i32_type, (unsigned)dyn_op, 0), out_tag };
+            if (dyn_op != 0) {
+                LLVMValueRef bits = LLVMBuildCall2(builder, dyna.fn_type, dyna.fn,
+                                                   dargs, 6, "dyy_dyn");
+                LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "dyy_tagv");
+                return { bits, JD_TAG_RUNTIME, tag_v };
+            }
+            LLVMValueRef l_str = LLVMBuildICmp(builder, LLVMIntEQ, lhs.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_STR, 0), "dyy_lstr");
+            LLVMValueRef r_str = LLVMBuildICmp(builder, LLVMIntEQ, rhs.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_STR, 0), "dyy_rstr");
+            LLVMValueRef any_str = LLVMBuildOr(builder, l_str, r_str, "dyy_str");
+            LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "dyy.join");
+            LLVMBasicBlockRef bb_sum = LLVMAppendBasicBlock(current_fn, "dyy.sum");
+            LLVMBasicBlockRef bb_end = LLVMAppendBasicBlock(current_fn, "dyy.end");
+            LLVMBuildCondBr(builder, any_str, bb_join, bb_sum);
 
-        LLVMPositionBuilderAtEnd(builder, bb_join);
-        LLVMValueRef ls = runtime_to_str(lhs.val, lhs.runtime_tag);
-        LLVMValueRef rs = runtime_to_str(rhs.val, rhs.runtime_tag);
-        auto& cat = runtime_funcs["__str_concat"];
-        LLVMValueRef cargs[] = { ls, rs };
-        LLVMValueRef joined = LLVMBuildCall2(builder, cat.fn_type, cat.fn, cargs, 2, "dyy_cat");
-        LLVMValueRef jbits = LLVMBuildPtrToInt(builder, joined, i64_type, "dyy_jbits");
-        LLVMBuildBr(builder, bb_end);
-        LLVMBasicBlockRef bb_join_end = LLVMGetInsertBlock(builder);
+            LLVMPositionBuilderAtEnd(builder, bb_join);
+            LLVMValueRef ls = runtime_to_str(lhs.val, lhs.runtime_tag);
+            LLVMValueRef rs = runtime_to_str(rhs.val, rhs.runtime_tag);
+            auto& cat = runtime_funcs["__str_concat"];
+            LLVMValueRef cargs[] = { ls, rs };
+            LLVMValueRef joined = LLVMBuildCall2(builder, cat.fn_type, cat.fn, cargs, 2, "dyy_cat");
+            LLVMValueRef jbits = LLVMBuildPtrToInt(builder, joined, i64_type, "dyy_jbits");
+            LLVMBuildBr(builder, bb_end);
+            LLVMBasicBlockRef bb_join_end = LLVMGetInsertBlock(builder);
 
-        LLVMPositionBuilderAtEnd(builder, bb_sum);
-        LLVMValueRef lf = coerce_to(lhs, f64_type);
-        LLVMValueRef rf = coerce_to(rhs, f64_type);
-        LLVMValueRef sum = LLVMBuildFAdd(builder, lf, rf, "dyy_add");
-        LLVMValueRef sbits = pun_f64_to_i64(sum);
-        LLVMBuildBr(builder, bb_end);
-        LLVMBasicBlockRef bb_sum_end = LLVMGetInsertBlock(builder);
+            LLVMPositionBuilderAtEnd(builder, bb_sum);
+            LLVMValueRef sbits = LLVMBuildCall2(builder, dyna.fn_type, dyna.fn,
+                                                dargs, 6, "dyy_dyn");
+            LLVMValueRef sbits_tag = LLVMBuildLoad2(builder, i32_type, out_tag, "dyy_sumtagv");
+            LLVMBuildBr(builder, bb_end);
+            LLVMBasicBlockRef bb_sum_end = LLVMGetInsertBlock(builder);
 
-        LLVMPositionBuilderAtEnd(builder, bb_end);
-        LLVMValueRef pv = LLVMBuildPhi(builder, i64_type, "dyy_v");
-        LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "dyy_t");
-        LLVMValueRef vals[] = { jbits, sbits };
-        LLVMValueRef tags[] = { LLVMConstInt(i32_type, JD_TAG_STR, 0),
-                                LLVMConstInt(i32_type, JD_TAG_F64, 0) };
-        LLVMBasicBlockRef bbs[] = { bb_join_end, bb_sum_end };
-        LLVMAddIncoming(pv, vals, bbs, 2);
-        LLVMAddIncoming(pt, tags, bbs, 2);
-        return { pv, JD_TAG_RUNTIME, pt };
+            LLVMPositionBuilderAtEnd(builder, bb_end);
+            LLVMValueRef pv = LLVMBuildPhi(builder, i64_type, "dyy_v");
+            LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "dyy_t");
+            LLVMValueRef vals[] = { jbits, sbits };
+            LLVMValueRef tags[] = { LLVMConstInt(i32_type, JD_TAG_STR, 0), sbits_tag };
+            LLVMBasicBlockRef bbs[] = { bb_join_end, bb_sum_end };
+            LLVMAddIncoming(pv, vals, bbs, 2);
+            LLVMAddIncoming(pt, tags, bbs, 2);
+            return { pv, JD_TAG_RUNTIME, pt };
+        }
     }
 
     // One runtime-typed operand and one number: an array behind the tag is
@@ -10779,6 +10808,34 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     }
 
     // Array/ptr operands: use native array arithmetic functions
+    // Both operands only name their kind when they run - two map values, two
+    // cells of a mixed array. An array on either side makes this element-wise,
+    // which no compile-time guess can tell, so the runtime decides and reports
+    // the kind of its answer. A later assignment that makes a slot
+    // runtime-tagged used to turn an earlier `ZEROS(3) + m{"v"}` into a 0.
+    if (lhs.tag == JD_TAG_RUNTIME && rhs.tag == JD_TAG_RUNTIME &&
+        lhs.runtime_tag && rhs.runtime_tag) {
+        int32_t dyn_op = -1;
+        switch (expr.op) {
+            case TokenType::PLUS:  dyn_op = 0; break;
+            case TokenType::MINUS: dyn_op = 1; break;
+            case TokenType::STAR:  dyn_op = 2; break;
+            case TokenType::SLASH: dyn_op = 3; break;
+            default: break;
+        }
+        if (dyn_op >= 0) {
+            auto& fn = runtime_funcs["__dyn_arith"];
+            LLVMValueRef out_tag = scratch_alloca(i32_type, "dyna_tag");
+            LLVMValueRef lb, lt, rb, rt;
+            to_bits_tag(lhs, lb, lt);
+            to_bits_tag(rhs, rb, rt);
+            LLVMValueRef args[] = { lb, lt, rb, rt,
+                LLVMConstInt(i32_type, (unsigned)dyn_op, 0), out_tag };
+            LLVMValueRef bits = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 6, "dyna");
+            LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "dyna_tagv");
+            return { bits, JD_TAG_RUNTIME, tag_v };
+        }
+    }
     if (lhs.tag == JD_TAG_ARR || rhs.tag == JD_TAG_ARR) {
         // Determine op code: 0=add, 1=sub, 2=mul, 3=div
         int32_t arith_op = -1;

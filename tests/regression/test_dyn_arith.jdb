@@ -1,0 +1,86 @@
+' Arithmetic where both operands only name their kind when they run - two
+' map values, two cells of a mixed array. The one path that existed covered
+' + and only asked whether either side was a string, so an array behind a
+' tag answered 0 and the other three operators had no path at all. A later
+' assignment that makes a slot runtime-tagged pulls an earlier line into
+' this shape too, which is how `ZEROS(3) + m{"v"}` came to answer 0 only
+' when a second statement was added below it.
+DIM bad = 0
+
+DIM box AS MAP
+box{"v"} = [1, 2, 3]
+box{"w"} = [10, 20, 30]
+box{"n"} = 5
+box{"o"} = 2
+box{"s"} = "ab"
+box{"t"} = "cd"
+
+' Two map values holding arrays, element-wise
+DIM both = box{"v"} + box{"w"}
+IF LEN(both) <> 3 ORELSE both[0] <> 11 ORELSE both[2] <> 33 THEN
+    bad = bad + 1
+    PRINT "array plus array: "; both
+ENDIF
+DIM gap = box{"w"} - box{"v"}
+IF gap[0] <> 9 ORELSE gap[2] <> 27 THEN
+    bad = bad + 1
+    PRINT "array minus array: "; gap
+ENDIF
+
+' An array on one side, a number on the other, both only named at run time
+DIM scaled = box{"v"} * box{"n"}
+IF scaled[0] <> 5 ORELSE scaled[2] <> 15 THEN
+    bad = bad + 1
+    PRINT "array times number: "; scaled
+ENDIF
+DIM shifted = box{"n"} + box{"v"}
+IF shifted[0] <> 6 ORELSE shifted[2] <> 8 THEN
+    bad = bad + 1
+    PRINT "number plus array: "; shifted
+ENDIF
+
+' Two numbers, all four operators
+IF box{"n"} + box{"o"} <> 7 THEN
+    bad = bad + 1
+    PRINT "number plus: "; box{"n"} + box{"o"}
+ENDIF
+IF box{"n"} - box{"o"} <> 3 THEN
+    bad = bad + 1
+    PRINT "number minus: "; box{"n"} - box{"o"}
+ENDIF
+IF box{"n"} * box{"o"} <> 10 THEN
+    bad = bad + 1
+    PRINT "number times: "; box{"n"} * box{"o"}
+ENDIF
+IF box{"n"} / box{"o"} <> 2.5 THEN
+    bad = bad + 1
+    PRINT "number over: "; box{"n"} / box{"o"}
+ENDIF
+
+' A string on either side still joins
+IF box{"s"} + box{"t"} <> "abcd" THEN
+    bad = bad + 1
+    PRINT "join: "; box{"s"} + box{"t"}
+ENDIF
+
+' An array variable assigned the sum of itself and a map value. The
+' assignment makes the slot runtime-tagged for the whole program, so the
+' read above it runs in the same shape.
+DIM acc = ZEROS(3)
+DIM first = acc + box{"v"}
+IF first[0] <> 1 ORELSE first[2] <> 3 THEN
+    bad = bad + 1
+    PRINT "before the assignment: "; first
+ENDIF
+acc = acc + box{"v"}
+IF LEN(acc) <> 3 ORELSE acc[0] <> 1 ORELSE acc[2] <> 3 THEN
+    bad = bad + 1
+    PRINT "assigned: "; acc
+ENDIF
+acc = acc * box{"n"}
+IF acc[0] <> 5 ORELSE acc[2] <> 15 THEN
+    bad = bad + 1
+    PRINT "assigned twice: "; acc
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

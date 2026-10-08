@@ -3216,6 +3216,42 @@ int64_t jdb_dyn_cmp(int64_t a, int32_t ta, int64_t b, int32_t tb) {
     return x < y ? -1 : (x > y ? 1 : 0);
 }
 
+// Arithmetic where both operands only name their kind when they run - two
+// map values, two cells of a mixed array. An array on either side decides
+// element-wise or array-with-a-scalar; anything else is a number. The caller
+// reads the kind of the answer from out_tag.
+int64_t jdb_dyn_arith(int64_t a, int32_t ta, int64_t b, int32_t tb,
+                      int32_t op, int32_t* out_tag) {
+    auto as_num = [](int64_t bits, int32_t t) -> double {
+        if (t == JD_TAG_I64 || t == JD_TAG_BOOL) return (double)bits;
+        if (t == JD_TAG_VM_HANDLE && g_jdrt_handle)
+            return jdrt_val_to_f64(g_jdrt_handle, bits);
+        union { double d; int64_t i; } u; u.i = bits; return u.d;
+    };
+    bool a_arr = (ta == JD_TAG_ARR), b_arr = (tb == JD_TAG_ARR);
+    if (a_arr || b_arr) {
+        if (out_tag) *out_tag = JD_TAG_ARR;
+        JdbArray* out = nullptr;
+        if (a_arr && b_arr)
+            out = jdb_array_binop((JdbArray*)(intptr_t)a, (JdbArray*)(intptr_t)b, op);
+        else if (a_arr)
+            out = jdb_array_scalar_op((JdbArray*)(intptr_t)a, as_num(b, tb), op, 0);
+        else
+            out = jdb_array_scalar_op((JdbArray*)(intptr_t)b, as_num(a, ta), op, 1);
+        return (int64_t)(intptr_t)out;
+    }
+    if (out_tag) *out_tag = JD_TAG_F64;
+    double x = as_num(a, ta), y = as_num(b, tb), r = 0.0;
+    switch (op) {
+        case 0: r = x + y; break;
+        case 1: r = x - y; break;
+        case 2: r = x * y; break;
+        case 3: r = (y != 0.0) ? x / y : 0.0; break;
+        default: r = 0.0; break;
+    }
+    union { double d; int64_t i; } u; u.d = r; return u.i;
+}
+
 int64_t jdb_str_cmp(const char* a, const char* b) {
     if (a == b) return 0;
     if (!a) return -1;

@@ -206,6 +206,7 @@ tests/regression/test_destruct.jdb	OK	OK	OK
 tests/regression/test_dim_funcref_call.jdb	OK	OK	OK
 tests/regression/test_dollar_coerce.jdb	PASS	CFAIL	GAP
 tests/regression/test_dump_run.jdb	OK	OK	OK
+tests/regression/test_dyn_arith.jdb	PASS	PASS	OK
 tests/regression/test_env_neg.jdb	OK	OK	OK
 tests/regression/test_errors.jdb	PASS	PASS	OK
 tests/regression/test_fileio.jdb	PASS	PASS	OK
