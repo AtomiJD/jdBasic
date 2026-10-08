@@ -69,6 +69,25 @@ std::string LLVMCodegen::dim_funcref_name(const TypedValue& tv) {
     return s;
 }
 
+// The lambda a variable was assigned, when a higher-order call may re-emit it
+// with the element kind of the array it will walk. Only a capture-free lambda
+// qualifies: an instance built at the use site has to stand on its own.
+const Expr* LLVMCodegen::stored_lambda_src(const Expr* e) {
+    if (!e || e->kind != ExprKind::LAMBDA_EXPR) return nullptr;
+    if (!e->lambda_captures.empty()) return nullptr;
+    return e;
+}
+
+// Remembers the lambda a slot was just given, together with the instance that
+// went into it. Both or neither: without the instance there is no way to tell
+// later whether the slot still holds this lambda.
+void LLVMCodegen::record_stored_lambda(VarInfo& vi, const Expr* e, const TypedValue& rhs) {
+    vi.lambda_src = stored_lambda_src(e);
+    vi.lambda_default = (vi.lambda_src && rhs.tag == JD_TAG_FUNCREF && rhs.val &&
+                         LLVMIsAFunction(rhs.val)) ? rhs.val : nullptr;
+    if (!vi.lambda_default) vi.lambda_src = nullptr;
+}
+
 // LLVM slot type a parameter of the given JdTag is passed in: ptr-shaped tags
 // take i8*, integer-shaped ones i64, everything else f64.
 static bool is_handle_returner(const std::string& fn_name) {
@@ -5978,6 +5997,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // tag can't decode an ordinary number as a pointer.
         vi->funcref_return_tag = fr_ret_tag;
         vi->funcref_name = fr_name;
+        record_stored_lambda(*vi, stmt.expr ? &*stmt.expr : nullptr, rhs);
         // STRICT: silent slot-type changes hide bit-puns in native - `DIM x = 0`
         // gives x an i64 slot, a later `x = 3.0` SIToFP-converts the float, but
         // when the codegen path is something less innocent (a func returning a
@@ -6141,6 +6161,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         VarInfo& nv = create_var(stmt.var_name, var_tag);
         nv.funcref_return_tag = fr_ret_tag;
         nv.funcref_name = fr_name;
+        record_stored_lambda(nv, stmt.expr ? &*stmt.expr : nullptr, rhs);
         LLVMBuildStore(builder, rhs.val, nv.alloca_val);
     }
 }
@@ -7189,12 +7210,14 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         if (jd_is_f64_tag(rhs.tag) && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_F64;
         if (untyped_bool_init && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_BOOL;
         vi->funcref_name = dim_funcref_name(rhs);
+        record_stored_lambda(*vi, stmt.expr ? &*stmt.expr : nullptr, rhs);
         vi->funcref_return_tag = fr_ret_tag;
         if (rhs.tag == JD_TAG_FUNCREF) vi->tag = JD_TAG_FUNCREF;
         LLVMBuildStore(builder, rhs.val, vi->alloca_val);
     } else {
         VarInfo& nv = create_var(stmt.var_name, rhs.tag);
         nv.funcref_name = dim_funcref_name(rhs);
+        record_stored_lambda(nv, stmt.expr ? &*stmt.expr : nullptr, rhs);
         nv.funcref_return_tag = fr_ret_tag;
         LLVMBuildStore(builder, rhs.val, nv.alloca_val);
     }
@@ -12492,17 +12515,54 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         if (a.kind == ExprKind::ARRAY_LITERAL) return JD_TAG_ARR;
         return JD_TAG_F64;
     };
-    // The function argument of a higher-order call; a LAMBDA written in
-    // place takes its parameter kinds from the loop it is handed to.
+    // The lambda a higher-order call will actually run: the expression itself,
+    // or - when a variable holds a capture-free lambda of the right arity -
+    // that lambda, so the instance emitted here takes the element kind instead
+    // of reading a string pointer as a number.
+    auto hof_lambda_source = [&](const Expr& f, int arity) -> const Expr* {
+        if (f.kind == ExprKind::LAMBDA_EXPR) return &f;
+        if (f.kind != ExprKind::VARIABLE) return nullptr;
+        VarInfo* vi = lookup_var(f.str_val);
+        if (!vi || vi->tag != JD_TAG_FUNCREF || !vi->lambda_src) return nullptr;
+        if ((int)vi->lambda_src->lambda_params.size() != arity) return nullptr;
+        return vi->lambda_src;
+    };
+    // True while the instance emitted for a variable is the one being called;
+    // false once the slot was re-pointed at another lambda, which only the
+    // running program can tell.
+    LLVMValueRef hof_spec_guard = nullptr;
     auto hof_funcref = [&](const Expr& f, int arity, int mode, int elem, int acc) -> TypedValue {
-        if (f.kind == ExprKind::LAMBDA_EXPR) {
+        hof_spec_guard = nullptr;
+        const Expr* src = hof_lambda_source(f, arity);
+        auto emit = [&](const Expr& e) -> TypedValue {
             hof_lambda_mode = mode;
             hof_elem_hint = elem;
             hof_acc_hint = acc;
-        }
-        TypedValue r = resolve_funcref(f, arity);
-        hof_lambda_mode = 0;
-        return r;
+            TypedValue r = resolve_funcref(e, arity);
+            hof_lambda_mode = 0;
+            return r;
+        };
+        if (!src) return emit(f);
+        if (f.kind == ExprKind::LAMBDA_EXPR) return emit(f);
+
+        // A slot can be re-pointed between the assignment and here, so the
+        // instance built for the recorded lambda is used only while the slot
+        // still holds it; otherwise whatever it holds now is called.
+        VarInfo* vi = lookup_var(f.str_val);
+        TypedValue held = codegen_expr(f);
+        TypedValue spec = emit(*src);
+        if (!vi || !vi->lambda_default || spec.tag != JD_TAG_FUNCREF ||
+            held.tag != JD_TAG_FUNCREF)
+            return held.tag == JD_TAG_FUNCREF ? held : spec;
+        LLVMValueRef dflt = LLVMBuildBitCast(builder, vi->lambda_default,
+                                             i8_ptr_type, "lam_dflt");
+        hof_spec_guard = LLVMBuildICmp(builder, LLVMIntEQ,
+            LLVMBuildPtrToInt(builder, held.val, i64_type, "held2i"),
+            LLVMBuildPtrToInt(builder, dflt, i64_type, "dflt2i"), "same_lam");
+        LLVMValueRef pick = LLVMBuildSelect(builder, hof_spec_guard,
+            LLVMBuildBitCast(builder, spec.val, i8_ptr_type, "spec_fn"),
+            held.val, "hof_fn");
+        return { pick, JD_TAG_FUNCREF };
     };
     // The array argument of a higher-order call as a native array pointer;
     // a VM array becomes a native one whose cells keep their kinds.
@@ -12561,11 +12621,28 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // decode the per-cell ptrs instead of showing the f64 bits as 0.
             // FILTER returns source elements, so it inherits the source's flag
             // via the runtime, not the predicate's return type.
-            if (upper == "SELECT" && funcref_returns_str(*expr.args[0])) {
+            const Expr* fn_src = hof_lambda_source(*expr.args[0], 1);
+            if (!fn_src) fn_src = expr.args[0].get();
+            if (upper == "SELECT" && funcref_returns_str(*fn_src)) {
                 auto* set_str = get_runtime_func("__arr_set_string_elems");
                 if (set_str) {
+                    // When a variable's recorded lambda was only a guess, the
+                    // cells are strings only if that lambda is the one that
+                    // ran; flagging them otherwise would decode numbers as
+                    // pointers.
+                    LLVMBasicBlockRef flag_bb = nullptr, join_bb = nullptr;
+                    if (hof_spec_guard) {
+                        flag_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "sel.flag");
+                        join_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "sel.flag.end");
+                        LLVMBuildCondBr(builder, hof_spec_guard, flag_bb, join_bb);
+                        LLVMPositionBuilderAtEnd(builder, flag_bb);
+                    }
                     LLVMValueRef ss[] = { result };
                     LLVMBuildCall2(builder, set_str->fn_type, set_str->fn, ss, 1, "");
+                    if (join_bb) {
+                        LLVMBuildBr(builder, join_bb);
+                        LLVMPositionBuilderAtEnd(builder, join_bb);
+                    }
                 }
             }
             return { result, JD_TAG_ARR };  // returns array

@@ -1,0 +1,110 @@
+' A lambda stored in a variable and handed to a higher-order call later.
+' The instance was emitted at the assignment, where nothing says what the
+' elements will be, so a string parameter without a $ suffix arrived as its
+' pointer bits: SELECT answered giant integers and INDEXOF on the result
+' answered -1. The slot can also be re-pointed at another lambda between the
+' assignment and the call, so the kind is only a guess until it runs.
+DIM bad = 0
+DIM words = ["ab", "abc", "a"]
+DIM nums = [1, 2, 3, 4]
+
+' The documented shape: a parameter without $ receiving strings
+DIM wlen = LAMBDA w -> LEN(w)
+DIM lens = SELECT(wlen, words)
+IF lens[0] <> 2 ORELSE lens[1] <> 3 ORELSE lens[2] <> 1 THEN
+    bad = bad + 1
+    PRINT "SELECT: "; lens
+ENDIF
+IF INDEXOF(lens, 3) <> 1 THEN
+    bad = bad + 1
+    PRINT "INDEXOF: "; INDEXOF(lens, 3)
+ENDIF
+
+' A $-named parameter was already fine and stays so
+DIM wlen2 = LAMBDA w$ -> LEN(w$)
+DIM lens2 = SELECT(wlen2, words)
+IF INDEXOF(lens2, 3) <> 1 THEN
+    bad = bad + 1
+    PRINT "dollar INDEXOF: "; INDEXOF(lens2, 3)
+ENDIF
+
+' A stored lambda that answers a string flags the result array
+DIM wrap = LAMBDA w -> "<" + w + ">"
+DIM wrapped = SELECT(wrap, words)
+IF wrapped[0] <> "<ab>" ORELSE wrapped[2] <> "<a>" THEN
+    bad = bad + 1
+    PRINT "string answer: "; wrapped
+ENDIF
+
+' Stored predicate and reducer
+DIM longer = LAMBDA w -> LEN(w) > 1
+DIM kept = FILTER(longer, words)
+IF LEN(kept) <> 2 ORELSE kept[0] <> "ab" THEN
+    bad = bad + 1
+    PRINT "FILTER: "; kept
+ENDIF
+DIM plus = LAMBDA a, x -> a + x
+IF REDUCE(plus, nums, 0) <> 10 THEN
+    bad = bad + 1
+    PRINT "REDUCE: "; REDUCE(plus, nums, 0)
+ENDIF
+
+' The same variable called directly and through SELECT
+DIM twice = LAMBDA x -> x * 2
+DIM doubled = SELECT(twice, nums)
+IF twice(21) <> 42 ORELSE doubled[3] <> 8 THEN
+    bad = bad + 1
+    PRINT "direct and SELECT: "; twice(21); " "; doubled
+ENDIF
+
+' Re-pointed in a branch: the call has to follow the slot, not the guess
+DIM pick = 1
+DIM sel = LAMBDA x -> x + 1
+IF pick = 1 THEN
+    sel = LAMBDA x -> x * 100
+ELSE
+    sel = LAMBDA x -> x - 1
+ENDIF
+DIM picked = SELECT(sel, [1, 2, 3])
+IF picked[0] <> 100 ORELSE picked[2] <> 300 THEN
+    bad = bad + 1
+    PRINT "branch: "; picked
+ENDIF
+
+' Re-pointed inside a loop: each pass uses what the slot holds then
+DIM step_one = ZEROS(2)
+DIM step_two = ZEROS(2)
+DIM gg = LAMBDA x -> x * 2
+FOR i = 1 TO 2
+    IF i = 2 THEN gg = LAMBDA x -> x * 3
+    DIM got = SELECT(gg, [1, 2])
+    IF i = 1 THEN step_one = got ELSE step_two = got
+NEXT i
+IF step_one[1] <> 4 ORELSE step_two[1] <> 6 THEN
+    bad = bad + 1
+    PRINT "loop: "; step_one; " "; step_two
+ENDIF
+
+' Re-pointed from a string answer to a number answer: the result of the
+' second call must not be flagged as strings
+DIM mk = LAMBDA w -> "<" + w + ">"
+DIM first = SELECT(mk, words)
+mk = LAMBDA x -> x * 7
+DIM second = SELECT(mk, nums)
+IF first[0] <> "<ab>" ORELSE second[0] <> 7 ORELSE second[3] <> 28 THEN
+    bad = bad + 1
+    PRINT "re-pointed kind: "; first; " "; second
+ENDIF
+
+' A named funcref in a variable keeps working
+FUNC WLen(w$)
+    RETURN LEN(w$)
+ENDFUNC
+DIM nf = WLen@
+DIM named = SELECT(nf, words)
+IF named[1] <> 3 THEN
+    bad = bad + 1
+    PRINT "named funcref: "; named
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

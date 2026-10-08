@@ -905,7 +905,8 @@ The interpreter gives a lambda parameter whatever value arrives. The native comp
 * A parameter whose name ends in `$` is a string, everywhere.
 * A `LAMBDA` written in place as the function argument of `SELECT`, `FILTER`, `TAKE_WHILE`, `DROP_WHILE` or `REDUCE` takes the element kind of the array it walks. The element is a number when the array is visibly numeric (a literal of numbers, `IOTA`, `ZEROS`, `ONES`, `LINSPACE`, `RANGE`, `CUMSUM`, `GRADE` or arithmetic on arrays), a string when it is a literal of strings, `SPLIT` or a variable known to hold strings, and otherwise runtime-typed: each call receives the element with its own kind, so numbers, strings, maps and the rows of `CSVREADER` or `JSON.PARSE$` all arrive intact.
 * The accumulator of `REDUCE` is a string when the start value is a string literal, a `$` variable or a `$` function call, an array when it is an array literal such as `[]`, otherwise a number. `REDUCE` then answers a string or an array.
-* Every other lambda parameter is a number. That includes a lambda stored in a variable first (`DIM f = LAMBDA w -> LEN(w)`) and handed to `SELECT` later: write it in place, or name the parameter `w$` when it receives strings.
+* A capture-free `LAMBDA` stored in a variable and handed to one of those five later is treated the same way: the compiler emits a second instance for the array it walks, and uses it while the variable still holds that lambda. Re-point the variable at another lambda and the call follows the variable.
+* Every other lambda parameter is a number. A named `FUNC` behind a funcref (`SELECT(Up@, words)`) keeps the kinds of its own declaration, so give it a typed or `$`-suffixed parameter when it receives strings.
 
 What a lambda answers keeps its kind as well: `SELECT(LAMBDA r -> r{"name"}, rows)` gives an array of strings, and `FILTER` returns the elements it keeps unchanged.
 

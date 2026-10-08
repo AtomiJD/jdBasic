@@ -266,6 +266,7 @@ tests/regression/test_slice.jdb	OK	OK	OK
 tests/regression/test_sprite_create_save_load.jdb	OK	OK	OK
 tests/regression/test_sql.jdb	OK	CFAIL	GAP
 tests/regression/test_stop.jdb	OK	OK	OK
+tests/regression/test_stored_lambda_hof.jdb	PASS	PASS	OK
 tests/regression/test_str_array.jdb	OK	OK	OK
 tests/regression/test_string_array_push.jdb	OK	CFAIL	GAP
 tests/regression/test_tag7_to_str.jdb	OK	CFAIL	GAP

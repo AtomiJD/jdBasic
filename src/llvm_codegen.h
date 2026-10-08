@@ -153,6 +153,14 @@ private:
         // can render it the way the interpreter does instead of formatting the
         // raw pointer.
         std::string funcref_name;
+        // For tag == JD_TAG_FUNCREF: the capture-free lambda this variable was
+        // assigned, so a later higher-order call can emit an instance whose
+        // parameter takes the element kind. Null once anything else landed in
+        // the slot.
+        const Expr* lambda_src = nullptr;
+        // The LLVM function of that lambda's default instance, to tell at run
+        // time whether the slot still holds it.
+        LLVMValueRef lambda_default = nullptr;
     };
 
     // Scope stack for local variables (functions push/pop scopes)
@@ -430,6 +438,8 @@ private:
     void scan_fresh_string_funcs(const std::vector<StmtPtr>& program);
 
     std::string dim_funcref_name(const TypedValue& tv);
+    static const Expr* stored_lambda_src(const Expr* e);
+    void record_stored_lambda(VarInfo& vi, const Expr* e, const TypedValue& rhs);
 
     // Setup
     void init_module();
