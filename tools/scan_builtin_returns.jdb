@@ -9,6 +9,28 @@ DIM nl$ = CHR$(10)
 
 DIM sigs$ = TXTREADER$("src/builtin_sigs.h")
 
+' The builtins the native compiler refuses outright. No signature can help
+' them, so they are not a backlog. Read out of the codegen rather than
+' repeated here, so one source says it.
+DIM codegen_lines = SPLIT(TXTREADER$("src/llvm_codegen.cpp"), CHR$(10))
+DIM interp_only$ = "|"
+FOR i = 0 TO LEN(codegen_lines) - 1
+    DIM cl$ = codegen_lines[i]
+    IF INSTR(cl$, "is interpreter-only") < 0 AND INSTR(cl$, "is not supported in native -c") < 0 THEN CONTINUEFOR
+    DIM back = i - 8
+    IF back < 0 THEN back = 0
+    FOR k = back TO i
+        IF INSTR(codegen_lines[k], "upper == ") < 0 THEN CONTINUEFOR
+        FOR EACH hit$ IN FLATTEN(REGEX.FINDALL("upper == " + CHR$(34) + "([^" + CHR$(34) + "]+)" + CHR$(34), codegen_lines[k]))
+            IF INSTR(interp_only$, "|" + hit$ + "|") < 0 THEN interp_only$ = interp_only$ + hit$ + "|"
+        NEXT
+    NEXT
+NEXT
+
+FUNC InterpOnly(n$)
+    RETURN INSTR(interp_only$, "|" + n$ + "|") >= 0
+ENDFUNC
+
 ' The table entry for a name, from the return kind to the end of the line.
 FUNC EntryOf(n$)
     DIM at = INSTR(sigs$, CHR$(34) + n$ + CHR$(34) + ", BuiltinRet::")
@@ -33,6 +55,15 @@ ENDFUNC
 ' The signature a scanned kind asks for. BF_DATE outranks the return kind:
 ' the table records what the ISO-string form answered, the flag records that
 ' the value is a date, and a date rides the f64 variant.
+' Whether a signature is an acceptable record of a scanned kind. The array
+' factory says nothing about the cells: a nested or mixed one has to travel
+' as a value-store handle, which the body does not show.
+FUNC SigFits(kind$, sig$)
+    IF kind$ = "ARR" THEN RETURN sig$ = "Arr" ORELSE sig$ = "Handle"
+    IF kind$ = "OBJ" THEN RETURN sig$ = "Handle"
+    RETURN sig$ = WantsSig(kind$)
+ENDFUNC
+
 FUNC WantsSig(kind$)
     IF kind$ = "NONE" THEN RETURN "None"
     IF kind$ = "STR" THEN RETURN "Str"
@@ -56,13 +87,13 @@ FUNC HasLambda(s$)
     RETURN INSTR(s$, "{") >= 0 ORELSE INSTR(s$, "->") >= 0
 ENDFUNC
 
-' The kind a single return statement answers, read off the Value factory.
-FUNC RetKind(s$)
-    DIM expr$ = LTRIM$(MID$(s$, 7))
+' The kind an expression answers, read off the Value factory that heads it.
+FUNC HeadKind(e$)
+    DIM expr$ = LTRIM$(e$)
     IF LEFT$(expr$, 2) = "{}" THEN RETURN "NONE"
     IF LEFT$(expr$, 7) = "Value()" THEN RETURN "NONE"
-    ' The kind is whatever the returned expression itself is, so a factory
-    ' that only fills an argument of a helper call decides nothing.
+    ' The kind is whatever the expression itself is, so a factory that only
+    ' fills an argument of a helper call decides nothing.
     IF LEFT$(expr$, 12) <> "Value::make_" THEN RETURN "?"
     DIM head$ = MID$(expr$, 7)
     DIM paren = INSTR(head$, "(")
@@ -75,6 +106,44 @@ FUNC RetKind(s$)
     IF head$ = "make_array" ORELSE head$ = "make_tensor" THEN RETURN "ARR"
     IF head$ = "make_object" ORELSE head$ = "make_map" THEN RETURN "OBJ"
     RETURN "?"
+ENDFUNC
+
+FUNC RetKind(s$)
+    RETURN HeadKind(MID$(s$, 7))
+ENDFUNC
+
+' The kinds assigned to a name in body_text$, as a space-separated set.
+' Every assignment has to be readable, otherwise the name says nothing.
+FUNC AssignedKinds(body_text$, nm$)
+    DIM out$ = ""
+    DIM hit = FALSE
+    FOR EACH src_line$ IN SPLIT(body_text$, CHR$(10))
+        DIM at = INSTR(src_line$, " " + nm$ + " = ")
+        IF at < 0 THEN CONTINUEFOR
+        hit = TRUE
+        DIM k$ = HeadKind(MID$(src_line$, at + LEN(nm$) + 4))
+        IF k$ = "?" THEN RETURN "?"
+        IF INSTR(out$, k$) < 0 THEN out$ = out$ + k$ + " "
+    NEXT
+    IF NOT hit THEN RETURN "?"
+    RETURN out$
+ENDFUNC
+
+DIM ident_chars$ = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+
+' The plain identifier a return statement names, or "" when the returned
+' expression is anything else.
+FUNC ReturnedName(s$)
+    DIM expr$ = LTRIM$(MID$(s$, 7))
+    DIM cut = INSTR(expr$, ";")
+    IF cut < 1 THEN RETURN ""
+    DIM nm$ = LEFT$(expr$, cut)
+    DIM k = 0
+    WHILE k < LEN(nm$)
+        IF INSTR(ident_chars$, MID$(nm$, k, 1)) < 0 THEN RETURN ""
+        k = k + 1
+    WEND
+    RETURN nm$
 ENDFUNC
 
 DIM names = []
@@ -123,6 +192,7 @@ FOR EACH f$ IN srcfiles
         DIM started = FALSE
         DIM skip_at = -1
         DIM seen$ = ""
+        DIM body_text$ = ""
         DIM j = lam
         WHILE j < n_lines
             DIM bl$ = src_lines[j]
@@ -132,9 +202,19 @@ FOR EACH f$ IN srcfiles
                 DIM rat = INSTR(bl$, "return ")
                 IF rat >= 0 THEN
                     DIM rk$ = RetKind(MID$(bl$, rat))
-                    IF INSTR(seen$, rk$) < 0 THEN seen$ = seen$ + rk$ + " "
+                    ' A return that names a variable says nothing by itself.
+                    ' What the body assigned to that variable does, and the
+                    ' assignments all stand above the return.
+                    IF rk$ = "?" THEN
+                        DIM named$ = ReturnedName(MID$(bl$, rat))
+                        IF named$ <> "" THEN rk$ = RTRIM$(AssignedKinds(body_text$, named$))
+                    ENDIF
+                    FOR EACH one$ IN SPLIT(rk$, " ")
+                        IF one$ <> "" AND INSTR(seen$, one$) < 0 THEN seen$ = seen$ + one$ + " "
+                    NEXT
                 ENDIF
             ENDIF
+            body_text$ = body_text$ + bl$ + CHR$(10)
             depth = depth + NumOf(bl$, "{") - NumOf(bl$, "}")
             IF depth > 0 THEN started = TRUE
             IF skip_at < 0 AND j > lam AND depth > d0 AND HasLambda(bl$) THEN skip_at = depth
@@ -161,7 +241,7 @@ IF check_only THEN
     FOR i = 0 TO LEN(names) - 1
         DIM s2$ = SigOf(names[i])
         DIM w2$ = WantsSig(kinds[i])
-        IF s2$ <> "-" AND w2$ <> "" AND w2$ <> s2$ AND INSTR(EntryOf(names[i]), "BF_DATE") < 0 THEN
+        IF NOT InterpOnly(names[i]) AND s2$ <> "-" AND w2$ <> "" AND NOT SigFits(kinds[i], s2$) AND INSTR(EntryOf(names[i]), "BF_DATE") < 0 THEN
             PRINT names[i]; " answers "; kinds[i]; ", builtin_sigs.h says "; s2$; " ("; srcs[i]; ")"
             found = found + 1
         ENDIF
@@ -176,14 +256,16 @@ IF check_only THEN
 ENDIF
 
 PRINT "scanned "; LEN(names); " registrations"
+PRINT "the compiler refuses outright, so no signature decides them:"; REPLACE$(interp_only$, "|", " ")
 PRINT ""
 
 DIM n_none_new = 0
 DIM n_kind_new = 0
+DIM n_container_new = 0
 
 PRINT "== answers NONE only, signature not listed =="
 FOR i = 0 TO LEN(names) - 1
-    IF kinds[i] = "NONE" AND SigOf(names[i]) = "-" THEN
+    IF NOT InterpOnly(names[i]) AND kinds[i] = "NONE" AND SigOf(names[i]) = "-" THEN
         PRINT names[i]; "  ("; srcs[i]; ")"
         n_none_new = n_none_new + 1
     ENDIF
@@ -195,7 +277,7 @@ DIM n_conflict = 0
 FOR i = 0 TO LEN(names) - 1
     DIM sig$ = SigOf(names[i])
     DIM wants$ = WantsSig(kinds[i])
-    IF sig$ <> "-" AND wants$ <> "" AND wants$ <> sig$ THEN
+    IF NOT InterpOnly(names[i]) AND sig$ <> "-" AND wants$ <> "" AND NOT SigFits(kinds[i], sig$) THEN
         ' A name carrying BF_DATE answers a date, whatever the kind the
         ' factory in its body names.
         IF INSTR(EntryOf(names[i]), "BF_DATE") < 0 THEN
@@ -209,9 +291,22 @@ PRINT ""
 PRINT "== answers one kind, signature not listed =="
 FOR i = 0 TO LEN(names) - 1
     DIM kk$ = kinds[i]
-    IF kk$ <> "NONE" AND kk$ <> "nolambda" AND kk$ <> "" AND INSTR(kk$, " ") < 0 AND kk$ <> "?" AND SigOf(names[i]) = "-" THEN
+    DIM one_kind = kk$ <> "nolambda" AND kk$ <> "" AND INSTR(kk$, " ") < 0 AND kk$ <> "?"
+    IF NOT InterpOnly(names[i]) AND one_kind AND kk$ <> "NONE" AND kk$ <> "ARR" AND kk$ <> "OBJ" AND SigOf(names[i]) = "-" THEN
         PRINT names[i]; "  -> "; kk$; "  ("; srcs[i]; ")"
         n_kind_new = n_kind_new + 1
+    ENDIF
+NEXT
+
+PRINT ""
+PRINT "== answers a container, signature not listed =="
+PRINT "   Arr carries flat cells, Handle anything nested or mixed, and the"
+PRINT "   factory in the body does not say which - read the body."
+FOR i = 0 TO LEN(names) - 1
+    DIM kc$ = kinds[i]
+    IF NOT InterpOnly(names[i]) AND (kc$ = "ARR" ORELSE kc$ = "OBJ") AND SigOf(names[i]) = "-" THEN
+        PRINT names[i]; "  -> "; kc$; "  ("; srcs[i]; ")"
+        n_container_new = n_container_new + 1
     ENDIF
 NEXT
 
@@ -220,10 +315,11 @@ PRINT "== several kinds or opaque, signature not listed =="
 FOR i = 0 TO LEN(names) - 1
     DIM km$ = kinds[i]
     DIM many = INSTR(km$, " ") >= 0 ORELSE km$ = "?" ORELSE km$ = "" ORELSE km$ = "nolambda"
-    IF many AND SigOf(names[i]) = "-" THEN PRINT names[i]; "  -> ["; km$; "]  ("; srcs[i]; ")"
+    IF NOT InterpOnly(names[i]) AND many AND SigOf(names[i]) = "-" THEN PRINT names[i]; "  -> ["; km$; "]  ("; srcs[i]; ")"
 NEXT
 
 PRINT ""
 PRINT "NONE-only and unlisted: "; n_none_new
 PRINT "single-kind and unlisted: "; n_kind_new
+PRINT "container and unlisted: "; n_container_new
 PRINT "conflicts with the table: "; n_conflict

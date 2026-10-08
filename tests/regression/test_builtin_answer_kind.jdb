@@ -59,6 +59,20 @@ IF MAP.SIZE(bag) <> 1 ORELSE FIND_IN_ARRAY(nums, 2) <> 1 THEN
     PRINT "counts: "; MAP.SIZE(bag); " "; FIND_IN_ARRAY(nums, 2)
 ENDIF
 
+DIM axis = CROSS([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+bad = bad + SameKind("CROSS", TYPEOF(axis), "ARRAY")
+IF LEN(axis) <> 3 ORELSE axis[2] <> 1 THEN
+    bad = bad + 1
+    PRINT "CROSS gave "; axis
+ENDIF
+
+DIM ranked = SORT([3, 1, 2])
+bad = bad + SameKind("SORT", TYPEOF(ranked), "ARRAY")
+IF LEN(ranked) <> 3 ORELSE ranked[0] <> 1 ORELSE ranked[2] <> 3 THEN
+    bad = bad + 1
+    PRINT "SORT gave "; ranked
+ENDIF
+
 bad = bad + SameKind("ABS", TYPEOF(ABS(-2)), "FLOAT64")
 bad = bad + SameKind("CEIL", TYPEOF(CEIL(1.2)), "FLOAT64")
 
