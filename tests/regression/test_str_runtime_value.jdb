@@ -1,0 +1,56 @@
+' STR$ of a value whose kind is only known when it runs. A string already is
+' its own text, so the conversion used to hand back the pointer it was given
+' while the caller dropped what STR$ answers - freeing the caller's own
+' string. The number and the truth value were copies, so only a string
+' argument corrupted the heap, and only once something else in the same
+' expression made the result worth dropping.
+DIM bad = 0.0
+
+FUNC Describe$(v)
+    RETURN TYPEOF(v) + ":" + STR$(v)
+ENDFUNC
+
+FUNC Plain$(v)
+    RETURN STR$(v)
+ENDFUNC
+
+FUNC Joined$(v)
+    RETURN STR$(v) + "!"
+ENDFUNC
+
+IF Describe$("x") <> "STRING:x" THEN
+    bad = bad + 1
+    PRINT "a string described as ["; Describe$("x"); "]"
+ENDIF
+IF Describe$(7) <> "INT64:7" THEN
+    bad = bad + 1
+    PRINT "a number described as ["; Describe$(7); "]"
+ENDIF
+IF Describe$(TRUE) <> "BOOLEAN:TRUE" THEN
+    bad = bad + 1
+    PRINT "a truth value described as ["; Describe$(TRUE); "]"
+ENDIF
+
+IF Plain$("x") <> "x" ORELSE Plain$(7) <> "7" THEN
+    bad = bad + 1
+    PRINT "plain: ["; Plain$("x"); "] ["; Plain$(7); "]"
+ENDIF
+
+IF Joined$("x") <> "x!" ORELSE Joined$(7) <> "7!" THEN
+    bad = bad + 1
+    PRINT "joined: ["; Joined$("x"); "] ["; Joined$(7); "]"
+ENDIF
+
+' The caller's string is still intact after the call that stringified it
+DIM held$ = "keepme"
+DIM shown$ = Describe$(held$)
+IF held$ <> "keepme" THEN
+    bad = bad + 1
+    PRINT "the caller's string became ["; held$; "]"
+ENDIF
+IF shown$ <> "STRING:keepme" THEN
+    bad = bad + 1
+    PRINT "described as ["; shown$; "]"
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

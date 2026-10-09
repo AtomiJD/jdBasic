@@ -12789,15 +12789,32 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& sb = runtime_funcs["__str_bool"];
             LLVMValueRef is_b = LLVMBuildICmp(builder, LLVMIntEQ, av.runtime_tag,
                 LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "str_isbool");
+            LLVMValueRef is_s = LLVMBuildICmp(builder, LLVMIntEQ, av.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_STR, 0), "str_isstr");
             LLVMBasicBlockRef bb_b = LLVMAppendBasicBlock(current_fn, "str.bool");
+            LLVMBasicBlockRef bb_s = LLVMAppendBasicBlock(current_fn, "str.str");
+            LLVMBasicBlockRef bb_c = LLVMAppendBasicBlock(current_fn, "str.chk_str");
             LLVMBasicBlockRef bb_o = LLVMAppendBasicBlock(current_fn, "str.other");
             LLVMBasicBlockRef bb_j = LLVMAppendBasicBlock(current_fn, "str.join");
-            LLVMBuildCondBr(builder, is_b, bb_b, bb_o);
+            LLVMBuildCondBr(builder, is_b, bb_b, bb_c);
+            LLVMPositionBuilderAtEnd(builder, bb_c);
+            LLVMBuildCondBr(builder, is_s, bb_s, bb_o);
 
             LLVMPositionBuilderAtEnd(builder, bb_b);
             LLVMValueRef ba[] = { av.val };
             LLVMValueRef sv_b = LLVMBuildCall2(builder, sb.fn_type, sb.fn, ba, 1, "sb_dyn");
             LLVMBasicBlockRef bb_b_end = LLVMGetInsertBlock(builder);
+            LLVMBuildBr(builder, bb_j);
+
+            // A string already is its own text, and coercing it hands back the
+            // pointer that came in. The consumer drops what STR$ answers, so
+            // every arm has to answer something it owns - dropping the
+            // caller's string corrupted the heap.
+            LLVMPositionBuilderAtEnd(builder, bb_s);
+            auto& ss = runtime_funcs["__str_str"];
+            LLVMValueRef sa[] = { LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "str_in") };
+            LLVMValueRef sv_s = LLVMBuildCall2(builder, ss.fn_type, ss.fn, sa, 1, "ss_dyn");
+            LLVMBasicBlockRef bb_s_end = LLVMGetInsertBlock(builder);
             LLVMBuildBr(builder, bb_j);
 
             LLVMPositionBuilderAtEnd(builder, bb_o);
@@ -12807,10 +12824,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
             LLVMPositionBuilderAtEnd(builder, bb_j);
             LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "str_dyn");
-            LLVMValueRef iv[] = { sv_b, sv_o };
-            LLVMBasicBlockRef ib[] = { bb_b_end, bb_o_end };
-            LLVMAddIncoming(phi, iv, ib, 2);
-            return { phi, JD_TAG_STR };
+            LLVMValueRef iv[] = { sv_b, sv_s, sv_o };
+            LLVMBasicBlockRef ib[] = { bb_b_end, bb_s_end, bb_o_end };
+            LLVMAddIncoming(phi, iv, ib, 3);
+            TypedValue out{ phi, JD_TAG_STR };
+            out.owned = true;
+            return out;
         }
         if (av.tag == JD_TAG_BOOL) {
             auto& fn = runtime_funcs["__str_bool"];

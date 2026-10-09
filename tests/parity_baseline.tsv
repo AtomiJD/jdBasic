@@ -290,6 +290,7 @@ tests/regression/test_sql.jdb	OK	CFAIL	GAP
 tests/regression/test_stop.jdb	OK	OK	OK
 tests/regression/test_stored_lambda_hof.jdb	PASS	PASS	OK
 tests/regression/test_str_array.jdb	OK	OK	OK
+tests/regression/test_str_runtime_value.jdb	PASS	PASS	OK
 tests/regression/test_string_array_push.jdb	OK	CFAIL	GAP
 tests/regression/test_tag7_to_str.jdb	OK	CFAIL	GAP
 tests/regression/test_try.jdb	OK	CFAIL	GAP
