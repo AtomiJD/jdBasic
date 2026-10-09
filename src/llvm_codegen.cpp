@@ -5704,15 +5704,38 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             }
             return false;
         };
+        // A date is epoch seconds with a tag. The array-wide date flag speaks
+        // only for an array whose every cell is one, so a date beside a plain
+        // number needs the per-cell tags.
+        auto el_is_date = [&](const Expr* e) -> bool {
+            if (!e) return false;
+            if (e->kind == ExprKind::CALL) {
+                std::string up = e->func_name;
+                std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                return builtin_returns_date(up);
+            }
+            if (e->kind == ExprKind::VARIABLE) {
+                std::string up = e->str_val;
+                std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                if (date_vars.count(up)) return true;
+                VarInfo* ev = lookup_var(e->str_val);
+                return ev && ev->tag == JD_TAG_DATE;
+            }
+            return false;
+        };
+        bool has_date = false, has_non_date = false;
         bool has_str = false, has_non_str = false, has_runtime = false;
         for (auto& a : stmt.expr->args) {
             if (!a) continue;
+            if (el_is_date(a.get())) has_date = true;
+            else has_non_date = true;
             if (el_is_string(a.get())) has_str = true;
             else if (el_is_runtime_typed(a.get())) has_runtime = true;
             else has_non_str = true;
         }
         if (has_runtime)                 mixed_array_vars.insert(stmt.var_name);
         else if (has_str && has_non_str) mixed_array_vars.insert(stmt.var_name);
+        else if (has_date && has_non_date) mixed_array_vars.insert(stmt.var_name);
         else if (has_str)                string_array_vars.insert(stmt.var_name);
     }
     // -"string" / -word$ (unary MINUS on a string) compiles to a char-split
@@ -5771,6 +5794,11 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // tracking, args[i] decoded as f64 garbage (regression 2026-05-01).
         if (u == "OS.ARGS")
             string_array_vars.insert(stmt.var_name);
+        // A builtin whose cells differ in kind: a slot holding that array has
+        // to read it per cell, the same way the array reads when the call is
+        // indexed where it stands.
+        if (builtin_has(u, BF_TAGGED_CELLS))
+            mixed_array_vars.insert(stmt.var_name);
         // CVDATE/CDATE over an array answers one ISO string per cell, so a
         // cell reads back as a date rather than as the bits of its pointer.
         // Only for an array argument - the scalar form is a plain string.
@@ -6783,15 +6811,38 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             }
             return false;
         };
+        // A date is epoch seconds with a tag. The array-wide date flag speaks
+        // only for an array whose every cell is one, so a date beside a plain
+        // number needs the per-cell tags.
+        auto el_is_date = [&](const Expr* e) -> bool {
+            if (!e) return false;
+            if (e->kind == ExprKind::CALL) {
+                std::string up = e->func_name;
+                std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                return builtin_returns_date(up);
+            }
+            if (e->kind == ExprKind::VARIABLE) {
+                std::string up = e->str_val;
+                std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                if (date_vars.count(up)) return true;
+                VarInfo* ev = lookup_var(e->str_val);
+                return ev && ev->tag == JD_TAG_DATE;
+            }
+            return false;
+        };
+        bool has_date = false, has_non_date = false;
         bool has_str = false, has_non_str = false, has_runtime = false;
         for (auto& a : stmt.expr->args) {
             if (!a) continue;
+            if (el_is_date(a.get())) has_date = true;
+            else has_non_date = true;
             if (el_is_string(a.get())) has_str = true;
             else if (el_is_runtime_typed(a.get())) has_runtime = true;
             else has_non_str = true;
         }
         if (has_runtime)                 mixed_array_vars.insert(stmt.var_name);
         else if (has_str && has_non_str) mixed_array_vars.insert(stmt.var_name);
+        else if (has_date && has_non_date) mixed_array_vars.insert(stmt.var_name);
         else if (has_str)                string_array_vars.insert(stmt.var_name);
     }
     // -"string" / -word$ char-split → track destination as a string array.
@@ -7991,7 +8042,8 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         cell_tag = LLVMBuildSelect(builder, is_int,
             LLVMConstInt(i32_type, JD_TAG_F64, 0), val_tv.runtime_tag, "aset_tag");
     } else if (val_tv.tag == JD_TAG_STR || val_tv.tag == JD_TAG_ARR ||
-               val_tv.tag == JD_TAG_NATIVE_MAP || val_tv.tag == JD_TAG_BOOL) {
+               val_tv.tag == JD_TAG_NATIVE_MAP || val_tv.tag == JD_TAG_BOOL ||
+               val_tv.tag == JD_TAG_DATE) {
         cell_tag = LLVMConstInt(i32_type, val_tv.tag, 0);
     }
     if (cell_tag) {
@@ -8939,6 +8991,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 std::vector<TypedValue> elems;
                 elems.reserve(expr.args.size());
                 bool saw_ptr_elem = false, saw_plain_elem = false;
+                bool saw_date_elem = false, saw_non_date_elem = false;
                 for (size_t i = 0; i < expr.args.size(); i++) {
                     // An element read asks the cell for its own kind, so a
                     // string taken out of an array whose element type is
@@ -8961,6 +9014,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         saw_ptr_elem = true;
                     else
                         saw_plain_elem = true;
+                    if (e.tag == JD_TAG_DATE) saw_date_elem = true;
+                    else saw_non_date_elem = true;
                     elems.push_back(e);
                 }
                 // Ragged literal ([3, [4,5]]): the array-wide nested bit would
@@ -8968,6 +9023,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // ones as addresses. Per-element tags are the only encoding
                 // that survives the mix.
                 if (saw_ptr_elem && saw_plain_elem) any_runtime = true;
+                // A date beside a plain number: the array-wide date bit speaks
+                // only for an array whose every cell is one, so the kind has
+                // to ride in the cell.
+                if (saw_date_elem && saw_non_date_elem) any_runtime = true;
                 for (size_t i = 0; i < elems.size(); i++) {
                     TypedValue elem = elems[i];
                     if (elem.tag != JD_TAG_BOOL) all_bool_elems = false;

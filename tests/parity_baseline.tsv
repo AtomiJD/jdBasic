@@ -201,6 +201,7 @@ tests/regression/test_codec.jdb	PASS	PASS	OK
 tests/regression/test_codegen_hint_leak.jdb	OK	OK	OK
 tests/regression/test_conversions.jdb	PASS	PASS	OK
 tests/regression/test_dap_repl.jdb	OK	OK	OK
+tests/regression/test_date_cell_kind.jdb	PASS	PASS	OK
 tests/regression/test_date_dim_bug.jdb	PASS	PASS	OK
 tests/regression/test_date_dim_works.jdb	OK	OK	OK
 tests/regression/test_datetime.jdb	OK	OK	OK

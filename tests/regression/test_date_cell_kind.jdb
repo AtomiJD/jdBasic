@@ -1,0 +1,53 @@
+' A date keeps its kind in a cell that sits beside cells of another kind.
+' The array-wide date flag only speaks for an array whose every cell is one,
+' so the kind has to ride in the cell: through the array literal, through an
+' index assignment, and through the bridge in both directions.
+DIM bad = 0.0
+
+FUNC SameKind(label$, kind$, want$)
+    IF kind$ = want$ THEN RETURN 0
+    PRINT label$; " answered "; kind$; ", not "; want$
+    RETURN 1
+ENDFUNC
+
+DIM when = CVDATE("2026-03-01")
+DIM iso$ = "2026-03-01 00:00:00"
+
+' A literal that mixes a date with a number
+DIM mixed = [when, 7]
+bad = bad + SameKind("literal date cell", TYPEOF(mixed[0]), "DATE")
+IF FORMAT_DATE(mixed[0], "%Y-%m-%d %H:%M:%S") <> "2026-03-01 00:00:00" THEN
+    bad = bad + 1
+    PRINT "literal date cell read as "; mixed[0]
+ENDIF
+IF mixed[1] <> 7 THEN
+    bad = bad + 1
+    PRINT "number beside a date read as "; mixed[1]
+ENDIF
+
+' Every cell a date: the array-wide flag carries it
+DIM both = [when, CVDATE("2026-04-01")]
+bad = bad + SameKind("uniform date cell", TYPEOF(both[0]), "DATE")
+
+' Out of a map, across the bridge and back
+DIM bag AS MAP
+bag{"when"} = when
+bag{"count"} = 7
+bad = bad + SameKind("map value date", TYPEOF(MAP.VALUES(bag)[0]), "DATE")
+DIM vals = MAP.VALUES(bag)
+bad = bad + SameKind("map value date in a slot", TYPEOF(vals[0]), "DATE")
+IF FORMAT_DATE(vals[0], "%Y-%m-%d %H:%M:%S") <> "2026-03-01 00:00:00" THEN
+    bad = bad + 1
+    PRINT "map value date read as "; vals[0]
+ENDIF
+
+' Written into a cell of an array that holds numbers
+DIM slots = [1, 2, 3]
+slots[1] = when
+bad = bad + SameKind("assigned date cell", TYPEOF(slots[1]), "DATE")
+IF slots[0] <> 1 ORELSE slots[2] <> 3 THEN
+    bad = bad + 1
+    PRINT "neighbours of an assigned date: "; slots[0]; " "; slots[2]
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

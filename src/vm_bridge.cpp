@@ -416,6 +416,8 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
                 out->elements.push_back(Value::make_i64((int64_t)d));
             } else if (t == jd_tag(JdTag::NONE)) {
                 out->elements.push_back(Value::make_none());
+            } else if (t == jd_tag(JdTag::DATE)) {
+                out->elements.push_back(Value::make_date(d));
             } else if (has_date) {
                 out->elements.push_back(Value::make_date(d));
             } else {
@@ -887,7 +889,10 @@ static JdbArray* value_to_jdbarray(const Value& v) {
             r->data[i] = (double)e.to_int();
         } else {
             has_other = true;
-            if (e.type == ValueType::FLOAT64 && e.subtype == ValueSubtype::DATE) date_cells++;
+            if (e.type == ValueType::FLOAT64 && e.subtype == ValueSubtype::DATE) {
+                date_cells++;
+                cell_tags[(size_t)i] = 10;  // JD_TAG_DATE
+            }
             r->data[i] = e.to_double();
         }
     }
@@ -899,7 +904,10 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     // dereferenced as char*) - per-element tags pin the layout for those.
     // A NONE cell needs its tag to read back as NONE rather than 0.
     // Uniform numeric arrays keep the plain flags encoding.
-    if ((has_string && has_other) || has_none) {
+    // A date among cells that are not dates needs its tag too: the
+    // array-wide date flag speaks only for an array whose every cell is one.
+    if ((has_string && has_other) || has_none ||
+        (date_cells > 0 && date_cells != r->length)) {
         r->elem_tags = (int8_t*)malloc((size_t)(r->length > 0 ? r->length : 1));
         memcpy(r->elem_tags, cell_tags.data(), (size_t)(r->length > 0 ? r->length : 1));
         r->flags |= 8;
@@ -975,6 +983,10 @@ static Value jdbmap_to_value(JdbMapFwd* m) {
             }
             case JdTag::NONE:
                 cell = Value::make_none();
+                break;
+            case JdTag::DATE:
+                // Epoch seconds that have to keep saying they are a date.
+                cell = Value::make_date(d);
                 break;
             case JdTag::F64:
             default:

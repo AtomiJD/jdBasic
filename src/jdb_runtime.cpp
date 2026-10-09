@@ -2456,6 +2456,13 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
             printf("%s", val != 0.0 ? "TRUE" : "FALSE");
             return;
         }
+        if (t == JD_TAG_DATE) {
+            extern char* jdb_cvdate_num(double);
+            char* iso = jdb_cvdate_num(val);
+            fputs(iso ? iso : "", stdout);
+            free(iso);
+            return;
+        }
         // 0 (unknown), 1 (F64), other → numeric
         char num[64]; jdb_format_double(num, sizeof(num), val); fputs(num, stdout);
         return;
