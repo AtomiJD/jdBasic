@@ -484,7 +484,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"LEFT", BuiltinRet::Str, BF_FRESH_STR},
     {"LEFT$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
     {"LEN", BuiltinRet::I64, BF_NO_VEC | BF_READS_ARGS},
-    {"LENV", BuiltinRet::Unknown, BF_NO_VEC},
+    {"LENV", BuiltinRet::Arr, BF_NO_VEC},
     {"LERP", BuiltinRet::F64, BF_NONE},
     {"LINE", BuiltinRet::None, BF_NO_VEC},
     {"LINSPACE", BuiltinRet::Arr, BF_NO_VEC},

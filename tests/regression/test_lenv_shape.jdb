@@ -1,0 +1,31 @@
+' LENV answers the shape vector. The cells of a string array are pointers
+' like the cells of a nested one, so the pointer flag alone cannot say
+' whether there is another dimension to walk - a string array read as nested
+' hands back the text as a length.
+DIM bad = 0.0
+
+FUNC SameShape(label$, got, want$)
+    IF FRMV$(got) = want$ THEN RETURN 0
+    PRINT label$; " answered "; FRMV$(got); ", not "; want$
+    RETURN 1
+ENDFUNC
+
+bad = bad + SameShape("numeric", LENV([1, 2, 3]), FRMV$([3]))
+bad = bad + SameShape("string", LENV(["ab", "cde"]), FRMV$([2]))
+bad = bad + SameShape("mixed", LENV(["ab", 7]), FRMV$([2]))
+bad = bad + SameShape("nested", LENV([[1, 2, 3], [4, 5, 6]]), FRMV$([2, 3]))
+bad = bad + SameShape("deep", LENV([[[1, 2]], [[3, 4]]]), FRMV$([2, 1, 2]))
+
+DIM words = ["ab", "cde"]
+DIM shape = LENV(words)
+IF LEN(shape) <> 1 ORELSE shape[0] <> 2 THEN
+    bad = bad + 1
+    PRINT "a string array in a slot: len "; LEN(shape); " cell0 "; shape[0]
+ENDIF
+
+IF LEN(LENV("hello")) <> 1 ORELSE LENV("hello")[0] <> 5 THEN
+    bad = bad + 1
+    PRINT "a string scalar: "; LENV("hello")
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

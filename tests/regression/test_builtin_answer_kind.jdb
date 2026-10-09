@@ -81,6 +81,9 @@ bad = bad + SameKind("CD", TYPEOF(CD()), "STRING")
 bad = bad + SameKind("REGEX.REPLACE", TYPEOF(REGEX.REPLACE("a", "abc", "x")), "STRING")
 bad = bad + SameKind("VBTAB", TYPEOF(VBTAB()), "STRING")
 bad = bad + SameKind("PACKSIZE", TYPEOF(PACKSIZE("i")), "INT64")
+
+DIM widths = LENV(["ab", "cde"])
+bad = bad + SameKind("LENV", TYPEOF(widths), "ARRAY")
 IF REGEX.REPLACE("a", "abc", "x") <> "xbc" THEN
     bad = bad + 1
     PRINT "REGEX.REPLACE gave "; REGEX.REPLACE("a", "abc", "x")

@@ -2532,10 +2532,20 @@ void* jdb_array_get_ptr(JdbArray* arr, int64_t idx) {
 // For 1D arrays returns a scalar-wrapped value (caller decodes).
 // Returns: ptr to JdbArray holding the shape, OR ptr encoding a single i64.
 // Caller uses flags to tell the difference: nested=shape array, non-nested=1D scalar wrap.
+// Bit 0 says the cells hold pointers, which a string array sets as well, so
+// it alone does not mean nested. Walking a string array as one dereferences
+// a char* and reads the text as the next dimension.
+static bool shape_is_nested(const JdbArray* a) {
+    if (!a || !(a->flags & 1) || (a->flags & 2)) return false;
+    if ((a->flags & 8) && a->elem_tags && a->length > 0)
+        return a->elem_tags[0] == JD_TAG_ARR;
+    return true;
+}
+
 JdbArray* jdb_array_len_shape(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
     // Non-nested: return a single-element array with the length
-    if (!(arr->flags & 1)) {
+    if (!shape_is_nested(arr)) {
         auto* r = jdb_array_new(1);
         r->data[0] = (double)arr->length;
         return r;
@@ -2556,7 +2566,7 @@ JdbArray* jdb_array_len_shape(JdbArray* arr) {
         r->data = new_data;
         r->length = new_len;
         // Descend if nested
-        if ((cur->flags & 1) && cur->length > 0) {
+        if (shape_is_nested(cur) && cur->length > 0) {
             union { double d; int64_t i; } v; v.d = cur->data[0];
             cur = (JdbArray*)(intptr_t)v.i;
         } else {
