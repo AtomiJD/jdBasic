@@ -1,0 +1,70 @@
+' IIF answers the arm it chose, with that arm's kind, and POP answers the
+' cell it removed with the cell's kind. Both used to force one kind on every
+' answer: IIF made both arms a string as soon as one was, and POP handed back
+' whatever it found as a char*, which the first reader dereferenced.
+DIM bad = 0.0
+
+FUNC SameKind(label$, kind$, want$)
+    IF kind$ = want$ THEN RETURN 0
+    PRINT label$; " answered "; kind$; ", not "; want$
+    RETURN 1
+ENDFUNC
+
+DIM yes = 1
+DIM no = 0
+
+' One arm a number, the other a string: the chosen arm decides
+DIM num_arm = IIF(yes, 9, "text")
+bad = bad + SameKind("IIF number arm", TYPEOF(num_arm), "INT64")
+IF num_arm <> 9 THEN
+    bad = bad + 1
+    PRINT "IIF number arm gave "; num_arm
+ENDIF
+DIM str_arm = IIF(no, 9, "text")
+bad = bad + SameKind("IIF string arm", TYPEOF(str_arm), "STRING")
+IF str_arm <> "text" THEN
+    bad = bad + 1
+    PRINT "IIF string arm gave "; str_arm
+ENDIF
+
+' A number out of IIF still works as one
+IF SQR(IIF(yes, 9, "text")) <> 3 THEN
+    bad = bad + 1
+    PRINT "SQR of the number arm gave "; SQR(IIF(yes, 9, "text"))
+ENDIF
+
+' Both arms the same kind
+bad = bad + SameKind("IIF both strings", TYPEOF(IIF(yes, "a", "b")), "STRING")
+IF IIF(yes, "a", "b") <> "a" ORELSE IIF(no, "a", "b") <> "b" THEN
+    bad = bad + 1
+    PRINT "IIF over two strings chose wrongly"
+ENDIF
+
+' POP answers the cell's kind and shortens the array
+DIM nums = [1, 2, 3]
+DIM taken = POP(nums)
+IF taken <> 3 ORELSE LEN(nums) <> 2 THEN
+    bad = bad + 1
+    PRINT "POP of a number gave "; taken; " leaving "; LEN(nums)
+ENDIF
+
+DIM words = ["ab", "cde"]
+DIM word$ = POP(words)
+bad = bad + SameKind("POP string", TYPEOF(word$), "STRING")
+IF word$ <> "cde" ORELSE LEN(words) <> 1 THEN
+    bad = bad + 1
+    PRINT "POP of a string gave "; word$; " leaving "; LEN(words)
+ENDIF
+
+DIM rows = [[1, 2], [3, 4]]
+DIM row = POP(rows)
+bad = bad + SameKind("POP nested", TYPEOF(row), "ARRAY")
+IF LEN(row) <> 2 ORELSE row[1] <> 4 ORELSE LEN(rows) <> 1 THEN
+    bad = bad + 1
+    PRINT "POP of a nested cell gave "; row; " leaving "; LEN(rows)
+ENDIF
+
+DIM nothing = []
+bad = bad + SameKind("POP empty", TYPEOF(POP(nothing)), "NONE")
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

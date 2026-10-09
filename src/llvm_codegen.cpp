@@ -365,6 +365,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_iota",       "IOTA",         i8_ptr_type, {i64_type}, JD_TAG_ARR);
     reg("jdb_iota3",      "__iota3",      i8_ptr_type, {f64_type, f64_type, f64_type}, JD_TAG_ARR);
     reg("jdb_array_pop",    "__arr_pop",     f64_type,    {i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_array_pop_tagged", "__arr_pop_tagged", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_RUNTIME);
     reg("jdb_array_pop_str","__arr_pop_str", i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_zeros",      "ZEROS",        i8_ptr_type, {i64_type}, JD_TAG_ARR);
     reg("jdb_ones",       "ONES",         i8_ptr_type, {i64_type}, JD_TAG_ARR);
@@ -4166,7 +4167,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         if (e->func_name == "ZEROS" || e->func_name == "ONES" ||
                             e->func_name == "IOTA" || e->func_name == "RANGE" ||
                             e->func_name == "LINSPACE") return JD_TAG_ARR;
-                        if (e->func_name == "POP") return JD_TAG_STR;
+                        if (e->func_name == "POP") return JD_TAG_RUNTIME;
                         // User-defined functions: trust their declared return tag.
                         // (They aren't auto-vectorized.)
                         auto uit_pre = user_functions.find(e->func_name);
@@ -13792,8 +13793,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "random2"), JD_TAG_F64 };
     }
 
-    // POP(arr) - remove last element; return type follows the array's
-    // string-flag (bit 1 of JdbArray::flags). We branch at runtime.
+    // POP(arr) - remove the last element and answer it with its own kind.
     if (upper == "POP" && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
         // An untyped parameter carries the array as its pointer bits, as in PUSH.
@@ -13802,46 +13802,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             av.tag = JD_TAG_ARR;
         }
         if (av.tag == JD_TAG_ARR) {
-            auto& fn_str = runtime_funcs["__arr_pop_str"];
-            auto& fn_num = runtime_funcs["__arr_pop"];
-            LLVMValueRef arr_ptr = av.val;
-            // JdbArray layout: double* data (8) | int64 length (8) | int32 flags (4)
-            LLVMValueRef off = LLVMConstInt(i64_type, 16, 0);
-            LLVMTypeRef i8_ty = LLVMInt8TypeInContext(ctx);
-            LLVMValueRef flags_ptr = LLVMBuildGEP2(builder, i8_ty, arr_ptr, &off, 1, "flagsp");
-            LLVMValueRef flags = LLVMBuildLoad2(builder, i32_type, flags_ptr, "flags");
-            LLVMValueRef two = LLVMConstInt(i32_type, 2, 0);
-            LLVMValueRef masked = LLVMBuildAnd(builder, flags, two, "mask");
-            LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, masked, two, "issf");
-
-            LLVMBasicBlockRef str_bb  = LLVMAppendBasicBlock(current_fn, "pop_str");
-            LLVMBasicBlockRef num_bb  = LLVMAppendBasicBlock(current_fn, "pop_num");
-            LLVMBasicBlockRef done_bb = LLVMAppendBasicBlock(current_fn, "pop_done");
-            LLVMBuildCondBr(builder, is_str, str_bb, num_bb);
-
-            LLVMPositionBuilderAtEnd(builder, str_bb);
-            LLVMValueRef s_args[] = { arr_ptr };
-            LLVMValueRef sres = LLVMBuildCall2(builder, fn_str.fn_type, fn_str.fn, s_args, 1, "pops");
-            LLVMBuildBr(builder, done_bb);
-            LLVMBasicBlockRef str_end = LLVMGetInsertBlock(builder);
-
-            LLVMPositionBuilderAtEnd(builder, num_bb);
-            LLVMValueRef n_args[] = { arr_ptr };
-            LLVMValueRef nres = LLVMBuildCall2(builder, fn_num.fn_type, fn_num.fn, n_args, 1, "popn");
-            // Convert f64 → i8* here so the value dominates done_bb from this path.
-            LLVMValueRef nrep = LLVMBuildIntToPtr(builder,
-                pun_f64_to_i64(nres), i8_ptr_type, "n2p");
-            LLVMBuildBr(builder, done_bb);
-            LLVMBasicBlockRef num_end = LLVMGetInsertBlock(builder);
-
-            LLVMPositionBuilderAtEnd(builder, done_bb);
-            // Unify via i8*: string is already a char*, number was punned above.
-            // Consumers read JD_TAG_STR; compare-as-number paths still coerce back.
-            LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "popv");
-            LLVMValueRef vals[] = { sres, nrep };
-            LLVMBasicBlockRef bbs[] = { str_end, num_end };
-            LLVMAddIncoming(phi, vals, bbs, 2);
-            return { phi, JD_TAG_STR };
+            // The cell says what it holds. Reading the array's string flag
+            // instead handed a number back as a char*, which the first
+            // reader dereferenced.
+            auto& fn = runtime_funcs["__arr_pop_tagged"];
+            LLVMValueRef tag_slot = scratch_alloca(i32_type, "pop_tag");
+            LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_NONE, 0), tag_slot);
+            LLVMValueRef args[] = { av.val, tag_slot };
+            LLVMValueRef bits = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "popv");
+            LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, tag_slot, "popt");
+            return { bits, JD_TAG_RUNTIME, tag_v };
         }
     }
 
@@ -14656,27 +14626,23 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         TypedValue cond = arg_cache[0];
         TypedValue val1 = arg_cache[1];
         TypedValue val2 = arg_cache[2];
-        if (val1.tag == JD_TAG_STR || val2.tag == JD_TAG_STR) {
-            // String IIF: use native select
+        if (val1.tag == JD_TAG_STR && val2.tag == JD_TAG_STR) {
+            // Both arms a string, so the answer is one whichever way it goes.
             LLVMValueRef cond_i1 = to_i1(cond);
-            // Ensure both are strings
-            auto to_str_iif = [&](TypedValue tv) -> LLVMValueRef {
-                if (tv.tag == JD_TAG_STR) return tv.val;
-                if (tv.tag == JD_TAG_I64) {
-                    auto& fn = runtime_funcs["__int_to_str"];
-                    LLVMValueRef a[] = { tv.val };
-                    return LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "itostr");
-                }
-                if (jd_is_f64_tag(tv.tag)) {
-                    auto& fn = runtime_funcs["__double_to_str"];
-                    LLVMValueRef a[] = { tv.val };
-                    return LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "ftostr");
-                }
-                return to_string_ptr(tv);
-            };
-            LLVMValueRef result = LLVMBuildSelect(builder, cond_i1,
-                to_str_iif(val1), to_str_iif(val2), "iif");
-            return { result, JD_TAG_STR };
+            return { LLVMBuildSelect(builder, cond_i1, val1.val, val2.val, "iif"),
+                     JD_TAG_STR };
+        }
+        if (val1.tag == JD_TAG_STR || val2.tag == JD_TAG_STR) {
+            // The arms are of different kinds, so the answer takes the kind of
+            // the arm that is chosen. Making both a string handed back "9" for
+            // the number arm, and the slot then held a string.
+            LLVMValueRef cond_i1 = to_i1(cond);
+            LLVMValueRef b1, t1, b2, t2;
+            to_bits_tag(val1, b1, t1);
+            to_bits_tag(val2, b2, t2);
+            LLVMValueRef bits = LLVMBuildSelect(builder, cond_i1, b1, b2, "iif_b");
+            LLVMValueRef tag  = LLVMBuildSelect(builder, cond_i1, t1, t2, "iif_t");
+            return { bits, JD_TAG_RUNTIME, tag };
         }
     }
 

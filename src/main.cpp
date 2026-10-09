@@ -1609,7 +1609,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             }
             if (!unforeseeable.empty()) {
                 warnings += (int)unforeseeable.size();
-                vm.emit("  Answers a kind the compiler has to guess: " +
+                vm.emit("  Answers a kind the compiled form reads as a number: " +
                         std::to_string(unforeseeable.size()) + "\n");
                 int shown = 0;
                 for (auto& u : unforeseeable) {
@@ -2172,9 +2172,10 @@ int main(int argc, char* argv[]) {
         for (auto& u : find_unforeseeable_results(ast, unrecorded_return_kind)) {
             std::cerr << "warning at " << (u.file.empty() ? filename : u.file)
                       << ":" << u.line << ": " << u.name
-                      << " answers a kind that is only known when it runs."
-                      << " Convert the result, or catch the error TRY raises"
-                      << " when it does not fit." << std::endl;
+                      << " answers a kind that is only known when it runs,"
+                      << " and the compiled form reads it as a number."
+                      << " Convert the result, or test it with TYPEOF."
+                      << std::endl;
         }
 
         if (compile_output.empty()) {

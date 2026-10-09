@@ -692,6 +692,31 @@ char* jdb_array_pop_str(JdbArray* arr) {
     return jdb_str_dup_binary(s);
 }
 
+// POP that says what it took. The last cell may be a number, a string, a
+// nested array or a date, and only the cell knows: a number handed back as a
+// string is dereferenced as a pointer by the first reader.
+int64_t jdb_array_pop_tagged(JdbArray* arr, int32_t* out_tag) {
+    if (out_tag) *out_tag = JD_TAG_NONE;
+    if (!arr || arr->length == 0) return 0;
+    int64_t idx = arr->length - 1;
+    int32_t tag = JD_TAG_F64;
+    extern int32_t jdb_array_classify_elem(JdbArray*, double);
+    if (arr->elem_tags && (arr->flags & 8)) tag = (int32_t)arr->elem_tags[idx];
+    else tag = jdb_array_classify_elem(arr, arr->data[idx]);
+    union { double d; int64_t i; } u;
+    u.d = arr->data[idx];
+    int64_t bits = u.i;
+    if (tag == JD_TAG_STR) {
+        char* copy = jdb_str_dup_binary((const char*)(intptr_t)u.i);
+        bits = (int64_t)(intptr_t)copy;
+    } else if (tag == JD_TAG_I64 || tag == JD_TAG_BOOL) {
+        bits = (int64_t)arr->data[idx];
+    }
+    arr->length--;
+    if (out_tag) *out_tag = tag;
+    return bits;
+}
+
 // Statistics walk leaves, not cells: on a matrix the top-level cells are
 // inner-array pointers, and summing those bits as numbers is meaningless.
 double jdb_mean(JdbArray* arr) {
