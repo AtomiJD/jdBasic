@@ -1972,6 +1972,12 @@ static JdbArray* wrap_map_in_array(JdbMap* m) {
     u.p = (intptr_t)m;
     a->data[0] = u.d;
     a->flags |= 1;  // bit 0 = ptr/nested element
+    // The cell is a map, and the pointer bit alone does not say so: a reader
+    // takes it for a nested array, which is what TYPEOF answered where the
+    // interpreter says OBJECT.
+    a->elem_tags = (int8_t*)malloc(1);
+    a->elem_tags[0] = (int8_t)JD_TAG_NATIVE_MAP;
+    a->flags |= 8;
     return a;
 }
 
