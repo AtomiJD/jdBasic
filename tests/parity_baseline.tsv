@@ -181,6 +181,7 @@ tests/regression/native_double_slots.jdb	PASS	PASS	OK
 tests/regression/native_event_suffix_names.jdb	PASS	PASS	OK
 tests/regression/test_2d.jdb	OK	OK	OK
 tests/regression/test_alias_isolated.jdb	OK	OK	OK
+tests/regression/test_any_kind_builtins.jdb	PASS	PASS	OK
 tests/regression/test_apl.jdb	OK	OK	OK
 tests/regression/test_arr_idx_method.jdb	OK	OK	OK
 tests/regression/test_arr_idx_method_deep.jdb	OK	OK	OK

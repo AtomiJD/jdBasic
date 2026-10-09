@@ -712,6 +712,9 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_I64);
     reg("jdrt_call_typed_arr",  "__jdrt_call_typed_arr",  i8_ptr_type,
         {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
+    reg("jdrt_call_typed_tagged", "__jdrt_call_typed_tagged", i64_type,
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type, i8_ptr_type},
+        JD_TAG_RUNTIME);
     // Field access on VM Value handles (objects from JSON.PARSE$, MAP.* etc.)
     reg("jdrt_obj_get_f64", "__jdrt_obj_get_f64", f64_type,
         {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_F64);
@@ -4186,6 +4189,9 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         // A procedure answers nothing whatever it is given,
                         // so neither the argument kinds nor the name decide.
                         if (builtin_ret(upper) == BuiltinRet::None) return JD_TAG_RUNTIME;
+                        // An answer that brings its own kind needs a slot that
+                        // can hold a kind as well as a value.
+                        if (builtin_ret(upper) == BuiltinRet::Any) return JD_TAG_RUNTIME;
                         for (auto& a : e->args) {
                             if (a && infer_tag(a.get()) == JD_TAG_ARR && !builtin_no_vectorize(upper)) {
                                 return JD_TAG_ARR;
@@ -15184,6 +15190,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_str"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
                 return { result, JD_TAG_STR };
+            } else if (sig_ret == BuiltinRet::Any) {
+                // Only the running program knows the kind, so the answer
+                // brings it along. Reading it as a number instead lost every
+                // string and every map a global or an EVAL handed back.
+                auto& fn = runtime_funcs["__jdrt_call_typed_tagged"];
+                LLVMValueRef tag_slot = scratch_alloca(i32_type, "vmany_tag");
+                LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_NONE, 0), tag_slot);
+                LLVMValueRef targs[] = { call_args[0], call_args[1], call_args[2],
+                                         call_args[3], call_args[4], tag_slot };
+                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn,
+                                                     targs, 6, "vmany");
+                LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, tag_slot, "vmany_t");
+                return { result, JD_TAG_RUNTIME, tag_v };
             } else if (sig_ret == BuiltinRet::I64) {
                 // Integers ride the f64 variant too, so a count, an index or
                 // a handle answers the kind the interpreter answers instead

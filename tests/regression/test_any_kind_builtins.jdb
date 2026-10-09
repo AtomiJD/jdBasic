@@ -1,0 +1,48 @@
+' A builtin that answers whatever it was given or found brings the kind with
+' it. Reading one as a number instead dropped every string and every absent
+' value: a global that held text came back as 0, and a missing key as 0 too.
+DIM bad = 0.0
+
+FUNC SameKind(label$, kind$, want$)
+    IF kind$ = want$ THEN RETURN 0
+    PRINT label$; " answered "; kind$; ", not "; want$
+    RETURN 1
+ENDFUNC
+
+JDB.GLOBAL_SET "probe_word", "text"
+JDB.GLOBAL_SET "probe_count", 7
+
+DIM word = JDB.GLOBAL_GET("probe_word")
+bad = bad + SameKind("global string", TYPEOF(word), "STRING")
+IF word <> "text" THEN
+    bad = bad + 1
+    PRINT "global string read as "; word
+ENDIF
+
+DIM count = JDB.GLOBAL_GET("probe_count")
+bad = bad + SameKind("global number", TYPEOF(count), "INT64")
+IF count <> 7 THEN
+    bad = bad + 1
+    PRINT "global number read as "; count
+ENDIF
+
+' An absent key is absent, not zero
+bad = bad + SameKind("global missing", TYPEOF(JDB.GLOBAL_GET("probe_absent")), "NONE")
+
+' EVAL answers what the expression answers
+DIM sum = EVAL("1 + 2")
+bad = bad + SameKind("eval number", TYPEOF(sum), "INT64")
+IF sum <> 3 THEN
+    bad = bad + 1
+    PRINT "eval number read as "; sum
+ENDIF
+
+DIM quoted$ = CHR$(34) + "ab" + CHR$(34)
+DIM evaled = EVAL(quoted$)
+bad = bad + SameKind("eval string", TYPEOF(evaled), "STRING")
+IF evaled <> "ab" THEN
+    bad = bad + 1
+    PRINT "eval string read as "; evaled
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

@@ -59,6 +59,8 @@ ENDFUNC
 ' factory says nothing about the cells: a nested or mixed one has to travel
 ' as a value-store handle, which the body does not show.
 FUNC SigFits(kind$, sig$)
+    ' Any records that the answer brings its own kind, so every kind fits.
+    IF sig$ = "Any" THEN RETURN TRUE
     IF kind$ = "ARR" THEN RETURN sig$ = "Arr" ORELSE sig$ = "Handle"
     IF kind$ = "OBJ" THEN RETURN sig$ = "Handle"
     RETURN sig$ = WantsSig(kind$)

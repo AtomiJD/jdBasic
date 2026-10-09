@@ -16,6 +16,10 @@ enum class BuiltinRet : uint8_t {
     Str,      // listed only for names without a trailing $
     Arr,      // flat JdbArray
     Handle,   // VM Value in the value store: maps, tensors, mixed kinds
+    // Answers whatever it was given or found, so only the running program
+    // knows. The answer carries its own kind, which is the one honest way to
+    // hand back a value whose kind was never written down.
+    Any,
 };
 
 enum BuiltinFlags : uint16_t {
@@ -218,7 +222,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"ENDSWITH", BuiltinRet::Bool, BF_READS_ARGS},
     {"ENUMERATE", BuiltinRet::Arr, BF_NO_VEC},
     {"EOMONTH", BuiltinRet::Str, BF_DATE | BF_NO_VEC},
-    {"EVAL", BuiltinRet::Unknown, BF_NO_VEC},
+    {"EVAL", BuiltinRet::Any, BF_NO_VEC},
     {"EXECUTE", BuiltinRet::None, BF_NO_VEC},
     {"EXP", BuiltinRet::F64, BF_NONE},
     {"FFT", BuiltinRet::Arr, BF_NO_VEC},
@@ -466,7 +470,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"ISNUM", BuiltinRet::Bool, BF_NO_VEC},
     {"ISSTR", BuiltinRet::Bool, BF_NO_VEC},
     {"JDB.CHECK$", BuiltinRet::Unknown, BF_NO_VEC},
-    {"JDB.GLOBAL_GET", BuiltinRet::Unknown, BF_NO_VEC},
+    {"JDB.GLOBAL_GET", BuiltinRet::Any, BF_NO_VEC},
     {"JDB.GLOBAL_SET", BuiltinRet::None, BF_NO_VEC},
     {"JOIN", BuiltinRet::Str, BF_NO_VEC | BF_READS_ARGS | BF_FRESH_STR},
     {"JOY.AXIS", BuiltinRet::F64, BF_NO_VEC},

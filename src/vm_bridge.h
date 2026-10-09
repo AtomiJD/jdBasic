@@ -120,6 +120,13 @@ JDRT_API void   jdrt_call_typed_void(JdRT rt, const char* name,
 JDRT_API void*  jdrt_call_typed_arr(JdRT rt, const char* name,
                                      const int64_t* args, const int32_t* tags, int nargs);
 
+
+// Call whose answer has no recorded kind: answers the bits and writes what
+// they are, so the value arrives as what it is instead of as a number.
+JDRT_API int64_t jdrt_call_typed_tagged(JdRT rt, const char* name,
+                                        const int64_t* args, const int32_t* tags,
+                                        int nargs, int32_t* out_tag);
+
 // Native-mode event dispatch. The bridge's VM holds the
 // event_handlers map (set up by __EVENT_ON), but in native mode the
 // handler bodies live as LLVM-IR in the .exe - the bridge VM has no

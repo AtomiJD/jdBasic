@@ -1319,6 +1319,28 @@ static int32_t value_to_tagged(JdRTImpl* rt, const Value& v, int64_t* out_val) {
     }
 }
 
+// A call whose answer the signature table records no kind for, because only
+// the running program knows one. Answers the bits and says what they are.
+JDRT_API int64_t jdrt_call_typed_tagged(JdRT handle, const char* name,
+                                        const int64_t* args, const int32_t* tags,
+                                        int nargs, int32_t* out_tag) {
+    auto* rt = resolve_rt(handle);
+    if (out_tag) *out_tag = jd_tag(JdTag::NONE);
+    try {
+        auto vargs = typed_args_to_values(rt, args, tags, nargs);
+        Value result = rt->vm.call_function(name, vargs);
+        rt->vm.event_poll();
+        rt->last_error.clear();
+        int64_t bits = 0;
+        int32_t t = value_to_tagged(rt, result, &bits);
+        if (out_tag) *out_tag = t;
+        return bits;
+    } catch (const std::exception& e) {
+        rt->last_error = e.what();
+        return 0;
+    }
+}
+
 // A member of a runtime value: a COM property, or a field of a VM object.
 // Answers the tag and writes the bits to out_val; an error is kept for
 // the caller's error check and answers NONE.
