@@ -79,6 +79,76 @@ FUNC NumOf(s$, ch$)
     RETURN LEN(SPLIT(s$, ch$)) - 1
 ENDFUNC
 
+' A line with its trailing comment cut off. A comment that says the word
+' return is prose, not a return statement, and CD reads as two kinds only
+' because one of its comments mentions returning the current directory.
+FUNC CodeOf(s$)
+    IF INSTR(s$, "//") < 0 THEN RETURN s$
+    DIM dq$ = CHR$(34)
+    DIM k = 0
+    DIM n = LEN(s$)
+    WHILE k < n
+        DIM c$ = MID$(s$, k, 1)
+        IF c$ = dq$ ORELSE c$ = "'" THEN
+            DIM closer$ = c$
+            k = k + 1
+            WHILE k < n
+                DIM d$ = MID$(s$, k, 1)
+                IF d$ = "\" THEN
+                    k = k + 2
+                ELSEIF d$ = closer$ THEN
+                    EXITDO
+                ELSE
+                    k = k + 1
+                ENDIF
+            WEND
+        ELSEIF c$ = "/" AND k + 1 < n AND MID$(s$, k + 1, 1) = "/" THEN
+            RETURN LEFT$(s$, k)
+        ENDIF
+        k = k + 1
+    WEND
+    RETURN s$
+ENDFUNC
+
+' How much a line opens or closes, counting only the braces the compiler
+' sees. A brace inside a character or string literal is text, and FORMAT$
+' is written over '{' and '}' - counting those swallowed the rest of its
+' file. A line without a quote or a comment takes the cheap count.
+FUNC NetBraces(s$)
+    DIM dq$ = CHR$(34)
+    IF INSTR(s$, dq$) < 0 AND INSTR(s$, "'") < 0 AND INSTR(s$, "//") < 0 THEN
+        RETURN NumOf(s$, "{") - NumOf(s$, "}")
+    ENDIF
+    DIM net = 0
+    DIM k = 0
+    DIM n = LEN(s$)
+    WHILE k < n
+        DIM c$ = MID$(s$, k, 1)
+        IF c$ = dq$ ORELSE c$ = "'" THEN
+            DIM closer$ = c$
+            k = k + 1
+            WHILE k < n
+                DIM d$ = MID$(s$, k, 1)
+                IF d$ = "\" THEN
+                    k = k + 2
+                ELSEIF d$ = closer$ THEN
+                    EXITDO
+                ELSE
+                    k = k + 1
+                ENDIF
+            WEND
+        ELSEIF c$ = "/" AND k + 1 < n AND MID$(s$, k + 1, 1) = "/" THEN
+            EXITDO
+        ELSEIF c$ = "{" THEN
+            net = net + 1
+        ELSEIF c$ = "}" THEN
+            net = net - 1
+        ENDIF
+        k = k + 1
+    WEND
+    RETURN net
+ENDFUNC
+
 ' A lambda introducer of any capture list: the closing bracket of the
 ' capture is followed by the parameter list, and the line goes on to open a
 ' body or name a return type.
@@ -196,17 +266,18 @@ FOR EACH f$ IN srcfiles
         DIM j = lam
         WHILE j < n_lines
             DIM bl$ = src_lines[j]
+            DIM code$ = CodeOf(bl$)
             DIM d0 = depth
             IF skip_at >= 0 AND d0 < skip_at THEN skip_at = -1
             IF skip_at < 0 AND (started ORELSE j = lam) THEN
-                DIM rat = INSTR(bl$, "return ")
+                DIM rat = INSTR(code$, "return ")
                 IF rat >= 0 THEN
-                    DIM rk$ = RetKind(MID$(bl$, rat))
+                    DIM rk$ = RetKind(MID$(code$, rat))
                     ' A return that names a variable says nothing by itself.
                     ' What the body assigned to that variable does, and the
                     ' assignments all stand above the return.
                     IF rk$ = "?" THEN
-                        DIM named$ = ReturnedName(MID$(bl$, rat))
+                        DIM named$ = ReturnedName(MID$(code$, rat))
                         IF named$ <> "" THEN rk$ = RTRIM$(AssignedKinds(body_text$, named$))
                     ENDIF
                     FOR EACH one$ IN SPLIT(rk$, " ")
@@ -214,8 +285,8 @@ FOR EACH f$ IN srcfiles
                     NEXT
                 ENDIF
             ENDIF
-            body_text$ = body_text$ + bl$ + CHR$(10)
-            depth = depth + NumOf(bl$, "{") - NumOf(bl$, "}")
+            body_text$ = body_text$ + code$ + CHR$(10)
+            depth = depth + NetBraces(bl$)
             IF depth > 0 THEN started = TRUE
             IF skip_at < 0 AND j > lam AND depth > d0 AND HasLambda(bl$) THEN skip_at = depth
             IF started AND depth <= 0 THEN EXITDO

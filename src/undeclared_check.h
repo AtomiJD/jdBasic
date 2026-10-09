@@ -197,3 +197,70 @@ inline std::vector<UndeclaredRef> find_builtin_shadows(
     walk(ast);
     return out;
 }
+
+// A builtin whose answer the compiler cannot foresee, used where that answer's
+// kind decides something. builtin_sigs.h records the kind of every builtin
+// whose body answers exactly one; what is left over answers more than one, and
+// the native compiler has to pick without knowing. It picks a number. Reported
+// by --lint and printed by -c, so the choice is the author's: convert the
+// result, or let the error TRY catches say the value did not fit.
+//
+// A result handed straight to a conversion or a kind test counts as handled,
+// and a call whose result is thrown away decides nothing.
+inline std::vector<UndeclaredRef> find_unforeseeable_results(
+        const std::vector<StmtPtr>& ast,
+        const std::function<bool(const std::string&)>& kind_unrecorded) {
+    std::vector<UndeclaredRef> out;
+    std::set<std::string> seen;
+    static const std::set<std::string> handles_any_kind = {
+        "CBOOL", "CDBL", "CINT", "CLNG", "CSNG", "CSTR", "CSTR$", "ISARR",
+        "ISBOOL", "ISMAP", "ISNONE", "ISNULL", "ISNUM", "ISSTR", "STR$",
+        "TONUM", "TOSTR", "TOSTR$", "TYPEOF", "VAL"
+    };
+    auto upper_of = [](const std::string& s) {
+        std::string up = s;
+        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+        return up;
+    };
+    auto note = [&](const std::string& n, int line, const std::string& file) {
+        // A trailing dollar names the kind, whatever the table records, and a
+        // double underscore is the parser's own desugaring, not the author's.
+        if (n.empty() || n.back() == '$') return;
+        if (n.size() >= 2 && n[0] == '_' && n[1] == '_') return;
+        std::string up = upper_of(n);
+        if (!kind_unrecorded(up)) return;
+        if (!seen.insert(up + "@" + file + ":" + std::to_string(line)).second) return;
+        out.push_back({ n, line, file });
+    };
+    std::function<void(const Expr*, int, const std::string&, bool)> walk_expr =
+            [&](const Expr* e, int line, const std::string& file, bool value_pos) {
+        if (!e) return;
+        if (e->kind == ExprKind::CALL) {
+            if (value_pos) note(e->func_name, line, file);
+            bool args_handled = handles_any_kind.count(upper_of(e->func_name)) != 0;
+            for (auto& a : e->args) walk_expr(a.get(), line, file, !args_handled);
+            walk_expr(e->left.get(), line, file, true);
+            walk_expr(e->right.get(), line, file, true);
+            return;
+        }
+        walk_expr(e->left.get(), line, file, true);
+        walk_expr(e->right.get(), line, file, true);
+        for (auto& a : e->args) walk_expr(a.get(), line, file, true);
+    };
+    std::function<void(const std::vector<StmtPtr>&)> walk =
+            [&](const std::vector<StmtPtr>& stmts) {
+        for (auto& s : stmts) {
+            if (!s) continue;
+            // A bare call is a procedure call: nothing reads the answer.
+            bool reads_answer = s->kind != StmtKind::EXPR_STMT;
+            walk_expr(s->expr.get(), s->line, s->source_file(), reads_answer);
+            for (auto& pe : s->print_exprs) walk_expr(pe.get(), s->line, s->source_file(), true);
+            walk(s->body);
+            walk(s->catch_body());
+            walk(s->finally_body());
+            for (auto& br : s->branches) walk(br.body);
+        }
+    };
+    walk(ast);
+    return out;
+}

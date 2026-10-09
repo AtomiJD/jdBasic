@@ -23,6 +23,15 @@
 #include <cstdio>
 #include <cctype>
 
+// A builtin the native compiler has to guess the answer's kind of: the table
+// records no kind for it and the compiler has no answer of its own. Shared by
+// --lint, which lists these, and by -c, which prints them.
+static bool unrecorded_return_kind(const std::string& name) {
+    const BuiltinSig* sig = builtin_sig(name);
+    return sig != nullptr && sig->ret == BuiltinRet::Unknown &&
+           (sig->flags & BF_COMPILER_HANDLES) == 0;
+}
+
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -1548,6 +1557,11 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 }))
                 shadows.push_back(s.name + " (line " + std::to_string(s.line) + ")");
 
+            // Builtins whose answer the compiler has to guess the kind of.
+            std::vector<std::string> unforeseeable;
+            for (auto& u : find_unforeseeable_results(ast, unrecorded_return_kind))
+                unforeseeable.push_back(u.name + " (line " + std::to_string(u.line) + ")");
+
             vm.emit("LINT: Parsed OK.\n");
             vm.emit("  " + std::to_string(ast.size()) + " top-level statements\n");
             vm.emit("  " + std::to_string(defined_funcs.size()) + " function/sub definitions\n");
@@ -1591,6 +1605,20 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                         break;
                     }
                     vm.emit("    " + s + "\n");
+                }
+            }
+            if (!unforeseeable.empty()) {
+                warnings += (int)unforeseeable.size();
+                vm.emit("  Answers a kind the compiler has to guess: " +
+                        std::to_string(unforeseeable.size()) + "\n");
+                int shown = 0;
+                for (auto& u : unforeseeable) {
+                    if (++shown > 10) {
+                        vm.emit("    ... (+" + std::to_string(unforeseeable.size() - 10) +
+                                " more)\n");
+                        break;
+                    }
+                    vm.emit("    " + u + "\n");
                 }
             }
             if (warnings == 0) vm.emit("  No warnings.\n");
@@ -2136,6 +2164,17 @@ int main(int argc, char* argv[]) {
         } catch (...) {
             std::cerr << "Parse error: unknown exception during parse." << std::endl;
             return 1;
+        }
+
+        // Builtins whose answer's kind the compiler has to pick without being
+        // told. It picks a number, which is right often enough to be the
+        // dangerous choice, so say so and name the line.
+        for (auto& u : find_unforeseeable_results(ast, unrecorded_return_kind)) {
+            std::cerr << "warning at " << (u.file.empty() ? filename : u.file)
+                      << ":" << u.line << ": " << u.name
+                      << " answers a kind that is only known when it runs."
+                      << " Convert the result, or catch the error TRY raises"
+                      << " when it does not fit." << std::endl;
         }
 
         if (compile_output.empty()) {

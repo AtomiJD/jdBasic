@@ -18,7 +18,7 @@ enum class BuiltinRet : uint8_t {
     Handle,   // VM Value in the value store: maps, tensors, mixed kinds
 };
 
-enum BuiltinFlags : uint8_t {
+enum BuiltinFlags : uint16_t {
     BF_NONE = 0,
     BF_DATE = 1,    // answers a date
     BF_NO_VEC = 2,      // takes an array argument whole instead of per element
@@ -28,18 +28,22 @@ enum BuiltinFlags : uint8_t {
     BF_TAGGED_CELLS = 32,  // answers an array whose cells differ in kind
     BF_MAP_ARG1 = 64,      // takes a map as its first argument
     BF_CONST = 128,        // a built-in constant, not assignable
+    // Answers more than one kind, and the native compiler already has an
+    // answer for that: it decides the kind itself, or it refuses the call.
+    // Either way the author has nothing to do, so --lint and -c stay quiet.
+    BF_COMPILER_HANDLES = 256,
 };
 
 struct BuiltinSig {
     const char* name;
     BuiltinRet ret;
-    uint8_t flags;
+    uint16_t flags;
 };
 
 inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"ABS", BuiltinRet::F64, BF_NONE},
     {"ACOS", BuiltinRet::F64, BF_NONE},
-    {"AGG", BuiltinRet::Unknown, BF_NO_VEC},
+    {"AGG", BuiltinRet::Handle, BF_NO_VEC},
     {"AI.ARGMAX", BuiltinRet::I64, BF_NO_VEC},
     {"AI.CHAT", BuiltinRet::Str, BF_NO_VEC},
     {"AI.CHAT_JSON", BuiltinRet::Unknown, BF_NO_VEC},
@@ -72,7 +76,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"AI.LOAD_LLM", BuiltinRet::I64, BF_NO_VEC},
     {"AI.NORMALIZE", BuiltinRet::Arr, BF_NO_VEC},
     {"AI.RAG_ADD", BuiltinRet::I64, BF_NO_VEC},
-    {"AI.RAG_ADD_DIR", BuiltinRet::Unknown, BF_NO_VEC},
+    {"AI.RAG_ADD_DIR", BuiltinRet::Handle, BF_NO_VEC},
     {"AI.RAG_ADD_FILE", BuiltinRet::Unknown, BF_NO_VEC},
     {"AI.RAG_BUILD_INDEX", BuiltinRet::None, BF_NO_VEC},
     {"AI.RAG_CLEAR", BuiltinRet::None, BF_NO_VEC},
@@ -134,7 +138,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"CAM.X", BuiltinRet::F64, BF_NO_VEC},
     {"CAM.Y", BuiltinRet::F64, BF_NO_VEC},
     {"CBOOL", BuiltinRet::Bool, BF_READS_ARGS},
-    {"CD", BuiltinRet::Unknown, BF_NO_VEC},
+    {"CD", BuiltinRet::Str, BF_NO_VEC},
     {"CDATE", BuiltinRet::Str, BF_DATE | BF_NO_VEC},
     {"CDBL", BuiltinRet::F64, BF_READS_ARGS},
     {"CEIL", BuiltinRet::F64, BF_NONE},
@@ -175,7 +179,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"COLOR", BuiltinRet::Unknown, BF_NO_VEC},
     {"COLORDIALOG", BuiltinRet::I64, BF_NO_VEC},
     {"CONVOLVE", BuiltinRet::Arr, BF_NO_VEC},
-    {"COPYV", BuiltinRet::Unknown, BF_NO_VEC},
+    {"COPYV", BuiltinRet::Arr, BF_NO_VEC},
     {"COS", BuiltinRet::F64, BF_NONE},
     {"COSH", BuiltinRet::F64, BF_NONE},
     {"COUNT", BuiltinRet::I64, BF_NO_VEC},
@@ -233,7 +237,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"FILE.STREAM_TAIL", BuiltinRet::I64, BF_NO_VEC},
     {"FILEOPEN$", BuiltinRet::Unknown, BF_NO_VEC},
     {"FILESAVE$", BuiltinRet::Unknown, BF_NO_VEC},
-    {"FILLV", BuiltinRet::Unknown, BF_NO_VEC},
+    {"FILLV", BuiltinRet::Arr, BF_NO_VEC},
     {"FILTER", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"FIND_IN_ARRAY", BuiltinRet::I64, BF_NO_VEC},
     {"FLATTEN", BuiltinRet::Arr, BF_NO_VEC},
@@ -345,11 +349,11 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"GL.VIEWPORT", BuiltinRet::None, BF_NO_VEC},
     {"GL.WINDOW", BuiltinRet::None, BF_NO_VEC},
     {"GRADE", BuiltinRet::Arr, BF_NO_VEC},
-    {"GROUPBY", BuiltinRet::Handle, BF_NO_VEC},
+    {"GROUPBY", BuiltinRet::Handle, BF_NO_VEC | BF_COMPILER_HANDLES},
     {"GUI.AVAIL_HEIGHT", BuiltinRet::F64, BF_NO_VEC},
     {"GUI.AVAIL_WIDTH", BuiltinRet::F64, BF_NO_VEC},
     {"GUI.BEGIN", BuiltinRet::Bool, BF_NO_VEC},
-    {"GUI.BEGIN_CHILD", BuiltinRet::Unknown, BF_NO_VEC},
+    {"GUI.BEGIN_CHILD", BuiltinRet::Bool, BF_NO_VEC},
     {"GUI.BEGIN_MAIN_MENU_BAR", BuiltinRet::Bool, BF_NO_VEC},
     {"GUI.BEGIN_MENU", BuiltinRet::Bool, BF_NO_VEC},
     {"GUI.BEGIN_MENU_BAR", BuiltinRet::Bool, BF_NO_VEC},
@@ -418,8 +422,8 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"GUI.TREE_POP", BuiltinRet::None, BF_NO_VEC},
     {"GUI.WINDOW_HEIGHT", BuiltinRet::F64, BF_NO_VEC},
     {"GUI.WINDOW_WIDTH", BuiltinRet::F64, BF_NO_VEC},
-    {"HELP", BuiltinRet::None, BF_NO_VEC},
-    {"HELP$", BuiltinRet::Unknown, BF_NO_VEC},
+    {"HELP", BuiltinRet::None, BF_NO_VEC | BF_COMPILER_HANDLES},
+    {"HELP$", BuiltinRet::Unknown, BF_NO_VEC | BF_COMPILER_HANDLES},
     {"HEX$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
     {"HISTEDGES", BuiltinRet::Arr, BF_NO_VEC},
     {"HISTOGRAM", BuiltinRet::Arr, BF_NO_VEC},
@@ -451,7 +455,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"INSTR", BuiltinRet::I64, BF_READS_ARGS},
     {"INSTR$", BuiltinRet::I64, BF_READS_ARGS},
     {"INT", BuiltinRet::I64, BF_NONE},
-    {"INTEGRATE", BuiltinRet::F64, BF_NO_VEC},
+    {"INTEGRATE", BuiltinRet::F64, BF_NO_VEC | BF_COMPILER_HANDLES},
     {"INVERT", BuiltinRet::Arr, BF_NO_VEC},
     {"IOTA", BuiltinRet::Arr, BF_NO_VEC},
     {"ISARR", BuiltinRet::Bool, BF_NO_VEC},
@@ -571,8 +575,8 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"OS.ARGS", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"OS.EXEC", BuiltinRet::Handle, BF_NO_VEC},
     {"OS.FEATURE", BuiltinRet::Bool, BF_NO_VEC},
-    {"OS.GETOS", BuiltinRet::Unknown, BF_NO_VEC},
-    {"OS.GETOS$", BuiltinRet::Unknown, BF_NO_VEC},
+    {"OS.GETOS", BuiltinRet::Str, BF_NO_VEC},
+    {"OS.GETOS$", BuiltinRet::Str, BF_NO_VEC},
     {"OS.HOSTNAME$", BuiltinRet::Unknown, BF_NO_VEC},
     {"OS.IP$", BuiltinRet::Unknown, BF_NO_VEC},
     {"OS.LOAD", BuiltinRet::F64, BF_NO_VEC},
@@ -580,7 +584,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"OUTER", BuiltinRet::Arr, BF_NO_VEC},
     {"OUTPUT.CAPTURE_BEGIN", BuiltinRet::None, BF_NO_VEC},
     {"PACK$", BuiltinRet::Unknown, BF_NO_VEC},
-    {"PACKSIZE", BuiltinRet::Unknown, BF_NO_VEC},
+    {"PACKSIZE", BuiltinRet::I64, BF_NO_VEC},
     {"PARTICLE.CLEAR", BuiltinRet::None, BF_NO_VEC},
     {"PARTICLE.COUNT", BuiltinRet::I64, BF_NO_VEC},
     {"PARTICLE.DRAW", BuiltinRet::None, BF_NO_VEC},
@@ -615,7 +619,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"REDUCE", BuiltinRet::F64, BF_NO_VEC},
     {"REGEX.FINDALL", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"REGEX.MATCH", BuiltinRet::Handle, BF_NO_VEC | BF_TAGGED_CELLS},
-    {"REGEX.REPLACE", BuiltinRet::Unknown, BF_NO_VEC},
+    {"REGEX.REPLACE", BuiltinRet::Str, BF_NO_VEC},
     {"REGEX_MATCH", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"REGEX_REPLACE$", BuiltinRet::Unknown, BF_NO_VEC},
     {"RELEASEALL", BuiltinRet::None, BF_NO_VEC},
@@ -750,7 +754,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SQL.ERRMSG$", BuiltinRet::Unknown, BF_NO_VEC},
     {"SQL.EXEC", BuiltinRet::I64, BF_NO_VEC},
     {"SQL.OPEN", BuiltinRet::I64, BF_NO_VEC},
-    {"SQL.QUERY", BuiltinRet::Unknown, BF_NO_VEC},
+    {"SQL.QUERY", BuiltinRet::Unknown, BF_NO_VEC | BF_COMPILER_HANDLES},
     {"SQL.TABLE", BuiltinRet::Arr, BF_NO_VEC},
     {"SQR", BuiltinRet::F64, BF_NONE},
     {"STACK", BuiltinRet::Arr, BF_NO_VEC},
@@ -894,7 +898,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"TURTLE.SET_COLOR", BuiltinRet::None, BF_NO_VEC},
     {"TXTREADER$", BuiltinRet::Unknown, BF_NO_VEC},
     {"TXTWRITER", BuiltinRet::None, BF_NO_VEC},
-    {"TYPEOF", BuiltinRet::Unknown, BF_NO_VEC | BF_READS_ARGS},
+    {"TYPEOF", BuiltinRet::Unknown, BF_NO_VEC | BF_READS_ARGS | BF_COMPILER_HANDLES},
     {"UCASE", BuiltinRet::Str, BF_READS_ARGS | BF_FRESH_STR},
     {"UCASE$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
     {"UNIQUE", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
@@ -904,9 +908,9 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"VAL", BuiltinRet::F64, BF_READS_ARGS},
     {"VARIANCE", BuiltinRet::F64, BF_NO_VEC},
     {"VARS", BuiltinRet::None, BF_NO_VEC},
-    {"VBCRLF", BuiltinRet::Unknown, BF_CONST},
-    {"VBNEWLINE", BuiltinRet::Unknown, BF_CONST},
-    {"VBTAB", BuiltinRet::Unknown, BF_CONST},
+    {"VBCRLF", BuiltinRet::Str, BF_CONST},
+    {"VBNEWLINE", BuiltinRet::Str, BF_CONST},
+    {"VBTAB", BuiltinRet::Str, BF_CONST},
     {"WAITKEY$", BuiltinRet::Unknown, BF_NO_VEC},
     {"WAV.INFO", BuiltinRet::Handle, BF_NONE},
     {"WAV.READ", BuiltinRet::Handle, BF_NONE},

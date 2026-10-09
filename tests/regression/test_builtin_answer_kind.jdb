@@ -76,4 +76,14 @@ ENDIF
 bad = bad + SameKind("ABS", TYPEOF(ABS(-2)), "FLOAT64")
 bad = bad + SameKind("CEIL", TYPEOF(CEIL(1.2)), "FLOAT64")
 
+bad = bad + SameKind("OS.GETOS", TYPEOF(OS.GETOS()), "STRING")
+bad = bad + SameKind("CD", TYPEOF(CD()), "STRING")
+bad = bad + SameKind("REGEX.REPLACE", TYPEOF(REGEX.REPLACE("a", "abc", "x")), "STRING")
+bad = bad + SameKind("VBTAB", TYPEOF(VBTAB()), "STRING")
+bad = bad + SameKind("PACKSIZE", TYPEOF(PACKSIZE("i")), "INT64")
+IF REGEX.REPLACE("a", "abc", "x") <> "xbc" THEN
+    bad = bad + 1
+    PRINT "REGEX.REPLACE gave "; REGEX.REPLACE("a", "abc", "x")
+ENDIF
+
 IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
