@@ -67,8 +67,9 @@ done
 # Directories whose reds report the environment, not the backends: RAG/AI need
 # local models, http needs the network, tui needs a TTY and a TUI-enabled
 # build (without the flag there are no TUI.* symbols at all), forms needs a
-# Windows FORMS build and opens real windows.
-EXCLUDE_DIRS='^tests/(rag|ai|http|tui|forms)/'
+# Windows FORMS build and opens real windows, and gfx needs a GFX build and a
+# display for the same reason.
+EXCLUDE_DIRS='^tests/(rag|ai|http|tui|forms|gfx)/'
 
 WORK="${PARITY_WORK:-${TMPDIR:-/tmp}/jdb_parity}"
 mkdir -p "$WORK/exe" "$WORK/log"
@@ -203,7 +204,7 @@ echo "=== SCOPE ==="
 printf '%-34s %d\n' "run" "$TOTAL"
 printf '%-34s %d\n' "skipped: IMPORT helpers" "$N_HELPERS"
 if [ "$ALL" -eq 0 ]; then
-    printf '%-34s %d   (rag/ai/http/tui - rerun with --all)\n' \
+    printf '%-34s %d   (rag/ai/http/tui/forms/gfx - rerun with --all)\n' \
         "skipped: needs environment" "$N_ENV"
 fi
 echo

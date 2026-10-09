@@ -295,7 +295,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"GETENV$", BuiltinRet::Unknown, BF_NO_VEC},
     {"GETX", BuiltinRet::I64, BF_NO_VEC},
     {"GETY", BuiltinRet::I64, BF_NO_VEC},
-    {"GFX.CAPTURE", BuiltinRet::Unknown, BF_NO_VEC},
+    {"GFX.CAPTURE", BuiltinRet::I64, BF_NO_VEC},
     {"GFX.CLOSE", BuiltinRet::None, BF_NO_VEC},
     {"GFX.COLOR_TO_ALPHA", BuiltinRet::None, BF_NO_VEC},
     {"GFX.DELAY", BuiltinRet::None, BF_NO_VEC},

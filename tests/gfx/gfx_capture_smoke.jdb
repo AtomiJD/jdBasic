@@ -1,0 +1,42 @@
+' GFX.CAPTURE answers an image id, as the reference says, and the id works
+' as one: it draws and it frees. A failure raises instead of answering
+' nothing, the way GFX.LOADIMAGE does - a caller handed nothing was left
+' with a number no image had ever been stored under.
+' Needs a GFX build and a display, so it lives beside the forms smoke
+' rather than in the sweep.
+DIM bad = 0
+
+SCREEN 320, 240, "gfx capture smoke"
+DRAWCOLOR 200, 80, 40
+RECT 10, 10, 100, 60, TRUE
+SCREENFLIP
+
+DIM shot = GFX.CAPTURE()
+IF TYPEOF(shot) <> "INT64" THEN
+    bad = bad + 1
+    PRINT "GFX.CAPTURE answered "; TYPEOF(shot)
+ENDIF
+IF shot <= 0 THEN
+    bad = bad + 1
+    PRINT "GFX.CAPTURE answered the id "; shot
+ENDIF
+
+GFX.DRAW_CAPTURE shot
+SCREENFLIP
+GFX.FREEIMAGE shot
+
+' A second capture answers a fresh id
+DIM again = GFX.CAPTURE()
+IF again <= 0 ORELSE again = shot THEN
+    bad = bad + 1
+    PRINT "the second capture answered "; again; " after "; shot
+ENDIF
+GFX.FREEIMAGE again
+
+GFX.CLOSE
+IF bad = 0 THEN
+    PRINT "RESULTS: 1 passed, 0 failed"
+    PRINT "ALL GFX CAPTURE TESTS PASSED!"
+ELSE
+    PRINT "RESULTS: 0 passed, 1 failed"
+ENDIF

@@ -139,6 +139,18 @@ rm -f tests/forms/forms_native_smoke.exe
 It needs `build_rt.bat ... FORMS` too - a DLL without the flag makes every
 FORM.* call fail with "Unknown function".
 
+The GFX capture smoke closes itself the same way, and the pass signal is
+**exit 0 + "ALL GFX CAPTURE TESTS PASSED!"**. It checks what an image id is
+worth: the kind `GFX.CAPTURE` answers, that two captures answer two ids, and
+that each one draws and frees. The sweep skips `tests/gfx/` for the same
+reason it skips `tests/forms/`, so this is where it gets run:
+
+```bash
+rm -f tests/gfx/gfx_capture_smoke.exe
+./build/jdBasic.exe -c tests/gfx/gfx_capture_smoke.jdb
+[ -f tests/gfx/gfx_capture_smoke.exe ] && timeout 25 ./tests/gfx/gfx_capture_smoke.exe
+```
+
 ## Step 3b - parity sweep (optional, ~90 s with the default 8 parallel jobs)
 
 The four suites above are the gate. `tests/parity.sh` is the wider net: it runs

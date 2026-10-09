@@ -1906,11 +1906,18 @@ void register_graphics_builtins(VM& vm) {
         (void)args;
         ensure_screen("GFX.CAPTURE");
         // Read current renderer into a surface, then create texture
+        // A failure raises, as it does in GFX.LOADIMAGE: the documented
+        // answer is an image id, and answering nothing instead left the
+        // caller with a number no image was ever stored under.
         SDL_Surface* surf = SDL_RenderReadPixels(g_renderer, nullptr);
-        if (!surf) return Value::make_none();
+        if (!surf)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("GFX.CAPTURE: SDL_RenderReadPixels failed: ") + SDL_GetError());
         SDL_Texture* tex = SDL_CreateTextureFromSurface(g_renderer, surf);
         SDL_DestroySurface(surf);
-        if (!tex) return Value::make_none();
+        if (!tex)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("GFX.CAPTURE: SDL_CreateTextureFromSurface failed: ") + SDL_GetError());
         // Store as a special image
         int id = g_next_image_id++;
         g_images[id] = tex;
