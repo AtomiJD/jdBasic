@@ -31,7 +31,9 @@
 # stays a real signal - see the note there.
 #
 # Result columns: TEST | INTERP | NATIVE | VERDICT
-#   INTERP/NATIVE: PASS (assert marker) OK (exit 0) FAIL FAIL:<code> TIMEOUT CFAIL
+#   INTERP/NATIVE: PASS (assert marker) OK (exit 0, nothing printed) FAIL
+#                  (a failure marker in the output, whatever the exit code)
+#                  FAIL:<code> TIMEOUT CFAIL
 #   VERDICT:       OK | GAP (interp green, native not) | BOTH_RED | NATIVE_ONLY
 
 set -u
@@ -83,7 +85,12 @@ classify() {
     # Suites name themselves in the marker ("ALL BNOT TESTS PASSED"), so the
     # pattern allows that middle word.
     if grep -qE 'ALL [A-Z0-9 _-]*TESTS PASSED|0 failed' "$log" 2>/dev/null; then echo "PASS"; return; fi
-    if grep -qE '(^|[[:space:]])FAIL:|[1-9][0-9]* failed' "$log" 2>/dev/null; then echo "FAIL"; return; fi
+    # A test that counts its own failures and still exits 0 is only visible in
+    # what it printed, and the bank prints it several ways: FAIL with a colon
+    # and without, the count before the word and after it, and in German.
+    # Three tests were failing in silence behind the narrower pattern.
+    if grep -qE '(^|[[:space:]])FAIL([^A-Za-z]|$)|[1-9][0-9]* failed|failed [1-9]|gefallen [1-9]|=== FAILED' \
+            "$log" 2>/dev/null; then echo "FAIL"; return; fi
     if [ "$code" = "0" ]; then echo "OK"; return; fi
     echo "FAIL:$code"
 }

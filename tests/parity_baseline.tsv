@@ -298,7 +298,7 @@ tests/regression/test_tutorial_samples.jdb	OK	OK	OK
 tests/regression/test_txt_cp1252.jdb	PASS	PASS	OK
 tests/regression/test_udt_method_cache.jdb	PASS	PASS	OK
 tests/regression/test_unknown_type.jdb	PASS	PASS	OK
-tests/regression/test_unknown_type_exec.jdb	PASS	CFAIL	GAP
+tests/regression/test_unknown_type_exec.jdb	PASS	FAIL	GAP
 tests/regression/test_utf8.jdb	OK	OK	OK
 tests/regression/test_vec_ops.jdb	OK	OK	OK
 tests/sleep_deadline.jdb	PASS	CFAIL	GAP
