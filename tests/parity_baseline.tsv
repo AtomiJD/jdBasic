@@ -260,6 +260,7 @@ tests/regression/test_noparens.jdb	PASS	PASS	OK
 tests/regression/test_oneliner.jdb	PASS	PASS	OK
 tests/regression/test_os.jdb	PASS	PASS	OK
 tests/regression/test_output_capture.jdb	OK	OK	OK
+tests/regression/test_path_instr_regex.jdb	PASS	PASS	OK
 tests/regression/test_pipe_tag.jdb	OK	OK	OK
 tests/regression/test_playbuffer.jdb	OK	OK	OK
 tests/regression/test_print.jdb	OK	OK	OK

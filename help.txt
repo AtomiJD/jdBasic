@@ -2572,6 +2572,10 @@ Example: PACK$("<4ai4a", "RIFF", 36, "WAVE")
 Syntax: PACKSIZE(format$) -> number
 Description: The number of bytes PACK$ writes and UNPACK reads for format$. PACKSIZE("<4ai4a") is 12.
 
+[PATH.ABS$]
+Syntax: PATH.ABS$(path$) -> string
+Description: The same place named from the root. A relative path is read against the current directory; . and .. are resolved either way, and the file does not have to exist. PATH.ABS$(".") answers the current directory as a string.
+
 [PATH.BASENAME$]
 Syntax: PATH.BASENAME$(path$)
 Description: Returns the filename part of a path (e.g., "file.txt" from "/dir/file.txt").
@@ -2583,6 +2587,10 @@ Description: Returns the directory part of a path (e.g., "a/b" from "a/b/c.txt")
 [PATH.EXT$]
 Syntax: PATH.EXT$(path$)
 Description: Returns the file extension of a path (e.g., ".png").
+
+[PATH.ISABS]
+Syntax: PATH.ISABS(path$) -> boolean
+Description: Whether a path names a place on its own, without a current directory to read it against. On Windows that is a drive ("D:\x"), a UNC share ("\\host\share") or a path rooted on the current drive ("\x"); elsewhere a leading "/". An empty string is not absolute.
 
 [PATH.JOIN$]
 Syntax: PATH.JOIN$(part1$, part2$, ...)
@@ -2662,15 +2670,15 @@ Description: Performs a cumulative reduction on an array using a custom function
 
 [REGEX.FINDALL]
 Syntax: REGEX.FINDALL(pattern$, text$)
-Description: Finds all occurrences of a regular expression pattern in a string.
+Description: Every match of a pattern in a string. Without capture groups the answer is one string per match; with groups it is one array per match, holding the whole match and then each group. The pattern syntax is ECMAScript; a leading (?i) asks for case-insensitive matching.
 
 [REGEX.MATCH]
 Syntax: REGEX.MATCH(pattern$, text$)
-Description: Checks if a string fully matches a regular expression pattern.
+Description: Whether a string matches a pattern in full. The pattern syntax is ECMAScript; a leading (?i) asks for case-insensitive matching. Answers the captured groups instead of TRUE when the pattern has any.
 
 [REGEX.REPLACE]
 Syntax: REGEX.REPLACE(pattern$, text$, replacement$)
-Description: Replaces all occurrences of a regular expression pattern in a string.
+Description: Replaces every match of a pattern in a string. In the replacement text $1 to $9 stand for the capture groups, $& for the whole match, and $$ for a single dollar; a dollar that stands alone is kept as it is. The pattern syntax is ECMAScript; a leading (?i) asks for case-insensitive matching.
 
 [REM]
 Syntax: REM comment_text

@@ -4601,17 +4601,28 @@ JdbArray* jdb_datediff_vec(const char* part, const char* date1, JdbArray* dates)
 // match that order or the same script picks one branch in interp and the
 // opposite in native (e.g. native_test.jdb's REGEX section flipping
 // PASS/FAIL between modes).
+// A pattern compiled the way the reader wrote it. std::regex speaks
+// ECMAScript, which has no inline flags, so a leading (?i) was matched as
+// literal text and the search quietly found nothing. The interpreter's copy
+// of the regex builtins reads it the same way - these are the bindings a
+// compiled program reaches instead.
+static std::regex rt_make_regex(const std::string& pattern) {
+    if (pattern.rfind("(?i)", 0) == 0)
+        return std::regex(pattern.substr(4), std::regex::icase);
+    return std::regex(pattern);
+}
+
 static int64_t regex_match_impl(const char* pattern, const char* text) {
     try {
         return std::regex_search(std::string(text ? text : ""),
-                                 std::regex(pattern ? pattern : "")) ? 1 : 0;
+                                 rt_make_regex(pattern ? pattern : "")) ? 1 : 0;
     } catch (...) { return 0; }
 }
 
 static char* regex_replace_impl(const char* pattern, const char* text, const char* replacement) {
     try {
         std::string result = std::regex_replace(std::string(text ? text : ""),
-                                                std::regex(pattern ? pattern : ""),
+                                                rt_make_regex(pattern ? pattern : ""),
                                                 std::string(replacement ? replacement : ""));
         return _strdup(result.c_str());
     } catch (...) { return _strdup(text ? text : ""); }
@@ -4627,7 +4638,7 @@ static JdbArray* regex_findall_impl(const char* pattern, const char* text) {
         static std::unordered_map<std::string, std::regex> cache;
         std::string pat(pattern ? pattern : "");
         auto cit = cache.find(pat);
-        if (cit == cache.end()) cit = cache.emplace(pat, std::regex(pat)).first;
+        if (cit == cache.end()) cit = cache.emplace(pat, rt_make_regex(pat)).first;
         auto begin = std::sregex_iterator(s.begin(), s.end(), cit->second);
         auto end2 = std::sregex_iterator();
         for (auto it = begin; it != end2; ++it) {

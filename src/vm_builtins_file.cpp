@@ -746,6 +746,47 @@ void VM::register_file_builtins() {
         if (res.empty()) res = ".";
         return Value::make_string(res);
     });
+
+    // Whether a path names a place on its own, without a current directory
+    // to read it against.
+    register_native("PATH.ISABS", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string p = args[0].as_string()->data;
+        if (p.empty()) return Value::make_bool(false);
+#if defined(_WIN32)
+        // A drive, a UNC share, or rooted on the current drive.
+        if (p.size() >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/'))
+            return Value::make_bool(true);
+        if (p.size() >= 2 && (p[0] == '\\' || p[0] == '/'))
+            return Value::make_bool(true);
+        return Value::make_bool(false);
+#else
+        return Value::make_bool(p[0] == '/');
+#endif
+    });
+
+    // The same place, named from the root. A relative path is read against
+    // the current directory; . and .. are resolved either way, and the file
+    // does not have to exist.
+    register_native("PATH.ABS$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string p = args[0].as_string()->data;
+#if defined(_WIN32)
+        if (p.empty()) p = ".";
+        char buf[MAX_PATH * 2];
+        DWORD n = GetFullPathNameA(p.c_str(), sizeof(buf), buf, nullptr);
+        if (n == 0 || n >= sizeof(buf))
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                "PATH.ABS$: cannot resolve \"" + p + "\"");
+        return Value::make_string(buf);
+#else
+        if (!p.empty() && p[0] == '/') return Value::make_string(p);
+        char buf[4096];
+        if (!getcwd(buf, sizeof(buf)))
+            throw jdError(ErrCode::RUNTIME_ERROR, "PATH.ABS$: cannot read the current directory");
+        std::string joined = std::string(buf);
+        if (!p.empty() && p != ".") { joined += "/"; joined += p; }
+        return Value::make_string(joined);
+#endif
+    });
 #endif
 
     // ── File metadata ───────────────────────────────────────────

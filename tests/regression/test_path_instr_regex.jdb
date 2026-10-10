@@ -1,0 +1,68 @@
+' Three gaps the reference promised and the language did not keep.
+'
+' PATH.ABS$ and PATH.ISABS did not exist, so a program had no way to name
+' the place a relative path means. INSTR with the other dialect's argument
+' order read a string as a position and answered 0 without saying anything.
+' And a leading (?i) was matched as literal text, because std::regex speaks
+' ECMAScript and has no inline flags - the search then found nothing, in
+' silence. The regex builtins exist twice, once for each backend, so both
+' copies read it.
+DIM bad = 0.0
+
+FUNC SameText(label$, got$, want$)
+    IF got$ = want$ THEN RETURN 0
+    PRINT label$; " answered ["; got$; "], not ["; want$; "]"
+    RETURN 1
+ENDFUNC
+
+' PATH.ISABS
+IF NOT PATH.ISABS(PATH.ABS$(".")) THEN
+    bad = bad + 1
+    PRINT "the current directory read as relative: "; PATH.ABS$(".")
+ENDIF
+IF PATH.ISABS("src") THEN
+    bad = bad + 1
+    PRINT "a bare name read as absolute"
+ENDIF
+IF PATH.ISABS("") THEN
+    bad = bad + 1
+    PRINT "an empty path read as absolute"
+ENDIF
+
+' PATH.ABS$ resolves . and .. and does not need the file to exist
+DIM here$ = PATH.ABS$(".")
+bad = bad + SameText("PATH.ABS$ of a round trip", PATH.ABS$(PATH.JOIN$(here$, "x", "..")), here$)
+IF NOT PATH.ISABS(PATH.ABS$("no_such_file_anywhere")) THEN
+    bad = bad + 1
+    PRINT "PATH.ABS$ of a missing name: "; PATH.ABS$("no_such_file_anywhere")
+ENDIF
+
+' INSTR says what the order is instead of answering 0
+DIM told$ = "nothing"
+TRY
+    DIM wrong = INSTR("abcabc", "c", 3)
+    told$ = "answered " + STR$(wrong)
+CATCH
+    told$ = "complained"
+ENDTRY
+bad = bad + SameText("INSTR in the other order", told$, "complained")
+IF INSTR(3, "abcabc", "c") <> 5 ORELSE INSTR("abcabc", "c") <> 2 THEN
+    bad = bad + 1
+    PRINT "INSTR in the right order: "; INSTR(3, "abcabc", "c"); " "; INSTR("abcabc", "c")
+ENDIF
+
+' A leading (?i) asks for case-insensitive matching
+bad = bad + SameText("(?i) in REGEX.REPLACE", REGEX.REPLACE("(?i)abc", "ABCdef", "x"), "xdef")
+IF NOT REGEX.MATCH("(?i)ab.*", "ABCdef") THEN
+    bad = bad + 1
+    PRINT "(?i) in REGEX.MATCH did not match"
+ENDIF
+DIM found = REGEX.FINDALL("(?i)[a-c]+", "xABCy")
+IF LEN(found) <> 1 ORELSE found[0] <> "ABC" THEN
+    bad = bad + 1
+    PRINT "(?i) in REGEX.FINDALL: "; found
+ENDIF
+' and without it the case still matters
+bad = bad + SameText("no flag", REGEX.REPLACE("abc", "ABCdef", "x"), "ABCdef")
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

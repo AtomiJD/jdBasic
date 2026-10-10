@@ -54,6 +54,19 @@ static size_t pack_size(const std::vector<PackField>& fields) {
     return total;
 }
 
+
+#ifndef JDB_LEAN
+// A pattern compiled the way the reader wrote it. std::regex speaks
+// ECMAScript, which has no inline flags, so a leading (?i) was matched as
+// literal text and the search quietly found nothing. Reading it here and
+// asking for icase instead is the one flag worth carrying; anywhere but the
+// front it still means what ECMAScript says it means.
+static std::regex make_regex(const std::string& pattern) {
+    if (pattern.rfind("(?i)", 0) == 0)
+        return std::regex(pattern.substr(4), std::regex::icase);
+    return std::regex(pattern);
+}
+#endif
 void VM::register_string_builtins() {
     // String functions
     register_native("LEN", 1, 1, [](const std::vector<Value>& args) -> Value {
@@ -211,6 +224,12 @@ void VM::register_string_builtins() {
         int64_t start = 0;
         std::string haystack, needle;
         if (args.size() >= 3) {
+            // The position comes first. The other dialect's order puts the
+            // text first and the position last, and reading a string as a
+            // position answered 0 without saying anything.
+            if (args[0].type == ValueType::STRING)
+                throw jdError(ErrCode::WRONG_ARG_TYPE,
+                    "INSTR$: the position comes first - INSTR$(start, haystack, needle)");
             start = args[0].to_int();
             haystack = args[1].as_string()->data;
             needle = args[2].as_string()->data;
@@ -241,6 +260,12 @@ void VM::register_string_builtins() {
         int64_t start = 0;
         std::string haystack, needle;
         if (args.size() >= 3) {
+            // The position comes first. The other dialect's order puts the
+            // text first and the position last, and reading a string as a
+            // position answered 0 without saying anything.
+            if (args[0].type == ValueType::STRING)
+                throw jdError(ErrCode::WRONG_ARG_TYPE,
+                    "INSTR: the position comes first - INSTR(start, haystack, needle)");
             start = args[0].to_int();
             haystack = args[1].as_string()->data;
             needle = args[2].as_string()->data;
@@ -770,7 +795,7 @@ void VM::register_string_builtins() {
         std::string s = args[0].as_string()->data, pat = args[1].as_string()->data;
         Value r = Value::make_array();
         try {
-            std::regex re(pat);
+            std::regex re = make_regex(pat);
             std::sregex_iterator it(s.begin(), s.end(), re), end;
             for (; it != end; ++it)
                 r.as_array()->elements.push_back(Value::make_string((*it)[0].str()));
@@ -781,7 +806,7 @@ void VM::register_string_builtins() {
 #ifndef JDB_LEAN
     register_native("REGEX_REPLACE$", [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].as_string()->data, pat = args[1].as_string()->data, repl = args[2].as_string()->data;
-        try { return Value::make_string(std::regex_replace(s, std::regex(pat), repl)); }
+        try { return Value::make_string(std::regex_replace(s, make_regex(pat), repl)); }
         catch (...) { return Value::make_string(s); }
     });
 #endif
@@ -794,7 +819,7 @@ void VM::register_string_builtins() {
         try {
             static std::unordered_map<std::string, std::regex> cache;
             auto cit = cache.find(pat);
-            if (cit == cache.end()) cit = cache.emplace(pat, std::regex(pat)).first;
+            if (cit == cache.end()) cit = cache.emplace(pat, make_regex(pat)).first;
             const std::regex& re = cit->second;
             std::smatch m;
             if (!std::regex_match(text, m, re)) return Value::make_bool(false);
@@ -818,7 +843,7 @@ void VM::register_string_builtins() {
         try {
             static std::unordered_map<std::string, std::regex> cache;
             auto cit = cache.find(pat);
-            if (cit == cache.end()) cit = cache.emplace(pat, std::regex(pat)).first;
+            if (cit == cache.end()) cit = cache.emplace(pat, make_regex(pat)).first;
             const std::regex& re = cit->second;
             std::sregex_iterator it(text.begin(), text.end(), re), end;
             bool has_groups = false;
@@ -851,7 +876,7 @@ void VM::register_string_builtins() {
             // cost when the same pattern runs over many lines (e.g. log triage).
             static std::unordered_map<std::string, std::regex> cache;
             auto it = cache.find(pat);
-            if (it == cache.end()) it = cache.emplace(pat, std::regex(pat)).first;
+            if (it == cache.end()) it = cache.emplace(pat, make_regex(pat)).first;
             return Value::make_string(std::regex_replace(text, it->second, repl));
         }
         catch (...) { return Value::make_string(text); }
