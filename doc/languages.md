@@ -1005,7 +1005,7 @@ PRINT "Cursor is at: " + GETY() + ", " + GETX()
 
 Checks the keyboard buffer for a key press. This function is **non-blocking**; it returns immediately, whether a key has been pressed or not.
 
-* **Returns**: A single-character string if a key has been pressed since the last check, otherwise an empty string `""`.
+* **Returns**: One character if a key has been pressed since the last check, otherwise an empty string `""`. A character past ASCII is more than one byte - `ö` is two - so compare the string, do not take its first byte.
 * **In a graphics window** (after `SCREEN`) the key comes from the window, not the console. Most keys return their SDL key name: one character for letters and digits (`"A"`, upper case, `"7"`), a word for the others (`"Right"`, `"Space"`, `"F1"`). Escape returns `CHR$(27)`, and so does closing the window when `INKEY$` is the call that sees the close (when `SCREENFLIP` sees it, the window shuts and `ON "QUIT"` fires instead). Enter `CHR$(13)`, Backspace `CHR$(8)`, Tab `CHR$(9)`. Auto-repeat is ignored. Only one key is kept: a newer press replaces one not yet read.
 
 ```basic
@@ -1026,12 +1026,25 @@ LOOP UNTIL LCASE$(KeyPressed$) = "q"
 
 Pauses program execution and waits for the user to press any key. This function is **blocking**.
 
-* **Returns**: A single-character string representing the key that was pressed.
+* **Returns**: One character, the key that was pressed. A character past ASCII
+is more than one byte - `ö` is two - so compare the string, do not take its
+first byte.
+* **A function or arrow key arrives as two calls.** The first answers the
+prefix `CHR$(0)` or `CHR$(224)`, the second the scan code - arrow-up reads
+`CHR$(224)` and then `"H"`. A loop that counts key presses counts two for one
+such key.
+* **In a graphics window** (after `SCREEN`) the key comes from the window and
+answers the SDL key name, as `INKEY$` does.
 
 ```basic
 PRINT "Press any key to continue..."
-AnyKey$ = WAITKEY$()
-PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
+DIM AnyKey$ = WAITKEY$()
+IF AnyKey$ = CHR$(0) OR AnyKey$ = CHR$(224) THEN
+    DIM Code$ = WAITKEY$()
+    PRINT "A function or arrow key, scan code " + Code$
+ELSE
+    PRINT "You pressed '" + AnyKey$ + "'."
+ENDIF
 ```
 
 #### `INPUT_HIDDEN$([prompt$]) -> String`

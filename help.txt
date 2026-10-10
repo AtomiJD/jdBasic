@@ -2018,7 +2018,7 @@ Description: Reads one line the terminal does not show, for a password or a toke
 
 [INKEY$]
 Syntax: INKEY$()
-Description: Non-blocking check for a key press. Returns the key or an empty string. While a SCREEN window is open it reads the window's keys: the SDL key name ("A" for the A key, "Space", "Left"), CHR$(27) for Escape or for closing the window, CHR$(13) for Enter, CHR$(8) for Backspace, CHR$(9) for Tab. Only the last key since the previous call is kept.
+Description: Non-blocking check for a key press. Returns the key or an empty string. From the console it answers one character, which is more than one byte for anything past ASCII, and a function or arrow key arrives as two calls: CHR$(0) or CHR$(224) first, then the scan code. While a SCREEN window is open it reads the window's keys: the SDL key name ("A" for the A key, "Space", "Left"), CHR$(27) for Escape or for closing the window, CHR$(13) for Enter, CHR$(8) for Backspace, CHR$(9) for Tab. Only the last key since the previous call is kept.
 
 [INPUT]
 Syntax: INPUT [prompt$] [,|;] variable
@@ -3735,7 +3735,7 @@ Description: A constant representing the tab character, CHR$(9).
 
 [WAITKEY$]
 Syntax: WAITKEY$()
-Description: Blocks execution and waits for a single key press, returning the key.
+Description: Blocks execution and waits for one key press, returning it as one character - which is more than one byte for anything past ASCII, so an o-umlaut answers two. A function or arrow key arrives as two calls: CHR$(0) or CHR$(224) first, then the scan code ("H" for arrow-up). While a SCREEN window is open it reads the window's keys and answers the SDL key name, as INKEY$ does.
 
 [WEEKDAY]
 Syntax: WEEKDAY(date) -> number
