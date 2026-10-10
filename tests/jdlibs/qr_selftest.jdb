@@ -247,6 +247,13 @@ QR.TOPDF(doc, hello, 20, 20, 42)
 DIM pdf$ = PDFGEN.BUILD$(doc)
 TESTKIT.ISTRUE(LEFT$(pdf$, 5) = "%PDF-", "TOPDF draws into a PDFGEN document")
 TESTKIT.ISTRUE(INSTR(pdf$, " re") >= 0, "as filled rectangles")
+DIM fills = 0
+DIM fill_at = INSTR(pdf$, " re f")
+DO WHILE fill_at >= 0
+    fills = fills + 1
+    fill_at = CINT(INSTR(fill_at + 5, pdf$, " re f"))
+LOOP
+TESTKIT.EQ(fills, 1, "that share one path, so no seam shows between neighbours")
 
 TESTKIT.SUITE("the largest EPC code")
 DIM big_opts = {"ecc": "M"}

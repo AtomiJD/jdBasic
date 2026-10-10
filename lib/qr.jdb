@@ -791,13 +791,15 @@ EXPORT FUNC SVG$(m, module_px = 4, quiet = 4)
 ENDFUNC
 
 ' The code drawn onto the current page of a PDFGEN document: top left corner
-' at x, y and size millimetres wide including quiet modules, the dark runs as
-' filled boxes. The fill colour is left black.
+' at x, y and size millimetres wide including the quiet modules. Every dark
+' run becomes a rectangle of one path, so neighbouring modules read as one
+' area instead of showing a pale seam where two fills meet. The fill colour
+' is left black.
 EXPORT SUB TOPDF(doc, m, x, y, size, quiet = 0)
     DIM n = LEN(m)
     DIM edge = CLNG(quiet)
     DIM unit = CDBL(size) / CDBL(n + 2 * edge)
-    PDFGEN.SETFILL(doc, 0, 0, 0)
+    DIM rects = []
     DIM r = 0
     FOR r = 0 TO n - 1
         DIM c = 0
@@ -807,12 +809,14 @@ EXPORT SUB TOPDF(doc, m, x, y, size, quiet = 0)
                 DO WHILE c < n ANDALSO m[r, c] = 1
                     c = c + 1
                 LOOP
-                PDFGEN.BOX(doc, x + (run_start + edge) * unit, y + (r + edge) * unit, (c - run_start) * unit, unit, "F")
+                PUSH(rects, [x + (run_start + edge) * unit, y + (r + edge) * unit, (c - run_start) * unit, unit])
             ELSE
                 c = c + 1
             ENDIF
         LOOP
     NEXT r
+    PDFGEN.SETFILL(doc, 0, 0, 0)
+    PDFGEN.BOXES(doc, rects, "F")
 ENDSUB
 
 ' ── EPC payment code ───────────────────────────────────────────

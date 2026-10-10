@@ -137,6 +137,32 @@ FUNC FindCmdAt(spec, name$)
     RETURN -1
 ENDFUNC
 
+' A subcommand reads its own options and the tool's. The merged copy is built
+' per parse instead of written into the attached spec, so the declared
+' subcommand keeps its own option list for a later parse.
+FUNC MergedSpec(parent, chosen)
+    DIM merged AS MAP
+    INIT(merged, chosen{"name"}, chosen{"about"})
+    merged{"cmdname"} = chosen{"cmdname"}
+    merged{"version"} = parent{"version"}
+    DIM own = chosen{"opts"}
+    DIM i
+    FOR i = 0 TO LEN(own) - 1
+        merged{"opts"} = APPEND(merged{"opts"}, own[i])
+    NEXT i
+    DIM tool_opts = parent{"opts"}
+    FOR i = 0 TO LEN(tool_opts) - 1
+        IF FindOptAt(merged, tool_opts[i]{"long"}, tool_opts[i]{"short"}) < 0 THEN
+            merged{"opts"} = APPEND(merged{"opts"}, tool_opts[i])
+        ENDIF
+    NEXT i
+    DIM wanted = chosen{"args"}
+    FOR i = 0 TO LEN(wanted) - 1
+        merged{"args"} = APPEND(merged{"args"}, wanted[i])
+    NEXT i
+    RETURN merged
+ENDFUNC
+
 ' Every option starts at its default, so a caller never has to test presence.
 SUB SeedDefaults(spec, got)
     DIM opts = spec{"opts"}
@@ -369,9 +395,10 @@ EXPORT FUNC PARSE(spec, argv)
             RETURN got
         ENDIF
         DIM chosen = spec{"cmds"}[cat]
+        DIM effective = MergedSpec(spec, chosen)
         SeedDefaults(chosen, got)
-        got = ParseInto(chosen, got, argv, got{"rest_at"}, 0)
-        CheckRequired(chosen, got)
+        got = ParseInto(effective, got, argv, got{"rest_at"}, 0)
+        CheckRequired(effective, got)
         RETURN got
     ENDIF
 
@@ -502,7 +529,7 @@ EXPORT FUNC DONE(spec, got)
         IF LEN(got{"command"}) > 0 THEN
             DIM cat = FindCmdAt(spec, got{"command"})
             IF cat >= 0 THEN
-                PRINT HELP$(spec{"cmds"}[cat])
+                PRINT HELP$(MergedSpec(spec, spec{"cmds"}[cat]))
                 RETURN TRUE
             ENDIF
         ENDIF

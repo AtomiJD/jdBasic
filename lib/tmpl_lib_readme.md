@@ -83,8 +83,10 @@ model, and is gone after it. A missing or empty array writes nothing.
 | `{% extends 'layout.html' %}` | this file fills the blocks of a layout instead of standing on its own |
 | `{% block name %} ... {% endblock %}` | an override point in a layout, and the content that fills it in a page |
 
-A layout block the page does not fill keeps its own content. A file that
-cannot be found leaves `<!-- tmpl: not found: path -->` in the page.
+A layout block the page does not fill keeps its own content. An include or a
+layout that cannot be found leaves `<!-- tmpl: not found: path -->` in the
+page. The file handed to `TMPL.RENDER$` itself has to be there: a path that
+is not raises an error.
 
 ### Filters
 

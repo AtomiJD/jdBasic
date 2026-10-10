@@ -199,6 +199,21 @@ DIM text$ = PDF.TEXT$(out_path$)
 TESTKIT.ISTRUE(INSTR(text$, "Rechnung RE-2026-0413") >= 0, "the extractor reads the heading back")
 TESTKIT.ISTRUE(INSTR(text$, "Item number 37 for the office") >= 0, "a row of the table")
 TESTKIT.ISTRUE(INSTR(text$, "Page 2 of 2") >= 0, "and the footer of the second page")
+
+TESTKIT.SUITE("many rectangles in one path")
+DIM tiles = PDFGEN.DOC()
+PDFGEN.ADDPAGE(tiles)
+PDFGEN.SETFILL(tiles, 0, 0, 0)
+PDFGEN.BOXES(tiles, [[20, 20, 10, 10], [30, 20, 10, 10], [20, 30, 10, 10]], "F")
+DIM tiles$ = PDFGEN.BUILD$(tiles)
+TESTKIT.EQ(CountOf(tiles$, " re "), 3, "every rectangle is in the stream")
+TESTKIT.EQ(CountOf(tiles$, "0.000 0.000 0.000 rg"), 1, "the fill colour is set once")
+TESTKIT.EQ(CountOf(tiles$, " re f"), 1, "and one fill closes the single path")
+DIM empty_doc = PDFGEN.DOC()
+PDFGEN.ADDPAGE(empty_doc)
+PDFGEN.BOXES(empty_doc, [], "F")
+TESTKIT.EQ(CountOf(PDFGEN.BUILD$(empty_doc), " re "), 0, "no rectangles draw nothing")
+
 TESTKIT.SUITE("a book page: TrueType, PNG, bookmarks, links")
 DIM font_dir$ = "resources/fonts/"
 IF NOT FILE.EXISTS(font_dir$ + "JetBrainsMono-Regular.ttf") THEN font_dir$ = "../../resources/fonts/"

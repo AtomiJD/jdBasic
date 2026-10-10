@@ -121,7 +121,14 @@ TXTWRITER base$ + "list.html", "<ul>{% for t in tickets %}{% include " + Q$ + "r
 TESTKIT.EQ(TMPL.RENDER$(base$ + "list.html", board), "<ul><li>Alpha</li><li>Beta &amp; &lt;C&gt;</li></ul>", "an include is found next to the file that names it")
 TXTWRITER base$ + "broken.html", "a{% include 'gone.html' %}b"
 TESTKIT.ISTRUE(INSTR(TMPL.RENDER$(base$ + "broken.html", board), "tmpl: not found") >= 0, "a missing include leaves a comment in the page")
-TESTKIT.ISTRUE(INSTR(TMPL.RENDER$(base$ + "nothing.html", board), "tmpl: not found") >= 0, "and so does a missing file")
+DIM told$ = "nothing"
+TRY
+    DIM gone$ = TMPL.RENDER$(base$ + "nothing.html", board)
+    told$ = gone$
+CATCH
+    told$ = ERRMSG$
+ENDTRY
+TESTKIT.ISTRUE(INSTR(told$, "no template at") >= 0, "a template the caller names has to be there")
 TESTKIT.EQ(TMPL.RENDERSTR$("[{% block x %}inner{% endblock %}]", board), "[inner]", "a block on its own writes its content")
 TXTWRITER base$ + "lay.html", "<h1>{% block title %}Default{% endblock %}</h1><main>{% block content %}none{% endblock %}</main>"
 TXTWRITER base$ + "pageA.html", "{% extends " + Q$ + "lay.html" + Q$ + " %}{% block title %}{{ title }}{% endblock %}{% block content %}Body A{% endblock %}"

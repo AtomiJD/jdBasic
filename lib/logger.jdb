@@ -65,11 +65,21 @@ EXPORT SUB TO_CONSOLE(lg, colour = TRUE)
     AddSink(lg, {"kind": "console", "colour": colour})
 ENDSUB
 
+' A log path may name a folder that is not there yet. It is made while the
+' sink is being added, so a path that cannot be written is reported before
+' the first record rather than at it.
+SUB EnsureFolder(path$)
+    DIM folder$ = PATH.DIRNAME$(path$)
+    IF LEN(folder$) > 0 THEN MKDIR folder$
+ENDSUB
+
 EXPORT SUB TO_FILE(lg, path$, max_bytes = 0, keep = 3)
+    EnsureFolder(path$)
     AddSink(lg, {"kind": "file", "path": path$, "max": max_bytes, "keep": keep})
 ENDSUB
 
 EXPORT SUB TO_JSONL(lg, path$, max_bytes = 0, keep = 3)
+    EnsureFolder(path$)
     AddSink(lg, {"kind": "jsonl", "path": path$, "max": max_bytes, "keep": keep})
 ENDSUB
 

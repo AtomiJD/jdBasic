@@ -620,8 +620,11 @@ EXPORT FUNC RENDERSTR$(src$, model)
     RETURN EmitTpl$(BuildOps(src$), model)
 ENDFUNC
 
-' render a template file against the model; parses once, then serves from cache
+' render a template file against the model; parses once, then serves from cache.
+' The page a caller names has to be there; an include or a layout referred to
+' from inside a template leaves a comment in the page instead.
 EXPORT FUNC RENDER$(path$, model)
+    IF NOT FILE.EXISTS(path$) THEN THROW "TMPL.RENDER$: no template at " + path$
     gIncBase$ = DirOf$(path$)
     RETURN EmitTpl$(LoadTpl(path$), model)
 ENDFUNC

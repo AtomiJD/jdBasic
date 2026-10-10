@@ -312,8 +312,17 @@ EXPORT FUNC UNAUTH()
         "__http_body": JSON.STRINGIFY$({ "error": "unauthorized" }) }
 ENDFUNC
 
-EXPORT FUNC REDIRECT_TO(loc$)
-    RETURN { "__http_status": 302, "__http_headers": { "Location": loc$ }, "__http_body": "" }
+' The status is 302 unless a caller names another one. After a POST, 303 is
+' the one to pass: it tells the client to fetch the new location with GET
+' instead of sending the body again, which a route that only takes GET
+' answers with 405.
+EXPORT FUNC REDIRECT_TO(loc$, status = 302)
+    RETURN { "__http_status": status, "__http_headers": { "Location": loc$ }, "__http_body": "" }
+ENDFUNC
+
+' A redirect for after a POST: the client fetches the new location with GET.
+EXPORT FUNC SEE_OTHER(loc$)
+    RETURN REDIRECT_TO(loc$, 303)
 ENDFUNC
 
 EXPORT SUB AUTH_INIT(db)

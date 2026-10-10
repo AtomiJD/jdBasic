@@ -41,8 +41,9 @@ Instants are DT values, seconds since 1970 in UTC.
 | `KIND$(cal, comp)` | `VEVENT`, `VTODO`, ... The calendar handle itself is a component too, so `PROP$(cal, cal, "X-WR-CALNAME")` reads calendar properties. |
 | `PROP$(cal, comp, name$, [fallback$])` | A property's value, text unescaped (`\n`, `\,`, `\;`, `\\`). |
 | `RAW$(cal, comp, name$)` | The value as written. |
-| `PARAM$(cal, comp, name$, param$, [fallback$])` | A parameter, quotes removed: `PARAM$(cal, ev, "DTSTART", "TZID")`. |
+| `PARAM$(cal, comp, name$, param$, [fallback$])` | A parameter of the first line that carries the property, quotes removed: `PARAM$(cal, ev, "DTSTART", "TZID")`. |
 | `VALUES(cal, comp, name$)` | Every value of a property that repeats, such as ATTENDEE or EXDATE. |
+| `PARAMS(cal, comp, name$, param$)` | One parameter of every line of such a property, in the order of `VALUES`: the CN of each ATTENDEE. A line without it contributes an empty string. |
 | `HAS(cal, comp, name$)` | Whether the property is there. |
 | `STARTAT(cal, comp)` / `ENDAT(cal, comp)` | DTSTART, and DTEND, else DUE, else DTSTART plus DURATION; an all-day start ends a day later. |
 | `TIMEOF(cal, comp, name$)` | Any date or date-time property as an instant (DTSTAMP, CREATED, RECURRENCE-ID). |

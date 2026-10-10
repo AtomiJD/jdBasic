@@ -485,7 +485,8 @@ returns the logged-in name or `""`; guard every protected handler with it.
 | `JDWEB.AUTH_USER$(db, request)` | logged-in user name, or `""` |
 | `JDWEB.AUTH_LOGIN/AUTH_LOGOUT/AUTH_ME(db, request[, secure])` | login/logout/whoami endpoints |
 | `JDWEB.UNAUTH()` | 401 JSON response |
-| `JDWEB.REDIRECT_TO(loc$)` | 302 redirect |
+| `JDWEB.REDIRECT_TO(loc$, [status])` | redirect, 302 by default |
+| `JDWEB.SEE_OTHER(loc$)` | 303 redirect, the one to send after a POST |
 
 ### Routes, middleware and sessions
 

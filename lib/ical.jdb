@@ -654,6 +654,8 @@ EXPORT FUNC RAW$(cal, comp, prop_name$)
     RETURN RawOf$(CINT(comp), prop_name$)
 ENDFUNC
 
+' One parameter of the first line that carries the property. A property that
+' repeats has a parameter per line, which PARAMS answers.
 EXPORT FUNC PARAM$(cal, comp, prop_name$, param_name$, fallback$ = "")
     DIM row_id = FindProp(CINT(comp), prop_name$)
     IF row_id < 0 THEN RETURN fallback$
@@ -661,6 +663,27 @@ EXPORT FUNC PARAM$(cal, comp, prop_name$, param_name$, fallback$ = "")
     DIM found$ = ParamIn$(params$, param_name$)
     IF found$ = "" THEN RETURN fallback$
     RETURN found$
+ENDFUNC
+
+FUNC ParamsOf(comp, prop_name$, param_name$)
+    DIM out = []
+    DIM want$ = UCASE$(prop_name$)
+    DIM row_id = gCFirstProp[comp]
+    DO WHILE row_id >= 0
+        IF gPrName[row_id] = want$ THEN
+            DIM params$ = gPrParams[row_id]
+            PUSH(out, ParamIn$(params$, param_name$))
+        ENDIF
+        row_id = gPrNext[row_id]
+    LOOP
+    RETURN out
+ENDFUNC
+
+' One parameter of every line of a repeating property (the CN of each
+' ATTENDEE), in the order VALUES answers. A line that does not carry the
+' parameter contributes an empty string, so the two arrays stay aligned.
+EXPORT FUNC PARAMS(cal, comp, prop_name$, param_name$)
+    RETURN ParamsOf(CINT(comp), prop_name$, param_name$)
 ENDFUNC
 
 FUNC ValuesOf(comp, prop_name$)

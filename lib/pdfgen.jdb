@@ -683,6 +683,29 @@ EXPORT SUB BOX(doc, x, y, w, h, style$ = "D")
     ENDIF
 ENDSUB
 
+' Several rectangles as one path: rects holds four numbers per row, x, y,
+' width and height. Two rectangles that share an edge become one area this
+' way, where filling each on its own leaves a pale seam between them.
+EXPORT SUB BOXES(doc, rects, style$ = "F")
+    IF LEN(rects) = 0 THEN RETURN
+    DIM st$ = UCASE$(style$)
+    DIM path$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(rects) - 1
+        DIM one = rects[i]
+        path$ = path$ + Pt$(one[0]) + " " + Ypt$(doc, CDBL(one[1]) + CDBL(one[3])) + " " + _
+            Pt$(one[2]) + " " + Pt$(one[3]) + " re "
+    NEXT i
+    DIM fill_rgb$ = doc{"fill_rgb"}
+    IF st$ = "F" THEN
+        Emit(doc, fill_rgb$ + " rg " + path$ + "f")
+    ELSEIF st$ = "DF" ORELSE st$ = "FD" THEN
+        Emit(doc, fill_rgb$ + " rg " + StrokeSetup$(doc) + path$ + "B")
+    ELSE
+        Emit(doc, StrokeSetup$(doc) + path$ + "S")
+    ENDIF
+ENDSUB
+
 ' A JPEG image with its top left corner at x, y. With w or h at 0 the
 ' other one follows from the picture's proportions; with both at 0 it is
 ' drawn at 96 dots per inch. A file drawn twice is embedded once.

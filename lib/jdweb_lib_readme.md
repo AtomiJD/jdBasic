@@ -89,7 +89,8 @@ and an `Allow` header naming them.
 | `REPLY(body$, [status], [content_type$])` | A response (200, `text/html; charset=utf-8`). |
 | `REPLY_JSON(value, [status])` | A value sent as JSON (200). |
 | `HEADER(response, name$, value$)` | A copy of the response with one more header. Another `Set-Cookie` is added beside the ones already there (the value becomes an array and the server sends one line each), so a handler's own cookie and the session cookie both arrive; any other name replaces its value. |
-| `REDIRECT_TO(loc$)` | A 302 to another path. |
+| `REDIRECT_TO(loc$, [status])` | A redirect to another path, 302 unless another status is given. |
+| `SEE_OTHER(loc$)` | A 303 to another path: the redirect for after a POST, so the client fetches the new location with GET instead of repeating the body. |
 | `UNAUTH()` | A 401 with a JSON error. |
 
 ### Sessions

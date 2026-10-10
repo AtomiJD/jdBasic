@@ -79,4 +79,16 @@ DIM older = LinesOf(small_path$ + ".1")
 TESTKIT.ISTRUE(INSTR(newest[LEN(newest) - 1], "entry 12") >= 0, "the newest entry is in the live file")
 TESTKIT.ISTRUE(VAL(MID$(older[0], INSTR(older[0], "entry ") + 6, 2)) < 12, "older entries moved down")
 
+TESTKIT.SUITE("a folder that is not there yet")
+DIM nested$ = work$ + "/logs/2026/deep.log"
+DIM deep = LOGGER.NEW("nested")
+LOGGER.TO_FILE(deep, nested$)
+LOGGER.INFO(deep, "first record")
+TESTKIT.ISTRUE(FILE.EXISTS(nested$), "the sink made the folders it needed")
+TESTKIT.EQ(LEN(LinesOf(nested$)), 1, "and the record went in")
+DIM nested_json$ = work$ + "/logs/json/deep.jsonl"
+LOGGER.TO_JSONL(deep, nested_json$)
+LOGGER.INFO(deep, "second record")
+TESTKIT.ISTRUE(FILE.EXISTS(nested_json$), "the JSON lines sink too")
+
 PRINT TESTKIT.REPORT()

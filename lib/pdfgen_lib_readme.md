@@ -90,6 +90,7 @@ bytes as given, in their own encodings.
 |------|--------------|
 | `DRAWLINE(doc, x1, y1, x2, y2)` | A line. |
 | `BOX(doc, x, y, w, h, [style$])` | A rectangle: `"D"` the frame, `"F"` filled, `"DF"` both. |
+| `BOXES(doc, rects, [style$])` | Several rectangles as one path, four numbers per row (x, y, w, h). Two that share an edge become one area, where filling each on its own leaves a pale seam between them. |
 | `IMAGE(doc, path$, x, y, [w], [h])` | A JPEG or PNG with its top left corner at `x`, `y`. A PNG is decoded with the IMG module and stored deflated; its transparency becomes a soft mask. With `w` or `h` at 0 the other follows from the picture's proportions; with both at 0 it is drawn at 96 dots per inch. |
 
 A JPEG is embedded without decoding: its size and colour components (grey,
