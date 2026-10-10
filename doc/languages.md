@@ -1984,7 +1984,7 @@ All numeric functions are vectorized: they also accept arrays and apply element-
 
 * **`RND()`**: Returns a pseudo-random double in `[0, 1]`, **both ends inclusive**; exactly 1.0 is rare (about 1 in 32768 draws) but real. Arguments are accepted and silently ignored. For a random integer in `[1, n]` use `INT(RND() * n) MOD n + 1` (the `MOD` clamps the 1.0 case).
 * **`RANDOM([lo], [hi])`**: Uniform double in `[lo, hi]` (hi inclusive). `RANDOM()` is `[0, 1]`, `RANDOM(hi)` is `[0, hi]`. All three arities work in both the interpreter and native `-c`.
-* **`RANDOMSEED(seed)`**: Seeds the PRNG. Using the same seed twice produces the same sequence, which is useful for reproducible tests.
+* **`RANDOMSEED(seed)`**: Seeds the PRNG that `RND` and `RANDOM` draw from. The same seed twice produces the same sequence, which is what makes a test reproducible. Without a call the sequence is the same on every run, so `RANDOMSEED(NOW_EPOCH())` is how a program picks a different one each time.
 
 `RND` and `RANDOM` share one process-wide generator from the C library, so its sequence differs between platforms and between runs that interleave other draws. The `RNG.*` generators are separate objects with a documented algorithm, xoshiro256** seeded through splitmix64: a seed gives the same sequence in the interpreter, in native `-c`, on every platform, and in any other implementation of the pair. They are not suited to secrets; use `CODEC.RANDOMBYTES$` there.
 

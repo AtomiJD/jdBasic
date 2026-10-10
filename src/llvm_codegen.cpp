@@ -591,7 +591,6 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_txtreader",       "TXTREADER$",  i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     // 3-arg TXTWRITER: 2-arg calls pad 0 → no append, 3-arg picks append
     reg("jdb_txtwriter3",      "TXTWRITER",   void_type, {i8_ptr_type, i8_ptr_type, i64_type}, -1);
-    reg("jdb_txtwriter_append","TXTWRITER_APPEND", void_type, {i8_ptr_type, i8_ptr_type}, -1);
     // Codepage-aware variants. The codegen routes TXTREADER$/TXTWRITER calls
     // here when an encoding arg is present (see the upper-rewrite block in
     // codegen_call). Underscore prefix keeps them out of the user namespace.

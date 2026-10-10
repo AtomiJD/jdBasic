@@ -3647,6 +3647,13 @@ char* jdb_pwd() {
 // Return the resulting current directory as a fresh string. The parser
 // wraps `CD "..."` in a PRINT to show the path; matching that contract.
 char* jdb_cd(const char* path) {
+    // No argument answers the current directory; an argument that is empty is
+    // a path the caller worked out wrongly, and answering the current
+    // directory for it hides that. The interpreter raises, so this does too.
+    if (path && !*path) {
+        jdb_err_set("CD: empty path", 1);
+        return _strdup("");
+    }
 #ifdef _WIN32
     if (path && *path) {
         if (!SetCurrentDirectoryA(path)) {

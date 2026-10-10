@@ -806,7 +806,7 @@ Syntax: DIM variable AS DOUBLE
 Description: Declares a variable to hold a 64-bit floating-point number.
 
 [DRAWCOLOR]
-Syntax: DRAWCOLOR(r, g, b, [a])
+Syntax: DRAWCOLOR r, g, b, [a]
 Description: Set the current draw colour for the 2D primitives (PSET, LINE, RECT, CIRCLE, TEXT). Components are 0-255; alpha defaults to 255.
 
 [DROP]
@@ -2650,7 +2650,7 @@ Description: Uniform random double in [lo, hi], hi inclusive. RANDOM() gives [0,
 
 [RANDOMSEED]
 Syntax: RANDOMSEED(seed)
-Description: Seeds the PRNG. The same seed reproduces the same sequence.
+Description: Seeds the PRNG that RND and RANDOM draw from. The same seed reproduces the same sequence, and without a call the sequence is the same on every run - RANDOMSEED(NOW_EPOCH()) picks a different one each time.
 
 [REACT]
 Syntax: DIM variable AS REACT type
@@ -2722,7 +2722,7 @@ Description: Removes an empty directory.
 
 [RND]
 Syntax: RND()
-Description: Returns a random double in [0, 1], both ends inclusive. Arguments are ignored. For an integer in [1, n] use INT(RND() * n) MOD n + 1.
+Description: Returns a random double in [0, 1], both ends inclusive. Arguments are ignored. For an integer in [1, n] use INT(RND() * n) MOD n + 1. Unseeded the sequence is the same on every run, which is what makes a test repeatable; call RANDOMSEED to pick a different one, for instance RANDOMSEED(NOW_EPOCH()).
 
 [RNG.NEW]
 Syntax: RNG.NEW(seed) -> handle

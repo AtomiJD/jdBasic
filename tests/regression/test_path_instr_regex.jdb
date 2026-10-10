@@ -65,4 +65,20 @@ ENDIF
 ' and without it the case still matters
 bad = bad + SameText("no flag", REGEX.REPLACE("abc", "ABCdef", "x"), "ABCdef")
 
+' CD answers the current directory without an argument, and an argument that
+' is empty is a path the caller worked out wrongly - the native side used to
+' answer the current directory for it, which hid the mistake.
+IF LEN(CD()) = 0 THEN
+    bad = bad + 1
+    PRINT "CD() answered nothing"
+ENDIF
+DIM cd_told$ = "nothing"
+TRY
+    DIM nowhere$ = CD("")
+    cd_told$ = "answered [" + nowhere$ + "]"
+CATCH
+    cd_told$ = "raised"
+ENDTRY
+bad = bad + SameText("CD of an empty path", cd_told$, "raised")
+
 IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
