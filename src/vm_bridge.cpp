@@ -252,6 +252,14 @@ static JdRTImpl* thread_rt() {
 // reads and writes, so the values it stores stay reachable afterwards.
 static thread_local bool tls_use_primary = false;
 
+// The info map an event handler was handed, while it runs. A compiled handler
+// receives a copy built on its own side of the bridge, so what it writes has
+// to be carried back into the object the raiser still holds. That is how an
+// event is answered at all: UNLOAD reading back cancel is the first answer,
+// and any later one travels the same way.
+static thread_local ObjectObj* tls_event_info = nullptr;
+
+
 // The bridge state of the calling thread: the program's own on its main
 // thread and while a compiled function runs for a builtin, a worker's
 // otherwise.
@@ -376,6 +384,14 @@ static inline bool bits_look_like_ptr(double d) {
 
 struct JdbMapFwd;
 static Value jdbmap_to_value(JdbMapFwd* m);
+
+JDRT_API void jdrt_event_writeback(void* map) {
+    if (!tls_event_info || !map) return;
+    Value back = jdbmap_to_value((JdbMapFwd*)map);
+    auto* src = back.as_object();
+    if (!src) return;
+    for (auto& field : src->fields) tls_event_info->set(field.first, field.second);
+}
 
 static Value jdbarray_to_value(JdbArrayFwd* arr) {
     if (!arr) return Value::make_array();
@@ -1972,7 +1988,13 @@ JDRT_API void jdrt_set_event_dispatcher(JdRT handle, JdrtEventDispatch fn) {
                     push_value(v);
                 }
             }
+            // Name the object the handler is answering about, so what it
+            // writes into its own copy of the info map comes back here.
+            ObjectObj* prev_info = tls_event_info;
+            tls_event_info = (!data.empty() && data[0].type == ValueType::OBJECT)
+                             ? data[0].as_object() : nullptr;
             fn(name.c_str(), args.data(), tags.data(), (int)args.size());
+            tls_event_info = prev_info;
         };
 }
 

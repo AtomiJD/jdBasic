@@ -1981,6 +1981,16 @@ static JdbArray* wrap_map_in_array(JdbMap* m) {
     return a;
 }
 
+// A handler may answer by writing into the info map it was handed. On this
+// side of the bridge that map is a copy, so after the handler returns the
+// fields travel back to the object the raiser still holds.
+void jdrt_event_writeback(void* map);
+
+static void call_event_handler(JdbEventFn fn, JdbMap* m) {
+    fn(wrap_map_in_array(m));
+    jdrt_event_writeback(m);
+}
+
 void jdrt_dispatch_event(const char* event_name,
                          const int64_t* args, const int32_t* tags, int nargs) {
     // The six SDL events have fixed positional schemas and ignore tags;
@@ -2002,7 +2012,7 @@ void jdrt_dispatch_event(const char* event_name,
         if (nargs >= 2) jdb_map_set_f64(m, "keycode",  (double)args[1]);
         if (nargs >= 3) jdb_map_set_str(m, "key",      event_arg_str(args, 2, nargs));
         if (nargs >= 4) jdb_map_set_f64(m, "repeat",   (double)args[3]);
-        fn(wrap_map_in_array(m));
+        call_event_handler(fn, m);
         return;
     }
 
@@ -2013,7 +2023,7 @@ void jdrt_dispatch_event(const char* event_name,
         if (nargs >= 1) jdb_map_set_f64(m, "button", (double)args[0]);
         if (nargs >= 2) jdb_map_set_f64(m, "x",      (double)args[1]);
         if (nargs >= 3) jdb_map_set_f64(m, "y",      (double)args[2]);
-        fn(wrap_map_in_array(m));
+        call_event_handler(fn, m);
         return;
     }
 
@@ -2022,7 +2032,7 @@ void jdrt_dispatch_event(const char* event_name,
         JdbMap* m = jdb_map_new();
         if (nargs >= 1) jdb_map_set_f64(m, "x", (double)args[0]);
         if (nargs >= 2) jdb_map_set_f64(m, "y", (double)args[1]);
-        g_h_mousemove(wrap_map_in_array(m));
+        call_event_handler(g_h_mousemove, m);
         return;
     }
 
@@ -2047,7 +2057,7 @@ void jdrt_dispatch_event(const char* event_name,
             jdb_map_set_f64(m, key, (double)args[i + 1]);
         }
     }
-    cit->second(wrap_map_in_array(m));
+    call_event_handler(cit->second, m);
 }
 
 static void map_grow(JdbMap* m) {

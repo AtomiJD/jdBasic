@@ -127,6 +127,12 @@ JDRT_API int64_t jdrt_call_typed_tagged(JdRT rt, const char* name,
                                         const int64_t* args, const int32_t* tags,
                                         int nargs, int32_t* out_tag);
 
+// What a handler wrote into the info map it was handed. A compiled handler
+// gets a copy on its own side of the bridge, so this carries the fields back
+// into the object the raiser still holds - UNLOAD reading back cancel is the
+// first thing that needs it.
+JDRT_API void jdrt_event_writeback(void* map);
+
 // Native-mode event dispatch. The bridge's VM holds the
 // event_handlers map (set up by __EVENT_ON), but in native mode the
 // handler bodies live as LLVM-IR in the .exe - the bridge VM has no
