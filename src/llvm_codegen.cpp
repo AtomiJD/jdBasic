@@ -4791,20 +4791,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             // check, so this is the only place that knows its line.
             emit_err_line(stmt.line);
 
-            if (!try_stack.empty()) {
-                LLVMBuildBr(builder, try_stack.back());
-            } else if (current_exit_bb) {
-                // No TRY in this function, but the caller may have one. Return
-                // with the error set and let the per-statement check at the
-                // call site carry it outwards, the way a raised runtime error
-                // already travels. Aborting here instead is what made a THROW
-                // from a called function uncatchable.
-                emit_fn_return(nullptr);
-            } else {
-                auto& uc = runtime_funcs["__throw_uncaught"];
-                LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
-                LLVMBuildUnreachable(builder);
-            }
+            emit_raise_exit();
             // Any statements after a THROW are dead; give them a landing block
             // so subsequent codegen doesn't produce blocks with two terminators.
             LLVMBasicBlockRef dead = LLVMAppendBasicBlock(current_fn, "post_throw");
@@ -5010,6 +4997,22 @@ void LLVMCodegen::emit_err_check() {
 // caller or the uncaught handler when an error is set, and continues in a
 // fresh block otherwise. After a call to a compiled FUNC this alone is enough,
 // because the callee's own statement checks already pulled any bridge error.
+// Where a raise goes. An empty try_stack does not mean nobody is catching:
+// the TRY may stand at the caller, in another function. Returning with the
+// error set lets the per-statement check at the call site carry it outwards;
+// aborting instead is what made a CATCH in the caller never run.
+void LLVMCodegen::emit_raise_exit() {
+    if (!try_stack.empty()) {
+        LLVMBuildBr(builder, try_stack.back());
+    } else if (current_exit_bb || in_lambda) {
+        emit_fn_return(nullptr);
+    } else {
+        auto& uc = runtime_funcs["__throw_uncaught"];
+        LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
+        LLVMBuildUnreachable(builder);
+    }
+}
+
 void LLVMCodegen::emit_err_line(int line) {
     if (line <= 0) return;
     auto it = runtime_funcs.find("__err_set_line");
@@ -5035,15 +5038,7 @@ void LLVMCodegen::emit_err_code_branch() {
     // error records the line; the runtime keeps the first one, so the checks
     // the error passes on its way out do not claim it as theirs.
     emit_err_line(m_current_stmt_line);
-    if (!try_stack.empty()) {
-        LLVMBuildBr(builder, try_stack.back());
-    } else if (current_exit_bb || in_lambda) {
-        emit_fn_return(nullptr);
-    } else {
-        auto& uc = runtime_funcs["__throw_uncaught"];
-        LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
-        LLVMBuildUnreachable(builder);
-    }
+    emit_raise_exit();
     LLVMPositionBuilderAtEnd(builder, ok_bb);
 }
 
@@ -5550,13 +5545,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             LLVMValueRef args[] = { msg_str, LLVMConstInt(i64_type, 1, 0) };
             LLVMBuildCall2(builder, es.fn_type, es.fn, args, 2, "");
             emit_err_line(stmt.line);
-            if (!try_stack.empty()) {
-                LLVMBuildBr(builder, try_stack.back());
-            } else {
-                auto& uc = runtime_funcs["__throw_uncaught"];
-                LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
-                LLVMBuildUnreachable(builder);
-            }
+            emit_raise_exit();
             LLVMBasicBlockRef dead = LLVMAppendBasicBlock(current_fn, "post_const_throw");
             LLVMPositionBuilderAtEnd(builder, dead);
             return;
@@ -5572,13 +5561,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             LLVMValueRef args[] = { msg_str, LLVMConstInt(i64_type, 1, 0) };
             LLVMBuildCall2(builder, es.fn_type, es.fn, args, 2, "");
             emit_err_line(stmt.line);
-            if (!try_stack.empty()) {
-                LLVMBuildBr(builder, try_stack.back());
-            } else {
-                auto& uc = runtime_funcs["__throw_uncaught"];
-                LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
-                LLVMBuildUnreachable(builder);
-            }
+            emit_raise_exit();
             LLVMBasicBlockRef dead = LLVMAppendBasicBlock(current_fn, "post_const_throw");
             LLVMPositionBuilderAtEnd(builder, dead);
             return;
@@ -15681,15 +15664,7 @@ LLVMCodegen::TypedValue LLVMCodegen::index_none_guard(const TypedValue& base, bo
         LLVMValueRef eargs[] = { msg, LLVMConstInt(i64_type, 99, 0) };
         LLVMBuildCall2(builder, es.fn_type, es.fn, eargs, 2, "");
         emit_err_line(m_current_stmt_line);
-        if (!try_stack.empty()) {
-            LLVMBuildBr(builder, try_stack.back());
-        } else if (current_exit_bb) {
-            emit_fn_return(nullptr);
-        } else {
-            auto& uc = runtime_funcs["__throw_uncaught"];
-            LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
-            LLVMBuildUnreachable(builder);
-        }
+        emit_raise_exit();
     }
 
     LLVMPositionBuilderAtEnd(builder, bb_get);
@@ -15722,15 +15697,7 @@ LLVMCodegen::TypedValue LLVMCodegen::map_null_guard(LLVMValueRef ptr, bool optio
         LLVMValueRef eargs[] = { msg, LLVMConstInt(i64_type, 99, 0) };
         LLVMBuildCall2(builder, es.fn_type, es.fn, eargs, 2, "");
         emit_err_line(m_current_stmt_line);
-        if (!try_stack.empty()) {
-            LLVMBuildBr(builder, try_stack.back());
-        } else if (current_exit_bb) {
-            emit_fn_return(nullptr);
-        } else {
-            auto& uc = runtime_funcs["__throw_uncaught"];
-            LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
-            LLVMBuildUnreachable(builder);
-        }
+        emit_raise_exit();
         LLVMPositionBuilderAtEnd(builder, bb_get);
         return getter();
     }
@@ -16608,13 +16575,7 @@ void LLVMCodegen::emit_div_zero_check(TypedValue rhs) {
     LLVMValueRef eargs[] = { msg, LLVMConstInt(i64_type, 1, 0) };
     LLVMBuildCall2(builder, es.fn_type, es.fn, eargs, 2, "");
     emit_err_line(m_current_stmt_line);
-    if (!try_stack.empty()) {
-        LLVMBuildBr(builder, try_stack.back());
-    } else {
-        auto& uc = runtime_funcs["__throw_uncaught"];
-        LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
-        LLVMBuildUnreachable(builder);
-    }
+    emit_raise_exit();
     LLVMPositionBuilderAtEnd(builder, ok_bb);
 }
 

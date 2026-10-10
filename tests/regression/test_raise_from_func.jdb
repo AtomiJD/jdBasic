@@ -1,0 +1,79 @@
+' An error raised inside a FUNC has to reach a TRY that stands at the caller.
+' An empty try_stack at the raise does not mean nobody is catching - the TRY
+' may be a frame up. Taking it for "uncatchable" and aborting is what made a
+' division by zero inside a FUNC end the program with "Unhandled exception"
+' while the interpreter caught it. THROW had been fixed that way before, the
+' other raises had not, so all of them leave through one place now.
+DIM bad = 0.0
+
+FUNC DivideByZero(n)
+    RETURN n / 0
+ENDFUNC
+
+FUNC TwoDeep(n)
+    RETURN DivideByZero(n)
+ENDFUNC
+
+FUNC Thrower(n)
+    IF n > 0 THEN THROW "thrown from a FUNC"
+    RETURN 0
+ENDFUNC
+
+FUNC IndexIntoNothing(m)
+    RETURN m{"absent"}{"deeper"}
+ENDFUNC
+
+' A division one frame down
+DIM caught1$ = "no"
+TRY
+    DIM r1 = DivideByZero(5)
+CATCH
+    caught1$ = "yes"
+ENDTRY
+IF caught1$ <> "yes" THEN
+    bad = bad + 1
+    PRINT "a division inside a FUNC was not caught"
+ENDIF
+
+' And two frames down
+DIM caught2$ = "no"
+TRY
+    DIM r2 = TwoDeep(5)
+CATCH
+    caught2$ = "yes"
+ENDTRY
+IF caught2$ <> "yes" THEN
+    bad = bad + 1
+    PRINT "a division two frames down was not caught"
+ENDIF
+
+' A THROW one frame down, which already worked
+DIM caught3$ = "no"
+DIM msg3$ = ""
+TRY
+    DIM r3 = Thrower(1)
+CATCH
+    caught3$ = "yes"
+    msg3$ = ERRMSG$
+ENDTRY
+IF caught3$ <> "yes" ORELSE msg3$ <> "thrown from a FUNC" THEN
+    bad = bad + 1
+    PRINT "a THROW inside a FUNC: "; caught3$; " ["; msg3$; "]"
+ENDIF
+
+' The error reports the line it happened on, not the line of the call
+DIM line4 = 0
+TRY
+    DIM r4 = DivideByZero(5)
+CATCH
+    line4 = ERL
+ENDTRY
+IF line4 <> 10 THEN
+    bad = bad + 1
+    PRINT "ERL for a division inside a FUNC: "; line4
+ENDIF
+
+' And the program is still alive afterwards
+PRINT "still running"
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

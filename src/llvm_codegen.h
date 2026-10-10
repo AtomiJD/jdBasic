@@ -366,6 +366,9 @@ private:
     // that raises and jumps straight to the handler needs it: such a jump
     // passes no error check, and the check is the only other place that knows.
     void emit_err_line(int line);
+    // Leave a raise: for the enclosing TRY, or out of the function so the
+    // caller's check carries the error on, or abort when nobody is left.
+    void emit_raise_exit();
     void emit_err_code_branch();
     void codegen_input(const Stmt& stmt);
 
