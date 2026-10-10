@@ -6,6 +6,32 @@
 extern "C" int jdb_poll_key_js(void);   // EM_JS, defined in vm.cpp
 #endif
 
+
+#if defined(_WIN32)
+// One keypress as the character it is. _getch answers a single byte, which is
+// a codepage byte for anything past ASCII: an umlaut read key by key came out
+// as a byte that is not valid UTF-8 on its own, so a password typed with one
+// was broken before it was ever checked.
+//
+// The function and arrow keys keep the two-call protocol callers read: the 0
+// or 0xE0 prefix passes through as the byte it was and the next call answers
+// the scan code.
+static std::string read_console_char() {
+    int wch = _getwch();
+    if (wch == 0 || wch == 0xE0) return std::string(1, (char)wch);
+    wchar_t w[2] = { (wchar_t)wch, 0 };
+    int n = 1;
+    if (wch >= 0xD800 && wch <= 0xDBFF) {
+        w[1] = (wchar_t)_getwch();  // the low half of the pair follows
+        n = 2;
+    }
+    int need = WideCharToMultiByte(CP_UTF8, 0, w, n, nullptr, 0, nullptr, nullptr);
+    if (need <= 0) return std::string();
+    std::string out((size_t)need, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w, n, &out[0], need, nullptr, nullptr);
+    return out;
+}
+#endif
 void VM::register_console_builtins() {
     // ── Console I/O ──────────────────────────────────────────
 
@@ -231,8 +257,7 @@ void VM::register_console_builtins() {
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_check).count() >= 100) {
             last_check = now;
             if (_kbhit()) {
-                int ch = _getch();
-                return Value::make_string(std::string(1, (char)ch));
+                return Value::make_string(read_console_char());
             }
         }
 #endif
@@ -277,8 +302,7 @@ void VM::register_console_builtins() {
         }
 #endif
 #if defined(_WIN32)
-        int ch = _getch();
-        return Value::make_string(std::string(1, (char)ch));
+        return Value::make_string(read_console_char());
 #else
         return Value::make_string("");
 #endif
