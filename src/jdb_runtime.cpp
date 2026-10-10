@@ -192,6 +192,32 @@ static thread_local int64_t g_err_code     = 0;
 // to return the caught values. Reads fall back to these shadows.
 static thread_local char    g_last_msg[512] = "";
 static thread_local int64_t g_last_code     = 0;
+// The line the error happened on, which is the first check to see it. The
+// checks of the callers above it see the same error as it travels out, and
+// they must not overwrite the line with their own.
+static thread_local int64_t g_err_line      = 0;
+static thread_local int64_t g_last_line     = 0;
+
+void jdb_err_set_line(int64_t line) {
+    if (g_err_line == 0 && line > 0) {
+        g_err_line = line;
+        g_last_line = line;
+    }
+}
+
+int64_t jdb_err_line() {
+    return g_err_line ? g_err_line : g_last_line;
+}
+
+// The call stack as the interpreter reports it, which is the line and
+// nothing else - even from inside nested calls it answers "line N".
+char* jdb_err_stack() {
+    char buf[32];
+    int64_t line = jdb_err_line();
+    if (line <= 0) return _strdup("");
+    snprintf(buf, sizeof buf, "line %lld", (long long)line);
+    return _strdup(buf);
+}
 
 void jdb_err_set(const char* msg, int64_t code) {
     if (msg) {
@@ -205,6 +231,8 @@ void jdb_err_set(const char* msg, int64_t code) {
     }
     g_err_code = code;
     g_last_code = code;
+    // A new error gets a fresh line: the next check to see it records one.
+    g_err_line = 0;
 }
 
 void jdb_err_clear() {
@@ -212,6 +240,8 @@ void jdb_err_clear() {
     g_err_code = 0;
     g_last_msg[0] = '\0';
     g_last_code = 0;
+    g_err_line = 0;
+    g_last_line = 0;
 }
 
 const char* jdb_err_msg() {

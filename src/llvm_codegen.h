@@ -114,6 +114,9 @@ public:
     // raised from deep inside codegen_expr use this for the file: prefix
     // (Expr itself doesn't carry source_file - only Stmt does).
     std::string m_current_stmt_file;
+    // The line of the statement under codegen, so the error check can record
+    // where an error happened for ERL and STACK$.
+    int m_current_stmt_line = 0;
 
     // Transient codegen state: true while evaluating an expression whose
     // result will be the LEFT of an INDEX chain (e.g. inner `a{"b"}` of
@@ -359,6 +362,10 @@ private:
     //   - inside main with no TRY → __throw_uncaught + unreachable
     // The builder is left positioned at the fall-through ok block.
     void emit_err_check();
+    // Record the line an error happened on, for ERL and STACK$. Every place
+    // that raises and jumps straight to the handler needs it: such a jump
+    // passes no error check, and the check is the only other place that knows.
+    void emit_err_line(int line);
     void emit_err_code_branch();
     void codegen_input(const Stmt& stmt);
 

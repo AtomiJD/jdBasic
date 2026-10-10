@@ -214,6 +214,7 @@ tests/regression/test_dump_run.jdb	OK	OK	OK
 tests/regression/test_dyn_arith.jdb	PASS	PASS	OK
 tests/regression/test_dyn_array_ops.jdb	PASS	PASS	OK
 tests/regression/test_env_neg.jdb	OK	OK	OK
+tests/regression/test_error_globals.jdb	PASS	PASS	OK
 tests/regression/test_errors.jdb	PASS	PASS	OK
 tests/regression/test_fileio.jdb	PASS	PASS	OK
 tests/regression/test_finally.jdb	PASS	PASS	OK
@@ -293,7 +294,7 @@ tests/regression/test_str_array.jdb	OK	OK	OK
 tests/regression/test_str_runtime_value.jdb	PASS	PASS	OK
 tests/regression/test_string_array_push.jdb	OK	CFAIL	GAP
 tests/regression/test_tag7_to_str.jdb	OK	CFAIL	GAP
-tests/regression/test_try.jdb	OK	CFAIL	GAP
+tests/regression/test_try.jdb	OK	OK	OK
 tests/regression/test_try_no_execute.jdb	OK	OK	OK
 tests/regression/test_tutorial_samples.jdb	OK	OK	OK
 tests/regression/test_txt_cp1252.jdb	PASS	PASS	OK

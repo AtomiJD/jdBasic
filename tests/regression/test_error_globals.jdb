@@ -1,0 +1,56 @@
+' What a CATCH can read about the error. languages.md names four globals;
+' ERL and STACK$ were not in the native compiler at all, so the documented
+' example did not compile - "undeclared variable 'ERL'". The line comes from
+' the first check to see the error, so the checks it passes on its way out
+' do not claim it as theirs.
+DIM bad = 0.0
+
+DIM thrown_code = 0
+DIM thrown_line = 0
+DIM thrown_msg$ = ""
+DIM thrown_stack$ = ""
+TRY
+    THROW "boom"
+CATCH
+    thrown_code = ERR
+    thrown_line = ERL
+    thrown_msg$ = ERRMSG$
+    thrown_stack$ = STACK$
+ENDTRY
+
+IF thrown_code <> 1 THEN
+    bad = bad + 1
+    PRINT "ERR after a THROW: "; thrown_code
+ENDIF
+IF thrown_line <> 13 THEN
+    bad = bad + 1
+    PRINT "ERL after a THROW: "; thrown_line
+ENDIF
+IF thrown_msg$ <> "boom" THEN
+    bad = bad + 1
+    PRINT "ERRMSG$ after a THROW: ["; thrown_msg$; "]"
+ENDIF
+IF thrown_stack$ <> "line 13" THEN
+    bad = bad + 1
+    PRINT "STACK$ after a THROW: ["; thrown_stack$; "]"
+ENDIF
+
+' A runtime error, not a THROW: the same four answer
+DIM div_line = 0
+DIM div_stack$ = ""
+TRY
+    DIM gone = 1 / 0
+CATCH
+    div_line = ERL
+    div_stack$ = STACK$
+ENDTRY
+IF div_line <> 42 THEN
+    bad = bad + 1
+    PRINT "ERL after a division by zero: "; div_line
+ENDIF
+IF div_stack$ <> "line 42" THEN
+    bad = bad + 1
+    PRINT "STACK$ after a division by zero: ["; div_stack$; "]"
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

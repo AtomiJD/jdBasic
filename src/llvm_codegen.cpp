@@ -490,6 +490,9 @@ void LLVMCodegen::declare_runtime_functions() {
     // ERR → user-visible reader (with shadow fallback). The raw-code
     // getter below is what emit_err_check's propagation loop calls.
     reg("jdb_err_code_visible", "ERR",      i64_type,    {}, JD_TAG_I64);
+    reg("jdb_err_line",         "ERL",      i64_type,    {}, JD_TAG_I64);
+    reg("jdb_err_stack",        "STACK$",   i8_ptr_type, {}, JD_TAG_STR);
+    reg("jdb_err_set_line",     "__err_set_line", void_type, {i64_type}, -1);
     reg("jdb_err_code",         "__err_rc", i64_type,    {}, JD_TAG_I64);
     reg("jdb_throw_uncaught","__throw_uncaught", void_type, {}, -1);
     // Clears only g_err_code, leaves g_err_msg alone (so ERRMSG$ still
@@ -4603,6 +4606,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
     // Track the source file of the statement under codegen so diagnostics
     // raised from nested expressions can attribute "error at file:line".
     m_current_stmt_file = stmt.source_file();
+    m_current_stmt_line = stmt.line;
 
     // Emit runtime trace if enabled (--trace flag)
     if (stmt.line > 0)
@@ -4783,6 +4787,9 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             auto& es = runtime_funcs["__err_set"];
             LLVMValueRef args[] = { msg_str, LLVMConstInt(i64_type, 1, 0) };
             LLVMBuildCall2(builder, es.fn_type, es.fn, args, 2, "");
+            // A THROW goes straight to the catch without passing an error
+            // check, so this is the only place that knows its line.
+            emit_err_line(stmt.line);
 
             if (!try_stack.empty()) {
                 LLVMBuildBr(builder, try_stack.back());
@@ -5003,6 +5010,14 @@ void LLVMCodegen::emit_err_check() {
 // caller or the uncaught handler when an error is set, and continues in a
 // fresh block otherwise. After a call to a compiled FUNC this alone is enough,
 // because the callee's own statement checks already pulled any bridge error.
+void LLVMCodegen::emit_err_line(int line) {
+    if (line <= 0) return;
+    auto it = runtime_funcs.find("__err_set_line");
+    if (it == runtime_funcs.end()) return;
+    LLVMValueRef a[] = { LLVMConstInt(i64_type, line, 0) };
+    LLVMBuildCall2(builder, it->second.fn_type, it->second.fn, a, 1, "");
+}
+
 void LLVMCodegen::emit_err_code_branch() {
     if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) return;
     auto ec_it = runtime_funcs.find("__err_rc");
@@ -5016,6 +5031,10 @@ void LLVMCodegen::emit_err_code_branch() {
     LLVMBuildCondBr(builder, has_err, err_bb, ok_bb);
 
     LLVMPositionBuilderAtEnd(builder, err_bb);
+    // Where it happened, for ERL and STACK$. The innermost check to see the
+    // error records the line; the runtime keeps the first one, so the checks
+    // the error passes on its way out do not claim it as theirs.
+    emit_err_line(m_current_stmt_line);
     if (!try_stack.empty()) {
         LLVMBuildBr(builder, try_stack.back());
     } else if (current_exit_bb || in_lambda) {
@@ -5530,6 +5549,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             auto& es = runtime_funcs["__err_set"];
             LLVMValueRef args[] = { msg_str, LLVMConstInt(i64_type, 1, 0) };
             LLVMBuildCall2(builder, es.fn_type, es.fn, args, 2, "");
+            emit_err_line(stmt.line);
             if (!try_stack.empty()) {
                 LLVMBuildBr(builder, try_stack.back());
             } else {
@@ -5551,6 +5571,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             auto& es = runtime_funcs["__err_set"];
             LLVMValueRef args[] = { msg_str, LLVMConstInt(i64_type, 1, 0) };
             LLVMBuildCall2(builder, es.fn_type, es.fn, args, 2, "");
+            emit_err_line(stmt.line);
             if (!try_stack.empty()) {
                 LLVMBuildBr(builder, try_stack.back());
             } else {
@@ -15659,6 +15680,7 @@ LLVMCodegen::TypedValue LLVMCodegen::index_none_guard(const TypedValue& base, bo
         auto& es = runtime_funcs["__err_set_ifclear"];
         LLVMValueRef eargs[] = { msg, LLVMConstInt(i64_type, 99, 0) };
         LLVMBuildCall2(builder, es.fn_type, es.fn, eargs, 2, "");
+        emit_err_line(m_current_stmt_line);
         if (!try_stack.empty()) {
             LLVMBuildBr(builder, try_stack.back());
         } else if (current_exit_bb) {
@@ -15699,6 +15721,7 @@ LLVMCodegen::TypedValue LLVMCodegen::map_null_guard(LLVMValueRef ptr, bool optio
         auto& es = runtime_funcs["__err_set_ifclear"];
         LLVMValueRef eargs[] = { msg, LLVMConstInt(i64_type, 99, 0) };
         LLVMBuildCall2(builder, es.fn_type, es.fn, eargs, 2, "");
+        emit_err_line(m_current_stmt_line);
         if (!try_stack.empty()) {
             LLVMBuildBr(builder, try_stack.back());
         } else if (current_exit_bb) {
@@ -16584,6 +16607,7 @@ void LLVMCodegen::emit_div_zero_check(TypedValue rhs) {
     auto& es = runtime_funcs["__err_set"];
     LLVMValueRef eargs[] = { msg, LLVMConstInt(i64_type, 1, 0) };
     LLVMBuildCall2(builder, es.fn_type, es.fn, eargs, 2, "");
+    emit_err_line(m_current_stmt_line);
     if (!try_stack.empty()) {
         LLVMBuildBr(builder, try_stack.back());
     } else {
