@@ -2305,7 +2305,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Compiled: " << compile_output << std::endl;
         return 0;
 #else
-        std::cerr << "Native compilation not available (build with NATIVEC flag)." << std::endl;
+        std::cerr << "This jdBasic has no native compiler - the build was made without the NATIVEC flag." << std::endl;
         return 1;
 #endif
     }

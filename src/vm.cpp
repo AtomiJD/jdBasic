@@ -3087,7 +3087,7 @@ Value VM::arithmetic(const Value& a, const Value& b, OpCode op) {
                 break;
             }
             case OpCode::IDIV:
-                if (ib == 0) throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero at arithmetic helper");
+                if (ib == 0) throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero");
                 result = ia / ib; break;
             case OpCode::MOD_OP: result = (ib != 0) ? ia % ib : 0; break;
             default: result = 0;
@@ -3114,10 +3114,10 @@ Value VM::arithmetic(const Value& a, const Value& b, OpCode op) {
         case OpCode::SUB:    result = da - db; break;
         case OpCode::MUL:    result = da * db; break;
         case OpCode::DIV:
-            if (db == 0.0) throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero at arithmetic helper");
+            if (db == 0.0) throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero");
             result = da / db; break;
         case OpCode::IDIV:
-            if (db == 0.0) throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero at arithmetic helper");
+            if (db == 0.0) throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero");
             // Integer division on floats: truncate toward zero, return INT64
             return Value::make_i64((int64_t)(da / db));
         case OpCode::MOD_OP: result = (db != 0.0) ? std::fmod(da, db) : 0.0; break;

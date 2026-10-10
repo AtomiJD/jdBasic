@@ -1,0 +1,14 @@
+' A file named after a library, lying beside the script, is read in place of
+' the library, and everything the library defines is then simply absent. The
+' importer now says so on stderr; what this test pins down is the resolution
+' itself - the neighbour wins, in both backends.
+IMPORT CLI
+
+DIM bad = 0.0
+
+IF CLI.SHADOW_MARK$() <> "local" THEN
+    bad = bad + 1
+    PRINT "IMPORT CLI did not read the file beside the script"
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

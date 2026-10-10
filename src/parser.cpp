@@ -74,8 +74,13 @@ bool Parser::match(TokenType type) {
     return false;
 }
 
-Token Parser::expect(TokenType type, const std::string& msg) {
+Token Parser::expect(TokenType type, const std::string& msg, int opened_line) {
     if (check(type)) return advance();
+    // At end of input the missing token is always "on the last line", which
+    // tells the reader nothing. Where the block opened does.
+    if (opened_line > 0 && check(TokenType::EOF_TOKEN))
+        throw std::runtime_error("Parse error at line " + std::to_string(opened_line) +
+            ": the block opened here is never closed - expected " + msg);
     throw std::runtime_error("Parse error at line " + std::to_string(current().line) +
         ": expected " + msg + ", got '" + current().value + "'");
 }
@@ -357,7 +362,7 @@ StmtPtr Parser::parse_statement() {
                 }
                 skip_newlines();
             }
-            expect(TokenType::ENDTYPE, "'ENDTYPE'");
+            expect(TokenType::ENDTYPE, "'ENDTYPE'", ln);
             expect_newline();
             return s;
         }
@@ -413,7 +418,7 @@ StmtPtr Parser::parse_statement() {
                         ": expected CASE, DEFAULT, or ENDSWITCH");
                 }
             }
-            expect(TokenType::ENDSWITCH, "'ENDSWITCH'");
+            expect(TokenType::ENDSWITCH, "'ENDSWITCH'", ln);
             expect_newline();
             return s;
         }
@@ -478,7 +483,7 @@ StmtPtr Parser::parse_statement() {
                 }
             }
 
-            expect(TokenType::ENDTRY, "'ENDTRY'");
+            expect(TokenType::ENDTRY, "'ENDTRY'", ln);
             expect_newline();
             return s;
         }
@@ -522,7 +527,7 @@ StmtPtr Parser::parse_statement() {
                 expect_newline();
                 skip_newlines();
             }
-            expect(TokenType::ENDENUM, "'ENDENUM'");
+            expect(TokenType::ENDENUM, "'ENDENUM'", ln);
             expect_newline();
             return s;
         }
@@ -1253,7 +1258,7 @@ StmtPtr Parser::parse_if() {
     }
 
     if (match(TokenType::ENDIF_KW)) { /* single keyword */ }
-    else { expect(TokenType::END, "'END'"); expect(TokenType::IF, "'IF'"); }
+    else { expect(TokenType::END, "'ENDIF'", ln); expect(TokenType::IF, "'IF'"); }
     expect_newline();
     return s;
 }
@@ -1309,7 +1314,7 @@ StmtPtr Parser::parse_sub() {
     }
 
     if (match(TokenType::ENDSUB)) { /* single keyword */ }
-    else { expect(TokenType::END, "'END'"); expect(TokenType::SUB, "'SUB'"); }
+    else { expect(TokenType::END, "'ENDSUB'", ln); expect(TokenType::SUB, "'SUB'"); }
     expect_newline();
     return s;
 }
@@ -1338,7 +1343,7 @@ StmtPtr Parser::parse_function() {
     }
 
     if (match(TokenType::ENDFUNC)) { /* single keyword */ }
-    else { expect(TokenType::END, "'END'"); expect(TokenType::FUNCTION, "'FUNCTION'"); }
+    else { expect(TokenType::END, "'ENDFUNC'", ln); expect(TokenType::FUNCTION, "'FUNCTION'"); }
     expect_newline();
     return s;
 }
@@ -1369,7 +1374,7 @@ StmtPtr Parser::parse_do_loop() {
         skip_newlines();
     }
 
-    expect(TokenType::LOOP, "'LOOP'");
+    expect(TokenType::LOOP, "'LOOP'", ln);
 
     // LOOP WHILE expr / LOOP UNTIL expr
     if (!s->cond_at_top && (check(TokenType::WHILE) || check(TokenType::UNTIL))) {
@@ -1400,7 +1405,7 @@ StmtPtr Parser::parse_while_wend() {
         skip_newlines();
     }
 
-    expect(TokenType::WEND, "'WEND'");
+    expect(TokenType::WEND, "'WEND'", ln);
     expect_newline();
     return s;
 }
@@ -1435,7 +1440,7 @@ StmtPtr Parser::parse_for() {
             s->body.push_back(parse_statement());
             skip_newlines();
         }
-        expect(TokenType::NEXT, "'NEXT'");
+        expect(TokenType::NEXT, "'NEXT'", ln);
         if (check(TokenType::IDENTIFIER)) advance();
         expect_newline();
         return s;
@@ -1473,7 +1478,7 @@ StmtPtr Parser::parse_for() {
         skip_newlines();
     }
 
-    expect(TokenType::NEXT, "'NEXT'");
+    expect(TokenType::NEXT, "'NEXT'", ln);
     // Optional variable name after NEXT
     if (check(TokenType::IDENTIFIER)) advance();
     expect_newline();
@@ -2519,6 +2524,8 @@ ExprPtr Parser::parse_primary() {
 
 // ── Module import ───────────────────────────────────────────────
 
+#include "jdb_module_path.h"
+#include <iostream>
 #include "lexer.h"
 
 // IMPORT A, B, C imports each module in turn, as three IMPORT lines would.
@@ -2550,6 +2557,21 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
     if (source.empty()) {
         throw std::runtime_error("Parse error at line " + std::to_string(ln) +
             ": cannot load module '" + module_name + "'");
+    }
+
+    // A file named after the module, sitting beside the script, is read in
+    // place of the shipped library of that name - and the library's functions
+    // are then simply missing. Name both files.
+    std::string hidden = jdb_modpath::shadowed_library_path(module_name, module_file_path);
+    if (!hidden.empty()) {
+        if (!current_source_file.empty())
+            std::cerr << "warning at " << current_source_file << ":" << ln << ": ";
+        else
+            std::cerr << "warning at line " << ln << ": ";
+        std::cerr << "IMPORT " << module_name << " read " << module_file_path
+                  << " and not the library " << hidden
+                  << ", so nothing the library defines exists under this name."
+                  << std::endl;
     }
 
     // Lex + parse the module file

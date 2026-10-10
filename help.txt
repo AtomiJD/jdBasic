@@ -2002,7 +2002,7 @@ Description: Begins a block of code that executes conditionally.
 
 [IMPORT]
 Syntax: IMPORT module_name [, module_name ...]
-Description: Loads one or more jdBasic module files, in the order given.
+Description: Loads one or more jdBasic module files, in the order given. Each name is looked for as NAME.jdb and name.jdb in the script's own directory, a modules/ subdirectory of it, the working directory, every directory in JDBASIC_PATH, <home>/.jdbasic/lib and finally <jdBasic.exe>/lib; the first hit wins, with no walk-up into parent directories. A file of the module's name beside the script therefore replaces a library of that name, and nothing the library defines exists any more - the importer writes one warning line to stderr naming both files, interpreted and under -c alike. Imports are resolved while the program is parsed, so for -c they are baked into the executable.
 
 [IN]
 Syntax: FOR EACH ... IN collection
@@ -2365,7 +2365,7 @@ Description: Creates a new directory, and any missing parent directories on the 
 
 [MKTEMP$]
 Syntax: MKTEMP$([prefix$])
-Description: Returns a unique file path in the OS temp directory. Default prefix is "jdb". The file is created-then-released so the caller can own the path.
+Description: A file path in the OS temp directory that nothing else is using. The file itself does not exist when you get the path - write to it to create it. On Windows only the first three characters of the prefix are used, so MKTEMP$("probe") gives a name beginning "pro". Default prefix is "jdb".
 
 [MOD]
 Syntax: number MOD number

@@ -1,0 +1,7 @@
+' Stands in for the shipped CLI library, so test_import_shadow.jdb can see
+' which of the two an IMPORT reaches.
+EXPORT MODULE CLI
+
+EXPORT FUNC SHADOW_MARK$()
+    RETURN "local"
+ENDFUNC

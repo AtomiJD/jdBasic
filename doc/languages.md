@@ -1132,8 +1132,14 @@ NEXT
 
   `JDBASIC_PATH` is separated by `;` on Windows and by `:` elsewhere. There is no
   walk-up into parent directories, so a sibling project's module can never be
-  picked up by accident, and a project-local file always shadows an installed one
-  of the same name.
+  picked up by accident.
+
+  A file in one of the first three places shadows a library of the same name,
+  and nothing the library defines then exists: `IMPORT MAIL` beside an own
+  `mail.jdb` gives "Undefined function: MAIL.MESSAGE". That is allowed - it is
+  how a project replaces a library - but it is reported, so it cannot happen in
+  silence. The importer writes one line to stderr naming the file it read and
+  the library it passed over, in the interpreter and under `-c` alike.
 
   Imports are resolved when the program is parsed. For a program compiled with
   `-c` that means at compile time: the module is baked into the executable, and
@@ -2208,7 +2214,7 @@ SQL.CLOSE(db)
 
 * **`GETENV$(var_name$)`**: Gets the value of a system environment variable.
 * **`SETENV name$, value$`**: Sets an environment variable for the current process. Passing an empty `value$` (or omitting it) removes the variable.
-* **`MKTEMP$([prefix$])`**: Returns a unique, freshly created-and-released path in the OS temp directory. Default prefix is `"jdb"`.
+* **`MKTEMP$([prefix$])`**: A file path in the OS temp directory that nothing else is using. The file itself does **not** exist when you get the path - write to it to create it. On Windows only the first three characters of the prefix are used, so `MKTEMP$("probe")` gives a name beginning `"pro"`. Default prefix is `"jdb"`.
 * **`SETLOCALE("locale_string")`**: Sets the locale for number formatting (e.g., "en-US" or "de-DE").
 * **`TICK()`**: Returns the number of milliseconds since the program started.
 * **`DATE$()` / `TIME$()`**: Returns the current system date/time as a string.

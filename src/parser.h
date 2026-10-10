@@ -98,7 +98,10 @@ private:
     Token advance();
     bool check(TokenType type);
     bool match(TokenType type);
-    Token expect(TokenType type, const std::string& msg);
+    // opened_line names where a block began. A closing token that is missing
+    // at end of input is always reported on the last line, which says nothing;
+    // the line the block opened on is what the reader needs.
+    Token expect(TokenType type, const std::string& msg, int opened_line = 0);
     void skip_newlines();
     void expect_newline();
     bool is_type_token(TokenType t) const;
