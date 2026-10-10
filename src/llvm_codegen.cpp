@@ -897,8 +897,15 @@ void LLVMCodegen::create_main_function() {
 // trampoline. The caller checks for forms usage first; the name alone says
 // nothing outside that context.
 static bool is_forms_event_handler_name(const std::string& name) {
+    // Every name the forms layer raises (queue_event, queue_key, queue_mouse).
+    // A handler whose suffix is missing here is never registered in the
+    // trampoline, so the event fires and finds nothing: eight of the fifteen
+    // did nothing at all in a compiled program.
     static const char* suffixes[] = { "_CLICK", "_DBLCLICK", "_CHANGE",
-                                      "_TICK", "_LOAD", "_UNLOAD", "_RESIZE" };
+                                      "_TICK", "_LOAD", "_UNLOAD", "_RESIZE",
+                                      "_GOTFOCUS", "_LOSTFOCUS",
+                                      "_KEYDOWN", "_KEYPRESS", "_KEYUP",
+                                      "_MOUSEDOWN", "_MOUSEMOVE", "_MOUSEUP" };
     for (const char* s : suffixes) {
         size_t sl = strlen(s);
         if (name.size() > sl && name.compare(name.size() - sl, sl, s) == 0)
@@ -2514,6 +2521,12 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 const auto& p = decl.stmt->params()[pi];
                 if (!p.name.empty() && p.name.back() == '$') continue;
                 if (p.type != VarType::NONE) continue;
+                // The dispatch trampoline calls a handler as
+                // void(*)(JdbArray*), so its event parameter cannot take the
+                // two-slot runtime-tagged ABI. It would arrive with whatever
+                // the second register held, and TYPEOF of it read that.
+                if (pi == 0 && decl.stmt->kind == StmtKind::SUB &&
+                    event_handler_subs.count(name)) continue;
                 if (body_uses_typeof_param(*decl.stmt, p.name) ||
                     body_walks_param(*decl.stmt, p.name) ||
                     body_index_assigns_param(*decl.stmt, p.name)) {
