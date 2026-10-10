@@ -233,6 +233,7 @@ tests/regression/test_env_neg.jdb	OK	OK	OK
 tests/regression/test_error_globals.jdb	PASS	PASS	OK
 tests/regression/test_errors.jdb	PASS	PASS	OK
 tests/regression/test_exec_oem_output.jdb	PASS	PASS	OK
+tests/regression/test_file_mtime_disk.jdb	PASS	PASS	OK
 tests/regression/test_fileio.jdb	PASS	PASS	OK
 tests/regression/test_finally.jdb	PASS	PASS	OK
 tests/regression/test_for.jdb	OK	OK	OK

@@ -364,7 +364,7 @@ Description: Reads the entire content of a binary file into a single string (raw
 
 [PDF.TEXT$]
 Syntax: PDF.TEXT$(filename$)
-Description: Extracts the text of a PDF file using the built-in extractor (uncompressed, FlateDecode, ASCIIHex/ASCII85 streams). Encrypted or image-only PDFs yield only what is decodable. Interpreter runtime.
+Description: Extracts the text of a PDF file using the built-in extractor (uncompressed, FlateDecode, ASCIIHex/ASCII85 streams). A font embedded as a TrueType subset shows its text as glyph indices; the extractor reads that font's ToUnicode CMap and answers the characters, so an Identity-H page comes back as text and not as glyph bytes. Encrypted or image-only PDFs yield only what is decodable.
 
 [BINWRITER]
 Syntax: BINWRITER filename$, data$
@@ -987,6 +987,10 @@ Description: Copies a file, keeping its modification time. A target that is an e
 [FILE.STAT]
 Syntax: FILE.STAT(path$) -> map
 Description: Returns a map with fields "exists", "size", "is_dir", "readonly", "hidden", "mtime" (last change in local time, string YYYY-MM-DD HH:MM:SS). For missing files, "exists" is FALSE.
+
+[FILE.SET_MTIME]
+Syntax: FILE.SET_MTIME(path$, when) -> boolean
+Description: Sets the modification time FILE.STAT reads back, which is what a program needs to test a rule about the age of a file. A string is read the way CDATE reads one, so in local time ("2020-01-02 03:04:05"); a number is epoch seconds, which is what CDATE and a DATE value carry. The file has to exist - this does not create one. Raises when the file cannot be opened or the time cannot be written.
 
 [FILTER]
 Syntax: FILTER(function@, array)
@@ -4238,12 +4242,12 @@ Syntax: SYS.NATIVES -> text$
 Description: How many builtins this build registered, how many bytes of name that is, and what registering them cost. ESP32-S3 only.
 
 [SYS.DF]
-Syntax: SYS.DF -> text$
-Description: The flash store as a line: bytes free of bytes total. Boards only.
+Syntax: SYS.DF([path$]) -> text$
+Description: The volume a path lies on as a line: bytes free of bytes total. Without a path, the working directory volume. On a board it answers for the flash store and takes no argument.
 
 [SYS.FREEDISK]
-Syntax: SYS.FREEDISK -> bytes
-Description: Free space on the flash store, as a number. Boards only.
+Syntax: SYS.FREEDISK([path$]) -> bytes
+Description: Free space on the volume a path lies on, as a number of bytes. Without a path, the working directory volume. The number is what this user may still write, which on a volume with quotas is less than the volume free space. On a board it answers for the flash store and takes no argument.
 
 [WIFI.AP]
 Syntax: WIFI.AP(ssid$ [, password$ [, channel]]) -> 0 | -1

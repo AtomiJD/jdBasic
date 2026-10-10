@@ -4,6 +4,7 @@
 #include <cstring>
 #if !defined(_WIN32)
 #include <utime.h>
+#include <sys/statvfs.h>
 #endif
 
 // Skips a UTF-8 byte order mark at the start of a stream.
@@ -873,4 +874,90 @@ void VM::register_file_builtins() {
 #endif
         return m;
     });
+
+#ifndef JDB_LEAN
+    // Writes the modification time FILE.STAT reads back. A string is read the
+    // way CDATE reads one, so local time; a number is epoch seconds.
+    register_native("FILE.SET_MTIME", 2, 2, [this](const std::vector<Value>& args) -> Value {
+        std::string p = args[0].to_string();
+        double epoch = 0.0;
+        if (args[1].type == ValueType::STRING) {
+            const NativeEntry* cd = native_find("CDATE");
+            if (!cd) throw std::runtime_error("FILE.SET_MTIME: no date parser in this build");
+            std::vector<Value> one{ args[1] };
+            epoch = cd->fn(one).to_double();
+        } else {
+            epoch = args[1].to_double();
+        }
+#if defined(_WIN32)
+        HANDLE h = CreateFileA(p.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (h == INVALID_HANDLE_VALUE)
+            throw std::runtime_error("FILE.SET_MTIME: cannot open " + p + ": " + FileTransfer::last_error());
+        // FILETIME counts 100 ns ticks from 1601-01-01, epoch counts seconds
+        // from 1970-01-01.
+        long long ticks = (long long)((epoch + 11644473600.0) * 10000000.0);
+        FILETIME ft;
+        ft.dwLowDateTime = (DWORD)(ticks & 0xFFFFFFFF);
+        ft.dwHighDateTime = (DWORD)(ticks >> 32);
+        BOOL ok = SetFileTime(h, nullptr, nullptr, &ft);
+        std::string why = ok ? std::string() : FileTransfer::last_error();
+        CloseHandle(h);
+        if (!ok) throw std::runtime_error("FILE.SET_MTIME: " + p + ": " + why);
+#else
+        struct stat st;
+        if (stat(p.c_str(), &st) != 0)
+            throw std::runtime_error("FILE.SET_MTIME: cannot read " + p + ": " + FileTransfer::last_error());
+        struct utimbuf times;
+        times.actime = st.st_atime;
+        times.modtime = (time_t)epoch;
+        if (utime(p.c_str(), &times) != 0)
+            throw std::runtime_error("FILE.SET_MTIME: " + p + ": " + FileTransfer::last_error());
+#endif
+        return Value::make_bool(true);
+    });
+
+    // Free space on the volume a path lies on. Without a path, the working
+    // directory's volume.
+    struct DiskSpace {
+        // Bytes available to this user, and the volume's size.
+        static bool read(const std::string& path, uint64_t& avail, uint64_t& total) {
+            std::string p = path.empty() ? std::string(".") : path;
+#if defined(_WIN32)
+            ULARGE_INTEGER free_bytes, total_bytes;
+            if (!GetDiskFreeSpaceExA(p.c_str(), &free_bytes, &total_bytes, nullptr)) return false;
+            avail = free_bytes.QuadPart;
+            total = total_bytes.QuadPart;
+            return true;
+#else
+            struct statvfs vfs;
+            if (statvfs(p.c_str(), &vfs) != 0) return false;
+            avail = (uint64_t)vfs.f_bavail * (uint64_t)vfs.f_frsize;
+            total = (uint64_t)vfs.f_blocks * (uint64_t)vfs.f_frsize;
+            return true;
+#endif
+        }
+    };
+
+    register_native("SYS.FREEDISK", 0, 1, [](const std::vector<Value>& args) -> Value {
+        std::string p = args.empty() ? std::string() : args[0].to_string();
+        uint64_t avail = 0, total = 0;
+        if (!DiskSpace::read(p, avail, total))
+            throw std::runtime_error("SYS.FREEDISK: cannot read the volume of \"" +
+                (p.empty() ? std::string(".") : p) + "\": " + FileTransfer::last_error());
+        return Value::make_i64((int64_t)avail);
+    });
+
+    register_native("SYS.DF", 0, 1, [](const std::vector<Value>& args) -> Value {
+        std::string p = args.empty() ? std::string() : args[0].to_string();
+        uint64_t avail = 0, total = 0;
+        if (!DiskSpace::read(p, avail, total))
+            throw std::runtime_error("SYS.DF: cannot read the volume of \"" +
+                (p.empty() ? std::string(".") : p) + "\": " + FileTransfer::last_error());
+        char buf[96];
+        snprintf(buf, sizeof(buf), "%llu free of %llu bytes",
+                 (unsigned long long)avail, (unsigned long long)total);
+        return Value::make_string(buf);
+    });
+#endif
 }

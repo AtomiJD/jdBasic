@@ -195,14 +195,10 @@ MKDIR folder$
 DIM out_path$ = folder$ + "/invoice.pdf"
 PDFGEN.WRITEFILE(inv, out_path$)
 TESTKIT.EQ(FILE.SIZE(out_path$), LEN(pdf$), "WRITEFILE writes the same bytes")
-IF OS.FEATURE("NATIVEC") THEN
-    TESTKIT.SKIP("the PDF text extractor is interpreter-only")
-ELSE
-    DIM text$ = PDF.TEXT$(out_path$)
-    TESTKIT.ISTRUE(INSTR(text$, "Rechnung RE-2026-0413") >= 0, "the extractor reads the heading back")
-    TESTKIT.ISTRUE(INSTR(text$, "Item number 37 for the office") >= 0, "a row of the table")
-    TESTKIT.ISTRUE(INSTR(text$, "Page 2 of 2") >= 0, "and the footer of the second page")
-ENDIF
+DIM text$ = PDF.TEXT$(out_path$)
+TESTKIT.ISTRUE(INSTR(text$, "Rechnung RE-2026-0413") >= 0, "the extractor reads the heading back")
+TESTKIT.ISTRUE(INSTR(text$, "Item number 37 for the office") >= 0, "a row of the table")
+TESTKIT.ISTRUE(INSTR(text$, "Page 2 of 2") >= 0, "and the footer of the second page")
 TESTKIT.SUITE("a book page: TrueType, PNG, bookmarks, links")
 DIM font_dir$ = "resources/fonts/"
 IF NOT FILE.EXISTS(font_dir$ + "JetBrainsMono-Regular.ttf") THEN font_dir$ = "../../resources/fonts/"
@@ -275,6 +271,10 @@ DIM plain$ = PDFGEN.BUILD$(plain)
 TESTKIT.ISTRUE(INSTR(plain$, "0.00000 -1.00000 1.00000 0.00000 283.46 ") >= 0, "a text turned by -90 degrees runs down the page")
 TESTKIT.ISTRUE(INSTR(plain$, "11 beginbfchar") >= 0, "the ToUnicode map lists the eleven glyphs used")
 TESTKIT.ISTRUE(INSTR(plain$, "> <0047>") >= 0 ANDALSO INSTR(plain$, "> <00FC>") >= 0 ANDALSO INSTR(plain$, "> <20AC>") >= 0, "G, ü and the euro sign map back to their code points")
+DIM plain_path$ = folder$ + "/plain.pdf"
+PDFGEN.WRITEFILE(plain, plain_path$)
+TESTKIT.ISTRUE(INSTR(PDF.TEXT$(plain_path$), "Grüße €") >= 0, "and the extractor reads the glyphs back as that text")
+KILL plain_path$
 
 KILL out_path$
 RMDIR folder$

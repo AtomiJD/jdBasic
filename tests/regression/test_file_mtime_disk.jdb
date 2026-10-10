@@ -1,0 +1,73 @@
+' Two things a program could not ask for: the modification time of a file as
+' something it may write, and the free space of the volume it writes to. The
+' time is what a rule about the age of a file is tested against, and both
+' answers have to come out the same in either backend.
+DIM bad = 0.0
+
+FUNC SameText(label$, got$, want$)
+    IF got$ = want$ THEN RETURN 0
+    PRINT label$; " answered ["; got$; "], not ["; want$; "]"
+    RETURN 1
+ENDFUNC
+
+DIM folder$ = MKTEMP$("mtime")
+MKDIR folder$
+DIM probe$ = folder$ + "/probe.txt"
+TXTWRITER probe$, "entry"
+
+' A string is local time, as CDATE reads one.
+FILE.SET_MTIME(probe$, "2020-01-02 03:04:05")
+bad = bad + SameText("a written mtime", FILE.STAT(probe$){"mtime"}, "2020-01-02 03:04:05")
+
+' A DATE carries the same instant through either backend: epoch seconds in
+' the interpreter, an ISO string in the compiled runtime.
+FILE.SET_MTIME(probe$, CDATE("1999-12-31 23:58:00"))
+bad = bad + SameText("a DATE as the time", FILE.STAT(probe$){"mtime"}, "1999-12-31 23:58:00")
+
+' Epoch seconds read as UTC, so the local reading carries the zone offset.
+FILE.SET_MTIME(probe$, 0)
+DIM at_epoch$ = FILE.STAT(probe$){"mtime"}
+IF LEFT$(at_epoch$, 4) <> "1970" THEN
+    bad = bad + 1
+    PRINT "epoch 0 read back as "; at_epoch$
+ENDIF
+
+DIM told$ = "nothing"
+TRY
+    FILE.SET_MTIME(folder$ + "/not_here.txt", 0)
+    told$ = "answered"
+CATCH
+    told$ = "raised"
+ENDTRY
+bad = bad + SameText("a missing file", told$, "raised")
+
+KILL probe$
+RMDIR folder$
+
+' The volume of the working directory has a size, and some of it is free.
+DIM free_bytes = SYS.FREEDISK()
+IF free_bytes <= 0 THEN
+    bad = bad + 1
+    PRINT "SYS.FREEDISK answered "; free_bytes
+ENDIF
+IF SYS.FREEDISK(".") <> free_bytes THEN
+    bad = bad + 1
+    PRINT "the working directory and an explicit . disagree"
+ENDIF
+
+DIM df_line$ = SYS.DF()
+IF INSTR(df_line$, "free of") < 0 THEN
+    bad = bad + 1
+    PRINT "SYS.DF answered ["; df_line$; "]"
+ENDIF
+
+DIM df_told$ = "nothing"
+TRY
+    DIM nowhere$ = SYS.DF("Q:/no/such/volume")
+    df_told$ = "answered"
+CATCH
+    df_told$ = "raised"
+ENDTRY
+bad = bad + SameText("a volume that is not there", df_told$, "raised")
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
