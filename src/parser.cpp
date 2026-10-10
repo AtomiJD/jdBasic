@@ -89,6 +89,27 @@ void Parser::skip_newlines() {
     while (check(TokenType::NEWLINE)) advance();
 }
 
+bool Parser::args_written_as_call() {
+    if (!check(TokenType::LPAREN)) return false;
+    int depth = 0;
+    bool comma = false;
+    for (size_t k = 0;; k++) {
+        TokenType t = peek_at(k).type;
+        if (t == TokenType::EOF_TOKEN || t == TokenType::NEWLINE) return false;
+        if (t == TokenType::LPAREN || t == TokenType::LBRACKET || t == TokenType::LBRACE) {
+            depth++;
+        } else if (t == TokenType::RPAREN || t == TokenType::RBRACKET || t == TokenType::RBRACE) {
+            if (--depth == 0) {
+                TokenType after = peek_at(k + 1).type;
+                return comma && (after == TokenType::NEWLINE || after == TokenType::EOF_TOKEN ||
+                                 after == TokenType::COLON);
+            }
+        } else if (t == TokenType::COMMA && depth == 1) {
+            comma = true;
+        }
+    }
+}
+
 void Parser::expect_newline() {
     if (!check(TokenType::NEWLINE) && !check(TokenType::EOF_TOKEN) &&
         !check(TokenType::COLON) && !check(TokenType::ELSE)) {
@@ -781,6 +802,10 @@ StmtPtr Parser::parse_statement() {
             int ln = current().line;
             std::string cmd = current().value;
             advance();
+            if (args_written_as_call())
+                throw std::runtime_error("Parse error at line " + std::to_string(ln) +
+                    ": " + cmd + " is a statement - its arguments take no brackets: " +
+                    cmd + " a, b");
             std::vector<ExprPtr> args;
             if (!check(TokenType::NEWLINE) && !check(TokenType::EOF_TOKEN) && !check(TokenType::COLON)) {
                 args.push_back(parse_expr());

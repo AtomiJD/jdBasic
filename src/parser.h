@@ -104,6 +104,10 @@ private:
     Token expect(TokenType type, const std::string& msg, int opened_line = 0);
     void skip_newlines();
     void expect_newline();
+    // TRUE when a statement's argument list was written as a call, as in
+    // DRAWCOLOR(1, 2, 3). A single bracketed argument is a grouped
+    // expression and stays legal.
+    bool args_written_as_call();
     bool is_type_token(TokenType t) const;
     VarType parse_type();
     // The user type the last parse_type() saw, empty for a builtin type.

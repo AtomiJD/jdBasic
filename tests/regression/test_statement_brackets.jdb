@@ -1,0 +1,60 @@
+' The graphics statements take their arguments bare: DRAWCOLOR r, g, b. Written
+' as a call, the comma inside the brackets used to end the parse at "expected
+' ')'", which says nothing about the form that works. The message names it now,
+' while a single bracketed argument stays a grouped expression and parses.
+DIM bad = 0.0
+
+DIM exe$ = "build\jdBasic.exe"
+IF NOT FILE.EXISTS(exe$) THEN exe$ = "..\..\build\jdBasic.exe"
+
+IF NOT FILE.EXISTS(exe$) THEN
+    PRINT "SKIP: no build\jdBasic.exe to parse the two forms with"
+    PRINT "RESULTS: 1 passed, 0 failed"
+    END
+ENDIF
+
+DIM work$ = MKTEMP$("brackets")
+MKDIR work$
+
+FUNC LintOf$(src$)
+    DIM one$ = work$ + "/one.jdb"
+    TXTWRITER one$, src$
+    DIM child = OS.EXEC(exe$, ["--lint", one$])
+    RETURN child{"OUTPUT"}
+ENDFUNC
+
+DIM told$ = LintOf$("DRAWCOLOR(1, 2, 3)")
+IF INSTR(told$, "DRAWCOLOR is a statement") < 0 THEN
+    bad = bad + 1
+    PRINT "the paren form of DRAWCOLOR was answered with ["; told$; "]"
+ENDIF
+IF INSTR(told$, "take no brackets") < 0 THEN
+    bad = bad + 1
+    PRINT "the message does not say what to write instead: ["; told$; "]"
+ENDIF
+
+' Every statement of the family reports for itself, not just the first one.
+DIM rect_told$ = LintOf$("RECT(1, 2, 3, 4)")
+IF INSTR(rect_told$, "RECT is a statement") < 0 THEN
+    bad = bad + 1
+    PRINT "the paren form of RECT was answered with ["; rect_told$; "]"
+ENDIF
+
+' One bracketed argument is a grouped expression.
+DIM grouped$ = LintOf$("DRAWCOLOR (10), 20, 30")
+IF INSTR(grouped$, "Parsed OK") < 0 THEN
+    bad = bad + 1
+    PRINT "a grouped first argument was refused: ["; grouped$; "]"
+ENDIF
+
+' So is a whole argument list that carries no comma.
+DIM single$ = LintOf$("TOGGLE_FULLSCREEN(1)")
+IF INSTR(single$, "Parsed OK") < 0 THEN
+    bad = bad + 1
+    PRINT "a single bracketed argument was refused: ["; single$; "]"
+ENDIF
+
+KILL work$ + "/one.jdb"
+RMDIR work$
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

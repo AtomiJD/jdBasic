@@ -38,7 +38,7 @@ inline std::vector<UndeclaredRef> find_undeclared(
         std::vector<std::string>* defined_funcs = nullptr) {
     std::set<std::string> declared;
     for (const char* k : {"MATH.PI", "MATH.E", "TRUE", "FALSE", "NULL", "NONE", "VBNEWLINE",
-                          "NOTHING", "ERR", "ERL", "ERRMSG$", "ERRLINE", "STACK$", "THIS"})
+                          "NOTHING", "ERR", "ERL", "ERRMSG$", "STACK$", "THIS"})
         declared.insert(k);
 
     std::function<void(const Expr*)> collect_expr = [&](const Expr* e) {

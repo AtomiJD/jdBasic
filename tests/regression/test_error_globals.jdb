@@ -53,4 +53,23 @@ IF div_stack$ <> "line 42" THEN
     PRINT "STACK$ after a division by zero: ["; div_stack$; "]"
 ENDIF
 
+' err$ is a variable like any other: the message lives in ERRMSG$, and a CATCH
+' writes none of the program's own names.
+DIM err$ = "my own value"
+DIM in_catch$ = ""
+TRY
+    THROW "boom again"
+CATCH
+    in_catch$ = ERRMSG$
+ENDTRY
+
+IF err$ <> "my own value" THEN
+    bad = bad + 1
+    PRINT "a CATCH wrote to err$: ["; err$; "]"
+ENDIF
+IF in_catch$ <> "boom again" THEN
+    bad = bad + 1
+    PRINT "ERRMSG$ in the second CATCH: ["; in_catch$; "]"
+ENDIF
+
 IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

@@ -1227,7 +1227,7 @@ Inside a CATCH block, you can use the following built-in variables:
 
 * **`ERR`**: The numeric error code.
 * **`ERL`**: The line number where the error occurred.
-* **`ERRMSG$`**: The descriptive error message string.
+* **`ERRMSG$`**: The descriptive error message string. `ERR$` is not one of these names - `err$` is an ordinary variable, and a `CATCH` leaves it alone.
 * **`STACK$`**: The call stack .
 
 ```basic

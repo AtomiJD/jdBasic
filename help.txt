@@ -436,7 +436,7 @@ Description: A block inside a SWITCH statement that executes if any listed value
 
 [CATCH]
 Syntax: CATCH
-Description: The block of code that executes when an error occurs within a TRY block.
+Description: The block of code that executes when an error occurs within a TRY block. It reads ERR (the code), ERL (the line), ERRMSG$ (the message) and STACK$.
 
 [CBOOL]
 Syntax: CBOOL(x)
