@@ -5,6 +5,9 @@ levels (easy, medium, expert) that take routine office work off the reader's
 desk, a setup wizard for the easy level, and a build that turns the Markdown
 manuscript into a Word document with jdBasic itself.
 
+Status, 2026-10-11: 56 recipes, every one green on all five columns of
+check_recipes.
+
 Status, 2026-10-02: WP 0a to 0c and WP 1 to WP 5 done; print PDF 655
 pages. WP 5: chapter 6 (with a worked change: a monthly schedule in the
 wizard), appendices A to E (D and E generated from the recipe folders

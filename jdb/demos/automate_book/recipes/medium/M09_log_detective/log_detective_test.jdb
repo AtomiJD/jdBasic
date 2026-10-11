@@ -4,8 +4,21 @@
 
 IMPORT TESTKIT, LOGSCAN
 
-DIM base$ = "recipes/medium/M09_log_detective/"
-IF NOT FILE.EXISTS(base$ + "app.log") THEN base$ = ""
+DIM work$ = MKTEMP$("logscan")
+MKDIR work$
+DIM log_path$ = PATH.JOIN$(work$, "app.log")
+DIM fixture = ["2026-10-05 08:58:12 INFO started"]
+PUSH(fixture, "2026-10-05 09:14:03 ERROR Timeout after 30 s on job 4711")
+PUSH(fixture, "    at Mailer.send (line 88)")
+PUSH(fixture, "2026-10-05 09:21:47 WARN low memory")
+PUSH(fixture, "2026-10-05 09:33:10 ERROR Timeout after 45 s on job 4712")
+PUSH(fixture, "2026-10-05 09:49:55 ERROR Timeout after 30 s on job 4713")
+PUSH(fixture, "2026-10-05 09:52:01 WARN low memory")
+PUSH(fixture, "2026-10-05 10:05:12 ERROR Connection refused by 10.0.0.7")
+PUSH(fixture, "2026-10-05 10:41:38 FATAL: lost the queue")
+PUSH(fixture, "2026-10-05 11:03:09 WARNING retrying in 5 s")
+PUSH(fixture, "2026-10-05 11:15:44 INFO finished")
+TXTWRITER log_path$, JOIN(fixture, CHR$(10)) + CHR$(10)
 
 TESTKIT.SUITE("lines")
 DIM p = LOGSCAN.PARSE("2026-10-05 09:14:03 ERROR Timeout after 30 s")
@@ -22,7 +35,7 @@ TESTKIT.EQ(LOGSCAN.SIGNATURE$("Timeout after 30 s on job 4711"), "Timeout after 
 
 TESTKIT.SUITE("the fixture log")
 DIM stats = LOGSCAN.NEW()
-LOGSCAN.SCAN_TEXT(stats, TXTREADER$(base$ + "app.log"))
+LOGSCAN.SCAN_TEXT(stats, TXTREADER$(log_path$))
 TESTKIT.EQ(stats{"lines"}, 11, "eleven lines")
 TESTKIT.EQ(stats{"skipped"}, 1, "one of them without a time stamp")
 TESTKIT.EQ(LOGSCAN.TOTAL(stats, "ERROR"), 5, "five errors")
@@ -39,13 +52,12 @@ DIM rep$ = LOGSCAN.REPORT$(stats, 2)
 TESTKIT.ISTRUE(STARTSWITH(rep$, "11 lines, 5 errors, 3 warnings"), "the totals first")
 TESTKIT.ISTRUE(INSTR(rep$, "    3  Timeout after # s on job #") >= 0, "the top error with its count")
 TESTKIT.ISTRUE(INSTR(rep$, "2026-10-05 10:00      2         0") >= 0, "a row per hour")
-DIM tmp$ = MKTEMP$("logscan")
-MKDIR tmp$
-DIM svg$ = PATH.JOIN$(tmp$, "hours.svg")
+DIM svg$ = PATH.JOIN$(work$, "hours.svg")
 LOGSCAN.CHART(stats, svg$)
 DIM markup$ = TXTREADER$(svg$)
 TESTKIT.ISTRUE(STARTSWITH(TRIM$(markup$), "<svg") ORELSE INSTR(markup$, "<svg") >= 0, "an SVG file")
 TESTKIT.ISTRUE(INSTR(markup$, "10-05 09h") >= 0, "with the hours as labels")
 KILL svg$
-RMDIR tmp$
+KILL log_path$
+RMDIR work$
 TESTKIT.REPORT()

@@ -67,9 +67,10 @@ The module does the work, from the calendar to the PDF:
    meetings included. It keeps those that start on the day you asked
    for and leaves out events that block whole days, such as a holiday.
 2. A time in the calendar can carry a time zone or not. A time with a
-   zone is shown on your computer's clock; a time without one is shown
-   as the file writes it, which is what Outlook means by it. That is
-   the work of `Zoned`.
+   zone names an instant and is shown on your computer's clock. A time
+   without one names a wall clock, which the ICAL library reads in your
+   zone, so `Clock$` gives back the digits the file writes - which is
+   what Outlook means by such a time.
 3. `NAMES` reads the names of the people from the `CN` part of the
    `ATTENDEE` lines, so the page says "Anna Berg" and not her address.
 4. `MAILS` reads every saved mail and keeps those from or to one of

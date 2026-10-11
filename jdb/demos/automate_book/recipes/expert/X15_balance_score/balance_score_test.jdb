@@ -96,7 +96,11 @@ DIM awful = {"hours": 90, "late_hours": 40, "meeting_hours": 0, _
 TESTKIT.EQ(BALANCE.SCORE(awful, rules){"score"}, 0, "never below 0")
 
 TESTKIT.SUITE("the weeks and the page")
-DIM sources = {"log": log$, "calendar": ics$, "outbox": box$}
+' A mail counts into the week it was written, which is the week this test
+' runs in, so the scores below read an outbox without any.
+DIM quiet_box$ = PATH.JOIN$(folder$, "quiet")
+MKDIR PATH.JOIN$(quiet_box$, "sent")
+DIM sources = {"log": log$, "calendar": ics$, "outbox": quiet_box$}
 DIM list = BALANCE.WEEKS(sources, rules, sunday, 3)
 TESTKIT.EQ(LEN(list), 3, "three weeks")
 TESTKIT.EQ(list[0]{"week"}, "2026-W39", "oldest first")
@@ -111,7 +115,9 @@ DIM page$ = BALANCE.PAGE$(list, rules, tpl$)
 TESTKIT.ISTRUE(INSTR(page$, "week 2026-W41") >= 0, "the page")
 TESTKIT.ISTRUE(INSTR(page$, "outside working hours") >= 0, _
     "with the points lost")
-TESTKIT.ISTRUE(INSTR(page$, "every hour worked above" + LF$ + _
+' The template is a text file, so its line ends are the checkout's.
+DIM flat$ = REPLACE$(page$, CHR$(13), "")
+TESTKIT.ISTRUE(INSTR(flat$, "every hour worked above" + LF$ + _
     "    40") >= 0, "and the rules with their numbers")
 
 TESTKIT.SUITE("the web page")

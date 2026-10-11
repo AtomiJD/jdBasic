@@ -111,6 +111,8 @@ DIM here$ = "recipes/expert/X10_ai_drive/aitools.jdb"
 DIM to_write = AITOOLS.MANIFESTS(here$)
 IF jdbasic$ = "" THEN
     TESTKIT.SKIP("no jdbasic found to start the MCP server")
+ELSEIF NOT OS.FEATURE("MCPSERVER") THEN
+    TESTKIT.SKIP("this jdbasic was built without MCP server mode")
 ELSE
     DIM tools$ = PATH.JOIN$(work$, "ai-tools")
     MKDIR tools$

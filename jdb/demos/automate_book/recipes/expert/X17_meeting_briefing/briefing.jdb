@@ -44,27 +44,17 @@ EXPORT FUNC NAMES(ics_text$)
     RETURN out
 ENDFUNC
 
-' Whether an event's time names a zone (Z or TZID). A time without
-' one is shown as the file writes it.
-FUNC Zoned(cal, ev, prop$)
-    DIM raw$ = ICAL.RAW$(cal, ev, prop$)
-    IF RIGHT$(raw$, 1) = "Z" THEN RETURN TRUE
-    RETURN ICAL.PARAM$(cal, ev, prop$, "TZID") <> ""
+' The clock time of an instant as HH:MM, on this computer's clock. A time
+' the file writes with a zone (Z or TZID) is an instant; a time without
+' one names a wall clock, which ICAL reads in this zone, so this clock
+' gives back the digits the file writes.
+FUNC Clock$(t_in)
+    RETURN FORMAT_DATE(CDBL(t_in), "%H:%M")
 ENDFUNC
 
-' The clock time of an event's start or end as HH:MM.
-FUNC Clock$(cal, ev, prop$, t_in)
-    DIM t = CDBL(t_in)
-    IF Zoned(cal, ev, prop$) THEN RETURN FORMAT_DATE(t, "%H:%M")
-    RETURN FORMAT_DATE(t, "%H:%M", 0)
-ENDFUNC
-
-' The date an event starts on, as YYYY-MM-DD.
-FUNC Day$(cal, ev, t_in)
-    DIM t = CDBL(t_in)
-    DIM fmt$ = "%Y-%m-%d"
-    IF Zoned(cal, ev, "DTSTART") THEN RETURN FORMAT_DATE(t, fmt$)
-    RETURN FORMAT_DATE(t, fmt$, 0)
+' The date an instant falls on, as YYYY-MM-DD.
+FUNC Day$(t_in)
+    RETURN FORMAT_DATE(CDBL(t_in), "%Y-%m-%d")
 ENDFUNC
 
 ' The people of an event as maps with name and mail.
@@ -102,12 +92,12 @@ EXPORT FUNC MEETINGS(ics_path$, day$)
     FOR k = 0 TO DF.NROWS(frame) - 1
         DIM r = DF.ROW(frame, k)
         DIM ev = r{"event"}
-        DIM today = Day$(cal, ev, r{"start"}) = day$
+        DIM today = Day$(r{"start"}) = day$
         IF today ANDALSO NOT ICAL.ALLDAY(cal, ev) THEN
             DIM m AS MAP
             m{"title"} = r{"summary"}
-            m{"start"} = Clock$(cal, ev, "DTSTART", r{"start"})
-            m{"end"} = Clock$(cal, ev, "DTEND", r{"end"})
+            m{"start"} = Clock$(r{"start"})
+            m{"end"} = Clock$(r{"end"})
             m{"location"} = ICAL.PROP$(cal, ev, "LOCATION", "")
             m{"people"} = People(cal, ev, names)
             PUSH(found, m)
