@@ -52,14 +52,25 @@ ISTRUE("and the negation of a miss", NOT DATED("scan 2026-09-30.pdf"))
 
 ISFALSE("a name OS.FEATURE does not know", OS.FEATURE("NO_SUCH_FLAG"))
 ISTRUE("one of the two backends", OS.FEATURE("INTERPRETER") ORELSE OS.FEATURE("NATIVEC"))
+' A predicate answers a truth value, and it renders as one. Compiled these
+' five read as INT64 1 while the interpreter said TRUE, because the reg()
+' line in the codegen carries its own kind beside the table's.
+SAY("OS.FEATURE renders a miss", STR$(OS.FEATURE("NO_SUCH_FLAG")), "FALSE")
+SAY("and names its kind", TYPEOF(OS.FEATURE("INTERPRETER")), "BOOLEAN")
+SAY("STARTSWITH names its kind", TYPEOF(STARTSWITH("abc", "ab")), "BOOLEAN")
+SAY("and renders as one", STR$(STARTSWITH("abc", "zz")), "FALSE")
+SAY("ENDSWITH names its kind", TYPEOF(ENDSWITH("abc", "bc")), "BOOLEAN")
+SAY("ALL names its kind", TYPEOF(ALL([TRUE, FALSE])), "BOOLEAN")
+SAY("ANY names its kind", TYPEOF(ANY([TRUE, FALSE])), "BOOLEAN")
+
 ' Every optional build flag the version banner names is a name OS.FEATURE
-' takes: the answer is usable as a condition whichever way the build went.
+' takes, and each answers a truth value whichever way the build went.
 DIM names AS ARRAY = ["FORMS", "OPENGL", "MINIAUDIO", "FX", "MIDI", "MCPSERVER", _
     "SQLITE", "PYTHON", "COM", "HTTP", "NET", "SERIAL", "GFX", "IMGUI", "LLM", "ONNX"]
 DIM k AS INTEGER = 0
 FOR k = 0 TO LEN(names) - 1
     DIM one AS STRING = names[k]
-    ISTRUE(one + " is a name it takes", OS.FEATURE(one) ORELSE NOT OS.FEATURE(one))
+    SAY(one + " answers a truth value", TYPEOF(OS.FEATURE(one)), "BOOLEAN")
 NEXT k
 
 PRINT "RESULTS: "; gPass; " passed, "; gFail; " failed"

@@ -77,6 +77,62 @@ FUNC WantsSig(kind$)
     RETURN ""
 ENDFUNC
 
+' The position of the nth quote in a line, -1 when there are fewer.
+FUNC QuoteAt(s$, n)
+    DIM found = -1
+    DIM from = 0
+    DIM k = 0
+    FOR k = 1 TO n
+        found = CINT(INSTR(from, s$, CHR$(34)))
+        IF found < 0 THEN RETURN -1
+        from = found + 1
+    NEXT k
+    RETURN found
+ENDFUNC
+
+' The builtin a reg() line binds straight to a runtime function, "" when the
+' line is not one. That binding carries its own JD_TAG, so the kind is
+' written down a second time - and nothing compared the two until OS.FEATURE
+' answered BOOLEAN interpreted and INT64 compiled.
+FUNC BoundName(s$)
+    IF INSTR(s$, "reg(" + CHR$(34)) < 0 THEN RETURN ""
+    IF INSTR(s$, "JD_TAG_") < 0 THEN RETURN ""
+    DIM q3 = QuoteAt(s$, 3)
+    DIM q4 = QuoteAt(s$, 4)
+    IF q3 < 0 ORELSE q4 <= q3 THEN RETURN ""
+    RETURN MID$(s$, q3 + 1, q4 - q3 - 1)
+ENDFUNC
+
+FUNC BoundTag(s$)
+    DIM at = CINT(INSTR(s$, "JD_TAG_"))
+    IF at < 0 THEN RETURN ""
+    DIM rest$ = MID$(s$, at + 7, 20)
+    DIM cut = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(rest$) - 1
+        DIM ch$ = MID$(rest$, k, 1)
+        IF (ch$ >= "A" ANDALSO ch$ <= "Z") ORELSE (ch$ >= "0" ANDALSO ch$ <= "9") ORELSE ch$ = "_" THEN
+            cut = k + 1
+        ELSE
+            EXITFOR
+        ENDIF
+    NEXT k
+    RETURN LEFT$(rest$, cut)
+ENDFUNC
+
+' The table kind a bound tag asks for, "" where the tag says nothing about
+' it: DATE rides the f64 variant and BF_DATE records it, RUNTIME is the
+' tagged answer an Any entry describes.
+FUNC KindOfTag(tag$)
+    IF tag$ = "BOOL" THEN RETURN "Bool"
+    IF tag$ = "I64" THEN RETURN "I64"
+    IF tag$ = "F64" THEN RETURN "F64"
+    IF tag$ = "STR" THEN RETURN "Str"
+    IF tag$ = "ARR" THEN RETURN "Arr"
+    IF tag$ = "VM_HANDLE" THEN RETURN "Handle"
+    RETURN ""
+ENDFUNC
+
 FUNC NumOf(s$, ch$)
     RETURN LEN(SPLIT(s$, ch$)) - 1
 ENDFUNC
@@ -302,6 +358,23 @@ FOR EACH f$ IN srcfiles
     WEND
 NEXT
 
+' The direct bindings, collected once so the report and --check read the
+' same pairs.
+DIM bound_names = []
+DIM bound_sigs = []
+FOR i = 0 TO LEN(codegen_lines) - 1
+    DIM bn$ = BoundName(codegen_lines[i])
+    IF bn$ = "" THEN CONTINUEFOR
+    DIM bk$ = KindOfTag(BoundTag(codegen_lines[i]))
+    IF bk$ = "" THEN CONTINUEFOR
+    DIM ts$ = SigOf(bn$)
+    IF ts$ = "-" ORELSE ts$ = "Any" ORELSE ts$ = bk$ THEN CONTINUEFOR
+    ' BF_DATE outranks the return kind, as above.
+    IF INSTR(EntryOf(bn$), "BF_DATE") >= 0 THEN CONTINUEFOR
+    PUSH(bound_names, bn$)
+    PUSH(bound_sigs, bk$ + "|" + ts$)
+NEXT
+
 ' --check reports only the contradictions and fails on them, which is what
 ' CI needs. The unlisted names are a backlog, not a breakage.
 DIM check_only = FALSE
@@ -319,8 +392,14 @@ IF check_only THEN
             found = found + 1
         ENDIF
     NEXT
+    DIM b = 0
+    FOR b = 0 TO LEN(bound_names) - 1
+        DIM parts = SPLIT(bound_sigs[b], "|")
+        PRINT bound_names[b]; " is bound as "; parts[0]; ", builtin_sigs.h says "; parts[1]
+        found = found + 1
+    NEXT b
     IF found = 0 THEN
-        PRINT "builtin returns: "; LEN(names); " registrations, none contradicts the table"
+        PRINT "builtin returns: "; LEN(names); " registrations, "; LEN(codegen_lines); " codegen lines, none contradicts the table"
     ELSE
         PRINT found; " builtin(s) answer a kind the table does not record"
         END 1
@@ -392,7 +471,19 @@ FOR i = 0 TO LEN(names) - 1
 NEXT
 
 PRINT ""
+PRINT ""
+PRINT "== bound straight to a runtime function, and the table says another kind =="
+PRINT "   The reg() line's JD_TAG decides what a compiled caller reads, so the"
+PRINT "   two have to agree or the backends answer different kinds."
+DIM b2 = 0
+FOR b2 = 0 TO LEN(bound_names) - 1
+    DIM pp = SPLIT(bound_sigs[b2], "|")
+    PRINT bound_names[b2]; "  bound as "; pp[0]; ", table says "; pp[1]
+NEXT b2
+
+PRINT ""
 PRINT "NONE-only and unlisted: "; n_none_new
 PRINT "single-kind and unlisted: "; n_kind_new
 PRINT "container and unlisted: "; n_container_new
 PRINT "conflicts with the table: "; n_conflict
+PRINT "bindings that disagree with the table: "; LEN(bound_names)

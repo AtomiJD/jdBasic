@@ -526,7 +526,7 @@ void LLVMCodegen::declare_runtime_functions() {
         void_type, {i8_ptr_type, i8_ptr_type}, -1);
 
     // OS.FEATURE - query whether a build feature is present in this binary
-    reg("jdb_os_feature",     "OS.FEATURE",      i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_os_feature",     "OS.FEATURE",      i64_type, {i8_ptr_type}, JD_TAG_BOOL);
 
     // OS
     reg("jdb_set_args",   "__set_args",   void_type, {i32_type, i8_ptr_type}, -1);
@@ -575,8 +575,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_str_ne",   "__str_ne",  i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_ltrim",    "LTRIM$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_rtrim",    "RTRIM$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
-    reg("jdb_startswith","STARTSWITH", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
-    reg("jdb_endswith", "ENDSWITH", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_startswith","STARTSWITH", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_BOOL);
+    reg("jdb_endswith", "ENDSWITH", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_BOOL);
     reg("jdb_hex",      "HEX$",    i8_ptr_type, {i64_type}, JD_TAG_STR);
     reg("jdb_bin",      "BIN$",    i8_ptr_type, {i64_type}, JD_TAG_STR);
     reg("jdb_oct",      "OCT$",    i8_ptr_type, {i64_type}, JD_TAG_STR);
