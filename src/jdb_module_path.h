@@ -45,6 +45,8 @@ inline std::string install_dir() {
     char buf[4096];
     uint32_t size = sizeof(buf);
     if (_NSGetExecutablePath(buf, &size) == 0) exe = buf;
+#elif defined(JDB_MCU)
+    // A board has no running-executable path, so the search skips that step.
 #else
     char buf[4096];
     ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -136,12 +138,14 @@ inline std::vector<std::string> candidates(const std::string& module_name,
 }
 
 // The path as the module reader reports it: absolute, native separators.
+// A board build has no path canonicaliser and answers with the path as given.
 inline std::string abs_path(const std::string& p) {
-    char buf[4096];
 #ifdef _WIN32
+    char buf[4096];
     DWORD len = GetFullPathNameA(p.c_str(), (DWORD)sizeof(buf), buf, nullptr);
     if (len > 0 && len < sizeof(buf)) return std::string(buf, len);
-#else
+#elif !defined(JDB_MCU)
+    char buf[4096];
     if (realpath(p.c_str(), buf)) return std::string(buf);
 #endif
     return p;

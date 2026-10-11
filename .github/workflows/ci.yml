@@ -74,3 +74,48 @@ jobs:
         run: |
           & build/jdBasic.exe tools/check_doc_examples.jdb doc/tour.md doc/guides/native.md doc/guides/data.md doc/guides/boards.md
           if ($LASTEXITCODE -ne 0) { throw "a documentation example prints something else" }
+
+  linux-core:
+    name: Core build + gate (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Eigen
+        id: cache-eigen
+        uses: actions/cache@v4
+        with:
+          path: libs/eigen
+          key: eigen-3.4.0-linux
+
+      - name: Fetch Eigen
+        if: steps.cache-eigen.outputs.cache-hit != 'true'
+        run: |
+          curl -sSL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz -o eigen.tar.gz
+          mkdir -p libs tmp_eigen
+          tar xzf eigen.tar.gz -C tmp_eigen
+          mv tmp_eigen/eigen-3.4.0 libs/eigen
+
+      - name: Build (core, no feature flags)
+        run: HTTP=0 GFX=0 ./build.sh
+
+      - name: Gate suites (interpreter)
+        run: |
+          for s in comprehensive_test native_test test_apl_complete test_apl_pipelines; do
+            echo "=== $s"
+            out=$(./build/jdbasic "tests/gate/$s.jdb" 2>&1)
+            echo "$out"
+            echo "$out" | grep -qE "ALL TESTS PASSED!|, 0 failed" || { echo "$s FAILED"; exit 1; }
+          done
+
+      - name: Builtin signature table
+        run: ./build/jdbasic tools/check_builtin_sigs.jdb
+
+      - name: Builtin return kinds
+        run: ./build/jdbasic tools/scan_builtin_returns.jdb --check
+
+      - name: Language reference contents and index
+        run: ./build/jdbasic tools/gen_doc_index.jdb --check
+
+      - name: Documentation examples
+        run: ./build/jdbasic tools/check_doc_examples.jdb doc/tour.md doc/guides/native.md doc/guides/data.md doc/guides/boards.md

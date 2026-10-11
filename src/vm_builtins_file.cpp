@@ -4,7 +4,9 @@
 #include <cstring>
 #if !defined(_WIN32)
 #include <utime.h>
+#if !defined(JDB_MCU)
 #include <sys/statvfs.h>
+#endif
 #endif
 
 // Skips a UTF-8 byte order mark at the start of a stream.
@@ -917,6 +919,7 @@ void VM::register_file_builtins() {
         return Value::make_bool(true);
     });
 
+#ifndef JDB_MCU
     // Free space on the volume a path lies on. Without a path, the working
     // directory's volume.
     struct DiskSpace {
@@ -959,5 +962,6 @@ void VM::register_file_builtins() {
                  (unsigned long long)avail, (unsigned long long)total);
         return Value::make_string(buf);
     });
+#endif
 #endif
 }

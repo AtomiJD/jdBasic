@@ -3,3 +3,7 @@ tests/jdlibs/fixtures/** text=auto eol=lf
 
 # Fonts are binary; never touch their line ends.
 *.ttf binary
+
+# Shell scripts run under a kernel that reads  as part of the interpreter
+# name, so keep LF even in a Windows checkout.
+*.sh text eol=lf

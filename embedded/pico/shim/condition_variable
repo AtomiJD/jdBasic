@@ -6,5 +6,8 @@ namespace std {
     template<class L> void wait(L&){}
     template<class L, class P> void wait(L&, P p){ while(!p()){} }
     template<class L, class T> int wait_for(L&, T){ return 0; }
+    // Nothing else runs while this build waits, so the predicate cannot
+    // change: it answers once, as the real wait_for answers at the deadline.
+    template<class L, class T, class P> bool wait_for(L&, T, P p){ return p(); }
   };
 }
