@@ -1,0 +1,86 @@
+' The three AI builtins whose answer kind was never written down.
+'
+' AI.RUN answers whatever the model's output tensor is: a number for a
+' single element, a nested array otherwise. AI.SOFTMAX answers a vector, as
+' the reference says, and raises for anything else rather than handing the
+' argument back - an answer whose kind followed the caller's mistake.
+' AI.CHAT_JSON answers the object its grammar's root demands.
+'
+' Needs an ONNX build for the first two, an LLM build and a model for the
+' third, so it lives beside the other AI tests rather than in the sweep.
+'   jdbasic tests/ai/test_ai_answer_kinds.jdb [path/to/model.gguf]
+
+DIM bad = 0
+DIM ran = 0
+
+SUB SAY(what$, got$, want$)
+    IF got$ <> want$ THEN
+        bad = bad + 1
+        PRINT "FAIL "; what$; "  is ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+DIM onnx$ = "jdb/bench/matmul.onnx"
+IF NOT FILE.EXISTS(onnx$) THEN onnx$ = PATH.JOIN$(PATH.JOIN$("..", ".."), onnx$)
+
+IF NOT OS.FEATURE("ONNX") THEN
+    PRINT "SKIP: this build has no ONNX, so AI.RUN and AI.SOFTMAX are not checked"
+ELSEIF NOT FILE.EXISTS(onnx$) THEN
+    ' The models are big binaries and gitignored, so a checkout has none.
+    PRINT "SKIP: no matmul.onnx to run the model with"
+ELSE
+    DIM mid = AI.LOAD(onnx$)
+    ran = ran + 1
+
+    ' One element out: a number, not an array of one.
+    DIM one_a = [[2.0]]
+    DIM one_b = [[21.0]]
+    SAY("AI.RUN of a 1x1 product", TYPEOF(AI.RUN(mid, [one_a, one_b])), "FLOAT64")
+    SAY("and its value", STR$(AI.RUN(mid, [one_a, one_b])), "42")
+
+    ' More than one: a nested array, read per cell.
+    DIM a2 = [[1.0, 2.0], [3.0, 4.0]]
+    DIM b2 = [[5.0, 6.0], [7.0, 8.0]]
+    DIM m2 = AI.RUN(mid, [a2, b2])
+    SAY("AI.RUN of a 2x2 product", TYPEOF(m2), "ARRAY")
+    SAY("its first row", TYPEOF(m2[0]), "ARRAY")
+    SAY("and the top left cell", STR$(m2[0][0]), "19")
+    AI.FREE(mid)
+
+    DIM sm = AI.SOFTMAX([1.0, 2.0, 3.0])
+    SAY("AI.SOFTMAX of a vector", TYPEOF(sm), "ARRAY")
+    SAY("one weight per element", STR$(LEN(sm)), "3")
+    DIM empty = []
+    SAY("an empty vector stays one", TYPEOF(AI.SOFTMAX(empty)), "ARRAY")
+
+    DIM refused$ = "took it"
+    TRY
+        DIM echoed = AI.SOFTMAX(5)
+    CATCH
+        refused$ = "refused"
+    ENDTRY
+    SAY("AI.SOFTMAX of a scalar", refused$, "refused")
+ENDIF
+
+' The model comes from the command line: no path, no LLM half.
+DIM argv = OS.ARGS()
+DIM model$ = ""
+IF LEN(argv) > 1 THEN model$ = argv[LEN(argv) - 1]
+
+IF model$ = "" ORELSE NOT FILE.EXISTS(model$) THEN
+    PRINT "SKIP: no model given, so AI.CHAT_JSON is not checked"
+ELSE
+    DIM llm = AI.LOAD_LLM(model$, 2048, 99)
+    ran = ran + 1
+    DIM obj = AI.CHAT_JSON(llm, "Answer with a JSON object holding name and population for Berlin. JSON only.")
+    SAY("AI.CHAT_JSON answers an object", TYPEOF(obj), "OBJECT")
+    SAY("and its fields are readable", TYPEOF(MAP.KEYS(obj)), "ARRAY")
+    AI.FREE_LLM(llm)
+ENDIF
+
+IF ran = 0 THEN
+    PRINT "SKIP: neither half could run"
+ELSE
+    PRINT "RESULTS: "; ran; " halves checked, "; bad; " failed"
+ENDIF
+IF bad > 0 THEN END 1

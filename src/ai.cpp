@@ -433,8 +433,13 @@ void register_ai_builtins(VM& vm) {
     // ── AI.SOFTMAX(array) -> array ──────────────────────────────
 
     vm.register_native("AI.SOFTMAX", 1, 1, [](const std::vector<Value>& args) -> Value {
+        // A vector in, a vector out. as_array() answers an empty array for a
+        // scalar too, so the kind has to be asked: handing the argument back
+        // made the answer's kind depend on the caller's mistake.
+        if (args[0].type != ValueType::ARRAY)
+            throw jdError(ErrCode::TYPE_MISMATCH, "AI.SOFTMAX: expected an array");
         auto* arr = args[0].as_array();
-        if (!arr || arr->elements.empty()) return args[0];
+        if (arr->elements.empty()) return args[0];
 
         // Find max for numerical stability
         double max_val = arr->elements[0].to_double();
