@@ -35,7 +35,9 @@ if [ -z "${CXX:-}" ]; then
     esac
 fi
 JOBS=${JOBS:-$(default_jobs)}
-CXXFLAGS="-std=c++17 -O2 -DNDEBUG -fPIC -DJDRT_EXPORTS -Isrc -Ilibs/eigen"
+# -MMD -MP write a .d beside every object naming the headers it read, which
+# is what needs_build reads to decide staleness.
+CXXFLAGS="-std=c++17 -O2 -DNDEBUG -MMD -MP -fPIC -DJDRT_EXPORTS -Isrc -Ilibs/eigen"
 LDFLAGS="-shared -ldl -lpthread -lm"
 # See build.sh: a Darwin library records where it expects to be found,
 # and @rpath leaves that to the program that loads it.
@@ -240,11 +242,28 @@ if [ ! -f "$STAMP" ]; then
     touch "$STAMP"
 fi
 
+# True when a unit has to be compiled again: no object, a newer source, no
+# record of what it read, or any file it read newer than the object. The .d
+# file comes from -MMD; -MP adds a target per header so a deleted one does
+# not stop the build. Comparing only the .cpp against the object left a
+# header change unbuilt, and a struct that grew in one left half the objects
+# on the old layout - the library then crashed far away from the change.
+needs_build() {
+    local src="$1" obj="$2" dep="${2%.o}.d" f
+    [ -f "$obj" ] || return 0
+    [ "$src" -nt "$obj" ] && return 0
+    [ -f "$dep" ] || return 0
+    for f in $(sed -e 's/\\$//' -e 's/^[^ ]*\.o://' "$dep" | tr -s ' \t' '\n' | grep -v ':$'); do
+        [ -f "$f" ] && [ "$f" -nt "$obj" ] && return 0
+    done
+    return 1
+}
+
 OBJS=()
 TO_BUILD=()
 for s in $SRC; do
     o="build/obj_pic/$(basename "$s" .cpp).o"; OBJS+=("$o")
-    if [ ! -f "$o" ] || [ "$s" -nt "$o" ]; then TO_BUILD+=("$s|$o"); fi
+    if needs_build "$s" "$o"; then TO_BUILD+=("$s|$o"); fi
 done
 
 features="embed"

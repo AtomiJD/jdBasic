@@ -32,7 +32,9 @@ if [ -z "${CXX:-}" ]; then
     esac
 fi
 JOBS=${JOBS:-$(default_jobs)}
-CXXFLAGS="-std=c++17 -O2 -DNDEBUG -Isrc -Ilibs/eigen"
+# -MMD -MP write a .d beside every object naming the headers it read, which
+# is what needs_build reads to decide staleness.
+CXXFLAGS="-std=c++17 -O2 -DNDEBUG -MMD -MP -Isrc -Ilibs/eigen"
 # BUILD_NUM stamps the binary the way build.bat does, so a distribution
 # tarball can say which build it is instead of "Build 0, dev". Left
 # unset for a development build, which is what most runs are.
@@ -310,6 +312,23 @@ obj_path() {
     echo "build/obj/$(basename "$1" .cpp).o"
 }
 
+# True when a unit has to be compiled again: no object, a newer source, no
+# record of what it read, or any file it read newer than the object. The .d
+# file comes from -MMD; -MP adds a target per header so a deleted one does
+# not stop the build. Comparing only the .cpp against the object left a
+# header change unbuilt, and a struct that grew in one left half the objects
+# on the old layout - the binary then crashed far away from the change.
+needs_build() {
+    local src="$1" obj="$2" dep="${2%.o}.d" f
+    [ -f "$obj" ] || return 0
+    [ "$src" -nt "$obj" ] && return 0
+    [ -f "$dep" ] || return 0
+    for f in $(sed -e 's/\\$//' -e 's/^[^ ]*\.o://' "$dep" | tr -s ' \t' '\n' | grep -v ':$'); do
+        [ -f "$f" ] && [ "$f" -nt "$obj" ] && return 0
+    done
+    return 1
+}
+
 FLAGS_HASH=$(echo "$CXX $CXXFLAGS" | sha1sum | cut -c1-12)
 STAMP="build/obj/.flags-$FLAGS_HASH"
 if [ ! -f "$STAMP" ]; then
@@ -325,7 +344,7 @@ OBJS=()
 TO_BUILD=()
 for s in $SRC; do
     o=$(obj_path "$s"); OBJS+=("$o")
-    if [ ! -f "$o" ] || [ "$s" -nt "$o" ]; then
+    if needs_build "$s" "$o"; then
         TO_BUILD+=("$s|$o")
     fi
 done
@@ -376,9 +395,9 @@ fi
 #  - build/libjdbrt.so:   shared library providing the full VM via the
 #    jdrt_* C-API, dlopen-style dependency of every generated exe
 if [ "$WANT_NATIVEC" = "1" ]; then
-    if [ ! -f build/jdb_runtime.o ] || [ src/jdb_runtime.cpp -nt build/jdb_runtime.o ]; then
+    if needs_build src/jdb_runtime.cpp build/jdb_runtime.o; then
         echo "== Precompiling jdb_runtime.o =="
-        $CXX -std=c++17 -O2 -DNDEBUG -Isrc -c src/jdb_runtime.cpp -o build/jdb_runtime.o
+        $CXX -std=c++17 -O2 -DNDEBUG -MMD -MP -Isrc -c src/jdb_runtime.cpp -o build/jdb_runtime.o
     fi
 
     # libjdbrt.so source list mirrors the main build minus main.cpp +
@@ -401,7 +420,7 @@ if [ "$WANT_NATIVEC" = "1" ]; then
     RT_TO_BUILD=()
     for s in $RT_SRC; do
         o="build/obj_pic/$(basename "$s" .cpp).o"; RT_OBJS+=("$o")
-        if [ ! -f "$o" ] || [ "$s" -nt "$o" ]; then RT_TO_BUILD+=("$s|$o"); fi
+        if needs_build "$s" "$o"; then RT_TO_BUILD+=("$s|$o"); fi
     done
     echo "== Building libjdbrt.so: ${#RT_TO_BUILD[@]} of ${#RT_OBJS[@]} stale =="
     if [ "${#RT_TO_BUILD[@]}" -gt 0 ]; then
