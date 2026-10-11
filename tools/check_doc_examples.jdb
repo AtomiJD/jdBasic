@@ -9,11 +9,21 @@
 DIM fence$ = "```"
 DIM nl$ = CHR$(10)
 DIM esc$ = CHR$(27)
-DIM exe$ = "./build/jdBasic"
-DIM scratch$ = "build/doc_example.jdb"
-IF OS.GETOS() = "WINDOWS" THEN
-    exe$ = "build" + CHR$(92) + "jdBasic.exe"
-    scratch$ = "build" + CHR$(92) + "doc_example.jdb"
+' PATH.JOIN$ answers with the separator the platform's shell accepts, and
+' the interpreter is jdBasic.exe from build.bat and jdbasic from build.sh.
+FUNC FindInterpreter$()
+    DIM cand$ = PATH.JOIN$("build", "jdBasic.exe")
+    IF FILE.EXISTS(cand$) THEN RETURN cand$
+    cand$ = PATH.JOIN$("build", "jdbasic")
+    IF FILE.EXISTS(cand$) THEN RETURN cand$
+    RETURN ""
+ENDFUNC
+
+DIM exe$ = FindInterpreter$()
+DIM scratch$ = PATH.JOIN$("build", "doc_example.jdb")
+IF exe$ = "" THEN
+    PRINT "doc examples: no interpreter under build to run them with"
+    END 1
 ENDIF
 
 DIM docs = DROP(1, OS.ARGS())
