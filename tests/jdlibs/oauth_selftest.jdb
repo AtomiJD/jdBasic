@@ -363,14 +363,18 @@ TESTKIT.EQ(gDevicePolls, 2, "after waiting through authorization_pending")
 ' ── LOGIN with a browser ───────────────────────────────────────
 
 TESTKIT.SUITE("LOGIN with a browser")
-DIM exe$ = "build\jdBasic.exe"
-DIM browser_script$ = "tests\jdlibs\fixtures\oauth_browser.jdb"
+' PATH.JOIN$ answers with the separator the platform accepts, and the
+' interpreter is jdBasic.exe from build.bat and jdbasic from build.sh.
+DIM root$ = "."
+DIM browser_script$ = PATH.JOIN$(PATH.JOIN$(PATH.JOIN$("tests", "jdlibs"), "fixtures"), "oauth_browser.jdb")
 IF NOT FILE.EXISTS(browser_script$) THEN
-    exe$ = "..\..\build\jdBasic.exe"
-    browser_script$ = "fixtures\oauth_browser.jdb"
+    root$ = PATH.JOIN$("..", "..")
+    browser_script$ = PATH.JOIN$("fixtures", "oauth_browser.jdb")
 ENDIF
+DIM exe$ = PATH.JOIN$(PATH.JOIN$(root$, "build"), "jdBasic.exe")
+IF NOT FILE.EXISTS(exe$) THEN exe$ = PATH.JOIN$(PATH.JOIN$(root$, "build"), "jdbasic")
 IF NOT FILE.EXISTS(exe$) THEN
-    TESTKIT.SKIP("no build\jdBasic.exe to run the browser with")
+    TESTKIT.SKIP("no interpreter under build to run the browser with")
     HTTP.SERVER.STOP
 ELSE
     DIM desk = OAUTH.NEW("app-1", "", BASE$ + "/authorize", BASE$ + "/token")

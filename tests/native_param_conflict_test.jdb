@@ -18,33 +18,57 @@ SUB CHECK(what$, got$, want$)
         pass = pass + 1
     ELSE
         fail = fail + 1
-        PRINT "FAIL "; what$; "  ist ["; got$; "] soll ["; want$; "]"
+        PRINT "FAIL "; what$; "  is ["; got$; "] want ["; want$; "]"
     ENDIF
 ENDSUB
 
-DIM exe$ = "build" + CHR$(92) + "jdBasic.exe"
-DIM tmp$ = "tests" + CHR$(92) + "tmp_param_conflict.jdb"
-DIM tmpexe$ = "tests" + CHR$(92) + "tmp_param_conflict.exe"
+' The interpreter is jdBasic.exe from build.bat and jdbasic from build.sh, and
+' the test is run either from the repository root or from its own directory.
+' PATH.JOIN$ answers with the separator the platform's shell accepts: cmd
+' reads a forward slash as the start of a switch.
+FUNC FIND_INTERPRETER$() AS STRING
+    DIM cand$ = PATH.JOIN$("build", "jdBasic.exe")
+    IF FILE.EXISTS(cand$) THEN RETURN cand$
+    cand$ = PATH.JOIN$("build", "jdbasic")
+    IF FILE.EXISTS(cand$) THEN RETURN cand$
+    DIM up$ = PATH.JOIN$(PATH.JOIN$("..", ".."), "build")
+    cand$ = PATH.JOIN$(up$, "jdBasic.exe")
+    IF FILE.EXISTS(cand$) THEN RETURN cand$
+    cand$ = PATH.JOIN$(up$, "jdbasic")
+    IF FILE.EXISTS(cand$) THEN RETURN cand$
+    RETURN ""
+ENDFUNC
+
+DIM exe$ = FIND_INTERPRETER$()
+' A leading "." keeps the produced program executable without a PATH lookup.
+DIM tmp$ = PATH.JOIN$(".", "tmp_param_conflict.jdb")
+DIM tmpexe$ = PATH.JOIN$(".", "tmp_param_conflict.exe")
 
 FUNC COMPILE(src$) AS OBJECT
     TXTWRITER tmp$, src$
-    RETURN OS.EXEC(exe$ + " -c " + tmp$)
+    RETURN OS.EXEC(exe$, ["-c", tmp$])
 ENDFUNC
 
 DIM nl$ = CHR$(10)
 
-PRINT "--- ein Parameter mit zwei Typen uebersetzt und laeuft"
+IF exe$ = "" THEN
+    PRINT "SKIP: no interpreter under build to compile the three programs with"
+    PRINT "native_param_conflict_test: passed 0, failed 0"
+    END
+ENDIF
+
+PRINT "--- one parameter with two types compiles and runs"
 
 DIM bad$ = "FUNC id(v)" + nl$ + "  RETURN v" + nl$ + "ENDFUNC" + nl$ + _
     "PRINT id(" + CHR$(34) + "a" + CHR$(34) + ")" + nl$ + "PRINT id(5)" + nl$
 DIM r1 = COMPILE(bad$)
-CHECK("die Uebersetzung geht durch", STR$(r1{"EXIT_CODE"}), "0")
-CHECK("ohne Konflikt-Meldung", STR$(INSTR("" + r1{"OUTPUT"}, "is called with") >= 0), "FALSE")
+CHECK("the compile goes through", STR$(r1{"EXIT_CODE"}), "0")
+CHECK("without a conflict message", STR$(INSTR("" + r1{"OUTPUT"}, "is called with") >= 0), "FALSE")
 DIM ran = OS.EXEC(tmpexe$)
-CHECK("der String kommt als String an", STR$(INSTR("" + ran{"OUTPUT"}, "a") >= 0), "TRUE")
-CHECK("die Zahl als Zahl", STR$(INSTR("" + ran{"OUTPUT"}, "5") >= 0), "TRUE")
+CHECK("the string arrives as a string", STR$(INSTR("" + ran{"OUTPUT"}, "a") >= 0), "TRUE")
+CHECK("the number as a number", STR$(INSTR("" + ran{"OUTPUT"}, "5") >= 0), "TRUE")
 
-PRINT "--- mit TYPEOF im Rumpf uebersetzt derselbe Aufruf"
+PRINT "--- with TYPEOF in the body the same call compiles"
 
 ' This is the documented way: a parameter the body asks TYPEOF about becomes
 ' runtime-tagged and carries its own type through the ABI.
@@ -53,18 +77,18 @@ DIM good$ = "FUNC show$(v)" + nl$ + _
     "  RETURN STR$(v)" + nl$ + "ENDFUNC" + nl$ + _
     "PRINT show$(" + CHR$(34) + "a" + CHR$(34) + ")" + nl$ + "PRINT show$(5)" + nl$
 DIM r2 = COMPILE(good$)
-CHECK("die Uebersetzung geht durch", STR$(r2{"EXIT_CODE"}), "0")
-CHECK("  ohne Konflikt-Meldung", STR$(INSTR("" + r2{"OUTPUT"}, "is called with") >= 0), "FALSE")
+CHECK("the compile goes through", STR$(r2{"EXIT_CODE"}), "0")
+CHECK("  without a conflict message", STR$(INSTR("" + r2{"OUTPUT"}, "is called with") >= 0), "FALSE")
 
-PRINT "--- und ein annotierter Parameter ebenso"
+PRINT "--- and an annotated parameter likewise"
 
 DIM ann$ = "FUNC twice(v AS DOUBLE)" + nl$ + "  RETURN v * 2" + nl$ + "ENDFUNC" + nl$ + _
     "PRINT twice(5)" + nl$
 DIM r3 = COMPILE(ann$)
-CHECK("annotiert uebersetzt", STR$(r3{"EXIT_CODE"}), "0")
+CHECK("annotated compiles", STR$(r3{"EXIT_CODE"}), "0")
 
 PRINT ""
-PRINT "native_param_conflict_test: bestanden "; pass; ", gefallen "; fail
+PRINT "native_param_conflict_test: passed "; pass; ", failed "; fail
 
 KILL tmp$
 IF FILE.EXISTS(tmpexe$) THEN KILL tmpexe$
