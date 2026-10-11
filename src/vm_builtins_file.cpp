@@ -9,6 +9,18 @@
 #endif
 #endif
 
+// A directory opens and reads as nothing where open(2) accepts one, so a
+// reader has to ask instead of answering an empty file.
+static bool path_is_directory(const std::string& p) {
+#if defined(_WIN32)
+    DWORD a = GetFileAttributesA(p.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    struct stat st;
+    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+}
+
 // Skips a UTF-8 byte order mark at the start of a stream.
 static void skip_utf8_bom(std::istream& f) {
     char b[3] = { 0, 0, 0 };
@@ -77,6 +89,8 @@ void VM::register_file_builtins() {
     register_native("TXTREADER$", 1, 2, [](const std::vector<Value>& args) -> Value {
         std::string fname = args[0].as_string()->data;
         std::string encoding = (args.size() >= 2) ? args[1].as_string()->data : std::string();
+        if (path_is_directory(fname))
+            throw std::runtime_error("Cannot open file: " + fname + " is a directory");
         std::ifstream f(fname, std::ios::binary);
         if (!f) throw std::runtime_error("Cannot open file: " + fname);
         std::ostringstream ss;
@@ -781,13 +795,28 @@ void VM::register_file_builtins() {
                 "PATH.ABS$: cannot resolve \"" + p + "\"");
         return Value::make_string(buf);
 #else
-        if (!p.empty() && p[0] == '/') return Value::make_string(p);
-        char buf[4096];
-        if (!getcwd(buf, sizeof(buf)))
-            throw jdError(ErrCode::RUNTIME_ERROR, "PATH.ABS$: cannot read the current directory");
-        std::string joined = std::string(buf);
-        if (!p.empty() && p != ".") { joined += "/"; joined += p; }
-        return Value::make_string(joined);
+        std::string joined;
+        if (!p.empty() && p[0] == '/') {
+            joined = p;
+        } else {
+            char buf[4096];
+            if (!getcwd(buf, sizeof(buf)))
+                throw jdError(ErrCode::RUNTIME_ERROR, "PATH.ABS$: cannot read the current directory");
+            joined = std::string(buf);
+            if (!p.empty() && p != ".") { joined += "/"; joined += p; }
+        }
+        std::vector<std::string> parts;
+        for (size_t i = 0; i < joined.size();) {
+            size_t j = joined.find('/', i);
+            if (j == std::string::npos) j = joined.size();
+            std::string seg = joined.substr(i, j - i);
+            if (seg == "..") { if (!parts.empty()) parts.pop_back(); }
+            else if (!seg.empty() && seg != ".") parts.push_back(seg);
+            i = j + 1;
+        }
+        std::string abs;
+        for (const std::string& seg : parts) { abs += "/"; abs += seg; }
+        return Value::make_string(abs.empty() ? std::string("/") : abs);
 #endif
     });
 #endif

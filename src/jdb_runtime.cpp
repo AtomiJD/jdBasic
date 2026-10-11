@@ -3539,9 +3539,23 @@ char* jdb_insert_str(const char* target, const char* insert, int64_t pos) {
 
 // ── File I/O ────────────────────────────────────────────────
 
+// A directory opens and reads as nothing where fopen accepts one, so the
+// readers below ask instead of answering an empty file.
+static bool jdb_path_is_directory(const char* path) {
+    if (!path) return false;
+#if defined(_WIN32)
+    DWORD a = GetFileAttributesA(path);
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+}
+
 char* jdb_txtreader(const char* path) {
     FILE* f = fopen(path, "rb");
-    if (!f) {
+    if (!f || jdb_path_is_directory(path)) {
+        if (f) fclose(f);
         // A path that cannot be opened - a directory, a missing file - is an
         // error, the way the interpreter has it. Answering an empty string
         // made a typo look like an empty file.
@@ -3590,7 +3604,8 @@ void jdb_txtwriter3(const char* path, const char* content, int64_t append) {
 // platforms only support pass-through.
 char* jdb_txtreader_enc(const char* path, const char* encoding) {
     FILE* f = fopen(path, "rb");
-    if (!f) {
+    if (!f || jdb_path_is_directory(path)) {
+        if (f) fclose(f);
         // A path that cannot be opened - a directory, a missing file - is an
         // error, the way the interpreter has it. Answering an empty string
         // made a typo look like an empty file.

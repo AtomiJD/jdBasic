@@ -39,8 +39,12 @@
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-[ -f "$REPO/build/jdBasic.exe" ] || REPO="D:/usr/dev/cc"
-JDB="$REPO/build/jdBasic.exe"
+# The interpreter is jdBasic.exe from build.bat and jdbasic from build.sh.
+if [ -x "$REPO/build/jdBasic.exe" ]; then JDB="$REPO/build/jdBasic.exe"
+elif [ -x "$REPO/build/jdbasic" ]; then JDB="$REPO/build/jdbasic"
+else
+    echo "parity: no interpreter in $REPO/build - build first" >&2; exit 1
+fi
 
 TIMEOUT=20
 # A test that starts an Office application over COM is waiting on Office, not
