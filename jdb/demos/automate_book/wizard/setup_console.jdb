@@ -121,7 +121,7 @@ FOR k = 0 TO LEN(recipes) - 1
             NEXT j
         ENDIF
         DIM sched = a{"schedule"}
-        sched{r{"id"}} = Ask$("    When to run (daily 18:30, weekdays 08:30, every 50 minutes, manual)", sched{r{"id"}})
+        sched{r{"id"}} = Ask$("    When to run (daily 18:30, weekdays 08:30, weekly fri 16:00, monthly 1 08:00, every 50 minutes, manual)", sched{r{"id"}})
     ENDIF
 NEXT k
 a{"picked"} = picked

@@ -82,7 +82,7 @@ FOR k = 0 TO 3
     PUSH(page2, sl)
     PUSH(page2, sb)
 NEXT k
-DIM lblWhen = FORM.LABEL(frm, "lblWhen", "When to run (daily 18:30, weekdays 08:30, every 50 minutes, manual)", 300, 360, 330, 36)
+DIM lblWhen = FORM.LABEL(frm, "lblWhen", "When to run (daily 18:30, weekdays 08:30, weekly fri 16:00, monthly 1 08:00, every 50 minutes, manual)", 300, 360, 330, 36)
 DIM txtWhen = FORM.TEXTBOX(frm, "txtWhen", "", 300, 400, 330, 26)
 PUSH(page2, lblWhen)
 PUSH(page2, txtWhen)
@@ -181,7 +181,7 @@ SUB KeepYou()
     NEXT i
 ENDSUB
 
-SUB ShowPage(n)
+SUB ShowPage(n AS INTEGER)
     gPage = n
     DIM p = 0
     DIM c = 0
