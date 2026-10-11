@@ -397,6 +397,24 @@ void VM::register_system_builtins() {
 #ifdef PYTHON
         if (name == "PYTHON") on = true;
 #endif
+#ifdef FORMS
+        if (name == "FORMS") on = true;
+#endif
+#ifdef OPENGL
+        if (name == "OPENGL") on = true;
+#endif
+#ifdef MINIAUDIO
+        if (name == "MINIAUDIO") on = true;
+#endif
+#ifdef FX
+        if (name == "FX") on = true;
+#endif
+#ifdef MIDI
+        if (name == "MIDI") on = true;
+#endif
+#ifdef MCPSERVER
+        if (name == "MCPSERVER") on = true;  // --mcp speaks over stdio
+#endif
 #ifdef LLVM_CODEGEN
         if (name == "LLVMC") on = true;  // compiler available (--compile)
 #endif

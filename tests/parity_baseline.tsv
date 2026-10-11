@@ -208,6 +208,7 @@ tests/regression/test_builtin_answer_kind.jdb	PASS	PASS	OK
 tests/regression/test_builtin_arity.jdb	PASS	PASS	OK
 tests/regression/test_builtin_constants.jdb	PASS	PASS	OK
 tests/regression/test_builtin_named_var.jdb	PASS	PASS	OK
+tests/regression/test_builtin_ret_kinds.jdb	PASS	PASS	OK
 tests/regression/test_call_result_kind.jdb	PASS	PASS	OK
 tests/regression/test_cdate_formats.jdb	PASS	PASS	OK
 tests/regression/test_chained_index_assign.jdb	PASS	PASS	OK
@@ -285,6 +286,7 @@ tests/regression/test_noparens.jdb	PASS	PASS	OK
 tests/regression/test_oneliner.jdb	PASS	PASS	OK
 tests/regression/test_os.jdb	PASS	PASS	OK
 tests/regression/test_output_capture.jdb	OK	OK	OK
+tests/regression/test_param_kind_scope.jdb	PASS	PASS	OK
 tests/regression/test_path_instr_regex.jdb	PASS	PASS	OK
 tests/regression/test_pipe_tag.jdb	OK	OK	OK
 tests/regression/test_place_arity.jdb	PASS	PASS	OK

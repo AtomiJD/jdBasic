@@ -365,6 +365,24 @@ int64_t jdb_os_feature(const char* name) {
 #ifdef PYTHON
     if (strcmp(up, "PYTHON")      == 0) return 1;
 #endif
+#ifdef FORMS
+    if (strcmp(up, "FORMS")       == 0) return 1;
+#endif
+#ifdef OPENGL
+    if (strcmp(up, "OPENGL")      == 0) return 1;
+#endif
+#ifdef MINIAUDIO
+    if (strcmp(up, "MINIAUDIO")   == 0) return 1;
+#endif
+#ifdef FX
+    if (strcmp(up, "FX")          == 0) return 1;
+#endif
+#ifdef MIDI
+    if (strcmp(up, "MIDI")        == 0) return 1;
+#endif
+#ifdef MCPSERVER
+    if (strcmp(up, "MCPSERVER")   == 0) return 1;
+#endif
     return 0;
 }
 

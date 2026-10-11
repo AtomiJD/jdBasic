@@ -628,7 +628,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"RECUR", BuiltinRet::I64, BF_NO_VEC},
     {"REDUCE", BuiltinRet::F64, BF_NO_VEC},
     {"REGEX.FINDALL", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
-    {"REGEX.MATCH", BuiltinRet::Handle, BF_NO_VEC | BF_TAGGED_CELLS},
+    {"REGEX.MATCH", BuiltinRet::Any, BF_NO_VEC | BF_TAGGED_CELLS},
     {"REGEX.REPLACE", BuiltinRet::Str, BF_NO_VEC},
     {"REGEX_MATCH", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"REGEX_REPLACE$", BuiltinRet::Unknown, BF_NO_VEC},

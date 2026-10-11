@@ -1,0 +1,66 @@
+' REGEX.MATCH answers a truth value without capture groups and the groups
+' with them, so its kind is only known while it runs. Recorded as a value
+' store handle, a FUNC that handed it back typed its caller's parameter as
+' a handle and the truth value arrived as an id into the store.
+' OS.FEATURE is checked here too: a name it does not know answers FALSE,
+' and the build flags it does know answer a truth value either way.
+OPTION "EXPLICIT"
+
+DIM gPass AS INTEGER = 0
+DIM gFail AS INTEGER = 0
+
+SUB SAY(what AS STRING, got AS STRING, want AS STRING)
+    IF got = want THEN
+        gPass = gPass + 1
+    ELSE
+        gFail = gFail + 1
+        PRINT "FAIL "; what; "  is ["; got; "] want ["; want; "]"
+    ENDIF
+ENDSUB
+
+FUNC DATED(file_name AS STRING) AS BOOLEAN
+    RETURN REGEX.MATCH("^\d{4}-\d{2}-\d{2}.*", file_name)
+ENDFUNC
+
+' An untyped parameter, the shape a test helper has.
+SUB ISTRUE(what AS STRING, cond)
+    IF cond THEN
+        gPass = gPass + 1
+    ELSE
+        gFail = gFail + 1
+        PRINT "FAIL "; what; "  expected a true value"
+    ENDIF
+ENDSUB
+
+SUB ISFALSE(what AS STRING, cond)
+    IF cond THEN
+        gFail = gFail + 1
+        PRINT "FAIL "; what; "  expected a false value"
+    ELSE
+        gPass = gPass + 1
+    ENDIF
+ENDSUB
+
+SAY("a whole match is a truth value", TYPEOF(REGEX.MATCH("^a.*", "abc")), "BOOLEAN")
+SAY("and so is a miss", STR$(REGEX.MATCH("^x.*", "abc")), "FALSE")
+SAY("with groups it is an array", TYPEOF(REGEX.MATCH("(\d+)-(\d+)", "7-9")), "ARRAY")
+SAY("the first group", REGEX.MATCH("(\d+)-(\d+)", "7-9")[0], "7")
+SAY("and the second", REGEX.MATCH("(\d+)-(\d+)", "7-9")[1], "9")
+
+ISTRUE("a dated name through an untyped parameter", DATED("2026-09-30 old.pdf"))
+ISTRUE("and the negation of a miss", NOT DATED("scan 2026-09-30.pdf"))
+
+ISFALSE("a name OS.FEATURE does not know", OS.FEATURE("NO_SUCH_FLAG"))
+ISTRUE("one of the two backends", OS.FEATURE("INTERPRETER") ORELSE OS.FEATURE("NATIVEC"))
+' Every optional build flag the version banner names is a name OS.FEATURE
+' takes: the answer is usable as a condition whichever way the build went.
+DIM names AS ARRAY = ["FORMS", "OPENGL", "MINIAUDIO", "FX", "MIDI", "MCPSERVER", _
+    "SQLITE", "PYTHON", "COM", "HTTP", "NET", "SERIAL", "GFX", "IMGUI", "LLM", "ONNX"]
+DIM k AS INTEGER = 0
+FOR k = 0 TO LEN(names) - 1
+    DIM one AS STRING = names[k]
+    ISTRUE(one + " is a name it takes", OS.FEATURE(one) ORELSE NOT OS.FEATURE(one))
+NEXT k
+
+PRINT "RESULTS: "; gPass; " passed, "; gFail; " failed"
+IF gFail > 0 THEN THROW "test_builtin_ret_kinds failed"
