@@ -512,6 +512,11 @@ PRINT recs[0]{"region"}
 SQL.CLOSE(db)
 ```
 
+On a build with the flag that prints `[region, total]`, then
+`[[South, 55], [North, 42.5], [East, 37.5]]`, then `South`. The
+documentation check runs on a core build, which has no `SQLITE`, so this
+one example is not among the ones it executes.
+
 ### Clean up
 
 `KILL` deletes a file. This removes everything the examples wrote.

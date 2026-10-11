@@ -324,3 +324,8 @@ doc/notes/
 embedded/esp32/build-*.stack
 
 jdb/demos/twoskins/tasks.json
+
+# Artefacts the demos in jdb/ write on their first run.
+jdb/test.db
+jdb/users.db
+jdb/xor_model.jmd

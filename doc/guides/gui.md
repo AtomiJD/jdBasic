@@ -257,7 +257,18 @@ format is described under
 A forms program compiles like any other jdBasic program: `jdbasic -c notes.jdb`
 writes `notes.exe` and copies `jdbrt.dll` next to it. The native compiler is always STRICT
 and EXPLICIT, so every variable needs a `DIM`, as in the examples above. Both
-the compiler and `jdbrt.dll` must be built with the `FORMS` flag.
+the compiler and `jdbrt.dll` must be built with the `FORMS` flag, and the
+compiler also with `NATIVEC`.
+
+No download bundle carries both: the VB6 pack reports
+`COM, HTTP, NET, GFX, ImGui, Forms, MCP, SQLite` and mcp-native reports
+`HTTP, NET, GFX, ImGui, MCP, NativeC`. To compile a forms program, build from
+source:
+
+```
+build.bat HTTP NET GFX IMGUI FORMS NATIVEC
+build_rt.bat HTTP NET GFX IMGUI FORMS NATIVEC
+```
 
 ### Forms demos
 

@@ -59,7 +59,9 @@ ENDSUB
 FORM.RUN(frm)
 ```
 
-`jdbasic -c hello.jdb` compiles this to `hello.exe`. Events are bound by name.
+`jdbasic -c hello.jdb` compiles this to `hello.exe`, from a build that carries
+both `FORMS` and `NATIVEC`. None of the download bundles combines the two, so
+compiling a forms program means building from source. Events are bound by name.
 The controls are Win32 controls, including menus, toolbars, list views, tabs
 and MDI windows, and the VS Code extension has a visual form designer.
 

@@ -139,7 +139,8 @@ page and draws its header row there again, in bold.
   places.
 - Nothing is kept between documents; a document is a map, and every call
   takes it.
-- Everything works compiled with `-c`; `PDF.TEXT$` is interpreter-only.
+- Everything works compiled with `-c`, `PDF.TEXT$` included: a document
+  written and read back answers the same under the interpreter and under `-c`.
 
 Self test: `tests/jdlibs/pdfgen_selftest.jdb`.
 Demo: `jdb/demos/jdlibs/pdfgen_demo.jdb`.

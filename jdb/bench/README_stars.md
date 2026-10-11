@@ -22,49 +22,46 @@ N=14000     607   1781  0.34x       37    323   0.12x
 
 ## Why vector loses here
 
-* Pro Frame allokiert die Vektor-Variante **5-7 frische N-Element-Arrays**
-  (mask, 1-mask, y*keep, new_x, x*keep, new_x*mask, sum). Allokations-Churn
-  dominiert die per-Element-Arbeit.
-* Die Wrap-Bedingung `y >= SCR_H` ist **dünn**: pro Frame wrappen typisch
-  1-3 von 140 Sternen. Branch-Prediction trifft 95%+, der FOR-loop läuft
-  fast immer in den No-Op-Pfad.
-* Native compile inlinet den FOR-loop sehr aggressiv (~17× speedup gegen
-  Interp). Vektor-Ops gehen weiter durch Arena-Alloc + Runtime-Dispatch
-  und gewinnen nur ~4× - Ergebnis: v3 ist **immer** schlechter, nicht
-  nur bei kleinem N.
+* Per frame the vector variant allocates **five to seven fresh N-element
+  arrays** (mask, 1-mask, y*keep, new_x, x*keep, new_x*mask, sum). The
+  allocation churn dominates the per-element work.
+* The wrap condition `y >= SCR_H` is **sparse**: one to three of 140 stars
+  wrap in a typical frame. Branch prediction hits above 95%, so the `FOR`
+  loop almost always takes the no-op path.
+* The native compiler inlines the `FOR` loop aggressively, about 17 times
+  faster than the interpreter. The vector operations still go through arena
+  allocation and runtime dispatch and gain only about 4 times, so v3 is
+  **always** worse here, not just at small N.
 
 ## Conclusion
 
-Die in `space_shooter.jdb` verwendete `update_stars`-Implementierung
-(FOR + Branch) ist bereits **nahe Optimum**. Eine APL-Version würde
-die Sache verlangsamen, nicht beschleunigen.
+The `update_stars` implementation that `space_shooter.jdb` uses (`FOR` plus a
+branch) is already near the optimum. An APL version would slow it down.
 
-## Wann Vektorisierung in jdBasic gewinnt
+## When vectorisation wins in jdBasic
 
-Ergänzung zu `feedback_vectorize_loops.md`:
+* **Large N and a dense condition**, where every element needs the operation
+* **Plain arithmetic without a branch**. `star_y = star_y + speed` stays
+  vectorised: the element work still runs in an internal loop with room for
+  SIMD, but without a per-operation allocation.
+* **Pairwise and outer-product shapes** (collision detection, distance
+  matrices). There the vector form wins by orders of magnitude.
+* **No per-element FUNC call.** `SELECT` with a lambda carries real overhead;
+  a `FOR` loop is the better answer then.
 
-* **N groß UND dense Bedingung** (jedes Element braucht die Operation)
-* **Reine Arithmetik** ohne Verzweigung (z. B. `star_y = star_y + speed`
-  bleibt vektor - DAS Element wird intern auch in einer Schleife mit
-  SIMD-Potenzial verarbeitet, aber ohne Allokations-Overhead pro Op)
-* **Pairwise / Outer-Product** Patterns (Collision-Detection, Distanz-
-  Matrizen) - da gewinnt der Vektor-Approach um Größenordnungen
-* **Kein per-Element-FUNC-Call** (SELECT mit Lambda hat hohe Overhead;
-  dann lieber FOR)
+## When FOR wins, or ties
 
-## Wann FOR gewinnt (oder gleich gut ist)
-
-* **N klein** (≤ ein paar Tausend) UND **sparse Bedingung** (≤ 10 % der
-  Elemente betroffen) - dann Branch-Prediction + In-Place-Schreiben
-  schlagen die Allokations-Kosten der Vektor-Ops
-* **Per-Element komplexe Logik** mit verschiedenen Code-Pfaden je
-  Element-Typ (z. B. `e_kind`-dispatch in `update_enemies`)
-* **Iteration mit early-exit** (FOR mit EXIT FOR gewinnt immer)
+* **Small N** (a few thousand at most) **and a sparse condition** (a tenth of
+  the elements or fewer). Branch prediction plus writing in place beats the
+  allocation cost of the vector operations.
+* **Complex per-element logic** with a different code path per element kind,
+  such as the `e_kind` dispatch in `update_enemies`
+* **Iteration with an early exit.** `FOR` with `EXITFOR` always wins.
 
 ## Suspected real wins in space_shooter (untested)
 
-* **collisions()** - pairwise N_BULLETS × N_ENEMIES = 64 × 24 = 1536
-  Paare. Outer-product `dx² + dy² < r²` Vektor-Form sollte gut gewinnen.
-* **update_fx** - wenn alle aktiven FX gleichbehandelt werden, vektor
-  arithmetik OHNE intermediate masks könnte schneller sein
-* **draw_*** - schon batched via GFX.PLOT_POINTS / matrix-LINE
+* **collisions()**: pairwise N_BULLETS x N_ENEMIES = 64 x 24 = 1536 pairs. The
+  outer-product form `dx^2 + dy^2 < r^2` should win well.
+* **update_fx**: where every active effect is treated alike, vector arithmetic
+  without intermediate masks could be faster.
+* **draw_***: already batched through `GFX.PLOT_POINTS` and the matrix `LINE`.

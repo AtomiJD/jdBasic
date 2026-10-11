@@ -16,7 +16,7 @@ Either build from source or grab a pre-built binary from the [releases page](htt
 
 ```bash
 # Linux / macOS
-./build.sh MCPSERVER=1
+MCPSERVER=1 HTTP=1 ./build.sh
 
 # Windows (Developer Command Prompt for VS 2022)
 build.bat MCPSERVER HTTP

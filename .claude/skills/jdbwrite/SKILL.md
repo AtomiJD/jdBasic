@@ -21,9 +21,18 @@ If a function is not in `doc/languages.md` AND doesn't probe-eval cleanly, do no
 Use only syntax/functions from `doc/languages.md` or a known-good example under `jdb/` or `tests/`. Don't invent keywords or assume "it works like other BASICs". (New keywords you add must also land in `languages.md` + `help.txt`.)
 
 ## 3. Reserved identifiers - NEVER use as variable / param / function names
-Identifiers are **case-insensitive** (`V` and `v` are the same slot).
-- Built-in CONSTs - never `DIM`/assign these: `MATH.PI  MATH.E  TAU  TRUE  FALSE  NULL  INF  NAN`
-- Keywords / builtins that bite as names: `CLS  STEP  LINE  ON  TICK  VAL  LEN` - and in general **any builtin function name** (`SUM MIN MAX DAY MONTH YEAR SORT COUNT` ...).
+Identifiers are **case-insensitive** (`V` and `v` are the same slot). Two
+classes, and only the first one is caught for you:
+
+- **Keywords** - `--lint` refuses the `DIM` outright: `CLS  STEP  LINE  ON  STOP  USE`
+- **Builtin function names** - the `DIM` parses, the breakage comes later and
+  `--lint` says nothing: `CD  PLACE  TICK  VAL  LEN  SUM  MIN  MAX  DAY  MONTH  YEAR  SORT  COUNT  MAP`
+  and in general any name in `languages.md` / `help.txt`
+- **Built-in constants** - never `DIM`/assign: `MATH.PI  MATH.E  TRUE  FALSE  NONE  NULL  NOTHING  VBNEWLINE  VBCRLF  VBTAB`
+
+`TAU`, `INF`, `NAN`, `PI` and `E` are **not** constants - none of them exists,
+and a bare `PI` reads as NONE in the interpreter. The names are `MATH.PI` and
+`MATH.E`.
 
 Rule of thumb: if a name appears in `languages.md`/`help.txt`, don't reuse it as your own identifier. When unsure, probe-eval it, or pick a non-colliding name.
 

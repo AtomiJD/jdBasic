@@ -15,7 +15,7 @@ endfunc
 ' This exported function demonstrates calling a private function.
 export func add_and_double(a, b)
     ' First, add the two numbers using the public 'add' function
-    result = add(a, b)
+    DIM result = add(a, b)
     
     ' Then, multiply by a secret internal value
     result = result * secret_multiplier()

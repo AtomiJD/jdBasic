@@ -962,7 +962,7 @@ void VM::register_array_builtins() {
     });
 
     // ── PLACE ────────────────────────────────────────────────
-    register_native("PLACE", [](const std::vector<Value>& args) -> Value {
+    register_native("PLACE", 3, 3, [](const std::vector<Value>& args) -> Value {
         // Deep copy destination
         int dr, dc; get_2d(args[0], dr, dc);
         Value r = make_matrix(dr, dc);

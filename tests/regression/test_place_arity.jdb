@@ -1,0 +1,39 @@
+' PLACE was registered without an arity, so a short call reached a body that
+' reads args[2] as an array and faulted instead of saying what was missing.
+DIM bad = 0
+
+DIM dest = RESHAPE([0, 0, 0, 0, 0, 0], [2, 3])
+DIM src = [[9, 9]]
+
+DIM told$ = "nothing"
+TRY
+    DIM one = PLACE(dest)
+    told$ = "accepted one argument"
+CATCH
+    told$ = ERRMSG$
+ENDTRY
+IF INSTR(told$, "3 argument") < 0 THEN
+    bad = bad + 1
+    PRINT "PLACE with one argument said: ["; told$; "]"
+ENDIF
+
+told$ = "nothing"
+TRY
+    DIM two = PLACE(dest, src)
+    told$ = "accepted two arguments"
+CATCH
+    told$ = ERRMSG$
+ENDTRY
+IF INSTR(told$, "3 argument") < 0 THEN
+    bad = bad + 1
+    PRINT "PLACE with two arguments said: ["; told$; "]"
+ENDIF
+
+' The documented form still answers.
+DIM got = PLACE(dest, src, [0, 0])
+IF got[0][0] <> 9 OR got[0][1] <> 9 OR got[0][2] <> 0 OR got[1][0] <> 0 THEN
+    bad = bad + 1
+    PRINT "PLACE(dest, src, [0,0]) answered: "; got
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

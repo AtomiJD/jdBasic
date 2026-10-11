@@ -73,11 +73,12 @@ FUNC Mark$(passed)
     RETURN "FAIL"
 ENDFUNC
 
-DIM jdbasic$ = PATH.NORMALIZE$(ArgAfter$("jdbasic", "../../../build/jdBasic.exe"))
+DIM jdbasic$ = PATH.ABS$(ArgAfter$("jdbasic", "../../../build/jdBasic.exe"))
 DIM only$ = ArgAfter$("only", "")
 DIM interp_only = HasArg("interp-only")
 DIM here$ = PATH.NORMALIZE$(".")
-SETENV "JDBASIC_PATH", PATH.NORMALIZE$("../../../lib") + gSep$ + PATH.NORMALIZE$("recipes/lib")
+' Absolute: a child that changes directory still finds the modules.
+SETENV "JDBASIC_PATH", PATH.ABS$("../../../lib") + gSep$ + PATH.ABS$("recipes/lib")
 DIM out_dir$ = PATH.JOIN$("out", "recipes")
 MKDIR out_dir$
 

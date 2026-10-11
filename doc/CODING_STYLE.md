@@ -1,85 +1,106 @@
 # Coding Style
 
-Verbindliche Konventionen für `src/` (C++) und `fluppi/`, `tests/`, `jdb/` (jdBasic).
-Ziel: **SPOT** (Single Point of Truth). Der Code erklärt WAS er tut; Kommentare nur wenn das WARUM nicht offensichtlich ist.
+Binding conventions for `src/` (C++) and for `fluppi/`, `tests/`, `jdb/`
+(jdBasic). The goal is a single point of truth: the code says WHAT it does,
+and a comment is there only when the WHY is not obvious.
 
 ## C++ (src/)
 
 ### Formatting
-- 4-Space-Indent, keine Tabs
-- LF Line-Endings (`.gitattributes` erzwingt das)
-- Curly-brace same line: `if (x) {`
-- Max. Zeilenlänge ~100 Zeichen (weiche Grenze, Lesbarkeit schlägt Hard-Limit)
+- Four-space indent, no tabs
+- LF line endings in the repository. Nothing in `.gitattributes` enforces that
+  for `src/`; it is `core.autocrlf` that normalises on commit, so a Windows
+  checkout holds CRLF and that is expected.
+- Opening brace on the same line: `if (x) {`
+- About 100 characters a line, a soft limit - readability beats the number
 
 ### Naming
-- `snake_case` für Funktionen, Variablen, Felder, Methoden
-- `PascalCase` für Typen: `struct`, `class`, `enum class`
-- `ALL_CAPS` nur für Macros und Compile-Time-Konstanten (`JD_TAG_*`)
-- Private Felder kein `m_`-Prefix, ausser für transient codegen-state (`m_want_leaf_tag`)
-- Header `pragma once`, kein Include-Guard
+- `snake_case` for functions, variables, fields and methods
+- `PascalCase` for types: `struct`, `class`, `enum class`
+- `ALL_CAPS` only for macros and compile-time constants (`JD_TAG_*`)
+- No `m_` prefix on private fields, except for transient codegen state
+  (`m_want_leaf_tag`)
+- `pragma once` in headers, no include guard
 
 ### Types
-- `enum class` > plain `enum`. Plain enum nur wenn C-interop nötig (→ dann parallel `#define`-Aliase wie `JD_TAG_*`)
-- Keine magic numbers für getaggte Werte, immer die named constant aus dem zentralen Header
-- `const` wo es geht: Parameter, Locals, Methoden
-- Brace-Init bei Struct-Literalen: `{ val, JD_TAG_F64 }` statt `TypedValue(val, 1)`
+- `enum class` over a plain `enum`. A plain enum only where C interop needs it,
+  and then with parallel `#define` aliases such as `JD_TAG_*`
+- No magic numbers for tagged values, always the named constant from the
+  central header
+- `const` wherever it fits: parameters, locals, methods
+- Brace initialisation for struct literals: `{ val, JD_TAG_F64 }` rather than
+  `TypedValue(val, 1)`
 
-### Comments: die SPOT-Regel
-**Default ist KEIN Kommentar.** Schreibe nur einen wenn:
-1. Es gibt eine versteckte Invariante, die der Code nicht direkt zeigt
-2. Ein Workaround für einen spezifischen Bug (kurz: was & warum)
-3. Eine überraschende Konstante oder nicht-offensichtliche Korrektheit
-4. Public-API in Headern: ein Einzeiler zu Semantik und Ownership
+### Comments
+**The default is no comment.** Write one only when:
+1. there is a hidden invariant the code does not show by itself,
+2. it is a workaround for a specific defect (briefly: what and why),
+3. a constant is surprising, or correctness is not obvious,
+4. it is public API in a header: one line on semantics and ownership.
 
-**Nicht schreiben:**
-- Was-der-Code-tut Narrative (`// Convert index to i64` direkt vor `LLVMBuildFPToSI`)
-- Historien-Kommentare (`// used to be X, now Y`): das steht im git log
-- Phase-Marker (`// Phase 3b:`): Phasen-Historie gehört in Commit-Messages
-- Section-Banner (`// ══ PLAYER STATS ══`): wenn die Datei strukturierte Sections braucht, splitte sie
+**Do not write:**
+- a narrative of what the code does (`// Convert index to i64` right above
+  `LLVMBuildFPToSI`)
+- history (`// used to be X, now Y`): that is what the git log is for
+- phase markers (`// Phase 3b:`): phase history belongs in a commit message
+- section banners (`// == PLAYER STATS ==`): a file that needs structured
+  sections wants splitting instead
 
-**Wenn du einen Kommentar schreibst:**
-- Eine Zeile bevorzugt, Block nur wenn echt nötig
-- Fokus auf WARUM, nicht WAS
-- Wenn der Kommentar ein Datum / Ticket / „see issue #123" enthält, lass ihn; das ist Kontext der nicht im Code steht
+**When you do write one:**
+- one line preferred, a block only where it is really needed
+- it says WHY, not WHAT
+- a comment carrying a date, a ticket or "see issue #123" stays; that is
+  context the code does not hold
 
-### Error Handling
-- `report_error(file, line, msg)` sammelt Diagnostics: alle nach dem Pass, nicht first-fail
-- Keine Silent-Fails: wenn eine Dispatch-Entscheidung unerwartet ist, throw oder diagnostics
+### Error handling
+- `report_error(file, line, msg)` collects diagnostics: everything the pass
+  found, not the first failure
+- No silent failures. Where a dispatch decision is unexpected, throw or
+  report it.
 
-### Tag System
-- Alle Tag-Literale via `JD_TAG_*` aus `jdb_tags.h`
-- `VarInfo.tag`, `TypedValue.tag`, `return_tag`, `param_tags[i]` → immer Macro
-- Der Kommentar `// JdTag (see jdb_tags.h)` auf dem Feld ist ausreichend
+### Tag system
+- Every tag literal comes from `JD_TAG_*` in `jdb_tags.h`
+- `VarInfo.tag`, `TypedValue.tag`, `return_tag`, `param_tags[i]` always use the
+  macro
+- `// JdTag (see jdb_tags.h)` on the field is comment enough
 
 ## jdBasic (fluppi/, tests/, jdb/)
 
-### Compiler-Targets
-- `OPTION "EXPLICIT"` und `OPTION "STRICT"` verpflichtend am Dateianfang
-- Jede Variable deklariert via `DIM` oder initialisiert via `LET`
-- `AS <Type>` bei allen DIMs wo der Typ nicht aus dem Init-Expr eindeutig ist
+### Compiler targets
+- `OPTION "EXPLICIT"` and `OPTION "STRICT"` at the top of the file, both
+  mandatory
+- Every variable declared with `DIM` or initialised with `LET`
+- `AS <type>` on every `DIM` whose type is not unambiguous from the initialiser
 
-### Interpreter-only Scripts
-- Dürfen bare-assignments nutzen (loose mode)
-- Wenn ein Skript sowohl im Interpreter läuft als auch ggf. compiliert wird: behandle es als Compiler-Target
+### Interpreter-only scripts
+- May use bare assignment (the loose mode)
+- A script that runs interpreted but may also be compiled is a compiler target
+  and follows those rules
 
 ### Naming
-- `snake_case` für alles (jdBasic ist case-insensitive, aber konsistente Schreibweise erleichtert `grep`)
-- `$`-Suffix für String-Variablen
-- Module-Namen als `SUB_AREA.NAME` (z.B. `RPG_DIALOG.SAY`)
+- `snake_case` throughout. jdBasic is case-insensitive, but a consistent
+  spelling is what makes `grep` useful.
+- `$` suffix on string variables
+- Module names as `SUB_AREA.NAME`, for example `RPG_DIALOG.SAY`
+- Never a builtin's name. All three paths refuse it, `--lint` included.
 
-### Struktur
-- Imports oben nach `EXPORT MODULE`
-- Public-API via `EXPORT` markiert
-- Keine Whole-File Comment-Banner ausser am obersten Dateiheader (`' == Module Title ==` Block)
+### Structure
+- Imports at the top, after `EXPORT MODULE`
+- Public API marked with `EXPORT`
+- No whole-file comment banners beyond the header block at the very top
+  (`' == Module Title ==`)
 
 ## Commits
-- Ein Stable-Milestone → ein Commit
-- Betreff in Imperativ, unter 72 Zeichen
-- Body erklärt WARUM (was sieht man ja im Diff), und welche Tests gelaufen sind
-- Kein `Co-Authored-By` Trailer
-- Referenz zur Phase oder Ticket wenn relevant
+- One stable milestone, one commit
+- Subject in the imperative, under 72 characters
+- The body says WHY - the diff already shows what - and which tests ran
+- No `Co-Authored-By` trailer
+- A reference to the ticket where there is one
 
 ## Tests
-- Jede neue Sprach-Feature → Regression-Test VOR dem Fix schreiben
-- Neue Keywords → eintragen in `doc/languages.md`, `help.txt` (Repo-Root), `jdbasic.tmLanguage.json`
-- 5-Point-Matrix nach jeder Compiler-Änderung: comprehensive (interp+native), crash (interp+native), rpg_demo native
+- Every new language feature gets a regression test, written before the fix
+- A new keyword is entered in `doc/languages.md`, `help.txt` (repository root)
+  and `syntaxes/jdbasic.tmLanguage.json`
+- After a compiler change, run the gate: the four suites under `tests/gate`
+  through both backends, then the two GUI smokes (`fluppi/rpg_demo.jdb` and
+  `jdb/emu/emu_run.jdb`), where `exit 124` from `timeout` is the pass

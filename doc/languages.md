@@ -19,10 +19,10 @@ This document describes the syntax, commands, and functions for the jdBasic inte
   - [Examples](#examples)
 - [Variables and Assignment](#variables-and-assignment)
 - [STATIC Local Variables](#static-local-variables)
-  - [$"...": a string with expressions in it](#-a-string-with-expressions-in-it)
-  - [??: the left side unless it is absent](#-the-left-side-unless-it-is-absent)
-  - [?. ?{ ?[: read into something that may not be there](#---read-into-something-that-may-not-be-there)
-  - [Optional parameters](#optional-parameters)
+- [$"...": a string with expressions in it](#-a-string-with-expressions-in-it)
+- [??: the left side unless it is absent](#-the-left-side-unless-it-is-absent)
+- [?. ?{ ?[: read into something that may not be there](#---read-into-something-that-may-not-be-there)
+- [Optional parameters](#optional-parameters)
 - [Constants](#constants)
 - [Destructuring Assignment](#destructuring-assignment)
 - [Reactive Variables and Assignment](#reactive-variables-and-assignment)
@@ -37,6 +37,11 @@ This document describes the syntax, commands, and functions for the jdBasic inte
   - [Bitwise Operators / Operations](#bitwise-operators--operations)
   - [Logical Operators](#logical-operators)
 - [Chained Access Syntax](#chained-access-syntax)
+- [Defining FUNC and SUB](#defining-func-and-sub)
+  - [Parameters](#parameters)
+  - [What a body can see](#what-a-body-can-see)
+  - [Names](#names)
+  - [Function references](#function-references)
 - [Functional Syntax](#functional-syntax)
   - [Function as operators](#function-as-operators)
   - [Higher Order Function](#higher-order-function)
@@ -78,7 +83,7 @@ This document describes the syntax, commands, and functions for the jdBasic inte
   - [Native Windows Forms (FORM.*)](#native-windows-forms-form)
   - [Terminal UI (TUI.*)](#terminal-ui-tui)
   - [Live Coding Sequencer](#live-coding-sequencer)
-  - [Sound Design (Track Specific)](#sound-design-track-specific)
+  - [Track Sends and Sidechain](#track-sends-and-sidechain)
   - [Visualization & Analysis](#visualization--analysis)
   - [Example: Custom Studio Monitor](#example-custom-studio-monitor)
 - [Real-time Audio: WAV, FX Chain, MIDI & Live Monitor](#real-time-audio-wav-fx-chain-midi--live-monitor)
@@ -295,7 +300,7 @@ callers share the same slot.
 
 
 
-### `$"..."`: a string with expressions in it
+## `$"..."`: a string with expressions in it
 
 ```basic
 DIM name$ = "world"
@@ -331,7 +336,7 @@ Values render the way `PRINT` renders them, arrays and maps included:
 It becomes `text + FORMAT$("{}", expr) + text` at parse time, so nothing
 new exists at runtime and it compiles exactly as it interprets.
 
-### `??`: the left side unless it is absent
+## `??`: the left side unless it is absent
 
 ```basic
 DIM m = { "zero": 0, "empty": "" }
@@ -359,7 +364,7 @@ and one of them means absent, so `TYPEOF` on a missing key is `NONE`
 whether the program was interpreted or compiled.
 
 
-### `?.` `?{` `?[`: read into something that may not be there
+## `?.` `?{` `?[`: read into something that may not be there
 
 ```basic
 DIM r = JSON.PARSE$(reply$)
@@ -396,7 +401,7 @@ Two things it is not:
 It pairs with `??`, which is usually how it is written: guard the walk,
 then name what to use when the walk came up empty.
 
-### Optional parameters
+## Optional parameters
 
 A trailing parameter may carry a default, and a call that leaves it out
 gets that value. Builtins have always worked this way (`SUM(a)` and
@@ -864,6 +869,119 @@ objXL.ActiveSheet.Cells(1, 1).Value = "Hello from a jdBasic!"
 The same forms work inside a `SUB` or `FUNC`, whether the object arrives
 as a parameter or is a global, and an assignment may run through a chain
 of any length (`wb.Worksheets(1).Name = "Data"`, `doc.documentElement.firstChild.text = "x"`).
+
+## Defining FUNC and SUB
+
+A `FUNC` answers a value, a `SUB` does not. Both take parameters, both may be
+recursive, and both are visible to the whole file regardless of where they
+stand, so a call may precede its definition.
+
+```basic
+FUNC Greet$(name$)
+    RETURN "Hallo " + name$
+ENDFUNC
+
+SUB Shout(text$)
+    PRINT UCASE$(text$)
+ENDSUB
+
+PRINT Greet$("Welt")
+Shout("leise")
+```
+
+`RETURN` leaves a `FUNC` with a value. A `FUNC` that reaches `ENDFUNC` without
+one answers `NONE`, which `TYPEOF` reports as `"NONE"` - worth testing for,
+because `= NONE` is true for any value (see the note under *Comparisons*).
+
+`EXITFUNC` leaves either kind early and carries no value. It is the exit for a
+`SUB` as well; there is no `EXITSUB`.
+
+### Parameters
+
+A parameter is typed by a sigil or by `AS`:
+
+```basic
+FUNC Label$(n$, count)                      ' n$ is a string, count a number
+FUNC Area(w AS DOUBLE, h AS DOUBLE) AS DOUBLE
+FUNC Total(rows AS ARRAY) AS DOUBLE
+```
+
+The declared types are `INTEGER`, `DOUBLE`, `STRING`, `ARRAY`, `MAP`, `BOOLEAN`
+and a `TYPE` name. A return type is declared the same way, after the parameter
+list. Under `-c` the declaration is what the compiler generates against, so a
+parameter that receives a string needs `s$` or `AS STRING`: an untyped
+parameter is generated as a number where the call goes through generated code,
+which is the case for a mapper handed to `SELECT`/`FILTER` or a reducer handed
+to `AGG`.
+
+Parameters with a default are described under *Optional parameters*.
+
+Scalars are passed by value. An **array or a map reaches the body as the
+caller's own**, so writing into one is visible after the call - the same in
+both backends:
+
+```basic
+SUB Clear(a AS ARRAY)
+    a[0] = 0.0
+ENDSUB
+
+DIM nums AS ARRAY = [7.0, 8.0]
+Clear(nums)
+PRINT nums[0]          ' 0, not 7
+```
+
+Pass a copy when the body should not touch the caller's: `a + 0` for an
+array of numbers, `TAKE(LEN(a), a)` for one of strings - `+ 0` would append
+"0" to every element there. There is no `BYREF`.
+
+### What a body can see
+
+A body reads the globals of its own chunk and writes them **only when the name
+already exists**. An assignment to a name the body has not seen before creates
+a local that is dropped at `ENDFUNC` / `ENDSUB`:
+
+```basic
+DIM total = 0
+
+SUB Add(n)
+    total = total + n      ' reaches the global: it was declared above
+    carry = n              ' a local; gone at ENDSUB
+ENDSUB
+
+Add(5)
+PRINT total                ' 5
+PRINT TYPEOF(carry)        ' NONE
+```
+
+This is the single most common surprise in jdBasic: a builder `SUB` that fills
+`result = ...` without a `DIM result` above it leaves `NONE` behind and
+everything downstream reads nothing. Declare every global a body writes, and
+`DIM` every local the body owns - `OPTION "EXPLICIT"` makes the second one a
+compile error instead of a silent local.
+
+`STATIC DIM` keeps a slot across calls; see *STATIC Local Variables*.
+
+A body defined in a dynamic chunk (`EXECUTE`, an MCP `jdb_eval`, a REPL line)
+sees only the globals of **that** chunk. Helpers written there take their data
+as parameters.
+
+### Names
+
+A `FUNC` or `SUB` may not take the name of a builtin. All three paths refuse it
+with the same message:
+
+```
+FUNC FILTER collides with the builtin function FILTER - choose another name
+```
+
+`--lint` reports it without running, which is the cheapest way to find out.
+Identifiers are case-insensitive, so `filter` collides too.
+
+### Function references
+
+`name@` is a reference to a named `FUNC` or `SUB`, and a `LAMBDA` is written in
+place; both are described under *Functional Syntax* and *Higher Order
+Function*.
 
 ## Functional Syntax
 
@@ -2075,7 +2193,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`SELECT(function@, array, [row_wise_bool]) -> array`**: Applies a user-defined function to each element of an array, returning a new array with the same dimensions containing the transformed elements. The provided function must accept exactly one argument. If the optional third argument 'row_wise_bool' is TRUE, it applies the function to each row of a 2D matrix instead. The result of a row-wise select is always a 1D array.
 * **`FILTER(function@, array) -> array`**: Filters an array by applying a user-defined predicate function to each element. It returns a new 1D array containing only the elements for which the predicate function returned `TRUE`. The provided function must accept one argument and should return a boolean value.
 
-  > **Native (`-c`) and string arrays:** `SELECT`/`FILTER` over string arrays compile native, including string-returning mappers (`SELECT(upper$@, names)`) and predicates over strings; `FILTER` preserves the element type of its source. A named `FUNC` used as mapper or predicate that *receives* a string must declare its parameter as a string (`FUNC f(s$)` or `AS STRING`); an untyped `FUNC` parameter (`FUNC f(s)`) is treated as a number under `-c` and reads the string as garbage. A `LAMBDA` written in place needs no such declaration: see *Lambda parameters under `-c`* in the lambda section. (`AGG` with a function reference stays interpreter-only: its reducer runs in the bridged VM, which can't call a natively-compiled function.)
+  > **Native (`-c`) and string arrays:** `SELECT`/`FILTER` over string arrays compile native, including string-returning mappers (`SELECT(upper$@, names)`) and predicates over strings; `FILTER` preserves the element type of its source. A named `FUNC` used as mapper or predicate that *receives* a string must declare its parameter as a string (`FUNC f(s$)` or `AS STRING`); an untyped `FUNC` parameter (`FUNC f(s)`) is treated as a number under `-c` and reads the string as garbage. A `LAMBDA` written in place needs no such declaration: see *Lambda parameters under `-c`* in the lambda section.
 * **`REDUCE(function@, array, [initial_value]) -> value`**: Performs a cumulative reduction on an array using a user-provided function.
 * **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.
 * **`TAKE_WHILE(predicate@, array) -> array`**: Returns the longest prefix of `array` for which `predicate(element)` is true. Stops at the first false. Compiles native (the predicate runs through its funcref wrapper).
@@ -2711,6 +2829,123 @@ AUDIO.PLAY shoot
 AUDIO.CLOSE
 ```
 
+#### Sprites
+
+A sprite is a drawable image handle. Load one from a file or create a blank
+texture; the returned `sprite_id` is what every other `SPRITE.*` call expects.
+
+**Loading & creation**
+
+* **`SPRITE.LOAD("filename.png"[, frame_w, frame_h]) -> sprite_id`**: Loads a sprite image, optionally as a spritesheet with the given frame size, and returns its sprite id.
+* **`SPRITE.CREATE(w, h) -> sprite_id`**: Allocates a new transparent sprite texture (`w`, `h` in `1..4096`) and returns its sprite id. Fill it with `SPRITE.SETPIXEL` / `SPRITE.SETBUFFER`, then optionally `SPRITE.SAVE`.
+* **`SPRITE.DELETE(id)`**: Removes a sprite instance.
+* **`SPRITE.SETPIXEL(id, x, y, r, g, b, a)`**: Writes one RGBA pixel into a `SPRITE.CREATE`'d sprite (components 0-255). Uploads the texture after each write; use `SPRITE.SETBUFFER` for bulk fills.
+* **`SPRITE.SETBUFFER(id, rgba_array)`**: Bulk RGBA-fill from a flat array of length `width * height * 4`. Length mismatch raises an error; values are clamped to 0-255. This is the fast path (and the one Claude uses when generating sprites via MCP).
+* **`SPRITE.SAVE(id, path$)`**: Writes a `SPRITE.CREATE`'d sprite's RGBA buffer to a PNG. For `SPRITE.LOAD`'d images use `GFX.SAVE_IMAGE` instead.
+
+**Position & transform**
+
+* **`SPRITE.POS(id, x, y)`** / **`SPRITE.MOVE(id, x, y)`**: Sets the absolute position of a sprite.
+* **`SPRITE.GET_X(id)`** / **`SPRITE.GET_Y(id)`**: Returns the X or Y coordinate of a sprite.
+* **`SPRITE.WIDTH(id) -> number`** / **`SPRITE.HEIGHT(id) -> number`**: Returns the scaled pixel size of a sprite.
+* **`SPRITE.SCALE(id, scale_x, [scale_y])`**: Sets the sprite scale; `scale_y` defaults to `scale_x`.
+* **`SPRITE.ROTATE(id, angle)`**: Sets the rotation angle in degrees.
+* **`SPRITE.SET_ORIGIN(id, origin_x, origin_y)`**: Sets the rotation/scale origin point.
+* **`SPRITE.FLIP(id, flip_h, [flip_v])`**: Sets the horizontal (and optional vertical) mirror state.
+* **`SPRITE.ALPHA(id, alpha)`**: Sets the per-sprite transparency (0-255).
+* **`SPRITE.VISIBLE(id, visible)`**: Sets whether the sprite is drawn.
+* **`SPRITE.ZORDER(id, z)`**: Sets the draw order used by `SPRITE.DRAW_ALL`.
+
+**Animation**
+
+* **`SPRITE.ANIM(id, name$, frames_array, fps, [loop])`**: Defines a named animation clip from an array of frame indices played at `fps`. `loop` defaults to `TRUE`.
+* **`SPRITE.PLAY(id, name$)`**: Starts playing a named clip (errors if the clip is unknown).
+* **`SPRITE.STOP(id)`**: Stops the current animation playback.
+* **`SPRITE.FRAME(id, frame_index)`**: Sets a fixed frame, stopping any playing animation.
+* **`SPRITE.PLAYING(id) -> boolean`**: Returns `TRUE` while an animation is playing.
+
+**Velocity & simple physics**
+
+* **`SPRITE.VELOCITY(id, vx, vy)`**: Sets the velocity in pixels per second. `SPRITE.UPDATE` advances the position.
+* **`SPRITE.GET_VX(id)`** / **`SPRITE.GET_VY(id)`**: Reads back the current velocity.
+* **`SPRITE.GRAVITY(id, gravity)`**: Sets a per-second vertical gravity acceleration applied during `SPRITE.UPDATE`.
+* **`SPRITE.LAND(id, ground_y)`**: Snaps a falling sprite to rest on a ground y-line, zeroing vertical velocity and flagging it on-ground.
+* **`SPRITE.ON_GROUND(id) -> boolean`**: Returns `TRUE` if `SPRITE.LAND` flagged the sprite as grounded.
+* **`SPRITE.UPDATE()`**: Advances the positions and animations of all sprites from their velocities (and gravity). Takes no arguments: the time step is the real time since the previous call (1/60 s on the first call), capped at 0.1 s so a pause does not make sprites jump.
+
+**Drawing**
+
+* **`SPRITE.DRAW(id)`**: Draws a single sprite if visible.
+* **`SPRITE.DRAW_ALL([world_x, world_y])`**: Draws all active sprites in z-order, optionally offset by a camera/world position.
+
+**Collision**
+
+* **`SPRITE.COLLISION(id1, id2) -> boolean`**: Returns `TRUE` if two sprites' bounding boxes overlap.
+* **`SPRITE.GROUP(id, group_name$)`**: Assigns a sprite to a named collision group.
+* **`SPRITE.COLLISIONS(group1$, group2$) -> array`**: Returns all colliding pairs between two groups as `[[id_a, id_b], ...]`.
+* **`SPRITE.COLLISION_FIRST(id, group$) -> number`**: Returns the id of the first sprite in `group$` overlapping `id`, or `-1`.
+
+#### Tiled Maps (`TILED.*`)
+
+Load and render maps authored in the [Tiled](https://www.mapeditor.org/) editor. Maps are referenced by a name you choose at load time.
+
+* **`TILED.LOAD(name$, filename$) -> boolean`**: Loads a Tiled (`.tmx`) map under `name$`; returns `TRUE` on success.
+* **`TILED.FREE(name$)`**: Frees a loaded map and its resources.
+* **`TILED.DRAW(name$, [cam_x], [cam_y])`**: Draws all layers in order; uses the global camera offset when none is given.
+* **`TILED.DRAW_LAYER(name$, layer$, [cam_x], [cam_y])`**: Draws a single named layer.
+* **`TILED.LAYERS$(name$) -> array`**: Returns the layer name strings in draw order.
+* **`TILED.OBJECTS(name$, layer$) -> array`**: Returns the objects of an object layer, each with `id, name, type, x, y, width, height, gid` and any custom properties.
+* **`TILED.PROPERTIES(name$) -> object`**: Returns the map-level custom properties.
+* **`TILED.TILE_AT(name$, layer$, pixel_x, pixel_y) -> gid`**: Returns the tile gid at a pixel position in a layer (`0` = empty).
+* **`TILED.COLLIDES(sprite_id, name$, layer$) -> boolean`**: Returns `TRUE` if a sprite overlaps a non-empty tile in the layer.
+* **`TILED.SIZE(name$) -> [w, h]`** / **`TILED.TILE_SIZE(name$) -> [tile_w, tile_h]`**: Map size in pixels / single tile size.
+* **`TILED.UPDATE(dt)`**: Advances animated tiles of all loaded maps by `dt` seconds.
+
+#### Programmatic Tilemaps (`TILEMAP.*`)
+
+Build a tilemap in code from a 2D array of tile ids, drawn from a tileset image. Use this when you generate levels at runtime instead of loading a Tiled file.
+
+* **`TILEMAP.CREATE(name$, tileset_image_id, data, tile_w, tile_h)`**: Creates a named tilemap from a 2D array of 1-based tile ids (`0` = empty) using a tileset image loaded via `GFX.LOADIMAGE`.
+* **`TILEMAP.DRAW(name$, [cam_x], [cam_y])`**: Draws the tilemap; uses the global camera offset when none is given.
+* **`TILEMAP.GET(name$, col, row) -> tile_id`** / **`TILEMAP.SET(name$, col, row, tile_id)`**: Reads/writes a single cell (out-of-range reads return `0`).
+* **`TILEMAP.TILE_AT(name$, pixel_x, pixel_y) -> tile_id`**: Returns the tile id at a pixel position (`0` if out of range).
+* **`TILEMAP.SIZE(name$) -> [cols, rows]`**: Returns the grid dimensions.
+* **`TILEMAP.COLLIDES(sprite_id, name$) -> boolean`**: Returns `TRUE` if the sprite's bounding box overlaps any non-empty tile.
+
+#### Camera (`CAM.*`)
+
+A 2D camera offset applied by `SPRITE.DRAW_ALL`, `TILED.DRAW` and `TILEMAP.DRAW` when no explicit offset is passed.
+
+* **`CAM.SET(x, y)`**: Sets the camera position manually (disables following).
+* **`CAM.FOLLOW(sprite_id, [smooth])`**: Makes the camera track a sprite, with an optional smoothing factor for lerped movement.
+* **`CAM.BOUNDS(x, y, w, h)`**: Clamps the camera to a rectangular world boundary during `SPRITE.UPDATE`.
+* **`CAM.SHAKE(intensity, duration)`**: Starts a camera shake of the given intensity for `duration` seconds.
+* **`CAM.X() -> number`** / **`CAM.Y() -> number`**: Returns the current camera position including any shake offset.
+
+#### Particles (`PARTICLE.*`)
+
+A lightweight fire-and-forget particle system for effects (explosions, sparks, dust).
+
+* **`PARTICLE.EMIT(x, y, count, r, g, b, [speed], [life], [gravity], [size])`**: Emits a burst of `count` colored particles with optional speed, lifetime, gravity and size.
+* **`PARTICLE.DRAW([cam_x], [cam_y])`**: Draws all active particles with life-based fade; uses the global camera offset when none is given.
+* **`PARTICLE.COUNT() -> number`**: Returns the number of currently active particles.
+* **`PARTICLE.CLEAR()`**: Removes all active particles.
+
+#### Turtle
+  
+* **`TURTLE.FORWARD distance`**: Moves the turtle forward with the distance at the given angle.
+* **`TURTLE.BACKWARD distance`**: Moves the turtle backward with the distance at the given angle.
+* **`TURTLE.LEFT degrees`**: Subtract degrees to the turles angle.
+* **`TURTLE.RIGHT degrees`**: Adds degrees to the turles angle.
+* **`TURTLE.PENUP`**: Stop drawing while moving.
+* **`TURTLE.PENDOWN`**: Begins drawing while moving.
+* **`TURTLE.SETPOS x, y`**: Set the turle position to x,y
+* **`TURTLE.SETHEADING degrees`**: Set the turtles angle to the degrees
+* **`TURTLE.HOME`**: Move the turtles position to the center of the canVas
+* **`TURTLE.DRAW`**: Redraws the entire path the turtle has taken so far.
+* **`TURTLE.CLEAR`**: Clears the turtle's path memory. Does not clear the screen.
+* **`TURTLE.SET_COLOR r, g, b`**: Set the turtles draw color to r,g,b
+
 ### ImGui Functions
 
 This suite of functions provides immediate-mode GUI capabilities using the Dear ImGui library. These functions allow you to create windows, inputs, plots, and complex layouts directly from your code.
@@ -3069,7 +3304,10 @@ The colour and style stacks decorate every subsequent emit until popped.
 
 The live coding sequencer allows you to program rhythmic musical patterns and manipulate sound in real-time.
 
-#### `SOUND.SEQ layer_id, pattern$, waveform$` Programs a rhythmic musical pattern into the live-coding sequencer for a specific layer
+#### `SOUND.SEQ layer_id, pattern$, waveform$`
+
+Programs a rhythmic musical pattern into the live-coding sequencer for a
+specific layer.
 
 * **`layer_id`** (Integer): The index of the sequencer layer (corresponds to Track ID).
 * **`pattern$`** (String): A rhythm string using "mini-notation".
@@ -3077,7 +3315,10 @@ The live coding sequencer allows you to program rhythmic musical patterns and ma
 * **"VOICE"**: Uses the track's existing design (ADSR, Filter, Sample, etc.).
 * **"SINE", "SQUARE", etc.**: Overrides the track's sound with a raw waveform.
 
-##### Pattern SyntaxThe sequencer divides time into "cycles". You can arrange events within a cycle using space-separated tokens
+##### Pattern Syntax
+
+The sequencer divides time into "cycles". Events are arranged within a
+cycle as space-separated tokens.
 
 * **Notes**: Plays a musical note.
 * **Frequency**: `"c3"`, `"f#4"`
@@ -3110,7 +3351,9 @@ SOUND.SEQ 2, "c3 [e3 g3] ~ b3", "VOICE"
 
 ```
 
-#### Sound Design (Track Specific)Apply these effects to specific tracks (0-7)
+#### Track Effects
+
+These effects apply to one track, numbered 0 to 7.
 
 * **`SOUND.GAIN track, volume`**: Sets track volume (1.0 = standard).
 * **`SOUND.PAN track, pan`**: Sets stereo panning (0.0=Left, 0.5=Center, 1.0=Right).
@@ -3128,9 +3371,10 @@ SOUND.SEQ 2, "c3 [e3 g3] ~ b3", "VOICE"
 
 * **`SOUND.RINGMOD track, freq, mix`**: Robotic/Sci-Fi modulation.
 
-### Sound Design (Track Specific)
+### Track Sends and Sidechain
 
-These commands allow you to control how individual tracks interact with global effects and other tracks.
+How one track reaches the global effect buses, and how one track ducks
+another.
 
 * **`SOUND.REVERBSEND track, amount`**: Sets the amount of the track's signal sent to the global reverb bus.
 * `amount`: 0.0 (Dry) to 1.0 (Full Wet).
@@ -3160,7 +3404,9 @@ These commands allow you to control how individual tracks interact with global e
 * **`SOUND.SHUTDOWN`**: Releases audio resources.
 * **`SOUND.DEBUG(enabled_bool)`**: Enables or disables verbose debug tracing from the audio engine, for diagnosing voice allocation or sequencer timing issues.
 
-#### Scale QuantizationMaps numbers in patterns (e.g., "0", "1") to musical scales
+#### Scale Quantization
+
+Maps the numbers in a pattern (`"0"`, `"1"`, ...) to a musical scale.
 
 **`SOUND.SCALE track, root_note$, scale_mode$`**
 
@@ -3233,123 +3479,6 @@ DO
 LOOP  UNTIL k$ = "q" OR k$ = "Q"
 
 ```
-
-#### Sprites
-
-A sprite is a drawable image handle. Load one from a file or create a blank
-texture; the returned `sprite_id` is what every other `SPRITE.*` call expects.
-
-**Loading & creation**
-
-* **`SPRITE.LOAD("filename.png"[, frame_w, frame_h]) -> sprite_id`**: Loads a sprite image, optionally as a spritesheet with the given frame size, and returns its sprite id.
-* **`SPRITE.CREATE(w, h) -> sprite_id`**: Allocates a new transparent sprite texture (`w`, `h` in `1..4096`) and returns its sprite id. Fill it with `SPRITE.SETPIXEL` / `SPRITE.SETBUFFER`, then optionally `SPRITE.SAVE`.
-* **`SPRITE.DELETE(id)`**: Removes a sprite instance.
-* **`SPRITE.SETPIXEL(id, x, y, r, g, b, a)`**: Writes one RGBA pixel into a `SPRITE.CREATE`'d sprite (components 0-255). Uploads the texture after each write; use `SPRITE.SETBUFFER` for bulk fills.
-* **`SPRITE.SETBUFFER(id, rgba_array)`**: Bulk RGBA-fill from a flat array of length `width * height * 4`. Length mismatch raises an error; values are clamped to 0-255. This is the fast path (and the one Claude uses when generating sprites via MCP).
-* **`SPRITE.SAVE(id, path$)`**: Writes a `SPRITE.CREATE`'d sprite's RGBA buffer to a PNG. For `SPRITE.LOAD`'d images use `GFX.SAVE_IMAGE` instead.
-
-**Position & transform**
-
-* **`SPRITE.POS(id, x, y)`** / **`SPRITE.MOVE(id, x, y)`**: Sets the absolute position of a sprite.
-* **`SPRITE.GET_X(id)`** / **`SPRITE.GET_Y(id)`**: Returns the X or Y coordinate of a sprite.
-* **`SPRITE.WIDTH(id) -> number`** / **`SPRITE.HEIGHT(id) -> number`**: Returns the scaled pixel size of a sprite.
-* **`SPRITE.SCALE(id, scale_x, [scale_y])`**: Sets the sprite scale; `scale_y` defaults to `scale_x`.
-* **`SPRITE.ROTATE(id, angle)`**: Sets the rotation angle in degrees.
-* **`SPRITE.SET_ORIGIN(id, origin_x, origin_y)`**: Sets the rotation/scale origin point.
-* **`SPRITE.FLIP(id, flip_h, [flip_v])`**: Sets the horizontal (and optional vertical) mirror state.
-* **`SPRITE.ALPHA(id, alpha)`**: Sets the per-sprite transparency (0-255).
-* **`SPRITE.VISIBLE(id, visible)`**: Sets whether the sprite is drawn.
-* **`SPRITE.ZORDER(id, z)`**: Sets the draw order used by `SPRITE.DRAW_ALL`.
-
-**Animation**
-
-* **`SPRITE.ANIM(id, name$, frames_array, fps, [loop])`**: Defines a named animation clip from an array of frame indices played at `fps`. `loop` defaults to `TRUE`.
-* **`SPRITE.PLAY(id, name$)`**: Starts playing a named clip (errors if the clip is unknown).
-* **`SPRITE.STOP(id)`**: Stops the current animation playback.
-* **`SPRITE.FRAME(id, frame_index)`**: Sets a fixed frame, stopping any playing animation.
-* **`SPRITE.PLAYING(id) -> boolean`**: Returns `TRUE` while an animation is playing.
-
-**Velocity & simple physics**
-
-* **`SPRITE.VELOCITY(id, vx, vy)`**: Sets the velocity in pixels per second. `SPRITE.UPDATE` advances the position.
-* **`SPRITE.GET_VX(id)`** / **`SPRITE.GET_VY(id)`**: Reads back the current velocity.
-* **`SPRITE.GRAVITY(id, gravity)`**: Sets a per-second vertical gravity acceleration applied during `SPRITE.UPDATE`.
-* **`SPRITE.LAND(id, ground_y)`**: Snaps a falling sprite to rest on a ground y-line, zeroing vertical velocity and flagging it on-ground.
-* **`SPRITE.ON_GROUND(id) -> boolean`**: Returns `TRUE` if `SPRITE.LAND` flagged the sprite as grounded.
-* **`SPRITE.UPDATE()`**: Advances the positions and animations of all sprites from their velocities (and gravity). Takes no arguments: the time step is the real time since the previous call (1/60 s on the first call), capped at 0.1 s so a pause does not make sprites jump.
-
-**Drawing**
-
-* **`SPRITE.DRAW(id)`**: Draws a single sprite if visible.
-* **`SPRITE.DRAW_ALL([world_x, world_y])`**: Draws all active sprites in z-order, optionally offset by a camera/world position.
-
-**Collision**
-
-* **`SPRITE.COLLISION(id1, id2) -> boolean`**: Returns `TRUE` if two sprites' bounding boxes overlap.
-* **`SPRITE.GROUP(id, group_name$)`**: Assigns a sprite to a named collision group.
-* **`SPRITE.COLLISIONS(group1$, group2$) -> array`**: Returns all colliding pairs between two groups as `[[id_a, id_b], ...]`.
-* **`SPRITE.COLLISION_FIRST(id, group$) -> number`**: Returns the id of the first sprite in `group$` overlapping `id`, or `-1`.
-
-#### Tiled Maps (`TILED.*`)
-
-Load and render maps authored in the [Tiled](https://www.mapeditor.org/) editor. Maps are referenced by a name you choose at load time.
-
-* **`TILED.LOAD(name$, filename$) -> boolean`**: Loads a Tiled (`.tmx`) map under `name$`; returns `TRUE` on success.
-* **`TILED.FREE(name$)`**: Frees a loaded map and its resources.
-* **`TILED.DRAW(name$, [cam_x], [cam_y])`**: Draws all layers in order; uses the global camera offset when none is given.
-* **`TILED.DRAW_LAYER(name$, layer$, [cam_x], [cam_y])`**: Draws a single named layer.
-* **`TILED.LAYERS$(name$) -> array`**: Returns the layer name strings in draw order.
-* **`TILED.OBJECTS(name$, layer$) -> array`**: Returns the objects of an object layer, each with `id, name, type, x, y, width, height, gid` and any custom properties.
-* **`TILED.PROPERTIES(name$) -> object`**: Returns the map-level custom properties.
-* **`TILED.TILE_AT(name$, layer$, pixel_x, pixel_y) -> gid`**: Returns the tile gid at a pixel position in a layer (`0` = empty).
-* **`TILED.COLLIDES(sprite_id, name$, layer$) -> boolean`**: Returns `TRUE` if a sprite overlaps a non-empty tile in the layer.
-* **`TILED.SIZE(name$) -> [w, h]`** / **`TILED.TILE_SIZE(name$) -> [tile_w, tile_h]`**: Map size in pixels / single tile size.
-* **`TILED.UPDATE(dt)`**: Advances animated tiles of all loaded maps by `dt` seconds.
-
-#### Programmatic Tilemaps (`TILEMAP.*`)
-
-Build a tilemap in code from a 2D array of tile ids, drawn from a tileset image. Use this when you generate levels at runtime instead of loading a Tiled file.
-
-* **`TILEMAP.CREATE(name$, tileset_image_id, data, tile_w, tile_h)`**: Creates a named tilemap from a 2D array of 1-based tile ids (`0` = empty) using a tileset image loaded via `GFX.LOADIMAGE`.
-* **`TILEMAP.DRAW(name$, [cam_x], [cam_y])`**: Draws the tilemap; uses the global camera offset when none is given.
-* **`TILEMAP.GET(name$, col, row) -> tile_id`** / **`TILEMAP.SET(name$, col, row, tile_id)`**: Reads/writes a single cell (out-of-range reads return `0`).
-* **`TILEMAP.TILE_AT(name$, pixel_x, pixel_y) -> tile_id`**: Returns the tile id at a pixel position (`0` if out of range).
-* **`TILEMAP.SIZE(name$) -> [cols, rows]`**: Returns the grid dimensions.
-* **`TILEMAP.COLLIDES(sprite_id, name$) -> boolean`**: Returns `TRUE` if the sprite's bounding box overlaps any non-empty tile.
-
-#### Camera (`CAM.*`)
-
-A 2D camera offset applied by `SPRITE.DRAW_ALL`, `TILED.DRAW` and `TILEMAP.DRAW` when no explicit offset is passed.
-
-* **`CAM.SET(x, y)`**: Sets the camera position manually (disables following).
-* **`CAM.FOLLOW(sprite_id, [smooth])`**: Makes the camera track a sprite, with an optional smoothing factor for lerped movement.
-* **`CAM.BOUNDS(x, y, w, h)`**: Clamps the camera to a rectangular world boundary during `SPRITE.UPDATE`.
-* **`CAM.SHAKE(intensity, duration)`**: Starts a camera shake of the given intensity for `duration` seconds.
-* **`CAM.X() -> number`** / **`CAM.Y() -> number`**: Returns the current camera position including any shake offset.
-
-#### Particles (`PARTICLE.*`)
-
-A lightweight fire-and-forget particle system for effects (explosions, sparks, dust).
-
-* **`PARTICLE.EMIT(x, y, count, r, g, b, [speed], [life], [gravity], [size])`**: Emits a burst of `count` colored particles with optional speed, lifetime, gravity and size.
-* **`PARTICLE.DRAW([cam_x], [cam_y])`**: Draws all active particles with life-based fade; uses the global camera offset when none is given.
-* **`PARTICLE.COUNT() -> number`**: Returns the number of currently active particles.
-* **`PARTICLE.CLEAR()`**: Removes all active particles.
-
-#### Turtle
-  
-* **`TURTLE.FORWARD distance`**: Moves the turtle forward with the distance at the given angle.
-* **`TURTLE.BACKWARD distance`**: Moves the turtle backward with the distance at the given angle.
-* **`TURTLE.LEFT degrees`**: Subtract degrees to the turles angle.
-* **`TURTLE.RIGHT degrees`**: Adds degrees to the turles angle.
-* **`TURTLE.PENUP`**: Stop drawing while moving.
-* **`TURTLE.PENDOWN`**: Begins drawing while moving.
-* **`TURTLE.SETPOS x, y`**: Set the turle position to x,y
-* **`TURTLE.SETHEADING degrees`**: Set the turtles angle to the degrees
-* **`TURTLE.HOME`**: Move the turtles position to the center of the canVas
-* **`TURTLE.DRAW`**: Redraws the entire path the turtle has taken so far.
-* **`TURTLE.CLEAR`**: Clears the turtle's path memory. Does not clear the screen.
-* **`TURTLE.SET_COLOR r, g, b`**: Set the turtles draw color to r,g,b
 
 ## Real-time Audio: WAV, FX Chain, MIDI & Live Monitor
 
@@ -4614,7 +4743,7 @@ Every documented builtin, linked to the section that describes it.
 
 **B** · [BIN$](#string-functions) · [BINREADER$](#file-io-functions) · [BINWRITER](#file-io-functions) · [BYTEAT](#string-functions)
 
-**C** · [CAM.BOUNDS](#example-custom-studio-monitor) · [CAM.FOLLOW](#example-custom-studio-monitor) · [CAM.SET](#example-custom-studio-monitor) · [CAM.SHAKE](#example-custom-studio-monitor) · [CAM.X](#example-custom-studio-monitor) · [CASE](#switchcaseendswitch) · [CATCH](#error-handling-trycatch) · [CBOOL](#matharithmeticround-functions) · [CD](#filesystem) · [CDATE](#matharithmeticround-functions) · [CDBL](#matharithmeticround-functions) · [CEIL](#matharithmeticround-functions) · [CHR$](#string-functions) · [CHUNK](#array--matrix-functions) · [CINT](#matharithmeticround-functions) · [CIRCLE](#graphics-and-multimedia-functions) · [CIRCLE_SECTOR](#graphics-and-multimedia-functions) · [CLAMP](#matharithmeticround-functions) · [CLEARWS](#development--debugging) · [CLEAR_RECUR](#background-tasks--timers) · [CLIPBOARD.GET$](#system--flow-control) · [CLIPBOARD.SET](#system--flow-control) · [CLNG](#matharithmeticround-functions) · [CLS](#system--flow-control) · [CODEC.BASE64_DECODE$](#encoding--hashing-codec) · [CODEC.BASE64_ENCODE$](#encoding--hashing-codec) · [CODEC.CRC32](#encoding--hashing-codec) · [CODEC.CRC32$](#encoding--hashing-codec) · [CODEC.DEFLATE$](#encoding--hashing-codec) · [CODEC.HMAC$](#encoding--hashing-codec) · [CODEC.INFLATE$](#encoding--hashing-codec) · [CODEC.PBKDF2$](#encoding--hashing-codec) · [CODEC.RANDOMBYTES$](#encoding--hashing-codec) · [CODEC.SHA256$](#encoding--hashing-codec) · [CODEC.UUID$](#encoding--hashing-codec) · [COLOR](#system--flow-control) · [COMPILE](#development--debugging) · [CONTINUEFOR](#system--flow-control) · [CONVOLVE](#array--matrix-functions) · [COPYV](#array--matrix-functions) · [COUNT](#array--matrix-functions) · [CREATEOBJECT](#com-automation-functions) · [CROSS](#array--matrix-functions) · [CSNG](#matharithmeticround-functions) · [CSTR](#matharithmeticround-functions) · [CSVHEADER](#file-io-functions) · [CSVREADER](#file-io-functions) · [CSVWRITER](#file-io-functions) · [CUMPROD](#array--matrix-functions) · [CUMSUM](#array--matrix-functions) · [CURSOR](#system--flow-control) · [CVDATE](#system-and-time-functions)
+**C** · [CAM.BOUNDS](#graphics-and-multimedia-functions) · [CAM.FOLLOW](#graphics-and-multimedia-functions) · [CAM.SET](#graphics-and-multimedia-functions) · [CAM.SHAKE](#graphics-and-multimedia-functions) · [CAM.X](#graphics-and-multimedia-functions) · [CASE](#switchcaseendswitch) · [CATCH](#error-handling-trycatch) · [CBOOL](#matharithmeticround-functions) · [CD](#filesystem) · [CDATE](#matharithmeticround-functions) · [CDBL](#matharithmeticround-functions) · [CEIL](#matharithmeticround-functions) · [CHR$](#string-functions) · [CHUNK](#array--matrix-functions) · [CINT](#matharithmeticround-functions) · [CIRCLE](#graphics-and-multimedia-functions) · [CIRCLE_SECTOR](#graphics-and-multimedia-functions) · [CLAMP](#matharithmeticround-functions) · [CLEARWS](#development--debugging) · [CLEAR_RECUR](#background-tasks--timers) · [CLIPBOARD.GET$](#system--flow-control) · [CLIPBOARD.SET](#system--flow-control) · [CLNG](#matharithmeticround-functions) · [CLS](#system--flow-control) · [CODEC.BASE64_DECODE$](#encoding--hashing-codec) · [CODEC.BASE64_ENCODE$](#encoding--hashing-codec) · [CODEC.CRC32](#encoding--hashing-codec) · [CODEC.CRC32$](#encoding--hashing-codec) · [CODEC.DEFLATE$](#encoding--hashing-codec) · [CODEC.HMAC$](#encoding--hashing-codec) · [CODEC.INFLATE$](#encoding--hashing-codec) · [CODEC.PBKDF2$](#encoding--hashing-codec) · [CODEC.RANDOMBYTES$](#encoding--hashing-codec) · [CODEC.SHA256$](#encoding--hashing-codec) · [CODEC.UUID$](#encoding--hashing-codec) · [COLOR](#system--flow-control) · [COMPILE](#development--debugging) · [CONTINUEFOR](#system--flow-control) · [CONVOLVE](#array--matrix-functions) · [COPYV](#array--matrix-functions) · [COUNT](#array--matrix-functions) · [CREATEOBJECT](#com-automation-functions) · [CROSS](#array--matrix-functions) · [CSNG](#matharithmeticround-functions) · [CSTR](#matharithmeticround-functions) · [CSVHEADER](#file-io-functions) · [CSVREADER](#file-io-functions) · [CSVWRITER](#file-io-functions) · [CUMPROD](#array--matrix-functions) · [CUMSUM](#array--matrix-functions) · [CURSOR](#system--flow-control) · [CVDATE](#system-and-time-functions)
 
 **D** · [DATE$](#system-and-time-functions) · [DATE.PARTS](#system-and-time-functions) · [DATE.UTC](#system-and-time-functions) · [DATEADD](#system-and-time-functions) · [DATEDIFF](#system-and-time-functions) · [DATERANGE](#system-and-time-functions) · [DEBUG.ASSERT](#development--debugging) · [DEBUG.PRINT](#development--debugging) · [DECLARE](#system--flow-control) · [DEFAULT](#switchcaseendswitch) · [DET](#array--matrix-functions) · [DIFF](#array--matrix-functions) · [DIR](#filesystem) · [DIR$](#filesystem) · [DISTANCE](#array--matrix-functions) · [DO](#system--flow-control) · [DOT](#array--matrix-functions) · [DRAWCOLOR](#graphics-and-multimedia-functions) · [DROP_WHILE](#array--matrix-functions) · [DUMP](#development--debugging)
 
@@ -4640,15 +4769,15 @@ Every documented builtin, linked to the section that describes it.
 
 **O** · [ON](#system--flow-control) · [ONES](#array--matrix-functions) · [OPTION](#system--flow-control) · [OS.ARGS](#os-functions) · [OS.EXEC](#os-functions) · [OS.FEATURE](#os-functions) · [OS.GETOS](#os-functions) · [OS.HOSTNAME$](#os-functions) · [OS.IP$](#os-functions) · [OS.LOAD](#os-functions) · [OS.SCREENSHOT](#os-functions) · [OUTER](#array--matrix-functions) · [OUTPUT.CAPTURE_BEGIN](#output-capture) · [OUTPUT.CAPTURE_END$](#output-capture) · [OUTPUT.CAPTURE_PEEK$](#output-capture)
 
-**P** · [PACK$](#string-functions) · [PACKSIZE](#string-functions) · [PARTICLE.CLEAR](#example-custom-studio-monitor) · [PARTICLE.COUNT](#example-custom-studio-monitor) · [PARTICLE.DRAW](#example-custom-studio-monitor) · [PARTICLE.EMIT](#example-custom-studio-monitor) · [PATH.ABS$](#filesystem) · [PATH.BASENAME$](#filesystem) · [PATH.DIRNAME$](#filesystem) · [PATH.EXT$](#filesystem) · [PATH.ISABS](#filesystem) · [PATH.JOIN$](#filesystem) · [PATH.NORMALIZE$](#filesystem) · [PDF.TEXT$](#file-io-functions) · [PLACE](#array--matrix-functions) · [PLOTRAW](#graphics-and-multimedia-functions) · [POP](#array--matrix-functions) · [POW](#matharithmeticround-functions) · [PRETTY](#development--debugging) · [PRINT](#console-io-functions) · [PSET](#graphics-and-multimedia-functions) · [PWD](#filesystem) · [PY.DIR$](#python-integration-build-flag-python) · [PY.EVAL](#python-integration-build-flag-python) · [PY.GET](#python-integration-build-flag-python) · [PY.HELP$](#python-integration-build-flag-python) · [PY.SET](#python-integration-build-flag-python) · [PYTHON$](#python-integration-build-flag-python)
+**P** · [PACK$](#string-functions) · [PACKSIZE](#string-functions) · [PARTICLE.CLEAR](#graphics-and-multimedia-functions) · [PARTICLE.COUNT](#graphics-and-multimedia-functions) · [PARTICLE.DRAW](#graphics-and-multimedia-functions) · [PARTICLE.EMIT](#graphics-and-multimedia-functions) · [PATH.ABS$](#filesystem) · [PATH.BASENAME$](#filesystem) · [PATH.DIRNAME$](#filesystem) · [PATH.EXT$](#filesystem) · [PATH.ISABS](#filesystem) · [PATH.JOIN$](#filesystem) · [PATH.NORMALIZE$](#filesystem) · [PDF.TEXT$](#file-io-functions) · [PLACE](#array--matrix-functions) · [PLOTRAW](#graphics-and-multimedia-functions) · [POP](#array--matrix-functions) · [POW](#matharithmeticround-functions) · [PRETTY](#development--debugging) · [PRINT](#console-io-functions) · [PSET](#graphics-and-multimedia-functions) · [PWD](#filesystem) · [PY.DIR$](#python-integration-build-flag-python) · [PY.EVAL](#python-integration-build-flag-python) · [PY.GET](#python-integration-build-flag-python) · [PY.HELP$](#python-integration-build-flag-python) · [PY.SET](#python-integration-build-flag-python) · [PYTHON$](#python-integration-build-flag-python)
 
 **Q** · [QR](#array--matrix-functions)
 
 **R** · [RAISEEVENT](#system--flow-control) · [RANDOM](#matharithmeticround-functions) · [RANDOMSEED](#matharithmeticround-functions) · [RANGE](#array--matrix-functions) · [REACT_BIND](#reactive-variables-and-assignment) · [RECT](#graphics-and-multimedia-functions) · [RECUR](#background-tasks--timers) · [REDUCE](#array--matrix-functions) · [REGEX.FINDALL](#regular-expression-functions) · [REGEX.MATCH](#regular-expression-functions) · [REGEX.REPLACE](#regular-expression-functions) · [RELEASEALL](#com-automation-functions) · [RELEASEOBJECT](#com-automation-functions) · [REPEAT$](#string-functions) · [REPLACE$](#string-functions) · [RESHAPE](#array--matrix-functions) · [REVERSE](#array--matrix-functions) · [REVERSE$](#string-functions) · [RMDIR](#filesystem) · [RND](#matharithmeticround-functions) · [RNG.FILL](#matharithmeticround-functions) · [RNG.FREE](#matharithmeticround-functions) · [RNG.INT](#matharithmeticround-functions) · [RNG.NEW](#matharithmeticround-functions) · [RNG.NEXT](#matharithmeticround-functions) · [ROTATE](#array--matrix-functions) · [ROTL](#matharithmeticround-functions) · [ROUND](#matharithmeticround-functions) · [ROUNDED_RECT](#graphics-and-multimedia-functions) · [RUN](#development--debugging)
 
-**S** · [SAVE](#development--debugging) · [SAVEWS](#development--debugging) · [SCAN](#array--matrix-functions) · [SCREEN](#graphics-and-multimedia-functions) · [SCREENFLIP](#graphics-and-multimedia-functions) · [SCREENWIDTH](#graphics-and-multimedia-functions) · [SELECT](#array--matrix-functions) · [SERIAL.AVAILABLE](#serial-communication-com) · [SERIAL.CLOSE](#serial-communication-com) · [SERIAL.FLUSH](#serial-communication-com) · [SERIAL.OPEN](#serial-communication-com) · [SERIAL.READ$](#serial-communication-com) · [SERIAL.WRITE](#serial-communication-com) · [SETENV](#system-and-time-functions) · [SETFONT](#graphics-and-multimedia-functions) · [SETLOCALE](#system-and-time-functions) · [SFX.LOAD](#imgui-functions) · [SFX.PLAY](#imgui-functions) · [SGN](#matharithmeticround-functions) · [SHIFT](#array--matrix-functions) · [SHUFFLE](#array--matrix-functions) · [SIN](#matharithmeticround-functions) · [SINH](#matharithmeticround-functions) · [SLEEP](#system--flow-control) · [SLICE](#array--matrix-functions) · [SOLVE](#array--matrix-functions) · [SORT](#array--matrix-functions) · [SOUND.BITCRUSH](#live-coding-sequencer) · [SOUND.COMPRESSOR](#sound-design-track-specific) · [SOUND.DEBUG](#sound-design-track-specific) · [SOUND.DELAY](#sound-design-track-specific) · [SOUND.DELAYSEND](#sound-design-track-specific) · [SOUND.DISTORTION](#sound-design-track-specific) · [SOUND.EQ](#live-coding-sequencer) · [SOUND.FILTER](#live-coding-sequencer) · [SOUND.FM](#live-coding-sequencer) · [SOUND.GAIN](#live-coding-sequencer) · [SOUND.GET_BUS_WAVE](#visualization--analysis) · [SOUND.GET_WAVE](#visualization--analysis) · [SOUND.INIT](#imgui-functions) · [SOUND.LFO](#live-coding-sequencer) · [SOUND.NOTE](#imgui-functions) · [SOUND.PAN](#live-coding-sequencer) · [SOUND.PLAY](#imgui-functions) · [SOUND.PLAYBUFFER](#imgui-functions) · [SOUND.QUEUED](#imgui-functions) · [SOUND.RELEASE](#imgui-functions) · [SOUND.RENDER](#visualization--analysis) · [SOUND.RESET](#sound-design-track-specific) · [SOUND.REVERB](#sound-design-track-specific) · [SOUND.REVERBSEND](#sound-design-track-specific) · [SOUND.RINGMOD](#live-coding-sequencer) · [SOUND.SAMPLE](#imgui-functions) · [SOUND.SHUTDOWN](#sound-design-track-specific) · [SOUND.SIDECHAIN](#sound-design-track-specific) · [SOUND.STATS](#imgui-functions) · [SOUND.STOP](#imgui-functions) · [SOUND.UNISON](#live-coding-sequencer) · [SOUND.VOICE](#imgui-functions) · [SPACE$](#string-functions) · [SPLIT](#string-functions) · [SPRITE.ALPHA](#example-custom-studio-monitor) · [SPRITE.ANIM](#example-custom-studio-monitor) · [SPRITE.COLLISION](#example-custom-studio-monitor) · [SPRITE.COLLISIONS](#example-custom-studio-monitor) · [SPRITE.COLLISION_FIRST](#example-custom-studio-monitor) · [SPRITE.CREATE](#example-custom-studio-monitor) · [SPRITE.DELETE](#example-custom-studio-monitor) · [SPRITE.DRAW](#example-custom-studio-monitor) · [SPRITE.DRAW_ALL](#example-custom-studio-monitor) · [SPRITE.FLIP](#example-custom-studio-monitor) · [SPRITE.FRAME](#example-custom-studio-monitor) · [SPRITE.GET_VX](#example-custom-studio-monitor) · [SPRITE.GET_X](#example-custom-studio-monitor) · [SPRITE.GRAVITY](#example-custom-studio-monitor) · [SPRITE.GROUP](#example-custom-studio-monitor) · [SPRITE.LAND](#example-custom-studio-monitor) · [SPRITE.LOAD](#example-custom-studio-monitor) · [SPRITE.ON_GROUND](#example-custom-studio-monitor) · [SPRITE.PLAY](#example-custom-studio-monitor) · [SPRITE.PLAYING](#example-custom-studio-monitor) · [SPRITE.POS](#example-custom-studio-monitor) · [SPRITE.ROTATE](#example-custom-studio-monitor) · [SPRITE.SAVE](#example-custom-studio-monitor) · [SPRITE.SCALE](#example-custom-studio-monitor) · [SPRITE.SETBUFFER](#example-custom-studio-monitor) · [SPRITE.SETPIXEL](#example-custom-studio-monitor) · [SPRITE.SET_ORIGIN](#example-custom-studio-monitor) · [SPRITE.STOP](#example-custom-studio-monitor) · [SPRITE.UPDATE](#example-custom-studio-monitor) · [SPRITE.VELOCITY](#example-custom-studio-monitor) · [SPRITE.VISIBLE](#example-custom-studio-monitor) · [SPRITE.WIDTH](#example-custom-studio-monitor) · [SPRITE.ZORDER](#example-custom-studio-monitor) · [SQL.CLOSE](#file-io-functions) · [SQL.COLUMNS](#file-io-functions) · [SQL.ERRMSG$](#file-io-functions) · [SQL.EXEC](#file-io-functions) · [SQL.OPEN](#file-io-functions) · [SQL.QUERY](#file-io-functions) · [SQL.TABLE](#file-io-functions) · [SQR](#matharithmeticround-functions) · [STACK](#array--matrix-functions) · [STACK$](#error-handling-trycatch) · [STARTSWITH](#string-functions) · [STOP](#system--flow-control) · [STR$](#string-functions) · [SUB](#user-defined-types-typeendtype) · [SVD](#array--matrix-functions) · [SWITCH](#switchcaseendswitch) · [SYS.CALL](#bare-metal-the-kernel-target) · [SYS.DF](#filesystem) · [SYS.FREEDISK](#filesystem) · [SYS.INB](#bare-metal-the-kernel-target) · [SYS.OUTB](#bare-metal-the-kernel-target) · [SYS.PEEKB](#bare-metal-the-kernel-target) · [SYS.POKEB](#bare-metal-the-kernel-target)
+**S** · [SAVE](#development--debugging) · [SAVEWS](#development--debugging) · [SCAN](#array--matrix-functions) · [SCREEN](#graphics-and-multimedia-functions) · [SCREENFLIP](#graphics-and-multimedia-functions) · [SCREENWIDTH](#graphics-and-multimedia-functions) · [SELECT](#array--matrix-functions) · [SERIAL.AVAILABLE](#serial-communication-com) · [SERIAL.CLOSE](#serial-communication-com) · [SERIAL.FLUSH](#serial-communication-com) · [SERIAL.OPEN](#serial-communication-com) · [SERIAL.READ$](#serial-communication-com) · [SERIAL.WRITE](#serial-communication-com) · [SETENV](#system-and-time-functions) · [SETFONT](#graphics-and-multimedia-functions) · [SETLOCALE](#system-and-time-functions) · [SFX.LOAD](#imgui-functions) · [SFX.PLAY](#imgui-functions) · [SGN](#matharithmeticround-functions) · [SHIFT](#array--matrix-functions) · [SHUFFLE](#array--matrix-functions) · [SIN](#matharithmeticround-functions) · [SINH](#matharithmeticround-functions) · [SLEEP](#system--flow-control) · [SLICE](#array--matrix-functions) · [SOLVE](#array--matrix-functions) · [SORT](#array--matrix-functions) · [SOUND.BITCRUSH](#live-coding-sequencer) · [SOUND.COMPRESSOR](#track-sends-and-sidechain) · [SOUND.DEBUG](#track-sends-and-sidechain) · [SOUND.DELAY](#track-sends-and-sidechain) · [SOUND.DELAYSEND](#track-sends-and-sidechain) · [SOUND.DISTORTION](#track-sends-and-sidechain) · [SOUND.EQ](#live-coding-sequencer) · [SOUND.FILTER](#live-coding-sequencer) · [SOUND.FM](#live-coding-sequencer) · [SOUND.GAIN](#live-coding-sequencer) · [SOUND.GET_BUS_WAVE](#visualization--analysis) · [SOUND.GET_WAVE](#visualization--analysis) · [SOUND.INIT](#imgui-functions) · [SOUND.LFO](#live-coding-sequencer) · [SOUND.NOTE](#imgui-functions) · [SOUND.PAN](#live-coding-sequencer) · [SOUND.PLAY](#imgui-functions) · [SOUND.PLAYBUFFER](#imgui-functions) · [SOUND.QUEUED](#imgui-functions) · [SOUND.RELEASE](#imgui-functions) · [SOUND.RENDER](#visualization--analysis) · [SOUND.RESET](#track-sends-and-sidechain) · [SOUND.REVERB](#track-sends-and-sidechain) · [SOUND.REVERBSEND](#track-sends-and-sidechain) · [SOUND.RINGMOD](#live-coding-sequencer) · [SOUND.SAMPLE](#imgui-functions) · [SOUND.SHUTDOWN](#track-sends-and-sidechain) · [SOUND.SIDECHAIN](#track-sends-and-sidechain) · [SOUND.STATS](#imgui-functions) · [SOUND.STOP](#imgui-functions) · [SOUND.UNISON](#live-coding-sequencer) · [SOUND.VOICE](#imgui-functions) · [SPACE$](#string-functions) · [SPLIT](#string-functions) · [SPRITE.ALPHA](#graphics-and-multimedia-functions) · [SPRITE.ANIM](#graphics-and-multimedia-functions) · [SPRITE.COLLISION](#graphics-and-multimedia-functions) · [SPRITE.COLLISIONS](#graphics-and-multimedia-functions) · [SPRITE.COLLISION_FIRST](#graphics-and-multimedia-functions) · [SPRITE.CREATE](#graphics-and-multimedia-functions) · [SPRITE.DELETE](#graphics-and-multimedia-functions) · [SPRITE.DRAW](#graphics-and-multimedia-functions) · [SPRITE.DRAW_ALL](#graphics-and-multimedia-functions) · [SPRITE.FLIP](#graphics-and-multimedia-functions) · [SPRITE.FRAME](#graphics-and-multimedia-functions) · [SPRITE.GET_VX](#graphics-and-multimedia-functions) · [SPRITE.GET_X](#graphics-and-multimedia-functions) · [SPRITE.GRAVITY](#graphics-and-multimedia-functions) · [SPRITE.GROUP](#graphics-and-multimedia-functions) · [SPRITE.LAND](#graphics-and-multimedia-functions) · [SPRITE.LOAD](#graphics-and-multimedia-functions) · [SPRITE.ON_GROUND](#graphics-and-multimedia-functions) · [SPRITE.PLAY](#graphics-and-multimedia-functions) · [SPRITE.PLAYING](#graphics-and-multimedia-functions) · [SPRITE.POS](#graphics-and-multimedia-functions) · [SPRITE.ROTATE](#graphics-and-multimedia-functions) · [SPRITE.SAVE](#graphics-and-multimedia-functions) · [SPRITE.SCALE](#graphics-and-multimedia-functions) · [SPRITE.SETBUFFER](#graphics-and-multimedia-functions) · [SPRITE.SETPIXEL](#graphics-and-multimedia-functions) · [SPRITE.SET_ORIGIN](#graphics-and-multimedia-functions) · [SPRITE.STOP](#graphics-and-multimedia-functions) · [SPRITE.UPDATE](#graphics-and-multimedia-functions) · [SPRITE.VELOCITY](#graphics-and-multimedia-functions) · [SPRITE.VISIBLE](#graphics-and-multimedia-functions) · [SPRITE.WIDTH](#graphics-and-multimedia-functions) · [SPRITE.ZORDER](#graphics-and-multimedia-functions) · [SQL.CLOSE](#file-io-functions) · [SQL.COLUMNS](#file-io-functions) · [SQL.ERRMSG$](#file-io-functions) · [SQL.EXEC](#file-io-functions) · [SQL.OPEN](#file-io-functions) · [SQL.QUERY](#file-io-functions) · [SQL.TABLE](#file-io-functions) · [SQR](#matharithmeticround-functions) · [STACK](#array--matrix-functions) · [STACK$](#error-handling-trycatch) · [STARTSWITH](#string-functions) · [STOP](#system--flow-control) · [STR$](#string-functions) · [SUB](#user-defined-types-typeendtype) · [SVD](#array--matrix-functions) · [SWITCH](#switchcaseendswitch) · [SYS.CALL](#bare-metal-the-kernel-target) · [SYS.DF](#filesystem) · [SYS.FREEDISK](#filesystem) · [SYS.INB](#bare-metal-the-kernel-target) · [SYS.OUTB](#bare-metal-the-kernel-target) · [SYS.PEEKB](#bare-metal-the-kernel-target) · [SYS.POKEB](#bare-metal-the-kernel-target)
 
-**T** · [TAKE](#array--matrix-functions) · [TAKE_WHILE](#array--matrix-functions) · [TALLY](#array--matrix-functions) · [TEXT](#graphics-and-multimedia-functions) · [THREAD.GETRESULT](#thread-functions) · [THREAD.ISDONE](#thread-functions) · [TICK](#system-and-time-functions) · [TILED.COLLIDES](#example-custom-studio-monitor) · [TILED.DRAW](#example-custom-studio-monitor) · [TILED.DRAW_LAYER](#example-custom-studio-monitor) · [TILED.FREE](#example-custom-studio-monitor) · [TILED.LAYERS$](#example-custom-studio-monitor) · [TILED.LOAD](#example-custom-studio-monitor) · [TILED.OBJECTS](#example-custom-studio-monitor) · [TILED.PROPERTIES](#example-custom-studio-monitor) · [TILED.SIZE](#example-custom-studio-monitor) · [TILED.TILE_AT](#example-custom-studio-monitor) · [TILED.UPDATE](#example-custom-studio-monitor) · [TILEMAP.COLLIDES](#example-custom-studio-monitor) · [TILEMAP.CREATE](#example-custom-studio-monitor) · [TILEMAP.DRAW](#example-custom-studio-monitor) · [TILEMAP.GET](#example-custom-studio-monitor) · [TILEMAP.SIZE](#example-custom-studio-monitor) · [TILEMAP.TILE_AT](#example-custom-studio-monitor) · [TOGGLE_FULLSCREEN](#graphics-and-multimedia-functions) · [TONUM](#matharithmeticround-functions) · [TRANSPOSE](#array--matrix-functions) · [TRON](#development--debugging) · [TRUNC](#matharithmeticround-functions) · [TRY](#system--flow-control) · [TUI.BEGIN](#terminal-ui-tui) · [TUI.BORDER_BEGIN](#terminal-ui-tui) · [TUI.BUTTON](#terminal-ui-tui) · [TUI.CANVAS_BEGIN](#terminal-ui-tui) · [TUI.CHECKBOX](#terminal-ui-tui) · [TUI.COLOR](#terminal-ui-tui) · [TUI.DROPDOWN](#terminal-ui-tui) · [TUI.END](#terminal-ui-tui) · [TUI.EXIT](#terminal-ui-tui) · [TUI.GAUGE](#terminal-ui-tui) · [TUI.GRID_BEGIN](#terminal-ui-tui) · [TUI.HBOX_BEGIN](#terminal-ui-tui) · [TUI.HEADING](#terminal-ui-tui) · [TUI.INPUT](#terminal-ui-tui) · [TUI.INPUT_DOUBLE](#terminal-ui-tui) · [TUI.INPUT_INT](#terminal-ui-tui) · [TUI.KEY$](#terminal-ui-tui) · [TUI.LAST_RENDER_MS](#terminal-ui-tui) · [TUI.LINE](#terminal-ui-tui) · [TUI.LINK](#terminal-ui-tui) · [TUI.MENU](#terminal-ui-tui) · [TUI.MENUBAR_BEGIN](#terminal-ui-tui) · [TUI.MENUITEM](#terminal-ui-tui) · [TUI.MODAL_BEGIN](#terminal-ui-tui) · [TUI.MODAL_CLOSE](#terminal-ui-tui) · [TUI.MODAL_END](#terminal-ui-tui) · [TUI.MODAL_OPEN](#terminal-ui-tui) · [TUI.MOUSE_X](#terminal-ui-tui) · [TUI.ON](#terminal-ui-tui) · [TUI.PARAGRAPH](#terminal-ui-tui) · [TUI.PIXEL](#terminal-ui-tui) · [TUI.PROGRESS](#terminal-ui-tui) · [TUI.QUIT](#terminal-ui-tui) · [TUI.RADIO](#terminal-ui-tui) · [TUI.RENDER](#terminal-ui-tui) · [TUI.RENDER_HEADLESS$](#terminal-ui-tui) · [TUI.SAME_LINE](#terminal-ui-tui) · [TUI.SELECTABLE](#terminal-ui-tui) · [TUI.SEPARATOR](#terminal-ui-tui) · [TUI.SIZE](#terminal-ui-tui) · [TUI.SLIDER](#terminal-ui-tui) · [TUI.SPACER](#terminal-ui-tui) · [TUI.SPINNER](#terminal-ui-tui) · [TUI.STYLE_PUSH](#terminal-ui-tui) · [TUI.SUBMENU_BEGIN](#terminal-ui-tui) · [TUI.TABLE_BEGIN](#terminal-ui-tui) · [TUI.TAB_BAR_BEGIN](#terminal-ui-tui) · [TUI.TAB_BEGIN](#terminal-ui-tui) · [TUI.TEXT](#terminal-ui-tui) · [TUI.THEME](#terminal-ui-tui) · [TUI.VERSION$](#terminal-ui-tui) · [TUI.WAIT_EVENT](#terminal-ui-tui) · [TUI.WIDTH](#terminal-ui-tui) · [TURTLE.BACKWARD](#example-custom-studio-monitor) · [TURTLE.CLEAR](#example-custom-studio-monitor) · [TURTLE.DRAW](#example-custom-studio-monitor) · [TURTLE.FORWARD](#example-custom-studio-monitor) · [TURTLE.HOME](#example-custom-studio-monitor) · [TURTLE.LEFT](#example-custom-studio-monitor) · [TURTLE.PENDOWN](#example-custom-studio-monitor) · [TURTLE.PENUP](#example-custom-studio-monitor) · [TURTLE.RIGHT](#example-custom-studio-monitor) · [TURTLE.SETHEADING](#example-custom-studio-monitor) · [TURTLE.SETPOS](#example-custom-studio-monitor) · [TURTLE.SET_COLOR](#example-custom-studio-monitor) · [TXTREADER$](#file-io-functions) · [TXTWRITER](#file-io-functions) · [TYPE](#user-defined-types-typeendtype) · [TYPEOF](#type-inspection)
+**T** · [TAKE](#array--matrix-functions) · [TAKE_WHILE](#array--matrix-functions) · [TALLY](#array--matrix-functions) · [TEXT](#graphics-and-multimedia-functions) · [THREAD.GETRESULT](#thread-functions) · [THREAD.ISDONE](#thread-functions) · [TICK](#system-and-time-functions) · [TILED.COLLIDES](#graphics-and-multimedia-functions) · [TILED.DRAW](#graphics-and-multimedia-functions) · [TILED.DRAW_LAYER](#graphics-and-multimedia-functions) · [TILED.FREE](#graphics-and-multimedia-functions) · [TILED.LAYERS$](#graphics-and-multimedia-functions) · [TILED.LOAD](#graphics-and-multimedia-functions) · [TILED.OBJECTS](#graphics-and-multimedia-functions) · [TILED.PROPERTIES](#graphics-and-multimedia-functions) · [TILED.SIZE](#graphics-and-multimedia-functions) · [TILED.TILE_AT](#graphics-and-multimedia-functions) · [TILED.UPDATE](#graphics-and-multimedia-functions) · [TILEMAP.COLLIDES](#graphics-and-multimedia-functions) · [TILEMAP.CREATE](#graphics-and-multimedia-functions) · [TILEMAP.DRAW](#graphics-and-multimedia-functions) · [TILEMAP.GET](#graphics-and-multimedia-functions) · [TILEMAP.SIZE](#graphics-and-multimedia-functions) · [TILEMAP.TILE_AT](#graphics-and-multimedia-functions) · [TOGGLE_FULLSCREEN](#graphics-and-multimedia-functions) · [TONUM](#matharithmeticround-functions) · [TRANSPOSE](#array--matrix-functions) · [TRON](#development--debugging) · [TRUNC](#matharithmeticround-functions) · [TRY](#system--flow-control) · [TUI.BEGIN](#terminal-ui-tui) · [TUI.BORDER_BEGIN](#terminal-ui-tui) · [TUI.BUTTON](#terminal-ui-tui) · [TUI.CANVAS_BEGIN](#terminal-ui-tui) · [TUI.CHECKBOX](#terminal-ui-tui) · [TUI.COLOR](#terminal-ui-tui) · [TUI.DROPDOWN](#terminal-ui-tui) · [TUI.END](#terminal-ui-tui) · [TUI.EXIT](#terminal-ui-tui) · [TUI.GAUGE](#terminal-ui-tui) · [TUI.GRID_BEGIN](#terminal-ui-tui) · [TUI.HBOX_BEGIN](#terminal-ui-tui) · [TUI.HEADING](#terminal-ui-tui) · [TUI.INPUT](#terminal-ui-tui) · [TUI.INPUT_DOUBLE](#terminal-ui-tui) · [TUI.INPUT_INT](#terminal-ui-tui) · [TUI.KEY$](#terminal-ui-tui) · [TUI.LAST_RENDER_MS](#terminal-ui-tui) · [TUI.LINE](#terminal-ui-tui) · [TUI.LINK](#terminal-ui-tui) · [TUI.MENU](#terminal-ui-tui) · [TUI.MENUBAR_BEGIN](#terminal-ui-tui) · [TUI.MENUITEM](#terminal-ui-tui) · [TUI.MODAL_BEGIN](#terminal-ui-tui) · [TUI.MODAL_CLOSE](#terminal-ui-tui) · [TUI.MODAL_END](#terminal-ui-tui) · [TUI.MODAL_OPEN](#terminal-ui-tui) · [TUI.MOUSE_X](#terminal-ui-tui) · [TUI.ON](#terminal-ui-tui) · [TUI.PARAGRAPH](#terminal-ui-tui) · [TUI.PIXEL](#terminal-ui-tui) · [TUI.PROGRESS](#terminal-ui-tui) · [TUI.QUIT](#terminal-ui-tui) · [TUI.RADIO](#terminal-ui-tui) · [TUI.RENDER](#terminal-ui-tui) · [TUI.RENDER_HEADLESS$](#terminal-ui-tui) · [TUI.SAME_LINE](#terminal-ui-tui) · [TUI.SELECTABLE](#terminal-ui-tui) · [TUI.SEPARATOR](#terminal-ui-tui) · [TUI.SIZE](#terminal-ui-tui) · [TUI.SLIDER](#terminal-ui-tui) · [TUI.SPACER](#terminal-ui-tui) · [TUI.SPINNER](#terminal-ui-tui) · [TUI.STYLE_PUSH](#terminal-ui-tui) · [TUI.SUBMENU_BEGIN](#terminal-ui-tui) · [TUI.TABLE_BEGIN](#terminal-ui-tui) · [TUI.TAB_BAR_BEGIN](#terminal-ui-tui) · [TUI.TAB_BEGIN](#terminal-ui-tui) · [TUI.TEXT](#terminal-ui-tui) · [TUI.THEME](#terminal-ui-tui) · [TUI.VERSION$](#terminal-ui-tui) · [TUI.WAIT_EVENT](#terminal-ui-tui) · [TUI.WIDTH](#terminal-ui-tui) · [TURTLE.BACKWARD](#graphics-and-multimedia-functions) · [TURTLE.CLEAR](#graphics-and-multimedia-functions) · [TURTLE.DRAW](#graphics-and-multimedia-functions) · [TURTLE.FORWARD](#graphics-and-multimedia-functions) · [TURTLE.HOME](#graphics-and-multimedia-functions) · [TURTLE.LEFT](#graphics-and-multimedia-functions) · [TURTLE.PENDOWN](#graphics-and-multimedia-functions) · [TURTLE.PENUP](#graphics-and-multimedia-functions) · [TURTLE.RIGHT](#graphics-and-multimedia-functions) · [TURTLE.SETHEADING](#graphics-and-multimedia-functions) · [TURTLE.SETPOS](#graphics-and-multimedia-functions) · [TURTLE.SET_COLOR](#graphics-and-multimedia-functions) · [TXTREADER$](#file-io-functions) · [TXTWRITER](#file-io-functions) · [TYPE](#user-defined-types-typeendtype) · [TYPEOF](#type-inspection)
 
 **U** · [UNIQUE](#array--matrix-functions) · [UNPACK](#string-functions) · [UNREACT](#reactive-variables-and-assignment)
 
