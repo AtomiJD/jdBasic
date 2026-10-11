@@ -2133,6 +2133,22 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     {
         std::function<void(const Stmt&, std::unordered_map<std::string,int>&)> promote_args =
             [&](const Stmt& s, std::unordered_map<std::string,int>& kinds) {
+            // A body sees the globals, never another body's locals. The names
+            // it declares itself shadow them, and what it assigns stays in it.
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
+                std::unordered_map<std::string,int> inner = kinds;
+                for (auto& p : s.params()) inner.erase(p.name);
+                std::function<void(const Stmt&)> drop_locals = [&](const Stmt& b) {
+                    if (b.kind == StmtKind::DIM && !b.var_name.empty()) inner.erase(b.var_name);
+                    for (auto& n : b.body) if (n) drop_locals(*n);
+                    for (auto& br : b.branches) for (auto& n : br.body) if (n) drop_locals(*n);
+                    for (auto& n : b.catch_body()) if (n) drop_locals(*n);
+                    for (auto& n : b.finally_body()) if (n) drop_locals(*n);
+                };
+                for (auto& b : s.body) if (b) drop_locals(*b);
+                for (auto& b : s.body) if (b) promote_args(*b, inner);
+                return;
+            }
             std::function<void(const Expr&)> walk_e = [&](const Expr& e) {
                 if (e.kind == ExprKind::CALL) {
                     auto cit = decls.find(e.func_name);

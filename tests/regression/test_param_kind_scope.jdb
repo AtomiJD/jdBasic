@@ -1,0 +1,47 @@
+' A function body's local names must not reach the next body. The native
+' compiler infers an untyped parameter's kind from what call sites hand it,
+' and read the kinds of one body's locals while scanning another: a local
+' called `slot` holding a map typed every other `slot` as a map, so an
+' array index arrived as a pointer and the IR did not verify.
+OPTION "EXPLICIT"
+
+DIM gRows AS ARRAY = [10, 20, 30]
+DIM gPass AS INTEGER = 0
+DIM gFail AS INTEGER = 0
+
+SUB SAY(what AS STRING, got AS STRING, want AS STRING)
+    IF got = want THEN
+        gPass = gPass + 1
+    ELSE
+        gFail = gFail + 1
+        PRINT "FAIL "; what; "  is ["; got; "] want ["; want; "]"
+    ENDIF
+ENDSUB
+
+FUNC NEWROOM(name AS STRING) AS MAP
+    DIM out AS MAP
+    out{"name"} = name
+    RETURN out
+ENDFUNC
+
+FUNC PICK(label AS STRING, slot) AS INTEGER
+    RETURN gRows[slot]
+ENDFUNC
+
+' This body gives the name `slot` to a map.
+FUNC NAMED(key AS STRING) AS STRING
+    DIM slot AS OBJECT = NEWROOM(key)
+    RETURN slot{"name"}
+ENDFUNC
+
+' And this one gives it to an array index.
+FUNC ROW(slot) AS INTEGER
+    RETURN PICK("row", slot)
+ENDFUNC
+
+SAY("a map under that name", NAMED("kitchen"), "kitchen")
+SAY("an index under the same name", STR$(ROW(1)), "20")
+SAY("and the first one", STR$(ROW(0)), "10")
+
+PRINT "RESULTS: "; gPass; " passed, "; gFail; " failed"
+IF gFail > 0 THEN THROW "test_param_kind_scope failed"
