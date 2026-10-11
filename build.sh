@@ -9,6 +9,13 @@
 set -e
 mkdir -p build build/obj
 
+# lib/ belongs next to the interpreter, the way a release lays it out and the
+# way IMPORT looks for it. A link keeps one copy on disk, so an edit under
+# lib/ is live for every script that runs from build/ or tests/.
+if [ -d lib ] && { [ -L build/lib ] || [ ! -e build/lib ]; }; then
+    ln -sfn ../lib build/lib 2>/dev/null || cp -r lib build/lib
+fi
+
 # macOS doesn't ship nproc; fall back to sysctl. Linux ships both.
 default_jobs() {
     if command -v nproc >/dev/null 2>&1; then nproc

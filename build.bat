@@ -11,6 +11,22 @@ set "CC=%MSVC%\bin\Hostx64\x64\cl.exe"
 
 if not exist build mkdir build
 
+REM lib\ belongs next to the EXE, the way a release lays it out and the way
+REM IMPORT looks for it. A junction keeps one copy on disk, so an edit under
+REM lib\ is live for every script that runs from build\ or tests\. A plain
+REM directory there is an unmanaged copy that drifts, so it is replaced.
+if exist lib\nul (
+    if exist build\lib\nul (
+        rmdir build\lib 2>nul
+        if exist build\lib\nul (
+            echo [+] build\lib was a copy - replacing it with a junction to lib\
+            rmdir /S /Q build\lib
+        )
+    )
+    if not exist build\lib\nul mklink /J build\lib lib >nul 2>&1
+    if not exist build\lib\nul xcopy /E /I /Y lib build\lib >nul 2>&1
+)
+
 set DEFS=/DNDEBUG
 set EXTRA_SRC=
 set EXTRA_INC=
