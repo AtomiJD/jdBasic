@@ -448,7 +448,7 @@ void VM::register_system_builtins() {
 
     // ── Reactive system ───────────────────────────────────────
 
-    register_native("REACT_BIND", [this](const std::vector<Value>& args) -> Value {
+    register_native("REACT_BIND", 4, 4, [this](const std::vector<Value>& args) -> Value {
         std::string var = args[0].as_string()->data;
         std::string formula = args[1].as_string()->data;
         std::string func = args[2].as_string()->data;
@@ -582,7 +582,7 @@ void VM::register_system_builtins() {
 
     // ── Event system ─────────────────────────────────────────
 
-    register_native("__EVENT_ON", [this](const std::vector<Value>& args) -> Value {
+    register_native("__EVENT_ON", 2, 2, [this](const std::vector<Value>& args) -> Value {
         std::string event_name = args[0].as_string()->data;
         std::string handler = args[1].as_string()->data;
         event_on(event_name, handler);

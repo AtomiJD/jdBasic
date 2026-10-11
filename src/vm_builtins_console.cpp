@@ -63,7 +63,7 @@ void VM::register_console_builtins() {
         return Value::make_none();
     });
 
-    register_native("LOCATE", [this](const std::vector<Value>& args) -> Value {
+    register_native("LOCATE", 2, 2, [this](const std::vector<Value>& args) -> Value {
         int row = (int)args[0].to_int();
         int col = (int)args[1].to_int();
         emit("\033[" + std::to_string(row) + ";" + std::to_string(col) + "H");

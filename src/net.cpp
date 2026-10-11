@@ -432,7 +432,7 @@ void register_net_builtins(VM& vm) {
     });
 
     // NET.SEND(handle, data$) -> bytes sent, -1 when nothing could be sent.
-    vm.register_native("NET.SEND", [](const std::vector<Value>& args) -> Value {
+    vm.register_native("NET.SEND", 2, 2, [](const std::vector<Value>& args) -> Value {
         need_args(args, 2, "NET.SEND");
         Sock* s = stream_sock(args, "NET.SEND");
         std::string data = text_of(args[1]);
@@ -530,7 +530,7 @@ void register_net_builtins(VM& vm) {
     });
 
     // NET.SENDTO(handle, host$, port, data$) -> bytes sent, -1 on error.
-    vm.register_native("NET.SENDTO", [](const std::vector<Value>& args) -> Value {
+    vm.register_native("NET.SENDTO", 4, 4, [](const std::vector<Value>& args) -> Value {
         need_args(args, 4, "NET.SENDTO");
         Sock* s = get_sock(args[0].to_int(), "NET.SENDTO");
         if (s->kind != Kind::Datagram)

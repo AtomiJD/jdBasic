@@ -63,6 +63,12 @@ jobs:
           & build/jdBasic.exe tools/scan_builtin_returns.jdb --check
           if ($LASTEXITCODE -ne 0) { throw "a builtin answers a kind builtin_sigs.h does not record" }
 
+      - name: Builtin argument counts
+        shell: pwsh
+        run: |
+          & build/jdBasic.exe tools/scan_builtin_arity.jdb --check
+          if ($LASTEXITCODE -ne 0) { throw "a builtin reads an argument it never checks was passed" }
+
       - name: Language reference contents and index
         shell: pwsh
         run: |
@@ -113,6 +119,9 @@ jobs:
 
       - name: Builtin return kinds
         run: ./build/jdbasic tools/scan_builtin_returns.jdb --check
+
+      - name: Builtin argument counts
+        run: ./build/jdbasic tools/scan_builtin_arity.jdb --check
 
       - name: Language reference contents and index
         run: ./build/jdbasic tools/gen_doc_index.jdb --check

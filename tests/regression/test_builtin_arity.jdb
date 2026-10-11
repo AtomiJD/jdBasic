@@ -1,0 +1,66 @@
+' register_native has an overload that takes no arity, and the VM pads a
+' short call with defaults. A builtin whose body reads args[1] or higher
+' without asking args.size() then answers from a value the caller never
+' passed, so a forgotten argument looks like a plausible result.
+DIM bad = 0
+
+SUB REFUSES(what$, got$)
+    IF INSTR(got$, "expected at least") < 0 THEN
+        bad = bad + 1
+        PRINT "FAIL "; what$; " said ["; got$; "]"
+    ENDIF
+ENDSUB
+
+FUNC TOLD$(code$)
+    TRY
+        EXECUTE "DIM throwaway = " + code$
+        RETURN "accepted"
+    CATCH
+        RETURN ERRMSG$
+    ENDTRY
+ENDFUNC
+
+DIM q$ = CHR$(34)
+REFUSES("LEFT$ with one argument", TOLD$("LEFT$(" + q$ + "abc" + q$ + ")"))
+REFUSES("RIGHT$ with one argument", TOLD$("RIGHT$(" + q$ + "abc" + q$ + ")"))
+REFUSES("SHL with one argument", TOLD$("SHL(4)"))
+REFUSES("STARTSWITH with one argument", TOLD$("STARTSWITH(" + q$ + "abc" + q$ + ")"))
+REFUSES("ENDSWITH with one argument", TOLD$("ENDSWITH(" + q$ + "abc" + q$ + ")"))
+REFUSES("SPLIT with one argument", TOLD$("SPLIT(" + q$ + "a,b" + q$ + ")"))
+REFUSES("BYTEAT with one argument", TOLD$("BYTEAT(" + q$ + "abc" + q$ + ")"))
+REFUSES("INDEXOF with one argument", TOLD$("INDEXOF([1, 2])"))
+REFUSES("DOT with one argument", TOLD$("DOT([1, 2])"))
+REFUSES("CROSS with one argument", TOLD$("CROSS([1, 2, 3])"))
+REFUSES("LINSPACE with two arguments", TOLD$("LINSPACE(0, 1)"))
+REFUSES("LERP with two arguments", TOLD$("LERP(0, 1)"))
+REFUSES("REPLACE$ with two arguments", TOLD$("REPLACE$(" + q$ + "ab" + q$ + ", " + q$ + "a" + q$ + ")"))
+REFUSES("MAP.EXISTS with one argument", TOLD$("MAP.EXISTS({" + q$ + "a" + q$ + ": 1})"))
+
+' The documented forms still answer.
+IF LEFT$("abcdef", 3) <> "abc" THEN
+    bad = bad + 1
+    PRINT "FAIL LEFT$ answered ["; LEFT$("abcdef", 3); "]"
+ENDIF
+IF STARTSWITH("abc", "ab") <> TRUE THEN
+    bad = bad + 1
+    PRINT "FAIL STARTSWITH answered "; STARTSWITH("abc", "ab")
+ENDIF
+IF LEN(LINSPACE(0, 1, 5)) <> 5 THEN
+    bad = bad + 1
+    PRINT "FAIL LINSPACE answered "; LEN(LINSPACE(0, 1, 5))
+ENDIF
+
+' COUNT documents an optional second argument: without it, the answer is the
+' array's length, and both backends have to say the same number.
+DIM nums = [4, 7, 7, 9]
+IF COUNT(nums) <> 4 THEN
+    bad = bad + 1
+    PRINT "FAIL COUNT without a value answered "; COUNT(nums)
+ENDIF
+IF COUNT(nums, 7) <> 2 THEN
+    bad = bad + 1
+    PRINT "FAIL COUNT with a value answered "; COUNT(nums, 7)
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
+IF bad > 0 THEN END 1

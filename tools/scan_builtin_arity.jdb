@@ -1,0 +1,78 @@
+' Every builtin registered without an arity, with the argument indices its
+' body reads. register_native has two overloads: (name, fn) accepts any
+' number of arguments, (name, min, max, fn) refuses a call outside the range.
+' The VM pads a short call to an arity-less builtin with defaults, so a body
+' that reads args[1] or higher without asking args.size() answers from a
+' value the caller never passed.
+'
+' One line per name: NAME <tab> file <tab> highest index read <tab>
+' guarded, where guarded says whether the body consults args.size().
+'
+'   jdbasic tools/scan_builtin_arity.jdb [--check]
+'
+' --check exits 1 when a body reads an index it never guards, which is the
+' shape that answers nonsense instead of saying what is missing.
+
+DIM check_only = FALSE
+DIM argv = OS.ARGS()
+DIM a = 0
+FOR a = 0 TO LEN(argv) - 1
+    IF argv[a] = "--check" THEN check_only = TRUE
+NEXT a
+
+DIM files = SORT(DIR$(PATH.JOIN$("src", "*.cpp")))
+DIM reg$ = "register_native("
+DIM q$ = CHR$(34)
+
+DIM total = 0
+DIM loose = 0
+DIM risky = 0
+DIM report = []
+
+DIM f = 0
+FOR f = 0 TO LEN(files) - 1
+    DIM path$ = PATH.JOIN$("src", files[f])
+    DIM src$ = TXTREADER$(path$)
+    DIM parts = SPLIT(src$, reg$)
+    DIM p = 1
+    FOR p = 1 TO LEN(parts) - 1
+        DIM slice$ = parts[p]
+        ' The name is the first quoted token of the call.
+        DIM q1 = INSTR(slice$, q$)
+        IF q1 < 0 THEN CONTINUEFOR
+        DIM q2 = INSTR(q1 + 1, slice$, q$)
+        IF q2 < 0 THEN CONTINUEFOR
+        DIM name$ = MID$(slice$, q1 + 1, q2 - q1 - 1)
+        total = total + 1
+        ' An arity follows the name as ", <digits>,".
+        DIM after$ = LTRIM$(MID$(slice$, q2 + 1, 12))
+        IF LEFT$(after$, 1) = "," THEN
+            DIM rest$ = LTRIM$(MID$(after$, 1, LEN(after$) - 1))
+            IF LEN(rest$) > 0 ANDALSO INSTR("0123456789", LEFT$(rest$, 1)) >= 0 THEN CONTINUEFOR
+        ENDIF
+        loose = loose + 1
+        ' The body is everything up to the next registration in the file.
+        DIM highest = -1
+        DIM idx = 0
+        FOR idx = 0 TO 9
+            IF INSTR(slice$, "args[" + STR$(idx) + "]") >= 0 THEN highest = idx
+        NEXT idx
+        DIM guarded$ = "no"
+        IF INSTR(slice$, "args.size()") >= 0 THEN guarded$ = "yes"
+        DIM line$ = name$ + CHR$(9) + files[f] + CHR$(9) + STR$(highest) + CHR$(9) + guarded$
+        IF highest >= 1 ANDALSO guarded$ = "no" THEN
+            risky = risky + 1
+            PUSH(report, line$)
+        ENDIF
+    NEXT p
+NEXT f
+
+IF NOT check_only THEN
+    DIM r = 0
+    FOR r = 0 TO LEN(report) - 1
+        PRINT report[r]
+    NEXT r
+ENDIF
+
+PRINT "arity scan: "; total; " registrations, "; loose; " without an arity, "; risky; " of those read an unguarded argument"
+IF check_only ANDALSO risky > 0 THEN END 1

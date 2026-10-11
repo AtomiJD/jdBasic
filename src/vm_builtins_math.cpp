@@ -168,15 +168,15 @@ void VM::register_math_builtins() {
         return Value::make_i64(v > 0 ? 1 : (v < 0 ? -1 : 0));
     });
     // ── LERP ─────────────────────────────────────────────────
-    register_native("LERP", [](const std::vector<Value>& args) -> Value {
+    register_native("LERP", 3, 3, [](const std::vector<Value>& args) -> Value {
         double a = args[0].to_double(), b = args[1].to_double(), t = args[2].to_double();
         return Value::make_f64(a + (b - a) * t);
     });
 
-    register_native("SHL", [](const std::vector<Value>& args) -> Value {
+    register_native("SHL", 2, 2, [](const std::vector<Value>& args) -> Value {
         return Value::make_i64(args[0].to_int() << args[1].to_int());
     });
-    register_native("SHR", [](const std::vector<Value>& args) -> Value {
+    register_native("SHR", 2, 2, [](const std::vector<Value>& args) -> Value {
         return Value::make_i64(args[0].to_int() >> args[1].to_int());
     });
 

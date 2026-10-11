@@ -85,7 +85,7 @@ void VM::register_data_builtins() {
 
     // ── MAP functions ────────────────────────────────────────
 
-    register_native("MAP.EXISTS", [](const std::vector<Value>& args) -> Value {
+    register_native("MAP.EXISTS", 2, 2, [](const std::vector<Value>& args) -> Value {
         auto* o = args[0].as_object();
         std::string key = args[1].as_string()->data;
         return Value::make_bool(o->get(key) != nullptr);
@@ -121,7 +121,7 @@ void VM::register_data_builtins() {
         return Value::make_i64(args[0].as_object()->fields.size());
     });
 
-    register_native("MAP.DELETE", [](const std::vector<Value>& args) -> Value {
+    register_native("MAP.DELETE", 2, 2, [](const std::vector<Value>& args) -> Value {
         auto* o = args[0].as_object();
         std::string key = args[1].as_string()->data;
         auto& f = o->fields;
@@ -134,7 +134,7 @@ void VM::register_data_builtins() {
         return Value::make_none();
     });
 
-    register_native("MAP.MERGE", [](const std::vector<Value>& args) -> Value {
+    register_native("MAP.MERGE", 2, 2, [](const std::vector<Value>& args) -> Value {
         auto* dst = args[0].as_object();
         auto* src = args[1].as_object();
         for (auto& [k, v] : src->fields) dst->set(k, v);

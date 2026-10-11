@@ -14904,6 +14904,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // more positional arg => encoding string at the tail.
     if (upper == "TXTREADER$" && expr.args.size() == 2) upper = "__TXTREADER_ENC";
     else if (upper == "TXTWRITER" && expr.args.size() == 4) upper = "__TXTWRITER_ENC";
+    // COUNT without a value to look for answers how many there are, which is
+    // what the LEN binding already does.
+    else if (upper == "COUNT" && expr.args.size() == 1) upper = "LEN";
     // COPYV(dst, scalar) → reroute to FILLV (= scalar broadcast). Detection
     // by inferred type of arg[1]: if not ARRAY-typed, treat as fill.
     else if (upper == "COPYV" && expr.args.size() == 2 && expr.args[1]) {

@@ -357,7 +357,7 @@ void register_http_builtins(VM& vm) {
         else         { httplib::Client    cli(host); return run(cli); }
     });
 
-    vm.register_native("HTTP.SETHEADER", [](const std::vector<Value>& args) -> Value {
+    vm.register_native("HTTP.SETHEADER", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::lock_guard<std::mutex> lock(g_http_mutex);
         g_http_headers[args[0].as_string()->data] = args[1].as_string()->data;
         return Value::make_none();
@@ -392,7 +392,7 @@ void register_http_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    vm.register_native("HTTP.SETPARAM", [](const std::vector<Value>& args) -> Value {
+    vm.register_native("HTTP.SETPARAM", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::string name = args[0].as_string()->data;
         std::string value = args[1].as_string()->data;
         std::lock_guard<std::mutex> lock(g_http_mutex);
@@ -410,7 +410,7 @@ void register_http_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    vm.register_native("HTTP.SETCOOKIE", [](const std::vector<Value>& args) -> Value {
+    vm.register_native("HTTP.SETCOOKIE", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::lock_guard<std::mutex> lock(g_http_mutex);
         g_http_cookies[args[0].as_string()->data] = args[1].as_string()->data;
         return Value::make_none();
@@ -590,13 +590,13 @@ void register_http_builtins(VM& vm) {
         return s;
     };
 
-    vm.register_native("HTTP.SERVER.ON_GET", [handler_name](const std::vector<Value>& args) -> Value {
+    vm.register_native("HTTP.SERVER.ON_GET", 2, 2, [handler_name](const std::vector<Value>& args) -> Value {
         std::lock_guard<std::mutex> lock(g_server_mutex);
         g_get_handlers[args[0].as_string()->data] = handler_name(args[1]);
         return Value::make_none();
     });
 
-    vm.register_native("HTTP.SERVER.ON_POST", [handler_name](const std::vector<Value>& args) -> Value {
+    vm.register_native("HTTP.SERVER.ON_POST", 2, 2, [handler_name](const std::vector<Value>& args) -> Value {
         std::lock_guard<std::mutex> lock(g_server_mutex);
         g_post_handlers[args[0].as_string()->data] = handler_name(args[1]);
         return Value::make_none();

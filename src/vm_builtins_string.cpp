@@ -157,14 +157,14 @@ void VM::register_string_builtins() {
     // String slicing helpers - implicitly stringify non-string inputs so
     // callers can pass e.g. a DATE-tagged FLOAT64 or a number directly,
     // matching classic BASIC's loose typing.
-    register_native("LEFT$", [](const std::vector<Value>& args) -> Value {
+    register_native("LEFT$", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].to_string();
         int64_t n = args[1].to_int();
         if (n < 0) n = 0;
         if (n > (int64_t)s.size()) n = (int64_t)s.size();
         return Value::make_string(s.substr(0, n));
     });
-    register_native("RIGHT$", [](const std::vector<Value>& args) -> Value {
+    register_native("RIGHT$", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].to_string();
         int64_t n = args[1].to_int();
         if (n < 0) n = 0;
@@ -278,7 +278,7 @@ void VM::register_string_builtins() {
     });
 
     // INSERT$: insert text into string or element into array at position
-    register_native("INSERT$", [](const std::vector<Value>& args) -> Value {
+    register_native("INSERT$", 3, 3, [](const std::vector<Value>& args) -> Value {
         if (args[0].type == ValueType::STRING) {
             std::string s = args[0].as_string()->data;
             std::string ins = args[1].as_string()->data;
@@ -301,7 +301,7 @@ void VM::register_string_builtins() {
     });
 
     // SPLIT: split string by delimiter
-    register_native("SPLIT", [](const std::vector<Value>& args) -> Value {
+    register_native("SPLIT", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::string src = args[0].as_string()->data;
         std::string delim = args[1].as_string()->data;
         Value r = Value::make_array();
@@ -323,7 +323,7 @@ void VM::register_string_builtins() {
     });
 
     // REPLACE$: replace all occurrences
-    register_native("REPLACE$", [](const std::vector<Value>& args) -> Value {
+    register_native("REPLACE$", 3, 3, [](const std::vector<Value>& args) -> Value {
         if (args[0].type == ValueType::STRING) {
             std::string s = args[0].as_string()->data;
             std::string find = args[1].as_string()->data;
@@ -392,7 +392,7 @@ void VM::register_string_builtins() {
     });
 
     // BYTEAT: raw byte value at index
-    register_native("BYTEAT", [](const std::vector<Value>& args) -> Value {
+    register_native("BYTEAT", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].as_string()->data;
         int64_t idx = args[1].to_int();
         if (idx < 0 || idx >= (int64_t)s.size()) return Value::make_i64(0);
@@ -721,11 +721,11 @@ void VM::register_string_builtins() {
         }
         return Value::make_string(r);
     });
-    register_native("STARTSWITH", [](const std::vector<Value>& args) -> Value {
+    register_native("STARTSWITH", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].as_string()->data, p = args[1].as_string()->data;
         return Value::make_bool(s.size() >= p.size() && s.substr(0, p.size()) == p);
     });
-    register_native("ENDSWITH", [](const std::vector<Value>& args) -> Value {
+    register_native("ENDSWITH", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].as_string()->data, p = args[1].as_string()->data;
         return Value::make_bool(s.size() >= p.size() && s.substr(s.size() - p.size()) == p);
     });
@@ -793,7 +793,7 @@ void VM::register_string_builtins() {
         return Value::make_string(buf);
     });
 #ifndef JDB_LEAN
-    register_native("REGEX_MATCH", [](const std::vector<Value>& args) -> Value {
+    register_native("REGEX_MATCH", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].as_string()->data, pat = args[1].as_string()->data;
         Value r = Value::make_array();
         try {
@@ -806,7 +806,7 @@ void VM::register_string_builtins() {
     });
 #endif
 #ifndef JDB_LEAN
-    register_native("REGEX_REPLACE$", [](const std::vector<Value>& args) -> Value {
+    register_native("REGEX_REPLACE$", 3, 3, [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].as_string()->data, pat = args[1].as_string()->data, repl = args[2].as_string()->data;
         try { return Value::make_string(std::regex_replace(s, make_regex(pat), repl)); }
         catch (...) { return Value::make_string(s); }
@@ -815,7 +815,7 @@ void VM::register_string_builtins() {
 
     // REGEX.MATCH(pattern, text) → TRUE/FALSE or array of captures
 #ifndef JDB_LEAN
-    register_native("REGEX.MATCH", [](const std::vector<Value>& args) -> Value {
+    register_native("REGEX.MATCH", 2, 2, [](const std::vector<Value>& args) -> Value {
         const std::string& pat = args[0].as_string()->data;
         std::string text = args[1].as_string()->data;
         try {
@@ -838,7 +838,7 @@ void VM::register_string_builtins() {
 
     // REGEX.FINDALL(pattern, text) → 1D array of matches or 2D if groups
 #ifndef JDB_LEAN
-    register_native("REGEX.FINDALL", [](const std::vector<Value>& args) -> Value {
+    register_native("REGEX.FINDALL", 2, 2, [](const std::vector<Value>& args) -> Value {
         const std::string& pat = args[0].as_string()->data;
         std::string text = args[1].as_string()->data;
         Value r = Value::make_array();
@@ -869,7 +869,7 @@ void VM::register_string_builtins() {
 
     // REGEX.REPLACE(pattern, text, replacement) → string
 #ifndef JDB_LEAN
-    register_native("REGEX.REPLACE", [](const std::vector<Value>& args) -> Value {
+    register_native("REGEX.REPLACE", 3, 3, [](const std::vector<Value>& args) -> Value {
         const std::string& pat = args[0].as_string()->data;
         const std::string& text = args[1].as_string()->data;
         const std::string& repl = args[2].as_string()->data;

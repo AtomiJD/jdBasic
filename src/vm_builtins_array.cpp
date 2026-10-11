@@ -468,7 +468,7 @@ void VM::register_array_builtins() {
     });
 
     // ── FIND_IN_ARRAY ────────────────────────────────────────
-    register_native("FIND_IN_ARRAY", [](const std::vector<Value>& args) -> Value {
+    register_native("FIND_IN_ARRAY", 2, 2, [](const std::vector<Value>& args) -> Value {
         auto* arr = args[0].as_array();
         std::string target = args[1].to_string();
         for (size_t i = 0; i < arr->elements.size(); i++) {
@@ -501,7 +501,7 @@ void VM::register_array_builtins() {
     });
 
     // ── DISTANCE ─────────────────────────────────────────────
-    register_native("DISTANCE", [](const std::vector<Value>& args) -> Value {
+    register_native("DISTANCE", 2, 2, [](const std::vector<Value>& args) -> Value {
         auto* a = args[0].as_array();
         auto* b = args[1].as_array();
         double sum = 0;
@@ -590,7 +590,7 @@ void VM::register_array_builtins() {
     });
 
     // ── ROTATE ───────────────────────────────────────────────
-    register_native("ROTATE", [](const std::vector<Value>& args) -> Value {
+    register_native("ROTATE", 2, 2, [](const std::vector<Value>& args) -> Value {
         auto shifts = shift_vector(args[1]);
         if (shifts.empty()) return args[0];
         if ((int)shifts.size() > array_rank(args[0]))
@@ -682,7 +682,7 @@ void VM::register_array_builtins() {
     });
 
     // ── SCAN ─────────────────────────────────────────────────
-    register_native("SCAN", [this](const std::vector<Value>& args) -> Value {
+    register_native("SCAN", 2, 2, [this](const std::vector<Value>& args) -> Value {
         std::string op = args[0].as_string()->data;
         auto* arr = args[1].as_array();
         Value r = Value::make_array();
@@ -709,7 +709,7 @@ void VM::register_array_builtins() {
     });
 
     // ── MATMUL ───────────────────────────────────────────────
-    register_native("MATMUL", [](const std::vector<Value>& args) -> Value {
+    register_native("MATMUL", 2, 2, [](const std::vector<Value>& args) -> Value {
         int ar, ac, br, bc;
         get_2d(args[0], ar, ac); get_2d(args[1], br, bc);
         if (ac != br) throw std::runtime_error("MATMUL: incompatible dimensions");
@@ -724,7 +724,7 @@ void VM::register_array_builtins() {
     });
 
     // ── MVLET ────────────────────────────────────────────────
-    register_native("MVLET", [](const std::vector<Value>& args) -> Value {
+    register_native("MVLET", 4, 4, [](const std::vector<Value>& args) -> Value {
         // MVLET(matrix, dim, index, vector)
         int rows, cols; get_2d(args[0], rows, cols);
         int dim = (int)args[1].to_int();
@@ -752,7 +752,7 @@ void VM::register_array_builtins() {
     // (dim 1) into a 2D matrix at `index`. index == size appends at the end.
     // `value` is a vector (one entry per row/col) OR a scalar broadcast to
     // fill the new row/column. Returns a new matrix (the original is untouched).
-    register_native("MVINS", [](const std::vector<Value>& args) -> Value {
+    register_native("MVINS", 4, 4, [](const std::vector<Value>& args) -> Value {
         int rows, cols; get_2d(args[0], rows, cols);
         int dim = (int)args[1].to_int();
         int idx = (int)args[2].to_int();
@@ -853,7 +853,7 @@ void VM::register_array_builtins() {
     });
 
     // ── SOLVE (Ax=b) ─────────────────────────────────────────
-    register_native("SOLVE", [](const std::vector<Value>& args) -> Value {
+    register_native("SOLVE", 2, 2, [](const std::vector<Value>& args) -> Value {
         int n, nc; get_2d(args[0], n, nc);
         auto* bv = args[1].as_array();
         // Build augmented matrix
@@ -1269,13 +1269,13 @@ void VM::register_array_builtins() {
         for_each_leaf(args[0], [&](const Value& v) { double d = v.to_double() - mean; ss += d * d; });
         return Value::make_f64(std::sqrt(ss / n));
     });
-    register_native("DOT", [](const std::vector<Value>& args) -> Value {
+    register_native("DOT", 2, 2, [](const std::vector<Value>& args) -> Value {
         auto* a = args[0].as_array(); auto* b = args[1].as_array();
         double s = 0; size_t n = std::min(a->elements.size(), b->elements.size());
         for (size_t i = 0; i < n; i++) s += a->elements[i].to_double() * b->elements[i].to_double();
         return Value::make_f64(s);
     });
-    register_native("CROSS", [](const std::vector<Value>& args) -> Value {
+    register_native("CROSS", 2, 2, [](const std::vector<Value>& args) -> Value {
         auto* a = args[0].as_array(); auto* b = args[1].as_array();
         if (a->elements.size() < 3 || b->elements.size() < 3) throw std::runtime_error("CROSS requires 3D vectors");
         double ax=a->elements[0].to_double(), ay=a->elements[1].to_double(), az=a->elements[2].to_double();
@@ -1340,7 +1340,7 @@ void VM::register_array_builtins() {
             r.as_array()->elements.push_back(Value::make_f64(mn + range * i / bins));
         return r;
     });
-    register_native("LINSPACE", [](const std::vector<Value>& args) -> Value {
+    register_native("LINSPACE", 3, 3, [](const std::vector<Value>& args) -> Value {
         double start = args[0].to_double(), end = args[1].to_double();
         int n = (int)args[2].to_int();
         Value r = Value::make_array();
@@ -1464,12 +1464,15 @@ void VM::register_array_builtins() {
         else if (step < 0) for (int64_t i = start; i > end; i += step) r.as_array()->elements.push_back(Value::make_i64(i));
         return r;
     });
-    register_native("COUNT", [](const std::vector<Value>& args) -> Value {
-        auto* arr = args[0].as_array(); std::string target = args[1].to_string();
+    register_native("COUNT", 1, 2, [](const std::vector<Value>& args) -> Value {
+        auto* arr = args[0].as_array();
+        // Without a value to look for, the answer is how many there are.
+        if (args.size() < 2) return Value::make_i64((int64_t)arr->elements.size());
+        std::string target = args[1].to_string();
         int64_t c = 0; for (auto& e : arr->elements) if (e.to_string() == target) c++;
         return Value::make_i64(c);
     });
-    register_native("INDEXOF", [](const std::vector<Value>& args) -> Value {
+    register_native("INDEXOF", 2, 2, [](const std::vector<Value>& args) -> Value {
         auto* arr = args[0].as_array(); std::string target = args[1].to_string();
         for (size_t i = 0; i < arr->elements.size(); i++)
             if (arr->elements[i].to_string() == target) return Value::make_i64(i);

@@ -205,6 +205,7 @@ tests/regression/test_bitops_vector.jdb	OK	OK	OK
 tests/regression/test_bnot.jdb	PASS	CFAIL	GAP
 tests/regression/test_bool_render.jdb	PASS	PASS	OK
 tests/regression/test_builtin_answer_kind.jdb	PASS	PASS	OK
+tests/regression/test_builtin_arity.jdb	PASS	PASS	OK
 tests/regression/test_builtin_constants.jdb	PASS	PASS	OK
 tests/regression/test_builtin_named_var.jdb	PASS	PASS	OK
 tests/regression/test_call_result_kind.jdb	PASS	PASS	OK

@@ -125,7 +125,7 @@ void VM::register_file_builtins() {
         return Value::make_string(data);
     });
 
-    register_native("BINWRITER", [](const std::vector<Value>& args) -> Value {
+    register_native("BINWRITER", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::string fname = args[0].as_string()->data;
         std::string data = args[1].as_string()->data;
         std::ofstream f(fname, std::ios::binary);
