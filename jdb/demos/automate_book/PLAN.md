@@ -6,7 +6,12 @@ desk, a setup wizard for the easy level, and a build that turns the Markdown
 manuscript into a Word document with jdBasic itself.
 
 Status, 2026-10-11: 56 recipes, every one green on all five columns of
-check_recipes.
+check_recipes. Built final: 749 print pages, 739 screen, 88567 words and
+16665 lines of code, cover spine 42.8 mm, EPUB of 110 files. The lines are
+broken paragraph at a time rather than line by line, which leaves 112 of
+them too loose to justify and no widows at all; `tools/build_book.jdb`
+reports both numbers on every run. Hyphenation is built in and off: it
+waits for a pattern file under `type.hyphenation`.
 
 Status, 2026-10-02: WP 0a to 0c and WP 1 to WP 5 done; print PDF 655
 pages. WP 5: chapter 6 (with a worked change: a monthly schedule in the

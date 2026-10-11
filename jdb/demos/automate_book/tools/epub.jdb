@@ -12,6 +12,8 @@ IMPORT CONF, MD, MDBOOK
 
 DIM gLF$ = CHR$(10)
 DIM gQ$ = CHR$(34)
+DIM gLang$ = "en"
+DIM gContents$ = "Contents"
 
 FUNC Esc$(s$)
     RETURN REPLACE$(MD.ESCAPE$(s$), "'", "&#39;")
@@ -20,7 +22,7 @@ ENDFUNC
 FUNC Page$(title$, body$)
     DIM head$ = "<?xml version=" + gQ$ + "1.0" + gQ$ + " encoding=" + gQ$ + "UTF-8" + gQ$ + "?>" + gLF$
     head$ = head$ + "<!DOCTYPE html>" + gLF$
-    head$ = head$ + "<html xmlns=" + gQ$ + "http://www.w3.org/1999/xhtml" + gQ$ + " xmlns:epub=" + gQ$ + "http://www.idpf.org/2007/ops" + gQ$ + " xml:lang=" + gQ$ + "en" + gQ$ + " lang=" + gQ$ + "en" + gQ$ + ">" + gLF$
+    head$ = head$ + "<html xmlns=" + gQ$ + "http://www.w3.org/1999/xhtml" + gQ$ + " xmlns:epub=" + gQ$ + "http://www.idpf.org/2007/ops" + gQ$ + " xml:lang=" + gQ$ + gLang$ + gQ$ + " lang=" + gQ$ + gLang$ + gQ$ + ">" + gLF$
     head$ = head$ + "<head><meta charset=" + gQ$ + "utf-8" + gQ$ + "/><title>" + Esc$(title$) + "</title>"
     head$ = head$ + "<link rel=" + gQ$ + "stylesheet" + gQ$ + " type=" + gQ$ + "text/css" + gQ$ + " href=" + gQ$ + "style.css" + gQ$ + "/></head>" + gLF$
     RETURN head$ + "<body>" + gLF$ + body$ + gLF$ + "</body></html>" + gLF$
@@ -92,7 +94,7 @@ ENDFUNC
 
 ' The navigation document: the headings of level 1 and 2 as nested lists.
 FUNC Nav$(found)
-    DIM out = ["<nav epub:type=" + gQ$ + "toc" + gQ$ + " id=" + gQ$ + "toc" + gQ$ + "><h1>Contents</h1>", "<ol>"]
+    DIM out = ["<nav epub:type=" + gQ$ + "toc" + gQ$ + " id=" + gQ$ + "toc" + gQ$ + "><h1>" + gContents$ + "</h1>", "<ol>"]
     DIM open_sub = FALSE
     DIM open_top = FALSE
     DIM k = 0
@@ -138,6 +140,91 @@ FUNC MediaType$(path$)
     RETURN ""
 ENDFUNC
 
+' A PNG or JPEG without the metadata that photo and AI tools leave in it
+' (EXIF, XMP, IPTC, C2PA, text chunks, comments); KDP has refused an
+' e-book over such a cover. Colour data (ICC profile, Adobe marker) stays.
+FUNC CleanImage$(data$)
+    DIM at = 0
+    DIM n = 0
+    DIM out$ = ""
+    IF LEFT$(data$, 4) = CHR$(137) + "PNG" THEN
+        out$ = LEFT$(data$, 8)
+        at = 8
+        DO WHILE at + 12 <= LEN(data$)
+            n = ((BYTEAT(data$, at) * 256 + BYTEAT(data$, at + 1)) * 256 + BYTEAT(data$, at + 2)) * 256 + BYTEAT(data$, at + 3)
+            DIM kind$ = MID$(data$, at + 4, 4)
+            IF INSTR("tEXt zTXt iTXt eXIf caBX", kind$) < 0 THEN out$ = out$ + MID$(data$, at, n + 12)
+            at = at + n + 12
+        LOOP
+        RETURN out$
+    ENDIF
+    IF LEN(data$) < 4 ORELSE BYTEAT(data$, 0) <> 255 ORELSE BYTEAT(data$, 1) <> 216 THEN RETURN data$
+    out$ = LEFT$(data$, 2)
+    at = 2
+    DO WHILE at + 4 <= LEN(data$)
+        DIM marker = BYTEAT(data$, at + 1)
+        ' From the start of the scan on, the rest is picture data.
+        IF marker = 218 THEN RETURN out$ + MID$(data$, at)
+        n = BYTEAT(data$, at + 2) * 256 + BYTEAT(data$, at + 3)
+        ' APP1 (EXIF, XMP), APP11 (C2PA), APP13 (IPTC) and COM go.
+        IF marker <> 225 ANDALSO marker <> 235 ANDALSO marker <> 237 ANDALSO marker <> 254 THEN out$ = out$ + MID$(data$, at, n + 2)
+        at = at + 2 + n
+    LOOP
+    RETURN data$
+ENDFUNC
+
+' Little-endian integers for the ZIP headers.
+FUNC LE16$(n)
+    RETURN CHR$(n MOD 256) + CHR$((n \ 256) MOD 256)
+ENDFUNC
+
+FUNC LE32$(n)
+    RETURN LE16$(n MOD 65536) + LE16$((n \ 65536) MOD 65536)
+ENDFUNC
+
+' A ZIP archive with every entry stored, none compressed, in the order of
+' the map; answers the number of entries. ZIP.WRITE deflates, and its
+' deflate damaged a JPEG cover (KDP refused that e-book), so the EPUB
+' does not use it. Stored is the safe form for EPUB: the mimetype entry
+' must be stored anyway, and pictures barely shrink.
+' The bytes of an entry and the method to record them under: deflated when
+' that is smaller and unpacks back to the same bytes, stored otherwise.
+' ZIP.WRITE deflates without asking, and its deflate damaged a JPEG cover
+' (KDP refused that e-book), so the EPUB packs its entries here and reads
+' each one back before trusting it. The mimetype entry stays stored, as the
+' format demands, and so does anything that does not shrink.
+FUNC Packed(name$, data$)
+    IF name$ = "mimetype" ORELSE LEN(data$) < 64 THEN RETURN [0, data$]
+    TRY
+        DIM small$ = CODEC.DEFLATE$(data$, 6, "raw")
+        IF LEN(small$) < LEN(data$) ANDALSO CODEC.INFLATE$(small$, "raw") = data$ THEN RETURN [8, small$]
+    CATCH
+        RETURN [0, data$]
+    ENDTRY
+    RETURN [0, data$]
+ENDFUNC
+
+' A ZIP archive in the order of the map; answers the number of entries.
+FUNC StoredZip(path$, files)
+    DIM body$ = ""
+    DIM central$ = ""
+    DIM names = MAP.KEYS(files)
+    FOR EACH name$ IN names
+        DIM data$ = files{name$}
+        DIM how = Packed(name$, data$)
+        DIM method = how[0]
+        DIM raw$ = how[1]
+        DIM crc = CODEC.CRC32(data$)
+        ' version 2.0, no flags, 1980-01-01 00:00
+        DIM common$ = LE16$(0) + LE16$(method) + LE16$(0) + LE16$(33) + LE32$(crc) + LE32$(LEN(raw$)) + LE32$(LEN(data$)) + LE16$(LEN(name$)) + LE16$(0)
+        central$ = central$ + LE32$(33639248) + LE16$(20) + LE16$(20) + common$ + LE16$(0) + LE16$(0) + LE16$(0) + LE32$(0) + LE32$(LEN(body$)) + name$
+        body$ = body$ + LE32$(67324752) + LE16$(20) + common$ + name$ + raw$
+    NEXT name$
+    DIM tail$ = LE32$(101010256) + LE16$(0) + LE16$(0) + LE16$(LEN(names)) + LE16$(LEN(names)) + LE32$(LEN(central$)) + LE32$(LEN(body$)) + LE16$(0)
+    BINWRITER path$, body$ + central$ + tail$
+    RETURN LEN(names)
+ENDFUNC
+
 ' Writes the e-book; answers the number of files in it. cover_png$ may be
 ' "" for a book without a cover picture.
 EXPORT FUNC WRITE(cfg, chapters, base$, out_path$, cover_png$)
@@ -145,6 +232,8 @@ EXPORT FUNC WRITE(cfg, chapters, base$, out_path$, cover_png$)
     DIM subtitle$ = CONF.GET(cfg, "book.subtitle", "")
     DIM authors = CONF.GET(cfg, "book.authors", [])
     DIM lang$ = LEFT$(CONF.GET(cfg, "book.language", "en-US"), 2)
+    gLang$ = lang$
+    gContents$ = CONF.GET(cfg, "labels.contents", "Contents")
     DIM publisher$ = CONF.GET(cfg, "book.publisher", "")
     DIM rights$ = CONF.GET(cfg, "book.rights", "")
     DIM files AS MAP
@@ -156,13 +245,14 @@ EXPORT FUNC WRITE(cfg, chapters, base$, out_path$, cover_png$)
     PUSH(manifest, Item$("nav", "nav.xhtml", "application/xhtml+xml", "nav"))
     PUSH(manifest, Item$("css", "style.css", "text/css", ""))
     IF cover_png$ <> "" ANDALSO FILE.EXISTS(cover_png$) THEN
-        files{"OEBPS/img/cover.png"} = BINREADER$(cover_png$)
-        PUSH(manifest, Item$("cover-image", "img/cover.png", "image/png", "cover-image"))
-        files{"OEBPS/cover.xhtml"} = Page$(title$, "<div class=" + gQ$ + "cover" + gQ$ + "><img src=" + gQ$ + "img/cover.png" + gQ$ + " alt=" + gQ$ + Esc$(title$) + gQ$ + "/></div>")
+        DIM cover_href$ = "img/cover" + LCASE$(PATH.EXT$(cover_png$))
+        files{"OEBPS/" + cover_href$} = CleanImage$(BINREADER$(cover_png$))
+        PUSH(manifest, Item$("cover-image", cover_href$, MediaType$(cover_png$), "cover-image"))
+        files{"OEBPS/cover.xhtml"} = Page$(title$, "<div class=" + gQ$ + "cover" + gQ$ + "><img src=" + gQ$ + cover_href$ + gQ$ + " alt=" + gQ$ + Esc$(title$) + gQ$ + "/></div>")
         PUSH(manifest, Item$("cover", "cover.xhtml", "application/xhtml+xml", ""))
         PUSH(spine, "cover")
     ENDIF
-    DIM title_body$ = "<div class=" + gQ$ + "title" + gQ$ + "><h1>" + Esc$(title$) + "</h1><p><em>" + Esc$(subtitle$) + "</em></p><p>" + Esc$(JOIN(authors, " and ")) + "</p></div>"
+    DIM title_body$ = "<div class=" + gQ$ + "title" + gQ$ + "><h1>" + Esc$(title$) + "</h1><p><em>" + Esc$(subtitle$) + "</em></p><p>" + Esc$(JOIN(authors, CONF.GET(cfg, "labels.and", " and "))) + "</p></div>"
     files{"OEBPS/title.xhtml"} = Page$(title$, title_body$)
     PUSH(manifest, Item$("title", "title.xhtml", "application/xhtml+xml", ""))
     PUSH(spine, "title")
@@ -190,10 +280,10 @@ EXPORT FUNC WRITE(cfg, chapters, base$, out_path$, cover_png$)
     DIM img_paths = MAP.KEYS(images)
     FOR k = 0 TO LEN(img_paths) - 1
         DIM rel$ = img_paths[k]
-        files{"OEBPS/" + rel$} = BINREADER$(images{rel$})
+        files{"OEBPS/" + rel$} = CleanImage$(BINREADER$(images{rel$}))
         PUSH(manifest, Item$("i" + STR$(k + 1), rel$, MediaType$(rel$), ""))
     NEXT k
-    files{"OEBPS/nav.xhtml"} = Page$("Contents", Nav$(found))
+    files{"OEBPS/nav.xhtml"} = Page$(CONF.GET(cfg, "labels.contents", "Contents"), Nav$(found))
     DIM opf = []
     PUSH(opf, "<?xml version=" + gQ$ + "1.0" + gQ$ + " encoding=" + gQ$ + "UTF-8" + gQ$ + "?>")
     PUSH(opf, "<package xmlns=" + gQ$ + "http://www.idpf.org/2007/opf" + gQ$ + " version=" + gQ$ + "3.0" + gQ$ + " unique-identifier=" + gQ$ + "bookid" + gQ$ + " xml:lang=" + gQ$ + lang$ + gQ$ + ">")
@@ -219,5 +309,5 @@ EXPORT FUNC WRITE(cfg, chapters, base$, out_path$, cover_png$)
     PUSH(opf, "</spine>")
     PUSH(opf, "</package>")
     files{"OEBPS/content.opf"} = JOIN(opf, gLF$) + gLF$
-    RETURN ZIP.WRITE(out_path$, files)
+    RETURN StoredZip(out_path$, files)
 ENDFUNC

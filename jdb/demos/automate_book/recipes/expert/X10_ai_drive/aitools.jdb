@@ -219,8 +219,8 @@ EXPORT FUNC CHECK(jdbasic$, tools$, scratch$)
     DIM k = 0
     FOR k = 0 TO LEN(rows) - 1
         DIM row$ = TRIM$(rows[k])
-        ' The server writes one reply per line; anything else it says about
-        ' itself is not JSON and is not a reply.
+        ' The server writes one reply per line; what it says
+        ' about itself is not JSON and is not a reply.
         IF LEFT$(row$, 1) <> "{" THEN CONTINUEFOR
         DIM reply = JSON.PARSE$(row$)
         IF TYPEOF(reply) = "OBJECT" ANDALSO IsListReply(reply) THEN

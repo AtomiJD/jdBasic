@@ -69,7 +69,7 @@ The module does the work, from the calendar to the PDF:
 2. A time in the calendar can carry a time zone or not. A time with a
    zone names an instant and is shown on your computer's clock. A time
    without one names a wall clock, which the ICAL library reads in your
-   zone, so `Clock$` gives back the digits the file writes - which is
+   zone, so `Clock$` gives back the digits the file writes, which is
    what Outlook means by such a time.
 3. `NAMES` reads the names of the people from the `CN` part of the
    `ATTENDEE` lines, so the page says "Anna Berg" and not her address.

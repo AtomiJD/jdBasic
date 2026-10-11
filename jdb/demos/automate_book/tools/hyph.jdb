@@ -1,0 +1,111 @@
+' hyph.jdb: hyphenation with TeX patterns (Frank Liang's algorithm), for
+' justified text. The patterns are a plain list, one per line, as the
+' hyph-utf8 project ships them in its txt folder (tools/hyph/).
+'
+'   IMPORT HYPH
+'   HYPH.LOAD("tools/hyph/hyph-de-1996.pat.txt")
+'   PRINT HYPH.POINTS("Softwareentwicklung")   ' [4, 8, 10, 14]
+'
+' Everything works on the UTF-8 bytes: a pattern only puts its digits
+' between characters, so the positions it finds never split a character.
+
+EXPORT MODULE HYPH
+
+DIM gPats = {}
+DIM gLoaded$ = ""
+DIM gCache = {}
+CONST HYPH_LEFT = 2
+CONST HYPH_RIGHT = 3
+
+' Reads a pattern file once; loading the same file again does nothing.
+EXPORT SUB LOAD(path$)
+    IF path$ = gLoaded$ THEN RETURN
+    gPats = {}
+    gCache = {}
+    DIM src = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), CHR$(10))
+    FOR EACH line$ IN src
+        DIM p$ = TRIM$(line$)
+        IF p$ = "" ORELSE LEFT$(p$, 1) = "%" THEN CONTINUEFOR
+        DIM letters$ = ""
+        DIM digits$ = ""
+        DIM pending$ = "0"
+        DIM k = 0
+        FOR k = 0 TO LEN(p$) - 1
+            DIM ch$ = MID$(p$, k, 1)
+            IF ch$ >= "0" ANDALSO ch$ <= "9" THEN
+                pending$ = ch$
+            ELSE
+                letters$ = letters$ + ch$
+                digits$ = digits$ + pending$
+                pending$ = "0"
+            ENDIF
+        NEXT k
+        gPats{letters$} = digits$ + pending$
+    NEXT line$
+    gLoaded$ = path$
+ENDSUB
+
+' True once a pattern file is loaded.
+EXPORT FUNC READY()
+    RETURN gLoaded$ <> ""
+ENDFUNC
+
+' Lower case for the patterns, the German capitals with umlaut included.
+FUNC Lower$(w$)
+    DIM t$ = LCASE$(w$)
+    t$ = REPLACE$(t$, CHR$(195) + CHR$(132), CHR$(195) + CHR$(164))
+    t$ = REPLACE$(t$, CHR$(195) + CHR$(150), CHR$(195) + CHR$(182))
+    t$ = REPLACE$(t$, CHR$(195) + CHR$(156), CHR$(195) + CHR$(188))
+    RETURN t$
+ENDFUNC
+
+' True for a byte that starts a character (not a UTF-8 continuation byte).
+FUNC Starts(w$, k)
+    DIM b = BYTEAT(w$, k)
+    RETURN b < 128 ORELSE b >= 192
+ENDFUNC
+
+' The byte positions inside word$ where it may be hyphenated, ascending; a
+' break at p splits the word into LEFT$(word$, p) and the rest. At least
+' two characters stay in front and three behind a break.
+EXPORT FUNC POINTS(word$)
+    IF MAP.EXISTS(gCache, word$) THEN RETURN gCache{word$}
+    DIM out = []
+    DIM w$ = "." + Lower$(word$) + "."
+    DIM n = LEN(w$)
+    DIM vals = []
+    DIM k = 0
+    FOR k = 0 TO n
+        PUSH(vals, 0)
+    NEXT k
+    DIM i = 0
+    DIM l = 0
+    FOR i = 0 TO n - 1
+        FOR l = 1 TO 14
+            IF i + l > n THEN EXITFOR
+            DIM key$ = MID$(w$, i, l)
+            IF MAP.EXISTS(gPats, key$) THEN
+                DIM d$ = gPats{key$}
+                FOR k = 0 TO l
+                    DIM v = BYTEAT(d$, k) - 48
+                    IF v > vals[i + k] THEN vals[i + k] = v
+                NEXT k
+            ENDIF
+        NEXT l
+    NEXT i
+    ' vals[j] belongs to the gap in front of byte j of w$, that is in front
+    ' of byte j - 1 of the word itself.
+    DIM chars_before = 0
+    DIM total = 0
+    FOR k = 0 TO LEN(word$) - 1
+        IF Starts(word$, k) THEN total = total + 1
+    NEXT k
+    FOR k = 0 TO LEN(word$) - 1
+        IF Starts(word$, k) THEN
+            IF chars_before >= HYPH_LEFT ANDALSO total - chars_before >= HYPH_RIGHT ANDALSO vals[k + 1] MOD 2 = 1 THEN PUSH(out, k)
+            chars_before = chars_before + 1
+        ENDIF
+    NEXT k
+    gCache{word$} = out
+    RETURN out
+ENDFUNC

@@ -343,7 +343,7 @@ FOR mi = 0 TO LEN(modes) - 1
         DIM pdf_path$ = PATH.JOIN$(out_dir$, "book_" + pdf_mode$ + ".pdf")
         DIM t0 = TICK()
         DIM n_pages = LAYOUT.BOOK(cfg, chapters, base$, pdf_path$, pdf_mode$)
-        PRINT "wrote "; pdf_path$; " ("; n_pages; " pages, "; FORMAT$("{:.1f}", (TICK() - t0) / 1000); " s)"
+        PRINT "wrote "; pdf_path$; " ("; n_pages; " pages, "; FORMAT$("{:.1f}", (TICK() - t0) / 1000); " s, "; LAYOUT.LAST_LOOSE(); " ragged lines in justified text, "; LAYOUT.LAST_WIDOWS(); " widows)"
     ENDIF
 NEXT mi
 DIM print_pages = 0

@@ -1,0 +1,45 @@
+' HYPH: Liang's algorithm with patterns the test writes itself, so it needs
+' no pattern file of its own language. A pattern puts a value in the gap in
+' front of a letter; an odd value breaks there, an even one does not, and a
+' break needs two characters in front of it and three behind.
+' Run from the book folder.
+IMPORT TESTKIT, HYPH
+
+FUNC Hyphenated$(w$)
+    DIM s$ = ""
+    DIM last = 0
+    FOR EACH p IN HYPH.POINTS(w$)
+        s$ = s$ + MID$(w$, last, p - last) + "-"
+        last = p
+    NEXT p
+    RETURN s$ + MID$(w$, last)
+ENDFUNC
+
+FUNC Ready$()
+    IF HYPH.READY() THEN RETURN "ready"
+    RETURN "not loaded"
+ENDFUNC
+
+TESTKIT.SUITE("before any pattern")
+TESTKIT.EQ(Ready$(), "not loaded", "no patterns are loaded yet")
+TESTKIT.EQ(LEN(HYPH.POINTS("whatever")), 0, "and nothing breaks")
+
+DIM work$ = MKTEMP$("hyph")
+MKDIR work$
+DIM pats$ = PATH.JOIN$(work$, "test.pat.txt")
+TXTWRITER pats$, "a1b" + CHR$(10) + "c2d" + CHR$(10)
+HYPH.LOAD(pats$)
+
+TESTKIT.SUITE("patterns")
+TESTKIT.EQ(Ready$(), "ready", "the patterns count as loaded")
+TESTKIT.EQ(Hyphenated$("xxabxxx"), "xxa-bxxx", "an odd value breaks in front of the letter")
+TESTKIT.EQ(Hyphenated$("xxcdxxx"), "xxcdxxx", "an even value does not")
+
+TESTKIT.SUITE("limits")
+TESTKIT.EQ(Hyphenated$("ab"), "ab", "two characters have to stay in front")
+TESTKIT.EQ(Hyphenated$("xab"), "xab", "and three behind")
+TESTKIT.EQ(Hyphenated$("xxab"), "xxab", "three behind, counted over the whole word")
+
+KILL pats$
+RMDIR work$
+TESTKIT.REPORT()

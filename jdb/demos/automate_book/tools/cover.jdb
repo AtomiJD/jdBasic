@@ -66,7 +66,7 @@ SUB DrawFront(doc, cfg, x0, y0, w, h)
     PDFGEN.TEXTAT(doc, x0 + m + 14, y0 + 190, "the part of the week a program does for you")
     PDFGEN.USEFONT(doc, "book", "", 13.5)
     PDFGEN.SETCOLOR(doc, 255, 255, 255)
-    DIM authors$ = JOIN(CONF.GET(cfg, "book.authors", []), " and ")
+    DIM authors$ = JOIN(CONF.GET(cfg, "book.authors", []), CONF.GET(cfg, "labels.and", " and "))
     PDFGEN.TEXTAT(doc, x0 + m, y0 + h - 22, authors$)
 ENDSUB
 
@@ -108,7 +108,7 @@ SUB DrawSpine(doc, cfg, x0, y0, w, h)
     DIM base_x = x0 + w / 2 - pt * 0.3527777 * 0.35
     PDFGEN.TEXTROTATED(doc, base_x, y0 + 20, title$, -90)
     PDFGEN.USEFONT(doc, "book", "", pt * 0.85)
-    DIM authors$ = JOIN(CONF.GET(cfg, "book.authors", []), " and ")
+    DIM authors$ = JOIN(CONF.GET(cfg, "book.authors", []), CONF.GET(cfg, "labels.and", " and "))
     PDFGEN.TEXTROTATED(doc, base_x, y0 + h - 20 - PDFGEN.STRWIDTH(doc, authors$), authors$, -90)
 ENDSUB
 

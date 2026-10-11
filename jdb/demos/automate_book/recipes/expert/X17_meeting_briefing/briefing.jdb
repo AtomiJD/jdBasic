@@ -44,10 +44,11 @@ EXPORT FUNC NAMES(ics_text$)
     RETURN out
 ENDFUNC
 
-' The clock time of an instant as HH:MM, on this computer's clock. A time
-' the file writes with a zone (Z or TZID) is an instant; a time without
-' one names a wall clock, which ICAL reads in this zone, so this clock
-' gives back the digits the file writes.
+' The clock time of an instant as HH:MM, on this computer's
+' clock. A time the file writes with a zone (Z or TZID) is an
+' instant; a time without one names a wall clock, which ICAL
+' reads in this zone, so this clock gives back the digits the
+' file writes.
 FUNC Clock$(t_in)
     RETURN FORMAT_DATE(CDBL(t_in), "%H:%M")
 ENDFUNC

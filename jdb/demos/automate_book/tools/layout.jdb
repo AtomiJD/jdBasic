@@ -14,12 +14,12 @@
 
 EXPORT MODULE LAYOUT
 
-IMPORT PDFGEN, TTF, IMG, CONF
+IMPORT PDFGEN, TTF, IMG, CONF, HYPH
 
 DIM gLF$ = CHR$(10)
 DIM gLastIndex = {}
-' A term on more pages than this lists only the pages that name it in a
-' heading, then "and throughout".
+DIM gLoose = 0
+DIM gWidows = 0
 CONST gIndexMaxPages = 12
 CONST PT_MM = 0.3527777777777778
 
@@ -34,6 +34,8 @@ FUNC Settings(cfg, out_mode$)
     s{"outer"} = CONF.GET(cfg, "page.outer_mm", 18)
     s{"top"} = CONF.GET(cfg, "page.top_mm", 22)
     s{"bottom"} = CONF.GET(cfg, "page.bottom_mm", 24)
+    s{"recto"} = CONF.GET(cfg, "page.chapter_recto", TRUE)
+    s{"contents"} = CONF.GET(cfg, "labels.contents", "Contents")
     IF out_mode$ = "screen" THEN
         DIM even = (s{"inner"} + s{"outer"}) / 2
         s{"inner"} = even
@@ -46,8 +48,9 @@ FUNC Settings(cfg, out_mode$)
     s{"image_mm"} = CONF.GET(cfg, "images.width_cm", 12.5) * 10
     s{"title"} = CONF.GET(cfg, "book.title", "Untitled")
     s{"subtitle"} = CONF.GET(cfg, "book.subtitle", "")
-    s{"authors"} = JOIN(CONF.GET(cfg, "book.authors", []), " and ")
+    s{"authors"} = JOIN(CONF.GET(cfg, "book.authors", []), CONF.GET(cfg, "labels.and", " and "))
     s{"version"} = CONF.GET(cfg, "book.version", "")
+    s{"title_note"} = CONF.GET(cfg, "book.title_note", "")
     s{"fonts"} = CONF.GET(cfg, "type.fonts", "fonts")
     RETURN s
 ENDFUNC
@@ -244,26 +247,177 @@ ENDFUNC
 
 ' The lines that the words fill at most wd mm wide; each a list of words.
 FUNC BreakLines(ctx, words, wd, pt, base_sty$)
-    DIM lines_out = []
-    DIM cur = []
-    DIM used = 0
-    DIM space = Measure(ctx, "book", "", pt, " ")
+    RETURN BreakText(ctx, words, wd, pt, base_sty$, FALSE)
+ENDFUNC
+
+' True for the character at byte k of t$ that hyphenation counts as a
+' letter: an ASCII letter or a Latin-1 letter (umlauts, sharp s, accents).
+FUNC LetterAt(t$, k)
+    DIM b = BYTEAT(t$, k)
+    IF b = 195 THEN RETURN TRUE
+    RETURN (b >= 65 ANDALSO b <= 90) ORELSE (b >= 97 ANDALSO b <= 122)
+ENDFUNC
+
+' The bytes of the UTF-8 character that starts at byte k of t$.
+FUNC CharLen(t$, k)
+    DIM b = BYTEAT(t$, k)
+    IF b >= 240 THEN RETURN 4
+    IF b >= 224 THEN RETURN 3
+    IF b >= 192 THEN RETURN 2
+    RETURN 1
+ENDFUNC
+
+' Where the word text t$ may break: a list of [byte position, hyphen], the
+' hyphen TRUE where the break needs one added. Quotes and punctuation
+' around the word stay out; a word with digits is left whole; a compound
+' with a hyphen breaks after it and is hyphenated part by part.
+FUNC Cuts(t$)
+    DIM out = []
+    DIM first = -1
+    DIM last_end = -1
     DIM k = 0
-    FOR k = 0 TO LEN(words) - 1
-        DIM w = words[k]
-        DIM ww = WordWidth(ctx, w, pt, base_sty$)
-        DIM need = ww
-        IF LEN(cur) > 0 THEN need = need + space
-        IF LEN(cur) > 0 ANDALSO used + need > wd THEN
-            PUSH(lines_out, cur)
-            cur = []
-            used = 0
-            need = ww
+    DO WHILE k < LEN(t$)
+        IF LetterAt(t$, k) THEN
+            IF first < 0 THEN first = k
+            last_end = k + CharLen(t$, k)
         ENDIF
-        PUSH(cur, w)
-        used = used + need
+        k = k + CharLen(t$, k)
+    LOOP
+    IF first < 0 THEN RETURN out
+    DIM core$ = MID$(t$, first, last_end - first)
+    IF REGEX.MATCH(".*[0-9].*", core$) THEN RETURN out
+    DIM parts = SPLIT(core$, "-")
+    DIM at = first
+    DIM j = 0
+    FOR j = 0 TO LEN(parts) - 1
+        DIM part$ = parts[j]
+        IF LEN(part$) >= 5 THEN
+            FOR EACH p IN HYPH.POINTS(part$)
+                PUSH(out, [at + p, TRUE])
+            NEXT p
+        ENDIF
+        at = at + LEN(part$) + 1
+        IF j < LEN(parts) - 1 ANDALSO part$ <> "" ANDALSO parts[j + 1] <> "" THEN PUSH(out, [at, FALSE])
+    NEXT j
+    RETURN out
+ENDFUNC
+
+' The words as units for line breaking: a whole word, or with hyphenation
+' the fragments between its break points. "end" marks the last unit of a
+' word (a space follows), "hy" the width of the hyphen a break after the
+' unit adds.
+FUNC Units(ctx, words, pt, base_sty$, hyphenate)
+    DIM units = []
+    FOR EACH w IN words
+        DIM cuts = []
+        IF hyphenate ANDALSO LEN(w) = 1 THEN
+            IF w[0]{"sty"} <> "code" ANDALSO w[0]{"href"} = "" THEN cuts = Cuts(w[0]{"t"})
+        ENDIF
+        IF LEN(cuts) = 0 THEN
+            PUSH(units, {"pieces": w, "w": WordWidth(ctx, w, pt, base_sty$), "end": TRUE, "hy": 0})
+        ELSE
+            DIM p = w[0]
+            DIM t$ = p{"t"}
+            DIM sty$ = MergeStyle$(base_sty$, p{"sty"})
+            DIM dash = Measure(ctx, PieceFont$(sty$), PieceStyle$(sty$), PieceSize(sty$, pt), "-")
+            DIM from = 0
+            DIM c = 0
+            FOR c = 0 TO LEN(cuts)
+                DIM upto = LEN(t$)
+                IF c < LEN(cuts) THEN upto = cuts[c][0]
+                DIM frag = [{"t": MID$(t$, from, upto - from), "sty": p{"sty"}, "href": ""}]
+                DIM hy = 0
+                IF c < LEN(cuts) ANDALSO cuts[c][1] THEN hy = dash
+                PUSH(units, {"pieces": frag, "w": WordWidth(ctx, frag, pt, base_sty$), "end": c = LEN(cuts), "hy": hy})
+                from = upto
+            NEXT c
+        ENDIF
+    NEXT w
+    RETURN units
+ENDFUNC
+
+' The lines that the words fill at most wd mm wide; each a list of words.
+' The breaks are chosen for the whole paragraph at once (least total
+' badness, as TeX does), not line by line: filling each line greedily
+' leaves a line now and then so loose that it cannot be justified. With
+' hyphenate the words may also break at their hyphenation points, at a
+' small cost, so a word is only split where that evens out the spacing.
+FUNC BreakText(ctx, words, wd, pt, base_sty$, hyphenate)
+    DIM lines_out = []
+    IF LEN(words) = 0 THEN RETURN lines_out
+    DIM units = Units(ctx, words, pt, base_sty$, hyphenate)
+    DIM n = LEN(units)
+    DIM space = Measure(ctx, "book", "", pt, " ")
+    DIM best = [0]
+    DIM prev = [0]
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        PUSH(best, 1E+30)
+        PUSH(prev, 0)
     NEXT k
-    IF LEN(cur) > 0 THEN PUSH(lines_out, cur)
+    ' best[j]: the least badness of setting units 0 .. j-1; prev[j]: where
+    ' the last of those lines starts.
+    DIM i = 0
+    DIM j = 0
+    FOR j = 1 TO n
+        DIM last_u = units[j - 1]
+        DIM hy = 0
+        IF NOT last_u{"end"} THEN hy = last_u{"hy"}
+        DIM natural = hy
+        DIM gaps = 0
+        FOR i = j - 1 TO 0 STEP -1
+            natural = natural + units[i]{"w"}
+            IF i < j - 1 ANDALSO units[i]{"end"} THEN gaps = gaps + 1
+            ' spaces may shrink to 80 % of their width
+            IF i < j - 1 ANDALSO natural + gaps * space * 0.8 > wd THEN EXITFOR
+            DIM cost = 0
+            IF j < n THEN
+                IF gaps = 0 THEN
+                    cost = 10000 + ((wd - natural) / space) ^ 2
+                ELSE
+                    ' how much a gap grows (or shrinks) against a plain space
+                    DIM stretch = ((wd - natural) / gaps) / space - 1
+                    cost = (stretch * 10) ^ 2 + 1
+                ENDIF
+                IF NOT last_u{"end"} THEN
+                    IF hy > 0 THEN cost = cost + 50 ELSE cost = cost + 10
+                ENDIF
+            ENDIF
+            IF best[i] + cost < best[j] THEN
+                best[j] = best[i] + cost
+                prev[j] = i
+            ENDIF
+        NEXT i
+    NEXT j
+    DIM starts = []
+    j = n
+    DO WHILE j > 0
+        PUSH(starts, prev[j])
+        j = prev[j]
+    LOOP
+    ' Units back to words: the fragments of one word join up again, and a
+    ' line that ends inside a word gets its hyphen.
+    DIM s_end = n
+    FOR k = LEN(starts) - 1 TO 0 STEP -1
+        s_end = n
+        IF k > 0 THEN s_end = starts[k - 1]
+        DIM line_words = []
+        DIM word = []
+        FOR i = starts[k] TO s_end - 1
+            DIM u = units[i]
+            FOR EACH piece IN u{"pieces"}
+                PUSH(word, piece)
+            NEXT piece
+            IF i = s_end - 1 ANDALSO NOT u{"end"} ANDALSO u{"hy"} > 0 THEN
+                PUSH(word, {"t": "-", "sty": word[LEN(word) - 1]{"sty"}, "href": ""})
+            ENDIF
+            IF u{"end"} ORELSE i = s_end - 1 THEN
+                PUSH(line_words, word)
+                word = []
+            ENDIF
+        NEXT i
+        PUSH(lines_out, line_words)
+    NEXT k
     RETURN lines_out
 ENDFUNC
 
@@ -281,7 +435,10 @@ SUB SetLine(ctx, words, x, y, wd, pt, lead, justified, base_sty$, r, g, b)
     NEXT k
     DIM gap = space
     IF justified ANDALSO LEN(words) > 1 THEN gap = (wd - natural) / (LEN(words) - 1)
-    IF gap > space * 2.6 THEN gap = space
+    IF gap > space * 2.6 THEN
+        gap = space
+        IF justified THEN gLoose = gLoose + 1
+    ENDIF
     DIM base_y = y + lead * 0.74
     DIM cx = x
     DIM j = 0
@@ -314,7 +471,7 @@ ENDSUB
 ' width; widows and orphans are avoided. Answers the lines it set.
 FUNC Paragraph(ctx, txt$, indent, pt, lead, justified, base_sty$)
     DIM wd = TextWidth(ctx) - indent
-    DIM lines_set = BreakLines(ctx, Words(txt$), wd, pt, base_sty$)
+    DIM lines_set = BreakText(ctx, Words(txt$), wd, pt, base_sty$, justified ANDALSO ctx{"s"}{"hyph"})
     DIM n = LEN(lines_set)
     DIM k = 0
     DO WHILE k < n
@@ -329,10 +486,19 @@ FUNC Paragraph(ctx, txt$, indent, pt, lead, justified, base_sty$)
                 NewPage(ctx, TRUE)
                 CONTINUEDO
             ENDIF
+            ' One line would be left for the next page (a widow): take a
+            ' second line along, or, with only two lines of room here, start
+            ' the rest on the next page rather than leave a single line here.
             IF left_over - room = 1 ANDALSO room > 2 THEN room = room - 1
+            IF left_over - room = 1 ANDALSO room = 2 THEN
+                NewPage(ctx, TRUE)
+                CONTINUEDO
+            ENDIF
         ENDIF
         DIM upto = k + room
         IF upto > n THEN upto = n
+        ' a paragraph's last line alone on top of a page
+        IF k > 0 ANDALSO k = n - 1 THEN gWidows = gWidows + 1
         DO WHILE k < upto
             DIM last_line = (k = n - 1)
             SetLine(ctx, lines_set[k], XLeft(ctx) + indent, ctx{"y"}, wd, pt, lead, justified ANDALSO NOT last_line, base_sty$, 30, 30, 30)
@@ -364,7 +530,7 @@ SUB Heading(ctx, b)
         ctx{"chapter"} = plain$
         IF ctx{"page"} > 0 ANDALSO NOT ctx{"page_empty"} THEN
             NewPage(ctx, FALSE)
-            IF s{"mode"} = "print" ANDALSO ctx{"page"} MOD 2 = 0 THEN NewPage(ctx, FALSE)
+            IF s{"mode"} = "print" ANDALSO s{"recto"} ANDALSO ctx{"page"} MOD 2 = 0 THEN NewPage(ctx, FALSE)
         ELSEIF ctx{"page"} = 0 THEN
             NewPage(ctx, FALSE)
         ENDIF
@@ -800,10 +966,10 @@ ENDSUB
 ' leaders to the page numbers; in the screen mode every entry is a link.
 SUB Contents(ctx)
     DIM s = ctx{"s"}
-    ctx{"chapter"} = "Contents"
+    ctx{"chapter"} = s{"contents"}
     DIM doc = ctx{"doc"}
     DIM entries = ctx{"toc"}
-    DIM title_lines = BreakLines(ctx, Words("Contents"), TextWidth(ctx), 22, "B")
+    DIM title_lines = BreakLines(ctx, Words(s{"contents"}), TextWidth(ctx), 22, "B")
     ctx{"y"} = s{"top"} + 30
     SetLine(ctx, title_lines[0], XLeft(ctx), ctx{"y"}, TextWidth(ctx), 22, 9.5, FALSE, "B", 31, 56, 100)
     ctx{"y"} = ctx{"y"} + 19
@@ -864,15 +1030,21 @@ SUB TitlePages(ctx)
     NEXT k
     IF s{"subtitle"} <> "" THEN
         y = y + 6
-        DIM sub_w = Measure(ctx, "book", "I", 13, s{"subtitle"})
-        Put(ctx, "book", "I", 13, XLeft(ctx) + (tw - sub_w) / 2, y, s{"subtitle"}, 60, 60, 60)
+        DIM sub_lines = BreakLines(ctx, Words(s{"subtitle"}), tw, 13, "I")
+        FOR k = 0 TO LEN(sub_lines) - 1
+            DIM sw = Measure(ctx, "book", "I", 13, PlainText$(LineText$(sub_lines[k])))
+            SetLine(ctx, sub_lines[k], XLeft(ctx) + (tw - sw) / 2, y, sw, 13, 6, FALSE, "I", 60, 60, 60)
+            y = y + 6
+        NEXT k
     ENDIF
     DIM aw = Measure(ctx, "book", "", 13, s{"authors"})
     Put(ctx, "book", "", 13, XLeft(ctx) + (tw - aw) / 2, 175, s{"authors"}, 30, 30, 30)
     NewPage(ctx, FALSE)
-    DIM note$ = "Text and pictures copyright 2026 Achim Christ, licensed under CC BY-NC-ND 4.0. Program code copyright 2026 Computerwelt AI Solutions LLC, licensed under the MIT License. See Copyright and Disclaimer. Version " + s{"version"} + ". Written in Markdown, built with jdBasic: every listing is a tested program, every page was set by the layout engine in tools/layout.jdb."
-    ctx{"y"} = s{"h"} - s{"bottom"} - 30
-    Paragraph(ctx, note$, 0, 8.5, 4.2, FALSE, "")
+    ' The back of the title page carries [book] title_note, or stays empty.
+    IF s{"title_note"} <> "" THEN
+        ctx{"y"} = s{"h"} - s{"bottom"} - 30
+        Paragraph(ctx, s{"title_note"}, 0, 8.5, 4.2, FALSE, "")
+    ENDIF
 ENDSUB
 
 FUNC LineText$(words)
@@ -1157,6 +1329,10 @@ ENDSUB
 
 FUNC Typeset(cfg, chapters, base$, out_mode$, toc, terms, ix_in, ix_main_in)
     DIM s = Settings(cfg, out_mode$)
+    ' Justified text is hyphenated when the book names a pattern file.
+    DIM hyph_rel$ = CONF.GET(cfg, "type.hyphenation", "")
+    s{"hyph"} = hyph_rel$ <> ""
+    IF s{"hyph"} THEN HYPH.LOAD(PATH.JOIN$(base$, hyph_rel$))
     DIM doc = PDFGEN.DOC({"width": s{"w"}, "height": s{"h"}, "margin": s{"inner"}, "compress": TRUE})
     PDFGEN.SETINFO(doc, s{"title"}, s{"authors"}, s{"subtitle"})
     AddFonts(doc, base$, s{"fonts"})
@@ -1256,10 +1432,24 @@ EXPORT FUNC BOOK(cfg, chapters, base$, out_path$, out_mode$)
     DIM terms = IndexTerms(terms_path$)
     DIM none AS MAP
     DIM first = Typeset(cfg, chapters, base$, out_mode$, ScanHeadings(chapters), terms, none, none)
+    gLoose = 0
+    gWidows = 0
     DIM second = Typeset(cfg, chapters, base$, out_mode$, first{"found"}, terms, first{"index"}, first{"main"})
     gLastIndex = second{"index"}
     PDFGEN.WRITEFILE(second{"doc"}, out_path$)
     RETURN second{"pages"}
+ENDFUNC
+
+' How many lines of the last book set should have been justified but were
+' too loose for it and stand ragged.
+EXPORT FUNC LAST_LOOSE()
+    RETURN gLoose
+ENDFUNC
+
+' How many paragraphs of the last book set end with a single line on top of
+' a page (widows).
+EXPORT FUNC LAST_WIDOWS()
+    RETURN gWidows
 ENDFUNC
 
 ' The index of the last book set: each term with its pages.

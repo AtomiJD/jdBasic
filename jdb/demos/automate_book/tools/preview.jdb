@@ -25,7 +25,9 @@ EXPORT FUNC ABS_PATH$(path$)
 ENDFUNC
 
 FUNC FileUrl$(path$)
-    RETURN "file:///" + REPLACE$(ABS_PATH$(path$), "\", "/")
+    ' The PDF travels in a query string, where "+" would read as a space.
+    DIM url$ = REPLACE$(REPLACE$(ABS_PATH$(path$), "%", "%25"), "\", "/")
+    RETURN "file:///" + REPLACE$(REPLACE$(REPLACE$(url$, "+", "%2B"), " ", "%20"), "#", "%23")
 ENDFUNC
 
 ' Draws one page at a pdf.js zoom (1.8 shows a 17 x 24 cm page in 870 by
