@@ -1,0 +1,40 @@
+' The interpreter answers a bare built-in constant from its registry, the
+' native compiler folds it at the use site. Both have to answer the same
+' characters, in every form a program writes them.
+OPTION "EXPLICIT"
+
+DIM bad AS INTEGER = 0
+
+SUB SAY(what AS STRING, got AS STRING, want AS STRING)
+    IF got <> want THEN
+        bad = bad + 1
+        PRINT "FAIL "; what; "  is ["; got; "] want ["; want; "]"
+    ENDIF
+ENDSUB
+
+SAY("VBNEWLINE is CR LF", STR$(LEN(VBNEWLINE)) + ":" + STR$(ASC(VBNEWLINE)) + ":" + STR$(ASC(MID$(VBNEWLINE, 1, 1))), "2:13:10")
+SAY("VBCRLF is CR LF", STR$(LEN(VBCRLF)) + ":" + STR$(ASC(VBCRLF)), "2:13")
+SAY("VBTAB is one tab", STR$(LEN(VBTAB)) + ":" + STR$(ASC(VBTAB)), "1:9")
+
+' A declared slot has to take the constant with the right kind.
+DIM nl AS STRING = VBNEWLINE
+SAY("into a typed slot", STR$(LEN(nl)), "2")
+DIM joined AS STRING = "a" + VBTAB + "b"
+SAY("in a concatenation", STR$(LEN(joined)) + ":" + STR$(ASC(MID$(joined, 1, 1))), "3:9")
+
+' The three spellings of absence.
+SAY("NONE is absent", TYPEOF(NONE), "NONE")
+SAY("NULL is absent", TYPEOF(NULL), "NONE")
+SAY("NOTHING is absent", TYPEOF(NOTHING), "NONE")
+
+DIM empty = NULL
+SAY("NULL into a slot", TYPEOF(empty), "NONE")
+
+FUNC TAB_IN_BODY$() AS STRING
+    RETURN VBTAB
+ENDFUNC
+
+SAY("a constant read inside a FUNC", STR$(ASC(TAB_IN_BODY$())), "9")
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
+IF bad > 0 THEN END 1

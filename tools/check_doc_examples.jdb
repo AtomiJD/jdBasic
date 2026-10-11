@@ -74,7 +74,7 @@ FOR EACH doc$ IN docs
         ENDIF
     LOOP
 NEXT
-KILL scratch$
+IF FILE.EXISTS(scratch$) THEN KILL scratch$
 
 IF failed = 0 THEN
     PRINT "doc examples: "; checked; " checked, all match"

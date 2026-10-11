@@ -42,6 +42,9 @@ struct BuiltinSig {
     const char* name;
     BuiltinRet ret;
     uint16_t flags;
+    // The characters a BF_CONST of string kind answers with. One place, so
+    // the VM and the native compiler cannot drift apart on the value.
+    const char* const_text = nullptr;
 };
 
 inline constexpr BuiltinSig kBuiltinSigs[] = {
@@ -917,9 +920,9 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"VAL", BuiltinRet::F64, BF_READS_ARGS},
     {"VARIANCE", BuiltinRet::F64, BF_NO_VEC},
     {"VARS", BuiltinRet::None, BF_NO_VEC},
-    {"VBCRLF", BuiltinRet::Str, BF_CONST},
-    {"VBNEWLINE", BuiltinRet::Str, BF_CONST},
-    {"VBTAB", BuiltinRet::Str, BF_CONST},
+    {"VBCRLF", BuiltinRet::Str, BF_CONST, "\r\n"},
+    {"VBNEWLINE", BuiltinRet::Str, BF_CONST, "\r\n"},
+    {"VBTAB", BuiltinRet::Str, BF_CONST, "\t"},
     {"WAITKEY$", BuiltinRet::Unknown, BF_NO_VEC},
     {"WAV.INFO", BuiltinRet::Handle, BF_NONE},
     {"WAV.READ", BuiltinRet::Handle, BF_NONE},
@@ -993,6 +996,13 @@ inline bool builtin_is(std::string_view name, BuiltinRet ret) {
 inline bool builtin_has(std::string_view name, BuiltinFlags flag) {
     const BuiltinSig* s = builtin_sig(name);
     return s && (s->flags & flag);
+}
+
+// The text of a built-in string constant, nullptr for every other name.
+inline const char* builtin_const_text(std::string_view name) {
+    const BuiltinSig* s = builtin_sig(name);
+    if (!s || !(s->flags & BF_CONST)) return nullptr;
+    return s->const_text;
 }
 
 inline bool builtin_returns_date(std::string_view name) {

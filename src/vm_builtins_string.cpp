@@ -698,14 +698,16 @@ void VM::register_string_builtins() {
         return Value::make_i64((int64_t)pack_size(pack_parse(args[0].as_string()->data, "PACKSIZE")));
     });
 
+    // The text of these three lives in builtin_sigs.h, which the native
+    // compiler reads too, so neither side can drift from the other.
     register_native("VBNEWLINE", 0, 0, [](const std::vector<Value>& args) -> Value {
-        (void)args; return Value::make_string("\r\n");
+        (void)args; return Value::make_string(builtin_const_text("VBNEWLINE"));
     });
     register_native("VBCRLF", 0, 0, [](const std::vector<Value>& args) -> Value {
-        (void)args; return Value::make_string("\r\n");
+        (void)args; return Value::make_string(builtin_const_text("VBCRLF"));
     });
     register_native("VBTAB", 0, 0, [](const std::vector<Value>& args) -> Value {
-        (void)args; return Value::make_string("\t");
+        (void)args; return Value::make_string(builtin_const_text("VBTAB"));
     });
     // ── 2. Additional String ─────────────────────────────────
 

@@ -4153,11 +4153,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 std::vector<std::string> mparts;
                 if (member_chain(stmt->var_name, mparts)) continue;
             }
-            // Don't shadow the math constants.
+            // Don't shadow a built-in constant. The guard in
+            // codegen_let_or_assign raises the error that says so.
             {
                 std::string up = stmt->var_name;
                 std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-                if (up == "MATH.PI" || up == "MATH.E") continue;
+                if (builtin_has(up, BF_CONST)) continue;
             }
             if (!lookup_var(stmt->var_name)) {
                 // Phase 3 EXPLICIT: a bare top-level `x = ...` where x was
@@ -4240,9 +4241,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             std::vector<std::string> mparts;
                             if (member_chain(e->str_val, mparts)) return JD_TAG_RUNTIME;
                         }
-                        // Bare-identifier constants like PI, E
+                        // A bare built-in constant answers without a call.
                         std::string up = e->str_val;
                         std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                        if (up == "NONE" || up == "NULL" || up == "NOTHING")
+                            return JD_TAG_RUNTIME;
+                        if (builtin_const_text(up)) return JD_TAG_STR;
                         auto rrit = runtime_funcs.find(up);
                         if (rrit != runtime_funcs.end() &&
                             LLVMCountParamTypes(rrit->second.fn_type) == 0)
@@ -5491,7 +5495,10 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         stmt.var_name.find('.') == std::string::npos) {
         VarInfo* prior = lookup_var(stmt.var_name);
         bool declared_global = type_env.count(stmt.var_name) > 0;
-        if (!prior && !declared_global) {
+        // A built-in constant is a name no program declares. The BF_CONST
+        // guard below raises the error that names the real problem, so this
+        // check stays quiet rather than sending the author after a missing DIM.
+        if (!prior && !declared_global && !builtin_has(stmt.var_name, BF_CONST)) {
             report_error(stmt.source_file(), stmt.line,
                 "undeclared variable '" + stmt.var_name + "'");
             // Fall through: let the normal codegen path run (auto-creates the
@@ -9253,17 +9260,23 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         }
                     }
                 }
-                // Bare-identifier constants like PI, E - call the 0-arg native fn.
+                // A bare built-in constant answers without a call.
                 std::string upper = expr.str_val;
                 std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
                 // NONE is the absent value: a runtime-typed zero with the
                 // NONE tag, so a slot, a map cell or TYPEOF sees the absence.
-                if (upper == "NONE") {
+                // NULL and NOTHING are the other two spellings of it.
+                if (upper == "NONE" || upper == "NULL" || upper == "NOTHING") {
                     TypedValue none;
                     none.val = LLVMConstInt(i64_type, 0, 0);
                     none.tag = JD_TAG_RUNTIME;
                     none.runtime_tag = LLVMConstInt(i32_type, JD_TAG_NONE, 0);
                     return none;
+                }
+                // The characters come from builtin_sigs.h, the same place the
+                // VM registration reads them.
+                if (const char* ctext = builtin_const_text(upper)) {
+                    return { LLVMBuildGlobalStringPtr(builder, ctext, ".bconst"), JD_TAG_STR };
                 }
                 auto rit = runtime_funcs.find(upper);
                 if (rit != runtime_funcs.end()) {
