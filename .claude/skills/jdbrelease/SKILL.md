@@ -1,6 +1,6 @@
 ---
 name: jdbrelease
-description: Cut or refresh a jdBasic Windows release - build the four redistributable packs (core / mcp-native / vibe-game-pack / vb6) with version bump, code-sign with the Certum SimplySign cert, and publish the assets to BOTH GitHub releases (jdbasic-mcp and v1.0.0). Use when Atomi says "make a release", "new release build", "sign and publish", or "update the git release".
+description: Cut or refresh a jdBasic release - build the four Windows packs (core / mcp-native / vibe-game-pack / vb6) plus the three POSIX tarballs on the farm, bump the version, code-sign with the Certum SimplySign cert, and publish to the current GitHub release. Use when Atomi says "make a release", "new release build", "sign and publish", or "update the git release".
 ---
 
 # jdBasic Release - build, sign, version, publish
@@ -8,10 +8,20 @@ description: Cut or refresh a jdBasic Windows release - build the four redistrib
 Use when **Atomi** wants to cut or refresh a public Windows release. This is the heavy
 release ceremony; for a plain dev build use `jdbbuild`, for the test matrix use `jdbgate`.
 
-Working dir: `/d/usr/dev/cc`. Two GitHub releases carry the packs (repo `AtomiJD/jdBasic`):
-**`v1.0.0`** is the one marked Latest that users see, **`jdbasic-mcp`** is the pre-release.
-Every upload goes to both.
+Working dir: `/d/usr/dev/cc`. **The current release is the only upload target.** Since
+1.1 (2026-10-12) that is **`v1.1.0`**, marked Latest; `v1.0.0` and the `jdbasic-mcp`
+pre-release are frozen history and carry a "Superseded by" line at the top of their
+body. `README.md` and `doc/MCP.md` link `/releases/latest`, so a new Latest needs no
+doc edit. Find the target with `"$GH" release list -R AtomiJD/jdBasic` rather than
+assuming a tag.
 `gh` lives at `/c/Program Files/GitHub CLI/gh.exe` (may also be on PATH).
+
+**A new version number** (1.0 -> 1.1) means one line in `src/version.h`
+(`JDBASIC_VERSION`, the single source; `build.bat`/`build.sh` only inject the build
+number and date), a commit with `[no-test]`, an annotated tag `vX.Y.0`, and
+`"$GH" release create <tag> --title "jdBasic X.Y" --notes-file <file> --latest
+--verify-tag`. A refresh of the same version skips all of that and uploads with
+`--clobber`.
 
 **Order matters:** build (versions + zips) → **sign** (re-zips + re-hashes) → upload. Do
 not upload the zips produced by the build step; the sign step rewrites them.
@@ -25,6 +35,11 @@ not upload the zips produced by the build step; the sign step rewrites them.
 - For signing, **SimplySign Desktop must be running and logged in** (mobile token), so the
   cloud cert mounts into `Cert:\CurrentUser\My`. A PIN dialog appears during signing. See
   [[reference_code_signing_certum]].
+- Build `build_vb6.bat` **last**: it carries the widest flag set, so the binary it leaves
+  in `build/` can run the gate afterwards, which is a gate on a real release binary.
+  For a version release also run the module library through both backends -
+  `for f in tests/jdlibs/*_selftest.jdb` interpreted and again through `-c` - and sum the
+  `N passed` lines; that number goes in the notes. Delete the `.exe` files afterwards.
 
 ## 1 - Build the packs
 
@@ -33,9 +48,9 @@ writes `<bundle>.zip.sha256`.
 
 | Script                  | build.bat flags                          | Bundle (`release\…`)                | Contents |
 |-------------------------|------------------------------------------|-------------------------------------|----------|
-| `build_mcp.bat`         | `MCPSERVER HTTP RELEASE`                  | `jdbasic-core-windows-x64`          | core MCP EXE + openssl + doc |
-| `build_mcp_native.bat`  | `MCPSERVER HTTP GFX IMGUI NATIVEC RELEASE` | `jdbasic-mcp-native-windows-x64`  | EXE + jdbrt.dll/.lib + LLVM-C + SDL3* + doc (native `-c` toolchain) |
-| `build_vibe.bat`        | `GFX IMGUI HTTP MCPSERVER RELEASE`       | `jdbasic-vibe-game-pack-windows-x64`| EXE + SDL3* + game demos |
+| `build_mcp.bat`         | `MCPSERVER HTTP NET RELEASE`              | `jdbasic-core-windows-x64`          | core MCP EXE + openssl + doc |
+| `build_mcp_native.bat`  | `MCPSERVER HTTP NET GFX IMGUI NATIVEC RELEASE` | `jdbasic-mcp-native-windows-x64`  | EXE + jdbrt.dll/.lib + LLVM-C + SDL3* + doc (native `-c` toolchain) |
+| `build_vibe.bat`        | `GFX IMGUI HTTP NET MCPSERVER SQLITE FX RELEASE` | `jdbasic-vibe-game-pack-windows-x64`| EXE + SDL3* + game demos |
 | `build_vb6.bat`         | `MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE NATIVEC RELEASE` | `jdbasic-vb6-windows-x64` | EXE + jdbrt.dll/.lib + jdb_runtime.obj + LLVM-C + SDL3* + forms demos (native `-c`, FORMS included) |
 
 Run them from Bash as `./build_x.bat`, never `cmd //c` - the scripts are LF-only and
@@ -86,46 +101,69 @@ you are not republishing silently desyncs the release notes from the asset. An
 unknown or ambiguous `-Only` value aborts instead of guessing.
 
 It prints `OK <bundle>.zip  sha256=<hash>` for each - **capture those hashes**, they
-go in both release bodies. (Override the cert with `-Thumbprint <40-hex>` if auto-pick grabs
+go in the release body. (Override the cert with `-Thumbprint <40-hex>` if auto-pick grabs
 the wrong one.)
 
-## 3 - Publish to BOTH GitHub releases
+Before uploading, check what ships: extract each signed zip into its **own** empty
+directory with `Expand-Archive` (the zips carry backslash separators, which Git-Bash
+`unzip` turns into literal filenames), run `jdBasic.exe --version` from there and read
+back the version, the build number and the feature list, plus
+`Get-AuthenticodeSignature`. One PowerShell loop in a `.ps1` file; writing it inline
+across `powershell -Command` quoting collapses the per-bundle paths into one directory.
 
-Upload the freshly **signed** zips + their `.sha256` to `jdbasic-mcp` AND `v1.0.0`,
-clobbering the old assets. List every pack you rebuilt (one shown):
+## 3 - The POSIX tarballs (on the farm)
+
+The three non-Windows assets are built on the farm ([[jdbfarm]]) and packed by
+`tools/pack_posix.sh`, which stages binary + runtime + `jdb_runtime.o` + `help.txt` +
+`doc/` + `lib/` + a generated `README.txt`, tars it and hashes it:
+
+```bash
+# per machine: render -> jdbasic-linux-x64, cortex -> jdbasic-linux-x64-cortex,
+#              mac    -> jdbasic-macos-arm64   (mac also needs LLVM_CONFIG)
+ssh <tgt> 'cd ~/dev/cc && git pull --ff-only origin main -q &&
+  BUILD_NUM=<n> HTTP=1 GFX=1 IMGUI=1 NATIVEC=1 ./build.sh 2>&1 | tail -3 &&
+  bash tools/pack_posix.sh <bundle-name>'
+scp <tgt>:dev/cc/dist/<bundle-name>.tar.gz release/
+```
+
+`BUILD_NUM=<n>` is what stamps a POSIX build (`build.sh` has no RELEASE flag); without
+it the tarball says "Build 0, dev". Give all three the same number, one above the last
+Windows pack. Then verify: unpack each tarball into an empty directory **on its own
+machine**, run `--version`, an `IMPORT`, and a `-c` compile from inside it, and re-hash
+locally after the `scp` to confirm the transfer.
+
+## 4 - Publish
+
+Upload the freshly **signed** zips and the tarballs with their `.sha256` to the current
+release, clobbering the old assets:
 
 ```bash
 GH="/c/Program Files/GitHub CLI/gh.exe"
-for t in jdbasic-mcp v1.0.0; do
-  "$GH" release upload $t -R AtomiJD/jdBasic --clobber \
-    release/jdbasic-vb6-windows-x64.zip release/jdbasic-vb6-windows-x64.zip.sha256
-done
+"$GH" release upload v1.1.0 -R AtomiJD/jdBasic --clobber \
+  release/jdbasic-vb6-windows-x64.zip release/jdbasic-vb6-windows-x64.zip.sha256
 ```
 
-**Then update BOTH release bodies** so the SHA256 hashes and the build number in the text
-match the just-uploaded zips. This is the step that's easy to forget - Atomi has caught a
-stale SHA256 / "(Build N)" in the notes before. The two bodies differ in layout
-(`jdbasic-mcp` lists the hash under each asset, `v1.0.0` has a hash table and a
-`## Downloads (Windows x64, Build N; VB6 Pack Build M)` heading), so replace the old hash
-string and the build phrase with `sed` instead of editing by line number:
+**Then make the body match the assets** - every SHA256 and every "(Build N)". This is
+the step that's easy to forget; Atomi has caught a stale hash in the notes before. For a
+refresh, replace the old hash strings with `sed` rather than editing by line number:
 
 ```bash
-for t in jdbasic-mcp v1.0.0; do
-  "$GH" release view $t -R AtomiJD/jdBasic --json body -q .body > /tmp/body_$t.md
-  sed -i "s/OLDHASH/NEWHASH/g; s/VB6 Pack Build 83/VB6 Pack Build 84/g" /tmp/body_$t.md
-  "$GH" release edit $t -R AtomiJD/jdBasic --notes-file /tmp/body_$t.md
-done
+"$GH" release view v1.1.0 -R AtomiJD/jdBasic --json body -q .body > /tmp/body.md
+sed -i "s/OLDHASH/NEWHASH/g; s/Build 99/Build 101/g" /tmp/body.md
+"$GH" release edit v1.1.0 -R AtomiJD/jdBasic --notes-file /tmp/body.md
 ```
 
-Verify on both: `"$GH" release view <tag> -R AtomiJD/jdBasic --json assets -q '.assets[].name'`
-shows 8 assets (4 zips + 4 sha256), and the body greps for the new hash.
+Verify: `"$GH" release view <tag> -R AtomiJD/jdBasic --json assets -q '.assets[].name'`
+shows 14 assets (4 zips + 3 tarballs + 7 sha256), the body greps for every new hash, and
+`"$GH" release download <tag> -p '<one asset>*'` into an empty directory hashes to what
+the body claims. A size match alone does not prove the upload.
 
 ## Notes / gotchas
 
 - The repo's source push is separate and follows the normal rule - **local-first, no push
   without Atomi asking** ([[feedback_commit_workflow_local_first]], [[feedback_no_coauthored_by]]).
   Uploading release *assets* via `gh` is the publish action here; confirm before clobbering.
-- Cross-platform release artifacts (Linux/Mac) are a different path - the `release/` dir has
-  had `jdbasic-core-linux-*` tarballs built on the farm; see [[jdbfarm]] for building there.
+- The POSIX tarballs are step 3 above, not a separate ceremony: since 1.1 they ship on
+  the same release as the Windows zips and are built on the farm ([[jdbfarm]]).
 - If `gh` reports auth issues, `"$GH" auth status`; Atomi logs in interactively
   (`! "/c/Program Files/GitHub CLI/gh.exe" auth login`).
