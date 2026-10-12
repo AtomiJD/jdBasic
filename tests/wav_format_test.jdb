@@ -208,13 +208,10 @@ NEXT i
 
 PRINT "--- capture"
 
-' MON.DEVICES does not exist at all in a build without MINIAUDIO, so the call
-' itself has to be guarded and not only the answer it gives.
+' MON.DEVICES does not exist at all in a build without MINIAUDIO, so the
+' feature is asked about before the call rather than the answer it gives.
 DIM devs = NONE
-TRY
-    devs = MON.DEVICES()
-CATCH
-ENDTRY
+IF OS.FEATURE("MINIAUDIO") THEN devs = MON.DEVICES()
 IF TYPEOF(devs) = "NONE" THEN
     PRINT "  skipped: a build without MINIAUDIO"
 ELSE
