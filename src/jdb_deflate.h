@@ -116,15 +116,19 @@ inline std::vector<int> code_lengths(const std::vector<uint32_t>& freqs, int max
     std::vector<int> stack = {heap[0]};
     std::vector<int> bl_count(max_len + 1, 0);
     int overflow = 0;
+    // Every node past the cap counts, a branch point as much as a leaf: the
+    // repair below trades two of them for one unit of code space, and a
+    // branch point past the cap holds exactly one leaf more than it pays
+    // for once its subtree is folded onto the cap.
     while (!stack.empty()) {
         int id = stack.back(); stack.pop_back();
+        int d = depth[id];
+        if (d > max_len) overflow++;
         if (nodes[id].symbol >= 0) {
-            int d = depth[id];
-            if (d > max_len) { d = max_len; overflow++; }
-            bl_count[d]++;
+            bl_count[d > max_len ? max_len : d]++;
         } else {
-            depth[nodes[id].left] = depth[id] + 1;
-            depth[nodes[id].right] = depth[id] + 1;
+            depth[nodes[id].left] = d + 1;
+            depth[nodes[id].right] = d + 1;
             stack.push_back(nodes[id].left);
             stack.push_back(nodes[id].right);
         }

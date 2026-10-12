@@ -3784,7 +3784,7 @@ Description: Combines vectors into a matrix where each row is [arr1[i], arr2[i],
 
 [ZIP.WRITE]
 Syntax: ZIP.WRITE(path$, entries)
-Description: Writes a map of entry name to content as a ZIP archive. Each entry is deflated when that makes it smaller and stored otherwise. Returns the entry count.
+Description: Writes a map of entry name to content as a ZIP archive. Each entry is deflated when that makes it smaller and the packed bytes read back unchanged, and stored otherwise. Returns the entry count.
 
 [ZIP.READ]
 Syntax: ZIP.READ(path$)

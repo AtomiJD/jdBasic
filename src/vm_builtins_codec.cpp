@@ -162,9 +162,17 @@ static std::string zip_build(const std::vector<std::pair<std::string, std::strin
         uint32_t size = (uint32_t)content.size();
         uint32_t offset = (uint32_t)body.size();
 
-        // Deflated when that is smaller, stored otherwise.
+        // Deflated when that is smaller and reads back byte for byte, stored
+        // otherwise. An entry no decoder can open makes the whole archive
+        // useless, and an archive is written once but opened many times.
         std::string packed = jdb_deflate::deflate_raw((const uint8_t*)content.data(), content.size(), 6);
         bool deflated = !content.empty() && packed.size() < content.size();
+        if (deflated) {
+            std::vector<uint8_t> back;
+            deflated = pdf_extract::tinfl::inflate((const uint8_t*)packed.data(), packed.size(), back, false) &&
+                       back.size() == content.size() &&
+                       memcmp(back.data(), content.data(), content.size()) == 0;
+        }
         uint16_t method = deflated ? 8 : 0;
         uint32_t comp_size = deflated ? (uint32_t)packed.size() : size;
 

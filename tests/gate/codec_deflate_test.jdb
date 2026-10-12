@@ -37,6 +37,47 @@ FUNC InflateGzip$(data$)
     RETURN CODEC.INFLATE$(data$, "gzip")
 ENDFUNC
 
+' Nearly incompressible bytes: noise with a few short repeats mixed in, the
+' mix a photograph has once it is already packed. A Lehmer generator drives
+' it, whose modulus and products stay inside what a double holds exactly, so
+' the bytes are the same on every machine.
+FUNC Noise$(sd, size, run_every, run_len)
+    DIM s = sd MOD 65537
+    IF s = 0 THEN s = 1
+    DIM out$ = ""
+    DO WHILE LEN(out$) < size
+        s = (s * 75 + 74) MOD 65537
+        IF (s MOD run_every) = 0 ANDALSO LEN(out$) > 300 THEN
+            s = (s * 75 + 74) MOD 65537
+            DIM at = s MOD (LEN(out$) - 260)
+            s = (s * 75 + 74) MOD 65537
+            DIM n = 3 + (s MOD run_len)
+            DIM i = 0
+            FOR i = 0 TO n - 1
+                IF LEN(out$) >= size THEN EXITFOR
+                out$ = out$ + MID$(out$, at + i, 1)
+            NEXT i
+        ELSE
+            s = (s * 75 + 74) MOD 65537
+            out$ = out$ + CHR$(s MOD 256)
+        ENDIF
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' One round trip, 1 when the bytes come back whole. A stream no decoder
+' accepts makes CODEC.INFLATE$ raise, which counts as a failed trip rather
+' than ending the run.
+FUNC Trip(d$ AS STRING, level AS INTEGER, fmt$ AS STRING) AS INTEGER
+    DIM ok AS INTEGER = 0
+    TRY
+        IF CODEC.INFLATE$(CODEC.DEFLATE$(d$, level, fmt$), fmt$) = d$ THEN ok = 1
+    CATCH
+        ok = 0
+    ENDTRY
+    RETURN ok
+ENDFUNC
+
 DIM text$ = REPEAT$("hello hello hello hello, jdBasic compresses this line ", 20)
 Check("the sample text", STR$(LEN(text$)), "1080")
 
@@ -101,17 +142,50 @@ ENDTRY
 Ok("other trailing data is refused", INSTR(tail_msg$, "trailing data") >= 0)
 Ok("the message names the function once", INSTR(tail_msg$, "INFLATE$: CODEC.INFLATE$") < 0)
 
+' Such a block drives the code length alphabet past its seven bit cap, and
+' the repair that brings the lengths back under it decides whether the
+' stream can be read at all. Both sizes below made an encoder that repaired
+' too little write a stream no decoder accepts, at every level.
+DIM rough_a$ = Noise$(4, 2000, 10, 16)
+DIM rough_b$ = Noise$(39, 2000, 6, 8)
+DIM rough_want$ = "e58b3cecf6ff8fdb8fa6805cba552978d763db920852024a74922ac8e0a064f1 " + _
+                  "18186968f9de73f74967a92aea6aab7236d3266571439b91f1b14c914185ccb7"
+Check("the generator makes the same bytes on every machine", _
+      CODEC.SHA256$(rough_a$) + " " + CODEC.SHA256$(rough_b$), rough_want$)
+DIM rough_trips AS INTEGER = 0
+DIM rough_fmt AS INTEGER = 0
+DIM rough_level AS INTEGER = 0
+FOR rough_fmt = 0 TO 2
+    DIM rough_name$ = formats[rough_fmt]
+    FOR rough_level = 0 TO 9
+        rough_trips = rough_trips + Trip(rough_a$, rough_level, rough_name$)
+        rough_trips = rough_trips + Trip(rough_b$, rough_level, rough_name$)
+    NEXT rough_level
+NEXT rough_fmt
+Check("sixty round trips of near incompressible data", STR$(rough_trips), "60")
+
+' Around that size too, so a change that moves the block boundaries is
+' caught as well.
+DIM rough_sizes AS INTEGER = 0
+DIM rough_n AS INTEGER = 0
+FOR rough_n = 1800 TO 2200 STEP 100
+    DIM part$ = Noise$(4, rough_n, 10, 16)
+    rough_sizes = rough_sizes + Trip(part$, 6, "raw")
+NEXT rough_n
+Check("five sizes around it", STR$(rough_sizes), "5")
+
 Check("CRC32 as a number", STR$(CLNG(CODEC.CRC32("123456789"))), "3421780262")
 Check("CRC32 over two pieces", STR$(CLNG(CODEC.CRC32("6789", CODEC.CRC32("12345")))), "3421780262")
 
 DIM zip_path$ = MKTEMP$("jdbzip") + ".zip"
-DIM entries = {"text.txt": text$, "noise.bin": noise$}
+DIM entries = {"text.txt": text$, "noise.bin": noise$, "rough.bin": rough_a$}
 DIM written = ZIP.WRITE(zip_path$, entries)
 DIM back = ZIP.READ(zip_path$)
 DIM back_text$ = back{"text.txt"}
 DIM back_noise$ = back{"noise.bin"}
-Ok("ZIP.READ gets both entries back", back_text$ = text$ ANDALSO back_noise$ = noise$)
-Ok("the text entry was compressed", FILE.SIZE(zip_path$) < 51080)
+DIM back_rough$ = back{"rough.bin"}
+Ok("ZIP.READ gets every entry back", back_text$ = text$ ANDALSO back_noise$ = noise$ ANDALSO back_rough$ = rough_a$)
+Ok("the text entry was compressed", FILE.SIZE(zip_path$) < 53100)
 KILL zip_path$
 
 PRINT ""

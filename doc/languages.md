@@ -2297,7 +2297,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 A ZIP file is a map from entry name to content, so that is the shape both
 directions use.
 
-* **`ZIP.WRITE(path$, entries) -> number`**: Writes `entries`, a map of name to content, as a ZIP archive and returns how many entries were written. A name may carry a directory component (`"data/rows.csv"`); the directories are created on extraction. Content is a byte string, so `CHR$(0)` inside it is data. Each entry is deflated when that makes it smaller and stored otherwise, so already-compressed content costs no extra. An existing file at `path$` is replaced, not appended to.
+* **`ZIP.WRITE(path$, entries) -> number`**: Writes `entries`, a map of name to content, as a ZIP archive and returns how many entries were written. A name may carry a directory component (`"data/rows.csv"`); the directories are created on extraction. Content is a byte string, so `CHR$(0)` inside it is data. Each entry is deflated when that makes it smaller and the packed bytes read back unchanged, and stored otherwise, so already-compressed content costs no extra and no entry can end up unreadable. An existing file at `path$` is replaced, not appended to.
 * **`ZIP.READ(path$) -> map`**: Reads every entry into a map of name to content. Directory markers are skipped. Entries stored either uncompressed or deflated are both handled, which covers archives written by any other tool.
 * **`ZIP.LIST(path$) -> array`**: The entry names, without reading the content. Use it to look inside a large archive cheaply.
 
