@@ -17,6 +17,11 @@ margin_mm = 20
 [images]
 width_cm = 12.5
 
+[type]
+# TeX hyphenation patterns for the justified text; see tools/hyph/LICENSE-hyph-en-us.txt.
+# An empty value turns hyphenation off.
+hyphenation = "tools/hyph/hyph-en-us.pat.txt"
+
 [chapters]
 files = [
     "manuscript/00_legal.md",

@@ -3,8 +3,13 @@
 ' hyph-utf8 project ships them in its txt folder (tools/hyph/).
 '
 '   IMPORT HYPH
-'   HYPH.LOAD("tools/hyph/hyph-de-1996.pat.txt")
-'   PRINT HYPH.POINTS("Softwareentwicklung")   ' [4, 8, 10, 14]
+'   HYPH.LOAD("tools/hyph/hyph-en-us.pat.txt")
+'   PRINT HYPH.POINTS("hyphenation")           ' [2, 5, 7]
+'
+' A word listed in the exceptions file beside the patterns breaks exactly
+' where that list says, and nowhere else. hyph-utf8 names the pair
+' <tag>.pat.txt and <tag>.hyp.txt, and LOAD picks the second one up on its
+' own.
 '
 ' Everything works on the UTF-8 bytes: a pattern only puts its digits
 ' between characters, so the positions it finds never split a character.
@@ -12,6 +17,7 @@
 EXPORT MODULE HYPH
 
 DIM gPats = {}
+DIM gExc = {}
 DIM gLoaded$ = ""
 DIM gCache = {}
 CONST HYPH_LEFT = 2
@@ -21,6 +27,7 @@ CONST HYPH_RIGHT = 3
 EXPORT SUB LOAD(path$)
     IF path$ = gLoaded$ THEN RETURN
     gPats = {}
+    gExc = {}
     gCache = {}
     DIM src = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), CHR$(10))
     FOR EACH line$ IN src
@@ -42,7 +49,33 @@ EXPORT SUB LOAD(path$)
         NEXT k
         gPats{letters$} = digits$ + pending$
     NEXT line$
+    IF INSTR(path$, ".pat.") >= 0 THEN LoadExceptions(REPLACE$(path$, ".pat.", ".hyp."))
     gLoaded$ = path$
+ENDSUB
+
+' Reads the exception list: one word per line with a hyphen at each place
+' it may break, as in "ta-ble". A missing file is no error.
+SUB LoadExceptions(path$)
+    IF NOT FILE.EXISTS(path$) THEN RETURN
+    DIM src = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), CHR$(10))
+    FOR EACH line$ IN src
+        DIM entry$ = TRIM$(line$)
+        IF entry$ = "" ORELSE LEFT$(entry$, 1) = "%" THEN CONTINUEFOR
+        DIM word$ = ""
+        DIM brk = {}
+        DIM chars = 0
+        DIM j = 0
+        FOR j = 0 TO LEN(entry$) - 1
+            DIM c$ = MID$(entry$, j, 1)
+            IF c$ = "-" THEN
+                brk{STR$(chars)} = 1
+            ELSE
+                word$ = word$ + c$
+                IF Starts(entry$, j) THEN chars = chars + 1
+            ENDIF
+        NEXT j
+        gExc{Folded$(word$)} = brk
+    NEXT line$
 ENDSUB
 
 ' True once a pattern file is loaded.
@@ -51,7 +84,7 @@ EXPORT FUNC READY()
 ENDFUNC
 
 ' Lower case for the patterns, the German capitals with umlaut included.
-FUNC Lower$(w$)
+FUNC Folded$(w$)
     DIM t$ = LCASE$(w$)
     t$ = REPLACE$(t$, CHR$(195) + CHR$(132), CHR$(195) + CHR$(164))
     t$ = REPLACE$(t$, CHR$(195) + CHR$(150), CHR$(195) + CHR$(182))
@@ -71,28 +104,35 @@ ENDFUNC
 EXPORT FUNC POINTS(word$)
     IF MAP.EXISTS(gCache, word$) THEN RETURN gCache{word$}
     DIM out = []
-    DIM w$ = "." + Lower$(word$) + "."
+    DIM lw$ = Folded$(word$)
+    DIM w$ = "." + lw$ + "."
     DIM n = LEN(w$)
     DIM vals = []
     DIM k = 0
     FOR k = 0 TO n
         PUSH(vals, 0)
     NEXT k
-    DIM i = 0
-    DIM l = 0
-    FOR i = 0 TO n - 1
-        FOR l = 1 TO 14
-            IF i + l > n THEN EXITFOR
-            DIM key$ = MID$(w$, i, l)
-            IF MAP.EXISTS(gPats, key$) THEN
-                DIM d$ = gPats{key$}
-                FOR k = 0 TO l
-                    DIM v = BYTEAT(d$, k) - 48
-                    IF v > vals[i + k] THEN vals[i + k] = v
-                NEXT k
-            ENDIF
-        NEXT l
-    NEXT i
+    DIM listed = MAP.EXISTS(gExc, lw$)
+    DIM brk = {}
+    IF listed THEN
+        brk = gExc{lw$}
+    ELSE
+        DIM i = 0
+        DIM l = 0
+        FOR i = 0 TO n - 1
+            FOR l = 1 TO 14
+                IF i + l > n THEN EXITFOR
+                DIM key$ = MID$(w$, i, l)
+                IF MAP.EXISTS(gPats, key$) THEN
+                    DIM d$ = gPats{key$}
+                    FOR k = 0 TO l
+                        DIM v = BYTEAT(d$, k) - 48
+                        IF v > vals[i + k] THEN vals[i + k] = v
+                    NEXT k
+                ENDIF
+            NEXT l
+        NEXT i
+    ENDIF
     ' vals[j] belongs to the gap in front of byte j of w$, that is in front
     ' of byte j - 1 of the word itself.
     DIM chars_before = 0
@@ -102,7 +142,13 @@ EXPORT FUNC POINTS(word$)
     NEXT k
     FOR k = 0 TO LEN(word$) - 1
         IF Starts(word$, k) THEN
-            IF chars_before >= HYPH_LEFT ANDALSO total - chars_before >= HYPH_RIGHT ANDALSO vals[k + 1] MOD 2 = 1 THEN PUSH(out, k)
+            DIM here = FALSE
+            IF listed THEN
+                here = MAP.EXISTS(brk, STR$(chars_before))
+            ELSE
+                here = vals[k + 1] MOD 2 = 1
+            ENDIF
+            IF chars_before >= HYPH_LEFT ANDALSO total - chars_before >= HYPH_RIGHT ANDALSO here THEN PUSH(out, k)
             chars_before = chars_before + 1
         ENDIF
     NEXT k

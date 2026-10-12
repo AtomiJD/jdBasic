@@ -267,6 +267,18 @@ FUNC CharLen(t$, k)
     RETURN 1
 ENDFUNC
 
+' True for a name written with an interior capital, such as a product or an
+' identifier. The patterns describe words, not names, so these stay whole.
+FUNC InnerCaps(core$)
+    DIM k = CharLen(core$, 0)
+    DO WHILE k < LEN(core$)
+        DIM b = BYTEAT(core$, k)
+        IF b >= 65 ANDALSO b <= 90 THEN RETURN TRUE
+        k = k + CharLen(core$, k)
+    LOOP
+    RETURN FALSE
+ENDFUNC
+
 ' Where the word text t$ may break: a list of [byte position, hyphen], the
 ' hyphen TRUE where the break needs one added. Quotes and punctuation
 ' around the word stay out; a word with digits is left whole; a compound
@@ -286,6 +298,7 @@ FUNC Cuts(t$)
     IF first < 0 THEN RETURN out
     DIM core$ = MID$(t$, first, last_end - first)
     IF REGEX.MATCH(".*[0-9].*", core$) THEN RETURN out
+    IF InnerCaps(core$) THEN RETURN out
     DIM parts = SPLIT(core$, "-")
     DIM at = first
     DIM j = 0
@@ -975,12 +988,12 @@ SUB Contents(ctx)
     ctx{"y"} = ctx{"y"} + 19
     DIM k = 0
     FOR k = 0 TO LEN(entries) - 1
-        DIM e = entries[k]
-        IF e{"level"} <= 2 THEN
+        DIM ent = entries[k]
+        IF ent{"level"} <= 2 THEN
             DIM indent = 0
             DIM sty$ = "B"
             DIM pt = 10.5
-            IF e{"level"} = 2 THEN
+            IF ent{"level"} = 2 THEN
                 indent = 6
                 sty$ = ""
                 pt = 10
@@ -988,10 +1001,10 @@ SUB Contents(ctx)
                 ctx{"y"} = ctx{"y"} + 2.5
             ENDIF
             Need(ctx, 5.4)
-            DIM num$ = STR$(e{"page"})
-            IF e{"page"} <= 0 THEN num$ = "000"
+            DIM num$ = STR$(ent{"page"})
+            IF ent{"page"} <= 0 THEN num$ = "000"
             DIM nw = Measure(ctx, "book", sty$, pt, num$)
-            DIM label$ = e{"text"}
+            DIM label$ = ent{"text"}
             DIM lw = Measure(ctx, "book", sty$, pt, label$)
             DIM x0 = XLeft(ctx) + indent
             DIM x_num = XLeft(ctx) + TextWidth(ctx) - nw
@@ -1001,7 +1014,7 @@ SUB Contents(ctx)
             DIM n_dots = FLOOR((x_num - x0 - lw - 4) / dot_w)
             IF n_dots > 0 THEN Put(ctx, "book", "", pt, x_num - 2 - n_dots * dot_w, base_y, DotRow$(". ", n_dots), 150, 150, 150)
             Put(ctx, "book", sty$, pt, x_num, base_y, num$, 30, 30, 30)
-            IF s{"mode"} = "screen" ANDALSO e{"page"} > 0 THEN PDFGEN.LINK(doc, x0, ctx{"y"}, TextWidth(ctx) - indent, 5.4, "#" + e{"dest"})
+            IF s{"mode"} = "screen" ANDALSO ent{"page"} > 0 THEN PDFGEN.LINK(doc, x0, ctx{"y"}, TextWidth(ctx) - indent, 5.4, "#" + ent{"dest"})
             ctx{"y"} = ctx{"y"} + 5.4
         ENDIF
     NEXT k

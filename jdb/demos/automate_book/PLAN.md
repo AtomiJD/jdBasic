@@ -5,13 +5,15 @@ levels (easy, medium, expert) that take routine office work off the reader's
 desk, a setup wizard for the easy level, and a build that turns the Markdown
 manuscript into a Word document with jdBasic itself.
 
-Status, 2026-10-11: 56 recipes, every one green on all five columns of
+Status, 2026-10-12: 56 recipes, every one green on all five columns of
 check_recipes. Built final: 749 print pages, 739 screen, 88567 words and
 16665 lines of code, cover spine 42.8 mm, EPUB of 110 files. The lines are
-broken paragraph at a time rather than line by line, which leaves 112 of
+broken paragraph at a time rather than line by line and hyphenated with
+the TeX patterns for American English (`tools/hyph/`), which leaves 90 of
 them too loose to justify and no widows at all; `tools/build_book.jdb`
-reports both numbers on every run. Hyphenation is built in and off: it
-waits for a pattern file under `type.hyphenation`.
+reports both numbers on every run. What stays ragged is text the patterns
+cannot touch: a line carrying a long inline code span, or the all capitals
+of the legal notice.
 
 Status, 2026-10-02: WP 0a to 0c and WP 1 to WP 5 done; print PDF 655
 pages. WP 5: chapter 6 (with a worked change: a monthly schedule in the
@@ -335,8 +337,8 @@ Pipeline:
 
 ### The layout engine (`tools/layout.jdb`)
 
-Sets the block list into pages on top of PDFGEN: body text justified with
-hyphenation off, headings that never sit alone at the bottom of a page,
+Sets the block list into pages on top of PDFGEN: body text justified and
+hyphenated, headings that never sit alone at the bottom of a page,
 listings that break between lines with a "continued" mark, note boxes that
 stay whole, running heads with the chapter title, page numbers outside,
 chapters starting on a right hand page. The table of contents and the index

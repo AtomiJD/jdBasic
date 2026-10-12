@@ -1,0 +1,36 @@
+title: Hyphenation patterns for American English
+
+version: 2005-05-30
+
+authors:
+  -
+    name: Gerard D.C. Kuiken
+
+copyright: Copyright (C) 1990, 2004, 2005 Gerard D.C. Kuiken
+
+licence:
+    text: >
+          Copying and distribution of this file, with or without
+          modification, are permitted in any medium without royalty
+          provided the copyright notice and this notice are preserved.
+
+notice: >
+        The patterns are the ushyphmax.tex set: Dr. Kuiken's additions on
+        top of the original Plain TeX patterns from Knuth's hyphen.tex,
+        which Frank M. Liang derived for his 1983 thesis. They find every
+        admissible hyphen of the words in the Hyphenation Exception Log,
+        TUGboat Volume 10 (1989), No. 3, pp. 337-341.
+
+source: https://github.com/hyphenation/tex-hyphen (hyph-utf8/tex/generic/hyph-utf8/patterns/{txt/hyph-en-us.pat.txt, txt/hyph-en-us.hyp.txt, tex/hyph-en-us.tex}), fetched 2026-10-12.
+
+language:
+    name: English, American spelling
+    tag:  en-us
+
+hyphenmins:
+    typesetting:
+        left:  2
+        right: 3
+
+known_bugs:
+    de-mo-c-rat: instead of dem-o-crat (tex-hyphen issue 15)

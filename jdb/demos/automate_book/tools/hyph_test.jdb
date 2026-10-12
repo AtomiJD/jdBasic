@@ -40,6 +40,19 @@ TESTKIT.EQ(Hyphenated$("ab"), "ab", "two characters have to stay in front")
 TESTKIT.EQ(Hyphenated$("xab"), "xab", "and three behind")
 TESTKIT.EQ(Hyphenated$("xxab"), "xxab", "three behind, counted over the whole word")
 
+TESTKIT.SUITE("exceptions")
+DIM pats2$ = PATH.JOIN$(work$, "test2.pat.txt")
+DIM exc$ = PATH.JOIN$(work$, "test2.hyp.txt")
+TXTWRITER pats2$, "a1b" + CHR$(10) + "c2d" + CHR$(10)
+TXTWRITER exc$, "xxabxxx" + CHR$(10) + "zzabz-zzz" + CHR$(10)
+HYPH.LOAD(pats2$)
+TESTKIT.EQ(Hyphenated$("qqabqqq"), "qqa-bqqq", "an unlisted word follows the patterns")
+TESTKIT.EQ(Hyphenated$("xxabxxx"), "xxabxxx", "a listed word without a hyphen never breaks")
+TESTKIT.EQ(Hyphenated$("zzabzzzz"), "zzabz-zzz", "a listed word breaks where the list says, not where the patterns do")
+TESTKIT.EQ(Hyphenated$("ZZABZZZZ"), "ZZABZ-ZZZ", "the list is read without case")
+
 KILL pats$
+KILL pats2$
+KILL exc$
 RMDIR work$
 TESTKIT.REPORT()
