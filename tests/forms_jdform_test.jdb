@@ -14,7 +14,7 @@ SUB CHECK(what$, got$, want$)
         pass = pass + 1
     ELSE
         fail = fail + 1
-        PRINT "FAIL "; what$; "  ist ["; got$; "] soll ["; want$; "]"
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
     ENDIF
 ENDSUB
 
@@ -31,8 +31,8 @@ DIM tmr = FORM.TIMER(frm, "TT", 400)
 SUB TT_TICK(e)
     IF shot = 1 THEN
         shot = 2
-        DIM r = OS.SCREENSHOT("tmp/forms_jdform.png", "window", "jdform Eigenschaften")
-        PRINT "Screenshot: "; r; " (0 = geschrieben)"
+        DIM r = OS.SCREENSHOT("tmp/forms_jdform.png", "window", "jdform properties")
+        PRINT "Screenshot: "; r; " (0 = written)"
         got{"formback"} = FORM.GET(frm, "BACKCOLOR")
         got{"fore"} = FORM.GET(FORM.FIND(frm, "L1"), "FORECOLOR")
         got{"maxlen"} = FORM.GET(FORM.FIND(frm, "PW"), "MAXLENGTH")
@@ -47,14 +47,15 @@ ENDSUB
 FORM.RUN(frm)
 
 PRINT ""
-CHECK("die Form traegt ihre Farbe aus der Datei", STR$(got{"formback"}), "16775906")
-CHECK("FORECOLOR aus der Datei", STR$(got{"fore"}), "13369344")
-CHECK("MAXLENGTH aus der Datei", STR$(got{"maxlen"}), "8")
-CHECK("LOCKED aus der Datei", STR$(got{"locked"}), "TRUE")
-CHECK("BACKCOLOR auf demselben Feld", STR$(got{"roback"}), "15132390")
-CHECK("TOOLTIP aus der Datei", "" + got{"tip"}, "Kommt auch aus der Datei")
-CHECK("TAG traegt die Map aus der Datei", STR$(got{"tag"}{"n"}), "7")
-CHECK("  und ihren Text", "" + got{"tag"}{"kind"}, "aus-datei")
+CHECK("the form carries its colour from the file", STR$(got{"formback"}), "16775906")
+CHECK("FORECOLOR from the file", STR$(got{"fore"}), "13369344")
+CHECK("MAXLENGTH from the file", STR$(got{"maxlen"}), "8")
+CHECK("LOCKED from the file", STR$(got{"locked"}), "TRUE")
+CHECK("BACKCOLOR on the same field", STR$(got{"roback"}), "15132390")
+CHECK("TOOLTIP from the file", "" + got{"tip"}, "Also from the file")
+CHECK("TAG carries the map from the file", STR$(got{"tag"}{"n"}), "7")
+CHECK("  and its text", "" + got{"tag"}{"kind"}, "from-file")
 
 PRINT ""
-PRINT "forms_jdform_test: bestanden "; pass; ", gefallen "; fail
+PRINT "forms_jdform_test: " + STR$(pass) + " passed, " + STR$(fail) + " failed"
+IF fail = 0 THEN PRINT "ALL FORMS JDFORM TESTS PASSED!"

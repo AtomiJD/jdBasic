@@ -2,14 +2,14 @@
   "version": 1,
   "form": {
     "name": "JF",
-    "title": "jdform Eigenschaften",
+    "title": "jdform properties",
     "width": 440,
     "height": 260,
     "properties": { "BACKCOLOR": 16775906 }
   },
   "controls": [
     {
-      "type": "LABEL", "name": "L1", "text": "Aus der Datei, rot und fett",
+      "type": "LABEL", "name": "L1", "text": "From the file, red and bold",
       "x": 20, "y": 20, "w": 300, "h": 22,
       "properties": {
         "FORECOLOR": 13369344,
@@ -18,12 +18,12 @@
       }
     },
     {
-      "type": "TEXTBOX", "name": "PW", "text": "geheim",
+      "type": "TEXTBOX", "name": "PW", "text": "secret",
       "x": 20, "y": 60, "w": 200, "h": 24,
       "properties": { "PASSWORD": true, "MAXLENGTH": 8 }
     },
     {
-      "type": "TEXTBOX", "name": "RO", "text": "nur lesen",
+      "type": "TEXTBOX", "name": "RO", "text": "read only",
       "x": 20, "y": 92, "w": 200, "h": 24,
       "properties": { "LOCKED": true, "BACKCOLOR": 15132390 }
     },
@@ -31,9 +31,9 @@
       "type": "BUTTON", "name": "B1", "text": "&Ok",
       "x": 20, "y": 128, "w": 120, "h": 28,
       "properties": {
-        "TOOLTIP": "Kommt auch aus der Datei",
+        "TOOLTIP": "Also from the file",
         "CURSOR": "HAND",
-        "TAG": { "kind": "aus-datei", "n": 7 }
+        "TAG": { "kind": "from-file", "n": 7 }
       }
     }
   ]

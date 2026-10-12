@@ -14,7 +14,7 @@ SUB CHECK(what$, got$, want$)
         pass = pass + 1
     ELSE
         fail = fail + 1
-        PRINT "FAIL "; what$; "  ist ["; got$; "] soll ["; want$; "]"
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
     ENDIF
 ENDSUB
 
@@ -22,34 +22,34 @@ CONST RED = 13369344
 CONST CREAM = 16775906
 CONST NAVY = 2050956
 
-DIM frm = FORM.CREATE("Eigenschaften", 460, 300, "PF")
+DIM frm = FORM.CREATE("Properties", 460, 300, "PF")
 FORM.SET(frm, "BACKCOLOR", CREAM)
 
-DIM lb1 = FORM.LABEL(frm, "L1", "Rot, fett und rechts", 20, 20, 300, 22)
+DIM lb1 = FORM.LABEL(frm, "L1", "Red, bold and right", 20, 20, 300, 22)
 FORM.SET(lb1, "FORECOLOR", RED)
 FORM.SET(lb1, "FONT", { "bold": TRUE, "size": 12 })
 FORM.SET(lb1, "ALIGN", "RIGHT")
 
-DIM lb2 = FORM.LABEL(frm, "L2", "Weiss auf Marine, kursiv", 20, 50, 300, 22)
+DIM lb2 = FORM.LABEL(frm, "L2", "White on navy, italic", 20, 50, 300, 22)
 FORM.SET(lb2, "FORECOLOR", 16777215)
 FORM.SET(lb2, "BACKCOLOR", NAVY)
 FORM.SET(lb2, "FONT", { "italic": TRUE })
 
-DIM pw = FORM.TEXTBOX(frm, "PW", "geheim", 20, 84, 200, 24)
+DIM pw = FORM.TEXTBOX(frm, "PW", "secret", 20, 84, 200, 24)
 FORM.SET(pw, "PASSWORD", TRUE)
 FORM.SET(pw, "MAXLENGTH", 8)
 
-DIM ro = FORM.TEXTBOX(frm, "RO", "nur lesen", 20, 116, 200, 24)
+DIM ro = FORM.TEXTBOX(frm, "RO", "read only", 20, 116, 200, 24)
 FORM.SET(ro, "LOCKED", TRUE)
 FORM.SET(ro, "BACKCOLOR", 15132390)
 
-DIM btn = FORM.BUTTON(frm, "B1", "&Warten", 20, 152, 120, 28)
-FORM.SET(btn, "TOOLTIP", "Zeigt die Sanduhr")
+DIM btn = FORM.BUTTON(frm, "B1", "&Wait", 20, 152, 120, 28)
+FORM.SET(btn, "TOOLTIP", "Shows the hourglass")
 FORM.SET(btn, "CURSOR", "WAIT")
 FORM.SET(btn, "TAG", { "kind": "demo", "n": 7 })
 
-DIM t1 = FORM.TEXTBOX(frm, "T1", "erst", 240, 84, 180, 24)
-DIM t2 = FORM.TEXTBOX(frm, "T2", "zweit", 240, 116, 180, 24)
+DIM t1 = FORM.TEXTBOX(frm, "T1", "first", 240, 84, 180, 24)
+DIM t2 = FORM.TEXTBOX(frm, "T2", "second", 240, 116, 180, 24)
 FORM.SET(t2, "TABSTOP", FALSE)
 
 ' A handle is gone once its window is, so everything is read while the form
@@ -66,8 +66,8 @@ DIM tmr = FORM.TIMER(frm, "TT", 400)
 SUB TT_TICK(e)
     IF shot = 1 THEN
         shot = 2
-        DIM r = OS.SCREENSHOT("tmp/forms_props.png", "window", "Eigenschaften")
-        PRINT "Screenshot: "; r; " (0 = geschrieben)"
+        DIM r = OS.SCREENSHOT("tmp/forms_props.png", "window", "Properties")
+        PRINT "Screenshot: "; r; " (0 = written)"
         got{"fore"} = FORM.GET(lb1, "FORECOLOR")
         got{"back"} = FORM.GET(lb2, "BACKCOLOR")
         got{"formback"} = FORM.GET(frm, "BACKCOLOR")
@@ -86,18 +86,19 @@ ENDSUB
 FORM.RUN(frm)
 
 PRINT ""
-CHECK("FORECOLOR kommt zurueck", STR$(got{"fore"}), STR$(RED))
-CHECK("BACKCOLOR kommt zurueck", STR$(got{"back"}), STR$(NAVY))
-CHECK("die Form traegt ihre eigene", STR$(got{"formback"}), STR$(CREAM))
-CHECK("ohne gesetzte Farbe kommt -1", STR$(got{"nofore"}), "-1")
-CHECK("MAXLENGTH kommt zurueck", STR$(got{"maxlen"}), "8")
-CHECK("LOCKED kommt zurueck", STR$(got{"locked"}), "TRUE")
-CHECK("  und ein anderes Feld ist es nicht", STR$(got{"unlocked"}), "FALSE")
-CHECK("TABSTOP laesst sich abschalten", STR$(got{"notab"}), "FALSE")
-CHECK("  und bleibt sonst gesetzt", STR$(got{"tab"}), "TRUE")
-CHECK("TOOLTIP kommt zurueck", "" + got{"tip"}, "Zeigt die Sanduhr")
-CHECK("TAG haelt eine ganze Map", STR$(got{"tag"}{"n"}), "7")
-CHECK("  und den Text darin", "" + got{"tag"}{"kind"}, "demo")
+CHECK("FORECOLOR comes back", STR$(got{"fore"}), STR$(RED))
+CHECK("BACKCOLOR comes back", STR$(got{"back"}), STR$(NAVY))
+CHECK("the form carries its own", STR$(got{"formback"}), STR$(CREAM))
+CHECK("an unset colour answers -1", STR$(got{"nofore"}), "-1")
+CHECK("MAXLENGTH comes back", STR$(got{"maxlen"}), "8")
+CHECK("LOCKED comes back", STR$(got{"locked"}), "TRUE")
+CHECK("  and another field is not", STR$(got{"unlocked"}), "FALSE")
+CHECK("TABSTOP can be switched off", STR$(got{"notab"}), "FALSE")
+CHECK("  and stays set otherwise", STR$(got{"tab"}), "TRUE")
+CHECK("TOOLTIP comes back", "" + got{"tip"}, "Shows the hourglass")
+CHECK("TAG holds a whole map", STR$(got{"tag"}{"n"}), "7")
+CHECK("  and the text inside it", "" + got{"tag"}{"kind"}, "demo")
 
 PRINT ""
-PRINT "forms_props_test: bestanden "; pass; ", gefallen "; fail
+PRINT "forms_props_test: " + STR$(pass) + " passed, " + STR$(fail) + " failed"
+IF fail = 0 THEN PRINT "ALL FORMS PROPS TESTS PASSED!"

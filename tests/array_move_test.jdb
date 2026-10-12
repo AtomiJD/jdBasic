@@ -25,8 +25,8 @@ SUB CHECK(what$, got$, want$)
     ELSE
         fail = fail + 1
         PRINT "FAIL "; what$
-        PRINT "      ist  "; got$
-        PRINT "      soll "; want$
+        PRINT "      got  "; got$
+        PRINT "      want "; want$
         report$ = APPEND(report$, [what$])
     ENDIF
 ENDSUB
@@ -120,7 +120,7 @@ SUB ROTCASE(rows, cols, dr, dc)
     DIM m = GRID(rows, cols)
     DIM want = REFROT(m, rows, cols, dr, dc)
     DIM got = ROTATE(m, [dr, dc])
-    DIM label$ = "ROTATE " + STR$(rows) + "x" + STR$(cols) + " um [" _
+    DIM label$ = "ROTATE " + STR$(rows) + "x" + STR$(cols) + " by [" _
         + STR$(dr) + "," + STR$(dc) + "]"
     CHECK(label$, FLAT$(got, rows, cols), FLAT$(want, rows, cols))
 ENDSUB
@@ -130,20 +130,20 @@ ENDSUB
 SUB SHIFTCASE(rows, cols, dr, dc, fillv)
     DIM m = GRID(rows, cols)
     DIM want = REFSHIFT(m, rows, cols, dr, dc, fillv)
-    DIM label$ = "SHIFT " + STR$(rows) + "x" + STR$(cols) + " um [" _
-        + STR$(dr) + "," + STR$(dc) + "] fuellt " + STR$(fillv)
+    DIM label$ = "SHIFT " + STR$(rows) + "x" + STR$(cols) + " by [" _
+        + STR$(dr) + "," + STR$(dc) + "] fills " + STR$(fillv)
     DIM got$ = "?"
     TRY
         DIM got = SHIFT(m, [dr, dc], fillv)
         got$ = FLAT$(got, rows, cols)
     CATCH
-        got$ = "kein " + STR$(rows) + "x" + STR$(cols) + " Ergebnis"
+        got$ = "no " + STR$(rows) + "x" + STR$(cols) + " result"
     ENDTRY
     CHECK(label$, got$, FLAT$(want, rows, cols))
 ENDSUB
 
 PRINT ""
-PRINT "=== ROTATE: zyklisch, jede Achse ==="
+PRINT "=== ROTATE: cyclic, every axis ==="
 PRINT ""
 
 ' the row axis, which has always worked - if these fail the reference is wrong
@@ -181,15 +181,15 @@ ROTCASE(6, 7, 4, 0)
 ROTCASE(6, 7, 2, 5)
 
 PRINT ""
-PRINT "=== ROTATE erhaelt den Inhalt ==="
+PRINT "=== ROTATE keeps the contents ==="
 PRINT ""
 
 DIM bagm = GRID(4, 6)
-CHECK("nichts geht verloren, nichts kommt dazu", _
+CHECK("nothing is lost, nothing is added", _
     STR$(SAMEBAG(ROTATE(bagm, [1, 2]), bagm, 4, 6)), "1")
 
 PRINT ""
-PRINT "=== ROTATE auf einem Vektor ==="
+PRINT "=== ROTATE on a vector ==="
 PRINT ""
 
 DIM v5 = IOTA(5)
@@ -198,12 +198,12 @@ DIM gotv$ = "?"
 TRY
     gotv$ = FLATV$(ROTATE(v5, [1]), 5)
 CATCH
-    gotv$ = "wirft"
+    gotv$ = "throws"
 ENDTRY
-CHECK("ROTATE Vektor um [1]", gotv$, wantv$)
+CHECK("ROTATE a vector by [1]", gotv$, wantv$)
 
 PRINT ""
-PRINT "=== SHIFT: was ueberhaupt zurueckkommt ==="
+PRINT "=== SHIFT: what comes back at all ==="
 PRINT ""
 
 ' Before any value can be judged, the shape has to survive. This one reports
@@ -211,17 +211,17 @@ PRINT ""
 DIM probe = GRID(3, 3)
 DIM sp = SHIFT(probe, [1, 0], 0)
 DIM outer = LEN(sp)
-DIM inner$ = "kein Untergitter"
+DIM inner$ = "no subgrid"
 TRY
     inner$ = STR$(LEN(sp[0]))
 CATCH
-    inner$ = "kein Untergitter"
+    inner$ = "no subgrid"
 ENDTRY
-PRINT "SHIFT(3x3, [1,0], 0) hat "; outer; " Zeilen, Zeile 0 hat "; inner$
-CHECK("SHIFT liefert wieder ein 3x3", inner$, "3")
+PRINT "SHIFT(3x3, [1,0], 0) has "; outer; " rows, row 0 has "; inner$
+CHECK("SHIFT answers a 3x3 again", inner$, "3")
 
 PRINT ""
-PRINT "=== SHIFT: nicht zyklisch, mit Fuellwert ==="
+PRINT "=== SHIFT: not cyclic, with a fill value ==="
 PRINT ""
 
 SHIFTCASE(3, 3, 1, 0, 0)
@@ -251,7 +251,7 @@ SHIFTCASE(5, 2, 2, 0, 0)
 SHIFTCASE(6, 7, 2, 3, 0)
 
 PRINT ""
-PRINT "=== SHIFT erfindet nichts ==="
+PRINT "=== SHIFT invents nothing ==="
 PRINT ""
 
 ' Every value in the result is either a fill or came from the input at most as
@@ -276,42 +276,42 @@ FOR vv = 1 TO 9
     NEXT rr
     IF nseen > 1 THEN dupes = dupes + 1
 NEXT vv
-CHECK("kein Element kommt doppelt zurueck", STR$(dupes), "0")
+CHECK("no element comes back twice", STR$(dupes), "0")
 
 PRINT ""
-PRINT "=== SHIFT auf einem Vektor, mit seinem eigenen Vorzeichen ==="
+PRINT "=== SHIFT on a vector, with its own sign ==="
 PRINT ""
 
-CHECK("SHIFT Vektor um [1]", FLATV$(SHIFT([1, 2, 3, 4, 5], [1], 0), 5), "0 1 2 3 4 ")
-CHECK("SHIFT Vektor um [-1]", FLATV$(SHIFT([1, 2, 3, 4, 5], [-1], 0), 5), "2 3 4 5 0 ")
-CHECK("SHIFT Vektor um [0]", FLATV$(SHIFT([1, 2, 3, 4, 5], [0], 0), 5), "1 2 3 4 5 ")
-CHECK("SHIFT Vektor ueber den Rand", FLATV$(SHIFT([1, 2, 3], [5], -1), 3), "-1 -1 -1 ")
-CHECK("SHIFT Vektor als Skalar statt Vektor", FLATV$(SHIFT([1, 2, 3, 4, 5], 1, 0), 5), "0 1 2 3 4 ")
-CHECK("und ROTATE zieht in die andere Richtung", _
+CHECK("SHIFT a vector by [1]", FLATV$(SHIFT([1, 2, 3, 4, 5], [1], 0), 5), "0 1 2 3 4 ")
+CHECK("SHIFT a vector by [-1]", FLATV$(SHIFT([1, 2, 3, 4, 5], [-1], 0), 5), "2 3 4 5 0 ")
+CHECK("SHIFT a vector by [0]", FLATV$(SHIFT([1, 2, 3, 4, 5], [0], 0), 5), "1 2 3 4 5 ")
+CHECK("SHIFT a vector past the edge", FLATV$(SHIFT([1, 2, 3], [5], -1), 3), "-1 -1 -1 ")
+CHECK("SHIFT a vector with a scalar instead of a vector", FLATV$(SHIFT([1, 2, 3, 4, 5], 1, 0), 5), "0 1 2 3 4 ")
+CHECK("and ROTATE pulls the other way", _
     FLATV$(ROTATE([1, 2, 3, 4, 5], [1]), 5), "2 3 4 5 1 ")
 
 PRINT ""
-PRINT "=== zu viele Achsen werden abgelehnt ==="
+PRINT "=== too many axes are refused ==="
 PRINT ""
 
-DIM toomany$ = "kein Fehler"
+DIM toomany$ = "no error"
 TRY
     DIM bad = ROTATE([1, 2, 3], [1, 1])
 CATCH
-    toomany$ = "wirft"
+    toomany$ = "throws"
 ENDTRY
-CHECK("ROTATE mit 2 Achsen auf einem Vektor", toomany$, "wirft")
+CHECK("ROTATE with 2 axes on a vector", toomany$, "throws")
 
-DIM toomany2$ = "kein Fehler"
+DIM toomany2$ = "no error"
 TRY
     DIM bad2 = SHIFT(GRID(3, 3), [1, 1, 1], 0)
 CATCH
-    toomany2$ = "wirft"
+    toomany2$ = "throws"
 ENDTRY
-CHECK("SHIFT mit 3 Achsen auf einer Matrix", toomany2$, "wirft")
+CHECK("SHIFT with 3 axes on a matrix", toomany2$, "throws")
 
 PRINT ""
-PRINT "=== Indizieren mit einer Index-Menge ==="
+PRINT "=== indexing with an index set ==="
 PRINT ""
 
 DIM pal = [100, 200, 300, 400]
@@ -321,11 +321,11 @@ DIM gotg$ = "?"
 TRY
     gotg$ = FLAT$(pal[idxm], 3, 3)
 CATCH
-    gotg$ = "wirft"
+    gotg$ = "throws"
 ENDTRY
 ' Either answer is defensible; the one thing that must not happen is a matrix
 ' of the first element, which is what a silent scalar coercion produces.
-CHECK("Vektor mit Index-Matrix: sammelt oder wirft", gotg$, wantg$)
+CHECK("a vector with an index matrix: gathers or throws", gotg$, wantg$)
 
 DIM idxv = [3, 1, 0]
 DIM wantgv$ = "400 200 100 "
@@ -333,27 +333,27 @@ DIM gotgv$ = "?"
 TRY
     gotgv$ = FLATV$(pal[idxv], 3)
 CATCH
-    gotgv$ = "wirft"
+    gotgv$ = "throws"
 ENDTRY
-CHECK("Vektor mit Index-Vektor: sammelt oder wirft", gotgv$, wantgv$)
+CHECK("a vector with an index vector: gathers or throws", gotgv$, wantgv$)
 
 ' A gather out of range has to say so rather than fold to something plausible.
-DIM oob$ = "kein Fehler"
+DIM oob$ = "no error"
 TRY
     DIM bad3 = pal[RESHAPE([0, 1, 9, 2], [2, 2])]
 CATCH
-    oob$ = "wirft"
+    oob$ = "throws"
 ENDTRY
-CHECK("Index ausserhalb des Bereichs wirft", oob$, "wirft")
+CHECK("an index out of range throws", oob$, "throws")
 
 ' Gathering whole rows out of a matrix: the elements collected are arrays, so
 ' this is the case where a shape-preserving gather could go wrong the other way.
 DIM rowsrc = GRID(4, 3)
-CHECK("Zeilen aus einer Matrix sammeln", FLAT$(rowsrc[[3, 0]], 2, 3), _
+CHECK("gathering rows out of a matrix", FLAT$(rowsrc[[3, 0]], 2, 3), _
     "10 11 12 | 1 2 3 ")
 
 PRINT ""
-PRINT "=== TRANSPOSE, weil der Umweg darauf steht ==="
+PRINT "=== TRANSPOSE, because the detour runs through it ==="
 PRINT ""
 
 DIM tm = GRID(2, 5)
@@ -366,16 +366,17 @@ FOR tr = 0 TO 1
         IF tt[tc][tr] <> tm[tr][tc] THEN tok = 0
     NEXT tc
 NEXT tr
-CHECK("TRANSPOSE stimmt auf 2x5", STR$(tok), "1")
-CHECK("  und der Spalten-Umweg liefert das Richtige", _
+CHECK("TRANSPOSE is right on 2x5", STR$(tok), "1")
+CHECK("  and the column detour answers the right thing", _
     FLAT$(TRANSPOSE(ROTATE(TRANSPOSE(tm), [1, 0])), 2, 5), _
     FLAT$(REFROT(tm, 2, 5, 0, 1), 2, 5))
 
 PRINT ""
-PRINT "array_move_test: bestanden "; pass; ", gefallen "; fail
+PRINT "array_move_test: " + STR$(pass) + " passed, " + STR$(fail) + " failed"
+IF fail = 0 THEN PRINT "ALL ARRAY MOVE TESTS PASSED!"
 IF fail > 0 THEN
     PRINT ""
-    PRINT "Gefallen:"
+    PRINT "Failed:"
     DIM fi
     FOR fi = 0 TO LEN(report$) - 1
         PRINT "  "; report$[fi]

@@ -15,7 +15,7 @@ SUB CHECK(what$, got$, want$)
         pass = pass + 1
     ELSE
         fail = fail + 1
-        PRINT "FAIL "; what$; "  ist ["; got$; "] soll ["; want$; "]"
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
     ENDIF
 ENDSUB
 
@@ -24,7 +24,7 @@ SUB CHECKF(what$, got, want)
         pass = pass + 1
     ELSE
         fail = fail + 1
-        PRINT "FAIL "; what$; "  ist ["; got; "] soll ["; want; "]"
+        PRINT "FAIL "; what$; "  got ["; got; "] want ["; want; "]"
     ENDIF
 ENDSUB
 
@@ -87,54 +87,54 @@ PRINT "--- 16-bit PCM, the format WAV.WRITE produces"
 
 DIM body16$ = LE16$(0) + LE16$(16384) + LE16$(-16384) + LE16$(32767) + LE16$(-32768)
 DIM w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(1, 16, 1, 44100)) + MKCHUNK$("data", body16$))
-CHECK("16-bit wird gelesen", TYPEOF(w), "OBJECT")
-CHECK("  Rate", STR$(w{"rate"}), "44100")
-CHECK("  Kanaele", STR$(w{"channels"}), "1")
-CHECK("  Frames", STR$(w{"frames"}), "5")
+CHECK("16-bit is read", TYPEOF(w), "OBJECT")
+CHECK("  rate", STR$(w{"rate"}), "44100")
+CHECK("  channels", STR$(w{"channels"}), "1")
+CHECK("  frames", STR$(w{"frames"}), "5")
 DIM s = w{"samples"}
 CHECKF("  Sample 0", s[0], 0.0)
 CHECKF("  Sample 1", s[1], 0.5)
 CHECKF("  Sample 2", s[2], -0.5)
 CHECKF("  Sample 4", s[4], -1.0)
 
-PRINT "--- 24-bit PCM, was jedes Audiointerface liefert"
+PRINT "--- 24-bit PCM, what every audio interface produces"
 
 DIM body24$ = LE24$(0) + LE24$(4194304) + LE24$(-4194304) + LE24$(-8388608)
 w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(1, 24, 1, 48000)) + MKCHUNK$("data", body24$))
-CHECK("24-bit wird gelesen", TYPEOF(w), "OBJECT")
-CHECK("  Rate", STR$(w{"rate"}), "48000")
-CHECK("  Frames", STR$(w{"frames"}), "4")
+CHECK("24-bit is read", TYPEOF(w), "OBJECT")
+CHECK("  rate", STR$(w{"rate"}), "48000")
+CHECK("  frames", STR$(w{"frames"}), "4")
 s = w{"samples"}
 CHECKF("  Sample 0", s[0], 0.0)
 CHECKF("  Sample 1", s[1], 0.5)
-CHECKF("  negativ korrekt vorzeichenerweitert", s[2], -0.5)
-CHECKF("  Vollausschlag negativ", s[3], -1.0)
+CHECKF("  a negative value is sign extended", s[2], -0.5)
+CHECKF("  full scale negative", s[3], -1.0)
 
 PRINT "--- 32-bit PCM"
 
 DIM body32$ = LE32$(0) + LE32$(1073741824) + LE32$(-1073741824)
 w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(1, 32, 1, 48000)) + MKCHUNK$("data", body32$))
-CHECK("32-bit wird gelesen", TYPEOF(w), "OBJECT")
+CHECK("32-bit is read", TYPEOF(w), "OBJECT")
 s = w{"samples"}
 CHECKF("  Sample 1", s[1], 0.5)
 CHECKF("  Sample 2", s[2], -0.5)
 
-PRINT "--- 8-bit PCM ist vorzeichenlos"
+PRINT "--- 8-bit PCM is unsigned"
 
 DIM body8$ = CHR$(128) + CHR$(192) + CHR$(64) + CHR$(0)
 w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(1, 8, 1, 22050)) + MKCHUNK$("data", body8$))
 s = w{"samples"}
-CHECKF("  Mitte ist Null", s[0], 0.0)
+CHECKF("  the midpoint is zero", s[0], 0.0)
 CHECKF("  Sample 1", s[1], 0.5)
 CHECKF("  Sample 3", s[3], -1.0)
 
-PRINT "--- IEEE float32 und float64"
+PRINT "--- IEEE float32 and float64"
 
 DIM f32$ = CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0) + _
            CHR$(0)+CHR$(0)+CHR$(0)+CHR$(63) + _
            CHR$(0)+CHR$(0)+CHR$(128)+CHR$(191)
 w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(3, 32, 1, 48000)) + MKCHUNK$("data", f32$))
-CHECK("float32 wird gelesen", TYPEOF(w), "OBJECT")
+CHECK("float32 is read", TYPEOF(w), "OBJECT")
 s = w{"samples"}
 CHECKF("  0.5", s[1], 0.5)
 CHECKF("  -1.0", s[2], -1.0)
@@ -142,100 +142,100 @@ CHECKF("  -1.0", s[2], -1.0)
 DIM f64$ = CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(224)+CHR$(63) + _
            CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(240)+CHR$(191)
 w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(3, 64, 1, 48000)) + MKCHUNK$("data", f64$))
-CHECK("float64 wird gelesen", TYPEOF(w), "OBJECT")
+CHECK("float64 is read", TYPEOF(w), "OBJECT")
 s = w{"samples"}
 CHECKF("  0.5", s[0], 0.5)
 CHECKF("  -1.0", s[1], -1.0)
 
-PRINT "--- WAVE_FORMAT_EXTENSIBLE loest auf den echten Typ auf"
+PRINT "--- WAVE_FORMAT_EXTENSIBLE resolves to the real type"
 
 w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMTEXT$(1, 16, 1, 48000)) + MKCHUNK$("data", body16$))
-CHECK("EXTENSIBLE/PCM wird gelesen", TYPEOF(w), "OBJECT")
-CHECK("  Frames", STR$(w{"frames"}), "5")
+CHECK("EXTENSIBLE/PCM is read", TYPEOF(w), "OBJECT")
+CHECK("  frames", STR$(w{"frames"}), "5")
 s = w{"samples"}
 CHECKF("  Sample 1", s[1], 0.5)
 
 w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMTEXT$(3, 32, 1, 48000)) + MKCHUNK$("data", f32$))
-CHECK("EXTENSIBLE/float wird gelesen", TYPEOF(w), "OBJECT")
+CHECK("EXTENSIBLE/float is read", TYPEOF(w), "OBJECT")
 s = w{"samples"}
 CHECKF("  0.5", s[1], 0.5)
 
-PRINT "--- Chunks vor fmt, auch mit ungerader Laenge"
+PRINT "--- chunks before fmt, odd length included"
 
 DIM pre$ = MKCHUNK$("JUNK", CHR$(1) + CHR$(2) + CHR$(3))
 w = READBACK(tmp$, pre$ + MKCHUNK$("fmt ", MKFMT$(1, 16, 1, 44100)) + MKCHUNK$("data", body16$))
-CHECK("JUNK vor fmt stoert nicht", TYPEOF(w), "OBJECT")
-CHECK("  Frames", STR$(w{"frames"}), "5")
+CHECK("JUNK before fmt does not disturb it", TYPEOF(w), "OBJECT")
+CHECK("  frames", STR$(w{"frames"}), "5")
 
-PRINT "--- Stereo liegt interleaved"
+PRINT "--- stereo is interleaved"
 
 DIM st$ = LE16$(16384) + LE16$(-16384) + LE16$(32767) + LE16$(-32768)
 w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(1, 16, 2, 48000)) + MKCHUNK$("data", st$))
-CHECK("  Kanaele", STR$(w{"channels"}), "2")
-CHECK("  Frames sind halb so viele wie Samples", STR$(w{"frames"}), "2")
+CHECK("  channels", STR$(w{"channels"}), "2")
+CHECK("  frames are half as many as samples", STR$(w{"frames"}), "2")
 s = w{"samples"}
-CHECKF("  Frame 0 links", s[0], 0.5)
-CHECKF("  Frame 0 rechts", s[1], -0.5)
-CHECKF("  Frame 1 rechts", s[3], -1.0)
+CHECKF("  frame 0 left", s[0], 0.5)
+CHECKF("  frame 0 right", s[1], -0.5)
+CHECKF("  frame 1 right", s[3], -1.0)
 
-PRINT "--- WAV.INFO liest nur den Kopf"
+PRINT "--- WAV.INFO reads only the header"
 
 BINWRITER tmp$, MKWAV$(pre$ + MKCHUNK$("fmt ", MKFMT$(1, 24, 2, 96000)) + MKCHUNK$("data", LE24$(0) + LE24$(0) + LE24$(0) + LE24$(0)))
 DIM inf = WAV.INFO(tmp$)
-CHECK("INFO liefert eine Map", TYPEOF(inf), "OBJECT")
-CHECK("  Rate", STR$(inf{"rate"}), "96000")
-CHECK("  Kanaele", STR$(inf{"channels"}), "2")
+CHECK("INFO answers a map", TYPEOF(inf), "OBJECT")
+CHECK("  rate", STR$(inf{"rate"}), "96000")
+CHECK("  channels", STR$(inf{"channels"}), "2")
 CHECK("  Bits", STR$(inf{"bits"}), "24")
-CHECK("  Frames", STR$(inf{"frames"}), "2")
+CHECK("  frames", STR$(inf{"frames"}), "2")
 
-PRINT "--- unbekannte Formate geben NONE"
+PRINT "--- unknown formats answer NONE"
 
 w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(2, 4, 1, 8000)) + MKCHUNK$("data", body8$))
-CHECK("ADPCM wird abgelehnt", TYPEOF(w), "NONE")
-CHECK("fehlende Datei gibt NONE", TYPEOF(WAV.READ("tests/does_not_exist.wav")), "NONE")
+CHECK("ADPCM is refused", TYPEOF(w), "NONE")
+CHECK("a missing file answers NONE", TYPEOF(WAV.READ("tests/does_not_exist.wav")), "NONE")
 
-PRINT "--- WAV.WRITE und WAV.READ sind zueinander invers"
+PRINT "--- WAV.WRITE and WAV.READ invert each other"
 
 DIM src = [0.0, 0.25, -0.25, 0.75, -0.75]
 WAV.WRITE tmp$, src, 48000, 1
 w = WAV.READ(tmp$)
-CHECK("Rundlauf Rate", STR$(w{"rate"}), "48000")
-CHECK("Rundlauf Frames", STR$(w{"frames"}), "5")
+CHECK("round trip rate", STR$(w{"rate"}), "48000")
+CHECK("round trip frames", STR$(w{"frames"}), "5")
 s = w{"samples"}
 FOR i = 0 TO 4
-    CHECKF("  Rundlauf Sample " + STR$(i), s[i], src[i])
+    CHECKF("  round trip sample " + STR$(i), s[i], src[i])
 NEXT i
 
-PRINT "--- Aufnahme"
+PRINT "--- capture"
 
 DIM devs = MON.DEVICES()
 IF TYPEOF(devs) = "NONE" THEN
-    PRINT "  uebersprungen: Build ohne MINIAUDIO"
+    PRINT "  skipped: a build without MINIAUDIO"
 ELSE
     DIM caps = devs{"capture"}
     IF LEN(caps) = 0 THEN
-        PRINT "  uebersprungen: kein Aufnahmegeraet"
+        PRINT "  skipped: no capture device"
     ELSE
-        PRINT "  Geraet: "; caps[0]
+        PRINT "  device: "; caps[0]
         DIM rec = WAV.RECORD(0.25, { "channels": 1, "rate": 48000 })
-        CHECK("WAV.RECORD liefert eine Map", TYPEOF(rec), "OBJECT")
+        CHECK("WAV.RECORD answers a map", TYPEOF(rec), "OBJECT")
         IF TYPEOF(rec) = "OBJECT" THEN
-            CHECK("  Rate", STR$(rec{"rate"}), "48000")
-            CHECK("  Kanaele", STR$(rec{"channels"}), "1")
-            CHECK("  Frames sind 0.25 s", STR$(rec{"frames"} > 10000), "TRUE")
+            CHECK("  rate", STR$(rec{"rate"}), "48000")
+            CHECK("  channels", STR$(rec{"channels"}), "1")
+            CHECK("  frames add up to 0.25 s", STR$(rec{"frames"} > 10000), "TRUE")
             ' the same map shape as WAV.READ, so it writes back out unchanged
             WAV.WRITE tmp$, rec{"samples"}, rec{"rate"}, rec{"channels"}
             DIM back = WAV.READ(tmp$)
-            CHECK("  geschrieben und gelesen", STR$(back{"frames"} = rec{"frames"}), "TRUE")
+            CHECK("  written and read back", STR$(back{"frames"} = rec{"frames"}), "TRUE")
         ENDIF
         DIM ok = WAV.RECSTART({ "seconds": 2, "rate": 48000 })
-        CHECK("WAV.RECSTART startet", STR$(ok), "TRUE")
+        CHECK("WAV.RECSTART starts", STR$(ok), "TRUE")
         SLEEP 300
         DIM secs = WAV.RECLEN()
-        CHECK("  RECLEN laeuft mit", STR$(secs > 0.05), "TRUE")
+        CHECK("  RECLEN keeps up", STR$(secs > 0.05), "TRUE")
         DIM rec2 = WAV.RECSTOP()
-        CHECK("  RECSTOP liefert eine Map", TYPEOF(rec2), "OBJECT")
-        CHECK("  und weniger als der Puffer", STR$(rec2{"frames"} < 96000), "TRUE")
+        CHECK("  RECSTOP answers a map", TYPEOF(rec2), "OBJECT")
+        CHECK("  and less than the buffer", STR$(rec2{"frames"} < 96000), "TRUE")
 
         ' duplex: play and capture on one device so both stay in step. Whether
         ' the default devices combine is a property of the machine, so a refusal
@@ -246,13 +246,14 @@ ELSE
         NEXT i
         DIM dup = WAV.RECORD(0.2, { "channels": 1, "rate": 48000, "play": tone })
         IF TYPEOF(dup) = "OBJECT" THEN
-            CHECK("Duplex liefert Frames", STR$(dup{"frames"} > 5000), "TRUE")
-            CHECK("  Kanaele", STR$(dup{"channels"}), "1")
+            CHECK("duplex answers frames", STR$(dup{"frames"} > 5000), "TRUE")
+            CHECK("  channels", STR$(dup{"channels"}), "1")
         ELSE
-            PRINT "  Duplex uebersprungen: die Standardgeraete lassen sich nicht koppeln"
+            PRINT "  duplex skipped: the default devices do not combine"
         ENDIF
     ENDIF
 ENDIF
 
 PRINT ""
-PRINT "wav_format_test: bestanden "; pass; ", gefallen "; fail
+PRINT "wav_format_test: " + STR$(pass) + " passed, " + STR$(fail) + " failed"
+IF fail = 0 THEN PRINT "ALL WAV FORMAT TESTS PASSED!"

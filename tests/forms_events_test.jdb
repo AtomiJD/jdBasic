@@ -22,7 +22,7 @@ SUB CHECK(what$, got$, want$)
         pass = pass + 1
     ELSE
         fail = fail + 1
-        PRINT "FAIL "; what$; "  ist ["; got$; "] soll ["; want$; "]"
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
     ENDIF
 ENDSUB
 
@@ -75,7 +75,7 @@ ENDSUB
 SUB TT_TICK(e)
     phase = phase + 1
     IF phase = 1 THEN
-        FORM.SET(box, "TEXT", "hallo")
+        FORM.SET(box, "TEXT", "hello")
         FORM.SET(box, "FOCUS", TRUE)
     ELSEIF phase = 2 THEN
         DIM hb = FORM.GET(box, "HWND")
@@ -90,8 +90,8 @@ SUB TT_TICK(e)
         ' again is queued before it opens.
         DIM hp = FORM.GET(frm, "HWND")
         DIM r4 = PostMessageW(hp, WM_KEYDOWN, 27, 0)
-        FORM.POPUP(frm, [{ "text": "&Kopieren", "name": "PMCOPY" }, "-", _
-                          { "text": "&Loeschen", "name": "PMDEL" }])
+        FORM.POPUP(frm, [{ "text": "&Copy", "name": "PMCOPY" }, "-", _
+                          { "text": "&Delete", "name": "PMDEL" }])
         NOTE("popup_returned", 1)
     ELSEIF phase = 5 THEN
         FORM.CLOSE(frm)
@@ -105,21 +105,22 @@ ENDSUB
 FORM.RUN(frm)
 
 PRINT ""
-PRINT "--- was angekommen ist ---"
-CHECK("GOTFOCUS feuert", GOT("gotfocus"), "1")
-CHECK("KEYDOWN feuert mit Tastencode", GOT("keydown"), "65")
+PRINT "--- what arrived ---"
+CHECK("GOTFOCUS fires", GOT("gotfocus"), "1")
+CHECK("KEYDOWN fires with the key code", GOT("keydown"), "65")
 ' TranslateMessage turns the KEYDOWN into a WM_CHAR carrying the lower-case
 ' letter, which arrives after the one posted by hand. The last one wins, and
 ' that is exactly what somebody typing would see.
-CHECK("KEYPRESS feuert mit dem Zeichen", GOT("keypress"), "97")
-CHECK("MOUSEDOWN meldet die rechte Taste", GOT("mousebutton"), "2")
-CHECK("und eine Koordinate", STR$(VAL(GOT("mousex")) > 0), "TRUE")
-CHECK("FORM.POPUP oeffnet und kehrt zurueck", GOT("popup_returned"), "1")
-CHECK("UNLOAD lief zweimal", GOT("unloads"), "2")
+CHECK("KEYPRESS fires with the character", GOT("keypress"), "97")
+CHECK("MOUSEDOWN reports the right button", GOT("mousebutton"), "2")
+CHECK("and a coordinate", STR$(VAL(GOT("mousex")) > 0), "TRUE")
+CHECK("FORM.POPUP opens and comes back", GOT("popup_returned"), "1")
+CHECK("UNLOAD ran twice", GOT("unloads"), "2")
 ' The A and the a of the two keystrokes really are in the field. That they
 ' show up here proves on the side that the keyboard reaches the control.
-CHECK("und konnte dabei die eigenen Felder lesen", GOT("text_at_unload"), "Aahallo")
-CHECK("die abgelehnte Form lebte weiter", GOT("alive_after_refusal"), "Aahallo")
+CHECK("and could read its own controls while doing it", GOT("text_at_unload"), "Aahello")
+CHECK("the refused form lived on", GOT("alive_after_refusal"), "Aahello")
 
 PRINT ""
-PRINT "forms_events_test: bestanden "; pass; ", gefallen "; fail
+PRINT "forms_events_test: " + STR$(pass) + " passed, " + STR$(fail) + " failed"
+IF fail = 0 THEN PRINT "ALL FORMS EVENTS TESTS PASSED!"

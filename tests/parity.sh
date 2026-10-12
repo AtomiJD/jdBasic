@@ -87,8 +87,10 @@ classify() {
     # The pass marker wins: a suite may print "Error #" while exercising TRY/CATCH
     # and still be green.
     # Suites name themselves in the marker ("ALL BNOT TESTS PASSED"), so the
-    # pattern allows that middle word.
-    if grep -qE 'ALL [A-Z0-9 _-]*TESTS PASSED|0 failed' "$log" 2>/dev/null; then echo "PASS"; return; fi
+    # pattern allows that middle word. The zero in the count needs a left
+    # anchor, or "10 failed" carries "0 failed" inside it and every failure
+    # count that ends in a zero reads as a pass.
+    if grep -qE 'ALL [A-Z0-9 _-]*TESTS PASSED|(^|[^0-9])0 failed' "$log" 2>/dev/null; then echo "PASS"; return; fi
     # A test that counts its own failures and still exits 0 is only visible in
     # what it printed, and the bank prints it several ways: FAIL with a colon
     # and without, the count before the word and after it, and in German.
