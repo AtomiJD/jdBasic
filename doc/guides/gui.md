@@ -260,10 +260,11 @@ and EXPLICIT, so every variable needs a `DIM`, as in the examples above. Both
 the compiler and `jdbrt.dll` must be built with the `FORMS` flag, and the
 compiler also with `NATIVEC`.
 
-No download bundle carries both: the VB6 pack reports
-`COM, HTTP, NET, GFX, ImGui, Forms, MCP, SQLite` and mcp-native reports
-`HTTP, NET, GFX, ImGui, MCP, NativeC`. To compile a forms program, build from
-source:
+The **VB6 pack** on the releases page carries both flags, so a forms program
+compiles straight out of the unzipped bundle: `jdbrt.lib` and `jdb_runtime.obj`
+ship next to the EXE for the link step. That link runs the MSVC linker, so
+Visual Studio 2022 17.10 or newer with the C++ workload has to be installed;
+running a script interpreted needs none of it. From source:
 
 ```
 build.bat HTTP NET GFX IMGUI FORMS NATIVEC

@@ -36,7 +36,7 @@ writes `<bundle>.zip.sha256`.
 | `build_mcp.bat`         | `MCPSERVER HTTP RELEASE`                  | `jdbasic-core-windows-x64`          | core MCP EXE + openssl + doc |
 | `build_mcp_native.bat`  | `MCPSERVER HTTP GFX IMGUI NATIVEC RELEASE` | `jdbasic-mcp-native-windows-x64`  | EXE + jdbrt.dll/.lib + LLVM-C + SDL3* + doc (native `-c` toolchain) |
 | `build_vibe.bat`        | `GFX IMGUI HTTP MCPSERVER RELEASE`       | `jdbasic-vibe-game-pack-windows-x64`| EXE + SDL3* + game demos |
-| `build_vb6.bat`         | `MCPSERVER HTTP GFX IMGUI COM FORMS SQLITE RELEASE` | `jdbasic-vb6-windows-x64` | EXE + SDL3* + forms demos (no NATIVEC, no jdbrt.dll) |
+| `build_vb6.bat`         | `MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE NATIVEC RELEASE` | `jdbasic-vb6-windows-x64` | EXE + jdbrt.dll/.lib + jdb_runtime.obj + LLVM-C + SDL3* + forms demos (native `-c`, FORMS included) |
 
 Run them from Bash as `./build_x.bat`, never `cmd //c` - the scripts are LF-only and
 cmd mis-parses them into garbage tokens:

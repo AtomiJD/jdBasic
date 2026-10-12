@@ -2,10 +2,11 @@
 setlocal enabledelayedexpansion
 
 REM build_vb6.bat - VB6-style desktop release bundle for Windows.
-REM Wraps build.bat MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE RELEASE, then
-REM assembles a redistributable zip in release\. Ships native Win32 forms
-REM (FORM.*), COM automation, embedded SQLite and the MCP server. No NATIVEC -
-REM scripts run interpreted, so there is no jdbrt.dll in this pack.
+REM Wraps build.bat MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE NATIVEC
+REM RELEASE and build_rt.bat with the same feature set, then assembles a
+REM redistributable zip in release\. Ships native Win32 forms (FORM.*), COM
+REM automation, embedded SQLite, the MCP server and the LLVM-18 native
+REM backend, so a forms program compiles to a standalone .exe.
 
 REM Make the script robust against being called from any working directory.
 pushd "%~dp0"
@@ -14,14 +15,26 @@ set BUNDLE=jdbasic-vb6-windows-x64
 set OUT=release\%BUNDLE%
 set ZIP=release\%BUNDLE%.zip
 
-echo === build_vb6: compile EXE (MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE RELEASE) ===
-call .\build.bat MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE RELEASE
+echo === build_vb6: compile EXE (MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE NATIVEC RELEASE) ===
+call .\build.bat MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE NATIVEC RELEASE
 if errorlevel 1 (
     echo EXE BUILD FAILED - bundle not assembled.
     exit /b 1
 )
 if not exist build\jdBasic.exe (
     echo build\jdBasic.exe missing - bundle not assembled.
+    exit /b 1
+)
+
+echo.
+echo === build_vb6: build runtime DLL (COM HTTP NET GFX IMGUI FORMS SQLITE) ===
+call .\build_rt.bat COM HTTP NET GFX IMGUI FORMS SQLITE
+if errorlevel 1 (
+    echo RT BUILD FAILED - bundle not assembled.
+    exit /b 1
+)
+if not exist build\jdbrt.dll (
+    echo build\jdbrt.dll missing after build_rt - bundle not assembled.
     exit /b 1
 )
 
@@ -33,6 +46,13 @@ mkdir "%OUT%\doc"
 mkdir "%OUT%\demos"
 
 copy /Y build\jdBasic.exe          "%OUT%\" >nul
+
+REM Native backend: -c links the LLVM-emitted object against jdb_runtime.obj
+REM and jdbrt.lib, and the .exe it writes loads jdbrt.dll at runtime.
+copy /Y build\jdbrt.dll            "%OUT%\" >nul
+copy /Y build\jdbrt.lib            "%OUT%\" >nul
+copy /Y build\jdb_runtime.obj      "%OUT%\" >nul
+copy /Y build\LLVM-C.dll           "%OUT%\" >nul
 copy /Y build\SDL3.dll             "%OUT%\" >nul 2>&1
 copy /Y build\SDL3_ttf.dll         "%OUT%\" >nul 2>&1
 copy /Y build\SDL3_image.dll       "%OUT%\" >nul 2>&1
@@ -78,8 +98,8 @@ set BDATE=%date:~6,4%/%date:~3,2%/%date:~0,2%
 > "%OUT%\BUILD_INFO.txt" echo jdBasic VB6 Pack - Build !BNUM! - !BDATE!
 >>"%OUT%\BUILD_INFO.txt" echo.
 >>"%OUT%\BUILD_INFO.txt" echo Binary: jdBasic.exe ^(Build !BNUM!, !BDATE!^)
->>"%OUT%\BUILD_INFO.txt" echo Features: Forms, COM, SQLite, HTTP, NET, GFX, ImGui, MCP
->>"%OUT%\BUILD_INFO.txt" echo Build flags: MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE
+>>"%OUT%\BUILD_INFO.txt" echo Features: Forms, COM, SQLite, HTTP, NET, GFX, ImGui, MCP, NativeC
+>>"%OUT%\BUILD_INFO.txt" echo Build flags: MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE NATIVEC
 
 REM End-user README inside the bundle.
 > "%OUT%\README.txt" echo jdBasic VB6 Pack ^(Windows x64^)
@@ -91,6 +111,8 @@ REM End-user README inside the bundle.
 >>"%OUT%\README.txt" echo     ^(CREATEOBJECT^).
 >>"%OUT%\README.txt" echo   - SQLite embedded ^(SQL.*^) - no server, one file.
 >>"%OUT%\README.txt" echo   - Plus the full jdBasic core: GFX, ImGui, HTTP.
+>>"%OUT%\README.txt" echo   - Native compiler: jdBasic.exe -c app.jdb writes a
+>>"%OUT%\README.txt" echo     standalone .exe, forms and all.
 >>"%OUT%\README.txt" echo.
 >>"%OUT%\README.txt" echo Try the demos:
 >>"%OUT%\README.txt" echo     jdBasic.exe demos\gallery.jdb     - every control at a glance
@@ -103,6 +125,24 @@ REM End-user README inside the bundle.
 >>"%OUT%\README.txt" echo.
 >>"%OUT%\README.txt" echo The .jdform layouts are made with the jdBasic VS Code
 >>"%OUT%\README.txt" echo extension's visual form designer.
+>>"%OUT%\README.txt" echo.
+>>"%OUT%\README.txt" echo Compile a program to a standalone .exe:
+>>"%OUT%\README.txt" echo     jdBasic.exe -c demos\tasklist.jdb
+>>"%OUT%\README.txt" echo.
+>>"%OUT%\README.txt" echo -c copies jdbrt.dll and jdbasic_default.ttf next to the
+>>"%OUT%\README.txt" echo .exe it writes. The native compiler is always STRICT and
+>>"%OUT%\README.txt" echo EXPLICIT, so every variable needs a DIM. All four demos
+>>"%OUT%\README.txt" echo above compile as they are.
+>>"%OUT%\README.txt" echo.
+>>"%OUT%\README.txt" echo NATIVE COMPILE REQUIREMENTS:
+>>"%OUT%\README.txt" echo     -c invokes the MSVC linker to fuse the LLVM-emitted
+>>"%OUT%\README.txt" echo     object with jdb_runtime.obj + jdbrt.lib. You need
+>>"%OUT%\README.txt" echo     Visual Studio 2022 17.10 or newer ^(Community is fine^)
+>>"%OUT%\README.txt" echo     with the "Desktop development with C++" workload and
+>>"%OUT%\README.txt" echo     a Windows 10 SDK. Older MSVC fails at link time with
+>>"%OUT%\README.txt" echo     LNK2019 on __std_find_trivial_1, because
+>>"%OUT%\README.txt" echo     jdb_runtime.obj uses STL helpers added in MSVC v14.40.
+>>"%OUT%\README.txt" echo     Running scripts interpreted needs none of this.
 >>"%OUT%\README.txt" echo.
 >>"%OUT%\README.txt" echo Run as MCP stdio server ^(for AI coding agents^):
 >>"%OUT%\README.txt" echo     jdBasic.exe --mcp

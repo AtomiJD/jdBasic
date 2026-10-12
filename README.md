@@ -87,7 +87,7 @@ and on an ESP32-S3 with a touch display. See [On a board](embedded/).
 ## Getting started
 
 - **In the browser:** [jdbasic.org/live](https://jdbasic.org/live/index.html), no installation needed.
-- **On Windows:** download a bundle from [Releases](https://github.com/AtomiJD/jdBasic/releases/latest), unzip it and run `jdBasic.exe`. The **VB6 pack** covers most features and includes the demos; **mcp-native** is the bundle for working with an AI agent.
+- **On Windows:** download a bundle from [Releases](https://github.com/AtomiJD/jdBasic/releases/latest), unzip it and run `jdBasic.exe`. The **VB6 pack** covers most features, compiles a script to a standalone `.exe` and includes the demos; **mcp-native** is the bundle for working with an AI agent.
 - **On Linux and macOS:** build from source as described in [doc/BUILD.md](doc/BUILD.md).
 
 ```basic
