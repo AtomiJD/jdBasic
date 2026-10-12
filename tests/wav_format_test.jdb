@@ -208,7 +208,13 @@ NEXT i
 
 PRINT "--- capture"
 
-DIM devs = MON.DEVICES()
+' MON.DEVICES does not exist at all in a build without MINIAUDIO, so the call
+' itself has to be guarded and not only the answer it gives.
+DIM devs = NONE
+TRY
+    devs = MON.DEVICES()
+CATCH
+ENDTRY
 IF TYPEOF(devs) = "NONE" THEN
     PRINT "  skipped: a build without MINIAUDIO"
 ELSE
