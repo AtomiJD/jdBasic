@@ -114,9 +114,9 @@ struct RagChunk {
 };
 
 struct LlmModel; // forward
-// Dense embedding via llama.cpp - implementiert weiter unten nach LlmModel-Definition
+// Dense embedding through llama.cpp, defined below next to LlmModel
 static std::vector<float> compute_dense_embedding(LlmModel* m, const std::string& text);
-// Lookup eines LLM via id - implementiert nach g_llms-Deklaration
+// Looks an LLM up by its id, defined after the g_llms declaration
 static LlmModel* rag_lookup_llm(int id);
 
 struct RagStore {
@@ -126,13 +126,13 @@ struct RagStore {
     std::vector<RagChunk> chunks;
     int chunk_size = 500;    // chars per chunk
     int chunk_overlap = 50;  // overlap between chunks
-    int embed_dim = 0;       // dimension der dense vectors (0 wenn TF-IDF)
+    int embed_dim = 0;       // dimension of the dense vectors (0 = TF-IDF)
 
-    // Optionaler HNSW-Index für schnelle Suche bei großen Indizes.
-    // Wird via AI.RAG_BUILD_INDEX aufgebaut. Der Index wird bei add_text NICHT
-    // automatisch aktualisiert - neue Chunks erfordern einen erneuten Build.
+    // Optional HNSW index for a fast search over a large store. It is
+    // built by AI.RAG_BUILD_INDEX, and add_text does NOT keep it up to
+    // date: new chunks need another build.
     std::unique_ptr<hnsw::HnswIndex> hnsw_index;
-    bool hnsw_dirty = false;  // true wenn add_text seit letztem Build aufgerufen wurde
+    bool hnsw_dirty = false;  // true once add_text ran after the last build
 
     bool dense_mode() const { return embed_llm_id != 0; }
     bool has_hnsw() const { return hnsw_index && !hnsw_dirty; }
@@ -157,7 +157,7 @@ struct RagStore {
         }
 
         if (dense_mode()) {
-            // Echte Embeddings via llama.cpp - pro Chunk
+            // Real embeddings through llama.cpp, one per chunk
             auto* m = rag_lookup_llm(embed_llm_id);
             if (!m) throw std::runtime_error("RAG: embedding model not loaded");
             for (auto idx : new_chunk_indices) {
@@ -165,7 +165,7 @@ struct RagStore {
                 if (embed_dim == 0) embed_dim = (int)chunks[idx].dense.size();
             }
         } else {
-            // TF-IDF: nur die neuen Chunks der Engine hinzufügen, dann ALLE neu einbetten
+            // TF-IDF: the engine learns the new chunks, then all of them embed again
             for (auto idx : new_chunk_indices) {
                 auto words = EmbedEngine::split_words(chunks[idx].text);
                 engine.add_document(words);
@@ -173,17 +173,17 @@ struct RagStore {
             for (auto& c : chunks) c.sparse = engine.embed(c.text);
         }
 
-        // HNSW-Index ist veraltet wenn vorhanden - User muss BUILD_INDEX neu aufrufen
+        // An index that is already there is stale now: BUILD_INDEX has to run again
         if (hnsw_index) hnsw_dirty = true;
     }
 
-    // Baut einen HNSW-Index über die aktuellen dichten Chunks. Funktioniert
-    // nur im dense_mode (TF-IDF ist sparse, HNSW braucht dichte Vektoren).
+    // Builds an HNSW index over the dense chunks. Dense mode only, since
+    // TF-IDF vectors are sparse and HNSW needs dense ones.
     void build_hnsw(int M = 16, int ef_construction = 200) {
         if (!dense_mode())
             throw std::runtime_error("HNSW needs dense embeddings: call RAG_CREATE with embed_llm_id");
         if (chunks.empty())
-            throw std::runtime_error("HNSW: keine Chunks vorhanden");
+            throw std::runtime_error("HNSW: no chunks to index");
         if (embed_dim == 0) embed_dim = (int)chunks[0].dense.size();
         hnsw_index = std::make_unique<hnsw::HnswIndex>(embed_dim, M, ef_construction);
         for (size_t i = 0; i < chunks.size(); i++) {
@@ -200,17 +200,17 @@ struct RagStore {
             if (!m) throw std::runtime_error("RAG: embedding model not loaded");
             auto q = compute_dense_embedding(m, query);
 
-            // Wenn ein HNSW-Index existiert und aktuell ist: nutzen
+            // Use the HNSW index when it is there and up to date
             if (has_hnsw()) {
-                // ef = max(top_k * 4, 50) für gute Recall/Speed Balance
+                // ef = max(top_k * 4, 50) balances recall against speed
                 int ef = std::max(top_k * 4, 50);
                 auto hits = hnsw_index->search(q.data(), top_k, ef);
                 for (auto& [sim, id] : hits) scores.push_back({(double)sim, (int)id});
-                return scores; // bereits sortiert
+                return scores; // already sorted
             }
 
-            // Fallback: lineare Suche
-            // (Vektoren sollten bereits L2-normalisiert sein, also reicht das Skalarprodukt)
+            // Fallback: a linear search
+            // (the vectors should be L2-normalised already, so the dot product does)
             double qn = 0; for (float v : q) qn += (double)v * v; qn = std::sqrt(qn);
             for (int i = 0; i < (int)chunks.size(); i++) {
                 auto& c = chunks[i].dense;
@@ -236,25 +236,25 @@ struct RagStore {
         return scores;
     }
 
-    // ── Persistierung ────────────────────────────────────────────
-    // Format: ASCII-Magic + Version + Felder + Engine-Daten + Chunks
+    // ── Persistence ──────────────────────────────────────────────
+    // Format: ASCII magic + version + fields + engine data + chunks
     //
     //   "JRAG" u32_version=1
     //   i32 chunk_size, i32 chunk_overlap
     //   u8 dense_mode, i32 embed_dim
-    //   --- TF-IDF (nur wenn dense_mode == 0) ---
+    //   --- TF-IDF (only when dense_mode == 0) ---
     //   i32 doc_freq_count
-    //   für jeden Eintrag: i32 word_len, bytes word, i32 doc_count
+    //   per entry: i32 word_len, bytes word, i32 doc_count
     //   i32 total_docs
     //   --- Chunks ---
     //   i32 chunk_count
-    //   für jeden Chunk:
+    //   per chunk:
     //     i32 text_len,   bytes
     //     i32 source_len, bytes
-    //     wenn dense_mode == 0:
+    //     when dense_mode == 0:
     //       i32 sparse_count
-    //       für jeden: i32 word_len, bytes word, f64 weight
-    //     sonst:
+    //       per entry: i32 word_len, bytes word, f64 weight
+    //     otherwise:
     //       i32 dim, dim*f32 floats
 
     static void w_u8 (std::ostream& o, uint8_t v)  { o.write((const char*)&v, 1); }
@@ -292,7 +292,7 @@ struct RagStore {
         w_i32(o, embed_dim);
 
         if (!dense) {
-            // TF-IDF Engine-Daten
+            // TF-IDF engine data
             w_i32(o, (int32_t)engine.doc_freq.size());
             for (auto& [word, cnt] : engine.doc_freq) {
                 w_str(o, word);
@@ -320,7 +320,7 @@ struct RagStore {
             }
         }
 
-        // Optionaler HNSW-Index (Version 2)
+        // Optional HNSW index (version 2)
         bool save_hnsw = (hnsw_index != nullptr) && !hnsw_dirty;
         w_u8(o, save_hnsw ? 1 : 0);
         if (save_hnsw) hnsw_index->save(o);
@@ -380,7 +380,7 @@ struct RagStore {
             chunks.push_back(std::move(c));
         }
 
-        // Optionaler HNSW (nur in Version >= 2)
+        // Optional HNSW (version 2 and up)
         if (ver >= 2) {
             uint8_t has_hn = r_u8(i);
             if (has_hn) {
@@ -396,10 +396,10 @@ static int g_next_rag_id = 1;
 static std::unordered_map<int, std::unique_ptr<RagStore>> g_rags;
 
 // ── Text Classifier Store ──────────────────────────────────────
-// k-NN-Klassifikation auf dichten Embeddings.
-// Trainingsdaten: Liste von (text, label, embedding).
-// Prediction: für einen neuen Text das Embedding berechnen, Top-k nächste
-// Nachbarn im Trainingsdatensatz finden, Majority Vote über die Labels.
+// k-NN classification over dense embeddings.
+// Training data: a list of (text, label, embedding).
+// Prediction: embed the new text, find the top-k nearest neighbours in
+// the training set, take a majority vote over their labels.
 
 struct ClassifierSample {
     std::string text;
@@ -408,10 +408,10 @@ struct ClassifierSample {
 };
 
 struct ClassifierStore {
-    int embed_llm_id = 0;           // ID des Embedding-Modells
+    int embed_llm_id = 0;           // id of the embedding model
     std::vector<ClassifierSample> samples;
     int embed_dim = 0;
-    // Optional: HNSW-Index für große Datensätze
+    // Optional: an HNSW index for a large training set
     std::unique_ptr<hnsw::HnswIndex> hnsw_index;
     bool hnsw_dirty = false;
 
@@ -441,8 +441,8 @@ struct ClassifierStore {
         hnsw_dirty = false;
     }
 
-    // Ermittelt die k nächsten Nachbarn für ein Query-Embedding.
-    // Rückgabe: Vektor von (similarity, sample_index) absteigend nach sim sortiert.
+    // The k nearest neighbours of a query embedding.
+    // Answers (similarity, sample_index) pairs, highest similarity first.
     std::vector<std::pair<double, int>> knn(const std::vector<float>& q, int k) const {
         std::vector<std::pair<double, int>> scores;
         if (samples.empty()) return scores;
@@ -454,7 +454,7 @@ struct ClassifierStore {
             return scores;
         }
 
-        // Lineare Suche mit Cosine-Similarity
+        // Linear search by cosine similarity
         for (size_t i = 0; i < samples.size(); i++) {
             auto& c = samples[i].embedding;
             if (c.size() != q.size()) { scores.push_back({0, (int)i}); continue; }
@@ -472,7 +472,7 @@ struct ClassifierStore {
         return scores;
     }
 
-    // Predict: gibt Gewinner-Label, confidence (0..1) und die Top-k neighbors zurück.
+    // Predict: the winning label, a confidence in 0..1, the top-k neighbours.
     struct Prediction {
         std::string label;
         double confidence;
@@ -488,17 +488,17 @@ struct ClassifierStore {
         auto q = compute_dense_embedding(m, text);
         p.neighbors = knn(q, k);
 
-        // Gewichtete Votes: jeder Nachbar trägt mit seiner Similarity bei.
-        // So werden nähere Nachbarn stärker berücksichtigt.
+        // Weighted votes: every neighbour contributes its similarity, so a
+        // nearer neighbour weighs more.
         std::map<std::string, double> weight;
         double total_weight = 0;
         for (auto& [sim, idx] : p.neighbors) {
-            double w = std::max(0.0, sim); // negative Werte clampen
+            double w = std::max(0.0, sim); // clamp a negative value
             weight[samples[idx].label] += w;
             total_weight += w;
         }
 
-        // Gewinner
+        // The winner
         std::string winner;
         double best_w = -1;
         for (auto& [lbl, w] : weight) {
@@ -507,7 +507,7 @@ struct ClassifierStore {
         p.label = winner;
         p.confidence = (total_weight > 0) ? (best_w / total_weight) : 0;
 
-        // Sortierte Vote-Liste (für die Rückgabe als Array)
+        // The votes sorted, for the array that goes back
         std::vector<std::pair<std::string, int>> sorted_votes;
         std::map<std::string, int> counts;
         for (auto& [sim, idx] : p.neighbors) counts[samples[idx].label]++;
@@ -518,14 +518,14 @@ struct ClassifierStore {
         return p;
     }
 
-    // Statistik: Anzahl Samples pro Label
+    // Statistics: how many samples each label has
     std::map<std::string, int> label_counts() const {
         std::map<std::string, int> counts;
         for (auto& s : samples) counts[s.label]++;
         return counts;
     }
 
-    // ── Persistierung: "JCLF" Magic + Version 1 ───────────────
+    // ── Persistence: "JCLF" magic + version 1 ─────────────────
     void save(const std::string& path) const {
         std::ofstream o(path, std::ios::binary);
         if (!o) throw std::runtime_error("CLASSIFIER_SAVE: cannot write " + path);
@@ -586,8 +586,8 @@ struct LlmModel {
     llama_sampler* sampler = nullptr;
     const llama_vocab* vocab = nullptr;
 
-    // True wenn das Modell ausschließlich für Embeddings genutzt wird
-    // (cparams.embeddings = true beim Init).
+    // True when the model is used for embeddings only
+    // (cparams.embeddings = true at init).
     bool is_embedding_model = false;
     int embed_dim = 0;
 
@@ -600,8 +600,8 @@ struct LlmModel {
     uint32_t seed = 0;
     std::string system_prompt;
 
-    // Optional GBNF Grammar (für strukturiertes Output / JSON Mode).
-    // Wenn nicht leer, wird ein grammar-Sampler vor die Chain gehängt.
+    // Optional GBNF grammar, for structured output and JSON mode. When it
+    // is not empty, a grammar sampler goes in front of the chain.
     std::string grammar_gbnf;
 
     // Chat history for multi-turn conversations
@@ -759,7 +759,7 @@ struct LlmModel {
 static int g_next_llm_id = 1;
 static std::unordered_map<int, std::unique_ptr<LlmModel>> g_llms;
 
-// Helper für Forward-Decl in RagStore (siehe oben)
+// Helper for the forward declaration in RagStore above
 static LlmModel* rag_lookup_llm(int id) {
     auto it = g_llms.find(id);
     return (it == g_llms.end()) ? nullptr : it->second.get();
@@ -828,8 +828,8 @@ static void rebuild_sampler(LlmModel* m) {
     auto sparams = llama_sampler_chain_default_params();
     m->sampler = llama_sampler_chain_init(sparams);
 
-    // Grammar-Sampler MUSS vor den anderen Samplern stehen, damit er
-    // ungültige Tokens maskiert bevor top-k/top-p sie filtern.
+    // The grammar sampler MUST come before the others, so that it masks
+    // the invalid tokens before top-k and top-p filter them.
     if (!m->grammar_gbnf.empty() && m->vocab) {
         auto* gs = llama_sampler_init_grammar(m->vocab, m->grammar_gbnf.c_str(), "root");
         if (gs) llama_sampler_chain_add(m->sampler, gs);
@@ -867,9 +867,9 @@ static std::string generate(LlmModel* m, const std::string& prompt,
             std::to_string(tokens.size()) + " tokens, max " + std::to_string(n_ctx) + ")");
     }
 
-    // KV-Cache vor jeder neuen Generierung leeren. Sonst sammelt sich
-    // bei wiederholten Aufrufen der komplette Verlauf und der Cache
-    // läuft über ("failed to find a memory slot").
+    // Clear the KV cache before every new generation. Otherwise repeated
+    // calls pile the whole history up in it and it runs over
+    // ("failed to find a memory slot").
     llama_memory_t mem = llama_get_memory(m->ctx);
     if (mem) llama_memory_clear(mem, true);
 
@@ -906,8 +906,8 @@ static std::string generate(LlmModel* m, const std::string& prompt,
 }
 
 // ── Standard JSON Grammar (GBNF) ────────────────────────────────
-// Vollständige RFC 8259 JSON-Grammar. Erzwingt valides JSON als Output.
-// Quelle: llama.cpp grammars/json.gbnf (public domain).
+// The full RFC 8259 JSON grammar; it forces valid JSON as output.
+// Source: llama.cpp grammars/json.gbnf (public domain).
 
 static const char* JSON_GBNF = R"GBNF(
 root   ::= object
@@ -932,12 +932,12 @@ ws ::= | " " | "\n" [ \t]{0,20}
 )GBNF";
 
 // ── RAG Prompt Builder ─────────────────────────────────────────
-// Baut Prompt aus:
-//   1. m->system_prompt (per AI.SET llm_id, "system", "..." setzbar)
-//   2. Automatisch formatierter Context mit Source-Markern
-//   3. User-Frage
-// Die *inhaltliche* Instruktion kommt vollständig aus dem system_prompt -
-// der C++-Code schreibt keine eigene Policy.
+// Builds the prompt from:
+//   1. m->system_prompt (settable with AI.SET llm_id, "system", "...")
+//   2. the context, formatted with source markers
+//   3. the user's question
+// What the model is told to do comes entirely from the system prompt;
+// the C++ code writes no policy of its own.
 
 static std::string build_rag_prompt(LlmModel* m,
                                     const std::vector<std::pair<double, int>>& results,
@@ -953,9 +953,9 @@ static std::string build_rag_prompt(LlmModel* m,
         context += chunks[idx].text + "\n\n";
     }
 
-    // System-Prompt: wenn der User via AI.SET einen eigenen gesetzt hat, diesen
-    // verwenden. Sonst ein minimaler neutraler Fallback - keine Meinung zur
-    // Quellenverwendung, keine Ablehnungs-Formulierung.
+    // System prompt: the one the user set through AI.SET when there is one,
+    // otherwise a minimal neutral fallback that says nothing about using
+    // the sources and nothing about refusing.
     std::string sys = m ? m->system_prompt : std::string();
     if (sys.empty()) sys = "You are a helpful assistant.";
 
@@ -967,10 +967,10 @@ static std::string build_rag_prompt(LlmModel* m,
 
 // ── Dense Embeddings via llama.cpp ──────────────────────────────
 //
-// Berechnet ein L2-normalisiertes Embedding für einen Text.
-// Funktioniert mit Modellen die im Embedding-Modus initialisiert wurden
-// (cparams.embeddings = true). Pooling: nutzt die llama.cpp-eigene Pooling-
-// Strategie wenn gesetzt; sonst Mean-Pool über alle Token-Embeddings.
+// Computes an L2-normalised embedding for a text.
+// Works with models that were initialised in embedding mode
+// (cparams.embeddings = true). Pooling: llama.cpp's own strategy when
+// one is set, otherwise a mean pool over all token embeddings.
 
 static std::vector<float> compute_dense_embedding(LlmModel* m, const std::string& text) {
     if (!m || !m->ctx) return {};
@@ -979,24 +979,24 @@ static std::vector<float> compute_dense_embedding(LlmModel* m, const std::string
     if ((int)tokens.size() > n_ctx) tokens.resize(n_ctx);
     if (tokens.empty()) return {};
 
-    // Cache leeren - Embeddings sind stateless, wir wollen kein Carry-Over
+    // Clear the cache: embeddings are stateless, nothing may carry over
     llama_memory_t mem = llama_get_memory(m->ctx);
     if (mem) llama_memory_clear(mem, true);
 
-    // Encoder-only-Modelle (BERT/nomic/bge) brauchen llama_encode.
-    // Decoder-Modelle (Phi-3, Llama etc.) brauchen llama_decode auch im Embedding-Modus.
+    // Encoder-only models (BERT, nomic, bge) need llama_encode. Decoder
+    // models (Phi-3, Llama) need llama_decode even in embedding mode.
     //
-    // llama.cpp's llama_model_has_encoder() ist nicht immer zuverlässig für
-    // BERT-ähnliche Modelle (z.B. nomic-embed). Daher probieren wir: wenn das
-    // Modell explizit als Embedding-Modell geladen wurde UND einen Decoder hat,
-    // nutze decode; sonst encode als Default.
+    // llama.cpp's llama_model_has_encoder() is not always reliable for
+    // BERT-like models such as nomic-embed, so the choice goes the other
+    // way round: a model loaded explicitly as an embedding model that has
+    // a real decoder decodes, everything else encodes.
     bool has_decoder = llama_model_has_decoder(m->model);
     bool use_encode;
     if (m->is_embedding_model) {
-        // Embedding-Modell: nur decode verwenden wenn es einen echten Decoder gibt
+        // An embedding model decodes only when it has a real decoder
         use_encode = !has_decoder;
     } else {
-        // Normales Generierungs-Modell - immer decode
+        // An ordinary generation model always decodes
         use_encode = false;
     }
 
@@ -1014,16 +1014,16 @@ static std::vector<float> compute_dense_embedding(LlmModel* m, const std::string
     int n_embd = llama_model_n_embd(m->model);
     if (m->embed_dim == 0) m->embed_dim = n_embd;
 
-    // Pooling-Strategie ermitteln
+    // Which pooling strategy is in force
     enum llama_pooling_type pt = llama_pooling_type(m->ctx);
 
     std::vector<float> out(n_embd, 0.0f);
     if (pt != LLAMA_POOLING_TYPE_NONE) {
-        // Modell macht Pooling automatisch - sequence-Embedding holen
+        // The model pools by itself: take the sequence embedding
         const float* emb = llama_get_embeddings_seq(m->ctx, 0);
         if (emb) std::copy(emb, emb + n_embd, out.begin());
     } else {
-        // Manuelles Mean-Pooling über alle Token-Embeddings
+        // Mean pooling by hand over all token embeddings
         int n = (int)tokens.size();
         int counted = 0;
         for (int i = 0; i < n; i++) {
@@ -1035,7 +1035,7 @@ static std::vector<float> compute_dense_embedding(LlmModel* m, const std::string
         if (counted > 0) for (auto& v : out) v /= (float)counted;
     }
 
-    // L2-Normalisierung
+    // L2 normalisation
     double norm = 0;
     for (float v : out) norm += (double)v * v;
     norm = std::sqrt(norm);
@@ -1086,8 +1086,8 @@ void register_llm_builtins(VM& vm) {
         m->vocab = llama_model_get_vocab(m->model);
 
         // Create context
-        // n_batch == n_ctx, damit lange RAG-Prompts (System + Context-Chunks +
-        // Question) in einem einzigen Decode passen, statt einen Assert auszulösen.
+        // n_batch == n_ctx, so a long RAG prompt (system + context chunks +
+        // question) fits one decode instead of tripping an assert.
         auto cparams = llama_context_default_params();
         cparams.n_ctx = n_ctx;
         cparams.n_batch = n_ctx;
@@ -1109,9 +1109,9 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.LOAD_EMBEDDINGS(path$, [n_ctx], [n_gpu_layers]) -> id ──
-    // Lädt ein dediziertes Embedding-Modell (z.B. nomic-embed-text,
-    // all-MiniLM-L6-v2). Diese ID kann an AI.RAG_CREATE als embed_llm_id
-    // übergeben werden für echte dichte Embeddings statt TF-IDF.
+    // Loads a dedicated embedding model such as nomic-embed-text or
+    // all-MiniLM-L6-v2. The id it answers goes to AI.RAG_CREATE as
+    // embed_llm_id, for real dense embeddings instead of TF-IDF.
 
     vm.register_native("AI.LOAD_EMBEDDINGS", 1, 3, [](const std::vector<Value>& args) -> Value {
         ensure_backend();
@@ -1134,10 +1134,10 @@ void register_llm_builtins(VM& vm) {
 
         auto cparams = llama_context_default_params();
         cparams.n_ctx        = n_ctx;
-        cparams.n_batch      = n_ctx;       // Embedding-Modelle: ganze Sequenz in einem Batch
+        cparams.n_batch      = n_ctx;       // embedding models: the whole sequence in one batch
         cparams.n_ubatch     = n_ctx;
-        cparams.embeddings   = true;        // ← Embedding-Modus aktivieren
-        cparams.pooling_type = LLAMA_POOLING_TYPE_MEAN;  // Mean-Pool über Sequenz
+        cparams.embeddings   = true;        // turn embedding mode on
+        cparams.pooling_type = LLAMA_POOLING_TYPE_MEAN;  // mean pool over the sequence
         cparams.no_perf      = true;
 
         m->ctx = llama_init_from_model(m->model, cparams);
@@ -1154,9 +1154,9 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.SET_GRAMMAR(llm_id, gbnf$) ──────────────────────────
-    // Setzt eine GBNF-Grammar als Constraint. Alle nachfolgenden CHAT/CHAT_RAW
-    // Aufrufe produzieren nur Ausgaben die der Grammar entsprechen.
-    // Leerer String entfernt die Grammar wieder.
+    // Sets a GBNF grammar as a constraint. Every CHAT and CHAT_RAW call
+    // after it answers only what the grammar allows. An empty string
+    // takes the grammar off again.
 
     vm.register_native("AI.SET_GRAMMAR", 2, 2, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
@@ -1178,7 +1178,7 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.SET_JSON_MODE(llm_id) ───────────────────────────────
-    // Convenience: erzwingt valides JSON als Output (keine Schema-Constraints).
+    // Convenience: forces valid JSON as output, with no schema constraint.
 
     vm.register_native("AI.SET_JSON_MODE", 1, 1, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
@@ -1189,16 +1189,16 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.CHAT_JSON(llm_id, prompt$) -> object ────────────────
-    // Aktiviert JSON-Mode, generiert eine Antwort, parst sie als JSON, gibt
-    // ein jdBasic-Objekt zurück (oder NONE bei Parse-Fehler). Die vorherige
-    // Grammar wird nach dem Aufruf wiederhergestellt.
+    // Turns JSON mode on, generates an answer, parses it as JSON and
+    // answers a jdBasic object, or NONE when the parse fails. The grammar
+    // that was in force is restored afterwards.
 
     vm.register_native("AI.CHAT_JSON", 2, 2, [&vm](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
         std::string user_msg = args[1].as_string()->data;
         auto* m = get_llm(id);
 
-        // Grammar temporär auf JSON umschalten
+        // Switch the grammar over to JSON for this call
         std::string saved_grammar = m->grammar_gbnf;
         m->grammar_gbnf = JSON_GBNF;
         rebuild_sampler(m);
@@ -1214,26 +1214,26 @@ void register_llm_builtins(VM& vm) {
             throw;
         }
 
-        // Grammar zurücksetzen
+        // Put the grammar back
         m->grammar_gbnf = saved_grammar;
         rebuild_sampler(m);
 
-        // History aktualisieren
+        // Update the history
         m->history.push_back({"user", user_msg});
         m->history.push_back({"assistant", clean});
 
-        // JSON parsen via JSON.PARSE$ (existiert bereits in jdBasic)
+        // Parse through JSON.PARSE$, which jdBasic has already
         try {
             return vm.call_function("JSON.PARSE$", { Value::make_string(clean) });
         } catch (...) {
-            // Fallback: rohen String zurück
+            // Fallback: the raw string
             return Value::make_string(clean);
         }
     });
 
     // ── AI.EMBED_LLM(llm_id, text$) -> array of float ──────────
-    // Berechnet das L2-normalisierte Embedding via geladenem LLM/Embedding-Modell.
-    // (Die Sparse-TF-IDF-Variante mit nur einem String-Argument heißt weiterhin AI.EMBED.)
+    // Computes the L2-normalised embedding through the loaded LLM or
+    // embedding model. The sparse TF-IDF form is still AI.EMBED.
 
     vm.register_native("AI.EMBED_LLM", 2, 2, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
@@ -1701,9 +1701,9 @@ void register_llm_builtins(VM& vm) {
 
     // ── AI.RAG_CREATE(llm_id, [chunk_size], [overlap], [embed_llm_id]) -> rag_id ─
     //
-    // llm_id      : Modell für die Antwort-Generierung in RAG_QUERY
-    // embed_llm_id: optional dediziertes Embedding-Modell (von AI.LOAD_EMBEDDINGS)
-    //               - wenn 0/weggelassen, fällt der Store auf TF-IDF zurück.
+    // llm_id      : the model that generates the answer in RAG_QUERY
+    // embed_llm_id: an optional dedicated embedding model, from
+    //               AI.LOAD_EMBEDDINGS; 0 or left out falls back to TF-IDF.
 
     vm.register_native("AI.RAG_CREATE", 1, 4, [](const std::vector<Value>& args) -> Value {
         auto store = std::make_unique<RagStore>();
@@ -1717,7 +1717,7 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.RAG_SAVE(rag_id, path$) ─────────────────────────────
-    // Speichert Index, Chunks und Embeddings in eine Binärdatei.
+    // Writes the index, the chunks and the embeddings to a binary file.
 
     vm.register_native("AI.RAG_SAVE", 2, 2, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
@@ -1731,11 +1731,11 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.RAG_BUILD_INDEX(rag_id, [M], [ef_construction]) ─────
-    // Baut einen HNSW-Index über die Chunks eines dense-RAG. Beschleunigt
-    // die Suche bei großen Indizes (>10K Chunks) drastisch.
+    // Builds an HNSW index over the chunks of a dense RAG store. It makes
+    // the search over a large index (beyond 10K chunks) far faster.
     //
-    //   M               : max Kanten pro Knoten (default 16, mehr = mehr Speicher + bessere Recall)
-    //   ef_construction : Suchweite beim Aufbau (default 200, mehr = langsamer + besser)
+    //   M               : edges per node at most (16; more memory, better recall)
+    //   ef_construction : how wide the build searches (200; slower, better)
 
     vm.register_native("AI.RAG_BUILD_INDEX", 1, 3, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
@@ -1751,9 +1751,9 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.RAG_LOAD(path$, [llm_id], [embed_llm_id]) -> rag_id ──
-    // Lädt einen vorher gespeicherten Index. llm_id wird für die Antwort-
-    // Generierung gebraucht; embed_llm_id muss bei dense-Indizes das
-    // ursprüngliche Embedding-Modell sein (sonst sind Suchen unsinnig).
+    // Loads an index written earlier. llm_id is needed to generate the
+    // answer; for a dense index embed_llm_id has to be the embedding model
+    // the index was built with, or the searches mean nothing.
 
     vm.register_native("AI.RAG_LOAD", 1, 3, [](const std::vector<Value>& args) -> Value {
         std::string path = args[0].as_string()->data;
@@ -1781,7 +1781,7 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.RAG_ADD_FILE(rag_id, filepath$) ──────────────────────
-    // Erkennt automatisch PDFs (.pdf-Endung) und extrahiert deren Text.
+    // Recognises a PDF by its .pdf ending and extracts its text.
 
     vm.register_native("AI.RAG_ADD_FILE", 2, 2, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
@@ -1789,7 +1789,7 @@ void register_llm_builtins(VM& vm) {
         if (it == g_rags.end()) throw jdError(ErrCode::RUNTIME_ERROR, "Invalid RAG id");
         std::string path = args[1].as_string()->data;
 
-        // PDF-Erkennung (case-insensitive)
+        // PDF detection, ignoring case
         std::string lower_path = path;
         std::transform(lower_path.begin(), lower_path.end(), lower_path.begin(),
                        [](unsigned char c){ return std::tolower(c); });
@@ -1800,7 +1800,7 @@ void register_llm_builtins(VM& vm) {
             content = pdf_extract::extract_text(path);
             if (content.empty())
                 throw jdError(ErrCode::RUNTIME_ERROR,
-                    "PDF: konnte keinen Text extrahieren (komprimiert/verschlüsselt?): " + path);
+                    "PDF: no text could be extracted (compressed or encrypted?): " + path);
         } else {
             std::ifstream file(path, std::ios::binary);
             if (!file.is_open()) throw jdError(ErrCode::FILE_NOT_FOUND, "Cannot open: " + path);
@@ -1813,9 +1813,9 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.RAG_ADD_DIR(rag_id, dirpath$, [pattern$], [recursive]) ──
-    // Indiziert ein ganzes Verzeichnis. pattern$ ist ein simpler Glob mit '*'
-    // (z.B. "*.txt" oder "*.{md,txt,pdf}"). Default = alle Text-Dateien + PDFs.
-    // recursive = true (default) durchläuft Unterverzeichnisse.
+    // Indexes a whole directory. pattern$ is a plain glob with '*', say
+    // "*.txt" or "*.{md,txt,pdf}". The default takes every text file and PDF.
+    // recursive = true, the default, walks the subdirectories.
 
     vm.register_native("AI.RAG_ADD_DIR", 2, 4, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
@@ -1825,7 +1825,7 @@ void register_llm_builtins(VM& vm) {
         std::string pattern = (args.size() >= 3) ? args[2].as_string()->data : std::string();
         bool recursive = (args.size() >= 4) ? args[3].to_int() != 0 : true;
 
-        // Default: gängige Text-Endungen + PDF
+        // Default: the usual text endings plus PDF
         std::set<std::string> default_exts = {
             ".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv",
             ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg",
@@ -1835,13 +1835,13 @@ void register_llm_builtins(VM& vm) {
             ".sh", ".bat", ".ps1", ".sql", ".jdb", ".pdf"
         };
 
-        // Pattern-Auswertung: "*.ext" oder "*.{a,b,c}"
-        // Wenn pattern leer ist, nutzen wir default_exts. Sonst extrahieren wir die Endungen.
+        // Reading the pattern: "*.ext" or "*.{a,b,c}". An empty pattern
+        // leaves default_exts in place, otherwise the endings come out of it.
         std::set<std::string> exts;
         if (pattern.empty()) {
             exts = default_exts;
         } else {
-            // Sehr einfacher Parser: alles nach '.' bis '}' oder ',' oder Ende
+            // A very simple parser: everything after '.' up to '}', ',' or the end
             size_t dot = pattern.find('.');
             if (dot != std::string::npos) {
                 std::string rest = pattern.substr(dot);
@@ -1861,13 +1861,13 @@ void register_llm_builtins(VM& vm) {
                         }
                     }
                 } else {
-                    // Einzelne Endung wie "*.txt"
+                    // A single ending such as "*.txt"
                     exts.insert(rest);
                 }
             }
         }
 
-        // Lowercase-Vergleich
+        // Compare in lower case
         auto lower = [](std::string s) {
             std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::tolower(c); });
             return s;
@@ -1878,7 +1878,7 @@ void register_llm_builtins(VM& vm) {
         namespace fs = std::filesystem;
         std::error_code ec;
         if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec))
-            throw jdError(ErrCode::FILE_NOT_FOUND, "Verzeichnis nicht gefunden: " + dir);
+            throw jdError(ErrCode::FILE_NOT_FOUND, "Directory not found: " + dir);
 
         int files_added = 0;
         int files_failed = 0;
@@ -1893,7 +1893,7 @@ void register_llm_builtins(VM& vm) {
                 if (ext == ".pdf") {
                     content = pdf_extract::extract_text(path_str);
                     if (content.empty()) {
-                        std::cerr << "[RAG] PDF skipped (kein extrahierbarer Text): " << path_str << std::endl;
+                        std::cerr << "[RAG] PDF skipped (no text to extract): " << path_str << std::endl;
                         files_failed++;
                         return;
                     }
@@ -1929,7 +1929,7 @@ void register_llm_builtins(VM& vm) {
                   << files_failed << " skipped, total chunks: "
                   << it->second->chunks.size() << std::endl;
 
-        // Rückgabe: Map mit Statistiken
+        // Answers a map of statistics
         Value result = Value::make_object();
         result.as_object()->set("files_added", Value::make_i64(files_added));
         result.as_object()->set("files_failed", Value::make_i64(files_failed));
@@ -1983,7 +1983,7 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.RAG_QUERY_FULL(rag_id, q$, [top_k]) -> {answer, sources} ─
-    // Wie RAG_QUERY, gibt aber zusätzlich die verwendeten Quellen zurück:
+    // Like RAG_QUERY, but it also answers the sources it used:
     //   { answer:  "…",
     //     sources: [ { source: "file.pdf", score: 0.42, text: "…" }, … ] }
 
@@ -2142,7 +2142,7 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ══════════════════════════════════════════════════════════════
-    // ── Text Classifier (k-NN auf dichten Embeddings) ────────────
+    // ── Text Classifier (k-NN over dense embeddings) ─────────────
     // ══════════════════════════════════════════════════════════════
 
     auto cls_get = [](int id) -> ClassifierStore* {
@@ -2153,8 +2153,8 @@ void register_llm_builtins(VM& vm) {
     };
 
     // ── AI.CLASSIFIER_CREATE(embed_llm_id) -> cls_id ──────────
-    // Erstellt einen leeren Text-Klassifikator. embed_llm_id muss auf ein
-    // bereits via AI.LOAD_EMBEDDINGS geladenes Embedding-Modell zeigen.
+    // Makes an empty text classifier. embed_llm_id has to name an
+    // embedding model that AI.LOAD_EMBEDDINGS already loaded.
 
     vm.register_native("AI.CLASSIFIER_CREATE", 1, 1, [](const std::vector<Value>& args) -> Value {
         auto store = std::make_unique<ClassifierStore>();
@@ -2165,7 +2165,7 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.CLASSIFIER_ADD(cls_id, text$, label$) -> samples_count ──
-    // Fügt ein einzelnes Trainingsbeispiel hinzu. Berechnet das Embedding.
+    // Adds one training sample and computes its embedding.
 
     vm.register_native("AI.CLASSIFIER_ADD", 3, 3, [cls_get](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
@@ -2177,7 +2177,7 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.CLASSIFIER_ADD_BATCH(cls_id, texts_arr, labels_arr) -> count ──
-    // Fügt viele Trainingsbeispiele auf einmal hinzu. Schnell beim CSV-Import.
+    // Adds many training samples at once. Fast for a CSV import.
 
     vm.register_native("AI.CLASSIFIER_ADD_BATCH", 3, 3, [cls_get](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
@@ -2189,9 +2189,9 @@ void register_llm_builtins(VM& vm) {
         if (ta.size() != la.size())
             throw jdError(ErrCode::RUNTIME_ERROR, "CLASSIFIER_ADD_BATCH: texts and labels array length mismatch");
 
-        // Fortschrittsanzeige für große Batches
+        // Progress for a large batch
         size_t total = ta.size();
-        size_t next_report = total / 20; // alle 5%
+        size_t next_report = total / 20; // every 5%
         if (next_report < 50) next_report = 50;
 
         for (size_t i = 0; i < total; i++) {
@@ -2206,12 +2206,12 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.CLASSIFIER_PREDICT(cls_id, text$, [k]) -> object ───
-    // Klassifiziert einen Text via k-NN. k default = 5.
-    // Rückgabe: {
-    //   label:       gewählte Klasse (Majority Vote, gewichtet mit Similarity)
-    //   confidence:  Anteil der Gewinner-Klasse am Gesamtgewicht (0..1)
-    //   neighbors:   Array der Top-k Nachbarn mit {score, label, text}
-    //   votes:       Array der Klassen mit Zählungen {label, count}
+    // Classifies a text by k-NN; k defaults to 5.
+    // Answers: {
+    //   label:       the chosen class (majority vote, weighted by similarity)
+    //   confidence:  the winner's share of the total weight (0..1)
+    //   neighbors:   the top-k neighbours as {score, label, text}
+    //   votes:       the classes with their counts as {label, count}
     // }
 
     vm.register_native("AI.CLASSIFIER_PREDICT", 2, 3, [cls_get](const std::vector<Value>& args) -> Value {
@@ -2250,7 +2250,7 @@ void register_llm_builtins(VM& vm) {
     });
 
     // ── AI.CLASSIFIER_BUILD_INDEX(cls_id, [M], [ef_construction]) ──
-    // Baut einen HNSW-Index für schnelle Prediction bei großen Trainings-Sets.
+    // Builds an HNSW index for fast prediction on a large training set.
 
     vm.register_native("AI.CLASSIFIER_BUILD_INDEX", 1, 3, [cls_get](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
