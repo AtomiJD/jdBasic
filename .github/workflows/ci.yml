@@ -40,16 +40,27 @@ jobs:
           set "SDKV=%WindowsSDKVersion:~0,-1%"
           call build.bat
 
+      # Every tests/gate/*_test.jdb and test_apl_*.jdb, so a suite added later
+      # is picked up without touching this file. The helper modules the suites
+      # IMPORT are named *_mod / *_modx / test_inner and do not match.
       - name: Gate suites (interpreter)
         shell: pwsh
         run: |
-          $suites = "comprehensive_test","native_test","test_apl_complete","test_apl_pipelines"
+          $suites = @(Get-ChildItem tests/gate -Filter *_test.jdb) + @(Get-ChildItem tests/gate -Filter test_apl_*.jdb)
+          $bad = @()
           foreach ($s in $suites) {
-            Write-Host "=== $s"
-            $out = & build/jdBasic.exe "tests/gate/$s.jdb" 2>&1 | Out-String
+            Write-Host "=== $($s.Name)"
+            $out = & build/jdBasic.exe "tests/gate/$($s.Name)" 2>&1 | Out-String
+            $rc = $LASTEXITCODE
             Write-Host $out
-            if ($out -notmatch "ALL TESTS PASSED!|,\s*0 failed") { throw "$s FAILED" }
+            # The marker has to be there AND the process has to have exited 0:
+            # counting absent FAIL lines would read a crash as a pass.
+            if ($rc -ne 0 -or $out -notmatch 'ALL [A-Z0-9 _-]*TESTS PASSED|,\s*0 failed') {
+              $bad += "$($s.Name) (exit $rc)"
+            }
           }
+          if ($bad.Count -gt 0) { throw "gate suites failed: $($bad -join '; ')" }
+          Write-Host "$($suites.Count) gate suites green"
 
       - name: Builtin signature table
         shell: pwsh
@@ -107,12 +118,22 @@ jobs:
 
       - name: Gate suites (interpreter)
         run: |
-          for s in comprehensive_test native_test test_apl_complete test_apl_pipelines; do
+          # set +e: the runner's bash has errexit on, which would abort at the
+          # first red suite and hide the rest.
+          set +e
+          bad=""; n=0
+          for f in tests/gate/*_test.jdb tests/gate/test_apl_*.jdb; do
+            s=$(basename "$f" .jdb)
             echo "=== $s"
-            out=$(./build/jdbasic "tests/gate/$s.jdb" 2>&1)
+            out=$("./build/jdbasic" "$f" 2>&1); rc=$?
             echo "$out"
-            echo "$out" | grep -qE "ALL TESTS PASSED!|, 0 failed" || { echo "$s FAILED"; exit 1; }
+            echo "$out" | grep -qE "ALL [A-Z0-9 _-]*TESTS PASSED|, 0 failed"
+            marker=$?
+            if [ "$rc" -ne 0 ] || [ "$marker" -ne 0 ]; then bad="$bad $s(exit $rc)"; fi
+            n=$((n + 1))
           done
+          if [ -n "$bad" ]; then echo "gate suites failed:$bad"; exit 1; fi
+          echo "$n gate suites green"
 
       - name: Builtin signature table
         run: ./build/jdbasic tools/check_builtin_sigs.jdb
@@ -128,3 +149,71 @@ jobs:
 
       - name: Documentation examples
         run: ./build/jdbasic tools/check_doc_examples.jdb doc/tour.md doc/guides/native.md doc/guides/data.md doc/guides/boards.md
+
+  linux-native:
+    name: Native compiler build + gate (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Eigen
+        id: cache-eigen
+        uses: actions/cache@v4
+        with:
+          path: libs/eigen
+          key: eigen-3.4.0-linux
+
+      - name: Fetch Eigen
+        if: steps.cache-eigen.outputs.cache-hit != 'true'
+        run: |
+          curl -sSL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz -o eigen.tar.gz
+          mkdir -p libs tmp_eigen
+          tar xzf eigen.tar.gz -C tmp_eigen
+          mv tmp_eigen/eigen-3.4.0 libs/eigen
+
+      - name: LLVM 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev
+
+      # NATIVEC also builds the runtime pieces a generated binary links against.
+      - name: Build with the native backend
+        run: HTTP=0 GFX=0 NATIVEC=1 ./build.sh
+
+      # The compiler is the half no interpreter run can speak for. A POSIX -c
+      # defect passes every interpreter suite, which is how #548 reached a
+      # release.
+      - name: Gate suites (native -c)
+        run: |
+          set +e
+          export LD_LIBRARY_PATH="$PWD/build:${LD_LIBRARY_PATH:-}"
+          bad=""; n=0
+          for f in tests/gate/*_test.jdb tests/gate/test_apl_*.jdb; do
+            s=$(basename "$f" .jdb)
+            # native_test.jdb is the loose interpreter twin; -c is STRICT and
+            # EXPLICIT, so the native pass takes its strict sibling.
+            if [ "$s" = "native_test" ]; then
+              f=tests/gate/native_test.strict.jdb
+              s=native_test.strict
+            fi
+            echo "=== $s"
+            rm -f "tests/gate/$s.exe"
+            ./build/jdbasic -c "$f" > "compile_$s.log" 2>&1
+            # A -c that aborts leaves the previous .exe in place, so the file
+            # has to be gone first and present afterwards.
+            if [ ! -f "tests/gate/$s.exe" ]; then
+              echo "COMPILE FAILED"
+              tail -5 "compile_$s.log"
+              bad="$bad $s(compile)"
+              n=$((n + 1))
+              continue
+            fi
+            out=$("./tests/gate/$s.exe" 2>&1); rc=$?
+            echo "$out"
+            echo "$out" | grep -qE "ALL [A-Z0-9 _-]*TESTS PASSED|, 0 failed"
+            marker=$?
+            if [ "$rc" -ne 0 ] || [ "$marker" -ne 0 ]; then bad="$bad $s(exit $rc)"; fi
+            n=$((n + 1))
+          done
+          if [ -n "$bad" ]; then echo "native gate failed:$bad"; exit 1; fi
+          echo "$n gate suites green natively"
