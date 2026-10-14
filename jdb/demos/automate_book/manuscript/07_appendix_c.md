@@ -49,18 +49,17 @@ of the jdBasic libraries, such as CONF or XLSX, belongs in the `lib`
 folder of your jdBasic installation; unpack the release again if it
 is missing.
 
-### 3. The forms release cannot compile
+### 3. This release cannot compile
 
 ```text
 Native compilation not available (build with NATIVEC flag).
 ```
 
-`jdbasic -c` needs the release of jdBasic with the native compiler.
-The forms release this book starts with runs every recipe but does
-not contain the compiler. `jdbasic --version` lists *NativeC* among
-the features when it is there. Use the professional release for X07
-and for handing programs to colleagues, as Chapter 2 explains under
-*From Script to Program*.
+`jdbasic -c` needs a release of jdBasic with the native compiler. The
+forms release this book starts with has it, the smallest release does
+not. `jdbasic --version` lists *NativeC* among the features when it
+is there. Compiling also needs the Microsoft C++ build tools, as
+Chapter 2 explains under *From Script to Program*.
 
 ## The settings file
 

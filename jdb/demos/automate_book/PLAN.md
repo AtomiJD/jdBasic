@@ -431,10 +431,9 @@ Taken on 2026-10-01:
    the colophon describes how it was made.
 4. **Publishing**: free as PDF and EPUB, and a print on demand paperback.
 5. **Release pack**: the reader installs the FORMS release (the wizard and
-   the Work Cockpit need it). A later professional edition uses a pack with
-   NATIVEC; until then the parts about `jdbasic -c` (section 2.9, recipe
-   X07) are marked as needing that pack, and `check_recipes` still runs every
-   recipe compiled so the professional edition needs no rework.
+   the Work Cockpit need it). Since jdBasic 1.1 that pack carries NATIVEC,
+   so `jdbasic -c` (section 2.9, recipe X07) works with the release the
+   book starts with, and `check_recipes` runs every recipe compiled.
 6. **Mail passwords**: asked for at the start, never written to disk. A
    recipe run by hand asks when it needs the password. Scheduled recipes
    cannot ask, so they either put finished mails as `.eml` files into an

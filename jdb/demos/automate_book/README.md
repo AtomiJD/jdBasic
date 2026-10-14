@@ -52,6 +52,8 @@ jdbasic wizard/setup_wizard.jdb --selftest   # the window wizard clicks through 
 
 `check_recipes` sets `JDBASIC_PATH` for the programs it starts and looks for
 the compiler at `../../../build/jdBasic.exe`; `--jdbasic path` names another.
+`--only E01` checks one recipe, `--skip E18,M18,X19` leaves out the three
+that drive Word, Excel and Outlook through COM.
 
 ## Writing rules
 

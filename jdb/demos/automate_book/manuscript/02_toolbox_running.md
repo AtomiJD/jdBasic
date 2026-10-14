@@ -169,12 +169,12 @@ it. Copy the folder to a colleague's computer and the program runs
 there with a double click. The compiled program is also faster, which
 matters for the large jobs of Chapter 5.
 
-Compiling needs the release of jdBasic with the native compiler, and the
-Microsoft C++ build tools on the computer that compiles (not on the one
-that runs the result). The forms release this book starts with does not
-contain the compiler; the professional edition of the book does. Every
-recipe in this book was compiled and tested as an `.exe` as well, so
-nothing changes when you switch.
+Compiling needs the Microsoft C++ build tools on the computer that
+compiles, not on the one that runs the result. The forms release this
+book starts with brings the compiler with it; `jdbasic --version`
+lists *NativeC* among its features. Every recipe in this book was
+compiled and tested as an `.exe` as well, so nothing changes when
+you compile one.
 
 > **Watch out**
 > A program you hand to a colleague runs with that colleague's rights

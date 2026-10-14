@@ -38,10 +38,10 @@ You need a folder that you may write to and your colleagues may read,
 such as `S:/Tools` on a shared drive, and the recipe you want to hand
 out, with its test. The compiler must be the jdBasic you work with,
 named in the `[paths]` part of `work.conf`, which the wizard wrote,
-and it must be the release with the native compiler:
+and it must be a release with the native compiler:
 `jdbasic --version` lists *NativeC*. The forms release this book
-starts with does not have it, as Chapter 2 explains under *From
-Script to Program*.
+starts with has it, as Chapter 2 explains under *From Script to
+Program*.
 
 A compiled recipe still reads its settings from a `work.conf`. Give
 your colleagues one with the part of the recipe, or start it with
