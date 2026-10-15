@@ -1,0 +1,939 @@
+' jdTexti - a plain-text editor on native Windows forms (FORMS build).
+' Multi-level undo, find/replace with whole-word and wrap-around, go to
+' line, word wrap, zoom, spell check, tab width, dark mode, printing,
+' recent files, and files kept in their own encoding and line endings.
+' Watches the open file for changes made by other programs.
+'
+'   jdbasic jdtexti.jdb [file.txt]
+'   jdbasic -c jdtexti.jdb       (jdtexti.jdb.props gives the .exe its icon)
+OPTION "EXPLICIT"
+
+DIM APP_NAME AS STRING = "jdTexti"
+DIM CR AS STRING = CHR$(13)
+DIM LF AS STRING = CHR$(10)
+DIM CRLF AS STRING = CR + LF
+DIM TXT_FILTER AS STRING = "Text files (*.txt)|*.txt|All files (*.*)|*.*"
+DIM SB_HEIGHT AS INTEGER = 22
+DIM MAX_RECENT AS INTEGER = 8
+DIM WORD_CHARS AS STRING = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+DIM DARK_BACK AS INTEGER = $1E1E1E
+DIM DARK_FORE AS INTEGER = $D4D4D4
+
+DIM frm AS DOUBLE = 0
+DIM txt AS DOUBLE = 0
+DIM sb AS DOUBLE = 0
+DIM dlg AS DOUBLE = 0
+DIM txtFind AS DOUBLE = 0
+DIM txtRepl AS DOUBLE = 0
+DIM chkCase AS DOUBLE = 0
+DIM chkWord AS DOUBLE = 0
+DIM chkWrap AS DOUBLE = 0
+DIM optUp AS DOUBLE = 0
+DIM lblRepl AS DOUBLE = 0
+DIM btnRepl AS DOUBLE = 0
+DIM btnAll AS DOUBLE = 0
+
+DIM file_path AS STRING = ""
+DIM file_enc AS STRING = "utf-8"
+DIM file_eol AS STRING = CRLF
+DIM file_mtime AS STRING = ""
+DIM file_ro AS INTEGER = 0
+DIM font_face AS STRING = "Consolas"
+DIM font_size AS INTEGER = 11
+DIM font_bold AS INTEGER = 0
+DIM font_italic AS INTEGER = 0
+DIM wrap_on AS INTEGER = 0
+DIM status_on AS INTEGER = 1
+DIM dark_on AS INTEGER = 0
+DIM spell_on AS INTEGER = 1
+DIM tab_w AS INTEGER = 8
+DIM zoom_pct AS INTEGER = 100
+DIM doc_chars AS INTEGER = 0
+DIM recent AS ARRAY = []
+DIM quitting AS INTEGER = 0
+DIM disk_prompt AS INTEGER = 0
+DIM client_w AS INTEGER = 760
+DIM client_h AS INTEGER = 500
+
+' ── document state ──────────────────────────────────────────────
+
+FUNC DOC_NAME$()
+    IF file_path = "" THEN RETURN "Untitled"
+    RETURN PATH.BASENAME$(file_path)
+ENDFUNC
+
+FUNC ENC_LABEL$(enc AS STRING)
+    SWITCH enc
+        CASE "utf-8-bom"
+            RETURN "UTF-8 with BOM"
+        CASE "utf-16le"
+            RETURN "UTF-16 LE"
+        CASE "utf-16be"
+            RETURN "UTF-16 BE"
+        CASE "cp1252"
+            RETURN "ANSI"
+    ENDSWITCH
+    RETURN "UTF-8"
+ENDFUNC
+
+' Characters as a reader counts them: a line break is one.
+FUNC CHAR_COUNT(s AS STRING) AS INTEGER
+    RETURN LEN(-REPLACE$(s, CR, ""))
+ENDFUNC
+
+SUB UPDATE_TITLE()
+    DIM mark AS STRING = ""
+    IF FORM.GET(txt, "MODIFIED") THEN mark = "*"
+    DIM ro AS STRING = ""
+    IF file_ro THEN ro = " [Read-Only]"
+    FORM.SET(frm, "TEXT", mark + DOC_NAME$() + ro + " - " + APP_NAME)
+ENDSUB
+
+SUB UPDATE_STATUS()
+    DIM pos AS STRING = "Ln " + STR$(FORM.GET(txt, "CARETLINE")) + ", Col " + STR$(FORM.GET(txt, "CARETCOL"))
+    DIM chars AS STRING = STR$(doc_chars) + " characters"
+    DIM sel AS STRING = FORM.GET(txt, "SELTEXT")
+    IF sel <> "" THEN chars = STR$(CHAR_COUNT(sel)) + " of " + chars
+    DIM eol AS STRING = "Windows (CRLF)"
+    IF file_eol <> CRLF THEN eol = "Unix (LF)"
+    FORM.SET(sb, "TEXT", [pos, chars, STR$(zoom_pct) + "%", eol, ENC_LABEL$(file_enc)])
+ENDSUB
+
+SUB LAYOUT()
+    DIM h AS INTEGER = client_h
+    IF status_on THEN h = h - SB_HEIGHT
+    FORM.SET(txt, "WIDTH", client_w)
+    FORM.SET(txt, "HEIGHT", h)
+ENDSUB
+
+SUB APPLY_COLORS()
+    IF dark_on THEN
+        FORM.SET(txt, "BACKCOLOR", DARK_BACK)
+        FORM.SET(txt, "FORECOLOR", DARK_FORE)
+    ELSE
+        FORM.SET(txt, "BACKCOLOR", $FFFFFF)
+        FORM.SET(txt, "FORECOLOR", $000000)
+    ENDIF
+ENDSUB
+
+SUB APPLY_FONT()
+    FORM.SET(txt, "FONT", {"name": font_face, "size": font_size, "bold": font_bold = 1, "italic": font_italic = 1})
+    APPLY_COLORS()
+ENDSUB
+
+' The control wants CRLF; files arrive with LF, CRLF or a mix.
+FUNC TO_CRLF$(s AS STRING)
+    RETURN REPLACE$(REPLACE$(s, CRLF, LF), LF, CRLF)
+ENDFUNC
+
+SUB REMEMBER_DISK()
+    DIM st AS OBJECT = FILE.STAT(file_path)
+    file_mtime = st{"mtime"}
+    file_ro = 0
+    IF st{"readonly"} THEN file_ro = 1
+ENDSUB
+
+' ── recent files ────────────────────────────────────────────────
+
+FUNC RECENT_FILE$()
+    RETURN GETENV$("APPDATA") + "\jdTexti\recent.txt"
+ENDFUNC
+
+SUB LOAD_RECENT()
+    recent = []
+    IF NOT FILE.EXISTS(RECENT_FILE$()) THEN RETURN
+    DIM entries AS ARRAY = SPLIT(REPLACE$(TXTREADER$(RECENT_FILE$()), CR, ""), LF)
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(entries) - 1
+        IF entries[i] <> "" ANDALSO LEN(recent) < MAX_RECENT THEN recent = APPEND(recent, entries[i])
+    NEXT
+ENDSUB
+
+SUB SAVE_RECENT()
+    TRY
+        MKDIR PATH.DIRNAME$(RECENT_FILE$())
+        TXTWRITER RECENT_FILE$(), JOIN(recent, CRLF)
+    CATCH
+    ENDTRY
+ENDSUB
+
+SUB ADD_RECENT(path AS STRING)
+    DIM kept AS ARRAY = [path]
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(recent) - 1
+        IF UCASE$(recent[i]) <> UCASE$(path) ANDALSO LEN(kept) < MAX_RECENT THEN kept = APPEND(kept, recent[i])
+    NEXT
+    recent = kept
+    SAVE_RECENT()
+    BUILD_MENU()
+ENDSUB
+
+' ── menu ────────────────────────────────────────────────────────
+
+FUNC RECENT_ITEMS()
+    DIM items AS ARRAY = []
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(recent) - 1
+        items = APPEND(items, {"text": "&" + STR$(i + 1) + " " + REPLACE$(recent[i], "&", "&&"), "name": "mnuRecent" + STR$(i + 1)})
+    NEXT
+    IF LEN(recent) = 0 THEN items = APPEND(items, {"text": "(none)", "name": "mnuRecentNone"})
+    items = APPEND(items, "-")
+    items = APPEND(items, {"text": "&Clear Recent Files", "name": "mnuRecentClear"})
+    RETURN items
+ENDFUNC
+
+SUB BUILD_MENU()
+    FORM.MENU(frm, [ _
+        {"text": "&File", "items": [ _
+            {"text": "&New", "name": "mnuNew", "key": "Ctrl+N"}, _
+            {"text": "&Open...", "name": "mnuOpen", "key": "Ctrl+O"}, _
+            {"text": "Open &Recent", "items": RECENT_ITEMS()}, _
+            {"text": "&Save", "name": "mnuSave", "key": "Ctrl+S"}, _
+            {"text": "Save &As...", "name": "mnuSaveAs", "key": "Ctrl+Shift+S"}, _
+            "-", _
+            {"text": "&Encoding", "items": [ _
+                {"text": "UTF-8", "name": "mnuEncUtf8"}, _
+                {"text": "UTF-8 with BOM", "name": "mnuEncUtf8Bom"}, _
+                {"text": "UTF-16 LE", "name": "mnuEncUtf16Le"}, _
+                {"text": "UTF-16 BE", "name": "mnuEncUtf16Be"}, _
+                {"text": "ANSI", "name": "mnuEncAnsi"}]}, _
+            {"text": "&Line Endings", "items": [ _
+                {"text": "Windows (CRLF)", "name": "mnuEolCrlf"}, _
+                {"text": "Unix (LF)", "name": "mnuEolLf"}]}, _
+            "-", _
+            {"text": "Page Set&up...", "name": "mnuPageSetup"}, _
+            {"text": "&Print...", "name": "mnuPrint", "key": "Ctrl+P"}, _
+            "-", _
+            {"text": "E&xit", "name": "mnuExit"}]}, _
+        {"text": "&Edit", "items": [ _
+            {"text": "&Undo", "name": "mnuUndo", "key": "Ctrl+Z"}, _
+            {"text": "&Redo", "name": "mnuRedo", "key": "Ctrl+Y"}, _
+            "-", _
+            {"text": "Cu&t", "name": "mnuCut", "key": "Ctrl+X"}, _
+            {"text": "&Copy", "name": "mnuCopy", "key": "Ctrl+C"}, _
+            {"text": "&Paste", "name": "mnuPaste", "key": "Ctrl+V"}, _
+            {"text": "De&lete" + CHR$(9) + "Del", "name": "mnuDelete"}, _
+            "-", _
+            {"text": "&Find...", "name": "mnuFind", "key": "Ctrl+F"}, _
+            {"text": "Find &Next", "name": "mnuFindNext", "key": "F3"}, _
+            {"text": "Find Pre&vious", "name": "mnuFindPrev", "key": "Shift+F3"}, _
+            {"text": "Find &Selection", "name": "mnuFindSel", "key": "Ctrl+F3"}, _
+            {"text": "R&eplace...", "name": "mnuReplace", "key": "Ctrl+H"}, _
+            {"text": "&Go To...", "name": "mnuGoto", "key": "Ctrl+G"}, _
+            "-", _
+            {"text": "Select &All", "name": "mnuSelAll", "key": "Ctrl+A"}, _
+            {"text": "Time/&Date", "name": "mnuTimeDate", "key": "F5"}]}, _
+        {"text": "F&ormat", "items": [ _
+            {"text": "&Word Wrap", "name": "mnuWrap"}, _
+            {"text": "&Font...", "name": "mnuFont"}, _
+            {"text": "&Tab Width", "items": [ _
+                {"text": "2", "name": "mnuTab2"}, _
+                {"text": "4", "name": "mnuTab4"}, _
+                {"text": "8", "name": "mnuTab8"}]}, _
+            {"text": "&Spell Check", "name": "mnuSpell"}]}, _
+        {"text": "&View", "items": [ _
+            {"text": "&Zoom", "items": [ _
+                {"text": "Zoom &In", "name": "mnuZoomIn", "key": "Ctrl+Plus"}, _
+                {"text": "Zoom &Out", "name": "mnuZoomOut", "key": "Ctrl+Minus"}, _
+                {"text": "&Restore Default Zoom", "name": "mnuZoomReset", "key": "Ctrl+0"}]}, _
+            {"text": "&Status Bar", "name": "mnuStatus"}, _
+            {"text": "&Dark Mode", "name": "mnuDark"}]}, _
+        {"text": "&Help", "items": [ _
+            {"text": "&About " + APP_NAME, "name": "mnuAbout"}]}])
+    IF LEN(recent) = 0 THEN FORM.SET(FORM.FIND(frm, "mnuRecentNone"), "ENABLED", FALSE)
+    MENU_CHECKS()
+ENDSUB
+
+SUB CHECK_ITEM(item_name AS STRING, checked AS INTEGER)
+    FORM.SET(FORM.FIND(frm, item_name), "CHECKED", checked)
+ENDSUB
+
+SUB MENU_CHECKS()
+    CHECK_ITEM("mnuEncUtf8", file_enc = "utf-8")
+    CHECK_ITEM("mnuEncUtf8Bom", file_enc = "utf-8-bom")
+    CHECK_ITEM("mnuEncUtf16Le", file_enc = "utf-16le")
+    CHECK_ITEM("mnuEncUtf16Be", file_enc = "utf-16be")
+    CHECK_ITEM("mnuEncAnsi", file_enc = "cp1252")
+    CHECK_ITEM("mnuEolCrlf", file_eol = CRLF)
+    CHECK_ITEM("mnuEolLf", file_eol <> CRLF)
+    CHECK_ITEM("mnuWrap", wrap_on)
+    CHECK_ITEM("mnuTab2", tab_w = 2)
+    CHECK_ITEM("mnuTab4", tab_w = 4)
+    CHECK_ITEM("mnuTab8", tab_w = 8)
+    CHECK_ITEM("mnuSpell", spell_on)
+    CHECK_ITEM("mnuStatus", status_on)
+    CHECK_ITEM("mnuDark", dark_on)
+ENDSUB
+
+' ── load and save ───────────────────────────────────────────────
+
+' Writing to ANSI drops what cp1252 cannot hold; a trial write finds out.
+FUNC ANSI_SAFE(body AS STRING)
+    DIM probe AS STRING = MKTEMP$("jdt")
+    DIM same AS INTEGER = 0
+    TRY
+        TXTWRITER probe, body, FALSE, "cp1252"
+        IF TXTREADER$(probe, "cp1252") = body THEN same = 1
+        KILL probe
+    CATCH
+    ENDTRY
+    RETURN same = 1
+ENDFUNC
+
+FUNC SAVE_TO(path AS STRING)
+    DIM body AS STRING = FORM.GET(txt, "TEXT")
+    IF file_eol <> CRLF THEN body = REPLACE$(body, CRLF, file_eol)
+    IF file_enc = "cp1252" ANDALSO NOT ANSI_SAFE(body) THEN
+        DIM answer AS INTEGER = MSGBOX("This file contains characters that ANSI cannot store; they would be lost." + CRLF + CRLF + "Save it as UTF-8 instead?", 3 + 48, APP_NAME)
+        IF answer = 2 THEN RETURN FALSE
+        IF answer = 6 THEN file_enc = "utf-8"
+    ENDIF
+    ' TXTWRITER writes UTF-16 without a BOM; the files Windows writes carry one
+    IF LEFT$(file_enc, 6) = "utf-16" THEN body = CHR$(65279) + body
+    TRY
+        TXTWRITER path, body, FALSE, file_enc
+    CATCH
+        MSGBOX("Cannot save " + path + CRLF + ERRMSG$, 16, APP_NAME)
+        RETURN FALSE
+    ENDTRY
+    file_path = path
+    REMEMBER_DISK()
+    FORM.SET(txt, "MODIFIED", FALSE)
+    ADD_RECENT(path)
+    UPDATE_TITLE()
+    UPDATE_STATUS()
+    RETURN TRUE
+ENDFUNC
+
+FUNC SAVE_AS()
+    DIM path AS STRING = FILESAVE$(TXT_FILTER, "Save As", DOC_NAME$())
+    IF path = "" THEN RETURN FALSE
+    IF PATH.EXT$(path) = "" THEN path = path + ".txt"
+    RETURN SAVE_TO(path)
+ENDFUNC
+
+FUNC SAVE_DOC()
+    IF file_path = "" THEN RETURN SAVE_AS()
+    IF file_ro THEN
+        MSGBOX(DOC_NAME$() + " is read-only. Save it under another name.", 48, APP_NAME)
+        RETURN SAVE_AS()
+    ENDIF
+    RETURN SAVE_TO(file_path)
+ENDFUNC
+
+' "Do you want to save changes?" - FALSE means stay put.
+FUNC CONFIRM_DISCARD()
+    IF NOT FORM.GET(txt, "MODIFIED") THEN RETURN TRUE
+    DIM answer AS INTEGER = MSGBOX("Do you want to save changes to " + DOC_NAME$() + "?", 3 + 48, APP_NAME)
+    IF answer = 2 THEN RETURN FALSE
+    IF answer = 6 THEN RETURN SAVE_DOC()
+    RETURN TRUE
+ENDFUNC
+
+SUB LOAD_DOC(path AS STRING)
+    DIM content AS STRING = ""
+    DIM enc AS STRING = ""
+    TRY
+        enc = TXTENCODING$(path)
+        content = TXTREADER$(path, enc)
+    CATCH
+        MSGBOX("Cannot open " + path + CRLF + ERRMSG$, 16, APP_NAME)
+        RETURN
+    ENDTRY
+    file_enc = enc
+    file_eol = CRLF
+    IF INSTR(content, LF) >= 0 ANDALSO INSTR(content, CRLF) < 0 THEN file_eol = LF
+    FORM.SET(txt, "TEXT", TO_CRLF$(content))
+    FORM.SET(txt, "MODIFIED", FALSE)
+    FORM.SET(txt, "SELSTART", 0)
+    file_path = path
+    REMEMBER_DISK()
+    doc_chars = CHAR_COUNT(FORM.GET(txt, "TEXT"))
+    ADD_RECENT(path)
+    UPDATE_TITLE()
+    UPDATE_STATUS()
+ENDSUB
+
+SUB NEW_DOC()
+    FORM.SET(txt, "TEXT", "")
+    FORM.SET(txt, "MODIFIED", FALSE)
+    file_path = ""
+    file_enc = "utf-8"
+    file_eol = CRLF
+    file_mtime = ""
+    file_ro = 0
+    doc_chars = 0
+    MENU_CHECKS()
+    UPDATE_TITLE()
+    UPDATE_STATUS()
+ENDSUB
+
+' Another program changed or replaced the file since it was loaded or saved.
+SUB CHECK_DISK()
+    IF file_path = "" ORELSE disk_prompt THEN RETURN
+    IF NOT FILE.EXISTS(file_path) THEN RETURN
+    DIM st AS OBJECT = FILE.STAT(file_path)
+    IF st{"mtime"} = file_mtime THEN RETURN
+    file_mtime = st{"mtime"}
+    disk_prompt = 1
+    DIM ask AS STRING = DOC_NAME$() + " was changed by another program." + CRLF + CRLF + "Reload it?"
+    IF FORM.GET(txt, "MODIFIED") THEN ask = ask + " Your changes here would be lost."
+    IF MSGBOX(ask, 4 + 32, APP_NAME) = 6 THEN LOAD_DOC(file_path)
+    disk_prompt = 0
+ENDSUB
+
+' ── find and replace ────────────────────────────────────────────
+
+FUNC IS_WORD_BYTE(s AS STRING, idx AS INTEGER)
+    IF idx < 0 ORELSE idx >= LEN(s) THEN RETURN FALSE
+    DIM c AS STRING = MID$(s, idx, 1)
+    IF ASC(c) >= 128 THEN RETURN TRUE
+    RETURN INSTR(WORD_CHARS, c) >= 0
+ENDFUNC
+
+' First hit at or after `from`, honouring "whole word"; -1 when none.
+FUNC NEXT_HIT(hay AS STRING, needle AS STRING, start_at AS INTEGER) AS INTEGER
+    DIM hit AS INTEGER = INSTR(start_at, hay, needle)
+    IF NOT FORM.GET(chkWord, "CHECKED") THEN RETURN hit
+    DO WHILE hit >= 0
+        IF NOT IS_WORD_BYTE(hay, hit - 1) ANDALSO NOT IS_WORD_BYTE(hay, hit + LEN(needle)) THEN RETURN hit
+        hit = INSTR(hit + 1, hay, needle)
+    LOOP
+    RETURN -1
+ENDFUNC
+
+FUNC FIND_FROM(needle AS STRING, upward AS INTEGER) AS INTEGER
+    DIM hay AS STRING = FORM.GET(txt, "TEXT")
+    IF NOT FORM.GET(chkCase, "CHECKED") THEN
+        hay = UCASE$(hay)
+        needle = UCASE$(needle)
+    ENDIF
+    DIM wrap_around AS INTEGER = FORM.GET(chkWrap, "CHECKED")
+    DIM sel_start AS INTEGER = FORM.GET(txt, "SELSTART")
+    IF NOT upward THEN
+        DIM hit AS INTEGER = NEXT_HIT(hay, needle, sel_start + FORM.GET(txt, "SELLENGTH"))
+        IF hit < 0 ANDALSO wrap_around THEN hit = NEXT_HIT(hay, needle, 0)
+        RETURN hit
+    ENDIF
+    DIM before AS INTEGER = -1
+    DIM last_hit AS INTEGER = -1
+    DIM probe AS INTEGER = NEXT_HIT(hay, needle, 0)
+    DO WHILE probe >= 0
+        IF probe < sel_start THEN before = probe
+        last_hit = probe
+        probe = NEXT_HIT(hay, needle, probe + 1)
+    LOOP
+    IF before < 0 ANDALSO wrap_around THEN before = last_hit
+    RETURN before
+ENDFUNC
+
+SUB FIND_IN(upward AS INTEGER)
+    DIM needle AS STRING = FORM.GET(txtFind, "TEXT")
+    IF needle = "" THEN
+        SHOW_FIND(FALSE)
+        RETURN
+    ENDIF
+    DIM hit AS INTEGER = FIND_FROM(needle, upward)
+    IF hit < 0 THEN
+        MSGBOX("Cannot find " + CHR$(34) + needle + CHR$(34), 64, APP_NAME)
+        RETURN
+    ENDIF
+    FORM.SET(txt, "SELSTART", hit)
+    FORM.SET(txt, "SELLENGTH", LEN(needle))
+    UPDATE_STATUS()
+ENDSUB
+
+FUNC SELECTION_MATCHES(needle AS STRING)
+    DIM sel AS STRING = FORM.GET(txt, "SELTEXT")
+    IF FORM.GET(chkCase, "CHECKED") THEN RETURN sel = needle
+    RETURN UCASE$(sel) = UCASE$(needle)
+ENDFUNC
+
+SUB SHOW_FIND(with_replace AS INTEGER)
+    FORM.SET(lblRepl, "VISIBLE", with_replace)
+    FORM.SET(txtRepl, "VISIBLE", with_replace)
+    FORM.SET(btnRepl, "VISIBLE", with_replace)
+    FORM.SET(btnAll, "VISIBLE", with_replace)
+    IF with_replace THEN
+        FORM.SET(dlg, "TEXT", "Replace")
+    ELSE
+        FORM.SET(dlg, "TEXT", "Find")
+    ENDIF
+    DIM sel AS STRING = FORM.GET(txt, "SELTEXT")
+    IF sel <> "" ANDALSO INSTR(sel, LF) < 0 THEN FORM.SET(txtFind, "TEXT", sel)
+    FORM.SHOW(dlg)
+    FORM.SET(txtFind, "FOCUS")
+ENDSUB
+
+' ── zoom ────────────────────────────────────────────────────────
+
+SUB SET_ZOOM(pct AS INTEGER)
+    IF pct < 10 THEN pct = 10
+    IF pct > 500 THEN pct = 500
+    zoom_pct = pct
+    FORM.SET(txt, "ZOOM", pct)
+    UPDATE_STATUS()
+ENDSUB
+
+' ── main window events ──────────────────────────────────────────
+
+SUB MAIN_LOAD(e)
+    FORM.SET(txt, "FOCUS")
+    UPDATE_STATUS()
+ENDSUB
+
+SUB MAIN_RESIZE(e)
+    client_w = e[0]{"width"}
+    client_h = e[0]{"height"}
+    LAYOUT()
+ENDSUB
+
+SUB MAIN_UNLOAD(e)
+    IF NOT CONFIRM_DISCARD() THEN
+        e[0]{"cancel"} = TRUE
+        RETURN
+    ENDIF
+    quitting = 1
+    FORM.CLOSE(dlg)
+ENDSUB
+
+SUB OPEN_DROPPED(e)
+    IF NOT CONFIRM_DISCARD() THEN RETURN
+    LOAD_DOC(e[0]{"files"}[0])
+ENDSUB
+
+SUB MAIN_DROPFILES(e)
+    OPEN_DROPPED(e)
+ENDSUB
+
+SUB TXT_DROPFILES(e)
+    OPEN_DROPPED(e)
+ENDSUB
+
+SUB TXT_CHANGE(e)
+    IF quitting THEN RETURN
+    doc_chars = CHAR_COUNT(FORM.GET(txt, "TEXT"))
+    UPDATE_TITLE()
+    UPDATE_STATUS()
+ENDSUB
+
+SUB TXT_KEYUP(e)
+    IF quitting THEN RETURN
+    UPDATE_STATUS()
+ENDSUB
+
+SUB TXT_MOUSEUP(e)
+    IF quitting THEN RETURN
+    UPDATE_STATUS()
+ENDSUB
+
+SUB TXT_GOTFOCUS(e)
+    IF quitting THEN RETURN
+    CHECK_DISK()
+ENDSUB
+
+' Ctrl+wheel zooms inside the control; the status bar follows it here.
+SUB TMRZOOM_TICK(e)
+    IF quitting THEN RETURN
+    DIM z AS INTEGER = CINT(FORM.GET(txt, "ZOOM"))
+    IF z <> zoom_pct THEN
+        zoom_pct = z
+        UPDATE_STATUS()
+    ENDIF
+ENDSUB
+
+' ── File ────────────────────────────────────────────────────────
+
+SUB MNUNEW_CLICK(e)
+    IF CONFIRM_DISCARD() THEN NEW_DOC()
+ENDSUB
+
+SUB MNUOPEN_CLICK(e)
+    IF NOT CONFIRM_DISCARD() THEN RETURN
+    DIM path AS STRING = FILEOPEN$(TXT_FILTER, "Open")
+    IF path <> "" THEN LOAD_DOC(path)
+ENDSUB
+
+SUB OPEN_RECENT(n AS INTEGER)
+    IF n > LEN(recent) THEN RETURN
+    DIM path AS STRING = recent[n - 1]
+    IF NOT FILE.EXISTS(path) THEN
+        MSGBOX("Cannot find " + path + ". It is removed from the list.", 48, APP_NAME)
+        DIM kept AS ARRAY = []
+        DIM i AS INTEGER = 0
+        FOR i = 0 TO LEN(recent) - 1
+            IF i <> n - 1 THEN kept = APPEND(kept, recent[i])
+        NEXT
+        recent = kept
+        SAVE_RECENT()
+        BUILD_MENU()
+        RETURN
+    ENDIF
+    IF CONFIRM_DISCARD() THEN LOAD_DOC(path)
+ENDSUB
+
+SUB MNURECENT1_CLICK(e)
+    OPEN_RECENT(1)
+ENDSUB
+
+SUB MNURECENT2_CLICK(e)
+    OPEN_RECENT(2)
+ENDSUB
+
+SUB MNURECENT3_CLICK(e)
+    OPEN_RECENT(3)
+ENDSUB
+
+SUB MNURECENT4_CLICK(e)
+    OPEN_RECENT(4)
+ENDSUB
+
+SUB MNURECENT5_CLICK(e)
+    OPEN_RECENT(5)
+ENDSUB
+
+SUB MNURECENT6_CLICK(e)
+    OPEN_RECENT(6)
+ENDSUB
+
+SUB MNURECENT7_CLICK(e)
+    OPEN_RECENT(7)
+ENDSUB
+
+SUB MNURECENT8_CLICK(e)
+    OPEN_RECENT(8)
+ENDSUB
+
+SUB MNURECENTCLEAR_CLICK(e)
+    recent = []
+    SAVE_RECENT()
+    BUILD_MENU()
+ENDSUB
+
+SUB MNUSAVE_CLICK(e)
+    SAVE_DOC()
+ENDSUB
+
+SUB MNUSAVEAS_CLICK(e)
+    SAVE_AS()
+ENDSUB
+
+SUB SET_ENCODING(enc AS STRING)
+    IF enc = file_enc THEN RETURN
+    file_enc = enc
+    FORM.SET(txt, "MODIFIED", TRUE)
+    MENU_CHECKS()
+    UPDATE_TITLE()
+    UPDATE_STATUS()
+ENDSUB
+
+SUB MNUENCUTF8_CLICK(e)
+    SET_ENCODING("utf-8")
+ENDSUB
+
+SUB MNUENCUTF8BOM_CLICK(e)
+    SET_ENCODING("utf-8-bom")
+ENDSUB
+
+SUB MNUENCUTF16LE_CLICK(e)
+    SET_ENCODING("utf-16le")
+ENDSUB
+
+SUB MNUENCUTF16BE_CLICK(e)
+    SET_ENCODING("utf-16be")
+ENDSUB
+
+SUB MNUENCANSI_CLICK(e)
+    SET_ENCODING("cp1252")
+ENDSUB
+
+SUB SET_EOL(eol AS STRING)
+    IF eol = file_eol THEN RETURN
+    file_eol = eol
+    FORM.SET(txt, "MODIFIED", TRUE)
+    MENU_CHECKS()
+    UPDATE_TITLE()
+    UPDATE_STATUS()
+ENDSUB
+
+SUB MNUEOLCRLF_CLICK(e)
+    SET_EOL(CRLF)
+ENDSUB
+
+SUB MNUEOLLF_CLICK(e)
+    SET_EOL(LF)
+ENDSUB
+
+SUB MNUPAGESETUP_CLICK(e)
+    FORM.PAGESETUP()
+ENDSUB
+
+SUB MNUPRINT_CLICK(e)
+    TRY
+        FORM.PRINT(FORM.GET(txt, "TEXT"), DOC_NAME$(), {"name": font_face, "size": font_size})
+    CATCH
+        MSGBOX("Printing failed." + CRLF + ERRMSG$, 16, APP_NAME)
+    ENDTRY
+ENDSUB
+
+SUB MNUEXIT_CLICK(e)
+    FORM.CLOSE(frm)
+ENDSUB
+
+' ── Edit ────────────────────────────────────────────────────────
+
+SUB MNUUNDO_CLICK(e)
+    FORM.SET(txt, "UNDO", TRUE)
+ENDSUB
+
+SUB MNUREDO_CLICK(e)
+    FORM.SET(txt, "REDO", TRUE)
+ENDSUB
+
+SUB MNUCUT_CLICK(e)
+    FORM.SET(txt, "CUT", TRUE)
+ENDSUB
+
+SUB MNUCOPY_CLICK(e)
+    FORM.SET(txt, "COPY", TRUE)
+ENDSUB
+
+SUB MNUPASTE_CLICK(e)
+    FORM.SET(txt, "PASTE", TRUE)
+ENDSUB
+
+SUB MNUDELETE_CLICK(e)
+    FORM.SET(txt, "SELTEXT", "")
+ENDSUB
+
+SUB MNUFIND_CLICK(e)
+    SHOW_FIND(FALSE)
+ENDSUB
+
+SUB MNUFINDNEXT_CLICK(e)
+    FIND_IN(FALSE)
+ENDSUB
+
+SUB MNUFINDPREV_CLICK(e)
+    FIND_IN(TRUE)
+ENDSUB
+
+SUB MNUFINDSEL_CLICK(e)
+    DIM sel AS STRING = FORM.GET(txt, "SELTEXT")
+    IF sel <> "" ANDALSO INSTR(sel, LF) < 0 THEN FORM.SET(txtFind, "TEXT", sel)
+    FIND_IN(FALSE)
+ENDSUB
+
+SUB MNUREPLACE_CLICK(e)
+    SHOW_FIND(TRUE)
+ENDSUB
+
+SUB MNUGOTO_CLICK(e)
+    DIM answer AS STRING = INPUTBOX$("Line number:", "Go To Line", STR$(FORM.GET(txt, "CARETLINE")))
+    IF answer = "" THEN RETURN
+    DIM target AS INTEGER = CINT(VAL(answer))
+    DIM lines AS ARRAY = SPLIT(FORM.GET(txt, "TEXT"), LF)
+    IF target < 1 ORELSE target > LEN(lines) THEN
+        MSGBOX("The line number is beyond the total number of lines", 64, APP_NAME + " - Go To Line")
+        RETURN
+    ENDIF
+    ' each line keeps its CR, so line + LF covers the full stride
+    DIM offset AS INTEGER = 0
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO target - 2
+        offset = offset + LEN(lines[i]) + 1
+    NEXT
+    FORM.SET(txt, "SELSTART", offset)
+    UPDATE_STATUS()
+ENDSUB
+
+SUB MNUSELALL_CLICK(e)
+    FORM.SET(txt, "SELSTART", 0)
+    FORM.SET(txt, "SELLENGTH", LEN(FORM.GET(txt, "TEXT")))
+    UPDATE_STATUS()
+ENDSUB
+
+SUB MNUTIMEDATE_CLICK(e)
+    FORM.SET(txt, "SELTEXT", TIME$() + " " + DATE$())
+ENDSUB
+
+' ── Format ──────────────────────────────────────────────────────
+
+SUB MNUWRAP_CLICK(e)
+    wrap_on = 1 - wrap_on
+    FORM.SET(txt, "WORDWRAP", wrap_on)
+    MENU_CHECKS()
+ENDSUB
+
+SUB MNUFONT_CLICK(e)
+    DIM picked AS STRING = FONTDIALOG$(font_face, font_size)
+    IF picked = "" THEN RETURN
+    DIM parts AS ARRAY = SPLIT(picked, ",")
+    font_face = parts[0]
+    font_size = CINT(VAL(parts[1]))
+    font_bold = 0
+    font_italic = 0
+    IF parts[2] = "1" THEN font_bold = 1
+    IF parts[3] = "1" THEN font_italic = 1
+    APPLY_FONT()
+ENDSUB
+
+SUB SET_TAB_WIDTH(n AS INTEGER)
+    tab_w = n
+    FORM.SET(txt, "TABWIDTH", n)
+    MENU_CHECKS()
+ENDSUB
+
+SUB MNUTAB2_CLICK(e)
+    SET_TAB_WIDTH(2)
+ENDSUB
+
+SUB MNUTAB4_CLICK(e)
+    SET_TAB_WIDTH(4)
+ENDSUB
+
+SUB MNUTAB8_CLICK(e)
+    SET_TAB_WIDTH(8)
+ENDSUB
+
+SUB MNUSPELL_CLICK(e)
+    spell_on = 1 - spell_on
+    FORM.SET(txt, "SPELLCHECK", spell_on)
+    MENU_CHECKS()
+ENDSUB
+
+' ── View / Help ─────────────────────────────────────────────────
+
+SUB MNUZOOMIN_CLICK(e)
+    SET_ZOOM(zoom_pct + 10)
+ENDSUB
+
+SUB MNUZOOMOUT_CLICK(e)
+    SET_ZOOM(zoom_pct - 10)
+ENDSUB
+
+SUB MNUZOOMRESET_CLICK(e)
+    SET_ZOOM(100)
+ENDSUB
+
+SUB MNUSTATUS_CLICK(e)
+    status_on = 1 - status_on
+    FORM.SET(sb, "VISIBLE", status_on)
+    LAYOUT()
+    MENU_CHECKS()
+ENDSUB
+
+SUB MNUDARK_CLICK(e)
+    dark_on = 1 - dark_on
+    FORM.SET(frm, "DARKMODE", dark_on)
+    APPLY_COLORS()
+    MENU_CHECKS()
+ENDSUB
+
+SUB MNUABOUT_CLICK(e)
+    MSGBOX(APP_NAME + CRLF + CRLF + "A plain-text editor written in jdBasic" + CRLF + "on native Windows forms.", 64, "About " + APP_NAME)
+ENDSUB
+
+' ── Find / Replace window ───────────────────────────────────────
+
+SUB FINDDLG_UNLOAD(e)
+    IF quitting = 0 THEN
+        e[0]{"cancel"} = TRUE
+        FORM.SET(dlg, "VISIBLE", FALSE)
+    ENDIF
+ENDSUB
+
+SUB BTNFINDNEXT_CLICK(e)
+    FIND_IN(FORM.GET(optUp, "CHECKED"))
+ENDSUB
+
+SUB BTNREPLACE_CLICK(e)
+    DIM needle AS STRING = FORM.GET(txtFind, "TEXT")
+    IF needle = "" THEN RETURN
+    IF SELECTION_MATCHES(needle) THEN FORM.SET(txt, "SELTEXT", FORM.GET(txtRepl, "TEXT"))
+    FIND_IN(FORM.GET(optUp, "CHECKED"))
+ENDSUB
+
+' Rebuilds the text and swaps it in through SELTEXT, so one Undo restores it.
+SUB BTNREPLACEALL_CLICK(e)
+    DIM needle AS STRING = FORM.GET(txtFind, "TEXT")
+    IF needle = "" THEN RETURN
+    DIM src AS STRING = FORM.GET(txt, "TEXT")
+    DIM repl AS STRING = FORM.GET(txtRepl, "TEXT")
+    DIM hay AS STRING = src
+    IF NOT FORM.GET(chkCase, "CHECKED") THEN
+        hay = UCASE$(src)
+        needle = UCASE$(needle)
+    ENDIF
+    DIM rebuilt AS STRING = ""
+    DIM done_to AS INTEGER = 0
+    DIM hits AS INTEGER = 0
+    DIM hit AS INTEGER = NEXT_HIT(hay, needle, 0)
+    DO WHILE hit >= 0
+        rebuilt = rebuilt + MID$(src, done_to, hit - done_to) + repl
+        done_to = hit + LEN(needle)
+        hits = hits + 1
+        hit = NEXT_HIT(hay, needle, done_to)
+    LOOP
+    IF hits = 0 THEN
+        MSGBOX("Cannot find " + CHR$(34) + FORM.GET(txtFind, "TEXT") + CHR$(34), 64, APP_NAME)
+        RETURN
+    ENDIF
+    rebuilt = rebuilt + MID$(src, done_to, LEN(src) - done_to)
+    FORM.SET(txt, "SELSTART", 0)
+    FORM.SET(txt, "SELLENGTH", LEN(src))
+    FORM.SET(txt, "SELTEXT", rebuilt)
+    FORM.SET(txt, "SELSTART", 0)
+    UPDATE_STATUS()
+ENDSUB
+
+SUB BTNCANCEL_CLICK(e)
+    FORM.SET(dlg, "VISIBLE", FALSE)
+    FORM.SET(txt, "FOCUS")
+ENDSUB
+
+' ── build the windows ───────────────────────────────────────────
+
+LOAD_RECENT()
+frm = FORM.CREATE("Untitled - " + APP_NAME, client_w, client_h, "MAIN")
+
+txt = FORM.RICHTEXT(frm, "txt", 0, 0, client_w, client_h - SB_HEIGHT)
+FORM.SET(txt, "PLAINTEXT", TRUE)
+FORM.SET(txt, "MAXLENGTH", 0)
+FORM.SET(txt, "WORDWRAP", FALSE)
+FORM.SET(txt, "HIDESELECTION", FALSE)
+FORM.SET(txt, "ACCEPTSTAB", TRUE)
+FORM.SET(txt, "SPELLCHECK", TRUE)
+FORM.SET(txt, "DROPFILES", TRUE)
+FORM.SET(frm, "DROPFILES", TRUE)
+APPLY_FONT()
+FORM.SET(txt, "TABWIDTH", tab_w)
+sb = FORM.STATUSBAR(frm, "sb", [140, 180, 60, 120, -1])
+BUILD_MENU()
+FORM.TIMER(frm, "tmrZoom", 400)
+
+dlg = FORM.CREATE("Find", 430, 150, "FINDDLG")
+FORM.SET(dlg, "BORDERSTYLE", 3)
+FORM.SET(dlg, "OWNER", frm)
+FORM.LABEL(dlg, "lblFind", "Fi&nd what:", 10, 14, 80, 18)
+txtFind = FORM.TEXTBOX(dlg, "txtFind", "", 92, 10, 220, 22)
+lblRepl = FORM.LABEL(dlg, "lblRepl", "Re&place with:", 10, 42, 80, 18)
+txtRepl = FORM.TEXTBOX(dlg, "txtRepl", "", 92, 38, 220, 22)
+chkCase = FORM.CHECKBOX(dlg, "chkCase", "Match &case", 10, 72, 130, 20)
+chkWord = FORM.CHECKBOX(dlg, "chkWord", "Match &whole word", 10, 96, 130, 20)
+chkWrap = FORM.CHECKBOX(dlg, "chkWrap", "Wrap ar&ound", 10, 120, 130, 20)
+FORM.SET(chkWrap, "CHECKED", TRUE)
+FORM.FRAME(dlg, "fraDir", "Direction", 160, 72, 152, 52)
+optUp = FORM.RADIO(dlg, "optUp", "&Up", 172, 94, 60, 20, TRUE)
+DIM optDown AS DOUBLE = FORM.RADIO(dlg, "optDown", "&Down", 238, 94, 66, 20)
+FORM.SET(optDown, "CHECKED", TRUE)
+FORM.BUTTON(dlg, "btnFindNext", "&Find Next", 326, 9, 94, 26)
+btnRepl = FORM.BUTTON(dlg, "btnReplace", "&Replace", 326, 39, 94, 26)
+btnAll = FORM.BUTTON(dlg, "btnReplaceAll", "Replace &All", 326, 69, 94, 26)
+FORM.BUTTON(dlg, "btnCancel", "Cancel", 326, 115, 94, 26)
+
+DIM args AS ARRAY = OS.ARGS()
+IF LEN(args) > 1 THEN LOAD_DOC(args[1])
+UPDATE_TITLE()
+
+FORM.RUN(frm)

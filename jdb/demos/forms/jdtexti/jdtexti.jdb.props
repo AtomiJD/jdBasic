@@ -1,0 +1,9 @@
+# EXE properties for jdtexti.exe (jdbasic -c jdtexti.jdb)
+FileVersion      = 1.0.0.0
+ProductVersion   = 1.0.0.0
+FileDescription  = jdTexti text editor
+ProductName      = jdTexti
+LegalCopyright   = Written in jdBasic
+OriginalFilename = jdtexti.exe
+Icon             = jdtexti.ico
+Subsystem        = Windows
