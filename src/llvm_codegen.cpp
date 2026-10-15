@@ -7458,7 +7458,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     // pun-storing the i64 handle into an i8* slot. Same shape as the
     // codegen_let_or_assign path; necessary for `DIM r$ = AWAIT task` and
     // similar VM-handle-yielding ASYNC FUNC results.
-    if (vi && vi->tag == JD_TAG_STR && rhs.tag == JD_TAG_VM_HANDLE) {
+    if (rhs.tag == JD_TAG_VM_HANDLE &&
+        ((vi && vi->tag == JD_TAG_STR) || (!vi && stmt.var_type == VarType::STRING))) {
         auto* vts = get_runtime_func("__jdrt_val_to_str");
         if (vts) {
             LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
@@ -14949,6 +14950,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         for (size_t i = 0; i < expr.args.size() && i < pc && i < arg_cache.size(); i++)
             if (arg_cache[i].tag == JD_TAG_VM_HANDLE && pts[i] == i8_ptr_type)
                 handle_into_ptr = true;
+    }
+    // The encoding aliases exist only as direct bindings; the bridge knows
+    // the user-facing names, which take the encoding as a tail argument.
+    if (handle_into_ptr) {
+        if (upper == "__TXTREADER_ENC") upper = "TXTREADER$";
+        else if (upper == "__TXTWRITER_ENC") upper = "TXTWRITER";
     }
     if (rit != runtime_funcs.end() && !handle_into_ptr &&
         expr.args.size() <= LLVMCountParamTypes(rit->second.fn_type)) {

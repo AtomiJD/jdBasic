@@ -1,0 +1,77 @@
+' ============================================================
+' Regression: VM-handle values landing in STRING slots under -c,
+' and the TXTENCODING$ / utf-8-bom file round trip
+' ============================================================
+' Self-checking. Each failure prints [FAIL].
+'
+' Covers:
+'   1. `DIM s AS STRING = <handle-returning builtin>` inside a FUNC holds a
+'      string, also when a branch may assign it a literal afterwards.
+'   2. TXTWRITER with an encoding takes a handle-valued content argument.
+'   3. TXTENCODING$ names what TXTREADER$/TXTWRITER take, and utf-8-bom
+'      writes and strips the byte order mark.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+DIM Q AS STRING = CHR$(34)
+
+SUB CHECK_STR(name$, expected AS STRING, actual AS STRING)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected=["; expected; "]  actual=["; actual; "]"
+    ENDIF
+ENDSUB
+
+FUNC PARSED_KEPT$(swap AS INTEGER)
+    DIM s AS STRING = JSON.PARSE(Q + "abc" + Q)
+    IF swap THEN s = "x"
+    RETURN s
+ENDFUNC
+
+FUNC PARSED_LEN(swap AS INTEGER)
+    DIM s AS STRING = JSON.PARSE(Q + "hello" + Q)
+    IF swap THEN s = "x"
+    RETURN LEN(s)
+ENDFUNC
+
+SUB WRITE_PARSED(path AS STRING)
+    TXTWRITER path, JSON.PARSE(Q + "Grüe" + Q), FALSE, "cp1252"
+ENDSUB
+
+CHECK_STR("handle kept when branch not taken", "abc", PARSED_KEPT$(0))
+CHECK_STR("literal when branch taken", "x", PARSED_KEPT$(1))
+CHECK_STR("LEN of handle-initialised string", "5", STR$(PARSED_LEN(0)))
+CHECK_STR("LEN after reassignment", "1", STR$(PARSED_LEN(1)))
+
+DIM ansi_path AS STRING = MKTEMP$("encA") + ".txt"
+WRITE_PARSED(ansi_path)
+CHECK_STR("cp1252 file detected", "cp1252", TXTENCODING$(ansi_path))
+CHECK_STR("cp1252 file decoded", "Grüe", TXTREADER$(ansi_path, TXTENCODING$(ansi_path)))
+
+DIM bom_path AS STRING = MKTEMP$("encB") + ".txt"
+TXTWRITER bom_path, "abc", FALSE, "utf-8-bom"
+CHECK_STR("utf-8-bom detected", "utf-8-bom", TXTENCODING$(bom_path))
+CHECK_STR("utf-8-bom stripped on read", "abc", TXTREADER$(bom_path, "utf-8-bom"))
+CHECK_STR("BOM kept by plain read", "6", STR$(LEN(TXTREADER$(bom_path))))
+
+DIM u8_path AS STRING = MKTEMP$("encC") + ".txt"
+TXTWRITER u8_path, "Grüe"
+CHECK_STR("utf-8 detected", "utf-8", TXTENCODING$(u8_path))
+
+DIM u16_path AS STRING = MKTEMP$("encD") + ".txt"
+TXTWRITER u16_path, CHR$(65279) + "abc", FALSE, "utf-16le"
+CHECK_STR("utf-16le detected", "utf-16le", TXTENCODING$(u16_path))
+CHECK_STR("utf-16le decoded", "abc", TXTREADER$(u16_path, "utf-16le"))
+
+KILL ansi_path
+KILL bom_path
+KILL u8_path
+KILL u16_path
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+IF FAIL_COUNT = 0 THEN PRINT "ALL TESTS PASSED!"

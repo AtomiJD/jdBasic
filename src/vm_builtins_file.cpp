@@ -98,6 +98,17 @@ void VM::register_file_builtins() {
         return Value::make_string(jdb_enc::decode_to_utf8(ss.str(), encoding));
     });
 
+    register_native("TXTENCODING$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string fname = args[0].as_string()->data;
+        if (path_is_directory(fname))
+            throw std::runtime_error("Cannot open file: " + fname + " is a directory");
+        std::ifstream f(fname, std::ios::binary);
+        if (!f) throw std::runtime_error("Cannot open file: " + fname);
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        return Value::make_string(jdb_enc::detect_encoding(ss.str()));
+    });
+
     register_native("TXTWRITER", 2, 4, [](const std::vector<Value>& args) -> Value {
         std::string fname = args[0].as_string()->data;
         std::string content = args[1].as_string()->data;

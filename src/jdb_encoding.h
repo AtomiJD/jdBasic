@@ -32,6 +32,7 @@ inline int codepage_id(const std::string& enc) {
         n.push_back((c >= 'A' && c <= 'Z') ? char(c + 32) : c);
     }
     if (n == "utf8" || n == "ascii" || n == "usascii") return 0;
+    if (n == "utf8bom" || n == "utf8sig") return -4;
     if (n == "cp1252" || n == "windows1252" || n == "1252" ||
         n == "iso88591" || n == "latin1") return 1252;
     if (n == "cp850" || n == "ibm850" || n == "850") return 850;
@@ -141,9 +142,44 @@ inline int sniff_utf16(const std::string& b) {
     return 0;
 }
 
+inline bool has_utf8_bom(const std::string& b) {
+    return b.size() >= 3 && (unsigned char)b[0] == 0xEF &&
+           (unsigned char)b[1] == 0xBB && (unsigned char)b[2] == 0xBF;
+}
+
+inline bool valid_utf8(const std::string& s) {
+    size_t i = 0, n = s.size();
+    while (i < n) {
+        unsigned char c = (unsigned char)s[i];
+        size_t need;
+        if (c < 0x80) need = 0;
+        else if ((c >> 5) == 0x6) need = 1;
+        else if ((c >> 4) == 0xE) need = 2;
+        else if ((c >> 3) == 0x1E) need = 3;
+        else return false;
+        if (i + need >= n && need > 0) return false;
+        for (size_t k = 1; k <= need; k++)
+            if (((unsigned char)s[i + k] >> 6) != 0x2) return false;
+        i += need + 1;
+    }
+    return true;
+}
+
+// Notepad's guess: a BOM decides, then UTF-16 by its NUL pattern, then
+// well-formed UTF-8; anything else is taken as the Windows ANSI codepage.
+inline std::string detect_encoding(const std::string& b) {
+    if (has_utf8_bom(b)) return "utf-8-bom";
+    int u16 = sniff_utf16(b);
+    if (u16 == 1) return "utf-16le";
+    if (u16 == 2) return "utf-16be";
+    if (valid_utf8(b)) return "utf-8";
+    return "cp1252";
+}
+
 // Decode bytes (in `encoding`) -> UTF-8. Empty/utf-8 pass through.
 inline std::string decode_to_utf8(const std::string& bytes, const std::string& encoding) {
     int cp = codepage_id(encoding);
+    if (cp == -4) return has_utf8_bom(bytes) ? bytes.substr(3) : bytes;
     if (cp == -2) return utf16_to_utf8(bytes, false);
     if (cp == -3) return utf16_to_utf8(bytes, true);
     if (cp == -1) throw std::runtime_error("unknown encoding: " + encoding);
@@ -174,6 +210,7 @@ inline std::string decode_to_utf8(const std::string& bytes, const std::string& e
 // Encode UTF-8 -> bytes (in `encoding`). Empty/utf-8 pass through.
 inline std::string encode_from_utf8(const std::string& utf8, const std::string& encoding) {
     int cp = codepage_id(encoding);
+    if (cp == -4) return std::string("\xEF\xBB\xBF") + utf8;
     if (cp == -2) return utf8_to_utf16(utf8, false);
     if (cp == -3) return utf8_to_utf16(utf8, true);
     if (cp == -1) throw std::runtime_error("unknown encoding: " + encoding);
