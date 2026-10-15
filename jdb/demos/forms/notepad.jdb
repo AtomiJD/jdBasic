@@ -476,6 +476,7 @@ FORM.MENU(frm, [ _
 txt = FORM.TEXTBOX(frm, "txt", "", 0, 0, client_w, client_h - SB_HEIGHT, TRUE)
 FORM.SET(txt, "MAXLENGTH", 0)
 FORM.SET(txt, "WORDWRAP", FALSE)
+FORM.SET(txt, "HIDESELECTION", FALSE)
 FORM.SET(txt, "DROPFILES", TRUE)
 FORM.SET(frm, "DROPFILES", TRUE)
 APPLY_FONT()

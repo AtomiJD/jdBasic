@@ -1265,16 +1265,12 @@ void edit_setsel(HWND h, DWORD a, DWORD b) {
     SendMessageW(h, EM_SCROLLCARET, 0, 0);
 }
 
-// A multiline EDIT fixes word wrap at creation, so toggling it rebuilds the
-// window under the same handle, carrying text, selection, font and flags.
-void edit_rewrap(int handle, FormsItem& it, bool wrap) {
+// An EDIT fixes word wrap and selection hiding at creation, so changing
+// either rebuilds the window under the same handle, carrying text,
+// selection, font and flags.
+void edit_rebuild(int handle, FormsItem& it, LONG_PTR style) {
     HWND old = it.hwnd;
-    LONG_PTR style = GetWindowLongPtrW(old, GWL_STYLE);
-    if (!(style & ES_MULTILINE)) return;
-    bool wrapped = !(style & ES_AUTOHSCROLL);
-    if (wrapped == wrap) return;
-    if (wrap) style &= ~(LONG_PTR)(ES_AUTOHSCROLL | WS_HSCROLL);
-    else      style |= ES_AUTOHSCROLL | WS_HSCROLL;
+    if (style == GetWindowLongPtrW(old, GWL_STYLE)) return;
     HWND parent = GetParent(old);
     RECT rc;
     GetWindowRect(old, &rc);
@@ -1291,7 +1287,7 @@ void edit_rewrap(int handle, FormsItem& it, bool wrap) {
                                rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
                                parent, (HMENU)(INT_PTR)GetDlgCtrlID(old),
                                GetModuleHandleW(nullptr), nullptr);
-    if (!ctl) throw std::runtime_error("FORM.SET: WORDWRAP could not rebuild '" + it.name + "'");
+    if (!ctl) throw std::runtime_error("FORM.SET: could not rebuild '" + it.name + "'");
     SendMessageW(ctl, WM_SETFONT, (WPARAM)font, FALSE);
     SendMessageW(ctl, EM_SETLIMITTEXT, (WPARAM)limit, 0);
     SendMessageW(ctl, EM_SETMODIFY, modified, 0);
@@ -1328,7 +1324,18 @@ bool edit_set_prop(int handle, FormsItem& it, const std::string& prop, const Val
     } else if (prop == "MODIFIED") {
         SendMessageW(h, EM_SETMODIFY, v.to_bool() ? TRUE : FALSE, 0);
     } else if (prop == "WORDWRAP" && it.kind == "TEXTBOX") {
-        edit_rewrap(handle, it, v.to_bool());
+        LONG_PTR style = GetWindowLongPtrW(h, GWL_STYLE);
+        if (!(style & ES_MULTILINE)) return true;
+        if (v.to_bool()) style &= ~(LONG_PTR)(ES_AUTOHSCROLL | WS_HSCROLL);
+        else             style |= ES_AUTOHSCROLL | WS_HSCROLL;
+        edit_rebuild(handle, it, style);
+    } else if (prop == "HIDESELECTION" && it.kind == "TEXTBOX") {
+        LONG_PTR style = GetWindowLongPtrW(h, GWL_STYLE);
+        if (v.to_bool()) style &= ~(LONG_PTR)ES_NOHIDESEL;
+        else             style |= ES_NOHIDESEL;
+        edit_rebuild(handle, it, style);
+    } else if (prop == "HIDESELECTION") {
+        SendMessageW(h, EM_HIDESELECTION, v.to_bool() ? TRUE : FALSE, 0);
     } else {
         return false;
     }
@@ -1351,6 +1358,8 @@ bool edit_get_prop(FormsItem& it, const std::string& prop, Value& out) {
     } else if (prop == "WORDWRAP") {
         LONG_PTR s = GetWindowLongPtrW(h, GWL_STYLE);
         out = Value::make_bool((s & ES_MULTILINE) && !(s & ES_AUTOHSCROLL));
+    } else if (prop == "HIDESELECTION" && it.kind == "TEXTBOX") {
+        out = Value::make_bool((GetWindowLongPtrW(h, GWL_STYLE) & ES_NOHIDESEL) == 0);
     } else if (prop == "LINECOUNT") {
         out = Value::make_i64((int64_t)SendMessageW(h, EM_GETLINECOUNT, 0, 0));
     } else if (prop == "CARETLINE" || prop == "CARETCOL") {
