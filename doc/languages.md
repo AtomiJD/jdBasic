@@ -1586,6 +1586,7 @@ keys:
 | `OriginalFilename` | Filename the binary was originally built as.            |
 | `InternalName`     | Internal name. Defaults to `OriginalFilename`.          |
 | `Icon`             | `.ico` file embedded as the EXE icon (resource 101, which forms windows show too); a relative path is looked up next to the source first. |
+| `Subsystem`        | `Windows` links a GUI program: no console window opens when it starts (a forms app wants this). Default `Console`. |
 
 Example `myprog.jdb.props`:
 

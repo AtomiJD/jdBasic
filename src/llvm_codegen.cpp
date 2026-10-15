@@ -17064,7 +17064,8 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     std::string link_cmd =
         "cmd /c \"\"" + link_exe + "\" "
         "/NOLOGO /OUT:\"" + exe_path + "\" "
-        "/SUBSYSTEM:CONSOLE "
+        + std::string(gui_subsystem ? "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup "
+                                    : "/SUBSYSTEM:CONSOLE ")
         + manifest_arg +
         "\"" + obj_path + "\" "
         "\"" + runtime_obj + "\" "
@@ -17218,6 +17219,9 @@ std::string LLVMCodegen::generate_version_resource(const std::string& source_pat
     std::string original_name   = get("OriginalFilename", "");
     std::string internal_name   = get("InternalName",     original_name.c_str());
     std::string icon_path       = get("Icon",             "");
+    std::string subsystem       = get("Subsystem",        "console");
+    std::transform(subsystem.begin(), subsystem.end(), subsystem.begin(), ::tolower);
+    gui_subsystem = subsystem == "windows";
     // A relative icon path is read from the source's folder first, then from
     // the working directory; rc.exe gets it absolute either way.
     if (!icon_path.empty()) {

@@ -1,0 +1,3 @@
+# The compiled test checks that this links a GUI exe.
+FileDescription = Subsystem sidecar test
+Subsystem       = Windows

@@ -1,0 +1,31 @@
+' "Subsystem = Windows" in the .jdb.props sidecar links a GUI exe: no
+' console window opens when it starts. The compiled program reads its own
+' PE header; the interpreter has no exe to read and only checks the sidecar.
+OPTION "EXPLICIT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK(ok AS INTEGER, what AS STRING)
+    IF ok THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; what
+    ENDIF
+ENDSUB
+
+IF OS.FEATURE("INTERPRETER") THEN
+    DIM props AS STRING = TXTREADER$(OS.ARGS()[0] + ".props")
+    CHECK(INSTR(props, "Subsystem") >= 0, "sidecar asks for a subsystem")
+ELSE
+    DIM exe AS STRING = BINREADER$(OS.ARGS()[0])
+    DIM pe AS INTEGER = CINT(UNPACK("<i", exe, 60)[0])
+    CHECK(MID$(exe, pe, 4) = "PE" + CHR$(0) + CHR$(0), "PE signature")
+    ' IMAGE_OPTIONAL_HEADER64.Subsystem sits 68 bytes into the optional header
+    DIM subsystem AS INTEGER = CINT(UNPACK("<s", exe, pe + 24 + 68)[0])
+    CHECK(subsystem = 2, "linked for the Windows GUI subsystem, got " + STR$(subsystem))
+ENDIF
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+IF FAIL_COUNT = 0 THEN PRINT "ALL TESTS PASSED!"

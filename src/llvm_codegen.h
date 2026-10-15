@@ -591,6 +591,8 @@ private:
     // no props file was found / generation failed.
     std::string generate_version_resource(const std::string& source_path,
                                           const std::string& obj_path);
+    // "Subsystem = Windows" in the .props: link a GUI exe, no console window.
+    bool gui_subsystem = false;
 };
 
 // RAII scope guards for the transient codegen-hint members. A guard saves
