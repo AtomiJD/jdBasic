@@ -12,17 +12,20 @@
 #endif
 #include <windows.h>
 #include <commctrl.h>
-#include <commdlg.h>
 #include <objbase.h>
+#include <commdlg.h>
 #include <richedit.h>
 #include <shellapi.h>
 #include <wincodec.h>
+#include <dwmapi.h>
+#include <uxtheme.h>
 
 #include <algorithm>
 #include <deque>
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <set>
 #include <unordered_set>
 #include <vector>
 
@@ -30,6 +33,9 @@
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 // Main-script directory, defined in main.cpp; relative .jdform paths
 // resolve against it like the graphics asset loaders do.
@@ -204,6 +210,9 @@ std::map<int, HBITMAP> g_pictures;        // PICTURE bitmaps
 std::map<int, int>     g_fore;        // FORECOLOR as 0xRRGGBB
 std::map<int, int>     g_back;        // BACKCOLOR as 0xRRGGBB
 std::map<int, HBRUSH>  g_back_brush;  // the brush WM_CTLCOLOR* hands back
+std::set<int>          g_accepts_tab;   // edit fields where Tab types a tab
+std::map<int, int>     g_tab_width;     // edit field -> tab width in characters
+std::set<int>          g_rich_nowrap;   // rich edits with word wrap off
 std::map<int, HFONT>   g_fonts;       // per-control FONT
 std::map<int, Value>   g_tags;        // TAG, whatever the program puts there
 std::map<int, std::string> g_ctl_tips;  // TOOLTIP text
@@ -958,12 +967,32 @@ LRESULT CALLBACK ctl_sub_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
             case WM_KILLFOCUS:   queue_event(it.name, "LOSTFOCUS", info_map(it)); break;
             case WM_KEYDOWN:     queue_key(it, "KEYDOWN", (int)wp); break;
             case WM_KEYUP:       queue_key(it, "KEYUP", (int)wp); break;
-            case WM_CHAR:        queue_key(it, "KEYPRESS", (int)wp); break;
             case WM_LBUTTONDOWN: queue_mouse(it, "MOUSEDOWN", 1, lp); break;
             case WM_LBUTTONUP:   queue_mouse(it, "MOUSEUP", 1, lp); break;
             case WM_RBUTTONDOWN: queue_mouse(it, "MOUSEDOWN", 2, lp); break;
             case WM_RBUTTONUP:   queue_mouse(it, "MOUSEUP", 2, lp); break;
             case WM_MOUSEMOVE:   queue_mouse(it, "MOUSEMOVE", 0, lp); break;
+            case WM_GETDLGCODE:
+                if (g_accepts_tab.count(hit->second)) {
+                    LRESULT code = DefSubclassProc(hwnd, msg, wp, lp);
+                    MSG* m = (MSG*)lp;
+                    bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+                    if (m && m->message == WM_KEYDOWN && m->wParam == VK_TAB && !ctrl)
+                        code |= DLGC_WANTMESSAGE;
+                    return code | DLGC_WANTTAB;
+                }
+                break;
+            case WM_CHAR:
+                // A rich edit inside a dialog keeps a plain Tab for focus
+                // moves; typed into the text here, it stays undoable.
+                if (wp == L'\t' && g_accepts_tab.count(hit->second) &&
+                    !(GetKeyState(VK_CONTROL) & 0x8000)) {
+                    queue_key(it, "KEYPRESS", (int)wp);
+                    SendMessageW(hwnd, EM_REPLACESEL, TRUE, (LPARAM)L"\t");
+                    return 0;
+                }
+                queue_key(it, "KEYPRESS", (int)wp);
+                break;
             case WM_DROPFILES:   queue_drop(it, (HDROP)wp); return 0;
             case WM_SETCURSOR: {
                 auto cur = g_cursors.find(hit->second);
@@ -1239,40 +1268,77 @@ void reset_items(HWND h, const std::string& kind, const Value& arr) {
 // ── Edit-control text surface (TEXTBOX, RICHTEXT) ───────────────
 // SELSTART/SELLENGTH count UTF-8 bytes of the TEXT property, the same units
 // LEN/INSTR/MID$ use, so a position found in the text addresses the control.
+// TEXT always carries CRLF line breaks. An EDIT counts both characters of a
+// CRLF in its positions, a rich edit counts one, so control positions go
+// through w_to_cpos/cpos_to_w on the way in and out.
 
 bool is_edit_kind(const std::string& kind) {
     return kind == "TEXTBOX" || kind == "RICHTEXT";
 }
 
+
 std::wstring edit_wtext(HWND h) {
     int len = GetWindowTextLengthW(h);
     std::wstring w(len + 1, 0);
-    if (len > 0) GetWindowTextW(h, &w[0], len + 1);
+    if (len > 0) len = GetWindowTextW(h, &w[0], len + 1);
     w.resize(len > 0 ? len : 0);
     return w;
 }
 
-int64_t u16_to_u8(const std::wstring& w, DWORD pos) {
-    if (pos > w.size()) pos = (DWORD)w.size();
+int64_t u16_to_u8(const std::wstring& w, size_t pos) {
+    if (pos > w.size()) pos = w.size();
     return (int64_t)narrow(w.substr(0, pos)).size();
 }
 
-DWORD u8_to_u16(const std::wstring& w, int64_t pos) {
+size_t u8_to_u16(const std::wstring& w, int64_t pos) {
     std::string s = narrow(w);
     if (pos < 0) pos = 0;
     if (pos > (int64_t)s.size()) pos = (int64_t)s.size();
     while (pos > 0 && pos < (int64_t)s.size() && ((unsigned char)s[pos] & 0xC0) == 0x80) pos--;
-    return (DWORD)widen(s.substr(0, (size_t)pos)).size();
+    return widen(s.substr(0, (size_t)pos)).size();
 }
 
-void edit_getsel(HWND h, DWORD& a, DWORD& b) {
-    a = b = 0;
-    SendMessageW(h, EM_GETSEL, (WPARAM)&a, (LPARAM)&b);
+DWORD w_to_cpos(bool rich, const std::wstring& w, size_t wpos) {
+    if (!rich) return (DWORD)wpos;
+    if (wpos > w.size()) wpos = w.size();
+    DWORD c = 0;
+    for (size_t i = 0; i < wpos; i++, c++)
+        if (w[i] == L'\r' && i + 1 < wpos && w[i + 1] == L'\n') i++;
+    return c;
 }
 
-void edit_setsel(HWND h, DWORD a, DWORD b) {
-    SendMessageW(h, EM_SETSEL, a, b);
-    SendMessageW(h, EM_SCROLLCARET, 0, 0);
+size_t cpos_to_w(bool rich, const std::wstring& w, DWORD cpos) {
+    if (!rich) return cpos > w.size() ? w.size() : cpos;
+    size_t i = 0;
+    for (DWORD c = 0; c < cpos && i < w.size(); c++)
+        i += (w[i] == L'\r' && i + 1 < w.size() && w[i + 1] == L'\n') ? 2 : 1;
+    return i;
+}
+
+// The selection as indices into the TEXT string (UTF-16).
+void edit_getsel(const FormsItem& it, const std::wstring& w, size_t& a, size_t& b) {
+    DWORD ca = 0, cb = 0;
+    SendMessageW(it.hwnd, EM_GETSEL, (WPARAM)&ca, (LPARAM)&cb);
+    bool rich = it.kind == "RICHTEXT";
+    a = cpos_to_w(rich, w, ca);
+    b = cpos_to_w(rich, w, cb);
+}
+
+void edit_setsel(const FormsItem& it, const std::wstring& w, size_t a, size_t b) {
+    bool rich = it.kind == "RICHTEXT";
+    SendMessageW(it.hwnd, EM_SETSEL, w_to_cpos(rich, w, a), w_to_cpos(rich, w, b));
+    SendMessageW(it.hwnd, EM_SCROLLCARET, 0, 0);
+}
+
+// Tab stops every n characters. Both controls read EM_SETTABSTOPS in dialog
+// units, four to an average character; a plain-text rich edit refuses
+// paragraph formats, so this is the one message that works for both.
+void apply_tab_width(const FormsItem& it, int handle) {
+    auto tw = g_tab_width.find(handle);
+    if (tw == g_tab_width.end()) return;
+    int du = (tw->second > 0 ? tw->second : 8) * 4;
+    SendMessageW(it.hwnd, EM_SETTABSTOPS, 1, (LPARAM)&du);
+    InvalidateRect(it.hwnd, nullptr, TRUE);
 }
 
 // An EDIT fixes word wrap and selection hiding at creation, so changing
@@ -1285,13 +1351,13 @@ void edit_rebuild(int handle, FormsItem& it, LONG_PTR style) {
     RECT rc;
     GetWindowRect(old, &rc);
     MapWindowPoints(nullptr, parent, (POINT*)&rc, 2);
-    DWORD a, b;
-    edit_getsel(old, a, b);
+    std::wstring text = edit_wtext(old);
+    size_t a, b;
+    edit_getsel(it, text, a, b);
     bool focused = GetFocus() == old;
     BOOL modified = (BOOL)SendMessageW(old, EM_GETMODIFY, 0, 0);
     LRESULT limit = SendMessageW(old, EM_GETLIMITTEXT, 0, 0);
     HFONT font = (HFONT)SendMessageW(old, WM_GETFONT, 0, 0);
-    std::wstring text = edit_wtext(old);
     HWND ctl = CreateWindowExW((DWORD)GetWindowLongPtrW(old, GWL_EXSTYLE), L"EDIT",
                                text.c_str(), (DWORD)style,
                                rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
@@ -1307,8 +1373,190 @@ void edit_rebuild(int handle, FormsItem& it, LONG_PTR style) {
     g_byhwnd[ctl] = handle;
     SetWindowSubclass(ctl, ctl_sub_proc, 1, 0);
     DestroyWindow(old);
+    apply_tab_width(it, handle);
     if (focused) SetFocus(ctl);
-    edit_setsel(ctl, a, b);
+    edit_setsel(it, text, a, b);
+}
+
+// ── Dark mode ───────────────────────────────────────────────────
+// The caption goes dark through DWM; scroll bars and other themed parts of
+// the child controls follow the Explorer dark theme. Menu bar and status
+// bar keep the light system look.
+
+std::set<int> g_dark_forms;
+
+void set_dark_mode(int handle, HWND h, bool dark) {
+    BOOL on = dark ? TRUE : FALSE;
+    // 20 = DWMWA_USE_IMMERSIVE_DARK_MODE; builds before 20H1 used 19
+    if (FAILED(DwmSetWindowAttribute(h, 20, &on, sizeof(on))))
+        DwmSetWindowAttribute(h, 19, &on, sizeof(on));
+    if (dark) g_dark_forms.insert(handle); else g_dark_forms.erase(handle);
+    for (HWND c = GetWindow(h, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
+        SetWindowTheme(c, dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    SetWindowPos(h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                 SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    RedrawWindow(h, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+}
+
+// ── Printing ────────────────────────────────────────────────────
+// Plain text on the printer the way Notepad does it: the page setup's
+// margins, the title centred in the top margin, "Page n" in the bottom one,
+// long lines wrapped at the margin and tabs expanded to every 8th column.
+
+HGLOBAL g_print_devmode = nullptr;
+HGLOBAL g_print_devnames = nullptr;
+RECT g_print_margins = { 750, 1000, 750, 1000 };   // thousandths of an inch
+
+HWND dialog_owner() {
+    HWND a = GetActiveWindow();
+    if (a) return a;
+    return g_last_form && IsWindow(g_last_form) ? g_last_form : nullptr;
+}
+
+bool do_page_setup() {
+    PAGESETUPDLGW psd = { sizeof(psd) };
+    psd.hwndOwner = dialog_owner();
+    psd.hDevMode = g_print_devmode;
+    psd.hDevNames = g_print_devnames;
+    psd.Flags = PSD_INTHOUSANDTHSOFINCHES | PSD_MARGINS;
+    psd.rtMargin = g_print_margins;
+    if (!PageSetupDlgW(&psd)) return false;
+    g_print_devmode = psd.hDevMode;
+    g_print_devnames = psd.hDevNames;
+    g_print_margins = psd.rtMargin;
+    return true;
+}
+
+std::wstring expand_tabs(const std::wstring& line) {
+    std::wstring out;
+    for (wchar_t c : line) {
+        if (c == L'\t') { do out.push_back(L' '); while (out.size() % 8); }
+        else out.push_back(c);
+    }
+    return out;
+}
+
+// Splits one source line into pieces that fit `width` device units,
+// breaking after the last space where there is one.
+std::vector<std::wstring> wrap_line(HDC dc, const std::wstring& line, int width) {
+    std::vector<std::wstring> out;
+    std::wstring rest = line;
+    while (true) {
+        int fit = 0;
+        SIZE sz;
+        GetTextExtentExPointW(dc, rest.c_str(), (int)rest.size(), width, &fit, nullptr, &sz);
+        if (fit >= (int)rest.size()) { out.push_back(rest); break; }
+        if (fit <= 0) fit = 1;
+        size_t cut = rest.rfind(L' ', fit - 1);
+        size_t take = (cut != std::wstring::npos && cut > 0) ? cut + 1 : (size_t)fit;
+        out.push_back(rest.substr(0, take));
+        rest = rest.substr(take);
+    }
+    return out;
+}
+
+HDC printer_dc(const std::wstring& printer, bool& cancelled) {
+    cancelled = false;
+    if (!printer.empty())
+        return CreateDCW(L"WINSPOOL", printer.c_str(), nullptr, nullptr);
+    PRINTDLGEXW pd = { sizeof(pd) };
+    pd.hwndOwner = dialog_owner();
+    pd.hDevMode = g_print_devmode;
+    pd.hDevNames = g_print_devnames;
+    pd.Flags = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION | PD_NOCURRENTPAGE;
+    pd.nStartPage = START_PAGE_GENERAL;
+    if (FAILED(PrintDlgExW(&pd)) || pd.dwResultAction != PD_RESULT_PRINT) {
+        if (pd.hDC) DeleteDC(pd.hDC);
+        cancelled = true;
+        return nullptr;
+    }
+    g_print_devmode = pd.hDevMode;
+    g_print_devnames = pd.hDevNames;
+    return pd.hDC;
+}
+
+bool do_print(const std::string& text, const std::string& title, const Value& font,
+              const std::string& printer, const std::string& outfile) {
+    bool cancelled = false;
+    HDC dc = printer_dc(widen(printer), cancelled);
+    if (!dc) {
+        if (cancelled) return false;
+        throw std::runtime_error("FORM.PRINT: no printer '" + printer + "'");
+    }
+    int dpx = GetDeviceCaps(dc, LOGPIXELSX), dpy = GetDeviceCaps(dc, LOGPIXELSY);
+    int offx = GetDeviceCaps(dc, PHYSICALOFFSETX), offy = GetDeviceCaps(dc, PHYSICALOFFSETY);
+    int pagew = GetDeviceCaps(dc, PHYSICALWIDTH), pageh = GetDeviceCaps(dc, PHYSICALHEIGHT);
+    int left = MulDiv(g_print_margins.left, dpx, 1000) - offx;
+    int right = pagew - MulDiv(g_print_margins.right, dpx, 1000) - offx;
+    int top = MulDiv(g_print_margins.top, dpy, 1000) - offy;
+    int bottom = pageh - MulDiv(g_print_margins.bottom, dpy, 1000) - offy;
+
+    LOGFONTW lf = {};
+    std::wstring face = L"Consolas";
+    int size = 10;
+    if (font.type == ValueType::OBJECT) {
+        auto* o = font.as_object();
+        if (Value* f = o->get("name")) face = widen(value_text(*f));
+        if (Value* z = o->get("size")) size = (int)z->to_int();
+        if (Value* b = o->get("bold")) lf.lfWeight = b->to_bool() ? FW_BOLD : FW_NORMAL;
+        if (Value* i = o->get("italic")) lf.lfItalic = i->to_bool() ? 1 : 0;
+    }
+    wcsncpy(lf.lfFaceName, face.c_str(), LF_FACESIZE - 1);
+    lf.lfHeight = -MulDiv(size, dpy, 72);
+    HFONT hf = CreateFontIndirectW(&lf);
+    HGDIOBJ old_font = SelectObject(dc, hf);
+    TEXTMETRICW tm = {};
+    GetTextMetricsW(dc, &tm);
+    int line_h = tm.tmHeight + tm.tmExternalLeading;
+
+    std::vector<std::wstring> lines;
+    std::wstring all = widen(text);
+    size_t pos = 0;
+    while (pos <= all.size()) {
+        size_t nl = all.find(L'\n', pos);
+        std::wstring one = all.substr(pos, nl == std::wstring::npos ? std::wstring::npos : nl - pos);
+        if (!one.empty() && one.back() == L'\r') one.pop_back();
+        for (auto& piece : wrap_line(dc, expand_tabs(one), right - left)) lines.push_back(piece);
+        if (nl == std::wstring::npos) break;
+        pos = nl + 1;
+    }
+
+    std::wstring wtitle = widen(title.empty() ? "Untitled" : title);
+    std::wstring wout = widen(outfile);
+    DOCINFOW di = { sizeof(di) };
+    di.lpszDocName = wtitle.c_str();
+    di.lpszOutput = wout.empty() ? nullptr : wout.c_str();
+    if (StartDocW(dc, &di) <= 0) {
+        SelectObject(dc, old_font);
+        DeleteObject(hf);
+        DeleteDC(dc);
+        throw std::runtime_error("FORM.PRINT: the printer refused the document");
+    }
+    int per_page = std::max(1, (bottom - top) / line_h);
+    int pages = std::max(1, (int)((lines.size() + per_page - 1) / per_page));
+    SetTextAlign(dc, TA_LEFT | TA_TOP);
+    for (int pg = 0; pg < pages; pg++) {
+        StartPage(dc);
+        SelectObject(dc, hf);
+        SetTextAlign(dc, TA_CENTER | TA_TOP);
+        TextOutW(dc, (left + right) / 2, std::max(0, top / 2 - line_h / 2),
+                 wtitle.c_str(), (int)wtitle.size());
+        std::wstring foot = L"Page " + std::to_wstring(pg + 1);
+        TextOutW(dc, (left + right) / 2, bottom + (pageh - offy - bottom) / 2 - line_h,
+                 foot.c_str(), (int)foot.size());
+        SetTextAlign(dc, TA_LEFT | TA_TOP);
+        for (int i = 0; i < per_page; i++) {
+            size_t idx = (size_t)pg * per_page + i;
+            if (idx >= lines.size()) break;
+            TextOutW(dc, left, top + i * line_h, lines[idx].c_str(), (int)lines[idx].size());
+        }
+        EndPage(dc);
+    }
+    EndDoc(dc);
+    SelectObject(dc, old_font);
+    DeleteObject(hf);
+    DeleteDC(dc);
+    return true;
 }
 
 // ── Form border styles (VB6 BorderStyle) ────────────────────────
@@ -1365,20 +1613,28 @@ void set_border_style(HWND h, int bs) {
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+void rich_set_options(HWND h, bool on, LPARAM opt) {
+    SendMessageW(h, EM_SETOPTIONS, on ? ECOOP_OR : ECOOP_AND, on ? opt : ~opt);
+}
+
 bool edit_set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v) {
     HWND h = it.hwnd;
+    bool rich = it.kind == "RICHTEXT";
     if (prop == "SELSTART") {
-        DWORD p = u8_to_u16(edit_wtext(h), v.to_int());
-        edit_setsel(h, p, p);
+        std::wstring w = edit_wtext(h);
+        size_t p = u8_to_u16(w, v.to_int());
+        edit_setsel(it, w, p, p);
     } else if (prop == "SELLENGTH") {
         std::wstring w = edit_wtext(h);
-        DWORD a, b;
-        edit_getsel(h, a, b);
-        edit_setsel(h, a, u8_to_u16(w, u16_to_u8(w, a) + v.to_int()));
+        size_t a, b;
+        edit_getsel(it, w, a, b);
+        edit_setsel(it, w, a, u8_to_u16(w, u16_to_u8(w, a) + v.to_int()));
     } else if (prop == "SELTEXT") {
         SendMessageW(h, EM_REPLACESEL, TRUE, (LPARAM)widen(value_text(v)).c_str());
     } else if (prop == "UNDO") {
         if (v.to_bool()) SendMessageW(h, EM_UNDO, 0, 0);
+    } else if (prop == "REDO") {
+        if (v.to_bool() && rich) SendMessageW(h, EM_REDO, 0, 0);
     } else if (prop == "CUT") {
         if (v.to_bool()) SendMessageW(h, WM_CUT, 0, 0);
     } else if (prop == "COPY") {
@@ -1387,51 +1643,126 @@ bool edit_set_prop(int handle, FormsItem& it, const std::string& prop, const Val
         if (v.to_bool()) SendMessageW(h, WM_PASTE, 0, 0);
     } else if (prop == "MODIFIED") {
         SendMessageW(h, EM_SETMODIFY, v.to_bool() ? TRUE : FALSE, 0);
-    } else if (prop == "WORDWRAP" && it.kind == "TEXTBOX") {
+    } else if (prop == "ACCEPTSTAB") {
+        if (v.to_bool()) g_accepts_tab.insert(handle); else g_accepts_tab.erase(handle);
+    } else if (prop == "TABWIDTH") {
+        g_tab_width[handle] = (int)v.to_int();
+        apply_tab_width(it, handle);
+    } else if (prop == "WORDWRAP" && rich) {
+        // NULL target device: 0 wraps at the window edge, 1 never wraps
+        SendMessageW(h, EM_SETTARGETDEVICE, 0, v.to_bool() ? 0 : 1);
+        rich_set_options(h, !v.to_bool(), ECO_AUTOHSCROLL);
+        if (v.to_bool()) g_rich_nowrap.erase(handle); else g_rich_nowrap.insert(handle);
+    } else if (prop == "WORDWRAP") {
         LONG_PTR style = GetWindowLongPtrW(h, GWL_STYLE);
         if (!(style & ES_MULTILINE)) return true;
         if (v.to_bool()) style &= ~(LONG_PTR)(ES_AUTOHSCROLL | WS_HSCROLL);
         else             style |= ES_AUTOHSCROLL | WS_HSCROLL;
         edit_rebuild(handle, it, style);
-    } else if (prop == "HIDESELECTION" && it.kind == "TEXTBOX") {
+    } else if (prop == "HIDESELECTION" && rich) {
+        rich_set_options(h, !v.to_bool(), ECO_NOHIDESEL);
+    } else if (prop == "HIDESELECTION") {
         LONG_PTR style = GetWindowLongPtrW(h, GWL_STYLE);
         if (v.to_bool()) style &= ~(LONG_PTR)ES_NOHIDESEL;
         else             style |= ES_NOHIDESEL;
         edit_rebuild(handle, it, style);
-    } else if (prop == "HIDESELECTION") {
-        SendMessageW(h, EM_HIDESELECTION, v.to_bool() ? TRUE : FALSE, 0);
+    } else if (prop == "MAXLENGTH" && rich) {
+        int64_t n = v.to_int();
+        SendMessageW(h, EM_EXLIMITTEXT, 0, (LPARAM)(n > 0 ? n : 0x7FFFFFFE));
+    } else if (prop == "PLAINTEXT" && rich) {
+        // the text mode only changes on an empty control
+        std::wstring keep = edit_wtext(h);
+        SetWindowTextW(h, L"");
+        WPARAM mode = v.to_bool() ? (TM_PLAINTEXT | TM_MULTILEVELUNDO | TM_MULTICODEPAGE)
+                                  : (TM_RICHTEXT | TM_MULTILEVELUNDO | TM_MULTICODEPAGE);
+        SendMessageW(h, EM_SETTEXTMODE, mode, 0);
+        SetWindowTextW(h, keep.c_str());
+        SendMessageW(h, EM_SETMODIFY, FALSE, 0);
+    } else if (prop == "ZOOM" && rich) {
+        int64_t z = v.to_int();
+        if (z == 100) SendMessageW(h, EM_SETZOOM, 0, 0);
+        else          SendMessageW(h, EM_SETZOOM, (WPARAM)z, 100);
+    } else if (prop == "SPELLCHECK" && rich) {
+        LRESULT lang = SendMessageW(h, EM_GETLANGOPTIONS, 0, 0);
+        lang = v.to_bool() ? (lang | IMF_SPELLCHECKING) : (lang & ~IMF_SPELLCHECKING);
+        SendMessageW(h, EM_SETLANGOPTIONS, 0, lang);
+        const WPARAM ctf = SES_USECTF | SES_CTFALLOWEMBED | SES_CTFALLOWSMARTTAG |
+                           SES_CTFALLOWPROOFING;
+        SendMessageW(h, EM_SETEDITSTYLE, v.to_bool() ? ctf : 0, ctf);
+    } else if (prop == "DROPFILES" && rich) {
+        // Rich edit is an OLE drop target of its own and would refuse a file;
+        // without it the window takes Explorer drops as WM_DROPFILES.
+        if (v.to_bool()) RevokeDragDrop(h);
+        DragAcceptFiles(h, v.to_bool() ? TRUE : FALSE);
+    } else if (prop == "BACKCOLOR" && rich) {
+        SendMessageW(h, EM_SETBKGNDCOLOR, 0, (LPARAM)rgb_to_colorref((int)v.to_int()));
+        return false;   // the generic path records it for GET
+    } else if (prop == "FORECOLOR" && rich) {
+        CHARFORMAT2W cf = {};
+        cf.cbSize = sizeof(cf);
+        cf.dwMask = CFM_COLOR;
+        cf.crTextColor = rgb_to_colorref((int)v.to_int());
+        SendMessageW(h, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf);
+        SendMessageW(h, EM_SETCHARFORMAT, SCF_DEFAULT, (LPARAM)&cf);
+        return false;
     } else {
         return false;
     }
     return true;
 }
 
-bool edit_get_prop(FormsItem& it, const std::string& prop, Value& out) {
+bool edit_get_prop(int handle, FormsItem& it, const std::string& prop, Value& out) {
     HWND h = it.hwnd;
+    bool rich = it.kind == "RICHTEXT";
     if (prop == "SELSTART" || prop == "SELLENGTH" || prop == "SELTEXT") {
         std::wstring w = edit_wtext(h);
-        DWORD a, b;
-        edit_getsel(h, a, b);
+        size_t a, b;
+        edit_getsel(it, w, a, b);
         if (prop == "SELSTART") out = Value::make_i64(u16_to_u8(w, a));
         else if (prop == "SELLENGTH") out = Value::make_i64(u16_to_u8(w, b) - u16_to_u8(w, a));
         else out = Value::make_string(narrow(w.substr(a, b - a)));
     } else if (prop == "CANUNDO") {
         out = Value::make_bool(SendMessageW(h, EM_CANUNDO, 0, 0) != 0);
+    } else if (prop == "CANREDO") {
+        out = Value::make_bool(rich && SendMessageW(h, EM_CANREDO, 0, 0) != 0);
     } else if (prop == "MODIFIED") {
         out = Value::make_bool(SendMessageW(h, EM_GETMODIFY, 0, 0) != 0);
+    } else if (prop == "ACCEPTSTAB") {
+        out = Value::make_bool(g_accepts_tab.count(handle) != 0);
+    } else if (prop == "TABWIDTH") {
+        auto tw = g_tab_width.find(handle);
+        out = Value::make_i64(tw != g_tab_width.end() ? tw->second : 8);
+    } else if (prop == "WORDWRAP" && rich) {
+        out = Value::make_bool(g_rich_nowrap.count(handle) == 0);
     } else if (prop == "WORDWRAP") {
         LONG_PTR s = GetWindowLongPtrW(h, GWL_STYLE);
         out = Value::make_bool((s & ES_MULTILINE) && !(s & ES_AUTOHSCROLL));
-    } else if (prop == "HIDESELECTION" && it.kind == "TEXTBOX") {
+    } else if (prop == "HIDESELECTION" && rich) {
+        out = Value::make_bool((SendMessageW(h, EM_GETOPTIONS, 0, 0) & ECO_NOHIDESEL) == 0);
+    } else if (prop == "HIDESELECTION") {
         out = Value::make_bool((GetWindowLongPtrW(h, GWL_STYLE) & ES_NOHIDESEL) == 0);
-    } else if (prop == "LINECOUNT") {
-        out = Value::make_i64((int64_t)SendMessageW(h, EM_GETLINECOUNT, 0, 0));
-    } else if (prop == "CARETLINE" || prop == "CARETCOL") {
-        DWORD a, b;
-        edit_getsel(h, a, b);
-        LRESULT row = SendMessageW(h, EM_LINEFROMCHAR, b, 0);
-        if (prop == "CARETLINE") out = Value::make_i64((int64_t)row + 1);
-        else out = Value::make_i64((int64_t)b - SendMessageW(h, EM_LINEINDEX, row, 0) + 1);
+    } else if (prop == "PLAINTEXT" && rich) {
+        out = Value::make_bool((SendMessageW(h, EM_GETTEXTMODE, 0, 0) & TM_PLAINTEXT) != 0);
+    } else if (prop == "ZOOM" && rich) {
+        int num = 0, den = 0;
+        SendMessageW(h, EM_GETZOOM, (WPARAM)&num, (LPARAM)&den);
+        out = Value::make_i64(den > 0 && num > 0 ? MulDiv(num, 100, den) : 100);
+    } else if (prop == "SPELLCHECK" && rich) {
+        out = Value::make_bool((SendMessageW(h, EM_GETLANGOPTIONS, 0, 0) & IMF_SPELLCHECKING) != 0);
+    } else if (prop == "LINECOUNT" || prop == "CARETLINE" || prop == "CARETCOL") {
+        // Lines of the text, not of the display: a wrapped line counts once.
+        std::wstring w = edit_wtext(h);
+        size_t a, b;
+        edit_getsel(it, w, a, b);
+        if (prop == "LINECOUNT") {
+            out = Value::make_i64((int64_t)std::count(w.begin(), w.end(), L'\n') + 1);
+        } else if (prop == "CARETLINE") {
+            out = Value::make_i64((int64_t)std::count(w.begin(), w.begin() + b, L'\n') + 1);
+        } else {
+            size_t nl_at = b > 0 ? w.rfind(L'\n', b - 1) : std::wstring::npos;
+            size_t start = nl_at == std::wstring::npos ? 0 : nl_at + 1;
+            out = Value::make_i64((int64_t)(b - start) + 1);
+        }
     } else {
         return false;
     }
@@ -1524,6 +1855,11 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         return;
     }
 
+    if (prop == "DARKMODE" && is_form_kind(it.kind)) {
+        set_dark_mode(handle, h, v.to_bool());
+        return;
+    }
+
     if (prop == "BORDERSTYLE" && it.kind == "FORM") {
         int bs = (int)v.to_int();
         if (bs < 0 || bs > 5)
@@ -1601,6 +1937,7 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         g_fonts[handle] = hf;
         SendMessageW(h, WM_SETFONT, (WPARAM)hf, TRUE);
         if (it.buddy) SendMessageW(it.buddy, WM_SETFONT, (WPARAM)hf, TRUE);
+        if (is_edit_kind(it.kind)) apply_tab_width(it, handle);
         InvalidateRect(h, nullptr, TRUE);
     } else if (prop == "TAG") {
         g_tags[handle] = v;
@@ -1771,7 +2108,7 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
 
 Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* who) {
     Value edit_out;
-    if (is_edit_kind(it.kind) && edit_get_prop(it, prop, edit_out)) return edit_out;
+    if (is_edit_kind(it.kind) && edit_get_prop(handle, it, prop, edit_out)) return edit_out;
     if (it.kind == "MENU") {
         if (prop == "NAME") return Value::make_string(it.name);
         if (prop == "KIND") return Value::make_string(it.kind);
@@ -1807,6 +2144,8 @@ Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* w
 
     if (prop == "MAXIMIZED" && is_form_kind(it.kind))
         return Value::make_bool(IsZoomed(h) != 0);
+    if (prop == "DARKMODE" && is_form_kind(it.kind))
+        return Value::make_bool(g_dark_forms.count(handle) != 0);
     if (prop == "BORDERSTYLE" && it.kind == "FORM")
         return Value::make_i64(border_style_of(h));
     if (prop == "OWNER" && it.kind == "FORM") {
@@ -1995,7 +2334,9 @@ bool parse_accel_key(const std::string& spec, WORD& fVirt, WORD& vk) {
         {"PGUP", VK_PRIOR}, {"PGDN", VK_NEXT}, {"LEFT", VK_LEFT},
         {"RIGHT", VK_RIGHT}, {"UP", VK_UP}, {"DOWN", VK_DOWN},
         {"ESC", VK_ESCAPE}, {"TAB", VK_TAB}, {"ENTER", VK_RETURN},
-        {"RETURN", VK_RETURN}, {"SPACE", VK_SPACE}, {"BACK", VK_BACK}
+        {"RETURN", VK_RETURN}, {"SPACE", VK_SPACE}, {"BACK", VK_BACK},
+        {"PLUS", VK_OEM_PLUS}, {"MINUS", VK_OEM_MINUS}, {"ADD", VK_ADD},
+        {"SUBTRACT", VK_SUBTRACT}
     };
     auto nit = named.find(k);
     if (nit != named.end()) { vk = nit->second; return true; }
@@ -2917,7 +3258,7 @@ void register_forms_builtins(VM& vm) {
         }
         int handle = create_control(
             arg_int(args, 0), arg_str(args, 1, "FORM.RICHTEXT"), L"RICHEDIT50W", "",
-            ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL | WS_TABSTOP,
+            ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP,
             WS_EX_CLIENTEDGE,
             arg_int(args, 2), arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), "RICHTEXT");
         SendMessageW(g_items[handle].hwnd, EM_SETEVENTMASK, 0, ENM_CHANGE);
@@ -3008,6 +3349,20 @@ void register_forms_builtins(VM& vm) {
                           (lf.lfWeight >= FW_BOLD ? "1" : "0") + "," +
                           (lf.lfItalic ? "1" : "0");
         return Value::make_string(out);
+    });
+
+    // FORM.PAGESETUP() -> TRUE when the page setup was confirmed
+    vm.register_native("FORM.PAGESETUP", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_bool(do_page_setup());
+    });
+
+    // FORM.PRINT(text$, [title$], [font], [printer$], [outfile$]) -> TRUE when printed
+    vm.register_native("FORM.PRINT", 1, 5, [](const std::vector<Value>& args) -> Value {
+        std::string title = args.size() > 1 ? value_text(args[1]) : "";
+        Value font = args.size() > 2 ? args[2] : Value::make_none();
+        std::string printer = args.size() > 3 ? value_text(args[3]) : "";
+        std::string outfile = args.size() > 4 ? value_text(args[4]) : "";
+        return Value::make_bool(do_print(value_text(args[0]), title, font, printer, outfile));
     });
 
     // FORM.SET(handle, prop$, [value])

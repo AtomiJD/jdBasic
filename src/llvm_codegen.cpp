@@ -17218,6 +17218,18 @@ std::string LLVMCodegen::generate_version_resource(const std::string& source_pat
     std::string original_name   = get("OriginalFilename", "");
     std::string internal_name   = get("InternalName",     original_name.c_str());
     std::string icon_path       = get("Icon",             "");
+    // A relative icon path is read from the source's folder first, then from
+    // the working directory; rc.exe gets it absolute either way.
+    if (!icon_path.empty()) {
+        std::filesystem::path ip(icon_path);
+        if (ip.is_relative()) {
+            std::filesystem::path beside =
+                std::filesystem::path(source_path).parent_path() / ip;
+            if (std::filesystem::exists(beside)) ip = beside;
+        }
+        if (std::filesystem::exists(ip))
+            icon_path = std::filesystem::absolute(ip).string();
+    }
 
     // Escape backslashes for .rc string literals.
     auto rc_escape = [](std::string s) {
