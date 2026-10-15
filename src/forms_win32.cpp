@@ -15,6 +15,7 @@
 #include <commdlg.h>
 #include <objbase.h>
 #include <richedit.h>
+#include <shellapi.h>
 #include <wincodec.h>
 
 #include <algorithm>
@@ -27,6 +28,7 @@
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "windowscodecs.lib")
 
 // Main-script directory, defined in main.cpp; relative .jdform paths
@@ -173,6 +175,7 @@ Value info_map(const FormsItem& it) {
 // WndProc needs them too.
 void queue_key(const FormsItem& it, const char* ev, int code);
 void queue_mouse(const FormsItem& it, const char* ev, int button, LPARAM lp);
+void queue_drop(const FormsItem& it, HDROP drop);
 
 void drain_events() {
     while (!g_evq.empty()) {
@@ -521,6 +524,13 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 }
                 queue_event(it.name, "CHANGE", m);
             }
+            return 0;
+        }
+
+        case WM_DROPFILES: {
+            auto hit = g_byhwnd.find(hwnd);
+            if (hit != g_byhwnd.end()) queue_drop(g_items[hit->second], (HDROP)wParam);
+            else DragFinish((HDROP)wParam);
             return 0;
         }
 
@@ -909,6 +919,29 @@ void queue_mouse(const FormsItem& it, const char* ev, int button, LPARAM lp) {
     queue_event(it.name, ev, std::move(m));
 }
 
+// Files dropped from Explorer: the paths, plus where they landed in logical
+// units of the window that took them.
+void queue_drop(const FormsItem& it, HDROP drop) {
+    Value files = Value::make_array();
+    UINT n = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    for (UINT i = 0; i < n; i++) {
+        UINT len = DragQueryFileW(drop, i, nullptr, 0);
+        std::wstring w(len + 1, 0);
+        DragQueryFileW(drop, i, &w[0], len + 1);
+        w.resize(len);
+        files.as_array()->elements.push_back(Value::make_string(narrow(w)));
+    }
+    POINT pt = {};
+    DragQueryPoint(drop, &pt);
+    DragFinish(drop);
+    Value m = info_map(it);
+    m.as_object()->set("files", files);
+    m.as_object()->set("x", Value::make_i64(lg(pt.x)));
+    m.as_object()->set("y", Value::make_i64(lg(pt.y)));
+    queue_mods(m);
+    queue_event(it.name, "DROPFILES", std::move(m));
+}
+
 LRESULT CALLBACK ctl_sub_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
                               UINT_PTR, DWORD_PTR) {
     auto hit = g_byhwnd.find(hwnd);
@@ -925,6 +958,7 @@ LRESULT CALLBACK ctl_sub_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
             case WM_RBUTTONDOWN: queue_mouse(it, "MOUSEDOWN", 2, lp); break;
             case WM_RBUTTONUP:   queue_mouse(it, "MOUSEUP", 2, lp); break;
             case WM_MOUSEMOVE:   queue_mouse(it, "MOUSEMOVE", 0, lp); break;
+            case WM_DROPFILES:   queue_drop(it, (HDROP)wp); return 0;
             case WM_SETCURSOR: {
                 auto cur = g_cursors.find(hit->second);
                 if (cur != g_cursors.end()) {
@@ -1192,7 +1226,147 @@ void reset_items(HWND h, const std::string& kind, const Value& arr) {
         SendMessageW(h, add, 0, (LPARAM)widen(value_text(el)).c_str());
 }
 
+// ── Edit-control text surface (TEXTBOX, RICHTEXT) ───────────────
+// SELSTART/SELLENGTH count UTF-8 bytes of the TEXT property, the same units
+// LEN/INSTR/MID$ use, so a position found in the text addresses the control.
+
+bool is_edit_kind(const std::string& kind) {
+    return kind == "TEXTBOX" || kind == "RICHTEXT";
+}
+
+std::wstring edit_wtext(HWND h) {
+    int len = GetWindowTextLengthW(h);
+    std::wstring w(len + 1, 0);
+    if (len > 0) GetWindowTextW(h, &w[0], len + 1);
+    w.resize(len > 0 ? len : 0);
+    return w;
+}
+
+int64_t u16_to_u8(const std::wstring& w, DWORD pos) {
+    if (pos > w.size()) pos = (DWORD)w.size();
+    return (int64_t)narrow(w.substr(0, pos)).size();
+}
+
+DWORD u8_to_u16(const std::wstring& w, int64_t pos) {
+    std::string s = narrow(w);
+    if (pos < 0) pos = 0;
+    if (pos > (int64_t)s.size()) pos = (int64_t)s.size();
+    while (pos > 0 && pos < (int64_t)s.size() && ((unsigned char)s[pos] & 0xC0) == 0x80) pos--;
+    return (DWORD)widen(s.substr(0, (size_t)pos)).size();
+}
+
+void edit_getsel(HWND h, DWORD& a, DWORD& b) {
+    a = b = 0;
+    SendMessageW(h, EM_GETSEL, (WPARAM)&a, (LPARAM)&b);
+}
+
+void edit_setsel(HWND h, DWORD a, DWORD b) {
+    SendMessageW(h, EM_SETSEL, a, b);
+    SendMessageW(h, EM_SCROLLCARET, 0, 0);
+}
+
+// A multiline EDIT fixes word wrap at creation, so toggling it rebuilds the
+// window under the same handle, carrying text, selection, font and flags.
+void edit_rewrap(int handle, FormsItem& it, bool wrap) {
+    HWND old = it.hwnd;
+    LONG_PTR style = GetWindowLongPtrW(old, GWL_STYLE);
+    if (!(style & ES_MULTILINE)) return;
+    bool wrapped = !(style & ES_AUTOHSCROLL);
+    if (wrapped == wrap) return;
+    if (wrap) style &= ~(LONG_PTR)(ES_AUTOHSCROLL | WS_HSCROLL);
+    else      style |= ES_AUTOHSCROLL | WS_HSCROLL;
+    HWND parent = GetParent(old);
+    RECT rc;
+    GetWindowRect(old, &rc);
+    MapWindowPoints(nullptr, parent, (POINT*)&rc, 2);
+    DWORD a, b;
+    edit_getsel(old, a, b);
+    bool focused = GetFocus() == old;
+    BOOL modified = (BOOL)SendMessageW(old, EM_GETMODIFY, 0, 0);
+    LRESULT limit = SendMessageW(old, EM_GETLIMITTEXT, 0, 0);
+    HFONT font = (HFONT)SendMessageW(old, WM_GETFONT, 0, 0);
+    std::wstring text = edit_wtext(old);
+    HWND ctl = CreateWindowExW((DWORD)GetWindowLongPtrW(old, GWL_EXSTYLE), L"EDIT",
+                               text.c_str(), (DWORD)style,
+                               rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
+                               parent, (HMENU)(INT_PTR)GetDlgCtrlID(old),
+                               GetModuleHandleW(nullptr), nullptr);
+    if (!ctl) throw std::runtime_error("FORM.SET: WORDWRAP could not rebuild '" + it.name + "'");
+    SendMessageW(ctl, WM_SETFONT, (WPARAM)font, FALSE);
+    SendMessageW(ctl, EM_SETLIMITTEXT, (WPARAM)limit, 0);
+    SendMessageW(ctl, EM_SETMODIFY, modified, 0);
+    SetWindowPos(ctl, old, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    g_byhwnd.erase(old);
+    it.hwnd = ctl;
+    g_byhwnd[ctl] = handle;
+    SetWindowSubclass(ctl, ctl_sub_proc, 1, 0);
+    DestroyWindow(old);
+    if (focused) SetFocus(ctl);
+    edit_setsel(ctl, a, b);
+}
+
+bool edit_set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v) {
+    HWND h = it.hwnd;
+    if (prop == "SELSTART") {
+        DWORD p = u8_to_u16(edit_wtext(h), v.to_int());
+        edit_setsel(h, p, p);
+    } else if (prop == "SELLENGTH") {
+        std::wstring w = edit_wtext(h);
+        DWORD a, b;
+        edit_getsel(h, a, b);
+        edit_setsel(h, a, u8_to_u16(w, u16_to_u8(w, a) + v.to_int()));
+    } else if (prop == "SELTEXT") {
+        SendMessageW(h, EM_REPLACESEL, TRUE, (LPARAM)widen(value_text(v)).c_str());
+    } else if (prop == "UNDO") {
+        if (v.to_bool()) SendMessageW(h, EM_UNDO, 0, 0);
+    } else if (prop == "CUT") {
+        if (v.to_bool()) SendMessageW(h, WM_CUT, 0, 0);
+    } else if (prop == "COPY") {
+        if (v.to_bool()) SendMessageW(h, WM_COPY, 0, 0);
+    } else if (prop == "PASTE") {
+        if (v.to_bool()) SendMessageW(h, WM_PASTE, 0, 0);
+    } else if (prop == "MODIFIED") {
+        SendMessageW(h, EM_SETMODIFY, v.to_bool() ? TRUE : FALSE, 0);
+    } else if (prop == "WORDWRAP" && it.kind == "TEXTBOX") {
+        edit_rewrap(handle, it, v.to_bool());
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool edit_get_prop(FormsItem& it, const std::string& prop, Value& out) {
+    HWND h = it.hwnd;
+    if (prop == "SELSTART" || prop == "SELLENGTH" || prop == "SELTEXT") {
+        std::wstring w = edit_wtext(h);
+        DWORD a, b;
+        edit_getsel(h, a, b);
+        if (prop == "SELSTART") out = Value::make_i64(u16_to_u8(w, a));
+        else if (prop == "SELLENGTH") out = Value::make_i64(u16_to_u8(w, b) - u16_to_u8(w, a));
+        else out = Value::make_string(narrow(w.substr(a, b - a)));
+    } else if (prop == "CANUNDO") {
+        out = Value::make_bool(SendMessageW(h, EM_CANUNDO, 0, 0) != 0);
+    } else if (prop == "MODIFIED") {
+        out = Value::make_bool(SendMessageW(h, EM_GETMODIFY, 0, 0) != 0);
+    } else if (prop == "WORDWRAP") {
+        LONG_PTR s = GetWindowLongPtrW(h, GWL_STYLE);
+        out = Value::make_bool((s & ES_MULTILINE) && !(s & ES_AUTOHSCROLL));
+    } else if (prop == "LINECOUNT") {
+        out = Value::make_i64((int64_t)SendMessageW(h, EM_GETLINECOUNT, 0, 0));
+    } else if (prop == "CARETLINE" || prop == "CARETCOL") {
+        DWORD a, b;
+        edit_getsel(h, a, b);
+        LRESULT row = SendMessageW(h, EM_LINEFROMCHAR, b, 0);
+        if (prop == "CARETLINE") out = Value::make_i64((int64_t)row + 1);
+        else out = Value::make_i64((int64_t)b - SendMessageW(h, EM_LINEINDEX, row, 0) + 1);
+    } else {
+        return false;
+    }
+    return true;
+}
+
 void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v, const char* who) {
+    if (is_edit_kind(it.kind) && edit_set_prop(handle, it, prop, v)) return;
     if (it.kind == "MENU") {
         FormsItem& f = form_of(it.form, who);
         HMENU bar = GetMenu(f.hwnd);
@@ -1269,6 +1443,11 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
     if (prop == "TOPMOST" && is_form_kind(it.kind)) {
         SetWindowPos(h, v.to_bool() ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE);
+        return;
+    }
+
+    if (prop == "DROPFILES") {
+        DragAcceptFiles(h, v.to_bool() ? TRUE : FALSE);
         return;
     }
 
@@ -1495,6 +1674,8 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
 }
 
 Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* who) {
+    Value edit_out;
+    if (is_edit_kind(it.kind) && edit_get_prop(it, prop, edit_out)) return edit_out;
     if (it.kind == "MENU") {
         if (prop == "NAME") return Value::make_string(it.name);
         if (prop == "KIND") return Value::make_string(it.kind);
@@ -1560,6 +1741,8 @@ Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* w
         return Value::make_bool((GetWindowLongPtrW(h, GWL_STYLE) & ES_READONLY) != 0);
     if (prop == "TABSTOP")
         return Value::make_bool((GetWindowLongPtrW(h, GWL_STYLE) & WS_TABSTOP) != 0);
+    if (prop == "DROPFILES")
+        return Value::make_bool((GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_ACCEPTFILES) != 0);
     if (prop == "COLOR" && it.kind == "SHAPE") {
         auto cit = g_shape_colors.find(handle);
         return Value::make_i64(cit != g_shape_colors.end() ? cit->second : 0);
@@ -1964,9 +2147,10 @@ const std::vector<const char*>& events_of(const std::string& kind) {
     // Focus, keyboard and mouse ride on every control that can take input, so
     // a .jdform binds them without an ON the way the rest already works.
 #define JDF_INPUT_EV "GOTFOCUS", "LOSTFOCUS", "KEYDOWN", "KEYUP", "KEYPRESS", \
-                     "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE"
+                     "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE", "DROPFILES"
     static const std::vector<const char*> form_ev  = { "LOAD", "UNLOAD", "RESIZE",
-                                                       "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE" };
+                                                       "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE",
+                                                       "DROPFILES" };
     static const std::vector<const char*> click_ev = { "CLICK", JDF_INPUT_EV };
     static const std::vector<const char*> text_ev  = { "CHANGE", JDF_INPUT_EV };
     static const std::vector<const char*> list_ev  = { "CLICK", "DBLCLICK", JDF_INPUT_EV };

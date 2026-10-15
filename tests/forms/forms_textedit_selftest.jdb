@@ -1,0 +1,100 @@
+' Edit-control text surface: SELSTART/SELLENGTH/SELTEXT in UTF-8 bytes,
+' UNDO/CUT/COPY/PASTE, MODIFIED, caret line/column and the WORDWRAP rebuild.
+' Needs a FORMS build on Windows; the clipboard is borrowed and restored.
+
+N_PASS = 0
+N_FAIL = 0
+
+SUB Check(cond, label$)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+CRLF$ = CHR$(13) + CHR$(10)
+frm = FORM.CREATE("Textedit Selftest", 360, 200, "MAIN")
+txt = FORM.TEXTBOX(frm, "txtDoc", "", 0, 0, 360, 200, TRUE)
+tmr = FORM.TIMER(frm, "tmrMain", 100)
+saved_clip$ = CLIPBOARD.GET$()
+
+FORM.SET(txt, "TEXT", "Grüße hello" + CRLF$ + "second line")
+Check(FORM.GET(txt, "MODIFIED") = FALSE, "TEXT set leaves MODIFIED clear")
+
+' "Grüße " is 8 bytes: ü and ß take two each
+pos = INSTR(FORM.GET(txt, "TEXT"), "hello")
+Check(pos = 8, "INSTR byte position of hello")
+FORM.SET(txt, "SELSTART", pos)
+FORM.SET(txt, "SELLENGTH", 5)
+Check(FORM.GET(txt, "SELSTART") = 8, "SELSTART round-trips in bytes")
+Check(FORM.GET(txt, "SELLENGTH") = 5, "SELLENGTH round-trips")
+Check(FORM.GET(txt, "SELTEXT") = "hello", "SELTEXT reads the selection")
+
+FORM.SET(txt, "SELSTART", 0)
+FORM.SET(txt, "SELLENGTH", 7)
+Check(FORM.GET(txt, "SELTEXT") = "Grüße", "SELLENGTH spans multibyte chars")
+
+FORM.SET(txt, "SELSTART", 8)
+FORM.SET(txt, "SELLENGTH", 5)
+FORM.SET(txt, "SELTEXT", "world")
+Check(LEFT$(FORM.GET(txt, "TEXT"), 13) = "Grüße world", "SELTEXT replaces the selection")
+Check(FORM.GET(txt, "MODIFIED"), "SELTEXT sets MODIFIED")
+Check(FORM.GET(txt, "CANUNDO"), "SELTEXT is undoable")
+FORM.SET(txt, "UNDO", TRUE)
+Check(LEFT$(FORM.GET(txt, "TEXT"), 13) = "Grüße hello", "UNDO restores the text")
+FORM.SET(txt, "MODIFIED", FALSE)
+Check(FORM.GET(txt, "MODIFIED") = FALSE, "MODIFIED can be cleared")
+
+Check(FORM.GET(txt, "LINECOUNT") = 2, "LINECOUNT")
+FORM.SET(txt, "SELSTART", INSTR(FORM.GET(txt, "TEXT"), "line"))
+Check(FORM.GET(txt, "CARETLINE") = 2, "CARETLINE is 1-based")
+Check(FORM.GET(txt, "CARETCOL") = 8, "CARETCOL is 1-based")
+
+FORM.SET(txt, "SELSTART", 0)
+FORM.SET(txt, "SELLENGTH", 7)
+FORM.SET(txt, "COPY", TRUE)
+Check(CLIPBOARD.GET$() = "Grüße", "COPY puts the selection on the clipboard")
+FORM.SET(txt, "CUT", TRUE)
+Check(LEFT$(FORM.GET(txt, "TEXT"), 6) = " hello", "CUT removes the selection")
+FORM.SET(txt, "PASTE", TRUE)
+Check(LEFT$(FORM.GET(txt, "TEXT"), 13) = "Grüße hello", "PASTE inserts the clipboard")
+
+Check(FORM.GET(txt, "WORDWRAP"), "multiline TEXTBOX wraps by default")
+FORM.SET(txt, "SELSTART", 8)
+FORM.SET(txt, "SELLENGTH", 5)
+FORM.SET(txt, "MODIFIED", TRUE)
+FORM.SET(txt, "WORDWRAP", FALSE)
+Check(FORM.GET(txt, "DROPFILES") = FALSE, "DROPFILES off by default")
+FORM.SET(txt, "DROPFILES", TRUE)
+Check(FORM.GET(txt, "DROPFILES"), "DROPFILES on")
+Check(FORM.GET(txt, "WORDWRAP") = FALSE, "WORDWRAP off")
+Check(FORM.GET(txt, "SELTEXT") = "hello", "WORDWRAP keeps the selection")
+Check(FORM.GET(txt, "MODIFIED"), "WORDWRAP keeps MODIFIED")
+Check(FORM.FIND(frm, "txtDoc") = txt, "WORDWRAP keeps the handle")
+Check(FORM.GET(txt, "WIDTH") = 360, "WORDWRAP keeps the geometry")
+Check(FORM.GET(txt, "DROPFILES"), "WORDWRAP keeps DROPFILES")
+FORM.SET(txt, "WORDWRAP", TRUE)
+Check(FORM.GET(txt, "WORDWRAP"), "WORDWRAP back on")
+
+changes = 0
+SUB TXTDOC_CHANGE(e)
+    changes = changes + 1
+ENDSUB
+
+ticks = 0
+SUB TMRMAIN_TICK(e)
+    ticks = ticks + 1
+    IF ticks = 1 THEN FORM.SET(txt, "SELTEXT", "x")
+    IF ticks >= 3 THEN FORM.CLOSE(frm)
+ENDSUB
+
+FORM.RUN(frm)
+CLIPBOARD.SET saved_clip$
+
+Check(changes >= 1, "rebuilt control still fires CHANGE")
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL TEXTEDIT TESTS PASSED!"

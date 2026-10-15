@@ -312,10 +312,17 @@ void VM::register_console_builtins() {
     register_native("CLIPBOARD.SET", [](const std::vector<Value>& args) -> Value {
 #if defined(_WIN32)
         std::string text = args[0].to_string();
+        int wn = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), nullptr, 0);
         if (OpenClipboard(NULL)) {
             EmptyClipboard();
-            HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1);
-            if (hg) { memcpy(GlobalLock(hg), text.c_str(), text.size() + 1); GlobalUnlock(hg); SetClipboardData(CF_TEXT, hg); }
+            HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, (wn + 1) * sizeof(wchar_t));
+            if (hg) {
+                wchar_t* w = static_cast<wchar_t*>(GlobalLock(hg));
+                MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), w, wn);
+                w[wn] = 0;
+                GlobalUnlock(hg);
+                SetClipboardData(CF_UNICODETEXT, hg);
+            }
             CloseClipboard();
         }
 #endif
@@ -328,10 +335,18 @@ void VM::register_console_builtins() {
         (void)args;
 #if defined(_WIN32)
         if (OpenClipboard(NULL)) {
-            HANDLE hg = GetClipboardData(CF_TEXT);
+            HANDLE hg = GetClipboardData(CF_UNICODETEXT);
             if (hg) {
-                char* s = static_cast<char*>(GlobalLock(hg));
-                if (s) { std::string r(s); GlobalUnlock(hg); CloseClipboard(); return Value::make_string(r); }
+                const wchar_t* w = static_cast<const wchar_t*>(GlobalLock(hg));
+                if (w) {
+                    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+                    std::string r(n > 0 ? n : 1, ' ');
+                    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w, -1, &r[0], n, nullptr, nullptr);
+                    r.resize(n > 0 ? n - 1 : 0);
+                    GlobalUnlock(hg);
+                    CloseClipboard();
+                    return Value::make_string(r);
+                }
             }
             CloseClipboard();
         }
