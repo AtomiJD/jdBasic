@@ -10,6 +10,7 @@
 #include "async_task.h"
 #include "jdb_module_path.h"
 #include <cstring>
+#include <deque>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -1927,6 +1928,9 @@ JDRT_API void jdrt_set_event_dispatcher(JdRT handle, JdrtEventDispatch fn) {
             std::vector<int32_t> tags;
             args.reserve(8);
             tags.reserve(8);
+            // Joined string arrays live here until the handler has run;
+            // a deque keeps each one's c_str() where it was.
+            std::deque<std::string> packed;
 
             auto push_value = [&](const Value& v) {
                 switch (v.type) {
@@ -1953,6 +1957,21 @@ JDRT_API void jdrt_set_event_dispatcher(JdRT handle, JdrtEventDispatch fn) {
                             (v.as_string() ? v.as_string()->data.c_str() : ""));
                         tags.push_back(JD_TAG_STR);
                         break;
+                    case ValueType::ARRAY: {
+                        // e.g. DROPFILES "files": the paths, joined by the
+                        // unit separator, which no path or text contains
+                        std::string joined;
+                        bool first = true;
+                        for (auto& el : v.as_array()->elements) {
+                            if (!first) joined += '\x1f';
+                            joined += el.to_string();
+                            first = false;
+                        }
+                        packed.push_back(std::move(joined));
+                        args.push_back((int64_t)(intptr_t)packed.back().c_str());
+                        tags.push_back(JD_TAG_ARR);
+                        break;
+                    }
                     default:
                         args.push_back(v.to_int());
                         tags.push_back(JD_TAG_I64);

@@ -31,6 +31,30 @@ DIM menu_clicks AS INTEGER = 0
 DIM tb_clicks AS INTEGER = 0
 DIM loaded AS BOOLEAN = FALSE
 DIM jfrm AS DOUBLE = 0
+DIM dropped AS STRING = ""
+
+' A file drop built in memory the way Explorer hands it over (DROPFILES with
+' an ANSI path), posted to the textbox so it travels the real message path.
+DECLARE FUNC GlobalAlloc LIB "kernel32.dll" ALIAS "GlobalAlloc" (flags AS INTEGER, bytes AS INTEGER) AS INTEGER
+DECLARE FUNC GlobalLock LIB "kernel32.dll" ALIAS "GlobalLock" (hmem AS INTEGER) AS INTEGER
+DECLARE FUNC GlobalUnlock LIB "kernel32.dll" ALIAS "GlobalUnlock" (hmem AS INTEGER) AS INTEGER
+DECLARE FUNC RtlFillMemory LIB "kernel32.dll" ALIAS "RtlFillMemory" (dest AS INTEGER, n AS INTEGER, fill AS INTEGER) AS INTEGER
+DECLARE FUNC RtlMoveMemory LIB "kernel32.dll" ALIAS "RtlMoveMemory" (dest AS INTEGER, src AS STRING, n AS INTEGER) AS INTEGER
+DECLARE FUNC PostMessageW LIB "user32.dll" ALIAS "PostMessageW" (hwnd AS INTEGER, msg AS INTEGER, wp AS INTEGER, lp AS INTEGER) AS INTEGER
+
+SUB POST_DROP(target AS DOUBLE, path AS STRING)
+    ' GMEM_MOVEABLE | GMEM_ZEROINIT; pFiles = 20, the path follows the header
+    DIM hmem AS INTEGER = GlobalAlloc(66, 20 + LEN(path) + 2)
+    DIM p AS INTEGER = GlobalLock(hmem)
+    DIM a AS INTEGER = RtlFillMemory(p, 1, 20)
+    DIM b AS INTEGER = RtlMoveMemory(p + 20, path, LEN(path))
+    DIM c AS INTEGER = GlobalUnlock(hmem)
+    DIM r AS INTEGER = PostMessageW(FORM.GET(target, "HWND"), 563, hmem, 0)
+ENDSUB
+
+SUB TXTNAME_DROPFILES(e)
+    dropped = e[0]{"files"}[0]
+ENDSUB
 
 SUB MAIN_LOAD(e)
     loaded = TRUE
@@ -54,6 +78,7 @@ SUB TMRMAIN_TICK(e)
         FORM.SET(btn, "VALUE", TRUE)
         FORM.SET(mnuPing, "VALUE", TRUE)
         FORM.SET(tbGo, "VALUE", TRUE)
+        POST_DROP(txt, "dropped_file.txt")
     ENDIF
     IF ticks >= 3 THEN FORM.CLOSE(frm)
 ENDSUB
@@ -61,6 +86,7 @@ ENDSUB
 frm = FORM.CREATE("Native Smoke", 420, 300, "MAIN")
 lbl = FORM.LABEL(frm, "lblInfo", "native forms", 10, 10, 200, 18)
 txt = FORM.TEXTBOX(frm, "txtName", "hello", 10, 40, 200, 24)
+FORM.SET(txt, "DROPFILES", TRUE)
 lst = FORM.LISTBOX(frm, "lstItems", 10, 74, 200, 100)
 btn = FORM.BUTTON(frm, "btnGo", "Go", 220, 74, 80, 26)
 tmr = FORM.TIMER(frm, "tmrMain", 100)
@@ -100,6 +126,7 @@ Check(ticks >= 3, "timer ticked")
 Check(clicks = 1, "button CLICK dispatched")
 Check(menu_clicks = 1, "menu CLICK dispatched")
 Check(tb_clicks = 1, "toolbar CLICK dispatched")
+Check(dropped = "dropped_file.txt", "DROPFILES handler auto-bound, got [" + dropped + "]")
 
 ' .jdform path: the file is parsed inside the runtime, handlers bind by
 ' name - the whole declarative chain in one native binary.

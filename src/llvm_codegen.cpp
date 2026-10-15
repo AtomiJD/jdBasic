@@ -907,7 +907,8 @@ static bool is_forms_event_handler_name(const std::string& name) {
                                       "_TICK", "_LOAD", "_UNLOAD", "_RESIZE",
                                       "_GOTFOCUS", "_LOSTFOCUS",
                                       "_KEYDOWN", "_KEYPRESS", "_KEYUP",
-                                      "_MOUSEDOWN", "_MOUSEMOVE", "_MOUSEUP" };
+                                      "_MOUSEDOWN", "_MOUSEMOVE", "_MOUSEUP",
+                                      "_DROPFILES" };
     for (const char* s : suffixes) {
         size_t sl = strlen(s);
         if (name.size() > sl && name.compare(name.size() - sl, sl, s) == 0)

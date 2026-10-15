@@ -1962,6 +1962,8 @@ void jdb_event_raise_str(const char* name, const char* arg) {
 JdbMap* jdb_map_new();
 void jdb_map_set_f64(JdbMap* m, const char* key, double val);
 void jdb_map_set_str(JdbMap* m, const char* key, const char* val);
+void jdb_map_set_tagged(JdbMap* m, const char* key, double val, int32_t tag);
+JdbArray* jdb_split(const char* src, const char* delim);
 
 // ── SDL event-handler trampoline (native mode) ──────────────────
 //
@@ -2097,6 +2099,13 @@ void jdrt_dispatch_event(const char* event_name,
         int32_t vtag = tags ? tags[i + 1] : JD_TAG_I64;
         if (vtag == JD_TAG_STR) {
             jdb_map_set_str(m, key, event_arg_str(args, i + 1, nargs));
+        } else if (vtag == JD_TAG_ARR) {
+            // a string array, joined by the unit separator on the bridge side
+            const char* joined = event_arg_str(args, i + 1, nargs);
+            JdbArray* arr = joined[0] ? jdb_split(joined, "\x1f") : jdb_array_new(0);
+            union { double d; intptr_t p; } u;
+            u.p = (intptr_t)arr;
+            jdb_map_set_tagged(m, key, u.d, JD_TAG_ARR);
         } else if (vtag == JD_TAG_F64) {
             double d;
             memcpy(&d, &args[i + 1], sizeof(double));
