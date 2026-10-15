@@ -484,6 +484,8 @@ sb = FORM.STATUSBAR(frm, "sb", [160, 140, -1])
 FORM.SET(FORM.FIND(frm, "mnuStatus"), "CHECKED", TRUE)
 
 dlg = FORM.CREATE("Find", 420, 132, "FINDDLG")
+FORM.SET(dlg, "BORDERSTYLE", 3)
+FORM.SET(dlg, "OWNER", frm)
 FORM.LABEL(dlg, "lblFind", "Fi&nd what:", 10, 14, 80, 18)
 txtFind = FORM.TEXTBOX(dlg, "txtFind", "", 92, 10, 210, 22)
 lblRepl = FORM.LABEL(dlg, "lblRepl", "Re&place with:", 10, 42, 80, 18)

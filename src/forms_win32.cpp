@@ -140,6 +140,11 @@ FormsItem& item_of(int handle, const char* who) {
     return it->second;
 }
 
+HICON app_icon() {
+    static HICON icon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101));
+    return icon;
+}
+
 bool is_form_kind(const std::string& kind) {
     return kind == "FORM" || kind == "MDIFRAME" || kind == "MDICHILD";
 }
@@ -869,12 +874,13 @@ void ensure_class() {
     wc.lpfnWndProc   = form_wndproc;
     wc.hInstance     = GetModuleHandleW(nullptr);
     wc.hCursor       = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
-    wc.hIcon         = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101));
+    // No class icon: each form sets its own, so a fixed dialog can show none.
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = FORM_CLASS;
     RegisterClassW(&wc);
 
     WNDCLASSW cc = wc;
+    cc.hIcon = app_icon();
     cc.lpszClassName = L"JDBMDIChild";
     RegisterClassW(&cc);
 
@@ -1033,6 +1039,10 @@ int do_create_form(const std::string& title, int cw, int ch, const std::string& 
                                 (sw - ww) / 2, (sh - wh) / 2, ww, wh,
                                 nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!hwnd) throw std::runtime_error("FORM.CREATE: CreateWindow failed");
+    if (HICON icon = app_icon()) {
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)icon);
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)icon);
+    }
 
     // AdjustWindowRect assumes 96-DPI frame metrics, which undersizes the
     // client area on a scaled display - measure and correct exactly.
@@ -1301,6 +1311,60 @@ void edit_rebuild(int handle, FormsItem& it, LONG_PTR style) {
     edit_setsel(ctl, a, b);
 }
 
+// ── Form border styles (VB6 BorderStyle) ────────────────────────
+// 0 None, 1 Fixed Single, 2 Sizable, 3 Fixed Dialog, 4 Fixed ToolWindow,
+// 5 Sizable ToolWindow.
+
+const DWORD FORM_STYLE_MASK = WS_CAPTION | WS_SYSMENU | WS_THICKFRAME |
+                              WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_POPUP | WS_BORDER;
+const DWORD FORM_EXSTYLE_MASK = WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW | WS_EX_WINDOWEDGE;
+
+void border_styles(int bs, DWORD& style, DWORD& ex) {
+    switch (bs) {
+        case 0: style = WS_POPUP; ex = 0; break;
+        case 1: style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX; ex = 0; break;
+        case 3: style = WS_CAPTION | WS_SYSMENU; ex = WS_EX_DLGMODALFRAME; break;
+        case 4: style = WS_CAPTION | WS_SYSMENU; ex = WS_EX_TOOLWINDOW; break;
+        case 5: style = WS_CAPTION | WS_SYSMENU | WS_THICKFRAME; ex = WS_EX_TOOLWINDOW; break;
+        default: style = WS_OVERLAPPEDWINDOW & FORM_STYLE_MASK; ex = WS_EX_WINDOWEDGE; break;
+    }
+}
+
+int border_style_of(HWND h) {
+    LONG_PTR s = GetWindowLongPtrW(h, GWL_STYLE), ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+    if (s & WS_POPUP) return 0;
+    bool sizable = (s & WS_THICKFRAME) != 0;
+    if (ex & WS_EX_TOOLWINDOW) return sizable ? 5 : 4;
+    if (sizable) return 2;
+    if (ex & WS_EX_DLGMODALFRAME) return 3;
+    return 1;
+}
+
+// Swaps the frame and keeps the client area the size it was.
+void set_border_style(HWND h, int bs) {
+    RECT cr;
+    GetClientRect(h, &cr);
+    DWORD style, ex;
+    border_styles(bs, style, ex);
+    LONG_PTR s = GetWindowLongPtrW(h, GWL_STYLE), e = GetWindowLongPtrW(h, GWL_EXSTYLE);
+    SetWindowLongPtrW(h, GWL_STYLE, (s & ~(LONG_PTR)FORM_STYLE_MASK) | style);
+    SetWindowLongPtrW(h, GWL_EXSTYLE, (e & ~(LONG_PTR)FORM_EXSTYLE_MASK) | ex);
+    // A fixed dialog shows no caption icon.
+    HICON icon = bs == 3 ? nullptr : app_icon();
+    SendMessageW(h, WM_SETICON, ICON_SMALL, (LPARAM)icon);
+    SendMessageW(h, WM_SETICON, ICON_BIG, (LPARAM)icon);
+    SetWindowPos(h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                 SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    RECT now, wr;
+    GetClientRect(h, &now);
+    GetWindowRect(h, &wr);
+    int dw = (cr.right - cr.left) - (now.right - now.left);
+    int dh = (cr.bottom - cr.top) - (now.bottom - now.top);
+    if (dw != 0 || dh != 0)
+        SetWindowPos(h, nullptr, 0, 0, wr.right - wr.left + dw, wr.bottom - wr.top + dh,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 bool edit_set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v) {
     HWND h = it.hwnd;
     if (prop == "SELSTART") {
@@ -1457,6 +1521,29 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
 
     if (prop == "DROPFILES") {
         DragAcceptFiles(h, v.to_bool() ? TRUE : FALSE);
+        return;
+    }
+
+    if (prop == "BORDERSTYLE" && it.kind == "FORM") {
+        int bs = (int)v.to_int();
+        if (bs < 0 || bs > 5)
+            throw std::runtime_error(std::string(who) + ": BORDERSTYLE must be 0..5");
+        set_border_style(h, bs);
+        return;
+    }
+
+    // An owned form stays above its owner, minimises with it and has no
+    // taskbar button of its own. 0 makes it free-standing again.
+    if (prop == "OWNER" && it.kind == "FORM") {
+        int oh = (int)v.to_int();
+        HWND owner = nullptr;
+        if (oh != 0) {
+            FormsItem& o = form_of(oh, who);
+            if (o.hwnd == h)
+                throw std::runtime_error(std::string(who) + ": a form cannot own itself");
+            owner = o.hwnd;
+        }
+        SetWindowLongPtrW(h, GWLP_HWNDPARENT, (LONG_PTR)owner);
         return;
     }
 
@@ -1720,6 +1807,13 @@ Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* w
 
     if (prop == "MAXIMIZED" && is_form_kind(it.kind))
         return Value::make_bool(IsZoomed(h) != 0);
+    if (prop == "BORDERSTYLE" && it.kind == "FORM")
+        return Value::make_i64(border_style_of(h));
+    if (prop == "OWNER" && it.kind == "FORM") {
+        HWND owner = (HWND)GetWindowLongPtrW(h, GWLP_HWNDPARENT);
+        auto oit = owner ? g_byhwnd.find(owner) : g_byhwnd.end();
+        return Value::make_i64(oit != g_byhwnd.end() ? oit->second : 0);
+    }
     if (prop == "TOPMOST" && is_form_kind(it.kind))
         return Value::make_bool((GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
     if (prop == "VALUE" && it.kind == "PROGRESS")
