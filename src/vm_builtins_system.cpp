@@ -406,6 +406,9 @@ void VM::register_system_builtins() {
 #ifdef MINIAUDIO
         if (name == "MINIAUDIO") on = true;
 #endif
+#if defined(GFX) || defined(SOUND_DSP)
+        if (name == "SOUND") on = true;  // the SOUND.* synth and sequencer
+#endif
 #ifdef FX
         if (name == "FX") on = true;
 #endif

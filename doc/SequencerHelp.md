@@ -36,6 +36,17 @@ The sequencer divides time into "cycles". You can arrange events within a cycle 
   * `"c4 c4"` = Two quarter notes (if cycle is 1 bar).
   * `"[c4 c4] c4"` = Two eighth notes followed by one quarter note.
   * `"c4 [c4 c4 c4]"` = One quarter note followed by eighth note triplets.
+  * **Stack** (`a, b`): play together, `"[c3,e3,g3] ~"` is a chord.
+  * **One per cycle** (`<a b c>`): `"<c3 a2 f2 g2>"` walks a chord progression bar by bar.
+  * **Speed** (`a*2`, `a/2`): `"c4*4"`, `"[c3 e3 g3 b3]/2"` spreads over two bars.
+  * **Repeat / weight / hold** (`a!3`, `a@3`, `_`), **chance** (`a?0.3`), **random choice** (`a | b`).
+  * **Euclidean** (`a(k,n,rot)`): `"c2(3,8)"` spreads 3 hits over 8 steps.
+  * A playing layer switches to a new pattern at the next cycle. `SOUND.EVENTS$(pattern$, cycles)` lists the events without playing them.
+  * Full table: languages.md, "Pattern Syntax".
+
+* **`SOUND.FILTER track, cutoff, [resonance], [mode$]`**: resonant `"LP"`/`"HP"`/`"BP"` when a resonance or mode is given.
+* **`SOUND.FENV track, octaves, attack, decay, [sustain], [release]`**: filter envelope per note.
+* **`SOUND.MOD track, param$, shape$, lo, hi, cycles`**: e.g. `SOUND.MOD 1, "CUTOFF", "SINE", 300, 3000, 8` sweeps over eight bars.
 
 ### Available Scale Modes
 

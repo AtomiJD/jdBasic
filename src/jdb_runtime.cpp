@@ -374,6 +374,9 @@ int64_t jdb_os_feature(const char* name) {
 #ifdef MINIAUDIO
     if (strcmp(up, "MINIAUDIO")   == 0) return 1;
 #endif
+#if defined(GFX) || defined(SOUND_DSP)
+    if (strcmp(up, "SOUND")       == 0) return 1;
+#endif
 #ifdef FX
     if (strcmp(up, "FX")          == 0) return 1;
 #endif

@@ -2887,8 +2887,9 @@ Syntax: SOLVE(matrixA, vectorB)
 Description: Solves the linear system Ax = b for the unknown vector x.
 
 [SOUND.INIT]
-Syntax: SOUND.INIT()
+Syntax: SOUND.INIT [mode$]
 Description: Initializes the audio system for synthesized sound.
+mode$ "PULL" opens no audio device: SOUND.RENDER is then the only clock, so a render is reproducible.
 
 [SOUND.PLAY]
 Syntax: SOUND.PLAY(track, frequency)
@@ -2937,8 +2938,22 @@ Syntax: SOUND.DISTORTION amount
 Description: Applies a master saturation/overdrive effect. Amount > 0.0.
 
 [SOUND.FILTER]
-Syntax: SOUND.FILTER track, cutoff_hz
-Description: Applies a Low-Pass Filter to a track at the specified cutoff frequency.
+Syntax: SOUND.FILTER track, cutoff_hz, [resonance], [mode$]
+Description: Filters a track. With two arguments a gentle one-pole low-pass.
+A resonance (0.0-1.0) or a mode selects the resonant state-variable filter.
+Modes: "LP" low-pass, "HP" high-pass, "BP" band-pass, "LP1" the one-pole low-pass.
+
+[SOUND.FENV]
+Syntax: SOUND.FENV track, octaves, attack, decay, [sustain], [release]
+Description: Filter envelope: each note opens the cutoff by up to `octaves` and closes it again.
+sustain defaults to 0, release to 0.1 seconds.
+
+[SOUND.MOD]
+Syntax: SOUND.MOD track, param$, shape$, [lo], [hi], [cycles], [offset]
+Description: Moves a track parameter between lo and hi, one period every `cycles` sequencer cycles.
+Parameters: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV.
+Shapes: SINE, COSINE, SAW, ISAW, TRI, SQUARE, RAND, PERLIN. "OFF" stops it and restores the value.
+Example: SOUND.MOD 1, "CUTOFF", "SINE", 300, 3000, 8
 
 [SOUND.FM]
 Syntax: SOUND.FM track, amount, ratio
@@ -2980,6 +2995,14 @@ Modes: MAJOR, MINOR, PENT_MIN, BLUES, ARABIC, etc.
 Syntax: SOUND.SEQ layer, pattern$, waveform$
 Description: Programs a rhythmic pattern for the sequencer.
 Waveform can be "SINE", "SQUARE", "SAW", "TRIANGLE", "NOISE", or "VOICE".
+A layer that is playing switches to the new pattern at the start of the next cycle.
+Pattern: a b (steps)  [a b] (group)  a,b (together)  <a b> (one per cycle)  a|b (random)
+~ (rest)  _ (hold)  a*2 a/2 (faster/slower)  a!3 (repeat)  a@3 (weight)  a?0.3 (chance)  a(3,8) (euclid)
+
+[SOUND.EVENTS$]
+Syntax: SOUND.EVENTS$(pattern$, [cycles], [first])
+Description: Lists the events a pattern plays, one line each: "start duration note".
+Times are in cycles. Needs no SOUND.INIT.
 
 [SOUND.COMPRESSOR]
 Syntax: SOUND.COMPRESSOR threshold, ratio, attack, release, gain

@@ -1,4 +1,5 @@
 #include "sound.h"
+#include "sound_pattern.h"
 #include "vm.h"
 #include "errors.h"
 
@@ -182,8 +183,10 @@ struct Voice {
     float unison_phases[16] = {};
     // LFO
     float lfo_phase = 0.0f;
-    // Filter state
+    // Filter state: one-pole, and the two SVF integrators per channel
     float filter_l = 0.0f, filter_r = 0.0f;
+    float svf_l1 = 0.0f, svf_l2 = 0.0f, svf_r1 = 0.0f, svf_r2 = 0.0f;
+    Envelope fenv;
     // EQ state
     float eq_lo_l = 0.0f, eq_lo_r = 0.0f;
     float eq_hi_l = 0.0f, eq_hi_r = 0.0f;
@@ -197,10 +200,49 @@ struct Voice {
     float sample_rate_ratio = 1.0f;
     float sample_pos = 0.0f;
     bool sample_loop = false;
-    // Sequencer gate-off (per-voice duration tracking)
+    // Sequencer timing: frames until the onset, then frames until gate-off
     bool seq_controlled = false;
-    double seq_remaining = 0.0;
+    int64_t delay_frames = 0;
+    int64_t gate_frames = -1;
 };
+
+// ── Parameter modulation ────────────────────────────────────────
+
+enum ModParam { MP_CUTOFF, MP_RESONANCE, MP_GAIN, MP_PAN, MP_DETUNE, MP_FM,
+                MP_CRUSH, MP_REVERB, MP_DELAY, MP_FENV, MP_COUNT };
+enum class ModShape { NONE, SINE, COSINE, SAW, ISAW, TRI, SQUARE, RAND, PERLIN };
+
+// A parameter moving between lo and hi, one period every `cycles` cycles.
+struct ModSlot {
+    ModShape shape = ModShape::NONE;
+    float lo = 0.0f, hi = 1.0f, cycles = 1.0f, offset = 0.0f;
+    float base = 0.0f;  // the value before modulation, restored when it stops
+};
+
+static float hash01(int64_t i) {
+    return (float)(jdpat::hash32(0x9e3779b9u, i) / 4294967295.0);
+}
+
+// 0..1 at time x, in periods
+static float mod_signal(ModShape sh, double x) {
+    double fl = std::floor(x);
+    float fr = (float)(x - fl);
+    switch (sh) {
+        case ModShape::SINE:   return 0.5f + 0.5f * std::sin(2.0f * (float)M_PI * fr);
+        case ModShape::COSINE: return 0.5f + 0.5f * std::cos(2.0f * (float)M_PI * fr);
+        case ModShape::SAW:    return fr;
+        case ModShape::ISAW:   return 1.0f - fr;
+        case ModShape::TRI:    return fr < 0.5f ? 2.0f * fr : 2.0f - 2.0f * fr;
+        case ModShape::SQUARE: return fr < 0.5f ? 0.0f : 1.0f;
+        case ModShape::RAND:   return hash01((int64_t)fl);
+        case ModShape::PERLIN: {
+            float a = hash01((int64_t)fl), b = hash01((int64_t)fl + 1);
+            float s = fr * fr * fr * (fr * (fr * 6.0f - 15.0f) + 10.0f);
+            return a + (b - a) * s;
+        }
+        default: return 0.0f;
+    }
+}
 
 // ── Track Parameters ────────────────────────────────────────────
 
@@ -209,6 +251,11 @@ struct TrackParams {
     float attack = 0.01f, decay = 0.1f, sustain = 0.7f, release = 0.3f;
     float gain = 1.0f, pan = 0.5f;
     float filter_cutoff = 20000.0f;
+    float filter_res = 0.0f;
+    int filter_mode = 0;  // 0 one-pole low-pass, 1 LP, 2 HP, 3 BP (state-variable)
+    float fenv_amount = 0.0f;  // octaves the cutoff opens at the envelope peak
+    float fenv_attack = 0.005f, fenv_decay = 0.2f, fenv_sustain = 0.0f, fenv_release = 0.1f;
+    ModSlot mods[MP_COUNT];
     float eq_low = 1.0f, eq_mid = 1.0f, eq_high = 1.0f;
     float lfo_freq = 0.0f, lfo_depth = 0.0f;
     float fm_amount = 0.0f, fm_ratio = 1.0f;
@@ -227,6 +274,22 @@ struct TrackParams {
     float sample_base_freq = 261.63f; // C4
     bool sample_loop = false;
 };
+
+static float* mod_target(TrackParams& tp, int param) {
+    switch (param) {
+        case MP_CUTOFF:    return &tp.filter_cutoff;
+        case MP_RESONANCE: return &tp.filter_res;
+        case MP_GAIN:      return &tp.gain;
+        case MP_PAN:       return &tp.pan;
+        case MP_DETUNE:    return &tp.unison_detune;
+        case MP_FM:        return &tp.fm_amount;
+        case MP_CRUSH:     return &tp.crush_bits;
+        case MP_REVERB:    return &tp.reverb_send;
+        case MP_DELAY:     return &tp.delay_send;
+        case MP_FENV:      return &tp.fenv_amount;
+        default:           return nullptr;
+    }
+}
 
 // ── Sequencer Event ─────────────────────────────────────────────
 
@@ -249,6 +312,11 @@ struct SeqLayer {
     bool looping = false;
     double total_length = 1.0;
     double linear_cursor = 0.0;
+    // Cyclic (SOUND.SEQ) mode: `events` holds the cycle `built_cycle`.
+    // A new pattern waits in `pending` until the next cycle starts.
+    jdpat::NodeP pat, pending;
+    bool has_pending = false;
+    int64_t built_cycle = INT64_MIN;
 };
 
 // ── Reverb Module (Schroeder) ───────────────────────────────────
@@ -368,7 +436,7 @@ static struct SoundSystem {
 
     // Sequencer
     float bpm = 120.0f;
-    double seq_phase = 0.0;
+    double seq_time = 0.0;  // sequencer clock in cycles since start
     SeqLayer seq_layers[NUM_TRACKS];
     int dbg_triggers = 0;
     int dbg_alloc_fail = 0;
@@ -515,12 +583,41 @@ static struct SoundSystem {
             sample_l *= duck; sample_r *= duck;
         }
 
-        // Low-pass filter (1-pole RC)
-        if (tp.filter_cutoff < 19999.0f) {
-            float rc = 1.0f / (2.0f * (float)M_PI * tp.filter_cutoff);
-            float alpha = dt / (rc + dt);
-            v.filter_l += alpha * (sample_l - v.filter_l); sample_l = v.filter_l;
-            v.filter_r += alpha * (sample_r - v.filter_r); sample_r = v.filter_r;
+        // Filter, its cutoff opened by the filter envelope
+        float fe = 0.0f;
+        if (tp.fenv_amount != 0.0f) {
+            if (v.env.state == EnvState::RELEASE &&
+                v.fenv.state != EnvState::RELEASE && v.fenv.state != EnvState::OFF)
+                v.fenv.gate_off();
+            fe = v.fenv.process(dt);
+        }
+        if (tp.filter_mode != 0 || tp.filter_cutoff < 19999.0f || tp.fenv_amount != 0.0f) {
+            float fc = tp.filter_cutoff;
+            if (fe != 0.0f) fc *= std::exp2(tp.fenv_amount * fe);
+            fc = std::clamp(fc, 10.0f, 0.45f * SAMPLE_RATE);
+            if (tp.filter_mode == 0) {
+                float rc = 1.0f / (2.0f * (float)M_PI * fc);
+                float alpha = dt / (rc + dt);
+                v.filter_l += alpha * (sample_l - v.filter_l); sample_l = v.filter_l;
+                v.filter_r += alpha * (sample_r - v.filter_r); sample_r = v.filter_r;
+            } else {
+                // Topology-preserving state-variable filter (Simper)
+                float g = std::tan((float)M_PI * fc / SAMPLE_RATE);
+                float k = 2.0f - 1.97f * std::clamp(tp.filter_res, 0.0f, 1.0f);
+                float a1 = 1.0f / (1.0f + g * (g + k)), a2 = g * a1, a3 = g * a2;
+                auto svf = [&](float x, float& ic1, float& ic2) {
+                    float v3 = x - ic2;
+                    float v1 = a1 * ic1 + a2 * v3;
+                    float v2 = ic2 + a2 * ic1 + a3 * v3;
+                    ic1 = 2.0f * v1 - ic1;
+                    ic2 = 2.0f * v2 - ic2;
+                    if (tp.filter_mode == 2) return x - k * v1 - v2;
+                    if (tp.filter_mode == 3) return v1;
+                    return v2;
+                };
+                sample_l = svf(sample_l, v.svf_l1, v.svf_l2);
+                sample_r = svf(sample_r, v.svf_r1, v.svf_r2);
+            }
         }
 
         // Ring modulator
@@ -713,6 +810,7 @@ static struct SoundSystem {
             if (layer.active_voice_idx >= 0 && layer.active_voice_idx < MAX_VOICES)
                 voices[layer.active_voice_idx].env.gate_off();
             layer.events.clear();
+            layer.pat.reset(); layer.pending.reset(); layer.has_pending = false;
             layer.active_voice_idx = -1;
             layer.remaining = 0;
             layer.use_voice = true;
@@ -726,134 +824,139 @@ static struct SoundSystem {
         }
     }
 
+    // Envelopes for a voice that starts a note on track `tp`
+    static void start_envelopes(Voice& v, const TrackParams& tp) {
+        v.env = Envelope{tp.attack, tp.decay, tp.sustain, tp.release};
+        v.env.gate_on();
+        v.fenv = Envelope{tp.fenv_attack, tp.fenv_decay, tp.fenv_sustain, tp.fenv_release};
+        v.fenv.gate_on();
+    }
+
+    // Starts the voice for one sequencer event, `offset` cycles into the buffer.
+    static void trigger_event(SoundSystem* sys, int t, const SeqEvent& ev,
+                              double offset, double phase_inc) {
+        if (ev.probability < 1.0f && ((float)rand() / RAND_MAX) > ev.probability)
+            return;
+        float freq = 0;
+        int midi = note_name_to_midi(ev.note);
+        if (midi >= 0) {
+            freq = midi_to_freq(midi);
+        } else {
+            try { int deg = std::stoi(ev.note); freq = sys->degree_to_freq(t, deg); }
+            catch (...) { try { freq = std::stof(ev.note); } catch (...) { return; } }
+        }
+        int vi = sys->allocate_voice(t);
+        if (vi < 0) { sys->dbg_alloc_fail++; return; }
+        sys->dbg_triggers++;
+        auto& v = sys->voices[vi];
+        auto& tp = sys->tracks[t];
+        v.frequency = freq;
+        v.phase = 0.0f;
+        start_envelopes(v, tp);
+        v.seq_controlled = true;
+        v.delay_frames = (int64_t)(offset / phase_inc);
+        v.gate_frames = (int64_t)(ev.duration / phase_inc);
+        if (tp.waveform == Waveform::SAMPLE) {
+            v.sample_id = tp.sample_id;
+            v.sample_loop = tp.sample_loop;
+            v.sample_pos = 0;
+        }
+        sys->seq_layers[t].active_voice_idx = vi;
+    }
+
+    // Moves every modulated track parameter to its value at cycle time `now`.
+    void apply_mods(double now) {
+        for (int t = 0; t < NUM_TRACKS; t++) {
+            auto& tp = tracks[t];
+            for (int m = 0; m < MP_COUNT; m++) {
+                auto& ms = tp.mods[m];
+                if (ms.shape == ModShape::NONE) continue;
+                double x = now / std::max(ms.cycles, 0.0001f) + ms.offset;
+                float val = ms.lo + (ms.hi - ms.lo) * mod_signal(ms.shape, x);
+                float* dst = mod_target(tp, m);
+                if (!dst) continue;
+                if (m == MP_CRUSH) val = std::clamp(val, 1.0f, 16.0f);
+                *dst = val;
+            }
+        }
+    }
+
     // ── Audio callback ──────────────────────────────────────────
 
     // SDL-free render: fill `buffer` with num_frames interleaved stereo samples.
     static void render_frames(SoundSystem* sys, float* buffer, int num_frames) {
         double dt = 1.0 / SAMPLE_RATE;
 
-        // Sequencer phase
+        // Sequencer clock, in cycles
         double cps = sys->bpm / 60.0 / 4.0; // cycles per second
         double phase_inc = dt * cps;
-        double prev_phase = sys->seq_phase;
-
-        // Process sequencer events
         double buffer_dur = num_frames * phase_inc;
+        double t0 = sys->seq_time, t1 = t0 + buffer_dur;
 
         for (int t = 0; t < NUM_TRACKS; t++) {
             auto& layer = sys->seq_layers[t];
-            if (layer.events.empty()) continue;
 
-            double start_window, end_window;
-            bool layer_wrapped = false;
-
-            if (layer.is_linear) {
-                start_window = layer.linear_cursor;
-                end_window = start_window + buffer_dur;
-                layer.linear_cursor += buffer_dur;
-
-                if (end_window >= layer.total_length) {
-                    if (layer.looping) {
-                        layer.linear_cursor -= layer.total_length;
-                        layer_wrapped = true;
-                    } else {
-                        if (start_window >= layer.total_length) {
-                            layer.events.clear();
-                            continue;
+            if (!layer.is_linear) {
+                if (!layer.pat && !layer.has_pending) continue;
+                for (int64_t c = (int64_t)std::floor(t0); (double)c < t1; c++) {
+                    if (layer.built_cycle != c) {
+                        if (layer.has_pending) {
+                            layer.pat = layer.pending;
+                            layer.pending.reset();
+                            layer.has_pending = false;
                         }
+                        layer.events.clear();
+                        for (auto& e : jdpat::query_cycle(layer.pat, c)) {
+                            SeqEvent ev;
+                            ev.start_phase = e.start;
+                            ev.duration = e.dur * 0.8;
+                            ev.note = e.note;
+                            ev.probability = e.prob;
+                            layer.events.push_back(ev);
+                        }
+                        layer.built_cycle = c;
                     }
+                    double ws = std::max(t0, (double)c) - (double)c;
+                    double we = std::min(t1, (double)c + 1.0) - (double)c;
+                    for (auto& ev : layer.events)
+                        if (ev.start_phase >= ws && ev.start_phase < we)
+                            trigger_event(sys, t, ev, (double)c + ev.start_phase - t0, phase_inc);
                 }
-            } else {
-                start_window = prev_phase;
-                end_window = start_window + buffer_dur;
+                continue;
             }
 
-            // Trigger events in window
+            if (layer.events.empty()) continue;
+            double start_window = layer.linear_cursor;
+            double end_window = start_window + buffer_dur;
+            bool layer_wrapped = false;
+            layer.linear_cursor += buffer_dur;
+
+            if (end_window >= layer.total_length) {
+                if (layer.looping) {
+                    layer.linear_cursor -= layer.total_length;
+                    layer_wrapped = true;
+                } else if (start_window >= layer.total_length) {
+                    layer.events.clear();
+                    continue;
+                }
+            }
+
             for (auto& ev : layer.events) {
-                bool in_window = false;
-
-                if (layer.is_linear) {
-                    if (layer_wrapped) {
-                        bool tail = (ev.start_phase >= start_window && ev.start_phase < layer.total_length);
-                        double head_end = end_window - layer.total_length;
-                        // Use <= for head to include events at exactly 0.0
-                        bool head = (ev.start_phase >= 0.0 && ev.start_phase <= head_end);
-                        in_window = tail || head;
-                    } else {
-                        in_window = (ev.start_phase >= start_window && ev.start_phase < end_window);
-                    }
-                } else {
-                    if (end_window > 1.0) {
-                        bool tail = (ev.start_phase >= start_window && ev.start_phase < 1.0);
-                        double head_end = end_window - 1.0;
-                        bool head = (ev.start_phase >= 0.0 && ev.start_phase <= head_end);
-                        in_window = tail || head;
-                    } else {
-                        in_window = (ev.start_phase >= start_window && ev.start_phase < end_window);
-                    }
-                }
-
-                if (!ev.triggered && in_window) {
-                    ev.triggered = true;
-
-                    if (ev.probability < 1.0f && ((float)rand() / RAND_MAX) > ev.probability)
-                        continue;
-
-                    // The previous voice will gate-off on its own via seq_remaining
-
-                    float freq = 0;
-                    int midi = note_name_to_midi(ev.note);
-                    if (midi >= 0) {
-                        freq = midi_to_freq(midi);
-                    } else {
-                        try { int deg = std::stoi(ev.note); freq = sys->degree_to_freq(t, deg); }
-                        catch (...) { try { freq = std::stof(ev.note); } catch (...) { continue; } }
-                    }
-
-                    int vi = sys->allocate_voice(t);
-                    if (vi < 0) { sys->dbg_alloc_fail++; continue; }
-                    sys->dbg_triggers++;
-                    auto& v = sys->voices[vi];
-                    auto& tp = sys->tracks[t];
-                    v.frequency = freq;
-                    v.phase = 0.0f;
-                    v.env = Envelope{tp.attack, tp.decay, tp.sustain, tp.release};
-                    v.env.gate_on();
-                    v.seq_controlled = true;
-                    v.seq_remaining = ev.duration;
-                    if (tp.waveform == Waveform::SAMPLE) {
-                        v.sample_id = tp.sample_id;
-                        v.sample_loop = tp.sample_loop;
-                        v.sample_pos = 0;
-                    }
-                    layer.active_voice_idx = vi;
-                }
+                double offset = -1.0;
+                if (ev.start_phase >= start_window && ev.start_phase < end_window)
+                    offset = ev.start_phase - start_window;
+                else if (layer_wrapped && ev.start_phase >= 0.0 &&
+                         ev.start_phase <= end_window - layer.total_length)
+                    offset = ev.start_phase + layer.total_length - start_window;
+                if (offset < 0.0 || ev.triggered) continue;
+                ev.triggered = true;
+                trigger_event(sys, t, ev, offset, phase_inc);
             }
-
-            // Reset triggered flags on wrap
-            if (layer.is_linear && layer_wrapped) {
+            if (layer_wrapped)
                 for (auto& ev : layer.events) ev.triggered = false;
-            }
-            if (!layer.is_linear && end_window > 1.0) {
-                for (auto& ev : layer.events) ev.triggered = false;
-            }
         }
 
-        // Per-voice gate-off: decrement seq_remaining for ALL sequencer-controlled voices
-        for (int i = 0; i < MAX_VOICES; i++) {
-            auto& v = sys->voices[i];
-            if (v.seq_controlled && v.env.state != EnvState::OFF && v.env.state != EnvState::RELEASE) {
-                v.seq_remaining -= buffer_dur;
-                if (v.seq_remaining <= 0.0) {
-                    v.env.gate_off();
-                    v.seq_controlled = false;
-                }
-            }
-        }
-
-        // Advance sequencer phase
-        sys->seq_phase += num_frames * phase_inc;
-        while (sys->seq_phase >= 1.0) sys->seq_phase -= 1.0;
+        sys->seq_time = t1;
 
         // Per-sample generation
         float rev_bus[2] = {};
@@ -869,9 +972,15 @@ static struct SoundSystem {
             float t_env[NUM_TRACKS] = {};
 
             // Synth voices
+            if ((f & 31) == 0) sys->apply_mods(t0 + f * phase_inc);
             for (int i = 0; i < MAX_VOICES; i++) {
                 auto& v = sys->voices[i];
                 if (v.env.state == EnvState::OFF || v.track < 0) continue;
+                if (v.delay_frames > 0) { v.delay_frames--; continue; }
+                if (v.seq_controlled && v.gate_frames >= 0 && v.gate_frames-- == 0) {
+                    v.env.gate_off();
+                    v.seq_controlled = false;
+                }
                 float vl, vr;
                 sys->generate_voice(v, vl, vr);
                 mix_l += vl; mix_r += vr;
@@ -997,9 +1106,19 @@ void register_sound_builtins(VM& vm) {
 
     // ── SOUND.INIT ──────────────────────────────────────────────
 
-    vm.register_native("SOUND.INIT", 0, 0, [](const std::vector<Value>& args) -> Value {
-        (void)args;
+    // SOUND.INIT [mode$]: "PULL" opens no audio device; SOUND.RENDER is
+    // then the only clock, which makes a render reproducible.
+    vm.register_native("SOUND.INIT", 0, 1, [](const std::vector<Value>& args) -> Value {
         if (g_sound.initialized) return Value::make_none();
+        bool pull = false;
+        if (!args.empty()) {
+            std::string m = args[0].to_string();
+            std::transform(m.begin(), m.end(), m.begin(), ::toupper);
+            if (m == "PULL") pull = true;
+            else if (m != "DEVICE")
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.INIT: mode is DEVICE or PULL, not " + m);
+        }
+        (void)pull;
 
         // Effect buffers - needed in both device and pull mode.
         g_sound.reverb.init();
@@ -1007,6 +1126,10 @@ void register_sound_builtins(VM& vm) {
         g_sound.wave_buffer.resize(1024, 0.0f);
 
 #ifdef GFX
+        if (pull) {
+            g_sound.initialized = true;
+            return Value::make_none();
+        }
         if (!SDL_WasInit(0)) {
             // SDL not initialized at all
             if (!SDL_Init(SDL_INIT_AUDIO))
@@ -1097,8 +1220,7 @@ void register_sound_builtins(VM& vm) {
             auto& v = g_sound.voices[vi];
             auto& tp = g_sound.tracks[t];
             v.frequency = freq;
-            v.env = Envelope{tp.attack, tp.decay, tp.sustain, tp.release};
-            v.env.gate_on();
+            SoundSystem::start_envelopes(v, tp);
             if (tp.waveform == Waveform::SAMPLE) {
                 v.sample_id = tp.sample_id;
                 v.sample_loop = tp.sample_loop;
@@ -1367,16 +1489,68 @@ void register_sound_builtins(VM& vm) {
         std::string wf = args[2].as_string()->data;
         std::transform(wf.begin(), wf.end(), wf.begin(), ::toupper);
 
+        jdpat::NodeP pat;
+        try { pat = jdpat::parse(pattern); }
+        catch (const std::exception& e) {
+            throw jdError(ErrCode::RUNTIME_ERROR, std::string("SOUND.SEQ: ") + e.what());
+        }
+
         ensure_sound("SOUND"); SND_LOCK();
+        bool idle = true;
+        for (auto& l : g_sound.seq_layers)
+            if (l.pat || l.has_pending || (l.is_linear && !l.events.empty())) idle = false;
         auto& layer = g_sound.seq_layers[t];
-        layer.events.clear();
+        if (layer.is_linear) {
+            layer.events.clear();
+            layer.is_linear = false;
+            layer.looping = false;
+        }
         layer.use_voice = (wf == "VOICE");
         if (!layer.use_voice) {
             g_sound.tracks[t].waveform = parse_waveform(wf);
         }
-        g_sound.parse_pattern(pattern, layer.events, 0.0f, 1.0f);
+        // A playing layer switches at the next cycle; an empty one starts now,
+        // and the first pattern of an idle sequencer starts a fresh cycle.
+        if (layer.pat || layer.has_pending) {
+            layer.pending = pat;
+            layer.has_pending = true;
+        } else {
+            if (idle) g_sound.seq_time = 0.0;
+            layer.pat = pat;
+            layer.events.clear();
+            layer.built_cycle = INT64_MIN;
+        }
         SND_UNLOCK();
         return Value::make_none();
+    });
+
+    // ── SOUND.EVENTS$(pattern$, [cycles], [first]) ──────────────
+    // The events a pattern plays, one line each: "start duration note".
+
+    vm.register_native("SOUND.EVENTS$", 1, 3, [](const std::vector<Value>& args) -> Value {
+        std::string pattern = args[0].to_string();
+        int64_t cycles = (args.size() >= 2) ? args[1].to_int() : 1;
+        int64_t first = (args.size() >= 3) ? args[2].to_int() : 0;
+        jdpat::NodeP pat;
+        try { pat = jdpat::parse(pattern); }
+        catch (const std::exception& e) {
+            throw jdError(ErrCode::RUNTIME_ERROR, std::string("SOUND.EVENTS$: ") + e.what());
+        }
+        std::string out;
+        char buf[64];
+        for (int64_t c = first; c < first + cycles; c++) {
+            for (auto& e : jdpat::query_cycle(pat, c)) {
+                if (!out.empty()) out += '\n';
+                std::snprintf(buf, sizeof buf, "%.6g %.6g ", (double)c + e.start, e.dur);
+                out += buf;
+                out += e.note;
+                if (e.prob < 1.0f) {
+                    std::snprintf(buf, sizeof buf, "?%.6g", e.prob);
+                    out += buf;
+                }
+            }
+        }
+        return Value::make_string(out);
     });
 
     // ── SOUND.NOTE pattern$, [loop] ──────────────────────────────
@@ -1431,9 +1605,88 @@ void register_sound_builtins(VM& vm) {
         int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
         g_sound.tracks[t].pan = (float)args[1].to_double(); return Value::make_none();
     });
-    vm.register_native("SOUND.FILTER", 2, 2, [](const std::vector<Value>& args) -> Value {
+    // SOUND.FILTER track, cutoff, [resonance], [mode$]
+    // Two arguments keep the one-pole low-pass; a resonance or a mode
+    // ("LP", "HP", "BP") selects the state-variable filter.
+    vm.register_native("SOUND.FILTER", 2, 4, [](const std::vector<Value>& args) -> Value {
         int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
-        g_sound.tracks[t].filter_cutoff = (float)args[1].to_double(); return Value::make_none();
+        auto& tp = g_sound.tracks[t];
+        tp.filter_cutoff = (float)args[1].to_double();
+        if (args.size() >= 3) {
+            tp.filter_res = std::clamp((float)args[2].to_double(), 0.0f, 1.0f);
+            tp.filter_mode = 1;
+        }
+        if (args.size() >= 4) {
+            std::string m = args[3].to_string();
+            std::transform(m.begin(), m.end(), m.begin(), ::toupper);
+            if (m == "LP") tp.filter_mode = 1;
+            else if (m == "HP") tp.filter_mode = 2;
+            else if (m == "BP") tp.filter_mode = 3;
+            else if (m == "LP1") tp.filter_mode = 0;
+            else throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.FILTER: mode is LP, HP, BP or LP1, not " + m);
+        }
+        return Value::make_none();
+    });
+
+    // SOUND.FENV track, octaves, attack, decay, [sustain], [release]
+    vm.register_native("SOUND.FENV", 4, 6, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        auto& tp = g_sound.tracks[t];
+        tp.fenv_amount = (float)args[1].to_double();
+        tp.fenv_attack = (float)args[2].to_double();
+        tp.fenv_decay = (float)args[3].to_double();
+        tp.fenv_sustain = (args.size() >= 5) ? (float)args[4].to_double() : 0.0f;
+        tp.fenv_release = (args.size() >= 6) ? (float)args[5].to_double() : 0.1f;
+        return Value::make_none();
+    });
+
+    // SOUND.MOD track, param$, shape$, [lo], [hi], [cycles], [offset]
+    // shape$ "OFF" stops the modulation and restores the value it started from.
+    vm.register_native("SOUND.MOD", 3, 7, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        std::string pn = args[1].to_string(), sn = args[2].to_string();
+        std::transform(pn.begin(), pn.end(), pn.begin(), ::toupper);
+        std::transform(sn.begin(), sn.end(), sn.begin(), ::toupper);
+        static const std::pair<const char*, int> params[] = {
+            {"CUTOFF", MP_CUTOFF}, {"RESONANCE", MP_RESONANCE}, {"GAIN", MP_GAIN},
+            {"PAN", MP_PAN}, {"DETUNE", MP_DETUNE}, {"FM", MP_FM}, {"CRUSH", MP_CRUSH},
+            {"REVERB", MP_REVERB}, {"DELAY", MP_DELAY}, {"FENV", MP_FENV}};
+        static const std::pair<const char*, ModShape> shapes[] = {
+            {"OFF", ModShape::NONE}, {"SINE", ModShape::SINE}, {"COSINE", ModShape::COSINE},
+            {"SAW", ModShape::SAW}, {"ISAW", ModShape::ISAW}, {"TRI", ModShape::TRI},
+            {"SQUARE", ModShape::SQUARE}, {"RAND", ModShape::RAND}, {"PERLIN", ModShape::PERLIN}};
+        int param = -1;
+        for (auto& p : params) if (pn == p.first) param = p.second;
+        if (param < 0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MOD: unknown parameter " + pn +
+                " (CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV)");
+        int shape = -1;
+        for (auto& s : shapes) if (sn == s.first) shape = (int)s.second;
+        if (shape < 0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MOD: unknown shape " + sn +
+                " (SINE, COSINE, SAW, ISAW, TRI, SQUARE, RAND, PERLIN, OFF)");
+        float cycles = (args.size() >= 6) ? (float)args[5].to_double() : 1.0f;
+        if (cycles <= 0.0f)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MOD: cycles must be positive");
+
+        SND_LOCK();
+        auto& tp = g_sound.tracks[t];
+        auto& ms = tp.mods[param];
+        float* dst = mod_target(tp, param);
+        if ((ModShape)shape == ModShape::NONE) {
+            if (ms.shape != ModShape::NONE && dst) *dst = ms.base;
+            ms.shape = ModShape::NONE;
+        } else {
+            if (ms.shape == ModShape::NONE && dst) ms.base = *dst;
+            ms.shape = (ModShape)shape;
+            ms.lo = (args.size() >= 4) ? (float)args[3].to_double() : 0.0f;
+            ms.hi = (args.size() >= 5) ? (float)args[4].to_double() : 1.0f;
+            ms.cycles = cycles;
+            ms.offset = (args.size() >= 7) ? (float)args[6].to_double() : 0.0f;
+            if (param == MP_RESONANCE && tp.filter_mode == 0) tp.filter_mode = 1;
+        }
+        SND_UNLOCK();
+        return Value::make_none();
     });
     vm.register_native("SOUND.EQ", 4, 4, [](const std::vector<Value>& args) -> Value {
         int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
@@ -1599,8 +1852,10 @@ void register_sound_builtins(VM& vm) {
             l.events.clear(); l.active_voice_idx = -1;
             l.is_linear = false; l.looping = false;
             l.linear_cursor = 0; l.total_length = 1.0f;
+            l.pat.reset(); l.pending.reset(); l.has_pending = false;
+            l.built_cycle = INT64_MIN;
         }
-        g_sound.seq_phase = 0;
+        g_sound.seq_time = 0;
         g_sound.distortion_amount = 0;
         g_sound.delay_active = false;
         g_sound.compressor_active = false;

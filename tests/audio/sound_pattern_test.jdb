@@ -1,0 +1,210 @@
+' ============================================================
+' SOUND sequencer: mini-notation patterns, cycle-quantized pattern
+' swap, sample-accurate onsets, state-variable filter, filter
+' envelope and parameter modulation
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' The audio half renders offline (SOUND.INIT "PULL"), so it needs no
+' audio device and gives the same samples on every run.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+DIM NL AS STRING = CHR$(10)
+
+SUB CHECK_STR(name$, expected AS STRING, actual AS STRING)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected=["; expected; "]  actual=["; actual; "]"
+    ENDIF
+ENDSUB
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+FUNC EV$(pattern$, cycles AS INTEGER) AS STRING
+    RETURN SOUND.EVENTS$(pattern$, cycles)
+ENDFUNC
+
+' Root mean square of the left channel, frames a..b-1
+FUNC RMS(buf, a AS INTEGER, b AS INTEGER) AS DOUBLE
+    DIM acc AS DOUBLE = 0
+    DIM i AS INTEGER
+    DIM x AS DOUBLE
+    FOR i = a TO b - 1
+        x = buf[i * 2]
+        acc = acc + x * x
+    NEXT i
+    RETURN SQR(acc / (b - a))
+ENDFUNC
+
+' RMS of the sample-to-sample difference: grows with high-frequency content
+FUNC DIFF_RMS(buf, a AS INTEGER, b AS INTEGER) AS DOUBLE
+    DIM acc AS DOUBLE = 0
+    DIM i AS INTEGER
+    DIM x AS DOUBLE
+    FOR i = a TO b - 1
+        x = buf[i * 2 + 2] - buf[i * 2]
+        acc = acc + x * x
+    NEXT i
+    RETURN SQR(acc / (b - a))
+ENDFUNC
+
+FUNC TRIGGERS() AS INTEGER
+    DIM s AS STRING = SOUND.STATS()
+    DIM p AS INTEGER = INSTR(s, "triggers=")
+    DIM q AS INTEGER = INSTR(s, " ")
+    RETURN VAL(MID$(s, p + 9, q - p - 9))
+ENDFUNC
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "SKIP: build has no SOUND sequencer"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+' ---------- 1. Mini-notation ----------
+CHECK_STR "sequence", "0 0.5 a" + NL + "0.5 0.5 b", EV$("a b", 1)
+CHECK_STR "rest", "0.5 0.5 c4", EV$("~ c4", 1)
+CHECK_STR "dot rest", "0.5 0.5 a", EV$(". a", 1)
+CHECK_STR "empty", "", EV$("", 1)
+CHECK_STR "alternation", "0 1 a" + NL + "1 1 b" + NL + "2 1 c", EV$("<a b c>", 3)
+CHECK_STR "nested alternation", "0 1 a" + NL + "1 1 b" + NL + "2 1 a" + NL + "3 1 c", EV$("<a <b c>>", 4)
+CHECK_STR "fast", "0 0.25 a" + NL + "0.25 0.25 a" + NL + "0.5 0.5 b", EV$("a*2 b", 1)
+CHECK_STR "fast alternation", "0 0.5 a" + NL + "0.5 0.5 b", EV$("<a b>*2", 1)
+CHECK_STR "slow group", "0 1 a" + NL + "1 1 b", EV$("[a b]/2", 2)
+CHECK_STR "slow atom", "0 2 a", EV$("a/2", 2)
+CHECK_STR "replicate", "0 0.25 a" + NL + "0.25 0.25 a" + NL + "0.5 0.25 a" + NL + "0.75 0.25 b", EV$("a!3 b", 1)
+CHECK_STR "bare bang", "0 0.333333 a" + NL + "0.333333 0.333333 a" + NL + "0.666667 0.333333 b", EV$("a ! b", 1)
+CHECK_STR "weight", "0 0.75 a" + NL + "0.75 0.25 b", EV$("a@3 b", 1)
+CHECK_STR "hold", "0 0.75 a" + NL + "0.75 0.25 b", EV$("a _ _ b", 1)
+CHECK_STR "euclid", "0 0.125 x" + NL + "0.375 0.125 x" + NL + "0.75 0.125 x", EV$("x(3,8)", 1)
+CHECK_STR "euclid rotated", "0.125 0.125 x" + NL + "0.5 0.125 x" + NL + "0.75 0.125 x", EV$("x(3,8,2)", 1)
+CHECK_STR "euclid 5,8", "0 0.125 x" + NL + "0.25 0.125 x" + NL + "0.375 0.125 x" + NL + "0.625 0.125 x" + NL + "0.75 0.125 x", EV$("x(5,8)", 1)
+CHECK_STR "stack", "0 1 a" + NL + "0 0.5 b" + NL + "0.5 0.5 c", EV$("[a, b c]", 1)
+CHECK_STR "chord", "0 0.5 c3" + NL + "0 0.5 e3" + NL + "0 0.5 g3", EV$("[c3,e3,g3] ~", 1)
+CHECK_STR "probability", "0 0.5 c3?0.25", EV$("c3?0.25 ~", 1)
+CHECK_STR "default probability", "0 0.5 a?0.5" + NL + "0.5 0.5 b", EV$("a? b", 1)
+CHECK_STR "old repeat", "0 0.25 c4" + NL + "0.25 0.25 c4" + NL + "0.5 0.25 c4" + NL + "0.75 0.25 c4", EV$("c4*4", 1)
+CHECK_STR "later cycles", "2 1 c", SOUND.EVENTS$("<a b c>", 1, 2)
+
+' random choice: one option per cycle, both options over 32 cycles
+DIM rnd$ AS STRING = EV$("a | b", 32)
+DIM lines = SPLIT(rnd$, NL)
+CHECK "choice one per cycle", LEN(lines) = 32, "lines=" + STR$(LEN(lines))
+CHECK "choice picks a", INSTR(rnd$, " a") >= 0, rnd$
+CHECK "choice picks b", INSTR(rnd$, " b") >= 0, rnd$
+CHECK_STR "choice is repeatable", rnd$, EV$("a | b", 32)
+
+DIM err_msg AS STRING = ""
+TRY
+    DIM bad AS STRING = SOUND.EVENTS$("[a b", 1)
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "unclosed bracket", INSTR(err_msg, "missing") >= 0, "msg=" + err_msg
+
+' ---------- 2. Engine, rendered offline ----------
+SOUND.INIT "PULL"
+SOUND.BPM 240
+DIM CYC AS INTEGER = 44100
+
+' onsets are sample-accurate inside one large render
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.SEQ 0, "~ c4", "VOICE"
+DIM buf = SOUND.RENDER(CYC)
+CHECK "silent before onset", RMS(buf, 0, 22000) < 0.001, "rms=" + STR$(RMS(buf, 0, 22000))
+CHECK "sound after onset", RMS(buf, 22200, 30000) > 0.3, "rms=" + STR$(RMS(buf, 22200, 30000))
+
+' a new pattern waits for the next cycle
+SOUND.RESET
+DIM n AS INTEGER = TRIGGERS()
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.SEQ 0, "c4*4", "VOICE"
+buf = SOUND.RENDER(CYC / 2)
+CHECK "first half old pattern", TRIGGERS() = 2, ""
+SOUND.SEQ 0, "c4*8", "VOICE"
+buf = SOUND.RENDER(CYC / 2)
+CHECK "second half still old", TRIGGERS() = 2, ""
+buf = SOUND.RENDER(CYC)
+CHECK "next cycle new pattern", TRIGGERS() = 8, ""
+SOUND.SEQ 0, "<c4 [c4 c4 c4]>", "VOICE"
+buf = SOUND.RENDER(CYC)
+n = TRIGGERS()
+buf = SOUND.RENDER(CYC)
+CHECK "alternation plays", n + TRIGGERS() = 4, "n=" + STR$(n)
+
+' high-pass removes a low sine that the low-pass keeps
+SOUND.RESET
+SOUND.VOICE 1, "SINE", 0.001, 0.01, 1.0, 0.01
+SOUND.FILTER 1, 2000, 0, "LP"
+SOUND.PLAY 1, 100
+buf = SOUND.RENDER(8000)
+DIM lp_rms AS DOUBLE = RMS(buf, 2000, 8000)
+SOUND.RESET
+SOUND.VOICE 1, "SINE", 0.001, 0.01, 1.0, 0.01
+SOUND.FILTER 1, 2000, 0, "HP"
+SOUND.PLAY 1, 100
+buf = SOUND.RENDER(8000)
+DIM hp_rms AS DOUBLE = RMS(buf, 2000, 8000)
+CHECK "low-pass passes", lp_rms > 0.6, "lp=" + STR$(lp_rms)
+CHECK "high-pass blocks", hp_rms < 0.02, "hp=" + STR$(hp_rms)
+
+' resonance lifts the cutoff frequency
+SOUND.RESET
+SOUND.VOICE 1, "SINE", 0.001, 0.01, 1.0, 0.01
+SOUND.FILTER 1, 1000, 0
+SOUND.PLAY 1, 1000
+buf = SOUND.RENDER(8000)
+DIM flat_rms AS DOUBLE = RMS(buf, 2000, 8000)
+SOUND.RESET
+SOUND.VOICE 1, "SINE", 0.001, 0.01, 1.0, 0.01
+SOUND.FILTER 1, 1000, 0.9
+SOUND.PLAY 1, 1000
+buf = SOUND.RENDER(8000)
+DIM res_rms AS DOUBLE = RMS(buf, 2000, 8000)
+CHECK "resonance boosts", res_rms > flat_rms * 3, "flat=" + STR$(flat_rms) + " res=" + STR$(res_rms)
+
+' the filter envelope opens a dark saw at the start of the note
+SOUND.RESET
+SOUND.VOICE 2, "SAW", 0.001, 0.01, 1.0, 0.01
+SOUND.FILTER 2, 200, 0
+SOUND.FENV 2, 5, 0.002, 0.1
+SOUND.PLAY 2, 110
+buf = SOUND.RENDER(30000)
+DIM early AS DOUBLE = DIFF_RMS(buf, 300, 1500)
+DIM late AS DOUBLE = DIFF_RMS(buf, 25000, 29000)
+CHECK "filter envelope opens", early > late * 2, "early=" + STR$(early) + " late=" + STR$(late)
+
+' a square modulator gates the gain: silent first half, full second half
+SOUND.RESET
+SOUND.VOICE 3, "SINE", 0.001, 0.01, 1.0, 0.01
+SOUND.MOD 3, "GAIN", "SQUARE", 0, 1, 1
+SOUND.PLAY 3, 440
+buf = SOUND.RENDER(CYC)
+CHECK "mod low half", RMS(buf, 1000, 21000) < 0.001, "rms=" + STR$(RMS(buf, 1000, 21000))
+CHECK "mod high half", RMS(buf, 23000, 43000) > 0.6, "rms=" + STR$(RMS(buf, 23000, 43000))
+SOUND.MOD 3, "GAIN", "OFF"
+buf = SOUND.RENDER(CYC / 2)
+CHECK "mod off restores", RMS(buf, 0, 20000) > 0.6, "rms=" + STR$(RMS(buf, 0, 20000))
+
+err_msg = ""
+TRY
+    SOUND.MOD 3, "WOBBLE", "SINE"
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "unknown mod parameter", INSTR(err_msg, "WOBBLE") >= 0, "msg=" + err_msg
+
+SOUND.RESET
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
