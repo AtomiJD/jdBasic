@@ -2894,9 +2894,10 @@ mode$ "PULL" opens no audio device: SOUND.RENDER is then the only clock, so a re
 [SOUND.KIT]
 Syntax: SOUND.KIT track, [kit]
 Description: Turns a track into a drum kit: pattern atoms name sounds ("bd sd hh"), name:n picks the n-th sample.
-kit is a kit file (one line per sound: name, WAV files, optional gain=) or a MAP name -> WAV path, SFX id or array.
-Each hit plays its whole sample. SOUND.KIT track alone removes the kit.
-Example: SOUND.KIT 0, "jdb/demos/sound/SynthesizerPercussion-SFZ-20220718/kit.txt"
+kit is "SYNTH" (built-in analog-style drums, no files: bd sd hh oh cr cp lt mt ht rim cb cl sh),
+a kit file (one line per sound: name, WAV files, optional gain= and choke=) or a MAP name -> WAV path, SFX id or array.
+Each hit plays its whole sample; a hit cuts its choke group (hh stops oh). SOUND.KIT track alone removes the kit.
+Example: SOUND.KIT 0, "SYNTH" : SOUND.SEQ 0, "bd*4, ~ cp, [hh oh]*4", "VOICE"
 
 [SOUND.PLAY]
 Syntax: SOUND.PLAY(track, frequency)

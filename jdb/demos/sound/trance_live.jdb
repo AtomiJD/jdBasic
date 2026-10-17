@@ -21,13 +21,11 @@ SOUND.REVERB 0.85, 0.4, 1.0, 0.5
 SOUND.DELAY TRUE, 3 * 60000 / 138 / 4, 0.45, 0.35
 SOUND.COMPRESSOR 0.5, 4, 5, 120, 1.0
 
-' kick: a short sine thump
-SOUND.VOICE 0, "SINE", 0.001, 0.18, 0.0, 0.05
+' kick, hats and clap from the built-in drum kit
+SOUND.KIT 0, "SYNTH"
 SOUND.GAIN 0, 0.9
-' hats: noise through a high-pass
-SOUND.VOICE 1, "NOISE", 0.001, 0.04, 0.0, 0.02
-SOUND.FILTER 1, 7000, 0.3, "HP"
-SOUND.GAIN 1, 0.35
+SOUND.KIT 1, "SYNTH"
+SOUND.GAIN 1, 0.6
 SOUND.PAN 1, 0.6
 ' bass: saw, low-pass plucked open by the filter envelope
 SOUND.VOICE 2, "SAW", 0.002, 0.12, 0.3, 0.05
@@ -57,11 +55,11 @@ DIM PAD$ AS STRING = "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>"
 DIM BASS$ AS STRING = "<[~ a1]*4 [~ f1]*4 [~ c2]*4 [~ g1]*4>"
 
 PRINT "kick"
-SOUND.SEQ 0, "c2*4", "VOICE"
+SOUND.SEQ 0, "bd*4", "VOICE"
 WAIT_BARS BARS_PER_PART
 
 PRINT "hats"
-SOUND.SEQ 1, "[~ c4]*4, c4(5,16,2)?0.6", "VOICE"
+SOUND.SEQ 1, "[~ oh]*4, ~ cp ~ cp, sh(5,16,2)?0.6", "VOICE"
 WAIT_BARS BARS_PER_PART
 
 PRINT "bass"
@@ -84,7 +82,7 @@ WAIT_BARS BARS_PER_PART
 
 PRINT "drop"
 SOUND.MOD 3, "RESONANCE", "OFF"
-SOUND.SEQ 0, "c2*4", "VOICE"
+SOUND.SEQ 0, "bd*4", "VOICE"
 SOUND.SEQ 2, BASS$, "VOICE"
 SOUND.SEQ 3, "<[a3 c4 e4 a4 e5 a4 e4 c4]*2 [f3 a3 c4 f4 c5 f4 c4 a3]*2 [c4 e4 g4 c5 g5 c5 g4 e4]*2 [g3 b3 d4 g4 d5 g4 d4 b3]*2>", "VOICE"
 WAIT_BARS 2 * BARS_PER_PART

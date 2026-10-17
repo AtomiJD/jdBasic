@@ -206,6 +206,9 @@ struct Voice {
     bool seq_controlled = false;
     int64_t delay_frames = 0;
     int64_t gate_frames = -1;
+    // Kit choke group, and whether the onset still has to cut the group
+    int choke = 0;
+    bool choke_pending = false;
 };
 
 // ── Parameter modulation ────────────────────────────────────────
@@ -252,6 +255,7 @@ static float mod_signal(ModShape sh, double x) {
 struct KitSound {
     std::vector<int> ids;
     float gain = 1.0f;
+    int choke = 0;  // a hit cuts the sounds of its group still ringing on the track
 };
 
 struct TrackParams {
@@ -501,6 +505,17 @@ static struct SoundSystem {
         }
         if (best >= 0) { voices[best] = Voice{}; voices[best].track = track; }
         return best;
+    }
+
+    // Releases the sounding voices in the choke group of voice `vi`.
+    void choke(int vi) {
+        const auto& src = voices[vi];
+        for (int i = 0; i < MAX_VOICES; i++) {
+            auto& v = voices[i];
+            if (i == vi || v.track != src.track || v.choke != src.choke) continue;
+            if (v.env.state == EnvState::OFF || v.delay_frames > 0 || v.choke_pending) continue;
+            v.env.gate_off();
+        }
     }
 
     float generate_waveform(Waveform wf, float phase, float dt) {
@@ -878,6 +893,8 @@ static struct SoundSystem {
             v.seq_controlled = true;
             v.delay_frames = (int64_t)(offset / phase_inc);
             v.gate_frames = -1;  // a hit plays its whole sample
+            v.choke = it->second.choke;
+            v.choke_pending = v.choke > 0;
             return;
         }
         float freq = 0;
@@ -1019,6 +1036,7 @@ static struct SoundSystem {
                 auto& v = sys->voices[i];
                 if (v.env.state == EnvState::OFF || v.track < 0) continue;
                 if (v.delay_frames > 0) { v.delay_frames--; continue; }
+                if (v.choke_pending) { v.choke_pending = false; sys->choke(i); }
                 if (v.seq_controlled && v.gate_frames >= 0 && v.gate_frames-- == 0) {
                     v.env.gate_off();
                     v.seq_controlled = false;
@@ -1142,6 +1160,165 @@ int sound_render(float* out, int num_frames) {
     SoundSystem::render_frames(&g_sound, out, num_frames);
     return num_frames;
 }
+
+// ── Built-in drum kit, synthesized (SOUND.KIT track, "SYNTH") ──
+
+namespace synthkit {
+
+struct Rng {
+    uint32_t s;
+    float next() { s = s * 1664525u + 1013904223u; return (float)(s >> 8) / 8388608.0f - 1.0f; }
+};
+
+static std::vector<float> buf(float sec) { return std::vector<float>((size_t)(sec * SAMPLE_RATE), 0.0f); }
+static float t_of(size_t i) { return (float)i / SAMPLE_RATE; }
+static float decay(float t, float tau) { return std::exp(-t / tau); }
+
+// State-variable filter over a buffer: mode 0 LP, 1 HP, 2 BP
+static void svf(std::vector<float>& x, float fc, float q, int mode) {
+    float g = std::tan((float)M_PI * fc / SAMPLE_RATE), k = 1.0f / q;
+    float a1 = 1.0f / (1.0f + g * (g + k)), a2 = g * a1, a3 = g * a2;
+    float ic1 = 0, ic2 = 0;
+    for (auto& s : x) {
+        float v3 = s - ic2, v1 = a1 * ic1 + a2 * v3, v2 = ic2 + a2 * ic1 + a3 * v3;
+        ic1 = 2 * v1 - ic1; ic2 = 2 * v2 - ic2;
+        s = mode == 0 ? v2 : mode == 1 ? s - k * v1 - v2 : v1;
+    }
+}
+
+static std::vector<float> noise(float len, uint32_t seed) {
+    auto x = buf(len);
+    Rng r{seed};
+    for (auto& s : x) s = r.next();
+    return x;
+}
+
+// Sine falling from f0 to f1 with time constant `sweep`, plus a noise click
+static std::vector<float> tone_drum(float f0, float f1, float sweep, float tau, float len, float click) {
+    auto x = buf(len);
+    Rng r{7};
+    float ph = 0;
+    for (size_t i = 0; i < x.size(); i++) {
+        float t = t_of(i);
+        ph += (f1 + (f0 - f1) * decay(t, sweep)) / SAMPLE_RATE;
+        x[i] = std::sin(2.0f * (float)M_PI * ph) * decay(t, tau);
+        if (i < 100) x[i] += click * r.next() * (1.0f - i / 100.0f);
+    }
+    return x;
+}
+
+// Six detuned square waves through a high-pass: the analog cymbal and hat source
+static std::vector<float> metal(float len, float tau, float hp, uint32_t seed) {
+    static const float fr[6] = {205.3f, 304.4f, 369.6f, 522.7f, 540.0f, 800.0f};
+    auto x = buf(len);
+    auto n = noise(len, seed);
+    for (size_t i = 0; i < x.size(); i++) {
+        float t = t_of(i), s = 0;
+        for (float f : fr) s += std::fmod(t * f, 1.0f) < 0.5f ? 1.0f : -1.0f;
+        x[i] = s / 6.0f + 0.3f * n[i];
+    }
+    svf(x, hp, 0.7f, 1);
+    svf(x, hp * 1.4f, 0.9f, 2);
+    for (size_t i = 0; i < x.size(); i++) x[i] *= decay(t_of(i), tau);
+    return x;
+}
+
+static void scale_peak(std::vector<float>& x, float peak) {
+    float m = 0;
+    for (float s : x) m = std::max(m, std::abs(s));
+    if (m > 0) for (auto& s : x) s *= peak / m;
+}
+
+// The mono samples of one sound; empty for an unknown name
+static std::vector<std::vector<float>> make(const std::string& name) {
+    std::vector<std::vector<float>> out;
+    if (name == "bd") {
+        out.push_back(tone_drum(170, 52, 0.025f, 0.16f, 0.8f, 0.25f));
+        out.push_back(tone_drum(120, 46, 0.05f, 0.55f, 1.6f, 0.12f));
+    } else if (name == "sd") {
+        auto x = buf(0.4f);
+        auto n = noise(0.4f, 11);
+        svf(n, 1800, 0.6f, 1);
+        for (size_t i = 0; i < x.size(); i++) {
+            float t = t_of(i);
+            float body = std::sin(2.0f * (float)M_PI * 185 * t) + 0.6f * std::sin(2.0f * (float)M_PI * 330 * t);
+            x[i] = 0.5f * body * decay(t, 0.05f) + 0.9f * n[i] * decay(t, 0.12f);
+        }
+        out.push_back(x);
+    } else if (name == "hh") {
+        out.push_back(metal(0.25f, 0.035f, 7500, 21));
+    } else if (name == "oh") {
+        out.push_back(metal(1.0f, 0.3f, 7500, 22));
+    } else if (name == "cr") {
+        auto x = metal(2.5f, 0.8f, 5000, 23);
+        auto n = noise(2.5f, 24);
+        svf(n, 6000, 0.7f, 1);
+        for (size_t i = 0; i < x.size(); i++) x[i] += 0.5f * n[i] * decay(t_of(i), 0.9f);
+        out.push_back(x);
+    } else if (name == "cp") {
+        auto x = noise(0.4f, 31);
+        svf(x, 1200, 1.5f, 2);
+        for (size_t i = 0; i < x.size(); i++) {
+            float t = t_of(i), e = 0;
+            for (int b = 0; b < 3; b++) {
+                float tb = t - 0.011f * b;
+                if (tb >= 0) e = std::max(e, decay(tb, 0.004f));
+            }
+            if (t >= 0.033f) e = std::max(e, decay(t - 0.033f, 0.11f));
+            x[i] *= e;
+        }
+        out.push_back(x);
+    } else if (name == "lt" || name == "mt" || name == "ht") {
+        float f = name == "lt" ? 85.0f : name == "mt" ? 125.0f : 180.0f;
+        out.push_back(tone_drum(f * 1.5f, f, 0.06f, 0.22f, 0.8f, 0.04f));
+    } else if (name == "rim") {
+        auto x = buf(0.08f);
+        for (size_t i = 0; i < x.size(); i++) {
+            float t = t_of(i);
+            x[i] = std::sin(2.0f * (float)M_PI * 1700 * t) * decay(t, 0.008f)
+                 + 0.6f * std::sin(2.0f * (float)M_PI * 480 * t) * decay(t, 0.012f);
+        }
+        out.push_back(x);
+    } else if (name == "cb") {
+        auto x = buf(0.6f);
+        for (size_t i = 0; i < x.size(); i++) {
+            float t = t_of(i);
+            float s = (std::fmod(t * 540, 1.0f) < 0.5f ? 1.0f : -1.0f) + (std::fmod(t * 800, 1.0f) < 0.5f ? 1.0f : -1.0f);
+            x[i] = s * (0.6f * decay(t, 0.015f) + 0.4f * decay(t, 0.25f));
+        }
+        svf(x, 800, 2.0f, 2);
+        out.push_back(x);
+    } else if (name == "cl") {
+        auto x = buf(0.12f);
+        for (size_t i = 0; i < x.size(); i++)
+            x[i] = std::sin(2.0f * (float)M_PI * 2500 * t_of(i)) * decay(t_of(i), 0.02f);
+        out.push_back(x);
+    } else if (name == "sh") {
+        auto x = noise(0.15f, 41);
+        svf(x, 5000, 0.7f, 1);
+        for (size_t i = 0; i < x.size(); i++) {
+            float t = t_of(i);
+            x[i] *= std::min(1.0f, t / 0.01f) * decay(t, 0.035f);
+        }
+        out.push_back(x);
+    }
+    for (auto& x : out) {
+        size_t fade = std::min(x.size(), (size_t)(0.01f * SAMPLE_RATE));
+        for (size_t i = 0; i < fade; i++) x[x.size() - 1 - i] *= (float)i / fade;
+        scale_peak(x, 0.9f);
+    }
+    return out;
+}
+
+struct Entry { const char* name; float gain; int choke; };
+static const Entry entries[] = {
+    {"bd", 1.0f, 0}, {"sd", 0.9f, 0}, {"hh", 0.55f, 1}, {"oh", 0.5f, 1},
+    {"cr", 0.45f, 0}, {"cp", 0.85f, 0}, {"lt", 0.9f, 0}, {"mt", 0.9f, 0},
+    {"ht", 0.9f, 0}, {"rim", 0.7f, 0}, {"cb", 0.55f, 0}, {"cl", 0.6f, 0},
+    {"sh", 0.4f, 0},
+};
+
+}  // namespace synthkit
 
 // Reads a WAV file into an interleaved-stereo chunk at the engine rate.
 static SoundChunk load_wav_file(const std::string& path, const std::string& who) {
@@ -1369,7 +1546,30 @@ void register_sound_builtins(VM& vm) {
             return s;
         };
         Value kv = args.size() >= 2 ? args[1] : Value::make_none();
-        if (kv.type == ValueType::STRING) {
+        if (kv.type == ValueType::STRING && lower(kv.as_string()->data) == "synth") {
+            for (const auto& e : synthkit::entries) {
+                KitSound ks;
+                ks.gain = e.gain;
+                ks.choke = e.choke;
+                std::string key = std::string("<synth>/") + e.name;
+                if (g_sound.kit_paths.count(key + ":0")) {
+                    for (int v = 0; g_sound.kit_paths.count(key + ":" + std::to_string(v)); v++)
+                        ks.ids.push_back(g_sound.kit_paths[key + ":" + std::to_string(v)]);
+                } else {
+                    auto mono = synthkit::make(e.name);
+                    for (size_t v = 0; v < mono.size(); v++) {
+                        SoundChunk chunk;
+                        chunk.data.resize(mono[v].size() * 2);
+                        for (size_t i = 0; i < mono[v].size(); i++)
+                            chunk.data[i * 2] = chunk.data[i * 2 + 1] = mono[v][i];
+                        loaded.push_back({next_id, std::move(chunk)});
+                        new_ids[key + ":" + std::to_string(v)] = next_id;
+                        ks.ids.push_back(next_id++);
+                    }
+                }
+                kit[e.name] = std::move(ks);
+            }
+        } else if (kv.type == ValueType::STRING) {
             std::string file = kv.as_string()->data;
             FILE* fp = file.empty() ? nullptr : fopen(file.c_str(), "rb");
             if (!file.empty() && !fp)
@@ -1397,6 +1597,7 @@ void register_sound_builtins(VM& vm) {
                 KitSound ks;
                 while (ls >> tok) {
                     if (tok.rfind("gain=", 0) == 0) { ks.gain = (float)std::atof(tok.c_str() + 5); continue; }
+                    if (tok.rfind("choke=", 0) == 0) { ks.choke = std::atoi(tok.c_str() + 6); continue; }
                     bool absolute = tok[0] == '/' || tok[0] == '\\' || (tok.size() > 1 && tok[1] == ':');
                     ks.ids.push_back(sample_for(absolute ? tok : dir + tok));
                 }

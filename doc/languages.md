@@ -3373,15 +3373,18 @@ PRINT SOUND.EVENTS$("<c3 e3>*2 g3", 1)
 
 Turns a track into a drum kit: its pattern atoms name sounds instead of notes, as in `"bd [~ bd] sd hh"`. `name:n` picks the n-th sample of a sound (counting from 0, wrapping around), so `"hh hh:1"` alternates two hats. Each hit plays its whole sample, whatever the step length. Names are not case-sensitive; an unknown name plays nothing.
 
-`kit` is either the path of a kit file or a MAP. A kit file has one sound per line: the name, its WAV files (relative to the kit file) and an optional `gain=` level; `#` starts a comment. In a MAP each key is a sound name and each value a WAV path, a sample id from `SFX.LOAD`, or an array of them. `SOUND.KIT track` alone removes the kit.
+`kit` is `"SYNTH"`, the path of a kit file, or a MAP. `"SYNTH"` is the built-in kit: analog-style drums computed at load time, no files needed, with the sounds `bd sd hh oh cr cp lt mt ht rim cb cl sh` (`bd:1` is a long boom kick). A kit file has one sound per line: the name, its WAV files (relative to the kit file), an optional `gain=` level and an optional `choke=` group; `#` starts a comment. A hit cuts the sounds of its choke group still ringing on the track, so a closed hat stops the open hat; both built-in hats are in group 1. In a MAP each key is a sound name and each value a WAV path, a sample id from `SFX.LOAD`, or an array of them. `SOUND.KIT track` alone removes the kit.
 
 SOUND.KIT sets the track's envelope to an instant attack at full level. A `SOUND.VOICE track, "SAMPLE", ...` afterwards reshapes it. Filters, sends and `SOUND.MOD` work as on any track.
 
 The repository ships the FreePats synthesizer percussion set (public domain, CC0) with a kit file. Its sounds are `bd sd hh oh cr cy lt mt ht cp sh shl cl`.
 
 ```basic
-SOUND.KIT 0, "jdb/demos/sound/SynthesizerPercussion-SFZ-20220718/kit.txt"
-SOUND.SEQ 0, "bd*4, [~ cp]*2, hh*8, ~ ~ ~ oh", "VOICE"
+SOUND.KIT 0, "SYNTH"
+SOUND.SEQ 0, "bd*4, [~ cp]*2, [hh hh oh hh]*2", "VOICE"
+
+SOUND.KIT 1, "jdb/demos/sound/SynthesizerPercussion-SFZ-20220718/kit.txt"
+SOUND.SEQ 1, "~ sd:1 ~ sd, hh*8", "VOICE"
 
 SFX.LOAD 1, "kick.wav"
 SOUND.KIT 1, {"bd": 1, "fx": ["zap1.wav", "zap2.wav"]}

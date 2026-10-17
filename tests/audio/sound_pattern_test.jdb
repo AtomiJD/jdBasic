@@ -252,6 +252,27 @@ SOUND.SEQ 0, "cp", "VOICE"
 buf = SOUND.RENDER(4000)
 CHECK "kit names are case-blind, ids work", RMS(buf, 0, 4000) > 0.05, "rms=" + STR$(RMS(buf, 0, 4000))
 
+' the built-in synthesized kit needs no files
+FUNC SYNTH_RMS(pattern$, a AS INTEGER, b AS INTEGER) AS DOUBLE
+    SOUND.RESET
+    SOUND.KIT 0, "synth"
+    SOUND.SEQ 0, pattern$, "VOICE"
+    RETURN RMS(SOUND.RENDER(CYC), a, b)
+ENDFUNC
+
+DIM synth_names AS STRING = "bd bd:1 sd hh oh cr cp lt mt ht rim cb cl sh"
+DIM nm AS STRING
+DIM quiet AS STRING = ""
+FOR EACH nm IN SPLIT(synth_names, " ")
+    IF SYNTH_RMS(nm, 0, 2000) < 0.02 THEN quiet = quiet + nm + " "
+NEXT
+CHECK_STR "synth kit sounds", "", quiet
+
+' choke: a closed hat cuts the open hat, a rim shot does not
+DIM oh_tail AS DOUBLE = SYNTH_RMS("oh rim", 30050, 38050)
+DIM choked AS DOUBLE = SYNTH_RMS("oh hh", 30050, 38050)
+CHECK "hh chokes oh", choked < oh_tail * 0.1, "rim=" + STR$(oh_tail) + " hh=" + STR$(choked)
+
 err_msg = ""
 TRY
     SOUND.KIT 0, "no_such_kit.txt"

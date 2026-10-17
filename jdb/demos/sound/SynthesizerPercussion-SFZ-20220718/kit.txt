@@ -1,10 +1,11 @@
 # SOUND.KIT map for the FreePats synthesizer percussion (CC0).
-# Each line: sound name, its samples (name:1 picks the second), optional gain=.
+# Each line: sound name, its samples (name:1 picks the second), optional gain=
+# and choke= (a hit cuts the sounds of its choke group, so hh stops oh).
 # Levels follow the volume= offsets in the .sfz file.
 bd  samples/Kick04.wav samples/Kick06.wav
 sd  samples/Snare09.wav samples/Snare14.wav
-hh  samples/ClosedHiHat01-01.wav samples/ClosedHiHat02-01.wav
-oh  samples/OpenHiHat02-01.wav gain=0.79
+hh  samples/ClosedHiHat01-01.wav samples/ClosedHiHat02-01.wav choke=1
+oh  samples/OpenHiHat02-01.wav gain=0.79 choke=1
 cr  samples/Cymbal01-01.wav samples/Cymbal01-02.wav samples/Cymbal01-03.wav
 cy  samples/Cymbal02.wav gain=0.71
 lt  samples/LowTom02-01.wav samples/LowTom02-02.wav
