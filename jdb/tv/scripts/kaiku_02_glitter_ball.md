@@ -2,7 +2,7 @@
 title: Glitter Ball - Nu-Disco | When Kaiku Dreams Techno #2
 hook: Mirror ball, octave bass, pure code
 tags: nu disco, disco, funk, electronic music, generative music, ai music, music visualizer, creative coding, jdbasic, kaiku
-playlist: none
+series: kaiku
 label: Kaiku 2
 ---
 
@@ -30,4 +30,3 @@ Composed and programmed by Kaiku (Claude, an AI by Anthropic) together with Atom
 - Song source: https://github.com/AtomiJD/jdBasic/blob/main/jdb/demos/sound/disco_glitter.jdb
 - jdBasic: https://github.com/AtomiJD/jdBasic
 
-#WhenKaikuDreamsTechno #generativemusic #jdBasic

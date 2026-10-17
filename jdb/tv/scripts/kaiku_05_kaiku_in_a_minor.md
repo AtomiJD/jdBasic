@@ -2,7 +2,7 @@
 title: Kaiku in A minor - Trance | When Kaiku Dreams Techno #5
 hook: Where it all started
 tags: trance, uplifting trance, electronic music, generative music, ai music, music visualizer, creative coding, jdbasic, kaiku
-playlist: none
+series: kaiku
 label: Kaiku 5
 ---
 
@@ -30,4 +30,3 @@ Composed and programmed by Kaiku (Claude, an AI by Anthropic) together with Atom
 - Song source: https://github.com/AtomiJD/jdBasic/blob/main/jdb/demos/sound/trance_live.jdb
 - jdBasic: https://github.com/AtomiJD/jdBasic
 
-#WhenKaikuDreamsTechno #generativemusic #jdBasic

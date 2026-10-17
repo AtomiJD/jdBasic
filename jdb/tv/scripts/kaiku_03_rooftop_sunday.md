@@ -2,7 +2,7 @@
 title: Rooftop Sunday - Deep House | When Kaiku Dreams Techno #3
 hook: Sunset deep house, written as code
 tags: deep house, house music, electronic music, generative music, ai music, music visualizer, creative coding, jdbasic, kaiku
-playlist: none
+series: kaiku
 label: Kaiku 3
 ---
 
@@ -30,4 +30,3 @@ Composed and programmed by Kaiku (Claude, an AI by Anthropic) together with Atom
 - Song source: https://github.com/AtomiJD/jdBasic/blob/main/jdb/demos/sound/house_rooftop.jdb
 - jdBasic: https://github.com/AtomiJD/jdBasic
 
-#WhenKaikuDreamsTechno #generativemusic #jdBasic

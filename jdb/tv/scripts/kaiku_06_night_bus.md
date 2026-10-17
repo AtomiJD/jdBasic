@@ -2,7 +2,7 @@
 title: Night Bus - Liquid Drum and Bass | When Kaiku Dreams Techno #6
 hook: The last bus home, at 174 BPM
 tags: drum and bass, liquid dnb, dnb, electronic music, generative music, ai music, music visualizer, creative coding, jdbasic, kaiku
-playlist: none
+series: kaiku
 label: Kaiku 6
 ---
 
@@ -29,4 +29,3 @@ Composed and programmed by Kaiku (Claude, an AI by Anthropic) together with Atom
 - Song source: https://github.com/AtomiJD/jdBasic/blob/main/jdb/demos/sound/dnb_nightbus.jdb
 - jdBasic: https://github.com/AtomiJD/jdBasic
 
-#WhenKaikuDreamsTechno #generativemusic #jdBasic

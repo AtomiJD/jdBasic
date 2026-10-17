@@ -71,6 +71,9 @@ FUNC ParseMd(path$)
     ' is what the thumbnail shows where a lesson number would sit.
     out{"playlist"} = ""
     out{"label"} = ""
+    ' series: kaiku reads yt\defaults_kaiku.json instead of the lesson
+    ' defaults (category, tags, footer, playlist of that series).
+    out{"series"} = ""
     out{"tags"} = []
     out{"description"} = ""
 
@@ -112,13 +115,14 @@ FUNC ParseMd(path$)
             IF k$ = "hook"  THEN out{"hook"}  = v$
             IF k$ = "playlist" THEN out{"playlist"} = LCASE$(v$)
             IF k$ = "label" THEN out{"label"} = v$
+            IF k$ = "series" THEN out{"series"} = LCASE$(v$)
             IF k$ = "tags"  THEN
                 DIM parts = SPLIT(v$, ",")
-                DIM pi AS INTEGER
-                FOR pi = 0 TO LEN(parts) - 1
-                    DIM t$ = TRIM$(parts[pi])
+                DIM part_i AS INTEGER
+                FOR part_i = 0 TO LEN(parts) - 1
+                    DIM t$ = TRIM$(parts[part_i])
                     IF LEN(t$) > 0 THEN PUSH out{"tags"}, t$
-                NEXT pi
+                NEXT part_i
             ENDIF
         ELSEIF fm_done = 1 THEN
             body$ = body$ + ln$ + CHR$(10)
@@ -353,6 +357,7 @@ SUB UploadOne(base$, env, defaults, dry_run)
     ENDIF
 
     DIM lesson_md = ParseMd(md$)
+    IF lesson_md{"series"} <> "" THEN defaults = LoadDefaults("yt\defaults_" + lesson_md{"series"} + ".json")
     IF dry_run = 0 THEN
         EnsureThumbnail(base$, lesson_md)
     ENDIF
@@ -389,25 +394,11 @@ SUB UploadOne(base$, env, defaults, dry_run)
         RETURN
     ENDIF
 
-    ' Build the youtubeuploader command.  Every path goes through CHR$(34)
-    ' since several of them legitimately contain spaces (Program Files).
-    ' cmd.exe quirk: when the executable path is quoted AND any argument is
-    ' also quoted, cmd's parser strips the outermost quotes of the line —
-    ' "D:\Program Files\…\foo.exe" then becomes the bare token "D:\Program"
-    ' plus a junk "Files\…\foo.exe" arg.  The defensive idiom is to wrap
-    ' the whole command in an EXTRA pair of quotes; cmd peels exactly one
-    ' set and the inner exe-path quoting survives.
-    DIM q$ = CHR$(34)
-    DIM cmd$ = q$ + env{"YT_UPLOADER"} + q$
-    cmd$ = cmd$ + " -filename "    + q$ + mp4$ + q$
-    cmd$ = cmd$ + " -metaJSON "    + q$ + meta_tmp$ + q$
-    cmd$ = cmd$ + " -thumbnail "   + q$ + "final\" + base$ + ".thumb.png" + q$
-    cmd$ = cmd$ + " -secrets "     + q$ + env{"YT_CLIENT_SECRETS"} + q$
-    cmd$ = cmd$ + " -cache "       + q$ + env{"YT_TOKEN_CACHE"} + q$
-    cmd$ = cmd$ + " -metaJSONout " + q$ + marker$ + q$
-    cmd$ = q$ + cmd$ + q$
+    ' The uploader and its arguments go to OS.EXEC as an array, so paths
+    ' with spaces (Program Files) need no quoting through cmd.exe.
+    DIM up_args = ["-filename", mp4$, "-metaJSON", meta_tmp$, "-thumbnail", "final\" + base$ + ".thumb.png", "-secrets", env{"YT_CLIENT_SECRETS"}, "-cache", env{"YT_TOKEN_CACHE"}, "-metaJSONout", marker$]
     PRINT "  invoking youtubeuploader..."
-    DIM r = OS.EXEC(cmd$)
+    DIM r = OS.EXEC(env{"YT_UPLOADER"}, up_args)
     DIM upload_ok AS INTEGER = 0
     ' Truth source for "did the upload succeed" is the marker file
     ' (youtubeuploader writes it via -metaJSONout right after the video

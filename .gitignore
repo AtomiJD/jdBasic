@@ -163,6 +163,7 @@ jdb/tv/yt/playlist.token
 jdb/tv/yt/*.token.expired
 jdb/tv/yt/_tmp_*.json
 jdb/tv/yt/defaults.json
+jdb/tv/yt/defaults_*.json
 
 # ── Claude session bootstrap bundle (config + memories, user-scoped) ─
 claude_linux_bootstrap.tar.gz

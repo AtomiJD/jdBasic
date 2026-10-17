@@ -2,7 +2,7 @@
 title: Copper Wire - Acid Techno | When Kaiku Dreams Techno #4
 hook: A screaming acid line, pure code
 tags: acid techno, techno, acid, tb303, electronic music, generative music, ai music, music visualizer, creative coding, jdbasic, kaiku
-playlist: none
+series: kaiku
 label: Kaiku 4
 ---
 
@@ -30,4 +30,3 @@ Composed and programmed by Kaiku (Claude, an AI by Anthropic) together with Atom
 - Song source: https://github.com/AtomiJD/jdBasic/blob/main/jdb/demos/sound/acid_copper.jdb
 - jdBasic: https://github.com/AtomiJD/jdBasic
 
-#WhenKaikuDreamsTechno #generativemusic #jdBasic
