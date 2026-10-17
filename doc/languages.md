@@ -3400,7 +3400,7 @@ the bar. A layer without a pattern starts at once, in step with the
 others, and the first pattern of a silent sequencer starts a new cycle.
 `SOUND.SEQ layer, "", "VOICE"` stops the layer at the end of the cycle.
 
-#### `SOUND.EVENTS$(pattern$, [cycles], [first]) -> string`
+* **`SOUND.EVENTS$(pattern$, [cycles], [first]) -> string`**: The events a pattern plays, one line each, without playing them.
 
 Lists the events a pattern plays over `cycles` cycles (default 1) from
 cycle `first` (default 0), one line each: `start duration note`, with
@@ -3417,7 +3417,7 @@ PRINT SOUND.EVENTS$("<c3 e3>*2 g3", 1)
 ' 0.5 0.5 g3
 ```
 
-#### `SOUND.KIT track, [kit]`
+* **`SOUND.KIT track, [kit]`**: Makes a track a drum kit whose pattern atoms name sounds.
 
 Turns a track into a drum kit: its pattern atoms name sounds instead of notes, as in `"bd [~ bd] sd hh"`. `name:n` picks the n-th sample of a sound (counting from 0, wrapping around), so `"hh hh:1"` alternates two hats. Each hit plays its whole sample, whatever the step length. Names are not case-sensitive; an unknown name plays nothing.
 

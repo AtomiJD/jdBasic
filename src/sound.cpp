@@ -2559,7 +2559,7 @@ void register_sound_builtins(VM& vm) {
         std::string nm = name;
         vm.register_native(name, lo, hi, [raw, nm](const std::vector<Value>& args) -> Value {
             if (g_sound.sched_at < 0 || !g_sound.initialized) return raw(args);
-            if (nm == "SOUND.SEQ") {
+            if (nm == "SOUND.SEQ" && args.size() > 1) {
                 try { jdpat::parse(args[1].to_string()); }
                 catch (const std::exception& ex) {
                     throw jdError(ErrCode::RUNTIME_ERROR, std::string("SOUND.SEQ: ") + ex.what());
