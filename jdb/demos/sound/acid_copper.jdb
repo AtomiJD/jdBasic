@@ -1,0 +1,215 @@
+' acid_copper.jdb - "Copper Wire", acid techno in A phrygian,
+' 160 bars at 128 BPM (five minutes), with the STAGE show.
+'
+'   0 intro      16 acid enters   32 acid opens   48 machine
+'  64 breakdown  80 build         88 drop        112 ping-pong
+' 128 peak      152 outro        160 end
+'
+' Usage: jdBasic acid_copper.jdb [--window] [--shots dir]
+'   F toggles fullscreen, Esc quits.
+
+OPTION "EXPLICIT"
+
+IMPORT SCORE
+IMPORT STAGE
+
+DIM BPM AS DOUBLE = 128
+
+DIM KICK AS INTEGER = 0
+DIM CLAP AS INTEGER = 1
+DIM HATS AS INTEGER = 2
+DIM PERC AS INTEGER = 3
+DIM ACID AS INTEGER = 4
+DIM STAB AS INTEGER = 5
+DIM RUMBLE AS INTEGER = 6
+DIM OPENHAT AS INTEGER = 7
+DIM RISER AS INTEGER = 8
+DIM CRASH AS INTEGER = 9
+DIM ROLL AS INTEGER = 10
+DIM TOM AS INTEGER = 11
+DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "PERC", "ACID", "STAB", "RUMBLE", "OPENHAT", "RISER", "CRASH", "ROLL", "TOM"]
+DIM ti AS INTEGER
+FOR ti = 0 TO LEN(TRACK_NAMES$) - 1
+    SCORE.TRACK ti, TRACK_NAMES$[ti]
+NEXT ti
+
+' ── Instruments ──────────────────────────────────────────────────
+
+SOUND.INIT
+SOUND.MASTER "FIXED", 0.5
+SCORE.TEMPO BPM
+SOUND.COMPRESSOR 0.55, 3, 4, 120, 1.15
+
+' orbit 0: a short dark room and a dotted-eighth echo; orbit 1: a big
+' warehouse for the stab and the rumble
+SOUND.REVERB 0.5, 0.7, 0.6, 0.18
+SOUND.DELAY TRUE, 3 * 60000 / BPM / 4, 0.45, 0.3
+SOUND.REVERB 0.97, 0.6, 1.0, 0.75, 1
+SOUND.DELAY TRUE, 60000 / BPM, 0.5, 0.25, 1
+
+SOUND.KIT KICK, "SYNTH"
+SOUND.GAIN KICK, 1.05
+SOUND.KIT CLAP, "SYNTH"
+SOUND.GAIN CLAP, 0.55
+SOUND.REVERBSEND CLAP, 0.4
+SOUND.KIT HATS, "SYNTH"
+SOUND.GAIN HATS, 0.4
+SOUND.KIT OPENHAT, "SYNTH"
+SOUND.GAIN OPENHAT, 0.38
+SOUND.KIT PERC, "SYNTH"
+SOUND.GAIN PERC, 0.4
+SOUND.MOD PERC, "PAN", "RAND", 0.2, 0.8, 0.125
+SOUND.KIT CRASH, "SYNTH"
+SOUND.GAIN CRASH, 0.55
+SOUND.ORBIT CRASH, 1
+SOUND.REVERBSEND CRASH, 0.4
+SOUND.KIT ROLL, "SYNTH"
+SOUND.ORBIT ROLL, 1
+SOUND.REVERBSEND ROLL, 0.3
+SOUND.KIT TOM, "SYNTH"
+SOUND.GAIN TOM, 0.5
+SOUND.REVERBSEND TOM, 0.4
+
+' acid: a saw through a screaming low-pass, every note plucks it open
+SOUND.VOICE ACID, "SAW", 0.002, 0.14, 0.3, 0.04
+SOUND.FILTER ACID, 500, 0.85
+SOUND.FENV ACID, 2.6, 0.002, 0.11
+SOUND.SIDECHAIN ACID, KICK, 0.4
+SOUND.DELAYSEND ACID, 0.18
+SOUND.GAIN ACID, 0.5
+
+' stab: a hollow minor chord thrown into the warehouse
+SOUND.VOICE STAB, "SQUARE", 0.003, 0.2, 0.0, 0.2
+SOUND.UNISON STAB, 3, 0.15, 0.8
+SOUND.FILTER STAB, 1800, 0.4
+SOUND.ORBIT STAB, 1
+SOUND.REVERBSEND STAB, 0.5
+SOUND.DELAYSEND STAB, 0.35
+SOUND.GAIN STAB, 0.32
+
+' rumble: a sub sine on the off-beats, washed in the warehouse
+SOUND.VOICE RUMBLE, "SINE", 0.01, 0.25, 0.3, 0.2
+SOUND.FILTER RUMBLE, 220, 0.2
+SOUND.SIDECHAIN RUMBLE, KICK, 0.9
+SOUND.ORBIT RUMBLE, 1
+SOUND.REVERBSEND RUMBLE, 0.35
+SOUND.GAIN RUMBLE, 0.7
+
+SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.25
+SOUND.FILTER RISER, 400, 0.5, "BP"
+SOUND.ORBIT RISER, 1
+SOUND.REVERBSEND RISER, 0.3
+SOUND.GAIN RISER, 0
+
+' ── Patterns ─────────────────────────────────────────────────────
+
+DIM ACID_A$ AS STRING = "gain([1 0.55 0.75 0.55]*4, [a1 a2 a1 c2 a1 a#1 a2 a1 g1 a1 a2 c2 a1 e2 a1 g1])"
+DIM ACID_B$ AS STRING = "gain([1 0.6 0.6 0.9]*4, <[a1 ~ a2 a1 c2 ~ a1 a#1 a2 ~ a1 g1 ~ a1 e2 ~] [a1 a1 ~ a2 a#1 ~ a1 c2 ~ a1 a2 ~ g1 a1 ~ f2]>)"
+DIM ACID_HI$ AS STRING = "gain([1 0.6 0.8 0.6]*4, [a2 a3 a2 c3 a2 a#2 e3 a2 g2 a2 a3 c3 a2 f3 e3 g2])"
+DIM HATS16$ AS STRING = "gain([0.3 0.5 0.8 0.5]*4, hh*16)"
+DIM STABS$ AS STRING = "legato(0.3, <[~ ~ [a3,c4,e4] ~] [~ ~ [a3,c4,e4] ~] [~ ~ [a#3,d4,f4] ~] [~ [g3,a#3,d4] ~ ~]>)"
+DIM RUMBLE$ AS STRING = "legato(0.5, [~ a1]*4)"
+DIM ROLL$ AS STRING = "gain(<0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55>, <sd*4 sd*4 sd*8 sd*8 sd*8 [sd*8 sd*16] sd*16 [sd*14 ~ ~]>)"
+
+' ── Score ────────────────────────────────────────────────────────
+
+SCORE.SECTION 0, "intro", "groove"
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY HATS, HATS16$
+SOUND.FILTER HATS, 4000, 0.3, "HP"
+SCORE.SWEEP HATS, "CUTOFF", "ISAW", 500, 8000, 16, 0
+SCORE.PLAY RUMBLE, RUMBLE$
+
+SCORE.SECTION 16, "acid enters", "shuffle"
+SCORE.SWEEP_OFF HATS, "CUTOFF"
+SOUND.FILTER HATS, 6000, 0.2, "HP"
+SCORE.PLAY ACID, ACID_A$
+SCORE.SWEEP ACID, "CUTOFF", "SAW", 250, 1400, 16, 0
+SCORE.PLAY PERC, "rim(5,16,2)"
+
+SCORE.SECTION 32, "acid opens", "jump"
+SCORE.PLAY CLAP, "~ cp ~ cp"
+SCORE.PLAY OPENHAT, "[~ oh]*4"
+SCORE.SWEEP ACID, "CUTOFF", "SINE", 500, 3200, 8, 0
+SCORE.SWEEP ACID, "RESONANCE", "TRI", 0.6, 0.93, 4, 0
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 48, "machine", "robot"
+SCORE.PLAY ACID, "every(4, rev, " + ACID_B$ + ")"
+SCORE.PLAY PERC, "rim(5,16,2), cb(3,8,1), sometimes(ply(2), cl(2,8,3))"
+SCORE.PLAY TOM, "<~!3 [~ ~ lt mt ht ~ mt ~]>"
+
+SCORE.SECTION 64, "breakdown", "wave"
+SCORE.QUIET KICK
+SCORE.QUIET CLAP
+SCORE.QUIET OPENHAT
+SCORE.QUIET RUMBLE
+SCORE.QUIET PERC
+SCORE.QUIET TOM
+SCORE.QUIET CRASH
+SCORE.PLAY HATS, "gain(0.35, [~ hh]*8)"
+SCORE.PLAY ACID, "degradeBy(0.25, " + ACID_A$ + ")"
+SCORE.SWEEP ACID, "CUTOFF", "SAW", 300, 2600, 16, 0
+SCORE.SWEEP_OFF ACID, "RESONANCE"
+SOUND.DELAYSEND ACID, 0.45
+SCORE.PLAY STAB, "slow(2, " + STABS$ + ")"
+
+SCORE.SECTION 80, "build: riser and roll", "rise"
+SCORE.PLAY RISER, "legato(1, c4)"
+SCORE.SWEEP RISER, "CUTOFF", "SAW", 400, 7000, 8, 0
+SCORE.SWEEP RISER, "GAIN", "SAW", 0, 0.2, 8, 0
+SCORE.PLAY ROLL, ROLL$
+SCORE.SWEEP ACID, "RESONANCE", "SAW", 0.7, 0.95, 8, 0
+
+SCORE.SECTION 88, "drop", "jump"
+SCORE.QUIET RISER
+SCORE.QUIET ROLL
+SCORE.SWEEP_OFF RISER, "CUTOFF"
+SCORE.SWEEP_OFF RISER, "GAIN"
+SOUND.DELAYSEND ACID, 0.18
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY CLAP, "every(4, ply(2), ~ cp ~ cp)"
+SCORE.PLAY HATS, HATS16$
+SCORE.PLAY OPENHAT, "[~ oh]*4"
+SCORE.PLAY RUMBLE, RUMBLE$
+SCORE.PLAY PERC, "rim(5,16,2), cb(3,8,1)"
+SCORE.PLAY ACID, ACID_B$
+SCORE.SWEEP ACID, "CUTOFF", "SINE", 700, 4200, 8, 0
+SCORE.SWEEP ACID, "RESONANCE", "TRI", 0.65, 0.93, 2, 0
+SCORE.PLAY STAB, STABS$
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 112, "ping-pong", "pan"
+SCORE.QUIET STAB
+SCORE.SWEEP ACID, "PAN", "SINE", 0.1, 0.9, 1, 0
+SCORE.PLAY ACID, "sometimes(ply(2), " + ACID_A$ + ")"
+SCORE.PLAY TOM, "<~!3 [~ ~ lt mt ht ~ mt ~]>"
+
+SCORE.SECTION 128, "peak: acid an octave up", "jump"
+SCORE.SWEEP_OFF ACID, "PAN"
+SCORE.PLAY ACID, "rarely(add(12), " + ACID_HI$ + ")"
+SCORE.SWEEP ACID, "CUTOFF", "SINE", 900, 5000, 4, 0
+SCORE.PLAY STAB, STABS$
+SCORE.QUIET TOM
+
+SCORE.SECTION 144, "peak: back down", "jump"
+SCORE.PLAY ACID, ACID_B$
+
+SCORE.SECTION 152, "outro", "groove"
+SCORE.QUIET STAB
+SCORE.QUIET CLAP
+SCORE.QUIET CRASH
+SCORE.QUIET PERC
+SCORE.SWEEP ACID, "CUTOFF", "ISAW", 250, 3000, 8, 0
+SCORE.SWEEP_OFF ACID, "RESONANCE"
+
+SCORE.SECTION 160, "end", "bye"
+SCORE.QUIET KICK
+SCORE.QUIET HATS
+SCORE.QUIET OPENHAT
+SCORE.QUIET RUMBLE
+SCORE.QUIET ACID
+
+SCORE.FINE 162
+
+STAGE.RUN "Copper Wire"

@@ -1,0 +1,229 @@
+' disco_glitter.jdb - "Glitter Ball", nu-disco in A minor,
+' 144 bars at 118 BPM (just under five minutes), with the STAGE show.
+'
+'   0 intro     8 groove     24 strings    40 chorus     56 break
+'  72 build    80 chorus 2   96 piano solo 112 last chorus  136 outro  144 end
+'
+' Usage: jdBasic disco_glitter.jdb [--window] [--shots dir]
+'   F toggles fullscreen, Esc quits.
+
+OPTION "EXPLICIT"
+
+IMPORT SCORE
+IMPORT STAGE
+
+DIM BPM AS DOUBLE = 118
+
+DIM KICK AS INTEGER = 0
+DIM CLAP AS INTEGER = 1
+DIM HATS AS INTEGER = 2
+DIM TAMB AS INTEGER = 3
+DIM BASS AS INTEGER = 4
+DIM GUITAR AS INTEGER = 5
+DIM STRINGS AS INTEGER = 6
+DIM LEAD AS INTEGER = 7
+DIM RISER AS INTEGER = 8
+DIM CRASH AS INTEGER = 9
+DIM PIANO AS INTEGER = 10
+DIM OPENHAT AS INTEGER = 11
+DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "TAMB", "BASS", "GUITAR", "STRINGS", "LEAD", "RISER", "CRASH", "PIANO", "OPENHAT"]
+DIM ti AS INTEGER
+FOR ti = 0 TO LEN(TRACK_NAMES$) - 1
+    SCORE.TRACK ti, TRACK_NAMES$[ti]
+NEXT ti
+
+' ── Instruments ──────────────────────────────────────────────────
+
+SOUND.INIT
+SOUND.MASTER "FIXED", 0.5
+SCORE.TEMPO BPM
+SOUND.COMPRESSOR 0.6, 2.5, 8, 160, 1.1
+
+' orbit 0: a lively room and an eighth echo; orbit 1: a string hall
+SOUND.REVERB 0.55, 0.4, 0.8, 0.2
+SOUND.DELAY TRUE, 60000 / BPM / 2, 0.3, 0.2
+SOUND.REVERB 0.88, 0.35, 1.0, 0.55, 1
+SOUND.DELAY TRUE, 3 * 60000 / BPM / 4, 0.3, 0.18, 1
+
+SOUND.KIT KICK, "SYNTH"
+SOUND.KIT CLAP, "SYNTH"
+SOUND.GAIN CLAP, 0.6
+SOUND.REVERBSEND CLAP, 0.3
+SOUND.KIT HATS, "SYNTH"
+SOUND.GAIN HATS, 0.38
+SOUND.PAN HATS, 0.62
+SOUND.KIT OPENHAT, "SYNTH"
+SOUND.GAIN OPENHAT, 0.42
+SOUND.PAN OPENHAT, 0.45
+SOUND.KIT TAMB, "SYNTH"
+SOUND.GAIN TAMB, 0.32
+SOUND.PAN TAMB, 0.35
+SOUND.KIT CRASH, "SYNTH"
+SOUND.GAIN CRASH, 0.55
+SOUND.ORBIT CRASH, 1
+SOUND.REVERBSEND CRASH, 0.35
+
+' bass: the octave-jumping disco bass, plucked
+SOUND.VOICE BASS, "SAW", 0.002, 0.1, 0.3, 0.04
+SOUND.FILTER BASS, 650, 0.4
+SOUND.FENV BASS, 1.8, 0.002, 0.08
+SOUND.SIDECHAIN BASS, KICK, 0.45
+SOUND.GAIN BASS, 0.55
+
+' guitar: a muted square scratch through a band-pass, sixteenths
+SOUND.VOICE GUITAR, "SQUARE", 0.001, 0.05, 0.0, 0.04
+SOUND.FILTER GUITAR, 1800, 0.5, "BP"
+SOUND.PAN GUITAR, 0.3
+SOUND.REVERBSEND GUITAR, 0.15
+SOUND.GAIN GUITAR, 0.3
+
+' strings: a lush saw section with slow attack, in the hall
+SOUND.VOICE STRINGS, "SAW", 0.15, 0.4, 0.8, 0.6
+SOUND.UNISON STRINGS, 6, 0.25, 1.0
+SOUND.FILTER STRINGS, 2400, 0.2
+SOUND.ORBIT STRINGS, 1
+SOUND.REVERBSEND STRINGS, 0.45
+SOUND.PAN STRINGS, 0.6
+SOUND.GAIN STRINGS, 0.24
+
+' piano: FM keys for the chords and the solo
+SOUND.VOICE PIANO, "SINE", 0.002, 0.7, 0.15, 0.4
+SOUND.FM PIANO, 1.4, 1
+SOUND.FILTER PIANO, 3500, 0.1
+SOUND.DELAYSEND PIANO, 0.15
+SOUND.REVERBSEND PIANO, 0.25
+SOUND.GAIN PIANO, 0.36
+
+' lead: a bright square "vocoder" line
+SOUND.VOICE LEAD, "SQUARE", 0.01, 0.25, 0.6, 0.25
+SOUND.UNISON LEAD, 2, 0.1, 0.5
+SOUND.FILTER LEAD, 2800, 0.3
+SOUND.LFO LEAD, 5, 0.1
+SOUND.ORBIT LEAD, 1
+SOUND.DELAYSEND LEAD, 0.25
+SOUND.REVERBSEND LEAD, 0.3
+SOUND.GAIN LEAD, 0.26
+
+SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.25
+SOUND.FILTER RISER, 400, 0.4, "BP"
+SOUND.ORBIT RISER, 1
+SOUND.REVERBSEND RISER, 0.3
+SOUND.GAIN RISER, 0
+
+' ── Patterns ─────────────────────────────────────────────────────
+
+' Am7 - D9 - Fmaj7 - E7, two bars each
+DIM AM7$ AS STRING = "[a3,c4,e4,g4]"
+DIM D9$ AS STRING = "[f#3,a3,c4,e4]"
+DIM FM7$ AS STRING = "[f3,a3,c4,e4]"
+DIM E7$ AS STRING = "[e3,g#3,b3,d4]"
+DIM CHORDS$ AS STRING = "<" + AM7$ + " " + AM7$ + " " + D9$ + " " + D9$ + " " + FM7$ + " " + FM7$ + " " + E7$ + " " + E7$ + ">"
+
+FUNC EIGHT_BARS$(rhythm$) AS STRING
+    DIM am$ AS STRING = REPLACE$(rhythm$, "x", AM7$)
+    DIM dn$ AS STRING = REPLACE$(rhythm$, "x", D9$)
+    DIM fm$ AS STRING = REPLACE$(rhythm$, "x", FM7$)
+    DIM em$ AS STRING = REPLACE$(rhythm$, "x", E7$)
+    RETURN "<" + am$ + " " + am$ + " " + dn$ + " " + dn$ + " " + fm$ + " " + fm$ + " " + em$ + " " + em$ + ">"
+ENDFUNC
+
+DIM BASS$ AS STRING = "legato(0.6, <[a1 a2 ~ a1 a2 ~ a1 a2] [a1 a2 ~ a1 g2 ~ e2 g2] [d2 d3 ~ d2 d3 ~ d2 d3] [d2 d3 ~ d2 c3 ~ a2 c3] [f1 f2 ~ f1 f2 ~ f1 f2] [f1 f2 ~ f1 e2 ~ c2 e2] [e1 e2 ~ e1 e2 ~ e1 e2] [e1 e2 ~ g#1 b1 ~ d2 e2]>)"
+DIM SCRATCH$ AS STRING = "gain([0.4 1 0.4 0.6]*4, " + EIGHT_BARS$("[~ x ~ x ~ x ~ x ~ x ~ x ~ x ~ x]") + ")"
+DIM STRING_STABS$ AS STRING = "legato(0.5, " + EIGHT_BARS$("[x ~ ~ ~ ~ ~ x ~]") + ")"
+DIM PIANO_COMP$ AS STRING = "legato(0.45, " + EIGHT_BARS$("[~ x ~ x ~ ~ x ~]") + ")"
+DIM HOOK$ AS STRING = "<[e5 _ d5 c5 _ a4 _ c5] [d5 _ _ c5 a4 _ _ _] [f#5 _ e5 d5 _ a4 _ d5] [e5 _ _ d5 c5 _ _ _] [a5 _ g5 f5 _ c5 _ f5] [e5 _ _ c5 a4 _ _ _] [g#5 _ f5 e5 _ b4 _ d5] [e5 _ _ _ _ _ _ _]>"
+DIM SOLO$ AS STRING = "<[a4 c5 e5 g5 a5 g5 e5 c5] [e5 g5 a5 c6 a5 g5 e5 d5] [f#5 a5 c6 a5 f#5 e5 d5 c5] [d5 f#5 a5 c6 e6 c6 a5 f#5] [f5 a5 c6 e6 c6 a5 f5 e5] [c5 e5 f5 a5 c6 a5 f5 c5] [e5 g#5 b5 d6 b5 g#5 e5 d5] [b4 d5 e5 g#5 b5 _ _ _]>"
+DIM HATS16$ AS STRING = "gain([0.3 0.5 0.4 0.6]*4, hh*16)"
+
+' ── Score ────────────────────────────────────────────────────────
+
+SCORE.SECTION 0, "intro", "groove"
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY OPENHAT, "[~ oh]*4"
+SCORE.PLAY GUITAR, SCRATCH$
+SCORE.SWEEP GUITAR, "CUTOFF", "SAW", 600, 2200, 8, 0
+
+SCORE.SECTION 8, "groove", "shuffle"
+SCORE.SWEEP_OFF GUITAR, "CUTOFF"
+SCORE.PLAY BASS, BASS$
+SCORE.PLAY CLAP, "~ cp ~ cp"
+SCORE.PLAY HATS, HATS16$
+SCORE.PLAY TAMB, "degradeBy(0.2, sh*16)"
+
+SCORE.SECTION 24, "strings", "jump"
+SCORE.PLAY STRINGS, STRING_STABS$
+SCORE.PLAY PIANO, PIANO_COMP$
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 40, "chorus", "jump"
+SCORE.PLAY LEAD, "legato(1, " + HOOK$ + ")"
+SCORE.PLAY STRINGS, "legato(1, " + CHORDS$ + ")"
+SCORE.PLAY CLAP, "every(4, ply(2), ~ cp ~ cp)"
+
+SCORE.SECTION 56, "break", "wave"
+SCORE.QUIET KICK
+SCORE.QUIET CLAP
+SCORE.QUIET HATS
+SCORE.QUIET OPENHAT
+SCORE.QUIET BASS
+SCORE.QUIET CRASH
+SCORE.QUIET LEAD
+SCORE.PLAY GUITAR, "degradeBy(0.4, " + SCRATCH$ + ")"
+SCORE.PLAY PIANO, "legato(1.2, " + CHORDS$ + ")"
+SCORE.SWEEP STRINGS, "CUTOFF", "SINE", 700, 2600, 8, 0
+
+SCORE.SECTION 72, "build: riser and clap roll", "rise"
+SCORE.PLAY RISER, "legato(1, c4)"
+SCORE.SWEEP RISER, "CUTOFF", "SAW", 400, 6000, 8, 0
+SCORE.SWEEP RISER, "GAIN", "SAW", 0, 0.18, 8, 0
+SCORE.PLAY CLAP, "gain(<0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.6>, <cp*4 cp*4 cp*4 cp*8 cp*8 cp*8 [cp*8 cp*16] [cp*12 ~ ~ ~ ~]>)"
+SCORE.PLAY KICK, "<bd*4 bd*4 bd*4 bd*4 bd*4 bd*8 bd*8 ~>"
+
+SCORE.SECTION 80, "chorus 2", "jump"
+SCORE.QUIET RISER
+SCORE.SWEEP_OFF RISER, "CUTOFF"
+SCORE.SWEEP_OFF RISER, "GAIN"
+SCORE.SWEEP_OFF STRINGS, "CUTOFF"
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY CLAP, "every(4, ply(2), ~ cp ~ cp)"
+SCORE.PLAY HATS, HATS16$
+SCORE.PLAY OPENHAT, "[~ oh]*4"
+SCORE.PLAY BASS, BASS$
+SCORE.PLAY GUITAR, SCRATCH$
+SCORE.PLAY PIANO, PIANO_COMP$
+SCORE.PLAY STRINGS, "legato(1, " + CHORDS$ + ")"
+SCORE.PLAY LEAD, "off(0.25, add(12), legato(1, " + HOOK$ + "))"
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 96, "piano solo", "robot"
+SCORE.QUIET LEAD
+SCORE.PLAY PIANO, "legato(0.8, " + SOLO$ + ")"
+SCORE.PLAY STRINGS, STRING_STABS$
+
+SCORE.SECTION 104, "piano solo: ping-pong", "pan"
+SCORE.SWEEP PIANO, "PAN", "SINE", 0.15, 0.85, 1, 0
+
+SCORE.SECTION 112, "last chorus", "jump"
+SCORE.SWEEP_OFF PIANO, "PAN"
+SCORE.PLAY PIANO, PIANO_COMP$
+SCORE.PLAY STRINGS, "legato(1, " + CHORDS$ + ")"
+SCORE.PLAY LEAD, "juxBy(0.5, add(12), legato(1, " + HOOK$ + "))"
+
+SCORE.SECTION 136, "outro", "groove"
+SCORE.QUIET LEAD
+SCORE.QUIET STRINGS
+SCORE.QUIET PIANO
+SCORE.QUIET CRASH
+SCORE.QUIET BASS
+SCORE.QUIET TAMB
+
+SCORE.SECTION 144, "end", "bye"
+SCORE.QUIET KICK
+SCORE.QUIET CLAP
+SCORE.QUIET HATS
+SCORE.QUIET OPENHAT
+SCORE.QUIET GUITAR
+
+SCORE.FINE 146
+
+STAGE.RUN "Glitter Ball"

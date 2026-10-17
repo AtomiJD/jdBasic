@@ -12,7 +12,7 @@
 ' rise, robot, pan, bye. jump also brings the lasers and sparks, wave
 ' the hearts, rise the strobe towards the end of the section.
 '
-'   F    toggle fullscreen        Esc  quit
+'   F    toggle fullscreen        Esc  quit        Q  quit with status 3
 '   --window       a half-size window instead of fullscreen
 '   --shots dir    a frame of every section saved into dir (implies --window)
 
@@ -672,6 +672,11 @@ SUB FRAME()
     IF GFX.KEYSTATE("Escape") THEN
         SOUND.RESET
         END
+    ENDIF
+    ' Q ends with status 3, which run_party.bat takes as "stop the party"
+    IF GFX.KEYSTATE("Q") THEN
+        SOUND.RESET
+        END 3
     ENDIF
     DIM key_f AS INTEGER = GFX.KEYSTATE("F")
     IF key_f ANDALSO NOT key_f_was THEN TOGGLE_FULLSCREEN

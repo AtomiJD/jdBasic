@@ -1,0 +1,239 @@
+' house_rooftop.jdb - "Rooftop Sunday", deep house in D minor,
+' 152 bars at 122 BPM (five minutes), with the STAGE show.
+'
+'   0 intro     16 groove    32 keys     48 full groove   64 breakdown
+'  80 build     88 drop     104 answer  120 dub          136 last groove
+' 148 outro    152 end
+'
+' Usage: jdBasic house_rooftop.jdb [--window] [--shots dir]
+'   F toggles fullscreen, Esc quits.
+
+OPTION "EXPLICIT"
+
+IMPORT SCORE
+IMPORT STAGE
+
+DIM BPM AS DOUBLE = 122
+
+DIM KICK AS INTEGER = 0
+DIM CLAP AS INTEGER = 1
+DIM HATS AS INTEGER = 2
+DIM PERC AS INTEGER = 3
+DIM BASS AS INTEGER = 4
+DIM KEYS AS INTEGER = 5
+DIM PAD AS INTEGER = 6
+DIM LEAD AS INTEGER = 7
+DIM RISER AS INTEGER = 8
+DIM CRASH AS INTEGER = 9
+DIM SHAKER AS INTEGER = 10
+DIM OPENHAT AS INTEGER = 11
+DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "PERC", "BASS", "KEYS", "PAD", "LEAD", "RISER", "CRASH", "SHAKER", "OPENHAT"]
+DIM ti AS INTEGER
+FOR ti = 0 TO LEN(TRACK_NAMES$) - 1
+    SCORE.TRACK ti, TRACK_NAMES$[ti]
+NEXT ti
+
+' ── Instruments ──────────────────────────────────────────────────
+
+SOUND.INIT
+SOUND.MASTER "FIXED", 0.5
+SCORE.TEMPO BPM
+SOUND.COMPRESSOR 0.6, 2.5, 8, 180, 1.1
+
+' orbit 0: a warm room and a quarter-note echo; orbit 1: a soft hall
+SOUND.REVERB 0.55, 0.5, 0.8, 0.22
+SOUND.DELAY TRUE, 60000 / BPM * 0.75, 0.38, 0.28
+SOUND.REVERB 0.9, 0.45, 1.0, 0.6, 1
+SOUND.DELAY TRUE, 60000 / BPM * 1.5, 0.3, 0.2, 1
+
+SOUND.KIT KICK, "SYNTH"
+SOUND.KIT CLAP, "SYNTH"
+SOUND.GAIN CLAP, 0.6
+SOUND.REVERBSEND CLAP, 0.35
+SOUND.NUDGE CLAP, 8
+SOUND.KIT HATS, "SYNTH"
+SOUND.GAIN HATS, 0.42
+SOUND.PAN HATS, 0.6
+SOUND.KIT OPENHAT, "SYNTH"
+SOUND.GAIN OPENHAT, 0.4
+SOUND.PAN OPENHAT, 0.42
+SOUND.KIT PERC, "SYNTH"
+SOUND.GAIN PERC, 0.45
+SOUND.REVERBSEND PERC, 0.3
+SOUND.KIT SHAKER, "SYNTH"
+SOUND.GAIN SHAKER, 0.35
+SOUND.NUDGE SHAKER, 6
+SOUND.KIT CRASH, "SYNTH"
+SOUND.GAIN CRASH, 0.6
+SOUND.ORBIT CRASH, 1
+SOUND.REVERBSEND CRASH, 0.4
+
+' bass: a round triangle sub, a touch of filter pluck, ducking the kick
+SOUND.VOICE BASS, "TRIANGLE", 0.003, 0.2, 0.6, 0.06
+SOUND.FILTER BASS, 500, 0.3
+SOUND.FENV BASS, 1.2, 0.002, 0.12
+SOUND.SIDECHAIN BASS, KICK, 0.6
+SOUND.GAIN BASS, 0.95
+
+' keys: an FM electric piano, chords on the off-beats, echoing
+SOUND.VOICE KEYS, "SINE", 0.004, 0.45, 0.25, 0.35
+SOUND.FM KEYS, 0.9, 1
+SOUND.FILTER KEYS, 2600, 0.15
+SOUND.SIDECHAIN KEYS, KICK, 0.35
+SOUND.DELAYSEND KEYS, 0.25
+SOUND.REVERBSEND KEYS, 0.25
+SOUND.GAIN KEYS, 0.42
+
+' pad: a slow wide string bed in the hall
+SOUND.VOICE PAD, "SAW", 1.2, 0.5, 0.8, 2.0
+SOUND.UNISON PAD, 5, 0.22, 1.0
+SOUND.FILTER PAD, 900, 0.2
+SOUND.SIDECHAIN PAD, KICK, 0.7
+SOUND.ORBIT PAD, 1
+SOUND.REVERBSEND PAD, 0.55
+SOUND.GAIN PAD, 0.22
+
+' lead: a square "vocal chop" through a band-pass
+SOUND.VOICE LEAD, "SQUARE", 0.005, 0.18, 0.4, 0.15
+SOUND.FILTER LEAD, 1500, 0.55, "BP"
+SOUND.FENV LEAD, 1.0, 0.004, 0.15
+SOUND.SIDECHAIN LEAD, KICK, 0.3
+SOUND.ORBIT LEAD, 1
+SOUND.DELAYSEND LEAD, 0.35
+SOUND.REVERBSEND LEAD, 0.35
+SOUND.GAIN LEAD, 0.3
+
+SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.3
+SOUND.FILTER RISER, 400, 0.4, "BP"
+SOUND.ORBIT RISER, 1
+SOUND.REVERBSEND RISER, 0.3
+SOUND.GAIN RISER, 0
+
+' ── Patterns ─────────────────────────────────────────────────────
+
+' Dm9 - Gm9 - Bbmaj7 - A7, one chord a bar
+DIM DM9$ AS STRING = "[d3,f3,a3,c4,e4]"
+DIM GM9$ AS STRING = "[f3,a#3,d4,a4]"
+DIM BBM7$ AS STRING = "[d3,f3,a3,a#3]"
+DIM A7$ AS STRING = "[c#3,e3,g3,a3]"
+DIM CHORDS$ AS STRING = "<" + DM9$ + " " + GM9$ + " " + BBM7$ + " " + A7$ + ">"
+
+' the chords as off-beat stabs, a push on the "and" of four
+FUNC STABS$(rhythm$) AS STRING
+    RETURN "<" + REPLACE$(rhythm$, "x", DM9$) + " " + REPLACE$(rhythm$, "x", GM9$) + " " + REPLACE$(rhythm$, "x", BBM7$) + " " + REPLACE$(rhythm$, "x", A7$) + ">"
+ENDFUNC
+DIM STAB_A$ AS STRING = "legato(0.5, " + STABS$("[~ x ~ ~ ~ x ~ x]") + ")"
+DIM STAB_B$ AS STRING = "legato(0.4, " + STABS$("[~ x ~ x ~ ~ x ~]") + ")"
+
+DIM BASS_A$ AS STRING = "legato(0.7, <[d2 ~ ~ d2 ~ ~ d3 ~] [g1 ~ ~ g1 ~ ~ g2 a#1] [a#1 ~ ~ a#1 ~ ~ f2 ~] [a1 ~ ~ a1 ~ c#2 e2 ~]>)"
+DIM BASS_B$ AS STRING = "legato(0.6, <[d2 ~ d2 ~ ~ d3 ~ c3] [g1 ~ g1 ~ ~ g2 ~ f2] [a#1 ~ a#1 ~ ~ a#2 ~ a2] [a1 ~ a1 ~ e2 ~ g2 ~]>)"
+DIM CHOP$ AS STRING = "<[~ a5 ~ c6 ~ a5 g5 ~] [~ f5 ~ a5 ~ g5 f5 ~] [~ d5 ~ f5 ~ a5 ~ f5] [~ e5 ~ g5 c#6 ~ a5 ~]>"
+DIM HATS16$ AS STRING = "swingBy(0.1, 4, gain([0.35 0.55 0.45 0.7]*4, hh*16))"
+
+' ── Score ────────────────────────────────────────────────────────
+
+SCORE.SECTION 0, "intro", "groove"
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY HATS, HATS16$
+SOUND.FILTER HATS, 2500, 0.2, "HP"
+SCORE.SWEEP HATS, "CUTOFF", "ISAW", 400, 7000, 16, 0
+
+SCORE.SECTION 8, "intro: shaker and rim", "groove"
+SCORE.PLAY SHAKER, "degradeBy(0.25, sh*16)"
+SCORE.PLAY PERC, "rim(3,8,2)"
+
+SCORE.SECTION 16, "groove: bass", "shuffle"
+SCORE.SWEEP_OFF HATS, "CUTOFF"
+SOUND.FILTER HATS, 5000, 0.2, "HP"
+SCORE.PLAY BASS, BASS_A$
+SCORE.PLAY OPENHAT, "[~ oh]*4"
+SCORE.PLAY CLAP, "~ cp ~ cp"
+
+SCORE.SECTION 32, "keys", "jump"
+SCORE.PLAY KEYS, STAB_A$
+SCORE.SWEEP KEYS, "CUTOFF", "SINE", 1200, 3600, 8, 0
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 48, "full groove", "jump"
+SCORE.PLAY PAD, "legato(1, " + CHORDS$ + ")"
+SCORE.PLAY PERC, "rim(3,8,2), sometimes(ply(2), cb(5,16,3))"
+SCORE.PLAY CLAP, "every(4, ply(2), ~ cp ~ cp)"
+
+SCORE.SECTION 64, "breakdown", "wave"
+SCORE.QUIET KICK
+SCORE.QUIET CLAP
+SCORE.QUIET OPENHAT
+SCORE.QUIET BASS
+SCORE.QUIET PERC
+SCORE.QUIET CRASH
+SCORE.PLAY HATS, "gain(0.4, [~ hh]*4)"
+SCORE.PLAY KEYS, "legato(1.4, " + CHORDS$ + ")"
+SCORE.SWEEP KEYS, "CUTOFF", "SAW", 700, 3000, 8, 0
+SCORE.PLAY LEAD, "slow(2, legato(1.2, " + CHOP$ + "))"
+SCORE.SWEEP PAD, "CUTOFF", "SINE", 500, 1800, 16, 0
+
+SCORE.SECTION 80, "build: riser and clap roll", "rise"
+SCORE.QUIET LEAD
+SCORE.PLAY RISER, "legato(1, c4)"
+SCORE.SWEEP RISER, "CUTOFF", "SAW", 400, 6000, 8, 0
+SCORE.SWEEP RISER, "GAIN", "SAW", 0, 0.18, 8, 0
+SCORE.PLAY CLAP, "gain(<0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.6>, <cp*4 cp*4 cp*4 cp*8 cp*8 cp*8 [cp*8 cp*16] [cp*12 ~ ~ ~ ~]>)"
+SCORE.PLAY KICK, "<bd*4 bd*4 bd*4 bd*4 bd*8 bd*8 ~ ~>"
+
+SCORE.SECTION 88, "drop", "jump"
+SCORE.QUIET RISER
+SCORE.SWEEP_OFF RISER, "CUTOFF"
+SCORE.SWEEP_OFF RISER, "GAIN"
+SCORE.SWEEP_OFF PAD, "CUTOFF"
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY CLAP, "every(4, ply(2), ~ cp ~ cp)"
+SCORE.PLAY HATS, HATS16$
+SCORE.PLAY OPENHAT, "[~ oh]*4"
+SCORE.PLAY PERC, "rim(3,8,2), sometimes(ply(2), cb(5,16,3))"
+SCORE.PLAY BASS, BASS_B$
+SCORE.PLAY KEYS, STAB_B$
+SCORE.SWEEP KEYS, "CUTOFF", "SINE", 1500, 4200, 8, 0
+SCORE.PLAY LEAD, CHOP$
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 104, "answer: chops echo an octave down", "jump"
+SCORE.PLAY LEAD, "off(0.25, add(-12), " + CHOP$ + ")"
+SCORE.PLAY SHAKER, "sh*16"
+
+SCORE.SECTION 120, "dub: keys alone with the groove", "robot"
+SCORE.QUIET LEAD
+SCORE.QUIET PAD
+SCORE.QUIET CLAP
+SCORE.PLAY KEYS, "degradeBy(0.3, " + STAB_A$ + ")"
+SOUND.DELAYSEND KEYS, 0.5
+
+SCORE.SECTION 128, "dub: keys ping-pong", "pan"
+SCORE.SWEEP KEYS, "PAN", "SINE", 0.15, 0.85, 1, 0
+SCORE.PLAY CLAP, "~ cp ~ cp"
+
+SCORE.SECTION 136, "last groove", "jump"
+SCORE.SWEEP_OFF KEYS, "PAN"
+SOUND.DELAYSEND KEYS, 0.25
+SCORE.PLAY KEYS, STAB_B$
+SCORE.PLAY PAD, "legato(1, " + CHORDS$ + ")"
+SCORE.PLAY LEAD, "juxBy(0.5, add(12), " + CHOP$ + ")"
+SCORE.PLAY CLAP, "every(4, ply(2), ~ cp ~ cp)"
+
+SCORE.SECTION 148, "outro", "groove"
+SCORE.QUIET LEAD
+SCORE.QUIET KEYS
+SCORE.QUIET PAD
+SCORE.QUIET BASS
+SCORE.QUIET CRASH
+SCORE.QUIET PERC
+
+SCORE.SECTION 152, "end", "bye"
+SCORE.QUIET KICK
+SCORE.QUIET CLAP
+SCORE.QUIET HATS
+SCORE.QUIET OPENHAT
+SCORE.QUIET SHAKER
+
+SCORE.FINE 154
+
+STAGE.RUN "Rooftop Sunday"

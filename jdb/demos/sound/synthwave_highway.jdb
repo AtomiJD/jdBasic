@@ -1,0 +1,236 @@
+' synthwave_highway.jdb - "Neon Highway", synthwave in E minor,
+' 128 bars at 104 BPM (just under five minutes), with the STAGE show.
+'
+'   0 intro     8 drive      24 verse      40 chorus     56 bridge
+'  72 build    80 chorus 2   96 solo      112 outro     128 end
+'
+' Usage: jdBasic synthwave_highway.jdb [--window] [--shots dir]
+'   F toggles fullscreen, Esc quits.
+
+OPTION "EXPLICIT"
+
+IMPORT SCORE
+IMPORT STAGE
+
+DIM BPM AS DOUBLE = 104
+
+DIM KICK AS INTEGER = 0
+DIM CLAP AS INTEGER = 1
+DIM HATS AS INTEGER = 2
+DIM TOMS AS INTEGER = 3
+DIM BASS AS INTEGER = 4
+DIM ARP AS INTEGER = 5
+DIM PAD AS INTEGER = 6
+DIM LEAD AS INTEGER = 7
+DIM RISER AS INTEGER = 8
+DIM CRASH AS INTEGER = 9
+DIM SNARE AS INTEGER = 10
+DIM BRASS AS INTEGER = 11
+DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "TOMS", "BASS", "ARP", "PAD", "LEAD", "RISER", "CRASH", "SNARE", "BRASS"]
+DIM ti AS INTEGER
+FOR ti = 0 TO LEN(TRACK_NAMES$) - 1
+    SCORE.TRACK ti, TRACK_NAMES$[ti]
+NEXT ti
+
+' ── Instruments ──────────────────────────────────────────────────
+
+SOUND.INIT
+SOUND.MASTER "FIXED", 0.5
+SCORE.TEMPO BPM
+SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
+
+' orbit 0: a bright plate and an eighth echo; orbit 1: the huge
+' eighties hall for the gated snare and the pads
+SOUND.REVERB 0.7, 0.3, 0.9, 0.25
+SOUND.DELAY TRUE, 60000 / BPM / 2, 0.4, 0.3
+SOUND.REVERB 0.96, 0.2, 1.0, 0.8, 1
+SOUND.DELAY TRUE, 3 * 60000 / BPM / 4, 0.35, 0.22, 1
+
+SOUND.KIT KICK, "SYNTH"
+SOUND.KIT SNARE, "SYNTH"
+SOUND.GAIN SNARE, 0.75
+SOUND.ORBIT SNARE, 1
+SOUND.REVERBSEND SNARE, 0.6
+SOUND.KIT CLAP, "SYNTH"
+SOUND.GAIN CLAP, 0.45
+SOUND.ORBIT CLAP, 1
+SOUND.REVERBSEND CLAP, 0.5
+SOUND.KIT HATS, "SYNTH"
+SOUND.GAIN HATS, 0.35
+SOUND.PAN HATS, 0.6
+SOUND.KIT TOMS, "SYNTH"
+SOUND.GAIN TOMS, 0.6
+SOUND.ORBIT TOMS, 1
+SOUND.REVERBSEND TOMS, 0.5
+SOUND.KIT CRASH, "SYNTH"
+SOUND.GAIN CRASH, 0.55
+SOUND.ORBIT CRASH, 1
+SOUND.REVERBSEND CRASH, 0.4
+
+' bass: the driving octave saw, eighths, plucked shut
+SOUND.VOICE BASS, "SAW", 0.002, 0.12, 0.35, 0.05
+SOUND.UNISON BASS, 2, 0.08, 0.3
+SOUND.FILTER BASS, 700, 0.35
+SOUND.FENV BASS, 1.6, 0.002, 0.09
+SOUND.SIDECHAIN BASS, KICK, 0.5
+SOUND.GAIN BASS, 0.55
+
+' arp: a glassy square, sixteenths, with the eighth echo
+SOUND.VOICE ARP, "SQUARE", 0.002, 0.1, 0.2, 0.08
+SOUND.FILTER ARP, 2400, 0.3
+SOUND.DELAYSEND ARP, 0.35
+SOUND.REVERBSEND ARP, 0.2
+SOUND.GAIN ARP, 0.22
+
+' pad: a wide slow saw choir
+SOUND.VOICE PAD, "SAW", 1.0, 0.6, 0.85, 2.2
+SOUND.UNISON PAD, 6, 0.28, 1.0
+SOUND.FILTER PAD, 1300, 0.2
+SOUND.ORBIT PAD, 1
+SOUND.REVERBSEND PAD, 0.5
+SOUND.MOD PAD, "PAN", "SINE", 0.35, 0.65, 8
+SOUND.GAIN PAD, 0.24
+
+' brass: stabs with a slow attack swell, the eighties hit
+SOUND.VOICE BRASS, "SAW", 0.04, 0.3, 0.6, 0.25
+SOUND.UNISON BRASS, 4, 0.18, 0.8
+SOUND.FILTER BRASS, 1600, 0.3
+SOUND.FENV BRASS, 1.2, 0.05, 0.25
+SOUND.ORBIT BRASS, 1
+SOUND.REVERBSEND BRASS, 0.35
+SOUND.GAIN BRASS, 0.3
+
+' lead: a singing saw with vibrato
+SOUND.VOICE LEAD, "SAW", 0.01, 0.3, 0.7, 0.35
+SOUND.UNISON LEAD, 3, 0.12, 0.6
+SOUND.FILTER LEAD, 3000, 0.25
+SOUND.LFO LEAD, 5.5, 0.15
+SOUND.ORBIT LEAD, 1
+SOUND.DELAYSEND LEAD, 0.3
+SOUND.REVERBSEND LEAD, 0.35
+SOUND.GAIN LEAD, 0.3
+
+SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.3
+SOUND.FILTER RISER, 400, 0.4, "BP"
+SOUND.ORBIT RISER, 1
+SOUND.REVERBSEND RISER, 0.3
+SOUND.GAIN RISER, 0
+
+' ── Patterns ─────────────────────────────────────────────────────
+
+' Em - C - G - D, one chord a bar
+DIM CHORDS$ AS STRING = "<[e3,g3,b3] [c3,e3,g3] [g3,b3,d4] [d3,f#3,a3]>"
+DIM ARPS$ AS STRING = "arp(updown, <[e4,g4,b4,e5]*4 [c4,e4,g4,c5]*4 [g4,b4,d5,g5]*4 [d4,f#4,a4,d5]*4>)"
+DIM BASS8$ AS STRING = "legato(0.7, <[e1 e2]*4 [c1 c2]*4 [g1 g2]*4 [d1 d2]*4>)"
+DIM BASS16$ AS STRING = "legato(0.6, gain([1 0.6]*8, <[e1 e2 e1 e1]*4 [c1 c2 c1 c1]*4 [g1 g2 g1 g1]*4 [d1 d2 d1 d1]*4>))"
+DIM BRASS$ AS STRING = "legato(0.5, <[[e4,g4,b4] ~ ~ [e4,g4,b4] ~ ~ ~ ~] [[e4,g4,c5] ~ ~ [e4,g4,c5] ~ ~ ~ ~] [[d4,g4,b4] ~ ~ [d4,g4,b4] ~ ~ ~ ~] [[d4,f#4,a4] ~ ~ ~ [d4,f#4,a4] ~ [d4,f#4,a4] ~]>)"
+DIM VERSE$ AS STRING = "<[b4 _ _ a4 g4 _ e4 _] [e4 _ g4 _ c5 _ b4 g4] [b4 _ _ d5 b4 _ g4 _] [a4 _ _ f#4 d4 _ _ _]>"
+DIM CHORUS$ AS STRING = "<[e5 _ d5 _ b4 _ g4 a4] [g4 _ _ _ e4 _ g4 _] [b4 _ d5 _ g5 _ f#5 d5] [f#5 _ e5 _ d5 _ a4 _]>"
+DIM SOLO$ AS STRING = "<[e5 g5 b5 g5 e5 d5 b4 d5] [c5 e5 g5 e5 c6 b5 g5 e5] [d5 g5 b5 d6 b5 g5 d5 b4] [f#5 a5 d6 a5 f#5 e5 d5 a4]>"
+DIM DRUMS_HALF$ AS STRING = "~ ~ sd ~"
+DIM FILL$ AS STRING = "<~!7 [~ ~ ~ ~ ht ht mt mt lt lt [lt lt] ~ ~ ~ ~ ~]>"
+
+' ── Score ────────────────────────────────────────────────────────
+
+SCORE.SECTION 0, "intro", "wave"
+SCORE.PLAY PAD, "legato(1, " + CHORDS$ + ")"
+SCORE.SWEEP PAD, "CUTOFF", "SAW", 400, 1800, 8, 0
+SCORE.PLAY ARP, "gain(0.6, " + ARPS$ + ")"
+
+SCORE.SECTION 8, "drive", "groove"
+SCORE.SWEEP_OFF PAD, "CUTOFF"
+SCORE.PLAY KICK, "bd ~ bd ~"
+SCORE.PLAY SNARE, DRUMS_HALF$
+SCORE.PLAY HATS, "gain([0.4 0.7]*8, hh*16)"
+SCORE.PLAY BASS, BASS8$
+
+SCORE.SECTION 24, "verse", "shuffle"
+SCORE.PLAY LEAD, "legato(1, " + VERSE$ + ")"
+SCORE.PLAY TOMS, FILL$
+SCORE.PLAY KICK, "bd*4"
+
+SCORE.SECTION 40, "chorus", "jump"
+SCORE.PLAY LEAD, "legato(1, " + CHORUS$ + ")"
+SCORE.PLAY BRASS, BRASS$
+SCORE.PLAY BASS, BASS16$
+SCORE.PLAY CLAP, "~ cp ~ cp"
+SCORE.PLAY CRASH, "<cr ~!7>"
+SCORE.PLAY ARP, ARPS$
+
+SCORE.SECTION 56, "bridge", "robot"
+SCORE.QUIET LEAD
+SCORE.QUIET BRASS
+SCORE.QUIET CLAP
+SCORE.QUIET CRASH
+SCORE.PLAY KICK, "bd ~ bd ~"
+SCORE.PLAY BASS, BASS8$
+SCORE.PLAY ARP, "iter(4, " + ARPS$ + ")"
+SCORE.SWEEP ARP, "CUTOFF", "TRI", 800, 4000, 4, 0
+SCORE.SWEEP ARP, "PAN", "SINE", 0.15, 0.85, 2, 0
+
+SCORE.SECTION 64, "bridge: only the pads", "wave"
+SCORE.QUIET KICK
+SCORE.QUIET SNARE
+SCORE.QUIET BASS
+SCORE.QUIET TOMS
+SCORE.PLAY HATS, "gain(0.3, [~ hh]*4)"
+SCORE.PLAY LEAD, "slow(2, legato(1.2, " + VERSE$ + "))"
+SCORE.SWEEP PAD, "CUTOFF", "SINE", 600, 2200, 8, 0
+
+SCORE.SECTION 72, "build: riser and tom roll", "rise"
+SCORE.QUIET LEAD
+SCORE.SWEEP_OFF ARP, "PAN"
+SCORE.PLAY RISER, "legato(1, c4)"
+SCORE.SWEEP RISER, "CUTOFF", "SAW", 400, 6000, 8, 0
+SCORE.SWEEP RISER, "GAIN", "SAW", 0, 0.18, 8, 0
+SCORE.PLAY TOMS, "gain(<0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.6>, <lt*4 lt*4 mt*8 mt*8 [mt*4 ht*4] ht*8 [ht*8 mt*8] [lt*8 ~ ~ ~ ~]>)"
+SCORE.PLAY KICK, "bd*4"
+
+SCORE.SECTION 80, "chorus 2", "jump"
+SCORE.QUIET RISER
+SCORE.SWEEP_OFF RISER, "CUTOFF"
+SCORE.SWEEP_OFF RISER, "GAIN"
+SCORE.SWEEP_OFF PAD, "CUTOFF"
+SCORE.SWEEP_OFF ARP, "CUTOFF"
+SCORE.PLAY SNARE, DRUMS_HALF$
+SCORE.PLAY HATS, "gain([0.4 0.7]*8, hh*16)"
+SCORE.PLAY CLAP, "~ cp ~ cp"
+SCORE.PLAY TOMS, FILL$
+SCORE.PLAY BASS, BASS16$
+SCORE.PLAY BRASS, BRASS$
+SCORE.PLAY ARP, ARPS$
+SCORE.PLAY LEAD, "off(0.125, add(12), legato(1, " + CHORUS$ + "))"
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 96, "solo", "pan"
+SCORE.PLAY LEAD, "legato(0.9, " + SOLO$ + ")"
+SCORE.SWEEP LEAD, "PAN", "SINE", 0.25, 0.75, 1, 0
+SCORE.SWEEP LEAD, "CUTOFF", "SINE", 1500, 5000, 4, 0
+
+SCORE.SECTION 104, "solo: chorus once more", "jump"
+SCORE.SWEEP_OFF LEAD, "PAN"
+SCORE.SWEEP_OFF LEAD, "CUTOFF"
+SCORE.PLAY LEAD, "juxBy(0.4, add(12), legato(1, " + CHORUS$ + "))"
+
+SCORE.SECTION 112, "outro", "groove"
+SCORE.QUIET LEAD
+SCORE.QUIET BRASS
+SCORE.QUIET CLAP
+SCORE.QUIET CRASH
+SCORE.QUIET TOMS
+SCORE.PLAY BASS, BASS8$
+SCORE.SWEEP PAD, "CUTOFF", "ISAW", 300, 1800, 16, 0
+
+SCORE.SECTION 120, "outro: pads and arp", "wave"
+SCORE.QUIET KICK
+SCORE.QUIET SNARE
+SCORE.QUIET HATS
+SCORE.QUIET BASS
+
+SCORE.SECTION 128, "end", "bye"
+SCORE.QUIET PAD
+SCORE.QUIET ARP
+
+SCORE.FINE 130
+
+STAGE.RUN "Neon Highway"
