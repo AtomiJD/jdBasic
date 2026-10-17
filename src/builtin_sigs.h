@@ -703,6 +703,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SOUND.GET_BUS_WAVE", BuiltinRet::Arr, BF_NO_VEC},
     {"SOUND.GET_WAVE", BuiltinRet::Arr, BF_NO_VEC},
     {"SOUND.INIT", BuiltinRet::None, BF_NO_VEC},
+    {"SOUND.KIT", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.LFO", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.MOD", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.NOTE", BuiltinRet::None, BF_NO_VEC},

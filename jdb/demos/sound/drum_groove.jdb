@@ -1,0 +1,60 @@
+' drum_groove.jdb - drums by name with SOUND.KIT: a groove that grows
+' bar by bar from the FreePats synthesizer percussion set (CC0).
+'
+' Shows kit names ("bd sd hh"), variants (hh:1), euclidean rhythms,
+' <...> alternation for fills, and a kit track through the filter.
+
+OPTION "EXPLICIT"
+
+DIM KIT$ AS STRING = "SynthesizerPercussion-SFZ-20220718/kit.txt"
+IF NOT FILE.EXISTS(KIT$) THEN KIT$ = "jdb/demos/sound/" + KIT$
+
+DIM BAR_MS AS INTEGER = 4 * 60000 / 124
+
+SUB WAIT_BARS(n AS INTEGER)
+    SLEEP n * BAR_MS
+ENDSUB
+
+SOUND.INIT
+SOUND.BPM 124
+SOUND.REVERB 0.6, 0.5, 1.0, 0.4
+
+' kick and clap
+SOUND.KIT 0, KIT$
+' hats, open hat and shaker
+SOUND.KIT 1, KIT$
+SOUND.GAIN 1, 0.55
+SOUND.PAN 1, 0.6
+' toms and percussion
+SOUND.KIT 2, KIT$
+SOUND.GAIN 2, 0.6
+SOUND.PAN 2, 0.4
+SOUND.REVERBSEND 2, 0.3
+
+PRINT "kick"
+SOUND.SEQ 0, "bd*4", "VOICE"
+WAIT_BARS 2
+
+PRINT "clap on two and four"
+SOUND.SEQ 0, "bd*4, ~ cp ~ cp", "VOICE"
+WAIT_BARS 2
+
+PRINT "hats: two closed hats alternate, open hat on the offbeat"
+SOUND.SEQ 1, "[hh hh:1]*4, [~ oh]*4?0.3", "VOICE"
+WAIT_BARS 4
+
+PRINT "euclidean claves and shaker"
+SOUND.SEQ 2, "cl(3,8,2), sh(5,16)", "VOICE"
+WAIT_BARS 4
+
+PRINT "tom fill every fourth bar"
+SOUND.SEQ 2, "<[cl(3,8,2), sh(5,16)]!3 [ht ht mt mt lt lt [lt lt] cr]>", "VOICE"
+WAIT_BARS 8
+
+PRINT "hats through a filter sweep"
+SOUND.FILTER 1, 1500, 0.6, "LP"
+SOUND.MOD 1, "CUTOFF", "SAW", 300, 9000, 4
+WAIT_BARS 4
+
+PRINT "end"
+SOUND.RESET

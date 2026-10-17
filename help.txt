@@ -2891,6 +2891,13 @@ Syntax: SOUND.INIT [mode$]
 Description: Initializes the audio system for synthesized sound.
 mode$ "PULL" opens no audio device: SOUND.RENDER is then the only clock, so a render is reproducible.
 
+[SOUND.KIT]
+Syntax: SOUND.KIT track, [kit]
+Description: Turns a track into a drum kit: pattern atoms name sounds ("bd sd hh"), name:n picks the n-th sample.
+kit is a kit file (one line per sound: name, WAV files, optional gain=) or a MAP name -> WAV path, SFX id or array.
+Each hit plays its whole sample. SOUND.KIT track alone removes the kit.
+Example: SOUND.KIT 0, "jdb/demos/sound/SynthesizerPercussion-SFZ-20220718/kit.txt"
+
 [SOUND.PLAY]
 Syntax: SOUND.PLAY(track, frequency)
 Description: Plays a note at a specific frequency on a given synthesizer track.

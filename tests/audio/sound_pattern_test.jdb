@@ -206,5 +206,59 @@ CATCH
 ENDTRY
 CHECK "unknown mod parameter", INSTR(err_msg, "WOBBLE") >= 0, "msg=" + err_msg
 
+' ---------- 3. Drum kit: atoms name samples ----------
+DIM KIT_DIR AS STRING = "jdb/demos/sound/SynthesizerPercussion-SFZ-20220718/"
+
+FUNC KIT_RENDER(pattern$, frames AS INTEGER)
+    SOUND.RESET
+    SOUND.KIT 0, KIT_DIR + "kit.txt"
+    SOUND.SEQ 0, pattern$, "VOICE"
+    RETURN SOUND.RENDER(frames)
+ENDFUNC
+
+buf = KIT_RENDER("~ bd", CYC)
+CHECK "kit silent before hit", RMS(buf, 0, 22000) < 0.001, "rms=" + STR$(RMS(buf, 0, 22000))
+CHECK "kit hit sounds", RMS(buf, 22050, 26000) > 0.05, "rms=" + STR$(RMS(buf, 22050, 26000))
+
+DIM v0 AS DOUBLE = RMS(KIT_RENDER("bd", 4000), 0, 4000)
+DIM v1 AS DOUBLE = RMS(KIT_RENDER("bd:1", 4000), 0, 4000)
+DIM v2 AS DOUBLE = RMS(KIT_RENDER("bd:2", 4000), 0, 4000)
+CHECK "variants differ", ABS(v0 - v1) > 0.001, "bd=" + STR$(v0) + " bd:1=" + STR$(v1)
+CHECK "variant index wraps", ABS(v0 - v2) < 0.000001, "bd=" + STR$(v0) + " bd:2=" + STR$(v2)
+
+' the crash outlives its eighth-cycle event
+buf = KIT_RENDER("cr ~ ~ ~ ~ ~ ~ ~", CYC / 2)
+CHECK "hit plays its whole sample", RMS(buf, 15000, 20000) > 0.005, "rms=" + STR$(RMS(buf, 15000, 20000))
+
+n = TRIGGERS()
+buf = KIT_RENDER("nosuch bd", CYC)
+n = TRIGGERS()
+CHECK "unknown name is skipped", n = 1, "triggers=" + STR$(n)
+
+' gain= in the kit file scales the sound against the same sample from a MAP
+DIM sh_kit AS DOUBLE = RMS(KIT_RENDER("sh", 4000), 0, 4000)
+SOUND.RESET
+SOUND.KIT 0, {"sh": KIT_DIR + "samples/Shaker04.wav"}
+SOUND.SEQ 0, "sh", "VOICE"
+buf = SOUND.RENDER(4000)
+DIM sh_map AS DOUBLE = RMS(buf, 0, 4000)
+CHECK "kit gain", ABS(sh_kit / sh_map - 0.45) < 0.02, "kit=" + STR$(sh_kit) + " map=" + STR$(sh_map)
+
+' a MAP entry may name an SFX.LOAD id
+SFX.LOAD 7, KIT_DIR + "samples/Clap01.wav"
+SOUND.RESET
+SOUND.KIT 0, {"CP": 7}
+SOUND.SEQ 0, "cp", "VOICE"
+buf = SOUND.RENDER(4000)
+CHECK "kit names are case-blind, ids work", RMS(buf, 0, 4000) > 0.05, "rms=" + STR$(RMS(buf, 0, 4000))
+
+err_msg = ""
+TRY
+    SOUND.KIT 0, "no_such_kit.txt"
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "missing kit file", INSTR(err_msg, "no_such_kit.txt") >= 0, "msg=" + err_msg
+
 SOUND.RESET
 PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

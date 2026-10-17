@@ -30,6 +30,7 @@ void register_sound_builtins(VM& vm) {
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <sstream>
 #include <algorithm>
 #include <mutex>
 #include <atomic>
@@ -199,6 +200,7 @@ struct Voice {
     int sample_id = -1;
     float sample_rate_ratio = 1.0f;
     float sample_pos = 0.0f;
+    float sample_gain = 1.0f;
     bool sample_loop = false;
     // Sequencer timing: frames until the onset, then frames until gate-off
     bool seq_controlled = false;
@@ -246,6 +248,12 @@ static float mod_signal(ModShape sh, double x) {
 
 // ── Track Parameters ────────────────────────────────────────────
 
+// One named kit sound: its variants (name:n picks one) and a level.
+struct KitSound {
+    std::vector<int> ids;
+    float gain = 1.0f;
+};
+
 struct TrackParams {
     Waveform waveform = Waveform::SINE;
     float attack = 0.01f, decay = 0.1f, sustain = 0.7f, release = 0.3f;
@@ -273,6 +281,8 @@ struct TrackParams {
     int sample_id = -1;
     float sample_base_freq = 261.63f; // C4
     bool sample_loop = false;
+    // Drum kit: pattern atoms name sounds instead of notes
+    std::unordered_map<std::string, KitSound> kit;
 };
 
 static float* mod_target(TrackParams& tp, int param) {
@@ -431,6 +441,9 @@ static struct SoundSystem {
 
     // SFX
     std::unordered_map<int, SoundChunk> samples;
+    // Kit samples loaded by path, under ids above any SFX.LOAD id
+    std::unordered_map<std::string, int> kit_paths;
+    int next_kit_id = 1 << 30;
     SfxChannel sfx_channels[MAX_SFX_CHANNELS];
     int music_channel = -1;
 
@@ -536,7 +549,7 @@ static struct SoundSystem {
         float sample_l = 0, sample_r = 0;
 
         // Sample playback
-        if (tp.waveform == Waveform::SAMPLE && v.sample_id >= 0) {
+        if (v.sample_id >= 0) {
             auto sit = samples.find(v.sample_id);
             if (sit != samples.end()) {
                 auto& chunk = sit->second;
@@ -545,6 +558,8 @@ static struct SoundSystem {
                     size_t idx = (size_t)v.sample_pos * 2;
                     sample_l = (idx < chunk.data.size()) ? chunk.data[idx] : 0;
                     sample_r = (idx + 1 < chunk.data.size()) ? chunk.data[idx + 1] : sample_l;
+                    sample_l *= v.sample_gain;
+                    sample_r *= v.sample_gain;
                     v.sample_pos += rate;
                     if (v.sample_pos >= chunk.data.size() / 2) {
                         if (v.sample_loop) v.sample_pos = 0;
@@ -837,6 +852,34 @@ static struct SoundSystem {
                               double offset, double phase_inc) {
         if (ev.probability < 1.0f && ((float)rand() / RAND_MAX) > ev.probability)
             return;
+        auto& tp = sys->tracks[t];
+        if (!tp.kit.empty()) {
+            std::string name = ev.note;
+            int variant = 0;
+            size_t colon = name.find(':');
+            if (colon != std::string::npos) {
+                variant = std::atoi(name.c_str() + colon + 1);
+                name.resize(colon);
+            }
+            std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+            auto it = tp.kit.find(name);
+            if (it == tp.kit.end() || it->second.ids.empty()) return;
+            const auto& ids = it->second.ids;
+            int n = (int)ids.size();
+            int vi = sys->allocate_voice(t);
+            if (vi < 0) { sys->dbg_alloc_fail++; return; }
+            sys->dbg_triggers++;
+            auto& v = sys->voices[vi];
+            v.frequency = tp.sample_base_freq;
+            start_envelopes(v, tp);
+            v.sample_id = ids[((variant % n) + n) % n];
+            v.sample_gain = it->second.gain;
+            v.sample_loop = false;
+            v.seq_controlled = true;
+            v.delay_frames = (int64_t)(offset / phase_inc);
+            v.gate_frames = -1;  // a hit plays its whole sample
+            return;
+        }
         float freq = 0;
         int midi = note_name_to_midi(ev.note);
         if (midi >= 0) {
@@ -849,7 +892,6 @@ static struct SoundSystem {
         if (vi < 0) { sys->dbg_alloc_fail++; return; }
         sys->dbg_triggers++;
         auto& v = sys->voices[vi];
-        auto& tp = sys->tracks[t];
         v.frequency = freq;
         v.phase = 0.0f;
         start_envelopes(v, tp);
@@ -1101,6 +1143,107 @@ int sound_render(float* out, int num_frames) {
     return num_frames;
 }
 
+// Reads a WAV file into an interleaved-stereo chunk at the engine rate.
+static SoundChunk load_wav_file(const std::string& path, const std::string& who) {
+#ifndef GFX
+    // SDL-free WAV loader for headless/SOUND_DSP builds: parses canonical
+    // RIFF/PCM (8/16/24/32-bit int, 32-bit float; mono or stereo) and
+    // resamples to the engine rate, producing interleaved-stereo float.
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) throw jdError(ErrCode::RUNTIME_ERROR, who + " failed: cannot open " + path);
+    fseek(f, 0, SEEK_END); long fsz = ftell(f); fseek(f, 0, SEEK_SET);
+    if (fsz < 44) { fclose(f); throw jdError(ErrCode::RUNTIME_ERROR, who + " failed: file too small: " + path); }
+    std::vector<uint8_t> b((size_t)fsz);
+    size_t got = fread(b.data(), 1, (size_t)fsz, f);
+    fclose(f);
+    if (got != (size_t)fsz) throw jdError(ErrCode::RUNTIME_ERROR, who + " failed: short read: " + path);
+
+    auto rd16 = [&](size_t o) -> uint16_t { return (uint16_t)(b[o] | (b[o + 1] << 8)); };
+    auto rd32 = [&](size_t o) -> uint32_t {
+        return (uint32_t)b[o] | ((uint32_t)b[o + 1] << 8) | ((uint32_t)b[o + 2] << 16) | ((uint32_t)b[o + 3] << 24);
+    };
+    if (memcmp(b.data(), "RIFF", 4) != 0 || memcmp(b.data() + 8, "WAVE", 4) != 0)
+        throw jdError(ErrCode::RUNTIME_ERROR, who + " failed: not a WAV: " + path);
+
+    uint16_t fmt = 0, channels = 0, bits = 0;
+    uint32_t srate = 0, dataOff = 0, dataLen = 0;
+    size_t p = 12;
+    while (p + 8 <= (size_t)fsz) {
+        uint32_t csz = rd32(p + 4);
+        if (memcmp(&b[p], "fmt ", 4) == 0 && p + 24 <= (size_t)fsz) {
+            fmt = rd16(p + 8); channels = rd16(p + 10); srate = rd32(p + 12); bits = rd16(p + 22);
+        } else if (memcmp(&b[p], "data", 4) == 0) {
+            dataOff = (uint32_t)(p + 8); dataLen = csz;
+        }
+        p += 8 + csz + (csz & 1); // chunks are word-aligned
+    }
+    if (dataOff == 0 || channels == 0 || bits == 0)
+        throw jdError(ErrCode::RUNTIME_ERROR, who + " failed: malformed WAV: " + path);
+    if ((size_t)dataOff + dataLen > (size_t)fsz) dataLen = (uint32_t)fsz - dataOff;
+
+    size_t bytesPerSample = bits / 8;
+    size_t frameStride = bytesPerSample * channels;
+    size_t frameCount = frameStride ? (dataLen / frameStride) : 0;
+
+    std::vector<float> srcL(frameCount), srcR(frameCount);
+    for (size_t i = 0; i < frameCount; ++i) {
+        for (int c = 0; c < channels; ++c) {
+            size_t so = (size_t)dataOff + i * frameStride + (size_t)c * bytesPerSample;
+            float s = 0.0f;
+            if (fmt == 3 && bits == 32) { float v; memcpy(&v, &b[so], 4); s = v; }
+            else if (bits == 16) { s = (int16_t)rd16(so) / 32768.0f; }
+            else if (bits == 8)  { s = ((int)b[so] - 128) / 128.0f; }
+            else if (bits == 24) { int32_t v = (int32_t)(b[so] | (b[so + 1] << 8) | (b[so + 2] << 16)); if (v & 0x800000) v |= ~0xFFFFFF; s = v / 8388608.0f; }
+            else if (bits == 32) { s = (int32_t)rd32(so) / 2147483648.0f; }
+            if (c == 0) srcL[i] = s;
+            if (c == 1) srcR[i] = s;
+        }
+        if (channels == 1) srcR[i] = srcL[i];
+    }
+
+    SoundChunk chunk;
+    if (srate == 0) srate = SAMPLE_RATE;
+    if (srate == (uint32_t)SAMPLE_RATE) {
+        chunk.data.resize(frameCount * 2);
+        for (size_t i = 0; i < frameCount; ++i) { chunk.data[i * 2] = srcL[i]; chunk.data[i * 2 + 1] = srcR[i]; }
+    } else {
+        double ratio = (double)SAMPLE_RATE / (double)srate;
+        size_t outFrames = (size_t)(frameCount * ratio);
+        chunk.data.resize(outFrames * 2);
+        for (size_t i = 0; i < outFrames; ++i) {
+            double sp = i / ratio;
+            size_t i0 = (size_t)sp; double fr = sp - i0;
+            size_t i1 = (i0 + 1 < frameCount) ? i0 + 1 : i0;
+            chunk.data[i * 2]     = (float)(srcL[i0] * (1.0 - fr) + srcL[i1] * fr);
+            chunk.data[i * 2 + 1] = (float)(srcR[i0] * (1.0 - fr) + srcR[i1] * fr);
+        }
+    }
+
+    return chunk;
+#else
+
+    SDL_AudioSpec spec;
+    Uint8* buf; Uint32 len;
+    if (!SDL_LoadWAV(path.c_str(), &spec, &buf, &len))
+        throw jdError(ErrCode::RUNTIME_ERROR, who + " failed: " + std::string(SDL_GetError()));
+
+    // Convert to target format
+    SDL_AudioSpec target; target.freq = SAMPLE_RATE; target.format = SDL_AUDIO_F32; target.channels = 2;
+    SDL_AudioStream* conv = SDL_CreateAudioStream(&spec, &target);
+    SDL_PutAudioStreamData(conv, buf, len);
+    SDL_FlushAudioStream(conv);
+    SDL_free(buf);
+
+    int avail = SDL_GetAudioStreamAvailable(conv);
+    SoundChunk chunk;
+    chunk.data.resize(avail / sizeof(float));
+    SDL_GetAudioStreamData(conv, chunk.data.data(), avail);
+    SDL_DestroyAudioStream(conv);
+
+    return chunk;
+#endif
+}
+
 void register_sound_builtins(VM& vm) {
     init_note_map();
 
@@ -1198,6 +1341,107 @@ void register_sound_builtins(VM& vm) {
             if (midi >= 0) g_sound.tracks[t].sample_base_freq = midi_to_freq(midi);
         }
         if (args.size() >= 4) g_sound.tracks[t].sample_loop = args[3].to_bool();
+        return Value::make_none();
+    });
+
+    // ── SOUND.KIT track, [kit] ──────────────────────────────────
+    // kit is a kit file, or a MAP from sound name to a sample id, a WAV path
+    // or an array of them. Pattern atoms on the track then name sounds.
+
+    vm.register_native("SOUND.KIT", 1, 2, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        std::unordered_map<std::string, KitSound> kit;
+        std::vector<std::pair<int, SoundChunk>> loaded;
+        std::unordered_map<std::string, int> new_ids;
+        int next_id = g_sound.next_kit_id;
+        auto sample_for = [&](const std::string& path) -> int {
+            auto it = g_sound.kit_paths.find(path);
+            if (it != g_sound.kit_paths.end()) return it->second;
+            auto jt = new_ids.find(path);
+            if (jt != new_ids.end()) return jt->second;
+            loaded.push_back({next_id, load_wav_file(path, "SOUND.KIT")});
+            new_ids[path] = next_id;
+            return next_id++;
+        };
+        auto lower = [](std::string s) {
+            std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+            return s;
+        };
+        Value kv = args.size() >= 2 ? args[1] : Value::make_none();
+        if (kv.type == ValueType::STRING) {
+            std::string file = kv.as_string()->data;
+            FILE* fp = file.empty() ? nullptr : fopen(file.c_str(), "rb");
+            if (!file.empty() && !fp)
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.KIT: cannot open " + file);
+            std::string text;
+            if (fp) {
+                char buf[4096];
+                size_t n;
+                while ((n = fread(buf, 1, sizeof buf, fp)) > 0) text.append(buf, n);
+                fclose(fp);
+            }
+            std::string dir;
+            size_t sl = file.find_last_of("/\\");
+            if (sl != std::string::npos) dir = file.substr(0, sl + 1);
+            std::istringstream in(text);
+            std::string line;
+            int lineno = 0;
+            while (std::getline(in, line)) {
+                lineno++;
+                size_t hash = line.find('#');
+                if (hash != std::string::npos) line.resize(hash);
+                std::istringstream ls(line);
+                std::string name, tok;
+                if (!(ls >> name)) continue;
+                KitSound ks;
+                while (ls >> tok) {
+                    if (tok.rfind("gain=", 0) == 0) { ks.gain = (float)std::atof(tok.c_str() + 5); continue; }
+                    bool absolute = tok[0] == '/' || tok[0] == '\\' || (tok.size() > 1 && tok[1] == ':');
+                    ks.ids.push_back(sample_for(absolute ? tok : dir + tok));
+                }
+                if (ks.ids.empty())
+                    throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.KIT: " + file + " line " +
+                                  std::to_string(lineno) + ": " + name + " has no sample");
+                kit[lower(name)] = std::move(ks);
+            }
+        } else if (kv.type == ValueType::OBJECT) {
+            auto* obj = dynamic_cast<ObjectObj*>(kv.obj);
+            if (!obj) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.KIT: the kit is a file name or a MAP");
+            for (auto& field : obj->fields) {
+                KitSound ks;
+                auto add = [&](const Value& v) {
+                    if (v.type == ValueType::STRING)
+                        ks.ids.push_back(sample_for(v.as_string()->data));
+                    else if (v.type >= ValueType::BYTE && v.type <= ValueType::FLOAT64)
+                        ks.ids.push_back((int)v.to_int());
+                    else
+                        throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.KIT: " + field.first +
+                                      " needs a sample id or a WAV path");
+                };
+                if (field.second.type == ValueType::ARRAY)
+                    for (auto& e : field.second.as_array()->elements) add(e);
+                else
+                    add(field.second);
+                if (ks.ids.empty())
+                    throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.KIT: " + field.first + " has no sample");
+                kit[lower(field.first)] = std::move(ks);
+            }
+        } else if (kv.type != ValueType::NONE) {
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.KIT: the kit is a file name or a MAP");
+        }
+
+        ensure_sound("SOUND"); SND_LOCK();
+        for (auto& lc : loaded) g_sound.samples[lc.first] = std::move(lc.second);
+        for (auto& p : new_ids) g_sound.kit_paths[p.first] = p.second;
+        g_sound.next_kit_id = next_id;
+        auto& tp = g_sound.tracks[t];
+        tp.kit = std::move(kit);
+        if (!tp.kit.empty()) {
+            tp.waveform = Waveform::SAMPLE;
+            tp.attack = 0.0005f; tp.decay = 0.001f; tp.sustain = 1.0f; tp.release = 0.05f;
+        }
+        SND_UNLOCK();
         return Value::make_none();
     });
 
@@ -1327,108 +1571,8 @@ void register_sound_builtins(VM& vm) {
     // ── SFX.LOAD id, filepath ───────────────────────────────────
 
     vm.register_native("SFX.LOAD", 2, 2, [](const std::vector<Value>& args) -> Value {
-#ifndef GFX
-        // SDL-free WAV loader for headless/SOUND_DSP builds: parses canonical
-        // RIFF/PCM (8/16/24/32-bit int, 32-bit float; mono or stereo) and
-        // resamples to the engine rate, producing interleaved-stereo float.
-        int id = (int)args[0].to_int();
-        std::string path = args[1].as_string()->data;
-
-        FILE* f = fopen(path.c_str(), "rb");
-        if (!f) throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: cannot open " + path);
-        fseek(f, 0, SEEK_END); long fsz = ftell(f); fseek(f, 0, SEEK_SET);
-        if (fsz < 44) { fclose(f); throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: file too small: " + path); }
-        std::vector<uint8_t> b((size_t)fsz);
-        size_t got = fread(b.data(), 1, (size_t)fsz, f);
-        fclose(f);
-        if (got != (size_t)fsz) throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: short read: " + path);
-
-        auto rd16 = [&](size_t o) -> uint16_t { return (uint16_t)(b[o] | (b[o + 1] << 8)); };
-        auto rd32 = [&](size_t o) -> uint32_t {
-            return (uint32_t)b[o] | ((uint32_t)b[o + 1] << 8) | ((uint32_t)b[o + 2] << 16) | ((uint32_t)b[o + 3] << 24);
-        };
-        if (memcmp(b.data(), "RIFF", 4) != 0 || memcmp(b.data() + 8, "WAVE", 4) != 0)
-            throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: not a WAV: " + path);
-
-        uint16_t fmt = 0, channels = 0, bits = 0;
-        uint32_t srate = 0, dataOff = 0, dataLen = 0;
-        size_t p = 12;
-        while (p + 8 <= (size_t)fsz) {
-            uint32_t csz = rd32(p + 4);
-            if (memcmp(&b[p], "fmt ", 4) == 0 && p + 24 <= (size_t)fsz) {
-                fmt = rd16(p + 8); channels = rd16(p + 10); srate = rd32(p + 12); bits = rd16(p + 22);
-            } else if (memcmp(&b[p], "data", 4) == 0) {
-                dataOff = (uint32_t)(p + 8); dataLen = csz;
-            }
-            p += 8 + csz + (csz & 1); // chunks are word-aligned
-        }
-        if (dataOff == 0 || channels == 0 || bits == 0)
-            throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: malformed WAV: " + path);
-        if ((size_t)dataOff + dataLen > (size_t)fsz) dataLen = (uint32_t)fsz - dataOff;
-
-        size_t bytesPerSample = bits / 8;
-        size_t frameStride = bytesPerSample * channels;
-        size_t frameCount = frameStride ? (dataLen / frameStride) : 0;
-
-        std::vector<float> srcL(frameCount), srcR(frameCount);
-        for (size_t i = 0; i < frameCount; ++i) {
-            for (int c = 0; c < channels; ++c) {
-                size_t so = (size_t)dataOff + i * frameStride + (size_t)c * bytesPerSample;
-                float s = 0.0f;
-                if (fmt == 3 && bits == 32) { float v; memcpy(&v, &b[so], 4); s = v; }
-                else if (bits == 16) { s = (int16_t)rd16(so) / 32768.0f; }
-                else if (bits == 8)  { s = ((int)b[so] - 128) / 128.0f; }
-                else if (bits == 24) { int32_t v = (int32_t)(b[so] | (b[so + 1] << 8) | (b[so + 2] << 16)); if (v & 0x800000) v |= ~0xFFFFFF; s = v / 8388608.0f; }
-                else if (bits == 32) { s = (int32_t)rd32(so) / 2147483648.0f; }
-                if (c == 0) srcL[i] = s;
-                if (c == 1) srcR[i] = s;
-            }
-            if (channels == 1) srcR[i] = srcL[i];
-        }
-
-        SoundChunk chunk;
-        if (srate == 0) srate = SAMPLE_RATE;
-        if (srate == (uint32_t)SAMPLE_RATE) {
-            chunk.data.resize(frameCount * 2);
-            for (size_t i = 0; i < frameCount; ++i) { chunk.data[i * 2] = srcL[i]; chunk.data[i * 2 + 1] = srcR[i]; }
-        } else {
-            double ratio = (double)SAMPLE_RATE / (double)srate;
-            size_t outFrames = (size_t)(frameCount * ratio);
-            chunk.data.resize(outFrames * 2);
-            for (size_t i = 0; i < outFrames; ++i) {
-                double sp = i / ratio;
-                size_t i0 = (size_t)sp; double fr = sp - i0;
-                size_t i1 = (i0 + 1 < frameCount) ? i0 + 1 : i0;
-                chunk.data[i * 2]     = (float)(srcL[i0] * (1.0 - fr) + srcL[i1] * fr);
-                chunk.data[i * 2 + 1] = (float)(srcR[i0] * (1.0 - fr) + srcR[i1] * fr);
-            }
-        }
-        g_sound.samples[id] = std::move(chunk);
+        g_sound.samples[(int)args[0].to_int()] = load_wav_file(args[1].as_string()->data, "SFX.LOAD");
         return Value::make_none();
-#else
-        int id = (int)args[0].to_int();
-        std::string path = args[1].as_string()->data;
-        SDL_AudioSpec spec;
-        Uint8* buf; Uint32 len;
-        if (!SDL_LoadWAV(path.c_str(), &spec, &buf, &len))
-            throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: " + std::string(SDL_GetError()));
-
-        // Convert to target format
-        SDL_AudioSpec target; target.freq = SAMPLE_RATE; target.format = SDL_AUDIO_F32; target.channels = 2;
-        SDL_AudioStream* conv = SDL_CreateAudioStream(&spec, &target);
-        SDL_PutAudioStreamData(conv, buf, len);
-        SDL_FlushAudioStream(conv);
-        SDL_free(buf);
-
-        int avail = SDL_GetAudioStreamAvailable(conv);
-        SoundChunk chunk;
-        chunk.data.resize(avail / sizeof(float));
-        SDL_GetAudioStreamData(conv, chunk.data.data(), avail);
-        SDL_DestroyAudioStream(conv);
-
-        g_sound.samples[id] = std::move(chunk);
-        return Value::make_none();
-#endif
     });
 
     // ── SFX.PLAY id ─────────────────────────────────────────────

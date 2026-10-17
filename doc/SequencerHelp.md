@@ -20,6 +20,7 @@ The sequencer programs rhythmic patterns into 8 available tracks (0-7).
 * **`pattern$`**: Space-separated tokens using mini-notation. Use `~` for rests and `[...]` for subdivisions.
 * **`waveform$`**: Options include `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`, or `"VOICE"`.
 
+* **`SOUND.KIT track, kit`**: Makes the track a drum kit, so pattern atoms name sounds: `SOUND.KIT 0, "jdb/demos/sound/SynthesizerPercussion-SFZ-20220718/kit.txt"` then `SOUND.SEQ 0, "bd [~ bd] sd hh:1", "VOICE"`. `kit` is a kit file or a MAP name -> WAV path or SFX id.
 * **`SOUND.SCALE track, root$, scale_mode$`**: Maps integer pattern tokens (e.g., "0", "1") to a musical scale.
 
 * **`SOUND.NOTE pattern$, looping`**: Plays pattern parts as melody (not part of the sequencer bar). pattern$ = "<c4 c4, e2 e4>" plays a melody on track 0 and the bass on track 1

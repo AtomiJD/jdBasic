@@ -1,0 +1,135 @@
+//+ Name: Synthesizer percussion
+//+ Date: 2022-07-18
+//+ URL: http://freepats.zenvoid.org/Percussion/electric-percussion.html#FSynthPercussion
+
+<global>
+ //+ Instrument: Synthesizer percussion
+ ampeg_release=100
+ loop_mode=no_loop
+
+<group>
+ // Bass Drum 1
+ key=48
+<region>
+ sample=samples/Kick04.wav
+
+<group>
+ // Bass Drum 2
+ key=49
+<region>
+ sample=samples/Kick06.wav
+
+<group>
+ // Snare Drum 1
+ key=50
+<region>
+ sample=samples/Snare09.wav
+
+<group>
+ // Snare Drum 2
+ key=51
+<region>
+ sample=samples/Snare14.wav
+
+<group>
+ // Closed Hi-Hat 1
+ key=52
+<region>
+ sample=samples/ClosedHiHat01-01.wav
+
+<group>
+ // Closed Hi-Hat 2
+ key=53
+<region>
+ sample=samples/ClosedHiHat02-01.wav
+
+<group>
+ // Open Hi-Hat
+ key=54
+ volume=-2
+<region>
+ sample=samples/OpenHiHat02-01.wav
+
+<group>
+ // Cymbal 1
+ //+ RandomRegion: Yes
+ key=55
+<region>
+ lorand=0 hirand=0.333333
+ sample=samples/Cymbal01-01.wav
+<region>
+ lorand=0.333333 hirand=0.666666
+ sample=samples/Cymbal01-02.wav
+<region>
+ lorand=0.666666 hirand=1
+ sample=samples/Cymbal01-03.wav
+
+<group>
+ // Cymbal 2
+ key=56
+ volume=-3
+<region>
+ sample=samples/Cymbal02.wav
+
+<group>
+ // Low Tom 1
+ key=57
+<region>
+ sample=samples/LowTom02-01.wav
+
+<group>
+ // Low Tom 2
+ key=58
+<region>
+ sample=samples/LowTom02-02.wav
+
+<group>
+ // Mid Tom 1
+ key=59
+<region>
+ sample=samples/MidTom02-01.wav
+
+<group>
+ // Mid Tom 2
+ key=60
+<region>
+ sample=samples/MidTom02-02.wav
+
+<group>
+ // High Tom 1
+ key=61
+<region>
+ sample=samples/HighTom02-01.wav
+
+<group>
+ // High Tom 2
+ key=62
+<region>
+ sample=samples/HighTom02-02.wav
+
+<group>
+ // Clap
+ key=63
+<region>
+ sample=samples/Clap01.wav
+
+<group>
+ // Shaker
+ key=64
+ volume=-7
+<region>
+ sample=samples/Shaker04.wav
+
+<group>
+ // Shaker long
+ key=65
+ volume=-4
+<region>
+ sample=samples/ShakerLong01.wav
+
+<group>
+ // Claves
+ key=66
+ volume=-2
+<region>
+ sample=samples/Claves01.wav
