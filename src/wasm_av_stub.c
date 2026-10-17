@@ -9,6 +9,7 @@
 SDL_Surface *IMG_Load(const char *file) { (void)file; return NULL; }
 SDL_Texture *IMG_LoadTexture(SDL_Renderer *r, const char *file) { (void)r; (void)file; return NULL; }
 bool IMG_SavePNG(SDL_Surface *s, const char *file) { (void)s; (void)file; return false; }
+bool IMG_SaveJPG(SDL_Surface *s, const char *file, int quality) { (void)s; (void)file; (void)quality; return false; }
 
 bool MIX_Init(void) { return false; }
 void MIX_Quit(void) {}
