@@ -1756,6 +1756,11 @@ Description: Displays a (?) icon that shows a tooltip when hovered.
 Syntax: GUI.INPUT(label$, current_value$)
 Description: Displays a text input field. Returns the new string value.
 
+[GUI.INPUT_MULTILINE]
+Syntax: GUI.INPUT_MULTILINE(label$, text$, [width], [height])
+Description: A multi-line text area (up to 64 KB); returns the edited text. 0 or omitted sizes fill the space left.
+Tab types a tab; Ctrl+Enter keeps the focus so a program can use it as a hotkey.
+
 [GUI.INPUT_DOUBLE]
 Syntax: GUI.INPUT_DOUBLE(label$, value)
 Description: Displays a double precision input field. Returns the new value.
@@ -2937,9 +2942,9 @@ Syntax: SOUND.BPM(beats_per_minute)
 Description: Sets the global tempo for the sequencer.
 
 [SOUND.DELAY]
-Syntax: SOUND.DELAY active_bool, time_ms, feedback, mix
+Syntax: SOUND.DELAY active_bool, time_ms, feedback, mix, [orbit]
 Description: Activates a global stereo delay (echo) effect.
-Feedback: 0.0-0.9. Mix: 0.0-1.0.
+Feedback: 0.0-0.9. Mix: 0.0-1.0. orbit (0-3, default 0) picks the effect bus; see SOUND.ORBIT.
 
 [SOUND.DISTORTION]
 Syntax: SOUND.DISTORTION amount
@@ -2974,7 +2979,19 @@ Description: Sets the volume gain for a specific track (0.0 to 1.0+).
 
 [SOUND.GET_WAVE]
 Syntax: SOUND.GET_WAVE()
-Description: Returns an array of float values representing the current live audio waveform.
+Description: Returns the last 1024 samples of the master output, oldest first (a scope).
+
+[SOUND.CYCLE]
+Syntax: SOUND.CYCLE()
+Description: The sequencer clock in cycles (bars): the whole part is the bar, the fraction the position in it.
+
+[SOUND.NUDGE]
+Syntax: SOUND.NUDGE track, ms
+Description: Starts every note of the track ms milliseconds late (0 to 1000).
+
+[SOUND.ORBIT]
+Syntax: SOUND.ORBIT track, orbit
+Description: Sends the track's reverb and delay sends to effect bus 0-3. Each orbit has its own SOUND.REVERB / SOUND.DELAY.
 
 [SOUND.LFO]
 Syntax: SOUND.LFO track, frequency_hz, depth
@@ -3009,6 +3026,8 @@ Pattern: a b (steps)  [a b] (group)  a,b (together)  <a b> (one per cycle)  a|b 
 Transforms, pattern last: rev(p) palindrome(p) fast(n,p) slow(n,p) ply(n,p) iter(n,p) add(n,p) arp(up|down|updown|downup,p)
 degrade(p) degradeBy(x,p) every(n,F,p) off(t,F,p) jux(F,p) juxBy(w,F,p) sometimes(F,p) often rarely sometimesBy(x,F,p)
 F is a transform without its pattern: rev, add(12), fast(2). Example: "every(4, rev, c3 e3 g3)"
+gain(v,p) legato(v,p) pan(v,p): v a number or number pattern read at each onset, e.g. gain([1 0.5]*4, hh*8)
+swing(n,p) swingBy(x,n,p): the second half of each of n slices plays x slices late
 
 [SOUND.EVENTS$]
 Syntax: SOUND.EVENTS$(pattern$, [cycles], [first])
@@ -3032,9 +3051,9 @@ Description: Sets the 3-band equalizer gains for a track.
 1.0 is flat, 0.0 cuts the band, >1.0 boosts it.
 
 [SOUND.REVERB]
-Syntax: SOUND.REVERB room_size, damping, width, wet
+Syntax: SOUND.REVERB room_size, damping, width, wet, [orbit]
 Description: Activates the master reverb effect.
-Room: 0.7-0.99. Damp: 0.0-1.0. Width: 0.0-1.0. Wet: 0.0-1.0.
+Room: 0.7-0.99. Damp: 0.0-1.0. Width: 0.0-1.0. Wet: 0.0-1.0. orbit (0-3, default 0) picks the effect bus; see SOUND.ORBIT.
 
 [SOUND.SAMPLE]
 Syntax: SOUND.SAMPLE track, sample_id, base_note$, loop_bool

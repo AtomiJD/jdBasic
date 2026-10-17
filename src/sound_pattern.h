@@ -14,6 +14,8 @@
 //   iter(4, p) add(12, p) degradeBy(0.3, p)  arp(up|down|updown|downup, p)
 //   every(4, F, p) off(0.125, F, p) jux(F, p) juxBy(0.5, F, p)
 //   sometimes(F, p) often rarely almostNever almostAlways sometimesBy(0.3, F, p)
+//   gain(v, p) legato(v, p) pan(v, p)   v a number or a number pattern: [1 0.6]*4
+//   swing(n, p) swingBy(x, n, p)        late second half of each of n slices
 // F is a transform without its pattern: rev, add(7), fast(2), every(2, rev).
 //
 // A pattern is parsed once into a tree and queried one cycle at a time;
@@ -49,6 +51,7 @@ struct Node {
     std::string fn;
     std::vector<double> nums;
     std::string word;
+    NodeP value;  // FN: a number pattern argument (gain, legato, pan)
 };
 
 struct Event {
@@ -57,6 +60,8 @@ struct Event {
     std::string note;
     float prob;
     float pan = -1.0f;  // below 0: the track pan
+    float gain = 1.0f;
+    float legato = -1.0f;  // gate as a share of the event; below 0: the default
 };
 
 inline uint32_t hash32(uint32_t a, int64_t b) {
@@ -325,7 +330,8 @@ private:
     }
 
     // The arguments a transform takes before its pattern:
-    // n a number, f a function, m an arp mode. nullptr for no transform.
+    // n a number, f a function, m an arp mode, v a number pattern.
+    // nullptr for no transform.
     static const char* fn_sig(const std::string& name) {
         static const std::pair<const char*, const char*> table[] = {
             {"rev", ""}, {"palindrome", ""}, {"degrade", ""},
@@ -333,6 +339,8 @@ private:
             {"degradeby", "n"}, {"every", "nf"}, {"off", "nf"}, {"sometimesby", "nf"},
             {"juxby", "nf"}, {"jux", "f"}, {"sometimes", "f"}, {"often", "f"},
             {"rarely", "f"}, {"almostnever", "f"}, {"almostalways", "f"}, {"arp", "m"},
+            {"gain", "v"}, {"velocity", "v"}, {"legato", "v"}, {"clip", "v"}, {"pan", "v"},
+            {"swing", "n"}, {"swingby", "nn"},
         };
         for (auto& e : table)
             if (name == e.first) return e.second;
@@ -363,6 +371,8 @@ private:
             }
             if (*s == 'n') {
                 t->nums.push_back(number());
+            } else if (*s == 'v') {
+                t->value = parse_steps(')', false);
             } else if (*s == 'm') {
                 t->word = name_at();
                 if (t->word != "up" && t->word != "down" && t->word != "updown" && t->word != "downup")
@@ -403,7 +413,12 @@ private:
         n->fn = fn;
         n->nums = t->nums;
         n->word = t->word;
+        n->value = t->value;
         n->seed = next_seed++;
+        if (fn == "velocity") n->fn = "gain";
+        if (fn == "clip") n->fn = "legato";
+        if (fn == "swing") { n->fn = "swingby"; n->nums = {1.0 / 3.0, t->nums[0]}; }
+        if (n->fn == "swingby" && n->nums[1] < 1) fail("swing needs at least 1 slice");
         static const std::pair<const char*, double> chance[] = {
             {"sometimes", 0.5}, {"often", 0.75}, {"rarely", 0.25},
             {"almostnever", 0.1}, {"almostalways", 0.9},
@@ -440,9 +455,58 @@ inline void reversed_cycle(const Node& p, double k, std::vector<Event>& out) {
     }
 }
 
+// The number a value pattern holds at time t; false where it has none
+inline bool value_at(const Node& v, double t, double& out) {
+    std::vector<Event> evs;
+    double k = std::floor(t + 1e-9);
+    query(v, k - 1.0, k + 1.0, evs);
+    for (auto it = evs.rbegin(); it != evs.rend(); ++it) {
+        if (it->start <= t + 1e-9 && t < it->start + it->dur - 1e-9) {
+            char* end = nullptr;
+            double x = std::strtod(it->note.c_str(), &end);
+            if (end == it->note.c_str() || *end != '\0') return false;
+            out = x;
+            return true;
+        }
+    }
+    return false;
+}
+
 inline void query_fn(const Node& n, double a, double b, std::vector<Event>& out) {
     const Node& p = *n.kids[0];
     const std::string& fn = n.fn;
+    if (fn == "gain" || fn == "legato" || fn == "pan") {
+        size_t first = out.size();
+        query(p, a, b, out);
+        for (size_t i = first; i < out.size(); i++) {
+            double x;
+            if (!value_at(*n.value, out[i].start, x)) continue;
+            if (fn == "gain") out[i].gain *= (float)std::max(0.0, x);
+            else if (fn == "legato") out[i].legato = (float)std::max(0.0, x);
+            else out[i].pan = (float)std::clamp(x, 0.0, 1.0);
+        }
+        return;
+    }
+    if (fn == "swingby") {
+        // Within each of n slices the first half plays as written; the second
+        // half plays the pattern x slices late (TidalCycles swingBy).
+        double x = n.nums[0], slices = n.nums[1], shift = x / slices;
+        auto late_half = [&](double t) {
+            double s = (t - std::floor(t + 1e-9)) * slices;
+            return s - std::floor(s + 1e-9) >= 0.5 - 1e-9;
+        };
+        std::vector<Event> evs;
+        query(p, a, b, evs);
+        for (auto& e : evs)
+            if (!late_half(e.start)) out.push_back(e);
+        evs.clear();
+        query(p, a - shift, b - shift, evs);
+        for (auto& e : evs) {
+            e.start += shift;
+            if (late_half(e.start)) out.push_back(e);
+        }
+        return;
+    }
     auto keep = [&](std::vector<Event>& evs) {
         for (auto& e : evs)
             if (e.start >= a - 1e-9 && e.start < b - 1e-9) out.push_back(e);

@@ -619,6 +619,29 @@ void register_gui_builtins(VM& vm) {
         return Value::make_string(std::string(buf.c_str()));
     });
 
+    // GUI.INPUT_MULTILINE(label$, text$, [width], [height]) -> string$
+    // A text area; Tab types a tab and Ctrl+Enter keeps the focus, so a program
+    // can take it as a hotkey. Width/height 0 or omitted fill the space left.
+    vm.register_native("GUI.INPUT_MULTILINE", 2, 4, [](const std::vector<Value>& args) -> Value {
+        ensure_imgui("GUI.INPUT_MULTILINE");
+        static constexpr size_t MULTILINE_BUF_SIZE = 65536;
+        std::string label = args[0].as_string()->data;
+        auto& buf = g_input_buffers[label];
+        buf = args[1].as_string()->data;
+        if (buf.size() >= MULTILINE_BUF_SIZE) buf.resize(MULTILINE_BUF_SIZE - 1);
+        buf.resize(MULTILINE_BUF_SIZE, '\0');
+        float w = args.size() >= 3 ? (float)args[2].to_double() : 0.0f;
+        float h = args.size() >= 4 ? (float)args[3].to_double() : 0.0f;
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        if (w <= 0) w = avail.x;
+        if (h <= 0) h = avail.y;
+        // Ctrl+Enter submits and would drop the focus; keep typing instead
+        if (ImGui::InputTextMultiline(label.c_str(), buf.data(), MULTILINE_BUF_SIZE, ImVec2(w, h),
+                                      ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
+            ImGui::SetKeyboardFocusHere(-1);
+        return Value::make_string(std::string(buf.c_str()));
+    });
+
     vm.register_native("GUI.INPUT_INT", 2, 2, [](const std::vector<Value>& args) -> Value {
         ensure_imgui("GUI.INPUT_INT");
         std::string label = args[0].as_string()->data;

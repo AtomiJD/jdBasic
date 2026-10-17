@@ -1,0 +1,103 @@
+' live.jdb - a live-coding editor for the sequencer, in the spirit of
+' Strudel: edit SOUND.* code, Ctrl+Enter plays it from the next bar.
+'
+'   Ctrl+Enter  evaluate the buffer; tracks it no longer mentions stop
+'   Ctrl+.      stop every track
+'   Ctrl+S      save the buffer back to its file
+'
+' Usage: jdBasic live.jdb [file.jdb]   (default: live_session.jdb)
+
+OPTION "EXPLICIT"
+
+DIM SESSION$ AS STRING = "live_session.jdb"
+DIM cli = OS.ARGS()
+IF LEN(cli) > 1 THEN SESSION$ = cli[1]
+IF NOT FILE.EXISTS(SESSION$) ANDALSO FILE.EXISTS("jdb/demos/sound/" + SESSION$) THEN
+    SESSION$ = "jdb/demos/sound/" + SESSION$
+ENDIF
+
+DIM W AS INTEGER = 1280
+DIM H AS INTEGER = 760
+DIM NUM_TRACKS AS INTEGER = 16
+
+DIM code$ AS STRING = ""
+IF FILE.EXISTS(SESSION$) THEN code$ = REPLACE$(TXTREADER$(SESSION$), CHR$(13), "")
+DIM status$ AS STRING = "Ctrl+Enter plays, Ctrl+. stops, Ctrl+S saves   (" + SESSION$ + ")"
+DIM status_err AS INTEGER = FALSE
+DIM was_eval AS INTEGER = FALSE
+DIM was_hush AS INTEGER = FALSE
+DIM was_save AS INTEGER = FALSE
+DIM started AS INTEGER = FALSE
+
+SUB HUSH()
+    DIM t AS INTEGER
+    FOR t = 0 TO NUM_TRACKS - 1
+        SOUND.SEQ t, "", "VOICE"
+    NEXT t
+ENDSUB
+
+FUNC CTRL_DOWN() AS INTEGER
+    RETURN GFX.KEYSTATE("Left Ctrl") OR GFX.KEYSTATE("Right Ctrl")
+ENDFUNC
+
+SCREEN W, H, "jdBasic live", 1
+GUI.THEME "DARK"
+SOUND.INIT
+
+DO
+    DIM ctrl AS INTEGER = CTRL_DOWN()
+    DIM do_eval AS INTEGER = ctrl ANDALSO GFX.KEYSTATE("Return")
+    DIM do_hush AS INTEGER = ctrl ANDALSO GFX.KEYSTATE(".")
+    DIM do_save AS INTEGER = ctrl ANDALSO GFX.KEYSTATE("S")
+
+    IF do_eval ANDALSO NOT was_eval THEN
+        ' the first run starts at once; later runs take over at the next bar
+        IF started THEN HUSH()
+        TRY
+            EXECUTE code$
+            status$ = IIF(started, "playing from the next bar", "playing")
+            started = TRUE
+            status_err = FALSE
+        CATCH
+            status$ = ERRMSG$
+            status_err = TRUE
+        ENDTRY
+    ENDIF
+    IF do_hush ANDALSO NOT was_hush THEN
+        HUSH()
+        status$ = "stopped"
+        status_err = FALSE
+    ENDIF
+    IF do_save ANDALSO NOT was_save THEN
+        TXTWRITER SESSION$, code$
+        status$ = "saved " + SESSION$
+        status_err = FALSE
+    ENDIF
+    was_eval = do_eval
+    was_hush = do_hush
+    was_save = do_save
+
+    CLS
+    IF GUI.BEGIN("live", 0, 0, W, H) THEN
+        code$ = GUI.INPUT_MULTILINE("##code", code$, 0, H - 190)
+
+        IF status_err THEN
+            GUI.PUSH_STYLE_COLOR GUI.COL("TEXT"), [255, 110, 110, 255]
+            GUI.TEXT status$, TRUE
+            GUI.POP_STYLE_COLOR
+        ELSE
+            GUI.TEXT status$, TRUE
+        ENDIF
+
+        DIM cyc AS DOUBLE = SOUND.CYCLE()
+        DIM bar AS INTEGER = INT(cyc)
+        DIM beat AS INTEGER = INT((cyc - bar) * 4) + 1
+        GUI.PROGRESS cyc - bar, "bar " + STR$(bar) + "  beat " + STR$(beat)
+        GUI.SET_NEXT_ITEM_WIDTH -1
+        GUI.PLOT_LINES "##scope", SOUND.GET_WAVE(), "", -1.0, 1.0
+    ENDIF
+    GUI.END
+
+    SCREENFLIP
+    SLEEP 10
+LOOP

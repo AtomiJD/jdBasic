@@ -40,7 +40,7 @@ void register_sound_builtins(VM& vm) {
 #endif
 
 static constexpr int SAMPLE_RATE = 44100;
-static constexpr int NUM_TRACKS = 8;
+static constexpr int NUM_TRACKS = 16;
 static constexpr int MAX_VOICES = 64;
 static constexpr int MAX_SFX_CHANNELS = 16;
 
@@ -202,6 +202,7 @@ struct Voice {
     float sample_pos = 0.0f;
     float sample_gain = 1.0f;
     float pan = -1.0f;  // below 0: the track pan
+    float gain = 1.0f;     // per-event level
     bool sample_loop = false;
     // Sequencer timing: frames until the onset, then frames until gate-off
     bool seq_controlled = false;
@@ -277,6 +278,8 @@ struct TrackParams {
     float crush_bits = 16.0f, crush_rate = 1.0f;
     float ring_freq = 0.0f, ring_mix = 0.0f;
     float reverb_send = 0.0f, delay_send = 0.0f;
+    int orbit = 0;  // the effect bus the sends go to
+    float nudge = 0.0f;  // seconds every note of the track starts late
     int sidechain_source = -1;
     float sidechain_amount = 0.0f;
     // Scale
@@ -314,6 +317,8 @@ struct SeqEvent {
     std::string note;    // note name or frequency
     float probability = 1.0f;
     float pan = -1.0f;  // below 0: the track pan
+    float gain = 1.0f;     // per-event level
+    float legato = -1.0f;  // gate as a share of the step; below 0: the default
     bool triggered = false;
 };
 
@@ -399,6 +404,49 @@ struct ReverbModule {
     }
 };
 
+static constexpr int NUM_ORBITS = 4;
+
+// One effect bus: a delay and a reverb fed by the sends of its tracks.
+// Buffers are allocated when the bus is first used.
+struct FxBus {
+    ReverbModule reverb;
+    std::vector<float> delay_buffer;
+    int delay_head = 0;
+    float delay_time = 0.3f, delay_feedback = 0.3f, delay_mix = 0.3f;
+    bool delay_active = false;
+    bool ready = false;
+
+    void prepare(float wet) {
+        if (ready) return;
+        reverb.init();
+        reverb.wet = wet;
+        delay_buffer.assign(SAMPLE_RATE * 2 * 2, 0.0f);  // 2 s stereo
+        ready = true;
+    }
+
+    // Adds this bus's delay output to the mix
+    void run_delay(float in_l, float in_r, float& mix_l, float& mix_r) {
+        if (!delay_active || delay_buffer.empty()) return;
+        int size = (int)delay_buffer.size();
+        int delay_samples = std::min((int)(delay_time * SAMPLE_RATE) * 2, size - 2);
+        int read_pos = (delay_head - delay_samples + size) % size;
+        float dl = delay_buffer[read_pos], dr = delay_buffer[read_pos + 1 < size ? read_pos + 1 : 0];
+        delay_buffer[delay_head] = in_l + dl * delay_feedback;
+        delay_buffer[(delay_head + 1) % size] = in_r + dr * delay_feedback;
+        delay_head = (delay_head + 2) % size;
+        mix_l += dl * delay_mix; mix_r += dr * delay_mix;
+    }
+
+    // Adds this bus's reverb output to the mix
+    void run_reverb(float in_l, float in_r, float& mix_l, float& mix_r) {
+        if (!ready || reverb.wet <= 0) return;
+        float rl, rr;
+        reverb.process((in_l + in_r) * 0.5f, rl, rr);
+        mix_l += rl * reverb.wet * 0.2f;
+        mix_r += rr * reverb.wet * 0.2f;
+    }
+};
+
 // ── Compressor ──────────────────────────────────────────────────
 
 struct Compressor {
@@ -456,19 +504,20 @@ static struct SoundSystem {
     // Sequencer
     float bpm = 120.0f;
     double seq_time = 0.0;  // sequencer clock in cycles since start
+    // The clock as frames counted from seq_base at tempo seq_bpm, so long
+    // renders add no rounding drift
+    double seq_base = 0.0, seq_bpm = 0.0;
+    int64_t seq_frames = 0;
+
+    void reset_clock() { seq_time = 0.0; seq_base = 0.0; seq_frames = 0; seq_bpm = bpm; }
     SeqLayer seq_layers[NUM_TRACKS];
     int dbg_triggers = 0;
     int dbg_alloc_fail = 0;
 
-    // Effects
-    ReverbModule reverb;
+    // Effect buses: track sends go to the bus of the track's orbit
+    FxBus buses[NUM_ORBITS];
     Compressor compressor;
     bool compressor_active = false;
-    // Delay
-    std::vector<float> delay_buffer;
-    int delay_head = 0;
-    float delay_time = 0.3f, delay_feedback = 0.3f, delay_mix = 0.3f;
-    bool delay_active = false;
     // Distortion
     float distortion_amount = 0.0f;
     // Master: false divides the mix by sqrt(active voices), true scales
@@ -480,6 +529,7 @@ static struct SoundSystem {
     std::vector<float> wave_buffer;
     std::vector<float> reverb_bus_wave;
     std::vector<float> delay_bus_wave;
+    size_t wave_pos = 0;  // next write in the three wave rings
 
     int allocate_voice(int track) {
         // Find free voice
@@ -695,8 +745,8 @@ static struct SoundSystem {
         float env = v.env.process(dt);
 
         float pan = v.pan >= 0.0f ? v.pan : tp.pan;
-        out_l = sample_l * env * tp.gain * (1.0f - pan) * 2.0f;
-        out_r = sample_r * env * tp.gain * pan * 2.0f;
+        out_l = sample_l * env * tp.gain * v.gain * (1.0f - pan) * 2.0f;
+        out_r = sample_r * env * tp.gain * v.gain * pan * 2.0f;
     }
 
     // Scale degree to frequency
@@ -899,8 +949,9 @@ static struct SoundSystem {
             v.sample_loop = false;
             v.seq_controlled = true;
             v.pan = ev.pan;
-            v.delay_frames = (int64_t)(offset / phase_inc);
-            v.gate_frames = -1;  // a hit plays its whole sample
+            v.gain = ev.gain;
+            v.delay_frames = (int64_t)(offset / phase_inc) + (int64_t)(tp.nudge * SAMPLE_RATE);
+            v.gate_frames = ev.legato >= 0.0f ? (int64_t)(ev.duration / phase_inc) : -1;
             v.choke = it->second.choke;
             v.choke_pending = v.choke > 0;
             return;
@@ -922,7 +973,8 @@ static struct SoundSystem {
         start_envelopes(v, tp);
         v.seq_controlled = true;
         v.pan = ev.pan;
-        v.delay_frames = (int64_t)(offset / phase_inc);
+        v.gain = ev.gain;
+        v.delay_frames = (int64_t)(offset / phase_inc) + (int64_t)(tp.nudge * SAMPLE_RATE);
         v.gate_frames = (int64_t)(ev.duration / phase_inc);
         if (tp.waveform == Waveform::SAMPLE) {
             v.sample_id = tp.sample_id;
@@ -961,14 +1013,28 @@ static struct SoundSystem {
     // ── Audio callback ──────────────────────────────────────────
 
     // SDL-free render: fill `buffer` with num_frames interleaved stereo samples.
+    // Works in short blocks, so a long render schedules no more notes at once
+    // than the audio device would.
     static void render_frames(SoundSystem* sys, float* buffer, int num_frames) {
+        const int block = 256;
+        for (int done = 0; done < num_frames; done += block)
+            render_block(sys, buffer + done * 2, std::min(block, num_frames - done));
+    }
+
+    static void render_block(SoundSystem* sys, float* buffer, int num_frames) {
         double dt = 1.0 / SAMPLE_RATE;
 
         // Sequencer clock, in cycles
         double cps = sys->bpm / 60.0 / 4.0; // cycles per second
         double phase_inc = dt * cps;
         double buffer_dur = num_frames * phase_inc;
-        double t0 = sys->seq_time, t1 = t0 + buffer_dur;
+        if (sys->bpm != sys->seq_bpm) {
+            sys->seq_base = sys->seq_time;
+            sys->seq_frames = 0;
+            sys->seq_bpm = sys->bpm;
+        }
+        double t0 = sys->seq_base + (double)sys->seq_frames * cps / SAMPLE_RATE;
+        double t1 = sys->seq_base + (double)(sys->seq_frames + num_frames) * cps / SAMPLE_RATE;
 
         for (int t = 0; t < NUM_TRACKS; t++) {
             auto& layer = sys->seq_layers[t];
@@ -986,10 +1052,12 @@ static struct SoundSystem {
                         for (auto& e : jdpat::query_cycle(layer.pat, c)) {
                             SeqEvent ev;
                             ev.start_phase = e.start;
-                            ev.duration = e.dur * 0.8;
+                            ev.duration = e.dur * (e.legato >= 0.0f ? e.legato : 0.8);
                             ev.note = e.note;
                             ev.probability = e.prob;
                             ev.pan = e.pan;
+                            ev.gain = e.gain;
+                            ev.legato = e.legato;
                             layer.events.push_back(ev);
                         }
                         layer.built_cycle = c;
@@ -1035,15 +1103,13 @@ static struct SoundSystem {
         }
 
         sys->seq_time = t1;
+        sys->seq_frames += num_frames;
 
         // Per-sample generation
-        float rev_bus[2] = {};
-        float del_bus[2] = {};
-
         for (int f = 0; f < num_frames; f++) {
             float mix_l = 0, mix_r = 0;
-            float rev_l = 0, rev_r = 0;
-            float del_l = 0, del_r = 0;
+            float rev_l[NUM_ORBITS] = {}, rev_r[NUM_ORBITS] = {};
+            float del_l[NUM_ORBITS] = {}, del_r[NUM_ORBITS] = {};
             int active = 0;
 
             // Reset track envelopes
@@ -1064,8 +1130,9 @@ static struct SoundSystem {
                 sys->generate_voice(v, vl, vr);
                 mix_l += vl; mix_r += vr;
                 auto& tp = sys->tracks[v.track];
-                rev_l += vl * tp.reverb_send; rev_r += vr * tp.reverb_send;
-                del_l += vl * tp.delay_send; del_r += vr * tp.delay_send;
+                int o = tp.orbit;
+                rev_l[o] += vl * tp.reverb_send; rev_r[o] += vr * tp.reverb_send;
+                del_l[o] += vl * tp.delay_send; del_r[o] += vr * tp.delay_send;
                 float e = std::max(std::abs(vl), std::abs(vr));
                 if (e > t_env[v.track]) t_env[v.track] = e;
                 active++;
@@ -1091,8 +1158,10 @@ static struct SoundSystem {
             if (sys->master_fixed) {
                 float h = sys->master_headroom;
                 mix_l *= h; mix_r *= h;
-                rev_l *= h; rev_r *= h;
-                del_l *= h; del_r *= h;
+                for (int o = 0; o < NUM_ORBITS; o++) {
+                    rev_l[o] *= h; rev_r[o] *= h;
+                    del_l[o] *= h; del_r[o] *= h;
+                }
             } else if (active > 1) {
                 float norm = 1.0f / std::sqrt((float)active);
                 mix_l *= norm; mix_r *= norm;
@@ -1102,17 +1171,8 @@ static struct SoundSystem {
             for (int t = 0; t < NUM_TRACKS; t++)
                 sys->track_envelopes[t] = t_env[t];
 
-            // Delay
-            if (sys->delay_active && !sys->delay_buffer.empty()) {
-                int delay_samples = (int)(sys->delay_time * SAMPLE_RATE) * 2;
-                delay_samples = std::min(delay_samples, (int)sys->delay_buffer.size() - 2);
-                int read_pos = (sys->delay_head - delay_samples + (int)sys->delay_buffer.size()) % (int)sys->delay_buffer.size();
-                float dl = sys->delay_buffer[read_pos], dr = sys->delay_buffer[read_pos + 1 < (int)sys->delay_buffer.size() ? read_pos + 1 : 0];
-                sys->delay_buffer[sys->delay_head] = del_l + dl * sys->delay_feedback;
-                sys->delay_buffer[(sys->delay_head + 1) % (int)sys->delay_buffer.size()] = del_r + dr * sys->delay_feedback;
-                sys->delay_head = (sys->delay_head + 2) % (int)sys->delay_buffer.size();
-                mix_l += dl * sys->delay_mix; mix_r += dr * sys->delay_mix;
-            }
+            for (int o = 0; o < NUM_ORBITS; o++)
+                sys->buses[o].run_delay(del_l[o], del_r[o], mix_l, mix_r);
 
             // Distortion
             if (sys->distortion_amount > 0) {
@@ -1120,14 +1180,8 @@ static struct SoundSystem {
                 mix_l = std::tanh(mix_l * d); mix_r = std::tanh(mix_r * d);
             }
 
-            // Reverb
-            if (sys->reverb.wet > 0) {
-                float mono_in = (rev_l + rev_r) * 0.5f;
-                float rl, rr;
-                sys->reverb.process(mono_in, rl, rr);
-                mix_l += rl * sys->reverb.wet * 0.2f;
-                mix_r += rr * sys->reverb.wet * 0.2f;
-            }
+            for (int o = 0; o < NUM_ORBITS; o++)
+                sys->buses[o].run_reverb(rev_l[o], rev_r[o], mix_l, mix_r);
 
             // Compressor
             if (sys->compressor_active) {
@@ -1136,6 +1190,18 @@ static struct SoundSystem {
 
             buffer[f * 2] = soft_clip(mix_l);
             buffer[f * 2 + 1] = soft_clip(mix_r);
+            if (!sys->wave_buffer.empty()) {
+                float rs = 0, ds = 0;
+                for (int o = 0; o < NUM_ORBITS; o++) {
+                    rs += rev_l[o] + rev_r[o];
+                    ds += del_l[o] + del_r[o];
+                }
+                size_t w = sys->wave_pos;
+                sys->wave_buffer[w] = 0.5f * (buffer[f * 2] + buffer[f * 2 + 1]);
+                sys->reverb_bus_wave[w] = 0.5f * rs;
+                sys->delay_bus_wave[w] = 0.5f * ds;
+                sys->wave_pos = (w + 1) % sys->wave_buffer.size();
+            }
         }
     }
 
@@ -1464,9 +1530,10 @@ void register_sound_builtins(VM& vm) {
         (void)pull;
 
         // Effect buffers - needed in both device and pull mode.
-        g_sound.reverb.init();
-        g_sound.delay_buffer.resize(SAMPLE_RATE * 2 * 2, 0.0f); // 2 sec stereo
+        g_sound.buses[0].prepare(0.3f);
         g_sound.wave_buffer.resize(1024, 0.0f);
+        g_sound.reverb_bus_wave.resize(1024, 0.0f);
+        g_sound.delay_bus_wave.resize(1024, 0.0f);
 
 #ifdef GFX
         if (pull) {
@@ -1902,7 +1969,7 @@ void register_sound_builtins(VM& vm) {
             layer.pending = pat;
             layer.has_pending = true;
         } else {
-            if (idle) g_sound.seq_time = 0.0;
+            if (idle) g_sound.reset_clock();
             layer.pat = pat;
             layer.events.clear();
             layer.built_cycle = INT64_MIN;
@@ -1937,6 +2004,14 @@ void register_sound_builtins(VM& vm) {
                 }
                 if (e.pan >= 0.0f) {
                     std::snprintf(buf, sizeof buf, " pan=%.6g", e.pan);
+                    out += buf;
+                }
+                if (e.gain != 1.0f) {
+                    std::snprintf(buf, sizeof buf, " gain=%.6g", e.gain);
+                    out += buf;
+                }
+                if (e.legato >= 0.0f) {
+                    std::snprintf(buf, sizeof buf, " legato=%.6g", e.legato);
                     out += buf;
                 }
             }
@@ -2139,18 +2214,73 @@ void register_sound_builtins(VM& vm) {
 
     // ── Global effects ──────────────────────────────────────────
 
-    vm.register_native("SOUND.DELAY", 4, 4, [](const std::vector<Value>& args) -> Value {
-        g_sound.delay_active = args[0].to_bool();
-        g_sound.delay_time = (float)args[1].to_double() / 1000.0f; // ms to sec
-        g_sound.delay_feedback = (float)args[2].to_double();
-        g_sound.delay_mix = (float)args[3].to_double();
+    // Orbit of the optional last argument of SOUND.DELAY / SOUND.REVERB,
+    // with its bus ready to use
+    static auto bus_arg = [](const std::vector<Value>& args, size_t i, const char* fn) -> FxBus& {
+        int o = args.size() > i ? (int)args[i].to_int() : 0;
+        if (o < 0 || o >= NUM_ORBITS)
+            throw jdError(ErrCode::RUNTIME_ERROR, std::string(fn) + ": orbit is 0 to " + std::to_string(NUM_ORBITS - 1));
+        g_sound.buses[o].prepare(0.0f);
+        return g_sound.buses[o];
+    };
+    vm.register_native("SOUND.DELAY", 4, 5, [](const std::vector<Value>& args) -> Value {
+        SND_LOCK();
+        FxBus* b = nullptr;
+        try { b = &bus_arg(args, 4, "SOUND.DELAY"); } catch (...) { SND_UNLOCK(); throw; }
+        b->delay_active = args[0].to_bool();
+        b->delay_time = (float)args[1].to_double() / 1000.0f;  // ms to sec
+        b->delay_feedback = (float)args[2].to_double();
+        b->delay_mix = (float)args[3].to_double();
+        SND_UNLOCK();
         return Value::make_none();
     });
-    vm.register_native("SOUND.REVERB", 4, 4, [](const std::vector<Value>& args) -> Value {
-        g_sound.reverb.room_size = std::min((float)args[0].to_double(), 0.98f);
-        g_sound.reverb.damping = (float)args[1].to_double();
-        g_sound.reverb.width = (float)args[2].to_double();
-        g_sound.reverb.wet = (float)args[3].to_double();
+    vm.register_native("SOUND.REVERB", 4, 5, [](const std::vector<Value>& args) -> Value {
+        SND_LOCK();
+        FxBus* b = nullptr;
+        try { b = &bus_arg(args, 4, "SOUND.REVERB"); } catch (...) { SND_UNLOCK(); throw; }
+        b->reverb.room_size = std::min((float)args[0].to_double(), 0.98f);
+        b->reverb.damping = (float)args[1].to_double();
+        b->reverb.width = (float)args[2].to_double();
+        b->reverb.wet = (float)args[3].to_double();
+        SND_UNLOCK();
+        return Value::make_none();
+    });
+    // ── SOUND.CYCLE() -> the sequencer clock, in cycles ─────────
+
+    vm.register_native("SOUND.CYCLE", 0, 0, [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        if (!g_sound.initialized) return Value::make_f64(0.0);
+        SND_LOCK();
+        double c = g_sound.seq_time;
+        SND_UNLOCK();
+        return Value::make_f64(c);
+    });
+
+    // ── SOUND.NUDGE track, ms ───────────────────────────────────
+    // Starts every note of the track ms milliseconds late (0 to 1000).
+
+    vm.register_native("SOUND.NUDGE", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        double ms = args[1].to_double();
+        if (ms < 0 || ms > 1000)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.NUDGE: ms is 0 to 1000");
+        SND_LOCK();
+        g_sound.tracks[t].nudge = (float)(ms / 1000.0);
+        SND_UNLOCK();
+        return Value::make_none();
+    });
+
+    vm.register_native("SOUND.ORBIT", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        int o = (int)args[1].to_int();
+        if (o < 0 || o >= NUM_ORBITS)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ORBIT: orbit is 0 to " + std::to_string(NUM_ORBITS - 1));
+        SND_LOCK();
+        g_sound.buses[o].prepare(0.0f);
+        g_sound.tracks[t].orbit = o;
+        SND_UNLOCK();
         return Value::make_none();
     });
     vm.register_native("SOUND.COMPRESSOR", 5, 5, [](const std::vector<Value>& args) -> Value {
@@ -2186,20 +2316,25 @@ void register_sound_builtins(VM& vm) {
 
     // ── SOUND.GET_WAVE / SOUND.GET_BUS_WAVE ─────────────────────
 
+    // The last 1024 output samples of a ring, oldest first.
+    static auto ring_array = [](const std::vector<float>& ring) -> Value {
+        Value r = Value::make_array();
+        if (!g_sound.initialized || ring.empty()) return r;
+        SND_LOCK();
+        size_t n = ring.size(), w = g_sound.wave_pos % n;
+        auto& el = r.as_array()->elements;
+        el.reserve(n);
+        for (size_t i = 0; i < n; i++) el.push_back(Value::make_f64(ring[(w + i) % n]));
+        SND_UNLOCK();
+        return r;
+    };
     vm.register_native("SOUND.GET_WAVE", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        Value r = Value::make_array();
-        for (auto f : g_sound.wave_buffer)
-            r.as_array()->elements.push_back(Value::make_f64(f));
-        return r;
+        return ring_array(g_sound.wave_buffer);
     });
     vm.register_native("SOUND.GET_BUS_WAVE", 1, 1, [](const std::vector<Value>& args) -> Value {
         int bus = (int)args[0].to_int();
-        Value r = Value::make_array();
-        auto& src = (bus == 0) ? g_sound.reverb_bus_wave : g_sound.delay_bus_wave;
-        for (auto f : src)
-            r.as_array()->elements.push_back(Value::make_f64(f));
-        return r;
+        return ring_array(bus == 0 ? g_sound.reverb_bus_wave : g_sound.delay_bus_wave);
     });
 
     // ── SOUND.DEBUG ──────────────────────────────────────────────
@@ -2246,14 +2381,16 @@ void register_sound_builtins(VM& vm) {
             l.pat.reset(); l.pending.reset(); l.has_pending = false;
             l.built_cycle = INT64_MIN;
         }
-        g_sound.seq_time = 0;
+        g_sound.reset_clock();
         g_sound.distortion_amount = 0;
-        g_sound.delay_active = false;
         g_sound.compressor_active = false;
         g_sound.master_fixed = false;
         g_sound.master_headroom = 0.5f;
-        g_sound.reverb.wet = 0;
-        std::fill(g_sound.delay_buffer.begin(), g_sound.delay_buffer.end(), 0.0f);
+        for (auto& b : g_sound.buses) {
+            b.delay_active = false;
+            b.reverb.wet = 0;
+            std::fill(b.delay_buffer.begin(), b.delay_buffer.end(), 0.0f);
+        }
         for (int t = 0; t < NUM_TRACKS; t++) g_sound.tracks[t] = TrackParams{};
         SND_UNLOCK();
         return Value::make_none();

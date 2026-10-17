@@ -130,6 +130,17 @@ DIM n_up AS INTEGER = LEN(SPLIT(EV$("sometimes(add(12), c3*64)", 1), "c4")) - 1
 CHECK "sometimes keeps every step", LEN(all_lines) = 64, "lines=" + STR$(LEN(all_lines))
 CHECK "sometimes changes about half", n_up > 20 ANDALSO n_up < 44, "changed=" + STR$(n_up)
 
+' per-event values: a number, or a number pattern read at each onset
+CHECK_STR "gain", "0 0.5 a gain=0.5" + NL + "0.5 0.5 b gain=0.5", EV$("gain(0.5, a b)", 1)
+CHECK_STR "gain pattern", "0 0.25 hh" + NL + "0.25 0.25 hh gain=0.6" + NL + "0.5 0.25 hh" + NL + "0.75 0.25 hh gain=0.6", EV$("gain([1 0.6]*2, hh*4)", 1)
+CHECK_STR "gain per cycle", "0 1 a" + NL + "1 1 a gain=0.5", EV$("gain(<1 0.5>, a)", 2)
+CHECK_STR "legato, clip", "0 0.5 a legato=0.25" + NL + "0.5 0.5 b legato=1", EV$("[legato(0.25, a) clip(1, b)]", 1)
+CHECK_STR "pan", "0 0.5 a pan=0" + NL + "0.5 0.5 b pan=0" + NL + "1 0.5 a pan=1" + NL + "1.5 0.5 b pan=1", EV$("pan(<0 1>, a b)", 2)
+CHECK_STR "velocity as a function", "0 1 a gain=0.3" + NL + "1 1 a", EV$("every(2, velocity(0.3), a)", 2)
+CHECK_STR "swing", "0 0.25 a" + NL + "0.916667 0.25 b", EV$("swing(2, a ~ ~ b)", 1)
+CHECK_STR "swing hats", "0 0.125 h" + NL + "0.208333 0.125 h" + NL + "0.25 0.125 h" + NL + "0.458333 0.125 h", EV$("swing(4, h*4 ~)", 1)
+CHECK_STR "swing keeps the first half", "0 0.25 a" + NL + "0.25 0.25 a" + NL + "0.5 0.25 c" + NL + "0.75 0.25 c", EV$("swingBy(0.5, 2, a b c d)", 1)
+
 FUNC PARSE_ERR$(pattern$) AS STRING
     TRY
         DIM r AS STRING = SOUND.EVENTS$(pattern$, 1)
@@ -264,6 +275,60 @@ CATCH
 ENDTRY
 CHECK "unknown mod parameter", INSTR(err_msg, "WOBBLE") >= 0, "msg=" + err_msg
 
+' ---------- 2b. Per-event values, nudge, orbits, tracks, clock ----------
+FUNC TONE_RMS(pattern$, a AS INTEGER, b AS INTEGER) AS DOUBLE
+    SOUND.RESET
+    SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+    SOUND.GAIN 0, 0.3
+    SOUND.SEQ 0, pattern$, "VOICE"
+    RETURN RMS(SOUND.RENDER(CYC), a, b)
+ENDFUNC
+
+DIM full_rms AS DOUBLE = TONE_RMS("c4", 2000, 20000)
+CHECK "event gain scales", ABS(TONE_RMS("gain(0.5, c4)", 2000, 20000) / full_rms - 0.5) < 0.01, "full=" + STR$(full_rms)
+CHECK "default gate is 0.8 of the step", TONE_RMS("c4", 30000, 34000) > 0.1, ""
+CHECK "legato shortens the gate", TONE_RMS("legato(0.25, c4)", 30000, 34000) < 0.001, ""
+CHECK "legato above 1 overlaps", TONE_RMS("legato(1.5, c4 ~)", 30000, 34000) > 0.1, ""
+
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.NUDGE 0, 100
+SOUND.SEQ 0, "c4", "VOICE"
+buf = SOUND.RENDER(8000)
+CHECK "nudge delays the onset", RMS(buf, 0, 4300) < 0.001 ANDALSO RMS(buf, 4600, 8000) > 0.1, "early=" + STR$(RMS(buf, 0, 4300))
+
+' a reverb on orbit 1 only answers the tracks sent to orbit 1
+FUNC TAIL_RMS(orbit AS INTEGER) AS DOUBLE
+    SOUND.RESET
+    SOUND.REVERB 0.9, 0.3, 1.0, 1.0, 1
+    SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+    SOUND.REVERBSEND 0, 1
+    SOUND.ORBIT 0, orbit
+    SOUND.SEQ 0, "legato(0.2, c4) ~ ~ ~", "VOICE"
+    RETURN RMS(SOUND.RENDER(CYC / 2), 12000, 20000)
+ENDFUNC
+DIM tail0 AS DOUBLE = TAIL_RMS(0)
+DIM tail1 AS DOUBLE = TAIL_RMS(1)
+CHECK "orbit routes the sends", tail1 > 0.005 ANDALSO tail0 < 0.0005, "orbit0=" + STR$(tail0) + " orbit1=" + STR$(tail1)
+
+err_msg = ""
+TRY
+    SOUND.ORBIT 0, 9
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "orbit range", INSTR(err_msg, "orbit is 0 to 3") >= 0, "msg=" + err_msg
+
+SOUND.RESET
+n = TRIGGERS()
+SOUND.VOICE 15, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.SEQ 15, "legato(1, c4*4)", "VOICE"
+buf = SOUND.RENDER(CYC)
+CHECK "sixteen tracks", TRIGGERS() = 4, ""
+CHECK "clock in cycles", ABS(SOUND.CYCLE() - 1.0) < 0.000001, "cycle=" + STR$(SOUND.CYCLE())
+CHECK "scope holds the output", MAX(ABS(SOUND.GET_WAVE())) > 0.1, ""
+
+
 ' ---------- 3. Master: AUTO divides by the voices, FIXED keeps levels ----------
 ' track 0 plays on the left only, track 1 on the right only
 FUNC LEFT_RMS(both AS INTEGER) AS DOUBLE
@@ -355,6 +420,18 @@ SOUND.KIT 0, {"CP": 7}
 SOUND.SEQ 0, "cp", "VOICE"
 buf = SOUND.RENDER(4000)
 CHECK "kit names are case-blind, ids work", RMS(buf, 0, 4000) > 0.05, "rms=" + STR$(RMS(buf, 0, 4000))
+
+buf = KIT_RENDER("clip(0.05, cr) ~", CYC / 2)
+CHECK "clip cuts a kit hit", RMS(buf, 15000, 20000) < 0.001, "rms=" + STR$(RMS(buf, 15000, 20000))
+
+
+' one long render plays a busy kit without running out of voices
+SOUND.RESET
+SOUND.KIT 0, KIT_DIR + "kit.txt"
+SOUND.SEQ 0, "hh*32, bd*8, cp*8", "VOICE"
+n = TRIGGERS()
+buf = SOUND.RENDER(CYC * 4)
+CHECK "long render keeps every hit", INSTR(SOUND.STATS(), "triggers=192 alloc_fail=0") >= 0, ""
 
 ' the built-in synthesized kit needs no files
 FUNC SYNTH_RMS(pattern$, a AS INTEGER, b AS INTEGER) AS DOUBLE

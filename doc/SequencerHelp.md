@@ -14,13 +14,14 @@ This document provides a detailed reference for the `SOUND` and `SFX` modules in
 
 ## 2. Live Coding Sequencer
 
-The sequencer programs rhythmic patterns into 8 available tracks (0-7).
+The sequencer programs rhythmic patterns into 16 tracks (0-15).
 
 * **`SOUND.SEQ track, pattern$, waveform$`**: Programs a rhythmic pattern into a specific track.
 * **`pattern$`**: Space-separated tokens using mini-notation. Use `~` for rests and `[...]` for subdivisions. Transforms wrap a pattern: `"every(4, rev, c3 e3 g3)"`, `"jux(rev, ...)"`, `"arp(up, [c3,e3,g3])"`, `"off(0.125, add(7), ...)"` (see the Pattern Transforms table in languages.md).
 * **`waveform$`**: Options include `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`, or `"VOICE"`.
 
 * **`SOUND.KIT track, kit`**: Makes the track a drum kit, so pattern atoms name sounds: `SOUND.KIT 0, "SYNTH"` uses the built-in drums, or `SOUND.KIT 0, "jdb/demos/sound/SynthesizerPercussion-SFZ-20220718/kit.txt"` then `SOUND.SEQ 0, "bd [~ bd] sd hh:1", "VOICE"`. `kit` is `"SYNTH"`, a kit file or a MAP name -> WAV path or SFX id.
+* **`SOUND.ORBIT track, orbit`**: four effect buses (0-3), each with its own `SOUND.REVERB`/`SOUND.DELAY` (their optional last argument). **`SOUND.NUDGE track, ms`** starts a track late. Pattern values: `gain(v, p)`, `legato(v, p)`, `pan(v, p)`, `swing(n, p)`.
 * **`SOUND.SCALE track, root$, scale_mode$`**: Maps integer pattern tokens (e.g., "0", "1") to a musical scale.
 
 * **`SOUND.NOTE pattern$, looping`**: Plays pattern parts as melody (not part of the sequencer bar). pattern$ = "<c4 c4, e2 e4>" plays a melody on track 0 and the bass on track 1
