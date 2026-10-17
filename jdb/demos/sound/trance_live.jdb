@@ -1,94 +1,368 @@
-' trance_live.jdb - a trance loop built up layer by layer, the way a
-' live-coding set grows: kick, hats, offbeat bass, supersaw arpeggio
-' with a filter sweep, chord pad.
+' trance_live.jdb - "Kaiku in A minor", a five-minute trance track
+' played live by the sequencer, 184 bars at 138 BPM.
 '
-' Shows the sequencer's mini-notation (<...> chord changes, a*n, euclid,
-' arp, jux, sometimes),
-' SOUND.MOD sweeps locked to the bar, the resonant filter with SOUND.FENV,
-' and sidechain pumping. Each new pattern starts on the next bar.
+'   0 intro         16 build          32 main          56 breakdown
+'  72 drop         104 arp section   120 breakdown 2  136 final drop
+' 168 outro        184 end
+'
+' Every section switch is a set of SOUND.SEQ calls sent just before the
+' bar; the sequencer swaps them in on the downbeat. Parameter moves
+' (filters, modulation, routing) are sent once the bar has begun.
+'
+' Uses: the built-in drum kit with choke, mini-notation (<> chords,
+' euclid, !, @, _, ?), transforms (arp, jux, juxBy, off, add, every,
+' iter, palindrome, ply, sometimes, degradeBy, swingBy, slow, rev),
+' per-event gain, legato and pan, SOUND.MOD sweeps, a trance gate and
+' risers, the resonant filter with FENV, sidechain pumping, two effect
+' orbits, SOUND.NUDGE, the FIXED master and the compressor.
 
 OPTION "EXPLICIT"
 
-DIM BARS_PER_PART AS INTEGER = 4
-DIM BAR_MS AS INTEGER = 4 * 60000 / 138
+DIM BPM AS DOUBLE = 138
+DIM SEC_PER_BAR AS DOUBLE = 4 * 60 / BPM
 
-SUB WAIT_BARS(n AS INTEGER)
-    SLEEP n * BAR_MS
+' ── Timing ───────────────────────────────────────────────────────
+
+SUB IDLE()
+    SLEEP 4
 ENDSUB
+
+' Returns just before bar b: patterns sent now take over on its downbeat
+SUB AT_BAR(b AS DOUBLE)
+    DO WHILE SOUND.CYCLE() < b - 0.05
+        IDLE()
+    LOOP
+ENDSUB
+
+' Returns once bar b has begun: for parameters that act at once
+SUB ON_BAR(b AS DOUBLE)
+    DO WHILE SOUND.CYCLE() < b
+        IDLE()
+    LOOP
+ENDSUB
+
+SUB SECTION(b AS INTEGER, name$)
+    AT_BAR b
+    DIM secs AS INTEGER = INT(b * SEC_PER_BAR)
+    DIM ss$ AS STRING = STR$(secs - 60 * INT(secs / 60))
+    IF LEN(ss$) < 2 THEN ss$ = "0" + ss$
+    PRINT STR$(INT(secs / 60)); ":"; ss$; "  bar "; b; "  "; name$
+ENDSUB
+
+SUB QUIET(t AS INTEGER)
+    SOUND.SEQ t, "", "VOICE"
+ENDSUB
+
+' ── Tracks ───────────────────────────────────────────────────────
+
+DIM KICK AS INTEGER = 0
+DIM CLAP AS INTEGER = 1
+DIM HATS AS INTEGER = 2
+DIM PERC AS INTEGER = 3
+DIM BASS AS INTEGER = 4
+DIM ARP AS INTEGER = 5
+DIM PAD AS INTEGER = 6
+DIM LEAD AS INTEGER = 7
+DIM RISER AS INTEGER = 8
+DIM CRASH AS INTEGER = 9
+DIM ROLL AS INTEGER = 10
+DIM FILL AS INTEGER = 11
 
 SOUND.INIT
 SOUND.MASTER "FIXED", 0.5
-SOUND.BPM 138
-SOUND.REVERB 0.85, 0.4, 1.0, 0.5
-SOUND.DELAY TRUE, 3 * 60000 / 138 / 4, 0.45, 0.35
-SOUND.COMPRESSOR 0.5, 4, 5, 120, 1.0
+SOUND.BPM BPM
+SOUND.COMPRESSOR 0.55, 3, 5, 150, 1.1
 
-' kick, hats and clap from the built-in drum kit
-SOUND.KIT 0, "SYNTH"
-SOUND.GAIN 0, 0.9
-SOUND.KIT 1, "SYNTH"
-SOUND.GAIN 1, 0.6
-SOUND.PAN 1, 0.6
-' bass: saw, low-pass plucked open by the filter envelope
-SOUND.VOICE 2, "SAW", 0.002, 0.12, 0.3, 0.05
-SOUND.FILTER 2, 180, 0.55
-SOUND.FENV 2, 3, 0.002, 0.09
-SOUND.SIDECHAIN 2, 0, 0.7
-' lead: supersaw arpeggio, cutoff swept over eight bars
-SOUND.VOICE 3, "SAW", 0.003, 0.15, 0.4, 0.15
-SOUND.UNISON 3, 7, 0.35, 0.8
-SOUND.FILTER 3, 1200, 0.45
-SOUND.MOD 3, "CUTOFF", "SINE", 500, 6000, 8, 0.75
-SOUND.SIDECHAIN 3, 0, 0.6
-SOUND.REVERBSEND 3, 0.5
-SOUND.DELAYSEND 3, 0.35
-SOUND.GAIN 3, 0.5
-' pad: slow chords, panned by a slow sine
-SOUND.VOICE 4, "SAW", 0.6, 0.5, 0.7, 1.2
-SOUND.UNISON 4, 5, 0.25, 1.0
-SOUND.FILTER 4, 900, 0.2
-SOUND.MOD 4, "PAN", "SINE", 0.3, 0.7, 4
-SOUND.SIDECHAIN 4, 0, 0.8
-SOUND.REVERBSEND 4, 0.7
-SOUND.GAIN 4, 0.35
+' orbit 0: a tight room and a dotted-eighth echo for the arp
+SOUND.REVERB 0.6, 0.6, 0.7, 0.25
+SOUND.DELAY TRUE, 3 * 60000 / BPM / 4, 0.4, 0.3
+' orbit 1: a long hall and a slow echo for pad, lead and risers
+SOUND.REVERB 0.95, 0.3, 1.0, 0.7, 1
+SOUND.DELAY TRUE, 3 * 60000 / BPM / 2, 0.35, 0.25, 1
 
-DIM ARP$ AS STRING = "arp(up, <[a3,c4,e4,a4]*2 [f3,a3,c4,f4]*2 [c4,e4,g4,c5]*2 [g3,b3,d4,g4]*2>)"
-DIM PAD$ AS STRING = "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>"
-DIM BASS$ AS STRING = "<[~ a1]*4 [~ f1]*4 [~ c2]*4 [~ g1]*4>"
+' drums from the built-in kit; the closed hat chokes the open one
+SOUND.KIT KICK, "SYNTH"
+SOUND.KIT CLAP, "SYNTH"
+SOUND.GAIN CLAP, 0.7
+SOUND.REVERBSEND CLAP, 0.25
+SOUND.KIT HATS, "SYNTH"
+SOUND.GAIN HATS, 0.55
+SOUND.PAN HATS, 0.58
+SOUND.KIT PERC, "SYNTH"
+SOUND.GAIN PERC, 0.5
+SOUND.NUDGE PERC, 12
+SOUND.MOD PERC, "PAN", "RAND", 0.25, 0.75, 0.25
+SOUND.KIT CRASH, "SYNTH"
+SOUND.GAIN CRASH, 0.8
+SOUND.REVERBSEND CRASH, 0.4
+SOUND.ORBIT CRASH, 1
+SOUND.KIT ROLL, "SYNTH"
+SOUND.REVERBSEND ROLL, 0.35
+SOUND.ORBIT ROLL, 1
+SOUND.KIT FILL, "SYNTH"
+SOUND.GAIN FILL, 0.6
+SOUND.REVERBSEND FILL, 0.3
 
-PRINT "kick"
-SOUND.SEQ 0, "bd*4", "VOICE"
-WAIT_BARS BARS_PER_PART
+' bass: rolling saw, plucked by the filter envelope, pumping off the kick
+SOUND.VOICE BASS, "SAW", 0.002, 0.1, 0.5, 0.04
+SOUND.FILTER BASS, 240, 0.45
+SOUND.FENV BASS, 2.5, 0.002, 0.08
+SOUND.SIDECHAIN BASS, KICK, 0.75
+SOUND.GAIN BASS, 0.75
 
-PRINT "hats"
-SOUND.SEQ 1, "[~ oh]*4, ~ cp ~ cp, sometimes(ply(2), sh(5,16,2)?0.6)", "VOICE"
-WAIT_BARS BARS_PER_PART
+' arp: plucky supersaw through a resonant low-pass, echoing on orbit 0
+SOUND.VOICE ARP, "SAW", 0.002, 0.12, 0.25, 0.12
+SOUND.UNISON ARP, 3, 0.25, 0.7
+SOUND.FILTER ARP, 1400, 0.55
+SOUND.FENV ARP, 1.5, 0.002, 0.1
+SOUND.SIDECHAIN ARP, KICK, 0.55
+SOUND.DELAYSEND ARP, 0.3
+SOUND.REVERBSEND ARP, 0.2
+SOUND.GAIN ARP, 0.45
 
-PRINT "bass"
-SOUND.SEQ 2, BASS$, "VOICE"
-WAIT_BARS BARS_PER_PART
+' pad: wide slow chords in the hall
+SOUND.VOICE PAD, "SAW", 0.9, 0.5, 0.8, 1.6
+SOUND.UNISON PAD, 6, 0.3, 1.0
+SOUND.FILTER PAD, 1100, 0.2
+SOUND.SIDECHAIN PAD, KICK, 0.8
+SOUND.ORBIT PAD, 1
+SOUND.REVERBSEND PAD, 0.6
+SOUND.MOD PAD, "PAN", "SINE", 0.3, 0.7, 8
+SOUND.GAIN PAD, 0.32
 
-PRINT "arpeggio, filter sweep over 8 bars"
-SOUND.SEQ 3, ARP$, "VOICE"
-WAIT_BARS 2 * BARS_PER_PART
+' lead: big supersaw with drifting detune, echoes and hall
+SOUND.VOICE LEAD, "SAW", 0.005, 0.25, 0.6, 0.3
+SOUND.UNISON LEAD, 7, 0.3, 0.9
+SOUND.FILTER LEAD, 3200, 0.3
+SOUND.FENV LEAD, 1, 0.005, 0.2, 0.3
+SOUND.MOD LEAD, "DETUNE", "PERLIN", 0.22, 0.42, 4
+SOUND.SIDECHAIN LEAD, KICK, 0.45
+SOUND.ORBIT LEAD, 1
+SOUND.REVERBSEND LEAD, 0.4
+SOUND.DELAYSEND LEAD, 0.3
+SOUND.GAIN LEAD, 0.34
 
-PRINT "pad"
-SOUND.SEQ 4, PAD$, "VOICE"
-WAIT_BARS 2 * BARS_PER_PART
+' riser: noise through a high-pass, opened and raised over eight bars
+SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.2
+SOUND.FILTER RISER, 400, 0.4, "HP"
+SOUND.ORBIT RISER, 1
+SOUND.REVERBSEND RISER, 0.5
 
-PRINT "breakdown"
-SOUND.SEQ 0, "", "VOICE"
-SOUND.SEQ 2, "", "VOICE"
-SOUND.MOD 3, "RESONANCE", "TRI", 0.3, 0.9, 4
-WAIT_BARS BARS_PER_PART
+' ── Patterns ─────────────────────────────────────────────────────
 
-PRINT "drop"
-SOUND.MOD 3, "RESONANCE", "OFF"
-SOUND.SEQ 0, "bd*4", "VOICE"
-SOUND.SEQ 2, BASS$, "VOICE"
-SOUND.GAIN 3, 0.35
-SOUND.SEQ 3, "juxBy(0.6, rev, arp(updown, <[a3,c4,e4,a4,e5]*2 [f3,a3,c4,f4,c5]*2 [c4,e4,g4,c5,g5]*2 [g3,b3,d4,g4,d5]*2>))", "VOICE"
-WAIT_BARS 2 * BARS_PER_PART
+' Am - F - C - G, one chord per bar
+DIM CHORDS$ AS STRING = "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>"
 
-PRINT "end"
+' The progression with each chord struck n times in its bar, for arp()
+FUNC CHORDS_X$(n AS INTEGER) AS STRING
+    DIM r$ AS STRING = "*" + STR$(n)
+    RETURN "<[a3,c4,e4,a4]" + r$ + " [f3,a3,c4,f4]" + r$ + " [c4,e4,g4,c5]" + r$ + " [g3,b3,d4,g4]" + r$ + ">"
+ENDFUNC
+
+FUNC TRIADS_X$(n AS INTEGER) AS STRING
+    DIM r$ AS STRING = "*" + STR$(n)
+    RETURN "<[a3,c4,e4]" + r$ + " [f3,a3,c4]" + r$ + " [c4,e4,g4]" + r$ + " [g3,b3,d4]" + r$ + ">"
+ENDFUNC
+DIM BASS_ROLL$ AS STRING = "legato(0.6, <[~ a1 a2 a1]*4 [~ f1 f2 f1]*4 [~ c2 c3 c2]*4 [~ g1 g2 g1]*4>)"
+DIM BASS_OFF$ AS STRING = "legato(0.7, <[~ a1]*4 [~ f1]*4 [~ c2]*4 [~ g1]*4>)"
+DIM ARP_UP$ AS STRING = "arp(up, <[a3,c4,e4,a4]*4 [f3,a3,c4,f4]*4 [c4,e4,g4,c5]*4 [g3,b3,d4,g4]*4>)"
+DIM ARP_WIDE$ AS STRING = "juxBy(0.7, rev, arp(updown, <[a3,c4,e4,a4,e5]*2 [f3,a3,c4,f4,c5]*2 [c4,e4,g4,c5,g5]*2 [g3,b3,d4,g4,d5]*2>))"
+DIM MELODY$ AS STRING = "<[a4 ~ e5 ~ d5 c5 ~ b4] [a4 ~ c5 ~ a4 g4 ~ f4] [e4 ~ g4 ~ c5 b4 ~ g4] [d5 ~ b4 ~ g4 d5 ~ b4]>"
+DIM MELODY_LONG$ AS STRING = "<[a4 _ _ c5] [a4 _ g4 f4] [e4 _ _ g4] [d5 _ b4 g4]>"
+DIM HATS_MAIN$ AS STRING = "[~ oh]*4, gain([0.35 0.6 0.45 0.8]*4, hh*16)"
+DIM CRASHES$ AS STRING = "<[cr, bd:1] ~!7>"
+DIM FILLS$ AS STRING = "<~!7 [~ ~ ~ ~ ht ht mt [lt lt]]>"
+DIM ROLL$ AS STRING = "gain(<0.25 0.3 0.35 0.4 0.5 0.6 0.7 0.85>, <sd*4 sd*4 sd*8 sd*8 sd*16 sd*16 [sd*16]*2 [sd*32]>)"
+
+' ── 0: intro - kick and a high-passed hat opening up ─────────────
+
+SECTION 0, "intro"
+SOUND.SEQ KICK, "bd*4", "VOICE"
+SOUND.SEQ HATS, "gain([0.4 0.7]*8, hh*16)", "VOICE"
+SOUND.FILTER HATS, 3000, 0.3, "HP"
+SOUND.MOD HATS, "CUTOFF", "ISAW", 300, 9000, 16
+SOUND.SEQ PERC, "degradeBy(0.3, sh*16), rim(3,8,5)", "VOICE"
+
+SECTION 8, "intro: clap"
+SOUND.SEQ CLAP, "~ cp ~ cp", "VOICE"
+
+' ── 16: build - rolling bass, open hats, a filtered arp ──────────
+
+SECTION 16, "build: bass"
+SOUND.SEQ BASS, BASS_ROLL$, "VOICE"
+SOUND.SEQ HATS, HATS_MAIN$, "VOICE"
+SOUND.SEQ FILL, FILLS$, "VOICE"
+ON_BAR 16
+SOUND.MOD HATS, "CUTOFF", "OFF"
+SOUND.FILTER HATS, 6000, 0.2, "HP"
+
+SECTION 24, "build: arp under the filter"
+SOUND.SEQ ARP, ARP_UP$, "VOICE"
+ON_BAR 24
+SOUND.MOD ARP, "CUTOFF", "SAW", 300, 2200, 8
+
+' ── 32: main - everything in, pad underneath ─────────────────────
+
+SECTION 32, "main"
+SOUND.SEQ CRASH, CRASHES$, "VOICE"
+SOUND.SEQ PAD, "legato(1, " + CHORDS$ + ")", "VOICE"
+SOUND.SEQ CLAP, "every(4, ply(2), ~ cp ~ cp)", "VOICE"
+SOUND.SEQ PERC, "sometimes(ply(2), sh(7,16,2)), rim(3,8,5)", "VOICE"
+ON_BAR 32
+SOUND.MOD ARP, "CUTOFF", "SINE", 700, 5000, 8, 0.75
+
+SECTION 48, "main: arp goes wide"
+SOUND.SEQ ARP, ARP_WIDE$, "VOICE"
+
+' ── 56: breakdown - drums out, pad and melody in the hall ────────
+
+SECTION 56, "breakdown"
+QUIET KICK
+QUIET CLAP
+QUIET BASS
+QUIET PERC
+QUIET FILL
+SOUND.SEQ HATS, "gain(0.5, [~ hh]*4)", "VOICE"
+SOUND.SEQ LEAD, "legato(1.2, " + MELODY_LONG$ + ")", "VOICE"
+SOUND.SEQ ARP, "gain(0.6, " + ARP_UP$ + ")", "VOICE"
+ON_BAR 56
+SOUND.MOD ARP, "RESONANCE", "TRI", 0.3, 0.92, 4
+SOUND.MOD ARP, "CUTOFF", "SINE", 500, 2500, 4
+SOUND.MOD LEAD, "CUTOFF", "SAW", 600, 3200, 8
+
+SECTION 64, "breakdown: riser and snare roll"
+QUIET HATS
+QUIET CRASH
+SOUND.SEQ RISER, "legato(1, c4)", "VOICE"
+SOUND.SEQ ROLL, ROLL$, "VOICE"
+ON_BAR 64
+SOUND.MOD RISER, "CUTOFF", "SAW", 300, 9000, 8
+SOUND.MOD RISER, "GAIN", "SAW", 0, 0.45, 8
+
+' ── 72: drop - full groove with the melody ───────────────────────
+
+SECTION 72, "drop"
+QUIET RISER
+QUIET ROLL
+SOUND.SEQ KICK, "bd*4", "VOICE"
+SOUND.SEQ CLAP, "every(4, ply(2), ~ cp ~ cp)", "VOICE"
+SOUND.SEQ HATS, HATS_MAIN$, "VOICE"
+SOUND.SEQ PERC, "sometimes(ply(2), sh(7,16,2)), rim(3,8,5)", "VOICE"
+SOUND.SEQ BASS, BASS_ROLL$, "VOICE"
+SOUND.SEQ CRASH, CRASHES$, "VOICE"
+SOUND.SEQ FILL, FILLS$, "VOICE"
+SOUND.SEQ ARP, ARP_WIDE$, "VOICE"
+SOUND.SEQ LEAD, MELODY$, "VOICE"
+ON_BAR 72
+SOUND.MOD RISER, "CUTOFF", "OFF"
+SOUND.MOD RISER, "GAIN", "OFF"
+SOUND.MOD ARP, "RESONANCE", "OFF"
+SOUND.MOD ARP, "CUTOFF", "SINE", 900, 5500, 8
+SOUND.MOD LEAD, "CUTOFF", "OFF"
+
+SECTION 88, "drop: lead doubled an octave up"
+SOUND.SEQ LEAD, "off(0.1875, add(12), " + MELODY$ + ")", "VOICE"
+
+' ── 104: arp section - stripped groove, the arp takes the lead ───
+
+SECTION 104, "arp section: iter"
+QUIET LEAD
+QUIET PAD
+QUIET BASS
+QUIET CLAP
+SOUND.SEQ HATS, "swingBy(0.12, 8, " + HATS_MAIN$ + ")", "VOICE"
+SOUND.SEQ ARP, "iter(4, arp(up, " + CHORDS_X$(4) + "))", "VOICE"
+ON_BAR 104
+SOUND.MOD ARP, "CUTOFF", "SAW", 600, 6000, 4
+
+SECTION 108, "arp section: palindrome, bass back"
+SOUND.SEQ ARP, "palindrome(arp(updown, " + CHORDS_X$(2) + "))", "VOICE"
+SOUND.SEQ BASS, BASS_OFF$, "VOICE"
+
+SECTION 112, "arp section: octave echoes"
+SOUND.SEQ ARP, "off(0.125, add(12), arp(up, " + TRIADS_X$(4) + "))", "VOICE"
+SOUND.SEQ CLAP, "~ cp ~ cp", "VOICE"
+
+SECTION 116, "arp section: ping-pong"
+SOUND.SEQ ARP, "arp(downup, " + CHORDS_X$(2) + ")", "VOICE"
+ON_BAR 116
+SOUND.MOD ARP, "PAN", "SINE", 0.1, 0.9, 1
+
+' ── 120: breakdown 2 - half-time melody, then the second riser ───
+
+SECTION 120, "breakdown 2"
+QUIET KICK
+QUIET CLAP
+QUIET HATS
+QUIET PERC
+QUIET BASS
+QUIET FILL
+QUIET CRASH
+SOUND.SEQ PAD, "legato(1, " + CHORDS$ + ")", "VOICE"
+SOUND.SEQ LEAD, "slow(2, legato(1.5, " + MELODY$ + "))", "VOICE"
+SOUND.SEQ ARP, "degradeBy(0.4, gain(0.5, " + ARP_UP$ + "))", "VOICE"
+ON_BAR 120
+SOUND.MOD ARP, "PAN", "OFF"
+SOUND.MOD ARP, "CUTOFF", "TRI", 400, 1800, 8
+SOUND.MOD PAD, "CUTOFF", "SINE", 500, 2400, 16
+
+SECTION 128, "breakdown 2: riser, roll, gated pad"
+SOUND.SEQ RISER, "legato(1, c4)", "VOICE"
+SOUND.SEQ ROLL, ROLL$, "VOICE"
+ON_BAR 128
+SOUND.MOD RISER, "CUTOFF", "SAW", 300, 10000, 8
+SOUND.MOD RISER, "GAIN", "SAW", 0, 0.5, 8
+SOUND.MOD PAD, "GAIN", "SQUARE", 0.08, 0.38, 0.125
+
+' ── 136: final drop - everything, the lead at full height ────────
+
+SECTION 136, "final drop"
+QUIET RISER
+QUIET ROLL
+SOUND.SEQ KICK, "bd*4", "VOICE"
+SOUND.SEQ CLAP, "every(4, ply(2), ~ cp ~ cp)", "VOICE"
+SOUND.SEQ HATS, HATS_MAIN$, "VOICE"
+SOUND.SEQ PERC, "sometimes(ply(2), sh(7,16,2)), rim(3,8,5)", "VOICE"
+SOUND.SEQ BASS, BASS_ROLL$, "VOICE"
+SOUND.SEQ CRASH, CRASHES$, "VOICE"
+SOUND.SEQ FILL, FILLS$, "VOICE"
+SOUND.SEQ ARP, ARP_WIDE$, "VOICE"
+SOUND.SEQ LEAD, "juxBy(0.4, add(12), off(0.1875, add(12), " + MELODY$ + "))", "VOICE"
+ON_BAR 136
+SOUND.MOD RISER, "CUTOFF", "OFF"
+SOUND.MOD RISER, "GAIN", "OFF"
+SOUND.MOD PAD, "CUTOFF", "OFF"
+SOUND.MOD ARP, "CUTOFF", "SINE", 900, 6000, 8
+SOUND.GAIN LEAD, 0.26
+
+SECTION 152, "final drop: arp rarely jumps an octave"
+SOUND.SEQ ARP, "rarely(add(12), " + ARP_WIDE$ + ")", "VOICE"
+
+' ── 168: outro - layers leave, the filter closes ─────────────────
+
+SECTION 168, "outro"
+QUIET LEAD
+QUIET CRASH
+QUIET FILL
+SOUND.SEQ PAD, "legato(1, " + CHORDS$ + ")", "VOICE"
+ON_BAR 168
+SOUND.MOD PAD, "GAIN", "OFF"
+SOUND.MOD ARP, "CUTOFF", "ISAW", 300, 4000, 8
+
+SECTION 172, "outro: bass and arp leave"
+QUIET BASS
+QUIET ARP
+QUIET CLAP
+
+SECTION 176, "outro: kick and hats"
+QUIET PAD
+QUIET PERC
+ON_BAR 176
+SOUND.FILTER HATS, 6000, 0.2, "LP"
+SOUND.MOD HATS, "CUTOFF", "ISAW", 400, 8000, 8
+
+SECTION 184, "end"
+QUIET KICK
+QUIET HATS
+ON_BAR 186
 SOUND.RESET
