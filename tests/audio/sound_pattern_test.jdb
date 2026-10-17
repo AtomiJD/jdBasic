@@ -160,16 +160,18 @@ DIM hp_rms AS DOUBLE = RMS(buf, 2000, 8000)
 CHECK "low-pass passes", lp_rms > 0.6, "lp=" + STR$(lp_rms)
 CHECK "high-pass blocks", hp_rms < 0.02, "hp=" + STR$(hp_rms)
 
-' resonance lifts the cutoff frequency
+' resonance lifts the cutoff frequency (kept quiet, below the soft clip)
 SOUND.RESET
 SOUND.VOICE 1, "SINE", 0.001, 0.01, 1.0, 0.01
 SOUND.FILTER 1, 1000, 0
+SOUND.GAIN 1, 0.1
 SOUND.PLAY 1, 1000
 buf = SOUND.RENDER(8000)
 DIM flat_rms AS DOUBLE = RMS(buf, 2000, 8000)
 SOUND.RESET
 SOUND.VOICE 1, "SINE", 0.001, 0.01, 1.0, 0.01
 SOUND.FILTER 1, 1000, 0.9
+SOUND.GAIN 1, 0.1
 SOUND.PLAY 1, 1000
 buf = SOUND.RENDER(8000)
 DIM res_rms AS DOUBLE = RMS(buf, 2000, 8000)
@@ -206,7 +208,53 @@ CATCH
 ENDTRY
 CHECK "unknown mod parameter", INSTR(err_msg, "WOBBLE") >= 0, "msg=" + err_msg
 
-' ---------- 3. Drum kit: atoms name samples ----------
+' ---------- 3. Master: AUTO divides by the voices, FIXED keeps levels ----------
+' track 0 plays on the left only, track 1 on the right only
+FUNC LEFT_RMS(both AS INTEGER) AS DOUBLE
+    SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.01
+    SOUND.VOICE 1, "SINE", 0.001, 0.01, 1.0, 0.01
+    SOUND.GAIN 0, 0.3
+    SOUND.GAIN 1, 0.3
+    SOUND.PAN 0, 0
+    SOUND.PAN 1, 1
+    SOUND.PLAY 0, 220
+    IF both THEN SOUND.PLAY 1, 330
+    RETURN RMS(SOUND.RENDER(8000), 2000, 8000)
+ENDFUNC
+
+SOUND.RESET
+DIM auto_one AS DOUBLE = LEFT_RMS(FALSE)
+SOUND.RESET
+DIM auto_two AS DOUBLE = LEFT_RMS(TRUE)
+CHECK "auto: a second voice lowers the first", auto_two < auto_one * 0.75, "one=" + STR$(auto_one) + " two=" + STR$(auto_two)
+SOUND.RESET
+SOUND.MASTER "FIXED", 0.5
+DIM fixed_one AS DOUBLE = LEFT_RMS(FALSE)
+SOUND.RESET
+SOUND.MASTER "FIXED", 0.5
+DIM fixed_two AS DOUBLE = LEFT_RMS(TRUE)
+CHECK "fixed: a second voice leaves the first", ABS(fixed_two - fixed_one) < 0.0001, "one=" + STR$(fixed_one) + " two=" + STR$(fixed_two)
+CHECK "fixed: headroom scales", ABS(fixed_one / auto_one - 0.5) < 0.01, "auto=" + STR$(auto_one) + " fixed=" + STR$(fixed_one)
+
+' the output bends smoothly below full scale instead of clipping
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.01
+SOUND.GAIN 0, 4
+SOUND.PLAY 0, 220
+buf = SOUND.RENDER(8000)
+CHECK "soft clip stays below 1", MAX(ABS(buf)) <= 1.0, "peak=" + STR$(MAX(ABS(buf)))
+CHECK "soft clip is loud", MAX(ABS(buf)) > 0.95, "peak=" + STR$(MAX(ABS(buf)))
+
+err_msg = ""
+TRY
+    SOUND.MASTER "LOUD"
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "unknown master mode", INSTR(err_msg, "LOUD") >= 0, "msg=" + err_msg
+SOUND.RESET
+
+' ---------- 4. Drum kit: atoms name samples ----------
 DIM KIT_DIR AS STRING = "jdb/demos/sound/SynthesizerPercussion-SFZ-20220718/"
 
 FUNC KIT_RENDER(pattern$, frames AS INTEGER)

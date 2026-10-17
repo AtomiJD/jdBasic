@@ -469,6 +469,10 @@ static struct SoundSystem {
     bool delay_active = false;
     // Distortion
     float distortion_amount = 0.0f;
+    // Master: false divides the mix by sqrt(active voices), true scales
+    // every voice by a fixed headroom
+    bool master_fixed = false;
+    float master_headroom = 0.5f;
 
     // Visualization
     std::vector<float> wave_buffer;
@@ -940,6 +944,15 @@ static struct SoundSystem {
         }
     }
 
+    // Linear up to the knee, then bends smoothly towards full scale
+    static float soft_clip(float x) {
+        const float knee = 0.8f;
+        float a = std::abs(x);
+        if (a <= knee) return x;
+        float y = knee + (1.0f - knee) * std::tanh((a - knee) / (1.0f - knee));
+        return x < 0 ? -y : y;
+    }
+
     // ── Audio callback ──────────────────────────────────────────
 
     // SDL-free render: fill `buffer` with num_frames interleaved stereo samples.
@@ -1069,8 +1082,12 @@ static struct SoundSystem {
                 }
             }
 
-            // Soft average
-            if (active > 1) {
+            if (sys->master_fixed) {
+                float h = sys->master_headroom;
+                mix_l *= h; mix_r *= h;
+                rev_l *= h; rev_r *= h;
+                del_l *= h; del_r *= h;
+            } else if (active > 1) {
                 float norm = 1.0f / std::sqrt((float)active);
                 mix_l *= norm; mix_r *= norm;
             }
@@ -1111,8 +1128,8 @@ static struct SoundSystem {
                 sys->compressor.process(mix_l, mix_r);
             }
 
-            buffer[f * 2] = mix_l;
-            buffer[f * 2 + 1] = mix_r;
+            buffer[f * 2] = soft_clip(mix_l);
+            buffer[f * 2 + 1] = soft_clip(mix_r);
         }
     }
 
@@ -1642,6 +1659,25 @@ void register_sound_builtins(VM& vm) {
             tp.waveform = Waveform::SAMPLE;
             tp.attack = 0.0005f; tp.decay = 0.001f; tp.sustain = 1.0f; tp.release = 0.05f;
         }
+        SND_UNLOCK();
+        return Value::make_none();
+    });
+
+    // ── SOUND.MASTER mode$, [headroom] ──────────────────────────
+    // "AUTO" divides the mix by the square root of the sounding voices;
+    // "FIXED" scales every voice by headroom, so tracks keep their level.
+
+    vm.register_native("SOUND.MASTER", 1, 2, [](const std::vector<Value>& args) -> Value {
+        std::string m = args[0].to_string();
+        std::transform(m.begin(), m.end(), m.begin(), ::toupper);
+        if (m != "AUTO" && m != "FIXED")
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MASTER: mode is AUTO or FIXED, not " + m);
+        float h = args.size() >= 2 ? (float)args[1].to_double() : 0.5f;
+        if (h <= 0.0f || h > 4.0f)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MASTER: headroom is above 0 and at most 4");
+        ensure_sound("SOUND"); SND_LOCK();
+        g_sound.master_fixed = (m == "FIXED");
+        g_sound.master_headroom = h;
         SND_UNLOCK();
         return Value::make_none();
     });
@@ -2204,6 +2240,8 @@ void register_sound_builtins(VM& vm) {
         g_sound.distortion_amount = 0;
         g_sound.delay_active = false;
         g_sound.compressor_active = false;
+        g_sound.master_fixed = false;
+        g_sound.master_headroom = 0.5f;
         g_sound.reverb.wet = 0;
         std::fill(g_sound.delay_buffer.begin(), g_sound.delay_buffer.end(), 0.0f);
         for (int t = 0; t < NUM_TRACKS; t++) g_sound.tracks[t] = TrackParams{};

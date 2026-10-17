@@ -109,6 +109,7 @@ You can use a loaded sample as a sound source for a sequencer track.
 * **`SOUND.REVERB size, damp, width, wet`**: Configures the global reverb room.
 * **`SOUND.DELAY active, time_ms, feedback, mix`**: Configures the global stereo delay.
 * **`SOUND.COMPRESSOR thresh, ratio, attack, release, gain`**: Master dynamics; `thresh` 0.0-1.0, `ratio` 1.0-20.0, `attack`/`release` in ms.
+* **`SOUND.MASTER mode$, [headroom]`**: `"AUTO"` (default) divides the mix by sqrt(voices); `"FIXED"` scales each voice by `headroom` (0.5), so layers keep their level. Output soft-clips above 0.8.
 * **`SOUND.DISTORTION amount`**: Applies master saturation/overdrive.
 
 ## 6. Visualization
@@ -168,6 +169,7 @@ All design commands (`SOUND.VOICE` / `SEQ` / `NOTE` / `FM` / `UNISON` / `REVERB`
 | **Global FX** | `SOUND.REVERB` | `size, damp, width, wet` | Set master reverb room |
 |  | `SOUND.DELAY` | `on, time, feed, mix` | Set master delay settings |
 |  | `SOUND.COMPRESSOR` | `thresh, ratio, atk, rel, gain` | Master dynamics |
+|  | `SOUND.MASTER` | `mode$, [headroom]` | AUTO or FIXED mix level |
 |  | `SOUND.DISTORTION` | `amount` | Master saturation |
 | **Analysis** | `SOUND.GET_WAVE` | none | Get master waveform array |
 |  | `SOUND.RENDER` | `frames` | Pull stereo samples (embed/no-device) |

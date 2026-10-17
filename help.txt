@@ -3017,6 +3017,12 @@ Syntax: SOUND.COMPRESSOR threshold, ratio, attack, release, gain
 Description: Applies master dynamic range compression.
 Threshold: 0.0-1.0. Ratio: 1.0-20.0. Attack/Release: ms. Gain: 1.0+.
 
+[SOUND.MASTER]
+Syntax: SOUND.MASTER mode$, [headroom]
+Description: Sets how the master sums the voices. "AUTO" (default) divides the mix by sqrt(sounding voices).
+"FIXED" scales every voice by headroom (default 0.5), so a track keeps its level whatever else plays.
+The output soft-clips above 0.8 in both modes. SOUND.RESET returns to "AUTO".
+
 [SOUND.EQ]
 Syntax: SOUND.EQ track, low_gain, mid_gain, high_gain
 Description: Sets the 3-band equalizer gains for a track.

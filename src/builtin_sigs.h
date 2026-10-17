@@ -705,6 +705,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SOUND.INIT", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.KIT", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.LFO", BuiltinRet::None, BF_NO_VEC},
+    {"SOUND.MASTER", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.MOD", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.NOTE", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.PAN", BuiltinRet::None, BF_NO_VEC},
