@@ -756,6 +756,8 @@ EXPORT SUB RUN(name$)
         IF cli[ai] = "--render" ANDALSO ai + 1 < LEN(cli) THEN render_dir$ = cli[ai + 1]
     NEXT ai
     IF shots$ <> "" THEN windowed = TRUE
+    ' the browser shows the canvas inside the page; fullscreen needs a gesture
+    IF OS.GETOS$() = "WEB" THEN windowed = TRUE
 
     ' FFT bands, spaced logarithmically from 86 Hz to 7.7 kHz
     DIM bi AS INTEGER
@@ -776,7 +778,7 @@ EXPORT SUB RUN(name$)
         SCREEN SW, SH, title$
         TOGGLE_FULLSCREEN
     ENDIF
-    DIM font_try$ = ["jdbasic_default.ttf", "build/jdbasic_default.ttf", "../../../build/jdbasic_default.ttf"]
+    DIM font_try$ = ["jdbasic_default.ttf", "/jdbasic_default.ttf", "build/jdbasic_default.ttf", "../../../build/jdbasic_default.ttf"]
     DIM fi AS INTEGER
     FOR fi = 0 TO LEN(font_try$) - 1
         IF font$ = "" THEN

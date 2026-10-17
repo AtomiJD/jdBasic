@@ -71,14 +71,25 @@ done
 # help.txt at the FS root so the HELP command finds it (load_help_file tries
 # "help.txt" relative to the MEMFS cwd, which is /).
 [ -f help.txt ] && EMBED="$EMBED --embed-file help.txt@/help.txt"
-# Web-specific programs (e.g. graphics tuned with YIELD) live under wasm/programs.
-# Subfolders (wasm/programs/tv = Train jdBasic lesson samples) are embedded
-# flat at the FS root so LIST/LOAD in the playground can see them.
+# Web-specific programs (e.g. graphics tuned with YIELD) live under wasm/programs,
+# embedded at the FS root; a subfolder keeps its name (wasm/programs/lessons =
+# the Train jdBasic lesson samples -> /lessons).
 if [ -d wasm/programs ]; then
-    for d in wasm/programs/*.jdb wasm/programs/*/*.jdb; do
+    for d in wasm/programs/*.jdb; do
         [ -f "$d" ] && EMBED="$EMBED --embed-file $d@/$(basename "$d")"
     done
+    for d in wasm/programs/*/*.jdb; do
+        [ -f "$d" ] && EMBED="$EMBED --embed-file $d@/$(basename "$(dirname "$d")")/$(basename "$d")"
+    done
 fi
+# The songs of When Kaiku Dreams Techno with the SCORE and STAGE modules they
+# import -> /music; IMPORT finds the modules beside the song.
+for d in jdb/demos/sound/score.jdb jdb/demos/sound/stage.jdb \
+         jdb/demos/sound/synthwave_highway.jdb jdb/demos/sound/disco_glitter.jdb \
+         jdb/demos/sound/house_rooftop.jdb jdb/demos/sound/acid_copper.jdb \
+         jdb/demos/sound/trance_live.jdb jdb/demos/sound/dnb_nightbus.jdb; do
+    [ -f "$d" ] && EMBED="$EMBED --embed-file $d@/music/$(basename "$d")"
+done
 
 # ASYNCIFY_STACK_SIZE: the default 4 KB is too small for our deeply-nested
 # bytecode interpreter - a suspend (INPUT, SLEEP, SCREENFLIP, YIELD) deep in

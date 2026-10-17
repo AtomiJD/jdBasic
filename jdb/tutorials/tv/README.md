@@ -10,7 +10,7 @@ cd jdb/tv
 jdbasic extract_samples.jdb
 ```
 
-The extractor writes this folder and `wasm/programs/tv/` (the web playground
+The extractor writes this folder and `wasm/programs/lessons/` (the web playground
 copy, which skips lessons 13/14 because the wasm build has no HTTP flag and no
 OS.EXEC). `mathx.jdb` is the lesson 10 module; `lesson10_modules_b.jdb`
 IMPORTs it, so both must stay in the same folder.

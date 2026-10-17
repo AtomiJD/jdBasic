@@ -8,9 +8,17 @@
 
 DIM lesson_files = ["script_01_hello.txt", "script_02_if_for.txt", "script_03_arrays.txt", "script_04_strings.txt", "script_05_func_sub.txt", "script_06_maps.txt", "script_07_input_do.txt", "script_08_file_io.txt", "script_09_graphics.txt", "script_10_modules.txt", "script_11_repl_workflow.txt", "script_12_higher_order.txt", "script_13_http_json.txt", "script_14_native_compile.txt"]
 
-' Target directories with lesson numbers to skip there (wasm build has no
-' HTTP flag and no OS.EXEC, so lessons 13/14 stay desktop-only).
-DIM targets = [["../tutorials/tv", ""], ["../../wasm/programs/tv", "13,14"]]
+' Target directories, the lesson numbers to skip there (the wasm build has no
+' HTTP flag and no OS.EXEC, so lessons 13/14 stay desktop-only), and the
+' naming: "long" is lesson02_if_for_a.jdb, "short" is 02a_if_for.jdb for the
+' web playground's /lessons folder.
+DIM targets = [["../tutorials/tv", "", "long"], ["../../wasm/programs/lessons", "13,14", "short"]]
+
+FUNC SAMPLE_NAME$(nn$, topic$, n_seg, style$)
+    DIM letter$ = CHR$(97 + n_seg)
+    IF style$ = "short" THEN RETURN nn$ + letter$ + "_" + topic$ + ".jdb"
+    RETURN "lesson" + nn$ + "_" + topic$ + "_" + letter$ + ".jdb"
+ENDFUNC
 
 DIM hk AS MAP = {"NEW": 1, "CLS": 1, "LIST": 1, "RUN": 1, "PRETTY": 1, "LINT": 1, "TRON": 1, "TROFF": 1, "SAVE": 1, "LOAD": 1, "SAVEWS": 1, "LOADWS": 1, "CLEARWS": 1, "VARS": 1, "FUNCS": 1, "HELP": 1, "EDIT": 1, "DIR": 1}
 
@@ -49,6 +57,8 @@ DIM t_i, f_i, r_i
 FOR t_i = 0 TO LEN(targets) - 1
     DIM out_dir$ = targets[t_i][0]
     DIM excl$ = targets[t_i][1]
+    DIM style$ = targets[t_i][2]
+    DIM style$ = targets[t_i][2]
     TRY
         MKDIR out_dir$
     CATCH
@@ -119,7 +129,7 @@ FOR t_i = 0 TO LEN(targets) - 1
                     DIM r = FlushSeg(nn$, topic$, ttl$, seg_chap$, body)
                     IF TYPEOF(r) = "ARRAY" THEN
                         DIM name$ = r[0]
-                        IF name$ = "" THEN name$ = "lesson" + nn$ + "_" + topic$ + "_" + CHR$(97 + n_seg) + ".jdb"
+                        IF name$ = "" THEN name$ = SAMPLE_NAME$(nn$, topic$, n_seg, style$)
                         TXTWRITER out_dir$ + "/" + name$, r[1]
                         n_seg = n_seg + 1
                     ENDIF
@@ -137,7 +147,7 @@ FOR t_i = 0 TO LEN(targets) - 1
         DIM r2 = FlushSeg(nn$, topic$, ttl$, seg_chap$, body)
         IF TYPEOF(r2) = "ARRAY" THEN
             DIM name2$ = r2[0]
-            IF name2$ = "" THEN name2$ = "lesson" + nn$ + "_" + topic$ + "_" + CHR$(97 + n_seg) + ".jdb"
+            IF name2$ = "" THEN name2$ = SAMPLE_NAME$(nn$, topic$, n_seg, style$)
             TXTWRITER out_dir$ + "/" + name2$, r2[1]
             n_seg = n_seg + 1
         ENDIF
