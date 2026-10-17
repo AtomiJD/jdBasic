@@ -125,6 +125,10 @@
       '    PRINT i, " squared is ", i * i\n' +
       'NEXT i\n';
     let program = SAMPLE;
+    // The folder of the loaded program; a run starts there so IMPORT finds
+    // the modules beside it (/music/score.jdb, /lessons/mathx.jdb).
+    let progDir = '/';
+    function dirOf(p){ const i = p.lastIndexOf('/'); return i > 0 ? p.substring(0, i) : '/'; }
 
     // jdBasic keywords - shared by the Monaco highlighter and the LIST colorizer.
     const KEYWORDS = ['PRINT','FOR','TO','STEP','NEXT','IF','THEN','ELSE','ELSEIF','ENDIF','END',
@@ -153,13 +157,21 @@
     // ---- LOAD / SAVE / DIR over the in-browser MEMFS (operate on the editor
     //      program, so they stay consistent with RUN / EDIT / LIST) ----
     function fnameOf(cmd){ const m = cmd.match(/^\w+\s+"?([^"]+?)"?\s*$/); return m ? m[1].trim() : ''; }
-    function listFiles(){
+    // DIR lists the programs and folders at the root, DIR folder one folder
+    function listFiles(cmd){
       try {
-        const fs = Mod.FS.readdir('/').filter(f=>/\.(jdb|bas)$/i.test(f)).sort();
-        term.write('\r\n\x1b[2mprograms (LOAD "name" then RUN):\x1b[0m\r\n');
-        if (!fs.length) term.write('  (none)\r\n');
+        let dir = fnameOf(cmd || '').replace(/\/+$/, '');
+        dir = dir ? (dir.startsWith('/') ? dir : '/' + dir) : '/';
+        const pre = dir === '/' ? '' : dir.substring(1) + '/';
+        const all = Mod.FS.readdir(dir).filter(f=> f !== '.' && f !== '..');
+        const isDir = f=> { try { return Mod.FS.isDir(Mod.FS.stat((dir === '/' ? '' : dir) + '/' + f).mode); } catch(e){ return false; } };
+        const dirs = all.filter(f=> isDir(f) && !/^(dev|proc|tmp|home)$/.test(f)).sort();
+        const fs = all.filter(f=>/\.(jdb|bas)$/i.test(f)).sort();
+        term.write('\r\n\x1b[2mprograms (LOAD "' + pre + 'name" then RUN):\x1b[0m\r\n');
+        if (!fs.length && !dirs.length) term.write('  (none)\r\n');
+        dirs.forEach(f=> term.write('  \x1b[36m' + f + '/\x1b[0m   (DIR ' + pre + f + ')\r\n'));
         fs.forEach(f=> term.write('  ' + f + '\r\n'));
-      } catch(e){ term.write('\r\n'+e); }
+      } catch(e){ term.write('\r\n\x1b[31mno folder ' + (cmd || '') + '\x1b[0m\r\n'); }
       prompt();
     }
     function readMaybe(p){ try{ return Mod.FS.readFile(p,{encoding:'utf8'}); }catch(e){ return null; } }
@@ -170,10 +182,11 @@
       if(data===null && !/\.\w+$/.test(base)){ const d2=readMaybe(base+'.jdb'); if(d2!==null){ data=d2; base+='.jdb'; } }
       if(data===null){ term.write('\r\n\x1b[31mcannot load '+n+'\x1b[0m'); prompt(); return; }
       program = data; if(editor) editor.setValue(program);
+      progDir = dirOf(base);
       term.write('\r\n\x1b[32mloaded '+base+' ('+program.split('\n').length+' lines). RUN or EDIT.\x1b[0m');
       prompt();
     }
-    function newProgram(){ program=''; if(editor) editor.setValue('');
+    function newProgram(){ program=''; progDir='/'; if(editor) editor.setValue('');
       term.write('\r\n\x1b[32mnew program\x1b[0m'); prompt(); }
     function saveProgram(cmd){
       let n = fnameOf(cmd); if(!n){ term.write('\r\nusage: SAVE "name.jdb"'); prompt(); return; }
@@ -246,7 +259,7 @@
         prompt(); return; }
       if (up === 'CLS' || up === 'CLEAR'){ term.clear(); prompt(); return; }
       if (up === 'NEW'){ newProgram(); return; }
-      if (up === 'DIR' || up === 'FILES'){ listFiles(); return; }
+      if (up === 'DIR' || up === 'FILES' || up.indexOf('DIR ') === 0){ listFiles(t); return; }
       if (up.indexOf('LOAD') === 0){ loadProgram(t); return; }
       if (up.indexOf('SAVE') === 0){ saveProgram(t); return; }
       await runCode(t); prompt();
@@ -258,6 +271,7 @@
       code = normalizeInput(code);
       if (!ready){ term.write('\r\nruntime not ready'); return; }
       keyQueue.length = 0;   // drop keys left over from the previous run
+      try { Mod.FS.chdir(progDir); } catch(e){ progDir = '/'; }
       running = true;
       try { await Mod.ccall('jdb_run','void',['string'],[code],{async:true}); }
       catch(e){ term.write('\x1b[31m'+e+'\x1b[0m'); }
@@ -495,6 +509,7 @@
       } else {
         if (!/\.\w+$/.test(prog)) prog += '.jdb';
         src = readMaybe('/'+prog);
+        if (src !== null) progDir = dirOf('/'+prog);
         if (src === null) {
           try { const r = await fetch(prog, {cache:'no-store'}); if (r.ok) src = await r.text(); } catch(e){}
         }
@@ -518,7 +533,8 @@
       onScreenOpen: (w,h)=>{ showGfx(); },
       onScreenClose: ()=>{ hideGfx(); },
       onJdbReady: ()=>{ ready=true; setStatus('runtime ready','var(--green)');
-        term.write('\r\n\x1b[2mDIR . LOAD name . RUN . NEW . EDIT . SAVE name . LIST . CLS\x1b[0m');
+        term.write('\r\n\x1b[2mDIR [folder] . LOAD name . RUN . NEW . EDIT . SAVE name . LIST . CLS\x1b[0m');
+        term.write('\r\n\x1b[2mlessons/ = the Train jdBasic samples . music/ = When Kaiku Dreams Techno (LOAD "music/trance_live")\x1b[0m');
         prompt(); focusTerm(); maybeAutoStart(); }
     }).then(M=>{ Mod=M; maybeAutoStart(); }).catch(e=>{ setStatus('runtime failed','var(--red)'); term.write('\r\nload error: '+e); });
 
