@@ -2897,9 +2897,15 @@ void Parser::module_rename_stmt(Stmt& stmt,
 
     // Rename variable declarations + index assigns
     if (stmt.kind == StmtKind::LET || stmt.kind == StmtKind::DIM ||
-        stmt.kind == StmtKind::ASSIGN || stmt.kind == StmtKind::INDEX_ASSIGN) {
+        stmt.kind == StmtKind::ASSIGN || stmt.kind == StmtKind::INDEX_ASSIGN ||
+        stmt.kind == StmtKind::FOR_LOOP || stmt.kind == StmtKind::FOR_EACH) {
         auto it = var_map.find(stmt.var_name);
         if (it != var_map.end()) stmt.var_name = it->second;
+    }
+    // FOR EACH k, v IN m keeps the first variable in `label`
+    if (stmt.kind == StmtKind::FOR_EACH && !stmt.label.empty()) {
+        auto it = var_map.find(stmt.label);
+        if (it != var_map.end()) stmt.label = it->second;
     }
 
     // DIM x AS TypeName - when TypeName is a module-internal type name

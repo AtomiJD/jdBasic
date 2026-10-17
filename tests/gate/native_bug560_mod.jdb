@@ -1,0 +1,32 @@
+EXPORT MODULE NATIVE_BUG560_MOD
+
+DIM squares = [0, 0, 0, 0]
+DIM k AS INTEGER
+FOR k = 0 TO 3
+    squares[k] = k * k
+NEXT k
+
+DIM names$ = ["", "", ""]
+DIM nm$ AS STRING
+DIM slot AS INTEGER = 0
+FOR EACH nm$ IN ["a", "b", "c"]
+    names$[slot] = nm$
+    slot = slot + 1
+NEXT nm$
+
+DIM idx AS INTEGER
+EXPORT FUNC SUMUP() AS INTEGER
+    DIM acc AS INTEGER = 0
+    FOR idx = 1 TO 4
+        acc = acc + idx
+    NEXT idx
+    RETURN acc
+ENDFUNC
+
+EXPORT FUNC SQUARES$() AS STRING
+    RETURN STR$(squares[0]) + "," + STR$(squares[1]) + "," + STR$(squares[2]) + "," + STR$(squares[3])
+ENDFUNC
+
+EXPORT FUNC NAMES$() AS STRING
+    RETURN names$[0] + names$[1] + names$[2]
+ENDFUNC

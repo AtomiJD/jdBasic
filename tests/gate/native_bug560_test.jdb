@@ -1,0 +1,31 @@
+' A FOR or FOR EACH loop at the top level of a module, or one in a module
+' FUNC whose variable is declared at module level, counts the variable
+' the body reads.
+
+OPTION "EXPLICIT"
+IMPORT NATIVE_BUG560_MOD
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+DIM k AS INTEGER = 99
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+Check("top-level FOR", NATIVE_BUG560_MOD.SQUARES$(), "0,1,4,9")
+Check("top-level FOR EACH", NATIVE_BUG560_MOD.NAMES$(), "abc")
+Check("FOR over a module variable in a FUNC", STR$(NATIVE_BUG560_MOD.SUMUP()), "10")
+Check("the program's k untouched", STR$(k), "99")
+
+PRINT ""
+PRINT "NATIVE BUG 560 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
