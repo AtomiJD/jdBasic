@@ -1134,7 +1134,7 @@ Description: Saves a loaded (and possibly modified) image to a PNG file, preserv
 
 [GFX.SAVE_SCREENSHOT]
 Syntax: GFX.SAVE_SCREENSHOT(file$, [x], [y], [w], [h])
-Description: Saves the current screen, or a given rectangular region, to a PNG file.
+Description: Saves the current screen, or a given rectangular region, to a PNG file, or a JPEG when the name ends in .jpg or .jpeg.
 
 [GFX.TEXTSIZE]
 Syntax: GFX.TEXTSIZE(text$) -> [w,h]
@@ -2911,6 +2911,10 @@ Example: SOUND.KIT 0, "SYNTH" : SOUND.SEQ 0, "bd*4, ~ cp, [hh oh]*4", "VOICE"
 [SOUND.PENDING]
 Syntax: SOUND.PENDING() -> number
 Description: Returns how many commands SOUND.AT has queued that the mixer has not applied yet.
+
+[SOUND.RECORD]
+Syntax: SOUND.RECORD [path$]
+Description: Writes the mixer output from now on into a 16-bit stereo WAV; no argument or "" finishes the file. Works for the device and for SOUND.RENDER in PULL mode.
 
 [SOUND.PLAY]
 Syntax: SOUND.PLAY(track, frequency)

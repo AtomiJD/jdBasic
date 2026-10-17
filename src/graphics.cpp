@@ -2070,7 +2070,10 @@ void register_graphics_builtins(VM& vm) {
             throw jdError(ErrCode::RUNTIME_ERROR,
                 std::string("GFX.SAVE_SCREENSHOT: ") + SDL_GetError());
 
-        bool ok = IMG_SavePNG(surface, path.c_str());
+        std::string ext = path.size() >= 4 ? path.substr(path.size() - 4) : "";
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        bool jpg = ext == ".jpg" || ext == "jpeg";
+        bool ok = jpg ? IMG_SaveJPG(surface, path.c_str(), 92) : IMG_SavePNG(surface, path.c_str());
         SDL_DestroySurface(surface);
         if (!ok)
             throw jdError(ErrCode::RUNTIME_ERROR,

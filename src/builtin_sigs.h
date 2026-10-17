@@ -719,6 +719,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SOUND.PLAY", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.PLAYBUFFER", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.QUEUED", BuiltinRet::I64, BF_NO_VEC},
+    {"SOUND.RECORD", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.RELEASE", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.RENDER", BuiltinRet::Arr, BF_NONE},
     {"SOUND.RESET", BuiltinRet::None, BF_NO_VEC},

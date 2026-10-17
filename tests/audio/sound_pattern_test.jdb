@@ -535,6 +535,29 @@ ENDTRY
 SOUND.AT
 CHECK "AT checks the pattern", INSTR(err_msg, "SOUND.SEQ") >= 0 ANDALSO SOUND.PENDING() = 0, "msg=" + err_msg
 
+' SOUND.RECORD writes what SOUND.RENDER puts out as 16-bit stereo
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.SEQ 0, "legato(1, c4)", "VOICE"
+DIM wav_path AS STRING = "sound_record_test.wav"
+SOUND.RECORD wav_path
+buf = SOUND.RENDER(4410)
+SOUND.RECORD
+DIM wav$ AS STRING = BINREADER$(wav_path)
+CHECK "RECORD file size", LEN(wav$) = 44 + 4410 * 4, "len=" + STR$(LEN(wav$))
+CHECK "RECORD header", MID$(wav$, 0, 4) = "RIFF" ANDALSO MID$(wav$, 8, 4) = "WAVE", ""
+DIM wav_head = UNPACK("<4a i 4a 4a i s s i i s s 4a i", wav$)
+CHECK "RECORD data size", wav_head[12] = 4410 * 4, "data=" + STR$(wav_head[12])
+DIM peak_s AS INTEGER = 0
+DIM wi AS INTEGER
+DIM wv = [0]
+FOR wi = 2000 TO 2100
+    wv = UNPACK("<h", wav$, 44 + wi * 4)
+    IF ABS(wv[0]) > peak_s THEN peak_s = ABS(wv[0])
+NEXT wi
+CHECK "RECORD carries the tone", peak_s > 3000, "peak=" + STR$(peak_s)
+KILL wav_path
+
 ' RESET empties the queue and leaves scheduling
 SOUND.AT 9
 SOUND.SEQ 0, "c4", "VOICE"

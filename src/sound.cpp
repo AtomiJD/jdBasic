@@ -555,6 +555,38 @@ static struct SoundSystem {
         for (auto& c : sched) m = std::min(m, c.at);
         return m;
     }
+    // SOUND.RECORD: the master output, appended as 16-bit stereo PCM
+    FILE* rec_file = nullptr;
+    uint32_t rec_frames = 0;
+
+    void record(const float* buffer, int num_frames) {
+        std::vector<int16_t> pcm((size_t)num_frames * 2);
+        for (size_t i = 0; i < pcm.size(); i++) {
+            float s = std::max(-1.0f, std::min(1.0f, buffer[i]));
+            pcm[i] = (int16_t)lrintf(s * 32767.0f);
+        }
+        fwrite(pcm.data(), sizeof(int16_t), pcm.size(), rec_file);
+        rec_frames += (uint32_t)num_frames;
+    }
+
+    // Writes a WAV header for rec_frames frames at the start of the file
+    void write_wav_header() {
+        auto w32 = [this](uint32_t v) { fwrite(&v, 4, 1, rec_file); };
+        auto w16 = [this](uint16_t v) { fwrite(&v, 2, 1, rec_file); };
+        uint32_t data_bytes = rec_frames * 4;
+        fseek(rec_file, 0, SEEK_SET);
+        fwrite("RIFF", 1, 4, rec_file); w32(36 + data_bytes); fwrite("WAVE", 1, 4, rec_file);
+        fwrite("fmt ", 1, 4, rec_file); w32(16); w16(1); w16(2);
+        w32(SAMPLE_RATE); w32(SAMPLE_RATE * 4); w16(4); w16(16);
+        fwrite("data", 1, 4, rec_file); w32(data_bytes);
+    }
+
+    void stop_recording() {
+        if (!rec_file) return;
+        write_wav_header();
+        fclose(rec_file);
+        rec_file = nullptr;
+    }
     SeqLayer seq_layers[NUM_TRACKS];
     int dbg_triggers = 0;
     int dbg_alloc_fail = 0;
@@ -1080,6 +1112,7 @@ static struct SoundSystem {
             render_block(sys, buffer + done * 2, n);
             done += n;
         }
+        if (sys->rec_file) sys->record(buffer, num_frames);
     }
 
     static void render_block(SoundSystem* sys, float* buffer, int num_frames) {
@@ -1289,6 +1322,7 @@ static void ensure_sound(const char* fn) {
 // ── Public API ──────────────────────────────────────────────────
 
 void sound_shutdown() {
+    g_sound.stop_recording();
 #ifdef GFX
     if (g_sound.stream) {
         SDL_DestroyAudioStream(g_sound.stream);
@@ -2442,6 +2476,7 @@ void register_sound_builtins(VM& vm) {
             l.pat.reset(); l.pending.reset(); l.has_pending = false;
             l.built_cycle = INT64_MIN;
         }
+        g_sound.stop_recording();
         g_sound.reset_clock();
         g_sound.sched.clear();
         g_sound.sched_at = -1.0;
@@ -2472,6 +2507,30 @@ void register_sound_builtins(VM& vm) {
 
     vm.register_native("SOUND.AT", 0, 1, [](const std::vector<Value>& args) -> Value {
         g_sound.sched_at = args.empty() ? -1.0 : args[0].to_double();
+        return Value::make_none();
+    });
+
+    // ── SOUND.RECORD [path$] ────────────────────────────────────
+    // Writes everything the mixer puts out from now on into a 16-bit
+    // stereo WAV; no argument or "" finishes the file.
+
+    vm.register_native("SOUND.RECORD", 0, 1, [](const std::vector<Value>& args) -> Value {
+        ensure_sound("SOUND.RECORD");
+        std::string path = args.empty() ? "" : args[0].to_string();
+        SND_LOCK();
+        g_sound.stop_recording();
+        bool failed = false;
+        if (!path.empty()) {
+            g_sound.rec_file = fopen(path.c_str(), "wb");
+            if (g_sound.rec_file) {
+                g_sound.rec_frames = 0;
+                g_sound.write_wav_header();
+            } else {
+                failed = true;
+            }
+        }
+        SND_UNLOCK();
+        if (failed) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.RECORD: cannot write " + path);
         return Value::make_none();
     });
 
