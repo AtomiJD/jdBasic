@@ -510,6 +510,51 @@ static struct SoundSystem {
     int64_t seq_frames = 0;
 
     void reset_clock() { seq_time = 0.0; seq_base = 0.0; seq_frames = 0; seq_bpm = bpm; }
+
+    // Commands queued by SOUND.AT, applied by the mixer when the clock
+    // reaches their cycle; equal cycles keep the order they were sent in
+    struct SchedCmd {
+        double at;
+        uint64_t order;
+        std::string name;
+        std::function<Value(const std::vector<Value>&)> fn;
+        std::vector<Value> args;
+    };
+    std::vector<SchedCmd> sched;
+    uint64_t sched_order = 0;
+    double sched_at = -1.0;   // the SOUND.AT target; below 0 commands apply at once
+    bool in_sched = false;    // true while the mixer applies a queued command
+
+    // Applies every queued command due by cycle `until`, earliest first
+    void run_sched(double until) {
+        std::vector<SchedCmd> due;
+        for (size_t i = 0; i < sched.size();) {
+            if (sched[i].at <= until) {
+                due.push_back(std::move(sched[i]));
+                sched[i] = std::move(sched.back());
+                sched.pop_back();
+            } else {
+                i++;
+            }
+        }
+        std::sort(due.begin(), due.end(), [](const SchedCmd& a, const SchedCmd& b) {
+            return a.at != b.at ? a.at < b.at : a.order < b.order;
+        });
+        in_sched = true;
+        for (auto& c : due) {
+            try { c.fn(c.args); }
+            catch (const std::exception& e) {
+                fprintf(stderr, "SOUND.AT %g: %s: %s\n", c.at, c.name.c_str(), e.what());
+            }
+        }
+        in_sched = false;
+    }
+
+    double next_sched_at() const {
+        double m = sched.front().at;
+        for (auto& c : sched) m = std::min(m, c.at);
+        return m;
+    }
     SeqLayer seq_layers[NUM_TRACKS];
     int dbg_triggers = 0;
     int dbg_alloc_fail = 0;
@@ -1017,8 +1062,24 @@ static struct SoundSystem {
     // than the audio device would.
     static void render_frames(SoundSystem* sys, float* buffer, int num_frames) {
         const int block = 256;
-        for (int done = 0; done < num_frames; done += block)
-            render_block(sys, buffer + done * 2, std::min(block, num_frames - done));
+        int done = 0;
+        while (done < num_frames) {
+            int n = std::min(block, num_frames - done);
+            // A block ends on the last frame before a queued command is due,
+            // so a pattern it starts still sees the downbeat of its cycle
+            if (!sys->sched.empty()) {
+                double cps = sys->bpm / 60.0 / 4.0;
+                double at = sys->next_sched_at();
+                double k = std::floor((at - sys->seq_time) * SAMPLE_RATE / cps + 1e-9);
+                if (k <= 0) {
+                    sys->run_sched(std::max(at, sys->seq_time));
+                    continue;
+                }
+                if (k < n) n = (int)k;
+            }
+            render_block(sys, buffer + done * 2, n);
+            done += n;
+        }
     }
 
     static void render_block(SoundSystem* sys, float* buffer, int num_frames) {
@@ -1969,7 +2030,7 @@ void register_sound_builtins(VM& vm) {
             layer.pending = pat;
             layer.has_pending = true;
         } else {
-            if (idle) g_sound.reset_clock();
+            if (idle && !g_sound.in_sched) g_sound.reset_clock();
             layer.pat = pat;
             layer.events.clear();
             layer.built_cycle = INT64_MIN;
@@ -2382,6 +2443,8 @@ void register_sound_builtins(VM& vm) {
             l.built_cycle = INT64_MIN;
         }
         g_sound.reset_clock();
+        g_sound.sched.clear();
+        g_sound.sched_at = -1.0;
         g_sound.distortion_amount = 0;
         g_sound.compressor_active = false;
         g_sound.master_fixed = false;
@@ -2401,6 +2464,62 @@ void register_sound_builtins(VM& vm) {
         sound_shutdown();
         return Value::make_none();
     });
+
+    // ── SOUND.AT [cycle] / SOUND.PENDING() ──────────────────────
+    // After SOUND.AT c, the track and mix commands below are queued and
+    // the mixer applies them on the frame the clock reaches cycle c.
+    // SOUND.AT with no argument or a negative one applies them at once.
+
+    vm.register_native("SOUND.AT", 0, 1, [](const std::vector<Value>& args) -> Value {
+        g_sound.sched_at = args.empty() ? -1.0 : args[0].to_double();
+        return Value::make_none();
+    });
+
+    vm.register_native("SOUND.PENDING", 0, 0, [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        if (!g_sound.initialized) return Value::make_i64(0);
+        SND_LOCK();
+        int64_t n = (int64_t)g_sound.sched.size();
+        SND_UNLOCK();
+        return Value::make_i64(n);
+    });
+
+    static const char* const schedulable[] = {
+        "SOUND.SEQ", "SOUND.NOTE", "SOUND.VOICE", "SOUND.BPM", "SOUND.GAIN",
+        "SOUND.PAN", "SOUND.FILTER", "SOUND.FENV", "SOUND.MOD", "SOUND.EQ",
+        "SOUND.LFO", "SOUND.FM", "SOUND.UNISON", "SOUND.BITCRUSH",
+        "SOUND.RINGMOD", "SOUND.REVERBSEND", "SOUND.DELAYSEND",
+        "SOUND.SIDECHAIN", "SOUND.SCALE", "SOUND.DELAY", "SOUND.REVERB",
+        "SOUND.NUDGE", "SOUND.ORBIT", "SOUND.COMPRESSOR", "SOUND.DISTORTION",
+        "SOUND.MASTER"};
+    for (const char* name : schedulable) {
+        const VM::NativeEntry* e = vm.native_find(name);
+        if (!e) continue;
+        VM::NativeFunc raw = e->fn;
+        int lo = e->min_args, hi = e->max_args;
+        std::string nm = name;
+        vm.register_native(name, lo, hi, [raw, nm](const std::vector<Value>& args) -> Value {
+            if (g_sound.sched_at < 0 || !g_sound.initialized) return raw(args);
+            if (nm == "SOUND.SEQ") {
+                try { jdpat::parse(args[1].to_string()); }
+                catch (const std::exception& ex) {
+                    throw jdError(ErrCode::RUNTIME_ERROR, std::string("SOUND.SEQ: ") + ex.what());
+                }
+            }
+            std::vector<Value> copy;
+            for (auto& a : args) {
+                if (a.type == ValueType::ARRAY || a.type == ValueType::OBJECT || a.type == ValueType::TENSOR)
+                    throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.AT: " + nm + " takes no array or map while scheduling");
+                copy.push_back(a.type == ValueType::STRING ? Value::make_string(a.to_string()) : a);
+            }
+            SND_LOCK();
+            bool later = g_sound.sched_at > g_sound.seq_time + 1e-9;
+            if (later)
+                g_sound.sched.push_back({g_sound.sched_at, g_sound.sched_order++, nm, raw, std::move(copy)});
+            SND_UNLOCK();
+            return later ? Value::make_none() : raw(args);
+        });
+    }
 }
 
 #endif // GFX

@@ -44,6 +44,7 @@ The sequencer divides time into "cycles". You can arrange events within a cycle 
   * **Repeat / weight / hold** (`a!3`, `a@3`, `_`), **chance** (`a?0.3`), **random choice** (`a | b`).
   * **Euclidean** (`a(k,n,rot)`): `"c2(3,8)"` spreads 3 hits over 8 steps.
   * A playing layer switches to a new pattern at the next cycle. `SOUND.EVENTS$(pattern$, cycles)` lists the events without playing them.
+  * **`SOUND.AT cycle`** queues the commands after it for that cycle, applied on its exact frame: `SOUND.AT 72` then `SOUND.SEQ 0, "bd*4", "VOICE"`, then `SOUND.AT` to apply at once again. A whole arrangement can be sent ahead this way; `SOUND.PENDING()` counts what is still queued. `jdb/demos/sound/score.jdb` wraps it into section verbs.
   * Full table: languages.md, "Pattern Syntax".
 
 * **`SOUND.FILTER track, cutoff, [resonance], [mode$]`**: resonant `"LP"`/`"HP"`/`"BP"` when a resonance or mode is given.
@@ -153,6 +154,8 @@ All design commands (`SOUND.VOICE` / `SEQ` / `NOTE` / `FM` / `UNISON` / `REVERB`
 |  | `SOUND.RESET` | none | Clear all sound/patterns |
 | **Sequencer** | `SOUND.SEQ` | `track, pattern$, wave$` | Define rhythmic pattern |
 |  | `SOUND.SCALE` | `track, root$, mode$` | Quantize pattern notes to scale |
+|  | `SOUND.AT` | `[cycle]` | Queue the following commands for a cycle |
+|  | `SOUND.PENDING` | none | Commands still queued |
 | **Track FX** | `SOUND.GAIN` | `track, volume` | Per-track volume |
 |  | `SOUND.PAN` | `track, position` | Per-track stereo position |
 |  | `SOUND.FILTER` | `track, frequency` | Per-track low-pass filter |

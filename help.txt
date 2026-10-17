@@ -2908,6 +2908,10 @@ a kit file (one line per sound: name, WAV files, optional gain= and choke=) or a
 Each hit plays its whole sample; a hit cuts its choke group (hh stops oh). SOUND.KIT track alone removes the kit.
 Example: SOUND.KIT 0, "SYNTH" : SOUND.SEQ 0, "bd*4, ~ cp, [hh oh]*4", "VOICE"
 
+[SOUND.PENDING]
+Syntax: SOUND.PENDING() -> number
+Description: Returns how many commands SOUND.AT has queued that the mixer has not applied yet.
+
 [SOUND.PLAY]
 Syntax: SOUND.PLAY(track, frequency)
 Description: Plays a note at a specific frequency on a given synthesizer track.
@@ -2935,6 +2939,10 @@ Description: Returns the number of bytes still waiting in the PLAYBUFFER queue. 
 [SOUND.VOICE]
 Syntax: SOUND.VOICE track, waveform$, attack, decay, sustain, release
 Description: Configures the ADSR envelope and waveform for a synthesizer track.
+
+[SOUND.AT]
+Syntax: SOUND.AT [cycle]
+Description: Queues the following track and mix commands (SEQ, MOD, FILTER, GAIN, VOICE, ...) for the given sequencer cycle; the mixer applies them on the frame the clock reaches it. No argument or a negative cycle applies commands at once again.
 
 [SOUND.BITCRUSH]
 Syntax: SOUND.BITCRUSH track, bits, rate

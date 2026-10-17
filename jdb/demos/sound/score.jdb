@@ -1,0 +1,247 @@
+' score.jdb - the verbs a song's score is written in, and a log of
+' what the score plays when, for whatever watches the song (STAGE).
+'
+' Every verb is queued with SOUND.AT for the bar of its section, so a
+' whole score is sent in one go before the first note; the mixer then
+' applies each change on the exact frame its bar begins.
+'
+'   SCORE.TEMPO 138
+'   SCORE.TRACK 0, "KICK"
+'   SCORE.SECTION 16, "build: bass", "shuffle"
+'   SCORE.PLAY 0, "bd*4"
+'   SCORE.SWEEP 5, "CUTOFF", "SAW", 300, 2200, 8, 0
+'   SCORE.QUIET 0
+'   SCORE.FINE 186
+
+EXPORT MODULE SCORE
+
+DIM MAX_TRACKS AS INTEGER = 16
+DIM bpm AS DOUBLE = 120
+DIM at_bar AS DOUBLE = 0
+DIM end_bar AS DOUBLE = 0
+DIM track_names$ = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+
+' sections: bar, name, mood
+DIM sec_bar = [0.0]
+DIM sec_name$ = [""]
+DIM sec_mood$ = [""]
+DIM n_sec AS INTEGER = 0
+
+' track starts and stops: bar, track, 1 or 0
+DIM ev_bar = [0.0]
+DIM ev_track = [0]
+DIM ev_on = [0]
+DIM n_ev AS INTEGER = 0
+
+' sweeps: the bars they run between, track, parameter and shape
+DIM sw_from = [0.0]
+DIM sw_to = [0.0]
+DIM sw_track = [0]
+DIM sw_param$ = [""]
+DIM sw_shape$ = [""]
+DIM sw_lo = [0.0]
+DIM sw_hi = [0.0]
+DIM sw_cyc = [1.0]
+DIM sw_off = [0.0]
+DIM n_sw AS INTEGER = 0
+
+DIM NEVER AS DOUBLE = 1000000000
+
+EXPORT SUB TEMPO(b AS DOUBLE)
+    bpm = b
+    SOUND.BPM b
+ENDSUB
+
+EXPORT SUB TRACK(t AS INTEGER, name$)
+    track_names$[t] = name$
+ENDSUB
+
+' Starts a section: the verbs below act on its first bar
+EXPORT SUB SECTION(b AS DOUBLE, name$, mood$)
+    AT b
+    IF n_sec = 0 THEN
+        sec_bar[0] = b
+        sec_name$[0] = name$
+        sec_mood$[0] = mood$
+    ELSE
+        sec_bar = APPEND(sec_bar, b)
+        sec_name$ = APPEND(sec_name$, name$)
+        sec_mood$ = APPEND(sec_mood$, mood$)
+    ENDIF
+    n_sec = n_sec + 1
+ENDSUB
+
+' The verbs below act on bar b, inside a section too
+EXPORT SUB AT(b AS DOUBLE)
+    at_bar = b
+    SOUND.AT b
+ENDSUB
+
+SUB LOG_TRACK(t AS INTEGER, v AS INTEGER)
+    IF n_ev = 0 THEN
+        ev_bar[0] = at_bar
+        ev_track[0] = t
+        ev_on[0] = v
+    ELSE
+        ev_bar = APPEND(ev_bar, at_bar)
+        ev_track = APPEND(ev_track, t)
+        ev_on = APPEND(ev_on, v)
+    ENDIF
+    n_ev = n_ev + 1
+ENDSUB
+
+EXPORT SUB PLAY(t AS INTEGER, pat$)
+    SOUND.SEQ t, pat$, "VOICE"
+    LOG_TRACK t, 1
+ENDSUB
+
+EXPORT SUB QUIET(t AS INTEGER)
+    SOUND.SEQ t, "", "VOICE"
+    LOG_TRACK t, 0
+ENDSUB
+
+SUB END_SWEEP(t AS INTEGER, param$)
+    DIM i AS INTEGER
+    FOR i = 0 TO n_sw - 1
+        IF sw_track[i] = t ANDALSO sw_param$[i] = param$ ANDALSO sw_to[i] = NEVER THEN sw_to[i] = at_bar
+    NEXT i
+ENDSUB
+
+EXPORT SUB SWEEP(t AS INTEGER, param$, shape$, lo AS DOUBLE, hi AS DOUBLE, cycles AS DOUBLE, offset AS DOUBLE)
+    SOUND.MOD t, param$, shape$, lo, hi, cycles, offset
+    END_SWEEP t, param$
+    IF n_sw = 0 THEN
+        sw_from[0] = at_bar
+        sw_to[0] = NEVER
+        sw_track[0] = t
+        sw_param$[0] = param$
+        sw_shape$[0] = shape$
+        sw_lo[0] = lo
+        sw_hi[0] = hi
+        sw_cyc[0] = cycles
+        sw_off[0] = offset
+    ELSE
+        sw_from = APPEND(sw_from, at_bar)
+        sw_to = APPEND(sw_to, NEVER)
+        sw_track = APPEND(sw_track, t)
+        sw_param$ = APPEND(sw_param$, param$)
+        sw_shape$ = APPEND(sw_shape$, shape$)
+        sw_lo = APPEND(sw_lo, lo)
+        sw_hi = APPEND(sw_hi, hi)
+        sw_cyc = APPEND(sw_cyc, cycles)
+        sw_off = APPEND(sw_off, offset)
+    ENDIF
+    n_sw = n_sw + 1
+ENDSUB
+
+EXPORT SUB SWEEP_OFF(t AS INTEGER, param$)
+    SOUND.MOD t, param$, "OFF"
+    END_SWEEP t, param$
+ENDSUB
+
+' The song ends on bar b; later verbs act at once again
+EXPORT SUB FINE(b AS DOUBLE)
+    end_bar = b
+    at_bar = 0
+    SOUND.AT
+ENDSUB
+
+' ── Queries ──────────────────────────────────────────────────────
+
+EXPORT FUNC BPM_OF() AS DOUBLE
+    RETURN bpm
+ENDFUNC
+
+EXPORT FUNC END_BAR() AS DOUBLE
+    RETURN end_bar
+ENDFUNC
+
+EXPORT FUNC TRACK_NAME$(t AS INTEGER) AS STRING
+    RETURN track_names$[t]
+ENDFUNC
+
+' The track called name$, or -1
+EXPORT FUNC TRACK_OF(name$) AS INTEGER
+    DIM t AS INTEGER
+    FOR t = 0 TO MAX_TRACKS - 1
+        IF track_names$[t] = name$ THEN RETURN t
+    NEXT t
+    RETURN -1
+ENDFUNC
+
+EXPORT FUNC SECTIONS() AS INTEGER
+    RETURN n_sec
+ENDFUNC
+
+' The section playing at cycle cyc, or -1 before the first
+EXPORT FUNC SECTION_AT(cyc AS DOUBLE) AS INTEGER
+    DIM i AS INTEGER
+    DIM found AS INTEGER = -1
+    FOR i = 0 TO n_sec - 1
+        IF sec_bar[i] <= cyc THEN found = i
+    NEXT i
+    RETURN found
+ENDFUNC
+
+EXPORT FUNC SECTION_BAR(i AS INTEGER) AS DOUBLE
+    RETURN sec_bar[i]
+ENDFUNC
+
+EXPORT FUNC SECTION_NAME$(i AS INTEGER) AS STRING
+    RETURN sec_name$[i]
+ENDFUNC
+
+EXPORT FUNC SECTION_MOOD$(i AS INTEGER) AS STRING
+    RETURN sec_mood$[i]
+ENDFUNC
+
+' 1 for every track that plays at cycle cyc, one entry per track
+EXPORT FUNC LIVE_AT(cyc AS DOUBLE)
+    DIM live = RESHAPE([0], [16])
+    DIM since = RESHAPE([-1.0], [16])
+    DIM i AS INTEGER
+    FOR i = 0 TO n_ev - 1
+        IF ev_bar[i] <= cyc ANDALSO ev_bar[i] >= since[ev_track[i]] THEN
+            live[ev_track[i]] = ev_on[i]
+            since[ev_track[i]] = ev_bar[i]
+        ENDIF
+    NEXT i
+    RETURN live
+ENDFUNC
+
+EXPORT FUNC SWEEPS() AS INTEGER
+    RETURN n_sw
+ENDFUNC
+
+' Whether sweep i runs at cycle cyc
+EXPORT FUNC SWEEP_ON(i AS INTEGER, cyc AS DOUBLE) AS INTEGER
+    RETURN sw_from[i] <= cyc ANDALSO cyc < sw_to[i]
+ENDFUNC
+
+EXPORT FUNC SWEEP_TRACK(i AS INTEGER) AS INTEGER
+    RETURN sw_track[i]
+ENDFUNC
+
+EXPORT FUNC SWEEP_PARAM$(i AS INTEGER) AS STRING
+    RETURN sw_param$[i]
+ENDFUNC
+
+EXPORT FUNC SWEEP_SHAPE$(i AS INTEGER) AS STRING
+    RETURN sw_shape$[i]
+ENDFUNC
+
+EXPORT FUNC SWEEP_LO(i AS INTEGER) AS DOUBLE
+    RETURN sw_lo[i]
+ENDFUNC
+
+EXPORT FUNC SWEEP_HI(i AS INTEGER) AS DOUBLE
+    RETURN sw_hi[i]
+ENDFUNC
+
+EXPORT FUNC SWEEP_CYCLES(i AS INTEGER) AS DOUBLE
+    RETURN sw_cyc[i]
+ENDFUNC
+
+EXPORT FUNC SWEEP_OFFSET(i AS INTEGER) AS DOUBLE
+    RETURN sw_off[i]
+ENDFUNC

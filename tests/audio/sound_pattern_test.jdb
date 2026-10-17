@@ -462,5 +462,86 @@ CATCH
 ENDTRY
 CHECK "missing kit file", INSTR(err_msg, "no_such_kit.txt") >= 0, "msg=" + err_msg
 
+' ---------- 3. SOUND.AT: commands queued for a cycle ----------
+' a pattern sent in cycle 0 for cycle 2 starts on its first frame
+SOUND.RESET
+n = TRIGGERS()
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.AT 2
+SOUND.SEQ 0, "c4", "VOICE"
+SOUND.AT
+CHECK "AT queues", SOUND.PENDING() = 1, "pending=" + STR$(SOUND.PENDING())
+buf = SOUND.RENDER(CYC * 3)
+CHECK "AT silent before", RMS(buf, CYC * 2 - 400, CYC * 2 - 2) < 0.0001, "rms=" + STR$(RMS(buf, CYC * 2 - 400, CYC * 2 - 2))
+CHECK "AT sounds on the bar", RMS(buf, CYC * 2 + 60, CYC * 2 + 400) > 0.3, "rms=" + STR$(RMS(buf, CYC * 2 + 60, CYC * 2 + 400))
+CHECK "AT applied", SOUND.PENDING() = 0, "pending=" + STR$(SOUND.PENDING())
+CHECK "AT one note", TRIGGERS() = 1, ""
+
+' at a tempo whose bar is no whole number of frames the downbeat survives
+SOUND.RESET
+SOUND.BPM 138
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.VOICE 1, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.SEQ 1, "c3", "VOICE"
+SOUND.AT 3
+SOUND.SEQ 0, "c4*4", "VOICE"
+SOUND.AT
+DIM fpb138 AS DOUBLE = 44100 * 240 / 138
+buf = SOUND.RENDER(INT(fpb138 * 3))
+n = TRIGGERS()
+buf = SOUND.RENDER(INT(fpb138))
+CHECK "AT keeps the downbeat", TRIGGERS() = 5, ""
+SOUND.BPM 240
+
+' a playing pattern swaps on the target cycle, the later of two sends wins
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.SEQ 0, "c4*4", "VOICE"
+SOUND.AT 1
+SOUND.SEQ 0, "c4*2", "VOICE"
+SOUND.SEQ 0, "c4*8", "VOICE"
+SOUND.AT
+n = TRIGGERS()
+buf = SOUND.RENDER(CYC)
+CHECK "AT old until the bar", TRIGGERS() = 4, ""
+buf = SOUND.RENDER(CYC)
+CHECK "AT later send wins", TRIGGERS() = 8, ""
+
+' a parameter changes on the frame of a fractional target
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.SEQ 0, "legato(1, c4)", "VOICE"
+SOUND.AT 0.5
+SOUND.GAIN 0, 0
+SOUND.AT
+buf = SOUND.RENDER(CYC)
+CHECK "AT gain before", RMS(buf, 18000, 22000) > 0.3, "rms=" + STR$(RMS(buf, 18000, 22000))
+CHECK "AT gain after", RMS(buf, 23500, 30000) < 0.01, "rms=" + STR$(RMS(buf, 23500, 30000))
+
+' a target already reached applies at once
+SOUND.AT 0
+SOUND.GAIN 0, 1
+SOUND.AT
+CHECK "AT past applies now", SOUND.PENDING() = 0, "pending=" + STR$(SOUND.PENDING())
+
+' a bad pattern fails when sent, not when due
+err_msg = ""
+SOUND.AT 9
+TRY
+    SOUND.SEQ 0, "[c4", "VOICE"
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+SOUND.AT
+CHECK "AT checks the pattern", INSTR(err_msg, "SOUND.SEQ") >= 0 ANDALSO SOUND.PENDING() = 0, "msg=" + err_msg
+
+' RESET empties the queue and leaves scheduling
+SOUND.AT 9
+SOUND.SEQ 0, "c4", "VOICE"
+SOUND.RESET
+CHECK "RESET clears the queue", SOUND.PENDING() = 0, "pending=" + STR$(SOUND.PENDING())
+SOUND.SEQ 0, "c4", "VOICE"
+CHECK "RESET ends AT", SOUND.PENDING() = 0, "pending=" + STR$(SOUND.PENDING())
+
 SOUND.RESET
 PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
