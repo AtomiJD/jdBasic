@@ -22,6 +22,11 @@
 #include <atomic>
 #include <memory>
 
+#ifdef GFX
+void gfx_shutdown();
+void sound_shutdown();
+#endif
+
 // MSVC's _strdup is POSIX strdup with an underscore prefix. Map them so
 // the call sites stay portable.
 #if !defined(_WIN32)
@@ -288,7 +293,18 @@ JDRT_API JdRT jdrt_init(void) {
     return (JdRT)rt;
 }
 
+// The program's end, as in the interpreter: the window and the audio
+// device close while the process is whole. Left to the DLL's atexit
+// handler they close after the graphics driver has gone.
+JDRT_API void jdrt_close_devices(void) {
+#ifdef GFX
+    sound_shutdown();
+    gfx_shutdown();
+#endif
+}
+
 JDRT_API void jdrt_shutdown(JdRT handle) {
+    if ((JdRTImpl*)handle == g_primary_rt) jdrt_close_devices();
     delete (JdRTImpl*)handle;
 }
 

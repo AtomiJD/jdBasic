@@ -267,15 +267,28 @@ int64_t jdb_err_code_visible() {
 // `END <code>`: the program asked for this exit status, from wherever it
 // stands. Matches the interpreter, which halts the whole run rather than
 // returning from the enclosing FUNC.
+// The window and the audio device close before exit() runs the atexit
+// handlers, which would reach a graphics driver that is already gone.
+#ifdef _WIN32
+__declspec(dllimport)
+#endif
+void jdrt_close_devices(void);
+
+static void close_devices() {
+    jdrt_close_devices();
+}
+
 void jdb_end_program(int64_t code) {
     fflush(stdout);
     fflush(stderr);
+    close_devices();
     exit((int)code);
 }
 
 void jdb_throw_uncaught() {
     fprintf(stderr, "Unhandled exception: %s\n", g_err_msg);
     fflush(stderr);
+    close_devices();
     exit(1);
 }
 

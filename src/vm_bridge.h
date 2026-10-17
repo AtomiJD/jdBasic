@@ -28,6 +28,9 @@ JDRT_API JdRT  jdrt_init(void);
 // Shutdown the runtime (destroys VM)
 JDRT_API void  jdrt_shutdown(JdRT rt);
 
+// Close the window and the audio device, before exit()
+JDRT_API void  jdrt_close_devices(void);
+
 // Call a function by name, passing args as doubles.
 // Returns the result as double. Strings are pointer-encoded.
 JDRT_API double jdrt_call_f64(JdRT rt, const char* name,
