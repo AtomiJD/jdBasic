@@ -2,7 +2,8 @@
 ' live-coding set grows: kick, hats, offbeat bass, supersaw arpeggio
 ' with a filter sweep, chord pad.
 '
-' Shows the sequencer's mini-notation (<...> chord changes, a*n, euclid),
+' Shows the sequencer's mini-notation (<...> chord changes, a*n, euclid,
+' arp, jux, sometimes),
 ' SOUND.MOD sweeps locked to the bar, the resonant filter with SOUND.FENV,
 ' and sidechain pumping. Each new pattern starts on the next bar.
 
@@ -51,7 +52,7 @@ SOUND.SIDECHAIN 4, 0, 0.8
 SOUND.REVERBSEND 4, 0.7
 SOUND.GAIN 4, 0.35
 
-DIM ARP$ AS STRING = "<[a3 c4 e4 a4]*2 [f3 a3 c4 f4]*2 [c4 e4 g4 c5]*2 [g3 b3 d4 g4]*2>"
+DIM ARP$ AS STRING = "arp(up, <[a3,c4,e4,a4]*2 [f3,a3,c4,f4]*2 [c4,e4,g4,c5]*2 [g3,b3,d4,g4]*2>)"
 DIM PAD$ AS STRING = "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>"
 DIM BASS$ AS STRING = "<[~ a1]*4 [~ f1]*4 [~ c2]*4 [~ g1]*4>"
 
@@ -60,7 +61,7 @@ SOUND.SEQ 0, "bd*4", "VOICE"
 WAIT_BARS BARS_PER_PART
 
 PRINT "hats"
-SOUND.SEQ 1, "[~ oh]*4, ~ cp ~ cp, sh(5,16,2)?0.6", "VOICE"
+SOUND.SEQ 1, "[~ oh]*4, ~ cp ~ cp, sometimes(ply(2), sh(5,16,2)?0.6)", "VOICE"
 WAIT_BARS BARS_PER_PART
 
 PRINT "bass"
@@ -85,7 +86,8 @@ PRINT "drop"
 SOUND.MOD 3, "RESONANCE", "OFF"
 SOUND.SEQ 0, "bd*4", "VOICE"
 SOUND.SEQ 2, BASS$, "VOICE"
-SOUND.SEQ 3, "<[a3 c4 e4 a4 e5 a4 e4 c4]*2 [f3 a3 c4 f4 c5 f4 c4 a3]*2 [c4 e4 g4 c5 g5 c5 g4 e4]*2 [g3 b3 d4 g4 d5 g4 d4 b3]*2>", "VOICE"
+SOUND.GAIN 3, 0.35
+SOUND.SEQ 3, "juxBy(0.6, rev, arp(updown, <[a3,c4,e4,a4,e5]*2 [f3,a3,c4,f4,c5]*2 [c4,e4,g4,c5,g5]*2 [g3,b3,d4,g4,d5]*2>))", "VOICE"
 WAIT_BARS 2 * BARS_PER_PART
 
 PRINT "end"

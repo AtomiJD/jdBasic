@@ -3347,6 +3347,37 @@ space-separated steps, in the mini-notation of TidalCycles and Strudel.
 
 Modifiers combine and nest: `"<[c3 e3]*2 g3(3,8)>"`.
 
+##### Pattern Transforms
+
+A transform wraps a pattern like a function call, the pattern always last:
+`"every(4, rev, c3 e3 g3 b3)"`. Transforms nest, sit anywhere a step can
+(`"[bd*4, rev(hh sd hh)]"`) and take modifiers afterwards (`"rev(a b)*2"`).
+Names are not case-sensitive.
+
+| Transform | Effect |
+| --- | --- |
+| `rev(p)` | Each cycle backwards |
+| `palindrome(p)` | Every other cycle backwards |
+| `fast(n, p)`, `slow(n, p)` | n times as fast or slow, like `[p]*n` and `[p]/n` |
+| `ply(n, p)` | Each event repeated n times in its own time |
+| `iter(n, p)` | Starts each cycle 1/n later into the pattern, wrapping around |
+| `add(n, p)` | Notes n semitones higher (negative: lower); scale degrees n degrees higher; drum names unchanged |
+| `arp(mode, p)` | Plays each chord as a run: `up`, `down`, `updown`, `downup` |
+| `degrade(p)`, `degradeBy(x, p)` | Drops half the events, or the share x |
+| `every(n, F, p)` | Applies F on every n-th cycle, starting with cycle 0 |
+| `off(t, F, p)` | Adds a copy with F applied, t cycles later |
+| `jux(F, p)`, `juxBy(w, F, p)` | Plays p on the left and p with F on the right; `juxBy` spreads them by w (0-1) |
+| `sometimes(F, p)` | Applies F to half the events; `often` 3/4, `rarely` 1/4, `almostNever`, `almostAlways`, `sometimesBy(x, F, p)` |
+
+`F` is a transform written without its pattern: `rev`, `add(12)`, `fast(2)`,
+`every(2, add(7))`. The random choices of `degrade` and `sometimes` depend
+on the event's time, so a pattern plays the same way every time.
+
+```basic
+SOUND.SEQ 0, "jux(rev, off(0.125, add(7), arp(updown, <[a3,c4,e4] [f3,a3,c4]>)))", "VOICE"
+SOUND.SEQ 1, "every(4, fast(2), bd*4), sometimes(ply(2), hh*8)", "VOICE"
+```
+
 A layer that is already playing switches to a new pattern at the start of
 the next cycle, so re-sending a pattern while live coding never breaks
 the bar. A layer without a pattern starts at once, in step with the
@@ -3357,7 +3388,8 @@ others, and the first pattern of a silent sequencer starts a new cycle.
 
 Lists the events a pattern plays over `cycles` cycles (default 1) from
 cycle `first` (default 0), one line each: `start duration note`, with
-times in cycles and `?p` after the note when it plays with a probability.
+times in cycles, `?p` after the note when it plays with a probability and
+`pan=x` when a transform such as `jux` places it in the stereo field.
 It needs no `SOUND.INIT`, so it shows what a pattern does before it is
 heard. A malformed pattern raises an error naming the position, here and
 in `SOUND.SEQ`.

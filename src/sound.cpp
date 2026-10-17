@@ -201,6 +201,7 @@ struct Voice {
     float sample_rate_ratio = 1.0f;
     float sample_pos = 0.0f;
     float sample_gain = 1.0f;
+    float pan = -1.0f;  // below 0: the track pan
     bool sample_loop = false;
     // Sequencer timing: frames until the onset, then frames until gate-off
     bool seq_controlled = false;
@@ -312,6 +313,7 @@ struct SeqEvent {
     double duration;     // in phase units
     std::string note;    // note name or frequency
     float probability = 1.0f;
+    float pan = -1.0f;  // below 0: the track pan
     bool triggered = false;
 };
 
@@ -692,8 +694,9 @@ static struct SoundSystem {
         // Envelope
         float env = v.env.process(dt);
 
-        out_l = sample_l * env * tp.gain * (1.0f - tp.pan) * 2.0f;
-        out_r = sample_r * env * tp.gain * tp.pan * 2.0f;
+        float pan = v.pan >= 0.0f ? v.pan : tp.pan;
+        out_l = sample_l * env * tp.gain * (1.0f - pan) * 2.0f;
+        out_r = sample_r * env * tp.gain * pan * 2.0f;
     }
 
     // Scale degree to frequency
@@ -895,6 +898,7 @@ static struct SoundSystem {
             v.sample_gain = it->second.gain;
             v.sample_loop = false;
             v.seq_controlled = true;
+            v.pan = ev.pan;
             v.delay_frames = (int64_t)(offset / phase_inc);
             v.gate_frames = -1;  // a hit plays its whole sample
             v.choke = it->second.choke;
@@ -917,6 +921,7 @@ static struct SoundSystem {
         v.phase = 0.0f;
         start_envelopes(v, tp);
         v.seq_controlled = true;
+        v.pan = ev.pan;
         v.delay_frames = (int64_t)(offset / phase_inc);
         v.gate_frames = (int64_t)(ev.duration / phase_inc);
         if (tp.waveform == Waveform::SAMPLE) {
@@ -984,6 +989,7 @@ static struct SoundSystem {
                             ev.duration = e.dur * 0.8;
                             ev.note = e.note;
                             ev.probability = e.prob;
+                            ev.pan = e.pan;
                             layer.events.push_back(ev);
                         }
                         layer.built_cycle = c;
@@ -1927,6 +1933,10 @@ void register_sound_builtins(VM& vm) {
                 out += e.note;
                 if (e.prob < 1.0f) {
                     std::snprintf(buf, sizeof buf, "?%.6g", e.prob);
+                    out += buf;
+                }
+                if (e.pan >= 0.0f) {
+                    std::snprintf(buf, sizeof buf, " pan=%.6g", e.pan);
                     out += buf;
                 }
             }

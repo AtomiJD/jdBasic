@@ -97,6 +97,51 @@ CHECK_STR "probability", "0 0.5 c3?0.25", EV$("c3?0.25 ~", 1)
 CHECK_STR "default probability", "0 0.5 a?0.5" + NL + "0.5 0.5 b", EV$("a? b", 1)
 CHECK_STR "old repeat", "0 0.25 c4" + NL + "0.25 0.25 c4" + NL + "0.5 0.25 c4" + NL + "0.75 0.25 c4", EV$("c4*4", 1)
 CHECK_STR "later cycles", "2 1 c", SOUND.EVENTS$("<a b c>", 1, 2)
+CHECK "thirds stay in their cycle", LEN(SPLIT(EV$("a b c", 3), NL)) = 9, EV$("a b c", 3)
+
+' ---------- 1b. Transforms ----------
+CHECK_STR "rev", "0 0.25 c" + NL + "0.25 0.25 b" + NL + "0.5 0.5 a", EV$("rev(a [b c])", 1)
+CHECK_STR "fast", "0 0.25 a" + NL + "0.25 0.25 b" + NL + "0.5 0.25 a" + NL + "0.75 0.25 b", EV$("fast(2, a b)", 1)
+CHECK_STR "slow", "0 1 a" + NL + "1 1 b", EV$("slow(2, a b)", 2)
+CHECK_STR "ply", "0 0.25 a" + NL + "0.25 0.25 a" + NL + "0.5 0.25 b" + NL + "0.75 0.25 b", EV$("ply(2, a b)", 1)
+CHECK_STR "add", "0 0.25 c4" + NL + "0.25 0.25 d#4" + NL + "0.5 0.25 12" + NL + "0.75 0.25 bd", EV$("add(12, c3 eb3 0 bd)", 1)
+CHECK_STR "add down", "0 1 b3", EV$("add(-1, c4)", 1)
+CHECK_STR "every", "0 1 c4" + NL + "1 1 c3" + NL + "2 1 c4", EV$("every(2, add(12), c3)", 3)
+CHECK_STR "off", "0 0.5 c3" + NL + "0.25 0.5 g3", EV$("off(0.25, add(7), c3 ~)", 1)
+CHECK_STR "jux", "0 0.5 a pan=0" + NL + "0 0.5 b pan=1" + NL + "0.5 0.5 b pan=0" + NL + "0.5 0.5 a pan=1", EV$("jux(rev, a b)", 1)
+CHECK_STR "juxBy", "0 1 a pan=0.25" + NL + "0 1 a pan=0.75", EV$("juxBy(0.5, rev, a)", 1)
+CHECK_STR "iter", "1 0.25 b" + NL + "1.25 0.25 c" + NL + "1.5 0.25 d" + NL + "1.75 0.25 a", SOUND.EVENTS$("iter(4, a b c d)", 1, 1)
+CHECK_STR "palindrome", "1 0.333333 c" + NL + "1.33333 0.333333 b" + NL + "1.66667 0.333333 a", SOUND.EVENTS$("palindrome(a b c)", 1, 1)
+CHECK_STR "arp up", "0 0.333333 c3" + NL + "0.333333 0.333333 e3" + NL + "0.666667 0.333333 g3", EV$("arp(up, [c3,e3,g3])", 1)
+CHECK_STR "arp updown", "0 0.125 c3" + NL + "0.125 0.125 e3" + NL + "0.25 0.125 g3" + NL + "0.375 0.125 e3", EV$("arp(updown, [c3,e3,g3] ~)", 1)
+CHECK_STR "arp down, chord changes", "1 0.333333 c4" + NL + "1.33333 0.333333 a3" + NL + "1.66667 0.333333 f3", SOUND.EVENTS$("arp(down, <[c3,e3,g3] [f3,a3,c4]>)", 1, 1)
+CHECK_STR "nested function", "0 0.5 c3" + NL + "0.25 0.5 c4" + NL + "1 0.5 c3" + NL + "1.25 0.5 c3", EV$("off(0.25, every(2, add(12)), c3 ~)", 2)
+CHECK_STR "transform then speed", "0 0.25 b" + NL + "0.25 0.25 a" + NL + "0.5 0.25 b" + NL + "0.75 0.25 a", EV$("rev(a b)*2", 1)
+CHECK_STR "transform inside a stack", "0 0.5 a" + NL + "0 0.25 c" + NL + "0.25 0.25 b" + NL + "0.5 0.5 d", EV$("[a, rev(b c)] d", 1)
+
+' degrade keeps about half, the same half every time; sometimes splits the events
+DIM deg$ AS STRING = EV$("degrade(a*64)", 1)
+DIM kept AS INTEGER = LEN(SPLIT(deg$, NL))
+CHECK "degrade keeps about half", kept > 20 ANDALSO kept < 44, "kept=" + STR$(kept)
+CHECK_STR "degrade is repeatable", deg$, EV$("degrade(a*64)", 1)
+DIM some$ AS STRING = EV$("sometimes(add(12), c3*64)", 1)
+DIM all_lines = SPLIT(some$, NL)
+DIM n_up AS INTEGER = LEN(SPLIT(EV$("sometimes(add(12), c3*64)", 1), "c4")) - 1
+CHECK "sometimes keeps every step", LEN(all_lines) = 64, "lines=" + STR$(LEN(all_lines))
+CHECK "sometimes changes about half", n_up > 20 ANDALSO n_up < 44, "changed=" + STR$(n_up)
+
+FUNC PARSE_ERR$(pattern$) AS STRING
+    TRY
+        DIM r AS STRING = SOUND.EVENTS$(pattern$, 1)
+    CATCH
+        RETURN ERRMSG$
+    ENDTRY
+    RETURN ""
+ENDFUNC
+CHECK "transform missing paren", INSTR(PARSE_ERR$("rev(a b"), "missing ')'") >= 0, PARSE_ERR$("rev(a b")
+CHECK "every needs a count", INSTR(PARSE_ERR$("every(0, rev, a)"), "at least 1") >= 0, PARSE_ERR$("every(0, rev, a)")
+CHECK "arp mode", INSTR(PARSE_ERR$("arp(sideways, a)"), "arp mode") >= 0, PARSE_ERR$("arp(sideways, a)")
+CHECK "unknown function", INSTR(PARSE_ERR$("every(2, foo, a)"), "transform expected") >= 0, PARSE_ERR$("every(2, foo, a)")
 
 ' random choice: one option per cycle, both options over 32 cycles
 DIM rnd$ AS STRING = EV$("a | b", 32)
@@ -143,6 +188,17 @@ buf = SOUND.RENDER(CYC)
 n = TRIGGERS()
 buf = SOUND.RENDER(CYC)
 CHECK "alternation plays", n + TRIGGERS() = 4, "n=" + STR$(n)
+
+' jux pans the copies apart: plain c4 left, the octave above right
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.GAIN 0, 0.2
+SOUND.SEQ 0, "jux(add(12), c4)", "VOICE"
+buf = SOUND.RENDER(8000)
+DIM jl AS DOUBLE = DIFF_RMS(buf, 2000, 7990) / RMS(buf, 2000, 7990)
+DIM right_buf = buf[IOTA(15998, 0) + 1]
+DIM jr AS DOUBLE = DIFF_RMS(right_buf, 2000, 7990) / RMS(right_buf, 2000, 7990)
+CHECK "jux right copy is higher", jr > jl * 1.8, "left=" + STR$(jl) + " right=" + STR$(jr)
 
 ' high-pass removes a low sine that the low-pass keeps
 SOUND.RESET

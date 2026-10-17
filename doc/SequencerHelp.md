@@ -17,7 +17,7 @@ This document provides a detailed reference for the `SOUND` and `SFX` modules in
 The sequencer programs rhythmic patterns into 8 available tracks (0-7).
 
 * **`SOUND.SEQ track, pattern$, waveform$`**: Programs a rhythmic pattern into a specific track.
-* **`pattern$`**: Space-separated tokens using mini-notation. Use `~` for rests and `[...]` for subdivisions.
+* **`pattern$`**: Space-separated tokens using mini-notation. Use `~` for rests and `[...]` for subdivisions. Transforms wrap a pattern: `"every(4, rev, c3 e3 g3)"`, `"jux(rev, ...)"`, `"arp(up, [c3,e3,g3])"`, `"off(0.125, add(7), ...)"` (see the Pattern Transforms table in languages.md).
 * **`waveform$`**: Options include `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`, or `"VOICE"`.
 
 * **`SOUND.KIT track, kit`**: Makes the track a drum kit, so pattern atoms name sounds: `SOUND.KIT 0, "SYNTH"` uses the built-in drums, or `SOUND.KIT 0, "jdb/demos/sound/SynthesizerPercussion-SFZ-20220718/kit.txt"` then `SOUND.SEQ 0, "bd [~ bd] sd hh:1", "VOICE"`. `kit` is `"SYNTH"`, a kit file or a MAP name -> WAV path or SFX id.
