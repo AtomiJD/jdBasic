@@ -1,13 +1,22 @@
 ' trance_live.jdb - "Kaiku in A minor", a five-minute trance track
-' played live by the sequencer, 184 bars at 138 BPM.
+' played live by the sequencer, 184 bars at 138 BPM, with a show:
+' two neon dancers, the scope, a spectrum skyline, the modulation
+' curves, beat-locked effects and a console window.
 '
 '   0 intro         16 build          32 main          56 breakdown
 '  72 drop         104 arp section   120 breakdown 2  136 final drop
 ' 168 outro        184 end
 '
+'   F    toggle fullscreen        Esc  quit
+'
+' Usage: jdBasic trance_live.jdb [--window] [--shots dir]
+'   --window  stay in a half-size window
+'   --shots   save a frame of every section into dir (implies --window)
+'
 ' Every section switch is a set of SOUND.SEQ calls sent just before the
 ' bar; the sequencer swaps them in on the downbeat. Parameter moves
-' (filters, modulation, routing) are sent once the bar has begun.
+' (filters, modulation, routing) are sent once the bar has begun. While
+' the arrangement waits for a bar, AT_BAR and ON_BAR draw frames.
 '
 ' Uses: the built-in drum kit with choke, mini-notation (<> chords,
 ' euclid, !, @, _, ?), transforms (arp, jux, juxBy, off, add, every,
@@ -20,38 +29,6 @@ OPTION "EXPLICIT"
 
 DIM BPM AS DOUBLE = 138
 DIM SEC_PER_BAR AS DOUBLE = 4 * 60 / BPM
-
-' ── Timing ───────────────────────────────────────────────────────
-
-SUB IDLE()
-    SLEEP 4
-ENDSUB
-
-' Returns just before bar b: patterns sent now take over on its downbeat
-SUB AT_BAR(b AS DOUBLE)
-    DO WHILE SOUND.CYCLE() < b - 0.05
-        IDLE()
-    LOOP
-ENDSUB
-
-' Returns once bar b has begun: for parameters that act at once
-SUB ON_BAR(b AS DOUBLE)
-    DO WHILE SOUND.CYCLE() < b
-        IDLE()
-    LOOP
-ENDSUB
-
-SUB SECTION(b AS INTEGER, name$)
-    AT_BAR b
-    DIM secs AS INTEGER = INT(b * SEC_PER_BAR)
-    DIM ss$ AS STRING = STR$(secs - 60 * INT(secs / 60))
-    IF LEN(ss$) < 2 THEN ss$ = "0" + ss$
-    PRINT STR$(INT(secs / 60)); ":"; ss$; "  bar "; b; "  "; name$
-ENDSUB
-
-SUB QUIET(t AS INTEGER)
-    SOUND.SEQ t, "", "VOICE"
-ENDSUB
 
 ' ── Tracks ───────────────────────────────────────────────────────
 
@@ -67,6 +44,793 @@ DIM RISER AS INTEGER = 8
 DIM CRASH AS INTEGER = 9
 DIM ROLL AS INTEGER = 10
 DIM FILL AS INTEGER = 11
+DIM N_TRACKS AS INTEGER = 12
+DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "PERC", "BASS", "ARP", "PAD", "LEAD", "RISER", "CRASH", "ROLL", "FILL"]
+
+' ── Show state ───────────────────────────────────────────────────
+
+DIM SW AS INTEGER = 1920
+DIM SH AS INTEGER = 1080
+DIM TWO_PI AS DOUBLE = 2 * MATH.PI
+DIM HORIZON AS DOUBLE = 640
+DIM FLOOR_Y AS DOUBLE = 905
+DIM N_BANDS AS INTEGER = 40
+DIM N_LOG AS INTEGER = 9
+DIM N_PART AS INTEGER = 200
+DIM MAX_MODS AS INTEGER = 12
+
+DIM windowed AS INTEGER = FALSE
+DIM shots$ AS STRING = ""
+DIM args_cli = OS.ARGS()
+DIM ai AS INTEGER
+FOR ai = 1 TO LEN(args_cli) - 1
+    IF args_cli[ai] = "--window" THEN windowed = TRUE
+    IF args_cli[ai] = "--shots" ANDALSO ai + 1 < LEN(args_cli) THEN shots$ = args_cli[ai + 1]
+NEXT ai
+IF shots$ <> "" THEN windowed = TRUE
+
+' what the arrangement has playing and modulating
+DIM t_on = RESHAPE([0], [12])
+DIM t_was = RESHAPE([0], [12])
+DIM t_bar = RESHAPE([0], [12])
+DIM mod_track = RESHAPE([0], [12])
+DIM mod_param$ = ["", "", "", "", "", "", "", "", "", "", "", ""]
+DIM mod_shape$ = ["", "", "", "", "", "", "", "", "", "", "", ""]
+DIM mod_lo = RESHAPE([0.0], [12])
+DIM mod_hi = RESHAPE([0.0], [12])
+DIM mod_cyc = RESHAPE([1.0], [12])
+DIM mod_off = RESHAPE([0.0], [12])
+DIM n_mods AS INTEGER = 0
+DIM log_lines$ = ["", "", "", "", "", "", "", "", ""]
+DIM mood$ AS STRING = "groove"
+DIM title$ AS STRING = ""
+DIM section_bar AS DOUBLE = 0
+
+DIM key_f_was AS INTEGER = FALSE
+DIM next_tick AS DOUBLE = 0
+DIM prev_cyc AS DOUBLE = 0
+DIM energy AS DOUBLE = 0
+DIM flash AS DOUBLE = 0
+DIM n_frames AS INTEGER = 0
+DIM frame_ms_sum AS DOUBLE = 0
+DIM frame_ms_max AS DOUBLE = 0
+DIM shot_at AS DOUBLE = -1
+DIM shot_name$ AS STRING = ""
+DIM font$ AS STRING = ""
+DIM spec = RESHAPE([0.0], [40])
+DIM band_lo = RESHAPE([0], [40])
+DIM band_hi = RESHAPE([0], [40])
+DIM p_x = RESHAPE([0.0], [200])
+DIM p_y = RESHAPE([0.0], [200])
+DIM p_vx = RESHAPE([0.0], [200])
+DIM p_vy = RESHAPE([0.0], [200])
+DIM p_life = RESHAPE([0.0], [200])
+DIM p_kind = RESHAPE([0], [200])
+DIM p_hue = RESHAPE([0.0], [200])
+DIM p_next AS INTEGER = 0
+DIM star_x = RND(160) * 1920
+DIM star_y = RND(160) * 600
+DIM star_ph = RND(160) * 6.283
+
+' FFT bands, spaced logarithmically from 86 Hz to 7.7 kHz
+DIM bi AS INTEGER
+FOR bi = 0 TO N_BANDS - 1
+    band_lo[bi] = INT(2 * 90 ^ (bi / N_BANDS))
+    band_hi[bi] = MAX([band_lo[bi] + 1, INT(2 * 90 ^ ((bi + 1) / N_BANDS))])
+NEXT bi
+
+FUNC FRACT(x AS DOUBLE) AS DOUBLE
+    RETURN x - INT(x)
+ENDFUNC
+
+FUNC CLAMP01(x AS DOUBLE) AS DOUBLE
+    IF x < 0 THEN RETURN 0
+    IF x > 1 THEN RETURN 1
+    RETURN x
+ENDFUNC
+
+FUNC CLOCK$(cyc AS DOUBLE) AS STRING
+    DIM secs AS INTEGER = INT(cyc * SEC_PER_BAR)
+    DIM ss$ AS STRING = STR$(secs - 60 * INT(secs / 60))
+    IF LEN(ss$) < 2 THEN ss$ = "0" + ss$
+    RETURN STR$(INT(secs / 60)) + ":" + ss$
+ENDFUNC
+
+' ── Arrangement verbs: play, record what plays for the show ──────
+
+' Whether track t sounds at cycle cyc
+FUNC LIVE(t AS INTEGER, cyc AS DOUBLE) AS INTEGER
+    IF cyc >= t_bar[t] THEN RETURN t_on[t]
+    RETURN t_was[t]
+ENDFUNC
+
+SUB MARK(t AS INTEGER, v AS INTEGER)
+    DIM now AS DOUBLE = SOUND.CYCLE()
+    t_was[t] = LIVE(t, now)
+    t_on[t] = v
+    t_bar[t] = INT(now + 0.5)
+ENDSUB
+
+SUB PLAY(t AS INTEGER, pat$)
+    SOUND.SEQ t, pat$, "VOICE"
+    MARK t, 1
+ENDSUB
+
+SUB QUIET(t AS INTEGER)
+    SOUND.SEQ t, "", "VOICE"
+    MARK t, 0
+ENDSUB
+
+SUB SWEEP_OFF(t AS INTEGER, param$)
+    SOUND.MOD t, param$, "OFF"
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    FOR i = n_mods - 1 TO 0 STEP -1
+        IF mod_track[i] = t ANDALSO mod_param$[i] = param$ THEN
+            FOR j = i TO n_mods - 2
+                mod_track[j] = mod_track[j + 1]
+                mod_param$[j] = mod_param$[j + 1]
+                mod_shape$[j] = mod_shape$[j + 1]
+                mod_lo[j] = mod_lo[j + 1]
+                mod_hi[j] = mod_hi[j + 1]
+                mod_cyc[j] = mod_cyc[j + 1]
+                mod_off[j] = mod_off[j + 1]
+            NEXT j
+            n_mods = n_mods - 1
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB SWEEP(t AS INTEGER, param$, shape$, lo AS DOUBLE, hi AS DOUBLE, cycles AS DOUBLE, offset AS DOUBLE)
+    SWEEP_OFF t, param$
+    SOUND.MOD t, param$, shape$, lo, hi, cycles, offset
+    IF n_mods >= MAX_MODS THEN EXITSUB
+    mod_track[n_mods] = t
+    mod_param$[n_mods] = param$
+    mod_shape$[n_mods] = shape$
+    mod_lo[n_mods] = lo
+    mod_hi[n_mods] = hi
+    mod_cyc[n_mods] = cycles
+    mod_off[n_mods] = offset
+    n_mods = n_mods + 1
+ENDSUB
+
+SUB LOG_LINE(s$)
+    PRINT s$
+    DIM i AS INTEGER
+    FOR i = 0 TO N_LOG - 2
+        log_lines$[i] = log_lines$[i + 1]
+    NEXT i
+    log_lines$[N_LOG - 1] = s$
+ENDSUB
+
+FUNC MOOD_OF$(name$) AS STRING
+    IF INSTR(name$, "riser") >= 0 THEN RETURN "rise"
+    IF INSTR(name$, "ping-pong") >= 0 THEN RETURN "pan"
+    IF INSTR(name$, "arp section") >= 0 THEN RETURN "robot"
+    IF INSTR(name$, "breakdown") >= 0 THEN RETURN "wave"
+    IF INSTR(name$, "drop") >= 0 THEN RETURN "jump"
+    IF INSTR(name$, "main") >= 0 THEN RETURN "jump"
+    IF INSTR(name$, "build") >= 0 THEN RETURN "shuffle"
+    IF name$ = "end" THEN RETURN "bye"
+    RETURN "groove"
+ENDFUNC
+
+' ── Drawing ──────────────────────────────────────────────────────
+
+' 0..1 values of a SOUND.MOD shape at the times x, in periods
+FUNC SHAPE_AT(shape$, x)
+    DIM fl = INT(x)
+    DIM fr = x - fl
+    IF shape$ = "SINE" THEN RETURN 0.5 + 0.5 * SIN(TWO_PI * fr)
+    IF shape$ = "COSINE" THEN RETURN 0.5 + 0.5 * COS(TWO_PI * fr)
+    IF shape$ = "SAW" THEN RETURN fr
+    IF shape$ = "ISAW" THEN RETURN 1 - fr
+    IF shape$ = "TRI" THEN RETURN 1 - ABS(2 * fr - 1)
+    IF shape$ = "SQUARE" THEN RETURN (fr >= 0.5) * 1
+    DIM ha = ABS(SIN(fl * 12.9898 + 78.233)) * 43758.5453
+    ha = ha - INT(ha)
+    IF shape$ = "RAND" THEN RETURN ha
+    DIM hb = ABS(SIN((fl + 1) * 12.9898 + 78.233)) * 43758.5453
+    hb = hb - INT(hb)
+    DIM sm = fr * fr * fr * (fr * (fr * 6 - 15) + 10)
+    RETURN ha + (hb - ha) * sm
+ENDFUNC
+
+' A glowing line: a wide dim halo under a bright core, drawn additively
+SUB NEON(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE, w AS INTEGER, r AS DOUBLE, g AS DOUBLE, b AS DOUBLE)
+    DIM dx AS DOUBLE = x2 - x1
+    DIM dy AS DOUBLE = y2 - y1
+    DIM ln AS DOUBLE = SQR(dx * dx + dy * dy) + 0.001
+    DIM nx AS DOUBLE = -dy / ln
+    DIM ny AS DOUBLE = dx / ln
+    DIM kh = (IOTA(2 * w + 5, 0) - (w + 2)) * 1.6
+    DRAWCOLOR INT(r * 0.16), INT(g * 0.16), INT(b * 0.16)
+    LINE STACK(1, x1 + nx * kh, y1 + ny * kh, x2 + nx * kh, y2 + ny * kh)
+    DIM kc = IOTA(2 * w + 1, 0) - w
+    DRAWCOLOR INT(r), INT(g), INT(b)
+    LINE STACK(1, x1 + nx * kc, y1 + ny * kc, x2 + nx * kc, y2 + ny * kc)
+ENDSUB
+
+SUB NEON_RING(x AS DOUBLE, y AS DOUBLE, rad AS DOUBLE, r AS DOUBLE, g AS DOUBLE, b AS DOUBLE)
+    DIM rh = rad + (IOTA(7, 0) - 3) * 1.6
+    DRAWCOLOR INT(r * 0.16), INT(g * 0.16), INT(b * 0.16)
+    CIRCLE STACK(1, rh * 0 + x, rh * 0 + y, rh)
+    DRAWCOLOR INT(r), INT(g), INT(b)
+    CIRCLE STACK(1, [x, x, x], [y, y, y], [rad - 1, rad, rad + 1])
+ENDSUB
+
+SUB FILL_HEART(x AS DOUBLE, y AS DOUBLE, s AS DOUBLE, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    DRAWCOLOR r, g, b
+    CIRCLE x - s * 0.5, y, s * 0.55, TRUE
+    CIRCLE x + s * 0.5, y, s * 0.55, TRUE
+    DIM ks = IOTA(INT(s * 1.3) + 1, 0)
+    DIM half = s * 1.05 * (1 - ks / (s * 1.3))
+    LINE STACK(1, x - half, y + ks, x + half, y + ks)
+ENDSUB
+
+' kind 0 sparks, 1 hearts, 2 confetti
+SUB SPAWN(kind AS INTEGER, x AS DOUBLE, y AS DOUBLE, n AS INTEGER, hue AS DOUBLE)
+    DIM i AS INTEGER
+    DIM a AS DOUBLE
+    DIM sp AS DOUBLE
+    FOR i = 1 TO n
+        a = RND(1) * TWO_PI
+        sp = 120 + RND(1) * 420
+        p_x[p_next] = x
+        p_y[p_next] = y
+        p_vx[p_next] = COS(a) * sp
+        p_vy[p_next] = SIN(a) * sp - 260
+        p_life[p_next] = 1.2 + RND(1) * 0.8
+        p_kind[p_next] = kind
+        p_hue[p_next] = hue + RND(1) * 1.5
+        IF kind = 1 THEN
+            p_vx[p_next] = (RND(1) - 0.5) * 60
+            p_vy[p_next] = -60 - RND(1) * 60
+            p_life[p_next] = 3 + RND(1)
+        ENDIF
+        p_next = p_next + 1
+        IF p_next >= N_PART THEN p_next = 0
+    NEXT i
+ENDSUB
+
+' One dancer. Every limb is an angle: 0 points down, +90 degrees right.
+SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOUBLE, cb AS DOUBLE)
+    DIM beat AS DOUBLE = cyc * 4
+    DIM bf AS DOUBLE = FRACT(beat)
+    DIM bn AS INTEGER = INT(beat)
+    DIM odd AS INTEGER = bn - 2 * INT(bn / 2)
+    DIM dip AS DOUBLE = 0.5 + 0.5 * COS(TWO_PI * bf)
+    DIM arc AS DOUBLE = SIN(MATH.PI * bf)
+    DIM s2 AS DOUBLE = SIN(TWO_PI * cyc / 2)
+    DIM side AS DOUBLE = 1
+    IF girl THEN side = -1
+    DIM hop AS DOUBLE = 0
+    DIM sway AS DOUBLE = 0
+    DIM lean AS DOUBLE = 0
+    DIM nod AS DOUBLE = 0
+    DIM tilt AS DOUBLE = 0
+    DIM lua AS DOUBLE = -0.3
+    DIM lfa AS DOUBLE = -0.2
+    DIM rua AS DOUBLE = 0.3
+    DIM rfa AS DOUBLE = 0.2
+    DIM lth AS DOUBLE = -0.14
+    DIM lsh AS DOUBLE = -0.06
+    DIM rth AS DOUBLE = 0.14
+    DIM rsh AS DOUBLE = 0.06
+
+    IF mood$ = "groove" THEN
+        lth = -0.12 - 0.3 * dip
+        rth = 0.12 + 0.3 * dip
+        lsh = 0.12 * dip
+        rsh = -0.12 * dip
+        lua = -0.35 - 0.2 * dip
+        rua = 0.35 + 0.2 * dip
+        lfa = 2.95 - 0.45 * dip
+        rfa = -2.95 + 0.45 * dip
+        nod = 6 * dip
+        sway = 10 * s2 * side
+    ELSEIF mood$ = "shuffle" THEN
+        IF odd = 0 THEN
+            lth = -0.15 - 0.8 * arc
+            lsh = lth + 0.5 * arc
+        ELSE
+            rth = 0.15 + 0.8 * arc
+            rsh = rth - 0.5 * arc
+        ENDIF
+        hop = 10 * arc
+        lua = -0.4
+        rua = 0.4
+        IF odd = 1 THEN lua = -0.4 - 1.3 * arc
+        IF odd = 0 THEN rua = 0.4 + 1.3 * arc
+        lfa = lua + 1.9
+        rfa = rua - 1.9
+        nod = 5 * dip
+    ELSEIF mood$ = "jump" THEN
+        hop = 40 * arc * (0.8 + energy * 1.5)
+        lth = -0.15 - 0.35 * arc
+        rth = 0.15 + 0.35 * arc
+        lsh = 0.25 * arc
+        rsh = -0.25 * arc
+        IF FRACT(cyc / 4) >= 0.75 THEN
+            lua = -2.5
+            lfa = -2.75
+            rua = 2.5
+            rfa = 2.75
+        ELSEIF (odd = 0) = (girl = 0) THEN
+            rua = 2.75
+            rfa = 3.0
+            lua = -0.45
+            lfa = 2.3
+        ELSE
+            lua = -2.75
+            lfa = -3.0
+            rua = 0.45
+            rfa = -2.3
+        ENDIF
+    ELSEIF mood$ = "wave" THEN
+        DIM d2 AS DOUBLE = 0.5 + 0.5 * COS(TWO_PI * cyc * 2)
+        sway = 34 * s2
+        lean = 0.1 * s2
+        lua = -2.45 + 0.25 * s2
+        rua = 2.45 + 0.25 * s2
+        lfa = lua - 0.25 + 0.5 * SIN(TWO_PI * cyc / 2 - 0.9)
+        rfa = rua + 0.25 + 0.5 * SIN(TWO_PI * cyc / 2 - 0.9)
+        lth = -0.1 - 0.2 * d2
+        rth = 0.1 + 0.2 * d2
+        lsh = 0.08 * d2
+        rsh = -0.08 * d2
+        tilt = 0.12 * s2
+    ELSEIF mood$ = "rise" THEN
+        DIM prog AS DOUBLE = CLAMP01((cyc - section_bar) / 8)
+        DIM trem AS DOUBLE = SIN(TWO_PI * cyc * 8) * (0.05 + 0.35 * prog)
+        lua = -2.7 + trem
+        rua = 2.7 - trem
+        lfa = lua - 0.2
+        rfa = rua + 0.2
+        hop = prog * prog * 28 * ABS(SIN(TWO_PI * cyc * 4))
+        nod = 4 * prog * SIN(TWO_PI * cyc * 8)
+    ELSEIF mood$ = "robot" THEN
+        DIM eighth AS INTEGER = INT(cyc * 8)
+        lua = -1.57
+        rua = 1.57
+        IF eighth - 2 * INT(eighth / 2) = 1 THEN
+            lfa = -3.14
+            rfa = 0
+        ELSE
+            lfa = 0
+            rfa = 3.14
+        ENDIF
+        sway = 16 * (2 * odd - 1)
+        tilt = 0.18 * (2 * odd - 1)
+        lth = -0.2
+        rth = 0.2
+        lsh = -0.2
+        rsh = 0.2
+    ELSEIF mood$ = "pan" THEN
+        DIM pp AS DOUBLE = SIN(TWO_PI * cyc)
+        sway = 90 * pp
+        lean = 0.25 * pp
+        lua = -1.45 - 0.45 * pp
+        rua = 1.45 - 0.45 * pp
+        lfa = lua - 0.15
+        rfa = rua + 0.15
+        lth = -0.12 - 0.25 * dip
+        rth = 0.12 + 0.25 * dip
+        lsh = 0.1 * dip
+        rsh = -0.1 * dip
+        tilt = 0.2 * pp
+    ELSEIF mood$ = "bye" THEN
+        IF girl THEN
+            lua = -2.55
+            lfa = -2.6 + 0.55 * SIN(TWO_PI * cyc * 2)
+        ELSE
+            rua = 2.55
+            rfa = 2.6 + 0.55 * SIN(TWO_PI * cyc * 2)
+        ENDIF
+    ENDIF
+
+    DIM THIGH AS DOUBLE = 88
+    DIM SHIN AS DOUBLE = 86
+    DIM TORSO AS DOUBLE = 122
+    DIM UARM AS DOUBLE = 70
+    DIM FARM AS DOUBLE = 64
+    DIM HEAD_R AS DOUBLE = 30
+    DIM legv AS DOUBLE = MAX([THIGH * COS(lth) + SHIN * COS(lsh), THIGH * COS(rth) + SHIN * COS(rsh)])
+    DIM hx AS DOUBLE = cx + sway
+    DIM hy AS DOUBLE = FLOOR_Y - legv - hop
+    DIM lkx AS DOUBLE = hx + THIGH * SIN(lth)
+    DIM lky AS DOUBLE = hy + THIGH * COS(lth)
+    DIM rkx AS DOUBLE = hx + THIGH * SIN(rth)
+    DIM rky AS DOUBLE = hy + THIGH * COS(rth)
+    DIM shx AS DOUBLE = hx + (TORSO - 14) * SIN(lean)
+    DIM shy AS DOUBLE = hy - (TORSO - 14) * COS(lean)
+    DIM nkx AS DOUBLE = hx + TORSO * SIN(lean)
+    DIM nky AS DOUBLE = hy - TORSO * COS(lean)
+    DIM hdx AS DOUBLE = nkx + (HEAD_R + 8) * SIN(lean + tilt)
+    DIM hdy AS DOUBLE = nky - (HEAD_R + 8) * COS(lean + tilt) + nod
+    DIM lex AS DOUBLE = shx + UARM * SIN(lua)
+    DIM ley AS DOUBLE = shy + UARM * COS(lua)
+    DIM rex AS DOUBLE = shx + UARM * SIN(rua)
+    DIM rey AS DOUBLE = shy + UARM * COS(rua)
+
+    ' shadow, shrinking as the dancer leaves the floor
+    DRAWCOLOR INT(cr * 0.14), INT(cg * 0.14), INT(cb * 0.14)
+    ELLIPSE hx, FLOOR_Y + 6, 70 - hop * 0.5, 12, TRUE
+
+    IF girl THEN
+        DIM wy AS DOUBLE = hy - 16
+        DIM hem AS DOUBLE = 58 + 0.12 * ABS(sway) + 10 * arc
+        DIM ks = IOTA(56, 0)
+        DIM half = 16 + (hem - 16) * ks / 55
+        DRAWCOLOR INT(cr * 0.3), INT(cg * 0.3), INT(cb * 0.3)
+        LINE STACK(1, hx - half, wy + ks, hx + half, wy + ks)
+        NEON hx - 16, wy, hx - hem, wy + 55, 1, cr, cg, cb
+        NEON hx + 16, wy, hx + hem, wy + 55, 1, cr, cg, cb
+        NEON hx - hem, wy + 55, hx + hem, wy + 55, 1, cr, cg, cb
+    ENDIF
+
+    NEON hx, hy, nkx, nky, 2, cr, cg, cb
+    NEON hx, hy, lkx, lky, 2, cr, cg, cb
+    NEON lkx, lky, lkx + SHIN * SIN(lsh), lky + SHIN * COS(lsh), 2, cr, cg, cb
+    NEON hx, hy, rkx, rky, 2, cr, cg, cb
+    NEON rkx, rky, rkx + SHIN * SIN(rsh), rky + SHIN * COS(rsh), 2, cr, cg, cb
+    NEON shx, shy, lex, ley, 2, cr, cg, cb
+    NEON lex, ley, lex + FARM * SIN(lfa), ley + FARM * COS(lfa), 2, cr, cg, cb
+    NEON shx, shy, rex, rey, 2, cr, cg, cb
+    NEON rex, rey, rex + FARM * SIN(rfa), rey + FARM * COS(rfa), 2, cr, cg, cb
+    NEON_RING hdx, hdy, HEAD_R, cr, cg, cb
+
+    DIM ex AS DOUBLE = 10
+    DRAWCOLOR 255, 255, 255
+    CIRCLE hdx - ex, hdy - 4, 4, TRUE
+    CIRCLE hdx + ex, hdy - 4, 4, TRUE
+    DIM sa = 0.6 + IOTA(9, 0) * 0.243
+    DIM smx = hdx + 13 * COS(sa)
+    DIM smy = hdy + 2 + 11 * SIN(sa)
+    DRAWCOLOR INT(cr), INT(cg), INT(cb)
+    LINE STACK(1, TAKE(8, smx), TAKE(8, smy), DROP(1, smx), DROP(1, smy))
+
+    IF girl THEN
+        ' lashes, blush, a ponytail swinging behind the beat, a bow
+        LINE STACK(1, [hdx - ex - 4, hdx + ex + 4], [hdy - 7, hdy - 7], [hdx - ex - 9, hdx + ex + 9], [hdy - 12, hdy - 12])
+        DRAWCOLOR 110, 25, 65
+        CIRCLE hdx - 18, hdy + 6, 6, TRUE
+        CIRCLE hdx + 18, hdy + 6, 6, TRUE
+        DIM pax AS DOUBLE = hdx + HEAD_R * 0.75
+        DIM pay AS DOUBLE = hdy - HEAD_R * 0.7
+        DIM pk = IOTA(7, 1)
+        DIM pa = 0.55 + 0.35 * SIN(TWO_PI * beat / 2 - pk * 0.45) - sway * 0.004 - hop * 0.008 * pk
+        DIM ppx = pax + pk * 11 * SIN(pa) + 6
+        DIM ppy = pay + pk * 11 * COS(pa) - 8
+        DRAWCOLOR INT(cr * 0.5), INT(cg * 0.5), INT(cb * 0.5)
+        CIRCLE STACK(1, ppx, ppy, 11 - pk), TRUE
+        DRAWCOLOR 255, 60, 110
+        CIRCLE pax - 7, pay - 3, 8, TRUE
+        CIRCLE pax + 9, pay - 9, 8, TRUE
+        CIRCLE pax + 1, pay - 6, 4, TRUE
+    ELSE
+        ' a cap, the brim towards her
+        DIM ck = IOTA(16, 0)
+        DIM cw = SQR(HEAD_R * HEAD_R - (HEAD_R - ck - 2) ^ 2 + 0.1)
+        DRAWCOLOR 255, 170, 40
+        LINE STACK(1, hdx - cw, hdy - HEAD_R + ck, hdx + cw, hdy - HEAD_R + ck)
+        NEON hdx - HEAD_R, hdy - HEAD_R + 16, hdx + HEAD_R + 26, hdy - HEAD_R + 16, 1, 255, 170, 40
+    ENDIF
+ENDSUB
+
+' The live SOUND.MOD curves of tracks that are playing, newest on top
+SUB DRAW_MODS(cyc AS DOUBLE)
+    DIM px AS DOUBLE = 1530
+    DIM pw AS DOUBLE = 360
+    DIM ph AS DOUBLE = 96
+    DIM shown AS INTEGER = 0
+    DIM n AS INTEGER = 90
+    DIM i AS INTEGER
+    FOR i = n_mods - 1 TO 0 STEP -1
+        IF shown >= 5 THEN EXITFOR
+        IF NOT LIVE(mod_track[i], cyc) THEN CONTINUEFOR
+        DIM y0 AS DOUBLE = 28 + shown * (ph + 14)
+        GFX.BLEND "BLEND"
+        DRAWCOLOR 8, 6, 24, 190
+        RECT px, y0, pw, ph, TRUE
+        GFX.BLEND "ADD"
+        DRAWCOLOR 70, 50, 140
+        RECT px, y0, pw, ph, FALSE
+        ' two periods, the playhead at three quarters
+        DIM span AS DOUBLE = 2 * mod_cyc[i]
+        DIM ts = cyc + (IOTA(n, 0) / (n - 1) - 0.75) * span
+        ts = ts * (ts > 0)
+        DIM vals = SHAPE_AT(mod_shape$[i], ts / mod_cyc[i] + mod_off[i])
+        DIM xs = px + 10 + IOTA(n, 0) * ((pw - 20) / (n - 1))
+        DIM ys = y0 + ph - 10 - vals * (ph - 36)
+        DIM hue AS DOUBLE = mod_track[i] * 0.9
+        DIM r AS INTEGER = INT(140 + 115 * SIN(hue))
+        DIM g AS INTEGER = INT(140 + 115 * SIN(hue + 2.1))
+        DIM b AS INTEGER = INT(140 + 115 * SIN(hue + 4.2))
+        DRAWCOLOR INT(r * 0.3), INT(g * 0.3), INT(b * 0.3)
+        LINE STACK(1, TAKE(n - 1, xs), TAKE(n - 1, ys) + 2, DROP(1, xs), DROP(1, ys) + 2)
+        LINE STACK(1, TAKE(n - 1, xs), TAKE(n - 1, ys) - 2, DROP(1, xs), DROP(1, ys) - 2)
+        DRAWCOLOR r, g, b
+        LINE STACK(1, TAKE(n - 1, xs), TAKE(n - 1, ys), DROP(1, xs), DROP(1, ys))
+        DIM phx AS DOUBLE = px + 10 + 0.75 * (pw - 20)
+        DIM nowa = SHAPE_AT(mod_shape$[i], [cyc / mod_cyc[i] + mod_off[i]])
+        DIM nowv AS DOUBLE = nowa[0]
+        DRAWCOLOR 60, 60, 90
+        LINE phx, y0 + 26, phx, y0 + ph - 6
+        NEON_RING phx, y0 + ph - 10 - nowv * (ph - 36), 5, r, g, b
+        DIM mval AS DOUBLE = mod_lo[i] + (mod_hi[i] - mod_lo[i]) * nowv
+        DIM mtxt$ AS STRING = STR$(INT(mval))
+        IF ABS(mod_hi[i]) < 10 THEN mtxt$ = STR$(INT(mval * 100) / 100)
+        TEXT px + 10, y0 + 5, TRACK_NAMES$[mod_track[i]] + " " + mod_param$[i] + "  " + mod_shape$[i], r, g, b
+        TEXT px + pw - 70, y0 + 5, mtxt$, 220, 220, 240
+        shown = shown + 1
+    NEXT i
+ENDSUB
+
+SUB DRAW_CONSOLE(cyc AS DOUBLE)
+    DIM x0 AS DOUBLE = 28
+    DIM y0 AS DOUBLE = 812
+    DIM w AS DOUBLE = 560
+    DIM h AS DOUBLE = 244
+    GFX.BLEND "BLEND"
+    DRAWCOLOR 6, 6, 18, 205
+    RECT x0, y0, w, h, TRUE
+    DRAWCOLOR 40, 30, 90, 230
+    RECT x0, y0, w, 26, TRUE
+    GFX.BLEND "ADD"
+    DRAWCOLOR 90, 70, 180
+    RECT x0, y0, w, h, FALSE
+    TEXT x0 + 10, y0 + 3, "console   Kaiku in A minor   138 BPM", 200, 190, 255
+    TEXT x0 + w - 130, y0 + 3, CLOCK$(cyc) + "  bar " + STR$(INT(cyc)), 255, 220, 120
+    DIM i AS INTEGER
+    FOR i = 0 TO N_LOG - 1
+        IF log_lines$[i] <> "" THEN
+            IF i = N_LOG - 1 THEN
+                TEXT x0 + 12, y0 + 32 + i * 23, "> " + log_lines$[i], 140, 255, 200
+            ELSE
+                TEXT x0 + 12, y0 + 32 + i * 23, "  " + log_lines$[i], 110, 120, 165
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB FRAME()
+    DIM t0 AS DOUBLE = TICK()
+    DIM cyc AS DOUBLE = SOUND.CYCLE()
+    DIM beat AS DOUBLE = cyc * 4
+    DIM bf AS DOUBLE = FRACT(beat)
+    DIM bar AS INTEGER = INT(cyc)
+    DIM dt AS DOUBLE = 1 / 60
+    DIM i AS INTEGER
+
+    DIM kick_on AS INTEGER = LIVE(KICK, cyc)
+    DIM kick_env AS DOUBLE = 0
+    IF kick_on THEN kick_env = EXP(-bf * 6)
+    DIM drop_on AS INTEGER = (mood$ = "jump")
+
+    ' beat and bar events
+    IF INT(beat) > INT(prev_cyc * 4) THEN
+        DIM bib AS INTEGER = INT(beat) - 4 * INT(INT(beat) / 4)
+        IF drop_on ANDALSO kick_on THEN
+            SPAWN 0, 760, FLOOR_Y, 5, 3.6
+            SPAWN 0, 1160, FLOOR_Y, 5, 5.2
+        ENDIF
+        IF mood$ = "wave" ANDALSO (bib = 0 OR bib = 2) THEN SPAWN 1, 960 + (RND(1) - 0.5) * 260, 700, 1, 0
+        IF LIVE(CLAP, cyc) ANDALSO (bib = 1 OR bib = 3) THEN flash = MAX([flash, 0.1])
+    ENDIF
+    IF bar > INT(prev_cyc) ANDALSO LIVE(CRASH, cyc) ANDALSO bar - 8 * INT(bar / 8) = 0 THEN
+        flash = 0.85
+        SPAWN 2, 960, 560, 70, RND(1) * 6
+    ENDIF
+    IF mood$ = "rise" THEN
+        DIM prog AS DOUBLE = CLAMP01((cyc - section_bar) / 8)
+        IF prog > 0.75 ANDALSO INT(cyc * 16) > INT(prev_cyc * 16) THEN flash = MAX([flash, (prog - 0.6) * 1.1])
+    ENDIF
+    prev_cyc = cyc
+
+    ' level and spectrum of the master
+    DIM wave = SOUND.GET_WAVE()
+    DIM nw AS INTEGER = LEN(wave)
+    energy = energy * 0.9 + SQR(SUM(wave * wave) / nw) * 0.1
+    DIM fq = FFT(wave)
+    DIM re = SLICE(fq, 1, 0)
+    DIM im = SLICE(fq, 1, 1)
+    DIM mag = SQR(re * re + im * im)
+    FOR i = 0 TO N_BANDS - 1
+        DIM bv AS DOUBLE = MAX(TAKE(band_hi[i] - band_lo[i], DROP(band_lo[i], mag)))
+        bv = CLAMP01(LOG(1 + bv * (0.3 + i * 0.04)) / 3.4)
+        IF bv > spec[i] THEN
+            spec[i] = bv
+        ELSE
+            spec[i] = spec[i] * 0.9
+        ENDIF
+    NEXT i
+
+    ' sky, tinted per section, brightening on the kick
+    DIM hue AS DOUBLE = section_bar * 0.11
+    DIM sr AS DOUBLE = 0.5 + 0.5 * SIN(hue)
+    DIM sg AS DOUBLE = 0.5 + 0.5 * SIN(hue + 2.1)
+    DIM sb AS DOUBLE = 0.5 + 0.5 * SIN(hue + 4.2)
+    CLS INT(6 + 34 * kick_env * sr), INT(3 + 16 * kick_env * sg), INT(16 + 38 * kick_env * sb)
+    GFX.BLEND "ADD"
+    DIM tw = INT(30 + 150 * (0.5 + 0.5 * SIN(star_ph + cyc * 3)))
+    CIRCLE STACK(1, star_x, star_y, star_x * 0 + 1.5), TRUE, STACK(1, tw, tw, tw + 30)
+
+    ' a striped sun on the horizon, swelling with the kick
+    DIM sun_r AS DOUBLE = 230 + 22 * kick_env + 70 * energy
+    DIM sy = IOTA(INT(sun_r), 0)
+    DIM scroll = sy + INT(FRACT(cyc) * 24)
+    DIM cut = (sy > sun_r * 0.5) * ((scroll - 24 * INT(scroll / 24)) < 3 + 7 * sy / sun_r)
+    DIM shalf = SQR(sun_r * sun_r - (sun_r - sy) ^ 2) * (1 - cut)
+    DIM tcol = sy / sun_r
+    LINE STACK(1, 960 - shalf, HORIZON - sun_r + sy, 960 + shalf, HORIZON - sun_r + sy), STACK(1, INT(230 - 10 * tcol), INT(200 - 170 * tcol), INT(60 + 120 * tcol))
+
+    ' spectrum skyline either side of the sun
+    DIM bx = IOTA(N_BANDS, 0) * 17
+    DIM bh = spec * 300 + 3
+    DIM bcols = STACK(1, INT(60 + 195 * spec), INT(30 + 80 * (1 - spec)), INT(200 - 60 * spec))
+    RECT STACK(1, 1214 + bx, HORIZON - bh, bx * 0 + 13, bh), TRUE, bcols
+    RECT STACK(1, 693 - bx, HORIZON - bh, bx * 0 + 13, bh), TRUE, bcols
+
+    ' the floor grid races towards the viewer, a line every two beats
+    DIM gb AS DOUBLE = 0.35 + 0.65 * kick_env
+    DIM gz = IOTA(18, 1) - FRACT(beat * 0.5)
+    DIM gy = HORIZON + (SH - HORIZON) * 0.9 / gz
+    DRAWCOLOR INT(200 * gb), INT(40 * gb), INT(180 * gb)
+    LINE STACK(1, gy * 0, gy, gy * 0 + SW, gy)
+    DIM vx = IOTA(25, 0) - 12
+    LINE STACK(1, 960 + vx * 14, vx * 0 + HORIZON, 960 + vx * 240, vx * 0 + SH)
+    DRAWCOLOR INT(255 * gb), INT(80 * gb), INT(220 * gb)
+    LINE 0, HORIZON, SW, HORIZON
+
+    ' the master scope across the sky, the reverb bus beneath it
+    DIM wx = 40 + IOTA(nw, 0) * (1440 / nw)
+    DIM wy = 175 + wave * 240
+    DIM bus = SOUND.GET_BUS_WAVE(0)
+    DIM by = 330 + bus * 300
+    DRAWCOLOR INT(40 + 60 * sb), INT(30 + 60 * sg), INT(50 + 80 * sr)
+    LINE STACK(1, TAKE(nw - 1, wx), TAKE(nw - 1, by), DROP(1, wx), DROP(1, by))
+    DRAWCOLOR INT(40 * sr), INT(80 * sg), INT(90 * sb)
+    LINE STACK(1, TAKE(nw - 1, wx), TAKE(nw - 1, wy) + 3, DROP(1, wx), DROP(1, wy) + 3)
+    LINE STACK(1, TAKE(nw - 1, wx), TAKE(nw - 1, wy) - 3, DROP(1, wx), DROP(1, wy) - 3)
+    DRAWCOLOR INT(120 + 135 * sr), INT(120 + 135 * sg), INT(120 + 135 * sb)
+    LINE STACK(1, TAKE(nw - 1, wx), TAKE(nw - 1, wy), DROP(1, wx), DROP(1, wy))
+    TEXT 44, 34, "MASTER", 150, 150, 200
+    TEXT 44, 296, "REVERB BUS", 110, 110, 150
+
+    ' a shock ring on the floor with every kick
+    IF kick_on THEN
+        DIM rr AS DOUBLE = 60 + bf * 900
+        DIM rl AS DOUBLE = (1 - bf) * (1 - bf)
+        DRAWCOLOR INT(255 * rl * sr), INT(200 * rl * sg), INT(255 * rl * sb)
+        ELLIPSE 960, FLOOR_Y + 10, rr, rr * 0.18, FALSE
+        ELLIPSE 960, FLOOR_Y + 10, rr + 2, rr * 0.18 + 1, FALSE
+    ENDIF
+
+    ' lasers sweep the floor in the drops
+    IF drop_on THEN
+        DIM k AS INTEGER
+        FOR k = 0 TO 5
+            DIM lx AS DOUBLE = 120
+            IF k >= 3 THEN lx = 1800
+            DIM tx AS DOUBLE = 960 + 820 * SIN(cyc * TWO_PI / 4 + k * 1.1)
+            DIM lh AS DOUBLE = k * 1.05 + cyc
+            NEON lx, -10, tx, FLOOR_Y + 120, 0, 120 + 120 * SIN(lh), 120 + 120 * SIN(lh + 2.1), 120 + 120 * SIN(lh + 4.2)
+        NEXT k
+    ENDIF
+
+    DANCER 760, FALSE, cyc, 60, 210, 255
+    DANCER 1160, TRUE, cyc, 255, 90, 200
+
+    ' particles; confetti and sparks fall, hearts float
+    p_x = p_x + p_vx * dt
+    p_y = p_y + p_vy * dt
+    p_vy = p_vy + (p_kind <> 1) * 700 * dt
+    p_life = p_life - dt
+    DIM alive = (p_life > 0) * 1
+    DIM dots = alive * (p_kind <> 1)
+    DIM pfade = alive * (p_life > 0.5) + alive * (p_life <= 0.5) * p_life * 2
+    DIM pcol = STACK(1, INT((128 + 127 * SIN(p_hue)) * pfade), INT((128 + 127 * SIN(p_hue + 2.1)) * pfade), INT((128 + 127 * SIN(p_hue + 4.2)) * pfade))
+    CIRCLE STACK(1, p_x + (1 - dots) * 9999, p_y, 2 + (p_kind = 2) * 3), TRUE, pcol
+    FOR i = 0 TO N_PART - 1
+        IF p_kind[i] = 1 ANDALSO p_life[i] > 0 THEN
+            DIM hl AS DOUBLE = CLAMP01(p_life[i] / 2)
+            FILL_HEART p_x[i], p_y[i], 14, INT(255 * hl), INT(60 * hl), INT(140 * hl)
+        ENDIF
+    NEXT i
+
+    ' white flashes: crash, clap, the end of a riser
+    IF flash > 0.01 THEN
+        DIM fw AS INTEGER = INT(255 * CLAMP01(flash))
+        DRAWCOLOR fw, fw, fw
+        RECT 0, 0, SW, SH, TRUE
+    ENDIF
+    flash = flash * 0.86
+
+    DRAW_MODS cyc
+    DRAW_CONSOLE cyc
+
+    ' the section title, fading over two bars
+    DIM ta AS DOUBLE = 1 - CLAMP01((cyc - section_bar) / 2)
+    IF ta > 0 ANDALSO title$ <> "" THEN
+        IF font$ <> "" THEN SETFONT font$, 44
+        DIM tsz = GFX.TEXTSIZE(title$)
+        TEXT 960 - tsz[0] / 2, 440, title$, INT(255 * ta), INT(230 * ta), INT(255 * ta)
+        IF font$ <> "" THEN SETFONT font$, 17
+    ENDIF
+    GFX.BLEND "NONE"
+
+    IF shot_at >= 0 ANDALSO cyc >= shot_at THEN
+        GFX.SAVE_SCREENSHOT shots$ + "/" + shot_name$ + ".png"
+        shot_at = -1
+    ENDIF
+    SCREENFLIP
+
+    IF GFX.KEYSTATE("Escape") THEN
+        SOUND.RESET
+        END
+    ENDIF
+    DIM key_f AS INTEGER = GFX.KEYSTATE("F")
+    IF key_f ANDALSO NOT key_f_was THEN TOGGLE_FULLSCREEN
+    key_f_was = key_f
+
+    DIM spent AS DOUBLE = TICK() - t0
+    n_frames = n_frames + 1
+    frame_ms_sum = frame_ms_sum + spent
+    IF spent > frame_ms_max THEN frame_ms_max = spent
+    DIM wait_ms AS DOUBLE = next_tick - TICK()
+    IF wait_ms > 1 THEN SLEEP INT(wait_ms)
+    next_tick = MAX([next_tick + 1000 / 60, TICK()])
+ENDSUB
+
+' ── Timing ───────────────────────────────────────────────────────
+
+' Returns just before bar b: patterns sent now take over on its downbeat
+SUB AT_BAR(b AS DOUBLE)
+    DO WHILE SOUND.CYCLE() < b - 0.05
+        FRAME
+    LOOP
+ENDSUB
+
+' Returns once bar b has begun: for parameters that act at once
+SUB ON_BAR(b AS DOUBLE)
+    DO WHILE SOUND.CYCLE() < b
+        FRAME
+    LOOP
+ENDSUB
+
+SUB SECTION(b AS INTEGER, name$)
+    AT_BAR b
+    LOG_LINE CLOCK$(b) + "  bar " + STR$(b) + "  " + name$
+    mood$ = MOOD_OF$(name$)
+    title$ = name$
+    section_bar = b
+    IF shots$ <> "" THEN
+        shot_at = b + 1.6
+        shot_name$ = "bar" + STR$(b)
+    ENDIF
+ENDSUB
+
+' ── Window ───────────────────────────────────────────────────────
+
+IF windowed THEN
+    SCREEN SW, SH, "Kaiku in A minor", 0.5
+ELSE
+    SCREEN SW, SH, "Kaiku in A minor"
+    TOGGLE_FULLSCREEN
+ENDIF
+DIM font_try$ = ["jdbasic_default.ttf", "build/jdbasic_default.ttf", "../../../build/jdbasic_default.ttf"]
+DIM fi AS INTEGER
+FOR fi = 0 TO LEN(font_try$) - 1
+    IF font$ = "" THEN
+        TRY
+            SETFONT font_try$[fi], 17
+            font$ = font_try$[fi]
+        CATCH
+        ENDTRY
+    ENDIF
+NEXT fi
 
 SOUND.INIT
 SOUND.MASTER "FIXED", 0.5
@@ -91,7 +855,7 @@ SOUND.PAN HATS, 0.58
 SOUND.KIT PERC, "SYNTH"
 SOUND.GAIN PERC, 0.5
 SOUND.NUDGE PERC, 12
-SOUND.MOD PERC, "PAN", "RAND", 0.25, 0.75, 0.25
+SWEEP PERC, "PAN", "RAND", 0.25, 0.75, 0.25, 0
 SOUND.KIT CRASH, "SYNTH"
 SOUND.GAIN CRASH, 0.8
 SOUND.REVERBSEND CRASH, 0.4
@@ -127,7 +891,7 @@ SOUND.FILTER PAD, 1100, 0.2
 SOUND.SIDECHAIN PAD, KICK, 0.8
 SOUND.ORBIT PAD, 1
 SOUND.REVERBSEND PAD, 0.6
-SOUND.MOD PAD, "PAN", "SINE", 0.3, 0.7, 8
+SWEEP PAD, "PAN", "SINE", 0.3, 0.7, 8, 0
 SOUND.GAIN PAD, 0.32
 
 ' lead: big supersaw with drifting detune, echoes and hall
@@ -135,7 +899,7 @@ SOUND.VOICE LEAD, "SAW", 0.005, 0.25, 0.6, 0.3
 SOUND.UNISON LEAD, 7, 0.3, 0.9
 SOUND.FILTER LEAD, 3200, 0.3
 SOUND.FENV LEAD, 1, 0.005, 0.2, 0.3
-SOUND.MOD LEAD, "DETUNE", "PERLIN", 0.22, 0.42, 4
+SWEEP LEAD, "DETUNE", "PERLIN", 0.22, 0.42, 4, 0
 SOUND.SIDECHAIN LEAD, KICK, 0.45
 SOUND.ORBIT LEAD, 1
 SOUND.REVERBSEND LEAD, 0.4
@@ -177,42 +941,42 @@ DIM ROLL$ AS STRING = "gain(<0.25 0.3 0.35 0.4 0.5 0.6 0.7 0.85>, <sd*4 sd*4 sd*
 ' ── 0: intro - kick and a high-passed hat opening up ─────────────
 
 SECTION 0, "intro"
-SOUND.SEQ KICK, "bd*4", "VOICE"
-SOUND.SEQ HATS, "gain([0.4 0.7]*8, hh*16)", "VOICE"
+PLAY KICK, "bd*4"
+PLAY HATS, "gain([0.4 0.7]*8, hh*16)"
 SOUND.FILTER HATS, 3000, 0.3, "HP"
-SOUND.MOD HATS, "CUTOFF", "ISAW", 300, 9000, 16
-SOUND.SEQ PERC, "degradeBy(0.3, sh*16), rim(3,8,5)", "VOICE"
+SWEEP HATS, "CUTOFF", "ISAW", 300, 9000, 16, 0
+PLAY PERC, "degradeBy(0.3, sh*16), rim(3,8,5)"
 
 SECTION 8, "intro: clap"
-SOUND.SEQ CLAP, "~ cp ~ cp", "VOICE"
+PLAY CLAP, "~ cp ~ cp"
 
 ' ── 16: build - rolling bass, open hats, a filtered arp ──────────
 
 SECTION 16, "build: bass"
-SOUND.SEQ BASS, BASS_ROLL$, "VOICE"
-SOUND.SEQ HATS, HATS_MAIN$, "VOICE"
-SOUND.SEQ FILL, FILLS$, "VOICE"
+PLAY BASS, BASS_ROLL$
+PLAY HATS, HATS_MAIN$
+PLAY FILL, FILLS$
 ON_BAR 16
-SOUND.MOD HATS, "CUTOFF", "OFF"
+SWEEP_OFF HATS, "CUTOFF"
 SOUND.FILTER HATS, 6000, 0.2, "HP"
 
 SECTION 24, "build: arp under the filter"
-SOUND.SEQ ARP, ARP_UP$, "VOICE"
+PLAY ARP, ARP_UP$
 ON_BAR 24
-SOUND.MOD ARP, "CUTOFF", "SAW", 300, 2200, 8
+SWEEP ARP, "CUTOFF", "SAW", 300, 2200, 8, 0
 
 ' ── 32: main - everything in, pad underneath ─────────────────────
 
 SECTION 32, "main"
-SOUND.SEQ CRASH, CRASHES$, "VOICE"
-SOUND.SEQ PAD, "legato(1, " + CHORDS$ + ")", "VOICE"
-SOUND.SEQ CLAP, "every(4, ply(2), ~ cp ~ cp)", "VOICE"
-SOUND.SEQ PERC, "sometimes(ply(2), sh(7,16,2)), rim(3,8,5)", "VOICE"
+PLAY CRASH, CRASHES$
+PLAY PAD, "legato(1, " + CHORDS$ + ")"
+PLAY CLAP, "every(4, ply(2), ~ cp ~ cp)"
+PLAY PERC, "sometimes(ply(2), sh(7,16,2)), rim(3,8,5)"
 ON_BAR 32
-SOUND.MOD ARP, "CUTOFF", "SINE", 700, 5000, 8, 0.75
+SWEEP ARP, "CUTOFF", "SINE", 700, 5000, 8, 0.75
 
 SECTION 48, "main: arp goes wide"
-SOUND.SEQ ARP, ARP_WIDE$, "VOICE"
+PLAY ARP, ARP_WIDE$
 
 ' ── 56: breakdown - drums out, pad and melody in the hall ────────
 
@@ -222,46 +986,46 @@ QUIET CLAP
 QUIET BASS
 QUIET PERC
 QUIET FILL
-SOUND.SEQ HATS, "gain(0.5, [~ hh]*4)", "VOICE"
-SOUND.SEQ LEAD, "legato(1.2, " + MELODY_LONG$ + ")", "VOICE"
-SOUND.SEQ ARP, "gain(0.6, " + ARP_UP$ + ")", "VOICE"
+PLAY HATS, "gain(0.5, [~ hh]*4)"
+PLAY LEAD, "legato(1.2, " + MELODY_LONG$ + ")"
+PLAY ARP, "gain(0.6, " + ARP_UP$ + ")"
 ON_BAR 56
-SOUND.MOD ARP, "RESONANCE", "TRI", 0.3, 0.92, 4
-SOUND.MOD ARP, "CUTOFF", "SINE", 500, 2500, 4
-SOUND.MOD LEAD, "CUTOFF", "SAW", 600, 3200, 8
+SWEEP ARP, "RESONANCE", "TRI", 0.3, 0.92, 4, 0
+SWEEP ARP, "CUTOFF", "SINE", 500, 2500, 4, 0
+SWEEP LEAD, "CUTOFF", "SAW", 600, 3200, 8, 0
 
 SECTION 64, "breakdown: riser and snare roll"
 QUIET HATS
 QUIET CRASH
-SOUND.SEQ RISER, "legato(1, c4)", "VOICE"
-SOUND.SEQ ROLL, ROLL$, "VOICE"
+PLAY RISER, "legato(1, c4)"
+PLAY ROLL, ROLL$
 ON_BAR 64
-SOUND.MOD RISER, "CUTOFF", "SAW", 300, 9000, 8
-SOUND.MOD RISER, "GAIN", "SAW", 0, 0.45, 8
+SWEEP RISER, "CUTOFF", "SAW", 300, 9000, 8, 0
+SWEEP RISER, "GAIN", "SAW", 0, 0.45, 8, 0
 
 ' ── 72: drop - full groove with the melody ───────────────────────
 
 SECTION 72, "drop"
 QUIET RISER
 QUIET ROLL
-SOUND.SEQ KICK, "bd*4", "VOICE"
-SOUND.SEQ CLAP, "every(4, ply(2), ~ cp ~ cp)", "VOICE"
-SOUND.SEQ HATS, HATS_MAIN$, "VOICE"
-SOUND.SEQ PERC, "sometimes(ply(2), sh(7,16,2)), rim(3,8,5)", "VOICE"
-SOUND.SEQ BASS, BASS_ROLL$, "VOICE"
-SOUND.SEQ CRASH, CRASHES$, "VOICE"
-SOUND.SEQ FILL, FILLS$, "VOICE"
-SOUND.SEQ ARP, ARP_WIDE$, "VOICE"
-SOUND.SEQ LEAD, MELODY$, "VOICE"
+PLAY KICK, "bd*4"
+PLAY CLAP, "every(4, ply(2), ~ cp ~ cp)"
+PLAY HATS, HATS_MAIN$
+PLAY PERC, "sometimes(ply(2), sh(7,16,2)), rim(3,8,5)"
+PLAY BASS, BASS_ROLL$
+PLAY CRASH, CRASHES$
+PLAY FILL, FILLS$
+PLAY ARP, ARP_WIDE$
+PLAY LEAD, MELODY$
 ON_BAR 72
-SOUND.MOD RISER, "CUTOFF", "OFF"
-SOUND.MOD RISER, "GAIN", "OFF"
-SOUND.MOD ARP, "RESONANCE", "OFF"
-SOUND.MOD ARP, "CUTOFF", "SINE", 900, 5500, 8
-SOUND.MOD LEAD, "CUTOFF", "OFF"
+SWEEP_OFF RISER, "CUTOFF"
+SWEEP_OFF RISER, "GAIN"
+SWEEP_OFF ARP, "RESONANCE"
+SWEEP ARP, "CUTOFF", "SINE", 900, 5500, 8, 0
+SWEEP_OFF LEAD, "CUTOFF"
 
 SECTION 88, "drop: lead doubled an octave up"
-SOUND.SEQ LEAD, "off(0.1875, add(12), " + MELODY$ + ")", "VOICE"
+PLAY LEAD, "off(0.1875, add(12), " + MELODY$ + ")"
 
 ' ── 104: arp section - stripped groove, the arp takes the lead ───
 
@@ -270,23 +1034,23 @@ QUIET LEAD
 QUIET PAD
 QUIET BASS
 QUIET CLAP
-SOUND.SEQ HATS, "swingBy(0.12, 8, " + HATS_MAIN$ + ")", "VOICE"
-SOUND.SEQ ARP, "iter(4, arp(up, " + CHORDS_X$(4) + "))", "VOICE"
+PLAY HATS, "swingBy(0.12, 8, " + HATS_MAIN$ + ")"
+PLAY ARP, "iter(4, arp(up, " + CHORDS_X$(4) + "))"
 ON_BAR 104
-SOUND.MOD ARP, "CUTOFF", "SAW", 600, 6000, 4
+SWEEP ARP, "CUTOFF", "SAW", 600, 6000, 4, 0
 
 SECTION 108, "arp section: palindrome, bass back"
-SOUND.SEQ ARP, "palindrome(arp(updown, " + CHORDS_X$(2) + "))", "VOICE"
-SOUND.SEQ BASS, BASS_OFF$, "VOICE"
+PLAY ARP, "palindrome(arp(updown, " + CHORDS_X$(2) + "))"
+PLAY BASS, BASS_OFF$
 
 SECTION 112, "arp section: octave echoes"
-SOUND.SEQ ARP, "off(0.125, add(12), arp(up, " + TRIADS_X$(4) + "))", "VOICE"
-SOUND.SEQ CLAP, "~ cp ~ cp", "VOICE"
+PLAY ARP, "off(0.125, add(12), arp(up, " + TRIADS_X$(4) + "))"
+PLAY CLAP, "~ cp ~ cp"
 
 SECTION 116, "arp section: ping-pong"
-SOUND.SEQ ARP, "arp(downup, " + CHORDS_X$(2) + ")", "VOICE"
+PLAY ARP, "arp(downup, " + CHORDS_X$(2) + ")"
 ON_BAR 116
-SOUND.MOD ARP, "PAN", "SINE", 0.1, 0.9, 1
+SWEEP ARP, "PAN", "SINE", 0.1, 0.9, 1, 0
 
 ' ── 120: breakdown 2 - half-time melody, then the second riser ───
 
@@ -298,45 +1062,45 @@ QUIET PERC
 QUIET BASS
 QUIET FILL
 QUIET CRASH
-SOUND.SEQ PAD, "legato(1, " + CHORDS$ + ")", "VOICE"
-SOUND.SEQ LEAD, "slow(2, legato(1.5, " + MELODY$ + "))", "VOICE"
-SOUND.SEQ ARP, "degradeBy(0.4, gain(0.5, " + ARP_UP$ + "))", "VOICE"
+PLAY PAD, "legato(1, " + CHORDS$ + ")"
+PLAY LEAD, "slow(2, legato(1.5, " + MELODY$ + "))"
+PLAY ARP, "degradeBy(0.4, gain(0.5, " + ARP_UP$ + "))"
 ON_BAR 120
-SOUND.MOD ARP, "PAN", "OFF"
-SOUND.MOD ARP, "CUTOFF", "TRI", 400, 1800, 8
-SOUND.MOD PAD, "CUTOFF", "SINE", 500, 2400, 16
+SWEEP_OFF ARP, "PAN"
+SWEEP ARP, "CUTOFF", "TRI", 400, 1800, 8, 0
+SWEEP PAD, "CUTOFF", "SINE", 500, 2400, 16, 0
 
 SECTION 128, "breakdown 2: riser, roll, gated pad"
-SOUND.SEQ RISER, "legato(1, c4)", "VOICE"
-SOUND.SEQ ROLL, ROLL$, "VOICE"
+PLAY RISER, "legato(1, c4)"
+PLAY ROLL, ROLL$
 ON_BAR 128
-SOUND.MOD RISER, "CUTOFF", "SAW", 300, 10000, 8
-SOUND.MOD RISER, "GAIN", "SAW", 0, 0.5, 8
-SOUND.MOD PAD, "GAIN", "SQUARE", 0.08, 0.38, 0.125
+SWEEP RISER, "CUTOFF", "SAW", 300, 10000, 8, 0
+SWEEP RISER, "GAIN", "SAW", 0, 0.5, 8, 0
+SWEEP PAD, "GAIN", "SQUARE", 0.08, 0.38, 0.125, 0
 
 ' ── 136: final drop - everything, the lead at full height ────────
 
 SECTION 136, "final drop"
 QUIET RISER
 QUIET ROLL
-SOUND.SEQ KICK, "bd*4", "VOICE"
-SOUND.SEQ CLAP, "every(4, ply(2), ~ cp ~ cp)", "VOICE"
-SOUND.SEQ HATS, HATS_MAIN$, "VOICE"
-SOUND.SEQ PERC, "sometimes(ply(2), sh(7,16,2)), rim(3,8,5)", "VOICE"
-SOUND.SEQ BASS, BASS_ROLL$, "VOICE"
-SOUND.SEQ CRASH, CRASHES$, "VOICE"
-SOUND.SEQ FILL, FILLS$, "VOICE"
-SOUND.SEQ ARP, ARP_WIDE$, "VOICE"
-SOUND.SEQ LEAD, "juxBy(0.4, add(12), off(0.1875, add(12), " + MELODY$ + "))", "VOICE"
+PLAY KICK, "bd*4"
+PLAY CLAP, "every(4, ply(2), ~ cp ~ cp)"
+PLAY HATS, HATS_MAIN$
+PLAY PERC, "sometimes(ply(2), sh(7,16,2)), rim(3,8,5)"
+PLAY BASS, BASS_ROLL$
+PLAY CRASH, CRASHES$
+PLAY FILL, FILLS$
+PLAY ARP, ARP_WIDE$
+PLAY LEAD, "juxBy(0.4, add(12), off(0.1875, add(12), " + MELODY$ + "))"
 ON_BAR 136
-SOUND.MOD RISER, "CUTOFF", "OFF"
-SOUND.MOD RISER, "GAIN", "OFF"
-SOUND.MOD PAD, "CUTOFF", "OFF"
-SOUND.MOD ARP, "CUTOFF", "SINE", 900, 6000, 8
+SWEEP_OFF RISER, "CUTOFF"
+SWEEP_OFF RISER, "GAIN"
+SWEEP_OFF PAD, "CUTOFF"
+SWEEP ARP, "CUTOFF", "SINE", 900, 6000, 8, 0
 SOUND.GAIN LEAD, 0.26
 
 SECTION 152, "final drop: arp rarely jumps an octave"
-SOUND.SEQ ARP, "rarely(add(12), " + ARP_WIDE$ + ")", "VOICE"
+PLAY ARP, "rarely(add(12), " + ARP_WIDE$ + ")"
 
 ' ── 168: outro - layers leave, the filter closes ─────────────────
 
@@ -344,10 +1108,10 @@ SECTION 168, "outro"
 QUIET LEAD
 QUIET CRASH
 QUIET FILL
-SOUND.SEQ PAD, "legato(1, " + CHORDS$ + ")", "VOICE"
+PLAY PAD, "legato(1, " + CHORDS$ + ")"
 ON_BAR 168
-SOUND.MOD PAD, "GAIN", "OFF"
-SOUND.MOD ARP, "CUTOFF", "ISAW", 300, 4000, 8
+SWEEP_OFF PAD, "GAIN"
+SWEEP ARP, "CUTOFF", "ISAW", 300, 4000, 8, 0
 
 SECTION 172, "outro: bass and arp leave"
 QUIET BASS
@@ -359,10 +1123,11 @@ QUIET PAD
 QUIET PERC
 ON_BAR 176
 SOUND.FILTER HATS, 6000, 0.2, "LP"
-SOUND.MOD HATS, "CUTOFF", "ISAW", 400, 8000, 8
+SWEEP HATS, "CUTOFF", "ISAW", 400, 8000, 8, 0
 
 SECTION 184, "end"
 QUIET KICK
 QUIET HATS
 ON_BAR 186
 SOUND.RESET
+IF shots$ <> "" THEN PRINT "frames: "; n_frames; "  avg ms: "; INT(frame_ms_sum / n_frames * 10) / 10; "  max ms: "; INT(frame_ms_max)

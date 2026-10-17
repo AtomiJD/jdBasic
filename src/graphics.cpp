@@ -278,7 +278,7 @@ struct ColorGuard {
     bool active;
     ColorGuard(bool has_color, Uint8 nr, Uint8 ng, Uint8 nb)
         : r(g_draw_r), g(g_draw_g), b(g_draw_b), a(g_draw_a), active(has_color) {
-        if (active) SDL_SetRenderDrawColor(g_renderer, nr, ng, nb, 255);
+        if (active) SDL_SetRenderDrawColor(g_renderer, nr, ng, nb, g_draw_a);
     }
     ~ColorGuard() {
         if (active) SDL_SetRenderDrawColor(g_renderer, r, g, b, a);
@@ -503,7 +503,7 @@ bool gfx_is_active() { return g_renderer != nullptr; }
 
 void gfx_clear(uint8_t r, uint8_t g, uint8_t b) {
     if (!g_renderer) return;
-    SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
+    SDL_SetRenderDrawColor(g_renderer, r, g, b, g_draw_a);
     SDL_RenderClear(g_renderer);
     // Restore draw color
     SDL_SetRenderDrawColor(g_renderer, g_draw_r, g_draw_g, g_draw_b, g_draw_a);
@@ -934,7 +934,7 @@ void register_graphics_builtins(VM& vm) {
                 if (pt->elements.size() >= 2) {
                     Uint8 r = g_draw_r, g = g_draw_g, b = g_draw_b;
                     if (hasColors) get_color_at(args[1], i, r, g, b);
-                    SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
+                    SDL_SetRenderDrawColor(g_renderer, r, g, b, g_draw_a);
                     SDL_RenderPoint(g_renderer, (float)pt->elements[0].to_double(),
                                                (float)pt->elements[1].to_double());
                 }
@@ -1021,7 +1021,7 @@ void register_graphics_builtins(VM& vm) {
             for (size_t i = 0; i < n; i++) {
                 Uint8 r, g, b;
                 get_color_at(args[2], i, r, g, b);
-                SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
+                SDL_SetRenderDrawColor(g_renderer, r, g, b, g_draw_a);
                 SDL_RenderPoint(g_renderer, g_pts_buf[i].x, g_pts_buf[i].y);
             }
             apply_draw_color();
@@ -1105,6 +1105,21 @@ void register_graphics_builtins(VM& vm) {
         });
     }
 
+    // ── GFX.BLEND mode$ ─────────────────────────────────────────
+
+    vm.register_native("GFX.BLEND", 1, 1, [](const std::vector<Value>& args) -> Value {
+        ensure_screen("GFX.BLEND");
+        std::string m = args[0].to_string();
+        std::transform(m.begin(), m.end(), m.begin(), ::toupper);
+        SDL_BlendMode bm;
+        if (m == "NONE") bm = SDL_BLENDMODE_NONE;
+        else if (m == "BLEND") bm = SDL_BLENDMODE_BLEND;
+        else if (m == "ADD") bm = SDL_BLENDMODE_ADD;
+        else throw jdError(ErrCode::RUNTIME_ERROR, "GFX.BLEND: mode must be NONE, BLEND or ADD");
+        SDL_SetRenderDrawBlendMode(g_renderer, bm);
+        return Value::make_none();
+    });
+
     // ── GFX.HSV_RGB(h, s, v) -> [r,g,b] ───────────────────────
     // Fast HSV → RGB conversion in C++. Avoids the per-pixel cost
     // of a user-defined HSVtoRGB function.
@@ -1147,7 +1162,7 @@ void register_graphics_builtins(VM& vm) {
                 if (ln->elements.size() >= 4) {
                     Uint8 r = g_draw_r, g = g_draw_g, b = g_draw_b;
                     if (hasColors) get_color_at(args[1], i, r, g, b);
-                    SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
+                    SDL_SetRenderDrawColor(g_renderer, r, g, b, g_draw_a);
                     SDL_RenderLine(g_renderer,
                         (float)ln->elements[0].to_double(), (float)ln->elements[1].to_double(),
                         (float)ln->elements[2].to_double(), (float)ln->elements[3].to_double());
@@ -1179,7 +1194,7 @@ void register_graphics_builtins(VM& vm) {
                 if (rc->elements.size() >= 4) {
                     Uint8 r = g_draw_r, g = g_draw_g, b = g_draw_b;
                     if (hasColors) get_color_at(args[2], i, r, g, b);
-                    SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
+                    SDL_SetRenderDrawColor(g_renderer, r, g, b, g_draw_a);
                     SDL_FRect rect = {(float)rc->elements[0].to_double(),
                                       (float)rc->elements[1].to_double(),
                                       (float)rc->elements[2].to_double(),
@@ -1219,7 +1234,7 @@ void register_graphics_builtins(VM& vm) {
                 if (c->elements.size() >= 3) {
                     Uint8 r = g_draw_r, g = g_draw_g, b = g_draw_b;
                     if (hasColors) get_color_at(args[2], i, r, g, b);
-                    SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
+                    SDL_SetRenderDrawColor(g_renderer, r, g, b, g_draw_a);
                     float cx = (float)c->elements[0].to_double();
                     float cy = (float)c->elements[1].to_double();
                     float cr = (float)c->elements[2].to_double();
@@ -1257,7 +1272,7 @@ void register_graphics_builtins(VM& vm) {
                 if (e->elements.size() >= 4) {
                     Uint8 r = g_draw_r, g = g_draw_g, b = g_draw_b;
                     if (hasColors) get_color_at(args[2], i, r, g, b);
-                    SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
+                    SDL_SetRenderDrawColor(g_renderer, r, g, b, g_draw_a);
                     float cx = (float)e->elements[0].to_double();
                     float cy = (float)e->elements[1].to_double();
                     float rx = (float)e->elements[2].to_double();
@@ -1297,7 +1312,7 @@ void register_graphics_builtins(VM& vm) {
                 if (rr->elements.size() >= 5) {
                     Uint8 r = g_draw_r, g = g_draw_g, b = g_draw_b;
                     if (hasColors) get_color_at(args[2], i, r, g, b);
-                    SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
+                    SDL_SetRenderDrawColor(g_renderer, r, g, b, g_draw_a);
                     float x = (float)rr->elements[0].to_double();
                     float y = (float)rr->elements[1].to_double();
                     float w = (float)rr->elements[2].to_double();
@@ -1339,7 +1354,7 @@ void register_graphics_builtins(VM& vm) {
                 if (cs->elements.size() >= 5) {
                     Uint8 r = g_draw_r, g = g_draw_g, b = g_draw_b;
                     if (hasColors) get_color_at(args[2], i, r, g, b);
-                    SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
+                    SDL_SetRenderDrawColor(g_renderer, r, g, b, g_draw_a);
                     float cx = (float)cs->elements[0].to_double();
                     float cy = (float)cs->elements[1].to_double();
                     float rad = (float)cs->elements[2].to_double();

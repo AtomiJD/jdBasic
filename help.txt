@@ -1048,6 +1048,10 @@ Description: Returns the current column (X) position of the console cursor.
 Syntax: GETY()
 Description: Returns the current row (Y) position of the console cursor.
 
+[GFX.BLEND]
+Syntax: GFX.BLEND mode$
+Description: Sets how drawing combines with the screen: "NONE" overwrites (the default), "BLEND" mixes by the DRAWCOLOR alpha, "ADD" adds the colour for glow effects.
+
 [GFX.CAPTURE]
 Syntax: GFX.CAPTURE() -> id
 Description: Captures the current renderer contents as a reusable texture and returns its image id.
