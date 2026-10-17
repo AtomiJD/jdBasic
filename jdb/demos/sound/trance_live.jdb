@@ -15,7 +15,7 @@
 '
 ' Uses: the built-in drum kit with choke, mini-notation (<> chords,
 ' euclid, !, @, _, ?), transforms (arp, jux, juxBy, off, add, every,
-' iter, palindrome, ply, sometimes, degradeBy, swingBy, slow, rev),
+' iter, palindrome, ply, sometimes, degradeBy, swingBy, rev),
 ' per-event gain, legato and pan, SOUND.MOD sweeps, a trance gate and
 ' risers, the resonant filter with FENV, sidechain pumping, two effect
 ' orbits, SOUND.NUDGE, the FIXED master and the compressor.
@@ -49,7 +49,7 @@ NEXT ti
 
 ' ── Instruments ──────────────────────────────────────────────────
 
-SOUND.INIT
+SOUND.INIT SCORE.AUDIO_MODE$()
 SOUND.MASTER "FIXED", 0.5
 SCORE.TEMPO BPM
 SOUND.COMPRESSOR 0.55, 3, 5, 150, 1.1
@@ -273,7 +273,7 @@ SCORE.QUIET BASS
 SCORE.QUIET FILL
 SCORE.QUIET CRASH
 SCORE.PLAY PAD, "legato(1, " + CHORDS$ + ")"
-SCORE.PLAY LEAD, "slow(2, legato(1.5, " + MELODY$ + "))"
+SCORE.PLAY LEAD, "legato(1.2, " + MELODY_LONG$ + ")"
 SCORE.PLAY ARP, "degradeBy(0.4, gain(0.5, " + ARP_UP$ + "))"
 SCORE.SWEEP_OFF ARP, "PAN"
 SCORE.SWEEP ARP, "CUTOFF", "TRI", 400, 1800, 8, 0
@@ -335,4 +335,5 @@ SCORE.QUIET KICK
 SCORE.QUIET HATS
 SCORE.FINE 186
 
+STAGE.SUBTITLE "Trance in A minor"
 STAGE.RUN "Kaiku in A minor"

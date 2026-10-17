@@ -34,7 +34,7 @@ NEXT ti
 
 ' ── Instruments ──────────────────────────────────────────────────
 
-SOUND.INIT
+SOUND.INIT SCORE.AUDIO_MODE$()
 SOUND.MASTER "FIXED", 0.5
 SCORE.TEMPO BPM
 SOUND.COMPRESSOR 0.55, 3, 3, 100, 1.15
@@ -94,12 +94,13 @@ SOUND.DELAYSEND KEYS, 0.2
 SOUND.GAIN KEYS, 0.32
 
 ' bell: a glassy FM tone for the hook
-SOUND.VOICE BELL, "SINE", 0.002, 0.5, 0.1, 0.6
-SOUND.FM BELL, 2.5, 3.5
+SOUND.VOICE BELL, "SINE", 0.003, 0.4, 0.15, 0.5
+SOUND.FM BELL, 0.7, 2
+SOUND.FILTER BELL, 2600, 0.15
 SOUND.ORBIT BELL, 1
-SOUND.DELAYSEND BELL, 0.45
+SOUND.DELAYSEND BELL, 0.3
 SOUND.REVERBSEND BELL, 0.45
-SOUND.GAIN BELL, 0.22
+SOUND.GAIN BELL, 0.28
 
 SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.25
 SOUND.FILTER RISER, 400, 0.4, "BP"
@@ -117,7 +118,8 @@ DIM GHOSTS$ AS STRING = "degradeBy(0.4, [~ ~ ~ sd ~ ~ sd ~ ~ sd ~ ~ ~ ~ ~ sd])"
 DIM HATS8$ AS STRING = "gain([0.5 0.8]*4, [~ hh]*4)"
 DIM SUB$ AS STRING = "legato(0.95, <f1 f1 c#1 c#1 g#1 g#1 d#1 [d#1 _ _ f1]>)"
 DIM REESE$ AS STRING = "legato(1, <[f1 _ _ _ _ _ g#1 _] [f1 _ _ _ c2 _ a#1 _] [c#1 _ _ _ _ _ f1 _] [c#1 _ _ _ g#1 _ f1 _] [g#1 _ _ _ _ _ c2 _] [g#1 _ _ _ d#2 _ c2 _] [d#1 _ _ _ _ _ g1 _] [d#1 _ _ _ a#1 _ g1 _]>)"
-DIM HOOK$ AS STRING = "<[c6 ~ g#5 ~ ~ d#5 ~ ~] [f5 ~ ~ g5 ~ g#5 ~ ~] [c6 ~ g#5 ~ ~ f5 ~ ~] [d#5 ~ ~ ~ ~ ~ ~ ~] [c6 ~ c#6 ~ ~ c6 ~ ~] [g#5 ~ ~ f5 ~ d#5 ~ ~] [g5 ~ ~ a#5 ~ g5 ~ ~] [d#5 ~ ~ ~ ~ ~ ~ ~]>"
+DIM HOOK$ AS STRING = "<[c5 ~ g#4 ~ f4 ~ g#4 ~] [g4 ~ ~ ~ f4 ~ ~ ~] [f4 ~ g#4 ~ c5 ~ g#4 ~] [c#5 ~ ~ ~ c5 ~ ~ ~] [d#4 ~ g#4 ~ c5 ~ g#4 ~] [c5 ~ ~ ~ a#4 ~ ~ ~] [g4 ~ a#4 ~ d#5 ~ a#4 ~] [d5 ~ ~ ~ a#4 ~ ~ ~]>"
+DIM HOOK_SOFT$ AS STRING = "legato(2, <[c5 ~ ~ ~ f4 ~ ~ ~] [g4 ~ ~ ~ ~ ~ ~ ~] [f4 ~ ~ ~ c5 ~ ~ ~] [c#5 ~ ~ ~ ~ ~ ~ ~] [d#4 ~ ~ ~ c5 ~ ~ ~] [c5 ~ ~ ~ ~ ~ ~ ~] [g4 ~ ~ ~ d#5 ~ ~ ~] [d5 ~ ~ ~ ~ ~ ~ ~]>)"
 DIM KEYS$ AS STRING = "legato(0.6, sometimes(off(0.125, add(12)), <[[f3,g#3,c4,d#4] ~ ~ [f3,g#3,c4,d#4] ~ ~ ~ ~] [~ ~ ~ ~ [f3,g#3,c4,d#4] ~ ~ ~] [[c#3,f3,g#3,c4] ~ ~ [c#3,f3,g#3,c4] ~ ~ ~ ~] [~ ~ ~ ~ [c#3,f3,g#3,c4] ~ ~ ~] [[g#2,c3,d#3,g#3] ~ ~ [g#2,c3,d#3,g#3] ~ ~ ~ ~] [~ ~ ~ ~ [g#2,c3,d#3,g#3] ~ ~ ~] [[d#3,g3,a#3,d4] ~ ~ [d#3,g3,a#3,d4] ~ ~ ~ ~] [~ ~ ~ ~ [d#3,g3,a#3,d4] ~ ~ ~]>))"
 
 ' ── Score ────────────────────────────────────────────────────────
@@ -125,7 +127,7 @@ DIM KEYS$ AS STRING = "legato(0.6, sometimes(off(0.125, add(12)), <[[f3,g#3,c4,d
 SCORE.SECTION 0, "intro", "wave"
 SCORE.PLAY PAD, "legato(1, " + CHORDS$ + ")"
 SCORE.SWEEP PAD, "CUTOFF", "SAW", 400, 1800, 16, 0
-SCORE.PLAY BELL, "slow(2, " + HOOK$ + ")"
+SCORE.PLAY BELL, HOOK_SOFT$
 
 SCORE.SECTION 16, "beat in", "groove"
 SCORE.SWEEP_OFF PAD, "CUTOFF"
@@ -177,7 +179,7 @@ SCORE.QUIET REESE
 SCORE.QUIET CRASH
 SCORE.PLAY SHAKER, "gain(0.5, degradeBy(0.5, sh*16))"
 SCORE.PLAY KEYS, "legato(1.5, " + CHORDS$ + ")"
-SCORE.PLAY BELL, "slow(2, " + HOOK$ + ")"
+SCORE.PLAY BELL, HOOK_SOFT$
 SCORE.SWEEP PAD, "CUTOFF", "SINE", 600, 2400, 16, 0
 
 SCORE.SECTION 120, "build: riser and snare roll", "rise"
@@ -200,7 +202,7 @@ SCORE.PLAY SHAKER, "sh*16"
 SCORE.PLAY REESE, REESE$
 SCORE.SWEEP REESE, "CUTOFF", "SINE", 400, 2200, 1, 0
 SCORE.PLAY KEYS, KEYS$
-SCORE.PLAY BELL, "off(0.375, add(-12), " + HOOK$ + ")"
+SCORE.PLAY BELL, "legato(1.5, " + HOOK$ + ")"
 SCORE.PLAY CRASH, "<cr ~!15>"
 
 SCORE.SECTION 160, "rollers", "robot"
@@ -237,4 +239,5 @@ SCORE.QUIET BELL
 
 SCORE.FINE 212
 
+STAGE.SUBTITLE "Liquid drum and bass in F minor"
 STAGE.RUN "Night Bus"

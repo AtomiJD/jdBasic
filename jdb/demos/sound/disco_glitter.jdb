@@ -34,7 +34,7 @@ NEXT ti
 
 ' ── Instruments ──────────────────────────────────────────────────
 
-SOUND.INIT
+SOUND.INIT SCORE.AUDIO_MODE$()
 SOUND.MASTER "FIXED", 0.5
 SCORE.TEMPO BPM
 SOUND.COMPRESSOR 0.6, 2.5, 8, 160, 1.1
@@ -226,4 +226,5 @@ SCORE.QUIET GUITAR
 
 SCORE.FINE 146
 
+STAGE.SUBTITLE "Nu-disco in A minor"
 STAGE.RUN "Glitter Ball"

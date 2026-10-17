@@ -35,7 +35,7 @@ NEXT ti
 
 ' ── Instruments ──────────────────────────────────────────────────
 
-SOUND.INIT
+SOUND.INIT SCORE.AUDIO_MODE$()
 SOUND.MASTER "FIXED", 0.5
 SCORE.TEMPO BPM
 SOUND.COMPRESSOR 0.55, 3, 4, 120, 1.15
@@ -152,7 +152,7 @@ SCORE.PLAY ACID, "degradeBy(0.25, " + ACID_A$ + ")"
 SCORE.SWEEP ACID, "CUTOFF", "SAW", 300, 2600, 16, 0
 SCORE.SWEEP_OFF ACID, "RESONANCE"
 SOUND.DELAYSEND ACID, 0.45
-SCORE.PLAY STAB, "slow(2, " + STABS$ + ")"
+SCORE.PLAY STAB, "degradeBy(0.5, " + STABS$ + ")"
 
 SCORE.SECTION 80, "build: riser and roll", "rise"
 SCORE.PLAY RISER, "legato(1, c4)"
@@ -212,4 +212,5 @@ SCORE.QUIET ACID
 
 SCORE.FINE 162
 
+STAGE.SUBTITLE "Acid techno in A phrygian"
 STAGE.RUN "Copper Wire"

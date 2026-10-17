@@ -15,6 +15,9 @@
 '   F    toggle fullscreen        Esc  quit        Q  quit with status 3
 '   --window       a half-size window instead of fullscreen
 '   --shots dir    a frame of every section saved into dir (implies --window)
+'   --render dir   an offline render: an intro with the series title and
+'                  3-2-1, then every frame as dir/fNNNNN.jpg at 30 fps and the
+'                  sound as dir/audio.wav, starting after the intro
 
 EXPORT MODULE STAGE
 IMPORT SCORE
@@ -53,6 +56,15 @@ DIM frame_ms_sum AS DOUBLE = 0
 DIM frame_ms_max AS DOUBLE = 0
 DIM shot_at AS DOUBLE = -1
 DIM shot_name$ AS STRING = ""
+
+' --render: frames at a fixed rate into render_dir$, the intro first
+DIM SERIES$ AS STRING = "When Kaiku Dreams Techno"
+DIM RENDER_FPS AS INTEGER = 30
+DIM INTRO_SECONDS AS DOUBLE = 6
+DIM render_dir$ AS STRING = ""
+DIM subtitle$ AS STRING = ""
+DIM frame_no AS INTEGER = 0
+DIM intro_left AS DOUBLE = -1
 DIM spec = RESHAPE([0.0], [40])
 DIM band_lo = RESHAPE([0], [40])
 DIM band_hi = RESHAPE([0], [40])
@@ -481,10 +493,39 @@ SUB DRAW_CONSOLE(cyc AS DOUBLE)
     NEXT i
 ENDSUB
 
+SUB CENTER_TEXT(y AS DOUBLE, size AS INTEGER, s$, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    IF font$ <> "" THEN SETFONT font$, size
+    DIM tsz = GFX.TEXTSIZE(s$)
+    TEXT 960 - tsz[0] / 2, y, s$, r, g, b
+ENDSUB
+
+' The intro of a rendered video: the series, the song, then 3-2-1
+SUB DRAW_INTRO()
+    GFX.BLEND "BLEND"
+    DRAWCOLOR 4, 2, 12, 175
+    RECT 0, 0, SW, SH, TRUE
+    GFX.BLEND "ADD"
+    DIM fade AS DOUBLE = CLAMP01((INTRO_SECONDS - intro_left) / 0.8)
+    CENTER_TEXT 250, 34, SERIES$, INT(150 * fade), INT(190 * fade), INT(255 * fade)
+    CENTER_TEXT 310, 110, title$, INT(255 * fade), INT(110 * fade), INT(215 * fade)
+    DIM info$ AS STRING = STR$(SCORE.BPM_OF()) + " BPM"
+    IF subtitle$ <> "" THEN info$ = subtitle$ + "   -   " + info$
+    CENTER_TEXT 470, 30, info$, INT(200 * fade), INT(200 * fade), INT(230 * fade)
+    IF intro_left < 3 THEN
+        DIM digit AS INTEGER = INT(intro_left) + 1
+        DIM part AS DOUBLE = intro_left - INT(intro_left)
+        DIM ring AS DOUBLE = 70 + (1 - part) * 160
+        NEON_RING 960, 740, ring, 255 * part, 120 * part, 230 * part
+        CENTER_TEXT 640, INT(120 + 80 * part), STR$(digit), 255, 230, 255
+    ENDIF
+    IF font$ <> "" THEN SETFONT font$, 17
+ENDSUB
+
 SUB FRAME()
     DIM t0 AS DOUBLE = TICK()
     DIM dt AS DOUBLE = CLAMP01((t0 - last_tick) / 1000)
     IF dt > 0.1 THEN dt = 0.1
+    IF render_dir$ <> "" THEN dt = 1 / RENDER_FPS
     last_tick = t0
     DIM cyc AS DOUBLE = SOUND.CYCLE()
     DIM beat AS DOUBLE = cyc * 4
@@ -494,7 +535,7 @@ SUB FRAME()
 
     live = SCORE.LIVE_AT(cyc)
     DIM si AS INTEGER = SCORE.SECTION_AT(cyc)
-    IF si <> sec_i ANDALSO si >= 0 THEN
+    IF si <> sec_i ANDALSO si >= 0 ANDALSO intro_left < 0 THEN
         sec_i = si
         section_bar = SCORE.SECTION_BAR(si)
         sec_name$ = SCORE.SECTION_NAME$(si)
@@ -506,7 +547,7 @@ SUB FRAME()
         ENDIF
     ENDIF
 
-    DIM kick_on AS INTEGER = IS_LIVE(kick_t)
+    DIM kick_on AS INTEGER = IS_LIVE(kick_t) ANDALSO intro_left < 0
     DIM kick_env AS DOUBLE = 0
     IF kick_on THEN kick_env = EXP(-bf * 6)
     DIM drop_on AS INTEGER = (mood$ = "jump")
@@ -661,11 +702,16 @@ SUB FRAME()
         TEXT 960 - tsz[0] / 2, 440, sec_name$, INT(255 * ta), INT(230 * ta), INT(255 * ta)
         IF font$ <> "" THEN SETFONT font$, 17
     ENDIF
+    IF intro_left >= 0 THEN DRAW_INTRO
     GFX.BLEND "NONE"
 
     IF shot_at >= 0 ANDALSO cyc >= shot_at THEN
         GFX.SAVE_SCREENSHOT shots$ + "/" + shot_name$ + ".png"
         shot_at = -1
+    ENDIF
+    IF render_dir$ <> "" THEN
+        GFX.SAVE_SCREENSHOT render_dir$ + "/f" + FORMAT$("{:0>5}", frame_no) + ".jpg"
+        frame_no = frame_no + 1
     ENDIF
     SCREENFLIP
 
@@ -686,9 +732,16 @@ SUB FRAME()
     n_frames = n_frames + 1
     frame_ms_sum = frame_ms_sum + spent
     IF spent > frame_ms_max THEN frame_ms_max = spent
-    DIM wait_ms AS DOUBLE = next_tick - TICK()
-    IF wait_ms > 1 THEN SLEEP INT(wait_ms)
-    next_tick = MAX([next_tick + 1000 / 60, TICK()])
+    IF render_dir$ = "" THEN
+        DIM wait_ms AS DOUBLE = next_tick - TICK()
+        IF wait_ms > 1 THEN SLEEP INT(wait_ms)
+        next_tick = MAX([next_tick + 1000 / 60, TICK()])
+    ENDIF
+ENDSUB
+
+' A line under the title on the intro of a rendered video
+EXPORT SUB SUBTITLE(s$)
+    subtitle$ = s$
 ENDSUB
 
 ' Opens the window and plays the queued score to its last bar
@@ -700,6 +753,7 @@ EXPORT SUB RUN(name$)
     FOR ai = 1 TO LEN(cli) - 1
         IF cli[ai] = "--window" THEN windowed = TRUE
         IF cli[ai] = "--shots" ANDALSO ai + 1 < LEN(cli) THEN shots$ = cli[ai + 1]
+        IF cli[ai] = "--render" ANDALSO ai + 1 < LEN(cli) THEN render_dir$ = cli[ai + 1]
     NEXT ai
     IF shots$ <> "" THEN windowed = TRUE
 
@@ -714,7 +768,9 @@ EXPORT SUB RUN(name$)
     clap_t = SCORE.TRACK_OF("CLAP")
     crash_t = SCORE.TRACK_OF("CRASH")
 
-    IF windowed THEN
+    IF render_dir$ <> "" THEN
+        SCREEN SW, SH, title$
+    ELSEIF windowed THEN
         SCREEN SW, SH, title$, 0.5
     ELSE
         SCREEN SW, SH, title$
@@ -733,9 +789,28 @@ EXPORT SUB RUN(name$)
     NEXT fi
 
     last_tick = TICK()
-    DO WHILE SOUND.CYCLE() < SCORE.END_BAR()
-        FRAME
-    LOOP
+    IF render_dir$ <> "" THEN
+        ' the mixer runs offline: each frame draws, then renders its
+        ' slice of audio into the WAV the video gets
+        DIM f AS INTEGER
+        FOR f = 0 TO INT(INTRO_SECONDS * RENDER_FPS) - 1
+            intro_left = INTRO_SECONDS - f / RENDER_FPS
+            FRAME
+        NEXT f
+        intro_left = -1
+        SOUND.RECORD render_dir$ + "/audio.wav"
+        DIM slice AS INTEGER = INT(44100 / RENDER_FPS)
+        DO WHILE SOUND.CYCLE() < SCORE.END_BAR()
+            FRAME
+            DIM rendered = SOUND.RENDER(slice)
+        LOOP
+        SOUND.RECORD
+        PRINT "rendered "; frame_no; " frames, avg "; INT(frame_ms_sum / n_frames); " ms"
+    ELSE
+        DO WHILE SOUND.CYCLE() < SCORE.END_BAR()
+            FRAME
+        LOOP
+    ENDIF
     SOUND.RESET
     IF shots$ <> "" THEN PRINT "frames: "; n_frames; "  avg ms: "; INT(frame_ms_sum / n_frames * 10) / 10; "  max ms: "; INT(frame_ms_max)
 ENDSUB

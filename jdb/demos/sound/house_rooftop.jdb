@@ -35,7 +35,7 @@ NEXT ti
 
 ' ── Instruments ──────────────────────────────────────────────────
 
-SOUND.INIT
+SOUND.INIT SCORE.AUDIO_MODE$()
 SOUND.MASTER "FIXED", 0.5
 SCORE.TEMPO BPM
 SOUND.COMPRESSOR 0.6, 2.5, 8, 180, 1.1
@@ -169,7 +169,7 @@ SCORE.QUIET CRASH
 SCORE.PLAY HATS, "gain(0.4, [~ hh]*4)"
 SCORE.PLAY KEYS, "legato(1.4, " + CHORDS$ + ")"
 SCORE.SWEEP KEYS, "CUTOFF", "SAW", 700, 3000, 8, 0
-SCORE.PLAY LEAD, "slow(2, legato(1.2, " + CHOP$ + "))"
+SCORE.PLAY LEAD, "degradeBy(0.4, legato(1.3, " + CHOP$ + "))"
 SCORE.SWEEP PAD, "CUTOFF", "SINE", 500, 1800, 16, 0
 
 SCORE.SECTION 80, "build: riser and clap roll", "rise"
@@ -236,4 +236,5 @@ SCORE.QUIET SHAKER
 
 SCORE.FINE 154
 
+STAGE.SUBTITLE "Deep house in D minor"
 STAGE.RUN "Rooftop Sunday"

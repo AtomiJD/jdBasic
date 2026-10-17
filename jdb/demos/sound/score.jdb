@@ -146,6 +146,17 @@ EXPORT SUB FINE(b AS DOUBLE)
     SOUND.AT
 ENDSUB
 
+' The SOUND.INIT mode: "PULL" when the song is rendered to video
+' (--render on the command line), "DEVICE" otherwise
+EXPORT FUNC AUDIO_MODE$() AS STRING
+    DIM cli = OS.ARGS()
+    DIM i AS INTEGER
+    FOR i = 1 TO LEN(cli) - 1
+        IF cli[i] = "--render" THEN RETURN "PULL"
+    NEXT i
+    RETURN "DEVICE"
+ENDFUNC
+
 ' ── Queries ──────────────────────────────────────────────────────
 
 EXPORT FUNC BPM_OF() AS DOUBLE

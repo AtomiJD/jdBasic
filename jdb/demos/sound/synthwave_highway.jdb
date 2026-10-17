@@ -34,7 +34,7 @@ NEXT ti
 
 ' ── Instruments ──────────────────────────────────────────────────
 
-SOUND.INIT
+SOUND.INIT SCORE.AUDIO_MODE$()
 SOUND.MASTER "FIXED", 0.5
 SCORE.TEMPO BPM
 SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
@@ -174,7 +174,7 @@ SCORE.QUIET SNARE
 SCORE.QUIET BASS
 SCORE.QUIET TOMS
 SCORE.PLAY HATS, "gain(0.3, [~ hh]*4)"
-SCORE.PLAY LEAD, "slow(2, legato(1.2, " + VERSE$ + "))"
+SCORE.PLAY LEAD, "degradeBy(0.3, legato(1.3, " + VERSE$ + "))"
 SCORE.SWEEP PAD, "CUTOFF", "SINE", 600, 2200, 8, 0
 
 SCORE.SECTION 72, "build: riser and tom roll", "rise"
@@ -233,4 +233,5 @@ SCORE.QUIET ARP
 
 SCORE.FINE 130
 
+STAGE.SUBTITLE "Synthwave in E minor"
 STAGE.RUN "Neon Highway"
