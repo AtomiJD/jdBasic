@@ -208,18 +208,15 @@ FUNC BuildChapters(script_path$, manifest_path$)
         ENDIF
     NEXT mi
 
-    ' Pass 3: build the formatted chapter block — first one to 00:00,
-    ' rest at their actual offset (relative to first VOICE).
+    ' Pass 3: build the formatted chapter block. The VOICE offsets are
+    ' times in the final video; the first chapter is set to 00:00.
     DIM out$ = ""
-    DIM base_off = 0
-    IF LEN(chapter_say_idx) > 0 AND chapter_say_idx[0] < LEN(voice_offsets) THEN
-        base_off = voice_offsets[chapter_say_idx[0]]
-    ENDIF
     DIM ci AS INTEGER
     FOR ci = 0 TO LEN(chapter_titles) - 1
         DIM idx = chapter_say_idx[ci]
         IF idx >= LEN(voice_offsets) THEN CONTINUEFOR
-        DIM off = voice_offsets[idx] - base_off
+        DIM off = voice_offsets[idx]
+        IF ci = 0 THEN off = 0
         IF off < 0 THEN off = 0
         out$ = out$ + TimeStr$(off) + " " + chapter_titles[ci] + CHR$(10)
     NEXT ci
