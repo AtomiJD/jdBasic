@@ -3066,7 +3066,7 @@ Modes: MAJOR, MINOR, PENT_MIN, BLUES, ARABIC, etc.
 Syntax: SOUND.SEQ layer, pattern$, waveform$
 Description: Programs a rhythmic pattern for the sequencer.
 Waveform can be "SINE", "SQUARE", "SAW", "TRIANGLE", "NOISE", or "VOICE".
-A layer that is playing switches to the new pattern at the start of the next cycle.
+A layer that is playing switches to the new pattern at the start of the next cycle; a switch queued with SOUND.AT applies on its own frame, also inside a cycle.
 Pattern: a b (steps)  [a b] (group)  a,b (together)  <a b> (one per cycle)  a|b (random)
 ~ (rest)  _ (hold)  a*2 a/2 (faster/slower)  a!3 (repeat)  a@3 (weight)  a?0.3 (chance)  a(3,8) (euclid)
 Chords: an upper-case root is a chord, voice-led in order: "<Am F C G>", Cmaj7 G7 Dm9 Esus4 Am/E F#m Bb

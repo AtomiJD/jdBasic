@@ -2257,7 +2257,14 @@ void register_sound_builtins(VM& vm) {
         }
         // A playing layer switches at the next cycle; an empty one starts now,
         // and the first pattern of an idle sequencer starts a fresh cycle.
-        if (layer.pat || layer.has_pending) {
+        // A switch SOUND.AT queued applies on its own frame, inside the cycle.
+        if ((layer.pat || layer.has_pending) && g_sound.in_sched) {
+            layer.pat = pat;
+            layer.pending.reset();
+            layer.has_pending = false;
+            layer.events.clear();
+            layer.built_cycle = INT64_MIN;
+        } else if (layer.pat || layer.has_pending) {
             layer.pending = pat;
             layer.has_pending = true;
         } else {

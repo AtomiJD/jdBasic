@@ -3429,7 +3429,9 @@ A layer that is already playing switches to a new pattern at the start of
 the next cycle, so re-sending a pattern while live coding never breaks
 the bar. A layer without a pattern starts at once, in step with the
 others, and the first pattern of a silent sequencer starts a new cycle.
-`SOUND.SEQ layer, "", "VOICE"` stops the layer at the end of the cycle.
+`SOUND.SEQ layer, "", "VOICE"` stops the layer at the end of the cycle. A
+switch queued with `SOUND.AT` applies on the frame of its target, also
+inside a cycle, so a score can stop a track for the last beat of a bar.
 
 * **`SOUND.EVENTS$(pattern$, [cycles], [first]) -> string`**: The events a pattern plays, one line each, without playing them.
 

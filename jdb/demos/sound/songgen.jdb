@@ -14,8 +14,8 @@
 ' parts, hook, breakdown, build, drop, outro in 8, 16 or 32 bars) and a
 ' variant of each part: a breakdown with the choir, with pad and hook or
 ' without the kick; a build with a snare roll, a kick roll or a closing
-' filter, perhaps ending on a bar of silence; a fill (snare, toms or a
-' one-beat gap) at each phrase end. The last drop is the peak.
+' filter, perhaps ending on a bar of only pad and riser; a fill (snare,
+' toms or a one-beat gap) at each phrase end. The last drop is the peak.
 '
 '   --wav file   renders the track offline into a WAV instead of the show
 '   --recipe     prints the recipe and the form, and stops
@@ -143,8 +143,7 @@ IF LEN(wav$) > 0 OR recipe_only THEN
 ELSE
     SOUND.INIT SCORE.AUDIO_MODE$()
 ENDIF
-DIM MASTER_LEVEL AS DOUBLE = 0.42
-SOUND.MASTER "FIXED", MASTER_LEVEL
+SOUND.MASTER "FIXED", 0.42
 SCORE.TEMPO BPM
 SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
 
@@ -355,15 +354,16 @@ ENDSUB
 DIM FILL_NAMES$ = ["snare", "toms", "a one-beat gap"]
 
 ' A fill on bar b, the last of a phrase. Inside a part the snare stops
-' again on the next bar. The gap mutes the master for the last beat: a
-' pattern change only takes effect on the next bar.
+' again on the next bar; the gap silences all but pad and choir for the
+' last beat, and the next part brings the tracks back.
 SUB FILL(b AS INTEGER, kind AS INTEGER, inside AS INTEGER)
+    DIM t AS INTEGER
     SCORE.AT b
     IF kind = 2 THEN
         SCORE.AT b + 0.75
-        SOUND.MASTER "FIXED", 0.001
-        SCORE.AT b + 1
-        SOUND.MASTER "FIXED", MASTER_LEVEL
+        FOR t = 0 TO N_TRACKS - 1
+            IF t <> PAD AND t <> CHOIR AND t <> RISER THEN TRK_OFF t
+        NEXT t
         RETURN
     ENDIF
     IF kind = 1 THEN
@@ -525,10 +525,10 @@ SUB PART_BUILD(b AS INTEGER, n AS INTEGER, v AS INTEGER, dropout AS INTEGER)
     SCORE.SECTION b + n - 2, "build: up an octave", "rise"
     TRK_ON PARTS_TRACK, "add(12, " + PARTS$ + ")"
     IF dropout THEN
-        SCORE.SECTION b + n - 1, "build: one bar of silence", "rise"
+        SCORE.SECTION b + n - 1, "build: one bar without drums", "rise"
         DIM t AS INTEGER
         FOR t = 0 TO N_TRACKS - 1
-            IF t <> RISER THEN TRK_OFF t
+            IF t <> RISER AND t <> PAD THEN TRK_OFF t
         NEXT t
     ENDIF
 ENDSUB
@@ -644,7 +644,7 @@ FOR fi = 0 TO N_PARTS - 1
         DIM dropout AS INTEGER = PICK(30 + fi, 2)
         PART_BUILD bar_at, nb, uv, dropout
         label$ = label$ + " (" + BUILD_NAMES$[uv]
-        IF dropout THEN label$ = label$ + ", a bar of silence"
+        IF dropout THEN label$ = label$ + ", a bar without drums"
         label$ = label$ + ")"
     ELSEIF part$ = "drop" THEN
         DIM dv AS INTEGER = PICK(20 + fi, 2)

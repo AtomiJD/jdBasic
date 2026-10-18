@@ -703,6 +703,22 @@ CHECK "AT old until the bar", TRIGGERS() = 4, ""
 buf = SOUND.RENDER(CYC)
 CHECK "AT later send wins", TRIGGERS() = 8, ""
 
+' a queued switch inside a cycle applies on its own frame
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.SEQ 0, "c4*4", "VOICE"
+SOUND.AT 1.5
+SOUND.SEQ 0, "", "VOICE"
+SOUND.AT 1.75
+SOUND.SEQ 0, "c4*16", "VOICE"
+SOUND.AT
+n = TRIGGERS()
+buf = SOUND.RENDER(CYC)
+CHECK "AT mid-cycle, first cycle whole", TRIGGERS() = 4, ""
+buf = SOUND.RENDER(CYC)
+CHECK "AT mid-cycle stop is silent", RMS(buf, CYC / 2 + 2000, CYC * 3 / 4 - 100) < 0.001, "rms=" + STR$(RMS(buf, CYC / 2 + 2000, CYC * 3 / 4 - 100))
+CHECK "AT mid-cycle switch plays at once", TRIGGERS() = 6, ""
+
 ' a parameter changes on the frame of a fractional target
 SOUND.RESET
 SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
