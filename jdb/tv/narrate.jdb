@@ -82,7 +82,7 @@ FOR i = 0 TO LEN(lines) - 1
         DIM av$ = LCASE$(TRIM$(MID$(ln$, 7)))
         IF av$ = "right" THEN
             avatar_x$ = "1430"
-            avatar_y$ = "440"
+            avatar_y$ = "696"
         ELSEIF av$ = "off" THEN
             avatar_x$ = ""
         ELSE
