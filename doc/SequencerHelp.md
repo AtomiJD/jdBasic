@@ -89,6 +89,8 @@ These shape the timbre of a track's voice and must be set before the pattern pla
 * **`SOUND.UNISON track, voices, detune, spread`**: Stacks `voices` (1-16) detuned copies for a super-saw; `detune` 0.0-1.0, `spread` 0.0-1.0 stereo.
 * **`SOUND.BITCRUSH track, bits, rate`**: Lo-fi effect; `bits` 1-16 resolution, `rate` 0.0-1.0 sample-rate reduction.
 * **`SOUND.RINGMOD track, freq, mix`**: Ring modulation for robotic / sci-fi tones.
+* **`SOUND.OSC2 track, wave$, [semitones], [mix], [cents]`**: A second oscillator per voice, e.g. a square an octave below a saw.
+* **Patches**: `jdb/demos/sound/patch.jdb` (`IMPORT PATCH`), `PATCH.APPLY track, "neon_pluck"` sets a whole sound in one call. The Neon sounds (`neon_pluck` for arps, `neon_lead` for hooks) are the jdBasic signature; also `supersaw`, `pad`, `choir`, `organ`, `fm_keys`, `vox_chop`, `bass_roll`, `bass_house`, `sub`, `acid`.
 * **`SOUND.FORMANT track, vowel$, mix, [breath]`**: Vowel formants (`"ah"`, `"eh"`, `"ee"`, `"oh"`, `"oo"` or 0-4) for "ooh"/"aah" pads and choirs; `breath` adds air. `SOUND.MOD track, "VOWEL", ...` morphs between vowels.
 * **`SOUND.GLIDE track, ms, [mode$]`**: Portamento; `"SLIDE"` glides only into notes marked `^` (`"c2 c3^ c2"`), the 303 way.
 * **`SOUND.CHORUS track, mix, [rate], [depth]`** and **`SOUND.WIDTH track, width`**: Stereo chorus and width on the track's sum.

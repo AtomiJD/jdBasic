@@ -1,0 +1,159 @@
+' patch.jdb - named sounds for sequencer tracks: one call sets the
+' oscillators, envelope, filter, unison, chorus and sends.
+'
+'   IMPORT PATCH
+'   PATCH.APPLY 6, "neon_pluck"
+'
+' The Neon sounds are the jdBasic signature: a saw with a square an
+' octave below, a resonant filter that snaps open on every note, a
+' light chorus and a dotted echo.
+'   neon_pluck   short and glassy, for arpeggios under the music
+'   neon_lead    the same sound held and wide, for a hook on top
+' The standards:
+'   supersaw     seven detuned saws, the trance lead
+'   pad          a slow wide supersaw bed
+'   choir        a breathy "ooh" (formants, vibrato)
+'   organ        the house organ stab: a square and a sine an octave up
+'   fm_keys      an FM electric piano
+'   vox_chop     a square sung through "ah", for chopped vocal hooks
+'   bass_roll    the trance off-beat bass, a plucked saw
+'   bass_house   a round triangle bass
+'   sub          a sine sub with glide
+'   acid         a squelchy saw with ^ slides
+'
+' APPLY first returns the track to a plain sine, so patches do not
+' leak into each other. Pan, orbit and sidechain stay as they are:
+' they belong to the mix, not to the sound.
+
+EXPORT MODULE PATCH
+
+DIM PATCH_NAMES$ = ["neon_pluck", "neon_lead", "supersaw", "pad", "choir", "organ", "fm_keys", "vox_chop", "bass_roll", "bass_house", "sub", "acid"]
+
+SUB PLAIN(t AS INTEGER)
+    SOUND.VOICE t, "SINE", 0.01, 0.1, 0.7, 0.3
+    SOUND.UNISON t, 1, 0, 0.5
+    SOUND.OSC2 t, "OFF"
+    SOUND.FORMANT t, "a", 0
+    SOUND.CHORUS t, 0
+    SOUND.WIDTH t, 1
+    SOUND.GLIDE t, 0
+    SOUND.FM t, 0, 1
+    SOUND.FENV t, 0, 0.005, 0.2
+    SOUND.LFO t, 0, 0
+    SOUND.FILTER t, 20000
+    SOUND.EQ t, 1, 1, 1
+    SOUND.RINGMOD t, 0, 0
+    SOUND.BITCRUSH t, 16, 1
+    SOUND.DELAYSEND t, 0
+    SOUND.REVERBSEND t, 0
+    SOUND.GAIN t, 1
+ENDSUB
+
+' The names APPLY knows
+EXPORT FUNC NAMES$()
+    RETURN PATCH_NAMES$
+ENDFUNC
+
+EXPORT FUNC EXISTS(name$) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(PATCH_NAMES$) - 1
+        IF PATCH_NAMES$[i] = LCASE$(name$) THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+EXPORT SUB APPLY(t AS INTEGER, name$)
+    DIM n$ = LCASE$(name$)
+    IF NOT EXISTS(n$) THEN
+        PRINT "PATCH.APPLY: no patch "; name$
+        RETURN
+    ENDIF
+    PLAIN t
+    IF n$ = "neon_pluck" THEN
+        SOUND.VOICE t, "SAW", 0.001, 0.22, 0.0, 0.18
+        SOUND.OSC2 t, "SQUARE", -12, 0.5
+        SOUND.UNISON t, 3, 0.12, 0.6
+        SOUND.FILTER t, 900, 0.45
+        SOUND.FENV t, 3.2, 0.001, 0.16
+        SOUND.CHORUS t, 0.3, 0.6, 3
+        SOUND.DELAYSEND t, 0.32
+        SOUND.REVERBSEND t, 0.25
+        SOUND.GAIN t, 0.24
+    ELSEIF n$ = "neon_lead" THEN
+        SOUND.VOICE t, "SAW", 0.005, 0.4, 0.75, 0.4
+        SOUND.OSC2 t, "SQUARE", -12, 0.45
+        SOUND.UNISON t, 7, 0.28, 0.9
+        SOUND.FILTER t, 2600, 0.35
+        SOUND.FENV t, 1.4, 0.003, 0.25
+        SOUND.CHORUS t, 0.4, 0.5, 4
+        SOUND.WIDTH t, 1.2
+        SOUND.DELAYSEND t, 0.3
+        SOUND.REVERBSEND t, 0.4
+        SOUND.GAIN t, 0.24
+    ELSEIF n$ = "supersaw" THEN
+        SOUND.VOICE t, "SAW", 0.004, 0.3, 0.7, 0.35
+        SOUND.UNISON t, 7, 0.32, 0.8
+        SOUND.FILTER t, 3200, 0.25
+        SOUND.FENV t, 0.8, 0.003, 0.2
+        SOUND.DELAYSEND t, 0.3
+        SOUND.REVERBSEND t, 0.4
+        SOUND.GAIN t, 0.26
+    ELSEIF n$ = "pad" THEN
+        SOUND.VOICE t, "SAW", 0.9, 0.6, 0.85, 1.6
+        SOUND.UNISON t, 7, 0.28, 1.0
+        SOUND.FILTER t, 1400, 0.2
+        SOUND.CHORUS t, 0.6, 0.5, 4
+        SOUND.WIDTH t, 1.3
+        SOUND.REVERBSEND t, 0.5
+        SOUND.GAIN t, 0.18
+    ELSEIF n$ = "choir" THEN
+        SOUND.VOICE t, "SAW", 0.7, 0.4, 0.9, 1.8
+        SOUND.UNISON t, 6, 0.22, 0.9
+        SOUND.FORMANT t, "oo", 1.0, 0.08
+        SOUND.LFO t, 5, 1.5
+        SOUND.CHORUS t, 0.5, 0.4, 3
+        SOUND.REVERBSEND t, 0.65
+        SOUND.GAIN t, 0.2
+    ELSEIF n$ = "organ" THEN
+        SOUND.VOICE t, "SQUARE", 0.002, 0.35, 0.3, 0.2
+        SOUND.OSC2 t, "SINE", 12, 0.6
+        SOUND.FILTER t, 3000, 0.1
+        SOUND.CHORUS t, 0.25, 0.8, 2
+        SOUND.REVERBSEND t, 0.25
+        SOUND.GAIN t, 0.2
+    ELSEIF n$ = "fm_keys" THEN
+        SOUND.VOICE t, "SINE", 0.004, 0.45, 0.25, 0.35
+        SOUND.FM t, 0.9, 1
+        SOUND.FILTER t, 2600, 0.15
+        SOUND.DELAYSEND t, 0.25
+        SOUND.REVERBSEND t, 0.25
+        SOUND.GAIN t, 0.25
+    ELSEIF n$ = "vox_chop" THEN
+        SOUND.VOICE t, "SQUARE", 0.005, 0.18, 0.4, 0.15
+        SOUND.FILTER t, 1500, 0.55, "BP"
+        SOUND.FORMANT t, "ah", 0.6
+        SOUND.DELAYSEND t, 0.3
+        SOUND.REVERBSEND t, 0.35
+        SOUND.GAIN t, 0.32
+    ELSEIF n$ = "bass_roll" THEN
+        SOUND.VOICE t, "SAW", 0.002, 0.12, 0.5, 0.05
+        SOUND.FILTER t, 700, 0.35
+        SOUND.FENV t, 1.5, 0.002, 0.09
+        SOUND.GAIN t, 0.8
+    ELSEIF n$ = "bass_house" THEN
+        SOUND.VOICE t, "TRIANGLE", 0.003, 0.2, 0.6, 0.06
+        SOUND.FILTER t, 600, 0.3
+        SOUND.FENV t, 1.2, 0.002, 0.12
+        SOUND.GAIN t, 0.95
+    ELSEIF n$ = "sub" THEN
+        SOUND.VOICE t, "SINE", 0.01, 0.3, 0.9, 0.2
+        SOUND.GLIDE t, 90
+        SOUND.GAIN t, 0.55
+    ELSEIF n$ = "acid" THEN
+        SOUND.VOICE t, "SAW", 0.002, 0.15, 0.4, 0.04
+        SOUND.FILTER t, 500, 0.75
+        SOUND.FENV t, 2.2, 0.002, 0.12
+        SOUND.GLIDE t, 70, "SLIDE"
+        SOUND.GAIN t, 0.7
+    ENDIF
+ENDSUB

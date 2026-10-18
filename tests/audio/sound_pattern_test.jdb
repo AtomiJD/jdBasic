@@ -327,6 +327,20 @@ FUNC RMS_SIDE(buf, a AS INTEGER, b AS INTEGER) AS DOUBLE
     RETURN SQR(acc / (b - a))
 ENDFUNC
 
+' The level of one frequency in the left channel, 8192 frames from start
+FUNC TONE_LEVEL(buf, hz AS DOUBLE, start AS INTEGER) AS DOUBLE
+    DIM re AS DOUBLE = 0
+    DIM im AS DOUBLE = 0
+    DIM w AS DOUBLE
+    DIM i AS INTEGER
+    FOR i = 0 TO 8191
+        w = 2 * MATH.PI * hz * i / 44100
+        re = re + buf[(start + i) * 2] * COS(w)
+        im = im + buf[(start + i) * 2] * SIN(w)
+    NEXT i
+    RETURN SQR(re * re + im * im) / 8192
+ENDFUNC
+
 ' the vowel shapes the spectrum: ee has its second formant near 2.2 kHz,
 ' oo none; the level of the 20th harmonic of 110 Hz tells them apart
 FUNC VOWEL_BRIGHTNESS(vowel$) AS DOUBLE
@@ -336,16 +350,7 @@ FUNC VOWEL_BRIGHTNESS(vowel$) AS DOUBLE
     SOUND.FORMANT 4, vowel$, 1.0
     SOUND.PLAY 4, 110
     DIM vb = SOUND.RENDER(12192)
-    DIM re AS DOUBLE = 0
-    DIM im AS DOUBLE = 0
-    DIM w AS DOUBLE
-    DIM i AS INTEGER
-    FOR i = 0 TO 8191
-        w = 2 * MATH.PI * 2200 * i / 44100
-        re = re + vb[(4000 + i) * 2] * COS(w)
-        im = im + vb[(4000 + i) * 2] * SIN(w)
-    NEXT i
-    RETURN SQR(re * re + im * im) / 8192
+    RETURN TONE_LEVEL(vb, 2200, 4000)
 ENDFUNC
 DIM bright_ee AS DOUBLE = VOWEL_BRIGHTNESS("ee")
 DIM bright_oo AS DOUBLE = VOWEL_BRIGHTNESS("oo")
@@ -434,6 +439,29 @@ CHECK "synced delay echoes on the beat", RMS(buf, 11100, 11800) > 0.05, "rms=" +
 buf = ECHO_BUF(TRUE)
 CHECK "ping-pong first echo left", RMS(buf, 11100, 11800) > RMS_R(buf, 11100, 11800) * 4, "l=" + STR$(RMS(buf, 11100, 11800)) + " r=" + STR$(RMS_R(buf, 11100, 11800))
 CHECK "ping-pong second echo right", RMS_R(buf, 22150, 22850) > RMS(buf, 22150, 22850) * 4, "l=" + STR$(RMS(buf, 22150, 22850)) + " r=" + STR$(RMS_R(buf, 22150, 22850))
+
+'' a second oscillator an octave down adds 220 Hz under a 440 Hz sine
+FUNC SUB_OCTAVE_LEVEL(wave$, mix AS DOUBLE) AS DOUBLE
+    SOUND.RESET
+    SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.01
+    SOUND.GAIN 0, 0.3
+    IF LEN(wave$) > 0 THEN SOUND.OSC2 0, wave$, -12, mix
+    SOUND.PLAY 0, 440
+    DIM ob = SOUND.RENDER(12192)
+    RETURN TONE_LEVEL(ob, 220, 4000)
+ENDFUNC
+DIM sub_none AS DOUBLE = SUB_OCTAVE_LEVEL("", 0)
+DIM sub_osc2 AS DOUBLE = SUB_OCTAVE_LEVEL("SINE", 1.0)
+DIM sub_off AS DOUBLE = SUB_OCTAVE_LEVEL("OFF", 1.0)
+CHECK "osc2 adds the octave below", sub_osc2 > 0.05 AND sub_osc2 > sub_none * 50, "with=" + STR$(sub_osc2) + " without=" + STR$(sub_none)
+CHECK "osc2 off is silent", sub_off < 0.002, "off=" + STR$(sub_off)
+err_msg = ""
+TRY
+    SOUND.OSC2 0, "PIANO", 0, 0.5
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "osc2 wave checked", INSTR(err_msg, "OSC2") >= 0, "msg=" + err_msg
 
 err_msg = ""
 TRY

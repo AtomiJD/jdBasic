@@ -1524,6 +1524,12 @@ Description: Sidechains a target track's level to a source track by the given am
 Syntax: SOUND.STATS() -> string
 Description: Returns and resets a debug string of voice trigger and allocation-failure counters.
 
+[SOUND.OSC2]
+Syntax: SOUND.OSC2 track, wave$, [semitones], [mix], [cents]
+Description: A second oscillator in every voice: wave SINE, SAW, SQUARE, TRIANGLE, NOISE,
+or OFF to remove it. semitones (default 0) and cents from the first, mix 0.0-1.0 (default 0.5).
+Example: SOUND.OSC2 6, "SQUARE", -12, 0.5
+
 [SOUND.UNISON]
 Syntax: SOUND.UNISON(track, voices, detune, spread)
 Description: Configures unison on a track with the given voice count (clamped 1-16), detune and stereo spread.

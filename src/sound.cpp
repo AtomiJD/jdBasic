@@ -180,8 +180,10 @@ struct Voice {
     Envelope env;
     // FM
     float fm_phase = 0.0f;
-    // Unison phases
+    // Unison phases, and the second oscillator's
     float unison_phases[16] = {};
+    float osc2_phase = 0.0f;
+    float osc2_phases[16] = {};
     // LFO
     float lfo_phase = 0.0f;
     // Filter state: one-pole, and the two SVF integrators per channel
@@ -305,6 +307,9 @@ struct TrackParams {
     bool glide_marked = false;
     float last_freq = 0.0f;
     float pitch_semis = 0.0f;
+    // A second oscillator per voice: its wave, interval, cents and level
+    Waveform osc2_wave = Waveform::SAW;
+    float osc2_ratio = 1.0f, osc2_mix = 0.0f;
     // Track insert: stereo chorus and width, on the sum of the track's voices
     float chorus_mix = 0.0f, chorus_rate = 0.8f, chorus_depth = 3.0f, width = 1.0f;
     std::vector<float> chorus_buf;
@@ -837,6 +842,7 @@ static struct SoundSystem {
         // Unison synthesis
         else if (tp.unison_voices > 1) {
             float norm = 1.0f / std::sqrt((float)tp.unison_voices);
+            if (tp.osc2_mix > 0.0f) norm /= 1.0f + 0.5f * tp.osc2_mix;
             for (int u = 0; u < tp.unison_voices && u < 16; u++) {
                 float ratio = (tp.unison_voices == 1) ? 0 :
                     ((float)u / (tp.unison_voices - 1) - 0.5f);
@@ -845,6 +851,11 @@ static struct SoundSystem {
                 float f = freq * det / SAMPLE_RATE;
                 v.unison_phases[u] += f;
                 float s = generate_waveform(tp.waveform, v.unison_phases[u] + fm_mod, f);
+                if (tp.osc2_mix > 0.0f) {
+                    float f2 = f * tp.osc2_ratio;
+                    v.osc2_phases[u] += f2;
+                    s += tp.osc2_mix * generate_waveform(tp.osc2_wave, v.osc2_phases[u] + fm_mod, f2);
+                }
                 sample_l += s * (1.0f - pan_u) * norm;
                 sample_r += s * pan_u * norm;
             }
@@ -854,6 +865,12 @@ static struct SoundSystem {
             float f = freq / SAMPLE_RATE;
             v.phase += f;
             float s = generate_waveform(tp.waveform, v.phase + fm_mod, f);
+            if (tp.osc2_mix > 0.0f) {
+                float f2 = f * tp.osc2_ratio;
+                v.osc2_phase += f2;
+                s += tp.osc2_mix * generate_waveform(tp.osc2_wave, v.osc2_phase + fm_mod, f2);
+                s /= 1.0f + 0.5f * tp.osc2_mix;
+            }
             sample_l = s;
             sample_r = s;
         }
@@ -2516,6 +2533,26 @@ void register_sound_builtins(VM& vm) {
         SND_UNLOCK();
         return Value::make_none();
     });
+    vm.register_native("SOUND.OSC2", 2, 5, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        std::string w = args[1].to_string();
+        std::transform(w.begin(), w.end(), w.begin(), ::toupper);
+        bool off = w == "OFF";
+        if (!off && w != "SINE" && w != "SAW" && w != "SQUARE" && w != "TRIANGLE" && w != "NOISE")
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.OSC2: wave is SINE, SAW, SQUARE, TRIANGLE, NOISE or OFF");
+        float semis = args.size() > 2 ? (float)args[2].to_double() : 0.0f;
+        float mix = args.size() > 3 ? std::clamp((float)args[3].to_double(), 0.0f, 1.0f) : 0.5f;
+        float cents = args.size() > 4 ? (float)args[4].to_double() : 0.0f;
+        SND_LOCK();
+        auto& tp = g_sound.tracks[t];
+        tp.osc2_mix = off ? 0.0f : mix;
+        if (!off) {
+            tp.osc2_wave = parse_waveform(w);
+            tp.osc2_ratio = std::exp2((semis + cents / 100.0f) / 12.0f);
+        }
+        SND_UNLOCK();
+        return Value::make_none();
+    });
     vm.register_native("SOUND.CHORUS", 2, 4, [](const std::vector<Value>& args) -> Value {
         int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
         SND_LOCK();
@@ -2788,7 +2825,7 @@ void register_sound_builtins(VM& vm) {
         "SOUND.RINGMOD", "SOUND.REVERBSEND", "SOUND.DELAYSEND",
         "SOUND.SIDECHAIN", "SOUND.SCALE", "SOUND.DELAY", "SOUND.REVERB",
         "SOUND.NUDGE", "SOUND.ORBIT", "SOUND.COMPRESSOR", "SOUND.DISTORTION",
-        "SOUND.MASTER", "SOUND.FORMANT", "SOUND.GLIDE", "SOUND.CHORUS", "SOUND.WIDTH"};
+        "SOUND.MASTER", "SOUND.FORMANT", "SOUND.GLIDE", "SOUND.CHORUS", "SOUND.WIDTH", "SOUND.OSC2"};
     for (const char* name : schedulable) {
         const VM::NativeEntry* e = vm.native_find(name);
         if (!e) continue;
