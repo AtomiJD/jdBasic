@@ -82,3 +82,15 @@ EXPORT FUNC RenderThumbnail(out_png$, lesson$, title$, hook$)
     payload{"hook"} = hook$
     RETURN Run("thumb", out_png$, payload)
 ENDFUNC
+
+' Render the neon 1280x720 thumbnail of the board videos.
+'   chip$   e.g. "RP2350B"
+'   title$  e.g. "jdBasic on the *Fruit Jam*", *...* is the big line
+'   hook$   one short line beneath it
+EXPORT FUNC RenderBoardThumbnail(out_png$, chip$, title$, hook$)
+    DIM payload = {}
+    payload{"chip"} = chip$
+    payload{"title"} = title$
+    payload{"hook"} = hook$
+    RETURN Run("boardthumb", out_png$, payload)
+ENDFUNC

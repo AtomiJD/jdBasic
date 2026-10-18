@@ -1,9 +1,12 @@
 ---
 title: jdBasic on the Fruit Jam - a BASIC computer on an RP2350B
-hook: Editor, pinball, a network clock and a BBS, all on the board
+hook: Pinball, a network clock and a BBS
 tags: jdBasic, basic, embedded, rp2350, fruit jam, adafruit, retro-computing
 playlist: none
 label: FJ
+thumbstyle: board
+chip: RP2350B
+thumbtitle: jdBasic on the *Fruit Jam*
 ---
 
 jdBasic running on an Adafruit Fruit Jam. A monitor on the DVI socket, a USB keyboard, and the same interpreter as on the desktop runs on the RP2350B.

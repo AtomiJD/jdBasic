@@ -71,6 +71,11 @@ FUNC ParseMd(path$)
     ' is what the thumbnail shows where a lesson number would sit.
     out{"playlist"} = ""
     out{"label"} = ""
+    ' thumbstyle: board renders the neon board thumbnail; chip: is
+    ' the label on its chip, thumbtitle: its title with *accent*.
+    out{"thumbstyle"} = ""
+    out{"chip"} = ""
+    out{"thumbtitle"} = ""
     ' series: kaiku reads yt\defaults_kaiku.json instead of the lesson
     ' defaults (category, tags, footer, playlist of that series).
     out{"series"} = ""
@@ -115,6 +120,9 @@ FUNC ParseMd(path$)
             IF k$ = "hook"  THEN out{"hook"}  = v$
             IF k$ = "playlist" THEN out{"playlist"} = LCASE$(v$)
             IF k$ = "label" THEN out{"label"} = v$
+            IF k$ = "thumbstyle" THEN out{"thumbstyle"} = LCASE$(v$)
+            IF k$ = "chip" THEN out{"chip"} = v$
+            IF k$ = "thumbtitle" THEN out{"thumbtitle"} = v$
             IF k$ = "series" THEN out{"series"} = LCASE$(v$)
             IF k$ = "tags"  THEN
                 DIM parts = SPLIT(v$, ",")
@@ -328,7 +336,14 @@ SUB EnsureThumbnail(base$, lesson_md)
     DIM hook$ = lesson_md{"hook"}
     IF LEN(hook$) = 0 THEN hook$ = lesson_md{"title"}
     PRINT "[upload] rendering thumbnail: "; thumb$
-    DIM ok = CARDS.RenderThumbnail(thumb$, lesson$, lesson_md{"title"}, hook$)
+    DIM ok = 0
+    IF lesson_md{"thumbstyle"} = "board" THEN
+        DIM bt_title$ = lesson_md{"thumbtitle"}
+        IF LEN(bt_title$) = 0 THEN bt_title$ = lesson_md{"title"}
+        ok = CARDS.RenderBoardThumbnail(thumb$, lesson_md{"chip"}, bt_title$, hook$)
+    ELSE
+        ok = CARDS.RenderThumbnail(thumb$, lesson$, lesson_md{"title"}, hook$)
+    ENDIF
     IF ok = 0 THEN
         PRINT "[upload] FATAL: thumbnail render failed"
         END

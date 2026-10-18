@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>jdBasic Boards - Thumbnail</title>
+<style>
+  /* Board thumbnail, 1280x720, the neon look of the board title card
+     in thumbnail type sizes: it has to read at 320px wide.
+     Tokens replaced by render_card.py:
+       {{TITLE}}  "jdBasic on the <em>Fruit Jam</em>", em is the big line
+       {{HOOK}}   one short line beneath it
+       {{CHIP}}   "RP2350B", the label on the chip */
+  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@500;700&family=Inter:wght@700;900&display=swap');
+
+  :root {
+    --cyan: #00e5ff;
+    --pink: #ff2e97;
+    --teal: #2dd4bf;
+    --amber: #ffb000;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #fff;
+    background: linear-gradient(180deg, #050713 0%, #0c1021 38%, #1b0f33 62%, #2a0b3a 72%, #050713 72.2%, #050713 100%);
+    position: relative;
+  }
+
+  .stars {
+    position: absolute; inset: 0 0 28% 0;
+    background-image:
+      radial-gradient(1.5px 1.5px at 80px 60px, #fff8, transparent),
+      radial-gradient(1px 1px at 300px 150px, #fff6, transparent),
+      radial-gradient(1.5px 1.5px at 520px 40px, #fff7, transparent),
+      radial-gradient(1px 1px at 700px 210px, #fff5, transparent),
+      radial-gradient(1.5px 1.5px at 860px 90px, #fff8, transparent),
+      radial-gradient(1px 1px at 1210px 60px, #fff6, transparent),
+      radial-gradient(1px 1px at 1240px 300px, #fff5, transparent);
+  }
+
+  .sun {
+    position: absolute; width: 460px; height: 460px; left: 800px; top: 70px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, var(--amber) 0%, #ff6a5c 45%, var(--pink) 75%, #b0127a 100%);
+    box-shadow: 0 0 100px 24px rgba(255, 46, 151, 0.4);
+    -webkit-mask-image: linear-gradient(180deg, #000 0 54%, transparent 54% 58%, #000 58% 66%, transparent 66% 71%, #000 71% 78%, transparent 78% 84%, #000 84% 90%, transparent 90%);
+    mask-image: linear-gradient(180deg, #000 0 54%, transparent 54% 58%, #000 58% 66%, transparent 66% 71%, #000 71% 78%, transparent 78% 84%, #000 84% 90%, transparent 90%);
+  }
+
+  .floor {
+    position: absolute; left: -50%; right: -50%; bottom: -10px; height: 29%;
+    background-image:
+      linear-gradient(rgba(0, 229, 255, 0.8) 2px, transparent 2px),
+      linear-gradient(90deg, rgba(255, 46, 151, 0.8) 2px, transparent 2px);
+    background-size: 90px 52px;
+    transform: perspective(300px) rotateX(62deg);
+    transform-origin: top center;
+    filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.6));
+  }
+  .horizon {
+    position: absolute; left: 0; right: 0; top: 72%; height: 3px;
+    background: linear-gradient(90deg, transparent, var(--pink) 20%, var(--cyan) 50%, var(--pink) 80%, transparent);
+    box-shadow: 0 0 20px 5px rgba(255, 46, 151, 0.5);
+  }
+
+  .chip {
+    position: absolute; left: 890px; top: 150px; width: 280px; height: 280px;
+    border-radius: 26px;
+    background: linear-gradient(145deg, #1a1f38, #0b0e1d);
+    border: 3px solid var(--cyan);
+    box-shadow: 0 0 0 8px rgba(0, 229, 255, 0.08), 0 0 50px 6px rgba(0, 229, 255, 0.5), inset 0 0 40px rgba(0, 229, 255, 0.18);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .chip::before {
+    content: ''; position: absolute; inset: 18px; border-radius: 14px;
+    border: 1px solid rgba(0, 229, 255, 0.35);
+  }
+  .chip .dot {
+    position: absolute; left: 32px; top: 32px; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--pink); box-shadow: 0 0 14px 4px rgba(255, 46, 151, 0.8);
+  }
+  .chip .name {
+    font-family: 'Fira Code', monospace; font-weight: 700; font-size: 46px; letter-spacing: 1px;
+    text-shadow: 0 0 10px var(--cyan), 0 0 28px rgba(0, 229, 255, 0.7);
+  }
+  .chip .maker {
+    margin-top: 10px; font-family: 'Fira Code', monospace; font-size: 17px; letter-spacing: 6px;
+    color: var(--teal); text-transform: uppercase;
+  }
+  .pins { position: absolute; display: flex; }
+  .pins span {
+    display: block; background: linear-gradient(180deg, #ffe08a, #b98a1e);
+    box-shadow: 0 0 6px rgba(255, 176, 0, 0.6); border-radius: 2px;
+  }
+  .pins.top, .pins.bottom { left: 922px; width: 216px; justify-content: space-between; }
+  .pins.top { top: 124px; }
+  .pins.bottom { top: 432px; }
+  .pins.top span, .pins.bottom span { width: 11px; height: 24px; }
+  .pins.left, .pins.right { top: 182px; height: 216px; flex-direction: column; justify-content: space-between; }
+  .pins.left { left: 864px; }
+  .pins.right { left: 1172px; }
+  .pins.left span, .pins.right span { width: 24px; height: 11px; }
+
+  .text { position: absolute; left: 64px; top: 118px; width: 800px; }
+  .title {
+    font-weight: 900; font-size: 64px; line-height: 1.0; letter-spacing: -1px;
+    text-shadow: 0 0 16px rgba(0, 229, 255, 0.6);
+  }
+  .title em {
+    display: block; margin-top: 10px;
+    font-style: normal; font-size: 156px; letter-spacing: -5px; line-height: 1.05;
+    background: linear-gradient(90deg, var(--pink), var(--amber));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: none;
+    filter: drop-shadow(0 0 20px rgba(255, 46, 151, 0.6));
+  }
+  .hook {
+    margin-top: 26px; width: 760px;
+    font-weight: 700; font-size: 40px; line-height: 1.2; color: var(--cyan);
+    text-shadow: 0 0 12px rgba(0, 229, 255, 0.55), 0 2px 6px #000;
+  }
+  .brand {
+    position: absolute; right: 48px; bottom: 34px;
+    font-family: 'Fira Code', monospace; font-size: 30px; font-weight: 700;
+    text-shadow: 0 0 10px var(--cyan), 0 0 4px #000;
+  }
+  .brand span { color: var(--cyan); }
+</style>
+</head>
+<body>
+  <div class="stars"></div>
+  <div class="sun"></div>
+  <div class="floor"></div>
+  <div class="horizon"></div>
+
+  <div class="pins top"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="pins bottom"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="pins left"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="pins right"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="chip">
+    <div class="dot"></div>
+    <div class="name">{{CHIP}}</div>
+    <div class="maker">jdBasic inside</div>
+  </div>
+
+  <div class="text">
+    <div class="title">{{TITLE}}</div>
+    <div class="hook">{{HOOK}}</div>
+  </div>
+
+  <div class="brand">jd<span>Basic</span></div>
+</body>
+</html>

@@ -22,7 +22,7 @@ title cards, 1280x720 for thumbnails).
 import sys, pathlib, json
 
 if len(sys.argv) != 4:
-    print("usage: render_card.py {title|thumb|topic|board} <out.png> <args.json>", file=sys.stderr)
+    print("usage: render_card.py {title|thumb|topic|board|boardthumb} <out.png> <args.json>", file=sys.stderr)
     sys.exit(2)
 
 kind     = sys.argv[1].lower()
@@ -76,8 +76,20 @@ elif kind == "board":
         "{{CHIP}}":     _html.escape(payload.get("chip", "")),
         "{{SPECS}}":    "".join(f"<span>{_html.escape(s)}</span>" for s in specs),
     }
+elif kind == "boardthumb":
+    # The board thumbnail: *word* in the title becomes the big line.
+    import html as _html, re as _re
+    tpl_path = here / "cards" / "template_thumb_board.html"
+    width, height = 1280, 720
+    title = _html.escape(payload.get("title", ""))
+    title = _re.sub(r"\*([^*]+)\*", r"<em>\1</em>", title)
+    substitutions = {
+        "{{TITLE}}": title,
+        "{{HOOK}}":  _html.escape(payload.get("hook", "")),
+        "{{CHIP}}":  _html.escape(payload.get("chip", "")),
+    }
 else:
-    print(f"unknown kind: {kind!r} — use 'title', 'thumb', 'topic' or 'board'", file=sys.stderr)
+    print(f"unknown kind: {kind!r} — use 'title', 'thumb', 'topic', 'board' or 'boardthumb'", file=sys.stderr)
     sys.exit(2)
 transparent = (kind == "topic")
 
