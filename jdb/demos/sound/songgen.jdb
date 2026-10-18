@@ -108,6 +108,13 @@ IF bass_style$ = "acid" THEN BASS$ = "legato(0.7, " + MELODY.BASS$(PROG$, "acid"
 DIM ARP$ AS STRING = "legato(0.5, " + MELODY.ARP$(PROG$, "updown", 16, 1) + ")"
 IF genre$ = "deep" THEN ARP$ = "legato(0.8, " + MELODY.ARP$(PROG$, "up", 8, 2) + ")"
 DIM STABS$ AS STRING = "legato(0.5, " + MELODY.STABS$(PROG$, "..x...x...x..x-.") + ")"
+' the breakdown's progression, with chords borrowed from the parallel key
+DIM BREAK_PROG$ AS STRING = MELODY.BORROWED$(KEY$)
+DIM BREAK_CHORDS$ AS STRING = "<" + BREAK_PROG$ + ">"
+DIM BREAK_LINE$ AS STRING = "legato(1.2, " + MELODY.ARP$(BREAK_PROG$, "down", 4, 1) + ")"
+DIM BREAK_ARP$ AS STRING = "legato(0.5, " + MELODY.ARP$(BREAK_PROG$, "updown", 16, 1) + ")"
+IF genre$ = "deep" THEN BREAK_ARP$ = "legato(0.8, " + MELODY.ARP$(BREAK_PROG$, "up", 8, 2) + ")"
+DIM BREAK_STABS$ AS STRING = "legato(0.5, " + MELODY.STABS$(BREAK_PROG$, "..x...x...x..x-.") + ")"
 ' the answers to each hook, a register below it
 DIM COUNTER_A$ AS STRING = MELODY.COUNTER$(seed, HOOK$, PROG$, KEY$, OCT - 1)
 DIM COUNTER_B$ AS STRING = MELODY.COUNTER$(seed + 1000, HOOK_B$, PROG$, KEY$, OCT - 1)
@@ -120,7 +127,11 @@ DIM LIFT AS INTEGER = 1 + PICK(9, 2)
 ' semitones the music now plays above the key; drums stay as they are
 DIM CUR_LIFT AS INTEGER = 0
 
-PRINT "songgen: "; genre$; ", seed "; seed
+DIM TITLE_A$ = ["Neon", "Glass", "Silver", "Midnight", "Velvet", "Electric", "Paper", "Golden", "Crystal", "Static", "Hollow", "Endless", "Quiet", "Burning", "Northern", "Second"]
+DIM TITLE_B$ = ["Horizon", "Tide", "Signal", "Garden", "Cathedral", "Engine", "Satellite", "Rain", "Mirror", "Harbour", "Lantern", "Orbit", "Daylight", "Circuit", "Meridian", "Echo"]
+DIM GENRE_NO AS INTEGER = INSTR("trance house deep   acid", genre$) \ 6
+DIM TITLE$ AS STRING = TITLE_A$[PICK(11 + 50 * GENRE_NO, LEN(TITLE_A$))] + " " + TITLE_B$[PICK(12 + 50 * GENRE_NO, LEN(TITLE_B$))]
+PRINT "songgen: "; CHR$(34); TITLE$; CHR$(34); ", "; genre$; ", seed "; seed
 PRINT "  key "; KEY$; ", "; BPM; " BPM, progression "; PROG_NAME$; ": "; PROG$
 PRINT "  hook rhythm "; RHYTHM_A$; " / "; RHYTHM_B$; ", octave "; OCT
 DIM INTRO_NAMES$ = ["drums and a filtered teaser", "a pad swell, the kick at bar 4", "drums and a filtered bass"]
@@ -168,6 +179,10 @@ SOUND.DELAY TRUE, "1/4", 0.35, 0.25, 1
 SOUND.KIT KICK, "SYNTH"
 SOUND.GAIN KICK, 0.85
 SOUND.KIT PERC, "SYNTH"
+' the hats and the percussion sit a few milliseconds behind the kick
+SOUND.NUDGE PERC, 7
+SOUND.NUDGE HATS, 4
+SOUND.NUDGE OPENHAT, 4
 SOUND.GAIN PERC, 0.45
 SOUND.PAN PERC, 0.35
 SOUND.REVERBSEND PERC, 0.25
@@ -253,7 +268,7 @@ SOUND.GAIN RISER, 0
 ' clean slate: the tracks it does not play fall silent, the sweeps of
 ' the part before stop and their filters return to the patch.
 
-DIM HATS16$ AS STRING = "gain([0.4 0.6 0.5 0.75]*4, hh*16)"
+DIM HATS16$ AS STRING = "sometimesBy(0.3, gain(0.78), gain([0.4 0.6 0.5 0.75]*4, hh*16))"
 IF genre$ = "house" OR genre$ = "deep" THEN HATS16$ = "swingBy(0.1, 4, " + HATS16$ + ")"
 DIM PARTS_TRACK AS INTEGER = ARP
 DIM PARTS$ AS STRING = ARP$
@@ -351,6 +366,15 @@ SUB COMMIT_PART(b AS INTEGER)
     NEXT t
 ENDSUB
 
+' a quiet snare a sixteenth before the clap, or "" below level 3
+DIM GHOST$ AS STRING = ""
+DIM GHOST_PAT$ AS STRING = "gain(0.14, <[~ ~ ~ sd ~ ~ ~ ~ ~ ~ ~ sd ~ ~ ~ ~] [~ ~ ~ ~ ~ ~ ~ sd ~ ~ ~ ~ ~ ~ sd ~]>)"
+
+' Some events of p a little softer
+FUNC LOOSE$(pat$) AS STRING
+    RETURN "sometimesBy(0.35, gain(0.7), " + pat$ + ")"
+ENDFUNC
+
 ' The drums at an energy from 1 (kick and light hats) to 5
 SUB DRUMS(level AS INTEGER)
     TRK_ON KICK, "bd*4"
@@ -363,9 +387,14 @@ SUB DRUMS(level AS INTEGER)
         TRK_ON CLAP, "~ cp ~ cp"
         TRK_ON OPENHAT, "[~ oh]*4"
     ENDIF
-    IF level = 2 OR level = 3 THEN TRK_ON PERC, "rim(3,8,2)"
-    IF level = 4 THEN TRK_ON PERC, "rim(3,8,2), cb(5,16,3)"
-    IF level = 5 THEN TRK_ON PERC, "rim(3,8,2), sometimes(ply(2), cb(5,16,3))"
+    IF level = 2 OR level = 3 THEN TRK_ON PERC, LOOSE$("rim(3,8,2)")
+    IF level = 4 THEN TRK_ON PERC, LOOSE$("rim(3,8,2), cb(5,16,3)")
+    IF level = 5 THEN TRK_ON PERC, LOOSE$("rim(3,8,2), sometimes(ply(2), cb(5,16,3))")
+    GHOST$ = ""
+    IF level >= 3 THEN
+        GHOST$ = GHOST_PAT$
+        TRK_ON SNARE, GHOST$
+    ENDIF
 ENDSUB
 
 SUB CRASH_AT(b AS INTEGER)
@@ -397,7 +426,11 @@ SUB FILL(b AS INTEGER, kind AS INTEGER, inside AS INTEGER)
     ENDIF
     IF inside THEN
         SCORE.AT b + 1
-        TRK_OFF SNARE
+        IF LEN(GHOST$) > 0 THEN
+            TRK_ON SNARE, GHOST$
+        ELSE
+            TRK_OFF SNARE
+        ENDIF
     ENDIF
 ENDSUB
 
@@ -487,35 +520,47 @@ ENDSUB
 
 DIM BREAK_NAMES$ = ["the choir", "pad and hook", "no kick"]
 
+' A breakdown on the borrowed chords; over 16 bars the second half is
+' home again on the main progression
 SUB PART_BREAK(b AS INTEGER, n AS INTEGER, v AS INTEGER)
     BEGIN_PART b, "breakdown: " + BREAK_NAMES$[v], "wave"
-    TRK_ON PAD, "legato(1, " + CHORDS$ + ")"
+    GHOST$ = ""
+    TRK_ON PAD, "legato(1, " + BREAK_CHORDS$ + ")"
+    SW PAD, "CUTOFF", "SINE", 600, 2200, 8, b
     IF v = 0 THEN
         TRK_ON HATS, "gain(0.3, [~ hh]*4)"
-        TRK_ON LEAD, "legato(1.2, " + HOOK$ + ")"
+        TRK_ON LEAD, BREAK_LINE$
         SW LEAD, "CUTOFF", "SINE", 900, 3000, 8, b
-        SW PAD, "CUTOFF", "SINE", 600, 2200, 8, b
-        TRK_ON CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
+        TRK_ON CHOIR, "legato(1, add(12, " + BREAK_CHORDS$ + "))"
         SW CHOIR, "VOWEL", "TRI", 4, 0, 8, b
     ELSEIF v = 1 THEN
-        TRK_ON LEAD, "legato(1.2, " + HOOK$ + ")"
-        SW LEAD, "CUTOFF", "SAW", 600, 2400, n, b
-        SW PAD, "CUTOFF", "SINE", 600, 2200, 8, b
+        TRK_ON LEAD, BREAK_LINE$
+        SW LEAD, "CUTOFF", "SAW", 600, 2400, 8, b
     ELSE
         TRK_ON HATS, HATS16$
-        TRK_ON PERC, "rim(3,8,2)"
+        TRK_ON PERC, LOOSE$("rim(3,8,2)")
         TRK_ON CLAP, "~ cp ~ cp"
-        TRK_ON PARTS_TRACK, PARTS$
+        IF PARTS_TRACK = ARP THEN
+            TRK_ON PARTS_TRACK, BREAK_ARP$
+        ELSE
+            TRK_ON PARTS_TRACK, BREAK_STABS$
+        ENDIF
         SW PARTS_TRACK, "CUTOFF", "SINE", 500, 2000, 8, b
     ENDIF
     COMMIT_PART b
     IF n >= 16 THEN
+        SCORE.SECTION b + 8, "breakdown: home again", "wave"
+        TRK_ON PAD, "legato(1, " + CHORDS$ + ")"
         IF v = 0 THEN
-            SCORE.SECTION b + 8, "breakdown: the arp returns", "wave"
+            TRK_ON CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
+            TRK_ON LEAD, "legato(1.2, " + HOOK$ + ")"
             TRK_ON PARTS_TRACK, PARTS$
             SW PARTS_TRACK, "CUTOFF", "SAW", 300, 1500, 8, b + 8
+        ELSEIF v = 1 THEN
+            TRK_ON LEAD, "legato(1.2, " + HOOK_B$ + ")"
+            SW LEAD, "CUTOFF", "SAW", 600, 2400, 8, b + 8
         ELSE
-            SCORE.SECTION b + 8, "breakdown: the hook", "wave"
+            TRK_ON PARTS_TRACK, PARTS$
             TRK_ON LEAD, "legato(1.2, " + HOOK_B$ + ")"
             SW LEAD, "CUTOFF", "SAW", 600, 2400, 8, b + 8
         ENDIF
@@ -710,6 +755,7 @@ FOR fi = 0 TO N_PARTS - 1
         FILL bar_at + nb - 1, fill_kind, FALSE
         label$ = label$ + " [" + FILL_NAMES$[fill_kind] + "]"
     ENDIF
+    IF part$ = "break" THEN label$ = label$ + " {" + BREAK_PROG$ + "}"
     recipe$ = recipe$ + "    " + STR$(bar_at) + " " + label$ + CHR$(10)
     bar_at = bar_at + nb
 NEXT fi
@@ -734,5 +780,5 @@ ELSEIF LEN(wav$) > 0 THEN
     PRINT "wrote "; wav$
 ELSE
     STAGE.SUBTITLE UCASE$(LEFT$(genre$, 1)) + MID$(genre$, 1) + " in " + KEY$ + ", seed " + STR$(seed)
-    STAGE.RUN "songgen"
+    STAGE.RUN TITLE$
 ENDIF

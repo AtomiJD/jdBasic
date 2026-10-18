@@ -53,6 +53,11 @@ CHECK_STR "flat minor key", "Fm Bbm Db C", MELODY.PROG$("dark", "F minor")
 CHECK_STR "sharp minor key", "F#m D A E", MELODY.PROG$("epic", "F# minor")
 CHECK_STR "flat dorian key", "Cm7 F7 Cm7 F7", MELODY.PROG$("deep", "C dorian")
 
+CHECK_STR "borrowed in major", "F Fm Ab Bb", MELODY.BORROWED$("C major")
+CHECK_STR "borrowed in minor", "Dm F G Am", MELODY.BORROWED$("A minor")
+CHECK_STR "borrowed in a flat key", "Eb Ebm Gb Ab", MELODY.BORROWED$("Bb major")
+CHECK_STR "borrowed in dorian", "Gm Bb C Dm", MELODY.BORROWED$("D dorian")
+
 ' ---------- the hook ----------
 DIM prog$ = "Am F C G"
 DIM hook$ = MELODY.HOOK$(7, prog$, "A minor", "x.x..x.x x.x.x...", 4)

@@ -32,6 +32,9 @@
 '                                bar (8, 12, 16), over 1 or 2 octaves
 '   STABS$(prog$, rhythm$)       the voiced chord on a rhythm mask (x - .)
 '
+'   BORROWED$(key$)              a breakdown progression with chords
+'                                from the parallel key
+'
 ' Around a hook:
 '   COUNTER$(seed, hook$, prog$, key$, octave)  an answer between the
 '                                hook's notes, at most four a bar
@@ -164,6 +167,33 @@ EXPORT FUNC PROG$(name$, key$) AS STRING
             out$ = out$ + DEGREE_CHORD$(root_pc, steps, degs[di], sevenths, flats)
         ENDIF
     NEXT di
+    RETURN out$
+ENDFUNC
+
+' A breakdown progression with chords borrowed from the parallel key:
+' IV iv bVI bVII in a major key (F Fm Ab Bb in C), iv bVI bVII i in a
+' minor one (Dm F G Am in A minor). It ends a step below or on the
+' tonic, so the main progression returns from it.
+EXPORT FUNC BORROWED$(key$) AS STRING
+    DIM root_pc AS INTEGER = KEY_ROOT(key$)
+    DIM steps = KEY_STEPS(key$)
+    DIM names$ = PC_SHARPS$
+    IF KEY_FLATS(key$) THEN names$ = PC_FLATS$
+    DIM offs = [5, 8, 10, 0]
+    DIM quals$ = ["m", "", "", "m"]
+    IF steps[2] = 4 THEN
+        offs = [5, 5, 8, 10]
+        quals$ = ["", "m", "", ""]
+    ENDIF
+    DIM out$ = ""
+    DIM ci AS INTEGER
+    FOR ci = 0 TO 3
+        DIM pc AS INTEGER = (root_pc + offs[ci]) MOD 12
+        DIM nm$ = names$[pc]
+        IF offs[ci] = 8 OR offs[ci] = 10 THEN nm$ = PC_FLATS$[pc]
+        IF ci > 0 THEN out$ = out$ + " "
+        out$ = out$ + nm$ + quals$[ci]
+    NEXT ci
     RETURN out$
 ENDFUNC
 
