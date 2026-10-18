@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>jdBasic Boards - Title Card</title>
+<style>
+  /* Board title card, 1920x1080: a neon sunset over a perspective grid,
+     the chip on the right, the title on the left.
+     Tokens replaced by render_card.py:
+       {{KICKER}}    "jdBasic on the boards"
+       {{TITLE}}     "jdBasic on the Fruit Jam"
+       {{SUBTITLE}}  "a BASIC computer on an RP2350B"
+       {{CHIP}}      "RP2350B"
+       {{SPECS}}     spec pills, already HTML */
+  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@500;700&family=Inter:wght@400;700;900&display=swap');
+
+  :root {
+    --cyan: #00e5ff;
+    --pink: #ff2e97;
+    --teal: #2dd4bf;
+    --amber: #ffb000;
+    --ink: #cdd6f4;
+    --night: #0c1021;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: var(--ink);
+    background: linear-gradient(180deg, #050713 0%, #0c1021 38%, #1b0f33 62%, #2a0b3a 70%, #050713 70.2%, #050713 100%);
+    position: relative;
+  }
+
+  /* stars */
+  .stars {
+    position: absolute; inset: 0 0 30% 0;
+    background-image:
+      radial-gradient(1.5px 1.5px at 120px 90px, #fff8, transparent),
+      radial-gradient(1px 1px at 340px 210px, #fff6, transparent),
+      radial-gradient(1.5px 1.5px at 610px 60px, #fff7, transparent),
+      radial-gradient(1px 1px at 820px 300px, #fff5, transparent),
+      radial-gradient(1.5px 1.5px at 1010px 140px, #fff8, transparent),
+      radial-gradient(1px 1px at 1290px 70px, #fff6, transparent),
+      radial-gradient(1.5px 1.5px at 1500px 250px, #fff7, transparent),
+      radial-gradient(1px 1px at 1760px 120px, #fff6, transparent),
+      radial-gradient(1px 1px at 1860px 330px, #fff5, transparent),
+      radial-gradient(1px 1px at 230px 380px, #fff4, transparent),
+      radial-gradient(1px 1px at 720px 420px, #fff4, transparent);
+  }
+
+  /* the sun behind the chip, cut by horizontal bands */
+  .sun {
+    position: absolute; width: 620px; height: 620px; left: 1180px; top: 150px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, var(--amber) 0%, #ff6a5c 45%, var(--pink) 75%, #b0127a 100%);
+    box-shadow: 0 0 120px 30px rgba(255, 46, 151, 0.35);
+    -webkit-mask-image: linear-gradient(180deg, #000 0 54%, transparent 54% 57%, #000 57% 65%, transparent 65% 69%, #000 69% 76%, transparent 76% 81%, #000 81% 87%, transparent 87%);
+    mask-image: linear-gradient(180deg, #000 0 54%, transparent 54% 57%, #000 57% 65%, transparent 65% 69%, #000 69% 76%, transparent 76% 81%, #000 81% 87%, transparent 87%);
+    opacity: 0.9;
+  }
+
+  /* the perspective floor */
+  .floor {
+    position: absolute; left: -50%; right: -50%; bottom: -10px; height: 31%;
+    background-image:
+      linear-gradient(rgba(0, 229, 255, 0.75) 2px, transparent 2px),
+      linear-gradient(90deg, rgba(255, 46, 151, 0.75) 2px, transparent 2px);
+    background-size: 120px 70px;
+    transform: perspective(420px) rotateX(62deg);
+    transform-origin: top center;
+    filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.6));
+  }
+  .horizon {
+    position: absolute; left: 0; right: 0; top: 70%; height: 3px;
+    background: linear-gradient(90deg, transparent, var(--pink) 20%, var(--cyan) 50%, var(--pink) 80%, transparent);
+    box-shadow: 0 0 24px 6px rgba(255, 46, 151, 0.5);
+  }
+
+  /* the chip */
+  .chip {
+    position: absolute; left: 1290px; top: 250px; width: 400px; height: 400px;
+    border-radius: 34px;
+    background: linear-gradient(145deg, #1a1f38, #0b0e1d);
+    border: 3px solid var(--cyan);
+    box-shadow:
+      0 0 0 10px rgba(0, 229, 255, 0.08),
+      0 0 60px 8px rgba(0, 229, 255, 0.45),
+      inset 0 0 50px rgba(0, 229, 255, 0.18);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .chip::before {
+    content: ''; position: absolute; inset: 26px;
+    border-radius: 18px;
+    border: 1px solid rgba(0, 229, 255, 0.35);
+  }
+  .chip .dot {
+    position: absolute; left: 44px; top: 44px; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--pink); box-shadow: 0 0 16px 4px rgba(255, 46, 151, 0.8);
+  }
+  .chip .name {
+    font-family: 'Fira Code', monospace; font-weight: 700; font-size: 64px;
+    color: #fff; letter-spacing: 2px;
+    text-shadow: 0 0 12px var(--cyan), 0 0 34px rgba(0, 229, 255, 0.7);
+  }
+  .chip .maker {
+    margin-top: 14px;
+    font-family: 'Fira Code', monospace; font-size: 24px; letter-spacing: 8px;
+    color: var(--teal); text-transform: uppercase;
+  }
+  .pins { position: absolute; display: flex; gap: 22px; }
+  .pins span {
+    display: block; background: linear-gradient(180deg, #ffe08a, #b98a1e);
+    box-shadow: 0 0 8px rgba(255, 176, 0, 0.6); border-radius: 3px;
+  }
+  .pins.top, .pins.bottom { left: 1336px; width: 308px; justify-content: space-between; }
+  .pins.top { top: 214px; }
+  .pins.bottom { top: 654px; }
+  .pins.top span, .pins.bottom span { width: 14px; height: 32px; }
+  .pins.left, .pins.right { top: 296px; height: 308px; flex-direction: column; justify-content: space-between; }
+  .pins.left { left: 1254px; }
+  .pins.right { left: 1694px; }
+  .pins.left span, .pins.right span { width: 32px; height: 14px; }
+
+  /* the text */
+  .text { position: absolute; left: 130px; top: 170px; width: 1080px; }
+  .kicker {
+    font-family: 'Fira Code', monospace; font-size: 30px; font-weight: 500;
+    color: var(--teal); letter-spacing: 6px; text-transform: uppercase;
+    display: flex; align-items: center; gap: 22px;
+  }
+  .kicker::before {
+    content: ''; width: 70px; height: 4px; background: var(--pink);
+    box-shadow: 0 0 12px var(--pink);
+  }
+  .title {
+    margin-top: 34px;
+    font-weight: 900; font-size: 132px; line-height: 1.0; letter-spacing: -3px;
+    color: #fff;
+    text-shadow: 0 0 18px rgba(0, 229, 255, 0.55), 0 0 60px rgba(0, 229, 255, 0.25);
+  }
+  .title em {
+    font-style: normal;
+    background: linear-gradient(90deg, var(--pink), var(--amber));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: none;
+    filter: drop-shadow(0 0 22px rgba(255, 46, 151, 0.55));
+  }
+  .subtitle {
+    margin-top: 34px; font-size: 44px; font-weight: 400; color: #b8c0e0;
+  }
+  .specs { margin-top: 48px; display: flex; flex-wrap: wrap; gap: 16px; }
+  .specs span {
+    font-family: 'Fira Code', monospace; font-size: 24px; color: var(--cyan);
+    padding: 10px 20px; border-radius: 999px;
+    border: 2px solid rgba(0, 229, 255, 0.55);
+    background: rgba(0, 229, 255, 0.07);
+    box-shadow: 0 0 14px rgba(0, 229, 255, 0.25);
+  }
+
+  .footer {
+    position: absolute; right: 80px; bottom: 50px;
+    font-family: 'Fira Code', monospace; font-size: 26px; color: #8a93b8;
+    text-shadow: 0 0 8px #000;
+  }
+  .footer b { color: var(--pink); font-weight: 700; }
+  .brand {
+    position: absolute; left: 130px; bottom: 50px;
+    font-family: 'Fira Code', monospace; font-size: 30px; font-weight: 700; color: #fff;
+    text-shadow: 0 0 10px var(--cyan);
+  }
+  .brand span { color: var(--cyan); }
+</style>
+</head>
+<body>
+  <div class="stars"></div>
+  <div class="sun"></div>
+  <div class="floor"></div>
+  <div class="horizon"></div>
+
+  <div class="pins top"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="pins bottom"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="pins left"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="pins right"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="chip">
+    <div class="dot"></div>
+    <div class="name">{{CHIP}}</div>
+    <div class="maker">jdBasic inside</div>
+  </div>
+
+  <div class="text">
+    <div class="kicker">{{KICKER}}</div>
+    <div class="title">{{TITLE}}</div>
+    <div class="subtitle">{{SUBTITLE}}</div>
+    <div class="specs">{{SPECS}}</div>
+  </div>
+
+  <div class="brand">jd<span>Basic</span></div>
+  <div class="footer">jdbasic.org <b>/</b> @AtomiJD</div>
+</body>
+</html>

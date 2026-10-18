@@ -6,7 +6,10 @@
 '
 '    jdbasic narrate.jdb boards_01_fruitjam.txt
 '
-'  The picture comes from the script's PICTURE: line. On the clock a
+'  The picture comes from the script's PICTURE: line. TITLESTYLE: board
+'  renders the TITLE as the neon board card: its first field is the
+'  chip, *...* in the title is the accent, and the SPECS: line lists
+'  the pills. On the clock a
 '  TITLE takes CARD_DUR_MS, a SAY takes its clip plus SAY_GAP_MS, AT:
 '  moves the clock forward to a second count, and a TOPIC band starts
 '  where the clock stands without taking time. A SAY that is still
@@ -41,6 +44,8 @@ ENDIF
 
 DIM lines = SPLIT(TXTREADER$(script_path$), CHR$(10))
 DIM picture$ = ""
+DIM title_style$ = "lesson"
+DIM specs$ = ""
 DIM manifest$ = ""
 DIM clock_ms AS INTEGER = 0
 DIM speaking_until AS INTEGER = 0
@@ -67,6 +72,10 @@ FOR i = 0 TO LEN(lines) - 1
     DIM ln$ = TRIM$(lines[i])
     IF STARTSWITH(ln$, "PICTURE:") THEN
         picture$ = TRIM$(MID$(ln$, 8))
+    ELSEIF STARTSWITH(ln$, "TITLESTYLE:") THEN
+        title_style$ = LCASE$(TRIM$(MID$(ln$, 11)))
+    ELSEIF STARTSWITH(ln$, "SPECS:") THEN
+        specs$ = TRIM$(MID$(ln$, 6))
     ELSEIF STARTSWITH(ln$, "TITLE:") THEN
         DIM tf = FIELDS(MID$(ln$, 6))
         DIM t_lesson$ = "00"
@@ -78,7 +87,12 @@ FOR i = 0 TO LEN(lines) - 1
         ENDIF
         IF LEN(tf) >= 3 THEN t_sub$ = tf[2]
         DIM t_png$ = "cards\" + script_base$ + "_title_" + FORMAT$("{:0>3}", n_title) + ".png"
-        DIM t_ok = CARDS.RenderTitle(t_png$, t_lesson$, t_title$, t_sub$, "")
+        DIM t_ok = 0
+        IF title_style$ = "board" THEN
+            t_ok = CARDS.RenderBoard(t_png$, t_lesson$, t_title$, t_sub$, specs$)
+        ELSE
+            t_ok = CARDS.RenderTitle(t_png$, t_lesson$, t_title$, t_sub$, "")
+        ENDIF
         manifest$ = manifest$ + "CARD" + CHR$(9) + STR$(clock_ms) + CHR$(9) + STR$(CARD_DUR_MS) + CHR$(9) + t_png$ + CHR$(10)
         PRINT SECS$(clock_ms); "  TITLE  "; t_title$
         clock_ms = clock_ms + CARD_DUR_MS

@@ -48,6 +48,20 @@ EXPORT FUNC RenderTitle(out_png$, lesson$, title$, subtitle$, host$)
     RETURN Run("title", out_png$, payload)
 ENDFUNC
 
+' Render the neon 1920x1080 title card of the board videos.
+'   chip$      e.g. "RP2350B", the label on the chip
+'   title$     e.g. "jdBasic on the *Fruit Jam*", *...* is the accent
+'   subtitle$  e.g. "a BASIC computer on an RP2350B"
+'   specs$     e.g. "DVI | USB keyboard | 8 MB PSRAM", one pill each
+EXPORT FUNC RenderBoard(out_png$, chip$, title$, subtitle$, specs$)
+    DIM payload = {}
+    payload{"chip"} = chip$
+    payload{"title"} = title$
+    payload{"subtitle"} = subtitle$
+    payload{"specs"} = specs$
+    RETURN Run("board", out_png$, payload)
+ENDFUNC
+
 ' Render a lower-third band on a transparent 1920x1080 page: the topic
 ' in large type, a note beneath it. Laid over the picture by compose.
 EXPORT FUNC RenderTopic(out_png$, topic$, note$)

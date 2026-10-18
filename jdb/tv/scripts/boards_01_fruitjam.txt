@@ -8,7 +8,9 @@
 PICTURE: D:/usr/video/Out/FruitJam_90.mp4
 SCENE: Video
 
-TITLE: FJ | jdBasic on the Fruit Jam | a BASIC computer on an RP2350B
+TITLESTYLE: board
+SPECS: DVI 320x240 | USB keyboard and pad | 8 MB PSRAM | I2S sound
+TITLE: RP2350B | jdBasic on the *Fruit Jam* | a BASIC computer on an RP2350B
 
 CHAPTER: The editor
 TOPIC: maze.jdb | the C64 one-liner, in the board's editor
