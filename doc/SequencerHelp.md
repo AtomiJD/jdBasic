@@ -48,6 +48,7 @@ The sequencer divides time into "cycles". You can arrange events within a cycle 
   * **`SOUND.AT cycle`** queues the commands after it for that cycle, applied on its exact frame: `SOUND.AT 72` then `SOUND.SEQ 0, "bd*4", "VOICE"`, then `SOUND.AT` to apply at once again. A whole arrangement can be sent ahead this way; `SOUND.PENDING()` counts what is still queued. `jdb/demos/sound/score.jdb` wraps it into section verbs.
   * Full table: languages.md, "Pattern Syntax".
   * **Progressions and hooks**: `jdb/demos/sound/melody.jdb` (`IMPORT MELODY`). `MELODY.PROG$("epic", "A minor")` gives `"Am F C G"` (also anthem, dark, pop, euphoric, house, deep); `MELODY.HOOK$(seed, prog$, key$, "x.x..x.x x.x.x...", 4)` writes a lead line over it, one bar per chord: chord tones on the beats, scale steps between, a leap and a step back, the form A A' A B, ending on the root or third. Same seed, same hook. `hook_trance.jdb --seed n --prog name` plays one.
+  * **Whole tracks**: `jdb/demos/sound/songgen.jdb --genre trance|house|deep|acid --seed n [--wav file]` picks key, tempo, progression and hook rhythm from the seed, builds bass, arp or stabs, choir and hook with MELODY and arranges 88 bars with SCORE. It prints the recipe first, so a good seed can be kept. `MELODY.BASS$`, `MELODY.ARP$` and `MELODY.STABS$` write the parts on their own.
 
 * **`SOUND.FILTER track, cutoff, [resonance], [mode$]`**: resonant `"LP"`/`"HP"`/`"BP"` when a resonance or mode is given.
 * **`SOUND.FENV track, octaves, attack, decay, [sustain], [release]`**: filter envelope per note.

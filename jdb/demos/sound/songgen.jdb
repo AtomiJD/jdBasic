@@ -1,0 +1,357 @@
+' songgen.jdb - a whole track from a genre and a seed: the seed picks
+' the key, the tempo, the progression, the hook's rhythm and the hook
+' itself, the genre the sounds, the bass and the arrangement.
+'
+'   jdBasic songgen.jdb --genre trance --seed 42
+'   jdBasic songgen.jdb --genre house --seed 7 --wav house7.wav
+'
+' Genres: trance (136-140 BPM, supersaw hook, rolling bass, arp, choir in
+' the breakdown), house (122-126, octave bass, chord stabs, vocal chop),
+' deep (118-122, dorian, sub bass with glide, soft keys, a vowel pad),
+' acid (128-132, a sliding 303 line, sparse hook).
+'
+' 0 intro  8 groove  16 parts  32 hook  48 breakdown  56 build
+' 64 drop  80 outro  88 end
+'
+'   --wav file   renders the track offline into a WAV instead of the show
+'   --window     the show in a window (see stage.jdb)
+' The recipe is printed first, so a good seed can be kept.
+
+OPTION "EXPLICIT"
+
+IMPORT SCORE
+IMPORT STAGE
+IMPORT MELODY
+
+DIM genre$ AS STRING = "trance"
+DIM seed AS INTEGER = 1
+DIM wav$ AS STRING = ""
+DIM cli = OS.ARGS()
+DIM ci AS INTEGER
+FOR ci = 1 TO LEN(cli) - 2
+    IF cli[ci] = "--genre" THEN genre$ = LCASE$(cli[ci + 1])
+    IF cli[ci] = "--seed" THEN seed = VAL(cli[ci + 1])
+    IF cli[ci] = "--wav" THEN wav$ = cli[ci + 1]
+NEXT ci
+IF genre$ <> "trance" AND genre$ <> "house" AND genre$ <> "deep" AND genre$ <> "acid" THEN
+    PRINT "unknown genre "; genre$; " (trance, house, deep, acid)"
+    END 1
+ENDIF
+
+' One of n choices for the k-th decision of this seed
+FUNC PICK(k AS INTEGER, n AS INTEGER) AS INTEGER
+    DIM h AS DOUBLE = (seed + 1) * 2654435761 + (k + 1) * 40503
+    RETURN INT(h - INT(h / 2147483647) * 2147483647) MOD n
+ENDFUNC
+
+' ── The recipe ───────────────────────────────────────────────────
+
+DIM keys$ = []
+DIM progs$ = []
+DIM bpm_lo AS INTEGER = 136
+DIM bass_style$ AS STRING = "offbeat"
+IF genre$ = "trance" THEN
+    keys$ = ["A minor", "F# minor", "C# minor", "D minor", "E minor", "G minor"]
+    progs$ = ["epic", "anthem", "dark"]
+    bpm_lo = 136
+ELSEIF genre$ = "house" THEN
+    keys$ = ["F major", "Bb major", "Eb major", "C major", "A minor", "D minor"]
+    progs$ = ["house", "pop", "euphoric"]
+    bpm_lo = 122
+    bass_style$ = "octave"
+ELSEIF genre$ = "deep" THEN
+    keys$ = ["D dorian", "G dorian", "C dorian", "A dorian", "F dorian"]
+    progs$ = ["deep", "deep", "dark"]
+    bpm_lo = 118
+    bass_style$ = "sub"
+ELSE
+    keys$ = ["A minor", "E minor", "F minor", "G minor"]
+    progs$ = ["dark", "epic", "anthem"]
+    bpm_lo = 128
+    bass_style$ = "acid"
+ENDIF
+DIM rhythms$ = ["x.x..x.x x.x.x...", "x--.x.x. x.x-x-..", "..x..x.x ..x.x.x.", "x.x.x--. x.x.x...", "x..x..x. x.x.....", ".x.x.xx. x..x.x.."]
+DIM KEY$ AS STRING = keys$[PICK(1, LEN(keys$))]
+DIM BPM AS DOUBLE = bpm_lo + PICK(2, 5)
+DIM PROG_NAME$ AS STRING = progs$[PICK(3, LEN(progs$))]
+DIM RHYTHM_A$ AS STRING = rhythms$[PICK(4, LEN(rhythms$))]
+DIM RHYTHM_B$ AS STRING = rhythms$[(PICK(4, LEN(rhythms$)) + 1 + PICK(5, LEN(rhythms$) - 1)) MOD LEN(rhythms$)]
+DIM OCT AS INTEGER = 4
+IF genre$ = "deep" OR genre$ = "acid" THEN OCT = 3 + PICK(6, 2)
+
+DIM PROG$ AS STRING = MELODY.PROG$(PROG_NAME$, KEY$)
+DIM CHORDS$ AS STRING = "<" + PROG$ + ">"
+DIM HOOK$ AS STRING = MELODY.HOOK$(seed, PROG$, KEY$, RHYTHM_A$, OCT)
+DIM HOOK_B$ AS STRING = MELODY.HOOK$(seed + 1000, PROG$, KEY$, RHYTHM_B$, OCT)
+DIM BASS$ AS STRING = "legato(0.6, " + MELODY.BASS$(PROG$, bass_style$, seed) + ")"
+IF bass_style$ = "sub" THEN BASS$ = "legato(1, " + MELODY.BASS$(PROG$, "sub", seed) + ")"
+IF bass_style$ = "acid" THEN BASS$ = "legato(0.7, " + MELODY.BASS$(PROG$, "acid", seed) + ")"
+DIM ARP$ AS STRING = "legato(0.5, " + MELODY.ARP$(PROG$, "updown", 16, 1) + ")"
+IF genre$ = "deep" THEN ARP$ = "legato(0.8, " + MELODY.ARP$(PROG$, "up", 8, 2) + ")"
+DIM STABS$ AS STRING = "legato(0.5, " + MELODY.STABS$(PROG$, "..x...x...x..x-.") + ")"
+
+PRINT "songgen: "; genre$; ", seed "; seed
+PRINT "  key "; KEY$; ", "; BPM; " BPM, progression "; PROG_NAME$; ": "; PROG$
+PRINT "  hook rhythm "; RHYTHM_A$; " / "; RHYTHM_B$; ", octave "; OCT
+PRINT "  hook "; HOOK$
+
+DIM KICK AS INTEGER = 0
+DIM CLAP AS INTEGER = 1
+DIM HATS AS INTEGER = 2
+DIM OPENHAT AS INTEGER = 3
+DIM BASS AS INTEGER = 4
+DIM PAD AS INTEGER = 5
+DIM ARP AS INTEGER = 6
+DIM LEAD AS INTEGER = 7
+DIM RISER AS INTEGER = 8
+DIM CRASH AS INTEGER = 9
+DIM SNARE AS INTEGER = 10
+DIM CHOIR AS INTEGER = 11
+DIM KEYS AS INTEGER = 12
+DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "OPENHAT", "BASS", "PAD", "ARP", "LEAD", "RISER", "CRASH", "SNARE", "CHOIR", "KEYS"]
+DIM ti AS INTEGER
+FOR ti = 0 TO LEN(TRACK_NAMES$) - 1
+    SCORE.TRACK ti, TRACK_NAMES$[ti]
+NEXT ti
+
+' ── Instruments ──────────────────────────────────────────────────
+
+IF LEN(wav$) > 0 THEN
+    SOUND.INIT "PULL"
+ELSE
+    SOUND.INIT SCORE.AUDIO_MODE$()
+ENDIF
+SOUND.MASTER "FIXED", 0.42
+SCORE.TEMPO BPM
+SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
+
+SOUND.REVERB 0.6, 0.5, 0.9, 0.2
+SOUND.DELAY TRUE, "1/8.", 0.4, 0.28, 0, TRUE
+SOUND.REVERB 0.95, 0.4, 1.0, 0.65, 1
+SOUND.DELAY TRUE, "1/4", 0.35, 0.25, 1
+
+SOUND.KIT KICK, "SYNTH"
+SOUND.KIT CLAP, "SYNTH"
+SOUND.GAIN CLAP, 0.55
+SOUND.REVERBSEND CLAP, 0.35
+SOUND.KIT HATS, "SYNTH"
+SOUND.GAIN HATS, 0.35
+SOUND.PAN HATS, 0.6
+SOUND.KIT OPENHAT, "SYNTH"
+SOUND.GAIN OPENHAT, 0.4
+SOUND.KIT SNARE, "SYNTH"
+SOUND.GAIN SNARE, 0.5
+SOUND.REVERBSEND SNARE, 0.3
+SOUND.KIT CRASH, "SYNTH"
+SOUND.GAIN CRASH, 0.6
+SOUND.ORBIT CRASH, 1
+SOUND.REVERBSEND CRASH, 0.4
+
+IF genre$ = "trance" THEN
+    SOUND.VOICE BASS, "SAW", 0.002, 0.12, 0.5, 0.05
+    SOUND.FILTER BASS, 700, 0.35
+    SOUND.FENV BASS, 1.5, 0.002, 0.09
+    SOUND.GAIN BASS, 0.8
+ELSEIF genre$ = "house" THEN
+    SOUND.VOICE BASS, "TRIANGLE", 0.003, 0.2, 0.6, 0.06
+    SOUND.FILTER BASS, 600, 0.3
+    SOUND.FENV BASS, 1.2, 0.002, 0.12
+    SOUND.GAIN BASS, 0.95
+ELSEIF genre$ = "deep" THEN
+    SOUND.VOICE BASS, "SINE", 0.01, 0.3, 0.9, 0.2
+    SOUND.GLIDE BASS, 90
+    SOUND.GAIN BASS, 0.55
+ELSE
+    SOUND.VOICE BASS, "SAW", 0.002, 0.15, 0.4, 0.04
+    SOUND.FILTER BASS, 500, 0.75
+    SOUND.FENV BASS, 2.2, 0.002, 0.12
+    SOUND.GLIDE BASS, 70, "SLIDE"
+    SOUND.GAIN BASS, 0.7
+ENDIF
+SOUND.SIDECHAIN BASS, KICK, 0.7
+
+SOUND.VOICE PAD, "SAW", 0.9, 0.6, 0.85, 1.6
+SOUND.UNISON PAD, 7, 0.28, 1.0
+SOUND.FILTER PAD, 1400, 0.2
+SOUND.SIDECHAIN PAD, KICK, 0.7
+SOUND.CHORUS PAD, 0.6, 0.5, 4
+SOUND.WIDTH PAD, 1.3
+SOUND.ORBIT PAD, 1
+SOUND.REVERBSEND PAD, 0.5
+SOUND.GAIN PAD, 0.18
+IF genre$ = "deep" THEN
+    SOUND.FORMANT PAD, "oo", 0.8, 0.05
+    SOUND.FILTER PAD, 2200, 0.1
+ENDIF
+
+SOUND.VOICE CHOIR, "SAW", 0.7, 0.4, 0.9, 1.8
+SOUND.UNISON CHOIR, 6, 0.22, 0.9
+SOUND.FORMANT CHOIR, "oo", 1.0, 0.08
+SOUND.LFO CHOIR, 5, 1.5
+SOUND.CHORUS CHOIR, 0.5, 0.4, 3
+SOUND.ORBIT CHOIR, 1
+SOUND.REVERBSEND CHOIR, 0.65
+SOUND.GAIN CHOIR, 0.2
+
+SOUND.VOICE ARP, "SQUARE", 0.002, 0.14, 0.15, 0.08
+SOUND.FILTER ARP, 2200, 0.4
+SOUND.FENV ARP, 1.6, 0.002, 0.1
+SOUND.SIDECHAIN ARP, KICK, 0.4
+SOUND.DELAYSEND ARP, 0.3
+SOUND.PAN ARP, 0.4
+SOUND.GAIN ARP, 0.2
+
+' keys: an FM electric piano for the stabs
+SOUND.VOICE KEYS, "SINE", 0.004, 0.45, 0.25, 0.35
+SOUND.FM KEYS, 0.9, 1
+SOUND.FILTER KEYS, 2600, 0.15
+SOUND.SIDECHAIN KEYS, KICK, 0.35
+SOUND.DELAYSEND KEYS, 0.25
+SOUND.REVERBSEND KEYS, 0.25
+SOUND.GAIN KEYS, 0.25
+
+IF genre$ = "house" THEN
+    ' a square vocal chop through a band-pass
+    SOUND.VOICE LEAD, "SQUARE", 0.005, 0.18, 0.4, 0.15
+    SOUND.FILTER LEAD, 1500, 0.55, "BP"
+    SOUND.FORMANT LEAD, "ah", 0.6
+    SOUND.GAIN LEAD, 0.32
+ELSEIF genre$ = "deep" THEN
+    SOUND.VOICE LEAD, "TRIANGLE", 0.01, 0.3, 0.5, 0.4
+    SOUND.FM LEAD, 0.4, 2
+    SOUND.FILTER LEAD, 1800, 0.2
+    SOUND.GAIN LEAD, 0.3
+ELSE
+    SOUND.VOICE LEAD, "SAW", 0.004, 0.3, 0.7, 0.35
+    SOUND.UNISON LEAD, 7, 0.32, 0.8
+    SOUND.FILTER LEAD, 3200, 0.25
+    SOUND.FENV LEAD, 0.8, 0.003, 0.2
+    SOUND.GAIN LEAD, 0.26
+ENDIF
+SOUND.SIDECHAIN LEAD, KICK, 0.35
+SOUND.ORBIT LEAD, 1
+SOUND.DELAYSEND LEAD, 0.3
+SOUND.REVERBSEND LEAD, 0.4
+
+SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.3
+SOUND.FILTER RISER, 400, 0.4, "BP"
+SOUND.ORBIT RISER, 1
+SOUND.REVERBSEND RISER, 0.3
+SOUND.GAIN RISER, 0
+
+' ── Arrangement ──────────────────────────────────────────────────
+
+DIM HATS16$ AS STRING = "gain([0.4 0.6 0.5 0.75]*4, hh*16)"
+IF genre$ = "house" OR genre$ = "deep" THEN HATS16$ = "swingBy(0.1, 4, " + HATS16$ + ")"
+DIM PARTS_TRACK AS INTEGER = ARP
+DIM PARTS$ AS STRING = ARP$
+IF genre$ = "house" OR genre$ = "deep" THEN
+    PARTS_TRACK = KEYS
+    PARTS$ = STABS$
+ENDIF
+
+SCORE.SECTION 0, "intro", "groove"
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY HATS, HATS16$
+SOUND.FILTER HATS, 3000, 0.2, "HP"
+SCORE.SWEEP HATS, "CUTOFF", "ISAW", 500, 7000, 8, 0
+
+SCORE.SECTION 8, "groove: bass", "shuffle"
+SCORE.SWEEP_OFF HATS, "CUTOFF"
+SOUND.FILTER HATS, 6000, 0.2, "HP"
+SCORE.PLAY BASS, BASS$
+SCORE.PLAY OPENHAT, "[~ oh]*4"
+SCORE.PLAY CLAP, "~ cp ~ cp"
+IF genre$ = "acid" THEN SCORE.SWEEP BASS, "CUTOFF", "SINE", 300, 2400, 16, 0
+
+SCORE.SECTION 16, "parts", "jump"
+SCORE.PLAY PAD, "legato(1, " + CHORDS$ + ")"
+SCORE.PLAY PARTS_TRACK, PARTS$
+SCORE.SWEEP PARTS_TRACK, "CUTOFF", "SINE", 900, 3500, 8, 0
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 32, "hook", "jump"
+SCORE.PLAY LEAD, HOOK$
+
+SCORE.SECTION 40, "hook, second rhythm", "wave"
+SCORE.PLAY LEAD, HOOK_B$
+
+SCORE.SECTION 48, "breakdown", "wave"
+SCORE.QUIET KICK
+SCORE.QUIET CLAP
+SCORE.QUIET OPENHAT
+SCORE.QUIET BASS
+SCORE.QUIET CRASH
+SCORE.QUIET PARTS_TRACK
+SCORE.PLAY HATS, "gain(0.3, [~ hh]*4)"
+SCORE.PLAY LEAD, "legato(1.2, " + HOOK$ + ")"
+SCORE.SWEEP LEAD, "CUTOFF", "SINE", 900, 3000, 8, 0
+SCORE.PLAY CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
+SCORE.SWEEP CHOIR, "VOWEL", "TRI", 4, 0, 8, 0
+
+SCORE.SECTION 56, "build", "rise"
+SCORE.SWEEP_OFF CHOIR, "VOWEL"
+SCORE.QUIET CHOIR
+SCORE.PLAY PARTS_TRACK, PARTS$
+SCORE.SWEEP PARTS_TRACK, "CUTOFF", "SAW", 500, 6000, 8, 0
+SCORE.PLAY RISER, "legato(1, c4)"
+SCORE.SWEEP RISER, "CUTOFF", "SAW", 400, 7000, 8, 0
+SCORE.SWEEP RISER, "GAIN", "SAW", 0, 0.2, 8, 0
+SCORE.PLAY SNARE, "gain(<0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65>, <sd*4 sd*4 sd*8 sd*8 sd*8 sd*16 sd*16 [sd*16 ~]>)"
+SCORE.PLAY KICK, "<bd*4 bd*4 bd*4 bd*4 bd*8 bd*8 ~ ~>"
+
+SCORE.SECTION 62, "build: up an octave", "rise"
+SCORE.PLAY PARTS_TRACK, "add(12, " + PARTS$ + ")"
+
+SCORE.SECTION 64, "drop", "jump"
+SCORE.QUIET RISER
+SCORE.QUIET SNARE
+SCORE.SWEEP_OFF RISER, "CUTOFF"
+SCORE.SWEEP_OFF RISER, "GAIN"
+SCORE.SWEEP_OFF LEAD, "CUTOFF"
+SCORE.SWEEP PARTS_TRACK, "CUTOFF", "SINE", 900, 3500, 8, 0
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY CLAP, "~ cp ~ cp"
+SCORE.PLAY HATS, HATS16$
+SCORE.PLAY OPENHAT, "[~ oh]*4"
+SCORE.PLAY BASS, BASS$
+SCORE.PLAY PARTS_TRACK, PARTS$
+SCORE.PLAY LEAD, "juxBy(0.4, add(12), " + HOOK$ + ")"
+SCORE.PLAY CRASH, "<cr ~!3>"
+
+SCORE.SECTION 72, "drop: the choir", "jump"
+SCORE.PLAY LEAD, "juxBy(0.4, add(12), " + HOOK_B$ + ")"
+SCORE.PLAY CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
+SOUND.FORMANT CHOIR, "ah", 1.0, 0.08
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 80, "outro", "groove"
+SCORE.QUIET LEAD
+SCORE.QUIET PARTS_TRACK
+SCORE.QUIET PAD
+SCORE.QUIET CHOIR
+SCORE.QUIET CRASH
+
+SCORE.SECTION 88, "end", "bye"
+SCORE.QUIET KICK
+SCORE.QUIET CLAP
+SCORE.QUIET HATS
+SCORE.QUIET OPENHAT
+SCORE.QUIET BASS
+
+SCORE.FINE 90
+
+IF LEN(wav$) > 0 THEN
+    SOUND.RECORD wav$
+    DIM total AS INTEGER = INT(90 * 4 * 60 / BPM * 44100)
+    DIM done AS INTEGER = 0
+    WHILE done < total
+        DIM buf = SOUND.RENDER(4410)
+        done = done + 4410
+    WEND
+    SOUND.RECORD
+    PRINT "wrote "; wav$
+ELSE
+    STAGE.SUBTITLE UCASE$(LEFT$(genre$, 1)) + MID$(genre$, 1) + " in " + KEY$ + ", seed " + STR$(seed)
+    STAGE.RUN "songgen"
+ENDIF

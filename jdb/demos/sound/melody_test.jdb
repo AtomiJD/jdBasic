@@ -45,10 +45,13 @@ ENDFUNC
 ' ---------- progressions ----------
 CHECK_STR "epic", "Am F C G", MELODY.PROG$("epic", "A minor")
 CHECK_STR "pop", "C G Am F", MELODY.PROG$("pop", "C major")
-CHECK_STR "dark", "Em Am C Bm", MELODY.PROG$("dark", "E minor")
+CHECK_STR "dark", "Em Am C B", MELODY.PROG$("dark", "E minor")
 CHECK_STR "house sevenths", "Gm7 C7 Fmaj7 Fmaj7", MELODY.PROG$("house", "F major")
 CHECK_STR "deep dorian", "Dm7 G7 Dm7 G7", MELODY.PROG$("deep", "D dorian")
 CHECK_STR "flat key", "Cm Ab Eb Bb", MELODY.PROG$("euphoric", "Eb major")
+CHECK_STR "flat minor key", "Fm Bbm Db C", MELODY.PROG$("dark", "F minor")
+CHECK_STR "sharp minor key", "F#m D A E", MELODY.PROG$("epic", "F# minor")
+CHECK_STR "flat dorian key", "Cm7 F7 Cm7 F7", MELODY.PROG$("deep", "C dorian")
 
 ' ---------- the hook ----------
 DIM prog$ = "Am F C G"
