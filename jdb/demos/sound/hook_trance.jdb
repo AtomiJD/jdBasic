@@ -3,7 +3,8 @@
 ' every seed is a new tune over the same arrangement.
 '
 '   0 intro   8 groove   16 pad and arp   24 hook   40 breakdown: the choir
-'  48 build: the arp rises an octave   56 drop   64 the choir sings ah
+'  48 build: the arp filter opens   54 the arp an octave up   56 drop
+'  64 the choir sings ah
 '  72 outro  80 end
 '
 ' Usage: jdBasic hook_trance.jdb [--seed n] [--prog name] [--window]
@@ -236,7 +237,10 @@ SCORE.SECTION 48, "build: riser and snare roll", "rise"
 SCORE.SWEEP_OFF CHOIR, "VOWEL"
 SCORE.QUIET CHOIR
 SCORE.PLAY ARP, ARP$
-SCORE.SWEEP ARP, "PITCH", "SAW", 0, 12, 8, 0
+SCORE.SWEEP ARP, "CUTOFF", "SAW", 500, 6000, 8, 0
+
+SCORE.SECTION 54, "build: the arp an octave up", "rise"
+SCORE.PLAY ARP, "add(12, " + ARP$ + ")"
 SCORE.PLAY RISER, "legato(1, c4)"
 SCORE.SWEEP RISER, "CUTOFF", "SAW", 400, 7000, 8, 0
 SCORE.SWEEP RISER, "GAIN", "SAW", 0, 0.2, 8, 0
@@ -250,7 +254,7 @@ SCORE.SWEEP_OFF RISER, "CUTOFF"
 SCORE.SWEEP_OFF RISER, "GAIN"
 SCORE.SWEEP_OFF LEAD, "CUTOFF"
 SCORE.SWEEP_OFF PAD, "CUTOFF"
-SCORE.SWEEP_OFF ARP, "PITCH"
+SCORE.SWEEP ARP, "CUTOFF", "SINE", 900, 3500, 8, 0
 SCORE.PLAY KICK, "bd*4"
 SCORE.PLAY CLAP, "~ cp ~ cp"
 SCORE.PLAY HATS, HATS16$

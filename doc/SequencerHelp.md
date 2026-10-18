@@ -91,7 +91,7 @@ These shape the timbre of a track's voice and must be set before the pattern pla
 * **`SOUND.FORMANT track, vowel$, mix, [breath]`**: Vowel formants (`"ah"`, `"eh"`, `"ee"`, `"oh"`, `"oo"` or 0-4) for "ooh"/"aah" pads and choirs; `breath` adds air. `SOUND.MOD track, "VOWEL", ...` morphs between vowels.
 * **`SOUND.GLIDE track, ms, [mode$]`**: Portamento; `"SLIDE"` glides only into notes marked `^` (`"c2 c3^ c2"`), the 303 way.
 * **`SOUND.CHORUS track, mix, [rate], [depth]`** and **`SOUND.WIDTH track, width`**: Stereo chorus and width on the track's sum.
-* `SOUND.MOD track, "PITCH", "SAW", 0, 12, 8` rises an octave over eight bars, a riser.
+* `SOUND.MOD track, "PITCH", "SAW", 0, 12, 8` rises an octave over eight bars: a riser on an effect track. On a melody or arpeggio the sweep pulls every note off the scale; step it with `add(12, ...)` instead.
 
 ## 4. PCM Samples and SFX
 
