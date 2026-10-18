@@ -56,53 +56,8 @@ DIM HOOK_B$ AS STRING = MELODY.HOOK$(seed, PROG$, KEY$, "x--.x.x. x.x-x-..", 4)
 PRINT "progression: "; PROG$
 PRINT "hook:        "; HOOK$
 
-' the chord roots as a rolling off-beat bass, f1 to e2
-FUNC BASS_LINE$(prog$) AS STRING
-    DIM chords$ = SPLIT(prog$, " ")
-    DIM out$ = ""
-    DIM i AS INTEGER
-    FOR i = 0 TO LEN(chords$) - 1
-        DIM m AS INTEGER = 36 + MELODY.PC_OF(chords$[i])
-        IF m > 40 THEN m = m - 12
-        DIM r$ = MELODY.MIDI_NAME$(m)
-        IF i > 0 THEN out$ = out$ + " "
-        out$ = out$ + "[~ " + r$ + " " + r$ + " " + r$ + "]*4"
-    NEXT i
-    RETURN "<" + out$ + ">"
-ENDFUNC
-
-' each chord's voicing an octave up, up and down in sixteenths
-FUNC ARP_LINE$(prog$) AS STRING
-    DIM n_bars AS INTEGER = LEN(SPLIT(prog$, " "))
-    DIM evs = SPLIT(SOUND.EVENTS$("<" + prog$ + ">", n_bars), CHR$(10))
-    DIM out$ = ""
-    DIM b AS INTEGER
-    FOR b = 0 TO n_bars - 1
-        DIM tones = []
-        DIM ei AS INTEGER
-        FOR ei = 0 TO LEN(evs) - 1
-            DIM cols = SPLIT(TRIM$(evs[ei]), " ")
-            IF LEN(cols) >= 3 ANDALSO VAL(cols[0]) = b THEN tones = APPEND(tones, MELODY.NOTE_MIDI(cols[2]) + 12)
-        NEXT ei
-        DIM walk = tones
-        DIM wi AS INTEGER
-        FOR wi = LEN(tones) - 2 TO 1 STEP -1
-            walk = APPEND(walk, tones[wi])
-        NEXT wi
-        DIM bar$ = ""
-        DIM s AS INTEGER
-        FOR s = 0 TO 15
-            IF s > 0 THEN bar$ = bar$ + " "
-            bar$ = bar$ + MELODY.MIDI_NAME$(walk[s MOD LEN(walk)])
-        NEXT s
-        IF b > 0 THEN out$ = out$ + " "
-        out$ = out$ + "[" + bar$ + "]"
-    NEXT b
-    RETURN "<" + out$ + ">"
-ENDFUNC
-
-DIM BASS$ AS STRING = "legato(0.6, " + BASS_LINE$(PROG$) + ")"
-DIM ARP$ AS STRING = "legato(0.5, " + ARP_LINE$(PROG$) + ")"
+DIM BASS$ AS STRING = "legato(0.6, " + MELODY.BASS$(PROG$, "offbeat", seed) + ")"
+DIM ARP$ AS STRING = "legato(0.5, " + MELODY.ARP$(PROG$, "updown", 16, 1) + ")"
 
 ' ── Instruments ──────────────────────────────────────────────────
 

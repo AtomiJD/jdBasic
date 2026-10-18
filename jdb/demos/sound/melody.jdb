@@ -21,6 +21,16 @@
 ' form A A' A B: every A bar makes the same choices on its own chord,
 ' A' changes its second half, and B ends on the root or the third and
 ' holds it. The same seed always gives the same hook.
+'
+' The parts under a hook, one bar per chord as well:
+'   BASS$(prog$, style$, seed)   offbeat (the trance roll), octave (house
+'                                eighths), sub (one long root), acid
+'                                (sixteenths with ^ slides for
+'                                SOUND.GLIDE track, ms, "SLIDE")
+'   ARP$(prog$, shape$, rate, octaves)  the chord's voicing an octave up:
+'                                up, down, updown, random; rate notes a
+'                                bar (8, 12, 16), over 1 or 2 octaves
+'   STABS$(prog$, rhythm$)       the voiced chord on a rhythm mask (x - .)
 
 EXPORT MODULE MELODY
 
@@ -306,5 +316,154 @@ EXPORT FUNC HOOK$(seed AS INTEGER, prog$, key$, rhythm$, octave AS INTEGER) AS S
         IF bi > 0 THEN out$ = out$ + " "
         out$ = out$ + bar$
     NEXT bi
+    RETURN "<" + out$ + ">"
+ENDFUNC
+
+' ── the parts under the hook ─────────────────────────────────────
+
+' Each bar's voicing of prog$ as the sequencer leads it, "a3,c4,e4"
+FUNC VOICINGS$(prog$)
+    DIM n_bars AS INTEGER = LEN(SPLIT(TRIM$(prog$), " "))
+    DIM evs = SPLIT(SOUND.EVENTS$("<" + TRIM$(prog$) + ">", n_bars), CHR$(10))
+    DIM out$ = []
+    DIM b AS INTEGER
+    FOR b = 0 TO n_bars - 1
+        DIM v$ = ""
+        DIM ei AS INTEGER
+        FOR ei = 0 TO LEN(evs) - 1
+            DIM cols = SPLIT(TRIM$(evs[ei]), " ")
+            IF LEN(cols) >= 3 ANDALSO VAL(cols[0]) = b THEN
+                IF LEN(v$) > 0 THEN v$ = v$ + ","
+                v$ = v$ + cols[2]
+            ENDIF
+        NEXT ei
+        out$ = APPEND(out$, v$)
+    NEXT b
+    RETURN out$
+ENDFUNC
+
+' The bass register of a chord's root: f1 to e2
+FUNC BASS_ROOT(chd$) AS INTEGER
+    DIM m AS INTEGER = 36 + PC_OF(chd$)
+    IF m > 40 THEN m = m - 12
+    RETURN m
+ENDFUNC
+
+EXPORT FUNC BASS$(prog$, style$, seed AS INTEGER) AS STRING
+    DIM chords$ = SPLIT(TRIM$(prog$), " ")
+    DIM st$ = LCASE$(style$)
+    DIM w AS INTEGER = RESEED(seed)
+    DIM out$ = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(chords$) - 1
+        DIM r AS INTEGER = BASS_ROOT(chords$[i])
+        DIM r$ = MIDI_NAME$(r)
+        DIM o$ = MIDI_NAME$(r + 12)
+        DIM bar$ = ""
+        IF st$ = "octave" THEN
+            bar$ = "[" + r$ + " " + o$ + "]*4"
+        ELSEIF st$ = "sub" THEN
+            bar$ = r$
+        ELSEIF st$ = "acid" THEN
+            DIM fifth$ = MIDI_NAME$(r + 7)
+            DIM k AS INTEGER
+            DIM sounding AS INTEGER = FALSE
+            bar$ = "["
+            FOR k = 0 TO 15
+                DIM x AS DOUBLE = RAND01()
+                DIM tok$ = r$
+                IF k MOD 4 <> 0 AND x < 0.2 THEN
+                    tok$ = "~"
+                ELSEIF x > 0.85 THEN
+                    tok$ = fifth$
+                ELSEIF x > 0.6 THEN
+                    tok$ = o$
+                ENDIF
+                IF tok$ <> "~" AND sounding AND RAND01() < 0.25 THEN tok$ = tok$ + "^"
+                sounding = tok$ <> "~"
+                IF k > 0 THEN bar$ = bar$ + " "
+                bar$ = bar$ + tok$
+            NEXT k
+            bar$ = bar$ + "]"
+        ELSE
+            bar$ = "[~ " + r$ + " " + r$ + " " + r$ + "]*4"
+        ENDIF
+        IF i > 0 THEN out$ = out$ + " "
+        out$ = out$ + bar$
+    NEXT i
+    RETURN "<" + out$ + ">"
+ENDFUNC
+
+EXPORT FUNC ARP$(prog$, shape$, rate AS INTEGER, octaves AS INTEGER) AS STRING
+    DIM voicings$ = VOICINGS$(prog$)
+    DIM sh$ = LCASE$(shape$)
+    DIM w AS INTEGER = RESEED(LEN(prog$))
+    DIM out$ = ""
+    DIM b AS INTEGER
+    FOR b = 0 TO LEN(voicings$) - 1
+        DIM names$ = SPLIT(voicings$[b], ",")
+        DIM tones = []
+        DIM oc AS INTEGER
+        DIM ni AS INTEGER
+        FOR oc = 1 TO MAX([1, octaves])
+            FOR ni = 0 TO LEN(names$) - 1
+                tones = APPEND(tones, NOTE_MIDI(names$[ni]) + 12 * oc)
+            NEXT ni
+        NEXT oc
+        DIM walk = []
+        DIM wi AS INTEGER
+        IF sh$ = "down" THEN
+            FOR wi = LEN(tones) - 1 TO 0 STEP -1
+                walk = APPEND(walk, tones[wi])
+            NEXT wi
+        ELSEIF sh$ = "updown" THEN
+            walk = tones + 0
+            FOR wi = LEN(tones) - 2 TO 1 STEP -1
+                walk = APPEND(walk, tones[wi])
+            NEXT wi
+        ELSE
+            walk = tones + 0
+        ENDIF
+        DIM bar$ = ""
+        DIM stp AS INTEGER
+        FOR stp = 0 TO rate - 1
+            DIM m AS INTEGER = walk[stp MOD LEN(walk)]
+            IF sh$ = "random" THEN m = walk[INT(RAND01() * LEN(walk))]
+            IF stp > 0 THEN bar$ = bar$ + " "
+            bar$ = bar$ + MIDI_NAME$(m)
+        NEXT stp
+        IF b > 0 THEN out$ = out$ + " "
+        out$ = out$ + "[" + bar$ + "]"
+    NEXT b
+    RETURN "<" + out$ + ">"
+ENDFUNC
+
+EXPORT FUNC STABS$(prog$, rhythm$) AS STRING
+    DIM voicings$ = VOICINGS$(prog$)
+    DIM mask$ = REPLACE$(rhythm$, " ", "")
+    DIM out$ = ""
+    DIM b AS INTEGER
+    FOR b = 0 TO LEN(voicings$) - 1
+        DIM chd$ = "[" + voicings$[b] + "]"
+        DIM bar$ = ""
+        DIM sounding AS INTEGER = FALSE
+        DIM k AS INTEGER
+        FOR k = 0 TO LEN(mask$) - 1
+            DIM c$ = MID$(mask$, k, 1)
+            DIM tok$ = "~"
+            IF c$ = "x" THEN
+                tok$ = chd$
+                sounding = TRUE
+            ELSEIF c$ = "-" AND sounding THEN
+                tok$ = "_"
+            ELSE
+                sounding = FALSE
+            ENDIF
+            IF k > 0 THEN bar$ = bar$ + " "
+            bar$ = bar$ + tok$
+        NEXT k
+        IF b > 0 THEN out$ = out$ + " "
+        out$ = out$ + "[" + bar$ + "]"
+    NEXT b
     RETURN "<" + out$ + ">"
 ENDFUNC

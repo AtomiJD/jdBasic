@@ -1,0 +1,142 @@
+' ============================================================
+' MELODY module: progressions, the hook generator and its rules,
+' bass, arp and stab parts
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' Pattern strings only, so it needs no audio device.
+
+OPTION "EXPLICIT"
+
+IMPORT MELODY
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK_STR(name$, expected AS STRING, actual AS STRING)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected=["; expected; "]  actual=["; actual; "]"
+    ENDIF
+ENDSUB
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "SKIP: build has no SOUND sequencer"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+' The bars of a <[...] [...]> pattern, each as its list of step tokens
+FUNC BARS$(pat$)
+    DIM inner$ = MID$(pat$, 2, LEN(pat$) - 4)
+    RETURN SPLIT(inner$, "] [")
+ENDFUNC
+
+' ---------- progressions ----------
+CHECK_STR "epic", "Am F C G", MELODY.PROG$("epic", "A minor")
+CHECK_STR "pop", "C G Am F", MELODY.PROG$("pop", "C major")
+CHECK_STR "dark", "Em Am C Bm", MELODY.PROG$("dark", "E minor")
+CHECK_STR "house sevenths", "Gm7 C7 Fmaj7 Fmaj7", MELODY.PROG$("house", "F major")
+CHECK_STR "deep dorian", "Dm7 G7 Dm7 G7", MELODY.PROG$("deep", "D dorian")
+CHECK_STR "flat key", "Cm Ab Eb Bb", MELODY.PROG$("euphoric", "Eb major")
+
+' ---------- the hook ----------
+DIM prog$ = "Am F C G"
+DIM hook$ = MELODY.HOOK$(7, prog$, "A minor", "x.x..x.x x.x.x...", 4)
+CHECK_STR "same seed, same hook", hook$, MELODY.HOOK$(7, prog$, "A minor", "x.x..x.x x.x.x...", 4)
+CHECK "another seed, another hook", hook$ <> MELODY.HOOK$(8, prog$, "A minor", "x.x..x.x x.x.x...", 4), ""
+
+DIM bars$ = BARS$(hook$)
+CHECK "one bar per chord", LEN(bars$) = 4, "bars=" + STR$(LEN(bars$))
+
+DIM chord_pcs = [[9, 0, 4], [5, 9, 0], [0, 4, 7], [7, 11, 2]]
+DIM scale_pcs = [9, 11, 0, 2, 4, 5, 7]
+DIM bi AS INTEGER
+DIM in_scale AS INTEGER = TRUE
+DIM in_range AS INTEGER = TRUE
+DIM firsts_ok AS INTEGER = TRUE
+FOR bi = 0 TO 3
+    DIM steps$ = SPLIT(bars$[bi], " ")
+    CHECK "sixteen steps, bar " + STR$(bi), LEN(steps$) = 16, "steps=" + STR$(LEN(steps$))
+    DIM first AS INTEGER = TRUE
+    DIM si AS INTEGER
+    FOR si = 0 TO LEN(steps$) - 1
+        DIM tok$ = steps$[si]
+        IF tok$ <> "~" AND tok$ <> "_" THEN
+            DIM m AS INTEGER = MELODY.NOTE_MIDI(tok$)
+            IF m < 66 OR m > 80 THEN in_range = FALSE
+            DIM pc AS INTEGER = m MOD 12
+            DIM hit AS INTEGER = FALSE
+            DIM k AS INTEGER
+            FOR k = 0 TO 6
+                IF scale_pcs[k] = pc THEN hit = TRUE
+            NEXT k
+            IF NOT hit THEN in_scale = FALSE
+            IF first THEN
+                DIM on_chord AS INTEGER = FALSE
+                FOR k = 0 TO 2
+                    IF chord_pcs[bi, k] = pc THEN on_chord = TRUE
+                NEXT k
+                IF NOT on_chord THEN firsts_ok = FALSE
+                first = FALSE
+            ENDIF
+        ENDIF
+    NEXT si
+NEXT bi
+CHECK "every note in A minor", in_scale, hook$
+CHECK "range f#4 to g#5", in_range, hook$
+CHECK "each bar starts on a chord tone", firsts_ok, hook$
+
+DIM last$ = SPLIT(bars$[3], " ")
+CHECK_STR "the last bar holds its last note", "_", last$[15]
+DIM end_i AS INTEGER = 15
+WHILE last$[end_i] = "_" AND end_i > 0
+    end_i = end_i - 1
+WEND
+DIM end_pc AS INTEGER = MELODY.NOTE_MIDI(last$[end_i]) MOD 12
+CHECK "the hook ends on the root or third of G", end_pc = 7 OR end_pc = 11, "end=" + last$[end_i]
+
+DIM first_a$ = SPLIT(bars$[0], " ")
+DIM first_a2$ = SPLIT(bars$[1], " ")
+DIM same_rhythm AS INTEGER = TRUE
+FOR bi = 0 TO 15
+    IF (first_a$[bi] = "~") <> (first_a2$[bi] = "~") THEN same_rhythm = FALSE
+NEXT bi
+CHECK "A' keeps the rhythm of A", same_rhythm, bars$[0] + " / " + bars$[1]
+
+' ---------- bass ----------
+CHECK_STR "bass offbeat", "<[~ a1 a1 a1]*4 [~ f1 f1 f1]*4 [~ c2 c2 c2]*4 [~ g1 g1 g1]*4>", MELODY.BASS$(prog$, "offbeat", 1)
+CHECK_STR "bass octave", "<[a1 a2]*4 [f1 f2]*4 [c2 c3]*4 [g1 g2]*4>", MELODY.BASS$(prog$, "octave", 1)
+CHECK_STR "bass sub", "<a1 f1 c2 g1>", MELODY.BASS$(prog$, "sub", 1)
+DIM acid$ = MELODY.BASS$(prog$, "acid", 5)
+CHECK_STR "acid is seeded", acid$, MELODY.BASS$(prog$, "acid", 5)
+CHECK "acid has slides", INSTR(acid$, "^") >= 0, acid$
+DIM acid_bar$ = SPLIT(BARS$(acid$)[0], " ")
+DIM acid_ok AS INTEGER = TRUE
+FOR bi = 0 TO LEN(acid_bar$) - 1
+    DIM at$ = REPLACE$(acid_bar$[bi], "^", "")
+    IF at$ <> "~" AND at$ <> "a1" AND at$ <> "a2" AND at$ <> "e2" THEN acid_ok = FALSE
+NEXT bi
+CHECK "acid plays root, octave and fifth", acid_ok, BARS$(acid$)[0]
+CHECK "acid starts on the beat", LEFT$(acid_bar$[0], 1) <> "~", BARS$(acid$)[0]
+
+' ---------- arp and stabs ----------
+DIM arp$ = MELODY.ARP$(prog$, "updown", 16, 1)
+CHECK_STR "arp updown", "a4 c5 e5 c5 a4 c5 e5 c5 a4 c5 e5 c5 a4 c5 e5 c5", BARS$(arp$)[0]
+CHECK_STR "arp down, two octaves", "e6 c6 a5 e5 c5 a4 e6 c6", BARS$(MELODY.ARP$(prog$, "down", 8, 2))[0]
+CHECK_STR "arp random is repeatable", MELODY.ARP$(prog$, "random", 16, 1), MELODY.ARP$(prog$, "random", 16, 1)
+DIM stabs$ = MELODY.STABS$(prog$, "..x...x...x..x-.")
+CHECK_STR "stabs follow the mask", "~ ~ [a3,c4,e4] ~ ~ ~ [a3,c4,e4] ~ ~ ~ [a3,c4,e4] ~ ~ [a3,c4,e4] _ ~", BARS$(stabs$)[0]
+CHECK "stabs play voiced chords", INSTR(BARS$(stabs$)[1], "[a3,c4,f4]") >= 0, BARS$(stabs$)[1]
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
