@@ -88,6 +88,10 @@ These shape the timbre of a track's voice and must be set before the pattern pla
 * **`SOUND.UNISON track, voices, detune, spread`**: Stacks `voices` (1-16) detuned copies for a super-saw; `detune` 0.0-1.0, `spread` 0.0-1.0 stereo.
 * **`SOUND.BITCRUSH track, bits, rate`**: Lo-fi effect; `bits` 1-16 resolution, `rate` 0.0-1.0 sample-rate reduction.
 * **`SOUND.RINGMOD track, freq, mix`**: Ring modulation for robotic / sci-fi tones.
+* **`SOUND.FORMANT track, vowel$, mix, [breath]`**: Vowel formants (`"ah"`, `"eh"`, `"ee"`, `"oh"`, `"oo"` or 0-4) for "ooh"/"aah" pads and choirs; `breath` adds air. `SOUND.MOD track, "VOWEL", ...` morphs between vowels.
+* **`SOUND.GLIDE track, ms, [mode$]`**: Portamento; `"SLIDE"` glides only into notes marked `^` (`"c2 c3^ c2"`), the 303 way.
+* **`SOUND.CHORUS track, mix, [rate], [depth]`** and **`SOUND.WIDTH track, width`**: Stereo chorus and width on the track's sum.
+* `SOUND.MOD track, "PITCH", "SAW", 0, 12, 8` rises an octave over eight bars, a riser.
 
 ## 4. PCM Samples and SFX
 
@@ -111,7 +115,7 @@ You can use a loaded sample as a sound source for a sequencer track.
 ## 5. Global Effects (Master Bus)
 
 * **`SOUND.REVERB size, damp, width, wet`**: Configures the global reverb room.
-* **`SOUND.DELAY active, time_ms, feedback, mix`**: Configures the global stereo delay.
+* **`SOUND.DELAY active, time, feedback, mix, [orbit], [pingpong]`**: Configures the global stereo delay; `time` in ms or a note value locked to the tempo (`"1/8."`, `"1/4"`, `"1/8t"`), `pingpong` bounces the repeats.
 * **`SOUND.COMPRESSOR thresh, ratio, attack, release, gain`**: Master dynamics; `thresh` 0.0-1.0, `ratio` 1.0-20.0, `attack`/`release` in ms.
 * **`SOUND.MASTER mode$, [headroom]`**: `"AUTO"` (default) divides the mix by sqrt(voices); `"FIXED"` scales each voice by `headroom` (0.5), so layers keep their level. Output soft-clips above 0.8.
 * **`SOUND.DISTORTION amount`**: Applies master saturation/overdrive.

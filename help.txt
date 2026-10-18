@@ -2958,9 +2958,11 @@ Syntax: SOUND.BPM(beats_per_minute)
 Description: Sets the global tempo for the sequencer.
 
 [SOUND.DELAY]
-Syntax: SOUND.DELAY active_bool, time_ms, feedback, mix, [orbit]
+Syntax: SOUND.DELAY active_bool, time, feedback, mix, [orbit], [pingpong]
 Description: Activates a global stereo delay (echo) effect.
+time: milliseconds, or a note value locked to SOUND.BPM: "1/4", "1/8." (dotted), "1/8t" (triplet).
 Feedback: 0.0-0.9. Mix: 0.0-1.0. orbit (0-3, default 0) picks the effect bus; see SOUND.ORBIT.
+pingpong TRUE bounces each repeat between left and right.
 
 [SOUND.DISTORTION]
 Syntax: SOUND.DISTORTION amount
@@ -2980,7 +2982,8 @@ sustain defaults to 0, release to 0.1 seconds.
 [SOUND.MOD]
 Syntax: SOUND.MOD track, param$, shape$, [lo], [hi], [cycles], [offset]
 Description: Moves a track parameter between lo and hi, one period every `cycles` sequencer cycles.
-Parameters: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV.
+Parameters: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV,
+VOWEL (0 a .. 4 u, see SOUND.FORMANT), PITCH (semitones).
 Shapes: SINE, COSINE, SAW, ISAW, TRI, SQUARE, RAND, PERLIN. "OFF" stops it and restores the value.
 Example: SOUND.MOD 1, "CUTOFF", "SINE", 300, 3000, 8
 
@@ -3026,6 +3029,27 @@ Description: Immediately silences all tracks, clears the sequencer, and resets e
 Syntax: SOUND.RINGMOD track, frequency_hz, mix
 Description: Applies Ring Modulation (multiplies signal by a sine wave).
 Mix: 0.0 (Dry) to 1.0 (Wet).
+
+[SOUND.FORMANT]
+Syntax: SOUND.FORMANT track, vowel$, mix, [breath]
+Description: Three band-passes on the formants of a sung vowel: "a" "e" "i" "o" "u"
+(also "ah" "eh" "ee" "oh" "oo") or a position 0 (a) to 4 (u). mix 0.0-1.0 is the wet share,
+breath 0.0-1.0 adds noise before the filters. SOUND.MOD track, "VOWEL", ... morphs the vowel.
+Example: SOUND.FORMANT 6, "oo", 1, 0.08
+
+[SOUND.GLIDE]
+Syntax: SOUND.GLIDE track, ms, [mode$]
+Description: Portamento from the track's previous note. Mode "ALL" (default) glides into
+every note, "SLIDE" only into notes marked ^ in the pattern: "c2 c2 c3^ c2". 0 turns it off.
+
+[SOUND.CHORUS]
+Syntax: SOUND.CHORUS track, mix, [rate], [depth]
+Description: Stereo chorus on the sum of the track's voices. rate in Hz (default 0.8),
+depth in ms (default 3). mix 0 turns it off.
+
+[SOUND.WIDTH]
+Syntax: SOUND.WIDTH track, width
+Description: Stereo width of the track after its chorus: 0 mono, 1 unchanged, up to 2 wider.
 
 [SOUND.SCALE]
 Syntax: SOUND.SCALE root_note$, scale_mode$

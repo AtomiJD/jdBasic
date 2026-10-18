@@ -211,12 +211,17 @@ struct Voice {
     // Kit choke group, and whether the onset still has to cut the group
     int choke = 0;
     bool choke_pending = false;
+    // Formant band-passes: channel, formant, the two SVF integrators
+    float fmt_s[2][3][2] = {};
+    // Glide: the sounding frequency, its step per frame and the frames left
+    float glide_cur = 0.0f, glide_ratio = 1.0f;
+    int64_t glide_left = 0;
 };
 
 // ── Parameter modulation ────────────────────────────────────────
 
 enum ModParam { MP_CUTOFF, MP_RESONANCE, MP_GAIN, MP_PAN, MP_DETUNE, MP_FM,
-                MP_CRUSH, MP_REVERB, MP_DELAY, MP_FENV, MP_COUNT };
+                MP_CRUSH, MP_REVERB, MP_DELAY, MP_FENV, MP_VOWEL, MP_PITCH, MP_COUNT };
 enum class ModShape { NONE, SINE, COSINE, SAW, ISAW, TRI, SQUARE, RAND, PERLIN };
 
 // A parameter moving between lo and hi, one period every `cycles` cycles.
@@ -291,7 +296,72 @@ struct TrackParams {
     bool sample_loop = false;
     // Drum kit: pattern atoms name sounds instead of notes
     std::unordered_map<std::string, KitSound> kit;
+    // Formants: the vowel as a position a=0 e=1 i=2 o=3 u=4, the wet share,
+    // noise added before the band-passes, and the coefficients of fmt_at
+    float formant_mix = 0.0f, formant_vowel = 0.0f, formant_breath = 0.0f;
+    float fmt_at = -1.0f, fmt_g[3] = {}, fmt_k[3] = {}, fmt_amp[3] = {};
+    // Glide in seconds, only into notes marked ^ when glide_marked
+    float glide_time = 0.0f;
+    bool glide_marked = false;
+    float last_freq = 0.0f;
+    float pitch_semis = 0.0f;
+    // Track insert: stereo chorus and width, on the sum of the track's voices
+    float chorus_mix = 0.0f, chorus_rate = 0.8f, chorus_depth = 3.0f, width = 1.0f;
+    std::vector<float> chorus_buf;
+    int chorus_head = 0;
+    float chorus_lfo = 0.0f;
+    bool has_insert() const { return chorus_mix > 0.0f || width != 1.0f; }
 };
+
+// Formant frequencies and levels of the vowels a e i o u (a soprano)
+static const float FORMANT_HZ[5][3] = {
+    {800, 1150, 2900}, {400, 1600, 2700}, {270, 2140, 2950}, {450, 800, 2830}, {325, 700, 2700}};
+static const float FORMANT_AMP[5][3] = {
+    {1.0f, 0.5f, 0.1f}, {1.0f, 0.2f, 0.18f}, {1.0f, 0.25f, 0.06f}, {1.0f, 0.28f, 0.08f}, {1.0f, 0.16f, 0.03f}};
+static const float FORMANT_Q[3] = {9.0f, 12.0f, 18.0f};
+static const float FORMANT_MAKEUP = 6.5f;
+
+// The band-pass coefficients of the track's vowel, blended between neighbours
+static void formant_coeffs(TrackParams& tp) {
+    float pos = std::clamp(tp.formant_vowel, 0.0f, 4.0f);
+    if (pos == tp.fmt_at) return;
+    tp.fmt_at = pos;
+    int a = std::min((int)pos, 3);
+    float fr = pos - (float)a;
+    for (int i = 0; i < 3; i++) {
+        float hz = FORMANT_HZ[a][i] + (FORMANT_HZ[a + 1][i] - FORMANT_HZ[a][i]) * fr;
+        tp.fmt_amp[i] = FORMANT_AMP[a][i] + (FORMANT_AMP[a + 1][i] - FORMANT_AMP[a][i]) * fr;
+        tp.fmt_g[i] = std::tan((float)M_PI * std::min(hz, 0.45f * SAMPLE_RATE) / SAMPLE_RATE);
+        tp.fmt_k[i] = 1.0f / FORMANT_Q[i];
+    }
+}
+
+// Beats of a note value: 1/4 is one beat, 1/8. dotted, 1/8t a triplet; 0 if none
+static float note_value_beats(const std::string& s) {
+    size_t slash = s.find('/');
+    if (slash == std::string::npos) return 0.0f;
+    float num = 0.0f, den = 0.0f;
+    try { num = std::stof(s.substr(0, slash)); den = std::stof(s.substr(slash + 1)); } catch (...) { return 0.0f; }
+    if (num <= 0.0f || den <= 0.0f) return 0.0f;
+    float beats = 4.0f * num / den;
+    char last = s.back();
+    if (last == '.') beats *= 1.5f;
+    else if (last == 't' || last == 'T') beats *= 2.0f / 3.0f;
+    return beats;
+}
+
+// A vowel name or a position: a ah e eh i ee o oh u oo, or 0 to 4
+static float vowel_position(const std::string& s) {
+    std::string w = s;
+    std::transform(w.begin(), w.end(), w.begin(), ::tolower);
+    if (w == "a" || w == "ah" || w == "aa") return 0.0f;
+    if (w == "e" || w == "eh") return 1.0f;
+    if (w == "i" || w == "ee" || w == "ih") return 2.0f;
+    if (w == "o" || w == "oh") return 3.0f;
+    if (w == "u" || w == "oo" || w == "ou") return 4.0f;
+    try { return std::clamp(std::stof(w), 0.0f, 4.0f); } catch (...) {}
+    throw std::runtime_error("vowel is a, e, i, o, u (ah eh ee oh oo) or 0 to 4");
+}
 
 static float* mod_target(TrackParams& tp, int param) {
     switch (param) {
@@ -305,6 +375,8 @@ static float* mod_target(TrackParams& tp, int param) {
         case MP_REVERB:    return &tp.reverb_send;
         case MP_DELAY:     return &tp.delay_send;
         case MP_FENV:      return &tp.fenv_amount;
+        case MP_VOWEL:     return &tp.formant_vowel;
+        case MP_PITCH:     return &tp.pitch_semis;
         default:           return nullptr;
     }
 }
@@ -413,6 +485,8 @@ struct FxBus {
     std::vector<float> delay_buffer;
     int delay_head = 0;
     float delay_time = 0.3f, delay_feedback = 0.3f, delay_mix = 0.3f;
+    float delay_beats = -1.0f;  // a note value in beats, kept in step with SOUND.BPM
+    bool delay_pingpong = false;
     bool delay_active = false;
     bool ready = false;
 
@@ -431,8 +505,14 @@ struct FxBus {
         int delay_samples = std::min((int)(delay_time * SAMPLE_RATE) * 2, size - 2);
         int read_pos = (delay_head - delay_samples + size) % size;
         float dl = delay_buffer[read_pos], dr = delay_buffer[read_pos + 1 < size ? read_pos + 1 : 0];
-        delay_buffer[delay_head] = in_l + dl * delay_feedback;
-        delay_buffer[(delay_head + 1) % size] = in_r + dr * delay_feedback;
+        if (delay_pingpong) {
+            // the input enters on the left, each repeat crosses to the other side
+            delay_buffer[delay_head] = 0.5f * (in_l + in_r) + dr * delay_feedback;
+            delay_buffer[(delay_head + 1) % size] = dl * delay_feedback;
+        } else {
+            delay_buffer[delay_head] = in_l + dl * delay_feedback;
+            delay_buffer[(delay_head + 1) % size] = in_r + dr * delay_feedback;
+        }
         delay_head = (delay_head + 2) % size;
         mix_l += dl * delay_mix; mix_r += dr * delay_mix;
     }
@@ -651,6 +731,37 @@ static struct SoundSystem {
         }
     }
 
+    // A track's insert on the sum of its voices: a stereo chorus, two taps
+    // swinging a quarter period apart, then the stereo width (mid/side)
+    void run_insert(TrackParams& tp, float& l, float& r) {
+        if (tp.chorus_mix > 0.0f) {
+            const int n = 4096;  // frames, stereo interleaved
+            if (tp.chorus_buf.size() != (size_t)n * 2) { tp.chorus_buf.assign(n * 2, 0.0f); tp.chorus_head = 0; }
+            tp.chorus_buf[tp.chorus_head * 2] = l;
+            tp.chorus_buf[tp.chorus_head * 2 + 1] = r;
+            auto tap = [&](int ch, float ph) {
+                float ms = 14.0f + tp.chorus_depth * std::sin(2.0f * (float)M_PI * ph);
+                float d = std::clamp(ms * 0.001f * SAMPLE_RATE, 1.0f, (float)n - 2.0f);
+                float pos = (float)tp.chorus_head - d;
+                if (pos < 0) pos += (float)n;
+                int i0 = (int)pos, i1 = (i0 + 1) % n;
+                float fr = pos - (float)i0;
+                return tp.chorus_buf[i0 * 2 + ch] * (1.0f - fr) + tp.chorus_buf[i1 * 2 + ch] * fr;
+            };
+            float wl = tap(0, tp.chorus_lfo), wr = tap(1, tp.chorus_lfo + 0.25f);
+            tp.chorus_head = (tp.chorus_head + 1) % n;
+            tp.chorus_lfo += tp.chorus_rate / SAMPLE_RATE;
+            if (tp.chorus_lfo >= 1.0f) tp.chorus_lfo -= 1.0f;
+            float m = std::clamp(tp.chorus_mix, 0.0f, 1.0f);
+            l = l * (1.0f - 0.5f * m) + wl * m * 0.7f;
+            r = r * (1.0f - 0.5f * m) + wr * m * 0.7f;
+        }
+        if (tp.width != 1.0f) {
+            float mid = 0.5f * (l + r), side = 0.5f * (l - r) * tp.width;
+            l = mid + side; r = mid - side;
+        }
+    }
+
     float generate_waveform(Waveform wf, float phase, float dt) {
         switch (wf) {
             case Waveform::SINE: return std::sin(phase * 2.0f * (float)M_PI);
@@ -679,8 +790,15 @@ static struct SoundSystem {
         float dt = 1.0f / SAMPLE_RATE;
         float dt_freq = v.frequency / SAMPLE_RATE;
 
-        // LFO
         float freq = v.frequency;
+        if (v.glide_left > 0) {
+            freq = v.glide_cur;
+            v.glide_cur *= v.glide_ratio;
+            v.glide_left--;
+        }
+        if (tp.pitch_semis != 0.0f) freq *= std::exp2(tp.pitch_semis / 12.0f);
+
+        // LFO
         if (tp.lfo_freq > 0 && tp.lfo_depth > 0) {
             float lfo = std::sin(v.lfo_phase * 2.0f * (float)M_PI);
             freq += lfo * tp.lfo_depth;
@@ -738,6 +856,35 @@ static struct SoundSystem {
             float s = generate_waveform(tp.waveform, v.phase + fm_mod, f);
             sample_l = s;
             sample_r = s;
+        }
+
+        // Formants: breath noise, then three band-passes on the vowel
+        if (tp.formant_mix > 0.0f) {
+            formant_coeffs(tp);
+            float in[2] = {sample_l, sample_r};
+            if (tp.formant_breath > 0.0f) {
+                float n = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+                in[0] += n * tp.formant_breath;
+                in[1] += n * tp.formant_breath;
+            }
+            float wet[2] = {0.0f, 0.0f};
+            for (int i = 0; i < 3; i++) {
+                float g = tp.fmt_g[i], k = tp.fmt_k[i];
+                float a1 = 1.0f / (1.0f + g * (g + k)), a2 = g * a1, a3 = g * a2;
+                for (int c = 0; c < 2; c++) {
+                    float& ic1 = v.fmt_s[c][i][0];
+                    float& ic2 = v.fmt_s[c][i][1];
+                    float v3 = in[c] - ic2;
+                    float v1 = a1 * ic1 + a2 * v3;
+                    float v2 = ic2 + a2 * ic1 + a3 * v3;
+                    ic1 = 2.0f * v1 - ic1;
+                    ic2 = 2.0f * v2 - ic2;
+                    wet[c] += k * v1 * tp.fmt_amp[i];
+                }
+            }
+            float m = std::clamp(tp.formant_mix, 0.0f, 1.0f);
+            sample_l = sample_l * (1.0f - m) + wet[0] * m * FORMANT_MAKEUP;
+            sample_r = sample_r * (1.0f - m) + wet[1] * m * FORMANT_MAKEUP;
         }
 
         // Sidechain ducking
@@ -1034,12 +1181,15 @@ static struct SoundSystem {
             return;
         }
         float freq = 0;
-        int midi = note_name_to_midi(ev.note);
+        std::string note = ev.note;
+        bool slide = !note.empty() && note.back() == '^';
+        if (slide) note.pop_back();
+        int midi = note_name_to_midi(note);
         if (midi >= 0) {
             freq = midi_to_freq(midi);
         } else {
-            try { int deg = std::stoi(ev.note); freq = sys->degree_to_freq(t, deg); }
-            catch (...) { try { freq = std::stof(ev.note); } catch (...) { return; } }
+            try { int deg = std::stoi(note); freq = sys->degree_to_freq(t, deg); }
+            catch (...) { try { freq = std::stof(note); } catch (...) { return; } }
         }
         int vi = sys->allocate_voice(t);
         if (vi < 0) { sys->dbg_alloc_fail++; return; }
@@ -1047,6 +1197,12 @@ static struct SoundSystem {
         auto& v = sys->voices[vi];
         v.frequency = freq;
         v.phase = 0.0f;
+        if (tp.glide_time > 0.0f && tp.last_freq > 0.0f && (slide || !tp.glide_marked)) {
+            v.glide_left = std::max<int64_t>(1, (int64_t)(tp.glide_time * SAMPLE_RATE));
+            v.glide_cur = tp.last_freq;
+            v.glide_ratio = std::pow(freq / tp.last_freq, 1.0f / (float)v.glide_left);
+        }
+        tp.last_freq = freq;
         start_envelopes(v, tp);
         v.seq_controlled = true;
         v.pan = ev.pan;
@@ -1208,6 +1364,9 @@ static struct SoundSystem {
 
             // Reset track envelopes
             float t_env[NUM_TRACKS] = {};
+            // Voices of tracks with an insert, summed before it
+            float ins_l[NUM_TRACKS] = {}, ins_r[NUM_TRACKS] = {};
+            bool any_insert = false;
 
             // Synth voices
             if ((f & 31) == 0) sys->apply_mods(t0 + f * phase_inc);
@@ -1222,14 +1381,35 @@ static struct SoundSystem {
                 }
                 float vl, vr;
                 sys->generate_voice(v, vl, vr);
-                mix_l += vl; mix_r += vr;
                 auto& tp = sys->tracks[v.track];
+                if (tp.has_insert()) {
+                    ins_l[v.track] += vl; ins_r[v.track] += vr;
+                    any_insert = true;
+                    float e = std::max(std::abs(vl), std::abs(vr));
+                    if (e > t_env[v.track]) t_env[v.track] = e;
+                    active++;
+                    continue;
+                }
+                mix_l += vl; mix_r += vr;
                 int o = tp.orbit;
                 rev_l[o] += vl * tp.reverb_send; rev_r[o] += vr * tp.reverb_send;
                 del_l[o] += vl * tp.delay_send; del_r[o] += vr * tp.delay_send;
                 float e = std::max(std::abs(vl), std::abs(vr));
                 if (e > t_env[v.track]) t_env[v.track] = e;
                 active++;
+            }
+
+            if (any_insert) {
+                for (int t = 0; t < NUM_TRACKS; t++) {
+                    auto& tp = sys->tracks[t];
+                    if (!tp.has_insert()) continue;
+                    float l = ins_l[t], r = ins_r[t];
+                    sys->run_insert(tp, l, r);
+                    mix_l += l; mix_r += r;
+                    int o = tp.orbit;
+                    rev_l[o] += l * tp.reverb_send; rev_r[o] += r * tp.reverb_send;
+                    del_l[o] += l * tp.delay_send; del_r[o] += r * tp.delay_send;
+                }
             }
 
             // SFX channels
@@ -2153,6 +2333,8 @@ void register_sound_builtins(VM& vm) {
 
     vm.register_native("SOUND.BPM", 1, 1, [](const std::vector<Value>& args) -> Value {
         g_sound.bpm = (float)args[0].to_double();
+        for (auto& b : g_sound.buses)
+            if (b.delay_beats > 0.0f && g_sound.bpm > 0.0f) b.delay_time = b.delay_beats * 60.0f / g_sound.bpm;
         return Value::make_none();
     });
 
@@ -2211,7 +2393,8 @@ void register_sound_builtins(VM& vm) {
         static const std::pair<const char*, int> params[] = {
             {"CUTOFF", MP_CUTOFF}, {"RESONANCE", MP_RESONANCE}, {"GAIN", MP_GAIN},
             {"PAN", MP_PAN}, {"DETUNE", MP_DETUNE}, {"FM", MP_FM}, {"CRUSH", MP_CRUSH},
-            {"REVERB", MP_REVERB}, {"DELAY", MP_DELAY}, {"FENV", MP_FENV}};
+            {"REVERB", MP_REVERB}, {"DELAY", MP_DELAY}, {"FENV", MP_FENV},
+            {"VOWEL", MP_VOWEL}, {"PITCH", MP_PITCH}};
         static const std::pair<const char*, ModShape> shapes[] = {
             {"OFF", ModShape::NONE}, {"SINE", ModShape::SINE}, {"COSINE", ModShape::COSINE},
             {"SAW", ModShape::SAW}, {"ISAW", ModShape::ISAW}, {"TRI", ModShape::TRI},
@@ -2307,6 +2490,50 @@ void register_sound_builtins(VM& vm) {
         return Value::make_none();
     });
 
+    vm.register_native("SOUND.FORMANT", 3, 4, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        float pos = 0.0f;
+        try { pos = vowel_position(args[1].to_string()); }
+        catch (const std::exception& e) { throw jdError(ErrCode::RUNTIME_ERROR, std::string("SOUND.FORMANT: ") + e.what()); }
+        SND_LOCK();
+        auto& tp = g_sound.tracks[t];
+        tp.formant_vowel = pos;
+        tp.formant_mix = std::clamp((float)args[2].to_double(), 0.0f, 1.0f);
+        tp.formant_breath = args.size() > 3 ? std::clamp((float)args[3].to_double(), 0.0f, 1.0f) : 0.0f;
+        tp.mods[MP_VOWEL].base = pos;
+        SND_UNLOCK();
+        return Value::make_none();
+    });
+    vm.register_native("SOUND.GLIDE", 2, 3, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        std::string mode = args.size() > 2 ? args[2].to_string() : "ALL";
+        std::transform(mode.begin(), mode.end(), mode.begin(), ::toupper);
+        if (mode != "ALL" && mode != "SLIDE")
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.GLIDE: mode is ALL or SLIDE");
+        SND_LOCK();
+        g_sound.tracks[t].glide_time = std::max(0.0f, (float)args[1].to_double() / 1000.0f);
+        g_sound.tracks[t].glide_marked = mode == "SLIDE";
+        SND_UNLOCK();
+        return Value::make_none();
+    });
+    vm.register_native("SOUND.CHORUS", 2, 4, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        SND_LOCK();
+        auto& tp = g_sound.tracks[t];
+        tp.chorus_mix = std::clamp((float)args[1].to_double(), 0.0f, 1.0f);
+        if (args.size() > 2) tp.chorus_rate = std::clamp((float)args[2].to_double(), 0.01f, 10.0f);
+        if (args.size() > 3) tp.chorus_depth = std::clamp((float)args[3].to_double(), 0.0f, 12.0f);
+        SND_UNLOCK();
+        return Value::make_none();
+    });
+    vm.register_native("SOUND.WIDTH", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        SND_LOCK();
+        g_sound.tracks[t].width = std::clamp((float)args[1].to_double(), 0.0f, 2.0f);
+        SND_UNLOCK();
+        return Value::make_none();
+    });
+
     // ── Global effects ──────────────────────────────────────────
 
     // Orbit of the optional last argument of SOUND.DELAY / SOUND.REVERB,
@@ -2318,12 +2545,21 @@ void register_sound_builtins(VM& vm) {
         g_sound.buses[o].prepare(0.0f);
         return g_sound.buses[o];
     };
-    vm.register_native("SOUND.DELAY", 4, 5, [](const std::vector<Value>& args) -> Value {
+    vm.register_native("SOUND.DELAY", 4, 6, [](const std::vector<Value>& args) -> Value {
+        float beats = -1.0f;
+        if (args[1].type == ValueType::STRING) {
+            beats = note_value_beats(args[1].to_string());
+            if (beats <= 0.0f)
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.DELAY: time is ms or a note value like 1/8, 1/8. or 1/8t");
+        }
         SND_LOCK();
         FxBus* b = nullptr;
         try { b = &bus_arg(args, 4, "SOUND.DELAY"); } catch (...) { SND_UNLOCK(); throw; }
         b->delay_active = args[0].to_bool();
-        b->delay_time = (float)args[1].to_double() / 1000.0f;  // ms to sec
+        b->delay_beats = beats;
+        b->delay_pingpong = args.size() > 5 && args[5].to_bool();
+        if (beats > 0.0f) b->delay_time = beats * 60.0f / std::max(1.0f, g_sound.bpm);
+        else b->delay_time = (float)args[1].to_double() / 1000.0f;  // ms to sec
         b->delay_feedback = (float)args[2].to_double();
         b->delay_mix = (float)args[3].to_double();
         SND_UNLOCK();
@@ -2486,6 +2722,8 @@ void register_sound_builtins(VM& vm) {
         g_sound.master_headroom = 0.5f;
         for (auto& b : g_sound.buses) {
             b.delay_active = false;
+            b.delay_beats = -1.0f;
+            b.delay_pingpong = false;
             b.reverb.wet = 0;
             std::fill(b.delay_buffer.begin(), b.delay_buffer.end(), 0.0f);
         }
@@ -2550,7 +2788,7 @@ void register_sound_builtins(VM& vm) {
         "SOUND.RINGMOD", "SOUND.REVERBSEND", "SOUND.DELAYSEND",
         "SOUND.SIDECHAIN", "SOUND.SCALE", "SOUND.DELAY", "SOUND.REVERB",
         "SOUND.NUDGE", "SOUND.ORBIT", "SOUND.COMPRESSOR", "SOUND.DISTORTION",
-        "SOUND.MASTER"};
+        "SOUND.MASTER", "SOUND.FORMANT", "SOUND.GLIDE", "SOUND.CHORUS", "SOUND.WIDTH"};
     for (const char* name : schedulable) {
         const VM::NativeEntry* e = vm.native_find(name);
         if (!e) continue;

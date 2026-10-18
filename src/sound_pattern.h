@@ -191,6 +191,8 @@ inline std::string midi_name(int m) {
 
 // A note moved by d semitones; an integer (a scale degree) moved by d degrees.
 inline std::string transpose(const std::string& s, double d) {
+    if (!s.empty() && s.back() == '^')  // a slide keeps its mark
+        return transpose(s.substr(0, s.size() - 1), d) + "^";
     long step = std::lround(d);
     char* end = nullptr;
     long v = std::strtol(s.c_str(), &end, 10);

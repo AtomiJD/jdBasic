@@ -294,6 +294,155 @@ CATCH
 ENDTRY
 CHECK "unknown mod parameter", INSTR(err_msg, "WOBBLE") >= 0, "msg=" + err_msg
 
+' ---------- 2a. Formants, glide, pitch, chorus, width, synced delay ----------
+' Frequency of the left channel from its rising zero crossings
+FUNC ZC_HZ(buf, a AS INTEGER, b AS INTEGER) AS DOUBLE
+    DIM crossings AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = a TO b - 2
+        IF buf[i * 2] <= 0 AND buf[i * 2 + 2] > 0 THEN crossings = crossings + 1
+    NEXT i
+    RETURN crossings * 44100.0 / (b - a)
+ENDFUNC
+
+FUNC RMS_R(buf, a AS INTEGER, b AS INTEGER) AS DOUBLE
+    DIM acc AS DOUBLE = 0
+    DIM i AS INTEGER
+    DIM x AS DOUBLE
+    FOR i = a TO b - 1
+        x = buf[i * 2 + 1]
+        acc = acc + x * x
+    NEXT i
+    RETURN SQR(acc / (b - a))
+ENDFUNC
+
+FUNC RMS_SIDE(buf, a AS INTEGER, b AS INTEGER) AS DOUBLE
+    DIM acc AS DOUBLE = 0
+    DIM i AS INTEGER
+    DIM x AS DOUBLE
+    FOR i = a TO b - 1
+        x = buf[i * 2] - buf[i * 2 + 1]
+        acc = acc + x * x
+    NEXT i
+    RETURN SQR(acc / (b - a))
+ENDFUNC
+
+' the vowel shapes the spectrum: ee has its second formant near 2.2 kHz,
+' oo none; the level of the 20th harmonic of 110 Hz tells them apart
+FUNC VOWEL_BRIGHTNESS(vowel$) AS DOUBLE
+    SOUND.RESET
+    SOUND.VOICE 4, "SAW", 0.001, 0.01, 1.0, 0.01
+    SOUND.GAIN 4, 0.3
+    SOUND.FORMANT 4, vowel$, 1.0
+    SOUND.PLAY 4, 110
+    DIM vb = SOUND.RENDER(12192)
+    DIM re AS DOUBLE = 0
+    DIM im AS DOUBLE = 0
+    DIM w AS DOUBLE
+    DIM i AS INTEGER
+    FOR i = 0 TO 8191
+        w = 2 * MATH.PI * 2200 * i / 44100
+        re = re + vb[(4000 + i) * 2] * COS(w)
+        im = im + vb[(4000 + i) * 2] * SIN(w)
+    NEXT i
+    RETURN SQR(re * re + im * im) / 8192
+ENDFUNC
+DIM bright_ee AS DOUBLE = VOWEL_BRIGHTNESS("ee")
+DIM bright_oo AS DOUBLE = VOWEL_BRIGHTNESS("oo")
+CHECK "formant ee brighter than oo", bright_ee > bright_oo * 4, "ee=" + STR$(bright_ee) + " oo=" + STR$(bright_oo)
+
+SOUND.RESET
+SOUND.VOICE 4, "SAW", 0.001, 0.01, 1.0, 0.01
+SOUND.GAIN 4, 0.3
+SOUND.PLAY 4, 110
+buf = SOUND.RENDER(12000)
+DIM dry_rms AS DOUBLE = RMS(buf, 4000, 12000)
+SOUND.RESET
+SOUND.VOICE 4, "SAW", 0.001, 0.01, 1.0, 0.01
+SOUND.GAIN 4, 0.3
+SOUND.FORMANT 4, "ah", 1.0
+SOUND.PLAY 4, 110
+buf = SOUND.RENDER(12000)
+DIM ah_rms AS DOUBLE = RMS(buf, 4000, 12000)
+CHECK "formant keeps the level", ah_rms > dry_rms * 0.5 AND ah_rms < dry_rms * 2, "dry=" + STR$(dry_rms) + " ah=" + STR$(ah_rms)
+
+err_msg = ""
+TRY
+    SOUND.FORMANT 4, "zz", 1.0
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "unknown vowel", INSTR(err_msg, "vowel") >= 0, "msg=" + err_msg
+
+' glide: the second note starts at the first one's pitch and slides up
+FUNC SECOND_NOTE_HZ(glide_ms AS INTEGER, mode$, pattern$, a AS INTEGER, b AS INTEGER) AS DOUBLE
+    SOUND.RESET
+    SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+    IF glide_ms > 0 THEN SOUND.GLIDE 0, glide_ms, mode$
+    SOUND.SEQ 0, "legato(1, " + pattern$ + ")", "VOICE"
+    DIM gb = SOUND.RENDER(CYC)
+    RETURN ZC_HZ(gb, 22050 + a, 22050 + b)
+ENDFUNC
+DIM hz_jump AS DOUBLE = SECOND_NOTE_HZ(0, "ALL", "c4 c5", 200, 2400)
+DIM hz_glide AS DOUBLE = SECOND_NOTE_HZ(200, "ALL", "c4 c5", 200, 2400)
+DIM hz_landed AS DOUBLE = SECOND_NOTE_HZ(100, "ALL", "c4 c5", 9000, 21000)
+CHECK "no glide jumps", hz_jump > 480, "hz=" + STR$(hz_jump)
+CHECK "glide starts low", hz_glide < 400, "hz=" + STR$(hz_glide)
+CHECK "glide lands", ABS(hz_landed - 523.25) < 15, "hz=" + STR$(hz_landed)
+DIM hz_unmarked AS DOUBLE = SECOND_NOTE_HZ(200, "SLIDE", "c4 c5", 200, 2400)
+DIM hz_marked AS DOUBLE = SECOND_NOTE_HZ(200, "SLIDE", "c4 c5^", 200, 2400)
+CHECK "slide mode skips unmarked", hz_unmarked > 480, "hz=" + STR$(hz_unmarked)
+CHECK "slide mode glides into ^", hz_marked < 400, "hz=" + STR$(hz_marked)
+
+' PITCH moves the whole track by semitones
+SOUND.RESET
+SOUND.VOICE 3, "SINE", 0.001, 0.01, 1.0, 0.01
+SOUND.MOD 3, "PITCH", "SQUARE", 0, 12, 1
+SOUND.PLAY 3, 440
+buf = SOUND.RENDER(CYC)
+DIM hz_low AS DOUBLE = ZC_HZ(buf, 2000, 20000)
+DIM hz_high AS DOUBLE = ZC_HZ(buf, 24000, 42000)
+CHECK "pitch mod low", ABS(hz_low - 440) < 10, "hz=" + STR$(hz_low)
+CHECK "pitch mod an octave up", ABS(hz_high - 880) < 15, "hz=" + STR$(hz_high)
+
+' chorus spreads a centred tone, width 0 folds it back to mono
+SOUND.RESET
+SOUND.VOICE 5, "SAW", 0.001, 0.01, 1.0, 0.01
+SOUND.GAIN 5, 0.3
+SOUND.CHORUS 5, 1.0, 1.5, 4
+SOUND.PLAY 5, 220
+buf = SOUND.RENDER(20000)
+DIM side_chorus AS DOUBLE = RMS_SIDE(buf, 4000, 20000)
+SOUND.WIDTH 5, 0
+buf = SOUND.RENDER(8000)
+DIM side_mono AS DOUBLE = RMS_SIDE(buf, 2000, 8000)
+CHECK "chorus widens", side_chorus > 0.05, "side=" + STR$(side_chorus)
+CHECK "width 0 is mono", side_mono < 0.0001, "side=" + STR$(side_mono)
+
+' a delay of 1/4 at 240 BPM repeats a quarter second later
+FUNC ECHO_BUF(pingpong AS INTEGER)
+    SOUND.RESET
+    SOUND.DELAY TRUE, "1/4", 0.5, 1.0, 0, pingpong
+    SOUND.VOICE 0, "SINE", 0.001, 0.02, 0.0, 0.01
+    SOUND.DELAYSEND 0, 1.0
+    SOUND.SEQ 0, "c5 ~ ~ ~", "VOICE"
+    RETURN SOUND.RENDER(CYC)
+ENDFUNC
+buf = ECHO_BUF(FALSE)
+CHECK "synced delay quiet before the echo", RMS(buf, 4000, 10500) < 0.01, "rms=" + STR$(RMS(buf, 4000, 10500))
+CHECK "synced delay echoes on the beat", RMS(buf, 11100, 11800) > 0.05, "rms=" + STR$(RMS(buf, 11100, 11800))
+buf = ECHO_BUF(TRUE)
+CHECK "ping-pong first echo left", RMS(buf, 11100, 11800) > RMS_R(buf, 11100, 11800) * 4, "l=" + STR$(RMS(buf, 11100, 11800)) + " r=" + STR$(RMS_R(buf, 11100, 11800))
+CHECK "ping-pong second echo right", RMS_R(buf, 22150, 22850) > RMS(buf, 22150, 22850) * 4, "l=" + STR$(RMS(buf, 22150, 22850)) + " r=" + STR$(RMS_R(buf, 22150, 22850))
+
+err_msg = ""
+TRY
+    SOUND.DELAY TRUE, "quarter", 0.3, 0.3
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "delay note value checked", INSTR(err_msg, "note value") >= 0, "msg=" + err_msg
+
 ' ---------- 2b. Per-event values, nudge, orbits, tracks, clock ----------
 FUNC TONE_RMS(pattern$, a AS INTEGER, b AS INTEGER) AS DOUBLE
     SOUND.RESET

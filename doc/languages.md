@@ -3499,10 +3499,10 @@ These effects apply to one track, numbered 0 to 15.
 * **`SOUND.FILTER track, cutoff_hz, [resonance], [mode$]`**: Filters the track. With two arguments it is a gentle one-pole low-pass. A `resonance` (0.0-1.0, near 1.0 it rings) or a `mode$` selects the resonant state-variable filter: `"LP"` low-pass, `"HP"` high-pass, `"BP"` band-pass; `"LP1"` returns to the one-pole low-pass.
 * **`SOUND.FENV track, octaves, attack, decay, [sustain], [release]`**: Filter envelope. Every note opens the cutoff by up to `octaves` and closes it again, the classic acid and pluck sound. Times in seconds; `sustain` (0.0-1.0) defaults to 0 and `release` to 0.1.
 * **`SOUND.MOD track, param$, shape$, [lo], [hi], [cycles], [offset]`**: Moves a track parameter continuously between `lo` and `hi` (default 0 and 1), one period every `cycles` sequencer cycles (default 1), so a sweep stays locked to the bar. `offset` shifts the start in periods.
-  * `param$`: `"CUTOFF"`, `"RESONANCE"`, `"GAIN"`, `"PAN"`, `"DETUNE"` (unison), `"FM"` (amount), `"CRUSH"` (bits), `"REVERB"` and `"DELAY"` (sends), `"FENV"` (octaves).
+  * `param$`: `"CUTOFF"`, `"RESONANCE"`, `"GAIN"`, `"PAN"`, `"DETUNE"` (unison), `"FM"` (amount), `"CRUSH"` (bits), `"REVERB"` and `"DELAY"` (sends), `"FENV"` (octaves), `"VOWEL"` (0 a to 4 u, with `SOUND.FORMANT`), `"PITCH"` (semitones, for risers and drops).
   * `shape$`: `"SINE"`, `"COSINE"`, `"SAW"` (rising), `"ISAW"` (falling), `"TRI"`, `"SQUARE"`, `"RAND"` (a new random value each period), `"PERLIN"` (smooth random). `"OFF"` stops the modulation and restores the value it started from.
   * *Example*: `SOUND.MOD 1, "CUTOFF", "SINE", 300, 3000, 8` sweeps the filter of track 1 open and closed over eight bars.
-* **`SOUND.AT [cycle]`**: Queues the track and mix commands that follow for sequencer cycle `cycle` instead of applying them now. The mixer applies them on the frame the clock reaches that cycle, so a section change lands exactly on its bar whatever the program is doing at the time, and a whole arrangement can be sent before the first note. `SOUND.AT` with no argument, or a negative cycle, applies commands at once again; a cycle the clock has already reached applies them at once too. Commands for the same cycle apply in the order they were sent. Queued are `SOUND.SEQ`, `SOUND.NOTE`, `SOUND.VOICE`, `SOUND.BPM`, `SOUND.GAIN`, `SOUND.PAN`, `SOUND.FILTER`, `SOUND.FENV`, `SOUND.MOD`, `SOUND.EQ`, `SOUND.LFO`, `SOUND.FM`, `SOUND.UNISON`, `SOUND.BITCRUSH`, `SOUND.RINGMOD`, `SOUND.REVERBSEND`, `SOUND.DELAYSEND`, `SOUND.SIDECHAIN`, `SOUND.SCALE`, `SOUND.DELAY`, `SOUND.REVERB`, `SOUND.NUDGE`, `SOUND.ORBIT`, `SOUND.COMPRESSOR`, `SOUND.DISTORTION` and `SOUND.MASTER`; a pattern is checked when it is sent, so a mistake fails at the call. `SOUND.RESET` empties the queue and ends `SOUND.AT`.
+* **`SOUND.AT [cycle]`**: Queues the track and mix commands that follow for sequencer cycle `cycle` instead of applying them now. The mixer applies them on the frame the clock reaches that cycle, so a section change lands exactly on its bar whatever the program is doing at the time, and a whole arrangement can be sent before the first note. `SOUND.AT` with no argument, or a negative cycle, applies commands at once again; a cycle the clock has already reached applies them at once too. Commands for the same cycle apply in the order they were sent. Queued are `SOUND.SEQ`, `SOUND.NOTE`, `SOUND.VOICE`, `SOUND.BPM`, `SOUND.GAIN`, `SOUND.PAN`, `SOUND.FILTER`, `SOUND.FENV`, `SOUND.MOD`, `SOUND.EQ`, `SOUND.LFO`, `SOUND.FM`, `SOUND.UNISON`, `SOUND.BITCRUSH`, `SOUND.RINGMOD`, `SOUND.REVERBSEND`, `SOUND.DELAYSEND`, `SOUND.SIDECHAIN`, `SOUND.SCALE`, `SOUND.DELAY`, `SOUND.REVERB`, `SOUND.NUDGE`, `SOUND.ORBIT`, `SOUND.COMPRESSOR`, `SOUND.DISTORTION`, `SOUND.MASTER`, `SOUND.FORMANT`, `SOUND.GLIDE`, `SOUND.CHORUS` and `SOUND.WIDTH`; a pattern is checked when it is sent, so a mistake fails at the call. `SOUND.RESET` empties the queue and ends `SOUND.AT`.
   * *Example*: `SOUND.AT 72`, then `SOUND.SEQ 0, "bd*4", "VOICE"` and `SOUND.MOD 5, "CUTOFF", "SINE", 900, 5500, 8`, then `SOUND.AT`: the kick and the sweep start on bar 72.
 * **`SOUND.PENDING() -> number`**: The number of commands `SOUND.AT` has queued that the mixer has not applied yet.
 * **`SOUND.EQ track, low, mid, high`**: 3-band Equalizer gains (1.0 = Flat).
@@ -3517,6 +3517,15 @@ These effects apply to one track, numbered 0 to 15.
   * `rate`: 0.0-1.0 (Sample rate reduction).
 
 * **`SOUND.RINGMOD track, freq, mix`**: Robotic/Sci-Fi modulation.
+
+* **`SOUND.FORMANT track, vowel$, mix, [breath]`**: Three band-passes on the formants of a sung vowel turn the track into a voice: `"a"` (`"ah"`), `"e"` (`"eh"`), `"i"` (`"ee"`), `"o"` (`"oh"`), `"u"` (`"oo"`), or a position from 0 (a) to 4 (u) between them. `mix` 0.0-1.0 is the wet share; `breath` 0.0-1.0 adds noise before the filters, the air of a choir. `SOUND.MOD track, "VOWEL", "SINE", 0, 4, 2` sings "ah" to "oo" and back every two bars.
+  * *A choir*: a saw with `SOUND.UNISON 6, 6, 0.25, 0.9`, `SOUND.FORMANT 6, "oo", 1, 0.08`, a slow attack, `SOUND.LFO 6, 5, 2` vibrato and a long reverb send.
+
+* **`SOUND.GLIDE track, ms, [mode$]`**: Portamento: each note starts at the pitch of the track's previous note and slides to its own in `ms`. Mode `"ALL"` (default) glides into every note, `"SLIDE"` only into notes marked with `^` in the pattern, the acid bass way: `"c2 c2 c3^ c2"`. 0 turns it off.
+
+* **`SOUND.CHORUS track, mix, [rate], [depth]`**: A stereo chorus on the sum of the track's voices: two taps 14 ms back, swinging `depth` ms (default 3) at `rate` Hz (default 0.8) a quarter period apart. Widens pads and stabs.
+
+* **`SOUND.WIDTH track, width`**: Stereo width of the track, applied after its chorus: 0 mono, 1 unchanged (default), up to 2 wider.
 
 ### Track Sends and Sidechain
 
@@ -3535,7 +3544,7 @@ another.
 
 #### Global Effects (Master Bus)
 
-* **`SOUND.DELAY active_bool, time_ms, feedback, mix, [orbit]`**: Stereo Delay
+* **`SOUND.DELAY active_bool, time, feedback, mix, [orbit], [pingpong]`**: Stereo Delay. `time` is in milliseconds or a note value that follows `SOUND.BPM`: `"1/4"` one beat, `"1/8."` a dotted eighth, `"1/8t"` a triplet eighth. `pingpong` TRUE starts the echoes on the left and bounces each repeat to the other side.
 
 * **`SOUND.REVERB room_size, damping, width, wet, [orbit]`**: Stereo Reverb.
   * `room_size`: 0.0-0.98.
