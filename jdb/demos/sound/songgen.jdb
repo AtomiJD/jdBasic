@@ -6,8 +6,8 @@
 '   jdBasic songgen.jdb --genre house --seed 7 --wav house7.wav
 '
 ' Genres: trance (136-140 BPM, supersaw hook, rolling bass, arp, choir in
-' the breakdown), house (122-126, octave bass, chord stabs, vocal chop),
-' deep (118-122, dorian, sub bass with glide, soft keys, a vowel pad),
+' the breakdown), house (122-126, octave bass, organ stabs, Neon hook),
+' deep (118-122, dorian, sub bass with glide, a soft Neon hook, a vowel pad),
 ' acid (128-132, a sliding 303 line, sparse hook).
 '
 ' The seed also picks one of three forms for the genre (intro, groove,
@@ -191,17 +191,18 @@ SOUND.REVERBSEND CRASH, 0.4
 DIM BASS_PATCH$ AS STRING = "bass_roll"
 DIM LEAD_PATCH$ AS STRING = "neon_lead"
 DIM KEYS_PATCH$ AS STRING = "fm_keys"
+DIM COUNTER_PATCH$ AS STRING = "neon_soft"
 DIM BASS_CUT AS DOUBLE = 700
 DIM BASS_RES AS DOUBLE = 0.35
 IF genre$ = "house" THEN
     BASS_PATCH$ = "bass_house"
-    LEAD_PATCH$ = "vox_chop"
     KEYS_PATCH$ = "organ"
     BASS_CUT = 600
     BASS_RES = 0.3
 ELSEIF genre$ = "deep" THEN
     BASS_PATCH$ = "sub"
-    LEAD_PATCH$ = "fm_keys"
+    LEAD_PATCH$ = "neon_soft"
+    COUNTER_PATCH$ = "neon_pluck"
     BASS_CUT = 20000
     BASS_RES = 0
 ELSEIF genre$ = "acid" THEN
@@ -209,7 +210,7 @@ ELSEIF genre$ = "acid" THEN
     BASS_CUT = 500
     BASS_RES = 0.75
 ENDIF
-PRINT "  sounds: "; BASS_PATCH$; ", neon_pluck, "; KEYS_PATCH$; ", "; LEAD_PATCH$
+PRINT "  sounds: "; BASS_PATCH$; ", neon_pluck, "; KEYS_PATCH$; ", "; LEAD_PATCH$; ", "; COUNTER_PATCH$
 
 PATCH.APPLY BASS, BASS_PATCH$
 SOUND.SIDECHAIN BASS, KICK, 0.7
@@ -233,14 +234,11 @@ PATCH.APPLY KEYS, KEYS_PATCH$
 SOUND.SIDECHAIN KEYS, KICK, 0.35
 
 PATCH.APPLY LEAD, LEAD_PATCH$
-IF genre$ = "deep" THEN SOUND.GAIN LEAD, 0.3
+IF genre$ = "deep" THEN SOUND.GAIN LEAD, 0.26
 SOUND.SIDECHAIN LEAD, KICK, 0.35
 SOUND.ORBIT LEAD, 1
 
-DIM COUNTER_PATCH$ AS STRING = "fm_keys"
-IF LEAD_PATCH$ = "fm_keys" THEN COUNTER_PATCH$ = "neon_pluck"
 PATCH.APPLY COUNTER, COUNTER_PATCH$
-SOUND.GAIN COUNTER, 0.2
 SOUND.PAN COUNTER, 0.65
 SOUND.SIDECHAIN COUNTER, KICK, 0.35
 

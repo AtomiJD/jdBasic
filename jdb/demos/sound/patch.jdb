@@ -9,6 +9,8 @@
 ' light chorus and a dotted echo.
 '   neon_pluck   short and glassy, for arpeggios under the music
 '   neon_lead    the same sound held and wide, for a hook on top
+'   neon_soft    the same sound dark and round, for a line that answers
+'                or sits behind the hook
 ' The standards:
 '   supersaw     seven detuned saws, the trance lead
 '   pad          a slow wide supersaw bed
@@ -27,11 +29,11 @@
 
 EXPORT MODULE PATCH
 
-DIM PATCH_NAMES$ = ["neon_pluck", "neon_lead", "supersaw", "pad", "choir", "organ", "fm_keys", "vox_chop", "bass_roll", "bass_house", "sub", "acid"]
+DIM PATCH_NAMES$ = ["neon_pluck", "neon_lead", "neon_soft", "supersaw", "pad", "choir", "organ", "fm_keys", "vox_chop", "bass_roll", "bass_house", "sub", "acid"]
 ' each patch's filter: cutoff, resonance, type
-DIM PATCH_CUT = [900, 2600, 3200, 1400, 20000, 3000, 2600, 1500, 700, 600, 20000, 500]
-DIM PATCH_RES = [0.45, 0.35, 0.25, 0.2, 0, 0.1, 0.15, 0.55, 0.35, 0.3, 0, 0.75]
-DIM PATCH_FTYPE$ = ["LP", "LP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP", "LP", "LP"]
+DIM PATCH_CUT = [900, 2600, 1100, 3200, 1400, 20000, 3000, 2600, 1500, 700, 600, 20000, 500]
+DIM PATCH_RES = [0.45, 0.35, 0.3, 0.25, 0.2, 0, 0.1, 0.15, 0.55, 0.35, 0.3, 0, 0.75]
+DIM PATCH_FTYPE$ = ["LP", "LP", "LP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP", "LP", "LP"]
 
 SUB PLAIN(t AS INTEGER)
     SOUND.VOICE t, "SINE", 0.01, 0.1, 0.7, 0.3
@@ -112,6 +114,15 @@ EXPORT SUB APPLY(t AS INTEGER, name$)
         SOUND.DELAYSEND t, 0.3
         SOUND.REVERBSEND t, 0.4
         SOUND.GAIN t, 0.24
+    ELSEIF n$ = "neon_soft" THEN
+        SOUND.VOICE t, "SAW", 0.012, 0.3, 0.35, 0.25
+        SOUND.OSC2 t, "SQUARE", -12, 0.4
+        SOUND.UNISON t, 3, 0.1, 0.5
+        SOUND.FENV t, 1.2, 0.006, 0.2
+        SOUND.CHORUS t, 0.35, 0.5, 3
+        SOUND.DELAYSEND t, 0.25
+        SOUND.REVERBSEND t, 0.35
+        SOUND.GAIN t, 0.2
     ELSEIF n$ = "supersaw" THEN
         SOUND.VOICE t, "SAW", 0.004, 0.3, 0.7, 0.35
         SOUND.UNISON t, 7, 0.32, 0.8
