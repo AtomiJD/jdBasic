@@ -39,6 +39,7 @@ The sequencer divides time into "cycles". You can arrange events within a cycle 
   * `"[c4 c4] c4"` = Two eighth notes followed by one quarter note.
   * `"c4 [c4 c4 c4]"` = One quarter note followed by eighth note triplets.
   * **Stack** (`a, b`): play together, `"[c3,e3,g3] ~"` is a chord.
+  * **Chord symbols**: an upper-case root is a chord, `"<Am F C G>"`, `"Cmaj7 G7 Dm9 Am/E"`, voice-led so each chord takes the inversion nearest the one before. Roman numerals follow `SOUND.SCALE`: `"<i VI III VII>"`. Notes stay lower case (`c4`).
   * **One per cycle** (`<a b c>`): `"<c3 a2 f2 g2>"` walks a chord progression bar by bar.
   * **Speed** (`a*2`, `a/2`): `"c4*4"`, `"[c3 e3 g3 b3]/2"` spreads over two bars.
   * **Repeat / weight / hold** (`a!3`, `a@3`, `_`), **chance** (`a?0.3`), **random choice** (`a | b`).

@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -52,6 +53,14 @@ struct Node {
     std::vector<double> nums;
     std::string word;
     NodeP value;  // FN: a number pattern argument (gain, legato, pan)
+    // A chord atom, a STACK whose kids voice_chords() fills: the root as a
+    // pitch class (or a scale degree when chord_deg), the chord tones as
+    // semitones (or degree steps) above it, a slash bass pitch class or -1.
+    bool chord = false;
+    bool chord_deg = false;
+    int chord_root = 0;
+    std::vector<int> chord_iv;
+    int chord_bass = -1;
 };
 
 struct Event {
@@ -112,6 +121,66 @@ inline int note_midi(const std::string& s) {
     else if (i < s.size() && (s[i] == 'b' || s[i] == 'B')) { acc = -1; i++; }
     if (i >= s.size() || i + 1 < s.size() || !isdigit((unsigned char)s[i])) return -1;
     return (s[i] - '0' + 1) * 12 + base[l - 'a'] + acc;
+}
+
+// A chord symbol: an upper-case root, # or b, and a quality from the table.
+// Fills the root pitch class and the intervals; false if s is none.
+// The pitch class of an upper-case note name at the start of s, with # or
+// b; i is left after it. -1 if s does not start with one.
+inline int note_class(const std::string& s, size_t& i) {
+    static const int base[7] = {9, 11, 0, 2, 4, 5, 7};  // A..G
+    if (s.empty() || s[0] < 'A' || s[0] > 'G') return -1;
+    int pc = base[s[0] - 'A'];
+    i = 1;
+    if (i < s.size() && s[i] == '#') { pc++; i++; }
+    else if (i < s.size() && s[i] == 'b') { pc--; i++; }
+    return (pc + 12) % 12;
+}
+
+inline bool chord_symbol(const std::string& s, int& root, std::vector<int>& iv) {
+    size_t i = 0;
+    root = note_class(s, i);
+    if (root < 0) return false;
+    static const std::pair<const char*, std::vector<int>> qualities[] = {
+        {"", {0, 4, 7}}, {"m", {0, 3, 7}}, {"min", {0, 3, 7}}, {"-", {0, 3, 7}},
+        {"dim", {0, 3, 6}}, {"o", {0, 3, 6}}, {"aug", {0, 4, 8}}, {"+", {0, 4, 8}},
+        {"sus2", {0, 2, 7}}, {"sus4", {0, 5, 7}}, {"sus", {0, 5, 7}}, {"5", {0, 7}},
+        {"6", {0, 4, 7, 9}}, {"m6", {0, 3, 7, 9}},
+        {"7", {0, 4, 7, 10}}, {"maj7", {0, 4, 7, 11}}, {"M7", {0, 4, 7, 11}},
+        {"m7", {0, 3, 7, 10}}, {"min7", {0, 3, 7, 10}}, {"-7", {0, 3, 7, 10}},
+        {"mmaj7", {0, 3, 7, 11}}, {"mM7", {0, 3, 7, 11}},
+        {"dim7", {0, 3, 6, 9}}, {"o7", {0, 3, 6, 9}}, {"m7b5", {0, 3, 6, 10}},
+        {"7sus4", {0, 5, 7, 10}},
+        {"9", {0, 4, 7, 10, 14}}, {"maj9", {0, 4, 7, 11, 14}}, {"m9", {0, 3, 7, 10, 14}},
+        {"add9", {0, 4, 7, 14}}, {"madd9", {0, 3, 7, 14}}, {"m11", {0, 3, 7, 10, 14, 17}},
+    };
+    std::string q = s.substr(i);
+    for (auto& e : qualities)
+        if (q == e.first) { iv = e.second; return true; }
+    return false;
+}
+
+// A Roman numeral on the track's scale: I..VII in either case, then
+// nothing, 7, 9, sus2 or sus4. The tones are degree steps above the root.
+inline bool chord_numeral(const std::string& s, int& degree, std::vector<int>& iv) {
+    static const char* numerals[7] = {"i", "ii", "iii", "iv", "v", "vi", "vii"};
+    std::string w;
+    for (char c : s) w += (char)tolower((unsigned char)c);
+    size_t len = 0;
+    degree = -1;
+    for (int k = 0; k < 7; k++) {
+        size_t n = strlen(numerals[k]);
+        if (w.compare(0, n, numerals[k]) == 0 && n > len) { len = n; degree = k; }
+    }
+    if (degree < 0) return false;
+    std::string q = w.substr(len);
+    if (q.empty()) iv = {0, 2, 4};
+    else if (q == "7") iv = {0, 2, 4, 6};
+    else if (q == "9") iv = {0, 2, 4, 6, 8};
+    else if (q == "sus2") iv = {0, 1, 4};
+    else if (q == "sus4") iv = {0, 3, 4};
+    else return false;
+    return true;
 }
 
 inline std::string midi_name(int m) {
@@ -319,6 +388,28 @@ private:
         if (pos < src.size() && src[pos] == '(' && fn_sig(lower(word)))
             return parse_fn(lower(word), true);
         auto n = std::make_shared<Node>();
+        int root = 0;
+        std::vector<int> iv;
+        bool named = chord_symbol(word, root, iv);
+        if (named || chord_numeral(word, root, iv)) {
+            n->kind = Kind::STACK;
+            n->chord = true;
+            n->chord_deg = !named;
+            n->chord_root = root;
+            n->chord_iv = iv;
+            // Am/E: the slash bass, a note name without octave
+            if (named && pos + 1 < src.size() && src[pos] == '/' && src[pos + 1] >= 'A' && src[pos + 1] <= 'G') {
+                pos++;
+                size_t bb = pos;
+                while (pos < src.size() && word_char(src[pos])) pos++;
+                std::string bw = src.substr(bb, pos - bb);
+                size_t bi = 0;
+                int bass = note_class(bw, bi);
+                if (bass < 0 || bi != bw.size()) fail("slash bass must be a note name");
+                n->chord_bass = bass;
+            }
+            return n;
+        }
         n->atom = word;
         n->kind = (n->atom == ".") ? Kind::REST : Kind::ATOM;
         return n;
@@ -435,7 +526,87 @@ private:
     }
 };
 
-inline NodeP parse(const std::string& s) { return Parser(s).parse(); }
+// Voice leading: the candidates are every inversion of the chord, an octave
+// down, in place and an octave up; each chord takes the one whose tones lie
+// closest to the previous chord's, the first one the one centred nearest
+// `centre`. `octave` is 12 for notes and 7 for scale degrees.
+inline std::vector<int> lead_voicing(const std::vector<int>& tones, const std::vector<int>& prev,
+                                     int octave, double centre) {
+    std::vector<int> best;
+    double best_cost = 1e18;
+    std::vector<int> inv = tones;
+    for (size_t r = 0; r < tones.size(); r++) {
+        for (int shift = -2; shift <= 1; shift++) {
+            std::vector<int> c = inv;
+            for (auto& t : c) t += shift * octave;
+            std::sort(c.begin(), c.end());
+            double cost = 0;
+            if (prev.empty()) {
+                double mean = 0;
+                for (int t : c) mean += t;
+                cost = std::fabs(mean / c.size() - centre);
+            } else {
+                for (int t : c) {
+                    int d = 1 << 20;
+                    for (int p : prev) d = std::min(d, std::abs(t - p));
+                    cost += d;
+                }
+                for (int p : prev) {
+                    int d = 1 << 20;
+                    for (int t : c) d = std::min(d, std::abs(t - p));
+                    cost += d;
+                }
+            }
+            if (cost < best_cost - 1e-9) { best_cost = cost; best = c; }
+        }
+        std::rotate(inv.begin(), inv.begin() + 1, inv.end());
+        inv.back() += octave;
+    }
+    return best;
+}
+
+// Fills every chord atom with note atoms (or degree atoms), voice-led in
+// the order the chords are written.
+inline void voice_chords(const NodeP& n, std::vector<int>& prev_note, std::vector<int>& prev_deg) {
+    if (!n) return;
+    if (n->chord) {
+        bool deg = n->chord_deg;
+        auto& prev_v = deg ? prev_deg : prev_note;
+        if (!n->kids.empty()) {
+            // a chord shared by a transform's two branches keeps its voicing
+            prev_v.clear();
+            for (auto& k : n->kids) prev_v.push_back(deg ? std::atoi(k->atom.c_str()) : note_midi(k->atom));
+            if (n->chord_bass >= 0) prev_v.erase(prev_v.begin());
+            return;
+        }
+        std::vector<int> tones;
+        for (int s : n->chord_iv) tones.push_back(n->chord_root + s + (deg ? 0 : 48));
+        std::vector<int> v = lead_voicing(tones, prev_v, deg ? 7 : 12, deg ? 3.0 : 59.0);
+        prev_v = v;
+        if (n->chord_bass >= 0) {
+            int bass = 36 + n->chord_bass;
+            while (bass + 12 < v.front()) bass += 12;
+            while (bass >= v.front()) bass -= 12;
+            v.insert(v.begin(), bass);
+        }
+        for (int t : v) {
+            auto a = std::make_shared<Node>();
+            a->kind = Kind::ATOM;
+            a->atom = deg ? std::to_string(t) : midi_name(t);
+            n->kids.push_back(a);
+        }
+        return;
+    }
+    for (auto& k : n->kids) voice_chords(k, prev_note, prev_deg);
+    voice_chords(n->value, prev_note, prev_deg);
+}
+
+inline NodeP parse(const std::string& s) {
+    NodeP n = Parser(s).parse();
+    std::vector<int> prev_note, prev_deg;
+    voice_chords(n, prev_note, prev_deg);
+    return n;
+}
 
 inline void query(const Node& n, double a, double b, std::vector<Event>& out);
 

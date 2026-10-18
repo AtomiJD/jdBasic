@@ -170,6 +170,25 @@ CATCH
 ENDTRY
 CHECK "unclosed bracket", INSTR(err_msg, "missing") >= 0, "msg=" + err_msg
 
+' chord symbols, voice-led in the order they are written
+CHECK_STR "chord minor", "0 1 a3" + NL + "0 1 c4" + NL + "0 1 e4", EV$("Am", 1)
+CHECK_STR "chord led to F", "1 1 a3" + NL + "1 1 c4" + NL + "1 1 f4", MID$(EV$("<Am F>", 2), 21)
+CHECK_STR "chord led to G", "3 1 g3" + NL + "3 1 b3" + NL + "3 1 d4", MID$(EV$("<Am F C G>", 4), 63)
+CHECK_STR "chord seventh", "0 1 g3" + NL + "0 1 b3" + NL + "0 1 c4" + NL + "0 1 e4", EV$("Cmaj7", 1)
+CHECK_STR "chord flat root", "0 1 f3" + NL + "0 1 a#3" + NL + "0 1 d4", EV$("Bb", 1)
+CHECK_STR "slash bass", "0 1 e3" + NL + "0 1 a3" + NL + "0 1 c4" + NL + "0 1 e4", EV$("Am/E", 1)
+CHECK_STR "numerals", "0 1 0" + NL + "0 1 2" + NL + "0 1 4" + NL + "1 1 0" + NL + "1 1 2" + NL + "1 1 5", EV$("<i VI>", 2)
+CHECK_STR "numeral seventh", "0 1 1" + NL + "0 1 3" + NL + "0 1 4" + NL + "0 1 6", EV$("V7", 1)
+CHECK_STR "lower case is a note", "0 1 c4", EV$("c4", 1)
+CHECK_STR "chord with transform", "0 0.333333 a3" + NL + "0.333333 0.333333 c4" + NL + "0.666667 0.333333 e4", EV$("arp(up, Am)", 1)
+err_msg = ""
+TRY
+    DIM bad_bass AS STRING = SOUND.EVENTS$("Am/x", 1)
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "slash bass needs a note", LEN(err_msg) > 0, "msg=" + err_msg
+
 ' ---------- 2. Engine, rendered offline ----------
 SOUND.INIT "PULL"
 SOUND.BPM 240

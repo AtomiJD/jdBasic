@@ -3349,6 +3349,37 @@ space-separated steps, in the mini-notation of TidalCycles and Strudel.
 
 Modifiers combine and nest: `"<[c3 e3]*2 g3(3,8)>"`.
 
+##### Chord Symbols
+
+A step that starts with an upper-case root is a chord: it plays its tones
+together, like a stack. Notes are written in lower case (`c4`), so `C4`
+stays a note while `C`, `Am` or `G7` are chords.
+
+| Chord | Tones | Chord | Tones |
+| --- | --- | --- | --- |
+| `C` | major | `Cm`, `Cmin`, `C-` | minor |
+| `C7` | dominant seventh | `Cmaj7`, `CM7` | major seventh |
+| `Cm7`, `Cmin7` | minor seventh | `CmM7`, `Cmmaj7` | minor major seventh |
+| `Cdim`, `Co` | diminished | `Cdim7`, `Co7` | diminished seventh |
+| `Cm7b5` | half-diminished | `Caug`, `C+` | augmented |
+| `Csus2`, `Csus4`, `Csus` | suspended | `C7sus4` | seventh, suspended fourth |
+| `C5` | power chord | `C6`, `Cm6` | sixth |
+| `C9`, `Cmaj9`, `Cm9` | ninth | `Cadd9`, `Cmadd9` | added ninth |
+| `Cm11` | minor eleventh | `Am/E` | slash chord: E in the bass |
+
+The root takes `#` or `b`: `F#m`, `Bb`, `Ebmaj7`.
+
+Roman numerals build the chord on the track's scale (`SOUND.SCALE`) from
+its own tones: `I` to `VII` in either case, then nothing, `7`, `9`, `sus2`
+or `sus4`. `"<i VI III VII>"` on A minor plays Am F C G. They become
+scale degrees, so the same line follows a new `SOUND.SCALE`.
+
+Chords are voice-led in the order they are written: each one takes the
+inversion that lies closest to the chord before it, the first one sits
+around b3. `"<Am F C G>"` plays a3 c4 e4, a3 c4 f4, g3 c4 e4, g3 b3 d4.
+Numerals lead the same way within a seven-tone scale. `add(12, ...)` moves
+a voicing up an octave, `arp(up, ...)` breaks it into an arpeggio.
+
 ##### Pattern Transforms
 
 A transform wraps a pattern like a function call, the pattern always last:
