@@ -10,10 +10,15 @@
 ' deep (118-122, dorian, sub bass with glide, soft keys, a vowel pad),
 ' acid (128-132, a sliding 303 line, sparse hook).
 '
-' 0 intro  8 groove  16 parts  32 hook  48 breakdown  56 build
-' 64 drop  80 outro  88 end
+' The seed also picks one of three forms for the genre (intro, groove,
+' parts, hook, breakdown, build, drop, outro in 8, 16 or 32 bars) and a
+' variant of each part: a breakdown with the choir, with pad and hook or
+' without the kick; a build with a snare roll, a kick roll or a closing
+' filter, perhaps ending on a bar of silence; a fill (snare, toms or a
+' one-beat gap) at each phrase end. The last drop is the peak.
 '
 '   --wav file   renders the track offline into a WAV instead of the show
+'   --recipe     prints the recipe and the form, and stops
 '   --window     the show in a window (see stage.jdb)
 ' The recipe is printed first, so a good seed can be kept.
 
@@ -27,12 +32,16 @@ IMPORT PATCH
 DIM genre$ AS STRING = "trance"
 DIM seed AS INTEGER = 1
 DIM wav$ AS STRING = ""
+DIM recipe_only AS INTEGER = FALSE
 DIM cli = OS.ARGS()
 DIM ci AS INTEGER
 FOR ci = 1 TO LEN(cli) - 2
     IF cli[ci] = "--genre" THEN genre$ = LCASE$(cli[ci + 1])
     IF cli[ci] = "--seed" THEN seed = VAL(cli[ci + 1])
     IF cli[ci] = "--wav" THEN wav$ = cli[ci + 1]
+NEXT ci
+FOR ci = 1 TO LEN(cli) - 1
+    IF cli[ci] = "--recipe" THEN recipe_only = TRUE
 NEXT ci
 IF genre$ <> "trance" AND genre$ <> "house" AND genre$ <> "deep" AND genre$ <> "acid" THEN
     PRINT "unknown genre "; genre$; " (trance, house, deep, acid)"
@@ -129,12 +138,13 @@ NEXT ti
 
 ' ── Instruments ──────────────────────────────────────────────────
 
-IF LEN(wav$) > 0 THEN
+IF LEN(wav$) > 0 OR recipe_only THEN
     SOUND.INIT "PULL"
 ELSE
     SOUND.INIT SCORE.AUDIO_MODE$()
 ENDIF
-SOUND.MASTER "FIXED", 0.42
+DIM MASTER_LEVEL AS DOUBLE = 0.42
+SOUND.MASTER "FIXED", MASTER_LEVEL
 SCORE.TEMPO BPM
 SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
 
@@ -222,6 +232,9 @@ SOUND.REVERBSEND RISER, 0.3
 SOUND.GAIN RISER, 0
 
 ' ── Arrangement ──────────────────────────────────────────────────
+' A form is a list of parts on the 8-bar grid. Each part starts from a
+' clean slate: the tracks it does not play fall silent, the sweeps of
+' the part before stop and their filters return to the patch.
 
 DIM HATS16$ AS STRING = "gain([0.4 0.6 0.5 0.75]*4, hh*16)"
 IF genre$ = "house" OR genre$ = "deep" THEN HATS16$ = "swingBy(0.1, 4, " + HATS16$ + ")"
@@ -231,130 +244,434 @@ IF genre$ = "house" OR genre$ = "deep" THEN
     PARTS_TRACK = KEYS
     PARTS$ = STABS$
 ENDIF
+DIM PAD_GAIN AS DOUBLE = 0.18
 
-SOUND.FILTER HATS, 6000, 0.2, "HP"
-SCORE.SECTION 0, "intro: " + INTRO_NAMES$[INTRO], "groove"
-IF INTRO = 0 THEN
-    SCORE.PLAY KICK, "bd*4"
-    SCORE.PLAY HATS, HATS16$
-    SCORE.PLAY PERC, "rim(3,8,2)"
-    SCORE.PLAY PARTS_TRACK, PARTS$
-    SCORE.SWEEP PARTS_TRACK, "CUTOFF", "SAW", 250, 1600, 8, 0
-ELSEIF INTRO = 1 THEN
-    SOUND.GAIN PAD, 0.32
-    SCORE.PLAY PAD, "legato(1, " + CHORDS$ + ")"
-    SCORE.SWEEP PAD, "CUTOFF", "SAW", 700, 2400, 8, 0
-    SCORE.PLAY HATS, "gain(0.5, [~ hh]*4)"
-    SCORE.SECTION 4, "intro: the kick", "groove"
-    SCORE.PLAY KICK, "bd*4"
-    SCORE.PLAY HATS, HATS16$
-ELSE
-    SCORE.PLAY KICK, "bd*4"
-    SCORE.PLAY HATS, HATS16$
-    SCORE.PLAY PERC, "rim(3,8,2), cb(5,16,3)"
-    SCORE.PLAY BASS, BASS$
-    SOUND.FILTER BASS, 180, 0.2, "LP"
-    SCORE.SWEEP BASS, "CUTOFF", "SAW", 180, 600, 8, 0
+DIM N_TRACKS AS INTEGER = LEN(TRACK_NAMES$)
+DIM LIVE = IOTA(N_TRACKS, 0) * 0
+DIM WANT = IOTA(N_TRACKS, 0) * 0
+DIM SWEPT$ = ["", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+DIM BASE_CUT = IOTA(N_TRACKS, 0) * 0 + 20000
+DIM BASE_RES = IOTA(N_TRACKS, 0) * 0
+DIM BASE_FT$ = ["LP", "LP", "HP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP", "LP", "LP", "LP"]
+BASE_CUT[HATS] = 6000
+BASE_RES[HATS] = 0.2
+BASE_CUT[RISER] = 400
+BASE_RES[RISER] = 0.4
+BASE_CUT[BASS] = BASS_CUT
+BASE_RES[BASS] = BASS_RES
+BASE_CUT[PAD] = PATCH.CUTOFF("pad")
+BASE_RES[PAD] = PATCH.RESONANCE("pad")
+IF genre$ = "deep" THEN
+    BASE_CUT[PAD] = 2200
+    BASE_RES[PAD] = 0.1
 ENDIF
+BASE_CUT[ARP] = PATCH.CUTOFF("neon_pluck")
+BASE_RES[ARP] = PATCH.RESONANCE("neon_pluck")
+BASE_CUT[KEYS] = PATCH.CUTOFF(KEYS_PATCH$)
+BASE_RES[KEYS] = PATCH.RESONANCE(KEYS_PATCH$)
+BASE_CUT[LEAD] = PATCH.CUTOFF(LEAD_PATCH$)
+BASE_RES[LEAD] = PATCH.RESONANCE(LEAD_PATCH$)
+BASE_FT$[LEAD] = PATCH.FILTER_TYPE$(LEAD_PATCH$)
+SOUND.FILTER HATS, 6000, 0.2, "HP"
 
-SCORE.SECTION 8, "groove: bass", "shuffle"
-SCORE.QUIET PARTS_TRACK
-SCORE.SWEEP_OFF PARTS_TRACK, "CUTOFF"
-SCORE.QUIET PAD
-SCORE.SWEEP_OFF PAD, "CUTOFF"
-SOUND.GAIN PAD, 0.18
-SCORE.SWEEP_OFF BASS, "CUTOFF"
-SOUND.FILTER BASS, BASS_CUT, BASS_RES
-SCORE.PLAY HATS, HATS16$
-SCORE.PLAY PERC, "rim(3,8,2)"
-SCORE.PLAY BASS, BASS$
-SCORE.PLAY OPENHAT, "[~ oh]*4"
-SCORE.PLAY CLAP, "~ cp ~ cp"
-IF genre$ = "acid" THEN SCORE.SWEEP BASS, "CUTOFF", "SINE", 300, 2400, 16, 0
+' the part that follows the one being written
+DIM NEXT_PART$ AS STRING = ""
 
-SCORE.SECTION 16, "parts", "jump"
-SCORE.PLAY PAD, "legato(1, " + CHORDS$ + ")"
-SCORE.PLAY PARTS_TRACK, PARTS$
-SCORE.SWEEP PARTS_TRACK, "CUTOFF", "SINE", 900, 3500, 8, 0
-SCORE.PLAY CRASH, "<cr ~!7>"
+SUB TRK_ON(t AS INTEGER, pat$)
+    SCORE.PLAY t, pat$
+    LIVE[t] = 1
+    WANT[t] = 1
+ENDSUB
 
-SCORE.SECTION 32, "hook", "jump"
-SCORE.PLAY LEAD, HOOK$
+SUB TRK_OFF(t AS INTEGER)
+    IF LIVE[t] THEN SCORE.QUIET t
+    LIVE[t] = 0
+ENDSUB
 
-SCORE.SECTION 40, "hook, second rhythm", "wave"
-SCORE.PLAY LEAD, HOOK_B$
+SUB SW(t AS INTEGER, param$, shape$, lo AS DOUBLE, hi AS DOUBLE, cycles AS DOUBLE, from_bar AS DOUBLE)
+    SCORE.SWEEP t, param$, shape$, lo, hi, cycles, -from_bar / cycles
+    IF INSTR(" " + SWEPT$[t] + " ", " " + param$ + " ") < 0 THEN SWEPT$[t] = TRIM$(SWEPT$[t] + " " + param$)
+ENDSUB
 
-SCORE.SECTION 48, "breakdown", "wave"
-SCORE.QUIET KICK
-SCORE.QUIET CLAP
-SCORE.QUIET OPENHAT
-SCORE.QUIET BASS
-SCORE.QUIET CRASH
-SCORE.QUIET PARTS_TRACK
-SCORE.QUIET PERC
-SCORE.PLAY HATS, "gain(0.3, [~ hh]*4)"
-SCORE.PLAY LEAD, "legato(1.2, " + HOOK$ + ")"
-SCORE.SWEEP LEAD, "CUTOFF", "SINE", 900, 3000, 8, 0
-SCORE.PLAY CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
-SCORE.SWEEP CHOIR, "VOWEL", "TRI", 4, 0, 8, 0
+' Stops every running sweep; a filter returns to its patch, a faded
+' track (the riser) to silence, the choir to "ooh"
+SUB CLEAN()
+    DIM t AS INTEGER
+    DIM k AS INTEGER
+    FOR t = 0 TO N_TRACKS - 1
+        IF LEN(SWEPT$[t]) > 0 THEN
+            DIM params$ = SPLIT(SWEPT$[t], " ")
+            FOR k = 0 TO LEN(params$) - 1
+                SCORE.SWEEP_OFF t, params$[k]
+                IF params$[k] = "CUTOFF" THEN SOUND.FILTER t, BASE_CUT[t], BASE_RES[t], BASE_FT$[t]
+                IF params$[k] = "GAIN" THEN SOUND.GAIN t, 0
+            NEXT k
+            SWEPT$[t] = ""
+        ENDIF
+    NEXT t
+    SOUND.GAIN PAD, PAD_GAIN
+    SOUND.FORMANT CHOIR, "oo", 1.0, 0.08
+ENDSUB
 
-SCORE.SECTION 56, "build", "rise"
-SCORE.SWEEP_OFF CHOIR, "VOWEL"
-SCORE.QUIET CHOIR
-SCORE.PLAY PARTS_TRACK, PARTS$
-SCORE.SWEEP PARTS_TRACK, "CUTOFF", "SAW", 500, 6000, 8, 0
-SCORE.PLAY RISER, "legato(1, c4)"
-SCORE.SWEEP RISER, "CUTOFF", "SAW", 400, 7000, 8, 0
-SCORE.SWEEP RISER, "GAIN", "SAW", 0, 0.2, 8, 0
-SCORE.PLAY SNARE, "gain(<0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65>, <sd*4 sd*4 sd*8 sd*8 sd*8 sd*16 sd*16 [sd*16 ~]>)"
-SCORE.PLAY KICK, "<bd*4 bd*4 bd*4 bd*4 bd*8 bd*8 ~ ~>"
+SUB BEGIN_PART(b AS INTEGER, name$, mood$)
+    SCORE.SECTION b, name$, mood$
+    CLEAN
+    WANT = IOTA(N_TRACKS, 0) * 0
+ENDSUB
 
-SCORE.SECTION 62, "build: up an octave", "rise"
-SCORE.PLAY PARTS_TRACK, "add(12, " + PARTS$ + ")"
+' Silences what the new part does not play
+SUB COMMIT_PART(b AS INTEGER)
+    DIM t AS INTEGER
+    SCORE.AT b
+    FOR t = 0 TO N_TRACKS - 1
+        IF LIVE[t] ANDALSO WANT[t] = 0 THEN TRK_OFF t
+    NEXT t
+ENDSUB
 
-SCORE.SECTION 64, "drop", "jump"
-SCORE.QUIET RISER
-SCORE.QUIET SNARE
-SCORE.SWEEP_OFF RISER, "CUTOFF"
-SCORE.SWEEP_OFF RISER, "GAIN"
-SCORE.SWEEP_OFF LEAD, "CUTOFF"
-SCORE.SWEEP PARTS_TRACK, "CUTOFF", "SINE", 900, 3500, 8, 0
-SCORE.PLAY KICK, "bd*4"
-SCORE.PLAY CLAP, "~ cp ~ cp"
-SCORE.PLAY HATS, HATS16$
-SCORE.PLAY OPENHAT, "[~ oh]*4"
-SCORE.PLAY PERC, "rim(3,8,2), sometimes(ply(2), cb(5,16,3))"
-SCORE.PLAY BASS, BASS$
-SCORE.PLAY PARTS_TRACK, PARTS$
-SCORE.PLAY LEAD, "juxBy(0.4, add(12), " + HOOK$ + ")"
-SCORE.PLAY CRASH, "<cr ~!3>"
+' The drums at an energy from 1 (kick and light hats) to 5
+SUB DRUMS(level AS INTEGER)
+    TRK_ON KICK, "bd*4"
+    IF level = 1 THEN
+        TRK_ON HATS, "gain(0.5, [~ hh]*4)"
+    ELSE
+        TRK_ON HATS, HATS16$
+    ENDIF
+    IF level >= 3 THEN
+        TRK_ON CLAP, "~ cp ~ cp"
+        TRK_ON OPENHAT, "[~ oh]*4"
+    ENDIF
+    IF level = 2 OR level = 3 THEN TRK_ON PERC, "rim(3,8,2)"
+    IF level = 4 THEN TRK_ON PERC, "rim(3,8,2), cb(5,16,3)"
+    IF level = 5 THEN TRK_ON PERC, "rim(3,8,2), sometimes(ply(2), cb(5,16,3))"
+ENDSUB
 
-SCORE.SECTION 72, "drop: the choir", "jump"
-SCORE.PLAY LEAD, "juxBy(0.4, add(12), " + HOOK_B$ + ")"
-SCORE.PLAY CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
-SOUND.FORMANT CHOIR, "ah", 1.0, 0.08
-SCORE.PLAY CRASH, "<cr ~!7>"
+SUB CRASH_AT(b AS INTEGER)
+    SCORE.AT b
+    TRK_ON CRASH, "cr ~ ~ ~"
+    SCORE.AT b + 1
+    TRK_OFF CRASH
+ENDSUB
 
-SCORE.SECTION 80, "outro", "groove"
-SCORE.QUIET LEAD
-SCORE.QUIET PARTS_TRACK
-SCORE.QUIET PAD
-SCORE.QUIET CHOIR
-SCORE.QUIET CRASH
+DIM FILL_NAMES$ = ["snare", "toms", "a one-beat gap"]
 
-SCORE.SECTION 88, "end", "bye"
-SCORE.QUIET KICK
-SCORE.QUIET CLAP
-SCORE.QUIET HATS
-SCORE.QUIET OPENHAT
-SCORE.QUIET PERC
-SCORE.QUIET BASS
+' A fill on bar b, the last of a phrase. Inside a part the snare stops
+' again on the next bar. The gap mutes the master for the last beat: a
+' pattern change only takes effect on the next bar.
+SUB FILL(b AS INTEGER, kind AS INTEGER, inside AS INTEGER)
+    SCORE.AT b
+    IF kind = 2 THEN
+        SCORE.AT b + 0.75
+        SOUND.MASTER "FIXED", 0.001
+        SCORE.AT b + 1
+        SOUND.MASTER "FIXED", MASTER_LEVEL
+        RETURN
+    ENDIF
+    IF kind = 1 THEN
+        TRK_ON SNARE, "~ ~ [ht ht mt mt] [lt lt lt ~]"
+    ELSE
+        TRK_ON SNARE, "~ ~ [~ sd] [sd sd sd sd]"
+    ENDIF
+    IF inside THEN
+        SCORE.AT b + 1
+        TRK_OFF SNARE
+    ENDIF
+ENDSUB
 
-SCORE.FINE 90
+SUB PART_INTRO(b AS INTEGER, n AS INTEGER, v AS INTEGER)
+    BEGIN_PART b, "intro: " + INTRO_NAMES$[v], "groove"
+    IF v = 0 THEN
+        DRUMS 2
+        TRK_ON PARTS_TRACK, PARTS$
+        SW PARTS_TRACK, "CUTOFF", "SAW", 250, 1600, n, b
+    ELSEIF v = 1 THEN
+        SOUND.GAIN PAD, 0.32
+        TRK_ON PAD, "legato(1, " + CHORDS$ + ")"
+        SW PAD, "CUTOFF", "SAW", 700, 2400, n, b
+        TRK_ON HATS, "gain(0.5, [~ hh]*4)"
+    ELSE
+        DRUMS 2
+        TRK_ON PERC, "rim(3,8,2), cb(5,16,3)"
+        TRK_ON BASS, BASS$
+        SOUND.FILTER BASS, 180, 0.2, "LP"
+        SW BASS, "CUTOFF", "SAW", 180, 600, n, b
+    ENDIF
+    COMMIT_PART b
+    IF v = 1 THEN
+        SCORE.SECTION b + 4, "intro: the kick", "groove"
+        DRUMS 2
+    ENDIF
+    IF n >= 16 THEN
+        IF v = 0 THEN
+            SCORE.SECTION b + 8, "intro: the bass", "groove"
+            TRK_ON BASS, BASS$
+        ELSEIF v = 1 THEN
+            SCORE.SECTION b + 8, "intro: the clap", "groove"
+            DRUMS 3
+        ELSE
+            SCORE.SECTION b + 8, "intro: a teaser", "groove"
+            TRK_ON PARTS_TRACK, PARTS$
+            SW PARTS_TRACK, "CUTOFF", "SAW", 250, 1600, 8, b + 8
+        ENDIF
+    ENDIF
+ENDSUB
 
-IF LEN(wav$) > 0 THEN
+SUB PART_GROOVE(b AS INTEGER, n AS INTEGER)
+    BEGIN_PART b, "groove: bass", "shuffle"
+    DRUMS 3
+    TRK_ON BASS, BASS$
+    IF genre$ = "acid" THEN SW BASS, "CUTOFF", "SINE", 300, 2400, 16, b
+    COMMIT_PART b
+    IF n >= 16 THEN
+        SCORE.SECTION b + 8, "groove: the pad", "shuffle"
+        TRK_ON PAD, "legato(1, " + CHORDS$ + ")"
+        SW PAD, "CUTOFF", "SAW", 500, BASE_CUT[PAD], 8, b + 8
+    ENDIF
+ENDSUB
+
+SUB PART_PARTS(b AS INTEGER, n AS INTEGER)
+    BEGIN_PART b, "parts", "jump"
+    DRUMS 3
+    TRK_ON BASS, BASS$
+    TRK_ON PAD, "legato(1, " + CHORDS$ + ")"
+    TRK_ON PARTS_TRACK, PARTS$
+    SW PARTS_TRACK, "CUTOFF", "SINE", 900, 3500, 8, b
+    IF genre$ = "acid" THEN SW BASS, "CUTOFF", "SINE", 300, 2400, 16, b
+    COMMIT_PART b
+    CRASH_AT b
+    IF n >= 16 THEN
+        SCORE.SECTION b + 8, "parts: all the percussion", "jump"
+        DRUMS 4
+    ENDIF
+ENDSUB
+
+SUB PART_HOOK(b AS INTEGER, n AS INTEGER, fill_kind AS INTEGER)
+    BEGIN_PART b, "hook", "jump"
+    DRUMS 4
+    TRK_ON BASS, BASS$
+    TRK_ON PAD, "legato(1, " + CHORDS$ + ")"
+    TRK_ON PARTS_TRACK, PARTS$
+    TRK_ON LEAD, HOOK$
+    COMMIT_PART b
+    CRASH_AT b
+    IF n >= 16 THEN
+        FILL b + 7, fill_kind MOD 2, TRUE
+        SCORE.SECTION b + 8, "hook, second rhythm", "wave"
+        TRK_ON LEAD, HOOK_B$
+    ENDIF
+ENDSUB
+
+DIM BREAK_NAMES$ = ["the choir", "pad and hook", "no kick"]
+
+SUB PART_BREAK(b AS INTEGER, n AS INTEGER, v AS INTEGER)
+    BEGIN_PART b, "breakdown: " + BREAK_NAMES$[v], "wave"
+    TRK_ON PAD, "legato(1, " + CHORDS$ + ")"
+    IF v = 0 THEN
+        TRK_ON HATS, "gain(0.3, [~ hh]*4)"
+        TRK_ON LEAD, "legato(1.2, " + HOOK$ + ")"
+        SW LEAD, "CUTOFF", "SINE", 900, 3000, 8, b
+        SW PAD, "CUTOFF", "SINE", 600, 2200, 8, b
+        TRK_ON CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
+        SW CHOIR, "VOWEL", "TRI", 4, 0, 8, b
+    ELSEIF v = 1 THEN
+        TRK_ON LEAD, "legato(1.2, " + HOOK$ + ")"
+        SW LEAD, "CUTOFF", "SAW", 600, 2400, n, b
+        SW PAD, "CUTOFF", "SINE", 600, 2200, 8, b
+    ELSE
+        TRK_ON HATS, HATS16$
+        TRK_ON PERC, "rim(3,8,2)"
+        TRK_ON CLAP, "~ cp ~ cp"
+        TRK_ON PARTS_TRACK, PARTS$
+        SW PARTS_TRACK, "CUTOFF", "SINE", 500, 2000, 8, b
+    ENDIF
+    COMMIT_PART b
+    IF n >= 16 THEN
+        IF v = 0 THEN
+            SCORE.SECTION b + 8, "breakdown: the arp returns", "wave"
+            TRK_ON PARTS_TRACK, PARTS$
+            SW PARTS_TRACK, "CUTOFF", "SAW", 300, 1500, 8, b + 8
+        ELSE
+            SCORE.SECTION b + 8, "breakdown: the hook", "wave"
+            TRK_ON LEAD, "legato(1.2, " + HOOK_B$ + ")"
+            SW LEAD, "CUTOFF", "SAW", 600, 2400, 8, b + 8
+        ENDIF
+    ENDIF
+ENDSUB
+
+DIM BUILD_NAMES$ = ["snare roll", "kick roll", "filter"]
+
+SUB PART_BUILD(b AS INTEGER, n AS INTEGER, v AS INTEGER, dropout AS INTEGER)
+    BEGIN_PART b, "build: " + BUILD_NAMES$[v], "rise"
+    TRK_ON PAD, "legato(1, " + CHORDS$ + ")"
+    TRK_ON PARTS_TRACK, PARTS$
+    SW PARTS_TRACK, "CUTOFF", "SAW", 500, 6000, n, b
+    TRK_ON RISER, "legato(1, c4)"
+    SW RISER, "CUTOFF", "SAW", 400, 7000, n, b
+    SW RISER, "GAIN", "SAW", 0, 0.2, n, b
+    IF v = 0 THEN
+        TRK_ON SNARE, "gain(<0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65>, <sd*4 sd*4 sd*8 sd*8 sd*8 sd*16 sd*16 [sd*16 ~]>)"
+        TRK_ON KICK, "<bd*4 bd*4 bd*4 bd*4 bd*8 bd*8 ~ ~>"
+    ELSEIF v = 1 THEN
+        TRK_ON KICK, "gain(<0.7 0.7 0.75 0.8 0.85 0.9 0.95 1>, <bd*4 bd*4 bd*4 bd*4 bd*8 bd*8 bd*16 [bd*16 ~]>)"
+        TRK_ON CLAP, "~ cp ~ cp"
+        TRK_ON HATS, HATS16$
+    ELSE
+        TRK_ON KICK, "bd*4"
+        TRK_ON HATS, HATS16$
+        TRK_ON CLAP, "<[~ cp ~ cp]!6 cp*8 cp*16>"
+        TRK_ON BASS, BASS$
+        SW BASS, "CUTOFF", "ISAW", 150, MIN([BASE_CUT[BASS], 2000]), n, b
+    ENDIF
+    COMMIT_PART b
+    SCORE.SECTION b + n - 2, "build: up an octave", "rise"
+    TRK_ON PARTS_TRACK, "add(12, " + PARTS$ + ")"
+    IF dropout THEN
+        SCORE.SECTION b + n - 1, "build: one bar of silence", "rise"
+        DIM t AS INTEGER
+        FOR t = 0 TO N_TRACKS - 1
+            IF t <> RISER THEN TRK_OFF t
+        NEXT t
+    ENDIF
+ENDSUB
+
+' A drop; the peak (the last drop) adds the choir and all the percussion
+' and, over 32 bars, becomes a double drop
+SUB PART_DROP(b AS INTEGER, n AS INTEGER, v AS INTEGER, peak AS INTEGER, fill_kind AS INTEGER)
+    DIM hooks$ = [HOOK$, HOOK_B$]
+    DIM level AS INTEGER = 4
+    IF peak AND n < 32 THEN level = 5
+    BEGIN_PART b, "drop", "jump"
+    DRUMS level
+    TRK_ON BASS, BASS$
+    TRK_ON PAD, "legato(1, " + CHORDS$ + ")"
+    TRK_ON PARTS_TRACK, PARTS$
+    SW PARTS_TRACK, "CUTOFF", "SINE", 900, 3500, 8, b
+    TRK_ON LEAD, "juxBy(0.4, add(12), " + hooks$[v] + ")"
+    IF level = 5 THEN
+        TRK_ON CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
+        SOUND.FORMANT CHOIR, "ah", 1.0, 0.08
+    ENDIF
+    COMMIT_PART b
+    CRASH_AT b
+    DIM k AS INTEGER
+    FOR k = 8 TO n - 8 STEP 8
+        FILL b + k - 1, (fill_kind + INT(k / 8)) MOD 2, TRUE
+        IF k = 16 THEN
+            SCORE.SECTION b + k, "drop: the peak", "jump"
+            CRASH_AT b + k
+            DRUMS 5
+            TRK_ON CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
+            SOUND.FORMANT CHOIR, "ah", 1.0, 0.08
+        ELSE
+            SCORE.SECTION b + k, "drop, the other rhythm", "jump"
+            SCORE.AT b + k
+        ENDIF
+        TRK_ON LEAD, "juxBy(0.4, add(12), " + hooks$[(v + INT(k / 8)) MOD 2] + ")"
+    NEXT k
+ENDSUB
+
+SUB PART_OUTRO(b AS INTEGER, n AS INTEGER)
+    BEGIN_PART b, "outro", "groove"
+    DRUMS 3
+    TRK_ON BASS, BASS$
+    TRK_ON PARTS_TRACK, PARTS$
+    SW PARTS_TRACK, "CUTOFF", "ISAW", 300, 3000, 8, b
+    COMMIT_PART b
+    IF n >= 16 THEN
+        SCORE.SECTION b + 8, "outro: drums", "groove"
+        DRUMS 2
+        TRK_OFF PARTS_TRACK
+        TRK_OFF BASS
+    ENDIF
+ENDSUB
+
+SUB PART_END(b AS INTEGER)
+    BEGIN_PART b, "end", "bye"
+    COMMIT_PART b
+ENDSUB
+
+' ── The form ─────────────────────────────────────────────────────
+' Three forms per genre; parts are 8, 16 or 32 bars, so every part
+' starts on a bar the 4-bar progression starts on
+
+DIM forms$ = []
+IF genre$ = "trance" THEN
+    forms$ = ["intro:16 groove:8 parts:8 hook:16 break:16 build:8 drop:16 drop:16 outro:16", "intro:8 groove:8 parts:16 hook:16 break:8 build:8 drop:16 break:8 build:8 drop:16 outro:8", "intro:16 parts:16 hook:16 break:16 build:8 drop:32 outro:8"]
+ELSEIF genre$ = "house" THEN
+    forms$ = ["intro:16 groove:16 hook:16 break:8 build:8 drop:16 outro:16", "intro:8 groove:8 parts:8 hook:16 break:8 build:8 drop:16 break:8 drop:16 outro:8", "intro:16 groove:8 hook:16 drop:16 break:8 build:8 drop:16 outro:8"]
+ELSEIF genre$ = "deep" THEN
+    forms$ = ["intro:16 groove:16 parts:16 hook:16 break:8 drop:16 outro:16", "intro:16 groove:8 parts:8 hook:16 break:16 build:8 drop:16 outro:16", "intro:8 groove:16 hook:16 break:8 hook:16 outro:16"]
+ELSE
+    forms$ = ["intro:16 groove:16 parts:8 hook:16 break:8 build:8 drop:16 outro:8", "intro:8 groove:16 hook:16 break:8 build:8 drop:32 outro:8", "intro:16 groove:8 parts:8 hook:8 break:8 build:8 drop:16 break:8 build:8 drop:16 outro:8"]
+ENDIF
+DIM FORM_NO AS INTEGER = PICK(8, LEN(forms$))
+DIM form$ = SPLIT(forms$[FORM_NO], " ")
+DIM N_PARTS AS INTEGER = LEN(form$)
+DIM part_names$ = []
+DIM part_bars = []
+DIM fi AS INTEGER
+DIM LAST_DROP AS INTEGER = -1
+FOR fi = 0 TO N_PARTS - 1
+    DIM colon AS INTEGER = INSTR(form$[fi], ":")
+    part_names$ = APPEND(part_names$, LEFT$(form$[fi], colon))
+    part_bars = APPEND(part_bars, VAL(MID$(form$[fi], colon + 1)))
+    IF part_names$[fi] = "drop" THEN LAST_DROP = fi
+NEXT fi
+
+DIM bar_at AS INTEGER = 0
+DIM recipe$ AS STRING = ""
+FOR fi = 0 TO N_PARTS - 1
+    DIM part$ AS STRING = part_names$[fi]
+    DIM nb AS INTEGER = part_bars[fi]
+    NEXT_PART$ = "end"
+    IF fi < N_PARTS - 1 THEN NEXT_PART$ = part_names$[fi + 1]
+    DIM fill_kind AS INTEGER = PICK(40 + fi, 3)
+    DIM label$ AS STRING = part$ + STR$(nb)
+    IF part$ = "intro" THEN
+        PART_INTRO bar_at, nb, INTRO
+    ELSEIF part$ = "groove" THEN
+        PART_GROOVE bar_at, nb
+    ELSEIF part$ = "parts" THEN
+        PART_PARTS bar_at, nb
+    ELSEIF part$ = "hook" THEN
+        PART_HOOK bar_at, nb, fill_kind
+    ELSEIF part$ = "break" THEN
+        DIM bv AS INTEGER = 1 + PICK(20 + fi, 2)
+        IF nb >= 16 THEN bv = 2 * PICK(20 + fi, 2)
+        PART_BREAK bar_at, nb, bv
+        label$ = label$ + " (" + BREAK_NAMES$[bv] + ")"
+    ELSEIF part$ = "build" THEN
+        DIM uv AS INTEGER = PICK(20 + fi, 3)
+        DIM dropout AS INTEGER = PICK(30 + fi, 2)
+        PART_BUILD bar_at, nb, uv, dropout
+        label$ = label$ + " (" + BUILD_NAMES$[uv]
+        IF dropout THEN label$ = label$ + ", a bar of silence"
+        label$ = label$ + ")"
+    ELSEIF part$ = "drop" THEN
+        DIM dv AS INTEGER = PICK(20 + fi, 2)
+        PART_DROP bar_at, nb, dv, fi = LAST_DROP, fill_kind
+        IF fi = LAST_DROP THEN label$ = label$ + " (peak)"
+    ELSE
+        PART_OUTRO bar_at, nb
+    ENDIF
+    ' a fill closes every phrase that does not lead into a build
+    IF part$ <> "build" AND part$ <> "outro" AND NEXT_PART$ <> "build" THEN
+        FILL bar_at + nb - 1, fill_kind, FALSE
+        label$ = label$ + " [" + FILL_NAMES$[fill_kind] + "]"
+    ENDIF
+    recipe$ = recipe$ + "    " + STR$(bar_at) + " " + label$ + CHR$(10)
+    bar_at = bar_at + nb
+NEXT fi
+PART_END bar_at
+SCORE.FINE bar_at + 2
+
+PRINT "  form "; FORM_NO + 1; " of "; LEN(forms$); ", "; bar_at; " bars:"
+PRINT recipe$;
+
+IF recipe_only THEN
+    END
+ELSEIF LEN(wav$) > 0 THEN
     SOUND.RECORD wav$
-    DIM total AS INTEGER = INT(90 * 4 * 60 / BPM * 44100)
+    DIM total AS INTEGER = INT(SCORE.END_BAR() * 4 * 60 / BPM * 44100)
     DIM done AS INTEGER = 0
     WHILE done < total
         DIM buf = SOUND.RENDER(4410)
