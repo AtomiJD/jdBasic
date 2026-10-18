@@ -747,11 +747,13 @@ static struct SoundSystem {
             auto tap = [&](int ch, float ph) {
                 float ms = 14.0f + tp.chorus_depth * std::sin(2.0f * (float)M_PI * ph);
                 float d = std::clamp(ms * 0.001f * SAMPLE_RATE, 1.0f, (float)n - 2.0f);
-                float pos = (float)tp.chorus_head - d;
-                if (pos < 0) pos += (float)n;
-                int i0 = (int)pos, i1 = (i0 + 1) % n;
-                float fr = pos - (float)i0;
-                return tp.chorus_buf[i0 * 2 + ch] * (1.0f - fr) + tp.chorus_buf[i1 * 2 + ch] * fr;
+                // whole frames back, wrapped in integers, and the fraction
+                // towards the frame before
+                int back = (int)d;
+                float fr = d - (float)back;
+                int i1 = ((tp.chorus_head - back) % n + n) % n;
+                int i0 = (i1 + n - 1) % n;
+                return tp.chorus_buf[i1 * 2 + ch] * (1.0f - fr) + tp.chorus_buf[i0 * 2 + ch] * fr;
             };
             float wl = tap(0, tp.chorus_lfo), wr = tap(1, tp.chorus_lfo + 0.25f);
             tp.chorus_head = (tp.chorus_head + 1) % n;
@@ -1383,7 +1385,6 @@ static struct SoundSystem {
             float t_env[NUM_TRACKS] = {};
             // Voices of tracks with an insert, summed before it
             float ins_l[NUM_TRACKS] = {}, ins_r[NUM_TRACKS] = {};
-            bool any_insert = false;
 
             // Synth voices
             if ((f & 31) == 0) sys->apply_mods(t0 + f * phase_inc);
@@ -1401,7 +1402,6 @@ static struct SoundSystem {
                 auto& tp = sys->tracks[v.track];
                 if (tp.has_insert()) {
                     ins_l[v.track] += vl; ins_r[v.track] += vr;
-                    any_insert = true;
                     float e = std::max(std::abs(vl), std::abs(vr));
                     if (e > t_env[v.track]) t_env[v.track] = e;
                     active++;
@@ -1416,7 +1416,9 @@ static struct SoundSystem {
                 active++;
             }
 
-            if (any_insert) {
+            // every frame, so a chorus keeps its own clock and its tail
+            // runs out while the track is silent
+            {
                 for (int t = 0; t < NUM_TRACKS; t++) {
                     auto& tp = sys->tracks[t];
                     if (!tp.has_insert()) continue;

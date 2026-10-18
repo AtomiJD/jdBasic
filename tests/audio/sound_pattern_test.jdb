@@ -424,6 +424,24 @@ DIM side_mono AS DOUBLE = RMS_SIDE(buf, 2000, 8000)
 CHECK "chorus widens", side_chorus > 0.05, "side=" + STR$(side_chorus)
 CHECK "width 0 is mono", side_mono < 0.0001, "side=" + STR$(side_mono)
 
+' a chorus tail runs out while its track is silent and does not come
+' back when another insert track starts (track 6 is silent, gain 0)
+SOUND.RESET
+SOUND.VOICE 5, "SAW", 0.001, 0.01, 1.0, 0.005
+SOUND.CHORUS 5, 1.0, 1.5, 4
+SOUND.VOICE 6, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.GAIN 6, 0
+SOUND.WIDTH 6, 1.5
+SOUND.SEQ 5, "c4 ~ ~ ~", "VOICE"
+SOUND.AT 1
+SOUND.SEQ 5, "", "VOICE"
+SOUND.AT 3
+SOUND.SEQ 6, "c4", "VOICE"
+SOUND.AT
+buf = SOUND.RENDER(CYC * 4)
+CHECK "chorus tail heard", RMS(buf, 8900, 9800) > 0.0005, "rms=" + STR$(RMS(buf, 8900, 9800))
+CHECK "chorus tail does not return", RMS(buf, CYC * 3, CYC * 3 + 1500) < 0.0001, "rms=" + STR$(RMS(buf, CYC * 3, CYC * 3 + 1500))
+
 ' a delay of 1/4 at 240 BPM repeats a quarter second later
 FUNC ECHO_BUF(pingpong AS INTEGER)
     SOUND.RESET
