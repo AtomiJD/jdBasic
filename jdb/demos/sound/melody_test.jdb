@@ -117,6 +117,70 @@ FOR bi = 0 TO 15
 NEXT bi
 CHECK "A' keeps the rhythm of A", same_rhythm, bars$[0] + " / " + bars$[1]
 
+' ---------- the answer ----------
+DIM counter$ = MELODY.COUNTER$(7, hook$, prog$, "A minor", 3)
+CHECK_STR "same seed, same answer", counter$, MELODY.COUNTER$(7, hook$, prog$, "A minor", 3)
+DIM cbars$ = BARS$(counter$)
+CHECK "an answer bar per hook bar", LEN(cbars$) = 4, "bars=" + STR$(LEN(cbars$))
+DIM gaps_ok AS INTEGER = TRUE
+DIM few_ok AS INTEGER = TRUE
+DIM low_ok AS INTEGER = TRUE
+DIM c_notes AS INTEGER = 0
+FOR bi = 0 TO 3
+    DIM hs$ = SPLIT(bars$[bi], " ")
+    DIM cs$ = SPLIT(cbars$[bi], " ")
+    DIM in_bar AS INTEGER = 0
+    DIM ck AS INTEGER
+    FOR ck = 0 TO 15
+        IF cs$[ck] <> "~" THEN
+            in_bar = in_bar + 1
+            c_notes = c_notes + 1
+            IF hs$[ck] <> "~" AND hs$[ck] <> "_" THEN gaps_ok = FALSE
+            IF ck > 0 ANDALSO hs$[ck - 1] <> "~" AND hs$[ck - 1] <> "_" THEN gaps_ok = FALSE
+            IF MELODY.NOTE_MIDI(cs$[ck]) > 66 THEN low_ok = FALSE
+        ENDIF
+    NEXT ck
+    IF in_bar > 4 THEN few_ok = FALSE
+NEXT bi
+CHECK "the answer has notes", c_notes > 0, counter$
+CHECK "the answer never strikes with the hook", gaps_ok, counter$
+CHECK "at most four answer notes a bar", few_ok, counter$
+CHECK "the answer sits below the hook", low_ok, counter$
+
+' ---------- variations ----------
+DIM oct$ = BARS$(MELODY.VARY$(hook$, prog$, "A minor", "octave"))
+CHECK_STR "octave keeps the A bar", bars$[0], oct$[0]
+DIM h1$ = SPLIT(bars$[1], " ")
+DIM o1$ = SPLIT(oct$[1], " ")
+DIM oct_ok AS INTEGER = TRUE
+FOR bi = 0 TO 15
+    IF h1$[bi] = "~" OR h1$[bi] = "_" THEN
+        IF o1$[bi] <> h1$[bi] THEN oct_ok = FALSE
+    ELSEIF MELODY.NOTE_MIDI(o1$[bi]) <> MELODY.NOTE_MIDI(h1$[bi]) + 12 THEN
+        oct_ok = FALSE
+    ENDIF
+NEXT bi
+CHECK "octave lifts the A' bar", oct_ok, oct$[1]
+CHECK_STR "octave keeps the B bar", bars$[3], oct$[3]
+
+DIM endb$ = SPLIT(BARS$(MELODY.VARY$(hook$, prog$, "A minor", "ending"))[3], " ")
+DIM rise AS INTEGER = MELODY.NOTE_MIDI(endb$[end_i]) - MELODY.NOTE_MIDI(last$[end_i])
+DIM rise_pc AS INTEGER = MELODY.NOTE_MIDI(endb$[end_i]) MOD 12
+CHECK "ending rises", rise >= 3 AND rise < 12, "rise=" + STR$(rise)
+CHECK "ending lands on a G chord tone", rise_pc = 7 OR rise_pc = 11 OR rise_pc = 2, "end=" + endb$[end_i]
+
+DIM dense$ = BARS$(MELODY.VARY$(hook$, prog$, "A minor", "dense"))
+DIM d0$ = SPLIT(dense$[0], " ")
+DIM h0$ = SPLIT(bars$[0], " ")
+DIM kept AS INTEGER = TRUE
+DIM more AS INTEGER = 0
+FOR bi = 0 TO 15
+    IF h0$[bi] <> "~" AND d0$[bi] <> h0$[bi] THEN kept = FALSE
+    IF h0$[bi] = "~" AND d0$[bi] <> "~" THEN more = more + 1
+NEXT bi
+CHECK "dense keeps the hook's notes", kept, dense$[0]
+CHECK "dense adds passing notes", more > 0, dense$[0]
+
 ' ---------- bass ----------
 CHECK_STR "bass offbeat", "<[~ a1 a1 a1]*4 [~ f1 f1 f1]*4 [~ c2 c2 c2]*4 [~ g1 g1 g1]*4>", MELODY.BASS$(prog$, "offbeat", 1)
 CHECK_STR "bass octave", "<[a1 a2]*4 [f1 f2]*4 [c2 c3]*4 [g1 g2]*4>", MELODY.BASS$(prog$, "octave", 1)

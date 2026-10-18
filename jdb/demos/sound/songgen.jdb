@@ -15,7 +15,8 @@
 ' variant of each part: a breakdown with the choir, with pad and hook or
 ' without the kick; a build with a snare roll, a kick roll or a closing
 ' filter, perhaps ending on a bar of only pad and riser; a fill (snare,
-' toms or a one-beat gap) at each phrase end. The last drop is the peak.
+' toms or a one-beat gap) at each phrase end. The last drop is the peak:
+' up a key, the hook varied (MELODY.VARY$) and answered (MELODY.COUNTER$).
 '
 '   --wav file   renders the track offline into a WAV instead of the show
 '   --recipe     prints the recipe and the form, and stops
@@ -107,6 +108,17 @@ IF bass_style$ = "acid" THEN BASS$ = "legato(0.7, " + MELODY.BASS$(PROG$, "acid"
 DIM ARP$ AS STRING = "legato(0.5, " + MELODY.ARP$(PROG$, "updown", 16, 1) + ")"
 IF genre$ = "deep" THEN ARP$ = "legato(0.8, " + MELODY.ARP$(PROG$, "up", 8, 2) + ")"
 DIM STABS$ AS STRING = "legato(0.5, " + MELODY.STABS$(PROG$, "..x...x...x..x-.") + ")"
+' the answers to each hook, a register below it
+DIM COUNTER_A$ AS STRING = MELODY.COUNTER$(seed, HOOK$, PROG$, KEY$, OCT - 1)
+DIM COUNTER_B$ AS STRING = MELODY.COUNTER$(seed + 1000, HOOK_B$, PROG$, KEY$, OCT - 1)
+' the hooks as the last drop plays them, up a key
+DIM VARY_NAMES$ = ["dense", "octave", "ending"]
+DIM VARY_KIND$ AS STRING = VARY_NAMES$[PICK(10, 3)]
+DIM VARIED_A$ AS STRING = MELODY.VARY$(HOOK$, PROG$, KEY$, VARY_KIND$)
+DIM VARIED_B$ AS STRING = MELODY.VARY$(HOOK_B$, PROG$, KEY$, VARY_KIND$)
+DIM LIFT AS INTEGER = 1 + PICK(9, 2)
+' semitones the music now plays above the key; drums stay as they are
+DIM CUR_LIFT AS INTEGER = 0
 
 PRINT "songgen: "; genre$; ", seed "; seed
 PRINT "  key "; KEY$; ", "; BPM; " BPM, progression "; PROG_NAME$; ": "; PROG$
@@ -130,7 +142,8 @@ DIM SNARE AS INTEGER = 10
 DIM CHOIR AS INTEGER = 11
 DIM KEYS AS INTEGER = 12
 DIM PERC AS INTEGER = 13
-DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "OPENHAT", "BASS", "PAD", "ARP", "LEAD", "RISER", "CRASH", "SNARE", "CHOIR", "KEYS", "PERC"]
+DIM COUNTER AS INTEGER = 14
+DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "OPENHAT", "BASS", "PAD", "ARP", "LEAD", "RISER", "CRASH", "SNARE", "CHOIR", "KEYS", "PERC", "COUNTER"]
 DIM ti AS INTEGER
 FOR ti = 0 TO LEN(TRACK_NAMES$) - 1
     SCORE.TRACK ti, TRACK_NAMES$[ti]
@@ -224,6 +237,13 @@ IF genre$ = "deep" THEN SOUND.GAIN LEAD, 0.3
 SOUND.SIDECHAIN LEAD, KICK, 0.35
 SOUND.ORBIT LEAD, 1
 
+DIM COUNTER_PATCH$ AS STRING = "fm_keys"
+IF LEAD_PATCH$ = "fm_keys" THEN COUNTER_PATCH$ = "neon_pluck"
+PATCH.APPLY COUNTER, COUNTER_PATCH$
+SOUND.GAIN COUNTER, 0.2
+SOUND.PAN COUNTER, 0.65
+SOUND.SIDECHAIN COUNTER, KICK, 0.35
+
 SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.3
 SOUND.FILTER RISER, 400, 0.4, "BP"
 SOUND.ORBIT RISER, 1
@@ -248,10 +268,10 @@ DIM PAD_GAIN AS DOUBLE = 0.18
 DIM N_TRACKS AS INTEGER = LEN(TRACK_NAMES$)
 DIM LIVE = IOTA(N_TRACKS, 0) * 0
 DIM WANT = IOTA(N_TRACKS, 0) * 0
-DIM SWEPT$ = ["", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+DIM SWEPT$ = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
 DIM BASE_CUT = IOTA(N_TRACKS, 0) * 0 + 20000
 DIM BASE_RES = IOTA(N_TRACKS, 0) * 0
-DIM BASE_FT$ = ["LP", "LP", "HP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP", "LP", "LP", "LP"]
+DIM BASE_FT$ = ["LP", "LP", "HP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP", "LP", "LP", "LP", "LP"]
 BASE_CUT[HATS] = 6000
 BASE_RES[HATS] = 0.2
 BASE_CUT[RISER] = 400
@@ -275,6 +295,12 @@ SOUND.FILTER HATS, 6000, 0.2, "HP"
 
 ' the part that follows the one being written
 DIM NEXT_PART$ AS STRING = ""
+
+' pat$ moved up by the current lift
+FUNC LIFTED$(pat$) AS STRING
+    IF CUR_LIFT = 0 THEN RETURN pat$
+    RETURN "add(" + TRIM$(STR$(CUR_LIFT)) + ", " + pat$ + ")"
+ENDFUNC
 
 SUB TRK_ON(t AS INTEGER, pat$)
     SCORE.PLAY t, pat$
@@ -455,8 +481,9 @@ SUB PART_HOOK(b AS INTEGER, n AS INTEGER, fill_kind AS INTEGER)
     CRASH_AT b
     IF n >= 16 THEN
         FILL b + 7, fill_kind MOD 2, TRUE
-        SCORE.SECTION b + 8, "hook, second rhythm", "wave"
+        SCORE.SECTION b + 8, "hook, second rhythm, answered", "wave"
         TRK_ON LEAD, HOOK_B$
+        TRK_ON COUNTER, COUNTER_B$
     ENDIF
 ENDSUB
 
@@ -533,47 +560,72 @@ SUB PART_BUILD(b AS INTEGER, n AS INTEGER, v AS INTEGER, dropout AS INTEGER)
     ENDIF
 ENDSUB
 
-' A drop; the peak (the last drop) adds the choir and all the percussion
-' and, over 32 bars, becomes a double drop
-SUB PART_DROP(b AS INTEGER, n AS INTEGER, v AS INTEGER, peak AS INTEGER, fill_kind AS INTEGER)
+' A drop in 8-bar blocks that swap the two hooks. The peak (the last
+' drop) adds the choir and all the percussion; at its lift the music goes
+' up a key, the hook plays its variation and the answer joins. The lift
+' comes at the start of a last drop that follows another, half way into
+' a lone 16-bar drop and at bar 16 of a double drop.
+SUB PART_DROP(b AS INTEGER, n AS INTEGER, v AS INTEGER, peak AS INTEGER, earlier AS INTEGER, fill_kind AS INTEGER)
     DIM hooks$ = [HOOK$, HOOK_B$]
-    DIM level AS INTEGER = 4
-    IF peak AND n < 32 THEN level = 5
-    BEGIN_PART b, "drop", "jump"
-    DRUMS level
-    TRK_ON BASS, BASS$
-    TRK_ON PAD, "legato(1, " + CHORDS$ + ")"
-    TRK_ON PARTS_TRACK, PARTS$
-    SW PARTS_TRACK, "CUTOFF", "SINE", 900, 3500, 8, b
-    TRK_ON LEAD, "juxBy(0.4, add(12), " + hooks$[v] + ")"
-    IF level = 5 THEN
-        TRK_ON CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
-        SOUND.FORMANT CHOIR, "ah", 1.0, 0.08
-    ENDIF
-    COMMIT_PART b
-    CRASH_AT b
-    DIM k AS INTEGER
-    FOR k = 8 TO n - 8 STEP 8
-        FILL b + k - 1, (fill_kind + INT(k / 8)) MOD 2, TRUE
-        IF k = 16 THEN
-            SCORE.SECTION b + k, "drop: the peak", "jump"
-            CRASH_AT b + k
-            DRUMS 5
-            TRK_ON CHOIR, "legato(1, add(12, " + CHORDS$ + "))"
-            SOUND.FORMANT CHOIR, "ah", 1.0, 0.08
-        ELSE
-            SCORE.SECTION b + k, "drop, the other rhythm", "jump"
-            SCORE.AT b + k
+    DIM varied$ = [VARIED_A$, VARIED_B$]
+    DIM answers$ = [COUNTER_A$, COUNTER_B$]
+    DIM lift_at AS INTEGER = n
+    IF peak THEN
+        lift_at = 8
+        IF n >= 32 THEN
+            lift_at = 16
+        ELSEIF earlier > 0 THEN
+            lift_at = 0
         ENDIF
-        TRK_ON LEAD, "juxBy(0.4, add(12), " + hooks$[(v + INT(k / 8)) MOD 2] + ")"
+    ENDIF
+    BEGIN_PART b, "drop", "jump"
+    DIM k AS INTEGER
+    FOR k = 0 TO n - 8 STEP 8
+        DIM h AS INTEGER = (v + INT(k / 8)) MOD 2
+        IF k > 0 THEN
+            FILL b + k - 1, (fill_kind + INT(k / 8)) MOD 2, TRUE
+            IF k = lift_at THEN
+                SCORE.SECTION b + k, "drop: up a key", "jump"
+            ELSEIF k = 16 THEN
+                SCORE.SECTION b + k, "drop: the peak", "jump"
+            ELSE
+                SCORE.SECTION b + k, "drop, the other rhythm", "jump"
+            ENDIF
+        ELSEIF lift_at = 0 THEN
+            SCORE.SECTION b, "drop: up a key", "jump"
+        ENDIF
+        IF k = lift_at THEN CUR_LIFT = LIFT
+        DIM level AS INTEGER = 4
+        IF peak AND (n < 32 OR k >= 16) THEN level = 5
+        DRUMS level
+        TRK_ON BASS, LIFTED$(BASS$)
+        TRK_ON PAD, LIFTED$("legato(1, " + CHORDS$ + ")")
+        TRK_ON PARTS_TRACK, LIFTED$(PARTS$)
+        IF k = 0 THEN SW PARTS_TRACK, "CUTOFF", "SINE", 900, 3500, 8, b
+        IF k >= lift_at THEN
+            IF VARY_KIND$ = "octave" THEN
+                TRK_ON LEAD, LIFTED$(varied$[h])
+            ELSE
+                TRK_ON LEAD, "juxBy(0.4, add(12), " + LIFTED$(varied$[h]) + ")"
+            ENDIF
+            TRK_ON COUNTER, LIFTED$(answers$[h])
+        ELSE
+            TRK_ON LEAD, "juxBy(0.4, add(12), " + LIFTED$(hooks$[h]) + ")"
+        ENDIF
+        IF level = 5 THEN
+            TRK_ON CHOIR, LIFTED$("legato(1, add(12, " + CHORDS$ + "))")
+            SOUND.FORMANT CHOIR, "ah", 1.0, 0.08
+        ENDIF
+        IF k = 0 THEN COMMIT_PART b
+        IF k = 0 OR k = 16 OR k = lift_at THEN CRASH_AT b + k
     NEXT k
 ENDSUB
 
 SUB PART_OUTRO(b AS INTEGER, n AS INTEGER)
     BEGIN_PART b, "outro", "groove"
     DRUMS 3
-    TRK_ON BASS, BASS$
-    TRK_ON PARTS_TRACK, PARTS$
+    TRK_ON BASS, LIFTED$(BASS$)
+    TRK_ON PARTS_TRACK, LIFTED$(PARTS$)
     SW PARTS_TRACK, "CUTOFF", "ISAW", 300, 3000, 8, b
     COMMIT_PART b
     IF n >= 16 THEN
@@ -619,6 +671,7 @@ NEXT fi
 
 DIM bar_at AS INTEGER = 0
 DIM recipe$ AS STRING = ""
+DIM drops_done AS INTEGER = 0
 FOR fi = 0 TO N_PARTS - 1
     DIM part$ AS STRING = part_names$[fi]
     DIM nb AS INTEGER = part_bars[fi]
@@ -648,8 +701,9 @@ FOR fi = 0 TO N_PARTS - 1
         label$ = label$ + ")"
     ELSEIF part$ = "drop" THEN
         DIM dv AS INTEGER = PICK(20 + fi, 2)
-        PART_DROP bar_at, nb, dv, fi = LAST_DROP, fill_kind
-        IF fi = LAST_DROP THEN label$ = label$ + " (peak)"
+        PART_DROP bar_at, nb, dv, fi = LAST_DROP, drops_done, fill_kind
+        drops_done = drops_done + 1
+        IF fi = LAST_DROP THEN label$ = label$ + " (peak, up a key)"
     ELSE
         PART_OUTRO bar_at, nb
     ENDIF
@@ -666,6 +720,7 @@ SCORE.FINE bar_at + 2
 
 PRINT "  form "; FORM_NO + 1; " of "; LEN(forms$); ", "; bar_at; " bars:"
 PRINT recipe$;
+IF LAST_DROP >= 0 THEN PRINT "  last drop: up "; LIFT; " semitone(s), the hook "; VARY_KIND$; ", answered below"
 
 IF recipe_only THEN
     END

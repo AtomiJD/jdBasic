@@ -31,6 +31,12 @@
 '                                up, down, updown, random; rate notes a
 '                                bar (8, 12, 16), over 1 or 2 octaves
 '   STABS$(prog$, rhythm$)       the voiced chord on a rhythm mask (x - .)
+'
+' Around a hook:
+'   COUNTER$(seed, hook$, prog$, key$, octave)  an answer between the
+'                                hook's notes, at most four a bar
+'   VARY$(hook$, prog$, key$, kind$)  the hook changed but still the
+'                                hook: dense, octave, ending
 
 EXPORT MODULE MELODY
 
@@ -342,6 +348,139 @@ EXPORT FUNC HOOK$(seed AS INTEGER, prog$, key$, rhythm$, octave AS INTEGER) AS S
         out$ = out$ + bar$
     NEXT bi
     RETURN "<" + out$ + ">"
+ENDFUNC
+
+' The bars of a "<[...] [...]>" line, each as its list of step tokens
+FUNC BARS_OF(pat$)
+    DIM inner$ = MID$(pat$, 2, LEN(pat$) - 4)
+    RETURN SPLIT(inner$, "] [")
+ENDFUNC
+
+FUNC LINE_OF$(bars$) AS STRING
+    RETURN "<[" + JOIN(bars$, "] [") + "]>"
+ENDFUNC
+
+FUNC ONSET(tok$) AS INTEGER
+    RETURN tok$ <> "~" AND tok$ <> "_"
+ENDFUNC
+
+' The direction of a bar's notes: 1 up, -1 down, 0 level or empty
+FUNC BAR_HEADING(steps$) AS INTEGER
+    DIM first AS INTEGER = -1
+    DIM last AS INTEGER = -1
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(steps$) - 1
+        IF steps$[k] <> "~" AND steps$[k] <> "_" THEN
+            IF first < 0 THEN first = NOTE_MIDI(steps$[k])
+            last = NOTE_MIDI(steps$[k])
+        ENDIF
+    NEXT k
+    RETURN SGN(last - first)
+ENDFUNC
+
+' An answer between the notes of hook$: eighth notes on the steps where
+' the hook does not strike (nor on the step before), at most four a bar
+' and the latest ones, in the other direction from the hook's bar,
+' starting and ending on a chord tone. octave places the answer like
+' HOOK$ does; one below the hook sits under it.
+EXPORT FUNC COUNTER$(seed AS INTEGER, hook$, prog$, key$, octave AS INTEGER) AS STRING
+    DIM bars$ = BARS_OF(hook$)
+    DIM chords$ = SPLIT(TRIM$(prog$), " ")
+    DIM root_pc AS INTEGER = KEY_ROOT(key$)
+    DIM centre AS INTEGER = (octave + 1) * 12 + root_pc
+    DIM pool = POOL(root_pc, KEY_STEPS(key$), centre - 3, centre + 9)
+    DIM w AS INTEGER = RESEED(seed + 7777)
+    DIM prev AS INTEGER = centre + 4
+    DIM out$ = []
+    DIM bi AS INTEGER
+    FOR bi = 0 TO LEN(bars$) - 1
+        DIM steps$ = SPLIT(bars$[bi], " ")
+        DIM pcs = CHORD_PCS(chords$[bi MOD LEN(chords$)])
+        DIM heading AS INTEGER = -BAR_HEADING(steps$)
+        IF heading = 0 THEN heading = -1
+        DIM answer$ = []
+        DIM k AS INTEGER
+        FOR k = 0 TO 15
+            answer$ = APPEND(answer$, "~")
+        NEXT k
+        DIM prev_bar$ = SPLIT(bars$[(bi + LEN(bars$) - 1) MOD LEN(bars$)], " ")
+        DIM prev_last$ = prev_bar$[15]
+        DIM slots = []
+        FOR k = 0 TO 14 STEP 2
+            DIM before$ = prev_last$
+            IF k > 0 THEN before$ = steps$[k - 1]
+            IF NOT ONSET(steps$[k]) AND NOT ONSET(before$) THEN slots = APPEND(slots, k)
+        NEXT k
+        DIM first_s AS INTEGER = LEN(slots) - 4
+        IF first_s < 0 THEN first_s = 0
+        DIM si AS INTEGER
+        FOR si = first_s TO LEN(slots) - 1
+            DIM nt AS INTEGER
+            IF si = first_s OR si = LEN(slots) - 1 THEN
+                nt = CHORD_TONE(pool, pcs, prev, heading, FALSE)
+            ELSE
+                nt = SCALE_STEP(pool, prev, heading, 1)
+            ENDIF
+            IF nt < 0 THEN nt = prev
+            IF si > first_s AND nt = prev THEN nt = SCALE_STEP(pool, prev, heading, 2)
+            prev = nt
+            answer$[slots[si]] = MIDI_NAME$(nt)
+        NEXT si
+        out$ = APPEND(out$, JOIN(answer$, " "))
+    NEXT bi
+    RETURN LINE_OF$(out$)
+ENDFUNC
+
+' hook$ changed so it is still the hook:
+'   dense    a passing note between notes three or more steps apart
+'   octave   the A' bars (the second and fourth) an octave up
+'   ending   the last note rises to a chord tone above instead of falling
+EXPORT FUNC VARY$(hook$, prog$, key$, kind$) AS STRING
+    DIM bars$ = BARS_OF(hook$)
+    DIM chords$ = SPLIT(TRIM$(prog$), " ")
+    DIM root_pc AS INTEGER = KEY_ROOT(key$)
+    DIM pool = POOL(root_pc, KEY_STEPS(key$), 36, 96)
+    DIM kd$ = LCASE$(kind$)
+    DIM bi AS INTEGER
+    DIM k AS INTEGER
+    FOR bi = 0 TO LEN(bars$) - 1
+        DIM steps$ = SPLIT(bars$[bi], " ")
+        IF kd$ = "dense" THEN
+            DIM prev_k AS INTEGER = -1
+            FOR k = 0 TO 15
+                IF steps$[k] <> "~" AND steps$[k] <> "_" THEN
+                    IF prev_k >= 0 ANDALSO k - prev_k >= 3 ANDALSO steps$[prev_k + 2] = "~" THEN
+                        DIM a AS INTEGER = NOTE_MIDI(steps$[prev_k])
+                        DIM z AS INTEGER = NOTE_MIDI(steps$[k])
+                        DIM h AS INTEGER = SGN(z - a)
+                        IF h = 0 THEN h = 1
+                        steps$[prev_k + 2] = MIDI_NAME$(SCALE_STEP(pool, a, h, 1))
+                    ENDIF
+                    prev_k = k
+                ENDIF
+            NEXT k
+        ELSEIF kd$ = "octave" AND bi MOD 2 = 1 AND bi < LEN(bars$) - 1 THEN
+            FOR k = 0 TO 15
+                IF steps$[k] <> "~" AND steps$[k] <> "_" THEN steps$[k] = MIDI_NAME$(NOTE_MIDI(steps$[k]) + 12)
+            NEXT k
+        ELSEIF kd$ = "ending" AND bi = LEN(bars$) - 1 THEN
+            DIM pcs = CHORD_PCS(chords$[bi MOD LEN(chords$)])
+            DIM last_k AS INTEGER = -1
+            FOR k = 0 TO 15
+                IF steps$[k] <> "~" AND steps$[k] <> "_" THEN last_k = k
+            NEXT k
+            IF last_k >= 0 THEN
+                DIM m AS INTEGER = NOTE_MIDI(steps$[last_k])
+                DIM up AS INTEGER = m + 3
+                WHILE NOT HAS_PC(pcs, up) AND up < m + 12
+                    up = up + 1
+                WEND
+                steps$[last_k] = MIDI_NAME$(up)
+            ENDIF
+        ENDIF
+        bars$[bi] = JOIN(steps$, " ")
+    NEXT bi
+    RETURN LINE_OF$(bars$)
 ENDFUNC
 
 ' ── the parts under the hook ─────────────────────────────────────
