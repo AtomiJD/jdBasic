@@ -1,0 +1,138 @@
+' ══════════════════════════════════════════════════════════════════
+'  narrate.jdb - lays a script's narration over a finished picture,
+'  offline, without OBS: the voice clips and cards are rendered, placed
+'  on a clock that follows the script, written to the manifest and
+'  composed onto the picture.
+'
+'    jdbasic narrate.jdb boards_01_fruitjam.txt
+'
+'  The picture comes from the script's PICTURE: line. On the clock a
+'  TITLE takes CARD_DUR_MS, a SAY takes its clip plus SAY_GAP_MS, AT:
+'  moves the clock forward to a second count, and a TOPIC band starts
+'  where the clock stands without taking time. A SAY that is still
+'  talking when the next AT: comes is reported with its overrun.
+'
+'  Output: voice\<base>_NNN.wav, cards\<base>_*.png,
+'          raw\<base>.manifest.txt, final\<base>.mp4
+' ══════════════════════════════════════════════════════════════════
+
+IMPORT TTS
+IMPORT CARDS
+IMPORT FFMPEG
+
+CD "\usr\dev\cc\jdb\tv"
+
+DIM CARD_DUR_MS AS INTEGER = 2500
+DIM TOPIC_DUR_MS AS INTEGER = 4000
+DIM SAY_GAP_MS AS INTEGER = 300
+
+DIM cli = OS.ARGS()
+IF LEN(cli) < 2 THEN
+    PRINT "usage: jdbasic narrate.jdb <script>.txt"
+    END 1
+ENDIF
+DIM script_file$ = cli[LEN(cli) - 1]
+DIM script_path$ = "scripts\" + script_file$
+DIM script_base$ = LEFT$(script_file$, LEN(script_file$) - 4)
+IF NOT FILE.EXISTS(script_path$) THEN
+    PRINT "no such script: "; script_path$
+    END 1
+ENDIF
+
+DIM lines = SPLIT(TXTREADER$(script_path$), CHR$(10))
+DIM picture$ = ""
+DIM manifest$ = ""
+DIM clock_ms AS INTEGER = 0
+DIM speaking_until AS INTEGER = 0
+DIM n_say AS INTEGER = 0
+DIM n_title AS INTEGER = 0
+DIM n_topic AS INTEGER = 0
+DIM overruns AS INTEGER = 0
+DIM i AS INTEGER
+
+FUNC FIELDS(body$)
+    DIM parts = SPLIT(body$, "|")
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(parts) - 1
+        parts[k] = TRIM$(parts[k])
+    NEXT k
+    RETURN parts
+ENDFUNC
+
+FUNC SECS$(ms)
+    RETURN FORMAT$("{:.1f}", ms / 1000.0) + "s"
+ENDFUNC
+
+FOR i = 0 TO LEN(lines) - 1
+    DIM ln$ = TRIM$(lines[i])
+    IF STARTSWITH(ln$, "PICTURE:") THEN
+        picture$ = TRIM$(MID$(ln$, 8))
+    ELSEIF STARTSWITH(ln$, "TITLE:") THEN
+        DIM tf = FIELDS(MID$(ln$, 6))
+        DIM t_lesson$ = "00"
+        DIM t_title$ = tf[0]
+        DIM t_sub$ = ""
+        IF LEN(tf) >= 2 THEN
+            t_lesson$ = tf[0]
+            t_title$ = tf[1]
+        ENDIF
+        IF LEN(tf) >= 3 THEN t_sub$ = tf[2]
+        DIM t_png$ = "cards\" + script_base$ + "_title_" + FORMAT$("{:0>3}", n_title) + ".png"
+        DIM t_ok = CARDS.RenderTitle(t_png$, t_lesson$, t_title$, t_sub$, "")
+        manifest$ = manifest$ + "CARD" + CHR$(9) + STR$(clock_ms) + CHR$(9) + STR$(CARD_DUR_MS) + CHR$(9) + t_png$ + CHR$(10)
+        PRINT SECS$(clock_ms); "  TITLE  "; t_title$
+        clock_ms = clock_ms + CARD_DUR_MS
+        n_title = n_title + 1
+    ELSEIF STARTSWITH(ln$, "TOPIC:") THEN
+        DIM pf = FIELDS(MID$(ln$, 6))
+        DIM p_note$ = ""
+        IF LEN(pf) >= 2 THEN p_note$ = pf[1]
+        DIM p_png$ = "cards\" + script_base$ + "_topic_" + FORMAT$("{:0>3}", n_topic) + ".png"
+        DIM p_ok = CARDS.RenderTopic(p_png$, pf[0], p_note$)
+        manifest$ = manifest$ + "CARD" + CHR$(9) + STR$(clock_ms) + CHR$(9) + STR$(TOPIC_DUR_MS) + CHR$(9) + p_png$ + CHR$(10)
+        PRINT SECS$(clock_ms); "  TOPIC  "; pf[0]
+        n_topic = n_topic + 1
+    ELSEIF STARTSWITH(ln$, "AT:") THEN
+        DIM at_ms AS INTEGER = CINT(VAL(TRIM$(MID$(ln$, 3))) * 1000)
+        IF speaking_until > at_ms THEN
+            PRINT "        ** the SAY before AT "; SECS$(at_ms); " runs over by "; SECS$(speaking_until - at_ms)
+            overruns = overruns + 1
+        ENDIF
+        IF at_ms > clock_ms THEN clock_ms = at_ms
+    ELSEIF STARTSWITH(ln$, "SAY:") THEN
+        DIM s_text$ = TRIM$(MID$(ln$, 4))
+        DIM s_wav$ = "voice\" + script_base$ + "_" + FORMAT$("{:0>3}", n_say) + ".wav"
+        DIM s_dur = TTS.Say(s_wav$, s_text$)
+        IF s_dur <= 0 THEN
+            PRINT "TTS failed on SAY "; n_say
+            END 1
+        ENDIF
+        DIM s_ms AS INTEGER = CINT(s_dur * 1000)
+        manifest$ = manifest$ + "VOICE" + CHR$(9) + STR$(clock_ms) + CHR$(9) + STR$(s_ms) + CHR$(9) + s_wav$ + CHR$(10)
+        PRINT SECS$(clock_ms); "  SAY    "; SECS$(s_ms); "  "; LEFT$(s_text$, 60)
+        speaking_until = clock_ms + s_ms
+        clock_ms = speaking_until + SAY_GAP_MS
+        n_say = n_say + 1
+    ENDIF
+NEXT i
+
+IF picture$ = "" THEN
+    PRINT "the script has no PICTURE: line"
+    END 1
+ENDIF
+IF NOT FILE.EXISTS(picture$) THEN
+    PRINT "no such picture: "; picture$
+    END 1
+ENDIF
+
+DIM manifest_path$ = "raw\" + script_base$ + ".manifest.txt"
+TXTWRITER manifest_path$, "# narrate.jdb" + CHR$(10) + "SCRIPT: " + script_path$ + CHR$(10) + "RAW: " + picture$ + CHR$(10) + manifest$
+PRINT "manifest: "; manifest_path$; "  ("; n_say; " SAY, "; n_title + n_topic; " cards, "; overruns; " overrun(s))"
+
+DIM final_path$ = "final\" + script_base$ + ".mp4"
+DIM result$ = FFMPEG.ComposeFromManifest$(manifest_path$, final_path$)
+IF LEN(result$) = 0 THEN
+    PRINT "compose failed"
+    END 1
+ENDIF
+PRINT "done: "; result$

@@ -62,15 +62,17 @@ EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
     ' Index 0           : raw video
     ' Index 1..nc       : card PNGs
     ' Index nc+1..nc+nv : voice WAVs
-    DIM cmd$ = "ffmpeg -y -loglevel warning -i " + CHR$(34) + raw_path$ + CHR$(34)
+    ' The arguments go to OS.EXEC as an array, so no shell sees the
+    ' filter graph's | and ; characters.
+    DIM ff_args$ = ["-y", "-loglevel", "warning", "-i", raw_path$]
     DIM k AS INTEGER
     FOR k = 0 TO nc - 1
         ' -loop 1 isn't needed here; a single image input is auto-extended
         ' to the [0:v] duration by ffmpeg when used through overlay.
-        cmd$ = cmd$ + " -i " + CHR$(34) + card_paths[k] + CHR$(34)
+        ff_args$ = APPEND(ff_args$, ["-i", card_paths[k]])
     NEXT k
     FOR k = 0 TO nv - 1
-        cmd$ = cmd$ + " -i " + CHR$(34) + voice_paths[k] + CHR$(34)
+        ff_args$ = APPEND(ff_args$, ["-i", voice_paths[k]])
     NEXT k
 
     ' ── Build the complex filter graph ───────────────────────────
@@ -112,32 +114,28 @@ EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
     ' If we added any overlay or filter, we have to re-encode video
     ' (no -c:v copy). Without filters we can stream-copy.
     DIM use_video_filter AS INTEGER = nc
-    DIM filter_tail$ = ""
     IF LEN(filter$) > 0 THEN
         ' Trim trailing semicolon.
         IF RIGHT$(filter$, 1) = ";" THEN filter$ = LEFT$(filter$, LEN(filter$) - 1)
-        filter_tail$ = " -filter_complex " + CHR$(34) + filter$ + CHR$(34)
+        ff_args$ = APPEND(ff_args$, ["-filter_complex", filter$])
     ENDIF
 
-    cmd$ = cmd$ + filter_tail$
-
     IF use_video_filter > 0 THEN
-        cmd$ = cmd$ + " -map " + CHR$(34) + last_v$ + CHR$(34)
-        cmd$ = cmd$ + " -c:v libx264 -preset veryfast -crf 18"
+        ff_args$ = APPEND(ff_args$, ["-map", last_v$, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18"])
     ELSE
-        cmd$ = cmd$ + " -map 0:v -c:v copy"
+        ff_args$ = APPEND(ff_args$, ["-map", "0:v", "-c:v", "copy"])
     ENDIF
 
     IF has_audio = 1 THEN
-        cmd$ = cmd$ + " -map " + CHR$(34) + "[aout]" + CHR$(34) + " -c:a aac -b:a 192k"
+        ff_args$ = APPEND(ff_args$, ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"])
     ELSE
-        cmd$ = cmd$ + " -an"
+        ff_args$ = APPEND(ff_args$, "-an")
     ENDIF
 
-    cmd$ = cmd$ + " " + CHR$(34) + out_path$ + CHR$(34)
+    ff_args$ = APPEND(ff_args$, out_path$)
 
-    PRINT "[FFMPEG] " + cmd$
-    DIM r = OS.EXEC(cmd$)
+    PRINT "[FFMPEG] ffmpeg " + JOIN(ff_args$, " ")
+    DIM r = OS.EXEC("ffmpeg", ff_args$)
     IF r{"EXIT_CODE"} <> 0 THEN
         PRINT "[FFMPEG] FAIL ("; r{"EXIT_CODE"}; "):"
         PRINT r{"OUTPUT"}
