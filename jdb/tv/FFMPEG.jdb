@@ -24,6 +24,9 @@ EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
     DIM card_offs = []
     DIM card_durs = []
     DIM card_paths = []
+    DIM avatar_path$ = ""
+    DIM avatar_x$ = "0"
+    DIM avatar_y$ = "0"
 
     DIM i AS INTEGER
     FOR i = 0 TO LEN(lines) - 1
@@ -46,6 +49,11 @@ EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
             PUSH card_offs,  VAL(parts[1])
             PUSH card_durs,  VAL(parts[2])
             PUSH card_paths, TRIM$(parts[3])
+        ELSEIF kind$ = "AVATAR" THEN
+            ' AVATAR <x> <y> <path>: a transparent clip over the picture
+            avatar_x$ = TRIM$(parts[1])
+            avatar_y$ = TRIM$(parts[2])
+            avatar_path$ = TRIM$(parts[3])
         ENDIF
     NEXT i
 
@@ -74,10 +82,20 @@ EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
     FOR k = 0 TO nv - 1
         ff_args$ = APPEND(ff_args$, ["-i", voice_paths[k]])
     NEXT k
+    ' A VP9 alpha .webm needs the libvpx decoder to keep its alpha.
+    IF LEN(avatar_path$) > 0 THEN
+        ff_args$ = APPEND(ff_args$, ["-c:v", "libvpx-vp9", "-i", avatar_path$])
+    ENDIF
 
     ' ── Build the complex filter graph ───────────────────────────
     DIM filter$ = ""
     DIM last_v$ = "[0:v]"   ' walks down the overlay chain
+
+    ' The avatar goes on the picture first, so the cards cover it.
+    IF LEN(avatar_path$) > 0 THEN
+        filter$ = filter$ + last_v$ + "[" + STR$(nc + nv + 1) + ":v]overlay=x=" + avatar_x$ + ":y=" + avatar_y$ + ":eof_action=pass[vav];"
+        last_v$ = "[vav]"
+    ENDIF
 
     ' Card overlays — chain each on top of the previous video stage.
     FOR k = 0 TO nc - 1
@@ -114,6 +132,7 @@ EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
     ' If we added any overlay or filter, we have to re-encode video
     ' (no -c:v copy). Without filters we can stream-copy.
     DIM use_video_filter AS INTEGER = nc
+    IF LEN(avatar_path$) > 0 THEN use_video_filter = 1
     IF LEN(filter$) > 0 THEN
         ' Trim trailing semicolon.
         IF RIGHT$(filter$, 1) = ";" THEN filter$ = LEFT$(filter$, LEN(filter$) - 1)

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Jaydee avatar</title>
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  canvas { display: block; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.3.3/lib/three-vrm.module.js"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+  // Renders the VRM as a bust on a transparent canvas. render_avatar.py
+  // calls setFrame() once per video frame and screenshots the page.
+  import * as THREE from 'three';
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+  const params = new URLSearchParams(location.search);
+  const W = parseInt(params.get('w') || '600');
+  const H = parseInt(params.get('h') || '720');
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  renderer.setSize(W, H);
+  renderer.setPixelRatio(1);
+  renderer.setClearColor(0x000000, 0);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(22, W / H, 0.1, 20);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+  const key = new THREE.DirectionalLight(0xffffff, 1.6);
+  key.position.set(0.6, 1.5, 2.0);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0xff2e97, 1.2);
+  rim.position.set(-1.5, 1.2, -1.0);
+  scene.add(rim);
+  const rim2 = new THREE.DirectionalLight(0x00e5ff, 1.0);
+  rim2.position.set(1.5, 1.0, -1.0);
+  scene.add(rim2);
+
+  let vrm = null;
+  const rest = {};
+
+  const loader = new GLTFLoader();
+  loader.register((parser) => new VRMLoaderPlugin(parser));
+  loader.load(params.get('model'), (gltf) => {
+    vrm = gltf.userData.vrm;
+    VRMUtils.removeUnnecessaryVertices(gltf.scene);
+    VRMUtils.rotateVRM0(vrm);
+    scene.add(vrm.scene);
+
+    const h = vrm.humanoid;
+    const armDown = parseFloat(params.get('arm') || '1.2');
+    h.getNormalizedBoneNode('leftUpperArm').rotation.z = armDown;
+    h.getNormalizedBoneNode('rightUpperArm').rotation.z = -armDown;
+    h.getNormalizedBoneNode('leftLowerArm').rotation.z = 0.15;
+    h.getNormalizedBoneNode('rightLowerArm').rotation.z = -0.15;
+    vrm.update(0);
+
+    const head = h.getNormalizedBoneNode('head');
+    const p = new THREE.Vector3();
+    head.getWorldPosition(p);
+    const look = new THREE.Vector3(0, p.y - 0.14, 0);
+    camera.position.set(0, p.y - 0.05, 2.0);
+    camera.lookAt(look);
+    rest.headY = p.y;
+    window.avatarReady = true;
+  }, undefined, (err) => { window.avatarError = String(err); });
+
+  // t: seconds; m: {aa, ih, ou, ee, oh}; blink: 0..1; opacity: 0..1
+  window.setFrame = (t, m, blink, opacity) => {
+    if (!vrm) return;
+    const em = vrm.expressionManager;
+    for (const k of ['aa', 'ih', 'ou', 'ee', 'oh']) em.setValue(k, m[k] || 0);
+    em.setValue('blink', blink);
+    em.setValue('happy', 0.25);
+    const h = vrm.humanoid;
+    h.getNormalizedBoneNode('spine').rotation.x = 0.015 * Math.sin(t * 1.6);
+    h.getNormalizedBoneNode('chest').rotation.x = 0.02 * Math.sin(t * 1.6 + 0.5);
+    const neck = h.getNormalizedBoneNode('neck');
+    neck.rotation.y = 0.06 * Math.sin(t * 0.43) + 0.03 * Math.sin(t * 1.13);
+    neck.rotation.x = 0.03 * Math.sin(t * 0.71) + 0.04 * (m.aa || 0);
+    neck.rotation.z = 0.025 * Math.sin(t * 0.37);
+    vrm.update(1 / 30);
+    renderer.domElement.style.opacity = opacity;
+    renderer.render(scene, camera);
+  };
+</script>
+</body>
+</html>

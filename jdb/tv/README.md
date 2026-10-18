@@ -223,8 +223,8 @@ encode is `libx264` / `aac` on a muted-desktop base track.
 - ✅ **Phase 2**: branded title-card overlays via Playwright + HTML.
 - ✅ **Phase 3**: lessons 00 → 10 shot and rendered.
 - ✅ **Phase 5**: YouTube upload via `upload.jdb` + `youtubeuploader.exe`.
-- ⏳ **Phase 4**: virtual Jaydee Basica avatar (`avatar/JayDee.vrm`,
-  VSeeFace lip-sync to the WAVs, OBS source).
+- ✅ **Phase 4**: Jaydee Basica avatar (`avatar/JayDee.vrm`) rendered offline by
+  `helpers/render_avatar.py` (three-vrm, lip sync from the WAVs); `AVATAR: right` in a script.
 
 ---
 

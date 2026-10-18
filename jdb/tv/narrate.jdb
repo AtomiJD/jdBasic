@@ -9,7 +9,9 @@
 '  The picture comes from the script's PICTURE: line. TITLESTYLE: board
 '  renders the TITLE as the neon board card: its first field is the
 '  chip, *...* in the title is the accent, and the SPECS: line lists
-'  the pills. On the clock a
+'  the pills. AVATAR: right (or AVATAR: <x> <y>) renders the VRM avatar
+'  lip-synced to the SAY clips and lays it over the picture while she
+'  speaks. On the clock a
 '  TITLE takes CARD_DUR_MS, a SAY takes its clip plus SAY_GAP_MS, AT:
 '  moves the clock forward to a second count, and a TOPIC band starts
 '  where the clock stands without taking time. A SAY that is still
@@ -46,6 +48,8 @@ DIM lines = SPLIT(TXTREADER$(script_path$), CHR$(10))
 DIM picture$ = ""
 DIM title_style$ = "lesson"
 DIM specs$ = ""
+DIM avatar_x$ = ""
+DIM avatar_y$ = ""
 DIM manifest$ = ""
 DIM clock_ms AS INTEGER = 0
 DIM speaking_until AS INTEGER = 0
@@ -74,6 +78,18 @@ FOR i = 0 TO LEN(lines) - 1
         picture$ = TRIM$(MID$(ln$, 8))
     ELSEIF STARTSWITH(ln$, "TITLESTYLE:") THEN
         title_style$ = LCASE$(TRIM$(MID$(ln$, 11)))
+    ELSEIF STARTSWITH(ln$, "AVATAR:") THEN
+        DIM av$ = LCASE$(TRIM$(MID$(ln$, 7)))
+        IF av$ = "right" THEN
+            avatar_x$ = "1430"
+            avatar_y$ = "440"
+        ELSEIF av$ = "off" THEN
+            avatar_x$ = ""
+        ELSE
+            DIM avp = SPLIT(av$, " ")
+            avatar_x$ = avp[0]
+            avatar_y$ = avp[LEN(avp) - 1]
+        ENDIF
     ELSEIF STARTSWITH(ln$, "SPECS:") THEN
         specs$ = TRIM$(MID$(ln$, 6))
     ELSEIF STARTSWITH(ln$, "TITLE:") THEN
@@ -142,6 +158,18 @@ ENDIF
 DIM manifest_path$ = "raw\" + script_base$ + ".manifest.txt"
 TXTWRITER manifest_path$, "# narrate.jdb" + CHR$(10) + "SCRIPT: " + script_path$ + CHR$(10) + "RAW: " + picture$ + CHR$(10) + manifest$
 PRINT "manifest: "; manifest_path$; "  ("; n_say; " SAY, "; n_title + n_topic; " cards, "; overruns; " overrun(s))"
+
+IF LEN(avatar_x$) > 0 THEN
+    DIM avatar_path$ = "raw\" + script_base$ + ".avatar.webm"
+    PRINT "avatar: "; avatar_path$
+    DIM av_r = OS.EXEC("python", ["helpers/render_avatar.py", "render", manifest_path$, avatar_path$, STR$(clock_ms / 1000.0), "speaking"])
+    IF av_r{"EXIT_CODE"} <> 0 THEN
+        PRINT "avatar render failed: "; av_r{"OUTPUT"}
+        END 1
+    ENDIF
+    manifest$ = manifest$ + "AVATAR" + CHR$(9) + avatar_x$ + CHR$(9) + avatar_y$ + CHR$(9) + avatar_path$ + CHR$(10)
+    TXTWRITER manifest_path$, "# narrate.jdb" + CHR$(10) + "SCRIPT: " + script_path$ + CHR$(10) + "RAW: " + picture$ + CHR$(10) + manifest$
+ENDIF
 
 DIM final_path$ = "final\" + script_base$ + ".mp4"
 DIM result$ = FFMPEG.ComposeFromManifest$(manifest_path$, final_path$)
