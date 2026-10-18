@@ -1,0 +1,310 @@
+' melody.jdb - chord progressions and a seeded hook generator for the
+' sequencer, in pattern strings that SOUND.SEQ and SCORE.PLAY take.
+'
+'   DIM prog$ = MELODY.PROG$("epic", "A minor")           ' "Am F C G"
+'   DIM hook$ = MELODY.HOOK$(7, prog$, "A minor", "x.x..x.x x.x.x...", 4)
+'   SCORE.PLAY LEAD, hook$
+'   SCORE.PLAY PAD, "<" + prog$ + ">"
+'
+' PROG$ names: epic (i VI III VII), anthem (i VII VI VII), dark
+' (i iv VI V), pop (I V vi IV), euphoric (vi IV I V), house (ii7 V7
+' I7 I7), deep (i7 iv7 i7 iv7). The key is a note name and a mode:
+' major, minor, dorian, phrygian, lydian, mixolydian.
+'
+' HOOK$ writes one bar per chord, sixteen steps a bar. The rhythm mask
+' has x for a note, - to hold it and . for a rest (spaces are ignored).
+' The rules: chord tones on the beats and on the first note of a bar,
+' scale steps between them, a leap now and then and a step back the
+' other way after it, a range of about a ninth, rising over the first
+' part of the hook and falling to the end. A note on the last two
+' steps of a bar already takes the next chord. The bars follow the
+' form A A' A B: every A bar makes the same choices on its own chord,
+' A' changes its second half, and B ends on the root or the third and
+' holds it. The same seed always gives the same hook.
+
+EXPORT MODULE MELODY
+
+DIM MODE_NAMES$ = ["MAJOR", "MINOR", "DORIAN", "PHRYGIAN", "LYDIAN", "MIXOLYDIAN"]
+DIM MODE_STEPS = [[0, 2, 4, 5, 7, 9, 11], [0, 2, 3, 5, 7, 8, 10], [0, 2, 3, 5, 7, 9, 10], [0, 1, 3, 5, 7, 8, 10], [0, 2, 4, 6, 7, 9, 11], [0, 2, 4, 5, 7, 9, 10]]
+DIM PC_NAMES$ = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+DIM rng = [1.0]
+
+' ── pitch helpers ────────────────────────────────────────────────
+
+' The pitch class of a note name: "A", "Bb", "f#3" (an octave is ignored)
+EXPORT FUNC PC_OF(name$) AS INTEGER
+    DIM letters$ = "CDEFGAB"
+    DIM base_pc = [0, 2, 4, 5, 7, 9, 11]
+    DIM up$ = UCASE$(LEFT$(name$, 1))
+    DIM li AS INTEGER = INSTR(letters$, up$)
+    IF li < 0 THEN RETURN -1
+    DIM pc AS INTEGER = base_pc[li]
+    IF LEN(name$) > 1 THEN
+        DIM acc$ = MID$(name$, 1, 1)
+        IF acc$ = "#" THEN pc = pc + 1
+        IF acc$ = "b" THEN pc = pc - 1
+    ENDIF
+    RETURN (pc + 12) MOD 12
+ENDFUNC
+
+' MIDI number of a lower-case note name as the sequencer writes it: a#3
+EXPORT FUNC NOTE_MIDI(name$) AS INTEGER
+    DIM pc AS INTEGER = PC_OF(name$)
+    DIM octave AS INTEGER = VAL(RIGHT$(name$, 1))
+    RETURN (octave + 1) * 12 + pc
+ENDFUNC
+
+EXPORT FUNC MIDI_NAME$(m AS INTEGER) AS STRING
+    DIM names$ = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"]
+    RETURN names$[m MOD 12] + STR$(INT(m / 12) - 1)
+ENDFUNC
+
+' The key's root pitch class and the seven steps of its mode
+FUNC KEY_ROOT(key$) AS INTEGER
+    RETURN PC_OF(TRIM$(key$))
+ENDFUNC
+
+FUNC KEY_STEPS(key$)
+    DIM parts = SPLIT(TRIM$(key$), " ")
+    DIM want$ = "MAJOR"
+    IF LEN(parts) > 1 THEN want$ = UCASE$(TRIM$(parts[LEN(parts) - 1]))
+    DIM mi AS INTEGER
+    FOR mi = 0 TO LEN(MODE_NAMES$) - 1
+        IF MODE_NAMES$[mi] = want$ THEN RETURN MODE_STEPS[mi]
+    NEXT mi
+    RETURN MODE_STEPS[0]
+ENDFUNC
+
+' ── progressions ─────────────────────────────────────────────────
+
+' The chord symbol of the triad (or seventh) on scale degree deg
+FUNC DEGREE_CHORD$(root_pc AS INTEGER, steps, deg AS INTEGER, seventh AS INTEGER) AS STRING
+    DIM r AS INTEGER = steps[deg MOD 7]
+    DIM third AS INTEGER = (steps[(deg + 2) MOD 7] - r + 12) MOD 12
+    DIM fifth AS INTEGER = (steps[(deg + 4) MOD 7] - r + 12) MOD 12
+    DIM sev AS INTEGER = (steps[(deg + 6) MOD 7] - r + 12) MOD 12
+    DIM q$ = ""
+    IF third = 3 AND fifth = 6 THEN
+        q$ = "dim"
+        IF seventh THEN q$ = "m7b5"
+    ELSEIF third = 3 THEN
+        q$ = "m"
+        IF seventh THEN q$ = "m7"
+    ELSEIF seventh AND sev = 11 THEN
+        q$ = "maj7"
+    ELSEIF seventh THEN
+        q$ = "7"
+    ENDIF
+    RETURN PC_NAMES$[(root_pc + r) MOD 12] + q$
+ENDFUNC
+
+' A named progression in a key, as chord symbols, one per bar
+EXPORT FUNC PROG$(name$, key$) AS STRING
+    DIM degs = [0, 5, 2, 6]
+    DIM sevenths AS INTEGER = FALSE
+    DIM n$ = LCASE$(name$)
+    IF n$ = "anthem" THEN degs = [0, 6, 5, 6]
+    IF n$ = "dark" THEN degs = [0, 3, 5, 4]
+    IF n$ = "pop" THEN degs = [0, 4, 5, 3]
+    IF n$ = "euphoric" THEN degs = [5, 3, 0, 4]
+    IF n$ = "house" THEN
+        degs = [1, 4, 0, 0]
+        sevenths = TRUE
+    ENDIF
+    IF n$ = "deep" THEN
+        degs = [0, 3, 0, 3]
+        sevenths = TRUE
+    ENDIF
+    DIM root_pc AS INTEGER = KEY_ROOT(key$)
+    DIM steps = KEY_STEPS(key$)
+    DIM out$ = ""
+    DIM di AS INTEGER
+    FOR di = 0 TO LEN(degs) - 1
+        IF di > 0 THEN out$ = out$ + " "
+        out$ = out$ + DEGREE_CHORD$(root_pc, steps, degs[di], sevenths)
+    NEXT di
+    RETURN out$
+ENDFUNC
+
+' ── the hook ─────────────────────────────────────────────────────
+
+FUNC RAND01() AS DOUBLE
+    DIM m AS DOUBLE = 2147483647
+    DIM x AS DOUBLE = rng[0] * 48271
+    rng[0] = x - INT(x / m) * m
+    RETURN rng[0] / m
+ENDFUNC
+
+FUNC RESEED(s AS INTEGER) AS INTEGER
+    rng[0] = ((ABS(s) + 1) * 2654435761 MOD 2147483646) + 1
+    DIM w AS DOUBLE = RAND01()
+    RETURN 0
+ENDFUNC
+
+' The pitch classes of a chord symbol, read back from the sequencer
+FUNC CHORD_PCS(chd$)
+    DIM evs = SPLIT(SOUND.EVENTS$(chd$, 1), CHR$(10))
+    DIM pcs = []
+    DIM ei AS INTEGER
+    FOR ei = 0 TO LEN(evs) - 1
+        DIM cols = SPLIT(TRIM$(evs[ei]), " ")
+        IF LEN(cols) >= 3 THEN pcs = APPEND(pcs, PC_OF(cols[2]))
+    NEXT ei
+    RETURN pcs
+ENDFUNC
+
+FUNC HAS_PC(pcs, m AS INTEGER) AS INTEGER
+    DIM pi_ AS INTEGER
+    FOR pi_ = 0 TO LEN(pcs) - 1
+        IF pcs[pi_] = m MOD 12 THEN RETURN TRUE
+    NEXT pi_
+    RETURN FALSE
+ENDFUNC
+
+' The scale notes from lo to hi, as MIDI numbers
+FUNC POOL(root_pc AS INTEGER, steps, lo AS INTEGER, hi AS INTEGER)
+    DIM out = []
+    DIM m AS INTEGER
+    FOR m = lo TO hi
+        DIM rel AS INTEGER = (m - root_pc + 120) MOD 12
+        DIM si AS INTEGER
+        FOR si = 0 TO 6
+            IF steps[si] = rel THEN out = APPEND(out, m)
+        NEXT si
+    NEXT m
+    RETURN out
+ENDFUNC
+
+' A chord tone of pcs from the pool: near prev, in the heading, or a
+' leap of a fourth to a sixth when leap is set
+FUNC CHORD_TONE(pool, pcs, prev AS INTEGER, heading AS INTEGER, leap AS INTEGER) AS INTEGER
+    DIM best AS INTEGER = -1
+    DIM best_cost AS DOUBLE = 1000000
+    DIM pi_ AS INTEGER
+    FOR pi_ = 0 TO LEN(pool) - 1
+        DIM m AS INTEGER = pool[pi_]
+        IF HAS_PC(pcs, m) THEN
+            DIM d AS INTEGER = m - prev
+            DIM cost AS DOUBLE = ABS(d)
+            IF leap THEN cost = ABS(ABS(d) - 7)
+            IF heading <> 0 AND d * heading < 0 THEN cost = cost + 4
+            IF d = 0 THEN cost = cost + 3.5
+            cost = cost + RAND01() * 2.5
+            IF cost < best_cost THEN
+                best_cost = cost
+                best = m
+            ENDIF
+        ENDIF
+    NEXT pi_
+    RETURN best
+ENDFUNC
+
+' A scale step (or two) from prev in the heading, held in the pool
+FUNC SCALE_STEP(pool, prev AS INTEGER, heading AS INTEGER, stride AS INTEGER) AS INTEGER
+    DIM near_i AS INTEGER = 0
+    DIM pi_ AS INTEGER
+    FOR pi_ = 0 TO LEN(pool) - 1
+        IF ABS(pool[pi_] - prev) < ABS(pool[near_i] - prev) THEN near_i = pi_
+    NEXT pi_
+    DIM h AS INTEGER = heading
+    IF h = 0 THEN h = 1
+    DIM target AS INTEGER = near_i + h * stride
+    IF target < 0 OR target > LEN(pool) - 1 THEN target = near_i - h * stride
+    IF target < 0 THEN target = 0
+    IF target > LEN(pool) - 1 THEN target = LEN(pool) - 1
+    RETURN pool[target]
+ENDFUNC
+
+' One bar of the hook as sixteen pattern steps. kind$ is A, A2 or B.
+FUNC HOOK_BAR$(mask$, pool, pcs, next_pcs, start AS INTEGER, seed AS INTEGER, kind$, progress AS DOUBLE, span AS DOUBLE) AS STRING
+    DIM w AS INTEGER = RESEED(seed)
+    DIM last_onset AS INTEGER = -1
+    DIM k AS INTEGER
+    FOR k = 0 TO 15
+        IF MID$(mask$, k, 1) = "x" THEN last_onset = k
+    NEXT k
+    DIM out$ = ""
+    DIM prev AS INTEGER = start
+    DIM leapt AS INTEGER = 0
+    DIM first AS INTEGER = TRUE
+    DIM sound_on AS INTEGER = FALSE
+    FOR k = 0 TO 15
+        IF kind$ = "A2" AND k = 8 THEN w = RESEED(seed + 101)
+        DIM c$ = MID$(mask$, k, 1)
+        DIM tok$ = "~"
+        IF kind$ = "B" AND k > last_onset AND last_onset >= 0 THEN c$ = "-"
+        IF c$ = "x" THEN
+            DIM t AS DOUBLE = progress + span * k / 16
+            DIM heading AS INTEGER = 1
+            IF t > 0.6 THEN heading = -1
+            IF RAND01() < 0.3 THEN heading = -heading
+            DIM nt AS INTEGER = prev
+            IF kind$ = "B" AND k = last_onset THEN
+                DIM ends = [pcs[0]]
+                IF LEN(pcs) > 1 THEN ends = APPEND(ends, pcs[1])
+                nt = CHORD_TONE(pool, ends, prev, -1, FALSE)
+            ELSEIF k >= 14 AND k = last_onset THEN
+                nt = CHORD_TONE(pool, next_pcs, prev, 0, FALSE)
+            ELSEIF first THEN
+                nt = CHORD_TONE(pool, pcs, start, 0, FALSE)
+            ELSEIF leapt <> 0 THEN
+                nt = SCALE_STEP(pool, prev, -leapt, 1)
+                leapt = 0
+            ELSEIF k MOD 4 = 0 THEN
+                DIM jump AS INTEGER = RAND01() < 0.2
+                nt = CHORD_TONE(pool, pcs, prev, heading, jump)
+                IF jump AND ABS(nt - prev) >= 5 THEN leapt = SGN(nt - prev)
+            ELSE
+                DIM r AS DOUBLE = RAND01()
+                IF r < 0.07 THEN
+                    nt = prev
+                ELSEIF r < 0.85 THEN
+                    nt = SCALE_STEP(pool, prev, heading, 1)
+                ELSE
+                    nt = SCALE_STEP(pool, prev, heading, 2)
+                ENDIF
+            ENDIF
+            IF nt < 0 THEN nt = prev
+            prev = nt
+            first = FALSE
+            sound_on = TRUE
+            tok$ = MIDI_NAME$(nt)
+        ELSEIF c$ = "-" AND sound_on THEN
+            tok$ = "_"
+        ELSE
+            sound_on = FALSE
+        ENDIF
+        IF k > 0 THEN out$ = out$ + " "
+        out$ = out$ + tok$
+    NEXT k
+    RETURN "[" + out$ + "]"
+ENDFUNC
+
+' A hook over prog$ (chord symbols, one bar each) in key$, on the rhythm
+' mask, around the key's root in the given octave
+EXPORT FUNC HOOK$(seed AS INTEGER, prog$, key$, rhythm$, octave AS INTEGER) AS STRING
+    DIM mask$ = REPLACE$(rhythm$, " ", "")
+    WHILE LEN(mask$) < 16
+        mask$ = mask$ + "."
+    WEND
+    DIM chords$ = SPLIT(TRIM$(prog$), " ")
+    DIM n_bars AS INTEGER = LEN(chords$)
+    DIM root_pc AS INTEGER = KEY_ROOT(key$)
+    DIM centre AS INTEGER = (octave + 1) * 12 + root_pc
+    DIM pool = POOL(root_pc, KEY_STEPS(key$), centre - 3, centre + 11)
+    DIM out$ = ""
+    DIM bi AS INTEGER
+    FOR bi = 0 TO n_bars - 1
+        DIM kind$ = "A"
+        IF bi = n_bars - 1 AND n_bars > 1 THEN
+            kind$ = "B"
+        ELSEIF bi MOD 2 = 1 THEN
+            kind$ = "A2"
+        ENDIF
+        DIM next_i AS INTEGER = (bi + 1) MOD n_bars
+        DIM bar$ = HOOK_BAR$(mask$, pool, CHORD_PCS(chords$[bi]), CHORD_PCS(chords$[next_i]), centre + 4, seed, kind$, bi / n_bars, 1 / n_bars)
+        IF bi > 0 THEN out$ = out$ + " "
+        out$ = out$ + bar$
+    NEXT bi
+    RETURN "<" + out$ + ">"
+ENDFUNC

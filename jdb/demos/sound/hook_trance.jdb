@@ -1,0 +1,262 @@
+' hook_trance.jdb - "Seed Number", trance in A minor at 138 BPM: the
+' chords come from MELODY.PROG$, the lead hook from MELODY.HOOK$, so
+' every seed is a new tune over the same arrangement.
+'
+'   0 intro   8 groove   16 pad and arp   24 hook   40 breakdown
+'  48 build  56 drop     72 outro         80 end
+'
+' Usage: jdBasic hook_trance.jdb [--seed n] [--prog name] [--window]
+'   --seed n      the hook's seed (default 7)
+'   --prog name   epic, anthem, dark, pop, euphoric (default epic)
+
+OPTION "EXPLICIT"
+
+IMPORT SCORE
+IMPORT STAGE
+IMPORT MELODY
+
+DIM BPM AS DOUBLE = 138
+DIM KEY$ AS STRING = "A minor"
+
+DIM seed AS INTEGER = 7
+DIM prog_name$ AS STRING = "epic"
+DIM cli = OS.ARGS()
+DIM ci AS INTEGER
+FOR ci = 1 TO LEN(cli) - 2
+    IF cli[ci] = "--seed" THEN seed = VAL(cli[ci + 1])
+    IF cli[ci] = "--prog" THEN prog_name$ = cli[ci + 1]
+NEXT ci
+
+DIM KICK AS INTEGER = 0
+DIM CLAP AS INTEGER = 1
+DIM HATS AS INTEGER = 2
+DIM OPENHAT AS INTEGER = 3
+DIM BASS AS INTEGER = 4
+DIM PAD AS INTEGER = 5
+DIM ARP AS INTEGER = 6
+DIM LEAD AS INTEGER = 7
+DIM RISER AS INTEGER = 8
+DIM CRASH AS INTEGER = 9
+DIM SNARE AS INTEGER = 10
+DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "OPENHAT", "BASS", "PAD", "ARP", "LEAD", "RISER", "CRASH", "SNARE"]
+DIM ti AS INTEGER
+FOR ti = 0 TO LEN(TRACK_NAMES$) - 1
+    SCORE.TRACK ti, TRACK_NAMES$[ti]
+NEXT ti
+
+' ── Harmony and hook ─────────────────────────────────────────────
+
+DIM PROG$ AS STRING = MELODY.PROG$(prog_name$, KEY$)
+DIM CHORDS$ AS STRING = "<" + PROG$ + ">"
+DIM HOOK$ AS STRING = MELODY.HOOK$(seed, PROG$, KEY$, "x.x..x.x x.x.x...", 4)
+DIM HOOK_B$ AS STRING = MELODY.HOOK$(seed, PROG$, KEY$, "x--.x.x. x.x-x-..", 4)
+PRINT "progression: "; PROG$
+PRINT "hook:        "; HOOK$
+
+' the chord roots as a rolling off-beat bass, f1 to e2
+FUNC BASS_LINE$(prog$) AS STRING
+    DIM chords$ = SPLIT(prog$, " ")
+    DIM out$ = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(chords$) - 1
+        DIM m AS INTEGER = 36 + MELODY.PC_OF(chords$[i])
+        IF m > 40 THEN m = m - 12
+        DIM r$ = MELODY.MIDI_NAME$(m)
+        IF i > 0 THEN out$ = out$ + " "
+        out$ = out$ + "[~ " + r$ + " " + r$ + " " + r$ + "]*4"
+    NEXT i
+    RETURN "<" + out$ + ">"
+ENDFUNC
+
+' each chord's voicing an octave up, up and down in sixteenths
+FUNC ARP_LINE$(prog$) AS STRING
+    DIM n_bars AS INTEGER = LEN(SPLIT(prog$, " "))
+    DIM evs = SPLIT(SOUND.EVENTS$("<" + prog$ + ">", n_bars), CHR$(10))
+    DIM out$ = ""
+    DIM b AS INTEGER
+    FOR b = 0 TO n_bars - 1
+        DIM tones = []
+        DIM ei AS INTEGER
+        FOR ei = 0 TO LEN(evs) - 1
+            DIM cols = SPLIT(TRIM$(evs[ei]), " ")
+            IF LEN(cols) >= 3 ANDALSO VAL(cols[0]) = b THEN tones = APPEND(tones, MELODY.NOTE_MIDI(cols[2]) + 12)
+        NEXT ei
+        DIM walk = tones
+        DIM wi AS INTEGER
+        FOR wi = LEN(tones) - 2 TO 1 STEP -1
+            walk = APPEND(walk, tones[wi])
+        NEXT wi
+        DIM bar$ = ""
+        DIM s AS INTEGER
+        FOR s = 0 TO 15
+            IF s > 0 THEN bar$ = bar$ + " "
+            bar$ = bar$ + MELODY.MIDI_NAME$(walk[s MOD LEN(walk)])
+        NEXT s
+        IF b > 0 THEN out$ = out$ + " "
+        out$ = out$ + "[" + bar$ + "]"
+    NEXT b
+    RETURN "<" + out$ + ">"
+ENDFUNC
+
+DIM BASS$ AS STRING = "legato(0.6, " + BASS_LINE$(PROG$) + ")"
+DIM ARP$ AS STRING = "legato(0.5, " + ARP_LINE$(PROG$) + ")"
+
+' ── Instruments ──────────────────────────────────────────────────
+
+SOUND.INIT SCORE.AUDIO_MODE$()
+SOUND.MASTER "FIXED", 0.5
+SCORE.TEMPO BPM
+SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
+
+' orbit 0: a room and a dotted-eighth echo; orbit 1: a big hall
+SOUND.REVERB 0.6, 0.5, 0.9, 0.2
+SOUND.DELAY TRUE, 60000 / BPM * 0.75, 0.42, 0.3
+SOUND.REVERB 0.95, 0.4, 1.0, 0.65, 1
+SOUND.DELAY TRUE, 60000 / BPM * 0.75, 0.35, 0.25, 1
+
+SOUND.KIT KICK, "SYNTH"
+SOUND.KIT CLAP, "SYNTH"
+SOUND.GAIN CLAP, 0.55
+SOUND.REVERBSEND CLAP, 0.35
+SOUND.KIT HATS, "SYNTH"
+SOUND.GAIN HATS, 0.35
+SOUND.PAN HATS, 0.6
+SOUND.KIT OPENHAT, "SYNTH"
+SOUND.GAIN OPENHAT, 0.42
+SOUND.KIT SNARE, "SYNTH"
+SOUND.GAIN SNARE, 0.5
+SOUND.REVERBSEND SNARE, 0.3
+SOUND.KIT CRASH, "SYNTH"
+SOUND.GAIN CRASH, 0.6
+SOUND.ORBIT CRASH, 1
+SOUND.REVERBSEND CRASH, 0.4
+
+' bass: a filtered saw, rolling on the off-beats, ducking the kick
+SOUND.VOICE BASS, "SAW", 0.002, 0.12, 0.5, 0.05
+SOUND.FILTER BASS, 700, 0.35
+SOUND.FENV BASS, 1.5, 0.002, 0.09
+SOUND.SIDECHAIN BASS, KICK, 0.75
+SOUND.GAIN BASS, 0.8
+
+' pad: a wide supersaw bed, voice-led chords, slow in and out
+SOUND.VOICE PAD, "SAW", 0.9, 0.6, 0.85, 1.6
+SOUND.UNISON PAD, 7, 0.28, 1.0
+SOUND.FILTER PAD, 1400, 0.2
+SOUND.SIDECHAIN PAD, KICK, 0.7
+SOUND.ORBIT PAD, 1
+SOUND.REVERBSEND PAD, 0.5
+SOUND.GAIN PAD, 0.2
+
+' arp: a plucky square up and down the chord, echoing
+SOUND.VOICE ARP, "SQUARE", 0.002, 0.14, 0.15, 0.08
+SOUND.FILTER ARP, 2200, 0.4
+SOUND.FENV ARP, 1.6, 0.002, 0.1
+SOUND.SIDECHAIN ARP, KICK, 0.4
+SOUND.DELAYSEND ARP, 0.3
+SOUND.PAN ARP, 0.4
+SOUND.GAIN ARP, 0.22
+
+' lead: the hook on a detuned supersaw in the hall
+SOUND.VOICE LEAD, "SAW", 0.004, 0.3, 0.7, 0.35
+SOUND.UNISON LEAD, 7, 0.32, 0.8
+SOUND.FILTER LEAD, 3200, 0.25
+SOUND.FENV LEAD, 0.8, 0.003, 0.2
+SOUND.SIDECHAIN LEAD, KICK, 0.35
+SOUND.ORBIT LEAD, 1
+SOUND.DELAYSEND LEAD, 0.3
+SOUND.REVERBSEND LEAD, 0.4
+SOUND.GAIN LEAD, 0.28
+
+SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.3
+SOUND.FILTER RISER, 400, 0.4, "BP"
+SOUND.ORBIT RISER, 1
+SOUND.REVERBSEND RISER, 0.3
+SOUND.GAIN RISER, 0
+
+' ── Score ────────────────────────────────────────────────────────
+
+DIM HATS16$ AS STRING = "gain([0.4 0.6 0.5 0.75]*4, hh*16)"
+
+SCORE.SECTION 0, "intro", "groove"
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY HATS, HATS16$
+SOUND.FILTER HATS, 3000, 0.2, "HP"
+SCORE.SWEEP HATS, "CUTOFF", "ISAW", 500, 7000, 8, 0
+
+SCORE.SECTION 8, "groove: rolling bass", "shuffle"
+SCORE.SWEEP_OFF HATS, "CUTOFF"
+SOUND.FILTER HATS, 6000, 0.2, "HP"
+SCORE.PLAY BASS, BASS$
+SCORE.PLAY OPENHAT, "[~ oh]*4"
+SCORE.PLAY CLAP, "~ cp ~ cp"
+SCORE.SWEEP BASS, "CUTOFF", "SAW", 400, 1200, 8, 0
+
+SCORE.SECTION 16, "pad and arp", "jump"
+SCORE.SWEEP_OFF BASS, "CUTOFF"
+SCORE.PLAY PAD, "legato(1, " + CHORDS$ + ")"
+SCORE.PLAY ARP, ARP$
+SCORE.SWEEP ARP, "CUTOFF", "SINE", 900, 3500, 8, 0
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 24, "hook", "jump"
+SCORE.PLAY LEAD, HOOK$
+
+SCORE.SECTION 32, "hook, second rhythm", "wave"
+SCORE.PLAY LEAD, HOOK_B$
+
+SCORE.SECTION 40, "breakdown", "wave"
+SCORE.QUIET KICK
+SCORE.QUIET CLAP
+SCORE.QUIET OPENHAT
+SCORE.QUIET BASS
+SCORE.QUIET CRASH
+SCORE.QUIET ARP
+SCORE.PLAY HATS, "gain(0.3, [~ hh]*4)"
+SCORE.PLAY LEAD, "legato(1.2, " + HOOK$ + ")"
+SCORE.SWEEP LEAD, "CUTOFF", "SINE", 900, 3000, 8, 0
+SCORE.SWEEP PAD, "CUTOFF", "SINE", 600, 2200, 8, 0
+
+SCORE.SECTION 48, "build: riser and snare roll", "rise"
+SCORE.PLAY RISER, "legato(1, c4)"
+SCORE.SWEEP RISER, "CUTOFF", "SAW", 400, 7000, 8, 0
+SCORE.SWEEP RISER, "GAIN", "SAW", 0, 0.2, 8, 0
+SCORE.PLAY SNARE, "gain(<0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65>, <sd*4 sd*4 sd*8 sd*8 sd*8 sd*16 sd*16 [sd*16 ~]>)"
+SCORE.PLAY KICK, "<bd*4 bd*4 bd*4 bd*4 bd*8 bd*8 ~ ~>"
+
+SCORE.SECTION 56, "drop", "jump"
+SCORE.QUIET RISER
+SCORE.QUIET SNARE
+SCORE.SWEEP_OFF RISER, "CUTOFF"
+SCORE.SWEEP_OFF RISER, "GAIN"
+SCORE.SWEEP_OFF LEAD, "CUTOFF"
+SCORE.SWEEP_OFF PAD, "CUTOFF"
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY CLAP, "~ cp ~ cp"
+SCORE.PLAY HATS, HATS16$
+SCORE.PLAY OPENHAT, "[~ oh]*4"
+SCORE.PLAY BASS, BASS$
+SCORE.PLAY ARP, ARP$
+SCORE.PLAY LEAD, "juxBy(0.4, add(12), " + HOOK$ + ")"
+SCORE.PLAY CRASH, "<cr ~!3>"
+
+SCORE.SECTION 64, "drop, second rhythm", "jump"
+SCORE.PLAY LEAD, "juxBy(0.4, add(12), " + HOOK_B$ + ")"
+SCORE.PLAY CRASH, "<cr ~!7>"
+
+SCORE.SECTION 72, "outro", "groove"
+SCORE.QUIET LEAD
+SCORE.QUIET ARP
+SCORE.QUIET PAD
+SCORE.QUIET CRASH
+
+SCORE.SECTION 80, "end", "bye"
+SCORE.QUIET KICK
+SCORE.QUIET CLAP
+SCORE.QUIET HATS
+SCORE.QUIET OPENHAT
+SCORE.QUIET BASS
+
+SCORE.FINE 82
+
+STAGE.SUBTITLE "Trance in A minor, seed " + STR$(seed)
+STAGE.RUN "Seed Number"
