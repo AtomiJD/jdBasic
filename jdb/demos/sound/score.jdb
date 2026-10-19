@@ -59,9 +59,7 @@ EXPORT SUB TRACK(t AS INTEGER, name$)
     track_names$[t] = name$
 ENDSUB
 
-' Starts a section: the verbs below act on its first bar
-EXPORT SUB SECTION(b AS DOUBLE, name$, mood$)
-    AT b
+SUB ADD_SECTION(b AS DOUBLE, name$, mood$)
     IF n_sec = 0 THEN
         sec_bar[0] = b
         sec_name$[0] = name$
@@ -74,23 +72,33 @@ EXPORT SUB SECTION(b AS DOUBLE, name$, mood$)
     n_sec = n_sec + 1
 ENDSUB
 
+' Starts a section: the verbs below act on its first bar
+EXPORT SUB SECTION(b AS DOUBLE, name$, mood$)
+    AT b
+    ADD_SECTION b, name$, mood$
+ENDSUB
+
 ' The verbs below act on bar b, inside a section too
 EXPORT SUB AT(b AS DOUBLE)
     at_bar = b
     SOUND.AT b
 ENDSUB
 
-SUB LOG_TRACK(t AS INTEGER, v AS INTEGER)
+SUB ADD_EVENT(b AS DOUBLE, t AS INTEGER, v AS INTEGER)
     IF n_ev = 0 THEN
-        ev_bar[0] = at_bar
+        ev_bar[0] = b
         ev_track[0] = t
         ev_on[0] = v
     ELSE
-        ev_bar = APPEND(ev_bar, at_bar)
+        ev_bar = APPEND(ev_bar, b)
         ev_track = APPEND(ev_track, t)
         ev_on = APPEND(ev_on, v)
     ENDIF
     n_ev = n_ev + 1
+ENDSUB
+
+SUB LOG_TRACK(t AS INTEGER, v AS INTEGER)
+    ADD_EVENT at_bar, t, v
 ENDSUB
 
 EXPORT SUB PLAY(t AS INTEGER, pat$)
@@ -110,12 +118,10 @@ SUB END_SWEEP(t AS INTEGER, param$)
     NEXT i
 ENDSUB
 
-EXPORT SUB SWEEP(t AS INTEGER, param$, shape$, lo AS DOUBLE, hi AS DOUBLE, cycles AS DOUBLE, offset AS DOUBLE)
-    SOUND.MOD t, param$, shape$, lo, hi, cycles, offset
-    END_SWEEP t, param$
+SUB ADD_SWEEP(from_bar AS DOUBLE, to_bar AS DOUBLE, t AS INTEGER, param$, shape$, lo AS DOUBLE, hi AS DOUBLE, cycles AS DOUBLE, offset AS DOUBLE)
     IF n_sw = 0 THEN
-        sw_from[0] = at_bar
-        sw_to[0] = NEVER
+        sw_from[0] = from_bar
+        sw_to[0] = to_bar
         sw_track[0] = t
         sw_param$[0] = param$
         sw_shape$[0] = shape$
@@ -124,8 +130,8 @@ EXPORT SUB SWEEP(t AS INTEGER, param$, shape$, lo AS DOUBLE, hi AS DOUBLE, cycle
         sw_cyc[0] = cycles
         sw_off[0] = offset
     ELSE
-        sw_from = APPEND(sw_from, at_bar)
-        sw_to = APPEND(sw_to, NEVER)
+        sw_from = APPEND(sw_from, from_bar)
+        sw_to = APPEND(sw_to, to_bar)
         sw_track = APPEND(sw_track, t)
         sw_param$ = APPEND(sw_param$, param$)
         sw_shape$ = APPEND(sw_shape$, shape$)
@@ -135,6 +141,12 @@ EXPORT SUB SWEEP(t AS INTEGER, param$, shape$, lo AS DOUBLE, hi AS DOUBLE, cycle
         sw_off = APPEND(sw_off, offset)
     ENDIF
     n_sw = n_sw + 1
+ENDSUB
+
+EXPORT SUB SWEEP(t AS INTEGER, param$, shape$, lo AS DOUBLE, hi AS DOUBLE, cycles AS DOUBLE, offset AS DOUBLE)
+    SOUND.MOD t, param$, shape$, lo, hi, cycles, offset
+    END_SWEEP t, param$
+    ADD_SWEEP at_bar, NEVER, t, param$, shape$, lo, hi, cycles, offset
 ENDSUB
 
 EXPORT SUB SWEEP_OFF(t AS INTEGER, param$)
@@ -165,6 +177,49 @@ EXPORT SUB CLEAR()
     sw_cyc = [1.0]
     sw_off = [0.0]
     n_sw = 0
+ENDSUB
+
+' The whole score as one value: what the queries below answer from
+EXPORT FUNC SNAPSHOT()
+    RETURN {"BPM": bpm, "END_BAR": end_bar, "TRACKS": track_names$, "N_SEC": n_sec, "SEC_BAR": sec_bar, "SEC_NAME": sec_name$, "SEC_MOOD": sec_mood$, "N_EV": n_ev, "EV_BAR": ev_bar, "EV_TRACK": ev_track, "EV_ON": ev_on, "N_SW": n_sw, "SW_FROM": sw_from, "SW_TO": sw_to, "SW_TRACK": sw_track, "SW_PARAM": sw_param$, "SW_SHAPE": sw_shape$, "SW_LO": sw_lo, "SW_HI": sw_hi, "SW_CYC": sw_cyc, "SW_OFF": sw_off}
+ENDFUNC
+
+' Takes over a score from SNAPSHOT() for the queries, without a sound
+' engine: nothing is sent to the mixer
+EXPORT SUB LOAD(snap)
+    CLEAR
+    bpm = snap{"BPM"}
+    end_bar = snap{"END_BAR"}
+    DIM names = snap{"TRACKS"}
+    DIM i AS INTEGER
+    FOR i = 0 TO MAX_TRACKS - 1
+        DIM track_name$ AS STRING = names[i]
+        track_names$[i] = track_name$
+    NEXT i
+    DIM s_bar = snap{"SEC_BAR"}
+    DIM s_name = snap{"SEC_NAME"}
+    DIM s_mood = snap{"SEC_MOOD"}
+    FOR i = 0 TO snap{"N_SEC"} - 1
+        ADD_SECTION s_bar[i], s_name[i], s_mood[i]
+    NEXT i
+    DIM e_bar = snap{"EV_BAR"}
+    DIM e_track = snap{"EV_TRACK"}
+    DIM e_on = snap{"EV_ON"}
+    FOR i = 0 TO snap{"N_EV"} - 1
+        ADD_EVENT e_bar[i], e_track[i], e_on[i]
+    NEXT i
+    DIM w_from = snap{"SW_FROM"}
+    DIM w_to = snap{"SW_TO"}
+    DIM w_track = snap{"SW_TRACK"}
+    DIM w_param = snap{"SW_PARAM"}
+    DIM w_shape = snap{"SW_SHAPE"}
+    DIM w_lo = snap{"SW_LO"}
+    DIM w_hi = snap{"SW_HI"}
+    DIM w_cyc = snap{"SW_CYC"}
+    DIM w_off = snap{"SW_OFF"}
+    FOR i = 0 TO snap{"N_SW"} - 1
+        ADD_SWEEP w_from[i], w_to[i], w_track[i], w_param[i], w_shape[i], w_lo[i], w_hi[i], w_cyc[i], w_off[i]
+    NEXT i
 ENDSUB
 
 ' The song ends on bar b; later verbs act at once again

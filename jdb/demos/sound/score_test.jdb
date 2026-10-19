@@ -1,0 +1,78 @@
+' ============================================================
+' SCORE.SNAPSHOT / SCORE.LOAD and SOUND.CLOCK, the two halves a show
+' in another process works from
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' The mixer runs in PULL mode, so it needs no audio device.
+
+OPTION "EXPLICIT"
+
+IMPORT SCORE
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+SOUND.INIT "PULL"
+SCORE.TEMPO 120
+SCORE.TRACK 0, "KICK"
+SCORE.TRACK 3, "LEAD"
+SCORE.SECTION 0, "intro", "groove"
+SCORE.PLAY 0, "bd*4"
+SCORE.SECTION 8, "drop", "jump"
+SCORE.PLAY 3, "c4 e4 g4 c5"
+SCORE.SWEEP 3, "CUTOFF", "SINE", 400, 3000, 4, 0
+SCORE.SECTION 16, "outro", "bye"
+SCORE.QUIET 3
+SCORE.FINE 24
+
+' the snapshot crosses a process boundary as NODE.PACK$ bytes
+DIM snap = NODE.UNPACK(NODE.PACK$(SCORE.SNAPSHOT()))
+SCORE.CLEAR
+CHECK "CLEAR forgets the sections", SCORE.SECTIONS() = 0, STR$(SCORE.SECTIONS())
+SCORE.TEMPO 90
+SCORE.LOAD snap
+
+CHECK "sections", SCORE.SECTIONS() = 3, STR$(SCORE.SECTIONS())
+CHECK "tempo", SCORE.BPM_OF() = 120, STR$(SCORE.BPM_OF())
+CHECK "end bar", SCORE.END_BAR() = 24, STR$(SCORE.END_BAR())
+CHECK "track names", SCORE.TRACK_OF("LEAD") = 3, STR$(SCORE.TRACK_OF("LEAD"))
+CHECK "section at bar 9", SCORE.SECTION_AT(9) = 1, STR$(SCORE.SECTION_AT(9))
+CHECK "its name", SCORE.SECTION_NAME$(1) = "drop", SCORE.SECTION_NAME$(1)
+CHECK "its mood", SCORE.SECTION_MOOD$(2) = "bye", SCORE.SECTION_MOOD$(2)
+DIM live_drop = SCORE.LIVE_AT(9)
+CHECK "both tracks play in the drop", live_drop[0] = 1 ANDALSO live_drop[3] = 1, STR$(live_drop)
+DIM live_out = SCORE.LIVE_AT(17)
+CHECK "the lead is quiet in the outro", live_out[0] = 1 ANDALSO live_out[3] = 0, STR$(live_out)
+CHECK "one sweep", SCORE.SWEEPS() = 1, STR$(SCORE.SWEEPS())
+CHECK "it runs in the drop", SCORE.SWEEP_ON(0, 9), ""
+CHECK "its shape and range", SCORE.SWEEP_SHAPE$(0) = "SINE" ANDALSO SCORE.SWEEP_HI(0) = 3000, SCORE.SWEEP_SHAPE$(0)
+
+' SOUND.CLOCK: LOAD sent nothing, so the mixer still plays 90 BPM, a
+' cycle in 8/3 seconds
+DIM c0 = SOUND.CLOCK()
+CHECK "CPS is the mixer's tempo, LOAD left it", c0{"CPS"} = 0.375, STR$(c0{"CPS"})
+DIM rendered = SOUND.RENDER(44100)
+DIM c1 = SOUND.CLOCK()
+CHECK "the anchor is the first cycle of the last render", ABS(c1{"CYCLE"}) < 0.000001, STR$(c1{"CYCLE"})
+rendered = SOUND.RENDER(22050)
+DIM c2 = SOUND.CLOCK()
+CHECK "one second later it is cycle 0.375", ABS(c2{"CYCLE"} - 0.375) < 0.000001, STR$(c2{"CYCLE"})
+DIM age_ms = (NODE.TIME() - c2{"T"}) / 1000000
+CHECK "PULL mode adds no latency: T is just now", age_ms >= 0 ANDALSO age_ms < 1000, STR$(age_ms)
+SOUND.SEEK 8
+DIM c3 = SOUND.CLOCK()
+CHECK "SEEK moves the anchor at once", c3{"CYCLE"} = 8, STR$(c3{"CYCLE"})
+CHECK "and its time", c3{"T"} >= c2{"T"}, ""
+SOUND.RESET
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+IF FAIL_COUNT = 0 THEN PRINT "ALL TESTS PASSED!"

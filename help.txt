@@ -3168,6 +3168,10 @@ Description: Returns the last 1024 samples of the master output, oldest first (a
 Syntax: SOUND.CYCLE()
 Description: The sequencer clock in cycles (bars): the whole part is the bar, the fraction the position in it.
 
+[SOUND.CLOCK]
+Syntax: SOUND.CLOCK()
+Description: When the song is heard: {"CYCLE", "T", "CPS"}, cycle CYCLE leaves the speaker at T (nanoseconds on the NODE.TIME clock, device latency included) and the song moves on at CPS cycles per second. Now heard: CYCLE + (NODE.TIME() - T) / 1E9 * CPS.
+
 [SOUND.NUDGE]
 Syntax: SOUND.NUDGE track, ms
 Description: Starts every note of the track ms milliseconds late (0 to 1000).
@@ -3553,6 +3557,14 @@ Description: Returns the current system time as a string in "HH:MM:SS" format.
 [TO]
 Syntax: FOR counter = start TO end
 Description: Specifies the ending value for a FOR loop counter.
+
+[GFX.DISPLAYS]
+Syntax: GFX.DISPLAYS()
+Description: One map per connected display: INDEX (from 1), NAME, X, Y, W, H and PRIMARY.
+
+[GFX.DISPLAY]
+Syntax: GFX.DISPLAY n
+Description: The display the next SCREEN opens on (an INDEX of GFX.DISPLAYS, 0 for the primary). An open window moves there; TOGGLE_FULLSCREEN then fills that display.
 
 [TOGGLE_FULLSCREEN]
 Syntax: TOGGLE_FULLSCREEN

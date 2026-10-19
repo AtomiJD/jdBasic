@@ -530,11 +530,11 @@ either backend has two orders of magnitude to spare.
 
 | Topic | Policy (receiver) | Retained | Content |
 |-------|-------------------|----------|---------|
-| `song/clock` | latest | yes | anchor of 9.1 |
-| `song/score` | queue:4 | yes | full song structure after each BUILD: `SCORE.SNAPSHOT()` (sections, moods, sweeps, track names, bpm, end bar) + title, key, genre, seed |
-| `song/scope` | latest | no | `{"T","MASTER","BUS0","BUS1"}` as f32 arrays (packed) |
-| `song/levels` | latest | no | `SOUND.LEVELS()`, `SOUND.LOUDNESS()`, mutes |
-| `song/log` | ring:64 | no | the SCORE log lines as they happen |
+| `song/clock` | latest | yes | `SOUND.CLOCK()` plus `EPOCH`, every desk frame (50 per second) and right after each build |
+| `song/score` | queue:4 | yes | after each build: `{"SCORE": SCORE.SNAPSHOT(), "TITLE", "SUBTITLE", "GENRE", "SEED", "KEY", "EPOCH"}` |
+| `song/scope` | latest | no | `{"T", "MASTER", "BUS0"}`, the 1024-sample rings as f64 arrays, only while someone subscribes |
+| `song/levels` | latest | no | `{"LEVELS", "MUTED", "SOLOED", "LOUDNESS"}`: the desk's meters (it reads `SOUND.LEVELS` itself), only while someone subscribes |
+| `song/log` | ring:64 | no | the desk's status lines (jump, reroll, seed, genre, show started) |
 
 Calls songgen serves: `JUMP part`, `REROLL`, `SEED n`, `GENRE g$`, `MUTE t,f`
 (so a second desk or a phone dashboard can steer the same song).
@@ -562,6 +562,25 @@ Acceptance for U1: desk and show in two windows, a jump or reroll shows up in
 the show within one frame of the audible change, the show can be closed and
 started again while the song plays, and the desk's frame rate does not drop by
 more than 5 % with the show attached.
+
+### 14.3 P4 results (2026-10-19, Windows dev box, interpreter)
+
+- `SOUND.CLOCK` on the SDL device: a callback block is 10 ms, the anchor
+  lies 4 to 7 ms ahead of the mixer (stream queue plus device buffer).
+- stage.jdb reads the song through `SRC_CYCLE()`, `SRC_WAVE()`, `SRC_BUS()`;
+  the SCORE queries answer from `SCORE.LOAD`. In follow mode a jump arrives
+  as a new score and clock in the same show frame: `NODE.CALL "JUMP"` from
+  a third process returned in 16 ms and the show logged the new section on
+  the next frame.
+- The show was killed and started again while the song played; the new one
+  took the retained score and clock and showed the same bar as the desk.
+  `V` on the desk starts a closed show again.
+- Desk alone: 50 fps, 17.5 ms of work per frame. With the show attached:
+  50 fps, 18.5 ms. The frame rate holds; the work per frame grows by 6 %,
+  mostly the scope arrays the desk now reads and packs.
+- `--stage` opens the show fullscreen on the first display that is not the
+  primary (`GFX.DISPLAYS`, `GFX.DISPLAY`), in a window when there is only
+  one display.
 
 ## 15. Spawning processes
 

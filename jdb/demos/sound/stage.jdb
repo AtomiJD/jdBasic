@@ -14,10 +14,19 @@
 '
 '   F    toggle fullscreen        Esc  quit        Q  quit with status 3
 '   --window       a half-size window instead of fullscreen
+'   --display n    opens on display n of GFX.DISPLAYS()
 '   --shots dir    a frame of every section saved into dir (implies --window)
 '   --render dir   an offline render: an intro with the series title and
 '                  3-2-1, then every frame as dir/fNNNNN.jpg at 30 fps and the
 '                  sound as dir/audio.wav, starting after the intro
+'
+' As a program of its own the show follows a song another process plays:
+'
+'   jdBasic stage.jdb --follow [node] [--window] [--display n]
+'
+' joins the Node Bus as "stage", takes the score, the clock and the scope
+' songgen --live publishes (node "songgen" unless named) and runs until
+' that node leaves. STAGE.FOLLOW does the same from a program.
 
 EXPORT MODULE STAGE
 IMPORT SCORE
@@ -79,6 +88,22 @@ DIM p_next AS INTEGER = 0
 DIM star_x = RND(160) * 1920
 DIM star_y = RND(160) * 600
 DIM star_ph = RND(160) * 6.283
+
+' Where the song comes from: this process's sound engine, or with
+' follow$ set the topics of that node. The anchor says cycle a_cycle is
+' heard at a_t (NODE.TIME) and the song moves on at a_cps per second.
+DIM follow$ AS STRING = ""
+DIM src_gone AS INTEGER = FALSE
+DIM a_cycle AS DOUBLE = 0
+DIM a_t AS DOUBLE = 0
+DIM a_cps AS DOUBLE = 0
+DIM a_epoch AS INTEGER = -1
+DIM src_wave = RESHAPE([0.0], [1024])
+DIM src_bus = RESHAPE([0.0], [1024])
+DIM sub_clock = NONE
+DIM sub_score = NONE
+DIM sub_scope = NONE
+DIM src_events = NONE
 
 FUNC FRACT(x AS DOUBLE) AS DOUBLE
     RETURN x - INT(x)
@@ -521,13 +546,79 @@ SUB DRAW_INTRO()
     IF font$ <> "" THEN SETFONT font$, 17
 ENDSUB
 
+' ── The source of the song ──────────────────────────────────────
+
+FUNC SRC_CYCLE() AS DOUBLE
+    IF follow$ = "" THEN RETURN SOUND.CYCLE()
+    IF a_cps <= 0 THEN RETURN a_cycle
+    RETURN a_cycle + (NODE.TIME() - a_t) / 1000000000 * a_cps
+ENDFUNC
+
+FUNC SRC_WAVE()
+    IF follow$ = "" THEN RETURN SOUND.GET_WAVE()
+    RETURN src_wave
+ENDFUNC
+
+FUNC SRC_BUS()
+    IF follow$ = "" THEN RETURN SOUND.GET_BUS_WAVE(0)
+    RETURN src_bus
+ENDFUNC
+
+FUNC GOT(v) AS INTEGER
+    RETURN NOT CHAN.IS_TIMEOUT(v) ANDALSO NOT CHAN.IS_EOF(v)
+ENDFUNC
+
+SUB TAKE_SCORE(m)
+    SCORE.LOAD m{"SCORE"}
+    title$ = m{"TITLE"}
+    subtitle$ = m{"SUBTITLE"}
+    kick_t = SCORE.TRACK_OF("KICK")
+    clap_t = SCORE.TRACK_OF("CLAP")
+    crash_t = SCORE.TRACK_OF("CRASH")
+    sec_i = -1
+    LOG_LINE "score: " + title$ + ", " + subtitle$
+ENDSUB
+
+SUB TAKE_CLOCK(m)
+    a_cycle = m{"CYCLE"}
+    a_t = m{"T"}
+    a_cps = m{"CPS"}
+    a_epoch = m{"EPOCH"}
+ENDSUB
+
+' Takes what the followed node sent since the last frame
+SUB SRC_POLL()
+    DIM m = CHAN.TRY_RECV(sub_score)
+    DO WHILE GOT(m)
+        TAKE_SCORE m
+        m = CHAN.TRY_RECV(sub_score)
+    LOOP
+    m = CHAN.TRY_RECV(sub_clock)
+    IF GOT(m) THEN TAKE_CLOCK m
+    m = CHAN.TRY_RECV(sub_scope)
+    IF GOT(m) THEN
+        src_wave = m{"MASTER"}
+        src_bus = m{"BUS0"}
+    ENDIF
+    m = CHAN.TRY_RECV(src_events)
+    DO WHILE GOT(m)
+        IF m{"EVENT"} = "LEAVE" ANDALSO m{"ADDR"} = follow$ THEN src_gone = TRUE
+        m = CHAN.TRY_RECV(src_events)
+    LOOP
+ENDSUB
+
+SUB QUIT_SHOW(code AS INTEGER)
+    IF follow$ = "" THEN SOUND.RESET
+    END code
+ENDSUB
+
 SUB FRAME()
     DIM t0 AS DOUBLE = TICK()
     DIM dt AS DOUBLE = CLAMP01((t0 - last_tick) / 1000)
     IF dt > 0.1 THEN dt = 0.1
     IF render_dir$ <> "" THEN dt = 1 / RENDER_FPS
     last_tick = t0
-    DIM cyc AS DOUBLE = SOUND.CYCLE()
+    DIM cyc AS DOUBLE = SRC_CYCLE()
     DIM beat AS DOUBLE = cyc * 4
     DIM bf AS DOUBLE = FRACT(beat)
     DIM bar AS INTEGER = INT(cyc)
@@ -573,7 +664,7 @@ SUB FRAME()
     prev_cyc = cyc
 
     ' level and spectrum of the master
-    DIM wave = SOUND.GET_WAVE()
+    DIM wave = SRC_WAVE()
     DIM nw AS INTEGER = LEN(wave)
     energy = energy * 0.9 + SQR(SUM(wave * wave) / nw) * 0.1
     DIM fq = FFT(wave)
@@ -630,7 +721,7 @@ SUB FRAME()
     ' the master scope across the sky, the reverb bus beneath it
     DIM wx = 40 + IOTA(nw, 0) * (1440 / nw)
     DIM wy = 175 + wave * 240
-    DIM bus = SOUND.GET_BUS_WAVE(0)
+    DIM bus = SRC_BUS()
     DIM by = 330 + bus * 300
     DRAWCOLOR INT(40 + 60 * sb), INT(30 + 60 * sg), INT(50 + 80 * sr)
     LINE STACK(1, TAKE(nw - 1, wx), TAKE(nw - 1, by), DROP(1, wx), DROP(1, by))
@@ -715,15 +806,9 @@ SUB FRAME()
     ENDIF
     SCREENFLIP
 
-    IF GFX.KEYSTATE("Escape") THEN
-        SOUND.RESET
-        END
-    ENDIF
+    IF GFX.KEYSTATE("Escape") THEN QUIT_SHOW 0
     ' Q ends with status 3, which run_party.bat takes as "stop the party"
-    IF GFX.KEYSTATE("Q") THEN
-        SOUND.RESET
-        END 3
-    ENDIF
+    IF GFX.KEYSTATE("Q") THEN QUIT_SHOW 3
     DIM key_f AS INTEGER = GFX.KEYSTATE("F")
     IF key_f ANDALSO NOT key_f_was THEN TOGGLE_FULLSCREEN
     key_f_was = key_f
@@ -744,9 +829,8 @@ EXPORT SUB SUBTITLE(s$)
     subtitle$ = s$
 ENDSUB
 
-' Opens the window and plays the queued score to its last bar
-EXPORT SUB RUN(name$)
-    title$ = name$
+' Reads the command line, opens the window, loads the font
+SUB OPEN_SHOW()
     DIM windowed AS INTEGER = FALSE
     DIM cli = OS.ARGS()
     DIM ai AS INTEGER
@@ -754,6 +838,7 @@ EXPORT SUB RUN(name$)
         IF cli[ai] = "--window" THEN windowed = TRUE
         IF cli[ai] = "--shots" ANDALSO ai + 1 < LEN(cli) THEN shots$ = cli[ai + 1]
         IF cli[ai] = "--render" ANDALSO ai + 1 < LEN(cli) THEN render_dir$ = cli[ai + 1]
+        IF cli[ai] = "--display" ANDALSO ai + 1 < LEN(cli) THEN GFX.DISPLAY CINT(VAL(cli[ai + 1]))
     NEXT ai
     IF shots$ <> "" THEN windowed = TRUE
     ' the browser shows the canvas inside the page; fullscreen needs a gesture
@@ -789,8 +874,13 @@ EXPORT SUB RUN(name$)
             ENDTRY
         ENDIF
     NEXT fi
-
     last_tick = TICK()
+ENDSUB
+
+' Opens the window and plays the queued score to its last bar
+EXPORT SUB RUN(name$)
+    title$ = name$
+    OPEN_SHOW
     IF render_dir$ <> "" THEN
         ' the mixer runs offline: each frame draws, then renders its
         ' slice of audio into the WAV the video gets
@@ -816,3 +906,50 @@ EXPORT SUB RUN(name$)
     SOUND.RESET
     IF shots$ <> "" THEN PRINT "frames: "; n_frames; "  avg ms: "; INT(frame_ms_sum / n_frames * 10) / 10; "  max ms: "; INT(frame_ms_max)
 ENDSUB
+
+' Follows the song node source$ publishes (song/score, song/clock,
+' song/scope) until that node leaves
+EXPORT SUB FOLLOW(source$)
+    follow$ = source$
+    DIM at_sign AS INTEGER = INSTR(follow$, "@")
+    IF at_sign >= 0 THEN follow$ = LEFT$(follow$, at_sign)
+    DIM me$ AS STRING = "stage"
+    IF LEN(NODE.PEERS(me$)) > 0 THEN me$ = "stage-" + STR$(OS.PID())
+    DIM self_node = NODE.JOIN(me$)
+    src_events = NODE.EVENTS()
+    sub_score = TOPIC.SUBSCRIBE("song/score", "queue:4")
+    sub_clock = TOPIC.SUBSCRIBE("song/clock", "latest")
+    sub_scope = TOPIC.SUBSCRIBE("song/scope", "latest")
+    IF NOT NODE.FIND(follow$, 10000) THEN
+        PRINT "stage: no node "; follow$
+        END 1
+    ENDIF
+    DIM first = CHAN.RECV(sub_score, 10000)
+    IF NOT GOT(first) THEN
+        PRINT "stage: "; follow$; " publishes no song/score"
+        END 1
+    ENDIF
+    TAKE_SCORE first
+    DIM first_clock = CHAN.RECV(sub_clock, 5000)
+    IF GOT(first_clock) THEN TAKE_CLOCK first_clock
+    OPEN_SHOW
+    DO WHILE NOT src_gone
+        SRC_POLL
+        FRAME
+    LOOP
+    NODE.LEAVE
+ENDSUB
+
+' Run as a program: jdBasic stage.jdb --follow [node]
+DIM stage_cli = OS.ARGS()
+IF LEN(stage_cli) > 1 ANDALSO INSTR(LCASE$(stage_cli[0]), "stage.jdb") >= 0 THEN
+    DIM follow_node$ AS STRING = ""
+    DIM sci AS INTEGER
+    FOR sci = 1 TO LEN(stage_cli) - 1
+        IF stage_cli[sci] = "--follow" THEN
+            follow_node$ = "songgen"
+            IF sci + 1 < LEN(stage_cli) ANDALSO LEFT$(stage_cli[sci + 1], 2) <> "--" THEN follow_node$ = stage_cli[sci + 1]
+        ENDIF
+    NEXT sci
+    IF follow_node$ <> "" THEN FOLLOW follow_node$
+ENDIF

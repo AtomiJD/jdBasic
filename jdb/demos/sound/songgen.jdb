@@ -28,7 +28,10 @@
 '   --live       a mixing desk instead of the show: mute and solo the
 '                tracks, jump to a part, reroll a part, change seed and
 '                genre while the music plays
-'   --shot file  with --live: saves the desk as an image after 6 s and ends
+'   --shot file  with --live: saves the desk as an image after 6 s (or
+'                --after s) and ends
+'   --stage      with --live: the show follows the desk in a window of its
+'                own (stage.jdb --follow); V starts it again after closing
 ' The recipe is printed first, so a good seed can be kept.
 
 OPTION "EXPLICIT"
@@ -45,6 +48,8 @@ DIM wav$ AS STRING = ""
 DIM recipe_only AS INTEGER = FALSE
 DIM live_mode AS INTEGER = FALSE
 DIM shot$ AS STRING = ""
+DIM shot_after AS DOUBLE = 6
+DIM stage_mode AS INTEGER = FALSE
 DIM cli = OS.ARGS()
 DIM ci AS INTEGER
 FOR ci = 1 TO LEN(cli) - 2
@@ -52,10 +57,12 @@ FOR ci = 1 TO LEN(cli) - 2
     IF cli[ci] = "--seed" THEN seed = CINT(VAL(cli[ci + 1]))
     IF cli[ci] = "--wav" THEN wav$ = cli[ci + 1]
     IF cli[ci] = "--shot" THEN shot$ = cli[ci + 1]
+    IF cli[ci] = "--after" THEN shot_after = VAL(cli[ci + 1])
 NEXT ci
 FOR ci = 1 TO LEN(cli) - 1
     IF cli[ci] = "--recipe" THEN recipe_only = TRUE
     IF cli[ci] = "--live" THEN live_mode = TRUE
+    IF cli[ci] = "--stage" THEN stage_mode = TRUE
 NEXT ci
 DIM GENRE_NO AS INTEGER = -1
 FOR ci = 0 TO LEN(GENRES$) - 1
@@ -951,6 +958,7 @@ SUB REBUILD(b AS DOUBLE)
     ENDIF
     SCORE.CLEAR
     BUILD
+    PUBLISH_SCORE
 ENDSUB
 
 ' ── Live desk ────────────────────────────────────────────────────
@@ -969,8 +977,8 @@ DIM MX AS DOUBLE = 0
 DIM MY AS DOUBLE = 0
 DIM CLICKED AS INTEGER = FALSE
 DIM mouse_was AS INTEGER = FALSE
-DIM KEY_LIST$ = ["Left", "Right", "G", "R", "Escape", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
-DIM KEY_PREV = RESHAPE([0], [14])
+DIM KEY_LIST$ = ["Left", "Right", "G", "R", "Escape", "1", "2", "3", "4", "5", "6", "7", "8", "9", "V"]
+DIM KEY_PREV = RESHAPE([0], [15])
 DIM status$ AS STRING = ""
 DIM status_at AS DOUBLE = 0
 
@@ -1035,6 +1043,7 @@ SUB SAY(s$)
     status$ = s$
     status_at = TICK()
     PRINT s$
+    IF bus_on THEN CHAN.SEND pub_log, s$
 ENDSUB
 
 ' A new song (seed or genre changed) from its first bar
@@ -1193,8 +1202,137 @@ SUB DRAW_CONTROLS(cur AS INTEGER)
         SOLOED = RESHAPE([0], [16])
         APPLY_MUTES
     ENDIF
-    TEXT 20, y0 + 56, "Left/Right seed   G genre   R reroll the part   1-9 jump to a part   click a part to jump   Esc quit", 140, 150, 180
+    TEXT 20, y0 + 56, "Left/Right seed   G genre   R reroll the part   1-9 jump to a part   click a part to jump   V show   Esc quit", 140, 150, 180
     IF status$ <> "" ANDALSO TICK() - status_at < 4000 THEN TEXT 20, y0 + 86, status$, 240, 200, 120
+ENDSUB
+
+' ── Node Bus ─────────────────────────────────────────────────────
+' The desk joins as "songgen" and publishes what a show in another
+' process needs: song/score (the structure, after each build), song/clock
+' (when which cycle is heard), song/scope, song/levels and song/log. It
+' serves JUMP part, REROLL, SEED n, GENRE g$ and MUTE [track, flag].
+
+DIM bus_on AS INTEGER = FALSE
+DIM pub_score = NONE
+DIM pub_clock = NONE
+DIM pub_scope = NONE
+DIM pub_levels = NONE
+DIM pub_log = NONE
+DIM epoch AS INTEGER = 0
+DIM show_pid AS INTEGER = 0
+
+FUNC SUBTITLE_OF$() AS STRING
+    RETURN UCASE$(LEFT$(genre$, 1)) + MID$(genre$, 1) + " in " + KEY$ + ", seed " + STR$(seed)
+ENDFUNC
+
+SUB PUBLISH_CLOCK()
+    DIM anchor = SOUND.CLOCK()
+    anchor{"EPOCH"} = epoch
+    CHAN.SEND pub_clock, anchor
+ENDSUB
+
+' A new structure: the show reloads it and jumps to the new clock
+SUB PUBLISH_SCORE()
+    IF NOT bus_on THEN RETURN
+    epoch = epoch + 1
+    CHAN.SEND pub_score, {"SCORE": SCORE.SNAPSHOT(), "TITLE": TITLE$, "SUBTITLE": SUBTITLE_OF$(), "GENRE": genre$, "SEED": seed, "KEY": KEY$, "EPOCH": epoch}
+    PUBLISH_CLOCK
+ENDSUB
+
+' What the show draws from, sent only while someone listens
+SUB PUBLISH_FRAME()
+    PUBLISH_CLOCK
+    IF TOPIC.STATS(pub_scope){"SUBSCRIBERS"} > 0 THEN
+        CHAN.SEND pub_scope, {"T": NODE.TIME(), "MASTER": SOUND.GET_WAVE(), "BUS0": SOUND.GET_BUS_WAVE(0)}
+    ENDIF
+    IF TOPIC.STATS(pub_levels){"SUBSCRIBERS"} > 0 THEN
+        CHAN.SEND pub_levels, {"LEVELS": SHOWN, "MUTED": MUTED, "SOLOED": SOLOED, "LOUDNESS": SOUND.LOUDNESS()}
+    ENDIF
+ENDSUB
+
+FUNC H_JUMP(c)
+    DIM part AS INTEGER = CINT(c{"ARG"})
+    IF part < 0 OR part >= N_PARTS THEN RETURN "no part " + STR$(part)
+    REBUILD PART_START[part]
+    SAY "jump to " + PART_LABEL$[part]
+    RETURN PART_LABEL$[part]
+ENDFUNC
+
+FUNC H_REROLL(c)
+    DIM cur AS INTEGER = PART_AT(SOUND.CYCLE())
+    REROLL cur
+    RETURN PART_LABEL$[cur]
+ENDFUNC
+
+FUNC H_SEED(c)
+    NEXT_SEED CINT(c{"ARG"}) - seed
+    RETURN TITLE$
+ENDFUNC
+
+FUNC H_GENRE(c)
+    DIM g AS INTEGER
+    FOR g = 0 TO LEN(GENRES$) - 1
+        IF GENRES$[g] = LCASE$(c{"ARG"}) THEN
+            GENRE_NO = (g + LEN(GENRES$) - 1) MOD LEN(GENRES$)
+            NEXT_GENRE
+            RETURN TITLE$
+        ENDIF
+    NEXT g
+    RETURN "unknown genre " + c{"ARG"}
+ENDFUNC
+
+FUNC H_MUTE(c)
+    DIM t AS INTEGER = CINT(c{"ARG"}[0])
+    IF t < 0 OR t >= N_TRACKS THEN RETURN FALSE
+    MUTED[t] = IIF(c{"ARG"}[1], 1, 0)
+    APPLY_MUTES
+    RETURN TRUE
+ENDFUNC
+
+SUB BUS_OPEN()
+    IF NOT OS.FEATURE("NET") THEN RETURN
+    IF LEN(NODE.PEERS("songgen")) > 0 THEN
+        PRINT "songgen: another songgen is on the Node Bus; this desk publishes nothing"
+        RETURN
+    ENDIF
+    DIM self_node = NODE.JOIN("songgen")
+    pub_score = TOPIC.OPEN("song/score")
+    TOPIC.RETAIN pub_score, TRUE
+    pub_clock = TOPIC.OPEN("song/clock")
+    TOPIC.RETAIN pub_clock, TRUE
+    pub_scope = TOPIC.OPEN("song/scope")
+    pub_levels = TOPIC.OPEN("song/levels")
+    pub_log = TOPIC.OPEN("song/log")
+    NODE.SERVE "JUMP", "H_JUMP"
+    NODE.SERVE "REROLL", "H_REROLL"
+    NODE.SERVE "SEED", "H_SEED"
+    NODE.SERVE "GENRE", "H_GENRE"
+    NODE.SERVE "MUTE", "H_MUTE"
+    bus_on = TRUE
+    PUBLISH_SCORE
+ENDSUB
+
+' Starts stage.jdb --follow in a window of its own
+SUB START_SHOW()
+    IF NOT bus_on THEN RETURN
+    IF show_pid > 0 ANDALSO OS.ALIVE(show_pid) THEN RETURN
+    IF NOT OS.FEATURE("INTERPRETER") THEN
+        SAY "the show needs the interpreter: jdBasic stage.jdb --follow"
+        RETURN
+    ENDIF
+    DIM stage_path$ AS STRING = PATH.JOIN$(PATH.DIRNAME$(PATH.ABS$(cli[0])), "stage.jdb")
+    ' fullscreen on the first display the desk is not on, else a window
+    DIM show_args = [stage_path$, "--follow", "songgen", "--window"]
+    DIM displays = GFX.DISPLAYS()
+    DIM di AS INTEGER
+    FOR di = 0 TO LEN(displays) - 1
+        IF NOT displays[di]{"PRIMARY"} THEN
+            show_args = [stage_path$, "--follow", "songgen", "--display", STR$(displays[di]{"INDEX"})]
+            EXITFOR
+        ENDIF
+    NEXT di
+    show_pid = OS.SPAWN(OS.SELF$(), show_args)
+    SAY "show started"
 ENDSUB
 
 SUB DESK_RUN()
@@ -1211,9 +1349,14 @@ SUB DESK_RUN()
         ENDIF
     NEXT fi
     DIM fresh = SOUND.LOUDNESS(TRUE)
+    BUS_OPEN
+    IF stage_mode THEN START_SHOW
     DIM next_frame AS DOUBLE = TICK()
     DIM started AS DOUBLE = TICK()
+    DIM n_desk AS INTEGER = 0
+    DIM desk_ms AS DOUBLE = 0
     DO
+        DIM frame_t0 AS DOUBLE = TICK()
         DIM cyc AS DOUBLE = SOUND.CYCLE()
         IF cyc >= SONG_BARS + 2 THEN
             REBUILD 0
@@ -1232,17 +1375,23 @@ SUB DESK_RUN()
         DRAW_FORM cyc, cur
         DRAW_STRIPS cyc
         DRAW_CONTROLS cur
-        IF shot$ <> "" ANDALSO TICK() - started > 6000 THEN
+        IF shot$ <> "" ANDALSO TICK() - started > shot_after * 1000 THEN
             GFX.SAVE_SCREENSHOT shot$
             EXITDO
         ENDIF
         SCREENFLIP
+
+        IF bus_on THEN
+            DIM served = NODE.POLL()
+            PUBLISH_FRAME
+        ENDIF
 
         IF KEY_HIT(0) THEN NEXT_SEED -1
         IF KEY_HIT(1) THEN NEXT_SEED 1
         IF KEY_HIT(2) THEN NEXT_GENRE
         IF KEY_HIT(3) THEN REROLL cur
         IF KEY_HIT(4) THEN EXITDO
+        IF KEY_HIT(14) THEN START_SHOW
         DIM k AS INTEGER
         FOR k = 5 TO 13
             IF KEY_HIT(k) ANDALSO k - 5 < N_PARTS THEN
@@ -1251,10 +1400,14 @@ SUB DESK_RUN()
             ENDIF
         NEXT k
 
+        n_desk = n_desk + 1
+        desk_ms = desk_ms + TICK() - frame_t0
         DIM wait_ms AS DOUBLE = next_frame - TICK()
         IF wait_ms > 1 THEN SLEEP INT(wait_ms)
         next_frame = MAX([next_frame + 1000 / 50, TICK()])
     LOOP
+    PRINT "desk: "; n_desk; " frames, "; FORMAT$("{:.2f}", desk_ms / MAX([1, n_desk])); " ms of work each"
+    IF bus_on THEN NODE.LEAVE
     SOUND.RESET
 ENDSUB
 

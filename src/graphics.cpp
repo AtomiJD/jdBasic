@@ -129,6 +129,8 @@ static std::vector<uint32_t> g_plot_buf;
 // its queue before the next PLOT_POINTS arrives, on RenderPresent).
 static std::vector<SDL_FPoint> g_pts_buf;
 static bool          g_sdl_init = false;
+// the display the next SCREEN opens on, 0 = the primary one
+static SDL_DisplayID g_target_display = 0;
 
 // Key buffer for INKEY$ in GFX mode
 static std::string g_last_key;
@@ -728,7 +730,7 @@ void register_graphics_builtins(VM& vm) {
         // in the browser the canvas carries no window chrome to make room for,
         // and shrinking it by the desktop margins breaks its aspect ratio -
         // the page then scales a letterboxed picture instead of the picture.
-        SDL_DisplayID display = SDL_GetPrimaryDisplay();
+        SDL_DisplayID display = g_target_display ? g_target_display : SDL_GetPrimaryDisplay();
         const SDL_DisplayMode* dm = SDL_GetCurrentDisplayMode(display);
         if (dm) {
             if (win_w > dm->w) win_w = dm->w - 40;
@@ -746,6 +748,9 @@ void register_graphics_builtins(VM& vm) {
         if (!g_window)
             throw jdError(ErrCode::RUNTIME_ERROR,
                 std::string("SDL_CreateWindow failed: ") + SDL_GetError());
+        if (g_target_display)
+            SDL_SetWindowPosition(g_window, SDL_WINDOWPOS_CENTERED_DISPLAY(g_target_display),
+                                  SDL_WINDOWPOS_CENTERED_DISPLAY(g_target_display));
 
         g_renderer = SDL_CreateRenderer(g_window, nullptr);
         if (!g_renderer)
@@ -1471,6 +1476,62 @@ void register_graphics_builtins(VM& vm) {
             }
         }
         apply_draw_color();
+        return Value::make_none();
+    });
+
+    // ── GFX.DISPLAYS() / GFX.DISPLAY n ──────────────────────────
+    // The connected displays, and which one SCREEN opens on (1 is the
+    // first of GFX.DISPLAYS, 0 the primary). An open window moves there.
+
+    static auto ensure_video = []() {
+        if (!g_sdl_init) {
+            if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
+                throw jdError(ErrCode::RUNTIME_ERROR, std::string("SDL_Init failed: ") + SDL_GetError());
+            g_sdl_init = true;
+        }
+    };
+
+    vm.register_native("GFX.DISPLAYS", 0, 0, [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        ensure_video();
+        Value r = Value::make_array();
+        int n = 0;
+        SDL_DisplayID* ids = SDL_GetDisplays(&n);
+        SDL_DisplayID primary = SDL_GetPrimaryDisplay();
+        for (int i = 0; i < n; i++) {
+            SDL_Rect b{0, 0, 0, 0};
+            SDL_GetDisplayBounds(ids[i], &b);
+            const char* name = SDL_GetDisplayName(ids[i]);
+            Value d = Value::make_object();
+            d.as_object()->set("INDEX", Value::make_i64(i + 1));
+            d.as_object()->set("NAME", Value::make_string(name ? name : ""));
+            d.as_object()->set("X", Value::make_i64(b.x));
+            d.as_object()->set("Y", Value::make_i64(b.y));
+            d.as_object()->set("W", Value::make_i64(b.w));
+            d.as_object()->set("H", Value::make_i64(b.h));
+            d.as_object()->set("PRIMARY", Value::make_bool(ids[i] == primary));
+            r.as_array()->elements.push_back(d);
+        }
+        SDL_free(ids);
+        return r;
+    });
+
+    vm.register_native("GFX.DISPLAY", 1, 1, [](const std::vector<Value>& args) -> Value {
+        ensure_video();
+        int want = (int)args[0].to_int();
+        int n = 0;
+        SDL_DisplayID* ids = SDL_GetDisplays(&n);
+        if (want < 0 || want > n) {
+            SDL_free(ids);
+            throw jdError(ErrCode::RUNTIME_ERROR, "GFX.DISPLAY: display is 0 to " + std::to_string(n));
+        }
+        g_target_display = want == 0 ? 0 : ids[want - 1];
+        SDL_free(ids);
+        if (g_window) {
+            SDL_DisplayID id = g_target_display ? g_target_display : SDL_GetPrimaryDisplay();
+            SDL_SetWindowPosition(g_window, SDL_WINDOWPOS_CENTERED_DISPLAY(id), SDL_WINDOWPOS_CENTERED_DISPLAY(id));
+            SDL_SyncWindow(g_window);
+        }
         return Value::make_none();
     });
 

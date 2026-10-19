@@ -34,6 +34,7 @@ void register_sound_builtins(VM& vm) {
 #include <algorithm>
 #include <mutex>
 #include <atomic>
+#include <chrono>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -731,7 +732,24 @@ static struct SoundSystem {
     double seq_base = 0.0, seq_bpm = 0.0;
     int64_t seq_frames = 0;
 
-    void reset_clock() { seq_time = 0.0; seq_base = 0.0; seq_frames = 0; seq_bpm = bpm; }
+    void reset_clock() { seq_time = 0.0; seq_base = 0.0; seq_frames = 0; seq_bpm = bpm; clock_ns = 0; }
+
+    // The anchor SOUND.CLOCK answers: cycle clock_cycle leaves the speaker
+    // at steady-clock time clock_ns. out_latency_ns is how long a sample
+    // waits in the stream and the device before it is heard.
+    double clock_cycle = 0.0;
+    int64_t clock_ns = 0;
+    int64_t out_latency_ns = 0;
+    int device_frames = 0;
+
+    static int64_t steady_ns() {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+    void set_anchor() {
+        clock_cycle = seq_time;
+        clock_ns = steady_ns() + out_latency_ns;
+    }
 
     // Commands queued by SOUND.AT, applied by the mixer when the clock
     // reaches their cycle; equal cycles keep the order they were sent in
@@ -1415,6 +1433,7 @@ static struct SoundSystem {
     static void render_frames(SoundSystem* sys, float* buffer, int num_frames) {
         const int block = 256;
         int done = 0;
+        sys->set_anchor();
         while (done < num_frames) {
             int n = std::min(block, num_frames - done);
             // A block ends on the last frame before a queued command is due,
@@ -1657,6 +1676,9 @@ static struct SoundSystem {
         auto* sys = (SoundSystem*)userdata;
         int num_floats = additional_len / sizeof(float);
         std::vector<float> buffer(num_floats, 0.0f);
+        int queued = SDL_GetAudioStreamQueued(stream);
+        int64_t frames_ahead = (int64_t)(queued > 0 ? queued / (int)(2 * sizeof(float)) : 0) + sys->device_frames;
+        sys->out_latency_ns = frames_ahead * 1000000000LL / SAMPLE_RATE;
         render_frames(sys, buffer.data(), num_floats / 2);
         SDL_PutAudioStreamData(stream, buffer.data(), additional_len);
     }
@@ -2009,6 +2031,12 @@ void register_sound_builtins(VM& vm) {
             throw jdError(ErrCode::RUNTIME_ERROR, std::string("SOUND.INIT failed: ") + SDL_GetError());
 
         SDL_ResumeAudioStreamDevice(g_sound.stream);
+        {
+            SDL_AudioSpec dev_spec;
+            int dev_frames = 0;
+            if (SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(g_sound.stream), &dev_spec, &dev_frames) && dev_frames > 0)
+                g_sound.device_frames = (int)((int64_t)dev_frames * SAMPLE_RATE / std::max(1, dev_spec.freq));
+        }
 
         // PCM push-stream - opened on the same default device. SDL3 mixes
         // multiple device-streams together, so the synth and the raw
@@ -2785,6 +2813,33 @@ void register_sound_builtins(VM& vm) {
         return Value::make_f64(c);
     });
 
+    // ── SOUND.CLOCK() -> {CYCLE, T, CPS} ─────────────────────────
+    // Cycle CYCLE leaves the speaker at T (nanoseconds on the clock of
+    // NODE.TIME), device latency included; later cycles follow at CPS
+    // cycles per second.
+
+    vm.register_native("SOUND.CLOCK", 0, 0, [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        double c = 0.0, cps = 120.0 / 240.0;
+        int64_t t = SoundSystem::steady_ns();
+        if (g_sound.initialized) {
+            SND_LOCK();
+            cps = g_sound.bpm / 240.0;
+            if (g_sound.clock_ns != 0) {
+                c = g_sound.clock_cycle;
+                t = g_sound.clock_ns;
+            } else {
+                c = g_sound.seq_time;
+            }
+            SND_UNLOCK();
+        }
+        Value r = Value::make_object();
+        r.as_object()->set("CYCLE", Value::make_f64(c));
+        r.as_object()->set("T", Value::make_i64(t));
+        r.as_object()->set("CPS", Value::make_f64(cps));
+        return r;
+    });
+
     // ── SOUND.NUDGE track, ms ───────────────────────────────────
     // Starts every note of the track ms milliseconds late (0 to 1000).
 
@@ -3043,6 +3098,7 @@ void register_sound_builtins(VM& vm) {
             for (auto& l : g_sound.seq_layers) l.built_cycle = INT64_MIN;
             for (auto& v : g_sound.voices)
                 if (v.env.state != EnvState::OFF) { v.env.gate_off(); v.seq_controlled = false; }
+            g_sound.set_anchor();
         }
         SND_UNLOCK();
         return Value::make_none();
