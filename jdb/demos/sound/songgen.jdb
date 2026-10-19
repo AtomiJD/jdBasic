@@ -1078,6 +1078,11 @@ SUB BUILD()
     ARRANGE
 ENDSUB
 
+' when and from which cycle the song was last written, to tell a clock
+' that runs ahead of the wall clock
+DIM BUILT_TICK AS DOUBLE = 0
+DIM BUILT_CYCLE AS DOUBLE = 0
+
 ' Writes the song again while the old one plays: from bar b on, or on
 ' from where it plays for b below 0
 SUB REBUILD(b AS DOUBLE)
@@ -1088,6 +1093,8 @@ SUB REBUILD(b AS DOUBLE)
     ENDIF
     SCORE.CLEAR
     BUILD
+    BUILT_TICK = TICK()
+    BUILT_CYCLE = SOUND.CYCLE()
     PUBLISH_SCORE
 ENDSUB
 
@@ -1489,7 +1496,14 @@ SUB DESK_RUN()
         DIM frame_t0 AS DOUBLE = TICK()
         DIM cyc AS DOUBLE = SOUND.CYCLE()
         IF cyc >= SONG_BARS + 2 THEN
-            NEXT_SEED 1 + INT(RND(1) * 100000) - seed
+            DIM real_ms AS DOUBLE = TICK() - BUILT_TICK
+            DIM song_ms AS DOUBLE = (cyc - BUILT_CYCLE) * 240000 / BPM
+            IF real_ms < song_ms / 2 THEN
+                PRINT "songgen: the sound clock ran ahead: "; INT(song_ms); " ms of song in "; INT(real_ms); " ms, the song starts again"
+                REBUILD 0
+            ELSE
+                NEXT_SEED 1 + (INT(NOW_EPOCH()) * 7 + INT(TICK())) MOD 99999 - seed
+            ENDIF
             cyc = 0
         ENDIF
         MX = GFX.MOUSEX()
