@@ -27,7 +27,8 @@
 '   --window     the show in a window (see stage.jdb)
 '   --live       a mixing desk instead of the show: mute and solo the
 '                tracks, jump to a part, reroll a part, change seed and
-'                genre while the music plays
+'                genre while the music plays; a song that ends is followed by
+'                one with a new random seed
 '   --shot file  with --live: saves the desk as an image after 6 s (or
 '                --after s) and ends
 '   --stage      with --live: the show follows the desk in a window of its
@@ -1363,7 +1364,7 @@ SUB DESK_RUN()
         DIM frame_t0 AS DOUBLE = TICK()
         DIM cyc AS DOUBLE = SOUND.CYCLE()
         IF cyc >= SONG_BARS + 2 THEN
-            REBUILD 0
+            NEXT_SEED 1 + INT(RND(1) * 100000) - seed
             cyc = 0
         ENDIF
         MX = GFX.MOUSEX()
