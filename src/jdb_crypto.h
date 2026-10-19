@@ -195,6 +195,31 @@ inline void pbkdf2_hmac_sha256(const uint8_t* password, size_t password_len,
     }
 }
 
+// HMAC-SHA256 per RFC 2104.
+inline void hmac_sha256(const uint8_t* key, size_t key_len, const uint8_t* msg, size_t msg_len, uint8_t out[32]) {
+    uint8_t k[64] = {0};
+    if (key_len > 64) {
+        Sha256 s;
+        sha256_init(s);
+        sha256_update(s, key, key_len);
+        sha256_final(s, k);
+    } else if (key_len) {
+        memcpy(k, key, key_len);
+    }
+    uint8_t pad[64], inner[32];
+    for (int i = 0; i < 64; i++) pad[i] = k[i] ^ 0x36;
+    Sha256 s;
+    sha256_init(s);
+    sha256_update(s, pad, 64);
+    sha256_update(s, msg, msg_len);
+    sha256_final(s, inner);
+    for (int i = 0; i < 64; i++) pad[i] = k[i] ^ 0x5c;
+    sha256_init(s);
+    sha256_update(s, pad, 64);
+    sha256_update(s, inner, 32);
+    sha256_final(s, out);
+}
+
 // A version 4 UUID from 16 random bytes, into a 37-byte buffer.
 inline void uuid4_format(uint8_t b[16], char out[37]) {
     static const char* hex = "0123456789abcdef";

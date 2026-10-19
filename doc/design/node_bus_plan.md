@@ -322,7 +322,7 @@ matching subscription, and SEND and CALL reuse an open link found by name. A
 subscriber with `"*"` (spy, MCP) connects to everyone.
 
 Frame kinds in use: HELLO, WELCOME, BYE, MSG, CALL, REPLY, FAIL, SUB, UNSUB,
-PUB (always with a timestamp), CREDIT. AUTH, PING and PONG come with P5.
+PUB (always with a timestamp), CREDIT, and on lan links AUTH, PING and PONG.
 
 ## 8. Runtime internals
 
@@ -511,6 +511,22 @@ for a node they are not linked to yet; a frame goes straight onto the
 socket when nothing waits ahead of it. Compiled programs pay for
 converting arrays across the bridge. U1 needs about 50 KB at 60 Hz, so
 either backend has two orders of magnitude to spare.
+
+### 12.3 P5 results (2026-10-19, `tools/node_farm_check.jdb` on three machines)
+
+| Link | Best call | 800 KB there and back | Clock error bound |
+|------|-----------|-----------------------|-------------------|
+| Windows - render (cable) | 119 to 150 us | 18 to 20 ms | 0.09 ms |
+| Windows - mac (mac on Wi-Fi) | 3.0 to 3.1 ms | 83 to 92 ms | 2.1 to 2.8 ms |
+| render - mac (mac on Wi-Fi) | 2.9 to 4.4 ms | 39 to 98 ms | 1.6 to 2.5 ms |
+
+The bound is half the shortest round trip of the last 32 PING/PONGs. Over
+the mac's Wi-Fi a plain ping takes at least 3 ms, so the bound cannot go
+below about 1.5 ms there; the two directions of the same link agreed on the
+offset to within 0.1 to 0.7 ms. On cable the bound is under 0.1 ms. The
+songgen desk on Windows and the stage show on the mac ran together for 14
+minutes (`--live --lan`, `stage.jdb --follow --lan`); the show ended on its
+own when the desk closed.
 
 ## 13. Tooling
 

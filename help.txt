@@ -641,11 +641,11 @@ Syntax: NODE.UNPACK(s$) -> value
 Description: Decodes what NODE.PACK$ produced. Malformed, cut-off or trailing input raises with the byte offset.
 
 [NODE.JOIN]
-Syntax: NODE.JOIN(name$, [scope$]) -> handle
-Description: Joins the Node Bus under name$ and returns the node handle; the first node is the program's default node. scope$ is "local". A name in use raises.
+Syntax: NODE.JOIN(name$, [scope$], [key$]) -> handle
+Description: Joins the Node Bus under name$ and returns the node handle; the first node is the program's default node. scope$ is "local" or "lan"; lan takes key$ or JDB_NODE_KEY. A name in use raises.
 
 [NODE.OPEN]
-Syntax: NODE.OPEN(name$, [scope$]) -> handle
+Syntax: NODE.OPEN(name$, [scope$], [key$]) -> handle
 Description: A further node in the same program. The default node stays as it was.
 
 [NODE.LEAVE]
@@ -658,7 +658,7 @@ Description: The node's full address, name@host.
 
 [NODE.PEERS]
 Syntax: NODE.PEERS([pattern$]) -> array
-Description: A map per other node on this machine: NAME, ADDR, HOST, PID, SCOPE, TOPICS, SINCE.
+Description: A map per other node: NAME, ADDR, HOST, PID, SCOPE, TOPICS, SINCE; lan nodes with the same key add IP, OFFSET and ERROR.
 
 [NODE.FIND]
 Syntax: NODE.FIND(addr$, [timeout_ms]) -> boolean
@@ -715,6 +715,10 @@ Description: Runs the waiting served calls on this thread and returns how many r
 [NODE.TIME]
 Syntax: NODE.TIME() -> number
 Description: Nanoseconds on the machine's steady clock, the same in every process.
+
+[NODE.TIME_OF]
+Syntax: NODE.TIME_OF(addr$, t) -> number
+Description: A NODE.TIME of the machine of node addr$, put on this machine's clock.
 
 [NODE.TRACE]
 Syntax: NODE.TRACE flag

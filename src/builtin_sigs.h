@@ -601,6 +601,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"NODE.SEND", BuiltinRet::Bool, BF_NO_VEC},
     {"NODE.SERVE", BuiltinRet::None, BF_NO_VEC},
     {"NODE.TIME", BuiltinRet::I64, BF_NO_VEC},
+    {"NODE.TIME_OF", BuiltinRet::I64, BF_NO_VEC},
     {"NODE.TRACE", BuiltinRet::None, BF_NO_VEC},
     {"NODE.UNPACK", BuiltinRet::Handle, BF_NO_VEC},
     {"NORMALIZE", BuiltinRet::Arr, BF_NO_VEC},

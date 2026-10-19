@@ -1,0 +1,178 @@
+' The Node Bus in the lan scope. Two children play other machines on this
+' one: each gets its own host name (JDB_NODE_HOST) and node directory
+' (JDB_NODE_DIR), so only the beacons and TCP can bring them together.
+' The first has the key, serves calls and publishes a counter; the second
+' has another key and must stay invisible.
+'
+' Needs a network interface that carries multicast or broadcast to this
+' machine; a firewall may ask about the beacon port 47474.
+
+OPTION "EXPLICIT"
+
+DIM argv = OS.ARGS()
+DIM interp AS INTEGER = OS.FEATURE("INTERPRETER")
+
+FUNC ARG_AT$(i AS INTEGER) AS STRING
+    IF i < LEN(argv) THEN RETURN argv[i]
+    RETURN ""
+ENDFUNC
+
+FUNC H_PID(c)
+    RETURN OS.PID()
+ENDFUNC
+
+FUNC H_ECHO(c)
+    RETURN c{"ARG"}
+ENDFUNC
+
+FUNC H_NOW(c)
+    RETURN NODE.TIME()
+ENDFUNC
+
+' ── the child side ────────────────────────────────────────────
+IF ARG_AT$(1) = "--child" THEN
+    DIM me$ AS STRING = ARG_AT$(2)
+    DIM self_node = NODE.JOIN(me$, "lan", ARG_AT$(3))
+    NODE.SERVE "PID", "H_PID"
+    NODE.SERVE "ECHO", "H_ECHO"
+    NODE.SERVE "NOW", "H_NOW"
+    DIM tick_pub = TOPIC.OPEN("lan/" + me$ + "/tick")
+    TOPIC.RETAIN tick_pub, TRUE
+    DIM inbox = NODE.INBOX()
+    DIM n AS INTEGER = 0
+    DIM t_end = TICK() + 60000
+    DO WHILE TICK() < t_end
+        n = n + 1
+        CHAN.SEND tick_pub, n
+        DIM ran = NODE.POLL(20)
+        DIM m = CHAN.TRY_RECV(inbox)
+        IF NOT CHAN.IS_TIMEOUT(m) THEN
+            IF TYPEOF(m) = "STRING" THEN
+                IF m = "QUIT" THEN
+                    NODE.LEAVE
+                    END 0
+                ENDIF
+            ELSEIF TYPEOF(m) = "OBJECT" THEN
+                DIM echo_sent = NODE.SEND(m{"REPLY_TO"}, m{"BODY"})
+            ENDIF
+        ENDIF
+    LOOP
+    END 3
+ENDIF
+
+' ── the parent side ───────────────────────────────────────────
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+DIM tag$ AS STRING = "l" + STR$(OS.PID())
+DIM key$ AS STRING = "lan-test-" + tag$
+DIM parent$ AS STRING = "lp_" + tag$
+DIM child$ AS STRING = "lc_" + tag$
+DIM stranger$ AS STRING = "ls_" + tag$
+DIM fake_host$ AS STRING = "fake-" + tag$
+DIM other_dir$ AS STRING = PATH.JOIN$(GETENV$("TEMP") + GETENV$("TMPDIR"), "jdb_lan_" + tag$)
+
+FUNC WAIT_EVENT(ch, kind$, addr$, ms)
+    DIM deadline = TICK() + ms
+    DO WHILE TICK() < deadline
+        DIM ev = CHAN.RECV(ch, deadline - TICK())
+        IF CHAN.IS_TIMEOUT(ev) ORELSE CHAN.IS_EOF(ev) THEN RETURN NONE
+        IF ev{"EVENT"} = kind$ ANDALSO ev{"ADDR"} = addr$ THEN RETURN ev
+    LOOP
+    RETURN NONE
+ENDFUNC
+
+FUNC START_CHILD(name$, host$, key_given$) AS INTEGER
+    DIM a = ["--child", name$, key_given$]
+    IF interp THEN a = [PATH.ABS$(argv[0]), "--child", name$, key_given$]
+    RETURN OS.SPAWN(OS.SELF$(), a, {"HIDDEN": TRUE, "ENV": {"JDB_NODE_HOST": host$, "JDB_NODE_DIR": other_dir$}})
+ENDFUNC
+
+DIM key_needed AS INTEGER = FALSE
+TRY
+    DIM no_key = NODE.OPEN("lk_" + tag$, "lan", "")
+CATCH
+    key_needed = INSTR(ERRMSG$, "key") >= 0
+ENDTRY
+Ok("the lan scope wants a key", key_needed OR GETENV$("JDB_NODE_KEY") <> "")
+
+DIM me = NODE.JOIN(parent$, "lan", key$)
+DIM events = NODE.EVENTS()
+DIM ticks = TOPIC.SUBSCRIBE("lan/" + child$ + "/*", "latest", TRUE)
+DIM pid1 AS INTEGER = START_CHILD(child$, fake_host$, key$)
+DIM pid_s AS INTEGER = START_CHILD(stranger$, "other-" + tag$, "another key")
+
+Ok("the other machine's node is found", NODE.FIND(child$ + "@" + fake_host$, 20000))
+DIM peers = NODE.PEERS(child$)
+Ok("PEERS lists it once", LEN(peers) = 1)
+IF LEN(peers) = 1 THEN
+    Ok("in the lan scope", peers[0]{"SCOPE"} = "lan")
+    Ok("on its host", peers[0]{"HOST"} = fake_host$)
+    Ok("with the pid SPAWN returned", peers[0]{"PID"} = pid1)
+ENDIF
+DIM joined = WAIT_EVENT(events, "JOIN", child$, 5000)
+Ok("EVENTS reports the join", TYPEOF(joined) = "OBJECT")
+
+Ok("CALL reaches it over TCP", NODE.CALL(child$, "PID", 0, 10000) = pid1)
+Ok("by its full address too", NODE.CALL(child$ + "@" + fake_host$, "PID", 0, 10000) = pid1)
+DIM echoed = NODE.CALL(child$, "ECHO", IOTA(100000), 10000)
+Ok("a 100000-element array goes there and back", LEN(echoed) = 100000 ANDALSO SUM(echoed) = 5000050000)
+Ok("SEND to the other machine", NODE.SEND(child$, {"REPLY_TO": parent$, "BODY": "ping"}))
+Ok("its answer arrives in the inbox", CHAN.RECV(NODE.INBOX(), 10000) = "ping")
+
+DIM t1 = CHAN.RECV(ticks, 10000)
+Ok("the counter topic arrives", TYPEOF(t1) = "OBJECT")
+IF TYPEOF(t1) = "OBJECT" THEN Ok("from the child", t1{"FROM"} = child$)
+
+' the clocks: one machine here, so the true offset is 0
+SLEEP 1500
+peers = NODE.PEERS(child$)
+DIM measured AS BOOLEAN = LEN(peers) = 1
+IF measured THEN measured = TYPEOF(peers[0]{"OFFSET"}) <> "NONE"
+Ok("PING/PONG measured the offset", measured)
+IF measured THEN
+    Ok("within its error bound of the true 0", ABS(peers[0]{"OFFSET"}) <= peers[0]{"ERROR"} + 1000000)
+    Ok("the error bound is under 2 ms", peers[0]{"ERROR"} < 2000000)
+ENDIF
+DIM their_now = NODE.CALL(child$, "NOW", 0, 10000)
+DIM mine = NODE.TIME_OF(child$, their_now)
+Ok("TIME_OF puts its time on this clock", ABS(NODE.TIME() - mine) < 50000000)
+
+Ok("the node with another key stays invisible", LEN(NODE.PEERS(stranger$)) = 0)
+Ok("and cannot be called", NOT NODE.FIND(stranger$, 2000))
+
+Ok("QUIT as a message", NODE.SEND(child$, "QUIT"))
+Ok("ends the child with 0", OS.WAIT(pid1, 10000) = 0)
+DIM left_ev = WAIT_EVENT(events, "LEAVE", child$, 3000)
+Ok("its leave beacon is heard at once", TYPEOF(left_ev) = "OBJECT")
+Ok("PEERS forgets it", LEN(NODE.PEERS(child$)) = 0)
+
+Ok("KILL the stranger", OS.KILL(pid_s))
+DIM code_s = OS.WAIT(pid_s, 10000)
+NODE.LEAVE
+DIM left_files = DIR$(PATH.JOIN$(other_dir$, "*"))
+DIM fi AS INTEGER
+FOR fi = 0 TO LEN(left_files) - 1
+    TRY
+        KILL PATH.JOIN$(other_dir$, left_files[fi])
+    CATCH
+    ENDTRY
+NEXT fi
+TRY
+    RMDIR other_dir$
+CATCH
+ENDTRY
+
+PRINT ""
+PRINT "NODE LAN TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

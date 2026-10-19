@@ -1,0 +1,114 @@
+' node_farm_check.jdb - checks the Node Bus between the machines of a LAN.
+' Start it on every machine at about the same time, with the same key:
+'
+'   JDB_NODE_KEY=... jdBasic tools/node_farm_check.jdb [machines] [seconds]
+'
+' Each copy joins as "farm-<host>" in the lan scope, waits until it hears
+' the other machines (default 3, this one included), then calls each of
+' them: a round trip, an 800 KB array there and back, and the clock offset
+' PING/PONG measured. Exit 0 when every other machine answered and every
+' offset is known to better than 2 ms.
+
+OPTION "EXPLICIT"
+
+FUNC H_NOW(c)
+    RETURN NODE.TIME()
+ENDFUNC
+
+FUNC H_ECHO(c)
+    RETURN c{"ARG"}
+ENDFUNC
+
+' A call that keeps serving the others while it waits, so two machines
+' calling each other at the same moment both get their answer
+FUNC CALL_SERVING(peer$, method$, arg, ms)
+    DIM ch = NODE.CALL_ASYNC(peer$, method$, arg)
+    DIM deadline = TICK() + ms
+    DO WHILE TICK() < deadline
+        DIM r = CHAN.TRY_RECV(ch)
+        IF NOT CHAN.IS_TIMEOUT(r) THEN RETURN r
+        DIM ran = NODE.POLL(0)
+    LOOP
+    RETURN NONE
+ENDFUNC
+
+DIM cli = OS.ARGS()
+DIM want AS INTEGER = 3
+DIM seconds AS INTEGER = 30
+IF LEN(cli) > 1 THEN want = CINT(VAL(cli[1]))
+IF LEN(cli) > 2 THEN seconds = CINT(VAL(cli[2]))
+
+DIM host$ AS STRING = LCASE$(OS.HOSTNAME$())
+DIM me$ AS STRING = "farm-" + host$
+DIM self_node = NODE.JOIN(me$, "lan")
+NODE.SERVE "NOW", "H_NOW"
+NODE.SERVE "ECHO", "H_ECHO"
+PRINT me$; " waits for "; want - 1; " other machine(s)"
+
+' everyone keeps serving while it measures and until the others are done
+DIM t_end = TICK() + seconds * 1000
+DIM others = []
+DO WHILE TICK() < t_end
+    DIM ran = NODE.POLL(50)
+    others = NODE.PEERS("farm-*")
+    IF LEN(others) >= want - 1 THEN EXITDO
+LOOP
+IF LEN(others) < want - 1 THEN
+    PRINT "only "; LEN(others); " other machine(s) heard"
+ENDIF
+
+' let PING/PONG settle
+DIM settle = TICK() + 3000
+DO WHILE TICK() < settle
+    DIM ran2 = NODE.POLL(50)
+LOOP
+
+DIM block = IOTA(100000) * 0.5
+DIM bad AS INTEGER = 0
+DIM i AS INTEGER
+others = NODE.PEERS("farm-*")
+PRINT "machine            ip               call us    800KB ms   offset ms     error ms"
+FOR i = 0 TO LEN(others) - 1
+    DIM peer$ AS STRING = others[i]{"NAME"}
+    DIM best AS DOUBLE = 1E18
+    DIM k AS INTEGER
+    FOR k = 1 TO 20
+        DIM t0 = NODE.TIME()
+        DIM theirs = CALL_SERVING(peer$, "NOW", 0, 3000)
+        DIM t1 = NODE.TIME()
+        IF TYPEOF(theirs) = "NONE" THEN EXITFOR
+        IF t1 - t0 < best THEN best = t1 - t0
+        DIM ran3 = NODE.POLL(5)
+    NEXT k
+    DIM b0 = NODE.TIME()
+    DIM back = CALL_SERVING(peer$, "ECHO", block, 10000)
+    DIM b_ms = (NODE.TIME() - b0) / 1000000
+    DIM row = NODE.PEERS(peer$)
+    DIM off$ AS STRING = "-"
+    DIM err$ AS STRING = "-"
+    DIM ok AS BOOLEAN = best < 1E18 ANDALSO TYPEOF(back) = "ARRAY"
+    IF ok THEN ok = LEN(back) = 100000
+    IF LEN(row) = 1 ANDALSO TYPEOF(row[0]{"ERROR"}) <> "NONE" THEN
+        off$ = FORMAT$("{:.3f}", row[0]{"OFFSET"} / 1000000)
+        err$ = FORMAT$("{:.3f}", row[0]{"ERROR"} / 1000000)
+        IF row[0]{"ERROR"} >= 2000000 THEN ok = FALSE
+    ELSE
+        ok = FALSE
+    ENDIF
+    IF NOT ok THEN bad = bad + 1
+    PRINT FORMAT$("{:<18} {:<16} {:>8.0f} {:>10.1f} {:>16} {:>12}", peer$, others[i]{"IP"}, best / 1000, b_ms, off$, err$); IIF(ok, "", "  FAIL")
+NEXT i
+IF LEN(others) < want - 1 THEN bad = bad + 1
+
+' keep answering the others for a while
+DIM linger = TICK() + 5000
+DO WHILE TICK() < linger
+    DIM ran4 = NODE.POLL(50)
+LOOP
+NODE.LEAVE
+IF bad = 0 THEN
+    PRINT "FARM CHECK OK"
+    END 0
+ENDIF
+PRINT "FARM CHECK FAILED: "; bad
+END 1

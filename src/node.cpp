@@ -8,6 +8,12 @@
 // missing) and a file in the node directory that names its socket and the
 // topics it publishes. One I/O thread per process serves every socket; the
 // VM threads queue frames under g_mu and wake it.
+//
+// A node in the "lan" scope also listens on TCP and sends a beacon once a
+// second (multicast, broadcast and the seeds in JDB_NODE_SEEDS). Nodes with
+// the same key find each other through the beacons, prove the key with
+// HMAC-SHA256 over both nonces before any other frame, and keep measuring
+// each other's clock offset with PING/PONG.
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -28,10 +34,14 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <ifaddrs.h>
+#include <netdb.h>
+#include <net/if.h>
 #endif
 
 #include "node.h"
 #include "channels.h"
+#include "jdb_crypto.h"
 #include "jdv.h"
 #include "vm.h"
 
@@ -158,8 +168,12 @@ std::string lower(std::string s) {
     return s;
 }
 
+// The machine's name; JDB_NODE_HOST stands in for it, so a test can play
+// a second machine on this one.
 std::string host_name() {
     static std::string h = [] {
+        const char* env = std::getenv("JDB_NODE_HOST");
+        if (env && *env) return lower(env);
         sockets_ready();
         char buf[256] = {};
         gethostname(buf, sizeof(buf) - 1);
@@ -168,12 +182,57 @@ std::string host_name() {
     return h;
 }
 
+std::string hex_of(const uint8_t* p, size_t n) {
+    static const char* digits = "0123456789abcdef";
+    std::string s;
+    for (size_t i = 0; i < n; ++i) {
+        s.push_back(digits[p[i] >> 4]);
+        s.push_back(digits[p[i] & 15]);
+    }
+    return s;
+}
+
+std::string random_hex(size_t n) {
+    std::vector<uint8_t> b(n);
+    if (!jdb_crypto::random_bytes(b.data(), n)) {
+        std::mt19937_64 gen((uint64_t)now_ns() ^ ((uint64_t)self_pid() << 20));
+        for (auto& x : b) x = (uint8_t)gen();
+    }
+    return hex_of(b.data(), n);
+}
+
+std::string hmac_hex(const std::string& key, const std::string& msg) {
+    uint8_t out[32];
+    jdb_crypto::hmac_sha256((const uint8_t*)key.data(), key.size(), (const uint8_t*)msg.data(), msg.size(), out);
+    return hex_of(out, 32);
+}
+
+// The first 8 bytes of SHA-256 of the key: nodes with different keys tell
+// from the beacon alone that they do not belong together.
+std::string key_fingerprint(const std::string& key) {
+    jdb_crypto::Sha256 s;
+    jdb_crypto::sha256_init(s);
+    jdb_crypto::sha256_update(s, (const uint8_t*)key.data(), key.size());
+    uint8_t out[32];
+    jdb_crypto::sha256_final(s, out);
+    return hex_of(out, 8);
+}
+
+// Comparison whose time does not depend on where the strings differ.
+bool same_secret(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    unsigned char d = 0;
+    for (size_t i = 0; i < a.size(); ++i) d |= (unsigned char)(a[i] ^ b[i]);
+    return d == 0;
+}
+
 // ── frames (plan 5.2) ───────────────────────────────────────────────
 
 enum Kind : uint8_t {
-    K_HELLO = 1, K_WELCOME = 2, K_BYE = 3,
+    K_HELLO = 1, K_WELCOME = 2, K_BYE = 3, K_AUTH = 4,
     K_MSG = 10, K_CALL = 11, K_REPLY = 12, K_FAIL = 13,
     K_SUB = 20, K_UNSUB = 22, K_PUB = 23, K_CREDIT = 24,
+    K_PING = 30, K_PONG = 31,
 };
 
 const size_t HDR = 24;
@@ -185,7 +244,8 @@ const char* kind_name(uint8_t k) {
         case K_HELLO: return "HELLO"; case K_WELCOME: return "WELCOME"; case K_BYE: return "BYE";
         case K_MSG: return "MSG"; case K_CALL: return "CALL"; case K_REPLY: return "REPLY";
         case K_FAIL: return "FAIL"; case K_SUB: return "SUB"; case K_UNSUB: return "UNSUB";
-        case K_PUB: return "PUB"; case K_CREDIT: return "CREDIT";
+        case K_PUB: return "PUB"; case K_CREDIT: return "CREDIT"; case K_AUTH: return "AUTH";
+        case K_PING: return "PING"; case K_PONG: return "PONG";
     }
     return "?";
 }
@@ -261,6 +321,7 @@ struct Link {
     int64_t node = 0;          // the local node this link belongs to
     std::string peer_id;       // the remote node's id
     std::string peer_name;     // the remote node's name
+    std::string peer_host;
     bool outbound = false;
     bool welcomed = false;
     bool dead = false;
@@ -268,6 +329,22 @@ struct Link {
     std::deque<std::string> tx;
     size_t tx_off = 0;
     size_t tx_bytes = 0;
+    // lan links: nothing but the handshake passes until the key is proven;
+    // frames sent before that wait in held
+    bool lan = false;
+    bool authed = false;
+    std::string nonce_mine, nonce_peer;
+    std::deque<std::string> held;
+    int64_t next_ping = 0;
+    int pings = 0;
+    std::deque<std::pair<int64_t, int64_t>> samples;   // round trip, offset
+};
+
+// What PING/PONG measured about a peer's clock: its time minus ours, and
+// half the shortest round trip as the error bound.
+struct ClockOffset {
+    int64_t offset = 0;
+    int64_t error = 0;
 };
 
 // One topic of one publisher that a subscription is attached to.
@@ -341,8 +418,14 @@ struct LocalNode {
     std::shared_ptr<Channel> events;
     int64_t events_handle = 0;
     std::set<std::string> known;                // peer names EVENTS has seen
+    bool lan = false;
+    std::string key, fp;
+    sock_t lan_lfd = BAD_SOCK;
+    int lan_port = 0;
 };
 
+// A node this one can reach: from the directory, or for lan nodes from a
+// beacon (then ip, fp and heard are set and tcp is its lan port).
 struct DirEntry {
     std::string id, name, display, sock, host;
     int64_t pid = 0;
@@ -350,6 +433,10 @@ struct DirEntry {
     int64_t started = 0;
     std::vector<std::string> topics;
     std::string file;
+    bool lan = false;
+    uint32_t ip = 0;           // network byte order
+    std::string fp;
+    int64_t heard = 0;
 };
 
 struct PendingCall {
@@ -381,6 +468,15 @@ std::atomic<bool> g_trace{false};
 sock_t g_wake = BAD_SOCK;
 sockaddr_in g_wake_addr{};
 std::string g_last_error;
+std::map<std::string, DirEntry> g_lan_peers;    // by node id, from beacons
+std::map<std::string, ClockOffset> g_offsets;   // by node id
+sock_t g_beacon = BAD_SOCK;
+int64_t g_next_beacon = 0;
+
+const uint16_t BEACON_PORT = 47474;
+const char* BEACON_GROUP = "239.255.74.66";
+const int64_t BEACON_EVERY = 1000000000LL;
+const int64_t PEER_EXPIRES = 3500000000LL;
 
 const size_t LATEST_BACKLOG = 8u * 1024 * 1024;   // a latest/ring frame waits behind at most this much
 const int64_t INBOX_CAP = 4096;
@@ -424,7 +520,12 @@ std::shared_ptr<Channel> new_channel(int64_t cap, ChanPolicy policy, int64_t& ha
 
 void send_frame(Link& l, std::string frame) {
     if (l.dead) return;
-    trace("->", l, (uint8_t)frame[3], get_le<uint32_t>(frame.data() + 8), frame.size());
+    uint8_t kind = (uint8_t)frame[3];
+    if (l.lan && !l.authed && kind != K_HELLO && kind != K_WELCOME && kind != K_AUTH) {
+        l.held.push_back(std::move(frame));
+        return;
+    }
+    trace("->", l, kind, get_le<uint32_t>(frame.data() + 8), frame.size());
     size_t off = 0;
     if (l.tx.empty()) {
         // Nothing queued ahead of it: straight onto the socket, the I/O
@@ -443,6 +544,15 @@ void send_frame(Link& l, std::string frame) {
     l.tx_bytes += frame.size();
     if (l.tx.empty()) l.tx_off = off;
     l.tx.push_back(std::move(frame));
+}
+
+void release_held(Link& l) {
+    l.authed = true;
+    while (!l.held.empty()) {
+        std::string f = std::move(l.held.front());
+        l.held.pop_front();
+        send_frame(l, std::move(f));
+    }
 }
 
 // ── the node directory ──────────────────────────────────────────────
@@ -636,17 +746,90 @@ Link* link_to(int64_t node, const std::string& peer_id) {
     return nullptr;
 }
 
-std::string hello_body(const LocalNode& n) {
-    return body_of(map_of({{"ID", Value::make_string(n.id)},
-                           {"NAME", Value::make_string(n.display)},
-                           {"PID", Value::make_i64(self_pid())},
-                           {"HOST", Value::make_string(host_name())},
-                           {"VERSION", Value::make_i64(1)}}));
+Value hello_map(const LocalNode& n) {
+    return map_of({{"ID", Value::make_string(n.id)},
+                   {"NAME", Value::make_string(n.display)},
+                   {"PID", Value::make_i64(self_pid())},
+                   {"HOST", Value::make_string(host_name())},
+                   {"VERSION", Value::make_i64(1)}});
+}
+
+std::string hello_body(const LocalNode& n) { return body_of(hello_map(n)); }
+
+// A TCP connection to ip:port within ms milliseconds, or BAD_SOCK.
+sock_t tcp_connect(uint32_t ip, int port, int ms) {
+    sock_t s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == BAD_SOCK) return s;
+    set_nonblocking(s);
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = ip;
+    a.sin_port = htons((uint16_t)port);
+    if (connect(s, (sockaddr*)&a, sizeof(a)) != 0) {
+        if (!would_block()) {
+            close_sock(s);
+            return BAD_SOCK;
+        }
+        pollfd_t p{};
+        p.fd = s;
+        p.events = POLLOUT;
+        if (poll_fds(&p, 1, ms) <= 0 || (p.revents & (POLLERR | POLLHUP))) {
+            close_sock(s);
+            return BAD_SOCK;
+        }
+        int err = 0;
+#if defined(_WIN32)
+        int len = sizeof(err);
+#else
+        socklen_t len = sizeof(err);
+#endif
+        getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&err, &len);
+        if (err != 0) {
+            close_sock(s);
+            return BAD_SOCK;
+        }
+    }
+    return s;
+}
+
+std::string ip_text(uint32_t ip) {
+    char b[INET_ADDRSTRLEN] = "";
+    in_addr a{};
+    a.s_addr = ip;
+    inet_ntop(AF_INET, &a, b, sizeof(b));
+    return b;
+}
+
+// Connects node to a lan peer; the handshake starts with HELLO and its nonce.
+Link* connect_lan(LocalNode& n, const DirEntry& e) {
+    sock_t s = tcp_connect(e.ip, e.tcp, 2000);
+    if (s == BAD_SOCK) {
+        set_error("cannot connect to node " + e.display + "@" + e.host + " at " + ip_text(e.ip) + ":" + std::to_string(e.tcp));
+        return nullptr;
+    }
+    tune_stream(s, true);
+    Link l;
+    l.id = g_next_link++;
+    l.fd = s;
+    l.node = n.handle;
+    l.peer_id = e.id;
+    l.peer_name = e.display;
+    l.peer_host = e.host;
+    l.outbound = true;
+    l.lan = true;
+    l.nonce_mine = random_hex(16);
+    auto& stored = g_links[l.id] = std::move(l);
+    Value hello = hello_map(n);
+    hello.as_object()->set("NONCE", Value::make_string(stored.nonce_mine));
+    send_frame(stored, make_frame(K_HELLO, 0, 0, body_of(hello)));
+    wake_io();
+    return &stored;
 }
 
 // Connects node to the peer of e; the caller holds g_mu.
 Link* connect_link(LocalNode& n, const DirEntry& e) {
     if (Link* l = link_to(n.handle, e.id)) return l;
+    if (e.lan) return connect_lan(n, e);
     sock_t s = BAD_SOCK;
     bool tcp = false;
     if (!e.sock.empty()) {
@@ -688,6 +871,7 @@ Link* connect_link(LocalNode& n, const DirEntry& e) {
     l.node = n.handle;
     l.peer_id = e.id;
     l.peer_name = e.display;
+    l.peer_host = host_name();
     l.outbound = true;
     auto& stored = g_links[l.id] = std::move(l);
     send_frame(stored, make_frame(K_HELLO, 0, 0, hello_body(n)));
@@ -695,48 +879,77 @@ Link* connect_link(LocalNode& n, const DirEntry& e) {
     return &stored;
 }
 
-// The directory entry of a node name, local or in the directory.
-bool find_peer(const std::string& addr, DirEntry& out) {
+// The lan peers n may talk to: heard recently, with n's key.
+std::vector<DirEntry> lan_peers_for(const LocalNode* n) {
+    std::vector<DirEntry> out;
+    if (!n || !n->lan) return out;
+    int64_t now = now_ns();
+    for (auto& kv : g_lan_peers)
+        if (kv.second.fp == n->fp && now - kv.second.heard < PEER_EXPIRES) out.push_back(kv.second);
+    return out;
+}
+
+// Every node n can reach: the directory of this machine, then the lan.
+std::vector<DirEntry> peers_for(const LocalNode* n) {
+    std::vector<DirEntry> out = read_directory();
+    for (auto& e : lan_peers_for(n)) out.push_back(e);
+    return out;
+}
+
+bool is_here(const std::string& host) {
+    return host == host_name() || host == "localhost" || host == "127.0.0.1";
+}
+
+// The entry of the node addr names (name or name@host): this machine
+// first, then the lan peers n hears.
+bool find_peer(const LocalNode* n, const std::string& addr, DirEntry& out) {
     std::string name = lower(addr);
+    std::string host;
     size_t at = name.find('@');
     if (at != std::string::npos) {
-        std::string host = name.substr(at + 1);
+        host = name.substr(at + 1);
         name = name.substr(0, at);
-        if (host != host_name() && host != "localhost" && host != "127.0.0.1") {
-            set_error(addr + " is on another machine; the lan scope is not built yet");
-            return false;
+    }
+    if (host.empty() || is_here(host)) {
+        for (auto& e : read_directory()) {
+            if (e.name == name) {
+                out = e;
+                return true;
+            }
         }
     }
-    for (auto& e : read_directory()) {
-        if (e.name == name) {
-            out = e;
-            return true;
+    if (host.empty() || !is_here(host)) {
+        for (auto& e : lan_peers_for(n)) {
+            if (e.name == name && (host.empty() || e.host == host)) {
+                out = e;
+                return true;
+            }
         }
     }
-    set_error("no node named " + addr);
+    if (!host.empty() && !is_here(host) && !(n && n->lan))
+        set_error(addr + " is on another machine; join with scope \"lan\" to reach it");
+    else
+        set_error("no node named " + addr);
     return false;
 }
 
-
 // A live link from n to the node addr names: an open one when there is
-// one, otherwise opened from the directory. The caller holds g_mu.
+// one, otherwise opened from the directory or the lan. The caller holds g_mu.
 Link* reach(LocalNode& n, const std::string& addr) {
     std::string name = lower(addr);
+    std::string host;
     size_t at = name.find('@');
-    bool here = true;
     if (at != std::string::npos) {
-        std::string host = name.substr(at + 1);
-        here = host == host_name() || host == "localhost" || host == "127.0.0.1";
+        host = name.substr(at + 1);
         name = name.substr(0, at);
     }
-    if (here) {
-        for (auto& kv : g_links) {
-            Link& l = kv.second;
-            if (l.node == n.handle && !l.dead && !l.peer_name.empty() && lower(l.peer_name) == name) return &l;
-        }
+    for (auto& kv : g_links) {
+        Link& l = kv.second;
+        if (l.node != n.handle || l.dead || l.peer_name.empty() || lower(l.peer_name) != name) continue;
+        if (host.empty() || (is_here(host) ? is_here(l.peer_host) : l.peer_host == host)) return &l;
     }
     DirEntry e;
-    if (!find_peer(addr, e)) return nullptr;
+    if (!find_peer(&n, addr, e)) return nullptr;
     return connect_link(n, e);
 }
 
@@ -773,6 +986,8 @@ void deliver_pub(Attachment& a, const std::string& body, uint64_t seq, int64_t t
     if (sit == g_subs.end()) return;
     Subscription& s = sit->second;
     Value v = value_of(body);
+    auto oit = g_offsets.find(a.peer_id);
+    if (oit != g_offsets.end()) t -= oit->second.offset;
     if (s.envelope) {
         v = map_of({{"DATA", v},
                     {"FROM", Value::make_string(a.peer_name)},
@@ -793,19 +1008,82 @@ void handle_frame(Link& l, uint8_t kind, uint16_t flags, uint32_t stream, uint64
     trace("<-", l, kind, stream, body.size() + HDR);
     LocalNode* n = node_of(l.node);
     if (!n) return;
+    if (l.lan && !l.authed) {
+        // the server takes HELLO then AUTH, the client WELCOME; nothing else
+        bool expected = l.outbound ? kind == K_WELCOME : (kind == K_HELLO && l.nonce_peer.empty()) || (kind == K_AUTH && !l.nonce_peer.empty());
+        if (!expected) {
+            std::fprintf(stderr, "[node] lan link sent %s before the key was proven, closed\n", kind_name(kind));
+            l.dead = true;
+            return;
+        }
+    }
     switch (kind) {
         case K_HELLO: {
             Value m = value_of(body);
             l.peer_id = field_str(m, "ID");
             l.peer_name = field_str(m, "NAME");
+            l.peer_host = field_str(m, "HOST");
             l.welcomed = true;
-            send_frame(l, make_frame(K_WELCOME, 0, 0, hello_body(*n)));
+            if (!l.lan) {
+                send_frame(l, make_frame(K_WELCOME, 0, 0, hello_body(*n)));
+                return;
+            }
+            l.nonce_peer = field_str(m, "NONCE");
+            if (l.nonce_peer.size() != 32) {
+                l.dead = true;
+                return;
+            }
+            l.nonce_mine = random_hex(16);
+            Value w = hello_map(*n);
+            w.as_object()->set("NONCE", Value::make_string(l.nonce_mine));
+            w.as_object()->set("PROOF", Value::make_string(hmac_hex(n->key, "S" + l.nonce_peer + l.nonce_mine)));
+            send_frame(l, make_frame(K_WELCOME, 0, 0, body_of(w)));
             return;
         }
         case K_WELCOME: {
             Value m = value_of(body);
             l.peer_name = field_str(m, "NAME");
+            l.peer_host = field_str(m, "HOST");
             l.welcomed = true;
+            if (!l.lan) return;
+            l.nonce_peer = field_str(m, "NONCE");
+            if (!same_secret(field_str(m, "PROOF"), hmac_hex(n->key, "S" + l.nonce_mine + l.nonce_peer))) {
+                std::fprintf(stderr, "[node] %s@%s does not prove the key, link closed\n", l.peer_name.c_str(), l.peer_host.c_str());
+                l.dead = true;
+                return;
+            }
+            Value a = map_of({{"PROOF", Value::make_string(hmac_hex(n->key, "C" + l.nonce_mine + l.nonce_peer))}});
+            send_frame(l, make_frame(K_AUTH, 0, 0, body_of(a)));
+            release_held(l);
+            return;
+        }
+        case K_AUTH: {
+            Value m = value_of(body);
+            if (!l.lan || !same_secret(field_str(m, "PROOF"), hmac_hex(n->key, "C" + l.nonce_peer + l.nonce_mine))) {
+                std::fprintf(stderr, "[node] %s@%s does not prove the key, link closed\n", l.peer_name.c_str(), l.peer_host.c_str());
+                l.dead = true;
+                return;
+            }
+            release_held(l);
+            return;
+        }
+        case K_PING: {
+            Value m = value_of(body);
+            int64_t t = now_ns();
+            Value p = map_of({{"T1", Value::make_i64(field_int(m, "T1"))}, {"T2", Value::make_i64(t)}, {"T3", Value::make_i64(t)}});
+            send_frame(l, make_frame(K_PONG, 0, 0, body_of(p)));
+            return;
+        }
+        case K_PONG: {
+            int64_t t4 = now_ns();
+            Value m = value_of(body);
+            int64_t t1 = field_int(m, "T1"), t2 = field_int(m, "T2"), t3 = field_int(m, "T3");
+            int64_t rtt = (t4 - t1) - (t3 - t2);
+            int64_t off = ((t2 - t1) + (t3 - t4)) / 2;
+            l.samples.push_back({rtt, off});
+            if (l.samples.size() > 32) l.samples.pop_front();
+            auto best = *std::min_element(l.samples.begin(), l.samples.end());
+            g_offsets[l.peer_id] = ClockOffset{best.second, best.first / 2};
             return;
         }
         case K_BYE:
@@ -1038,22 +1316,242 @@ void unpublish_locked(int64_t handle) {
     }
     int64_t node = it->second.node;
     g_pubs.erase(it);
-    if (LocalNode* n = node_of(node)) write_dir_file(*n);
+    if (LocalNode* n = node_of(node)) {
+        write_dir_file(*n);
+        if (n->lan) g_next_beacon = 0;
+    }
     g_cv.notify_all();
+}
+
+// ── beacons (plan 7.2) ──────────────────────────────────────────────
+
+// The IPv4 addresses of this machine's interfaces that are up, without
+// loopback, in network byte order.
+std::vector<uint32_t> local_ipv4s() {
+    std::vector<uint32_t> out;
+#if defined(_WIN32)
+    char name[256] = {};
+    gethostname(name, sizeof(name) - 1);
+    addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_INET;
+    if (getaddrinfo(name, nullptr, &hints, &res) == 0) {
+        for (addrinfo* p = res; p; p = p->ai_next) {
+            uint32_t ip = ((sockaddr_in*)p->ai_addr)->sin_addr.s_addr;
+            if ((ntohl(ip) >> 24) != 127 && std::find(out.begin(), out.end(), ip) == out.end()) out.push_back(ip);
+        }
+        freeaddrinfo(res);
+    }
+#else
+    ifaddrs* ifs = nullptr;
+    if (getifaddrs(&ifs) == 0) {
+        for (ifaddrs* p = ifs; p; p = p->ifa_next) {
+            if (!p->ifa_addr || p->ifa_addr->sa_family != AF_INET) continue;
+            if (!(p->ifa_flags & IFF_UP) || (p->ifa_flags & IFF_LOOPBACK)) continue;
+            uint32_t ip = ((sockaddr_in*)p->ifa_addr)->sin_addr.s_addr;
+            if (std::find(out.begin(), out.end(), ip) == out.end()) out.push_back(ip);
+        }
+        freeifaddrs(ifs);
+    }
+#endif
+    return out;
+}
+
+// JDB_NODE_SEEDS: hosts that get every beacon by unicast as well, for
+// networks that carry no multicast or broadcast.
+std::vector<uint32_t> seed_ips() {
+    static std::vector<uint32_t> seeds = [] {
+        std::vector<uint32_t> out;
+        const char* env = std::getenv("JDB_NODE_SEEDS");
+        if (!env) return out;
+        std::stringstream ss(env);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            item.erase(0, item.find_first_not_of(" \t"));
+            item.erase(item.find_last_not_of(" \t") + 1);
+            if (item.empty()) continue;
+            addrinfo hints{}, *res = nullptr;
+            hints.ai_family = AF_INET;
+            if (getaddrinfo(item.c_str(), nullptr, &hints, &res) == 0 && res) {
+                out.push_back(((sockaddr_in*)res->ai_addr)->sin_addr.s_addr);
+                freeaddrinfo(res);
+            } else {
+                std::fprintf(stderr, "[node] JDB_NODE_SEEDS: cannot resolve %s\n", item.c_str());
+            }
+        }
+        return out;
+    }();
+    return seeds;
+}
+
+void open_beacon() {
+    if (g_beacon != BAD_SOCK) return;
+    sock_t s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s == BAD_SOCK) return;
+    int one = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof(one));
+#if defined(SO_REUSEPORT)
+    setsockopt(s, SOL_SOCKET, SO_REUSEPORT, (const char*)&one, sizeof(one));
+#endif
+    setsockopt(s, SOL_SOCKET, SO_BROADCAST, (const char*)&one, sizeof(one));
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_ANY);
+    a.sin_port = htons(BEACON_PORT);
+    if (bind(s, (sockaddr*)&a, sizeof(a)) != 0) {
+        std::fprintf(stderr, "[node] cannot bind the beacon port %u; only JDB_NODE_SEEDS will find peers\n", BEACON_PORT);
+    }
+    unsigned char ttl = 1;
+    setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, (const char*)&ttl, sizeof(ttl));
+    unsigned char loop = 1;
+    setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP, (const char*)&loop, sizeof(loop));
+    ip_mreq mreq{};
+    inet_pton(AF_INET, BEACON_GROUP, &mreq.imr_multiaddr);
+    std::vector<uint32_t> ips = local_ipv4s();
+    if (ips.empty()) ips.push_back(htonl(INADDR_ANY));
+    for (uint32_t ip : ips) {
+        mreq.imr_interface.s_addr = ip;
+        setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, (const char*)&mreq, sizeof(mreq));
+    }
+#if defined(_WIN32)
+    // a unicast beacon to a closed port must not turn into an error on the next read
+    DWORD no_reset = FALSE, ret = 0;
+    WSAIoctl(s, _WSAIOW(IOC_VENDOR, 12), &no_reset, sizeof(no_reset), nullptr, 0, &ret, nullptr, nullptr);
+#endif
+    set_nonblocking(s);
+    g_beacon = s;
+}
+
+std::string beacon_packet(const LocalNode& n, bool leaving) {
+    Value topics = Value::make_array();
+    for (auto& kv : g_pubs)
+        if (kv.second.node == n.handle) topics.as_array()->elements.push_back(Value::make_string(kv.second.topic));
+    Value m = map_of({{"ID", Value::make_string(n.id)},
+                      {"NAME", Value::make_string(n.display)},
+                      {"HOST", Value::make_string(host_name())},
+                      {"PORT", Value::make_i64(n.lan_port)},
+                      {"PID", Value::make_i64(self_pid())},
+                      {"FP", Value::make_string(n.fp)},
+                      {"STARTED", Value::make_i64(n.started)},
+                      {"TOPICS", topics},
+                      {"LEAVE", Value::make_bool(leaving)}});
+    return "JNB1" + body_of(m);
+}
+
+void send_beacon_to(const std::string& pkt, uint32_t ip) {
+    sockaddr_in to{};
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = ip;
+    to.sin_port = htons(BEACON_PORT);
+    sendto(g_beacon, pkt.data(), (int)pkt.size(), 0, (const sockaddr*)&to, sizeof(to));
+}
+
+// One beacon of n to the group on every interface, to the broadcast
+// address and to each seed.
+void send_beacon(const LocalNode& n, bool leaving) {
+    if (g_beacon == BAD_SOCK) return;
+    std::string pkt = beacon_packet(n, leaving);
+    uint32_t group = 0;
+    inet_pton(AF_INET, BEACON_GROUP, &group);
+    for (uint32_t ip : local_ipv4s()) {
+        in_addr ifa{};
+        ifa.s_addr = ip;
+        setsockopt(g_beacon, IPPROTO_IP, IP_MULTICAST_IF, (const char*)&ifa, sizeof(ifa));
+        send_beacon_to(pkt, group);
+    }
+    send_beacon_to(pkt, htonl(INADDR_BROADCAST));
+    for (uint32_t ip : seed_ips()) send_beacon_to(pkt, ip);
+}
+
+void send_beacons() {
+    int64_t now = now_ns();
+    if (now < g_next_beacon) return;
+    g_next_beacon = now + BEACON_EVERY;
+    for (auto& kv : g_nodes)
+        if (kv.second.lan) send_beacon(kv.second, false);
+}
+
+void read_beacons() {
+    if (g_beacon == BAD_SOCK) return;
+    char buf[65536];
+    for (;;) {
+        sockaddr_in from{};
+#if defined(_WIN32)
+        int flen = sizeof(from);
+#else
+        socklen_t flen = sizeof(from);
+#endif
+        int k = recvfrom(g_beacon, buf, sizeof(buf), 0, (sockaddr*)&from, &flen);
+        if (k <= 0) return;
+        if (k < 4 || std::memcmp(buf, "JNB1", 4) != 0) continue;
+        Value m;
+        try {
+            m = value_of(std::string(buf + 4, (size_t)k - 4));
+        } catch (const std::exception&) {
+            continue;
+        }
+        DirEntry e;
+        e.id = field_str(m, "ID");
+        e.display = field_str(m, "NAME");
+        e.name = lower(e.display);
+        e.host = lower(field_str(m, "HOST"));
+        if (e.id.empty() || e.name.empty() || e.host == host_name()) continue;
+        bool ours = false;
+        for (auto& kv : g_nodes) if (kv.second.id == e.id) ours = true;
+        if (ours) continue;
+        if (field_int(m, "LEAVE") != 0) {
+            g_lan_peers.erase(e.id);
+            continue;
+        }
+        e.lan = true;
+        e.ip = from.sin_addr.s_addr;
+        e.tcp = (int)field_int(m, "PORT");
+        e.pid = field_int(m, "PID");
+        e.fp = field_str(m, "FP");
+        e.started = field_int(m, "STARTED");
+        e.heard = now_ns();
+        if (Value* t = m.as_object()->get("TOPICS"))
+            if (t->type == ValueType::ARRAY)
+                for (auto& x : t->as_array()->elements) e.topics.push_back(x.to_string());
+        bool fresh = !g_lan_peers.count(e.id);
+        g_lan_peers[e.id] = e;
+        if (fresh)
+            for (auto& kv : g_nodes)
+                if (kv.second.lan && kv.second.fp == e.fp) send_beacon_to(beacon_packet(kv.second, false), e.ip);
+    }
+}
+
+void expire_lan_peers() {
+    int64_t now = now_ns();
+    for (auto it = g_lan_peers.begin(); it != g_lan_peers.end();) {
+        if (now - it->second.heard >= PEER_EXPIRES) it = g_lan_peers.erase(it);
+        else ++it;
+    }
+}
+
+void ping_links() {
+    int64_t now = now_ns();
+    for (auto& kv : g_links) {
+        Link& l = kv.second;
+        if (!l.lan || !l.authed || l.dead || now < l.next_ping) continue;
+        send_frame(l, make_frame(K_PING, 0, 0, body_of(map_of({{"T1", Value::make_i64(now)}}))));
+        l.pings++;
+        l.next_ping = now + (l.pings < 30 ? 100000000LL : 1000000000LL);
+    }
 }
 
 // ── the I/O thread ──────────────────────────────────────────────────
 
-void accept_on(LocalNode& n) {
+void accept_on(LocalNode& n, bool lan) {
     for (;;) {
-        sock_t s = accept(n.lfd, nullptr, nullptr);
+        sock_t s = accept(lan ? n.lan_lfd : n.lfd, nullptr, nullptr);
         if (s == BAD_SOCK) return;
-        tune_stream(s, !n.unix_sock);
+        tune_stream(s, lan || !n.unix_sock);
         set_nonblocking(s);
         Link l;
         l.id = g_next_link++;
         l.fd = s;
         l.node = n.handle;
+        l.lan = lan;
         g_links[l.id] = std::move(l);
     }
 }
@@ -1067,12 +1565,18 @@ void scan_directory(std::chrono::steady_clock::time_point& next_scan) {
     if (!g_subs.empty()) need = true;
     if (!need) return;
     std::vector<DirEntry> dir = read_directory();
-    for (auto& kv : g_subs) attach(kv.second, dir);
+    std::map<int64_t, std::vector<DirEntry>> seen;   // what each node reaches
+    for (auto& kv : g_nodes) {
+        std::vector<DirEntry> all = dir;
+        for (auto& e : lan_peers_for(&kv.second)) all.push_back(e);
+        seen[kv.first] = std::move(all);
+    }
+    for (auto& kv : g_subs) attach(kv.second, seen[kv.second.node]);
     for (auto& kv : g_nodes) {
         LocalNode& n = kv.second;
         if (!n.events) continue;
         std::set<std::string> now_names;
-        for (auto& e : dir) if (e.id != n.id) now_names.insert(e.display);
+        for (auto& e : seen[kv.first]) if (e.id != n.id) now_names.insert(e.display);
         for (auto& nm : now_names)
             if (!n.known.count(nm))
                 push_value(*n.events, map_of({{"EVENT", Value::make_string("JOIN")}, {"ADDR", Value::make_string(nm)}}));
@@ -1084,35 +1588,32 @@ void scan_directory(std::chrono::steady_clock::time_point& next_scan) {
 }
 
 void io_loop() {
+    enum Owner : char { O_WAKE, O_LINK, O_LISTEN, O_LAN_LISTEN, O_BEACON };
     std::vector<pollfd_t> fds;
-    std::vector<int64_t> owners;    // 0 = wake socket, >0 link id, <0 -node handle
+    std::vector<std::pair<Owner, int64_t>> owners;
     auto next_scan = std::chrono::steady_clock::now();
     bool busy = false;
+    auto watch = [&](sock_t fd, short events, Owner o, int64_t id) {
+        pollfd_t p{};
+        p.fd = fd;
+        p.events = events;
+        fds.push_back(p);
+        owners.push_back({o, id});
+    };
     while (!g_stop.load()) {
         fds.clear();
         owners.clear();
         {
             std::lock_guard<std::mutex> lock(g_mu);
-            pollfd_t w{};
-            w.fd = g_wake;
-            w.events = POLLIN;
-            fds.push_back(w);
-            owners.push_back(0);
+            watch(g_wake, POLLIN, O_WAKE, 0);
+            if (g_beacon != BAD_SOCK) watch(g_beacon, POLLIN, O_BEACON, 0);
             for (auto& kv : g_nodes) {
-                pollfd_t p{};
-                p.fd = kv.second.lfd;
-                p.events = POLLIN;
-                fds.push_back(p);
-                owners.push_back(-kv.first);
+                watch(kv.second.lfd, POLLIN, O_LISTEN, kv.first);
+                if (kv.second.lan_lfd != BAD_SOCK) watch(kv.second.lan_lfd, POLLIN, O_LAN_LISTEN, kv.first);
             }
             for (auto& kv : g_links) {
                 if (kv.second.dead) continue;
-                pollfd_t p{};
-                p.fd = kv.second.fd;
-                p.events = POLLIN;
-                if (!kv.second.tx.empty()) p.events |= POLLOUT;
-                fds.push_back(p);
-                owners.push_back(kv.first);
+                watch(kv.second.fd, (short)(POLLIN | (kv.second.tx.empty() ? 0 : POLLOUT)), O_LINK, kv.first);
             }
         }
         poll_fds(fds.data(), fds.size(), busy ? 5 : 100);
@@ -1123,12 +1624,17 @@ void io_loop() {
         }
         std::lock_guard<std::mutex> lock(g_mu);
         for (size_t i = 1; i < fds.size(); ++i) {
-            if (owners[i] < 0) {
-                if (fds[i].revents & POLLIN)
-                    if (LocalNode* n = node_of(-owners[i])) accept_on(*n);
+            Owner o = owners[i].first;
+            if (o == O_BEACON) {
+                if (fds[i].revents & POLLIN) read_beacons();
                 continue;
             }
-            auto it = g_links.find(owners[i]);
+            if (o == O_LISTEN || o == O_LAN_LISTEN) {
+                if (fds[i].revents & POLLIN)
+                    if (LocalNode* n = node_of(owners[i].second)) accept_on(*n, o == O_LAN_LISTEN);
+                continue;
+            }
+            auto it = g_links.find(owners[i].second);
             if (it == g_links.end()) continue;
             Link& l = it->second;
             if (fds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
@@ -1161,6 +1667,9 @@ void io_loop() {
             }
         }
         busy = return_credits();
+        ping_links();
+        send_beacons();
+        expire_lan_peers();
         for (auto& kv : g_links) if (!kv.second.tx.empty()) busy = true;
         scan_directory(next_scan);
     }
@@ -1215,6 +1724,10 @@ void leave_locked(int64_t handle) {
         if (ch) chan_close(*ch);
     }
     for (int64_t p : pubs) g_pubs.erase(p);
+    if (n->lan) {
+        send_beacon(*n, true);
+        close_sock(n->lan_lfd);
+    }
     close_sock(n->lfd);
     std::error_code ec;
     fs::remove(fs::u8path(n->dir_file), ec);
@@ -1242,12 +1755,18 @@ void shutdown_all() {
     }
 }
 
-int64_t join(const std::string& display, const std::string& scope) {
+int64_t join(const std::string& display, const std::string& scope, const std::string& key_arg) {
     if (!valid_name(display))
         throw std::runtime_error("a node name is 1 to 64 letters, digits, '_', '-' or '.', not \"" + display + "\"");
     std::string sc = lower(scope);
-    if (sc == "lan") throw std::runtime_error("the lan scope is not built yet; use \"local\"");
-    if (sc != "local") throw std::runtime_error("scope must be \"local\" or \"lan\", not \"" + scope + "\"");
+    std::string key = key_arg;
+    if (sc == "lan" && key.empty()) {
+        const char* env = std::getenv("JDB_NODE_KEY");
+        if (env) key = env;
+        if (key.empty())
+            throw std::runtime_error("the lan scope needs a key: set JDB_NODE_KEY or pass it as the third argument");
+    }
+    if (sc != "local" && sc != "lan") throw std::runtime_error("scope must be \"local\" or \"lan\", not \"" + scope + "\"");
     if (!sockets_ready()) throw std::runtime_error("the socket layer did not start");
     std::string name = lower(display);
     std::lock_guard<std::mutex> lock(g_mu);
@@ -1307,6 +1826,30 @@ int64_t join(const std::string& display, const std::string& scope) {
         n.lfd = s;
     }
     set_nonblocking(n.lfd);
+    if (sc == "lan") {
+        sock_t s = socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_ANY);
+        a.sin_port = 0;
+        if (s == BAD_SOCK || bind(s, (sockaddr*)&a, sizeof(a)) != 0 || listen(s, 64) != 0) {
+            close_sock(s);
+            close_sock(n.lfd);
+            throw std::runtime_error("cannot open a lan socket for node " + display);
+        }
+#if defined(_WIN32)
+        int len = sizeof(a);
+#else
+        socklen_t len = sizeof(a);
+#endif
+        getsockname(s, (sockaddr*)&a, &len);
+        set_nonblocking(s);
+        n.lan = true;
+        n.key = key;
+        n.fp = key_fingerprint(key);
+        n.lan_lfd = s;
+        n.lan_port = ntohs(a.sin_port);
+    }
 
     {
         // The exclusive create is the name lock between processes.
@@ -1329,6 +1872,11 @@ int64_t join(const std::string& display, const std::string& scope) {
     int64_t h = n.handle;
     auto& stored = g_nodes[h] = std::move(n);
     write_dir_file(stored);
+    if (stored.lan) {
+        open_beacon();
+        g_next_beacon = 0;
+        wake_io();
+    }
     if (!g_default) g_default = h;
     start_io();
     return h;
@@ -1339,6 +1887,14 @@ LocalNode& require_node(int64_t h, const char* fn) {
     LocalNode* n = node_of(h);
     if (!n) throw std::runtime_error(std::string(fn) + ": no node; call NODE.JOIN first");
     return *n;
+}
+
+std::string scope_arg(const std::vector<Value>& args) {
+    return args.size() > 1 && args[1].type != ValueType::NONE ? args[1].to_string() : "local";
+}
+
+std::string key_arg(const std::vector<Value>& args) {
+    return args.size() > 2 && args[2].type != ValueType::NONE ? args[2].to_string() : "";
 }
 
 int64_t node_arg(const std::vector<Value>& args, size_t i) {
@@ -1373,7 +1929,7 @@ int64_t subscribe(int64_t node, const std::string& pattern, const std::string& p
     s.ch->on_close = [flag] { flag->store(true); wake_io(); };
     int64_t h = s.handle;
     auto& stored = g_subs[s.id] = std::move(s);
-    attach(stored, read_directory());
+    attach(stored, peers_for(&n));
     wake_io();
     return h;
 }
@@ -1466,6 +2022,7 @@ int64_t open_topic(int64_t node, const std::string& topic, bool blocking) {
     ch->on_close = [flag] { flag->store(true); wake_io(); };
     g_pubs[h] = std::move(p);
     write_dir_file(n);
+    if (n.lan) g_next_beacon = 0;
     return h;
 }
 
@@ -1490,13 +2047,22 @@ Value call_wait(int64_t node, const std::string& addr, const std::string& method
 Value make_peer_map(const DirEntry& e) {
     Value topics = Value::make_array();
     for (auto& t : e.topics) topics.as_array()->elements.push_back(Value::make_string(t));
-    return map_of({{"NAME", Value::make_string(e.display)},
+    Value m = map_of({{"NAME", Value::make_string(e.display)},
                    {"ADDR", Value::make_string(e.display + "@" + e.host)},
                    {"HOST", Value::make_string(e.host)},
                    {"PID", Value::make_i64(e.pid)},
-                   {"SCOPE", Value::make_string("local")},
+                   {"SCOPE", Value::make_string(e.lan ? "lan" : "local")},
                    {"TOPICS", topics},
                    {"SINCE", Value::make_date((double)e.started)}});
+    if (e.lan) {
+        m.as_object()->set("IP", Value::make_string(ip_text(e.ip)));
+        auto it = g_offsets.find(e.id);
+        if (it != g_offsets.end()) {
+            m.as_object()->set("OFFSET", Value::make_i64(it->second.offset));
+            m.as_object()->set("ERROR", Value::make_i64(it->second.error));
+        }
+    }
+    return m;
 }
 
 int64_t call_token(const Value& msg, const char* fn) {
@@ -1526,16 +2092,16 @@ void register_node_builtins(VM& vm) {
     VM* vmp = &vm;
 
     // NODE.JOIN(name$, [scope$]) -> node handle; the first one is the default node.
-    vm.register_native("NODE.JOIN", 1, 2, [](const std::vector<Value>& args) -> Value {
+    vm.register_native("NODE.JOIN", 1, 3, [](const std::vector<Value>& args) -> Value {
         try {
-            return Value::make_i64(join(args[0].to_string(), args.size() > 1 ? args[1].to_string() : "local"));
+            return Value::make_i64(join(args[0].to_string(), scope_arg(args), key_arg(args)));
         } catch (const std::exception& ex) {
             throw std::runtime_error(std::string("NODE.JOIN: ") + ex.what());
         }
     });
 
     // NODE.OPEN(name$, [scope$]) -> a further node of this program.
-    vm.register_native("NODE.OPEN", 1, 2, [](const std::vector<Value>& args) -> Value {
+    vm.register_native("NODE.OPEN", 1, 3, [](const std::vector<Value>& args) -> Value {
         int64_t keep;
         {
             std::lock_guard<std::mutex> lock(g_mu);
@@ -1543,7 +2109,7 @@ void register_node_builtins(VM& vm) {
         }
         int64_t h;
         try {
-            h = join(args[0].to_string(), args.size() > 1 ? args[1].to_string() : "local");
+            h = join(args[0].to_string(), scope_arg(args), key_arg(args));
         } catch (const std::exception& ex) {
             throw std::runtime_error(std::string("NODE.OPEN: ") + ex.what());
         }
@@ -1573,13 +2139,11 @@ void register_node_builtins(VM& vm) {
     // NODE.PEERS([pattern$]) -> array of maps, every other node on this machine.
     vm.register_native("NODE.PEERS", 0, 1, [](const std::vector<Value>& args) -> Value {
         std::string pat = args.empty() || args[0].type == ValueType::NONE ? "*" : lower(args[0].to_string());
+        std::lock_guard<std::mutex> lock(g_mu);
         std::string self_id;
-        {
-            std::lock_guard<std::mutex> lock(g_mu);
-            if (LocalNode* n = node_of(g_default)) self_id = n->id;
-        }
+        if (LocalNode* n = node_of(g_default)) self_id = n->id;
         Value out = Value::make_array();
-        auto dir = read_directory();
+        std::vector<DirEntry> dir = peers_for(node_of(g_default));
         std::sort(dir.begin(), dir.end(), [](const DirEntry& a, const DirEntry& b) { return a.name < b.name; });
         for (auto& e : dir)
             if (e.id != self_id && glob_match(pat, e.name)) out.as_array()->elements.push_back(make_peer_map(e));
@@ -1596,7 +2160,7 @@ void register_node_builtins(VM& vm) {
             bool found;
             {
                 std::lock_guard<std::mutex> lock(g_mu);
-                found = find_peer(addr, e);
+                found = find_peer(node_of(g_default), addr, e);
             }
             if (found) return Value::make_bool(true);
             if (ms >= 0 && std::chrono::steady_clock::now() >= deadline) return Value::make_bool(false);
@@ -1609,7 +2173,7 @@ void register_node_builtins(VM& vm) {
         LocalNode& n = require_node(node_arg(args, 0), "NODE.EVENTS");
         if (!n.events) {
             n.events = new_channel(256, ChanPolicy::Ring, n.events_handle);
-            for (auto& e : read_directory()) if (e.id != n.id) n.known.insert(e.display);
+            for (auto& e : peers_for(&n)) if (e.id != n.id) n.known.insert(e.display);
         }
         return Value::make_i64(n.events_handle);
     });
@@ -1734,6 +2298,16 @@ void register_node_builtins(VM& vm) {
         return Value::make_i64(now_ns());
     });
 
+    // NODE.TIME_OF(addr$, t) -> a NODE.TIME of that node on this machine's clock.
+    vm.register_native("NODE.TIME_OF", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int64_t t = args[1].to_int();
+        std::lock_guard<std::mutex> lock(g_mu);
+        DirEntry e;
+        if (!find_peer(node_of(g_default), args[0].to_string(), e) || !e.lan) return Value::make_i64(t);
+        auto it = g_offsets.find(e.id);
+        return Value::make_i64(it == g_offsets.end() ? t : t - it->second.offset);
+    });
+
     vm.register_native("NODE.TRACE", 1, 1, [](const std::vector<Value>& args) -> Value {
         g_trace = args[0].to_bool();
         return Value::make_none();
@@ -1793,7 +2367,11 @@ void register_node_builtins(VM& vm) {
     vm.register_native("TOPIC.LIST", 0, 1, [](const std::vector<Value>& args) -> Value {
         std::string pat = args.empty() || args[0].type == ValueType::NONE ? "*" : args[0].to_string();
         Value out = Value::make_array();
-        auto dir = read_directory();
+        std::vector<DirEntry> dir;
+        {
+            std::lock_guard<std::mutex> lock(g_mu);
+            dir = peers_for(node_of(g_default));
+        }
         std::sort(dir.begin(), dir.end(), [](const DirEntry& a, const DirEntry& b) { return a.name < b.name; });
         for (auto& e : dir)
             for (auto& t : e.topics)

@@ -22,11 +22,12 @@
 '
 ' As a program of its own the show follows a song another process plays:
 '
-'   jdBasic stage.jdb --follow [node] [--window] [--display n]
+'   jdBasic stage.jdb --follow [node] [--window] [--display n] [--lan]
 '
 ' joins the Node Bus as "stage", takes the score, the clock and the scope
 ' songgen --live publishes (node "songgen" unless named) and runs until
-' that node leaves. STAGE.FOLLOW does the same from a program.
+' that node leaves. With --lan the node may be on another machine (the
+' key in JDB_NODE_KEY). STAGE.FOLLOW does the same from a program.
 
 EXPORT MODULE STAGE
 IMPORT SCORE
@@ -581,7 +582,7 @@ ENDSUB
 
 SUB TAKE_CLOCK(m)
     a_cycle = m{"CYCLE"}
-    a_t = m{"T"}
+    a_t = NODE.TIME_OF(follow$, m{"T"})
     a_cps = m{"CPS"}
     a_epoch = m{"EPOCH"}
 ENDSUB
@@ -915,7 +916,13 @@ EXPORT SUB FOLLOW(source$)
     IF at_sign >= 0 THEN follow$ = LEFT$(follow$, at_sign)
     DIM me$ AS STRING = "stage"
     IF LEN(NODE.PEERS(me$)) > 0 THEN me$ = "stage-" + STR$(OS.PID())
-    DIM self_node = NODE.JOIN(me$)
+    DIM scope$ AS STRING = "local"
+    DIM fcli = OS.ARGS()
+    DIM fa AS INTEGER
+    FOR fa = 1 TO LEN(fcli) - 1
+        IF fcli[fa] = "--lan" THEN scope$ = "lan"
+    NEXT fa
+    DIM self_node = NODE.JOIN(me$, scope$)
     src_events = NODE.EVENTS()
     sub_score = TOPIC.SUBSCRIBE("song/score", "queue:4")
     sub_clock = TOPIC.SUBSCRIBE("song/clock", "latest")

@@ -32,6 +32,8 @@
 '                --after s) and ends
 '   --stage      with --live: the show follows the desk in a window of its
 '                own (stage.jdb --follow); V starts it again after closing
+'   --lan        with --live: the desk is on the Node Bus of the whole LAN, so
+'                a show on another machine can follow it (key in JDB_NODE_KEY)
 ' The recipe is printed first, so a good seed can be kept.
 
 OPTION "EXPLICIT"
@@ -50,6 +52,7 @@ DIM live_mode AS INTEGER = FALSE
 DIM shot$ AS STRING = ""
 DIM shot_after AS DOUBLE = 6
 DIM stage_mode AS INTEGER = FALSE
+DIM lan_mode AS INTEGER = FALSE
 DIM cli = OS.ARGS()
 DIM ci AS INTEGER
 FOR ci = 1 TO LEN(cli) - 2
@@ -63,6 +66,7 @@ FOR ci = 1 TO LEN(cli) - 1
     IF cli[ci] = "--recipe" THEN recipe_only = TRUE
     IF cli[ci] = "--live" THEN live_mode = TRUE
     IF cli[ci] = "--stage" THEN stage_mode = TRUE
+    IF cli[ci] = "--lan" THEN lan_mode = TRUE
 NEXT ci
 DIM GENRE_NO AS INTEGER = -1
 FOR ci = 0 TO LEN(GENRES$) - 1
@@ -1295,7 +1299,7 @@ SUB BUS_OPEN()
         PRINT "songgen: another songgen is on the Node Bus; this desk publishes nothing"
         RETURN
     ENDIF
-    DIM self_node = NODE.JOIN("songgen")
+    DIM self_node = NODE.JOIN("songgen", IIF(lan_mode, "lan", "local"))
     pub_score = TOPIC.OPEN("song/score")
     TOPIC.RETAIN pub_score, TRUE
     pub_clock = TOPIC.OPEN("song/clock")
