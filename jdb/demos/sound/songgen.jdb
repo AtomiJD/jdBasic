@@ -409,7 +409,8 @@ DIM BASE_FT$ = ["LP", "LP", "HP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP"
 ' its patch
 SUB RESET_ARRANGEMENT()
     HATS16$ = "sometimesBy(0.3, gain(0.78), gain([0.4 0.6 0.5 0.75]*4, hh*16))"
-    IF genre$ = "house" OR genre$ = "deep" THEN HATS16$ = "swingBy(0.1, 4, " + HATS16$ + ")"
+    PICK_SONG_GROOVE
+    HATS16$ = SWUNG$(HATS16$)
     PARTS_TRACK = ARP
     IF genre$ = "house" OR genre$ = "deep" THEN PARTS_TRACK = KEYS
     PARTS$ = FIGURES$[0]
@@ -502,28 +503,123 @@ SUB COMMIT_PART(b AS INTEGER)
     NEXT t
 ENDSUB
 
-' a quiet snare a sixteenth before the clap, or "" below level 3
+' The groove: the song picks the kick, the hat style and the swing, each
+' part its clap figure, how many claps it scatters and its percussion.
+' Scattered hits come from the seed, so a seed always plays the same.
+DIM CUR_PART AS INTEGER = 0
+DIM KICK_PAT$ AS STRING = "bd*4"
+DIM HAT_STYLE AS INTEGER = 0
+DIM SWING_AMT AS DOUBLE = 0.1
+DIM CLAP_PAT$ AS STRING = "~ cp ~ cp"
+DIM CLAP_SCATTER AS DOUBLE = 0
+DIM PERC_A$ AS STRING = "rim(3,8,2)"
+DIM PERC_B$ AS STRING = "cb(5,16,3)"
+DIM BREAK_CLAP$ AS STRING = "~ cp ~ cp"
+
+' a quiet snare scattered around the clap, or "" below level 3
 DIM GHOST$ AS STRING = ""
-DIM GHOST_PAT$ AS STRING = "gain(0.14, <[~ ~ ~ sd ~ ~ ~ ~ ~ ~ ~ sd ~ ~ ~ ~] [~ ~ ~ ~ ~ ~ ~ sd ~ ~ ~ ~ ~ ~ sd ~]>)"
 
 ' Some events of p a little softer
 FUNC LOOSE$(pat$) AS STRING
     RETURN "sometimesBy(0.35, gain(0.7), " + pat$ + ")"
 ENDFUNC
 
+' The k-th groove decision of part fi; parts lie far apart in k, so the
+' scattered hits of two parts do not repeat each other
+FUNC GPICK(fi AS INTEGER, k AS INTEGER, n AS INTEGER) AS INTEGER
+    RETURN PICK(k + 1009 * fi + 50021 * PART_SALT[fi], n)
+ENDFUNC
+
+FUNC SWUNG$(pat$) AS STRING
+    IF genre$ = "house" OR genre$ = "deep" THEN RETURN "swingBy(" + STR$(SWING_AMT) + ", 4, " + pat$ + ")"
+    RETURN pat$
+ENDFUNC
+
+' Four bars of sixteenths where snd$ falls on each step with the chance
+' density, never on the steps listed in skip$ (" 4 12 "); the seed and
+' salt decide where
+FUNC SCATTER$(snd$, density AS DOUBLE, salt AS INTEGER, skip$) AS STRING
+    DIM out$ AS STRING = "<"
+    DIM b AS INTEGER
+    DIM s AS INTEGER
+    FOR b = 0 TO 3
+        DIM bar$ AS STRING = "["
+        FOR s = 0 TO 15
+            DIM hit AS INTEGER = FALSE
+            IF INSTR(skip$, " " + STR$(s) + " ") < 0 THEN hit = GPICK(CUR_PART, salt + b * 16 + s, 1000) < density * 1000
+            IF s > 0 THEN bar$ = bar$ + " "
+            IF hit THEN
+                bar$ = bar$ + snd$
+            ELSE
+                bar$ = bar$ + "~"
+            ENDIF
+        NEXT s
+        IF b > 0 THEN out$ = out$ + " "
+        out$ = out$ + bar$ + "]"
+    NEXT b
+    RETURN out$ + ">"
+ENDFUNC
+
+' The song-wide part of the groove
+SUB PICK_SONG_GROOVE()
+    DIM kicks$ = ["bd*4", "<bd*4 [bd*4, [~ ~ ~ [~ ~ ~ bd]]]>"]
+    IF genre$ = "deep" THEN kicks$ = APPEND(kicks$, "<bd*4 [bd ~ ~ bd ~ ~ bd ~]>")
+    IF genre$ = "synthwave" THEN kicks$ = ["bd*4", "bd:1*4", "<bd*4 [bd*4, [~ ~ ~ [~ ~ ~ bd]]]>"]
+    KICK_PAT$ = kicks$[PICK(201, LEN(kicks$))]
+    HAT_STYLE = PICK(202, 4)
+    SWING_AMT = 0.06 + 0.04 * PICK(203, 4)
+    DIM hat_names$ = ["sixteenths", "sixteenths on the beat", "eighths and scattered sixteenths", "shaker"]
+    RECIPE$ = RECIPE$ + "  groove: kick " + KICK_PAT$ + ", hats " + hat_names$[HAT_STYLE] + NL$
+ENDSUB
+
+' The groove of part fi
+SUB PICK_GROOVE(fi AS INTEGER)
+    CUR_PART = fi
+    DIM claps$ = ["~ cp ~ cp", "<[~ cp ~ cp] [~ cp ~ [cp ~ ~ cp]]>", "~ [cp,sd] ~ [cp,sd]", "off(0.008, gain(0.6), ~ cp ~ cp)", "<[~ cp ~ cp]!3 [~ cp [~ ~ ~ cp] cp]>"]
+    IF genre$ = "synthwave" THEN claps$ = ["~ sd ~ sd", "off(0.008, gain(0.6), ~ sd ~ sd)", "~ [sd,cp] ~ [sd,cp]", "<[~ sd ~ sd]!3 [~ sd [~ ~ ~ sd] sd]>"]
+    CLAP_PAT$ = claps$[GPICK(fi, 211, LEN(claps$))]
+    DIM densities = [0, 0.04, 0.07, 0.1]
+    CLAP_SCATTER = densities[GPICK(fi, 212, 4)]
+    DIM insts$ = ["rim", "cb", "cl", "sh", "lt", "mt"]
+    DIM rhythms$ = ["3,8", "5,8", "5,16", "7,16", "3,16", "9,16"]
+    DIM ia AS INTEGER = GPICK(fi, 213, LEN(insts$))
+    DIM ib AS INTEGER = (ia + 1 + GPICK(fi, 214, LEN(insts$) - 1)) MOD LEN(insts$)
+    DIM ra$ AS STRING = rhythms$[GPICK(fi, 215, LEN(rhythms$))]
+    DIM rb$ AS STRING = rhythms$[GPICK(fi, 216, LEN(rhythms$))]
+    PERC_A$ = insts$[ia] + "(" + ra$ + "," + STR$(GPICK(fi, 217, 8)) + ")"
+    PERC_B$ = insts$[ib] + "(" + rb$ + "," + STR$(GPICK(fi, 218, 8)) + ")"
+    BREAK_CLAP$ = "~ cp ~ cp"
+    IF GPICK(fi, 219, 2) = 1 THEN BREAK_CLAP$ = "~ ~ cp ~"
+ENDSUB
+
+FUNC HATS_PAT$(level AS INTEGER) AS STRING
+    IF level = 1 THEN RETURN "gain(0.5, [~ hh]*4)"
+    IF HAT_STYLE = 1 THEN RETURN SWUNG$("sometimesBy(0.3, gain(0.78), gain([0.75 0.4 0.55 0.4]*4, hh*16))")
+    IF HAT_STYLE = 2 THEN RETURN SWUNG$("sometimesBy(0.25, gain(0.8), gain([0.7 0.45]*4, hh*8)), gain(0.35, " + SCATTER$("hh", 0.3, 230, " 0 2 4 6 8 10 12 14 ") + ")")
+    IF HAT_STYLE = 3 THEN RETURN SWUNG$("gain([0.45 0.75 0.55 0.85]*4, sh*16), gain(0.5, [~ hh]*4)")
+    RETURN HATS16$
+ENDFUNC
+
+' The clap figure of the part, with its scattered claps from level 3
+FUNC CLAPS_PAT$(level AS INTEGER, snd$) AS STRING
+    DIM dens AS DOUBLE = CLAP_SCATTER * (0.4 + 0.3 * (level - 2))
+    IF dens <= 0 THEN RETURN CLAP_PAT$
+    RETURN CLAP_PAT$ + ", gain(0.5, " + SCATTER$(snd$, dens, 220 + 100 * level, " 4 12 ") + ")"
+ENDFUNC
+
 ' The synthwave drums: eighth hats, the gated snare on two and four
 ' from level 3, sixteenths from 4, the open hat at 5
 SUB DRUMS_80S(level AS INTEGER)
-    TRK_ON KICK, "bd*4"
+    TRK_ON KICK, KICK_PAT$
     IF level = 1 THEN
         TRK_ON HATS, "gain(0.5, [~ hh]*4)"
     ELSEIF level < 4 THEN
         TRK_ON HATS, LOOSE$("gain([0.65 0.45]*4, hh*8)")
     ELSE
-        TRK_ON HATS, HATS16$
+        TRK_ON HATS, HATS_PAT$(level)
     ENDIF
     IF level >= 3 THEN
-        TRK_ON CLAP, "~ sd ~ sd"
+        TRK_ON CLAP, CLAPS_PAT$(level, "sd")
         TRK_ON GATE, "legato(0.45, ~ c4 ~ c4)"
     ENDIF
     IF level = 5 THEN TRK_ON OPENHAT, "gain(0.7, [~ oh]*4)"
@@ -536,22 +632,20 @@ SUB DRUMS(level AS INTEGER)
         DRUMS_80S level
         RETURN
     ENDIF
-    TRK_ON KICK, "bd*4"
-    IF level = 1 THEN
-        TRK_ON HATS, "gain(0.5, [~ hh]*4)"
-    ELSE
-        TRK_ON HATS, HATS16$
-    ENDIF
+    DIM kick$ AS STRING = KICK_PAT$
+    IF level >= 4 THEN kick$ = kick$ + ", gain(0.35, " + SCATTER$("bd", 0.03, 240, " 0 4 8 12 ") + ")"
+    TRK_ON KICK, kick$
+    TRK_ON HATS, HATS_PAT$(level)
     IF level >= 3 THEN
-        TRK_ON CLAP, "~ cp ~ cp"
+        TRK_ON CLAP, CLAPS_PAT$(level, "cp")
         TRK_ON OPENHAT, "[~ oh]*4"
     ENDIF
-    IF level = 2 OR level = 3 THEN TRK_ON PERC, LOOSE$("rim(3,8,2)")
-    IF level = 4 THEN TRK_ON PERC, LOOSE$("rim(3,8,2), cb(5,16,3)")
-    IF level = 5 THEN TRK_ON PERC, LOOSE$("rim(3,8,2), sometimes(ply(2), cb(5,16,3))")
+    IF level = 2 OR level = 3 THEN TRK_ON PERC, LOOSE$(PERC_A$)
+    IF level = 4 THEN TRK_ON PERC, LOOSE$(PERC_A$ + ", " + PERC_B$)
+    IF level = 5 THEN TRK_ON PERC, LOOSE$(PERC_A$ + ", sometimes(ply(2), " + PERC_B$ + ")")
     GHOST$ = ""
     IF level >= 3 THEN
-        GHOST$ = GHOST_PAT$
+        GHOST$ = "gain(0.14, " + SCATTER$("sd", 0.08, 250, " 4 12 ") + ")"
         TRK_ON SNARE, GHOST$
     ENDIF
 ENDSUB
@@ -698,7 +792,7 @@ SUB PART_BREAK(b AS INTEGER, n AS INTEGER, v AS INTEGER)
     ELSE
         TRK_ON HATS, HATS16$
         TRK_ON PERC, LOOSE$("rim(3,8,2)")
-        TRK_ON CLAP, "~ cp ~ cp"
+        TRK_ON CLAP, BREAK_CLAP$
         TRK_ON PARTS_TRACK, BREAK_FIGURE$
         SW PARTS_TRACK, "CUTOFF", "SINE", 500, 2000, 8, b
     ENDIF
@@ -893,6 +987,7 @@ SUB ARRANGE()
         NEXT_PART$ = "end"
         IF fi < N_PARTS - 1 THEN NEXT_PART$ = PART_NAMES$[fi + 1]
         PARTS$ = FIGURES$[PICK_PART(fi, 60, 3)]
+        PICK_GROOVE fi
         DIM fill_kind AS INTEGER = PICK_PART(fi, 40, 3)
         ' synthwave fills with toms or a gap, never the snare
         IF genre$ = "synthwave" THEN fill_kind = 1 + PICK_PART(fi, 40, 2)
