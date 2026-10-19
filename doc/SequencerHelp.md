@@ -48,7 +48,7 @@ The sequencer divides time into "cycles". You can arrange events within a cycle 
   * **`SOUND.AT cycle`** queues the commands after it for that cycle, applied on its exact frame: `SOUND.AT 72` then `SOUND.SEQ 0, "bd*4", "VOICE"`, then `SOUND.AT` to apply at once again. A whole arrangement can be sent ahead this way; `SOUND.PENDING()` counts what is still queued. `jdb/demos/sound/score.jdb` wraps it into section verbs.
   * Full table: languages.md, "Pattern Syntax".
   * **Progressions and hooks**: `jdb/demos/sound/melody.jdb` (`IMPORT MELODY`). `MELODY.PROG$("epic", "A minor")` gives `"Am F C G"` (also anthem, dark, pop, euphoric, house, deep); `MELODY.HOOK$(seed, prog$, key$, "x.x..x.x x.x.x...", 4)` writes a lead line over it, one bar per chord: chord tones on the beats, scale steps between, a leap and a step back, the form A A' A B, ending on the root or third. Same seed, same hook. `hook_trance.jdb --seed n --prog name` plays one.
-  * **Whole tracks**: `jdb/demos/sound/songgen.jdb --genre trance|house|deep|acid --seed n [--wav file]` picks key, tempo, progression and hook rhythm from the seed, builds bass, arp or stabs, choir and hook with MELODY and arranges it with SCORE in one of three forms per genre, with a variant of each part (breakdown, build, drop), a fill at each phrase end and the peak in the last drop. It prints the recipe and the form first, so a good seed can be kept; `--recipe` prints them and stops. `MELODY.BASS$`, `MELODY.ARP$` and `MELODY.STABS$` write the parts on their own. `MELODY.COUNTER$(seed, hook$, prog$, key$, octave)` writes an answer between the hook's notes (call and response), `MELODY.VARY$(hook$, prog$, key$, "dense"|"octave"|"ending")` a variation that is still the hook. songgen's last drop goes up a key (1 or 2 semitones, `add(n, ...)` on every tonal part), plays the varied hook and brings in the answer. `MELODY.BORROWED$(key$)` gives a breakdown progression with chords from the parallel key (IV iv bVI bVII in major, iv bVI bVII i in minor); songgen's breakdown plays it and, over 16 bars, goes home to the main progression for the second half. The drums are humanized: a share of the hat and percussion hits softer (`sometimesBy(0.3, gain(0.78), ...)`), a ghost snare before the clap, hats and percussion a few ms behind the kick (`SOUND.NUDGE`). Each track gets a title from the seed and the genre.
+  * **Whole tracks**: `jdb/demos/sound/songgen.jdb --genre trance|house|deep|acid --seed n [--wav file]` picks key, tempo, progression and hook rhythm from the seed, builds bass, arp or stabs, choir and hook with MELODY and arranges it with SCORE in one of three forms per genre, with a variant of each part (breakdown, build, drop), a fill at each phrase end and the peak in the last drop. It prints the recipe and the form first, so a good seed can be kept; `--recipe` prints them and stops. `MELODY.BASS$`, `MELODY.ARP$` and `MELODY.STABS$` write the parts on their own. `MELODY.COUNTER$(seed, hook$, prog$, key$, octave)` writes an answer between the hook's notes (call and response), `MELODY.VARY$(hook$, prog$, key$, "dense"|"octave"|"ending")` a variation that is still the hook. songgen's last drop goes up a key (1 or 2 semitones, `add(n, ...)` on every tonal part), plays the varied hook and brings in the answer. `MELODY.BORROWED$(key$)` gives a breakdown progression with chords from the parallel key (IV iv bVI bVII in major, iv bVI bVII i in minor); songgen's breakdown plays it and, over 16 bars, goes home to the main progression for the second half. The drums are humanized: a share of the hat and percussion hits softer (`sometimesBy(0.3, gain(0.78), ...)`), a ghost snare before the clap, hats and percussion a few ms behind the kick (`SOUND.NUDGE`). Each track gets a title from the seed and the genre. The master ends in `SOUND.LIMITER` with a drive per genre, so every track lands near -12 LUFS integrated with peaks under -1 dB; `--wav` prints the loudness it measured (`SOUND.LOUDNESS`).
 
 * **`SOUND.FILTER track, cutoff, [resonance], [mode$]`**: resonant `"LP"`/`"HP"`/`"BP"` when a resonance or mode is given.
 * **`SOUND.FENV track, octaves, attack, decay, [sustain], [release]`**: filter envelope per note.
@@ -120,6 +120,8 @@ You can use a loaded sample as a sound source for a sequencer track.
 * **`SOUND.REVERB size, damp, width, wet`**: Configures the global reverb room.
 * **`SOUND.DELAY active, time, feedback, mix, [orbit], [pingpong]`**: Configures the global stereo delay; `time` in ms or a note value locked to the tempo (`"1/8."`, `"1/4"`, `"1/8t"`), `pingpong` bounces the repeats.
 * **`SOUND.COMPRESSOR thresh, ratio, attack, release, gain`**: Master dynamics; `thresh` 0.0-1.0, `ratio` 1.0-20.0, `attack`/`release` in ms.
+* **`SOUND.LIMITER [ceiling_db, [drive_db], [release_ms]]`**: Lookahead peak limiter at the end of the master: `drive_db` lifts the mix into it, no sample passes `ceiling_db`; no argument switches it off.
+* **`SOUND.LOUDNESS([reset])`**: Map with the output's loudness in LUFS (`INTEGRATED`, `MOMENTARY`, `SHORT`, `SHORT_MAX`), `PEAK` in dBFS and the limiter's `REDUCTION`/`REDUCTION_MAX`.
 * **`SOUND.MASTER mode$, [headroom]`**: `"AUTO"` (default) divides the mix by sqrt(voices); `"FIXED"` scales each voice by `headroom` (0.5), so layers keep their level. Output soft-clips above 0.8.
 * **`SOUND.DISTORTION amount`**: Applies master saturation/overdrive.
 
@@ -182,11 +184,13 @@ All design commands (`SOUND.VOICE` / `SEQ` / `NOTE` / `FM` / `UNISON` / `REVERB`
 | **Global FX** | `SOUND.REVERB` | `size, damp, width, wet` | Set master reverb room |
 |  | `SOUND.DELAY` | `on, time, feed, mix` | Set master delay settings |
 |  | `SOUND.COMPRESSOR` | `thresh, ratio, atk, rel, gain` | Master dynamics |
+|  | `SOUND.LIMITER` | `[ceil_db, drive_db, rel]` | Peak limiter, master end |
 |  | `SOUND.MASTER` | `mode$, [headroom]` | AUTO or FIXED mix level |
 |  | `SOUND.DISTORTION` | `amount` | Master saturation |
 | **Analysis** | `SOUND.GET_WAVE` | none | Get master waveform array |
 |  | `SOUND.RENDER` | `frames` | Pull stereo samples (embed/no-device) |
 |  | `SOUND.GET_BUS_WAVE` | `bus_id` | Get wet-only waveform |
+|  | `SOUND.LOUDNESS` | `[reset]` | LUFS, peak, limiter reduction |
 
 ---
 

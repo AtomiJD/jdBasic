@@ -796,5 +796,48 @@ CHECK "RESET clears the queue", SOUND.PENDING() = 0, "pending=" + STR$(SOUND.PEN
 SOUND.SEQ 0, "c4", "VOICE"
 CHECK "RESET ends AT", SOUND.PENDING() = 0, "pending=" + STR$(SOUND.PENDING())
 
+' the limiter holds its ceiling and settles on it
+SOUND.RESET
+SOUND.MASTER "FIXED", 1.0
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.GAIN 0, 0.9
+SOUND.LIMITER -6
+SOUND.SEQ 0, "legato(1, b5)", "VOICE"
+buf = SOUND.RENDER(CYC / 2)
+DIM lim_max AS DOUBLE = MAX(ABS(buf))
+DIM lim_ceil AS DOUBLE = 10 ^ (-6 / 20)
+CHECK "LIMITER holds the ceiling", lim_max <= lim_ceil + 0.000001, "max=" + STR$(lim_max)
+CHECK "LIMITER settles on the ceiling", lim_max > lim_ceil - 0.01, "max=" + STR$(lim_max)
+DIM lim_meter = SOUND.LOUDNESS()
+CHECK "LOUDNESS reports the reduction", lim_meter{"REDUCTION_MAX"} < -2.5, "red=" + STR$(lim_meter{"REDUCTION_MAX"})
+SOUND.LIMITER
+buf = SOUND.RENDER(CYC / 4)
+CHECK "LIMITER off passes the level", MAX(ABS(buf)) > 0.75, "max=" + STR$(MAX(ABS(buf)))
+DIM lim_err AS STRING = ""
+TRY
+    SOUND.LIMITER 3
+CATCH
+    lim_err = ERRMSG$
+ENDTRY
+CHECK "LIMITER rejects a ceiling above 0 dB", INSTR(lim_err, "ceiling") >= 0, lim_err
+
+' a 988 Hz sine at amplitude 0.5 in both channels reads -6.02 LUFS
+SOUND.RESET
+SOUND.MASTER "FIXED", 1.0
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.GAIN 0, 0.5
+SOUND.SEQ 0, "legato(1, b5)", "VOICE"
+buf = SOUND.RENDER(CYC * 4)
+DIM lm = SOUND.LOUDNESS(TRUE)
+CHECK "LOUDNESS integrated", ABS(lm{"INTEGRATED"} + 6.02) < 0.15, "lufs=" + STR$(lm{"INTEGRATED"})
+CHECK "LOUDNESS short term", ABS(lm{"SHORT"} + 6.02) < 0.15, "lufs=" + STR$(lm{"SHORT"})
+CHECK "LOUDNESS measured 4 s", lm{"SECONDS"} = 4, "s=" + STR$(lm{"SECONDS"})
+lm = SOUND.LOUDNESS()
+CHECK "LOUDNESS reset", lm{"INTEGRATED"} = -120 ANDALSO lm{"SECONDS"} = 0, "lufs=" + STR$(lm{"INTEGRATED"})
+buf = SOUND.RENDER(CYC / 2)
+lm = SOUND.LOUDNESS()
+CHECK "LOUDNESS momentary after 0.5 s", ABS(lm{"MOMENTARY"} + 6.02) < 0.15, "lufs=" + STR$(lm{"MOMENTARY"})
+CHECK "LOUDNESS short term needs 3 s", lm{"SHORT"} = -120, "lufs=" + STR$(lm{"SHORT"})
+
 SOUND.RESET
 PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

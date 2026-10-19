@@ -559,6 +559,145 @@ struct Compressor {
     }
 };
 
+// ── Limiter ─────────────────────────────────────────────────────
+
+// Lookahead peak limiter: the gain each sample needs is held as the
+// minimum over the lookahead window and then averaged over the same
+// window, so it has reached its value when the peak leaves the delay
+// line and the output never exceeds the ceiling.
+struct Limiter {
+    static constexpr int LOOK = 88;  // 2 ms at 44.1 kHz
+    float ceiling = 0.891f, drive = 1.0f, release_ms = 80.0f;
+    float need[LOOK] = {}, env_hist[LOOK] = {};
+    float delay_l[LOOK] = {}, delay_r[LOOK] = {};
+    int pos = 0;
+    double env_sum = 0.0;
+    float env = 1.0f;
+    float reduction = 1.0f;  // gain applied to the last sample
+    float min_gain = 1.0f;   // lowest gain since the meter was cleared
+
+    void clear() {
+        for (int i = 0; i < LOOK; i++) {
+            need[i] = 1.0f; env_hist[i] = 1.0f; delay_l[i] = 0.0f; delay_r[i] = 0.0f;
+        }
+        pos = 0; env_sum = LOOK; env = 1.0f; reduction = 1.0f; min_gain = 1.0f;
+    }
+
+    void process(float& l, float& r) {
+        l *= drive; r *= drive;
+        float peak = std::max(std::abs(l), std::abs(r));
+        need[pos] = peak > ceiling ? ceiling / peak : 1.0f;
+        float m = need[0];
+        for (int i = 1; i < LOOK; i++) m = std::min(m, need[i]);
+        float rel = 1.0f - std::exp(-1.0f / (0.001f * release_ms * SAMPLE_RATE));
+        env = (m < env) ? m : env + (m - env) * rel;
+        env_sum += env - env_hist[pos];
+        env_hist[pos] = env;
+        int out = (pos + 1) % LOOK;  // the oldest sample, LOOK-1 frames back
+        float g = (float)(env_sum / LOOK);
+        float ol = delay_l[out] * g, orr = delay_r[out] * g;
+        delay_l[pos] = l; delay_r[pos] = r;
+        pos = out;
+        reduction = g;
+        min_gain = std::min(min_gain, g);
+        l = std::max(-ceiling, std::min(ceiling, ol));
+        r = std::max(-ceiling, std::min(ceiling, orr));
+    }
+};
+
+// ── Loudness meter ──────────────────────────────────────────────
+
+// K-weighted loudness after ITU-R BS.1770 / EBU R128: power is summed in
+// 100 ms steps; momentary is the last 400 ms, short term the last 3 s,
+// integrated the gated mean of all 400 ms blocks (absolute gate -70 LUFS,
+// relative gate 10 LU below the ungated mean).
+struct LoudnessMeter {
+    struct Biquad {
+        double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+        double z1[2] = {}, z2[2] = {};
+        double run(double x, int ch) {
+            double y = b0 * x + z1[ch];
+            z1[ch] = b1 * x - a1 * y + z2[ch];
+            z2[ch] = b2 * x - a2 * y;
+            return y;
+        }
+    };
+    static constexpr int STEP_FRAMES = SAMPLE_RATE / 10;
+    Biquad shelf, highpass;
+    double acc = 0.0;
+    int acc_frames = 0;
+    std::vector<double> steps;  // mean square per 100 ms
+    float peak = 0.0f;
+
+    LoudnessMeter() {
+        const double pi = 3.14159265358979323846, fs = SAMPLE_RATE;
+        double f0 = 1681.974450955533, gain_db = 3.999843853973347, q = 0.7071752369554196;
+        double k = std::tan(pi * f0 / fs);
+        double vh = std::pow(10.0, gain_db / 20.0), vb = std::pow(vh, 0.4996667741545416);
+        double a0 = 1.0 + k / q + k * k;
+        shelf.b0 = (vh + vb * k / q + k * k) / a0;
+        shelf.b1 = 2.0 * (k * k - vh) / a0;
+        shelf.b2 = (vh - vb * k / q + k * k) / a0;
+        shelf.a1 = 2.0 * (k * k - 1.0) / a0;
+        shelf.a2 = (1.0 - k / q + k * k) / a0;
+        f0 = 38.13547087602444; q = 0.5003270373238773;
+        k = std::tan(pi * f0 / fs);
+        a0 = 1.0 + k / q + k * k;
+        highpass.b0 = 1.0; highpass.b1 = -2.0; highpass.b2 = 1.0;
+        highpass.a1 = 2.0 * (k * k - 1.0) / a0;
+        highpass.a2 = (1.0 - k / q + k * k) / a0;
+    }
+
+    void clear() {
+        for (Biquad* b : {&shelf, &highpass})
+            for (int c = 0; c < 2; c++) { b->z1[c] = 0; b->z2[c] = 0; }
+        acc = 0.0; acc_frames = 0; steps.clear(); peak = 0.0f;
+    }
+
+    void add(float l, float r) {
+        peak = std::max(peak, std::max(std::abs(l), std::abs(r)));
+        double kl = highpass.run(shelf.run(l, 0), 0);
+        double kr = highpass.run(shelf.run(r, 1), 1);
+        acc += kl * kl + kr * kr;
+        if (++acc_frames == STEP_FRAMES) {
+            steps.push_back(acc / STEP_FRAMES);
+            acc = 0.0; acc_frames = 0;
+        }
+    }
+
+    static double lufs(double power) {
+        return power > 1e-12 ? -0.691 + 10.0 * std::log10(power) : -120.0;
+    }
+    // Mean power of the last n steps (0 when fewer were measured)
+    double window_power(size_t n, size_t end) const {
+        if (end < n) return 0.0;
+        double s = 0.0;
+        for (size_t i = end - n; i < end; i++) s += steps[i];
+        return s / n;
+    }
+    double momentary() const { return lufs(window_power(4, steps.size())); }
+    double short_term() const { return lufs(window_power(30, steps.size())); }
+    double short_max() const {
+        double m = 0.0;
+        for (size_t e = 30; e <= steps.size(); e++) m = std::max(m, window_power(30, e));
+        return lufs(m);
+    }
+    double integrated() const {
+        std::vector<double> blocks;
+        for (size_t e = 4; e <= steps.size(); e++) {
+            double p = window_power(4, e);
+            if (lufs(p) > -70.0) blocks.push_back(p);
+        }
+        if (blocks.empty()) return -120.0;
+        double mean = 0.0;
+        for (double p : blocks) mean += p;
+        double gate = lufs(mean / blocks.size()) - 10.0;
+        double s = 0.0; size_t n = 0;
+        for (double p : blocks) if (lufs(p) > gate) { s += p; n++; }
+        return n ? lufs(s / n) : -120.0;
+    }
+};
+
 // ── Sound System ────────────────────────────────────────────────
 
 static struct SoundSystem {
@@ -680,6 +819,9 @@ static struct SoundSystem {
     FxBus buses[NUM_ORBITS];
     Compressor compressor;
     bool compressor_active = false;
+    Limiter limiter;
+    bool limiter_active = false;
+    LoudnessMeter meter;
     // Distortion
     float distortion_amount = 0.0f;
     // Master: false divides the mix by sqrt(active voices), true scales
@@ -1481,8 +1623,15 @@ static struct SoundSystem {
                 sys->compressor.process(mix_l, mix_r);
             }
 
-            buffer[f * 2] = soft_clip(mix_l);
-            buffer[f * 2 + 1] = soft_clip(mix_r);
+            if (sys->limiter_active) {
+                sys->limiter.process(mix_l, mix_r);
+                buffer[f * 2] = mix_l;
+                buffer[f * 2 + 1] = mix_r;
+            } else {
+                buffer[f * 2] = soft_clip(mix_l);
+                buffer[f * 2 + 1] = soft_clip(mix_r);
+            }
+            sys->meter.add(buffer[f * 2], buffer[f * 2 + 1]);
             if (!sys->wave_buffer.empty()) {
                 float rs = 0, ds = 0;
                 for (int o = 0; o < NUM_ORBITS; o++) {
@@ -2669,6 +2818,49 @@ void register_sound_builtins(VM& vm) {
         g_sound.compressor_active = true;
         return Value::make_none();
     });
+    // ── SOUND.LIMITER [ceiling_db [, drive_db [, release_ms]]] ──
+    vm.register_native("SOUND.LIMITER", 0, 3, [](const std::vector<Value>& args) -> Value {
+        if (args.empty()) { g_sound.limiter_active = false; return Value::make_none(); }
+        double ceil_db = args[0].to_double();
+        double drive_db = args.size() > 1 ? args[1].to_double() : 0.0;
+        double rel = args.size() > 2 ? args[2].to_double() : 80.0;
+        if (ceil_db > 0.0 || ceil_db < -24.0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.LIMITER: ceiling is -24 to 0 dB");
+        if (drive_db < -24.0 || drive_db > 24.0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.LIMITER: drive is -24 to 24 dB");
+        if (rel < 1.0 || rel > 2000.0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.LIMITER: release is 1 to 2000 ms");
+        SND_LOCK();
+        if (!g_sound.limiter_active) g_sound.limiter.clear();
+        g_sound.limiter.ceiling = (float)std::pow(10.0, ceil_db / 20.0);
+        g_sound.limiter.drive = (float)std::pow(10.0, drive_db / 20.0);
+        g_sound.limiter.release_ms = (float)rel;
+        g_sound.limiter_active = true;
+        SND_UNLOCK();
+        return Value::make_none();
+    });
+
+    // ── SOUND.LOUDNESS([reset]) - map of the output's loudness ──
+    vm.register_native("SOUND.LOUDNESS", 0, 1, [](const std::vector<Value>& args) -> Value {
+        Value r = Value::make_object();
+        auto* o = r.as_object();
+        SND_LOCK();
+        auto& m = g_sound.meter;
+        o->set("INTEGRATED", Value::make_f64(m.integrated()));
+        o->set("MOMENTARY", Value::make_f64(m.momentary()));
+        o->set("SHORT", Value::make_f64(m.short_term()));
+        o->set("SHORT_MAX", Value::make_f64(m.short_max()));
+        o->set("PEAK", Value::make_f64(m.peak > 1e-6f ? 20.0 * std::log10(m.peak) : -120.0));
+        o->set("REDUCTION", Value::make_f64(g_sound.limiter_active
+            ? 20.0 * std::log10(std::max(1e-6f, g_sound.limiter.reduction)) : 0.0));
+        o->set("REDUCTION_MAX", Value::make_f64(g_sound.limiter_active
+            ? 20.0 * std::log10(std::max(1e-6f, g_sound.limiter.min_gain)) : 0.0));
+        o->set("SECONDS", Value::make_f64(m.steps.size() / 10.0));
+        if (!args.empty() && args[0].to_bool()) { m.clear(); g_sound.limiter.min_gain = 1.0f; }
+        SND_UNLOCK();
+        return r;
+    });
+
     vm.register_native("SOUND.DISTORTION", 1, 1, [](const std::vector<Value>& args) -> Value {
         g_sound.distortion_amount = (float)args[0].to_double(); return Value::make_none();
     });
@@ -2764,6 +2956,9 @@ void register_sound_builtins(VM& vm) {
         g_sound.sched_at = -1.0;
         g_sound.distortion_amount = 0;
         g_sound.compressor_active = false;
+        g_sound.limiter_active = false;
+        g_sound.meter.clear();
+        g_sound.limiter.clear();
         g_sound.master_fixed = false;
         g_sound.master_headroom = 0.5f;
         for (auto& b : g_sound.buses) {

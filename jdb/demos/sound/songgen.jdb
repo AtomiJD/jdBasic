@@ -170,6 +170,13 @@ ENDIF
 SOUND.MASTER "FIXED", 0.42
 SCORE.TEMPO BPM
 SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
+' the limiter's drive lifts each genre's mix onto its loudness target
+' (-12 LUFS integrated, as --wav reports), peaks stay under -1 dB
+DIM LOUD_DRIVE AS DOUBLE = 4.2
+IF genre$ = "house" THEN LOUD_DRIVE = 3.1
+IF genre$ = "deep" THEN LOUD_DRIVE = 2.6
+IF genre$ = "acid" THEN LOUD_DRIVE = 4.9
+SOUND.LIMITER -1, LOUD_DRIVE
 
 SOUND.REVERB 0.6, 0.5, 0.9, 0.2
 SOUND.DELAY TRUE, "1/8.", 0.4, 0.28, 0, TRUE
@@ -777,7 +784,9 @@ ELSEIF LEN(wav$) > 0 THEN
         done = done + 4410
     WEND
     SOUND.RECORD
-    PRINT "wrote "; wav$
+    DIM meter = SOUND.LOUDNESS()
+    PRINT "wrote "; wav$; ", "; FORMAT$("{:.1f}", meter{"INTEGRATED"}); " LUFS, loudest 3 s ";
+    PRINT FORMAT$("{:.1f}", meter{"SHORT_MAX"}); " LUFS, peak "; FORMAT$("{:.1f}", meter{"PEAK"}); " dB, limiter up to "; FORMAT$("{:.1f}", -meter{"REDUCTION_MAX"}); " dB"
 ELSE
     STAGE.SUBTITLE UCASE$(LEFT$(genre$, 1)) + MID$(genre$, 1) + " in " + KEY$ + ", seed " + STR$(seed)
     STAGE.RUN TITLE$

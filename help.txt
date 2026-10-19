@@ -3087,6 +3087,16 @@ Syntax: SOUND.COMPRESSOR threshold, ratio, attack, release, gain
 Description: Applies master dynamic range compression.
 Threshold: 0.0-1.0. Ratio: 1.0-20.0. Attack/Release: ms. Gain: 1.0+.
 
+[SOUND.LIMITER]
+Syntax: SOUND.LIMITER [ceiling_db], [drive_db], [release_ms]
+Description: Lookahead peak limiter at the end of the master. drive_db (-24..24, default 0) lifts the mix into it,
+no sample passes ceiling_db (-24..0), release_ms defaults to 80. No argument switches it off.
+
+[SOUND.LOUDNESS]
+Syntax: SOUND.LOUDNESS([reset]) -> Map
+Description: Loudness of the output since init, reset or the last SOUND.LOUDNESS(TRUE), after EBU R128:
+INTEGRATED, MOMENTARY, SHORT, SHORT_MAX (LUFS), PEAK (dBFS), REDUCTION, REDUCTION_MAX (limiter, dB), SECONDS.
+
 [SOUND.MASTER]
 Syntax: SOUND.MASTER mode$, [headroom]
 Description: Sets how the master sums the voices. "AUTO" (default) divides the mix by sqrt(sounding voices).
