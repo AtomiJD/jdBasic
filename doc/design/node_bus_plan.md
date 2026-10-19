@@ -170,33 +170,38 @@ LOOP
 
 ### 5.1 JDV1 value encoding
 
-Little-endian, one tag byte per value. Varints are LEB128, signed ints zigzag.
+Implemented in P1: `src/jdv.h` is the reference. `"JDV"` + version byte 1,
+then one value. Little-endian, varints are LEB128, signed ints zigzag.
 
 | Tag | Value | Payload |
 |-----|-------|---------|
 | 0x00 | NONE | - |
 | 0x01 / 0x02 | FALSE / TRUE | - |
-| 0x03 | integer (INT64 and smaller) | zigzag varint |
+| 0x03 | INT64 | zigzag varint |
 | 0x04 | FLOAT64 | 8 bytes |
 | 0x05 | FLOAT32 | 4 bytes |
-| 0x06 | STRING | varint length + bytes (UTF-8 or binary, not validated) |
-| 0x07 | ARRAY, mixed | varint rank, varint dims, then the elements as JDV |
-| 0x08 | ARRAY, packed numeric | dtype byte (u8, i16, i32, i64, f16, f32, f64, bool), varint rank, varint dims, pad to 8, raw data |
-| 0x09 | MAP | varint count, then key (STRING payload, no tag) + JDV value |
-| 0x0A | DATE | i64 epoch seconds + subtype byte (VM and runtime keep dates differently, see the two-date note; the codec normalises) |
-| 0x0B | TENSOR | dtype, rank, dims, data; gradient and graph are dropped |
-| 0x0C | UDT instance | type name STRING + MAP of fields; unpacks as a MAP with `"__type"` (no foreign code is instantiated) |
-| 0x0D | channel reference | reserved for P7 (channels over the wire) |
-| 0x7F | extension | varint id + varint length + bytes; unknown ids are skipped |
+| 0x06 | STRING | varint length + bytes (binary safe) |
+| 0x07 | ARRAY, mixed | varint count + values |
+| 0x08 | ARRAY of one numeric kind | kind byte (BOOLEAN, BYTE, INT16/32/64, FLOAT16/32/64), varint count, raw elements |
+| 0x09 | MAP | varint count, then varint key length + key bytes + value |
+| 0x0A | DATE | FLOAT64 epoch seconds |
+| 0x0B | TENSOR | varint rank, varint dims, varint count, FLOAT64 data |
+| 0x10 | BYTE | 1 byte |
+| 0x11 / 0x12 | INT16 / INT32 | zigzag varint |
+| 0x13 | FLOAT16 | 2 bytes |
 
 Rules:
-- An all-number ARRAY always goes out packed (0x08): one `memcpy`, no per
-  element tags. That is the U8 fast path even over TCP.
-- Function references, FFI pointers, COM objects, file and socket handles do
-  not travel: PACK raises `"NODE.PACK: cannot send <kind>"`.
-- Decode limits (configurable): depth 64, 64 MB per message, element count
-  bounded by the remaining bytes. A malformed frame closes that link and is
-  logged, the process survives.
+- Arrays are nested in jdBasic, so a grid is an ARRAY of packed rows; each
+  row is still one `memcpy`.
+- A UDT instance is a map with `"__TYPE__"` and travels as a MAP. Function
+  references are strings, handles integers; both travel as such. A COM object
+  raises.
+- Decode limits: depth 64, every count checked against the remaining bytes
+  (an element needs at least one byte), varints at most 10 bytes, no trailing
+  bytes. Every prefix of a valid message raises.
+- Compiled programs hand integers and dates to the VM as FLOAT64 and a bare
+  `NONE` argument as 0, so those kinds arrive as FLOAT64 from a `-c` sender.
+  A UDT argument is refused at compile time.
 - JDV is documented so a Python client (devrig) or an ESP32 can speak it
   later.
 
