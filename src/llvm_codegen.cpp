@@ -952,7 +952,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             std::string fu = e.func_name;
             std::transform(fu.begin(), fu.end(), fu.begin(), ::toupper);
             const Expr* hn = nullptr;
-            if ((fu == "HTTP.SERVER.ON_GET" || fu == "HTTP.SERVER.ON_POST") &&
+            if ((fu == "HTTP.SERVER.ON_GET" || fu == "HTTP.SERVER.ON_POST" || fu == "NODE.SERVE") &&
                 e.args.size() >= 2) hn = e.args[1].get();
             else if (fu == "HTTP.SERVER.ON_NOTFOUND" && !e.args.empty()) hn = e.args[0].get();
             if (hn && hn->kind == ExprKind::LITERAL_STRING) {

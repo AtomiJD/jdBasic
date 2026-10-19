@@ -116,7 +116,7 @@ fi
 NET_SRC=""
 if [ "$WANT_NET" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DNET"
-    NET_SRC="src/net.cpp"
+    NET_SRC="src/net.cpp src/node.cpp"
 fi
 
 GFX_SRC=""

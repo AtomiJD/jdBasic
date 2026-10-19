@@ -94,6 +94,11 @@ void VM::register_async_builtins() {
             throw std::runtime_error("CHAN.SEND: invalid channel handle " + std::to_string(handle));
         }
         Value v = args[1];
+        if (ch->forward) {
+            if (ch->closed.load()) throw std::runtime_error("CHAN.SEND: channel is closed");
+            ch->forward(v);
+            return Value::make_none();
+        }
 
         std::unique_lock<std::mutex> lock(ch->mtx);
         if (ch->policy != ChanPolicy::Block) {

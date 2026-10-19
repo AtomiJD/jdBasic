@@ -1,0 +1,296 @@
+' The Node Bus with several nodes inside one program: names and peers,
+' messages into the inbox, calls (CALL_ASYNC, REPLY, FAIL, SERVE + POLL,
+' the timeout), topics with each policy, retained values, patterns,
+' envelopes, SHARE, closing, LEAVE, EVENTS and a subscription that finds a
+' new publisher of its topic. Every link is a real local socket.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+FUNC MUL_HANDLER(c)
+    DIM pair = c{"ARG"}
+    RETURN pair[0] * pair[1]
+ENDFUNC
+
+FUNC BOOM_HANDLER(c)
+    DIM nothing = NODE.UNPACK("not a packed value")
+    RETURN nothing
+ENDFUNC
+
+' The next event of kind$ about addr$, or NONE after ms milliseconds. Other
+' programs on the machine may join and leave at the same time.
+FUNC WAIT_EVENT(ch, kind$, addr$, ms)
+    DIM deadline = TICK() + ms
+    DO WHILE TICK() < deadline
+        DIM ev = CHAN.RECV(ch, deadline - TICK())
+        IF CHAN.IS_TIMEOUT(ev) ORELSE CHAN.IS_EOF(ev) THEN RETURN NONE
+        IF ev{"EVENT"} = kind$ ANDALSO ev{"ADDR"} = addr$ THEN RETURN ev
+    LOOP
+    RETURN NONE
+ENDFUNC
+
+FUNC RAISES_JOIN(name$, scope$) AS INTEGER
+    DIM hit AS INTEGER = FALSE
+    TRY
+        DIM h = NODE.OPEN(name$, scope$)
+    CATCH
+        hit = TRUE
+    ENDTRY
+    RETURN hit
+ENDFUNC
+
+' Names carry the pid, so a second test run at the same time cannot collide.
+DIM tag$ AS STRING = "t" + STR$(OS.PID())
+DIM na$ AS STRING = "la_" + tag$
+DIM nb$ AS STRING = "lb_" + tag$
+DIM nc$ AS STRING = "lc_" + tag$
+
+' ── names and peers ───────────────────────────────────────────
+DIM a = NODE.JOIN(na$)
+DIM b = NODE.OPEN(nb$)
+DIM c = NODE.OPEN(nc$)
+Ok("JOIN returns a handle", a > 0)
+Ok("OPEN returns another", b > 0 ANDALSO b <> a ANDALSO c <> b)
+DIM full$ AS STRING = NODE.NAME$()
+Ok("NAME$ is the default node at this host", LEFT$(full$, LEN(na$) + 1) = na$ + "@")
+Ok("NAME$ of another node", LEFT$(NODE.NAME$(b), LEN(nb$)) = nb$)
+DIM peers = NODE.PEERS("*" + tag$)
+Ok("PEERS lists the other two", LEN(peers) = 2)
+Ok("each with its name", peers[0]{"NAME"} = nb$ ANDALSO peers[1]{"NAME"} = nc$)
+Ok("and this pid", peers[0]{"PID"} = OS.PID())
+Ok("a taken name raises", RAISES_JOIN(nb$, "local"))
+Ok("an empty name raises", RAISES_JOIN("", "local"))
+Ok("a name with a space raises", RAISES_JOIN("two words", "local"))
+Ok("the lan scope is not built yet", RAISES_JOIN("x_" + tag$, "lan"))
+Ok("FIND sees a node that exists", NODE.FIND(nb$, 100))
+Ok("FIND gives up on one that does not", NOT NODE.FIND("nobody_" + tag$, 100))
+
+' ── messages ──────────────────────────────────────────────────
+DIM inbox_b = NODE.INBOX(b)
+Ok("SEND to a node", NODE.SEND(nb$, {"hello": [1, 2, 3]}))
+DIM got = CHAN.RECV(inbox_b, 3000)
+Ok("arrives in its inbox", got{"hello"}[2] = 3)
+Ok("SEND to nobody is FALSE", NOT NODE.SEND("nobody_" + tag$, 1))
+Ok("ERROR$ says why", INSTR(NODE.ERROR$(), "no node named") >= 0)
+DIM k AS INTEGER
+FOR k = 1 TO 500
+    DIM sent_ok = NODE.SEND(nb$, k)
+NEXT k
+DIM in_order AS INTEGER = TRUE
+FOR k = 1 TO 500
+    IF CHAN.RECV(inbox_b, 3000) <> k THEN in_order = FALSE
+NEXT k
+Ok("500 messages arrive in order", in_order)
+DIM big = IOTA(1000000)
+Ok("an 8 MB array is sent", NODE.SEND(nb$, big))
+DIM big_back = CHAN.RECV(inbox_b, 10000)
+Ok("and arrives whole", LEN(big_back) = 1000000 ANDALSO big_back[999999] = 1000000)
+Ok("SEND from another node of this program", NODE.SEND(na$, "to a", c))
+Ok("arrives in the default inbox", CHAN.RECV(NODE.INBOX(), 3000) = "to a")
+
+' ── calls ─────────────────────────────────────────────────────
+DIM reply_ch = NODE.CALL_ASYNC(nb$, "ADD", [2, 3])
+DIM call_in = CHAN.RECV(inbox_b, 3000)
+Ok("a call arrives in the inbox", NODE.IS_CALL(call_in))
+Ok("an ordinary message is no call", NOT NODE.IS_CALL(got))
+Ok("with its method", call_in{"METHOD"} = "ADD")
+Ok("its argument", call_in{"ARG"}[1] = 3)
+Ok("and who called", call_in{"FROM"} = na$)
+Ok("REPLY answers it", NODE.REPLY(call_in, call_in{"ARG"}[0] + call_in{"ARG"}[1]))
+Ok("the caller gets the reply", CHAN.RECV(reply_ch, 3000) = 5)
+Ok("a call is answered once", NOT NODE.REPLY(call_in, 6))
+
+DIM fail_ch = NODE.CALL_ASYNC(nb$, "DIV", [1, 0])
+DIM call_div = CHAN.RECV(inbox_b, 3000)
+Ok("FAIL answers with an error", NODE.FAIL(call_div, "division by zero"))
+DIM failure = CHAN.RECV(fail_ch, 3000)
+Ok("the caller sees a failure", NODE.IS_FAIL(failure))
+Ok("with the message", failure{"ERROR"} = "division by zero")
+
+NODE.SERVE "MUL", "MUL_HANDLER", b
+NODE.SERVE "BOOM", "BOOM_HANDLER", b
+DIM mul_ch = NODE.CALL_ASYNC(nb$, "mul", [6, 7])
+Ok("POLL runs the served call", NODE.POLL(3000, b) = 1)
+Ok("the handler's answer arrives", CHAN.RECV(mul_ch, 3000) = 42)
+DIM boom_ch = NODE.CALL_ASYNC(nb$, "BOOM", 0)
+DIM ran = NODE.POLL(3000, b)
+DIM boom = CHAN.RECV(boom_ch, 3000)
+' Compiled, an error inside a handler does not reach NODE.POLL yet.
+IF OS.FEATURE("INTERPRETER") THEN Ok("a handler that raises answers with a failure", NODE.IS_FAIL(boom))
+Ok("POLL with nothing waiting returns 0", NODE.POLL(0, b) = 0)
+
+DIM t0 = TICK()
+DIM nobody_answers = NODE.CALL(nc$, "SLOW", 1, 150)
+Ok("CALL times out", CHAN.IS_TIMEOUT(nobody_answers))
+Ok("after about the timeout", TICK() - t0 >= 140)
+DIM unanswered = CHAN.RECV(NODE.INBOX(c), 1000)
+Ok("the unanswered call is in that inbox", NODE.IS_CALL(unanswered))
+DIM call_raised AS INTEGER = FALSE
+TRY
+    DIM r_none = NODE.CALL("nobody_" + tag$, "X", 1, 100)
+CATCH
+    call_raised = TRUE
+ENDTRY
+Ok("CALL to nobody raises", call_raised)
+
+' ── topics ────────────────────────────────────────────────────
+DIM q_pub = TOPIC.OPEN("q/" + tag$, "drop", b)
+DIM q_sub = TOPIC.SUBSCRIBE("q/" + tag$, "queue:8")
+SLEEP 300
+FOR k = 1 TO 8
+    CHAN.SEND q_pub, k
+NEXT k
+DIM q_ok AS INTEGER = TRUE
+FOR k = 1 TO 8
+    IF CHAN.RECV(q_sub, 3000) <> k THEN q_ok = FALSE
+NEXT k
+Ok("a queue delivers its capacity in order", q_ok)
+SLEEP 200
+FOR k = 9 TO 16
+    CHAN.SEND q_pub, k
+NEXT k
+q_ok = TRUE
+FOR k = 9 TO 16
+    IF CHAN.RECV(q_sub, 3000) <> k THEN q_ok = FALSE
+NEXT k
+Ok("credits come back after the reader took them", q_ok)
+SLEEP 200
+FOR k = 1 TO 12
+    CHAN.SEND q_pub, k
+NEXT k
+DIM q_stats = TOPIC.STATS(q_pub)
+Ok("a drop publisher drops what has no credit", q_stats{"DROPPED"} = 4)
+Ok("and counts what it sent", q_stats{"SENT"} = 28)
+Ok("one subscriber", q_stats{"SUBSCRIBERS"} = 1)
+FOR k = 1 TO 8
+    DIM drain = CHAN.RECV(q_sub, 3000)
+NEXT k
+DIM sub_stats = TOPIC.STATS(q_sub)
+Ok("the subscription counts what arrived", sub_stats{"RECEIVED"} = 24)
+Ok("from one publisher", sub_stats{"PUBLISHERS"} = 1)
+
+DIM l_pub = TOPIC.OPEN("l/" + tag$, "drop", b)
+DIM l_sub = TOPIC.SUBSCRIBE("l/" + tag$, "latest")
+SLEEP 300
+FOR k = 1 TO 100
+    CHAN.SEND l_pub, k
+NEXT k
+SLEEP 300
+Ok("latest keeps one value", CHAN.LEN(l_sub) = 1)
+Ok("the newest", CHAN.TRY_RECV(l_sub) = 100)
+
+DIM r_pub = TOPIC.OPEN("r/" + tag$, "drop", b)
+DIM r_sub = TOPIC.SUBSCRIBE("r/" + tag$, "ring:5")
+SLEEP 300
+FOR k = 1 TO 20
+    CHAN.SEND r_pub, k
+NEXT k
+SLEEP 300
+Ok("ring keeps five", CHAN.LEN(r_sub) = 5)
+Ok("the newest five", CHAN.RECV(r_sub, 100) = 16)
+
+DIM s_pub = TOPIC.OPEN("state/" + tag$, "drop", b)
+TOPIC.RETAIN s_pub, TRUE
+CHAN.SEND s_pub, "first state"
+CHAN.SEND s_pub, "second state"
+DIM late_sub = TOPIC.SUBSCRIBE("state/" + tag$, "queue:4")
+Ok("a late subscriber gets the retained value", CHAN.RECV(late_sub, 3000) = "second state")
+CHAN.SEND s_pub, "third state"
+Ok("then the next one", CHAN.RECV(late_sub, 3000) = "third state")
+
+DIM m_pub_b = TOPIC.OPEN("multi/" + tag$ + "/b", "drop", b)
+DIM m_pub_c = TOPIC.OPEN("multi/" + tag$ + "/c", "drop", c)
+DIM m_sub = TOPIC.SUBSCRIBE("multi/" + tag$ + "/*", "queue:16", TRUE)
+SLEEP 300
+CHAN.SEND m_pub_b, "from b"
+CHAN.SEND m_pub_c, "from c"
+DIM e1 = CHAN.RECV(m_sub, 3000)
+DIM e2 = CHAN.RECV(m_sub, 3000)
+Ok("a pattern reaches two publishers", TYPEOF(e1) = "OBJECT" ANDALSO TYPEOF(e2) = "OBJECT")
+DIM froms$ AS STRING = e1{"FROM"} + "," + e2{"FROM"}
+Ok("both senders", INSTR(froms$, nb$) >= 0 ANDALSO INSTR(froms$, nc$) >= 0)
+Ok("the envelope names the topic", LEFT$(e1{"TOPIC"}, 6) = "multi/")
+Ok("and carries the data", INSTR(e1{"DATA"} + e2{"DATA"}, "from b") >= 0)
+Ok("a sequence number", e1{"SEQ"} = 1)
+Ok("and the send time", e1{"T"} > 0 ANDALSO e1{"T"} <= NODE.TIME())
+DIM listed = TOPIC.LIST("multi/" + tag$ + "/*")
+Ok("TOPIC.LIST finds both topics", LEN(listed) = 2)
+
+DIM jobs = TOPIC.OPEN("jobs/" + tag$, "drop", b)
+DIM worker_a = TOPIC.SHARE("jobs/" + tag$, 64)
+DIM worker_c = TOPIC.SHARE("jobs/" + tag$, 64, c)
+SLEEP 300
+FOR k = 1 TO 20
+    CHAN.SEND jobs, k
+NEXT k
+SLEEP 300
+DIM got_a AS INTEGER = CHAN.LEN(worker_a)
+DIM got_c AS INTEGER = CHAN.LEN(worker_c)
+Ok("SHARE gives every job to one worker", got_a + got_c = 20)
+Ok("and both get work", got_a > 0 ANDALSO got_c > 0)
+
+TOPIC.UNSUBSCRIBE q_sub
+SLEEP 300
+Ok("UNSUBSCRIBE leaves the publisher without subscribers", TOPIC.STATS(q_pub){"SUBSCRIBERS"} = 0)
+CHAN.CLOSE l_pub
+SLEEP 300
+Ok("a closed topic leaves the list", LEN(TOPIC.LIST("l/" + tag$)) = 0)
+DIM send_closed AS INTEGER = FALSE
+TRY
+    CHAN.SEND l_pub, 1
+CATCH
+    send_closed = TRUE
+ENDTRY
+Ok("SEND on a closed topic raises", send_closed)
+DIM bad_policy AS INTEGER = FALSE
+TRY
+    DIM s_bad = TOPIC.SUBSCRIBE("x", "newest")
+CATCH
+    bad_policy = TRUE
+ENDTRY
+Ok("an unknown policy raises", bad_policy)
+
+' ── events, leave and a new publisher ─────────────────────────
+DIM events = NODE.EVENTS()
+DIM nd$ AS STRING = "ld_" + tag$
+DIM d = NODE.OPEN(nd$)
+DIM joined = WAIT_EVENT(events, "JOIN", nd$, 3000)
+Ok("EVENTS reports a node that joins", TYPEOF(joined) = "OBJECT")
+DIM re_sub = TOPIC.SUBSCRIBE("again/" + tag$, "queue:4")
+DIM re_pub = TOPIC.OPEN("again/" + tag$, "drop", d)
+SLEEP 400
+CHAN.SEND re_pub, "first publisher"
+Ok("a subscription finds a publisher that came later", CHAN.RECV(re_sub, 3000) = "first publisher")
+NODE.LEAVE d
+DIM left = WAIT_EVENT(events, "LEAVE", nd$, 3000)
+Ok("and reports one that leaves", TYPEOF(left) = "OBJECT")
+Ok("PEERS forgets it", LEN(NODE.PEERS(nd$)) = 0)
+DIM d2 = NODE.OPEN(nd$)
+DIM re_pub2 = TOPIC.OPEN("again/" + tag$, "drop", d2)
+SLEEP 500
+CHAN.SEND re_pub2, "second publisher"
+Ok("the same subscription takes the new publisher", CHAN.RECV(re_sub, 3000) = "second publisher")
+
+NODE.LEAVE b
+Ok("a node that left has an inbox at its end", CHAN.IS_EOF(CHAN.RECV(inbox_b, 1000)))
+Ok("NODE.TIME grows", NODE.TIME() > e1{"T"})
+NODE.LEAVE c
+NODE.LEAVE d2
+NODE.LEAVE
+Ok("no nodes of this test are left", LEN(NODE.PEERS("*" + tag$)) = 0)
+
+PRINT ""
+PRINT "NODE LOCAL TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

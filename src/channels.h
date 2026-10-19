@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -33,6 +34,12 @@ struct Channel {
     // value instead (Latest keeps one value, Ring keeps `capacity`).
     ChanPolicy                policy = ChanPolicy::Block;
     uint64_t                  dropped = 0;   // values a full Latest/Ring channel let go
+    // Set by the Node Bus: SEND hands the value to `forward` instead of the
+    // buffer (a topic publisher), and CLOSE calls `on_close` once. on_close
+    // runs with g_channels_mutex possibly held, so it must not touch the
+    // channel registry.
+    std::function<void(const Value&)> forward;
+    std::function<void()>             on_close;
     std::atomic<bool>         closed{false};
     // Counts of threads currently parked in SEND/RECV. Lets CLOSE wake
     // everyone deterministically and lets the destructor refuse to drop a

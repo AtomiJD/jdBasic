@@ -28,6 +28,7 @@
 #endif
 
 #include "net.h"
+#include "node.h"
 #include "vm.h"
 
 #include <algorithm>
@@ -651,4 +652,6 @@ void register_net_builtins(VM& vm) {
         std::lock_guard<std::mutex> lock(g_error_mu);
         return Value::make_string(g_last_error);
     });
+
+    register_node_builtins(vm);
 }

@@ -125,6 +125,7 @@ static std::vector<std::string> pe_imported_dlls(const std::filesystem::path& fi
 #include "http.h"
 #ifdef NET
 #include "net.h"
+#include "node.h"
 #endif
 #ifdef USE_SERIAL
 #include "serial.h"
@@ -1827,6 +1828,7 @@ int main(int argc, char* argv[]) {
               "      --lint               Parse + typecheck only, do not run\n"
               "      --pcode              Compile to p-code (<file>.jdpb beside the source), do not run\n"
               "      --dump-tokens        Print the token stream, one token per line\n"
+              "      --nodes              List the Node Bus nodes on this machine and exit\n"
               "      --pretty             Reformat source to stdout (UPPER keywords)\n"
               "      --pretty-vb          Reformat source to stdout (VB-style Pascal-cased keywords)\n"
               "      --mcp                Speak the Model Context Protocol on stdio\n"
@@ -1854,6 +1856,14 @@ int main(int argc, char* argv[]) {
               "  load on demand: keep build/ on PATH or copy those DLLs for AI .exes.\n"
               "  Everything after the script filename is passed through to the script via OS.ARGS.\n"
               "  Run without arguments to drop into the interactive workspace (see HELP inside).\n";
+            return 0;
+        }
+        if (a == "--nodes") {
+#ifdef NET
+            std::cout << node_bus_report();
+#else
+            std::cout << "built without NET: no Node Bus\n";
+#endif
             return 0;
         }
         if (a == "--version" || a == "-V") {

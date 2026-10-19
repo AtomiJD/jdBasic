@@ -1,0 +1,118 @@
+' Node Bus throughput and latency as a jdBasic program sees them, encoding
+' and the interpreter's own cost included. Starts itself with --child as
+' the far end for the round trips between two processes.
+'
+'   jdBasic tests/node/bench_node.jdb
+
+OPTION "EXPLICIT"
+
+DIM argv = OS.ARGS()
+DIM interp AS INTEGER = OS.FEATURE("INTERPRETER")
+
+FUNC ARG_AT$(i AS INTEGER) AS STRING
+    IF i < LEN(argv) THEN RETURN argv[i]
+    RETURN ""
+ENDFUNC
+
+FUNC H_ECHO(c)
+    RETURN c{"ARG"}
+ENDFUNC
+
+IF ARG_AT$(1) = "--child" THEN
+    DIM child_node = NODE.JOIN(ARG_AT$(2))
+    NODE.SERVE "ECHO", "H_ECHO"
+    DIM child_inbox = NODE.INBOX()
+    DIM t_end = TICK() + 120000
+    DO WHILE TICK() < t_end
+        DIM ran = NODE.POLL(5)
+        DIM m = CHAN.TRY_RECV(child_inbox)
+        IF NOT CHAN.IS_TIMEOUT(m) THEN
+            IF TYPEOF(m) = "STRING" THEN
+                IF m = "QUIT" THEN END 0
+            ENDIF
+        ENDIF
+    LOOP
+    END 3
+ENDIF
+
+FUNC RATE$(n, ms) AS STRING
+    IF ms <= 0 THEN ms = 1
+    RETURN FORMAT$("{:.0f}", n * 1000 / ms)
+ENDFUNC
+
+DIM tag$ AS STRING = "b" + STR$(OS.PID())
+DIM a = NODE.JOIN("ba_" + tag$)
+DIM b = NODE.OPEN("bb_" + tag$)
+DIM inbox_b = NODE.INBOX(b)
+DIM k AS INTEGER
+DIM t0 AS DOUBLE = 0
+DIM ms AS DOUBLE = 0
+
+PRINT "Node Bus bench (" + IIF(interp, "interpreter", "compiled") + ")"
+
+' small messages, one node to another in this process
+DIM n_small AS INTEGER = 20000
+t0 = TICK()
+DIM j AS INTEGER
+FOR k = 1 TO n_small STEP 1000
+    FOR j = 0 TO 999
+        DIM s_ok = NODE.SEND("bb_" + tag$, k + j)
+    NEXT j
+    FOR j = 0 TO 999
+        DIM v = CHAN.RECV(inbox_b, 5000)
+    NEXT j
+NEXT k
+ms = TICK() - t0
+PRINT "  small messages        " + RATE$(n_small, ms) + " msg/s"
+
+' 800 KB arrays
+DIM block = IOTA(100000) * 1.5
+DIM n_block AS INTEGER = 50
+t0 = TICK()
+FOR k = 1 TO n_block
+    DIM b_ok = NODE.SEND("bb_" + tag$, block)
+    DIM got = CHAN.RECV(inbox_b, 5000)
+NEXT k
+ms = TICK() - t0
+PRINT "  800 KB arrays         " + RATE$(n_block * 0.8, ms) + " MB/s"
+
+' topic frames of 1024 numbers into a latest subscription
+DIM frame = IOTA(1024) * 0.5
+DIM scope_pub = TOPIC.OPEN("bench/" + tag$ + "/scope", "drop", b)
+DIM scope_sub = TOPIC.SUBSCRIBE("bench/" + tag$ + "/scope", "latest")
+SLEEP 300
+DIM n_frames AS INTEGER = 5000
+t0 = TICK()
+FOR k = 1 TO n_frames
+    CHAN.SEND scope_pub, frame
+NEXT k
+ms = TICK() - t0
+PRINT "  1024-number frames    " + RATE$(n_frames, ms) + " published/s"
+
+' calls to another process
+DIM self$ AS STRING = OS.SELF$()
+DIM ca = ["--child", "bc_" + tag$]
+IF interp THEN ca = [PATH.ABS$(argv[0]), "--child", "bc_" + tag$]
+DIM pid AS INTEGER = OS.SPAWN(self$, ca, {"HIDDEN": TRUE})
+DIM found = NODE.FIND("bc_" + tag$, 20000)
+DIM warm = NODE.CALL("bc_" + tag$, "ECHO", 1, 10000)
+DIM n_calls AS INTEGER = 2000
+DIM times = []
+FOR k = 1 TO n_calls
+    DIM c0 = NODE.TIME()
+    DIM echo1 = NODE.CALL("bc_" + tag$, "ECHO", k, 10000)
+    times = APPEND(times, (NODE.TIME() - c0) / 1000)
+NEXT k
+DIM sorted = SORT(times)
+PRINT "  call to a process     median " + FORMAT$("{:.0f}", sorted[n_calls / 2]) + " us, p99 " + FORMAT$("{:.0f}", sorted[INT(n_calls * 0.99)]) + " us"
+t0 = TICK()
+FOR k = 1 TO 20
+    DIM echo2 = NODE.CALL("bc_" + tag$, "ECHO", block, 10000)
+NEXT k
+ms = TICK() - t0
+PRINT "  800 KB there and back " + RATE$(20 * 1.6, ms) + " MB/s"
+
+DIM q = NODE.SEND("bc_" + tag$, "QUIT")
+DIM code = OS.WAIT(pid, 10000)
+NODE.LEAVE b
+NODE.LEAVE

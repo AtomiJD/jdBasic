@@ -94,13 +94,17 @@ Ok("a killed child is not alive", NOT OS.ALIVE(p_sleep))
 
 ' output, environment and working directory
 IF FILE.EXISTS(out$) THEN KILL out$
-DIM env_opts = {"HIDDEN": TRUE, "OUTPUT": out$, "CWD": tmp_dir$, "ENV": {"JDB_SPAWN_TEST": "neon 42"}}
+DIM cwd_name$ AS STRING = "jdb_spawn_cwd_" + STR$(OS.PID())
+DIM cwd$ AS STRING = PATH.JOIN$(tmp_dir$, cwd_name$)
+MKDIR cwd$
+DIM env_opts = {"HIDDEN": TRUE, "OUTPUT": out$, "CWD": cwd$, "ENV": {"JDB_SPAWN_TEST": "neon 42"}}
 DIM p_env AS INTEGER = OS.SPAWN(self$, CHILD_ARGS(["env"]), env_opts)
 Ok("the env child exits 0", OS.WAIT(p_env, 30000) = 0)
 DIM env_out$ AS STRING = TXTREADER$(out$)
 Ok("ENV reaches the child", INSTR(env_out$, "ENV=neon 42") >= 0)
-Ok("CWD is the child's directory", INSTR(LCASE$(env_out$), "cwd=" + LCASE$(PATH.ABS$(tmp_dir$))) >= 0)
+Ok("CWD is the child's directory", INSTR(env_out$, cwd_name$ + CHR$(10)) >= 0 ORELSE INSTR(env_out$, cwd_name$ + CHR$(13)) >= 0)
 Ok("the parent keeps its own environment", GETENV$("JDB_SPAWN_TEST") = "")
+RMDIR cwd$
 KILL out$
 
 ' arguments arrive as they were given, without a shell reading them

@@ -640,6 +640,115 @@ Description: Encodes any value as a binary JDV1 string (magic "JDV" + version). 
 Syntax: NODE.UNPACK(s$) -> value
 Description: Decodes what NODE.PACK$ produced. Malformed, cut-off or trailing input raises with the byte offset.
 
+[NODE.JOIN]
+Syntax: NODE.JOIN(name$, [scope$]) -> handle
+Description: Joins the Node Bus under name$ and returns the node handle; the first node is the program's default node. scope$ is "local". A name in use raises.
+
+[NODE.OPEN]
+Syntax: NODE.OPEN(name$, [scope$]) -> handle
+Description: A further node in the same program. The default node stays as it was.
+
+[NODE.LEAVE]
+Syntax: NODE.LEAVE [node]
+Description: Leaves the bus: links close, the directory entry goes, the node's channels read EOF.
+
+[NODE.NAME$]
+Syntax: NODE.NAME$([node]) -> string$
+Description: The node's full address, name@host.
+
+[NODE.PEERS]
+Syntax: NODE.PEERS([pattern$]) -> array
+Description: A map per other node on this machine: NAME, ADDR, HOST, PID, SCOPE, TOPICS, SINCE.
+
+[NODE.FIND]
+Syntax: NODE.FIND(addr$, [timeout_ms]) -> boolean
+Description: Waits until the node exists, at most timeout_ms (default 5000).
+
+[NODE.EVENTS]
+Syntax: NODE.EVENTS([node]) -> channel
+Description: A channel receiving {"EVENT": "JOIN" or "LEAVE", "ADDR": name} as other nodes come and go.
+
+[NODE.INBOX]
+Syntax: NODE.INBOX([node]) -> channel
+Description: The channel direct messages and calls arrive on.
+
+[NODE.SEND]
+Syntax: NODE.SEND(addr$, value, [node]) -> boolean
+Description: Puts value into another node's inbox. FALSE when it does not exist or cannot be reached.
+
+[NODE.ERROR$]
+Syntax: NODE.ERROR$() -> string$
+Description: Why the last NODE.SEND or NODE.FIND failed.
+
+[NODE.CALL]
+Syntax: NODE.CALL(addr$, method$, arg, [timeout_ms], [node]) -> value
+Description: Asks another node and waits for the answer; the timeout marker after timeout_ms (default 5000). A failure raises.
+
+[NODE.CALL_ASYNC]
+Syntax: NODE.CALL_ASYNC(addr$, method$, arg, [node]) -> channel
+Description: A call without waiting; the answer, or a failure map, arrives on the returned channel.
+
+[NODE.IS_CALL]
+Syntax: NODE.IS_CALL(value) -> boolean
+Description: Whether an inbox value is a call (a map with METHOD, ARG, FROM).
+
+[NODE.IS_FAIL]
+Syntax: NODE.IS_FAIL(value) -> boolean
+Description: Whether a CALL_ASYNC answer is a failure.
+
+[NODE.REPLY]
+Syntax: NODE.REPLY(call, value) -> boolean
+Description: Answers a call taken from the inbox.
+
+[NODE.FAIL]
+Syntax: NODE.FAIL(call, message$) -> boolean
+Description: Answers a call with an error, which NODE.CALL raises on the other side.
+
+[NODE.SERVE]
+Syntax: NODE.SERVE method$, func$, [node]
+Description: Calls of method$ go to the FUNC func$ (it takes the call map and returns the answer), run by NODE.POLL.
+
+[NODE.POLL]
+Syntax: NODE.POLL([timeout_ms], [node]) -> number
+Description: Runs the waiting served calls on this thread and returns how many ran; waits up to timeout_ms for the first.
+
+[NODE.TIME]
+Syntax: NODE.TIME() -> number
+Description: Nanoseconds on the machine's steady clock, the same in every process.
+
+[NODE.TRACE]
+Syntax: NODE.TRACE flag
+Description: Writes every Node Bus frame in or out to standard error while TRUE.
+
+[TOPIC.OPEN]
+Syntax: TOPIC.OPEN(name$, [mode$], [node]) -> channel
+Description: Publishes a topic; CHAN.SEND on the channel publishes. mode$ "drop" (default) or "block" for full queue readers.
+
+[TOPIC.SUBSCRIBE]
+Syntax: TOPIC.SUBSCRIBE(pattern$, [policy$], [envelope], [node]) -> channel
+Description: Receives every topic matching pattern$. policy$ "queue:N" (default queue:256), "latest" or "ring:N". envelope TRUE wraps values as DATA, FROM, TOPIC, SEQ, T.
+
+[TOPIC.SHARE]
+Syntax: TOPIC.SHARE(name$, [capacity], [node]) -> channel
+Description: A work queue: each value of the topic reaches one of the channels sharing it.
+
+[TOPIC.UNSUBSCRIBE]
+Syntax: TOPIC.UNSUBSCRIBE ch
+Description: Ends a subscription.
+
+[TOPIC.RETAIN]
+Syntax: TOPIC.RETAIN pub, flag
+Description: The topic keeps its last value and hands it to new subscribers first.
+
+[TOPIC.LIST]
+Syntax: TOPIC.LIST([pattern$]) -> array
+Description: TOPIC and ADDR of every topic on this machine that matches.
+
+[TOPIC.STATS]
+Syntax: TOPIC.STATS(ch) -> map
+Description: Counters of a publisher (SENT, DROPPED, BYTES, SUBSCRIBERS) or a subscription (RECEIVED, DROPPED, BYTES, PUBLISHERS).
+
+
 [COLOR]
 Syntax: COLOR foreground, background
 Description: Sets the text colors for the console.

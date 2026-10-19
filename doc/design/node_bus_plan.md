@@ -307,16 +307,22 @@ A directory of small files, one per node: `<runtime dir>/nodes/<name>.json` with
 
 ### 7.3 Topic routing
 
-No broker: each node advertises its published topic names to every peer it is
-connected to (`ADVERT`), and peers ask each other for adverts on connect. A
-subscription pattern is matched locally against all known adverts; for every
-match the subscriber sends `SUB` (with policy and credits) to that publisher.
-New adverts later are matched against existing subscriptions, so a subscriber
-that started first gets the publisher when it appears, and a restarted
-publisher is picked up again without the subscriber doing anything.
+No broker. Implemented in P2: each node lists the topics it publishes in its
+directory file, rewritten on every `TOPIC.OPEN` and close. A node with
+subscriptions or `NODE.EVENTS` rereads the directory every 250 ms, matches
+each pattern against the listed topics and sends `SUB` (policy and credits)
+to every publisher it is not attached to yet. The publisher answers a topic
+it no longer has with `UNSUB`. So a subscriber that started first gets the
+publisher when it appears, and a restarted publisher is picked up again
+without the subscriber doing anything. Across machines (P5) the beacons
+carry the topic list the way the directory file does here.
 
 Links are opened lazily: a node connects to a peer only for a SEND, CALL or a
-matching subscription. A subscriber with `"*"` (spy, MCP) connects to everyone.
+matching subscription, and SEND and CALL reuse an open link found by name. A
+subscriber with `"*"` (spy, MCP) connects to everyone.
+
+Frame kinds in use: HELLO, WELCOME, BYE, MSG, CALL, REPLY, FAIL, SUB, UNSUB,
+PUB (always with a timestamp), CREDIT. AUTH, PING and PONG come with P5.
 
 ## 8. Runtime internals
 
@@ -476,6 +482,35 @@ Decisions:
 **Budget for U1:** per frame master scope 4096 f32 (16 KB) + 2 bus scopes
 (32 KB) + 16 levels + loudness + anchor, about 50 KB at 60 Hz = 3 MB/s. Local:
 negligible. LAN: 2.4 % of 1 GbE, and Wi-Fi 5 still has headroom.
+
+### 12.2 P2 results (2026-10-19, `tests/node/bench_node.jdb`, Windows dev box)
+
+As a jdBasic program sees it, encoding and interpreter included. Small
+messages and frames go between two nodes of one program; calls go to a
+second process.
+
+| Path | Interpreter | Compiled |
+|------|-------------|----------|
+| small messages (one integer) | 98000 msg/s | 94000 msg/s |
+| 800 KB arrays, one way | 718 MB/s | 384 MB/s |
+| 1024-number frames into a latest subscription | 86000/s | 47000/s |
+| call to another process, median / p99 | 70 / 129 us | 68 / 119 us |
+| 800 KB there and back | 631 MB/s | 362 MB/s |
+
+On the farm (interpreter / compiled):
+
+| Path | render (Linux) | mac mini (M1) |
+|------|----------------|---------------|
+| small messages | 445000 / 388000 msg/s | 165000 / 164000 msg/s |
+| 800 KB arrays, one way | 1798 / 716 MB/s | 1616 / 948 MB/s |
+| 1024-number frames | 147000 / 150000/s | 47000 / 50000/s |
+| call to another process, median | 9 / 10 us | 36 / 24 us |
+
+SEND and CALL find an open link by name and read the node directory only
+for a node they are not linked to yet; a frame goes straight onto the
+socket when nothing waits ahead of it. Compiled programs pay for
+converting arrays across the bridge. U1 needs about 50 KB at 60 Hz, so
+either backend has two orders of magnitude to spare.
 
 ## 13. Tooling
 

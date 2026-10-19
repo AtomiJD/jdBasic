@@ -55,7 +55,7 @@ for %%A in (%*) do (
     )
     if /I "%%A"=="NET" (
         set DEFS=!DEFS! /DNET
-        set EXTRA_SRC=!EXTRA_SRC! src\net.cpp
+        set EXTRA_SRC=!EXTRA_SRC! src\net.cpp src\node.cpp
         echo [+] NET - TCP and UDP sockets
     )
     if /I "%%A"=="SERIAL" (

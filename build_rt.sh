@@ -89,7 +89,7 @@ fi
 
 if [ "$WANT_NET" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DNET"
-    SRC="$SRC src/net.cpp"
+    SRC="$SRC src/net.cpp src/node.cpp"
 fi
 
 if [ "$WANT_SOUND" = "1" ]; then

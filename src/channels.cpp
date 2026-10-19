@@ -85,6 +85,7 @@ void chan_close(Channel& ch) {
     // SENDers learn the channel is dead and throw.
     ch.cv_recv.notify_all();
     ch.cv_send.notify_all();
+    if (ch.on_close) ch.on_close();
 }
 
 void chan_shutdown_all() {

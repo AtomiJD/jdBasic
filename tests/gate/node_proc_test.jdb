@@ -1,0 +1,157 @@
+' The Node Bus between two processes. The test starts itself again with
+' --child as the peer: a node that serves calls, echoes messages and
+' publishes a counter. The parent calls it, subscribes, kills it, sees it
+' leave, starts it again and finds the subscription attached to the new one.
+
+OPTION "EXPLICIT"
+
+DIM argv = OS.ARGS()
+DIM interp AS INTEGER = OS.FEATURE("INTERPRETER")
+
+FUNC ARG_AT$(i AS INTEGER) AS STRING
+    IF i < LEN(argv) THEN RETURN argv[i]
+    RETURN ""
+ENDFUNC
+
+FUNC H_PID(c)
+    RETURN OS.PID()
+ENDFUNC
+
+FUNC H_ECHO(c)
+    RETURN c{"ARG"}
+ENDFUNC
+
+' ── the child side ────────────────────────────────────────────
+IF ARG_AT$(1) = "--child" THEN
+    DIM me$ AS STRING = ARG_AT$(2)
+    DIM self_node = NODE.JOIN(me$)
+    NODE.SERVE "PID", "H_PID"
+    NODE.SERVE "ECHO", "H_ECHO"
+    DIM tick_pub = TOPIC.OPEN("proc/" + me$ + "/tick")
+    TOPIC.RETAIN tick_pub, TRUE
+    DIM inbox = NODE.INBOX()
+    DIM n AS INTEGER = 0
+    DIM t_end = TICK() + 60000
+    DO WHILE TICK() < t_end
+        n = n + 1
+        CHAN.SEND tick_pub, n
+        DIM ran = NODE.POLL(20)
+        DIM m = CHAN.TRY_RECV(inbox)
+        IF NOT CHAN.IS_TIMEOUT(m) THEN
+            IF TYPEOF(m) = "STRING" THEN
+                IF m = "QUIT" THEN
+                    NODE.LEAVE
+                    END 0
+                ENDIF
+            ELSEIF NODE.IS_CALL(m) THEN
+                DIM refused = NODE.FAIL(m, "no handler for " + m{"METHOD"})
+            ELSEIF TYPEOF(m) = "OBJECT" THEN
+                DIM echo_sent = NODE.SEND(m{"REPLY_TO"}, m{"BODY"})
+            ENDIF
+        ENDIF
+    LOOP
+    END 3
+ENDIF
+
+' ── the parent side ───────────────────────────────────────────
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+DIM self$ AS STRING = OS.SELF$()
+DIM tag$ AS STRING = "t" + STR$(OS.PID())
+DIM parent$ AS STRING = "pp_" + tag$
+DIM child$ AS STRING = "pc_" + tag$
+
+' The next event of kind$ about addr$, or NONE after ms milliseconds. Other
+' programs on the machine may join and leave at the same time.
+FUNC WAIT_EVENT(ch, kind$, addr$, ms)
+    DIM deadline = TICK() + ms
+    DO WHILE TICK() < deadline
+        DIM ev = CHAN.RECV(ch, deadline - TICK())
+        IF CHAN.IS_TIMEOUT(ev) ORELSE CHAN.IS_EOF(ev) THEN RETURN NONE
+        IF ev{"EVENT"} = kind$ ANDALSO ev{"ADDR"} = addr$ THEN RETURN ev
+    LOOP
+    RETURN NONE
+ENDFUNC
+
+FUNC START_CHILD(name$) AS INTEGER
+    DIM a = ["--child", name$]
+    IF interp THEN a = [PATH.ABS$(argv[0]), "--child", name$]
+    RETURN OS.SPAWN(self$, a, {"HIDDEN": TRUE})
+ENDFUNC
+
+DIM me = NODE.JOIN(parent$)
+DIM events = NODE.EVENTS()
+DIM ticks = TOPIC.SUBSCRIBE("proc/pc_" + tag$ + "/*", "latest", TRUE)
+DIM pid1 AS INTEGER = START_CHILD(child$)
+Ok("the child node appears", NODE.FIND(child$, 20000))
+DIM peers = NODE.PEERS(child$)
+Ok("PEERS lists it", LEN(peers) = 1)
+Ok("with the pid SPAWN returned", LEN(peers) = 1 ANDALSO peers[0]{"PID"} = pid1)
+DIM joined = WAIT_EVENT(events, "JOIN", child$, 5000)
+Ok("EVENTS reports the join", TYPEOF(joined) = "OBJECT")
+
+DIM their_pid = NODE.CALL(child$, "PID", NONE, 10000)
+Ok("CALL reaches the other process", their_pid = pid1)
+DIM payload = IOTA(100000)
+DIM echoed = NODE.CALL(child$, "ECHO", payload, 10000)
+Ok("a 100000-element array goes there and back", LEN(echoed) = 100000 ANDALSO SUM(echoed) = 5000050000)
+DIM text_back = NODE.CALL(child$, "ECHO", "a" + CHR$(0) + "b", 10000)
+Ok("a string with NUL survives", text_back = "a" + CHR$(0) + "b")
+DIM unknown_raised AS INTEGER = FALSE
+TRY
+    DIM nope = NODE.CALL(child$, "NO_SUCH_METHOD", 1, 10000)
+CATCH
+    unknown_raised = INSTR(ERRMSG$, "no handler") >= 0
+ENDTRY
+Ok("a method nobody serves comes back as an error", unknown_raised)
+
+Ok("SEND to the other process", NODE.SEND(child$, {"REPLY_TO": parent$, "BODY": "ping"}))
+Ok("its answer arrives in the inbox", CHAN.RECV(NODE.INBOX(), 10000) = "ping")
+
+DIM t1 = CHAN.RECV(ticks, 10000)
+Ok("the counter topic arrives", TYPEOF(t1) = "OBJECT")
+Ok("from the child", t1{"FROM"} = child$)
+DIM t2 = CHAN.RECV(ticks, 10000)
+DIM count_until = TICK() + 10000
+DO WHILE TICK() < count_until ANDALSO NOT CHAN.IS_TIMEOUT(t2) ANDALSO t2{"DATA"} <= t1{"DATA"}
+    t2 = CHAN.RECV(ticks, 10000)
+LOOP
+DIM counting AS INTEGER = NOT CHAN.IS_TIMEOUT(t2) ANDALSO t2{"DATA"} > t1{"DATA"}
+IF NOT counting THEN PRINT "ticks subscription: "; TOPIC.STATS(ticks)
+Ok("and keeps counting", counting)
+Ok("the send time is on this machine's clock", t2{"T"} <= NODE.TIME() ANDALSO t2{"T"} > t1{"T"})
+
+Ok("KILL the child", OS.KILL(pid1))
+DIM code1 = OS.WAIT(pid1, 10000)
+DIM left = WAIT_EVENT(events, "LEAVE", child$, 5000)
+Ok("EVENTS reports that it left", TYPEOF(left) = "OBJECT")
+Ok("PEERS forgets a node whose process died", LEN(NODE.PEERS(child$)) = 0)
+DIM dead_send = NODE.SEND(child$, "anyone?")
+Ok("SEND to it is FALSE", NOT dead_send)
+
+DIM drained = CHAN.TRY_RECV(ticks)
+DIM pid2 AS INTEGER = START_CHILD(child$)
+Ok("the same name can join again", NODE.FIND(child$, 20000))
+DIM t3 = CHAN.RECV(ticks, 10000)
+Ok("the subscription takes the new process", TYPEOF(t3) = "OBJECT" ANDALSO t3{"FROM"} = child$)
+Ok("whose counter starts again", t3{"DATA"} < 1000)
+
+Ok("QUIT as a message", NODE.SEND(child$, "QUIT"))
+Ok("ends the child with 0", OS.WAIT(pid2, 10000) = 0)
+NODE.LEAVE
+Ok("nothing of this test is left", LEN(NODE.PEERS("*" + tag$)) = 0)
+
+PRINT ""
+PRINT "NODE PROC TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
