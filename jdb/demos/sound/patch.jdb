@@ -22,6 +22,7 @@
 '   bass_house   a round triangle bass
 '   sub          a sine sub with glide
 '   acid         a squelchy saw with ^ slides
+'   synth_bass   a dark saw pulse for straight eighths, the synthwave bass
 '
 ' APPLY first returns the track to a plain sine, so patches do not
 ' leak into each other. Pan, orbit and sidechain stay as they are:
@@ -29,11 +30,11 @@
 
 EXPORT MODULE PATCH
 
-DIM PATCH_NAMES$ = ["neon_pluck", "neon_lead", "neon_soft", "supersaw", "pad", "choir", "organ", "fm_keys", "vox_chop", "bass_roll", "bass_house", "sub", "acid"]
+DIM PATCH_NAMES$ = ["neon_pluck", "neon_lead", "neon_soft", "supersaw", "pad", "choir", "organ", "fm_keys", "vox_chop", "bass_roll", "bass_house", "sub", "acid", "synth_bass"]
 ' each patch's filter: cutoff, resonance, type
-DIM PATCH_CUT = [900, 2600, 1100, 3200, 1400, 20000, 3000, 2600, 1500, 700, 600, 20000, 500]
-DIM PATCH_RES = [0.45, 0.35, 0.3, 0.25, 0.2, 0, 0.1, 0.15, 0.55, 0.35, 0.3, 0, 0.75]
-DIM PATCH_FTYPE$ = ["LP", "LP", "LP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP", "LP", "LP"]
+DIM PATCH_CUT = [900, 2600, 1100, 3200, 1400, 20000, 3000, 2600, 1500, 700, 600, 20000, 500, 520]
+DIM PATCH_RES = [0.45, 0.35, 0.3, 0.25, 0.2, 0, 0.1, 0.15, 0.55, 0.35, 0.3, 0, 0.75, 0.3]
+DIM PATCH_FTYPE$ = ["LP", "LP", "LP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP", "LP", "LP", "LP"]
 
 SUB PLAIN(t AS INTEGER)
     SOUND.VOICE t, "SINE", 0.01, 0.1, 0.7, 0.3
@@ -179,6 +180,11 @@ EXPORT SUB APPLY(t AS INTEGER, name$)
         SOUND.VOICE t, "SAW", 0.002, 0.15, 0.4, 0.04
         SOUND.FENV t, 2.2, 0.002, 0.12
         SOUND.GLIDE t, 70, "SLIDE"
+        SOUND.GAIN t, 0.7
+    ELSEIF n$ = "synth_bass" THEN
+        SOUND.VOICE t, "SAW", 0.002, 0.18, 0.55, 0.05
+        SOUND.UNISON t, 2, 0.08, 0.3
+        SOUND.FENV t, 1.6, 0.002, 0.14
         SOUND.GAIN t, 0.7
     ENDIF
 ENDSUB

@@ -52,6 +52,8 @@ CHECK_STR "flat key", "Cm Ab Eb Bb", MELODY.PROG$("euphoric", "Eb major")
 CHECK_STR "flat minor key", "Fm Bbm Db C", MELODY.PROG$("dark", "F minor")
 CHECK_STR "sharp minor key", "F#m D A E", MELODY.PROG$("epic", "F# minor")
 CHECK_STR "flat dorian key", "Cm7 F7 Cm7 F7", MELODY.PROG$("deep", "C dorian")
+CHECK_STR "outrun", "F G Am Am", MELODY.PROG$("outrun", "A minor")
+CHECK_STR "outrun flat key", "Db Eb Fm Fm", MELODY.PROG$("outrun", "F minor")
 
 CHECK_STR "borrowed in major", "F Fm Ab Bb", MELODY.BORROWED$("C major")
 CHECK_STR "borrowed in minor", "Dm F G Am", MELODY.BORROWED$("A minor")
@@ -190,6 +192,7 @@ CHECK "dense adds passing notes", more > 0, dense$[0]
 CHECK_STR "bass offbeat", "<[~ a1 a1 a1]*4 [~ f1 f1 f1]*4 [~ c2 c2 c2]*4 [~ g1 g1 g1]*4>", MELODY.BASS$(prog$, "offbeat", 1)
 CHECK_STR "bass octave", "<[a1 a2]*4 [f1 f2]*4 [c2 c3]*4 [g1 g2]*4>", MELODY.BASS$(prog$, "octave", 1)
 CHECK_STR "bass sub", "<a1 f1 c2 g1>", MELODY.BASS$(prog$, "sub", 1)
+CHECK_STR "bass drive", "<[a1 a1 a1 a1 a1 a1 a2 a1] [f1 f1 f1 f1 f1 f1 f2 f1] [c2 c2 c2 c2 c2 c2 c3 c2] [g1 g1 g1 g1 g1 g1 g2 g1]>", MELODY.BASS$(prog$, "drive", 1)
 DIM acid$ = MELODY.BASS$(prog$, "acid", 5)
 CHECK_STR "acid is seeded", acid$, MELODY.BASS$(prog$, "acid", 5)
 CHECK "acid has slides", INSTR(acid$, "^") >= 0, acid$

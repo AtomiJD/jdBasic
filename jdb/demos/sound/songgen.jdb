@@ -8,7 +8,9 @@
 ' Genres: trance (136-140 BPM, supersaw hook, rolling bass, arp, choir in
 ' the breakdown), house (122-126, octave bass, organ stabs, Neon hook),
 ' deep (118-122, dorian, sub bass with glide, a soft Neon hook, a vowel pad),
-' acid (128-132, a sliding 303 line, sparse hook).
+' acid (128-132, a sliding 303 line, sparse hook), synthwave (102-106,
+' straight eighth bass, a gated snare on two and four, arpeggios, tom
+' fills, a minor key).
 '
 ' The seed also picks one of three forms for the genre (intro, groove,
 ' parts, hook, breakdown, build, drop, outro in 8, 16 or 32 bars) and a
@@ -44,8 +46,8 @@ NEXT ci
 FOR ci = 1 TO LEN(cli) - 1
     IF cli[ci] = "--recipe" THEN recipe_only = TRUE
 NEXT ci
-IF genre$ <> "trance" AND genre$ <> "house" AND genre$ <> "deep" AND genre$ <> "acid" THEN
-    PRINT "unknown genre "; genre$; " (trance, house, deep, acid)"
+IF genre$ <> "trance" AND genre$ <> "house" AND genre$ <> "deep" AND genre$ <> "acid" AND genre$ <> "synthwave" THEN
+    PRINT "unknown genre "; genre$; " (trance, house, deep, acid, synthwave)"
     END 1
 ENDIF
 
@@ -83,6 +85,11 @@ ELSEIF genre$ = "deep" THEN
     progs$ = ["deep", "deep", "dark"]
     bpm_lo = 118
     bass_style$ = "sub"
+ELSEIF genre$ = "synthwave" THEN
+    keys$ = ["A minor", "E minor", "F# minor", "D minor", "C minor", "F minor"]
+    progs$ = ["outrun", "epic", "anthem"]
+    bpm_lo = 102
+    bass_style$ = "drive"
 ELSE
     keys$ = ["A minor", "E minor", "F minor", "G minor"]
     progs$ = ["dark", "epic", "anthem"]
@@ -129,7 +136,7 @@ DIM CUR_LIFT AS INTEGER = 0
 
 DIM TITLE_A$ = ["Neon", "Glass", "Silver", "Midnight", "Velvet", "Electric", "Paper", "Golden", "Crystal", "Static", "Hollow", "Endless", "Quiet", "Burning", "Northern", "Second"]
 DIM TITLE_B$ = ["Horizon", "Tide", "Signal", "Garden", "Cathedral", "Engine", "Satellite", "Rain", "Mirror", "Harbour", "Lantern", "Orbit", "Daylight", "Circuit", "Meridian", "Echo"]
-DIM GENRE_NO AS INTEGER = INSTR("trance house deep   acid", genre$) \ 6
+DIM GENRE_NO AS INTEGER = INSTR("trance house deep   acid  synthwave", genre$) \ 6
 DIM TITLE$ AS STRING = TITLE_A$[PICK(11 + 50 * GENRE_NO, LEN(TITLE_A$))] + " " + TITLE_B$[PICK(12 + 50 * GENRE_NO, LEN(TITLE_B$))]
 PRINT "songgen: "; CHR$(34); TITLE$; CHR$(34); ", "; genre$; ", seed "; seed
 PRINT "  key "; KEY$; ", "; BPM; " BPM, progression "; PROG_NAME$; ": "; PROG$
@@ -154,7 +161,8 @@ DIM CHOIR AS INTEGER = 11
 DIM KEYS AS INTEGER = 12
 DIM PERC AS INTEGER = 13
 DIM COUNTER AS INTEGER = 14
-DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "OPENHAT", "BASS", "PAD", "ARP", "LEAD", "RISER", "CRASH", "SNARE", "CHOIR", "KEYS", "PERC", "COUNTER"]
+DIM GATE AS INTEGER = 15
+DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "OPENHAT", "BASS", "PAD", "ARP", "LEAD", "RISER", "CRASH", "SNARE", "CHOIR", "KEYS", "PERC", "COUNTER", "GATE"]
 DIM ti AS INTEGER
 FOR ti = 0 TO LEN(TRACK_NAMES$) - 1
     SCORE.TRACK ti, TRACK_NAMES$[ti]
@@ -170,17 +178,21 @@ ENDIF
 SOUND.MASTER "FIXED", 0.42
 SCORE.TEMPO BPM
 SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
+' synthwave glues its bus harder, the parts sit closer to the drop
+IF genre$ = "synthwave" THEN SOUND.COMPRESSOR 0.3, 3, 12, 220, 1.5
 ' the limiter's drive lifts each genre's mix onto its loudness target
 ' (-12 LUFS integrated, as --wav reports), peaks stay under -1 dB
 DIM LOUD_DRIVE AS DOUBLE = 4.2
 IF genre$ = "house" THEN LOUD_DRIVE = 3.1
 IF genre$ = "deep" THEN LOUD_DRIVE = 2.6
 IF genre$ = "acid" THEN LOUD_DRIVE = 4.9
+IF genre$ = "synthwave" THEN LOUD_DRIVE = 4.4
 SOUND.LIMITER -1, LOUD_DRIVE
 
 SOUND.REVERB 0.6, 0.5, 0.9, 0.2
 SOUND.DELAY TRUE, "1/8.", 0.4, 0.28, 0, TRUE
 SOUND.REVERB 0.95, 0.4, 1.0, 0.65, 1
+IF genre$ = "synthwave" THEN SOUND.REVERB 0.97, 0.35, 1.0, 0.75, 1
 SOUND.DELAY TRUE, "1/4", 0.35, 0.25, 1
 
 SOUND.KIT KICK, "SYNTH"
@@ -204,6 +216,17 @@ SOUND.GAIN OPENHAT, 0.4
 SOUND.KIT SNARE, "SYNTH"
 SOUND.GAIN SNARE, 0.5
 SOUND.REVERBSEND SNARE, 0.3
+' the gated snare's tail: a burst of noise that stops dead
+SOUND.VOICE GATE, "NOISE", 0.001, 0.03, 0.55, 0.004
+SOUND.FILTER GATE, 1800, 0.2, "BP"
+SOUND.GAIN GATE, 0.22
+SOUND.ORBIT GATE, 1
+SOUND.REVERBSEND GATE, 0.35
+IF genre$ = "synthwave" THEN
+    SOUND.GAIN KICK, 0.68
+    SOUND.GAIN CLAP, 0.6
+    SOUND.REVERBSEND CLAP, 0.5
+ENDIF
 SOUND.KIT CRASH, "SYNTH"
 SOUND.GAIN CRASH, 0.6
 SOUND.ORBIT CRASH, 1
@@ -231,6 +254,10 @@ ELSEIF genre$ = "acid" THEN
     BASS_PATCH$ = "acid"
     BASS_CUT = 500
     BASS_RES = 0.75
+ELSEIF genre$ = "synthwave" THEN
+    BASS_PATCH$ = "synth_bass"
+    BASS_CUT = PATCH.CUTOFF("synth_bass")
+    BASS_RES = PATCH.RESONANCE("synth_bass")
 ENDIF
 PRINT "  sounds: "; BASS_PATCH$; ", neon_pluck, "; KEYS_PATCH$; ", "; LEAD_PATCH$; ", "; COUNTER_PATCH$
 
@@ -288,10 +315,10 @@ DIM PAD_GAIN AS DOUBLE = 0.18
 DIM N_TRACKS AS INTEGER = LEN(TRACK_NAMES$)
 DIM LIVE = IOTA(N_TRACKS, 0) * 0
 DIM WANT = IOTA(N_TRACKS, 0) * 0
-DIM SWEPT$ = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+DIM SWEPT$ = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
 DIM BASE_CUT = IOTA(N_TRACKS, 0) * 0 + 20000
 DIM BASE_RES = IOTA(N_TRACKS, 0) * 0
-DIM BASE_FT$ = ["LP", "LP", "HP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP", "LP", "LP", "LP", "LP"]
+DIM BASE_FT$ = ["LP", "LP", "HP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP", "LP", "LP", "LP", "LP", "BP"]
 BASE_CUT[HATS] = 6000
 BASE_RES[HATS] = 0.2
 BASE_CUT[RISER] = 400
@@ -382,8 +409,31 @@ FUNC LOOSE$(pat$) AS STRING
     RETURN "sometimesBy(0.35, gain(0.7), " + pat$ + ")"
 ENDFUNC
 
+' The synthwave drums: eighth hats, the gated snare on two and four
+' from level 3, sixteenths from 4, the open hat at 5
+SUB DRUMS_80S(level AS INTEGER)
+    TRK_ON KICK, "bd*4"
+    IF level = 1 THEN
+        TRK_ON HATS, "gain(0.5, [~ hh]*4)"
+    ELSEIF level < 4 THEN
+        TRK_ON HATS, LOOSE$("gain([0.65 0.45]*4, hh*8)")
+    ELSE
+        TRK_ON HATS, HATS16$
+    ENDIF
+    IF level >= 3 THEN
+        TRK_ON CLAP, "~ sd ~ sd"
+        TRK_ON GATE, "legato(0.45, ~ c4 ~ c4)"
+    ENDIF
+    IF level = 5 THEN TRK_ON OPENHAT, "gain(0.7, [~ oh]*4)"
+    GHOST$ = ""
+ENDSUB
+
 ' The drums at an energy from 1 (kick and light hats) to 5
 SUB DRUMS(level AS INTEGER)
+    IF genre$ = "synthwave" THEN
+        DRUMS_80S level
+        RETURN
+    ENDIF
     TRK_ON KICK, "bd*4"
     IF level = 1 THEN
         TRK_ON HATS, "gain(0.5, [~ hh]*4)"
@@ -702,6 +752,8 @@ ELSEIF genre$ = "house" THEN
     forms$ = ["intro:16 groove:16 hook:16 break:8 build:8 drop:16 outro:16", "intro:8 groove:8 parts:8 hook:16 break:8 build:8 drop:16 break:8 drop:16 outro:8", "intro:16 groove:8 hook:16 drop:16 break:8 build:8 drop:16 outro:8"]
 ELSEIF genre$ = "deep" THEN
     forms$ = ["intro:16 groove:16 parts:16 hook:16 break:8 drop:16 outro:16", "intro:16 groove:8 parts:8 hook:16 break:16 build:8 drop:16 outro:16", "intro:8 groove:16 hook:16 break:8 hook:16 outro:16"]
+ELSEIF genre$ = "synthwave" THEN
+    forms$ = ["intro:8 groove:16 hook:16 break:8 build:8 drop:16 outro:16", "intro:16 groove:8 parts:8 hook:16 break:16 drop:16 drop:16 outro:8", "intro:8 groove:16 hook:16 parts:8 hook:16 break:8 build:8 drop:16 outro:16"]
 ELSE
     forms$ = ["intro:16 groove:16 parts:8 hook:16 break:8 build:8 drop:16 outro:8", "intro:8 groove:16 hook:16 break:8 build:8 drop:32 outro:8", "intro:16 groove:8 parts:8 hook:8 break:8 build:8 drop:16 break:8 build:8 drop:16 outro:8"]
 ENDIF
@@ -728,6 +780,8 @@ FOR fi = 0 TO N_PARTS - 1
     NEXT_PART$ = "end"
     IF fi < N_PARTS - 1 THEN NEXT_PART$ = part_names$[fi + 1]
     DIM fill_kind AS INTEGER = PICK(40 + fi, 3)
+    ' synthwave fills with toms or a gap, never the snare
+    IF genre$ = "synthwave" THEN fill_kind = 1 + PICK(40 + fi, 2)
     DIM label$ AS STRING = part$ + STR$(nb)
     IF part$ = "intro" THEN
         PART_INTRO bar_at, nb, INTRO
@@ -744,6 +798,7 @@ FOR fi = 0 TO N_PARTS - 1
         label$ = label$ + " (" + BREAK_NAMES$[bv] + ")"
     ELSEIF part$ = "build" THEN
         DIM uv AS INTEGER = PICK(20 + fi, 3)
+        IF genre$ = "synthwave" AND uv = 1 THEN uv = 2
         DIM dropout AS INTEGER = PICK(30 + fi, 2)
         PART_BUILD bar_at, nb, uv, dropout
         label$ = label$ + " (" + BUILD_NAMES$[uv]

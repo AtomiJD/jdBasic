@@ -8,7 +8,7 @@
 '
 ' PROG$ names: epic (i VI III VII), anthem (i VII VI VII), dark
 ' (i iv VI V, the V major), pop (I V vi IV), euphoric (vi IV I V), house (ii7 V7
-' I7 I7), deep (i7 iv7 i7 iv7). The key is a note name and a mode:
+' I7 I7), deep (i7 iv7 i7 iv7), outrun (VI VII i i, for a minor key). The key is a note name and a mode:
 ' major, minor, dorian, phrygian, lydian, mixolydian.
 '
 ' HOOK$ writes one bar per chord, sixteen steps a bar. The rhythm mask
@@ -26,7 +26,9 @@
 '   BASS$(prog$, style$, seed)   offbeat (the trance roll), octave (house
 '                                eighths), sub (one long root), acid
 '                                (sixteenths with ^ slides for
-'                                SOUND.GLIDE track, ms, "SLIDE")
+'                                SOUND.GLIDE track, ms, "SLIDE"), drive
+'                                (straight eighths, the octave on the
+'                                seventh)
 '   ARP$(prog$, shape$, rate, octaves)  the chord's voicing an octave up:
 '                                up, down, updown, random; rate notes a
 '                                bar (8, 12, 16), over 1 or 2 octaves
@@ -144,6 +146,7 @@ EXPORT FUNC PROG$(name$, key$) AS STRING
     IF n$ = "dark" THEN degs = [0, 3, 5, 4]
     IF n$ = "pop" THEN degs = [0, 4, 5, 3]
     IF n$ = "euphoric" THEN degs = [5, 3, 0, 4]
+    IF n$ = "outrun" THEN degs = [5, 6, 0, 0]
     IF n$ = "house" THEN
         degs = [1, 4, 0, 0]
         sevenths = TRUE
@@ -558,6 +561,8 @@ EXPORT FUNC BASS$(prog$, style$, seed AS INTEGER) AS STRING
             bar$ = "[" + r$ + " " + o$ + "]*4"
         ELSEIF st$ = "sub" THEN
             bar$ = r$
+        ELSEIF st$ = "drive" THEN
+            bar$ = "[" + r$ + " " + r$ + " " + r$ + " " + r$ + " " + r$ + " " + r$ + " " + o$ + " " + r$ + "]"
         ELSEIF st$ = "acid" THEN
             DIM fifth$ = MIDI_NAME$(r + 7)
             DIM k AS INTEGER

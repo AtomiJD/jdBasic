@@ -554,8 +554,6 @@ struct Compressor {
         } else {
             l *= makeup; r *= makeup;
         }
-        l = std::max(-1.0f, std::min(1.0f, l));
-        r = std::max(-1.0f, std::min(1.0f, r));
     }
 };
 
