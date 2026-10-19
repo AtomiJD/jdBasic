@@ -4,6 +4,7 @@
 '
 '   jdBasic songgen.jdb --genre trance --seed 42
 '   jdBasic songgen.jdb --genre house --seed 7 --wav house7.wav
+'   jdBasic songgen.jdb --genre synthwave --seed 3 --live
 '
 ' Genres: trance (136-140 BPM, supersaw hook, rolling bass, arp, choir in
 ' the breakdown), house (122-126, octave bass, organ stabs, Neon hook),
@@ -17,12 +18,17 @@
 ' variant of each part: a breakdown with the choir, with pad and hook or
 ' without the kick; a build with a snare roll, a kick roll or a closing
 ' filter, perhaps ending on a bar of only pad and riser; a fill (snare,
-' toms or a one-beat gap) at each phrase end. The last drop is the peak:
-' up a key, the hook varied (MELODY.VARY$) and answered (MELODY.COUNTER$).
+' toms or a one-beat gap) at each phrase end; the arp or stab figure.
+' The last drop is the peak: up a key, the hook varied (MELODY.VARY$)
+' and answered (MELODY.COUNTER$).
 '
 '   --wav file   renders the track offline into a WAV instead of the show
 '   --recipe     prints the recipe and the form, and stops
 '   --window     the show in a window (see stage.jdb)
+'   --live       a mixing desk instead of the show: mute and solo the
+'                tracks, jump to a part, reroll a part, change seed and
+'                genre while the music plays
+'   --shot file  with --live: saves the desk as an image after 6 s and ends
 ' The recipe is printed first, so a good seed can be kept.
 
 OPTION "EXPLICIT"
@@ -32,21 +38,30 @@ IMPORT STAGE
 IMPORT MELODY
 IMPORT PATCH
 
+DIM GENRES$ = ["trance", "house", "deep", "acid", "synthwave"]
 DIM genre$ AS STRING = "trance"
 DIM seed AS INTEGER = 1
 DIM wav$ AS STRING = ""
 DIM recipe_only AS INTEGER = FALSE
+DIM live_mode AS INTEGER = FALSE
+DIM shot$ AS STRING = ""
 DIM cli = OS.ARGS()
 DIM ci AS INTEGER
 FOR ci = 1 TO LEN(cli) - 2
     IF cli[ci] = "--genre" THEN genre$ = LCASE$(cli[ci + 1])
-    IF cli[ci] = "--seed" THEN seed = VAL(cli[ci + 1])
+    IF cli[ci] = "--seed" THEN seed = CINT(VAL(cli[ci + 1]))
     IF cli[ci] = "--wav" THEN wav$ = cli[ci + 1]
+    IF cli[ci] = "--shot" THEN shot$ = cli[ci + 1]
 NEXT ci
 FOR ci = 1 TO LEN(cli) - 1
     IF cli[ci] = "--recipe" THEN recipe_only = TRUE
+    IF cli[ci] = "--live" THEN live_mode = TRUE
 NEXT ci
-IF genre$ <> "trance" AND genre$ <> "house" AND genre$ <> "deep" AND genre$ <> "acid" AND genre$ <> "synthwave" THEN
+DIM GENRE_NO AS INTEGER = -1
+FOR ci = 0 TO LEN(GENRES$) - 1
+    IF GENRES$[ci] = genre$ THEN GENRE_NO = ci
+NEXT ci
+IF GENRE_NO < 0 THEN
     PRINT "unknown genre "; genre$; " (trance, house, deep, acid, synthwave)"
     END 1
 ENDIF
@@ -65,86 +80,133 @@ FUNC PICK(k AS INTEGER, n AS INTEGER) AS INTEGER
     RETURN INT(x / m * n)
 ENDFUNC
 
+' how often each part was rerolled; a reroll gives the part new choices
+DIM PART_SALT = RESHAPE([0], [32])
+
+' The k-th decision of part fi
+FUNC PICK_PART(fi AS INTEGER, k AS INTEGER, n AS INTEGER) AS INTEGER
+    RETURN PICK(k + fi + 1000 * PART_SALT[fi], n)
+ENDFUNC
+
 ' ── The recipe ───────────────────────────────────────────────────
 
-DIM keys$ = []
-DIM progs$ = []
-DIM bpm_lo AS INTEGER = 136
-DIM bass_style$ AS STRING = "offbeat"
-IF genre$ = "trance" THEN
-    keys$ = ["A minor", "F# minor", "C# minor", "D minor", "E minor", "G minor"]
-    progs$ = ["epic", "anthem", "dark"]
-    bpm_lo = 136
-ELSEIF genre$ = "house" THEN
-    keys$ = ["F major", "Bb major", "Eb major", "C major", "A minor", "D minor"]
-    progs$ = ["house", "pop", "euphoric"]
-    bpm_lo = 122
-    bass_style$ = "octave"
-ELSEIF genre$ = "deep" THEN
-    keys$ = ["D dorian", "G dorian", "C dorian", "A dorian", "F dorian"]
-    progs$ = ["deep", "deep", "dark"]
-    bpm_lo = 118
-    bass_style$ = "sub"
-ELSEIF genre$ = "synthwave" THEN
-    keys$ = ["A minor", "E minor", "F# minor", "D minor", "C minor", "F minor"]
-    progs$ = ["outrun", "epic", "anthem"]
-    bpm_lo = 102
-    bass_style$ = "drive"
-ELSE
-    keys$ = ["A minor", "E minor", "F minor", "G minor"]
-    progs$ = ["dark", "epic", "anthem"]
-    bpm_lo = 128
-    bass_style$ = "acid"
-ENDIF
-DIM rhythms$ = ["x.x..x.x x.x.x...", "x--.x.x. x.x-x-..", "..x..x.x ..x.x.x.", "x.x.x--. x.x.x...", "x..x..x. x.x.....", ".x.x.xx. x..x.x.."]
-DIM KEY$ AS STRING = keys$[PICK(1, LEN(keys$))]
-DIM BPM AS DOUBLE = bpm_lo + PICK(2, 5)
-DIM PROG_NAME$ AS STRING = progs$[PICK(3, LEN(progs$))]
-DIM RHYTHM_A$ AS STRING = rhythms$[PICK(4, LEN(rhythms$))]
-DIM RHYTHM_B$ AS STRING = rhythms$[(PICK(4, LEN(rhythms$)) + 1 + PICK(5, LEN(rhythms$) - 1)) MOD LEN(rhythms$)]
+DIM KEY$ AS STRING = ""
+DIM BPM AS DOUBLE = 120
+DIM PROG_NAME$ AS STRING = ""
+DIM RHYTHM_A$ AS STRING = ""
+DIM RHYTHM_B$ AS STRING = ""
 DIM OCT AS INTEGER = 4
-IF genre$ = "deep" OR genre$ = "acid" THEN OCT = 3 + PICK(6, 2)
-
-DIM PROG$ AS STRING = MELODY.PROG$(PROG_NAME$, KEY$)
-DIM CHORDS$ AS STRING = "<" + PROG$ + ">"
-DIM HOOK$ AS STRING = MELODY.HOOK$(seed, PROG$, KEY$, RHYTHM_A$, OCT)
-DIM HOOK_B$ AS STRING = MELODY.HOOK$(seed + 1000, PROG$, KEY$, RHYTHM_B$, OCT)
-DIM BASS$ AS STRING = "legato(0.6, " + MELODY.BASS$(PROG$, bass_style$, seed) + ")"
-IF bass_style$ = "sub" THEN BASS$ = "legato(1, " + MELODY.BASS$(PROG$, "sub", seed) + ")"
-IF bass_style$ = "acid" THEN BASS$ = "legato(0.7, " + MELODY.BASS$(PROG$, "acid", seed) + ")"
-DIM ARP$ AS STRING = "legato(0.5, " + MELODY.ARP$(PROG$, "updown", 16, 1) + ")"
-IF genre$ = "deep" THEN ARP$ = "legato(0.8, " + MELODY.ARP$(PROG$, "up", 8, 2) + ")"
-DIM STABS$ AS STRING = "legato(0.5, " + MELODY.STABS$(PROG$, "..x...x...x..x-.") + ")"
-' the breakdown's progression, with chords borrowed from the parallel key
-DIM BREAK_PROG$ AS STRING = MELODY.BORROWED$(KEY$)
-DIM BREAK_CHORDS$ AS STRING = "<" + BREAK_PROG$ + ">"
-DIM BREAK_LINE$ AS STRING = "legato(1.2, " + MELODY.ARP$(BREAK_PROG$, "down", 4, 1) + ")"
-DIM BREAK_ARP$ AS STRING = "legato(0.5, " + MELODY.ARP$(BREAK_PROG$, "updown", 16, 1) + ")"
-IF genre$ = "deep" THEN BREAK_ARP$ = "legato(0.8, " + MELODY.ARP$(BREAK_PROG$, "up", 8, 2) + ")"
-DIM BREAK_STABS$ AS STRING = "legato(0.5, " + MELODY.STABS$(BREAK_PROG$, "..x...x...x..x-.") + ")"
-' the answers to each hook, a register below it
-DIM COUNTER_A$ AS STRING = MELODY.COUNTER$(seed, HOOK$, PROG$, KEY$, OCT - 1)
-DIM COUNTER_B$ AS STRING = MELODY.COUNTER$(seed + 1000, HOOK_B$, PROG$, KEY$, OCT - 1)
-' the hooks as the last drop plays them, up a key
+DIM PROG$ AS STRING = ""
+DIM CHORDS$ AS STRING = ""
+DIM HOOK$ AS STRING = ""
+DIM HOOK_B$ AS STRING = ""
+DIM BASS$ AS STRING = ""
+' the arp or stab figures; each part's flavour picks one
+DIM FIGURES$ = ["", "", ""]
+DIM BREAK_PROG$ AS STRING = ""
+DIM BREAK_CHORDS$ AS STRING = ""
+DIM BREAK_LINE$ AS STRING = ""
+DIM BREAK_FIGURE$ AS STRING = ""
+DIM COUNTER_A$ AS STRING = ""
+DIM COUNTER_B$ AS STRING = ""
 DIM VARY_NAMES$ = ["dense", "octave", "ending"]
-DIM VARY_KIND$ AS STRING = VARY_NAMES$[PICK(10, 3)]
-DIM VARIED_A$ AS STRING = MELODY.VARY$(HOOK$, PROG$, KEY$, VARY_KIND$)
-DIM VARIED_B$ AS STRING = MELODY.VARY$(HOOK_B$, PROG$, KEY$, VARY_KIND$)
-DIM LIFT AS INTEGER = 1 + PICK(9, 2)
+DIM VARY_KIND$ AS STRING = ""
+DIM VARIED_A$ AS STRING = ""
+DIM VARIED_B$ AS STRING = ""
+DIM LIFT AS INTEGER = 1
 ' semitones the music now plays above the key; drums stay as they are
 DIM CUR_LIFT AS INTEGER = 0
-
 DIM TITLE_A$ = ["Neon", "Glass", "Silver", "Midnight", "Velvet", "Electric", "Paper", "Golden", "Crystal", "Static", "Hollow", "Endless", "Quiet", "Burning", "Northern", "Second"]
 DIM TITLE_B$ = ["Horizon", "Tide", "Signal", "Garden", "Cathedral", "Engine", "Satellite", "Rain", "Mirror", "Harbour", "Lantern", "Orbit", "Daylight", "Circuit", "Meridian", "Echo"]
-DIM GENRE_NO AS INTEGER = INSTR("trance house deep   acid  synthwave", genre$) \ 6
-DIM TITLE$ AS STRING = TITLE_A$[PICK(11 + 50 * GENRE_NO, LEN(TITLE_A$))] + " " + TITLE_B$[PICK(12 + 50 * GENRE_NO, LEN(TITLE_B$))]
-PRINT "songgen: "; CHR$(34); TITLE$; CHR$(34); ", "; genre$; ", seed "; seed
-PRINT "  key "; KEY$; ", "; BPM; " BPM, progression "; PROG_NAME$; ": "; PROG$
-PRINT "  hook rhythm "; RHYTHM_A$; " / "; RHYTHM_B$; ", octave "; OCT
+DIM TITLE$ AS STRING = ""
 DIM INTRO_NAMES$ = ["drums and a filtered teaser", "a pad swell, the kick at bar 4", "drums and a filtered bass"]
-DIM INTRO AS INTEGER = PICK(7, 3)
-PRINT "  intro: "; INTRO_NAMES$[INTRO]
-PRINT "  hook "; HOOK$
+DIM INTRO AS INTEGER = 0
+' the recipe and the form as printed, a line each
+DIM RECIPE$ AS STRING = ""
+DIM NL$ AS STRING = CHR$(10)
+
+SUB MAKE_RECIPE()
+    DIM keys$ = []
+    DIM progs$ = []
+    DIM bpm_lo AS INTEGER = 136
+    DIM bass_style$ AS STRING = "offbeat"
+    IF genre$ = "trance" THEN
+        keys$ = ["A minor", "F# minor", "C# minor", "D minor", "E minor", "G minor"]
+        progs$ = ["epic", "anthem", "dark"]
+        bpm_lo = 136
+    ELSEIF genre$ = "house" THEN
+        keys$ = ["F major", "Bb major", "Eb major", "C major", "A minor", "D minor"]
+        progs$ = ["house", "pop", "euphoric"]
+        bpm_lo = 122
+        bass_style$ = "octave"
+    ELSEIF genre$ = "deep" THEN
+        keys$ = ["D dorian", "G dorian", "C dorian", "A dorian", "F dorian"]
+        progs$ = ["deep", "deep", "dark"]
+        bpm_lo = 118
+        bass_style$ = "sub"
+    ELSEIF genre$ = "synthwave" THEN
+        keys$ = ["A minor", "E minor", "F# minor", "D minor", "C minor", "F minor"]
+        progs$ = ["outrun", "epic", "anthem"]
+        bpm_lo = 102
+        bass_style$ = "drive"
+    ELSE
+        keys$ = ["A minor", "E minor", "F minor", "G minor"]
+        progs$ = ["dark", "epic", "anthem"]
+        bpm_lo = 128
+        bass_style$ = "acid"
+    ENDIF
+    DIM rhythms$ = ["x.x..x.x x.x.x...", "x--.x.x. x.x-x-..", "..x..x.x ..x.x.x.", "x.x.x--. x.x.x...", "x..x..x. x.x.....", ".x.x.xx. x..x.x.."]
+    KEY$ = keys$[PICK(1, LEN(keys$))]
+    BPM = bpm_lo + PICK(2, 5)
+    PROG_NAME$ = progs$[PICK(3, LEN(progs$))]
+    RHYTHM_A$ = rhythms$[PICK(4, LEN(rhythms$))]
+    RHYTHM_B$ = rhythms$[(PICK(4, LEN(rhythms$)) + 1 + PICK(5, LEN(rhythms$) - 1)) MOD LEN(rhythms$)]
+    OCT = 4
+    IF genre$ = "deep" OR genre$ = "acid" THEN OCT = 3 + PICK(6, 2)
+
+    PROG$ = MELODY.PROG$(PROG_NAME$, KEY$)
+    CHORDS$ = "<" + PROG$ + ">"
+    HOOK$ = MELODY.HOOK$(seed, PROG$, KEY$, RHYTHM_A$, OCT)
+    HOOK_B$ = MELODY.HOOK$(seed + 1000, PROG$, KEY$, RHYTHM_B$, OCT)
+    BASS$ = "legato(0.6, " + MELODY.BASS$(PROG$, bass_style$, seed) + ")"
+    IF bass_style$ = "sub" THEN BASS$ = "legato(1, " + MELODY.BASS$(PROG$, "sub", seed) + ")"
+    IF bass_style$ = "acid" THEN BASS$ = "legato(0.7, " + MELODY.BASS$(PROG$, "acid", seed) + ")"
+    ' the breakdown's progression, with chords borrowed from the parallel key
+    BREAK_PROG$ = MELODY.BORROWED$(KEY$)
+    BREAK_CHORDS$ = "<" + BREAK_PROG$ + ">"
+    BREAK_LINE$ = "legato(1.2, " + MELODY.ARP$(BREAK_PROG$, "down", 4, 1) + ")"
+    DIM shapes$ = ["updown", "up", "down"]
+    DIM stab_rhythms$ = ["..x...x...x..x-.", "x..x..x...x.x...", "..x..x.x..x...x."]
+    DIM fi AS INTEGER
+    FOR fi = 0 TO 2
+        IF genre$ = "house" OR genre$ = "deep" THEN
+            FIGURES$[fi] = "legato(0.5, " + MELODY.STABS$(PROG$, stab_rhythms$[fi]) + ")"
+        ELSE
+            FIGURES$[fi] = "legato(0.5, " + MELODY.ARP$(PROG$, shapes$[fi], 16, 1) + ")"
+        ENDIF
+    NEXT fi
+    IF genre$ = "house" OR genre$ = "deep" THEN
+        BREAK_FIGURE$ = "legato(0.5, " + MELODY.STABS$(BREAK_PROG$, stab_rhythms$[0]) + ")"
+    ELSE
+        BREAK_FIGURE$ = "legato(0.5, " + MELODY.ARP$(BREAK_PROG$, "updown", 16, 1) + ")"
+    ENDIF
+    ' the answers to each hook, a register below it
+    COUNTER_A$ = MELODY.COUNTER$(seed, HOOK$, PROG$, KEY$, OCT - 1)
+    COUNTER_B$ = MELODY.COUNTER$(seed + 1000, HOOK_B$, PROG$, KEY$, OCT - 1)
+    ' the hooks as the last drop plays them, up a key
+    VARY_KIND$ = VARY_NAMES$[PICK(10, 3)]
+    VARIED_A$ = MELODY.VARY$(HOOK$, PROG$, KEY$, VARY_KIND$)
+    VARIED_B$ = MELODY.VARY$(HOOK_B$, PROG$, KEY$, VARY_KIND$)
+    LIFT = 1 + PICK(9, 2)
+
+    TITLE$ = TITLE_A$[PICK(11 + 50 * GENRE_NO, LEN(TITLE_A$))] + " " + TITLE_B$[PICK(12 + 50 * GENRE_NO, LEN(TITLE_B$))]
+    INTRO = PICK_PART(0, 7, 3)
+    RECIPE$ = "songgen: " + CHR$(34) + TITLE$ + CHR$(34) + ", " + genre$ + ", seed " + STR$(seed) + NL$
+    RECIPE$ = RECIPE$ + "  key " + KEY$ + ", " + STR$(BPM) + " BPM, progression " + PROG_NAME$ + ": " + PROG$ + NL$
+    RECIPE$ = RECIPE$ + "  hook rhythm " + RHYTHM_A$ + " / " + RHYTHM_B$ + ", octave " + STR$(OCT) + NL$
+    RECIPE$ = RECIPE$ + "  intro: " + INTRO_NAMES$[INTRO] + NL$
+    RECIPE$ = RECIPE$ + "  hook " + HOOK$ + NL$
+ENDSUB
 
 DIM KICK AS INTEGER = 0
 DIM CLAP AS INTEGER = 1
@@ -163,182 +225,210 @@ DIM PERC AS INTEGER = 13
 DIM COUNTER AS INTEGER = 14
 DIM GATE AS INTEGER = 15
 DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "OPENHAT", "BASS", "PAD", "ARP", "LEAD", "RISER", "CRASH", "SNARE", "CHOIR", "KEYS", "PERC", "COUNTER", "GATE"]
+DIM N_TRACKS AS INTEGER = LEN(TRACK_NAMES$)
 DIM ti AS INTEGER
-FOR ti = 0 TO LEN(TRACK_NAMES$) - 1
+FOR ti = 0 TO N_TRACKS - 1
     SCORE.TRACK ti, TRACK_NAMES$[ti]
 NEXT ti
 
 ' ── Instruments ──────────────────────────────────────────────────
 
-IF LEN(wav$) > 0 OR recipe_only THEN
-    SOUND.INIT "PULL"
-ELSE
-    SOUND.INIT SCORE.AUDIO_MODE$()
-ENDIF
-SOUND.MASTER "FIXED", 0.42
-SCORE.TEMPO BPM
-SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
-' synthwave glues its bus harder, the parts sit closer to the drop
-IF genre$ = "synthwave" THEN SOUND.COMPRESSOR 0.3, 3, 12, 220, 1.5
-' the limiter's drive lifts each genre's mix onto its loudness target
-' (-12 LUFS integrated, as --wav reports), peaks stay under -1 dB
-DIM LOUD_DRIVE AS DOUBLE = 4.2
-IF genre$ = "house" THEN LOUD_DRIVE = 3.1
-IF genre$ = "deep" THEN LOUD_DRIVE = 2.6
-IF genre$ = "acid" THEN LOUD_DRIVE = 4.9
-IF genre$ = "synthwave" THEN LOUD_DRIVE = 4.4
-SOUND.LIMITER -1, LOUD_DRIVE
+' What every genre shares: the kits, the orbits, pans and nudges
+SUB INIT_SOUND()
+    DIM t AS INTEGER
+    FOR t = 0 TO N_TRACKS - 1
+        IF t = KICK OR t = CLAP OR t = HATS OR t = OPENHAT OR t = SNARE OR t = CRASH OR t = PERC THEN SOUND.KIT t, "SYNTH"
+    NEXT t
+    ' the hats and the percussion sit a few milliseconds behind the kick
+    SOUND.NUDGE PERC, 7
+    SOUND.NUDGE HATS, 4
+    SOUND.NUDGE OPENHAT, 4
+    SOUND.PAN PERC, 0.35
+    SOUND.PAN HATS, 0.6
+    SOUND.PAN ARP, 0.4
+    SOUND.PAN COUNTER, 0.65
+    SOUND.ORBIT CRASH, 1
+    SOUND.ORBIT GATE, 1
+    SOUND.ORBIT PAD, 1
+    SOUND.ORBIT CHOIR, 1
+    SOUND.ORBIT LEAD, 1
+    SOUND.ORBIT RISER, 1
+ENDSUB
 
-SOUND.REVERB 0.6, 0.5, 0.9, 0.2
-SOUND.DELAY TRUE, "1/8.", 0.4, 0.28, 0, TRUE
-SOUND.REVERB 0.95, 0.4, 1.0, 0.65, 1
-IF genre$ = "synthwave" THEN SOUND.REVERB 0.97, 0.35, 1.0, 0.75, 1
-SOUND.DELAY TRUE, "1/4", 0.35, 0.25, 1
-
-SOUND.KIT KICK, "SYNTH"
-SOUND.GAIN KICK, 0.85
-SOUND.KIT PERC, "SYNTH"
-' the hats and the percussion sit a few milliseconds behind the kick
-SOUND.NUDGE PERC, 7
-SOUND.NUDGE HATS, 4
-SOUND.NUDGE OPENHAT, 4
-SOUND.GAIN PERC, 0.45
-SOUND.PAN PERC, 0.35
-SOUND.REVERBSEND PERC, 0.25
-SOUND.KIT CLAP, "SYNTH"
-SOUND.GAIN CLAP, 0.55
-SOUND.REVERBSEND CLAP, 0.35
-SOUND.KIT HATS, "SYNTH"
-SOUND.GAIN HATS, 0.45
-SOUND.PAN HATS, 0.6
-SOUND.KIT OPENHAT, "SYNTH"
-SOUND.GAIN OPENHAT, 0.4
-SOUND.KIT SNARE, "SYNTH"
-SOUND.GAIN SNARE, 0.5
-SOUND.REVERBSEND SNARE, 0.3
-' the gated snare's tail: a burst of noise that stops dead
-SOUND.VOICE GATE, "NOISE", 0.001, 0.03, 0.55, 0.004
-SOUND.FILTER GATE, 1800, 0.2, "BP"
-SOUND.GAIN GATE, 0.22
-SOUND.ORBIT GATE, 1
-SOUND.REVERBSEND GATE, 0.35
-IF genre$ = "synthwave" THEN
-    SOUND.GAIN KICK, 0.68
-    SOUND.GAIN CLAP, 0.6
-    SOUND.REVERBSEND CLAP, 0.5
-ENDIF
-SOUND.KIT CRASH, "SYNTH"
-SOUND.GAIN CRASH, 0.6
-SOUND.ORBIT CRASH, 1
-SOUND.REVERBSEND CRASH, 0.4
-
-' the sounds: patches, then the mix (pan, orbit, sidechain)
 DIM BASS_PATCH$ AS STRING = "bass_roll"
 DIM LEAD_PATCH$ AS STRING = "neon_lead"
 DIM KEYS_PATCH$ AS STRING = "fm_keys"
 DIM COUNTER_PATCH$ AS STRING = "neon_soft"
 DIM BASS_CUT AS DOUBLE = 700
 DIM BASS_RES AS DOUBLE = 0.35
-IF genre$ = "house" THEN
-    BASS_PATCH$ = "bass_house"
-    KEYS_PATCH$ = "organ"
-    BASS_CUT = 600
-    BASS_RES = 0.3
-ELSEIF genre$ = "deep" THEN
-    BASS_PATCH$ = "sub"
-    LEAD_PATCH$ = "neon_soft"
-    COUNTER_PATCH$ = "neon_pluck"
-    BASS_CUT = 20000
-    BASS_RES = 0
-ELSEIF genre$ = "acid" THEN
-    BASS_PATCH$ = "acid"
-    BASS_CUT = 500
-    BASS_RES = 0.75
-ELSEIF genre$ = "synthwave" THEN
-    BASS_PATCH$ = "synth_bass"
-    BASS_CUT = PATCH.CUTOFF("synth_bass")
-    BASS_RES = PATCH.RESONANCE("synth_bass")
-ENDIF
-PRINT "  sounds: "; BASS_PATCH$; ", neon_pluck, "; KEYS_PATCH$; ", "; LEAD_PATCH$; ", "; COUNTER_PATCH$
+DIM PAD_GAIN AS DOUBLE = 0.18
 
-PATCH.APPLY BASS, BASS_PATCH$
-SOUND.SIDECHAIN BASS, KICK, 0.7
+' The genre's sounds and mix, sent for bar 0: the score that follows
+' plays on a clean desk, also when it replaces one that plays
+SUB SETUP_SOUND()
+    DIM t AS INTEGER
+    SCORE.AT 0
+    FOR t = 0 TO N_TRACKS - 1
+        SOUND.SEQ t, "", "VOICE"
+        SOUND.MOD t, "CUTOFF", "OFF"
+        SOUND.MOD t, "GAIN", "OFF"
+        SOUND.MOD t, "VOWEL", "OFF"
+    NEXT t
+    SOUND.MASTER "FIXED", 0.42
+    SCORE.TEMPO BPM
+    SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
+    ' synthwave glues its bus harder, the parts sit closer to the drop
+    IF genre$ = "synthwave" THEN SOUND.COMPRESSOR 0.3, 3, 12, 220, 1.5
+    ' the limiter's drive lifts each genre's mix onto its loudness target
+    ' (-12 LUFS integrated, as --wav reports), peaks stay under -1 dB
+    DIM loud_drive AS DOUBLE = 4.2
+    IF genre$ = "house" THEN loud_drive = 3.1
+    IF genre$ = "deep" THEN loud_drive = 2.6
+    IF genre$ = "acid" THEN loud_drive = 4.9
+    IF genre$ = "synthwave" THEN loud_drive = 4.4
+    SOUND.LIMITER -1, loud_drive
 
-PATCH.APPLY PAD, "pad"
-SOUND.SIDECHAIN PAD, KICK, 0.7
-SOUND.ORBIT PAD, 1
-IF genre$ = "deep" THEN
-    SOUND.FORMANT PAD, "oo", 0.8, 0.05
-    SOUND.FILTER PAD, 2200, 0.1
-ENDIF
+    SOUND.REVERB 0.6, 0.5, 0.9, 0.2
+    SOUND.DELAY TRUE, "1/8.", 0.4, 0.28, 0, TRUE
+    SOUND.REVERB 0.95, 0.4, 1.0, 0.65, 1
+    IF genre$ = "synthwave" THEN SOUND.REVERB 0.97, 0.35, 1.0, 0.75, 1
+    SOUND.DELAY TRUE, "1/4", 0.35, 0.25, 1
 
-PATCH.APPLY CHOIR, "choir"
-SOUND.ORBIT CHOIR, 1
+    SOUND.GAIN KICK, 0.85
+    SOUND.GAIN PERC, 0.45
+    SOUND.REVERBSEND PERC, 0.25
+    SOUND.GAIN CLAP, 0.55
+    SOUND.REVERBSEND CLAP, 0.35
+    SOUND.GAIN HATS, 0.45
+    SOUND.FILTER HATS, 6000, 0.2, "HP"
+    SOUND.GAIN OPENHAT, 0.4
+    SOUND.GAIN SNARE, 0.5
+    SOUND.REVERBSEND SNARE, 0.3
+    ' the gated snare's tail: a burst of noise that stops dead
+    SOUND.VOICE GATE, "NOISE", 0.001, 0.03, 0.55, 0.004
+    SOUND.FILTER GATE, 1800, 0.2, "BP"
+    SOUND.GAIN GATE, 0.22
+    SOUND.REVERBSEND GATE, 0.35
+    IF genre$ = "synthwave" THEN
+        SOUND.GAIN KICK, 0.68
+        SOUND.GAIN CLAP, 0.6
+        SOUND.REVERBSEND CLAP, 0.5
+    ENDIF
+    SOUND.GAIN CRASH, 0.6
+    SOUND.REVERBSEND CRASH, 0.4
 
-PATCH.APPLY ARP, "neon_pluck"
-SOUND.SIDECHAIN ARP, KICK, 0.4
-SOUND.PAN ARP, 0.4
+    ' the sounds: patches, then the mix (sidechain)
+    BASS_PATCH$ = "bass_roll"
+    LEAD_PATCH$ = "neon_lead"
+    KEYS_PATCH$ = "fm_keys"
+    COUNTER_PATCH$ = "neon_soft"
+    BASS_CUT = 700
+    BASS_RES = 0.35
+    IF genre$ = "house" THEN
+        BASS_PATCH$ = "bass_house"
+        KEYS_PATCH$ = "organ"
+        BASS_CUT = 600
+        BASS_RES = 0.3
+    ELSEIF genre$ = "deep" THEN
+        BASS_PATCH$ = "sub"
+        LEAD_PATCH$ = "neon_soft"
+        COUNTER_PATCH$ = "neon_pluck"
+        BASS_CUT = 20000
+        BASS_RES = 0
+    ELSEIF genre$ = "acid" THEN
+        BASS_PATCH$ = "acid"
+        BASS_CUT = 500
+        BASS_RES = 0.75
+    ELSEIF genre$ = "synthwave" THEN
+        BASS_PATCH$ = "synth_bass"
+        BASS_CUT = PATCH.CUTOFF("synth_bass")
+        BASS_RES = PATCH.RESONANCE("synth_bass")
+    ENDIF
+    RECIPE$ = RECIPE$ + "  sounds: " + BASS_PATCH$ + ", neon_pluck, " + KEYS_PATCH$ + ", " + LEAD_PATCH$ + ", " + COUNTER_PATCH$ + NL$
 
-PATCH.APPLY KEYS, KEYS_PATCH$
-SOUND.SIDECHAIN KEYS, KICK, 0.35
+    PATCH.APPLY BASS, BASS_PATCH$
+    SOUND.SIDECHAIN BASS, KICK, 0.7
 
-PATCH.APPLY LEAD, LEAD_PATCH$
-IF genre$ = "deep" THEN SOUND.GAIN LEAD, 0.26
-SOUND.SIDECHAIN LEAD, KICK, 0.35
-SOUND.ORBIT LEAD, 1
+    PATCH.APPLY PAD, "pad"
+    SOUND.SIDECHAIN PAD, KICK, 0.7
+    IF genre$ = "deep" THEN
+        SOUND.FORMANT PAD, "oo", 0.8, 0.05
+        SOUND.FILTER PAD, 2200, 0.1
+    ENDIF
 
-PATCH.APPLY COUNTER, COUNTER_PATCH$
-SOUND.PAN COUNTER, 0.65
-SOUND.SIDECHAIN COUNTER, KICK, 0.35
+    PATCH.APPLY CHOIR, "choir"
 
-SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.3
-SOUND.FILTER RISER, 400, 0.4, "BP"
-SOUND.ORBIT RISER, 1
-SOUND.REVERBSEND RISER, 0.3
-SOUND.GAIN RISER, 0
+    PATCH.APPLY ARP, "neon_pluck"
+    SOUND.SIDECHAIN ARP, KICK, 0.4
+
+    PATCH.APPLY KEYS, KEYS_PATCH$
+    SOUND.SIDECHAIN KEYS, KICK, 0.35
+
+    PATCH.APPLY LEAD, LEAD_PATCH$
+    IF genre$ = "deep" THEN SOUND.GAIN LEAD, 0.26
+    SOUND.SIDECHAIN LEAD, KICK, 0.35
+
+    PATCH.APPLY COUNTER, COUNTER_PATCH$
+    SOUND.SIDECHAIN COUNTER, KICK, 0.35
+
+    SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.3
+    SOUND.FILTER RISER, 400, 0.4, "BP"
+    SOUND.REVERBSEND RISER, 0.3
+    SOUND.GAIN RISER, 0
+ENDSUB
 
 ' ── Arrangement ──────────────────────────────────────────────────
 ' A form is a list of parts on the 8-bar grid. Each part starts from a
 ' clean slate: the tracks it does not play fall silent, the sweeps of
 ' the part before stop and their filters return to the patch.
 
-DIM HATS16$ AS STRING = "sometimesBy(0.3, gain(0.78), gain([0.4 0.6 0.5 0.75]*4, hh*16))"
-IF genre$ = "house" OR genre$ = "deep" THEN HATS16$ = "swingBy(0.1, 4, " + HATS16$ + ")"
+DIM HATS16$ AS STRING = ""
 DIM PARTS_TRACK AS INTEGER = ARP
-DIM PARTS$ AS STRING = ARP$
-IF genre$ = "house" OR genre$ = "deep" THEN
-    PARTS_TRACK = KEYS
-    PARTS$ = STABS$
-ENDIF
-DIM PAD_GAIN AS DOUBLE = 0.18
+DIM PARTS$ AS STRING = ""
 
-DIM N_TRACKS AS INTEGER = LEN(TRACK_NAMES$)
 DIM LIVE = IOTA(N_TRACKS, 0) * 0
 DIM WANT = IOTA(N_TRACKS, 0) * 0
 DIM SWEPT$ = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
 DIM BASE_CUT = IOTA(N_TRACKS, 0) * 0 + 20000
 DIM BASE_RES = IOTA(N_TRACKS, 0) * 0
 DIM BASE_FT$ = ["LP", "LP", "HP", "LP", "LP", "LP", "LP", "LP", "BP", "LP", "LP", "LP", "LP", "LP", "LP", "BP"]
-BASE_CUT[HATS] = 6000
-BASE_RES[HATS] = 0.2
-BASE_CUT[RISER] = 400
-BASE_RES[RISER] = 0.4
-BASE_CUT[BASS] = BASS_CUT
-BASE_RES[BASS] = BASS_RES
-BASE_CUT[PAD] = PATCH.CUTOFF("pad")
-BASE_RES[PAD] = PATCH.RESONANCE("pad")
-IF genre$ = "deep" THEN
-    BASE_CUT[PAD] = 2200
-    BASE_RES[PAD] = 0.1
-ENDIF
-BASE_CUT[ARP] = PATCH.CUTOFF("neon_pluck")
-BASE_RES[ARP] = PATCH.RESONANCE("neon_pluck")
-BASE_CUT[KEYS] = PATCH.CUTOFF(KEYS_PATCH$)
-BASE_RES[KEYS] = PATCH.RESONANCE(KEYS_PATCH$)
-BASE_CUT[LEAD] = PATCH.CUTOFF(LEAD_PATCH$)
-BASE_RES[LEAD] = PATCH.RESONANCE(LEAD_PATCH$)
-BASE_FT$[LEAD] = PATCH.FILTER_TYPE$(LEAD_PATCH$)
-SOUND.FILTER HATS, 6000, 0.2, "HP"
+
+' The arrangement starts with every track silent and every filter at
+' its patch
+SUB RESET_ARRANGEMENT()
+    HATS16$ = "sometimesBy(0.3, gain(0.78), gain([0.4 0.6 0.5 0.75]*4, hh*16))"
+    IF genre$ = "house" OR genre$ = "deep" THEN HATS16$ = "swingBy(0.1, 4, " + HATS16$ + ")"
+    PARTS_TRACK = ARP
+    IF genre$ = "house" OR genre$ = "deep" THEN PARTS_TRACK = KEYS
+    PARTS$ = FIGURES$[0]
+    CUR_LIFT = 0
+    LIVE = IOTA(N_TRACKS, 0) * 0
+    WANT = IOTA(N_TRACKS, 0) * 0
+    SWEPT$ = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+    BASE_CUT = IOTA(N_TRACKS, 0) * 0 + 20000
+    BASE_RES = IOTA(N_TRACKS, 0) * 0
+    BASE_CUT[HATS] = 6000
+    BASE_RES[HATS] = 0.2
+    BASE_CUT[RISER] = 400
+    BASE_RES[RISER] = 0.4
+    BASE_CUT[GATE] = 1800
+    BASE_RES[GATE] = 0.2
+    BASE_CUT[BASS] = BASS_CUT
+    BASE_RES[BASS] = BASS_RES
+    BASE_CUT[PAD] = PATCH.CUTOFF("pad")
+    BASE_RES[PAD] = PATCH.RESONANCE("pad")
+    IF genre$ = "deep" THEN
+        BASE_CUT[PAD] = 2200
+        BASE_RES[PAD] = 0.1
+    ENDIF
+    BASE_CUT[ARP] = PATCH.CUTOFF("neon_pluck")
+    BASE_RES[ARP] = PATCH.RESONANCE("neon_pluck")
+    BASE_CUT[KEYS] = PATCH.CUTOFF(KEYS_PATCH$)
+    BASE_RES[KEYS] = PATCH.RESONANCE(KEYS_PATCH$)
+    BASE_CUT[LEAD] = PATCH.CUTOFF(LEAD_PATCH$)
+    BASE_RES[LEAD] = PATCH.RESONANCE(LEAD_PATCH$)
+    BASE_FT$[LEAD] = PATCH.FILTER_TYPE$(LEAD_PATCH$)
+ENDSUB
 
 ' the part that follows the one being written
 DIM NEXT_PART$ AS STRING = ""
@@ -597,11 +687,7 @@ SUB PART_BREAK(b AS INTEGER, n AS INTEGER, v AS INTEGER)
         TRK_ON HATS, HATS16$
         TRK_ON PERC, LOOSE$("rim(3,8,2)")
         TRK_ON CLAP, "~ cp ~ cp"
-        IF PARTS_TRACK = ARP THEN
-            TRK_ON PARTS_TRACK, BREAK_ARP$
-        ELSE
-            TRK_ON PARTS_TRACK, BREAK_STABS$
-        ENDIF
+        TRK_ON PARTS_TRACK, BREAK_FIGURE$
         SW PARTS_TRACK, "CUTOFF", "SINE", 500, 2000, 8, b
     ENDIF
     COMMIT_PART b
@@ -745,88 +831,443 @@ ENDSUB
 ' Three forms per genre; parts are 8, 16 or 32 bars, so every part
 ' starts on a bar the 4-bar progression starts on
 
-DIM forms$ = []
-IF genre$ = "trance" THEN
-    forms$ = ["intro:16 groove:8 parts:8 hook:16 break:16 build:8 drop:16 drop:16 outro:16", "intro:8 groove:8 parts:16 hook:16 break:8 build:8 drop:16 break:8 build:8 drop:16 outro:8", "intro:16 parts:16 hook:16 break:16 build:8 drop:32 outro:8"]
-ELSEIF genre$ = "house" THEN
-    forms$ = ["intro:16 groove:16 hook:16 break:8 build:8 drop:16 outro:16", "intro:8 groove:8 parts:8 hook:16 break:8 build:8 drop:16 break:8 drop:16 outro:8", "intro:16 groove:8 hook:16 drop:16 break:8 build:8 drop:16 outro:8"]
-ELSEIF genre$ = "deep" THEN
-    forms$ = ["intro:16 groove:16 parts:16 hook:16 break:8 drop:16 outro:16", "intro:16 groove:8 parts:8 hook:16 break:16 build:8 drop:16 outro:16", "intro:8 groove:16 hook:16 break:8 hook:16 outro:16"]
-ELSEIF genre$ = "synthwave" THEN
-    forms$ = ["intro:8 groove:16 hook:16 break:8 build:8 drop:16 outro:16", "intro:16 groove:8 parts:8 hook:16 break:16 drop:16 drop:16 outro:8", "intro:8 groove:16 hook:16 parts:8 hook:16 break:8 build:8 drop:16 outro:16"]
-ELSE
-    forms$ = ["intro:16 groove:16 parts:8 hook:16 break:8 build:8 drop:16 outro:8", "intro:8 groove:16 hook:16 break:8 build:8 drop:32 outro:8", "intro:16 groove:8 parts:8 hook:8 break:8 build:8 drop:16 break:8 build:8 drop:16 outro:8"]
-ENDIF
-DIM FORM_NO AS INTEGER = PICK(8, LEN(forms$))
-DIM form$ = SPLIT(forms$[FORM_NO], " ")
-DIM N_PARTS AS INTEGER = LEN(form$)
-DIM part_names$ = []
-DIM part_bars = []
-DIM fi AS INTEGER
+DIM FORM_NO AS INTEGER = 0
+DIM N_FORMS AS INTEGER = 3
+DIM N_PARTS AS INTEGER = 0
 DIM LAST_DROP AS INTEGER = -1
-FOR fi = 0 TO N_PARTS - 1
-    DIM colon AS INTEGER = INSTR(form$[fi], ":")
-    part_names$ = APPEND(part_names$, LEFT$(form$[fi], colon))
-    part_bars = APPEND(part_bars, VAL(MID$(form$[fi], colon + 1)))
-    IF part_names$[fi] = "drop" THEN LAST_DROP = fi
-NEXT fi
+' the parts as the form lays them out: name, first bar, bars, label
+DIM PART_NAMES$ = [""]
+DIM PART_START = [0]
+DIM PART_LEN = [0]
+DIM PART_LABEL$ = [""]
+DIM SONG_BARS AS INTEGER = 0
 
-DIM bar_at AS INTEGER = 0
-DIM recipe$ AS STRING = ""
-DIM drops_done AS INTEGER = 0
-FOR fi = 0 TO N_PARTS - 1
-    DIM part$ AS STRING = part_names$[fi]
-    DIM nb AS INTEGER = part_bars[fi]
-    NEXT_PART$ = "end"
-    IF fi < N_PARTS - 1 THEN NEXT_PART$ = part_names$[fi + 1]
-    DIM fill_kind AS INTEGER = PICK(40 + fi, 3)
-    ' synthwave fills with toms or a gap, never the snare
-    IF genre$ = "synthwave" THEN fill_kind = 1 + PICK(40 + fi, 2)
-    DIM label$ AS STRING = part$ + STR$(nb)
-    IF part$ = "intro" THEN
-        PART_INTRO bar_at, nb, INTRO
-    ELSEIF part$ = "groove" THEN
-        PART_GROOVE bar_at, nb
-    ELSEIF part$ = "parts" THEN
-        PART_PARTS bar_at, nb
-    ELSEIF part$ = "hook" THEN
-        PART_HOOK bar_at, nb, fill_kind
-    ELSEIF part$ = "break" THEN
-        DIM bv AS INTEGER = 1 + PICK(20 + fi, 2)
-        IF nb >= 16 THEN bv = 2 * PICK(20 + fi, 2)
-        PART_BREAK bar_at, nb, bv
-        label$ = label$ + " (" + BREAK_NAMES$[bv] + ")"
-    ELSEIF part$ = "build" THEN
-        DIM uv AS INTEGER = PICK(20 + fi, 3)
-        IF genre$ = "synthwave" AND uv = 1 THEN uv = 2
-        DIM dropout AS INTEGER = PICK(30 + fi, 2)
-        PART_BUILD bar_at, nb, uv, dropout
-        label$ = label$ + " (" + BUILD_NAMES$[uv]
-        IF dropout THEN label$ = label$ + ", a bar without drums"
-        label$ = label$ + ")"
-    ELSEIF part$ = "drop" THEN
-        DIM dv AS INTEGER = PICK(20 + fi, 2)
-        PART_DROP bar_at, nb, dv, fi = LAST_DROP, drops_done, fill_kind
-        drops_done = drops_done + 1
-        IF fi = LAST_DROP THEN label$ = label$ + " (peak, up a key)"
+SUB ARRANGE()
+    DIM forms$ = []
+    IF genre$ = "trance" THEN
+        forms$ = ["intro:16 groove:8 parts:8 hook:16 break:16 build:8 drop:16 drop:16 outro:16", "intro:8 groove:8 parts:16 hook:16 break:8 build:8 drop:16 break:8 build:8 drop:16 outro:8", "intro:16 parts:16 hook:16 break:16 build:8 drop:32 outro:8"]
+    ELSEIF genre$ = "house" THEN
+        forms$ = ["intro:16 groove:16 hook:16 break:8 build:8 drop:16 outro:16", "intro:8 groove:8 parts:8 hook:16 break:8 build:8 drop:16 break:8 drop:16 outro:8", "intro:16 groove:8 hook:16 drop:16 break:8 build:8 drop:16 outro:8"]
+    ELSEIF genre$ = "deep" THEN
+        forms$ = ["intro:16 groove:16 parts:16 hook:16 break:8 drop:16 outro:16", "intro:16 groove:8 parts:8 hook:16 break:16 build:8 drop:16 outro:16", "intro:8 groove:16 hook:16 break:8 hook:16 outro:16"]
+    ELSEIF genre$ = "synthwave" THEN
+        forms$ = ["intro:8 groove:16 hook:16 break:8 build:8 drop:16 outro:16", "intro:16 groove:8 parts:8 hook:16 break:16 drop:16 drop:16 outro:8", "intro:8 groove:16 hook:16 parts:8 hook:16 break:8 build:8 drop:16 outro:16"]
     ELSE
-        PART_OUTRO bar_at, nb
+        forms$ = ["intro:16 groove:16 parts:8 hook:16 break:8 build:8 drop:16 outro:8", "intro:8 groove:16 hook:16 break:8 build:8 drop:32 outro:8", "intro:16 groove:8 parts:8 hook:8 break:8 build:8 drop:16 break:8 build:8 drop:16 outro:8"]
     ENDIF
-    ' a fill closes every phrase that does not lead into a build
-    IF part$ <> "build" AND part$ <> "outro" AND NEXT_PART$ <> "build" THEN
-        FILL bar_at + nb - 1, fill_kind, FALSE
-        label$ = label$ + " [" + FILL_NAMES$[fill_kind] + "]"
-    ENDIF
-    IF part$ = "break" THEN label$ = label$ + " {" + BREAK_PROG$ + "}"
-    recipe$ = recipe$ + "    " + STR$(bar_at) + " " + label$ + CHR$(10)
-    bar_at = bar_at + nb
-NEXT fi
-PART_END bar_at
-SCORE.FINE bar_at + 2
+    N_FORMS = LEN(forms$)
+    FORM_NO = PICK(8, N_FORMS)
+    DIM form$ = SPLIT(forms$[FORM_NO], " ")
+    N_PARTS = LEN(form$)
+    PART_NAMES$ = []
+    PART_START = []
+    PART_LEN = []
+    PART_LABEL$ = []
+    DIM fi AS INTEGER
+    LAST_DROP = -1
+    FOR fi = 0 TO N_PARTS - 1
+        DIM colon AS INTEGER = INSTR(form$[fi], ":")
+        PART_NAMES$ = APPEND(PART_NAMES$, LEFT$(form$[fi], colon))
+        PART_LEN = APPEND(PART_LEN, VAL(MID$(form$[fi], colon + 1)))
+        IF PART_NAMES$[fi] = "drop" THEN LAST_DROP = fi
+    NEXT fi
 
-PRINT "  form "; FORM_NO + 1; " of "; LEN(forms$); ", "; bar_at; " bars:"
-PRINT recipe$;
-IF LAST_DROP >= 0 THEN PRINT "  last drop: up "; LIFT; " semitone(s), the hook "; VARY_KIND$; ", answered below"
+    DIM bar_at AS INTEGER = 0
+    DIM form_lines$ AS STRING = ""
+    DIM drops_done AS INTEGER = 0
+    FOR fi = 0 TO N_PARTS - 1
+        DIM part$ AS STRING = PART_NAMES$[fi]
+        DIM nb AS INTEGER = PART_LEN[fi]
+        NEXT_PART$ = "end"
+        IF fi < N_PARTS - 1 THEN NEXT_PART$ = PART_NAMES$[fi + 1]
+        PARTS$ = FIGURES$[PICK_PART(fi, 60, 3)]
+        DIM fill_kind AS INTEGER = PICK_PART(fi, 40, 3)
+        ' synthwave fills with toms or a gap, never the snare
+        IF genre$ = "synthwave" THEN fill_kind = 1 + PICK_PART(fi, 40, 2)
+        DIM label$ AS STRING = part$ + STR$(nb)
+        IF part$ = "intro" THEN
+            PART_INTRO bar_at, nb, INTRO
+        ELSEIF part$ = "groove" THEN
+            PART_GROOVE bar_at, nb
+        ELSEIF part$ = "parts" THEN
+            PART_PARTS bar_at, nb
+        ELSEIF part$ = "hook" THEN
+            PART_HOOK bar_at, nb, fill_kind
+        ELSEIF part$ = "break" THEN
+            DIM bv AS INTEGER = 1 + PICK_PART(fi, 20, 2)
+            IF nb >= 16 THEN bv = 2 * PICK_PART(fi, 20, 2)
+            PART_BREAK bar_at, nb, bv
+            label$ = label$ + " (" + BREAK_NAMES$[bv] + ")"
+        ELSEIF part$ = "build" THEN
+            DIM uv AS INTEGER = PICK_PART(fi, 20, 3)
+            IF genre$ = "synthwave" AND uv = 1 THEN uv = 2
+            DIM dropout AS INTEGER = PICK_PART(fi, 30, 2)
+            PART_BUILD bar_at, nb, uv, dropout
+            label$ = label$ + " (" + BUILD_NAMES$[uv]
+            IF dropout THEN label$ = label$ + ", a bar without drums"
+            label$ = label$ + ")"
+        ELSEIF part$ = "drop" THEN
+            DIM dv AS INTEGER = PICK_PART(fi, 20, 2)
+            PART_DROP bar_at, nb, dv, fi = LAST_DROP, drops_done, fill_kind
+            drops_done = drops_done + 1
+            IF fi = LAST_DROP THEN label$ = label$ + " (peak, up a key)"
+        ELSE
+            PART_OUTRO bar_at, nb
+        ENDIF
+        ' a fill closes every phrase that does not lead into a build
+        IF part$ <> "build" AND part$ <> "outro" AND NEXT_PART$ <> "build" THEN
+            FILL bar_at + nb - 1, fill_kind, FALSE
+            label$ = label$ + " [" + FILL_NAMES$[fill_kind] + "]"
+        ENDIF
+        IF part$ = "break" THEN label$ = label$ + " {" + BREAK_PROG$ + "}"
+        form_lines$ = form_lines$ + "    " + STR$(bar_at) + " " + label$ + NL$
+        PART_START = APPEND(PART_START, bar_at)
+        PART_LABEL$ = APPEND(PART_LABEL$, label$)
+        bar_at = bar_at + nb
+    NEXT fi
+    PART_END bar_at
+    SONG_BARS = bar_at
+    SCORE.FINE bar_at + 2
+
+    RECIPE$ = RECIPE$ + "  form " + STR$(FORM_NO + 1) + " of " + STR$(N_FORMS) + ", " + STR$(bar_at) + " bars:" + NL$ + form_lines$
+    IF LAST_DROP >= 0 THEN RECIPE$ = RECIPE$ + "  last drop: up " + STR$(LIFT) + " semitone(s), the hook " + VARY_KIND$ + ", answered below" + NL$
+ENDSUB
+
+' The whole song for genre$ and seed: recipe, sounds, arrangement
+SUB BUILD()
+    MAKE_RECIPE
+    SETUP_SOUND
+    RESET_ARRANGEMENT
+    ARRANGE
+ENDSUB
+
+' Writes the song again while the old one plays: from bar b on, or on
+' from where it plays for b below 0
+SUB REBUILD(b AS DOUBLE)
+    IF b < 0 THEN
+        SOUND.SEEK
+    ELSE
+        SOUND.SEEK b
+    ENDIF
+    SCORE.CLEAR
+    BUILD
+ENDSUB
+
+' ── Live desk ────────────────────────────────────────────────────
+' --live: the song plays in a window with a strip per track (meter,
+' mute, solo), the form as a row of parts to click, and buttons for the
+' seed, the genre and a reroll of the part that plays. Each change
+' writes the song again while it plays (REBUILD).
+
+DIM DESK_W AS INTEGER = 1280
+DIM DESK_H AS INTEGER = 760
+DIM desk_font$ AS STRING = ""
+DIM MUTED = RESHAPE([0], [16])
+DIM SOLOED = RESHAPE([0], [16])
+DIM SHOWN = RESHAPE([0.0], [16])
+DIM MX AS DOUBLE = 0
+DIM MY AS DOUBLE = 0
+DIM CLICKED AS INTEGER = FALSE
+DIM mouse_was AS INTEGER = FALSE
+DIM KEY_LIST$ = ["Left", "Right", "G", "R", "Escape", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+DIM KEY_PREV = RESHAPE([0], [14])
+DIM status$ AS STRING = ""
+DIM status_at AS DOUBLE = 0
+
+SUB DESK_FONT(size AS INTEGER)
+    IF desk_font$ <> "" THEN SETFONT desk_font$, size
+ENDSUB
+
+' TRUE on the frame key i of KEY_LIST$ goes down
+FUNC KEY_HIT(i AS INTEGER) AS INTEGER
+    DIM down AS INTEGER = GFX.KEYSTATE(KEY_LIST$[i])
+    DIM hit AS INTEGER = down ANDALSO KEY_PREV[i] = 0
+    KEY_PREV[i] = down
+    RETURN hit
+ENDFUNC
+
+FUNC INSIDE(x AS DOUBLE, y AS DOUBLE, w AS DOUBLE, h AS DOUBLE) AS INTEGER
+    RETURN MX >= x ANDALSO MX < x + w ANDALSO MY >= y ANDALSO MY < y + h
+ENDFUNC
+
+' Draws a button; TRUE when it was clicked this frame
+FUNC BUTTON(x AS DOUBLE, y AS DOUBLE, w AS DOUBLE, h AS DOUBLE, caption$, lit AS INTEGER) AS INTEGER
+    DIM over AS INTEGER = INSIDE(x, y, w, h)
+    IF lit THEN
+        DRAWCOLOR 240, 190, 60
+    ELSEIF over THEN
+        DRAWCOLOR 70, 80, 110
+    ELSE
+        DRAWCOLOR 45, 50, 70
+    ENDIF
+    RECT x, y, w, h, TRUE
+    DRAWCOLOR 90, 100, 140
+    RECT x, y, w, h, FALSE
+    DIM tsz = GFX.TEXTSIZE(caption$)
+    IF lit THEN
+        TEXT x + (w - tsz[0]) / 2, y + (h - tsz[1]) / 2, caption$, 20, 20, 30
+    ELSE
+        TEXT x + (w - tsz[0]) / 2, y + (h - tsz[1]) / 2, caption$, 220, 225, 240
+    ENDIF
+    RETURN over ANDALSO CLICKED
+ENDFUNC
+
+FUNC PART_RGB(name$)
+    IF name$ = "intro" THEN RETURN [60, 90, 140]
+    IF name$ = "groove" THEN RETURN [50, 120, 115]
+    IF name$ = "parts" THEN RETURN [80, 120, 60]
+    IF name$ = "hook" THEN RETURN [160, 115, 40]
+    IF name$ = "break" THEN RETURN [110, 70, 150]
+    IF name$ = "build" THEN RETURN [165, 85, 55]
+    IF name$ = "drop" THEN RETURN [190, 50, 95]
+    RETURN [70, 80, 110]
+ENDFUNC
+
+SUB APPLY_MUTES()
+    DIM any_solo AS INTEGER = SUM(SOLOED) > 0
+    DIM t AS INTEGER
+    FOR t = 0 TO N_TRACKS - 1
+        SOUND.MUTE t, (MUTED[t] = 1) OR (any_solo ANDALSO SOLOED[t] = 0)
+    NEXT t
+ENDSUB
+
+SUB SAY(s$)
+    status$ = s$
+    status_at = TICK()
+    PRINT s$
+ENDSUB
+
+' A new song (seed or genre changed) from its first bar
+SUB NEW_SONG()
+    PART_SALT = RESHAPE([0], [32])
+    REBUILD 0
+    DIM fresh = SOUND.LOUDNESS(TRUE)
+    PRINT RECIPE$;
+ENDSUB
+
+' The part that plays at cycle cyc
+FUNC PART_AT(cyc AS DOUBLE) AS INTEGER
+    DIM i AS INTEGER
+    DIM found AS INTEGER = 0
+    FOR i = 0 TO N_PARTS - 1
+        IF PART_START[i] <= cyc THEN found = i
+    NEXT i
+    RETURN found
+ENDFUNC
+
+SUB DRAW_HEADER()
+    DESK_FONT 30
+    TEXT 20, 14, TITLE$, 255, 230, 250
+    DESK_FONT 15
+    DIM info$ AS STRING = genre$ + "  |  " + KEY$ + "  |  " + STR$(BPM) + " BPM  |  seed " + STR$(seed) + "  |  " + PROG_NAME$ + ": " + PROG$
+    TEXT 20, 56, info$, 170, 180, 210
+    DIM meter = SOUND.LOUDNESS()
+    DIM loud$ AS STRING = "LUFS  M " + FORMAT$("{:.1f}", meter{"MOMENTARY"}) + "   S " + FORMAT$("{:.1f}", meter{"SHORT"}) + "   I " + FORMAT$("{:.1f}", meter{"INTEGRATED"})
+    TEXT 860, 18, loud$, 200, 210, 230
+    DIM gr AS DOUBLE = -meter{"REDUCTION"}
+    TEXT 860, 46, "LIMITER", 150, 160, 190
+    DRAWCOLOR 40, 44, 60
+    RECT 940, 48, 300, 12, TRUE
+    DRAWCOLOR 240, 120, 60
+    RECT 940, 48, 300 * MIN([gr / 8, 1]), 12, TRUE
+ENDSUB
+
+' The form as a row of parts; a click jumps to a part
+SUB DRAW_FORM(cyc AS DOUBLE, cur AS INTEGER)
+    DIM x0 AS DOUBLE = 20
+    DIM full AS DOUBLE = DESK_W - 40
+    DIM y0 AS DOUBLE = 96
+    DIM h AS DOUBLE = 64
+    DIM i AS INTEGER
+    DIM jump_to AS INTEGER = -1
+    DESK_FONT 14
+    FOR i = 0 TO N_PARTS - 1
+        DIM px AS DOUBLE = x0 + PART_START[i] / SONG_BARS * full
+        DIM pw AS DOUBLE = PART_LEN[i] / SONG_BARS * full - 3
+        DIM rgb = PART_RGB(PART_NAMES$[i])
+        DIM shade AS DOUBLE = 0.75
+        IF i = cur THEN shade = 1.15
+        IF INSIDE(px, y0, pw, h) THEN
+            shade = shade + 0.2
+            IF CLICKED THEN jump_to = i
+        ENDIF
+        DRAWCOLOR MIN([255, INT(rgb[0] * shade)]), MIN([255, INT(rgb[1] * shade)]), MIN([255, INT(rgb[2] * shade)])
+        RECT px, y0, pw, h, TRUE
+        IF i = cur THEN
+            DRAWCOLOR 255, 255, 255
+            RECT px, y0, pw, h, FALSE
+        ENDIF
+        DIM cap$ AS STRING = PART_NAMES$[i]
+        DIM cap_size = GFX.TEXTSIZE(cap$)
+        IF cap_size[0] < pw - 6 THEN TEXT px + 5, y0 + 6, cap$, 240, 240, 250
+        IF i < 9 ANDALSO pw > 24 THEN TEXT px + 5, y0 + h - 22, STR$(i + 1), 200, 200, 220
+    NEXT i
+    DIM head_x AS DOUBLE = x0 + MIN([cyc, SONG_BARS]) / SONG_BARS * full
+    DRAWCOLOR 255, 255, 255
+    RECT head_x - 1, y0 - 6, 3, h + 12, TRUE
+    DESK_FONT 15
+    TEXT 20, y0 + h + 10, "bar " + STR$(INT(cyc)) + " of " + STR$(SONG_BARS) + "   " + PART_LABEL$[cur], 210, 215, 235
+    IF jump_to >= 0 THEN
+        REBUILD PART_START[jump_to]
+        SAY "jump to " + PART_LABEL$[jump_to]
+    ENDIF
+ENDSUB
+
+' A strip per track: name, meter, mute, solo
+SUB DRAW_STRIPS(cyc AS DOUBLE)
+    DIM levels = SOUND.LEVELS()
+    DIM playing = SCORE.LIVE_AT(cyc)
+    DIM changed AS INTEGER = FALSE
+    DIM t AS INTEGER
+    DESK_FONT 15
+    FOR t = 0 TO N_TRACKS - 1
+        DIM col AS INTEGER = t \ 8
+        DIM row AS INTEGER = t MOD 8
+        DIM sx AS DOUBLE = 20 + col * 630
+        DIM sy AS DOUBLE = 200 + row * 50
+        SHOWN[t] = MAX([levels[t], SHOWN[t] * 0.86])
+        DRAWCOLOR 28, 30, 44
+        RECT sx, sy, 610, 42, TRUE
+        IF playing[t] = 1 THEN
+            TEXT sx + 12, sy + 11, TRACK_NAMES$[t], 235, 235, 250
+        ELSE
+            TEXT sx + 12, sy + 11, TRACK_NAMES$[t], 110, 115, 140
+        ENDIF
+        DIM db AS DOUBLE = -60
+        IF SHOWN[t] > 0.000001 THEN db = 20 * LOG(SHOWN[t]) / LOG(10)
+        DIM frac AS DOUBLE = MAX([0, MIN([1, (db + 48) / 48])])
+        DRAWCOLOR 40, 44, 60
+        RECT sx + 120, sy + 14, 340, 14, TRUE
+        IF MUTED[t] = 1 OR (SUM(SOLOED) > 0 ANDALSO SOLOED[t] = 0) THEN
+            DRAWCOLOR 90, 95, 110
+        ELSEIF frac > 0.9 THEN
+            DRAWCOLOR 240, 80, 70
+        ELSEIF frac > 0.75 THEN
+            DRAWCOLOR 240, 200, 70
+        ELSE
+            DRAWCOLOR 80, 210, 140
+        ENDIF
+        RECT sx + 120, sy + 14, 340 * frac, 14, TRUE
+        IF BUTTON(sx + 480, sy + 7, 56, 28, "M", MUTED[t] = 1) THEN
+            MUTED[t] = 1 - MUTED[t]
+            changed = TRUE
+        ENDIF
+        IF BUTTON(sx + 544, sy + 7, 56, 28, "S", SOLOED[t] = 1) THEN
+            SOLOED[t] = 1 - SOLOED[t]
+            changed = TRUE
+        ENDIF
+    NEXT t
+    IF changed THEN APPLY_MUTES
+ENDSUB
+
+SUB NEXT_SEED(delta AS INTEGER)
+    seed = MAX([1, seed + delta])
+    NEW_SONG
+    SAY "seed " + STR$(seed) + ": " + TITLE$
+ENDSUB
+
+SUB NEXT_GENRE()
+    GENRE_NO = (GENRE_NO + 1) MOD LEN(GENRES$)
+    genre$ = GENRES$[GENRE_NO]
+    NEW_SONG
+    SAY genre$ + ": " + TITLE$
+ENDSUB
+
+SUB REROLL(cur AS INTEGER)
+    IF cur >= N_PARTS THEN RETURN
+    PART_SALT[cur] = PART_SALT[cur] + 1
+    REBUILD -1
+    SAY "rerolled " + PART_LABEL$[cur]
+ENDSUB
+
+SUB DRAW_CONTROLS(cur AS INTEGER)
+    DIM y0 AS DOUBLE = 620
+    DIM reroll$ AS STRING = "reroll " + PART_NAMES$[MIN([cur, N_PARTS - 1])]
+    DESK_FONT 15
+    IF BUTTON(20, y0, 120, 40, "< seed", FALSE) THEN NEXT_SEED -1
+    IF BUTTON(150, y0, 120, 40, "seed >", FALSE) THEN NEXT_SEED 1
+    IF BUTTON(280, y0, 240, 40, "genre: " + genre$ + " >", FALSE) THEN NEXT_GENRE
+    IF BUTTON(530, y0, 200, 40, reroll$, FALSE) THEN REROLL cur
+    IF BUTTON(740, y0, 160, 40, "clear mutes", FALSE) THEN
+        MUTED = RESHAPE([0], [16])
+        SOLOED = RESHAPE([0], [16])
+        APPLY_MUTES
+    ENDIF
+    TEXT 20, y0 + 56, "Left/Right seed   G genre   R reroll the part   1-9 jump to a part   click a part to jump   Esc quit", 140, 150, 180
+    IF status$ <> "" ANDALSO TICK() - status_at < 4000 THEN TEXT 20, y0 + 86, status$, 240, 200, 120
+ENDSUB
+
+SUB DESK_RUN()
+    SCREEN DESK_W, DESK_H, "songgen live"
+    DIM font_try$ = ["jdbasic_default.ttf", "/jdbasic_default.ttf", "build/jdbasic_default.ttf", "../../../build/jdbasic_default.ttf"]
+    DIM fi AS INTEGER
+    FOR fi = 0 TO LEN(font_try$) - 1
+        IF desk_font$ = "" THEN
+            TRY
+                SETFONT font_try$[fi], 15
+                desk_font$ = font_try$[fi]
+            CATCH
+            ENDTRY
+        ENDIF
+    NEXT fi
+    DIM fresh = SOUND.LOUDNESS(TRUE)
+    DIM next_frame AS DOUBLE = TICK()
+    DIM started AS DOUBLE = TICK()
+    DO
+        DIM cyc AS DOUBLE = SOUND.CYCLE()
+        IF cyc >= SONG_BARS + 2 THEN
+            REBUILD 0
+            cyc = 0
+        ENDIF
+        MX = GFX.MOUSEX()
+        MY = GFX.MOUSEY()
+        DIM down AS INTEGER = GFX.MOUSEBUTTON(1)
+        CLICKED = down ANDALSO mouse_was = 0
+        mouse_was = down
+        DIM cur AS INTEGER = PART_AT(cyc)
+
+        DRAWCOLOR 16, 17, 26
+        RECT 0, 0, DESK_W, DESK_H, TRUE
+        DRAW_HEADER
+        DRAW_FORM cyc, cur
+        DRAW_STRIPS cyc
+        DRAW_CONTROLS cur
+        IF shot$ <> "" ANDALSO TICK() - started > 6000 THEN
+            GFX.SAVE_SCREENSHOT shot$
+            EXITDO
+        ENDIF
+        SCREENFLIP
+
+        IF KEY_HIT(0) THEN NEXT_SEED -1
+        IF KEY_HIT(1) THEN NEXT_SEED 1
+        IF KEY_HIT(2) THEN NEXT_GENRE
+        IF KEY_HIT(3) THEN REROLL cur
+        IF KEY_HIT(4) THEN EXITDO
+        DIM k AS INTEGER
+        FOR k = 5 TO 13
+            IF KEY_HIT(k) ANDALSO k - 5 < N_PARTS THEN
+                REBUILD PART_START[k - 5]
+                SAY "jump to " + PART_LABEL$[k - 5]
+            ENDIF
+        NEXT k
+
+        DIM wait_ms AS DOUBLE = next_frame - TICK()
+        IF wait_ms > 1 THEN SLEEP INT(wait_ms)
+        next_frame = MAX([next_frame + 1000 / 50, TICK()])
+    LOOP
+    SOUND.RESET
+ENDSUB
+
+' ── Main ─────────────────────────────────────────────────────────
+
+IF LEN(wav$) > 0 OR recipe_only THEN
+    SOUND.INIT "PULL"
+ELSE
+    SOUND.INIT SCORE.AUDIO_MODE$()
+ENDIF
+INIT_SOUND
+BUILD
+PRINT RECIPE$;
 
 IF recipe_only THEN
     END
@@ -842,6 +1283,8 @@ ELSEIF LEN(wav$) > 0 THEN
     DIM meter = SOUND.LOUDNESS()
     PRINT "wrote "; wav$; ", "; FORMAT$("{:.1f}", meter{"INTEGRATED"}); " LUFS, loudest 3 s ";
     PRINT FORMAT$("{:.1f}", meter{"SHORT_MAX"}); " LUFS, peak "; FORMAT$("{:.1f}", meter{"PEAK"}); " dB, limiter up to "; FORMAT$("{:.1f}", -meter{"REDUCTION_MAX"}); " dB"
+ELSEIF live_mode THEN
+    DESK_RUN
 ELSE
     STAGE.SUBTITLE UCASE$(LEFT$(genre$, 1)) + MID$(genre$, 1) + " in " + KEY$ + ", seed " + STR$(seed)
     STAGE.RUN TITLE$

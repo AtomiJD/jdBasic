@@ -2918,6 +2918,19 @@ Example: SOUND.KIT 0, "SYNTH" : SOUND.SEQ 0, "bd*4, ~ cp, [hh oh]*4", "VOICE"
 Syntax: SOUND.PENDING() -> number
 Description: Returns how many commands SOUND.AT has queued that the mixer has not applied yet.
 
+[SOUND.SEEK]
+Syntax: SOUND.SEEK [cycle]
+Description: Moves the clock to cycle (no argument: keeps it) and drops the queue. Commands queued after it are
+held, passed ones too, until SOUND.AT with no argument; the mixer then applies the passed ones at once, in order.
+
+[SOUND.MUTE]
+Syntax: SOUND.MUTE track, flag
+Description: Silences a track (and its sends) while its patterns keep running. SOUND.RESET lifts all mutes.
+
+[SOUND.LEVELS]
+Syntax: SOUND.LEVELS() -> Array
+Description: The highest level of each of the 16 tracks since the last call, for meters.
+
 [SOUND.RECORD]
 Syntax: SOUND.RECORD [path$]
 Description: Writes the mixer output from now on into a 16-bit stereo WAV; no argument or "" finishes the file. Works for the device and for SOUND.RENDER in PULL mode.

@@ -12,6 +12,9 @@
 '   SCORE.SWEEP 5, "CUTOFF", "SAW", 300, 2200, 8, 0
 '   SCORE.QUIET 0
 '   SCORE.FINE 186
+'
+' SCORE.CLEAR forgets the score, so a new one can replace it while the
+' old one plays: SOUND.SEEK to the bar, CLEAR, write it, FINE.
 
 EXPORT MODULE SCORE
 
@@ -137,6 +140,31 @@ ENDSUB
 EXPORT SUB SWEEP_OFF(t AS INTEGER, param$)
     SOUND.MOD t, param$, "OFF"
     END_SWEEP t, param$
+ENDSUB
+
+' Forgets the score written so far, for a new one sent while the old
+' one plays (after SOUND.SEEK); the track names stay
+EXPORT SUB CLEAR()
+    at_bar = 0
+    end_bar = 0
+    sec_bar = [0.0]
+    sec_name$ = [""]
+    sec_mood$ = [""]
+    n_sec = 0
+    ev_bar = [0.0]
+    ev_track = [0]
+    ev_on = [0]
+    n_ev = 0
+    sw_from = [0.0]
+    sw_to = [0.0]
+    sw_track = [0]
+    sw_param$ = [""]
+    sw_shape$ = [""]
+    sw_lo = [0.0]
+    sw_hi = [0.0]
+    sw_cyc = [1.0]
+    sw_off = [0.0]
+    n_sw = 0
 ENDSUB
 
 ' The song ends on bar b; later verbs act at once again

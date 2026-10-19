@@ -746,6 +746,11 @@ static struct SoundSystem {
     uint64_t sched_order = 0;
     double sched_at = -1.0;   // the SOUND.AT target; below 0 commands apply at once
     bool in_sched = false;    // true while the mixer applies a queued command
+    // After SOUND.SEEK the mixer leaves the queue alone until SOUND.AT ends
+    // scheduling, so a rebuilt score lands in one piece
+    bool sched_hold = false;
+    bool muted[NUM_TRACKS] = {};
+    float track_peak[NUM_TRACKS] = {};  // highest level since SOUND.LEVELS()
 
     // Applies every queued command due by cycle `until`, earliest first
     void run_sched(double until) {
@@ -1414,7 +1419,7 @@ static struct SoundSystem {
             int n = std::min(block, num_frames - done);
             // A block ends on the last frame before a queued command is due,
             // so a pattern it starts still sees the downbeat of its cycle
-            if (!sys->sched.empty()) {
+            if (!sys->sched.empty() && !sys->sched_hold) {
                 double cps = sys->bpm / 60.0 / 4.0;
                 double at = sys->next_sched_at();
                 double k = std::floor((at - sys->seq_time) * SAMPLE_RATE / cps + 1e-9);
@@ -1540,20 +1545,18 @@ static struct SoundSystem {
                 float vl, vr;
                 sys->generate_voice(v, vl, vr);
                 auto& tp = sys->tracks[v.track];
+                float e = std::max(std::abs(vl), std::abs(vr));
+                if (e > t_env[v.track]) t_env[v.track] = e;
+                active++;
+                if (sys->muted[v.track]) { vl = 0.0f; vr = 0.0f; }
                 if (tp.has_insert()) {
                     ins_l[v.track] += vl; ins_r[v.track] += vr;
-                    float e = std::max(std::abs(vl), std::abs(vr));
-                    if (e > t_env[v.track]) t_env[v.track] = e;
-                    active++;
                     continue;
                 }
                 mix_l += vl; mix_r += vr;
                 int o = tp.orbit;
                 rev_l[o] += vl * tp.reverb_send; rev_r[o] += vr * tp.reverb_send;
                 del_l[o] += vl * tp.delay_send; del_r[o] += vr * tp.delay_send;
-                float e = std::max(std::abs(vl), std::abs(vr));
-                if (e > t_env[v.track]) t_env[v.track] = e;
-                active++;
             }
 
             // every frame, so a chorus keeps its own clock and its tail
@@ -1601,8 +1604,10 @@ static struct SoundSystem {
             }
 
             // Store track envelopes for sidechain
-            for (int t = 0; t < NUM_TRACKS; t++)
+            for (int t = 0; t < NUM_TRACKS; t++) {
                 sys->track_envelopes[t] = t_env[t];
+                if (t_env[t] > sys->track_peak[t]) sys->track_peak[t] = t_env[t];
+            }
 
             for (int o = 0; o < NUM_ORBITS; o++)
                 sys->buses[o].run_delay(del_l[o], del_r[o], mix_l, mix_r);
@@ -2952,6 +2957,8 @@ void register_sound_builtins(VM& vm) {
         g_sound.reset_clock();
         g_sound.sched.clear();
         g_sound.sched_at = -1.0;
+        g_sound.sched_hold = false;
+        for (int t = 0; t < NUM_TRACKS; t++) { g_sound.muted[t] = false; g_sound.track_peak[t] = 0.0f; }
         g_sound.distortion_amount = 0;
         g_sound.compressor_active = false;
         g_sound.limiter_active = false;
@@ -2984,6 +2991,11 @@ void register_sound_builtins(VM& vm) {
 
     vm.register_native("SOUND.AT", 0, 1, [](const std::vector<Value>& args) -> Value {
         g_sound.sched_at = args.empty() ? -1.0 : args[0].to_double();
+        if (g_sound.sched_at < 0 && g_sound.sched_hold) {
+            SND_LOCK();
+            g_sound.sched_hold = false;
+            SND_UNLOCK();
+        }
         return Value::make_none();
     });
 
@@ -3009,6 +3021,53 @@ void register_sound_builtins(VM& vm) {
         SND_UNLOCK();
         if (failed) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.RECORD: cannot write " + path);
         return Value::make_none();
+    });
+
+    // ── SOUND.SEEK [cycle] ──────────────────────────────────────
+    // Moves the clock to `cycle` (no argument: leaves it where it is) and
+    // drops the queue. Commands sent after it are held, also those for
+    // cycles already passed, until SOUND.AT with no argument; the mixer
+    // then applies the passed ones at once.
+    vm.register_native("SOUND.SEEK", 0, 1, [](const std::vector<Value>& args) -> Value {
+        ensure_sound("SOUND.SEEK");
+        double c = args.empty() ? -1.0 : args[0].to_double();
+        if (!args.empty() && c < 0) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.SEEK: cycle is 0 or above");
+        SND_LOCK();
+        g_sound.sched.clear();
+        g_sound.sched_hold = true;
+        if (c >= 0) {
+            g_sound.seq_time = c;
+            g_sound.seq_base = c;
+            g_sound.seq_frames = 0;
+            g_sound.seq_bpm = g_sound.bpm;
+            for (auto& l : g_sound.seq_layers) l.built_cycle = INT64_MIN;
+            for (auto& v : g_sound.voices)
+                if (v.env.state != EnvState::OFF) { v.env.gate_off(); v.seq_controlled = false; }
+        }
+        SND_UNLOCK();
+        return Value::make_none();
+    });
+
+    // ── SOUND.MUTE track, flag / SOUND.LEVELS() ─────────────────
+    vm.register_native("SOUND.MUTE", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        if (t < 0 || t >= NUM_TRACKS)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MUTE: track is 0 to " + std::to_string(NUM_TRACKS - 1));
+        g_sound.muted[t] = args[1].to_bool();
+        return Value::make_none();
+    });
+    // The highest level each track reached since the last call
+    vm.register_native("SOUND.LEVELS", 0, 0, [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        Value r = Value::make_array();
+        auto& el = r.as_array()->elements;
+        SND_LOCK();
+        for (int t = 0; t < NUM_TRACKS; t++) {
+            el.push_back(Value::make_f64(g_sound.track_peak[t]));
+            g_sound.track_peak[t] = 0.0f;
+        }
+        SND_UNLOCK();
+        return r;
     });
 
     vm.register_native("SOUND.PENDING", 0, 0, [](const std::vector<Value>& args) -> Value {
@@ -3049,7 +3108,7 @@ void register_sound_builtins(VM& vm) {
                 copy.push_back(a.type == ValueType::STRING ? Value::make_string(a.to_string()) : a);
             }
             SND_LOCK();
-            bool later = g_sound.sched_at > g_sound.seq_time + 1e-9;
+            bool later = g_sound.sched_hold || g_sound.sched_at > g_sound.seq_time + 1e-9;
             if (later)
                 g_sound.sched.push_back({g_sound.sched_at, g_sound.sched_order++, nm, raw, std::move(copy)});
             SND_UNLOCK();

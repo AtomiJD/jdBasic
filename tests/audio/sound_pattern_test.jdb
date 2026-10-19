@@ -839,5 +839,52 @@ lm = SOUND.LOUDNESS()
 CHECK "LOUDNESS momentary after 0.5 s", ABS(lm{"MOMENTARY"} + 6.02) < 0.15, "lufs=" + STR$(lm{"MOMENTARY"})
 CHECK "LOUDNESS short term needs 3 s", lm{"SHORT"} = -120, "lufs=" + STR$(lm{"SHORT"})
 
+' SEEK moves the clock and holds the score until SOUND.AT ends it;
+' then the passed commands apply at once, inside the cycle
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.SEQ 0, "c4*4", "VOICE"
+buf = SOUND.RENDER(CYC / 2)
+SOUND.SEEK 5
+CHECK "SEEK moves the clock", ABS(SOUND.CYCLE() - 5) < 0.000001, "cycle=" + STR$(SOUND.CYCLE())
+SOUND.AT 3
+SOUND.SEQ 0, "c4*8", "VOICE"
+SOUND.AT 7
+SOUND.SEQ 0, "~", "VOICE"
+CHECK "SEEK holds a passed command", SOUND.PENDING() = 2, "pending=" + STR$(SOUND.PENDING())
+n = TRIGGERS()
+buf = SOUND.RENDER(CYC / 4)
+CHECK "held commands wait", TRIGGERS() = 1, ""
+SOUND.AT
+buf = SOUND.RENDER(CYC / 4)
+CHECK "released, the passed switch plays at once", TRIGGERS() = 2, ""
+CHECK "released, the later command waits", SOUND.PENDING() = 1, "pending=" + STR$(SOUND.PENDING())
+
+' MUTE silences a track that keeps playing; LEVELS meters every track
+SOUND.RESET
+SOUND.MASTER "FIXED", 1.0
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.GAIN 0, 0.5
+SOUND.SEQ 0, "legato(1, b5)", "VOICE"
+buf = SOUND.RENDER(CYC / 4)
+DIM lv = SOUND.LEVELS()
+CHECK "LEVELS has a value per track", LEN(lv) = 16, "len=" + STR$(LEN(lv))
+CHECK "LEVELS reads the playing track", lv[0] > 0.4 ANDALSO lv[1] = 0, "l0=" + STR$(lv[0])
+SOUND.MUTE 0, TRUE
+buf = SOUND.RENDER(CYC / 4)
+CHECK "MUTE silences the track", MAX(ABS(buf)) < 0.0001, "max=" + STR$(MAX(ABS(buf)))
+lv = SOUND.LEVELS()
+CHECK "a muted track still meters", lv[0] > 0.4, "l0=" + STR$(lv[0])
+SOUND.MUTE 0, FALSE
+buf = SOUND.RENDER(CYC / 4)
+CHECK "MUTE off brings it back", MAX(ABS(buf)) > 0.4, "max=" + STR$(MAX(ABS(buf)))
+SOUND.MUTE 0, TRUE
+SOUND.RESET
+SOUND.MASTER "FIXED", 1.0
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.SEQ 0, "legato(1, b5)", "VOICE"
+buf = SOUND.RENDER(CYC / 4)
+CHECK "RESET lifts the mutes", MAX(ABS(buf)) > 0.4, "max=" + STR$(MAX(ABS(buf)))
+
 SOUND.RESET
 PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
