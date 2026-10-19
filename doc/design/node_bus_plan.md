@@ -433,6 +433,41 @@ Measured by `tests/node/bench_node.jdb` (P0 for the C++ spike, then for real):
 The interpreter's own cost (building the map, encoding) should dominate, not
 the transport.
 
+### 12.1 P0 results (2026-10-19, `tools/node_spike`)
+
+Two processes on one machine, raw bytes without encoding. Round trip of a
+64-byte message (median / p99, us), then one-way throughput in MB/s for 1 KB,
+16 KB, 256 KB and 8 MB messages. The shm ring polls with a spin, so its
+latency is the floor of a core burning, not what a sleeping receiver gets.
+
+| Machine | Path | RTT med | RTT p99 | 1K | 16K | 256K | 8M |
+|---------|------|---------|---------|----|-----|------|----|
+| Windows dev box | tcp | 40.0 | 66 | 115 | 1450 | 5100 | 3600 |
+| | unix | 25.8 | 42 | 850 | 8100 | 34000 | 5400 |
+| | shm | 0.2 | 3.8 | 7600 | 11900 | 12300 | 12000 |
+| render (Linux) | tcp | 5.3 | 10.6 | 600 | 6500 | 14000 | 13100 |
+| | unix | 2.5 | 4.8 | 2600 | 15500 | 18200 | 16800 |
+| | shm | 0.2 | 3.0 | 12800 | 20800 | 21400 | 17700 |
+| cortex (Linux) | tcp | 3.7 | 7.6 | 810 | 8800 | 16200 | 14700 |
+| | unix | 3.6 | 11.4 | 3000 | 19000 | 20100 | 16600 |
+| | shm | 0.7 | 5.0 | 13300 | 28900 | 21300 | 22300 |
+| mac mini (M1) | tcp | 15.8 | 22 | 540 | 6550 | 15800 | 6300 |
+| | unix | 3.6 | 6.3 | 1760 | 14250 | 26600 | 7200 |
+| | shm | 0.17 | 0.21 | 5300 | 23000 | 25100 | 13900 |
+
+Decisions:
+- **AF_UNIX is the local transport** on all four machines. It beats loopback
+  TCP everywhere; for 1 KB messages by 7 times on Windows, 3 to 4 times on
+  Linux and the mac.
+  Loopback TCP stays only as the fallback.
+- **P3 (shared memory) is parked.** AF_UNIX moves at least 5 GB/s for large
+  messages on every machine, which is 1000 times U1's budget and more than an
+  interpreter can fill. Shared memory wins only on latency with a spinning
+  receiver; with a doorbell for a sleeping receiver it falls back to socket
+  latency. Revisit when a measured program is bound by the transport.
+- The local socket row of the targets holds with a wide margin (26 us RTT on
+  Windows, under 4 us on Linux and the mac).
+
 **Budget for U1:** per frame master scope 4096 f32 (16 KB) + 2 bus scopes
 (32 KB) + 16 levels + loudness + anchor, about 50 KB at 60 Hz = 3 MB/s. Local:
 negligible. LAN: 2.4 % of 1 GbE, and Wi-Fi 5 still has headroom.
