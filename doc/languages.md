@@ -1538,6 +1538,26 @@ File and directory names are UTF-8 like every other string. On Windows a program
     PRINT Result{"OUTPUT"}
     ```
 
+* **`OS.SPAWN(command$, [args_array$], [options]) -> pid`**: Starts a program and returns its process id at once, while `OS.EXEC` waits. With `args_array$` (an empty array too) `command$` names the program and each element reaches it as one argument, without a shell; without it, `command$` is a line for `cmd /c` or `sh -c` and the pid is that shell's. The child runs on when the program ends. `options` is a map:
+    * `"CWD"`: the child's working directory.
+    * `"ENV"`: a map of variables added to (or replacing in) the current environment for the child only.
+    * `"OUTPUT"`: a file the child's standard output and error are appended to; without it the child writes to the same console.
+    * `"HIDDEN"`: `TRUE` opens no console window for it (Windows).
+
+    Only the `"OUTPUT"` file is handed to the child, never the sockets and files the program holds open. A program that cannot be started, or a missing `"CWD"`, raises.
+
+    ```basic
+    ' A second jdBasic program next to this one, its output in a log
+    DIM pid = OS.SPAWN(OS.SELF$(), ["stage.jdb", "--follow"], {"OUTPUT": "stage.log"})
+    ' ... later
+    IF OS.ALIVE(pid) THEN DIM ended = OS.KILL(pid)
+    PRINT "stage ended with "; OS.WAIT(pid, 5000)
+    ```
+* **`OS.WAIT(pid, [timeout_ms]) -> number`**: Waits for a child `OS.SPAWN` started and returns its exit code; asked again, it returns the same code. After `timeout_ms` with the child still running it returns `NONE` (test with `TYPEOF(r) = "NONE"`); without a timeout it waits as long as it takes. A process `OS.SPAWN` did not start raises. A child ended by a signal (POSIX) reports 128 plus the signal number.
+* **`OS.ALIVE(pid) -> boolean`**: `TRUE` while the process runs, for any process id. A finished child of `OS.SPAWN` is collected here, so it leaves no zombie behind.
+* **`OS.KILL(pid) -> boolean`**: Ends the process at once (TerminateProcess on Windows, SIGKILL elsewhere). `FALSE` when it was gone, may not be ended, or is the program itself.
+* **`OS.PID() -> number`**: The process id of the running program.
+* **`OS.SELF$() -> string$`**: The full path of the running executable: `jdBasic` itself for a script, the program for a compiled one. With `OS.SPAWN` it starts another script on the same jdBasic without guessing paths.
 * **`OS.HOSTNAME$() -> STRING"`**: Returns the network hostname of the local machine.
 * **`OS.IP$() -> STRING`**: Returns the primary local IPv4 address of the machine.
 * **`OS.LOAD() -> Number`**: Returns the current system-wide CPU load as a percentage (0.0 to 100.0). Accuracy and behavior are OS-dependent.
@@ -4966,7 +4986,7 @@ Every documented builtin, linked to the section that describes it.
 
 **N** · [NET.ACCEPT](#tcp-and-udp-sockets-net) · [NET.ALIVE](#tcp-and-udp-sockets-net) · [NET.CLOSE](#tcp-and-udp-sockets-net) · [NET.CONNECT](#tcp-and-udp-sockets-net) · [NET.ERROR$](#tcp-and-udp-sockets-net) · [NET.LISTEN](#tcp-and-udp-sockets-net) · [NET.PEER$](#tcp-and-udp-sockets-net) · [NET.PORT](#tcp-and-udp-sockets-net) · [NET.RECV$](#tcp-and-udp-sockets-net) · [NET.RECVFROM](#tcp-and-udp-sockets-net) · [NET.RECVLINE$](#tcp-and-udp-sockets-net) · [NET.SEND](#tcp-and-udp-sockets-net) · [NET.SENDTO](#tcp-and-udp-sockets-net) · [NET.UDP](#tcp-and-udp-sockets-net) · [NEW](#development--debugging) · [NODE.PACK$](#encoding--hashing-codec) · [NODE.UNPACK](#encoding--hashing-codec) · [NORMALIZE](#array--matrix-functions) · [NOW](#system-and-time-functions) · [NOW_EPOCH](#system-and-time-functions)
 
-**O** · [ON](#system--flow-control) · [ONES](#array--matrix-functions) · [OPTION](#system--flow-control) · [OS.ARGS](#os-functions) · [OS.EXEC](#os-functions) · [OS.FEATURE](#os-functions) · [OS.GETOS](#os-functions) · [OS.HOSTNAME$](#os-functions) · [OS.IP$](#os-functions) · [OS.LOAD](#os-functions) · [OS.SCREENSHOT](#os-functions) · [OUTER](#array--matrix-functions) · [OUTPUT.CAPTURE_BEGIN](#output-capture) · [OUTPUT.CAPTURE_END$](#output-capture) · [OUTPUT.CAPTURE_PEEK$](#output-capture)
+**O** · [ON](#system--flow-control) · [ONES](#array--matrix-functions) · [OPTION](#system--flow-control) · [OS.ALIVE](#os-functions) · [OS.ARGS](#os-functions) · [OS.EXEC](#os-functions) · [OS.FEATURE](#os-functions) · [OS.GETOS](#os-functions) · [OS.HOSTNAME$](#os-functions) · [OS.IP$](#os-functions) · [OS.KILL](#os-functions) · [OS.LOAD](#os-functions) · [OS.PID](#os-functions) · [OS.SCREENSHOT](#os-functions) · [OS.SELF$](#os-functions) · [OS.SPAWN](#os-functions) · [OS.WAIT](#os-functions) · [OUTER](#array--matrix-functions) · [OUTPUT.CAPTURE_BEGIN](#output-capture) · [OUTPUT.CAPTURE_END$](#output-capture) · [OUTPUT.CAPTURE_PEEK$](#output-capture)
 
 **P** · [PACK$](#string-functions) · [PACKSIZE](#string-functions) · [PARTICLE.CLEAR](#graphics-and-multimedia-functions) · [PARTICLE.COUNT](#graphics-and-multimedia-functions) · [PARTICLE.DRAW](#graphics-and-multimedia-functions) · [PARTICLE.EMIT](#graphics-and-multimedia-functions) · [PATH.ABS$](#filesystem) · [PATH.BASENAME$](#filesystem) · [PATH.DIRNAME$](#filesystem) · [PATH.EXT$](#filesystem) · [PATH.ISABS](#filesystem) · [PATH.JOIN$](#filesystem) · [PATH.NORMALIZE$](#filesystem) · [PDF.TEXT$](#file-io-functions) · [PLACE](#array--matrix-functions) · [PLOTRAW](#graphics-and-multimedia-functions) · [POP](#array--matrix-functions) · [POW](#matharithmeticround-functions) · [PRETTY](#development--debugging) · [PRINT](#console-io-functions) · [PSET](#graphics-and-multimedia-functions) · [PWD](#filesystem) · [PY.DIR$](#python-integration-build-flag-python) · [PY.EVAL](#python-integration-build-flag-python) · [PY.GET](#python-integration-build-flag-python) · [PY.HELP$](#python-integration-build-flag-python) · [PY.SET](#python-integration-build-flag-python) · [PYTHON$](#python-integration-build-flag-python)
 

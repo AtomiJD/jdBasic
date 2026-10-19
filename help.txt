@@ -2547,6 +2547,30 @@ Description: Executes an external command and captures its output. Without args_
 Syntax: OS.GETOS()
 Description: Returns a string identifying the operating system ("WINDOWS", "LINUX", "MACOS").
 
+[OS.SPAWN]
+Syntax: OS.SPAWN(command$, [args_array$], [options]) -> pid
+Description: Starts a program and returns its process id at once. With args_array$ the program runs without a shell and gets each element as one argument; without it command$ is a shell line. options map: "CWD" working directory, "ENV" map of extra variables, "OUTPUT" file for stdout and stderr, "HIDDEN" TRUE for no console window (Windows).
+
+[OS.WAIT]
+Syntax: OS.WAIT(pid, [timeout_ms]) -> exit code or NONE
+Description: Waits for a child started by OS.SPAWN and returns its exit code, or NONE when it still runs after timeout_ms.
+
+[OS.ALIVE]
+Syntax: OS.ALIVE(pid) -> boolean
+Description: TRUE while the process runs. Works for any process id.
+
+[OS.KILL]
+Syntax: OS.KILL(pid) -> boolean
+Description: Ends the process at once. FALSE when it was gone, may not be ended, or is the program itself.
+
+[OS.PID]
+Syntax: OS.PID() -> number
+Description: The process id of the running program.
+
+[OS.SELF$]
+Syntax: OS.SELF$() -> string$
+Description: The full path of the running executable: jdBasic for a script, the program itself when compiled.
+
 [OS.HOSTNAME$]
 Syntax: OS.HOSTNAME$()
 Description: Returns the network hostname of the local machine.

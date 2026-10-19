@@ -1,0 +1,155 @@
+' OS.SPAWN, OS.WAIT, OS.ALIVE, OS.KILL, OS.PID and OS.SELF$. The test starts
+' itself again with --child as the program to watch, so it needs no helper
+' and runs the same in both backends.
+
+OPTION "EXPLICIT"
+
+DIM argv = OS.ARGS()
+DIM interp AS INTEGER = OS.FEATURE("INTERPRETER")
+
+' ── the child side ────────────────────────────────────────────
+FUNC ARG_AT$(i AS INTEGER) AS STRING
+    IF i < LEN(argv) THEN RETURN argv[i]
+    RETURN ""
+ENDFUNC
+
+IF ARG_AT$(1) = "--child" THEN
+    DIM what$ AS STRING = ARG_AT$(2)
+    IF what$ = "exit" THEN END VAL(ARG_AT$(3))
+    IF what$ = "sleep" THEN
+        SLEEP VAL(ARG_AT$(3))
+        END 0
+    ENDIF
+    IF what$ = "env" THEN
+        PRINT "ENV=" + GETENV$("JDB_SPAWN_TEST")
+        PRINT "CWD=" + PATH.ABS$(".")
+        END 0
+    ENDIF
+    IF what$ = "args" THEN
+        DIM k AS INTEGER
+        FOR k = 3 TO LEN(argv) - 1
+            PRINT "ARG=" + argv[k]
+        NEXT k
+        END 0
+    ENDIF
+    END 99
+ENDIF
+
+' ── the parent side ───────────────────────────────────────────
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+' The program and the arguments that start this test as a child.
+DIM self$ AS STRING = OS.SELF$()
+FUNC CHILD_ARGS(extra)
+    DIM a = ["--child"]
+    IF interp THEN a = [PATH.ABS$(argv[0]), "--child"]
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(extra) - 1
+        a = APPEND(a, extra[j])
+    NEXT j
+    RETURN a
+ENDFUNC
+
+DIM tmp_dir$ AS STRING = GETENV$("TEMP")
+IF tmp_dir$ = "" THEN tmp_dir$ = GETENV$("TMPDIR")
+IF tmp_dir$ = "" THEN tmp_dir$ = "/tmp"
+DIM out$ AS STRING = PATH.JOIN$(tmp_dir$, "jdb_spawn_" + STR$(OS.PID()) + ".txt")
+DIM hide = {"HIDDEN": TRUE}
+
+Ok("OS.PID is a process id", OS.PID() > 0)
+Ok("OS.SELF$ names a file that exists", self$ <> "" ANDALSO FILE.EXISTS(self$))
+Ok("the running process is alive", OS.ALIVE(OS.PID()))
+Ok("pid 0 is not", NOT OS.ALIVE(0))
+Ok("a process cannot kill itself", NOT OS.KILL(OS.PID()))
+
+' exit codes
+DIM p_exit AS INTEGER = OS.SPAWN(self$, CHILD_ARGS(["exit", "7"]), hide)
+Ok("SPAWN returns a pid", p_exit > 0)
+DIM code = OS.WAIT(p_exit, 30000)
+Ok("WAIT returns the exit code", code = 7)
+Ok("a second WAIT returns it again", OS.WAIT(p_exit, 0) = 7)
+Ok("a finished child is not alive", NOT OS.ALIVE(p_exit))
+DIM p_zero AS INTEGER = OS.SPAWN(self$, CHILD_ARGS(["exit", "0"]), hide)
+Ok("exit code 0", OS.WAIT(p_zero, 30000) = 0)
+
+' waiting, alive and kill
+DIM p_sleep AS INTEGER = OS.SPAWN(self$, CHILD_ARGS(["sleep", "20000"]), hide)
+Ok("a sleeping child is alive", OS.ALIVE(p_sleep))
+Ok("WAIT with a short timeout returns NONE", TYPEOF(OS.WAIT(p_sleep, 50)) = "NONE")
+Ok("KILL ends it", OS.KILL(p_sleep))
+DIM killed = OS.WAIT(p_sleep, 10000)
+Ok("and WAIT then returns", TYPEOF(killed) <> "NONE")
+Ok("with a code that is not 0", killed <> 0)
+Ok("a killed child is not alive", NOT OS.ALIVE(p_sleep))
+
+' output, environment and working directory
+IF FILE.EXISTS(out$) THEN KILL out$
+DIM env_opts = {"HIDDEN": TRUE, "OUTPUT": out$, "CWD": tmp_dir$, "ENV": {"JDB_SPAWN_TEST": "neon 42"}}
+DIM p_env AS INTEGER = OS.SPAWN(self$, CHILD_ARGS(["env"]), env_opts)
+Ok("the env child exits 0", OS.WAIT(p_env, 30000) = 0)
+DIM env_out$ AS STRING = TXTREADER$(out$)
+Ok("ENV reaches the child", INSTR(env_out$, "ENV=neon 42") >= 0)
+Ok("CWD is the child's directory", INSTR(LCASE$(env_out$), "cwd=" + LCASE$(PATH.ABS$(tmp_dir$))) >= 0)
+Ok("the parent keeps its own environment", GETENV$("JDB_SPAWN_TEST") = "")
+KILL out$
+
+' arguments arrive as they were given, without a shell reading them
+DIM tricky = ["args", "two words", "quote" + CHR$(34) + "inside", "back\slash\", "a&b|c>d", ""]
+DIM p_args AS INTEGER = OS.SPAWN(self$, CHILD_ARGS(tricky), {"HIDDEN": TRUE, "OUTPUT": out$})
+Ok("the args child exits 0", OS.WAIT(p_args, 30000) = 0)
+DIM args_out$ AS STRING = TXTREADER$(out$)
+Ok("an argument with a space", INSTR(args_out$, "ARG=two words") >= 0)
+Ok("an argument with a quote", INSTR(args_out$, "ARG=quote" + CHR$(34) + "inside") >= 0)
+Ok("an argument with backslashes", INSTR(args_out$, "ARG=back\slash\") >= 0)
+Ok("shell operators stay text", INSTR(args_out$, "ARG=a&b|c>d") >= 0)
+Ok("five arguments, the empty one too", LEN(SPLIT(args_out$, "ARG=")) - 1 = 5)
+KILL out$
+
+' a command line goes to the shell
+DIM p_shell AS INTEGER = OS.SPAWN("exit 3")
+Ok("a shell line returns its exit code", OS.WAIT(p_shell, 30000) = 3)
+
+' errors
+DIM raised AS INTEGER = FALSE
+TRY
+    DIM p_none AS INTEGER = OS.SPAWN("jdb_no_such_program_here", [], hide)
+CATCH
+    raised = TRUE
+ENDTRY
+Ok("a missing program raises", raised)
+raised = FALSE
+TRY
+    DIM w = OS.WAIT(OS.PID(), 0)
+CATCH
+    raised = TRUE
+ENDTRY
+Ok("WAIT on a process SPAWN did not start raises", raised)
+raised = FALSE
+TRY
+    DIM p_opt AS INTEGER = OS.SPAWN(self$, [], {"COLOUR": "red"})
+CATCH
+    raised = TRUE
+ENDTRY
+Ok("an unknown option raises", raised)
+raised = FALSE
+TRY
+    DIM p_cwd AS INTEGER = OS.SPAWN(self$, CHILD_ARGS(["exit", "0"]), {"HIDDEN": TRUE, "CWD": PATH.JOIN$(tmp_dir$, "jdb_no_such_dir_here")})
+CATCH
+    raised = TRUE
+ENDTRY
+Ok("a missing working directory raises", raised)
+
+PRINT ""
+PRINT "OS SPAWN TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

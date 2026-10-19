@@ -1,6 +1,7 @@
-// VM builtins: environment, OS.*, EXECUTE/EVAL, reactive bindings and internal hooks.
+// VM builtins: environment, OS.* (child processes in os_spawn.h), EXECUTE/EVAL, reactive bindings and internal hooks.
 
 #include "vm_internal.h"
+#include "os_spawn.h"
 
 #if defined(_WIN32)
 // The output of a console program as UTF-8: text that is valid UTF-8 stays
@@ -296,6 +297,109 @@ void VM::register_system_builtins() {
         result.as_object()->set("OUTPUT", Value::make_string(output));
         result.as_object()->set("EXIT_CODE", Value::make_i64(exit_code));
         return result;
+    });
+#endif
+
+#if !defined(JDB_LEAN) && !defined(__EMSCRIPTEN__)
+    // OS.SPAWN(command$, [args_array$], [options]) -> pid. Starts and returns
+    // at once. With an argument array (even an empty one) the program runs
+    // without a shell; without one, command$ is a line for cmd / sh.
+    register_native("OS.SPAWN", 1, 3, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING || args[0].as_string()->data.empty())
+            throw std::runtime_error("OS.SPAWN: expects a program or command line");
+        std::vector<std::string> argv{args[0].as_string()->data};
+        bool use_shell = true;
+        if (args.size() >= 2 && args[1].type == ValueType::ARRAY) {
+            use_shell = false;
+            for (auto& a : args[1].as_array()->elements) argv.push_back(a.to_string());
+        } else if (args.size() >= 2 && args[1].type != ValueType::NONE) {
+            throw std::runtime_error("OS.SPAWN: the arguments must be an array of strings");
+        }
+        os_spawn::Options opts;
+        if (args.size() >= 3 && args[2].type == ValueType::OBJECT) {
+            for (auto& f : args[2].as_object()->fields) {
+                std::string key = f.first;
+                for (char& c : key) c = (char)std::toupper((unsigned char)c);
+                if (key == "CWD") opts.cwd = f.second.to_string();
+                else if (key == "OUTPUT") opts.output = f.second.to_string();
+                else if (key == "HIDDEN") opts.hidden = f.second.to_bool();
+                else if (key == "ENV") {
+                    if (f.second.type != ValueType::OBJECT)
+                        throw std::runtime_error("OS.SPAWN: ENV must be a map of names to values");
+                    for (auto& e : f.second.as_object()->fields)
+                        opts.env.emplace_back(e.first, e.second.to_string());
+                } else {
+                    throw std::runtime_error("OS.SPAWN: unknown option " + f.first + " (CWD, ENV, OUTPUT, HIDDEN)");
+                }
+            }
+        } else if (args.size() >= 3 && args[2].type != ValueType::NONE) {
+            throw std::runtime_error("OS.SPAWN: the options must be a map");
+        }
+        return Value::make_i64(os_spawn::start(argv, use_shell, opts));
+    });
+
+    // OS.WAIT(pid, [timeout_ms]) -> exit code, or NONE when the child still
+    // runs after timeout_ms. Only for processes OS.SPAWN started.
+    register_native("OS.WAIT", 1, 2, [](const std::vector<Value>& args) -> Value {
+        int64_t pid = args[0].to_int();
+        int64_t timeout_ms = args.size() >= 2 ? args[1].to_int() : -1;
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
+        for (;;) {
+            {
+                std::lock_guard<std::mutex> lock(os_spawn::table_mutex());
+                auto it = os_spawn::table().find(pid);
+                if (it == os_spawn::table().end())
+                    throw std::runtime_error("OS.WAIT: process " + std::to_string(pid) + " was not started by OS.SPAWN");
+                if (os_spawn::poll_locked(pid, it->second, 0)) return Value::make_i64(it->second.exit_code);
+            }
+            if (timeout_ms >= 0 && std::chrono::steady_clock::now() >= deadline) return Value::make_none();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    });
+
+    // OS.ALIVE(pid) -> BOOLEAN, for any process.
+    register_native("OS.ALIVE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t pid = args[0].to_int();
+        {
+            std::lock_guard<std::mutex> lock(os_spawn::table_mutex());
+            auto it = os_spawn::table().find(pid);
+            if (it != os_spawn::table().end())
+                return Value::make_bool(!os_spawn::poll_locked(pid, it->second, 0));
+        }
+        if (pid <= 0) return Value::make_bool(false);
+#if defined(_WIN32)
+        HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
+        if (!h) return Value::make_bool(GetLastError() == ERROR_ACCESS_DENIED);
+        bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+        CloseHandle(h);
+        return Value::make_bool(alive);
+#else
+        return Value::make_bool(kill((pid_t)pid, 0) == 0 || errno == EPERM);
+#endif
+    });
+
+    // OS.KILL(pid) -> BOOLEAN. Ends the process at once (TerminateProcess,
+    // SIGKILL); FALSE when it was gone or may not be ended.
+    register_native("OS.KILL", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t pid = args[0].to_int();
+        if (pid <= 0 || pid == os_spawn::self_pid()) return Value::make_bool(false);
+#if defined(_WIN32)
+        HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, (DWORD)pid);
+        if (!h) return Value::make_bool(false);
+        bool ok = TerminateProcess(h, 137) != 0;
+        CloseHandle(h);
+        return Value::make_bool(ok);
+#else
+        return Value::make_bool(kill((pid_t)pid, SIGKILL) == 0);
+#endif
+    });
+
+    register_native("OS.PID", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(os_spawn::self_pid());
+    });
+
+    register_native("OS.SELF$", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_string(os_spawn::self_path());
     });
 #endif
 
