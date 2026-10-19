@@ -115,6 +115,8 @@ DIM HOOK_B$ AS STRING = ""
 DIM BASS$ AS STRING = ""
 ' the arp or stab figures; each part's flavour picks one
 DIM FIGURES$ = ["", "", ""]
+DIM ARP_TEXT$ AS STRING = ""
+DIM ARP_PATCH$ AS STRING = "neon_pluck"
 DIM BREAK_PROG$ AS STRING = ""
 DIM BREAK_CHORDS$ AS STRING = ""
 DIM BREAK_LINE$ AS STRING = ""
@@ -187,18 +189,43 @@ SUB MAKE_RECIPE()
     BREAK_PROG$ = MELODY.BORROWED$(KEY$)
     BREAK_CHORDS$ = "<" + BREAK_PROG$ + ">"
     BREAK_LINE$ = "legato(1.2, " + MELODY.ARP$(BREAK_PROG$, "down", 4, 1) + ")"
-    DIM shapes$ = ["updown", "up", "down"]
-    DIM stab_rhythms$ = ["..x...x...x..x-.", "x..x..x...x.x...", "..x..x.x..x...x."]
+    DIM stab_pool$ = ["..x...x...x..x-.", "x..x..x...x.x...", "..x..x.x..x...x.", "x.-.x.-..x.x-.x.", ".x..x..x.x..x...", "x...x.x...x.x.x."]
+    DIM arp_shapes$ = ["up", "down", "updown", "downup", "pedal", "octave", "threes", "random"]
+    DIM arp_masks$ = ["", "", "x.xx.x.x..x.x.x.", "xx.xx.x.xx.xx.x.", "x..x..x..x..x.x.", "x.x.x.xxx.x.x.xx"]
+    DIM arp_rates = [16, 16, 16, 8, 12]
+    DIM arp_lengths = [0.3, 0.5, 0.7]
+    DIM moves$ = ["", "", "every(4, rev, ", "iter(4, ", "off(0.125, add(12), "]
     DIM fi AS INTEGER
+    ARP_TEXT$ = ""
     FOR fi = 0 TO 2
         IF genre$ = "house" OR genre$ = "deep" THEN
-            FIGURES$[fi] = "legato(0.5, " + MELODY.STABS$(PROG$, stab_rhythms$[fi]) + ")"
+            FIGURES$[fi] = "legato(0.5, " + MELODY.STABS$(PROG$, stab_pool$[PICK(810 + 7 * fi, LEN(stab_pool$))]) + ")"
         ELSE
-            FIGURES$[fi] = "legato(0.5, " + MELODY.ARP$(PROG$, shapes$[fi], 16, 1) + ")"
+            DIM shape$ AS STRING = arp_shapes$[PICK(811 + 7 * fi, LEN(arp_shapes$))]
+            DIM rate AS INTEGER = arp_rates[PICK(812 + 7 * fi, LEN(arp_rates))]
+            DIM span AS INTEGER = 1 + PICK(813 + 7 * fi, 2)
+            IF shape$ = "octave" THEN span = 1
+            DIM mask$ AS STRING = ""
+            IF rate = 16 THEN mask$ = arp_masks$[PICK(814 + 7 * fi, LEN(arp_masks$))]
+            DIM len_i AS INTEGER = PICK(815 + 7 * fi, 3)
+            DIM fig$ AS STRING = "legato(" + STR$(arp_lengths[len_i]) + ", " + MELODY.GATE$(MELODY.ARP$(PROG$, shape$, rate, span), mask$) + ")"
+            DIM move$ AS STRING = moves$[PICK(816 + 7 * fi, LEN(moves$))]
+            IF move$ <> "" THEN fig$ = move$ + fig$ + ")"
+            ' a figure that is higher, longer or doubled plays softer, so the mix
+            ' keeps its loudness
+            DIM level AS DOUBLE = 1
+            IF span > 1 OR shape$ = "octave" THEN level = level * 0.75
+            IF shape$ = "threes" THEN level = level * 0.85
+            IF len_i = 2 THEN level = level * 0.85
+            IF INSTR(move$, "off(") = 0 THEN level = level * 0.7
+            IF level < 1 THEN fig$ = "gain(" + STR$(INT(level * 100) / 100) + ", " + fig$ + ")"
+            FIGURES$[fi] = fig$
+            IF fi > 0 THEN ARP_TEXT$ = ARP_TEXT$ + ", "
+            ARP_TEXT$ = ARP_TEXT$ + shape$ + " " + STR$(rate) + IIF(span > 1, " two octaves", "") + IIF(mask$ <> "", " gated", "") + IIF(move$ <> "", " " + LEFT$(move$, INSTR(move$, "(")), "")
         ENDIF
     NEXT fi
     IF genre$ = "house" OR genre$ = "deep" THEN
-        BREAK_FIGURE$ = "legato(0.5, " + MELODY.STABS$(BREAK_PROG$, stab_rhythms$[0]) + ")"
+        BREAK_FIGURE$ = "legato(0.5, " + MELODY.STABS$(BREAK_PROG$, stab_pool$[0]) + ")"
     ELSE
         BREAK_FIGURE$ = "legato(0.5, " + MELODY.ARP$(BREAK_PROG$, "updown", 16, 1) + ")"
     ENDIF
@@ -218,6 +245,7 @@ SUB MAKE_RECIPE()
     RECIPE$ = RECIPE$ + "  hook rhythm " + RHYTHM_A$ + " / " + RHYTHM_B$ + ", octave " + STR$(OCT) + NL$
     RECIPE$ = RECIPE$ + "  intro: " + INTRO_NAMES$[INTRO] + NL$
     RECIPE$ = RECIPE$ + "  hook " + HOOK$ + NL$
+    IF ARP_TEXT$ <> "" THEN RECIPE$ = RECIPE$ + "  arps: " + ARP_TEXT$ + NL$
 ENDSUB
 
 DIM KICK AS INTEGER = 0
@@ -356,7 +384,7 @@ SUB SETUP_SOUND()
         BASS_CUT = PATCH.CUTOFF("synth_bass")
         BASS_RES = PATCH.RESONANCE("synth_bass")
     ENDIF
-    RECIPE$ = RECIPE$ + "  sounds: " + BASS_PATCH$ + ", neon_pluck, " + KEYS_PATCH$ + ", " + LEAD_PATCH$ + ", " + COUNTER_PATCH$ + NL$
+    RECIPE$ = RECIPE$ + "  sounds: " + BASS_PATCH$ + ", " + ARP_PATCH$ + ", " + KEYS_PATCH$ + ", " + LEAD_PATCH$ + ", " + COUNTER_PATCH$ + NL$
 
     PATCH.APPLY BASS, BASS_PATCH$
     SOUND.SIDECHAIN BASS, KICK, 0.7
@@ -370,7 +398,9 @@ SUB SETUP_SOUND()
 
     PATCH.APPLY CHOIR, "choir"
 
-    PATCH.APPLY ARP, "neon_pluck"
+    DIM arp_patches$ = ["neon_pluck", "neon_pluck", "neon_soft", "fm_keys"]
+    ARP_PATCH$ = arp_patches$[PICK(830, LEN(arp_patches$))]
+    PATCH.APPLY ARP, ARP_PATCH$
     SOUND.SIDECHAIN ARP, KICK, 0.4
 
     PATCH.APPLY KEYS, KEYS_PATCH$
@@ -434,8 +464,8 @@ SUB RESET_ARRANGEMENT()
         BASE_CUT[PAD] = 2200
         BASE_RES[PAD] = 0.1
     ENDIF
-    BASE_CUT[ARP] = PATCH.CUTOFF("neon_pluck")
-    BASE_RES[ARP] = PATCH.RESONANCE("neon_pluck")
+    BASE_CUT[ARP] = PATCH.CUTOFF(ARP_PATCH$)
+    BASE_RES[ARP] = PATCH.RESONANCE(ARP_PATCH$)
     BASE_CUT[KEYS] = PATCH.CUTOFF(KEYS_PATCH$)
     BASE_RES[KEYS] = PATCH.RESONANCE(KEYS_PATCH$)
     BASE_CUT[LEAD] = PATCH.CUTOFF(LEAD_PATCH$)
@@ -564,10 +594,10 @@ ENDFUNC
 SUB PICK_SONG_GROOVE()
     DIM kicks$ = ["bd*4", "<bd*4 [bd*4, [~ ~ ~ [~ ~ ~ bd]]]>"]
     IF genre$ = "deep" THEN kicks$ = APPEND(kicks$, "<bd*4 [bd ~ ~ bd ~ ~ bd ~]>")
-    IF genre$ = "synthwave" THEN kicks$ = ["bd*4", "bd:1*4", "<bd*4 [bd*4, [~ ~ ~ [~ ~ ~ bd]]]>"]
-    KICK_PAT$ = kicks$[PICK(201, LEN(kicks$))]
-    HAT_STYLE = PICK(202, 4)
-    SWING_AMT = 0.06 + 0.04 * PICK(203, 4)
+    IF genre$ = "synthwave" THEN kicks$ = ["bd*4", "gain(0.75, legato(0.9, bd:1*4))", "<bd*4 [bd*4, [~ ~ ~ [~ ~ ~ bd]]]>"]
+    KICK_PAT$ = kicks$[PICK(800, LEN(kicks$))]
+    HAT_STYLE = PICK(801, 4)
+    SWING_AMT = 0.06 + 0.04 * PICK(802, 4)
     DIM hat_names$ = ["sixteenths", "sixteenths on the beat", "eighths and scattered sixteenths", "shaker"]
     RECIPE$ = RECIPE$ + "  groove: kick " + KICK_PAT$ + ", hats " + hat_names$[HAT_STYLE] + NL$
 ENDSUB
@@ -577,25 +607,25 @@ SUB PICK_GROOVE(fi AS INTEGER)
     CUR_PART = fi
     DIM claps$ = ["~ cp ~ cp", "<[~ cp ~ cp] [~ cp ~ [cp ~ ~ cp]]>", "~ [cp,sd] ~ [cp,sd]", "off(0.008, gain(0.6), ~ cp ~ cp)", "<[~ cp ~ cp]!3 [~ cp [~ ~ ~ cp] cp]>"]
     IF genre$ = "synthwave" THEN claps$ = ["~ sd ~ sd", "off(0.008, gain(0.6), ~ sd ~ sd)", "~ [sd,cp] ~ [sd,cp]", "<[~ sd ~ sd]!3 [~ sd [~ ~ ~ sd] sd]>"]
-    CLAP_PAT$ = claps$[GPICK(fi, 211, LEN(claps$))]
+    CLAP_PAT$ = claps$[GPICK(fi, 901, LEN(claps$))]
     DIM densities = [0, 0.04, 0.07, 0.1]
-    CLAP_SCATTER = densities[GPICK(fi, 212, 4)]
+    CLAP_SCATTER = densities[GPICK(fi, 902, 4)]
     DIM insts$ = ["rim", "cb", "cl", "sh", "lt", "mt"]
     DIM rhythms$ = ["3,8", "5,8", "5,16", "7,16", "3,16", "9,16"]
-    DIM ia AS INTEGER = GPICK(fi, 213, LEN(insts$))
-    DIM ib AS INTEGER = (ia + 1 + GPICK(fi, 214, LEN(insts$) - 1)) MOD LEN(insts$)
-    DIM ra$ AS STRING = rhythms$[GPICK(fi, 215, LEN(rhythms$))]
-    DIM rb$ AS STRING = rhythms$[GPICK(fi, 216, LEN(rhythms$))]
-    PERC_A$ = insts$[ia] + "(" + ra$ + "," + STR$(GPICK(fi, 217, 8)) + ")"
-    PERC_B$ = insts$[ib] + "(" + rb$ + "," + STR$(GPICK(fi, 218, 8)) + ")"
+    DIM ia AS INTEGER = GPICK(fi, 903, LEN(insts$))
+    DIM ib AS INTEGER = (ia + 1 + GPICK(fi, 904, LEN(insts$) - 1)) MOD LEN(insts$)
+    DIM ra$ AS STRING = rhythms$[GPICK(fi, 905, LEN(rhythms$))]
+    DIM rb$ AS STRING = rhythms$[GPICK(fi, 906, LEN(rhythms$))]
+    PERC_A$ = insts$[ia] + "(" + ra$ + "," + STR$(GPICK(fi, 907, 8)) + ")"
+    PERC_B$ = insts$[ib] + "(" + rb$ + "," + STR$(GPICK(fi, 908, 8)) + ")"
     BREAK_CLAP$ = "~ cp ~ cp"
-    IF GPICK(fi, 219, 2) = 1 THEN BREAK_CLAP$ = "~ ~ cp ~"
+    IF GPICK(fi, 909, 2) = 1 THEN BREAK_CLAP$ = "~ ~ cp ~"
 ENDSUB
 
 FUNC HATS_PAT$(level AS INTEGER) AS STRING
     IF level = 1 THEN RETURN "gain(0.5, [~ hh]*4)"
     IF HAT_STYLE = 1 THEN RETURN SWUNG$("sometimesBy(0.3, gain(0.78), gain([0.75 0.4 0.55 0.4]*4, hh*16))")
-    IF HAT_STYLE = 2 THEN RETURN SWUNG$("sometimesBy(0.25, gain(0.8), gain([0.7 0.45]*4, hh*8)), gain(0.35, " + SCATTER$("hh", 0.3, 230, " 0 2 4 6 8 10 12 14 ") + ")")
+    IF HAT_STYLE = 2 THEN RETURN SWUNG$("sometimesBy(0.25, gain(0.8), gain([0.7 0.45]*4, hh*8)), gain(0.35, " + SCATTER$("hh", 0.3, 100, " 0 2 4 6 8 10 12 14 ") + ")")
     IF HAT_STYLE = 3 THEN RETURN SWUNG$("gain([0.45 0.75 0.55 0.85]*4, sh*16), gain(0.5, [~ hh]*4)")
     RETURN HATS16$
 ENDFUNC
@@ -604,7 +634,7 @@ ENDFUNC
 FUNC CLAPS_PAT$(level AS INTEGER, snd$) AS STRING
     DIM dens AS DOUBLE = CLAP_SCATTER * (0.4 + 0.3 * (level - 2))
     IF dens <= 0 THEN RETURN CLAP_PAT$
-    RETURN CLAP_PAT$ + ", gain(0.5, " + SCATTER$(snd$, dens, 220 + 100 * level, " 4 12 ") + ")"
+    RETURN CLAP_PAT$ + ", gain(0.5, " + SCATTER$(snd$, dens, 200 + 100 * level, " 4 12 ") + ")"
 ENDFUNC
 
 ' The synthwave drums: eighth hats, the gated snare on two and four
@@ -633,7 +663,7 @@ SUB DRUMS(level AS INTEGER)
         RETURN
     ENDIF
     DIM kick$ AS STRING = KICK_PAT$
-    IF level >= 4 THEN kick$ = kick$ + ", gain(0.35, " + SCATTER$("bd", 0.03, 240, " 0 4 8 12 ") + ")"
+    IF level >= 4 THEN kick$ = kick$ + ", gain(0.35, " + SCATTER$("bd", 0.03, 200, " 0 4 8 12 ") + ")"
     TRK_ON KICK, kick$
     TRK_ON HATS, HATS_PAT$(level)
     IF level >= 3 THEN
@@ -645,7 +675,7 @@ SUB DRUMS(level AS INTEGER)
     IF level = 5 THEN TRK_ON PERC, LOOSE$(PERC_A$ + ", sometimes(ply(2), " + PERC_B$ + ")")
     GHOST$ = ""
     IF level >= 3 THEN
-        GHOST$ = "gain(0.14, " + SCATTER$("sd", 0.08, 250, " 4 12 ") + ")"
+        GHOST$ = "gain(0.14, " + SCATTER$("sd", 0.08, 300, " 4 12 ") + ")"
         TRK_ON SNARE, GHOST$
     ENDIF
 ENDSUB

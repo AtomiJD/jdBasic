@@ -30,8 +30,14 @@
 '                                (straight eighths, the octave on the
 '                                seventh)
 '   ARP$(prog$, shape$, rate, octaves)  the chord's voicing an octave up:
-'                                up, down, updown, random; rate notes a
-'                                bar (8, 12, 16), over 1 or 2 octaves
+'                                up, down, updown, downup, pedal (the root
+'                                between the others), octave (each tone
+'                                and its octave), threes (rolling groups
+'                                of three through the tones), random;
+'                                rate notes a bar (8, 12, 16), over 1 or
+'                                2 octaves
+'   GATE$(arp$, mask$)           an ARP$ figure with rests where mask$
+'                                has "."
 '   STABS$(prog$, rhythm$)       the voiced chord on a rhythm mask (x - .)
 '
 '   BORROWED$(key$)              a breakdown progression with chords
@@ -620,6 +626,30 @@ EXPORT FUNC ARP$(prog$, shape$, rate AS INTEGER, octaves AS INTEGER) AS STRING
             FOR wi = LEN(tones) - 2 TO 1 STEP -1
                 walk = APPEND(walk, tones[wi])
             NEXT wi
+        ELSEIF sh$ = "downup" THEN
+            FOR wi = LEN(tones) - 1 TO 0 STEP -1
+                walk = APPEND(walk, tones[wi])
+            NEXT wi
+            FOR wi = 1 TO LEN(tones) - 2
+                walk = APPEND(walk, tones[wi])
+            NEXT wi
+        ELSEIF sh$ = "pedal" THEN
+            FOR wi = 1 TO LEN(tones) - 1
+                walk = APPEND(walk, tones[0])
+                walk = APPEND(walk, tones[wi])
+            NEXT wi
+        ELSEIF sh$ = "octave" THEN
+            FOR wi = 0 TO LEN(tones) - 1
+                walk = APPEND(walk, tones[wi])
+                walk = APPEND(walk, tones[wi] + 12)
+            NEXT wi
+        ELSEIF sh$ = "threes" THEN
+            DIM ext = APPEND(tones + 0, tones + 12)
+            FOR wi = 0 TO LEN(tones) - 1
+                walk = APPEND(walk, ext[wi])
+                walk = APPEND(walk, ext[wi + 1])
+                walk = APPEND(walk, ext[wi + 2])
+            NEXT wi
         ELSE
             walk = tones + 0
         ENDIF
@@ -631,6 +661,36 @@ EXPORT FUNC ARP$(prog$, shape$, rate AS INTEGER, octaves AS INTEGER) AS STRING
             IF stp > 0 THEN bar$ = bar$ + " "
             bar$ = bar$ + MIDI_NAME$(m)
         NEXT stp
+        IF b > 0 THEN out$ = out$ + " "
+        out$ = out$ + "[" + bar$ + "]"
+    NEXT b
+    RETURN "<" + out$ + ">"
+ENDFUNC
+
+
+' An ARP$ figure with the steps where mask$ has "." made rests; the mask
+' repeats over each bar's steps ("x.xx.x.x..x.x.x.", a gated arp)
+EXPORT FUNC GATE$(arp$, mask$) AS STRING
+    IF LEN(mask$) = 0 THEN RETURN arp$
+    DIM inner$ AS STRING = MID$(arp$, 1, LEN(arp$) - 2)
+    DIM bars$ = SPLIT(inner$, "] [")
+    DIM out$ AS STRING = ""
+    DIM b AS INTEGER
+    FOR b = 0 TO LEN(bars$) - 1
+        DIM body$ AS STRING = bars$[b]
+        IF LEFT$(body$, 1) = "[" THEN body$ = MID$(body$, 1)
+        IF RIGHT$(body$, 1) = "]" THEN body$ = LEFT$(body$, LEN(body$) - 1)
+        DIM steps$ = SPLIT(body$, " ")
+        DIM bar$ AS STRING = ""
+        DIM s AS INTEGER
+        FOR s = 0 TO LEN(steps$) - 1
+            IF s > 0 THEN bar$ = bar$ + " "
+            IF MID$(mask$, s MOD LEN(mask$), 1) = "." THEN
+                bar$ = bar$ + "~"
+            ELSE
+                bar$ = bar$ + steps$[s]
+            ENDIF
+        NEXT s
         IF b > 0 THEN out$ = out$ + " "
         out$ = out$ + "[" + bar$ + "]"
     NEXT b
