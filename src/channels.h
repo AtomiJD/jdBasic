@@ -21,12 +21,18 @@
 // and then start returning the EOF marker (a small `MAP { __chan_eof: TRUE }`
 // - chosen so we don't need a new ValueType, see CHAN.IS_EOF).
 
+enum class ChanPolicy : uint8_t { Block, Latest, Ring };
+
 struct Channel {
     std::mutex                mtx;
     std::condition_variable   cv_recv;     // wakes RECVers when buffer fills
     std::condition_variable   cv_send;     // wakes SENDers when slot frees
     std::deque<Value>         buffer;
     int64_t                   capacity = 0;  // 0 → unbuffered rendezvous
+    // Block waits for room; Latest and Ring never block and drop the oldest
+    // value instead (Latest keeps one value, Ring keeps `capacity`).
+    ChanPolicy                policy = ChanPolicy::Block;
+    uint64_t                  dropped = 0;   // values a full Latest/Ring channel let go
     std::atomic<bool>         closed{false};
     // Counts of threads currently parked in SEND/RECV. Lets CLOSE wake
     // everyone deterministically and lets the destructor refuse to drop a

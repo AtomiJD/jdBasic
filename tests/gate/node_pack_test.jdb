@@ -1,0 +1,237 @@
+' NODE.PACK$ / NODE.UNPACK (the JDV1 value encoding) and the latest and ring
+' channel policies: every kind round trip, the packed form of numeric arrays,
+' refusal of malformed input, the depth limit, and channels that drop the
+' oldest value instead of waiting.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+FUNC RAISES(s$) AS INTEGER
+    DIM hit AS INTEGER = FALSE
+    TRY
+        DIM v = NODE.UNPACK(s$)
+    CATCH
+        hit = TRUE
+    ENDTRY
+    RETURN hit
+ENDFUNC
+
+FUNC SAME_AFTER_TRIP(v) AS INTEGER
+    DIM p$ AS STRING = NODE.PACK$(v)
+    RETURN NODE.PACK$(NODE.UNPACK(p$)) = p$
+ENDFUNC
+
+ASYNC FUNC FLOOD(handle, n)
+    DIM k AS INTEGER
+    FOR k = 1 TO n
+        CHAN.SEND handle, k
+    NEXT k
+    RETURN n
+ENDFUNC
+
+' ── scalars ───────────────────────────────────────────────────
+DIM hdr$ AS STRING = NODE.PACK$(NONE)
+Ok("magic JDV and version 1", LEFT$(hdr$, 3) = "JDV" ANDALSO ASC(MID$(hdr$, 3, 1)) = 1)
+' Compiled, a bare NONE argument reaches the VM as the number 0 and dates
+' and integers as FLOAT64, so those kinds are checked on the interpreter.
+DIM interp AS INTEGER = OS.FEATURE("INTERPRETER")
+IF interp THEN
+    Ok("NONE is five bytes", LEN(hdr$) = 5)
+    Ok("NONE comes back", TYPEOF(NODE.UNPACK(hdr$)) = "NONE")
+ENDIF
+Ok("NONE inside an array", TYPEOF(NODE.UNPACK(NODE.PACK$([NONE]))[0]) = "NONE")
+Ok("TRUE", NODE.UNPACK(NODE.PACK$(TRUE)) = TRUE)
+Ok("FALSE", NODE.UNPACK(NODE.PACK$(FALSE)) = FALSE)
+Ok("TRUE stays BOOLEAN", TYPEOF(NODE.UNPACK(NODE.PACK$(TRUE))) = "BOOLEAN")
+Ok("zero", NODE.UNPACK(NODE.PACK$(0)) = 0)
+Ok("minus one", NODE.UNPACK(NODE.PACK$(-1)) = -1)
+DIM huge AS INTEGER = 4611686018427387904
+Ok("2^62", NODE.UNPACK(NODE.PACK$(huge)) = huge)
+Ok("minus 2^62", NODE.UNPACK(NODE.PACK$(-huge)) = -huge)
+Ok("an integer stays INT64", TYPEOF(NODE.UNPACK(NODE.PACK$(42))) = "INT64")
+Ok("small integers take one byte", LEN(NODE.PACK$(5)) = 6)
+Ok("a double", NODE.UNPACK(NODE.PACK$(1.25)) = 1.25)
+Ok("a negative double", NODE.UNPACK(NODE.PACK$(-0.001)) = -0.001)
+Ok("a double stays FLOAT64", TYPEOF(NODE.UNPACK(NODE.PACK$(2.5))) = "FLOAT64")
+DIM when = CVDATE("2026-10-19 12:00")
+DIM when_back = NODE.UNPACK(NODE.PACK$(when))
+IF interp THEN Ok("a date stays DATE", TYPEOF(when_back) = "DATE")
+Ok("on the same day", YEAR(when_back) = 2026 ANDALSO MONTH(when_back) = 10 ANDALSO DAY(when_back) = 19)
+
+' ── strings ───────────────────────────────────────────────────
+Ok("an empty string", NODE.UNPACK(NODE.PACK$("")) = "")
+Ok("a string stays STRING", TYPEOF(NODE.UNPACK(NODE.PACK$("x"))) = "STRING")
+DIM bin$ AS STRING = "a" + CHR$(0) + CHR$(255) + CHR$(34) + "z"
+DIM bin_back$ AS STRING = NODE.UNPACK(NODE.PACK$(bin$))
+Ok("NUL, 255 and a quote survive", bin_back$ = bin$)
+Ok("byte for byte", LEN(bin_back$) = 5)
+DIM long$ AS STRING = REPEAT$("q", 70000)
+Ok("a 70000-byte string", NODE.UNPACK(NODE.PACK$(long$)) = long$)
+Ok("its length prefix takes three bytes", LEN(NODE.PACK$(long$)) = 4 + 1 + 3 + 70000)
+DIM pack_of_pack$ AS STRING = NODE.PACK$(NODE.PACK$([1, 2]))
+Ok("a packed value inside a string", NODE.UNPACK(NODE.UNPACK(pack_of_pack$))[1] = 2)
+
+' ── arrays ────────────────────────────────────────────────────
+DIM empty_arr = NODE.UNPACK(NODE.PACK$([]))
+Ok("an empty array", TYPEOF(empty_arr) = "ARRAY" ANDALSO LEN(empty_arr) = 0)
+DIM ints = IOTA(1000)
+DIM ints_p$ AS STRING = NODE.PACK$(ints)
+Ok("1000 integers pack as one block", LEN(ints_p$) = 4 + 2 + 2 + 8000)
+DIM ints_back = NODE.UNPACK(ints_p$)
+Ok("and come back in full", LEN(ints_back) = 1000 ANDALSO SUM(ints_back) = 500500)
+Ok("first and last", ints_back[0] = 1 ANDALSO ints_back[999] = 1000)
+IF interp THEN Ok("still integers", TYPEOF(ints_back[500]) = "INT64")
+DIM floats = [0.5, -1.5, 1000000.25]
+DIM floats_back = NODE.UNPACK(NODE.PACK$(floats))
+Ok("doubles pack", LEN(NODE.PACK$(floats)) = 4 + 2 + 1 + 24)
+Ok("and come back", floats_back[2] = 1000000.25 ANDALSO floats_back[1] = -1.5)
+DIM flags = [TRUE, FALSE, TRUE]
+DIM flags_back = NODE.UNPACK(NODE.PACK$(flags))
+Ok("booleans pack one byte each", LEN(NODE.PACK$(flags)) = 4 + 2 + 1 + 3)
+Ok("and stay booleans", flags_back[0] = TRUE ANDALSO flags_back[1] = FALSE ANDALSO TYPEOF(flags_back[2]) = "BOOLEAN")
+DIM mixed = [1, "two", 3.5, NONE, [4, 5]]
+DIM mixed_back = NODE.UNPACK(NODE.PACK$(mixed))
+Ok("a mixed array", mixed_back[1] = "two" ANDALSO mixed_back[2] = 3.5 ANDALSO mixed_back[4][1] = 5)
+Ok("NONE inside an array", TYPEOF(mixed_back[3]) = "NONE")
+Ok("a mixed array encodes the same twice", SAME_AFTER_TRIP(mixed))
+DIM grid = RESHAPE(IOTA(6), [2, 3])
+DIM grid_back = NODE.UNPACK(NODE.PACK$(grid))
+Ok("a 2x3 grid keeps its rows", LEN(grid_back) = 2 ANDALSO LEN(grid_back[1]) = 3)
+Ok("and its cells", grid_back[1][2] = 6)
+DIM dates_arr = [CVDATE("2020-01-01"), CVDATE("2021-01-01")]
+DIM dates_back = NODE.UNPACK(NODE.PACK$(dates_arr))
+IF interp THEN Ok("an array of dates keeps the date kind", TYPEOF(dates_back[1]) = "DATE")
+Ok("and its day", YEAR(dates_back[1]) = 2021)
+
+' ── maps ─────────────────────────────────────────────────────
+DIM song = {"title": "Neon", "bpm": 104, "parts": ["intro", "drop"], "mix": {"gain": 0.7, "mute": [FALSE, TRUE]}}
+DIM song_back = NODE.UNPACK(NODE.PACK$(song))
+Ok("a map", song_back{"title"} = "Neon" ANDALSO song_back{"bpm"} = 104)
+Ok("an array inside a map", song_back{"parts"}[1] = "drop")
+Ok("a map inside a map", song_back{"mix"}{"gain"} = 0.7 ANDALSO song_back{"mix"}{"mute"}[1] = TRUE)
+Ok("keys keep their order", JSON.STRINGIFY$(song_back) = JSON.STRINGIFY$(song))
+Ok("a map encodes the same twice", SAME_AFTER_TRIP(song))
+DIM no_keys = NODE.UNPACK(NODE.PACK$({}))
+Ok("an empty map", LEN(no_keys) = 0)
+
+' ── malformed input ───────────────────────────────────────────
+DIM sample$ AS STRING = NODE.PACK$(song)
+DIM n AS INTEGER
+DIM raised AS INTEGER = 0
+FOR n = 0 TO LEN(sample$) - 1
+    IF RAISES(LEFT$(sample$, n)) THEN raised = raised + 1
+NEXT n
+Ok("every cut-off prefix raises", raised = LEN(sample$))
+Ok("trailing bytes raise", RAISES(sample$ + CHR$(0)))
+Ok("a wrong magic raises", RAISES("JDX" + MID$(sample$, 3)))
+Ok("a wrong version raises", RAISES("JDV" + CHR$(2) + MID$(sample$, 4)))
+Ok("an unknown tag raises", RAISES("JDV" + CHR$(1) + CHR$(127)))
+Ok("a packed array of an unknown kind raises", RAISES("JDV" + CHR$(1) + CHR$(8) + CHR$(9) + CHR$(1) + "x"))
+Ok("a count beyond the data raises", RAISES("JDV" + CHR$(1) + CHR$(7) + CHR$(255) + CHR$(255) + CHR$(127)))
+Ok("a varint that never ends raises", RAISES("JDV" + CHR$(1) + CHR$(3) + REPEAT$(CHR$(255), 12)))
+Ok("the empty string raises", RAISES(""))
+DIM msg$ AS STRING = ""
+TRY
+    DIM v_bad = NODE.UNPACK("JDV" + CHR$(1) + CHR$(127))
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Ok("the message names the byte", INSTR(msg$, "unknown tag at byte 4") >= 0)
+DIM no_str AS INTEGER = FALSE
+TRY
+    DIM v_num = NODE.UNPACK(42)
+CATCH
+    no_str = TRUE
+ENDTRY
+Ok("UNPACK of a number raises", no_str)
+
+' ── depth ─────────────────────────────────────────────────────
+DIM deep = [1]
+FOR n = 1 TO 60
+    deep = [deep]
+NEXT n
+DIM deep_back = NODE.UNPACK(NODE.PACK$(deep))
+Ok("60 levels deep", LEN(deep_back) = 1)
+FOR n = 1 TO 10
+    deep = [deep]
+NEXT n
+DIM too_deep AS INTEGER = FALSE
+TRY
+    DIM p_deep$ = NODE.PACK$(deep)
+CATCH
+    too_deep = TRUE
+ENDTRY
+Ok("70 levels deep raises", too_deep)
+
+' ── latest and ring channels ──────────────────────────────────
+DIM latest = CHAN.OPEN(1, "latest")
+CHAN.SEND latest, 1
+CHAN.SEND latest, 2
+CHAN.SEND latest, 3
+Ok("latest holds one value", CHAN.LEN(latest) = 1)
+Ok("the newest", CHAN.TRY_RECV(latest) = 3)
+Ok("and counts the two it dropped", CHAN.DROPPED(latest) = 2)
+Ok("then it is empty", CHAN.IS_TIMEOUT(CHAN.TRY_RECV(latest)))
+DIM latest_big = CHAN.OPEN(50, "LATEST")
+Ok("latest ignores a larger capacity", CHAN.CAP(latest_big) = 1)
+
+DIM ring = CHAN.OPEN(3, "ring")
+FOR n = 1 TO 5
+    CHAN.SEND ring, n
+NEXT n
+Ok("ring keeps its capacity", CHAN.LEN(ring) = 3)
+Ok("oldest kept first", CHAN.RECV(ring) = 3)
+Ok("then the next", CHAN.RECV(ring) = 4)
+Ok("then the newest", CHAN.RECV(ring) = 5)
+Ok("ring counts its drops", CHAN.DROPPED(ring) = 2)
+
+DIM blocking = CHAN.OPEN(2, "block")
+CHAN.SEND blocking, 1
+Ok("block is the old behaviour", CHAN.LEN(blocking) = 1 ANDALSO CHAN.DROPPED(blocking) = 0)
+
+DIM flooded = CHAN.OPEN(1, "latest")
+DIM flood_task = FLOOD(flooded, 2000)
+DIM flood_n = AWAIT flood_task
+Ok("a producer never waits on latest", flood_n = 2000)
+Ok("the reader sees the last value", CHAN.RECV(flooded, 1000) = 2000)
+Ok("1999 dropped", CHAN.DROPPED(flooded) = 1999)
+
+DIM bad_policy AS INTEGER = FALSE
+TRY
+    DIM c_bad = CHAN.OPEN(1, "newest")
+CATCH
+    bad_policy = TRUE
+ENDTRY
+Ok("an unknown policy raises", bad_policy)
+DIM bad_ring AS INTEGER = FALSE
+TRY
+    DIM c_ring0 = CHAN.OPEN(0, "ring")
+CATCH
+    bad_ring = TRUE
+ENDTRY
+Ok("a ring of capacity 0 raises", bad_ring)
+CHAN.CLOSE latest
+DIM closed_send AS INTEGER = FALSE
+TRY
+    CHAN.SEND latest, 9
+CATCH
+    closed_send = TRUE
+ENDTRY
+Ok("SEND on a closed latest channel raises", closed_send)
+Ok("a closed latest channel reads EOF", CHAN.IS_EOF(CHAN.TRY_RECV(latest)))
+
+PRINT ""
+PRINT "NODE PACK TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

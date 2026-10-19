@@ -451,12 +451,12 @@ Syntax: CDATE(date_string$ [, tz_hours])
 Description: Parses a date text into a DateTime value: "YYYY-MM-DD" or "DD.MM.YYYY", optionally followed by a time "HH:MM[:SS]" after a space (or a T for the ISO form). Any other text is an error that names it. Alias for CVDATE. With tz_hours, the string is interpreted as wall-clock time in that UTC offset.
 
 [CHAN.OPEN]
-Syntax: CHAN.OPEN(capacity) -> handle
-Description: Creates a bounded MP/MC channel. Capacity 0 = unbuffered rendezvous. Returns an i64 handle that can be passed across ASYNC FUNC boundaries. Phase 1 is interp-only.
+Syntax: CHAN.OPEN(capacity, [policy$]) -> handle
+Description: Creates a bounded MP/MC channel. Capacity 0 = unbuffered rendezvous. policy$ is "block" (default, SEND waits for room), "latest" (keeps only the newest value) or "ring" (keeps the newest capacity values); latest and ring drop the oldest value and never block SEND. Returns an i64 handle that can be passed across ASYNC FUNC boundaries.
 
 [CHAN.SEND]
 Syntax: CHAN.SEND(handle, value)
-Description: Pushes a value into the channel. Blocks while the buffer is full. Throws if the channel is closed.
+Description: Pushes a value into the channel. Blocks while the buffer is full; a latest or ring channel drops its oldest value instead. Throws if the channel is closed.
 
 [CHAN.RECV]
 Syntax: CHAN.RECV(handle, [timeout_ms]) -> value
@@ -493,6 +493,10 @@ Description: Current depth of the channel buffer (queued items waiting for RECV)
 [CHAN.CAP]
 Syntax: CHAN.CAP(handle) -> integer
 Description: Capacity the channel was opened with. 0 means unbuffered rendezvous.
+
+[CHAN.DROPPED]
+Syntax: CHAN.DROPPED(handle) -> integer
+Description: How many values a latest or ring channel dropped to make room.
 
 [CLAMP]
 Syntax: CLAMP(value_or_array, min, max) -> number or array
@@ -627,6 +631,14 @@ Description: Returns the SHA256 hash of a string (64-char hex).
 [CODEC.UUID$]
 Syntax: CODEC.UUID$()
 Description: Generates a random Version 4 UUID from the secure random source.
+
+[NODE.PACK$]
+Syntax: NODE.PACK$(value) -> string$
+Description: Encodes any value as a binary JDV1 string (magic "JDV" + version). Kinds, map key order and dates are kept; an array of one numeric kind is stored as one block of raw numbers. Up to 64 levels deep. A UDT becomes a map with "__TYPE__" (interpreter only).
+
+[NODE.UNPACK]
+Syntax: NODE.UNPACK(s$) -> value
+Description: Decodes what NODE.PACK$ produced. Malformed, cut-off or trailing input raises with the byte offset.
 
 [COLOR]
 Syntax: COLOR foreground, background

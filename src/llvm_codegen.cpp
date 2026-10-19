@@ -12797,11 +12797,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
 
-    // JSON.STRINGIFY$ supports MAP and ARRAY only. A native UDT instance does
-    // not marshal across the VM bridge - it would silently stringify to "".
-    // Fail loud at compile time instead (use a MAP, or build the JSON from the
-    // fields). Detect a UDT-typed argument via var_udt_type / infer_expr_type.
-    if (upper == "JSON.STRINGIFY$" && !expr.args.empty() && expr.args[0]) {
+    // JSON.STRINGIFY$ and NODE.PACK$ support MAP and ARRAY only. A native UDT
+    // instance does not marshal across the VM bridge - it would silently turn
+    // into "". Fail loud at compile time instead (use a MAP, or build the value
+    // from the fields). Detect a UDT-typed argument via var_udt_type /
+    // infer_expr_type.
+    if ((upper == "JSON.STRINGIFY$" || upper == "NODE.PACK$") && !expr.args.empty() && expr.args[0]) {
         const Expr& a0 = *expr.args[0];
         std::string udt_name;
         if (a0.kind == ExprKind::VARIABLE) {
@@ -12814,8 +12815,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
         if (!udt_name.empty()) {
             report_error(m_current_stmt_file, expr.line,
-                "JSON.STRINGIFY$ does not support a UDT instance (type '" + udt_name +
-                "') under -c: pass a MAP/ARRAY, or build the JSON from its fields");
+                upper + " does not support a UDT instance (type '" + udt_name +
+                "') under -c: pass a MAP/ARRAY, or build the " +
+                std::string(upper == "NODE.PACK$" ? "value" : "JSON") + " from its fields");
         }
     }
 

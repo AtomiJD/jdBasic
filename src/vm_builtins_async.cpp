@@ -57,14 +57,30 @@ void VM::register_async_builtins() {
     // globals copy that happens when ASYNC spawns, so worker tasks can
     // look up the same Channel as the spawner.
 
-    // CHAN.OPEN(capacity) → handle. Capacity 0 → unbuffered rendezvous.
-    register_native("CHAN.OPEN", 1, 1, [](const std::vector<Value>& args) -> Value {
+    // CHAN.OPEN(capacity, [policy$]) → handle. Capacity 0 → unbuffered
+    // rendezvous. "latest" keeps the newest value only, "ring" the newest
+    // `capacity` values; both let SEND drop the oldest instead of waiting.
+    register_native("CHAN.OPEN", 1, 2, [](const std::vector<Value>& args) -> Value {
         int64_t cap = args[0].to_int();
         if (cap < 0) {
             throw std::runtime_error("CHAN.OPEN: capacity must be >= 0");
         }
+        ChanPolicy policy = ChanPolicy::Block;
+        if (args.size() >= 2) {
+            std::string p = args[1].as_string()->data;
+            for (char& c : p) c = (char)std::toupper((unsigned char)c);
+            if (p == "LATEST") policy = ChanPolicy::Latest;
+            else if (p == "RING") policy = ChanPolicy::Ring;
+            else if (p != "BLOCK")
+                throw std::runtime_error("CHAN.OPEN: policy must be \"block\", \"latest\" or \"ring\", not \"" +
+                                         args[1].as_string()->data + "\"");
+        }
+        if (policy == ChanPolicy::Latest) cap = 1;
+        if (policy == ChanPolicy::Ring && cap < 1)
+            throw std::runtime_error("CHAN.OPEN: a ring channel needs a capacity of at least 1");
         auto ch = std::make_shared<Channel>();
         ch->capacity = cap;
+        ch->policy = policy;
         int64_t id = chan_register(ch);
         return Value::make_i64(id);
     });
@@ -80,6 +96,16 @@ void VM::register_async_builtins() {
         Value v = args[1];
 
         std::unique_lock<std::mutex> lock(ch->mtx);
+        if (ch->policy != ChanPolicy::Block) {
+            if (ch->closed.load()) throw std::runtime_error("CHAN.SEND: channel is closed");
+            while (ch->buffer.size() >= (size_t)ch->capacity) {
+                ch->buffer.pop_front();
+                ++ch->dropped;
+            }
+            ch->buffer.push_back(std::move(v));
+            ch->cv_recv.notify_one();
+            return Value::make_none();
+        }
         if (ch->capacity == 0) {
             // Unbuffered rendezvous: park until a RECV is waiting, then
             // hand the value through and wake exactly one receiver.
@@ -242,6 +268,15 @@ void VM::register_async_builtins() {
         auto ch = chan_lookup(handle);
         if (!ch) return Value::make_i64(0);
         return Value::make_i64(ch->capacity);
+    });
+
+    // CHAN.DROPPED(ch) → INTEGER. Values a latest or ring channel let go.
+    register_native("CHAN.DROPPED", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        auto ch = chan_lookup(handle);
+        if (!ch) return Value::make_i64(0);
+        std::lock_guard<std::mutex> lock(ch->mtx);
+        return Value::make_i64((int64_t)ch->dropped);
     });
 
     // ── FILE streaming handles ────────────────────────────────

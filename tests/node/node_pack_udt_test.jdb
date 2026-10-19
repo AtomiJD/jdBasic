@@ -1,0 +1,38 @@
+' NODE.PACK$ of a UDT instance: it travels as a map that keeps its fields
+' and names its type in "__TYPE__". Interpreter only; -c refuses a UDT
+' argument at compile time, as it does for JSON.STRINGIFY$.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+TYPE POINT2
+    X AS DOUBLE
+    Y AS DOUBLE
+ENDTYPE
+
+DIM pt AS POINT2
+pt.X = 3
+pt.Y = -4
+DIM pt_back = NODE.UNPACK(NODE.PACK$(pt))
+Ok("a UDT arrives as a map", TYPEOF(pt_back) = "OBJECT")
+Ok("with its fields", pt_back{"X"} = 3 ANDALSO pt_back{"Y"} = -4)
+Ok("and the type name", pt_back{"__TYPE__"} = "POINT2")
+DIM pts = [pt, pt]
+DIM pts_back = NODE.UNPACK(NODE.PACK$(pts))
+Ok("UDTs inside an array", pts_back[1]{"Y"} = -4)
+
+PRINT ""
+PRINT "NODE PACK UDT TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

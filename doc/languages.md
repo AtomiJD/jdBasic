@@ -1646,6 +1646,7 @@ fails silently at runtime. The interpreter runs all of it.
 | `GROUPBY(fn@, ...)`, `INTEGRATE(fn@, ...)` | a compiled program cannot resolve a funcref by name at runtime | run in the interpreter |
 | `HELP`, `HELP$` | the help text ships with the REPL, not with your `.exe` | run in the interpreter |
 | `JSON.STRINGIFY$(<UDT>)` | a UDT instance does not marshal across the bridge | pass a MAP or ARRAY, or build the JSON from the fields |
+| `NODE.PACK$(<UDT>)` | a UDT instance does not marshal across the bridge | pass a MAP or ARRAY built from the fields |
 | `name@` that resolves to nothing | there is no FUNC of that name and no builtin with a matching scalar signature | check the name and arity |
 | a number into a slot a string DIMmed (`DIM c = ""` then `c = 2.5`) | the slot stays a string, so the number is stringified and `c + 1` concatenates | `c = STR$(2.5)`, or DIM the slot as a number |
 | a `LAMBDA` inside a `FUNC` that reads one of its locals without naming it | the lambda is its own function, so the local is in another frame | name it: `LAMBDA USE(n) x -> x + n` |
@@ -2580,6 +2581,14 @@ DIM stored$ = CODEC.PBKDF2$(password$, salt$, 600000, 32)
 DIM token$ = CODEC.BASE64_ENCODE$(CODEC.RANDOMBYTES$(32))
 ```
 * **`CODEC.UUID$() -> string$`**: A random Version 4 UUID (e.g., `"550e8400-e29b-41d4-a716-446655440000"`) built from `CODEC.RANDOMBYTES$`.
+* **`NODE.PACK$(value) -> string$`**: The binary JDV1 encoding of any value: numbers keep their kind, strings their bytes, maps their key order, dates their date kind, and an array of one numeric kind is stored as a single block of raw numbers (8 bytes per `DOUBLE`, one per `BOOLEAN`). Nested arrays and maps may go 64 levels deep. A UDT instance becomes a map that names its type in `"__TYPE__"` (interpreter; `-c` refuses a UDT argument). The format starts with `"JDV"` and a version byte and is what the Node Bus sends between programs; it also suits caches and files. A COM object cannot be packed.
+* **`NODE.UNPACK(s$) -> value`**: The value `NODE.PACK$` encoded. Anything else raises, naming the byte where it went wrong: a missing magic, a cut-off or corrupted message, trailing bytes, or counts larger than the data. Compiled, integers and dates come back as `DOUBLE`.
+
+```basic
+DIM blob$ = NODE.PACK$({"title": "Neon", "levels": [0.5, 0.25, 0.75]})
+DIM song = NODE.UNPACK(blob$)
+PRINT song{"levels"}[2]      ' 0.75
+```
 
 ### Building a Web Server & API
 
@@ -3984,6 +3993,21 @@ DO
 LOOP
 ```
 
+`CHAN.OPEN(capacity, policy$)` picks what a full channel does with the
+next `SEND`. `"block"` (the default) waits for room. `"latest"` keeps
+only the newest value (the capacity is always 1) and `"ring"` the newest
+`capacity` values; both drop the oldest and never make the sender wait,
+which is what a frame, a meter or a clock wants: the reader always gets
+the most recent state and a slow reader cannot stall the writer.
+`CHAN.DROPPED` counts the values they let go.
+
+```basic
+DIM frames = CHAN.OPEN(1, "latest")
+CHAN.SEND frames, 1
+CHAN.SEND frames, 2
+PRINT CHAN.TRY_RECV(frames), CHAN.DROPPED(frames)    ' 2  1
+```
+
 Native compile supports the full `CHAN.*` API including concurrent use
 across `ASYNC FUNC` consumers/producers. The call site for an ASYNC
 FUNC emits a `__jdrt_async_spawn` runtime call that detaches a thread
@@ -4003,8 +4027,8 @@ integers. Interp keeps the original tag and accepts either.
 
 | Native | Signature | Behaviour |
 |---|---|---|
-| `CHAN.OPEN(capacity)` | `INTEGER → handle` | `capacity = 0` → unbuffered rendezvous; `> 0` → bounded queue. |
-| `CHAN.SEND(ch, value)` | `handle, ANY` | Blocks while buffer full. Throws on a closed channel. |
+| `CHAN.OPEN(capacity, [policy$])` | `INTEGER, STRING → handle` | `capacity = 0` → unbuffered rendezvous; `> 0` → bounded queue. `policy$` `"block"` (default), `"latest"` (newest value only) or `"ring"` (newest `capacity` values); the last two never block SEND. |
+| `CHAN.SEND(ch, value)` | `handle, ANY` | Blocks while buffer full (`"block"`), drops the oldest value (`"latest"`, `"ring"`). Throws on a closed channel. |
 | `CHAN.RECV(ch, [timeout_ms])` | `handle, INTEGER → value` | Blocks while empty, at most `timeout_ms` when given, then returns the timeout marker. Returns the EOF marker on a closed-and-drained channel. |
 | `CHAN.TRY_RECV(ch)` | `handle → value` | Never blocks: a waiting value, the EOF marker when closed and drained, else the timeout marker. |
 | `CHAN.SELECT(channels, [timeout_ms])` | `ARRAY, INTEGER → INTEGER` | Index of the first channel with a value waiting or closed; `-1` after `timeout_ms`. No or a negative timeout waits indefinitely. |
@@ -4014,6 +4038,7 @@ integers. Interp keeps the original tag and accepts either.
 | `CHAN.IS_CLOSED(ch)` | `handle → BOOLEAN` | Status query. Returns `TRUE` for unknown handles. |
 | `CHAN.LEN(ch)` | `handle → INTEGER` | Current buffer depth. |
 | `CHAN.CAP(ch)` | `handle → INTEGER` | Configured capacity (for diagnostics). |
+| `CHAN.DROPPED(ch)` | `handle → INTEGER` | Values a `"latest"` or `"ring"` channel dropped to make room. |
 
 ```basic
 ASYNC FUNC produce(handle, n)
@@ -4939,7 +4964,7 @@ Every documented builtin, linked to the section that describes it.
 
 **M** · [MAT4.IDENTITY](#graphics-and-multimedia-functions) · [MAT4.LOOKAT](#graphics-and-multimedia-functions) · [MAT4.MUL](#graphics-and-multimedia-functions) · [MAT4.PERSPECTIVE](#graphics-and-multimedia-functions) · [MAT4.ROTATE](#graphics-and-multimedia-functions) · [MAT4.SCALE](#graphics-and-multimedia-functions) · [MAT4.TRANSLATE](#graphics-and-multimedia-functions) · [MATH.E](#built-in-constants) · [MATH.PI](#built-in-constants) · [MATMUL](#array--matrix-functions) · [MEAN](#array--matrix-functions) · [MKDIR](#filesystem) · [MKTEMP$](#system-and-time-functions) · [MOUSEB](#mouse--joystick--gamepad-input) · [MOUSEX](#mouse--joystick--gamepad-input) · [MOUSEY](#mouse--joystick--gamepad-input) · [MSGBOX](#native-windows-forms-form) · [MUSIC.PLAY](#imgui-functions) · [MUSIC.STOP](#imgui-functions) · [MVINS](#array--matrix-functions) · [MVLET](#array--matrix-functions)
 
-**N** · [NET.ACCEPT](#tcp-and-udp-sockets-net) · [NET.ALIVE](#tcp-and-udp-sockets-net) · [NET.CLOSE](#tcp-and-udp-sockets-net) · [NET.CONNECT](#tcp-and-udp-sockets-net) · [NET.ERROR$](#tcp-and-udp-sockets-net) · [NET.LISTEN](#tcp-and-udp-sockets-net) · [NET.PEER$](#tcp-and-udp-sockets-net) · [NET.PORT](#tcp-and-udp-sockets-net) · [NET.RECV$](#tcp-and-udp-sockets-net) · [NET.RECVFROM](#tcp-and-udp-sockets-net) · [NET.RECVLINE$](#tcp-and-udp-sockets-net) · [NET.SEND](#tcp-and-udp-sockets-net) · [NET.SENDTO](#tcp-and-udp-sockets-net) · [NET.UDP](#tcp-and-udp-sockets-net) · [NEW](#development--debugging) · [NORMALIZE](#array--matrix-functions) · [NOW](#system-and-time-functions) · [NOW_EPOCH](#system-and-time-functions)
+**N** · [NET.ACCEPT](#tcp-and-udp-sockets-net) · [NET.ALIVE](#tcp-and-udp-sockets-net) · [NET.CLOSE](#tcp-and-udp-sockets-net) · [NET.CONNECT](#tcp-and-udp-sockets-net) · [NET.ERROR$](#tcp-and-udp-sockets-net) · [NET.LISTEN](#tcp-and-udp-sockets-net) · [NET.PEER$](#tcp-and-udp-sockets-net) · [NET.PORT](#tcp-and-udp-sockets-net) · [NET.RECV$](#tcp-and-udp-sockets-net) · [NET.RECVFROM](#tcp-and-udp-sockets-net) · [NET.RECVLINE$](#tcp-and-udp-sockets-net) · [NET.SEND](#tcp-and-udp-sockets-net) · [NET.SENDTO](#tcp-and-udp-sockets-net) · [NET.UDP](#tcp-and-udp-sockets-net) · [NEW](#development--debugging) · [NODE.PACK$](#encoding--hashing-codec) · [NODE.UNPACK](#encoding--hashing-codec) · [NORMALIZE](#array--matrix-functions) · [NOW](#system-and-time-functions) · [NOW_EPOCH](#system-and-time-functions)
 
 **O** · [ON](#system--flow-control) · [ONES](#array--matrix-functions) · [OPTION](#system--flow-control) · [OS.ARGS](#os-functions) · [OS.EXEC](#os-functions) · [OS.FEATURE](#os-functions) · [OS.GETOS](#os-functions) · [OS.HOSTNAME$](#os-functions) · [OS.IP$](#os-functions) · [OS.LOAD](#os-functions) · [OS.SCREENSHOT](#os-functions) · [OUTER](#array--matrix-functions) · [OUTPUT.CAPTURE_BEGIN](#output-capture) · [OUTPUT.CAPTURE_END$](#output-capture) · [OUTPUT.CAPTURE_PEEK$](#output-capture)
 

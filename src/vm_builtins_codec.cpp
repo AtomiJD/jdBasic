@@ -1,6 +1,7 @@
-// VM builtins: CODEC.* hashes and encodings, ZIP.*.
+// VM builtins: CODEC.* hashes and encodings, ZIP.*, NODE.PACK$ / NODE.UNPACK.
 
 #include "vm_internal.h"
+#include "jdv.h"
 
 // ── SHA-256 (FIPS 180-4) ────────────────────────────────────
 // Byte oriented, so a key or message carrying a NUL is hashed in full.
@@ -544,4 +545,14 @@ void VM::register_codec_builtins() {
         return Value::make_string(std::move(out));
     });
 #endif
+
+    // JDV1, the value encoding of the Node Bus (src/jdv.h).
+    register_native("NODE.PACK$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_string(jdv::pack(args[0]));
+    });
+    register_native("NODE.UNPACK", 1, 1, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING)
+            throw std::runtime_error("NODE.UNPACK: expects the string NODE.PACK$ returned");
+        return jdv::unpack(args[0].as_string()->data);
+    });
 }
