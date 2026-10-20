@@ -477,6 +477,11 @@ private:
     // User FUNCs whose every RETURN hands back a buffer allocated for the
     // caller, so the result is dropped or taken over like a builtin's.
     std::unordered_set<std::string> fresh_string_funcs;
+    // Inside such a FUNC a string parameter handed back is copied, so the
+    // caller's argument still dies after the call.
+    bool copy_param_returns = false;
+    const Stmt* escape_scan_fn = nullptr;
+    static bool string_param(const Stmt& fn, const std::string& name);
     // Maps built by a MAP_LITERAL whose cells are scalars, strings and maps
     // of the same kind: nothing else points into them, so a consumer that
     // copies the map may free the whole tree (jdb_map_free_tree).
@@ -512,6 +517,12 @@ private:
     // FOR EACH loops after which the keys or characters walked can go.
     std::unordered_set<const Stmt*> foreach_release;
     void scan_foreach_release(const std::vector<StmtPtr>& program);
+    // Variables whose arrays only ever have their cells read and copied:
+    // an array the bridge built for one of them takes its strings with it
+    // when it is freed.
+    std::unordered_set<std::string> cell_owner_vars;
+    const Expr* cell_owner_rhs = nullptr;
+    void scan_cell_owners(const std::vector<StmtPtr>& program);
     bool param_escapes_at(const std::string& fn, size_t i) const;
 
     std::string dim_funcref_name(const TypedValue& tv);

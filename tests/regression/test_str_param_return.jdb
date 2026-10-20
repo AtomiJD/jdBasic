@@ -1,0 +1,67 @@
+' A FUNC that hands back its string parameter gives the caller a string of
+' its own: the argument is released after the call, the variable that was
+' passed keeps its value, and the answer stays whole after both are gone.
+
+OPTION "EXPLICIT"
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Echo$(s$)
+    RETURN s$
+ENDFUNC
+
+FUNC Pick$(a$, b$, first)
+    IF first THEN RETURN a$
+    RETURN b$ + "!"
+ENDFUNC
+
+FUNC Rewrite$(s$)
+    s$ = s$ + "+"
+    RETURN s$
+ENDFUNC
+
+FUNC Twice$(s$)
+    RETURN Echo$(Echo$(s$))
+ENDFUNC
+
+DIM i AS INTEGER
+DIM kept$ = ""
+DIM last$ = ""
+FOR i = 1 TO 200
+    last$ = Echo$("row " + STR$(i))
+    IF i = 77 THEN kept$ = last$
+NEXT i
+Check(kept$ = "row 77", "answer kept from pass 77")
+Check(last$ = "row 200", "last answer")
+
+DIM src$ = "source"
+DIM copy$ = Echo$(src$)
+src$ = "changed"
+Check(copy$ = "source", "answer outlives the variable passed")
+Check(src$ = "changed", "variable passed keeps its own value")
+
+Check(Pick$("x" + STR$(1), "y", TRUE) = "x1", "parameter answered from one branch")
+Check(Pick$("x", "y" + STR$(2), FALSE) = "y2!", "concatenation answered from the other")
+Check(Rewrite$("a" + STR$(3)) = "a3+", "parameter written over and answered")
+Check(Twice$("t" + STR$(4)) = "t4", "nested answers")
+
+DIM rows = []
+FOR i = 1 TO 50
+    PUSH(rows, Echo$("cell " + STR$(i)))
+NEXT i
+DIM c7$ = rows[6]
+Check(c7$ = "cell 7", "answer pushed into an array")
+
+DIM m = {}
+m{"k"} = Echo$("val " + STR$(5))
+Check(m{"k"} = "val 5", "answer stored in a map")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

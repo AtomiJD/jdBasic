@@ -2353,6 +2353,7 @@ struct RcEntry {
     int32_t rc;
     uint8_t kind;        // JD_TAG_ARR or JD_TAG_NATIVE_MAP
     uint8_t pinned;
+    uint8_t owns_cells;  // an array whose string cells nobody else points at
 };
 
 struct RcPoolItem { uintptr_t key; uint64_t gen; };
@@ -2442,9 +2443,20 @@ static bool rc_poison() {
     return on == 1;
 }
 
-static void rc_free_container(uintptr_t k, uint8_t kind) {
+static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells) {
     if (kind == JD_TAG_ARR) {
         JdbArray* a = (JdbArray*)k;
+        if (owns_cells && a->data) {
+            for (int64_t i = 0; i < a->length; i++) {
+                bool str = a->elem_tags ? a->elem_tags[i] == JD_TAG_STR : (a->flags & 2) != 0;
+                if (!str) continue;
+                union { double d; int64_t i; } u; u.d = a->data[i];
+                char* s = (char*)(intptr_t)u.i;
+                if (!s) continue;
+                if (rc_poison()) { if (*s) s[0] = '\x7f'; }
+                else jdb_str_drop(s);
+            }
+        }
         if (rc_poison()) {
             if (a->data) memset(a->data, 0xDD, (size_t)a->capacity * sizeof(double));
             a->length = 0x7DDDDDDD;
@@ -2495,8 +2507,16 @@ extern "C" void* jdb_rc_new(void* p, int32_t kind) {
     e->rc = 0;
     e->kind = (uint8_t)kind;
     e->pinned = 0;
+    e->owns_cells = 0;
     g_rc.pool.push_back({ k, e->gen });
     return p;
+}
+
+// The strings in an array the bridge built are copies made for it alone; a
+// variable whose cells are only ever read hands them to the array.
+extern "C" void jdb_rc_own_cells(int64_t bits) {
+    if (!g_rc.cap || !rc_ready()) return;
+    if (RcEntry* e = rc_find((uintptr_t)bits)) if (e->kind == JD_TAG_ARR) e->owns_cells = 1;
 }
 
 extern "C" void jdb_rc_pin(int64_t bits) {
@@ -2534,8 +2554,9 @@ static void rc_sweep(std::vector<RcPoolItem>& list, size_t from) {
         RcEntry* e = rc_find(list[i].key);
         if (!e || e->gen != list[i].gen || e->rc != 0 || e->pinned) continue;
         uint8_t kind = e->kind;
+        bool owns = e->owns_cells != 0;
         rc_remove(e);
-        rc_free_container(list[i].key, kind);
+        rc_free_container(list[i].key, kind, owns);
     }
     list.resize(from);
 }

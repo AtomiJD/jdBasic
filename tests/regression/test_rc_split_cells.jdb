@@ -1,0 +1,96 @@
+' The strings in a SPLIT answer go with the array when nothing else points
+' at them, and stay where something does: a copy in a string variable, a
+' cell pushed elsewhere, a FOR EACH variable, a FUNC that keeps its
+' parameter, an alias of the array. Every check reads after the loop passes
+' that free what nobody holds.
+
+OPTION "EXPLICIT"
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM kept_names = []
+
+SUB Keep(s$)
+    PUSH(kept_names, s$)
+ENDSUB
+
+FUNC Width(s$)
+    RETURN LEN(s$)
+ENDFUNC
+
+FUNC FirstOf$(line$)
+    DIM cols = SPLIT(line$, ";")
+    DIM head$ = cols[0]
+    RETURN head$
+ENDFUNC
+
+DIM i AS INTEGER
+
+' Only read and copied: the array owns its strings.
+DIM parts = SPLIT("a,b", ",")
+DIM first$ = ""
+DIM width_sum AS DOUBLE = 0
+FOR i = 1 TO 200
+    parts = SPLIT("n" + STR$(i) + ",m" + STR$(i), ",")
+    IF i = 42 THEN first$ = parts[0]
+    width_sum = width_sum + Width(parts[1]) + LEN(parts)
+NEXT i
+Check(first$ = "n42", "cell copied into a string variable")
+Check(parts[1] = "m200", "last answer read after the loop")
+Check(width_sum > 0, "cells read by a FUNC")
+
+' A cell pushed into another array.
+DIM pieces = SPLIT("x", ",")
+DIM pile = []
+FOR i = 1 TO 100
+    pieces = SPLIT("p" + STR$(i) + ",q", ",")
+    PUSH(pile, pieces[0])
+NEXT i
+DIM p7$ = pile[6]
+Check(p7$ = "p7", "cell pushed into another array")
+
+' A FOR EACH over the answer.
+DIM words = SPLIT("u", ",")
+DIM seen$ = ""
+FOR i = 1 TO 60
+    words = SPLIT("w" + STR$(i) + ",v", ",")
+    FOR EACH wd IN words
+        IF i = 60 THEN seen$ = seen$ + wd
+    NEXT
+NEXT i
+Check(seen$ = "w60v", "FOR EACH over the answer")
+
+' A cell handed to a SUB that keeps it.
+DIM names = SPLIT("z", ",")
+FOR i = 1 TO 80
+    names = SPLIT("k" + STR$(i) + ",j", ",")
+    IF i MOD 10 = 0 THEN Keep(names[0])
+NEXT i
+DIM k3$ = kept_names[2]
+Check(k3$ = "k30", "cell kept by a SUB")
+
+' An alias of the array.
+DIM row = SPLIT("r", ",")
+DIM alias = row
+FOR i = 1 TO 70
+    row = SPLIT("r" + STR$(i) + ",s", ",")
+    IF i = 5 THEN alias = row
+NEXT i
+Check(alias[0] = "r5", "alias of an answer")
+
+' A local answer inside a FUNC, its first cell handed back.
+DIM heads$ = ""
+FOR i = 1 TO 90
+    heads$ = FirstOf$("h" + STR$(i) + ";t")
+NEXT i
+Check(heads$ = "h90", "cell of a local answer handed back")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

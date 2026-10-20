@@ -561,6 +561,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_map_free_tree", "__map_free_tree", void_type, {i8_ptr_type}, -1);
     reg("jdb_rc_new",     "__rc_new",     i8_ptr_type, {i8_ptr_type, i32_type}, -1);
     reg("jdb_rc_pin",     "__rc_pin",     void_type, {i64_type}, -1);
+    reg("jdb_rc_own_cells", "__rc_own_cells", void_type, {i64_type}, -1);
     reg("jdb_rc_retain",  "__rc_retain",  void_type, {i64_type}, -1);
     reg("jdb_rc_release", "__rc_release", void_type, {i64_type, i32_type}, -1);
     reg("jdb_rc_assign",  "__rc_assign",  void_type, {i64_type, i64_type, i32_type}, -1);
@@ -4256,6 +4257,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     scan_fresh_string_funcs(program);
     scan_param_escapes(program);
     scan_foreach_release(program);
+    scan_cell_owners(program);
     // Pre-scan: declare all global variables used in top-level code
     // so that FUNC/SUB bodies can reference them
     // Pre-scan TYPE_DECL names so we can recognize DIM x AS TypeName
@@ -5384,6 +5386,8 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     auto saved_param_names = std::move(current_param_names);
     current_param_names.clear();
     for (auto& pn : stmt.params()) current_param_names.insert(pn.name);
+    bool saved_copy_param_returns = copy_param_returns;
+    copy_param_returns = fresh_string_funcs.count(stmt.func_name) > 0;
     // The element-kind sets are keyed by name; what this body registers
     // for its locals must not describe a same-named local elsewhere.
     auto saved_array_array = array_array_vars;
@@ -5664,6 +5668,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     owned_str_locals = std::move(saved_owned_locals);
     runtime_later_locals = std::move(saved_runtime_later);
     current_param_names = std::move(saved_param_names);
+    copy_param_returns = saved_copy_param_returns;
     array_array_vars = std::move(saved_array_array);
     field_array_vars = std::move(saved_field_array);
     string_array_vars = std::move(saved_string_array);
@@ -5697,6 +5702,12 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
             if (sh != owned_local_shadow.end())
                 LLVMBuildStore(builder, LLVMConstNull(i8_ptr_type), sh->second);
         }
+        else if (copy_param_returns && ret_ty == i8_ptr_type && rv.tag == JD_TAG_STR &&
+                 stmt.expr->kind == ExprKind::VARIABLE &&
+                 current_param_names.count(stmt.expr->str_val)) {
+            auto& own = runtime_funcs["__str_own"];
+            rv.val = LLVMBuildCall2(builder, own.fn_type, own.fn, &rv.val, 1, "ret_own");
+        }
         // An i64-returning function hands objects back as VM handles. A
         // native map built locally has none yet: box it, so the caller's
         // handle reads (jdrt_obj_get_tagged & co) see the entries instead
@@ -5726,6 +5737,13 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
 
 void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     if (!stmt.expr) return;
+    struct CellOwnerRhs {
+        LLVMCodegen* cg; const Expr* saved;
+        CellOwnerRhs(LLVMCodegen* c, const Stmt& s) : cg(c), saved(c->cell_owner_rhs) {
+            if (s.expr && c->cell_owner_vars.count(s.var_name)) c->cell_owner_rhs = s.expr.get();
+        }
+        ~CellOwnerRhs() { cg->cell_owner_rhs = saved; }
+    } _cell_owner(this, stmt);
 
     // Phase 3 EXPLICIT: under OPTION "EXPLICIT", a bare `x = ...` for a
     // name that was never DIM'd (and isn't a FOR variable, parameter, or
@@ -6770,6 +6788,13 @@ void LLVMCodegen::codegen_static_dim(const Stmt& stmt) {
 }
 
 void LLVMCodegen::codegen_dim(const Stmt& stmt) {
+    struct CellOwnerRhs {
+        LLVMCodegen* cg; const Expr* saved;
+        CellOwnerRhs(LLVMCodegen* c, const Stmt& s) : cg(c), saved(c->cell_owner_rhs) {
+            if (s.expr && c->cell_owner_vars.count(s.var_name)) c->cell_owner_rhs = s.expr.get();
+        }
+        ~CellOwnerRhs() { cg->cell_owner_rhs = saved; }
+    } _cell_owner(this, stmt);
     if (stmt.is_static) {
         codegen_static_dim(stmt);
         return;
@@ -9859,8 +9884,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 r = codegen_call(expr);
             }
             if (r.fresh_container && (r.tag == JD_TAG_ARR || r.tag == JD_TAG_NATIVE_MAP) &&
-                LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind)
+                LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind) {
                 r.val = rc_born(r.val, r.tag);
+                if (rc_on && !rc_escape && &expr == cell_owner_rhs && r.tag == JD_TAG_ARR) {
+                    auto& fn = runtime_funcs["__rc_own_cells"];
+                    LLVMValueRef a[] = { rc_bits(r.val) };
+                    LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "");
+                }
+            }
             else if (outer_escape) rc_pin(r);
             return r;
         }
@@ -16799,9 +16830,11 @@ bool LLVMCodegen::body_lets_escape(const std::vector<StmtPtr>& body, const std::
         if (is_p(e)) { if (bare_escapes) esc = true; return; }
         scan(*e);
     };
+    bool return_copies = escape_scan_fn && fresh_string_funcs.count(escape_scan_fn->func_name) &&
+                         string_param(*escape_scan_fn, p);
     std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
         if (esc) return;
-        bool stores = s.kind == StmtKind::RETURN || s.kind == StmtKind::LET ||
+        bool stores = (s.kind == StmtKind::RETURN && !return_copies) || s.kind == StmtKind::LET ||
                       s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM ||
                       s.kind == StmtKind::INDEX_ASSIGN || s.kind == StmtKind::REACT_ASSIGN ||
                       s.kind == StmtKind::DESTRUCTURE;
@@ -16832,6 +16865,123 @@ bool LLVMCodegen::body_lets_escape(const std::vector<StmtPtr>& body, const std::
 // library built for it. They can go after the loop when its variables keep
 // none of them: not let escape in the body, and not read anywhere outside it
 // (after the loop a variable still holds the last one).
+// A cell read is safe where its pointer is not kept: an operand, an argument
+// of a builtin that only reads it and answers a number or a new string, a
+// parameter that does not escape, a PRINT, a condition, or a copy into a
+// string variable that owns what it holds. A bare read of the variable is
+// safe only as LEN-like argument or as an index base. Anything else, and
+// any write into its cells, rules the name out.
+void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
+    if (!rc_on || std::getenv("JDB_NO_STROWN")) return;
+    std::unordered_set<std::string> candidates, banned;
+    auto is_var = [](const Expr* e) { return e && e->kind == ExprKind::VARIABLE; };
+    auto user_fn = [&](const std::string& n, const std::string& up) {
+        return user_functions.count(n) || user_functions.count(up) || param_escapes.count(n);
+    };
+    auto answers_new = [](const std::string& up) {
+        BuiltinRet r = builtin_ret(up);
+        if (r == BuiltinRet::F64 || r == BuiltinRet::I64 || r == BuiltinRet::Bool) return true;
+        bool str = r == BuiltinRet::Str || (!up.empty() && up.back() == '$');
+        return str && builtin_fresh_string(up);
+    };
+
+    std::function<void(const Expr&, bool)> scan = [&](const Expr& e, bool keeps) {
+        for (auto& c : e.lambda_captures) banned.insert(c);
+        switch (e.kind) {
+        case ExprKind::VARIABLE:
+            banned.insert(e.str_val);
+            return;
+        case ExprKind::LITERAL_INT: case ExprKind::LITERAL_FLOAT:
+        case ExprKind::LITERAL_STRING: case ExprKind::LITERAL_BOOL:
+        case ExprKind::PLACEHOLDER_EXPR:
+            return;
+        case ExprKind::INDEX:
+            if (is_var(e.left.get())) {
+                if (keeps) banned.insert(e.left->str_val);
+            } else if (e.left) scan(*e.left, true);
+            if (e.right) scan(*e.right, false);
+            for (auto& a : e.args) if (a) scan(*a, false);
+            return;
+        case ExprKind::BINARY: case ExprKind::UNARY:
+            if (e.left) scan(*e.left, false);
+            if (e.right) scan(*e.right, false);
+            for (auto& a : e.args) if (a) scan(*a, false);
+            return;
+        case ExprKind::CALL: {
+            std::string up = e.func_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            if (user_fn(e.func_name, up)) {
+                for (size_t i = 0; i < e.args.size(); i++)
+                    if (e.args[i]) scan(*e.args[i], param_escapes_at(e.func_name, i));
+                return;
+            }
+            bool reads = builtin_reads_args(up) && answers_new(up);
+            for (auto& a : e.args) {
+                if (!a) continue;
+                if (reads && is_var(a.get())) continue;
+                scan(*a, !reads);
+            }
+            return;
+        }
+        default:
+            if (e.left) scan(*e.left, true);
+            if (e.right) scan(*e.right, true);
+            for (auto& a : e.args) if (a) scan(*a, true);
+            return;
+        }
+    };
+
+    std::function<void(const Stmt&, const Stmt*)> walk = [&](const Stmt& s, const Stmt* fn) {
+        if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) fn = &s;
+        bool assigns = s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM;
+        if (assigns && s.expr && s.expr->kind == ExprKind::CALL && !s.var_name.empty())
+            candidates.insert(s.var_name);
+        if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty()) banned.insert(s.var_name);
+        if (s.kind == StmtKind::FOR_EACH && !s.label.empty()) banned.insert(s.label);
+        if (s.expr) {
+            bool copies = false;
+            if (assigns && s.expr->kind == ExprKind::INDEX && !s.var_name.empty() &&
+                s.var_name.back() == '$') {
+                if (!fn) copies = owned_str_globals.count(s.var_name) > 0;
+                else {
+                    auto oit = owned_locals_by_fn.find(fn->func_name);
+                    copies = oit != owned_locals_by_fn.end() && oit->second.count(s.var_name);
+                }
+            }
+            scan(*s.expr, !copies && s.kind != StmtKind::EXPR_STMT &&
+                          s.kind != StmtKind::IF);
+        }
+        for (auto& e : s.print_exprs) if (e) scan(*e, false);
+        for (auto& e : s.index_chain) if (e) scan(*e, false);
+        for (auto& e : s.ctor_args()) if (e) scan(*e, true);
+        if (s.loop_cond) scan(*s.loop_cond, false);
+        if (s.end_expr) scan(*s.end_expr, false);
+        if (s.step_expr) scan(*s.step_expr, false);
+        for (auto& n : s.destruct_vars()) banned.insert(n);
+        for (auto& b : s.branches) {
+            if (b.condition) scan(*b.condition, false);
+            for (auto& lab : b.case_labels) {
+                if (lab.first) scan(*lab.first, false);
+                if (lab.second) scan(*lab.second, false);
+            }
+            for (auto& x : b.body) if (x) walk(*x, fn);
+        }
+        for (auto& b : s.body)           if (b) walk(*b, fn);
+        for (auto& c : s.catch_body())   if (c) walk(*c, fn);
+        for (auto& f : s.finally_body()) if (f) walk(*f, fn);
+    };
+    for (auto& stmt : program) {
+        if (!stmt) continue;
+        if (stmt->kind == StmtKind::TYPE_DECL) {
+            for (auto& m : stmt->body) if (m) walk(*m, nullptr);
+            continue;
+        }
+        walk(*stmt, nullptr);
+    }
+    for (auto& c : candidates)
+        if (!banned.count(c)) cell_owner_vars.insert(c);
+}
+
 void LLVMCodegen::scan_foreach_release(const std::vector<StmtPtr>& program) {
     if (std::getenv("JDB_NO_STROWN")) return;
     std::function<int(const Expr&, const std::string&)> count_expr =
@@ -16911,13 +17061,23 @@ void LLVMCodegen::scan_param_escapes(const std::vector<StmtPtr>& program) {
             auto& esc = param_escapes[fn->func_name];
             for (size_t pi = 0; pi < esc.size(); pi++) {
                 if (esc[pi]) continue;
-                if (body_lets_escape(fn->body, fn->params()[pi].name)) {
+                escape_scan_fn = fn;
+                bool lets = body_lets_escape(fn->body, fn->params()[pi].name);
+                escape_scan_fn = nullptr;
+                if (lets) {
                     esc[pi] = true;
                     changed = true;
                 }
             }
         }
     }
+}
+
+bool LLVMCodegen::string_param(const Stmt& fn, const std::string& name) {
+    for (auto& p : fn.params())
+        if (p.name == name)
+            return p.type == VarType::STRING || (!p.name.empty() && p.name.back() == '$');
+    return false;
 }
 
 void LLVMCodegen::scan_fresh_string_funcs(const std::vector<StmtPtr>& program) {
@@ -16935,10 +17095,11 @@ void LLVMCodegen::scan_fresh_string_funcs(const std::vector<StmtPtr>& program) {
     // become a new buffer), a call that allocates, or an owned local of
     // this function. A literal, a parameter, a global, an element read or
     // a map value is somebody else's buffer.
-    auto fresh_expr = [&](const Expr& e, const std::unordered_set<std::string>& owned) -> bool {
+    auto fresh_expr = [&](const Stmt& fn, const Expr& e, const std::unordered_set<std::string>& owned) -> bool {
         if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) return true;
         if (e.kind == ExprKind::LITERAL_INT || e.kind == ExprKind::LITERAL_FLOAT) return true;
-        if (e.kind == ExprKind::VARIABLE) return owned.count(e.str_val) > 0;
+        if (e.kind == ExprKind::VARIABLE)
+            return owned.count(e.str_val) > 0 || string_param(fn, e.str_val);
         if (e.kind == ExprKind::CALL) return expr_yields_fresh_string(e);
         return false;
     };
@@ -16962,7 +17123,7 @@ void LLVMCodegen::scan_fresh_string_funcs(const std::vector<StmtPtr>& program) {
             std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
                 if (!ok) return;
                 if (s.kind == StmtKind::EXIT_LOOP && s.is_while) ok = false;
-                if (s.kind == StmtKind::RETURN && (!s.expr || !fresh_expr(*s.expr, *owned))) ok = false;
+                if (s.kind == StmtKind::RETURN && (!s.expr || !fresh_expr(*fn, *s.expr, *owned))) ok = false;
                 for (auto& b : s.body)           if (b) walk(*b);
                 for (auto& c : s.catch_body())   if (c) walk(*c);
                 for (auto& f : s.finally_body()) if (f) walk(*f);

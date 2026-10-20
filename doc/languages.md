@@ -1647,8 +1647,9 @@ safe to release:
   arguments (`LEN`, `INSTR`, `LEFT$` and the like), any builtin the runtime
   library serves (it copies its arguments), a map store (it copies), and a
   `FUNC` whose parameter does not outlive the call. A parameter outlives it
-  when the body returns it, stores it, assigns it to another name or hands it
-  on to somewhere that keeps it.
+  when the body stores it, assigns it to another name or hands it on to
+  somewhere that keeps it. A string `FUNC` that hands back a string parameter
+  hands back a copy of it, so `RETURN s$` does not count.
 * A **field read** out of a map that came from the runtime library (a
   `CHAN.RECV`, a JSON value, a node message) copies the string or the numeric
   array it answers, and that copy is released after the same consumers.
@@ -1690,9 +1691,18 @@ waits for the end of a pass of a loop at the top level of the program, and
 so does what a parameter lets go of. A program with an `ASYNC FUNC` or an
 HTTP handler counts nothing, since another thread reads its containers.
 
+The strings in an array a runtime-library call answers are copies made for
+it, and they are freed with the array when the variable that holds it only
+ever reads its cells: `LEN(parts)`, `parts[i]` in an expression, as an
+argument of a builtin that only reads it or of a parameter that does not
+escape, in a `PRINT` or a condition, or copied into a string variable that
+owns what it holds. One other use of that name anywhere in the program (an
+alias, a `FOR EACH`, a cell pushed elsewhere, a write into a cell) keeps the
+strings for good.
+
 What is still lost: a string temporary handed to a `FUNC` whose parameter
-escapes, the strings in the cells of an array that is freed, and every
-container that went into a cell.
+escapes, the strings in the cells of any other array that is freed, and
+every container that went into a cell.
 
 `JDB_NO_STROWN=1` in the environment compiles with the string mechanism off
 and `JDB_NO_RC=1` with the counts off, which is the first thing to try if a
