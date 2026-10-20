@@ -2161,17 +2161,32 @@ void jdb_map_set_f64(JdbMap* m, const char* key, double val) {
     m->tags[idx] = JD_TAG_F64;
 }
 
+// A map owns the copy of every string it stores (the getters hand out
+// copies too), so the string a key held is released once the key is
+// written over.
+static void map_drop_cell_str(int32_t tag, double bits) {
+    if (tag != JD_TAG_STR) return;
+    union { double d; int64_t i; } u; u.d = bits;
+    jdb_str_drop((char*)(intptr_t)u.i);
+}
+
 void jdb_map_set_str(JdbMap* m, const char* key, const char* val) {
     if (!m || !key) return;
     int64_t idx = map_find(m, key);
+    int32_t old_tag = JD_TAG_NONE;
+    double old_bits = 0;
     if (idx < 0) {
         if (m->count == m->capacity) map_grow(m);
         idx = m->count++;
         m->keys[idx] = _strdup(key);
+    } else {
+        old_tag = m->tags[idx];
+        old_bits = m->values[idx];
     }
     union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)jdb_str_dup_binary(val);
     m->values[idx] = u.d;
     m->tags[idx] = JD_TAG_STR;
+    map_drop_cell_str(old_tag, old_bits);
 }
 
 // Store an already-punned f64 value with an explicit tag. Used when the
@@ -2184,10 +2199,15 @@ void jdb_map_set_str(JdbMap* m, const char* key, const char* val) {
 void jdb_map_set_tagged(JdbMap* m, const char* key, double val, int32_t tag) {
     if (!m || !key) return;
     int64_t idx = map_find(m, key);
+    int32_t old_tag = JD_TAG_NONE;
+    double old_bits = 0;
     if (idx < 0) {
         if (m->count == m->capacity) map_grow(m);
         idx = m->count++;
         m->keys[idx] = _strdup(key);
+    } else {
+        old_tag = m->tags[idx];
+        old_bits = m->values[idx];
     }
     if (tag == JD_TAG_STR) {
         union { double d; int64_t i; } u; u.d = val;
@@ -2198,6 +2218,7 @@ void jdb_map_set_tagged(JdbMap* m, const char* key, double val, int32_t tag) {
         m->values[idx] = val;
     }
     m->tags[idx] = tag;
+    map_drop_cell_str(old_tag, old_bits);
 }
 
 double jdb_map_get_f64(JdbMap* m, const char* key) {

@@ -339,6 +339,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_str_concat",   "__str_concat",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_str_own",      "__str_own",       i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_str_drop",     "__str_drop",      void_type,   {i8_ptr_type}, -1);
+    reg("jdrt_str_free",    "__jdrt_str_free", void_type,   {i8_ptr_type}, -1);
     reg("jdb_end_program",  "__end_program",   void_type,   {i64_type}, -1);
     reg("jdb_int_to_str",   "__int_to_str",    i8_ptr_type, {i64_type}, JD_TAG_STR);
     reg("jdb_double_to_str","__double_to_str", i8_ptr_type, {f64_type}, JD_TAG_STR);
@@ -4150,6 +4151,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     }
     scan_owned_str_locals(program);
     scan_fresh_string_funcs(program);
+    scan_param_escapes(program);
     // Pre-scan: declare all global variables used in top-level code
     // so that FUNC/SUB bodies can reference them
     // Pre-scan TYPE_DECL names so we can recognize DIM x AS TypeName
@@ -7964,6 +7966,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                 auto& set_fn = runtime_funcs["__map_set_str"];
                 LLVMValueRef args[] = { obj_ptr, field_str, val_tv.val };
                 LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+                drop_fresh_temp(*stmt.expr, val_tv);
             } else if (val_tv.tag == JD_TAG_ARR || val_tv.tag == JD_TAG_NATIVE_MAP || val_tv.tag == JD_TAG_VM_HANDLE || val_tv.tag == JD_TAG_DATE) {
                 // Preserve ptr-like tag (array, map, VM handle) so the
                 // tagged getter can return the right type identity. For
@@ -8139,6 +8142,8 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             auto& fn = runtime_funcs["__map_set_str"];
             LLVMValueRef args[] = { arr_ptr, idx_tv.val, val_tv.val };
             LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "");
+            drop_fresh_temp(*stmt.expr, val_tv);
+            drop_fresh_temp(*stmt.index_chain.back(), idx_tv);
         } else if (val_tv.tag == JD_TAG_ARR || val_tv.tag == JD_TAG_NATIVE_MAP || val_tv.tag == JD_TAG_VM_HANDLE || val_tv.tag == JD_TAG_DATE) {
             LLVMValueRef fv;
             if (val_tv.tag == JD_TAG_VM_HANDLE) {
@@ -9295,6 +9300,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     auto& set_str = runtime_funcs["__map_set_str"];
                     LLVMValueRef args[] = { m, key, v.val };
                     LLVMBuildCall2(builder, set_str.fn_type, set_str.fn, args, 3, "");
+                    drop_fresh_temp(*expr.args[i], v);
                 } else if (v.tag == JD_TAG_ARR || v.tag == JD_TAG_NATIVE_MAP || v.tag == JD_TAG_VM_HANDLE) {
                     // Nested ptrs - preserve tag so tagged getter
                     // returns the right type identity. A VM handle is
@@ -12763,6 +12769,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
             }
         }
+        std::vector<LLVMValueRef> user_drops;
         for (size_t i = 0; i < call_args.size(); i++) {
             int expected_tag = (i < fi.param_tags.size()) ? fi.param_tags[i] : 1;
             TypedValue av;
@@ -12817,6 +12824,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 ScopedLeafTag _lt(this, arg_leaf_hint);
                 av = codegen_expr(*call_args[i]);
             }
+            if (av.tag == JD_TAG_STR && !std::getenv("JDB_NO_STROWN") &&
+                (av.owned || expr_yields_fresh_string(*call_args[i])) &&
+                !param_escapes_at(name, i))
+                user_drops.push_back(av.val);
             if (expected_tag == JD_TAG_RUNTIME) {
                 // Tag-aware ABI: pack (i64 val, i32 tag) for this param.
                 // Strings / arrays / handles get pun'd to i64; numeric
@@ -12864,15 +12875,26 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 args.push_back(coerce_to(av, pt));
         }
         LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
+        // A string this call allocated for a parameter that does not
+        // outlive the call dies with it.
+        auto drop_user_args = [&]() {
+            auto& drop = runtime_funcs["__str_drop"];
+            for (LLVMValueRef p : user_drops) {
+                LLVMValueRef d[] = { p };
+                LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+            }
+        };
         if (fi.return_tag == -1) {
             LLVMBuildCall2(builder, fn_type, fi.fn,
                            args.empty() ? nullptr : args.data(),
                            (unsigned)args.size(), "");
+            drop_user_args();
             return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
         } else {
             LLVMValueRef result = LLVMBuildCall2(builder, fn_type, fi.fn,
                                                   args.empty() ? nullptr : args.data(),
                                                   (unsigned)args.size(), "call");
+            drop_user_args();
             // A FUNC that raised an error returns a placeholder; the value must
             // not reach the rest of the expression, such as an outer call.
             emit_err_code_branch();
@@ -14055,7 +14077,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         if (av.tag == JD_TAG_STR) {
             auto& fn = runtime_funcs["LEN$"];
             LLVMValueRef args[] = { av.val };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "slen"), JD_TAG_I64 };
+            LLVMValueRef n = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "slen");
+            drop_fresh_temp(*expr.args[0], av);
+            return { n, JD_TAG_I64 };
         }
         if (av.tag == JD_TAG_ARR) {
             auto& fn = runtime_funcs["LEN"];
@@ -15132,10 +15156,29 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             else args.push_back(LLVMConstNull(t));
         }
 
+        // A builtin that only reads its string arguments, and answers no
+        // string or a fresh one, leaves an argument this expression
+        // allocated with nobody holding it: it dies after the call.
+        std::vector<LLVMValueRef> native_drops;
+        if (!std::getenv("JDB_NO_STROWN") && builtin_reads_args(upper) &&
+            (rf.return_tag != JD_TAG_STR || builtin_fresh_string(upper)))
+            for (size_t i = 0; i < expr.args.size() && i < param_count; i++)
+                if (arg_cache[i].tag == JD_TAG_STR && expr.args[i] &&
+                    (arg_cache[i].owned || expr_yields_fresh_string(*expr.args[i])))
+                    native_drops.push_back(args[i]);
+        auto drop_native_args = [&]() {
+            auto& drop = runtime_funcs["__str_drop"];
+            for (LLVMValueRef p : native_drops) {
+                LLVMValueRef d[] = { p };
+                LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+            }
+        };
+
         if (rf.return_tag == -1) {
             LLVMBuildCall2(builder, rf.fn_type, rf.fn,
                            args.empty() ? nullptr : args.data(),
                            (unsigned)args.size(), "");
+            drop_native_args();
             if (builtin_ret(upper) == BuiltinRet::None) {
                 TypedValue none;
                 none.val = LLVMConstInt(i64_type, 0, 0);
@@ -15148,6 +15191,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef result = LLVMBuildCall2(builder, rf.fn_type, rf.fn,
                                                   args.empty() ? nullptr : args.data(),
                                                   (unsigned)args.size(), "call");
+            drop_native_args();
             if (upper == "DATEDIFF" || upper == "DATEADD") emit_err_code_branch();
             // APPEND(arr, <string scalar>) stores the string ptr bit-punned but
             // UNTAGGED via jdb_array_append. The codegen-side string_array_vars
@@ -15342,6 +15386,24 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 tags_ptr = LLVMConstNull(i8_ptr_type);
             }
 
+            // The bridge copies every string argument into a VM value before
+            // the call, so an argument this expression allocated dies after it.
+            std::vector<LLVMValueRef> bridge_drops;
+            if (!std::getenv("JDB_NO_STROWN"))
+                for (int i = 0; i < nargs; i++)
+                    if (arg_cache[i].tag == JD_TAG_STR && expr.args[i] &&
+                        (arg_cache[i].owned || expr_yields_fresh_string(*expr.args[i])))
+                        bridge_drops.push_back(arg_cache[i].val);
+            auto bridge_call = [&](RuntimeFunc& fn, LLVMValueRef* a, unsigned n, const char* nm) {
+                LLVMValueRef r = LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, n, nm);
+                auto& drop = runtime_funcs["__str_drop"];
+                for (LLVMValueRef p : bridge_drops) {
+                    LLVMValueRef d[] = { p };
+                    LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+                }
+                return r;
+            };
+
             const BuiltinRet sig_ret = builtin_ret(upper);
             bool is_string_fn = (!upper.empty() && upper.back() == '$') ||
                                 sig_ret == BuiltinRet::Str ||
@@ -15359,7 +15421,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // form answers the same shape a NONE literal does: a
                 // runtime-tagged zero.
                 auto& fn = runtime_funcs["__jdrt_call_typed_void"];
-                LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "");
+                bridge_call(fn, call_args, 5, "");
                 TypedValue none;
                 none.val = LLVMConstInt(i64_type, 0, 0);
                 none.tag = JD_TAG_RUNTIME;
@@ -15367,30 +15429,40 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return none;
             } else if (is_void_fn) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_void"];
-                LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "");
+                bridge_call(fn, call_args, 5, "");
                 return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
             } else if (is_array_fn) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_arr"];
-                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmarr");
+                LLVMValueRef result = bridge_call(fn, call_args, 5, "vmarr");
                 return { result, JD_TAG_ARR };
             } else if (is_object_fn) {
                 // Returned i64 looks identical to a native JdbMap* but is
                 // a value_store handle - the VM_HANDLE tag routes field
                 // access through jdrt_obj_* instead of jdb_map_*.
                 auto& fn = runtime_funcs["__jdrt_call_typed_obj"];
-                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmobj");
+                LLVMValueRef result = bridge_call(fn, call_args, 5, "vmobj");
                 return { result, JD_TAG_VM_HANDLE };
             } else if (builtin_returns_date(upper)) {
                 // The signature says Str because that is what the ISO-string
                 // form answered. A date rides the f64 variant as its epoch,
                 // which is what the bridge hands back for a DATE Value.
                 auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
-                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmdate");
+                LLVMValueRef result = bridge_call(fn, call_args, 5, "vmdate");
                 return { result, JD_TAG_DATE };
             } else if (is_string_fn) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_str"];
-                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
-                return { result, JD_TAG_STR };
+                LLVMValueRef result = bridge_call(fn, call_args, 5, "vmcall");
+                if (std::getenv("JDB_NO_STROWN")) return { result, JD_TAG_STR };
+                // The answer is copied into this program's own heap and the
+                // DLL's buffer freed, so it is an owned string like any other.
+                auto& own = runtime_funcs["__str_own"];
+                auto& dll_free = runtime_funcs["__jdrt_str_free"];
+                LLVMValueRef oa[] = { result };
+                LLVMValueRef mine = LLVMBuildCall2(builder, own.fn_type, own.fn, oa, 1, "vmcall_own");
+                LLVMBuildCall2(builder, dll_free.fn_type, dll_free.fn, oa, 1, "");
+                TypedValue out{ mine, JD_TAG_STR };
+                out.owned = true;
+                return out;
             } else if (sig_ret == BuiltinRet::Any) {
                 // Only the running program knows the kind, so the answer
                 // brings it along. Reading it as a number instead lost every
@@ -15400,7 +15472,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_NONE, 0), tag_slot);
                 LLVMValueRef targs[] = { call_args[0], call_args[1], call_args[2],
                                          call_args[3], call_args[4], tag_slot };
-                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn,
+                LLVMValueRef result = bridge_call(fn,
                                                      targs, 6, "vmany");
                 LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, tag_slot, "vmany_t");
                 return { result, JD_TAG_RUNTIME, tag_v };
@@ -15409,19 +15481,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // a handle answers the kind the interpreter answers instead
                 // of a double that happens to be whole.
                 auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
-                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmint");
+                LLVMValueRef result = bridge_call(fn, call_args, 5, "vmint");
                 return { LLVMBuildFPToSI(builder, result, i64_type, "vmint_i"), JD_TAG_I64 };
             } else if (sig_ret == BuiltinRet::Bool) {
                 // Bools ride the f64 variant; narrow the double back to the
                 // i64 0/1 that JD_TAG_BOOL is represented as.
                 auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
-                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmbool");
+                LLVMValueRef result = bridge_call(fn, call_args, 5, "vmbool");
                 LLVMValueRef nz = LLVMBuildFCmp(builder, LLVMRealONE, result,
                                                 LLVMConstReal(f64_type, 0.0), "vmbool_nz");
                 return { LLVMBuildZExt(builder, nz, i64_type, "vmbool_i"), JD_TAG_BOOL };
             } else {
                 auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
-                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
+                LLVMValueRef result = bridge_call(fn, call_args, 5, "vmcall");
                 return { result, JD_TAG_F64 };
             }
         }
@@ -16272,6 +16344,128 @@ void LLVMCodegen::emit_owned_local_release() {
     }
 }
 
+bool LLVMCodegen::param_escapes_at(const std::string& fn, size_t i) const {
+    auto it = param_escapes.find(fn);
+    return it == param_escapes.end() || i >= it->second.size() || it->second[i];
+}
+
+void LLVMCodegen::scan_param_escapes(const std::vector<StmtPtr>& program) {
+    if (std::getenv("JDB_NO_STROWN")) return;
+    std::vector<const Stmt*> fns;
+    for (auto& stmt : program)
+        if (stmt && (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB))
+            fns.push_back(stmt.get());
+    // An ASYNC body runs on another thread after the call has returned.
+    for (const Stmt* fn : fns)
+        param_escapes[fn->func_name] = std::vector<bool>(fn->params().size(), fn->is_async_func);
+
+    // Does `p` occur anywhere in e (a lambda capture included)?
+    std::function<bool(const Expr&, const std::string&)> mentions =
+        [&](const Expr& e, const std::string& p) -> bool {
+        if (e.kind == ExprKind::VARIABLE && e.str_val == p) return true;
+        for (auto& c : e.lambda_captures) if (c == p) return true;
+        if (e.left && mentions(*e.left, p)) return true;
+        if (e.right && mentions(*e.right, p)) return true;
+        for (auto& a : e.args) if (a && mentions(*a, p)) return true;
+        return false;
+    };
+
+    // A bare `p` is safe only where it is read and nothing keeps the
+    // pointer: an operand, an index or member base, an argument of a
+    // builtin that only reads it, or of a FUNC whose parameter does not
+    // escape. Anything not recognised counts as escaping.
+    auto escapes = [&](const Stmt& fn, const std::string& p) -> bool {
+        bool esc = false;
+        auto is_p = [&](const Expr* e) {
+            return e && e->kind == ExprKind::VARIABLE && e->str_val == p;
+        };
+        std::function<void(const Expr&)> scan = [&](const Expr& e) {
+            if (esc) return;
+            switch (e.kind) {
+            case ExprKind::LITERAL_INT: case ExprKind::LITERAL_FLOAT:
+            case ExprKind::LITERAL_STRING: case ExprKind::LITERAL_BOOL:
+            case ExprKind::VARIABLE: case ExprKind::PLACEHOLDER_EXPR:
+                return;
+            case ExprKind::BINARY: case ExprKind::UNARY:
+            case ExprKind::INDEX: case ExprKind::MEMBER_ACCESS:
+                if (e.left && !is_p(e.left.get())) scan(*e.left);
+                if (e.right && !is_p(e.right.get())) scan(*e.right);
+                for (auto& a : e.args) if (a && !is_p(a.get())) scan(*a);
+                return;
+            case ExprKind::CALL: {
+                std::string up = e.func_name;
+                std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                auto uit = param_escapes.find(e.func_name);
+                bool user = uit != param_escapes.end() ||
+                            user_functions.count(e.func_name) || user_functions.count(up);
+                for (size_t i = 0; i < e.args.size() && !esc; i++) {
+                    const Expr* a = e.args[i].get();
+                    if (!a) continue;
+                    if (!is_p(a)) { scan(*a); continue; }
+                    bool safe = user ? (uit != param_escapes.end() && i < uit->second.size() &&
+                                        !uit->second[i])
+                                     : builtin_reads_args(up);
+                    if (!safe) esc = true;
+                }
+                return;
+            }
+            default:
+                if (mentions(e, p)) esc = true;
+                return;
+            }
+        };
+        auto top = [&](const Expr* e, bool bare_escapes) {
+            if (!e || esc) return;
+            if (is_p(e)) { if (bare_escapes) esc = true; return; }
+            scan(*e);
+        };
+        std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+            if (esc) return;
+            bool stores = s.kind == StmtKind::RETURN || s.kind == StmtKind::LET ||
+                          s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM ||
+                          s.kind == StmtKind::INDEX_ASSIGN || s.kind == StmtKind::REACT_ASSIGN ||
+                          s.kind == StmtKind::DESTRUCTURE;
+            top(s.expr.get(), stores);
+            for (auto& e : s.print_exprs) top(e.get(), false);
+            for (auto& e : s.index_chain) top(e.get(), false);
+            for (auto& e : s.ctor_args()) top(e.get(), true);
+            top(s.loop_cond.get(), false);
+            top(s.end_expr.get(), false);
+            top(s.step_expr.get(), false);
+            for (auto& b : s.branches) {
+                top(b.condition.get(), false);
+                for (auto& lab : b.case_labels) {
+                    top(lab.first.get(), false);
+                    top(lab.second.get(), false);
+                }
+                for (auto& x : b.body) if (x) walk(*x);
+            }
+            for (auto& b : s.body)           if (b) walk(*b);
+            for (auto& c : s.catch_body())   if (c) walk(*c);
+            for (auto& f : s.finally_body()) if (f) walk(*f);
+        };
+        for (auto& b : fn.body) if (b) walk(*b);
+        return esc;
+    };
+
+    // Starts from "nothing escapes" and only ever turns entries on, so it
+    // ends; stopping early would leave an optimistic answer standing.
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const Stmt* fn : fns) {
+            auto& esc = param_escapes[fn->func_name];
+            for (size_t pi = 0; pi < esc.size(); pi++) {
+                if (esc[pi]) continue;
+                if (escapes(*fn, fn->params()[pi].name)) {
+                    esc[pi] = true;
+                    changed = true;
+                }
+            }
+        }
+    }
+}
+
 void LLVMCodegen::scan_fresh_string_funcs(const std::vector<StmtPtr>& program) {
     if (std::getenv("JDB_NO_STROWN")) return;
     std::vector<const Stmt*> fns;
@@ -16336,6 +16530,14 @@ bool LLVMCodegen::returns_shared_string(const std::string& fn_name) {
 // one evaluation, with nothing else holding it? Only a builtin call and a
 // concatenation do; a bare read, an index and a user function all hand back
 // something another slot may still own.
+void LLVMCodegen::drop_fresh_temp(const Expr& e, const TypedValue& tv) {
+    if (tv.tag != JD_TAG_STR || std::getenv("JDB_NO_STROWN")) return;
+    if (!tv.owned && !expr_yields_fresh_string(e)) return;
+    auto& drop = runtime_funcs["__str_drop"];
+    LLVMValueRef d[] = { tv.val };
+    LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+}
+
 bool LLVMCodegen::expr_yields_fresh_string(const Expr& e) const {
     if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) return true;
     if (e.kind != ExprKind::CALL) return false;
@@ -16472,9 +16674,14 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             auto& d2s = runtime_funcs["__double_to_str"];
             LLVMValueRef fstr = LLVMBuildCall2(builder, d2s.fn_type, d2s.fn, &f, 1, "f2s");
             // A bool renders as TRUE/FALSE rather than as its number.
+            // Every arm below is formatted and allocated, and a select keeps
+            // one; the arm not kept is released.
+            auto& drop = runtime_funcs["__str_drop"];
             if (auto* b2s = get_runtime_func("__str_bool")) {
                 LLVMValueRef bstr = LLVMBuildCall2(builder, b2s->fn_type, b2s->fn, &tv.val, 1, "b2s");
+                LLVMValueRef unused = LLVMBuildSelect(builder, is_bool_s, fstr, bstr, "str_oth_unused");
                 fstr = LLVMBuildSelect(builder, is_bool_s, bstr, fstr, "str_oth");
+                LLVMBuildCall2(builder, drop.fn_type, drop.fn, &unused, 1, "");
             }
             // A date renders as its wall clock rather than as its epoch.
             // A date renders as its wall clock rather than as its epoch. A
@@ -16490,7 +16697,9 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
                 LLVMValueRef dargs[] = { safe_epoch, LLVMConstNull(i8_ptr_type),
                     LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
                 LLVMValueRef dstr = LLVMBuildCall2(builder, fdn->fn_type, fdn->fn, dargs, 3, "d2s");
+                LLVMValueRef unused = LLVMBuildSelect(builder, is_date_s, fstr, dstr, "str_date_unused");
                 fstr = LLVMBuildSelect(builder, is_date_s, dstr, fstr, "str_date");
+                LLVMBuildCall2(builder, drop.fn_type, drop.fn, &unused, 1, "");
             }
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_other_end = LLVMGetInsertBlock(builder);

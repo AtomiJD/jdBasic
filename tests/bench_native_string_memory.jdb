@@ -8,7 +8,9 @@
 '   jdBasic bench_native_string_memory.jdb <mode> <iterations>
 '
 ' mode: "concat" builds a fresh string each pass, "map" reads one out of a
-' map, "number" does the same amount of arithmetic and touches no string.
+' map, "func" builds one in a FUNC, "arg" hands fresh strings to calls and a
+' map, "dyn" formats elements of a run-time kind, "typeof" reads a shared
+' word, "number" does the same amount of arithmetic and touches no string.
 
 OPTION "EXPLICIT"
 
@@ -43,6 +45,21 @@ ELSEIF mode$ = "func" THEN
     FOR i = 1 TO rounds
         sink$ = Decorate$(i)
     NEXT i
+ELSEIF mode$ = "arg" THEN
+    ' A fresh string handed to a builtin, to a bridge builtin and to a FUNC
+    ' that only reads its parameter: each dies after the call.
+    DIM bag2 AS MAP
+    FOR i = 1 TO rounds
+        total = total + LEN("row " + STR$(i)) + Measure("cell " + STR$(i))
+        bag2{"k"} = "row " + STR$(i)
+    NEXT i
+ELSEIF mode$ = "dyn" THEN
+    ' STR$ of an element whose kind is known only at run time formats it
+    ' several ways and keeps one; the others are released.
+    DIM cells = [1, 2, 3]
+    FOR i = 1 TO rounds
+        sink$ = Render$(cells)
+    NEXT i
 ELSEIF mode$ = "typeof" THEN
     ' TYPEOF answers with one of ten fixed words and hands out a shared
     ' buffer, so this column must stay flat. It used to allocate once per
@@ -64,4 +81,17 @@ FUNC Decorate$(n)
     DIM body$ = "row " + STR$(n)
     DIM framed$ = "[" + body$ + "]"
     RETURN framed$
+ENDFUNC
+
+FUNC Measure(s$)
+    RETURN LEN(s$) + INSTR(s$, "1")
+ENDFUNC
+
+FUNC Render$(v)
+    DIM out$ = ""
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(v) - 1
+        out$ = out$ + STR$(v[k])
+    NEXT k
+    RETURN out$ + "."
 ENDFUNC

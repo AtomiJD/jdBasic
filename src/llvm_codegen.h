@@ -416,6 +416,9 @@ private:
     // must never be dropped or taken over by a slot.
     static bool returns_shared_string(const std::string& fn_name);
     bool expr_yields_fresh_string(const Expr& e) const;
+    // Releases a string temporary its consumer has finished reading, when the
+    // expression allocated it for this one use.
+    void drop_fresh_temp(const Expr& e, const TypedValue& tv);
 
     // Top-level string variables the program only ever writes by plain
     // assignment and never lets alias. Their slots take ownership of what
@@ -457,6 +460,13 @@ private:
     // caller, so the result is dropped or taken over like a builtin's.
     std::unordered_set<std::string> fresh_string_funcs;
     void scan_fresh_string_funcs(const std::vector<StmtPtr>& program);
+    // Per user FUNC/SUB, whether each parameter may outlive the call: handed
+    // back, stored, aliased or passed on to somewhere that keeps it. A string
+    // the caller allocated for a parameter that does not escape dies after
+    // the call. Missing entries count as escaping.
+    std::unordered_map<std::string, std::vector<bool>> param_escapes;
+    void scan_param_escapes(const std::vector<StmtPtr>& program);
+    bool param_escapes_at(const std::string& fn, size_t i) const;
 
     std::string dim_funcref_name(const TypedValue& tv);
     static const Expr* stored_lambda_src(const Expr* e);

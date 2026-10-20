@@ -118,6 +118,8 @@ JDRT_API double jdrt_call_typed_f64(JdRT rt, const char* name,
 
 JDRT_API char*  jdrt_call_typed_str(JdRT rt, const char* name,
                                      const int64_t* args, const int32_t* tags, int nargs);
+// Frees a string jdrt_call_typed_str returned, with the DLL's own allocator.
+JDRT_API void   jdrt_str_free(char* s);
 
 JDRT_API void   jdrt_call_typed_void(JdRT rt, const char* name,
                                       const int64_t* args, const int32_t* tags, int nargs);

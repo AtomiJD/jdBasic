@@ -638,6 +638,14 @@ JDRT_API void jdrt_forget_binary(const char* s) {
     bin_lens().erase((const void*)s);
 }
 
+// Frees a string the bridge handed out. The DLL and a compiled program each
+// carry their own C runtime, so a buffer goes back to the malloc that made it.
+JDRT_API void jdrt_str_free(char* s) {
+    if (!s) return;
+    jdrt_forget_binary(s);
+    free(s);
+}
+
 JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
                                     const int64_t* args, const int32_t* tags, int nargs) {
     auto* rt = resolve_rt(handle);
@@ -1660,6 +1668,13 @@ JDRT_API void jdrt_tagged_arr_set(JdRT handle, int64_t val_bits, int32_t val_tag
         double d;
         if (tag == jd_tag(JdTag::I64) || tag == jd_tag(JdTag::BOOL)) d = (double)bits;
         else memcpy(&d, &bits, 8);
+        // The map keeps a copy of a string, as every other setter does, and
+        // releases it when the key is written over.
+        if (tag == jd_tag(JdTag::STR)) {
+            Value text = value_from_native_str((const char*)(intptr_t)bits);
+            char* copy = native_str_from_string(text.as_string() ? text.as_string()->data : std::string());
+            memcpy(&d, &copy, 8);
+        }
         set_jdbmap_key((JdbMapFwd*)(intptr_t)val_bits, std::to_string(idx), d, tag);
         return;
     }
