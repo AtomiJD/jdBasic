@@ -549,6 +549,9 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
                 vargs.push_back(Value::make_bool(args[i] != 0));
                 break;
             }
+            case JdTag::NONE:
+                vargs.push_back(Value::make_none());
+                break;
             case JdTag::FUNCREF:
             case JdTag::RUNTIME:
             default: {
@@ -1951,6 +1954,11 @@ static bool call_compiled_fn(const std::string& name, const std::vector<Value>& 
     int64_t ob = 0;
     int32_t ot = JD_TAG_NONE;
     fn(bits.data(), tags.data(), (int32_t)bits.size(), &ob, &ot);
+    if (ot == JD_TAG_RAISED) {
+        tls_use_primary = saved_primary;
+        const char* m = (const char*)(intptr_t)ob;
+        throw std::runtime_error(m && *m ? m : "error in " + name);
+    }
     if (ot == JD_TAG_NONE) {
         tls_use_primary = saved_primary;
         out = Value::make_none();

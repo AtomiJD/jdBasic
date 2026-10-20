@@ -132,8 +132,7 @@ Ok("the handler's answer arrives", CHAN.RECV(mul_ch, 3000) = 42)
 DIM boom_ch = NODE.CALL_ASYNC(nb$, "BOOM", 0)
 DIM ran = NODE.POLL(3000, b)
 DIM boom = CHAN.RECV(boom_ch, 3000)
-' Compiled, an error inside a handler does not reach NODE.POLL yet.
-IF OS.FEATURE("INTERPRETER") THEN Ok("a handler that raises answers with a failure", NODE.IS_FAIL(boom))
+Ok("a handler that raises answers with a failure", NODE.IS_FAIL(boom))
 Ok("POLL with nothing waiting returns 0", NODE.POLL(0, b) = 0)
 
 DIM t0 = TICK()

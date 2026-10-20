@@ -69,6 +69,9 @@ constexpr int32_t jd_tag(JdTag t) { return static_cast<int32_t>(t); }
 #define JD_TAG_NONE       9
 // A date: epoch seconds, bit-identical to JD_TAG_F64. See JdTag::DATE.
 #define JD_TAG_DATE       10
+// Only in the answer of a compiled FUNC the VM side called (a NODE.SERVE or
+// HTTP handler): the FUNC raised, and the bits point at its message.
+#define JD_TAG_RAISED     64
 
 // A date is a number, so everything that asks "is this an f64" has to say
 // yes to one. Only the places that render a value, report its type, or

@@ -11905,13 +11905,25 @@ LLVMValueRef LLVMCodegen::build_compiled_call_wrapper(const std::string& fn_name
         LLVMBasicBlockRef bb_done = LLVMAppendBasicBlock(w, "cfn.done");
         LLVMBuildCondBr(builder, has, bb_err, bb_done);
         LLVMPositionBuilderAtEnd(builder, bb_err);
+        // The caller raises the error with this message; the copy outlives
+        // the clear below.
+        LLVMValueRef msg_bits = LLVMConstInt(i64_type, 0, 0);
+        auto* emsg = get_runtime_func("ERRMSG$");
+        auto* eown = get_runtime_func("__str_own");
+        if (emsg && eown) {
+            LLVMValueRef m = LLVMBuildCall2(builder, emsg->fn_type, emsg->fn, nullptr, 0, "cfn_msg");
+            LLVMValueRef mc = LLVMBuildCall2(builder, eown->fn_type, eown->fn, &m, 1, "cfn_msgc");
+            msg_bits = LLVMBuildPtrToInt(builder, mc, i64_type, "cfn_msgb");
+        }
         LLVMBuildCall2(builder, ecl->fn_type, ecl->fn, nullptr, 0, "");
         LLVMBuildBr(builder, bb_done);
+        LLVMBasicBlockRef bb_err_end = LLVMGetInsertBlock(builder);
         LLVMPositionBuilderAtEnd(builder, bb_done);
         LLVMValueRef pb = LLVMBuildPhi(builder, i64_type, "cfn_rb");
         LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "cfn_rt");
-        LLVMValueRef bvals[] = { rb, LLVMConstInt(i64_type, 0, 0) };
-        LLVMValueRef tvals[] = { rt, LLVMConstInt(i32_type, JD_TAG_NONE, 0) };
+        bb_err = bb_err_end;
+        LLVMValueRef bvals[] = { rb, msg_bits };
+        LLVMValueRef tvals[] = { rt, LLVMConstInt(i32_type, JD_TAG_RAISED, 0) };
         LLVMBasicBlockRef bbs[] = { bb_ok, bb_err };
         LLVMAddIncoming(pb, bvals, bbs, 2);
         LLVMAddIncoming(pt, tvals, bbs, 2);

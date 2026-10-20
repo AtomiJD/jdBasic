@@ -43,13 +43,13 @@ ENDFUNC
 ' ── scalars ───────────────────────────────────────────────────
 DIM hdr$ AS STRING = NODE.PACK$(NONE)
 Ok("magic JDV and version 1", LEFT$(hdr$, 3) = "JDV" ANDALSO ASC(MID$(hdr$, 3, 1)) = 1)
-' Compiled, a bare NONE argument reaches the VM as the number 0 and dates
-' and integers as FLOAT64, so those kinds are checked on the interpreter.
+Ok("NONE is five bytes", LEN(hdr$) = 5)
+Ok("NONE comes back", TYPEOF(NODE.UNPACK(hdr$)) = "NONE")
+DIM nothing = NONE
+Ok("a NONE variable packs as NONE", LEN(NODE.PACK$(nothing)) = 5)
+' Compiled, dates and integers reach the VM as FLOAT64, so those kinds are
+' checked on the interpreter.
 DIM interp AS INTEGER = OS.FEATURE("INTERPRETER")
-IF interp THEN
-    Ok("NONE is five bytes", LEN(hdr$) = 5)
-    Ok("NONE comes back", TYPEOF(NODE.UNPACK(hdr$)) = "NONE")
-ENDIF
 Ok("NONE inside an array", TYPEOF(NODE.UNPACK(NODE.PACK$([NONE]))[0]) = "NONE")
 Ok("TRUE", NODE.UNPACK(NODE.PACK$(TRUE)) = TRUE)
 Ok("FALSE", NODE.UNPACK(NODE.PACK$(FALSE)) = FALSE)

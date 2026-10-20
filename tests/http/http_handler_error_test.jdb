@@ -1,0 +1,43 @@
+' A handler that raises answers 500 with the message, compiled as well as
+' interpreted, and the server keeps serving afterwards.
+
+OPTION "EXPLICIT"
+
+DIM failed AS INTEGER = 0
+DIM port AS INTEGER = 9973
+
+FUNC BOOM(request)
+    DIM nothing = NODE.UNPACK("not a packed value")
+    RETURN "unreachable"
+ENDFUNC
+
+FUNC FINE(request)
+    RETURN "fine"
+ENDFUNC
+
+HTTP.SERVER.ON_GET("/boom", "BOOM")
+HTTP.SERVER.ON_GET("/fine", "FINE")
+IF NOT HTTP.SERVER.START(port) THEN
+    PRINT "could not start the server"
+    END 1
+ENDIF
+
+DIM r = HTTP.REQUEST("GET", "http://127.0.0.1:" + STR$(port) + "/boom")
+IF r{"status"} <> 500 THEN
+    PRINT "FAIL status "; r{"status"}
+    failed = failed + 1
+ENDIF
+DIM body$ = r{"body"}
+IF INSTR(body$, "NODE.UNPACK") < 0 THEN
+    PRINT "FAIL body "; body$
+    failed = failed + 1
+ENDIF
+DIM r2 = HTTP.REQUEST("GET", "http://127.0.0.1:" + STR$(port) + "/fine")
+DIM body2$ = r2{"body"}
+IF r2{"status"} <> 200 ORELSE body2$ <> "fine" THEN
+    PRINT "FAIL after the error: "; r2{"status"}
+    failed = failed + 1
+ENDIF
+HTTP.SERVER.STOP
+IF failed > 0 THEN END 1
+PRINT "OK"
