@@ -6239,11 +6239,8 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // dispatch, and the non-string arm of that dispatch answers 0 for LEN.
     // `g = arr[i]` from inside a SUB is how this shows up, since a string
     // array element arrives runtime-tagged.
-    if (vi && vi->tag == JD_TAG_STR && rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
-        rhs.val = runtime_to_str(rhs.val, rhs.runtime_tag);
-        rhs.tag = JD_TAG_STR;
-        rhs.runtime_tag = nullptr;
-    }
+    if (vi && vi->tag == JD_TAG_STR && rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag)
+        rhs = runtime_into_str_slot(rhs);
     // Tag 7 (runtime-tagged): ALWAYS store as tag 7 with companion alloca.
     // Never coerce to a concrete type - the runtime tag carries the truth
     // about what the value IS (could be f64, string, array, VM handle).
@@ -7515,11 +7512,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                     (!stmt.var_name.empty() && stmt.var_name.back() == '$');
     if (rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag &&
         ((vi && vi->tag == JD_TAG_STR && (stmt.var_type != VarType::NONE || str_name)) ||
-         (!vi && str_name))) {
-        rhs.val = runtime_to_str(rhs.val, rhs.runtime_tag);
-        rhs.tag = JD_TAG_STR;
-        rhs.runtime_tag = nullptr;
-    }
+         (!vi && str_name)))
+        rhs = runtime_into_str_slot(rhs);
     // Tag 7 (runtime-tagged): mirror codegen_let_or_assign - store
     // the value AND a companion runtime-tag alloca so later reads can
     // dispatch on the runtime tag. Without this, `DIM c = game{"k"}`
@@ -7619,7 +7613,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                              rhs.tag == JD_TAG_BOOL;
     // A DIM that runs again (in a loop, or on the next call) releases what
     // the slot held; the owned local tracks the buffer it is given here.
-    if (rhs.tag == JD_TAG_STR && owns_local_string(stmt.var_name)) {
+    if (rhs.tag == JD_TAG_STR && (owns_local_string(stmt.var_name) ||
+                                  (scopes.size() == 1 && owned_str_globals.count(stmt.var_name)))) {
         bool fresh = rhs.owned || expr_yields_fresh_string(*stmt.expr);
         rhs.val = take_string_ownership(stmt.var_name, rhs, fresh);
     }
@@ -8017,6 +8012,8 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                 auto& set_fn = runtime_funcs["__map_set_tagged"];
                 LLVMValueRef args[] = { obj_ptr, field_str, fval, val_tv.runtime_tag };
                 LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
+                // The map copies a string and keeps an array as it is.
+                drop_read_temp(val_tv, false);
             } else if (val_tv.tag == JD_TAG_BOOL) {
                 // Store the truth-ness with the value; the untagged setter
                 // leaves a bare number and the read renders it as 1/0.
@@ -8184,6 +8181,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             LLVMValueRef args[] = { arr_ptr, idx_tv.val,
                 store_f, val_tv.runtime_tag };
             LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "");
+            drop_read_temp(val_tv, false);
         } else {
             auto& fn = runtime_funcs["__map_set_f64"];
             LLVMValueRef args[] = { arr_ptr, idx_tv.val, coerce_to(val_tv, f64_type) };
@@ -9333,6 +9331,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     auto& set_tg = runtime_funcs["__map_set_tagged"];
                     LLVMValueRef args[] = { m, key, fv, v.runtime_tag };
                     LLVMBuildCall2(builder, set_tg.fn_type, set_tg.fn, args, 4, "");
+                    drop_read_temp(v, false);
                 } else if (v.tag == JD_TAG_BOOL) {
                     // Preserve the bool tag so jdb_map_str renders TRUE/FALSE
                     // instead of falling back to numeric formatting.
@@ -10025,10 +10024,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     // assignment - a conditionally-skipped write would then
                     // leave the runtime_tag slot at 0 and turn later reads
                     // into garbage-formatted doubles.
-                    if (leaf_hint == 2) return { coerce_to(r, i8_ptr_type), JD_TAG_STR };
-                    if (leaf_hint == 1) return { coerce_to(r, f64_type), JD_TAG_F64 };
+                    if (leaf_hint == 2) {
+                        TypedValue s{ coerce_to(r, i8_ptr_type), JD_TAG_STR };
+                        if (std::getenv("JDB_NO_STROWN")) return s;
+                        // A copy in this program's heap; the read goes back.
+                        auto& own = runtime_funcs["__str_own"];
+                        LLVMValueRef copy = LLVMBuildCall2(builder, own.fn_type, own.fn, &s.val, 1, "rd_own");
+                        drop_read_temp(r);
+                        s.val = copy;
+                        s.owned = true;
+                        return s;
+                    }
+                    if (leaf_hint == 1) { LLVMValueRef d = coerce_to(r, f64_type); drop_read_temp(r); return { d, JD_TAG_F64 }; }
                     if (leaf_hint == 0) {
                         LLVMValueRef d = coerce_to(r, f64_type);
+                        drop_read_temp(r);
                         return { LLVMBuildFPToSI(builder, d, i64_type, "7toi"), JD_TAG_I64 };
                     }
                     return r;
@@ -10894,6 +10904,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         if (std::getenv("JDB_NO_STROWN")) { own_l = false; own_r = false; }
         if (own_l) { LLVMValueRef d[] = { args[0] }; LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, ""); }
         if (own_r) { LLVMValueRef d[] = { args[1] }; LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, ""); }
+        drop_read_temp(lhs);
+        drop_read_temp(rhs);
         TypedValue out{ result, JD_TAG_STR };
         out.owned = true;
         return out;
@@ -16582,7 +16594,20 @@ void LLVMCodegen::drop_fresh_temp(const Expr& e, const TypedValue& tv) {
     LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
 }
 
-void LLVMCodegen::drop_read_temp(const TypedValue& tv) {
+LLVMCodegen::TypedValue LLVMCodegen::runtime_into_str_slot(const TypedValue& rhs) {
+    TypedValue out{ runtime_to_str(rhs.val, rhs.runtime_tag), JD_TAG_STR };
+    if (!rhs.fresh_ptr || std::getenv("JDB_NO_STROWN")) return out;
+    // A field read's buffer belongs to the bridge library: the slot gets a
+    // copy in this program's heap, and the read goes back.
+    auto& own = runtime_funcs["__str_own"];
+    LLVMValueRef copy = LLVMBuildCall2(builder, own.fn_type, own.fn, &out.val, 1, "rd_own");
+    drop_read_temp(rhs);
+    out.val = copy;
+    out.owned = true;
+    return out;
+}
+
+void LLVMCodegen::drop_read_temp(const TypedValue& tv, bool arrays_too) {
     if (tv.tag != JD_TAG_RUNTIME || !tv.runtime_tag || !tv.fresh_ptr) return;
     if (std::getenv("JDB_NO_STROWN")) return;
     // Both kinds were allocated by the bridge library, so they go back there.
@@ -16590,8 +16615,10 @@ void LLVMCodegen::drop_read_temp(const TypedValue& tv) {
     auto& afree = runtime_funcs["__jdrt_free_flat_array"];
     LLVMValueRef is_str = LLVMBuildAnd(builder, tv.fresh_ptr,
         LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag, LLVMConstInt(i32_type, JD_TAG_STR, 0), "rd_isstr"), "rd_dropstr");
-    LLVMValueRef is_arr = LLVMBuildAnd(builder, tv.fresh_ptr,
-        LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag, LLVMConstInt(i32_type, JD_TAG_ARR, 0), "rd_isarr"), "rd_droparr");
+    LLVMValueRef is_arr = arrays_too
+        ? LLVMBuildAnd(builder, tv.fresh_ptr,
+              LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag, LLVMConstInt(i32_type, JD_TAG_ARR, 0), "rd_isarr"), "rd_droparr")
+        : LLVMConstInt(LLVMInt1TypeInContext(ctx), 0, 0);
     LLVMBasicBlockRef bb_s = LLVMAppendBasicBlock(current_fn, "rd.str");
     LLVMBasicBlockRef bb_c = LLVMAppendBasicBlock(current_fn, "rd.chk");
     LLVMBasicBlockRef bb_a = LLVMAppendBasicBlock(current_fn, "rd.arr");

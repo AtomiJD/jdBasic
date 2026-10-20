@@ -423,7 +423,11 @@ private:
     // Releases a string temporary its consumer has finished reading, when the
     // expression allocated it for this one use.
     void drop_fresh_temp(const Expr& e, const TypedValue& tv);
-    void drop_read_temp(const TypedValue& tv);
+    // arrays_too = false where the consumer keeps an array it is handed.
+    void drop_read_temp(const TypedValue& tv, bool arrays_too = true);
+    // A runtime-tagged value bound for a string slot, as an owned string
+    // when it is a field read's fresh buffer.
+    TypedValue runtime_into_str_slot(const TypedValue& rhs);
 
     // Top-level string variables the program only ever writes by plain
     // assignment and never lets alias. Their slots take ownership of what

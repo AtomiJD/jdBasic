@@ -9,8 +9,9 @@
 '
 ' mode: "concat" builds a fresh string each pass, "map" reads one out of a
 ' map, "func" builds one in a FUNC, "arg" hands fresh strings to calls and a
-' map, "dyn" formats elements of a run-time kind, "typeof" reads a shared
-' word, "number" does the same amount of arithmetic and touches no string.
+' map, "dyn" formats elements of a run-time kind, "field" reads fields of a
+' map that came through a channel, "typeof" reads a shared word, "number"
+' does the same amount of arithmetic and touches no string.
 
 OPTION "EXPLICIT"
 
@@ -60,6 +61,20 @@ ELSEIF mode$ = "dyn" THEN
     FOR i = 1 TO rounds
         sink$ = Render$(cells)
     NEXT i
+ELSEIF mode$ = "field" THEN
+    ' Fields read out of a map that came through a channel (a VM object):
+    ' each read copies, and the copy goes back once it has been used.
+    DIM box = CHAN.OPEN(2)
+    CHAN.SEND box, {"NAME": "song/clock", "WAVE": IOTA(256)}
+    DIM msg = CHAN.RECV(box, 100)
+    DIM names AS MAP
+    i = 0
+    DO WHILE i < rounds
+        i = i + 1
+        DIM label$ AS STRING = msg{"NAME"}
+        names{"last"} = msg{"NAME"}
+        total = total + LEN(msg{"WAVE"}) + Measure("at " + msg{"NAME"})
+    LOOP
 ELSEIF mode$ = "typeof" THEN
     ' TYPEOF answers with one of ten fixed words and hands out a shared
     ' buffer, so this column must stay flat. It used to allocate once per
