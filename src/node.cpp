@@ -709,6 +709,10 @@ std::vector<DirEntry> read_directory() {
     return out;
 }
 
+// Nodes whose directory file could not be replaced yet; the io loop writes
+// them again.
+std::set<int64_t> g_dir_retry;
+
 void write_dir_file(const LocalNode& n) {
     fs::path file = fs::u8path(n.dir_file);
     fs::path tmp = file;
@@ -717,9 +721,19 @@ void write_dir_file(const LocalNode& n) {
         std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
         o << node_json(n);
     }
+    // On Windows the rename fails while another program has the file open
+    // to read it; a lost write would hide a new topic from every subscriber.
     std::error_code ec;
-    fs::rename(tmp, file, ec);
-    if (ec) fs::remove(tmp, ec);
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        fs::rename(tmp, file, ec);
+        if (!ec) {
+            g_dir_retry.erase(n.handle);
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    fs::remove(tmp, ec);
+    g_dir_retry.insert(n.handle);
 }
 
 bool glob_match(const std::string& pat, const std::string& s) {
@@ -1672,6 +1686,14 @@ void io_loop() {
         send_beacons();
         expire_lan_peers();
         for (auto& kv : g_links) if (!kv.second.tx.empty()) busy = true;
+        if (!g_dir_retry.empty()) {
+            std::vector<int64_t> retry(g_dir_retry.begin(), g_dir_retry.end());
+            for (int64_t h : retry) {
+                if (LocalNode* n = node_of(h)) write_dir_file(*n);
+                else g_dir_retry.erase(h);
+            }
+            busy = true;
+        }
         scan_directory(next_scan);
     }
 }
