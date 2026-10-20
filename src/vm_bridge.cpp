@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <thread>
 #include <atomic>
@@ -191,6 +192,7 @@ struct JdRTImpl {
     int64_t next_handle = 1;            // positive - frame-temp, swept
     int64_t next_persistent = -1;       // negative - persistent, never swept
     std::unordered_map<int64_t, int64_t> handle_owner;  // persistent key -> variable (jdrt_adopt_handle)
+    std::unordered_set<int64_t> foreach_temps;          // arrays jdrt_foreach_begin built to walk
     JdrtEventDispatch user_event_dispatch = nullptr;
 
     int64_t store_value(Value v) {
@@ -1778,6 +1780,7 @@ JDRT_API int64_t jdrt_foreach_begin(JdRT handle, int64_t val_bits, int32_t val_t
         }
         int64_t n = (int64_t)keys.as_array()->elements.size();
         int64_t key_bits = (int64_t)(intptr_t)value_to_jdbarray(keys);
+        rt->foreach_temps.insert(key_bits);
         if (pair) {
             *a_bits = key_bits;
             *a_tag = jd_tag(JdTag::ARR);
@@ -1799,6 +1802,7 @@ JDRT_API int64_t jdrt_foreach_begin(JdRT handle, int64_t val_bits, int32_t val_t
             i += len;
         }
         JdbArray* arr = value_to_jdbarray(chars);
+        rt->foreach_temps.insert((int64_t)(intptr_t)arr);
         return walk_array((int64_t)(intptr_t)arr);
     };
 
@@ -1845,6 +1849,29 @@ JDRT_API int32_t jdrt_foreach_key(JdRT handle, int64_t a_bits, int32_t a_tag,
         return jd_tag(JdTag::I64);
     }
     return jdrt_tagged_arr_get(handle, a_bits, a_tag, idx, out_val);
+}
+
+// After a FOR EACH whose loop variables kept nothing: the keys or characters
+// jdrt_foreach_begin built for it go, strings included. Anything else it is
+// handed (an array the program owns) is left alone.
+JDRT_API void jdrt_foreach_end(JdRT handle, int64_t bits) {
+    auto* rt = resolve_rt(handle);
+    auto it = rt->foreach_temps.find(bits);
+    if (it == rt->foreach_temps.end()) return;
+    rt->foreach_temps.erase(it);
+    auto* a = (JdbArray*)(intptr_t)bits;
+    if (!a) return;
+    for (int64_t i = 0; i < a->length; i++) {
+        bool is_str = (a->flags & 8) && a->elem_tags ? a->elem_tags[i] == jd_tag(JdTag::STR)
+                                                     : (a->flags & 2) != 0;
+        if (!is_str) continue;
+        union { double d; int64_t p; } u;
+        u.d = a->data[i];
+        jdrt_str_free((char*)(intptr_t)u.p);
+    }
+    free(a->data);
+    free(a->elem_tags);
+    free(a);
 }
 
 // Tag-7 INDEX dispatch when the key is tagged too: a string key reads the

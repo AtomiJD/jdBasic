@@ -1652,6 +1652,10 @@ safe to release:
   `CHAN.RECV`, a JSON value, a node message) copies the string or the numeric
   array it answers, and that copy is released after the same consumers.
 * A **map** releases the string a key held when the key is written over.
+* A **`FOR EACH`** over a map or a string walks keys or characters built for
+  it; they are released after the loop when its variable keeps none of them
+  (it is not stored, passed on to something that keeps it, or read after the
+  loop).
 
 All of this needs proof of exclusive ownership, so the analysis stands down
 whenever it cannot get it: a variable that is also a loop variable, a
@@ -1661,9 +1665,10 @@ older never-release behaviour, as does every variable in a program that uses
 the result of a `FUNC` that sometimes returns its parameter, or a read out of
 an array.
 
-What is still lost: the keys a `FOR EACH` walks over a map from the runtime
-library, a temporary handed to a `FUNC` whose parameter escapes, and arrays in
-general (an array a program builds is never released).
+What is still lost: a temporary handed to a `FUNC` whose parameter escapes,
+the values a runtime-library call hands back inside a `FOR` loop (a `DO` loop
+sweeps them each pass), and arrays in general (an array a program builds is
+never released).
 
 `JDB_NO_STROWN=1` in the environment compiles with the whole mechanism off,
 which is the first thing to try if a compiled program misbehaves in a way that

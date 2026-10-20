@@ -1,0 +1,62 @@
+' FOR EACH over a map that came from the runtime library (through a
+' channel) and over a string: the keys and characters stay valid wherever
+' the loop variable takes them - into an array, past the end of the loop,
+' into a FUNC that keeps them - in both backends.
+
+OPTION "EXPLICIT"
+
+DIM kept = []
+
+SUB KEEP(s)
+    kept = APPEND(kept, s)
+ENDSUB
+
+FUNC KEYLIST$(v) AS STRING
+    DIM out$ AS STRING = ""
+    DIM k AS STRING
+    FOR EACH k IN v
+        out$ = out$ + k + ";"
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+DIM failed AS INTEGER = 0
+DIM box = CHAN.OPEN(2)
+CHAN.SEND box, {"ALPHA": 1, "BETA": 2, "GAMMA": 3}
+DIM m = CHAN.RECV(box, 100)
+
+DIM i AS INTEGER
+FOR i = 1 TO 50
+    IF KEYLIST$(m) <> "ALPHA;BETA;GAMMA;" THEN failed = failed + 1
+NEXT i
+
+DIM names = []
+DIM key AS STRING = ""
+FOR EACH key IN m
+    names = APPEND(names, key)
+NEXT key
+DIM churn$ AS STRING = ""
+FOR i = 1 TO 200
+    churn$ = KEYLIST$(m) + STR$(i)
+NEXT i
+IF LEN(names) <> 3 ORELSE names[2] <> "GAMMA" THEN
+    PRINT "FAIL keys put into an array"
+    failed = failed + 1
+ENDIF
+IF key <> "GAMMA" THEN
+    PRINT "FAIL the loop variable after the loop: "; key
+    failed = failed + 1
+ENDIF
+
+DIM ch AS STRING = ""
+FOR EACH ch IN "xyz"
+    KEEP ch
+NEXT ch
+churn$ = KEYLIST$(m)
+IF LEN(kept) <> 3 ORELSE kept[0] <> "x" ORELSE kept[2] <> "z" THEN
+    PRINT "FAIL characters a SUB kept"
+    failed = failed + 1
+ENDIF
+
+IF failed > 0 THEN END 1
+PRINT "OK"

@@ -839,6 +839,7 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i32_type, i64_type, i32_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_foreach_begin", "__jdrt_foreach_begin", i64_type,
         {i8_ptr_type, i64_type, i32_type, i32_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdrt_foreach_end", "__jdrt_foreach_end", void_type, {i8_ptr_type, i64_type}, -1);
     reg("jdrt_foreach_key", "__jdrt_foreach_key", i32_type,
         {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_promote_handle", "__jdrt_promote_handle", i64_type,
@@ -4194,6 +4195,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     scan_owned_str_locals(program);
     scan_fresh_string_funcs(program);
     scan_param_escapes(program);
+    scan_foreach_release(program);
     // Pre-scan: declare all global variables used in top-level code
     // so that FUNC/SUB bodies can reference them
     // Pre-scan TYPE_DECL names so we can recognize DIM x AS TypeName
@@ -8982,6 +8984,18 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
 
     loop_stack.pop();
     LLVMPositionBuilderAtEnd(builder, end_bb);
+    if (!numeric && foreach_release.count(&stmt)) {
+        // The runtime library frees only what it built for this walk.
+        auto& fe = runtime_funcs["__jdrt_foreach_end"];
+        LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        LLVMValueRef ea[] = { rt, walk_bits };
+        LLVMBuildCall2(builder, fe.fn_type, fe.fn, ea, 2, "");
+        if (key_bits) {
+            LLVMValueRef ka[] = { rt, key_bits };
+            LLVMBuildCall2(builder, fe.fn_type, fe.fn, ka, 2, "");
+        }
+    }
 }
 
 // ── ENUM ────────────────────────────────────────────────────
@@ -16458,16 +16472,9 @@ bool LLVMCodegen::param_escapes_at(const std::string& fn, size_t i) const {
     return it == param_escapes.end() || i >= it->second.size() || it->second[i];
 }
 
-void LLVMCodegen::scan_param_escapes(const std::vector<StmtPtr>& program) {
-    if (std::getenv("JDB_NO_STROWN")) return;
-    std::vector<const Stmt*> fns;
-    for (auto& stmt : program)
-        if (stmt && (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB))
-            fns.push_back(stmt.get());
-    // An ASYNC body runs on another thread after the call has returned.
-    for (const Stmt* fn : fns)
-        param_escapes[fn->func_name] = std::vector<bool>(fn->params().size(), fn->is_async_func);
-
+// Can the string or array `p` holds outlive the statements in body? A bare
+// read is safe only where nothing keeps the pointer (see scan_param_escapes).
+bool LLVMCodegen::body_lets_escape(const std::vector<StmtPtr>& body, const std::string& p) {
     // Does `p` occur anywhere in e (a lambda capture included)?
     std::function<bool(const Expr&, const std::string&)> mentions =
         [&](const Expr& e, const std::string& p) -> bool {
@@ -16483,79 +16490,152 @@ void LLVMCodegen::scan_param_escapes(const std::vector<StmtPtr>& program) {
     // pointer: an operand, an index or member base, an argument of a
     // builtin that only reads it, or of a FUNC whose parameter does not
     // escape. Anything not recognised counts as escaping.
-    auto escapes = [&](const Stmt& fn, const std::string& p) -> bool {
-        bool esc = false;
-        auto is_p = [&](const Expr* e) {
-            return e && e->kind == ExprKind::VARIABLE && e->str_val == p;
-        };
-        std::function<void(const Expr&)> scan = [&](const Expr& e) {
-            if (esc) return;
-            switch (e.kind) {
-            case ExprKind::LITERAL_INT: case ExprKind::LITERAL_FLOAT:
-            case ExprKind::LITERAL_STRING: case ExprKind::LITERAL_BOOL:
-            case ExprKind::VARIABLE: case ExprKind::PLACEHOLDER_EXPR:
-                return;
-            case ExprKind::BINARY: case ExprKind::UNARY:
-            case ExprKind::INDEX: case ExprKind::MEMBER_ACCESS:
-                if (e.left && !is_p(e.left.get())) scan(*e.left);
-                if (e.right && !is_p(e.right.get())) scan(*e.right);
-                for (auto& a : e.args) if (a && !is_p(a.get())) scan(*a);
-                return;
-            case ExprKind::CALL: {
-                std::string up = e.func_name;
-                std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-                auto uit = param_escapes.find(e.func_name);
-                bool user = uit != param_escapes.end() ||
-                            user_functions.count(e.func_name) || user_functions.count(up);
-                for (size_t i = 0; i < e.args.size() && !esc; i++) {
-                    const Expr* a = e.args[i].get();
-                    if (!a) continue;
-                    if (!is_p(a)) { scan(*a); continue; }
-                    bool safe = user ? (uit != param_escapes.end() && i < uit->second.size() &&
-                                        !uit->second[i])
-                                     : builtin_reads_args(up);
-                    if (!safe) esc = true;
-                }
-                return;
-            }
-            default:
-                if (mentions(e, p)) esc = true;
-                return;
-            }
-        };
-        auto top = [&](const Expr* e, bool bare_escapes) {
-            if (!e || esc) return;
-            if (is_p(e)) { if (bare_escapes) esc = true; return; }
-            scan(*e);
-        };
-        std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
-            if (esc) return;
-            bool stores = s.kind == StmtKind::RETURN || s.kind == StmtKind::LET ||
-                          s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM ||
-                          s.kind == StmtKind::INDEX_ASSIGN || s.kind == StmtKind::REACT_ASSIGN ||
-                          s.kind == StmtKind::DESTRUCTURE;
-            top(s.expr.get(), stores);
-            for (auto& e : s.print_exprs) top(e.get(), false);
-            for (auto& e : s.index_chain) top(e.get(), false);
-            for (auto& e : s.ctor_args()) top(e.get(), true);
-            top(s.loop_cond.get(), false);
-            top(s.end_expr.get(), false);
-            top(s.step_expr.get(), false);
-            for (auto& b : s.branches) {
-                top(b.condition.get(), false);
-                for (auto& lab : b.case_labels) {
-                    top(lab.first.get(), false);
-                    top(lab.second.get(), false);
-                }
-                for (auto& x : b.body) if (x) walk(*x);
-            }
-            for (auto& b : s.body)           if (b) walk(*b);
-            for (auto& c : s.catch_body())   if (c) walk(*c);
-            for (auto& f : s.finally_body()) if (f) walk(*f);
-        };
-        for (auto& b : fn.body) if (b) walk(*b);
-        return esc;
+    bool esc = false;
+    auto is_p = [&](const Expr* e) {
+        return e && e->kind == ExprKind::VARIABLE && e->str_val == p;
     };
+    std::function<void(const Expr&)> scan = [&](const Expr& e) {
+        if (esc) return;
+        switch (e.kind) {
+        case ExprKind::LITERAL_INT: case ExprKind::LITERAL_FLOAT:
+        case ExprKind::LITERAL_STRING: case ExprKind::LITERAL_BOOL:
+        case ExprKind::VARIABLE: case ExprKind::PLACEHOLDER_EXPR:
+            return;
+        case ExprKind::BINARY: case ExprKind::UNARY:
+        case ExprKind::INDEX: case ExprKind::MEMBER_ACCESS:
+            if (e.left && !is_p(e.left.get())) scan(*e.left);
+            if (e.right && !is_p(e.right.get())) scan(*e.right);
+            for (auto& a : e.args) if (a && !is_p(a.get())) scan(*a);
+            return;
+        case ExprKind::CALL: {
+            std::string up = e.func_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            auto uit = param_escapes.find(e.func_name);
+            bool user = uit != param_escapes.end() ||
+                        user_functions.count(e.func_name) || user_functions.count(up);
+            for (size_t i = 0; i < e.args.size() && !esc; i++) {
+                const Expr* a = e.args[i].get();
+                if (!a) continue;
+                if (!is_p(a)) { scan(*a); continue; }
+                bool safe = user ? (uit != param_escapes.end() && i < uit->second.size() &&
+                                    !uit->second[i])
+                                 : builtin_reads_args(up);
+                if (!safe) esc = true;
+            }
+            return;
+        }
+        default:
+            if (mentions(e, p)) esc = true;
+            return;
+        }
+    };
+    auto top = [&](const Expr* e, bool bare_escapes) {
+        if (!e || esc) return;
+        if (is_p(e)) { if (bare_escapes) esc = true; return; }
+        scan(*e);
+    };
+    std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+        if (esc) return;
+        bool stores = s.kind == StmtKind::RETURN || s.kind == StmtKind::LET ||
+                      s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM ||
+                      s.kind == StmtKind::INDEX_ASSIGN || s.kind == StmtKind::REACT_ASSIGN ||
+                      s.kind == StmtKind::DESTRUCTURE;
+        top(s.expr.get(), stores);
+        for (auto& e : s.print_exprs) top(e.get(), false);
+        for (auto& e : s.index_chain) top(e.get(), false);
+        for (auto& e : s.ctor_args()) top(e.get(), true);
+        top(s.loop_cond.get(), false);
+        top(s.end_expr.get(), false);
+        top(s.step_expr.get(), false);
+        for (auto& b : s.branches) {
+            top(b.condition.get(), false);
+            for (auto& lab : b.case_labels) {
+                top(lab.first.get(), false);
+                top(lab.second.get(), false);
+            }
+            for (auto& x : b.body) if (x) walk(*x);
+        }
+        for (auto& b : s.body)           if (b) walk(*b);
+        for (auto& c : s.catch_body())   if (c) walk(*c);
+        for (auto& f : s.finally_body()) if (f) walk(*f);
+    };
+    for (auto& b : body) if (b) walk(*b);
+    return esc;
+}
+
+// A FOR EACH over a map or a string walks keys or characters the runtime
+// library built for it. They can go after the loop when its variables keep
+// none of them: not let escape in the body, and not read anywhere outside it
+// (after the loop a variable still holds the last one).
+void LLVMCodegen::scan_foreach_release(const std::vector<StmtPtr>& program) {
+    if (std::getenv("JDB_NO_STROWN")) return;
+    std::function<int(const Expr&, const std::string&)> count_expr =
+        [&](const Expr& e, const std::string& v) -> int {
+        int n = (e.kind == ExprKind::VARIABLE && e.str_val == v) ? 1 : 0;
+        for (auto& c : e.lambda_captures) if (c == v) n++;
+        if (e.left) n += count_expr(*e.left, v);
+        if (e.right) n += count_expr(*e.right, v);
+        for (auto& a : e.args) if (a) n += count_expr(*a, v);
+        return n;
+    };
+    std::function<int(const Stmt&, const std::string&)> count_stmt =
+        [&](const Stmt& s, const std::string& v) -> int {
+        int n = 0;
+        auto add = [&](const Expr* e) { if (e) n += count_expr(*e, v); };
+        add(s.expr.get());
+        add(s.loop_cond.get());
+        add(s.end_expr.get());
+        add(s.step_expr.get());
+        for (auto& e : s.print_exprs) add(e.get());
+        for (auto& e : s.index_chain) add(e.get());
+        for (auto& e : s.ctor_args()) add(e.get());
+        for (auto& b : s.branches) {
+            add(b.condition.get());
+            for (auto& lab : b.case_labels) { add(lab.first.get()); add(lab.second.get()); }
+            for (auto& x : b.body) if (x) n += count_stmt(*x, v);
+        }
+        for (auto& b : s.body)           if (b) n += count_stmt(*b, v);
+        for (auto& c : s.catch_body())   if (c) n += count_stmt(*c, v);
+        for (auto& f : s.finally_body()) if (f) n += count_stmt(*f, v);
+        return n;
+    };
+    auto count_all = [&](const std::vector<StmtPtr>& stmts, const std::string& v) {
+        int n = 0;
+        for (auto& s : stmts) if (s) n += count_stmt(*s, v);
+        return n;
+    };
+    auto keeps_nothing = [&](const Stmt& loop, const std::string& v,
+                             const std::vector<StmtPtr>& scope) {
+        if (v.empty()) return true;
+        return count_all(scope, v) == count_all(loop.body, v) && !body_lets_escape(loop.body, v);
+    };
+    std::function<void(const Stmt&, const std::vector<StmtPtr>&)> visit =
+        [&](const Stmt& s, const std::vector<StmtPtr>& scope) {
+        if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
+            for (auto& b : s.body) if (b) visit(*b, s.body);
+            return;
+        }
+        if (s.kind == StmtKind::FOR_EACH &&
+            keeps_nothing(s, s.var_name, scope) && keeps_nothing(s, s.label, scope))
+            foreach_release.insert(&s);
+        for (auto& b : s.branches) for (auto& x : b.body) if (x) visit(*x, scope);
+        for (auto& b : s.body)           if (b) visit(*b, scope);
+        for (auto& c : s.catch_body())   if (c) visit(*c, scope);
+        for (auto& f : s.finally_body()) if (f) visit(*f, scope);
+    };
+    // A loop at the top level has a global variable, which any FUNC may read.
+    for (auto& s : program) if (s) visit(*s, program);
+}
+
+void LLVMCodegen::scan_param_escapes(const std::vector<StmtPtr>& program) {
+    if (std::getenv("JDB_NO_STROWN")) return;
+    std::vector<const Stmt*> fns;
+    for (auto& stmt : program)
+        if (stmt && (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB))
+            fns.push_back(stmt.get());
+    // An ASYNC body runs on another thread after the call has returned.
+    for (const Stmt* fn : fns)
+        param_escapes[fn->func_name] = std::vector<bool>(fn->params().size(), fn->is_async_func);
 
     // Starts from "nothing escapes" and only ever turns entries on, so it
     // ends; stopping early would leave an optimistic answer standing.
@@ -16566,7 +16646,7 @@ void LLVMCodegen::scan_param_escapes(const std::vector<StmtPtr>& program) {
             auto& esc = param_escapes[fn->func_name];
             for (size_t pi = 0; pi < esc.size(); pi++) {
                 if (esc[pi]) continue;
-                if (escapes(*fn, fn->params()[pi].name)) {
+                if (body_lets_escape(fn->body, fn->params()[pi].name)) {
                     esc[pi] = true;
                     changed = true;
                 }
