@@ -1279,7 +1279,7 @@ NEXT
     * `ON "KEYUP"`: `key`, `scancode`, `keycode`.
     * `ON "MOUSEDOWN"` / `ON "MOUSEUP"`: `button` (1 left, 2 middle, 3 right), `x`, `y` in the same logical coordinates as `GFX.MOUSEX` and `GFX.MOUSEY`.
     * `ON "MOUSEMOVE"`: `x`, `y`, also logical coordinates.
-    * `ON "QUIT"`: the array is empty.
+    * `ON "QUIT"`: the array is empty. When `SCREENFLIP` sees the close it shuts the window, and the handler runs before the statement after `SCREENFLIP`, so a loop that checks a flag set there stops before it draws into the closed window. `SOUND` keeps playing.
     * Without a window, `ON "KEYDOWN"` reads the console: the map has `key` (the character) and `scancode` (its code).
 * **`RAISEEVENT event_name$, [event_data]`**: Triggers a custom event, passing optional data to the registered event handler.
 

@@ -156,6 +156,9 @@ void gfx_push_event(const SDL_Event& ev) {
     g_pending_sdl_events.push_back(copy);
 }
 bool gfx_has_pending_events() { return !g_pending_sdl_events.empty(); }
+// Set when SCREENFLIP closed the window on a quit event, so the VM runs
+// ON "QUIT" at the next instruction instead of at its periodic poll.
+bool g_gfx_closed_by_quit = false;
 std::vector<SDL_Event> gfx_drain_pending_events() {
     std::vector<SDL_Event> out;
     out.swap(g_pending_sdl_events);
@@ -668,7 +671,8 @@ static void cleanup_graphics() {
 
     if (g_renderer) { SDL_DestroyRenderer(g_renderer); g_renderer = nullptr; }
     if (g_window) { SDL_DestroyWindow(g_window); g_window = nullptr; }
-    if (g_sdl_init) { SDL_Quit(); g_sdl_init = false; }
+    // Only what SCREEN started: SOUND may still hold the audio subsystem.
+    if (g_sdl_init) { SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS); g_sdl_init = false; }
 }
 
 // ── Register all graphics/audio builtins ────────────────────────
@@ -859,6 +863,7 @@ void register_graphics_builtins(VM& vm) {
 #endif
             if (ev.type == SDL_EVENT_QUIT) {
                 gfx_push_event(ev); // also let event_poll dispatch ON QUIT
+                g_gfx_closed_by_quit = true;
                 cleanup_graphics();
                 return Value::make_none();
             }

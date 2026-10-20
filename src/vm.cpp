@@ -662,7 +662,24 @@ bool jdb_no_vectorize(const std::string& name) {
 // Invoke an already-resolved native: a direct call, or element-wise
 // auto-vectorisation when an arg is an array and no_vec is false. Shared by
 // OpCode::CALL_NATIVE, the slow CALL path, and call_function.
+// After a native that shut the window on a quit event, the next
+// instruction polls events, so ON "QUIT" runs before the program draws
+// into the closed window.
+struct QuitDispatch {
+    int& counter;
+    ~QuitDispatch() {
+#ifdef GFX
+        extern bool g_gfx_closed_by_quit;
+        if (g_gfx_closed_by_quit) {
+            g_gfx_closed_by_quit = false;
+            counter = 199;
+        }
+#endif
+    }
+};
+
 Value VM::invoke_native(const NativeFunc& fn, const std::vector<Value>& args, bool no_vec) {
+    QuitDispatch quit_dispatch{tick_counter};
     bool has_arr = false;
     if (!no_vec) {
         for (auto& a : args) if (a.type == ValueType::ARRAY) { has_arr = true; break; }
@@ -1903,6 +1920,7 @@ void VM::run() {
                     }
                 } else {
                     try {
+                        QuitDispatch quit_dispatch{tick_counter};
                         push(native_it->fn(args));
                     } catch (const jdError&) {
                         throw;
@@ -4136,7 +4154,8 @@ void VM::event_poll() {
 #else
     bool any_window = gfx_is_active();
 #endif
-    if (any_window) {
+    // A window that SCREENFLIP shut on a quit event leaves that event queued.
+    if (any_window || gfx_has_pending_events()) {
         // Drain the shared event queue that SCREENFLIP and gfx_pump_events
         // already populated. We must NOT call SDL_PollEvent here - that
         // would race with SCREENFLIP's loop and whichever runs first eats
