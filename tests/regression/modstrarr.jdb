@@ -1,0 +1,28 @@
+' modstrarr.jdb - helper of test_module_str_array.jdb: a module string
+' array that grows by APPEND and is replaced from a map value.
+EXPORT MODULE MODSTRARR
+
+DIM names$ = [""]
+DIM n AS INTEGER = 0
+
+EXPORT SUB ADD(s$)
+    IF n = 0 THEN
+        names$[0] = s$
+    ELSE
+        names$ = APPEND(names$, s$)
+    ENDIF
+    n = n + 1
+ENDSUB
+
+EXPORT SUB TAKE(mp)
+    names$ = mp{"NAMES"}
+    n = LEN(names$)
+ENDSUB
+
+EXPORT FUNC COUNT_OF() AS INTEGER
+    RETURN LEN(names$)
+ENDFUNC
+
+EXPORT FUNC NAME_AT$(i AS INTEGER) AS STRING
+    RETURN names$[i]
+ENDFUNC

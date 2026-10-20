@@ -2422,6 +2422,57 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         rec(body);
         return returns_str;
     };
+    // A name ending in $ made the function string-returning in Phase 1; one
+    // whose every RETURN answers SPLIT, LINES, WORDS or CHARS, or a local
+    // built from those, an array literal or APPEND, returns that string
+    // array instead.
+    auto makes_str_array = [](const Expr& e) -> bool {
+        if (e.kind == ExprKind::ARRAY_LITERAL) return true;
+        if (e.kind != ExprKind::CALL) return false;
+        std::string u = e.func_name;
+        std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+        return u == "SPLIT" || u == "LINES" || u == "WORDS" || u == "CHARS" || u == "APPEND";
+    };
+    std::function<void(const Stmt&, std::unordered_set<std::string>&, std::unordered_set<std::string>&)>
+        collect_array_locals = [&](const Stmt& s, std::unordered_set<std::string>& arrays,
+                                   std::unordered_set<std::string>& others) {
+        if ((s.kind == StmtKind::DIM || s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) &&
+            s.expr && !s.var_name.empty())
+            (makes_str_array(*s.expr) ? arrays : others).insert(s.var_name);
+        for (auto& b : s.body) if (b) collect_array_locals(*b, arrays, others);
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b) collect_array_locals(*b, arrays, others);
+        for (auto& c : s.catch_body())   if (c) collect_array_locals(*c, arrays, others);
+        for (auto& f : s.finally_body()) if (f) collect_array_locals(*f, arrays, others);
+    };
+    std::function<void(const Stmt&, const std::unordered_set<std::string>&, bool&, bool&)> scan_split_returns =
+        [&](const Stmt& s, const std::unordered_set<std::string>& arrays, bool& any, bool& all) {
+        if (s.kind == StmtKind::RETURN && s.expr) {
+            any = true;
+            bool split = (s.expr->kind == ExprKind::CALL && makes_str_array(*s.expr)) ||
+                         (s.expr->kind == ExprKind::VARIABLE && arrays.count(s.expr->str_val));
+            if (!split) all = false;
+        }
+        for (auto& b : s.body) if (b) scan_split_returns(*b, arrays, any, all);
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b) scan_split_returns(*b, arrays, any, all);
+        for (auto& c : s.catch_body())   if (c) scan_split_returns(*c, arrays, any, all);
+        for (auto& f : s.finally_body()) if (f) scan_split_returns(*f, arrays, any, all);
+    };
+    for (auto& [name, decl] : decls) {
+        if (!decl.stmt || decl.return_tag != JD_TAG_STR || name.empty() || name.back() != '$' ||
+            decl.stmt->return_type != VarType::NONE)
+            continue;
+        std::unordered_set<std::string> arrays, others;
+        collect_array_locals(*decl.stmt, arrays, others);
+        for (auto& o : others) arrays.erase(o);
+        bool any = false, all = true;
+        scan_split_returns(*decl.stmt, arrays, any, all);
+        if (any && all) {
+            decl.return_tag = JD_TAG_ARR;
+            decl.returns_string_array = true;
+        }
+    }
     bool sa_changed = true;
     int sa_guard = 0;
     while (sa_changed && sa_guard++ < 4) {
@@ -7425,7 +7476,12 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     }
     if (rhs.tag == JD_TAG_ARR) {
         VarInfo* vi = dim_slot();
-        if (vi) {
+        if (vi && vi->tag == JD_TAG_RUNTIME && vi->runtime_tag_alloca) {
+            // A slot that later takes other kinds (a map field, a call's
+            // answer) keeps reading its tag, so the array's tag goes there too.
+            LLVMBuildStore(builder, LLVMBuildPtrToInt(builder, rhs.val, i64_type, "arr2i"), vi->alloca_val);
+            LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_ARR, 0), vi->runtime_tag_alloca);
+        } else if (vi) {
             LLVMBuildStore(builder, rhs.val, vi->alloca_val);
             vi->tag = JD_TAG_ARR;
         } else {

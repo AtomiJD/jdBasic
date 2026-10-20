@@ -1,0 +1,26 @@
+' A module string array that one SUB grows by APPEND and another replaces
+' from a map value keeps working in both backends.
+
+IMPORT MODSTRARR
+
+DIM failed AS INTEGER = 0
+MODSTRARR.ADD "a"
+MODSTRARR.ADD "b"
+MODSTRARR.ADD "c"
+IF MODSTRARR.COUNT_OF() <> 3 ORELSE MODSTRARR.NAME_AT$(2) <> "c" THEN
+    PRINT "FAIL after APPEND"
+    failed = failed + 1
+ENDIF
+DIM snap = {"NAMES": ["x", "y"]}
+MODSTRARR.TAKE snap
+IF MODSTRARR.COUNT_OF() <> 2 ORELSE MODSTRARR.NAME_AT$(1) <> "y" THEN
+    PRINT "FAIL after TAKE"
+    failed = failed + 1
+ENDIF
+MODSTRARR.ADD "z"
+IF MODSTRARR.COUNT_OF() <> 3 ORELSE MODSTRARR.NAME_AT$(2) <> "z" THEN
+    PRINT "FAIL after APPEND to the taken array"
+    failed = failed + 1
+ENDIF
+IF failed > 0 THEN END 1
+PRINT "OK"

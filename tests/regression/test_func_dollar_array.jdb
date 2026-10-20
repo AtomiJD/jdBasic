@@ -1,0 +1,30 @@
+' A FUNC whose name ends in $ and answers SPLIT returns the string array,
+' in the interpreter and compiled alike.
+
+OPTION "EXPLICIT"
+
+FUNC BARS$(pat$)
+    DIM inner$ AS STRING = MID$(pat$, 2, LEN(pat$) - 4)
+    RETURN SPLIT(inner$, "] [")
+ENDFUNC
+
+FUNC WORDS$(s$)
+    RETURN SPLIT(s$, " ")
+ENDFUNC
+
+DIM failed AS INTEGER = 0
+DIM bars$ = BARS$("<[c5 ~ e5] [c5 ~ d5] [b4 ~ a4]>")
+IF LEN(bars$) <> 3 THEN
+    PRINT "FAIL bars: "; LEN(bars$)
+    failed = failed + 1
+ELSEIF bars$[2] <> "b4 ~ a4" THEN
+    PRINT "FAIL bar 2: "; bars$[2]
+    failed = failed + 1
+ENDIF
+DIM steps$ = WORDS$(bars$[0])
+IF LEN(steps$) <> 3 ORELSE steps$[2] <> "e5" THEN
+    PRINT "FAIL steps"
+    failed = failed + 1
+ENDIF
+IF failed > 0 THEN END 1
+PRINT "OK"
