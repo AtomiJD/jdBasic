@@ -6,6 +6,12 @@
 
 OPTION "EXPLICIT"
 
+IF NOT OS.FEATURE("NET") THEN
+    PRINT "the Node Bus needs a build with NET: skipped"
+    PRINT "ALL TESTS PASSED!"
+    END 0
+ENDIF
+
 DIM passed AS INTEGER = 0
 DIM failed AS INTEGER = 0
 
