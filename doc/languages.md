@@ -1637,21 +1637,33 @@ The interpreter hands its strings to C++ and forgets about them. A compiled
 program has no such collector, so the backend releases what it can prove is
 safe to release:
 
-* A **top-level string variable** owns what it holds, and the previous buffer
-  is released when it is overwritten. This is what keeps a loop like
-  `s$ = "row " + STR$(i)` at a flat memory size.
-* A **temporary** a string expression just built is released once the
-  surrounding concatenation has copied out of it.
+* A **string variable**, at the top level or a `$` local of a `FUNC`, owns
+  what it holds, and the previous buffer is released when it is overwritten
+  (by an assignment or by a `DIM` that runs again) or when the `FUNC` returns.
+  This is what keeps a loop like `s$ = "row " + STR$(i)` at a flat memory size.
+* A **temporary** a string expression just built is released once its
+  consumer is done with it: a concatenation, a builtin that only reads its
+  arguments (`LEN`, `INSTR`, `LEFT$` and the like), any builtin the runtime
+  library serves (it copies its arguments), a map store (it copies), and a
+  `FUNC` whose parameter does not outlive the call. A parameter outlives it
+  when the body returns it, stores it, assigns it to another name or hands it
+  on to somewhere that keeps it.
+* A **field read** out of a map that came from the runtime library (a
+  `CHAN.RECV`, a JSON value, a node message) copies the string or the numeric
+  array it answers, and that copy is released after the same consumers.
+* A **map** releases the string a key held when the key is written over.
 
-Both need proof of exclusive ownership, so the analysis stands down whenever
-it cannot get it: a variable that is also a loop variable, a parameter, a
-destructuring target or an indexed assignment target keeps the older
-never-release behaviour, as does every variable in a program that uses `ASYNC`.
-The same goes for a value that some other slot may still hold, such as the
-result of a user `FUNC` or a read out of an array.
+All of this needs proof of exclusive ownership, so the analysis stands down
+whenever it cannot get it: a variable that is also a loop variable, a
+parameter, a destructuring target or an indexed assignment target keeps the
+older never-release behaviour, as does every variable in a program that uses
+`ASYNC`. The same goes for a value that some other slot may still hold, such as
+the result of a `FUNC` that sometimes returns its parameter, or a read out of
+an array.
 
-What is still lost: a temporary consumed by something other than a
-concatenation, and every string a `FUNC` allocates in a local.
+What is still lost: the keys a `FOR EACH` walks over a map from the runtime
+library, a temporary handed to a `FUNC` whose parameter escapes, and arrays in
+general (an array a program builds is never released).
 
 `JDB_NO_STROWN=1` in the environment compiles with the whole mechanism off,
 which is the first thing to try if a compiled program misbehaves in a way that
