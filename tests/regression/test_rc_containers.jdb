@@ -1,0 +1,161 @@
+' Arrays and maps a compiled program frees once nothing counts them stay
+' whole wherever something still holds them: a FOR EACH over a variable the
+' body writes over, an argument whose variable a callee writes over, a
+' parameter written over inside the callee, a cell, a map field, an alias,
+' a FUNC's answer, a closure's capture. Every check runs past the end of
+' loop passes, where the counts free what nobody holds.
+
+OPTION "EXPLICIT"
+
+DIM failed AS INTEGER = 0
+DIM g = [1, 2, 3]
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC SwapG()
+    DIM k AS INTEGER
+    FOR k = 1 TO 70
+        g = [k, k, k]
+    NEXT k
+    RETURN 5
+ENDFUNC
+
+FUNC Combine(a, b)
+    RETURN SUM(a) + b
+ENDFUNC
+
+FUNC SumAfter(a)
+    DIM keep = a
+    DIM j AS INTEGER
+    FOR j = 1 TO 70
+        a = [j]
+    NEXT j
+    RETURN SUM(keep)
+ENDFUNC
+
+FUNC MakeRow(n)
+    DIM r = [n, n + 1]
+    RETURN r
+ENDFUNC
+
+FUNC Build(n)
+    DIM last = [0]
+    DIM j AS INTEGER
+    FOR j = 1 TO n
+        last = [j, j * 10]
+    NEXT j
+    RETURN last
+ENDFUNC
+
+FUNC MakeSummer()
+    DIM base = [1, 2, 3]
+    RETURN LAMBDA USE(base) x -> x + SUM(base)
+ENDFUNC
+
+DIM i AS INTEGER
+DIM j AS INTEGER
+
+' An argument read before a callee writes its variable over.
+DIM combined AS DOUBLE = 0
+FOR i = 1 TO 100
+    g = [1, 2, 3]
+    combined = combined + Combine(g, SwapG())
+NEXT i
+Check(combined = 1100, "argument kept through a callee that writes the global")
+
+' A FOR EACH over a variable the body writes over.
+DIM src = [1, 2, 3, 4, 5]
+DIM acc AS DOUBLE = 0
+FOR EACH v IN src
+    FOR j = 1 TO 70
+        src = [0]
+    NEXT j
+    acc = acc + v
+NEXT
+Check(acc = 15, "FOR EACH walk over a variable written in the body")
+
+' A parameter written over inside the callee.
+DIM after AS DOUBLE = 0
+FOR i = 1 TO 100
+    after = after + SumAfter([1, 2, 3])
+NEXT i
+Check(after = 600, "parameter written over in the callee")
+
+' Rows kept in cells, a map field and a pushed element.
+DIM grid = []
+DIM slots = [0, 0, 0, 0, 0]
+DIM byname = {}
+DIM row = []
+FOR i = 1 TO 200
+    row = [i, i * 2]
+    PUSH(grid, row)
+    IF i <= 5 THEN slots[i - 1] = row
+    byname{"r" + STR$(i)} = row
+NEXT i
+DIM total AS DOUBLE = 0
+FOR i = 0 TO 199
+    DIM cell = grid[i]
+    total = total + SUM(cell)
+NEXT i
+Check(total = 60300, "rows pushed into an array")
+DIM s3 = slots[2]
+Check(SUM(s3) = 9, "row in an indexed cell")
+DIM f77 = byname{"r77"}
+Check(SUM(f77) = 231, "row in a map field")
+
+' An alias kept while the original is written over.
+DIM x = [1, 2]
+DIM y = x
+FOR i = 1 TO 100
+    x = [i]
+NEXT i
+Check(SUM(y) = 3, "alias of an array written over")
+
+' A map literal kept from one pass.
+DIM env = {}
+DIM kept = {}
+FOR i = 1 TO 100
+    env = {"T": i, "NAME": "clock"}
+    IF i = 50 THEN kept = env
+NEXT i
+Check(kept{"T"} = 50, "map literal kept from pass 50")
+Check(kept{"NAME"} = "clock", "string field of the kept map")
+Check(env{"T"} = 100, "last map literal")
+
+' FUNC answers: kept in a list and in a variable.
+DIM made = []
+DIM latest = []
+FOR i = 1 TO 100
+    DIM got = MakeRow(i)
+    PUSH(made, got)
+    latest = MakeRow(i * 2)
+NEXT i
+DIM m10 = made[9]
+Check(SUM(m10) = 21, "FUNC answer pushed")
+Check(SUM(latest) = 401, "FUNC answer in a variable")
+DIM built = Build(80)
+Check(SUM(built) = 880, "FUNC answer made inside its own loop")
+
+' A closure's capture outlives the FUNC that made it.
+DIM summer = MakeSummer()
+FOR i = 1 TO 100
+    x = [i, i]
+NEXT i
+Check(summer(10) = 16, "captured array")
+
+' SPLIT answers kept and dropped.
+DIM parts = SPLIT("a,b", ",")
+DIM keepparts = parts
+FOR i = 1 TO 100
+    parts = SPLIT("x,y," + STR$(i), ",")
+NEXT i
+Check(LEN(keepparts) = 2, "SPLIT answer kept")
+Check(parts[2] = "100", "last SPLIT answer")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

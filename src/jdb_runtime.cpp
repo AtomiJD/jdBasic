@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <vector>
 #include <atomic>
+#include <thread>
 
 #include "jdb_tags.h"
 #include "jdb_encoding.h"
@@ -1146,6 +1147,27 @@ JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
     keep_kind(2, tag == JD_TAG_STR);
     keep_kind(1, tag == JD_TAG_ARR || tag == JD_TAG_STR);
     keep_kind(4, tag == JD_TAG_BOOL);
+    return r;
+}
+
+// An array literal is built one cell at a time; each step's array belongs
+// to nobody but the next step, which frees it.
+static void array_free_shallow(JdbArray* a) {
+    if (!a) return;
+    free(a->data);
+    free(a->elem_tags);
+    free(a);
+}
+
+JdbArray* jdb_array_lit_append(JdbArray* arr, double val) {
+    JdbArray* r = jdb_array_append(arr, val);
+    array_free_shallow(arr);
+    return r;
+}
+
+JdbArray* jdb_array_lit_append_tagged(JdbArray* arr, double val, int32_t tag) {
+    JdbArray* r = jdb_array_append_tagged(arr, val, tag);
+    array_free_shallow(arr);
     return r;
 }
 
@@ -2286,8 +2308,10 @@ int64_t jdb_map_delete(JdbMap* m, const char* key) {
 // Frees a map the program owns outright, with its keys, its strings and the
 // maps nested in it. Arrays and VM handles in its cells are not followed:
 // the codegen only hands over maps that hold none.
+static void rc_forget(const void* p);
 void jdb_map_free_tree(JdbMap* m) {
     if (!m) return;
+    rc_forget(m);
     for (int64_t i = 0; i < m->count; i++) {
         free(m->keys[i]);
         map_drop_cell_str(m->tags[i], m->values[i]);
@@ -2300,6 +2324,231 @@ void jdb_map_free_tree(JdbMap* m) {
     free(m->values);
     free(m->tags);
     free(m);
+}
+
+// ── Reference counts for arrays and maps ─────────────────────
+//
+// A container the compiled code made (a literal, an array the bridge built)
+// is registered here with a count of zero and put in the pool. A variable
+// that stores it counts one; overwriting the variable, or the end of the
+// FUNC that owns it, takes one away. At the end of a loop pass the pool
+// frees what was made inside the pass and nobody counts. A container that
+// went into a cell, a closure or a builtin that keeps its arguments is
+// pinned and never freed, since those holders do not count.
+//
+// Only pointers in the registry are ever freed, so a slot whose bits are a
+// number, a VM handle or a container this file did not register is passed
+// over. A count that reaches zero from a global slot waits for the end of a
+// pass of a loop in the main program, where no expression is half done; one
+// from a local slot is freed at the end of the current pass.
+//
+// Everything here runs on the thread that first used it. A callback the VM
+// runs on another thread counts nothing and frees nothing.
+
+namespace {
+
+struct RcEntry {
+    uintptr_t key;       // 0 = empty, 1 = deleted
+    uint64_t gen;
+    int32_t rc;
+    uint8_t kind;        // JD_TAG_ARR or JD_TAG_NATIVE_MAP
+    uint8_t pinned;
+};
+
+struct RcPoolItem { uintptr_t key; uint64_t gen; };
+
+struct RcState {
+    RcEntry* slots = nullptr;
+    size_t cap = 0;      // power of two
+    size_t used = 0;     // live + deleted
+    size_t live = 0;
+    uint64_t next_gen = 1;
+    std::vector<RcPoolItem> pool;
+    std::vector<RcPoolItem> zombies;
+    bool init = false;
+    bool off = false;
+    std::thread::id owner{};
+};
+
+}
+
+static RcState g_rc;
+
+static inline std::thread::id rc_this_thread() { return std::this_thread::get_id(); }
+
+static inline size_t rc_hash(uintptr_t k) {
+    k ^= k >> 33; k *= 0xff51afd7ed558ccdULL; k ^= k >> 33;
+    return (size_t)k;
+}
+
+static bool rc_ready() {
+    if (!g_rc.init) {
+        g_rc.init = true;
+        g_rc.off = std::getenv("JDB_RC_OFF") != nullptr;
+        g_rc.owner = rc_this_thread();
+    }
+    return !g_rc.off && g_rc.owner == rc_this_thread();
+}
+
+static RcEntry* rc_find(uintptr_t k) {
+    if (!g_rc.cap || k < 2) return nullptr;
+    size_t mask = g_rc.cap - 1;
+    for (size_t i = rc_hash(k) & mask;; i = (i + 1) & mask) {
+        RcEntry& e = g_rc.slots[i];
+        if (e.key == k) return &e;
+        if (e.key == 0) return nullptr;
+    }
+}
+
+static void rc_rehash(size_t cap) {
+    RcEntry* old = g_rc.slots;
+    size_t old_cap = g_rc.cap;
+    g_rc.slots = (RcEntry*)calloc(cap, sizeof(RcEntry));
+    g_rc.cap = cap;
+    g_rc.used = g_rc.live;
+    size_t mask = cap - 1;
+    for (size_t j = 0; j < old_cap; j++) {
+        if (old[j].key < 2) continue;
+        size_t i = rc_hash(old[j].key) & mask;
+        while (g_rc.slots[i].key != 0) i = (i + 1) & mask;
+        g_rc.slots[i] = old[j];
+    }
+    free(old);
+}
+
+static RcEntry* rc_insert(uintptr_t k) {
+    if ((g_rc.used + 1) * 2 > g_rc.cap)
+        rc_rehash(g_rc.cap ? (g_rc.live * 4 > g_rc.cap ? g_rc.cap * 2 : g_rc.cap) : 1024);
+    size_t mask = g_rc.cap - 1;
+    RcEntry* tomb = nullptr;
+    for (size_t i = rc_hash(k) & mask;; i = (i + 1) & mask) {
+        RcEntry& e = g_rc.slots[i];
+        if (e.key == 1 && !tomb) tomb = &e;
+        if (e.key == 0) {
+            RcEntry* at = tomb ? tomb : &e;
+            if (!tomb) g_rc.used++;
+            at->key = k;
+            g_rc.live++;
+            return at;
+        }
+    }
+}
+
+// JDB_RC_POISON=1 overwrites what is freed, so a holder the counts missed
+// reads garbage at once instead of the old values that freed memory keeps.
+static bool rc_poison() {
+    static int on = -1;
+    if (on < 0) on = std::getenv("JDB_RC_POISON") ? 1 : 0;
+    return on == 1;
+}
+
+static void rc_free_container(uintptr_t k, uint8_t kind) {
+    if (kind == JD_TAG_ARR) {
+        JdbArray* a = (JdbArray*)k;
+        if (rc_poison()) {
+            if (a->data) memset(a->data, 0xDD, (size_t)a->capacity * sizeof(double));
+            a->length = 0x7DDDDDDD;
+            a->data = nullptr;
+            return;
+        }
+        free(a->data);
+        free(a->elem_tags);
+        free(a);
+    } else {
+        JdbMap* m = (JdbMap*)k;
+        if (rc_poison()) {
+            for (int64_t i = 0; i < m->count; i++) {
+                m->values[i] = 0;
+                if (m->keys[i]) m->keys[i][0] = '\x7f';
+            }
+            m->count = 0;
+            return;
+        }
+        for (int64_t i = 0; i < m->count; i++) {
+            free(m->keys[i]);
+            map_drop_cell_str(m->tags[i], m->values[i]);
+        }
+        free(m->keys);
+        free(m->values);
+        free(m->tags);
+        free(m);
+    }
+}
+
+static void rc_remove(RcEntry* e) {
+    e->key = 1;
+    g_rc.live--;
+}
+
+// Forgets a container that is freed by other means.
+static void rc_forget(const void* p) {
+    if (!g_rc.cap) return;
+    if (RcEntry* e = rc_find((uintptr_t)p)) rc_remove(e);
+}
+
+extern "C" void* jdb_rc_new(void* p, int32_t kind) {
+    if (!p || !rc_ready()) return p;
+    uintptr_t k = (uintptr_t)p;
+    if (rc_find(k)) return p;
+    RcEntry* e = rc_insert(k);
+    e->gen = g_rc.next_gen++;
+    e->rc = 0;
+    e->kind = (uint8_t)kind;
+    e->pinned = 0;
+    g_rc.pool.push_back({ k, e->gen });
+    return p;
+}
+
+extern "C" void jdb_rc_pin(int64_t bits) {
+    if (!g_rc.cap || !rc_ready()) return;
+    if (RcEntry* e = rc_find((uintptr_t)bits)) e->pinned = 1;
+}
+
+extern "C" void jdb_rc_retain(int64_t bits) {
+    if (!g_rc.cap || !rc_ready()) return;
+    if (RcEntry* e = rc_find((uintptr_t)bits)) e->rc++;
+}
+
+extern "C" void jdb_rc_release(int64_t bits, int32_t global) {
+    if (!g_rc.cap || !rc_ready()) return;
+    RcEntry* e = rc_find((uintptr_t)bits);
+    if (!e || e->rc <= 0) return;
+    if (--e->rc == 0 && !e->pinned)
+        (global ? g_rc.zombies : g_rc.pool).push_back({ e->key, e->gen });
+}
+
+// The store of a slot: the new value counts before the old one stops
+// counting, so `a = a` keeps what a holds.
+extern "C" void jdb_rc_assign(int64_t old_bits, int64_t new_bits, int32_t global) {
+    if (old_bits == new_bits) return;
+    jdb_rc_retain(new_bits);
+    jdb_rc_release(old_bits, global);
+}
+
+extern "C" int64_t jdb_rc_mark(void) {
+    return (int64_t)g_rc.pool.size();
+}
+
+static void rc_sweep(std::vector<RcPoolItem>& list, size_t from) {
+    for (size_t i = from; i < list.size(); i++) {
+        RcEntry* e = rc_find(list[i].key);
+        if (!e || e->gen != list[i].gen || e->rc != 0 || e->pinned) continue;
+        uint8_t kind = e->kind;
+        rc_remove(e);
+        rc_free_container(list[i].key, kind);
+    }
+    list.resize(from);
+}
+
+// The end of a loop pass: frees what the pass made or let go of and nobody
+// counts. In a loop of the main program the containers global slots let go
+// of go too.
+extern "C" void jdb_rc_drain(int64_t mark, int32_t main_level) {
+    size_t from = mark < 0 ? 0 : (size_t)mark;
+    if (from >= g_rc.pool.size() && (!main_level || g_rc.zombies.empty())) return;
+    if (!g_rc.cap || !rc_ready()) return;
+    if (from < g_rc.pool.size()) rc_sweep(g_rc.pool, from);
+    if (main_level && !g_rc.zombies.empty()) rc_sweep(g_rc.zombies, 0);
 }
 
 // Number of keys in a map.

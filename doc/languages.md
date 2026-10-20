@@ -1674,14 +1674,32 @@ older never-release behaviour, as does every variable in a program that uses
 the result of a `FUNC` that sometimes returns its parameter, or a read out of
 an array.
 
-What is still lost: a temporary handed to a `FUNC` whose parameter escapes,
-a map literal assigned to a variable (`m = {"T": t}` in a loop keeps every
-earlier map), and arrays in general (an array a program builds is never
-released).
+**Arrays and maps** are counted. An array or map literal, and an array a
+runtime-library call answers (`SPLIT`, `MAP.KEYS` and the like), starts with
+a count of zero. Each variable that stores it counts one, a FUNC parameter
+counts one for the call, a `FOR EACH` counts the array it walks. Overwriting
+the variable, or the end of the FUNC that owns it, takes the count away
+again. At the end of a loop pass, the arrays and maps that pass made or let
+go of and that nothing counts any more are freed: `row = [i, i + 1]` or
+`env = {"T": i}` in a loop stays at a flat size. Three kinds of holder do
+not count, so whatever reaches them is kept for good instead: a cell of an
+array or a map (`grid[i] = row`, `PUSH(list, row)`, `m{"k"} = row`, a
+literal inside a literal), a builtin that does more than read its arguments,
+and the captures of a `LAMBDA USE(...)`. What a global variable lets go of
+waits for the end of a pass of a loop at the top level of the program, and
+so does what a parameter lets go of. A program with an `ASYNC FUNC` or an
+HTTP handler counts nothing, since another thread reads its containers.
 
-`JDB_NO_STROWN=1` in the environment compiles with the whole mechanism off,
-which is the first thing to try if a compiled program misbehaves in a way that
-smells like memory.
+What is still lost: a string temporary handed to a `FUNC` whose parameter
+escapes, the strings in the cells of an array that is freed, and every
+container that went into a cell.
+
+`JDB_NO_STROWN=1` in the environment compiles with the string mechanism off
+and `JDB_NO_RC=1` with the counts off, which is the first thing to try if a
+compiled program misbehaves in a way that smells like memory. Running a
+compiled program with `JDB_RC_POISON=1` makes the counts overwrite what they
+free instead of handing it back, so a holder they missed reads garbage at
+once.
 
 `SYS.HEAP()` answers how many bytes the C heap holds for the process right
 now, in both backends. Run a piece of work N times, read it, run it 2N more

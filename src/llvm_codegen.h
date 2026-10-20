@@ -418,6 +418,9 @@ private:
         // array it answers was allocated for this read alone (a copy out of
         // a VM object). drop_read_temp releases it after a reading consumer.
         LLVMValueRef fresh_ptr = nullptr;
+        // An array or map this call built for its caller alone (the bridge
+        // copies every answer); the caller registers it with the counts.
+        bool fresh_container = false;
     };
     // adopt_vm_handle for a value that may be a VM handle only at run time.
     void adopt_if_vm_handle(const std::string& name, TypedValue& rhs, bool local_only);
@@ -478,6 +481,26 @@ private:
     // of the same kind: nothing else points into them, so a consumer that
     // copies the map may free the whole tree (jdb_map_free_tree).
     std::unordered_set<LLVMValueRef> pure_map_literals;
+    // Reference counts for arrays and maps (jdb_rc_* in jdb_runtime.cpp).
+    // A container made where nothing untracked can take it is registered;
+    // a variable store counts it; the end of a loop pass frees what nobody
+    // counts. Inside rc_escape a value goes somewhere that does not count
+    // (a cell, a builtin that keeps its arguments): what is made there is
+    // not registered, and what a variable or a FUNC hands over is pinned.
+    friend struct ScopedRcEscape;
+    bool rc_on = false;
+    int rc_escape = 0;
+    static bool rc_tag(int t) {
+        return t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP || t == JD_TAG_RUNTIME;
+    }
+    LLVMValueRef rc_bits(LLVMValueRef v);
+    LLVMValueRef rc_born(LLVMValueRef p, int kind);
+    void rc_pin(const TypedValue& tv);
+    void rc_slot_store(LLVMValueRef slot, LLVMValueRef val, int old_tag, int new_tag);
+    void rc_retain_slot(LLVMValueRef slot);
+    void rc_release_locals(size_t first_scope);
+    LLVMValueRef rc_mark();
+    void rc_drain(LLVMValueRef mark);
     void scan_fresh_string_funcs(const std::vector<StmtPtr>& program);
     // Per user FUNC/SUB, whether each parameter may outlive the call: handed
     // back, stored, aliased or passed on to somewhere that keeps it. A string
@@ -652,6 +675,18 @@ struct ScopedLeafTag {
     ~ScopedLeafTag() { gen->m_want_leaf_tag = saved; }
     ScopedLeafTag(const ScopedLeafTag&) = delete;
     ScopedLeafTag& operator=(const ScopedLeafTag&) = delete;
+};
+
+// Sets whether the expressions codegen'd in this scope hand their value to a
+// holder that does not count (see LLVMCodegen::rc_escape).
+struct ScopedRcEscape {
+    LLVMCodegen* gen;
+    int saved;
+    ScopedRcEscape(LLVMCodegen* g, bool escapes)
+        : gen(g), saved(g->rc_escape) { gen->rc_escape = escapes ? 1 : 0; }
+    ~ScopedRcEscape() { gen->rc_escape = saved; }
+    ScopedRcEscape(const ScopedRcEscape&) = delete;
+    ScopedRcEscape& operator=(const ScopedRcEscape&) = delete;
 };
 
 struct ScopedPtrResult {
