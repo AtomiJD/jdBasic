@@ -1,0 +1,33 @@
+' A FUNC parameter named with $ that is handed an array (SPLIT, an array
+' literal, a $ variable holding one) works as that array in both backends:
+' LEN counts the cells and an index reads a cell, every time.
+
+OPTION "EXPLICIT"
+
+FUNC ONSETS(steps$) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(steps$) - 1
+        IF steps$[k] <> "~" AND steps$[k] <> "_" THEN n = n + 1
+    NEXT k
+    RETURN n
+ENDFUNC
+
+FUNC COUNT_IN(bar$) AS INTEGER
+    DIM steps$ = SPLIT(bar$, " ")
+    RETURN ONSETS(steps$)
+ENDFUNC
+
+DIM failed AS INTEGER = 0
+DIM i AS INTEGER
+FOR i = 1 TO 200
+    DIM row$ = SPLIT("b4 ~ a4 ~ ~ g4 ~ a4 b4 ~ a4 ~ g4 _ _ _", " ")
+    IF ONSETS(row$) <> 7 THEN failed = failed + 1
+    IF COUNT_IN("c5 ~ e5 _") <> 2 THEN failed = failed + 1
+NEXT i
+IF ONSETS(["x", "~", "y"]) <> 2 THEN failed = failed + 1
+IF failed > 0 THEN
+    PRINT "FAIL: "; failed
+    END 1
+ENDIF
+PRINT "OK"

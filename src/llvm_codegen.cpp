@@ -1197,6 +1197,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     std::unordered_map<std::string, std::vector<std::map<int, int>>> arg_tag_line;
 
     std::unordered_map<std::string, int> pre_var_tags;
+    std::unordered_set<std::string> top_dollar_arrays;
     // An expression that is a date: a call to a builtin flagged BF_DATE, or a
     // variable a date-producing DIM bound.
     auto is_date_expr = [&](const Expr& e) -> bool {
@@ -1312,6 +1313,26 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (!stmt) continue;
         if (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB) continue;
         scan_top_decls(*stmt);
+    }
+    // A top-level $ name that is handed an array (SPLIT and the like), in a
+    // loop or a branch too, holds an array whatever its name says; a call
+    // that passes it to a $ parameter makes that parameter an array.
+    {
+        std::function<void(const Stmt&)> find_dollar_arrays = [&](const Stmt& s) {
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) return;
+            if ((s.kind == StmtKind::DIM || s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) &&
+                !s.var_name.empty() && s.var_name.back() == '$' &&
+                s.var_type == VarType::NONE && s.expr &&
+                (s.expr->kind == ExprKind::ARRAY_LITERAL ||
+                 (s.expr->kind == ExprKind::CALL && !s.expr->func_name.empty() &&
+                  s.expr->func_name.back() != '$' && infer_expr_tag(*s.expr) == JD_TAG_ARR)))
+                top_dollar_arrays.insert(s.var_name);
+            for (auto& b : s.body) if (b) find_dollar_arrays(*b);
+            for (auto& br : s.branches) for (auto& b : br.body) if (b) find_dollar_arrays(*b);
+            for (auto& c : s.catch_body()) if (c) find_dollar_arrays(*c);
+            for (auto& f : s.finally_body()) if (f) find_dollar_arrays(*f);
+        };
+        for (auto& stmt : program) if (stmt) find_dollar_arrays(*stmt);
     }
 
     // Pre-pass: any `arr[i] = some_array_value` statement marks `arr`
@@ -1493,6 +1514,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                 const std::string& vn = e.args[i]->str_val;
                                 auto lk = cur_local_kinds.find(vn);
                                 if (lk != cur_local_kinds.end()) seen = lk->second;
+                                else if (!in_fn_body && top_dollar_arrays.count(vn)) seen = JD_TAG_ARR;
                                 else if (!vn.empty() && vn.back() == '$') seen = JD_TAG_STR;
                                 break;
                             }
@@ -1506,6 +1528,25 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                 arg_tag_line[e.func_name].resize(i + 1);
                             if (!arg_tag_line[e.func_name][i].count(seen))
                                 arg_tag_line[e.func_name][i][seen] = e.line;
+                        }
+                    }
+                    // A $ parameter the caller hands an array is an array: as a
+                    // string slot its LEN and index read the array's bytes.
+                    if (e.args[i] && it->second.stmt && i < it->second.stmt->params().size()) {
+                        const Param& cp = it->second.stmt->params()[i];
+                        const Expr& a = *e.args[i];
+                        bool arg_arr = a.kind == ExprKind::ARRAY_LITERAL;
+                        if (a.kind == ExprKind::CALL && !a.func_name.empty() && a.func_name.back() != '$')
+                            arg_arr = infer_expr_tag(a) == JD_TAG_ARR;
+                        if (a.kind == ExprKind::VARIABLE) {
+                            auto lk = cur_local_kinds.find(a.str_val);
+                            arg_arr = lk != cur_local_kinds.end() ? lk->second == JD_TAG_ARR
+                                                                  : (!in_fn_body && top_dollar_arrays.count(a.str_val) > 0);
+                        }
+                        if (arg_arr && !cp.name.empty() && cp.name.back() == '$' &&
+                            cp.type == VarType::NONE) {
+                            it->second.tags[i] = JD_TAG_ARR;
+                            continue;
                         }
                     }
                     if (it->second.tags[i] != JD_TAG_STR && e.args[i] && is_str_expr(*e.args[i]))
