@@ -979,6 +979,16 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     return r;
 }
 
+// Frees an array value_to_jdbarray made for a read, with this library's
+// allocator. Only a flat one: an array holding pointers is left alone.
+JDRT_API void jdrt_free_flat_array(void* p) {
+    auto* a = (JdbArray*)p;
+    if (!a || (a->flags & 1)) return;
+    free(a->data);
+    free(a->elem_tags);
+    free(a);
+}
+
 // Layout-compatible mirror of JdbMap from jdb_runtime.cpp. Used to
 // box a native JdbMap* into a Value::OBJECT before crossing the bridge,
 // so generic native CALLs that accept arbitrary Values (e.g. CHAN.SEND)

@@ -410,6 +410,10 @@ private:
         // value wrongly marked owned is a double free while one wrongly left
         // unowned is only the leak we already have.
         bool owned = false;
+        // For a runtime-tagged field read: an i1 saying that a string or an
+        // array it answers was allocated for this read alone (a copy out of
+        // a VM object). drop_read_temp releases it after a reading consumer.
+        LLVMValueRef fresh_ptr = nullptr;
     };
 
     // Runtime string functions whose result is NOT a fresh allocation, so it
@@ -419,6 +423,7 @@ private:
     // Releases a string temporary its consumer has finished reading, when the
     // expression allocated it for this one use.
     void drop_fresh_temp(const Expr& e, const TypedValue& tv);
+    void drop_read_temp(const TypedValue& tv);
 
     // Top-level string variables the program only ever writes by plain
     // assignment and never lets alias. Their slots take ownership of what
