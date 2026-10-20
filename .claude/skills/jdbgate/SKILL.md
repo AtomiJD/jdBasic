@@ -151,6 +151,23 @@ rm -f tests/gfx/gfx_capture_smoke.exe
 [ -f tests/gfx/gfx_capture_smoke.exe ] && timeout 25 ./tests/gfx/gfx_capture_smoke.exe
 ```
 
+## Step 3a - leak check (~6 s)
+
+Run it after touching `src/llvm_codegen.cpp`, `src/jdb_runtime.cpp` or
+`src/vm_bridge.cpp`:
+
+```bash
+./tests/leak_check.sh
+```
+
+It runs each pattern of `tests/leak/leak_patterns.jdb` in both backends and
+reads `SYS.HEAP()` after a third, two thirds and all of the passes. A pattern
+whose heap grows in both thirds leaks. Exit 1 = a `NEW-LEAK` that
+`tests/leak/known_leaks.txt` does not list. A `FIXED` line is a listed leak
+that went flat: take it off the list in the same commit. A new memory
+pattern worth guarding goes into `leak_patterns.jdb` as one more
+`ELSEIF pattern$ = "..."` branch; the script finds it by that line.
+
 ## Step 3b - parity sweep (optional, ~90 s with the default 8 parallel jobs)
 
 The four suites above are the gate. `tests/parity.sh` is the wider net: it runs

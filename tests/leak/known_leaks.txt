@@ -1,0 +1,9 @@
+# Patterns of leak_patterns.jdb that are known to leak, per backend.
+# leak_check.sh fails on a leak not listed here and reports a listed one that
+# has gone flat, so this file shrinks as the leaks are fixed.
+#
+# backend  pattern   ticket
+native     escape    660
+native     maplit    660
+native     split     660
+native     arraylit  660

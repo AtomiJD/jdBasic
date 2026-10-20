@@ -86,7 +86,7 @@ inline const std::unordered_set<std::string>& native_names() {
         "GL", "GLOBAL_GET", "GLOBAL_SET", "GPIO",
         "GRADE", "GRAVITY", "GRID_BEGIN", "GRID_END",
         "GROUP", "GROUPBY", "GUI", "HAT",
-        "HBOX_BEGIN", "HBOX_END", "HEADING", "HEAP$",
+        "HBOX_BEGIN", "HBOX_END", "HEADING", "HEAP", "HEAP$",
         "HEIGHT", "HELP", "HELP$", "HELPMARKER",
         "HEX$", "HISTEDGES", "HISTOGRAM", "HMAC$",
         "HOME", "HOSTNAME$", "HOUR", "HSV_RGB",

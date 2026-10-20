@@ -1,0 +1,155 @@
+' One pattern of work, run 3 * rounds times, with the C heap read after each
+' third. A pattern that releases what it allocates prints three close
+' figures; one that leaks prints a staircase. tests/leak_check.sh runs every
+' pattern in both backends and judges the staircase.
+'
+'   jdBasic leak_patterns.jdb <pattern> <rounds>
+'
+' Prints one line: HEAP <pattern> <h1> <h2> <h3>
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM pattern$ AS STRING = "concat"
+DIM rounds AS INTEGER = 20000
+IF LEN(cli) >= 2 THEN
+    pattern$ = cli[LEN(cli) - 2]
+    rounds = CINT(VAL(cli[LEN(cli) - 1]))
+ENDIF
+
+DIM passes AS INTEGER = 3 * rounds
+DIM i AS INTEGER = 0
+DIM sink$ AS STRING = ""
+DIM total AS DOUBLE = 0.0
+DIM marks$ AS STRING = ""
+
+IF pattern$ = "concat" THEN
+    FOR i = 1 TO passes
+        sink$ = "row " + STR$(i)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "mapread" THEN
+    DIM bag AS MAP
+    bag{"k"} = "value"
+    FOR i = 1 TO passes
+        sink$ = bag{"k"}
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "mapwrite" THEN
+    DIM store AS MAP
+    FOR i = 1 TO passes
+        store{"k"} = "row " + STR$(i)
+        store{"n"} = i
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "func" THEN
+    FOR i = 1 TO passes
+        sink$ = Decorate$(i)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "arg" THEN
+    FOR i = 1 TO passes
+        total = total + LEN("row " + STR$(i)) + Measure("cell " + STR$(i))
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "escape" THEN
+    FOR i = 1 TO passes
+        sink$ = Echo$("row " + STR$(i))
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "dyn" THEN
+    DIM cells = [1, 2, 3]
+    FOR i = 1 TO passes
+        sink$ = Render$(cells)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "typeof" THEN
+    DIM probe = 42
+    FOR i = 1 TO passes
+        sink$ = TYPEOF(probe)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "field" THEN
+    DIM box = CHAN.OPEN(2)
+    CHAN.SEND box, {"NAME": "song/clock", "WAVE": IOTA(64)}
+    DIM msg = CHAN.RECV(box, 100)
+    FOR i = 1 TO passes
+        total = total + LEN(msg{"WAVE"}) + Measure("at " + msg{"NAME"})
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "send" THEN
+    DIM box2 = CHAN.OPEN(2)
+    DIM got = {}
+    FOR i = 1 TO passes
+        CHAN.SEND box2, {"TOPIC": "song/clock", "N": i, "DATA": {"T": i}}
+        got = CHAN.RECV(box2, 100)
+        total = total + got{"N"}
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "json" THEN
+    FOR i = 1 TO passes
+        sink$ = JSON.STRINGIFY$({"A": i, "B": {"C": "x"}})
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "foreach" THEN
+    DIM keyed AS MAP
+    keyed{"alpha"} = 1
+    keyed{"beta"} = 2
+    FOR i = 1 TO passes
+        FOR EACH k$ IN keyed
+            total = total + LEN(k$)
+        NEXT
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "maplit" THEN
+    DIM env = {}
+    FOR i = 1 TO passes
+        env = {"T": i, "NAME": "clock"}
+        total = total + env{"T"}
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "split" THEN
+    DIM parts = SPLIT("a,b", ",")
+    FOR i = 1 TO passes
+        parts = SPLIT("a,b," + STR$(i), ",")
+        total = total + LEN(parts)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "arraylit" THEN
+    DIM row = [0, 0, 0]
+    FOR i = 1 TO passes
+        row = [i, i + 1, i + 2]
+        total = total + row[1]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSE
+    FOR i = 1 TO passes
+        total = total + i * 0.5
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ENDIF
+
+PRINT "HEAP " + pattern$ + marks$
+
+FUNC Decorate$(n)
+    DIM body$ = "row " + STR$(n)
+    DIM framed$ = "[" + body$ + "]"
+    RETURN framed$
+ENDFUNC
+
+FUNC Measure(s$)
+    RETURN LEN(s$) + INSTR(s$, "1")
+ENDFUNC
+
+FUNC Echo$(s$)
+    RETURN s$
+ENDFUNC
+
+FUNC Render$(v)
+    DIM out$ = ""
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(v) - 1
+        out$ = out$ + STR$(v[k])
+    NEXT k
+    RETURN out$ + "."
+ENDFUNC

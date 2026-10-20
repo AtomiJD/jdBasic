@@ -7,6 +7,11 @@
 #if !defined(JDB_MCU)
 #include <sys/statvfs.h>
 #endif
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#elif defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #endif
 
 // A directory opens and reads as nothing where open(2) accepts one, so a
@@ -1001,6 +1006,35 @@ void VM::register_file_builtins() {
         snprintf(buf, sizeof(buf), "%llu free of %llu bytes",
                  (unsigned long long)avail, (unsigned long long)total);
         return Value::make_string(buf);
+    });
+
+    // Bytes the C heap holds for the process right now: what both backends,
+    // the bridge DLL and the libraries allocated and have not freed. A leak
+    // test reads it after N and after 3N passes of the same work.
+    register_native("SYS.HEAP", 0, 0, [](const std::vector<Value>&) -> Value {
+        int64_t in_use = -1;
+#if defined(_WIN32)
+        HANDLE heap = GetProcessHeap();
+        PROCESS_HEAP_ENTRY entry;
+        entry.lpData = nullptr;
+        uint64_t sum = 0;
+        if (HeapLock(heap)) {
+            while (HeapWalk(heap, &entry))
+                if (entry.wFlags & PROCESS_HEAP_ENTRY_BUSY) sum += entry.cbData;
+            HeapUnlock(heap);
+            in_use = (int64_t)sum;
+        }
+#elif defined(__APPLE__)
+        malloc_statistics_t st;
+        malloc_zone_statistics(nullptr, &st);
+        in_use = (int64_t)st.size_in_use;
+#elif defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
+        struct mallinfo2 mi = mallinfo2();
+        in_use = (int64_t)(mi.uordblks + mi.hblkhd);
+#endif
+        if (in_use < 0)
+            throw std::runtime_error("SYS.HEAP: this platform cannot report its heap");
+        return Value::make_i64(in_use);
     });
 #endif
 #endif

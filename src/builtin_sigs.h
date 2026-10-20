@@ -830,6 +830,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SYS.CALL", BuiltinRet::Unknown, BF_NO_VEC},
     {"SYS.DF", BuiltinRet::Str, BF_NO_VEC | BF_READS_ARGS | BF_FRESH_STR},
     {"SYS.FREEDISK", BuiltinRet::I64, BF_NO_VEC | BF_READS_ARGS},
+    {"SYS.HEAP", BuiltinRet::I64, BF_NO_VEC},
     {"SYS.INB", BuiltinRet::Unknown, BF_NO_VEC},
     {"SYS.OUTB", BuiltinRet::Unknown, BF_NO_VEC},
     {"SYS.PEEK", BuiltinRet::Unknown, BF_NO_VEC},

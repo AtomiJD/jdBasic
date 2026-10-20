@@ -4553,6 +4553,10 @@ Description: The volume a path lies on as a line: bytes free of bytes total. Wit
 Syntax: SYS.FREEDISK([path$]) -> bytes
 Description: Free space on the volume a path lies on, as a number of bytes. Without a path, the working directory volume. The number is what this user may still write, which on a volume with quotas is less than the volume free space. On a board it answers for the flash store and takes no argument.
 
+[SYS.HEAP]
+Syntax: SYS.HEAP() -> bytes
+Description: Bytes the C heap holds for the process right now, both backends, the runtime DLL and the libraries together. Read it after N and after 3N passes of the same work; a figure that grows with the passes is a leak. Windows, Linux (glibc 2.33+) and macOS.
+
 [WIFI.AP]
 Syntax: WIFI.AP(ssid$ [, password$ [, channel]]) -> 0 | -1
 Description: Raises the board's own network on 192.168.4.1 with a DHCP server behind it. Open with no password, WPA2 with one of at least eight characters. ESP32-S3 only.
