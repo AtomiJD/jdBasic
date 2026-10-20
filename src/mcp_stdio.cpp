@@ -21,6 +21,9 @@
 #ifdef GFX
 #include "graphics.h"
 #endif
+#ifdef NET
+#include "node.h"
+#endif
 
 // Defined in main.cpp / vm_bridge.cpp - directory of the currently-loaded
 // script. Set by tool_jdb_load so that IMPORT inside a loaded script can
@@ -937,6 +940,29 @@ Value tool_jdb_reset(VM& vm, const Value&) {
 // and an error is returned (popen exposes no PID, so the child itself
 // cannot be killed portably - the message says it may still be running).
 
+#ifdef NET
+// The Node Bus seen from outside: the MCP server joins as node "mcp" on
+// first use. Neither tool touches the VM, so both answer while a program runs.
+Value tool_jdb_nodes(VM&, const Value&) {
+    try {
+        return make_text_result(node_observer_peers(), false);
+    } catch (const std::exception& e) {
+        return make_text_result(std::string("jdb_nodes: ") + e.what(), true);
+    }
+}
+
+Value tool_jdb_peek(VM&, const Value& args) {
+    std::string topic = obj_get_str(args, "topic");
+    if (topic.empty()) return make_text_result("topic is empty", true);
+    int64_t ms = obj_get_num(args, "timeout_ms", 2000);
+    try {
+        return make_text_result(node_observer_peek(topic, ms), false);
+    } catch (const std::exception& e) {
+        return make_text_result(std::string("jdb_peek: ") + e.what(), true);
+    }
+}
+#endif
+
 Value tool_jdb_run_native(VM&, const Value& args) {
     std::string cmd = obj_get_str(args, "command");
     if (cmd.empty()) return make_text_result("command is empty", true);
@@ -1237,6 +1263,19 @@ Value build_tools() {
         "Reset the persistent VM to a clean slate: session source, variables and functions are cleared (the MCP equivalent of the REPL's CLEARWS). Workspace files on disk are untouched, jdb_loadws restores one afterwards.",
         build_input_schema({}, {})));
 
+#ifdef NET
+    a.push_back(tool_descriptor(
+        "jdb_nodes",
+        "List the running jdBasic programs on the Node Bus (this machine, and the LAN when JDB_NODE_KEY is set): node name@host, IP, PID, scope and the topics each one publishes. Works while a program runs on the VM.",
+        build_input_schema({}, {})));
+
+    a.push_back(tool_descriptor(
+        "jdb_peek",
+        "Show the next value a Node Bus topic publishes (a retained topic answers at once): publisher, sequence number and the value, with long arrays summarised. Use jdb_nodes to see the topics.",
+        build_input_schema({{"topic", "Topic name, or a pattern with * and ?."},
+                            {"timeout_ms", "How long to wait for a value (default 2000)."}}, {"topic"})));
+#endif
+
     a.push_back(tool_descriptor(
         "echo",
         "Echo back the message you sent. Connectivity smoke test.",
@@ -1272,7 +1311,11 @@ Value dispatch_tool(VM& vm, const std::string& name, const Value& args) {
     if (name == "jdb_savews")     return tool_jdb_savews(vm, args);
     if (name == "jdb_loadws")     return tool_jdb_loadws(vm, args);
     if (name == "jdb_reset")      return tool_jdb_reset(vm, args);
-    if (name == "echo")           return tool_echo(vm, args);
+#ifdef NET
+    if (name == "jdb_nodes")      return tool_jdb_nodes(vm, args);
+    if (name == "jdb_peek")       return tool_jdb_peek(vm, args);
+#endif
+    if (name == "echo")          return tool_echo(vm, args);
     // User tools registered via --tools <dir>.
     for (auto& t : g_user_tools) {
         if (t.name == name) return invoke_user_tool(vm, t, args);

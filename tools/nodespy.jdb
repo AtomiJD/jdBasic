@@ -1,0 +1,133 @@
+' nodespy.jdb - watches the Node Bus: every topic of every node, live.
+'
+'   jdBasic tools/nodespy.jdb [pattern] [--dump topic] [--seconds n] [--plain] [--lan]
+'
+' Without --dump it shows a table once a second: topic, publisher, values
+' per second, kilobytes per second and the last value, shortened. With
+' --dump it prints every value of one topic as it arrives. pattern picks
+' the topics (default "*"), --seconds ends after n seconds (default: until
+' Ctrl+C), --plain prints each table below the last instead of clearing the
+' console, --lan joins the lan scope with the key from JDB_NODE_KEY.
+
+OPTION "EXPLICIT"
+
+FUNC SHORT$(v, depth AS INTEGER) AS STRING
+    DIM kind$ AS STRING = TYPEOF(v)
+    IF kind$ = "STRING" THEN
+        IF LEN(v) > 40 THEN RETURN CHR$(34) + LEFT$(v, 40) + "..." + CHR$(34)
+        RETURN CHR$(34) + v + CHR$(34)
+    ENDIF
+    IF kind$ = "ARRAY" THEN
+        IF depth > 0 ORELSE LEN(v) > 4 THEN RETURN "[" + STR$(LEN(v)) + " values]"
+        DIM parts$ AS STRING = ""
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(v) - 1
+            IF i > 0 THEN parts$ = parts$ + ", "
+            parts$ = parts$ + SHORT$(v[i], depth + 1)
+        NEXT i
+        RETURN "[" + parts$ + "]"
+    ENDIF
+    IF kind$ = "OBJECT" THEN
+        IF depth > 0 THEN RETURN "{" + STR$(MAP.SIZE(v)) + " fields}"
+        DIM fields$ AS STRING = ""
+        DIM k AS STRING
+        FOR EACH k IN v
+            IF fields$ <> "" THEN fields$ = fields$ + ", "
+            fields$ = fields$ + k + ": " + SHORT$(v{k}, depth + 1)
+        NEXT k
+        RETURN "{" + fields$ + "}"
+    ENDIF
+    RETURN STR$(v)
+ENDFUNC
+
+FUNC CUT$(s$, width AS INTEGER) AS STRING
+    IF LEN(s$) <= width THEN RETURN s$
+    RETURN LEFT$(s$, width - 3) + "..."
+ENDFUNC
+
+DIM cli = OS.ARGS()
+DIM pattern$ AS STRING = "*"
+DIM dump$ AS STRING = ""
+DIM seconds AS DOUBLE = 0
+DIM plain AS INTEGER = FALSE
+DIM scope$ AS STRING = "local"
+DIM a AS INTEGER = 1
+DO WHILE a < LEN(cli)
+    DIM arg$ AS STRING = cli[a]
+    IF arg$ = "--dump" ANDALSO a + 1 < LEN(cli) THEN
+        dump$ = cli[a + 1]
+        a = a + 1
+    ELSEIF arg$ = "--seconds" ANDALSO a + 1 < LEN(cli) THEN
+        seconds = VAL(cli[a + 1])
+        a = a + 1
+    ELSEIF arg$ = "--plain" THEN
+        plain = TRUE
+    ELSEIF arg$ = "--lan" THEN
+        scope$ = "lan"
+    ELSE
+        pattern$ = arg$
+    ENDIF
+    a = a + 1
+LOOP
+IF dump$ <> "" THEN pattern$ = dump$
+
+DIM self_node = NODE.JOIN("nodespy-" + STR$(OS.PID()), scope$)
+DIM sub_ch = TOPIC.SUBSCRIBE(pattern$, "queue:4096", TRUE)
+DIM t_start AS DOUBLE = TICK()
+DIM t_table AS DOUBLE = TICK()
+
+DIM n_window = {}
+DIM bytes_window = {}
+DIM rate = {}
+DIM kbs = {}
+DIM last_val = {}
+DIM from_node = {}
+
+DO
+    IF seconds > 0 ANDALSO TICK() - t_start >= seconds * 1000 THEN EXITDO
+    DIM env = CHAN.RECV(sub_ch, 100)
+    DO WHILE NOT CHAN.IS_TIMEOUT(env)
+        IF CHAN.IS_EOF(env) THEN EXITDO
+        DIM topic$ AS STRING = env{"TOPIC"}
+        IF dump$ <> "" THEN
+            PRINT topic$; " #"; env{"SEQ"}; " from "; env{"FROM"}; ": "; SHORT$(env{"DATA"}, 0)
+        ELSE
+            IF NOT MAP.EXISTS(n_window, topic$) THEN
+                n_window{topic$} = 0
+                bytes_window{topic$} = 0
+                rate{topic$} = 0
+                kbs{topic$} = 0
+            ENDIF
+            n_window{topic$} = n_window{topic$} + 1
+            bytes_window{topic$} = bytes_window{topic$} + LEN(NODE.PACK$(env{"DATA"}))
+            last_val{topic$} = SHORT$(env{"DATA"}, 0)
+            from_node{topic$} = env{"FROM"}
+        ENDIF
+        env = CHAN.TRY_RECV(sub_ch)
+    LOOP
+    IF CHAN.IS_EOF(env) THEN EXITDO
+
+    DIM span AS DOUBLE = TICK() - t_table
+    IF dump$ = "" ANDALSO span >= 1000 THEN
+        DIM topics = MAP.KEYS(n_window)
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(topics) - 1
+            DIM t$ AS STRING = topics[i]
+            rate{t$} = n_window{t$} * 1000 / span
+            kbs{t$} = bytes_window{t$} / span
+            n_window{t$} = 0
+            bytes_window{t$} = 0
+        NEXT i
+        t_table = TICK()
+        IF NOT plain THEN CLS
+        PRINT "nodespy "; pattern$; ", "; INT((TICK() - t_start) / 1000); " s, "; LEN(NODE.PEERS()); " other node(s)"
+        PRINT FORMAT$("{:<20} {:<20} ", "TOPIC", "FROM"); FORMAT$("{:>7} {:>8}  LAST", "VAL/S", "KB/S")
+        FOR i = 0 TO LEN(topics) - 1
+            DIM tp$ AS STRING = topics[i]
+            PRINT FORMAT$("{:<20} {:<20} ", CUT$(tp$, 20), CUT$(from_node{tp$}, 20)); FORMAT$("{:>7.1f} {:>8.1f}  ", rate{tp$}, kbs{tp$}); CUT$(last_val{tp$}, 70)
+        NEXT i
+        IF LEN(topics) = 0 THEN PRINT "(no values yet)"
+    ENDIF
+LOOP
+TOPIC.UNSUBSCRIBE sub_ch
+NODE.LEAVE

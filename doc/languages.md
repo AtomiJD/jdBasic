@@ -4190,6 +4190,8 @@ DIM c = CHAN.RECV(clock, 5000)
 DIM heard_at = NODE.TIME_OF("songgen", c{"T"})     ' on this machine's clock
 ```
 
+Recipes for the usual shapes (a viewer of a running program, a work queue, a service, a dashboard, big arrays) are in [NodeBus.md](NodeBus.md). `jdBasic --nodes` lists the nodes of the machine, `tools/nodespy.jdb` shows every topic live, and the MCP server shows the same through `jdb_nodes` and `jdb_peek`.
+
 ```basic
 ' desk.jdb - publishes its clock, answers JUMP
 NODE.JOIN "desk"

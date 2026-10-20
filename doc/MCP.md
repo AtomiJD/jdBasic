@@ -101,6 +101,8 @@ All tools share a single persistent VM instance: variables, `FUNC`s, and loaded 
 | `jdb_reset` | Clear the VM to a clean slate (the `CLEARWS` equivalent); workspace files on disk are untouched. |
 | `jdb_stop` / `jdb_status` / `jdb_resume` | Pause a running script, report VM state (`running` / `stopped` / `idle`), and continue after a `STOP`. The reader thread fast-paths `jdb_stop`/`jdb_status` so they answer even while another call is busy. |
 | `jdb_run_native` | Run any shell command line in a child process and return combined stdout+stderr with the exit code. Despite the name it does not compile anything; to test a native build, pass e.g. `build/jdBasic.exe -c prog.jdb` and then the produced `.exe`. Optional `timeout_ms` (default 120000, 0 = wait forever); on timeout the call returns an error but the process may keep running. It gives the client a full shell on the host. |
+| `jdb_nodes` | The running programs on the [Node Bus](NodeBus.md): node `name@host`, IP, PID, scope and the topics each one publishes. The server joins as node `mcp` on first use, in the lan scope when `JDB_NODE_KEY` is set. Answers while a script runs. Builds with `NET`. |
+| `jdb_peek` | The next value of a Node Bus topic (a retained topic answers at once): publisher, sequence number and the value, long arrays summarised. Optional `timeout_ms` (default 2000). Builds with `NET`. |
 
 ### Your own tools: `--tools` and `--tools-only`
 

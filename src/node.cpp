@@ -459,6 +459,7 @@ std::map<int64_t, Publisher> g_pubs;          // by publisher channel handle
 std::map<uint32_t, PendingCall> g_calls;
 std::map<int64_t, CallToken> g_tokens;
 int64_t g_default = 0;
+int64_t g_observer = 0;                        // the MCP server's node, never the default
 int64_t g_next_node = 1, g_next_link = 1, g_next_sub = 1, g_next_token = 1;
 uint32_t g_next_att = 1, g_next_call = 1;
 std::thread g_io;
@@ -1736,7 +1737,12 @@ void leave_locked(int64_t handle) {
     if (n->served) chan_close(*n->served);
     if (n->events) chan_close(*n->events);
     g_nodes.erase(handle);
-    if (g_default == handle) g_default = g_nodes.empty() ? 0 : g_nodes.begin()->first;
+    if (g_observer == handle) g_observer = 0;
+    if (g_default == handle) {
+        g_default = 0;
+        for (auto& kv : g_nodes)
+            if (kv.first != g_observer) { g_default = kv.first; break; }
+    }
     g_cv.notify_all();
 }
 
@@ -2436,5 +2442,158 @@ std::string node_bus_report() {
                       e.sock.empty() ? "tcp" : "unix", since);
         o << line << topics << "\n";
     }
+    return o.str();
+}
+
+// ── An observer outside the language: the MCP server ────────────
+
+namespace {
+
+// Joins as "mcp" (or "mcp-<pid>" when that name is taken) without becoming
+// the default node, so a program run in the same process keeps its own
+// NODE.JOIN as the default. Lan scope when JDB_NODE_KEY is set.
+int64_t observer_node() {
+    int64_t keep;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        if (g_observer && node_of(g_observer)) return g_observer;
+        keep = g_default;
+    }
+    const char* key_env = std::getenv("JDB_NODE_KEY");
+    std::string scope = key_env && *key_env ? "lan" : "local";
+    int64_t h;
+    try {
+        h = join("mcp", scope, "");
+    } catch (const std::exception&) {
+        h = join("mcp-" + std::to_string(self_pid()), scope, "");
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        g_default = keep && node_of(keep) ? keep : 0;
+        g_observer = h;
+    }
+    // the beacons of the other machines come once a second
+    if (scope == "lan") std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    return h;
+}
+
+std::string number_text(double d) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.6g", d);
+    return buf;
+}
+
+std::string describe_value(const Value& v, int depth) {
+    switch (v.type) {
+    case ValueType::STRING: {
+        const std::string& s = v.as_string()->data;
+        if (s.size() <= 120) return "\"" + s + "\"";
+        return "\"" + s.substr(0, 120) + "...\" (" + std::to_string(s.size()) + " bytes)";
+    }
+    case ValueType::ARRAY: {
+        const auto& el = v.as_array()->elements;
+        if (el.empty()) return "[]";
+        if (depth >= 3) return "[" + std::to_string(el.size()) + " values]";
+        bool numeric = true;
+        for (const Value& e : el)
+            if (!is_numeric(e.type)) { numeric = false; break; }
+        std::string out = "[";
+        if (numeric && el.size() > 8) {
+            double lo = el[0].to_double(), hi = lo;
+            for (const Value& e : el) {
+                double d = e.to_double();
+                if (d < lo) lo = d;
+                if (d > hi) hi = d;
+            }
+            out += std::to_string(el.size()) + " numbers from " + number_text(lo) + " to " + number_text(hi) + ": ";
+            for (size_t i = 0; i < 6; ++i) out += number_text(el[i].to_double()) + ", ";
+            return out + "...]";
+        }
+        size_t shown = el.size() > 8 ? 8 : el.size();
+        for (size_t i = 0; i < shown; ++i) out += (i ? ", " : "") + describe_value(el[i], depth + 1);
+        if (shown < el.size()) out += ", ... " + std::to_string(el.size() - shown) + " more";
+        return out + "]";
+    }
+    case ValueType::OBJECT: {
+        const auto& fields = v.as_object()->fields;
+        if (depth >= 3) return "{" + std::to_string(fields.size()) + " fields}";
+        std::string out = "{";
+        size_t shown = fields.size() > 24 ? 24 : fields.size();
+        for (size_t i = 0; i < shown; ++i)
+            out += (i ? ", " : "") + fields[i].first + ": " + describe_value(fields[i].second, depth + 1);
+        if (shown < fields.size()) out += ", ... " + std::to_string(fields.size() - shown) + " more";
+        return out + "}";
+    }
+    case ValueType::TENSOR: {
+        std::string shape;
+        for (size_t d : v.as_tensor()->shape) shape += (shape.empty() ? "" : "x") + std::to_string(d);
+        return "tensor " + shape;
+    }
+    default:
+        return v.to_string();
+    }
+}
+
+}  // namespace
+
+std::string node_observer_peers() {
+    int64_t h = observer_node();
+    std::vector<DirEntry> dir;
+    std::string self_id;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        LocalNode* n = node_of(h);
+        if (n) self_id = n->id;
+        dir = peers_for(n);
+    }
+    std::sort(dir.begin(), dir.end(), [](const DirEntry& a, const DirEntry& b) { return a.name < b.name; });
+    std::ostringstream o;
+    int count = 0;
+    char line[256];
+    std::snprintf(line, sizeof(line), "%-28s %-16s %8s  %-5s  %s\n", "NODE", "IP", "PID", "SCOPE", "TOPICS");
+    o << line;
+    for (const DirEntry& e : dir) {
+        if (e.id == self_id) continue;
+        std::string topics;
+        for (size_t i = 0; i < e.topics.size(); ++i) topics += (i ? ", " : "") + e.topics[i];
+        std::snprintf(line, sizeof(line), "%-28s %-16s %8lld  %-5s  ", (e.display + "@" + e.host).c_str(),
+                      e.lan ? ip_text(e.ip).c_str() : "-", (long long)e.pid, e.lan ? "lan" : "local");
+        o << line << topics << "\n";
+        ++count;
+    }
+    if (count == 0) return "no other nodes\n";
+    return o.str();
+}
+
+std::string node_observer_peek(const std::string& topic, int64_t timeout_ms) {
+    int64_t h = observer_node();
+    int64_t handle = subscribe(h, topic, "latest", 1, true);
+    auto ch = chan_lookup(handle);
+    if (!ch) return "could not subscribe to \"" + topic + "\"\n";
+    Value got;
+    bool have = false;
+    {
+        std::unique_lock<std::mutex> lock(ch->mtx);
+        auto ready = [&]() { return !ch->buffer.empty() || ch->closed.load(); };
+        if (ch->cv_recv.wait_for(lock, std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms), ready) &&
+            !ch->buffer.empty()) {
+            got = std::move(ch->buffer.front());
+            ch->buffer.pop_front();
+            have = true;
+        }
+    }
+    chan_close(*ch);
+    if (!have) return "no value on \"" + topic + "\" within " + std::to_string(timeout_ms) + " ms\n";
+    if (got.type != ValueType::OBJECT) return describe_value(got, 0) + "\n";
+    ObjectObj* env = got.as_object();
+    Value* data = env->get("DATA");
+    Value* from = env->get("FROM");
+    Value* name = env->get("TOPIC");
+    Value* seq = env->get("SEQ");
+    std::ostringstream o;
+    o << "topic " << (name ? name->to_string() : topic);
+    if (from) o << " from " << from->to_string();
+    if (seq) o << ", value " << seq->to_string();
+    o << "\n" << (data ? describe_value(*data, 0) : std::string("(no data)")) << "\n";
     return o.str();
 }
