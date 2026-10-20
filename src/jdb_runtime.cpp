@@ -43,6 +43,18 @@ static auto g_start_time = std::chrono::steady_clock::now();
 struct JdbArray;
 extern "C" JdbArray* jdb_array_new(int64_t size);
 
+// The VM bridge of a compiled program (jdb_runtime_set_handle). A VM handle
+// stored into an array or a map cell is made persistent there, so the sweep
+// at the end of a loop pass does not take the value from under the cell.
+static void* g_jdrt_handle = nullptr;
+extern "C" int64_t jdrt_promote_handle(void* rt, int64_t h);
+static inline double keep_vm_handle(double val, int32_t tag) {
+    if (tag != JD_TAG_VM_HANDLE || !g_jdrt_handle) return val;
+    union { double d; int64_t i; } u; u.d = val;
+    u.i = jdrt_promote_handle(g_jdrt_handle, u.i);
+    return u.d;
+}
+
 extern "C" {
 
 static inline JdbArray* decode_inner(double val);
@@ -650,7 +662,7 @@ JdbArray* jdb_array_push(JdbArray* arr, double val, int32_t tag) {
             arr->elem_tags[i] = (int8_t)jdb_array_classify_elem(arr, arr->data[i]);
         arr->flags |= 8;
     }
-    arr->data[arr->length] = val;
+    arr->data[arr->length] = keep_vm_handle(val, tag);
     arr->elem_tags[arr->length] = (int8_t)tag;
     // The array-wide kind bits (string, nested, bool) stay set while every
     // cell is of that kind and are dropped by the first cell that is not,
@@ -1109,7 +1121,7 @@ void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
     if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP)
         arr->flags |= 1;
     if (tag == JD_TAG_STR) arr->flags |= 2;
-    arr->data[idx] = val;
+    arr->data[idx] = keep_vm_handle(val, tag);
     arr->elem_tags[idx] = (int8_t)tag;
 }
 
@@ -1117,7 +1129,7 @@ JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
     int64_t newlen = arr ? arr->length + 1 : 1;
     auto* r = jdb_array_new(newlen);
     if (arr) memcpy(r->data, arr->data, arr->length * sizeof(double));
-    r->data[newlen - 1] = val;
+    r->data[newlen - 1] = keep_vm_handle(val, tag);
     int32_t base_flags = arr ? arr->flags : 0;
     r->flags = base_flags | 8;  // bit 3: tagged elements present
     r->elem_tags = (int8_t*)malloc(newlen);
@@ -1485,7 +1497,7 @@ JdbArray* jdb_array_insert(JdbArray* arr, double val, int64_t pos, int32_t tag) 
     if (pos > oldlen) pos = oldlen;
     auto* r = jdb_array_new(oldlen + 1);
     if (arr && pos > 0) memcpy(r->data, arr->data, pos * sizeof(double));
-    r->data[pos] = val;
+    r->data[pos] = keep_vm_handle(val, tag);
     if (arr && pos < oldlen)
         memcpy(r->data + pos + 1, arr->data + pos, (oldlen - pos) * sizeof(double));
 
@@ -2215,7 +2227,7 @@ void jdb_map_set_tagged(JdbMap* m, const char* key, double val, int32_t tag) {
         union { int64_t i; double d; } out; out.i = (int64_t)(intptr_t)jdb_str_dup_binary(s);
         m->values[idx] = out.d;
     } else {
-        m->values[idx] = val;
+        m->values[idx] = keep_vm_handle(val, tag);
     }
     m->tags[idx] = tag;
     map_drop_cell_str(old_tag, old_bits);
@@ -2269,6 +2281,25 @@ int64_t jdb_map_delete(JdbMap* m, const char* key) {
     }
     m->count--;
     return 1;
+}
+
+// Frees a map the program owns outright, with its keys, its strings and the
+// maps nested in it. Arrays and VM handles in its cells are not followed:
+// the codegen only hands over maps that hold none.
+void jdb_map_free_tree(JdbMap* m) {
+    if (!m) return;
+    for (int64_t i = 0; i < m->count; i++) {
+        free(m->keys[i]);
+        map_drop_cell_str(m->tags[i], m->values[i]);
+        if (m->tags[i] == JD_TAG_NATIVE_MAP) {
+            union { double d; int64_t i; } u; u.d = m->values[i];
+            jdb_map_free_tree((JdbMap*)(intptr_t)u.i);
+        }
+    }
+    free(m->keys);
+    free(m->values);
+    free(m->tags);
+    free(m);
 }
 
 // Number of keys in a map.
@@ -2955,7 +2986,6 @@ extern "C" {
     double jdrt_val_to_f64(void* rt, int64_t handle);
     const char* jdrt_val_to_str(void* rt, int64_t handle);
 }
-static void* g_jdrt_handle = nullptr;
 extern "C" void jdb_runtime_set_handle(void* h) { g_jdrt_handle = h; }
 
 // types[i] is 'd' for an f64-bit-pun, 's' for a const char*, or 'h' for a

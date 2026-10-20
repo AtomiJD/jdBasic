@@ -735,7 +735,10 @@ JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
 // handles (returns the input key unchanged).
 JDRT_API int64_t jdrt_promote_handle(JdRT handle, int64_t h) {
     auto* rt = resolve_rt(handle);
-    if (h <= 0) return h;
+    // A container now holds the key as well: the variable that adopted it
+    // no longer owns it alone and must not release it on reassignment.
+    if (h < 0) { rt->handle_owner.erase(h); return h; }
+    if (h == 0) return h;
     auto it = rt->value_store.find(h);
     if (it == rt->value_store.end()) return h;
     return rt->store_persistent(it->second);
@@ -1678,6 +1681,10 @@ JDRT_API void jdrt_tagged_arr_set(JdRT handle, int64_t val_bits, int32_t val_tag
             }
         }
     };
+    // A native container keeps the key itself, so it gets a persistent one
+    // the sweep at the end of a loop pass leaves alone.
+    if (tag == jd_tag(JdTag::VM_HANDLE) && val_tag != jd_tag(JdTag::VM_HANDLE))
+        bits = jdrt_promote_handle(handle, bits);
     if (val_tag == jd_tag(JdTag::NATIVE_MAP)) {
         // The native map stores a number as itself and a pointer as its bits.
         double d;

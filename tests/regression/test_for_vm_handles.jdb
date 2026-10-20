@@ -1,0 +1,62 @@
+' Values of the VM side (JSON.PARSE$ objects and what is read out of them)
+' kept from inside FOR passes - in a variable, an array cell, a pushed
+' element, a map key, through a SUB - are still there after the loop, past
+' the release of the temporaries a pass made, in both backends.
+
+OPTION "EXPLICIT"
+
+SUB KEEPAT(store, at, value)
+    store[at] = value
+ENDSUB
+
+DIM failed AS INTEGER = 0
+DIM q$ AS STRING = CHR$(34)
+DIM src$ AS STRING = "["
+DIM i AS INTEGER
+FOR i = 0 TO 199
+    IF i > 0 THEN src$ = src$ + ","
+    src$ = src$ + "{" + q$ + "id" + q$ + ":" + STR$(i) + "," + q$ + "inner" + q$ + ":{" + q$ + "n" + q$ + ":" + STR$(i * 3) + "}}"
+NEXT i
+src$ = src$ + "]"
+DIM rows = JSON.PARSE$(src$)
+
+DIM last = 0
+DIM cells = []
+DIM pushed = []
+DIM bykey = {}
+DIM viasub = []
+FOR i = 0 TO LEN(rows) - 1
+    DIM row = rows[i]
+    last = row{"inner"}
+    PUSH(cells, NONE)
+    cells[i] = row{"inner"}
+    PUSH(pushed, row{"inner"})
+    bykey{"k" + STR$(i)} = row{"inner"}
+    PUSH(viasub, NONE)
+    KEEPAT(viasub, i, row{"inner"})
+NEXT i
+
+DIM probe = 0
+probe = last
+IF probe{"n"} <> 597 THEN
+    PRINT "FAIL the variable: "; JSON.STRINGIFY$(probe)
+    failed = failed + 1
+ENDIF
+DIM bad AS INTEGER = 0
+FOR i = 0 TO 199
+    probe = cells[i]
+    IF probe{"n"} <> i * 3 THEN bad = bad + 1
+    probe = pushed[i]
+    IF probe{"n"} <> i * 3 THEN bad = bad + 1
+    probe = bykey{"k" + STR$(i)}
+    IF probe{"n"} <> i * 3 THEN bad = bad + 1
+    probe = viasub[i]
+    IF probe{"n"} <> i * 3 THEN bad = bad + 1
+NEXT i
+IF bad > 0 THEN
+    PRINT "FAIL kept cells: "; bad
+    failed = failed + 1
+ENDIF
+
+IF failed > 0 THEN END 1
+PRINT "OK"

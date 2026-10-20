@@ -10,8 +10,9 @@
 ' mode: "concat" builds a fresh string each pass, "map" reads one out of a
 ' map, "func" builds one in a FUNC, "arg" hands fresh strings to calls and a
 ' map, "dyn" formats elements of a run-time kind, "field" reads fields of a
-' map that came through a channel, "typeof" reads a shared word, "number"
-' does the same amount of arithmetic and touches no string.
+' map that came through a channel, "typeof" reads a shared word, "send"
+' hands a map literal to a builtin and reads a VM object in a FOR pass,
+' "number" does the same amount of arithmetic and touches no string.
 
 OPTION "EXPLICIT"
 
@@ -82,6 +83,16 @@ ELSEIF mode$ = "typeof" THEN
     DIM probe = 42
     FOR i = 1 TO rounds
         sink$ = TYPEOF(probe)
+    NEXT i
+ELSEIF mode$ = "send" THEN
+    ' The literal is copied into the channel and freed after the call; the
+    ' received object is a VM value the pass releases at its end.
+    DIM box = CHAN.OPEN(2)
+    DIM got = {}
+    FOR i = 1 TO rounds
+        CHAN.SEND box, {"TOPIC": "song/clock", "N": i, "DATA": {"T": i}}
+        got = CHAN.RECV(box, 100)
+        total = total + got{"N"}
     NEXT i
 ELSE
     FOR i = 1 TO rounds

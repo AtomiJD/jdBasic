@@ -1,0 +1,42 @@
+' A map literal handed straight to a builtin of the VM side (CHAN.SEND,
+' JSON.STRINGIFY$) arrives whole, nested maps and strings included, on
+' every pass of a loop, in both backends.
+
+OPTION "EXPLICIT"
+
+DIM failed AS INTEGER = 0
+DIM ch = CHAN.OPEN(2)
+DIM i AS INTEGER
+DIM got = {}
+DIM who$ AS STRING = "songgen"
+FOR i = 1 TO 300
+    CHAN.SEND ch, {"TOPIC": "song/clock", "FROM": who$ + "", "N": i, "DATA": {"CYCLE": 1.5, "T": i * 2, "TAG": "t" + STR$(i)}}
+    got = CHAN.RECV(ch, 100)
+    IF got{"N"} <> i ORELSE got{"FROM"} <> "songgen" ORELSE got{"DATA"}{"T"} <> i * 2 THEN failed = failed + 1
+NEXT i
+IF failed > 0 THEN PRINT "FAIL channel round trip: "; failed
+DIM inner$ AS STRING = got{"DATA"}{"TAG"}
+IF inner$ <> "t300" THEN
+    PRINT "FAIL nested string after the loop: "; inner$
+    failed = failed + 1
+ENDIF
+
+DIM js$ AS STRING = ""
+FOR i = 1 TO 50
+    js$ = JSON.STRINGIFY$({"A": i, "B": {"C": "x"}})
+NEXT i
+IF INSTR(js$, "50") < 0 ORELSE INSTR(js$, CHR$(34) + "x" + CHR$(34)) < 0 THEN
+    PRINT "FAIL stringify: "; js$
+    failed = failed + 1
+ENDIF
+
+DIM keep = {"K": 7}
+CHAN.SEND ch, {"WRAP": keep}
+DIM back = CHAN.RECV(ch, 100)
+IF keep{"K"} <> 7 ORELSE back{"WRAP"}{"K"} <> 7 THEN
+    PRINT "FAIL a map variable inside the literal"
+    failed = failed + 1
+ENDIF
+
+IF failed > 0 THEN END 1
+PRINT "OK"

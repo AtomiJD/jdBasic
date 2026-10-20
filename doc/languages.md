@@ -1656,6 +1656,14 @@ safe to release:
   it; they are released after the loop when its variable keeps none of them
   (it is not stored, passed on to something that keeps it, or read after the
   loop).
+* A **map literal** handed straight to a builtin the runtime library serves
+  (`CHAN.SEND ch, {"T": t}`, `NODE.PUBLISH`, `JSON.STRINGIFY$`) is copied
+  there and released after the call, nested literals included, as long as its
+  values are numbers, strings and such literals.
+* The **values a runtime-library call hands back** inside a `DO` or `FOR`
+  loop are released at the end of the pass (a `FOR` loop does it every 64
+  passes and when it ends) unless something keeps them: a variable, an array
+  cell, a map key or a pushed element.
 
 All of this needs proof of exclusive ownership, so the analysis stands down
 whenever it cannot get it: a variable that is also a loop variable, a
@@ -1666,9 +1674,9 @@ the result of a `FUNC` that sometimes returns its parameter, or a read out of
 an array.
 
 What is still lost: a temporary handed to a `FUNC` whose parameter escapes,
-the values a runtime-library call hands back inside a `FOR` loop (a `DO` loop
-sweeps them each pass), and arrays in general (an array a program builds is
-never released).
+a map literal assigned to a variable (`m = {"T": t}` in a loop keeps every
+earlier map), and arrays in general (an array a program builds is never
+released).
 
 `JDB_NO_STROWN=1` in the environment compiles with the whole mechanism off,
 which is the first thing to try if a compiled program misbehaves in a way that

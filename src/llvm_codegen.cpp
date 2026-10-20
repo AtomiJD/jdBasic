@@ -261,6 +261,40 @@ LLVMValueRef LLVMCodegen::adopt_vm_handle(const std::string& name, LLVMValueRef 
     return call;
 }
 
+// A runtime-tagged value is a VM handle only when its tag says so at run
+// time, and only then may it reach jdrt_adopt_handle: the bits of any other
+// kind could name an unrelated key.
+void LLVMCodegen::adopt_if_vm_handle(const std::string& name, TypedValue& rhs, bool local_only) {
+    if (rhs.tag == JD_TAG_VM_HANDLE) {
+        rhs.val = adopt_vm_handle(name, rhs.val, local_only);
+        return;
+    }
+    if (rhs.tag != JD_TAG_RUNTIME || !rhs.runtime_tag || !current_fn) return;
+    if (!get_runtime_func("__jdrt_adopt_handle") || !LLVMGetNamedGlobal(module, "__jdrt_handle")) return;
+    if (LLVMTypeOf(rhs.val) != i64_type && LLVMTypeOf(rhs.val) != f64_type) return;
+    LLVMValueRef is_h = LLVMBuildICmp(builder, LLVMIntEQ, rhs.runtime_tag,
+        LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "adopt_ish");
+    LLVMBasicBlockRef from = LLVMGetInsertBlock(builder);
+    LLVMBasicBlockRef bb_h = LLVMAppendBasicBlockInContext(ctx, current_fn, "adopt.h");
+    LLVMBasicBlockRef bb_m = LLVMAppendBasicBlockInContext(ctx, current_fn, "adopt.m");
+    LLVMBuildCondBr(builder, is_h, bb_h, bb_m);
+    LLVMPositionBuilderAtEnd(builder, bb_h);
+    // The bits travel as i64 or as an f64 that carries them.
+    LLVMTypeRef vt = LLVMTypeOf(rhs.val);
+    bool as_f64 = vt == f64_type;
+    LLVMValueRef kept = adopt_vm_handle(name,
+        as_f64 ? pun_f64_to_i64(rhs.val) : rhs.val, local_only);
+    if (as_f64) kept = pun_i64_to_f64(kept);
+    LLVMBasicBlockRef h_end = LLVMGetInsertBlock(builder);
+    LLVMBuildBr(builder, bb_m);
+    LLVMPositionBuilderAtEnd(builder, bb_m);
+    LLVMValueRef phi = LLVMBuildPhi(builder, vt, "adopted_rt");
+    LLVMValueRef vs[] = { kept, rhs.val };
+    LLVMBasicBlockRef bs[] = { h_end, from };
+    LLVMAddIncoming(phi, vs, bs, 2);
+    rhs.val = phi;
+}
+
 void LLVMCodegen::finish_pending_adopts() {
     if (pending_adopts.empty()) return;
     LLVMBasicBlockRef cur = LLVMGetInsertBlock(builder);
@@ -524,6 +558,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_map_get_str","__map_get_str",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_map_has",    "__map_has",    i64_type,    {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_map_delete", "__map_delete", i64_type,    {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_map_free_tree", "__map_free_tree", void_type, {i8_ptr_type}, -1);
     reg("jdb_map_count",  "__map_count",  i64_type,    {i8_ptr_type}, JD_TAG_I64);
     reg("jdb_map_get_obj","__map_get_obj",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_NATIVE_MAP);
     // The same step inside an assignment chain, where a missing entry is an
@@ -6218,9 +6253,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             rhs = codegen_expr(*stmt.expr);
         }
     }
-    if (rhs.tag == JD_TAG_VM_HANDLE && stmt.var_name.find('.') == std::string::npos)
-        rhs.val = adopt_vm_handle(stmt.var_name, rhs.val,
-                                  stmt.kind == StmtKind::DIM && scopes.size() > 1);
+    if (stmt.var_name.find('.') == std::string::npos)
+        adopt_if_vm_handle(stmt.var_name, rhs,
+                           stmt.kind == StmtKind::DIM && scopes.size() > 1);
 
     // A right-hand side that raised must not reach the slot. The check after
     // the statement comes too late: the store has run, and the variable then
@@ -7503,8 +7538,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
         if (!bound) rhs = codegen_expr(*stmt.expr);
     }
-    if (rhs.tag == JD_TAG_VM_HANDLE)
-        rhs.val = adopt_vm_handle(stmt.var_name, rhs.val, scopes.size() > 1);
+    adopt_if_vm_handle(stmt.var_name, rhs, scopes.size() > 1);
     // A local that a later assignment feeds from an index read holds its
     // value with a tag from the start, so a read placed before that
     // assignment in the source, inside a loop, sees the current kind.
@@ -8540,6 +8574,19 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
     LLVMBasicBlockRef inc_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.inc");
     LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.end");
 
+    // VM handles a pass allocated are temporaries (a variable adopts what
+    // it keeps), so one watermark before the loop serves every pass. The
+    // sweep runs every 64 passes and on the normal exit, which keeps a
+    // tight loop free of calls into the bridge.
+    LLVMValueRef wm = emit_frame_begin();
+    LLVMValueRef passes = nullptr;
+    LLVMBasicBlockRef exit_bb = end_bb;
+    if (wm) {
+        passes = scratch_alloca(i64_type, "for.passes");
+        LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), passes);
+        exit_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.exit");
+    }
+
     loop_stack.push({ end_bb, inc_bb });
 
     LLVMBuildBr(builder, cond_bb);
@@ -8563,7 +8610,7 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
                         cur_val, end_slot, "cmp")
         : LLVMBuildICmp(builder, negative_step ? LLVMIntSGE : LLVMIntSLE,
                         cur_val, end_slot, "cmp");
-    LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
+    LLVMBuildCondBr(builder, cmp, body_bb, exit_bb);
 
     LLVMPositionBuilderAtEnd(builder, body_bb);
     for (auto& s : stmt.body) {
@@ -8573,6 +8620,22 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
         LLVMBuildBr(builder, inc_bb);
 
     LLVMPositionBuilderAtEnd(builder, inc_bb);
+    if (wm) {
+        LLVMValueRef n = LLVMBuildAdd(builder,
+            LLVMBuildLoad2(builder, i64_type, passes, "passes"),
+            LLVMConstInt(i64_type, 1, 0), "passes.next");
+        LLVMBuildStore(builder, n, passes);
+        LLVMValueRef due = LLVMBuildICmp(builder, LLVMIntEQ,
+            LLVMBuildAnd(builder, n, LLVMConstInt(i64_type, 63, 0), "passes.low"),
+            LLVMConstInt(i64_type, 0, 0), "sweep.due");
+        LLVMBasicBlockRef sweep_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.sweep");
+        LLVMBasicBlockRef step_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.step");
+        LLVMBuildCondBr(builder, due, sweep_bb, step_bb);
+        LLVMPositionBuilderAtEnd(builder, sweep_bb);
+        emit_frame_end(wm);
+        LLVMBuildBr(builder, step_bb);
+        LLVMPositionBuilderAtEnd(builder, step_bb);
+    }
     LLVMValueRef cur_val2 = LLVMBuildLoad2(builder, loop_type, var_alloca, "i.load");
     LLVMValueRef next_val = use_f64
         ? LLVMBuildFAdd(builder, cur_val2, step_val, "i.next")
@@ -8580,8 +8643,37 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
     LLVMBuildStore(builder, next_val, var_alloca);
     LLVMBuildBr(builder, cond_bb);
 
+    if (wm) {
+        LLVMPositionBuilderAtEnd(builder, exit_bb);
+        emit_frame_end(wm);
+        LLVMBuildBr(builder, end_bb);
+    }
+
     loop_stack.pop();
     LLVMPositionBuilderAtEnd(builder, end_bb);
+}
+
+// The watermark is taken at the start of a loop pass; handles allocated
+// before the loop (JSON.PARSE results at init, say) are below it and stay.
+LLVMValueRef LLVMCodegen::emit_frame_begin() {
+    auto* fb = get_runtime_func("__jdrt_frame_begin");
+    if (!fb) return nullptr;
+    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+    if (!hg) return nullptr;
+    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+    LLVMValueRef args[] = { rt };
+    return LLVMBuildCall2(builder, fb->fn_type, fb->fn, args, 1, "wm");
+}
+
+void LLVMCodegen::emit_frame_end(LLVMValueRef watermark) {
+    if (!watermark) return;
+    auto* fe = get_runtime_func("__jdrt_frame_end");
+    if (!fe) return;
+    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+    if (!hg) return;
+    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+    LLVMValueRef args[] = { rt, watermark };
+    LLVMBuildCall2(builder, fe->fn_type, fe->fn, args, 2, "");
 }
 
 // ── DO...LOOP ───────────────────────────────────────────────
@@ -8589,30 +8681,6 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
 void LLVMCodegen::codegen_do_loop(const Stmt& stmt) {
     LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "do.body");
     LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "do.end");
-
-    // Frame-based VM handle cleanup: save a watermark at loop-body start
-    // and sweep all handles >= watermark at the end of each iteration.
-    // This keeps value_store bounded without affecting long-lived handles
-    // (those allocated before the loop - e.g. JSON.PARSE results at init).
-    auto emit_frame_begin = [&]() -> LLVMValueRef {
-        auto* fb = get_runtime_func("__jdrt_frame_begin");
-        if (!fb) return nullptr;
-        LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
-        if (!hg) return nullptr;
-        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
-        LLVMValueRef args[] = { rt };
-        return LLVMBuildCall2(builder, fb->fn_type, fb->fn, args, 1, "wm");
-    };
-    auto emit_frame_end = [&](LLVMValueRef wm) {
-        if (!wm) return;
-        auto* fe = get_runtime_func("__jdrt_frame_end");
-        if (!fe) return;
-        LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
-        if (!hg) return;
-        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
-        LLVMValueRef args[] = { rt, wm };
-        LLVMBuildCall2(builder, fe->fn_type, fe->fn, args, 2, "");
-    };
 
     if (stmt.cond_at_top && stmt.loop_cond) {
         LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "do.cond");
@@ -9346,10 +9414,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             auto& map_new = runtime_funcs["__map_new"];
             LLVMValueRef m = LLVMBuildCall2(builder, map_new.fn_type, map_new.fn,
                                              nullptr, 0, "map");
+            bool pure = true;
             for (size_t i = 0; i < expr.map_keys.size() && i < expr.args.size(); i++) {
                 LLVMValueRef key = LLVMBuildGlobalStringPtr(builder,
                     expr.map_keys[i].c_str(), ".mk");
                 TypedValue v = codegen_expr(*expr.args[i]);
+                bool cell_pure = v.tag == JD_TAG_STR || v.tag == JD_TAG_BOOL ||
+                                 v.tag == JD_TAG_I64 || jd_is_f64_tag(v.tag) ||
+                                 (v.tag == JD_TAG_NATIVE_MAP && pure_map_literals.count(v.val));
+                if (!cell_pure) pure = false;
                 if (v.tag == JD_TAG_STR) {
                     auto& set_str = runtime_funcs["__map_set_str"];
                     LLVMValueRef args[] = { m, key, v.val };
@@ -9413,6 +9486,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMBuildCall2(builder, set_f64.fn_type, set_f64.fn, args, 3, "");
                 }
             }
+            if (pure) pure_map_literals.insert(m);
             return { m, JD_TAG_NATIVE_MAP };  // tag=4 means map/object
         }
 
@@ -15524,6 +15598,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 for (int i = 0; i < nargs; i++)
                     if (arg_cache[i].tag == JD_TAG_RUNTIME && arg_cache[i].fresh_ptr)
                         drop_read_temp(arg_cache[i]);
+                // A map argument crossed as a copy (jdrt_map_to_handle).
+                auto& mfree = runtime_funcs["__map_free_tree"];
+                bool boxed = get_runtime_func("__jdrt_map_to_handle") != nullptr;
+                for (int i = 0; i < nargs && boxed; i++)
+                    if (arg_cache[i].tag == JD_TAG_NATIVE_MAP && expr.args[i] &&
+                        expr.args[i]->kind == ExprKind::MAP_LITERAL &&
+                        pure_map_literals.count(arg_cache[i].val)) {
+                        LLVMValueRef d[] = { arg_cache[i].val };
+                        LLVMBuildCall2(builder, mfree.fn_type, mfree.fn, d, 1, "");
+                    }
                 return r;
             };
 

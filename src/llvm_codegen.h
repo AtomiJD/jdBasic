@@ -186,6 +186,10 @@ private:
     struct PendingAdopt { LLVMValueRef call; std::string name; bool local_only; };
     std::vector<PendingAdopt> pending_adopts;
     void finish_pending_adopts();
+    // A loop pass as a frame of VM handles: what the pass allocated and no
+    // variable adopted is released at its end (jdrt_frame_begin/end).
+    LLVMValueRef emit_frame_begin();
+    void emit_frame_end(LLVMValueRef watermark);
     LLVMTypeRef param_slot_type(int tag) const;
 
     // User-defined functions: name -> {LLVMValueRef, return_tag, param_tags}
@@ -415,6 +419,8 @@ private:
         // a VM object). drop_read_temp releases it after a reading consumer.
         LLVMValueRef fresh_ptr = nullptr;
     };
+    // adopt_vm_handle for a value that may be a VM handle only at run time.
+    void adopt_if_vm_handle(const std::string& name, TypedValue& rhs, bool local_only);
 
     // Runtime string functions whose result is NOT a fresh allocation, so it
     // must never be dropped or taken over by a slot.
@@ -468,6 +474,10 @@ private:
     // User FUNCs whose every RETURN hands back a buffer allocated for the
     // caller, so the result is dropped or taken over like a builtin's.
     std::unordered_set<std::string> fresh_string_funcs;
+    // Maps built by a MAP_LITERAL whose cells are scalars, strings and maps
+    // of the same kind: nothing else points into them, so a consumer that
+    // copies the map may free the whole tree (jdb_map_free_tree).
+    std::unordered_set<LLVMValueRef> pure_map_literals;
     void scan_fresh_string_funcs(const std::vector<StmtPtr>& program);
     // Per user FUNC/SUB, whether each parameter may outlive the call: handed
     // back, stored, aliased or passed on to somewhere that keeps it. A string

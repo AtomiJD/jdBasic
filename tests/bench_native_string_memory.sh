@@ -42,8 +42,11 @@ peak_of() {
 }
 
 printf '%-8s %12s %10s %10s\n' mode rounds peakMB bytes/round
-for mode in concat map func arg dyn field typeof number; do
-    for rounds in 5000000 10000000 20000000; do
+for mode in concat map func arg dyn field typeof send number; do
+    # A channel round trip costs microseconds, not nanoseconds.
+    counts="5000000 10000000 20000000"
+    [ "$mode" = send ] && counts="100000 200000 400000"
+    for rounds in $counts; do
         peak=$(peak_of "bench.exe" "$work/bench.exe" "$mode" "$rounds")
         printf '%-8s %12s %10s %10s\n' \
             "$mode" "$rounds" "$((peak / 1024))" "$((peak * 1024 / rounds))"
