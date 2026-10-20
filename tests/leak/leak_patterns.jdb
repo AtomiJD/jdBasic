@@ -115,6 +115,29 @@ ELSEIF pattern$ = "split" THEN
         total = total + LEN(parts)
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "strlit" THEN
+    DIM labels = ["", ""]
+    FOR i = 1 TO passes
+        labels = ["row " + STR$(i), "fixed"]
+        total = total + LEN(labels)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "pushrow" THEN
+    DIM batch = []
+    FOR i = 1 TO passes
+        batch = []
+        PUSH(batch, [i, i + 1])
+        PUSH(batch, [i, i + 2])
+        total = total + LEN(batch)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "gridrow" THEN
+    DIM grid = [[0, 0], [0, 0], [0, 0]]
+    FOR i = 1 TO passes
+        grid[i MOD 3] = [i, i * 2]
+        total = total + LEN(grid)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSEIF pattern$ = "arraylit" THEN
     DIM row = [0, 0, 0]
     FOR i = 1 TO passes

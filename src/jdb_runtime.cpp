@@ -624,6 +624,11 @@ struct JdbArray {
                          // present); jdb_array_push grows in place up to it.
 };
 
+// Set on an array once a container written into one of its cells belongs to
+// it (jdb_rc_adopt); a cell written over then lets go of what it held.
+static const int32_t JDB_ARR_OWNS_CHILDREN = 1 << 12;
+static void rc_disown_cell(JdbArray* arr, double old);
+
 JdbArray* jdb_array_new(int64_t size) {
     auto* arr = (JdbArray*)malloc(sizeof(JdbArray));
     arr->data = (double*)calloc(size, sizeof(double));
@@ -681,8 +686,10 @@ JdbArray* jdb_array_push(JdbArray* arr, double val, int32_t tag) {
 }
 
 void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
-    if (idx >= 0 && idx < arr->length)
+    if (idx >= 0 && idx < arr->length) {
+        if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
         arr->data[idx] = val;
+    }
 }
 
 // One line from standard input for INPUT, without its line ending.
@@ -1122,6 +1129,7 @@ void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
     if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP)
         arr->flags |= 1;
     if (tag == JD_TAG_STR) arr->flags |= 2;
+    if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
     arr->data[idx] = keep_vm_handle(val, tag);
     arr->elem_tags[idx] = (int8_t)tag;
 }
@@ -2354,6 +2362,8 @@ struct RcEntry {
     uint8_t kind;        // JD_TAG_ARR or JD_TAG_NATIVE_MAP
     uint8_t pinned;
     uint8_t owns_cells;  // an array whose string cells nobody else points at
+    uintptr_t owner;     // the array whose cell holds it and counts for it
+    uint64_t owner_gen;
 };
 
 struct RcPoolItem { uintptr_t key; uint64_t gen; };
@@ -2443,9 +2453,28 @@ static bool rc_poison() {
     return on == 1;
 }
 
-static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells) {
+static void rc_remove(RcEntry* e);
+
+static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64_t gen) {
     if (kind == JD_TAG_ARR) {
         JdbArray* a = (JdbArray*)k;
+        // The containers its cells own go with it unless something else
+        // counts them too.
+        if ((a->flags & JDB_ARR_OWNS_CHILDREN) && a->data) {
+            for (int64_t i = 0; i < a->length; i++) {
+                union { double d; int64_t i; } u; u.d = a->data[i];
+                RcEntry* c = rc_find((uintptr_t)u.i);
+                if (!c || c->owner != k || c->owner_gen != gen) continue;
+                c->owner = 0;
+                if (--c->rc > 0 || c->pinned) continue;
+                uintptr_t ck = c->key;
+                uint8_t ckind = c->kind;
+                bool cowns = c->owns_cells != 0;
+                uint64_t cgen = c->gen;
+                rc_remove(c);
+                rc_free_container(ck, ckind, cowns, cgen);
+            }
+        }
         if (owns_cells && a->data) {
             for (int64_t i = 0; i < a->length; i++) {
                 bool str = a->elem_tags ? a->elem_tags[i] == JD_TAG_STR : (a->flags & 2) != 0;
@@ -2508,8 +2537,40 @@ extern "C" void* jdb_rc_new(void* p, int32_t kind) {
     e->kind = (uint8_t)kind;
     e->pinned = 0;
     e->owns_cells = 0;
+    e->owner = 0;
+    e->owner_gen = 0;
     g_rc.pool.push_back({ k, e->gen });
     return p;
+}
+
+// A container written straight into a cell of an array, with no other
+// holder: the cell counts for it, and it goes when the array goes or the
+// cell is written over. Anything else is kept for good, as every cell
+// value used to be.
+extern "C" void jdb_rc_adopt(int64_t parent_bits, int64_t child_bits) {
+    if (!g_rc.cap || !rc_ready()) return;
+    RcEntry* c = rc_find((uintptr_t)child_bits);
+    if (!c) return;
+    RcEntry* p = rc_find((uintptr_t)parent_bits);
+    if (!p || p->kind != JD_TAG_ARR || p == c || c->owner || c->pinned || c->rc != 0) {
+        c->pinned = 1;
+        return;
+    }
+    c->rc = 1;
+    c->owner = p->key;
+    c->owner_gen = p->gen;
+    ((JdbArray*)p->key)->flags |= JDB_ARR_OWNS_CHILDREN;
+}
+
+static void rc_disown_cell(JdbArray* arr, double old) {
+    if (!g_rc.cap || !rc_ready()) return;
+    union { double d; int64_t i; } u; u.d = old;
+    RcEntry* c = rc_find((uintptr_t)u.i);
+    if (!c || c->owner != (uintptr_t)arr) return;
+    RcEntry* p = rc_find((uintptr_t)arr);
+    if (!p || p->gen != c->owner_gen) return;
+    c->owner = 0;
+    if (--c->rc == 0 && !c->pinned) g_rc.pool.push_back({ c->key, c->gen });
 }
 
 // The strings in an array the bridge built are copies made for it alone; a
@@ -2556,7 +2617,7 @@ static void rc_sweep(std::vector<RcPoolItem>& list, size_t from) {
         uint8_t kind = e->kind;
         bool owns = e->owns_cells != 0;
         rc_remove(e);
-        rc_free_container(list[i].key, kind, owns);
+        rc_free_container(list[i].key, kind, owns, list[i].gen);
     }
     list.resize(from);
 }

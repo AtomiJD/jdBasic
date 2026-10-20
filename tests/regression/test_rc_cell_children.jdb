@@ -1,0 +1,122 @@
+' A literal written straight into a cell belongs to the array: it goes when
+' the array goes or the cell is written over, and stays whole as long as
+' the array holds it. Arrays whose cells are copied out, aliased or walked
+' keep their cells for good. Every check reads after the loop passes that
+' free what nobody holds.
+
+OPTION "EXPLICIT"
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM i AS INTEGER
+DIM k AS INTEGER
+
+' Rows pushed into a fresh list each pass, read in place.
+DIM batch = []
+DIM rowsum AS DOUBLE = 0
+FOR i = 1 TO 200
+    batch = []
+    PUSH(batch, [i, i + 1])
+    PUSH(batch, [i, i + 2])
+    rowsum = rowsum + batch[0][1] + batch[1][1]
+NEXT i
+Check(rowsum = 40800, "rows read in place each pass")
+Check(batch[1][1] = 202, "last list read after the loop")
+Check(LEN(batch[0]) = 2, "row length after the loop")
+
+' Cells written over, the rows read in place.
+DIM grid = [[0, 0], [0, 0], [0, 0]]
+FOR i = 1 TO 300
+    grid[i MOD 3] = [i, i * 2]
+NEXT i
+Check(grid[0][0] = 300, "cell 0 written last in pass 300")
+Check(grid[1][1] = 596, "cell 1 written last in pass 298")
+Check(grid[2][0] = 299, "cell 2 written last in pass 299")
+
+' A row written into further in place.
+DIM board = [[0, 0, 0], [0, 0, 0]]
+FOR i = 1 TO 50
+    board[i MOD 2] = [0, 0, 0]
+    board[i MOD 2][1] = i
+NEXT i
+Check(board[0][1] = 50, "row written into after it was placed")
+Check(board[1][1] = 49, "other row written into")
+
+' Maps pushed as rows.
+DIM recs = []
+FOR i = 1 TO 120
+    recs = []
+    PUSH(recs, {"N": i, "TAG": "r" + STR$(i)})
+NEXT i
+Check(recs[0]{"N"} = 120, "map row read in place")
+Check(recs[0]{"TAG"} = "r120", "string field of a map row")
+
+' A row copied out of the list: the list keeps its rows.
+DIM keep_list = []
+DIM taken = []
+FOR i = 1 TO 100
+    keep_list = []
+    PUSH(keep_list, [i, i])
+    IF i = 33 THEN taken = keep_list[0]
+NEXT i
+Check(taken[0] = 33, "row copied out of a list")
+
+' A list walked by FOR EACH.
+DIM walked = []
+DIM seen AS DOUBLE = 0
+FOR i = 1 TO 80
+    walked = []
+    PUSH(walked, [i, 1])
+    FOR EACH r IN walked
+        seen = seen + r[1]
+    NEXT
+NEXT i
+Check(seen = 80, "list walked by FOR EACH")
+
+' A list handed to a FUNC.
+FUNC FirstOfFirst(lst)
+    RETURN lst[0][0]
+ENDFUNC
+DIM handed = []
+DIM got AS DOUBLE = 0
+FOR i = 1 TO 90
+    handed = []
+    PUSH(handed, [i, 0])
+    got = FirstOfFirst(handed)
+NEXT i
+Check(got = 90, "list handed to a FUNC")
+
+' A list aliased by another name.
+DIM orig = []
+DIM other = []
+FOR i = 1 TO 60
+    orig = []
+    PUSH(orig, [i])
+    IF i = 7 THEN other = orig
+NEXT i
+Check(other[0][0] = 7, "alias keeps its rows")
+
+' Rows inside a FUNC's own list.
+FUNC Build(n)
+    DIM acc = []
+    DIM j AS INTEGER
+    FOR j = 1 TO n
+        PUSH(acc, [j, j * j])
+    NEXT j
+    RETURN SUM(acc[n - 1])
+ENDFUNC
+DIM b AS DOUBLE = 0
+FOR i = 1 TO 40
+    b = Build(10)
+NEXT i
+Check(b = 110, "rows of a local list")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

@@ -92,5 +92,30 @@ FOR i = 1 TO 90
 NEXT i
 Check(heads$ = "h90", "cell of a local answer handed back")
 
+' Literals of strings: a constant, a variable and a new string in the cells.
+DIM label$ = "lbl"
+DIM labels = ["", "", ""]
+DIM pick$ = ""
+FOR i = 1 TO 150
+    labels = ["row " + STR$(i), "fixed", label$]
+    IF i = 9 THEN pick$ = labels[0]
+NEXT i
+label$ = "changed"
+Check(pick$ = "row 9", "cell of a literal copied out")
+Check(labels[0] = "row 150", "new string cell after the loop")
+Check(labels[1] = "fixed", "constant cell after the loop")
+Check(labels[2] = "lbl", "variable cell keeps the value it was given")
+Check(label$ = "changed", "variable written over after the literal")
+
+' A literal whose cells go elsewhere keeps them.
+DIM tags = ["", ""]
+DIM bag = []
+FOR i = 1 TO 70
+    tags = ["t" + STR$(i), "u"]
+    PUSH(bag, tags[0])
+NEXT i
+DIM t5$ = bag[4]
+Check(t5$ = "t5", "literal cell pushed elsewhere")
+
 IF failed > 0 THEN END 1
 PRINT "OK"

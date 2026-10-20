@@ -562,6 +562,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_rc_new",     "__rc_new",     i8_ptr_type, {i8_ptr_type, i32_type}, -1);
     reg("jdb_rc_pin",     "__rc_pin",     void_type, {i64_type}, -1);
     reg("jdb_rc_own_cells", "__rc_own_cells", void_type, {i64_type}, -1);
+    reg("jdb_rc_adopt",   "__rc_adopt",   void_type, {i64_type, i64_type}, -1);
     reg("jdb_rc_retain",  "__rc_retain",  void_type, {i64_type}, -1);
     reg("jdb_rc_release", "__rc_release", void_type, {i64_type, i32_type}, -1);
     reg("jdb_rc_assign",  "__rc_assign",  void_type, {i64_type, i64_type, i32_type}, -1);
@@ -4258,6 +4259,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     scan_param_escapes(program);
     scan_foreach_release(program);
     scan_cell_owners(program);
+    scan_child_owners(program);
     // Pre-scan: declare all global variables used in top-level code
     // so that FUNC/SUB bodies can reference them
     // Pre-scan TYPE_DECL names so we can recognize DIM x AS TypeName
@@ -8222,10 +8224,11 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         }
         TypedValue idx_tv = codegen_expr(*stmt.index_chain[0]);
         LLVMValueRef idx = coerce_to(idx_tv, i64_type);
+        bool adopt = adopts_literal(stmt.var_name, stmt.expr.get());
         TypedValue v;
         {
             ScopedLeafTag _vl(this, stmt.expr->kind == ExprKind::INDEX ? JD_TAG_RUNTIME : -1);
-            ScopedRcEscape _esc(this, true);
+            ScopedRcEscape _esc(this, !adopt);
             v = codegen_expr(*stmt.expr);
         }
         auto [bits, tag] = tagged_bits_of(v);
@@ -8234,6 +8237,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
         LLVMValueRef args[] = { rt, base_bits, base_tag, idx, bits, tag };
         LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 6, "");
+        if (adopt) rc_adopt(base_bits, v);
         if (v.tag == JD_TAG_ARR && !stmt.var_name.empty())
             array_array_vars.insert(stmt.var_name);
         if (v.tag == JD_TAG_STR && !stmt.var_name.empty())
@@ -8280,7 +8284,12 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     // Last index: route to map_set_* if string-keyed, else array_set.
     TypedValue idx_tv = codegen_expr(*stmt.index_chain.back());
     TypedValue val_tv;
-    { ScopedRcEscape _esc(this, true); val_tv = codegen_expr(*stmt.expr); }
+    bool adopt = stmt.index_chain.size() == 1 && adopts_literal(stmt.var_name, stmt.expr.get());
+    { ScopedRcEscape _esc(this, !adopt); val_tv = codegen_expr(*stmt.expr); }
+    if (adopt && idx_tv.tag == JD_TAG_STR) {
+        rc_pin(val_tv);
+        adopt = false;
+    }
 
     if (idx_tv.tag == JD_TAG_STR) {
         if (val_tv.tag == JD_TAG_STR) {
@@ -8378,6 +8387,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         LLVMValueRef args[] = { arr_ptr, idx, val };
         LLVMBuildCall2(builder, arr_set.fn_type, arr_set.fn, args, 3, "");
     }
+    if (adopt) rc_adopt(arr_ptr, val_tv);
 
     // Track element-type for the outer array so subsequent reads can
     // pun the f64 slot back to the right tag. `arr[i] = some_matrix`
@@ -9424,6 +9434,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, size_arg, 1, "arr");
             bool has_ptr_elems = false;
             bool has_string_elems = false;
+            bool own_strs = false;
             bool all_bool_elems = !expr.args.empty();
             bool all_date_elems = !expr.args.empty();
             // Pre-scan: any INDEX-typed element forces tagged storage so
@@ -9496,6 +9507,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // only for an array whose every cell is one, so the kind has
                 // to ride in the cell.
                 if (saw_date_elem && saw_non_date_elem) any_runtime = true;
+                // Written straight into a variable whose cells are only read:
+                // every string cell becomes the array's own, so a string the
+                // literal did not build itself goes in as a copy.
+                own_strs = rc_on && !rc_escape && &expr == cell_owner_rhs;
+                for (auto& el : elems)
+                    if (el.tag == JD_TAG_RUNTIME || el.tag == JD_TAG_VM_HANDLE) own_strs = false;
+                if (own_strs) {
+                    auto& own = runtime_funcs["__str_own"];
+                    for (size_t i = 0; i < elems.size(); i++)
+                        if (elems[i].tag == JD_TAG_STR && !elems[i].owned &&
+                            !expr_yields_fresh_string(*expr.args[i]))
+                            elems[i].val = LLVMBuildCall2(builder, own.fn_type, own.fn,
+                                                          &elems[i].val, 1, "lit_own");
+                }
                 for (size_t i = 0; i < elems.size(); i++) {
                     TypedValue elem = elems[i];
                     if (elem.tag != JD_TAG_BOOL) all_bool_elems = false;
@@ -9576,7 +9601,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     }
                 }
             }
-            return { rc_born(arr, JD_TAG_ARR), JD_TAG_ARR };
+            arr = rc_born(arr, JD_TAG_ARR);
+            if (own_strs) {
+                auto& fn = runtime_funcs["__rc_own_cells"];
+                LLVMValueRef a[] = { rc_bits(arr) };
+                LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "");
+            }
+            return { arr, JD_TAG_ARR };
         }
 
         case ExprKind::MAP_LITERAL: {
@@ -14073,8 +14104,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
     // Handle PUSH: PUSH arr, val → arr = APPEND(arr, val)
     if (upper == "PUSH" && expr.args.size() >= 2) {
-        TypedValue arr_tv = codegen_expr(*expr.args[0]);
-        TypedValue val_tv = codegen_expr(*expr.args[1]);
+        // The array grows in place and is not kept anywhere new; only the
+        // pushed value goes into a holder the counts do not see.
+        TypedValue arr_tv;
+        {
+            ScopedRcEscape _esc(this, rc_escape && expr.args[0]->kind != ExprKind::VARIABLE);
+            arr_tv = codegen_expr(*expr.args[0]);
+        }
+        bool adopt = expr.args[0]->kind == ExprKind::VARIABLE &&
+                     adopts_literal(expr.args[0]->str_val, expr.args[1].get());
+        TypedValue val_tv;
+        {
+            ScopedRcEscape _esc(this, adopt ? false : rc_escape != 0);
+            val_tv = codegen_expr(*expr.args[1]);
+        }
         // VM-handle / runtime-tagged pushes must preserve raw i64 bits -
         // coerce_to(tag=7, f64) would CONVERT a VM handle via __jdrt_val_to_f64
         // (yielding 0 for a map object), erasing the handle. Pun directly so
@@ -14125,6 +14168,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             arr_ptr = coerce_to(arr_tv, i8_ptr_type);
         LLVMValueRef args[] = { arr_ptr, fval, tag_v };
         LLVMValueRef result = LLVMBuildCall2(builder, push_fn.fn_type, push_fn.fn, args, 3, "push");
+        if (adopt) rc_adopt(result, val_tv);
         // PUSH map{"key"}, val: write the appended array back into the map
         // and propagate the string-elems flag so reads round-trip the type.
         if (expr.args[0]->kind == ExprKind::INDEX &&
@@ -16934,7 +16978,8 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
     std::function<void(const Stmt&, const Stmt*)> walk = [&](const Stmt& s, const Stmt* fn) {
         if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) fn = &s;
         bool assigns = s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM;
-        if (assigns && s.expr && s.expr->kind == ExprKind::CALL && !s.var_name.empty())
+        if (assigns && s.expr && !s.var_name.empty() &&
+            (s.expr->kind == ExprKind::CALL || s.expr->kind == ExprKind::ARRAY_LITERAL))
             candidates.insert(s.var_name);
         if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty()) banned.insert(s.var_name);
         if (s.kind == StmtKind::FOR_EACH && !s.label.empty()) banned.insert(s.label);
@@ -16980,6 +17025,136 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
     }
     for (auto& c : candidates)
         if (!banned.count(c)) cell_owner_vars.insert(c);
+}
+
+// The array of such a variable is reachable through that one name only: it
+// is given array literals and nothing else, is no parameter, and is never
+// read bare except to be pushed onto or measured. A cell read stays in
+// place: an operand, the base of a further index, an argument of a builtin
+// that only reads it and answers a number or a new string, a PRINT or a
+// condition. Copying a cell anywhere, even into a variable, rules it out,
+// since a cell may hold one of the containers the array owns.
+void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
+    if (!rc_on) return;
+    std::unordered_set<std::string> candidates, banned;
+    auto is_var = [](const Expr* e) { return e && e->kind == ExprKind::VARIABLE; };
+    auto is_lit = [](const Expr* e) {
+        return e && (e->kind == ExprKind::ARRAY_LITERAL || e->kind == ExprKind::MAP_LITERAL);
+    };
+    auto answers_new = [](const std::string& up) {
+        BuiltinRet r = builtin_ret(up);
+        if (r == BuiltinRet::F64 || r == BuiltinRet::I64 || r == BuiltinRet::Bool) return true;
+        bool str = r == BuiltinRet::Str || (!up.empty() && up.back() == '$');
+        return str && builtin_fresh_string(up);
+    };
+
+    std::function<void(const Expr&, bool)> scan = [&](const Expr& e, bool keeps) {
+        for (auto& c : e.lambda_captures) banned.insert(c);
+        switch (e.kind) {
+        case ExprKind::VARIABLE:
+            banned.insert(e.str_val);
+            return;
+        case ExprKind::LITERAL_INT: case ExprKind::LITERAL_FLOAT:
+        case ExprKind::LITERAL_STRING: case ExprKind::LITERAL_BOOL:
+        case ExprKind::PLACEHOLDER_EXPR:
+            return;
+        case ExprKind::INDEX:
+            if (is_var(e.left.get())) {
+                if (keeps) banned.insert(e.left->str_val);
+            } else if (e.left) scan(*e.left, false);
+            if (e.right) scan(*e.right, false);
+            for (auto& a : e.args) if (a) scan(*a, false);
+            return;
+        case ExprKind::BINARY: case ExprKind::UNARY:
+            if (e.left) scan(*e.left, false);
+            if (e.right) scan(*e.right, false);
+            for (auto& a : e.args) if (a) scan(*a, false);
+            return;
+        case ExprKind::CALL: {
+            std::string up = e.func_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            bool user = user_functions.count(e.func_name) || user_functions.count(up) ||
+                        param_escapes.count(e.func_name);
+            if (!user && up == "PUSH" && e.args.size() == 2) {
+                if (e.args[0] && !is_var(e.args[0].get())) scan(*e.args[0], true);
+                if (e.args[1]) scan(*e.args[1], true);
+                return;
+            }
+            bool reads = !user && builtin_reads_args(up) && answers_new(up);
+            for (auto& a : e.args) {
+                if (!a) continue;
+                if (reads && is_var(a.get())) continue;
+                scan(*a, !reads);
+            }
+            return;
+        }
+        default:
+            if (e.left) scan(*e.left, true);
+            if (e.right) scan(*e.right, true);
+            for (auto& a : e.args) if (a) scan(*a, true);
+            return;
+        }
+    };
+
+    std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+        if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB)
+            for (auto& p : s.params()) banned.insert(p.name);
+        bool assigns = s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM;
+        if (assigns && s.expr && !s.var_name.empty() && s.expr->kind != ExprKind::ARRAY_LITERAL)
+            banned.insert(s.var_name);
+        if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty() &&
+            s.index_chain.size() == 1 && is_lit(s.expr.get()))
+            candidates.insert(s.var_name);
+        if (s.kind == StmtKind::EXPR_STMT && s.expr && s.expr->kind == ExprKind::CALL &&
+            s.expr->args.size() == 2 && is_var(s.expr->args[0].get()) && is_lit(s.expr->args[1].get())) {
+            std::string up = s.expr->func_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            if (up == "PUSH") candidates.insert(s.expr->args[0]->str_val);
+        }
+        if (s.kind == StmtKind::FOR_EACH && !s.label.empty()) banned.insert(s.label);
+        if (s.kind == StmtKind::FOR_LOOP && !s.var_name.empty()) banned.insert(s.var_name);
+        if (s.expr) scan(*s.expr, s.kind != StmtKind::EXPR_STMT && s.kind != StmtKind::IF);
+        for (auto& e : s.print_exprs) if (e) scan(*e, false);
+        for (auto& e : s.index_chain) if (e) scan(*e, false);
+        for (auto& e : s.ctor_args()) if (e) scan(*e, true);
+        if (s.loop_cond) scan(*s.loop_cond, false);
+        if (s.end_expr) scan(*s.end_expr, false);
+        if (s.step_expr) scan(*s.step_expr, false);
+        for (auto& n : s.destruct_vars()) banned.insert(n);
+        for (auto& b : s.branches) {
+            if (b.condition) scan(*b.condition, false);
+            for (auto& lab : b.case_labels) {
+                if (lab.first) scan(*lab.first, false);
+                if (lab.second) scan(*lab.second, false);
+            }
+            for (auto& x : b.body) if (x) walk(*x);
+        }
+        for (auto& b : s.body)           if (b) walk(*b);
+        for (auto& c : s.catch_body())   if (c) walk(*c);
+        for (auto& f : s.finally_body()) if (f) walk(*f);
+    };
+    for (auto& stmt : program) {
+        if (!stmt) continue;
+        if (stmt->kind == StmtKind::TYPE_DECL) {
+            for (auto& m : stmt->body) if (m) walk(*m);
+            continue;
+        }
+        walk(*stmt);
+    }
+    for (auto& c : candidates)
+        if (!banned.count(c)) child_owner_vars.insert(c);
+}
+
+bool LLVMCodegen::adopts_literal(const std::string& var, const Expr* value) const {
+    return rc_on && value && child_owner_vars.count(var) &&
+           (value->kind == ExprKind::ARRAY_LITERAL || value->kind == ExprKind::MAP_LITERAL);
+}
+
+void LLVMCodegen::rc_adopt(LLVMValueRef parent, const TypedValue& child) {
+    if (!rc_on || !rc_tag(child.tag) || !child.val) return;
+    auto& fn = runtime_funcs["__rc_adopt"];
+    LLVMValueRef a[] = { rc_bits(parent), rc_bits(child.val) };
+    LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "");
 }
 
 void LLVMCodegen::scan_foreach_release(const std::vector<StmtPtr>& program) {

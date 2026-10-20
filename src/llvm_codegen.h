@@ -522,6 +522,13 @@ private:
     // when it is freed.
     std::unordered_set<std::string> cell_owner_vars;
     const Expr* cell_owner_rhs = nullptr;
+    // Variables only ever given array literals, whose cells are only read in
+    // place: a literal written straight into one of their cells belongs to
+    // the array (jdb_rc_adopt).
+    std::unordered_set<std::string> child_owner_vars;
+    void scan_child_owners(const std::vector<StmtPtr>& program);
+    bool adopts_literal(const std::string& var, const Expr* value) const;
+    void rc_adopt(LLVMValueRef parent, const TypedValue& child);
     void scan_cell_owners(const std::vector<StmtPtr>& program);
     bool param_escapes_at(const std::string& fn, size_t i) const;
 

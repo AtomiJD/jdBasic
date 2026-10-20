@@ -1698,11 +1698,22 @@ argument of a builtin that only reads it or of a parameter that does not
 escape, in a `PRINT` or a condition, or copied into a string variable that
 owns what it holds. One other use of that name anywhere in the program (an
 alias, a `FOR EACH`, a cell pushed elsewhere, a write into a cell) keeps the
-strings for good.
+strings for good. An array literal assigned to such a variable makes its
+string cells its own the same way, copying a constant or a variable's
+string as it goes in: `labels = ["row " + STR$(i), "fixed"]` in a loop stays
+flat.
+
+A literal written straight into a cell (`PUSH(list, [i, i + 1])`,
+`grid[k] = [x, y]`) belongs to the array when the variable holding the array
+is only ever given array literals, is no parameter and never has a cell
+copied out: its cells are read in place (`grid[k][1]`, `LEN(list[0])`,
+`list[0][1] = 5`), never assigned to a variable, handed to a `FUNC`, walked
+by `FOR EACH` or passed on bare. Such a row goes when the array goes or when
+its cell is written over.
 
 What is still lost: a string temporary handed to a `FUNC` whose parameter
 escapes, the strings in the cells of any other array that is freed, and
-every container that went into a cell.
+every other container that went into a cell.
 
 `JDB_NO_STROWN=1` in the environment compiles with the string mechanism off
 and `JDB_NO_RC=1` with the counts off, which is the first thing to try if a
