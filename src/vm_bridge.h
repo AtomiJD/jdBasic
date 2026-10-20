@@ -104,6 +104,9 @@ JDRT_API int64_t     jdrt_frame_begin(JdRT rt);
 JDRT_API void        jdrt_frame_end  (JdRT rt, int64_t watermark);
 // Re-store a temp handle as a persistent one (negative key, never swept).
 JDRT_API int64_t     jdrt_promote_handle(JdRT rt, int64_t h);
+// A handle assigned to a variable: a persistent copy owned by that variable;
+// the variable's previous copy is released when it owned that one.
+JDRT_API int64_t     jdrt_adopt_handle(JdRT rt, int64_t owner, int64_t old_key, int32_t old_tag, int64_t h);
 JDRT_API void*       jdrt_handle_to_hof_array(JdRT rt, int64_t h);
 
 // Type-aware call: each arg has a JdTag (see jdb_tags.h). The wire only

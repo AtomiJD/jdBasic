@@ -175,6 +175,17 @@ private:
     VarInfo* lookup_var(const std::string& name);
     VarInfo& create_var(const std::string& name, int tag);
     LLVMValueRef scratch_alloca(LLVMTypeRef ty, const char* name);
+    // A VM handle about to be stored in variable `name`: a persistent copy
+    // owned by that variable's slot (jdrt_adopt_handle). `local_only` looks
+    // the variable up in the innermost scope, as a DIM inside a FUNC does.
+    LLVMValueRef adopt_vm_handle(const std::string& name, LLVMValueRef h, bool local_only);
+    VarInfo* adopt_slot(const std::string& name, bool local_only);
+    void adopt_operands(VarInfo* vi, LLVMValueRef ops[3]);
+    // Adopt calls emitted before their statement created the variable;
+    // finish_pending_adopts fills in owner and old value after the statement.
+    struct PendingAdopt { LLVMValueRef call; std::string name; bool local_only; };
+    std::vector<PendingAdopt> pending_adopts;
+    void finish_pending_adopts();
     LLVMTypeRef param_slot_type(int tag) const;
 
     // User-defined functions: name -> {LLVMValueRef, return_tag, param_tags}

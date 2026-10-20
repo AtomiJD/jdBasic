@@ -62,6 +62,28 @@ DIM after = CHAN.RECV(other, 10)
 Ok("RECV on a closed, drained channel is EOF", CHAN.IS_EOF(after))
 Ok("not a timeout", NOT CHAN.IS_TIMEOUT(after))
 
+' A received map assigned again inside loops keeps what it holds after a
+' pass of the loop ends, and a loop that keeps reassigning ends.
+DIM maps = CHAN.OPEN(8)
+CHAN.SEND maps, {"TOPIC": "a"}
+CHAN.SEND maps, {"TOPIC": "b"}
+CHAN.SEND maps, {"TOPIC": "c"}
+DIM seen$ AS STRING = ""
+DIM rounds AS INTEGER = 0
+DIM steps AS INTEGER = 0
+DO WHILE rounds < 2
+    rounds = rounds + 1
+    DIM msg = CHAN.RECV(maps, 50)
+    DO WHILE NOT CHAN.IS_TIMEOUT(msg) ANDALSO steps < 10
+        steps = steps + 1
+        DIM topic$ AS STRING = msg{"TOPIC"}
+        seen$ = seen$ + topic$
+        msg = CHAN.TRY_RECV(maps)
+    LOOP
+LOOP
+Ok("every map read back after reassignment in a loop", seen$ = "abc")
+Ok("the reassigning loop ends on the timeout", steps = 3)
+
 PRINT ""
 PRINT "CHAN TIMEOUT TEST RESULTS"
 PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"

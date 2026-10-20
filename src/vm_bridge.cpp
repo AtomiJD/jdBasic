@@ -190,6 +190,7 @@ struct JdRTImpl {
     std::unordered_map<int64_t, Value> value_store;
     int64_t next_handle = 1;            // positive - frame-temp, swept
     int64_t next_persistent = -1;       // negative - persistent, never swept
+    std::unordered_map<int64_t, int64_t> handle_owner;  // persistent key -> variable (jdrt_adopt_handle)
     JdrtEventDispatch user_event_dispatch = nullptr;
 
     int64_t store_value(Value v) {
@@ -725,6 +726,28 @@ JDRT_API int64_t jdrt_promote_handle(JdRT handle, int64_t h) {
     auto it = rt->value_store.find(h);
     if (it == rt->value_store.end()) return h;
     return rt->store_persistent(it->second);
+}
+
+// A VM handle assigned to a variable: the variable gets a persistent copy
+// of its own, so the sweep at the end of a DO-loop pass cannot take the
+// value away. The copy the variable held before is released when this
+// variable made it (owner is a number per variable), so a loop that keeps
+// reassigning does not grow value_store.
+JDRT_API int64_t jdrt_adopt_handle(JdRT handle, int64_t owner, int64_t old_key, int32_t old_tag, int64_t h) {
+    auto* rt = resolve_rt(handle);
+    if (h == 0 || (h == old_key && old_tag == jd_tag(JdTag::VM_HANDLE))) return h;
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end()) return h;
+    int64_t k = rt->store_persistent(it->second);
+    rt->handle_owner[k] = owner;
+    if (owner != 0 && old_tag == jd_tag(JdTag::VM_HANDLE) && old_key < 0) {
+        auto o = rt->handle_owner.find(old_key);
+        if (o != rt->handle_owner.end() && o->second == owner) {
+            rt->handle_owner.erase(o);
+            rt->value_store.erase(old_key);
+        }
+    }
+    return k;
 }
 
 // A VM array as a native array for SELECT, FILTER and the other loops that

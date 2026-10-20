@@ -208,6 +208,9 @@ LLVMCodegen::VarInfo& LLVMCodegen::create_var(const std::string& name, int tag) 
             LLVMPositionBuilderAtEnd(builder, entry_block);
 
         storage = LLVMBuildAlloca(builder, var_type, name.c_str());
+        // A slot that can hold a VM handle starts at 0, so jdrt_adopt_handle
+        // never takes what an earlier call left on the stack for its own copy.
+        if (var_type == i64_type) LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), storage);
 
         LLVMPositionBuilderAtEnd(builder, current_block);
     }
@@ -215,6 +218,62 @@ LLVMCodegen::VarInfo& LLVMCodegen::create_var(const std::string& name, int tag) 
     auto& vi = scopes.back().vars[name];
     vi = { storage, tag };
     return vi;
+}
+
+LLVMCodegen::VarInfo* LLVMCodegen::adopt_slot(const std::string& name, bool local_only) {
+    if (local_only) {
+        auto it = scopes.back().vars.find(name);
+        return it != scopes.back().vars.end() ? &it->second : nullptr;
+    }
+    return lookup_var(name);
+}
+
+// The owner (the slot's address) and the slot's current value and tag,
+// as operands 1..3 of a jdrt_adopt_handle call, built at the builder.
+void LLVMCodegen::adopt_operands(VarInfo* vi, LLVMValueRef ops[3]) {
+    ops[0] = LLVMConstInt(i64_type, 0, 0);
+    ops[1] = LLVMConstInt(i64_type, 0, 0);
+    ops[2] = LLVMConstInt(i32_type, 0, 0);
+    if (!vi || !vi->alloca_val) return;
+    ops[0] = LLVMBuildPtrToInt(builder, vi->alloca_val, i64_type, "owner");
+    if (vi->tag == JD_TAG_VM_HANDLE) {
+        ops[1] = LLVMBuildLoad2(builder, i64_type, vi->alloca_val, "oldh");
+        ops[2] = LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0);
+    } else if (vi->tag == JD_TAG_RUNTIME && vi->runtime_tag_alloca) {
+        ops[1] = LLVMBuildLoad2(builder, i64_type, vi->alloca_val, "oldh");
+        ops[2] = LLVMBuildLoad2(builder, i32_type, vi->runtime_tag_alloca, "oldt");
+    }
+}
+
+LLVMValueRef LLVMCodegen::adopt_vm_handle(const std::string& name, LLVMValueRef h, bool local_only) {
+    auto* fn = get_runtime_func("__jdrt_adopt_handle");
+    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+    if (!fn || !hg) return h;
+    VarInfo* vi = adopt_slot(name, local_only);
+    LLVMValueRef ops[3];
+    adopt_operands(vi, ops);
+    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+    LLVMValueRef args[] = { rt, ops[0], ops[1], ops[2], h };
+    LLVMValueRef call = LLVMBuildCall2(builder, fn->fn_type, fn->fn, args, 5, "adopted");
+    // The statement creates the variable only after this call: once it
+    // exists, the owner and the old value are filled in before the call.
+    if (!vi) pending_adopts.push_back({ call, name, local_only });
+    return call;
+}
+
+void LLVMCodegen::finish_pending_adopts() {
+    if (pending_adopts.empty()) return;
+    LLVMBasicBlockRef cur = LLVMGetInsertBlock(builder);
+    for (auto& p : pending_adopts) {
+        VarInfo* vi = adopt_slot(p.name, p.local_only);
+        if (!vi) continue;
+        LLVMPositionBuilderBefore(builder, p.call);
+        LLVMValueRef ops[3];
+        adopt_operands(vi, ops);
+        for (unsigned i = 0; i < 3; ++i) LLVMSetOperand(p.call, i + 1, ops[i]);
+    }
+    pending_adopts.clear();
+    if (cur) LLVMPositionBuilderAtEnd(builder, cur);
 }
 
 // A temporary slot in the entry block, so a read inside a loop body does
@@ -782,6 +841,8 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_promote_handle", "__jdrt_promote_handle", i64_type,
         {i8_ptr_type, i64_type}, JD_TAG_I64);
+    reg("jdrt_adopt_handle", "__jdrt_adopt_handle", i64_type,
+        {i8_ptr_type, i64_type, i64_type, i32_type, i64_type}, JD_TAG_I64);
     reg("jdrt_frame_begin", "__jdrt_frame_begin", i64_type,
         {i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_frame_end",   "__jdrt_frame_end",   void_type,
@@ -4637,9 +4698,11 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
         case StmtKind::LET:
         case StmtKind::ASSIGN:
             codegen_let_or_assign(stmt);
+            finish_pending_adopts();
             break;
         case StmtKind::DIM:
             codegen_dim(stmt);
+            finish_pending_adopts();
             break;
         case StmtKind::INDEX_ASSIGN:
             codegen_index_assign(stmt);
@@ -6058,6 +6121,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             rhs = codegen_expr(*stmt.expr);
         }
     }
+    if (rhs.tag == JD_TAG_VM_HANDLE && stmt.var_name.find('.') == std::string::npos)
+        rhs.val = adopt_vm_handle(stmt.var_name, rhs.val,
+                                  stmt.kind == StmtKind::DIM && scopes.size() > 1);
 
     // A right-hand side that raised must not reach the slot. The check after
     // the statement comes too late: the store has run, and the variable then
@@ -7343,6 +7409,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
         if (!bound) rhs = codegen_expr(*stmt.expr);
     }
+    if (rhs.tag == JD_TAG_VM_HANDLE)
+        rhs.val = adopt_vm_handle(stmt.var_name, rhs.val, scopes.size() > 1);
     // A local that a later assignment feeds from an index read holds its
     // value with a tag from the start, so a read placed before that
     // assignment in the source, inside a loop, sees the current kind.
