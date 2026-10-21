@@ -84,7 +84,7 @@ FOR bi = 0 TO 3
         DIM tok$ = steps$[si]
         IF tok$ <> "~" AND tok$ <> "_" THEN
             DIM m AS INTEGER = MELODY.NOTE_MIDI(tok$)
-            IF m < 66 OR m > 80 THEN in_range = FALSE
+            IF m < 66 OR m > 81 THEN in_range = FALSE
             DIM pc AS INTEGER = m MOD 12
             DIM hit AS INTEGER = FALSE
             DIM k AS INTEGER
@@ -104,7 +104,7 @@ FOR bi = 0 TO 3
     NEXT si
 NEXT bi
 CHECK "every note in A minor", in_scale, hook$
-CHECK "range f#4 to g#5", in_range, hook$
+CHECK "range f#4 to a5", in_range, hook$
 CHECK "each bar starts on a chord tone", firsts_ok, hook$
 
 DIM last$ = SPLIT(bars$[3], " ")
@@ -213,5 +213,67 @@ CHECK_STR "arp random is repeatable", MELODY.ARP$(prog$, "random", 16, 1), MELOD
 DIM stabs$ = MELODY.STABS$(prog$, "..x...x...x..x-.")
 CHECK_STR "stabs follow the mask", "~ ~ [a3,c4,e4] ~ ~ ~ [a3,c4,e4] ~ ~ ~ [a3,c4,e4] ~ ~ [a3,c4,e4] _ ~", BARS$(stabs$)[0]
 CHECK "stabs play voiced chords", INSTR(BARS$(stabs$)[1], "[a3,c4,f4]") >= 0, BARS$(stabs$)[1]
+
+' ---------- rhythms and variety ----------
+DIM rh$ = MELODY.RHYTHM$(11, FALSE)
+CHECK_STR "same seed, same rhythm", rh$, MELODY.RHYTHM$(11, FALSE)
+DIM rhythms_ok AS INTEGER = TRUE
+DIM room_ok AS INTEGER = TRUE
+DIM rs AS INTEGER
+FOR rs = 1 TO 30
+    DIM r1$ = REPLACE$(MELODY.RHYTHM$(rs, FALSE), " ", "")
+    DIM n_on AS INTEGER = LEN(r1$) - LEN(REPLACE$(r1$, "x", ""))
+    IF LEN(r1$) <> 16 OR n_on < 4 OR n_on > 9 THEN rhythms_ok = FALSE
+    DIM r2$ = REPLACE$(MELODY.RHYTHM$(rs, TRUE), " ", "")
+    IF RIGHT$(r2$, 6) <> "......" OR INSTR(r2$, "x") < 0 THEN room_ok = FALSE
+NEXT rs
+CHECK "rhythms: sixteen steps, four to nine notes", rhythms_ok, rh$
+CHECK "room leaves the last six steps free", room_ok, MELODY.RHYTHM$(3, TRUE)
+
+' the first note (relative to the key) and the first six moves of a hook
+FUNC SHAPE$(h$) AS STRING
+    DIM toks$ = SPLIT(REPLACE$(REPLACE$(REPLACE$(REPLACE$(h$, "<", ""), ">", ""), "[", ""), "]", ""), " ")
+    DIM out$ AS STRING = ""
+    DIM prev AS INTEGER = -1
+    DIM n AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(toks$) - 1
+        IF toks$[i] <> "~" AND toks$[i] <> "_" AND n < 7 THEN
+            DIM m AS INTEGER = MELODY.NOTE_MIDI(toks$[i])
+            IF prev < 0 THEN
+                out$ = STR$((m - 69 + 120) MOD 12) + ":"
+            ELSE
+                out$ = out$ + MID$("DSU", SGN(m - prev) + 1, 1)
+            ENDIF
+            prev = m
+            n = n + 1
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+DIM shapes = {}
+DIM first_notes = {}
+FOR rs = 1 TO 40
+    DIM sh$ = SHAPE$(MELODY.HOOK$(rs, prog$, "A minor", "x--.x.x. x.x-x-..", 4))
+    shapes{sh$} = 1
+    first_notes{LEFT$(sh$, INSTR(sh$, ":"))} = 1
+NEXT rs
+CHECK "hooks start on the root, the third or the fifth", LEN(MAP.KEYS(first_notes)) >= 3, JOIN(MAP.KEYS(first_notes), " ")
+CHECK "forty seeds, thirty shapes or more", LEN(MAP.KEYS(shapes)) >= 30, "shapes=" + STR$(LEN(MAP.KEYS(shapes)))
+
+' the answer to a hook with room plays at the end of every bar
+DIM roomy$ = MELODY.HOOK$(1007, prog$, "A minor", MELODY.RHYTHM$(1007, TRUE), 4)
+DIM rbars$ = BARS$(MELODY.COUNTER$(1007, roomy$, prog$, "A minor", 4))
+DIM late_ok AS INTEGER = TRUE
+FOR bi = 0 TO 3
+    DIM late AS INTEGER = FALSE
+    DIM rsteps$ = SPLIT(rbars$[bi], " ")
+    FOR rs = 10 TO 15
+        IF rsteps$[rs] <> "~" THEN late = TRUE
+    NEXT rs
+    IF NOT late THEN late_ok = FALSE
+NEXT bi
+CHECK "the answer fills the room at the end of each bar", late_ok, JOIN(rbars$, " | ")
 
 PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

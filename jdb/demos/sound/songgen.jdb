@@ -169,12 +169,12 @@ SUB MAKE_RECIPE()
         bpm_lo = 128
         bass_style$ = "acid"
     ENDIF
-    DIM rhythms$ = ["x.x..x.x x.x.x...", "x--.x.x. x.x-x-..", "..x..x.x ..x.x.x.", "x.x.x--. x.x.x...", "x..x..x. x.x.....", ".x.x.xx. x..x.x.."]
     KEY$ = keys$[PICK(1, LEN(keys$))]
     BPM = bpm_lo + PICK(2, 5)
     PROG_NAME$ = progs$[PICK(3, LEN(progs$))]
-    RHYTHM_A$ = rhythms$[PICK(4, LEN(rhythms$))]
-    RHYTHM_B$ = rhythms$[(PICK(4, LEN(rhythms$)) + 1 + PICK(5, LEN(rhythms$) - 1)) MOD LEN(rhythms$)]
+    RHYTHM_A$ = MELODY.RHYTHM$(seed, FALSE)
+    ' the second hook leaves the end of each bar to its answer
+    RHYTHM_B$ = MELODY.RHYTHM$(seed + 1000, TRUE)
     OCT = 4
     IF genre$ = "deep" OR genre$ = "acid" THEN OCT = 3 + PICK(6, 2)
 
@@ -229,9 +229,9 @@ SUB MAKE_RECIPE()
     ELSE
         BREAK_FIGURE$ = "legato(0.5, " + MELODY.ARP$(BREAK_PROG$, "updown", 16, 1) + ")"
     ENDIF
-    ' the answers to each hook, a register below it
-    COUNTER_A$ = MELODY.COUNTER$(seed, HOOK$, PROG$, KEY$, OCT - 1)
-    COUNTER_B$ = MELODY.COUNTER$(seed + 1000, HOOK_B$, PROG$, KEY$, OCT - 1)
+    ' the answers to each hook, in its register between its notes
+    COUNTER_A$ = MELODY.COUNTER$(seed, HOOK$, PROG$, KEY$, OCT)
+    COUNTER_B$ = MELODY.COUNTER$(seed + 1000, HOOK_B$, PROG$, KEY$, OCT)
     ' the hooks as the last drop plays them, up a key
     VARY_KIND$ = VARY_NAMES$[PICK(10, 3)]
     VARIED_A$ = MELODY.VARY$(HOOK$, PROG$, KEY$, VARY_KIND$)
@@ -361,12 +361,14 @@ SUB SETUP_SOUND()
     BASS_PATCH$ = "bass_roll"
     LEAD_PATCH$ = "neon_lead"
     KEYS_PATCH$ = "fm_keys"
-    COUNTER_PATCH$ = "neon_soft"
+    ' the answer gets a sound of its own, apart from the lead and the arp
+    COUNTER_PATCH$ = "vox_chop"
     BASS_CUT = 700
     BASS_RES = 0.35
     IF genre$ = "house" THEN
         BASS_PATCH$ = "bass_house"
         KEYS_PATCH$ = "organ"
+        COUNTER_PATCH$ = "fm_keys"
         BASS_CUT = 600
         BASS_RES = 0.3
     ELSEIF genre$ = "deep" THEN
@@ -384,6 +386,9 @@ SUB SETUP_SOUND()
         BASS_CUT = PATCH.CUTOFF("synth_bass")
         BASS_RES = PATCH.RESONANCE("synth_bass")
     ENDIF
+    DIM arp_patches$ = ["neon_pluck", "neon_pluck", "neon_soft", "fm_keys"]
+    ARP_PATCH$ = arp_patches$[PICK(830, LEN(arp_patches$))]
+    IF ARP_PATCH$ = COUNTER_PATCH$ THEN COUNTER_PATCH$ = "vox_chop"
     RECIPE$ = RECIPE$ + "  sounds: " + BASS_PATCH$ + ", " + ARP_PATCH$ + ", " + KEYS_PATCH$ + ", " + LEAD_PATCH$ + ", " + COUNTER_PATCH$ + NL$
 
     PATCH.APPLY BASS, BASS_PATCH$
@@ -398,8 +403,6 @@ SUB SETUP_SOUND()
 
     PATCH.APPLY CHOIR, "choir"
 
-    DIM arp_patches$ = ["neon_pluck", "neon_pluck", "neon_soft", "fm_keys"]
-    ARP_PATCH$ = arp_patches$[PICK(830, LEN(arp_patches$))]
     PATCH.APPLY ARP, ARP_PATCH$
     SOUND.SIDECHAIN ARP, KICK, 0.4
 
@@ -411,7 +414,7 @@ SUB SETUP_SOUND()
     SOUND.SIDECHAIN LEAD, KICK, 0.35
 
     PATCH.APPLY COUNTER, COUNTER_PATCH$
-    SOUND.SIDECHAIN COUNTER, KICK, 0.35
+    SOUND.SIDECHAIN COUNTER, KICK, 0.2
 
     SOUND.VOICE RISER, "NOISE", 0.01, 0.1, 1.0, 0.3
     SOUND.FILTER RISER, 400, 0.4, "BP"
@@ -933,6 +936,12 @@ SUB PART_DROP(b AS INTEGER, n AS INTEGER, v AS INTEGER, peak AS INTEGER, earlier
             TRK_ON COUNTER, LIFTED$(answers$[h])
         ELSE
             TRK_ON LEAD, "juxBy(0.4, add(12), " + LIFTED$(hooks$[h]) + ")"
+            ' the second hook comes with its answer in every drop
+            IF h = 1 THEN
+                TRK_ON COUNTER, LIFTED$(answers$[h])
+            ELSE
+                TRK_OFF COUNTER
+            ENDIF
         ENDIF
         IF level = 5 THEN
             TRK_ON CHOIR, LIFTED$("legato(1, add(12, " + CHORDS$ + "))")

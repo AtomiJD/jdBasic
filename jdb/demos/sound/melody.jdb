@@ -15,12 +15,20 @@
 ' has x for a note, - to hold it and . for a rest (spaces are ignored).
 ' The rules: chord tones on the beats and on the first note of a bar,
 ' scale steps between them, a leap now and then and a step back the
-' other way after it, a range of about a ninth, rising over the first
-' part of the hook and falling to the end. A note on the last two
-' steps of a bar already takes the next chord. The bars follow the
-' form A A' A B: every A bar makes the same choices on its own chord,
-' A' changes its second half, and B ends on the root or the third and
-' holds it. The same seed always gives the same hook.
+' other way after it, a range of about a ninth. A note on the last two
+' steps of a bar already takes the next chord. The seed picks the
+' hook's character: the note it starts from (root, third, fifth or the
+' octave), its contour (arch, fall, valley, zigzag, repeated notes, or
+' leaps filled back down), how often it repeats a note, skips a step
+' or leaps, and the form of its bars: A A' A B, A C A B, A A C B or
+' A C C' B. Every A bar makes the same choices on its own chord, A'
+' changes its second half, C is a second motif that starts where the
+' bar before it ended, and B ends on the root or the third and holds
+' it. The same seed always gives the same hook.
+'
+'   RHYTHM$(seed, room)          a seeded rhythm mask for HOOK$; with room
+'                                the end of each bar stays free for an
+'                                answer
 '
 ' The parts under a hook, one bar per chord as well:
 '   BASS$(prog$, style$, seed)   offbeat (the trance roll), octave (house
@@ -295,8 +303,26 @@ FUNC SCALE_STEP(pool, prev AS INTEGER, heading AS INTEGER, stride AS INTEGER) AS
     RETURN pool[target]
 ENDFUNC
 
-' One bar of the hook as sixteen pattern steps. kind$ is A, A2 or B.
-FUNC HOOK_BAR$(mask$, pool, pcs, next_pcs, start AS INTEGER, seed AS INTEGER, kind$, progress AS DOUBLE, span AS DOUBLE) AS STRING
+' The heading of the hook at time t (0 to 1 over the hook) for its n-th
+' note, by contour: arch, fall, valley, zigzag, repeat (an arch with
+' many repeated notes), leap (a leap up on the beats, filled back down)
+FUNC CONTOUR_HEADING(contour AS INTEGER, t AS DOUBLE, n AS INTEGER) AS INTEGER
+    IF contour = 1 THEN RETURN -1
+    IF contour = 2 THEN RETURN IIF(t < 0.5, -1, 1)
+    IF contour = 3 THEN RETURN IIF(n MOD 2 = 0, 1, -1)
+    IF contour = 5 THEN RETURN -1
+    RETURN IIF(t > 0.6, -1, 1)
+ENDFUNC
+
+' One bar of the hook as sixteen pattern steps. kind$ is A, A2 or B; the
+' character is [contour, flip, repeat, stride two, leap] from HOOK$.
+FUNC HOOK_BAR$(mask$, pool, pcs, next_pcs, start AS INTEGER, seed AS INTEGER, kind$, progress AS DOUBLE, span AS DOUBLE, character) AS STRING
+    DIM contour AS INTEGER = character[0]
+    DIM flip_p AS DOUBLE = character[1]
+    DIM repeat_p AS DOUBLE = character[2]
+    DIM stride_p AS DOUBLE = character[3]
+    DIM leap_p AS DOUBLE = character[4]
+    DIM n_note AS INTEGER = 0
     DIM w AS INTEGER = RESEED(seed)
     DIM last_onset AS INTEGER = -1
     DIM k AS INTEGER
@@ -315,9 +341,9 @@ FUNC HOOK_BAR$(mask$, pool, pcs, next_pcs, start AS INTEGER, seed AS INTEGER, ki
         IF kind$ = "B" AND k > last_onset AND last_onset >= 0 THEN c$ = "-"
         IF c$ = "x" THEN
             DIM t AS DOUBLE = progress + span * k / 16
-            DIM heading AS INTEGER = 1
-            IF t > 0.6 THEN heading = -1
-            IF RAND01() < 0.3 THEN heading = -heading
+            DIM heading AS INTEGER = CONTOUR_HEADING(contour, t, n_note)
+            IF RAND01() < flip_p THEN heading = -heading
+            n_note = n_note + 1
             DIM nt AS INTEGER = prev
             IF kind$ = "B" AND k = last_onset THEN
                 DIM ends = [pcs[0]]
@@ -331,14 +357,15 @@ FUNC HOOK_BAR$(mask$, pool, pcs, next_pcs, start AS INTEGER, seed AS INTEGER, ki
                 nt = SCALE_STEP(pool, prev, -leapt, 1)
                 leapt = 0
             ELSEIF k MOD 4 = 0 THEN
-                DIM jump AS INTEGER = RAND01() < 0.2
+                DIM jump AS INTEGER = RAND01() < leap_p
+                IF jump AND contour = 5 THEN heading = 1
                 nt = CHORD_TONE(pool, pcs, prev, heading, jump)
                 IF jump AND ABS(nt - prev) >= 5 THEN leapt = SGN(nt - prev)
             ELSE
                 DIM r AS DOUBLE = RAND01()
-                IF r < 0.07 THEN
+                IF r < repeat_p THEN
                     nt = prev
-                ELSEIF r < 0.85 THEN
+                ELSEIF r < 1 - stride_p THEN
                     nt = SCALE_STEP(pool, prev, heading, 1)
                 ELSE
                     nt = SCALE_STEP(pool, prev, heading, 2)
@@ -371,22 +398,80 @@ EXPORT FUNC HOOK$(seed AS INTEGER, prog$, key$, rhythm$, octave AS INTEGER) AS S
     DIM n_bars AS INTEGER = LEN(chords$)
     DIM root_pc AS INTEGER = KEY_ROOT(key$)
     DIM centre AS INTEGER = (octave + 1) * 12 + root_pc
-    DIM pool = POOL(root_pc, KEY_STEPS(key$), centre - 3, centre + 11)
+    DIM steps = KEY_STEPS(key$)
+    DIM pool = POOL(root_pc, steps, centre - 3, centre + 12)
+    DIM w AS INTEGER = RESEED(seed + 31337)
+    DIM contour AS INTEGER = INT(RAND01() * 6)
+    DIM degs = [0, 2, 4]
+    IF contour = 1 THEN degs = [4, 7]
+    IF contour = 2 OR contour = 5 THEN degs = [2, 4, 7]
+    DIM deg AS INTEGER = degs[INT(RAND01() * LEN(degs))]
+    DIM anchor AS INTEGER = centre + steps[deg MOD 7] + 12 * INT(deg / 7)
+    DIM repeat_p AS DOUBLE = 0.03 + RAND01() * 0.12
+    IF contour = 4 THEN repeat_p = 0.35 + RAND01() * 0.15
+    DIM leap_p AS DOUBLE = 0.1 + RAND01() * 0.25
+    IF contour = 5 THEN leap_p = 0.6
+    DIM character = [contour, 0.12 + RAND01() * 0.23, repeat_p, 0.08 + RAND01() * 0.22, leap_p]
+    DIM plans$ = ["A A2 A", "A C A", "A A C", "A C C2"]
+    DIM plan$ = SPLIT(plans$[INT(RAND01() * LEN(plans$))], " ")
+    DIM c_start AS INTEGER = -1
+    DIM last_note AS INTEGER = anchor
     DIM out$ = ""
     DIM bi AS INTEGER
     FOR bi = 0 TO n_bars - 1
-        DIM kind$ = "A"
-        IF bi = n_bars - 1 AND n_bars > 1 THEN
-            kind$ = "B"
-        ELSEIF bi MOD 2 = 1 THEN
-            kind$ = "A2"
+        DIM role$ = plan$[bi MOD LEN(plan$)]
+        IF bi = n_bars - 1 AND n_bars > 1 THEN role$ = "B"
+        DIM kind$ = IIF(role$ = "C", "A", IIF(role$ = "C2", "A2", role$))
+        DIM bar_seed AS INTEGER = seed
+        DIM start AS INTEGER = anchor
+        IF LEFT$(role$, 1) = "C" THEN
+            bar_seed = seed + 5003
+            IF c_start < 0 THEN c_start = last_note
+            start = c_start
         ENDIF
         DIM next_i AS INTEGER = (bi + 1) MOD n_bars
-        DIM bar$ = HOOK_BAR$(mask$, pool, CHORD_PCS(chords$[bi]), CHORD_PCS(chords$[next_i]), centre + 4, seed, kind$, bi / n_bars, 1 / n_bars)
+        DIM bar$ = HOOK_BAR$(mask$, pool, CHORD_PCS(chords$[bi]), CHORD_PCS(chords$[next_i]), start, bar_seed, kind$, bi / n_bars, 1 / n_bars, character)
+        DIM toks$ = SPLIT(MID$(bar$, 1, LEN(bar$) - 2), " ")
+        DIM ti AS INTEGER
+        FOR ti = 0 TO LEN(toks$) - 1
+            IF ONSET(toks$[ti]) THEN last_note = NOTE_MIDI(toks$[ti])
+        NEXT ti
         IF bi > 0 THEN out$ = out$ + " "
         out$ = out$ + bar$
     NEXT bi
     RETURN "<" + out$ + ">"
+ENDFUNC
+
+' A hook rhythm for HOOK$ from a seed: four beats of sixteenth steps, each
+' beat a cell such as "x.x." or ".x.x", four to nine notes a bar, now and
+' then a held note or an upbeat start. With room set, the last six steps
+' stay silent, so an answer (COUNTER$) has the end of every bar.
+EXPORT FUNC RHYTHM$(seed AS INTEGER, room AS INTEGER) AS STRING
+    DIM cells$ = ["x...", "x.x.", "x-x.", "x--.", ".x.x", "..x.", "x..x", ".xx.", "x.xx", "xx.x", "x-..", "...."]
+    DIM pickups$ = [".x.x", "..x.", ".xx.", "..xx"]
+    DIM w AS INTEGER = RESEED(seed + 4242)
+    DIM mask$ AS STRING = ""
+    DIM tries AS INTEGER
+    FOR tries = 1 TO 40
+        mask$ = ""
+        DIM b AS INTEGER
+        FOR b = 0 TO 3
+            DIM cell$ = cells$[INT(RAND01() * LEN(cells$))]
+            IF b = 0 THEN
+                cell$ = cells$[INT(RAND01() * 11)]
+                IF RAND01() < 0.25 THEN cell$ = pickups$[INT(RAND01() * LEN(pickups$))]
+            ENDIF
+            IF room AND b = 2 THEN cell$ = LEFT$(cell$, 2) + ".."
+            IF room AND b = 3 THEN cell$ = "...."
+            mask$ = mask$ + cell$
+        NEXT b
+        mask$ = REPLACE$(mask$, ".-", "..")
+        DIM n_on AS INTEGER = LEN(mask$) - LEN(REPLACE$(mask$, "x", ""))
+        DIM lo AS INTEGER = IIF(room, 3, 4)
+        DIM hi AS INTEGER = IIF(room, 6, 9)
+        IF n_on >= lo AND n_on <= hi ANDALSO INSTR(MID$(mask$, 0, 8), "x") >= 0 THEN EXITFOR
+    NEXT tries
+    RETURN LEFT$(mask$, 8) + " " + MID$(mask$, 8, 8)
 ENDFUNC
 
 ' The bars of a "<[...] [...]>" line, each as its list of step tokens
@@ -419,7 +504,8 @@ ENDFUNC
 
 ' An answer between the notes of hook$: eighth notes on the steps where
 ' the hook does not strike (nor on the step before), at most four a bar
-' and the latest ones, in the other direction from the hook's bar,
+' and the latest ones (a run of free eighths at the bar's end alone,
+' when it holds three), in the other direction from the hook's bar,
 ' starting and ending on a chord tone. octave places the answer like
 ' HOOK$ does; one below the hook sits under it.
 EXPORT FUNC COUNTER$(seed AS INTEGER, hook$, prog$, key$, octave AS INTEGER) AS STRING
@@ -452,6 +538,13 @@ EXPORT FUNC COUNTER$(seed AS INTEGER, hook$, prog$, key$, octave AS INTEGER) AS 
         NEXT k
         DIM first_s AS INTEGER = LEN(slots) - 4
         IF first_s < 0 THEN first_s = 0
+        ' a run of three or more free eighths at the end of the bar makes
+        ' a phrase of its own; the answer stays inside it
+        DIM run_s AS INTEGER = LEN(slots) - 1
+        WHILE run_s > 0 ANDALSO slots[run_s] - slots[run_s - 1] = 2
+            run_s = run_s - 1
+        WEND
+        IF LEN(slots) - run_s >= 3 AND run_s > first_s THEN first_s = run_s
         DIM si AS INTEGER
         FOR si = first_s TO LEN(slots) - 1
             DIM nt AS INTEGER
