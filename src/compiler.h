@@ -81,8 +81,11 @@ private:
         std::vector<size_t> break_patches; // addresses to patch for EXIT
         std::vector<size_t> continue_patches; // addresses to patch for CONTINUE
         bool is_for;                      // FOR vs DO
+        size_t try_depth = 0;             // TRY blocks open when the loop began
     };
     std::vector<LoopCtx> loop_stack;
+    size_t try_depth = 0;                 // TRY bodies being compiled
+    void emit_leave_trys(size_t to_depth, int line);
 
     CompilerScope& current_scope();
     Chunk& current_chunk();

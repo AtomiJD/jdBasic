@@ -1,0 +1,199 @@
+' A TRY block left by EXITDO, EXITFOR, CONTINUEDO, CONTINUEFOR or RETURN
+' stops catching: a later error goes to the TRY around it, or ends the
+' program, never back into the block that was left. A loop inside a TRY
+' that exits keeps the TRY around it catching.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM entered AS INTEGER = 0
+
+FUNC Boom(n)
+    THROW "boom " + STR$(n)
+    RETURN 0
+ENDFUNC
+
+SUB LeaveDo()
+    DO
+        TRY
+            entered = entered + 1
+            EXITDO
+        CATCH
+            entered = entered + 100
+        ENDTRY
+    LOOP
+ENDSUB
+
+SUB LeaveFor()
+    DIM i AS INTEGER
+    FOR i = 1 TO 3
+        TRY
+            entered = entered + 1
+            EXITFOR
+        CATCH
+            entered = entered + 100
+        ENDTRY
+    NEXT i
+ENDSUB
+
+SUB SkipDo()
+    DIM n AS INTEGER = 0
+    DO WHILE n < 3
+        n = n + 1
+        TRY
+            entered = entered + 1
+            CONTINUEDO
+        CATCH
+            entered = entered + 100
+        ENDTRY
+    LOOP
+ENDSUB
+
+SUB SkipFor()
+    DIM i AS INTEGER
+    FOR i = 1 TO 3
+        TRY
+            entered = entered + 1
+            CONTINUEFOR
+        CATCH
+            entered = entered + 100
+        ENDTRY
+    NEXT i
+ENDSUB
+
+FUNC ReturnFromTry()
+    TRY
+        entered = entered + 1
+        RETURN 5
+    CATCH
+        entered = entered + 100
+    ENDTRY
+    RETURN 0
+ENDFUNC
+
+FUNC NestedLeave()
+    DIM k AS INTEGER
+    FOR k = 1 TO 2
+        TRY
+            TRY
+                entered = entered + 1
+                EXITFOR
+            CATCH
+                entered = entered + 100
+            ENDTRY
+        CATCH
+            entered = entered + 100
+        ENDTRY
+    NEXT k
+    RETURN k
+ENDFUNC
+
+DIM msg$ = ""
+
+entered = 0
+TRY
+    LeaveDo()
+    DIM r1 = Boom(1)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(msg$ = "boom 1", "EXITDO out of a TRY")
+Check(entered = 1, "EXITDO: the left block did not catch")
+
+entered = 0
+TRY
+    LeaveFor()
+    DIM r2 = Boom(2)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(msg$ = "boom 2", "EXITFOR out of a TRY")
+Check(entered = 1, "EXITFOR: the left block did not catch")
+
+entered = 0
+TRY
+    SkipDo()
+    DIM r3 = Boom(3)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(msg$ = "boom 3", "CONTINUEDO out of a TRY")
+Check(entered = 3, "CONTINUEDO: the left blocks did not catch")
+
+entered = 0
+TRY
+    SkipFor()
+    DIM r4 = Boom(4)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(msg$ = "boom 4", "CONTINUEFOR out of a TRY")
+Check(entered = 3, "CONTINUEFOR: the left blocks did not catch")
+
+entered = 0
+DIM five AS DOUBLE = 0
+TRY
+    five = ReturnFromTry()
+    DIM r5 = Boom(5)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(five = 5, "RETURN out of a TRY answers")
+Check(msg$ = "boom 5", "RETURN out of a TRY")
+Check(entered = 1, "RETURN: the left block did not catch")
+
+entered = 0
+DIM at AS DOUBLE = 0
+TRY
+    at = NestedLeave()
+    DIM r6 = Boom(6)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(at = 1, "EXITFOR out of two TRYs leaves the loop")
+Check(msg$ = "boom 6", "EXITFOR out of two TRYs")
+Check(entered = 1, "nested: neither left block caught")
+
+' A loop inside a TRY: leaving the loop keeps the TRY catching.
+DIM j AS INTEGER
+msg$ = ""
+TRY
+    FOR j = 1 TO 5
+        IF j = 2 THEN EXITFOR
+    NEXT j
+    DO
+        EXITDO
+    LOOP
+    DIM r7 = Boom(7)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(msg$ = "boom 7", "TRY around a loop that exits still catches")
+
+' EXITDO out of a CATCH: the handler is already gone.
+DIM tries AS INTEGER = 0
+DO
+    tries = tries + 1
+    TRY
+        DIM r8 = Boom(8)
+    CATCH
+        IF tries >= 2 THEN EXITDO
+    ENDTRY
+LOOP
+msg$ = ""
+TRY
+    DIM r9 = Boom(9)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(tries = 2, "EXITDO out of a CATCH leaves after two tries")
+Check(msg$ = "boom 9", "EXITDO out of a CATCH")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

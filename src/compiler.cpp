@@ -548,6 +548,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
                 // EXITFUNC → RETURN NONE
                 current_chunk().emit(OpCode::RETURN_VOID, stmt.line);
             } else if (!loop_stack.empty()) {
+                emit_leave_trys(loop_stack.back().try_depth, stmt.line);
                 size_t jmp = emit_jump(OpCode::JUMP, stmt.line);
                 loop_stack.back().break_patches.push_back(jmp);
             }
@@ -555,6 +556,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
         }
         case StmtKind::CONTINUE_LOOP: {
             if (!loop_stack.empty()) {
+                emit_leave_trys(loop_stack.back().try_depth, stmt.line);
                 if (loop_stack.back().is_for) {
                     // FOR loops: continue_addr not yet known, use patch
                     size_t jmp = emit_jump(OpCode::JUMP, stmt.line);
@@ -598,7 +600,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             emit_constant(Value::make_i64(pair ? 1 : 0), stmt.line);
             emit_store_temp(state_slot);
 
-            { LoopCtx lc; lc.is_for = true; loop_stack.push_back(std::move(lc)); }
+            { LoopCtx lc; lc.is_for = true; lc.try_depth = try_depth; loop_stack.push_back(std::move(lc)); }
             size_t loop_start = current_chunk().code.size();
 
             // Push iter, state; opcode pops both. On exit it jumps to
@@ -651,7 +653,9 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             current_chunk().emit_u16(0, stmt.line); // placeholder
 
             // TRY body
+            try_depth++;
             for (auto& s : stmt.body) compile_stmt(*s);
+            try_depth--;
 
             // POP_TRY (no error occurred)
             current_chunk().emit(OpCode::POP_TRY, stmt.line);
@@ -1103,7 +1107,7 @@ void Compiler::compile_if(const Stmt& stmt) {
 
 void Compiler::compile_do_loop(const Stmt& stmt) {
     size_t loop_start = current_chunk().code.size();
-    { LoopCtx lc; lc.is_for = false; loop_stack.push_back(std::move(lc)); }
+    { LoopCtx lc; lc.is_for = false; lc.try_depth = try_depth; loop_stack.push_back(std::move(lc)); }
     loop_stack.back().continue_addr = loop_start;
 
     if (stmt.cond_at_top && stmt.loop_cond) {
@@ -1200,7 +1204,7 @@ void Compiler::compile_for(const Stmt& stmt) {
     size_t exit_jump = emit_jump(OpCode::JUMP_IF_FALSE, stmt.line);
 
     // 3. Body (with loop context for EXITFOR/CONTINUEFOR)
-    { LoopCtx lc; lc.is_for = true; loop_stack.push_back(std::move(lc)); }
+    { LoopCtx lc; lc.is_for = true; lc.try_depth = try_depth; loop_stack.push_back(std::move(lc)); }
     for (auto& s : stmt.body) compile_stmt(*s);
 
     // 4. Continue point + Increment: var = var + step
@@ -1227,6 +1231,12 @@ void Compiler::compile_for(const Stmt& stmt) {
     patch_jump(exit_jump);
     for (size_t bp : loop_stack.back().break_patches) patch_jump(bp);
     loop_stack.pop_back();
+}
+
+// A jump out of TRY bodies drops their handlers, as their POP_TRY would.
+void Compiler::emit_leave_trys(size_t to_depth, int line) {
+    for (size_t d = try_depth; d > to_depth; --d)
+        current_chunk().emit(OpCode::POP_TRY, line);
 }
 
 void Compiler::compile_return(const Stmt& stmt) {

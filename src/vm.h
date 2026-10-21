@@ -239,6 +239,12 @@ private:
 
     // Exception handling
     std::vector<TryHandler> try_handlers;
+    // A frame that returns takes the handlers of its TRY blocks with it.
+    void drop_frame_trys() {
+        while (!try_handlers.empty() &&
+               try_handlers.back().saved_frame_count >= frames.size())
+            try_handlers.pop_back();
+    }
 
 public:
     // Tracing

@@ -2267,6 +2267,7 @@ void VM::run() {
             // gets overwritten by a later push.
             size_t base = cf.stack_base;
             for (size_t i = base; i < sp; ++i) stack[i] = Value();
+            drop_frame_trys();
             frames.pop_back();
             sp = base;
             push(Value::make_none());
@@ -2284,6 +2285,7 @@ void VM::run() {
             for (size_t i = base; i + 1 < sp; ++i) stack[i] = Value();
             stack[base] = std::move(retval);
             sp = base + 1;
+            drop_frame_trys();
             frames.pop_back();
             // cf is now dangling - break so next iteration refetches
             if (frames.size() <= min_frame_depth) return;
