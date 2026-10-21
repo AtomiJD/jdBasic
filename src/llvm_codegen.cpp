@@ -15510,7 +15510,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             }
             auto& fn = runtime_funcs["__map_has"];
             LLVMValueRef a[] = { mptr, kptr };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "mhas"), JD_TAG_I64 };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "mhas"), JD_TAG_BOOL };
         }
         // VM handle (JSON.PARSE$, MAP.FROM, etc.): go direct to
         // __jdrt_obj_exists. Routing through jdrt_call_typed_f64 works in
@@ -15525,7 +15525,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle_g, "rt");
             auto& fn = runtime_funcs["__jdrt_obj_exists"];
             LLVMValueRef a[] = { rt, mtv.val, kptr };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "oex"), JD_TAG_I64 };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "oex"), JD_TAG_BOOL };
         }
         // Runtime-tagged: branch on runtime_tag - if VM_HANDLE, use
         // obj_exists; else fall to __map_has on the punned pointer.
@@ -15561,7 +15561,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef vals[] = { vres, mres };
             LLVMBasicBlockRef blks[] = { vm_end, map_end };
             LLVMAddIncoming(phi, vals, blks, 2);
-            return { phi, JD_TAG_I64 };
+            return { phi, JD_TAG_BOOL };
         }
     }
 
