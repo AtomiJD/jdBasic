@@ -1,0 +1,59 @@
+' A FOR EACH variable that walks rows read from JSON keeps its kind when it
+' is handed to a FUNC, in the main program and inside a FUNC; a global that
+' starts as NONE and later holds a map is read as a map inside a FUNC.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM Q$ = CHR$(34)
+DIM holder = NONE
+
+FUNC Head$(row)
+    RETURN "" + row[0]
+ENDFUNC
+
+FUNC Width(row)
+    RETURN LEN(row)
+ENDFUNC
+
+FUNC Heads$(k$)
+    DIM out$ = ""
+    FOR EACH row IN holder{k$}
+        out$ = out$ + Head$(row)
+    NEXT row
+    RETURN out$
+ENDFUNC
+
+FUNC RowCount(k$)
+    IF TYPEOF(holder) = "OBJECT" ANDALSO MAP.EXISTS(holder, k$) THEN
+        DIM rows = holder{k$}
+        RETURN LEN(rows)
+    ENDIF
+    RETURN -1
+ENDFUNC
+
+DIM cards = JSON.PARSE$("[[" + Q$ + "DISC" + Q$ + ", 3], [" + Q$ + "BAR" + Q$ + ", 4, 5]]")
+DIM seen$ = ""
+DIM widths AS DOUBLE = 0
+FOR EACH row IN cards
+    seen$ = seen$ + Head$(row)
+    widths = widths + Width(row)
+NEXT row
+Check(seen$ = "DISCBAR", "rows handed on in the main program")
+Check(widths = 5, "row length inside the FUNC")
+
+Check(RowCount("T") = -1, "NONE global before it holds a map")
+DIM shapes AS MAP = {}
+shapes{"T"} = cards
+holder = shapes
+Check(RowCount("T") = 2, "NONE global read as a map")
+Check(Heads$("T") = "DISCBAR", "rows handed on inside a FUNC")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

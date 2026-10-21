@@ -1009,6 +1009,9 @@ void LLVMCodegen::create_main_function() {
 // bind it at runtime by name and main init registers it in the dispatch
 // trampoline. The caller checks for forms usage first; the name alone says
 // nothing outside that context.
+static bool foreach_var_is_tagged(const Stmt& s);
+static bool foreach_key_is_tagged(const Stmt& s);
+
 static bool is_forms_event_handler_name(const std::string& name) {
     // Every name the forms layer raises (queue_event, queue_key, queue_mouse).
     // A handler whose suffix is missing here is never registered in the
@@ -1362,6 +1365,22 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB) continue;
         scan_top_decls(*stmt);
     }
+    // A FOR EACH variable of the main program carries each element's own
+    // tag, so a call that hands it on types that parameter by it.
+    {
+        std::function<void(const Stmt&)> find_loop_vars = [&](const Stmt& s) {
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) return;
+            if (foreach_var_is_tagged(s) && !pre_var_tags.count(s.var_name))
+                pre_var_tags[s.var_name] = JD_TAG_RUNTIME;
+            if (foreach_key_is_tagged(s) && !pre_var_tags.count(s.label))
+                pre_var_tags[s.label] = JD_TAG_RUNTIME;
+            for (auto& b : s.body) if (b) find_loop_vars(*b);
+            for (auto& br : s.branches) for (auto& b : br.body) if (b) find_loop_vars(*b);
+            for (auto& c : s.catch_body()) if (c) find_loop_vars(*c);
+            for (auto& f : s.finally_body()) if (f) find_loop_vars(*f);
+        };
+        for (auto& stmt : program) if (stmt) find_loop_vars(*stmt);
+    }
     // A top-level $ name that is handed an array (SPLIT and the like), in a
     // loop or a branch too, holds an array whatever its name says; a call
     // that passes it to a $ parameter makes that parameter an array.
@@ -1627,7 +1646,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                 auto pit = pre_var_tags.find(a.str_val);
                                 if (pit != pre_var_tags.end() &&
                                     (pit->second == JD_TAG_ARR ||
-                                     pit->second == JD_TAG_NATIVE_MAP))
+                                     pit->second == JD_TAG_NATIVE_MAP ||
+                                     pit->second == JD_TAG_RUNTIME))
                                     it->second.tags[i] = pit->second;
                             }
                         }
@@ -1815,6 +1835,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (k > 0) cur_local_kinds[s.var_name] = k;
             else cur_local_kinds.erase(s.var_name);
         } else if (s.expr) scan_expr(*s.expr);
+        if (in_fn_body && foreach_var_is_tagged(s)) cur_local_kinds[s.var_name] = JD_TAG_RUNTIME;
+        if (in_fn_body && foreach_key_is_tagged(s)) cur_local_kinds[s.label] = JD_TAG_RUNTIME;
         if (s.loop_cond) scan_expr(*s.loop_cond);
         if (s.end_expr) scan_expr(*s.end_expr);
         if (s.step_expr) scan_expr(*s.step_expr);
@@ -4813,6 +4835,18 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     if (kv.second.tag == JD_TAG_RUNTIME) ++after;
             if (after == before) break;
         }
+        // A FUNC compiled next reads a runtime-typed global through its tag
+        // slot, so every such global has one before the bodies are emitted.
+        if (!scopes.empty())
+            for (auto& kv : scopes[0].vars) {
+                VarInfo& g = kv.second;
+                if (g.tag != JD_TAG_RUNTIME || g.runtime_tag_alloca) continue;
+                std::string rtag_name = kv.first + ".rtag";
+                LLVMValueRef rg = LLVMAddGlobal(module, i32_type, rtag_name.c_str());
+                LLVMSetInitializer(rg, LLVMConstInt(i32_type, JD_TAG_NONE, 0));
+                LLVMSetLinkage(rg, LLVMInternalLinkage);
+                g.runtime_tag_alloca = rg;
+            }
     }
 
     // Second pass: compile all FUNC/SUB bodies
