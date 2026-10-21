@@ -832,6 +832,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SYS.FREEDISK", BuiltinRet::I64, BF_NO_VEC | BF_READS_ARGS},
     {"SYS.HEAP", BuiltinRet::I64, BF_NO_VEC},
     {"SYS.INB", BuiltinRet::Unknown, BF_NO_VEC},
+    {"SYS.MEMORY", BuiltinRet::Handle, BF_NO_VEC},
     {"SYS.OUTB", BuiltinRet::Unknown, BF_NO_VEC},
     {"SYS.PEEK", BuiltinRet::Unknown, BF_NO_VEC},
     {"SYS.PEEKB", BuiltinRet::Unknown, BF_NO_VEC},

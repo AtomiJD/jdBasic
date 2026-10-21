@@ -2693,8 +2693,8 @@ Syntax: OS.IP$()
 Description: Returns the primary local IPv4 address of the machine.
 
 [OS.LOAD]
-OS.LOAD() -> number
-Returns the current system-wide CPU load percentage (0.0 - 100.0).
+Syntax: OS.LOAD() -> number
+Description: The CPU load of the whole machine in percent (0 to 100), measured since the previous call; the first call measures over a tenth of a second. Windows, Linux and macOS.
 
 [OS.FEATURE]
 Syntax: OS.FEATURE(name$) -> BOOLEAN
@@ -4556,6 +4556,10 @@ Description: Free space on the volume a path lies on, as a number of bytes. With
 [SYS.HEAP]
 Syntax: SYS.HEAP() -> bytes
 Description: Bytes the C heap holds for the process right now, both backends, the runtime DLL and the libraries together. Read it after N and after 3N passes of the same work; a figure that grows with the passes is a leak. Windows, Linux (glibc 2.33+) and macOS.
+
+[SYS.MEMORY]
+Syntax: SYS.MEMORY() -> map
+Description: The physical memory of the machine in bytes: "TOTAL", and "FREE" for what programs can still have without the system swapping. Windows, Linux and macOS.
 
 [WIFI.AP]
 Syntax: WIFI.AP(ssid$ [, password$ [, channel]]) -> 0 | -1

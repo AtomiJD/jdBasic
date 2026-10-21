@@ -1,0 +1,25 @@
+' SYS.MEMORY answers the machine's memory and OS.LOAD a load in percent,
+' in both backends and on every desktop platform.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM m = SYS.MEMORY()
+Check(m{"TOTAL"} > 100000000, "total memory above 100 MB")
+Check(m{"FREE"} > 0, "some memory free")
+Check(m{"FREE"} <= m{"TOTAL"}, "free memory within the total")
+
+DIM first = OS.LOAD()
+Check(first >= 0 ANDALSO first <= 100, "first load in percent")
+SLEEP 50
+DIM second = OS.LOAD()
+Check(second >= 0 ANDALSO second <= 100, "load since the first call in percent")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

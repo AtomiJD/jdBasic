@@ -2,6 +2,13 @@
 
 #include "vm_internal.h"
 #include "os_spawn.h"
+#include <fstream>
+#include <mutex>
+#include <thread>
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <sys/sysctl.h>
+#endif
 
 #if defined(_WIN32)
 // The output of a console program as UTF-8: text that is valid UTF-8 stays
@@ -32,6 +39,80 @@ static std::string console_text_to_utf8(const std::string& s) {
     std::string out(ulen, '\0');
     WideCharToMultiByte(CP_UTF8, 0, w.data(), wlen, &out[0], ulen, nullptr, nullptr);
     return out;
+}
+#endif
+
+#ifndef JDB_LEAN
+// Idle and total CPU time of the whole machine, in the platform's own units
+static bool cpu_times(uint64_t& idle, uint64_t& total) {
+#if defined(_WIN32)
+    FILETIME fi, fk, fu;
+    if (!GetSystemTimes(&fi, &fk, &fu)) return false;
+    auto u64 = [](const FILETIME& f) { return ((uint64_t)f.dwHighDateTime << 32) | f.dwLowDateTime; };
+    idle = u64(fi);
+    total = u64(fk) + u64(fu);   // kernel time includes the idle time
+    return true;
+#elif defined(__APPLE__)
+    host_cpu_load_info_data_t info;
+    mach_msg_type_number_t n = HOST_CPU_LOAD_INFO_COUNT;
+    if (host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, (host_info_t)&info, &n) != KERN_SUCCESS)
+        return false;
+    idle = info.cpu_ticks[CPU_STATE_IDLE];
+    total = 0;
+    for (int i = 0; i < CPU_STATE_MAX; i++) total += info.cpu_ticks[i];
+    return true;
+#elif defined(__linux__)
+    std::ifstream f("/proc/stat");
+    std::string cpu;
+    uint64_t v[8] = {0};
+    if (!(f >> cpu) || cpu != "cpu") return false;
+    for (int i = 0; i < 8; i++) f >> v[i];   // user nice system idle iowait irq softirq steal
+    idle = v[3] + v[4];
+    total = 0;
+    for (int i = 0; i < 8; i++) total += v[i];
+    return true;
+#else
+    (void)idle; (void)total;
+    return false;
+#endif
+}
+
+// Physical memory: all of it, and what programs could still have without
+// the system swapping
+static bool memory_bytes(uint64_t& total, uint64_t& avail) {
+#if defined(_WIN32)
+    MEMORYSTATUSEX ms;
+    ms.dwLength = sizeof(ms);
+    if (!GlobalMemoryStatusEx(&ms)) return false;
+    total = ms.ullTotalPhys;
+    avail = ms.ullAvailPhys;
+    return true;
+#elif defined(__APPLE__)
+    uint64_t mem = 0;
+    size_t len = sizeof(mem);
+    if (sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) != 0) return false;
+    vm_statistics64_data_t vs;
+    mach_msg_type_number_t n = HOST_VM_INFO64_COUNT;
+    if (host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&vs, &n) != KERN_SUCCESS)
+        return false;
+    total = mem;
+    avail = ((uint64_t)vs.free_count + vs.inactive_count + vs.purgeable_count) * (uint64_t)vm_kernel_page_size;
+    return true;
+#elif defined(__linux__)
+    std::ifstream f("/proc/meminfo");
+    std::string key, unit;
+    uint64_t kb = 0;
+    bool got_total = false, got_avail = false;
+    while (f >> key >> kb >> unit) {
+        if (key == "MemTotal:") { total = kb * 1024; got_total = true; }
+        else if (key == "MemAvailable:") { avail = kb * 1024; got_avail = true; }
+        if (got_total && got_avail) return true;
+    }
+    return false;
+#else
+    (void)total; (void)avail;
+    return false;
+#endif
 }
 #endif
 
@@ -550,24 +631,39 @@ void VM::register_system_builtins() {
 #endif
 
 #ifndef JDB_LEAN
-    register_native("OS.LOAD", 0, -1, [](const std::vector<Value>& args) -> Value {
-        (void)args;
-        double load = 0.0;
-#if defined(_WIN32)
-        // Use a quick WMI/perf counter approach via wmic
-        FILE* pipe = _popen("wmic cpu get LoadPercentage /value 2>nul", "r");
-        if (pipe) {
-            char buf[256];
-            while (fgets(buf, sizeof(buf), pipe)) {
-                std::string line(buf);
-                if (line.find("LoadPercentage=") != std::string::npos) {
-                    try { load = std::stod(line.substr(line.find('=') + 1)); } catch (...) {}
-                }
-            }
-            _pclose(pipe);
+    // The load between two readings of the system's CPU time counters: since
+    // the previous call, or over a tenth of a second for the first one.
+    register_native("OS.LOAD", 0, 0, [](const std::vector<Value>&) -> Value {
+        static std::mutex mu;
+        static uint64_t prev_idle = 0, prev_total = 0;
+        static bool have_prev = false;
+        std::lock_guard<std::mutex> lock(mu);
+        uint64_t idle = 0, total = 0;
+        if (!cpu_times(idle, total)) return Value::make_f64(0.0);
+        if (!have_prev) {
+            prev_idle = idle;
+            prev_total = total;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (!cpu_times(idle, total)) return Value::make_f64(0.0);
         }
-#endif
+        uint64_t d_total = total - prev_total;
+        uint64_t d_idle = idle - prev_idle;
+        prev_idle = idle;
+        prev_total = total;
+        have_prev = true;
+        if (d_total == 0) return Value::make_f64(0.0);
+        double load = 100.0 * (double)(d_total - std::min(d_idle, d_total)) / (double)d_total;
         return Value::make_f64(load);
+    });
+
+    register_native("SYS.MEMORY", 0, 0, [](const std::vector<Value>&) -> Value {
+        uint64_t total = 0, avail = 0;
+        if (!memory_bytes(total, avail))
+            throw std::runtime_error("SYS.MEMORY: this platform cannot report its memory");
+        Value m = Value::make_object();
+        m.as_object()->set("TOTAL", Value::make_i64((int64_t)total));
+        m.as_object()->set("FREE", Value::make_i64((int64_t)avail));
+        return m;
     });
 #endif
 
