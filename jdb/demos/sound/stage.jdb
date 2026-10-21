@@ -165,7 +165,7 @@ ENDSUB
 
 ' 0..1 values of a SOUND.MOD shape at the times x, in periods
 FUNC SHAPE_AT(shape$, x)
-    DIM fl = INT(x)
+    DIM fl = FLOOR(x)
     DIM fr = x - fl
     IF shape$ = "SINE" THEN RETURN 0.5 + 0.5 * SIN(TWO_PI * fr)
     IF shape$ = "COSINE" THEN RETURN 0.5 + 0.5 * COS(TWO_PI * fr)

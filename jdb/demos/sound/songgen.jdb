@@ -298,7 +298,7 @@ ENDSUB
 DIM BASS_PATCH$ AS STRING = "bass_roll"
 DIM LEAD_PATCH$ AS STRING = "neon_lead"
 DIM KEYS_PATCH$ AS STRING = "fm_keys"
-DIM COUNTER_PATCH$ AS STRING = "neon_soft"
+DIM COUNTER_PATCH$ AS STRING = "neon_voice"
 DIM BASS_CUT AS DOUBLE = 700
 DIM BASS_RES AS DOUBLE = 0.35
 DIM PAD_GAIN AS DOUBLE = 0.18
@@ -361,20 +361,18 @@ SUB SETUP_SOUND()
     BASS_PATCH$ = "bass_roll"
     LEAD_PATCH$ = "neon_lead"
     KEYS_PATCH$ = "fm_keys"
-    ' the answer gets a sound of its own, apart from the lead and the arp
-    COUNTER_PATCH$ = "vox_chop"
+    ' the answer has the signature voice in every genre
+    COUNTER_PATCH$ = "neon_voice"
     BASS_CUT = 700
     BASS_RES = 0.35
     IF genre$ = "house" THEN
         BASS_PATCH$ = "bass_house"
         KEYS_PATCH$ = "organ"
-        COUNTER_PATCH$ = "fm_keys"
         BASS_CUT = 600
         BASS_RES = 0.3
     ELSEIF genre$ = "deep" THEN
         BASS_PATCH$ = "sub"
         LEAD_PATCH$ = "neon_soft"
-        COUNTER_PATCH$ = "neon_pluck"
         BASS_CUT = 20000
         BASS_RES = 0
     ELSEIF genre$ = "acid" THEN
@@ -388,7 +386,6 @@ SUB SETUP_SOUND()
     ENDIF
     DIM arp_patches$ = ["neon_pluck", "neon_pluck", "neon_soft", "fm_keys"]
     ARP_PATCH$ = arp_patches$[PICK(830, LEN(arp_patches$))]
-    IF ARP_PATCH$ = COUNTER_PATCH$ THEN COUNTER_PATCH$ = "vox_chop"
     RECIPE$ = RECIPE$ + "  sounds: " + BASS_PATCH$ + ", " + ARP_PATCH$ + ", " + KEYS_PATCH$ + ", " + LEAD_PATCH$ + ", " + COUNTER_PATCH$ + NL$
 
     PATCH.APPLY BASS, BASS_PATCH$
