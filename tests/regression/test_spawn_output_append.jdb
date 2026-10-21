@@ -1,0 +1,34 @@
+' OS.SPAWN with "OUTPUT" appends the child's output to the file, also for
+' a program of Git for Windows' MSYS (bash), which cannot write to an
+' append-only handle.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM sh$ = "sh"
+IF OS.GETOS() = "WINDOWS" THEN sh$ = "C:/Program Files/Git/bin/bash.exe"
+IF OS.GETOS() = "WINDOWS" ANDALSO NOT FILE.EXISTS(sh$) THEN
+    PRINT "OK (no Git bash)"
+    END 0
+ENDIF
+
+MKDIR "tmp"
+DIM out$ = "tmp/spawn_output_append_" + STR$(OS.PID()) + ".txt"
+TXTWRITER out$, "kept" + CHR$(10)
+DIM pid = OS.SPAWN(sh$, ["-c", "echo one; echo two >&2"], {"OUTPUT": out$, "HIDDEN": TRUE})
+DIM code = OS.WAIT(pid, 20000)
+Check(code = 0, "the shell ran to the end")
+DIM got$ = REPLACE$(TXTREADER$(out$), CHR$(13), "")
+Check(STARTSWITH(got$, "kept" + CHR$(10)), "what the file held stays in front")
+Check(INSTR(got$, "one") >= 0, "standard output reaches the file")
+Check(INSTR(got$, "two") >= 0, "standard error reaches the file")
+KILL out$
+
+IF failed > 0 THEN END 1
+PRINT "OK"

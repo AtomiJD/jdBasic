@@ -201,10 +201,14 @@ inline int64_t start(const std::vector<std::string>& argv, bool use_shell, const
     if (opts.hidden) flags |= CREATE_NO_WINDOW;
     if (!opts.output.empty()) {
         SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, TRUE};
-        out = CreateFileW(widen(opts.output).c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        // Write access positioned at the end rather than an append-only
+        // handle, which MSYS programs such as Git's bash cannot write to
+        out = CreateFileW(widen(opts.output).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                           &sa, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (out == INVALID_HANDLE_VALUE)
             throw std::runtime_error("OS.SPAWN: cannot open the output file " + opts.output);
+        LARGE_INTEGER zero = {};
+        SetFilePointerEx(out, zero, nullptr, FILE_END);
         // Only the output handle is inherited, never the sockets and files
         // the program holds.
         SIZE_T size = 0;
