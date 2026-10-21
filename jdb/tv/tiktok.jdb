@@ -8,7 +8,8 @@
 '
 ' Per clip: the frames and the WAV go into raw/<base>_frames, ffmpeg
 ' muxes final/tiktok/<base>.mp4 (1080x1920, 30 fps), the frames are
-' deleted again, and final/tiktok/<base>.txt holds a caption to paste.
+' deleted again, final/tiktok/<base>.cover.png is the cover and
+' final/tiktok/<base>.txt holds a caption to paste.
 
 OPTION "EXPLICIT"
 
@@ -27,7 +28,7 @@ SUB CLEAN_FRAMES(dir$)
         DIM i AS INTEGER
         FOR i = 0 TO LEN(names) - 1
             DIM nm$ AS STRING = names[i]
-            IF ENDSWITH(nm$, ".jpg") ORELSE nm$ = "audio.wav" THEN KILL dir$ + "\" + nm$
+            IF ENDSWITH(nm$, ".jpg") ORELSE ENDSWITH(nm$, ".png") ORELSE ENDSWITH(nm$, ".txt") ORELSE nm$ = "audio.wav" THEN KILL dir$ + "\" + nm$
         NEXT i
         RMDIR dir$
     ENDIF
@@ -42,6 +43,56 @@ FUNC QUOTED$(s$) AS STRING
     DIM b AS INTEGER = INSTR(rest$, q$)
     IF b < 0 THEN RETURN ""
     RETURN LEFT$(rest$, b)
+ENDFUNC
+
+' The still of the first move in PREFER$ the render saved, else of any
+FUNC COVER_STILL$(frames$) AS STRING
+    DIM PREFER$ = ["heart", "clap", "woah", "dab", "wave"]
+    DIM names = DIR$(frames$)
+    DIM pi_k AS INTEGER
+    DIM i AS INTEGER
+    FOR pi_k = 0 TO LEN(PREFER$) - 1
+        FOR i = 0 TO LEN(names) - 1
+            DIM nm$ AS STRING = names[i]
+            IF STARTSWITH(nm$, "cover_") ANDALSO ENDSWITH(nm$, "_" + PREFER$[pi_k] + ".png") THEN RETURN frames$ + "\" + nm$
+        NEXT i
+    NEXT pi_k
+    FOR i = 0 TO LEN(names) - 1
+        DIM cand$ AS STRING = names[i]
+        IF STARTSWITH(cand$, "cover_") THEN RETURN frames$ + "\" + cand$
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+' The cover: the still, whose own line names the series, under a dark band
+' with the song and the key, in the upper third, where TikTok's profile
+' grid still shows it
+FUNC MAKE_COVER(still$, out_png$, song$, info$, work$) AS INTEGER
+    DIM song_txt$ AS STRING = work$ + "\cover_song.txt"
+    DIM info_txt$ AS STRING = work$ + "\cover_info.txt"
+    TXTWRITER song_txt$, song$
+    TXTWRITER info_txt$, info$
+    DIM size AS INTEGER = INT(880 / (MAX([LEN(song$), 6]) * 0.6))
+    IF size > 150 THEN size = 150
+    DIM font$ AS STRING = "fontfile=../../build/jdbasic_default.ttf"
+    DIM ft$ AS STRING = REPLACE$(song_txt$, "\", "/")
+    DIM fi$ AS STRING = REPLACE$(info_txt$, "\", "/")
+    DIM vf$ AS STRING = "drawbox=x=0:y=318:w=iw:h=340:color=0x05020F@0.62:t=fill"
+    vf$ = vf$ + ",drawtext=" + font$ + ":textfile=" + ft$ + ":fontsize=" + STR$(size) + ":fontcolor=0xFF6EC7:borderw=5:bordercolor=0x1A0020:x=(w-text_w)/2:y=" + STR$(INT(440 - size / 2))
+    vf$ = vf$ + ",drawtext=" + font$ + ":textfile=" + fi$ + ":fontsize=46:fontcolor=0xF0F0FF:x=(w-text_w)/2:y=560"
+    DIM ff = OS.EXEC("ffmpeg", ["-y", "-loglevel", "error", "-i", still$, "-vf", vf$, "-frames:v", "1", out_png$])
+    IF ff{"EXIT_CODE"} <> 0 THEN PRINT ff{"OUTPUT"}
+    RETURN ff{"EXIT_CODE"} = 0 ANDALSO FILE.EXISTS(out_png$)
+ENDFUNC
+
+' "Eb major, 123 BPM" from the recipe line "  key Eb major, 123 BPM, ..."
+FUNC KEY_INFO$(run_log$) AS STRING
+    DIM k AS INTEGER = INSTR(run_log$, "  key ")
+    IF k < 0 THEN RETURN ""
+    DIM rest$ AS STRING = MID$(run_log$, k + 6, 60)
+    DIM b AS INTEGER = INSTR(rest$, " BPM")
+    IF b < 0 THEN RETURN ""
+    RETURN LEFT$(rest$, b + 4)
 ENDFUNC
 
 FUNC MAKE_CLIP(genre$, seed$) AS INTEGER
@@ -75,9 +126,16 @@ FUNC MAKE_CLIP(genre$, seed$) AS INTEGER
         PRINT ff{"OUTPUT"}
         RETURN FALSE
     ENDIF
+    DIM genre_name$ AS STRING = UCASE$(LEFT$(genre$, 1)) + MID$(genre$, 1, LEN(genre$))
+    DIM still$ AS STRING = COVER_STILL$(frames$)
+    DIM cover$ AS STRING = OUT_DIR$ + "\" + base$ + ".cover.png"
+    IF still$ = "" ORELSE NOT MAKE_COVER(still$, cover$, song$, genre_name$ + "  -  " + KEY_INFO$(run_log$), frames$) THEN
+        PRINT "   cover failed"
+    ELSE
+        PRINT "   -> "; cover$
+    ENDIF
     CLEAN_FRAMES frames$
 
-    DIM genre_name$ AS STRING = UCASE$(LEFT$(genre$, 1)) + MID$(genre$, 1, LEN(genre$))
     DIM caption$ AS STRING = song$ + " - " + genre_name$ + " | When Kaiku Dreams Techno" + CHR$(10)
     caption$ = caption$ + "Every sound and every move is code: an AI writes the track, she dances to it." + CHR$(10)
     caption$ = caption$ + TAGS$ + " #" + genre$ + CHR$(10)

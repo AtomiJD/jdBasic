@@ -100,6 +100,7 @@ DIM TT_LABELS$ = ["HIT THE WOAH", "FLOSS", "CLAP IT UP", "HEART HANDS", "DAB", "
 DIM clip_from AS DOUBLE = 0
 DIM clip_to AS DOUBLE = 0
 DIM tt_offset AS INTEGER = 0
+DIM tt_cover_done AS INTEGER = -1
 DIM spec = RESHAPE([0.0], [40])
 DIM band_lo = RESHAPE([0], [40])
 DIM band_hi = RESHAPE([0], [40])
@@ -1045,6 +1046,14 @@ SUB FRAME()
     ENDIF
     IF render_dir$ <> "" THEN
         GFX.SAVE_SCREENSHOT render_dir$ + "/f" + FORMAT$("{:0>5}", frame_no) + ".jpg"
+        ' a still of each move once its name has faded, for the cover
+        IF tiktok ANDALSO (cyc - clip_from) * 240 / SCORE.BPM_OF() >= 4 THEN
+            DIM cover_k AS INTEGER = INT((cyc - clip_from) / TT_BARS_PER_MOVE)
+            IF cover_k > tt_cover_done ANDALSO cyc - clip_from - TT_BARS_PER_MOVE * cover_k >= 1.5 THEN
+                GFX.SAVE_SCREENSHOT render_dir$ + "/cover_" + STR$(cover_k) + "_" + TT_MOVES$[TT_MOVE_AT(cyc)] + ".png"
+                tt_cover_done = cover_k
+            ENDIF
+        ENDIF
         frame_no = frame_no + 1
     ENDIF
     SCREENFLIP
