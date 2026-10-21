@@ -15066,6 +15066,31 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
+    // JOIN of a string answers "", as in the interpreter; handed on, the
+    // string's bytes would be read as an array header. Only a literal or a
+    // builtin $ function is surely a string: a $ variable may hold an array.
+    bool join_of_text = false;
+    if (upper == "JOIN" && !expr.args.empty() && expr.args[0]) {
+        const Expr& a0 = *expr.args[0];
+        join_of_text = a0.kind == ExprKind::LITERAL_STRING ||
+                       (a0.kind == ExprKind::CALL && !a0.func_name.empty() &&
+                        a0.func_name.back() == '$' && !user_functions.count(a0.func_name) &&
+                        builtin_sig(a0.func_name));
+    }
+    if (join_of_text && !arg_cache.empty() && arg_cache[0].tag == JD_TAG_STR) {
+        if (!std::getenv("JDB_NO_STROWN") && expr.args[0] &&
+            (arg_cache[0].owned || expr_yields_fresh_string(*expr.args[0]))) {
+            auto& drop = runtime_funcs["__str_drop"];
+            LLVMValueRef d[] = { arg_cache[0].val };
+            LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+        }
+        auto& own = runtime_funcs["__str_own"];
+        LLVMValueRef e[] = { LLVMBuildGlobalStringPtr(builder, "", ".join_s") };
+        TypedValue r{ LLVMBuildCall2(builder, own.fn_type, own.fn, e, 1, "join_s"), JD_TAG_STR };
+        r.owned = true;
+        return r;
+    }
+
     // Direct array specializations - bypass the apply_ff function-pointer
     // callback for unary math that can inline + vectorise.
     {

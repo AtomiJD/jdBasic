@@ -1,0 +1,23 @@
+' JOIN handed a string instead of an array answers "" in both backends,
+' whether the string is new or a constant.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM rows = TALLY(-"abbccc")
+DIM lines$ = FRMV$(rows, "{}={}")
+Check(JOIN(FRMV$(rows, "{}={}"), ";") = "", "a new string")
+Check(JOIN("abc", ",") = "", "a constant")
+Check(JOIN(["a", "b"], ",") = "a,b", "an array still joins")
+DIM parts$ = SPLIT("x y z", " ")
+Check(JOIN(parts$, "-") = "x-y-z", "a $ name holding an array still joins")
+Check(LEN(lines$) > 0, "the string itself is untouched")
+
+IF failed > 0 THEN END 1
+PRINT "OK"
