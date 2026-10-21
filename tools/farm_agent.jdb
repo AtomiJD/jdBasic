@@ -12,6 +12,9 @@
 '   SYNC      git pull --ff-only origin main
 '   BUILD     the standard build (Linux and macOS; Windows builds by hand,
 '             since the running jdBasic.exe cannot be replaced)
+'   GATE      {COMMIT, BUILD, PARITY}: fetch, fast-forward to COMMIT, build
+'             when asked, tools/gate_run.jdb; its results go to
+'             farm/<host>/gate, one map per step with HOST added
 '   CANCEL    ends the running action
 '   RESTART   starts a fresh agent from the current source and leaves
 '
@@ -30,7 +33,8 @@ DIM slash AS INTEGER = INSTR(REVERSE$(script$), "/")
 IF slash >= 0 THEN repo$ = LEFT$(script$, LEN(script$) - 1 - slash) + "/.."
 DIM os$ AS STRING = OS.GETOS()
 ' The repo's own binary: after a rebuild on Linux, OS.SELF$ names the deleted file
-DIM jdb_exe$ AS STRING = repo$ + IIF(os$ = "WINDOWS", "/build/jdBasic.exe", "/build/jdbasic")
+DIM jdb_exe$ AS STRING = repo$ + "/build/jdbasic"
+IF os$ = "WINDOWS" THEN jdb_exe$ = REPLACE$(repo$ + "/build/jdBasic.exe", "/", "\")
 DIM host$ AS STRING = LCASE$(OS.HOSTNAME$())
 IF INSTR(host$, ".") >= 0 THEN host$ = LEFT$(host$, INSTR(host$, "."))
 DIM home$ AS STRING = GETENV$("HOME")
@@ -67,6 +71,7 @@ DIM stats_pub = TOPIC.OPEN("farm/" + host$ + "/stats")
 TOPIC.RETAIN stats_pub, TRUE
 DIM log_pub = TOPIC.OPEN("farm/" + host$ + "/log")
 DIM done_pub = TOPIC.OPEN("farm/" + host$ + "/done")
+DIM gate_pub = TOPIC.OPEN("farm/" + host$ + "/gate")
 MKDIR repo$ + "/tmp"
 
 ' Slow facts, refreshed every SLOW_MS and after each action
@@ -81,6 +86,8 @@ DIM t_slow AS DOUBLE = 0
 ' The running action
 DIM busy$ AS STRING = ""
 DIM busy_pid = 0
+DIM steps = []
+DIM step_i AS INTEGER = 0
 DIM busy_start AS DOUBLE = 0
 DIM log_done AS INTEGER = 0
 DIM log_rest$ AS STRING = ""
@@ -119,18 +126,36 @@ FUNC STATS()
     RETURN {"HOST": host$, "OS": os$, "ADDR": NODE.NAME$(), "PID": OS.PID(), "CPU": OS.LOAD(), "MEM_TOTAL": mem{"TOTAL"}, "MEM_FREE": mem{"FREE"}, "DISK_FREE": SYS.FREEDISK(repo$), "HEAD": head$, "BRANCH": branch$, "DIRTY": dirty, "VERSION": version$, "FEATURES": features$, "GPU": gpu$, "BUSY": busy$, "BUSY_SECONDS": IIF(busy$ = "", 0, INT((TICK() - busy_start) / 1000)), "LAST": last, "UPTIME": INT((TICK() - t_start) / 1000), "T": NODE.TIME()}
 ENDFUNC
 
-' Starts an action's command with its output in the log file
-SUB START_ACTION(action$, prog$, args, env)
+' Starts the action's first step; each further one starts when the one
+' before it ended with exit 0, and all of them write to the same log file
+SUB START_ACTION(action$, plan)
     IF FILE.EXISTS(log_path$) THEN KILL log_path$
-    busy_pid = OS.SPAWN(prog$, args, {"CWD": repo$, "ENV": env, "OUTPUT": log_path$, "HIDDEN": TRUE})
+    steps = plan
+    step_i = 0
     busy$ = action$
     busy_start = TICK()
     log_done = 0
     log_rest$ = ""
     CHAN.SEND log_pub, "== " + action$ + " on " + host$ + " =="
+    START_STEP()
 ENDSUB
 
-' Publishes the lines the running action wrote since the last look
+SUB START_STEP()
+    DIM s = steps[step_i]
+    TRY
+        busy_pid = OS.SPAWN(s{"PROG"}, s{"ARGS"}, {"CWD": repo$, "ENV": s{"ENV"}, "OUTPUT": log_path$, "HIDDEN": TRUE})
+    CATCH
+        CHAN.SEND log_pub, ERRMSG$
+        FINISH_ACTION(-1)
+    ENDTRY
+ENDSUB
+
+FUNC PLAN_STEP(prog$, args, env)
+    RETURN {"PROG": prog$, "ARGS": args, "ENV": env}
+ENDFUNC
+
+' Publishes the lines the running action wrote since the last look; a
+' "GATE {...}" line of tools/gate_run.jdb goes to farm/<host>/gate as a map
 SUB PUMP_LOG(final)
     IF NOT FILE.EXISTS(log_path$) THEN EXITFUNC
     DIM all$ AS STRING = TXTREADER$(log_path$)
@@ -146,7 +171,15 @@ SUB PUMP_LOG(final)
     ENDIF
     DIM i AS INTEGER
     FOR i = 0 TO n - 1
-        IF rows[i] <> "" THEN CHAN.SEND log_pub, rows[i]
+        DIM row$ AS STRING = rows[i]
+        IF STARTSWITH(row$, "GATE {") THEN
+            DIM rec = JSON.PARSE(MID$(row$, 5, LEN(row$)))
+            rec{"HOST"} = host$
+            CHAN.SEND gate_pub, rec
+            CHAN.SEND log_pub, rec{"STEP"} + " " + rec{"BACKEND"} + ": " + rec{"STATUS"} + " " + rec{"SUMMARY"}
+        ELSEIF row$ <> "" THEN
+            CHAN.SEND log_pub, row$
+        ENDIF
     NEXT i
 ENDSUB
 
@@ -165,23 +198,56 @@ SUB REFUSE_IF_BUSY()
     IF busy$ <> "" THEN THROW host$ + " is busy with " + busy$
 ENDSUB
 
+FUNC FLAG(m, key$)
+    RETURN TYPEOF(m{key$}) = "BOOLEAN" ANDALSO m{key$}
+ENDFUNC
+
 FUNC H_STATUS(c)
     RETURN STATS()
 ENDFUNC
 
+FUNC SYNC_STEP()
+    RETURN PLAN_STEP("git", ["-C", ".", "pull", "--ff-only", "origin", "main"], {})
+ENDFUNC
+
+' The standard build, with the native compiler only where the current
+' binary has one (a machine without LLVM 18 builds the interpreter alone)
+FUNC BUILD_STEP()
+    IF os$ = "WINDOWS" THEN THROW "BUILD runs on Linux and macOS; build Windows by hand"
+    DIM env = {"HTTP": "1", "NET": "1", "GFX": "1", "IMGUI": "1", "NATIVEC": IIF(INSTR(features$, "NativeC") >= 0, "1", "0")}
+    IF os$ = "MACOS" ANDALSO FILE.EXISTS("/opt/homebrew/opt/llvm@18/bin/llvm-config") THEN env{"LLVM_CONFIG"} = "/opt/homebrew/opt/llvm@18/bin/llvm-config"
+    RETURN PLAN_STEP("./build.sh", [], env)
+ENDFUNC
+
 FUNC H_SYNC(c)
     REFUSE_IF_BUSY()
-    START_ACTION("SYNC", "git", ["-C", repo$, "pull", "--ff-only", "origin", "main"], {})
+    START_ACTION("SYNC", [SYNC_STEP()])
     RETURN {"STARTED": "SYNC", "LOG": "farm/" + host$ + "/log"}
 ENDFUNC
 
 FUNC H_BUILD(c)
     REFUSE_IF_BUSY()
-    IF os$ = "WINDOWS" THEN THROW "BUILD runs on Linux and macOS; build Windows by hand"
-    DIM env = {"HTTP": "1", "NET": "1", "GFX": "1", "IMGUI": "1", "NATIVEC": "1"}
-    IF os$ = "MACOS" ANDALSO FILE.EXISTS("/opt/homebrew/opt/llvm@18/bin/llvm-config") THEN env{"LLVM_CONFIG"} = "/opt/homebrew/opt/llvm@18/bin/llvm-config"
-    START_ACTION("BUILD", "./build.sh", [], env)
+    START_ACTION("BUILD", [BUILD_STEP()])
     RETURN {"STARTED": "BUILD", "LOG": "farm/" + host$ + "/log"}
+ENDFUNC
+
+' GATE with {"COMMIT": sha, "BUILD": flag, "PARITY": flag}: fetches, moves
+' fast-forward to the commit, builds when asked (not on Windows), then runs
+' tools/gate_run.jdb on the repo's binary
+FUNC H_GATE(c)
+    REFUSE_IF_BUSY()
+    DIM arg = c{"ARG"}
+    IF TYPEOF(arg) <> "OBJECT" THEN arg = {}
+    DIM commit$ AS STRING = ""
+    IF TYPEOF(arg{"COMMIT"}) = "STRING" THEN commit$ = arg{"COMMIT"}
+    DIM plan = [PLAN_STEP("git", ["-C", ".", "fetch", "-q", "origin"], {})]
+    IF commit$ <> "" THEN plan = APPEND(plan, PLAN_STEP("git", ["-C", ".", "merge", "--ff-only", "-q", commit$], {}))
+    IF FLAG(arg, "BUILD") ANDALSO os$ <> "WINDOWS" THEN plan = APPEND(plan, BUILD_STEP())
+    DIM run_args = ["tools/gate_run.jdb"]
+    IF FLAG(arg, "PARITY") THEN run_args = APPEND(run_args, "--parity")
+    plan = APPEND(plan, PLAN_STEP(jdb_exe$, run_args, {}))
+    START_ACTION("GATE", plan)
+    RETURN {"STARTED": "GATE", "LOG": "farm/" + host$ + "/log", "RESULTS": "farm/" + host$ + "/gate"}
 ENDFUNC
 
 FUNC H_CANCEL(c)
@@ -199,6 +265,7 @@ ENDFUNC
 NODE.SERVE "STATUS", "H_STATUS"
 NODE.SERVE "SYNC", "H_SYNC"
 NODE.SERVE "BUILD", "H_BUILD"
+NODE.SERVE "GATE", "H_GATE"
 NODE.SERVE "CANCEL", "H_CANCEL"
 NODE.SERVE "RESTART", "H_RESTART"
 
@@ -211,6 +278,9 @@ DO
         DIM code = OS.WAIT(busy_pid, 0)
         IF TYPEOF(code) = "NONE" THEN
             PUMP_LOG(FALSE)
+        ELSEIF code = 0 ANDALSO step_i < LEN(steps) - 1 THEN
+            step_i = step_i + 1
+            START_STEP()
         ELSE
             FINISH_ACTION(code)
         ENDIF

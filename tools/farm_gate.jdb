@@ -1,0 +1,283 @@
+' farm_gate.jdb - the gate on every farm machine at once, one matrix.
+'
+'   jdBasic tools/farm_gate.jdb [--build] [--parity] [--here] [--verbose] [host...]
+'
+' Asks every farm agent (tools/farm_agent.jdb), or the hosts named, to run
+' GATE on this repo's HEAD: fetch, fast-forward to the commit, build with
+' --build (Linux and macOS), then tools/gate_run.jdb (--parity adds
+' tests/parity.sh). HEAD has to be on origin, since the machines fetch it
+' from there; --here runs on whatever each machine has checked out. Results
+' print as they arrive, --verbose prints the machines' logs too. At the end
+' comes the matrix, also written to tmp/farm_gate_<commit>.txt. Exit 0 when
+' every machine answered and every step is OK (SKIP counts as OK: a machine
+' without the native compiler skips the native column).
+
+OPTION "EXPLICIT"
+
+DIM STALE_MS AS INTEGER = 5000
+DIM MAX_MS AS DOUBLE = 3600000
+
+FUNC NODE_KEY$() AS STRING
+    DIM k$ AS STRING = GETENV$("JDB_NODE_KEY")
+    IF k$ <> "" THEN RETURN k$
+    DIM home$ AS STRING = GETENV$("HOME")
+    IF home$ = "" THEN home$ = GETENV$("USERPROFILE")
+    DIM path$ AS STRING = home$ + "/.jdbasic/node.key"
+    IF NOT FILE.EXISTS(path$) THEN RETURN ""
+    RETURN TRIM$(TXTREADER$(path$))
+ENDFUNC
+
+FUNC TOPIC_HOST$(topic$) AS STRING
+    DIM parts = SPLIT(topic$, "/")
+    IF LEN(parts) < 3 THEN RETURN ""
+    RETURN parts[1]
+ENDFUNC
+
+FUNC PAD$(s$, width AS INTEGER) AS STRING
+    IF LEN(s$) >= width THEN RETURN LEFT$(s$, width)
+    RETURN s$ + SPACE$(width - LEN(s$))
+ENDFUNC
+
+FUNC GIT$(args) AS STRING
+    DIM r = OS.EXEC("git", args)
+    IF r{"EXIT_CODE"} <> 0 THEN RETURN ""
+    RETURN TRIM$(REPLACE$(REPLACE$(r{"OUTPUT"}, CHR$(13), ""), CHR$(10), " "))
+ENDFUNC
+
+DIM cli = OS.ARGS()
+DIM want_build AS INTEGER = FALSE
+DIM want_parity AS INTEGER = FALSE
+DIM here AS INTEGER = FALSE
+DIM verbose AS INTEGER = FALSE
+DIM targets = []
+DIM a AS INTEGER
+FOR a = 1 TO LEN(cli) - 1
+    DIM arg$ AS STRING = cli[a]
+    IF arg$ = "--build" THEN
+        want_build = TRUE
+    ELSEIF arg$ = "--parity" THEN
+        want_parity = TRUE
+    ELSEIF arg$ = "--here" THEN
+        here = TRUE
+    ELSEIF arg$ = "--verbose" THEN
+        verbose = TRUE
+    ELSE
+        targets = APPEND(targets, LCASE$(arg$))
+    ENDIF
+NEXT a
+
+DIM key$ AS STRING = NODE_KEY$()
+IF key$ = "" THEN
+    PRINT "farm_gate: no key - set JDB_NODE_KEY or write it to ~/.jdbasic/node.key"
+    END 1
+ENDIF
+
+DIM commit$ AS STRING = GIT$(["rev-parse", "HEAD"])
+DIM short$ AS STRING = LEFT$(commit$, 8)
+IF NOT here THEN
+    DIM dummy$ AS STRING = GIT$(["fetch", "-q", "origin"])
+    IF INSTR(GIT$(["branch", "-r", "--contains", commit$]), "origin/main") < 0 THEN
+        PRINT "farm_gate: HEAD "; short$; " is not on origin/main - push it, or run with --here"
+        END 1
+    ENDIF
+ENDIF
+
+DIM gate_node = NODE.JOIN("farmgate-" + STR$(OS.PID()), "lan", key$)
+DIM stats_sub = TOPIC.SUBSCRIBE("farm/*/stats", "queue:256", TRUE)
+DIM gate_sub = TOPIC.SUBSCRIBE("farm/*/gate", "queue:4096")
+DIM done_sub = TOPIC.SUBSCRIBE("farm/*/done", "queue:256", TRUE)
+DIM log_sub = TOPIC.SUBSCRIBE("farm/*/log", "queue:8192", TRUE)
+
+DIM machines = {}
+DIM seen = {}
+DIM hosts = []
+
+SUB TAKE_STATS()
+    DO
+        DIM env_in = CHAN.TRY_RECV(stats_sub)
+        IF CHAN.IS_TIMEOUT(env_in) THEN EXITDO
+        DIM h$ AS STRING = TOPIC_HOST$(env_in{"TOPIC"})
+        IF h$ = "" THEN CONTINUEDO
+        IF TYPEOF(machines{h$}) = "NONE" THEN hosts = SORT(APPEND(hosts, h$))
+        machines{h$} = env_in{"DATA"}
+        seen{h$} = TICK()
+    LOOP
+ENDSUB
+
+FUNC ONLINE(h$)
+    IF TYPEOF(seen{h$}) = "NONE" THEN RETURN FALSE
+    RETURN TICK() - seen{h$} < STALE_MS
+ENDFUNC
+
+' Lan machines announce themselves once a second: listen 2.5 s at least
+DIM t_listen AS DOUBLE = TICK() + 2500
+DIM t_give_up AS DOUBLE = TICK() + 6000
+DO WHILE TICK() < t_give_up
+    TAKE_STATS()
+    IF TICK() > t_listen ANDALSO LEN(hosts) > 0 ANDALSO LEN(hosts) >= LEN(NODE.PEERS("farmagent-*")) THEN EXITDO
+    SLEEP 50
+LOOP
+
+DIM pick = targets
+IF LEN(pick) = 0 THEN pick = FILTER(LAMBDA h -> ONLINE(h), hosts)
+IF LEN(pick) = 0 THEN
+    PRINT "farm_gate: no farm agent answered"
+    END 1
+ENDIF
+
+' host -> its step records in arrival order; host -> its last log lines
+DIM results = {}
+DIM tails = {}
+DIM outcome = {}
+DIM started = []
+DIM t_start AS DOUBLE = TICK()
+PRINT "gate of "; IIF(here, "each machine's own HEAD", short$); " on "; LEN(pick); " machine(s)"; IIF(want_build, ", with build", ""); IIF(want_parity, ", with parity", "")
+DIM i AS INTEGER
+FOR i = 0 TO LEN(pick) - 1
+    DIM h$ AS STRING = pick[i]
+    results{h$} = []
+    tails{h$} = []
+    IF NOT ONLINE(h$) THEN
+        outcome{h$} = "not reached"
+        CONTINUEFOR
+    ENDIF
+    IF machines{h$}{"BUSY"} <> "" THEN
+        outcome{h$} = "busy with " + machines{h$}{"BUSY"}
+        CONTINUEFOR
+    ENDIF
+    DIM job = {"BUILD": want_build, "PARITY": want_parity}
+    IF NOT here THEN job{"COMMIT"} = commit$
+    TRY
+        DIM answer = NODE.CALL("farmagent-" + h$, "GATE", job, 5000)
+        IF CHAN.IS_TIMEOUT(answer) THEN
+            outcome{h$} = "no answer"
+        ELSE
+            started = APPEND(started, h$)
+        ENDIF
+    CATCH
+        outcome{h$} = ERRMSG$
+    ENDTRY
+NEXT i
+FOR i = 0 TO LEN(pick) - 1
+    IF TYPEOF(outcome{pick[i]}) <> "NONE" THEN PRINT PAD$(pick[i], 16); " not started: "; outcome{pick[i]}
+NEXT i
+
+DIM running = started
+DO WHILE LEN(running) > 0 ANDALSO TICK() - t_start < MAX_MS
+    TAKE_STATS()
+    DO
+        DIM rec = CHAN.TRY_RECV(gate_sub)
+        IF CHAN.IS_TIMEOUT(rec) THEN EXITDO
+        DIM rh$ AS STRING = rec{"HOST"}
+        IF TYPEOF(results{rh$}) = "NONE" THEN CONTINUEDO
+        IF rec{"STEP"} <> "gate" THEN
+            results{rh$} = APPEND(results{rh$}, rec)
+            PRINT PAD$(rh$, 16); " "; PAD$(rec{"STEP"}, 20); PAD$(rec{"BACKEND"}, 8); PAD$(rec{"STATUS"}, 9); FORMAT$("{:>4} s  ", rec{"SECONDS"}); rec{"SUMMARY"}
+            DIM f AS INTEGER
+            FOR f = 0 TO LEN(rec{"FAILS"}) - 1
+                PRINT SPACE$(18); rec{"FAILS"}[f]
+            NEXT f
+        ENDIF
+    LOOP
+    DO
+        DIM lg = CHAN.TRY_RECV(log_sub)
+        IF CHAN.IS_TIMEOUT(lg) THEN EXITDO
+        DIM lh$ AS STRING = TOPIC_HOST$(lg{"TOPIC"})
+        IF TYPEOF(tails{lh$}) = "NONE" THEN CONTINUEDO
+        DIM rows = APPEND(tails{lh$}, lg{"DATA"})
+        IF LEN(rows) > 12 THEN rows = SLICE(rows, LEN(rows) - 12, 12)
+        tails{lh$} = rows
+        IF verbose THEN PRINT PAD$(lh$, 16); " | "; lg{"DATA"}
+    LOOP
+    DO
+        DIM dn = CHAN.TRY_RECV(done_sub)
+        IF CHAN.IS_TIMEOUT(dn) THEN EXITDO
+        DIM dh$ AS STRING = TOPIC_HOST$(dn{"TOPIC"})
+        IF dn{"DATA"}{"ACTION"} = "GATE" ANDALSO TYPEOF(outcome{dh$}) = "NONE" ANDALSO TYPEOF(results{dh$}) <> "NONE" THEN
+            outcome{dh$} = IIF(dn{"DATA"}{"OK"}, "OK", "FAIL") + " after " + STR$(dn{"DATA"}{"SECONDS"}) + " s"
+            ' a failure before gate_run (fetch, fast-forward, build) shows only in the log
+            IF NOT dn{"DATA"}{"OK"} ANDALSO LEN(results{dh$}) = 0 THEN
+                PRINT PAD$(dh$, 16); " failed before the suites; its log ends:"
+                DIM t AS INTEGER
+                FOR t = 0 TO LEN(tails{dh$}) - 1
+                    PRINT SPACE$(18); tails{dh$}[t]
+                NEXT t
+            ENDIF
+        ENDIF
+    LOOP
+    DIM still = []
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(running) - 1
+        DIM rk$ AS STRING = running[k]
+        IF TYPEOF(outcome{rk$}) <> "NONE" THEN CONTINUEFOR
+        IF NOT ONLINE(rk$) THEN
+            outcome{rk$} = "lost"
+            PRINT PAD$(rk$, 16); " lost"
+            CONTINUEFOR
+        ENDIF
+        still = APPEND(still, rk$)
+    NEXT k
+    running = still
+    SLEEP 50
+LOOP
+FOR i = 0 TO LEN(running) - 1
+    outcome{running[i]} = "timed out"
+NEXT i
+
+' The matrix: one row per step and backend, one column per machine
+DIM row_keys = []
+DIM cells = {}
+FOR i = 0 TO LEN(pick) - 1
+    DIM recs = results{pick[i]}
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(recs) - 1
+        DIM rk$ AS STRING = recs[j]{"STEP"} + " " + recs[j]{"BACKEND"}
+        IF TYPEOF(cells{rk$}) = "NONE" THEN
+            cells{rk$} = {}
+            row_keys = APPEND(row_keys, rk$)
+        ENDIF
+        cells{rk$}{pick[i]} = recs[j]{"STATUS"}
+    NEXT j
+NEXT i
+
+DIM all_ok AS INTEGER = TRUE
+DIM report = []
+report = APPEND(report, "farm gate of " + IIF(here, "each machine's HEAD", short$) + ", " + STR$(INT((TICK() - t_start) / 1000)) + " s wall time")
+DIM head_row$ AS STRING = PAD$("", 30)
+FOR i = 0 TO LEN(pick) - 1
+    head_row$ = head_row$ + PAD$(pick[i], 17)
+NEXT i
+report = APPEND(report, head_row$)
+FOR i = 0 TO LEN(row_keys) - 1
+    DIM row_out$ AS STRING = PAD$(row_keys[i], 30)
+    DIM c AS INTEGER
+    FOR c = 0 TO LEN(pick) - 1
+        DIM cell = cells{row_keys[i]}{pick[c]}
+        DIM cell$ AS STRING = "?"
+        IF TYPEOF(cell) = "STRING" THEN cell$ = IIF(cell = "SKIP", "-", cell)
+        IF cell$ <> "OK" ANDALSO cell$ <> "-" THEN all_ok = FALSE
+        row_out$ = row_out$ + PAD$(cell$, 17)
+    NEXT c
+    report = APPEND(report, row_out$)
+NEXT i
+DIM end_row$ AS STRING = PAD$("machine", 30)
+FOR i = 0 TO LEN(pick) - 1
+    DIM o$ AS STRING = "?"
+    IF TYPEOF(outcome{pick[i]}) = "STRING" THEN o$ = outcome{pick[i]}
+    IF NOT STARTSWITH(o$, "OK") THEN all_ok = FALSE
+    end_row$ = end_row$ + PAD$(o$, 17)
+NEXT i
+report = APPEND(report, end_row$)
+report = APPEND(report, "verdict: " + IIF(all_ok, "GREEN", "RED"))
+
+PRINT
+FOR i = 0 TO LEN(report) - 1
+    PRINT report[i]
+NEXT i
+MKDIR "tmp"
+DIM out_path$ AS STRING = "tmp/farm_gate_" + IIF(here, "here", short$) + ".txt"
+TXTWRITER out_path$, JOIN(report, CHR$(10)) + CHR$(10)
+PRINT "-> "; out_path$
+NODE.LEAVE
+IF all_ok THEN END 0
+END 1

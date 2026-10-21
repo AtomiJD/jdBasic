@@ -1,0 +1,144 @@
+' gate_run.jdb - the pre-commit gate on this machine, one JSON line per step.
+'
+'   jdBasic tools/gate_run.jdb [--no-native] [--parity]
+'
+' Runs from the repo root: the four suites under tests/gate in the
+' interpreter, then compiled with -c (native_test as its strict twin) when
+' the binary has NativeC, then tests/parity.sh with --parity. Every step
+' prints one line
+'
+'   GATE {"STEP": "comprehensive_test", "BACKEND": "interp", "STATUS": "OK",
+'         "SECONDS": 4, "EXIT": 0, "SUMMARY": "...", "FAILS": [...]}
+'
+' with STATUS OK, FAIL (the suite reported failures), CRASH (it ended
+' without its RESULTS line), COMPILE (-c produced no program), TIMEOUT or
+' SKIP; the last line is {"STEP": "gate", "STATUS": "OK" or "FAIL"}.
+' Exit 0 when every step that ran is OK.
+
+OPTION "EXPLICIT"
+
+DIM SUITE_MS AS INTEGER = 600000
+DIM INTERP_SUITES$ = ["comprehensive_test", "native_test", "test_apl_complete", "test_apl_pipelines"]
+DIM NATIVE_SUITES$ = ["comprehensive_test", "native_test.strict", "test_apl_complete", "test_apl_pipelines"]
+
+DIM os$ AS STRING = OS.GETOS()
+DIM exe_ext$ AS STRING = ".exe"
+DIM out_file$ AS STRING = "tmp/gate_run_" + STR$(OS.PID()) + ".out"
+MKDIR "tmp"
+
+' Runs a program with its output in out_file$; {"EXIT", "OUTPUT", "TIMEOUT"}
+FUNC RUN(prog$, args, env, ms)
+    IF FILE.EXISTS(out_file$) THEN KILL out_file$
+    DIM pid = OS.SPAWN(prog$, args, {"ENV": env, "OUTPUT": out_file$, "HIDDEN": TRUE})
+    DIM code = OS.WAIT(pid, ms)
+    DIM timed_out = FALSE
+    IF TYPEOF(code) = "NONE" THEN
+        DIM killed = OS.KILL(pid)
+        timed_out = TRUE
+        code = -1
+    ENDIF
+    DIM text$ AS STRING = ""
+    IF FILE.EXISTS(out_file$) THEN text$ = REPLACE$(TXTREADER$(out_file$), CHR$(13), "")
+    RETURN {"EXIT": code, "OUTPUT": text$, "TIMEOUT": timed_out}
+ENDFUNC
+
+FUNC REPORT(rec)
+    PRINT "GATE "; JSON.STRINGIFY$(rec)
+    RETURN rec{"STATUS"} = "OK" ORELSE rec{"STATUS"} = "SKIP"
+ENDFUNC
+
+' The verdict of one suite run from its output and exit code
+FUNC JUDGE(step$, backend$, r, secs)
+    DIM rows = SPLIT(r{"OUTPUT"}, CHR$(10))
+    DIM fails = []
+    DIM summary$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row$ AS STRING = TRIM$(rows[i])
+        IF INSTR(row$, "ALL TESTS PASSED") >= 0 ORELSE STARTSWITH(row$, "RESULTS:") THEN summary$ = row$
+        ' a count line such as "FAIL:     0" belongs to the summary
+        DIM counted AS INTEGER = STARTSWITH(UCASE$(row$), "FAIL:") ANDALSO TRIM$(MID$(row$, 5, LEN(row$))) = "0"
+        IF STARTSWITH(UCASE$(row$), "FAIL") ANDALSO NOT counted ANDALSO LEN(fails) < 8 THEN fails = APPEND(fails, LEFT$(row$, 200))
+    NEXT i
+    DIM status$ AS STRING = "OK"
+    IF r{"TIMEOUT"} THEN
+        status$ = "TIMEOUT"
+    ELSEIF summary$ = "" THEN
+        status$ = "CRASH"
+    ELSEIF r{"EXIT"} <> 0 ORELSE LEN(fails) > 0 ORELSE (STARTSWITH(summary$, "RESULTS:") ANDALSO INSTR(summary$, " 0 failed") < 0) THEN
+        status$ = "FAIL"
+    ENDIF
+    RETURN {"STEP": step$, "BACKEND": backend$, "STATUS": status$, "SECONDS": secs, "EXIT": r{"EXIT"}, "SUMMARY": summary$, "FAILS": fails}
+ENDFUNC
+
+DIM cli = OS.ARGS()
+DIM want_native AS INTEGER = TRUE
+DIM want_parity AS INTEGER = FALSE
+DIM a AS INTEGER
+FOR a = 1 TO LEN(cli) - 1
+    IF cli[a] = "--no-native" THEN want_native = FALSE
+    IF cli[a] = "--parity" THEN want_parity = TRUE
+NEXT a
+
+DIM jdb$ AS STRING = OS.SELF$()
+DIM has_native AS INTEGER = OS.FEATURE("LLVMC")
+DIM all_ok AS INTEGER = TRUE
+DIM no_env = {}
+DIM t0 AS DOUBLE
+DIM i AS INTEGER
+
+FOR i = 0 TO LEN(INTERP_SUITES$) - 1
+    t0 = TICK()
+    DIM ri = RUN(jdb$, ["tests/gate/" + INTERP_SUITES$[i] + ".jdb"], no_env, SUITE_MS)
+    IF NOT REPORT(JUDGE(INTERP_SUITES$[i], "interp", ri, INT((TICK() - t0) / 1000))) THEN all_ok = FALSE
+NEXT i
+
+' Compiled programs find the runtime library in build/, relative to the repo root they run in
+DIM native_env = {}
+IF os$ = "LINUX" THEN native_env{"LD_LIBRARY_PATH"} = "build:" + GETENV$("LD_LIBRARY_PATH")
+IF os$ = "MACOS" THEN native_env{"DYLD_LIBRARY_PATH"} = "build:" + GETENV$("DYLD_LIBRARY_PATH")
+
+FOR i = 0 TO LEN(NATIVE_SUITES$) - 1
+    DIM name$ AS STRING = NATIVE_SUITES$[i]
+    IF NOT want_native ORELSE NOT has_native THEN
+        DIM why$ AS STRING = IIF(want_native, "no NativeC in this build", "--no-native")
+        DIM skipped = REPORT({"STEP": name$, "BACKEND": "native", "STATUS": "SKIP", "SECONDS": 0, "EXIT": 0, "SUMMARY": why$, "FAILS": []})
+        CONTINUEFOR
+    ENDIF
+    t0 = TICK()
+    DIM prog$ AS STRING = "tests/gate/" + name$ + exe_ext$
+    IF FILE.EXISTS(prog$) THEN KILL prog$
+    DIM rc = RUN(jdb$, ["-c", "tests/gate/" + name$ + ".jdb"], no_env, SUITE_MS)
+    IF NOT FILE.EXISTS(prog$) THEN
+        DIM msg = SPLIT(TRIM$(rc{"OUTPUT"}), CHR$(10))
+        DIM last_rows = []
+        IF LEN(msg) > 0 THEN last_rows = [LEFT$(msg[LEN(msg) - 1], 200)]
+        DIM bad_compile = REPORT({"STEP": name$, "BACKEND": "native", "STATUS": "COMPILE", "SECONDS": INT((TICK() - t0) / 1000), "EXIT": rc{"EXIT"}, "SUMMARY": "-c produced no program", "FAILS": last_rows})
+        all_ok = FALSE
+        CONTINUEFOR
+    ENDIF
+    DIM rn = RUN(IIF(os$ = "WINDOWS", REPLACE$(prog$, "/", "\"), "./" + prog$), [], native_env, SUITE_MS)
+    IF NOT REPORT(JUDGE(name$, "native", rn, INT((TICK() - t0) / 1000))) THEN all_ok = FALSE
+NEXT i
+
+IF want_parity THEN
+    t0 = TICK()
+    DIM sh$ AS STRING = "bash"
+    IF os$ = "WINDOWS" THEN sh$ = "C:/Program Files/Git/bin/bash.exe"
+    DIM rp = RUN(sh$, ["tests/parity.sh", "-t", "12"], no_env, 1800000)
+    DIM prow = SPLIT(rp{"OUTPUT"}, CHR$(10))
+    DIM worse = []
+    DIM in_block AS INTEGER = FALSE
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(prow) - 1
+        IF INSTR(prow[k], "VS BASELINE") >= 0 THEN in_block = TRUE
+        IF in_block ANDALSO LEN(worse) < 12 ANDALSO TRIM$(prow[k]) <> "" THEN worse = APPEND(worse, LEFT$(prow[k], 200))
+    NEXT k
+    DIM pstatus$ AS STRING = IIF(rp{"TIMEOUT"}, "TIMEOUT", IIF(rp{"EXIT"} = 0, "OK", "FAIL"))
+    IF NOT REPORT({"STEP": "parity", "BACKEND": "both", "STATUS": pstatus$, "SECONDS": INT((TICK() - t0) / 1000), "EXIT": rp{"EXIT"}, "SUMMARY": IIF(rp{"EXIT"} = 0, "no test worse than the baseline", "worse than the baseline"), "FAILS": worse}) THEN all_ok = FALSE
+ENDIF
+
+IF FILE.EXISTS(out_file$) THEN KILL out_file$
+DIM verdict = REPORT({"STEP": "gate", "BACKEND": "", "STATUS": IIF(all_ok, "OK", "FAIL"), "SECONDS": 0, "EXIT": 0, "SUMMARY": "", "FAILS": []})
+IF all_ok THEN END 0
+END 1
