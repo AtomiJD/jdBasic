@@ -93,4 +93,6 @@ fi
 echo
 echo "All libs built. Static archives:"
 find "$LIBS" -maxdepth 4 -name "libSDL3*.a" -o -name "libllama*.a" -o -name "libggml*.a" 2>/dev/null
-[ -f "$LIBS/onnxruntime/lib/libonnxruntime.so" ] && echo "$LIBS/onnxruntime/lib/libonnxruntime.so (prebuilt)"
+if [ -f "$LIBS/onnxruntime/lib/libonnxruntime.so" ]; then
+    echo "$LIBS/onnxruntime/lib/libonnxruntime.so (prebuilt)"
+fi
