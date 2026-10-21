@@ -21,7 +21,7 @@ This document describes the syntax, commands, and functions for the jdBasic inte
 - [STATIC Local Variables](#static-local-variables)
 - [$"...": a string with expressions in it](#-a-string-with-expressions-in-it)
 - [??: the left side unless it is absent](#-the-left-side-unless-it-is-absent)
-- [`?.` `?{` `?[`: read into something that may not be there](#---read-into-something-that-may-not-be-there)
+- [?. ?{ ?\[: read into something that may not be there](#---read-into-something-that-may-not-be-there)
 - [Optional parameters](#optional-parameters)
 - [Constants](#constants)
 - [Destructuring Assignment](#destructuring-assignment)

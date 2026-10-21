@@ -88,7 +88,8 @@ FOR EACH row$ IN rows
             anchor$ = anchor$ + "-" + STR$(seen{anchor$})
         ENDIF
         section$ = anchor$
-        DIM shown$ = REPLACE$(title$, "`", "")
+        ' A bracket in link text would open a link of its own
+        DIM shown$ = REPLACE$(REPLACE$(REPLACE$(title$, "`", ""), "[", "\["), "]", "\]")
         IF level = 2 THEN
             toc = APPEND(toc, "- [" + shown$ + "](#" + anchor$ + ")")
         ELSE
