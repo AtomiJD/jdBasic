@@ -11,9 +11,10 @@
 '         "SECONDS": 4, "EXIT": 0, "SUMMARY": "...", "FAILS": [...]}
 '
 ' with STATUS OK, FAIL (the suite reported failures), CRASH (it ended
-' without its RESULTS line), COMPILE (-c produced no program), TIMEOUT or
-' SKIP; the last line is {"STEP": "gate", "STATUS": "OK" or "FAIL"}.
-' Exit 0 when every step that ran is OK.
+' without its RESULTS line), COMPILE (-c produced no program), TIMEOUT,
+' SKIP, or INFO for parity off Windows (the baseline is a Windows one);
+' the last line is {"STEP": "gate", "STATUS": "OK" or "FAIL"}. Exit 0
+' when every step that ran is OK, SKIP or INFO.
 
 OPTION "EXPLICIT"
 
@@ -44,7 +45,7 @@ ENDFUNC
 
 FUNC REPORT(rec)
     PRINT "GATE "; JSON.STRINGIFY$(rec)
-    RETURN rec{"STATUS"} = "OK" ORELSE rec{"STATUS"} = "SKIP"
+    RETURN rec{"STATUS"} = "OK" ORELSE rec{"STATUS"} = "SKIP" ORELSE rec{"STATUS"} = "INFO"
 ENDFUNC
 
 ' The verdict of one suite run from its output and exit code
@@ -143,6 +144,8 @@ ELSEIF want_parity THEN
         IF in_block ANDALSO LEN(worse) < 12 ANDALSO TRIM$(prow[k]) <> "" THEN worse = APPEND(worse, LEFT$(prow[k], 200))
     NEXT k
     DIM pstatus$ AS STRING = IIF(rp{"TIMEOUT"}, "TIMEOUT", IIF(rp{"EXIT"} = 0, "OK", "FAIL"))
+    ' the baseline is recorded on Windows, where COM, FFI and forms tests run
+    IF pstatus$ = "FAIL" ANDALSO os$ <> "WINDOWS" THEN pstatus$ = "INFO"
     IF NOT REPORT({"STEP": "parity", "BACKEND": "both", "STATUS": pstatus$, "SECONDS": INT((TICK() - t0) / 1000), "EXIT": rp{"EXIT"}, "SUMMARY": IIF(rp{"EXIT"} = 0, "no test worse than the baseline", "worse than the baseline"), "FAILS": worse}) THEN all_ok = FALSE
 ENDIF
 

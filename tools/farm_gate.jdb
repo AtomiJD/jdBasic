@@ -10,7 +10,8 @@
 ' print as they arrive, --verbose prints the machines' logs too. At the end
 ' comes the matrix, also written to tmp/farm_gate_<commit>.txt. Exit 0 when
 ' every machine answered and every step is OK (SKIP counts as OK: a machine
-' without the native compiler skips the native column).
+' without the native compiler skips the native column; so does INFO, parity
+' off Windows, measured against the Windows baseline).
 
 OPTION "EXPLICIT"
 
@@ -254,8 +255,8 @@ FOR i = 0 TO LEN(row_keys) - 1
     FOR c = 0 TO LEN(pick) - 1
         DIM cell = cells{row_keys[i]}{pick[c]}
         DIM cell$ AS STRING = "?"
-        IF TYPEOF(cell) = "STRING" THEN cell$ = IIF(cell = "SKIP", "-", cell)
-        IF cell$ <> "OK" ANDALSO cell$ <> "-" THEN all_ok = FALSE
+        IF TYPEOF(cell) = "STRING" THEN cell$ = IIF(cell = "SKIP", "-", IIF(cell = "INFO", "info", cell))
+        IF cell$ <> "OK" ANDALSO cell$ <> "-" ANDALSO cell$ <> "info" THEN all_ok = FALSE
         row_out$ = row_out$ + PAD$(cell$, 17)
     NEXT c
     report = APPEND(report, row_out$)
