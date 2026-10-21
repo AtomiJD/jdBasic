@@ -12652,15 +12652,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (name == "APPEND" && expr.args.size() == 2) {
         TypedValue a = codegen_expr(*expr.args[0]);
         TypedValue b = codegen_expr(*expr.args[1]);
+        // The first argument is an array by definition; a runtime-typed
+        // holder hands its pointer over.
+        if (a.tag == JD_TAG_RUNTIME && a.runtime_tag)
+            a = { coerce_to(a, i8_ptr_type), JD_TAG_ARR };
         if (a.tag == JD_TAG_ARR && b.tag == JD_TAG_ARR) {
             auto& fn = runtime_funcs["__append_arr"];
             LLVMValueRef args[] = { a.val, b.val };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "appa"), JD_TAG_ARR };
         }
-        // The first argument is an array by definition; a runtime-typed
-        // holder hands its pointer over.
-        if (a.tag == JD_TAG_RUNTIME && a.runtime_tag)
-            a = { coerce_to(a, i8_ptr_type), JD_TAG_ARR };
         if (a.tag == JD_TAG_ARR && b.tag == JD_TAG_RUNTIME && b.runtime_tag) {
             // An array argument flattens, a scalar becomes one cell, and only
             // the running program knows which this is: both are emitted and

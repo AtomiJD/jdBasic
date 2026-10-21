@@ -1,0 +1,25 @@
+' APPEND of an array literal to a variable the compiler holds with a runtime
+' tag adds the literal's elements, not the literal as one cell.
+
+IMPORT MODAPPHOLD
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM cal = ["BEGIN", "VERSION"]
+cal = APPEND(cal, ["EVENT", "UID"])
+Check(LEN(cal) = 4, "two elements appended")
+Check(JOIN(cal, ",") = "BEGIN,VERSION,EVENT,UID", "elements in order")
+cal = APPEND(cal, "END")
+Check(LEN(cal) = 5, "a scalar appended as one cell")
+Check(cal[4] = "END", "scalar cell reads back")
+Check(MODAPPHOLD.OWNER(MODAPPHOLD.MAKE(7)) = 7, "module keeps its own names")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

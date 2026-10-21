@@ -1,0 +1,21 @@
+' modapphold.jdb - helper of test_append_runtime_holder.jdb: a module
+' whose FUNCs use the name CAL for a cell read and for a parameter, which
+' makes a variable of that name in the importing program a runtime-typed
+' holder.
+EXPORT MODULE MODAPPHOLD
+
+DIM gOwner = []
+
+FUNC NewEntry(parent)
+    PUSH(gOwner, parent)
+    RETURN LEN(gOwner) - 1
+ENDFUNC
+
+EXPORT FUNC OWNER(comp)
+    DIM cal = gOwner[comp]
+    RETURN cal
+ENDFUNC
+
+EXPORT FUNC MAKE(cal)
+    RETURN NewEntry(cal)
+ENDFUNC
