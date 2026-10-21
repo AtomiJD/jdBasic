@@ -10196,7 +10196,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 }
             }
 
-            TypedValue body = codegen_expr(*expr.right);
+            // A body that answers a cell reads it with its own tag, so a row
+            // or a string picked out of an array keeps its kind in the result.
+            TypedValue body;
+            {
+                bool cell_body = hof_mode != 0 && expr.right->kind == ExprKind::INDEX;
+                ScopedLeafTag _lt(this, cell_body ? JD_TAG_RUNTIME : m_want_leaf_tag);
+                body = codegen_expr(*expr.right);
+            }
 
             LLVMValueRef ret_val = body.val;
             if (hof_mode != 0) {
