@@ -372,6 +372,11 @@ static int run_source(const std::string& source, bool show_timing) {
     // compiles separately and would not otherwise know them.
     for (const auto& t : compiler.types()) vm.known_types.insert(t);
     vm.load(compiler.main_chunk(), compiler.functions());
+#ifdef GFX
+    // An error that ends the program stops the audio thread and the window
+    // too, before the process tears down what that thread still reads.
+    try {
+#endif
     vm.run();
 #ifdef GFX
     // CLAUDE_LIVE pause loop: a `STOP` statement returns from vm.run()
@@ -384,6 +389,11 @@ static int run_source(const std::string& source, bool show_timing) {
     while (vm.is_paused() && gfx_is_active()) {
         if (!gfx_console_pause_wait()) break;
         vm.resume();
+    }
+    } catch (...) {
+        sound_shutdown();
+        gfx_shutdown();
+        throw;
     }
     sound_shutdown();
     gfx_shutdown();
