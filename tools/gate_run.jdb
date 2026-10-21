@@ -58,7 +58,8 @@ FUNC JUDGE(step$, backend$, r, secs)
         IF INSTR(row$, "ALL TESTS PASSED") >= 0 ORELSE STARTSWITH(row$, "RESULTS:") THEN summary$ = row$
         ' a count line such as "FAIL:     0" belongs to the summary
         DIM counted AS INTEGER = STARTSWITH(UCASE$(row$), "FAIL:") ANDALSO TRIM$(MID$(row$, 5, LEN(row$))) = "0"
-        IF STARTSWITH(UCASE$(row$), "FAIL") ANDALSO NOT counted ANDALSO LEN(fails) < 8 THEN fails = APPEND(fails, LEFT$(row$, 200))
+        DIM failed_row AS INTEGER = STARTSWITH(UCASE$(row$), "FAIL") ORELSE STARTSWITH(UCASE$(row$), "[FAIL]")
+        IF failed_row ANDALSO NOT counted ANDALSO LEN(fails) < 8 THEN fails = APPEND(fails, LEFT$(row$, 200))
     NEXT i
     DIM status$ AS STRING = "OK"
     IF r{"TIMEOUT"} THEN

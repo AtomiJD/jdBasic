@@ -98,7 +98,7 @@ DIM t_start AS DOUBLE = TICK()
 SUB READ_SLOW()
     head$ = FIRST_LINE$("git", ["-C", repo$, "rev-parse", "--short", "HEAD"])
     branch$ = FIRST_LINE$("git", ["-C", repo$, "rev-parse", "--abbrev-ref", "HEAD"])
-    DIM st = OS.EXEC("git", ["-C", repo$, "status", "--porcelain", "--untracked-files=no"])
+    DIM st = OS.EXEC("git", ["--no-optional-locks", "-C", repo$, "status", "--porcelain", "--untracked-files=no"])
     dirty = 0
     IF st{"EXIT_CODE"} = 0 THEN
         DIM rows = SPLIT(TRIM$(REPLACE$(st{"OUTPUT"}, CHR$(13), "")), CHR$(10))
