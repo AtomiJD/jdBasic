@@ -1,0 +1,395 @@
+' farm_dash.jdb - the build farm at a glance, from the farm agents.
+'
+'   jdBasic tools/farm_dash.jdb                       the window
+'   jdBasic tools/farm_dash.jdb --once                one table, then exit
+'   jdBasic tools/farm_dash.jdb --do sync [host...]   an action on some or
+'                                                     all machines, with logs
+'
+' Every machine runs tools/farm_agent.jdb; both sides take the lan key from
+' JDB_NODE_KEY or ~/.jdbasic/node.key. The window shows one row per machine
+' (online, HEAD against this repo's HEAD, build, load, memory, disk, GPU,
+' the running and the last action), buttons for SYNC, BUILD, RESTART and
+' CANCEL per machine and for all, and the log of the selected machine.
+' --once exits 1 when no agent answers; --do exits 1 when an action failed
+' or a machine was not reached.
+
+OPTION "EXPLICIT"
+
+DIM STALE_MS AS INTEGER = 6000
+DIM LOG_KEEP AS INTEGER = 400
+
+FUNC NODE_KEY$() AS STRING
+    DIM k$ AS STRING = GETENV$("JDB_NODE_KEY")
+    IF k$ <> "" THEN RETURN k$
+    DIM home$ AS STRING = GETENV$("HOME")
+    IF home$ = "" THEN home$ = GETENV$("USERPROFILE")
+    DIM path$ AS STRING = home$ + "/.jdbasic/node.key"
+    IF NOT FILE.EXISTS(path$) THEN RETURN ""
+    RETURN TRIM$(TXTREADER$(path$))
+ENDFUNC
+
+' "farm/cortex/log" -> "cortex"
+FUNC TOPIC_HOST$(topic$) AS STRING
+    DIM parts = SPLIT(topic$, "/")
+    IF LEN(parts) < 3 THEN RETURN ""
+    RETURN parts[1]
+ENDFUNC
+
+FUNC GB$(bytes) AS STRING
+    RETURN FORMAT$("{:.1f}", bytes / 1073741824)
+ENDFUNC
+
+FUNC PAD$(s$, width AS INTEGER) AS STRING
+    IF LEN(s$) >= width THEN RETURN LEFT$(s$, width)
+    RETURN s$ + SPACE$(width - LEN(s$))
+ENDFUNC
+
+DIM cli = OS.ARGS()
+DIM mode$ AS STRING = "gui"
+DIM action$ AS STRING = ""
+DIM targets = []
+DIM a AS INTEGER = 1
+DO WHILE a < LEN(cli)
+    DIM arg$ AS STRING = cli[a]
+    IF arg$ = "--once" THEN
+        mode$ = "once"
+    ELSEIF arg$ = "--do" ANDALSO a + 1 < LEN(cli) THEN
+        mode$ = "do"
+        action$ = UCASE$(cli[a + 1])
+        a = a + 1
+    ELSE
+        targets = APPEND(targets, LCASE$(arg$))
+    ENDIF
+    a = a + 1
+LOOP
+
+DIM key$ AS STRING = NODE_KEY$()
+IF key$ = "" THEN
+    PRINT "farm_dash: no key - set JDB_NODE_KEY or write it to ~/.jdbasic/node.key"
+    END 1
+ENDIF
+
+DIM script$ AS STRING = REPLACE$(cli[0], "\", "/")
+DIM repo$ AS STRING = "."
+DIM slash AS INTEGER = INSTR(REVERSE$(script$), "/")
+IF slash >= 0 THEN repo$ = LEFT$(script$, LEN(script$) - 1 - slash) + "/.."
+DIM ref_r = OS.EXEC("git", ["-C", repo$, "rev-parse", "--short", "HEAD"])
+DIM ref_head$ AS STRING = TRIM$(REPLACE$(REPLACE$(ref_r{"OUTPUT"}, CHR$(13), ""), CHR$(10), ""))
+
+DIM dash_node = NODE.JOIN("farmdash-" + LCASE$(OS.HOSTNAME$()) + "-" + STR$(OS.PID()), "lan", key$)
+DIM stats_sub = TOPIC.SUBSCRIBE("farm/*/stats", "queue:256", TRUE)
+DIM log_sub = TOPIC.SUBSCRIBE("farm/*/log", "queue:4096", TRUE)
+DIM done_sub = TOPIC.SUBSCRIBE("farm/*/done", "queue:256", TRUE)
+DIM events = NODE.EVENTS()
+
+' host -> latest stats map, host -> TICK() it arrived, host -> log lines
+DIM machines = {}
+DIM seen = {}
+DIM logs = {}
+DIM hosts = []
+DIM finished = {}
+
+SUB TAKE_STATS()
+    DO
+        DIM env_in = CHAN.TRY_RECV(stats_sub)
+        IF CHAN.IS_TIMEOUT(env_in) THEN EXITDO
+        DIM h$ AS STRING = TOPIC_HOST$(env_in{"TOPIC"})
+        IF h$ = "" THEN CONTINUEDO
+        IF TYPEOF(machines{h$}) = "NONE" THEN
+            hosts = SORT(APPEND(hosts, h$))
+            logs{h$} = []
+        ENDIF
+        machines{h$} = env_in{"DATA"}
+        seen{h$} = TICK()
+    LOOP
+    DO
+        DIM ev = CHAN.TRY_RECV(events)
+        IF CHAN.IS_TIMEOUT(ev) THEN EXITDO
+        IF ev{"EVENT"} = "LEAVE" ANDALSO STARTSWITH(LCASE$(ev{"ADDR"}), "farmagent-") THEN
+            DIM gone$ AS STRING = MID$(LCASE$(ev{"ADDR"}), 10, LEN(ev{"ADDR"}))
+            IF INSTR(gone$, "@") >= 0 THEN gone$ = LEFT$(gone$, INSTR(gone$, "@"))
+            IF TYPEOF(seen{gone$}) <> "NONE" THEN seen{gone$} = 0
+        ENDIF
+    LOOP
+ENDSUB
+
+' Log lines into logs{host}; with echo they are printed as well
+SUB TAKE_LOGS(echo)
+    DO
+        DIM env_in = CHAN.TRY_RECV(log_sub)
+        IF CHAN.IS_TIMEOUT(env_in) THEN EXITDO
+        DIM h$ AS STRING = TOPIC_HOST$(env_in{"TOPIC"})
+        IF TYPEOF(logs{h$}) = "NONE" THEN logs{h$} = []
+        DIM rows = APPEND(logs{h$}, env_in{"DATA"})
+        IF LEN(rows) > LOG_KEEP THEN rows = SLICE(rows, LEN(rows) - LOG_KEEP, LOG_KEEP)
+        logs{h$} = rows
+        IF echo THEN PRINT PAD$(h$, 10); " | "; env_in{"DATA"}
+    LOOP
+    DO
+        DIM d = CHAN.TRY_RECV(done_sub)
+        IF CHAN.IS_TIMEOUT(d) THEN EXITDO
+        finished{TOPIC_HOST$(d{"TOPIC"})} = d{"DATA"}
+    LOOP
+ENDSUB
+
+FUNC ONLINE(h$)
+    IF TYPEOF(seen{h$}) = "NONE" THEN RETURN FALSE
+    RETURN TICK() - seen{h$} < STALE_MS
+ENDFUNC
+
+' One line per machine for the terminal
+FUNC ROW$(h$) AS STRING
+    DIM s = machines{h$}
+    IF NOT ONLINE(h$) THEN RETURN PAD$(h$, 10) + " offline"
+    DIM head$ AS STRING = s{"HEAD"} + IIF(s{"DIRTY"} > 0, "*", "") + IIF(s{"HEAD"} = ref_head$, "", " (differs)")
+    DIM busy$ AS STRING = IIF(s{"BUSY"} = "", "-", s{"BUSY"} + " " + STR$(s{"BUSY_SECONDS"}) + "s")
+    DIM last = s{"LAST"}
+    DIM last$ AS STRING = IIF(last{"ACTION"} = "", "-", last{"ACTION"} + IIF(last{"OK"}, " ok", " FAILED"))
+    DIM gpu$ AS STRING = "-"
+    IF s{"GPU"} <> "" THEN
+        DIM g = SPLIT(s{"GPU"}, ",")
+        IF LEN(g) >= 3 THEN gpu$ = TRIM$(g[1]) + "C " + TRIM$(g[2]) + "%"
+    ENDIF
+    RETURN PAD$(h$, 10) + " " + PAD$(s{"OS"}, 8) + PAD$(head$, 22) + FORMAT$("{:>5.0f}%", s{"CPU"}) + "  " + PAD$(GB$(s{"MEM_TOTAL"} - s{"MEM_FREE"}) + "/" + GB$(s{"MEM_TOTAL"}) + " GB", 16) + PAD$(GB$(s{"DISK_FREE"}) + " GB", 10) + PAD$(gpu$, 10) + PAD$(busy$, 12) + last$
+ENDFUNC
+
+FUNC HEADER$() AS STRING
+    RETURN PAD$("machine", 10) + " " + PAD$("os", 8) + PAD$("head", 22) + "  load  " + PAD$("memory", 16) + PAD$("disk free", 10) + PAD$("gpu", 10) + PAD$("running", 12) + "last"
+ENDFUNC
+
+' Starts action$ on one machine; "" when the agent took it, else why not
+FUNC ASK$(h$, act$) AS STRING
+    DIM r$ AS STRING = ""
+    TRY
+        DIM answer = NODE.CALL("farmagent-" + h$, act$, 0, 5000)
+        IF CHAN.IS_TIMEOUT(answer) THEN r$ = "no answer"
+    CATCH
+        r$ = ERRMSG$
+    ENDTRY
+    RETURN r$
+ENDFUNC
+
+' Waits until the stats of every running agent have arrived
+SUB GATHER(ms)
+    DIM t_end AS DOUBLE = TICK() + ms
+    DO WHILE TICK() < t_end
+        TAKE_STATS()
+        DIM peers = NODE.PEERS("farmagent-*")
+        IF LEN(peers) > 0 ANDALSO LEN(hosts) >= LEN(peers) THEN EXITDO
+        SLEEP 50
+    LOOP
+ENDSUB
+
+IF mode$ = "once" THEN
+    GATHER(4000)
+    PRINT "farm, against "; ref_head$; " here"
+    PRINT HEADER$()
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(hosts) - 1
+        PRINT ROW$(hosts[i])
+    NEXT i
+    IF LEN(hosts) = 0 THEN
+        PRINT "no farm agent answered"
+        END 1
+    ENDIF
+    END 0
+ENDIF
+
+IF mode$ = "do" THEN
+    GATHER(4000)
+    DIM pick = targets
+    IF LEN(pick) = 0 ORELSE pick[0] = "all" THEN pick = FILTER(LAMBDA h -> ONLINE(h), hosts)
+    DIM bad AS INTEGER = 0
+    DIM started = []
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(pick) - 1
+        DIM why$ AS STRING = ASK$(pick[j], action$)
+        IF why$ = "" THEN
+            started = APPEND(started, pick[j])
+        ELSE
+            PRINT PAD$(pick[j], 10); " | not started: "; why$
+            bad = bad + 1
+        ENDIF
+    NEXT j
+    IF action$ = "RESTART" ORELSE action$ = "CANCEL" ORELSE action$ = "STATUS" THEN
+        PRINT action$; " sent to "; LEN(started); " machine(s)"
+        IF bad > 0 THEN END 1
+        END 0
+    ENDIF
+    DO WHILE LEN(started) > 0
+        TAKE_STATS()
+        TAKE_LOGS(TRUE)
+        DIM still = []
+        DIM k AS INTEGER
+        FOR k = 0 TO LEN(started) - 1
+            DIM h$ AS STRING = started[k]
+            IF TYPEOF(finished{h$}) <> "NONE" THEN
+                IF NOT finished{h$}{"OK"} THEN bad = bad + 1
+            ELSEIF NOT ONLINE(h$) THEN
+                PRINT PAD$(h$, 10); " | lost"
+                bad = bad + 1
+            ELSE
+                still = APPEND(still, h$)
+            ENDIF
+        NEXT k
+        started = still
+        SLEEP 50
+    LOOP
+    TAKE_LOGS(TRUE)
+    IF bad > 0 THEN
+        PRINT action$; ": "; bad; " machine(s) failed"
+        END 1
+    ENDIF
+    PRINT action$; ": all ok"
+    END 0
+ENDIF
+
+' The window
+DIM running AS INTEGER = TRUE
+SUB ON_QUIT()
+    running = FALSE
+ENDSUB
+ON "QUIT" CALL ON_QUIT
+
+SCREEN 1280, 760, "jdBasic farm"
+GUI.THEME "DARK"
+DIM selected$ AS STRING = ""
+DIM status$ AS STRING = ""
+
+' Starts act$ on every online machine without waiting for the answers
+SUB ASK_ALL(act$)
+    DIM n AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(hosts) - 1
+        IF ONLINE(hosts[i]) THEN
+            DIM ch = NODE.CALL_ASYNC("farmagent-" + hosts[i], act$, 0)
+            n = n + 1
+        ENDIF
+    NEXT i
+    status$ = act$ + " sent to " + STR$(n) + " machine(s)"
+ENDSUB
+
+DIM green = [90, 215, 115, 255]
+DIM red = [240, 100, 90, 255]
+DIM amber = [240, 190, 80, 255]
+DIM text_col AS INTEGER = GUI.COL("Text")
+
+DO WHILE running
+    TAKE_STATS()
+    TAKE_LOGS(FALSE)
+    IF selected$ = "" ANDALSO LEN(hosts) > 0 THEN selected$ = hosts[0]
+    CLS 18, 18, 24
+
+    IF GUI.BEGIN("Farm", 10, 10, 1260, 330) THEN
+        GUI.TEXT "HEAD here: " + ref_head$ + "     " + status$
+        IF GUI.BUTTON("Sync all") THEN ASK_ALL("SYNC")
+        GUI.SAME_LINE
+        IF GUI.BUTTON("Build all") THEN ASK_ALL("BUILD")
+        GUI.SAME_LINE
+        IF GUI.BUTTON("Restart agents") THEN ASK_ALL("RESTART")
+        GUI.SEPARATOR
+        IF GUI.BEGIN_TABLE("machines", 9) THEN
+            GUI.TABLE_SETUP_COLUMN "machine"
+            GUI.TABLE_SETUP_COLUMN "os"
+            GUI.TABLE_SETUP_COLUMN "head"
+            GUI.TABLE_SETUP_COLUMN "build"
+            GUI.TABLE_SETUP_COLUMN "load"
+            GUI.TABLE_SETUP_COLUMN "memory"
+            GUI.TABLE_SETUP_COLUMN "disk free"
+            GUI.TABLE_SETUP_COLUMN "gpu"
+            GUI.TABLE_SETUP_COLUMN "action"
+            GUI.TABLE_HEADERS_ROW
+            DIM i AS INTEGER
+            FOR i = 0 TO LEN(hosts) - 1
+                DIM h$ AS STRING = hosts[i]
+                DIM s = machines{h$}
+                DIM up = ONLINE(h$)
+                GUI.PUSH_ID h$
+                GUI.TABLE_NEXT_ROW
+                GUI.TABLE_NEXT_COLUMN
+                GUI.PUSH_STYLE_COLOR text_col, IIF(up, green, red)
+                IF GUI.SELECTABLE(h$ + IIF(up, "", " (offline)"), selected$ = h$) THEN selected$ = h$
+                GUI.POP_STYLE_COLOR
+                GUI.TABLE_NEXT_COLUMN
+                GUI.TEXT s{"OS"}
+                GUI.TABLE_NEXT_COLUMN
+                DIM same = s{"HEAD"} = ref_head$
+                GUI.PUSH_STYLE_COLOR text_col, IIF(same, green, amber)
+                GUI.TEXT s{"HEAD"} + IIF(s{"DIRTY"} > 0, " +" + STR$(s{"DIRTY"}), "")
+                GUI.POP_STYLE_COLOR
+                GUI.TABLE_NEXT_COLUMN
+                GUI.TEXT REPLACE$(s{"VERSION"}, "jdBasic ", "")
+                GUI.TOOLTIP s{"FEATURES"}
+                GUI.TABLE_NEXT_COLUMN
+                GUI.PROGRESS s{"CPU"} / 100, FORMAT$("{:.0f}%", s{"CPU"})
+                GUI.TABLE_NEXT_COLUMN
+                DIM used = s{"MEM_TOTAL"} - s{"MEM_FREE"}
+                GUI.PROGRESS used / s{"MEM_TOTAL"}, GB$(used) + " / " + GB$(s{"MEM_TOTAL"}) + " GB"
+                GUI.TABLE_NEXT_COLUMN
+                GUI.TEXT GB$(s{"DISK_FREE"}) + " GB"
+                GUI.TABLE_NEXT_COLUMN
+                DIM gpu$ AS STRING = "-"
+                IF s{"GPU"} <> "" THEN
+                    DIM g = SPLIT(s{"GPU"}, ",")
+                    IF LEN(g) >= 3 THEN gpu$ = TRIM$(g[1]) + " C, " + TRIM$(g[2]) + "%"
+                ENDIF
+                GUI.TEXT gpu$
+                GUI.TABLE_NEXT_COLUMN
+                DIM last = s{"LAST"}
+                IF s{"BUSY"} <> "" THEN
+                    GUI.PUSH_STYLE_COLOR text_col, amber
+                    GUI.TEXT s{"BUSY"} + " " + STR$(s{"BUSY_SECONDS"}) + " s"
+                    GUI.POP_STYLE_COLOR
+                ELSEIF last{"ACTION"} <> "" THEN
+                    GUI.PUSH_STYLE_COLOR text_col, IIF(last{"OK"}, green, red)
+                    GUI.TEXT last{"ACTION"} + IIF(last{"OK"}, " ok", " failed") + " (" + STR$(last{"SECONDS"}) + " s)"
+                    GUI.POP_STYLE_COLOR
+                    GUI.TOOLTIP last{"ENDED"}
+                ELSE
+                    GUI.TEXT "-"
+                ENDIF
+                GUI.POP_ID
+            NEXT i
+            GUI.END_TABLE
+        ENDIF
+        IF LEN(hosts) = 0 THEN GUI.TEXT "No farm agent heard yet. Start tools/farm_agent.jdb on each machine."
+    ENDIF
+    GUI.END
+
+    IF GUI.BEGIN("Log", 10, 350, 1260, 400) THEN
+        IF selected$ = "" THEN
+            GUI.TEXT "no machine"
+        ELSE
+            GUI.TEXT selected$
+            IF ONLINE(selected$) THEN
+                DIM why$ AS STRING = ""
+                GUI.SAME_LINE
+                IF GUI.BUTTON("Sync") THEN why$ = ASK$(selected$, "SYNC")
+                GUI.SAME_LINE
+                IF GUI.BUTTON("Build") THEN why$ = ASK$(selected$, "BUILD")
+                GUI.SAME_LINE
+                IF GUI.BUTTON("Restart agent") THEN why$ = ASK$(selected$, "RESTART")
+                IF machines{selected$}{"BUSY"} <> "" THEN
+                    GUI.SAME_LINE
+                    IF GUI.BUTTON("Cancel") THEN why$ = ASK$(selected$, "CANCEL")
+                ENDIF
+                IF why$ <> "" THEN status$ = selected$ + ": " + why$
+            ENDIF
+        ENDIF
+        GUI.SEPARATOR
+        GUI.BEGIN_CHILD "logview", 0, 0, TRUE
+        IF selected$ <> "" ANDALSO TYPEOF(logs{selected$}) <> "NONE" THEN
+            DIM rows = logs{selected$}
+            DIM r AS INTEGER
+            FOR r = 0 TO LEN(rows) - 1
+                GUI.TEXT rows[r]
+            NEXT r
+        ENDIF
+        GUI.END_CHILD
+    ENDIF
+    GUI.END
+
+    SCREENFLIP
+    SLEEP 30
+LOOP
+NODE.LEAVE

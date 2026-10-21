@@ -1,0 +1,232 @@
+' farm_agent.jdb - one build machine on the Node Bus, for tools/farm_dash.jdb.
+'
+'   jdBasic tools/farm_agent.jdb
+'
+' Joins the lan scope as "farmagent-<host>" with the key from JDB_NODE_KEY,
+' or from ~/.jdbasic/node.key when the variable is not set. Every 2 seconds
+' it publishes farm/<host>/stats (retained): load, memory, disk, the repo's
+' HEAD and the jdBasic build. It serves a fixed set of calls and runs no
+' other command:
+'
+'   STATUS    the stats as they are now
+'   SYNC      git pull --ff-only origin main
+'   BUILD     the standard build (Linux and macOS; Windows builds by hand,
+'             since the running jdBasic.exe cannot be replaced)
+'   CANCEL    ends the running action
+'   RESTART   starts a fresh agent from the current source and leaves
+'
+' One action runs at a time. Its output goes line by line to farm/<host>/log,
+' and {ACTION, OK, EXIT, SECONDS} to farm/<host>/done when it ends.
+
+OPTION "EXPLICIT"
+
+DIM STATS_MS AS INTEGER = 2000
+DIM SLOW_MS AS INTEGER = 15000
+
+DIM cli = OS.ARGS()
+DIM script$ AS STRING = REPLACE$(cli[0], "\", "/")
+DIM repo$ AS STRING = "."
+DIM slash AS INTEGER = INSTR(REVERSE$(script$), "/")
+IF slash >= 0 THEN repo$ = LEFT$(script$, LEN(script$) - 1 - slash) + "/.."
+DIM os$ AS STRING = OS.GETOS()
+DIM host$ AS STRING = LCASE$(OS.HOSTNAME$())
+IF INSTR(host$, ".") >= 0 THEN host$ = LEFT$(host$, INSTR(host$, "."))
+DIM home$ AS STRING = GETENV$("HOME")
+IF home$ = "" THEN home$ = GETENV$("USERPROFILE")
+DIM log_path$ AS STRING = repo$ + "/tmp/farm_agent_" + host$ + ".log"
+
+' The lan key: the environment first, then the key file
+FUNC NODE_KEY$(home$) AS STRING
+    DIM k$ AS STRING = GETENV$("JDB_NODE_KEY")
+    IF k$ <> "" THEN RETURN k$
+    DIM path$ AS STRING = home$ + "/.jdbasic/node.key"
+    IF NOT FILE.EXISTS(path$) THEN RETURN ""
+    RETURN TRIM$(TXTREADER$(path$))
+ENDFUNC
+
+' The first line of a command's output, "" when it failed
+FUNC FIRST_LINE$(prog$, args) AS STRING
+    DIM r = OS.EXEC(prog$, args)
+    IF r{"EXIT_CODE"} <> 0 THEN RETURN ""
+    DIM out$ AS STRING = REPLACE$(r{"OUTPUT"}, CHR$(13), "")
+    DIM nl AS INTEGER = INSTR(out$, CHR$(10))
+    IF nl >= 0 THEN out$ = LEFT$(out$, nl)
+    RETURN TRIM$(out$)
+ENDFUNC
+
+DIM key$ AS STRING = NODE_KEY$(home$)
+IF key$ = "" THEN
+    PRINT "farm_agent: no key - set JDB_NODE_KEY or write it to "; home$; "/.jdbasic/node.key"
+    END 1
+ENDIF
+
+DIM agent_node = NODE.JOIN("farmagent-" + host$, "lan", key$)
+DIM stats_pub = TOPIC.OPEN("farm/" + host$ + "/stats")
+TOPIC.RETAIN stats_pub, TRUE
+DIM log_pub = TOPIC.OPEN("farm/" + host$ + "/log")
+DIM done_pub = TOPIC.OPEN("farm/" + host$ + "/done")
+MKDIR repo$ + "/tmp"
+
+' Slow facts, refreshed every SLOW_MS and after each action
+DIM head$ AS STRING = ""
+DIM branch$ AS STRING = ""
+DIM dirty AS INTEGER = 0
+DIM version$ AS STRING = ""
+DIM features$ AS STRING = ""
+DIM gpu$ AS STRING = ""
+DIM t_slow AS DOUBLE = 0
+
+' The running action
+DIM busy$ AS STRING = ""
+DIM busy_pid = 0
+DIM busy_start AS DOUBLE = 0
+DIM log_done AS INTEGER = 0
+DIM log_rest$ AS STRING = ""
+DIM last = {"ACTION": "", "OK": TRUE, "EXIT": 0, "SECONDS": 0, "ENDED": ""}
+DIM restart_wanted AS INTEGER = FALSE
+DIM t_start AS DOUBLE = TICK()
+
+SUB READ_SLOW()
+    head$ = FIRST_LINE$("git", ["-C", repo$, "rev-parse", "--short", "HEAD"])
+    branch$ = FIRST_LINE$("git", ["-C", repo$, "rev-parse", "--abbrev-ref", "HEAD"])
+    DIM st = OS.EXEC("git", ["-C", repo$, "status", "--porcelain", "--untracked-files=no"])
+    dirty = 0
+    IF st{"EXIT_CODE"} = 0 THEN
+        DIM rows = SPLIT(TRIM$(REPLACE$(st{"OUTPUT"}, CHR$(13), "")), CHR$(10))
+        IF LEN(rows) > 0 ANDALSO rows[0] <> "" THEN dirty = LEN(rows)
+    ENDIF
+    DIM v = OS.EXEC(OS.SELF$(), ["--version"])
+    version$ = ""
+    features$ = ""
+    DIM vrows = SPLIT(REPLACE$(v{"OUTPUT"}, CHR$(13), ""), CHR$(10))
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(vrows) - 1
+        DIM vr$ AS STRING = TRIM$(vrows[i])
+        IF STARTSWITH(vr$, "Features:") THEN
+            features$ = TRIM$(MID$(vr$, 9, LEN(vr$)))
+        ELSEIF version$ = "" ANDALSO vr$ <> "" THEN
+            version$ = vr$
+        ENDIF
+    NEXT i
+    gpu$ = FIRST_LINE$("nvidia-smi", ["--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"])
+    t_slow = TICK()
+ENDSUB
+
+FUNC STATS()
+    DIM mem = SYS.MEMORY()
+    RETURN {"HOST": host$, "OS": os$, "ADDR": NODE.NAME$(), "PID": OS.PID(), "CPU": OS.LOAD(), "MEM_TOTAL": mem{"TOTAL"}, "MEM_FREE": mem{"FREE"}, "DISK_FREE": SYS.FREEDISK(repo$), "HEAD": head$, "BRANCH": branch$, "DIRTY": dirty, "VERSION": version$, "FEATURES": features$, "GPU": gpu$, "BUSY": busy$, "BUSY_SECONDS": IIF(busy$ = "", 0, INT((TICK() - busy_start) / 1000)), "LAST": last, "UPTIME": INT((TICK() - t_start) / 1000), "T": NODE.TIME()}
+ENDFUNC
+
+' Starts an action's command with its output in the log file
+SUB START_ACTION(action$, prog$, args, env)
+    IF FILE.EXISTS(log_path$) THEN KILL log_path$
+    busy_pid = OS.SPAWN(prog$, args, {"CWD": repo$, "ENV": env, "OUTPUT": log_path$, "HIDDEN": TRUE})
+    busy$ = action$
+    busy_start = TICK()
+    log_done = 0
+    log_rest$ = ""
+    CHAN.SEND log_pub, "== " + action$ + " on " + host$ + " =="
+ENDSUB
+
+' Publishes the lines the running action wrote since the last look
+SUB PUMP_LOG(final)
+    IF NOT FILE.EXISTS(log_path$) THEN EXITFUNC
+    DIM all$ AS STRING = TXTREADER$(log_path$)
+    IF LEN(all$) <= log_done THEN EXITFUNC
+    DIM fresh$ AS STRING = log_rest$ + REPLACE$(MID$(all$, log_done, LEN(all$) - log_done), CHR$(13), "")
+    log_done = LEN(all$)
+    DIM rows = SPLIT(fresh$, CHR$(10))
+    DIM n AS INTEGER = LEN(rows)
+    log_rest$ = ""
+    IF NOT final ANDALSO NOT ENDSWITH(fresh$, CHR$(10)) THEN
+        log_rest$ = rows[n - 1]
+        n = n - 1
+    ENDIF
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        IF rows[i] <> "" THEN CHAN.SEND log_pub, rows[i]
+    NEXT i
+ENDSUB
+
+SUB FINISH_ACTION(code)
+    PUMP_LOG(TRUE)
+    DIM secs = INT((TICK() - busy_start) / 1000)
+    last = {"ACTION": busy$, "OK": code = 0, "EXIT": code, "SECONDS": secs, "ENDED": DATE$() + " " + TIME$()}
+    CHAN.SEND done_pub, last
+    CHAN.SEND log_pub, "== " + busy$ + " " + IIF(code = 0, "ok", "failed, exit " + STR$(code)) + " after " + STR$(secs) + " s =="
+    busy$ = ""
+    busy_pid = 0
+    READ_SLOW()
+ENDSUB
+
+SUB REFUSE_IF_BUSY()
+    IF busy$ <> "" THEN THROW host$ + " is busy with " + busy$
+ENDSUB
+
+FUNC H_STATUS(c)
+    RETURN STATS()
+ENDFUNC
+
+FUNC H_SYNC(c)
+    REFUSE_IF_BUSY()
+    START_ACTION("SYNC", "git", ["-C", repo$, "pull", "--ff-only", "origin", "main"], {})
+    RETURN {"STARTED": "SYNC", "LOG": "farm/" + host$ + "/log"}
+ENDFUNC
+
+FUNC H_BUILD(c)
+    REFUSE_IF_BUSY()
+    IF os$ = "WINDOWS" THEN THROW "BUILD runs on Linux and macOS; build Windows by hand"
+    DIM env = {"HTTP": "1", "NET": "1", "GFX": "1", "IMGUI": "1", "NATIVEC": "1"}
+    IF os$ = "MACOS" ANDALSO FILE.EXISTS("/opt/homebrew/opt/llvm@18/bin/llvm-config") THEN env{"LLVM_CONFIG"} = "/opt/homebrew/opt/llvm@18/bin/llvm-config"
+    START_ACTION("BUILD", "./build.sh", [], env)
+    RETURN {"STARTED": "BUILD", "LOG": "farm/" + host$ + "/log"}
+ENDFUNC
+
+FUNC H_CANCEL(c)
+    IF busy$ = "" THEN RETURN FALSE
+    DIM killed = OS.KILL(busy_pid)
+    RETURN killed
+ENDFUNC
+
+FUNC H_RESTART(c)
+    REFUSE_IF_BUSY()
+    restart_wanted = TRUE
+    RETURN TRUE
+ENDFUNC
+
+NODE.SERVE "STATUS", "H_STATUS"
+NODE.SERVE "SYNC", "H_SYNC"
+NODE.SERVE "BUILD", "H_BUILD"
+NODE.SERVE "CANCEL", "H_CANCEL"
+NODE.SERVE "RESTART", "H_RESTART"
+
+READ_SLOW()
+PRINT "farm_agent "; NODE.NAME$(); " in "; repo$; " - "; version$
+DIM t_stats AS DOUBLE = 0
+DO
+    DIM ran = NODE.POLL(100)
+    IF busy$ <> "" THEN
+        DIM code = OS.WAIT(busy_pid, 0)
+        IF TYPEOF(code) = "NONE" THEN
+            PUMP_LOG(FALSE)
+        ELSE
+            FINISH_ACTION(code)
+        ENDIF
+    ENDIF
+    IF restart_wanted THEN
+        ' let the RESTART answer reach the caller before the node goes
+        DIM t_wait AS DOUBLE = TICK() + 300
+        DO WHILE TICK() < t_wait
+            DIM ran2 = NODE.POLL(20)
+        LOOP
+        NODE.LEAVE
+        DIM child = OS.SPAWN(OS.SELF$(), [script$], {"CWD": repo$, "OUTPUT": repo$ + "/tmp/farm_agent_" + host$ + ".out", "HIDDEN": TRUE})
+        PRINT "farm_agent restarted as pid "; child
+        END 0
+    ENDIF
+    IF busy$ = "" ANDALSO TICK() - t_slow > SLOW_MS THEN READ_SLOW()
+    IF TICK() - t_stats >= STATS_MS THEN
+        CHAN.SEND stats_pub, STATS()
+        t_stats = TICK()
+    ENDIF
+LOOP
