@@ -185,7 +185,7 @@ DO WHILE LEN(running) > 0 ANDALSO TICK() - t_start < MAX_MS
         DIM lh$ AS STRING = TOPIC_HOST$(lg{"TOPIC"})
         IF TYPEOF(tails{lh$}) = "NONE" THEN CONTINUEDO
         DIM rows = APPEND(tails{lh$}, lg{"DATA"})
-        IF LEN(rows) > 12 THEN rows = SLICE(rows, LEN(rows) - 12, 12)
+        IF LEN(rows) > 12 THEN rows = TAKE(-12, rows)
         tails{lh$} = rows
         IF verbose THEN PRINT PAD$(lh$, 16); " | "; lg{"DATA"}
     LOOP

@@ -122,7 +122,14 @@ FOR i = 0 TO LEN(NATIVE_SUITES$) - 1
     IF NOT REPORT(JUDGE(name$, "native", rn, INT((TICK() - t0) / 1000))) THEN all_ok = FALSE
 NEXT i
 
-IF want_parity THEN
+' parity.sh runs every test under GNU timeout, which macOS does not ship
+DIM parity_skip$ AS STRING = ""
+IF want_parity ANDALSO os$ <> "WINDOWS" THEN
+    IF OS.EXEC("sh", ["-c", "command -v timeout"]){"EXIT_CODE"} <> 0 THEN parity_skip$ = "no timeout command (GNU coreutils)"
+ENDIF
+IF want_parity ANDALSO parity_skip$ <> "" THEN
+    DIM pskip = REPORT({"STEP": "parity", "BACKEND": "both", "STATUS": "SKIP", "SECONDS": 0, "EXIT": 0, "SUMMARY": parity_skip$, "FAILS": []})
+ELSEIF want_parity THEN
     t0 = TICK()
     DIM sh$ AS STRING = "bash"
     IF os$ = "WINDOWS" THEN sh$ = "C:/Program Files/Git/bin/bash.exe"

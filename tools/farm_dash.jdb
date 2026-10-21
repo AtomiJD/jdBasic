@@ -121,7 +121,7 @@ SUB TAKE_LOGS(echo)
         DIM h$ AS STRING = TOPIC_HOST$(env_in{"TOPIC"})
         IF TYPEOF(logs{h$}) = "NONE" THEN logs{h$} = []
         DIM rows = APPEND(logs{h$}, env_in{"DATA"})
-        IF LEN(rows) > LOG_KEEP THEN rows = SLICE(rows, LEN(rows) - LOG_KEEP, LOG_KEEP)
+        IF LEN(rows) > LOG_KEEP THEN rows = TAKE(-LOG_KEEP, rows)
         logs{h$} = rows
         IF echo THEN PRINT PAD$(h$, 16); " | "; env_in{"DATA"}
     LOOP
