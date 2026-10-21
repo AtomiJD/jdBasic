@@ -1,0 +1,41 @@
+' A FUNC that answers a local declared AS STRING answers that string, and
+' STR of a string is the string itself, in both backends.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Label(n)
+    DIM caption AS STRING = "item " + STR$(n)
+    RETURN caption
+ENDFUNC
+
+FUNC Fixed(n)
+    DIM caption AS STRING = "same"
+    RETURN caption
+ENDFUNC
+
+FUNC Evaluated(expression)
+    DIM r AS STRING = EVAL(expression)
+    RETURN r
+ENDFUNC
+
+Check(Label(3) = "item 3", "local built from a number")
+Check(Fixed(1) = "same", "local holding a constant")
+Check(Evaluated("6 * 7") = "42", "number from EVAL into a string local")
+Check("<" + Fixed(1) + ">" = "<same>", "answer used in a concatenation")
+Check(LEN(Label(10)) = 7, "length of the answer")
+DIM held = Label(9)
+Check(held = "item 9", "answer kept in a variable")
+
+DIM word AS STRING = "abc"
+Check(STR(word) = "abc", "STR of a string")
+Check(STR(12) = "12", "STR of a number")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

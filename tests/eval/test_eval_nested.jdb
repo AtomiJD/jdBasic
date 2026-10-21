@@ -26,5 +26,21 @@ LET fr = Calc@
 LET v = fr("3 + 4")
 PRINT "fr returned: "; v
 
+
+DIM failed AS INTEGER = 0
+IF out <> "714" THEN
+    PRINT "FAIL Calc returned "; out
+    failed = failed + 1
+ENDIF
+IF Plus100(5) <> "105" THEN
+    PRINT "FAIL Plus100"
+    failed = failed + 1
+ENDIF
+IF v <> "7" THEN
+    PRINT "FAIL funcref returned "; v
+    failed = failed + 1
+ENDIF
+IF failed > 0 THEN END 1
+
 PRINT ""
 PRINT "All EVAL nesting tests OK"

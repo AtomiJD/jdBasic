@@ -3229,6 +3229,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         // return type that no earlier phase could name.
         bool index_dynamic = false;
         bool index_hit = false;
+        bool unknown_answer = false;
         for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++)
             local_kind[decl.stmt->params()[pi].name] = decl.tags[pi];
         // A member read off an object (a COM object or a VM value) is
@@ -3333,6 +3334,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             return norm(a) == norm(b);
         };
         std::vector<int> kinds;
+        // A name declared with a type keeps it whatever it is handed.
+        std::unordered_set<std::string> typed_locals;
         std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
             // A declared type names the kind even without an initialiser.
             if (s.kind == StmtKind::DIM && !s.var_name.empty()) {
@@ -3340,7 +3343,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (s.var_type == VarType::OBJECT && s.label.empty()) declared = JD_TAG_NATIVE_MAP;
                 else if (s.var_type == VarType::ARRAY) declared = JD_TAG_ARR;
                 else if (s.var_type == VarType::STRING) declared = JD_TAG_STR;
-                if (declared != 0) local_kind[s.var_name] = declared;
+                if (declared != 0) {
+                    local_kind[s.var_name] = declared;
+                    typed_locals.insert(s.var_name);
+                }
             }
             if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
                  s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr) {
@@ -3353,7 +3359,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         for (auto& b2 : br2.body) if (b2) walk(*b2);
                     return;
                 }
-                int k = kind_of(*s.expr);
+                int k = typed_locals.count(s.var_name) ? 0 : kind_of(*s.expr);
                 if (k != 0) {
                     auto it = local_kind.find(s.var_name);
                     if (it != local_kind.end() && it->second != 0 && !same_kind(it->second, k))
@@ -3369,6 +3375,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 int k = kind_of(*s.expr);
                 if (k == JD_TAG_RUNTIME && index_hit) index_dynamic = true;
                 else if (k == JD_TAG_RUNTIME) dynamic = true;
+                else if (k == 0) unknown_answer = true;
                 else if (k != 0) {
                     bool seen = false;
                     for (int have : kinds) if (same_kind(have, k)) seen = true;
@@ -3388,6 +3395,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             decl.return_tag = JD_TAG_RUNTIME;
         else if (any_answer && all_truth && decl.return_tag == JD_TAG_F64)
             decl.return_tag = JD_TAG_BOOL;
+        // Every answer a string, one read from a local declared AS STRING
+        // among them: the FUNC answers a string.
+        else if (any_answer && !unknown_answer && kinds.size() == 1 &&
+                 kinds[0] == JD_TAG_STR && decl.return_tag == JD_TAG_F64)
+            decl.return_tag = JD_TAG_STR;
     }
 
     // Return tags are final here, so the names that hold a value of a kind
@@ -13441,10 +13453,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // STR$(arg) - tag-aware. Default `jdb_str(double)` punnes strings
+    // STR$(arg) and STR(arg) - tag-aware. Default `jdb_str(double)` punnes strings
     // and prints booleans as 1/0; route to specific helpers when the
     // input tag is known.
-    if (upper == "STR$" && expr.args.size() == 1) {
+    if ((upper == "STR$" || upper == "STR") && expr.args.size() == 1) {
         // STR$ renders whatever it is handed, so an outer leaf hint must not
         // reach the argument: a `want string` from the assignment target or a
         // $-suffixed parameter would decode a numeric array cell as a char*
@@ -16128,15 +16140,10 @@ LLVMValueRef LLVMCodegen::runtime_to_str(LLVMValueRef bits, LLVMValueRef rtag) {
     LLVMBuildBr(builder, bb_join);
     LLVMBasicBlockRef str_end = LLVMGetInsertBlock(builder);
 
+    // A number, a bool or a container is rendered by its own kind;
+    // only a VM handle is the bridge's to render.
     LLVMPositionBuilderAtEnd(builder, bb_other);
-    LLVMValueRef as_text = LLVMConstPointerNull(i8_ptr_type);
-    auto* vts = get_runtime_func("__jdrt_val_to_str");
-    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
-    if (vts && hg) {
-        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
-        LLVMValueRef args[] = { rt, bits };
-        as_text = LLVMBuildCall2(builder, vts->fn_type, vts->fn, args, 2, "rt2s_txt");
-    }
+    LLVMValueRef as_text = runtime_to_text(bits, rtag);
     LLVMBuildBr(builder, bb_join);
     LLVMBasicBlockRef other_end = LLVMGetInsertBlock(builder);
 
