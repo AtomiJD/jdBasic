@@ -76,17 +76,17 @@ INIT_SPRITE 16, 16
 
 ' --- 3. PALETTES ---
 ' Pico-8 Palette (16 colors)
-PALETTE_PICO8 = [ [0,0,0,255], [29,43,83,255], [126,37,83,255], [0,135,81,255], 
-    [171,82,54,255], [95,87,79,255], [194,195,199,255], [255,241,232,255], 
-    [255,0,77,255], [255,163,0,255], [255,236,39,255], [0,228,54,255], 
-    [41,173,255,255], [131,118,156,255], [255,119,168,255], [255,204,170,255] 
+PALETTE_PICO8 = [ [0,0,0,255], [29,43,83,255], [126,37,83,255], [0,135,81,255], _
+    [171,82,54,255], [95,87,79,255], [194,195,199,255], [255,241,232,255], _
+    [255,0,77,255], [255,163,0,255], [255,236,39,255], [0,228,54,255], _
+    [41,173,255,255], [131,118,156,255], [255,119,168,255], [255,204,170,255] _
 ]
 
 ' Simple NES-ish (approximate)
-PALETTE_NES = [ [124,124,124,255], [0,0,252,255], [0,0,188,255], [68,40,188,255], 
-    [148,0,132,255], [168,0,32,255], [168,16,0,255], [136,20,0,255], 
-    [80,48,0,255], [0,120,0,255], [0,104,0,255], [0,88,0,255], 
-    [0,64,88,255], [0,0,0,255], [0,0,0,255], [0,0,0,255] 
+PALETTE_NES = [ [124,124,124,255], [0,0,252,255], [0,0,188,255], [68,40,188,255], _
+    [148,0,132,255], [168,0,32,255], [168,16,0,255], [136,20,0,255], _
+    [80,48,0,255], [0,120,0,255], [0,104,0,255], [0,88,0,255], _
+    [0,64,88,255], [0,0,0,255], [0,0,0,255], [0,0,0,255] _
 ]
 
 ' Grayscale
@@ -100,10 +100,10 @@ ACTIVE_PALETTE = PALETTE_PICO8
 
 ' --- 4. DRAWING FUNCTIONS ---
 
-SUB SET_PIXEL(x, y, color)
+SUB SET_PIXEL(x, y, pal_idx)
     IF x >= 0 AND x < CANVAS_W AND y >= 0 AND y < CANVAS_H THEN
         idx = y * CANVAS_W + x
-        SPRITE_DATA[idx] = color
+        SPRITE_DATA[idx] = pal_idx
     ENDIF
 ENDSUB
 
@@ -115,7 +115,7 @@ FUNC GET_PIXEL(x, y)
     RETURN [0,0,0,0]
 ENDFUNC
 
-SUB DRAW_LINE(x0, y0, x1, y1, color)
+SUB DRAW_LINE(x0, y0, x1, y1, pal_idx)
     dx = ABS(x1 - x0)
     dy = ABS(y1 - y0) * -1
     sx = -1 : IF x0 < x1 THEN sx = 1
@@ -123,7 +123,7 @@ SUB DRAW_LINE(x0, y0, x1, y1, color)
     err_val = dx + dy
     
     DO WHILE TRUE
-        SET_PIXEL x0, y0, color
+        SET_PIXEL x0, y0, pal_idx
         IF x0 = x1 AND y0 = y1 THEN EXITDO
         e2 = 2 * err_val
         IF e2 >= dy THEN
@@ -137,19 +137,19 @@ SUB DRAW_LINE(x0, y0, x1, y1, color)
     LOOP
 ENDSUB
 
-SUB DRAW_CIRCLE(cx, cy, r, color)
+SUB DRAW_CIRCLE(cx, cy, r, pal_idx)
     x = 0
     y = r
     d = 3 - 2 * r
     DO WHILE y >= x
-        SET_PIXEL cx+x, cy+y, color
-        SET_PIXEL cx-x, cy+y, color
-        SET_PIXEL cx+x, cy-y, color
-        SET_PIXEL cx-x, cy-y, color
-        SET_PIXEL cx+y, cy+x, color
-        SET_PIXEL cx-y, cy+x, color
-        SET_PIXEL cx+y, cy-x, color
-        SET_PIXEL cx-y, cy-x, color
+        SET_PIXEL cx+x, cy+y, pal_idx
+        SET_PIXEL cx-x, cy+y, pal_idx
+        SET_PIXEL cx+x, cy-y, pal_idx
+        SET_PIXEL cx-x, cy-y, pal_idx
+        SET_PIXEL cx+y, cy+x, pal_idx
+        SET_PIXEL cx-y, cy+x, pal_idx
+        SET_PIXEL cx+y, cy-x, pal_idx
+        SET_PIXEL cx-y, cy-x, pal_idx
         x = x + 1
         IF d > 0 THEN
             y = y - 1
@@ -170,9 +170,9 @@ SUB FLOOD_FILL(x, y, target_color, fill_color)
 
     stack = [[x, y]]
     
-    DO WHILE LEN(stack)[0] > 0
+    DO WHILE LEN(stack) > 0
         ' Pop
-        idx = LEN(stack)[0] - 1
+        idx = LEN(stack) - 1
         pt = stack[idx]
         stack = TAKE(idx, stack) ' Remove last
         
@@ -215,7 +215,7 @@ SUB COPY_SELECTION()
 ENDSUB
 
 SUB PASTE_SELECTION(dx, dy)
-    IF LEN(CLIPBOARD_DATA)[0] > 0 THEN
+    IF LEN(CLIPBOARD_DATA) > 0 THEN
         FOR y = 0 TO CLIPBOARD_H - 1
             FOR x = 0 TO CLIPBOARD_W - 1
                 idx = y * CLIPBOARD_W + x
@@ -286,7 +286,7 @@ DO
         
         IF GUI.BEGIN_MENU("Edit") THEN
             IF GUI.MENU_ITEM("Copy", "Ctrl+C", FALSE, HAS_SELECTION) THEN COPY_SELECTION
-            IF GUI.MENU_ITEM("Paste", "Ctrl+V", FALSE, LEN(CLIPBOARD_DATA)[0] > 0) THEN 
+            IF GUI.MENU_ITEM("Paste", "Ctrl+V", FALSE, LEN(CLIPBOARD_DATA) > 0) THEN 
                 ' Paste at top left for now, or center
                 PASTE_SELECTION 0, 0
             ENDIF
@@ -329,7 +329,7 @@ DO
         
         GUI.DUMMY 0, 10
         ' Draw Palette Swatches
-        NUM_COLORS = LEN(ACTIVE_PALETTE)[0]
+        NUM_COLORS = LEN(ACTIVE_PALETTE)
 
         ' Get ImGui Style Color IDs
         ID_BTN = GUI.COL("BUTTON")
@@ -339,7 +339,7 @@ DO
         FOR i = 0 TO NUM_COLORS - 1
             GUI.PUSH_ID i
             
-            col = SLICE(ACTIVE_PALETTE, 0, i)
+            col = ACTIVE_PALETTE[i]
             
             ' Create variations for hover (lighter) and active (darker) states
             ' We use CLAMP to ensure values stay within 0-255
