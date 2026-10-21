@@ -123,7 +123,7 @@ SUB TAKE_LOGS(echo)
         DIM rows = APPEND(logs{h$}, env_in{"DATA"})
         IF LEN(rows) > LOG_KEEP THEN rows = SLICE(rows, LEN(rows) - LOG_KEEP, LOG_KEEP)
         logs{h$} = rows
-        IF echo THEN PRINT PAD$(h$, 10); " | "; env_in{"DATA"}
+        IF echo THEN PRINT PAD$(h$, 16); " | "; env_in{"DATA"}
     LOOP
     DO
         DIM d = CHAN.TRY_RECV(done_sub)
@@ -140,7 +140,7 @@ ENDFUNC
 ' One line per machine for the terminal
 FUNC ROW$(h$) AS STRING
     DIM s = machines{h$}
-    IF NOT ONLINE(h$) THEN RETURN PAD$(h$, 10) + " offline"
+    IF NOT ONLINE(h$) THEN RETURN PAD$(h$, 16) + " offline"
     DIM head$ AS STRING = s{"HEAD"} + IIF(s{"DIRTY"} > 0, "*", "") + IIF(s{"HEAD"} = ref_head$, "", " (differs)")
     DIM busy$ AS STRING = IIF(s{"BUSY"} = "", "-", s{"BUSY"} + " " + STR$(s{"BUSY_SECONDS"}) + "s")
     DIM last = s{"LAST"}
@@ -150,11 +150,11 @@ FUNC ROW$(h$) AS STRING
         DIM g = SPLIT(s{"GPU"}, ",")
         IF LEN(g) >= 3 THEN gpu$ = TRIM$(g[1]) + "C " + TRIM$(g[2]) + "%"
     ENDIF
-    RETURN PAD$(h$, 10) + " " + PAD$(s{"OS"}, 8) + PAD$(head$, 22) + FORMAT$("{:>5.0f}%", s{"CPU"}) + "  " + PAD$(GB$(s{"MEM_TOTAL"} - s{"MEM_FREE"}) + "/" + GB$(s{"MEM_TOTAL"}) + " GB", 16) + PAD$(GB$(s{"DISK_FREE"}) + " GB", 10) + PAD$(gpu$, 10) + PAD$(busy$, 12) + last$
+    RETURN PAD$(h$, 16) + " " + PAD$(s{"OS"}, 8) + PAD$(head$, 22) + FORMAT$("{:>5.0f}%", s{"CPU"}) + "  " + PAD$(GB$(s{"MEM_TOTAL"} - s{"MEM_FREE"}) + "/" + GB$(s{"MEM_TOTAL"}) + " GB", 16) + PAD$(GB$(s{"DISK_FREE"}) + " GB", 10) + PAD$(gpu$, 10) + PAD$(busy$, 12) + last$
 ENDFUNC
 
 FUNC HEADER$() AS STRING
-    RETURN PAD$("machine", 10) + " " + PAD$("os", 8) + PAD$("head", 22) + "  load  " + PAD$("memory", 16) + PAD$("disk free", 10) + PAD$("gpu", 10) + PAD$("running", 12) + "last"
+    RETURN PAD$("machine", 16) + " " + PAD$("os", 8) + PAD$("head", 22) + "  load  " + PAD$("memory", 16) + PAD$("disk free", 10) + PAD$("gpu", 10) + PAD$("running", 12) + "last"
 ENDFUNC
 
 ' Starts action$ on one machine; "" when the agent took it, else why not
@@ -169,19 +169,21 @@ FUNC ASK$(h$, act$) AS STRING
     RETURN r$
 ENDFUNC
 
-' Waits until the stats of every running agent have arrived
+' Waits until the stats of every agent have arrived; lan machines announce
+' themselves once a second, so the first 2.5 s are always spent listening
 SUB GATHER(ms)
+    DIM t_listen AS DOUBLE = TICK() + 2500
     DIM t_end AS DOUBLE = TICK() + ms
     DO WHILE TICK() < t_end
         TAKE_STATS()
         DIM peers = NODE.PEERS("farmagent-*")
-        IF LEN(peers) > 0 ANDALSO LEN(hosts) >= LEN(peers) THEN EXITDO
+        IF TICK() > t_listen ANDALSO LEN(peers) > 0 ANDALSO LEN(hosts) >= LEN(peers) THEN EXITDO
         SLEEP 50
     LOOP
 ENDSUB
 
 IF mode$ = "once" THEN
-    GATHER(4000)
+    GATHER(6000)
     PRINT "farm, against "; ref_head$; " here"
     PRINT HEADER$()
     DIM i AS INTEGER
@@ -196,7 +198,7 @@ IF mode$ = "once" THEN
 ENDIF
 
 IF mode$ = "do" THEN
-    GATHER(4000)
+    GATHER(6000)
     DIM pick = targets
     IF LEN(pick) = 0 ORELSE pick[0] = "all" THEN pick = FILTER(LAMBDA h -> ONLINE(h), hosts)
     DIM bad AS INTEGER = 0
@@ -226,7 +228,7 @@ IF mode$ = "do" THEN
             IF TYPEOF(finished{h$}) <> "NONE" THEN
                 IF NOT finished{h$}{"OK"} THEN bad = bad + 1
             ELSEIF NOT ONLINE(h$) THEN
-                PRINT PAD$(h$, 10); " | lost"
+                PRINT PAD$(h$, 16); " | lost"
                 bad = bad + 1
             ELSE
                 still = APPEND(still, h$)

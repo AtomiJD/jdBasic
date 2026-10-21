@@ -29,6 +29,8 @@ DIM repo$ AS STRING = "."
 DIM slash AS INTEGER = INSTR(REVERSE$(script$), "/")
 IF slash >= 0 THEN repo$ = LEFT$(script$, LEN(script$) - 1 - slash) + "/.."
 DIM os$ AS STRING = OS.GETOS()
+' The repo's own binary: after a rebuild on Linux, OS.SELF$ names the deleted file
+DIM jdb_exe$ AS STRING = repo$ + IIF(os$ = "WINDOWS", "/build/jdBasic.exe", "/build/jdbasic")
 DIM host$ AS STRING = LCASE$(OS.HOSTNAME$())
 IF INSTR(host$, ".") >= 0 THEN host$ = LEFT$(host$, INSTR(host$, "."))
 DIM home$ AS STRING = GETENV$("HOME")
@@ -95,7 +97,7 @@ SUB READ_SLOW()
         DIM rows = SPLIT(TRIM$(REPLACE$(st{"OUTPUT"}, CHR$(13), "")), CHR$(10))
         IF LEN(rows) > 0 ANDALSO rows[0] <> "" THEN dirty = LEN(rows)
     ENDIF
-    DIM v = OS.EXEC(OS.SELF$(), ["--version"])
+    DIM v = OS.EXEC(jdb_exe$, ["--version"])
     version$ = ""
     features$ = ""
     DIM vrows = SPLIT(REPLACE$(v{"OUTPUT"}, CHR$(13), ""), CHR$(10))
@@ -220,7 +222,7 @@ DO
             DIM ran2 = NODE.POLL(20)
         LOOP
         NODE.LEAVE
-        DIM child = OS.SPAWN(OS.SELF$(), [script$], {"CWD": repo$, "OUTPUT": repo$ + "/tmp/farm_agent_" + host$ + ".out", "HIDDEN": TRUE})
+        DIM child = OS.SPAWN(jdb_exe$, [script$], {"OUTPUT": repo$ + "/tmp/farm_agent_" + host$ + ".out", "HIDDEN": TRUE})
         PRINT "farm_agent restarted as pid "; child
         END 0
     ENDIF
