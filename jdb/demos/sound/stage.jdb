@@ -19,6 +19,9 @@
 '   --render dir   an offline render: an intro with the series title and
 '                  3-2-1, then every frame as dir/fNNNNN.jpg at 30 fps and the
 '                  sound as dir/audio.wav, starting after the intro
+'   --tiktok       portrait 1080x1920 with the girl alone, a new move every
+'                  two bars; with --render only the clip around the first
+'                  drop (at most 30 s) and no intro
 '
 ' As a program of its own the show follows a song another process plays:
 '
@@ -75,6 +78,28 @@ DIM render_dir$ AS STRING = ""
 DIM subtitle$ AS STRING = ""
 DIM frame_no AS INTEGER = 0
 DIM intro_left AS DOUBLE = -1
+
+' --tiktok: a portrait clip around the first drop with the girl alone,
+' dancing a new move every two bars
+DIM tiktok AS INTEGER = FALSE
+DIM MID_X AS DOUBLE = 960
+DIM DS AS DOUBLE = 1
+DIM SCOPE_W AS DOUBLE = 1440
+DIM SCOPE_Y AS DOUBLE = 175
+DIM SCOPE_AMP AS DOUBLE = 240
+DIM BUS_GAP AS DOUBLE = 155
+DIM BUS_AMP AS DOUBLE = 300
+DIM FLASH_MAX AS DOUBLE = 1
+DIM SUN_SCALE AS DOUBLE = 1
+DIM BAND_DX AS DOUBLE = 17
+DIM BAND_W AS DOUBLE = 13
+DIM TT_MAX_SECONDS AS DOUBLE = 30
+DIM TT_BARS_PER_MOVE AS DOUBLE = 2
+DIM TT_MOVES$ = ["woah", "floss", "clap", "heart", "dab", "shimmy", "point", "hips", "wave"]
+DIM TT_LABELS$ = ["HIT THE WOAH", "FLOSS", "CLAP IT UP", "HEART HANDS", "DAB", "SHIMMY", "DISCO POINT", "HIP ROLL", "ARM WAVE"]
+DIM clip_from AS DOUBLE = 0
+DIM clip_to AS DOUBLE = 0
+DIM tt_offset AS INTEGER = 0
 DIM spec = RESHAPE([0.0], [40])
 DIM band_lo = RESHAPE([0], [40])
 DIM band_hi = RESHAPE([0], [40])
@@ -214,6 +239,167 @@ SUB SPAWN(kind AS INTEGER, x AS DOUBLE, y AS DOUBLE, n AS INTEGER, hue AS DOUBLE
 ENDSUB
 
 ' One dancer. Every limb is an angle: 0 points down, +90 degrees right.
+FUNC SMOOTH01(x AS DOUBLE) AS DOUBLE
+    DIM t AS DOUBLE = CLAMP01(x)
+    RETURN t * t * (3 - 2 * t)
+ENDFUNC
+
+' The move of the clip at cycle cyc, an index into TT_MOVES$
+FUNC TT_MOVE_AT(cyc AS DOUBLE) AS INTEGER
+    DIM k AS INTEGER = INT((cyc - clip_from) / TT_BARS_PER_MOVE) + tt_offset
+    IF k < tt_offset THEN k = tt_offset
+    RETURN k - LEN(TT_MOVES$) * INT(k / LEN(TT_MOVES$))
+ENDFUNC
+
+' A pose as [hop, sway, lean, nod, tilt, lua, lfa, rua, rfa, lth, lsh, rth,
+' rsh]; angles as in DANCER, 0 down and MATH.PI up, positive to the right
+FUNC TT_POSE(move$, cyc AS DOUBLE)
+    DIM beat AS DOUBLE = cyc * 4
+    DIM bf AS DOUBLE = FRACT(beat)
+    DIM bn AS INTEGER = INT(beat)
+    DIM odd AS INTEGER = bn - 2 * INT(bn / 2)
+    DIM dip AS DOUBLE = 0.5 + 0.5 * COS(TWO_PI * bf)
+    DIM s2 AS DOUBLE = SIN(TWO_PI * beat / 2)
+    DIM p AS DOUBLE = FRACT(cyc)
+    DIM hop AS DOUBLE = 0
+    DIM sway AS DOUBLE = 0
+    DIM lean AS DOUBLE = 0
+    DIM nod AS DOUBLE = 5 * dip
+    DIM tilt AS DOUBLE = 0
+    DIM lua AS DOUBLE = -0.3
+    DIM lfa AS DOUBLE = -0.2
+    DIM rua AS DOUBLE = 0.3
+    DIM rfa AS DOUBLE = 0.2
+    DIM lth AS DOUBLE = -0.12 - 0.2 * dip
+    DIM rth AS DOUBLE = 0.12 + 0.2 * dip
+    DIM lsh AS DOUBLE = 0.1 * dip
+    DIM rsh AS DOUBLE = -0.1 * dip
+
+    IF move$ = "floss" THEN
+        ' both arms swing to one side each beat, the hips the other way
+        DIM fs AS DOUBLE = COS(MATH.PI * beat)
+        lua = 0.65 * fs - 0.15
+        rua = 0.65 * fs + 0.15
+        lfa = lua + 0.2 * fs
+        rfa = rua + 0.2 * fs
+        sway = -26 * fs
+        lean = 0.06 * fs
+    ELSEIF move$ = "woah" THEN
+        ' a sweep down from up-right on the one, frozen in a squat
+        DIM k AS DOUBLE = SMOOTH01(p / 0.12)
+        IF p > 0.85 THEN k = 1 - SMOOTH01((p - 0.85) / 0.15)
+        lua = 2.2 + (-1.15 - 2.2) * k
+        lfa = 2.3 + (-0.4 - 2.3) * k
+        rua = 2.45 + (-0.55 - 2.45) * k
+        rfa = 2.5 + (-1.6 - 2.5) * k
+        lth = -0.15 - 0.3 * k
+        lsh = 0.38 * k
+        rth = 0.15 + 0.3 * k
+        rsh = -0.38 * k
+        lean = -0.1 * k
+        tilt = -0.15 * k
+        nod = 2 * dip
+    ELSEIF move$ = "heart" THEN
+        ' the hands meet over the head as a heart
+        lua = -2.55
+        rua = 2.55
+        lfa = 2.3
+        rfa = -2.3
+        sway = 14 * s2
+        tilt = 0.12 * s2
+    ELSEIF move$ = "shimmy" THEN
+        ' hands on the hips, the shoulders shaking on the eighths
+        DIM sh AS DOUBLE = SIN(TWO_PI * beat * 2)
+        lua = -0.75
+        lfa = 0.95
+        rua = 0.75
+        rfa = -0.95
+        lean = 0.07 * sh
+        tilt = -0.1 * sh
+        sway = 8 * sh
+    ELSEIF move$ = "point" THEN
+        ' up to the right on one beat, down across on the next
+        lua = -0.75
+        lfa = 0.95
+        IF odd = 0 THEN
+            rua = 2.45
+            rfa = 2.5
+        ELSE
+            rua = -0.45
+            rfa = -0.75
+        ENDIF
+        sway = 18 * (1 - 2 * odd)
+        lean = 0.06 * (1 - 2 * odd)
+        tilt = 0.1 * (2 * odd - 1)
+    ELSEIF move$ = "clap" THEN
+        ' a step to the side each beat, a clap over the head on two and four
+        DIM c AS DOUBLE = 0.5 - 0.5 * COS(MATH.PI * beat)
+        lua = -2.2 - 0.55 * c
+        rua = 2.2 + 0.55 * c
+        lfa = -2.4 - 1.0 * c
+        rfa = 2.4 + 1.0 * c
+        sway = 28 * s2
+        lth = -0.12 - 0.35 * (s2 < 0) * ABS(s2)
+        rth = 0.12 + 0.35 * (s2 > 0) * ABS(s2)
+        lsh = lth + 0.1
+        rsh = rth - 0.1
+    ELSEIF move$ = "dab" THEN
+        ' the head into one elbow, the other arm out; the side alternates per bar
+        DIM d AS DOUBLE = SMOOTH01(p / 0.05)
+        IF p > 0.45 THEN d = 1 - SMOOTH01((p - 0.45) / 0.1)
+        lua = -0.3 + (1.9 + 0.3) * d
+        lfa = -0.2 + (-2.3 + 0.2) * d
+        rua = 0.3 + (2.25 - 0.3) * d
+        rfa = 0.2 + (2.25 - 0.2) * d
+        tilt = 0.5 * d
+        lean = 0.1 * d
+        IF INT(cyc) - 2 * INT(INT(cyc) / 2) = 1 THEN
+            DIM ta AS DOUBLE = lua
+            lua = -rua
+            rua = -ta
+            ta = lfa
+            lfa = -rfa
+            rfa = -ta
+            tilt = -tilt
+            lean = -lean
+        ENDIF
+    ELSEIF move$ = "hips" THEN
+        ' a hip roll, one hand on the hip, the other behind the head
+        sway = 28 * s2
+        lean = -0.1 * s2
+        tilt = 0.1 * COS(TWO_PI * beat / 2)
+        lua = -0.75
+        lfa = 0.95
+        rua = 2.7
+        rfa = -2.0
+        lth = -0.14 - 0.12 * s2
+        rth = 0.14 - 0.12 * s2
+    ELSEIF move$ = "wave" THEN
+        ' the arms out level, a wave running through them from left to right
+        lua = -1.57 + 0.25 * SIN(TWO_PI * beat / 2 + 1.6)
+        lfa = -1.57 + 0.6 * SIN(TWO_PI * beat / 2 + 1.0)
+        rua = 1.57 + 0.25 * SIN(TWO_PI * beat / 2 - 0.4)
+        rfa = 1.57 + 0.6 * SIN(TWO_PI * beat / 2 - 1.0)
+        sway = 10 * s2
+        tilt = 0.08 * s2
+    ENDIF
+    RETURN [hop, sway, lean, nod, tilt, lua, lfa, rua, rfa, lth, lsh, rth, rsh]
+ENDFUNC
+
+' The pose of the clip at cyc: the current move, faded in from the last
+' one over the first beat
+FUNC TT_POSE_AT(cyc AS DOUBLE)
+    DIM mi AS INTEGER = TT_MOVE_AT(cyc)
+    DIM cur = TT_POSE(TT_MOVES$[mi], cyc)
+    DIM into AS DOUBLE = cyc - clip_from - TT_BARS_PER_MOVE * INT((cyc - clip_from) / TT_BARS_PER_MOVE)
+    IF cyc - clip_from < TT_BARS_PER_MOVE ORELSE into >= 0.25 THEN RETURN cur
+    DIM prev_i AS INTEGER = mi - 1
+    IF prev_i < 0 THEN prev_i = LEN(TT_MOVES$) - 1
+    DIM prev = TT_POSE(TT_MOVES$[prev_i], cyc)
+    DIM w AS DOUBLE = SMOOTH01(into / 0.25)
+    RETURN prev + (cur - prev) * w
+ENDFUNC
+
 SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOUBLE, cb AS DOUBLE)
     DIM beat AS DOUBLE = cyc * 4
     DIM bf AS DOUBLE = FRACT(beat)
@@ -349,12 +535,33 @@ SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOU
         ENDIF
     ENDIF
 
-    DIM THIGH AS DOUBLE = 88
-    DIM SHIN AS DOUBLE = 86
-    DIM TORSO AS DOUBLE = 122
-    DIM UARM AS DOUBLE = 70
-    DIM FARM AS DOUBLE = 64
-    DIM HEAD_R AS DOUBLE = 30
+    IF tiktok THEN
+        DIM pose = TT_POSE_AT(cyc)
+        hop = pose[0]
+        sway = pose[1]
+        lean = pose[2]
+        nod = pose[3]
+        tilt = pose[4]
+        lua = pose[5]
+        lfa = pose[6]
+        rua = pose[7]
+        rfa = pose[8]
+        lth = pose[9]
+        lsh = pose[10]
+        rth = pose[11]
+        rsh = pose[12]
+    ENDIF
+    hop = hop * DS
+    sway = sway * DS
+    nod = nod * DS
+
+    DIM THIGH AS DOUBLE = 88 * DS
+    DIM SHIN AS DOUBLE = 86 * DS
+    DIM TORSO AS DOUBLE = 122 * DS
+    DIM UARM AS DOUBLE = 70 * DS
+    DIM FARM AS DOUBLE = 64 * DS
+    DIM HEAD_R AS DOUBLE = 30 * DS
+    DIM nw AS INTEGER = INT(2 * DS + 0.5)
     DIM legv AS DOUBLE = MAX([THIGH * COS(lth) + SHIN * COS(lsh), THIGH * COS(rth) + SHIN * COS(rsh)])
     DIM hx AS DOUBLE = cx + sway
     DIM hy AS DOUBLE = FLOOR_Y - legv - hop
@@ -362,12 +569,12 @@ SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOU
     DIM lky AS DOUBLE = hy + THIGH * COS(lth)
     DIM rkx AS DOUBLE = hx + THIGH * SIN(rth)
     DIM rky AS DOUBLE = hy + THIGH * COS(rth)
-    DIM shx AS DOUBLE = hx + (TORSO - 14) * SIN(lean)
-    DIM shy AS DOUBLE = hy - (TORSO - 14) * COS(lean)
+    DIM shx AS DOUBLE = hx + (TORSO - 14 * DS) * SIN(lean)
+    DIM shy AS DOUBLE = hy - (TORSO - 14 * DS) * COS(lean)
     DIM nkx AS DOUBLE = hx + TORSO * SIN(lean)
     DIM nky AS DOUBLE = hy - TORSO * COS(lean)
-    DIM hdx AS DOUBLE = nkx + (HEAD_R + 8) * SIN(lean + tilt)
-    DIM hdy AS DOUBLE = nky - (HEAD_R + 8) * COS(lean + tilt) + nod
+    DIM hdx AS DOUBLE = nkx + (HEAD_R + 8 * DS) * SIN(lean + tilt)
+    DIM hdy AS DOUBLE = nky - (HEAD_R + 8 * DS) * COS(lean + tilt) + nod
     DIM lex AS DOUBLE = shx + UARM * SIN(lua)
     DIM ley AS DOUBLE = shy + UARM * COS(lua)
     DIM rex AS DOUBLE = shx + UARM * SIN(rua)
@@ -375,59 +582,60 @@ SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOU
 
     ' shadow, shrinking as the dancer leaves the floor
     DRAWCOLOR INT(cr * 0.14), INT(cg * 0.14), INT(cb * 0.14)
-    ELLIPSE hx, FLOOR_Y + 6, 70 - hop * 0.5, 12, TRUE
+    ELLIPSE hx, FLOOR_Y + 6 * DS, (70 - hop * 0.5 / DS) * DS, 12 * DS, TRUE
 
     IF girl THEN
-        DIM wy AS DOUBLE = hy - 16
-        DIM hem AS DOUBLE = 58 + 0.12 * ABS(sway) + 10 * arc
-        DIM ks = IOTA(56, 0)
-        DIM half = 16 + (hem - 16) * ks / 55
+        DIM wy AS DOUBLE = hy - 16 * DS
+        DIM hem AS DOUBLE = (58 + 0.12 * ABS(sway / DS) + 10 * arc) * DS
+        DIM skirt_h AS DOUBLE = 55 * DS
+        DIM ks = IOTA(INT(skirt_h) + 1, 0)
+        DIM half = 16 * DS + (hem - 16 * DS) * ks / skirt_h
         DRAWCOLOR INT(cr * 0.3), INT(cg * 0.3), INT(cb * 0.3)
         LINE STACK(1, hx - half, wy + ks, hx + half, wy + ks)
-        NEON hx - 16, wy, hx - hem, wy + 55, 1, cr, cg, cb
-        NEON hx + 16, wy, hx + hem, wy + 55, 1, cr, cg, cb
-        NEON hx - hem, wy + 55, hx + hem, wy + 55, 1, cr, cg, cb
+        NEON hx - 16 * DS, wy, hx - hem, wy + skirt_h, 1, cr, cg, cb
+        NEON hx + 16 * DS, wy, hx + hem, wy + skirt_h, 1, cr, cg, cb
+        NEON hx - hem, wy + skirt_h, hx + hem, wy + skirt_h, 1, cr, cg, cb
     ENDIF
 
-    NEON hx, hy, nkx, nky, 2, cr, cg, cb
-    NEON hx, hy, lkx, lky, 2, cr, cg, cb
-    NEON lkx, lky, lkx + SHIN * SIN(lsh), lky + SHIN * COS(lsh), 2, cr, cg, cb
-    NEON hx, hy, rkx, rky, 2, cr, cg, cb
-    NEON rkx, rky, rkx + SHIN * SIN(rsh), rky + SHIN * COS(rsh), 2, cr, cg, cb
-    NEON shx, shy, lex, ley, 2, cr, cg, cb
-    NEON lex, ley, lex + FARM * SIN(lfa), ley + FARM * COS(lfa), 2, cr, cg, cb
-    NEON shx, shy, rex, rey, 2, cr, cg, cb
-    NEON rex, rey, rex + FARM * SIN(rfa), rey + FARM * COS(rfa), 2, cr, cg, cb
+    NEON hx, hy, nkx, nky, nw, cr, cg, cb
+    NEON hx, hy, lkx, lky, nw, cr, cg, cb
+    NEON lkx, lky, lkx + SHIN * SIN(lsh), lky + SHIN * COS(lsh), nw, cr, cg, cb
+    NEON hx, hy, rkx, rky, nw, cr, cg, cb
+    NEON rkx, rky, rkx + SHIN * SIN(rsh), rky + SHIN * COS(rsh), nw, cr, cg, cb
+    NEON shx, shy, lex, ley, nw, cr, cg, cb
+    NEON lex, ley, lex + FARM * SIN(lfa), ley + FARM * COS(lfa), nw, cr, cg, cb
+    NEON shx, shy, rex, rey, nw, cr, cg, cb
+    NEON rex, rey, rex + FARM * SIN(rfa), rey + FARM * COS(rfa), nw, cr, cg, cb
     NEON_RING hdx, hdy, HEAD_R, cr, cg, cb
 
-    DIM ex AS DOUBLE = 10
+    DIM ex AS DOUBLE = 10 * DS
     DRAWCOLOR 255, 255, 255
-    CIRCLE hdx - ex, hdy - 4, 4, TRUE
-    CIRCLE hdx + ex, hdy - 4, 4, TRUE
+    CIRCLE hdx - ex, hdy - 4 * DS, 4 * DS, TRUE
+    CIRCLE hdx + ex, hdy - 4 * DS, 4 * DS, TRUE
     DIM sa = 0.6 + IOTA(9, 0) * 0.243
-    DIM smx = hdx + 13 * COS(sa)
-    DIM smy = hdy + 2 + 11 * SIN(sa)
+    DIM smx = hdx + 13 * DS * COS(sa)
+    DIM smy = hdy + 2 * DS + 11 * DS * SIN(sa)
     DRAWCOLOR INT(cr), INT(cg), INT(cb)
     LINE STACK(1, TAKE(8, smx), TAKE(8, smy), DROP(1, smx), DROP(1, smy))
 
     IF girl THEN
         ' lashes, blush, a ponytail swinging behind the beat, a bow
-        LINE STACK(1, [hdx - ex - 4, hdx + ex + 4], [hdy - 7, hdy - 7], [hdx - ex - 9, hdx + ex + 9], [hdy - 12, hdy - 12])
+        LINE STACK(1, [hdx - ex - 4 * DS, hdx + ex + 4 * DS], [hdy - 7 * DS, hdy - 7 * DS], [hdx - ex - 9 * DS, hdx + ex + 9 * DS], [hdy - 12 * DS, hdy - 12 * DS])
         DRAWCOLOR 110, 25, 65
-        CIRCLE hdx - 18, hdy + 6, 6, TRUE
-        CIRCLE hdx + 18, hdy + 6, 6, TRUE
+        CIRCLE hdx - 18 * DS, hdy + 6 * DS, 6 * DS, TRUE
+        CIRCLE hdx + 18 * DS, hdy + 6 * DS, 6 * DS, TRUE
         DIM pax AS DOUBLE = hdx + HEAD_R * 0.75
         DIM pay AS DOUBLE = hdy - HEAD_R * 0.7
         DIM pk = IOTA(7, 1)
-        DIM pa = 0.55 + 0.35 * SIN(TWO_PI * beat / 2 - pk * 0.45) - sway * 0.004 - hop * 0.008 * pk
-        DIM ppx = pax + pk * 11 * SIN(pa) + 6
-        DIM ppy = pay + pk * 11 * COS(pa) - 8
+        DIM pa = 0.55 + 0.35 * SIN(TWO_PI * beat / 2 - pk * 0.45) - sway / DS * 0.004 - hop / DS * 0.008 * pk
+        DIM ppx = pax + pk * 11 * DS * SIN(pa) + 6 * DS
+        DIM ppy = pay + pk * 11 * DS * COS(pa) - 8 * DS
         DRAWCOLOR INT(cr * 0.5), INT(cg * 0.5), INT(cb * 0.5)
-        CIRCLE STACK(1, ppx, ppy, 11 - pk), TRUE
+        CIRCLE STACK(1, ppx, ppy, (11 - pk) * DS), TRUE
         DRAWCOLOR 255, 60, 110
-        CIRCLE pax - 7, pay - 3, 8, TRUE
-        CIRCLE pax + 9, pay - 9, 8, TRUE
-        CIRCLE pax + 1, pay - 6, 4, TRUE
+        CIRCLE pax - 7 * DS, pay - 3 * DS, 8 * DS, TRUE
+        CIRCLE pax + 9 * DS, pay - 9 * DS, 8 * DS, TRUE
+        CIRCLE pax + 1 * DS, pay - 6 * DS, 4 * DS, TRUE
     ELSE
         ' a cap, the brim towards her
         DIM ck = IOTA(16, 0)
@@ -522,7 +730,7 @@ ENDSUB
 SUB CENTER_TEXT(y AS DOUBLE, size AS INTEGER, s$, r AS INTEGER, g AS INTEGER, b AS INTEGER)
     IF font$ <> "" THEN SETFONT font$, size
     DIM tsz = GFX.TEXTSIZE(s$)
-    TEXT 960 - tsz[0] / 2, y, s$, r, g, b
+    TEXT MID_X - tsz[0] / 2, y, s$, r, g, b
 ENDSUB
 
 ' The intro of a rendered video: the series, the song, then 3-2-1
@@ -543,6 +751,27 @@ SUB DRAW_INTRO()
         DIM ring AS DOUBLE = 70 + (1 - part) * 160
         NEON_RING 960, 740, ring, 255 * part, 120 * part, 230 * part
         CENTER_TEXT 640, INT(120 + 80 * part), STR$(digit), 255, 230, 255
+    ENDIF
+    IF font$ <> "" THEN SETFONT font$, 17
+ENDSUB
+
+' The words over a TikTok clip: the series always, the song for its
+' first seconds, the name of each move as it starts. TikTok draws its own
+' buttons over the top, the right and the bottom, so all of it stays in
+' the middle band.
+SUB DRAW_TIKTOK(cyc AS DOUBLE)
+    DIM secs AS DOUBLE = (cyc - clip_from) * 240 / SCORE.BPM_OF()
+    CENTER_TEXT 250, 34, SERIES$, 150, 190, 255
+    DIM tf AS DOUBLE = 1 - CLAMP01((secs - 2.5) / 1)
+    IF tf > 0 THEN
+        CENTER_TEXT 300, 76, title$, INT(255 * tf), INT(110 * tf), INT(215 * tf)
+        IF subtitle$ <> "" THEN CENTER_TEXT 400, 30, subtitle$, INT(200 * tf), INT(200 * tf), INT(230 * tf)
+    ENDIF
+    DIM into AS DOUBLE = cyc - clip_from - TT_BARS_PER_MOVE * INT((cyc - clip_from) / TT_BARS_PER_MOVE)
+    DIM la AS DOUBLE = 1 - CLAMP01((into - 0.5) / 0.75)
+    IF cyc >= clip_from ANDALSO la > 0 ANDALSO secs > 1.5 THEN
+        DIM pop AS INTEGER = INT(64 + 16 * (1 - CLAMP01(into * 4)))
+        CENTER_TEXT 590, pop, TT_LABELS$[TT_MOVE_AT(cyc)], INT(255 * la), INT(235 * la), INT(120 * la)
     ENDIF
     IF font$ <> "" THEN SETFONT font$, 17
 ENDSUB
@@ -648,15 +877,16 @@ SUB FRAME()
     IF INT(beat) > INT(prev_cyc * 4) THEN
         DIM bib AS INTEGER = INT(beat) - 4 * INT(INT(beat) / 4)
         IF drop_on ANDALSO kick_on THEN
-            SPAWN 0, 760, FLOOR_Y, 5, 3.6
-            SPAWN 0, 1160, FLOOR_Y, 5, 5.2
+            SPAWN 0, MID_X - 200 * DS, FLOOR_Y, 5, 3.6
+            SPAWN 0, MID_X + 200 * DS, FLOOR_Y, 5, 5.2
         ENDIF
-        IF mood$ = "wave" ANDALSO (bib = 0 OR bib = 2) THEN SPAWN 1, 960 + (RND(1) - 0.5) * 260, 700, 1, 0
+        IF mood$ = "wave" ANDALSO (bib = 0 OR bib = 2) ANDALSO NOT tiktok THEN SPAWN 1, MID_X + (RND(1) - 0.5) * 260, HORIZON + 60, 1, 0
+        IF tiktok ANDALSO TT_MOVES$[TT_MOVE_AT(cyc)] = "heart" THEN SPAWN 1, MID_X + (RND(1) - 0.5) * 140 * DS, FLOOR_Y - 470 * DS, 1, 0
         IF IS_LIVE(clap_t) ANDALSO (bib = 1 OR bib = 3) THEN flash = MAX([flash, 0.1])
     ENDIF
     IF bar > INT(prev_cyc) ANDALSO IS_LIVE(crash_t) ANDALSO bar - 8 * INT(bar / 8) = 0 THEN
         flash = 0.85
-        SPAWN 2, 960, 560, 70, RND(1) * 6
+        SPAWN 2, MID_X, HORIZON - 80, 70, RND(1) * 6
     ENDIF
     IF mood$ = "rise" THEN
         DIM prog AS DOUBLE = CLAMP01((cyc - section_bar) / 8)
@@ -693,20 +923,20 @@ SUB FRAME()
     CIRCLE STACK(1, star_x, star_y, star_x * 0 + 1.5), TRUE, STACK(1, tw, tw, tw + 30)
 
     ' a striped sun on the horizon, swelling with the kick
-    DIM sun_r AS DOUBLE = 230 + 22 * kick_env + 70 * energy
+    DIM sun_r AS DOUBLE = (230 + 22 * kick_env + 70 * energy) * SUN_SCALE
     DIM sy = IOTA(INT(sun_r), 0)
     DIM scroll = sy + INT(FRACT(cyc) * 24)
     DIM cut = (sy > sun_r * 0.5) * ((scroll - 24 * INT(scroll / 24)) < 3 + 7 * sy / sun_r)
     DIM shalf = SQR(sun_r * sun_r - (sun_r - sy) ^ 2) * (1 - cut)
     DIM tcol = sy / sun_r
-    LINE STACK(1, 960 - shalf, HORIZON - sun_r + sy, 960 + shalf, HORIZON - sun_r + sy), STACK(1, INT(230 - 10 * tcol), INT(200 - 170 * tcol), INT(60 + 120 * tcol))
+    LINE STACK(1, MID_X - shalf, HORIZON - sun_r + sy, MID_X + shalf, HORIZON - sun_r + sy), STACK(1, INT(230 - 10 * tcol), INT(200 - 170 * tcol), INT(60 + 120 * tcol))
 
     ' spectrum skyline either side of the sun
-    DIM bx = IOTA(N_BANDS, 0) * 17
+    DIM bx = IOTA(N_BANDS, 0) * BAND_DX
     DIM bh = spec * 300 + 3
     DIM bcols = STACK(1, INT(60 + 195 * spec), INT(30 + 80 * (1 - spec)), INT(200 - 60 * spec))
-    RECT STACK(1, 1214 + bx, HORIZON - bh, bx * 0 + 13, bh), TRUE, bcols
-    RECT STACK(1, 693 - bx, HORIZON - bh, bx * 0 + 13, bh), TRUE, bcols
+    RECT STACK(1, MID_X + 254 * BAND_DX / 17 + bx, HORIZON - bh, bx * 0 + BAND_W, bh), TRUE, bcols
+    RECT STACK(1, MID_X - 267 * BAND_DX / 17 - bx, HORIZON - bh, bx * 0 + BAND_W, bh), TRUE, bcols
 
     ' the floor grid races towards the viewer, a line every two beats
     DIM gb AS DOUBLE = 0.35 + 0.65 * kick_env
@@ -715,15 +945,17 @@ SUB FRAME()
     DRAWCOLOR INT(200 * gb), INT(40 * gb), INT(180 * gb)
     LINE STACK(1, gy * 0, gy, gy * 0 + SW, gy)
     DIM vx = IOTA(25, 0) - 12
-    LINE STACK(1, 960 + vx * 14, vx * 0 + HORIZON, 960 + vx * 240, vx * 0 + SH)
+    LINE STACK(1, MID_X + vx * 14, vx * 0 + HORIZON, MID_X + vx * 240, vx * 0 + SH)
     DRAWCOLOR INT(255 * gb), INT(80 * gb), INT(220 * gb)
     LINE 0, HORIZON, SW, HORIZON
 
     ' the master scope across the sky, the reverb bus beneath it
-    DIM wx = 40 + IOTA(nw, 0) * (1440 / nw)
-    DIM wy = 175 + wave * 240
+    DIM scope_gain AS DOUBLE = 1
+    IF tiktok THEN scope_gain = CLAMP01(((cyc - clip_from) * 240 / SCORE.BPM_OF() - 2.5) / 1)
+    DIM wx = 40 + IOTA(nw, 0) * (SCOPE_W / nw)
+    DIM wy = SCOPE_Y + wave * SCOPE_AMP * scope_gain
     DIM bus = SRC_BUS()
-    DIM by = 330 + bus * 300
+    DIM by = SCOPE_Y + BUS_GAP + bus * BUS_AMP * scope_gain
     DRAWCOLOR INT(40 + 60 * sb), INT(30 + 60 * sg), INT(50 + 80 * sr)
     LINE STACK(1, TAKE(nw - 1, wx), TAKE(nw - 1, by), DROP(1, wx), DROP(1, by))
     DRAWCOLOR INT(40 * sr), INT(80 * sg), INT(90 * sb)
@@ -731,32 +963,38 @@ SUB FRAME()
     LINE STACK(1, TAKE(nw - 1, wx), TAKE(nw - 1, wy) - 3, DROP(1, wx), DROP(1, wy) - 3)
     DRAWCOLOR INT(120 + 135 * sr), INT(120 + 135 * sg), INT(120 + 135 * sb)
     LINE STACK(1, TAKE(nw - 1, wx), TAKE(nw - 1, wy), DROP(1, wx), DROP(1, wy))
-    TEXT 44, 34, "MASTER", 150, 150, 200
-    TEXT 44, 296, "REVERB BUS", 110, 110, 150
+    IF NOT tiktok THEN
+        TEXT 44, 34, "MASTER", 150, 150, 200
+        TEXT 44, 296, "REVERB BUS", 110, 110, 150
+    ENDIF
 
     ' a shock ring on the floor with every kick
     IF kick_on THEN
         DIM rr AS DOUBLE = 60 + bf * 900
         DIM rl AS DOUBLE = (1 - bf) * (1 - bf)
         DRAWCOLOR INT(255 * rl * sr), INT(200 * rl * sg), INT(255 * rl * sb)
-        ELLIPSE 960, FLOOR_Y + 10, rr, rr * 0.18, FALSE
-        ELLIPSE 960, FLOOR_Y + 10, rr + 2, rr * 0.18 + 1, FALSE
+        ELLIPSE MID_X, FLOOR_Y + 10, rr, rr * 0.18, FALSE
+        ELLIPSE MID_X, FLOOR_Y + 10, rr + 2, rr * 0.18 + 1, FALSE
     ENDIF
 
     ' lasers sweep the floor in the drops
     IF drop_on THEN
         DIM k AS INTEGER
         FOR k = 0 TO 5
-            DIM lx AS DOUBLE = 120
-            IF k >= 3 THEN lx = 1800
-            DIM tx AS DOUBLE = 960 + 820 * SIN(cyc * TWO_PI / 4 + k * 1.1)
+            DIM lx AS DOUBLE = SW * 0.0625
+            IF k >= 3 THEN lx = SW * 0.9375
+            DIM tx AS DOUBLE = MID_X + SW * 0.427 * SIN(cyc * TWO_PI / 4 + k * 1.1)
             DIM lh AS DOUBLE = k * 1.05 + cyc
             NEON lx, -10, tx, FLOOR_Y + 120, 0, 120 + 120 * SIN(lh), 120 + 120 * SIN(lh + 2.1), 120 + 120 * SIN(lh + 4.2)
         NEXT k
     ENDIF
 
-    DANCER 760, FALSE, cyc, 60, 210, 255
-    DANCER 1160, TRUE, cyc, 255, 90, 200
+    IF tiktok THEN
+        DANCER MID_X, TRUE, cyc, 255, 90, 200
+    ELSE
+        DANCER 760, FALSE, cyc, 60, 210, 255
+        DANCER 1160, TRUE, cyc, 255, 90, 200
+    ENDIF
 
     ' particles; confetti and sparks fall, hearts float
     p_x = p_x + p_vx * dt
@@ -771,27 +1009,31 @@ SUB FRAME()
     FOR i = 0 TO N_PART - 1
         IF p_kind[i] = 1 ANDALSO p_life[i] > 0 THEN
             DIM hl AS DOUBLE = CLAMP01(p_life[i] / 2)
-            FILL_HEART p_x[i], p_y[i], 14, INT(255 * hl), INT(60 * hl), INT(140 * hl)
+            FILL_HEART p_x[i], p_y[i], 14 * DS, INT(255 * hl), INT(60 * hl), INT(140 * hl)
         ENDIF
     NEXT i
 
     ' white flashes: crash, clap, the end of a riser
     IF flash > 0.01 THEN
-        DIM fw AS INTEGER = INT(255 * CLAMP01(flash))
+        DIM fw AS INTEGER = INT(255 * CLAMP01(flash) * FLASH_MAX)
         DRAWCOLOR fw, fw, fw
         RECT 0, 0, SW, SH, TRUE
     ENDIF
     flash = flash * 0.86
 
-    DRAW_MODS cyc
-    DRAW_CONSOLE cyc
+    IF tiktok THEN
+        DRAW_TIKTOK cyc
+    ELSE
+        DRAW_MODS cyc
+        DRAW_CONSOLE cyc
+    ENDIF
 
     ' the section title, fading over two bars
     DIM ta AS DOUBLE = 1 - CLAMP01((cyc - section_bar) / 2)
-    IF ta > 0 ANDALSO sec_name$ <> "" THEN
+    IF ta > 0 ANDALSO sec_name$ <> "" ANDALSO NOT tiktok THEN
         IF font$ <> "" THEN SETFONT font$, 44
         DIM tsz = GFX.TEXTSIZE(sec_name$)
-        TEXT 960 - tsz[0] / 2, 440, sec_name$, INT(255 * ta), INT(230 * ta), INT(255 * ta)
+        TEXT MID_X - tsz[0] / 2, 440, sec_name$, INT(255 * ta), INT(230 * ta), INT(255 * ta)
         IF font$ <> "" THEN SETFONT font$, 17
     ENDIF
     IF intro_left >= 0 THEN DRAW_INTRO
@@ -840,7 +1082,27 @@ SUB OPEN_SHOW()
         IF cli[ai] = "--shots" ANDALSO ai + 1 < LEN(cli) THEN shots$ = cli[ai + 1]
         IF cli[ai] = "--render" ANDALSO ai + 1 < LEN(cli) THEN render_dir$ = cli[ai + 1]
         IF cli[ai] = "--display" ANDALSO ai + 1 < LEN(cli) THEN GFX.DISPLAY CINT(VAL(cli[ai + 1]))
+        IF cli[ai] = "--tiktok" THEN tiktok = TRUE
     NEXT ai
+    IF tiktok THEN
+        SW = 1080
+        SH = 1920
+        MID_X = 540
+        HORIZON = 1150
+        FLOOR_Y = 1560
+        DS = 2.05
+        SCOPE_W = SW - 80
+        SCOPE_Y = 340
+        SCOPE_AMP = 110
+        BUS_GAP = 150
+        BUS_AMP = 130
+        FLASH_MAX = 0.55
+        SUN_SCALE = 0.68
+        BAND_DX = 7
+        BAND_W = 5
+        star_x = RND(160) * SW
+        star_y = RND(160) * (HORIZON - 60)
+    ENDIF
     IF shots$ <> "" THEN windowed = TRUE
     ' the browser shows the canvas inside the page; fullscreen needs a gesture
     IF OS.GETOS$() = "WEB" THEN windowed = TRUE
@@ -879,10 +1141,47 @@ SUB OPEN_SHOW()
 ENDSUB
 
 ' Opens the window and plays the queued score to its last bar
+' The clip a TikTok render keeps: a bar of run-up, then the first drop for
+' as many whole four-bar phrases as fit into TT_MAX_SECONDS
+SUB TT_CLIP()
+    DIM drop_bar AS DOUBLE = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO SCORE.SECTIONS() - 1
+        IF drop_bar < 0 ANDALSO LEFT$(SCORE.SECTION_NAME$(i), 4) = "drop" THEN drop_bar = SCORE.SECTION_BAR(i)
+    NEXT i
+    FOR i = 0 TO SCORE.SECTIONS() - 1
+        IF drop_bar < 0 ANDALSO SCORE.SECTION_MOOD$(i) = "jump" THEN drop_bar = SCORE.SECTION_BAR(i)
+    NEXT i
+    IF drop_bar < 1 THEN drop_bar = 8
+    DIM bars_fit AS DOUBLE = TT_MAX_SECONDS * SCORE.BPM_OF() / 240 - 1
+    DIM body AS DOUBLE = 4 * INT(bars_fit / 4)
+    IF body < 4 THEN body = 4
+    clip_from = drop_bar - 1
+    clip_to = drop_bar + body
+    IF clip_to > SCORE.END_BAR() THEN clip_to = SCORE.END_BAR()
+    ' each song starts at another move of the list
+    DIM spin AS INTEGER = INT(drop_bar * 7 + SCORE.BPM_OF())
+    tt_offset = spin - LEN(TT_MOVES$) * INT(spin / LEN(TT_MOVES$))
+ENDSUB
+
 EXPORT SUB RUN(name$)
     title$ = name$
     OPEN_SHOW
-    IF render_dir$ <> "" THEN
+    IF tiktok THEN TT_CLIP
+    IF render_dir$ <> "" ANDALSO tiktok THEN
+        ' the song up to the clip is mixed but not filmed
+        DO WHILE SOUND.CYCLE() < clip_from
+            DIM skipped = SOUND.RENDER(4410)
+        LOOP
+        SOUND.RECORD render_dir$ + "/audio.wav"
+        DIM tslice AS INTEGER = INT(44100 / RENDER_FPS)
+        DO WHILE SOUND.CYCLE() < clip_to
+            FRAME
+            DIM trendered = SOUND.RENDER(tslice)
+        LOOP
+        SOUND.RECORD
+        PRINT "rendered "; frame_no; " frames, avg "; INT(frame_ms_sum / n_frames); " ms, bars "; clip_from; " to "; clip_to
+    ELSEIF render_dir$ <> "" THEN
         ' the mixer runs offline: each frame draws, then renders its
         ' slice of audio into the WAV the video gets
         DIM f AS INTEGER

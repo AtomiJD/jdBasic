@@ -1,0 +1,99 @@
+' tiktok.jdb - TikTok clips for the series "When Kaiku Dreams Techno":
+' songgen writes a track from a genre and a seed, and the show renders it
+' in portrait (stage.jdb --tiktok) with the girl dancing a new move every
+' two bars, from a bar before the first drop for at most 30 seconds.
+'
+'   jdBasic tiktok.jdb                    every clip in CLIPS below
+'   jdBasic tiktok.jdb house 7            one, from a genre and a seed
+'
+' Per clip: the frames and the WAV go into raw/<base>_frames, ffmpeg
+' muxes final/tiktok/<base>.mp4 (1080x1920, 30 fps), the frames are
+' deleted again, and final/tiktok/<base>.txt holds a caption to paste.
+
+OPTION "EXPLICIT"
+
+DIM JDB$ AS STRING = "..\..\build\jdBasic.exe"
+DIM SONGGEN$ AS STRING = "..\demos\sound\songgen.jdb"
+DIM FPS AS INTEGER = 30
+DIM OUT_DIR$ AS STRING = "final\tiktok"
+DIM TAGS$ AS STRING = "#techno #electronicmusic #generativemusic #aimusic #creativecoding #dance #neon #synthwave #kaiku #jdbasic"
+
+' genre, seed
+DIM CLIPS$ = ["trance", "42", "house", "7", "synthwave", "3", "deep", "11", "acid", "5"]
+
+SUB CLEAN_FRAMES(dir$)
+    IF FILE.EXISTS(dir$) THEN
+        DIM names = DIR$(dir$)
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(names) - 1
+            DIM nm$ AS STRING = names[i]
+            IF ENDSWITH(nm$, ".jpg") ORELSE nm$ = "audio.wav" THEN KILL dir$ + "\" + nm$
+        NEXT i
+        RMDIR dir$
+    ENDIF
+ENDSUB
+
+' The text between the first pair of quotes in s$, "" when there is none
+FUNC QUOTED$(s$) AS STRING
+    DIM q$ AS STRING = CHR$(34)
+    DIM a AS INTEGER = INSTR(s$, q$)
+    IF a < 0 THEN RETURN ""
+    DIM rest$ AS STRING = MID$(s$, a + 1, LEN(s$))
+    DIM b AS INTEGER = INSTR(rest$, q$)
+    IF b < 0 THEN RETURN ""
+    RETURN LEFT$(rest$, b)
+ENDFUNC
+
+FUNC MAKE_CLIP(genre$, seed$) AS INTEGER
+    DIM base$ AS STRING = "kaiku_tt_" + genre$ + "_" + seed$
+    DIM frames$ AS STRING = "raw\" + base$ + "_frames"
+    DIM out$ AS STRING = OUT_DIR$ + "\" + base$ + ".mp4"
+    PRINT "== "; base$
+    CLEAN_FRAMES frames$
+    MKDIR frames$
+    MKDIR OUT_DIR$
+
+    DIM t0 AS DOUBLE = TICK()
+    DIM r = OS.EXEC(JDB$, [SONGGEN$, "--genre", genre$, "--seed", seed$, "--render", frames$, "--tiktok"])
+    DIM run_log$ AS STRING = r{"OUTPUT"}
+    DIM p AS INTEGER = INSTR(run_log$, "rendered ")
+    IF p < 0 THEN
+        PRINT "   render failed:"
+        PRINT run_log$
+        RETURN FALSE
+    ENDIF
+    DIM song$ AS STRING = QUOTED$(run_log$)
+    DIM n_frames AS INTEGER = VAL(MID$(run_log$, p + 9, 8))
+    DIM secs AS DOUBLE = n_frames / FPS
+    PRINT "   "; song$; ": "; n_frames; " frames ("; INT(secs * 10) / 10; " s) in "; INT((TICK() - t0) / 1000); " s"
+
+    DIM vfilter$ AS STRING = "[0:v]fade=t=in:st=0:d=0.3,fade=t=out:st=" + STR$(secs - 0.8) + ":d=0.8[v]"
+    DIM afilter$ AS STRING = "[1:a]afade=t=in:st=0:d=0.05,afade=t=out:st=" + STR$(secs - 1.2) + ":d=1.2[a]"
+    DIM ff = OS.EXEC("ffmpeg", ["-y", "-loglevel", "error", "-framerate", STR$(FPS), "-i", frames$ + "\f%05d.jpg", "-i", frames$ + "\audio.wav", "-filter_complex", vfilter$ + ";" + afilter$, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-t", STR$(secs), "-movflags", "+faststart", out$])
+    IF ff{"EXIT_CODE"} <> 0 ORELSE NOT FILE.EXISTS(out$) THEN
+        PRINT "   ffmpeg failed:"
+        PRINT ff{"OUTPUT"}
+        RETURN FALSE
+    ENDIF
+    CLEAN_FRAMES frames$
+
+    DIM genre_name$ AS STRING = UCASE$(LEFT$(genre$, 1)) + MID$(genre$, 1, LEN(genre$))
+    DIM caption$ AS STRING = song$ + " - " + genre_name$ + " | When Kaiku Dreams Techno" + CHR$(10)
+    caption$ = caption$ + "Every sound and every move is code: an AI writes the track, she dances to it." + CHR$(10)
+    caption$ = caption$ + TAGS$ + " #" + genre$ + CHR$(10)
+    TXTWRITER OUT_DIR$ + "\" + base$ + ".txt", caption$
+    PRINT "   -> "; out$; "  ("; INT((TICK() - t0) / 1000); " s total)"
+    RETURN TRUE
+ENDFUNC
+
+DIM cli = OS.ARGS()
+DIM made AS INTEGER = 0
+IF LEN(cli) > 2 THEN
+    IF MAKE_CLIP(LCASE$(cli[1]), cli[2]) THEN made = 1
+ELSE
+    DIM ci AS INTEGER
+    FOR ci = 0 TO LEN(CLIPS$) - 1 STEP 2
+        IF MAKE_CLIP(CLIPS$[ci], CLIPS$[ci + 1]) THEN made = made + 1
+    NEXT ci
+ENDIF
+PRINT made; " clip(s) made"
