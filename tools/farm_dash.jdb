@@ -137,10 +137,50 @@ FUNC ONLINE(h$)
     RETURN TICK() - seen{h$} < STALE_MS
 ENDFUNC
 
+' A machine of tools/nas_agent.jdb: it reports, but neither syncs nor builds
+FUNC IS_NAS(h$)
+    DIM s = machines{h$}
+    IF TYPEOF(s) = "NONE" THEN RETURN FALSE
+    RETURN TYPEOF(s{"KIND"}) = "STRING" ANDALSO s{"KIND"} = "nas"
+ENDFUNC
+
+FUNC BUILDER(h$)
+    RETURN ONLINE(h$) ANDALSO NOT IS_NAS(h$)
+ENDFUNC
+
+' The NAS's volumes added up: [total, free]
+FUNC VOLUME_SUM(s)
+    DIM vols = s{"VOLUMES"}
+    IF LEN(vols) = 0 THEN RETURN [0, 0]
+    RETURN [SUM(SELECT(LAMBDA v -> v{"TOTAL"}, vols)), SUM(SELECT(LAMBDA v -> v{"FREE"}, vols))]
+ENDFUNC
+
+' One line per volume, "volume1  2.1 of 7.3 TB free"
+FUNC VOLUME_LINES$(s) AS STRING
+    DIM out$ AS STRING = ""
+    DIM vols = s{"VOLUMES"}
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(vols) - 1
+        DIM v = vols[i]
+        IF i > 0 THEN out$ = out$ + CHR$(10)
+        out$ = out$ + v{"NAME"} + "  " + GB$(v{"FREE"}) + " of " + GB$(v{"TOTAL"}) + " GB free"
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC UPTIME$(secs) AS STRING
+    IF secs >= 86400 THEN RETURN STR$(INT(secs / 86400)) + " d"
+    RETURN STR$(INT(secs / 3600)) + " h"
+ENDFUNC
+
 ' One line per machine for the terminal
 FUNC ROW$(h$) AS STRING
     DIM s = machines{h$}
     IF NOT ONLINE(h$) THEN RETURN PAD$(h$, 16) + " offline"
+    IF IS_NAS(h$) THEN
+        DIM vs = VOLUME_SUM(s)
+        RETURN PAD$(h$, 16) + " " + PAD$("NAS", 8) + PAD$("up " + UPTIME$(s{"HOST_UPTIME"}), 22) + FORMAT$("{:>5.0f}%", s{"CPU"}) + "  " + PAD$(GB$(s{"MEM_TOTAL"} - s{"MEM_FREE"}) + "/" + GB$(s{"MEM_TOTAL"}) + " GB", 16) + PAD$(GB$(vs[1]) + "/" + GB$(vs[0]) + " GB", 20) + IIF(s{"TEMP"} > 0, FORMAT$("{:.0f}C", s{"TEMP"}), "-")
+    ENDIF
     DIM head$ AS STRING = s{"HEAD"} + IIF(s{"DIRTY"} > 0, "*", "") + IIF(s{"HEAD"} = ref_head$, "", " (differs)")
     DIM busy$ AS STRING = IIF(s{"BUSY"} = "", "-", s{"BUSY"} + " " + STR$(s{"BUSY_SECONDS"}) + "s")
     DIM last = s{"LAST"}
@@ -200,7 +240,7 @@ ENDIF
 IF mode$ = "do" THEN
     GATHER(6000)
     DIM pick = targets
-    IF LEN(pick) = 0 ORELSE pick[0] = "all" THEN pick = FILTER(LAMBDA h -> ONLINE(h), hosts)
+    IF LEN(pick) = 0 ORELSE pick[0] = "all" THEN pick = FILTER(LAMBDA h -> BUILDER(h), hosts)
     DIM bad AS INTEGER = 0
     DIM started = []
     DIM j AS INTEGER
@@ -263,7 +303,7 @@ SUB ASK_ALL(act$)
     DIM n AS INTEGER = 0
     DIM i AS INTEGER
     FOR i = 0 TO LEN(hosts) - 1
-        IF ONLINE(hosts[i]) THEN
+        IF BUILDER(hosts[i]) THEN
             DIM ch = NODE.CALL_ASYNC("farmagent-" + hosts[i], act$, 0)
             n = n + 1
         ENDIF
@@ -275,6 +315,35 @@ DIM green = [90, 215, 115, 255]
 DIM red = [240, 100, 90, 255]
 DIM amber = [240, 190, 80, 255]
 DIM text_col AS INTEGER = GUI.COL("Text")
+
+' The row of a NAS after its name: the volumes in place of HEAD and disk,
+' the CPU temperature in place of the GPU
+SUB NAS_CELLS(s)
+    GUI.TABLE_NEXT_COLUMN
+    GUI.TEXT "NAS"
+    GUI.TABLE_NEXT_COLUMN
+    GUI.TEXT "up " + UPTIME$(s{"HOST_UPTIME"})
+    GUI.TABLE_NEXT_COLUMN
+    GUI.TEXT REPLACE$(s{"VERSION"}, "jdBasic ", "")
+    GUI.TOOLTIP s{"FEATURES"}
+    GUI.TABLE_NEXT_COLUMN
+    GUI.PROGRESS s{"CPU"} / 100, FORMAT$("{:.0f}%", s{"CPU"})
+    GUI.TABLE_NEXT_COLUMN
+    DIM used = s{"MEM_TOTAL"} - s{"MEM_FREE"}
+    GUI.PROGRESS used / s{"MEM_TOTAL"}, GB$(used) + " / " + GB$(s{"MEM_TOTAL"}) + " GB"
+    GUI.TABLE_NEXT_COLUMN
+    DIM vs = VOLUME_SUM(s)
+    IF vs[0] > 0 THEN
+        GUI.PROGRESS (vs[0] - vs[1]) / vs[0], GB$(vs[1]) + " GB free"
+        GUI.TOOLTIP VOLUME_LINES$(s)
+    ELSE
+        GUI.TEXT "no volume"
+    ENDIF
+    GUI.TABLE_NEXT_COLUMN
+    GUI.TEXT IIF(s{"TEMP"} > 0, FORMAT$("{:.0f} C", s{"TEMP"}), "-")
+    GUI.TABLE_NEXT_COLUMN
+    GUI.TEXT "-"
+ENDSUB
 
 DO WHILE running
     TAKE_STATS()
@@ -312,6 +381,11 @@ DO WHILE running
                 GUI.PUSH_STYLE_COLOR text_col, IIF(up, green, red)
                 IF GUI.SELECTABLE(h$ + IIF(up, "", " (offline)"), selected$ = h$) THEN selected$ = h$
                 GUI.POP_STYLE_COLOR
+                IF IS_NAS(h$) THEN
+                    NAS_CELLS(s)
+                    GUI.POP_ID
+                    CONTINUEFOR
+                ENDIF
                 GUI.TABLE_NEXT_COLUMN
                 GUI.TEXT s{"OS"}
                 GUI.TABLE_NEXT_COLUMN
@@ -363,7 +437,7 @@ DO WHILE running
             GUI.TEXT "no machine"
         ELSE
             GUI.TEXT selected$
-            IF ONLINE(selected$) THEN
+            IF BUILDER(selected$) THEN
                 DIM why$ AS STRING = ""
                 GUI.SAME_LINE
                 IF GUI.BUTTON("Sync") THEN why$ = ASK$(selected$, "SYNC")

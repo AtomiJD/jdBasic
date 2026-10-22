@@ -1,0 +1,5 @@
+*
+!build.sh
+!libs/eigen
+!src
+!tools/nas_agent.jdb

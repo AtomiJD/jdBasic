@@ -1,0 +1,15 @@
+# The NAS agent of the build farm. Import the image (docker load, or the
+# NAS's image import), set the key and the name, mount each volume read-only
+# under /vol, and start the project.
+services:
+  nas-agent:
+    image: jdbasic-nas-agent
+    container_name: jdbasic-nas-agent
+    restart: unless-stopped
+    # the Node Bus finds its peers by multicast and broadcast
+    network_mode: host
+    environment:
+      JDB_NODE_KEY: "the lan key from ~/.jdbasic/node.key"
+      FARM_HOST: "nas01"
+    volumes:
+      - /volume1:/vol/volume1:ro

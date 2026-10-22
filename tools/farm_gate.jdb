@@ -110,6 +110,13 @@ FUNC ONLINE(h$)
     RETURN TICK() - seen{h$} < STALE_MS
 ENDFUNC
 
+' An online machine that runs the gate; a NAS of tools/nas_agent.jdb does not
+FUNC BUILDER(h$)
+    IF NOT ONLINE(h$) THEN RETURN FALSE
+    DIM s = machines{h$}
+    RETURN NOT (TYPEOF(s{"KIND"}) = "STRING" ANDALSO s{"KIND"} = "nas")
+ENDFUNC
+
 ' Lan machines announce themselves once a second: listen 2.5 s at least
 DIM t_listen AS DOUBLE = TICK() + 2500
 DIM t_give_up AS DOUBLE = TICK() + 6000
@@ -120,7 +127,7 @@ DO WHILE TICK() < t_give_up
 LOOP
 
 DIM pick = targets
-IF LEN(pick) = 0 THEN pick = FILTER(LAMBDA h -> ONLINE(h), hosts)
+IF LEN(pick) = 0 THEN pick = FILTER(LAMBDA h -> BUILDER(h), hosts)
 IF LEN(pick) = 0 THEN
     PRINT "farm_gate: no farm agent answered"
     END 1

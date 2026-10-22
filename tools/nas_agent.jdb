@@ -1,0 +1,131 @@
+' nas_agent.jdb - a NAS on the Node Bus, for tools/farm_dash.jdb.
+'
+'   jdBasic tools/nas_agent.jdb
+'
+' The headless twin of tools/farm_agent.jdb for a machine that does not
+' build: it joins the lan scope as "farmagent-<host>" with the key from
+' JDB_NODE_KEY (or ~/.jdbasic/node.key) and every 2 seconds publishes
+' farm/<host>/stats (retained) with KIND "nas": load, memory, the CPU
+' temperature, the machine's uptime and every volume mounted under
+' NAS_VOLUMES (default /vol) with its size and free space. FARM_HOST names
+' the machine when the hostname is not the name it should show. It serves
+' STATUS and nothing else. tools/docker/nas_agent runs it in a container.
+
+OPTION "EXPLICIT"
+
+DIM STATS_MS AS INTEGER = 2000
+DIM SLOW_MS AS INTEGER = 30000
+
+FUNC ENV_OR$(name$, fallback$) AS STRING
+    DIM v$ AS STRING = GETENV$(name$)
+    IF v$ = "" THEN RETURN fallback$
+    RETURN v$
+ENDFUNC
+
+FUNC NODE_KEY$() AS STRING
+    DIM k$ AS STRING = GETENV$("JDB_NODE_KEY")
+    IF k$ <> "" THEN RETURN k$
+    DIM path$ AS STRING = GETENV$("HOME") + "/.jdbasic/node.key"
+    IF NOT FILE.EXISTS(path$) THEN RETURN ""
+    RETURN TRIM$(TXTREADER$(path$))
+ENDFUNC
+
+' A command's output through sh, "" when it failed
+FUNC SH$(cmd$) AS STRING
+    DIM r = OS.EXEC("sh", ["-c", cmd$])
+    IF r{"EXIT_CODE"} <> 0 THEN RETURN ""
+    RETURN REPLACE$(r{"OUTPUT"}, CHR$(13), "")
+ENDFUNC
+
+FUNC LINES(text$)
+    DIM rows = SPLIT(TRIM$(text$), CHR$(10))
+    RETURN FILTER(LAMBDA r -> TRIM$(r) <> "", rows)
+ENDFUNC
+
+DIM host$ AS STRING = LCASE$(ENV_OR$("FARM_HOST", OS.HOSTNAME$()))
+IF INSTR(host$, ".") >= 0 THEN host$ = LEFT$(host$, INSTR(host$, "."))
+DIM vol_root$ AS STRING = ENV_OR$("NAS_VOLUMES", "/vol")
+
+DIM key$ AS STRING = NODE_KEY$()
+IF key$ = "" THEN
+    PRINT "nas_agent: no key - set JDB_NODE_KEY"
+    END 1
+ENDIF
+
+' Every mount point under vol_root$ with its size and free bytes
+FUNC VOLUMES(root$)
+    DIM out = []
+    DIM rows = LINES(SH$("df -P -B1 " + root$ + "/* 2>/dev/null; true"))
+    DIM i AS INTEGER
+    FOR i = 1 TO LEN(rows) - 1
+        DIM f = FILTER(LAMBDA c -> c <> "", SPLIT(rows[i], " "))
+        IF LEN(f) < 6 THEN CONTINUEFOR
+        DIM mount$ AS STRING = f[LEN(f) - 1]
+        DIM name$ AS STRING = REPLACE$(mount$, root$ + "/", "")
+        out = APPEND(out, {"NAME": name$, "TOTAL": VAL(f[1]), "FREE": VAL(f[3])})
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The hottest thermal zone in degrees C, 0 when the machine reports none
+FUNC CPU_TEMP() AS DOUBLE
+    DIM rows = LINES(SH$("cat /sys/class/thermal/thermal_zone*/temp /sys/class/hwmon/hwmon*/temp1_input 2>/dev/null; true"))
+    IF LEN(rows) = 0 THEN RETURN 0
+    RETURN MAX(SELECT(LAMBDA r -> VAL(r), rows)) / 1000
+ENDFUNC
+
+FUNC HOST_UPTIME() AS INTEGER
+    IF NOT FILE.EXISTS("/proc/uptime") THEN RETURN 0
+    DIM f = SPLIT(TXTREADER$("/proc/uptime"), " ")
+    RETURN INT(VAL(f[0]))
+ENDFUNC
+
+DIM version$ AS STRING = ""
+DIM features$ AS STRING = ""
+DIM vrows = LINES(SH$("'" + OS.SELF$() + "' --version"))
+DIM vi AS INTEGER
+FOR vi = 0 TO LEN(vrows) - 1
+    DIM vr$ AS STRING = TRIM$(vrows[vi])
+    IF STARTSWITH(vr$, "Features:") THEN
+        features$ = TRIM$(MID$(vr$, 9, LEN(vr$)))
+    ELSEIF version$ = "" THEN
+        version$ = vr$
+    ENDIF
+NEXT vi
+
+DIM agent_node = NODE.JOIN("farmagent-" + host$, "lan", key$)
+DIM stats_pub = TOPIC.OPEN("farm/" + host$ + "/stats")
+TOPIC.RETAIN stats_pub, TRUE
+
+DIM volumes = []
+DIM temp AS DOUBLE = 0
+DIM t_slow AS DOUBLE = -SLOW_MS
+DIM t_start AS DOUBLE = TICK()
+
+FUNC STATS()
+    DIM mem = SYS.MEMORY()
+    DIM free_sum = 0
+    IF LEN(volumes) > 0 THEN free_sum = SUM(SELECT(LAMBDA v -> v{"FREE"}, volumes))
+    RETURN {"HOST": host$, "KIND": "nas", "OS": OS.GETOS(), "ADDR": NODE.NAME$(), "PID": OS.PID(), "CPU": OS.LOAD(), "MEM_TOTAL": mem{"TOTAL"}, "MEM_FREE": mem{"FREE"}, "DISK_FREE": free_sum, "VOLUMES": volumes, "TEMP": temp, "HOST_UPTIME": HOST_UPTIME(), "HEAD": "", "BRANCH": "", "DIRTY": 0, "VERSION": version$, "FEATURES": features$, "GPU": "", "BUSY": "", "BUSY_SECONDS": 0, "LAST": {"ACTION": "", "OK": TRUE, "EXIT": 0, "SECONDS": 0, "ENDED": ""}, "UPTIME": INT((TICK() - t_start) / 1000), "T": NODE.TIME()}
+ENDFUNC
+
+FUNC H_STATUS(c)
+    RETURN STATS()
+ENDFUNC
+
+NODE.SERVE "STATUS", "H_STATUS"
+
+PRINT "nas_agent "; NODE.NAME$(); " - "; version$; " - volumes under "; vol_root$
+DIM t_stats AS DOUBLE = 0
+DO
+    DIM ran = NODE.POLL(200)
+    IF TICK() - t_slow >= SLOW_MS THEN
+        volumes = VOLUMES(vol_root$)
+        temp = CPU_TEMP()
+        t_slow = TICK()
+    ENDIF
+    IF TICK() - t_stats >= STATS_MS THEN
+        CHAN.SEND stats_pub, STATS()
+        t_stats = TICK()
+    ENDIF
+LOOP
