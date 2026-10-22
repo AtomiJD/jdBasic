@@ -587,7 +587,7 @@ void register_gui_builtins(VM& vm) {
     vm.register_native("GUI.TOOLTIP", 1, 1, [](const std::vector<Value>& args) -> Value {
         ensure_imgui("GUI.TOOLTIP");
         std::string text = args[0].as_string()->data;
-        ImGui::SetTooltip("%s", text.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", text.c_str());
         return Value::make_none();
     });
 
