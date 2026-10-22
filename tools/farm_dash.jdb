@@ -10,6 +10,8 @@
 ' (online, HEAD against this repo's HEAD, build, load, memory, disk, GPU,
 ' the running and the last action), buttons for SYNC, BUILD, RESTART and
 ' CANCEL per machine and for all, and the log of the selected machine.
+' tools/nas_agent.jdb and tools/pihole_agent.jdb report a NAS and a Pi-hole
+' in the same table, with their own columns and without the actions.
 ' --once exits 1 when no agent answers; --do exits 1 when an action failed
 ' or a machine was not reached.
 
@@ -137,15 +139,28 @@ FUNC ONLINE(h$)
     RETURN TICK() - seen{h$} < STALE_MS
 ENDFUNC
 
-' A machine of tools/nas_agent.jdb: it reports, but neither syncs nor builds
-FUNC IS_NAS(h$)
+' What a reporting machine is: "" for a build machine of tools/farm_agent.jdb,
+' "nas" for tools/nas_agent.jdb, "pihole" for tools/pihole_agent.jdb
+FUNC KIND$(h$) AS STRING
     DIM s = machines{h$}
-    IF TYPEOF(s) = "NONE" THEN RETURN FALSE
-    RETURN TYPEOF(s{"KIND"}) = "STRING" ANDALSO s{"KIND"} = "nas"
+    IF TYPEOF(s) = "NONE" THEN RETURN ""
+    IF TYPEOF(s{"KIND"}) <> "STRING" THEN RETURN ""
+    RETURN s{"KIND"}
 ENDFUNC
 
+FUNC IS_NAS(h$)
+    RETURN KIND$(h$) = "nas"
+ENDFUNC
+
+' Only build machines sync, build and restart
 FUNC BUILDER(h$)
-    RETURN ONLINE(h$) ANDALSO NOT IS_NAS(h$)
+    RETURN ONLINE(h$) ANDALSO KIND$(h$) = ""
+ENDFUNC
+
+' A Pi-hole's state: "enabled", "disabled" or "unreachable"
+FUNC PIHOLE_STATE$(s) AS STRING
+    IF NOT s{"REACHABLE"} THEN RETURN "unreachable"
+    RETURN s{"STATUS"}
 ENDFUNC
 
 ' The NAS's volumes added up: [total, free]
@@ -180,6 +195,10 @@ FUNC ROW$(h$) AS STRING
     IF IS_NAS(h$) THEN
         DIM vs = VOLUME_SUM(s)
         RETURN PAD$(h$, 16) + " " + PAD$("NAS", 8) + PAD$("up " + UPTIME$(s{"HOST_UPTIME"}), 22) + FORMAT$("{:>5.0f}%", s{"CPU"}) + "  " + PAD$(GB$(s{"MEM_TOTAL"} - s{"MEM_FREE"}) + "/" + GB$(s{"MEM_TOTAL"}) + " GB", 16) + PAD$(GB$(vs[1]) + "/" + GB$(vs[0]) + " GB", 20) + IIF(s{"TEMP"} > 0, FORMAT$("{:.0f}C", s{"TEMP"}), "-")
+    ENDIF
+    IF KIND$(h$) = "pihole" THEN
+        DIM upd$ AS STRING = IIF(s{"UPDATE"} = "", "", "  update " + s{"UPDATE"})
+        RETURN PAD$(h$, 16) + " " + PAD$("PIHOLE", 8) + PAD$(PIHOLE_STATE$(s), 22) + FORMAT$("{:>5.1f}%", s{"BLOCKED_PCT"}) + " blocked, " + STR$(s{"BLOCKED"}) + " of " + STR$(s{"QUERIES"}) + " queries, " + STR$(s{"CLIENTS"}) + " clients, lists " + STR$(s{"GRAVITY_DAYS"}) + " d" + upd$
     ENDIF
     DIM head$ AS STRING = s{"HEAD"} + IIF(s{"DIRTY"} > 0, "*", "") + IIF(s{"HEAD"} = ref_head$, "", " (differs)")
     DIM busy$ AS STRING = IIF(s{"BUSY"} = "", "-", s{"BUSY"} + " " + STR$(s{"BUSY_SECONDS"}) + "s")
@@ -345,6 +364,40 @@ SUB NAS_CELLS(s)
     GUI.TEXT "-"
 ENDSUB
 
+' The row of a Pi-hole after its name: blocking state, the share of blocked
+' queries, the day's queries, the blocklist, the clients and an update
+SUB PIHOLE_CELLS(s)
+    DIM state$ AS STRING = PIHOLE_STATE$(s)
+    GUI.TABLE_NEXT_COLUMN
+    GUI.TEXT "Pi-hole"
+    GUI.TOOLTIP s{"ADDR"}
+    GUI.TABLE_NEXT_COLUMN
+    GUI.PUSH_STYLE_COLOR text_col, IIF(state$ = "enabled", green, red)
+    GUI.TEXT state$
+    GUI.POP_STYLE_COLOR
+    GUI.TABLE_NEXT_COLUMN
+    GUI.TEXT s{"VERSION"}
+    GUI.TOOLTIP s{"VERSIONS"}
+    GUI.TABLE_NEXT_COLUMN
+    GUI.PROGRESS s{"BLOCKED_PCT"} / 100, FORMAT$("{:.1f}% blocked", s{"BLOCKED_PCT"})
+    GUI.TOOLTIP STR$(s{"BLOCKED"}) + " of " + STR$(s{"QUERIES"}) + " queries blocked today"
+    GUI.TABLE_NEXT_COLUMN
+    GUI.TEXT STR$(s{"QUERIES"}) + " queries"
+    GUI.TABLE_NEXT_COLUMN
+    GUI.TEXT STR$(s{"DOMAINS"}) + " domains"
+    GUI.TOOLTIP "blocklist updated " + STR$(s{"GRAVITY_DAYS"}) + " d ago"
+    GUI.TABLE_NEXT_COLUMN
+    GUI.TEXT STR$(s{"CLIENTS"}) + " clients"
+    GUI.TABLE_NEXT_COLUMN
+    IF s{"UPDATE"} <> "" THEN
+        GUI.PUSH_STYLE_COLOR text_col, amber
+        GUI.TEXT "update " + s{"UPDATE"}
+        GUI.POP_STYLE_COLOR
+    ELSE
+        GUI.TEXT "-"
+    ENDIF
+ENDSUB
+
 DO WHILE running
     TAKE_STATS()
     TAKE_LOGS(FALSE)
@@ -383,6 +436,11 @@ DO WHILE running
                 GUI.POP_STYLE_COLOR
                 IF IS_NAS(h$) THEN
                     NAS_CELLS(s)
+                    GUI.POP_ID
+                    CONTINUEFOR
+                ENDIF
+                IF KIND$(h$) = "pihole" THEN
+                    PIHOLE_CELLS(s)
                     GUI.POP_ID
                     CONTINUEFOR
                 ENDIF

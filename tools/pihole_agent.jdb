@@ -1,0 +1,125 @@
+' pihole_agent.jdb - a Pi-hole on the Node Bus, for tools/farm_dash.jdb.
+'
+'   jdBasic tools/pihole_agent.jdb [address]
+'
+' Runs on any machine of the farm, not on the Pi-hole: it reads the Pi-hole's
+' web API (v5, /admin/api.php, which answers the summary without a login)
+' at the address given, PIHOLE_ADDR or 192.168.0.201, and publishes
+' farm/<name>/stats (retained) with KIND "pihole" every 2 seconds: whether
+' blocking is on, the queries and blocked queries of the day, the clients,
+' the blocklist's size and age and the versions. PIHOLE_NAME names the row
+' (default "pihole"). The key comes from JDB_NODE_KEY or ~/.jdbasic/node.key.
+
+OPTION "EXPLICIT"
+
+DIM STATS_MS AS INTEGER = 2000
+DIM POLL_MS AS INTEGER = 10000
+DIM VERSION_MS AS INTEGER = 600000
+
+FUNC ENV_OR$(name$, fallback$) AS STRING
+    DIM v$ AS STRING = GETENV$(name$)
+    IF v$ = "" THEN RETURN fallback$
+    RETURN v$
+ENDFUNC
+
+FUNC NODE_KEY$() AS STRING
+    DIM k$ AS STRING = GETENV$("JDB_NODE_KEY")
+    IF k$ <> "" THEN RETURN k$
+    DIM home$ AS STRING = GETENV$("HOME")
+    IF home$ = "" THEN home$ = GETENV$("USERPROFILE")
+    DIM path$ AS STRING = home$ + "/.jdbasic/node.key"
+    IF NOT FILE.EXISTS(path$) THEN RETURN ""
+    RETURN TRIM$(TXTREADER$(path$))
+ENDFUNC
+
+DIM cli = OS.ARGS()
+DIM addr$ AS STRING = ENV_OR$("PIHOLE_ADDR", "192.168.0.201")
+IF LEN(cli) > 1 THEN addr$ = cli[1]
+DIM name$ AS STRING = LCASE$(ENV_OR$("PIHOLE_NAME", "pihole"))
+DIM api$ AS STRING = "http://" + addr$ + "/admin/api.php"
+
+DIM key$ AS STRING = NODE_KEY$()
+IF key$ = "" THEN
+    PRINT "pihole_agent: no key - set JDB_NODE_KEY or write it to ~/.jdbasic/node.key"
+    END 1
+ENDIF
+
+' The API's answer at url$ as a map, NONE when the Pi-hole did not answer
+FUNC ASK_API(url$)
+    DIM body$ AS STRING = ""
+    TRY
+        body$ = HTTP.GET$(url$)
+    CATCH
+        RETURN NONE
+    ENDTRY
+    IF HTTP.STATUSCODE() <> 200 ORELSE NOT STARTSWITH(TRIM$(body$), "{") THEN RETURN NONE
+    RETURN JSON.PARSE(body$)
+ENDFUNC
+
+HTTP.SETTIMEOUT(2)
+
+DIM agent_node = NODE.JOIN("farmagent-" + name$, "lan", key$)
+DIM stats_pub = TOPIC.OPEN("farm/" + name$ + "/stats")
+TOPIC.RETAIN stats_pub, TRUE
+
+DIM summary = NONE
+DIM versions = NONE
+DIM t_poll AS DOUBLE = -POLL_MS
+DIM t_versions AS DOUBLE = -VERSION_MS
+DIM t_start AS DOUBLE = TICK()
+
+FUNC FIELD(m, k$)
+    IF TYPEOF(m) <> "OBJECT" THEN RETURN 0
+    DIM v = m{k$}
+    IF TYPEOF(v) = "NONE" THEN RETURN 0
+    RETURN v
+ENDFUNC
+
+FUNC STATS()
+    DIM s = {"HOST": name$, "KIND": "pihole", "OS": "PIHOLE", "ADDR": addr$, "REACHABLE": TYPEOF(summary) = "OBJECT", "UPTIME": INT((TICK() - t_start) / 1000), "T": NODE.TIME()}
+    s{"STATUS"} = ""
+    s{"GRAVITY_DAYS"} = -1
+    IF TYPEOF(summary) = "OBJECT" THEN
+        s{"STATUS"} = summary{"status"}
+        IF TYPEOF(summary{"gravity_last_updated"}) = "OBJECT" THEN s{"GRAVITY_DAYS"} = FIELD(summary{"gravity_last_updated"}{"relative"}, "days")
+    ENDIF
+    s{"QUERIES"} = FIELD(summary, "dns_queries_today")
+    s{"BLOCKED"} = FIELD(summary, "ads_blocked_today")
+    s{"BLOCKED_PCT"} = FIELD(summary, "ads_percentage_today")
+    s{"DOMAINS"} = FIELD(summary, "domains_being_blocked")
+    s{"CLIENTS"} = FIELD(summary, "unique_clients")
+    s{"VERSION"} = ""
+    s{"VERSIONS"} = ""
+    s{"UPDATE"} = ""
+    IF TYPEOF(versions) = "OBJECT" THEN
+        s{"VERSION"} = versions{"core_current"}
+        s{"VERSIONS"} = "core " + versions{"core_current"} + ", web " + versions{"web_current"} + ", FTL " + versions{"FTL_current"}
+        IF versions{"core_update"} THEN s{"UPDATE"} = versions{"core_latest"}
+    ENDIF
+    RETURN s
+ENDFUNC
+
+FUNC H_STATUS(c)
+    RETURN STATS()
+ENDFUNC
+
+NODE.SERVE "STATUS", "H_STATUS"
+
+PRINT "pihole_agent "; NODE.NAME$(); " reading "; api$
+DIM t_stats AS DOUBLE = 0
+DO
+    DIM ran = NODE.POLL(200)
+    IF TICK() - t_poll >= POLL_MS THEN
+        summary = ASK_API(api$ + "?summaryRaw")
+        t_poll = TICK()
+    ENDIF
+    IF TICK() - t_versions >= VERSION_MS THEN
+        DIM v = ASK_API(api$ + "?versions")
+        IF TYPEOF(v) = "OBJECT" THEN versions = v
+        t_versions = TICK()
+    ENDIF
+    IF TICK() - t_stats >= STATS_MS THEN
+        CHAN.SEND stats_pub, STATS()
+        t_stats = TICK()
+    ENDIF
+LOOP
