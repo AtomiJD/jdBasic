@@ -34,6 +34,15 @@ Check(Rows$(ALL(t > 0, 0)) = "TRUE,TRUE;TRUE,TRUE;", "ALL over axis 0")
 Check(JOIN(SUM(m, 0), ",") = "5,7,9" ANDALSO JOIN(SUM(m, 1), ",") = "6,15", "a matrix as before")
 Check(SUM(t) = 36 ANDALSO MAX(t) = 8, "the whole array as before")
 
+FUNC RowSums(a AS ARRAY)
+    RETURN SUM(a, 1)
+ENDFUNC
+
+DIM r AS ARRAY = t
+r = SUM(t, 1)
+Check(Rows$(r) = "4,6;12,14;", "a reduction with an axis fills a declared ARRAY")
+Check(JOIN(RowSums(m), ",") = "6,15", "a FUNC without a return type answers the reduced array")
+
 DIM caught$ AS STRING = ""
 TRY
     DIM bad AS ARRAY = SUM(m, 2)

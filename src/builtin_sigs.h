@@ -1080,6 +1080,14 @@ inline bool builtin_no_vectorize(std::string_view name) {
     return s && (s->flags & BF_NO_VEC);
 }
 
+// A reducer that, given an array and an axis, answers the array with that
+// axis taken out instead of one number.
+inline bool builtin_reduces_axis(std::string_view name) {
+    return name == "SUM" || name == "PRODUCT" || name == "MIN" || name == "MAX" ||
+           name == "MEAN" || name == "MEDIAN" || name == "VARIANCE" || name == "STDEV" ||
+           name == "ANY" || name == "ALL";
+}
+
 inline bool builtin_reads_args(std::string_view name) {
     const BuiltinSig* s = builtin_sig(name);
     return s && (s->flags & BF_READS_ARGS);

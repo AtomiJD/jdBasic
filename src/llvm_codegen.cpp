@@ -2175,6 +2175,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     if (builtin_is(x->func_name, BuiltinRet::Arr)) return true;
                     std::string upper = x->func_name;
                     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                    if (builtin_reduces_axis(upper) && x->args.size() == 2)
+                        return is_array_expr(x->args[0].get());
                     if (!builtin_sig(upper) || builtin_no_vectorize(upper)) return false;
                     for (auto& a : x->args)
                         if (is_array_expr(a.get())) return true;
@@ -3830,13 +3832,16 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
                     default:                return make(K::UNKNOWN);
                 }
             }
-            // An element-wise builtin given an array answers an array.
+            // An element-wise builtin given an array answers an array, and so
+            // does a reducer given an array and an axis.
             {
                 std::string upper = e.func_name;
                 std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
                 if (builtin_sig(upper) && !builtin_no_vectorize(upper))
                     for (auto& a : e.args)
                         if (a && infer_expr_type(*a).kind == K::ARRAY) return make(K::ARRAY);
+                if (builtin_reduces_axis(upper) && e.args.size() == 2 && e.args[0] &&
+                    infer_expr_type(*e.args[0]).kind == K::ARRAY) return make(K::ARRAY);
             }
             auto rit = runtime_funcs.find(e.func_name);
             if (rit != runtime_funcs.end()) {
