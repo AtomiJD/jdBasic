@@ -31,5 +31,6 @@ PRINT "chars: "; -"abc"; " "; LEN(-u$)
 PRINT "cmp: "; "abc" = "abc"; " "; "abc" < "abd"; " "; "a" > "B"; " "; "" = ""; " "; "10" < "9"
 PRINT "binary safe: "; LEN("a" + CHR$(0) + "b"); " "; INSTR("a" + CHR$(0) + "b", "b")
 PRINT "indexof: "; INDEXOF(["a", "b", "c"], "b"); " "; INDEXOF(["a"], "z")
+PRINT "insert: "; INSERT$("ac", "b", 1); " "; INSERT$("ac", "b", 9); " "; INSERT$([1, 3], 2, 1)
 PRINT "tostr: "; TOSTR(3.5); " "; TOSTR(7); " "; CSTR(2)
 PRINT "interp: "; $"x={{1 + 1}} s={{s$}}"

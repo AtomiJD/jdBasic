@@ -21,6 +21,7 @@ PRINT "any all: "; ANY(v > 2); " "; ALL(v > 0); " "; ANY([]); " "; ALL([])
 PRINT "sort: "; SORT(v); " "; SORT(v, TRUE); " "; SORT(s); " "; GRADE(v); " "; XSORT([3, 1, 2])
 PRINT "unique rev: "; UNIQUE([1, 2, 2, 3, 1]); " "; REVERSE(v); " "; UNIQUE(["a", "a", "b"])
 PRINT "cum: "; CUMSUM(v); " "; CUMPROD([1, 2, 3, 4]); " "; DIFF([1, 4, 9, 16]); " "; SCAN(v, "+")
+PRINT "take drop: "; TAKE(2, w); " "; DROP(2, w); " "; TAKE(-1, w); " "; DROP(5, w); " "; TAKE(0, w); " "; DROP(0, w)
 PRINT "while: "; TAKE_WHILE(IOTA(10), LAMBDA x -> x < 4); " "; DROP_WHILE(IOTA(10), LAMBDA x -> x < 8)
 PRINT "append push: "; APPEND(v, 9); " "; APPEND(v, [7, 8]); " "; APPEND([], 1); " "; LEN(APPEND(m, [7, 8, 9]))
 DIM st AS ARRAY = [1]

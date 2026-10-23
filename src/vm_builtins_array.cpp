@@ -28,6 +28,16 @@ static double elem2d(const Value& m, int r, int c) {
     return m.as_array()->elements[r].as_array()->elements[c].to_double();
 }
 
+// TAKE and DROP take a count and an array, in that order; the other way
+// round would read the array as a count.
+static void count_and_array(const std::vector<Value>& args, const char* fn) {
+    if (args[0].type == ValueType::ARRAY || args[0].type == ValueType::STRING)
+        throw jdError(ErrCode::TYPE_MISMATCH, std::string(fn) + ": argument 1 is " +
+            (args[0].type == ValueType::ARRAY ? "an array" : "a string") + ", a number is expected");
+    if (args[1].type != ValueType::ARRAY)
+        throw jdError(ErrCode::TYPE_MISMATCH, std::string(fn) + ": argument 2 is a number, an array is expected");
+}
+
 // Reduction argument shape. A reducer takes one array; a second argument
 // names the axis and is only meaningful for a matrix.
 enum class ReduceForm { WHOLE, ALONG_AXIS, BAD_SCALAR };
@@ -402,6 +412,7 @@ void VM::register_array_builtins() {
 
     // ── TAKE / DROP ──────────────────────────────────────────
     register_native("TAKE", 2, 2, [](const std::vector<Value>& args) -> Value {
+        count_and_array(args, "TAKE");
         int64_t n = args[0].to_int();
         auto* arr = args[1].as_array();
         Value r = Value::make_array();
@@ -417,6 +428,7 @@ void VM::register_array_builtins() {
     });
 
     register_native("DROP", 2, 2, [](const std::vector<Value>& args) -> Value {
+        count_and_array(args, "DROP");
         int64_t n = args[0].to_int();
         auto* arr = args[1].as_array();
         Value r = Value::make_array();

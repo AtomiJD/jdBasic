@@ -2,15 +2,4 @@
 ' harness names the first one; move a line back into its family snippet
 ' once it survives in both backends.
 OPTION "EXPLICIT"
-DIM w AS ARRAY = [10, 20, 30]
 PRINT "slice: "; SLICE(IOTA(10), 2, 5)
-PRINT "take past end: "; TAKE(w, -1)
-PRINT "drop past end: "; DROP(w, 5)
-PRINT "insert: "; INSERT$("ac", 1, "b")
-PRINT "take zero: "; TAKE(w, 0)
-PRINT "drop zero: "; DROP(w, 0)
-PRINT "insert mid: "; INSERT$("ac", 2, "b")
-PRINT "take two: "; TAKE(w, 2)
-PRINT "drop two: "; DROP(w, 2)
-PRINT "take all: "; TAKE(w, 3)
-PRINT "drop one: "; DROP(w, 1)

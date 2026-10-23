@@ -1,0 +1,9 @@
+' A container or a string handed to a number parameter of a builtin, or a
+' number to an array parameter: the compiler refuses the call, the
+' interpreter raises error 11 at the call. Before, a compiled program read
+' the pointer as the count and died.
+OPTION "EXPLICIT"
+DIM w AS ARRAY = [10, 20, 30]
+PRINT TAKE(w, 2)
+PRINT DROP(w, 5)
+PRINT INSERT$("ac", 1, "b")

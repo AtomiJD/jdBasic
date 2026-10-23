@@ -279,7 +279,12 @@ void VM::register_string_builtins() {
 
     // INSERT$: insert text into string or element into array at position
     register_native("INSERT$", 3, 3, [](const std::vector<Value>& args) -> Value {
+        if (args[2].type == ValueType::STRING || args[2].type == ValueType::ARRAY)
+            throw jdError(ErrCode::TYPE_MISMATCH, std::string("INSERT$: argument 3 is ") +
+                (args[2].type == ValueType::ARRAY ? "an array" : "a string") + ", a number is expected");
         if (args[0].type == ValueType::STRING) {
+            if (args[1].type != ValueType::STRING)
+                throw jdError(ErrCode::TYPE_MISMATCH, "INSERT$: argument 2 is not a string");
             std::string s = args[0].as_string()->data;
             std::string ins = args[1].as_string()->data;
             int64_t pos = args[2].to_int();

@@ -15639,6 +15639,29 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         std::vector<LLVMTypeRef> param_types(param_count);
         if (param_count > 0) LLVMGetParamTypes(rf.fn_type, param_types.data());
 
+        // A container or a string literal handed to a number parameter, or a
+        // number literal to a pointer parameter, would be read as the other
+        // kind; the call is refused here, where the kinds are known. Computed
+        // values are let through: an indexed row of a matrix is typed as a
+        // number, and a $-named builtin that answers a number as a string.
+        for (size_t i = 0; i < expr.args.size() && i < param_count; i++) {
+            int t = arg_cache[i].tag;
+            bool numeric_param = param_types[i] == i64_type || param_types[i] == f64_type;
+            ExprKind ak = expr.args[i] ? expr.args[i]->kind : ExprKind::VARIABLE;
+            bool literal_number = ak == ExprKind::LITERAL_INT || ak == ExprKind::LITERAL_FLOAT;
+            bool literal_string = ak == ExprKind::LITERAL_STRING;
+            const char* kind = nullptr;
+            if (numeric_param && t == JD_TAG_ARR) kind = "an array";
+            else if (numeric_param && literal_string) kind = "a string";
+            else if (numeric_param && t == JD_TAG_NATIVE_MAP) kind = "a map";
+            else if (param_types[i] == i8_ptr_type && literal_number) kind = "a number";
+            if (kind) {
+                report_error(m_current_stmt_file, expr.line,
+                    upper + ": argument " + std::to_string(i + 1) + " is " + kind + ", " +
+                    (numeric_param ? "a number" : "a string or an array") + " is expected");
+                return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
+            }
+        }
         for (size_t i = 0; i < expr.args.size() && i < param_count; i++) {
             // Propagate the parameter's expected LLVM type as an INDEX-leaf
             // hint so `SCREEN SW, SH, game{"title"}` asks the runtime for
