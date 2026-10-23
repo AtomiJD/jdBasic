@@ -54,7 +54,8 @@ other where it was.
 
 `DRAWS` kinds are `unit uniform int normal lognormal exponential gamma
 beta triangular poisson binomial`, with the parameters in the order the
-single calls take them: `RAND.DRAWS(gen, "gamma", 1000, 2.5, 1)`.
+single calls take them: `RAND.DRAWS(gen, "gamma", 1000, 2.5, 1)`. For `normal`
+and `lognormal` a left-out sigma (or 0, which would only repeat mu) is 1, the default of `NORMAL` and `LOGNORMAL`.
 
 The Box-Muller normal discards the second value of each pair, so the
 n-th normal draw never depends on whether an odd number came before it.

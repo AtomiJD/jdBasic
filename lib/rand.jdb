@@ -293,12 +293,14 @@ EXPORT FUNC BINOMIAL(gen, n, p)
 ENDFUNC
 
 ' n draws of one kind as an array: "unit", "uniform" (low, high), "int"
-' (low, high), "normal" (mu, sigma), "lognormal" (mu, sigma), "exponential"
+' (low, high), "normal" (mu, sigma), "lognormal" (mu, sigma; a sigma of 0 or none means 1, as the default of NORMAL), "exponential"
 ' (rate), "gamma" (shape, scale), "beta" (a, b), "triangular" (low, mode,
 ' high), "poisson" (lambda), "binomial" (n, p).
 EXPORT FUNC DRAWS(gen, kind$, n, p1 = 0, p2 = 0, p3 = 0)
     DIM out = []
     DIM which$ = LCASE$(kind$)
+    DIM sigma = p2
+    IF sigma = 0 THEN sigma = 1
     DIM i = 0
     FOR i = 1 TO CLNG(n)
         DIM v = 0.0
@@ -309,9 +311,9 @@ EXPORT FUNC DRAWS(gen, kind$, n, p1 = 0, p2 = 0, p3 = 0)
         ELSEIF which$ = "int" THEN
             v = INTRANGE(gen, p1, p2)
         ELSEIF which$ = "normal" THEN
-            v = NORMAL(gen, p1, p2)
+            v = NORMAL(gen, p1, sigma)
         ELSEIF which$ = "lognormal" THEN
-            v = LOGNORMAL(gen, p1, p2)
+            v = LOGNORMAL(gen, p1, sigma)
         ELSEIF which$ = "exponential" THEN
             v = EXPONENTIAL(gen, p1)
         ELSEIF which$ = "gamma" THEN
