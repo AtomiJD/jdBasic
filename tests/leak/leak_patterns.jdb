@@ -191,6 +191,28 @@ ELSEIF pattern$ = "takedrop" THEN
         total = total + part[0]
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "chain" THEN
+    DIM base AS ARRAY = RESHAPE(IOTA(64), [8, 8])
+    DIM acc AS ARRAY = base
+    FOR i = 1 TO passes
+        acc = MATMUL(acc, base)
+        acc = ROTATE(acc, [1, 1])
+        acc = SHIFT(acc, 1, 0)
+        total = total + acc[1][1]
+        IF i MOD 7 = 0 THEN acc = base
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "chainstr" THEN
+    DIM names AS ARRAY = ["delta", "alpha", "charlie", "bravo"]
+    DIM ranked AS ARRAY = names
+    FOR i = 1 TO passes
+        ranked = SORT(ranked)
+        ranked = REVERSE(ranked)
+        ranked = TAKE(3, ranked)
+        total = total + LEN(ranked[0])
+        IF i MOD 5 = 0 THEN ranked = names
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSEIF pattern$ = "iota" THEN
     DIM seq AS ARRAY = []
     FOR i = 1 TO passes

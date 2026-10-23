@@ -5392,7 +5392,8 @@ LLVMValueRef LLVMCodegen::array_or_single(const TypedValue& tv) {
     LLVMValueRef p = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, one, 1, "single");
     LLVMValueRef set_args[] = { p, LLVMConstInt(i64_type, 0, 0), coerce_to(tv, f64_type) };
     LLVMBuildCall2(builder, arr_set.fn_type, arr_set.fn, set_args, 3, "");
-    return p;
+    // The cell is read and left behind, so the drain of the pass frees it.
+    return rc_born(p, JD_TAG_ARR);
 }
 
 void LLVMCodegen::emit_err_code_branch() {
@@ -10011,7 +10012,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 std::string up = expr.func_name;
                 std::transform(up.begin(), up.end(), up.begin(), ::toupper);
                 bool user = user_functions.count(expr.func_name) || user_functions.count(up);
-                escapes = !user && builtin_sig(up) && !builtin_reads_args(up);
+                escapes = !user && builtin_sig(up) && !builtin_reads_args(up) && !builtin_reads_arrays(up);
             }
             TypedValue r;
             {
@@ -15950,6 +15951,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 }
             }
             TypedValue out{ result, rf.return_tag };
+            // An array a builtin that only reads its arguments answers is a
+            // fresh one, so it is counted and freed like a literal.
+            if (rf.return_tag == JD_TAG_ARR && builtin_reads_arrays(upper))
+                out.fresh_container = true;
             // A string builtin hands back a buffer it just allocated for this
             // one call, so a slot may take it over and a consumer may drop it.
             if (rf.return_tag == JD_TAG_STR && !returns_shared_string(upper))

@@ -890,9 +890,21 @@ struct RtShape {
         if (a->elem_tags) a->elem_tags[i] = JD_TAG_F64;
         a->data[i] = d;
     }
-    // A cell with the tag it carries, when the source keeps tags per cell.
+    // Whether cell i holds a row, by the per-cell tags or the array's flags.
+    static bool cell_is_row(JdbArray* a, int64_t i) {
+        return a->elem_tags ? a->elem_tags[i] == JD_TAG_ARR : is_row(a, i);
+    }
+    // A copy of the array down to its leaves, sharing no row with the source;
+    // string cells are shared, since an array handed to a builtin never frees
+    // its own strings.
+    static bool same(JdbArray* a, JdbArray* b) { return a == b; }
+    static JdbArray* clone(JdbArray* a) {
+        return jdb_shape::take<RtShape>(a, jdb_shape::span_indices(len(a), 0, len(a)));
+    }
+    // A cell with the tag it carries, when the source keeps tags per cell; a
+    // row cell is a clone of the row, so the answer outlives its source.
     static void copy_cell(JdbArray* out, int64_t k, JdbArray* a, int64_t i) {
-        out->data[k] = a->data[i];
+        out->data[k] = cell_is_row(a, i) ? encode_inner(clone(decode_inner(a->data[i]))) : a->data[i];
         if (out->elem_tags && a->elem_tags) out->elem_tags[k] = a->elem_tags[i];
     }
     // What the source says about all its cells: strings, rows, truth values,
@@ -1410,11 +1422,6 @@ JdbArray* jdb_drop_n(int64_t n, JdbArray* arr) {
     return jdb_array_drop(arr, n);
 }
 
-// A copy of the cells, with what the array says about them.
-static JdbArray* rt_copy_cells(JdbArray* arr) {
-    return jdb_shape::take<RtShape>(arr, jdb_shape::span_indices(arr->length, 0, arr->length));
-}
-
 // The entries of the shift vector; more of them than the array has axes is
 // an error.
 static bool rt_shift_vector(const char* fn, JdbArray* arr, JdbArray* shifts, std::vector<int64_t>& out) {
@@ -1437,7 +1444,7 @@ JdbArray* jdb_array_rotate(JdbArray* arr, JdbArray* shifts) {
     std::vector<int64_t> k;
     if (!rt_shift_vector("ROTATE", arr, shifts, k)) return jdb_array_new(0);
     JdbArray* r = jdb_shape::move_axes<RtShape>(arr, k, 0, true, 0.0);
-    return r == arr ? rt_copy_cells(arr) : r;
+    return r == arr ? RtShape::clone(arr) : r;
 }
 
 JdbArray* jdb_array_shift(JdbArray* arr, JdbArray* shifts, double fill) {
@@ -1445,7 +1452,7 @@ JdbArray* jdb_array_shift(JdbArray* arr, JdbArray* shifts, double fill) {
     std::vector<int64_t> k;
     if (!rt_shift_vector("SHIFT", arr, shifts, k)) return jdb_array_new(0);
     JdbArray* r = jdb_shape::move_axes<RtShape>(arr, k, 0, false, fill);
-    return r == arr ? rt_copy_cells(arr) : r;
+    return r == arr ? RtShape::clone(arr) : r;
 }
 
 // SLICE(matrix, axis, index): a row or a column of a matrix; a flat array,
@@ -1470,7 +1477,7 @@ JdbArray* jdb_array_slice(JdbArray* arr, int64_t dim, int64_t idx) {
         jdb_err_set(msg, 13);
         return jdb_array_new(0);
     }
-    if (dim == 0) return rt_copy_cells(RtShape::row(arr, idx));
+    if (dim == 0) return RtShape::clone(RtShape::row(arr, idx));
     for (int64_t ro = 0; ro < rows; ro++) {
         JdbArray* row = RtShape::row(arr, ro);
         if (!row || idx >= row->length) {

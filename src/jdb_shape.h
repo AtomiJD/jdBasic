@@ -346,7 +346,9 @@ typename A::Arr move_axes(typename A::Arr a, const std::vector<int64_t>& shifts,
             if (A::is_row(a, 0)) A::put_row(out, i, blank_like<A>(A::row(a, 0), fill));
             else A::put_fill(out, i, fill);
         } else if (A::is_row(a, src)) {
-            A::put_row(out, i, move_axes<A>(A::row(a, src), shifts, depth + 1, cyclic, fill));
+            typename A::Arr r = A::row(a, src);
+            typename A::Arr moved = move_axes<A>(r, shifts, depth + 1, cyclic, fill);
+            A::put_row(out, i, A::same(moved, r) ? A::clone(r) : moved);
         } else {
             A::copy_cell(out, i, a, src);
         }

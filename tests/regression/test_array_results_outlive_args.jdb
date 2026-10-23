@@ -1,0 +1,60 @@
+' An array a builtin answers shares no row with its argument, so the
+' argument may go while the answer stays: a matrix reassigned from its own
+' REVERSE, TAKE, ROTATE, SHIFT, SLICE, DIFF, UNIQUE or RESHAPE in a
+' loop still reads right afterwards, in both backends and under
+' JDB_RC_POISON=1, where a freed row reads as rubbish.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Rows$(m AS ARRAY) AS STRING
+    DIM parts AS ARRAY = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m) - 1
+        parts = APPEND(parts, JOIN(m[i], ","))
+    NEXT i
+    RETURN JOIN(parts, "|")
+ENDFUNC
+
+DIM m AS ARRAY = [[3, 1], [1, 2], [2, 3]]
+DIM k AS INTEGER
+FOR k = 1 TO 3
+    m = ROTATE(m, [1])
+    m = REVERSE(m)
+    m = TAKE(3, m)
+    m = DROP(0, m)
+    m = SHIFT(m, [0, 0], 0)
+    m = RESHAPE(FLATTEN(m), [3, 2])
+NEXT k
+Check(Rows$(m) = "3,1|2,3|1,2", "a matrix survives a loop of its own moves: " + Rows$(m))
+
+DIM strip AS ARRAY = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+FOR k = 1 TO 3
+    strip = SLICE(strip, 0, 0, 3)
+    strip = UNIQUE(strip)
+    strip = DIFF(strip, [])
+NEXT k
+Check(Rows$(strip) = "1,2,3|4,5,6|7,8,9", "a strip of rows survives: " + Rows$(strip))
+
+DIM words AS ARRAY = [["pear", "fig"], ["apple", "kiwi"]]
+FOR k = 1 TO 3
+    words = ROTATE(words, [1])
+    words = REVERSE(REVERSE(words))
+NEXT k
+Check(Rows$(words) = "apple,kiwi|pear,fig", "rows of strings survive: " + Rows$(words))
+
+DIM deep AS ARRAY = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+FOR k = 1 TO 3
+    deep = ROTATE(deep, [1])
+    deep = TAKE(2, deep)
+NEXT k
+Check(deep[1][0][1] = 2, "a 3-D array survives a rotation of its outer axis")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

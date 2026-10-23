@@ -149,6 +149,8 @@ struct VmShape {
     static void copy_cell(Value& out, int64_t k, const Value& a, int64_t i) {
         out.as_array()->elements[(size_t)k] = a.as_array()->elements[(size_t)i];
     }
+    static Value clone(const Value& a) { return a; }
+    static bool same(const Value& a, const Value& b) { return a.as_array() == b.as_array(); }
     static void carry_flags(Value&, const Value&) {}
     static void drop(Value&) {}
     static void shape_error(int64_t n, int64_t m) {
