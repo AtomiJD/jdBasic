@@ -622,6 +622,8 @@ void LLVMCodegen::declare_runtime_functions() {
     // missed leaves.
     reg("jdb_recursion_enter",    "__rec_enter",   i32_type, {}, -1);
     reg("jdb_recursion_leave",    "__rec_leave",   void_type, {}, -1);
+    reg("jdb_rc_func_enter",      "__rc_func_enter", void_type, {}, -1);
+    reg("jdb_rc_func_leave",      "__rc_func_leave", void_type, {}, -1);
     reg("jdb_recursion_reset_to", "__rec_reset",   void_type, {i64_type}, -1);
     reg("jdb_recursion_depth",    "__rec_depth",   i64_type, {}, JD_TAG_I64);
 
@@ -5687,6 +5689,13 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     // error state. We branch straight to exit_bb (which will NOT emit
     // leave when the error path reached it, but for simplicity always
     // calls leave - counter reset on catch compensates for drift).
+    // A FUNC opens a frame a caller may be half way through an expression
+    // over; the exit block closes it (see jdb_rc_drain).
+    bool counts_frame = rc_on && stmt.kind != StmtKind::SUB;
+    if (counts_frame) {
+        auto& fe = runtime_funcs["__rc_func_enter"];
+        LLVMBuildCall2(builder, fe.fn_type, fe.fn, nullptr, 0, "");
+    }
     auto& re = runtime_funcs["__rec_enter"];
     LLVMValueRef rc = LLVMBuildCall2(builder, re.fn_type, re.fn, nullptr, 0, "rec_rc");
     LLVMValueRef too_deep = LLVMBuildICmp(builder, LLVMIntNE, rc,
@@ -5781,6 +5790,10 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     emit_owned_local_release();
     rc_release_locals(scopes.size() - 1);
     emit_dispose_cleanup();
+    if (counts_frame) {
+        auto& fl = runtime_funcs["__rc_func_leave"];
+        LLVMBuildCall2(builder, fl.fn_type, fl.fn, nullptr, 0, "");
+    }
     auto& rl = runtime_funcs["__rec_leave"];
     LLVMBuildCall2(builder, rl.fn_type, rl.fn, nullptr, 0, "");
     if (is_void_fn) {

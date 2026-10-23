@@ -22,6 +22,8 @@ DIM i AS INTEGER = 0
 DIM sink$ AS STRING = ""
 DIM total AS DOUBLE = 0.0
 DIM marks$ AS STRING = ""
+DIM glob AS ARRAY = []
+DIM base8 AS ARRAY = RESHAPE(IOTA(64), [8, 8])
 
 IF pattern$ = "concat" THEN
     FOR i = 1 TO passes
@@ -213,6 +215,8 @@ ELSEIF pattern$ = "chainstr" THEN
         IF i MOD 5 = 0 THEN ranked = names
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "subglobal" THEN
+    SubLoop(passes)
 ELSEIF pattern$ = "iota" THEN
     DIM seq AS ARRAY = []
     FOR i = 1 TO passes
@@ -251,3 +255,16 @@ FUNC Render$(v)
     NEXT k
     RETURN out$ + "."
 ENDFUNC
+
+' A global reassigned inside a SUB's loop: what it let go of is freed within
+' the SUB, not only once the main program loops.
+SUB SubLoop(n AS INTEGER)
+    DIM j AS INTEGER
+    glob = base8
+    FOR j = 1 TO n
+        glob = MATMUL(glob, base8)
+        glob = [j, j + 1]
+        glob = base8
+        IF j MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT j
+ENDSUB

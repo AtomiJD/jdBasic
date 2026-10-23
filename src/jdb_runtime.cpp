@@ -2484,6 +2484,7 @@ struct RcState {
     uint64_t next_gen = 1;
     std::vector<RcPoolItem> pool;
     std::vector<RcPoolItem> zombies;
+    int func_depth = 0;  // FUNC frames on the stack; a SUB chain from the main program is depth 0
     bool init = false;
     bool off = false;
     std::thread::id owner{};
@@ -2768,15 +2769,38 @@ static void rc_sweep(std::vector<RcPoolItem>& list, size_t from) {
     list.resize(from);
 }
 
+// Zombies whose container is gone already, freed by a pool sweep after a
+// slot let go of it, leave the list so it stays as short as what is live.
+static void rc_compact_zombies() {
+    auto& z = g_rc.zombies;
+    size_t keep = 0;
+    for (size_t i = 0; i < z.size(); i++) {
+        RcEntry* e = rc_find(z[i].key);
+        if (e && e->gen == z[i].gen) z[keep++] = z[i];
+    }
+    z.resize(keep);
+}
+
+// FUNC frames on the stack. A SUB is called at a statement boundary, so
+// while no FUNC is open no caller holds a container half way through an
+// expression, and what a global or a parameter let go of may be freed.
+extern "C" void jdb_rc_func_enter(void) { g_rc.func_depth++; }
+extern "C" void jdb_rc_func_leave(void) { if (g_rc.func_depth > 0) g_rc.func_depth--; }
+
 // The end of a loop pass: frees what the pass made or let go of and nobody
-// counts. In a loop of the main program the containers global slots let go
-// of go too.
+// counts. The containers global slots and parameters let go of go too once
+// no FUNC frame is open; under one they wait, and only their dead entries
+// are dropped.
 extern "C" void jdb_rc_drain(int64_t mark, int32_t main_level) {
     size_t from = mark < 0 ? 0 : (size_t)mark;
-    if (from >= g_rc.pool.size() && (!main_level || g_rc.zombies.empty())) return;
+    if (from >= g_rc.pool.size() && g_rc.zombies.empty()) return;
     if (!g_rc.cap || !rc_ready()) return;
     if (from < g_rc.pool.size()) rc_sweep(g_rc.pool, from);
-    if (main_level && !g_rc.zombies.empty()) rc_sweep(g_rc.zombies, 0);
+    if (g_rc.zombies.empty()) return;
+    // A raise that left a FUNC skipped its leave; the main program is depth 0.
+    if (main_level) g_rc.func_depth = 0;
+    if (g_rc.func_depth == 0) rc_sweep(g_rc.zombies, 0);
+    else rc_compact_zombies();
 }
 
 // Number of keys in a map.
