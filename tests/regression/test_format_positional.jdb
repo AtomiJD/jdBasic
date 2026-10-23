@@ -1,0 +1,22 @@
+' FORMAT$ placeholders that name their argument, {0} and {1:>6}, pick it
+' whatever their position, and an unnamed one takes the next in turn, in
+' both backends.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+Check(FORMAT$("{0} {1} {0}", "a", "b") = "a b a", "a named argument used twice")
+Check(FORMAT$("{1} {0}", "a", "b") = "b a", "named arguments in reverse")
+Check(FORMAT$("{1:>4}|{0:<3}|", 7, 42) = "  42|7  |", "named with a format")
+Check(FORMAT$("{} {} {}", 1, 2, 3) = "1 2 3", "unnamed take their turn")
+Check(FORMAT$("{0:.2f} and {0:.0f}", 2.345) = "2.35 and 2", "one number, two formats")
+Check(FORMAT$("{1}{0}", "x", "y") = "yx", "named strings")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

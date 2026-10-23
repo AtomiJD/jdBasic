@@ -3404,6 +3404,18 @@ static int jdb_format_one_arg(char* out, int cap,
     return written;
 }
 
+// A placeholder's own argument number, {0} or {1:>6}, taken off the spec;
+// -1 when the placeholder takes the next argument in turn.
+static int format_pick_index(char* spec) {
+    int i = 0;
+    while (spec[i] >= '0' && spec[i] <= '9') i++;
+    if (i == 0 || (spec[i] != ':' && spec[i] != '\0')) return -1;
+    int idx = atoi(spec);
+    int from = i + (spec[i] == ':' ? 1 : 0);
+    memmove(spec, spec + from, strlen(spec + from) + 1);
+    return idx;
+}
+
 char* jdb_format(const char* fmt, JdbArray* args) {
     char result[4096];
     int rp = 0;
@@ -3420,7 +3432,9 @@ char* jdb_format(const char* fmt, JdbArray* args) {
             int slen = (int)(end - p - 1);
             if (slen > 0 && slen < 63) memcpy(spec, p+1, slen);
 
-            double val = (args && arg_idx < args->length) ? args->data[arg_idx++] : 0.0;
+            int pick = format_pick_index(spec);
+            int ai = pick >= 0 ? pick : arg_idx++;
+            double val = (args && ai < args->length) ? args->data[ai] : 0.0;
 
             char tmp[256];
             int tlen = jdb_format_one_arg(tmp, sizeof(tmp), spec, val, nullptr, false);
@@ -3491,9 +3505,10 @@ static char* jdb_format_tagged_impl(const char* fmt, const char* types,
             if (slen > 0 && slen < 63) memcpy(spec, p+1, slen);
 
             char tmp[256] = {0};
-            char tag = (arg_idx < n && types) ? types[arg_idx] : 'd';
-            int64_t r64 = (arg_idx < n) ? raw[arg_idx] : 0;
-            arg_idx++;
+            int pick = format_pick_index(spec);
+            int ai = pick >= 0 ? pick : arg_idx++;
+            char tag = (ai < n && types) ? types[ai] : 'd';
+            int64_t r64 = (ai < n) ? raw[ai] : 0;
 
             if (tag == 's') {
                 const char* s = (const char*)(intptr_t)r64;
