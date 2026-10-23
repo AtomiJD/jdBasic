@@ -4780,6 +4780,41 @@ double jdb_iif(int64_t cond, double a, double b) {
     return cond ? a : b;
 }
 
+// IIF over an array condition picks cell by cell, into nested rows as well;
+// a branch that is an array gives its own cell (its rows for a nested
+// condition), a number is the same in every cell. The branches arrive as
+// bits with their kind, since an array is a pointer punned into the double.
+JdbArray* jdb_array_iif(JdbArray* cond, double a, int32_t a_tag, double b, int32_t b_tag) {
+    if (!cond) return jdb_array_new(0);
+    JdbArray* aa = a_tag == JD_TAG_ARR ? decode_inner(a) : nullptr;
+    JdbArray* bb = b_tag == JD_TAG_ARR ? decode_inner(b) : nullptr;
+    bool nested = arr_nested(cond);
+    std::vector<double> vals((size_t)cond->length);
+    std::vector<int32_t> tags((size_t)cond->length);
+    bool any_row = false, any_num = false;
+    for (int64_t i = 0; i < cond->length; i++) {
+        double av = a, bv = b;
+        int32_t at = a_tag, bt = b_tag;
+        if (aa && aa->length) { av = aa->data[i % aa->length]; at = arr_nested(aa) ? JD_TAG_ARR : JD_TAG_F64; }
+        if (bb && bb->length) { bv = bb->data[i % bb->length]; bt = arr_nested(bb) ? JD_TAG_ARR : JD_TAG_F64; }
+        if (nested) {
+            vals[i] = encode_inner(jdb_array_iif(decode_inner(cond->data[i]), av, at, bv, bt));
+            tags[i] = JD_TAG_ARR;
+        } else {
+            bool pick = cond->data[i] != 0.0;
+            vals[i] = pick ? av : bv;
+            tags[i] = pick ? at : bt;
+        }
+        if (tags[i] == JD_TAG_ARR) any_row = true; else any_num = true;
+    }
+    JdbArray* r = jdb_array_new(cond->length);
+    for (int64_t i = 0; i < cond->length; i++) r->data[i] = vals[i];
+    if (any_row && !any_num) r->flags |= 1;
+    else if (any_row)
+        for (int64_t i = 0; i < cond->length; i++) jdb_array_set_tagged(r, i, vals[i], tags[i]);
+    return r;
+}
+
 // ISNUM, ISSTR, ISARR - type checking (simplified for native)
 int64_t jdb_isnum(double val) { (void)val; return 1; }
 int64_t jdb_isstr(const char* val) { (void)val; return 1; }

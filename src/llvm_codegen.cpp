@@ -747,6 +747,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_setenv",  "SETENV",   void_type,   {i8_ptr_type, i8_ptr_type}, -1);
     reg("jdb_mktemp",  "MKTEMP$",  i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_iif",     "IIF",      f64_type, {i64_type, f64_type, f64_type}, JD_TAG_F64);
+    reg("jdb_array_iif", "__arr_iif", i8_ptr_type, {i8_ptr_type, f64_type, i32_type, f64_type, i32_type}, JD_TAG_ARR);
     reg("jdb_isnum",   "ISNUM",    i64_type, {f64_type}, JD_TAG_BOOL);
 
     // Bit rotation (2-arg, implicit 64-bit width; 3-arg falls back to VM bridge)
@@ -15323,6 +15324,36 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         TypedValue cond = arg_cache[0];
         TypedValue val1 = arg_cache[1];
         TypedValue val2 = arg_cache[2];
+        auto num_or_arr = [&](const TypedValue& v) {
+            return v.tag == JD_TAG_ARR || jd_is_f64_tag(v.tag) || v.tag == JD_TAG_I64 || v.tag == JD_TAG_BOOL;
+        };
+        // An array condition picks cell by cell in the runtime; the branches
+        // go as bits with their kind, since a branch may be an array itself.
+        if (cond.tag == JD_TAG_ARR && num_or_arr(val1) && num_or_arr(val2)) {
+            auto& fn = runtime_funcs["__arr_iif"];
+            auto branch = [&](const TypedValue& v, LLVMValueRef& f, LLVMValueRef& t) {
+                if (v.tag == JD_TAG_ARR) {
+                    f = pun_i64_to_f64(LLVMBuildPtrToInt(builder, v.val, i64_type, "iif_p2i"));
+                    t = LLVMConstInt(i32_type, JD_TAG_ARR, 0);
+                } else {
+                    f = coerce_to(v, f64_type);
+                    t = LLVMConstInt(i32_type, JD_TAG_F64, 0);
+                }
+            };
+            LLVMValueRef b1, t1, b2, t2;
+            branch(val1, b1, t1);
+            branch(val2, b2, t2);
+            LLVMValueRef args[] = { cond.val, b1, t1, b2, t2 };
+            TypedValue out{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 5, "iif_arr"), JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
+        }
+        // A number condition with two array branches answers one of them whole.
+        if (cond.tag != JD_TAG_ARR && cond.tag != JD_TAG_RUNTIME &&
+            val1.tag == JD_TAG_ARR && val2.tag == JD_TAG_ARR) {
+            LLVMValueRef cond_i1 = to_i1(cond);
+            return { LLVMBuildSelect(builder, cond_i1, val1.val, val2.val, "iif"), JD_TAG_ARR };
+        }
         if (val1.tag == JD_TAG_STR && val2.tag == JD_TAG_STR) {
             // Both arms a string, so the answer is one whichever way it goes.
             LLVMValueRef cond_i1 = to_i1(cond);

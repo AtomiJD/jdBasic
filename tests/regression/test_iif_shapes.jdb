@@ -1,0 +1,46 @@
+' IIF over an array condition picks cell by cell, into the rows of a matrix
+' as well; a branch that is an array gives its own cell, a scalar is the
+' same everywhere; a scalar condition with two array branches answers one
+' of them whole.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Rows$(m AS ARRAY) AS STRING
+    DIM s$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m) - 1
+        s$ = s$ + JOIN(m[i], ",") + ";"
+    NEXT i
+    RETURN s$
+ENDFUNC
+
+DIM m AS ARRAY = [[1, 2, 3], [4, 5, 6]]
+DIM v AS ARRAY = [1, 2, 3, 4, 5, 6]
+
+DIM r1 AS ARRAY = IIF(v < 3, v, 0)
+Check(JOIN(r1, ",") = "1,2,0,0,0,0", "1-D: array branch and scalar branch")
+DIM r2 AS ARRAY = IIF(m < 3, 1, 0)
+Check(Rows$(r2) = "1,1,0;0,0,0;", "2-D: scalar branches")
+DIM r3 AS ARRAY = IIF(m < 3, m, 0)
+Check(Rows$(r3) = "1,2,0;0,0,0;", "2-D: array branch and scalar branch")
+DIM r4 AS ARRAY = IIF(m < 3, m, m * 10)
+Check(Rows$(r4) = "1,2,30;40,50,60;", "2-D: both branches arrays")
+DIM r5 AS ARRAY = IIF(v > 3, -v, v)
+Check(JOIN(r5, ",") = "1,2,3,-4,-5,-6", "1-D: both branches arrays")
+
+DIM pick AS INTEGER = 1
+DIM r6 AS ARRAY = IIF(pick > 0, v, m)
+Check(LEN(r6) = 6, "a scalar condition answers the first array whole")
+DIM r7 AS ARRAY = IIF(pick > 1, v, m)
+Check(LEN(r7) = 2 ANDALSO LEN(r7[0]) = 3, "a scalar condition answers the second array whole")
+Check(IIF(pick > 0, 7, 9) = 7, "a scalar condition picks a number")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

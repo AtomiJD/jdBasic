@@ -19,6 +19,25 @@ static double conversion_arg(const Value& v, const char* fn) {
         std::string(fn) + ": \"" + s + "\" is not a number");
 }
 
+// IIF over an array condition picks cell by cell, into nested rows as well;
+// a branch that is an array gives its own cell (its rows for a nested
+// condition), a scalar branch is the same in every cell.
+static Value iif_pick(const Value& cond, const Value& t, const Value& f) {
+    if (cond.type != ValueType::ARRAY) return cond.to_bool() ? t : f;
+    auto cell = [](const Value& branch, size_t i) -> const Value& {
+        if (branch.type != ValueType::ARRAY || branch.as_array()->elements.empty()) return branch;
+        auto& cells = branch.as_array()->elements;
+        return cells[i % cells.size()];
+    };
+    auto& conds = cond.as_array()->elements;
+    Value r = Value::make_array();
+    auto& out = r.as_array()->elements;
+    out.reserve(conds.size());
+    for (size_t i = 0; i < conds.size(); i++)
+        out.push_back(iif_pick(conds[i], cell(t, i), cell(f, i)));
+    return r;
+}
+
 void VM::register_data_builtins() {
     register_native("CDBL", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(conversion_arg(args[0], "CDBL"));
@@ -36,22 +55,7 @@ void VM::register_data_builtins() {
         return Value::make_bool(args[0].to_bool());
     });
     register_native("IIF", 3, 3, [](const std::vector<Value>& args) -> Value {
-        // Vectorized: IIF(cond_array, true_val, false_val)
-        if (args[0].type == ValueType::ARRAY) {
-            Value r = Value::make_array();
-            auto* conds = args[0].as_array();
-            bool t_arr = (args[1].type == ValueType::ARRAY);
-            bool f_arr = (args[2].type == ValueType::ARRAY);
-            for (size_t i = 0; i < conds->elements.size(); i++) {
-                if (conds->elements[i].to_bool()) {
-                    r.as_array()->elements.push_back(t_arr ? args[1].as_array()->elements[i % args[1].as_array()->elements.size()] : args[1]);
-                } else {
-                    r.as_array()->elements.push_back(f_arr ? args[2].as_array()->elements[i % args[2].as_array()->elements.size()] : args[2]);
-                }
-            }
-            return r;
-        }
-        return args[0].to_bool() ? args[1] : args[2];
+        return iif_pick(args[0], args[1], args[2]);
     });
 
     // Type checking
