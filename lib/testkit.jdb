@@ -97,13 +97,26 @@ ENDFUNC
 
 ' Both parameters stay array-typed all the way down, which is what keeps the
 ' comparison intact under the native compiler.
-FUNC SameArray(a, b)
-    IF LEN(a) <> LEN(b) THEN RETURN FALSE
-    DIM i
-    FOR i = 0 TO LEN(a) - 1
-        IF ShowScalar$(a[i]) <> ShowScalar$(b[i]) THEN RETURN FALSE
+FUNC SameCells(a AS ARRAY, b AS ARRAY, n AS INTEGER) AS INTEGER
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO n - 1
+        IF ShowScalar$(a[i]) <> ShowScalar$(b[i]) THEN RETURN 0
     NEXT i
-    RETURN TRUE
+    RETURN 1
+ENDFUNC
+
+' A 2-D array is compared cell by cell after flattening: its rows are arrays
+' themselves, which a native program cannot compare through ShowScalar$.
+FUNC SameArray(a AS ARRAY, b AS ARRAY)
+    IF LEN(a) <> LEN(b) THEN RETURN FALSE
+    IF LEN(a) = 0 THEN RETURN TRUE
+    IF TYPEOF(a[0]) <> "ARRAY" ORELSE TYPEOF(b[0]) <> "ARRAY" THEN RETURN SameCells(a, b, LEN(a)) = 1
+    DIM cols AS INTEGER = LEN(a[0])
+    IF cols <> LEN(b[0]) THEN RETURN FALSE
+    DIM n AS INTEGER = LEN(a) * cols
+    DIM fa AS ARRAY = RESHAPE(a, [n])
+    DIM fb AS ARRAY = RESHAPE(b, [n])
+    RETURN SameCells(fa, fb, n) = 1
 ENDFUNC
 
 SUB Record(status, message$, detail$)

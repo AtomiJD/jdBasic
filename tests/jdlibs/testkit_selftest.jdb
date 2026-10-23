@@ -8,6 +8,8 @@ TESTKIT.EQ("ab" + "c", "abc", "strings")
 TESTKIT.EQARRAY([1, 2, 3], [1, 2, 3], "arrays element by element")
 TESTKIT.NE(1, "1", "a number is not its own spelling")
 TESTKIT.NEARRAY([1, 2], [2, 1], "order matters")
+TESTKIT.EQARRAY(RESHAPE(IOTA(6), [2, 3]), RESHAPE(IOTA(6), [2, 3]), "2-D arrays cell by cell")
+TESTKIT.NEARRAY(RESHAPE(IOTA(6), [2, 3]), RESHAPE(IOTA(6) + 1, [2, 3]), "2-D arrays that differ")
 
 TESTKIT.SUITE("truthiness")
 TESTKIT.ISTRUE(3 > 2, "greater than")
