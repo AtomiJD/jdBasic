@@ -172,6 +172,7 @@ public:
     // Invoke an already-resolved native: direct call, or element-wise
     // auto-vectorisation when an arg is an array and no_vec is false.
     Value invoke_native(const NativeFunc& fn, const std::vector<Value>& args, bool no_vec);
+    Value vectorize_native(const NativeFunc& fn, const std::vector<Value>& args);
 
     // Apply a binary operator by string name
     Value apply_binary_op(const std::string& op, const Value& a, const Value& b);

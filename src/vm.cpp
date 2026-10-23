@@ -688,35 +688,19 @@ Value VM::invoke_native(const NativeFunc& fn, const std::vector<Value>& args, bo
         for (auto& a : args) if (a.type == ValueType::ARRAY) { has_arr = true; break; }
     }
     if (!has_arr) return fn(args);
-    std::function<Value(const std::vector<Value>&)> vec =
-        [&](const std::vector<Value>& cur) -> Value {
-        size_t alen = 0;
-        bool any = false;
-        for (auto& a : cur) {
-            if (a.type == ValueType::ARRAY) {
-                any = true;
-                size_t n = a.as_array()->elements.size();
-                if (n > alen) alen = n;
-            }
-        }
-        if (!any) return fn(cur);
-        Value r = Value::make_array();
-        r.as_array()->elements.reserve(alen);
-        for (size_t i = 0; i < alen; i++) {
-            std::vector<Value> ea(cur.size());
-            for (size_t j = 0; j < cur.size(); j++) {
-                if (cur[j].type == ValueType::ARRAY) {
-                    auto* ar = cur[j].as_array();
-                    ea[j] = ar->elements[i % ar->elements.size()];
-                } else {
-                    ea[j] = cur[j];
-                }
-            }
-            r.as_array()->elements.push_back(vec(ea));
-        }
-        return r;
-    };
-    return vec(args);
+    return vectorize_native(fn, args);
+}
+
+// A native applied cell by cell over its array arguments, by
+// jdb_shape::zip, the walk the native runtime shares.
+Value VM::vectorize_native(const NativeFunc& fn, const std::vector<Value>& args) {
+    std::vector<jdb_shape::Branch<VmShape>> ops;
+    ops.reserve(args.size());
+    for (auto& a : args) {
+        if (a.type == ValueType::ARRAY) ops.push_back({ true, a, Value() });
+        else ops.push_back({ false, Value(), a });
+    }
+    return jdb_shape::zip<VmShape>(ops, [&](const std::vector<Value>& cells) { return fn(cells); });
 }
 
 Value VM::call_function_idx(int32_t idx, const std::vector<Value>& args) {
@@ -1858,38 +1842,8 @@ void VM::run() {
                 }
 
                 if (has_array) {
-                    // Apply function element-wise, recursively for N-D arrays
-                    auto vectorize_call = [&](auto& self, const std::vector<Value>& cur_args) -> Value {
-                        // Check if any arg is still an array
-                        bool any_arr = false;
-                        size_t alen = 0;
-                        for (auto& a : cur_args) {
-                            if (a.type == ValueType::ARRAY) {
-                                any_arr = true;
-                                size_t n = a.as_array()->elements.size();
-                                if (n > alen) alen = n;
-                            }
-                        }
-                        if (!any_arr) return native_it->fn(cur_args);
-                        Value result = Value::make_array();
-                        auto* out = result.as_array();
-                        out->elements.reserve(alen);
-                        for (size_t ei = 0; ei < alen; ei++) {
-                            std::vector<Value> elem_args(cur_args.size());
-                            for (size_t j = 0; j < cur_args.size(); j++) {
-                                if (cur_args[j].type == ValueType::ARRAY) {
-                                    auto* arr = cur_args[j].as_array();
-                                    elem_args[j] = arr->elements[ei % arr->elements.size()];
-                                } else {
-                                    elem_args[j] = cur_args[j];
-                                }
-                            }
-                            out->elements.push_back(self(self, elem_args));
-                        }
-                        return result;
-                    };
                     try {
-                        push(vectorize_call(vectorize_call, args));
+                        push(vectorize_native(native_it->fn, args));
                     } catch (const jdError&) { throw; }
                     catch (const std::exception& e) {
                         // A builtin that already names itself keeps one prefix.

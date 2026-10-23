@@ -197,6 +197,32 @@ typename A::Arr pick(typename A::Arr cond, const Branch<A>& t, const Branch<A>& 
     return out;
 }
 
+// ── A function over the cells ────────────────────────────────────────────
+
+// A function of n values applied cell by cell over its array operands, the
+// shorter ones taken round again, rows recursed: SIN over an array, LEFT$
+// over an array of strings and an array of counts.
+template <class A>
+typename A::Arr zip(const std::vector<Branch<A>>& ops,
+                    const std::function<typename A::Val(const std::vector<typename A::Val>&)>& fn) {
+    int64_t n = 0;
+    for (auto& o : ops) if (o.is_arr && A::len(o.a) > n) n = A::len(o.a);
+    typename A::Arr out = A::make(n);
+    std::vector<Branch<A>> sub(ops.size());
+    std::vector<typename A::Val> vals(ops.size());
+    for (int64_t i = 0; i < n; i++) {
+        bool rows = false;
+        for (size_t k = 0; k < ops.size(); k++) {
+            sub[k] = branch_at<A>(ops[k], i);
+            if (sub[k].is_arr) rows = true;
+        }
+        if (rows) { A::put_row(out, i, zip<A>(sub, fn)); continue; }
+        for (size_t k = 0; k < ops.size(); k++) vals[k] = sub[k].v;
+        A::put(out, i, fn(vals));
+    }
+    return out;
+}
+
 // ── RESHAPE ──────────────────────────────────────────────────────────────
 
 // The cells of a in order, rows opened as they come.

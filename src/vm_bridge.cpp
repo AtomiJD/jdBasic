@@ -932,7 +932,9 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     bool has_ptr = false, has_string = false, has_other = false, has_none = false;
     // Dates are numbers the VM marks with a subtype. The native side has no
     // tag for one, so the array says it holds them and every cell must agree.
+    // Truth values are the same: an array of nothing but them renders them.
     int64_t date_cells = 0;
+    int64_t bool_cells = 0;
     std::vector<int8_t> cell_tags((size_t)(r->length > 0 ? r->length : 1), 1);
     for (int64_t i = 0; i < r->length; i++) {
         const auto& e = arr->elements[i];
@@ -965,12 +967,14 @@ static JdbArray* value_to_jdbarray(const Value& v) {
                 date_cells++;
                 cell_tags[(size_t)i] = 10;  // JD_TAG_DATE
             }
+            if (e.type == ValueType::BOOLEAN) bool_cells++;
             r->data[i] = e.to_double();
         }
     }
     if (has_ptr) r->flags |= 1;
     if (has_string) r->flags |= 2;
     if (date_cells > 0 && date_cells == r->length) r->flags |= 16;
+    if (bool_cells > 0 && bool_cells == r->length) r->flags |= 4;
     // String cells mixed with anything else make flags-only decoding
     // ambiguous (a numeric cell in a string-flagged row would be
     // dereferenced as char*) - per-element tags pin the layout for those.

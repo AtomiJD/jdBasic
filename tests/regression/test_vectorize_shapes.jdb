@@ -1,0 +1,44 @@
+' A builtin given an array applies to every cell, into the rows of a nested
+' array, and a second array among the arguments is cycled cell by cell; the
+' same in both backends, strings included.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Rows$(m AS ARRAY) AS STRING
+    DIM s$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m) - 1
+        s$ = s$ + JOIN(m[i], ",") + ";"
+    NEXT i
+    RETURN s$
+ENDFUNC
+
+DIM s AS ARRAY = ["ab", "cde", "f"]
+DIM ns AS ARRAY = [["ab", "cd"], ["ef", "gh"]]
+DIM m AS ARRAY = [[1.26, -2.5], [3.5, 4.44]]
+
+Check(Rows$(UCASE$(ns)) = "AB,CD;EF,GH;", "UCASE$ into the rows of a nested string array")
+Check(Rows$(LEFT$(ns, 1)) = "a,c;e,g;", "LEFT$ into the rows")
+Check(JOIN(MID$(s, 1, 1), ",") = "b,d,", "MID$ over an array")
+Check(JOIN(ASC(s), ",") = "97,99,102", "ASC over an array")
+Check(JOIN(CHR$([65, 66, 67]), "") = "ABC", "CHR$ over an array")
+Check(JOIN(REPLACE$(s, "d", "D"), ",") = "ab,cDe,f", "REPLACE$ over an array")
+Check(JOIN(TRIM$(["  a ", "b "]), ",") = "a,b", "TRIM$ over an array")
+Check(JOIN(STARTSWITH(s, "a"), ",") = "TRUE,FALSE,FALSE", "STARTSWITH over an array answers truth values")
+Check(JOIN(VAL(["1", "2.5", "x"]), ",") = "1,2.5,0", "VAL over an array")
+Check(JOIN(HEX$([255, 16]), ",") = "FF,10", "HEX$ over an array")
+Check(Rows$(ROUND(m, 1)) = "1.3,-2.5;3.5,4.4;", "ROUND into the rows")
+Check(Rows$(SQR([[4, 9], [16, 25]])) = "2,3;4,5;", "SQR into the rows")
+Check(JOIN(LEFT$(["abc", "defg", "hi"], [1, 2]), ",") = "a,de,h", "a second array is cycled cell by cell")
+Check(ABS(ATAN2([1, 2], [3, 4])[1] - ATAN2(2, 4)) < 0.000000001, "two arrays cell by cell")
+Check(JOIN(CLAMP([1, 5, 9], [0, 0, 0], [2, 4, 6]), ",") = "1,4,6", "three arrays cell by cell")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

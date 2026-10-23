@@ -404,6 +404,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_round_p","__round_p", f64_type, {f64_type, f64_type}, JD_TAG_F64);
     reg("jdb_array_round_p", "__arr_round_p", i8_ptr_type, {i8_ptr_type, f64_type}, JD_TAG_ARR);
     reg("jdb_reshape", "__reshape", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_replace", "__arr_replace", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_join_arr","JOIN",     i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_trunc",  "TRUNC",  f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_sign_i", "SIGN",   i64_type, {f64_type}, JD_TAG_I64);
@@ -1238,7 +1239,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     std::function<bool(const Expr&)> is_str_expr = [&](const Expr& e) -> bool {
         if (e.kind == ExprKind::LITERAL_STRING) return true;
         if (e.kind == ExprKind::VARIABLE && !e.str_val.empty() && e.str_val.back() == '$') return true;
-        if (e.kind == ExprKind::CALL && !e.func_name.empty() && e.func_name.back() == '$') return true;
+        if (e.kind == ExprKind::CALL && !e.func_name.empty() && e.func_name.back() == '$') {
+            // A $ builtin over an array literal answers an array of strings.
+            if (!e.args.empty() && e.args[0] && e.args[0]->kind == ExprKind::ARRAY_LITERAL &&
+                !decls.count(e.func_name) && builtin_sig(e.func_name) && !builtin_no_vectorize(e.func_name))
+                return false;
+            return true;
+        }
         // String concat (any + with a string operand)
         if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) {
             if ((e.left && is_str_expr(*e.left)) || (e.right && is_str_expr(*e.right)))
@@ -1628,7 +1635,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             continue;
                         }
                     }
-                    if (it->second.tags[i] != JD_TAG_STR && e.args[i] && is_str_expr(*e.args[i]))
+                    // A parameter declared AS ARRAY keeps its kind whatever the
+                    // argument's name says: UCASE$(rows) and a $ variable that
+                    // holds an array are arrays.
+                    bool declared_array = it->second.stmt && i < it->second.stmt->params().size() &&
+                                          it->second.stmt->params()[i].type == VarType::ARRAY;
+                    if (!declared_array && it->second.tags[i] != JD_TAG_STR && e.args[i] &&
+                        is_str_expr(*e.args[i]))
                         it->second.tags[i] = JD_TAG_STR;
                     // Promote param types from the call-site so the callee's
                     // LLVM signature matches and INDEX inside the body
@@ -14488,6 +14501,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // ROUND(x, places) → native 2-arg form
+    // REPLACE$ over an array of strings replaces in every cell, as the
+    // interpreter's does; the string form takes one string.
+    if (upper == "REPLACE$" && expr.args.size() == 3) {
+        TypedValue target = codegen_expr(*expr.args[0]);
+        if (target.tag == JD_TAG_ARR) {
+            TypedValue find = codegen_expr(*expr.args[1]);
+            TypedValue repl = codegen_expr(*expr.args[2]);
+            auto& fn = runtime_funcs["__arr_replace"];
+            LLVMValueRef args[] = { target.val, coerce_to(find, i8_ptr_type), coerce_to(repl, i8_ptr_type) };
+            TypedValue out{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "arepl"), JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
+        }
+    }
+
     // RESHAPE of a native array runs in the runtime; a shape given as one
     // number becomes a shape of one dimension. A VM array goes to the bridge.
     if (upper == "RESHAPE" && expr.args.size() == 2) {
@@ -15264,6 +15292,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         auto vit = native_vec.find(upper);
         if (vit != native_vec.end() && !expr.args.empty()) {
             TypedValue av = arg_cache[0];
+            // A second array among the arguments is cycled against the first
+            // cell by cell; the appliers here take one array, so the bridge
+            // does that call.
+            bool other_arr = false;
+            for (size_t i = 1; i < arg_cache.size(); i++)
+                if (arg_cache[i].tag == JD_TAG_ARR) other_arr = true;
+            if (other_arr) goto no_native_vec;
             if (av.tag == JD_TAG_ARR) {
                 const VecSpec& spec = vit->second;
                 // Look up the scalar runtime function's LLVMValueRef (by name via runtime_funcs)

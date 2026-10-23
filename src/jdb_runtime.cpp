@@ -2883,92 +2883,66 @@ JdbArray* jdb_array_apply_ff(JdbArray* arr, void* fnp) {
     return r;
 }
 
-// String → string element-wise. Array must have bit 1 set (string elems).
-JdbArray* jdb_array_apply_ss(JdbArray* arr, void* fnp) {
+// A function over the string cells of an array, into the rows of a nested
+// one: the leaf gets the string and answers the new cell; a cell that is no
+// string gets "". str_result marks the answers as strings.
+static JdbArray* apply_string_cells(JdbArray* arr, bool str_result,
+                                    const std::function<double(const char*)>& leaf) {
     if (!arr) return jdb_array_new(0);
-    fn_ss fn = (fn_ss)fnp;
     auto* r = jdb_array_new(arr->length);
-    r->flags |= 3;  // ptr + string
+    if ((arr->flags & 1) && !(arr->flags & 2)) {
+        r->flags |= 1;
+        for (int64_t i = 0; i < arr->length; i++)
+            r->data[i] = encode_inner(apply_string_cells(decode_inner(arr->data[i]), str_result, leaf));
+        return r;
+    }
     bool has_string = (arr->flags & 2) != 0;
     for (int64_t i = 0; i < arr->length; i++) {
+        const char* elem = "";
         if (has_string) {
             union { double d; int64_t i; } u; u.d = arr->data[i];
-            const char* elem = (const char*)(intptr_t)u.i;
-            char* res = fn(elem ? elem : "");
-            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
-            r->data[i] = ur.d;
-        } else {
-            // Element is numeric, caller mistake - return empty string
-            char* empty = _strdup("");
-            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)empty;
-            r->data[i] = ur.d;
+            if (u.i) elem = (const char*)(intptr_t)u.i;
         }
+        r->data[i] = leaf(elem);
     }
+    if (str_result) r->flags |= 3;
     return r;
+}
+
+static inline double encode_str_cell(char* s) {
+    union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)s;
+    return u.d;
+}
+
+// String → string element-wise (UCASE$, TRIM$, REVERSE$).
+JdbArray* jdb_array_apply_ss(JdbArray* arr, void* fnp) {
+    fn_ss fn = (fn_ss)fnp;
+    return apply_string_cells(arr, true, [fn](const char* s) { return encode_str_cell(fn(s)); });
 }
 
 // String → int element-wise (LEN$, ASC).
 JdbArray* jdb_array_apply_ifs(JdbArray* arr, void* fnp) {
-    if (!arr) return jdb_array_new(0);
     fn_ifs fn = (fn_ifs)fnp;
-    auto* r = jdb_array_new(arr->length);
-    bool has_string = (arr->flags & 2) != 0;
-    for (int64_t i = 0; i < arr->length; i++) {
-        if (has_string) {
-            union { double d; int64_t i; } u; u.d = arr->data[i];
-            const char* elem = (const char*)(intptr_t)u.i;
-            r->data[i] = (double)fn(elem ? elem : "");
-        } else {
-            r->data[i] = 0;
-        }
-    }
-    return r;
+    return apply_string_cells(arr, false, [fn](const char* s) { return (double)fn(s); });
 }
 
 // String + int → string element-wise (LEFT$, RIGHT$ with scalar count).
 JdbArray* jdb_array_apply_sfi(JdbArray* arr, int64_t n, void* fnp) {
-    if (!arr) return jdb_array_new(0);
     fn_sfi fn = (fn_sfi)fnp;
-    auto* r = jdb_array_new(arr->length);
-    r->flags |= 3;
-    bool has_string = (arr->flags & 2) != 0;
-    for (int64_t i = 0; i < arr->length; i++) {
-        if (has_string) {
-            union { double d; int64_t i; } u; u.d = arr->data[i];
-            const char* elem = (const char*)(intptr_t)u.i;
-            char* res = fn(elem ? elem : "", n);
-            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
-            r->data[i] = ur.d;
-        } else {
-            char* empty = _strdup("");
-            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)empty;
-            r->data[i] = ur.d;
-        }
-    }
-    return r;
+    return apply_string_cells(arr, true, [fn, n](const char* s) { return encode_str_cell(fn(s, n)); });
 }
 
 // String + int + int → string element-wise (MID$).
 JdbArray* jdb_array_apply_sfii(JdbArray* arr, int64_t a, int64_t b, void* fnp) {
-    if (!arr) return jdb_array_new(0);
     fn_sfii fn = (fn_sfii)fnp;
-    auto* r = jdb_array_new(arr->length);
-    r->flags |= 3;
-    bool has_string = (arr->flags & 2) != 0;
-    for (int64_t i = 0; i < arr->length; i++) {
-        if (has_string) {
-            union { double d; int64_t i; } u; u.d = arr->data[i];
-            const char* elem = (const char*)(intptr_t)u.i;
-            char* res = fn(elem ? elem : "", a, b);
-            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
-            r->data[i] = ur.d;
-        } else {
-            char* empty = _strdup("");
-            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)empty;
-            r->data[i] = ur.d;
-        }
-    }
-    return r;
+    return apply_string_cells(arr, true, [fn, a, b](const char* s) { return encode_str_cell(fn(s, a, b)); });
+}
+
+char* jdb_replace(const char* src, const char* find, const char* rep);
+
+// REPLACE$ over every string cell of an array.
+JdbArray* jdb_array_replace(JdbArray* arr, const char* find, const char* repl) {
+    return apply_string_cells(arr, true, [&](const char* s) { return encode_str_cell(jdb_replace(s, find, repl)); });
 }
 
 // double + int → double (ROUND(arr, 2))
