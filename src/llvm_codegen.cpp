@@ -2133,6 +2133,41 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     std::unordered_set<std::string> classify_locals;
     std::function<int(const Stmt&, std::unordered_map<std::string,int>&)> classify_return =
         [&](const Stmt& s, std::unordered_map<std::string,int>& local_kinds) -> int {
+        // Whether an expression answers an array, read from the locals known
+        // so far: an array literal, a local or an unshadowed global holding
+        // one, arithmetic or a sign on an array, a call answering one, and an
+        // element-wise builtin given one.
+        std::function<bool(const Expr*)> is_array_expr = [&](const Expr* x) -> bool {
+            if (!x) return false;
+            switch (x->kind) {
+                case ExprKind::ARRAY_LITERAL: return true;
+                case ExprKind::VARIABLE: {
+                    auto lit = local_kinds.find(x->str_val);
+                    if (lit != local_kinds.end()) return lit->second == JD_TAG_ARR;
+                    if (classify_locals.count(x->str_val)) return false;
+                    auto git = pre_var_tags.find(x->str_val);
+                    return git != pre_var_tags.end() && git->second == JD_TAG_ARR;
+                }
+                case ExprKind::UNARY:
+                    return is_array_expr(x->right.get());
+                case ExprKind::BINARY:
+                    return is_array_expr(x->left.get()) || is_array_expr(x->right.get());
+                case ExprKind::CALL: {
+                    auto cit = decls.find(x->func_name);
+                    if (cit != decls.end()) return cit->second.return_tag == JD_TAG_ARR;
+                    auto rit = runtime_funcs.find(x->func_name);
+                    if (rit != runtime_funcs.end() && rit->second.return_tag == JD_TAG_ARR) return true;
+                    if (builtin_is(x->func_name, BuiltinRet::Arr)) return true;
+                    std::string upper = x->func_name;
+                    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                    if (!builtin_sig(upper) || builtin_no_vectorize(upper)) return false;
+                    for (auto& a : x->args)
+                        if (is_array_expr(a.get())) return true;
+                    return false;
+                }
+                default: return false;
+            }
+        };
         // Track `var = <literal>` (or DIM with init) so RETURN var resolves.
         // DIM was missing here originally - `DIM out AS ARRAY = []` left out
         // unclassified, so a FUNC building a list with rec APPENDs and
@@ -2144,21 +2179,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 local_kinds[s.var_name] = JD_TAG_NATIVE_MAP;
             else if (s.expr->kind == ExprKind::ARRAY_LITERAL)
                 local_kinds[s.var_name] = JD_TAG_ARR;
-            else if (s.expr->kind == ExprKind::BINARY) {
-                // Arithmetic with an array operand yields an array.
-                auto side_is_arr = [&](const Expr* x) {
-                    if (!x) return false;
-                    if (x->kind == ExprKind::ARRAY_LITERAL) return true;
-                    if (x->kind == ExprKind::VARIABLE) {
-                        auto lit = local_kinds.find(x->str_val);
-                        return lit != local_kinds.end() && lit->second == JD_TAG_ARR;
-                    }
-                    return false;
-                };
-                if (side_is_arr(s.expr->left.get()) || side_is_arr(s.expr->right.get()))
+            else if (s.expr->kind == ExprKind::BINARY || s.expr->kind == ExprKind::UNARY) {
+                if (is_array_expr(s.expr.get()))
                     local_kinds[s.var_name] = JD_TAG_ARR;
             }
             else if (s.expr->kind == ExprKind::CALL) {
+                if (is_array_expr(s.expr.get()))
+                    local_kinds[s.var_name] = JD_TAG_ARR;
                 auto cit = decls.find(s.expr->func_name);
                 if (cit != decls.end() &&
                     (cit->second.return_tag == JD_TAG_ARR ||
@@ -2204,7 +2231,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (s.kind == StmtKind::RETURN && s.expr) {
             const Expr& e = *s.expr;
             if (e.kind == ExprKind::MAP_LITERAL) return JD_TAG_NATIVE_MAP;
-            if (e.kind == ExprKind::ARRAY_LITERAL) return JD_TAG_ARR;
+            if (is_array_expr(&e)) return JD_TAG_ARR;
             if (e.kind == ExprKind::VARIABLE) {
                 auto lit = local_kinds.find(e.str_val);
                 if (lit != local_kinds.end()) return lit->second;
@@ -3787,6 +3814,14 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
                     case JD_TAG_FUNCREF:    return make(K::FUNCREF);
                     default:                return make(K::UNKNOWN);
                 }
+            }
+            // An element-wise builtin given an array answers an array.
+            {
+                std::string upper = e.func_name;
+                std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                if (builtin_sig(upper) && !builtin_no_vectorize(upper))
+                    for (auto& a : e.args)
+                        if (a && infer_expr_type(*a).kind == K::ARRAY) return make(K::ARRAY);
             }
             auto rit = runtime_funcs.find(e.func_name);
             if (rit != runtime_funcs.end()) {

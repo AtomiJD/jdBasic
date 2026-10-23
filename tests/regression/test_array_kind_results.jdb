@@ -1,0 +1,66 @@
+' An element-wise builtin or an operator given an array answers an array in
+' a compiled program too: as the value of a FUNC without a return type, as
+' the right side of an assignment to a declared ARRAY, and for ZEROS and
+' ONES of a two-dimensional shape.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Dbl(m AS ARRAY)
+    RETURN m * 2
+ENDFUNC
+
+FUNC Clipped(m AS ARRAY)
+    RETURN CLAMP(m, -1, 1)
+ENDFUNC
+
+FUNC Neg(m AS ARRAY)
+    RETURN -m
+ENDFUNC
+
+DIM a AS ARRAY = [-3.5, 0.5, 4.5]
+Check(JOIN(Dbl(a), ",") = "-7,1,9", "RETURN m * 2 answers the array")
+Check(JOIN(Clipped(a), ",") = "-1,0.5,1", "RETURN CLAMP(m) answers the array")
+Check(JOIN(Neg(a), ",") = "3.5,-0.5,-4.5", "RETURN -m answers the array")
+DIM r AS ARRAY = Clipped(a)
+Check(LEN(r) = 3, "the answer fills a declared ARRAY")
+
+DIM b AS ARRAY = ZEROS([3])
+b = FLOOR(a)
+Check(JOIN(b, ",") = "-4,0,4", "a = FLOOR(arr) into a declared ARRAY")
+b = ABS(a)
+Check(JOIN(b, ",") = "3.5,0.5,4.5", "a = ABS(arr)")
+b = INT(a)
+Check(JOIN(b, ",") = "-3,0,4", "a = INT(arr)")
+b = CLAMP(a, 0, 2)
+Check(JOIN(b, ",") = "0,0.5,2", "a = CLAMP(arr, lo, hi)")
+
+DIM z AS ARRAY = ZEROS([40, 8])
+Check(LEN(z) = 40 ANDALSO LEN(z[39]) = 8, "ZEROS of a shape has the rows and columns")
+Check(SUM(z) = 0, "ZEROS is all zero")
+DIM o AS ARRAY = ONES([4, 8])
+Check(LEN(o) = 4 ANDALSO SUM(o) = 32, "ONES of a shape is all one")
+DIM g AS ARRAY = ZEROS([2, 3])
+g[1][2] = 7
+Check(g[1][2] = 7 ANDALSO g[0][2] = 0, "the rows of ZEROS are separate")
+
+DIM m AS ARRAY = RESHAPE(IOTA(9), [3, 3])
+DIM x AS ARRAY = m
+DIM i AS INTEGER
+FOR i = 1 TO 200
+    x = m * m
+NEXT i
+Check(SUM(x) = 285, "an array product in a loop keeps its value")
+FOR i = 1 TO 200
+    x = MATMUL(m, m)
+NEXT i
+Check(x[0][0] = 30 ANDALSO x[2][2] = 150, "MATMUL in a loop keeps its value")
+
+IF failed > 0 THEN END 1
+PRINT "OK"
