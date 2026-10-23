@@ -765,7 +765,12 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
 }
 
 Value VM::apply_binary_op(const std::string& op, const Value& a, const Value& b) {
-    if (op == "+" || op == "ADD") return arithmetic(a, b, OpCode::ADD);
+    if (op == "+" || op == "ADD") {
+        // + with a string on either side joins, as the operator does.
+        if (a.type == ValueType::STRING || b.type == ValueType::STRING)
+            return Value::make_string(a.to_string() + b.to_string());
+        return arithmetic(a, b, OpCode::ADD);
+    }
     if (op == "-" || op == "SUB") return arithmetic(a, b, OpCode::SUB);
     if (op == "*" || op == "MUL") return arithmetic(a, b, OpCode::MUL);
     if (op == "/" || op == "DIV") return arithmetic(a, b, OpCode::DIV);

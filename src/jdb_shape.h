@@ -259,6 +259,35 @@ inline std::vector<int64_t> unique_indices(int64_t n, const std::function<bool(i
     return kept;
 }
 
+// ── Running folds and selections ─────────────────────────────────────────
+
+// The running fold of the cells, into the rows of a nested array: CUMSUM is
+// step(acc, x) = acc + x from 0. With from_first the first cell is the start
+// and stands as it is, the way SCAN begins.
+template <class A>
+typename A::Arr cumulate(typename A::Arr a, const typename A::Val& init,
+                         const std::function<typename A::Val(const typename A::Val&, const typename A::Val&)>& step,
+                         bool from_first = false) {
+    int64_t n = A::len(a);
+    typename A::Arr out = A::make(n);
+    typename A::Val acc = init;
+    bool started = !from_first;
+    for (int64_t i = 0; i < n; i++) {
+        if (A::is_row(a, i)) { A::put_row(out, i, cumulate<A>(A::row(a, i), init, step, from_first)); continue; }
+        if (!started) { acc = A::cell(a, i); started = true; }
+        else acc = step(acc, A::cell(a, i));
+        A::put(out, i, acc);
+    }
+    return out;
+}
+
+// The indices of the cells keep accepts, in order.
+inline std::vector<int64_t> select_indices(int64_t n, const std::function<bool(int64_t)>& keep) {
+    std::vector<int64_t> kept;
+    for (int64_t i = 0; i < n; i++) if (keep(i)) kept.push_back(i);
+    return kept;
+}
+
 // ── RESHAPE ──────────────────────────────────────────────────────────────
 
 // The cells of a in order, rows opened as they come.

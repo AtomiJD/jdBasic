@@ -1,0 +1,44 @@
+' CUMSUM and CUMPROD run along the cells and into the rows of a matrix;
+' DIFF keeps the cells the second array has no equal of, strings by content;
+' the same in both backends.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Rows$(m AS ARRAY) AS STRING
+    DIM s$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m) - 1
+        s$ = s$ + JOIN(m[i], ",") + ";"
+    NEXT i
+    RETURN s$
+ENDFUNC
+
+DIM v AS ARRAY = [1, 2, 3, 4]
+DIM m AS ARRAY = [[1, 2, 3], [4, 5, 6]]
+DIM s AS ARRAY = ["pear", "apple", "fig"]
+
+Check(JOIN(CUMSUM(v), ",") = "1,3,6,10", "CUMSUM of a flat array")
+Check(JOIN(CUMPROD(v), ",") = "1,2,6,24", "CUMPROD of a flat array")
+Check(Rows$(CUMSUM(m)) = "1,3,6;4,9,15;", "CUMSUM runs along every row")
+Check(Rows$(CUMPROD(m)) = "1,2,6;4,20,120;", "CUMPROD runs along every row")
+Check(LEN(CUMSUM([])) = 0, "CUMSUM of nothing")
+Check(JOIN(CUMSUM([1.5, -0.5]), ",") = "1.5,1", "CUMSUM with fractions")
+Check(JOIN(DIFF(v, [2, 4]), ",") = "1,3", "DIFF of numbers")
+Check(JOIN(DIFF(s, ["apple"]), ",") = "pear,fig", "DIFF of strings by content")
+Check(JOIN(DIFF(UCASE$(s), ["APPLE", "FIG"]), ",") = "PEAR", "DIFF of computed strings")
+Check(JOIN(DIFF(v, []), ",") = "1,2,3,4", "DIFF against nothing")
+Check(LEN(DIFF(v, v)) = 0, "DIFF against itself")
+Check(JOIN(SCAN("+", v), ",") = "1,3,6,10", "SCAN with + agrees with CUMSUM")
+Check(Rows$(SCAN("+", m)) = "1,3,6;4,9,15;", "SCAN runs along every row")
+Check(JOIN(SCAN("MAX", [3, 1, 4, 1, 5]), ",") = "3,3,4,4,5", "SCAN with MAX")
+Check(JOIN(SCAN("+", ["a", "b", "c"]), ",") = "a,ab,abc", "SCAN with + joins strings")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

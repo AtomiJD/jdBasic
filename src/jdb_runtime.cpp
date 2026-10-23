@@ -1367,20 +1367,15 @@ JdbArray* jdb_array_unique_str(JdbArray* arr) {
     return jdb_array_unique(arr);
 }
 
+// CUMSUM and CUMPROD run along the cells, into the rows of a nested array.
 JdbArray* jdb_array_cumsum(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
-    auto* r = jdb_array_new(arr->length);
-    double s = 0;
-    for (int64_t i = 0; i < arr->length; i++) { s += arr->data[i]; r->data[i] = s; }
-    return r;
+    return jdb_shape::cumulate<RtShape>(arr, 0.0, [](const double& acc, const double& x) { return acc + x; });
 }
 
 JdbArray* jdb_array_cumprod(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
-    auto* r = jdb_array_new(arr->length);
-    double s = 1;
-    for (int64_t i = 0; i < arr->length; i++) { s *= arr->data[i]; r->data[i] = s; }
-    return r;
+    return jdb_shape::cumulate<RtShape>(arr, 1.0, [](const double& acc, const double& x) { return acc * x; });
 }
 
 JdbArray* jdb_array_take(JdbArray* arr, int64_t n) {
@@ -1431,18 +1426,23 @@ JdbArray* jdb_drop_n(int64_t n, JdbArray* arr) {
     return jdb_array_drop(arr, n);
 }
 
+static bool rt_cell_is_str(JdbArray* arr, int64_t i);
+static const char* rt_cell_str(JdbArray* arr, int64_t i);
+
+// DIFF(a, b): the cells of a that b has no equal of, strings by content.
 JdbArray* jdb_array_diff(JdbArray* a, JdbArray* b) {
     if (!a) return jdb_array_new(0);
-    auto* r = jdb_array_new(a->length);
-    int64_t n = 0;
-    for (int64_t i = 0; i < a->length; i++) {
-        bool found = false;
-        if (b) for (int64_t j = 0; j < b->length; j++) if (b->data[j] == a->data[i]) { found = true; break; }
-        if (!found) r->data[n++] = a->data[i];
-    }
-    r->length = n;
-    r->flags = a->flags;  // preserve element-type marker
-    return r;
+    auto same = [&](int64_t i, int64_t j) {
+        bool si = rt_cell_is_str(a, i), sj = rt_cell_is_str(b, j);
+        if (si != sj) return false;
+        if (si) return strcmp(rt_cell_str(a, i), rt_cell_str(b, j)) == 0;
+        return a->data[i] == b->data[j];
+    };
+    std::vector<int64_t> kept = jdb_shape::select_indices(a->length, [&](int64_t i) {
+        if (b) for (int64_t j = 0; j < b->length; j++) if (same(i, j)) return false;
+        return true;
+    });
+    return jdb_shape::take<RtShape>(a, kept);
 }
 
 // Forward-declared; defined later alongside the arithmetic helpers.

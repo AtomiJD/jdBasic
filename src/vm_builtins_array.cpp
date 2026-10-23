@@ -347,20 +347,17 @@ void VM::register_array_builtins() {
     });
 
     // ── DIFF ─────────────────────────────────────────────────
+    // DIFF(a, b): the cells of a that b has no equal of, in their order.
     register_native("DIFF", 1, 2, [](const std::vector<Value>& args) -> Value {
         if (args.size() < 2) return args[0];
-        auto* a = args[0].as_array();
-        auto* b = args[1].as_array();
-        Value r = Value::make_array();
-        auto* out = r.as_array();
-        for (auto& e : a->elements) {
-            bool found = false;
-            for (auto& f : b->elements) {
-                if (e.to_string() == f.to_string()) { found = true; break; }
-            }
-            if (!found) out->elements.push_back(e);
-        }
-        return r;
+        auto& a = args[0].as_array()->elements;
+        auto& b = args[1].as_array()->elements;
+        std::vector<int64_t> kept = jdb_shape::select_indices((int64_t)a.size(), [&](int64_t i) {
+            std::string key = a[(size_t)i].to_string();
+            for (auto& f : b) if (f.to_string() == key) return false;
+            return true;
+        });
+        return jdb_shape::take<VmShape>(args[0], kept);
     });
 
     // ── TAKE / DROP ──────────────────────────────────────────
@@ -635,19 +632,12 @@ void VM::register_array_builtins() {
     });
 
     // ── SCAN ─────────────────────────────────────────────────
+    // SCAN(op$, array): the running fold under the operator from the first
+    // cell, along the last axis, by jdb_shape::cumulate.
     register_native("SCAN", 2, 2, [this](const std::vector<Value>& args) -> Value {
         std::string op = args[0].as_string()->data;
-        auto* arr = args[1].as_array();
-        Value r = Value::make_array();
-        auto* out = r.as_array();
-        if (arr->elements.empty()) return r;
-        Value acc = arr->elements[0];
-        out->elements.push_back(acc);
-        for (size_t i = 1; i < arr->elements.size(); i++) {
-            acc = apply_binary_op(op, acc, arr->elements[i]);
-            out->elements.push_back(acc);
-        }
-        return r;
+        return jdb_shape::cumulate<VmShape>(args[1], Value(),
+            [this, op](const Value& acc, const Value& x) { return apply_binary_op(op, acc, x); }, true);
     });
 
     // ── TRANSPOSE ────────────────────────────────────────────
@@ -1256,17 +1246,15 @@ void VM::register_array_builtins() {
         r.as_array()->elements.push_back(Value::make_f64(ax*by - ay*bx));
         return r;
     });
-    register_native("CUMSUM", [](const std::vector<Value>& args) -> Value {
-        auto* arr = args[0].as_array();
-        Value r = Value::make_array(); double s = 0;
-        for (auto& v : arr->elements) { s += v.to_double(); r.as_array()->elements.push_back(Value::make_f64(s)); }
-        return r;
+    // CUMSUM and CUMPROD run along the cells, into the rows of a nested
+    // array, by jdb_shape::cumulate, which the native runtime shares.
+    register_native("CUMSUM", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return jdb_shape::cumulate<VmShape>(args[0], Value::make_f64(0.0),
+            [](const Value& acc, const Value& x) { return Value::make_f64(acc.to_double() + x.to_double()); });
     });
-    register_native("CUMPROD", [](const std::vector<Value>& args) -> Value {
-        auto* arr = args[0].as_array();
-        Value r = Value::make_array(); double s = 1;
-        for (auto& v : arr->elements) { s *= v.to_double(); r.as_array()->elements.push_back(Value::make_f64(s)); }
-        return r;
+    register_native("CUMPROD", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return jdb_shape::cumulate<VmShape>(args[0], Value::make_f64(1.0),
+            [](const Value& acc, const Value& x) { return Value::make_f64(acc.to_double() * x.to_double()); });
     });
     register_native("HISTOGRAM", [](const std::vector<Value>& args) -> Value {
         int bins = (args.size() >= 2) ? (int)args[1].to_int() : 10;
