@@ -75,6 +75,8 @@ void install_seh_translator_for_this_thread() {}
 #include <atomic>
 #include <map>
 #include "async_task.h"
+static Value array_pair(const Value& a, const Value& b,
+                        const std::function<Value(const Value&, const Value&)>& cell);
 
 // Names in a chunk keep the case they were written in.
 static bool name_ci_equal(const char* a, const std::string& b) {
@@ -1564,32 +1566,9 @@ void VM::run() {
             }
             Value b = pop();
             Value a = pop();
-            // Element-wise comparison for arrays - RECURSIVE so 2-D matrices
-            // (e.g. `(board = 0)` for a [10,10] board) keep their shape.
-            std::function<Value(const Value&, const Value&)> rec =
-                [&](const Value& la, const Value& lb) -> Value {
-                if (la.type == ValueType::ARRAY || lb.type == ValueType::ARRAY) {
-                    Value result = Value::make_array();
-                    auto* out = result.as_array();
-                    if (la.type == ValueType::ARRAY && lb.type == ValueType::ARRAY) {
-                        auto& aa = la.as_array()->elements;
-                        auto& bb = lb.as_array()->elements;
-                        size_t len = std::min(aa.size(), bb.size());
-                        out->elements.reserve(len);
-                        for (size_t i = 0; i < len; i++)
-                            out->elements.push_back(rec(aa[i], bb[i]));
-                    } else if (la.type == ValueType::ARRAY) {
-                        for (auto& e : la.as_array()->elements)
-                            out->elements.push_back(rec(e, lb));
-                    } else {
-                        for (auto& e : lb.as_array()->elements)
-                            out->elements.push_back(rec(la, e));
-                    }
-                    return result;
-                }
-                return compare(la, lb, op);
-            };
-            push(rec(a, b));
+            // An array on either side compares cell by cell, under the same
+            // shape rule as the arithmetic.
+            push(array_pair(a, b, [&](const Value& x, const Value& y) { return compare(x, y, op); }));
             break;
         }
 
@@ -3178,84 +3157,54 @@ Value VM::array_arithmetic(const Value& a, const Value& b, OpCode op) {
     // Recursive so 2-D matrices keep their shape: when an inner element is
     // itself an array, recurse instead of dropping into scalar_binop which
     // would coerce the whole row to a number.
-    if (a.type == ValueType::ARRAY && b.type == ValueType::ARRAY) {
+    return array_pair(a, b, [&](const Value& x, const Value& y) { return scalar_binop(x, y, op); });
+}
+
+// Two values under a cell operation, over arrays: two arrays of equal length
+// meet cell by cell; a flat array meets every row of a matrix; an array of
+// one cell gives that cell to every cell of the other; any other pair of
+// lengths is an error. A scalar meets every cell.
+static Value array_pair(const Value& a, const Value& b,
+                        const std::function<Value(const Value&, const Value&)>& cell) {
+    bool a_arr = a.type == ValueType::ARRAY, b_arr = b.type == ValueType::ARRAY;
+    if (!a_arr && !b_arr) return cell(a, b);
+    Value result = Value::make_array();
+    auto& out = result.as_array()->elements;
+    if (a_arr && b_arr) {
         auto& la = a.as_array()->elements;
         auto& lb = b.as_array()->elements;
-        // NumPy-style broadcasting for mismatched sizes
-        if (la.size() != lb.size()) {
-            bool la_2d = !la.empty() && la[0].type == ValueType::ARRAY;
-            bool lb_2d = !lb.empty() && lb[0].type == ValueType::ARRAY;
-            // (M,N) op (N,) or (1,N) op (N,) → broadcast flat array to each row
-            if (la_2d && !lb_2d) {
-                Value result = Value::make_array();
-                auto* out = result.as_array();
-                out->elements.reserve(la.size());
-                for (size_t i = 0; i < la.size(); i++)
-                    out->elements.push_back(array_arithmetic(la[i], b, op));
-                return result;
-            }
-            // (N,) op (M,N) → broadcast flat array to each row
-            if (lb_2d && !la_2d) {
-                Value result = Value::make_array();
-                auto* out = result.as_array();
-                out->elements.reserve(lb.size());
-                for (size_t i = 0; i < lb.size(); i++)
-                    out->elements.push_back(array_arithmetic(a, lb[i], op));
-                return result;
-            }
-            // Both 2D: broadcast size-1 side
-            if (la.size() == 1) {
-                Value result = Value::make_array();
-                auto* out = result.as_array();
-                out->elements.reserve(lb.size());
-                for (size_t i = 0; i < lb.size(); i++)
-                    out->elements.push_back(array_arithmetic(la[0], lb[i], op));
-                return result;
-            }
-            if (lb.size() == 1) {
-                Value result = Value::make_array();
-                auto* out = result.as_array();
-                out->elements.reserve(la.size());
-                for (size_t i = 0; i < la.size(); i++)
-                    out->elements.push_back(array_arithmetic(la[i], lb[0], op));
-                return result;
-            }
-        }
-        Value result = Value::make_array();
-        auto* out = result.as_array();
-        size_t len = std::min(la.size(), lb.size());
-        out->elements.reserve(len);
-        for (size_t i = 0; i < len; i++) {
-            if (la[i].type == ValueType::ARRAY || lb[i].type == ValueType::ARRAY)
-                out->elements.push_back(array_arithmetic(la[i], lb[i], op));
-            else
-                out->elements.push_back(scalar_binop(la[i], lb[i], op));
+        bool la_rows = !la.empty() && la[0].type == ValueType::ARRAY;
+        bool lb_rows = !lb.empty() && lb[0].type == ValueType::ARRAY;
+        if (la_rows && !lb_rows) {
+            out.reserve(la.size());
+            for (auto& row : la) out.push_back(array_pair(row, b, cell));
+        } else if (lb_rows && !la_rows) {
+            out.reserve(lb.size());
+            for (auto& row : lb) out.push_back(array_pair(a, row, cell));
+        } else if (la.size() == lb.size()) {
+            out.reserve(la.size());
+            for (size_t i = 0; i < la.size(); i++) out.push_back(array_pair(la[i], lb[i], cell));
+        } else if (la.size() == 1) {
+            out.reserve(lb.size());
+            for (auto& y : lb) out.push_back(array_pair(la[0], y, cell));
+        } else if (lb.size() == 1) {
+            out.reserve(la.size());
+            for (auto& x : la) out.push_back(array_pair(x, lb[0], cell));
+        } else {
+            throw jdError(ErrCode::TYPE_MISMATCH, "shapes differ: " + std::to_string(la.size()) +
+                          " and " + std::to_string(lb.size()));
         }
         return result;
     }
-    if (a.type == ValueType::ARRAY) {
-        Value result = Value::make_array();
-        auto* out = result.as_array();
-        auto& arr = a.as_array()->elements;
-        out->elements.reserve(arr.size());
-        for (auto& elem : arr) {
-            if (elem.type == ValueType::ARRAY)
-                out->elements.push_back(array_arithmetic(elem, b, op));
-            else
-                out->elements.push_back(scalar_binop(elem, b, op));
-        }
+    if (a_arr) {
+        auto& la = a.as_array()->elements;
+        out.reserve(la.size());
+        for (auto& x : la) out.push_back(array_pair(x, b, cell));
         return result;
     }
-    Value result = Value::make_array();
-    auto* out = result.as_array();
-    auto& arr = b.as_array()->elements;
-    out->elements.reserve(arr.size());
-    for (auto& elem : arr) {
-        if (elem.type == ValueType::ARRAY)
-            out->elements.push_back(array_arithmetic(a, elem, op));
-        else
-            out->elements.push_back(scalar_binop(a, elem, op));
-    }
+    auto& lb = b.as_array()->elements;
+    out.reserve(lb.size());
+    for (auto& y : lb) out.push_back(array_pair(a, y, cell));
     return result;
 }
 

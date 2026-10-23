@@ -203,7 +203,7 @@ PRINT MultiLine$
 | `^`                                   | numeric                    | DOUBLE  | Power.                                                                                          |
 | `BAND` `BOR` `BXOR` `BNOT` `SHL` `SHR` | numeric                    | INTEGER | Operands coerced to 64-bit integer (trunc toward 0 first). `BNOT` is unary prefix. Shift counts are clamped to `0..63`. |
 
-**Arrays:** `+ - * / \ MOD` and bitwise ops apply **element-wise** for arrays of equal shape. Scalar-array operations broadcast the scalar.
+**Arrays:** `+ - * / \ MOD`, the comparisons and the bitwise ops apply **element-wise**. Two arrays of equal length meet cell by cell (rows of a matrix row by row); a flat array of `k` cells meets every row of a matrix with `k` columns (`[N,k] op [k]`); an array of one cell, among them a column `[N,1]` against `[N,k]`, gives its cell to every cell it meets; any other pair of lengths is a type mismatch, `shapes differ: 3 and 2`. A scalar meets every cell.
 **Tensors:** `/` is supported; `\` (integer division) and `MOD` are **not supported** for tensors.
 
 ### Comparisons

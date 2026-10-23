@@ -1704,37 +1704,27 @@ static inline double scalar_cmp(double a, double b, int op) {
     }
 }
 
-// arr OP arr (recursive for nested arrays)
-static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op) {
-    if (!a || !b) return jdb_array_new(0);
-    int64_t n = a->length < b->length ? a->length : b->length;
-    auto* r = jdb_array_new(n);
-    // String arrays carry bit0(ptr)+bit1(str). Element-wise '+' (op 0)
-    // concatenates; treating a string cell as a JdbArray* (the nested path)
-    // would dereference a char* and segfault.
-    if ((a->flags & 2) && (b->flags & 2)) {
-        for (int64_t i = 0; i < n; i++)
-            r->data[i] = (op == 0)
-                ? encode_str(str_concat2(decode_str(a->data[i]), decode_str(b->data[i])))
-                : encode_str(_strdup(""));
-        r->flags |= 3;
-        return r;
+// Nested: bit 0 set without the string bit, so the cells are rows.
+static inline bool arr_nested(const JdbArray* a) { return a && (a->flags & 1) && !(a->flags & 2); }
+
+// The comparison seen from the other side: a < b is b > a.
+static int flip_cmp(int op) {
+    switch (op) {
+        case 4: return 6;
+        case 5: return 7;
+        case 6: return 4;
+        case 7: return 5;
+        default: return op;
     }
-    // Genuine nested array (array of arrays) - bit0 set WITHOUT the string bit.
-    bool nested = ((a->flags & 1) && !(a->flags & 2)) ||
-                  ((b->flags & 1) && !(b->flags & 2));
-    if (nested) {
-        r->flags |= 1;
-        for (int64_t i = 0; i < n; i++) {
-            auto* inner = arr_binop(decode_inner(a->data[i]), decode_inner(b->data[i]), op);
-            r->data[i] = encode_inner(inner);
-        }
-    } else {
-        for (int64_t i = 0; i < n; i++)
-            r->data[i] = scalar_op(a->data[i], b->data[i], op);
-    }
-    return r;
 }
+
+static void shape_error(int64_t n, int64_t m) {
+    char msg[96];
+    snprintf(msg, sizeof msg, "shapes differ: %lld and %lld", (long long)n, (long long)m);
+    jdb_err_set(msg, 11);
+}
+
+static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op);
 
 // arr OP scalar (recursive for nested arrays, broadcasts scalar to all leaves)
 static JdbArray* arr_scalar_op(JdbArray* a, double s, int op, bool scalar_left) {
@@ -1803,8 +1793,7 @@ static JdbArray* arr_cmp_arr(JdbArray* a, JdbArray* b, int op) {
         jdb_array_set_bool_elems(r);
         return r;
     }
-    bool nested = ((a->flags & 1) && !(a->flags & 2)) ||
-                  ((b->flags & 1) && !(b->flags & 2));
+    bool nested = arr_nested(a) || arr_nested(b);
     if (nested) {
         r->flags |= 1;
         for (int64_t i = 0; i < n; i++) {
@@ -1819,9 +1808,84 @@ static JdbArray* arr_cmp_arr(JdbArray* a, JdbArray* b, int op) {
     return r;
 }
 
-// op: 0=add,1=sub,2=mul,3=div; is_arr_b: whether b is an array
+static JdbArray* arr_pair(JdbArray* a, JdbArray* b, int op, bool cmp);
+
+// One cell of a meets one cell of b: two rows meet row by row, a row and a
+// number meet the number in every cell, two numbers meet as numbers.
+static double pair_cell(double av, bool a_row, double bv, bool b_row, int op, bool cmp) {
+    if (a_row && b_row) return encode_inner(arr_pair(decode_inner(av), decode_inner(bv), op, cmp));
+    if (a_row) return encode_inner(cmp ? arr_cmp_scalar(decode_inner(av), bv, op)
+                                       : arr_scalar_op(decode_inner(av), bv, op, false));
+    if (b_row) return encode_inner(cmp ? arr_cmp_scalar(decode_inner(bv), av, flip_cmp(op))
+                                       : arr_scalar_op(decode_inner(bv), av, op, true));
+    return cmp ? scalar_cmp(av, bv, op) : scalar_op(av, bv, op);
+}
+
+// Two arrays under an operator. Equal lengths meet cell by cell; a flat
+// array meets every row of a matrix; an array of one cell gives that cell
+// to every cell of the other; any other pair of lengths is an error.
+// Arithmetic or comparison, by cmp; string arrays go their own way.
+static JdbArray* arr_pair(JdbArray* a, JdbArray* b, int op, bool cmp) {
+    if (!a || !b) return jdb_array_new(0);
+    if ((a->flags & 2) || (b->flags & 2)) {
+        if (a->length != b->length) { shape_error(a->length, b->length); return jdb_array_new(0); }
+        return cmp ? arr_cmp_arr(a, b, op) : arr_binop(a, b, op);
+    }
+    bool an = arr_nested(a), bn = arr_nested(b);
+    JdbArray* r;
+    bool rows;
+    if (an && !bn) {
+        r = jdb_array_new(a->length);
+        rows = true;
+        for (int64_t i = 0; i < a->length; i++)
+            r->data[i] = encode_inner(arr_pair(decode_inner(a->data[i]), b, op, cmp));
+    } else if (bn && !an) {
+        r = jdb_array_new(b->length);
+        rows = true;
+        for (int64_t i = 0; i < b->length; i++)
+            r->data[i] = encode_inner(arr_pair(a, decode_inner(b->data[i]), op, cmp));
+    } else if (a->length == b->length) {
+        r = jdb_array_new(a->length);
+        rows = an;
+        for (int64_t i = 0; i < a->length; i++)
+            r->data[i] = pair_cell(a->data[i], an, b->data[i], bn, op, cmp);
+    } else if (a->length == 1) {
+        r = jdb_array_new(b->length);
+        rows = bn;
+        for (int64_t i = 0; i < b->length; i++)
+            r->data[i] = pair_cell(a->data[0], an, b->data[i], bn, op, cmp);
+    } else if (b->length == 1) {
+        r = jdb_array_new(a->length);
+        rows = an;
+        for (int64_t i = 0; i < a->length; i++)
+            r->data[i] = pair_cell(a->data[i], an, b->data[0], bn, op, cmp);
+    } else {
+        shape_error(a->length, b->length);
+        return jdb_array_new(0);
+    }
+    if (rows) r->flags |= 1;
+    else if (cmp) jdb_array_set_bool_elems(r);
+    return r;
+}
+
+// Two string arrays under an operator, cell by cell: '+' joins, anything
+// else gives empty cells.
+static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op) {
+    if (!a || !b) return jdb_array_new(0);
+    if (!((a->flags & 2) && (b->flags & 2))) return arr_pair(a, b, op, false);
+    int64_t n = a->length < b->length ? a->length : b->length;
+    auto* r = jdb_array_new(n);
+    for (int64_t i = 0; i < n; i++)
+        r->data[i] = (op == 0)
+            ? encode_str(str_concat2(decode_str(a->data[i]), decode_str(b->data[i])))
+            : encode_str(_strdup(""));
+    r->flags |= 3;
+    return r;
+}
+
+// op: 0=add,1=sub,2=mul,3=div
 JdbArray* jdb_array_binop(JdbArray* a, JdbArray* b, int32_t op) {
-    return arr_binop(a, b, op);
+    return arr_pair(a, b, op, false);
 }
 JdbArray* jdb_array_scalar_op(JdbArray* a, double s, int32_t op, int32_t scalar_left) {
     return arr_scalar_op(a, s, op, scalar_left != 0);
@@ -1830,7 +1894,7 @@ JdbArray* jdb_array_cmp_scalar(JdbArray* a, double s, int32_t op) {
     return arr_cmp_scalar(a, s, op);
 }
 JdbArray* jdb_array_cmp_arr(JdbArray* a, JdbArray* b, int32_t op) {
-    return arr_cmp_arr(a, b, op);
+    return arr_pair(a, b, op, true);
 }
 
 // Forward declaration - actual definition is jdb_array_set_bool_elems
