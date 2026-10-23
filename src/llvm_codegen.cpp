@@ -403,6 +403,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_round",  "ROUND",  f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_round_p","__round_p", f64_type, {f64_type, f64_type}, JD_TAG_F64);
     reg("jdb_array_round_p", "__arr_round_p", i8_ptr_type, {i8_ptr_type, f64_type}, JD_TAG_ARR);
+    reg("jdb_reshape", "__reshape", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_join_arr","JOIN",     i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_trunc",  "TRUNC",  f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_sign_i", "SIGN",   i64_type, {f64_type}, JD_TAG_I64);
@@ -14487,6 +14488,33 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // ROUND(x, places) → native 2-arg form
+    // RESHAPE of a native array runs in the runtime; a shape given as one
+    // number becomes a shape of one dimension. A VM array goes to the bridge.
+    if (upper == "RESHAPE" && expr.args.size() == 2) {
+        TypedValue src = codegen_expr(*expr.args[0]);
+        if (src.tag == JD_TAG_ARR) {
+            TypedValue sh = codegen_expr(*expr.args[1]);
+            LLVMValueRef shape_ptr;
+            if (sh.tag == JD_TAG_ARR) {
+                shape_ptr = sh.val;
+            } else {
+                auto& arr_new = runtime_funcs["__array_new"];
+                auto& arr_set = runtime_funcs["__array_set"];
+                LLVMValueRef one[] = { LLVMConstInt(i64_type, 1, 0) };
+                shape_ptr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, one, 1, "shape1");
+                LLVMValueRef set_args[] = { shape_ptr, LLVMConstInt(i64_type, 0, 0), coerce_to(sh, f64_type) };
+                LLVMBuildCall2(builder, arr_set.fn_type, arr_set.fn, set_args, 3, "");
+            }
+            auto& fn = runtime_funcs["__reshape"];
+            LLVMValueRef args[] = { src.val, shape_ptr };
+            LLVMValueRef res = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "reshape");
+            emit_err_code_branch();
+            TypedValue out{ res, JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
+        }
+    }
+
     if (upper == "ROUND" && expr.args.size() == 2) {
         TypedValue x = codegen_expr(*expr.args[0]);
         TypedValue p = codegen_expr(*expr.args[1]);

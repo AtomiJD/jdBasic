@@ -197,4 +197,30 @@ typename A::Arr pick(typename A::Arr cond, const Branch<A>& t, const Branch<A>& 
     return out;
 }
 
+// ── RESHAPE ──────────────────────────────────────────────────────────────
+
+// The cells of a in order, rows opened as they come.
+template <class A>
+void flatten(typename A::Arr a, std::vector<typename A::Val>& out) {
+    int64_t n = A::len(a);
+    for (int64_t i = 0; i < n; i++) {
+        if (A::is_row(a, i)) flatten<A>(A::row(a, i), out);
+        else out.push_back(A::cell(a, i));
+    }
+}
+
+// An array of the shape's dimensions from dim on, its cells taken from
+// flat in order and again from the start when flat runs out.
+template <class A>
+typename A::Arr build(const std::vector<int64_t>& shape, size_t dim,
+                      const std::vector<typename A::Val>& flat, size_t& idx) {
+    int64_t n = shape[dim] < 0 ? 0 : shape[dim];
+    typename A::Arr out = A::make(n);
+    for (int64_t i = 0; i < n; i++) {
+        if (dim + 1 < shape.size()) A::put_row(out, i, build<A>(shape, dim + 1, flat, idx));
+        else { A::put(out, i, flat[idx % flat.size()]); idx++; }
+    }
+    return out;
+}
+
 } // namespace jdb_shape

@@ -3130,6 +3130,44 @@ JdbArray* jdb_array_round_p(JdbArray* arr, double places) {
     return r;
 }
 
+// Whether the innermost arrays below a hold strings.
+static bool leaves_are_strings(JdbArray* a) {
+    while (a && (a->flags & 1) && !(a->flags & 2) && a->length > 0) a = decode_inner(a->data[0]);
+    return a && (a->flags & 2) != 0;
+}
+
+// Every string cell below a becomes its own copy, and the arrays say so.
+static void own_string_leaves(JdbArray* a) {
+    if (!a) return;
+    if ((a->flags & 1) && !(a->flags & 2)) {
+        for (int64_t i = 0; i < a->length; i++) own_string_leaves(decode_inner(a->data[i]));
+        return;
+    }
+    for (int64_t i = 0; i < a->length; i++) {
+        union { double d; int64_t i; } u; u.d = a->data[i];
+        const char* s = (const char*)(intptr_t)u.i;
+        union { int64_t i; double d; } w; w.i = (int64_t)(intptr_t)_strdup(s ? s : "");
+        a->data[i] = w.d;
+    }
+    a->flags |= 3;
+}
+
+// RESHAPE(array, shape): the cells of the array, in order and again from the
+// start when they run out, in the dimensions of the shape.
+JdbArray* jdb_reshape(JdbArray* src, JdbArray* shape) {
+    if (!src || !shape) return jdb_array_new(0);
+    std::vector<double> flat;
+    jdb_shape::flatten<RtShape>(src, flat);
+    if (flat.empty()) { jdb_err_set("RESHAPE: the array has no cells", 11); return jdb_array_new(0); }
+    std::vector<int64_t> dims;
+    for (int64_t i = 0; i < shape->length; i++) dims.push_back((int64_t)shape->data[i]);
+    if (dims.empty()) return jdb_array_new(0);
+    size_t idx = 0;
+    JdbArray* out = jdb_shape::build<RtShape>(dims, 0, flat, idx);
+    if (leaves_are_strings(src)) own_string_leaves(out);
+    return out;
+}
+
 // Get array element as a pointer (decodes f64-encoded ptr back).
 // Used when array has flags bit 0 set (contains pointers/strings).
 void* jdb_array_get_ptr(JdbArray* arr, int64_t idx) {

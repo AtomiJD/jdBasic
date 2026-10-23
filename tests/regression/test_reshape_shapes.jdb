@@ -1,0 +1,50 @@
+' RESHAPE lays the cells of an array, in order and again from the start when
+' they run out, into the dimensions of a shape, in both backends: a matrix, a
+' 3-D array, a flat shape given as one number, a string array, a nested
+' source, and an empty source refused.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Rows$(m AS ARRAY) AS STRING
+    DIM s$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m) - 1
+        s$ = s$ + JOIN(m[i], ",") + ";"
+    NEXT i
+    RETURN s$
+ENDFUNC
+
+DIM m AS ARRAY = RESHAPE(IOTA(6), [2, 3])
+Check(Rows$(m) = "1,2,3;4,5,6;", "six cells as 2 by 3")
+DIM t AS ARRAY = RESHAPE(IOTA(8), [2, 2, 2])
+Check(LEN(t) = 2 ANDALSO Rows$(t[1]) = "5,6;7,8;", "eight cells as 2 by 2 by 2")
+DIM flat AS ARRAY = RESHAPE(m, [6])
+Check(JOIN(flat, ",") = "1,2,3,4,5,6", "a matrix back to a flat array")
+DIM flat2 AS ARRAY = RESHAPE(t, 8)
+Check(JOIN(flat2, ",") = "1,2,3,4,5,6,7,8", "a shape given as one number")
+DIM cyc AS ARRAY = RESHAPE([1, 2, 3], [2, 4])
+Check(Rows$(cyc) = "1,2,3,1;2,3,1,2;", "cells come round again")
+DIM ss AS ARRAY = RESHAPE(["a", "b", "c", "d"], [2, 2])
+Check(Rows$(ss) = "a,b;c,d;" ANDALSO ss[1][0] = "c", "a string array keeps its strings")
+DIM one AS ARRAY = RESHAPE(7, [3])
+Check(JOIN(one, ",") = "7,7,7", "one number fills a shape")
+DIM back AS ARRAY = RESHAPE(RESHAPE(IOTA(12), [3, 4]), [4, 3])
+Check(Rows$(back) = "1,2,3;4,5,6;7,8,9;10,11,12;", "3 by 4 to 4 by 3")
+
+DIM caught$ AS STRING = ""
+TRY
+    DIM e AS ARRAY = RESHAPE([], [2, 2])
+CATCH
+    caught$ = ERRMSG$
+ENDTRY
+Check(INSTR(caught$, "no cells") >= 0, "an empty source is refused: " + caught$)
+
+IF failed > 0 THEN END 1
+PRINT "OK"

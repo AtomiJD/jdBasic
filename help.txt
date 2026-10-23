@@ -2875,8 +2875,12 @@ REPLACE$(source$, find$, replace$) -> string_or_array
 Replaces all occurrences of find$ with replace$.
 
 [RESHAPE]
-Syntax: RESHAPE(array, shape_vector)
-Description: Creates a new array with new dimensions from the data of a source array.
+Syntax: RESHAPE(array, shape)
+Description: The cells of the array, in order and again from the start when
+they run out, in the dimensions of the shape: RESHAPE(IOTA(6), [2, 3]) is a
+2 by 3 matrix, RESHAPE(m, 6) lays a matrix flat, RESHAPE(IOTA(8), [2, 2, 2])
+is 3-D, RESHAPE(7, [3]) is [7, 7, 7]. A nested array is read row by row. An
+empty array is an error.
 
 [RESUME]
 Syntax: RESUME

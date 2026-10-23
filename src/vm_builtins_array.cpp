@@ -314,56 +314,23 @@ void VM::register_array_builtins() {
 
     // RESHAPE(source_array, shape_vector) -> nested array
     // e.g. RESHAPE(IOTA(8), [2,2,2]) -> [[[1,2],[3,4]],[[5,6],[7,8]]]
-    register_native("RESHAPE", [](const std::vector<Value>& args) -> Value {
-        if (args.size() < 2) return Value::make_none();
-
-        // Flatten source into a flat list of values
+    // RESHAPE(array, shape): the cells of the array, in order and again
+    // from the start when they run out, in the dimensions of the shape; by
+    // jdb_shape::flatten and build, which the native runtime shares.
+    register_native("RESHAPE", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::vector<Value> flat;
-        std::function<void(const Value&)> flatten = [&](const Value& v) {
-            if (v.type == ValueType::ARRAY) {
-                for (auto& e : v.as_array()->elements) flatten(e);
-            } else {
-                flat.push_back(v);
-            }
-        };
-        flatten(args[0]);
-
-        // Read shape
+        if (args[0].type == ValueType::ARRAY) jdb_shape::flatten<VmShape>(args[0], flat);
+        else flat.push_back(args[0]);
+        if (flat.empty()) throw jdError(ErrCode::TYPE_MISMATCH, "RESHAPE: the array has no cells");
         std::vector<int64_t> shape;
         if (args[1].type == ValueType::ARRAY) {
-            for (auto& e : args[1].as_array()->elements)
-                shape.push_back(e.to_int());
+            for (auto& e : args[1].as_array()->elements) shape.push_back(e.to_int());
         } else {
             shape.push_back(args[1].to_int());
         }
-
         if (shape.empty()) return Value::make_array();
-
-        // Recursive builder
         size_t idx = 0;
-        std::function<Value(size_t)> build = [&](size_t dim) -> Value {
-            if (dim == shape.size() - 1) {
-                // Innermost dimension: create leaf array
-                Value arr = Value::make_array();
-                auto* a = arr.as_array();
-                a->elements.reserve(shape[dim]);
-                for (int64_t i = 0; i < shape[dim]; i++) {
-                    a->elements.push_back(flat[idx % flat.size()]);
-                    idx++;
-                }
-                return arr;
-            }
-            // Outer dimension: array of sub-arrays
-            Value arr = Value::make_array();
-            auto* a = arr.as_array();
-            a->elements.reserve(shape[dim]);
-            for (int64_t i = 0; i < shape[dim]; i++) {
-                a->elements.push_back(build(dim + 1));
-            }
-            return arr;
-        };
-
-        return build(0);
+        return jdb_shape::build<VmShape>(shape, 0, flat, idx);
     });
 
     // ── APPEND ───────────────────────────────────────────────
