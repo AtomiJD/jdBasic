@@ -499,7 +499,7 @@ private:
         return t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP || t == JD_TAG_RUNTIME;
     }
     LLVMValueRef rc_bits(LLVMValueRef v);
-    LLVMValueRef rc_born(LLVMValueRef p, int kind);
+    LLVMValueRef rc_born(LLVMValueRef p, int kind, bool rows = false);
     void rc_pin(const TypedValue& tv);
     void rc_slot_store(LLVMValueRef slot, LLVMValueRef val, int old_tag, int new_tag);
     void rc_retain_slot(LLVMValueRef slot);

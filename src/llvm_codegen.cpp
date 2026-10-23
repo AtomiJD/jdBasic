@@ -561,6 +561,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_map_delete", "__map_delete", i64_type,    {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_map_free_tree", "__map_free_tree", void_type, {i8_ptr_type}, -1);
     reg("jdb_rc_new",     "__rc_new",     i8_ptr_type, {i8_ptr_type, i32_type}, -1);
+    reg("jdb_rc_new_rows", "__rc_new_rows", i8_ptr_type, {i8_ptr_type}, -1);
     reg("jdb_rc_pin",     "__rc_pin",     void_type, {i64_type}, -1);
     reg("jdb_rc_own_cells", "__rc_own_cells", void_type, {i64_type}, -1);
     reg("jdb_rc_adopt",   "__rc_adopt",   void_type, {i64_type, i64_type}, -1);
@@ -7590,7 +7591,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 LLVMValueRef args[] = { to_i64(*shape_args[0]), to_i64(*shape_args[1]), LLVMConstReal(f64_type, 0.0) };
                 arr = LLVMBuildCall2(builder, arr_new_2d.fn_type, arr_new_2d.fn, args, 3, "arr2d");
             }
-            arr = rc_born(arr, JD_TAG_ARR);
+            arr = rc_born(arr, JD_TAG_ARR, true);
             VarInfo* vi = dim_slot();
             if (vi) { rc_slot_store(vi->alloca_val, arr, vi->tag, JD_TAG_ARR); vi->tag = JD_TAG_ARR; }
             else { VarInfo& nv = create_var(stmt.var_name, JD_TAG_ARR); rc_slot_store(nv.alloca_val, arr, JD_TAG_ARR, JD_TAG_ARR); }
@@ -8805,8 +8806,14 @@ LLVMValueRef LLVMCodegen::rc_bits(LLVMValueRef v) {
     return v;
 }
 
-LLVMValueRef LLVMCodegen::rc_born(LLVMValueRef p, int kind) {
+// rows: the container is a matrix the runtime built, whose rows it owns.
+LLVMValueRef LLVMCodegen::rc_born(LLVMValueRef p, int kind, bool rows) {
     if (!rc_on || rc_escape) return p;
+    if (rows && kind == JD_TAG_ARR) {
+        auto& fn = runtime_funcs["__rc_new_rows"];
+        LLVMValueRef a[] = { p };
+        return LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "rc_new_rows");
+    }
     auto& fn = runtime_funcs["__rc_new"];
     LLVMValueRef a[] = { p, LLVMConstInt(i32_type, kind, 0) };
     return LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "rc_new");
@@ -9863,14 +9870,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
         case ExprKind::BINARY: {
             TypedValue r = codegen_binary(expr);
             if (r.tag == JD_TAG_ARR && r.val && LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind)
-                r.val = rc_born(r.val, JD_TAG_ARR);
+                r.val = rc_born(r.val, JD_TAG_ARR, true);
             return r;
         }
 
         case ExprKind::UNARY: {
             TypedValue r = codegen_unary(expr);
             if (r.tag == JD_TAG_ARR && r.val && LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind)
-                r.val = rc_born(r.val, JD_TAG_ARR);
+                r.val = rc_born(r.val, JD_TAG_ARR, true);
             return r;
         }
 
@@ -9965,7 +9972,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             }
             if (r.fresh_container && (r.tag == JD_TAG_ARR || r.tag == JD_TAG_NATIVE_MAP) &&
                 LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind) {
-                r.val = rc_born(r.val, r.tag);
+                r.val = rc_born(r.val, r.tag, true);
                 if (rc_on && !rc_escape && &expr == cell_owner_rhs && r.tag == JD_TAG_ARR) {
                     auto& fn = runtime_funcs["__rc_own_cells"];
                     LLVMValueRef a[] = { rc_bits(r.val) };

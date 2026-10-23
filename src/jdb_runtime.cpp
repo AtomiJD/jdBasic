@@ -2607,12 +2607,12 @@ static void rc_forget(const void* p) {
     if (RcEntry* e = rc_find((uintptr_t)p)) rc_remove(e);
 }
 
-// The rows of a nested array the runtime built (arithmetic, ZEROS of a
-// shape, a result the bridge marshalled) are its alone: each one that no
-// entry knows yet is registered with the array as its owner, so it goes
-// when the array goes. A row that is registered already is somebody
-// else's and is left as it is. rc_insert may rehash, so the owner is
-// found again by key after each insertion.
+// The rows of a matrix the runtime built (arithmetic, ZEROS of a shape, a
+// result the bridge marshalled) are its alone: each one that no entry knows
+// yet is registered with the matrix as its owner, so it goes when the
+// matrix goes. A row that is registered already is somebody else's and is
+// left as it is. Only a caller that knows the cells are rows asks for this:
+// the pointer bit alone also marks an array of UDT objects.
 static void rc_register_children(uintptr_t parent_key, uint64_t parent_gen) {
     JdbArray* a = (JdbArray*)parent_key;
     if (!a->data || (a->flags & 2) || !((a->flags & 1) || a->elem_tags)) return;
@@ -2650,7 +2650,14 @@ extern "C" void* jdb_rc_new(void* p, int32_t kind) {
     e->owner = 0;
     e->owner_gen = 0;
     g_rc.pool.push_back({ k, gen });
-    if (kind == JD_TAG_ARR) rc_register_children(k, gen);
+    return p;
+}
+
+// A fresh matrix: the array and the rows it owns.
+extern "C" void* jdb_rc_new_rows(void* p) {
+    if (!p || !rc_ready()) return p;
+    jdb_rc_new(p, JD_TAG_ARR);
+    if (RcEntry* e = rc_find((uintptr_t)p)) rc_register_children(e->key, e->gen);
     return p;
 }
 
