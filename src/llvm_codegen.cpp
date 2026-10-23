@@ -8626,7 +8626,20 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, pm, 1, "");
                 LLVMBuildBr(builder, bb_join);
 
+                // Absent has no bits to render; the interpreter writes NONE.
                 LLVMPositionBuilderAtEnd(builder, bb_rest2);
+                LLVMValueRef is_none = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_NONE, 0), "pr_isnone");
+                LLVMBasicBlockRef bb_none  = LLVMAppendBasicBlock(current_fn, "pr.none");
+                LLVMBasicBlockRef bb_rest3 = LLVMAppendBasicBlock(current_fn, "pr.rest3");
+                LLVMBuildCondBr(builder, is_none, bb_none, bb_rest3);
+
+                LLVMPositionBuilderAtEnd(builder, bb_none);
+                LLVMValueRef pn[] = { LLVMBuildGlobalStringPtr(builder, "NONE", "pr_none") };
+                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, pn, 1, "");
+                LLVMBuildBr(builder, bb_join);
+
+                LLVMPositionBuilderAtEnd(builder, bb_rest3);
                 LLVMValueRef args_e[] = { coerce_to(tv, i8_ptr_type) };
                 LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args_e, 1, "");
                 LLVMBuildBr(builder, bb_join);
@@ -11318,6 +11331,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 LLVMValueRef args[] = { tv.val };
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "itostr");
             }
+            if (tv.tag == JD_TAG_DATE) {
+                // Epoch seconds, written as the date, the way PRINT does.
+                owns = true;
+                auto& fd = runtime_funcs["__format_date_num"];
+                LLVMValueRef fargs[] = { tv.val, LLVMConstNull(i8_ptr_type),
+                    LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
+                return LLVMBuildCall2(builder, fd.fn_type, fd.fn, fargs, 3, "dtostr");
+            }
             if (jd_is_f64_tag(tv.tag)) {
                 owns = true;
                 auto& fn = runtime_funcs["__double_to_str"];
@@ -13423,7 +13444,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // STR$(arg) and STR(arg) - tag-aware. Default `jdb_str(double)` punnes strings
     // and prints booleans as 1/0; route to specific helpers when the
     // input tag is known.
-    if ((upper == "STR$" || upper == "STR") && expr.args.size() == 1) {
+    if ((upper == "STR$" || upper == "STR" || upper == "CSTR") && expr.args.size() == 1) {
         // STR$ renders whatever it is handed, so an outer leaf hint must not
         // reach the argument: a `want string` from the assignment target or a
         // $-suffixed parameter would decode a numeric array cell as a char*
@@ -13465,16 +13486,32 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMBasicBlockRef bb_s_end = LLVMGetInsertBlock(builder);
             LLVMBuildBr(builder, bb_j);
 
+            // Absent has no bits to render; the answer is the word NONE,
+            // owned like the other arms' answers.
             LLVMPositionBuilderAtEnd(builder, bb_o);
+            LLVMValueRef is_n = LLVMBuildICmp(builder, LLVMIntEQ, av.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_NONE, 0), "str_isnone");
+            LLVMBasicBlockRef bb_n = LLVMAppendBasicBlock(current_fn, "str.none");
+            LLVMBasicBlockRef bb_v = LLVMAppendBasicBlock(current_fn, "str.value");
+            LLVMBuildCondBr(builder, is_n, bb_n, bb_v);
+
+            LLVMPositionBuilderAtEnd(builder, bb_n);
+            auto& own = runtime_funcs["__str_own"];
+            LLVMValueRef na[] = { LLVMBuildGlobalStringPtr(builder, "NONE", ".str_none") };
+            LLVMValueRef sv_n = LLVMBuildCall2(builder, own.fn_type, own.fn, na, 1, "sn_dyn");
+            LLVMBasicBlockRef bb_n_end = LLVMGetInsertBlock(builder);
+            LLVMBuildBr(builder, bb_j);
+
+            LLVMPositionBuilderAtEnd(builder, bb_v);
             LLVMValueRef sv_o = coerce_to(av, i8_ptr_type);
             LLVMBasicBlockRef bb_o_end = LLVMGetInsertBlock(builder);
             LLVMBuildBr(builder, bb_j);
 
             LLVMPositionBuilderAtEnd(builder, bb_j);
             LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "str_dyn");
-            LLVMValueRef iv[] = { sv_b, sv_s, sv_o };
-            LLVMBasicBlockRef ib[] = { bb_b_end, bb_s_end, bb_o_end };
-            LLVMAddIncoming(phi, iv, ib, 3);
+            LLVMValueRef iv[] = { sv_b, sv_s, sv_n, sv_o };
+            LLVMBasicBlockRef ib[] = { bb_b_end, bb_s_end, bb_n_end, bb_o_end };
+            LLVMAddIncoming(phi, iv, ib, 4);
             TypedValue out{ phi, JD_TAG_STR };
             out.owned = true;
             return out;
@@ -13483,6 +13520,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& fn = runtime_funcs["__str_bool"];
             LLVMValueRef args[] = { av.val };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "sb"), JD_TAG_STR };
+        }
+        if (av.tag == JD_TAG_DATE) {
+            // Epoch seconds, so the number path would give the count.
+            auto& fd = runtime_funcs["__format_date_num"];
+            LLVMValueRef fargs[] = { av.val, LLVMConstNull(i8_ptr_type),
+                LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
+            return { LLVMBuildCall2(builder, fd.fn_type, fd.fn, fargs, 3, "sdate"), JD_TAG_STR };
         }
         if (av.tag == JD_TAG_STR) {
             auto& fn = runtime_funcs["__str_str"];

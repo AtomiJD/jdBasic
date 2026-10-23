@@ -1546,9 +1546,13 @@ JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, in
         case ValueType::BOOLEAN:
             *out_val = v->to_int() ? 1 : 0;
             return jd_tag(JdTag::BOOL);
+        case ValueType::NONE:
+            return jd_tag(JdTag::NONE);
         default:
             u.d = v->to_double();
             *out_val = u.i;
+            if (v->type == ValueType::FLOAT64 && v->subtype == ValueSubtype::DATE)
+                return jd_tag(JdTag::DATE);
             return jd_tag(JdTag::F64);
     }
 }

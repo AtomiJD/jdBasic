@@ -1,0 +1,43 @@
+' Kinds that a compiled program rendered as numbers: NONE printed as 0, a
+' date as its epoch, TRUE through CSTR as 1, and a JSON null read out of a
+' parsed map as FLOAT64.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM d AS DATE = CVDATE("2026-03-29 12:30:45")
+Check(STR$(d) = "2026-03-29 12:30:45", "STR$ of a date is the date")
+Check("" + d = "2026-03-29 12:30:45", "a date joined to a string is the date")
+Check(CSTR(TRUE) = "TRUE" ANDALSO CSTR(1 = 2) = "FALSE", "CSTR of a truth value")
+Check(CSTR(2.5) = "2.5", "CSTR of a number")
+
+DIM mp AS MAP
+mp{"k"} = NONE
+Check(TYPEOF(mp{"k"}) = "NONE", "NONE in a map cell keeps its kind")
+Check("" + STR$(NONE) = "NONE", "STR$ of NONE")
+
+DIM q$ AS STRING = CHR$(34)
+DIM m = JSON.PARSE("{" + q$ + "b" + q$ + ": null}")
+Check(TYPEOF(m{"b"}) = "NONE", "JSON null in a parsed map")
+DIM am = JSON.PARSE("[{" + q$ + "b" + q$ + ": null}]")
+Check(TYPEOF(am[0]{"b"}) = "NONE", "JSON null in a map inside an array")
+DIM a = JSON.PARSE("[1, null]")
+Check(TYPEOF(a[1]) = "NONE", "JSON null in a parsed array")
+
+OUTPUT.CAPTURE_BEGIN
+PRINT NONE
+PRINT mp{"k"}
+DIM r = RANDOMSEED(3)
+PRINT r
+DIM shown$ AS STRING = OUTPUT.CAPTURE_END$()
+Check(INSTR(shown$, "0") < 0, "nothing prints as 0: " + REPLACE$(shown$, CHR$(10), "|"))
+Check(INSTR(shown$, "NONE") >= 0, "NONE prints as NONE")
+
+IF failed > 0 THEN END 1
+PRINT "OK"
