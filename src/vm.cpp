@@ -75,6 +75,7 @@ void install_seh_translator_for_this_thread() {}
 #include <atomic>
 #include <map>
 #include "async_task.h"
+#include "jdb_shape.h"
 static Value array_pair(const Value& a, const Value& b,
                         const std::function<Value(const Value&, const Value&)>& cell);
 
@@ -3164,52 +3165,15 @@ Value VM::array_arithmetic(const Value& a, const Value& b, OpCode op) {
     return array_pair(a, b, [&](const Value& x, const Value& y) { return scalar_binop(x, y, op); });
 }
 
-// Two values under a cell operation, over arrays: two arrays of equal length
-// meet cell by cell; a flat array meets every row of a matrix; an array of
-// one cell gives that cell to every cell of the other; any other pair of
-// lengths is an error. A scalar meets every cell.
+// Two values under a cell operation, over arrays: the shape rule of
+// jdb_shape::pair, which the native runtime shares; a scalar meets every cell.
 static Value array_pair(const Value& a, const Value& b,
                         const std::function<Value(const Value&, const Value&)>& cell) {
     bool a_arr = a.type == ValueType::ARRAY, b_arr = b.type == ValueType::ARRAY;
     if (!a_arr && !b_arr) return cell(a, b);
-    Value result = Value::make_array();
-    auto& out = result.as_array()->elements;
-    if (a_arr && b_arr) {
-        auto& la = a.as_array()->elements;
-        auto& lb = b.as_array()->elements;
-        bool la_rows = !la.empty() && la[0].type == ValueType::ARRAY;
-        bool lb_rows = !lb.empty() && lb[0].type == ValueType::ARRAY;
-        if (la_rows && !lb_rows) {
-            out.reserve(la.size());
-            for (auto& row : la) out.push_back(array_pair(row, b, cell));
-        } else if (lb_rows && !la_rows) {
-            out.reserve(lb.size());
-            for (auto& row : lb) out.push_back(array_pair(a, row, cell));
-        } else if (la.size() == lb.size()) {
-            out.reserve(la.size());
-            for (size_t i = 0; i < la.size(); i++) out.push_back(array_pair(la[i], lb[i], cell));
-        } else if (la.size() == 1) {
-            out.reserve(lb.size());
-            for (auto& y : lb) out.push_back(array_pair(la[0], y, cell));
-        } else if (lb.size() == 1) {
-            out.reserve(la.size());
-            for (auto& x : la) out.push_back(array_pair(x, lb[0], cell));
-        } else {
-            throw jdError(ErrCode::TYPE_MISMATCH, "shapes differ: " + std::to_string(la.size()) +
-                          " and " + std::to_string(lb.size()));
-        }
-        return result;
-    }
-    if (a_arr) {
-        auto& la = a.as_array()->elements;
-        out.reserve(la.size());
-        for (auto& x : la) out.push_back(array_pair(x, b, cell));
-        return result;
-    }
-    auto& lb = b.as_array()->elements;
-    out.reserve(lb.size());
-    for (auto& y : lb) out.push_back(array_pair(a, y, cell));
-    return result;
+    if (a_arr && b_arr) return jdb_shape::pair<VmShape>(a, b, cell);
+    if (a_arr) return jdb_shape::spread<VmShape>(a, b, false, cell);
+    return jdb_shape::spread<VmShape>(b, a, true, cell);
 }
 
 // ── Comparison helper ────────────────────────────────────────

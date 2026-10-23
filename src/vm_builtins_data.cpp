@@ -1,6 +1,7 @@
 // VM builtins: type predicates and conversions, MAP.* and JSON.*.
 
 #include "vm_internal.h"
+#include "jdb_shape.h"
 
 // The number a conversion function reads from its argument. A string is
 // parsed whole, surrounding spaces allowed; any other text is a type mismatch.
@@ -19,23 +20,16 @@ static double conversion_arg(const Value& v, const char* fn) {
         std::string(fn) + ": \"" + s + "\" is not a number");
 }
 
-// IIF over an array condition picks cell by cell, into nested rows as well;
-// a branch that is an array gives its own cell (its rows for a nested
-// condition), a scalar branch is the same in every cell.
+// IIF over an array condition picks cell by cell, into nested rows as well,
+// by jdb_shape::pick, which the native runtime shares.
 static Value iif_pick(const Value& cond, const Value& t, const Value& f) {
     if (cond.type != ValueType::ARRAY) return cond.to_bool() ? t : f;
-    auto cell = [](const Value& branch, size_t i) -> const Value& {
-        if (branch.type != ValueType::ARRAY || branch.as_array()->elements.empty()) return branch;
-        auto& cells = branch.as_array()->elements;
-        return cells[i % cells.size()];
+    auto branch = [](const Value& v) -> jdb_shape::Branch<VmShape> {
+        if (v.type == ValueType::ARRAY) return { true, v, Value() };
+        return { false, Value(), v };
     };
-    auto& conds = cond.as_array()->elements;
-    Value r = Value::make_array();
-    auto& out = r.as_array()->elements;
-    out.reserve(conds.size());
-    for (size_t i = 0; i < conds.size(); i++)
-        out.push_back(iif_pick(conds[i], cell(t, i), cell(f, i)));
-    return r;
+    return jdb_shape::pick<VmShape>(cond, branch(t), branch(f),
+        [](const Value& c) { return c.to_bool(); });
 }
 
 void VM::register_data_builtins() {

@@ -36,6 +36,14 @@ Check(JOIN(v + lone, ",") = "1010,1020,1030", "one cell meets every cell of a fl
 Check(JOIN(v + [1, 2, 3], ",") = "11,22,33", "equal lengths meet cell by cell")
 Check(Rows$(m - m) = "0,0,0;0,0,0;", "equal matrices meet row by row")
 
+DIM t AS ARRAY = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+DIM tv AS ARRAY = t + [10, 20]
+Check(Rows$(tv[1]) = "15,26;17,28;", "a flat array meets every row of a 3-D array")
+DIM tc AS ARRAY = t * [[[1], [100]], [[1], [100]]]
+Check(Rows$(tc[0]) = "1,2;300,400;", "a 3-D column gives its cell to every cell of its row")
+DIM ti AS ARRAY = IIF(t > 4, t, 0)
+Check(Rows$(ti[0]) = "0,0;0,0;" ANDALSO Rows$(ti[1]) = "5,6;7,8;", "IIF into the rows of a 3-D condition")
+
 DIM lt AS ARRAY = m < v
 Check(Rows$(lt) = "TRUE,TRUE,TRUE;TRUE,TRUE,TRUE;", "a comparison takes the same rule")
 DIM gt AS ARRAY = col > m

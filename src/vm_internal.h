@@ -125,3 +125,28 @@ static bool any_leaf(const Value& v, F&& pred) {
     }
     return pred(v);
 }
+
+// The VM's array model for the shape algorithms of jdb_shape.h: nested
+// Values, a cell holding whatever Value it holds.
+struct VmShape {
+    using Arr = Value;
+    using Val = Value;
+    static int64_t len(const Value& a) { return (int64_t)a.as_array()->elements.size(); }
+    static bool is_row(const Value& a, int64_t i) { return a.as_array()->elements[(size_t)i].type == ValueType::ARRAY; }
+    static Value row(const Value& a, int64_t i) { return a.as_array()->elements[(size_t)i]; }
+    static double num(const Value& a, int64_t i) { return a.as_array()->elements[(size_t)i].to_double(); }
+    static Value cell(const Value& a, int64_t i) { return a.as_array()->elements[(size_t)i]; }
+    static Value make(int64_t n) {
+        Value v = Value::make_array();
+        v.as_array()->elements.assign((size_t)n, Value::make_f64(0.0));
+        return v;
+    }
+    static void put_num(Value& a, int64_t i, double d) { a.as_array()->elements[(size_t)i] = Value::make_f64(d); }
+    static void put_bool(Value& a, int64_t i, bool b) { a.as_array()->elements[(size_t)i] = Value::make_bool(b); }
+    static void put_row(Value& a, int64_t i, const Value& r) { a.as_array()->elements[(size_t)i] = r; }
+    static void put(Value& a, int64_t i, const Value& v) { a.as_array()->elements[(size_t)i] = v; }
+    static void drop(Value&) {}
+    static void shape_error(int64_t n, int64_t m) {
+        throw jdError(ErrCode::TYPE_MISMATCH, "shapes differ: " + std::to_string(n) + " and " + std::to_string(m));
+    }
+};

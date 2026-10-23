@@ -82,4 +82,119 @@ Cell<A> reduce_axis(typename A::Arr a, int axis, const Lane& lane, bool as_bool)
     return { false, 0.0, out };
 }
 
+// ── Two arrays under a cell operation ────────────────────────────────────
+//
+// The accessor adds, for these walks:
+//   A::Val                   a cell's value (a Value, a double)
+//   A::cell(a, i)            the cell as a value, when it is not a row
+//   A::put(a, i, v)          write a value into a cell
+//   A::shape_error(n, m)     two lengths that do not meet; the walk then
+//                            answers an empty array
+
+template <class A>
+using Op = std::function<typename A::Val(const typename A::Val&, const typename A::Val&)>;
+
+template <class A>
+typename A::Arr pair(typename A::Arr a, typename A::Arr b, const Op<A>& op);
+
+// An array and one value: the value meets every cell, rows recursed.
+template <class A>
+typename A::Arr spread(typename A::Arr a, const typename A::Val& v, bool value_left, const Op<A>& op) {
+    int64_t n = A::len(a);
+    typename A::Arr out = A::make(n);
+    for (int64_t i = 0; i < n; i++) {
+        if (A::is_row(a, i)) A::put_row(out, i, spread<A>(A::row(a, i), v, value_left, op));
+        else A::put(out, i, value_left ? op(v, A::cell(a, i)) : op(A::cell(a, i), v));
+    }
+    return out;
+}
+
+// One cell of a meets one cell of b: two rows meet row by row, a row and a
+// value meet the value in every cell, two values meet under the operation.
+template <class A>
+static void meet(typename A::Arr out, int64_t k, typename A::Arr a, int64_t i,
+                 typename A::Arr b, int64_t j, const Op<A>& op) {
+    bool ra = A::is_row(a, i), rb = A::is_row(b, j);
+    if (ra && rb) A::put_row(out, k, pair<A>(A::row(a, i), A::row(b, j), op));
+    else if (ra) A::put_row(out, k, spread<A>(A::row(a, i), A::cell(b, j), false, op));
+    else if (rb) A::put_row(out, k, spread<A>(A::row(b, j), A::cell(a, i), true, op));
+    else A::put(out, k, op(A::cell(a, i), A::cell(b, j)));
+}
+
+// Two arrays under an operation: equal lengths meet cell by cell; a flat
+// array meets every row of a matrix; an array of one cell gives that cell to
+// every cell of the other; any other pair of lengths is a shape error.
+template <class A>
+typename A::Arr pair(typename A::Arr a, typename A::Arr b, const Op<A>& op) {
+    int64_t n = A::len(a), m = A::len(b);
+    bool a_rows = n > 0 && A::is_row(a, 0);
+    bool b_rows = m > 0 && A::is_row(b, 0);
+    if (a_rows && !b_rows) {
+        typename A::Arr out = A::make(n);
+        for (int64_t i = 0; i < n; i++) A::put_row(out, i, pair<A>(A::row(a, i), b, op));
+        return out;
+    }
+    if (b_rows && !a_rows) {
+        typename A::Arr out = A::make(m);
+        for (int64_t j = 0; j < m; j++) A::put_row(out, j, pair<A>(a, A::row(b, j), op));
+        return out;
+    }
+    if (n == m) {
+        typename A::Arr out = A::make(n);
+        for (int64_t i = 0; i < n; i++) meet<A>(out, i, a, i, b, i, op);
+        return out;
+    }
+    if (n == 1) {
+        typename A::Arr out = A::make(m);
+        for (int64_t j = 0; j < m; j++) meet<A>(out, j, a, 0, b, j, op);
+        return out;
+    }
+    if (m == 1) {
+        typename A::Arr out = A::make(n);
+        for (int64_t i = 0; i < n; i++) meet<A>(out, i, a, i, b, 0, op);
+        return out;
+    }
+    A::shape_error(n, m);
+    return A::make(0);
+}
+
+// ── IIF over an array condition ──────────────────────────────────────────
+
+// A branch of IIF: an array, or one value for every cell.
+template <class A>
+struct Branch {
+    bool is_arr;
+    typename A::Arr a;
+    typename A::Val v;
+};
+
+// The branch's cell for place i: its own cell, cyclically, or the one value.
+template <class A>
+static Branch<A> branch_at(const Branch<A>& b, int64_t i) {
+    if (!b.is_arr || A::len(b.a) == 0) return b;
+    int64_t k = i % A::len(b.a);
+    if (A::is_row(b.a, k)) return { true, A::row(b.a, k), typename A::Val() };
+    return { false, typename A::Arr(), A::cell(b.a, k) };
+}
+
+// IIF cell by cell, into the rows of a condition that is a matrix; a branch
+// that is an array gives its own cell, a value is the same in every cell.
+template <class A>
+typename A::Arr pick(typename A::Arr cond, const Branch<A>& t, const Branch<A>& f,
+                     const std::function<bool(const typename A::Val&)>& truth) {
+    int64_t n = A::len(cond);
+    typename A::Arr out = A::make(n);
+    for (int64_t i = 0; i < n; i++) {
+        Branch<A> ti = branch_at<A>(t, i), fi = branch_at<A>(f, i);
+        if (A::is_row(cond, i)) {
+            A::put_row(out, i, pick<A>(A::row(cond, i), ti, fi, truth));
+            continue;
+        }
+        const Branch<A>& chosen = truth(A::cell(cond, i)) ? ti : fi;
+        if (chosen.is_arr) A::put_row(out, i, chosen.a);
+        else A::put(out, i, chosen.v);
+    }
+    return out;
+}
+
 } // namespace jdb_shape

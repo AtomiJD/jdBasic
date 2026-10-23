@@ -862,18 +862,25 @@ double jdb_array_sum(JdbArray* arr) {
 // in the interpreter; the op codes match JdbReduceOp there.
 //   0 sum  1 min  2 max  3 product  4 mean
 //   5 median  6 variance  7 stdev  8 any  9 all
-// The native array model for the shape algorithms of jdb_shape.h.
+static void shape_error(int64_t n, int64_t m);
+
+// The native array model for the shape algorithms of jdb_shape.h: a cell is
+// a double, a row an array pointer punned into one.
 struct RtShape {
     using Arr = JdbArray*;
+    using Val = double;
     static int64_t len(JdbArray* a) { return a ? a->length : 0; }
     static bool is_row(JdbArray* a, int64_t) { return a && (a->flags & 1) && !(a->flags & 2); }
     static JdbArray* row(JdbArray* a, int64_t i) { return decode_inner(a->data[i]); }
     static double num(JdbArray* a, int64_t i) { return a->data[i]; }
+    static double cell(JdbArray* a, int64_t i) { return a->data[i]; }
     static JdbArray* make(int64_t n) { return jdb_array_new(n); }
     static void put_num(JdbArray* a, int64_t i, double d) { a->data[i] = d; }
     static void put_bool(JdbArray* a, int64_t i, bool b) { a->data[i] = b ? 1.0 : 0.0; a->flags |= 4; }
     static void put_row(JdbArray* a, int64_t i, JdbArray* r) { a->data[i] = encode_inner(r); a->flags |= 1; }
+    static void put(JdbArray* a, int64_t i, double d) { a->data[i] = d; }
     static void drop(JdbArray* a) { if (a) { free(a->data); free(a->elem_tags); free(a); } }
+    static void shape_error(int64_t n, int64_t m) { ::shape_error(n, m); }
 };
 
 // A reducer along one axis of an n-dimensional array; the axis must exist.
@@ -1718,17 +1725,6 @@ static inline double scalar_cmp(double a, double b, int op) {
 // Nested: bit 0 set without the string bit, so the cells are rows.
 static inline bool arr_nested(const JdbArray* a) { return a && (a->flags & 1) && !(a->flags & 2); }
 
-// The comparison seen from the other side: a < b is b > a.
-static int flip_cmp(int op) {
-    switch (op) {
-        case 4: return 6;
-        case 5: return 7;
-        case 6: return 4;
-        case 7: return 5;
-        default: return op;
-    }
-}
-
 static void shape_error(int64_t n, int64_t m) {
     char msg[96];
     snprintf(msg, sizeof msg, "shapes differ: %lld and %lld", (long long)n, (long long)m);
@@ -1819,63 +1815,30 @@ static JdbArray* arr_cmp_arr(JdbArray* a, JdbArray* b, int op) {
     return r;
 }
 
-static JdbArray* arr_pair(JdbArray* a, JdbArray* b, int op, bool cmp);
-
-// One cell of a meets one cell of b: two rows meet row by row, a row and a
-// number meet the number in every cell, two numbers meet as numbers.
-static double pair_cell(double av, bool a_row, double bv, bool b_row, int op, bool cmp) {
-    if (a_row && b_row) return encode_inner(arr_pair(decode_inner(av), decode_inner(bv), op, cmp));
-    if (a_row) return encode_inner(cmp ? arr_cmp_scalar(decode_inner(av), bv, op)
-                                       : arr_scalar_op(decode_inner(av), bv, op, false));
-    if (b_row) return encode_inner(cmp ? arr_cmp_scalar(decode_inner(bv), av, flip_cmp(op))
-                                       : arr_scalar_op(decode_inner(bv), av, op, true));
-    return cmp ? scalar_cmp(av, bv, op) : scalar_op(av, bv, op);
+// Every array of numbers below a renders as TRUE/FALSE.
+static void mark_bool_leaves(JdbArray* a) {
+    if (!a) return;
+    if (arr_nested(a)) {
+        for (int64_t i = 0; i < a->length; i++) mark_bool_leaves(decode_inner(a->data[i]));
+    } else {
+        jdb_array_set_bool_elems(a);
+    }
 }
 
-// Two arrays under an operator. Equal lengths meet cell by cell; a flat
-// array meets every row of a matrix; an array of one cell gives that cell
-// to every cell of the other; any other pair of lengths is an error.
-// Arithmetic or comparison, by cmp; string arrays go their own way.
+// Two arrays under an operator, by the shape rule of jdb_shape::pair, which
+// the VM shares. Arithmetic or comparison, by cmp; string arrays go their
+// own way.
 static JdbArray* arr_pair(JdbArray* a, JdbArray* b, int op, bool cmp) {
     if (!a || !b) return jdb_array_new(0);
     if ((a->flags & 2) || (b->flags & 2)) {
         if (a->length != b->length) { shape_error(a->length, b->length); return jdb_array_new(0); }
         return cmp ? arr_cmp_arr(a, b, op) : arr_binop(a, b, op);
     }
-    bool an = arr_nested(a), bn = arr_nested(b);
-    JdbArray* r;
-    bool rows;
-    if (an && !bn) {
-        r = jdb_array_new(a->length);
-        rows = true;
-        for (int64_t i = 0; i < a->length; i++)
-            r->data[i] = encode_inner(arr_pair(decode_inner(a->data[i]), b, op, cmp));
-    } else if (bn && !an) {
-        r = jdb_array_new(b->length);
-        rows = true;
-        for (int64_t i = 0; i < b->length; i++)
-            r->data[i] = encode_inner(arr_pair(a, decode_inner(b->data[i]), op, cmp));
-    } else if (a->length == b->length) {
-        r = jdb_array_new(a->length);
-        rows = an;
-        for (int64_t i = 0; i < a->length; i++)
-            r->data[i] = pair_cell(a->data[i], an, b->data[i], bn, op, cmp);
-    } else if (a->length == 1) {
-        r = jdb_array_new(b->length);
-        rows = bn;
-        for (int64_t i = 0; i < b->length; i++)
-            r->data[i] = pair_cell(a->data[0], an, b->data[i], bn, op, cmp);
-    } else if (b->length == 1) {
-        r = jdb_array_new(a->length);
-        rows = an;
-        for (int64_t i = 0; i < a->length; i++)
-            r->data[i] = pair_cell(a->data[i], an, b->data[0], bn, op, cmp);
-    } else {
-        shape_error(a->length, b->length);
-        return jdb_array_new(0);
-    }
-    if (rows) r->flags |= 1;
-    else if (cmp) jdb_array_set_bool_elems(r);
+    jdb_shape::Op<RtShape> fn = cmp
+        ? jdb_shape::Op<RtShape>([op](const double& x, const double& y) { return scalar_cmp(x, y, op); })
+        : jdb_shape::Op<RtShape>([op](const double& x, const double& y) { return scalar_op(x, y, op); });
+    JdbArray* r = jdb_shape::pair<RtShape>(a, b, fn);
+    if (cmp) mark_bool_leaves(r);
     return r;
 }
 
@@ -4841,33 +4804,12 @@ double jdb_iif(int64_t cond, double a, double b) {
 // bits with their kind, since an array is a pointer punned into the double.
 JdbArray* jdb_array_iif(JdbArray* cond, double a, int32_t a_tag, double b, int32_t b_tag) {
     if (!cond) return jdb_array_new(0);
-    JdbArray* aa = a_tag == JD_TAG_ARR ? decode_inner(a) : nullptr;
-    JdbArray* bb = b_tag == JD_TAG_ARR ? decode_inner(b) : nullptr;
-    bool nested = arr_nested(cond);
-    std::vector<double> vals((size_t)cond->length);
-    std::vector<int32_t> tags((size_t)cond->length);
-    bool any_row = false, any_num = false;
-    for (int64_t i = 0; i < cond->length; i++) {
-        double av = a, bv = b;
-        int32_t at = a_tag, bt = b_tag;
-        if (aa && aa->length) { av = aa->data[i % aa->length]; at = arr_nested(aa) ? JD_TAG_ARR : JD_TAG_F64; }
-        if (bb && bb->length) { bv = bb->data[i % bb->length]; bt = arr_nested(bb) ? JD_TAG_ARR : JD_TAG_F64; }
-        if (nested) {
-            vals[i] = encode_inner(jdb_array_iif(decode_inner(cond->data[i]), av, at, bv, bt));
-            tags[i] = JD_TAG_ARR;
-        } else {
-            bool pick = cond->data[i] != 0.0;
-            vals[i] = pick ? av : bv;
-            tags[i] = pick ? at : bt;
-        }
-        if (tags[i] == JD_TAG_ARR) any_row = true; else any_num = true;
-    }
-    JdbArray* r = jdb_array_new(cond->length);
-    for (int64_t i = 0; i < cond->length; i++) r->data[i] = vals[i];
-    if (any_row && !any_num) r->flags |= 1;
-    else if (any_row)
-        for (int64_t i = 0; i < cond->length; i++) jdb_array_set_tagged(r, i, vals[i], tags[i]);
-    return r;
+    auto branch = [](double v, int32_t tag) -> jdb_shape::Branch<RtShape> {
+        if (tag == JD_TAG_ARR) return { true, decode_inner(v), 0.0 };
+        return { false, nullptr, v };
+    };
+    return jdb_shape::pick<RtShape>(cond, branch(a, a_tag), branch(b, b_tag),
+        [](const double& c) { return c != 0.0; });
 }
 
 // ISNUM, ISSTR, ISARR - type checking (simplified for native)
