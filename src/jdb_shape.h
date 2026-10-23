@@ -14,6 +14,7 @@
 //   A::drop(a)               free a working array whose cells are borrowed
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -221,6 +222,41 @@ typename A::Arr zip(const std::vector<Branch<A>>& ops,
         A::put(out, i, fn(vals));
     }
     return out;
+}
+
+// ── Order, take and unique ───────────────────────────────────────────────
+//
+// The accessor adds, for these walks:
+//   A::copy_cell(out, k, a, i)   cell i of a into cell k of out, as it is
+//   A::carry_flags(out, a)       what the array says about all its cells
+
+// The indices 0 to n-1 in the order less puts the cells they name; cells
+// that neither precedes keep their order.
+inline std::vector<int64_t> order(int64_t n, const std::function<bool(int64_t, int64_t)>& less) {
+    std::vector<int64_t> idx((size_t)(n < 0 ? 0 : n));
+    for (int64_t i = 0; i < n; i++) idx[(size_t)i] = i;
+    std::stable_sort(idx.begin(), idx.end(), less);
+    return idx;
+}
+
+// The cells of a in the order the indices name.
+template <class A>
+typename A::Arr take(typename A::Arr a, const std::vector<int64_t>& idx) {
+    typename A::Arr out = A::make((int64_t)idx.size());
+    A::carry_flags(out, a);
+    for (size_t k = 0; k < idx.size(); k++) A::copy_cell(out, (int64_t)k, a, idx[k]);
+    return out;
+}
+
+// The indices of the first cell of every group of cells that same puts together.
+inline std::vector<int64_t> unique_indices(int64_t n, const std::function<bool(int64_t, int64_t)>& same) {
+    std::vector<int64_t> kept;
+    for (int64_t i = 0; i < n; i++) {
+        bool dup = false;
+        for (int64_t j : kept) if (same(i, j)) { dup = true; break; }
+        if (!dup) kept.push_back(i);
+    }
+    return kept;
 }
 
 // ── RESHAPE ──────────────────────────────────────────────────────────────

@@ -879,6 +879,21 @@ struct RtShape {
     static void put_bool(JdbArray* a, int64_t i, bool b) { a->data[i] = b ? 1.0 : 0.0; a->flags |= 4; }
     static void put_row(JdbArray* a, int64_t i, JdbArray* r) { a->data[i] = encode_inner(r); a->flags |= 1; }
     static void put(JdbArray* a, int64_t i, double d) { a->data[i] = d; }
+    // A cell with the tag it carries, when the source keeps tags per cell.
+    static void copy_cell(JdbArray* out, int64_t k, JdbArray* a, int64_t i) {
+        out->data[k] = a->data[i];
+        if (out->elem_tags && a->elem_tags) out->elem_tags[k] = a->elem_tags[i];
+    }
+    // What the source says about all its cells: strings, rows, truth values,
+    // dates, and room for per-cell tags when it keeps them.
+    static void carry_flags(JdbArray* out, JdbArray* a) {
+        out->flags = a->flags;
+        if ((a->flags & 8) && a->elem_tags) {
+            out->elem_tags = (int8_t*)malloc((size_t)(out->length > 0 ? out->length : 1));
+        } else {
+            out->flags &= ~8;
+        }
+    }
     static void drop(JdbArray* a) { if (a) { free(a->data); free(a->elem_tags); free(a); } }
     static void shape_error(int64_t n, int64_t m) { ::shape_error(n, m); }
 };
@@ -1046,64 +1061,30 @@ int64_t jdb_array_all(JdbArray* arr) {
     return 1;
 }
 
-JdbArray* jdb_array_reverse(JdbArray* arr) {
-    if (!arr) return jdb_array_new(0);
-    auto* r = jdb_array_new(arr->length);
-    for (int64_t i = 0; i < arr->length; i++)
-        r->data[i] = arr->data[arr->length - 1 - i];
-    r->flags = arr->flags;  // preserve string-elem / nested-arr dispatch
-    return r;
+struct RtShape;
+JdbArray* jdb_array_reverse(JdbArray* arr);
+
+// Whether cell i holds a string, by the per-cell tags or the array's flag.
+static bool rt_cell_is_str(JdbArray* arr, int64_t i) {
+    if ((arr->flags & 8) && arr->elem_tags) return arr->elem_tags[i] == JD_TAG_STR;
+    return (arr->flags & 2) != 0;
+}
+
+static const char* rt_cell_str(JdbArray* arr, int64_t i) {
+    union { double d; int64_t b; } u; u.d = arr->data[i];
+    const char* p = (const char*)(intptr_t)u.b;
+    return p ? p : "";
 }
 
 // Orders indices by the cells they name: strings by content, numbers by
 // value, a string after every number. Used by SORT and GRADE.
 static void jdb_order_indices(JdbArray* arr, std::vector<int64_t>& idx) {
-    idx.resize((size_t)arr->length);
-    for (int64_t i = 0; i < arr->length; i++) idx[(size_t)i] = i;
-    bool tagged = (arr->flags & 8) && arr->elem_tags;
-    bool all_str = (arr->flags & 2) != 0;
-    auto is_str = [&](int64_t i) {
-        if (tagged) return arr->elem_tags[i] == JD_TAG_STR;
-        return all_str;
-    };
-    auto str_at = [&](int64_t i) -> const char* {
-        union { double d; int64_t b; } u; u.d = arr->data[i];
-        const char* p = (const char*)(intptr_t)u.b;
-        return p ? p : "";
-    };
-    std::stable_sort(idx.begin(), idx.end(), [&](int64_t a, int64_t b) {
-        bool sa = is_str(a), sb = is_str(b);
-        if (sa && sb) return strcmp(str_at(a), str_at(b)) < 0;
+    idx = jdb_shape::order(arr->length, [&](int64_t a, int64_t b) {
+        bool sa = rt_cell_is_str(arr, a), sb = rt_cell_is_str(arr, b);
+        if (sa && sb) return strcmp(rt_cell_str(arr, a), rt_cell_str(arr, b)) < 0;
         if (sa != sb) return !sa;
         return arr->data[a] < arr->data[b];
     });
-}
-
-JdbArray* jdb_array_sort(JdbArray* arr) {
-    if (!arr) return jdb_array_new(0);
-    std::vector<int64_t> idx;
-    jdb_order_indices(arr, idx);
-    auto* r = jdb_array_new(arr->length);
-    for (int64_t i = 0; i < arr->length; i++) r->data[i] = arr->data[idx[(size_t)i]];
-    r->flags = arr->flags;
-    if ((arr->flags & 8) && arr->elem_tags) {
-        r->elem_tags = (int8_t*)malloc((size_t)(arr->length > 0 ? arr->length : 1));
-        for (int64_t i = 0; i < arr->length; i++) r->elem_tags[i] = arr->elem_tags[idx[(size_t)i]];
-    } else {
-        r->flags &= ~8;
-    }
-    return r;
-}
-
-// SORT(array, descending): the ascending order, reversed when descending.
-JdbArray* jdb_array_sort_dir(JdbArray* arr, double descending) {
-    JdbArray* r = jdb_array_sort(arr);
-    if (descending == 0.0 || r->length < 2) return r;
-    for (int64_t i = 0, j = r->length - 1; i < j; i++, j--) {
-        std::swap(r->data[i], r->data[j]);
-        if (r->elem_tags) std::swap(r->elem_tags[i], r->elem_tags[j]);
-    }
-    return r;
 }
 
 // The tag a cell carries when the array keeps none per cell: the
@@ -1369,49 +1350,21 @@ int64_t jdb_array_has_num(JdbArray* arr, double val) {
 // Forward declaration - actual definition follows below.
 extern "C" JdbArray* jdb_array_unique_str(JdbArray* arr);
 
+// UNIQUE: the first of every group of equal cells, strings by content and
+// numbers by value, whether the array says string per cell or as a whole.
 JdbArray* jdb_array_unique(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
-    // Runtime fallback: if codegen didn't statically route to _str (e.g.
-    // UNIQUE(APPEND(REVERSE(arr), ...)) - args[0] is a CALL chain, not a
-    // VARIABLE in string_array_vars), the array's per-cell-type flag still
-    // tells us this is a string array. Delegate so dedupe uses strcmp.
-    if (arr->flags & 2) return jdb_array_unique_str(arr);
-    auto* r = jdb_array_new(arr->length);
-    int64_t n = 0;
-    for (int64_t i = 0; i < arr->length; i++) {
-        bool found = false;
-        for (int64_t j = 0; j < n; j++) if (r->data[j] == arr->data[i]) { found = true; break; }
-        if (!found) r->data[n++] = arr->data[i];
-    }
-    r->length = n;
-    r->flags = arr->flags;
-    return r;
+    std::vector<int64_t> kept = jdb_shape::unique_indices(arr->length, [&](int64_t i, int64_t j) {
+        bool si = rt_cell_is_str(arr, i), sj = rt_cell_is_str(arr, j);
+        if (si != sj) return false;
+        if (si) return strcmp(rt_cell_str(arr, i), rt_cell_str(arr, j)) == 0;
+        return arr->data[i] == arr->data[j];
+    });
+    return jdb_shape::take<RtShape>(arr, kept);
 }
 
-// String-array UNIQUE: each cell carries an i8* in punned-f64 bits.
-// Numeric UNIQUE only catches pointer-identity duplicates; this one
-// dedupes by string content (strcmp). Codegen routes here when the
-// argument is a known string-array (string_array_vars membership).
 JdbArray* jdb_array_unique_str(JdbArray* arr) {
-    if (!arr) return jdb_array_new(0);
-    auto* r = jdb_array_new(arr->length);
-    int64_t n = 0;
-    for (int64_t i = 0; i < arr->length; i++) {
-        union { double d; intptr_t p; } u; u.d = arr->data[i];
-        const char* si = (const char*)u.p;
-        if (!si) si = "";
-        bool found = false;
-        for (int64_t j = 0; j < n; j++) {
-            union { double d; intptr_t p; } v; v.d = r->data[j];
-            const char* sj = (const char*)v.p;
-            if (!sj) sj = "";
-            if (std::strcmp(si, sj) == 0) { found = true; break; }
-        }
-        if (!found) r->data[n++] = arr->data[i];
-    }
-    r->length = n;
-    r->flags |= 3;  // string elements - preserve dispatch info
-    return r;
+    return jdb_array_unique(arr);
 }
 
 JdbArray* jdb_array_cumsum(JdbArray* arr) {
@@ -1645,6 +1598,31 @@ JdbArray* jdb_grade(JdbArray* arr) {
     auto* r = jdb_array_new(arr->length);
     for (int64_t i = 0; i < arr->length; i++) r->data[i] = (double)idx[(size_t)i];
     return r;
+}
+
+// SORT: the cells in the order jdb_order_indices puts them.
+JdbArray* jdb_array_sort(JdbArray* arr) {
+    if (!arr) return jdb_array_new(0);
+    std::vector<int64_t> idx;
+    jdb_order_indices(arr, idx);
+    return jdb_shape::take<RtShape>(arr, idx);
+}
+
+// SORT(array, descending): the ascending order, reversed when descending.
+JdbArray* jdb_array_sort_dir(JdbArray* arr, double descending) {
+    if (!arr) return jdb_array_new(0);
+    std::vector<int64_t> idx;
+    jdb_order_indices(arr, idx);
+    if (descending != 0.0) std::reverse(idx.begin(), idx.end());
+    return jdb_shape::take<RtShape>(arr, idx);
+}
+
+// REVERSE: the cells from the last to the first.
+JdbArray* jdb_array_reverse(JdbArray* arr) {
+    if (!arr) return jdb_array_new(0);
+    std::vector<int64_t> idx((size_t)arr->length);
+    for (int64_t i = 0; i < arr->length; i++) idx[(size_t)i] = arr->length - 1 - i;
+    return jdb_shape::take<RtShape>(arr, idx);
 }
 
 // ── Array Arithmetic (element-wise, recursive for 2D+) ──

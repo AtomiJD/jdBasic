@@ -145,6 +145,10 @@ struct VmShape {
     static void put_bool(Value& a, int64_t i, bool b) { a.as_array()->elements[(size_t)i] = Value::make_bool(b); }
     static void put_row(Value& a, int64_t i, const Value& r) { a.as_array()->elements[(size_t)i] = r; }
     static void put(Value& a, int64_t i, const Value& v) { a.as_array()->elements[(size_t)i] = v; }
+    static void copy_cell(Value& out, int64_t k, const Value& a, int64_t i) {
+        out.as_array()->elements[(size_t)k] = a.as_array()->elements[(size_t)i];
+    }
+    static void carry_flags(Value&, const Value&) {}
     static void drop(Value&) {}
     static void shape_error(int64_t n, int64_t m) {
         throw jdError(ErrCode::TYPE_MISMATCH, "shapes differ: " + std::to_string(n) + " and " + std::to_string(m));

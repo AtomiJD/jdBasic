@@ -397,27 +397,23 @@ void VM::register_array_builtins() {
     });
 
     // ── REVERSE ──────────────────────────────────────────────
+    // REVERSE, UNIQUE, GRADE and SORT walk by jdb_shape::order, take and
+    // unique_indices, which the native runtime shares; the comparison of two
+    // cells is each side's own.
     register_native("REVERSE", 1, 1, [](const std::vector<Value>& args) -> Value {
-        Value r = Value::make_array();
-        auto* arr = args[0].as_array();
-        auto* out = r.as_array();
-        out->elements.assign(arr->elements.rbegin(), arr->elements.rend());
-        return r;
+        int64_t n = VmShape::len(args[0]);
+        std::vector<int64_t> idx((size_t)n);
+        for (int64_t i = 0; i < n; i++) idx[(size_t)i] = n - 1 - i;
+        return jdb_shape::take<VmShape>(args[0], idx);
     });
 
     // ── UNIQUE ───────────────────────────────────────────────
     register_native("UNIQUE", 1, 1, [](const std::vector<Value>& args) -> Value {
-        auto* arr = args[0].as_array();
-        Value r = Value::make_array();
-        auto* out = r.as_array();
-        for (auto& e : arr->elements) {
-            bool dup = false;
-            for (auto& o : out->elements) {
-                if (e.to_string() == o.to_string()) { dup = true; break; }
-            }
-            if (!dup) out->elements.push_back(e);
-        }
-        return r;
+        auto& cells = args[0].as_array()->elements;
+        std::vector<int64_t> kept = jdb_shape::unique_indices((int64_t)cells.size(), [&](int64_t i, int64_t j) {
+            return cells[(size_t)i].to_string() == cells[(size_t)j].to_string();
+        });
+        return jdb_shape::take<VmShape>(args[0], kept);
     });
 
     // ── SHUFFLE ──────────────────────────────────────────────
@@ -482,12 +478,10 @@ void VM::register_array_builtins() {
     // Strings order lexicographically after every number; equal keys
     // keep their original order.
     register_native("GRADE", [](const std::vector<Value>& args) -> Value {
-        auto* arr = args[0].as_array();
-        std::vector<int64_t> idx(arr->elements.size());
-        for (size_t i = 0; i < idx.size(); i++) idx[i] = i;
-        std::stable_sort(idx.begin(), idx.end(), [&](int64_t a, int64_t b) {
-            const Value& va = arr->elements[a];
-            const Value& vb = arr->elements[b];
+        auto& cells = args[0].as_array()->elements;
+        std::vector<int64_t> idx = jdb_shape::order((int64_t)cells.size(), [&](int64_t a, int64_t b) {
+            const Value& va = cells[(size_t)a];
+            const Value& vb = cells[(size_t)b];
             bool a_str = (va.type == ValueType::STRING);
             bool b_str = (vb.type == ValueType::STRING);
             if (a_str != b_str) return !a_str;
@@ -504,23 +498,17 @@ void VM::register_array_builtins() {
     // codegen-side jdb_sort helper. Strings sort lexicographically,
     // numerics by value. Multi-dim shape goes through XSORT.
     register_native("SORT", 1, 2, [](const std::vector<Value>& args) -> Value {
-        Value r = Value::make_array();
-        r.as_array()->elements = args[0].as_array()->elements;
+        auto& cells = args[0].as_array()->elements;
         bool desc = (args.size() >= 2 && args[1].to_bool());
-        auto& elems = r.as_array()->elements;
-        bool string_sort = !elems.empty() && elems[0].type == ValueType::STRING;
-        if (string_sort) {
-            std::sort(elems.begin(), elems.end(), [desc](const Value& a, const Value& b) {
-                const std::string& sa = a.as_string()->data;
-                const std::string& sb = b.as_string()->data;
-                return desc ? sa > sb : sa < sb;
-            });
-        } else {
-            std::sort(elems.begin(), elems.end(), [desc](const Value& a, const Value& b) {
-                return desc ? a.to_double() > b.to_double() : a.to_double() < b.to_double();
-            });
-        }
-        return r;
+        bool string_sort = !cells.empty() && cells[0].type == ValueType::STRING;
+        std::vector<int64_t> idx = jdb_shape::order((int64_t)cells.size(), [&](int64_t a, int64_t b) {
+            const Value& va = cells[(size_t)a];
+            const Value& vb = cells[(size_t)b];
+            if (string_sort) return va.to_string() < vb.to_string();
+            return va.to_double() < vb.to_double();
+        });
+        if (desc) std::reverse(idx.begin(), idx.end());
+        return jdb_shape::take<VmShape>(args[0], idx);
     });
     register_native("XSORT", [](const std::vector<Value>& args) -> Value {
         // Type-aware ordering: numerics sort before strings, strings compare

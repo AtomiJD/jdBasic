@@ -55,3 +55,4 @@ PRINT "slice: "; SLICE([[1, 2, 3], [4, 5, 6]], 0, 1); " "; SLICE([[1, 2, 3], [4,
 DIM t3 AS ARRAY = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
 PRINT "reduce 3d: "; SUM(t3, 0); " "; SUM(t3, 1); " "; SUM(t3, 2); " "; MAX(t3, 0); " "; MEAN(t3, 1); " "; ANY(t3 > 6, 2); " "; SUM(t3); " "; PRODUCT(t3, 2)
 PRINT "reshape more: "; RESHAPE(IOTA(8), [2, 2, 2]); " "; RESHAPE(IOTA(4), 4); " "; RESHAPE([1, 2, 3], [2, 4]); " "; RESHAPE(["a", "b", "c", "d"], [2, 2]); " "; RESHAPE(7, [2])
+PRINT "order more: "; GRADE([3, 1, 2, 1]); " "; UNIQUE(["b", "a", "b"]); " "; REVERSE([[1, 2], [3, 4]]); " "; SORT(["pear", "apple"], TRUE); " "; UNIQUE([1, 1.0, 2])

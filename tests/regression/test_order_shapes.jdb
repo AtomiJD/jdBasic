@@ -1,0 +1,43 @@
+' SORT, GRADE, UNIQUE and REVERSE walk one order: numbers by value, strings
+' by content, equal cells in their order, rows as they are, in both backends.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Rows$(m AS ARRAY) AS STRING
+    DIM s$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m) - 1
+        s$ = s$ + JOIN(m[i], ",") + ";"
+    NEXT i
+    RETURN s$
+ENDFUNC
+
+DIM v AS ARRAY = [3, 1, 2, 1]
+DIM s AS ARRAY = ["pear", "apple", "fig", "apple"]
+DIM m AS ARRAY = [[1, 2], [3, 4], [5, 6]]
+
+Check(JOIN(SORT(v), ",") = "1,1,2,3", "SORT numbers")
+Check(JOIN(SORT(v, TRUE), ",") = "3,2,1,1", "SORT descending")
+Check(JOIN(SORT(s), ",") = "apple,apple,fig,pear", "SORT strings")
+Check(JOIN(SORT(s, TRUE), ",") = "pear,fig,apple,apple", "SORT strings descending")
+Check(JOIN(GRADE(v), ",") = "1,3,2,0", "GRADE keeps equal cells in their order")
+Check(JOIN(GRADE(s), ",") = "1,3,2,0", "GRADE of strings")
+Check(JOIN(UNIQUE(v), ",") = "3,1,2", "UNIQUE numbers keeps the first")
+Check(JOIN(UNIQUE(s), ",") = "pear,apple,fig", "UNIQUE strings by content")
+Check(JOIN(UNIQUE([1, 1.0, 2]), ",") = "1,2", "UNIQUE sees 1 and 1.0 as one")
+Check(JOIN(REVERSE(v), ",") = "1,2,1,3", "REVERSE numbers")
+Check(JOIN(REVERSE(s), ",") = "apple,fig,apple,pear", "REVERSE strings")
+Check(Rows$(REVERSE(m)) = "5,6;3,4;1,2;", "REVERSE keeps the rows whole")
+Check(JOIN(SORT([]), ",") = "" ANDALSO LEN(UNIQUE([])) = 0 ANDALSO LEN(REVERSE([])) = 0, "empty arrays")
+Check(JOIN(SORT([2.5, -1, 0]), ",") = "-1,0,2.5", "SORT with fractions and a negative")
+Check(JOIN(SORT(REVERSE(UNIQUE(s))), ",") = "apple,fig,pear", "a chain of the three")
+
+IF failed > 0 THEN END 1
+PRINT "OK"
