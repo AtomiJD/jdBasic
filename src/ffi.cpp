@@ -126,14 +126,48 @@ static intptr_t call_ffi(SymbolPtr proc, intptr_t* a, int n) {
     }
 }
 
+// ── Typed caller (x86-64) ───────────────────────────────────────
+//
+// Integers and pointers travel in the integer registers, doubles in the
+// XMM registers, on Win64 and System V alike, so a call with a double
+// anywhere needs the function pointer cast to its exact signature. The
+// recursion below builds that signature one parameter at a time, one
+// instantiation per pattern of up to FFI_TYPED_MAX parameters.
+
+static constexpr int FFI_TYPED_MAX = 6;
+
+struct FfiArg {
+    bool is_double = false;
+    intptr_t i = 0;
+    double d = 0.0;
+};
+
+template <typename R, typename... Args>
+static R ffi_invoke(SymbolPtr proc, Args... args) {
+    return ((R (*)(Args...))proc)(args...);
+}
+
+template <typename R, typename... Args>
+static R ffi_typed(SymbolPtr proc, const FfiArg* a, int n, int idx, Args... args) {
+    if constexpr (sizeof...(Args) >= FFI_TYPED_MAX) {
+        (void)a; (void)n; (void)idx;
+        return ffi_invoke<R, Args...>(proc, args...);
+    } else {
+        if (idx == n) return ffi_invoke<R, Args...>(proc, args...);
+        if (a[idx].is_double)
+            return ffi_typed<R, Args..., double>(proc, a, n, idx + 1, args..., a[idx].d);
+        return ffi_typed<R, Args..., intptr_t>(proc, a, n, idx + 1, args..., a[idx].i);
+    }
+}
+
 // ── FFI declaration info ────────────────────────────────────────
 
 struct FFIDecl {
     std::string name;
     std::string dll;
     std::string alias;
-    std::vector<std::string> param_types; // "INTEGER", "STRING", "RETURN"
-    std::string return_type;              // "INTEGER", "STRING", "ARRAY", "VOID"
+    std::vector<std::string> param_types; // "INTEGER", "DOUBLE", "STRING", "RETURN", "ARRAY"
+    std::string return_type;              // "INTEGER", "DOUBLE", "STRING", "ARRAY", "VOID"
     SymbolPtr proc = nullptr;             // cached
 };
 
@@ -186,7 +220,12 @@ static Value ffi_call_wrapper(const FFIDecl& decl, const std::vector<Value>& arg
     return_buffers.reserve(return_sizes.size());
     for (int sz : return_sizes) return_buffers.emplace_back(sz, 0);
 
+    // An ARRAY parameter is a double buffer the function reads and may write;
+    // the buffer comes back in the answer array, after the RETURN strings.
+    std::vector<std::vector<double>> array_buffers;
     std::vector<int> return_indices;
+    FfiArg typed_args[8];
+    bool any_double = decl.return_type == "DOUBLE";
     int return_idx = 0;
     int arg_idx = 0;
     for (int i = 0; i < param_count && i < 8; i++) {
@@ -195,28 +234,60 @@ static Value ffi_call_wrapper(const FFIDecl& decl, const std::vector<Value>& arg
             raw_args[i] = (intptr_t)return_buffers[return_idx].data();
             return_indices.push_back(return_idx);
             return_idx++;
-            arg_idx++;
         }
         else if (ptype == "STRING") {
             if (arg_idx < (int)args.size()) {
                 str_storage[i] = args[arg_idx].to_string();
                 raw_args[i] = (intptr_t)str_storage[i].c_str();
             }
-            arg_idx++;
+        }
+        else if (ptype == "DOUBLE") {
+            typed_args[i].is_double = true;
+            if (arg_idx < (int)args.size()) typed_args[i].d = args[arg_idx].to_double();
+            any_double = true;
+        }
+        else if (ptype == "ARRAY") {
+            std::vector<double> buf;
+            if (arg_idx < (int)args.size() && args[arg_idx].type == ValueType::ARRAY) {
+                for (auto& cell : args[arg_idx].as_array()->elements) {
+                    if (cell.type == ValueType::ARRAY)
+                        throw jdError(ErrCode::TYPE_MISMATCH,
+                            "FFI: an ARRAY parameter takes a flat array of numbers");
+                    buf.push_back(cell.to_double());
+                }
+            } else if (arg_idx < (int)args.size()) {
+                throw jdError(ErrCode::TYPE_MISMATCH, "FFI: an ARRAY parameter takes an array");
+            }
+            array_buffers.push_back(std::move(buf));
+            raw_args[i] = (intptr_t)(array_buffers.back().empty() ? nullptr : array_buffers.back().data());
         }
         else { // INTEGER or anything else → intptr_t
             if (arg_idx < (int)args.size()) {
                 raw_args[i] = (intptr_t)args[arg_idx].to_int();
             }
-            arg_idx++;
         }
+        typed_args[i].i = raw_args[i];
+        arg_idx++;
     }
 
-    intptr_t result = call_ffi(proc, raw_args, param_count);
+    intptr_t result = 0;
+    double result_d = 0.0;
+    if (any_double) {
+        if (param_count > FFI_TYPED_MAX)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                "FFI: a function with a DOUBLE takes at most " + std::to_string(FFI_TYPED_MAX) + " parameters");
+        if (decl.return_type == "DOUBLE")
+            result_d = ffi_typed<double>(proc, typed_args, param_count, 0);
+        else
+            result = ffi_typed<intptr_t>(proc, typed_args, param_count, 0);
+    } else {
+        result = call_ffi(proc, raw_args, param_count);
+    }
+    Value answer = decl.return_type == "DOUBLE" ? Value::make_f64(result_d) : Value::make_i64(result);
 
-    if (!return_indices.empty() || decl.return_type == "ARRAY") {
+    if (!return_indices.empty() || !array_buffers.empty() || decl.return_type == "ARRAY") {
         Value arr = Value::make_array();
-        arr.as_array()->elements.push_back(Value::make_i64(result));
+        arr.as_array()->elements.push_back(answer);
         for (size_t ri = 0; ri < return_indices.size(); ri++) {
             // NUL-terminated up to capacity.
             const char* data = return_buffers[ri].data();
@@ -224,6 +295,12 @@ static Value ffi_call_wrapper(const FFIDecl& decl, const std::vector<Value>& arg
             int len = 0;
             while (len < cap && data[len] != 0) len++;
             arr.as_array()->elements.push_back(Value::make_string(std::string(data, (size_t)len)));
+        }
+        for (auto& buf : array_buffers) {
+            Value cells = Value::make_array();
+            cells.as_array()->elements.reserve(buf.size());
+            for (double d : buf) cells.as_array()->elements.push_back(Value::make_f64(d));
+            arr.as_array()->elements.push_back(std::move(cells));
         }
         return arr;
     }
@@ -235,7 +312,7 @@ static Value ffi_call_wrapper(const FFIDecl& decl, const std::vector<Value>& arg
     if (decl.return_type == "VOID") {
         return Value::make_none();
     }
-    return Value::make_i64(result);
+    return answer;
 }
 
 // ── Register FFI builtins ───────────────────────────────────────
@@ -259,6 +336,13 @@ void register_ffi_builtins(VM& vm) {
         decl.alias = args[2].as_string()->data;
 
         auto* ptypes = args[3].as_array();
+        for (auto& e : ptypes->elements) {
+            const std::string& t = e.as_string()->data;
+            if (t != "INTEGER" && t != "DOUBLE" && t != "STRING" && t != "RETURN" && t != "ARRAY")
+                throw jdError(ErrCode::TYPE_MISMATCH,
+                    "DECLARE " + decl.name + ": parameter type " + t +
+                    " is not one of INTEGER, DOUBLE, STRING, RETURN, ARRAY");
+        }
         for (auto& e : ptypes->elements)
             decl.param_types.push_back(e.as_string()->data);
 
@@ -284,6 +368,10 @@ void register_ffi_builtins(VM& vm) {
         // "Undefined function: <UPPERCASE>" on the FFI call site.
         vm.register_native(decl.name, wrapper);
         if (key != decl.name) vm.register_native(key, wrapper);
+        // An ARRAY parameter takes the array whole; without this the VM
+        // would call the function once per cell.
+        for (auto& t : decl.param_types)
+            if (t == "ARRAY") { vm.extra_no_vectorize.insert(decl.name); vm.extra_no_vectorize.insert(key); }
 
         return Value::make_none();
     });

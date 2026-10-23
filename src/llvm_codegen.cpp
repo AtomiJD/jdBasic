@@ -1110,7 +1110,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 [](unsigned char c){ return (char)std::toupper(c); });
             std::transform(ret.begin(), ret.end(), ret.begin(),
                 [](unsigned char c){ return (char)std::toupper(c); });
-            if (ret == "ARRAY")        ffi_array_returners.insert(fn);
+            // A RETURN or ARRAY parameter makes the answer an array of the
+            // result and the buffers, whatever the declared return type.
+            bool buffers = false;
+            if (e.args[3] && e.args[3]->kind == ExprKind::ARRAY_LITERAL)
+                for (auto& p : e.args[3]->args)
+                    if (p && p->kind == ExprKind::LITERAL_STRING &&
+                        (p->str_val == "RETURN" || p->str_val == "ARRAY")) buffers = true;
+            if (ret == "ARRAY" || buffers) ffi_array_returners.insert(fn);
             else if (ret == "STRING")  ffi_string_returners.insert(fn);
             else if (ret == "VOID")    ffi_void_returners.insert(fn);
         }

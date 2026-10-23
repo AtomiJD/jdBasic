@@ -1774,21 +1774,25 @@ DECLARE SUB  name LIB "library" ALIAS "export_name" (p1 AS type, ...)
   * macOS:   `libname.dylib`
   * If the string already contains a path separator or one of these extensions, it is used verbatim.
 * **`ALIAS "export_name"`**: symbol exported by the library (case-sensitive). Default is `name`.
-* **Parameter types**: `INTEGER`, `STRING`, `RETURN`. Up to 8 parameters.
-* **Return types**: `INTEGER` (default for FUNC), `STRING`, `ARRAY`, `VOID` (SUB).
+* **Parameter types**: `INTEGER`, `DOUBLE`, `STRING`, `RETURN`, `ARRAY`. Up to 8 parameters, 6 when a `DOUBLE` is among them or answered.
+* **Return types**: `INTEGER` (default for FUNC), `DOUBLE`, `STRING`, `ARRAY`, `VOID` (SUB).
 
 **Parameter types in detail**
 
 | Type      | C-side                          | jdBasic-side                                    |
 |-----------|---------------------------------|-------------------------------------------------|
 | `INTEGER` | `intptr_t` (any int / pointer)  | Numeric value                                   |
+| `DOUBLE`  | `double`                        | Numeric value                                   |
 | `STRING`  | `const char*` (NUL-terminated)  | jdBasic string is copied into a temp buffer     |
 | `RETURN`  | `char*` writable output buffer  | The integer passed by the caller is the **buffer size in bytes** (0 = default 64 KB; clamped at 64 MB) |
+| `ARRAY`   | `double*` buffer the function reads and may write | A flat array of numbers, copied into the buffer; the buffer comes back in the answer array |
 
-When a function uses one or more `RETURN` parameters, **or** declares
-`AS ARRAY`, the call returns an array: `[function_return, return_buf_1,
-return_buf_2, ...]`. Each `RETURN` slot is decoded as a NUL-terminated
-string. Use array destructuring to unpack:
+When a function uses one or more `RETURN` or `ARRAY` parameters, **or**
+declares `AS ARRAY`, the call returns an array: `[function_return,
+return_buf_1, ..., array_1, ...]`, the `RETURN` slots first, each decoded as
+a NUL-terminated string, then the `ARRAY` buffers as arrays of numbers.
+Declare such a function `AS ARRAY` so a compiled program reads the answer
+as one. Use array destructuring to unpack:
 
 ```basic
 [bytes_written, json$] = sqlb_query_json(db, "SELECT * FROM users", 1024*1024, 1024*1024)
@@ -1799,9 +1803,23 @@ the integer the C function receives as its size argument. A single value
 serves both ends, which is the typical Win32 / POSIX pattern.
 
 **Calling convention**: x86-64 only, Win64 ABI on Windows and System V on
-Linux/macOS. Pass everything as `intptr_t`-sized values. There is no
-`STDCALL` / `CDECL` / `double` support today; floats must be marshalled as
-strings or bit-pattern integers in the bridge.
+Linux/macOS. Integers and pointers travel in the integer registers, a
+`DOUBLE` in the floating-point registers, so the call is made with the exact
+signature of the declaration; a `float` parameter is not a `DOUBLE` and has
+no type here. There is no `STDCALL` / `CDECL` distinction on x86-64.
+
+**Example: the C runtime's maths**
+
+```basic
+DECLARE FUNC cpow LIB "ucrtbase" ALIAS "pow" (x AS DOUBLE, y AS DOUBLE) AS DOUBLE
+DECLARE FUNC cldexp LIB "ucrtbase" ALIAS "ldexp" (x AS DOUBLE, e AS INTEGER) AS DOUBLE
+DECLARE FUNC cmemcpy LIB "ucrtbase" ALIAS "memcpy" (dst AS ARRAY, src AS ARRAY, bytes AS INTEGER) AS ARRAY
+
+PRINT cpow(2, 10)              ' 1024
+PRINT cldexp(1.5, 3)           ' 12
+[p, dst, src] = cmemcpy(ZEROS([3]), [1, 2, 3], 24)
+PRINT dst                      ' [1, 2, 3]
+```
 
 **Example: Win32 API**
 

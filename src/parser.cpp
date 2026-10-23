@@ -702,8 +702,12 @@ StmtPtr Parser::parse_statement() {
                         ptype = "INTEGER"; advance();
                     } else if (current().value == "STRING" || current().type == TokenType::TY_STRING) {
                         ptype = "STRING"; advance();
+                    } else if (current().value == "ARRAY" || current().type == TokenType::TY_ARRAY) {
+                        ptype = "ARRAY"; advance();
                     } else {
                         ptype = advance().value;
+                        std::transform(ptype.begin(), ptype.end(), ptype.begin(), ::toupper);
+                        if (ptype == "FLOAT64") ptype = "DOUBLE";
                     }
                     param_names_arr.push_back(make_string_lit(pname, ln));
                     param_types_arr.push_back(make_string_lit(ptype, ln));
@@ -722,6 +726,8 @@ StmtPtr Parser::parse_statement() {
                     ret_type = "STRING"; advance();
                 } else {
                     ret_type = advance().value;
+                    std::transform(ret_type.begin(), ret_type.end(), ret_type.begin(), ::toupper);
+                    if (ret_type == "FLOAT64") ret_type = "DOUBLE";
                 }
             }
             expect_newline();

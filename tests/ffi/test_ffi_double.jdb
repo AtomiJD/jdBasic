@@ -1,0 +1,36 @@
+' DECLARE FUNC with DOUBLE parameters and answers, a DOUBLE beside an
+' INTEGER, and ARRAY buffers that come back in the answer. The C runtime's
+' maths serve as the library, as the other tests here use user32 and kernel32;
+' the same program runs interpreted and compiled.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DECLARE FUNC cpow LIB "ucrtbase" ALIAS "pow" (x AS DOUBLE, y AS DOUBLE) AS DOUBLE
+DECLARE FUNC cfabs LIB "ucrtbase" ALIAS "fabs" (x AS DOUBLE) AS DOUBLE
+DECLARE FUNC cldexp LIB "ucrtbase" ALIAS "ldexp" (x AS DOUBLE, e AS INTEGER) AS DOUBLE
+DECLARE FUNC catof LIB "ucrtbase" ALIAS "atof" (s AS STRING) AS DOUBLE
+DECLARE FUNC cmemcpy LIB "ucrtbase" ALIAS "memcpy" (dst AS ARRAY, src AS ARRAY, bytes AS INTEGER) AS ARRAY
+
+Check(cpow(2, 10) = 1024, "two doubles in, a double out")
+Check(ABS(cpow(2.5, 2) - 6.25) < 0.000000001, "fractions survive the registers")
+Check(cfabs(-3.25) = 3.25, "one double")
+Check(cldexp(1.5, 3) = 12, "a double beside an integer")
+Check(ABS(catof("2.5") - 2.5) < 0.000000001, "a string in, a double out")
+
+DIM src AS ARRAY = [1, 2, 3]
+DIM answer = cmemcpy(ZEROS([3]), src, 24)
+Check(LEN(answer) = 3, "the answer carries the result and both buffers")
+DIM dst AS ARRAY = answer[1]
+Check(LEN(dst) = 3 ANDALSO dst[0] = 1 ANDALSO dst[2] = 3, "the function wrote into the ARRAY buffer")
+DIM back AS ARRAY = answer[2]
+Check(back[1] = 2, "the source buffer comes back unchanged")
+
+IF failed > 0 THEN END 1
+PRINT "OK"
