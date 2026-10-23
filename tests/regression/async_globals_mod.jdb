@@ -1,0 +1,11 @@
+' Module for test_async_globals.jdb: a constant and a variable read by its
+' functions.
+EXPORT MODULE ASYNC_GLOBALS_MOD
+CONST SCALE = 5
+DIM gk = 5
+EXPORT FUNC WITH_CONST(x)
+    RETURN x / SCALE
+ENDFUNC
+EXPORT FUNC WITH_GLOBAL(x)
+    RETURN x / gk
+ENDFUNC

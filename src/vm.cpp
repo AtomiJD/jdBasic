@@ -2113,7 +2113,7 @@ void VM::run() {
                 auto fmap_copy = std::make_shared<std::unordered_map<std::string, size_t>>(func_map);
                 std::string fn = func_name;
 
-                task->thread = std::thread([task, funcs_copy, fn, async_args]() {
+                task->thread = std::thread([task, funcs_copy, globals_copy, gnames_copy, fn, async_args]() {
                     install_seh_translator_for_this_thread();
                     try {
                         VM async_vm;
@@ -2124,8 +2124,12 @@ void VM::run() {
                         extern void register_llm_builtins(VM&);
                         register_ai_builtins(async_vm);
                         register_llm_builtins(async_vm);
-                        // Register all functions via restore_state
+                        // The task starts from a copy of the globals as they
+                        // are at the call, module constants and variables
+                        // among them, and writes to its own copy only.
                         VMState st;
+                        st.globals = *globals_copy;
+                        st.global_names = *gnames_copy;
                         st.functions = *funcs_copy;
                         for (size_t i = 0; i < st.functions.size(); i++) {
                             st.func_map[st.functions[i].name] = i;

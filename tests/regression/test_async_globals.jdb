@@ -1,0 +1,40 @@
+' An ASYNC FUNC starts from a copy of the globals as they are at the call,
+' module constants and variables among them, so a module function it calls
+' reads the same values the main program reads.
+
+IMPORT ASYNC_GLOBALS_MOD
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM base AS INTEGER = 100
+
+ASYNC FUNC W1(x)
+    RETURN ASYNC_GLOBALS_MOD.WITH_CONST(x)
+ENDFUNC
+
+ASYNC FUNC W2(x)
+    RETURN ASYNC_GLOBALS_MOD.WITH_GLOBAL(x)
+ENDFUNC
+
+ASYNC FUNC W3(x)
+    RETURN x + base
+ENDFUNC
+
+Check(ASYNC_GLOBALS_MOD.WITH_CONST(10) = 2, "module constant in the main program")
+Check(ASYNC_GLOBALS_MOD.WITH_GLOBAL(10) = 2, "module variable in the main program")
+DIM a = W1(10)
+DIM b = W2(10)
+DIM c = W3(1)
+Check(AWAIT a = 2, "module constant in an ASYNC FUNC")
+Check(AWAIT b = 2, "module variable in an ASYNC FUNC")
+Check(AWAIT c = 101, "a global of the main program in an ASYNC FUNC")
+
+IF failed > 0 THEN END 1
+PRINT "OK"
