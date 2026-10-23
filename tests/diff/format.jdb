@@ -1,0 +1,28 @@
+' PRINT and STR$ of every kind, and FORMAT$ corner cases.
+OPTION "EXPLICIT"
+DIM a AS ARRAY = [1, 2.5, "x", TRUE]
+DIM m AS ARRAY = [[1, 2], [3, 4]]
+DIM mp AS MAP
+mp{"b"} = 2
+mp{"a"} = 1
+PRINT "array: "; a; " "; m; " "; []
+PRINT "map: "; mp
+PRINT "bool: "; TRUE; " "; FALSE; " "; 1 = 1; " "; NOT TRUE
+PRINT "none: "; NONE; " "; TYPEOF(NONE)
+PRINT "nested: "; [[1, [2, 3]], "a", [TRUE]]
+PRINT "strings in array: "; ["a", "b"]; " "; JOIN(["a", "b"], "")
+PRINT "numbers: "; 1; " "; 1.0; " "; 1.50; " "; -0.25; " "; 1e3; " "; 2 / 3
+PRINT "semicolons:"; 1; 2; 3
+PRINT "commas:", 1, 2, 3
+PRINT "tab: a" + VBTAB + "b"
+PRINT "str$: "; STR$(1.0); " "; STR$(TRUE); " "; STR$([1, 2]); " "; STR$("s")
+PRINT "format d: "; FORMAT$("{:d}", 3.7); " "; FORMAT$("{:5d}|", 42); " "; FORMAT$("{:-5d}|", 42)
+PRINT "format f: "; FORMAT$("{:.3f}", 2); " "; FORMAT$("{:.0f}", 2.5); " "; FORMAT$("{:.0f}", 3.5); " "; FORMAT$("{:10.4f}|", 3.14159)
+PRINT "format s: "; FORMAT$("[{:^7}]", "mid"); " "; FORMAT$("[{:>3}]", "toolong"); " "; FORMAT$("{0} {1} {0}", "a", "b")
+PRINT "format mix: "; FORMAT$("{} {} {}", 1, "two", 3.0); " "; FORMAT$("{}", [1, 2]); " "; FORMAT$("{}", TRUE)
+PRINT "format pct: "; FORMAT$("{:.1%}", 0.1234); " "; FORMAT$("{:.2f}", 1234567.891)
+PRINT "format sign: "; FORMAT$("{:+.1f}", -2); " "; FORMAT$("{: d}", 7); " "; FORMAT$("{:+d}", 0)
+PRINT "format e g: "; FORMAT$("{:.2e}", 0.000123); " "; FORMAT$("{:E}", 1500); " "; FORMAT$("{:g}", 1500000); " "; FORMAT$("{:.3g}", 3.14159)
+PRINT "format hex: "; FORMAT$("{:X}", 255); " "; FORMAT$("{:#x}", 255); " "; FORMAT$("{:x}", 4095)
+PRINT "braces: "; FORMAT$("{{}} {}", 1)
+PRINT "cstr: "; CSTR(1.5); " "; CSTR(TRUE); " "; TOSTR([1])

@@ -1,0 +1,37 @@
+' Numbers: arithmetic, rounding, the maths functions, bitwise operators.
+OPTION "EXPLICIT"
+DIM x AS DOUBLE = -7.5
+DIM n AS INTEGER = -7
+DIM m AS INTEGER = 3
+PRINT "div: "; 7 / 2; " "; -7 / 2; " "; 1 / 3
+PRINT "idiv: "; 7 \ 2; " "; -7 \ 2; " "; n \ m
+PRINT "mod: "; 7 MOD 3; " "; -7 MOD 3; " "; 7 MOD -3; " "; 7.5 MOD 2
+PRINT "pow: "; 2 ^ 10; " "; 2 ^ 0.5; " "; (-8) ^ (1 / 3); " "; 0 ^ 0
+PRINT "int: "; INT(7.5); " "; INT(-7.5); " "; INT(x)
+PRINT "floor: "; FLOOR(7.5); " "; FLOOR(-7.5); " "; CEIL(7.2); " "; CEIL(-7.2)
+PRINT "trunc: "; TRUNC(7.9); " "; TRUNC(-7.9)
+PRINT "round: "; ROUND(2.5); " "; ROUND(3.5); " "; ROUND(-2.5); " "; ROUND(2.345, 2); " "; ROUND(1234.5, -2)
+PRINT "abs sgn: "; ABS(x); " "; ABS(n); " "; SGN(x); " "; SGN(0); " "; SGN(3)
+PRINT "sqr: "; SQR(2); " "; SQR(144); " "; SQR(0)
+PRINT "exp log: "; EXP(1); " "; LOG(10); " "; LOG10(1000); " "; LOG(1)
+PRINT "trig: "; SIN(1); " "; COS(1); " "; TAN(1); " "; ATAN2(1, 2); " "; ASIN(0.5); " "; ACOS(0.5); " "; ATAN(1)
+PRINT "hyp: "; SINH(1); " "; COSH(1); " "; TANH(1)
+PRINT "clamp lerp: "; CLAMP(15, 0, 10); " "; CLAMP(-3, 0, 10); " "; LERP(0, 10, 0.25)
+PRINT "gcd lcm: "; GCD(12, 18); " "; LCM(4, 6)
+PRINT "conv: "; CINT(7.6); " "; CINT(-7.6); " "; CLNG(2.5); " "; CDBL(3); " "; CSNG(1 / 3)
+PRINT "conv text: "; CINT("42"); " "; VAL("3.25abc"); " "; VAL("x"); " "; VAL("  12 ")
+PRINT "tonum: "; TONUM("7"); " "; TONUM("7.5")
+PRINT "str: "; STR$(3.0); " "; STR$(-0.5); " "; STR$(1000000); " "; STR$(1 / 3); " "; STR$(1e21); " "; STR$(1e-7)
+PRINT "big: "; 2 ^ 53; " "; 2 ^ 53 + 1; " "; 9007199254740993
+PRINT "float print: "; 0.1 + 0.2; " "; 1e8; " "; 123456789.125; " "; 1.5e-10
+PRINT "hex: "; HEX$(255); " "; HEX$(-1); " "; OCT$(8); " "; BIN$(5)
+PRINT "band: "; 12 BAND 10; " "; 12 BOR 10; " "; 12 BXOR 10; " "; BNOT 5; " "; 1 SHL 4; " "; 256 SHR 2
+PRINT "rot: "; ROTL(1, 3); " "; ROTR(8, 3)
+PRINT "logic: "; 374 AND 255; " "; 0 OR 5; " "; NOT 0; " "; NOT 1; " "; TRUE AND FALSE; " "; 3 XOR 5
+PRINT "cmp: "; 1 = 1.0; " "; 2 < 1; " "; 2 >= 2; " "; "a" < "b"; " "; "B" < "a"
+PRINT "bool math: "; TRUE + TRUE; " "; -TRUE; " "; TRUE * 5
+PRINT "neg zero: "; -0.0; " "; 0 * -1
+PRINT "int overflow: "; 2147483647 + 1; " "; 9223372036854775807
+PRINT "mixed: "; 7 + 0.5; " "; 7 * 1.0; " "; 10 / 5
+PRINT "prec: "; 1 / 7; " "; 22 / 7; " "; 100 / 3
+PRINT "random seeded: "; RANDOMSEED(42); " "; INT(RND(1) * 1000)

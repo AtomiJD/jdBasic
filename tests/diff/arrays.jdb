@@ -1,0 +1,50 @@
+' Arrays: construction, shapes, element-wise maths, reductions, higher-order.
+OPTION "EXPLICIT"
+DIM v AS ARRAY = [3, 1, 2]
+DIM w AS ARRAY = [10, 20, 30]
+DIM m AS ARRAY = [[1, 2, 3], [4, 5, 6]]
+DIM s AS ARRAY = ["b", "a", "c"]
+PRINT "iota: "; IOTA(5); " "; IOTA(3, 0); " "; IOTA(0)
+PRINT "range lin: "; RANGE(0, 10, 2.5); " "; RANGE(5, 1, -1); " "; LINSPACE(0, 1, 5)
+PRINT "zeros ones: "; ZEROS([3]); " "; ONES([2, 2]); " "; LEN(ZEROS([4, 5])); " "; LEN(ZEROS([4, 5])[0])
+PRINT "reshape: "; RESHAPE(IOTA(6), [2, 3]); " "; RESHAPE([[1, 2], [3, 4]], [4]); " "; LEN(m)
+PRINT "arith: "; v + w; " "; v * 2; " "; 2 - v; " "; w / v; " "; v ^ 2; " "; -v
+PRINT "arith int: "; w \ v; " "; w MOD v; " "; v + 0.5
+PRINT "matrix: "; m * 2; " "; m + m; " "; m + [10, 20, 30]; " "; m * [[100], [200]]; " "; m + [[1000]]
+PRINT "cmp: "; v < 2; " "; v = 1; " "; v >= w / 10; " "; m > 3
+PRINT "logic: "; (v > 1) AND (v < 3); " "; (v > 2) OR (v < 2); " "; NOT (v > 1)
+PRINT "bit: "; v BAND 1; " "; v SHL 1
+PRINT "reduce: "; SUM(v); " "; PRODUCT(v); " "; MIN(v); " "; MAX(v); " "; MEAN(v); " "; MEDIAN([1, 3, 2, 4])
+PRINT "stats: "; STDEV([2, 4, 4, 4, 5, 5, 7, 9]); " "; VARIANCE([1, 2, 3, 4]); " "; COUNT(v)
+PRINT "reduce axis: "; SUM(m, 0); " "; SUM(m, 1); " "; MAX(m, 0); " "; MEAN(m, 1)
+PRINT "any all: "; ANY(v > 2); " "; ALL(v > 0); " "; ANY([]); " "; ALL([])
+PRINT "sort: "; SORT(v); " "; SORT(v, TRUE); " "; SORT(s); " "; GRADE(v); " "; XSORT([3, 1, 2])
+PRINT "unique rev: "; UNIQUE([1, 2, 2, 3, 1]); " "; REVERSE(v); " "; UNIQUE(["a", "a", "b"])
+PRINT "cum: "; CUMSUM(v); " "; CUMPROD([1, 2, 3, 4]); " "; DIFF([1, 4, 9, 16]); " "; SCAN(v, "+")
+PRINT "while: "; TAKE_WHILE(IOTA(10), LAMBDA x -> x < 4); " "; DROP_WHILE(IOTA(10), LAMBDA x -> x < 8)
+PRINT "append push: "; APPEND(v, 9); " "; APPEND(v, [7, 8]); " "; APPEND([], 1); " "; LEN(APPEND(m, [7, 8, 9]))
+DIM st AS ARRAY = [1]
+PUSH(st, 2)
+PUSH(st, [3, 4])
+PRINT "push pop: "; st; " "; POP(st); " "; st
+PRINT "index: "; v[0]; " "; v[2]; " "; m[1][2]; " "; m[1, 2]; " "; m[0]; " "; w[1 + 1]
+PRINT "slice str: "; s[1]; " "; LEN(s[0])
+PRINT "flatten chunk: "; FLATTEN(m); " "; CHUNK(IOTA(7), 3); " "; ZIP(v, w)
+PRINT "find: "; FIND_IN_ARRAY(w, 20); " "; FIND_IN_ARRAY(w, 99); " "; INDEXOF(s, "c"); " "; 20 IN w; " "; "z" IN s
+PRINT "select filter: "; SELECT(LAMBDA x -> x * 10, v); " "; FILTER(LAMBDA x -> x > 1, v); " "; REDUCE(LAMBDA a, b -> a + b, v, 0)
+PRINT "outer dot: "; OUTER(v, [1, 2], "*"); " "; DOT(v, w); " "; CROSS([1, 0, 0], [0, 1, 0])
+PRINT "transpose: "; TRANSPOSE(m); " "; MATMUL(m, TRANSPOSE(m))
+PRINT "iif: "; IIF(v > 1, v, 0); " "; IIF(m < 3, 1, 0); " "; IIF(TRUE, [1], [2])
+PRINT "rotate shift: "; ROTATE(w, 1); " "; ROTATE(w, -1); " "; SHIFT(w, 1); " "; SHIFT(w, -1)
+PRINT "convolve: "; CONVOLVE([1, 2, 3, 4], [1, 1, 1])
+PRINT "tally: "; TALLY(["a", "b", "a"]); " "; ENUMERATE(["x", "y"])
+PRINT "normalize: "; NORMALIZE([3, 4]); " "; DISTANCE([0, 0], [3, 4])
+PRINT "clamp vec: "; CLAMP(v, 1.5, 2.5); " "; ABS([-1, 2]); " "; FLOOR([1.5, -1.5]); " "; ROUND([1.25, 1.35], 1)
+PRINT "sqr vec: "; SQR([4, 9]); " "; INT([2.7, -2.7]); " "; LEN([])
+PRINT "mixed: "; [1, "a", TRUE, 2.5]; " "; LEN([1, [2, 3]]); " "; [1, [2, 3]][1]
+PRINT "stringarr: "; s + "!"; " "; UCASE$(s); " "; LEN(s); " "; s = "a"
+PRINT "equal: "; [1, 2] = [1, 2]; " "; v = v
+PRINT "histogram: "; HISTOGRAM([1, 2, 2, 3, 3, 3], 3)
+PRINT "lambda capture: "; SELECT(LAMBDA x -> x + LEN(w), v)
+PRINT "copy: "; (v + 0)[0]
+PRINT "nested set: "; m[0][0]

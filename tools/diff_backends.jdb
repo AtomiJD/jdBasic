@@ -1,0 +1,85 @@
+' Runs every snippet in tests/diff interpreted and compiled and compares what
+' they print, line by line. tests/parity.sh compares exit codes; this
+' compares the answers, which is where the two backends drift apart.
+'
+'   jdBasic tools/diff_backends.jdb [pattern]      from the repository root
+'
+' Exit 1 when a line differs, a snippet fails to compile, or a backend dies.
+
+OPTION "EXPLICIT"
+
+DIM jdb$ AS STRING = "build\jdBasic.exe"
+IF NOT FILE.EXISTS(jdb$) THEN jdb$ = "build/jdbasic"
+DIM pattern$ AS STRING = ""
+DIM cli = OS.ARGS()
+IF LEN(cli) > 1 THEN pattern$ = cli[1]
+
+' The lines a run printed, with the line endings of either platform removed.
+FUNC LINES_OF(text$) AS ARRAY
+    DIM raw = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    DIM out = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(raw) - 1
+        IF raw[i] <> "" THEN out = APPEND(out, raw[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+DIM names = DIR$("tests/diff")
+DIM snippets = []
+DIM ni AS INTEGER
+FOR ni = 0 TO LEN(names) - 1
+    DIM nm$ AS STRING = names[ni]
+    IF ENDSWITH(nm$, ".jdb") ANDALSO (pattern$ = "" ORELSE INSTR(nm$, pattern$) >= 0) THEN snippets = APPEND(snippets, nm$)
+NEXT ni
+snippets = SORT(snippets)
+
+DIM total_lines AS INTEGER = 0
+DIM total_diff AS INTEGER = 0
+DIM broken AS INTEGER = 0
+DIM si AS INTEGER
+FOR si = 0 TO LEN(snippets) - 1
+    DIM file$ AS STRING = "tests/diff/" + snippets[si]
+    DIM base$ AS STRING = LEFT$(snippets[si], LEN(snippets[si]) - 4)
+    DIM exe$ AS STRING = "tests/diff/" + base$ + ".exe"
+    IF FILE.EXISTS(exe$) THEN KILL exe$
+    DIM ri = OS.EXEC(jdb$, [file$])
+    DIM rc = OS.EXEC(jdb$, ["-c", file$])
+    IF NOT FILE.EXISTS(exe$) THEN
+        PRINT "== "; base$; ": COMPILE FAILED"
+        PRINT rc{"OUTPUT"}
+        broken = broken + 1
+        CONTINUEFOR
+    ENDIF
+    DIM run$ AS STRING = exe$
+    IF OS.GETOS$() = "WINDOWS" THEN run$ = REPLACE$(exe$, "/", "\") ELSE run$ = "./" + exe$
+    DIM rn = OS.EXEC(run$, [])
+    KILL exe$
+    DIM li = LINES_OF(ri{"OUTPUT"})
+    DIM ln = LINES_OF(rn{"OUTPUT"})
+    DIM n AS INTEGER = MAX([LEN(li), LEN(ln)])
+    DIM differ AS INTEGER = 0
+    DIM k AS INTEGER
+    DIM report$ AS STRING = ""
+    FOR k = 0 TO n - 1
+        DIM a$ AS STRING = ""
+        DIM b$ AS STRING = ""
+        IF k < LEN(li) THEN a$ = li[k]
+        IF k < LEN(ln) THEN b$ = ln[k]
+        IF a$ <> b$ THEN
+            differ = differ + 1
+            report$ = report$ + "   interp: " + a$ + CHR$(10) + "   native: " + b$ + CHR$(10)
+        ENDIF
+    NEXT k
+    DIM status$ AS STRING = ""
+    IF ri{"EXIT_CODE"} <> 0 THEN status$ = status$ + " interp exit " + STR$(ri{"EXIT_CODE"})
+    IF rn{"EXIT_CODE"} <> 0 THEN status$ = status$ + " native exit " + STR$(rn{"EXIT_CODE"})
+    IF status$ <> "" THEN broken = broken + 1
+    PRINT "== "; base$; ": "; n; " lines, "; differ; " differ"; status$
+    IF differ > 0 THEN PRINT report$;
+    total_lines = total_lines + n
+    total_diff = total_diff + differ
+NEXT si
+
+PRINT "RESULT: "; LEN(snippets); " snippets, "; total_lines; " lines, "; total_diff; " differ, "; broken; " broken"
+IF total_diff > 0 ORELSE broken > 0 THEN END 1

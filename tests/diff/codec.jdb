@@ -1,0 +1,33 @@
+' Codecs, JSON, maps, packing.
+OPTION "EXPLICIT"
+DIM mp AS MAP
+mp{"name"} = "Kaiku"
+mp{"n"} = 3
+mp{"list"} = [1, 2]
+mp{"sub"} = {"k": TRUE}
+PRINT "json: "; JSON.STRINGIFY$(mp)
+PRINT "json arr: "; JSON.STRINGIFY$([1, "a", [2.5, FALSE]])
+DIM back = JSON.PARSE("{" + CHR$(34) + "a" + CHR$(34) + ": [1, 2, {" + CHR$(34) + "b" + CHR$(34) + ": null}], " + CHR$(34) + "s" + CHR$(34) + ": " + CHR$(34) + "x" + CHR$(34) + "}")
+PRINT "parse: "; back{"a"}[1]; " "; back{"s"}; " "; TYPEOF(back{"a"}[2]{"b"}); " "; LEN(back{"a"})
+PRINT "keys: "; MAP.KEYS(mp); " "; LEN(mp); " "; MAP.EXISTS(mp, "n"); " "; MAP.EXISTS(mp, "zz")
+PRINT "missing: "; TYPEOF(mp{"zz"}); " "; mp{"n"} + 1
+PRINT "base64: "; CODEC.BASE64_ENCODE$("Hello, World"); " "; CODEC.BASE64_DECODE$("SGk=")
+PRINT "sha: "; CODEC.SHA256$("abc")
+PRINT "crc: "; CODEC.CRC32("abc"); " "; CODEC.CRC32$("abc")
+PRINT "hex: "; HEX$(48879); " "; VAL("255")
+PRINT "pack: "; LEN(PACK$("<i", 258)); " "; UNPACK("<i", PACK$("<i", 258)); " "; PACKSIZE("<di")
+PRINT "pack2: "; UNPACK("<di", PACK$("<di", 1.5, 7))
+PRINT "chr utf8: "; LEN(CHR$(8364)); " "; ASC(CHR$(8364)); " "; -CHR$(8364)
+PRINT "regex: "; REGEX.MATCH("a1b22c333", "[0-9]+"); " "; REGEX.FINDALL("a1b22c333", "[0-9]+"); " "; REGEX.REPLACE("a1b22", "[0-9]", "#")
+PRINT "regex2: "; REGEX.MATCH("abc", "x"); " "; LEN(REGEX.FINDALL("", "a"))
+DIM u = {"x": 1, "y": [1, 2]}
+u{"x"} = u{"x"} + 1
+PRINT "map lit: "; u{"x"}; " "; u{"y"}[1]; " "; TYPEOF(u)
+PRINT "nested map: "; mp{"sub"}{"k"}; " "; JSON.STRINGIFY$(mp{"sub"})
+PRINT "map iter:";
+FOR EACH k$ IN mp
+    PRINT " "; k$;
+NEXT
+PRINT
+PRINT "typeof: "; TYPEOF(1); " "; TYPEOF(1.5); " "; TYPEOF("s"); " "; TYPEOF([1]); " "; TYPEOF(mp); " "; TYPEOF(TRUE); " "; TYPEOF(LAMBDA x -> x)
+PRINT "typeof date: "; TYPEOF(CVDATE("2026-01-01")); " "; TYPEOF(NOW())

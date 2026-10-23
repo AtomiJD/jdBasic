@@ -1,0 +1,35 @@
+' Strings: slicing, searching, case, padding, splitting, conversions.
+OPTION "EXPLICIT"
+DIM s$ AS STRING = "Hello, World"
+DIM e$ AS STRING = ""
+DIM u$ AS STRING = "Grüße aus Köln"
+PRINT "len: "; LEN(s$); " "; LEN(e$); " "; LEN(u$)
+PRINT "left right: "; LEFT$(s$, 5); " "; RIGHT$(s$, 5); " "; LEFT$(s$, 0); " "; LEFT$(s$, 99); " "; RIGHT$(e$, 3)
+PRINT "mid: "; MID$(s$, 0, 1); " "; MID$(s$, 7); " "; MID$(s$, 7, 3); " "; MID$(s$, 50, 2); " "; MID$(s$, 3, 0)
+PRINT "instr: "; INSTR(s$, "World"); " "; INSTR(s$, "x"); " "; INSTR(s$, ""); " "; INSTR(e$, "a"); " "; INSTR(s$, "l")
+PRINT "case: "; UCASE$(s$); " "; LCASE$(s$); " "; UCASE$(u$); " "; LCASE$("ÄÖÜ")
+PRINT "trim: ["; TRIM$("  a b  "); "] ["; LTRIM$("  x"); "] ["; RTRIM$("x  "); "] ["; TRIM$(e$); "]"
+PRINT "replace: "; REPLACE$(s$, "l", "L"); " "; REPLACE$(s$, "zz", "y"); " "; REPLACE$(s$, "", "-"); " "; REPLACE$("aaa", "a", "aa")
+PRINT "repeat space: ["; REPEAT$("ab", 3); "] ["; SPACE$(3); "] ["; REPEAT$("x", 0); "]"
+PRINT "pad: ["; LPAD$("7", 3, "0"); "] ["; RPAD$("ab", 5, "."); "] ["; LPAD$("toolong", 3, " "); "]"
+PRINT "reverse: "; REVERSE$(s$); " "; REVERSE$(u$)
+PRINT "starts ends: "; STARTSWITH(s$, "Hell"); " "; ENDSWITH(s$, "ld"); " "; STARTSWITH(s$, ""); " "; ENDSWITH(e$, "a")
+PRINT "chr asc: "; CHR$(65); " "; ASC("A"); " "; ASC("é"); " "; ASC(e$); " "; CHR$(8364)
+PRINT "concat: "; "a" + "b"; " "; "n=" + STR$(5); " "; "x" + 5; " "; 5 + "x"
+PRINT "mult: "; "-" * 5; " "; 3 * "ab"
+PRINT "minus: "; "abababac" - "ab"
+PRINT "slice: "; 5 / "Welcome"; " "; "Welcome" / 4
+DIM parts = SPLIT("a,b,,c", ",")
+PRINT "split: "; LEN(parts); " "; parts
+PRINT "split2: "; SPLIT("abc", ""); " "; SPLIT("", ","); " "; SPLIT("a--b--c", "--")
+PRINT "join: "; JOIN(["x", "y", "z"], "+"); " "; JOIN([1, 2, 3], ","); " "; JOIN([], ",")
+PRINT "str num: "; STR$(42); " "; STR$(-1); " "; STR$(2.50); " "; VAL("007"); " "; VAL("-3.5e2")
+PRINT "format: "; FORMAT$("{:5.2f}|{:>6}|{:<4}|", 3.14159, "ab", "cd"); " "; FORMAT$("{:04d}", 7)
+PRINT "format2: "; FORMAT$("{:.0%}", 0.42); " "; FORMAT$("{:+d}", 5); " "; FORMAT$("{:e}", 12345.678); " "; FORMAT$("{:g}", 0.00001234)
+PRINT "format3: "; FORMAT$("{} and {}", "a", 2); " "; FORMAT$("{:x}", 255); " "; FORMAT$("{:08.3f}", -3.5)
+PRINT "chars: "; -"abc"; " "; LEN(-u$)
+PRINT "cmp: "; "abc" = "abc"; " "; "abc" < "abd"; " "; "a" > "B"; " "; "" = ""; " "; "10" < "9"
+PRINT "binary safe: "; LEN("a" + CHR$(0) + "b"); " "; INSTR("a" + CHR$(0) + "b", "b")
+PRINT "indexof: "; INDEXOF(["a", "b", "c"], "b"); " "; INDEXOF(["a"], "z")
+PRINT "tostr: "; TOSTR(3.5); " "; TOSTR(7); " "; CSTR(2)
+PRINT "interp: "; $"x={{1 + 1}} s={{s$}}"
