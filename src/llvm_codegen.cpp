@@ -402,6 +402,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_atan2",  "ATAN2",  f64_type, {f64_type, f64_type}, JD_TAG_F64);
     reg("jdb_round",  "ROUND",  f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_round_p","__round_p", f64_type, {f64_type, f64_type}, JD_TAG_F64);
+    reg("jdb_array_round_p", "__arr_round_p", i8_ptr_type, {i8_ptr_type, f64_type}, JD_TAG_ARR);
     reg("jdb_join_arr","JOIN",     i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_trunc",  "TRUNC",  f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_sign_i", "SIGN",   i64_type, {f64_type}, JD_TAG_I64);
@@ -11744,6 +11745,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::SHL:   arith_op = 7; break;
             case TokenType::SHR:   arith_op = 8; break;
             case TokenType::MOD:   arith_op = 9; break;
+            case TokenType::BACKSLASH: arith_op = 11; break;
             default: break;
         }
         // Comparison ops: 0=eq, 1=ne, 2=and, 3=or, 4=lt, 5=le, 6=gt, 7=ge
@@ -14439,6 +14441,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (upper == "ROUND" && expr.args.size() == 2) {
         TypedValue x = codegen_expr(*expr.args[0]);
         TypedValue p = codegen_expr(*expr.args[1]);
+        if (x.tag == JD_TAG_ARR) {
+            auto& afn = runtime_funcs["__arr_round_p"];
+            LLVMValueRef aargs[] = { x.val, coerce_to(p, f64_type) };
+            TypedValue out{ LLVMBuildCall2(builder, afn.fn_type, afn.fn, aargs, 2, "arnd"), JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
+        }
         auto& fn = runtime_funcs["__round_p"];
         LLVMValueRef args[] = {
             coerce_to(x, f64_type),

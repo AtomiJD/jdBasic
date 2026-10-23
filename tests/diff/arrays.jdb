@@ -43,9 +43,10 @@ PRINT "normalize: "; NORMALIZE([3, 4]); " "; DISTANCE([0, 0], [3, 4])
 PRINT "clamp vec: "; CLAMP(v, 1.5, 2.5); " "; ABS([-1, 2]); " "; FLOOR([1.5, -1.5]); " "; ROUND([1.25, 1.35], 1)
 PRINT "sqr vec: "; SQR([4, 9]); " "; INT([2.7, -2.7]); " "; LEN([])
 PRINT "mixed: "; [1, "a", TRUE, 2.5]; " "; LEN([1, [2, 3]]); " "; [1, [2, 3]][1]
-PRINT "stringarr: "; s + "!"; " "; UCASE$(s); " "; LEN(s); " "; s = "a"
+PRINT "stringarr: "; s + "!"; " "; UCASE$(s); " "; LEN(s); " "; s = "a"; " "; [1, 2] + "x"; " "; "<" + s
 PRINT "equal: "; [1, 2] = [1, 2]; " "; v = v
 PRINT "histogram: "; HISTOGRAM([1, 2, 2, 3, 3, 3], 3)
 PRINT "lambda capture: "; SELECT(LAMBDA x -> x + LEN(w), v)
 PRINT "copy: "; (v + 0)[0]
 PRINT "nested set: "; m[0][0]
+PRINT "idiv forms: "; w \ 3; " "; 100 \ w; " "; m \ 2

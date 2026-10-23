@@ -1687,6 +1687,11 @@ static inline double scalar_op(double a, double b, int op) {
             return (double)((int64_t)a % bi);
         }
         case 10: return std::pow(a, b);
+        case 11: { // integer division, truncating toward zero
+            int64_t bi = (int64_t)b;
+            if (bi == 0) return 0;
+            return (double)((int64_t)a / bi);
+        }
         default: return 0;
     }
 }
@@ -3112,17 +3117,25 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
     }
 }
 
-// Element-wise concat: each string in arr + scalar suffix (or prefix if scalar_left).
-// Array elements are ptr-encoded strings (from SPLIT/etc.) or will be encoded.
+// Element-wise concat: each cell of arr + the scalar as suffix (or prefix if
+// scalar_left). A string cell is joined as it is, a number cell as PRINT
+// writes it; the answer is a string array.
 JdbArray* jdb_array_str_concat(JdbArray* arr, const char* s, int32_t scalar_left) {
     if (!arr || !s) return jdb_array_new(0);
     auto* r = jdb_array_new(arr->length);
-    r->flags |= 1; // contains ptr elements (strings)
+    r->flags |= 3;
+    bool strings = (arr->flags & 2) != 0;
     for (int64_t i = 0; i < arr->length; i++) {
-        // Decode element as string ptr
-        union { double d; int64_t i; } u; u.d = arr->data[i];
-        const char* elem = (const char*)(intptr_t)u.i;
-        if (!elem) elem = "";
+        char num[64];
+        const char* elem;
+        if (strings) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            elem = (const char*)(intptr_t)u.i;
+            if (!elem) elem = "";
+        } else {
+            jdb_format_double(num, sizeof num, arr->data[i]);
+            elem = num;
+        }
         size_t ls = strlen(s), le = strlen(elem);
         char* out = (char*)malloc(ls + le + 1);
         if (scalar_left) { memcpy(out, s, ls); memcpy(out + ls, elem, le); }
@@ -3130,6 +3143,20 @@ JdbArray* jdb_array_str_concat(JdbArray* arr, const char* s, int32_t scalar_left
         out[ls + le] = 0;
         union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)out;
         r->data[i] = ur.d;
+    }
+    return r;
+}
+
+// ROUND of every cell to a number of places, into the rows of a matrix.
+JdbArray* jdb_array_round_p(JdbArray* arr, double places) {
+    if (!arr) return jdb_array_new(0);
+    auto* r = jdb_array_new(arr->length);
+    if (arr_nested(arr)) {
+        r->flags |= 1;
+        for (int64_t i = 0; i < arr->length; i++)
+            r->data[i] = encode_inner(jdb_array_round_p(decode_inner(arr->data[i]), places));
+    } else {
+        for (int64_t i = 0; i < arr->length; i++) r->data[i] = jdb_round_p(arr->data[i], places);
     }
     return r;
 }
