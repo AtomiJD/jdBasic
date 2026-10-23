@@ -858,12 +858,23 @@ void VM::register_array_builtins() {
         }
         // 3-arg form: SLICE(arr, axis, index) - extract single row/column
         int rows, cols; get_2d(args[0], rows, cols);
+        if (cols == 0)
+            throw jdError(ErrCode::TYPE_MISMATCH, "SLICE: argument 1 is a flat array, a matrix is expected");
+        if (dim != 0 && dim != 1)
+            throw jdError(ErrCode::TYPE_MISMATCH, "SLICE: the axis is 0 for a row or 1 for a column, got " + std::to_string(dim));
+        int extent = dim == 0 ? rows : cols;
+        if (idx < 0 || idx >= extent)
+            throw jdError(ErrCode::INDEX_OUT_OF_RANGE, "SLICE: index " + std::to_string(idx) + " is outside 0 to " + std::to_string(extent - 1));
         Value r = Value::make_array();
         if (dim == 0) { // extract row
             r.as_array()->elements = src->elements[idx].as_array()->elements;
         } else { // extract column
-            for (int ro = 0; ro < rows; ro++)
-                r.as_array()->elements.push_back(src->elements[ro].as_array()->elements[idx]);
+            for (int ro = 0; ro < rows; ro++) {
+                auto* row = src->elements[ro].as_array();
+                if (!row || idx >= (int)row->elements.size())
+                    throw jdError(ErrCode::INDEX_OUT_OF_RANGE, "SLICE: row " + std::to_string(ro) + " has no column " + std::to_string(idx));
+                r.as_array()->elements.push_back(row->elements[idx]);
+            }
         }
         return r;
     });

@@ -29,5 +29,6 @@ FOR EACH k$ IN mp
     PRINT " "; k$;
 NEXT
 PRINT
-PRINT "typeof: "; TYPEOF(1); " "; TYPEOF(1.5); " "; TYPEOF("s"); " "; TYPEOF([1]); " "; TYPEOF(mp); " "; TYPEOF(TRUE); " "; TYPEOF(LAMBDA x -> x)
+' TYPEOF of a lambda is the documented seam (STRING interpreted, FUNCREF compiled) and stays out.
+PRINT "typeof: "; TYPEOF(1); " "; TYPEOF(1.5); " "; TYPEOF("s"); " "; TYPEOF([1]); " "; TYPEOF(mp); " "; TYPEOF(TRUE)
 PRINT "typeof date: "; TYPEOF(CVDATE("2026-01-01")); " "; TYPEOF(NOW())

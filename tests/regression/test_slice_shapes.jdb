@@ -1,0 +1,52 @@
+' SLICE(matrix, axis, index) answers a row or a column and refuses a flat
+' array, an axis other than 0 or 1 and an index outside the matrix with an
+' error instead of reading past the cells, in both backends.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Refused(msg$ AS STRING) AS INTEGER
+    RETURN INSTR(msg$, "SLICE") >= 0
+ENDFUNC
+
+DIM m AS ARRAY = [[1, 2, 3], [4, 5, 6]]
+Check(JOIN(SLICE(m, 0, 1), ",") = "4,5,6", "a row")
+Check(JOIN(SLICE(m, 1, 2), ",") = "3,6", "a column")
+
+DIM code$ AS STRING = ""
+TRY
+    DIM a AS ARRAY = SLICE(IOTA(10), 2, 5)
+CATCH
+    code$ = ERRMSG$
+ENDTRY
+Check(Refused(code$), "a flat array is refused: " + code$)
+code$ = ""
+TRY
+    DIM b AS ARRAY = SLICE(m, 0, 7)
+CATCH
+    code$ = ERRMSG$
+ENDTRY
+Check(Refused(code$), "a row index past the end is refused: " + code$)
+code$ = ""
+TRY
+    DIM c AS ARRAY = SLICE(m, 1, -1)
+CATCH
+    code$ = ERRMSG$
+ENDTRY
+Check(Refused(code$), "a negative column is refused: " + code$)
+code$ = ""
+TRY
+    DIM d AS ARRAY = SLICE(m, 2, 0)
+CATCH
+    code$ = ERRMSG$
+ENDTRY
+Check(Refused(code$), "an axis of 2 is refused: " + code$)
+
+IF failed > 0 THEN END 1
+PRINT "OK"

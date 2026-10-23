@@ -217,3 +217,10 @@ jobs:
           done
           if [ -n "$bad" ]; then echo "native gate failed:$bad"; exit 1; fi
           echo "$n gate suites green natively"
+
+      # The two backends must print the same. parity.sh compares exit codes;
+      # the diff snippets compare the answers line by line.
+      - name: Differential snippets (interpreter vs -c)
+        run: |
+          export LD_LIBRARY_PATH="$PWD/build:${LD_LIBRARY_PATH:-}"
+          ./build/jdbasic tools/diff_backends.jdb

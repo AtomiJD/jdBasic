@@ -51,3 +51,4 @@ PRINT "copy: "; (v + 0)[0]
 PRINT "nested set: "; m[0][0]
 PRINT "idiv forms: "; w \ 3; " "; 100 \ w; " "; m \ 2
 PRINT "range dir: "; RANGE(5, 1); " "; RANGE(1, 5); " "; RANGE(3, 3); " "; RANGE(10, 0, -3); " "; RANGE(1, 10, -1)
+PRINT "slice: "; SLICE([[1, 2, 3], [4, 5, 6]], 0, 1); " "; SLICE([[1, 2, 3], [4, 5, 6]], 1, 2)

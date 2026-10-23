@@ -1,5 +1,5 @@
 ' Calls that take one backend or both down, each on its own line so the
 ' harness names the first one; move a line back into its family snippet
-' once it survives in both backends.
+' once it survives in both backends. Empty today.
 OPTION "EXPLICIT"
-PRINT "slice: "; SLICE(IOTA(10), 2, 5)
+PRINT "none"
