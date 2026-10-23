@@ -24,7 +24,18 @@ FUNC Neg(m AS ARRAY)
     RETURN -m
 ENDFUNC
 
+FUNC Holds(m AS ARRAY, x)
+    RETURN x IN m
+ENDFUNC
+
+FUNC Both(m AS ARRAY, x)
+    RETURN LEN(m) > 0 ANDALSO x IN m
+ENDFUNC
+
 DIM a AS ARRAY = [-3.5, 0.5, 4.5]
+Check(Holds(a, 0.5) = TRUE ANDALSO Holds(a, 7) = FALSE, "RETURN x IN m answers one value")
+Check(TYPEOF(Holds(a, 0.5)) <> "ARRAY", "and it is not an array")
+Check(Both(a, 0.5) = TRUE, "RETURN a ANDALSO b answers one value")
 Check(JOIN(Dbl(a), ",") = "-7,1,9", "RETURN m * 2 answers the array")
 Check(JOIN(Clipped(a), ",") = "-1,0.5,1", "RETURN CLAMP(m) answers the array")
 Check(JOIN(Neg(a), ",") = "3.5,-0.5,-4.5", "RETURN -m answers the array")

@@ -2152,6 +2152,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 case ExprKind::UNARY:
                     return is_array_expr(x->right.get());
                 case ExprKind::BINARY:
+                    // IN and the short-circuit operators answer one value
+                    // whatever their operands are.
+                    if (x->op == TokenType::IN || x->op == TokenType::ANDALSO || x->op == TokenType::ORELSE)
+                        return false;
                     return is_array_expr(x->left.get()) || is_array_expr(x->right.get());
                 case ExprKind::CALL: {
                     auto cit = decls.find(x->func_name);
