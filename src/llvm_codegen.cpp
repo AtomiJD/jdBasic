@@ -448,6 +448,7 @@ void LLVMCodegen::declare_runtime_functions() {
 
     // Arrays (JdbArray* is opaque pointer = i8_ptr_type)
     reg("jdb_array_new",  "__array_new",  i8_ptr_type, {i64_type}, JD_TAG_ARR);
+    reg("jdb_array_new_2d", "__array_new_2d", i8_ptr_type, {i64_type, i64_type, f64_type}, JD_TAG_ARR);
     reg("jdb_array_set",  "__array_set",  void_type, {i8_ptr_type, i64_type, f64_type}, -1);
     reg("jdb_array_set_tagged", "__array_set_tagged", void_type,
         {i8_ptr_type, i64_type, f64_type, i32_type}, -1);
@@ -7563,80 +7564,24 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         !stmt.expr->args.empty() && stmt.expr->args[0]->kind == ExprKind::ARRAY_LITERAL) {
         auto& shape_args = stmt.expr->args[0]->args;
         if (!shape_args.empty()) {
-            auto& arr_new = runtime_funcs["__array_new"];
-            auto& arr_append = runtime_funcs["APPEND"];
-
+            auto to_i64 = [&](const Expr& e) {
+                TypedValue v = codegen_expr(e);
+                return jd_is_f64_tag(v.tag) ? LLVMBuildFPToSI(builder, v.val, i64_type, "ftoi") : v.val;
+            };
+            LLVMValueRef arr;
             if (shape_args.size() == 1) {
-                // 1D: jdb_array_new(N)
-                TypedValue size_val = codegen_expr(*shape_args[0]);
-                LLVMValueRef size_i64 = jd_is_f64_tag(size_val.tag)
-                    ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi")
-                    : size_val.val;
-                LLVMValueRef args[] = { size_i64 };
-                LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, args, 1, "arr");
-                VarInfo* vi = dim_slot();
-                if (vi) { rc_slot_store(vi->alloca_val, arr, vi->tag, JD_TAG_ARR); vi->tag = JD_TAG_ARR; }
-                else { VarInfo& nv = create_var(stmt.var_name, JD_TAG_ARR); rc_slot_store(nv.alloca_val, arr, JD_TAG_ARR, JD_TAG_ARR); }
+                auto& arr_new = runtime_funcs["__array_new"];
+                LLVMValueRef args[] = { to_i64(*shape_args[0]) };
+                arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, args, 1, "arr");
             } else {
-                // 2D+: build array of arrays
-                // Outer array with shape_args[0] elements, each is an inner array of shape_args[1] elements
-                TypedValue rows_val = codegen_expr(*shape_args[0]);
-                TypedValue cols_val = codegen_expr(*shape_args[1]);
-                LLVMValueRef rows = jd_is_f64_tag(rows_val.tag)
-                    ? LLVMBuildFPToSI(builder, rows_val.val, i64_type, "ftoi") : rows_val.val;
-                LLVMValueRef cols = jd_is_f64_tag(cols_val.tag)
-                    ? LLVMBuildFPToSI(builder, cols_val.val, i64_type, "ftoi") : cols_val.val;
-
-                // Create outer array (empty, will be filled with inner arrays)
-                LLVMValueRef zero_args[] = { LLVMConstInt(i64_type, 0, 0) };
-                LLVMValueRef outer = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, zero_args, 1, "outer");
-
-                // Loop: create inner arrays and append to outer
-                LLVMBasicBlockRef pre_bb = LLVMGetInsertBlock(builder);
-                LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dim2d.loop");
-                LLVMBasicBlockRef end_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dim2d.end");
-
-                // Alloca for loop var and outer array accumulator
-                LLVMValueRef idx_alloca = scratch_alloca(i64_type, "dim_i");
-                LLVMValueRef outer_alloca = scratch_alloca(i8_ptr_type, "dim_outer");
-                LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_alloca);
-                LLVMBuildStore(builder, outer, outer_alloca);
-                LLVMBuildBr(builder, loop_bb);
-
-                LLVMPositionBuilderAtEnd(builder, loop_bb);
-                LLVMValueRef cur_idx = LLVMBuildLoad2(builder, i64_type, idx_alloca, "i");
-                LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSLT, cur_idx, rows, "cmp");
-                LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dim2d.body");
-                LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
-
-                LLVMPositionBuilderAtEnd(builder, body_bb);
-                // Create inner array
-                LLVMValueRef inner_args[] = { cols };
-                LLVMValueRef inner = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, inner_args, 1, "inner");
-                // Encode inner ptr as f64 for append
-                LLVMValueRef inner_i64 = LLVMBuildPtrToInt(builder, inner, i64_type, "ptoi");
-                LLVMValueRef inner_f64 = pun_i64_to_f64(inner_i64);
-                // Append to outer
-                LLVMValueRef cur_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "out");
-                LLVMValueRef append_args[] = { cur_outer, inner_f64 };
-                LLVMValueRef new_outer = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, append_args, 2, "out");
-                LLVMBuildStore(builder, new_outer, outer_alloca);
-                // Increment
-                LLVMValueRef next_idx = LLVMBuildAdd(builder, cur_idx, LLVMConstInt(i64_type, 1, 0), "next");
-                LLVMBuildStore(builder, next_idx, idx_alloca);
-                LLVMBuildBr(builder, loop_bb);
-
-                LLVMPositionBuilderAtEnd(builder, end_bb);
-                LLVMValueRef final_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "arr2d");
-                // Mark as nested (2D) so array arithmetic recurses correctly
-                auto& set_nested = runtime_funcs["__arr_set_nested"];
-                LLVMValueRef sn_args[] = { final_outer };
-                LLVMBuildCall2(builder, set_nested.fn_type, set_nested.fn, sn_args, 1, "");
-
-                VarInfo* vi = dim_slot();
-                if (vi) { rc_slot_store(vi->alloca_val, final_outer, vi->tag, JD_TAG_ARR); vi->tag = JD_TAG_ARR; }
-                else { VarInfo& nv = create_var(stmt.var_name, JD_TAG_ARR); rc_slot_store(nv.alloca_val, final_outer, JD_TAG_ARR, JD_TAG_ARR); }
+                auto& arr_new_2d = runtime_funcs["__array_new_2d"];
+                LLVMValueRef args[] = { to_i64(*shape_args[0]), to_i64(*shape_args[1]), LLVMConstReal(f64_type, 0.0) };
+                arr = LLVMBuildCall2(builder, arr_new_2d.fn_type, arr_new_2d.fn, args, 3, "arr2d");
             }
+            arr = rc_born(arr, JD_TAG_ARR);
+            VarInfo* vi = dim_slot();
+            if (vi) { rc_slot_store(vi->alloca_val, arr, vi->tag, JD_TAG_ARR); vi->tag = JD_TAG_ARR; }
+            else { VarInfo& nv = create_var(stmt.var_name, JD_TAG_ARR); rc_slot_store(nv.alloca_val, arr, JD_TAG_ARR, JD_TAG_ARR); }
             return;
         }
     }
@@ -9900,11 +9845,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             return loaded;
         }
 
-        case ExprKind::BINARY:
-            return codegen_binary(expr);
+        // An array an operator answers is a fresh one, so it is counted
+        // like a literal: a slot that stores it keeps it, the end of the
+        // pass frees it otherwise.
+        case ExprKind::BINARY: {
+            TypedValue r = codegen_binary(expr);
+            if (r.tag == JD_TAG_ARR && r.val && LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind)
+                r.val = rc_born(r.val, JD_TAG_ARR);
+            return r;
+        }
 
-        case ExprKind::UNARY:
-            return codegen_unary(expr);
+        case ExprKind::UNARY: {
+            TypedValue r = codegen_unary(expr);
+            if (r.tag == JD_TAG_ARR && r.val && LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind)
+                r.val = rc_born(r.val, JD_TAG_ARR);
+            return r;
+        }
 
         case ExprKind::MEMBER_ACCESS: {
             // obj.field - get field from UDT object
@@ -12852,73 +12808,25 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if ((name == "ZEROS" || name == "ONES") && expr.args.size() == 1 &&
         expr.args[0] && expr.args[0]->kind == ExprKind::ARRAY_LITERAL) {
         auto& shape_args = expr.args[0]->args;
-        auto& arr_new = runtime_funcs["__array_new"];
         bool is_ones = (name == "ONES");
-        auto& arr_ones_fn = runtime_funcs["ONES"];
-
+        auto to_i64 = [&](const Expr& e) {
+            TypedValue v = codegen_expr(e);
+            return jd_is_f64_tag(v.tag) ? LLVMBuildFPToSI(builder, v.val, i64_type, "ftoi") : v.val;
+        };
         if (shape_args.size() == 1) {
-            TypedValue size_val = codegen_expr(*shape_args[0]);
-            LLVMValueRef size_i64 = jd_is_f64_tag(size_val.tag)
-                ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi") : size_val.val;
-            LLVMValueRef args[] = { size_i64 };
-            LLVMValueRef arr;
-            if (is_ones) {
-                arr = LLVMBuildCall2(builder, arr_ones_fn.fn_type, arr_ones_fn.fn, args, 1, "arr1d");
-            } else {
-                arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, args, 1, "arr1d");
-            }
-            return { arr, JD_TAG_ARR };
+            auto& fn = runtime_funcs[is_ones ? "ONES" : "__array_new"];
+            LLVMValueRef args[] = { to_i64(*shape_args[0]) };
+            TypedValue out{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "arr1d"), JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
         }
         if (shape_args.size() == 2) {
-            auto& arr_append = runtime_funcs["APPEND"];
-            TypedValue rows_val = codegen_expr(*shape_args[0]);
-            TypedValue cols_val = codegen_expr(*shape_args[1]);
-            LLVMValueRef rows = jd_is_f64_tag(rows_val.tag)
-                ? LLVMBuildFPToSI(builder, rows_val.val, i64_type, "ftoi") : rows_val.val;
-            LLVMValueRef cols = jd_is_f64_tag(cols_val.tag)
-                ? LLVMBuildFPToSI(builder, cols_val.val, i64_type, "ftoi") : cols_val.val;
-
-            LLVMValueRef zero_args[] = { LLVMConstInt(i64_type, 0, 0) };
-            LLVMValueRef outer = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, zero_args, 1, "outer2d");
-
-            LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "z2d.loop");
-            LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "z2d.end");
-            LLVMValueRef idx_alloca   = scratch_alloca(i64_type, "z2d_i");
-            LLVMValueRef outer_alloca = scratch_alloca(i8_ptr_type, "z2d_outer");
-            LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_alloca);
-            LLVMBuildStore(builder, outer, outer_alloca);
-            LLVMBuildBr(builder, loop_bb);
-
-            LLVMPositionBuilderAtEnd(builder, loop_bb);
-            LLVMValueRef cur_idx = LLVMBuildLoad2(builder, i64_type, idx_alloca, "i");
-            LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSLT, cur_idx, rows, "cmp");
-            LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "z2d.body");
-            LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
-
-            LLVMPositionBuilderAtEnd(builder, body_bb);
-            LLVMValueRef inner_args[] = { cols };
-            LLVMValueRef inner;
-            if (is_ones) {
-                inner = LLVMBuildCall2(builder, arr_ones_fn.fn_type, arr_ones_fn.fn, inner_args, 1, "inner");
-            } else {
-                inner = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, inner_args, 1, "inner");
-            }
-            LLVMValueRef inner_i64 = LLVMBuildPtrToInt(builder, inner, i64_type, "ptoi");
-            LLVMValueRef inner_f64 = pun_i64_to_f64(inner_i64);
-            LLVMValueRef cur_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "out");
-            LLVMValueRef append_args[] = { cur_outer, inner_f64 };
-            LLVMValueRef new_outer = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, append_args, 2, "out");
-            LLVMBuildStore(builder, new_outer, outer_alloca);
-            LLVMValueRef next_idx = LLVMBuildAdd(builder, cur_idx, LLVMConstInt(i64_type, 1, 0), "next");
-            LLVMBuildStore(builder, next_idx, idx_alloca);
-            LLVMBuildBr(builder, loop_bb);
-
-            LLVMPositionBuilderAtEnd(builder, end_bb);
-            LLVMValueRef final_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "arr2d");
-            auto& set_nested = runtime_funcs["__arr_set_nested"];
-            LLVMValueRef sn_args[] = { final_outer };
-            LLVMBuildCall2(builder, set_nested.fn_type, set_nested.fn, sn_args, 1, "");
-            return { final_outer, JD_TAG_ARR };
+            auto& fn = runtime_funcs["__array_new_2d"];
+            LLVMValueRef args[] = { to_i64(*shape_args[0]), to_i64(*shape_args[1]),
+                                    LLVMConstReal(f64_type, is_ones ? 1.0 : 0.0) };
+            TypedValue out{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "arr2d"), JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
         }
     }
 

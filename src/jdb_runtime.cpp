@@ -59,6 +59,7 @@ static inline double keep_vm_handle(double val, int32_t tag) {
 extern "C" {
 
 static inline JdbArray* decode_inner(double val);
+static inline double encode_inner(JdbArray* arr);
 static void flatten_into(JdbArray* arr, std::vector<double>& out);
 
 // ── I/O ─────────────────────────────────────────────────────
@@ -637,6 +638,21 @@ JdbArray* jdb_array_new(int64_t size) {
     arr->elem_tags = nullptr;
     arr->capacity = size;
     return arr;
+}
+
+// rows x cols, every cell fill, built in one piece.
+JdbArray* jdb_array_new_2d(int64_t rows, int64_t cols, double fill) {
+    if (rows < 0) rows = 0;
+    if (cols < 0) cols = 0;
+    JdbArray* outer = jdb_array_new(rows);
+    outer->flags |= 1;
+    for (int64_t r = 0; r < rows; r++) {
+        JdbArray* row = jdb_array_new(cols);
+        if (fill != 0.0)
+            for (int64_t c = 0; c < cols; c++) row->data[c] = fill;
+        outer->data[r] = encode_inner(row);
+    }
+    return outer;
 }
 
 // Appends in place, so every holder of the array sees the new element;
@@ -2527,19 +2543,50 @@ static void rc_forget(const void* p) {
     if (RcEntry* e = rc_find((uintptr_t)p)) rc_remove(e);
 }
 
+// The rows of a nested array the runtime built (arithmetic, ZEROS of a
+// shape, a result the bridge marshalled) are its alone: each one that no
+// entry knows yet is registered with the array as its owner, so it goes
+// when the array goes. A row that is registered already is somebody
+// else's and is left as it is. rc_insert may rehash, so the owner is
+// found again by key after each insertion.
+static void rc_register_children(uintptr_t parent_key, uint64_t parent_gen) {
+    JdbArray* a = (JdbArray*)parent_key;
+    if (!a->data || (a->flags & 2) || !((a->flags & 1) || a->elem_tags)) return;
+    bool any = false;
+    for (int64_t i = 0; i < a->length; i++) {
+        if (a->elem_tags ? a->elem_tags[i] != JD_TAG_ARR : !(a->flags & 1)) continue;
+        union { double d; int64_t i; } u; u.d = a->data[i];
+        uintptr_t ck = (uintptr_t)u.i;
+        if (ck < 2 || rc_find(ck)) continue;
+        RcEntry* c = rc_insert(ck);
+        c->gen = g_rc.next_gen++;
+        c->rc = 1;
+        c->kind = JD_TAG_ARR;
+        c->pinned = 0;
+        c->owns_cells = 0;
+        c->owner = parent_key;
+        c->owner_gen = parent_gen;
+        any = true;
+        rc_register_children(ck, c->gen);
+    }
+    if (any) a->flags |= JDB_ARR_OWNS_CHILDREN;
+}
+
 extern "C" void* jdb_rc_new(void* p, int32_t kind) {
     if (!p || !rc_ready()) return p;
     uintptr_t k = (uintptr_t)p;
     if (rc_find(k)) return p;
     RcEntry* e = rc_insert(k);
-    e->gen = g_rc.next_gen++;
+    uint64_t gen = g_rc.next_gen++;
+    e->gen = gen;
     e->rc = 0;
     e->kind = (uint8_t)kind;
     e->pinned = 0;
     e->owns_cells = 0;
     e->owner = 0;
     e->owner_gen = 0;
-    g_rc.pool.push_back({ k, e->gen });
+    g_rc.pool.push_back({ k, gen });
+    if (kind == JD_TAG_ARR) rc_register_children(k, gen);
     return p;
 }
 

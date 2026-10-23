@@ -145,6 +145,37 @@ ELSEIF pattern$ = "arraylit" THEN
         total = total + row[1]
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "arith" THEN
+    DIM a AS ARRAY = RESHAPE(IOTA(64), [8, 8])
+    DIM x AS ARRAY = a
+    FOR i = 1 TO passes
+        x = a * a + 1
+        total = total + x[1][1]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "matmul" THEN
+    DIM m AS ARRAY = RESHAPE(IOTA(64), [8, 8])
+    DIM p AS ARRAY = m
+    FOR i = 1 TO passes
+        p = MATMUL(m, m)
+        total = total + p[1][1]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "zerosgrid" THEN
+    DIM z AS ARRAY = []
+    FOR i = 1 TO passes
+        z = ZEROS([8, 4])
+        z = ONES([4, 8])
+        total = total + LEN(z)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "iota" THEN
+    DIM seq AS ARRAY = []
+    FOR i = 1 TO passes
+        seq = RESHAPE(IOTA(16), [4, 4])
+        total = total + LEN(seq)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
