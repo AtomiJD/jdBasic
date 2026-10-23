@@ -2349,7 +2349,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`FIND_IN_ARRAY(array, value) -> number`**: Finds the first 0-based index of a value in an array. Returns -1 if not found.
 * **`DISTANCE(point1_array, point2_array) -> number`**: Calculates the Euclidean distance between two points.
 * **`STACK(dimension, array1, array2, ...) -> matrix`**: Stacks 1D vectors into a 2D matrix.
-* **`SLICE(matrix, dim, index)`**: Extracts a row (`dim=0`) or column (`dim=1`) from a 2D matrix.
+* **`SLICE(matrix, dim, index)`**: Extracts a row (`dim=0`) or column (`dim=1`) from a 2D matrix. `SLICE(matrix, dim, start, count)` is a band of rows or of columns out of every row, stopping at the edge. A flat array, an axis other than 0 or 1 and an index outside the matrix are errors.
 * **`LERP(start, end, alpha) -> number or array`**: Performs linear interpolation.
 * **`GRADE(vector)`**: Returns the indices that would sort the vector.
 * **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, *, /, MOD, >, <, =, ^) or a reference to a function (sqr@).

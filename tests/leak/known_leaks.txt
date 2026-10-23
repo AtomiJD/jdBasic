@@ -4,3 +4,4 @@
 #
 # backend  pattern   ticket
 native   iota     662
+native   takedrop 662

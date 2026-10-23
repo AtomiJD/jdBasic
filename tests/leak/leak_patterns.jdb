@@ -169,6 +169,28 @@ ELSEIF pattern$ = "zerosgrid" THEN
         total = total + LEN(z)
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "moves" THEN
+    DIM board AS ARRAY = RESHAPE(IOTA(64), [8, 8])
+    DIM turn AS ARRAY = [1, 1]
+    DIM mv AS ARRAY = []
+    DIM col AS ARRAY = []
+    FOR i = 1 TO passes
+        mv = ROTATE(board, turn)
+        mv = SHIFT(board, turn, 0)
+        col = SLICE(board, 1, 2)
+        col = SLICE(board, 1, 1, 3)
+        total = total + mv[1][1] + LEN(col)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "takedrop" THEN
+    DIM seq16 AS ARRAY = IOTA(16)
+    DIM part AS ARRAY = []
+    FOR i = 1 TO passes
+        part = TAKE(3, seq16)
+        part = DROP(3, seq16)
+        total = total + part[0]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSEIF pattern$ = "iota" THEN
     DIM seq AS ARRAY = []
     FOR i = 1 TO passes

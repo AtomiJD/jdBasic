@@ -36,7 +36,7 @@ PRINT "select filter: "; SELECT(LAMBDA x -> x * 10, v); " "; FILTER(LAMBDA x -> 
 PRINT "outer dot: "; OUTER(v, [1, 2], "*"); " "; DOT(v, w); " "; CROSS([1, 0, 0], [0, 1, 0])
 PRINT "transpose: "; TRANSPOSE(m); " "; MATMUL(m, TRANSPOSE(m))
 PRINT "iif: "; IIF(v > 1, v, 0); " "; IIF(m < 3, 1, 0); " "; IIF(TRUE, [1], [2])
-PRINT "rotate shift: "; ROTATE(w, 1); " "; ROTATE(w, -1); " "; SHIFT(w, 1); " "; SHIFT(w, -1)
+PRINT "rotate shift: "; ROTATE(w, 1); " "; ROTATE(w, -1); " "; SHIFT(w, 1); " "; SHIFT(w, -1); " "; ROTATE(m, [1, 1]); " "; SHIFT(m, [1, 0]); " "; SHIFT(m, [0, -1], 7); " "; ROTATE(s, 1); " "; SHIFT(UCASE$(s), 1)
 PRINT "convolve: "; CONVOLVE([1, 2, 3, 4], [1, 1, 1])
 PRINT "tally: "; TALLY(["a", "b", "a"]); " "; ENUMERATE(["x", "y"])
 PRINT "normalize: "; NORMALIZE([3, 4]); " "; DISTANCE([0, 0], [3, 4])
@@ -51,7 +51,7 @@ PRINT "copy: "; (v + 0)[0]
 PRINT "nested set: "; m[0][0]
 PRINT "idiv forms: "; w \ 3; " "; 100 \ w; " "; m \ 2
 PRINT "range dir: "; RANGE(5, 1); " "; RANGE(1, 5); " "; RANGE(3, 3); " "; RANGE(10, 0, -3); " "; RANGE(1, 10, -1)
-PRINT "slice: "; SLICE([[1, 2, 3], [4, 5, 6]], 0, 1); " "; SLICE([[1, 2, 3], [4, 5, 6]], 1, 2)
+PRINT "slice: "; SLICE([[1, 2, 3], [4, 5, 6]], 0, 1); " "; SLICE([[1, 2, 3], [4, 5, 6]], 1, 2); " "; SLICE(m, 0, 1, 2); " "; SLICE(m, 1, 1, 2); " "; TAKE(2, s); " "; DROP(-1, UCASE$(s))
 DIM t3 AS ARRAY = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
 PRINT "reduce 3d: "; SUM(t3, 0); " "; SUM(t3, 1); " "; SUM(t3, 2); " "; MAX(t3, 0); " "; MEAN(t3, 1); " "; ANY(t3 > 6, 2); " "; SUM(t3); " "; PRODUCT(t3, 2)
 PRINT "reshape more: "; RESHAPE(IOTA(8), [2, 2, 2]); " "; RESHAPE(IOTA(4), 4); " "; RESHAPE([1, 2, 3], [2, 4]); " "; RESHAPE(["a", "b", "c", "d"], [2, 2]); " "; RESHAPE(7, [2])

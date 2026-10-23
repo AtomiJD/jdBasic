@@ -128,62 +128,6 @@ static Value make_matrix(int rows, int cols, double fill = 0.0) {
     return m;
 }
 
-// ── ROTATE / SHIFT: one axis per entry of the shift vector ───────────────
-// Both used to read only the first entry and move the outer vector, which on
-// a matrix meant rows worked and columns were silently dropped. SHIFT also
-// wrote its scalar fill into row slots, so the result was a ragged array whose
-// LEN no longer matched its contents.
-//
-// The two keep the sign conventions they have always had on a vector, because
-// programs depend on them and they differ on purpose:
-//   ROTATE  out[i] = in[i + k]   (positive k pulls from ahead, APL's rotate)
-//   SHIFT   out[i] = in[i - k]   (positive k pushes along, a shift register)
-
-// A value shaped like proto but filled with fill, so a row that shifts off the
-// edge comes back as a row of fill and not as a bare scalar.
-static Value shaped_fill(const Value& proto, const Value& fill) {
-    if (proto.type != ValueType::ARRAY) return fill;
-    auto* pa = proto.as_array();
-    Value r = Value::make_array();
-    auto* out = r.as_array();
-    out->elements.reserve(pa->elements.size());
-    for (size_t i = 0; i < pa->elements.size(); i++)
-        out->elements.push_back(shaped_fill(pa->elements[i], fill));
-    return r;
-}
-
-static Value axis_move(const Value& v, const std::vector<int64_t>& shifts,
-                       size_t depth, bool cyclic, const Value& fill) {
-    if (depth >= shifts.size() || v.type != ValueType::ARRAY) return v;
-    auto* arr = v.as_array();
-    const size_t n = arr->elements.size();
-    if (n == 0) return v;
-
-    // deeper axes first, so this level only has to move whole elements
-    std::vector<Value> kids;
-    kids.reserve(n);
-    for (size_t i = 0; i < n; i++)
-        kids.push_back(axis_move(arr->elements[i], shifts, depth + 1, cyclic, fill));
-
-    const int64_t k = shifts[depth];
-    Value r = Value::make_array();
-    auto* out = r.as_array();
-    out->elements.reserve(n);
-    if (cyclic) {
-        const int64_t m = ((k % (int64_t)n) + (int64_t)n) % (int64_t)n;
-        for (size_t i = 0; i < n; i++)
-            out->elements.push_back(kids[(i + (size_t)m) % n]);
-    } else {
-        const Value blank = shaped_fill(kids[0], fill);
-        for (size_t i = 0; i < n; i++) {
-            const int64_t src = (int64_t)i - k;
-            if (src >= 0 && src < (int64_t)n) out->elements.push_back(kids[(size_t)src]);
-            else out->elements.push_back(blank);
-        }
-    }
-    return r;
-}
-
 // A scalar, or one entry per axis. A longer vector than the array has axes is
 // a mistake worth saying out loud rather than half-applying.
 static std::vector<int64_t> shift_vector(const Value& v) {
@@ -196,14 +140,13 @@ static std::vector<int64_t> shift_vector(const Value& v) {
     return out;
 }
 
-static int array_rank(const Value& v) {
-    int rank = 0;
-    const Value* cur = &v;
-    while (cur->type == ValueType::ARRAY && !cur->as_array()->elements.empty()) {
-        rank++;
-        cur = &cur->as_array()->elements[0];
-    }
-    return rank;
+// More shifts than the array has axes is a mistake worth saying out loud
+// rather than half-applying.
+static void check_shift_rank(const char* fn, const Value& v, size_t shifts) {
+    int rank = v.type == ValueType::ARRAY ? jdb_shape::depth<VmShape>(v) : 0;
+    if ((int)shifts > rank)
+        throw std::runtime_error(std::string(fn) + " got " + std::to_string(shifts) +
+            " shifts for an array of rank " + std::to_string(rank));
 }
 
 void VM::register_array_builtins() {
@@ -360,37 +303,20 @@ void VM::register_array_builtins() {
         return jdb_shape::take<VmShape>(args[0], kept);
     });
 
+
     // ── TAKE / DROP ──────────────────────────────────────────
+    // The first or last N cells, or all but them, by jdb_shape::take over
+    // take_count and drop_count, which the native runtime shares.
     register_native("TAKE", 2, 2, [](const std::vector<Value>& args) -> Value {
         count_and_array(args, "TAKE");
-        int64_t n = args[0].to_int();
-        auto* arr = args[1].as_array();
-        Value r = Value::make_array();
-        auto* out = r.as_array();
-        int sz = (int)arr->elements.size();
-        if (n >= 0) {
-            for (int i = 0; i < n && i < sz; i++) out->elements.push_back(arr->elements[i]);
-        } else {
-            int start = std::max(0, sz + (int)n);
-            for (int i = start; i < sz; i++) out->elements.push_back(arr->elements[i]);
-        }
-        return r;
+        int64_t n = (int64_t)args[1].as_array()->elements.size();
+        return jdb_shape::take<VmShape>(args[1], jdb_shape::take_count(n, args[0].to_int()));
     });
 
     register_native("DROP", 2, 2, [](const std::vector<Value>& args) -> Value {
         count_and_array(args, "DROP");
-        int64_t n = args[0].to_int();
-        auto* arr = args[1].as_array();
-        Value r = Value::make_array();
-        auto* out = r.as_array();
-        int sz = (int)arr->elements.size();
-        if (n >= 0) {
-            for (int i = (int)n; i < sz; i++) out->elements.push_back(arr->elements[i]);
-        } else {
-            int end = sz + (int)n;
-            for (int i = 0; i < end && i < sz; i++) out->elements.push_back(arr->elements[i]);
-        }
-        return r;
+        int64_t n = (int64_t)args[1].as_array()->elements.size();
+        return jdb_shape::take<VmShape>(args[1], jdb_shape::drop_count(n, args[0].to_int()));
     });
 
     // ── REVERSE ──────────────────────────────────────────────
@@ -539,25 +465,23 @@ void VM::register_array_builtins() {
         return r;
     });
 
-    // ── ROTATE ───────────────────────────────────────────────
+
+    // ── ROTATE / SHIFT ───────────────────────────────────────
+    // One axis per entry of the shift vector, outermost first, by
+    // jdb_shape::move_axes, which the native runtime shares.
     register_native("ROTATE", 2, 2, [](const std::vector<Value>& args) -> Value {
         auto shifts = shift_vector(args[1]);
         if (shifts.empty()) return args[0];
-        if ((int)shifts.size() > array_rank(args[0]))
-            throw std::runtime_error("ROTATE got " + std::to_string(shifts.size()) +
-                " shifts for an array of rank " + std::to_string(array_rank(args[0])));
-        return axis_move(args[0], shifts, 0, true, Value::make_i64(0));
+        check_shift_rank("ROTATE", args[0], shifts.size());
+        return jdb_shape::move_axes<VmShape>(args[0], shifts, 0, true, Value::make_i64(0));
     });
 
-    // ── SHIFT ────────────────────────────────────────────────
     register_native("SHIFT", [](const std::vector<Value>& args) -> Value {
         auto shifts = shift_vector(args[1]);
         if (shifts.empty()) return args[0];
-        if ((int)shifts.size() > array_rank(args[0]))
-            throw std::runtime_error("SHIFT got " + std::to_string(shifts.size()) +
-                " shifts for an array of rank " + std::to_string(array_rank(args[0])));
+        check_shift_rank("SHIFT", args[0], shifts.size());
         Value fill = (args.size() >= 3) ? args[2] : Value::make_i64(0);
-        return axis_move(args[0], shifts, 0, false, fill);
+        return jdb_shape::move_axes<VmShape>(args[0], shifts, 0, false, fill);
     });
 
     // ── Reductions: SUM, PRODUCT, MIN, MAX, ANY, ALL ─────────
@@ -762,32 +686,24 @@ void VM::register_array_builtins() {
     });
 
     // ── SLICE ────────────────────────────────────────────────
+    // SLICE(matrix, axis, index) is a row or a column; SLICE(matrix, axis,
+    // start, count) a band of rows or of columns. Both by jdb_shape::take,
+    // span_indices and column, which the native runtime shares.
     register_native("SLICE", [](const std::vector<Value>& args) -> Value {
         int dim = (int)args[1].to_int();
         int idx = (int)args[2].to_int();
         auto* src = args[0].as_array();
         if (!src) throw std::runtime_error("SLICE: expected array");
-        // 4-arg form: SLICE(arr, axis, start, count) - extract sub-matrix
         if (args.size() >= 4) {
             int count = (int)args[3].to_int();
+            if (dim == 0)
+                return jdb_shape::take<VmShape>(args[0], jdb_shape::span_indices((int64_t)src->elements.size(), idx, count));
             Value r = Value::make_array();
-            if (dim == 0) { // extract rows [start..start+count)
-                int end = std::min(idx + count, (int)src->elements.size());
-                for (int i = idx; i < end; i++)
-                    r.as_array()->elements.push_back(src->elements[i]);
-            } else { // extract columns [start..start+count) from each row
-                for (auto& row : src->elements) {
-                    auto* ra = row.as_array();
-                    Value nr = Value::make_array();
-                    int end = std::min(idx + count, (int)ra->elements.size());
-                    for (int j = idx; j < end; j++)
-                        nr.as_array()->elements.push_back(ra->elements[j]);
-                    r.as_array()->elements.push_back(std::move(nr));
-                }
-            }
+            for (auto& row : src->elements)
+                r.as_array()->elements.push_back(jdb_shape::take<VmShape>(row,
+                    jdb_shape::span_indices((int64_t)row.as_array()->elements.size(), idx, count)));
             return r;
         }
-        // 3-arg form: SLICE(arr, axis, index) - extract single row/column
         int rows, cols; get_2d(args[0], rows, cols);
         if (cols == 0)
             throw jdError(ErrCode::TYPE_MISMATCH, "SLICE: argument 1 is a flat array, a matrix is expected");
@@ -796,18 +712,17 @@ void VM::register_array_builtins() {
         int extent = dim == 0 ? rows : cols;
         if (idx < 0 || idx >= extent)
             throw jdError(ErrCode::INDEX_OUT_OF_RANGE, "SLICE: index " + std::to_string(idx) + " is outside 0 to " + std::to_string(extent - 1));
-        Value r = Value::make_array();
-        if (dim == 0) { // extract row
+        if (dim == 0) {
+            Value r = Value::make_array();
             r.as_array()->elements = src->elements[idx].as_array()->elements;
-        } else { // extract column
-            for (int ro = 0; ro < rows; ro++) {
-                auto* row = src->elements[ro].as_array();
-                if (!row || idx >= (int)row->elements.size())
-                    throw jdError(ErrCode::INDEX_OUT_OF_RANGE, "SLICE: row " + std::to_string(ro) + " has no column " + std::to_string(idx));
-                r.as_array()->elements.push_back(row->elements[idx]);
-            }
+            return r;
         }
-        return r;
+        for (int ro = 0; ro < rows; ro++) {
+            auto* row = src->elements[ro].as_array();
+            if (!row || idx >= (int)row->elements.size())
+                throw jdError(ErrCode::INDEX_OUT_OF_RANGE, "SLICE: row " + std::to_string(ro) + " has no column " + std::to_string(idx));
+        }
+        return jdb_shape::column<VmShape>(args[0], idx);
     });
 
 #ifdef JDB_MCU

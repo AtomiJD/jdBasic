@@ -3065,7 +3065,8 @@ Description: Pauses program execution for a specified duration. The wait is meas
 
 [SLICE]
 Syntax: SLICE(matrix, dimension, index)
-Description: Extracts a row (dim=0) or column (dim=1) from a 2D matrix.
+        SLICE(matrix, dimension, start, count)
+Description: Extracts a row (dim=0) or column (dim=1) from a 2D matrix. With start and count, a band of rows (dim=0) or of columns out of every row (dim=1), stopping at the edge. A flat array, an axis other than 0 or 1 and an index outside the matrix are errors.
 
 [SOLVE]
 Syntax: SOLVE(matrixA, vectorB)

@@ -879,6 +879,17 @@ struct RtShape {
     static void put_bool(JdbArray* a, int64_t i, bool b) { a->data[i] = b ? 1.0 : 0.0; a->flags |= 4; }
     static void put_row(JdbArray* a, int64_t i, JdbArray* r) { a->data[i] = encode_inner(r); a->flags |= 1; }
     static void put(JdbArray* a, int64_t i, double d) { a->data[i] = d; }
+    // A number written where a cell moved away: in an array of strings the
+    // cells become tagged one by one so the number reads as a number.
+    static void put_fill(JdbArray* a, int64_t i, double d) {
+        if ((a->flags & 2) && !a->elem_tags) {
+            a->elem_tags = (int8_t*)malloc((size_t)(a->length > 0 ? a->length : 1));
+            memset(a->elem_tags, JD_TAG_STR, (size_t)(a->length > 0 ? a->length : 1));
+            a->flags = (a->flags & ~2) | 8;
+        }
+        if (a->elem_tags) a->elem_tags[i] = JD_TAG_F64;
+        a->data[i] = d;
+    }
     // A cell with the tag it carries, when the source keeps tags per cell.
     static void copy_cell(JdbArray* out, int64_t k, JdbArray* a, int64_t i) {
         out->data[k] = a->data[i];
@@ -1378,52 +1389,110 @@ JdbArray* jdb_array_cumprod(JdbArray* arr) {
     return jdb_shape::cumulate<RtShape>(arr, 1.0, [](const double& acc, const double& x) { return acc * x; });
 }
 
+// TAKE and DROP: the first or last n cells, or all but them, by
+// jdb_shape::take over take_count and drop_count.
 JdbArray* jdb_array_take(JdbArray* arr, int64_t n) {
-    if (!arr || n == 0) return jdb_array_new(0);
-    if (n < 0) {
-        int64_t k = -n;
-        if (k > arr->length) k = arr->length;
-        auto* r = jdb_array_new(k);
-        memcpy(r->data, arr->data + (arr->length - k), k * sizeof(double));
-        r->flags = arr->flags;
-        return r;
-    }
-    if (n > arr->length) n = arr->length;
-    auto* r = jdb_array_new(n);
-    memcpy(r->data, arr->data, n * sizeof(double));
-    r->flags = arr->flags;  // preserve nested/string flags
-    return r;
+    if (!arr) return jdb_array_new(0);
+    return jdb_shape::take<RtShape>(arr, jdb_shape::take_count(arr->length, n));
 }
 
 // (n, arr) parameter order to match the interpreter's TAKE(n, arr).
-// Native codegen's TAKE entry points here so user-order args don't get
-// swapped silently when the optimizer skips the VM bridge.
 JdbArray* jdb_take_n(int64_t n, JdbArray* arr) {
     return jdb_array_take(arr, n);
 }
 
 JdbArray* jdb_array_drop(JdbArray* arr, int64_t n) {
     if (!arr) return jdb_array_new(0);
-    if (n < 0) {
-        int64_t k = -n;
-        if (k >= arr->length) return jdb_array_new(0);
-        int64_t newlen = arr->length - k;
-        auto* r = jdb_array_new(newlen);
-        memcpy(r->data, arr->data, newlen * sizeof(double));
-        r->flags = arr->flags;
-        return r;
-    }
-    if (n >= arr->length) return jdb_array_new(0);
-    int64_t newlen = arr->length - n;
-    auto* r = jdb_array_new(newlen);
-    memcpy(r->data, arr->data + n, newlen * sizeof(double));
-    r->flags = arr->flags;
-    return r;
+    return jdb_shape::take<RtShape>(arr, jdb_shape::drop_count(arr->length, n));
 }
 
-// (n, arr) ordering for the codegen entry-point - see jdb_take_n.
 JdbArray* jdb_drop_n(int64_t n, JdbArray* arr) {
     return jdb_array_drop(arr, n);
+}
+
+// A copy of the cells, with what the array says about them.
+static JdbArray* rt_copy_cells(JdbArray* arr) {
+    return jdb_shape::take<RtShape>(arr, jdb_shape::span_indices(arr->length, 0, arr->length));
+}
+
+// The entries of the shift vector; more of them than the array has axes is
+// an error.
+static bool rt_shift_vector(const char* fn, JdbArray* arr, JdbArray* shifts, std::vector<int64_t>& out) {
+    out.clear();
+    if (shifts) for (int64_t i = 0; i < shifts->length; i++) out.push_back((int64_t)shifts->data[i]);
+    int rank = jdb_shape::depth<RtShape>(arr);
+    if ((int)out.size() > rank) {
+        char msg[96];
+        snprintf(msg, sizeof msg, "%s got %d shifts for an array of rank %d", fn, (int)out.size(), rank);
+        jdb_err_set(msg, 11);
+        return false;
+    }
+    return true;
+}
+
+// ROTATE and SHIFT move the cells along one axis per entry of the shift
+// vector, by jdb_shape::move_axes; the answer is always a fresh array.
+JdbArray* jdb_array_rotate(JdbArray* arr, JdbArray* shifts) {
+    if (!arr) return jdb_array_new(0);
+    std::vector<int64_t> k;
+    if (!rt_shift_vector("ROTATE", arr, shifts, k)) return jdb_array_new(0);
+    JdbArray* r = jdb_shape::move_axes<RtShape>(arr, k, 0, true, 0.0);
+    return r == arr ? rt_copy_cells(arr) : r;
+}
+
+JdbArray* jdb_array_shift(JdbArray* arr, JdbArray* shifts, double fill) {
+    if (!arr) return jdb_array_new(0);
+    std::vector<int64_t> k;
+    if (!rt_shift_vector("SHIFT", arr, shifts, k)) return jdb_array_new(0);
+    JdbArray* r = jdb_shape::move_axes<RtShape>(arr, k, 0, false, fill);
+    return r == arr ? rt_copy_cells(arr) : r;
+}
+
+// SLICE(matrix, axis, index): a row or a column of a matrix; a flat array,
+// an axis other than 0 or 1 and an index outside the matrix are errors.
+JdbArray* jdb_array_slice(JdbArray* arr, int64_t dim, int64_t idx) {
+    if (!arr) return jdb_array_new(0);
+    int64_t rows = arr->length;
+    int64_t cols = (rows > 0 && RtShape::is_row(arr, 0)) ? RtShape::len(RtShape::row(arr, 0)) : 0;
+    char msg[128];
+    if (cols == 0) {
+        jdb_err_set("SLICE: argument 1 is a flat array, a matrix is expected", 11);
+        return jdb_array_new(0);
+    }
+    if (dim != 0 && dim != 1) {
+        snprintf(msg, sizeof msg, "SLICE: the axis is 0 for a row or 1 for a column, got %lld", (long long)dim);
+        jdb_err_set(msg, 11);
+        return jdb_array_new(0);
+    }
+    int64_t extent = dim == 0 ? rows : cols;
+    if (idx < 0 || idx >= extent) {
+        snprintf(msg, sizeof msg, "SLICE: index %lld is outside 0 to %lld", (long long)idx, (long long)(extent - 1));
+        jdb_err_set(msg, 13);
+        return jdb_array_new(0);
+    }
+    if (dim == 0) return rt_copy_cells(RtShape::row(arr, idx));
+    for (int64_t ro = 0; ro < rows; ro++) {
+        JdbArray* row = RtShape::row(arr, ro);
+        if (!row || idx >= row->length) {
+            snprintf(msg, sizeof msg, "SLICE: row %lld has no column %lld", (long long)ro, (long long)idx);
+            jdb_err_set(msg, 13);
+            return jdb_array_new(0);
+        }
+    }
+    return jdb_shape::column<RtShape>(arr, idx);
+}
+
+// SLICE(matrix, axis, start, count): a band of rows, or of columns out of
+// every row.
+JdbArray* jdb_array_slice_band(JdbArray* arr, int64_t dim, int64_t start, int64_t count) {
+    if (!arr) return jdb_array_new(0);
+    if (dim == 0) return jdb_shape::take<RtShape>(arr, jdb_shape::span_indices(arr->length, start, count));
+    JdbArray* out = jdb_array_new(arr->length);
+    for (int64_t i = 0; i < arr->length; i++) {
+        JdbArray* row = RtShape::row(arr, i);
+        RtShape::put_row(out, i, jdb_shape::take<RtShape>(row, jdb_shape::span_indices(row->length, start, count)));
+    }
+    return out;
 }
 
 static bool rt_cell_is_str(JdbArray* arr, int64_t i);

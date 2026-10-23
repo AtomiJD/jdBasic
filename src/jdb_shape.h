@@ -288,6 +288,82 @@ inline std::vector<int64_t> select_indices(int64_t n, const std::function<bool(i
     return kept;
 }
 
+// ── Spans, axis moves and columns ────────────────────────────────────────
+
+// The indices of the first k cells of n, or of the last -k when k is negative.
+inline std::vector<int64_t> take_count(int64_t n, int64_t k) {
+    std::vector<int64_t> idx;
+    int64_t from = k >= 0 ? 0 : std::max<int64_t>(0, n + k);
+    int64_t to = k >= 0 ? std::min(n, k) : n;
+    for (int64_t i = from; i < to; i++) idx.push_back(i);
+    return idx;
+}
+
+// The indices of n cells without the first k, or without the last -k.
+inline std::vector<int64_t> drop_count(int64_t n, int64_t k) {
+    std::vector<int64_t> idx;
+    int64_t from = k >= 0 ? std::min(n, k) : 0;
+    int64_t to = k >= 0 ? n : std::max<int64_t>(0, n + k);
+    for (int64_t i = from; i < to; i++) idx.push_back(i);
+    return idx;
+}
+
+// The indices from start, count of them, within n.
+inline std::vector<int64_t> span_indices(int64_t n, int64_t start, int64_t count) {
+    std::vector<int64_t> idx;
+    int64_t to = std::min(n, start + count);
+    for (int64_t i = std::max<int64_t>(0, start); i < to; i++) idx.push_back(i);
+    return idx;
+}
+
+// An array shaped like proto with fill in every cell, so a row that moves
+// off an edge comes back as a row of fill and not as one cell.
+template <class A>
+typename A::Arr blank_like(typename A::Arr proto, const typename A::Val& fill) {
+    int64_t n = A::len(proto);
+    typename A::Arr out = A::make(n);
+    for (int64_t i = 0; i < n; i++) {
+        if (A::is_row(proto, i)) A::put_row(out, i, blank_like<A>(A::row(proto, i), fill));
+        else A::put_fill(out, i, fill);
+    }
+    return out;
+}
+
+// The cells moved along one axis per entry of shifts, outermost first.
+// Cyclic is ROTATE, out[i] = in[i + k]; otherwise SHIFT, out[i] = in[i - k]
+// with fill where nothing moves in. Axes beyond the shifts stay as they are.
+template <class A>
+typename A::Arr move_axes(typename A::Arr a, const std::vector<int64_t>& shifts, size_t depth,
+                          bool cyclic, const typename A::Val& fill) {
+    int64_t n = A::len(a);
+    if (depth >= shifts.size() || n == 0) return a;
+    typename A::Arr out = A::make(n);
+    A::carry_flags(out, a);
+    const int64_t k = shifts[depth];
+    for (int64_t i = 0; i < n; i++) {
+        int64_t src = cyclic ? (((i + k) % n) + n) % n : i - k;
+        if (src < 0 || src >= n) {
+            if (A::is_row(a, 0)) A::put_row(out, i, blank_like<A>(A::row(a, 0), fill));
+            else A::put_fill(out, i, fill);
+        } else if (A::is_row(a, src)) {
+            A::put_row(out, i, move_axes<A>(A::row(a, src), shifts, depth + 1, cyclic, fill));
+        } else {
+            A::copy_cell(out, i, a, src);
+        }
+    }
+    return out;
+}
+
+// Cell j of every row: a column of a matrix whose rows all reach j.
+template <class A>
+typename A::Arr column(typename A::Arr a, int64_t j) {
+    int64_t n = A::len(a);
+    typename A::Arr out = A::make(n);
+    if (n > 0) A::carry_flags(out, A::row(a, 0));
+    for (int64_t i = 0; i < n; i++) A::copy_cell(out, i, A::row(a, i), j);
+    return out;
+}
+
 // ── RESHAPE ──────────────────────────────────────────────────────────────
 
 // The cells of a in order, rows opened as they come.

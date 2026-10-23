@@ -405,6 +405,10 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_round_p", "__arr_round_p", i8_ptr_type, {i8_ptr_type, f64_type}, JD_TAG_ARR);
     reg("jdb_reshape", "__reshape", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_array_replace", "__arr_replace", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_rotate", "__arr_rotate", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_shift", "__arr_shift", i8_ptr_type, {i8_ptr_type, i8_ptr_type, f64_type}, JD_TAG_ARR);
+    reg("jdb_array_slice", "__arr_slice", i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, JD_TAG_ARR);
+    reg("jdb_array_slice_band", "__arr_slice_band", i8_ptr_type, {i8_ptr_type, i64_type, i64_type, i64_type}, JD_TAG_ARR);
     reg("jdb_join_arr","JOIN",     i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_trunc",  "TRUNC",  f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_sign_i", "SIGN",   i64_type, {f64_type}, JD_TAG_I64);
@@ -5380,6 +5384,17 @@ void LLVMCodegen::emit_err_line(int line) {
     LLVMBuildCall2(builder, it->second.fn_type, it->second.fn, a, 1, "");
 }
 
+LLVMValueRef LLVMCodegen::array_or_single(const TypedValue& tv) {
+    if (tv.tag == JD_TAG_ARR) return tv.val;
+    auto& arr_new = runtime_funcs["__array_new"];
+    auto& arr_set = runtime_funcs["__array_set"];
+    LLVMValueRef one[] = { LLVMConstInt(i64_type, 1, 0) };
+    LLVMValueRef p = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, one, 1, "single");
+    LLVMValueRef set_args[] = { p, LLVMConstInt(i64_type, 0, 0), coerce_to(tv, f64_type) };
+    LLVMBuildCall2(builder, arr_set.fn_type, arr_set.fn, set_args, 3, "");
+    return p;
+}
+
 void LLVMCodegen::emit_err_code_branch() {
     if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) return;
     auto ec_it = runtime_funcs.find("__err_rc");
@@ -6290,7 +6305,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 return false;
             };
             if ((u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" ||
-                 u == "DROP" || u == "SLICE") && !stmt.expr->args.empty()) {
+                 u == "DROP" || u == "SLICE" || u == "ROTATE" || u == "SHIFT") && !stmt.expr->args.empty()) {
                 for (auto& a : stmt.expr->args)
                     if (yields_strings(a.get())) {
                         string_array_vars.insert(stmt.var_name);
@@ -6302,7 +6317,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // Cells of mixed kind stay mixed through the functions that hand
         // them on whole: a read of the result asks the cell.
         if (u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" ||
-            u == "DROP" || u == "APPEND" || u == "SLICE") {
+            u == "DROP" || u == "APPEND" || u == "SLICE" || u == "ROTATE" || u == "SHIFT") {
             for (auto& a : stmt.expr->args) {
                 if (!a) continue;
                 if (a->kind == ExprKind::VARIABLE &&
@@ -7386,7 +7401,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 return false;
             };
             if ((u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" ||
-                 u == "DROP" || u == "SLICE") && !stmt.expr->args.empty()) {
+                 u == "DROP" || u == "SLICE" || u == "ROTATE" || u == "SHIFT") && !stmt.expr->args.empty()) {
                 for (auto& a : stmt.expr->args)
                     if (yields_strings(a.get())) {
                         string_array_vars.insert(stmt.var_name);
@@ -7398,7 +7413,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         // Cells of mixed kind stay mixed through the functions that hand
         // them on whole: a read of the result asks the cell.
         if (u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" ||
-            u == "DROP" || u == "APPEND" || u == "SLICE") {
+            u == "DROP" || u == "APPEND" || u == "SLICE" || u == "ROTATE" || u == "SHIFT") {
             for (auto& a : stmt.expr->args) {
                 if (!a) continue;
                 if (a->kind == ExprKind::VARIABLE &&
@@ -14521,21 +14536,65 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (upper == "RESHAPE" && expr.args.size() == 2) {
         TypedValue src = codegen_expr(*expr.args[0]);
         if (src.tag == JD_TAG_ARR) {
-            TypedValue sh = codegen_expr(*expr.args[1]);
-            LLVMValueRef shape_ptr;
-            if (sh.tag == JD_TAG_ARR) {
-                shape_ptr = sh.val;
-            } else {
-                auto& arr_new = runtime_funcs["__array_new"];
-                auto& arr_set = runtime_funcs["__array_set"];
-                LLVMValueRef one[] = { LLVMConstInt(i64_type, 1, 0) };
-                shape_ptr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, one, 1, "shape1");
-                LLVMValueRef set_args[] = { shape_ptr, LLVMConstInt(i64_type, 0, 0), coerce_to(sh, f64_type) };
-                LLVMBuildCall2(builder, arr_set.fn_type, arr_set.fn, set_args, 3, "");
-            }
+            LLVMValueRef shape_ptr = array_or_single(codegen_expr(*expr.args[1]));
             auto& fn = runtime_funcs["__reshape"];
             LLVMValueRef args[] = { src.val, shape_ptr };
             LLVMValueRef res = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "reshape");
+            emit_err_code_branch();
+            TypedValue out{ res, JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
+        }
+    }
+
+    // ROTATE and SHIFT of a native array run in the runtime; the shift vector
+    // may be one number. A string fill, or a VM array, goes to the bridge.
+    if ((upper == "ROTATE" && expr.args.size() == 2) ||
+        (upper == "SHIFT" && (expr.args.size() == 2 || expr.args.size() == 3))) {
+        bool str_fill = expr.args.size() == 3 &&
+            infer_expr_type(*expr.args[2]).kind == StaticType::Kind::STRING;
+        if (!str_fill) {
+            TypedValue src = codegen_expr(*expr.args[0]);
+            if (src.tag == JD_TAG_ARR) {
+                LLVMValueRef shifts = array_or_single(codegen_expr(*expr.args[1]));
+                LLVMValueRef res;
+                if (upper == "ROTATE") {
+                    auto& fn = runtime_funcs["__arr_rotate"];
+                    LLVMValueRef args[] = { src.val, shifts };
+                    res = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "rotate");
+                } else {
+                    LLVMValueRef fill = expr.args.size() == 3
+                        ? coerce_to(codegen_expr(*expr.args[2]), f64_type)
+                        : LLVMConstReal(f64_type, 0.0);
+                    auto& fn = runtime_funcs["__arr_shift"];
+                    LLVMValueRef args[] = { src.val, shifts, fill };
+                    res = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "shift");
+                }
+                emit_err_code_branch();
+                TypedValue out{ res, JD_TAG_ARR };
+                out.fresh_container = true;
+                return out;
+            }
+        }
+    }
+
+    // SLICE of a native matrix: a row or a column, or a band of either.
+    if (upper == "SLICE" && (expr.args.size() == 3 || expr.args.size() == 4)) {
+        TypedValue src = codegen_expr(*expr.args[0]);
+        if (src.tag == JD_TAG_ARR) {
+            LLVMValueRef dim = coerce_to(codegen_expr(*expr.args[1]), i64_type);
+            LLVMValueRef idx = coerce_to(codegen_expr(*expr.args[2]), i64_type);
+            LLVMValueRef res;
+            if (expr.args.size() == 4) {
+                LLVMValueRef count = coerce_to(codegen_expr(*expr.args[3]), i64_type);
+                auto& fn = runtime_funcs["__arr_slice_band"];
+                LLVMValueRef args[] = { src.val, dim, idx, count };
+                res = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "slice_band");
+            } else {
+                auto& fn = runtime_funcs["__arr_slice"];
+                LLVMValueRef args[] = { src.val, dim, idx };
+                res = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "slice");
+            }
             emit_err_code_branch();
             TypedValue out{ res, JD_TAG_ARR };
             out.fresh_container = true;

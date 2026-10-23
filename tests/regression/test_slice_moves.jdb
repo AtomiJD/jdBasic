@@ -1,0 +1,68 @@
+' TAKE, DROP, ROTATE, SHIFT and SLICE answer the same cells in both
+' backends: counts from either end, moves along every axis of a matrix with
+' the fill shaped like a row, strings kept by content, and the band form of
+' SLICE over rows and over columns.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Rows$(m AS ARRAY) AS STRING
+    DIM parts AS ARRAY = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m) - 1
+        parts = APPEND(parts, JOIN(m[i], ","))
+    NEXT i
+    RETURN JOIN(parts, "|")
+ENDFUNC
+
+DIM v AS ARRAY = [1, 2, 3, 4, 5]
+Check(JOIN(TAKE(2, v), ",") = "1,2", "TAKE from the front")
+Check(JOIN(TAKE(-2, v), ",") = "4,5", "TAKE from the back")
+Check(LEN(TAKE(9, v)) = 5, "TAKE past the end takes all")
+Check(JOIN(DROP(2, v), ",") = "3,4,5", "DROP from the front")
+Check(JOIN(DROP(-2, v), ",") = "1,2,3", "DROP from the back")
+Check(LEN(DROP(9, v)) = 0, "DROP past the end leaves nothing")
+
+DIM w AS ARRAY = ["a", "b", "c"]
+Check(JOIN(TAKE(2, w), ",") = "a,b", "TAKE keeps strings")
+Check(JOIN(DROP(-1, UCASE$(w)), ",") = "A,B", "DROP over a string result")
+
+Check(JOIN(ROTATE(v, 1), ",") = "2,3,4,5,1", "ROTATE pulls from ahead")
+Check(JOIN(ROTATE(v, [-1]), ",") = "5,1,2,3,4", "ROTATE by a vector of one")
+Check(JOIN(ROTATE(w, 1), ",") = "b,c,a", "ROTATE keeps strings")
+Check(JOIN(SHIFT(v, 1), ",") = "0,1,2,3,4", "SHIFT pushes along with 0")
+Check(JOIN(SHIFT(v, -2, 9), ",") = "3,4,5,9,9", "SHIFT the other way with a fill")
+Check(JOIN(SHIFT(v, 7), ",") = "0,0,0,0,0", "SHIFT past the axis is all fill")
+
+DIM m AS ARRAY = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+Check(Rows$(ROTATE(m, [1, 0])) = "4,5,6|7,8,9|1,2,3", "ROTATE the rows")
+Check(Rows$(ROTATE(m, [0, 1])) = "2,3,1|5,6,4|8,9,7", "ROTATE the columns")
+Check(Rows$(ROTATE(m, [1, 1])) = "5,6,4|8,9,7|2,3,1", "ROTATE both axes")
+Check(Rows$(SHIFT(m, [1, 0])) = "0,0,0|1,2,3|4,5,6", "SHIFT the rows with a row of fill")
+Check(Rows$(SHIFT(m, [0, -1], 7)) = "2,3,7|5,6,7|8,9,7", "SHIFT the columns with a fill")
+
+DIM msg$ AS STRING = ""
+TRY
+    DIM bad AS ARRAY = ROTATE(v, [1, 1])
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(INSTR(msg$, "rank") >= 0, "more shifts than axes is an error: " + msg$)
+
+Check(JOIN(SLICE(m, 0, 2), ",") = "7,8,9", "SLICE a row")
+Check(JOIN(SLICE(m, 1, 0), ",") = "1,4,7", "SLICE a column")
+Check(Rows$(SLICE(m, 0, 1, 2)) = "4,5,6|7,8,9", "SLICE a band of rows")
+Check(Rows$(SLICE(m, 1, 1, 2)) = "2,3|5,6|8,9", "SLICE a band of columns")
+Check(Rows$(SLICE(m, 0, 2, 5)) = "7,8,9", "a band past the end stops at the end")
+
+DIM names AS ARRAY = [["ann", "bob"], ["cid", "dee"]]
+Check(JOIN(SLICE(names, 1, 1), ",") = "bob,dee", "SLICE a column of strings")
+
+IF failed > 0 THEN END 1
+PRINT "OK"
