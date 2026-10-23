@@ -22,6 +22,10 @@
 '   --tiktok       portrait 1080x1920 with the girl alone, a new move every
 '                  two bars; with --render only the clip around the first
 '                  drop (at most 30 s) and no intro
+'   --look name    the show: classic (sun, skirt and ponytail), purple
+'                  (moon and nebula, gown, space buns and tiara), neon
+'                  (digital rain, raver with headphones and glow sticks) or
+'                  rainbow (rainbow and clouds, unicorn with tutu and horn)
 '
 ' As a program of its own the show follows a song another process plays:
 '
@@ -101,6 +105,32 @@ DIM clip_from AS DOUBLE = 0
 DIM clip_to AS DOUBLE = 0
 DIM tt_offset AS INTEGER = 0
 DIM tt_cover_done AS INTEGER = -1
+
+' --look: the show's palette, backdrop and the girl's outfit, set by SET_LOOK
+DIM look$ AS STRING = "classic"
+DIM backdrop$ AS STRING = "sun"
+DIM outfit$ AS STRING = "skirt"
+DIM girl_r AS DOUBLE = 255
+DIM girl_g AS DOUBLE = 90
+DIM girl_b AS DOUBLE = 200
+DIM blush_r AS INTEGER = 110
+DIM blush_g AS INTEGER = 25
+DIM blush_b AS INTEGER = 65
+DIM sky_r AS DOUBLE = 6
+DIM sky_g AS DOUBLE = 3
+DIM sky_b AS DOUBLE = 16
+DIM acc_r AS DOUBLE = -1
+DIM acc_g AS DOUBLE = 0
+DIM acc_b AS DOUBLE = 0
+DIM sun_top = [230, 200, 60]
+DIM sun_bot = [220, 30, 180]
+DIM band_lo_rgb = [60, 110, 200]
+DIM band_hi_rgb = [255, 30, 140]
+DIM grid_rgb = [200, 40, 180]
+DIM hline_rgb = [255, 80, 220]
+DIM title_rgb = [255, 110, 215]
+DIM label_rgb = [255, 235, 120]
+DIM laser_mode AS INTEGER = 0
 DIM spec = RESHAPE([0.0], [40])
 DIM band_lo = RESHAPE([0], [40])
 DIM band_hi = RESHAPE([0], [40])
@@ -162,6 +192,90 @@ SUB LOG_LINE(s$)
     NEXT i
     log_lines$[N_LOG - 1] = s$
 ENDSUB
+
+' The show for --look: classic, purple, neon or rainbow
+SUB SET_LOOK(name$)
+    look$ = name$
+    IF name$ = "purple" THEN
+        backdrop$ = "moon"
+        outfit$ = "gown"
+        girl_r = 190
+        girl_g = 120
+        girl_b = 255
+        blush_r = 80
+        blush_g = 30
+        blush_b = 110
+        sky_r = 8
+        sky_g = 3
+        sky_b = 22
+        acc_r = 150
+        acc_g = 80
+        acc_b = 255
+        sun_top = [240, 230, 255]
+        sun_bot = [165, 135, 240]
+        band_lo_rgb = [70, 40, 160]
+        band_hi_rgb = [225, 120, 255]
+        grid_rgb = [120, 50, 210]
+        hline_rgb = [190, 110, 255]
+        title_rgb = [210, 150, 255]
+        label_rgb = [255, 220, 255]
+        laser_mode = 1
+    ELSEIF name$ = "neon" THEN
+        backdrop$ = "rain"
+        outfit$ = "raver"
+        girl_r = 90
+        girl_g = 255
+        girl_b = 110
+        blush_r = 30
+        blush_g = 90
+        blush_b = 40
+        sky_r = 2
+        sky_g = 9
+        sky_b = 5
+        acc_r = 60
+        acc_g = 255
+        acc_b = 100
+        sun_top = [210, 255, 80]
+        sun_bot = [20, 200, 150]
+        band_lo_rgb = [20, 90, 60]
+        band_hi_rgb = [170, 255, 60]
+        grid_rgb = [30, 200, 70]
+        hline_rgb = [120, 255, 120]
+        title_rgb = [120, 255, 140]
+        label_rgb = [230, 255, 120]
+        laser_mode = 2
+    ELSEIF name$ = "rainbow" THEN
+        backdrop$ = "rainbow"
+        outfit$ = "unicorn"
+        blush_r = 110
+        blush_g = 40
+        blush_b = 90
+        sky_r = 8
+        sky_g = 4
+        sky_b = 18
+        acc_r = 0
+        band_lo_rgb = [0, 0, 0]
+        band_hi_rgb = [0, 0, 0]
+        title_rgb = [255, 215, 90]
+        label_rgb = [255, 245, 200]
+        laser_mode = 0
+    ELSE
+        look$ = "classic"
+    ENDIF
+ENDSUB
+
+' A rainbow colour, h in radians
+FUNC HUE_R(h AS DOUBLE) AS INTEGER
+    RETURN INT(128 + 127 * SIN(h))
+ENDFUNC
+
+FUNC HUE_G(h AS DOUBLE) AS INTEGER
+    RETURN INT(128 + 127 * SIN(h + 2.1))
+ENDFUNC
+
+FUNC HUE_B(h AS DOUBLE) AS INTEGER
+    RETURN INT(128 + 127 * SIN(h + 4.2))
+ENDFUNC
 
 ' 0..1 values of a SOUND.MOD shape at the times x, in periods
 FUNC SHAPE_AT(shape$, x)
@@ -401,6 +515,17 @@ FUNC TT_POSE_AT(cyc AS DOUBLE)
     RETURN prev + (cur - prev) * w
 ENDFUNC
 
+' A skirt from the waist at y, top_half wide there, hem wide at its foot
+SUB SKIRT(x AS DOUBLE, y AS DOUBLE, top_half AS DOUBLE, hem AS DOUBLE, h AS DOUBLE, cr AS DOUBLE, cg AS DOUBLE, cb AS DOUBLE)
+    DIM ks = IOTA(INT(h) + 1, 0)
+    DIM half = top_half + (hem - top_half) * ks / h
+    DRAWCOLOR INT(cr * 0.3), INT(cg * 0.3), INT(cb * 0.3)
+    LINE STACK(1, x - half, y + ks, x + half, y + ks)
+    NEON x - top_half, y, x - hem, y + h, 1, cr, cg, cb
+    NEON x + top_half, y, x + hem, y + h, 1, cr, cg, cb
+    NEON x - hem, y + h, x + hem, y + h, 1, cr, cg, cb
+ENDSUB
+
 SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOUBLE, cb AS DOUBLE)
     DIM beat AS DOUBLE = cyc * 4
     DIM bf AS DOUBLE = FRACT(beat)
@@ -587,15 +712,31 @@ SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOU
 
     IF girl THEN
         DIM wy AS DOUBLE = hy - 16 * DS
-        DIM hem AS DOUBLE = (58 + 0.12 * ABS(sway / DS) + 10 * arc) * DS
-        DIM skirt_h AS DOUBLE = 55 * DS
-        DIM ks = IOTA(INT(skirt_h) + 1, 0)
-        DIM half = 16 * DS + (hem - 16 * DS) * ks / skirt_h
-        DRAWCOLOR INT(cr * 0.3), INT(cg * 0.3), INT(cb * 0.3)
-        LINE STACK(1, hx - half, wy + ks, hx + half, wy + ks)
-        NEON hx - 16 * DS, wy, hx - hem, wy + skirt_h, 1, cr, cg, cb
-        NEON hx + 16 * DS, wy, hx + hem, wy + skirt_h, 1, cr, cg, cb
-        NEON hx - hem, wy + skirt_h, hx + hem, wy + skirt_h, 1, cr, cg, cb
+        DIM flare AS DOUBLE = 0.12 * ABS(sway / DS) + 10 * arc
+        IF outfit$ = "gown" THEN
+            DIM ghem AS DOUBLE = (72 + 1.4 * flare) * DS
+            DIM gown_h AS DOUBLE = 150 * DS
+            SKIRT hx, wy, 14 * DS, ghem, gown_h, cr, cg, cb
+            ' stars woven into the gown, twinkling on the beat
+            DIM gfx = [-0.55, 0.3, -0.1, 0.6, -0.4, 0.15, 0.45]
+            DIM gfy = [0.35, 0.28, 0.55, 0.62, 0.82, 0.88, 0.45]
+            DIM gtw = 0.5 + 0.5 * SIN(TWO_PI * beat / 2 + IOTA(7, 0) * 1.7)
+            DIM gsx = hx + gfx * (14 * DS + (ghem - 14 * DS) * gfy)
+            DIM gsy = wy + gfy * gown_h
+            DIM gc = INT(120 + 135 * gtw)
+            CIRCLE STACK(1, gsx, gsy, gtw * 0 + 3 * DS), TRUE, STACK(1, gc, gc, gc)
+        ELSEIF outfit$ = "raver" THEN
+            SKIRT hx, wy, 16 * DS, (46 + flare) * DS, 34 * DS, cr, cg, cb
+        ELSEIF outfit$ = "unicorn" THEN
+            ' a tutu of three layers, the longest and widest at the back
+            DIM tk AS INTEGER
+            FOR tk = 0 TO 2
+                DIM th AS DOUBLE = tk * 2.1 + cyc
+                SKIRT hx, wy, 16 * DS, (92 - tk * 16 + 1.3 * flare) * DS, (36 - tk * 9) * DS, HUE_R(th), HUE_G(th), HUE_B(th)
+            NEXT tk
+        ELSE
+            SKIRT hx, wy, 16 * DS, (58 + flare) * DS, 55 * DS, cr, cg, cb
+        ENDIF
     ENDIF
 
     NEON hx, hy, nkx, nky, nw, cr, cg, cb
@@ -609,6 +750,16 @@ SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOU
     NEON rex, rey, rex + FARM * SIN(rfa), rey + FARM * COS(rfa), nw, cr, cg, cb
     NEON_RING hdx, hdy, HEAD_R, cr, cg, cb
 
+    IF girl ANDALSO outfit$ = "raver" THEN
+        ' glow sticks, held along the forearms
+        DIM lhx AS DOUBLE = lex + FARM * SIN(lfa)
+        DIM lhy AS DOUBLE = ley + FARM * COS(lfa)
+        DIM rhx AS DOUBLE = rex + FARM * SIN(rfa)
+        DIM rhy AS DOUBLE = rey + FARM * COS(rfa)
+        NEON lhx, lhy, lhx + 44 * DS * SIN(lfa), lhy + 44 * DS * COS(lfa), nw + 1, 255, 60, 200
+        NEON rhx, rhy, rhx + 44 * DS * SIN(rfa), rhy + 44 * DS * COS(rfa), nw + 1, 60, 220, 255
+    ENDIF
+
     DIM ex AS DOUBLE = 10 * DS
     DRAWCOLOR 255, 255, 255
     CIRCLE hdx - ex, hdy - 4 * DS, 4 * DS, TRUE
@@ -620,23 +771,71 @@ SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOU
     LINE STACK(1, TAKE(8, smx), TAKE(8, smy), DROP(1, smx), DROP(1, smy))
 
     IF girl THEN
-        ' lashes, blush, a ponytail swinging behind the beat, a bow
+        ' lashes and blush, then the hair and headwear of the outfit
         LINE STACK(1, [hdx - ex - 4 * DS, hdx + ex + 4 * DS], [hdy - 7 * DS, hdy - 7 * DS], [hdx - ex - 9 * DS, hdx + ex + 9 * DS], [hdy - 12 * DS, hdy - 12 * DS])
-        DRAWCOLOR 110, 25, 65
+        DRAWCOLOR blush_r, blush_g, blush_b
         CIRCLE hdx - 18 * DS, hdy + 6 * DS, 6 * DS, TRUE
         CIRCLE hdx + 18 * DS, hdy + 6 * DS, 6 * DS, TRUE
-        DIM pax AS DOUBLE = hdx + HEAD_R * 0.75
-        DIM pay AS DOUBLE = hdy - HEAD_R * 0.7
-        DIM pk = IOTA(7, 1)
-        DIM pa = 0.55 + 0.35 * SIN(TWO_PI * beat / 2 - pk * 0.45) - sway / DS * 0.004 - hop / DS * 0.008 * pk
-        DIM ppx = pax + pk * 11 * DS * SIN(pa) + 6 * DS
-        DIM ppy = pay + pk * 11 * DS * COS(pa) - 8 * DS
-        DRAWCOLOR INT(cr * 0.5), INT(cg * 0.5), INT(cb * 0.5)
-        CIRCLE STACK(1, ppx, ppy, (11 - pk) * DS), TRUE
-        DRAWCOLOR 255, 60, 110
-        CIRCLE pax - 7 * DS, pay - 3 * DS, 8 * DS, TRUE
-        CIRCLE pax + 9 * DS, pay - 9 * DS, 8 * DS, TRUE
-        CIRCLE pax + 1 * DS, pay - 6 * DS, 4 * DS, TRUE
+        IF outfit$ = "gown" THEN
+            ' space buns and a tiara
+            DRAWCOLOR INT(cr * 0.55), INT(cg * 0.55), INT(cb * 0.55)
+            CIRCLE hdx - HEAD_R * 0.85, hdy - HEAD_R * 0.75, 14 * DS, TRUE
+            CIRCLE hdx + HEAD_R * 0.85, hdy - HEAD_R * 0.75, 14 * DS, TRUE
+            NEON_RING hdx - HEAD_R * 0.85, hdy - HEAD_R * 0.75, 14 * DS, cr, cg, cb
+            NEON_RING hdx + HEAD_R * 0.85, hdy - HEAD_R * 0.75, 14 * DS, cr, cg, cb
+            DIM crx = hdx + [-16, -10, -5, 0, 5, 10, 16] * DS
+            DIM cry = hdy - HEAD_R - 2 * DS + [0, -13, -4, -20, -4, -13, 0] * DS
+            DRAWCOLOR 255, 220, 120
+            LINE STACK(1, TAKE(6, crx), TAKE(6, cry), DROP(1, crx), DROP(1, cry))
+            LINE STACK(1, TAKE(6, crx), TAKE(6, cry) + 1, DROP(1, crx), DROP(1, cry) + 1)
+            DRAWCOLOR 255, 255, 255
+            CIRCLE hdx, hdy - HEAD_R - 22 * DS, 3 * DS, TRUE
+        ELSEIF outfit$ = "raver" THEN
+            ' pigtails either side, swinging against each other, and headphones
+            DIM rk = IOTA(6, 1)
+            DIM swing = 0.35 * SIN(TWO_PI * beat / 2 - rk * 0.5) - hop / DS * 0.006 * rk
+            DIM qlx = hdx - HEAD_R * 0.9 - rk * 10 * DS * SIN(0.5 + swing)
+            DIM qly = hdy - HEAD_R * 0.3 + rk * 10 * DS * COS(0.5 + swing)
+            DIM qrx = hdx + HEAD_R * 0.9 + rk * 10 * DS * SIN(0.5 - swing)
+            DIM qry = hdy - HEAD_R * 0.3 + rk * 10 * DS * COS(0.5 - swing)
+            DRAWCOLOR INT(cr * 0.5), INT(cg * 0.5), INT(cb * 0.5)
+            CIRCLE STACK(1, qlx, qly, (10 - rk) * DS), TRUE
+            CIRCLE STACK(1, qrx, qry, (10 - rk) * DS), TRUE
+            DIM ha = MATH.PI + 0.35 + IOTA(13, 0) * (MATH.PI - 0.7) / 12
+            DIM hpx = hdx + (HEAD_R + 6 * DS) * COS(ha)
+            DIM hpy = hdy + (HEAD_R + 6 * DS) * SIN(ha)
+            DRAWCOLOR 255, 60, 200
+            LINE STACK(1, TAKE(12, hpx), TAKE(12, hpy), DROP(1, hpx), DROP(1, hpy))
+            LINE STACK(1, TAKE(12, hpx), TAKE(12, hpy) + 2, DROP(1, hpx), DROP(1, hpy) + 2)
+            CIRCLE hdx - HEAD_R - 3 * DS, hdy - 2 * DS, 9 * DS, TRUE
+            CIRCLE hdx + HEAD_R + 3 * DS, hdy - 2 * DS, 9 * DS, TRUE
+        ELSEIF outfit$ = "unicorn" THEN
+            ' long rainbow hair and a striped horn
+            DIM uk = IOTA(10, 1)
+            DIM ua = 0.5 + 0.3 * SIN(TWO_PI * beat / 2 - uk * 0.4) - sway / DS * 0.004 - hop / DS * 0.006 * uk
+            DIM ux = hdx + HEAD_R * 0.7 + uk * 11 * DS * SIN(ua)
+            DIM uy = hdy - HEAD_R * 0.6 + uk * 11 * DS * COS(ua)
+            DIM uh = uk * 0.6 + cyc * 2
+            CIRCLE STACK(1, ux, uy, (13 - uk * 0.8) * DS), TRUE, STACK(1, INT((128 + 127 * SIN(uh)) * 0.7), INT((128 + 127 * SIN(uh + 2.1)) * 0.7), INT((128 + 127 * SIN(uh + 4.2)) * 0.7))
+            DIM hk = IOTA(INT(42 * DS), 0)
+            DIM hw = 7 * DS * (1 - hk / (42 * DS))
+            DIM stripe = (hk - 12 * INT(hk / 12)) < 6
+            LINE STACK(1, hdx - hw, hdy - HEAD_R - hk, hdx + hw, hdy - HEAD_R - hk), STACK(1, 255 + hk * 0, INT(200 + 55 * stripe), INT(90 + 150 * stripe))
+        ELSE
+            ' a ponytail swinging behind the beat, a bow
+            DIM pax AS DOUBLE = hdx + HEAD_R * 0.75
+            DIM pay AS DOUBLE = hdy - HEAD_R * 0.7
+            DIM pk = IOTA(7, 1)
+            DIM pa = 0.55 + 0.35 * SIN(TWO_PI * beat / 2 - pk * 0.45) - sway / DS * 0.004 - hop / DS * 0.008 * pk
+            DIM ppx = pax + pk * 11 * DS * SIN(pa) + 6 * DS
+            DIM ppy = pay + pk * 11 * DS * COS(pa) - 8 * DS
+            DRAWCOLOR INT(cr * 0.5), INT(cg * 0.5), INT(cb * 0.5)
+            CIRCLE STACK(1, ppx, ppy, (11 - pk) * DS), TRUE
+            DRAWCOLOR 255, 60, 110
+            CIRCLE pax - 7 * DS, pay - 3 * DS, 8 * DS, TRUE
+            CIRCLE pax + 9 * DS, pay - 9 * DS, 8 * DS, TRUE
+            CIRCLE pax + 1 * DS, pay - 6 * DS, 4 * DS, TRUE
+        ENDIF
     ELSE
         ' a cap, the brim towards her
         DIM ck = IOTA(16, 0)
@@ -645,6 +844,107 @@ SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOU
         LINE STACK(1, hdx - cw, hdy - HEAD_R + ck, hdx + cw, hdy - HEAD_R + ck)
         NEON hdx - HEAD_R, hdy - HEAD_R + 16, hdx + HEAD_R + 26, hdy - HEAD_R + 16, 1, 255, 170, 40
     ENDIF
+ENDSUB
+
+' Purple nebula clouds drifting through the sky, a shooting star every two bars
+SUB DRAW_NEBULA(cyc AS DOUBLE)
+    DIM sc AS DOUBLE = SW / 1080
+    DIM nx = [0.18, 0.8, 0.48, 0.9, 0.28] * SW + 40 * sc * SIN(cyc * 0.2 + IOTA(5, 0))
+    DIM ny = [0.22, 0.34, 0.1, 0.62, 0.58] * (HORIZON - 100)
+    DIM nr = [260, 220, 300, 180, 210] * sc
+    DIM ncol = STACK(1, [6, 9, 4, 8, 5], [2, 1, 3, 2, 2], [10, 8, 11, 9, 10])
+    DIM k AS INTEGER
+    FOR k = 1 TO 9
+        CIRCLE STACK(1, nx, ny, nr * (1.12 - k * 0.11)), TRUE, ncol
+    NEXT k
+    DIM sp AS DOUBLE = FRACT(cyc / 2)
+    IF sp < 0.3 THEN
+        DIM which AS INTEGER = INT(cyc / 2)
+        DIM prog AS DOUBLE = sp / 0.3
+        DIM sx AS DOUBLE = SW * (0.12 + 0.45 * FRACT(which * 0.618)) + prog * 420 * sc
+        DIM sy AS DOUBLE = HORIZON * (0.08 + 0.25 * FRACT(which * 0.381)) + prog * 170 * sc
+        DIM fade AS DOUBLE = 1 - prog
+        NEON sx - 150 * sc, sy - 60 * sc, sx, sy, 1, 120 * fade, 90 * fade, 200 * fade
+        NEON_RING sx, sy, 3 * sc, 255 * fade, 240 * fade, 255 * fade
+    ENDIF
+ENDSUB
+
+' Green digital rain falling down to the horizon
+SUB DRAW_RAIN(cyc AS DOUBLE)
+    DIM n AS INTEGER = 36
+    DIM ix = IOTA(n, 0)
+    DIM rx = ix * (SW / n) + SW / n / 2
+    DIM speed = 0.6 + (ix * 0.618 - INT(ix * 0.618)) * 0.9
+    DIM fall = cyc * speed / 2 + ix * 0.377
+    DIM head = (fall - INT(fall)) * (HORIZON + 300) - 100
+    DIM j AS INTEGER
+    FOR j = 0 TO 9
+        DIM lev AS DOUBLE = 1 - j / 10
+        DIM yy = head - j * 26
+        yy = yy + (yy > HORIZON - 16) * 9999
+        IF j = 0 THEN
+            DRAWCOLOR 190, 255, 200
+        ELSE
+            DRAWCOLOR INT(30 * lev), INT(210 * lev), INT(80 * lev)
+        ENDIF
+        LINE STACK(1, rx, yy, rx, yy + 14)
+        LINE STACK(1, rx + 1, yy, rx + 1, yy + 14)
+    NEXT j
+ENDSUB
+
+' Soft clouds drifting across the sky
+SUB DRAW_CLOUDS(cyc AS DOUBLE)
+    DIM sc AS DOUBLE = SW / 1080
+    GFX.BLEND "BLEND"
+    DRAWCOLOR 200, 190, 235, 40
+    DIM k AS INTEGER
+    FOR k = 0 TO 3
+        DIM drift AS DOUBLE = FRACT(k * 0.29 + cyc * 0.02 * (1 + k * 0.3))
+        DIM cx AS DOUBLE = drift * (SW + 400 * sc) - 200 * sc
+        DIM cy AS DOUBLE = HORIZON * (0.14 + k * 0.17)
+        DIM s AS DOUBLE = (50 + k * 8) * sc
+        CIRCLE STACK(1, cx + [-1.2, -0.4, 0.4, 1.2, 0] * s, cy + [0.2, -0.1, -0.2, 0.2, -0.6] * s, [0.6, 0.8, 0.8, 0.6, 0.7] * s), TRUE
+    NEXT k
+    GFX.BLEND "ADD"
+ENDSUB
+
+' A full moon off to the side of the dancer, r as wide as the sun would be
+SUB DRAW_MOON(r AS DOUBLE)
+    DIM mr AS DOUBLE = r * 0.62
+    DIM mx AS DOUBLE = MID_X + SW * 0.27
+    DIM my AS DOUBLE = HORIZON - r * 2
+    DIM ry = IOTA(INT(2 * mr), 0)
+    DIM half = SQR(ry * (2 * mr - ry))
+    DIM t = ry / (2 * mr)
+    GFX.BLEND "BLEND"
+    LINE STACK(1, mx - half, my - mr + ry, mx + half, my - mr + ry), STACK(1, INT(sun_top[0] + (sun_bot[0] - sun_top[0]) * t), INT(sun_top[1] + (sun_bot[1] - sun_top[1]) * t), INT(sun_top[2] + (sun_bot[2] - sun_top[2]) * t))
+    DRAWCOLOR INT(sun_bot[0] * 0.75), INT(sun_bot[1] * 0.75), INT(sun_bot[2] * 0.8)
+    CIRCLE STACK(1, mx + [-0.4, 0.32, 0.05, -0.12, 0.5] * mr, my + [-0.25, 0.18, -0.5, 0.45, -0.3] * mr, [0.17, 0.23, 0.1, 0.12, 0.07] * mr), TRUE
+    GFX.BLEND "ADD"
+    NEON_RING mx, my, mr + 10, 110, 70, 190
+    NEON_RING mx, my, mr + 28, 50, 30, 100
+ENDSUB
+
+' A rainbow of seven bands standing on the horizon, brighter on the kick
+SUB DRAW_RAINBOW(r AS DOUBLE, glow AS DOUBLE)
+    DIM br = [255, 255, 255, 70, 40, 100, 180]
+    DIM bg = [50, 140, 230, 220, 150, 70, 60]
+    DIM bb = [70, 40, 60, 90, 255, 255, 230]
+    DIM d = IOTA(INT(r), 0)
+    DIM lev AS DOUBLE = 0.7 + 0.3 * glow
+    DIM k AS INTEGER
+    FOR k = 0 TO 6
+        DIM ro AS DOUBLE = r * (1 - k * 0.065)
+        DIM ri AS DOUBLE = r * (1 - (k + 1) * 0.065)
+        DIM qo = ro * ro - d * d
+        DIM qi = ri * ri - d * d
+        DIM ring_out = SQR(qo * (qo > 0))
+        DIM ring_in = SQR(qi * (qi > 0))
+        DIM off = (qo <= 0) * 9999
+        DRAWCOLOR INT(br[k] * lev), INT(bg[k] * lev), INT(bb[k] * lev)
+        LINE STACK(1, MID_X - ring_out - off, HORIZON - d, MID_X - ring_in - off, HORIZON - d)
+        LINE STACK(1, MID_X + ring_in + off, HORIZON - d, MID_X + ring_out + off, HORIZON - d)
+    NEXT k
 ENDSUB
 
 ' The running sweeps of tracks that play, newest on top
@@ -742,7 +1042,7 @@ SUB DRAW_INTRO()
     GFX.BLEND "ADD"
     DIM fade AS DOUBLE = CLAMP01((INTRO_SECONDS - intro_left) / 0.8)
     CENTER_TEXT 250, 34, SERIES$, INT(150 * fade), INT(190 * fade), INT(255 * fade)
-    CENTER_TEXT 310, 110, title$, INT(255 * fade), INT(110 * fade), INT(215 * fade)
+    CENTER_TEXT 310, 110, title$, INT(title_rgb[0] * fade), INT(title_rgb[1] * fade), INT(title_rgb[2] * fade)
     DIM info$ AS STRING = STR$(SCORE.BPM_OF()) + " BPM"
     IF subtitle$ <> "" THEN info$ = subtitle$ + "   -   " + info$
     CENTER_TEXT 470, 30, info$, INT(200 * fade), INT(200 * fade), INT(230 * fade)
@@ -765,14 +1065,14 @@ SUB DRAW_TIKTOK(cyc AS DOUBLE)
     CENTER_TEXT 250, 34, SERIES$, 150, 190, 255
     DIM tf AS DOUBLE = 1 - CLAMP01((secs - 2.5) / 1)
     IF tf > 0 THEN
-        CENTER_TEXT 300, 76, title$, INT(255 * tf), INT(110 * tf), INT(215 * tf)
+        CENTER_TEXT 300, 76, title$, INT(title_rgb[0] * tf), INT(title_rgb[1] * tf), INT(title_rgb[2] * tf)
         IF subtitle$ <> "" THEN CENTER_TEXT 400, 30, subtitle$, INT(200 * tf), INT(200 * tf), INT(230 * tf)
     ENDIF
     DIM into AS DOUBLE = cyc - clip_from - TT_BARS_PER_MOVE * INT((cyc - clip_from) / TT_BARS_PER_MOVE)
     DIM la AS DOUBLE = 1 - CLAMP01((into - 0.5) / 0.75)
     IF cyc >= clip_from ANDALSO la > 0 ANDALSO secs > 1.5 THEN
         DIM pop AS INTEGER = INT(64 + 16 * (1 - CLAMP01(into * 4)))
-        CENTER_TEXT 590, pop, TT_LABELS$[TT_MOVE_AT(cyc)], INT(255 * la), INT(235 * la), INT(120 * la)
+        CENTER_TEXT 590, pop, TT_LABELS$[TT_MOVE_AT(cyc)], INT(label_rgb[0] * la), INT(label_rgb[1] * la), INT(label_rgb[2] * la)
     ENDIF
     IF font$ <> "" THEN SETFONT font$, 17
 ENDSUB
@@ -918,24 +1218,56 @@ SUB FRAME()
     DIM sr AS DOUBLE = 0.5 + 0.5 * SIN(hue)
     DIM sg AS DOUBLE = 0.5 + 0.5 * SIN(hue + 2.1)
     DIM sb AS DOUBLE = 0.5 + 0.5 * SIN(hue + 4.2)
-    CLS INT(6 + 34 * kick_env * sr), INT(3 + 16 * kick_env * sg), INT(16 + 38 * kick_env * sb)
+    IF look$ = "rainbow" THEN
+        sr = 0.5 + 0.5 * SIN(cyc)
+        sg = 0.5 + 0.5 * SIN(cyc + 2.1)
+        sb = 0.5 + 0.5 * SIN(cyc + 4.2)
+    ELSEIF look$ <> "classic" THEN
+        sr = acc_r / 255
+        sg = acc_g / 255
+        sb = acc_b / 255
+    ENDIF
+    IF look$ = "classic" THEN
+        CLS INT(6 + 34 * kick_env * sr), INT(3 + 16 * kick_env * sg), INT(16 + 38 * kick_env * sb)
+    ELSEIF look$ = "rainbow" THEN
+        CLS INT(sky_r + 12 * kick_env * sr), INT(sky_g + 12 * kick_env * sg), INT(sky_b + 20 * kick_env)
+    ELSE
+        CLS INT(sky_r + 30 * kick_env * sr), INT(sky_g + 30 * kick_env * sg), INT(sky_b + 30 * kick_env * sb)
+    ENDIF
     GFX.BLEND "ADD"
-    DIM tw = INT(30 + 150 * (0.5 + 0.5 * SIN(star_ph + cyc * 3)))
-    CIRCLE STACK(1, star_x, star_y, star_x * 0 + 1.5), TRUE, STACK(1, tw, tw, tw + 30)
+    IF backdrop$ = "moon" THEN DRAW_NEBULA cyc
+    IF backdrop$ = "rain" THEN
+        DRAW_RAIN cyc
+    ELSE
+        DIM tw = INT(30 + 150 * (0.5 + 0.5 * SIN(star_ph + cyc * 3)))
+        CIRCLE STACK(1, star_x, star_y, star_x * 0 + 1.5), TRUE, STACK(1, tw, tw, tw + 30)
+    ENDIF
+    IF backdrop$ = "rainbow" THEN DRAW_CLOUDS cyc
 
-    ' a striped sun on the horizon, swelling with the kick
+    ' on the horizon a striped sun, a moon or a rainbow, swelling with the kick
     DIM sun_r AS DOUBLE = (230 + 22 * kick_env + 70 * energy) * SUN_SCALE
-    DIM sy = IOTA(INT(sun_r), 0)
-    DIM scroll = sy + INT(FRACT(cyc) * 24)
-    DIM cut = (sy > sun_r * 0.5) * ((scroll - 24 * INT(scroll / 24)) < 3 + 7 * sy / sun_r)
-    DIM shalf = SQR(sun_r * sun_r - (sun_r - sy) ^ 2) * (1 - cut)
-    DIM tcol = sy / sun_r
-    LINE STACK(1, MID_X - shalf, HORIZON - sun_r + sy, MID_X + shalf, HORIZON - sun_r + sy), STACK(1, INT(230 - 10 * tcol), INT(200 - 170 * tcol), INT(60 + 120 * tcol))
+    IF backdrop$ = "moon" THEN
+        DRAW_MOON sun_r
+    ELSEIF backdrop$ = "rainbow" THEN
+        DRAW_RAINBOW sun_r * 1.25, kick_env
+    ELSE
+        DIM sy = IOTA(INT(sun_r), 0)
+        DIM scroll = sy + INT(FRACT(cyc) * 24)
+        DIM cut = (sy > sun_r * 0.5) * ((scroll - 24 * INT(scroll / 24)) < 3 + 7 * sy / sun_r)
+        DIM shalf = SQR(sun_r * sun_r - (sun_r - sy) ^ 2) * (1 - cut)
+        DIM tcol = sy / sun_r
+        LINE STACK(1, MID_X - shalf, HORIZON - sun_r + sy, MID_X + shalf, HORIZON - sun_r + sy), STACK(1, INT(sun_top[0] + (sun_bot[0] - sun_top[0]) * tcol), INT(sun_top[1] + (sun_bot[1] - sun_top[1]) * tcol), INT(sun_top[2] + (sun_bot[2] - sun_top[2]) * tcol))
+    ENDIF
 
     ' spectrum skyline either side of the sun
     DIM bx = IOTA(N_BANDS, 0) * BAND_DX
     DIM bh = spec * 300 + 3
-    DIM bcols = STACK(1, INT(60 + 195 * spec), INT(30 + 80 * (1 - spec)), INT(200 - 60 * spec))
+    DIM bcols = STACK(1, INT(band_lo_rgb[0] + (band_hi_rgb[0] - band_lo_rgb[0]) * spec), INT(band_lo_rgb[1] + (band_hi_rgb[1] - band_lo_rgb[1]) * spec), INT(band_lo_rgb[2] + (band_hi_rgb[2] - band_lo_rgb[2]) * spec))
+    IF look$ = "rainbow" THEN
+        DIM bhue = IOTA(N_BANDS, 0) * 0.16 + cyc
+        DIM blev = 0.45 + 0.55 * spec
+        bcols = STACK(1, INT((128 + 127 * SIN(bhue)) * blev), INT((128 + 127 * SIN(bhue + 2.1)) * blev), INT((128 + 127 * SIN(bhue + 4.2)) * blev))
+    ENDIF
     RECT STACK(1, MID_X + 254 * BAND_DX / 17 + bx, HORIZON - bh, bx * 0 + BAND_W, bh), TRUE, bcols
     RECT STACK(1, MID_X - 267 * BAND_DX / 17 - bx, HORIZON - bh, bx * 0 + BAND_W, bh), TRUE, bcols
 
@@ -943,11 +1275,19 @@ SUB FRAME()
     DIM gb AS DOUBLE = 0.35 + 0.65 * kick_env
     DIM gz = IOTA(18, 1) - FRACT(beat * 0.5)
     DIM gy = HORIZON + (SH - HORIZON) * 0.9 / gz
-    DRAWCOLOR INT(200 * gb), INT(40 * gb), INT(180 * gb)
-    LINE STACK(1, gy * 0, gy, gy * 0 + SW, gy)
     DIM vx = IOTA(25, 0) - 12
-    LINE STACK(1, MID_X + vx * 14, vx * 0 + HORIZON, MID_X + vx * 240, vx * 0 + SH)
-    DRAWCOLOR INT(255 * gb), INT(80 * gb), INT(220 * gb)
+    IF look$ = "rainbow" THEN
+        DIM gh = IOTA(18, 1) * 0.7 - cyc
+        LINE STACK(1, gy * 0, gy, gy * 0 + SW, gy), STACK(1, INT((128 + 127 * SIN(gh)) * gb), INT((128 + 127 * SIN(gh + 2.1)) * gb), INT((128 + 127 * SIN(gh + 4.2)) * gb))
+        DIM vh = vx * 0.26 + cyc
+        LINE STACK(1, MID_X + vx * 14, vx * 0 + HORIZON, MID_X + vx * 240, vx * 0 + SH), STACK(1, INT((128 + 127 * SIN(vh)) * gb), INT((128 + 127 * SIN(vh + 2.1)) * gb), INT((128 + 127 * SIN(vh + 4.2)) * gb))
+        DRAWCOLOR INT(255 * gb), INT(255 * gb), INT(255 * gb)
+    ELSE
+        DRAWCOLOR INT(grid_rgb[0] * gb), INT(grid_rgb[1] * gb), INT(grid_rgb[2] * gb)
+        LINE STACK(1, gy * 0, gy, gy * 0 + SW, gy)
+        LINE STACK(1, MID_X + vx * 14, vx * 0 + HORIZON, MID_X + vx * 240, vx * 0 + SH)
+        DRAWCOLOR INT(hline_rgb[0] * gb), INT(hline_rgb[1] * gb), INT(hline_rgb[2] * gb)
+    ENDIF
     LINE 0, HORIZON, SW, HORIZON
 
     ' the master scope across the sky, the reverb bus beneath it
@@ -986,15 +1326,26 @@ SUB FRAME()
             IF k >= 3 THEN lx = SW * 0.9375
             DIM tx AS DOUBLE = MID_X + SW * 0.427 * SIN(cyc * TWO_PI / 4 + k * 1.1)
             DIM lh AS DOUBLE = k * 1.05 + cyc
-            NEON lx, -10, tx, FLOOR_Y + 120, 0, 120 + 120 * SIN(lh), 120 + 120 * SIN(lh + 2.1), 120 + 120 * SIN(lh + 4.2)
+            IF laser_mode = 1 THEN
+                NEON lx, -10, tx, FLOOR_Y + 120, 0, 190 + 60 * SIN(lh), 70 + 50 * SIN(lh + 2.1), 255
+            ELSEIF laser_mode = 2 THEN
+                NEON lx, -10, tx, FLOOR_Y + 120, 0, 90 + 90 * SIN(lh), 255, 90 + 60 * SIN(lh + 2.1)
+            ELSE
+                NEON lx, -10, tx, FLOOR_Y + 120, 0, 120 + 120 * SIN(lh), 120 + 120 * SIN(lh + 2.1), 120 + 120 * SIN(lh + 4.2)
+            ENDIF
         NEXT k
     ENDIF
 
+    IF look$ = "rainbow" THEN
+        girl_r = HUE_R(cyc * 0.5)
+        girl_g = HUE_G(cyc * 0.5)
+        girl_b = HUE_B(cyc * 0.5)
+    ENDIF
     IF tiktok THEN
-        DANCER MID_X, TRUE, cyc, 255, 90, 200
+        DANCER MID_X, TRUE, cyc, girl_r, girl_g, girl_b
     ELSE
         DANCER 760, FALSE, cyc, 60, 210, 255
-        DANCER 1160, TRUE, cyc, 255, 90, 200
+        DANCER 1160, TRUE, cyc, girl_r, girl_g, girl_b
     ENDIF
 
     ' particles; confetti and sparks fall, hearts float
@@ -1092,6 +1443,7 @@ SUB OPEN_SHOW()
         IF cli[ai] = "--render" ANDALSO ai + 1 < LEN(cli) THEN render_dir$ = cli[ai + 1]
         IF cli[ai] = "--display" ANDALSO ai + 1 < LEN(cli) THEN GFX.DISPLAY CINT(VAL(cli[ai + 1]))
         IF cli[ai] = "--tiktok" THEN tiktok = TRUE
+        IF cli[ai] = "--look" ANDALSO ai + 1 < LEN(cli) THEN SET_LOOK LCASE$(cli[ai + 1])
     NEXT ai
     IF tiktok THEN
         SW = 1080

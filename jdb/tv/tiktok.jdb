@@ -5,6 +5,10 @@
 '
 '   jdBasic tiktok.jdb                    every clip in CLIPS below
 '   jdBasic tiktok.jdb house 7            one, from a genre and a seed
+'   jdBasic tiktok.jdb house 7 neon       the same in another look
+'
+' The look is the show (stage.jdb --look): classic, purple, neon or
+' rainbow. A look other than classic is part of the file name.
 '
 ' Per clip: the frames and the WAV go into raw/<base>_frames, ffmpeg
 ' muxes final/tiktok/<base>.mp4 (1080x1920, 30 fps), the frames are
@@ -19,8 +23,16 @@ DIM FPS AS INTEGER = 30
 DIM OUT_DIR$ AS STRING = "final\tiktok"
 DIM TAGS$ AS STRING = "#techno #electronicmusic #generativemusic #aimusic #creativecoding #dance #neon #synthwave #kaiku #jdbasic"
 
-' genre, seed
-DIM CLIPS$ = ["trance", "42", "house", "7", "synthwave", "3", "deep", "11", "acid", "5"]
+' genre, seed, look
+DIM CLIPS$ = ["trance", "42", "purple", "house", "7", "neon", "synthwave", "3", "classic", "deep", "11", "rainbow", "acid", "5", "neon", "trance", "17", "rainbow", "house", "23", "purple"]
+
+' The cover title's colour per look
+FUNC LOOK_COLOR$(look$) AS STRING
+    IF look$ = "purple" THEN RETURN "0xD296FF"
+    IF look$ = "neon" THEN RETURN "0x78FF8C"
+    IF look$ = "rainbow" THEN RETURN "0xFFD75A"
+    RETURN "0xFF6EC7"
+ENDFUNC
 
 SUB CLEAN_FRAMES(dir$)
     IF FILE.EXISTS(dir$) THEN
@@ -67,7 +79,7 @@ ENDFUNC
 ' The cover: the still, whose own line names the series, under a dark band
 ' with the song and the key, in the upper third, where TikTok's profile
 ' grid still shows it
-FUNC MAKE_COVER(still$, out_png$, song$, info$, work$) AS INTEGER
+FUNC MAKE_COVER(still$, out_png$, song$, info$, work$, color$) AS INTEGER
     DIM song_txt$ AS STRING = work$ + "\cover_song.txt"
     DIM info_txt$ AS STRING = work$ + "\cover_info.txt"
     TXTWRITER song_txt$, song$
@@ -78,7 +90,7 @@ FUNC MAKE_COVER(still$, out_png$, song$, info$, work$) AS INTEGER
     DIM ft$ AS STRING = REPLACE$(song_txt$, "\", "/")
     DIM fi$ AS STRING = REPLACE$(info_txt$, "\", "/")
     DIM vf$ AS STRING = "drawbox=x=0:y=318:w=iw:h=340:color=0x05020F@0.62:t=fill"
-    vf$ = vf$ + ",drawtext=" + font$ + ":textfile=" + ft$ + ":fontsize=" + STR$(size) + ":fontcolor=0xFF6EC7:borderw=5:bordercolor=0x1A0020:x=(w-text_w)/2:y=" + STR$(INT(440 - size / 2))
+    vf$ = vf$ + ",drawtext=" + font$ + ":textfile=" + ft$ + ":fontsize=" + STR$(size) + ":fontcolor=" + color$ + ":borderw=5:bordercolor=0x1A0020:x=(w-text_w)/2:y=" + STR$(INT(440 - size / 2))
     vf$ = vf$ + ",drawtext=" + font$ + ":textfile=" + fi$ + ":fontsize=46:fontcolor=0xF0F0FF:x=(w-text_w)/2:y=560"
     DIM ff = OS.EXEC("ffmpeg", ["-y", "-loglevel", "error", "-i", still$, "-vf", vf$, "-frames:v", "1", out_png$])
     IF ff{"EXIT_CODE"} <> 0 THEN PRINT ff{"OUTPUT"}
@@ -95,8 +107,9 @@ FUNC KEY_INFO$(run_log$) AS STRING
     RETURN LEFT$(rest$, b + 4)
 ENDFUNC
 
-FUNC MAKE_CLIP(genre$, seed$) AS INTEGER
+FUNC MAKE_CLIP(genre$, seed$, look$) AS INTEGER
     DIM base$ AS STRING = "kaiku_tt_" + genre$ + "_" + seed$
+    IF look$ <> "classic" THEN base$ = base$ + "_" + look$
     DIM frames$ AS STRING = "raw\" + base$ + "_frames"
     DIM out$ AS STRING = OUT_DIR$ + "\" + base$ + ".mp4"
     PRINT "== "; base$
@@ -105,7 +118,7 @@ FUNC MAKE_CLIP(genre$, seed$) AS INTEGER
     MKDIR OUT_DIR$
 
     DIM t0 AS DOUBLE = TICK()
-    DIM r = OS.EXEC(JDB$, [SONGGEN$, "--genre", genre$, "--seed", seed$, "--render", frames$, "--tiktok"])
+    DIM r = OS.EXEC(JDB$, [SONGGEN$, "--genre", genre$, "--seed", seed$, "--render", frames$, "--tiktok", "--look", look$])
     DIM run_log$ AS STRING = r{"OUTPUT"}
     DIM p AS INTEGER = INSTR(run_log$, "rendered ")
     IF p < 0 THEN
@@ -129,7 +142,7 @@ FUNC MAKE_CLIP(genre$, seed$) AS INTEGER
     DIM genre_name$ AS STRING = UCASE$(LEFT$(genre$, 1)) + MID$(genre$, 1, LEN(genre$))
     DIM still$ AS STRING = COVER_STILL$(frames$)
     DIM cover$ AS STRING = OUT_DIR$ + "\" + base$ + ".cover.png"
-    IF still$ = "" ORELSE NOT MAKE_COVER(still$, cover$, song$, genre_name$ + "  -  " + KEY_INFO$(run_log$), frames$) THEN
+    IF still$ = "" ORELSE NOT MAKE_COVER(still$, cover$, song$, genre_name$ + "  -  " + KEY_INFO$(run_log$), frames$, LOOK_COLOR$(look$)) THEN
         PRINT "   cover failed"
     ELSE
         PRINT "   -> "; cover$
@@ -147,11 +160,13 @@ ENDFUNC
 DIM cli = OS.ARGS()
 DIM made AS INTEGER = 0
 IF LEN(cli) > 2 THEN
-    IF MAKE_CLIP(LCASE$(cli[1]), cli[2]) THEN made = 1
+    DIM one_look$ AS STRING = "classic"
+    IF LEN(cli) > 3 THEN one_look$ = LCASE$(cli[3])
+    IF MAKE_CLIP(LCASE$(cli[1]), cli[2], one_look$) THEN made = 1
 ELSE
     DIM ci AS INTEGER
-    FOR ci = 0 TO LEN(CLIPS$) - 1 STEP 2
-        IF MAKE_CLIP(CLIPS$[ci], CLIPS$[ci + 1]) THEN made = made + 1
+    FOR ci = 0 TO LEN(CLIPS$) - 1 STEP 3
+        IF MAKE_CLIP(CLIPS$[ci], CLIPS$[ci + 1], CLIPS$[ci + 2]) THEN made = made + 1
     NEXT ci
 ENDIF
 PRINT made; " clip(s) made"
