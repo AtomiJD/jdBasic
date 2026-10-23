@@ -1,0 +1,23 @@
+' RANGE(start, stop, [step]) stops before stop in either direction, and a
+' left-out step is 1 or -1 by the direction, in both backends.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+Check(JOIN(RANGE(1, 5), ",") = "1,2,3,4", "up without a step")
+Check(JOIN(RANGE(5, 1), ",") = "5,4,3,2", "down without a step")
+Check(JOIN(RANGE(5, 1, -1), ",") = "5,4,3,2", "down with -1")
+Check(JOIN(RANGE(10, 0, -3), ",") = "10,7,4,1", "down with -3")
+Check(JOIN(RANGE(0, 10, 3), ",") = "0,3,6,9", "up with 3")
+Check(LEN(RANGE(3, 3)) = 0, "empty when start is stop")
+Check(LEN(RANGE(1, 10, -1)) = 0, "empty when the step points away")
+Check(LEN(RANGE(10, 1, 1)) = 0, "empty when the step points away, upward")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

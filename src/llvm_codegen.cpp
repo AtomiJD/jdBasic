@@ -15692,7 +15692,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // flag and __TXTWRITER_ENC's append slot must default to 0 (no
         // append), not -1 (which is truthy and would silently switch to
         // append mode for 2-arg / 3-arg calls).
-        bool i64_default_zero = (upper == "TXTWRITER" || upper == "__TXTWRITER_ENC");
+        // RANGE's step of 0 means the direction's own 1 or -1.
+        bool i64_default_zero = (upper == "TXTWRITER" || upper == "__TXTWRITER_ENC" || upper == "RANGE");
         for (size_t i = expr.args.size(); i < param_count; i++) {
             LLVMTypeRef t = param_types[i];
             if (t == i64_type) {

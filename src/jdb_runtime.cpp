@@ -1616,10 +1616,14 @@ JdbArray* jdb_ones(int64_t n) {
     return r;
 }
 
+// start up to but not including stop; a step of 0 means 1 or -1 by the
+// direction, as the interpreter's default does.
 JdbArray* jdb_range(int64_t start, int64_t stop, int64_t step) {
-    if (step == 0) step = 1;
-    int64_t n = (stop - start + step - 1) / step;
-    if (n <= 0) return jdb_array_new(0);
+    if (step == 0) step = start <= stop ? 1 : -1;
+    int64_t span = step > 0 ? stop - start : start - stop;
+    int64_t mag = step > 0 ? step : -step;
+    if (span <= 0) return jdb_array_new(0);
+    int64_t n = (span + mag - 1) / mag;
     auto* r = jdb_array_new(n);
     for (int64_t i = 0; i < n; i++) r->data[i] = (double)(start + i * step);
     return r;
