@@ -4156,7 +4156,7 @@ char* jdb_now() {
 
 // Epoch version retained for legacy callers
 double jdb_now_epoch() {
-    return (double)time(NULL);
+    return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 // Civil calendar fallback (Howard Hinnant's algorithm): localtime returns
