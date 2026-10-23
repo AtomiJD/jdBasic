@@ -621,8 +621,8 @@ ENDFUNC
 
 ' ── output ─────────────────────────────────────────────────────
 
-EXPORT SUB WRITECSV(df, path$, delim$ = ",")
-    CSVWRITER path$, MATRIX(df), delim$, df{"names"}
+EXPORT SUB WRITECSV(df, path$, delim$ = ",", digits = 0)
+    CSVWRITER path$, MATRIX(df), delim$, df{"names"}, digits
 ENDSUB
 
 ' The first rows as a CONSOLE table; n_rows 0 prints every row.

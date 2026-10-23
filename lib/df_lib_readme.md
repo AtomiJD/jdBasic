@@ -78,7 +78,7 @@ DF.SHOW(DF.SORT(by_region, "revenue", TRUE))
 
 | Call | What it does |
 |------|--------------|
-| `WRITECSV(df, path$, [delim$])` | The frame as CSV with a header row. |
+| `WRITECSV(df, path$, [delim$], [digits])` | The frame as CSV with a header row; `digits` writes numbers with that many significant digits (17 for an exact round trip). |
 | `TEXT$(df, [n], [opts])` | The first `n` rows as a `CONSOLE` table, ten by default, `0` for all; `opts` reaches `CONSOLE.TABLE$`. |
 | `SHOW(df, [n], [opts])` | The same, printed. |
 

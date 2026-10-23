@@ -1,0 +1,32 @@
+' CSVWRITER writes a number with 6 significant digits unless the digits
+' argument says how many; 17 reads back the very same double.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM path$ AS STRING = "_csv_digits.csv"
+DIM rows AS ARRAY = [[0.123456789012345, 3], [1.5, 4]]
+
+CSVWRITER path$, rows, ",", ["a", "b"]
+DIM six$ AS STRING = TXTREADER$(path$)
+Check(INSTR(six$, "0.123457,3") >= 0, "six significant digits by default")
+
+CSVWRITER path$, rows, ",", ["a", "b"], 17
+DIM back = CSVREADER(path$, ",", TRUE)
+Check(back[0][0] = 0.123456789012345, "17 digits read back the same double")
+Check(back[1][0] = 1.5, "a short number stays short")
+Check(back[0][1] = 3, "an integer stays an integer")
+
+CSVWRITER path$, rows, ",", 0, 3
+DIM three$ AS STRING = TXTREADER$(path$)
+Check(INSTR(three$, "0.123,3") >= 0, "three significant digits")
+KILL path$
+
+IF failed > 0 THEN END 1
+PRINT "OK"

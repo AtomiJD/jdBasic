@@ -305,6 +305,10 @@ void VM::register_file_builtins() {
         std::string fname = args[0].as_string()->data;
         auto* data = args[1].as_array();
         std::string delim = (args.size() >= 3) ? args[2].as_string()->data : ",";
+        // Significant digits for a non-integer number; 0 is the 6 of to_string.
+        int digits = (args.size() >= 5) ? (int)args[4].to_int() : 0;
+        if (digits < 0) digits = 0;
+        if (digits > 17) digits = 17;
         std::ofstream f(fname);
         if (!f) throw std::runtime_error("Cannot write file: " + fname);
         // A text field quoted as RFC 4180 asks when it holds the delimiter,
@@ -315,6 +319,14 @@ void VM::register_file_builtins() {
             std::string q = "\"";
             for (char c : s) { if (c == '"') q += '"'; q += c; }
             return q + "\"";
+        };
+        auto number = [digits](const Value& v) {
+            bool fractional = v.type == ValueType::FLOAT64 || v.type == ValueType::FLOAT32 ||
+                              v.type == ValueType::FLOAT16;
+            if (digits == 0 || !fractional) return v.to_string();
+            char buf[40];
+            snprintf(buf, sizeof buf, "%.*g", digits, v.to_double());
+            return std::string(buf);
         };
         // Optional header array
         if (args.size() >= 4 && args[3].type == ValueType::ARRAY) {
@@ -334,11 +346,11 @@ void VM::register_file_builtins() {
                     if (cell.type == ValueType::STRING) {
                         f << field(cell.as_string()->data);
                     } else {
-                        f << cell.to_string();
+                        f << number(cell);
                     }
                 }
             } else {
-                f << row.to_string();
+                f << number(row);
             }
             f << "\n";
         }
