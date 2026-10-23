@@ -394,6 +394,12 @@ Description: Performs a bitwise OR operation on two numeric expressions.
 Syntax: expression BXOR expression
 Description: Performs a bitwise XOR operation on two numeric expressions.
 
+[BMM]
+Syntax: BMM(a, b)
+Description: The matrix product per batch: a is [B][M][K], b is [B][K][N], the
+answer [B][M][N]. A side that is one matrix meets every batch of the other; two
+matrices answer as MATMUL does.
+
 [BNOT]
 Syntax: BNOT expression
 Description: Unary bitwise NOT (~). Operand is coerced to 64-bit integer; vectorises element-wise over arrays. Example: BNOT 5 = -6, (BNOT $AA) BAND $FF = $55.
@@ -2482,8 +2488,17 @@ Syntax: MAT4.TRANSLATE(m, x, y, z) -> mat4
 Description: Returns m * Translation(x, y, z).
 
 [MATMUL]
-Syntax: MATMUL(matrixA, matrixB)
-Description: Performs matrix multiplication.
+Syntax: MATMUL(a, b)
+Description: The matrix product: a is [M,K], b is [K,N], the answer [M,N]. A flat
+array on the right is a column of K cells and answers a flat array of M; one
+on the left is a row and answers a flat array of N. Shapes that do not fit are
+an error; the dot product of two vectors is SUM(a * b).
+
+[MATMUL_T]
+Syntax: MATMUL_T(a, b)
+Description: MATMUL(TRANSPOSE(a), b) without the transposed copy: a is [K,M],
+b is [K,N], the answer [M,N]. The gradient step x^T * delta and the Gram
+matrix h^T * h.
 
 [MAX]
 Syntax: MAX(array) or MAX(matrix, dimension)

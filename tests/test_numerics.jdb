@@ -1,5 +1,5 @@
 ' Regression tests for the Eigen-backed numerics builtins:
-' SVD, QR, DET, EIG, FFT, IFFT. Runs identically under the interpreter
+' MATMUL, MATMUL_T, BMM, SOLVE, INVERT, SVD, QR, DET, EIG, FFT, IFFT. Runs identically under the interpreter
 ' and native -c.
 
 FUNC chk(nm AS STRING, got AS DOUBLE, want AS DOUBLE, tol AS DOUBLE) AS INTEGER
@@ -42,6 +42,75 @@ fails = fails + chk("FFT roundtrip[2]", rt[2][0], 3.0, 0.000000001)
 DIM dc = FFT([1.0, 1.0, 1.0, 1.0])
 fails = fails + chk("FFT DC bin0", dc[0][0], 4.0, 0.000000001)
 fails = fails + chk("FFT DC bin1", dc[1][0], 0.0, 0.000000001)
+
+
+' MATMUL: [[1,2],[3,4]] * [[5,6],[7,8]] = [[19,22],[43,50]]
+DIM B = [[5.0, 6.0], [7.0, 8.0]]
+DIM P = MATMUL(A, B)
+fails = fails + chk("MATMUL 00", P[0][0], 19.0, 0.000000001)
+fails = fails + chk("MATMUL 11", P[1][1], 50.0, 0.000000001)
+fails = fails + chk("MATMUL rows", LEN(P), 2, 0)
+
+' A matrix times a flat vector answers a flat vector: A * [1, 1] = [3, 7]
+DIM Av = MATMUL(A, [1.0, 1.0])
+fails = fails + chk("MATMUL vector len", LEN(Av), 2, 0)
+fails = fails + chk("MATMUL vector 1", Av[1], 7.0, 0.000000001)
+' A row vector times a matrix: [1, 1] * A = [4, 6]
+DIM vA = MATMUL([1.0, 1.0], A)
+fails = fails + chk("MATMUL row 1", vA[1], 6.0, 0.000000001)
+
+' MATMUL_T(A, B) = TRANSPOSE(A) * B
+DIM T1 = MATMUL_T(A, B)
+DIM T2 = MATMUL(TRANSPOSE(A), B)
+fails = fails + chk("MATMUL_T 01", T1[0][1], T2[0][1], 0.000000001)
+fails = fails + chk("MATMUL_T 10", T1[1][0], T2[1][0], 0.000000001)
+' A tall matrix: h is 3x2, h^T h is 2x2
+DIM h = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+DIM hth = MATMUL_T(h, h)
+fails = fails + chk("MATMUL_T gram rows", LEN(hth), 2, 0)
+fails = fails + chk("MATMUL_T gram 00", hth[0][0], 35.0, 0.000000001)
+fails = fails + chk("MATMUL_T gram 01", hth[0][1], 44.0, 0.000000001)
+
+' BMM over two batches, and a matrix side that meets every batch
+DIM batch = [A, B]
+DIM BB = BMM(batch, batch)
+fails = fails + chk("BMM batches", LEN(BB), 2, 0)
+fails = fails + chk("BMM 0 = A*A", BB[0][0][0], 7.0, 0.000000001)
+fails = fails + chk("BMM 1 = B*B", BB[1][1][1], 106.0, 0.000000001)
+DIM BA = BMM(batch, A)
+fails = fails + chk("BMM broadcast 1 = B*A", BA[1][0][0], 23.0, 0.000000001)
+DIM BM = BMM(A, B)
+fails = fails + chk("BMM two matrices", BM[1][1], 50.0, 0.000000001)
+
+' SOLVE and INVERT: A x = [5, 11] has x = [1, 2]; A * INVERT(A) = I
+DIM x = SOLVE(A, [5.0, 11.0])
+fails = fails + chk("SOLVE x0", x[0], 1.0, 0.000000001)
+fails = fails + chk("SOLVE x1", x[1], 2.0, 0.000000001)
+DIM X2 = SOLVE(A, [[5.0, 1.0], [11.0, 3.0]])
+fails = fails + chk("SOLVE matrix rhs", X2[1][0], 2.0, 0.000000001)
+DIM Ai = INVERT(A)
+DIM I2 = MATMUL(A, Ai)
+fails = fails + chk("INVERT identity 00", I2[0][0], 1.0, 0.000000001)
+fails = fails + chk("INVERT identity 01", I2[0][1], 0.0, 0.000000001)
+
+' Shapes that do not fit, and a singular matrix, are errors
+DIM errs = 0
+TRY
+    DIM bad = MATMUL(A, h)
+CATCH
+    errs = errs + 1
+ENDTRY
+TRY
+    DIM sing = INVERT([[1.0, 2.0], [2.0, 4.0]])
+CATCH
+    errs = errs + 1
+ENDTRY
+TRY
+    DIM dot = MATMUL([1.0, 2.0], [3.0, 4.0])
+CATCH
+    errs = errs + 1
+ENDTRY
+fails = fails + chk("three errors", errs, 3, 0)
 
 PRINT "==============================="
 IF fails = 0 THEN

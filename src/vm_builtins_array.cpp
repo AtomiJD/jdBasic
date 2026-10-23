@@ -709,6 +709,9 @@ void VM::register_array_builtins() {
     });
 
     // ── MATMUL ───────────────────────────────────────────────
+    // A board has no Eigen and keeps the loop; numerics.cpp registers the
+    // Eigen form for every other build, as it does for SOLVE and INVERT.
+#ifdef JDB_MCU
     register_native("MATMUL", 2, 2, [](const std::vector<Value>& args) -> Value {
         int ar, ac, br, bc;
         get_2d(args[0], ar, ac); get_2d(args[1], br, bc);
@@ -722,6 +725,7 @@ void VM::register_array_builtins() {
             }
         return r;
     });
+#endif
 
     // ── MVLET ────────────────────────────────────────────────
     register_native("MVLET", 4, 4, [](const std::vector<Value>& args) -> Value {
@@ -852,6 +856,7 @@ void VM::register_array_builtins() {
         return r;
     });
 
+#ifdef JDB_MCU
     // ── SOLVE (Ax=b) ─────────────────────────────────────────
     register_native("SOLVE", 2, 2, [](const std::vector<Value>& args) -> Value {
         int n, nc; get_2d(args[0], n, nc);
@@ -914,6 +919,7 @@ void VM::register_array_builtins() {
                 r.as_array()->elements[i].as_array()->elements[j] = Value::make_f64(A[i][n + j]);
         return r;
     });
+#endif
 
     // ── CONVOLVE ─────────────────────────────────────────────
     register_native("CONVOLVE", [](const std::vector<Value>& args) -> Value {

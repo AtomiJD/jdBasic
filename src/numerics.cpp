@@ -1,4 +1,5 @@
-// Eigen-backed numerical builtins: SVD, QR, DET, EIG, FFT, IFFT.
+// Eigen-backed numerical builtins: MATMUL, MATMUL_T, BMM, SOLVE, INVERT,
+// SVD, QR, DET, EIG, FFT, IFFT.
 //
 // Isolated in its own translation unit so Eigen's heavy template headers only
 // compile here. Header-only - no runtime dependency, available in every build
@@ -117,9 +118,113 @@ Value fft_run(const Value& v, bool inverse) {
     return r;
 }
 
+// The shape of a matrix argument: its rows and the cells of its first row.
+// A flat array is a vector: no columns, and to_eigen reads it as a column.
+struct Shape { int rows; int cols; bool flat; };
+
+Shape shape_of(const Value& v, const char* fn) {
+    auto* a = v.as_array();
+    if (!a) throw std::runtime_error(std::string(fn) + ": expected a matrix argument");
+    Shape s{ (int)a->elements.size(), 0, true };
+    if (s.rows > 0 && a->elements[0].type == ValueType::ARRAY) {
+        s.flat = false;
+        s.cols = (int)a->elements[0].as_array()->elements.size();
+    }
+    return s;
+}
+
+std::string shape_text(const Shape& s) {
+    if (s.flat) return std::to_string(s.rows);
+    return std::to_string(s.rows) + "x" + std::to_string(s.cols);
+}
+
+// A three-dimensional array: rows whose cells are rows.
+bool is_batch(const Value& v) {
+    auto* a = v.as_array();
+    if (!a || a->elements.empty() || a->elements[0].type != ValueType::ARRAY) return false;
+    auto* row = a->elements[0].as_array();
+    return !row->elements.empty() && row->elements[0].type == ValueType::ARRAY;
+}
+
+// The product of two matrix arguments, the left one transposed when asked.
+// A flat array on the right is a column, one on the left a row, and the
+// answer of a vector side is a flat array; two vectors are not a product.
+Value matrix_product(const char* fn, const Value& a, const Value& b, bool transpose_left) {
+    Shape sa = shape_of(a, fn), sb = shape_of(b, fn);
+    if (sa.flat && sb.flat)
+        throw std::runtime_error(std::string(fn) + ": two vectors; the dot product is SUM(a * b)");
+    Eigen::MatrixXd L = to_eigen(a);
+    if (sa.flat || transpose_left) L.transposeInPlace();
+    Eigen::MatrixXd R = to_eigen(b);
+    if (L.cols() != R.rows()) {
+        std::string left = transpose_left && !sa.flat
+            ? std::to_string(sa.cols) + "x" + std::to_string(sa.rows) : shape_text(sa);
+        throw std::runtime_error(std::string(fn) + ": incompatible dimensions, " + left + " and " + shape_text(sb));
+    }
+    Eigen::MatrixXd P = L * R;
+    if (sa.flat) return vec_from_eigen(P.row(0).transpose());
+    if (sb.flat) return vec_from_eigen(P.col(0));
+    return from_eigen(P);
+}
+
+Eigen::MatrixXd square_of(const Value& v, const char* fn) {
+    Eigen::MatrixXd M = to_eigen(v);
+    if (M.rows() != M.cols())
+        throw std::runtime_error(std::string(fn) + ": matrix must be square");
+    return M;
+}
+
 } // namespace
 
 void register_numerics_builtins(VM& vm) {
+    // MATMUL(a, b) -> a * b; MATMUL_T(a, b) -> TRANSPOSE(a) * b without the copy.
+    vm.register_native("MATMUL", 2, 2, [](const std::vector<Value>& args) -> Value {
+        return matrix_product("MATMUL", args[0], args[1], false);
+    });
+    vm.register_native("MATMUL_T", 2, 2, [](const std::vector<Value>& args) -> Value {
+        return matrix_product("MATMUL_T", args[0], args[1], true);
+    });
+
+    // BMM(a, b): the product per batch of two [B][M][K] x [B][K][N] arrays;
+    // a side that is one matrix meets every batch of the other.
+    vm.register_native("BMM", 2, 2, [](const std::vector<Value>& args) -> Value {
+        bool ba = is_batch(args[0]), bb = is_batch(args[1]);
+        if (!ba && !bb) return matrix_product("BMM", args[0], args[1], false);
+        auto& la = args[0].as_array()->elements;
+        auto& lb = args[1].as_array()->elements;
+        size_t n = ba ? la.size() : lb.size();
+        if (ba && bb && la.size() != lb.size())
+            throw std::runtime_error("BMM: batch sizes differ, " + std::to_string(la.size()) +
+                                     " and " + std::to_string(lb.size()));
+        Value out = Value::make_array();
+        auto& cells = out.as_array()->elements;
+        cells.reserve(n);
+        for (size_t i = 0; i < n; i++)
+            cells.push_back(matrix_product("BMM", ba ? la[i] : args[0], bb ? lb[i] : args[1], false));
+        return out;
+    });
+
+    // SOLVE(a, b) -> x with a * x = b; b is a vector or a matrix of right-hand sides.
+    vm.register_native("SOLVE", 2, 2, [](const std::vector<Value>& args) -> Value {
+        Eigen::MatrixXd M = square_of(args[0], "SOLVE");
+        Shape sb = shape_of(args[1], "SOLVE");
+        if (sb.rows != M.rows())
+            throw std::runtime_error("SOLVE: incompatible dimensions, " + shape_text(Shape{(int)M.rows(), (int)M.cols(), false}) +
+                                     " and " + shape_text(sb));
+        Eigen::FullPivLU<Eigen::MatrixXd> lu(M);
+        if (!lu.isInvertible()) throw std::runtime_error("SOLVE: singular matrix");
+        Eigen::MatrixXd X = lu.solve(to_eigen(args[1]));
+        if (sb.flat) return vec_from_eigen(X.col(0));
+        return from_eigen(X);
+    });
+
+    // INVERT(a) -> the inverse of a square matrix.
+    vm.register_native("INVERT", 1, 1, [](const std::vector<Value>& args) -> Value {
+        Eigen::FullPivLU<Eigen::MatrixXd> lu(square_of(args[0], "INVERT"));
+        if (!lu.isInvertible()) throw std::runtime_error("INVERT: singular matrix");
+        return from_eigen(lu.inverse());
+    });
+
     // SVD(matrix) -> { U, S, V }  (thin U/V; S is the singular-value vector).
     vm.register_native("SVD", 1, 1, [](const std::vector<Value>& args) -> Value {
         Eigen::MatrixXd M = to_eigen(args[0]);
