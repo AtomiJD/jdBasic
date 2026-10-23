@@ -2294,7 +2294,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`APPEND(array, value)`**: Appends a scalar value or all elements of another array to a given array, returning a new flat 1D array.
 * **`DIFF(array1, array2) -> array`**: Set difference: the elements of `array1` that do not occur in `array2`, in `array1`'s order and with its repeats kept. Elements compare by their string form, so `2` and `"2"` match. `DIFF([1,2,2,3], [2])` is `[1, 3]`. It is not a successive difference (NumPy's `diff`).
 * **`IOTA(N, [B=1], [S=1]) -> vector`**: Generates a vector of N numbers starting from B with step S. B,S defaults to 1 if not provided.
-* **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
+* **`Reduction (SUM, PRODUCT, MIN, MAX, MEAN, MEDIAN, VARIANCE, STDEV, ANY, ALL)`**: Functions that reduce an array to a single value (`SUM(my_array)`, every cell of every depth) or along one axis (`SUM(my_array, axis)`): the answer is the array with that axis taken out. For a matrix axis 0 reduces down the rows (one value per column) and axis 1 across each row; for a 3-D array `[B][M][K]` axis 0 answers `[M][K]`, axis 2 answers `[B][M]`. An axis the array does not have is an error.
 
   A reducer takes **one** array. The optional second argument names the axis of a matrix; it is never a second value to compare against. `MAX(3, 9)` is a malformed reduction, not a two-argument maximum; write `MAX([3, 9])`. The axis form is available on `SUM`, `MIN`, `MAX`, `PRODUCT`, `MEAN`, `MEDIAN`, `VARIANCE`, `STDEV`, `ANY` and `ALL`.
 

@@ -52,3 +52,5 @@ PRINT "nested set: "; m[0][0]
 PRINT "idiv forms: "; w \ 3; " "; 100 \ w; " "; m \ 2
 PRINT "range dir: "; RANGE(5, 1); " "; RANGE(1, 5); " "; RANGE(3, 3); " "; RANGE(10, 0, -3); " "; RANGE(1, 10, -1)
 PRINT "slice: "; SLICE([[1, 2, 3], [4, 5, 6]], 0, 1); " "; SLICE([[1, 2, 3], [4, 5, 6]], 1, 2)
+DIM t3 AS ARRAY = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+PRINT "reduce 3d: "; SUM(t3, 0); " "; SUM(t3, 1); " "; SUM(t3, 2); " "; MAX(t3, 0); " "; MEAN(t3, 1); " "; ANY(t3 > 6, 2); " "; SUM(t3); " "; PRODUCT(t3, 2)

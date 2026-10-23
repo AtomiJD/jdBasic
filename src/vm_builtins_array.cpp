@@ -1,6 +1,7 @@
 // VM builtins: array creation, the APL primitives, reductions, linear algebra and statistics.
 
 #include "vm_internal.h"
+#include "jdb_shape.h"
 
 // ── Helpers for matrix operations ─────────────────────────────
 
@@ -102,30 +103,33 @@ static double lane_all(const std::vector<double>& v) {
 
 // Gather each lane along `dim` and reduce it. dim 0 walks down the rows and
 // yields one value per column; dim 1 walks across a row.
+// The VM's array model for the shape algorithms of jdb_shape.h.
+struct VmShape {
+    using Arr = Value;
+    static int64_t len(const Value& a) { return (int64_t)a.as_array()->elements.size(); }
+    static bool is_row(const Value& a, int64_t i) { return a.as_array()->elements[(size_t)i].type == ValueType::ARRAY; }
+    static Value row(const Value& a, int64_t i) { return a.as_array()->elements[(size_t)i]; }
+    static double num(const Value& a, int64_t i) { return a.as_array()->elements[(size_t)i].to_double(); }
+    static Value make(int64_t n) {
+        Value v = Value::make_array();
+        v.as_array()->elements.assign((size_t)n, Value::make_f64(0.0));
+        return v;
+    }
+    static void put_num(Value& a, int64_t i, double d) { a.as_array()->elements[(size_t)i] = Value::make_f64(d); }
+    static void put_bool(Value& a, int64_t i, bool b) { a.as_array()->elements[(size_t)i] = Value::make_bool(b); }
+    static void put_row(Value& a, int64_t i, const Value& r) { a.as_array()->elements[(size_t)i] = r; }
+    static void drop(Value&) {}
+};
+
+// A reducer along one axis of an n-dimensional array; the axis must exist.
 static Value reduce_along_axis(const Value& m, int dim,
         const std::function<double(const std::vector<double>&)>& reduce_lane,
         bool as_bool = false) {
-    int rows, cols; get_2d(m, rows, cols);
-    Value r = Value::make_array();
-    std::vector<double> lane;
-    auto emit = [&](double d) {
-        r.as_array()->elements.push_back(
-            as_bool ? Value::make_bool(d != 0.0) : Value::make_f64(d));
-    };
-    if (dim == 0) {
-        for (int c = 0; c < cols; c++) {
-            lane.clear();
-            for (int ro = 0; ro < rows; ro++) lane.push_back(elem2d(m, ro, c));
-            emit(reduce_lane(lane));
-        }
-    } else {
-        for (int ro = 0; ro < rows; ro++) {
-            lane.clear();
-            for (int c = 0; c < cols; c++) lane.push_back(elem2d(m, ro, c));
-            emit(reduce_lane(lane));
-        }
-    }
-    return r;
+    int d = jdb_shape::depth<VmShape>(m);
+    if (dim < 0 || dim >= d)
+        throw jdError(ErrCode::TYPE_MISMATCH, "axis " + std::to_string(dim) + " is outside a " +
+                      std::to_string(d) + "-D array");
+    return jdb_shape::reduce_axis<VmShape>(m, dim, reduce_lane, as_bool).a;
 }
 
 static Value make_matrix(int rows, int cols, double fill = 0.0) {

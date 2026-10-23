@@ -10,6 +10,7 @@
 #include <chrono>
 #include <string>
 #include <regex>
+#include "jdb_shape.h"
 #include <algorithm>
 #include <vector>
 #include <atomic>
@@ -861,18 +862,30 @@ double jdb_array_sum(JdbArray* arr) {
 // in the interpreter; the op codes match JdbReduceOp there.
 //   0 sum  1 min  2 max  3 product  4 mean
 //   5 median  6 variance  7 stdev  8 any  9 all
+// The native array model for the shape algorithms of jdb_shape.h.
+struct RtShape {
+    using Arr = JdbArray*;
+    static int64_t len(JdbArray* a) { return a ? a->length : 0; }
+    static bool is_row(JdbArray* a, int64_t) { return a && (a->flags & 1) && !(a->flags & 2); }
+    static JdbArray* row(JdbArray* a, int64_t i) { return decode_inner(a->data[i]); }
+    static double num(JdbArray* a, int64_t i) { return a->data[i]; }
+    static JdbArray* make(int64_t n) { return jdb_array_new(n); }
+    static void put_num(JdbArray* a, int64_t i, double d) { a->data[i] = d; }
+    static void put_bool(JdbArray* a, int64_t i, bool b) { a->data[i] = b ? 1.0 : 0.0; a->flags |= 4; }
+    static void put_row(JdbArray* a, int64_t i, JdbArray* r) { a->data[i] = encode_inner(r); a->flags |= 1; }
+    static void drop(JdbArray* a) { if (a) { free(a->data); free(a->elem_tags); free(a); } }
+};
+
+// A reducer along one axis of an n-dimensional array; the axis must exist.
 JdbArray* jdb_array_reduce_axis(JdbArray* arr, int64_t dim, int32_t op) {
     if (!arr || arr->length == 0 || !(arr->flags & 1)) return jdb_array_new(0);
-    int64_t rows = arr->length;
-    int64_t cols = 0;
-    for (int64_t r = 0; r < rows; r++) {
-        JdbArray* row = decode_inner(arr->data[r]);
-        if (row && row->length > cols) cols = row->length;
+    int d = jdb_shape::depth<RtShape>(arr);
+    if (dim < 0 || dim >= d) {
+        char msg[96];
+        snprintf(msg, sizeof msg, "axis %lld is outside a %d-D array", (long long)dim, d);
+        jdb_err_set(msg, 11);
+        return jdb_array_new(0);
     }
-    auto cell = [&](int64_t r, int64_t c) -> double {
-        JdbArray* row = decode_inner(arr->data[r]);
-        return (row && c < row->length) ? row->data[c] : 0.0;
-    };
     auto reduce_lane = [&](const std::vector<double>& v) -> double {
         if (v.empty()) return 0.0;
         switch (op) {
@@ -900,18 +913,7 @@ JdbArray* jdb_array_reduce_axis(JdbArray* arr, int64_t dim, int32_t op) {
         double var = ss / (double)v.size();
         return (op == 7) ? sqrt(var) : var;
     };
-    int64_t out_len = (dim == 0) ? cols : rows;
-    int64_t lane_len = (dim == 0) ? rows : cols;
-    auto* out = jdb_array_new(out_len);
-    std::vector<double> lane;
-    for (int64_t i = 0; i < out_len; i++) {
-        lane.clear();
-        for (int64_t k = 0; k < lane_len; k++)
-            lane.push_back((dim == 0) ? cell(k, i) : cell(i, k));
-        out->data[i] = reduce_lane(lane);
-    }
-    if (op == 8 || op == 9) out->flags |= 4;  // render as TRUE/FALSE
-    return out;
+    return jdb_shape::reduce_axis<RtShape>(arr, (int)dim, reduce_lane, op == 8 || op == 9).a;
 }
 
 double jdb_array_product(JdbArray* arr) {

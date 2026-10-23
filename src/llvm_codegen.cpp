@@ -15466,7 +15466,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             };
             LLVMValueRef result = LLVMBuildCall2(builder, ax->fn_type, ax->fn,
                                                  args, 3, "redax");
-            return { result, JD_TAG_ARR };
+            emit_err_code_branch();
+            TypedValue out{ result, JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
         }
     }
 

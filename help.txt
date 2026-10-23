@@ -2501,22 +2501,24 @@ b is [K,N], the answer [M,N]. The gradient step x^T * delta and the Gram
 matrix h^T * h.
 
 [MAX]
-Syntax: MAX(array) or MAX(matrix, dimension)
-Description: Returns the maximum value from an array. Given a matrix and a
-dimension, returns one maximum per lane: dimension 0 reduces down the rows
-(one value per column), dimension 1 reduces across each row. The second
-argument is never a second value to compare; write MAX([a, b]) for that.
+Syntax: MAX(array) or MAX(array, axis)
+Description: Returns the maximum value from an array, every cell of every
+depth. Given an axis, answers the array with that axis taken out: for a
+matrix axis 0 reduces down the rows (one value per column), axis 1 across
+each row; a 3-D array [B][M][K] gives [M][K] for axis 0 and [B][M] for axis
+2. An axis the array does not have is an error. The second argument is never
+a second value to compare; write MAX([a, b]) for that.
 
 [MID$]
 Syntax: MID$(string$, start, [length])
 Description: Returns a substring from a string.
 
 [MIN]
-Syntax: MIN(array) or MIN(matrix, dimension)
-Description: Returns the minimum value from an array. Given a matrix and a
-dimension, returns one minimum per lane: dimension 0 reduces down the rows
-(one value per column), dimension 1 reduces across each row. The second
-argument is never a second value to compare; write MIN([a, b]) for that.
+Syntax: MIN(array) or MIN(array, axis)
+Description: Returns the minimum value from an array, every cell of every
+depth. Given an axis, answers the array with that axis taken out, as MAX
+does. An axis the array does not have is an error. The second argument is
+never a second value to compare; write MIN([a, b]) for that.
 
 [MKDIR]
 Syntax: MKDIR "directory_name"
@@ -3440,10 +3442,13 @@ Syntax: SUB name(parameters) ... ENDSUB
 Description: Begins the definition of a user-defined subroutine.
 
 [SUM]
-Syntax: SUM(array) or SUM(matrix, dimension)
-Description: Returns the sum of all elements in an array. Given a matrix and
-a dimension, returns one sum per lane: dimension 0 reduces down the rows (one
-value per column), dimension 1 reduces across each row.
+Syntax: SUM(array) or SUM(array, axis)
+Description: Returns the sum of all cells in an array, of every depth. Given
+an axis, answers the array with that axis taken out: for a matrix axis 0
+reduces down the rows (one value per column), axis 1 across each row; a 3-D
+array [B][M][K] gives [M][K] for axis 0 and [B][M] for axis 2. An axis the
+array does not have is an error. PRODUCT, MEAN, MEDIAN, VARIANCE, STDEV, ANY
+and ALL take the same axis.
 
 [SWITCH]
 Syntax: SWITCH expression ... ENDSWITCH
