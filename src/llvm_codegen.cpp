@@ -3858,9 +3858,18 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
             {
                 std::string upper = e.func_name;
                 std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-                if (builtin_sig(upper) && !builtin_no_vectorize(upper))
-                    for (auto& a : e.args)
-                        if (a && infer_expr_type(*a).kind == K::ARRAY) return make(K::ARRAY);
+                if (builtin_sig(upper) && !builtin_no_vectorize(upper)) {
+                    bool unknown_arg = false;
+                    for (auto& a : e.args) {
+                        if (!a) continue;
+                        K ak = infer_expr_type(*a).kind;
+                        if (ak == K::ARRAY) return make(K::ARRAY);
+                        if (ak == K::UNKNOWN || ak == K::ANY) unknown_arg = true;
+                    }
+                    // A cell or a value of no declared kind may be an array,
+                    // and then so is the answer.
+                    if (unknown_arg && builtin_reads_arrays(upper)) return make(K::UNKNOWN);
+                }
                 if (builtin_reduces_axis(upper) && e.args.size() == 2 && e.args[0] &&
                     infer_expr_type(*e.args[0]).kind == K::ARRAY) return make(K::ARRAY);
             }
@@ -4370,6 +4379,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     // owner's cells does not escape, and a variable handed to a parameter
     // that escapes owns nothing. The first pass counts every parameter as
     // escaping, so both answers only ever err towards keeping.
+    build_owner_locals(program);
     scan_cell_owners(program);
     scan_param_escapes(program);
     scan_foreach_release(program);
@@ -5505,6 +5515,8 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     std::string fn_name = stmt.func_name;
     auto fit = user_functions.find(fn_name);
     if (fit == user_functions.end()) return;
+    std::string saved_fn_name = current_fn_name;
+    current_fn_name = fn_name;
 
     // Save current state
     LLVMValueRef saved_fn = current_fn;
@@ -5813,6 +5825,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     // Pop scope and restore
     scopes.pop_back();
     current_fn = saved_fn;
+    current_fn_name = saved_fn_name;
     current_fn_source_file = saved_fn_src;
     current_exit_bb = saved_exit;
     current_retval_alloca = saved_retval;
@@ -5893,7 +5906,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     struct CellOwnerRhs {
         LLVMCodegen* cg; const Expr* saved;
         CellOwnerRhs(LLVMCodegen* c, const Stmt& s) : cg(c), saved(c->cell_owner_rhs) {
-            if (s.expr && c->cell_owner_vars.count(s.var_name)) c->cell_owner_rhs = s.expr.get();
+            if (s.expr && c->cell_owner_vars.count(c->owner_key_here(s.var_name))) c->cell_owner_rhs = s.expr.get();
         }
         ~CellOwnerRhs() { cg->cell_owner_rhs = saved; }
     } _cell_owner(this, stmt);
@@ -6944,7 +6957,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     struct CellOwnerRhs {
         LLVMCodegen* cg; const Expr* saved;
         CellOwnerRhs(LLVMCodegen* c, const Stmt& s) : cg(c), saved(c->cell_owner_rhs) {
-            if (s.expr && c->cell_owner_vars.count(s.var_name)) c->cell_owner_rhs = s.expr.get();
+            if (s.expr && c->cell_owner_vars.count(c->owner_key_here(s.var_name))) c->cell_owner_rhs = s.expr.get();
         }
         ~CellOwnerRhs() { cg->cell_owner_rhs = saved; }
     } _cell_owner(this, stmt);
@@ -8922,6 +8935,33 @@ void LLVMCodegen::rc_pin(const TypedValue& tv) {
 
 // A store into a variable slot. The old bits are read right before the store,
 // after the right-hand side ran, since that may have written the slot itself.
+LLVMValueRef LLVMCodegen::rc_count_flag(LLVMValueRef slot) {
+    auto it = rc_count_flags.find(slot);
+    if (it != rc_count_flags.end()) return it->second;
+    LLVMTypeRef i8t = LLVMInt8TypeInContext(ctx);
+    LLVMValueRef flag;
+    if (LLVMIsAGlobalVariable(slot)) {
+        flag = LLVMAddGlobal(module, i8t, "rc_counts");
+        LLVMSetInitializer(flag, LLVMConstInt(i8t, 0, 0));
+        LLVMSetLinkage(flag, LLVMInternalLinkage);
+    } else {
+        LLVMBasicBlockRef cur = LLVMGetInsertBlock(builder);
+        LLVMBasicBlockRef entry = LLVMGetEntryBasicBlock(current_fn);
+        LLVMValueRef first = LLVMGetFirstInstruction(entry);
+        if (first) LLVMPositionBuilderBefore(builder, first);
+        else LLVMPositionBuilderAtEnd(builder, entry);
+        flag = LLVMBuildAlloca(builder, i8t, "rc_counts");
+        LLVMBuildStore(builder, LLVMConstInt(i8t, 0, 0), flag);
+        LLVMPositionBuilderAtEnd(builder, cur);
+    }
+    rc_count_flags[slot] = flag;
+    return flag;
+}
+
+// A store into a variable slot. The old bits are read right before the store,
+// after the right-hand side ran, since that may have written the slot itself.
+// A slot that held a number until now counted nothing, so its first container
+// is only retained; from then on its flag says whether there is one to let go.
 void LLVMCodegen::rc_slot_store(LLVMValueRef slot, LLVMValueRef val, int old_tag, int new_tag) {
     if (!rc_on || !(rc_tag(old_tag) || rc_tag(new_tag))) {
         LLVMBuildStore(builder, val, slot);
@@ -8930,9 +8970,36 @@ void LLVMCodegen::rc_slot_store(LLVMValueRef slot, LLVMValueRef val, int old_tag
     LLVMValueRef old_bits = LLVMBuildLoad2(builder, i64_type, slot, "rc_old");
     LLVMBuildStore(builder, val, slot);
     bool global = LLVMIsAGlobalVariable(slot) != nullptr;
-    auto& fn = runtime_funcs["__rc_assign"];
-    LLVMValueRef a[] = { old_bits, rc_bits(val), LLVMConstInt(i32_type, global ? 1 : 0, 0) };
-    LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "");
+    LLVMValueRef gflag = LLVMConstInt(i32_type, global ? 1 : 0, 0);
+    bool turns = !rc_tag(old_tag) && rc_tag(new_tag);
+    auto fit = rc_count_flags.find(slot);
+    if (!turns && fit == rc_count_flags.end()) {
+        auto& fn = runtime_funcs["__rc_assign"];
+        LLVMValueRef a[] = { old_bits, rc_bits(val), gflag };
+        LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "");
+        return;
+    }
+    LLVMValueRef flag = turns ? rc_count_flag(slot) : fit->second;
+    LLVMTypeRef i8t = LLVMInt8TypeInContext(ctx);
+    if (rc_tag(new_tag)) {
+        auto& ret = runtime_funcs["__rc_retain"];
+        LLVMValueRef r[] = { rc_bits(val) };
+        LLVMBuildCall2(builder, ret.fn_type, ret.fn, r, 1, "");
+    }
+    if (rc_tag(old_tag)) {
+        LLVMValueRef counted = LLVMBuildICmp(builder, LLVMIntNE,
+            LLVMBuildLoad2(builder, i8t, flag, "rc_cnt"), LLVMConstInt(i8t, 0, 0), "rc_counted");
+        LLVMBasicBlockRef bb_rel = LLVMAppendBasicBlock(current_fn, "rcs.release");
+        LLVMBasicBlockRef bb_end = LLVMAppendBasicBlock(current_fn, "rcs.end");
+        LLVMBuildCondBr(builder, counted, bb_rel, bb_end);
+        LLVMPositionBuilderAtEnd(builder, bb_rel);
+        auto& rel = runtime_funcs["__rc_release"];
+        LLVMValueRef a[] = { old_bits, gflag };
+        LLVMBuildCall2(builder, rel.fn_type, rel.fn, a, 2, "");
+        LLVMBuildBr(builder, bb_end);
+        LLVMPositionBuilderAtEnd(builder, bb_end);
+    }
+    LLVMBuildStore(builder, LLVMConstInt(i8t, rc_tag(new_tag) ? 1 : 0, 0), flag);
 }
 
 void LLVMCodegen::rc_retain_slot(LLVMValueRef slot) {
@@ -8954,7 +9021,21 @@ void LLVMCodegen::rc_release_locals(size_t first_scope) {
             bool param = current_param_names.count(name) != 0;
             LLVMValueRef a[] = { LLVMBuildLoad2(builder, i64_type, vi.alloca_val, "rc_loc"),
                                  LLVMConstInt(i32_type, param ? 1 : 0, 0) };
+            auto fit = rc_count_flags.find(vi.alloca_val);
+            if (fit == rc_count_flags.end()) {
+                LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "");
+                continue;
+            }
+            LLVMTypeRef i8t = LLVMInt8TypeInContext(ctx);
+            LLVMValueRef counted = LLVMBuildICmp(builder, LLVMIntNE,
+                LLVMBuildLoad2(builder, i8t, fit->second, "rc_cnt"), LLVMConstInt(i8t, 0, 0), "rc_counted");
+            LLVMBasicBlockRef bb_rel = LLVMAppendBasicBlock(current_fn, "rcl.release");
+            LLVMBasicBlockRef bb_end = LLVMAppendBasicBlock(current_fn, "rcl.end");
+            LLVMBuildCondBr(builder, counted, bb_rel, bb_end);
+            LLVMPositionBuilderAtEnd(builder, bb_rel);
             LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "");
+            LLVMBuildBr(builder, bb_end);
+            LLVMPositionBuilderAtEnd(builder, bb_end);
         }
 }
 
@@ -14287,7 +14368,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // Into an array that owns its strings a string goes as the array's
         // own copy, unless it was made for this push.
         if (rc_on && val_tv.tag == JD_TAG_STR && expr.args[0]->kind == ExprKind::VARIABLE &&
-            cell_owner_vars.count(expr.args[0]->str_val) &&
+            cell_owner_vars.count(owner_key_here(expr.args[0]->str_val)) &&
             !(val_tv.owned || expr_yields_fresh_string(*expr.args[1]))) {
             auto& own = runtime_funcs["__str_own"];
             val_tv.val = LLVMBuildCall2(builder, own.fn_type, own.fn, &val_tv.val, 1, "push_own");
@@ -14375,7 +14456,26 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                                vi->alloca_val);
                 LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_ARR, 0), vi->runtime_tag_alloca);
             } else if (vi) {
+                bool turns = rc_on && !rc_tag(vi->tag);
                 LLVMBuildStore(builder, result, vi->alloca_val);
+                if (turns) {
+                    // The slot held the array as a number and counted nothing:
+                    // from here on it counts the array, once.
+                    LLVMValueRef flag = rc_count_flag(vi->alloca_val);
+                    LLVMTypeRef i8t = LLVMInt8TypeInContext(ctx);
+                    LLVMValueRef counted = LLVMBuildICmp(builder, LLVMIntNE,
+                        LLVMBuildLoad2(builder, i8t, flag, "rc_cnt"), LLVMConstInt(i8t, 0, 0), "rc_counted");
+                    LLVMBasicBlockRef bb_ret = LLVMAppendBasicBlock(current_fn, "rcp.retain");
+                    LLVMBasicBlockRef bb_end = LLVMAppendBasicBlock(current_fn, "rcp.end");
+                    LLVMBuildCondBr(builder, counted, bb_end, bb_ret);
+                    LLVMPositionBuilderAtEnd(builder, bb_ret);
+                    auto& ret = runtime_funcs["__rc_retain"];
+                    LLVMValueRef r[] = { rc_bits(result) };
+                    LLVMBuildCall2(builder, ret.fn_type, ret.fn, r, 1, "");
+                    LLVMBuildStore(builder, LLVMConstInt(i8t, 1, 0), flag);
+                    LLVMBuildBr(builder, bb_end);
+                    LLVMPositionBuilderAtEnd(builder, bb_end);
+                }
                 vi->tag = JD_TAG_ARR;  // ensure var is tracked as array
             }
             // Propagate UDT element type if pushed value was a known UDT.
@@ -15312,8 +15412,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         std::vector<LLVMTypeRef> pts_h(pc_h);
         if (pc_h) LLVMGetParamTypes(rit_h->second.fn_type, pts_h.data());
         arg_cache.reserve(expr.args.size());
+        // Element-wise math maps an array cell by cell: a cell read handed to
+        // it keeps its own kind, which the array branch below then sees.
+        static const std::unordered_set<std::string> cellwise_math = {
+            "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "SINH", "COSH", "TANH",
+            "EXP", "LOG", "LOG10", "SQR", "ABS", "FLOOR", "CEIL", "ROUND", "TRUNC",
+        };
+        bool keeps_kind = cellwise_math.count(upper) > 0 && expr.args.size() == 1;
         for (size_t i = 0; i < expr.args.size(); i++) {
             int hint = (i < pc_h && (pts_h[i] == f64_type || pts_h[i] == i64_type)) ? JD_TAG_F64 : -1;
+            if (keeps_kind && expr.args[i] && expr.args[i]->kind == ExprKind::INDEX) hint = JD_TAG_RUNTIME;
             ScopedLeafTag _lt(this, hint);
             arg_cache.push_back(codegen_expr(*expr.args[i]));
         }
@@ -17256,7 +17364,7 @@ bool LLVMCodegen::body_lets_escape(const std::vector<StmtPtr>& body, const std::
                 // in as a copy.
                 bool pushes_copy = rc_on && up == "PUSH" && i == 1 && e.args.size() == 2 &&
                                    e.args[0] && e.args[0]->kind == ExprKind::VARIABLE &&
-                                   cell_owner_vars.count(e.args[0]->str_val);
+                                   cell_owner_vars.count(owner_key(escape_scan_fn ? escape_scan_fn->func_name : std::string(), e.args[0]->str_val));
                 bool safe = user ? (uit != param_escapes.end() && i < uit->second.size() &&
                                     !uit->second[i])
                                  : builtin_reads_args(up) || pushes_copy;
@@ -17296,7 +17404,7 @@ bool LLVMCodegen::body_lets_escape(const std::vector<StmtPtr>& body, const std::
         if (assigns && s.expr && is_p(s.expr.get()) && copies_into(s.var_name)) {
             // copied into the slot
         } else if (assigns && rc_on && s.expr && s.expr->kind == ExprKind::ARRAY_LITERAL &&
-                   cell_owner_vars.count(s.var_name)) {
+                   cell_owner_vars.count(owner_key(escape_scan_fn ? escape_scan_fn->func_name : std::string(), s.var_name))) {
             for (auto& a : s.expr->args) if (a && !is_p(a.get())) scan(*a);
         } else {
             top(s.expr.get(), stores);
@@ -17336,6 +17444,8 @@ bool LLVMCodegen::body_lets_escape(const std::vector<StmtPtr>& body, const std::
 void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
     if (!rc_on || std::getenv("JDB_NO_STROWN")) return;
     std::unordered_set<std::string> candidates, banned;
+    std::string cur_fn;
+    auto K = [&](const std::string& n) { return owner_key(cur_fn, n); };
     auto is_var = [](const Expr* e) { return e && e->kind == ExprKind::VARIABLE; };
     auto user_fn = [&](const std::string& n, const std::string& up) {
         return user_functions.count(n) || user_functions.count(up) || param_escapes.count(n);
@@ -17348,10 +17458,10 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
     };
 
     std::function<void(const Expr&, bool)> scan = [&](const Expr& e, bool keeps) {
-        for (auto& c : e.lambda_captures) banned.insert(c);
+        for (auto& c : e.lambda_captures) banned.insert(K(c));
         switch (e.kind) {
         case ExprKind::VARIABLE:
-            banned.insert(e.str_val);
+            banned.insert(K(e.str_val));
             return;
         case ExprKind::LITERAL_INT: case ExprKind::LITERAL_FLOAT:
         case ExprKind::LITERAL_STRING: case ExprKind::LITERAL_BOOL:
@@ -17359,7 +17469,7 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
             return;
         case ExprKind::INDEX:
             if (is_var(e.left.get())) {
-                if (keeps) banned.insert(e.left->str_val);
+                if (keeps) banned.insert(K(e.left->str_val));
             } else if (e.left) scan(*e.left, true);
             if (e.right) scan(*e.right, false);
             for (auto& a : e.args) if (a) scan(*a, false);
@@ -17402,12 +17512,13 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
 
     std::function<void(const Stmt&, const Stmt*)> walk = [&](const Stmt& s, const Stmt* fn) {
         if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) fn = &s;
+        cur_fn = fn ? fn->func_name : std::string();
         bool assigns = s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM;
         if (assigns && s.expr && !s.var_name.empty() &&
             (s.expr->kind == ExprKind::CALL || s.expr->kind == ExprKind::ARRAY_LITERAL))
-            candidates.insert(s.var_name);
-        if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty()) banned.insert(s.var_name);
-        if (s.kind == StmtKind::FOR_EACH && !s.label.empty()) banned.insert(s.label);
+            candidates.insert(K(s.var_name));
+        if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty()) banned.insert(K(s.var_name));
+        if (s.kind == StmtKind::FOR_EACH && !s.label.empty()) banned.insert(K(s.label));
         if (s.expr) {
             bool copies = false;
             if (assigns && s.expr->kind == ExprKind::INDEX && !s.var_name.empty() &&
@@ -17427,7 +17538,7 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
         if (s.loop_cond) scan(*s.loop_cond, false);
         if (s.end_expr) scan(*s.end_expr, false);
         if (s.step_expr) scan(*s.step_expr, false);
-        for (auto& n : s.destruct_vars()) banned.insert(n);
+        for (auto& n : s.destruct_vars()) banned.insert(K(n));
         for (auto& b : s.branches) {
             if (b.condition) scan(*b.condition, false);
             for (auto& lab : b.case_labels) {
@@ -17459,9 +17570,93 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
 // that only reads it and answers a number or a new string, a PRINT or a
 // condition. Copying a cell anywhere, even into a variable, rules it out,
 // since a cell may hold one of the containers the array owns.
+// The names each FUNC and SUB (methods of a TYPE too) has for itself: its
+// parameters always, and what it declares. A DIM that shadows a variable of
+// the main program counts only when it stands in the body itself, not in a
+// block, ahead of every other mention of the name: before it, and after a
+// block it sits in, the name still means the global.
+void LLVMCodegen::build_owner_locals(const std::vector<StmtPtr>& program) {
+    std::function<bool(const Expr&, const std::string&)> expr_has =
+        [&](const Expr& e, const std::string& n) -> bool {
+        if ((e.kind == ExprKind::VARIABLE && e.str_val == n) || e.func_name == n) return true;
+        for (auto& c : e.lambda_captures) if (c == n) return true;
+        if (e.left && expr_has(*e.left, n)) return true;
+        if (e.right && expr_has(*e.right, n)) return true;
+        for (auto& a : e.args) if (a && expr_has(*a, n)) return true;
+        return false;
+    };
+    std::function<bool(const Stmt&, const std::string&)> stmt_has =
+        [&](const Stmt& s, const std::string& n) -> bool {
+        auto ex = [&](const ExprPtr& e) { return e && expr_has(*e, n); };
+        if (s.var_name == n || s.label == n) return true;
+        for (auto& d : s.destruct_vars()) if (d == n) return true;
+        if (ex(s.expr) || ex(s.loop_cond) || ex(s.end_expr) || ex(s.step_expr)) return true;
+        for (auto& e : s.print_exprs) if (ex(e)) return true;
+        for (auto& e : s.index_chain) if (ex(e)) return true;
+        for (auto& e : s.ctor_args()) if (ex(e)) return true;
+        for (auto& br : s.branches) {
+            if (ex(br.condition)) return true;
+            for (auto& lab : br.case_labels) if (ex(lab.first) || ex(lab.second)) return true;
+            for (auto& b : br.body) if (b && stmt_has(*b, n)) return true;
+        }
+        for (auto& b : s.body)           if (b && stmt_has(*b, n)) return true;
+        for (auto& c : s.catch_body())   if (c && stmt_has(*c, n)) return true;
+        for (auto& f : s.finally_body()) if (f && stmt_has(*f, n)) return true;
+        return false;
+    };
+    // A DIM of n directly in the body, with no mention of n before it.
+    auto declared_first = [&](const Stmt& fn, const std::string& n) {
+        for (auto& b : fn.body) {
+            if (!b) continue;
+            if (b->kind == StmtKind::DIM && b->var_name == n)
+                return !(b->expr && expr_has(*b->expr, n));
+            if (stmt_has(*b, n)) return false;
+        }
+        return false;
+    };
+    owner_locals_by_fn.clear();
+    std::unordered_set<std::string> top;
+    std::function<void(const Stmt&)> collect = [&](const Stmt& s) {
+        if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB || s.kind == StmtKind::TYPE_DECL) return;
+        bool assigns = s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM ||
+                       s.kind == StmtKind::FOR_LOOP || s.kind == StmtKind::FOR_EACH;
+        if (assigns && !s.var_name.empty()) top.insert(s.var_name);
+        if (s.kind == StmtKind::FOR_EACH && !s.label.empty()) top.insert(s.label);
+        for (auto& n : s.destruct_vars()) top.insert(n);
+        for (auto& br : s.branches) for (auto& b : br.body) if (b) collect(*b);
+        for (auto& b : s.body)           if (b) collect(*b);
+        for (auto& c : s.catch_body())   if (c) collect(*c);
+        for (auto& f : s.finally_body()) if (f) collect(*f);
+    };
+    for (auto& stmt : program) if (stmt) collect(*stmt);
+    auto add_fn = [&](const Stmt& fn) {
+        std::unordered_set<std::string> own;
+        for (auto& p : fn.params()) own.insert(p.name);
+        for (auto& n : fn_local_names(fn))
+            if (!top.count(n) || declared_first(fn, n)) own.insert(n);
+        if (!own.empty()) owner_locals_by_fn[fn.func_name] = std::move(own);
+    };
+    for (auto& stmt : program) {
+        if (!stmt) continue;
+        if (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB) add_fn(*stmt);
+        if (stmt->kind == StmtKind::TYPE_DECL)
+            for (auto& m : stmt->body)
+                if (m && (m->kind == StmtKind::FUNCTION || m->kind == StmtKind::SUB)) add_fn(*m);
+    }
+}
+
+std::string LLVMCodegen::owner_key(const std::string& fn, const std::string& name) const {
+    if (fn.empty()) return name;
+    auto it = owner_locals_by_fn.find(fn);
+    if (it == owner_locals_by_fn.end() || !it->second.count(name)) return name;
+    return fn + '\x1f' + name;
+}
+
 void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
     if (!rc_on) return;
     std::unordered_set<std::string> candidates, banned;
+    std::string cur_fn;
+    auto K = [&](const std::string& n) { return owner_key(cur_fn, n); };
     auto is_var = [](const Expr* e) { return e && e->kind == ExprKind::VARIABLE; };
     auto is_lit = [](const Expr* e) {
         return e && (e->kind == ExprKind::ARRAY_LITERAL || e->kind == ExprKind::MAP_LITERAL);
@@ -17495,10 +17690,10 @@ void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
     };
 
     std::function<void(const Expr&, bool)> scan = [&](const Expr& e, bool keeps) {
-        for (auto& c : e.lambda_captures) banned.insert(c);
+        for (auto& c : e.lambda_captures) banned.insert(K(c));
         switch (e.kind) {
         case ExprKind::VARIABLE:
-            banned.insert(e.str_val);
+            banned.insert(K(e.str_val));
             return;
         case ExprKind::LITERAL_INT: case ExprKind::LITERAL_FLOAT:
         case ExprKind::LITERAL_STRING: case ExprKind::LITERAL_BOOL:
@@ -17506,7 +17701,7 @@ void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
             return;
         case ExprKind::INDEX:
             if (is_var(e.left.get())) {
-                if (keeps) banned.insert(e.left->str_val);
+                if (keeps) banned.insert(K(e.left->str_val));
             } else if (e.left) scan(*e.left, false);
             if (e.right) scan(*e.right, false);
             for (auto& a : e.args) if (a) scan(*a, false);
@@ -17545,26 +17740,33 @@ void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
     };
 
     std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+        struct FnScope {
+            std::string& cur; std::string saved;
+            FnScope(std::string& c, const Stmt& st) : cur(c), saved(c) {
+                if (st.kind == StmtKind::FUNCTION || st.kind == StmtKind::SUB) cur = st.func_name;
+            }
+            ~FnScope() { cur = saved; }
+        } _fn(cur_fn, s);
         if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB)
-            for (auto& p : s.params()) banned.insert(p.name);
+            for (auto& p : s.params()) banned.insert(K(p.name));
         bool assigns = s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM;
         // A container copied out of a cell is counted by the slot it lands
         // in, and its own cells by the container itself, so the variable may
         // write them as it may write a literal's.
         if (assigns && s.expr && !s.var_name.empty() && !is_lit(s.expr.get()) &&
             !map_cell_of_var(s.expr.get()))
-            banned.insert(s.var_name);
+            banned.insert(K(s.var_name));
         if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty() &&
             !s.index_chain.empty() && is_counted(s.expr.get()))
-            candidates.insert(s.var_name);
+            candidates.insert(K(s.var_name));
         if (s.kind == StmtKind::EXPR_STMT && s.expr && s.expr->kind == ExprKind::CALL &&
             s.expr->args.size() == 2 && is_var(s.expr->args[0].get()) && is_counted(s.expr->args[1].get())) {
             std::string up = s.expr->func_name;
             std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-            if (up == "PUSH") candidates.insert(s.expr->args[0]->str_val);
+            if (up == "PUSH") candidates.insert(K(s.expr->args[0]->str_val));
         }
-        if (s.kind == StmtKind::FOR_EACH && !s.label.empty()) banned.insert(s.label);
-        if (s.kind == StmtKind::FOR_LOOP && !s.var_name.empty()) banned.insert(s.var_name);
+        if (s.kind == StmtKind::FOR_EACH && !s.label.empty()) banned.insert(K(s.label));
+        if (s.kind == StmtKind::FOR_LOOP && !s.var_name.empty()) banned.insert(K(s.var_name));
         // A cell copied into a plain variable is counted by that variable's
         // slot, and one handed back by RETURN by the caller's, as a cell of
         // a cell already is; so the array keeps owning its cells.
@@ -17582,7 +17784,7 @@ void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
         if (s.loop_cond) scan(*s.loop_cond, false);
         if (s.end_expr) scan(*s.end_expr, false);
         if (s.step_expr) scan(*s.step_expr, false);
-        for (auto& n : s.destruct_vars()) banned.insert(n);
+        for (auto& n : s.destruct_vars()) banned.insert(K(n));
         for (auto& b : s.branches) {
             if (b.condition) scan(*b.condition, false);
             for (auto& lab : b.case_labels) {
@@ -17612,7 +17814,7 @@ void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
 // holder of; a variable's slot counts what it holds, so the cell joins it. A
 // cell read stays out: the cell it came from may hold it without counting.
 bool LLVMCodegen::adopts_value(const std::string& var, const Expr* value) {
-    if (!rc_on || !value || !child_owner_vars.count(var)) return false;
+    if (!rc_on || !value || !child_owner_vars.count(owner_key_here(var))) return false;
     switch (value->kind) {
     case ExprKind::ARRAY_LITERAL: case ExprKind::MAP_LITERAL: case ExprKind::CALL:
     case ExprKind::BINARY: case ExprKind::UNARY:

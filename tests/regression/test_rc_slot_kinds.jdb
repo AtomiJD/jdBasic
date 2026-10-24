@@ -1,0 +1,73 @@
+' A cell read keeps its kind for element-wise math, a slot that turns from a
+' number into an array counts what it holds from then on, and a FUNC's local
+' that shadows a global of the main program is its own variable. Every check
+' reads after the loop passes that free what nobody holds.
+
+OPTION "EXPLICIT"
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM k AS INTEGER
+
+' Element-wise math over an array kept in a map cell.
+DIM bag AS MAP = {}
+bag{"x"} = [1, 2, 3] * 1
+bag{"n"} = 0.5
+DIM curve AS ARRAY = [0]
+FOR k = 1 TO 50
+    curve = TANH(bag{"x"}) * 2
+NEXT k
+Check(LEN(curve) = 3 ANDALSO curve[2] > 1.99 ANDALSO curve[2] < 2, "TANH of a map cell holding an array")
+Check(TANH(bag{"n"}) > 0.46 ANDALSO TANH(bag{"n"}) < 0.47, "TANH of a map cell holding a number")
+DIM floored AS ARRAY = [0]
+floored = FLOOR(bag{"x"} * 1.5)
+Check(floored[1] = 3 ANDALSO floored[2] = 4, "FLOOR of an operator over a map cell")
+
+' A row copied out by position into an untyped local, grown, written over.
+DIM rows = [[1], [2]]
+SUB Grow(i, v)
+    DIM r = rows[i]
+    IF v > 1000 THEN PUSH(r, v)
+    PUSH(r, v)
+    r = [0, 0]
+    r = rows[i]
+ENDSUB
+SUB GrowParam(r, v)
+    PUSH(r, v)
+ENDSUB
+FOR k = 1 TO 40
+    Grow(k MOD 2, k)
+    GrowParam(rows[k MOD 2], k + 100)
+NEXT k
+DIM spare AS ARRAY = ZEROS([256])
+Check(LEN(rows[0]) = 41 ANDALSO LEN(rows[1]) = 41, "rows grown through copies keep every push")
+Check(rows[1][10] = 109 ANDALSO rows[0][40] = 140, "rows grown through copies read back")
+
+' A global and a FUNC's own local of the same name.
+DIM pair AS MAP = {}
+pair{"g"} = [9, 9]
+FUNC Wrap$(s$ AS STRING)
+    DIM pair AS ARRAY = [s$, "x"]
+    RETURN pair[0] + "!"
+ENDFUNC
+SUB Touch()
+    DIM pair AS MAP = {}
+    pair{"g"} = [1, 1]
+ENDSUB
+DIM said$ AS STRING = ""
+FOR k = 1 TO 30
+    said$ = Wrap$("a")
+    Touch
+NEXT k
+Check(said$ = "a!", "the FUNC's own local")
+Check(pair{"g"}[0] = 9, "the global of the same name is untouched")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

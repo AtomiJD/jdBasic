@@ -500,6 +500,10 @@ private:
     }
     LLVMValueRef rc_bits(LLVMValueRef v);
     LLVMValueRef rc_born(LLVMValueRef p, int kind, bool rows = false);
+    // A slot that took a number before it took a container counts only what
+    // it was handed since; this i8 says whether it counts what it holds now.
+    std::unordered_map<LLVMValueRef, LLVMValueRef> rc_count_flags;
+    LLVMValueRef rc_count_flag(LLVMValueRef slot);
     void rc_born_if_array(LLVMValueRef bits, LLVMValueRef tag);
     void rc_pin(const TypedValue& tv);
     void rc_slot_store(LLVMValueRef slot, LLVMValueRef val, int old_tag, int new_tag);
@@ -529,6 +533,15 @@ private:
     // literal, a call or a variable, is counted by the cell (jdb_rc_adopt).
     std::unordered_set<std::string> child_owner_vars;
     void scan_child_owners(const std::vector<StmtPtr>& program);
+    // The cell-owner scans judge each variable by its uses alone. A FUNC's
+    // own local is keyed with the FUNC's name, so a same-named variable
+    // elsewhere neither bans nor vouches for it; a global, and a local DIM
+    // that shadows one, keeps its bare name.
+    std::unordered_map<std::string, std::unordered_set<std::string>> owner_locals_by_fn;
+    std::string current_fn_name;  // the FUNC or SUB being generated, "" in the main program
+    void build_owner_locals(const std::vector<StmtPtr>& program);
+    std::string owner_key(const std::string& fn, const std::string& name) const;
+    std::string owner_key_here(const std::string& name) const { return owner_key(current_fn_name, name); }
     bool adopts_value(const std::string& var, const Expr* value);
     bool literal_cell_counts(const Expr& e);
     void rc_adopt(LLVMValueRef parent, const TypedValue& child);

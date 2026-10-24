@@ -350,6 +350,14 @@ ELSEIF pattern$ = "twocells" THEN
         total = total + twin{"b"}[0, 0]
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "shadowname" THEN
+    DIM ledger AS MAP
+    FOR i = 1 TO passes
+        ledger = {}
+        ledger{"a"} = base8 * i
+        total = total + ledger{"a"}[0, 0] + LedgerLen(i)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSEIF pattern$ = "tapenode" THEN
     FOR i = 1 TO passes
         TapeStep(i)
@@ -429,3 +437,10 @@ SUB TapeStep(n AS INTEGER)
     tape{"g"} = tape{"g"} * 0 + base8
     total = total + LEN(tape{"g"})
 ENDSUB
+
+' A FUNC's own local of the name a variable of the main program has, handed
+' on whole: it says nothing about the main program's variable.
+FUNC LedgerLen(n AS INTEGER) AS INTEGER
+    DIM ledger AS ARRAY = [n, n + 1]
+    RETURN LEN(Render$(ledger))
+ENDFUNC
