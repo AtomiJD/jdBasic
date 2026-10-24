@@ -34,8 +34,10 @@
 '
 ' joins the Node Bus as "stage", takes the score, the clock and the scope
 ' songgen --live publishes (node "songgen" unless named) and runs until
-' that node leaves. With --lan the node may be on another machine (the
-' key in JDB_NODE_KEY). STAGE.FOLLOW does the same from a program.
+' that node leaves. The look comes from that node (songgen --look, or L
+' on its desk) unless --look is given here. With --lan the node may be on
+' another machine (the key in JDB_NODE_KEY). STAGE.FOLLOW does the same
+' from a program.
 
 EXPORT MODULE STAGE
 IMPORT SCORE
@@ -109,6 +111,7 @@ DIM tt_cover_done AS INTEGER = -1
 
 ' --look: the show's palette, backdrop and the dancers' outfits, set by SET_LOOK
 DIM look$ AS STRING = "classic"
+DIM look_pinned AS INTEGER = FALSE
 DIM backdrop$ AS STRING = "sun"
 DIM outfit$ AS STRING = "skirt"
 DIM girl_r AS DOUBLE = 255
@@ -197,10 +200,39 @@ SUB LOG_LINE(s$)
     log_lines$[N_LOG - 1] = s$
 ENDSUB
 
-' The show for --look: classic, purple, neon or rainbow
+' The show for --look: classic, purple, neon or rainbow; any other name
+' is classic. Every value starts from classic, so a show can change its
+' look while it runs.
 SUB SET_LOOK(name$)
-    look$ = name$
+    look$ = "classic"
+    backdrop$ = "sun"
+    outfit$ = "skirt"
+    girl_r = 255
+    girl_g = 90
+    girl_b = 200
+    boy_r = 60
+    boy_g = 210
+    boy_b = 255
+    blush_r = 110
+    blush_g = 25
+    blush_b = 65
+    sky_r = 6
+    sky_g = 3
+    sky_b = 16
+    acc_r = -1
+    acc_g = 0
+    acc_b = 0
+    sun_top = [230, 200, 60]
+    sun_bot = [220, 30, 180]
+    band_lo_rgb = [60, 110, 200]
+    band_hi_rgb = [255, 30, 140]
+    grid_rgb = [200, 40, 180]
+    hline_rgb = [255, 80, 220]
+    title_rgb = [255, 110, 215]
+    label_rgb = [255, 235, 120]
+    laser_mode = 0
     IF name$ = "purple" THEN
+        look$ = name$
         backdrop$ = "moon"
         outfit$ = "gown"
         girl_r = 190
@@ -228,6 +260,7 @@ SUB SET_LOOK(name$)
         label_rgb = [255, 220, 255]
         laser_mode = 1
     ELSEIF name$ = "neon" THEN
+        look$ = name$
         backdrop$ = "rain"
         outfit$ = "raver"
         girl_r = 90
@@ -255,6 +288,7 @@ SUB SET_LOOK(name$)
         label_rgb = [230, 255, 120]
         laser_mode = 2
     ELSEIF name$ = "rainbow" THEN
+        look$ = name$
         backdrop$ = "rainbow"
         outfit$ = "unicorn"
         blush_r = 110
@@ -268,9 +302,6 @@ SUB SET_LOOK(name$)
         band_hi_rgb = [0, 0, 0]
         title_rgb = [255, 215, 90]
         label_rgb = [255, 245, 200]
-        laser_mode = 0
-    ELSE
-        look$ = "classic"
     ENDIF
 ENDSUB
 
@@ -1161,6 +1192,9 @@ SUB TAKE_SCORE(m)
     SCORE.LOAD m{"SCORE"}
     title$ = m{"TITLE"}
     subtitle$ = m{"SUBTITLE"}
+    IF NOT look_pinned ANDALSO MAP.EXISTS(m, "LOOK") THEN
+        IF LCASE$(m{"LOOK"}) <> look$ THEN SET_LOOK LCASE$(m{"LOOK"})
+    ENDIF
     kick_t = SCORE.TRACK_OF("KICK")
     clap_t = SCORE.TRACK_OF("CLAP")
     crash_t = SCORE.TRACK_OF("CRASH")
@@ -1642,6 +1676,7 @@ EXPORT SUB FOLLOW(source$)
     DIM fa AS INTEGER
     FOR fa = 1 TO LEN(fcli) - 1
         IF fcli[fa] = "--lan" THEN scope$ = "lan"
+        IF fcli[fa] = "--look" THEN look_pinned = TRUE
     NEXT fa
     DIM self_node = NODE.JOIN(me$, scope$)
     src_events = NODE.EVENTS()
