@@ -1,0 +1,17 @@
+' PACK$ and UNPACK: every code, counts, byte order, offsets, sizes.
+OPTION "EXPLICIT"
+PRINT "sizes: "; PACKSIZE("bsild"); " "; PACKSIZE("3i2d"); " "; PACKSIZE("4a2x"); " "; PACKSIZE("<i>i"); " "; PACKSIZE("")
+DIM p$ AS STRING = PACK$("bsild", 200, -2, 100000, 1234567890123, 2.5)
+PRINT "len: "; LEN(p$)
+PRINT "unsigned: "; UNPACK("bsil", p$)
+PRINT "signed: "; UNPACK("chnl", p$)
+PRINT "double: "; UNPACK("d", p$, 15)
+PRINT "float: "; UNPACK("f", PACK$("f", 1.5)); " "; UNPACK("f", PACK$("f", -0.1))[0] < 0
+PRINT "order: "; UNPACK(">i", PACK$("<i", 258)); " "; UNPACK("<s", PACK$(">s", 258)); " "; UNPACK(">l", PACK$("<l", 1))
+PRINT "counts: "; UNPACK("3b", PACK$("3b", 1, 2, 3)); " "; UNPACK("2s1i", PACK$("2s1i", 7, 8, 9))
+PRINT "text: "; UNPACK("4a", PACK$("4a", "hi")); "|"; UNPACK("2a", PACK$("2a", "hello")); "|"; LEN(PACK$("4a", "hi"))
+PRINT "pad: "; LEN(PACK$("b2xb", 1, 2)); " "; UNPACK("b2xb", PACK$("b2xb", 1, 2)); " "; UNPACK("x", PACK$("x"))
+PRINT "offset: "; UNPACK("b", PACK$("bb", 5, 6), 1); " "; UNPACK("s", PACK$("bs", 1, 513), 1)
+PRINT "bytes: "; BYTEAT(PACK$(">s", 258), 0); " "; BYTEAT(PACK$(">s", 258), 1); " "; BYTEAT(PACK$("<s", 258), 0)
+PRINT "mixed: "; UNPACK("b4ad", PACK$("b4ad", 9, "abcd", 0.25))
+PRINT "nul inside: "; LEN(PACK$("i", 0)); " "; UNPACK("i", PACK$("i", 0)); " "; LEN(PACK$("2a", "") + "x")

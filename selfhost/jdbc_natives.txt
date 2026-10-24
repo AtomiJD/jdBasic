@@ -370,7 +370,7 @@ __datediff_vec	jdb_datediff_vec	P	PPP	3
 __cvdate_num	jdb_cvdate_num	P	D	2
 __cvdate_arr	jdb_cvdate_arr	P	P	3
 REGEX.REPLACE	jdb_regex_replace	P	PPP	2
-REGEX_REPLACE$	jdb_regex_replace	P	PPP	2
+REGEX_REPLACE$	jdb_regex_replace_text_first	P	PPP	2
 REGEX.FINDALL	jdb_regex_findall	P	PP	3
 __typeof_tag	jdb_typeof_tag	P	I	2
 __typeof_f64	jdb_typeof_f64	P	D	2

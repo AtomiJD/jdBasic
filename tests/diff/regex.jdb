@@ -1,0 +1,18 @@
+' Regex: match, captures, findall, replace, the (?i) prefix, bad patterns.
+OPTION "EXPLICIT"
+DIM t$ AS STRING = "Order 66 shipped 2026-10-24 to Bob, order 7 pending"
+PRINT "match: "; REGEX.MATCH("^Order.*pending$", t$); " "; REGEX.MATCH("^order", t$); " "; REGEX.MATCH("(?i)^order", t$)
+PRINT "captures: "; REGEX.MATCH("(\d+)-(\d+)-(\d+)", "2026-10-24")
+PRINT "no groups: "; REGEX.MATCH("\d+", "123"); " "; REGEX.MATCH("\d+", "abc")
+PRINT "findall: "; REGEX.FINDALL("\d+", t$)
+PRINT "findall groups: "; REGEX.FINDALL("(\w+) (\d+)", t$)
+PRINT "findall none: "; REGEX.FINDALL("xyz", t$); " "; LEN(REGEX.FINDALL("xyz", t$))
+PRINT "findall icase: "; REGEX.FINDALL("(?i)order", t$)
+PRINT "replace: "; REGEX.REPLACE("\d+", t$, "#")
+PRINT "replace groups: "; REGEX.REPLACE("(\d+)-(\d+)-(\d+)", "2026-10-24", "$3.$2.$1")
+PRINT "replace icase: "; REGEX.REPLACE("(?i)ORDER", t$, "Job")
+PRINT "replace none: "; REGEX.REPLACE("zzz", "abc", "-")
+PRINT "old match: "; REGEX_MATCH(t$, "\d+"); " "; REGEX_MATCH(t$, "(?i)bob")
+PRINT "old replace: "; REGEX_REPLACE$(t$, "\s+", "_")
+PRINT "bad pattern: "; REGEX.MATCH("(", "x"); " "; REGEX.FINDALL("(", "x"); " "; REGEX.REPLACE("(", "x", "y"); " "; REGEX_REPLACE$("x", "(", "y")
+PRINT "empty: "; REGEX.MATCH("", ""); " "; REGEX.FINDALL("a*", "b"); " "; REGEX.REPLACE("", "ab", "-")

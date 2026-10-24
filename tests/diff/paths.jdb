@@ -1,0 +1,19 @@
+' Paths and file metadata: pure path text first, then the few files the
+' repository is sure to have.
+OPTION "EXPLICIT"
+PRINT "basename: "; PATH.BASENAME$("a/b/c.txt"); " "; PATH.BASENAME$("c.txt"); " "; PATH.BASENAME$("a\b\"); "|"; PATH.BASENAME$(""); "|"
+PRINT "ext: "; PATH.EXT$("a/b/c.tar.gz"); " "; PATH.EXT$("a.b/c"); "|"; PATH.EXT$(".hidden"); " "; PATH.EXT$("noext"); "|"
+PRINT "dirname: "; PATH.DIRNAME$("a/b/c.txt"); " "; PATH.DIRNAME$("c.txt"); "|"; PATH.DIRNAME$("/c.txt"); " "; PATH.DIRNAME$("a\b\c")
+PRINT "normalize: "; PATH.NORMALIZE$("a/./b/../c//d"); " "; PATH.NORMALIZE$("../x/./y"); " "; PATH.NORMALIZE$("a/.."); " "; PATH.NORMALIZE$("")
+PRINT "normalize rooted: "; PATH.NORMALIZE$("/a/../../b"); " "; PATH.NORMALIZE$("c:/x/../y")
+PRINT "join: "; PATH.JOIN$("a", "b", "c.txt"); " "; PATH.JOIN$("a/", "b"); " "; PATH.JOIN$("", "b"); " "; PATH.JOIN$("a")
+PRINT "isabs: "; PATH.ISABS("/x"); " "; PATH.ISABS("x/y"); " "; PATH.ISABS("c:/x"); " "; PATH.ISABS("c:x"); " "; PATH.ISABS("")
+PRINT "abs equals itself: "; PATH.ABS$("tests/diff") = PATH.ABS$("tests/./x/../diff")
+PRINT "abs is abs: "; PATH.ISABS(PATH.ABS$("tests"))
+PRINT "exists: "; FILE.EXISTS("tests/diff/paths.jdb"); " "; FILE.EXISTS("tests/diff/nope.jdb"); " "; FILE.EXISTS("tests"); " "; FILE.EXISTS("")
+PRINT "isdir: "; FILE.ISDIR("tests"); " "; FILE.ISDIR("tests/diff/paths.jdb"); " "; FILE.ISDIR("nope")
+PRINT "size: "; FILE.SIZE("tests/diff/paths.jdb") > 100; " "; FILE.SIZE("tests"); " "; FILE.SIZE("nope")
+DIM st = FILE.STAT("tests/diff/paths.jdb")
+PRINT "stat: "; st{"exists"}; " "; st{"is_dir"}; " "; st{"size"} > 100; " "; LEN(st{"mtime"})
+DIM none = FILE.STAT("nope")
+PRINT "stat none: "; none{"exists"}

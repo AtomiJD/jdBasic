@@ -3,74 +3,12 @@
 #include "vm_internal.h"
 #include "jdb_format.h"
 #include "jdb_text.h"
-
+#include "jdb_pack.h"
+#ifndef JDB_LEAN
+#include "jdb_regex.h"
+#endif
 using jdb_text::View;
 
-// PACK$ / UNPACK format: < or > sets the byte order for the codes after it,
-// each code takes an optional repeat count. For 'a' the count is the string
-// length, for 'x' the number of zero pad bytes.
-struct PackField {
-    char code;
-    int count;
-    bool big_endian;
-};
-
-static int pack_width(char code) {
-    switch (code) {
-        case 'b': case 'c': case 'a': case 'x': return 1;
-        case 's': case 'h': return 2;
-        case 'i': case 'n': case 'f': return 4;
-        case 'l': case 'd': return 8;
-    }
-    return 0;
-}
-
-static std::vector<PackField> pack_parse(const std::string& fmt, const char* who) {
-    std::vector<PackField> fields;
-    bool big_endian = false;
-    int64_t count = -1;
-    for (char c : fmt) {
-        if (c == ' ' || c == '\t') continue;
-        if (c >= '0' && c <= '9') {
-            count = (count < 0 ? 0 : count) * 10 + (c - '0');
-            if (count > 100000000)
-                throw std::runtime_error(std::string(who) + ": repeat count too large");
-            continue;
-        }
-        if (count >= 0 && (c == '<' || c == '>'))
-            throw std::runtime_error(std::string(who) + ": a count must be followed by a code");
-        if (c == '<') { big_endian = false; continue; }
-        if (c == '>') { big_endian = true; continue; }
-        char lc = (char)std::tolower((unsigned char)c);
-        if (pack_width(lc) == 0)
-            throw std::runtime_error(std::string(who) + ": unknown format char '" + c + "'");
-        fields.push_back({lc, count < 0 ? 1 : (int)count, big_endian});
-        count = -1;
-    }
-    if (count >= 0)
-        throw std::runtime_error(std::string(who) + ": a count must be followed by a code");
-    return fields;
-}
-
-static size_t pack_size(const std::vector<PackField>& fields) {
-    size_t total = 0;
-    for (auto& f : fields) total += (size_t)pack_width(f.code) * (size_t)f.count;
-    return total;
-}
-
-
-#ifndef JDB_LEAN
-// A pattern compiled the way the reader wrote it. std::regex speaks
-// ECMAScript, which has no inline flags, so a leading (?i) was matched as
-// literal text and the search quietly found nothing. Reading it here and
-// asking for icase instead is the one flag worth carrying; anywhere but the
-// front it still means what ECMAScript says it means.
-static std::regex make_regex(const std::string& pattern) {
-    if (pattern.rfind("(?i)", 0) == 0)
-        return std::regex(pattern.substr(4), std::regex::icase);
-    return std::regex(pattern);
-}
-#endif
 void VM::register_string_builtins() {
     // String functions
     register_native("LEN", 1, 1, [](const std::vector<Value>& args) -> Value {
@@ -409,37 +347,22 @@ void VM::register_string_builtins() {
     // A digit prefix repeats a code: "3i" is "iii".
     register_native("PACK$", [](const std::vector<Value>& args) -> Value {
         if (args.empty()) throw std::runtime_error("PACK$: needs a format");
-        auto fields = pack_parse(args[0].as_string()->data, "PACK$");
+        auto fields = jdb_pack::parse(args[0].as_string()->data, "PACK$");
         std::string result;
-        result.reserve(pack_size(fields));
+        result.reserve(jdb_pack::size(fields));
         size_t ai = 1;
         for (auto& fd : fields) {
-            auto write = [&](const void* data, int n) {
-                const uint8_t* p = (const uint8_t*)data;
-                if (fd.big_endian) for (int i = n - 1; i >= 0; i--) result += (char)p[i];
-                else for (int i = 0; i < n; i++) result += (char)p[i];
-            };
             if (fd.code == 'x') { result.append((size_t)fd.count, '\0'); continue; }
             if (fd.code == 'a') {
-                if (ai >= args.size())
-                    throw std::runtime_error("PACK$: not enough values for format");
-                std::string s = args[ai++].to_string();
-                s.resize((size_t)fd.count, '\0');
-                result += s;
+                if (ai >= args.size()) throw std::runtime_error("PACK$: not enough values for format");
+                jdb_pack::put_text(result, fd, args[ai++].to_string());
                 continue;
             }
             for (int k = 0; k < fd.count; k++) {
-                if (ai >= args.size())
-                    throw std::runtime_error("PACK$: not enough values for format");
+                if (ai >= args.size()) throw std::runtime_error("PACK$: not enough values for format");
                 const Value& v = args[ai++];
-                switch (fd.code) {
-                    case 'b': case 'c': { uint8_t x = (uint8_t)v.to_int(); write(&x, 1); break; }
-                    case 's': case 'h': { int16_t x = (int16_t)v.to_int(); write(&x, 2); break; }
-                    case 'i': case 'n': { int32_t x = (int32_t)v.to_int(); write(&x, 4); break; }
-                    case 'l': { int64_t x = v.to_int(); write(&x, 8); break; }
-                    case 'f': { float x = (float)v.to_double(); write(&x, 4); break; }
-                    case 'd': { double x = v.to_double(); write(&x, 8); break; }
-                }
+                jdb_pack::put(result, fd, jdb_pack::is_float(fd.code) ? jdb_pack::float_bits(fd, v.to_double())
+                                                                     : (uint64_t)v.to_int());
             }
         }
         return Value::make_string(result);
@@ -449,12 +372,12 @@ void VM::register_string_builtins() {
     // unsigned, c h n and l signed, a gives the bytes as a string. Data
     // shorter than the format is an error.
     register_native("UNPACK", 2, 3, [](const std::vector<Value>& args) -> Value {
-        auto fields = pack_parse(args[0].as_string()->data, "UNPACK");
+        auto fields = jdb_pack::parse(args[0].as_string()->data, "UNPACK");
         const std::string& data = args[1].as_string()->data;
         int64_t offset = args.size() >= 3 ? args[2].to_int() : 0;
         if (offset < 0 || (uint64_t)offset > data.size())
             throw std::runtime_error("UNPACK: offset " + std::to_string(offset) + " is outside the data");
-        size_t need = pack_size(fields);
+        size_t need = jdb_pack::size(fields);
         if (data.size() - (size_t)offset < need)
             throw std::runtime_error("UNPACK: the format needs " + std::to_string(need) +
                                      " bytes, the data has " + std::to_string(data.size() - (size_t)offset));
@@ -468,25 +391,11 @@ void VM::register_string_builtins() {
                 pos += (size_t)fd.count;
                 continue;
             }
-            int w = pack_width(fd.code);
             for (int k = 0; k < fd.count; k++) {
-                uint64_t u = 0;
-                for (int j = 0; j < w; j++) {
-                    uint8_t byte = (uint8_t)(fd.big_endian ? data[pos + w - 1 - j] : data[pos + j]);
-                    u |= (uint64_t)byte << (8 * j);
-                }
-                pos += (size_t)w;
-                switch (fd.code) {
-                    case 'b': case 's': case 'i': out.push_back(Value::make_i64((int64_t)u)); break;
-                    case 'c': out.push_back(Value::make_i64((int8_t)(uint8_t)u)); break;
-                    case 'h': out.push_back(Value::make_i64((int16_t)(uint16_t)u)); break;
-                    case 'n': out.push_back(Value::make_i64((int32_t)(uint32_t)u)); break;
-                    case 'l': out.push_back(Value::make_i64((int64_t)u)); break;
-                    case 'f': { uint32_t b32 = (uint32_t)u; float fv; std::memcpy(&fv, &b32, 4);
-                                out.push_back(Value::make_f64(fv)); break; }
-                    case 'd': { double dv; std::memcpy(&dv, &u, 8);
-                                out.push_back(Value::make_f64(dv)); break; }
-                }
+                uint64_t u = jdb_pack::get(data, pos, fd);
+                pos += (size_t)jdb_pack::width(fd.code);
+                if (jdb_pack::is_float(fd.code)) out.push_back(Value::make_f64(jdb_pack::as_double(fd, u)));
+                else out.push_back(Value::make_i64(jdb_pack::as_int(fd, u)));
             }
         }
         return r;
@@ -494,7 +403,7 @@ void VM::register_string_builtins() {
 
     // PACKSIZE(fmt$) -> the number of bytes PACK$ writes for the format.
     register_native("PACKSIZE", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_i64((int64_t)pack_size(pack_parse(args[0].as_string()->data, "PACKSIZE")));
+        return Value::make_i64((int64_t)jdb_pack::size(jdb_pack::parse(args[0].as_string()->data, "PACKSIZE")));
     });
 
     // The text of these three lives in builtin_sigs.h, which the native
@@ -559,95 +468,50 @@ void VM::register_string_builtins() {
         return Value::make_string(buf);
     });
 #ifndef JDB_LEAN
+    // The legacy pair takes the text first.
     register_native("REGEX_MATCH", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data, pat = args[1].as_string()->data;
         Value r = Value::make_array();
-        try {
-            std::regex re = make_regex(pat);
-            std::sregex_iterator it(s.begin(), s.end(), re), end;
-            for (; it != end; ++it)
-                r.as_array()->elements.push_back(Value::make_string((*it)[0].str()));
-        } catch (...) { }
+        for (const std::string& m : jdb_regex::matches(args[1].as_string()->data, args[0].as_string()->data))
+            r.as_array()->elements.push_back(Value::make_string(m));
         return r;
     });
-#endif
-#ifndef JDB_LEAN
     register_native("REGEX_REPLACE$", 3, 3, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data, pat = args[1].as_string()->data, repl = args[2].as_string()->data;
-        try { return Value::make_string(std::regex_replace(s, make_regex(pat), repl)); }
-        catch (...) { return Value::make_string(s); }
+        return Value::make_string(jdb_regex::replace(args[1].as_string()->data, args[0].as_string()->data,
+                                                     args[2].as_string()->data));
     });
-#endif
 
-    // REGEX.MATCH(pattern, text) → TRUE/FALSE or array of captures
-#ifndef JDB_LEAN
+    // REGEX.MATCH(pattern, text): the captures when the pattern has groups,
+    // a truth value when it has none.
     register_native("REGEX.MATCH", 2, 2, [](const std::vector<Value>& args) -> Value {
-        const std::string& pat = args[0].as_string()->data;
-        std::string text = args[1].as_string()->data;
-        try {
-            static std::unordered_map<std::string, std::regex> cache;
-            auto cit = cache.find(pat);
-            if (cit == cache.end()) cit = cache.emplace(pat, make_regex(pat)).first;
-            const std::regex& re = cit->second;
-            std::smatch m;
-            if (!std::regex_match(text, m, re)) return Value::make_bool(false);
-            // No capture groups → just TRUE
-            if (m.size() <= 1) return Value::make_bool(true);
-            // Has capture groups → return array of captures
-            Value r = Value::make_array();
-            for (size_t i = 1; i < m.size(); i++)
-                r.as_array()->elements.push_back(Value::make_string(m[i].str()));
-            return r;
-        } catch (...) { return Value::make_bool(false); }
-    });
-#endif
-
-    // REGEX.FINDALL(pattern, text) → 1D array of matches or 2D if groups
-#ifndef JDB_LEAN
-    register_native("REGEX.FINDALL", 2, 2, [](const std::vector<Value>& args) -> Value {
-        const std::string& pat = args[0].as_string()->data;
-        std::string text = args[1].as_string()->data;
+        std::vector<std::string> groups;
+        if (!jdb_regex::match(args[0].as_string()->data, args[1].as_string()->data, groups))
+            return Value::make_bool(false);
+        if (groups.empty()) return Value::make_bool(true);
         Value r = Value::make_array();
-        try {
-            static std::unordered_map<std::string, std::regex> cache;
-            auto cit = cache.find(pat);
-            if (cit == cache.end()) cit = cache.emplace(pat, make_regex(pat)).first;
-            const std::regex& re = cit->second;
-            std::sregex_iterator it(text.begin(), text.end(), re), end;
-            bool has_groups = false;
-            for (; it != end; ++it) {
-                auto& m = *it;
-                if (m.size() > 1) {
-                    // Has capture groups → row per match
-                    has_groups = true;
-                    Value row = Value::make_array();
-                    for (size_t i = 1; i < m.size(); i++)
-                        row.as_array()->elements.push_back(Value::make_string(m[i].str()));
-                    r.as_array()->elements.push_back(std::move(row));
-                } else {
-                    r.as_array()->elements.push_back(Value::make_string(m[0].str()));
-                }
-            }
-        } catch (...) { }
+        for (const std::string& g : groups) r.as_array()->elements.push_back(Value::make_string(g));
         return r;
     });
-#endif
 
-    // REGEX.REPLACE(pattern, text, replacement) → string
-#ifndef JDB_LEAN
-    register_native("REGEX.REPLACE", 3, 3, [](const std::vector<Value>& args) -> Value {
-        const std::string& pat = args[0].as_string()->data;
-        const std::string& text = args[1].as_string()->data;
-        const std::string& repl = args[2].as_string()->data;
-        try {
-            // Cache compiled patterns - std::regex construction is the dominant
-            // cost when the same pattern runs over many lines (e.g. log triage).
-            static std::unordered_map<std::string, std::regex> cache;
-            auto it = cache.find(pat);
-            if (it == cache.end()) it = cache.emplace(pat, make_regex(pat)).first;
-            return Value::make_string(std::regex_replace(text, it->second, repl));
+    // REGEX.FINDALL(pattern, text): every match, or one row of groups per
+    // match when the pattern has any.
+    register_native("REGEX.FINDALL", 2, 2, [](const std::vector<Value>& args) -> Value {
+        std::vector<std::vector<std::string>> rows;
+        bool has_groups = false;
+        jdb_regex::find_all(args[0].as_string()->data, args[1].as_string()->data, rows, has_groups);
+        Value r = Value::make_array();
+        for (auto& row : rows) {
+            if (!has_groups) { r.as_array()->elements.push_back(Value::make_string(row[0])); continue; }
+            Value cells = Value::make_array();
+            for (const std::string& g : row) cells.as_array()->elements.push_back(Value::make_string(g));
+            r.as_array()->elements.push_back(std::move(cells));
         }
-        catch (...) { return Value::make_string(text); }
+        return r;
+    });
+
+    // REGEX.REPLACE(pattern, text, replacement)
+    register_native("REGEX.REPLACE", 3, 3, [](const std::vector<Value>& args) -> Value {
+        return Value::make_string(jdb_regex::replace(args[0].as_string()->data, args[1].as_string()->data,
+                                                     args[2].as_string()->data));
     });
 #endif
 }

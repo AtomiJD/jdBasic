@@ -15,6 +15,8 @@
 #include "jdb_format.h"
 #include "jdb_number.h"
 #include "jdb_text.h"
+#include "jdb_path.h"
+#include "jdb_regex.h"
 #include <clocale>
 #include <algorithm>
 #include <vector>
@@ -3085,7 +3087,7 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
         if (t == 2) {  // STR
             union { double d; int64_t i; } u; u.d = val;
             const char* s = (const char*)(intptr_t)u.i;
-            if (s) printf("%s", s);
+            if (s) jdb_print_str(s);
             return;
         }
         if (t == 3) {  // ARR
@@ -3128,7 +3130,7 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
         // String-flag alone is enough - element is a ptr-encoded char*.
         union { double d; int64_t i; } u; u.d = val;
         const char* s = (const char*)(intptr_t)u.i;
-        if (s) printf("%s", s);
+        if (s) jdb_print_str(s);
     } else if (has_ptr) {
         // Nested array - print as [e0, e1, ...]
         union { double d; int64_t i; } u; u.d = val;
@@ -3898,16 +3900,7 @@ char* jdb_insert_str(const char* target, const char* insert, int64_t pos) {
 
 // A directory opens and reads as nothing where fopen accepts one, so the
 // readers below ask instead of answering an empty file.
-static bool jdb_path_is_directory(const char* path) {
-    if (!path) return false;
-#if defined(_WIN32)
-    DWORD a = GetFileAttributesA(path);
-    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
-#else
-    struct stat st;
-    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
-#endif
-}
+static bool jdb_path_is_directory(const char* path) { return path && jdb_path::is_dir(path); }
 
 char* jdb_txtreader(const char* path) {
     FILE* f = fopen(path, "rb");
@@ -4198,100 +4191,13 @@ void jdb_rmdir(const char* path) {
 }
 
 // ── File metadata ───────────────────────────────────────────
-int64_t jdb_file_exists(const char* path) {
-    if (!path) return 0;
-#ifdef _WIN32
-    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? 1 : 0;
-#else
-    struct stat st;
-    return stat(path, &st) == 0 ? 1 : 0;
-#endif
-}
-
-int64_t jdb_file_size(const char* path) {
-    if (!path) return -1;
-#ifdef _WIN32
-    WIN32_FILE_ATTRIBUTE_DATA fad;
-    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &fad)) return -1;
-    if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return -1;
-    return ((int64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
-#else
-    struct stat st;
-    if (stat(path, &st) != 0 || S_ISDIR(st.st_mode)) return -1;
-    return (int64_t)st.st_size;
-#endif
-}
-
-int64_t jdb_file_isdir(const char* path) {
-    if (!path) return 0;
-#ifdef _WIN32
-    DWORD attr = GetFileAttributesA(path);
-    if (attr == INVALID_FILE_ATTRIBUTES) return 0;
-    return (attr & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
-#else
-    struct stat st;
-    if (stat(path, &st) != 0) return 0;
-    return S_ISDIR(st.st_mode) ? 1 : 0;
-#endif
-}
+int64_t jdb_file_exists(const char* path) { return path && jdb_path::exists(path) ? 1 : 0; }
+int64_t jdb_file_size(const char* path) { return path ? jdb_path::size(path) : -1; }
+int64_t jdb_file_isdir(const char* path) { return path && jdb_path::is_dir(path) ? 1 : 0; }
 
 // ── Path helpers ────────────────────────────────────────────
-char* jdb_path_dirname(const char* p) {
-    if (!p) return _strdup("");
-    std::string s(p);
-    size_t pos = s.find_last_of("/\\");
-    if (pos == std::string::npos) return _strdup("");
-    if (pos == 0) return _strdup(s.substr(0, 1).c_str());
-    return _strdup(s.substr(0, pos).c_str());
-}
-
-char* jdb_path_normalize(const char* p) {
-    if (!p) return _strdup("");
-#ifdef _WIN32
-    const char sep = '\\';
-#else
-    const char sep = '/';
-#endif
-    std::string s; s.reserve(strlen(p));
-    for (const char* c = p; *c; c++)
-        s.push_back((*c == '/' || *c == '\\') ? sep : *c);
-    std::string prefix;
-    std::string body = s;
-#ifdef _WIN32
-    if (body.size() >= 2 && isalpha((unsigned char)body[0]) && body[1] == ':') {
-        prefix = body.substr(0, 2);
-        body = body.substr(2);
-    }
-#endif
-    bool rooted = !body.empty() && body[0] == sep;
-    std::vector<std::string> parts;
-    size_t i = 0;
-    while (i < body.size()) {
-        while (i < body.size() && body[i] == sep) i++;
-        size_t j = i;
-        while (j < body.size() && body[j] != sep) j++;
-        if (i < j) parts.push_back(body.substr(i, j - i));
-        i = j;
-    }
-    std::vector<std::string> out;
-    for (auto& part : parts) {
-        if (part == ".") continue;
-        if (part == "..") {
-            if (!out.empty() && out.back() != "..") out.pop_back();
-            else if (!rooted) out.push_back("..");
-        } else {
-            out.push_back(part);
-        }
-    }
-    std::string res = prefix;
-    if (rooted) res.push_back(sep);
-    for (size_t k = 0; k < out.size(); k++) {
-        if (k) res.push_back(sep);
-        res += out[k];
-    }
-    if (res.empty()) res = ".";
-    return _strdup(res.c_str());
-}
+char* jdb_path_dirname(const char* p) { return p ? text_out(jdb_path::dirname(p)) : _strdup(""); }
+char* jdb_path_normalize(const char* p) { return p ? text_out(jdb_path::normalize(p)) : _strdup(""); }
 
 // ── Bit rotation ────────────────────────────────────────────
 // A width other than 8, 16, 32 or 64 rotates within 64 bits.
@@ -4575,58 +4481,12 @@ JdbArray* jdb_datediff_vec(const char* part, const char* date1, JdbArray* dates)
 // match that order or the same script picks one branch in interp and the
 // opposite in native (e.g. native_test.jdb's REGEX section flipping
 // PASS/FAIL between modes).
-// A pattern compiled the way the reader wrote it. std::regex speaks
-// ECMAScript, which has no inline flags, so a leading (?i) was matched as
-// literal text and the search quietly found nothing. The interpreter's copy
-// of the regex builtins reads it the same way - these are the bindings a
-// compiled program reaches instead.
-static std::regex rt_make_regex(const std::string& pattern) {
-    if (pattern.rfind("(?i)", 0) == 0)
-        return std::regex(pattern.substr(4), std::regex::icase);
-    return std::regex(pattern);
-}
-
-static int64_t regex_match_impl(const char* pattern, const char* text) {
-    try {
-        return std::regex_search(std::string(text ? text : ""),
-                                 rt_make_regex(pattern ? pattern : "")) ? 1 : 0;
-    } catch (...) { return 0; }
-}
-
-static char* regex_replace_impl(const char* pattern, const char* text, const char* replacement) {
-    try {
-        std::string result = std::regex_replace(std::string(text ? text : ""),
-                                                rt_make_regex(pattern ? pattern : ""),
-                                                std::string(replacement ? replacement : ""));
-        return _strdup(result.c_str());
-    } catch (...) { return _strdup(text ? text : ""); }
-}
-
 // Every match as a string; with capture groups, one row of group strings
 // per match instead.
 static JdbArray* regex_findall_impl(const char* pattern, const char* text) {
     std::vector<std::vector<std::string>> rows;
     bool has_groups = false;
-    try {
-        std::string s(text ? text : "");
-        static std::unordered_map<std::string, std::regex> cache;
-        std::string pat(pattern ? pattern : "");
-        auto cit = cache.find(pat);
-        if (cit == cache.end()) cit = cache.emplace(pat, rt_make_regex(pat)).first;
-        auto begin = std::sregex_iterator(s.begin(), s.end(), cit->second);
-        auto end2 = std::sregex_iterator();
-        for (auto it = begin; it != end2; ++it) {
-            auto& m = *it;
-            std::vector<std::string> row;
-            if (m.size() > 1) {
-                has_groups = true;
-                for (size_t g = 1; g < m.size(); g++) row.push_back(m[g].str());
-            } else {
-                row.push_back(m[0].str());
-            }
-            rows.push_back(std::move(row));
-        }
-    } catch (...) {}
+    jdb_regex::find_all(pattern ? pattern : "", text ? text : "", rows, has_groups);
     auto put_str = [](JdbArray* a, int64_t i, const std::string& v) {
         char* copy = (char*)malloc(v.size() + 1);
         memcpy(copy, v.data(), v.size());
@@ -4652,8 +4512,16 @@ static JdbArray* regex_findall_impl(const char* pattern, const char* text) {
 }
 
 extern "C" {
-int64_t jdb_regex_match(const char* pattern, const char* text) { return regex_match_impl(pattern, text); }
-char* jdb_regex_replace(const char* pattern, const char* text, const char* replacement) { return regex_replace_impl(pattern, text, replacement); }
+int64_t jdb_regex_match(const char* pattern, const char* text) {
+    return jdb_regex::search(pattern ? pattern : "", text ? text : "") ? 1 : 0;
+}
+char* jdb_regex_replace(const char* pattern, const char* text, const char* replacement) {
+    return text_out(jdb_regex::replace(pattern ? pattern : "", text ? text : "", replacement ? replacement : ""));
+}
+// The legacy REGEX_REPLACE$ takes the text first.
+char* jdb_regex_replace_text_first(const char* text, const char* pattern, const char* replacement) {
+    return jdb_regex_replace(pattern, text, replacement);
+}
 JdbArray* jdb_regex_findall(const char* pattern, const char* text) { return regex_findall_impl(pattern, text); }
 
 // ── SHA-256 ─────────────────────────────────────────────────
@@ -4838,21 +4706,17 @@ char* jdb_frmv(JdbArray* arr) {
     bool is_nested = (arr->flags & 1) != 0 && !is_str;
     bool is_bool = (arr->flags & 4) != 0;
     bool is_date = (arr->flags & 16) != 0;
-    char buf[8192] = "[";
-    int pos = 1;
-    // snprintf returns the INTENDED length, which can exceed the space left;
-    // emit() clamps pos so neither the in-loop writes nor the trailing ']'
-    // ever run past buf[8191].
-    const int CAP = 8190;
+    // A string cell is appended by its registered length, so a binary cell
+    // (UNPACK "a", BINREADER$) keeps the bytes behind its first NUL.
+    std::string out = "[";
     auto emit = [&](const char* s) {
-        if (pos >= CAP || !s) return;
-        int w = snprintf(buf + pos, (size_t)(CAP - pos), "%s", s);
-        if (w < 0) return;
-        pos += w;
-        if (pos > CAP) pos = CAP;
+        if (!s) return;
+        int64_t n = jdrt_strlen(s);
+        if (n < 0) n = (int64_t)strlen(s);
+        out.append(s, (size_t)n);
     };
-    for (int64_t i = 0; i < arr->length && pos < CAP; i++) {
-        if (i > 0) { buf[pos++] = ','; buf[pos++] = ' '; }
+    for (int64_t i = 0; i < arr->length; i++) {
+        if (i > 0) out += ", ";
         if (has_tagged) {
             // Per-cell JdTag (mixed arrays, e.g. AGG/TALLY rows [key, n]).
             int8_t t = arr->elem_tags[i];
@@ -4908,8 +4772,8 @@ char* jdb_frmv(JdbArray* arr) {
             emit(num);
         }
     }
-    buf[pos++] = ']'; buf[pos] = '\0';
-    return _strdup(buf);
+    out += "]";
+    return text_out(out);
 }
 
 // FRMV$ as the language documents it: a 1-D array becomes one element per
@@ -4974,36 +4838,6 @@ char* jdb_frmv_matrix(JdbArray* arr) {
         out += "\n";
     }
     return _strdup(out.c_str());
-}
-
-// ── PACK$/UNPACK (binary data) ──────────────────────────────
-
-char* jdb_pack(const char* fmt, JdbArray* values) {
-    if (!fmt || !values) return _strdup("");
-    size_t len = 0;
-    // Calculate size
-    for (const char* p = fmt; *p; p++) {
-        switch (*p) { case 'b': len += 1; break; case 's': len += 2; break;
-                      case 'i': case 'f': len += 4; break; case 'd': case 'l': len += 8; break; }
-    }
-    char* buf = (char*)calloc(len + 1, 1);
-    size_t off = 0; int64_t vi = 0;
-    for (const char* p = fmt; *p && vi < values->length; p++) {
-        int64_t v = (int64_t)values->data[vi++];
-        switch (*p) {
-            case 'b': buf[off] = (char)v; off += 1; break;
-            case 's': *(int16_t*)(buf+off) = (int16_t)v; off += 2; break;
-            case 'i': *(int32_t*)(buf+off) = (int32_t)v; off += 4; break;
-            case 'l': *(int64_t*)(buf+off) = v; off += 8; break;
-            case 'f': *(float*)(buf+off) = (float)values->data[vi-1]; off += 4; break;
-            case 'd': *(double*)(buf+off) = values->data[vi-1]; off += 8; break;
-        }
-    }
-    // Return as string (binary data, length tracked by caller)
-    char* result = (char*)malloc(len);
-    memcpy(result, buf, len);
-    free(buf);
-    return result;
 }
 
 // ── Misc ────────────────────────────────────────────────────

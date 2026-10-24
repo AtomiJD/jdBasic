@@ -936,7 +936,7 @@ void LLVMCodegen::declare_runtime_functions() {
     // the legacy REGEX_MATCH. Registered as a plain boolean native call it
     // answered 1 where the interpreter handed back the groups.
     reg("jdb_regex_replace", "REGEX.REPLACE",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
-    reg("jdb_regex_replace", "REGEX_REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_regex_replace_text_first", "REGEX_REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_regex_findall", "REGEX.FINDALL",  i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
 
     // TYPEOF (compile-time tag)

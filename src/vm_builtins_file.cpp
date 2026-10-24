@@ -2,6 +2,7 @@
 
 #include "vm_internal.h"
 #include <cstring>
+#include "jdb_path.h"
 #if !defined(_WIN32)
 #include <utime.h>
 #if !defined(JDB_MCU)
@@ -16,15 +17,7 @@
 
 // A directory opens and reads as nothing where open(2) accepts one, so a
 // reader has to ask instead of answering an empty file.
-static bool path_is_directory(const std::string& p) {
-#if defined(_WIN32)
-    DWORD a = GetFileAttributesA(p.c_str());
-    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
-#else
-    struct stat st;
-    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-#endif
-}
+static bool path_is_directory(const std::string& p) { return jdb_path::is_dir(p); }
 
 // Skips a UTF-8 byte order mark at the start of a stream.
 static void skip_utf8_bom(std::istream& f) {
@@ -694,119 +687,29 @@ void VM::register_file_builtins() {
 
 #ifndef JDB_LEAN
     register_native("PATH.JOIN$", [](const std::vector<Value>& args) -> Value {
-#if defined(_WIN32)
-        char sep = '\\';
-#else
-        char sep = '/';
-#endif
-        std::string result;
-        for (size_t i = 0; i < args.size(); i++) {
-            std::string part = args[i].to_string();
-            if (i > 0 && !result.empty() && result.back() != sep && result.back() != '/' && result.back() != '\\')
-                result += sep;
-            result += part;
-        }
-        return Value::make_string(result);
-    });
-#endif
-
-#ifndef JDB_LEAN
-    register_native("PATH.BASENAME$", [](const std::vector<Value>& args) -> Value {
-        std::string p = args[0].as_string()->data;
-        size_t pos = p.find_last_of("/\\");
-        return Value::make_string(pos == std::string::npos ? p : p.substr(pos + 1));
-    });
-#endif
-
-#ifndef JDB_LEAN
-    register_native("PATH.EXT$", [](const std::vector<Value>& args) -> Value {
-        std::string p = args[0].as_string()->data;
-        size_t slash = p.find_last_of("/\\");
-        size_t dot = p.find_last_of('.');
-        if (dot == std::string::npos || (slash != std::string::npos && dot < slash))
-            return Value::make_string("");
-        return Value::make_string(p.substr(dot));
-    });
-#endif
-
-#ifndef JDB_LEAN
-    register_native("PATH.DIRNAME$", 1, 1, [](const std::vector<Value>& args) -> Value {
-        std::string p = args[0].as_string()->data;
-        size_t pos = p.find_last_of("/\\");
-        if (pos == std::string::npos) return Value::make_string("");
-        // Strip trailing separator unless it's the root.
-        if (pos == 0) return Value::make_string(p.substr(0, 1));
-        return Value::make_string(p.substr(0, pos));
-    });
-#endif
-
-#ifndef JDB_LEAN
-    register_native("PATH.NORMALIZE$", 1, 1, [](const std::vector<Value>& args) -> Value {
-        std::string p = args[0].as_string()->data;
-#if defined(_WIN32)
-        const char sep = '\\';
-#else
-        const char sep = '/';
-#endif
-        // Normalize all separators to native
-        std::string s; s.reserve(p.size());
-        for (char c : p) s.push_back((c == '/' || c == '\\') ? sep : c);
-        // Detect drive prefix like "C:" so we don't mangle it
-        std::string prefix;
-        std::string body = s;
-#if defined(_WIN32)
-        if (body.size() >= 2 && isalpha((unsigned char)body[0]) && body[1] == ':') {
-            prefix = body.substr(0, 2);
-            body = body.substr(2);
-        }
-#endif
-        bool rooted = !body.empty() && body[0] == sep;
-        // Split into parts
         std::vector<std::string> parts;
-        size_t i = 0;
-        while (i < body.size()) {
-            while (i < body.size() && body[i] == sep) i++;
-            size_t j = i;
-            while (j < body.size() && body[j] != sep) j++;
-            if (i < j) parts.push_back(body.substr(i, j - i));
-            i = j;
-        }
-        // Resolve . and ..
-        std::vector<std::string> out;
-        for (auto& part : parts) {
-            if (part == ".") continue;
-            if (part == "..") {
-                if (!out.empty() && out.back() != "..") out.pop_back();
-                else if (!rooted) out.push_back("..");
-            } else {
-                out.push_back(part);
-            }
-        }
-        std::string res = prefix;
-        if (rooted) res.push_back(sep);
-        for (size_t k = 0; k < out.size(); k++) {
-            if (k) res.push_back(sep);
-            res += out[k];
-        }
-        if (res.empty()) res = ".";
-        return Value::make_string(res);
+        for (const Value& a : args) parts.push_back(a.to_string());
+        return Value::make_string(jdb_path::join(parts));
     });
 
-    // Whether a path names a place on its own, without a current directory
-    // to read it against.
+    register_native("PATH.BASENAME$", [](const std::vector<Value>& args) -> Value {
+        return Value::make_string(jdb_path::basename(args[0].as_string()->data));
+    });
+
+    register_native("PATH.EXT$", [](const std::vector<Value>& args) -> Value {
+        return Value::make_string(jdb_path::ext(args[0].as_string()->data));
+    });
+
+    register_native("PATH.DIRNAME$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_string(jdb_path::dirname(args[0].as_string()->data));
+    });
+
+    register_native("PATH.NORMALIZE$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_string(jdb_path::normalize(args[0].as_string()->data));
+    });
+
     register_native("PATH.ISABS", 1, 1, [](const std::vector<Value>& args) -> Value {
-        std::string p = args[0].as_string()->data;
-        if (p.empty()) return Value::make_bool(false);
-#if defined(_WIN32)
-        // A drive, a UNC share, or rooted on the current drive.
-        if (p.size() >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/'))
-            return Value::make_bool(true);
-        if (p.size() >= 2 && (p[0] == '\\' || p[0] == '/'))
-            return Value::make_bool(true);
-        return Value::make_bool(false);
-#else
-        return Value::make_bool(p[0] == '/');
-#endif
+        return Value::make_bool(jdb_path::is_abs(args[0].as_string()->data));
     });
 
     // The same place, named from the root. A relative path is read against
@@ -851,43 +754,15 @@ void VM::register_file_builtins() {
 
     // ── File metadata ───────────────────────────────────────────
     register_native("FILE.EXISTS", 1, 1, [](const std::vector<Value>& args) -> Value {
-        std::string p = args[0].as_string()->data;
-#if defined(_WIN32)
-        DWORD attr = GetFileAttributesA(p.c_str());
-        return Value::make_bool(attr != INVALID_FILE_ATTRIBUTES);
-#else
-        struct stat st;
-        return Value::make_bool(stat(p.c_str(), &st) == 0);
-#endif
+        return Value::make_bool(jdb_path::exists(args[0].as_string()->data));
     });
 
     register_native("FILE.SIZE", 1, 1, [](const std::vector<Value>& args) -> Value {
-        std::string p = args[0].as_string()->data;
-#if defined(_WIN32)
-        WIN32_FILE_ATTRIBUTE_DATA fad;
-        if (!GetFileAttributesExA(p.c_str(), GetFileExInfoStandard, &fad))
-            return Value::make_i64(-1);
-        if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return Value::make_i64(-1);
-        int64_t sz = ((int64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
-        return Value::make_i64(sz);
-#else
-        struct stat st;
-        if (stat(p.c_str(), &st) != 0 || S_ISDIR(st.st_mode)) return Value::make_i64(-1);
-        return Value::make_i64((int64_t)st.st_size);
-#endif
+        return Value::make_i64(jdb_path::size(args[0].as_string()->data));
     });
 
     register_native("FILE.ISDIR", 1, 1, [](const std::vector<Value>& args) -> Value {
-        std::string p = args[0].as_string()->data;
-#if defined(_WIN32)
-        DWORD attr = GetFileAttributesA(p.c_str());
-        if (attr == INVALID_FILE_ATTRIBUTES) return Value::make_bool(false);
-        return Value::make_bool((attr & FILE_ATTRIBUTE_DIRECTORY) != 0);
-#else
-        struct stat st;
-        if (stat(p.c_str(), &st) != 0) return Value::make_bool(false);
-        return Value::make_bool(S_ISDIR(st.st_mode));
-#endif
+        return Value::make_bool(jdb_path::is_dir(args[0].as_string()->data));
     });
 
     register_native("FILE.STAT", 1, 1, [](const std::vector<Value>& args) -> Value {
