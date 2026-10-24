@@ -27,6 +27,11 @@
 '                  crown), neon (digital rain; her glow sticks and headphones,
 '                  his hoodie and visor) or rainbow (rainbow and clouds; her
 '                  tutu and horn, his party hat and bow tie)
+'   --help         the options, as CLI (lib/cli.jdb) lists them
+'
+' A program that imports STAGE and has options of its own adds the show's
+' to its spec with STAGE.OPTIONS and hands the parsed map to
+' STAGE.CONFIGURE; a song without any lets STAGE.RUN read the command line.
 '
 ' As a program of its own the show follows a song another process plays:
 '
@@ -41,6 +46,7 @@
 
 EXPORT MODULE STAGE
 IMPORT SCORE
+IMPORT CLI
 
 DIM SW AS INTEGER = 1920
 DIM SH AS INTEGER = 1080
@@ -112,6 +118,12 @@ DIM tt_cover_done AS INTEGER = -1
 ' --look: the show's palette, backdrop and the dancers' outfits, set by SET_LOOK
 DIM look$ AS STRING = "classic"
 DIM look_pinned AS INTEGER = FALSE
+
+' The command line, taken by CONFIGURE
+DIM configured AS INTEGER = FALSE
+DIM windowed AS INTEGER = FALSE
+DIM display_no AS INTEGER = -1
+DIM lan AS INTEGER = FALSE
 DIM backdrop$ AS STRING = "sun"
 DIM outfit$ AS STRING = "skirt"
 DIM girl_r AS DOUBLE = 255
@@ -1527,19 +1539,53 @@ EXPORT SUB SUBTITLE(s$)
     subtitle$ = s$
 ENDSUB
 
-' Reads the command line, opens the window, loads the font
+' The show's options, added to the spec of the program that imports STAGE
+EXPORT SUB OPTIONS(cli_spec)
+    CLI.FLAG(cli_spec, "window", "", "a half-size window instead of fullscreen")
+    CLI.OPT(cli_spec, "display", "", "the display to open on, of GFX.DISPLAYS()", "")
+    CLI.OPT(cli_spec, "shots", "", "a frame of every section saved into this folder", "")
+    CLI.OPT(cli_spec, "render", "", "an offline render into this folder: frames at 30 fps and audio.wav", "")
+    CLI.FLAG(cli_spec, "tiktok", "", "portrait 1080x1920, the girl alone, a new move every two bars")
+    CLI.OPT(cli_spec, "look", "", "the show: classic, purple, neon or rainbow", "")
+    CLI.FLAG(cli_spec, "lan", "", "the Node Bus of the whole LAN, key in JDB_NODE_KEY")
+ENDSUB
+
+' Takes the parsed command line; a look given here stays, whatever a
+' followed node publishes
+EXPORT SUB CONFIGURE(parsed)
+    windowed = parsed{"window"}
+    IF parsed{"display"} <> "" THEN display_no = CINT(VAL(parsed{"display"}))
+    shots$ = parsed{"shots"}
+    render_dir$ = parsed{"render"}
+    tiktok = parsed{"tiktok"}
+    lan = parsed{"lan"}
+    IF parsed{"look"} <> "" THEN
+        SET_LOOK LCASE$(parsed{"look"})
+        look_pinned = TRUE
+    ENDIF
+    configured = TRUE
+ENDSUB
+
+' The spec of the show on its own, for a song without options and for
+' stage.jdb --follow
+FUNC OWN_SPEC()
+    DIM own = CLI.NEW("stage", "the show for a song: two dancers, the scope and the skyline")
+    OPTIONS own
+    CLI.FLAG(own, "follow", "", "follow the song another node plays, until that node leaves")
+    CLI.ARG(own, "node", "the node to follow, songgen unless named", FALSE)
+    RETURN own
+ENDFUNC
+
+' Opens the window and loads the font; reads the command line first when
+' nobody did
 SUB OPEN_SHOW()
-    DIM windowed AS INTEGER = FALSE
-    DIM cli = OS.ARGS()
-    DIM ai AS INTEGER
-    FOR ai = 1 TO LEN(cli) - 1
-        IF cli[ai] = "--window" THEN windowed = TRUE
-        IF cli[ai] = "--shots" ANDALSO ai + 1 < LEN(cli) THEN shots$ = cli[ai + 1]
-        IF cli[ai] = "--render" ANDALSO ai + 1 < LEN(cli) THEN render_dir$ = cli[ai + 1]
-        IF cli[ai] = "--display" ANDALSO ai + 1 < LEN(cli) THEN GFX.DISPLAY CINT(VAL(cli[ai + 1]))
-        IF cli[ai] = "--tiktok" THEN tiktok = TRUE
-        IF cli[ai] = "--look" ANDALSO ai + 1 < LEN(cli) THEN SET_LOOK LCASE$(cli[ai + 1])
-    NEXT ai
+    IF NOT configured THEN
+        DIM spec = OWN_SPEC()
+        DIM got = CLI.PARSE(spec, CLI.ARGV())
+        IF CLI.DONE(spec, got) THEN END CLI.STATUS(got)
+        CONFIGURE got
+    ENDIF
+    IF display_no >= 0 THEN GFX.DISPLAY display_no
     IF tiktok THEN
         SW = 1080
         SH = 1920
@@ -1672,12 +1718,7 @@ EXPORT SUB FOLLOW(source$)
     DIM me$ AS STRING = "stage"
     IF LEN(NODE.PEERS(me$)) > 0 THEN me$ = "stage-" + STR$(OS.PID())
     DIM scope$ AS STRING = "local"
-    DIM fcli = OS.ARGS()
-    DIM fa AS INTEGER
-    FOR fa = 1 TO LEN(fcli) - 1
-        IF fcli[fa] = "--lan" THEN scope$ = "lan"
-        IF fcli[fa] = "--look" THEN look_pinned = TRUE
-    NEXT fa
+    IF lan THEN scope$ = "lan"
     DIM self_node = NODE.JOIN(me$, scope$)
     src_events = NODE.EVENTS()
     sub_score = TOPIC.SUBSCRIBE("song/score", "queue:4")
@@ -1706,13 +1747,13 @@ ENDSUB
 ' Run as a program: jdBasic stage.jdb --follow [node]
 DIM stage_cli = OS.ARGS()
 IF LEN(stage_cli) > 1 ANDALSO INSTR(LCASE$(stage_cli[0]), "stage.jdb") >= 0 THEN
-    DIM follow_node$ AS STRING = ""
-    DIM sci AS INTEGER
-    FOR sci = 1 TO LEN(stage_cli) - 1
-        IF stage_cli[sci] = "--follow" THEN
-            follow_node$ = "songgen"
-            IF sci + 1 < LEN(stage_cli) ANDALSO LEFT$(stage_cli[sci + 1], 2) <> "--" THEN follow_node$ = stage_cli[sci + 1]
-        ENDIF
-    NEXT sci
-    IF follow_node$ <> "" THEN FOLLOW follow_node$
+    DIM own_spec = OWN_SPEC()
+    DIM own_got = CLI.PARSE(own_spec, CLI.ARGV())
+    IF CLI.DONE(own_spec, own_got) THEN END CLI.STATUS(own_got)
+    CONFIGURE own_got
+    IF own_got{"follow"} THEN
+        DIM follow_node$ AS STRING = "songgen"
+        IF LEN(own_got{"args"}) > 0 THEN follow_node$ = own_got{"args"}[0]
+        FOLLOW follow_node$
+    ENDIF
 ENDIF

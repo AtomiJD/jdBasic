@@ -360,7 +360,7 @@ EXPORT FUNC ARGV()
     DIM i
     DIM start = 0
     IF LEN(raw) > 0 THEN
-        IF LooksLikeProgramPath(raw[0]) THEN start = 1
+        IF LooksLikeProgramPath(raw[0]) ORELSE ENDSWITH(LCASE$(raw[0]), ".jdb") THEN start = 1
     ENDIF
     FOR i = start TO LEN(raw) - 1
         out = APPEND(out, raw[i])
@@ -494,7 +494,7 @@ EXPORT FUNC HELP$(spec)
     out$ = out$ + nl$ + "options:" + nl$
     FOR i = 0 TO LEN(opts) - 1
         DIM line_text$ = RPAD$(OptLabel$(opts[i]), width, " ") + opts[i]{"help"}
-        IF opts[i]{"kind"} = KIND_STR THEN line_text$ = line_text$ + " (default " + opts[i]{"default"} + ")"
+        IF opts[i]{"kind"} = KIND_STR ANDALSO LEN(opts[i]{"default"}) > 0 THEN line_text$ = line_text$ + " (default " + opts[i]{"default"} + ")"
         IF opts[i]{"kind"} = KIND_NUM THEN line_text$ = line_text$ + " (default " + STR$(opts[i]{"default"}) + ")"
         out$ = out$ + line_text$ + nl$
     NEXT i

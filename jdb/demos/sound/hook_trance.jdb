@@ -17,18 +17,20 @@ IMPORT SCORE
 IMPORT STAGE
 IMPORT MELODY
 IMPORT PATCH
+IMPORT CLI
 
 DIM BPM AS DOUBLE = 138
 DIM KEY$ AS STRING = "A minor"
 
-DIM seed AS INTEGER = 7
-DIM prog_name$ AS STRING = "epic"
-DIM cli = OS.ARGS()
-DIM ci AS INTEGER
-FOR ci = 1 TO LEN(cli) - 2
-    IF cli[ci] = "--seed" THEN seed = VAL(cli[ci + 1])
-    IF cli[ci] = "--prog" THEN prog_name$ = cli[ci + 1]
-NEXT ci
+DIM spec = CLI.NEW("hook_trance", "Seed Number: trance in A minor, a new hook from every seed")
+CLI.NUM(spec, "seed", "s", "the hook's seed", 7)
+CLI.OPT(spec, "prog", "p", "epic, anthem, dark, pop or euphoric", "epic")
+STAGE.OPTIONS spec
+DIM got = CLI.PARSE(spec, CLI.ARGV())
+IF CLI.DONE(spec, got) THEN END CLI.STATUS(got)
+STAGE.CONFIGURE got
+DIM seed AS INTEGER = CINT(got{"seed"})
+DIM prog_name$ AS STRING = got{"prog"}
 
 DIM KICK AS INTEGER = 0
 DIM CLAP AS INTEGER = 1

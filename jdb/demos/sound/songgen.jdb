@@ -46,6 +46,7 @@ IMPORT SCORE
 IMPORT STAGE
 IMPORT MELODY
 IMPORT PATCH
+IMPORT CLI
 
 DIM GENRES$ = ["trance", "house", "deep", "acid", "synthwave"]
 DIM genre$ AS STRING = "trance"
@@ -60,21 +61,30 @@ DIM LOOKS$ = ["classic", "purple", "neon", "rainbow"]
 DIM look$ AS STRING = "classic"
 DIM lan_mode AS INTEGER = FALSE
 DIM cli = OS.ARGS()
+DIM spec = CLI.NEW("songgen", "writes a whole track from a genre and a seed, and shows it")
+CLI.OPT(spec, "genre", "g", "trance, house, deep, acid or synthwave", "trance")
+CLI.NUM(spec, "seed", "s", "the seed of the track", 1)
+CLI.OPT(spec, "wav", "w", "render the track offline into this WAV instead of the show", "")
+CLI.FLAG(spec, "recipe", "", "print the recipe and the form, and stop")
+CLI.FLAG(spec, "live", "", "a mixing desk instead of the show: mute, jump, reroll, seed, genre and look while the music plays")
+CLI.OPT(spec, "shot", "", "with --live: save the desk as this image and end", "")
+CLI.NUM(spec, "after", "", "with --shot: seconds before the image", 6)
+CLI.FLAG(spec, "stage", "", "with --live: the show follows the desk in a window of its own")
+STAGE.OPTIONS spec
+DIM got = CLI.PARSE(spec, CLI.ARGV())
+IF CLI.DONE(spec, got) THEN END CLI.STATUS(got)
+STAGE.CONFIGURE got
+genre$ = LCASE$(got{"genre"})
+seed = CINT(got{"seed"})
+wav$ = got{"wav"}
+recipe_only = got{"recipe"}
+live_mode = got{"live"}
+shot$ = got{"shot"}
+shot_after = got{"after"}
+stage_mode = got{"stage"}
+lan_mode = got{"lan"}
+IF got{"look"} <> "" THEN look$ = LCASE$(got{"look"})
 DIM ci AS INTEGER
-FOR ci = 1 TO LEN(cli) - 2
-    IF cli[ci] = "--genre" THEN genre$ = LCASE$(cli[ci + 1])
-    IF cli[ci] = "--seed" THEN seed = CINT(VAL(cli[ci + 1]))
-    IF cli[ci] = "--wav" THEN wav$ = cli[ci + 1]
-    IF cli[ci] = "--shot" THEN shot$ = cli[ci + 1]
-    IF cli[ci] = "--after" THEN shot_after = VAL(cli[ci + 1])
-    IF cli[ci] = "--look" THEN look$ = LCASE$(cli[ci + 1])
-NEXT ci
-FOR ci = 1 TO LEN(cli) - 1
-    IF cli[ci] = "--recipe" THEN recipe_only = TRUE
-    IF cli[ci] = "--live" THEN live_mode = TRUE
-    IF cli[ci] = "--stage" THEN stage_mode = TRUE
-    IF cli[ci] = "--lan" THEN lan_mode = TRUE
-NEXT ci
 DIM GENRE_NO AS INTEGER = -1
 FOR ci = 0 TO LEN(GENRES$) - 1
     IF GENRES$[ci] = genre$ THEN GENRE_NO = ci
