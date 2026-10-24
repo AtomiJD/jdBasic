@@ -1,0 +1,55 @@
+name: Nightly
+
+# The sweeps that take too long for every push: the gate under
+# AddressSanitizer and UndefinedBehaviorSanitizer (tests/sanitize_gate.sh).
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  sanitizer-gate:
+    name: Sanitizer gate (Linux, ASan + UBSan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Eigen
+        id: cache-eigen
+        uses: actions/cache@v4
+        with:
+          path: libs/eigen
+          key: eigen-3.4.0-linux
+
+      - name: Fetch Eigen
+        if: steps.cache-eigen.outputs.cache-hit != 'true'
+        run: |
+          curl -sSL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz -o eigen.tar.gz
+          mkdir -p libs tmp_eigen
+          tar xzf eigen.tar.gz -C tmp_eigen
+          mv tmp_eigen/eigen-3.4.0 libs/eigen
+
+      - name: LLVM 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev
+
+      # AddressSanitizer cannot reserve its shadow memory under the address
+      # randomisation newer kernels default to.
+      - name: Address randomisation ASan can live with
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Build under the sanitizers
+        run: SANITIZE=1 HTTP=0 GFX=0 NATIVEC=1 ./build.sh
+
+      - name: Sanitizer gate
+        run: bash tests/sanitize_gate.sh 2000
+
+      - name: Sanitizer reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-reports
+          path: tmp/san
+          if-no-files-found: ignore

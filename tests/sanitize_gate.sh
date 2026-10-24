@@ -25,6 +25,7 @@ mkdir -p tmp/san
 export ASAN_OPTIONS="detect_leaks=0:print_stacktrace=1:log_path=$PWD/tmp/san/asan"
 export UBSAN_OPTIONS="print_stacktrace=1:log_path=$PWD/tmp/san/ubsan"
 export JDB_SANITIZE=1
+export LD_LIBRARY_PATH="$PWD/build:${LD_LIBRARY_PATH:-}"
 fail=0
 
 # run <label> <command...>: one line per step with the exit code and the
