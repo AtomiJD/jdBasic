@@ -12,6 +12,7 @@
 #include <regex>
 #include "jdb_shape.h"
 #include "jdb_calendar.h"
+#include "jdb_format.h"
 #include <algorithm>
 #include <vector>
 #include <atomic>
@@ -3372,178 +3373,51 @@ double jdb_val_ptr(double encoded_ptr) {
 // `is_str=true` formats `str_val`; otherwise `val` is formatted per the
 // type letter (d/f/x/X) or the default (`%g` or `.precf`). Returns chars
 // written (excluding NUL); caller must pass `cap >= 2`.
+// One placeholder of FORMAT$ rendered into out: a number, or a string that
+// is read as a number when the spec asks for one. Raises FORMAT$'s error
+// for a spec the language does not have.
 static int jdb_format_one_arg(char* out, int cap,
                                const char* spec,
                                double val,
                                const char* str_val,
                                bool is_str) {
     if (cap < 2) { if (cap > 0) out[0] = 0; return 0; }
-    if (spec && spec[0] == ':') spec++;
-    int slen = spec ? (int)strlen(spec) : 0;
-    int sp = 0;
-
-    char fill = ' ', align = '\0';
-    if (slen >= 2 && (spec[1] == '<' || spec[1] == '>' || spec[1] == '^')) {
-        fill = spec[0]; align = spec[1]; sp = 2;
-    } else if (slen >= 1 && (spec[0] == '<' || spec[0] == '>' || spec[0] == '^')) {
-        align = spec[0]; sp = 1;
-    }
-    const bool explicit_align = align != '\0';
-    char sign = 0;
-    if (sp < slen && (spec[sp] == '+' || spec[sp] == '-' || spec[sp] == ' ')) sign = spec[sp++];
-    // # asks for a 0x prefix, before the width or after the precision
-    bool hash_flag = false;
-    if (sp < slen && spec[sp] == '#') { hash_flag = true; sp++; }
-    // A 0 before the width pads a number with zeros after its sign
-    bool zero_pad = false;
-    if (sp < slen && spec[sp] == '0') { zero_pad = true; sp++; }
-    int width = 0;
-    while (sp < slen && spec[sp] >= '0' && spec[sp] <= '9')
-        width = width * 10 + (spec[sp++] - '0');
-    int prec = -1;
-    if (sp < slen && spec[sp] == '.') {
-        sp++; prec = 0;
-        while (sp < slen && spec[sp] >= '0' && spec[sp] <= '9')
-            prec = prec * 10 + (spec[sp++] - '0');
-    }
-    if (sp < slen && spec[sp] == '#') { hash_flag = true; sp++; }
-    char type = (sp < slen) ? spec[sp] : 0;
-    bool known_type = type == 0 || type == 'd' || type == 'f' || type == 'x' ||
-                      type == 'X' || type == 's' || type == 'e' || type == 'E' ||
-                      type == 'g' || type == 'G' || type == '%';
-    if (!known_type || sp + (type ? 1 : 0) != slen) {
-        char msg[200];
-        snprintf(msg, sizeof(msg),
-                 "FORMAT$: unknown format spec \"{:%.60s}\"; use [[fill]align][sign][#][0][width][.precision][d|f|e|g|x|X|s|%%]",
-                 spec ? spec : "");
-        jdb_err_set(msg, 1);
+    jdb_fmt::Spec s;
+    if (!jdb_fmt::parse_spec(spec, s)) {
+        const char* shown = spec ? (spec[0] == ':' ? spec + 1 : spec) : "";
+        jdb_err_set(jdb_fmt::spec_error(shown).c_str(), 1);
         out[0] = 0;
         return 0;
     }
-
-    char raw[256];
-    int raw_len;
-    if (is_str) {
-        const char* s = str_val ? str_val : "";
-        raw_len = (int)strlen(s);
-        if (raw_len >= (int)sizeof(raw)) raw_len = (int)sizeof(raw) - 1;
-        memcpy(raw, s, raw_len);
-        raw[raw_len] = 0;
-    } else if (type == 'd') {
-        raw_len = snprintf(raw, sizeof(raw), "%lld", (long long)(int64_t)val);
-    } else if (type == 'f') {
-        if (prec >= 0) raw_len = snprintf(raw, sizeof(raw), "%.*f", prec, val);
-        else           raw_len = snprintf(raw, sizeof(raw), "%f", val);
-    } else if (type == 'e' || type == 'E' || type == 'g' || type == 'G') {
-        char cfmt[8] = {'%', '.', '*', type, 0};
-        raw_len = snprintf(raw, sizeof(raw), cfmt, prec >= 0 ? prec : 6, val);
-    } else if (type == '%') {
-        raw_len = snprintf(raw, sizeof(raw), "%.*f%%", prec >= 0 ? prec : 6, val * 100.0);
-    } else if (type == 'x') {
-        raw_len = snprintf(raw, sizeof(raw),
-            hash_flag ? "0x%llx" : "%llx", (long long)(int64_t)val);
-    } else if (type == 'X') {
-        raw_len = snprintf(raw, sizeof(raw),
-            hash_flag ? "0x%llX" : "%llX", (long long)(int64_t)val);
-    } else if (prec >= 0) {
-        raw_len = snprintf(raw, sizeof(raw), "%.*f", prec, val);
+    std::string text;
+    if (is_str && !jdb_fmt::wants_number(s)) {
+        text = str_val ? str_val : "";
     } else {
-        raw_len = jdb_format_double(raw, (int)sizeof(raw), val);
+        if (is_str) val = atof(str_val ? str_val : "");
+        char plain[64];
+        jdb_format_double(plain, (int)sizeof(plain), val);
+        text = jdb_fmt::number_text(s, val, (int64_t)val, plain);
     }
-    if (raw_len < 0) raw_len = 0;
-    if (raw_len >= (int)sizeof(raw)) raw_len = (int)sizeof(raw) - 1;
-    if (!is_str && (sign == '+' || sign == ' ') && raw_len > 0 && raw[0] != '-' &&
-        raw_len + 1 < (int)sizeof(raw)) {
-        memmove(raw + 1, raw, (size_t)raw_len + 1);
-        raw[0] = sign;
-        raw_len++;
-    }
-    if (zero_pad && width > 0 && raw_len < width && width < (int)sizeof(raw)) {
-        if (!explicit_align && !is_str) {
-            int at = (raw_len > 0 && (raw[0] == '+' || raw[0] == '-' || raw[0] == ' ')) ? 1 : 0;
-            if (raw_len >= at + 2 && raw[at] == '0' && raw[at + 1] == 'x') at += 2;
-            int pad = width - raw_len;
-            memmove(raw + at + pad, raw + at, (size_t)(raw_len - at) + 1);
-            memset(raw + at, '0', (size_t)pad);
-            raw_len = width;
-        } else if (!explicit_align || fill == ' ') {
-            fill = '0';
-        }
-    }
-
-    int written = 0;
-    if (width > 0 && raw_len < width) {
-        if (align == '\0') align = '>';
-        int pad = width - raw_len;
-        if (align == '<') {
-            if (raw_len < cap - 1) { memcpy(out, raw, raw_len); written = raw_len; }
-            for (int k = 0; k < pad && written < cap - 1; k++) out[written++] = fill;
-        } else if (align == '^') {
-            int left = pad / 2;
-            for (int k = 0; k < left && written < cap - 1; k++) out[written++] = fill;
-            if (written + raw_len < cap - 1) {
-                memcpy(out + written, raw, raw_len); written += raw_len;
-            }
-            for (int k = 0; k < pad - left && written < cap - 1; k++) out[written++] = fill;
-        } else { // '>'
-            for (int k = 0; k < pad && written < cap - 1; k++) out[written++] = fill;
-            if (written + raw_len < cap - 1) {
-                memcpy(out + written, raw, raw_len); written += raw_len;
-            }
-        }
-    } else {
-        int n = raw_len < cap - 1 ? raw_len : cap - 1;
-        memcpy(out, raw, n); written = n;
-    }
-    out[written] = 0;
-    return written;
+    text = jdb_fmt::lay_out(s, text, !is_str);
+    int n = (int)text.size() < cap - 1 ? (int)text.size() : cap - 1;
+    memcpy(out, text.data(), (size_t)n);
+    out[n] = 0;
+    return n;
 }
 
-// A placeholder's own argument number, {0} or {1:>6}, taken off the spec;
-// -1 when the placeholder takes the next argument in turn.
-static int format_pick_index(char* spec) {
-    int i = 0;
-    while (spec[i] >= '0' && spec[i] <= '9') i++;
-    if (i == 0 || (spec[i] != ':' && spec[i] != '\0')) return -1;
-    int idx = atoi(spec);
-    int from = i + (spec[i] == ':' ? 1 : 0);
-    memmove(spec, spec + from, strlen(spec + from) + 1);
-    return idx;
-}
-
+// FORMAT$ over an array of numbers.
 char* jdb_format(const char* fmt, JdbArray* args) {
-    char result[4096];
-    int rp = 0;
-    int arg_idx = 0;
-    const char* p = fmt;
-
-    while (*p && rp < 4090) {
-        if (*p == '{') {
-            if (*(p+1) == '{') { result[rp++] = '{'; p += 2; continue; }
-            const char* end = strchr(p, '}');
-            if (!end) { result[rp++] = *p++; continue; }
-
-            char spec[64] = {0};
-            int slen = (int)(end - p - 1);
-            if (slen > 0 && slen < 63) memcpy(spec, p+1, slen);
-
-            int pick = format_pick_index(spec);
-            int ai = pick >= 0 ? pick : arg_idx++;
-            double val = (args && ai < args->length) ? args->data[ai] : 0.0;
-
-            char tmp[256];
-            int tlen = jdb_format_one_arg(tmp, sizeof(tmp), spec, val, nullptr, false);
-            if (rp + tlen < 4090) { memcpy(result + rp, tmp, tlen); rp += tlen; }
-
-            p = end + 1;
-        } else if (*p == '}' && *(p+1) == '}') {
-            result[rp++] = '}'; p += 2;
-        } else {
-            result[rp++] = *p++;
-        }
-    }
-    result[rp] = '\0';
-    return _strdup(result);
+    std::string result;
+    jdb_fmt::expand(fmt ? fmt : "", result,
+        [&](int ai, const std::string& spec, std::string& out) {
+            // A placeholder past the arguments renders as "?".
+            if (!args || ai < 0 || ai >= args->length) { out += "?"; return true; }
+            char tmp[320];
+            jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(), args->data[ai], nullptr, false);
+            out += tmp;
+            return true;
+        });
+    return _strdup(result.c_str());
 }
 
 // Simple FORMAT$ with individual args (up to 4)
@@ -3577,69 +3451,43 @@ extern "C" {
 }
 extern "C" void jdb_runtime_set_handle(void* h) { g_jdrt_handle = h; }
 
-// types[i] is 'd' for an f64-bit-pun, 's' for a const char*, or 'h' for a
-// VM-handle (i64 key into the VM's value_store). 'h' lets us defer the
-// "is this number-or-string?" question to runtime, which is the only stage
-// that knows both the format spec and the underlying Value's type - useful
-// for MAP indexing where p{"name"} could be a string and p{"price"} a double
-// in the same FORMAT$ call.
+// types[i] is 'd' for an f64 bit pun, 's' for a const char*, or 'h' for a
+// VM handle (an i64 key into the VM's value store). A handle is read as a
+// number when the spec asks for one and as text otherwise, which is the
+// only stage that knows both the spec and the value's type: p{"name"} may
+// be a string and p{"price"} a number in the same FORMAT$ call.
 static char* jdb_format_tagged_impl(const char* fmt, const char* types,
                                      int n, const int64_t* raw) {
-    char result[4096];
-    int rp = 0;
-    int arg_idx = 0;
-    const char* p = fmt;
-    while (*p && rp < 4090) {
-        if (*p == '{') {
-            if (*(p+1) == '{') { result[rp++] = '{'; p += 2; continue; }
-            const char* end = strchr(p, '}');
-            if (!end) { result[rp++] = *p++; continue; }
-
-            char spec[64] = {0};
-            int slen = (int)(end - p - 1);
-            if (slen > 0 && slen < 63) memcpy(spec, p+1, slen);
-
-            char tmp[256] = {0};
-            int pick = format_pick_index(spec);
-            int ai = pick >= 0 ? pick : arg_idx++;
-            char tag = (ai < n && types) ? types[ai] : 'd';
-            int64_t r64 = (ai < n) ? raw[ai] : 0;
-
+    std::string result;
+    jdb_fmt::expand(fmt ? fmt : "", result,
+        [&](int ai, const std::string& spec, std::string& out) {
+            if (ai < 0 || ai >= n) { out += "?"; return true; }
+            char tag = types ? types[ai] : 'd';
+            int64_t r64 = raw[ai];
+            char tmp[320] = {0};
             if (tag == 's') {
-                const char* s = (const char*)(intptr_t)r64;
-                jdb_format_one_arg(tmp, sizeof(tmp), spec, 0.0, s, true);
+                jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(), 0.0,
+                                   (const char*)(intptr_t)r64, true);
             } else if (tag == 'h') {
-                // VM handle. Pick number-or-string materialisation by the
-                // type letter in the spec - d/f/x/X/e/g all want a number,
-                // anything else (including bare `{}`) renders as string.
-                size_t splen = strlen(spec);
-                char ty = (splen > 0) ? spec[splen-1] : 0;
-                bool is_numeric = (ty == 'f' || ty == 'd' || ty == 'x' ||
-                                   ty == 'X' || ty == 'e' || ty == 'g');
-                if (is_numeric && g_jdrt_handle) {
-                    double val = jdrt_val_to_f64(g_jdrt_handle, r64);
-                    jdb_format_one_arg(tmp, sizeof(tmp), spec, val, nullptr, false);
+                jdb_fmt::Spec s;
+                bool numeric = jdb_fmt::parse_spec(spec.c_str(), s) && jdb_fmt::wants_number(s);
+                if (numeric && g_jdrt_handle) {
+                    jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(),
+                                       jdrt_val_to_f64(g_jdrt_handle, r64), nullptr, false);
                 } else if (g_jdrt_handle) {
-                    const char* s = jdrt_val_to_str(g_jdrt_handle, r64);
-                    jdb_format_one_arg(tmp, sizeof(tmp), spec, 0.0, s, true);
+                    jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(), 0.0,
+                                       jdrt_val_to_str(g_jdrt_handle, r64), true);
                 } else {
                     snprintf(tmp, sizeof(tmp), "<no-runtime>");
                 }
             } else {
                 union { double d; int64_t i; } u; u.i = r64;
-                jdb_format_one_arg(tmp, sizeof(tmp), spec, u.d, nullptr, false);
+                jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(), u.d, nullptr, false);
             }
-            int tlen = (int)strlen(tmp);
-            if (rp + tlen < 4090) { memcpy(result + rp, tmp, tlen); rp += tlen; }
-            p = end + 1;
-        } else if (*p == '}' && *(p+1) == '}') {
-            result[rp++] = '}'; p += 2;
-        } else {
-            result[rp++] = *p++;
-        }
-    }
-    result[rp] = '\0';
-    return _strdup(result);
+            out += tmp;
+            return true;
+        });
+    return _strdup(result.c_str());
 }
 
 char* jdb_format1_t(const char* fmt, const char* types, int64_t a1) {

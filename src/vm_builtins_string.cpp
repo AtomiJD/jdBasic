@@ -1,6 +1,7 @@
 // VM builtins: text: slicing, case, trim, search, SPLIT/JOIN, FORMAT$, PACK$/UNPACK, regex.
 
 #include "vm_internal.h"
+#include "jdb_format.h"
 
 // PACK$ / UNPACK format: < or > sets the byte order for the codes after it,
 // each code takes an optional repeat count. For 'a' the count is the string
@@ -404,137 +405,34 @@ void VM::register_string_builtins() {
         return Value::make_i64((uint8_t)s[idx]);
     });
 
-    // FORMAT$: C++20-style string formatting
+    // FORMAT$: the placeholder language of jdb_format.h over Values. A
+    // placeholder past the arguments renders as "?".
     register_native("FORMAT$", [](const std::vector<Value>& args) -> Value {
-        std::string fmt = args[0].as_string()->data;
         std::string result;
-        size_t arg_idx = 1; // next auto-arg
-        size_t i = 0;
-        while (i < fmt.size()) {
-            if (fmt[i] == '{' && i + 1 < fmt.size()) {
-                if (fmt[i + 1] == '{') { result += '{'; i += 2; continue; } // escaped {{
-                size_t end = fmt.find('}', i);
-                if (end == std::string::npos) { result += fmt[i++]; continue; }
-                std::string spec = fmt.substr(i + 1, end - i - 1);
-                i = end + 1;
-
-                // Parse: [index][:format]
-                size_t colon = spec.find(':');
-                std::string idx_str = (colon != std::string::npos) ? spec.substr(0, colon) : spec;
-                std::string fmt_spec = (colon != std::string::npos) ? spec.substr(colon + 1) : "";
-
-                size_t ai;
-                if (!idx_str.empty() && std::isdigit(idx_str[0]))
-                    ai = std::stoi(idx_str) + 1; // +1 because args[0] is format string
-                else
-                    ai = arg_idx++;
-
-                if (ai >= args.size()) { result += "?"; continue; }
+        jdb_fmt::expand(args[0].as_string()->data.c_str(), result,
+            [&](int index, const std::string& spec, std::string& out) {
+                size_t ai = (size_t)index + 1;
+                if (ai >= args.size()) { out += "?"; return true; }
                 const Value& v = args[ai];
-
-                if (fmt_spec.empty()) {
-                    result += v.to_string();
+                if (spec.empty()) { out += v.to_string(); return true; }
+                jdb_fmt::Spec s;
+                if (!jdb_fmt::parse_spec(spec.c_str(), s))
+                    throw jdError(ErrCode::WRONG_ARG_TYPE, jdb_fmt::spec_error(spec.c_str()));
+                bool number = is_numeric(v.type);
+                std::string text;
+                if (number) {
+                    text = jdb_fmt::number_text(s, v.to_double(), v.to_int(), v.to_string());
+                } else if (jdb_fmt::wants_number(s)) {
+                    // A string under a numeric spec is read as the number it spells.
+                    double d = v.type == ValueType::STRING ? std::strtod(v.as_string()->data.c_str(), nullptr)
+                                                           : v.to_double();
+                    text = jdb_fmt::number_text(s, d, (int64_t)d, v.to_string());
                 } else {
-                    // Parse fill, align, width, precision, type
-                    char fill = ' ', align = '>';
-                    size_t fp = 0;
-                    if (fmt_spec.size() >= 2 && (fmt_spec[1] == '<' || fmt_spec[1] == '>' || fmt_spec[1] == '^')) {
-                        fill = fmt_spec[0]; align = fmt_spec[1]; fp = 2;
-                    } else if (!fmt_spec.empty() && (fmt_spec[0] == '<' || fmt_spec[0] == '>' || fmt_spec[0] == '^')) {
-                        align = fmt_spec[0]; fp = 1;
-                    }
-                    const bool explicit_align = fp > 0;
-                    // Parse sign: + always, space for a positive number, - only for a negative
-                    char sign = 0;
-                    if (fp < fmt_spec.size() &&
-                        (fmt_spec[fp] == '+' || fmt_spec[fp] == '-' || fmt_spec[fp] == ' '))
-                        sign = fmt_spec[fp++];
-                    // # asks for a 0x prefix, before the width or after the precision
-                    bool hash_flag = false;
-                    if (fp < fmt_spec.size() && fmt_spec[fp] == '#') { hash_flag = true; fp++; }
-                    // A 0 before the width pads a number with zeros after its sign
-                    bool zero_pad = false;
-                    if (fp < fmt_spec.size() && fmt_spec[fp] == '0') { zero_pad = true; fp++; }
-                    // Parse width
-                    int width = 0;
-                    while (fp < fmt_spec.size() && std::isdigit(fmt_spec[fp]))
-                        width = width * 10 + (fmt_spec[fp++] - '0');
-                    // Parse .precision
-                    int prec = -1;
-                    if (fp < fmt_spec.size() && fmt_spec[fp] == '.') {
-                        fp++; prec = 0;
-                        while (fp < fmt_spec.size() && std::isdigit(fmt_spec[fp]))
-                            prec = prec * 10 + (fmt_spec[fp++] - '0');
-                    }
-                    // Parse # flag and type
-                    char type = 0;
-                    if (fp < fmt_spec.size() && fmt_spec[fp] == '#') { hash_flag = true; fp++; }
-                    if (fp < fmt_spec.size()) type = fmt_spec[fp];
-                    bool known_type = type == 0 || type == 'd' || type == 'f' || type == 'e' ||
-                                      type == 'E' || type == 'g' || type == 'G' || type == 'x' ||
-                                      type == 'X' || type == 's' || type == '%';
-                    if (!known_type || fp + (type ? 1 : 0) != fmt_spec.size())
-                        throw jdError(ErrCode::WRONG_ARG_TYPE,
-                            "FORMAT$: unknown format spec \"{" + spec +
-                            "}\"; use [[fill]align][sign][#][0][width][.precision][d|f|e|g|x|X|s|%]");
-
-                    // Format the value
-                    std::string sv;
-                    if (type == 'd') {
-                        sv = std::to_string(v.to_int());
-                    } else if (type == 'f') {
-                        std::ostringstream os;
-                        if (prec >= 0) os << std::fixed << std::setprecision(prec);
-                        os << v.to_double();
-                        sv = os.str();
-                    } else if (type == 'e' || type == 'E' || type == 'g' || type == 'G') {
-                        char cfmt[8] = {'%', '.', '*', type, 0};
-                        char buf[64]; snprintf(buf, sizeof(buf), cfmt, prec >= 0 ? prec : 6, v.to_double());
-                        sv = buf;
-                    } else if (type == '%') {
-                        char buf[64]; snprintf(buf, sizeof(buf), "%.*f%%", prec >= 0 ? prec : 6, v.to_double() * 100.0);
-                        sv = buf;
-                    } else if (type == 'x') {
-                        char buf[32]; snprintf(buf, sizeof(buf), "%llx", (long long)v.to_int()); sv = buf;
-                        if (hash_flag) sv = "0x" + sv;
-                    } else if (type == 'X') {
-                        char buf[32]; snprintf(buf, sizeof(buf), "%llX", (long long)v.to_int()); sv = buf;
-                        if (hash_flag) sv = "0x" + sv;
-                    } else {
-                        sv = v.to_string();
-                        if (prec >= 0 && is_numeric(v.type)) {
-                            std::ostringstream os;
-                            os << std::fixed << std::setprecision(prec) << v.to_double();
-                            sv = os.str();
-                        }
-                    }
-
-                    if ((sign == '+' || sign == ' ') && is_numeric(v.type) && !sv.empty() && sv[0] != '-')
-                        sv = std::string(1, sign) + sv;
-                    if (zero_pad && width > 0 && (int)sv.size() < width) {
-                        if (!explicit_align && is_numeric(v.type)) {
-                            size_t at = (!sv.empty() && (sv[0] == '+' || sv[0] == '-' || sv[0] == ' ')) ? 1 : 0;
-                            if (sv.compare(at, 2, "0x") == 0) at += 2;
-                            sv.insert(at, std::string(width - sv.size(), '0'));
-                        } else if (!explicit_align || fill == ' ') {
-                            fill = '0';
-                        }
-                    }
-                    // Apply width and alignment
-                    if (width > 0 && (int)sv.size() < width) {
-                        int pad = width - (int)sv.size();
-                        if (align == '<') sv += std::string(pad, fill);
-                        else if (align == '>') sv = std::string(pad, fill) + sv;
-                        else { int l = pad / 2; sv = std::string(l, fill) + sv + std::string(pad - l, fill); }
-                    }
-                    result += sv;
+                    text = v.to_string();
                 }
-            } else if (fmt[i] == '}' && i + 1 < fmt.size() && fmt[i + 1] == '}') {
-                result += '}'; i += 2;
-            } else {
-                result += fmt[i++];
-            }
-        }
+                out += jdb_fmt::lay_out(s, text, number);
+                return true;
+            });
         return Value::make_string(result);
     });
 
