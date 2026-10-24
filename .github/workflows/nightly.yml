@@ -2,7 +2,8 @@ name: Nightly
 
 # The sweeps that take too long for every push: the gate under
 # AddressSanitizer and UndefinedBehaviorSanitizer (tests/sanitize_gate.sh),
-# and the macOS core build with its gate.
+# the macOS core build with its gate, and the flag families with a headless
+# smoke each.
 on:
   schedule:
     - cron: '30 2 * * *'
@@ -99,3 +100,119 @@ jobs:
           done
           if [ -n "$bad" ]; then echo "gate suites failed:$bad"; exit 1; fi
           echo "$n gate suites green"
+
+  # The flag families the core jobs never compile, one job each so a red
+  # names the family: a build with the flag, then a smoke that runs without
+  # a display, a sound device or a terminal.
+  flag-matrix:
+    name: ${{ matrix.family }} build + smoke (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - family: sqlite
+            flags: "HTTP=0 GFX=0 SQLITE=1"
+            smoke: tests/jdlibs/db_selftest.jdb
+          - family: sound
+            flags: "HTTP=0 GFX=0 MINIAUDIO=1 FX=1 MIDI=1"
+            smoke: tests/audio/sound_pattern_test.jdb
+          - family: gfx
+            flags: "HTTP=0 GFX=1 IMGUI=1"
+            smoke: tests/gfx/gfx_capture_smoke.jdb
+          - family: tui
+            flags: "HTTP=0 GFX=0 FTXUI=1 TUI=1"
+            smoke: tests/tui/test_tui_smoke.jdb
+    env:
+      SDL_VIDEODRIVER: offscreen
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Eigen
+        id: cache-eigen
+        uses: actions/cache@v4
+        with:
+          path: libs/eigen
+          key: eigen-3.4.0-linux
+
+      - name: Fetch Eigen
+        if: steps.cache-eigen.outputs.cache-hit != 'true'
+        run: |
+          curl -sSL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz -o eigen.tar.gz
+          mkdir -p libs tmp_eigen
+          tar xzf eigen.tar.gz -C tmp_eigen
+          mv tmp_eigen/eigen-3.4.0 libs/eigen
+
+      - name: SQLite amalgamation
+        if: matrix.family == 'sqlite'
+        run: |
+          curl -sSL https://www.sqlite.org/2025/sqlite-amalgamation-3500400.zip -o sqlite.zip
+          unzip -q -o sqlite.zip -d tmp_sqlite
+          cp tmp_sqlite/sqlite-amalgamation-3500400/sqlite3.c tmp_sqlite/sqlite-amalgamation-3500400/sqlite3.h bridges/sqlitebridge/
+
+      - name: ALSA headers for RtMidi
+        if: matrix.family == 'sound'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: SDL3 build dependencies
+        if: matrix.family == 'gfx'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libharfbuzz-dev libfreetype-dev libpng-dev libjpeg-dev libtiff-dev libwebp-dev
+
+      - name: Cache the SDL3 stack
+        if: matrix.family == 'gfx'
+        id: cache-sdl
+        uses: actions/cache@v4
+        with:
+          path: |
+            libs/SDL3
+            libs/SDL3_image
+            libs/SDL3_ttf
+            libs/SDL3_mixer
+          key: sdl3-3.4.8-image-3.4.4-ttf-3.2.2-mixer-3.2.2-ubuntu
+
+      - name: Build the SDL3 stack
+        if: matrix.family == 'gfx' && steps.cache-sdl.outputs.cache-hit != 'true'
+        run: |
+          git clone -q --depth 1 --branch release-3.4.8 https://github.com/libsdl-org/SDL.git libs/SDL3
+          git clone -q --depth 1 --branch release-3.4.4 https://github.com/libsdl-org/SDL_image.git libs/SDL3_image
+          git clone -q --depth 1 --branch release-3.2.2 https://github.com/libsdl-org/SDL_ttf.git libs/SDL3_ttf
+          git clone -q --depth 1 --branch release-3.2.2 https://github.com/libsdl-org/SDL_mixer.git libs/SDL3_mixer
+          ./build_libs.sh
+
+      - name: Cache FTXUI
+        if: matrix.family == 'tui'
+        id: cache-ftxui
+        uses: actions/cache@v4
+        with:
+          path: libs/ftxui/build
+          key: ftxui-${{ hashFiles('libs/ftxui/CMakeLists.txt', 'libs/ftxui/src/**') }}-ubuntu
+
+      - name: Build FTXUI
+        if: matrix.family == 'tui' && steps.cache-ftxui.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          cd libs/ftxui && mkdir -p build && cd build
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+                -DFTXUI_BUILD_EXAMPLES=OFF -DFTXUI_BUILD_TESTS=OFF -DFTXUI_BUILD_DOCS=OFF ..
+          cmake --build . -j
+
+      - name: Build with the family's flags
+        run: ${{ matrix.flags }} ./build.sh
+
+      # The smoke has to have run its checks: a suite that skips for want of
+      # the feature prints 0 passed, which is no pass.
+      - name: Smoke
+        run: |
+          set +e
+          out=$(./build/jdbasic ${{ matrix.smoke }} 2>&1); rc=$?
+          echo "$out"
+          echo "$out" | grep -qE "ALL [A-Z0-9 _-]*TESTS PASSED|[1-9][0-9]* passed, 0 failed"
+          marker=$?
+          if [ "$rc" -ne 0 ] || [ "$marker" -ne 0 ]; then echo "smoke failed (exit $rc)"; exit 1; fi
