@@ -14,6 +14,7 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
 jdb="$repo/build/jdBasic.exe"
+[ -x "$jdb" ] || jdb="$repo/build/jdbasic"
 [ -x "$jdb" ] || jdb="$repo/build/jdBasic"
 src="$here/leak/leak_patterns.jdb"
 known="$here/leak/known_leaks.txt"
