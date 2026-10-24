@@ -167,7 +167,7 @@ jobs:
           sudo apt-get install -y cmake ninja-build libharfbuzz-dev libfreetype-dev libpng-dev libjpeg-dev \
             libtiff-dev libwebp-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libxfixes-dev libxss-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev \
-            libgbm-dev libdrm-dev
+            libgbm-dev libdrm-dev libxtst-dev libxinerama-dev libxxf86vm-dev libdbus-1-dev libudev-dev \n            libgles2-mesa-dev libdecor-0-dev
 
       - name: Cache the SDL3 stack
         if: matrix.family == 'gfx'
