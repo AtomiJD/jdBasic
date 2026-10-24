@@ -209,6 +209,12 @@ jobs:
                 -DFTXUI_BUILD_EXAMPLES=OFF -DFTXUI_BUILD_TESTS=OFF -DFTXUI_BUILD_DOCS=OFF ..
           cmake --build . -j
 
+      # Dear ImGui is compiled into jdbasic from its sources, which the
+      # repository does not carry.
+      - name: Dear ImGui
+        if: matrix.family == 'gfx'
+        run: git clone -q --depth 1 --branch v1.92.5 https://github.com/ocornut/imgui.git libs/imgui
+
       - name: Build with the family's flags
         run: ${{ matrix.flags }} ./build.sh
 
