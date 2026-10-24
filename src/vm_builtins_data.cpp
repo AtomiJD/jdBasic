@@ -357,10 +357,26 @@ void VM::register_data_builtins() {
                 case ValueType::STRING: return escape_string(v.as_string()->data);
                 // A date prints as a timestamp, which is text, so it is
                 // quoted like text. Written bare it is not JSON at all.
-                case ValueType::FLOAT64:
+                // A number is written with a dot and no grouping whatever
+                // locale SETLOCALE chose, since JSON knows no other.
+                case ValueType::FLOAT64: {
                     if (v.subtype == ValueSubtype::DATE)
                         return escape_string(v.to_string());
-                    return v.to_string();
+                    char buf[512];
+                    jdb_num::format_double(buf, sizeof(buf), v.f64, jdb_num::Punct{});
+                    return std::string(buf);
+                }
+                case ValueType::BYTE: case ValueType::INT16:
+                case ValueType::INT32: case ValueType::INT64: {
+                    char buf[64];
+                    jdb_num::format_int(buf, sizeof(buf), v.to_int(), jdb_num::Punct{});
+                    return std::string(buf);
+                }
+                case ValueType::FLOAT16: case ValueType::FLOAT32: {
+                    char buf[512];
+                    jdb_num::format_double(buf, sizeof(buf), v.to_double(), jdb_num::Punct{});
+                    return std::string(buf);
+                }
                 case ValueType::ARRAY: {
                     std::string r = "[";
                     auto* a = v.as_array();

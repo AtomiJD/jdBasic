@@ -1,0 +1,29 @@
+' JSON.STRINGIFY$ writes numbers with a dot and no grouping whatever locale
+' SETLOCALE chose; a machine without the locale prints the same text, so
+' the test holds either way.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM doc AS MAP
+doc{"a"} = 1.5
+doc{"b"} = 1234567
+doc{"c"} = [2.25, 1000000, TRUE]
+
+DIM before$ AS STRING = JSON.STRINGIFY$(doc)
+Check(before$ = "{" + CHR$(34) + "a" + CHR$(34) + ":1.5," + CHR$(34) + "b" + CHR$(34) + ":1234567," + CHR$(34) + "c" + CHR$(34) + ":[2.25,1000000,true]}", "JSON in the C locale: " + before$)
+
+SETLOCALE("de_DE")
+DIM after$ AS STRING = JSON.STRINGIFY$(doc)
+Check(after$ = before$, "JSON under de_DE is the same text: " + after$)
+Check(JSON.STRINGIFY$([0.5, -3]) = "[0.5,-3]", "an array of numbers under de_DE: " + JSON.STRINGIFY$([0.5, -3]))
+SETLOCALE("C")
+
+IF failed > 0 THEN END 1
+PRINT "OK"
