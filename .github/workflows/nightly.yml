@@ -1,7 +1,8 @@
 name: Nightly
 
 # The sweeps that take too long for every push: the gate under
-# AddressSanitizer and UndefinedBehaviorSanitizer (tests/sanitize_gate.sh).
+# AddressSanitizer and UndefinedBehaviorSanitizer (tests/sanitize_gate.sh),
+# and the macOS core build with its gate.
 on:
   schedule:
     - cron: '30 2 * * *'
@@ -53,3 +54,48 @@ jobs:
           name: sanitizer-reports
           path: tmp/san
           if-no-files-found: ignore
+
+  macos-core:
+    name: Core build + gate (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Eigen
+        id: cache-eigen
+        uses: actions/cache@v4
+        with:
+          path: libs/eigen
+          key: eigen-3.4.0-macos
+
+      - name: Fetch Eigen
+        if: steps.cache-eigen.outputs.cache-hit != 'true'
+        run: |
+          curl -sSL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz -o eigen.tar.gz
+          mkdir -p libs tmp_eigen
+          tar xzf eigen.tar.gz -C tmp_eigen
+          mv tmp_eigen/eigen-3.4.0 libs/eigen
+
+      - name: OpenSSL
+        run: brew install openssl@3
+
+      - name: Build (core with HTTP, the way the Mac mini builds it)
+        run: HTTP=1 GFX=0 ./build.sh
+
+      - name: Gate suites (interpreter)
+        run: |
+          set +e
+          bad=""; n=0
+          for f in tests/gate/*_test.jdb tests/gate/test_apl_*.jdb; do
+            s=$(basename "$f" .jdb)
+            echo "=== $s"
+            out=$("./build/jdbasic" "$f" 2>&1); rc=$?
+            echo "$out"
+            echo "$out" | grep -qE "ALL [A-Z0-9 _-]*TESTS PASSED|, 0 failed"
+            marker=$?
+            if [ "$rc" -ne 0 ] || [ "$marker" -ne 0 ]; then bad="$bad $s(exit $rc)"; fi
+            n=$((n + 1))
+          done
+          if [ -n "$bad" ]; then echo "gate suites failed:$bad"; exit 1; fi
+          echo "$n gate suites green"
