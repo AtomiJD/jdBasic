@@ -9,6 +9,7 @@
 '   SEARCH.ADD(ix, "terms", {"title": "Payment terms", "body": "Due within 30 days."})
 '   DIM hits = SEARCH.QUERY(ix, "payment days")
 '   PRINT hits[0]{"key"}, hits[0]{"score"}
+' version: 1.0.0
 EXPORT MODULE SEARCH
 
 IMPORT FUZZY
@@ -674,18 +675,18 @@ FUNC SortIdx(scores, keys)
         DIM run_i = 0
         FOR run_i = 0 TO n
             IF lo >= n THEN EXITFOR
-            DIM mid = lo + width_n
-            IF mid > n THEN mid = n
+            DIM middle = lo + width_n
+            IF middle > n THEN middle = n
             DIM hi = lo + 2 * width_n
             IF hi > n THEN hi = n
             DIM a = lo
-            DIM bi = mid
+            DIM bi = middle
             DIM o = 0
             FOR o = lo TO hi - 1
                 DIM take_left = FALSE
-                IF a < mid ANDALSO bi >= hi THEN
+                IF a < middle ANDALSO bi >= hi THEN
                     take_left = TRUE
-                ELSEIF a < mid THEN
+                ELSEIF a < middle THEN
                     DIM ia = CLNG(src[a])
                     DIM ib = CLNG(src[bi])
                     DIM sa = scores[ia]

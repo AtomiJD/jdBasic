@@ -11,6 +11,7 @@
 ' The numbers come from a generator written here rather than from the
 ' one the machine offers, so the same seed gives the same rows on every
 ' computer. Two locales, "en" and "de".
+' version: 1.0.0
 
 EXPORT MODULE FAKE
 
@@ -150,14 +151,14 @@ EXPORT FUNC CHANCE(share)
 ENDFUNC
 
 ' One entry of a list, whatever it holds.
-EXPORT FUNC PICK(list)
-    IF LEN(list) = 0 THEN RETURN NONE
-    RETURN list[NUMBER(0, LEN(list) - 1)]
+EXPORT FUNC PICK(items)
+    IF LEN(items) = 0 THEN RETURN NONE
+    RETURN items[NUMBER(0, LEN(items) - 1)]
 ENDFUNC
 
 ' The same entries in another order.
-EXPORT FUNC SHUFFLE(list)
-    DIM out = Copied(list)
+EXPORT FUNC SHUFFLE(items)
+    DIM out = Copied(items)
     DIM i = 0
     FOR i = LEN(out) - 1 TO 1 STEP -1
         DIM j = NUMBER(0, i)
@@ -169,8 +170,8 @@ EXPORT FUNC SHUFFLE(list)
 ENDFUNC
 
 ' So many entries of the list, none of them twice.
-EXPORT FUNC SAMPLE(list, n)
-    DIM mixed = SHUFFLE(list)
+EXPORT FUNC SAMPLE(items, n)
+    DIM mixed = SHUFFLE(items)
     DIM out = []
     DIM want = n
     IF want > LEN(mixed) THEN want = LEN(mixed)
@@ -447,11 +448,11 @@ FUNC Pad$(value, width)
     RETURN out$
 ENDFUNC
 
-FUNC Copied(list)
+FUNC Copied(items)
     DIM out = []
     DIM i = 0
-    FOR i = 0 TO LEN(list) - 1
-        PUSH(out, list[i])
+    FOR i = 0 TO LEN(items) - 1
+        PUSH(out, items[i])
     NEXT i
     RETURN out
 ENDFUNC

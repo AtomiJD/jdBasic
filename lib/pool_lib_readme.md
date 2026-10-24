@@ -8,9 +8,11 @@ It is plain jdBasic on top of `ASYNC FUNC`, `AWAIT`, `THREAD.ISDONE` and
 the `CHAN.*` natives. It runs the same interpreted and compiled with
 `-c`.
 
-The Python counterparts are `concurrent.futures.ThreadPoolExecutor.map`,
+Stands in for: `concurrent.futures.ThreadPoolExecutor.map`,
 `multiprocessing.Pool` and `asyncio.gather` / `asyncio.wait`, plus a
 token bucket such as `aiolimiter`.
+
+## Quick start
 
 ```basic
 IMPORT POOL

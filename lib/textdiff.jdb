@@ -8,6 +8,7 @@
 '   DIM again$ = TEXTDIFF.APPLY$(old$, patch$)
 '   PRINT TEXTDIFF.WORDDIFF$("the quick brown fox", "the quick red fox")
 '   ' the quick [-brown-]{+red+} fox
+' version: 1.0.0
 
 EXPORT MODULE TEXTDIFF
 

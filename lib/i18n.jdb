@@ -11,6 +11,7 @@
 ' The current locale lives in module state. An ASYNC FUNC runs on its own
 ' copy of the globals and does not see a locale set by USELOCALE; pass the locale
 ' as the last argument there. Every call takes it.
+' version: 1.0.0
 EXPORT MODULE I18N
 
 IMPORT CONF, YAML, NUMFMT, TMPL
@@ -172,8 +173,8 @@ ENDFUNC
 
 ' A catalog from text in "json", "yaml", "toml" or "ini"; INI sections
 ' become the first part of a dotted key.
-EXPORT FUNC LOADTEXT(locale$, text$, format$)
-    DIM kind$ = LCASE$(TRIM$(format$))
+EXPORT FUNC LOADTEXT(locale$, text$, fmt$)
+    DIM kind$ = LCASE$(TRIM$(fmt$))
     IF kind$ = "json" THEN
         DIM parsed = JSON.PARSE$(text$)
         RETURN CLNG(Walk(NORMALIZE$(locale$), "", parsed))
@@ -190,20 +191,20 @@ EXPORT FUNC LOADTEXT(locale$, text$, format$)
         DIM ini = CONF.INI_TEXT(text$)
         RETURN CLNG(Walk(NORMALIZE$(locale$), "", ini))
     ENDIF
-    THROW "I18N.LOADTEXT: unknown format " + format$
+    THROW "I18N.LOADTEXT: unknown format " + fmt$
     RETURN 0
 ENDFUNC
 
 ' A catalog file; the format comes from its extension.
 EXPORT FUNC LOADFILE(locale$, path$)
     IF NOT FILE.EXISTS(path$) THEN THROW "I18N.LOADFILE: no file " + path$
-    DIM dot = -1
+    DIM dot_at = -1
     DIM k = 0
     FOR k = 0 TO LEN(path$) - 1
-        IF MID$(path$, k, 1) = "." THEN dot = k
+        IF MID$(path$, k, 1) = "." THEN dot_at = k
     NEXT k
     DIM ext$ = ""
-    IF dot >= 0 THEN ext$ = LCASE$(MID$(path$, dot + 1, LEN(path$)))
+    IF dot_at >= 0 THEN ext$ = LCASE$(MID$(path$, dot_at + 1, LEN(path$)))
     RETURN LOADTEXT(locale$, TXTREADER$(path$), ext$)
 ENDFUNC
 
@@ -236,17 +237,17 @@ ENDFUNC
 
 ' The text of a key with its placeholders filled from vars; the key itself
 ' when no locale of the chain has it.
-EXPORT FUNC T$(key$, vars = 0, locale$ = "")
+EXPORT FUNC T$(key$, values = 0, locale$ = "")
     DIM tag$ = FoundIn$(key$, locale$)
     IF tag$ = "" THEN RETURN key$
     DIM text$ = gTexts{tag$ + "|" + key$}
-    RETURN FILL$(text$, vars)
+    RETURN FILL$(text$, values)
 ENDFUNC
 
 ' The text of key.<category> for a count, where the category comes from the
 ' plural rules of the locale; key.other when that category has no text.
 ' {count} holds the count as it was given.
-EXPORT FUNC N$(key$, number, vars = 0, locale$ = "")
+EXPORT FUNC N$(key$, number, values = 0, locale$ = "")
     DIM amount$ = ""
     IF TYPEOF(number) = "STRING" THEN
         DIM given$ = number
@@ -263,12 +264,12 @@ EXPORT FUNC N$(key$, number, vars = 0, locale$ = "")
     ENDIF
     IF tag$ = "" THEN RETURN key$
     DIM filled AS MAP
-    IF TYPEOF(vars) = "OBJECT" THEN
-        DIM names = MAP.KEYS(vars)
+    IF TYPEOF(values) = "OBJECT" THEN
+        DIM names = MAP.KEYS(values)
         DIM k = 0
         FOR k = 0 TO LEN(names) - 1
             DIM name$ = names[k]
-            DIM v = vars{name$}
+            DIM v = values{name$}
             filled{name$} = v
         NEXT k
     ENDIF
@@ -279,8 +280,8 @@ ENDFUNC
 
 ' {name} replaced by vars{name}; {{ and }} give a brace; a placeholder
 ' without a value stays as it is.
-EXPORT FUNC FILL$(text$, vars = 0)
-    DIM has_vars = (TYPEOF(vars) = "OBJECT")
+EXPORT FUNC FILL$(text$, values = 0)
+    DIM has_vars = (TYPEOF(values) = "OBJECT")
     DIM out$ = ""
     DIM k = 0
     DIM n = LEN(text$)
@@ -300,7 +301,7 @@ EXPORT FUNC FILL$(text$, vars = 0)
             ELSE
                 DIM name$ = MID$(text$, k + 1, close - k - 1)
                 DIM put$ = "{" + name$ + "}"
-                IF has_vars ANDALSO MAP.EXISTS(vars, name$) THEN put$ = ValueText$(vars{name$})
+                IF has_vars ANDALSO MAP.EXISTS(values, name$) THEN put$ = ValueText$(values{name$})
                 out$ = out$ + put$
                 k = close + 1
             ENDIF
@@ -417,10 +418,10 @@ EXPORT FUNC PLURAL$(number, locale$ = "")
     IF LEFT$(text$, 1) = "-" ORELSE LEFT$(text$, 1) = "+" THEN text$ = MID$(text$, 1, LEN(text$))
     DIM int$ = text$
     DIM frac$ = ""
-    DIM dot = CINT(INSTR(text$, "."))
-    IF dot >= 0 THEN
-        int$ = LEFT$(text$, dot)
-        frac$ = MID$(text$, dot + 1, LEN(text$))
+    DIM dot_at = CINT(INSTR(text$, "."))
+    IF dot_at >= 0 THEN
+        int$ = LEFT$(text$, dot_at)
+        frac$ = MID$(text$, dot_at + 1, LEN(text$))
     ENDIF
     IF int$ = "" THEN int$ = "0"
     DIM trimmed$ = frac$
@@ -560,41 +561,41 @@ EXPORT FUNC ACCEPT(header$)
                 IF LEFT$(param$, 2) = "q=" THEN q = VAL(MID$(param$, 2, LEN(param$)))
             NEXT p
             IF tag$ <> "" ANDALSO tag$ <> "*" ANDALSO q > 0 THEN
-                DIM place = LEN(tags)
+                DIM spot = LEN(tags)
                 DIM s = 0
                 FOR s = LEN(tags) - 1 TO 0 STEP -1
                     DIM wq = weights[s]
-                    IF wq < q THEN place = s
+                    IF wq < q THEN spot = s
                 NEXT s
-                tags = InsertText(tags, place, NORMALIZE$(tag$))
-                weights = InsertNumber(weights, place, q)
+                tags = InsertText(tags, spot, NORMALIZE$(tag$))
+                weights = InsertNumber(weights, spot, q)
             ENDIF
         ENDIF
     NEXT k
     RETURN tags
 ENDFUNC
 
-FUNC InsertText(list, place, text$)
+FUNC InsertText(items, spot, text$)
     DIM out = []
     DIM k = 0
-    FOR k = 0 TO LEN(list) - 1
-        IF k = place THEN PUSH(out, text$)
-        DIM old$ = list[k]
+    FOR k = 0 TO LEN(items) - 1
+        IF k = spot THEN PUSH(out, text$)
+        DIM old$ = items[k]
         PUSH(out, old$)
     NEXT k
-    IF place >= LEN(list) THEN PUSH(out, text$)
+    IF spot >= LEN(items) THEN PUSH(out, text$)
     RETURN out
 ENDFUNC
 
-FUNC InsertNumber(list, place, value)
+FUNC InsertNumber(items, spot, value)
     DIM out = []
     DIM k = 0
-    FOR k = 0 TO LEN(list) - 1
-        IF k = place THEN PUSH(out, value)
-        DIM old = list[k]
+    FOR k = 0 TO LEN(items) - 1
+        IF k = spot THEN PUSH(out, value)
+        DIM old = items[k]
         PUSH(out, old)
     NEXT k
-    IF place >= LEN(list) THEN PUSH(out, value)
+    IF spot >= LEN(items) THEN PUSH(out, value)
     RETURN out
 ENDFUNC
 

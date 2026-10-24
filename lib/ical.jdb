@@ -11,6 +11,7 @@
 '   DIM out = ICAL.NEW()
 '   DIM ev = ICAL.ADDEVENT(out, "Review", DT.PARSE("2026-10-01T10:00:00+02:00"), DT.PARSE("2026-10-01T11:00:00+02:00"), "Europe/Berlin")
 '   ICAL.WRITEFILE(out, "review.ics")
+' version: 1.0.0
 
 EXPORT MODULE ICAL
 

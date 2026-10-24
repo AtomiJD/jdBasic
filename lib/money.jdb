@@ -9,6 +9,7 @@
 '   DIM net = MONEY.PARSE("1.234,50", "EUR")                     ' 123450
 '   DIM vat = MONEY.TIMES(net, "0.19")                           ' 23456
 '   PRINT MONEY.CURRENCY$(MONEY.PLUS(net, vat), "EUR", "de-DE")  ' 1.469,06 €
+' version: 1.0.0
 
 EXPORT MODULE MONEY
 IMPORT VALID, NUMFMT
@@ -525,9 +526,9 @@ EXPORT FUNC DIVIDE(amount, divisor, mode$ = "half-up")
     IF sign_part$ = "-" THEN negative = NOT negative
     DIM numerator$ = WholeText$(amount) + REPEAT$("0", CINT(VAL(scale_text$)))
     DIM denominator = VAL(figures$)
-    DIM qr = SPLIT(DivDigits$(numerator$, denominator), ":")
-    DIM q$ = qr[0]
-    DIM remain$ = qr[1]
+    DIM quot_rem = SPLIT(DivDigits$(numerator$, denominator), ":")
+    DIM q$ = quot_rem[0]
+    DIM remain$ = quot_rem[1]
     DIM kind = CINT(RestKind(VAL(remain$), denominator))
     RETURN Settle(q$, kind, negative, mode$)
 ENDFUNC
@@ -564,9 +565,9 @@ EXPORT FUNC ROUNDSTEP(amount, unit, mode$ = "half-up")
     IF unit < 1 ORELSE unit <> FLOOR(unit) ORELSE unit > 99999999999999 THEN
         THROW "MONEY: ROUNDSTEP takes a whole number of minor units from 1"
     ENDIF
-    DIM qr = SPLIT(DivDigits$(WholeText$(amount), unit), ":")
-    DIM q$ = qr[0]
-    DIM remain$ = qr[1]
+    DIM quot_rem = SPLIT(DivDigits$(WholeText$(amount), unit), ":")
+    DIM q$ = quot_rem[0]
+    DIM remain$ = quot_rem[1]
     DIM kind = CINT(RestKind(VAL(remain$), unit))
     DIM negative = (amount < 0)
     DIM count_units = Settle(q$, kind, negative, mode$)
@@ -596,9 +597,9 @@ FUNC Allot(amount, ratios)
     DIM handed = 0.0
     FOR i = 0 TO count_parts - 1
         DIM ri = ratios[i]
-        DIM qr = SPLIT(DivDigits$(MulDigits$(amount$, FORMAT$("{:.0f}", ri)), ratio_sum), ":")
-        DIM share$ = qr[0]
-        DIM remain$ = qr[1]
+        DIM quot_rem = SPLIT(DivDigits$(MulDigits$(amount$, FORMAT$("{:.0f}", ri)), ratio_sum), ":")
+        DIM share$ = quot_rem[0]
+        DIM remain$ = quot_rem[1]
         DIM share = VAL(share$)
         PUSH(shares, share)
         PUSH(remains, VAL(remain$))
@@ -642,10 +643,10 @@ ENDFUNC
 ' first: 100 in 3 is [34, 33, 33].
 EXPORT FUNC PARTS(amount, pieces)
     IF pieces < 1 ORELSE pieces <> FLOOR(pieces) THEN THROW "MONEY: PARTS takes a whole number of parts from 1"
-    DIM ones = []
+    DIM ones_part = []
     DIM i = 0
     FOR i = 1 TO pieces
-        PUSH(ones, 1)
+        PUSH(ones_part, 1)
     NEXT i
-    RETURN Allot(amount, ones)
+    RETURN Allot(amount, ones_part)
 ENDFUNC

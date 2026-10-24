@@ -8,6 +8,7 @@
 '
 ' A URL is a string, and PARSE gives the map of its parts. Nothing is
 ' kept between calls.
+' version: 1.0.0
 
 EXPORT MODULE URL
 

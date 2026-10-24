@@ -13,6 +13,7 @@
 '   DB.WHERE(q, "city = ? AND age > ?", ["London", 30])
 '   DB.ORDERBY(q, "name")
 '   DIM found = DB.ROWS(h, q)
+' version: 1.0.0
 
 EXPORT MODULE DB
 

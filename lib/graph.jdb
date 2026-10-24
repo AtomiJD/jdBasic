@@ -12,6 +12,7 @@
 ' A graph is a map the calls change in place. Nodes are named by strings
 ' and keep the order they were added in, so every answer here comes out
 ' the same on every run.
+' version: 1.0.0
 
 EXPORT MODULE GRAPH
 
@@ -125,10 +126,10 @@ EXPORT FUNC EDGES(g)
     DIM i = 0
     FOR i = 0 TO LEN(names) - 1
         DIM a$ = names[i]
-        DIM list = going{a$}
+        DIM links = going{a$}
         DIM n = 0
-        FOR n = 0 TO LEN(list) - 1
-            DIM b$ = list[n]
+        FOR n = 0 TO LEN(links) - 1
+            DIM b$ = links[n]
             DIM key$ = a$ + EDGE_SEP$ + b$
             IF NOT MAP.EXISTS(seen, key$) THEN
                 seen{key$} = TRUE
@@ -244,10 +245,10 @@ EXPORT FUNC BFS(g, start$)
         DIM here$ = queue[head]
         head = head + 1
         PUSH(out, here$)
-        DIM list = NEIGHBOURS(g, here$)
+        DIM links = NEIGHBOURS(g, here$)
         DIM i = 0
-        FOR i = 0 TO LEN(list) - 1
-            DIM to$ = list[i]
+        FOR i = 0 TO LEN(links) - 1
+            DIM to$ = links[i]
             IF NOT MAP.EXISTS(seen, to$) THEN
                 seen{to$} = TRUE
                 PUSH(queue, to$)
@@ -263,18 +264,18 @@ EXPORT FUNC DFS(g, start$)
     DIM out = []
     IF NOT HAS(g, start$) THEN RETURN out
     DIM seen AS MAP
-    DIM stack = [start$]
+    DIM pile = [start$]
     DO
-        IF LEN(stack) = 0 THEN EXITDO
-        DIM here$ = stack[LEN(stack) - 1]
-        stack = Trimmed(stack)
+        IF LEN(pile) = 0 THEN EXITDO
+        DIM here$ = pile[LEN(pile) - 1]
+        pile = Trimmed(pile)
         IF NOT MAP.EXISTS(seen, here$) THEN
             seen{here$} = TRUE
             PUSH(out, here$)
-            DIM list = NEIGHBOURS(g, here$)
+            DIM links = NEIGHBOURS(g, here$)
             DIM i = 0
-            FOR i = LEN(list) - 1 TO 0 STEP -1
-                IF NOT MAP.EXISTS(seen, list[i]) THEN PUSH(stack, list[i])
+            FOR i = LEN(links) - 1 TO 0 STEP -1
+                IF NOT MAP.EXISTS(seen, links[i]) THEN PUSH(pile, links[i])
             NEXT i
         ENDIF
     LOOP
@@ -373,10 +374,10 @@ EXPORT FUNC TOPO(g)
         IF NOT got THEN EXITDO
         placed{pick$} = TRUE
         PUSH(out, pick$)
-        DIM list = NEIGHBOURS(g, pick$)
+        DIM links = NEIGHBOURS(g, pick$)
         DIM n = 0
-        FOR n = 0 TO LEN(list) - 1
-            DIM to$ = list[n]
+        FOR n = 0 TO LEN(links) - 1
+            DIM to$ = links[n]
             waiting{to$} = waiting{to$} - 1
         NEXT n
     LOOP
@@ -509,9 +510,9 @@ FUNC Attach(g, a$, b$, weight)
     w{key$} = weight
     IF fresh THEN
         DIM going = g{"out"}
-        DIM list = going{a$}
-        PUSH(list, b$)
-        going{a$} = list
+        DIM links = going{a$}
+        PUSH(links, b$)
+        going{a$} = links
         DIM coming = g{"in"}
         DIM sources = coming{b$}
         PUSH(sources, a$)
@@ -533,30 +534,30 @@ FUNC Part(g, a$, b$)
     RETURN TRUE
 ENDFUNC
 
-FUNC Without(list, name$)
+FUNC Without(links, name$)
     DIM out = []
     DIM i = 0
-    FOR i = 0 TO LEN(list) - 1
-        IF list[i] <> name$ THEN PUSH(out, list[i])
+    FOR i = 0 TO LEN(links) - 1
+        IF links[i] <> name$ THEN PUSH(out, links[i])
     NEXT i
     RETURN out
 ENDFUNC
 
-FUNC Copied(list)
+FUNC Copied(links)
     DIM out = []
     DIM i = 0
-    FOR i = 0 TO LEN(list) - 1
-        PUSH(out, list[i])
+    FOR i = 0 TO LEN(links) - 1
+        PUSH(out, links[i])
     NEXT i
     RETURN out
 ENDFUNC
 
 ' The list without its last entry.
-FUNC Trimmed(list)
+FUNC Trimmed(links)
     DIM out = []
     DIM i = 0
-    FOR i = 0 TO LEN(list) - 2
-        PUSH(out, list[i])
+    FOR i = 0 TO LEN(links) - 2
+        PUSH(out, links[i])
     NEXT i
     RETURN out
 ENDFUNC
@@ -584,11 +585,11 @@ ENDFUNC
 ' cycle.
 FUNC Loops(g, here$, came$, colour, parent)
     colour{here$} = 1
-    DIM list = NEIGHBOURS(g, here$)
+    DIM links = NEIGHBOURS(g, here$)
     DIM directed = g{"directed"}
     DIM i = 0
-    FOR i = 0 TO LEN(list) - 1
-        DIM to$ = list[i]
+    FOR i = 0 TO LEN(links) - 1
+        DIM to$ = links[i]
         DIM skip = FALSE
         IF NOT directed ANDALSO to$ = came$ THEN skip = TRUE
         IF NOT skip THEN
@@ -660,10 +661,10 @@ FUNC Routes(g, from$, target$, guess, guided)
         settled{pick$} = TRUE
         IF LEN(target$) > 0 ANDALSO pick$ = target$ THEN EXITDO
         DIM here = cost{pick$}
-        DIM list = NEIGHBOURS(g, pick$)
+        DIM links = NEIGHBOURS(g, pick$)
         DIM n = 0
-        FOR n = 0 TO LEN(list) - 1
-            DIM to$ = list[n]
+        FOR n = 0 TO LEN(links) - 1
+            DIM to$ = links[n]
             DIM total = here + w{pick$ + EDGE_SEP$ + to$}
             IF NOT MAP.EXISTS(cost, to$) THEN
                 cost{to$} = total
@@ -717,10 +718,10 @@ FUNC Wander$(g, here$, target$, max_hops, seen, sofar$)
     IF here$ = target$ THEN RETURN sofar$
     IF max_hops > 0 ANDALSO Hops(sofar$) >= max_hops THEN RETURN ""
     DIM out$ = ""
-    DIM list = NEIGHBOURS(g, here$)
+    DIM links = NEIGHBOURS(g, here$)
     DIM i = 0
-    FOR i = 0 TO LEN(list) - 1
-        DIM to$ = list[i]
+    FOR i = 0 TO LEN(links) - 1
+        DIM to$ = links[i]
         IF NOT MAP.EXISTS(seen, to$) THEN
             seen{to$} = TRUE
             DIM deeper$ = Wander$(g, to$, target$, max_hops, seen, sofar$ + EDGE_SEP$ + to$)

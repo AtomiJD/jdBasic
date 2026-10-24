@@ -17,6 +17,7 @@
 ' outline. Text uses jdbasic_default.ttf next to the running program, or
 ' resources/fonts, or the font given in the options; a five by seven
 ' bitmap font steps in when no TrueType file is found.
+' version: 1.0.0
 
 EXPORT MODULE RASTER
 

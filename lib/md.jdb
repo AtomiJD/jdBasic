@@ -12,6 +12,7 @@
 ' spans, links, images, autolinks, backslash escapes. Text is HTML
 ' escaped; a raw HTML block or an inline tag is escaped too unless the
 ' "raw" option is set.
+' version: 1.0.0
 
 EXPORT MODULE MD
 
@@ -348,13 +349,13 @@ FUNC Table$(rows, delimiter$, raw)
     DIM c = 0
     FOR c = 0 TO LEN(spec) - 1
         DIM a$ = ""
-        DIM left = STARTSWITH(spec[c], ":")
-        DIM right = ENDSWITH(spec[c], ":")
-        IF left ANDALSO right THEN
+        DIM left_align = STARTSWITH(spec[c], ":")
+        DIM right_align = ENDSWITH(spec[c], ":")
+        IF left_align ANDALSO right_align THEN
             a$ = "center"
-        ELSEIF right THEN
+        ELSEIF right_align THEN
             a$ = "right"
-        ELSEIF left THEN
+        ELSEIF left_align THEN
             a$ = "left"
         ENDIF
         PUSH(aligns, a$)

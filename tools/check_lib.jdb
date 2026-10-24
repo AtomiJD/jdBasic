@@ -1,0 +1,243 @@
+' Checks a library module against the shape lib/CONTRIBUTING.md asks for:
+' the header with its version line, EXPORT MODULE, a lint without a
+' collision with a builtin name, the readme page and its sections, the row
+' in lib/README.md, the self test on TESTKIT, the demo, and no em-dash.
+' With --run the self test runs too, interpreted and, when this jdBasic
+' has the native compiler, compiled.
+'
+'   jdBasic tools/check_lib.jdb NAME [--run]      from the repository root
+'   jdBasic tools/check_lib.jdb --all [--run]
+'
+' Exit 1 when a module misses something; the lines say what.
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM want_all AS INTEGER = 0
+DIM want_run AS INTEGER = 0
+DIM names = []
+DIM i AS INTEGER = 0
+FOR i = 1 TO LEN(cli) - 1
+    DIM arg$ AS STRING = cli[i]
+    IF arg$ = "--all" THEN
+        want_all = 1
+    ELSEIF arg$ = "--run" THEN
+        want_run = 1
+    ELSE
+        names = APPEND(names, LCASE$(REPLACE$(arg$, ".jdb", "")))
+    ENDIF
+NEXT i
+
+IF NOT FILE.ISDIR("lib") THEN
+    PRINT "check_lib: run from the repository root (no lib/ here)"
+    END 1
+ENDIF
+
+IF want_all = 1 THEN
+    DIM entries = SORT(DIR$("lib"))
+    DIM ei AS INTEGER = 0
+    FOR ei = 0 TO LEN(entries) - 1
+        DIM entry$ AS STRING = entries[ei]
+        IF ENDSWITH(entry$, ".jdb") THEN names = APPEND(names, LEFT$(entry$, LEN(entry$) - 4))
+    NEXT ei
+ENDIF
+IF LEN(names) = 0 THEN
+    PRINT "usage: jdBasic tools/check_lib.jdb NAME [--run] | --all [--run]"
+    END 1
+ENDIF
+
+DIM readme_index$ AS STRING = TXTREADER$("lib/README.md")
+DIM em_dash$ AS STRING = CHR$(8212)
+
+' The lines of a file with the line endings of either platform removed.
+FUNC LinesOf(path$ AS STRING) AS ARRAY
+    RETURN SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), CHR$(10))
+ENDFUNC
+
+' Whether the text has the word on its own, as an identifier, in any case.
+FUNC HasWord(text$ AS STRING, word$ AS STRING) AS INTEGER
+    DIM up$ AS STRING = UCASE$(text$)
+    DIM w$ AS STRING = UCASE$(word$)
+    DIM at AS INTEGER = INSTR(up$, w$)
+    DO WHILE at >= 0
+        DIM before$ AS STRING = ""
+        IF at > 0 THEN before$ = MID$(up$, at - 1, 1)
+        DIM after$ AS STRING = MID$(up$, at + LEN(w$), 1)
+        DIM edge_before AS INTEGER = before$ = "" ORELSE INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", before$) < 0
+        DIM edge_after AS INTEGER = after$ = "" ORELSE INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", after$) < 0
+        IF edge_before ANDALSO edge_after THEN RETURN 1
+        at = INSTR(up$, w$, at + 1)
+    LOOP
+    RETURN 0
+ENDFUNC
+
+' The names jdBasic --lint reports for the file itself: a warning whose
+' line in this file does not carry the name belongs to an imported module
+' and is reported there.
+FUNC LintFaults(path$ AS STRING) AS ARRAY
+    DIM faults = []
+    DIM run = OS.EXEC(OS.SELF$(), ["--lint", path$])
+    DIM out$ AS STRING = run{"OUTPUT"}
+    DIM rows = SPLIT(REPLACE$(out$, CHR$(13), ""), CHR$(10))
+    DIM src = LinesOf(path$)
+    DIM r AS INTEGER = 0
+    FOR r = 0 TO LEN(rows) - 1
+        DIM row$ AS STRING = TRIM$(rows[r])
+        IF STARTSWITH(row$, "LINT error") ORELSE STARTSWITH(row$, "Parse error") THEN
+            faults = APPEND(faults, row$)
+            CONTINUEFOR
+        ENDIF
+        DIM open_at AS INTEGER = INSTR(row$, " (line ")
+        IF open_at < 0 THEN CONTINUEFOR
+        DIM found$ AS STRING = LEFT$(row$, open_at)
+        DIM line_no AS INTEGER = VAL(MID$(row$, open_at + 7))
+        IF line_no < 1 ORELSE line_no > LEN(src) THEN CONTINUEFOR
+        DIM src_line$ AS STRING = src[line_no - 1]
+        DIM bare$ AS STRING = REPLACE$(found$, "$", "")
+        IF HasWord(src_line$, bare$) THEN faults = APPEND(faults, "builtin name " + found$ + " used at line " + STR$(line_no))
+    NEXT r
+    RETURN faults
+ENDFUNC
+
+' The demo files a module header names after "demo:", or its own.
+FUNC DemoFiles(name$ AS STRING, src AS ARRAY) AS ARRAY
+    DIM r AS INTEGER = 0
+    FOR r = 0 TO LEN(src) - 1
+        DIM row$ AS STRING = TRIM$(src[r])
+        IF LCASE$(LEFT$(row$, 7)) = "' demo:" THEN
+            DIM listed = SPLIT(MID$(row$, 7), ",")
+            DIM out = []
+            DIM k AS INTEGER = 0
+            FOR k = 0 TO LEN(listed) - 1
+                DIM item$ AS STRING = TRIM$(listed[k])
+                IF item$ <> "" THEN out = APPEND(out, item$)
+            NEXT k
+            RETURN out
+        ENDIF
+        IF STARTSWITH(UCASE$(row$), "EXPORT MODULE ") THEN EXITFOR
+    NEXT r
+    RETURN [name$ + "_demo.jdb"]
+ENDFUNC
+
+' Runs a self test and answers "" when it passed, else what went wrong.
+FUNC RunTest(path$ AS STRING) AS STRING
+    DIM run = OS.EXEC(OS.SELF$(), [path$])
+    DIM out$ AS STRING = run{"OUTPUT"}
+    IF INSTR(out$, ", 0 failed") < 0 THEN RETURN "the self test does not pass interpreted"
+    IF NOT OS.FEATURE("NATIVEC") THEN RETURN ""
+    DIM exe$ AS STRING = MKTEMP$("check_lib") + ".exe"
+    DIM built = OS.EXEC(OS.SELF$(), ["-c", "-o", exe$, path$])
+    IF NOT FILE.EXISTS(exe$) THEN RETURN "the self test does not compile with -c"
+    DIM ran = OS.EXEC(exe$, [])
+    DIM native$ AS STRING = ran{"OUTPUT"}
+    KILL exe$
+    IF INSTR(native$, ", 0 failed") < 0 THEN RETURN "the self test does not pass compiled"
+    RETURN ""
+ENDFUNC
+
+' Every fault of one module, as lines.
+FUNC CheckModule(name$ AS STRING) AS ARRAY
+    DIM faults = []
+    DIM path$ AS STRING = "lib/" + name$ + ".jdb"
+    IF NOT FILE.EXISTS(path$) THEN RETURN ["no such module " + path$]
+    DIM src = LinesOf(path$)
+    DIM whole$ AS STRING = TXTREADER$(path$)
+    DIM module_upper$ AS STRING = UCASE$(name$)
+
+    ' the header
+    IF LEN(src) = 0 ORELSE LEFT$(src[0], 1) <> "'" THEN faults = APPEND(faults, "the file does not start with a header comment")
+    DIM head$ AS STRING = ""
+    DIM has_export AS INTEGER = 0
+    DIM r AS INTEGER = 0
+    FOR r = 0 TO LEN(src) - 1
+        DIM row$ AS STRING = TRIM$(src[r])
+        IF STARTSWITH(UCASE$(row$), "EXPORT MODULE ") THEN
+            has_export = 1
+            IF UCASE$(TRIM$(MID$(row$, 14))) <> module_upper$ THEN faults = APPEND(faults, "EXPORT MODULE names " + TRIM$(MID$(row$, 14)) + ", the file is " + name$ + ".jdb")
+            EXITFOR
+        ENDIF
+        IF LEFT$(row$, 1) = "'" THEN head$ = head$ + row$ + CHR$(10)
+    NEXT r
+    IF has_export = 0 THEN faults = APPEND(faults, "no EXPORT MODULE " + module_upper$)
+    IF NOT HasWord(head$, "IMPORT") THEN faults = APPEND(faults, "the header shows no IMPORT example")
+    DIM ver$ AS STRING = ""
+    DIM head_rows = SPLIT(head$, CHR$(10))
+    DIM h AS INTEGER = 0
+    FOR h = 0 TO LEN(head_rows) - 1
+        DIM head_row$ AS STRING = head_rows[h]
+        IF LCASE$(LEFT$(head_row$, 10)) = "' version:" THEN ver$ = TRIM$(MID$(head_row$, 10))
+    NEXT h
+    IF ver$ = "" THEN
+        faults = APPEND(faults, "no ' version: line in the header")
+    ELSEIF LEN(SPLIT(ver$, ".")) <> 3 THEN
+        faults = APPEND(faults, "the version is not major.minor.patch: " + ver$)
+    ENDIF
+    IF INSTR(whole$, em_dash$) >= 0 THEN faults = APPEND(faults, "an em-dash in the module; write -")
+
+    ' the lint
+    DIM lint = LintFaults(path$)
+    DIM k AS INTEGER = 0
+    FOR k = 0 TO LEN(lint) - 1
+        DIM fault$ AS STRING = lint[k]
+        faults = APPEND(faults, fault$)
+    NEXT k
+
+    ' the readme page
+    DIM page$ AS STRING = "lib/" + name$ + "_lib_readme.md"
+    IF NOT FILE.EXISTS(page$) THEN
+        faults = APPEND(faults, "no readme page " + page$)
+    ELSE
+        DIM page_text$ AS STRING = TXTREADER$(page$)
+        IF LEFT$(page_text$, 2) <> "# " THEN faults = APPEND(faults, "the readme page does not start with a # title")
+        IF INSTR(page_text$, "Stands in for") < 0 THEN faults = APPEND(faults, "the readme page has no 'Stands in for' line")
+        IF INSTR(page_text$, "## Quick start") < 0 THEN faults = APPEND(faults, "the readme page has no ## Quick start")
+        DIM sections AS INTEGER = LEN(SPLIT(page_text$, CHR$(10) + "## ")) - 1
+        IF sections < 2 THEN faults = APPEND(faults, "the readme page has fewer than two ## sections")
+        IF INSTR(page_text$, em_dash$) >= 0 THEN faults = APPEND(faults, "an em-dash in the readme page; write -")
+    ENDIF
+    IF INSTR(readme_index$, "| `" + name$ + ".jdb` |") < 0 THEN faults = APPEND(faults, "no row for " + name$ + ".jdb in lib/README.md")
+
+    ' the self test
+    DIM test$ AS STRING = "tests/jdlibs/" + name$ + "_selftest.jdb"
+    IF NOT FILE.EXISTS(test$) THEN
+        faults = APPEND(faults, "no self test " + test$)
+    ELSE
+        DIM test_text$ AS STRING = UCASE$(TXTREADER$(test$))
+        IF INSTR(test_text$, "TESTKIT.REPORT") < 0 THEN faults = APPEND(faults, "the self test does not end with TESTKIT.REPORT()")
+        IF want_run = 1 THEN
+            DIM problem$ AS STRING = RunTest(test$)
+            IF problem$ <> "" THEN faults = APPEND(faults, problem$)
+        ENDIF
+    ENDIF
+
+    ' the demo
+    DIM demos = DemoFiles(name$, src)
+    FOR k = 0 TO LEN(demos) - 1
+        DIM demo$ AS STRING = demos[k]
+        IF NOT FILE.EXISTS("jdb/demos/jdlibs/" + demo$) THEN faults = APPEND(faults, "no demo jdb/demos/jdlibs/" + demo$)
+    NEXT k
+    RETURN faults
+ENDFUNC
+
+DIM bad AS INTEGER = 0
+DIM n AS INTEGER = 0
+FOR n = 0 TO LEN(names) - 1
+    DIM module$ AS STRING = names[n]
+    DIM faults = CheckModule(module$)
+    IF LEN(faults) = 0 THEN
+        PRINT "ok    "; module$
+    ELSE
+        bad = bad + 1
+        PRINT "FAIL  "; module$
+        DIM f AS INTEGER = 0
+        FOR f = 0 TO LEN(faults) - 1
+            PRINT "        "; faults[f]
+        NEXT f
+    ENDIF
+NEXT n
+PRINT
+IF bad = 0 THEN
+    PRINT "check_lib: "; LEN(names); " modules, all in shape"
+ELSE
+    PRINT "check_lib: "; bad; " of "; LEN(names); " modules miss something"
+    END 1
+ENDIF

@@ -92,6 +92,12 @@ jobs:
           & build/jdBasic.exe tools/check_doc_examples.jdb doc/tour.md doc/guides/native.md doc/guides/data.md doc/guides/boards.md
           if ($LASTEXITCODE -ne 0) { throw "a documentation example prints something else" }
 
+      - name: Library modules
+        shell: pwsh
+        run: |
+          & build/jdBasic.exe tools/check_lib.jdb --all
+          if ($LASTEXITCODE -ne 0) { throw "a module under lib/ misses part of its shape" }
+
   linux-core:
     name: Core build + gate (Linux)
     runs-on: ubuntu-latest
@@ -149,6 +155,9 @@ jobs:
 
       - name: Documentation examples
         run: ./build/jdbasic tools/check_doc_examples.jdb doc/tour.md doc/guides/native.md doc/guides/data.md doc/guides/boards.md
+
+      - name: Library modules
+        run: ./build/jdbasic tools/check_lib.jdb --all
 
   linux-native:
     name: Native compiler build + gate (Linux)

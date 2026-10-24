@@ -1,0 +1,40 @@
+' PPTX demo: a small deck with a title slide, bullet slides, a chart
+' drawn by SVG and RASTER as the picture on one of them, speaker notes
+' and a table, written as .pptx and read back.
+'
+'   jdBasic jdb/demos/jdlibs/pptx_demo.jdb        interpreted
+'   jdBasic -c jdb/demos/jdlibs/pptx_demo.jdb     compiled
+
+IMPORT PPTX, SVG
+
+DIM out_dir$ = MKTEMP$("pptx_demo")
+MKDIR out_dir$
+
+' the chart for slide three
+DIM c = SVG.CHART("bar", 800, 450)
+SVG.SETOPT(c, "title", "Revenue by region, Q4")
+SVG.LABELS(c, ["North", "South", "East", "West"])
+SVG.SERIES(c, "Q4", [1.3, 1.1, 0.8, 0.95])
+DIM chart_png$ = out_dir$ + "/chart.png"
+SVG.WRITEPNG(SVG.RENDER(c), chart_png$, {"scale": 2})
+
+DIM deck = PPTX.NEW("Quarterly Review")
+DIM n = PPTX.TITLE_SLIDE(deck, "Quarterly Review", "Sales team, October")
+n = PPTX.SLIDE(deck, "Highlights", ["Revenue up 8 %", "  most of it in the north", "Two new customers", "The app now sells on its own"])
+PPTX.NOTES(deck, "Thank the team first.")
+n = PPTX.SLIDE(deck, "By region", [])
+PPTX.IMAGE(deck, chart_png$)
+n = PPTX.SLIDE(deck, "The numbers", [])
+PPTX.TABLE(deck, [["Region", "Q4", "Change"], ["North", "1.3 M", "+12 %"], ["South", "1.1 M", "+4 %"], ["East", "0.8 M", "+9 %"], ["West", "0.95 M", "+7 %"]])
+
+DIM deck_path$ = out_dir$ + "/review.pptx"
+PRINT PPTX.WRITE(deck, deck_path$)
+PRINT "written: "; deck_path$; " ("; FILE.SIZE(deck_path$); " bytes)"
+
+DIM back = PPTX.READ(deck_path$)
+PRINT LEN(back); " slides read back"
+DIM k = 0
+FOR k = 0 TO LEN(back) - 1
+    DIM slide = back[k]
+    PRINT k + 1; ". "; slide{"title"}; ": "; JOIN(slide{"bullets"}, " | ")
+NEXT k

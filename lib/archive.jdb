@@ -11,6 +11,7 @@
 '   DIM a = ARCHIVE.BLANK()
 '   ARCHIVE.ADDFILE(a, "notes/hello.txt", "hello" + CHR$(10))
 '   ARCHIVE.WRITEFILE(a, "notes.tar.gz")
+' version: 1.0.0
 EXPORT MODULE ARCHIVE
 
 ' Entries of every archive in parallel arrays; gOwner holds the handle an

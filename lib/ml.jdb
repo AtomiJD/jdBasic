@@ -8,6 +8,7 @@
 '   DIM parts = ML.TRAINTEST(rows, labels, 0.2, 7)
 '   DIM model = ML.FIT("logistic", parts{"x_train"}, parts{"y_train"})
 '   PRINT ML.ACCURACY(parts{"y_test"}, ML.PREDICT(model, parts{"x_test"}))
+' version: 1.0.0
 
 EXPORT MODULE ML
 

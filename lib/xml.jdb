@@ -10,6 +10,7 @@
 ' and a node number, as in HTMLDOM. Node 0 is the document itself. The
 ' parser is strict about structure and names the line and column of the
 ' first thing that is not well-formed.
+' version: 1.0.0
 
 EXPORT MODULE XML
 
@@ -73,7 +74,7 @@ EXPORT FUNC PARSE(xml$, opts = 0)
         ENDIF
         cursor_at = cursor_at + LEN(gSrc$)
         gAt = 0
-        Scan()
+        ScanText()
         k = k + 1
     LOOP
     gSrc$ = ""
@@ -100,7 +101,7 @@ FUNC Terminator$(piece$)
 ENDFUNC
 
 ' The markup at the start of gSrc$ and the text after it.
-SUB Scan()
+SUB ScanText()
     DO WHILE gAt < LEN(gSrc$)
         IF MID$(gSrc$, gAt, 1) <> "<" THEN
             TextRun()
@@ -1008,14 +1009,14 @@ FUNC Copy(arr)
 ENDFUNC
 
 ' An array of arrays with one cell replaced.
-FUNC WithCell(outer, at, cell)
+FUNC WithCell(host, at, cell)
     DIM out = []
     DIM i = 0
-    FOR i = 0 TO LEN(outer) - 1
+    FOR i = 0 TO LEN(host) - 1
         IF i = at THEN
             PUSH(out, cell)
         ELSE
-            DIM kept_cell = outer[i]
+            DIM kept_cell = host[i]
             PUSH(out, kept_cell)
         ENDIF
     NEXT i

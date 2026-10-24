@@ -50,4 +50,6 @@ A good bug report is a **minimal `.jdb` repro** plus:
 
 ## Pull requests
 
+A module for `lib/` follows [lib/CONTRIBUTING.md](lib/CONTRIBUTING.md): the header, the readme page, the row in the index, the self test and the demo, checked by `tools/check_lib.jdb`.
+
 Keep them small and focused. Say in the description which parts of the gate you ran and their results. For anything ambitious, consider opening a discussion or issue first so we can talk design before you invest serious time.

@@ -21,6 +21,7 @@
 '
 ' Arrays use EQARRAY and NEARRAY. EQ and NE refuse them, because a compiled
 ' parameter that also carries scalars arrives empty when handed an array.
+' version: 1.0.0
 
 EXPORT MODULE TESTKIT
 
@@ -125,15 +126,15 @@ SUB Record(status, message$, detail$)
         gMark = gRunStart
         gStarted = 1
     ENDIF
-    DIM now = TICK()
-    DIM elapsed = now - gMark
+    DIM now_ms = TICK()
+    DIM elapsed = now_ms - gMark
     gCases = gCases + 1
     gSuiteNames$ = APPEND(gSuiteNames$, gSuite$)
     gMessages$ = APPEND(gMessages$, message$)
     gStatus = APPEND(gStatus, status)
     gDetails$ = APPEND(gDetails$, detail$)
     gMillis = APPEND(gMillis, elapsed)
-    gMark = now
+    gMark = now_ms
     IF status = ST_FAIL THEN gFails = gFails + 1
     IF status = ST_SKIP THEN gSkips = gSkips + 1
     IF gMode = MODE_HUMAN THEN EmitHuman(status, message$, detail$, elapsed)

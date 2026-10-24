@@ -16,6 +16,7 @@
 ' pictures and tables, so a deck does not depend on a template. The
 ' parts are written as XML text and packed with ZIP.WRITE, the way
 ' DOCX writes its documents.
+' version: 1.0.0
 
 EXPORT MODULE PPTX
 

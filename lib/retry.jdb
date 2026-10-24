@@ -9,6 +9,7 @@
 ' The wait doubles after every failure and can carry a random share so
 ' many callers do not come back at the same moment. A predicate decides
 ' which errors are worth another attempt; a callback sees each one.
+' version: 1.0.0
 
 EXPORT MODULE RETRY
 
@@ -155,8 +156,8 @@ ENDFUNC
 ' The wait with its random share added, never below zero.
 FUNC Spread(wait, jitter)
     IF jitter <= 0 THEN RETURN wait
-    DIM shift = wait * jitter * (2 * RND(1) - 1)
-    DIM out = wait + shift
+    DIM jitter_shift = wait * jitter * (2 * RND(1) - 1)
+    DIM out = wait + jitter_shift
     IF out < 0 THEN RETURN 0
     RETURN out
 ENDFUNC

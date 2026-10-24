@@ -12,6 +12,7 @@
 ' element-wise operators run over a whole column at once. DF.COL answers
 ' the column array itself; add 0 for a copy before changing it in place.
 ' Every function returns a new frame and leaves its input alone.
+' version: 1.0.0
 
 EXPORT MODULE DF
 
@@ -290,10 +291,10 @@ EXPORT FUNC DROP(df, names)
     DIM gone = names
     IF TYPEOF(names) = "STRING" THEN gone = [names]
     DIM keep = []
-    DIM all = df{"names"}
+    DIM all_names = df{"names"}
     DIM i = 0
-    FOR i = 0 TO LEN(all) - 1
-        IF NOT (all[i] IN gone) THEN keep = APPEND(keep, all[i])
+    FOR i = 0 TO LEN(all_names) - 1
+        IF NOT (all_names[i] IN gone) THEN keep = APPEND(keep, all_names[i])
     NEXT i
     RETURN Keep(df, keep)
 ENDFUNC
@@ -520,9 +521,9 @@ EXPORT FUNC JOIN(a, b, keys, how$ = "inner")
             PUSH(b_idx, -1)
         ENDIF
     NEXT i
-    DIM left = Gather(a, a_idx)
-    DIM names = left{"names"}
-    DIM cols = left{"cols"}
+    DIM left_rows = Gather(a, a_idx)
+    DIM names = left_rows{"names"}
+    DIM cols = left_rows{"cols"}
     DIM b_names = b{"names"}
     DIM b_cols = b{"cols"}
     DIM c = 0
@@ -597,7 +598,7 @@ EXPORT FUNC DESCRIBE(df)
     DIM cols = df{"cols"}
     DIM column = []
     DIM counts = []
-    DIM mean = []
+    DIM means = []
     DIM low = []
     DIM high = []
     DIM spread = []
@@ -607,7 +608,7 @@ EXPORT FUNC DESCRIBE(df)
         IF NOT IsNumberColumn(col) THEN CONTINUEFOR
         PUSH(column, names[c])
         PUSH(counts, LEN(col))
-        PUSH(mean, MEAN(col))
+        PUSH(means, MEAN(col))
         PUSH(low, MIN(col))
         PUSH(high, MAX(col))
         IF LEN(col) > 1 THEN
@@ -616,7 +617,7 @@ EXPORT FUNC DESCRIBE(df)
             PUSH(spread, 0)
         ENDIF
     NEXT c
-    RETURN Frame(["column", "count", "mean", "min", "max", "stdev"], [column, counts, mean, low, high, spread])
+    RETURN Frame(["column", "count", "mean", "min", "max", "stdev"], [column, counts, means, low, high, spread])
 ENDFUNC
 
 ' ── output ─────────────────────────────────────────────────────

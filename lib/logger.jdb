@@ -24,6 +24,7 @@
 ' becomes name.2 and so on up to keep, and the oldest is dropped.
 '
 ' The module is named LOGGER because LOG is the natural logarithm.
+' version: 1.0.0
 
 EXPORT MODULE LOGGER
 

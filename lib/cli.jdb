@@ -28,6 +28,7 @@
 ' A parse never ends the program by itself, so a test can drive it. CLI.STATUS
 ' gives the exit status a shell expects: 0 when the run simply had nothing to
 ' do, 2 when the command line was wrong.
+' version: 1.0.0
 
 EXPORT MODULE CLI
 
@@ -60,45 +61,45 @@ ENDSUB
 ' Each kind carries its default in its own call rather than through one
 ' shared parameter: a slot that takes a string in one call and an array in
 ' the next has no single type for the native compiler to give it.
-FUNC NewOpt(long_name$, short_name$, help$, kind$)
+FUNC NewOpt(long_name$, short_name$, help_text$, kind$)
     DIM o AS MAP
     o{"long"} = long_name$
     o{"short"} = short_name$
-    o{"help"} = help$
+    o{"help"} = help_text$
     o{"kind"} = kind$
     RETURN o
 ENDFUNC
 
 ' A switch. Present means TRUE, absent means FALSE.
-EXPORT SUB FLAG(spec, long_name$, short_name$, help$)
-    DIM o = NewOpt(long_name$, short_name$, help$, KIND_FLAG)
+EXPORT SUB FLAG(spec, long_name$, short_name$, help_text$)
+    DIM o = NewOpt(long_name$, short_name$, help_text$, KIND_FLAG)
     o{"default"} = FALSE
     spec{"opts"} = APPEND(spec{"opts"}, o)
 ENDSUB
 
-EXPORT SUB OPT(spec, long_name$, short_name$, help$, fallback$)
-    DIM o = NewOpt(long_name$, short_name$, help$, KIND_STR)
+EXPORT SUB OPT(spec, long_name$, short_name$, help_text$, fallback$)
+    DIM o = NewOpt(long_name$, short_name$, help_text$, KIND_STR)
     o{"default"} = fallback$
     spec{"opts"} = APPEND(spec{"opts"}, o)
 ENDSUB
 
-EXPORT SUB NUM(spec, long_name$, short_name$, help$, fallback)
-    DIM o = NewOpt(long_name$, short_name$, help$, KIND_NUM)
+EXPORT SUB NUM(spec, long_name$, short_name$, help_text$, fallback)
+    DIM o = NewOpt(long_name$, short_name$, help_text$, KIND_NUM)
     o{"default"} = fallback
     spec{"opts"} = APPEND(spec{"opts"}, o)
 ENDSUB
 
 ' Collects every occurrence into an array, empty when never given.
-EXPORT SUB MANY(spec, long_name$, short_name$, help$)
-    DIM o = NewOpt(long_name$, short_name$, help$, KIND_MANY)
+EXPORT SUB MANY(spec, long_name$, short_name$, help_text$)
+    DIM o = NewOpt(long_name$, short_name$, help_text$, KIND_MANY)
     o{"default"} = []
     spec{"opts"} = APPEND(spec{"opts"}, o)
 ENDSUB
 
-EXPORT SUB ARG(spec, name$, help$, required)
+EXPORT SUB ARG(spec, name$, help_text$, required)
     DIM a AS MAP
     a{"name"} = name$
-    a{"help"} = help$
+    a{"help"} = help_text$
     a{"required"} = required
     spec{"args"} = APPEND(spec{"args"}, a)
 ENDSUB

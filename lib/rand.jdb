@@ -15,6 +15,7 @@
 ' generator, seeded with SEED. The same seed gives the same draws in both
 ' backends: every value is built from RNG.NEXT and RNG.INT (xoshiro256**)
 ' with fixed formulas.
+' version: 1.0.0
 
 EXPORT MODULE RAND
 
@@ -428,22 +429,22 @@ ENDFUNC
 ' ── sampling ───────────────────────────────────────────────────
 
 ' One entry of a list.
-EXPORT FUNC CHOICE(gen, list)
-    IF LEN(list) = 0 THEN THROW "RAND.CHOICE: the list is empty"
-    DIM at = CLNG(RNG.INT(Gen(gen), 0, LEN(list) - 1))
-    DIM item = list[at]
+EXPORT FUNC CHOICE(gen, items)
+    IF LEN(items) = 0 THEN THROW "RAND.CHOICE: the list is empty"
+    DIM at = CLNG(RNG.INT(Gen(gen), 0, LEN(items) - 1))
+    DIM item = items[at]
     RETURN item
 ENDFUNC
 
 ' k entries drawn with replacement.
-EXPORT FUNC CHOICES(gen, list, k)
-    IF LEN(list) = 0 THEN THROW "RAND.CHOICES: the list is empty"
+EXPORT FUNC CHOICES(gen, items, k)
+    IF LEN(items) = 0 THEN THROW "RAND.CHOICES: the list is empty"
     DIM g = Gen(gen)
     DIM out = []
     DIM i = 0
     FOR i = 1 TO CLNG(k)
-        DIM at = CLNG(RNG.INT(g, 0, LEN(list) - 1))
-        PUSH(out, list[at])
+        DIM at = CLNG(RNG.INT(g, 0, LEN(items) - 1))
+        PUSH(out, items[at])
     NEXT i
     RETURN out
 ENDFUNC
@@ -468,8 +469,8 @@ FUNC ShuffledIndex(g, n, k)
 ENDFUNC
 
 ' k different entries (without replacement), in the order they were drawn.
-EXPORT FUNC SAMPLE(gen, list, k)
-    DIM n = LEN(list)
+EXPORT FUNC SAMPLE(gen, items, k)
+    DIM n = LEN(items)
     DIM want = CLNG(k)
     IF want > n THEN THROW "RAND.SAMPLE: more entries asked for than the list has"
     DIM order = ShuffledIndex(Gen(gen), n, want)
@@ -477,20 +478,20 @@ EXPORT FUNC SAMPLE(gen, list, k)
     DIM i = 0
     FOR i = 0 TO want - 1
         DIM at = CLNG(order[i])
-        PUSH(out, list[at])
+        PUSH(out, items[at])
     NEXT i
     RETURN out
 ENDFUNC
 
 ' A new array with the entries of the list in a random order.
-EXPORT FUNC SHUFFLED(gen, list)
-    DIM n = LEN(list)
+EXPORT FUNC SHUFFLED(gen, items)
+    DIM n = LEN(items)
     DIM order = ShuffledIndex(Gen(gen), n, n)
     DIM out = []
     DIM i = 0
     FOR i = 0 TO n - 1
         DIM at = CLNG(order[i])
-        PUSH(out, list[at])
+        PUSH(out, items[at])
     NEXT i
     RETURN out
 ENDFUNC
@@ -509,11 +510,11 @@ ENDFUNC
 
 ' k entries of a list chosen uniformly by reservoir sampling (Algorithm R),
 ' in reservoir order: the same entries SAMPLE-like, in one pass.
-EXPORT FUNC RESERVOIR(gen, list, k)
+EXPORT FUNC RESERVOIR(gen, items, k)
     DIM box = RESERVOIR_START(k)
     DIM i = 0
-    FOR i = 0 TO LEN(list) - 1
-        DIM item$ = "" + list[i]
+    FOR i = 0 TO LEN(items) - 1
+        DIM item$ = "" + items[i]
         RESERVOIR_OFFER(gen, box, item$)
     NEXT i
     RETURN RESERVOIR_ITEMS(box)

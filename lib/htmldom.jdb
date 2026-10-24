@@ -11,6 +11,7 @@
 ' unquoted attribute values, comments, raw text in script and style,
 ' entities, stray markup. A document is an array of nodes and every call
 ' takes the document and a node number, so the tree holds no cycles.
+' version: 1.0.0
 
 EXPORT MODULE HTMLDOM
 
@@ -357,10 +358,10 @@ ENDFUNC
 
 ' Every attribute of an element as a map.
 EXPORT FUNC ATTRS(doc, id)
-    DIM all = doc{"attrs"}
+    DIM all_attrs = doc{"attrs"}
     DIM empty AS MAP
-    IF id < 0 ORELSE id >= LEN(all) THEN RETURN empty
-    RETURN all[id]
+    IF id < 0 ORELSE id >= LEN(all_attrs) THEN RETURN empty
+    RETURN all_attrs[id]
 ENDFUNC
 
 ' One attribute, or the fallback when it is not there.
@@ -726,15 +727,15 @@ FUNC MatchStep(doc, id, item)
     DIM last = item{"last"}
     IF nth > 0 ORELSE nth_type > 0 ORELSE last THEN
         DIM siblings = ELEMENTS(doc, PARENT(doc, id))
-        DIM place = 0
+        DIM spot = 0
         DIM typed = 0
         DIM my_place = 0
         DIM my_typed = 0
         FOR i = 0 TO LEN(siblings) - 1
-            place = place + 1
+            spot = spot + 1
             IF TAG$(doc, siblings[i]) = TAG$(doc, id) THEN typed = typed + 1
             IF siblings[i] = id THEN
-                my_place = place
+                my_place = spot
                 my_typed = typed
             ENDIF
         NEXT i

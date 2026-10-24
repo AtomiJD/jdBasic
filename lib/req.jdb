@@ -24,6 +24,7 @@
 '
 ' The HTTP builtins keep one global header, cookie and timeout state; every
 ' call here installs the session's state and clears it afterwards.
+' version: 1.0.0
 
 EXPORT MODULE REQ
 
@@ -84,9 +85,9 @@ EXPORT FUNC ENCODE$(text$)
         IF (b >= 48 AND b <= 57) OR (b >= 65 AND b <= 90) OR (b >= 97 AND b <= 122) OR b = 45 OR b = 95 OR b = 46 OR b = 126 THEN
             out$ = out$ + CHR$(b)
         ELSE
-            DIM hex$ = HEX$(b)
-            IF LEN(hex$) < 2 THEN hex$ = "0" + hex$
-            out$ = out$ + "%" + hex$
+            DIM hex_text$ = HEX$(b)
+            IF LEN(hex_text$) < 2 THEN hex_text$ = "0" + hex_text$
+            out$ = out$ + "%" + hex_text$
         ENDIF
     NEXT i
     RETURN out$

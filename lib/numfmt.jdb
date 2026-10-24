@@ -12,6 +12,7 @@
 ' The separators and the place of the currency sign follow the Unicode
 ' CLDR data for each locale, including the non-breaking spaces it uses.
 ' Rounding is commercial: a half goes away from zero.
+' version: 1.0.0
 
 EXPORT MODULE NUMFMT
 
@@ -247,11 +248,11 @@ FUNC GermanSmall$(n, final)
         RETURN out$ + "ein"
     ENDIF
     IF rest < 20 THEN RETURN out$ + GermanUnit$(rest)
-    DIM ones = rest MOD 10
+    DIM ones_digit = rest MOD 10
     DIM tens = rest \ 10
-    IF ones = 0 THEN RETURN out$ + GermanTen$(tens)
-    DIM one_word$ = GermanUnit$(ones)
-    IF ones = 1 THEN one_word$ = "ein"
+    IF ones_digit = 0 THEN RETURN out$ + GermanTen$(tens)
+    DIM one_word$ = GermanUnit$(ones_digit)
+    IF ones_digit = 1 THEN one_word$ = "ein"
     RETURN out$ + one_word$ + "und" + GermanTen$(tens)
 ENDFUNC
 
@@ -305,9 +306,9 @@ ENDFUNC
 ' 1 to 99.
 FUNC EnglishTens$(n)
     IF n < 20 THEN RETURN EnglishUnit$(n)
-    DIM ones = n MOD 10
-    IF ones = 0 THEN RETURN EnglishTen$(n \ 10)
-    RETURN EnglishTen$(n \ 10) + "-" + EnglishUnit$(ones)
+    DIM ones_digit = n MOD 10
+    IF ones_digit = 0 THEN RETURN EnglishTen$(n \ 10)
+    RETURN EnglishTen$(n \ 10) + "-" + EnglishUnit$(ones_digit)
 ENDFUNC
 
 ' 1 to 999: "one hundred and twenty-one".

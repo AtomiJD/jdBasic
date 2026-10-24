@@ -12,6 +12,7 @@
 '   SVG.SERIES(c, "2026", [120, 95.5, 143])
 '   SVG.WRITEFILE(SVG.RENDER(c), "sales.svg")
 '   SVG.WRITEPNG(SVG.RENDER(c), "sales.png", {"scale": 2})
+' version: 1.0.0
 
 EXPORT MODULE SVG
 

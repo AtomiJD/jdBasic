@@ -14,6 +14,7 @@
 ' A generator is a string. Every draw takes whole numbers from a choice
 ' sequence; shrinking deletes and lowers entries of that sequence and draws
 ' again, so every generator and combination shrinks the same way.
+' version: 1.0.0
 
 EXPORT MODULE PROPTEST
 IMPORT TESTKIT, FAKE
@@ -636,7 +637,7 @@ ENDFUNC
 FUNC RunProperty(gen$, prop, opts)
     DIM kind$ = KindOf$(gen$)
     DIM runs = CINT(OptNumber(opts, "runs", 100))
-    DIM seed = OptNumber(opts, "seed", (TIMER * 1000.0 + TICK()) MOD 2147483646 + 1)
+    DIM seed = OptNumber(opts, "seed", (NOW_EPOCH() * 1000.0 + TICK()) MOD 2147483646 + 1)
     seed = CINT(seed)
     DIM max_calls = CINT(OptNumber(opts, "max_shrinks", 2000))
     DIM report AS MAP

@@ -10,6 +10,7 @@
 '   TXTWRITER "code.svg", QR.SVG$(code)
 '
 '   DIM giro = QR.EPCMATRIX("Papier & Toner GmbH", "DE89370400440532013000", "168.80", "COBADEFFXXX", "RE-2026-0413")
+' version: 1.0.0
 EXPORT MODULE QR
 
 IMPORT VALID, MONEY, PDFGEN
@@ -611,11 +612,11 @@ EXPORT FUNC MATRIX(text$, opts = 0)
 
     DIM idx = 0
     DIM total_bits = LEN(stream)
-    DIM right = n - 1
+    DIM right_edge = n - 1
     DIM vertical = 0
     DIM z = 0
-    DO WHILE right > 0
-        DIM col_r = right
+    DO WHILE right_edge > 0
+        DIM col_r = right_edge
         IF col_r <= 6 THEN col_r = col_r - 1
         DIM up = 0
         IF (col_r BAND 2) = 0 THEN up = 1
@@ -633,7 +634,7 @@ EXPORT FUNC MATRIX(text$, opts = 0)
                 ENDIF
             NEXT z
         NEXT vertical
-        right = right - 2
+        right_edge = right_edge - 2
     LOOP
 
     DIM best = want_mask

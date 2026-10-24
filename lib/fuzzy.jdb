@@ -10,6 +10,7 @@
 '   PRINT FUZZY.KOELNER$("Meier"), FUZZY.KOELNER$("Mayer")     ' 67 67
 '
 ' Every function works on characters, not bytes: an umlaut counts once.
+' version: 1.0.0
 
 EXPORT MODULE FUZZY
 
@@ -814,13 +815,13 @@ ENDFUNC
 ' the same code: Meier, Mayer and Maier are all 67.
 EXPORT FUNC KOELNER$(text$)
     DIM cs = -REPLACE$(text$, "-", " ")
-    DIM lower$ = ""
+    DIM low$ = ""
     DIM k = 0
     FOR k = 0 TO LEN(cs) - 1
         DIM c$ = cs[k]
-        lower$ = lower$ + LowerChar$(c$)
+        low$ = low$ + LowerChar$(c$)
     NEXT k
-    DIM words = SPLIT(lower$, " ")
+    DIM words = SPLIT(low$, " ")
     DIM codes = []
     FOR k = 0 TO LEN(words) - 1
         DIM w$ = words[k]

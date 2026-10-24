@@ -11,6 +11,7 @@
 '   SCHED.JOB("report", "daily 06:00", NightlyReport@, {"offset": 2, "attempts": 3})
 '   SCHED.JOB("ping", "every 5 minutes", CheckService@)
 '   DIM runs = SCHED.SERVE(0)
+' version: 1.0.0
 
 EXPORT MODULE SCHED
 IMPORT DT, RETRY, LOGGER

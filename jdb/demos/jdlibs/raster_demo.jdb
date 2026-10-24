@@ -1,0 +1,41 @@
+' RASTER demo: a chart and a drawing become PNG files without a window,
+' then the drawing once more over a transparent page and three times the
+' size, the way a document or a dense screen wants it.
+'
+'   jdBasic jdb/demos/jdlibs/raster_demo.jdb        interpreted
+'   jdBasic -c jdb/demos/jdlibs/raster_demo.jdb     compiled
+
+IMPORT SVG, RASTER, IMG
+
+DIM out_dir$ = MKTEMP$("raster_demo")
+MKDIR out_dir$
+
+' a chart, as SVG.RENDER draws it
+DIM c = SVG.CHART("line")
+SVG.SETOPT(c, "title", "Visitors per weekday")
+SVG.LABELS(c, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+SVG.SERIES(c, "web", [120, 132, 101, 134, 190, 230, 210])
+SVG.SERIES(c, "app", [60, 72, 81, 94, 130, 160, 150])
+DIM chart_png$ = out_dir$ + "/visitors.png"
+SVG.WRITEPNG(SVG.RENDER(c), chart_png$, {"scale": 2})
+PRINT "chart: "; chart_png$; " ("; FILE.SIZE(chart_png$); " bytes)"
+
+' a drawing by hand
+DIM d = SVG.NEW(240, 140)
+DIM grad$ = SVG.GRADIENT$(d, "sky", ["#2c5aa0", "#9ad1ff"], 90)
+SVG.ADDRECT(d, 0, 0, 240, 140, {"fill": grad$})
+SVG.ADDCIRCLE(d, 190, 40, 22, {"fill": "#ffd166"})
+SVG.ADDPATH(d, "M 0 110 Q 60 70 120 110 T 240 110 L 240 140 L 0 140 Z", {"fill": "#2d6a4f"})
+SVG.ADDPOLYGON(d, [40, 70, 100], [100, 50, 100], {"fill": "#8d6e63", "stroke": "#3e2723", "stroke_width": 2})
+SVG.ADDTEXT(d, 120, 30, "Good morning", {"text_anchor": "middle", "font_size": 18, "font_weight": "bold", "fill": "#fff"})
+DIM scene_png$ = out_dir$ + "/scene.png"
+SVG.WRITEPNG(d, scene_png$)
+PRINT "scene: "; scene_png$
+
+' the same drawing as an image in memory: transparent page, three times
+' the size, then cut to the sun and saved on its own
+DIM big = SVG.TOIMAGE(d, {"scale": 3, "background": "none"})
+PRINT "in memory: "; IMG.WIDTH(big); "x"; IMG.HEIGHT(big); ", "; IMG.CHANNELS(big); " channels"
+DIM sun = IMG.CROP(big, 3 * 160, 3 * 10, 3 * 60, 3 * 60)
+IMG.WRITEPNG(sun, out_dir$ + "/sun.png", {"filter": "none"})
+PRINT "sun:   "; out_dir$ + "/sun.png"; " ("; IMG.GETPIXEL(sun, 90, 90); " at its centre)"

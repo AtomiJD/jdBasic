@@ -30,6 +30,7 @@
 ' worker is a named ASYNC FUNC of the caller and everything it needs
 ' travels as parameters. Workers talk to the pool only through the two
 ' channels and the scalar helpers TAKE_JOB, DONE, DONE_TEXT and FAILED.
+' version: 1.0.0
 
 EXPORT MODULE POOL
 
@@ -225,7 +226,7 @@ EXPORT FUNC GATHER(p, timeout_ms = 0, fail_fast = FALSE)
         IF first_state < 2 THEN open_items = open_items + 1
     NEXT i
     DIM wait_ms AS DOUBLE = 25.0
-    DIM now AS DOUBLE = 0.0
+    DIM now_s AS DOUBLE = 0.0
     DIM idx AS INTEGER = 0
     DIM kind AS INTEGER = 0
     DIM st AS INTEGER = 0
@@ -234,25 +235,25 @@ EXPORT FUNC GATHER(p, timeout_ms = 0, fail_fast = FALSE)
         IF open_items <= 0 THEN EXITDO
         wait_ms = 25.0
         IF limit_ms > 0 THEN
-            now = TICK()
+            now_s = TICK()
             FOR i = 0 TO n - 1
                 st = CLNG(item_state[base + i])
                 IF st = 1 THEN
                     due = deadlines[i]
-                    IF due > 0 ANDALSO due - now < wait_ms THEN wait_ms = due - now
+                    IF due > 0 ANDALSO due - now_s < wait_ms THEN wait_ms = due - now_s
                 ENDIF
             NEXT i
         ENDIF
         IF wait_ms < 1 THEN wait_ms = 1
         DIM msg = CHAN.RECV(results, CLNG(wait_ms))
         IF CHAN.IS_TIMEOUT(msg) THEN
-            now = TICK()
+            now_s = TICK()
             IF limit_ms > 0 THEN
                 FOR i = 0 TO n - 1
                     st = CLNG(item_state[base + i])
                     IF st = 1 THEN
                         due = deadlines[i]
-                        IF due > 0 ANDALSO now >= due THEN
+                        IF due > 0 ANDALSO now_s >= due THEN
                             item_state[base + i] = 4
                             item_reason[base + i] = "timed out after " + STR$(CLNG(limit_ms)) + " ms"
                             open_items = open_items - 1
@@ -587,12 +588,12 @@ EXPORT FUNC FANIN(sources, timeout_ms = 0)
             ENDIF
         NEXT i
         IF LEN(live) = 0 THEN RETURN -2
-        DIM left AS DOUBLE = -1.0
+        DIM left_s AS DOUBLE = -1.0
         IF limit_ms > 0 THEN
-            left = limit_ms - (TICK() - started)
-            IF left < 0 THEN left = 0
+            left_s = limit_ms - (TICK() - started)
+            IF left_s < 0 THEN left_s = 0
         ENDIF
-        DIM which AS INTEGER = CHAN.SELECT(chans, CLNG(left))
+        DIM which AS INTEGER = CHAN.SELECT(chans, CLNG(left_s))
         IF which < 0 THEN RETURN -1
         DIM picked = chans[which]
         DIM got = CHAN.TRY_RECV(picked)

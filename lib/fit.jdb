@@ -13,6 +13,7 @@
 ' Matrices are arrays of rows. A model for CURVEFIT is a FUNC taking one x
 ' and the parameter array; a function for the root finders and MINIMIZE
 ' takes one number.
+' version: 1.0.0
 EXPORT MODULE FIT
 
 DIM gEps = 2.220446049250313E-16
@@ -514,12 +515,12 @@ FUNC IntervalOf(knots, t)
     DIM lo = 1
     DIM hi = last
     DO WHILE hi - lo > 1
-        DIM mid = CLNG((lo + hi) / 2)
-        DIM km = knots[mid]
+        DIM middle = CLNG((lo + hi) / 2)
+        DIM km = knots[middle]
         IF km <= t THEN
-            lo = mid
+            lo = middle
         ELSE
-            hi = mid
+            hi = middle
         ENDIF
     LOOP
     RETURN lo

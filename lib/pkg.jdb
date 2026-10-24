@@ -15,6 +15,7 @@
 '   ' version: 1.2.0
 '   ' requires: REQ ^1.0, SCHEMA ~1.1
 
+' version: 1.0.0
 EXPORT MODULE PKG
 
 DIM gLF$ = CHR$(10)

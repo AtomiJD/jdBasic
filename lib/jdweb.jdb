@@ -20,6 +20,7 @@
 ' file on a server, or on JDBASIC_PATH. The page templates (layout, theme)
 ' are read from jdweb_tpl/ next to the app script unless TEMPLATES names
 ' another folder.
+' version: 1.0.0
 EXPORT MODULE JDWEB
 
 IMPORT TMPL, SECRET
@@ -79,13 +80,13 @@ FUNC FIELD$(obj, key$)
 ENDFUNC
 
 FUNC TplDir$()
-    DIM dir$ = gConf{"tpl"}
-    RETURN dir$
+    DIM tpl_dir$ = gConf{"tpl"}
+    RETURN tpl_dir$
 ENDFUNC
 
 ' The folder the page templates are read from.
-EXPORT SUB TEMPLATES(dir$)
-    gConf{"tpl"} = dir$
+EXPORT SUB TEMPLATES(tpl_dir$)
+    gConf{"tpl"} = tpl_dir$
     gConf{"theme"} = ""
 ENDSUB
 
@@ -102,13 +103,13 @@ ENDFUNC
 
 ' ---- template rendering ----
 
-EXPORT FUNC RENDER$(tpl$, vars)
+EXPORT FUNC RENDER$(tpl$, values)
     DIM out$ = REPLACE$(tpl$, "##theme##", THEME$())
-    DIM keys = MAP.KEYS(vars)
+    DIM keys = MAP.KEYS(values)
     DIM k = 0
     FOR k = 0 TO LEN(keys) - 1
         DIM key$ = keys[k]
-        DIM v = vars{key$}
+        DIM v = values{key$}
         out$ = REPLACE$(out$, "##" + key$ + "##", "" + v)
     NEXT k
     RETURN out$
@@ -289,19 +290,19 @@ ENDFUNC
 EXPORT FUNC AUTH_USER$(db, request)
     DIM token$ = COOKIE_VAL$(request, "jdwsession")
     IF LEN(token$) = 0 THEN RETURN ""
-    DIM now = SessionNow()
-    DIM now$ = STR$(CLNG(now))
+    DIM now_s = SessionNow()
+    DIM now$ = STR$(CLNG(now_s))
     DIM rows = SQL.TABLE(db, "SELECT username, COALESCE(last_seen, " + now$ + "), last_seen IS NULL FROM sessions WHERE token = '" + ESC$(token$) + "'")
     IF LEN(rows) = 0 THEN RETURN ""
     DIM who$ = rows[0, 0]
     DIM seen = rows[0, 1]
     DIM never = rows[0, 2]
     DIM ttl = gSessionConf{"auth_ttl"}
-    IF ttl > 0 ANDALSO now - seen > ttl THEN
+    IF ttl > 0 ANDALSO now_s - seen > ttl THEN
         SQL.EXEC(db, "DELETE FROM sessions WHERE token = '" + ESC$(token$) + "'")
         RETURN ""
     ENDIF
-    IF never <> 0 ORELSE now - seen >= 60 THEN
+    IF never <> 0 ORELSE now_s - seen >= 60 THEN
         SQL.EXEC(db, "UPDATE sessions SET last_seen = " + now$ + " WHERE token = '" + ESC$(token$) + "'")
     ENDIF
     RETURN who$
@@ -489,7 +490,7 @@ ENDFUNC
 
 ' Any handler answer as a rich response: a string is HTML, a map or an array
 ' without __http_status is JSON, both with the given status.
-FUNC Normalize(value, status)
+FUNC NormalizeStatus(value, status)
     DIM kind$ = TYPEOF(value)
     IF kind$ = "OBJECT" THEN
         IF MAP.EXISTS(value, "__http_status") THEN RETURN value
@@ -678,7 +679,7 @@ FUNC CallHandler(handler, request)
     DIM msg$ = ""
     TRY
         DIM answer = handler(request)
-        result = Normalize(answer, 200)
+        result = NormalizeStatus(answer, 200)
     CATCH
         failed = TRUE
         msg$ = ERRMSG$
@@ -688,19 +689,19 @@ FUNC CallHandler(handler, request)
         DIM efn = gHooks{"error"}
         gCurrent{"error"} = msg$
         DIM error_value = efn(request)
-        RETURN Normalize(error_value, 500)
+        RETURN NormalizeStatus(error_value, 500)
     ENDIF
     RETURN REPLY("Internal Server Error", 500, "text/plain; charset=utf-8")
 ENDFUNC
 
 FUNC MimeOf$(name$)
-    DIM dot = -1
+    DIM dot_at = -1
     DIM k = 0
     FOR k = 0 TO LEN(name$) - 1
-        IF MID$(name$, k, 1) = "." THEN dot = k
+        IF MID$(name$, k, 1) = "." THEN dot_at = k
     NEXT k
-    IF dot < 0 THEN RETURN "application/octet-stream"
-    DIM ext$ = LCASE$(MID$(name$, dot + 1, LEN(name$)))
+    IF dot_at < 0 THEN RETURN "application/octet-stream"
+    DIM ext$ = LCASE$(MID$(name$, dot_at + 1, LEN(name$)))
     IF ext$ = "html" ORELSE ext$ = "htm" THEN RETURN "text/html; charset=utf-8"
     IF ext$ = "css" THEN RETURN "text/css; charset=utf-8"
     IF ext$ = "js" ORELSE ext$ = "mjs" THEN RETURN "application/javascript; charset=utf-8"
@@ -721,13 +722,13 @@ ENDFUNC
 
 ' Files of a folder served under a path prefix: "/static/app.css" from
 ' dir$ + "/app.css", a folder by its index.html.
-EXPORT SUB ASSETS(prefix$, dir$)
+EXPORT SUB ASSETS(prefix$, tpl_dir$)
     DIM pre$ = prefix$
     DO WHILE LEN(pre$) > 1 ANDALSO RIGHT$(pre$, 1) = "/"
         pre$ = LEFT$(pre$, LEN(pre$) - 1)
     LOOP
     PUSH(gStaticPrefixes, pre$)
-    PUSH(gStaticDirs, dir$)
+    PUSH(gStaticDirs, tpl_dir$)
 ENDSUB
 
 FUNC StaticFile(path$)
@@ -735,7 +736,7 @@ FUNC StaticFile(path$)
     DIM k = 0
     FOR k = 0 TO LEN(gStaticPrefixes) - 1
         DIM pre$ = gStaticPrefixes[k]
-        DIM dir$ = gStaticDirs[k]
+        DIM tpl_dir$ = gStaticDirs[k]
         DIM rel$ = ""
         DIM hit = FALSE
         IF pre$ = "/" ORELSE pre$ = "" THEN
@@ -751,7 +752,7 @@ FUNC StaticFile(path$)
             rel$ = PercentDecode$(rel$)
             IF INSTR(rel$, "..") >= 0 ORELSE INSTR(rel$, "\") >= 0 ORELSE INSTR(rel$, ":") >= 0 THEN RETURN REPLY("Forbidden", 403, "text/plain; charset=utf-8")
             IF rel$ = "" ORELSE RIGHT$(rel$, 1) = "/" THEN rel$ = rel$ + "index.html"
-            DIM file$ = PATH.JOIN$(dir$, rel$)
+            DIM file$ = PATH.JOIN$(tpl_dir$, rel$)
             IF FILE.EXISTS(file$) THEN RETURN REPLY(BINREADER$(file$), 200, MimeOf$(rel$))
         ENDIF
     NEXT k
@@ -761,8 +762,8 @@ ENDFUNC
 ' ---- sessions ----
 
 FUNC SessionNow()
-    DIM shift = gSessionConf{"clock_shift"}
-    RETURN INT(NOW_EPOCH()) + shift
+    DIM clock_shift = gSessionConf{"clock_shift"}
+    RETURN INT(NOW_EPOCH()) + clock_shift
 ENDFUNC
 
 FUNC SessionCookie$()
@@ -852,13 +853,13 @@ SUB SaveSession(sid$)
     ENDIF
 ENDSUB
 
-FUNC IsExpired(sid$, now)
+FUNC IsExpired(sid$, now_s)
     DIM ttl = gSessionConf{"ttl"}
     DIM lifetime = gSessionConf{"lifetime"}
     DIM seen = gSessionSeen{sid$}
     DIM created = gSessionCreated{sid$}
-    IF ttl > 0 ANDALSO now - seen > ttl THEN RETURN TRUE
-    IF lifetime > 0 ANDALSO now - created > lifetime THEN RETURN TRUE
+    IF ttl > 0 ANDALSO now_s - seen > ttl THEN RETURN TRUE
+    IF lifetime > 0 ANDALSO now_s - created > lifetime THEN RETURN TRUE
     RETURN FALSE
 ENDFUNC
 
@@ -872,12 +873,12 @@ FUNC LiveSid$(request)
     DIM sid$ = COOKIE_VAL$(request, SessionCookie$())
     IF sid$ = "" THEN RETURN ""
     IF NOT HeldOrLoaded(sid$) THEN RETURN ""
-    DIM now = SessionNow()
-    IF IsExpired(sid$, now) THEN
+    DIM now_s = SessionNow()
+    IF IsExpired(sid$, now_s) THEN
         ForgetSession(sid$)
         RETURN ""
     ENDIF
-    gSessionSeen{sid$} = now
+    gSessionSeen{sid$} = now_s
     gCurrent{"sid_used"} = sid$
     RETURN sid$
 ENDFUNC
@@ -890,10 +891,10 @@ EXPORT FUNC SESSION(request)
     IF sid$ = "" THEN
         sid$ = SECRET.TOKEN$()
         DIM fresh AS MAP
-        DIM now = SessionNow()
+        DIM now_s = SessionNow()
         gSessions{sid$} = fresh
-        gSessionCreated{sid$} = now
-        gSessionSeen{sid$} = now
+        gSessionCreated{sid$} = now_s
+        gSessionSeen{sid$} = now_s
         gCurrent{"sid_new"} = sid$
     ENDIF
     DIM stored = gSessions{sid$}
@@ -918,10 +919,10 @@ EXPORT FUNC SESSION_ROTATE(request)
         ForgetSession(old$)
     ENDIF
     DIM sid$ = SECRET.TOKEN$()
-    DIM now = SessionNow()
+    DIM now_s = SessionNow()
     gSessions{sid$} = moved
-    gSessionCreated{sid$} = now
-    gSessionSeen{sid$} = now
+    gSessionCreated{sid$} = now_s
+    gSessionSeen{sid$} = now_s
     gCurrent{"sid_new"} = sid$
     gCurrent{"sid_used"} = ""
     DIM stored = gSessions{sid$}
@@ -943,7 +944,7 @@ ENDSUB
 ' The expired sessions removed from memory and from the database store; the
 ' number removed.
 EXPORT FUNC SESSION_CLEANUP()
-    DIM now = SessionNow()
+    DIM now_s = SessionNow()
     DIM ttl = gSessionConf{"ttl"}
     DIM lifetime = gSessionConf{"lifetime"}
     DIM removed = 0
@@ -951,7 +952,7 @@ EXPORT FUNC SESSION_CLEANUP()
     DIM k = 0
     FOR k = 0 TO LEN(ids) - 1
         DIM sid$ = ids[k]
-        IF IsExpired(sid$, now) THEN
+        IF IsExpired(sid$, now_s) THEN
             DropHeld(sid$)
             removed = removed + 1
         ENDIF
@@ -959,14 +960,14 @@ EXPORT FUNC SESSION_CLEANUP()
     DIM db = gSessionConf{"db"}
     IF db <> 0 ANDALSO (ttl > 0 ORELSE lifetime > 0) THEN
         DIM where$ = "0"
-        IF ttl > 0 THEN where$ = where$ + " OR seen < " + STR$(CLNG(now - ttl))
-        IF lifetime > 0 THEN where$ = where$ + " OR created < " + STR$(CLNG(now - lifetime))
+        IF ttl > 0 THEN where$ = where$ + " OR seen < " + STR$(CLNG(now_s - ttl))
+        IF lifetime > 0 THEN where$ = where$ + " OR created < " + STR$(CLNG(now_s - lifetime))
         DIM counted = SQL.TABLE(db, "SELECT COUNT(*) FROM jdweb_sessions WHERE " + where$)
         DIM in_db = counted[0, 0]
         SQL.EXEC(db, "DELETE FROM jdweb_sessions WHERE " + where$)
         IF in_db > removed THEN removed = in_db
     ENDIF
-    gSessionConf{"last_cleanup"} = now
+    gSessionConf{"last_cleanup"} = now_s
     RETURN CLNG(removed)
 ENDFUNC
 
@@ -1153,7 +1154,7 @@ EXPORT FUNC DISPATCH(request)
         DIM bkey$ = gBeforeIds[k]
         DIM bfn = gBeforeFns{bkey$}
         DIM early = bfn(request)
-        IF NOT IsPass(early) THEN RETURN Finish(request, Normalize(early, 200))
+        IF NOT IsPass(early) THEN RETURN Finish(request, NormalizeStatus(early, 200))
     NEXT k
     IF CsrfRefused(request, method$, path$) THEN RETURN Finish(request, REPLY("CSRF token missing or wrong", 403, "text/plain; charset=utf-8"))
     DIM allowed$ = ""
@@ -1185,7 +1186,7 @@ EXPORT FUNC DISPATCH(request)
     IF MAP.EXISTS(gHooks, "missing") THEN
         DIM mfn = gHooks{"missing"}
         DIM missing_value = mfn(request)
-        RETURN Finish(request, Normalize(missing_value, 404))
+        RETURN Finish(request, NormalizeStatus(missing_value, 404))
     ENDIF
     RETURN Finish(request, REPLY("Not Found", 404, "text/plain; charset=utf-8"))
 ENDFUNC

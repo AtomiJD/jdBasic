@@ -27,6 +27,7 @@
 ' cached value. Dates arrive as the serial number Excel stores.
 '
 ' The archive is written with stored entries through ZIP.WRITE.
+' version: 1.0.0
 
 EXPORT MODULE XLSX
 

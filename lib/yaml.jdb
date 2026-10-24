@@ -10,6 +10,7 @@
 ' scalars with implicit typing, block scalars with folding and chomping,
 ' comments, document markers, and single line flow collections.
 ' Anchors, aliases, tags and merge keys raise an error naming the line.
+' version: 1.0.0
 
 EXPORT MODULE YAML
 

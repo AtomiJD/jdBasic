@@ -23,6 +23,7 @@
 ' text. Basic strings know the TOML escapes, \u and
 ' \U included; any other backslash is an error. Multi-line strings are
 ' not supported. A mistake is an error that names the line.
+' version: 1.0.0
 
 EXPORT MODULE CONF
 

@@ -9,6 +9,7 @@
 '   DIM token$ = OAUTH.LOGIN(app, "openid email", 8765)
 '   DIM api = OAUTH.SESSION(app, "https://www.googleapis.com")
 '   DIM me = OAUTH.GET(app, api, "/oauth2/v3/userinfo")
+' version: 1.0.0
 
 EXPORT MODULE OAUTH
 IMPORT REQ, URL, CACHE

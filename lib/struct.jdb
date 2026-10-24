@@ -12,6 +12,7 @@
 ' Types: u8 i8 u16 i16 u32 i32 i64 f32 f64, str (a fixed number of bytes,
 ' NUL padded) and pad (skipped bytes). A layout holds fields in the order
 ' they were added; a layout handle is a number.
+' version: 1.0.0
 EXPORT MODULE STRUCT
 
 DIM gLayoutNames = []
@@ -488,12 +489,12 @@ FUNC WriteAt$(id, values)
                 IF n = 1 THEN
                     out$ = out$ + PackNumber$(byte_order$, t$, NumberOf(values, field_name$, "WRITE$"), field_name$)
                 ELSE
-                    DIM list = []
-                    IF MAP.EXISTS(values, field_name$) THEN list = values{field_name$}
-                    IF TYPEOF(list) <> "ARRAY" THEN THROW "STRUCT.WRITE$: " + field_name$ + " needs an array of " + STR$(n)
+                    DIM items = []
+                    IF MAP.EXISTS(values, field_name$) THEN items = values{field_name$}
+                    IF TYPEOF(items) <> "ARRAY" THEN THROW "STRUCT.WRITE$: " + field_name$ + " needs an array of " + STR$(n)
                     FOR k = 0 TO n - 1
                         DIM item = 0
-                        IF k < LEN(list) THEN item = list[k]
+                        IF k < LEN(items) THEN item = items[k]
                         out$ = out$ + PackNumber$(byte_order$, t$, item, field_name$ + "[" + STR$(k) + "]")
                     NEXT k
                 ENDIF

@@ -11,6 +11,7 @@
 ' NO_COLOR is set, when TERM is "dumb", or after CONSOLE.PLAIN(TRUE); a
 ' progress bar then prints one line per ten percent instead of redrawing.
 ' The width comes from COLUMNS, or CONSOLE.SET_WIDTH, or defaults to 80.
+' version: 1.0.0
 
 EXPORT MODULE CONSOLE
 
@@ -143,13 +144,13 @@ EXPORT FUNC VISIBLE(text$)
 ENDFUNC
 
 ' The first count characters of a plain text, whole UTF-8 characters only.
-FUNC LeftChars$(text$, count)
+FUNC LeftChars$(text$, n_chars)
     DIM seen = 0
     DIM i = 0
     DO WHILE i < LEN(text$)
         DIM code = BYTEAT(text$, i)
         IF code < 128 ORELSE code >= 192 THEN
-            IF seen = count THEN EXITDO
+            IF seen = n_chars THEN EXITDO
             seen = seen + 1
         ENDIF
         i = i + 1
@@ -389,11 +390,11 @@ EXPORT FUNC RULE$(title$ = "", fill$ = "-")
     DIM w = WIDTH()
     IF LEN(title$) = 0 THEN RETURN (fill$ * (w))
     DIM label$ = " " + title$ + " "
-    DIM left = (w - VISIBLE(label$)) \ 2
-    IF left < 1 THEN left = 1
-    DIM right = w - left - VISIBLE(label$)
-    IF right < 1 THEN right = 1
-    RETURN (fill$ * (left)) + BOLD$(label$) + (fill$ * (right))
+    DIM left_pad = (w - VISIBLE(label$)) \ 2
+    IF left_pad < 1 THEN left_pad = 1
+    DIM right_pad = w - left_pad - VISIBLE(label$)
+    IF right_pad < 1 THEN right_pad = 1
+    RETURN (fill$ * (left_pad)) + BOLD$(label$) + (fill$ * (right_pad))
 ENDFUNC
 
 EXPORT SUB RULE(title$ = "", fill$ = "-")

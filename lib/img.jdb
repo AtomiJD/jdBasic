@@ -14,6 +14,7 @@
 ' An image is a map {"width", "height", "channels", "pixels"}: channels 1
 ' (gray), 2 (gray and alpha), 3 (RGB) or 4 (RGBA), pixels a flat array of
 ' height * width * channels values from 0 to 255, row by row.
+' version: 1.0.0
 EXPORT MODULE IMG
 
 DIM gPngSig$ = CODEC.BASE64_DECODE$("iVBORw0KGgo=")
@@ -537,16 +538,18 @@ FUNC RowCost(samples, base, prev_base, rowlen, bpp, ftype)
 ENDFUNC
 
 ' The scanlines unfiltered: a zero byte in front of every row, the bytes
-' themselves straight from the samples.
+' themselves straight from the samples, cut from one string of them all.
 FUNC PlainRows$(samples, h, rowlen)
-    DIM rows = RESHAPE(samples, [h, rowlen])
-    DIM pieces = []
+    ' TAKE hands the compiler an array it can see the kind of; a cell read
+    ' straight out of the image map reaches CHR$ as a number under -c.
+    DIM flat = TAKE(LEN(samples), samples)
+    DIM all$ = JOIN(CHR$(flat), "")
+    DIM data$ = ""
     DIM y = 0
     FOR y = 0 TO h - 1
-        PUSH(pieces, CHR$(0))
-        PUSH(pieces, JOIN(CHR$(rows[y]), ""))
+        data$ = data$ + CHR$(0) + MID$(all$, y * rowlen, rowlen)
     NEXT y
-    RETURN JOIN(pieces, "")
+    RETURN data$
 ENDFUNC
 
 ' Filter byte plus filtered row for every row.

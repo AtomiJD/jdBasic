@@ -11,6 +11,7 @@
 '   PARSEC.ACTION(calc, "NUMBER", Num@)
 '   DIM tree = PARSEC.PARSE(calc, "2 * (3 + 4)")
 '   PRINT tree{"value"}
+' version: 1.0.0
 
 EXPORT MODULE PARSEC
 

@@ -14,6 +14,7 @@
 '
 ' The parts are written with single-quoted XML attributes and stored
 ' uncompressed through ZIP.WRITE, the way XLSX writes its workbooks.
+' version: 1.0.0
 
 EXPORT MODULE DOCX
 
@@ -452,8 +453,8 @@ FUNC StylesXml$(lang$)
     RETURN out$ + "</w:styles>"
 ENDFUNC
 
-FUNC Level$(format$, text$)
-    RETURN "<w:lvl w:ilvl='0'><w:start w:val='1'/><w:numFmt w:val='" + format$ + "'/><w:lvlText w:val='" + text$ + "'/><w:lvlJc w:val='left'/><w:pPr><w:ind w:left='720' w:hanging='360'/></w:pPr></w:lvl>"
+FUNC Level$(fmt$, text$)
+    RETURN "<w:lvl w:ilvl='0'><w:start w:val='1'/><w:numFmt w:val='" + fmt$ + "'/><w:lvlText w:val='" + text$ + "'/><w:lvlJc w:val='left'/><w:pPr><w:ind w:left='720' w:hanging='360'/></w:pPr></w:lvl>"
 ENDFUNC
 
 FUNC NumberingXml$(n_lists)

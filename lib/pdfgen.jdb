@@ -14,6 +14,7 @@
 ' the encoding those fonts carry: umlauts, the euro sign and typographic
 ' quotes come out, and a character outside it becomes "?". A TrueType font
 ' added with ADDFONT is embedded and shows every character it has a glyph for.
+' version: 1.0.0
 
 EXPORT MODULE PDFGEN
 

@@ -176,6 +176,7 @@ TESTKIT.ISTRUE(FILE.EXISTS(png$), "WRITEPNG writes the file")
 DIM back = IMG.READPNG(png$)
 TESTKIT.EQ(IMG.WIDTH(back), 640, "at twice the size when asked")
 TESTKIT.EQ(IMG.HEIGHT(back), 400, "in both directions")
+TESTKIT.ISTRUE(InkCount(back) > 2000, "and the pixels came through the file")
 KILL png$
 
 TESTKIT.REPORT()

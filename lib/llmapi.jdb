@@ -39,6 +39,8 @@
 
 IMPORT REQ
 IMPORT SCHEMA
+' version: 1.0.0
+' demo: llm_facts.jdb, llm_tools_demo.jdb
 
 EXPORT MODULE LLMAPI
 

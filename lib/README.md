@@ -33,6 +33,12 @@ During development, `JDBASIC_PATH=D:\usr\dev\cc\lib` points at this directory
 without copying anything. A module that imports another one (LLMAPI uses REQ
 and SCHEMA) finds it through the same search.
 
+## Writing one
+
+The shape of a module, as a checklist with the way in for a module of
+your own, is [CONTRIBUTING.md](CONTRIBUTING.md) in this folder;
+`tools/check_lib.jdb NAME` checks it.
+
 ## The modules
 
 | Module | Stands in for | One line | Page |

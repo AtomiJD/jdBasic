@@ -11,6 +11,7 @@
 ' A message is a map. BUILD$ turns it into the text of an RFC 5322 message
 ' with MIME parts: quoted-printable text, base64 attachments, RFC 2047
 ' encoded headers. PARSE turns such a text back into a map.
+' version: 1.0.0
 
 EXPORT MODULE MAIL
 
@@ -75,8 +76,8 @@ EXPORT SUB HEADER(msg, name$, value$)
 ENDSUB
 
 ' The Date header as written, instead of the time of building.
-EXPORT SUB SETDATE(msg, date$)
-    msg{"date"} = date$
+EXPORT SUB SETDATE(msg, date_text$)
+    msg{"date"} = date_text$
 ENDSUB
 
 ' The Message-ID as written, angle brackets included, instead of a new one.
@@ -471,11 +472,11 @@ EXPORT FUNC BUILD$(msg)
     RETURN JOIN(lines, gCRLF$) + gCRLF$ + Body$(msg, id$)
 ENDFUNC
 
-FUNC AddressLine$(list)
+FUNC AddressLine$(items)
     DIM parts = []
     DIM i = 0
-    FOR i = 0 TO LEN(list) - 1
-        DIM one$ = list[i]
+    FOR i = 0 TO LEN(items) - 1
+        DIM one$ = items[i]
         PUSH(parts, HeaderAddress$(one$))
     NEXT i
     RETURN JOIN(parts, ", ")
@@ -606,14 +607,14 @@ EXPORT FUNC DATENOW$()
 ENDFUNC
 
 ' An RFC 5322 date from its parts and the offset from UTC in minutes.
-EXPORT FUNC DATETEXT$(year, month, day, hour, minute, second, offset_minutes)
+EXPORT FUNC DATETEXT$(yr, mo, dy, hr, mi, sec, offset_minutes)
     DIM day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     DIM month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    DIM stamp = DATE.UTC(year, month, day, 12, 0, 0)
+    DIM stamp = DATE.UTC(yr, mo, dy, 12, 0, 0)
     DIM parts = DATE.PARTS(stamp, 0)
     DIM wd = CLNG(parts{"weekday"})
     DIM day_name$ = day_names[wd]
-    DIM month_name$ = month_names[month - 1]
+    DIM month_name$ = month_names[mo - 1]
     DIM sign_char$ = "+"
     DIM off = offset_minutes
     IF off < 0 THEN
@@ -621,7 +622,7 @@ EXPORT FUNC DATETEXT$(year, month, day, hour, minute, second, offset_minutes)
         off = -off
     ENDIF
     DIM zone$ = sign_char$ + LPAD$(STR$(off \ 60), 2, "0") + LPAD$(STR$(off MOD 60), 2, "0")
-    RETURN day_name$ + ", " + LPAD$(STR$(day), 2, "0") + " " + month_name$ + " " + STR$(year) + " " + LPAD$(STR$(hour), 2, "0") + ":" + LPAD$(STR$(minute), 2, "0") + ":" + LPAD$(STR$(second), 2, "0") + " " + zone$
+    RETURN day_name$ + ", " + LPAD$(STR$(dy), 2, "0") + " " + month_name$ + " " + STR$(yr) + " " + LPAD$(STR$(hr), 2, "0") + ":" + LPAD$(STR$(mi), 2, "0") + ":" + LPAD$(STR$(sec), 2, "0") + " " + zone$
 ENDFUNC
 
 ' Writes the message to an .eml file.
@@ -745,15 +746,15 @@ ENDFUNC
 
 ' The decoded bytes of an attachment of a parsed message.
 EXPORT FUNC ATTACHMENTDATA$(parsed, index)
-    DIM all = parsed{"att_base64"}
-    DIM data64$ = all[index]
+    DIM all_att = parsed{"att_base64"}
+    DIM data64$ = all_att[index]
     RETURN CODEC.BASE64_DECODE$(data64$)
 ENDFUNC
 
 ' Writes an attachment of a parsed message to a file.
 EXPORT SUB SAVEATTACHMENT(parsed, index, path$)
-    DIM all = parsed{"att_base64"}
-    DIM data64$ = all[index]
+    DIM all_att = parsed{"att_base64"}
+    DIM data64$ = all_att[index]
     BINWRITER path$, CODEC.BASE64_DECODE$(data64$)
 ENDSUB
 

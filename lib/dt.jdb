@@ -16,6 +16,7 @@
 ' DT.LOCAL_OFFSET() answers the machine's current offset and nothing
 ' more. DT.TODATE and DT.FROMDATE convert to and from the core DateTime
 ' when a builtin wants one.
+' version: 1.0.0
 
 EXPORT MODULE DT
 
@@ -194,13 +195,13 @@ ENDFUNC
 FUNC OffsetOf(text$)
     DIM u$ = UCASE$(text$)
     IF u$ = "Z" ORELSE u$ = "GMT" ORELSE u$ = "UTC" THEN RETURN 0
-    DIM sign = 1
-    IF LEFT$(u$, 1) = "-" THEN sign = -1
+    DIM direction = 1
+    IF LEFT$(u$, 1) = "-" THEN direction = -1
     DIM digits$ = REPLACE$(MID$(u$, 1, LEN(u$) - 1), ":", "")
     DIM hours = VAL(LEFT$(digits$, 2))
     DIM minutes = 0
     IF LEN(digits$) >= 4 THEN minutes = VAL(MID$(digits$, 2, 2))
-    RETURN sign * (hours + minutes / 60)
+    RETURN direction * (hours + minutes / 60)
 ENDFUNC
 
 ' 1..12 for an English or German month name or its first three letters.

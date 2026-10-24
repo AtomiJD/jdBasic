@@ -10,6 +10,7 @@
 ' The registry lives in module globals. An ASYNC FUNC works on its own copy
 ' of the globals, so what it records never reaches the registry a scrape
 ' reads; record in the task that serves the scrape.
+' version: 1.0.0
 EXPORT MODULE METRICS
 
 DIM gNames = []

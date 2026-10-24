@@ -30,6 +30,7 @@
 ' where a string was declared. Options: {"coerce": TRUE, "strict": TRUE};
 ' strict rejects keys the schema does not declare. A missing key is
 ' detected with TYPEOF, since comparing a value to NONE proves nothing.
+' version: 1.0.0
 
 EXPORT MODULE SCHEMA
 

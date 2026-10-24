@@ -10,6 +10,7 @@
 '
 ' Glyph outlines are read on demand (OUTLINE) as flattened contours, the
 ' way RASTER draws text; PDFGEN embeds the file whole.
+' version: 1.0.0
 
 EXPORT MODULE TTF
 

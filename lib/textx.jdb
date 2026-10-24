@@ -12,6 +12,7 @@
 '   PRINT TEXTX.RELATIVE$(180)                          ' 3 minutes ago
 '
 ' Every length is a number of characters: an umlaut counts once.
+' version: 1.0.0
 
 EXPORT MODULE TEXTX
 
@@ -722,9 +723,9 @@ ENDFUNC
 ' Python's round: a half goes to the even neighbour.
 FUNC RoundEven(x)
     DIM low = FLOOR(x)
-    DIM diff = x - low
-    IF diff > 0.5 THEN RETURN low + 1
-    IF diff < 0.5 THEN RETURN low
+    DIM delta = x - low
+    IF delta > 0.5 THEN RETURN low + 1
+    IF delta < 0.5 THEN RETURN low
     IF low - 2 * FLOOR(low / 2) = 0 THEN RETURN low
     RETURN low + 1
 ENDFUNC
@@ -758,10 +759,10 @@ FUNC GroupDigits$(value, german)
     ENDIF
     DIM whole$ = text$
     DIM frac$ = ""
-    DIM dot = CINT(INSTR(text$, "."))
-    IF dot >= 0 THEN
-        whole$ = LEFT$(text$, dot)
-        frac$ = MID$(text$, dot + 1, LEN(text$))
+    DIM dot_at = CINT(INSTR(text$, "."))
+    IF dot_at >= 0 THEN
+        whole$ = LEFT$(text$, dot_at)
+        frac$ = MID$(text$, dot_at + 1, LEN(text$))
     ENDIF
     DIM group$ = Tr$(german, ",", ".")
     DIM out$ = ""
@@ -816,7 +817,7 @@ EXPORT FUNC INTCOMMA$(value, lang$ = "en")
     RETURN GroupDigits$(value, LangKey$(lang$) = "de")
 ENDFUNC
 
-FUNC PowerName$(place, german, count_n)
+FUNC PowerName$(spot, german, count_n)
     DIM en_names$ = "thousand million billion trillion quadrillion quintillion sextillion"
     DIM de_one$ = "Tausend Million Milliarde Billion Billiarde Trillion Trilliarde"
     DIM de_many$ = "Tausend Millionen Milliarden Billionen Billiarden Trillionen Trilliarden"
@@ -826,7 +827,7 @@ FUNC PowerName$(place, german, count_n)
         IF count_n = 1 THEN pick$ = de_one$
     ENDIF
     DIM parts = SPLIT(pick$, " ")
-    DIM s$ = parts[place]
+    DIM s$ = parts[spot]
     RETURN s$
 ENDFUNC
 
@@ -843,24 +844,24 @@ EXPORT FUNC INTWORD$(value, lang$ = "en")
     ENDIF
     IF whole < 1000 THEN RETURN minus$ + IntText$(whole)
     DIM powers = [1000.0, 1000000.0, 1000000000.0, 1000000000000.0, 1000000000000000.0, 1000000000000000000.0, 1000000000000000000000.0]
-    DIM place = 0
+    DIM spot = 0
     DIM k = 0
     FOR k = 0 TO LEN(powers) - 1
         DIM pw = powers[k]
-        IF whole >= pw THEN place = k
+        IF whole >= pw THEN spot = k
     NEXT k
-    DIM here = powers[place]
+    DIM here = powers[spot]
     DIM rounded = VAL(FORMAT$("{:.1f}", whole / here))
-    IF place < LEN(powers) - 1 THEN
-        DIM next_pw = powers[place + 1]
+    IF spot < LEN(powers) - 1 THEN
+        DIM next_pw = powers[spot + 1]
         IF rounded * here = next_pw THEN
-            place = place + 1
+            spot = spot + 1
             rounded = 1.0
         ENDIF
     ENDIF
     DIM number$ = FORMAT$("{:.1f}", rounded)
     IF german THEN number$ = REPLACE$(number$, ".", ",")
-    RETURN minus$ + number$ + " " + PowerName$(place, german, -FLOOR(-rounded))
+    RETURN minus$ + number$ + " " + PowerName$(spot, german, -FLOOR(-rounded))
 ENDFUNC
 
 ' 1st, 2nd, 3rd, 11th in English; 1., 2., 3. in German.

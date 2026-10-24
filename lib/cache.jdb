@@ -9,6 +9,7 @@
 ' entries, throwing out the one that was read longest ago, and an entry
 ' older than "ttl" seconds is gone when it is asked for. Both are off
 ' when they are zero.
+' version: 1.0.0
 
 EXPORT MODULE CACHE
 
@@ -203,7 +204,7 @@ EXPORT SUB SAVE(c, path$)
     DIM values = c{"values"}
     DIM stamps = c{"stamps"}
     DIM ttl = c{"ttl"}
-    DIM now = Seconds()
+    DIM now_s = Seconds()
     DIM i = 0
     FOR i = 0 TO LEN(keys) - 1
         IF Alive(c, i) THEN
@@ -211,9 +212,9 @@ EXPORT SUB SAVE(c, path$)
             DIM key$ = keys[i]
             entry{"key"} = key$
             entry{"value"} = values[i]
-            DIM left = 0.0
-            IF ttl > 0 THEN left = ttl - (now - stamps[i])
-            entry{"left"} = left
+            DIM left_s = 0.0
+            IF ttl > 0 THEN left_s = ttl - (now_s - stamps[i])
+            entry{"left"} = left_s
             PUSH(entries, entry)
         ENDIF
     NEXT i
@@ -238,18 +239,18 @@ EXPORT FUNC LOAD(path$, opts = 0)
     DIM c = NEW(settings)
     DIM entries = raw{"entries"}
     DIM ttl = c{"ttl"}
-    DIM now = Seconds()
+    DIM now_s = Seconds()
     DIM i = 0
     FOR i = 0 TO LEN(entries) - 1
         DIM entry = entries[i]
-        DIM left = entry{"left"}
-        IF ttl <= 0 ORELSE left > 0 THEN
+        DIM left_s = entry{"left"}
+        IF ttl <= 0 ORELSE left_s > 0 THEN
             DIM key$ = entry{"key"}
             Store(c, key$, entry{"value"})
             IF ttl > 0 THEN
                 DIM stamps = c{"stamps"}
                 DIM at = Live(c, key$)
-                IF at >= 0 THEN stamps[at] = now - (ttl - left)
+                IF at >= 0 THEN stamps[at] = now_s - (ttl - left_s)
             ENDIF
         ENDIF
     NEXT i

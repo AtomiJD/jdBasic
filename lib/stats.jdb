@@ -12,6 +12,7 @@
 ' asked otherwise; the STDEV and VARIANCE builtins are the population
 ' forms. Every function answers the same as scipy.stats to six decimals;
 ' the self test carries the comparison.
+' version: 1.0.0
 
 EXPORT MODULE STATS
 
@@ -60,18 +61,18 @@ ENDFUNC
 EXPORT FUNC SKEW(v)
     DIM n = LEN(v)
     IF n < 3 THEN RETURN 0
-    DIM second = Moment(v, 2)
-    IF second <= 0 THEN RETURN 0
-    RETURN Moment(v, 3) / (second ^ 1.5)
+    DIM second_moment = Moment(v, 2)
+    IF second_moment <= 0 THEN RETURN 0
+    RETURN Moment(v, 3) / (second_moment ^ 1.5)
 ENDFUNC
 
 ' How heavy the tails are, as the excess over the normal curve.
 EXPORT FUNC KURTOSIS(v)
     DIM n = LEN(v)
     IF n < 4 THEN RETURN 0
-    DIM second = Moment(v, 2)
-    IF second <= 0 THEN RETURN 0
-    RETURN Moment(v, 4) / (second * second) - 3
+    DIM second_moment = Moment(v, 2)
+    IF second_moment <= 0 THEN RETURN 0
+    RETURN Moment(v, 4) / (second_moment * second_moment) - 3
 ENDFUNC
 
 ' Everything above in one map: n, mean, variance, sd, sem, min, q1,
@@ -160,10 +161,10 @@ EXPORT FUNC RANKS(v)
         DO WHILE j + 1 < n ANDALSO v[order[j + 1]] = v[order[i]]
             j = j + 1
         LOOP
-        DIM place = (i + j + 2) / 2
+        DIM spot = (i + j + 2) / 2
         DIM k = i
         FOR k = i TO j
-            out[order[k]] = place
+            out[order[k]] = spot
         NEXT k
         i = j + 1
     LOOP
@@ -506,11 +507,11 @@ EXPORT FUNC NORMPPF(p, mu = 0, sd = 1)
     DIM hi = 40.0
     DIM i = 0
     FOR i = 1 TO 200
-        DIM mid = (lo + hi) / 2
-        IF NORMCDF(mid, 0, 1) < p THEN
-            lo = mid
+        DIM middle = (lo + hi) / 2
+        IF NORMCDF(middle, 0, 1) < p THEN
+            lo = middle
         ELSE
-            hi = mid
+            hi = middle
         ENDIF
     NEXT i
     RETURN mu + sd * (lo + hi) / 2
@@ -522,8 +523,8 @@ EXPORT FUNC TPDF(x, df)
 ENDFUNC
 
 EXPORT FUNC TCDF(x, df)
-    DIM split = df / (df + x * x)
-    DIM half = 0.5 * BetaI(df / 2, 0.5, split)
+    DIM split_ratio = df / (df + x * x)
+    DIM half = 0.5 * BetaI(df / 2, 0.5, split_ratio)
     IF x > 0 THEN RETURN 1 - half
     RETURN half
 ENDFUNC
@@ -541,11 +542,11 @@ EXPORT FUNC TPPF(p, df)
     LOOP
     DIM i = 0
     FOR i = 1 TO 200
-        DIM mid = (lo + hi) / 2
-        IF TCDF(mid, df) < p THEN
-            lo = mid
+        DIM middle = (lo + hi) / 2
+        IF TCDF(middle, df) < p THEN
+            lo = middle
         ELSE
-            hi = mid
+            hi = middle
         ENDIF
     NEXT i
     RETURN (lo + hi) / 2
@@ -572,11 +573,11 @@ EXPORT FUNC CHI2PPF(p, df)
     DIM lo = 0.0
     DIM i = 0
     FOR i = 1 TO 200
-        DIM mid = (lo + hi) / 2
-        IF CHI2CDF(mid, df) < p THEN
-            lo = mid
+        DIM middle = (lo + hi) / 2
+        IF CHI2CDF(middle, df) < p THEN
+            lo = middle
         ELSE
-            hi = mid
+            hi = middle
         ENDIF
     NEXT i
     RETURN (lo + hi) / 2

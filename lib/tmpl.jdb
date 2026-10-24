@@ -21,6 +21,7 @@
 '   {% extends "layout.html" %}             (this file fills the layout's blocks)
 '   {% block name %} ... {% endblock %}     (override point / default content)
 ' Conditions: a bare path (truthy), path == "lit", path != "lit", not path.
+' version: 1.0.0
 
 EXPORT MODULE TMPL
 

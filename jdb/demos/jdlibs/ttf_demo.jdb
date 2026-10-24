@@ -1,0 +1,41 @@
+' TTF demo: a TrueType font read for its metrics, the width of a line in
+' points, the glyphs of a text and the ones the font lacks, and the
+' outline of one letter drawn as a small PNG through its contours.
+'
+'   jdBasic jdb/demos/jdlibs/ttf_demo.jdb        interpreted
+'   jdBasic -c jdb/demos/jdlibs/ttf_demo.jdb     compiled
+
+IMPORT TTF, SVG, RASTER
+
+DIM path$ = "resources/fonts/JetBrainsMono-Regular.ttf"
+IF NOT FILE.EXISTS(path$) THEN path$ = PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf"
+DIM font = TTF.LOAD(path$)
+PRINT font{"name"}; ": "; font{"glyphs"}; " glyphs, "; TTF.UPEM(font); " units per em, ascent "; font{"ascent"}; ", descent "; font{"descent"}
+PRINT "monospace: "; font{"monospace"}
+
+DIM sample$ = "Hello, world"
+PRINT sample$; " is "; TTF.WIDTH(font, sample$) * 12 / TTF.UPEM(font); " points wide at 12 pt"
+PRINT "glyphs: "; TTF.GLYPHS(font, "Grüße")
+PRINT "missing in this font: "; TTF.MISSING(font, "ok ✓ 中")
+
+' the outline of a letter: contours as polygons in font units, y up
+DIM gid = TTF.GLYPH(font, ASC("g"))
+DIM contours = TTF.OUTLINE(font, gid)
+PRINT "the letter g has "; LEN(contours); " contours"
+DIM d = SVG.NEW(200, 200)
+DIM s = 160 / TTF.UPEM(font)
+DIM k = 0
+FOR k = 0 TO LEN(contours) - 1
+    DIM poly = contours[k]
+    DIM xs = []
+    DIM ys = []
+    DIM i = 0
+    FOR i = 0 TO LEN(poly) - 2 STEP 2
+        xs = APPEND(xs, 20 + poly[i] * s)
+        ys = APPEND(ys, 150 - poly[i + 1] * s)
+    NEXT i
+    SVG.ADDPOLYGON(d, xs, ys, {"fill": "none", "stroke": "#1d3557", "stroke_width": 1.5})
+NEXT k
+DIM out$ = MKTEMP$("ttf_demo") + ".png"
+SVG.WRITEPNG(d, out$)
+PRINT "its contours drawn: "; out$

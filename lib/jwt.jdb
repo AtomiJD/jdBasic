@@ -16,6 +16,7 @@
 '
 ' Base64url is the standard alphabet with + and / swapped for - and _
 ' and the padding dropped; the module converts both ways.
+' version: 1.0.0
 
 EXPORT MODULE JWT
 
@@ -44,12 +45,12 @@ ENDFUNC
 
 EXPORT FUNC VERIFY(token$, secret$, opts = 0)
     DIM skew = 0
-    DIM now = NOW_EPOCH()
+    DIM now_s = NOW_EPOCH()
     DIM want_iss$ = ""
     DIM want_aud$ = ""
     IF TYPEOF(opts) = "OBJECT" THEN
         IF MAP.EXISTS(opts, "skew") THEN skew = opts{"skew"}
-        IF MAP.EXISTS(opts, "now") THEN now = opts{"now"}
+        IF MAP.EXISTS(opts, "now") THEN now_s = opts{"now"}
         IF MAP.EXISTS(opts, "iss") THEN want_iss$ = opts{"iss"}
         IF MAP.EXISTS(opts, "aud") THEN want_aud$ = opts{"aud"}
     ENDIF
@@ -65,8 +66,8 @@ EXPORT FUNC VERIFY(token$, secret$, opts = 0)
     IF NOT MAP.EXISTS(header, "alg") ORELSE header{"alg"} <> "HS256" THEN RETURN Rejected("unsupported algorithm")
     IF NOT SameText(Signature$(parts[0] + "." + parts[1], secret$), parts[2]) THEN RETURN Rejected("bad signature")
     DIM claims = decoded{"claims"}
-    IF MAP.EXISTS(claims, "exp") ANDALSO now > claims{"exp"} + skew THEN RETURN Rejected("token expired")
-    IF MAP.EXISTS(claims, "nbf") ANDALSO now + skew < claims{"nbf"} THEN RETURN Rejected("token not yet valid")
+    IF MAP.EXISTS(claims, "exp") ANDALSO now_s > claims{"exp"} + skew THEN RETURN Rejected("token expired")
+    IF MAP.EXISTS(claims, "nbf") ANDALSO now_s + skew < claims{"nbf"} THEN RETURN Rejected("token not yet valid")
     IF LEN(want_iss$) > 0 THEN
         IF NOT MAP.EXISTS(claims, "iss") ORELSE claims{"iss"} <> want_iss$ THEN RETURN Rejected("wrong issuer")
     ENDIF
@@ -96,21 +97,21 @@ ENDFUNC
 ' comparison takes does not tell where two signatures part.
 FUNC SameText(a$, b$)
     IF LEN(a$) <> LEN(b$) THEN RETURN FALSE
-    DIM diff = 0
+    DIM delta = 0
     DIM i = 0
     FOR i = 0 TO LEN(a$) - 1
-        IF BYTEAT(a$, i) <> BYTEAT(b$, i) THEN diff = diff + 1
+        IF BYTEAT(a$, i) <> BYTEAT(b$, i) THEN delta = delta + 1
     NEXT i
-    RETURN diff = 0
+    RETURN delta = 0
 ENDFUNC
 
-FUNC HexBytes$(hex$)
+FUNC HexBytes$(hex_text$)
     DIM out$ = ""
     DIM i = 0
-    DIM lower$ = LCASE$(hex$)
-    FOR i = 0 TO LEN(lower$) - 2 STEP 2
-        DIM hi = INSTR(HEX_DIGITS, MID$(lower$, i, 1))
-        DIM lo = INSTR(HEX_DIGITS, MID$(lower$, i + 1, 1))
+    DIM low$ = LCASE$(hex_text$)
+    FOR i = 0 TO LEN(low$) - 2 STEP 2
+        DIM hi = INSTR(HEX_DIGITS, MID$(low$, i, 1))
+        DIM lo = INSTR(HEX_DIGITS, MID$(low$, i + 1, 1))
         out$ = out$ + CHR$(hi * 16 + lo)
     NEXT i
     RETURN out$
