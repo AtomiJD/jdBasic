@@ -101,6 +101,11 @@ if [ "$WANT_MIDI" = "1" ]; then
     fi
 fi
 
+# SOUND=1 compiles the SOUND.* synth and sequencer without a display: the
+# DSP in pull mode, rendering to buffers, which a GFX build has anyway.
+WANT_SOUND=${SOUND:-0}
+if [ "$WANT_SOUND" = "1" ]; then CXXFLAGS="$CXXFLAGS -DSOUND_DSP"; fi
+
 WANT_MINIAUDIO=${MINIAUDIO:-0}
 if [ "$WANT_MINIAUDIO" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DMINIAUDIO -Ilibs/miniaudio"

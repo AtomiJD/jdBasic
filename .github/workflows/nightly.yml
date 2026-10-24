@@ -116,7 +116,7 @@ jobs:
             flags: "HTTP=0 GFX=0 SQLITE=1"
             smoke: tests/jdlibs/db_selftest.jdb
           - family: sound
-            flags: "HTTP=0 GFX=0 MINIAUDIO=1 FX=1 MIDI=1"
+            flags: "HTTP=0 GFX=0 SOUND=1 MINIAUDIO=1 FX=1 MIDI=1"
             smoke: tests/audio/sound_pattern_test.jdb
           - family: gfx
             flags: "HTTP=0 GFX=1 IMGUI=1"
@@ -162,7 +162,10 @@ jobs:
         if: matrix.family == 'gfx'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libharfbuzz-dev libfreetype-dev libpng-dev libjpeg-dev libtiff-dev libwebp-dev
+          sudo apt-get install -y cmake ninja-build libharfbuzz-dev libfreetype-dev libpng-dev libjpeg-dev \
+            libtiff-dev libwebp-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxfixes-dev libxss-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev \
+            libgbm-dev libdrm-dev
 
       - name: Cache the SDL3 stack
         if: matrix.family == 'gfx'
