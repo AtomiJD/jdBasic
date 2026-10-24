@@ -24,6 +24,8 @@ DIM total AS DOUBLE = 0.0
 DIM marks$ AS STRING = ""
 DIM glob AS ARRAY = []
 DIM base8 AS ARRAY = RESHAPE(IOTA(64), [8, 8])
+DIM kept$ AS STRING = ""
+DIM shelf AS ARRAY = []
 
 IF pattern$ = "concat" THEN
     FOR i = 1 TO passes
@@ -293,6 +295,34 @@ ELSEIF pattern$ = "nestmap" THEN
         total = total + scene{"T"}
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "strkeep" THEN
+    FOR i = 1 TO passes
+        Keep("row " + STR$(i))
+        total = total + LEN(kept$)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "strwrap" THEN
+    FOR i = 1 TO passes
+        sink$ = Wrap$("row " + STR$(i))
+        total = total + LEN(sink$)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "strshelf" THEN
+    FOR i = 1 TO passes
+        shelf = []
+        Shelve("row " + STR$(i))
+        total = total + LEN(shelf)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "pushstr" THEN
+    DIM rack AS ARRAY = []
+    FOR i = 1 TO passes
+        rack = []
+        PUSH(rack, "row " + STR$(i))
+        PUSH(rack, "fixed")
+        total = total + LEN(rack)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
@@ -324,6 +354,21 @@ FUNC Render$(v)
     NEXT k
     RETURN out$ + "."
 ENDFUNC
+
+' A temp handed to a parameter that is copied into a global, laid into a
+' literal or pushed into an owner's array dies with the call.
+SUB Keep(s$ AS STRING)
+    kept$ = s$
+ENDSUB
+
+FUNC Wrap$(s$ AS STRING)
+    DIM pair AS ARRAY = [s$, "x"]
+    RETURN pair[0] + "!"
+ENDFUNC
+
+SUB Shelve(s$ AS STRING)
+    PUSH(shelf, s$)
+ENDSUB
 
 ' A global reassigned inside a SUB's loop: what it let go of is freed within
 ' the SUB, not only once the main program loops.

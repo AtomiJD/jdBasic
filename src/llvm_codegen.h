@@ -513,6 +513,7 @@ private:
     // the call. Missing entries count as escaping.
     std::unordered_map<std::string, std::vector<bool>> param_escapes;
     void scan_param_escapes(const std::vector<StmtPtr>& program);
+    std::unordered_set<std::string> fn_local_names(const Stmt& fn) const;
     bool body_lets_escape(const std::vector<StmtPtr>& body, const std::string& p);
     // FOR EACH loops after which the keys or characters walked can go.
     std::unordered_set<const Stmt*> foreach_release;

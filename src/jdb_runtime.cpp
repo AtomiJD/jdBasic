@@ -2498,6 +2498,7 @@ struct RcState {
     uint64_t next_gen = 1;
     std::vector<RcPoolItem> pool;
     std::vector<RcPoolItem> zombies;
+    std::vector<char*> str_later;  // strings global slots let go of inside a FUNC or SUB
     int func_depth = 0;  // FUNC frames on the stack; a SUB chain from the main program is depth 0
     bool init = false;
     bool off = false;
@@ -2802,6 +2803,14 @@ static void rc_compact_zombies() {
     z.resize(keep);
 }
 
+static void rc_drop_later_strings() {
+    for (char* s : g_rc.str_later) {
+        if (rc_poison()) { if (*s) s[0] = (char)0x7f; }
+        else jdb_str_drop(s);
+    }
+    g_rc.str_later.clear();
+}
+
 // FUNC frames on the stack. A SUB is called at a statement boundary, so
 // while no FUNC is open no caller holds a container half way through an
 // expression, and what a global or a parameter let go of may be freed.
@@ -2813,15 +2822,24 @@ extern "C" void jdb_rc_func_leave(void) { if (g_rc.func_depth > 0) g_rc.func_dep
 // no FUNC frame is open; under one they wait, and only their dead entries
 // are dropped.
 extern "C" void jdb_rc_drain(int64_t mark, int32_t main_level) {
+    // A raise that left a FUNC skipped its leave; the main program is depth 0.
+    if (main_level) g_rc.func_depth = 0;
+    if (g_rc.func_depth == 0 && !g_rc.str_later.empty()) rc_drop_later_strings();
     size_t from = mark < 0 ? 0 : (size_t)mark;
     if (from >= g_rc.pool.size() && g_rc.zombies.empty()) return;
     if (!g_rc.cap || !rc_ready()) return;
     if (from < g_rc.pool.size()) rc_sweep(g_rc.pool, from);
     if (g_rc.zombies.empty()) return;
-    // A raise that left a FUNC skipped its leave; the main program is depth 0.
-    if (main_level) g_rc.func_depth = 0;
     if (g_rc.func_depth == 0) rc_sweep(g_rc.zombies, 0);
     else rc_compact_zombies();
+}
+
+// A string a global slot let go of inside a FUNC or SUB: a caller may be
+// half way through an expression over it, so it waits for a drain with no
+// FUNC frame open.
+extern "C" void jdb_str_drop_later(char* s) {
+    if (!s) return;
+    g_rc.str_later.push_back(s);
 }
 
 // Number of keys in a map.

@@ -1,0 +1,93 @@
+' A string global written inside a SUB or FUNC owns its buffer like one
+' written at the top level: the store copies what it is given and lets go
+' of the old buffer at the next drain of the main program, so a caller half
+' way through an expression over the old value still reads it. A global
+' read inside a body and kept by a cell or handed back is not owned. Read
+' right afterwards in both backends and under JDB_RC_POISON=1, where a
+' freed string reads as rubbish.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM i AS INTEGER
+
+' A temp handed to a SUB that stores it in a global.
+DIM kept$ AS STRING = ""
+SUB Keep(s$ AS STRING)
+    kept$ = s$
+ENDSUB
+FOR i = 1 TO 300
+    Keep("row " + STR$(i))
+NEXT i
+Check(kept$ = "row 300", "a global written in a SUB reads its last value: " + kept$)
+
+' A global the caller holds across a FUNC that overwrites it.
+DIM word$ AS STRING = "first"
+FUNC Bump$() AS STRING
+    word$ = "second"
+    RETURN "!"
+ENDFUNC
+DIM joined$ AS STRING = ""
+FOR i = 1 TO 300
+    word$ = "old " + STR$(i)
+    joined$ = word$ + Bump$()
+NEXT i
+Check(joined$ = "old 300!", "the caller reads the value it loaded before the FUNC ran: " + joined$)
+Check(word$ = "second", "the global reads what the FUNC stored")
+
+' A global pushed into an array inside a SUB: the cell shares the buffer,
+' so the global may not let go of it.
+DIM tag$ AS STRING = ""
+DIM shelf AS ARRAY = []
+SUB Stash()
+    PUSH(shelf, tag$)
+ENDSUB
+FOR i = 1 TO 3
+    tag$ = "tag " + STR$(i)
+    Stash()
+NEXT i
+Check(shelf[0] = "tag 1" ANDALSO shelf[2] = "tag 3", "a global pushed in a SUB keeps its buffer: " + shelf[0])
+
+' A global handed back by a FUNC and kept in a cell.
+DIM label$ AS STRING = ""
+FUNC Label$() AS STRING
+    RETURN label$
+ENDFUNC
+DIM labels AS ARRAY = []
+FOR i = 1 TO 3
+    label$ = "label " + STR$(i)
+    PUSH(labels, Label$())
+NEXT i
+Check(labels[0] = "label 1" ANDALSO labels[2] = "label 3", "a global handed back by a FUNC keeps its buffer: " + labels[0])
+
+' A temp to a FUNC that puts the parameter into an array literal of its own.
+FUNC Wrap$(s$ AS STRING) AS STRING
+    DIM pair AS ARRAY = [s$, "x"]
+    RETURN pair[0] + "!"
+ENDFUNC
+DIM wrapped$ AS STRING = ""
+FOR i = 1 TO 300
+    wrapped$ = Wrap$("item " + STR$(i))
+NEXT i
+Check(wrapped$ = "item 300!", "a parameter laid into a literal reads right: " + wrapped$)
+
+' A temp pushed into a global array by a SUB.
+DIM names AS ARRAY = []
+SUB Shelve(s$ AS STRING)
+    PUSH(names, s$)
+ENDSUB
+FOR i = 1 TO 300
+    names = []
+    Shelve("name " + STR$(i))
+    Shelve("other " + STR$(i))
+NEXT i
+Check(names[0] = "name 300" ANDALSO names[1] = "other 300", "a parameter pushed into a global array reads right: " + names[0])
+
+IF failed > 0 THEN END 1
+PRINT "OK"
