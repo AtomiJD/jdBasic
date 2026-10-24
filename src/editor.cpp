@@ -324,7 +324,7 @@ static std::string base64_encode(const std::string& in) {
     static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;
     out.reserve(((in.size() + 2) / 3) * 4);
-    uint32_t val = 0;
+    unsigned val = 0;
     int bits = -6;
     for (unsigned char c : in) {
         val = (val << 8) | c;

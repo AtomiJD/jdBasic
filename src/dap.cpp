@@ -29,7 +29,7 @@ static std::string dap_b64(const std::string& in) {
     static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;
     out.reserve(((in.size() + 2) / 3) * 4);
-    uint32_t val = 0;
+    unsigned val = 0;
     int bits = -6;
     for (unsigned char c : in) {
         val = (val << 8) | c;
@@ -55,7 +55,8 @@ static std::string dap_unb64(const std::string& in) {
         init = true;
     }
     std::string out;
-    int val = 0, bits = -8;
+    unsigned val = 0;
+    int bits = -8;
     for (unsigned char c : in) {
         if (c == '=' || T[c] < 0) continue;
         val = (val << 6) | T[c];

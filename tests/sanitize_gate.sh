@@ -61,7 +61,7 @@ for t in comprehensive_test native_test.strict test_apl_complete test_apl_pipeli
     fi
 done
 run "harness" "$jdb" tools/diff_backends.jdb
-run "leak_check" tests/leak_check.sh "$rounds"
+run "leak_check" bash tests/leak_check.sh "$rounds"
 for t in tests/regression/test_rc_*.jdb tests/regression/test_str_*.jdb \
          tests/regression/test_array_results_outlive_args.jdb tests/regression/test_json_locale.jdb; do
     [ -f "$t" ] || continue
