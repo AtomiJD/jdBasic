@@ -7132,6 +7132,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         LLVMValueRef size_arg[] = { LLVMConstInt(i64_type, 0, 0) };
         LLVMValueRef a = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn,
                                          size_arg, 1, "arr");
+        a = rc_born(a, JD_TAG_ARR);
         VarInfo* vi = dim_slot();
         if (vi) { rc_slot_store(vi->alloca_val, a, vi->tag, JD_TAG_ARR); vi->tag = JD_TAG_ARR; }
         else {
@@ -7146,6 +7147,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         auto& map_new = runtime_funcs["__map_new"];
         LLVMValueRef m = LLVMBuildCall2(builder, map_new.fn_type, map_new.fn,
                                          nullptr, 0, "obj");
+        m = rc_born(m, JD_TAG_NATIVE_MAP);
         VarInfo* vi = dim_slot();
         if (vi) { rc_slot_store(vi->alloca_val, m, vi->tag, JD_TAG_NATIVE_MAP); vi->tag = JD_TAG_NATIVE_MAP; }
         else {
@@ -8100,10 +8102,11 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             TypedValue k = codegen_expr(*stmt.index_chain[0]);
             key_ptr = to_string_ptr(k);
         }
+        bool adopt = adopts_value(stmt.var_name, stmt.expr.get());
         TypedValue v;
         {
             ScopedLeafTag _vl(this, stmt.expr->kind == ExprKind::INDEX ? JD_TAG_RUNTIME : -1);
-            ScopedRcEscape _esc(this, true);
+            ScopedRcEscape _esc(this, !adopt);
             v = codegen_expr(*stmt.expr);
         }
         auto [bits, tag] = tagged_bits_of(v);
@@ -8122,6 +8125,8 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
             LLVMValueRef sargs[] = { rt, base_bits, key_ptr, bits, tag };
             LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, sargs, 5, "");
+            // The VM holds it now, where the counts do not reach.
+            if (adopt) rc_pin(v);
         }
         LLVMBuildBr(builder, bb_m);
 
@@ -8140,6 +8145,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             auto& set_fn = runtime_funcs["__map_set_tagged"];
             LLVMValueRef args[] = { obj_ptr, key_ptr, fval, tag };
             LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
+            if (adopt) rc_adopt(base_bits, v);
         }
         LLVMBuildBr(builder, bb_m);
 
@@ -8185,9 +8191,10 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         // An array element whose cell type is not known statically is read
         // with its own tag, so the entry keeps the type the cell had.
         TypedValue val_tv{ nullptr, JD_TAG_F64 };
+        bool adopt = adopts_value(stmt.var_name, stmt.expr.get());
         {
             ScopedLeafTag _vlt(this, stmt.expr->kind == ExprKind::INDEX ? JD_TAG_RUNTIME : -1);
-            ScopedRcEscape _esc(this, true);
+            ScopedRcEscape _esc(this, !adopt);
             val_tv = codegen_expr(*stmt.expr);
         }
 
@@ -8223,6 +8230,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                 LLVMValueRef args[] = { obj_ptr, field_str, fval,
                     LLVMConstInt(i32_type, val_tv.tag, 0) };
                 LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
+                if (adopt) rc_adopt(obj_ptr, val_tv);
             } else if (val_tv.tag == JD_TAG_RUNTIME && val_tv.runtime_tag) {
                 // Runtime-tagged: pass the live runtime tag through so
                 // the stored entry carries its real type identity. The
@@ -8267,6 +8275,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         }
 
         // UDT field assignment
+        if (adopt) rc_pin(val_tv);
         {
             auto tit = var_udt_type.find(stmt.var_name);
             const UDTField* fld = tit == var_udt_type.end() ? nullptr : udt_field(tit->second, field_name);
@@ -8312,7 +8321,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         }
         TypedValue idx_tv = codegen_expr(*stmt.index_chain[0]);
         LLVMValueRef idx = coerce_to(idx_tv, i64_type);
-        bool adopt = adopts_literal(stmt.var_name, stmt.expr.get());
+        bool adopt = adopts_value(stmt.var_name, stmt.expr.get());
         TypedValue v;
         {
             ScopedLeafTag _vl(this, stmt.expr->kind == ExprKind::INDEX ? JD_TAG_RUNTIME : -1);
@@ -8372,12 +8381,10 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     // Last index: route to map_set_* if string-keyed, else array_set.
     TypedValue idx_tv = codegen_expr(*stmt.index_chain.back());
     TypedValue val_tv;
-    bool adopt = stmt.index_chain.size() == 1 && adopts_literal(stmt.var_name, stmt.expr.get());
+    // The holder is the container the chain ends in: the variable's own, or
+    // a row or a map in one of its cells.
+    bool adopt = adopts_value(stmt.var_name, stmt.expr.get());
     { ScopedRcEscape _esc(this, !adopt); val_tv = codegen_expr(*stmt.expr); }
-    if (adopt && idx_tv.tag == JD_TAG_STR) {
-        rc_pin(val_tv);
-        adopt = false;
-    }
 
     if (idx_tv.tag == JD_TAG_STR) {
         if (val_tv.tag == JD_TAG_STR) {
@@ -8401,6 +8408,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             LLVMValueRef args[] = { arr_ptr, idx_tv.val, fv,
                 LLVMConstInt(i32_type, val_tv.tag, 0) };
             LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "");
+            if (adopt) rc_adopt(arr_ptr, val_tv);
         } else if (val_tv.tag == JD_TAG_RUNTIME && val_tv.runtime_tag) {
             // RUNTIME val carries i64 bits whose meaning depends on rtag:
             //   STR / ARR / VMH / NATIVE_MAP - pun ptr-as-i64 → f64 cell
@@ -9565,6 +9573,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 if (s) saw_str_lit = true; else saw_nonstr_lit = true;
             }
             if (saw_str_lit && saw_nonstr_lit) any_runtime = true;
+            std::vector<TypedValue> adopted;
             if (!expr.args.empty()) {
                 auto& arr_append = runtime_funcs["__arr_lit_append"];
                 auto& arr_append_tg = runtime_funcs["__arr_lit_append_tagged"];
@@ -9582,14 +9591,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     // An element read asks the cell for its own kind, so a
                     // string taken out of an array whose element type is
                     // not known stays a string inside the literal.
+                    // A literal or a call among the elements answers a
+                    // container this array is the first holder of, so its
+                    // cell counts it once the array exists.
+                    bool nested = expr.args[i] && !rc_escape &&
+                                  (expr.args[i]->kind == ExprKind::ARRAY_LITERAL ||
+                                   expr.args[i]->kind == ExprKind::MAP_LITERAL ||
+                                   expr.args[i]->kind == ExprKind::CALL);
                     TypedValue e;
                     {
                         ScopedLeafTag _lt(this, expr.args[i] &&
                                                 expr.args[i]->kind == ExprKind::INDEX
                                                 ? JD_TAG_RUNTIME : -1);
-                        ScopedRcEscape _esc(this, true);
+                        ScopedRcEscape _esc(this, !nested);
                         e = codegen_expr(*expr.args[i]);
                     }
+                    if (nested) adopted.push_back(e);
                     if (e.tag == JD_TAG_NATIVE_MAP) any_runtime = true;
                     // An element whose kind is only known at run time has to
                     // carry that kind into the cell. The array-wide nested
@@ -9709,6 +9726,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 }
             }
             arr = rc_born(arr, JD_TAG_ARR);
+            for (auto& child : adopted) rc_adopt(arr, child);
             if (own_strs) {
                 auto& fn = runtime_funcs["__rc_own_cells"];
                 LLVMValueRef a[] = { rc_bits(arr) };
@@ -9723,14 +9741,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             LLVMValueRef m = LLVMBuildCall2(builder, map_new.fn_type, map_new.fn,
                                              nullptr, 0, "map");
             bool pure = true;
+            std::vector<TypedValue> adopted;
             for (size_t i = 0; i < expr.map_keys.size() && i < expr.args.size(); i++) {
                 LLVMValueRef key = LLVMBuildGlobalStringPtr(builder,
                     expr.map_keys[i].c_str(), ".mk");
+                // A literal or a call answers a container this map is the
+                // first holder of, so its entry counts it once the map exists.
+                bool nested = expr.args[i] && !rc_escape &&
+                              (expr.args[i]->kind == ExprKind::ARRAY_LITERAL ||
+                               expr.args[i]->kind == ExprKind::MAP_LITERAL ||
+                               expr.args[i]->kind == ExprKind::CALL);
                 TypedValue v;
                 {
-                    ScopedRcEscape _esc(this, true);
+                    ScopedRcEscape _esc(this, !nested);
                     v = codegen_expr(*expr.args[i]);
                 }
+                if (nested && rc_tag(v.tag)) adopted.push_back(v);
                 bool cell_pure = v.tag == JD_TAG_STR || v.tag == JD_TAG_BOOL ||
                                  v.tag == JD_TAG_I64 || jd_is_f64_tag(v.tag) ||
                                  (v.tag == JD_TAG_NATIVE_MAP && pure_map_literals.count(v.val));
@@ -9799,6 +9825,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 }
             }
             m = rc_born(m, JD_TAG_NATIVE_MAP);
+            for (auto& child : adopted) rc_adopt(m, child);
             if (pure) pure_map_literals.insert(m);
             return { m, JD_TAG_NATIVE_MAP };  // tag=4 means map/object
         }
@@ -14224,7 +14251,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             arr_tv = codegen_expr(*expr.args[0]);
         }
         bool adopt = expr.args[0]->kind == ExprKind::VARIABLE &&
-                     adopts_literal(expr.args[0]->str_val, expr.args[1].get());
+                     adopts_value(expr.args[0]->str_val, expr.args[1].get());
         TypedValue val_tv;
         {
             ScopedRcEscape _esc(this, adopt ? false : rc_escape != 0);
@@ -17334,6 +17361,10 @@ void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
     auto is_lit = [](const Expr* e) {
         return e && (e->kind == ExprKind::ARRAY_LITERAL || e->kind == ExprKind::MAP_LITERAL);
     };
+    // A value a cell can count: see adopts_value.
+    auto is_counted = [&](const Expr* e) {
+        return is_lit(e) || (e && (e->kind == ExprKind::CALL || e->kind == ExprKind::VARIABLE));
+    };
     auto answers_new = [](const std::string& up) {
         BuiltinRet r = builtin_ret(up);
         if (r == BuiltinRet::F64 || r == BuiltinRet::I64 || r == BuiltinRet::Bool) return true;
@@ -17393,13 +17424,13 @@ void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
         if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB)
             for (auto& p : s.params()) banned.insert(p.name);
         bool assigns = s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM;
-        if (assigns && s.expr && !s.var_name.empty() && s.expr->kind != ExprKind::ARRAY_LITERAL)
+        if (assigns && s.expr && !s.var_name.empty() && !is_lit(s.expr.get()))
             banned.insert(s.var_name);
         if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty() &&
-            s.index_chain.size() == 1 && is_lit(s.expr.get()))
+            !s.index_chain.empty() && is_counted(s.expr.get()))
             candidates.insert(s.var_name);
         if (s.kind == StmtKind::EXPR_STMT && s.expr && s.expr->kind == ExprKind::CALL &&
-            s.expr->args.size() == 2 && is_var(s.expr->args[0].get()) && is_lit(s.expr->args[1].get())) {
+            s.expr->args.size() == 2 && is_var(s.expr->args[0].get()) && is_counted(s.expr->args[1].get())) {
             std::string up = s.expr->func_name;
             std::transform(up.begin(), up.end(), up.begin(), ::toupper);
             if (up == "PUSH") candidates.insert(s.expr->args[0]->str_val);
@@ -17438,9 +17469,22 @@ void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
         if (!banned.count(c)) child_owner_vars.insert(c);
 }
 
-bool LLVMCodegen::adopts_literal(const std::string& var, const Expr* value) const {
-    return rc_on && value && child_owner_vars.count(var) &&
-           (value->kind == ExprKind::ARRAY_LITERAL || value->kind == ExprKind::MAP_LITERAL);
+// Whether a cell of var's container counts the value written into it. A
+// literal and a call answer something the cell is the first holder of; a
+// variable's slot counts what it holds, so the cell joins it. A cell read
+// stays out: the cell it came from may hold it without counting.
+bool LLVMCodegen::adopts_value(const std::string& var, const Expr* value) {
+    if (!rc_on || !value || !child_owner_vars.count(var)) return false;
+    switch (value->kind) {
+    case ExprKind::ARRAY_LITERAL: case ExprKind::MAP_LITERAL: case ExprKind::CALL:
+        return true;
+    case ExprKind::VARIABLE: {
+        VarInfo* vi = lookup_var(value->str_val);
+        return vi && rc_tag(vi->tag);
+    }
+    default:
+        return false;
+    }
 }
 
 void LLVMCodegen::rc_adopt(LLVMValueRef parent, const TypedValue& child) {

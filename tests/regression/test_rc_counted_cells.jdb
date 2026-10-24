@@ -1,0 +1,106 @@
+' A container written into a cell of an array or a map is counted by the
+' cell: a literal, a call's answer or a variable's value alike, into the
+' variable's own container or into a row or a map in one of its cells, and
+' the containers nested in a literal by the literal. What a cell lets go of
+' is freed, what a variable still holds is not. Read right afterwards in
+' both backends and under JDB_RC_POISON=1, where a freed container reads as
+' rubbish.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC MakePair(n AS INTEGER) AS ARRAY
+    RETURN [n, n * 2]
+ENDFUNC
+
+DIM i AS INTEGER
+
+' A variable's array pushed into a list, then the variable moves on.
+DIM backlog AS ARRAY = []
+DIM item AS ARRAY = []
+FOR i = 1 TO 200
+    backlog = []
+    item = [i, i + 1]
+    PUSH(backlog, item)
+    item = [i, i + 2]
+    PUSH(backlog, item)
+NEXT i
+Check(backlog[0][1] = 201 ANDALSO backlog[1][1] = 202, "a pushed variable's array outlives the variable's next value")
+Check(item[1] = 202, "the variable still reads its last value")
+
+' The list goes while the variable keeps the last row.
+FOR i = 1 TO 200
+    item = [i, i * 3]
+    PUSH(backlog, item)
+    backlog = []
+NEXT i
+Check(item[1] = 600, "a row survives the list it was pushed into")
+
+' A call's answer pushed in.
+DIM made AS ARRAY = []
+FOR i = 1 TO 200
+    made = []
+    PUSH(made, IOTA(3))
+    PUSH(made, RESHAPE(IOTA(4), [2, 2]))
+    PUSH(made, MakePair(i))
+NEXT i
+Check(made[0][2] = 3 ANDALSO made[1][1][0] = 3 ANDALSO made[2][0] = 200, "pushed call answers read right: " + STR$(made[1][1][0]))
+
+' A cell two levels down.
+DIM cube AS ARRAY = [[[0, 0], [0, 0]], [[0, 0], [0, 0]]]
+FOR i = 1 TO 200
+    cube[i MOD 2][(i + 1) MOD 2] = [i, i * 2]
+NEXT i
+Check(cube[0][1][1] = 400 ANDALSO cube[1][0][1] = 398, "a cell two levels down reads right: " + STR$(cube[0][1][1]))
+
+' A variable's array into a row slot, and one the variable keeps sharing.
+DIM lattice AS ARRAY = [[0, 0], [0, 0], [0, 0]]
+DIM fresh AS ARRAY = []
+DIM handed AS ARRAY = [7, 7]
+FOR i = 1 TO 300
+    fresh = [i, i * 2]
+    lattice[i MOD 3] = fresh
+    lattice[(i + 1) MOD 3] = handed
+    handed = [i, i]
+NEXT i
+Check(lattice[0][1] = 600 ANDALSO lattice[1][0] = 299, "row slots given variables' arrays read right: " + STR$(lattice[0][1]) + "," + STR$(lattice[1][0]))
+Check(handed[0] = 300, "the variable reads its own last value")
+
+' Map cells.
+DIM slots AS MAP
+DIM spot AS ARRAY = []
+FOR i = 1 TO 300
+    slots{"k"} = [i, i + 1]
+    slots{"n"} = {"T": i}
+    spot = [i, -i]
+    slots{"v"} = spot
+    slots{"c"} = IOTA(i MOD 5 + 1)
+NEXT i
+Check(slots{"k"}[1] = 301 ANDALSO slots{"n"}{"T"} = 300 ANDALSO slots{"v"}[1] = -300 ANDALSO LEN(slots{"c"}) = 1, "map cells overwritten in a loop read right")
+Check(spot[1] = -300, "the variable behind a map cell reads right")
+
+' Nested literals, with a row taken out before the whole is replaced.
+DIM cube2 AS ARRAY = []
+DIM kept AS ARRAY = []
+FOR i = 1 TO 300
+    cube2 = [[i, 0], [0, i]]
+    IF i = 150 THEN kept = cube2[1]
+NEXT i
+Check(cube2[1][1] = 300 ANDALSO kept[1] = 150, "a row taken out of a nested literal outlives it: " + STR$(kept[1]))
+
+DIM scene AS MAP
+DIM anchor AS ARRAY = []
+FOR i = 1 TO 300
+    scene = {"T": i, "AT": [i, i], "SUB": {"A": i}}
+    IF i = 100 THEN anchor = scene{"AT"}
+NEXT i
+Check(scene{"AT"}[0] = 300 ANDALSO scene{"SUB"}{"A"} = 300 ANDALSO anchor[1] = 100, "a map literal's nested containers go with it, one taken out stays: " + STR$(anchor[1]))
+
+IF failed > 0 THEN END 1
+PRINT "OK"

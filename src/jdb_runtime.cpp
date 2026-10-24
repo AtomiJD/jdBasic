@@ -629,7 +629,7 @@ struct JdbArray {
 // Set on an array once a container written into one of its cells belongs to
 // it (jdb_rc_adopt); a cell written over then lets go of what it held.
 static const int32_t JDB_ARR_OWNS_CHILDREN = 1 << 12;
-static void rc_disown_cell(JdbArray* arr, double old);
+static void rc_disown_cell(const void* holder, double old);
 
 JdbArray* jdb_array_new(int64_t size) {
     auto* arr = (JdbArray*)malloc(sizeof(JdbArray));
@@ -2299,18 +2299,6 @@ static int64_t map_find(JdbMap* m, const char* key) {
     return -1;
 }
 
-void jdb_map_set_f64(JdbMap* m, const char* key, double val) {
-    if (!m || !key) return;
-    int64_t idx = map_find(m, key);
-    if (idx < 0) {
-        if (m->count == m->capacity) map_grow(m);
-        idx = m->count++;
-        m->keys[idx] = _strdup(key);
-    }
-    m->values[idx] = val;
-    m->tags[idx] = JD_TAG_F64;
-}
-
 // A map owns the copy of every string it stores (the getters hand out
 // copies too), so the string a key held is released once the key is
 // written over.
@@ -2318,6 +2306,31 @@ static void map_drop_cell_str(int32_t tag, double bits) {
     if (tag != JD_TAG_STR) return;
     union { double d; int64_t i; } u; u.d = bits;
     jdb_str_drop((char*)(intptr_t)u.i);
+}
+
+// A key written over or removed: the string it held goes, and a container
+// it held loses this map as a holder.
+static void map_let_go(JdbMap* m, int32_t tag, double bits) {
+    if (tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP) rc_disown_cell(m, bits);
+    else map_drop_cell_str(tag, bits);
+}
+
+void jdb_map_set_f64(JdbMap* m, const char* key, double val) {
+    if (!m || !key) return;
+    int64_t idx = map_find(m, key);
+    int32_t old_tag = JD_TAG_NONE;
+    double old_bits = 0;
+    if (idx < 0) {
+        if (m->count == m->capacity) map_grow(m);
+        idx = m->count++;
+        m->keys[idx] = _strdup(key);
+    } else {
+        old_tag = m->tags[idx];
+        old_bits = m->values[idx];
+    }
+    m->values[idx] = val;
+    m->tags[idx] = JD_TAG_F64;
+    map_let_go(m, old_tag, old_bits);
 }
 
 void jdb_map_set_str(JdbMap* m, const char* key, const char* val) {
@@ -2336,7 +2349,7 @@ void jdb_map_set_str(JdbMap* m, const char* key, const char* val) {
     union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)jdb_str_dup_binary(val);
     m->values[idx] = u.d;
     m->tags[idx] = JD_TAG_STR;
-    map_drop_cell_str(old_tag, old_bits);
+    map_let_go(m, old_tag, old_bits);
 }
 
 // Store an already-punned f64 value with an explicit tag. Used when the
@@ -2368,7 +2381,7 @@ void jdb_map_set_tagged(JdbMap* m, const char* key, double val, int32_t tag) {
         m->values[idx] = keep_vm_handle(val, tag);
     }
     m->tags[idx] = tag;
-    map_drop_cell_str(old_tag, old_bits);
+    map_let_go(m, old_tag, old_bits);
 }
 
 double jdb_map_get_f64(JdbMap* m, const char* key) {
@@ -2412,6 +2425,7 @@ int64_t jdb_map_delete(JdbMap* m, const char* key) {
     int64_t idx = map_find(m, key);
     if (idx < 0) return 0;
     free(m->keys[idx]);
+    map_let_go(m, m->tags[idx], m->values[idx]);
     for (int64_t i = idx + 1; i < m->count; i++) {
         m->keys[i - 1] = m->keys[i];
         m->values[i - 1] = m->values[i];
@@ -2563,27 +2577,31 @@ static bool rc_poison() {
 }
 
 static void rc_remove(RcEntry* e);
+static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64_t gen);
+
+// A cell of a holder that is going: the container in it loses that holder
+// and goes with it unless something else counts it.
+static void rc_release_child(uintptr_t holder, uint64_t holder_gen, double bits) {
+    union { double d; int64_t i; } u; u.d = bits;
+    RcEntry* c = rc_find((uintptr_t)u.i);
+    if (!c || c->owner != holder || c->owner_gen != holder_gen) return;
+    c->owner = 0;
+    if (--c->rc > 0 || c->pinned) return;
+    uintptr_t ck = c->key;
+    uint8_t ckind = c->kind;
+    bool cowns = c->owns_cells != 0;
+    uint64_t cgen = c->gen;
+    rc_remove(c);
+    rc_free_container(ck, ckind, cowns, cgen);
+}
 
 static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64_t gen) {
     if (kind == JD_TAG_ARR) {
         JdbArray* a = (JdbArray*)k;
         // The containers its cells own go with it unless something else
         // counts them too.
-        if ((a->flags & JDB_ARR_OWNS_CHILDREN) && a->data) {
-            for (int64_t i = 0; i < a->length; i++) {
-                union { double d; int64_t i; } u; u.d = a->data[i];
-                RcEntry* c = rc_find((uintptr_t)u.i);
-                if (!c || c->owner != k || c->owner_gen != gen) continue;
-                c->owner = 0;
-                if (--c->rc > 0 || c->pinned) continue;
-                uintptr_t ck = c->key;
-                uint8_t ckind = c->kind;
-                bool cowns = c->owns_cells != 0;
-                uint64_t cgen = c->gen;
-                rc_remove(c);
-                rc_free_container(ck, ckind, cowns, cgen);
-            }
-        }
+        if ((a->flags & JDB_ARR_OWNS_CHILDREN) && a->data)
+            for (int64_t i = 0; i < a->length; i++) rc_release_child(k, gen, a->data[i]);
         if (owns_cells && a->data) {
             for (int64_t i = 0; i < a->length; i++) {
                 bool str = a->elem_tags ? a->elem_tags[i] == JD_TAG_STR : (a->flags & 2) != 0;
@@ -2606,6 +2624,9 @@ static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64
         free(a);
     } else {
         JdbMap* m = (JdbMap*)k;
+        for (int64_t i = 0; i < m->count; i++)
+            if (m->tags[i] == JD_TAG_ARR || m->tags[i] == JD_TAG_NATIVE_MAP)
+                rc_release_child(k, gen, m->values[i]);
         if (rc_poison()) {
             for (int64_t i = 0; i < m->count; i++) {
                 m->values[i] = 0;
@@ -2690,31 +2711,31 @@ extern "C" void* jdb_rc_new_rows(void* p) {
     return p;
 }
 
-// A container written straight into a cell of an array, with no other
-// holder: the cell counts for it, and it goes when the array goes or the
-// cell is written over. Anything else is kept for good, as every cell
-// value used to be.
+// A container written into a cell of an array or a map: the cell counts
+// for it next to the variables that hold it, and lets go of it when it is
+// written over or the holder goes. A cell of a second holder, or of a
+// holder the registry does not know, keeps it for good.
 extern "C" void jdb_rc_adopt(int64_t parent_bits, int64_t child_bits) {
     if (!g_rc.cap || !rc_ready()) return;
     RcEntry* c = rc_find((uintptr_t)child_bits);
     if (!c) return;
     RcEntry* p = rc_find((uintptr_t)parent_bits);
-    if (!p || p->kind != JD_TAG_ARR || p == c || c->owner || c->pinned || c->rc != 0) {
+    if (!p || p == c || c->owner || c->pinned) {
         c->pinned = 1;
         return;
     }
-    c->rc = 1;
+    c->rc++;
     c->owner = p->key;
     c->owner_gen = p->gen;
-    ((JdbArray*)p->key)->flags |= JDB_ARR_OWNS_CHILDREN;
+    if (p->kind == JD_TAG_ARR) ((JdbArray*)p->key)->flags |= JDB_ARR_OWNS_CHILDREN;
 }
 
-static void rc_disown_cell(JdbArray* arr, double old) {
+static void rc_disown_cell(const void* holder, double old) {
     if (!g_rc.cap || !rc_ready()) return;
     union { double d; int64_t i; } u; u.d = old;
     RcEntry* c = rc_find((uintptr_t)u.i);
-    if (!c || c->owner != (uintptr_t)arr) return;
-    RcEntry* p = rc_find((uintptr_t)arr);
+    if (!c || c->owner != (uintptr_t)holder) return;
+    RcEntry* p = rc_find((uintptr_t)holder);
     if (!p || p->gen != c->owner_gen) return;
     c->owner = 0;
     if (--c->rc == 0 && !c->pinned) g_rc.pool.push_back({ c->key, c->gen });

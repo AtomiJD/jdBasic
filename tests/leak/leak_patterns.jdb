@@ -224,6 +224,75 @@ ELSEIF pattern$ = "iota" THEN
         total = total + LEN(seq)
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "pushvar" THEN
+    DIM backlog AS ARRAY = []
+    DIM item AS ARRAY = []
+    FOR i = 1 TO passes
+        backlog = []
+        item = [i, i + 1]
+        PUSH(backlog, item)
+        item = [i, i + 2]
+        PUSH(backlog, item)
+        total = total + LEN(backlog)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "pushcall" THEN
+    DIM made AS ARRAY = []
+    FOR i = 1 TO passes
+        made = []
+        PUSH(made, IOTA(4))
+        PUSH(made, RESHAPE(IOTA(4), [2, 2]))
+        total = total + LEN(made)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "deepcell" THEN
+    DIM cube AS ARRAY = [[[0, 0], [0, 0]], [[0, 0], [0, 0]]]
+    FOR i = 1 TO passes
+        cube[i MOD 2][(i + 1) MOD 2] = [i, i * 2]
+        total = total + LEN(cube)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "gridvar" THEN
+    DIM lattice AS ARRAY = [[0, 0], [0, 0], [0, 0]]
+    DIM fresh AS ARRAY = []
+    FOR i = 1 TO passes
+        fresh = [i, i * 2]
+        lattice[i MOD 3] = fresh
+        total = total + LEN(lattice)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "mapcell" THEN
+    DIM slots AS MAP
+    FOR i = 1 TO passes
+        slots{"k"} = [i, i + 1]
+        slots{"n"} = {"T": i}
+        slots{"c"} = IOTA(3)
+        total = total + LEN(slots{"k"})
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "mapcellvar" THEN
+    DIM slots2 AS MAP
+    DIM spot AS ARRAY = []
+    FOR i = 1 TO passes
+        spot = [i, i + 1]
+        slots2{"k"} = spot
+        total = total + LEN(slots2{"k"})
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "nestlit" THEN
+    DIM cube2 AS ARRAY = []
+    FOR i = 1 TO passes
+        cube2 = [[i, 0], [0, i]]
+        total = total + cube2[1][1]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "nestmap" THEN
+    DIM scene AS MAP
+    FOR i = 1 TO passes
+        scene = {"T": i, "AT": [i, i], "SUB": {"A": i}}
+        total = total + scene{"T"}
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
