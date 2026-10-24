@@ -323,6 +323,38 @@ ELSEIF pattern$ = "pushstr" THEN
         total = total + LEN(rack)
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "mathop" THEN
+    DIM curve AS ARRAY = base8 * 1
+    FOR i = 1 TO passes
+        curve = TANH(base8 * 0.01) + CLAMP(base8, 2, 9) + IOTA(64, 1)[0]
+        total = total + curve[0, 0]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "mapop" THEN
+    DIM opcells AS MAP
+    FOR i = 1 TO passes
+        opcells = {}
+        opcells{"a"} = base8 * i
+        opcells{"b"} = {"w": base8 + i}
+        total = total + opcells{"a"}[0, 0]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "twocells" THEN
+    DIM twin AS MAP
+    DIM shared AS ARRAY = base8 * 1
+    FOR i = 1 TO passes
+        twin = {}
+        shared = base8 * i
+        twin{"a"} = shared
+        twin{"b"} = shared
+        total = total + twin{"b"}[0, 0]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "tapenode" THEN
+    FOR i = 1 TO passes
+        TapeStep(i)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
@@ -381,4 +413,19 @@ SUB SubLoop(n AS INTEGER)
         glob = base8
         IF j MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT j
+ENDSUB
+
+' A node built in a local map and filed whole into a map of the main program,
+' then read back through a copy of its cell and updated with a value whose
+' kind is known only when it runs: the shape of an autograd tape.
+DIM tape = {}
+SUB TapeStep(n AS INTEGER)
+    DIM nd = {}
+    tape = {}
+    nd{"v"} = base8 * n
+    tape{"x"} = nd
+    DIM back = tape{"x"}
+    tape{"g"} = back{"v"} * 0.5
+    tape{"g"} = tape{"g"} * 0 + base8
+    total = total + LEN(tape{"g"})
 ENDSUB

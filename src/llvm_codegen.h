@@ -500,6 +500,7 @@ private:
     }
     LLVMValueRef rc_bits(LLVMValueRef v);
     LLVMValueRef rc_born(LLVMValueRef p, int kind, bool rows = false);
+    void rc_born_if_array(LLVMValueRef bits, LLVMValueRef tag);
     void rc_pin(const TypedValue& tv);
     void rc_slot_store(LLVMValueRef slot, LLVMValueRef val, int old_tag, int new_tag);
     void rc_retain_slot(LLVMValueRef slot);
@@ -529,6 +530,7 @@ private:
     std::unordered_set<std::string> child_owner_vars;
     void scan_child_owners(const std::vector<StmtPtr>& program);
     bool adopts_value(const std::string& var, const Expr* value);
+    bool literal_cell_counts(const Expr& e);
     void rc_adopt(LLVMValueRef parent, const TypedValue& child);
     void scan_cell_owners(const std::vector<StmtPtr>& program);
     bool param_escapes_at(const std::string& fn, size_t i) const;

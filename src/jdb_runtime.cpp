@@ -2466,6 +2466,10 @@ struct RcState {
     uint64_t next_gen = 1;
     std::vector<RcPoolItem> pool;
     std::vector<RcPoolItem> zombies;
+    // Holders beyond the owner: a container in cells of several holders, or
+    // in several cells of one, counts once per cell. Keyed by the container,
+    // each item a holder and its generation.
+    std::unordered_map<uintptr_t, std::vector<RcPoolItem>> extra;
     std::vector<char*> str_later;  // strings global slots let go of inside a FUNC or SUB
     int func_depth = 0;  // FUNC frames on the stack; a SUB chain from the main program is depth 0
     bool init = false;
@@ -2548,13 +2552,32 @@ static bool rc_poison() {
 static void rc_remove(RcEntry* e);
 static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64_t gen);
 
+// One cell of holder lets go of c: the owner's, else one of the holders
+// beyond it. FALSE when holder does not count for c.
+static bool rc_let_go(RcEntry* c, uintptr_t holder, uint64_t holder_gen) {
+    if (c->owner == holder && c->owner_gen == holder_gen) {
+        c->owner = 0;
+        return true;
+    }
+    auto it = g_rc.extra.find(c->key);
+    if (it == g_rc.extra.end()) return false;
+    auto& v = it->second;
+    for (size_t i = 0; i < v.size(); i++) {
+        if (v[i].key != holder || v[i].gen != holder_gen) continue;
+        v[i] = v.back();
+        v.pop_back();
+        if (v.empty()) g_rc.extra.erase(it);
+        return true;
+    }
+    return false;
+}
+
 // A cell of a holder that is going: the container in it loses that holder
 // and goes with it unless something else counts it.
 static void rc_release_child(uintptr_t holder, uint64_t holder_gen, double bits) {
     union { double d; int64_t i; } u; u.d = bits;
     RcEntry* c = rc_find((uintptr_t)u.i);
-    if (!c || c->owner != holder || c->owner_gen != holder_gen) return;
-    c->owner = 0;
+    if (!c || !rc_let_go(c, holder, holder_gen)) return;
     if (--c->rc > 0 || c->pinned) return;
     uintptr_t ck = c->key;
     uint8_t ckind = c->kind;
@@ -2616,6 +2639,7 @@ static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64
 }
 
 static void rc_remove(RcEntry* e) {
+    if (!g_rc.extra.empty()) g_rc.extra.erase(e->key);
     e->key = 1;
     g_rc.live--;
 }
@@ -2682,20 +2706,26 @@ extern "C" void* jdb_rc_new_rows(void* p) {
 
 // A container written into a cell of an array or a map: the cell counts
 // for it next to the variables that hold it, and lets go of it when it is
-// written over or the holder goes. A cell of a second holder, or of a
-// holder the registry does not know, keeps it for good.
+// written over or the holder goes. The first such cell makes its holder
+// the owner; every further one, of the same holder or another, is kept with
+// the holders beyond it. A cell of a holder the registry does not know, or
+// of the container itself, keeps it for good.
 extern "C" void jdb_rc_adopt(int64_t parent_bits, int64_t child_bits) {
     if (!g_rc.cap || !rc_ready()) return;
     RcEntry* c = rc_find((uintptr_t)child_bits);
     if (!c) return;
     RcEntry* p = rc_find((uintptr_t)parent_bits);
-    if (!p || p == c || c->owner || c->pinned) {
+    if (!p || p == c || c->pinned) {
         c->pinned = 1;
         return;
     }
     c->rc++;
-    c->owner = p->key;
-    c->owner_gen = p->gen;
+    if (c->owner) {
+        g_rc.extra[c->key].push_back({ p->key, p->gen });
+    } else {
+        c->owner = p->key;
+        c->owner_gen = p->gen;
+    }
     if (p->kind == JD_TAG_ARR) ((JdbArray*)p->key)->flags |= JDB_ARR_OWNS_CHILDREN;
 }
 
@@ -2703,10 +2733,9 @@ static void rc_disown_cell(const void* holder, double old) {
     if (!g_rc.cap || !rc_ready()) return;
     union { double d; int64_t i; } u; u.d = old;
     RcEntry* c = rc_find((uintptr_t)u.i);
-    if (!c || c->owner != (uintptr_t)holder) return;
+    if (!c) return;
     RcEntry* p = rc_find((uintptr_t)holder);
-    if (!p || p->gen != c->owner_gen) return;
-    c->owner = 0;
+    if (!p || !rc_let_go(c, p->key, p->gen)) return;
     if (--c->rc == 0 && !c->pinned) g_rc.pool.push_back({ c->key, c->gen });
 }
 
