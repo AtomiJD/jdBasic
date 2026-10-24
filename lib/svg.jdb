@@ -11,8 +11,11 @@
 '   SVG.LABELS(c, ["Jan", "Feb", "Mar"])
 '   SVG.SERIES(c, "2026", [120, 95.5, 143])
 '   SVG.WRITEFILE(SVG.RENDER(c), "sales.svg")
+'   SVG.WRITEPNG(SVG.RENDER(c), "sales.png", {"scale": 2})
 
 EXPORT MODULE SVG
+
+IMPORT RASTER
 
 DIM gPalette = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"]
 
@@ -328,6 +331,17 @@ ENDFUNC
 
 EXPORT SUB WRITEFILE(doc, file_path$)
     TXTWRITER file_path$, MARKUP$(doc)
+ENDSUB
+
+' The drawing as an IMG image, drawn by RASTER: options "scale",
+' "background" and "font" as RASTER.RENDER takes them.
+EXPORT FUNC TOIMAGE(doc, opts = 0)
+    RETURN RASTER.RENDER(MARKUP$(doc), opts)
+ENDFUNC
+
+' The drawing written as a PNG file.
+EXPORT SUB WRITEPNG(doc, file_path$, opts = 0)
+    RASTER.WRITEPNG(MARKUP$(doc), file_path$, opts)
 ENDSUB
 
 ' ── charts: data ───────────────────────────────────────────────

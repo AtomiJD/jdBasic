@@ -16,7 +16,6 @@
 ' height * width * channels values from 0 to 255, row by row.
 EXPORT MODULE IMG
 
-DIM gB64$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 DIM gPngSig$ = CODEC.BASE64_DECODE$("iVBORw0KGgo=")
 
 ' ---- building blocks ----
@@ -53,34 +52,8 @@ ENDFUNC
 ' character codes (never NUL) and decoded in one step.
 FUNC BytesText$(bytes, n)
     IF n <= 0 THEN RETURN ""
-    DIM alpha = ZEROS(64)
-    DIM i = 0
-    FOR i = 0 TO 63
-        alpha[i] = ASC(MID$(gB64$, i, 1))
-    NEXT i
-    DIM groups = INT((n + 2) / 3)
-    DIM codes = ZEROS(groups * 4)
-    FOR i = 0 TO groups - 1
-        DIM at = i * 3
-        DIM b0 = bytes[at]
-        DIM b1 = 0
-        DIM b2 = 0
-        IF at + 1 < n THEN b1 = bytes[at + 1]
-        IF at + 2 < n THEN b2 = bytes[at + 2]
-        DIM v = b0 * 65536 + b1 * 256 + b2
-        DIM s0 = INT(v / 262144)
-        DIM rest = v - s0 * 262144
-        DIM s1 = INT(rest / 4096)
-        rest = rest - s1 * 4096
-        DIM s2 = INT(rest / 64)
-        codes[i * 4] = alpha[s0]
-        codes[i * 4 + 1] = alpha[s1]
-        codes[i * 4 + 2] = alpha[s2]
-        codes[i * 4 + 3] = alpha[rest - s2 * 64]
-    NEXT i
-    DIM text$ = JOIN(CHR$(codes), "")
-    DIM decoded$ = CODEC.BASE64_DECODE$(text$)
-    RETURN LEFT$(decoded$, n)
+    IF n < LEN(bytes) THEN RETURN JOIN(CHR$(TAKE(n, bytes)), "")
+    RETURN JOIN(CHR$(bytes), "")
 ENDFUNC
 
 FUNC TextBytes(data$)
@@ -563,6 +536,19 @@ FUNC RowCost(samples, base, prev_base, rowlen, bpp, ftype)
     RETURN total
 ENDFUNC
 
+' The scanlines unfiltered: a zero byte in front of every row, the bytes
+' themselves straight from the samples.
+FUNC PlainRows$(samples, h, rowlen)
+    DIM rows = RESHAPE(samples, [h, rowlen])
+    DIM pieces = []
+    DIM y = 0
+    FOR y = 0 TO h - 1
+        PUSH(pieces, CHR$(0))
+        PUSH(pieces, JOIN(CHR$(rows[y]), ""))
+    NEXT y
+    RETURN JOIN(pieces, "")
+ENDFUNC
+
 ' Filter byte plus filtered row for every row.
 FUNC FilterRows(samples, h, rowlen, bpp, mode$)
     DIM out = ZEROS(h * (rowlen + 1))
@@ -675,8 +661,12 @@ EXPORT FUNC ENCODE$(img, opts = 0)
         DIM prow = FilterRows(indices, h, w, 1, mode$)
         data$ = BytesText$(prow, h * (w + 1))
     ELSE
-        DIM crow = FilterRows(px, h, w * c, c, mode$)
-        data$ = BytesText$(crow, h * (w * c + 1))
+        IF mode$ = "none" THEN
+            data$ = PlainRows$(px, h, w * c)
+        ELSE
+            DIM crow = FilterRows(px, h, w * c, c, mode$)
+            data$ = BytesText$(crow, h * (w * c + 1))
+        ENDIF
     ENDIF
     DIM parts = []
     PUSH(parts, gPngSig$)

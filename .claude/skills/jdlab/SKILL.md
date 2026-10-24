@@ -77,10 +77,7 @@ Never present a chart, grid, or layout you haven't seen. The loop is:
 4. Clean up throwaway captures from `tmp/` at session end; keep only the
    final shots.
 
-**Charts come from the CHART module** (`modules/chart.jdb`): `IMPORT CHART`
-once, then `CHART.PLOT(xs, ys, title$, path$)`, `CHART.SCATTER`,
-`CHART.BARS(labels, values, ...)`, `CHART.HIST(vals, n_bins, ...)` - margins,
-gridlines and tick labels are built in. Self-built LAB_ render helpers are
+**Charts come from SVG and RASTER** (`IMPORT SVG` once): `SVG.CHART("line" | "bar" | "scatter" | "histogram" | ...)`, `SVG.LABELS`, `SVG.SERIES` or `SVG.POINTS` or `SVG.BINS`, then `SVG.WRITEPNG(SVG.RENDER(c), path$, {"scale": 2})` draws the PNG without a window - axes, ticks, legend and title are built in, and the same chart is an SVG for a page. Self-built LAB_ render helpers are
 for needs the module doesn't cover; keep them parameterised by output path
 so re-rendering after a fix is a single eval.
 

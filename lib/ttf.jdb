@@ -8,7 +8,8 @@
 '   PRINT TTF.WIDTH(serif, "Hello") * 11 / TTF.UPEM(serif); " points at 11 pt"
 '   PRINT TTF.GLYPHS(serif, "Hi")
 '
-' Glyph outlines are not read; the file is embedded whole.
+' Glyph outlines are read on demand (OUTLINE) as flattened contours, the
+' way RASTER draws text; PDFGEN embeds the file whole.
 
 EXPORT MODULE TTF
 
@@ -139,7 +140,8 @@ EXPORT FUNC LOAD(path$)
     DIM hhea = Need(tables, "hhea")
     DIM maxp = Need(tables, "maxp")
     DIM hmtx = Need(tables, "hmtx")
-    Need(tables, "glyf")
+    DIM glyf = Need(tables, "glyf")
+    DIM loca = Need(tables, "loca")
     DIM font AS MAP
     font{"data"} = data$
     font{"path"} = path$
@@ -172,6 +174,10 @@ EXPORT FUNC LOAD(path$)
         ENDIF
     NEXT k
     font{"glyphs"} = n_glyphs
+    font{"glyf"} = glyf
+    font{"loca"} = loca
+    font{"loca_long"} = S16(data$, head + 50) <> 0
+    font{"outlines"} = {}
     font{"widths"} = widths
     ReadCmap(font, data$, tables)
     RETURN font
@@ -254,4 +260,256 @@ EXPORT FUNC MISSING(font, text$)
         IF codes[k] > 32 ANDALSO GLYPH(font, codes[k]) = 0 THEN PUSH(out, codes[k])
     NEXT k
     RETURN out
+ENDFUNC
+
+' ── outlines ───────────────────────────────────────────────────
+
+FUNC S8(data$, at)
+    DIM v = BYTEAT(data$, at)
+    IF v >= 128 THEN RETURN v - 256
+    RETURN v
+ENDFUNC
+
+' Where glyph gid starts in the glyf table and where the next one starts;
+' a glyph with no outline (a space) has the same number twice.
+FUNC GlyphSpan(font, gid)
+    DIM data$ = font{"data"}
+    DIM loca = font{"loca"}
+    IF font{"loca_long"} THEN RETURN [U32(data$, loca + 4 * gid), U32(data$, loca + 4 * gid + 4)]
+    RETURN [2 * U16(data$, loca + 2 * gid), 2 * U16(data$, loca + 2 * gid + 2)]
+ENDFUNC
+
+' Appends the points of a quadratic curve from (x0, y0) over the control
+' point (cx, cy) to (x1, y1), flattened into six straight pieces.
+SUB AppendCurve(poly, x0, y0, cx, cy, x1, y1)
+    DIM segs = 6
+    DIM k = 0
+    FOR k = 1 TO segs
+        DIM t = k / segs
+        DIM u = 1 - t
+        PUSH(poly, u * u * x0 + 2 * u * t * cx + t * t * x1)
+        PUSH(poly, u * u * y0 + 2 * u * t * cy + t * t * y1)
+    NEXT k
+ENDSUB
+
+' One contour of on and off curve points as a closed polygon, flat
+' [x0, y0, x1, y1, ...]. Two off points in a row imply an on point halfway
+' between them; a contour that starts off the curve starts at the last
+' point, or halfway when that one is off the curve too.
+FUNC ContourPolygon(xs, ys, ons)
+    DIM n = LEN(xs)
+    DIM poly = []
+    IF n = 0 THEN RETURN poly
+    DIM sx = xs[0]
+    DIM sy = ys[0]
+    DIM first = 1
+    IF ons[0] = 0 THEN
+        first = 0
+        IF ons[n - 1] = 1 THEN
+            sx = xs[n - 1]
+            sy = ys[n - 1]
+        ELSE
+            sx = (xs[0] + xs[n - 1]) / 2
+            sy = (ys[0] + ys[n - 1]) / 2
+        ENDIF
+    ENDIF
+    PUSH(poly, sx)
+    PUSH(poly, sy)
+    DIM px = sx
+    DIM py = sy
+    DIM have_ctrl = 0
+    DIM cx = 0
+    DIM cy = 0
+    DIM k = 0
+    FOR k = first TO n
+        DIM x = sx
+        DIM y = sy
+        DIM on_curve = 1
+        IF k < n THEN
+            x = xs[k]
+            y = ys[k]
+            on_curve = ons[k]
+        ENDIF
+        IF on_curve = 1 THEN
+            IF have_ctrl = 1 THEN
+                AppendCurve(poly, px, py, cx, cy, x, y)
+                have_ctrl = 0
+            ELSE
+                PUSH(poly, x)
+                PUSH(poly, y)
+            ENDIF
+            px = x
+            py = y
+        ELSE
+            IF have_ctrl = 1 THEN
+                DIM mx = (cx + x) / 2
+                DIM my = (cy + y) / 2
+                AppendCurve(poly, px, py, cx, cy, mx, my)
+                px = mx
+                py = my
+            ENDIF
+            cx = x
+            cy = y
+            have_ctrl = 1
+        ENDIF
+    NEXT k
+    RETURN poly
+ENDFUNC
+
+' The contours of a simple glyph at offset at, each a closed polygon in
+' font units, transformed by [a b c d dx dy].
+FUNC SimpleContours(data$, at, n_contours, m)
+    DIM out = []
+    DIM ends = UNPACK(">" + STR$(n_contours) + "s", data$, at + 10)
+    DIM n_points = ends[n_contours - 1] + 1
+    DIM instr_len = U16(data$, at + 10 + 2 * n_contours)
+    DIM p = at + 12 + 2 * n_contours + instr_len
+    DIM flags = ZEROS(n_points)
+    DIM k = 0
+    DO WHILE k < n_points
+        DIM f = BYTEAT(data$, p)
+        p = p + 1
+        flags[k] = f
+        k = k + 1
+        IF (f BAND 8) <> 0 THEN
+            DIM rep = BYTEAT(data$, p)
+            p = p + 1
+            DIM r = 0
+            FOR r = 1 TO rep
+                IF k < n_points THEN flags[k] = f
+                k = k + 1
+            NEXT r
+        ENDIF
+    LOOP
+    DIM xs = ZEROS(n_points)
+    DIM ys = ZEROS(n_points)
+    DIM v = 0
+    FOR k = 0 TO n_points - 1
+        DIM fx = flags[k]
+        IF (fx BAND 2) <> 0 THEN
+            DIM dx = BYTEAT(data$, p)
+            p = p + 1
+            IF (fx BAND 16) = 0 THEN dx = -dx
+            v = v + dx
+        ELSEIF (fx BAND 16) = 0 THEN
+            v = v + S16(data$, p)
+            p = p + 2
+        ENDIF
+        xs[k] = v
+    NEXT k
+    v = 0
+    FOR k = 0 TO n_points - 1
+        DIM fy = flags[k]
+        IF (fy BAND 4) <> 0 THEN
+            DIM dy = BYTEAT(data$, p)
+            p = p + 1
+            IF (fy BAND 32) = 0 THEN dy = -dy
+            v = v + dy
+        ELSEIF (fy BAND 32) = 0 THEN
+            v = v + S16(data$, p)
+            p = p + 2
+        ENDIF
+        ys[k] = v
+    NEXT k
+    DIM start = 0
+    DIM c = 0
+    FOR c = 0 TO n_contours - 1
+        DIM last = ends[c]
+        DIM cxs = []
+        DIM cys = []
+        DIM ons = []
+        FOR k = start TO last
+            DIM x = xs[k]
+            DIM y = ys[k]
+            PUSH(cxs, m[0] * x + m[2] * y + m[4])
+            PUSH(cys, m[1] * x + m[3] * y + m[5])
+            PUSH(ons, IIF((flags[k] BAND 1) <> 0, 1, 0))
+        NEXT k
+        DIM poly = ContourPolygon(cxs, cys, ons)
+        IF LEN(poly) >= 6 THEN PUSH(out, poly)
+        start = last + 1
+    NEXT c
+    RETURN out
+ENDFUNC
+
+FUNC F2Dot14(data$, at)
+    RETURN S16(data$, at) / 16384
+ENDFUNC
+
+' The contours of glyph gid under the transform m, composite glyphs
+' resolved through their parts.
+FUNC GlyphContours(font, gid, m, depth)
+    DIM out = []
+    IF depth > 8 ORELSE gid < 0 ORELSE gid >= font{"glyphs"} THEN RETURN out
+    DIM span = GlyphSpan(font, gid)
+    IF span[1] <= span[0] THEN RETURN out
+    DIM data$ = font{"data"}
+    DIM at = font{"glyf"} + span[0]
+    DIM n_contours = S16(data$, at)
+    IF n_contours >= 0 THEN
+        IF n_contours = 0 THEN RETURN out
+        RETURN SimpleContours(data$, at, n_contours, m)
+    ENDIF
+    DIM p = at + 10
+    DIM more = 1
+    DO WHILE more = 1
+        DIM flags = U16(data$, p)
+        DIM part = U16(data$, p + 2)
+        p = p + 4
+        DIM dx = 0
+        DIM dy = 0
+        IF (flags BAND 1) <> 0 THEN
+            dx = S16(data$, p)
+            dy = S16(data$, p + 2)
+            p = p + 4
+        ELSE
+            dx = S8(data$, p)
+            dy = S8(data$, p + 1)
+            p = p + 2
+        ENDIF
+        IF (flags BAND 2) = 0 THEN
+            dx = 0
+            dy = 0
+        ENDIF
+        DIM a = 1
+        DIM b = 0
+        DIM c = 0
+        DIM d = 1
+        IF (flags BAND 8) <> 0 THEN
+            a = F2Dot14(data$, p)
+            d = a
+            p = p + 2
+        ELSEIF (flags BAND 64) <> 0 THEN
+            a = F2Dot14(data$, p)
+            d = F2Dot14(data$, p + 2)
+            p = p + 4
+        ELSEIF (flags BAND 128) <> 0 THEN
+            a = F2Dot14(data$, p)
+            b = F2Dot14(data$, p + 2)
+            c = F2Dot14(data$, p + 4)
+            d = F2Dot14(data$, p + 6)
+            p = p + 8
+        ENDIF
+        ' the part's own transform first, then the caller's
+        DIM part_m = [m[0] * a + m[2] * b, m[1] * a + m[3] * b, m[0] * c + m[2] * d, m[1] * c + m[3] * d, m[0] * dx + m[2] * dy + m[4], m[1] * dx + m[3] * dy + m[5]]
+        DIM parts = GlyphContours(font, part, part_m, depth + 1)
+        DIM k = 0
+        FOR k = 0 TO LEN(parts) - 1
+            PUSH(out, parts[k])
+        NEXT k
+        more = IIF((flags BAND 32) <> 0, 1, 0)
+    LOOP
+    RETURN out
+ENDFUNC
+
+' The outline of a glyph: an array of closed contours, each a flat
+' [x0, y0, x1, y1, ...] polygon in font units with y up, the quadratic
+' curves flattened. A space answers an empty array. Read once per glyph.
+EXPORT FUNC OUTLINE(font, gid)
+    DIM cache = font{"outlines"}
+    DIM key$ = STR$(gid)
+    IF MAP.EXISTS(cache, key$) THEN RETURN cache{key$}
+    DIM contours = GlyphContours(font, gid, [1, 0, 0, 1, 0, 0], 0)
+    cache{key$} = contours
+    RETURN contours
 ENDFUNC

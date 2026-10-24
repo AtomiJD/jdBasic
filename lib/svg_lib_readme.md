@@ -146,6 +146,19 @@ their colours from a style sheet with a `prefers-color-scheme: dark`
 rule, and the series colours (Tableau 10) are mid-toned, so the same
 chart reads on a light and a dark page.
 
+## PNG
+
+A drawing or a rendered chart becomes a picture through RASTER, with no
+window and no browser: `SVG.TOIMAGE(doc, [opts])` answers an IMG image,
+`SVG.WRITEPNG(doc, path$, [opts])` writes the PNG. The options are
+RASTER.RENDER's: `scale` (2 for a crisp picture), `background` (`"none"`
+for a transparent page) and `font` (a TrueType file for the text). The
+chart comes out in its light colours; see(raster_lib_readme.md) for what is drawn and how.
+
+```basic
+SVG.WRITEPNG(SVG.RENDER(c), "sales.png", {"scale": 2})
+```
+
 ## Notes
 
 - Label widths are estimated at 7 pixels per character of a 12 pixel

@@ -1,0 +1,1575 @@
+' raster.jdb - SVG drawn into pixels without a window: an IMG image from
+' SVG markup, so a chart or a drawing becomes a PNG on a machine with no
+' display. Shapes, paths with arcs and curves, strokes, groups with
+' transforms, the style block and style attributes, linear and radial
+' gradients, and text from a TrueType font. The ground of cairosvg and resvg
+' for the SVG that SVG.RENDER writes; a hand-written file with filters,
+' masks, patterns or markers is drawn without them.
+'
+'   IMPORT SVG, RASTER
+'   DIM c = SVG.CHART("bar")
+'   SVG.LABELS(c, ["Jan", "Feb", "Mar"])
+'   SVG.SERIES(c, "2026", [120, 95.5, 143])
+'   RASTER.WRITEPNG(SVG.MARKUP$(SVG.RENDER(c)), "sales.png", {"scale": 2})
+'
+' Every shape ends as polygons; one filler with per-pixel coverage draws
+' them all, so edges are smooth and holes come from the winding of the
+' outline. Text uses jdbasic_default.ttf next to the running program, or
+' resources/fonts, or the font given in the options; a five by seven
+' bitmap font steps in when no TrueType file is found.
+
+EXPORT MODULE RASTER
+
+IMPORT XML, IMG, TTF
+
+' the image being drawn
+DIM gW = 0
+DIM gH = 0
+DIM gPix = []
+
+' the document being drawn: style rules, gradients and the element stack
+' the rules are matched against
+DIM gRuleTags = []
+DIM gRuleClasses = []
+DIM gRuleDecls = []
+DIM gRuleSpec = []
+DIM gGrads AS MAP
+DIM gStackTag = []
+DIM gStackCls = []
+
+' the first and last column each row of the box being filled touches
+DIM gRowLo = []
+DIM gRowHi = []
+
+' fonts: the path chosen by FONT, the font loaded for it
+DIM gFontPath$ = ""
+DIM gFont = 0
+DIM gFontLoaded$ = ""
+DIM gFontMissing = 0
+DIM gNamed AS MAP
+DIM gBitmap AS MAP
+
+' ── numbers ────────────────────────────────────────────────────
+
+FUNC IsDigit(c$)
+    RETURN c$ >= "0" ANDALSO c$ <= "9"
+ENDFUNC
+
+' The number at the front of a text, units ignored; fallback for none.
+FUNC NumOf(s$, fallback)
+    DIM t$ = TRIM$(s$)
+    IF t$ = "" THEN RETURN fallback
+    DIM c$ = LEFT$(t$, 1)
+    IF NOT IsDigit(c$) ANDALSO c$ <> "-" ANDALSO c$ <> "+" ANDALSO c$ <> "." THEN RETURN fallback
+    RETURN VAL(t$)
+ENDFUNC
+
+' Every number in a text, separated by spaces, commas or a sign.
+FUNC Nums(s$)
+    DIM out = []
+    DIM n = LEN(s$)
+    DIM i = 0
+    DIM cur$ = ""
+    DO WHILE i < n
+        DIM c$ = MID$(s$, i, 1)
+        IF IsDigit(c$) ORELSE c$ = "." THEN
+            IF c$ = "." ANDALSO INSTR(cur$, ".") >= 0 ANDALSO INSTR(cur$, "e") < 0 THEN
+                PUSH(out, VAL(cur$))
+                cur$ = ""
+            ENDIF
+            cur$ = cur$ + c$
+        ELSEIF c$ = "e" ORELSE c$ = "E" THEN
+            IF cur$ <> "" THEN cur$ = cur$ + "e"
+        ELSEIF c$ = "-" ORELSE c$ = "+" THEN
+            IF cur$ <> "" ANDALSO RIGHT$(cur$, 1) <> "e" THEN
+                PUSH(out, VAL(cur$))
+                cur$ = ""
+            ENDIF
+            cur$ = cur$ + c$
+        ELSE
+            IF cur$ <> "" ANDALSO cur$ <> "-" ANDALSO cur$ <> "+" THEN PUSH(out, VAL(cur$))
+            cur$ = ""
+        ENDIF
+        i = i + 1
+    LOOP
+    IF cur$ <> "" ANDALSO cur$ <> "-" ANDALSO cur$ <> "+" THEN PUSH(out, VAL(cur$))
+    RETURN out
+ENDFUNC
+
+' ── colours ────────────────────────────────────────────────────
+
+SUB NamedColors()
+    IF LEN(MAP.KEYS(gNamed)) > 0 THEN RETURN
+    gNamed{"black"} = "#000000"
+    gNamed{"white"} = "#ffffff"
+    gNamed{"red"} = "#ff0000"
+    gNamed{"green"} = "#008000"
+    gNamed{"blue"} = "#0000ff"
+    gNamed{"yellow"} = "#ffff00"
+    gNamed{"gray"} = "#808080"
+    gNamed{"grey"} = "#808080"
+    gNamed{"silver"} = "#c0c0c0"
+    gNamed{"orange"} = "#ffa500"
+    gNamed{"purple"} = "#800080"
+    gNamed{"brown"} = "#a52a2a"
+    gNamed{"pink"} = "#ffc0cb"
+    gNamed{"cyan"} = "#00ffff"
+    gNamed{"aqua"} = "#00ffff"
+    gNamed{"magenta"} = "#ff00ff"
+    gNamed{"fuchsia"} = "#ff00ff"
+    gNamed{"navy"} = "#000080"
+    gNamed{"teal"} = "#008080"
+    gNamed{"maroon"} = "#800000"
+    gNamed{"olive"} = "#808000"
+    gNamed{"lime"} = "#00ff00"
+    gNamed{"gold"} = "#ffd700"
+    gNamed{"crimson"} = "#dc143c"
+    gNamed{"coral"} = "#ff7f50"
+    gNamed{"tomato"} = "#ff6347"
+    gNamed{"salmon"} = "#fa8072"
+    gNamed{"steelblue"} = "#4682b4"
+    gNamed{"royalblue"} = "#4169e1"
+    gNamed{"skyblue"} = "#87ceeb"
+    gNamed{"lightgray"} = "#d3d3d3"
+    gNamed{"lightgrey"} = "#d3d3d3"
+    gNamed{"darkgray"} = "#a9a9a9"
+    gNamed{"darkgrey"} = "#a9a9a9"
+    gNamed{"dimgray"} = "#696969"
+    gNamed{"whitesmoke"} = "#f5f5f5"
+    gNamed{"gainsboro"} = "#dcdcdc"
+    gNamed{"darkblue"} = "#00008b"
+    gNamed{"darkgreen"} = "#006400"
+    gNamed{"darkred"} = "#8b0000"
+    gNamed{"indigo"} = "#4b0082"
+    gNamed{"violet"} = "#ee82ee"
+    gNamed{"turquoise"} = "#40e0d0"
+    gNamed{"chocolate"} = "#d2691e"
+    gNamed{"tan"} = "#d2b48c"
+    gNamed{"beige"} = "#f5f5dc"
+    gNamed{"ivory"} = "#fffff0"
+    gNamed{"khaki"} = "#f0e68c"
+    gNamed{"lavender"} = "#e6e6fa"
+    gNamed{"orchid"} = "#da70d6"
+    gNamed{"seagreen"} = "#2e8b57"
+    gNamed{"forestgreen"} = "#228b22"
+    gNamed{"firebrick"} = "#b22222"
+    gNamed{"slategray"} = "#708090"
+    gNamed{"slategrey"} = "#708090"
+    gNamed{"currentcolor"} = "#000000"
+ENDSUB
+
+FUNC HexVal(c$)
+    DIM p = INSTR("0123456789abcdef", LCASE$(c$))
+    IF p < 0 THEN RETURN 0
+    RETURN p
+ENDFUNC
+
+FUNC HexByte(s$, at)
+    RETURN HexVal(MID$(s$, at, 1)) * 16 + HexVal(MID$(s$, at + 1, 1))
+ENDFUNC
+
+' A colour as [r, g, b, a] with a from 0 to 1; an empty array for none.
+FUNC ParseColor(s$)
+    DIM t$ = LCASE$(TRIM$(s$))
+    IF t$ = "" ORELSE t$ = "none" ORELSE t$ = "transparent" THEN RETURN []
+    NamedColors()
+    IF MAP.EXISTS(gNamed, t$) THEN t$ = gNamed{t$}
+    IF LEFT$(t$, 1) = "#" THEN
+        DIM digits$ = MID$(t$, 1)
+        IF LEN(digits$) = 3 ORELSE LEN(digits$) = 4 THEN
+            DIM r3 = HexVal(MID$(digits$, 0, 1)) * 17
+            DIM g3 = HexVal(MID$(digits$, 1, 1)) * 17
+            DIM b3 = HexVal(MID$(digits$, 2, 1)) * 17
+            DIM a3 = 1.0
+            IF LEN(digits$) = 4 THEN a3 = HexVal(MID$(digits$, 3, 1)) * 17 / 255
+            RETURN [r3, g3, b3, a3]
+        ENDIF
+        IF LEN(digits$) >= 6 THEN
+            DIM a6 = 1.0
+            IF LEN(digits$) >= 8 THEN a6 = HexByte(digits$, 6) / 255
+            RETURN [HexByte(digits$, 0), HexByte(digits$, 2), HexByte(digits$, 4), a6]
+        ENDIF
+        RETURN [0, 0, 0, 1.0]
+    ENDIF
+    IF LEFT$(t$, 4) = "rgb(" ORELSE LEFT$(t$, 5) = "rgba(" THEN
+        DIM parts = Nums(MID$(t$, INSTR(t$, "(") + 1))
+        IF LEN(parts) < 3 THEN RETURN [0, 0, 0, 1.0]
+        DIM scale_pct = 1.0
+        IF INSTR(t$, "%") >= 0 THEN scale_pct = 2.55
+        DIM alpha = 1.0
+        IF LEN(parts) >= 4 THEN alpha = Clamp(parts[3], 0, 1)
+        RETURN [Clamp(parts[0] * scale_pct, 0, 255), Clamp(parts[1] * scale_pct, 0, 255), Clamp(parts[2] * scale_pct, 0, 255), alpha]
+    ENDIF
+    RETURN [0, 0, 0, 1.0]
+ENDFUNC
+
+' ── matrices [a, b, c, d, tx, ty]: x' = a x + c y + tx, y' = b x + d y + ty
+
+FUNC MatIdentity()
+    RETURN [1, 0, 0, 1, 0, 0]
+ENDFUNC
+
+' p after c: a point goes through c first, then through p.
+FUNC MatCompose(p, c)
+    RETURN [p[0] * c[0] + p[2] * c[1], p[1] * c[0] + p[3] * c[1], p[0] * c[2] + p[2] * c[3], p[1] * c[2] + p[3] * c[3], p[0] * c[4] + p[2] * c[5] + p[4], p[1] * c[4] + p[3] * c[5] + p[5]]
+ENDFUNC
+
+' The length factor of a matrix: what a unit length becomes on average.
+FUNC MatScale(m)
+    RETURN SQR(ABS(m[0] * m[3] - m[1] * m[2]))
+ENDFUNC
+
+' A transform attribute: translate, scale, rotate, skewX, skewY and matrix,
+' in the order written.
+FUNC ParseTransform(s$)
+    DIM m = MatIdentity()
+    DIM t$ = s$
+    DO WHILE TRUE
+        DIM open_at = INSTR(t$, "(")
+        IF open_at < 0 THEN EXITDO
+        DIM close_at = INSTR(t$, ")")
+        IF close_at < open_at THEN EXITDO
+        DIM fn$ = LCASE$(TRIM$(REPLACE$(LEFT$(t$, open_at), ",", " ")))
+        DIM args = Nums(MID$(t$, open_at + 1, close_at - open_at - 1))
+        DIM part = MatIdentity()
+        DIM n = LEN(args)
+        IF fn$ = "translate" THEN
+            IF n >= 1 THEN part[4] = args[0]
+            IF n >= 2 THEN part[5] = args[1]
+        ELSEIF fn$ = "scale" THEN
+            IF n >= 1 THEN
+                part[0] = args[0]
+                part[3] = args[0]
+            ENDIF
+            IF n >= 2 THEN part[3] = args[1]
+        ELSEIF fn$ = "rotate" THEN
+            IF n >= 1 THEN
+                DIM rad = args[0] * MATH.PI / 180
+                part = [COS(rad), SIN(rad), -SIN(rad), COS(rad), 0, 0]
+                IF n >= 3 THEN
+                    part = MatCompose([1, 0, 0, 1, args[1], args[2]], MatCompose(part, [1, 0, 0, 1, -args[1], -args[2]]))
+                ENDIF
+            ENDIF
+        ELSEIF fn$ = "skewx" THEN
+            IF n >= 1 THEN part[2] = TAN(args[0] * MATH.PI / 180)
+        ELSEIF fn$ = "skewy" THEN
+            IF n >= 1 THEN part[1] = TAN(args[0] * MATH.PI / 180)
+        ELSEIF fn$ = "matrix" THEN
+            IF n >= 6 THEN part = [args[0], args[1], args[2], args[3], args[4], args[5]]
+        ENDIF
+        m = MatCompose(m, part)
+        t$ = MID$(t$, close_at + 1)
+    LOOP
+    RETURN m
+ENDFUNC
+
+' A flat polygon [x0, y0, ...] through a matrix.
+FUNC TransformPoly(poly, m)
+    DIM n = LEN(poly)
+    DIM out = ZEROS(n)
+    DIM i = 0
+    FOR i = 0 TO n - 2 STEP 2
+        DIM x = poly[i]
+        DIM y = poly[i + 1]
+        out[i] = m[0] * x + m[2] * y + m[4]
+        out[i + 1] = m[1] * x + m[3] * y + m[5]
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC TransformPolys(polys, m)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(polys) - 1
+        PUSH(out, TransformPoly(polys[k], m))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ── the filler ─────────────────────────────────────────────────
+
+' Adds the signed area and cover of one edge to the accumulation buffer
+' of a box bw wide, bh high; x already lies in [0, bw], y may be outside.
+' The row sums of the buffer are the coverage of each pixel.
+SUB AccLine(acc, bw, bh, px0, py0, px1, py1)
+    IF ABS(py0 - py1) < 0.000001 THEN RETURN
+    DIM wind = 1.0
+    DIM x0 = px0
+    DIM y0 = py0
+    DIM x1 = px1
+    DIM y1 = py1
+    IF py0 > py1 THEN
+        wind = -1.0
+        x0 = px1
+        y0 = py1
+        x1 = px0
+        y1 = py0
+    ENDIF
+    DIM dxdy = (x1 - x0) / (y1 - y0)
+    DIM x = x0
+    DIM row0 = INT(FLOOR(y0))
+    IF row0 < 0 THEN
+        x = x - y0 * dxdy
+        row0 = 0
+    ENDIF
+    DIM row_end = INT(CEIL(y1))
+    IF row_end > bh THEN row_end = bh
+    DIM stride = bw + 2
+    DIM yy = 0
+    FOR yy = row0 TO row_end - 1
+        DIM base = yy * stride
+        DIM top = yy
+        IF y0 > top THEN top = y0
+        DIM bottom = yy + 1
+        IF y1 < bottom THEN bottom = y1
+        DIM dy = bottom - top
+        DIM xnext = x + dxdy * dy
+        DIM d = dy * wind
+        ' rounding may push a clamped x a hair outside the box
+        DIM xc = x
+        IF xc < 0 THEN xc = 0
+        IF xc > bw THEN xc = bw
+        DIM xnc = xnext
+        IF xnc < 0 THEN xnc = 0
+        IF xnc > bw THEN xnc = bw
+        DIM xa = xc
+        DIM xb = xnc
+        IF xb < xa THEN
+            xa = xnc
+            xb = xc
+        ENDIF
+        DIM xa_floor = FLOOR(xa)
+        DIM xai = INT(xa_floor)
+        DIM xb_ceil = CEIL(xb)
+        DIM xbi = INT(xb_ceil)
+        IF xai < gRowLo[yy] THEN gRowLo[yy] = xai
+        IF xbi + 1 > gRowHi[yy] THEN gRowHi[yy] = xbi + 1
+        IF xbi <= xai + 1 THEN
+            DIM xmf = 0.5 * (xc + xnc) - xa_floor
+            acc[base + xai] = acc[base + xai] + d - d * xmf
+            acc[base + xai + 1] = acc[base + xai + 1] + d * xmf
+        ELSE
+            DIM s = 1 / (xb - xa)
+            DIM xaf = xa - xa_floor
+            DIM a0 = 0.5 * s * (1 - xaf) * (1 - xaf)
+            DIM xbf = xb - xb_ceil + 1
+            DIM am = 0.5 * s * xbf * xbf
+            acc[base + xai] = acc[base + xai] + d * a0
+            IF xbi = xai + 2 THEN
+                acc[base + xai + 1] = acc[base + xai + 1] + d * (1 - a0 - am)
+            ELSE
+                DIM a1 = s * (1.5 - xaf)
+                acc[base + xai + 1] = acc[base + xai + 1] + d * (a1 - a0)
+                DIM xi = 0
+                FOR xi = xai + 2 TO xbi - 2
+                    acc[base + xi] = acc[base + xi] + d * s
+                NEXT xi
+                DIM a2 = a1 + (xbi - xai - 3) * s
+                acc[base + xbi - 1] = acc[base + xbi - 1] + d * (1 - a2 - am)
+            ENDIF
+            acc[base + xbi] = acc[base + xbi] + d * am
+        ENDIF
+        x = xnext
+    NEXT yy
+ENDSUB
+
+' The colour of a gradient at a point of the shape's box, (u, v) from 0
+' to 1 across it.
+FUNC GradientColor(grad, u, v)
+    DIM t = 0.0
+    IF grad{"kind"} = "radial" THEN
+        DIM du = (u - grad{"cx"}) / grad{"r"}
+        DIM dv = (v - grad{"cy"}) / grad{"r"}
+        t = SQR(du * du + dv * dv)
+    ELSE
+        DIM gx = grad{"x2"} - grad{"x1"}
+        DIM gy = grad{"y2"} - grad{"y1"}
+        DIM gl = gx * gx + gy * gy
+        IF gl > 0 THEN t = ((u - grad{"x1"}) * gx + (v - grad{"y1"}) * gy) / gl
+    ENDIF
+    t = Clamp(t, 0, 1)
+    DIM offs = grad{"offsets"}
+    DIM cols = grad{"colors"}
+    DIM n = LEN(offs)
+    IF n = 0 THEN RETURN [0, 0, 0, 1.0]
+    IF t <= offs[0] THEN RETURN cols[0]
+    DIM k = 1
+    FOR k = 1 TO n - 1
+        IF t <= offs[k] THEN
+            DIM span = offs[k] - offs[k - 1]
+            DIM f = 0.0
+            IF span > 0 THEN f = (t - offs[k - 1]) / span
+            DIM ca = cols[k - 1]
+            DIM cb = cols[k]
+            RETURN [ca[0] + (cb[0] - ca[0]) * f, ca[1] + (cb[1] - ca[1]) * f, ca[2] + (cb[2] - ca[2]) * f, ca[3] + (cb[3] - ca[3]) * f]
+        ENDIF
+    NEXT k
+    RETURN cols[n - 1]
+ENDFUNC
+
+' Fills polygons in device coordinates with a colour [r, g, b, a], or with
+' a gradient map when grad is one: coverage by the nonzero winding of all
+' of them together, so a hole drawn the other way round stays open.
+SUB FillPolys(polys, rgba, grad)
+    DIM n_polys = LEN(polys)
+    IF n_polys = 0 THEN RETURN
+    DIM minx = 1e18
+    DIM miny = 1e18
+    DIM maxx = -1e18
+    DIM maxy = -1e18
+    DIM k = 0
+    DIM i = 0
+    FOR k = 0 TO n_polys - 1
+        DIM poly = polys[k]
+        FOR i = 0 TO LEN(poly) - 2 STEP 2
+            IF poly[i] < minx THEN minx = poly[i]
+            IF poly[i] > maxx THEN maxx = poly[i]
+            IF poly[i + 1] < miny THEN miny = poly[i + 1]
+            IF poly[i + 1] > maxy THEN maxy = poly[i + 1]
+        NEXT i
+    NEXT k
+    IF maxx <= 0 ORELSE maxy <= 0 ORELSE minx >= gW ORELSE miny >= gH THEN RETURN
+    DIM ox = INT(FLOOR(minx))
+    DIM oy = INT(FLOOR(miny))
+    IF ox < 0 THEN ox = 0
+    IF oy < 0 THEN oy = 0
+    DIM ex = INT(CEIL(maxx))
+    DIM ey = INT(CEIL(maxy))
+    IF ex > gW THEN ex = gW
+    IF ey > gH THEN ey = gH
+    DIM bw = ex - ox
+    DIM bh = ey - oy
+    IF bw <= 0 ORELSE bh <= 0 THEN RETURN
+    DIM stride = bw + 2
+    DIM acc = ZEROS(stride * bh)
+    gRowLo = RESHAPE([bw + 2], [bh])
+    gRowHi = RESHAPE([-1], [bh])
+    FOR k = 0 TO n_polys - 1
+        DIM pts = polys[k]
+        DIM n = LEN(pts)
+        IF n < 6 THEN CONTINUEFOR
+        DIM px = Clamp(pts[n - 2] - ox, 0, bw)
+        DIM py = pts[n - 1] - oy
+        FOR i = 0 TO n - 2 STEP 2
+            DIM qx = Clamp(pts[i] - ox, 0, bw)
+            DIM qy = pts[i + 1] - oy
+            AccLine(acc, bw, bh, px, py, qx, qy)
+            px = qx
+            py = qy
+        NEXT i
+    NEXT k
+    DIM has_grad = TYPEOF(grad) = "OBJECT"
+    DIM sr = 0
+    DIM sg = 0
+    DIM sb = 0
+    DIM sa = 1.0
+    IF NOT has_grad THEN
+        sr = rgba[0]
+        sg = rgba[1]
+        sb = rgba[2]
+        sa = rgba[3]
+    ENDIF
+    DIM shape_w = maxx - minx
+    DIM shape_h = maxy - miny
+    IF shape_w <= 0 THEN shape_w = 1
+    IF shape_h <= 0 THEN shape_h = 1
+    DIM solid = NOT has_grad ANDALSO sa >= 0.999
+    DIM ir = INT(sr + 0.5)
+    DIM ig = INT(sg + 0.5)
+    DIM ib = INT(sb + 0.5)
+    DIM yy = 0
+    DIM xx = 0
+    FOR yy = 0 TO bh - 1
+        DIM x_lo = gRowLo[yy]
+        DIM x_hi = gRowHi[yy]
+        IF x_hi > bw - 1 THEN x_hi = bw - 1
+        IF x_lo > x_hi THEN CONTINUEFOR
+        DIM run = 0.0
+        DIM base = yy * stride
+        DIM row = (oy + yy) * gW
+        FOR xx = x_lo TO x_hi
+            run = run + acc[base + xx]
+            DIM cov = ABS(run)
+            IF cov > 0.998 ANDALSO solid THEN
+                DIM at = (row + ox + xx) * 4
+                gPix[at] = ir
+                gPix[at + 1] = ig
+                gPix[at + 2] = ib
+                gPix[at + 3] = 255
+            ELSEIF cov > 0.002 THEN
+                IF cov > 1 THEN cov = 1
+                IF has_grad THEN
+                    DIM gc = GradientColor(grad, (ox + xx + 0.5 - minx) / shape_w, (oy + yy + 0.5 - miny) / shape_h)
+                    sr = gc[0]
+                    sg = gc[1]
+                    sb = gc[2]
+                    sa = gc[3]
+                ENDIF
+                DIM alpha = cov * sa
+                DIM idx = (row + ox + xx) * 4
+                DIM da = gPix[idx + 3] / 255
+                DIM oa = alpha + da * (1 - alpha)
+                IF oa > 0 THEN
+                    DIM wd = da * (1 - alpha) / oa
+                    DIM ws = alpha / oa
+                    gPix[idx] = INT(sr * ws + gPix[idx] * wd + 0.5)
+                    gPix[idx + 1] = INT(sg * ws + gPix[idx + 1] * wd + 0.5)
+                    gPix[idx + 2] = INT(sb * ws + gPix[idx + 2] * wd + 0.5)
+                    gPix[idx + 3] = INT(oa * 255 + 0.5)
+                ENDIF
+            ENDIF
+        NEXT xx
+    NEXT yy
+ENDSUB
+
+' ── shapes as polygons, in user coordinates ─────────────────────
+
+FUNC SignedArea(poly)
+    DIM n = LEN(poly)
+    DIM area = 0.0
+    DIM i = 0
+    DIM jx = poly[n - 2]
+    DIM jy = poly[n - 1]
+    FOR i = 0 TO n - 2 STEP 2
+        area = area + jx * poly[i + 1] - poly[i] * jy
+        jx = poly[i]
+        jy = poly[i + 1]
+    NEXT i
+    RETURN area / 2
+ENDFUNC
+
+' The polygon with its points in the order that gives a positive area.
+FUNC Positive(poly)
+    IF SignedArea(poly) >= 0 THEN RETURN poly
+    DIM n = LEN(poly)
+    DIM out = ZEROS(n)
+    DIM i = 0
+    FOR i = 0 TO n - 2 STEP 2
+        out[i] = poly[n - 2 - i]
+        out[i + 1] = poly[n - 1 - i]
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' How many straight pieces an arc of that radius (in device pixels)
+' through that angle needs to look round.
+FUNC ArcSegments(radius_px, sweep)
+    DIM n = INT(CEIL(ABS(sweep) * (radius_px + 2) / 2.5))
+    IF n < 4 THEN n = 4
+    IF n > 180 THEN n = 180
+    RETURN n
+ENDFUNC
+
+' Appends the points of an elliptical arc about (cx, cy) from angle a0
+' through sweep, the ellipse rotated by phi; the start point is left out.
+SUB AppendArc(poly, cx, cy, rx, ry, phi, a0, sweep, scale_px)
+    DIM n = ArcSegments(scale_px * (rx + ry) / 2, sweep)
+    DIM cp = COS(phi)
+    DIM sp = SIN(phi)
+    DIM k = 1
+    FOR k = 1 TO n
+        DIM a = a0 + sweep * k / n
+        DIM ex = rx * COS(a)
+        DIM ey = ry * SIN(a)
+        PUSH(poly, cx + ex * cp - ey * sp)
+        PUSH(poly, cy + ex * sp + ey * cp)
+    NEXT k
+ENDSUB
+
+FUNC EllipsePoly(cx, cy, rx, ry, scale_px)
+    DIM poly = [cx + rx, cy]
+    AppendArc(poly, cx, cy, rx, ry, 0, 0, 2 * MATH.PI, scale_px)
+    RETURN poly
+ENDFUNC
+
+FUNC RectPoly(x, y, w, h, rx, ry, scale_px)
+    IF rx <= 0 ANDALSO ry <= 0 THEN RETURN [x, y, x + w, y, x + w, y + h, x, y + h]
+    IF rx <= 0 THEN rx = ry
+    IF ry <= 0 THEN ry = rx
+    IF rx > w / 2 THEN rx = w / 2
+    IF ry > h / 2 THEN ry = h / 2
+    DIM q = MATH.PI / 2
+    DIM poly = [x + rx, y]
+    PUSH(poly, x + w - rx)
+    PUSH(poly, y)
+    AppendArc(poly, x + w - rx, y + ry, rx, ry, 0, -q, q, scale_px)
+    PUSH(poly, x + w)
+    PUSH(poly, y + h - ry)
+    AppendArc(poly, x + w - rx, y + h - ry, rx, ry, 0, 0, q, scale_px)
+    PUSH(poly, x + rx)
+    PUSH(poly, y + h)
+    AppendArc(poly, x + rx, y + h - ry, rx, ry, 0, q, q, scale_px)
+    PUSH(poly, x)
+    PUSH(poly, y + ry)
+    AppendArc(poly, x + rx, y + ry, rx, ry, 0, 2 * q, q, scale_px)
+    RETURN poly
+ENDFUNC
+
+' Appends a cubic curve, flattened.
+SUB AppendCubic(poly, x0, y0, x1, y1, x2, y2, x3, y3, scale_px)
+    DIM span = ABS(x3 - x0) + ABS(y3 - y0) + ABS(x1 - x0) + ABS(y1 - y0) + ABS(x2 - x3) + ABS(y2 - y3)
+    DIM n = INT(CEIL(span * scale_px / 6))
+    IF n < 4 THEN n = 4
+    IF n > 64 THEN n = 64
+    DIM k = 1
+    FOR k = 1 TO n
+        DIM t = k / n
+        DIM u = 1 - t
+        PUSH(poly, u * u * u * x0 + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * x3)
+        PUSH(poly, u * u * u * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y3)
+    NEXT k
+ENDSUB
+
+SUB AppendQuad(poly, x0, y0, x1, y1, x2, y2, scale_px)
+    AppendCubic(poly, x0, y0, x0 + 2 * (x1 - x0) / 3, y0 + 2 * (y1 - y0) / 3, x2 + 2 * (x1 - x2) / 3, y2 + 2 * (y1 - y2) / 3, x2, y2, scale_px)
+ENDSUB
+
+FUNC VecAngle(ux, uy, vx, vy)
+    RETURN ATAN2(ux * vy - uy * vx, ux * vx + uy * vy)
+ENDFUNC
+
+' Appends an SVG arc from (x1, y1) to (x2, y2): radii, rotation in
+' degrees, the large-arc and sweep flags, as the path data gives them.
+SUB AppendSvgArc(poly, x1, y1, rx_in, ry_in, rot_deg, large, sweep_flag, x2, y2, scale_px)
+    DIM rx = ABS(rx_in)
+    DIM ry = ABS(ry_in)
+    IF rx = 0 ORELSE ry = 0 ORELSE (x1 = x2 ANDALSO y1 = y2) THEN
+        PUSH(poly, x2)
+        PUSH(poly, y2)
+        RETURN
+    ENDIF
+    DIM phi = rot_deg * MATH.PI / 180
+    DIM cp = COS(phi)
+    DIM sp = SIN(phi)
+    DIM dx2 = (x1 - x2) / 2
+    DIM dy2 = (y1 - y2) / 2
+    DIM x1p = cp * dx2 + sp * dy2
+    DIM y1p = -sp * dx2 + cp * dy2
+    DIM lam = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry)
+    IF lam > 1 THEN
+        rx = rx * SQR(lam)
+        ry = ry * SQR(lam)
+    ENDIF
+    DIM root_sign = -1
+    IF large <> sweep_flag THEN root_sign = 1
+    DIM num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p
+    DIM den = rx * rx * y1p * y1p + ry * ry * x1p * x1p
+    DIM coef = 0.0
+    IF den > 0 ANDALSO num > 0 THEN coef = root_sign * SQR(num / den)
+    DIM cxp = coef * rx * y1p / ry
+    DIM cyp = -coef * ry * x1p / rx
+    DIM cx = cp * cxp - sp * cyp + (x1 + x2) / 2
+    DIM cy = sp * cxp + cp * cyp + (y1 + y2) / 2
+    DIM ux = (x1p - cxp) / rx
+    DIM uy = (y1p - cyp) / ry
+    DIM vx = (-x1p - cxp) / rx
+    DIM vy = (-y1p - cyp) / ry
+    DIM theta = VecAngle(1, 0, ux, uy)
+    DIM delta = VecAngle(ux, uy, vx, vy)
+    IF sweep_flag = 0 ANDALSO delta > 0 THEN delta = delta - 2 * MATH.PI
+    IF sweep_flag <> 0 ANDALSO delta < 0 THEN delta = delta + 2 * MATH.PI
+    AppendArc(poly, cx, cy, rx, ry, phi, theta, delta, scale_px)
+    ' the end point exactly as written, free of rounding
+    DIM n = LEN(poly)
+    poly[n - 2] = x2
+    poly[n - 1] = y2
+ENDSUB
+
+' The tokens of path data: a letter is a command, anything else a number.
+FUNC PathTokens(d$)
+    DIM out = []
+    DIM n = LEN(d$)
+    DIM i = 0
+    DIM cur$ = ""
+    DO WHILE i < n
+        DIM c$ = MID$(d$, i, 1)
+        DIM lc$ = LCASE$(c$)
+        IF lc$ >= "a" ANDALSO lc$ <= "z" ANDALSO lc$ <> "e" THEN
+            IF cur$ <> "" THEN PUSH(out, cur$)
+            cur$ = ""
+            PUSH(out, c$)
+        ELSEIF IsDigit(c$) ORELSE c$ = "." THEN
+            IF c$ = "." ANDALSO INSTR(cur$, ".") >= 0 ANDALSO INSTR(cur$, "e") < 0 THEN
+                PUSH(out, cur$)
+                cur$ = ""
+            ENDIF
+            cur$ = cur$ + c$
+        ELSEIF lc$ = "e" THEN
+            IF cur$ <> "" THEN cur$ = cur$ + "e"
+        ELSEIF c$ = "-" ORELSE c$ = "+" THEN
+            IF cur$ <> "" ANDALSO RIGHT$(cur$, 1) <> "e" THEN
+                PUSH(out, cur$)
+                cur$ = ""
+            ENDIF
+            cur$ = cur$ + c$
+        ELSE
+            IF cur$ <> "" ANDALSO cur$ <> "-" ANDALSO cur$ <> "+" THEN PUSH(out, cur$)
+            cur$ = ""
+        ENDIF
+        i = i + 1
+    LOOP
+    IF cur$ <> "" ANDALSO cur$ <> "-" ANDALSO cur$ <> "+" THEN PUSH(out, cur$)
+    RETURN out
+ENDFUNC
+
+' Path data as subpaths: answers {"polys": [...], "closed": [...]}, each
+' subpath a flat polygon and a flag whether a Z closed it.
+FUNC PathPolys(d$, scale_px)
+    DIM toks = PathTokens(d$)
+    DIM polys = []
+    DIM closed = []
+    DIM cur = []
+    DIM cur_closed = 0
+    DIM cmd$ = ""
+    DIM x = 0.0
+    DIM y = 0.0
+    DIM sx = 0.0
+    DIM sy = 0.0
+    DIM lcx = 0.0
+    DIM lcy = 0.0
+    DIM last$ = ""
+    DIM n = LEN(toks)
+    DIM i = 0
+    DO WHILE i < n
+        DIM tok$ = toks[i]
+        DIM lc$ = LCASE$(tok$)
+        IF lc$ >= "a" ANDALSO lc$ <= "z" THEN
+            cmd$ = tok$
+            i = i + 1
+            IF lc$ = "z" THEN
+                IF LEN(cur) >= 4 THEN
+                    PUSH(polys, cur)
+                    PUSH(closed, 1)
+                ENDIF
+                cur = []
+                x = sx
+                y = sy
+                last$ = "z"
+                CONTINUEDO
+            ENDIF
+        ENDIF
+        IF cmd$ = "" THEN
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM rel = LCASE$(cmd$) = cmd$
+        DIM c$ = LCASE$(cmd$)
+        DIM need = 2
+        IF c$ = "h" ORELSE c$ = "v" THEN need = 1
+        IF c$ = "c" THEN need = 6
+        IF c$ = "s" ORELSE c$ = "q" THEN need = 4
+        IF c$ = "a" THEN need = 7
+        IF i + need > n THEN EXITDO
+        DIM args = ZEROS(need)
+        DIM k = 0
+        FOR k = 0 TO need - 1
+            args[k] = VAL(toks[i + k])
+        NEXT k
+        i = i + need
+        DIM ox = 0.0
+        DIM oy = 0.0
+        IF rel THEN
+            ox = x
+            oy = y
+        ENDIF
+        IF c$ = "m" THEN
+            IF LEN(cur) >= 4 THEN
+                PUSH(polys, cur)
+                PUSH(closed, 0)
+            ENDIF
+            x = ox + args[0]
+            y = oy + args[1]
+            sx = x
+            sy = y
+            cur = [x, y]
+            cmd$ = IIF(rel, "l", "L")
+        ELSEIF c$ = "l" THEN
+            x = ox + args[0]
+            y = oy + args[1]
+            PUSH(cur, x)
+            PUSH(cur, y)
+        ELSEIF c$ = "h" THEN
+            x = ox + args[0]
+            PUSH(cur, x)
+            PUSH(cur, y)
+        ELSEIF c$ = "v" THEN
+            y = oy + args[0]
+            PUSH(cur, x)
+            PUSH(cur, y)
+        ELSEIF c$ = "c" THEN
+            AppendCubic(cur, x, y, ox + args[0], oy + args[1], ox + args[2], oy + args[3], ox + args[4], oy + args[5], scale_px)
+            lcx = ox + args[2]
+            lcy = oy + args[3]
+            x = ox + args[4]
+            y = oy + args[5]
+        ELSEIF c$ = "s" THEN
+            DIM c1x = x
+            DIM c1y = y
+            IF last$ = "c" ORELSE last$ = "s" THEN
+                c1x = 2 * x - lcx
+                c1y = 2 * y - lcy
+            ENDIF
+            AppendCubic(cur, x, y, c1x, c1y, ox + args[0], oy + args[1], ox + args[2], oy + args[3], scale_px)
+            lcx = ox + args[0]
+            lcy = oy + args[1]
+            x = ox + args[2]
+            y = oy + args[3]
+        ELSEIF c$ = "q" THEN
+            AppendQuad(cur, x, y, ox + args[0], oy + args[1], ox + args[2], oy + args[3], scale_px)
+            lcx = ox + args[0]
+            lcy = oy + args[1]
+            x = ox + args[2]
+            y = oy + args[3]
+        ELSEIF c$ = "t" THEN
+            DIM qx = x
+            DIM qy = y
+            IF last$ = "q" ORELSE last$ = "t" THEN
+                qx = 2 * x - lcx
+                qy = 2 * y - lcy
+            ENDIF
+            AppendQuad(cur, x, y, qx, qy, ox + args[0], oy + args[1], scale_px)
+            lcx = qx
+            lcy = qy
+            x = ox + args[0]
+            y = oy + args[1]
+        ELSEIF c$ = "a" THEN
+            DIM ex = ox + args[5]
+            DIM ey = oy + args[6]
+            AppendSvgArc(cur, x, y, args[0], args[1], args[2], args[3], args[4], ex, ey, scale_px)
+            x = ex
+            y = ey
+        ENDIF
+        last$ = c$
+    LOOP
+    IF LEN(cur) >= 4 THEN
+        PUSH(polys, cur)
+        PUSH(closed, 0)
+    ENDIF
+    RETURN {"polys": polys, "closed": closed}
+ENDFUNC
+
+' ── strokes ────────────────────────────────────────────────────
+
+' The outline of a stroke along a polyline: one strip per piece, a round
+' joint at every corner, caps as asked (butt, round or square).
+FUNC StrokePolys(pts, is_closed, width, cap$)
+    DIM out = []
+    DIM hw = width / 2
+    DIM n = LEN(pts) \ 2
+    IF n < 1 THEN RETURN out
+    IF n = 1 THEN
+        IF cap$ = "round" THEN PUSH(out, EllipsePoly(pts[0], pts[1], hw, hw, 1))
+        RETURN out
+    ENDIF
+    DIM last = n - 1
+    IF is_closed THEN last = n
+    DIM i = 0
+    FOR i = 0 TO last - 1
+        DIM ax = pts[2 * i]
+        DIM ay = pts[2 * i + 1]
+        DIM j = (i + 1) MOD n
+        DIM bx = pts[2 * j]
+        DIM by = pts[2 * j + 1]
+        DIM dx = bx - ax
+        DIM dy = by - ay
+        DIM d = SQR(dx * dx + dy * dy)
+        IF d < 0.0000001 THEN CONTINUEFOR
+        DIM nx = -dy / d * hw
+        DIM ny = dx / d * hw
+        DIM ex = 0.0
+        DIM ey = 0.0
+        IF cap$ = "square" ANDALSO NOT is_closed THEN
+            ex = dx / d * hw
+            ey = dy / d * hw
+        ENDIF
+        DIM sx0 = ax
+        DIM sy0 = ay
+        DIM sx1 = bx
+        DIM sy1 = by
+        IF i = 0 THEN
+            sx0 = ax - ex
+            sy0 = ay - ey
+        ENDIF
+        IF i = last - 1 THEN
+            sx1 = bx + ex
+            sy1 = by + ey
+        ENDIF
+        PUSH(out, Positive([sx0 + nx, sy0 + ny, sx1 + nx, sy1 + ny, sx1 - nx, sy1 - ny, sx0 - nx, sy0 - ny]))
+    NEXT i
+    IF hw > 0.7 THEN
+        DIM first_joint = 1
+        DIM last_joint = n - 2
+        IF is_closed THEN
+            first_joint = 0
+            last_joint = n - 1
+        ENDIF
+        FOR i = first_joint TO last_joint
+            PUSH(out, EllipsePoly(pts[2 * i], pts[2 * i + 1], hw, hw, 1))
+        NEXT i
+        IF cap$ = "round" ANDALSO NOT is_closed THEN
+            PUSH(out, EllipsePoly(pts[0], pts[1], hw, hw, 1))
+            PUSH(out, EllipsePoly(pts[2 * n - 2], pts[2 * n - 1], hw, hw, 1))
+        ENDIF
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' ── style ──────────────────────────────────────────────────────
+
+' Which properties pass from a group to what is inside it.
+FUNC Inherited(sty)
+    DIM out AS MAP
+    DIM names = ["fill", "stroke", "stroke-width", "fill-opacity", "stroke-opacity", "font-size", "font-weight", "font-family", "text-anchor", "stroke-linecap"]
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM nm$ = names[k]
+        IF MAP.EXISTS(sty, nm$) THEN out{nm$} = sty{nm$}
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Declarations "a: b; c: d" into a style map.
+SUB ApplyDecls(sty, decl$)
+    DIM parts = SPLIT(decl$, ";")
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM part$ = parts[k]
+        DIM colon = INSTR(part$, ":")
+        IF colon < 0 THEN CONTINUEFOR
+        DIM nm$ = LCASE$(TRIM$(LEFT$(part$, colon)))
+        DIM value$ = TRIM$(MID$(part$, colon + 1))
+        IF nm$ <> "" THEN sty{nm$} = value$
+    NEXT k
+ENDSUB
+
+' The text with its /* comments */ and @media blocks taken out: the
+' rendering is the light one.
+FUNC PlainCss$(css$)
+    DIM t$ = css$
+    DO WHILE TRUE
+        DIM a = INSTR(t$, "/*")
+        IF a < 0 THEN EXITDO
+        DIM b = INSTR(MID$(t$, a + 2), "*/")
+        IF b < 0 THEN
+            t$ = LEFT$(t$, a)
+        ELSE
+            t$ = LEFT$(t$, a) + MID$(t$, a + 2 + b + 2)
+        ENDIF
+    LOOP
+    DO WHILE TRUE
+        DIM at = INSTR(t$, "@")
+        IF at < 0 THEN EXITDO
+        DIM open_at = INSTR(MID$(t$, at), "{")
+        IF open_at < 0 THEN
+            t$ = LEFT$(t$, at)
+            EXITDO
+        ENDIF
+        DIM depth = 0
+        DIM i = at + open_at
+        DIM n = LEN(t$)
+        DO WHILE i < n
+            DIM c$ = MID$(t$, i, 1)
+            IF c$ = "{" THEN depth = depth + 1
+            IF c$ = "}" THEN
+                depth = depth - 1
+                IF depth = 0 THEN EXITDO
+            ENDIF
+            i = i + 1
+        LOOP
+        t$ = LEFT$(t$, at) + MID$(t$, i + 1)
+    LOOP
+    RETURN t$
+ENDFUNC
+
+' Reads the rules of a style block: one row per selector, its compounds
+' as tags and class lists, its declarations, and a weight (classes count
+' ten, tags one) that decides between rules that both apply.
+SUB ParseCss(css$)
+    DIM rules = SPLIT(PlainCss$(css$), "}")
+    DIM r = 0
+    FOR r = 0 TO LEN(rules) - 1
+        DIM rule$ = rules[r]
+        DIM brace = INSTR(rule$, "{")
+        IF brace < 0 THEN CONTINUEFOR
+        DIM decl$ = MID$(rule$, brace + 1)
+        DIM selectors = SPLIT(LEFT$(rule$, brace), ",")
+        DIM s = 0
+        FOR s = 0 TO LEN(selectors) - 1
+            DIM sel$ = TRIM$(REPLACE$(REPLACE$(selectors[s], CHR$(10), " "), CHR$(13), " "))
+            IF sel$ = "" THEN CONTINUEFOR
+            DIM compounds = FILTER(LAMBDA w$ -> w$ <> "", SPLIT(sel$, " "))
+            DIM tags = []
+            DIM classes = []
+            DIM spec = 0
+            DIM c = 0
+            FOR c = 0 TO LEN(compounds) - 1
+                DIM comp$ = LCASE$(compounds[c])
+                DIM dot_at = INSTR(comp$, ".")
+                DIM tag$ = comp$
+                DIM class_list$ = ""
+                IF dot_at >= 0 THEN
+                    tag$ = LEFT$(comp$, dot_at)
+                    class_list$ = REPLACE$(MID$(comp$, dot_at + 1), ".", " ")
+                ENDIF
+                IF tag$ = "*" THEN tag$ = ""
+                PUSH(tags, tag$)
+                PUSH(classes, class_list$)
+                IF tag$ <> "" THEN spec = spec + 1
+                IF class_list$ <> "" THEN spec = spec + 10 * LEN(SPLIT(class_list$, " "))
+            NEXT c
+            PUSH(gRuleTags, tags)
+            PUSH(gRuleClasses, classes)
+            PUSH(gRuleDecls, decl$)
+            PUSH(gRuleSpec, spec)
+        NEXT s
+    NEXT r
+ENDSUB
+
+' Whether the element at depth level of the stack matches one compound.
+FUNC CompoundMatches(level, tag$, class_list$)
+    IF tag$ <> "" ANDALSO gStackTag[level] <> tag$ THEN RETURN FALSE
+    IF class_list$ = "" THEN RETURN TRUE
+    DIM have$ = " " + gStackCls[level] + " "
+    DIM wanted = SPLIT(class_list$, " ")
+    DIM k = 0
+    FOR k = 0 TO LEN(wanted) - 1
+        DIM w$ = wanted[k]
+        IF w$ <> "" ANDALSO INSTR(have$, " " + w$ + " ") < 0 THEN RETURN FALSE
+    NEXT k
+    RETURN TRUE
+ENDFUNC
+
+' Whether rule r applies to the element on top of the stack: its last
+' compound is the element, the ones before it ancestors in that order.
+FUNC RuleMatches(r)
+    DIM tags = gRuleTags[r]
+    DIM classes = gRuleClasses[r]
+    DIM nc = LEN(tags)
+    DIM level = LEN(gStackTag) - 1
+    IF nc = 0 ORELSE level < 0 THEN RETURN FALSE
+    DIM last_tag$ = tags[nc - 1]
+    DIM last_cls$ = classes[nc - 1]
+    IF NOT CompoundMatches(level, last_tag$, last_cls$) THEN RETURN FALSE
+    DIM c = nc - 2
+    level = level - 1
+    DO WHILE c >= 0
+        DIM found = 0
+        DIM tg$ = tags[c]
+        DIM cl$ = classes[c]
+        DO WHILE level >= 0
+            IF CompoundMatches(level, tg$, cl$) THEN
+                found = 1
+                level = level - 1
+                EXITDO
+            ENDIF
+            level = level - 1
+        LOOP
+        IF found = 0 THEN RETURN FALSE
+        c = c - 1
+    LOOP
+    RETURN TRUE
+ENDFUNC
+
+' The style of the element on top of the stack: what it inherits, then
+' its presentation attributes, then the style rules that match it in
+' order of weight, then its style attribute.
+FUNC ElementStyle(tree, nid, inherited)
+    DIM sty = Inherited(inherited)
+    DIM attrs = XML.ATTRS(tree, nid)
+    DIM names = MAP.KEYS(attrs)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM nm$ = LCASE$(names[k])
+        IF nm$ = "fill" ORELSE nm$ = "stroke" ORELSE nm$ = "stroke-width" ORELSE nm$ = "opacity" ORELSE nm$ = "fill-opacity" ORELSE nm$ = "stroke-opacity" ORELSE nm$ = "font-size" ORELSE nm$ = "font-weight" ORELSE nm$ = "font-family" ORELSE nm$ = "text-anchor" ORELSE nm$ = "stroke-linecap" ORELSE nm$ = "stop-color" ORELSE nm$ = "stop-opacity" THEN
+            sty{nm$} = attrs{names[k]}
+        ENDIF
+    NEXT k
+    DIM n_rules = LEN(gRuleTags)
+    IF n_rules > 0 THEN
+        DIM hits = []
+        DIM r = 0
+        FOR r = 0 TO n_rules - 1
+            IF RuleMatches(r) THEN PUSH(hits, r)
+        NEXT r
+        IF LEN(hits) > 0 THEN
+            DIM order = GRADE(SELECT(LAMBDA h -> gRuleSpec[h], hits))
+            FOR k = 0 TO LEN(order) - 1
+                DIM hit = hits[order[k]]
+                ApplyDecls(sty, gRuleDecls[hit])
+            NEXT k
+        ENDIF
+    ENDIF
+    IF MAP.EXISTS(attrs, "style") THEN ApplyDecls(sty, attrs{"style"})
+    RETURN sty
+ENDFUNC
+
+FUNC StyleNum(sty, nm$, fallback)
+    IF NOT MAP.EXISTS(sty, nm$) THEN RETURN fallback
+    RETURN NumOf(sty{nm$}, fallback)
+ENDFUNC
+
+FUNC StyleText$(sty, nm$, fallback$)
+    IF NOT MAP.EXISTS(sty, nm$) THEN RETURN fallback$
+    RETURN sty{nm$}
+ENDFUNC
+
+' A paint: {"color": [r, g, b, a]} for a colour, {"grad": map} for a
+' gradient, {"none": TRUE} for nothing to draw.
+FUNC Paint(value$, opacity)
+    DIM v$ = TRIM$(value$)
+    IF LEFT$(LCASE$(v$), 4) = "url(" THEN
+        DIM hash = INSTR(v$, "#")
+        DIM close_at = INSTR(v$, ")")
+        IF hash >= 0 ANDALSO close_at > hash THEN
+            DIM id$ = MID$(v$, hash + 1, close_at - hash - 1)
+            IF MAP.EXISTS(gGrads, id$) THEN
+                DIM grad = gGrads{id$}
+                IF opacity < 1 THEN
+                    DIM scaled AS MAP
+                    scaled{"kind"} = grad{"kind"}
+                    scaled{"x1"} = grad{"x1"}
+                    scaled{"y1"} = grad{"y1"}
+                    scaled{"x2"} = grad{"x2"}
+                    scaled{"y2"} = grad{"y2"}
+                    scaled{"cx"} = grad{"cx"}
+                    scaled{"cy"} = grad{"cy"}
+                    scaled{"r"} = grad{"r"}
+                    scaled{"offsets"} = grad{"offsets"}
+                    DIM faded = []
+                    DIM cols = grad{"colors"}
+                    DIM k = 0
+                    FOR k = 0 TO LEN(cols) - 1
+                        DIM col = cols[k]
+                        PUSH(faded, [col[0], col[1], col[2], col[3] * opacity])
+                    NEXT k
+                    scaled{"colors"} = faded
+                    RETURN {"grad": scaled}
+                ENDIF
+                RETURN {"grad": grad}
+            ENDIF
+        ENDIF
+        RETURN {"color": [0, 0, 0, opacity]}
+    ENDIF
+    DIM col = ParseColor(v$)
+    IF LEN(col) = 0 THEN RETURN {"none": TRUE}
+    RETURN {"color": [col[0], col[1], col[2], col[3] * opacity]}
+ENDFUNC
+
+SUB FillWith(polys, paint)
+    IF MAP.EXISTS(paint, "none") THEN RETURN
+    IF MAP.EXISTS(paint, "grad") THEN
+        FillPolys(polys, [0, 0, 0, 1], paint{"grad"})
+    ELSE
+        FillPolys(polys, paint{"color"}, 0)
+    ENDIF
+ENDSUB
+
+' Draws a shape given as subpaths in user space: the fill, then the
+' stroke, each as the style says.
+SUB DrawShape(polys, closed, sty, m, opacity, fill_default$)
+    DIM fill_val$ = StyleText$(sty, "fill", fill_default$)
+    DIM fill_op = Clamp(StyleNum(sty, "fill-opacity", 1), 0, 1) * opacity
+    DIM device = TransformPolys(polys, m)
+    DIM fill_paint = Paint(fill_val$, fill_op)
+    IF NOT MAP.EXISTS(fill_paint, "none") THEN
+        DIM fillable = []
+        DIM k = 0
+        FOR k = 0 TO LEN(device) - 1
+            IF LEN(device[k]) >= 6 THEN PUSH(fillable, device[k])
+        NEXT k
+        FillWith(fillable, fill_paint)
+    ENDIF
+    DIM stroke_val$ = StyleText$(sty, "stroke", "none")
+    DIM stroke_paint = Paint(stroke_val$, Clamp(StyleNum(sty, "stroke-opacity", 1), 0, 1) * opacity)
+    IF MAP.EXISTS(stroke_paint, "none") THEN RETURN
+    DIM width = StyleNum(sty, "stroke-width", 1) * MatScale(m)
+    IF width <= 0 THEN RETURN
+    DIM cap$ = LCASE$(StyleText$(sty, "stroke-linecap", "butt"))
+    DIM strips = []
+    DIM j = 0
+    FOR j = 0 TO LEN(device) - 1
+        DIM is_closed = 0
+        IF j < LEN(closed) THEN is_closed = closed[j]
+        DIM pieces = StrokePolys(device[j], is_closed, width, cap$)
+        DIM p = 0
+        FOR p = 0 TO LEN(pieces) - 1
+            PUSH(strips, pieces[p])
+        NEXT p
+    NEXT j
+    FillWith(strips, stroke_paint)
+ENDSUB
+
+' ── text ───────────────────────────────────────────────────────
+
+' The font to draw with: the one given, else jdbasic_default.ttf next to
+' the running program, else the repository's resources/fonts; 0 when
+' none of them is there or the file is not TrueType.
+FUNC CurrentFont()
+    DIM want$ = gFontPath$
+    IF want$ = "" THEN
+        DIM beside$ = PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf"
+        IF FILE.EXISTS(beside$) THEN
+            want$ = beside$
+        ELSEIF FILE.EXISTS("resources/fonts/JetBrainsMono-Regular.ttf") THEN
+            want$ = "resources/fonts/JetBrainsMono-Regular.ttf"
+        ENDIF
+    ENDIF
+    IF want$ = "" THEN RETURN 0
+    IF want$ = gFontLoaded$ THEN
+        IF gFontMissing = 1 THEN RETURN 0
+        RETURN gFont
+    ENDIF
+    gFontLoaded$ = want$
+    gFontMissing = 0
+    TRY
+        gFont = TTF.LOAD(want$)
+    CATCH
+        gFontMissing = 1
+        gFont = 0
+    ENDTRY
+    IF gFontMissing = 1 THEN RETURN 0
+    RETURN gFont
+ENDFUNC
+
+' The five by seven font: five column bytes per character, the low bit the
+' top row, for the characters from space to tilde.
+SUB BitmapFont()
+    IF LEN(MAP.KEYS(gBitmap)) > 0 THEN RETURN
+    DIM rows$ = "0000000000 00005F0000 0007000700 147F147F14 242A7F2A12 2313086462 3649552250 0005030000 001C224100 0041221C00 14083E0814 08083E0808 0050300000 0808080808 0060600000 2010080402"
+    rows$ = rows$ + " 3E5149453E 00427F4000 4261514946 2141454B31 1814127F10 2745454539 3C4A494930 0171090503 3649494936 064949291E 0036360000 0056360000 0814224100 1414141414 0041221408 0201510906"
+    rows$ = rows$ + " 324979413E 7E1111117E 7F49494936 3E41414122 7F4141221C 7F49494941 7F09090901 3E4149497A 7F0808087F 00417F4100 2040413F01 7F08142241 7F40404040 7F020C027F 7F0408107F 3E4141413E"
+    rows$ = rows$ + " 7F09090906 3E4151215E 7F09192946 4649494931 01017F0101 3F4040403F 1F2040201F 3F4038403F 6314081463 0708700807 6151494543 007F414100 0204081020 0041417F00 0402010204 4040404040"
+    rows$ = rows$ + " 0001020400 2054545478 7F48444438 3844444420 384444487F 3854545418 087E090102 0C5252523E 7F08040478 00447D4000 2040443D00 7F10284400 00417F4000 7C04180478 7C08040478 3844444438"
+    rows$ = rows$ + " 7C14141408 081414187C 7C08040408 4854545420 043F444020 3C4040207C 1C2040201C 3C4030403C 4428102844 0C5050503C 44645 44C44 0008364100 00007F0000 0041360800 1008081008"
+    DIM glyphs = FILTER(LAMBDA g$ -> g$ <> "", SPLIT(rows$, " "))
+    DIM k = 0
+    FOR k = 0 TO LEN(glyphs) - 1
+        IF k + 32 <= 126 THEN gBitmap{STR$(k + 32)} = glyphs[k]
+    NEXT k
+ENDSUB
+
+' The cells of a bitmap character as squares in user space, the pen at
+' (x, y) on the baseline, cell the size of one dot.
+SUB AppendBitmapGlyph(polys, code, x, y, cell)
+    DIM key$ = STR$(code)
+    IF NOT MAP.EXISTS(gBitmap, key$) THEN RETURN
+    DIM g$ = gBitmap{key$}
+    DIM col = 0
+    FOR col = 0 TO 4
+        DIM bits = HexByte(g$, 2 * col)
+        DIM row = 0
+        FOR row = 0 TO 6
+            IF (bits BAND SHL(1, row)) <> 0 THEN
+                DIM x0 = x + col * cell
+                DIM y0 = y - (7 - row) * cell
+                PUSH(polys, [x0, y0, x0 + cell, y0, x0 + cell, y0 + cell, x0, y0 + cell])
+            ENDIF
+        NEXT row
+    NEXT col
+ENDSUB
+
+' Draws a text with its baseline start at (x, y) in user space: glyph
+' outlines from the font, or bitmap dots when there is none.
+SUB DrawText(x, y, content$, sty, m, opacity)
+    IF content$ = "" THEN RETURN
+    DIM size = StyleNum(sty, "font-size", 16)
+    IF size <= 0 THEN RETURN
+    DIM anchor$ = LCASE$(StyleText$(sty, "text-anchor", "start"))
+    DIM weight$ = LCASE$(StyleText$(sty, "font-weight", "400"))
+    DIM bold = weight$ = "bold" ORELSE weight$ = "bolder" ORELSE NumOf(weight$, 400) >= 600
+    DIM paint = Paint(StyleText$(sty, "fill", "#000"), Clamp(StyleNum(sty, "fill-opacity", 1), 0, 1) * opacity)
+    IF MAP.EXISTS(paint, "none") THEN RETURN
+    DIM font = CurrentFont()
+    DIM polys = []
+    DIM pen = x
+    IF TYPEOF(font) = "OBJECT" THEN
+        DIM glyphs = TTF.GLYPHS(font, content$)
+        DIM widths = font{"widths"}
+        DIM s = size / TTF.UPEM(font)
+        DIM total = 0.0
+        DIM k = 0
+        FOR k = 0 TO LEN(glyphs) - 1
+            total = total + widths[glyphs[k]] * s
+        NEXT k
+        IF anchor$ = "middle" THEN pen = x - total / 2
+        IF anchor$ = "end" THEN pen = x - total
+        FOR k = 0 TO LEN(glyphs) - 1
+            DIM gid = glyphs[k]
+            DIM contours = TTF.OUTLINE(font, gid)
+            DIM c = 0
+            FOR c = 0 TO LEN(contours) - 1
+                DIM src = contours[c]
+                DIM n = LEN(src)
+                DIM poly = ZEROS(n)
+                DIM i = 0
+                FOR i = 0 TO n - 2 STEP 2
+                    poly[i] = pen + src[i] * s
+                    poly[i + 1] = y - src[i + 1] * s
+                NEXT i
+                PUSH(polys, poly)
+            NEXT c
+            pen = pen + widths[gid] * s
+        NEXT k
+    ELSE
+        BitmapFont()
+        DIM codes = TTF.CODEPOINTS(content$)
+        DIM cell = size / 9
+        DIM total_w = LEN(codes) * 6 * cell
+        IF anchor$ = "middle" THEN pen = x - total_w / 2
+        IF anchor$ = "end" THEN pen = x - total_w
+        DIM j = 0
+        FOR j = 0 TO LEN(codes) - 1
+            AppendBitmapGlyph(polys, codes[j], pen, y, cell)
+            pen = pen + 6 * cell
+        NEXT j
+    ENDIF
+    IF LEN(polys) = 0 THEN RETURN
+    DIM device = TransformPolys(polys, m)
+    FillWith(device, paint)
+    IF bold ANDALSO TYPEOF(font) = "OBJECT" THEN
+        DIM strips = []
+        DIM q = 0
+        FOR q = 0 TO LEN(device) - 1
+            DIM pieces = StrokePolys(device[q], 1, size * MatScale(m) * 0.045, "butt")
+            DIM p = 0
+            FOR p = 0 TO LEN(pieces) - 1
+                PUSH(strips, pieces[p])
+            NEXT p
+        NEXT q
+        FillWith(strips, paint)
+    ENDIF
+ENDSUB
+
+' The text of an element with the text of its tspans, in order.
+FUNC TextContent$(tree, nid)
+    DIM out$ = ""
+    DIM kids = XML.CHILDREN(tree, nid)
+    DIM k = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        DIM kind$ = XML.KIND$(tree, kid)
+        IF kind$ = "text" ORELSE kind$ = "cdata" THEN
+            out$ = out$ + XML.TEXT$(tree, kid)
+        ELSEIF kind$ = "element" THEN
+            out$ = out$ + TextContent$(tree, kid)
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' ── the document ───────────────────────────────────────────────
+
+FUNC AttrNum(tree, nid, nm$, fallback)
+    RETURN NumOf(XML.ATTR$(tree, nid, nm$, ""), fallback)
+ENDFUNC
+
+' A fraction from "50%" or "0.5".
+FUNC Fraction(s$, fallback)
+    DIM t$ = TRIM$(s$)
+    IF t$ = "" THEN RETURN fallback
+    DIM v = NumOf(t$, fallback)
+    IF INSTR(t$, "%") >= 0 THEN v = v / 100
+    RETURN v
+ENDFUNC
+
+' Reads a gradient element into gGrads under its id.
+SUB CollectGradient(tree, nid, kind$)
+    DIM id$ = XML.ATTR$(tree, nid, "id", "")
+    IF id$ = "" THEN RETURN
+    DIM grad AS MAP
+    grad{"kind"} = kind$
+    grad{"x1"} = Fraction(XML.ATTR$(tree, nid, "x1", ""), 0)
+    grad{"y1"} = Fraction(XML.ATTR$(tree, nid, "y1", ""), 0)
+    grad{"x2"} = Fraction(XML.ATTR$(tree, nid, "x2", ""), 1)
+    grad{"y2"} = Fraction(XML.ATTR$(tree, nid, "y2", ""), 0)
+    grad{"cx"} = Fraction(XML.ATTR$(tree, nid, "cx", ""), 0.5)
+    grad{"cy"} = Fraction(XML.ATTR$(tree, nid, "cy", ""), 0.5)
+    grad{"r"} = Fraction(XML.ATTR$(tree, nid, "r", ""), 0.5)
+    IF grad{"r"} <= 0 THEN grad{"r"} = 0.5
+    DIM offsets = []
+    DIM colors = []
+    DIM stops = XML.ELEMENTS(tree, nid, "stop")
+    DIM k = 0
+    FOR k = 0 TO LEN(stops) - 1
+        DIM st = stops[k]
+        DIM sty AS MAP
+        sty{"stop-color"} = XML.ATTR$(tree, st, "stop-color", "#000")
+        sty{"stop-opacity"} = XML.ATTR$(tree, st, "stop-opacity", "1")
+        IF XML.HAS(tree, st, "style") THEN ApplyDecls(sty, XML.ATTR$(tree, st, "style", ""))
+        DIM col = ParseColor(sty{"stop-color"})
+        IF LEN(col) = 0 THEN col = [0, 0, 0, 0]
+        col[3] = col[3] * Clamp(NumOf(sty{"stop-opacity"}, 1), 0, 1)
+        DIM off = Fraction(XML.ATTR$(tree, st, "offset", "0"), 0)
+        IF k > 0 ANDALSO off < offsets[k - 1] THEN off = offsets[k - 1]
+        PUSH(offsets, Clamp(off, 0, 1))
+        PUSH(colors, col)
+    NEXT k
+    grad{"offsets"} = offsets
+    grad{"colors"} = colors
+    gGrads{id$} = grad
+ENDSUB
+
+' Style blocks and gradients anywhere in the document, read before any
+' shape is drawn.
+SUB CollectDefs(tree, nid)
+    DIM kids = XML.CHILDREN(tree, nid)
+    DIM k = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        IF XML.KIND$(tree, kid) <> "element" THEN CONTINUEFOR
+        DIM tag$ = LCASE$(XML.LOCAL$(tree, kid))
+        IF tag$ = "style" THEN
+            ParseCss(TextContent$(tree, kid))
+        ELSEIF tag$ = "lineargradient" THEN
+            CollectGradient(tree, kid, "linear")
+        ELSEIF tag$ = "radialgradient" THEN
+            CollectGradient(tree, kid, "radial")
+        ELSE
+            CollectDefs(tree, kid)
+        ENDIF
+    NEXT k
+ENDSUB
+
+FUNC PointsPoly(tree, nid)
+    RETURN Nums(XML.ATTR$(tree, nid, "points", ""))
+ENDFUNC
+
+' Draws one element and what is inside it.
+SUB DrawElement(tree, nid, parent_m, inherited, parent_opacity)
+    DIM tag$ = LCASE$(XML.LOCAL$(tree, nid))
+    IF tag$ = "defs" ORELSE tag$ = "style" ORELSE tag$ = "title" ORELSE tag$ = "desc" ORELSE tag$ = "metadata" ORELSE tag$ = "lineargradient" ORELSE tag$ = "radialgradient" ORELSE tag$ = "clippath" ORELSE tag$ = "mask" ORELSE tag$ = "pattern" ORELSE tag$ = "marker" ORELSE tag$ = "symbol" THEN RETURN
+    PUSH(gStackTag, tag$)
+    PUSH(gStackCls, LCASE$(XML.ATTR$(tree, nid, "class", "")))
+    DIM sty = ElementStyle(tree, nid, inherited)
+    DIM opacity = parent_opacity * Clamp(StyleNum(sty, "opacity", 1), 0, 1)
+    DIM m = parent_m
+    IF XML.HAS(tree, nid, "transform") THEN m = MatCompose(parent_m, ParseTransform(XML.ATTR$(tree, nid, "transform", "")))
+    DIM scale_px = MatScale(m)
+    IF tag$ = "g" ORELSE tag$ = "svg" ORELSE tag$ = "a" ORELSE tag$ = "switch" THEN
+        DIM kids = XML.CHILDREN(tree, nid)
+        DIM k = 0
+        FOR k = 0 TO LEN(kids) - 1
+            DIM kid = kids[k]
+            IF XML.KIND$(tree, kid) = "element" THEN DrawElement(tree, kid, m, sty, opacity)
+        NEXT k
+    ELSEIF tag$ = "rect" THEN
+        DIM w = AttrNum(tree, nid, "width", 0)
+        DIM h = AttrNum(tree, nid, "height", 0)
+        IF w > 0 ANDALSO h > 0 THEN
+            DIM rx = AttrNum(tree, nid, "rx", 0)
+            DIM ry = AttrNum(tree, nid, "ry", 0)
+            DrawShape([RectPoly(AttrNum(tree, nid, "x", 0), AttrNum(tree, nid, "y", 0), w, h, rx, ry, scale_px)], [1], sty, m, opacity, "#000")
+        ENDIF
+    ELSEIF tag$ = "circle" THEN
+        DIM r = AttrNum(tree, nid, "r", 0)
+        IF r > 0 THEN DrawShape([EllipsePoly(AttrNum(tree, nid, "cx", 0), AttrNum(tree, nid, "cy", 0), r, r, scale_px)], [1], sty, m, opacity, "#000")
+    ELSEIF tag$ = "ellipse" THEN
+        DIM erx = AttrNum(tree, nid, "rx", 0)
+        DIM ery = AttrNum(tree, nid, "ry", 0)
+        IF erx > 0 ANDALSO ery > 0 THEN DrawShape([EllipsePoly(AttrNum(tree, nid, "cx", 0), AttrNum(tree, nid, "cy", 0), erx, ery, scale_px)], [1], sty, m, opacity, "#000")
+    ELSEIF tag$ = "line" THEN
+        DrawShape([[AttrNum(tree, nid, "x1", 0), AttrNum(tree, nid, "y1", 0), AttrNum(tree, nid, "x2", 0), AttrNum(tree, nid, "y2", 0)]], [0], sty, m, opacity, "none")
+    ELSEIF tag$ = "polyline" THEN
+        DIM pl = PointsPoly(tree, nid)
+        IF LEN(pl) >= 4 THEN DrawShape([pl], [0], sty, m, opacity, "#000")
+    ELSEIF tag$ = "polygon" THEN
+        DIM pg = PointsPoly(tree, nid)
+        IF LEN(pg) >= 4 THEN DrawShape([pg], [1], sty, m, opacity, "#000")
+    ELSEIF tag$ = "path" THEN
+        DIM parsed = PathPolys(XML.ATTR$(tree, nid, "d", ""), scale_px)
+        IF LEN(parsed{"polys"}) > 0 THEN DrawShape(parsed{"polys"}, parsed{"closed"}, sty, m, opacity, "#000")
+    ELSEIF tag$ = "text" THEN
+        DrawText(AttrNum(tree, nid, "x", 0), AttrNum(tree, nid, "y", 0), TextContent$(tree, nid), sty, m, opacity)
+    ENDIF
+    DIM dropped_tag$ = POP(gStackTag)
+    DIM dropped_cls$ = POP(gStackCls)
+ENDSUB
+
+' ── the public calls ───────────────────────────────────────────
+
+' The TrueType file text is drawn with from now on; "" goes back to the
+' search for jdbasic_default.ttf.
+EXPORT SUB FONT(path$)
+    gFontPath$ = path$
+ENDSUB
+
+FUNC OptNum(opts, nm$, fallback)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN fallback
+    IF NOT MAP.EXISTS(opts, nm$) THEN RETURN fallback
+    RETURN opts{nm$}
+ENDFUNC
+
+FUNC OptText$(opts, nm$, fallback$)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN fallback$
+    IF NOT MAP.EXISTS(opts, nm$) THEN RETURN fallback$
+    RETURN "" + opts{nm$}
+ENDFUNC
+
+' SVG markup as an IMG image (RGBA). Options: "scale" multiplies the size
+' (2 for a crisp picture on a dense screen), "background" is a colour or
+' "none" for a transparent page, "font" a TrueType file for the text.
+EXPORT FUNC RENDER(markup$, opts = 0)
+    DIM tree = XML.PARSE(markup$)
+    DIM root = XML.ROOT(tree)
+    IF root < 0 ORELSE LCASE$(XML.LOCAL$(tree, root)) <> "svg" THEN THROW "RASTER: the markup has no svg element"
+    DIM scale = OptNum(opts, "scale", 1)
+    IF scale <= 0 THEN THROW "RASTER: the scale must be above zero"
+    DIM font$ = OptText$(opts, "font", "")
+    DIM saved_font$ = gFontPath$
+    IF font$ <> "" THEN gFontPath$ = font$
+    DIM vb = Nums(XML.ATTR$(tree, root, "viewBox", ""))
+    DIM w_user = AttrNum(tree, root, "width", 0)
+    DIM h_user = AttrNum(tree, root, "height", 0)
+    IF LEN(vb) = 4 THEN
+        IF w_user <= 0 ORELSE INSTR(XML.ATTR$(tree, root, "width", ""), "%") >= 0 THEN w_user = vb[2]
+        IF h_user <= 0 ORELSE INSTR(XML.ATTR$(tree, root, "height", ""), "%") >= 0 THEN h_user = vb[3]
+    ENDIF
+    IF w_user <= 0 THEN w_user = 300
+    IF h_user <= 0 THEN h_user = 150
+    gW = INT(w_user * scale + 0.5)
+    gH = INT(h_user * scale + 0.5)
+    IF gW < 1 THEN gW = 1
+    IF gH < 1 THEN gH = 1
+    DIM m = [scale, 0, 0, scale, 0, 0]
+    IF LEN(vb) = 4 ANDALSO vb[2] > 0 ANDALSO vb[3] > 0 THEN
+        DIM sx = w_user / vb[2]
+        DIM sy = h_user / vb[3]
+        DIM uniform = sx
+        IF sy < uniform THEN uniform = sy
+        DIM tx = (w_user - vb[2] * uniform) / 2 - vb[0] * uniform
+        DIM ty = (h_user - vb[3] * uniform) / 2 - vb[1] * uniform
+        m = MatCompose(m, [uniform, 0, 0, uniform, tx, ty])
+    ENDIF
+    DIM bg$ = OptText$(opts, "background", "#fff")
+    DIM bg = ParseColor(bg$)
+    IF LEN(bg) = 0 THEN
+        gPix = ZEROS(gW * gH * 4)
+    ELSE
+        gPix = RESHAPE([INT(bg[0] + 0.5), INT(bg[1] + 0.5), INT(bg[2] + 0.5), INT(bg[3] * 255 + 0.5)], [gW * gH * 4])
+    ENDIF
+    gRuleTags = []
+    gRuleClasses = []
+    gRuleDecls = []
+    gRuleSpec = []
+    gGrads = {}
+    gStackTag = []
+    gStackCls = []
+    CollectDefs(tree, root)
+    DIM base AS MAP
+    base{"fill"} = "#000"
+    base{"stroke"} = "none"
+    base{"stroke-width"} = "1"
+    base{"font-size"} = "16"
+    base{"font-weight"} = "400"
+    base{"text-anchor"} = "start"
+    DrawElement(tree, root, m, base, 1.0)
+    gFontPath$ = saved_font$
+    DIM img = {"width": gW, "height": gH, "channels": 4, "pixels": gPix}
+    gPix = []
+    RETURN img
+ENDFUNC
+
+' The markup rendered and written as a PNG.
+EXPORT SUB WRITEPNG(markup$, path$, opts = 0)
+    IMG.WRITEPNG(RENDER(markup$, opts), path$, {"filter": "none"})
+ENDSUB

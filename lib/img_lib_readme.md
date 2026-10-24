@@ -123,10 +123,10 @@ Pillow's own resize of the PNG this module wrote.
 | Step | Interpreted | Compiled (`-c`) |
 |------|-------------|-----------------|
 | `DECODE` | 1.8 s | 0.18 s |
-| `ENCODE$` adaptive, level 6 (184 KB) | 7.1 s | 1.4 s |
+| `ENCODE$` adaptive, level 6 (184 KB) | 4.7 s | 2.1 s |
 | `ENCODE$` paeth, level 6 (203 KB) | 2.8 s | 0.67 s |
-| `ENCODE$` sub, level 1 (47 KB) | 1.7 s | 0.56 s |
-| `ENCODE$` none, level 0 (1.2 MB) | 1.5 s | 0.55 s |
+| `ENCODE$` sub, level 1 (47 KB) | 0.8 s | 0.3 s |
+| `ENCODE$` none, level 0 (1.2 MB) | 0.2 s | 0.06 s |
 | `RESIZE` to 160x120 bilinear | 1.6 s | 0.08 s |
 | `GRAY` | 0.14 s | 0.009 s |
 | `EDGES` on the gray image | 0.95 s | 0.05 s |

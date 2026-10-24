@@ -30,6 +30,7 @@ PRINT TTF.MISSING(serif, "ok ✓ 中")          ' code points without a glyph
 | `WIDTH(font, text$)` | The advance width of a text in font units; divide by `UPEM` and multiply by the size in points. |
 | `UPEM(font)` | Font units per em. |
 | `MISSING(font, text$)` | The code points above the space that the font has no glyph for. |
+| `OUTLINE(font, gid)` | The outline of a glyph: an array of closed contours, each a flat `[x0, y0, x1, y1, ...]` polygon in font units with y up, the quadratic curves flattened. A space answers an empty array; read once per glyph and kept. RASTER draws text with it. |
 
 ## Notes
 

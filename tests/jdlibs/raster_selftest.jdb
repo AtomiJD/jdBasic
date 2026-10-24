@@ -1,0 +1,181 @@
+' RASTER: SVG drawn into pixels and probed at known coordinates: fills,
+' strokes, coverage at an edge, transforms, gradients, the style block,
+' opacity, paths with arcs, text from the font and from the bitmap
+' fallback, the viewBox, a transparent page, and a chart from SVG written
+' as a PNG that IMG reads back.
+
+IMPORT TESTKIT, RASTER, IMG, SVG
+
+DIM Q$ = CHR$(34)
+DIM head$ = "<svg xmlns=" + Q$ + "http://www.w3.org/2000/svg" + Q$ + " width=" + Q$ + "100" + Q$ + " height=" + Q$ + "60" + Q$ + ">"
+DIM tail$ = "</svg>"
+
+FUNC Px(img, x, y)
+    RETURN IMG.GETPIXEL(img, x, y)
+ENDFUNC
+
+FUNC IsColor(p, r, g, b)
+    RETURN ABS(p[0] - r) <= 2 ANDALSO ABS(p[1] - g) <= 2 ANDALSO ABS(p[2] - b) <= 2
+ENDFUNC
+
+FUNC IsWhite(p)
+    RETURN IsColor(p, 255, 255, 255)
+ENDFUNC
+
+' How many pixels of the image are darker than white.
+FUNC InkCount(img)
+    DIM px = img{"pixels"}
+    DIM n = IMG.WIDTH(img) * IMG.HEIGHT(img)
+    DIM i = 0
+    DIM ink = 0
+    FOR i = 0 TO n - 1
+        IF px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2] < 750 THEN ink = ink + 1
+    NEXT i
+    RETURN ink
+ENDFUNC
+
+' ---- the page ----
+
+DIM blank = RASTER.RENDER(head$ + tail$)
+TESTKIT.EQ(IMG.WIDTH(blank), 100, "the width of the svg element")
+TESTKIT.EQ(IMG.HEIGHT(blank), 60, "and its height")
+TESTKIT.EQ(IMG.CHANNELS(blank), 4, "RGBA")
+TESTKIT.ISTRUE(IsWhite(Px(blank, 50, 30)), "a white page by default")
+TESTKIT.EQ(Px(blank, 50, 30)[3], 255, "opaque")
+
+DIM see_through = RASTER.RENDER(head$ + tail$, {"background": "none"})
+TESTKIT.EQ(Px(see_through, 50, 30)[3], 0, "background none leaves the page transparent")
+
+DIM scaled = RASTER.RENDER(head$ + tail$, {"scale": 2})
+TESTKIT.EQ(IMG.WIDTH(scaled), 200, "scale doubles the width")
+TESTKIT.EQ(IMG.HEIGHT(scaled), 120, "and the height")
+
+' ---- fills ----
+
+DIM box_img = RASTER.RENDER(head$ + "<rect x=" + Q$ + "10" + Q$ + " y=" + Q$ + "10" + Q$ + " width=" + Q$ + "40" + Q$ + " height=" + Q$ + "20" + Q$ + " fill=" + Q$ + "#4e79a7" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(box_img, 30, 20), 78, 121, 167), "a rect is filled with its colour")
+TESTKIT.ISTRUE(IsColor(Px(box_img, 10, 10), 78, 121, 167), "from its first pixel")
+TESTKIT.ISTRUE(IsColor(Px(box_img, 49, 29), 78, 121, 167), "to its last")
+TESTKIT.ISTRUE(IsWhite(Px(box_img, 50, 20)), "and not one pixel further right")
+TESTKIT.ISTRUE(IsWhite(Px(box_img, 30, 30)), "nor further down")
+TESTKIT.ISTRUE(IsWhite(Px(box_img, 9, 20)), "nor left of it")
+
+DIM half = RASTER.RENDER(head$ + "<rect x=" + Q$ + "10.5" + Q$ + " y=" + Q$ + "10" + Q$ + " width=" + Q$ + "40" + Q$ + " height=" + Q$ + "20" + Q$ + " fill=" + Q$ + "black" + Q$ + "/>" + tail$)
+DIM edge = Px(half, 10, 20)
+TESTKIT.ISTRUE(edge[0] > 100 ANDALSO edge[0] < 156, "an edge on a half pixel covers it half: " + STR$(edge[0]))
+TESTKIT.ISTRUE(IsColor(Px(half, 11, 20), 0, 0, 0), "the next pixel is covered whole")
+
+DIM disc = RASTER.RENDER(head$ + "<circle cx=" + Q$ + "50" + Q$ + " cy=" + Q$ + "30" + Q$ + " r=" + Q$ + "20" + Q$ + " fill=" + Q$ + "red" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(disc, 50, 30), 255, 0, 0), "a circle is filled at its centre")
+TESTKIT.ISTRUE(IsColor(Px(disc, 50, 12), 255, 0, 0), "and near its top")
+TESTKIT.ISTRUE(IsWhite(Px(disc, 33, 13)), "but not in the corner of its box")
+
+DIM poly = RASTER.RENDER(head$ + "<polygon points=" + Q$ + "10,50 50,10 90,50" + Q$ + " fill=" + Q$ + "#0f0" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(poly, 50, 40), 0, 255, 0), "a polygon is filled inside")
+TESTKIT.ISTRUE(IsWhite(Px(poly, 15, 15)), "and not outside its slanted edge")
+
+DIM ring = RASTER.RENDER(head$ + "<path d=" + Q$ + "M 30 30 m -20 0 a 20 20 0 1 0 40 0 a 20 20 0 1 0 -40 0 M 30 30 m -10 0 a 10 10 0 1 1 20 0 a 10 10 0 1 1 -20 0" + Q$ + " fill=" + Q$ + "black" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(ring, 30, 15), 0, 0, 0), "a ring path is filled between its arcs")
+TESTKIT.ISTRUE(IsWhite(Px(ring, 30, 30)), "and the hole wound the other way stays open")
+
+DIM pie = RASTER.RENDER(head$ + "<path d=" + Q$ + "M 50 30 L 70 30 A 20 20 0 0 1 50 50 Z" + Q$ + " fill=" + Q$ + "blue" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(pie, 58, 38), 0, 0, 255), "a pie slice is filled inside its arc")
+TESTKIT.ISTRUE(IsWhite(Px(pie, 42, 22)), "and empty in the opposite quadrant")
+TESTKIT.ISTRUE(IsWhite(Px(pie, 68, 48)), "and outside the arc")
+
+' ---- strokes ----
+
+DIM hair = RASTER.RENDER(head$ + "<line x1=" + Q$ + "10" + Q$ + " y1=" + Q$ + "30.5" + Q$ + " x2=" + Q$ + "90" + Q$ + " y2=" + Q$ + "30.5" + Q$ + " stroke=" + Q$ + "black" + Q$ + " stroke-width=" + Q$ + "1" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(hair, 50, 30), 0, 0, 0), "a one pixel line on the pixel centre is black there")
+TESTKIT.ISTRUE(IsWhite(Px(hair, 50, 29)), "and white above")
+TESTKIT.ISTRUE(IsWhite(Px(hair, 50, 31)), "and below")
+
+DIM thick = RASTER.RENDER(head$ + "<line x1=" + Q$ + "10" + Q$ + " y1=" + Q$ + "30" + Q$ + " x2=" + Q$ + "90" + Q$ + " y2=" + Q$ + "30" + Q$ + " stroke=" + Q$ + "#333" + Q$ + " stroke-width=" + Q$ + "6" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(thick, 50, 28), 51, 51, 51), "a six pixel line covers three rows above its middle")
+TESTKIT.ISTRUE(IsColor(Px(thick, 50, 32), 51, 51, 51), "and three below")
+TESTKIT.ISTRUE(IsWhite(Px(thick, 50, 26)), "and no fourth")
+
+DIM outlined = RASTER.RENDER(head$ + "<rect x=" + Q$ + "10" + Q$ + " y=" + Q$ + "10" + Q$ + " width=" + Q$ + "40" + Q$ + " height=" + Q$ + "20" + Q$ + " fill=" + Q$ + "none" + Q$ + " stroke=" + Q$ + "black" + Q$ + " stroke-width=" + Q$ + "2" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(IsWhite(Px(outlined, 30, 20)), "fill none leaves the inside empty")
+TESTKIT.ISTRUE(IsColor(Px(outlined, 30, 10), 0, 0, 0), "while the stroke sits on the edge")
+
+' ---- transforms ----
+
+DIM moved = RASTER.RENDER(head$ + "<g transform=" + Q$ + "translate(20 10)" + Q$ + "><rect x=" + Q$ + "0" + Q$ + " y=" + Q$ + "0" + Q$ + " width=" + Q$ + "10" + Q$ + " height=" + Q$ + "10" + Q$ + "/></g>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(moved, 25, 15), 0, 0, 0), "a translated group moves its rect")
+TESTKIT.ISTRUE(IsWhite(Px(moved, 5, 5)), "away from where it was")
+
+DIM turned = RASTER.RENDER(head$ + "<rect x=" + Q$ + "40" + Q$ + " y=" + Q$ + "20" + Q$ + " width=" + Q$ + "40" + Q$ + " height=" + Q$ + "4" + Q$ + " transform=" + Q$ + "rotate(90 40 20)" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(turned, 38, 40), 0, 0, 0), "a rect rotated about its corner stands up")
+TESTKIT.ISTRUE(IsWhite(Px(turned, 60, 22)), "and no longer lies where it was")
+
+DIM grown = RASTER.RENDER(head$ + "<g transform=" + Q$ + "scale(2)" + Q$ + "><rect x=" + Q$ + "5" + Q$ + " y=" + Q$ + "5" + Q$ + " width=" + Q$ + "10" + Q$ + " height=" + Q$ + "10" + Q$ + "/></g>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(grown, 28, 28), 0, 0, 0), "scale doubles a rect")
+TESTKIT.ISTRUE(IsWhite(Px(grown, 31, 28)), "to exactly twice its size")
+
+' ---- paint ----
+
+DIM faded = RASTER.RENDER(head$ + "<rect x=" + Q$ + "10" + Q$ + " y=" + Q$ + "10" + Q$ + " width=" + Q$ + "40" + Q$ + " height=" + Q$ + "20" + Q$ + " fill=" + Q$ + "black" + Q$ + " opacity=" + Q$ + "0.5" + Q$ + "/>" + tail$)
+DIM middle = Px(faded, 30, 20)
+TESTKIT.ISTRUE(middle[0] > 120 ANDALSO middle[0] < 136, "half opacity over white gives mid gray: " + STR$(middle[0]))
+
+DIM styled = RASTER.RENDER(head$ + "<rect x=" + Q$ + "10" + Q$ + " y=" + Q$ + "10" + Q$ + " width=" + Q$ + "40" + Q$ + " height=" + Q$ + "20" + Q$ + " style=" + Q$ + "fill: rgb(0, 128, 0); stroke: none" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(styled, 30, 20), 0, 128, 0), "the style attribute sets the fill")
+
+DIM css$ = "<defs><style>.pg rect{fill:#808080}.pg .hot{fill:#f00}@media (prefers-color-scheme: dark){.pg rect{fill:#fff}}</style></defs>"
+DIM ruled = RASTER.RENDER(head$ + css$ + "<g class=" + Q$ + "pg" + Q$ + "><rect x=" + Q$ + "0" + Q$ + " y=" + Q$ + "0" + Q$ + " width=" + Q$ + "40" + Q$ + " height=" + Q$ + "60" + Q$ + "/><rect class=" + Q$ + "hot" + Q$ + " x=" + Q$ + "60" + Q$ + " y=" + Q$ + "0" + Q$ + " width=" + Q$ + "40" + Q$ + " height=" + Q$ + "60" + Q$ + "/></g>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(ruled, 20, 30), 128, 128, 128), "a style rule by tag under a class applies")
+TESTKIT.ISTRUE(IsColor(Px(ruled, 80, 30), 255, 0, 0), "a rule with a class outweighs one with a tag")
+
+DIM grad$ = "<defs><linearGradient id=" + Q$ + "g1" + Q$ + " x1=" + Q$ + "0" + Q$ + " y1=" + Q$ + "0" + Q$ + " x2=" + Q$ + "1" + Q$ + " y2=" + Q$ + "0" + Q$ + "><stop offset=" + Q$ + "0%" + Q$ + " stop-color=" + Q$ + "#000" + Q$ + "/><stop offset=" + Q$ + "100%" + Q$ + " stop-color=" + Q$ + "#fff" + Q$ + "/></linearGradient></defs>"
+DIM shaded = RASTER.RENDER(head$ + grad$ + "<rect x=" + Q$ + "0" + Q$ + " y=" + Q$ + "0" + Q$ + " width=" + Q$ + "100" + Q$ + " height=" + Q$ + "60" + Q$ + " fill=" + Q$ + "url(#g1)" + Q$ + "/>" + tail$)
+TESTKIT.ISTRUE(Px(shaded, 2, 30)[0] < 20, "a gradient starts dark on the left")
+TESTKIT.ISTRUE(Px(shaded, 97, 30)[0] > 235, "and ends light on the right")
+DIM centre = Px(shaded, 50, 30)[0]
+TESTKIT.ISTRUE(centre > 110 ANDALSO centre < 146, "with the middle in between: " + STR$(centre))
+
+' ---- text ----
+
+DIM word_svg$ = head$ + "<text x=" + Q$ + "50" + Q$ + " y=" + Q$ + "40" + Q$ + " font-size=" + Q$ + "24" + Q$ + " text-anchor=" + Q$ + "middle" + Q$ + ">Hello</text>" + tail$
+DIM words = RASTER.RENDER(word_svg$)
+DIM ink = InkCount(words)
+TESTKIT.ISTRUE(ink > 150, "text puts ink on the page: " + STR$(ink))
+TESTKIT.ISTRUE(IsWhite(Px(words, 50, 5)), "above the line stays white")
+TESTKIT.ISTRUE(IsWhite(Px(words, 5, 30)), "and so does the margin left of a centred word")
+TESTKIT.ISTRUE(IsWhite(Px(words, 95, 30)), "and right of it")
+
+DIM at_start = RASTER.RENDER(head$ + "<text x=" + Q$ + "4" + Q$ + " y=" + Q$ + "40" + Q$ + " font-size=" + Q$ + "24" + Q$ + ">Hello</text>" + tail$)
+TESTKIT.ISTRUE(InkCount(IMG.CROP(at_start, 0, 0, 50, 60)) > InkCount(IMG.CROP(at_start, 50, 0, 50, 60)), "text-anchor start keeps the ink on the left")
+
+RASTER.FONT("no/such/font.ttf")
+DIM dots = RASTER.RENDER(word_svg$)
+RASTER.FONT("")
+DIM dot_ink = InkCount(dots)
+TESTKIT.ISTRUE(dot_ink > 60, "without a font the bitmap glyphs still draw: " + STR$(dot_ink))
+TESTKIT.ISTRUE(IsWhite(Px(dots, 50, 5)), "inside the same band")
+
+' ---- the viewBox ----
+
+DIM boxed = RASTER.RENDER("<svg xmlns=" + Q$ + "http://www.w3.org/2000/svg" + Q$ + " width=" + Q$ + "100" + Q$ + " height=" + Q$ + "100" + Q$ + " viewBox=" + Q$ + "0 0 10 10" + Q$ + "><rect x=" + Q$ + "0" + Q$ + " y=" + Q$ + "0" + Q$ + " width=" + Q$ + "5" + Q$ + " height=" + Q$ + "10" + Q$ + "/></svg>")
+TESTKIT.EQ(IMG.WIDTH(boxed), 100, "the width attribute sets the pixels")
+TESTKIT.ISTRUE(IsColor(Px(boxed, 48, 50), 0, 0, 0), "and the viewBox maps the units onto them")
+TESTKIT.ISTRUE(IsWhite(Px(boxed, 52, 50)), "half way across")
+
+' ---- a chart, to a file and back ----
+
+DIM chart = SVG.CHART("bar", 320, 200)
+SVG.SETOPT(chart, "title", "Sales")
+SVG.LABELS(chart, ["Jan", "Feb", "Mar"])
+SVG.SERIES(chart, "2026", [120, 95.5, 143])
+DIM drawn = SVG.TOIMAGE(SVG.RENDER(chart))
+TESTKIT.EQ(IMG.WIDTH(drawn), 320, "a chart renders at its size")
+TESTKIT.ISTRUE(InkCount(drawn) > 2000, "with bars, axes and text on it")
+DIM png$ = MKTEMP$("raster") + ".png"
+SVG.WRITEPNG(SVG.RENDER(chart), png$, {"scale": 2})
+TESTKIT.ISTRUE(FILE.EXISTS(png$), "WRITEPNG writes the file")
+DIM back = IMG.READPNG(png$)
+TESTKIT.EQ(IMG.WIDTH(back), 640, "at twice the size when asked")
+TESTKIT.EQ(IMG.HEIGHT(back), 400, "in both directions")
+KILL png$
+
+TESTKIT.REPORT()
