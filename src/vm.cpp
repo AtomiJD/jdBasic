@@ -76,6 +76,7 @@ void install_seh_translator_for_this_thread() {}
 #include <map>
 #include "async_task.h"
 #include "jdb_shape.h"
+#include "jdb_text.h"
 static Value array_pair(const Value& a, const Value& b,
                         const std::function<Value(const Value&, const Value&)>& cell);
 
@@ -1426,39 +1427,20 @@ void VM::run() {
                     // Concatenation: "Hello " + "World"
                     push(Value::make_string(a.to_string() + b.to_string()));
                 } else if (op == OpCode::SUB && a.type == ValueType::STRING && b.type == ValueType::STRING) {
-                    // Replacement: "abababac" - "ab" → "ac"
-                    std::string s = a.as_string()->data;
-                    std::string rem = b.as_string()->data;
-                    if (!rem.empty()) {
-                        size_t pos;
-                        while ((pos = s.find(rem)) != std::string::npos)
-                            s.erase(pos, rem.size());
-                    }
-                    push(Value::make_string(s));
+                    // Removal: "abababac" - "ab" is "ac"
+                    push(Value::make_string(jdb_text::remove_all(a.as_string()->data, b.as_string()->data)));
                 } else if (op == OpCode::MUL && a.type == ValueType::STRING) {
                     // Repetition: "-" * 10
-                    std::string s;
-                    int n = (int)b.to_int();
-                    std::string src = a.as_string()->data;
-                    for (int i = 0; i < n; i++) s += src;
-                    push(Value::make_string(s));
+                    push(Value::make_string(jdb_text::repeat(a.as_string()->data, b.to_int())));
                 } else if (op == OpCode::MUL && b.type == ValueType::STRING) {
                     // Repetition: 10 * "-"
-                    std::string s;
-                    int n = (int)a.to_int();
-                    std::string src = b.as_string()->data;
-                    for (int i = 0; i < n; i++) s += src;
-                    push(Value::make_string(s));
+                    push(Value::make_string(jdb_text::repeat(b.as_string()->data, a.to_int())));
                 } else if (op == OpCode::DIV) {
-                    // Slicing: 5 / "Welcome" → "Welco" (left), "Welcome" / 4 → "come" (right)
+                    // Slicing: 5 / "Welcome" is "Welco", "Welcome" / 4 is "come"
                     if (a.type == ValueType::STRING && is_numeric(b.type)) {
-                        std::string s = a.as_string()->data;
-                        int n = (int)b.to_int();
-                        push(Value::make_string(s.size() > (size_t)n ? s.substr(s.size() - n) : s));
+                        push(Value::make_string(jdb_text::slice(a.as_string()->data, b.to_int(), false)));
                     } else if (is_numeric(a.type) && b.type == ValueType::STRING) {
-                        std::string s = b.as_string()->data;
-                        int n = (int)a.to_int();
-                        push(Value::make_string(s.substr(0, n)));
+                        push(Value::make_string(jdb_text::slice(b.as_string()->data, a.to_int(), true)));
                     } else {
                         push(Value::make_string(a.to_string()));
                     }
@@ -1489,17 +1471,11 @@ void VM::run() {
                 };
                 push(neg_rec(a));
             } else if (a.type == ValueType::STRING) {
-                // Unary split: -"ABC" → ["A", "B", "C"]
-                auto& s = a.as_string()->data;
+                // Unary split: -"ABC" is ["A", "B", "C"], one UTF-8 character each
                 Value result = Value::make_array();
                 auto* out = result.as_array();
-                for (size_t i = 0; i < s.size(); ) {
-                    unsigned char c = s[i];
-                    int len = 1;
-                    if (c >= 0xC0) { len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : 2; }
-                    out->elements.push_back(Value::make_string(s.substr(i, len)));
-                    i += len;
-                }
+                jdb_text::chars(a.as_string()->data,
+                                [&](std::string c) { out->elements.push_back(Value::make_string(std::move(c))); });
                 push(std::move(result));
             } else if (is_integer_type(a.type)) {
                 push(Value::make_i64(-a.to_int()));

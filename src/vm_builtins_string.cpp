@@ -2,6 +2,9 @@
 
 #include "vm_internal.h"
 #include "jdb_format.h"
+#include "jdb_text.h"
+
+using jdb_text::View;
 
 // PACK$ / UNPACK format: < or > sets the byte order for the codes after it,
 // each code takes an optional repeat count. For 'a' the count is the string
@@ -105,21 +108,18 @@ void VM::register_string_builtins() {
         return shape;
     });
     register_native("LEFT", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        int64_t n = args[1].to_int();
-        return Value::make_string(s.substr(0, n));
+        return Value::make_string(jdb_text::left(args[0].as_string()->data, args[1].to_int()));
     });
     register_native("RIGHT", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        int64_t n = args[1].to_int();
-        if (n >= (int64_t)s.size()) return Value::make_string(s);
-        return Value::make_string(s.substr(s.size() - n));
+        return Value::make_string(jdb_text::right(args[0].as_string()->data, args[1].to_int()));
     });
+    // Strict MID: a start past the end is an error TRY/CATCH can observe.
     register_native("MID", 2, 3, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
+        const std::string& s = args[0].as_string()->data;
         int64_t start = args[1].to_int();
-        int64_t len = args.size() > 2 ? args[2].to_int() : (int64_t)s.size();
-        return Value::make_string(s.substr(start, len));
+        if (!jdb_text::in_range(s, start)) throw std::runtime_error("MID: index out of range");
+        int64_t len = args.size() > 2 ? args[2].to_int() : -1;
+        return Value::make_string(jdb_text::mid(s, start, len));
     });
     register_native("STR", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_string(args[0].to_string());
@@ -128,27 +128,20 @@ void VM::register_string_builtins() {
         return Value::make_f64(jdb_num::parse_prefix(args[0].as_string()->data.c_str()));
     });
     register_native("CHR", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(std::string(1, static_cast<char>(args[0].to_int())));
+        return Value::make_string(jdb_text::chr(args[0].to_int()));
     });
     register_native("ASC", 1, 1, [](const std::vector<Value>& args) -> Value {
-        auto& s = args[0].as_string()->data;
-        return Value::make_i64(s.empty() ? 0 : static_cast<uint8_t>(s[0]));
+        return Value::make_i64(jdb_text::asc(args[0].as_string()->data));
     });
     register_native("UCASE", 1, 1, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-        return Value::make_string(s);
+        return Value::make_string(jdb_text::upper(args[0].as_string()->data));
     });
     register_native("LCASE", 1, 1, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-        return Value::make_string(s);
+        return Value::make_string(jdb_text::lower(args[0].as_string()->data));
     });
 
     register_native("LCASE$", [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-        return Value::make_string(s);
+        return Value::make_string(jdb_text::lower(args[0].as_string()->data));
     });
 
     // ── String functions ($ aliases + new ones) ──────────────
@@ -158,66 +151,33 @@ void VM::register_string_builtins() {
     // callers can pass e.g. a DATE-tagged FLOAT64 or a number directly,
     // matching classic BASIC's loose typing.
     register_native("LEFT$", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].to_string();
-        int64_t n = args[1].to_int();
-        if (n < 0) n = 0;
-        if (n > (int64_t)s.size()) n = (int64_t)s.size();
-        return Value::make_string(s.substr(0, n));
+        return Value::make_string(jdb_text::left(args[0].to_string(), args[1].to_int()));
     });
     register_native("RIGHT$", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].to_string();
-        int64_t n = args[1].to_int();
-        if (n < 0) n = 0;
-        if (n >= (int64_t)s.size()) return Value::make_string(s);
-        return Value::make_string(s.substr(s.size() - n));
+        return Value::make_string(jdb_text::right(args[0].to_string(), args[1].to_int()));
     });
     register_native("MID$", [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].to_string();
-        int64_t start = args[1].to_int();
-        int64_t len = args.size() > 2 ? args[2].to_int() : (int64_t)s.size();
-        if (start < 0) start = 0;
-        if (start > (int64_t)s.size()) return Value::make_string("");
-        return Value::make_string(s.substr(start, len));
+        int64_t len = args.size() > 2 ? args[2].to_int() : -1;
+        return Value::make_string(jdb_text::mid(args[0].to_string(), args[1].to_int(), len));
     });
     register_native("UCASE$", [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-        return Value::make_string(s);
+        return Value::make_string(jdb_text::upper(args[0].as_string()->data));
     });
     // UPPER$ / LOWER$ - aliases the native compiler already exports
     // through its arr_apply table (jdb_upper / jdb_lower). Registered
     // in the VM so interpreter mode mirrors native and the shared
     // test suite (tests/native_test.jdb) doesn't fail on either side.
     register_native("UPPER$", [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-        return Value::make_string(s);
+        return Value::make_string(jdb_text::upper(args[0].as_string()->data));
     });
     register_native("LOWER$", [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-        return Value::make_string(s);
+        return Value::make_string(jdb_text::lower(args[0].as_string()->data));
     });
     register_native("STR$", [](const std::vector<Value>& args) -> Value {
         return Value::make_string(args[0].to_string());
     });
     register_native("CHR$", [](const std::vector<Value>& args) -> Value {
-        // 0..255 is one raw byte, a code above 255 is that Unicode character in UTF-8.
-        int64_t code = args[0].to_int();
-        if (code <= 255 || code > 0x10FFFF) return Value::make_string(std::string(1, (char)code));
-        std::string s;
-        if (code < 0x800) {
-            s += (char)(0xC0 | (code >> 6));
-        } else if (code < 0x10000) {
-            s += (char)(0xE0 | (code >> 12));
-            s += (char)(0x80 | ((code >> 6) & 0x3F));
-        } else {
-            s += (char)(0xF0 | (code >> 18));
-            s += (char)(0x80 | ((code >> 12) & 0x3F));
-            s += (char)(0x80 | ((code >> 6) & 0x3F));
-        }
-        s += (char)(0x80 | (code & 0x3F));
-        return Value::make_string(s);
+        return Value::make_string(jdb_text::chr(args[0].to_int()));
     });
     register_native("INSTR$", [](const std::vector<Value>& args) -> Value {
         // Same as INSTR
@@ -237,22 +197,14 @@ void VM::register_string_builtins() {
             haystack = args[0].as_string()->data;
             needle = args[1].as_string()->data;
         }
-        size_t pos = haystack.find(needle, start);
-        return Value::make_i64(pos == std::string::npos ? -1 : (int64_t)pos);
+        return Value::make_i64(jdb_text::find(haystack, needle, start));
     });
 
-    // TRIM$
     register_native("TRIM$", [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        size_t a = s.find_first_not_of(" \t\r\n");
-        size_t b = s.find_last_not_of(" \t\r\n");
-        return Value::make_string(a == std::string::npos ? "" : s.substr(a, b - a + 1));
+        return Value::make_string(jdb_text::trim(args[0].as_string()->data));
     });
     register_native("TRIM", [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        size_t a = s.find_first_not_of(" \t\r\n");
-        size_t b = s.find_last_not_of(" \t\r\n");
-        return Value::make_string(a == std::string::npos ? "" : s.substr(a, b - a + 1));
+        return Value::make_string(jdb_text::trim(args[0].as_string()->data));
     });
 
     // INSTR
@@ -273,8 +225,7 @@ void VM::register_string_builtins() {
             haystack = args[0].as_string()->data;
             needle = args[1].as_string()->data;
         }
-        size_t pos = haystack.find(needle, start);
-        return Value::make_i64(pos == std::string::npos ? -1 : (int64_t)pos);
+        return Value::make_i64(jdb_text::find(haystack, needle, start));
     });
 
     // INSERT$: insert text into string or element into array at position
@@ -285,13 +236,8 @@ void VM::register_string_builtins() {
         if (args[0].type == ValueType::STRING) {
             if (args[1].type != ValueType::STRING)
                 throw jdError(ErrCode::TYPE_MISMATCH, "INSERT$: argument 2 is not a string");
-            std::string s = args[0].as_string()->data;
-            std::string ins = args[1].as_string()->data;
-            int64_t pos = args[2].to_int();
-            if (pos < 0) pos = 0;
-            if (pos > (int64_t)s.size()) pos = s.size();
-            s.insert(pos, ins);
-            return Value::make_string(s);
+            return Value::make_string(jdb_text::insert(args[0].as_string()->data,
+                                                       args[1].as_string()->data, args[2].to_int()));
         }
         if (args[0].type == ValueType::ARRAY) {
             Value r = Value::make_array();
@@ -305,88 +251,39 @@ void VM::register_string_builtins() {
         return args[0];
     });
 
-    // SPLIT: split string by delimiter
+    // SPLIT: the parts of a text between its delimiters.
     register_native("SPLIT", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string src = args[0].as_string()->data;
-        std::string delim = args[1].as_string()->data;
         Value r = Value::make_array();
-        if (delim.empty()) {
-            r.as_array()->elements.push_back(Value::make_string(src));
-            return r;
-        }
-        size_t pos = 0;
-        while (true) {
-            size_t found = src.find(delim, pos);
-            if (found == std::string::npos) {
-                r.as_array()->elements.push_back(Value::make_string(src.substr(pos)));
-                break;
-            }
-            r.as_array()->elements.push_back(Value::make_string(src.substr(pos, found - pos)));
-            pos = found + delim.size();
-        }
+        auto& out = r.as_array()->elements;
+        jdb_text::split(args[0].as_string()->data, args[1].as_string()->data,
+                        [&](std::string part) { out.push_back(Value::make_string(std::move(part))); });
         return r;
     });
 
-    // REPLACE$: replace all occurrences
+    // REPLACE$: every occurrence replaced, in a text or in every string of an array.
     register_native("REPLACE$", 3, 3, [](const std::vector<Value>& args) -> Value {
-        if (args[0].type == ValueType::STRING) {
-            std::string s = args[0].as_string()->data;
-            std::string find = args[1].as_string()->data;
-            std::string repl = args[2].as_string()->data;
-            if (!find.empty()) {
-                size_t pos = 0;
-                while ((pos = s.find(find, pos)) != std::string::npos) {
-                    s.replace(pos, find.size(), repl);
-                    pos += repl.size();
-                }
-            }
-            return Value::make_string(s);
-        }
-        // Array: element-wise
+        View find_text(args[1].as_string()->data), rep(args[2].as_string()->data);
+        if (args[0].type == ValueType::STRING)
+            return Value::make_string(jdb_text::replace_all(args[0].as_string()->data, find_text, rep));
         if (args[0].type == ValueType::ARRAY) {
             Value r = Value::make_array();
             for (auto& e : args[0].as_array()->elements) {
-                if (e.type == ValueType::STRING) {
-                    std::string s = e.as_string()->data;
-                    std::string find = args[1].as_string()->data;
-                    std::string repl = args[2].as_string()->data;
-                    if (!find.empty()) {
-                        size_t pos = 0;
-                        while ((pos = s.find(find, pos)) != std::string::npos) {
-                            s.replace(pos, find.size(), repl);
-                            pos += repl.size();
-                        }
-                    }
-                    r.as_array()->elements.push_back(Value::make_string(s));
-                } else {
+                if (e.type == ValueType::STRING)
+                    r.as_array()->elements.push_back(
+                        Value::make_string(jdb_text::replace_all(e.as_string()->data, find_text, rep)));
+                else
                     r.as_array()->elements.push_back(e);
-                }
             }
             return r;
         }
         return args[0];
     });
 
-    // REVERSE$: reverse a string (REVERSE for arrays already exists)
+    // REVERSE$: a text with its characters in the opposite order, or an
+    // array with its elements reversed.
     register_native("REVERSE$", [](const std::vector<Value>& args) -> Value {
-        if (args[0].type == ValueType::STRING) {
-            std::string s = args[0].as_string()->data;
-            // UTF-8 aware reverse
-            std::vector<std::string> chars;
-            for (size_t i = 0; i < s.size(); ) {
-                unsigned char c = s[i];
-                int len = 1;
-                if (c >= 0xF0) len = 4;
-                else if (c >= 0xE0) len = 3;
-                else if (c >= 0xC0) len = 2;
-                chars.push_back(s.substr(i, len));
-                i += len;
-            }
-            std::string r;
-            for (int i = (int)chars.size() - 1; i >= 0; i--) r += chars[i];
-            return Value::make_string(r);
-        }
-        // Array: delegate to REVERSE
+        if (args[0].type == ValueType::STRING)
+            return Value::make_string(jdb_text::reverse(args[0].as_string()->data));
         if (args[0].type == ValueType::ARRAY) {
             Value r = Value::make_array();
             auto& src = args[0].as_array()->elements;
@@ -624,57 +521,30 @@ void VM::register_string_builtins() {
         return Value::make_string(r);
     });
     register_native("STARTSWITH", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data, p = args[1].as_string()->data;
-        return Value::make_bool(s.size() >= p.size() && s.substr(0, p.size()) == p);
+        return Value::make_bool(jdb_text::starts_with(args[0].as_string()->data, args[1].as_string()->data));
     });
     register_native("ENDSWITH", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data, p = args[1].as_string()->data;
-        return Value::make_bool(s.size() >= p.size() && s.substr(s.size() - p.size()) == p);
+        return Value::make_bool(jdb_text::ends_with(args[0].as_string()->data, args[1].as_string()->data));
     });
     register_native("LTRIM$", [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        size_t p = s.find_first_not_of(" \t\r\n");
-        return Value::make_string(p == std::string::npos ? "" : s.substr(p));
+        return Value::make_string(jdb_text::ltrim(args[0].as_string()->data));
     });
     register_native("RTRIM$", [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        size_t p = s.find_last_not_of(" \t\r\n");
-        return Value::make_string(p == std::string::npos ? "" : s.substr(0, p + 1));
+        return Value::make_string(jdb_text::rtrim(args[0].as_string()->data));
     });
     register_native("SPACE$", [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(std::string((size_t)args[0].to_int(), ' '));
+        return Value::make_string(jdb_text::spaces(args[0].to_int()));
     });
     register_native("REPEAT$", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        int64_t n = args[1].to_int();
-        if (n <= 0 || s.empty()) return Value::make_string("");
-        std::string r; r.reserve(s.size() * (size_t)n);
-        for (int64_t i = 0; i < n; i++) r += s;
-        return Value::make_string(r);
+        return Value::make_string(jdb_text::repeat(args[0].as_string()->data, args[1].to_int()));
     });
     register_native("LPAD$", 2, 3, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        int64_t n = args[1].to_int();
-        std::string pad = (args.size() >= 3) ? args[2].as_string()->data : " ";
-        if (pad.empty()) pad = " ";
-        if ((int64_t)s.size() >= n) return Value::make_string(s);
-        size_t need = (size_t)n - s.size();
-        std::string prefix; prefix.reserve(need);
-        while (prefix.size() < need) prefix += pad;
-        prefix.resize(need);
-        return Value::make_string(prefix + s);
+        std::string pad = args.size() >= 3 ? args[2].as_string()->data : " ";
+        return Value::make_string(jdb_text::lpad(args[0].as_string()->data, args[1].to_int(), pad));
     });
     register_native("RPAD$", 2, 3, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
-        int64_t n = args[1].to_int();
-        std::string pad = (args.size() >= 3) ? args[2].as_string()->data : " ";
-        if (pad.empty()) pad = " ";
-        if ((int64_t)s.size() >= n) return Value::make_string(s);
-        size_t need = (size_t)n - s.size();
-        std::string suffix; suffix.reserve(need);
-        while (suffix.size() < need) suffix += pad;
-        suffix.resize(need);
-        return Value::make_string(s + suffix);
+        std::string pad = args.size() >= 3 ? args[2].as_string()->data : " ";
+        return Value::make_string(jdb_text::rpad(args[0].as_string()->data, args[1].to_int(), pad));
     });
     register_native("HEX$", [](const std::vector<Value>& args) -> Value {
         char buf[32]; jdb_num::format_hex(buf, sizeof(buf), args[0].to_int());

@@ -14,6 +14,7 @@
 #include "jdb_calendar.h"
 #include "jdb_format.h"
 #include "jdb_number.h"
+#include "jdb_text.h"
 #include <clocale>
 #include <algorithm>
 #include <vector>
@@ -89,8 +90,19 @@ void jdb_print_double(double val) {
     fputs(buf, stdout);
 }
 
+// The byte length of a string registered as binary, -1 for one that is not;
+// resolved against jdbrt.dll, declared once more below.
+#ifdef _WIN32
+__declspec(dllimport)
+#endif
+int64_t jdrt_strlen(const char* s);
+
+// Every byte of the string, a NUL inside it included.
 void jdb_print_str(const char* val) {
-    printf("%s", val);
+    if (!val) return;
+    int64_t n = jdrt_strlen(val);
+    if (n < 0) n = (int64_t)strlen(val);
+    if (n > 0) fwrite(val, 1, (size_t)n, stdout);
 }
 
 void jdb_print_bool(int64_t val) {
@@ -464,6 +476,22 @@ static char* jdb_str_dup_binary(const char* s) {
     if (n) memcpy(r, s, (size_t)n);
     r[n] = '\0';
     if (n != (int64_t)strlen(r)) jdrt_register_binary(r, n);
+    return r;
+}
+
+// A string on its way into jdb_text, with the registered byte length of a
+// buffer that holds a NUL.
+static inline jdb_text::View text_in(const char* s) {
+    return jdb_text::View(s, s ? (size_t)jdb_str_blen(s) : 0);
+}
+
+// A string jdb_text answered, copied into a buffer of this runtime's own,
+// registered with its length when it holds a NUL.
+static char* text_out(const std::string& s) {
+    char* r = (char*)malloc(s.size() + 1);
+    if (!s.empty()) memcpy(r, s.data(), s.size());
+    r[s.size()] = '\0';
+    if (s.size() != strlen(r)) jdrt_register_binary(r, (int64_t)s.size());
     return r;
 }
 
@@ -1983,49 +2011,27 @@ int32_t jdb_array_classify_elem(JdbArray* arr, double d) {
 
 // String * int → repeat: "-" * 5 → "-----"
 char* jdb_str_repeat(const char* s, int64_t n) {
-    if (!s || n <= 0) return _strdup("");
-    size_t slen = (size_t)jdb_str_blen(s);
-    size_t total = slen * (size_t)n;
-    char* out = (char*)malloc(total + 1);
-    for (int64_t i = 0; i < n; i++) memcpy(out + i * slen, s, slen);
-    out[total] = '\0';
-    if (total != strlen(out)) jdrt_register_binary(out, (int64_t)total);
-    return out;
+    return text_out(jdb_text::repeat(text_in(s), n));
 }
 
-// Unary `-"abc"` → ["a","b","c"], UTF-8 aware. Mirrors the interpreter's
-// OpCode::NEG string case. Returns a fresh array of one strdup'd string per
-// code point, flagged as a nested string array (bit0 ptr + bit1 string) with
-// explicit per-cell STR tags (bit3) so both the tagged INDEX getter and the
-// VM-bridge arg marshaller treat the cells as strings, not punned f64s.
+// Unary `-"abc"` answers ["a", "b", "c"], one string per UTF-8 character,
+// as an array flagged nested and string with per-cell STR tags, so the
+// tagged INDEX getter and the bridge marshaller read the cells as strings.
 JdbArray* jdb_str_to_chars(const char* s) {
     if (!s) return jdb_array_new(0);
-    size_t slen = strlen(s);
-    int64_t n = 0;
-    for (size_t i = 0; i < slen; ) {
-        unsigned char c = (unsigned char)s[i];
-        int len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
-        if (i + (size_t)len > slen) len = (int)(slen - i);
-        i += len; n++;
-    }
+    std::vector<std::string> parts;
+    jdb_text::chars(text_in(s), [&](std::string c) { parts.push_back(std::move(c)); });
+    int64_t n = (int64_t)parts.size();
     JdbArray* arr = jdb_array_new(n);
-    int64_t k = 0;
-    for (size_t i = 0; i < slen; ) {
-        unsigned char c = (unsigned char)s[i];
-        int len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
-        if (i + (size_t)len > slen) len = (int)(slen - i);
-        char* cp = (char*)malloc((size_t)len + 1);
-        memcpy(cp, s + i, len);
-        cp[len] = '\0';
-        union { int64_t iv; double d; } u; u.iv = (int64_t)(intptr_t)cp;
-        arr->data[k++] = u.d;
-        i += len;
+    for (int64_t i = 0; i < n; i++) {
+        union { int64_t iv; double d; } u; u.iv = (int64_t)(intptr_t)text_out(parts[(size_t)i]);
+        arr->data[i] = u.d;
     }
-    arr->flags |= 3;  // nested ptr + string
+    arr->flags |= 3;
     if (n > 0) {
         arr->elem_tags = (int8_t*)malloc((size_t)n);
-        for (int64_t i = 0; i < n; i++) arr->elem_tags[i] = (int8_t)2;  // STR
-        arr->flags |= 8;  // per-cell tags present
+        for (int64_t i = 0; i < n; i++) arr->elem_tags[i] = (int8_t)JD_TAG_STR;
+        arr->flags |= 8;
     }
     return arr;
 }
@@ -2895,20 +2901,7 @@ int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
 
 // String - String → remove all occurrences: "abcabc" - "bc" → "aa"
 char* jdb_str_sub(const char* a, const char* b) {
-    if (!a) return _strdup("");
-    if (!b || !*b) return _strdup(a);
-    size_t alen = strlen(a), blen = strlen(b);
-    char* out = (char*)malloc(alen + 1);
-    size_t oi = 0;
-    for (size_t i = 0; i < alen; ) {
-        if (i + blen <= alen && memcmp(a + i, b, blen) == 0) {
-            i += blen;
-        } else {
-            out[oi++] = a[i++];
-        }
-    }
-    out[oi] = '\0';
-    return out;
+    return text_out(jdb_text::remove_all(text_in(a), text_in(b)));
 }
 
 // BASIC string slicing via `/`. `from_left` picks the side:
@@ -2961,26 +2954,50 @@ JdbArray* jdb_array_apply_ff(JdbArray* arr, void* fnp) {
 }
 
 // A function over the string cells of an array, into the rows of a nested
-// one: the leaf gets the string and answers the new cell; a cell that is no
-// string gets "". str_result marks the answers as strings.
+// one: the leaf gets the string and answers the new cell, a cell that is no
+// string stays as it is. str_result marks the answers as strings. An array
+// that carries per-cell tags answers one that does too.
 static JdbArray* apply_string_cells(JdbArray* arr, bool str_result,
                                     const std::function<double(const char*)>& leaf) {
     if (!arr) return jdb_array_new(0);
     auto* r = jdb_array_new(arr->length);
+    bool tagged = (arr->flags & 8) && arr->elem_tags;
+    if (tagged) {
+        r->elem_tags = (int8_t*)malloc((size_t)(arr->length > 0 ? arr->length : 1));
+        r->flags |= 8;
+        bool all_str = arr->length > 0;
+        for (int64_t i = 0; i < arr->length; i++) {
+            int8_t t = arr->elem_tags[i];
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            if (t == JD_TAG_STR) {
+                r->data[i] = leaf(u.i ? (const char*)(intptr_t)u.i : "");
+                t = str_result ? (int8_t)JD_TAG_STR : (int8_t)JD_TAG_F64;
+            } else if (t == JD_TAG_ARR) {
+                r->data[i] = encode_inner(apply_string_cells(decode_inner(arr->data[i]), str_result, leaf));
+            } else {
+                r->data[i] = arr->data[i];
+            }
+            r->elem_tags[i] = t;
+            if (t != JD_TAG_STR) all_str = false;
+        }
+        if (all_str) r->flags |= 3;
+        else if (str_result) r->flags |= 1;
+        return r;
+    }
     if ((arr->flags & 1) && !(arr->flags & 2)) {
         r->flags |= 1;
         for (int64_t i = 0; i < arr->length; i++)
             r->data[i] = encode_inner(apply_string_cells(decode_inner(arr->data[i]), str_result, leaf));
         return r;
     }
-    bool has_string = (arr->flags & 2) != 0;
+    if (!(arr->flags & 2)) {
+        memcpy(r->data, arr->data, (size_t)arr->length * sizeof(double));
+        r->flags = arr->flags;
+        return r;
+    }
     for (int64_t i = 0; i < arr->length; i++) {
-        const char* elem = "";
-        if (has_string) {
-            union { double d; int64_t i; } u; u.d = arr->data[i];
-            if (u.i) elem = (const char*)(intptr_t)u.i;
-        }
-        r->data[i] = leaf(elem);
+        union { double d; int64_t i; } u; u.d = arr->data[i];
+        r->data[i] = leaf(u.i ? (const char*)(intptr_t)u.i : "");
     }
     if (str_result) r->flags |= 3;
     return r;
@@ -3470,167 +3487,68 @@ char* jdb_format4_t(const char* fmt, const char* types, int64_t a1, int64_t a2, 
 // String slicing via `/`:  "str" / n → last n chars; n / "str" → first n.
 // Binary-safe: uses the byte length registry (embedded NULs survive) and
 // registers the result so downstream slices/compares see its true length.
+// BASIC string slicing via `/`: n / "str" answers the first n bytes,
+// "str" / n the last n.
 char* jdb_str_slice(const char* s, int64_t n, int32_t from_left) {
-    if (!s) return _strdup("");
-    int64_t slen = jdb_str_blen(s);
-    if (n < 0) n = 0;
-    if (n > slen) n = slen;
-    char* out = (char*)malloc((size_t)n + 1);
-    const char* src = from_left ? s : (s + (slen - n));
-    memcpy(out, src, (size_t)n);
-    out[n] = '\0';
-    jdrt_register_binary(out, n);
-    return out;
+    return text_out(jdb_text::slice(text_in(s), n, from_left != 0));
 }
 
 int64_t jdb_len_str(const char* s) {
-    if (!s) return 0;
-    int64_t blen = jdrt_strlen(s);
-    if (blen >= 0) return blen;
-    return (int64_t)strlen(s);
+    return s ? jdb_str_blen(s) : 0;
 }
 
-// Strict MID - matches VM's substr-based register_native("MID", ...).
-// start past the end is an error so TRY/CATCH can observe it (the
-// crash_test relies on this).
+// Strict MID: a start past the end is an error TRY/CATCH can observe.
 char* jdb_mid(const char* s, int64_t start, int64_t length) {
-    if (!s) return _strdup("");
-    int64_t slen = jdb_str_blen(s);
-    if (start < 0 || start > slen) {
+    jdb_text::View v = text_in(s);
+    if (!jdb_text::in_range(v, start)) {
         jdb_err_set("MID: index out of range", 1);
         return _strdup("");
     }
-    if (length < 0 || start + length > slen) length = slen - start;
-    char* r = (char*)malloc(length + 1);
-    memcpy(r, s + start, length);
-    r[length] = '\0';
-    jdrt_register_binary(r, length);
-    return r;
+    return text_out(jdb_text::mid(v, start, length));
 }
 
-// Lenient MID$ - matches VM's register_native("MID$", ...). Out-of-range
-// start returns an empty string instead of erroring; lots of jdBasic
-// programs (dialog wrappers, parsers) rely on this to scan past the
-// end of a string without bounds-checking.
+// Lenient MID$: a start past the end answers an empty string, so a parser
+// may scan past the end of its text without checking.
 char* jdb_mid_lax(const char* s, int64_t start, int64_t length) {
-    if (!s) return _strdup("");
-    int64_t slen = jdb_str_blen(s);
-    if (start < 0) start = 0;
-    if (start > slen) return _strdup("");
-    if (length < 0 || start + length > slen) length = slen - start;
-    char* r = (char*)malloc(length + 1);
-    memcpy(r, s + start, length);
-    r[length] = '\0';
-    jdrt_register_binary(r, length);
-    return r;
+    return text_out(jdb_text::mid(text_in(s), start, length));
 }
 
 char* jdb_left(const char* s, int64_t n) {
-    return jdb_mid(s, 0, n);
+    return text_out(jdb_text::left(text_in(s), n));
 }
 
 char* jdb_right(const char* s, int64_t n) {
-    if (!s) return _strdup("");
-    int64_t slen = jdb_str_blen(s);
-    if (n >= slen) return _strdup(s);
-    return jdb_mid(s, slen - n, n);
+    return text_out(jdb_text::right(text_in(s), n));
 }
 
 char* jdb_upper(const char* s) {
-    if (!s) return _strdup("");
-    char* r = _strdup(s);
-    for (char* p = r; *p; p++) *p = (char)toupper((unsigned char)*p);
-    return r;
+    return text_out(jdb_text::upper(text_in(s)));
 }
 
 char* jdb_lower(const char* s) {
-    if (!s) return _strdup("");
-    char* r = _strdup(s);
-    for (char* p = r; *p; p++) *p = (char)tolower((unsigned char)*p);
-    return r;
+    return text_out(jdb_text::lower(text_in(s)));
 }
 
 char* jdb_trim(const char* s) {
-    if (!s) return _strdup("");
-    while (*s && isspace((unsigned char)*s)) s++;
-    int64_t len = (int64_t)strlen(s);
-    while (len > 0 && isspace((unsigned char)s[len-1])) len--;
-    char* r = (char*)malloc(len + 1);
-    memcpy(r, s, len);
-    r[len] = '\0';
-    return r;
+    return text_out(jdb_text::trim(text_in(s)));
 }
 
 char* jdb_chr(int64_t code) {
-    // 0..255 is one raw byte, a code above 255 is that Unicode character in UTF-8.
-    if (code > 255 && code <= 0x10FFFF) {
-        char u[5] = { 0 };
-        if (code < 0x800) {
-            u[0] = (char)(0xC0 | (code >> 6));
-            u[1] = (char)(0x80 | (code & 0x3F));
-        } else if (code < 0x10000) {
-            u[0] = (char)(0xE0 | (code >> 12));
-            u[1] = (char)(0x80 | ((code >> 6) & 0x3F));
-            u[2] = (char)(0x80 | (code & 0x3F));
-        } else {
-            u[0] = (char)(0xF0 | (code >> 18));
-            u[1] = (char)(0x80 | ((code >> 12) & 0x3F));
-            u[2] = (char)(0x80 | ((code >> 6) & 0x3F));
-            u[3] = (char)(0x80 | (code & 0x3F));
-        }
-        return _strdup(u);
-    }
-    char buf[2] = { (char)code, '\0' };
-    char* r = _strdup(buf);
-    // CHR$(0) is a 1-byte string whose only byte is 0x00. strlen would
-    // report 0; register the real length so INSTR/MID$/etc. treat it as
-    // a real character. Other CHR$(N) values are fine - strlen=1.
-    if (code == 0) jdrt_register_binary(r, 1);
-    return r;
+    return text_out(jdb_text::chr(code));
 }
 
 int64_t jdb_asc(const char* s) {
-    return (s && *s) ? (unsigned char)s[0] : 0;
+    return jdb_text::asc(text_in(s));
 }
 
-// Binary-safe substring search: walks the registered length of the
-// haystack and uses memcmp so embedded 0x00 bytes don't terminate the
-// search. The old strstr-based version stopped at the first NUL, which
-// broke INSTR(buf$, CHR$(0)) for any BINREADER$ buffer.
 int64_t jdb_instr(const char* haystack, const char* needle) {
     if (!haystack || !needle) return -1;
-    int64_t hlen = jdb_str_blen(haystack);
-    int64_t nlen = jdb_str_blen(needle);
-    if (nlen == 0) return 0;
-    if (nlen > hlen) return -1;
-    for (int64_t i = 0; i + nlen <= hlen; i++) {
-        if (memcmp(haystack + i, needle, (size_t)nlen) == 0) return i;
-    }
-    return -1;
+    return jdb_text::find(text_in(haystack), text_in(needle));
 }
 
 char* jdb_replace(const char* src, const char* find, const char* rep) {
     if (!src || !find || !rep) return _strdup(src ? src : "");
-    size_t flen = strlen(find), rlen = strlen(rep), slen = strlen(src);
-    if (flen == 0) return _strdup(src);
-    // Count occurrences
-    int count = 0;
-    const char* p = src;
-    while ((p = strstr(p, find))) { count++; p += flen; }
-    // Build result
-    size_t nlen = slen + count * (rlen - flen);
-    char* r = (char*)malloc(nlen + 1);
-    char* rp = r;
-    p = src;
-    while (*p) {
-        if (strncmp(p, find, flen) == 0) {
-            memcpy(rp, rep, rlen); rp += rlen; p += flen;
-        } else {
-            *rp++ = *p++;
-        }
-    }
-    *rp = '\0';
-    return r;
+    return text_out(jdb_text::replace_all(text_in(src), text_in(find), text_in(rep)));
 }
 
 char* jdb_str(double val) {
@@ -3736,22 +3654,13 @@ char* jdb_str_str(const char* s) {
 }
 
 char* jdb_space(int64_t n) {
-    if (n <= 0) return _strdup("");
-    char* r = (char*)malloc(n + 1);
-    memset(r, ' ', n);
-    r[n] = '\0';
-    return r;
+    return text_out(jdb_text::spaces(n));
 }
 
 int64_t jdb_str_eq(const char* a, const char* b) {
     if (a == b) return 1;
     if (!a || !b) return 0;
-    // Use the binary-length registry so buffers with embedded NULs
-    // (BINREADER$, PACK$, etc.) compare correctly past the first 0x00.
-    int64_t la = jdrt_strlen(a); if (la < 0) la = (int64_t)strlen(a);
-    int64_t lb = jdrt_strlen(b); if (lb < 0) lb = (int64_t)strlen(b);
-    if (la != lb) return 0;
-    return memcmp(a, b, (size_t)la) == 0 ? 1 : 0;
+    return jdb_text::equal(text_in(a), text_in(b)) ? 1 : 0;
 }
 
 int64_t jdb_str_ne(const char* a, const char* b) {
@@ -3876,41 +3785,25 @@ int64_t jdb_str_cmp(const char* a, const char* b) {
     if (a == b) return 0;
     if (!a) return -1;
     if (!b) return 1;
-    int64_t la = jdrt_strlen(a); if (la < 0) la = (int64_t)strlen(a);
-    int64_t lb = jdrt_strlen(b); if (lb < 0) lb = (int64_t)strlen(b);
-    int64_t n = la < lb ? la : lb;
-    int c = n > 0 ? memcmp(a, b, (size_t)n) : 0;
-    if (c != 0) return c < 0 ? -1 : 1;
-    if (la == lb) return 0;
-    return la < lb ? -1 : 1;
+    return jdb_text::compare(text_in(a), text_in(b));
 }
 
 char* jdb_ltrim(const char* s) {
-    if (!s) return _strdup("");
-    while (*s && isspace((unsigned char)*s)) s++;
-    return _strdup(s);
+    return text_out(jdb_text::ltrim(text_in(s)));
 }
 
 char* jdb_rtrim(const char* s) {
-    if (!s) return _strdup("");
-    int64_t len = (int64_t)strlen(s);
-    while (len > 0 && isspace((unsigned char)s[len-1])) len--;
-    char* r = (char*)malloc(len + 1);
-    memcpy(r, s, len);
-    r[len] = '\0';
-    return r;
+    return text_out(jdb_text::rtrim(text_in(s)));
 }
 
 int64_t jdb_startswith(const char* s, const char* prefix) {
     if (!s || !prefix) return 0;
-    return strncmp(s, prefix, strlen(prefix)) == 0 ? 1 : 0;
+    return jdb_text::starts_with(text_in(s), text_in(prefix)) ? 1 : 0;
 }
 
 int64_t jdb_endswith(const char* s, const char* suffix) {
     if (!s || !suffix) return 0;
-    size_t slen = strlen(s), plen = strlen(suffix);
-    if (plen > slen) return 0;
-    return strcmp(s + slen - plen, suffix) == 0 ? 1 : 0;
+    return jdb_text::ends_with(text_in(s), text_in(suffix)) ? 1 : 0;
 }
 
 char* jdb_hex(int64_t val) {
@@ -3981,26 +3874,15 @@ char* jdb_join_arr(JdbArray* arr, const char* delim) {
     return out;
 }
 
-// SPLIT returns array of doubles (each is a pointer-encoded string)
+// SPLIT answers an array of strings, one per part between the delimiters.
 JdbArray* jdb_split(const char* src, const char* delim) {
     if (!src || !delim) return jdb_array_new(0);
-    // Count parts
-    int count = 1;
-    size_t dlen = strlen(delim);
-    const char* p = src;
-    while ((p = strstr(p, delim))) { count++; p += dlen; }
-    auto* arr = jdb_array_new(count);
-    p = src;
-    for (int i = 0; i < count; i++) {
-        const char* next = strstr(p, delim);
-        size_t plen = next ? (size_t)(next - p) : strlen(p);
-        char* part = (char*)malloc(plen + 1);
-        memcpy(part, p, plen);
-        part[plen] = '\0';
-        // Store pointer as double
-        intptr_t ptr = (intptr_t)part;
+    std::vector<std::string> parts;
+    jdb_text::split(text_in(src), text_in(delim), [&](std::string p) { parts.push_back(std::move(p)); });
+    auto* arr = jdb_array_new((int64_t)parts.size());
+    for (size_t i = 0; i < parts.size(); i++) {
+        intptr_t ptr = (intptr_t)text_out(parts[i]);
         memcpy(&arr->data[i], &ptr, sizeof(double));
-        p = next ? next + dlen : p + plen;
     }
     arr->flags |= 3;  // bit 0 (ptr) + bit 1 (string elems): PRINT + INDEX dispatch
     return arr;
@@ -4009,14 +3891,7 @@ JdbArray* jdb_split(const char* src, const char* delim) {
 char* jdb_insert_str(const char* target, const char* insert, int64_t pos) {
     if (!target) return _strdup(insert ? insert : "");
     if (!insert) return _strdup(target);
-    size_t tlen = strlen(target), ilen = strlen(insert);
-    if (pos < 0) pos = 0;
-    if (pos > (int64_t)tlen) pos = (int64_t)tlen;
-    char* r = (char*)malloc(tlen + ilen + 1);
-    memcpy(r, target, pos);
-    memcpy(r + pos, insert, ilen);
-    memcpy(r + pos + ilen, target + pos, tlen - pos + 1);
-    return r;
+    return text_out(jdb_text::insert(text_in(target), text_in(insert), pos));
 }
 
 // ── File I/O ────────────────────────────────────────────────
@@ -4438,28 +4313,10 @@ int64_t jdb_lcm(int64_t a, int64_t b) { return jdb_num::lcm(a, b); }
 
 // ── String padding ──────────────────────────────────────────
 char* jdb_lpad(const char* s, int64_t n, const char* pad) {
-    const char* p = (pad && *pad) ? pad : " ";
-    size_t slen = s ? strlen(s) : 0;
-    if ((int64_t)slen >= n) return _strdup(s ? s : "");
-    size_t need = (size_t)n - slen;
-    size_t plen = strlen(p);
-    char* out = (char*)malloc(need + slen + 1);
-    for (size_t i = 0; i < need; i++) out[i] = p[i % plen];
-    memcpy(out + need, s ? s : "", slen);
-    out[need + slen] = '\0';
-    return out;
+    return text_out(jdb_text::lpad(text_in(s), n, text_in(pad)));
 }
 char* jdb_rpad(const char* s, int64_t n, const char* pad) {
-    const char* p = (pad && *pad) ? pad : " ";
-    size_t slen = s ? strlen(s) : 0;
-    if ((int64_t)slen >= n) return _strdup(s ? s : "");
-    size_t need = (size_t)n - slen;
-    size_t plen = strlen(p);
-    char* out = (char*)malloc(slen + need + 1);
-    memcpy(out, s ? s : "", slen);
-    for (size_t i = 0; i < need; i++) out[slen + i] = p[i % plen];
-    out[slen + need] = '\0';
-    return out;
+    return text_out(jdb_text::rpad(text_in(s), n, text_in(pad)));
 }
 // 2-arg forms used by native codegen (default pad = " ").
 char* jdb_lpad2(const char* s, int64_t n) { return jdb_lpad(s, n, " "); }
