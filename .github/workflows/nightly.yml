@@ -145,12 +145,14 @@ jobs:
           tar xzf eigen.tar.gz -C tmp_eigen
           mv tmp_eigen/eigen-3.4.0 libs/eigen
 
+      # The version the Windows build carries; 3.50.4 read a literal with an
+      # extreme exponent one ulp off, which the DB selftest sees.
       - name: SQLite amalgamation
         if: matrix.family == 'sqlite'
         run: |
-          curl -sSL https://www.sqlite.org/2025/sqlite-amalgamation-3500400.zip -o sqlite.zip
+          curl -sSL https://www.sqlite.org/2026/sqlite-amalgamation-3530000.zip -o sqlite.zip
           unzip -q -o sqlite.zip -d tmp_sqlite
-          cp tmp_sqlite/sqlite-amalgamation-3500400/sqlite3.c tmp_sqlite/sqlite-amalgamation-3500400/sqlite3.h bridges/sqlitebridge/
+          cp tmp_sqlite/sqlite-amalgamation-3530000/sqlite3.c tmp_sqlite/sqlite-amalgamation-3530000/sqlite3.h bridges/sqlitebridge/
 
       - name: ALSA headers for RtMidi
         if: matrix.family == 'sound'
