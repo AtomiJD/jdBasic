@@ -22,10 +22,11 @@
 '   --tiktok       portrait 1080x1920 with the girl alone, a new move every
 '                  two bars; with --render only the clip around the first
 '                  drop (at most 30 s) and no intro
-'   --look name    the show: classic (sun, skirt and ponytail), purple
-'                  (moon and nebula, gown, space buns and tiara), neon
-'                  (digital rain, raver with headphones and glow sticks) or
-'                  rainbow (rainbow and clouds, unicorn with tutu and horn)
+'   --look name    the show: classic (sun; her skirt and ponytail, his cap),
+'                  purple (moon and nebula; her gown and tiara, his cape and
+'                  crown), neon (digital rain; her glow sticks and headphones,
+'                  his hoodie and visor) or rainbow (rainbow and clouds; her
+'                  tutu and horn, his party hat and bow tie)
 '
 ' As a program of its own the show follows a song another process plays:
 '
@@ -106,13 +107,16 @@ DIM clip_to AS DOUBLE = 0
 DIM tt_offset AS INTEGER = 0
 DIM tt_cover_done AS INTEGER = -1
 
-' --look: the show's palette, backdrop and the girl's outfit, set by SET_LOOK
+' --look: the show's palette, backdrop and the dancers' outfits, set by SET_LOOK
 DIM look$ AS STRING = "classic"
 DIM backdrop$ AS STRING = "sun"
 DIM outfit$ AS STRING = "skirt"
 DIM girl_r AS DOUBLE = 255
 DIM girl_g AS DOUBLE = 90
 DIM girl_b AS DOUBLE = 200
+DIM boy_r AS DOUBLE = 60
+DIM boy_g AS DOUBLE = 210
+DIM boy_b AS DOUBLE = 255
 DIM blush_r AS INTEGER = 110
 DIM blush_g AS INTEGER = 25
 DIM blush_b AS INTEGER = 65
@@ -202,6 +206,9 @@ SUB SET_LOOK(name$)
         girl_r = 190
         girl_g = 120
         girl_b = 255
+        boy_r = 130
+        boy_g = 150
+        boy_b = 255
         blush_r = 80
         blush_g = 30
         blush_b = 110
@@ -226,6 +233,9 @@ SUB SET_LOOK(name$)
         girl_r = 90
         girl_g = 255
         girl_b = 110
+        boy_r = 70
+        boy_g = 170
+        boy_b = 255
         blush_r = 30
         blush_g = 90
         blush_b = 40
@@ -737,6 +747,20 @@ SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOU
         ELSE
             SKIRT hx, wy, 16 * DS, (58 + flare) * DS, 55 * DS, cr, cg, cb
         ENDIF
+    ELSEIF outfit$ = "gown" THEN
+        ' a cape from the shoulders, trailing the sway and flaring with the hop
+        DIM cape_h AS DOUBLE = TORSO + 30 * DS
+        DIM cape_half AS DOUBLE = (34 + 0.25 * hop / DS) * DS
+        DIM cape_x AS DOUBLE = shx - sway * 0.4
+        DIM cks = IOTA(INT(cape_h) + 1, 0)
+        DIM ct = cks / cape_h
+        DIM cpl = shx - 14 * DS + (cape_x - cape_half - shx + 14 * DS) * ct
+        DIM cpr = shx + 14 * DS + (cape_x + cape_half - shx - 14 * DS) * ct
+        DRAWCOLOR INT(cr * 0.22), INT(cg * 0.22), INT(cb * 0.22)
+        LINE STACK(1, cpl, shy + cks, cpr, shy + cks)
+        NEON shx - 14 * DS, shy, cape_x - cape_half, shy + cape_h, 1, cr, cg, cb
+        NEON shx + 14 * DS, shy, cape_x + cape_half, shy + cape_h, 1, cr, cg, cb
+        NEON cape_x - cape_half, shy + cape_h, cape_x + cape_half, shy + cape_h, 1, cr, cg, cb
     ENDIF
 
     NEON hx, hy, nkx, nky, nw, cr, cg, cb
@@ -761,9 +785,12 @@ SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOU
     ENDIF
 
     DIM ex AS DOUBLE = 10 * DS
-    DRAWCOLOR 255, 255, 255
-    CIRCLE hdx - ex, hdy - 4 * DS, 4 * DS, TRUE
-    CIRCLE hdx + ex, hdy - 4 * DS, 4 * DS, TRUE
+    DIM visor AS INTEGER = (NOT girl) ANDALSO outfit$ = "raver"
+    IF NOT visor THEN
+        DRAWCOLOR 255, 255, 255
+        CIRCLE hdx - ex, hdy - 4 * DS, 4 * DS, TRUE
+        CIRCLE hdx + ex, hdy - 4 * DS, 4 * DS, TRUE
+    ENDIF
     DIM sa = 0.6 + IOTA(9, 0) * 0.243
     DIM smx = hdx + 13 * DS * COS(sa)
     DIM smy = hdy + 2 * DS + 11 * DS * SIN(sa)
@@ -836,6 +863,37 @@ SUB DANCER(cx AS DOUBLE, girl AS INTEGER, cyc AS DOUBLE, cr AS DOUBLE, cg AS DOU
             CIRCLE pax + 9 * DS, pay - 9 * DS, 8 * DS, TRUE
             CIRCLE pax + 1 * DS, pay - 6 * DS, 4 * DS, TRUE
         ENDIF
+    ELSEIF outfit$ = "gown" THEN
+        ' a crown of three points, a jewel on each
+        DIM kx = hdx + [-18, -12, -6, 0, 6, 12, 18] * DS
+        DIM ky = hdy - HEAD_R + [2, -16, -6, -22, -6, -16, 2] * DS
+        DRAWCOLOR 255, 220, 120
+        LINE STACK(1, TAKE(6, kx), TAKE(6, ky), DROP(1, kx), DROP(1, ky))
+        LINE STACK(1, TAKE(6, kx), TAKE(6, ky) + 1, DROP(1, kx), DROP(1, ky) + 1)
+        LINE hdx - 18 * DS, hdy - HEAD_R + 2 * DS, hdx + 18 * DS, hdy - HEAD_R + 2 * DS
+        LINE hdx - 18 * DS, hdy - HEAD_R + 5 * DS, hdx + 18 * DS, hdy - HEAD_R + 5 * DS
+        DRAWCOLOR 230, 160, 255
+        CIRCLE STACK(1, hdx + [-12, 0, 12] * DS, hdy - HEAD_R + [-16, -22, -16] * DS, [3, 3, 3] * DS), TRUE
+    ELSEIF outfit$ = "raver" THEN
+        ' a hood around the head, down to the shoulders, and a visor
+        DIM hda = MATH.PI + 0.2 + IOTA(13, 0) * (MATH.PI - 0.4) / 12
+        DRAWCOLOR INT(cr * 0.5), INT(cg * 0.5), INT(cb * 0.5)
+        CIRCLE STACK(1, hdx + (HEAD_R + 7 * DS) * COS(hda), hdy + (HEAD_R + 7 * DS) * SIN(hda), hda * 0 + 7 * DS), TRUE
+        NEON hdx - HEAD_R - 9 * DS, hdy + 2 * DS, shx - 18 * DS, shy, nw, cr * 0.6, cg * 0.6, cb * 0.6
+        NEON hdx + HEAD_R + 9 * DS, hdy + 2 * DS, shx + 18 * DS, shy, nw, cr * 0.6, cg * 0.6, cb * 0.6
+        NEON hdx - ex - 9 * DS, hdy - 4 * DS, hdx + ex + 9 * DS, hdy - 4 * DS, nw + 2, 255, 60, 200
+    ELSEIF outfit$ = "unicorn" THEN
+        ' a striped party hat with a pompom, a bow tie at the neck
+        DIM hpk = IOTA(INT(46 * DS), 0)
+        DIM hpw = 20 * DS * (1 - hpk / (46 * DS))
+        DIM hph = hpk * 0.09 + cyc * 2
+        LINE STACK(1, hdx - hpw, hdy - HEAD_R - hpk, hdx + hpw, hdy - HEAD_R - hpk), STACK(1, INT(128 + 127 * SIN(hph)), INT(128 + 127 * SIN(hph + 2.1)), INT(128 + 127 * SIN(hph + 4.2)))
+        DRAWCOLOR 255, 255, 255
+        CIRCLE hdx, hdy - HEAD_R - 46 * DS, 6 * DS, TRUE
+        DRAWCOLOR 255, 215, 90
+        CIRCLE nkx - 9 * DS, nky + 5 * DS, 6 * DS, TRUE
+        CIRCLE nkx + 9 * DS, nky + 5 * DS, 6 * DS, TRUE
+        CIRCLE nkx, nky + 5 * DS, 3 * DS, TRUE
     ELSE
         ' a cap, the brim towards her
         DIM ck = IOTA(16, 0)
@@ -1340,11 +1398,14 @@ SUB FRAME()
         girl_r = HUE_R(cyc * 0.5)
         girl_g = HUE_G(cyc * 0.5)
         girl_b = HUE_B(cyc * 0.5)
+        boy_r = HUE_R(cyc * 0.5 + MATH.PI)
+        boy_g = HUE_G(cyc * 0.5 + MATH.PI)
+        boy_b = HUE_B(cyc * 0.5 + MATH.PI)
     ENDIF
     IF tiktok THEN
         DANCER MID_X, TRUE, cyc, girl_r, girl_g, girl_b
     ELSE
-        DANCER 760, FALSE, cyc, 60, 210, 255
+        DANCER 760, FALSE, cyc, boy_r, boy_g, boy_b
         DANCER 1160, TRUE, cyc, girl_r, girl_g, girl_b
     ENDIF
 

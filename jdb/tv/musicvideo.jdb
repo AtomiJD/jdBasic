@@ -1,8 +1,13 @@
 ' musicvideo.jdb - turns the songs in jdb/demos/sound into music videos
 ' for the series "When Kaiku Dreams Techno".
 '
-'   jdBasic musicvideo.jdb              every song in SONGS below
-'   jdBasic musicvideo.jdb <base>       one, e.g. kaiku_01_neon_highway
+'   jdBasic musicvideo.jdb                      every song in SONGS below
+'   jdBasic musicvideo.jdb <base>               one, e.g. kaiku_01_neon_highway
+'   jdBasic musicvideo.jdb <base> purple        the same in another look
+'
+' The look is the show (stage.jdb --look): classic, purple, neon or
+' rainbow, for both dancers. A look other than classic is part of the
+' file name.
 '
 ' Per song: the song renders itself offline (--render, see stage.jdb)
 ' into raw/<base>_frames - an intro with 3-2-1, then every frame as JPEG
@@ -17,8 +22,8 @@ DIM SONG_DIR$ AS STRING = "..\demos\sound\"
 DIM FPS AS INTEGER = 30
 DIM INTRO_MS AS INTEGER = 6000
 
-' base, song file
-DIM SONGS$ = ["kaiku_01_neon_highway", "synthwave_highway", "kaiku_02_glitter_ball", "disco_glitter", "kaiku_03_rooftop_sunday", "house_rooftop", "kaiku_04_copper_wire", "acid_copper", "kaiku_05_kaiku_in_a_minor", "trance_live", "kaiku_06_night_bus", "dnb_nightbus"]
+' base, song file, look
+DIM SONGS$ = ["kaiku_01_neon_highway", "synthwave_highway", "classic", "kaiku_02_glitter_ball", "disco_glitter", "rainbow", "kaiku_03_rooftop_sunday", "house_rooftop", "classic", "kaiku_04_copper_wire", "acid_copper", "neon", "kaiku_05_kaiku_in_a_minor", "trance_live", "purple", "kaiku_06_night_bus", "dnb_nightbus", "neon"]
 
 ' Deletes the frames and the WAV of a render, then the directory
 SUB CLEAN_FRAMES(dir$)
@@ -33,15 +38,17 @@ SUB CLEAN_FRAMES(dir$)
     ENDIF
 ENDSUB
 
-FUNC MAKE_VIDEO(base$, song$) AS INTEGER
+FUNC MAKE_VIDEO(name$, song$, look$) AS INTEGER
+    DIM base$ AS STRING = name$
+    IF look$ <> "classic" THEN base$ = base$ + "_" + look$
     DIM frames$ AS STRING = "raw\" + base$ + "_frames"
     DIM out$ AS STRING = "final\" + base$ + ".mp4"
-    PRINT "== "; base$; "  ("; song$; ".jdb)"
+    PRINT "== "; base$; "  ("; song$; ".jdb, "; look$; ")"
     CLEAN_FRAMES frames$
     MKDIR frames$
 
     DIM t0 AS DOUBLE = TICK()
-    DIM r = OS.EXEC(JDB$, [SONG_DIR$ + song$ + ".jdb", "--render", frames$])
+    DIM r = OS.EXEC(JDB$, [SONG_DIR$ + song$ + ".jdb", "--render", frames$, "--look", look$])
     DIM run_log$ AS STRING = r{"OUTPUT"}
     DIM p AS INTEGER = INSTR(run_log$, "rendered ")
     IF p < 0 THEN
@@ -69,11 +76,16 @@ ENDFUNC
 DIM cli = OS.ARGS()
 DIM only$ AS STRING = ""
 IF LEN(cli) > 1 THEN only$ = cli[1]
+DIM one_look$ AS STRING = ""
+IF LEN(cli) > 2 THEN one_look$ = LCASE$(cli[2])
+DIM look$ AS STRING = ""
 DIM made AS INTEGER = 0
 DIM si AS INTEGER
-FOR si = 0 TO LEN(SONGS$) - 1 STEP 2
+FOR si = 0 TO LEN(SONGS$) - 1 STEP 3
     IF only$ = "" ORELSE only$ = SONGS$[si] THEN
-        IF MAKE_VIDEO(SONGS$[si], SONGS$[si + 1]) THEN made = made + 1
+        look$ = SONGS$[si + 2]
+        IF one_look$ <> "" THEN look$ = one_look$
+        IF MAKE_VIDEO(SONGS$[si], SONGS$[si + 1], look$) THEN made = made + 1
     ENDIF
 NEXT si
 PRINT made; " video(s) made"
