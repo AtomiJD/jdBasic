@@ -13600,6 +13600,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             out.owned = true;
             return out;
         }
+        if (av.tag == JD_TAG_I64) {
+            // A whole number keeps every digit; through the double the
+            // numeric STR$ takes it would round above 2^53.
+            auto& fn = runtime_funcs["__int_to_str"];
+            LLVMValueRef args[] = { av.val };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "si"), JD_TAG_STR };
+        }
         if (av.tag == JD_TAG_BOOL) {
             auto& fn = runtime_funcs["__str_bool"];
             LLVMValueRef args[] = { av.val };

@@ -125,8 +125,7 @@ void VM::register_string_builtins() {
         return Value::make_string(args[0].to_string());
     });
     register_native("VAL", 1, 1, [](const std::vector<Value>& args) -> Value {
-        try { return Value::make_f64(std::stod(args[0].as_string()->data)); }
-        catch (...) { return Value::make_f64(0); }
+        return Value::make_f64(jdb_num::parse_prefix(args[0].as_string()->data.c_str()));
     });
     register_native("CHR", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_string(std::string(1, static_cast<char>(args[0].to_int())));
@@ -678,21 +677,15 @@ void VM::register_string_builtins() {
         return Value::make_string(s + suffix);
     });
     register_native("HEX$", [](const std::vector<Value>& args) -> Value {
-        char buf[32]; snprintf(buf, sizeof(buf), "%llX", (long long)args[0].to_int());
+        char buf[32]; jdb_num::format_hex(buf, sizeof(buf), args[0].to_int());
         return Value::make_string(buf);
     });
     register_native("BIN$", [](const std::vector<Value>& args) -> Value {
-        int64_t v = args[0].to_int(); std::string r;
-        if (v == 0) return Value::make_string("0");
-        uint64_t u = (uint64_t)v; bool started = false;
-        for (int i = 63; i >= 0; i--) {
-            if (u & (1ULL << i)) { started = true; r += '1'; }
-            else if (started) r += '0';
-        }
-        return Value::make_string(r);
+        char buf[72]; jdb_num::format_bin(buf, sizeof(buf), args[0].to_int());
+        return Value::make_string(buf);
     });
     register_native("OCT$", [](const std::vector<Value>& args) -> Value {
-        char buf[32]; snprintf(buf, sizeof(buf), "%llo", (long long)args[0].to_int());
+        char buf[32]; jdb_num::format_oct(buf, sizeof(buf), args[0].to_int());
         return Value::make_string(buf);
     });
 #ifndef JDB_LEAN

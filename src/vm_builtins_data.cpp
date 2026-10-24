@@ -8,14 +8,8 @@
 static double conversion_arg(const Value& v, const char* fn) {
     if (v.type != ValueType::STRING) return v.to_double();
     const std::string& s = v.as_string()->data;
-    size_t b = s.find_first_not_of(" \t\r\n");
-    size_t e = s.find_last_not_of(" \t\r\n");
-    if (b != std::string::npos) {
-        std::string t = s.substr(b, e - b + 1);
-        char* end = nullptr;
-        double d = std::strtod(t.c_str(), &end);
-        if (end && *end == '\0') return d;
-    }
+    double d;
+    if (jdb_num::parse_whole(s.c_str(), d)) return d;
     throw jdError(ErrCode::TYPE_MISMATCH,
         std::string(fn) + ": \"" + s + "\" is not a number");
 }
@@ -37,13 +31,13 @@ void VM::register_data_builtins() {
         return Value::make_f64(conversion_arg(args[0], "CDBL"));
     });
     register_native("CINT", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_i64(static_cast<int32_t>(conversion_arg(args[0], "CINT")));
+        return Value::make_i64(jdb_num::cint(conversion_arg(args[0], "CINT")));
     });
     register_native("CLNG", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_i64(static_cast<int64_t>(conversion_arg(args[0], "CLNG")));
+        return Value::make_i64(jdb_num::clng(conversion_arg(args[0], "CLNG")));
     });
     register_native("CSNG", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_f64(static_cast<double>(static_cast<float>(conversion_arg(args[0], "CSNG"))));
+        return Value::make_f64(jdb_num::csng(conversion_arg(args[0], "CSNG")));
     });
     register_native("CBOOL", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_bool(args[0].to_bool());
@@ -416,10 +410,8 @@ void VM::register_data_builtins() {
     });
     register_native("TONUM", [](const std::vector<Value>& args) -> Value {
         // Mirror VAL: strings go through stod so "1.5" → 1.5, not 0.
-        if (args[0].type == ValueType::STRING) {
-            try { return Value::make_f64(std::stod(args[0].as_string()->data)); }
-            catch (...) { return Value::make_f64(0); }
-        }
+        if (args[0].type == ValueType::STRING)
+            return Value::make_f64(jdb_num::parse_prefix(args[0].as_string()->data.c_str()));
         return Value::make_f64(args[0].to_double());
     });
     register_native("TOSTR", [](const std::vector<Value>& args) -> Value {

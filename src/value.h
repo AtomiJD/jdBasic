@@ -12,8 +12,11 @@
 #include <locale>
 #include <stdexcept>
 
-// Global locale for number formatting (set by SETLOCALE)
+#include "jdb_number.h"
+
+// The locale SETLOCALE chose, and the punctuation numbers are written with.
 inline std::locale g_jd_locale("C");
+inline jdb_num::Punct g_jd_punct;
 
 #include "jdb_calendar.h"
 
@@ -362,27 +365,17 @@ struct Value {
         }
     }
 
-    // Format a floating-point number with locale-aware thousand separators,
-    // fixed precision 6, trailing zeros and trailing decimal point removed.
+    // A number as PRINT and STR$ write it, under the locale's punctuation.
     static std::string format_float_locale(double val) {
-        std::ostringstream ss;
-        ss.imbue(g_jd_locale);
-        ss << std::fixed << std::setprecision(6) << val;
-        std::string s = ss.str();
-        // Remove trailing zeros
-        s.erase(s.find_last_not_of('0') + 1, std::string::npos);
-        // Remove trailing decimal point
-        char dp = std::use_facet<std::numpunct<char>>(g_jd_locale).decimal_point();
-        if (!s.empty() && s.back() == dp) s.pop_back();
-        return s;
+        char buf[512];
+        jdb_num::format_double(buf, sizeof(buf), val, g_jd_punct);
+        return std::string(buf);
     }
 
-    // Format an integer with locale-aware thousand separators.
     static std::string format_int_locale(int64_t val) {
-        std::ostringstream ss;
-        ss.imbue(g_jd_locale);
-        ss << val;
-        return ss.str();
+        char buf[64];
+        jdb_num::format_int(buf, sizeof(buf), val, g_jd_punct);
+        return std::string(buf);
     }
 
     std::string to_string() const {

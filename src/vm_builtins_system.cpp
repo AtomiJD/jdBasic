@@ -185,6 +185,7 @@ void VM::register_system_builtins() {
         }
         try {
             g_jd_locale = std::locale(applied.c_str());
+            g_jd_punct = jdb_num::punct_of(g_jd_locale);
             std::cout.imbue(g_jd_locale);
         } catch (const std::runtime_error&) {
             // If the C++ locale fails, keep the previous one

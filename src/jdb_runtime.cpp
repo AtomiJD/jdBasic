@@ -13,6 +13,8 @@
 #include "jdb_shape.h"
 #include "jdb_calendar.h"
 #include "jdb_format.h"
+#include "jdb_number.h"
+#include <clocale>
 #include <algorithm>
 #include <vector>
 #include <atomic>
@@ -67,32 +69,22 @@ static void flatten_into(JdbArray* arr, std::vector<double>& out);
 
 // ── I/O ─────────────────────────────────────────────────────
 
+// The punctuation SETLOCALE chose for numbers, the C locale's at first.
+static jdb_num::Punct g_punct;
+
 void jdb_print_int(int64_t val) {
-    printf("%lld", (long long)val);
+    char buf[64];
+    jdb_num::format_int(buf, sizeof(buf), val, g_punct);
+    fputs(buf, stdout);
 }
 
-// Format a double the way the interpreter's value.h::format_float_locale
-// does: %.6f then trim trailing zeros and a trailing decimal point. This
-// keeps interp/native PRINT outputs aligned (1e8 → "100000000", 1e-10 → "0",
-// 1e20 → "100000000000000000000", 1.5 → "1.5").
+// A number as PRINT and STR$ write it (jdb_num::format_double).
 static int jdb_format_double(char* out, int cap, double val) {
-    int n = snprintf(out, cap, "%.6f", val);
-    if (n <= 0 || n >= cap) return n;
-    // Strip trailing zeros (only inside / after the fractional part).
-    int dot = -1;
-    for (int i = 0; i < n; i++) if (out[i] == '.') { dot = i; break; }
-    if (dot >= 0) {
-        int end = n - 1;
-        while (end > dot && out[end] == '0') end--;
-        if (end == dot) end--;  // drop the dot itself
-        out[end + 1] = '\0';
-        n = end + 1;
-    }
-    return n;
+    return jdb_num::format_double(out, cap, val, g_punct);
 }
 
 void jdb_print_double(double val) {
-    char buf[64];
+    char buf[512];
     jdb_format_double(buf, sizeof(buf), val);
     fputs(buf, stdout);
 }
@@ -494,53 +486,28 @@ void jdb_str_drop(char* s) {
     free(s);
 }
 
-// Locale state: 0 = C (default), 1 = de_DE (dot thousand sep, comma decimal)
-static int g_locale = 0;
-
+// SETLOCALE: the process locale, so strtod and the C library's number text
+// follow it as in the interpreter, and the punctuation PRINT and STR$ use.
+// A bare name is tried with the .UTF-8 and .utf8 suffixes glibc wants.
 void jdb_setlocale(const char* name) {
-    if (!name) { g_locale = 0; return; }
-    if (strstr(name, "de") || strstr(name, "DE")) g_locale = 1;
-    else g_locale = 0;
-}
-
-// Format integer with thousand separators based on locale.
-static void format_int_grouped(int64_t val, char sep, char* out, size_t out_size) {
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%lld", (long long)val);
-    bool neg = (buf[0] == '-');
-    const char* digits = neg ? buf + 1 : buf;
-    size_t dlen = strlen(digits);
-    size_t oi = 0;
-    if (neg && oi < out_size - 1) out[oi++] = '-';
-    for (size_t i = 0; i < dlen && oi < out_size - 1; i++) {
-        if (i > 0 && (dlen - i) % 3 == 0) {
-            if (oi < out_size - 1) out[oi++] = sep;
-        }
-        out[oi++] = digits[i];
+    std::string loc = name ? name : "C";
+    const char* set = setlocale(LC_ALL, loc.c_str());
+    if (!set && loc.find('.') == std::string::npos) {
+        if (setlocale(LC_ALL, (loc + ".UTF-8").c_str())) loc += ".UTF-8";
+        else if (setlocale(LC_ALL, (loc + ".utf8").c_str())) loc += ".utf8";
     }
-    out[oi] = '\0';
+    try { g_punct = jdb_num::punct_of(std::locale(loc.c_str())); } catch (...) {}
 }
 
 char* jdb_int_to_str(int64_t val) {
     char buf[64];
-    if (g_locale == 1) format_int_grouped(val, '.', buf, sizeof(buf));
-    else snprintf(buf, sizeof(buf), "%lld", (long long)val);
+    jdb_num::format_int(buf, sizeof(buf), val, g_punct);
     return _strdup(buf);
 }
 
 char* jdb_double_to_str(double val) {
-    char buf[128];
-    // Whole-number doubles print without decimals (matches interpreter).
-    if (val == (int64_t)val && fabs(val) < 1e15) {
-        if (g_locale == 1) format_int_grouped((int64_t)val, '.', buf, sizeof(buf));
-        else snprintf(buf, sizeof(buf), "%lld", (long long)(int64_t)val);
-    } else {
-        jdb_format_double(buf, sizeof(buf), val);
-        if (g_locale == 1) {
-            // Replace dot decimal with comma
-            for (char* p = buf; *p; p++) if (*p == '.') { *p = ','; break; }
-        }
-    }
+    char buf[512];
+    jdb_format_double(buf, sizeof(buf), val);
     return _strdup(buf);
 }
 
@@ -561,7 +528,7 @@ double jdb_floor(double x)     { return floor(x); }
 double jdb_ceil(double x)      { return ceil(x); }
 double jdb_pow(double x, double y) { return pow(x, y); }
 int64_t jdb_int(double x)      { return (int64_t)x; }
-double jdb_val(const char* s)   { return atof(s); }
+double jdb_val(const char* s)   { return jdb_num::parse_prefix(s); }
 double jdb_rnd(double ignored)  { (void)ignored; return (double)rand() / RAND_MAX; }
 double jdb_random2(double lo, double hi) { return lo + (double)rand() / RAND_MAX * (hi - lo); }
 
@@ -571,21 +538,12 @@ double jdb_cosh(double x)      { return cosh(x); }
 double jdb_tanh(double x)      { return tanh(x); }
 double jdb_atan2(double y, double x) { return atan2(y, x); }
 double jdb_round(double x)     { return round(x); }
-double jdb_round_p(double x, double places) {
-    double m = pow(10.0, places);
-    return round(x * m) / m;
-}
+double jdb_round_p(double x, double places) { return jdb_num::round_places(x, places); }
 double jdb_trunc(double x)     { return trunc(x); }
-double jdb_sign(double x)      { return (x > 0) ? 1.0 : (x < 0) ? -1.0 : 0.0; }
-int64_t jdb_sign_i(double x)   { return (x > 0) ? 1 : (x < 0) ? -1 : 0; }
-double jdb_clamp(double x, double lo, double hi) { return x < lo ? lo : (x > hi ? hi : x); }
-double jdb_fac(double n) {
-    int64_t k = (int64_t)n;
-    if (k <= 1) return 1.0;
-    double r = 1.0;
-    for (int64_t i = 2; i <= k; i++) r *= i;
-    return r;
-}
+double jdb_sign(double x)      { return (double)jdb_num::sign(x); }
+int64_t jdb_sign_i(double x)   { return jdb_num::sign(x); }
+double jdb_clamp(double x, double lo, double hi) { return jdb_num::clamp(x, lo, hi); }
+double jdb_fac(double n)       { return jdb_num::fac((int64_t)n); }
 double jdb_fmod(double x, double y) { return fmod(x, y); }
 double jdb_min2(double a, double b) { return a < b ? a : b; }
 double jdb_max2(double a, double b) { return a > b ? a : b; }
@@ -2868,7 +2826,7 @@ void* jdb_map_get_obj(JdbMap* m, const char* key) {
     } else if (t == JD_TAG_BOOL) {
         snprintf(msg, sizeof msg, "Cannot index into %s", u.d != 0.0 ? "TRUE" : "FALSE");
     } else {
-        char num[64];
+        char num[512];
         jdb_format_double(num, sizeof num, u.d);
         snprintf(msg, sizeof msg, "Cannot index into %s", num);
     }
@@ -3146,7 +3104,7 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
             return;
         }
         // 0 (unknown), 1 (F64), other → numeric
-        char num[64]; jdb_format_double(num, sizeof(num), val); fputs(num, stdout);
+        char num[512]; jdb_format_double(num, sizeof(num), val); fputs(num, stdout);
         return;
     }
     if (has_string) {
@@ -3173,7 +3131,7 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
         fputs(iso ? iso : "", stdout);
         free(iso);
     } else {
-        char num[64];
+        char num[512];
         jdb_format_double(num, sizeof(num), val);
         fputs(num, stdout);
     }
@@ -3188,7 +3146,7 @@ JdbArray* jdb_array_str_concat(JdbArray* arr, const char* s, int32_t scalar_left
     r->flags |= 3;
     bool strings = (arr->flags & 2) != 0;
     for (int64_t i = 0; i < arr->length; i++) {
-        char num[64];
+        char num[512];
         const char* elem;
         if (strings) {
             union { double d; int64_t i; } u; u.d = arr->data[i];
@@ -3676,7 +3634,7 @@ char* jdb_replace(const char* src, const char* find, const char* rep) {
 }
 
 char* jdb_str(double val) {
-    char buf[64];
+    char buf[512];
     jdb_format_double(buf, sizeof(buf), val);
     return _strdup(buf);
 }
@@ -3717,7 +3675,7 @@ static int jdb_value_str_tag(char* buf, int cap, int pos, double val, int32_t ta
             // Map cells hold every number as f64; the tag says how it reads.
             return pos + snprintf(buf + pos, cap - pos, "%lld", (long long)val);
         case JD_TAG_F64: {
-            char num[64];
+            char num[512];
             jdb_format_double(num, sizeof(num), val);
             return pos + snprintf(buf + pos, cap - pos, "%s", num);
         }
@@ -3740,7 +3698,7 @@ static int jdb_value_str_tag(char* buf, int cap, int pos, double val, int32_t ta
             return pos + snprintf(buf + pos, cap - pos, "%s",
                 val != 0.0 ? "TRUE" : "FALSE");
         default: {
-            char num[64];
+            char num[512];
             jdb_format_double(num, sizeof(num), val);
             return pos + snprintf(buf + pos, cap - pos, "%s", num);
         }
@@ -3957,27 +3915,19 @@ int64_t jdb_endswith(const char* s, const char* suffix) {
 
 char* jdb_hex(int64_t val) {
     char buf[32];
-    snprintf(buf, sizeof(buf), "%llX", (unsigned long long)val);
+    jdb_num::format_hex(buf, sizeof(buf), val);
     return _strdup(buf);
 }
 
 char* jdb_bin(int64_t val) {
-    char buf[66];
-    if (val == 0) return _strdup("0");
-    int pos = 0;
-    uint64_t u = (uint64_t)val;
-    // Find highest bit
-    int bits = 0;
-    for (uint64_t t = u; t; t >>= 1) bits++;
-    for (int i = bits - 1; i >= 0; i--)
-        buf[pos++] = (u & (1ULL << i)) ? '1' : '0';
-    buf[pos] = '\0';
+    char buf[72];
+    jdb_num::format_bin(buf, sizeof(buf), val);
     return _strdup(buf);
 }
 
 char* jdb_oct(int64_t val) {
     char buf[32];
-    snprintf(buf, sizeof(buf), "%llo", (unsigned long long)val);
+    jdb_num::format_oct(buf, sizeof(buf), val);
     return _strdup(buf);
 }
 
@@ -4469,36 +4419,22 @@ char* jdb_path_normalize(const char* p) {
 }
 
 // ── Bit rotation ────────────────────────────────────────────
+// A width other than 8, 16, 32 or 64 rotates within 64 bits.
 int64_t jdb_rotl(int64_t x, int64_t n, int64_t bits) {
-    int w = (bits == 8 || bits == 16 || bits == 32 || bits == 64) ? (int)bits : 64;
-    uint64_t mask = (w == 64) ? ~(uint64_t)0 : ((uint64_t)1 << w) - 1;
-    uint64_t u = ((uint64_t)x) & mask;
-    int64_t s = ((n % w) + w) % w;
-    return (int64_t)(((u << s) | (u >> (w - s))) & mask);
+    int w = jdb_num::rotation_width_ok((int)bits) ? (int)bits : 64;
+    return (int64_t)jdb_num::rotl((uint64_t)x, n, w);
 }
 int64_t jdb_rotr(int64_t x, int64_t n, int64_t bits) {
-    int w = (bits == 8 || bits == 16 || bits == 32 || bits == 64) ? (int)bits : 64;
-    uint64_t mask = (w == 64) ? ~(uint64_t)0 : ((uint64_t)1 << w) - 1;
-    uint64_t u = ((uint64_t)x) & mask;
-    int64_t s = ((n % w) + w) % w;
-    return (int64_t)(((u >> s) | (u << (w - s))) & mask);
+    int w = jdb_num::rotation_width_ok((int)bits) ? (int)bits : 64;
+    return (int64_t)jdb_num::rotr((uint64_t)x, n, w);
 }
 // 2-arg forms used by native codegen (implicit 64-bit width).
 int64_t jdb_rotl2(int64_t x, int64_t n) { return jdb_rotl(x, n, 64); }
 int64_t jdb_rotr2(int64_t x, int64_t n) { return jdb_rotr(x, n, 64); }
 
 // ── Math (GCD/LCM) - binary; variadic is expanded by codegen ─
-int64_t jdb_gcd(int64_t a, int64_t b) {
-    if (a < 0) a = -a; if (b < 0) b = -b;
-    while (b) { int64_t t = a % b; a = b; b = t; }
-    return a;
-}
-int64_t jdb_lcm(int64_t a, int64_t b) {
-    if (a == 0 || b == 0) return 0;
-    int64_t g = jdb_gcd(a, b);
-    if (a < 0) a = -a; if (b < 0) b = -b;
-    return (a / g) * b;
-}
+int64_t jdb_gcd(int64_t a, int64_t b) { return jdb_num::gcd(a, b); }
+int64_t jdb_lcm(int64_t a, int64_t b) { return jdb_num::lcm(a, b); }
 
 // ── String padding ──────────────────────────────────────────
 char* jdb_lpad(const char* s, int64_t n, const char* pad) {
@@ -5081,7 +5017,7 @@ char* jdb_frmv(JdbArray* arr) {
             } else if (t == 8) {  // BOOL
                 emit(arr->data[i] != 0.0 ? "TRUE" : "FALSE");
             } else {       // F64 / I64 / unknown
-                char num[64];
+                char num[512];
                 jdb_format_double(num, sizeof(num), arr->data[i]);
                 emit(num);
             }
@@ -5099,7 +5035,7 @@ char* jdb_frmv(JdbArray* arr) {
                 emit(sub ? sub : "[]");
                 free(sub);
             } else {
-                char num[64];
+                char num[512];
                 jdb_format_double(num, sizeof(num), arr->data[i]);
                 emit(num);
             }
@@ -5110,7 +5046,7 @@ char* jdb_frmv(JdbArray* arr) {
             emit(iso ? iso : "");
             free(iso);
         } else {
-            char num[64];
+            char num[512];
             jdb_format_double(num, sizeof(num), arr->data[i]);
             emit(num);
         }
@@ -5145,7 +5081,7 @@ char* jdb_frmv_matrix(JdbArray* arr) {
             free(iso);
             return out;
         }
-        char num[64];
+        char num[512];
         jdb_format_double(num, sizeof num, a->data[i]);
         return num;
     };
@@ -5222,10 +5158,8 @@ double jdb_conv_str(const char* s, const char* fn) {
     const char* p = s ? s : "";
     while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
     if (*p) {
-        char* end = nullptr;
-        double d = strtod(p, &end);
-        while (end && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) end++;
-        if (end && end != p && *end == '\0') return d;
+        double d;
+        if (jdb_num::parse_whole(p, d)) return d;
         jdb_cal::Civil c;
         if (jdb_cal::looks_iso(p) && jdb_cal::parse_iso(p, c)) return jdb_cal::local_to_epoch(c);
     }
@@ -5236,13 +5170,13 @@ double jdb_conv_str(const char* s, const char* fn) {
 }
 
 double jdb_cdbl(double x) { return x; }
-int64_t jdb_cint(double x) { return (int64_t)(int32_t)x; }
-int64_t jdb_clng(double x) { return (int64_t)x; }
-double jdb_csng(double x) { return (double)(float)x; }
+int64_t jdb_cint(double x) { return jdb_num::cint(x); }
+int64_t jdb_clng(double x) { return jdb_num::clng(x); }
+double jdb_csng(double x) { return jdb_num::csng(x); }
 int64_t jdb_cbool(double x) { return x != 0.0 ? 1 : 0; }
 char* jdb_tostr(double x) { return jdb_str(x); }
 char* jdb_cstr(double x) { return jdb_str(x); }
-double jdb_tonum(const char* s) { return s ? atof(s) : 0.0; }
+double jdb_tonum(const char* s) { return jdb_num::parse_prefix(s); }
 
 int64_t jdb_byteat(const char* s, int64_t idx) {
     if (!s || idx < 0) return 0;

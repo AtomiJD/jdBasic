@@ -74,73 +74,32 @@ void VM::register_math_builtins() {
         return Value::make_f64(std::log10(args[0].to_double()));
     });
     register_native("GCD", 2, -1, [](const std::vector<Value>& args) -> Value {
-        // Variadic: GCD(a,b,c,...) via iterated Euclid.
-        auto gcd2 = [](int64_t a, int64_t b) {
-            if (a < 0) a = -a; if (b < 0) b = -b;
-            while (b) { int64_t t = a % b; a = b; b = t; }
-            return a;
-        };
         int64_t r = args[0].to_int();
-        for (size_t i = 1; i < args.size(); i++) r = gcd2(r, args[i].to_int());
+        for (size_t i = 1; i < args.size(); i++) r = jdb_num::gcd(r, args[i].to_int());
         return Value::make_i64(r);
     });
     register_native("LCM", 2, -1, [](const std::vector<Value>& args) -> Value {
-        auto gcd2 = [](int64_t a, int64_t b) {
-            if (a < 0) a = -a; if (b < 0) b = -b;
-            while (b) { int64_t t = a % b; a = b; b = t; }
-            return a;
-        };
-        auto lcm2 = [&](int64_t a, int64_t b) -> int64_t {
-            if (a == 0 || b == 0) return 0;
-            int64_t g = gcd2(a, b);
-            if (a < 0) a = -a; if (b < 0) b = -b;
-            return (a / g) * b;
-        };
         int64_t r = args[0].to_int();
-        for (size_t i = 1; i < args.size(); i++) r = lcm2(r, args[i].to_int());
+        for (size_t i = 1; i < args.size(); i++) r = jdb_num::lcm(r, args[i].to_int());
         return Value::make_i64(r);
     });
+    // ROTL(x, n, [bits=64]) and ROTR rotate within a width of 8, 16, 32 or 64 bits.
     register_native("ROTL", 2, 3, [](const std::vector<Value>& args) -> Value {
-        // ROTL(x, n, [bits=64]) - rotate-left on an integer width 'bits' (8/16/32/64).
-        uint64_t x = (uint64_t)args[0].to_int();
-        int64_t n = args[1].to_int();
         int w = (args.size() >= 3) ? (int)args[2].to_int() : 64;
-        if (w != 8 && w != 16 && w != 32 && w != 64)
-            throw std::runtime_error("ROTL: bits must be 8, 16, 32 or 64");
-        uint64_t mask = (w == 64) ? ~(uint64_t)0 : ((uint64_t)1 << w) - 1;
-        x &= mask;
-        n = ((n % w) + w) % w;
-        uint64_t r = ((x << n) | (x >> (w - n))) & mask;
-        return Value::make_i64((int64_t)r);
+        if (!jdb_num::rotation_width_ok(w)) throw std::runtime_error("ROTL: bits must be 8, 16, 32 or 64");
+        return Value::make_i64((int64_t)jdb_num::rotl((uint64_t)args[0].to_int(), args[1].to_int(), w));
     });
     register_native("ROTR", 2, 3, [](const std::vector<Value>& args) -> Value {
-        uint64_t x = (uint64_t)args[0].to_int();
-        int64_t n = args[1].to_int();
         int w = (args.size() >= 3) ? (int)args[2].to_int() : 64;
-        if (w != 8 && w != 16 && w != 32 && w != 64)
-            throw std::runtime_error("ROTR: bits must be 8, 16, 32 or 64");
-        uint64_t mask = (w == 64) ? ~(uint64_t)0 : ((uint64_t)1 << w) - 1;
-        x &= mask;
-        n = ((n % w) + w) % w;
-        uint64_t r = ((x >> n) | (x << (w - n))) & mask;
-        return Value::make_i64((int64_t)r);
+        if (!jdb_num::rotation_width_ok(w)) throw std::runtime_error("ROTR: bits must be 8, 16, 32 or 64");
+        return Value::make_i64((int64_t)jdb_num::rotr((uint64_t)args[0].to_int(), args[1].to_int(), w));
     });
+    // FAC answers a whole number while n! fits one and a double beyond.
     register_native("FAC", 1, 1, [](const std::vector<Value>& args) -> Value {
         int64_t n = args[0].to_int();
-        if (n < 0) return Value::make_i64(0);
-        // Stay in INT64 as long as possible (exact up to 20!), then continue
-        // in FLOAT64 (still fits 170! ≈ 7.26e306). Beyond that, returns inf.
-        int64_t ir = 1;
-        int64_t i = 2;
-        for (; i <= n; i++) {
-            int64_t nr = (int64_t)((uint64_t)ir * (uint64_t)i);
-            if (ir != 0 && nr / ir != i) break; // overflow → switch to double
-            ir = nr;
-        }
-        if (i > n) return Value::make_i64(ir);
-        double dr = (double)ir;
-        for (; i <= n; i++) dr *= (double)i;
-        return Value::make_f64(dr);
+        double r = jdb_num::fac(n);
+        if (n < 0 || jdb_num::fac_is_whole(n)) return Value::make_i64((int64_t)r);
+        return Value::make_f64(r);
     });
     register_native("FLOOR", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(std::floor(args[0].to_double()));
@@ -149,28 +108,20 @@ void VM::register_math_builtins() {
         return Value::make_f64(std::ceil(args[0].to_double()));
     });
     register_native("ROUND", 1, 2, [](const std::vector<Value>& args) -> Value {
-        double v = args[0].to_double();
-        int dec = (args.size() >= 2) ? (int)args[1].to_int() : 0;
-        double m = std::pow(10.0, dec);
-        return Value::make_f64(std::round(v * m) / m);
+        double places = (args.size() >= 2) ? (double)args[1].to_int() : 0.0;
+        return Value::make_f64(jdb_num::round_places(args[0].to_double(), places));
     });
     register_native("CLAMP", 3, 3, [](const std::vector<Value>& args) -> Value {
-        double v = args[0].to_double();
-        double lo = args[1].to_double();
-        double hi = args[2].to_double();
-        return Value::make_f64(v < lo ? lo : (v > hi ? hi : v));
+        return Value::make_f64(jdb_num::clamp(args[0].to_double(), args[1].to_double(), args[2].to_double()));
     });
     register_native("TRUNC", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(std::trunc(args[0].to_double()));
     });
     register_native("SIGN", 1, 1, [](const std::vector<Value>& args) -> Value {
-        double v = args[0].to_double();
-        return Value::make_i64(v > 0 ? 1 : (v < 0 ? -1 : 0));
+        return Value::make_i64(jdb_num::sign(args[0].to_double()));
     });
-    // ── LERP ─────────────────────────────────────────────────
     register_native("LERP", 3, 3, [](const std::vector<Value>& args) -> Value {
-        double a = args[0].to_double(), b = args[1].to_double(), t = args[2].to_double();
-        return Value::make_f64(a + (b - a) * t);
+        return Value::make_f64(jdb_num::lerp(args[0].to_double(), args[1].to_double(), args[2].to_double()));
     });
 
     register_native("SHL", 2, 2, [](const std::vector<Value>& args) -> Value {
@@ -204,8 +155,7 @@ void VM::register_math_builtins() {
         return Value::make_f64(std::tanh(args[0].to_double()));
     });
     register_native("SGN", [](const std::vector<Value>& args) -> Value {
-        double v = args[0].to_double();
-        return Value::make_i64(v > 0 ? 1 : (v < 0 ? -1 : 0));
+        return Value::make_i64(jdb_num::sign(args[0].to_double()));
     });
     // Math constants, readable as MATH.PI or MATH.PI().
     register_const("MATH.PI", Value::make_f64(3.14159265358979323846));
