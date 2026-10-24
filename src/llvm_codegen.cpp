@@ -18718,8 +18718,12 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
             ? std::filesystem::path(".")
             : std::filesystem::path(runtime_obj).parent_path()).string();
     std::string abs_build = std::filesystem::absolute("build").string();
+    // A runtime object built under the sanitizers needs their library at
+    // the link, which JDB_SANITIZE in the environment asks for.
+    const char* san = std::getenv("JDB_SANITIZE");
     std::string link_cmd =
         "g++ -O2 -no-pie -o " + sh_quote(exe_path) + " "
+        + (san && *san ? "-fsanitize=address,undefined " : "")
         + sh_quote(obj_path) + " "
         + sh_quote(runtime_obj) + " "
         + "-L" + sh_quote(rt_dir) + " -Lbuild -ljdbrt "

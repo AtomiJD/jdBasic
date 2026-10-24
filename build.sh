@@ -43,6 +43,16 @@ if [ -n "$BUILD_NUM" ]; then
     CXXFLAGS="$CXXFLAGS -DJDBASIC_BUILD_NUM=\"$BUILD_NUM\" -DJDBASIC_BUILD_DATE=\"$BUILD_DATE\""
 fi
 LDFLAGS="-ldl -lpthread"
+# SANITIZE=1 builds everything, the runtime object included, under
+# AddressSanitizer and UndefinedBehaviorSanitizer. A program compiled with
+# -c links the instrumented object, so jdbasic -c links it with the same
+# flags when JDB_SANITIZE is set in its environment.
+SAN_FLAGS=""
+if [ "${SANITIZE:-0}" = "1" ]; then
+    SAN_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+    CXXFLAGS="$CXXFLAGS $SAN_FLAGS"
+    LDFLAGS="$LDFLAGS $SAN_FLAGS"
+fi
 
 # Homebrew on Apple Silicon installs to /opt/homebrew; on Intel to /usr/local.
 # OpenSSL, libpng, libjpeg, freetype, harfbuzz etc. live under brew's prefix
@@ -397,7 +407,7 @@ fi
 if [ "$WANT_NATIVEC" = "1" ]; then
     if needs_build src/jdb_runtime.cpp build/jdb_runtime.o; then
         echo "== Precompiling jdb_runtime.o =="
-        $CXX -std=c++17 -O2 -DNDEBUG -MMD -MP -Isrc -c src/jdb_runtime.cpp -o build/jdb_runtime.o
+        $CXX -std=c++17 -O2 -DNDEBUG -MMD -MP -Isrc $SAN_FLAGS -c src/jdb_runtime.cpp -o build/jdb_runtime.o
     fi
 
     # libjdbrt.so source list mirrors the main build minus main.cpp +
