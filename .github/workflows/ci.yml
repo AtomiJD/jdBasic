@@ -224,3 +224,10 @@ jobs:
         run: |
           export LD_LIBRARY_PATH="$PWD/build:${LD_LIBRARY_PATH:-}"
           ./build/jdbasic tools/diff_backends.jdb
+
+      # Every tracked test through both backends, compared per test against
+      # tests/parity_baseline.linux.tsv: red when one got worse than recorded.
+      - name: Parity sweep (interpreter vs -c)
+        run: |
+          export LD_LIBRARY_PATH="$PWD/build:${LD_LIBRARY_PATH:-}"
+          ./tests/parity.sh -t 20 -j 4

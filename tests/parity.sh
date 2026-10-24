@@ -19,7 +19,9 @@
 #   --all   include the excluded directories too (needs models, network, a TTY
 #           and a TUI-enabled build; expect reds that say nothing about parity)
 #
-# The run is compared per test against tests/parity_baseline.tsv and exits 1
+# The run is compared per test against the platform's baseline
+# (tests/parity_baseline.tsv on Windows, parity_baseline.linux.tsv,
+# parity_baseline.macos.tsv) and exits 1
 # if any test got worse. A summary count cannot do that: one test regressing
 # while another is fixed leaves the totals unchanged. Re-record the baseline
 # with --update-baseline once a change is understood and intended.
@@ -232,7 +234,13 @@ echo
 
 # Compare against the recorded baseline. A summary count alone hides the case
 # where one test regresses while another is fixed, so compare per test.
-BASELINE="$REPO/tests/parity_baseline.tsv"
+# One baseline per platform: the Windows one carries the COM and FORMS tests,
+# the others their own flag set and binary names.
+case "$(uname -s)" in
+    Linux)  BASELINE="$REPO/tests/parity_baseline.linux.tsv" ;;
+    Darwin) BASELINE="$REPO/tests/parity_baseline.macos.tsv" ;;
+    *)      BASELINE="$REPO/tests/parity_baseline.tsv" ;;
+esac
 rank() { case "$1" in OK) echo 0 ;; XFAIL) echo 0 ;; NATIVE_ONLY) echo 1 ;; GAP) echo 2 ;; BOTH_RED) echo 3 ;; *) echo 3 ;; esac; }
 
 if [ "$UPDATE_BASELINE" -eq 1 ]; then
