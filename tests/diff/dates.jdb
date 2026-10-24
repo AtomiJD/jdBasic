@@ -21,3 +21,11 @@ PRINT "weekday week: "; WEEKDAY(CVDATE("2026-10-26")); " "; WEEKDAY(CVDATE("2026
 PRINT "leap: "; DAY(DATEADD("D", 1, CVDATE("2024-02-28"))); " "; DAY(DATEADD("D", 1, CVDATE("2023-02-28")))
 PRINT "epoch: "; CLNG(CVDATE("1970-01-01 00:00:00")); " "; CLNG(CVDATE("2000-01-01"))
 PRINT "str: "; STR$(d); " "; "" + e
+PRINT "parts tz: "; DATE.PARTS(d, 0){"hour"}; " "; DATE.PARTS(d, 5.5){"minute"}; " "; DATE.PARTS(old){"yday"}; " "; DATE.PARTS(d){"weekday"}
+PRINT "utc: "; YEAR(DATE.UTC(1969, 7, 20, 20, 17)); " "; CLNG(DATE.UTC(1969, 7, 20, 20, 17)); " "; CLNG(DATE.UTC(2000, 1, 1))
+PRINT "format tz: "; FORMAT_DATE(d, "%H:%M", 0); " "; FORMAT_DATE(d, "%d.%m.%Y", 8); " "; FORMAT_DATE(d, "%j %w %a")
+PRINT "parts old time: "; HOUR(old); " "; MINUTE(DATEADD("N", 90, old)); " "; DAY(DATEADD("D", -1, old))
+PRINT "range months: "; LEN(DATERANGE(CVDATE("2026-01-31"), CVDATE("2026-06-30"), "M")); " "; DAY(DATERANGE(CVDATE("2026-01-31"), CVDATE("2026-04-30"), "M")[1]); " "; DAY(DATERANGE(CVDATE("2026-01-31"), CVDATE("2026-04-30"), "M")[2])
+PRINT "range weeks: "; LEN(DATERANGE(e, DATEADD("D", 20, e), "W")); " "; LEN(DATERANGE(e, DATEADD("H", 5, e), "H", 2)); " "; LEN(DATERANGE(DATEADD("D", 6, e), e, "D", -3))
+PRINT "eom old: "; EOMONTH(old); " "; EOMONTH(old, -5); " "; DAY(EOMONTH(CVDATE("1900-02-10")))
+PRINT "dateadd wall: "; DATEADD("M", 1, CVDATE("2026-03-31 23:30:00")); " "; DATEADD("D", 1.5, CVDATE("2026-10-25")); " "; DATEDIFF("D", CVDATE("2026-03-28"), CVDATE("2026-03-30 12:00"))

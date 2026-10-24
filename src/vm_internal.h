@@ -82,16 +82,6 @@ extern "C" int  picocalc_gfx_buffered(void);
 extern "C" void picocalc_gfx_clear(int index);
 #endif
 
-// Days since 1970-01-01 of a proleptic Gregorian date.
-inline int64_t jdb_days_from_civil(int64_t y, int64_t m, int64_t d) {
-    y -= m <= 2;
-    const int64_t era = (y >= 0 ? y : y - 399) / 400;
-    const int64_t yoe = y - era * 400;
-    const int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-    const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + doe - 719468;
-}
-
 // Defined in vm_builtins_datetime.cpp. jdb_date_arith answers false when
 // neither operand is a date, and the caller then does ordinary numeric
 // arithmetic on a result that carries no DATE subtype.

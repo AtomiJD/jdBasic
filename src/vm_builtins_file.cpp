@@ -204,7 +204,7 @@ void VM::register_file_builtins() {
         std::time_t t = std::mktime(&tm);
         if (t == (std::time_t)-1) {
             // Outside the CRT's range (pre-1970 on Windows) - UTC civil epoch.
-            out_epoch = (double)(jdb_days_from_civil(y, mo, d) * 86400 +
+            out_epoch = (double)(jdb_cal::days_from_civil(y, mo, d) * 86400 +
                                  h * 3600 + mi * 60 + se);
             return true;
         }
