@@ -13477,9 +13477,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // / REDUCE / AGG / OUTER / TAKE_WHILE / DROP_WHILE).
     if (upper == "GROUPBY" || upper == "INTEGRATE") {
         report_error(m_current_stmt_file, expr.line,
-            upper + " with a function reference is not supported in native -c "
-            "(the compiled program can't resolve the funcref by name) - run it "
-            "in the interpreter");
+            upper + " with a function reference is interpreter-only (the compiled "
+            "program cannot resolve the funcref by name) - run it in the interpreter");
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
 
@@ -13519,8 +13518,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
         if (!udt_name.empty()) {
             report_error(m_current_stmt_file, expr.line,
-                upper + " does not support a UDT instance (type '" + udt_name +
-                "') under -c: pass a MAP/ARRAY, or build the " +
+                upper + " on a UDT instance (type '" + udt_name +
+                "') is interpreter-only: pass a MAP/ARRAY, or build the " +
                 std::string(upper == "NODE.PACK$" ? "value" : "JSON") + " from its fields");
         }
     }

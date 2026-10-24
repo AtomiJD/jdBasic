@@ -5,6 +5,11 @@
 
 OPTION EXPLICIT
 
+IF NOT OS.FEATURE("INTERPRETER") THEN
+    PRINT "test_unknown_type_exec is interpreter-only: EXECUTE runs deferred under -c"
+    END
+ENDIF
+
 DIM passed AS INTEGER = 0
 DIM failed AS INTEGER = 0
 

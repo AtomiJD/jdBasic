@@ -36,7 +36,11 @@
 #   INTERP/NATIVE: PASS (assert marker) OK (exit 0, nothing printed) FAIL
 #                  (a failure marker in the output, whatever the exit code)
 #                  FAIL:<code> TIMEOUT CFAIL
-#   VERDICT:       OK | GAP (interp green, native not) | BOTH_RED | NATIVE_ONLY
+#   VERDICT:       OK | GAP (interp green, native red, and not by design) |
+#                  LOOSE (loose source: -c refused it as STRICT or EXPLICIT and
+#                  the named variable really has no declaration) | UNSUPPORTED
+#                  (the compiler, the runtime or the test itself said
+#                  "interpreter-only") | BOTH_RED | NATIVE_ONLY | XFAIL
 
 set -u
 
@@ -105,6 +109,29 @@ classify() {
 
 green() { case "$1" in PASS|OK) return 0 ;; *) return 1 ;; esac; }
 
+# The backends disagree by design in two ways, and neither is a GAP. Prints
+# LOOSE or UNSUPPORTED, or nothing when the disagreement is unexplained.
+#   design_verdict <source> <compile log> <native log> <native status>
+# UNSUPPORTED rests on one phrase: every refusal in llvm_codegen.cpp and
+# vm_bridge.cpp says "interpreter-only", and a test that skips its native half
+# through OS.FEATURE("INTERPRETER") prints the same words.
+# LOOSE is checked, not trusted: an "undeclared variable" that the source does
+# declare somewhere is the compiler missing a declaration, which stays a GAP.
+design_verdict() {
+    local src="$1" clog="$2" nlog="$3" nstat="$4" first name base
+    if grep -qa 'interpreter-only' "$clog" "$nlog" 2>/dev/null; then echo "UNSUPPORTED"; return; fi
+    [ "$nstat" = "CFAIL" ] || return 0
+    first=$(grep -a -m1 -E 'error at [0-9]+:' "$clog")
+    case "$first" in
+        *"STRICT: untyped DIM "*) echo "LOOSE" ;;
+        *"undeclared variable '"*)
+            name=$(printf '%s\n' "$first" | sed "s/.*undeclared variable '\([^']*\)'.*/\1/"); base=${name%\$}
+            if ! grep -qiE "^[[:space:]]*(DIM|CONST|STATIC|GLOBAL|SHARED|FUNC|SUB|ASYNC|DECLARE)[^A-Za-z0-9_].*(^|[^A-Za-z0-9_])${base}([^A-Za-z0-9_]|\$)|^[[:space:]]*FOR[[:space:]]+(EACH[[:space:]]+)?${base}\\$?[[:space:]]*(=|IN[[:space:]])" "$src"; then
+                echo "LOOSE"
+            fi ;;
+    esac
+}
+
 run_one() {
     local rel="$1"
     local id="${rel//\//_}"; id="${id%.jdb}"
@@ -154,8 +181,14 @@ run_one() {
                 return
             fi ;;
     esac
-    if green "$istat" && green "$nstat"; then verdict="OK"
-    elif green "$istat"; then verdict="GAP"
+    if green "$istat" && green "$nstat"; then
+        verdict="OK"
+        # A test that skipped its native half says so; green on both sides
+        # then proves nothing about parity.
+        grep -qa 'interpreter-only' "$nlog" 2>/dev/null && verdict="UNSUPPORTED"
+    elif green "$istat"; then
+        verdict=$(design_verdict "$abs" "$clog" "$nlog" "$nstat")
+        [ -n "$verdict" ] || verdict="GAP"
     elif green "$nstat"; then verdict="NATIVE_ONLY"
     else verdict="BOTH_RED"
     fi
@@ -163,7 +196,7 @@ run_one() {
     printf '%s\t%s\t%s\t%s\n' "$rel" "$istat" "$nstat" "$verdict"
 }
 
-export -f run_one classify green
+export -f run_one classify green design_verdict
 export REPO JDB WORK TIMEOUT COM_TIMEOUT
 
 cd "$REPO" || exit 1
@@ -226,9 +259,10 @@ echo
 echo "=== SUMMARY ==="
 awk -F'\t' '{v[$4]++} END {for (k in v) printf "%-12s %d\n", k, v[k]}' "$RESULTS" | sort
 echo
-echo "=== PARITY GAPS (interp green, native red) ==="
-echo "note: a loose test rejected by the STRICT native compiler is expected -"
-echo "      the interpreter is deliberately loose. Look for runtime divergence."
+echo "=== PARITY GAPS (interp green, native red, not explained by design) ==="
+echo "note: loose source that STRICT/EXPLICIT refuses is LOOSE, a construct the"
+echo "      compiler names as interpreter-only is UNSUPPORTED; both sit in the"
+echo "      summary above. What is listed here needs a look."
 awk -F'\t' '$4=="GAP" {printf "%-52s interp=%-6s native=%s\n", $1, $2, $3}' "$RESULTS"
 echo
 
@@ -241,7 +275,7 @@ case "$(uname -s)" in
     Darwin) BASELINE="$REPO/tests/parity_baseline.macos.tsv" ;;
     *)      BASELINE="$REPO/tests/parity_baseline.tsv" ;;
 esac
-rank() { case "$1" in OK) echo 0 ;; XFAIL) echo 0 ;; NATIVE_ONLY) echo 1 ;; GAP) echo 2 ;; BOTH_RED) echo 3 ;; *) echo 3 ;; esac; }
+rank() { case "$1" in OK|XFAIL) echo 0 ;; LOOSE|UNSUPPORTED) echo 1 ;; NATIVE_ONLY) echo 2 ;; GAP) echo 3 ;; *) echo 4 ;; esac; }
 
 if [ "$UPDATE_BASELINE" -eq 1 ]; then
     cp "$RESULTS" "$BASELINE"

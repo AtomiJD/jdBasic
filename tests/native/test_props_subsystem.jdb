@@ -18,6 +18,9 @@ ENDSUB
 IF OS.FEATURE("INTERPRETER") THEN
     DIM props AS STRING = TXTREADER$(OS.ARGS()[0] + ".props")
     CHECK(INSTR(props, "Subsystem") >= 0, "sidecar asks for a subsystem")
+ELSEIF OS.GETOS$() <> "WINDOWS" THEN
+    DIM img AS STRING = BINREADER$(OS.ARGS()[0])
+    CHECK(LEFT$(img, 2) <> "MZ", "a POSIX build is no PE image; the subsystem is a Windows field")
 ELSE
     DIM exe AS STRING = BINREADER$(OS.ARGS()[0])
     DIM pe AS INTEGER = CINT(UNPACK("<i", exe, 60)[0])

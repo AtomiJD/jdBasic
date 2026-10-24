@@ -1777,7 +1777,7 @@ JDRT_API int64_t jdrt_foreach_begin(JdRT handle, int64_t val_bits, int32_t val_t
     *out_bits = 0;
     *out_tag = jd_tag(JdTag::NONE);
     auto refuse_other = [&]() -> int64_t {
-        rt->last_error = "FOR EACH needs an array, a string or a map; a channel is walked only by the interpreter";
+        rt->last_error = "FOR EACH needs an array, a string or a map; walking a channel is interpreter-only";
         return 0;
     };
     auto walk_array = [&](int64_t bits) -> int64_t {
