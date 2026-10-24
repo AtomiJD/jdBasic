@@ -389,7 +389,8 @@ void VM::register_codec_builtins() {
         static const char t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         const std::string& in = args[0].as_string()->data;
         std::string out;
-        int val = 0, bits = -6;
+        uint32_t val = 0;
+        int bits = -6;
         for (unsigned char c : in) {
             val = (val << 8) + c; bits += 8;
             while (bits >= 0) { out += t[(val >> bits) & 0x3F]; bits -= 6; }

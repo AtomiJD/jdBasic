@@ -33,9 +33,17 @@ run() {
     local label="$1"; shift
     local out rc summary
     out=$("$@" 2>&1); rc=$?
-    summary=$(printf '%s\n' "$out" | grep -aE 'PASSED|RESULTS:|RESULT:|FAIL|^OK$|Sanitizer|runtime error' | tail -1)
+    summary=$(printf '%s\n' "$out" | grep -aE 'PASSED|RESULTS:|RESULT:|FAIL|^OK$' | tail -1)
     printf '%-44s rc=%-4s %s\n' "$label" "$rc" "$summary"
     [ "$rc" -ne 0 ] && fail=1
+    # A report a child process wrote to its own stderr instead of log_path
+    # (the harness and leak_check run the binaries themselves).
+    local inline
+    inline=$(printf '%s\n' "$out" | grep -aE 'runtime error:|ERROR: AddressSanitizer|SUMMARY: .*Sanitizer' | sort | uniq -c | sort -rn | head -10)
+    if [ -n "$inline" ]; then
+        printf '%s\n' "$inline" | sed 's/^/    /'
+        fail=1
+    fi
 }
 
 for t in comprehensive_test native_test test_apl_complete test_apl_pipelines; do
