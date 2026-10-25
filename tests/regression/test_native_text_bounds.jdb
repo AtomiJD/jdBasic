@@ -37,6 +37,8 @@ Check(LEN(a) = 5 ANDALSO a[0] = "q" ANDALSO a[4] = 7, "PUSH after POP keeps ever
 
 Check(JOIN([1.5, "x", TRUE], "-") = "1.5-x-TRUE", "JOIN of mixed cells")
 Check(VAL("2.5") + 1 = 3.5, "VAL of a string")
+DIM vx AS DOUBLE = 3.5
+Check(VAL(vx) = 3.5, "VAL of a number is that number")
 
 DIM mm = {"s": "abc", "a": "x", "b": 2}
 Check(mm{"a"} + mm{"b"} = "x2", "string + number out of a map")

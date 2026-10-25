@@ -2168,7 +2168,7 @@ Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"
 * **`REPEAT$(str$, n) -> string$`**: Returns `str$` concatenated `n` times. `n <= 0` or empty input returns `""`.
 * **`LPAD$(str$, width [, pad$]) -> string$`** / **`RPAD$(str$, width [, pad$]) -> string$`**: Left- or right-pads `str$` to `width` characters using `pad$` (default `" "`). Multi-character `pad$` cycles (e.g. `LPAD$("x", 5, "-=")` -> `"-=-=x"`). If `str$` is already `>= width`, it is returned unchanged.
 * **`BIN$(n)` / `HEX$(n)` / `OCT$(n)` -> string$**: Converts an integer into its binary, hexadecimal or octal string representation.
-* **`STR$(number)`**, **`VAL(string$)`**: Converts between numbers and strings.
+* **`STR$(number)`**, **`VAL(string$)`**: Converts between numbers and strings. `VAL` reads the number at the start of the string; given a number, it answers that number.
 * **`CHR$(code)`**, **`ASC(char$)`**: Convert between codes and characters. `CHR$` of 0 to 255 is that single byte; a code above 255 is the Unicode character in UTF-8, so `CHR$(8364)` is the euro sign.
 * **`INSTR([start, ]haystack$, needle$)` / `INSTR$()`**: Finds the position of one string within another. Positions are 0-based. Returns -1 if not found. *(Both variants are supported)*.
 * **`INSERT$(target_string or array, text_to_insert$ string or array, position or array) -> string or array`**: Inserts a text_to_insert$ in target at position.

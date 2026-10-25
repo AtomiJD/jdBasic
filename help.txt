@@ -4044,7 +4044,7 @@ Description: Specifies the condition that will end a DO loop.
 
 [VAL]
 Syntax: VAL(string$)
-Description: Converts a string to a number.
+Description: Converts a string to a number: the number at the start of the string. Given a number, it answers that number.
 
 [VARIANCE]
 Syntax: VARIANCE(array) or VARIANCE(matrix, dimension) -> number or array

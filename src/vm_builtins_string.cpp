@@ -63,6 +63,8 @@ void VM::register_string_builtins() {
         return Value::make_string(args[0].to_string());
     });
     register_native("VAL", 1, 1, [](const std::vector<Value>& args) -> Value {
+        // A number is already the value, as in the compiled program.
+        if (is_numeric(args[0].type)) return Value::make_f64(args[0].to_double());
         return Value::make_f64(jdb_num::parse_prefix(args[0].as_string()->data.c_str()));
     });
     register_native("CHR", 1, 1, [](const std::vector<Value>& args) -> Value {
