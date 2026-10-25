@@ -637,7 +637,8 @@ struct JdbArray {
     int64_t capacity;    // slots allocated in data (and elem_tags when
                          // present); jdb_array_push grows in place up to it.
     JdbArray* parent;    // the matrix a row belongs to while no count knows
-                         // the row (JDB_ARR_IMPLICIT_ROW); null otherwise.
+                         // the row (JDB_ARR_IMPLICIT_ROW); the array itself
+                         // for a matrix holding such rows; null otherwise.
 };
 
 // Set on an array once a container written into one of its cells belongs to
@@ -645,11 +646,13 @@ struct JdbArray {
 static const int32_t JDB_ARR_OWNS_CHILDREN = 1 << 12;
 // The rows of a fresh matrix are its alone and stay out of the counts: such
 // a row carries JDB_ARR_IMPLICIT_ROW and its matrix in `parent`, the matrix
-// JDB_ARR_IMPLICIT_ROWS, and the matrix frees them with itself. A row that is
+// points `parent` at itself, and it frees them with itself. A row that is
 // handed out (a cell read, a POP, a higher-order call's element, another
 // array taking it) is entered into the counts first, owned by its matrix.
+// The matrix's mark lives in `parent` and not in its flags, since many
+// builders copy flags from a source array whose rows they share.
 static const int32_t JDB_ARR_IMPLICIT_ROW = 1 << 13;
-static const int32_t JDB_ARR_IMPLICIT_ROWS = 1 << 14;
+static inline bool rc_holds_rows(const JdbArray* a) { return a->parent == a; }
 // Marks a row met once already during one rc_register_children pass.
 static const int32_t JDB_ARR_ROW_SEEN = 1 << 15;
 static void rc_cell_out(JdbArray* arr, int64_t idx);
@@ -736,7 +739,7 @@ JdbArray* jdb_array_push(JdbArray* arr, double val, int32_t tag) {
 void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
     if (idx >= 0 && idx < arr->length) {
         rc_drop_cell_text(arr, idx);
-        if (arr->flags & JDB_ARR_IMPLICIT_ROWS) rc_implicit_overwrite(arr, idx);
+        if (rc_holds_rows(arr)) rc_implicit_overwrite(arr, idx);
         if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
         arr->data[idx] = val;
     }
@@ -1150,7 +1153,7 @@ void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
     arr->flags |= 8;  // bit 3: per-element tags present
     if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP)
         arr->flags |= 1;
-    if (arr->flags & JDB_ARR_IMPLICIT_ROWS) rc_implicit_overwrite(arr, idx);
+    if (rc_holds_rows(arr)) rc_implicit_overwrite(arr, idx);
     rc_drop_cell_text(arr, idx);
     if (tag == JD_TAG_STR) arr->flags |= 2;
     if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
@@ -2889,7 +2892,7 @@ static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64
     if (kind == JD_TAG_ARR) {
         JdbArray* a = (JdbArray*)k;
         // Its rows outside the counts are nobody else's.
-        if ((a->flags & JDB_ARR_IMPLICIT_ROWS) && a->data) {
+        if (rc_holds_rows(a) && a->data) {
             for (int64_t i = 0; i < a->length; i++) {
                 JdbArray* row = rc_cell_row(a, i);
                 if (row && (row->flags & JDB_ARR_IMPLICIT_ROW) && row->parent == a)
@@ -3006,7 +3009,7 @@ static void rc_row_out(JdbArray* row) {
     if (!row || !(row->flags & JDB_ARR_IMPLICIT_ROW) || !row->parent) return;
     if (!g_rc.cap || !rc_ready()) return;
     RcEntry* pe = rc_find((uintptr_t)row->parent);
-    if (!pe || pe->kind != JD_TAG_ARR || !(row->parent->flags & JDB_ARR_IMPLICIT_ROWS)) return;
+    if (!pe || pe->kind != JD_TAG_ARR || !rc_holds_rows(row->parent)) return;
     rc_materialize(row);
 }
 
@@ -3036,11 +3039,14 @@ static void rc_free_implicit_row(JdbArray* row) {
     free(row);
 }
 
-// The cell idx of arr is written over: an implicit row it held goes now.
+// The cell idx of arr is written over: an implicit row it held is entered
+// into the counts as arr's, so letting go of the cell sends it to the pool
+// like any counted row, and a value still in flight keeps it until the drain.
 static void rc_implicit_overwrite(JdbArray* arr, int64_t idx) {
-    if (!(arr->flags & JDB_ARR_IMPLICIT_ROWS)) return;
+    if (!rc_holds_rows(arr)) return;
     JdbArray* row = rc_cell_row(arr, idx);
-    if (row && (row->flags & JDB_ARR_IMPLICIT_ROW) && row->parent == arr) rc_free_implicit_row(row);
+    if (!row || !(row->flags & JDB_ARR_IMPLICIT_ROW) || row->parent != arr) return;
+    if (!rc_materialize(row)) rc_free_implicit_row(row);
 }
 
 static void rc_register_children(uintptr_t parent_key, uint64_t parent_gen) {
@@ -3068,7 +3074,7 @@ static void rc_register_children(uintptr_t parent_key, uint64_t parent_gen) {
             if (row->flags & JDB_ARR_IMPLICIT_ROW) {
                 row->parent = a;
                 row->flags |= JDB_ARR_ROW_SEEN;
-                a->flags |= JDB_ARR_IMPLICIT_ROWS;
+                a->parent = a;
                 seen_any = true;
             }
             continue;
@@ -3077,7 +3083,7 @@ static void rc_register_children(uintptr_t parent_key, uint64_t parent_gen) {
             // A row of numbers belongs to this matrix without an entry.
             row->flags |= JDB_ARR_IMPLICIT_ROW | JDB_ARR_ROW_SEEN;
             row->parent = a;
-            a->flags |= JDB_ARR_IMPLICIT_ROWS;
+            a->parent = a;
             seen_any = true;
             continue;
         }

@@ -90,6 +90,30 @@ FOR i = 1 TO 100
 NEXT i
 Check(mrow[0] = 15 ANDALSO mrow[1] = 20, "row of a MATMUL answer")
 
+' A gather shares the rows of its source; both go when the FUNC returns,
+' in either order, and the rows go once.
+FUNC GatherSum(m AS ARRAY, idx AS ARRAY) AS DOUBLE
+    DIM src AS ARRAY = m * 2
+    DIM g AS ARRAY = src[idx]
+    RETURN g[0][0] + g[1][1]
+ENDFUNC
+DIM gm AS ARRAY = RESHAPE(IOTA(2000), [1000, 2])
+DIM gs AS DOUBLE = 0
+FOR i = 1 TO 200
+    gs = gs + GatherSum(gm, [i, i + 1, 999])
+NEXT i
+Check(gs = 2 * (200 * 3 + 2 * 201 * 200 + 200 * 2), "rows shared by a gather")
+
+' A row of a matrix written over while its old value is still read.
+DIM ow AS ARRAY = RESHAPE(IOTA(6), [3, 2])
+DIM held AS ARRAY = [0]
+FOR i = 1 TO 100
+    ow = RESHAPE(IOTA(6) + i, [3, 2])
+    held = ow[1]
+    ow[1] = held * 2
+NEXT i
+Check(held[0] = 103 ANDALSO ow[1][0] = 206, "row written over after it was read")
+
 ' A 3D array: its rows hold rows and keep their own count.
 DIM cube AS ARRAY = [0]
 DIM plane AS ARRAY = [0]
