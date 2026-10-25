@@ -23,19 +23,26 @@ Eigen::MatrixXd to_eigen(const Value& v) {
     if (!a) throw std::runtime_error("expected a matrix argument");
     int rows = (int)a->elements.size();
     if (rows == 0) return Eigen::MatrixXd(0, 0);
+    auto number = [](const Value& c) {
+        if (c.type == ValueType::ARRAY || c.type == ValueType::STRING || c.type == ValueType::OBJECT)
+            throw std::runtime_error("expected a matrix of numbers");
+        return c.to_double();
+    };
     if (a->elements[0].type == ValueType::ARRAY) {
         int cols = (int)a->elements[0].as_array()->elements.size();
         Eigen::MatrixXd m(rows, cols);
         for (int r = 0; r < rows; r++) {
+            if (a->elements[r].type != ValueType::ARRAY)
+                throw std::runtime_error("expected a matrix of numbers");
             auto* row = a->elements[r].as_array();
             for (int c = 0; c < cols; c++)
-                m(r, c) = (c < (int)row->elements.size()) ? row->elements[c].to_double() : 0.0;
+                m(r, c) = (c < (int)row->elements.size()) ? number(row->elements[c]) : 0.0;
         }
         return m;
     }
     // 1-D vector -> column matrix.
     Eigen::MatrixXd m(rows, 1);
-    for (int r = 0; r < rows; r++) m(r, 0) = a->elements[r].to_double();
+    for (int r = 0; r < rows; r++) m(r, 0) = number(a->elements[r]);
     return m;
 }
 

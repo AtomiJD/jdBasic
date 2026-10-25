@@ -3388,6 +3388,27 @@ static bool mat_shape(const JdbArray* a, int64_t& rows, int64_t& cols, bool& fla
     return a != nullptr;
 }
 
+// Every cell a number: a flat array of them, or rows that each are one.
+static bool mat_numbers(const JdbArray* a, bool flat) {
+    auto flat_numbers = [](const JdbArray* v) {
+        if (!v || (v->flags & 2)) return false;
+        if ((v->flags & 8) && v->elem_tags) {
+            for (int64_t i = 0; i < v->length; i++) {
+                int t = v->elem_tags[i];
+                if (t != JD_TAG_F64 && t != JD_TAG_I64 && t != JD_TAG_BOOL) return false;
+            }
+            return true;
+        }
+        return !(v->flags & 1);
+    };
+    if (flat) return flat_numbers(a);
+    for (int64_t r = 0; r < a->length; r++) {
+        if ((a->flags & 8) && a->elem_tags && a->elem_tags[r] != JD_TAG_ARR) return false;
+        if (!flat_numbers(mat_row(a, r))) return false;
+    }
+    return true;
+}
+
 static JdbMat mat_from(const JdbArray* a, bool flat, int64_t rows, int64_t cols) {
     if (flat) {
         JdbMat m(rows, 1);
@@ -3416,19 +3437,35 @@ template <class F>
 static void mat_bands(int64_t n, unsigned workers, F body) {
     if (workers <= 1 || n < 2) { body(0, n); return; }
     if ((int64_t)workers > n) workers = (unsigned)n;
+    // A band that throws, or a thread that cannot start, is reported once
+    // every started thread is back.
+    std::atomic<bool> failed{ false };
     std::vector<std::thread> pool;
     int64_t step = (n + workers - 1) / workers;
+    int64_t done_to = step;
     for (unsigned w = 1; w < workers; w++) {
         int64_t lo = w * step, hi = (std::min)(n, lo + step);
         if (lo >= hi) break;
-        pool.emplace_back([=] { body(lo, hi); });
+        try {
+            pool.emplace_back([=, &failed] {
+                try { body(lo, hi); } catch (...) { failed = true; }
+            });
+            done_to = hi;
+        } catch (...) {
+            break;
+        }
     }
-    body(0, (std::min)(n, step));
+    try {
+        body(0, (std::min)(n, step));
+        if (done_to < n) body(done_to, n);
+    } catch (...) {
+        failed = true;
+    }
     for (auto& t : pool) t.join();
+    if (failed) throw std::bad_alloc();
 }
 
-extern "C" JdbArray* jdb_matmul(JdbArray* a, JdbArray* b, int32_t transpose_left) {
-    const char* fn = transpose_left ? "MATMUL_T" : "MATMUL";
+static JdbArray* matmul_body(JdbArray* a, JdbArray* b, int32_t transpose_left, const char* fn) {
     int64_t ra, ca, rb, cb;
     bool fa, fb;
     if (!mat_shape(a, ra, ca, fa) || !mat_shape(b, rb, cb, fb)) {
@@ -3437,6 +3474,10 @@ extern "C" JdbArray* jdb_matmul(JdbArray* a, JdbArray* b, int32_t transpose_left
     }
     if (fa && fb) {
         jdb_err_set((std::string(fn) + ": two vectors; the dot product is SUM(a * b)").c_str(), 1);
+        return jdb_array_new(0);
+    }
+    if (!mat_numbers(a, fa) || !mat_numbers(b, fb)) {
+        jdb_err_set((std::string(fn) + ": expected a matrix of numbers").c_str(), 1);
         return jdb_array_new(0);
     }
     JdbMat R = mat_from(b, fb, rb, cb);
@@ -3494,6 +3535,19 @@ extern "C" JdbArray* jdb_matmul(JdbArray* a, JdbArray* b, int32_t transpose_left
         }
     });
     return out;
+}
+
+// The C entry the compiled program calls: nothing of C++ crosses it.
+extern "C" JdbArray* jdb_matmul(JdbArray* a, JdbArray* b, int32_t transpose_left) {
+    const char* fn = transpose_left ? "MATMUL_T" : "MATMUL";
+    try {
+        return matmul_body(a, b, transpose_left, fn);
+    } catch (...) {
+        // Fixed texts: a message built here could need the memory that ran out.
+        jdb_err_set(transpose_left ? "MATMUL_T: out of memory for a product this size"
+                                   : "MATMUL: out of memory for a product this size", 1);
+        return jdb_array_new(0);
+    }
 }
 extern "C" {
 

@@ -39,6 +39,16 @@ CATCH
 ENDTRY
 Check(INSTR(msg$, "two vectors") >= 0, "two vectors are no product")
 
+DIM mix AS ARRAY = [[1, 2], [3, 4]]
+mix[1] = "x"
+msg$ = ""
+TRY
+    DIM bad3 AS ARRAY = MATMUL(mix, [[1], [2]])
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(INSTR(msg$, "expected a matrix of numbers") >= 0, "a row that is no row of numbers is an error")
+
 DIM n AS INTEGER = 6000
 DIM big AS ARRAY = RESHAPE(IOTA(n * 16) MOD 7, [n, 16])
 DIM w AS ARRAY = RESHAPE(IOTA(16 * 16) MOD 5, [16, 16])
