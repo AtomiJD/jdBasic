@@ -164,7 +164,9 @@ void DAPHandler::server_loop(int port) {
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons((u_short)port);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    // The adapter runs arbitrary code through `repl` and has no authentication,
+    // so it only accepts connections from this machine.
+    server_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     // Allow port reuse
     int opt = 1;

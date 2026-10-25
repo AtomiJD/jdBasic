@@ -2199,10 +2199,8 @@ int main(int argc, char* argv[]) {
         }
 
         if (compile_output.empty()) {
-            compile_output = filename;
-            auto dot = compile_output.rfind('.');
-            if (dot != std::string::npos) compile_output = compile_output.substr(0, dot);
-            compile_output += ".exe";
+            compile_output =
+                std::filesystem::path(filename).replace_extension(".exe").string();
         }
         {
             std::filesystem::path out_parent = std::filesystem::path(compile_output).parent_path();

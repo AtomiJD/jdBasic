@@ -4100,10 +4100,8 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     if (err) LLVMDisposeMessage(err);
     // DEBUG: dump IR when JDB_DUMP_IR env var is set
     if (std::getenv("JDB_DUMP_IR")) {
-        std::string ll_path = output_exe;
-        auto ld = ll_path.rfind('.');
-        if (ld != std::string::npos) ll_path = ll_path.substr(0, ld);
-        ll_path += ".ll";
+        std::string ll_path =
+            std::filesystem::path(output_exe).replace_extension(".ll").string();
         char* ir = LLVMPrintModuleToString(module);
         FILE* f = fopen(ll_path.c_str(), "w");
         if (f) { fputs(ir, f); fclose(f); }
@@ -4111,9 +4109,10 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     }
 
     // Emit object file
-    std::string obj_path = output_exe;
-    auto dot = obj_path.rfind('.');
-    if (dot != std::string::npos) obj_path = obj_path.substr(0, dot);
+    // The extension is replaced on the file name only, never at a dot in a
+    // directory name.
+    std::string obj_path =
+        std::filesystem::path(output_exe).replace_extension("").string();
 
 #ifdef KERNEL
     if (kernel_target) {
@@ -4131,11 +4130,10 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     // Optional: <source>.props -> .res with VERSIONINFO + icon.
     std::string res_path = generate_version_resource(source_path, obj_path);
 
-    if (!link_executable(obj_path, output_exe, res_path)) return false;
-
+    bool linked = link_executable(obj_path, output_exe, res_path);
     std::remove(obj_path.c_str());
     if (!res_path.empty()) std::remove(res_path.c_str());
-    return true;
+    return linked;
 }
 
 bool LLVMCodegen::emit_ir(const std::vector<StmtPtr>& program) {
@@ -19359,6 +19357,43 @@ bool LLVMCodegen::emit_object_file(const std::string& obj_path) {
 #ifdef _WIN32
 extern "C" __declspec(dllimport) unsigned long __stdcall
 GetModuleFileNameA(void* module_handle, char* filename, unsigned long size);
+#include <process.h>
+
+// Quotes one argument for the CRT command-line parser: backslashes are
+// literal except in front of a quote, where they and the quote are escaped.
+static std::string quote_tool_arg(const std::string& arg) {
+    if (!arg.empty() && arg.find_first_of(" \t\"") == std::string::npos)
+        return arg;
+    std::string out = "\"";
+    size_t backslashes = 0;
+    for (char c : arg) {
+        if (c == '\\') { backslashes++; continue; }
+        if (c == '"') out.append(backslashes * 2 + 1, '\\');
+        else out.append(backslashes, '\\');
+        backslashes = 0;
+        out.push_back(c);
+    }
+    out.append(backslashes * 2, '\\');
+    out.push_back('"');
+    return out;
+}
+
+// Runs a tool and waits for it, with no shell in between, so no character
+// of a path is read as a command separator, a redirection or a variable.
+// Answers the tool's exit code, or -1 when it could not be started.
+static int run_tool(const std::string& exe, const std::vector<std::string>& args) {
+    std::vector<std::string> quoted;
+    quoted.reserve(args.size() + 1);
+    quoted.push_back(quote_tool_arg(exe));
+    for (const auto& a : args) quoted.push_back(quote_tool_arg(a));
+    std::vector<const char*> argv;
+    for (const auto& q : quoted) argv.push_back(q.c_str());
+    argv.push_back(nullptr);
+    std::fflush(stdout);
+    std::fflush(stderr);
+    intptr_t rc = _spawnv(_P_WAIT, exe.c_str(), argv.data());
+    return rc == -1 ? -1 : (int)rc;
+}
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
 #else
@@ -19627,13 +19662,10 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         return false;
     }
 
-    std::string res_arg;
-    if (!res_path.empty()) res_arg = "\"" + res_path + "\" ";
-
     // UTF-8 as the process code page, so file names and paths reach the
     // narrow Win32 and CRT calls as the UTF-8 the program holds.
     std::string manifest_path = obj_path + ".manifest";
-    std::string manifest_arg;
+    bool use_manifest = false;
     std::string sdk_bin = sdk + "\\bin\\" + sdkv + "\\x64";
     std::string saved_path;
     if (const char* p = std::getenv("PATH")) saved_path = p;
@@ -19649,28 +19681,35 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
                   "  </application>\n"
                   "</assembly>\n";
             mf.close();
-            manifest_arg = "/MANIFEST:EMBED /MANIFESTINPUT:\"" + manifest_path + "\" ";
+            use_manifest = true;
             _putenv_s("PATH", (sdk_bin + ";" + saved_path).c_str());
         }
     }
 
-    std::string link_cmd =
-        "cmd /c \"\"" + link_exe + "\" "
-        "/NOLOGO /OUT:\"" + exe_path + "\" "
-        + std::string(gui_subsystem ? "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup "
-                                    : "/SUBSYSTEM:CONSOLE ")
-        + manifest_arg +
-        "\"" + obj_path + "\" "
-        "\"" + runtime_obj + "\" "
-        + res_arg +
-        "/LIBPATH:\"" + msvc + "\\lib\\x64\" "
-        "/LIBPATH:\"" + sdk + "\\Lib\\" + sdkv + "\\ucrt\\x64\" "
-        "/LIBPATH:\"" + sdk + "\\Lib\\" + sdkv + "\\um\\x64\" "
-        "libcmt.lib libucrt.lib kernel32.lib legacy_stdio_definitions.lib "
-        "\"" + jdbrt_lib + "\"\"";
+    std::vector<std::string> link_args = { "/NOLOGO", "/OUT:" + exe_path };
+    if (gui_subsystem) {
+        link_args.push_back("/SUBSYSTEM:WINDOWS");
+        link_args.push_back("/ENTRY:mainCRTStartup");
+    } else {
+        link_args.push_back("/SUBSYSTEM:CONSOLE");
+    }
+    if (use_manifest) {
+        link_args.push_back("/MANIFEST:EMBED");
+        link_args.push_back("/MANIFESTINPUT:" + manifest_path);
+    }
+    link_args.push_back(obj_path);
+    link_args.push_back(runtime_obj);
+    if (!res_path.empty()) link_args.push_back(res_path);
+    link_args.push_back("/LIBPATH:" + msvc + "\\lib\\x64");
+    link_args.push_back("/LIBPATH:" + sdk + "\\Lib\\" + sdkv + "\\ucrt\\x64");
+    link_args.push_back("/LIBPATH:" + sdk + "\\Lib\\" + sdkv + "\\um\\x64");
+    for (const char* lib : { "libcmt.lib", "libucrt.lib", "kernel32.lib",
+                             "legacy_stdio_definitions.lib" })
+        link_args.push_back(lib);
+    link_args.push_back(jdbrt_lib);
 
-    int ret = std::system(link_cmd.c_str());
-    if (!manifest_arg.empty()) {
+    int ret = run_tool(link_exe, link_args);
+    if (use_manifest) {
         std::remove(manifest_path.c_str());
         _putenv_s("PATH", saved_path.c_str());
     }
@@ -19832,21 +19871,22 @@ std::string LLVMCodegen::generate_version_resource(const std::string& source_pat
             icon_path = std::filesystem::absolute(ip).string();
     }
 
-    // Escape backslashes for .rc string literals.
+    // An .rc string literal escapes a backslash with a backslash and writes
+    // a quote twice.
     auto rc_escape = [](std::string s) {
         std::string out;
         out.reserve(s.size());
         for (char c : s) {
-            if (c == '\\' || c == '"') { out.push_back('\\'); out.push_back(c); }
+            if (c == '\\') out += "\\\\";
+            else if (c == '"') out += "\"\"";
             else out.push_back(c);
         }
         return out;
     };
 
     // Use obj_path's stem for temp files (same dir as the obj).
-    std::string base = obj_path;
-    auto dot = base.rfind('.');
-    if (dot != std::string::npos) base = base.substr(0, dot);
+    std::string base =
+        std::filesystem::path(obj_path).replace_extension("").string();
     std::string rc_path  = base + ".jdb_props.rc";
     std::string res_path = base + ".jdb_props.res";
 
@@ -19882,11 +19922,12 @@ std::string LLVMCodegen::generate_version_resource(const std::string& source_pat
 
     std::string sdk  = "C:\\Program Files (x86)\\Windows Kits\\10";
     std::string sdkv = "10.0.26100.0";
-    std::string rc_cmd =
-        "cmd /c \"\"" + sdk + "\\bin\\" + sdkv + "\\x64\\rc.exe\" "
-        "/nologo /fo \"" + res_path + "\" \"" + rc_path + "\" >nul 2>&1\"";
-
-    int ret = std::system(rc_cmd.c_str());
+#ifdef _WIN32
+    int ret = run_tool(sdk + "\\bin\\" + sdkv + "\\x64\\rc.exe",
+                       { "/nologo", "/fo", res_path, rc_path });
+#else
+    int ret = -1;
+#endif
     std::remove(rc_path.c_str());
     if (ret != 0 || !std::filesystem::exists(res_path)) {
         std::cerr << "Warning: rc.exe failed for " << props_path
