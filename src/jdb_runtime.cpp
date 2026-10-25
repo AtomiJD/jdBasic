@@ -865,9 +865,12 @@ JdbArray* jdb_iota3(double n, double start, double step) {
 // via union). Caller knows the type via array flags. Returns 0 on empty.
 double jdb_array_pop(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0.0;
+    int k = cell_kind(arr, arr->length - 1);
     if (arr->flags & (1 | 8)) rc_cell_out(arr, arr->length - 1);
     double v = arr->data[arr->length - 1];
     arr->length--;
+    // The array no longer holds a container it gave away; the taker counts it.
+    if (k == JD_TAG_ARR || k == JD_TAG_NATIVE_MAP) rc_disown_cell(arr, v);
     return v;
 }
 
@@ -879,8 +882,11 @@ char* jdb_array_pop_str(JdbArray* arr) {
     if (!arr || arr->length == 0) return _strdup("");
     int k = cell_kind(arr, arr->length - 1);
     if (k != JD_TAG_STR) {
+        // A row or a map taken this way is no longer held by the array.
+        if (!kind_is_num(k)) rc_cell_out(arr, arr->length - 1);
         double v = arr->data[arr->length - 1];
         arr->length--;
+        if (!kind_is_num(k)) rc_disown_cell(arr, v);
         return kind_is_num(k) ? jdb_str(v) : _strdup("");
     }
     union { double d; int64_t i; } u;
@@ -915,6 +921,7 @@ int64_t jdb_array_pop_tagged(JdbArray* arr, int32_t* out_tag) {
         bits = (int64_t)arr->data[idx];
     }
     arr->length--;
+    if (tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP) rc_disown_cell(arr, arr->data[idx]);
     if (out_tag) *out_tag = tag;
     return bits;
 }

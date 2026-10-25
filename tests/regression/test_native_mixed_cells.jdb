@@ -85,6 +85,16 @@ Check(sel[0][1] = 2 ANDALSO sel[1][0] = 5, "a gather keeps its rows when its sou
 DIM shuf AS ARRAY = SHUFFLE([[1, 2], [3, 4]])
 Check(SUM(shuf) = 10, "SHUFFLE of rows")
 
+DIM pm AS ARRAY = [[1, 2], [3, 4], [5, 6]]
+DIM pr AS ARRAY = POP(pm)
+DIM pq AS ARRAY = POP(pm)
+pm = [[0]]
+Check(pr[1] = 6 ANDALSO pq[0] = 3, "popped rows outlive their array")
+DIM pmm AS ARRAY = [{"a": 1}, {"b": 2}]
+DIM px = POP(pmm)
+pmm = []
+Check(px{"b"} = 2, "a popped map outlives its array")
+
 Check(LEN(FORMAT$("{}", SPACE$(400))) = 400, "FORMAT$ keeps a long text")
 Check(LEN(FORMAT$("{:500}", 1)) = 500, "FORMAT$ keeps a wide field")
 
