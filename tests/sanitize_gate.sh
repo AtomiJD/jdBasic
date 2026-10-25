@@ -64,7 +64,9 @@ done
 run "harness" "$jdb" tools/diff_backends.jdb
 run "leak_check" bash tests/leak_check.sh "$rounds"
 for t in tests/regression/test_rc_*.jdb tests/regression/test_str_*.jdb \
-         tests/regression/test_array_results_outlive_args.jdb tests/regression/test_json_locale.jdb; do
+         tests/regression/test_array_results_outlive_args.jdb tests/regression/test_json_locale.jdb \
+         tests/regression/test_text_ownership.jdb tests/regression/test_udt_local_free.jdb \
+         tests/regression/test_elementwise_cell_kind.jdb; do
     [ -f "$t" ] || continue
     run "interp $(basename "$t")" "$jdb" "$t"
     exe="${t%.jdb}.san"
