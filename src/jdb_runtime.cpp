@@ -2808,7 +2808,7 @@ void jdb_event_raise_str(const char* name, const char* arg) {
         arr->data[0] = u.d;
         jdb_rc_new(arr, JD_TAG_ARR);
         jdb_rc_own_cells((int64_t)(intptr_t)arr);
-        it->second(arr);
+        { CompiledCall open; it->second(arr); }
     });
 }
 
