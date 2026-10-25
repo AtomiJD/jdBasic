@@ -152,11 +152,15 @@ static void check_shift_rank(const char* fn, const Value& v, size_t shifts) {
 void VM::register_array_builtins() {
     // Array functions
     register_native("PUSH", 2, -1, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::ARRAY)
+            throw jdError(ErrCode::TYPE_MISMATCH, "PUSH: the first argument must be an array");
         auto* arr = args[0].as_array();
         arr->elements.push_back(args[1]);
         return Value::make_i64(arr->elements.size());
     });
     register_native("POP", 1, 1, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::ARRAY)
+            throw jdError(ErrCode::TYPE_MISMATCH, "POP: the argument must be an array");
         auto* arr = args[0].as_array();
         if (arr->elements.empty()) return Value::make_none();
         Value v = arr->elements.back();
@@ -886,10 +890,10 @@ void VM::register_array_builtins() {
         bool row_wise = (args.size() >= 3 && args[2].to_bool());
         Value r = Value::make_array();
         if (row_wise) {
-            for (auto& row : arr->elements)
+            for (auto& row : std::vector<Value>(arr->elements))
                 r.as_array()->elements.push_back(call_funcref(fn, {row}));
         } else {
-            for (auto& e : arr->elements)
+            for (auto& e : std::vector<Value>(arr->elements))
                 r.as_array()->elements.push_back(call_funcref(fn, {e}));
         }
         return r;
@@ -901,7 +905,7 @@ void VM::register_array_builtins() {
         Value fn = args[0];
         auto* arr = args[1].as_array();
         Value r = Value::make_array();
-        for (auto& e : arr->elements) {
+        for (auto& e : std::vector<Value>(arr->elements)) {
             Value res = call_funcref(fn, {e});
             if (res.to_bool()) r.as_array()->elements.push_back(e);
         }
@@ -915,7 +919,7 @@ void VM::register_array_builtins() {
         Value fn = args[0];
         auto* arr = args[1].as_array();
         Value r = Value::make_array();
-        for (auto& e : arr->elements) {
+        for (auto& e : std::vector<Value>(arr->elements)) {
             if (!call_funcref(fn, {e}).to_bool()) break;
             r.as_array()->elements.push_back(e);
         }
@@ -930,7 +934,7 @@ void VM::register_array_builtins() {
         auto* arr = args[1].as_array();
         Value r = Value::make_array();
         bool dropping = true;
-        for (auto& e : arr->elements) {
+        for (auto& e : std::vector<Value>(arr->elements)) {
             if (dropping && call_funcref(fn, {e}).to_bool()) continue;
             dropping = false;
             r.as_array()->elements.push_back(e);
@@ -949,7 +953,7 @@ void VM::register_array_builtins() {
         auto* out = r.as_array();
         Value chunk = Value::make_array();
         auto* cur = chunk.as_array();
-        for (auto& e : arr->elements) {
+        for (auto& e : std::vector<Value>(arr->elements)) {
             cur->elements.push_back(e);
             if ((int64_t)cur->elements.size() == n) {
                 out->elements.push_back(std::move(chunk));
@@ -984,7 +988,7 @@ void VM::register_array_builtins() {
         auto* arr = args[1].as_array();
         Value r = Value::make_object();
         auto* obj = r.as_object();
-        for (auto& e : arr->elements) {
+        for (auto& e : std::vector<Value>(arr->elements)) {
             std::string key = call_funcref(fn, {e}).to_string();
             Value* bucket = obj->get(key);
             if (bucket) {

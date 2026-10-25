@@ -356,14 +356,20 @@ struct Chunk {
                     return static_cast<uint16_t>(i);
             }
         }
+        // Constant indexes are 16-bit operands.
+        if (constants.size() >= 0xFFFF)
+            throw std::runtime_error("too large to compile: more than 65535 constants in one function");
         constants.push_back(std::move(v));
         return static_cast<uint16_t>(constants.size() - 1);
     }
 
     uint16_t add_var_name(const std::string& name) {
-        for (uint16_t i = 0; i < name_offsets.size(); i++) {
-            if (name == name_at(i)) return i;
+        for (size_t i = 0; i < name_offsets.size(); i++) {
+            if (name == name_at(static_cast<uint16_t>(i))) return static_cast<uint16_t>(i);
         }
+        // Name slots are 16-bit operands.
+        if (name_offsets.size() >= 0xFFFF)
+            throw std::runtime_error("too large to compile: more than 65535 names in one function");
         uint32_t off = static_cast<uint32_t>(name_blob.size());
         if (name.find('.') != std::string::npos) off |= kDottedName;
         name_offsets.push_back(off);

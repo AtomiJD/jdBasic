@@ -213,13 +213,7 @@ void VM::load(Chunk& main_chunk, std::vector<FuncProto>& funcs) {
         // Compiled and about to become permanent: give back the room the
         // vectors kept while they were growing.
         f.chunk.shrink();
-        auto it = func_map.find(f.name);
-        if (it != func_map.end()) {
-            owned_funcs[it->second] = std::move(f);
-        } else {
-            func_map[f.name] = owned_funcs.size();
-            owned_funcs.push_back(std::move(f));
-        }
+        install_func(std::move(f));
     }
     func_protos = &owned_funcs;
     func_map_generation++;
@@ -240,6 +234,30 @@ void VM::load(Chunk& main_chunk, std::vector<FuncProto>& funcs) {
     frames.push_back({&main_chunk, 0, 0});
 }
 
+void VM::install_func(FuncProto&& f) {
+    auto it = func_map.find(f.name);
+    if (it == func_map.end()) {
+        func_map[f.name] = owned_funcs.size();
+        owned_funcs.push_back(std::move(f));
+        return;
+    }
+    // A live frame holds a pointer into the old chunk and an ip into its
+    // bytecode, so that chunk is not overwritten under it.
+    const Chunk* old = &owned_funcs[it->second].chunk;
+    bool live = false;
+    for (auto& fr : frames) if (fr.chunk == old) live = true;
+    for (auto& fr : stopped_frames) if (fr.chunk == old) live = true;
+    if (!live) {
+        owned_funcs[it->second] = std::move(f);
+        return;
+    }
+    // The old version stays where it is for its frame, nameless, so no
+    // listing shows it and no call finds it.
+    owned_funcs[it->second].name.clear();
+    it->second = owned_funcs.size();
+    owned_funcs.push_back(std::move(f));
+}
+
 std::pair<size_t, size_t> VM::merge_funcs(std::vector<FuncProto>& new_funcs) {
     size_t added = 0, updated = 0;
     for (auto& f : new_funcs) {
@@ -247,15 +265,8 @@ std::pair<size_t, size_t> VM::merge_funcs(std::vector<FuncProto>& new_funcs) {
         // Compiled and about to become permanent: give back the room the
         // vectors kept while they were growing.
         f.chunk.shrink();
-        auto it = func_map.find(f.name);
-        if (it != func_map.end()) {
-            owned_funcs[it->second] = std::move(f);
-            updated++;
-        } else {
-            func_map[f.name] = owned_funcs.size();
-            owned_funcs.push_back(std::move(f));
-            added++;
-        }
+        if (func_map.count(f.name)) updated++; else added++;
+        install_func(std::move(f));
     }
     func_protos = &owned_funcs;
     if (added || updated) func_map_generation++;
@@ -277,13 +288,7 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
         // Compiled and about to become permanent: give back the room the
         // vectors kept while they were growing.
         f.chunk.shrink();
-        auto it = func_map.find(f.name);
-        if (it != func_map.end()) {
-            owned_funcs[it->second] = std::move(f);
-        } else {
-            func_map[f.name] = owned_funcs.size();
-            owned_funcs.push_back(std::move(f));
-        }
+        install_func(std::move(f));
         funcs_changed = true;
     }
     func_protos = &owned_funcs;
@@ -2796,9 +2801,10 @@ void VM::run() {
             uint16_t slot = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
             uint16_t cidx = cf.chunk->code[cf.ip + 2] | (cf.chunk->code[cf.ip + 3] << 8);
             cf.ip += 4 + 2; // 2 slot + 2 const_idx + 2 NOP padding
+            // Grow first: a resize moves the stack, and `a` points into it.
+            if (sp >= stack.size()) stack.resize(stack.size() * 2);
             const Value& a = stack[cf.stack_base + slot];
             const Value& c = cf.chunk->constants[cidx];
-            if (sp >= stack.size()) stack.resize(stack.size() * 2);
             if (a.type == ValueType::INT64 && c.type == ValueType::INT64) {
                 int64_t x = a.i64, y = c.i64, r;
                 bool overflow = false;
@@ -2866,9 +2872,10 @@ void VM::run() {
             uint16_t slot = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
             uint16_t cidx = cf.chunk->code[cf.ip + 2] | (cf.chunk->code[cf.ip + 3] << 8);
             cf.ip += 4 + 2;
+            // Grow first: a resize moves the stack, and `a` points into it.
+            if (sp >= stack.size()) stack.resize(stack.size() * 2);
             const Value& a = stack[cf.stack_base + slot];
             const Value& c = cf.chunk->constants[cidx];
-            if (sp >= stack.size()) stack.resize(stack.size() * 2);
             if (a.type == ValueType::INT64 && c.type == ValueType::INT64) {
                 int64_t x = a.i64, y = c.i64;
                 bool r;
@@ -2928,9 +2935,15 @@ void VM::run() {
         case OpCode::LOAD_VAR_RETURN: {
             uint16_t slot = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
             cf.ip += 2 + 1; // slot + 1 NOP padding
+            // The same as LOAD_VAR + RETURN_VAL: the other locals are let go
+            // and the frame's TRY blocks end with it, or a later error would
+            // jump into a handler of a function that has returned.
             size_t base = cf.stack_base;
-            stack[base] = stack[base + slot]; // copy local to frame-base slot
+            Value retval = stack[base + slot];
+            for (size_t i = base; i < sp; ++i) stack[i] = Value();
+            stack[base] = std::move(retval);
             sp = base + 1;
+            drop_frame_trys();
             frames.pop_back();
             if (frames.size() <= min_frame_depth) return;
             break;
@@ -3597,24 +3610,11 @@ bool VM::debug_goto_line(int target_line) {
 bool VM::debug_reload_main(Chunk& new_main, std::vector<FuncProto>& new_funcs, int target_line) {
     if (frames.empty()) return false;
 
-    // A function whose body is currently executing must not be overwritten:
-    // the live frame holds a pointer into its chunk and an ip into its
-    // bytecode. Recompiling it under the running frame would jump into
-    // re-laid-out code. Skip those; merge everything else.
-    auto on_stack = [&](const Chunk* c) {
-        for (auto& fr : frames) if (fr.chunk == c) return true;
-        return false;
-    };
+    // A function whose body is executing keeps its old code for the live
+    // frame (install_func); later calls reach the recompiled one.
     for (auto& f : new_funcs) {
         f.chunk.shrink();
-        auto it = func_map.find(f.name);
-        if (it != func_map.end()) {
-            if (on_stack(&owned_funcs[it->second].chunk)) continue;
-            owned_funcs[it->second] = std::move(f);
-        } else {
-            func_map[f.name] = owned_funcs.size();
-            owned_funcs.push_back(std::move(f));
-        }
+        install_func(std::move(f));
     }
     func_protos = &owned_funcs;
     func_map_generation++;

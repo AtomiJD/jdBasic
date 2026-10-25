@@ -709,6 +709,7 @@ Value tool_jdb_funcs(VM& vm, const Value&) {
     const auto& funcs = vm.get_funcs();
     std::vector<std::string> kept;
     for (const auto& f : funcs) {
+        if (f.name.empty()) continue;  // a replaced version a frame still runs
         if (!is_user_func(f.name)) continue;
         std::string kind = f.is_sub ? "SUB" : (f.is_async ? "ASYNC FUNC" : "FUNC");
         std::string sig = "(";

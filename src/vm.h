@@ -60,6 +60,10 @@ public:
     // STOPped (the existing stopped_frames keep working - they dispatch
     // through func_map on the next CALL opcode and pick up the new bodies).
     std::pair<size_t, size_t> merge_funcs(std::vector<FuncProto>& new_funcs);
+    // Puts a compiled function in place of the one of its name. A version
+    // a live frame (running or STOPped) is inside of is kept for that frame
+    // and the name moves to the new one.
+    void install_func(FuncProto&& f);
 
     // Builtins always win at call dispatch, so a user FUNC/SUB carrying a
     // builtin's name could never be reached - reject it at load/merge time.

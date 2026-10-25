@@ -6619,7 +6619,9 @@ JdbArray* jdb_select_fn(JdbMapFn fn, JdbArray* arr) {
         std::vector<int8_t> tags((size_t)arr->length, (int8_t)JD_TAG_F64);
         bool tagged = false;
         HofDepth hof_depth_scope;
-        for (int64_t i = 0; i < arr->length; i++) {
+        // A callback may grow or shrink the array it walks: these walks cover
+        // the cells there were when they began, as long as they still exist.
+        for (int64_t i = 0, n = arr->length; i < n && i < arr->length; i++) {
             hof_publish(arr, i);
             r->data[i] = call_compiled(fn, arr->data[i]);
             int32_t t = hof_answer_tag();
@@ -6730,7 +6732,7 @@ JdbArray* jdb_filter_fn(JdbMapFn fn, JdbArray* arr) {
         if (!arr) return jdb_array_new(0);
         std::vector<int64_t> keep;
         HofDepth hof_depth_scope;
-        for (int64_t i = 0; i < arr->length; i++) {
+        for (int64_t i = 0, n = arr->length; i < n && i < arr->length; i++) {
             hof_publish(arr, i);
             if (call_compiled(fn, arr->data[i]) != 0.0) keep.push_back(i);
         }
@@ -6743,7 +6745,7 @@ double jdb_reduce_fn(JdbReduceFn fn, JdbArray* arr, double init) {
         if (!arr) return init;
         double acc = init;
         HofDepth hof_depth_scope;
-        for (int64_t i = 0; i < arr->length; i++) {
+        for (int64_t i = 0, n = arr->length; i < n && i < arr->length; i++) {
             hof_publish(arr, i);
             acc = call_compiled(fn, acc, arr->data[i]);
         }
@@ -6757,7 +6759,7 @@ JdbArray* jdb_take_while_fn(JdbMapFn pred, JdbArray* arr) {
         if (!arr) return jdb_array_new(0);
         std::vector<int64_t> keep;
         HofDepth hof_depth_scope;
-        for (int64_t i = 0; i < arr->length; i++) {
+        for (int64_t i = 0, n = arr->length; i < n && i < arr->length; i++) {
             hof_publish(arr, i);
             if (call_compiled(pred, arr->data[i]) == 0.0) break;
             keep.push_back(i);
@@ -6772,7 +6774,8 @@ JdbArray* jdb_drop_while_fn(JdbMapFn pred, JdbArray* arr) {
         if (!arr) return jdb_array_new(0);
         int64_t start = 0;
         HofDepth hof_depth_scope;
-        while (start < arr->length) {
+        const int64_t n = arr->length;
+        while (start < n && start < arr->length) {
             hof_publish(arr, start);
             if (call_compiled(pred, arr->data[start]) == 0.0) break;
             start++;

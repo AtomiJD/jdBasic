@@ -522,6 +522,7 @@ static void setup_dynamic_code(VM& vm) {
         const auto& funcs = vm.get_funcs();
         if (funcs.empty()) { vm.emit("No functions defined.\n"); return Value::make_none(); }
         for (const auto& f : funcs) {
+            if (f.name.empty()) continue;  // a replaced version a frame still runs
             if (f.name.size() >= 2 && f.name[0] == '_' && f.name[1] == '_') continue;
             std::string kind = f.is_sub ? "SUB" : (f.is_async ? "ASYNC FUNC" : "FUNC");
             std::string sig = "(";

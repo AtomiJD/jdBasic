@@ -9,6 +9,10 @@
 #include <functional>
 #include <algorithm>
 #include <limits>
+#include <cstdint>
+
+static int16_t jump_offset(long long d);
+static uint16_t operand_u16(size_t n, const char* what);
 
 // Process-global native-slot registry (defined in vm.cpp).
 int jdb_native_slot(const std::string& name);
@@ -107,7 +111,7 @@ size_t Compiler::emit_jump(OpCode op, int line) {
 
 void Compiler::patch_jump(size_t addr) {
     size_t target = current_chunk().code.size();
-    int16_t offset = static_cast<int16_t>(target - addr - 2);
+    int16_t offset = jump_offset((long long)target - addr - 2);
     current_chunk().patch_i16(addr, offset);
 }
 
@@ -163,6 +167,43 @@ void Compiler::emit_var_store(const std::string& name, int line, bool prefer_loc
     }
 }
 
+// A SUB or FUNC can be compiled while the enclosing chunk is half done (a
+// FUNC inside an IF, a TYPE method): its labels and GOTOs are its own, so
+// the enclosing chunk's pending ones are set aside for its body.
+struct OwnLabels {
+    std::unordered_map<std::string, size_t>& labels;
+    std::vector<std::pair<std::string, size_t>>& gotos;
+    std::unordered_map<std::string, size_t> saved_labels;
+    std::vector<std::pair<std::string, size_t>> saved_gotos;
+    OwnLabels(std::unordered_map<std::string, size_t>& l,
+              std::vector<std::pair<std::string, size_t>>& g)
+        : labels(l), gotos(g), saved_labels(std::move(l)), saved_gotos(std::move(g)) {
+        labels.clear();
+        gotos.clear();
+    }
+    ~OwnLabels() {
+        labels = std::move(saved_labels);
+        gotos = std::move(saved_gotos);
+    }
+};
+
+// A jump offset that fits the bytecode's 16 bits; a block too large for it
+// is refused instead of jumping into other code.
+static int16_t jump_offset(long long d) {
+    if (d < INT16_MIN || d > INT16_MAX)
+        throw std::runtime_error("a block is too large to compile (a jump spans more than "
+                                 "32767 bytes of code); move part of it into a SUB or FUNC");
+    return static_cast<int16_t>(d);
+}
+
+// A count or a position that fits the bytecode's 16-bit operand.
+static uint16_t operand_u16(size_t n, const char* what) {
+    if (n > 0xFFFF)
+        throw std::runtime_error(std::string("too large to compile: ") + what +
+                                 " exceeds 65535");
+    return static_cast<uint16_t>(n);
+}
+
 void Compiler::resolve_labels() {
     // Resolve all pending GOTOs against collected label positions.
     // IMPORTANT: labels and GOTOs are per‑chunk (each SUB/FUNC has its own
@@ -175,7 +216,7 @@ void Compiler::resolve_labels() {
         if (it == label_positions.end()) {
             throw std::runtime_error("Undefined label: " + label);
         }
-        uint16_t target = static_cast<uint16_t>(it->second);
+        uint16_t target = operand_u16(it->second, "a GOTO target position");
         current_chunk().patch_u16(patch_addr, target);
     }
     // Clear for the next chunk
@@ -463,18 +504,23 @@ void Compiler::compile_stmt(const Stmt& stmt) {
                 cc.emit(OpCode::DUP, 0); // keep object on stack
                 uint16_t key_idx = cc.add_constant(Value::make_string(mem.name));
                 cc.emit(OpCode::LOAD_CONST, 0); cc.emit_u16(key_idx, 0);
-                // Default value based on type
-                Value def;
-                switch (mem.type) {
-                    case VarType::STRING:  def = Value::make_string(""); break;
-                    case VarType::BOOLEAN: def = Value::make_bool(false); break;
-                    case VarType::OBJECT:  def = Value::make_object(); break;
-                    case VarType::ARRAY:   def = Value::make_array(); break;
-                    case VarType::ANY:     def = Value::make_array(); break;
-                    default: def = Value::make_i64(0); break;
+                // Default value based on type. A map or an array is built
+                // anew for every instance: a constant would be one container
+                // that every instance of the type shares.
+                if (mem.type == VarType::OBJECT) {
+                    cc.emit(OpCode::MAKE_MAP, 0); cc.emit_u16(0, 0);
+                } else if (mem.type == VarType::ARRAY || mem.type == VarType::ANY) {
+                    cc.emit(OpCode::MAKE_ARRAY, 0); cc.emit_u16(0, 0);
+                } else {
+                    Value def;
+                    switch (mem.type) {
+                        case VarType::STRING:  def = Value::make_string(""); break;
+                        case VarType::BOOLEAN: def = Value::make_bool(false); break;
+                        default: def = Value::make_i64(0); break;
+                    }
+                    uint16_t val_idx = cc.add_constant(std::move(def));
+                    cc.emit(OpCode::LOAD_CONST, 0); cc.emit_u16(val_idx, 0);
                 }
-                uint16_t val_idx = cc.add_constant(std::move(def));
-                cc.emit(OpCode::LOAD_CONST, 0); cc.emit_u16(val_idx, 0);
                 cc.emit(OpCode::INDEX_SET, 0);
             }
 
@@ -569,7 +615,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
                     // DO loops: continue_addr = loop_start (already known)
                     current_chunk().emit(OpCode::JUMP, stmt.line);
                     size_t addr = current_chunk().code.size();
-                    int16_t offset = static_cast<int16_t>(loop_stack.back().continue_addr - addr - 2);
+                    int16_t offset = jump_offset((long long)loop_stack.back().continue_addr - addr - 2);
                     current_chunk().emit_i16(offset, stmt.line);
                 }
             }
@@ -629,10 +675,10 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             for (size_t cp : loop_stack.back().continue_patches) patch_jump(cp);
             current_chunk().emit(OpCode::JUMP, stmt.line);
             size_t back_addr = current_chunk().code.size();
-            current_chunk().emit_i16(static_cast<int16_t>(loop_start - back_addr - 2), stmt.line);
+            current_chunk().emit_i16(jump_offset((long long)loop_start - back_addr - 2), stmt.line);
 
             // Patch FOREACH_NEXT exit offset to here.
-            int16_t fwd_off = static_cast<int16_t>(
+            int16_t fwd_off = jump_offset((long long)
                 current_chunk().code.size() - (exit_patch + 2));
             current_chunk().patch_i16(exit_patch, fwd_off);
 
@@ -670,7 +716,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             // Patch CATCH address
             size_t catch_target = current_chunk().code.size();
             current_chunk().patch_u16(catch_addr,
-                static_cast<uint16_t>(catch_target - catch_addr - 2));
+                operand_u16(catch_target - catch_addr - 2, "a TRY block"));
 
             // CATCH body
             for (auto& s : stmt.catch_body()) compile_stmt(*s);
@@ -882,7 +928,7 @@ void Compiler::compile_dim(const Stmt& stmt) {
 
         // Patch the skip offset: jump from (skip_patch + 2) to here.
         size_t target = current_chunk().code.size();
-        int16_t off = static_cast<int16_t>(target - (skip_patch + 2));
+        int16_t off = jump_offset((long long)target - (skip_patch + 2));
         current_chunk().patch_i16(skip_patch, off);
         return;
     }
@@ -1129,7 +1175,7 @@ void Compiler::compile_do_loop(const Stmt& stmt) {
         // Jump back to start
         current_chunk().emit(OpCode::JUMP, stmt.line);
         size_t back_addr = current_chunk().code.size();
-        int16_t back_offset = static_cast<int16_t>(loop_start - back_addr - 2);
+        int16_t back_offset = jump_offset((long long)loop_start - back_addr - 2);
         current_chunk().emit_i16(back_offset, stmt.line);
 
         patch_jump(exit_jump);
@@ -1147,13 +1193,13 @@ void Compiler::compile_do_loop(const Stmt& stmt) {
                 current_chunk().emit(OpCode::JUMP_IF_FALSE, stmt.line);
             }
             size_t back_addr = current_chunk().code.size();
-            int16_t back_offset = static_cast<int16_t>(loop_start - back_addr - 2);
+            int16_t back_offset = jump_offset((long long)loop_start - back_addr - 2);
             current_chunk().emit_i16(back_offset, stmt.line);
         } else {
             // Infinite loop: DO ... LOOP
             current_chunk().emit(OpCode::JUMP, stmt.line);
             size_t back_addr = current_chunk().code.size();
-            int16_t back_offset = static_cast<int16_t>(loop_start - back_addr - 2);
+            int16_t back_offset = jump_offset((long long)loop_start - back_addr - 2);
             current_chunk().emit_i16(back_offset, stmt.line);
         }
     }
@@ -1228,7 +1274,7 @@ void Compiler::compile_for(const Stmt& stmt) {
     // 5. Jump back to condition check
     current_chunk().emit(OpCode::JUMP, stmt.line);
     size_t back_addr = current_chunk().code.size();
-    int16_t back_offset = static_cast<int16_t>(loop_start - back_addr - 2);
+    int16_t back_offset = jump_offset((long long)loop_start - back_addr - 2);
     current_chunk().emit_i16(back_offset, stmt.line);
 
     // 6. Patch exit + break patches
@@ -1304,6 +1350,7 @@ void Compiler::compile_sub(const Stmt& stmt) {
     for (auto& p : stmt.params()) proto.param_names.push_back(p.name);
 
     // Push a new scope for the function body
+    OwnLabels own_labels(label_positions, unresolved_gotos);
     scopes.push_back(CompilerScope{});
     current_scope().is_function = true;
     // Propagate source file for debugger (module file, or inherit from main chunk)
@@ -1346,6 +1393,7 @@ void Compiler::compile_function(const Stmt& stmt) {
     proto.is_async = stmt.is_async_func;
     for (auto& p : stmt.params()) proto.param_names.push_back(p.name);
 
+    OwnLabels own_labels(label_positions, unresolved_gotos);
     scopes.push_back(CompilerScope{});
     current_scope().is_function = true;
     current_scope().return_type = stmt.return_type;
@@ -1470,7 +1518,7 @@ void Compiler::compile_expr(const Expr& expr) {
                 compile_expr(*elem);
             }
             current_chunk().emit(OpCode::MAKE_ARRAY, expr.line);
-            current_chunk().emit_u16(static_cast<uint16_t>(expr.args.size()), expr.line);
+            current_chunk().emit_u16(operand_u16(expr.args.size(), "an array literal's element count"), expr.line);
             break;
 
         case ExprKind::MAP_LITERAL:
@@ -1480,7 +1528,7 @@ void Compiler::compile_expr(const Expr& expr) {
                 compile_expr(*expr.args[i]);
             }
             current_chunk().emit(OpCode::MAKE_MAP, expr.line);
-            current_chunk().emit_u16(static_cast<uint16_t>(expr.map_keys.size()), expr.line);
+            current_chunk().emit_u16(operand_u16(expr.map_keys.size(), "a map literal's key count"), expr.line);
             break;
 
         case ExprKind::MEMBER_ACCESS:

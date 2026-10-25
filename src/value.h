@@ -335,15 +335,24 @@ struct Value {
         if (type != ValueType::STRING || !obj) return &empty_str;
         return static_cast<StringObj*>(obj);
     }
+    // A value that is no array (no map) reads as an empty one. The stand-in
+    // is per thread and emptied on every use, so a builtin that writes into
+    // it leaves nothing behind for the next caller.
     ArrayObj* as_array() const {
-        static ArrayObj empty_arr;
-        if (type != ValueType::ARRAY || !obj) return &empty_arr;
+        if (type != ValueType::ARRAY || !obj) {
+            static thread_local ArrayObj empty_arr;
+            empty_arr.elements.clear();
+            return &empty_arr;
+        }
         return static_cast<ArrayObj*>(obj);
     }
     TensorObj* as_tensor() const { return static_cast<TensorObj*>(obj); }
     ObjectObj* as_object() const {
-        static ObjectObj empty_obj;
-        if (type != ValueType::OBJECT || !obj) return &empty_obj;
+        if (type != ValueType::OBJECT || !obj) {
+            static thread_local ObjectObj empty_obj;
+            empty_obj.fields.clear();
+            return &empty_obj;
+        }
         return static_cast<ObjectObj*>(obj);
     }
 

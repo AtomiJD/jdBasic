@@ -736,7 +736,7 @@ void VM::register_system_builtins() {
         } else if (what == "FUNCS" || what == "FUNCTIONS") {
             emit("--- Functions (" + std::to_string(owned_funcs.size()) + ") ---\n");
             for (auto& f : owned_funcs)
-                emit("  " + f.name + " (" + std::to_string(f.arity) + " params)\n");
+                if (!f.name.empty()) emit("  " + f.name + " (" + std::to_string(f.arity) + " params)\n");
         } else { // GLOBAL or VARS (default)
             emit("--- Global Variables (" + std::to_string(global_names.size()) + ") ---\n");
             for (auto& [name, slot] : global_names) {

@@ -122,12 +122,16 @@ void VM::register_data_builtins() {
         return Value::make_none();
     });
 
-    register_native("MAP.CLEAR", [](const std::vector<Value>& args) -> Value {
+    register_native("MAP.CLEAR", 1, 1, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::OBJECT)
+            throw jdError(ErrCode::TYPE_MISMATCH, "MAP.CLEAR: the argument must be a map");
         args[0].as_object()->fields.clear();
         return Value::make_none();
     });
 
     register_native("MAP.MERGE", 2, 2, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::OBJECT)
+            throw jdError(ErrCode::TYPE_MISMATCH, "MAP.MERGE: the first argument must be a map");
         auto* dst = args[0].as_object();
         auto* src = args[1].as_object();
         for (auto& [k, v] : src->fields) dst->set(k, v);

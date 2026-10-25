@@ -186,6 +186,7 @@ ftxui::Element render_side_panel(const Workspace& w) {
     rows.push_back(text(" FUNCTIONS ") | bold | color(jdb_theme::accent));
     int fn_count = 0, fn_seen = 0;
     for (const auto& f : w.vm->get_funcs()) {
+        if (f.name.empty()) continue;  // a replaced version a frame still runs
         if (w.boot_funcs.count(f.name)) continue;
         if (f.name.size() >= 2 && f.name[0] == '_' && f.name[1] == '_') continue;
         fn_seen++;

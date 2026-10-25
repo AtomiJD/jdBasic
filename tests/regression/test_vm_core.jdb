@@ -1,0 +1,62 @@
+' The interpreter's core keeps its bookkeeping straight: a RETURN from
+' inside TRY ends that TRY with the function, a user type's map and array
+' members belong to each instance, and a callback that grows the array a
+' higher-order function walks does not upset the walk.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+TYPE Bag
+    Tags AS MAP
+    Items AS ARRAY
+ENDTYPE
+
+DIM main_passes AS INTEGER = 0
+main_passes = main_passes + 1
+
+FUNC ReturnInTry(x AS INTEGER) AS INTEGER
+    TRY
+        RETURN x
+    CATCH
+        RETURN -1
+    ENDTRY
+    RETURN 0
+ENDFUNC
+
+DIM grow AS ARRAY = [1, 2, 3]
+FUNC Grows(v AS INTEGER) AS BOOLEAN
+    PUSH grow, v * 10
+    RETURN v > 1
+ENDFUNC
+
+Check(ReturnInTry(5) = 5, "RETURN from inside TRY")
+DIM small AS ARRAY = [1]
+DIM caught AS INTEGER = 0
+TRY
+    PRINT small[9]
+CATCH
+    caught = caught + 1
+ENDTRY
+Check(caught = 1, "a later error goes to its own TRY")
+Check(main_passes = 1, "the main program runs once")
+
+DIM first AS Bag
+DIM second AS Bag
+DIM tags AS MAP = first.Tags
+tags{"y"} = 2
+DIM items AS ARRAY = first.Items
+PUSH items, 7
+Check(LEN(MAP.KEYS(second.Tags)) = 0, "a map member is not shared between instances")
+Check(LEN(second.Items) = 0, "an array member is not shared between instances")
+
+DIM kept AS ARRAY = FILTER(Grows@, grow)
+Check(LEN(kept) = 2, "FILTER walks the array as it was handed over")
+
+IF failed > 0 THEN END 1
+PRINT "OK"
