@@ -1,0 +1,65 @@
+' MATMUL and MATMUL_T on the program's own arrays answer what the VM's
+' Eigen path answers: matrix by matrix, a flat array as a row on the left
+' and as a column on the right, the left side transposed, the error texts,
+' and a product big enough to be cut into bands across the cores.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM a AS ARRAY = [[1, 2], [3, 4], [5, 6]]
+DIM b AS ARRAY = [[1, 0, 2], [0, 1, 3]]
+DIM p AS ARRAY = MATMUL(a, b)
+Check(LEN(p) = 3 ANDALSO LEN(p[0]) = 3, "3x2 by 2x3 is 3x3")
+Check(p[0][0] = 1 ANDALSO p[0][2] = 8 ANDALSO p[2][1] = 6 ANDALSO p[2][2] = 28, "the cells of the product")
+DIM t AS ARRAY = MATMUL_T(a, a)
+Check(LEN(t) = 2 ANDALSO t[0][0] = 35 ANDALSO t[0][1] = 44 ANDALSO t[1][1] = 56, "MATMUL_T is the left side transposed")
+DIM rowv AS ARRAY = MATMUL([1, 1, 1], a)
+Check(LEN(rowv) = 2 ANDALSO rowv[0] = 9 ANDALSO rowv[1] = 12, "a flat array on the left is a row")
+DIM colv AS ARRAY = MATMUL(a, [1, 1])
+Check(LEN(colv) = 3 ANDALSO colv[0] = 3 ANDALSO colv[2] = 11, "a flat array on the right is a column")
+
+DIM msg$ AS STRING = ""
+TRY
+    DIM bad AS ARRAY = MATMUL(a, a)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(INSTR(msg$, "incompatible dimensions, 3x2 and 3x2") >= 0, "a shape mismatch names both shapes")
+msg$ = ""
+TRY
+    DIM bad2 AS ARRAY = MATMUL([1, 2], [3, 4])
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(INSTR(msg$, "two vectors") >= 0, "two vectors are no product")
+
+DIM n AS INTEGER = 6000
+DIM big AS ARRAY = RESHAPE(IOTA(n * 16) MOD 7, [n, 16])
+DIM w AS ARRAY = RESHAPE(IOTA(16 * 16) MOD 5, [16, 16])
+DIM bp AS ARRAY = MATMUL(big, w)
+DIM r AS INTEGER = n - 1
+DIM c AS INTEGER = 0
+DIM s AS DOUBLE = 0
+DIM k AS INTEGER = 0
+FOR c = 0 TO 15 STEP 5
+    s = 0
+    FOR k = 0 TO 15
+        s = s + big[r][k] * w[k][c]
+    NEXT k
+    Check(bp[r][c] = s, "a cell of a banded product, column " + STR$(c))
+NEXT c
+DIM gram AS ARRAY = MATMUL_T(big, big)
+s = 0
+FOR k = 0 TO n - 1
+    s = s + big[k][3] * big[k][7]
+NEXT k
+Check(gram[3][7] = s, "a banded MATMUL_T sums every band")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

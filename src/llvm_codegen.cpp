@@ -595,6 +595,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_apply_sfi",  "__arr_apply_sfi",  i8_ptr_type, {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_array_apply_sfii", "__arr_apply_sfii", i8_ptr_type, {i8_ptr_type, i64_type, i64_type, i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_array_len_shape",   "__arr_len_shape",   i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_matmul",            "__matmul",          i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
     reg("jdb_print_array_elem",  "__print_arr_elem",  void_type, {i8_ptr_type, i64_type}, -1);
     reg("jdb_array_str_concat",  "__arr_str_concat",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
     reg("jdb_trace",             "__trace",           void_type, {i8_ptr_type, i64_type}, -1);
@@ -15861,6 +15862,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     LLVMValueRef ob[] = { LLVMBuildPtrToInt(builder, arg_cache[i].val, i64_type, "own_arg") };
                     LLVMBuildCall2(builder, oc.fn_type, oc.fn, ob, 1, "");
                 }
+    }
+
+    // A matrix product of two arrays runs on the program's own arrays; through
+    // the bridge every cell was boxed into a VM value and back.
+    if ((upper == "MATMUL" || upper == "MATMUL_T") && arg_cache.size() == 2 &&
+        arg_cache[0].tag == JD_TAG_ARR && arg_cache[1].tag == JD_TAG_ARR) {
+        auto& mm = runtime_funcs["__matmul"];
+        LLVMValueRef margs[] = { arg_cache[0].val, arg_cache[1].val,
+            LLVMConstInt(i32_type, upper == "MATMUL_T" ? 1 : 0, 0) };
+        TypedValue out{ LLVMBuildCall2(builder, mm.fn_type, mm.fn, margs, 3, "matmul"), JD_TAG_ARR };
+        emit_err_code_branch();
+        out.fresh_container = true;
+        return out;
     }
 
     // JOIN of a string answers "", as in the interpreter; handed on, the

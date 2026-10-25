@@ -313,7 +313,7 @@ if %ERRORLEVEL%==0 (
         "%CC%" /std:c++17 /O2 /EHsc /c !DEFS! src\jdb_runtime.cpp ^
             "/I%MSVC%\include" "/I%SDK%\Include\%SDKV%\ucrt" ^
             "/I%SDK%\Include\%SDKV%\um" "/I%SDK%\Include\%SDKV%\shared" ^
-            /Isrc /Fo:build\jdb_runtime.obj
+            /Isrc /Ilibs\eigen /Fo:build\jdb_runtime.obj
         if errorlevel 1 (
             echo BUILD FAILED: jdb_runtime.obj
         ) else (

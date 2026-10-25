@@ -416,7 +416,7 @@ if [ "$WANT_NATIVEC" = "1" ]; then
     RT_OBJ_STAMP="build/.jdb_runtime.flags-$(echo "$CXX $SAN_FLAGS" | sha1sum | cut -c1-12)"
     if needs_build src/jdb_runtime.cpp build/jdb_runtime.o || [ ! -f "$RT_OBJ_STAMP" ]; then
         echo "== Precompiling jdb_runtime.o =="
-        $CXX -std=c++17 -O2 -DNDEBUG -MMD -MP -Isrc $SAN_FLAGS -c src/jdb_runtime.cpp -o build/jdb_runtime.o
+        $CXX -std=c++17 -O2 -DNDEBUG -MMD -MP -Isrc -Ilibs/eigen $SAN_FLAGS -c src/jdb_runtime.cpp -o build/jdb_runtime.o
         rm -f build/.jdb_runtime.flags-*
         touch "$RT_OBJ_STAMP"
     fi

@@ -11,6 +11,7 @@
 #include <string>
 #include <regex>
 #include "jdb_shape.h"
+#include <Eigen/Dense>
 #include "jdb_calendar.h"
 #include "jdb_format.h"
 #include "jdb_number.h"
@@ -3360,6 +3361,141 @@ static bool shape_is_nested(const JdbArray* a) {
         return a->elem_tags[0] == JD_TAG_ARR;
     return true;
 }
+
+}  // extern "C": the matrix product below is C++
+// ── MATMUL / MATMUL_T on the program's own arrays ───────────
+// The same rules as the VM's (numerics.cpp): a flat array on the right is a
+// column, one on the left a row, the answer of a vector side is flat, and two
+// vectors are no product. Rows are copied into one row-major block, Eigen
+// multiplies, and a product big enough is cut into row bands, one per core.
+using JdbMat = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+
+static JdbArray* mat_row(const JdbArray* a, int64_t r) {
+    union { double d; int64_t i; } u; u.d = a->data[r];
+    return (JdbArray*)(intptr_t)u.i;
+}
+
+// rows x cols of a matrix argument; a flat one is rows x 0.
+static bool mat_shape(const JdbArray* a, int64_t& rows, int64_t& cols, bool& flat) {
+    rows = a ? a->length : 0;
+    cols = 0;
+    flat = true;
+    if (rows > 0 && shape_is_nested(a)) {
+        flat = false;
+        const JdbArray* r0 = mat_row(a, 0);
+        cols = r0 ? r0->length : 0;
+    }
+    return a != nullptr;
+}
+
+static JdbMat mat_from(const JdbArray* a, bool flat, int64_t rows, int64_t cols) {
+    if (flat) {
+        JdbMat m(rows, 1);
+        for (int64_t r = 0; r < rows; r++) m(r, 0) = a->data[r];
+        return m;
+    }
+    JdbMat m(rows, cols);
+    for (int64_t r = 0; r < rows; r++) {
+        const JdbArray* row = mat_row(a, r);
+        int64_t n = row ? std::min<int64_t>(row->length, cols) : 0;
+        double* dst = m.data() + r * cols;
+        if (n) memcpy(dst, row->data, (size_t)n * sizeof(double));
+        for (int64_t c = n; c < cols; c++) dst[c] = 0.0;
+    }
+    return m;
+}
+
+static unsigned mat_workers(double work) {
+    static const unsigned cores = (std::max)(1u, std::thread::hardware_concurrency());
+    if (work < 2.0e6) return 1;
+    return (unsigned)std::min<double>(cores, (std::max)(1.0, work / 1.0e6));
+}
+
+// Runs body(lo, hi) over [0, n) in up to `workers` bands at once.
+template <class F>
+static void mat_bands(int64_t n, unsigned workers, F body) {
+    if (workers <= 1 || n < 2) { body(0, n); return; }
+    if ((int64_t)workers > n) workers = (unsigned)n;
+    std::vector<std::thread> pool;
+    int64_t step = (n + workers - 1) / workers;
+    for (unsigned w = 1; w < workers; w++) {
+        int64_t lo = w * step, hi = (std::min)(n, lo + step);
+        if (lo >= hi) break;
+        pool.emplace_back([=] { body(lo, hi); });
+    }
+    body(0, (std::min)(n, step));
+    for (auto& t : pool) t.join();
+}
+
+extern "C" JdbArray* jdb_matmul(JdbArray* a, JdbArray* b, int32_t transpose_left) {
+    const char* fn = transpose_left ? "MATMUL_T" : "MATMUL";
+    int64_t ra, ca, rb, cb;
+    bool fa, fb;
+    if (!mat_shape(a, ra, ca, fa) || !mat_shape(b, rb, cb, fb)) {
+        jdb_err_set((std::string(fn) + ": expected a matrix argument").c_str(), 1);
+        return jdb_array_new(0);
+    }
+    if (fa && fb) {
+        jdb_err_set((std::string(fn) + ": two vectors; the dot product is SUM(a * b)").c_str(), 1);
+        return jdb_array_new(0);
+    }
+    JdbMat R = mat_from(b, fb, rb, cb);
+    JdbMat L = mat_from(a, fa, ra, ca);
+    bool lt = fa || transpose_left;
+    int64_t lrows = lt ? L.cols() : L.rows(), linner = lt ? L.rows() : L.cols();
+    if (linner != R.rows()) {
+        auto text = [](int64_t r, int64_t c, bool f) {
+            return f ? std::to_string(r) : std::to_string(r) + "x" + std::to_string(c);
+        };
+        std::string left = transpose_left && !fa ? std::to_string(ca) + "x" + std::to_string(ra)
+                                                 : text(ra, ca, fa);
+        jdb_err_set((std::string(fn) + ": incompatible dimensions, " + left + " and " +
+                     text(rb, cb, fb)).c_str(), 1);
+        return jdb_array_new(0);
+    }
+    int64_t pcols = R.cols();
+    JdbMat P(lrows, pcols);
+    unsigned workers = mat_workers((double)lrows * (double)linner * (double)pcols);
+    if (!lt) {
+        mat_bands(lrows, workers, [&](int64_t lo, int64_t hi) {
+            P.middleRows(lo, hi - lo).noalias() = L.middleRows(lo, hi - lo) * R;
+        });
+    } else if (workers <= 1) {
+        P.noalias() = L.transpose() * R;
+    } else {
+        // L' * R sums over L's rows: each band adds its share, then the shares meet.
+        int64_t n = L.rows();
+        unsigned w = (unsigned)std::min<int64_t>(workers, n);
+        std::vector<JdbMat> part(w, JdbMat::Zero(lrows, pcols));
+        int64_t step = (n + w - 1) / w;
+        mat_bands(w, w, [&](int64_t lo, int64_t hi) {
+            for (int64_t k = lo; k < hi; k++) {
+                int64_t s = k * step, e = (std::min)(n, s + step);
+                if (s < e) part[k].noalias() = L.middleRows(s, e - s).transpose() * R.middleRows(s, e - s);
+            }
+        });
+        P.setZero();
+        for (auto& p : part) P += p;
+    }
+    if (fa || fb) {
+        int64_t n = fa ? pcols : lrows;
+        JdbArray* out = jdb_array_new(n);
+        for (int64_t i = 0; i < n; i++) out->data[i] = fa ? P(0, i) : P(i, 0);
+        return out;
+    }
+    JdbArray* out = jdb_array_new(lrows);
+    out->flags |= 1;
+    mat_bands(lrows, mat_workers((double)lrows * (double)pcols * 4.0), [&](int64_t lo, int64_t hi) {
+        for (int64_t r = lo; r < hi; r++) {
+            JdbArray* row = jdb_array_new(pcols);
+            if (pcols) memcpy(row->data, P.data() + r * pcols, (size_t)pcols * sizeof(double));
+            union { double d; int64_t i; } u; u.i = (int64_t)(intptr_t)row;
+            out->data[r] = u.d;
+        }
+    });
+    return out;
+}
+extern "C" {
 
 JdbArray* jdb_array_len_shape(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
