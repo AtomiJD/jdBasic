@@ -6263,6 +6263,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // indexed where it stands.
         if (builtin_has(u, BF_TAGGED_CELLS))
             mixed_array_vars.insert(stmt.var_name);
+        // A DECLAREd function answers its result beside the buffers.
+        if (ffi_array_returners.count(u))
+            mixed_array_vars.insert(stmt.var_name);
         // CVDATE/CDATE over an array answers one ISO string per cell, so a
         // cell reads back as a date rather than as the bits of its pointer.
         // Only for an array argument - the scalar form is a plain string.
@@ -6289,6 +6292,11 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // their cells per kind.
         if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" ||
             u == "TILED.OBJECTS" || u == "SQL.QUERY" || u == "SQLITE.QUERY")
+            array_array_vars.insert(stmt.var_name);
+        // RESHAPE to a literal shape of two or more axes answers rows.
+        if (u == "RESHAPE" && stmt.expr->args.size() >= 2 && stmt.expr->args[1] &&
+            stmt.expr->args[1]->kind == ExprKind::ARRAY_LITERAL &&
+            stmt.expr->args[1]->args.size() >= 2)
             array_array_vars.insert(stmt.var_name);
         if (nested_array_returning_funcs.count(stmt.expr->func_name))
             array_array_vars.insert(stmt.var_name);
@@ -7382,15 +7390,21 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         // Match groups and map values are arrays whose cells may be
         // strings, numbers or nested arrays; every read asks the cell.
         // UNPACK answers one cell per format code: numbers beside the
-        // fixed-width texts, so every read asks the cell.
+        // fixed-width texts, so every read asks the cell. A DECLAREd
+        // function answers its result beside the buffers.
         if (u == "REGEX.FINDALL" || u == "REGEX.MATCH" || u == "REGEX_FINDALL" ||
             u == "REGEX_MATCH" || u == "MAP.VALUES" || u == "MAP.ITEMS" ||
-            u == "UNPACK")
+            u == "UNPACK" || ffi_array_returners.count(u))
             mixed_array_vars.insert(stmt.var_name);
         // Builtins that answer a table: rows taken out of the result read
         // their cells per kind.
         if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" ||
             u == "TILED.OBJECTS" || u == "SQL.QUERY" || u == "SQLITE.QUERY")
+            array_array_vars.insert(stmt.var_name);
+        // RESHAPE to a literal shape of two or more axes answers rows.
+        if (u == "RESHAPE" && stmt.expr->args.size() >= 2 && stmt.expr->args[1] &&
+            stmt.expr->args[1]->kind == ExprKind::ARRAY_LITERAL &&
+            stmt.expr->args[1]->args.size() >= 2)
             array_array_vars.insert(stmt.var_name);
         if (nested_array_returning_funcs.count(stmt.expr->func_name))
             array_array_vars.insert(stmt.var_name);
@@ -7683,7 +7697,10 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                                 : runtime_later_globals.count(stmt.var_name)))
         dim_leaf_hint = JD_TAG_RUNTIME;
     else if (stmt.var_type == VarType::ARRAY)
-        dim_leaf_hint = JD_TAG_ARR;
+        // A row read by position names no kind of its own: the cell tells.
+        dim_leaf_hint = (stmt.expr && stmt.expr->kind == ExprKind::INDEX && stmt.expr->right &&
+                         stmt.expr->right->kind != ExprKind::LITERAL_STRING)
+                            ? JD_TAG_RUNTIME : JD_TAG_ARR;
     else if (stmt.var_type == VarType::FLOAT64 || stmt.var_type == VarType::FLOAT32 ||
              stmt.var_type == VarType::FLOAT16)
         dim_leaf_hint = JD_TAG_F64;
@@ -11054,7 +11071,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             if (expr.left && expr.left->kind == ExprKind::CALL) {
                 std::string bu = expr.left->func_name;
                 std::transform(bu.begin(), bu.end(), bu.begin(), ::toupper);
-                if (builtin_has(bu, BF_TAGGED_CELLS)) {
+                if (builtin_has(bu, BF_TAGGED_CELLS) || ffi_array_returners.count(bu)) {
                     auto& gtg = runtime_funcs["__arr_get_tagged"];
                     LLVMValueRef out_tag = scratch_alloca(i32_type, "call_gt_tag");
                     LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
@@ -15532,6 +15549,83 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     return out;
                 }
             }
+        }
+    }
+
+    // An element-wise builtin over an argument that names its kind only when
+    // the program runs (a map value, a variable that took one) maps an array
+    // cell by cell and takes anything else the scalar way.
+    if ((native_vec.count(upper) || upper == "CHR$") && !arg_cache.empty() &&
+        arg_cache[0].tag == JD_TAG_RUNTIME && arg_cache[0].runtime_tag) {
+        bool rest_scalar = true;
+        for (size_t i = 1; i < arg_cache.size(); i++)
+            if (arg_cache[i].tag == JD_TAG_ARR || arg_cache[i].tag == JD_TAG_RUNTIME)
+                rest_scalar = false;
+        auto sit = runtime_funcs.find(upper);
+        if (rest_scalar && sit != runtime_funcs.end() && sit->second.return_tag >= 0 &&
+            LLVMCountParamTypes(sit->second.fn_type) == arg_cache.size()) {
+            const RuntimeFunc sfn = sit->second;
+            const TypedValue av = arg_cache[0];
+            const int nargs = (int)arg_cache.size();
+            LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, av.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_ARR, 0), "ew_isarr");
+            LLVMBasicBlockRef bb_v = LLVMAppendBasicBlock(current_fn, "ew.arr");
+            LLVMBasicBlockRef bb_s = LLVMAppendBasicBlock(current_fn, "ew.scalar");
+            LLVMBasicBlockRef bb_j = LLVMAppendBasicBlock(current_fn, "ew.join");
+            LLVMBuildCondBr(builder, is_arr, bb_v, bb_s);
+
+            LLVMPositionBuilderAtEnd(builder, bb_v);
+            LLVMValueRef args_p = scratch_alloca(LLVMArrayType(i64_type, nargs), "ew_args");
+            LLVMValueRef tags_p = scratch_alloca(LLVMArrayType(i32_type, nargs), "ew_tags");
+            for (int i = 0; i < nargs; i++) {
+                const TypedValue& a = arg_cache[i];
+                LLVMValueRef enc; int32_t tg;
+                if (i == 0) { enc = av.val; tg = JD_TAG_ARR; }
+                else if (a.tag == JD_TAG_STR) { enc = LLVMBuildPtrToInt(builder, a.val, i64_type, "ew_p"); tg = JD_TAG_STR; }
+                else if (jd_is_f64_tag(a.tag)) { enc = pun_f64_to_i64(a.val); tg = JD_TAG_F64; }
+                else { enc = coerce_to(a, i64_type); tg = JD_TAG_I64; }
+                LLVMValueRef ai[] = { LLVMConstInt(i32_type, 0, 0), LLVMConstInt(i32_type, i, 0) };
+                LLVMBuildStore(builder, enc,
+                    LLVMBuildGEP2(builder, LLVMArrayType(i64_type, nargs), args_p, ai, 2, "ew_a"));
+                LLVMBuildStore(builder, LLVMConstInt(i32_type, tg, 0),
+                    LLVMBuildGEP2(builder, LLVMArrayType(i32_type, nargs), tags_p, ai, 2, "ew_t"));
+            }
+            LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
+                LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
+            auto& vfn = runtime_funcs["__jdrt_call_typed_arr"];
+            LLVMValueRef cargs[] = { handle,
+                LLVMBuildGlobalStringPtr(builder, upper.c_str(), ".fn"),
+                args_p, tags_p, LLVMConstInt(i32_type, nargs, 0) };
+            LLVMValueRef vres = LLVMBuildCall2(builder, vfn.fn_type, vfn.fn, cargs, 5, "ew_vec");
+            vres = rc_born(vres, JD_TAG_ARR, true);
+            LLVMValueRef vbits = LLVMBuildPtrToInt(builder, vres, i64_type, "ew_vbits");
+            LLVMBuildBr(builder, bb_j);
+            LLVMBasicBlockRef v_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_s);
+            std::vector<LLVMTypeRef> pts(nargs);
+            LLVMGetParamTypes(sfn.fn_type, pts.data());
+            std::vector<LLVMValueRef> sargs(nargs);
+            for (int i = 0; i < nargs; i++) sargs[i] = coerce_to(arg_cache[i], pts[i]);
+            LLVMValueRef sres = LLVMBuildCall2(builder, sfn.fn_type, sfn.fn,
+                                               sargs.data(), nargs, "ew_s");
+            LLVMValueRef sbits = sfn.return_tag == JD_TAG_F64 ? pun_f64_to_i64(sres)
+                               : sfn.return_tag == JD_TAG_STR
+                                 ? LLVMBuildPtrToInt(builder, sres, i64_type, "ew_sbits")
+                                 : sres;
+            LLVMBuildBr(builder, bb_j);
+            LLVMBasicBlockRef s_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_j);
+            LLVMValueRef pv = LLVMBuildPhi(builder, i64_type, "ew_v");
+            LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "ew_t");
+            LLVMValueRef vals[] = { vbits, sbits };
+            LLVMValueRef tags[] = { LLVMConstInt(i32_type, JD_TAG_ARR, 0),
+                                    LLVMConstInt(i32_type, sfn.return_tag, 0) };
+            LLVMBasicBlockRef bbs[] = { v_end, s_end };
+            LLVMAddIncoming(pv, vals, bbs, 2);
+            LLVMAddIncoming(pt, tags, bbs, 2);
+            return { pv, JD_TAG_RUNTIME, pt };
         }
     }
 

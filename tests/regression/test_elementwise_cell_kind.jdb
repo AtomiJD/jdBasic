@@ -1,0 +1,48 @@
+' Element-wise builtins over a value whose kind only the running program
+' knows: an array is mapped cell by cell, a scalar goes the scalar way. A row
+' read by position into an ARRAY slot keeps its cells.
+
+OPTION "EXPLICIT"
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM rows = RESHAPE([72, 105, 33, 97, 98, 99], [2, 3])
+Check(JOIN(CHR$(rows[0]), "") = "Hi!", "CHR$ of a row of a reshaped array")
+DIM first AS ARRAY = rows[1]
+Check(TYPEOF(first) = "ARRAY" ANDALSO LEN(first) = 3 ANDALSO first[2] = 99, "a row taken into an ARRAY slot")
+
+DIM bag AS MAP = {}
+bag{"codes"} = [104, 105]
+bag{"code"} = 65
+bag{"word"} = " mixed Case "
+bag{"words"} = ["ab", "cd"]
+DIM codes = bag{"codes"}
+Check(TYPEOF(CHR$(codes)) = "ARRAY" ANDALSO JOIN(CHR$(codes), "") = "hi", "CHR$ of a map value holding an array")
+Check(JOIN(CHR$(codes + 0), "") = "hi", "CHR$ of arithmetic over that value")
+Check(CHR$(bag{"code"}) = "A", "CHR$ of a map value holding a number")
+Check(UCASE$(bag{"word"}) = " MIXED CASE ", "UCASE$ of a map value holding a string")
+Check(TRIM$(bag{"word"}) = "mixed Case", "TRIM$ of a map value holding a string")
+Check(LEFT$(bag{"word"}, 3) = " mi", "LEFT$ of a map value holding a string")
+Check(JOIN(UCASE$(bag{"words"}), ",") = "AB,CD", "UCASE$ of a map value holding strings")
+Check(JOIN(LEFT$(bag{"words"}, 1), "") = "ac", "LEFT$ of a map value holding strings")
+
+FUNC SecondRow(grid)
+    DIM r AS ARRAY = grid[1]
+    RETURN LEN(r) * 100 + r[0]
+ENDFUNC
+Check(SecondRow([[1, 2], [7, 8, 9]]) = 307, "a row of a parameter taken into an ARRAY slot")
+
+DIM pieces = []
+PUSH(pieces, CHR$(0))
+PUSH(pieces, "abc")
+Check(LEN(JOIN(pieces, "")) = 4, "JOIN keeps a cell behind its NUL")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

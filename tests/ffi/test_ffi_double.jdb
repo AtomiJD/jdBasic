@@ -31,6 +31,11 @@ DIM dst AS ARRAY = answer[1]
 Check(LEN(dst) = 3 ANDALSO dst[0] = 1 ANDALSO dst[2] = 3, "the function wrote into the ARRAY buffer")
 DIM back AS ARRAY = answer[2]
 Check(back[1] = 2, "the source buffer comes back unchanged")
+Check(TYPEOF(dst) = "ARRAY", "a buffer taken out of the answer prints as an array")
+Check(TYPEOF(cmemcpy(ZEROS([2]), [7, 8], 16)[1]) = "ARRAY", "a buffer read straight off the call")
+DIM again = [0]
+again = cmemcpy(ZEROS([2]), [5, 6], 16)
+Check(TYPEOF(again[1]) = "ARRAY", "a buffer read off an assigned answer")
 
 IF failed > 0 THEN END 1
 PRINT "OK"
