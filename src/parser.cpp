@@ -1,6 +1,15 @@
 #include "parser.h"
 #include <algorithm>
 #include "lexer.h"
+#include "jdb_stack.h"
+
+// Nesting is bounded by the stack that is left, not by a fixed count, so
+// a deep but legal program parses wherever the stack allows it.
+static void check_parse_depth(int line) {
+    if (jdb_stack::low())
+        throw std::runtime_error("Parse error at line " + std::to_string(line) +
+                                 ": the program nests too deeply");
+}
 
 Parser::Parser(std::vector<Token> t) : ring(std::move(t)), count(ring.size()) {
     // OPTION "EXPLICIT" / "STRICT" anywhere in the program, whatever order the
@@ -255,6 +264,7 @@ static bool is_block_closer(TokenType t) {
            t == TokenType::ENUM;
 }
 StmtPtr Parser::parse_statement() {
+    check_parse_depth(current().line);
     // A statement never comes back to a position before its own start.
     hold = (size_t)-1;
     // Drain any synthesised statements queued from a previous call (e.g.
@@ -2083,6 +2093,7 @@ StmtPtr Parser::parse_ident_stmt() {
 // ── Expressions ──────────────────────────────────────────────
 
 ExprPtr Parser::parse_expr() {
+    check_parse_depth(current().line);
     auto left = parse_coalesce();
     // Pipe operator: lowest precedence
     while (check(TokenType::PIPE)) {
@@ -2090,6 +2101,7 @@ ExprPtr Parser::parse_expr() {
         advance(); // |>
         auto right = parse_or();
         auto pipe = std::make_unique<Expr>();
+        pipe->chain_depth = chain_depth_over(left, right, ln);
         pipe->kind = ExprKind::PIPE_EXPR;
         pipe->left = std::move(left);
         pipe->right = std::move(right);
@@ -2218,6 +2230,7 @@ ExprPtr Parser::parse_and() {
 }
 
 ExprPtr Parser::parse_not() {
+    check_parse_depth(current().line);
     if (check(TokenType::NOT)) {
         int ln = current().line;
         advance();
@@ -2339,6 +2352,7 @@ ExprPtr Parser::parse_multiplication() {
 }
 
 ExprPtr Parser::parse_power() {
+    check_parse_depth(current().line);
     auto left = parse_unary();
     if (check(TokenType::CARET)) {
         int ln = current().line;
@@ -2350,6 +2364,7 @@ ExprPtr Parser::parse_power() {
 }
 
 ExprPtr Parser::parse_unary() {
+    check_parse_depth(current().line);
     if (check(TokenType::MINUS)) {
         int ln = current().line;
         advance();
@@ -2958,7 +2973,13 @@ void Parser::module_rename_stmt(Stmt& stmt,
 
 ExprPtr Parser::parse_postfix(ExprPtr expr) {
     // Postfix chain: [idx], {key}, .field, .method(args)
+    // Built in a loop like an operator chain, and bounded the same way.
+    int depth = expr ? expr->chain_depth : 1;
     while (true) {
+        if (++depth > MAX_CHAIN_DEPTH)
+            throw std::runtime_error("Parse error at line " + std::to_string(current().line) +
+                ": the expression chains more than " + std::to_string(MAX_CHAIN_DEPTH) +
+                " accessors");
         // A ? in front of an accessor makes it optional. The same token
         // is the pipe placeholder, but that one stands where an
         // expression begins and this one stands after one, so position
@@ -3034,5 +3055,6 @@ ExprPtr Parser::parse_postfix(ExprPtr expr) {
         }
         else break;
     }
+    if (expr) expr->chain_depth = depth;
     return expr;
 }

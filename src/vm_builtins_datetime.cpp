@@ -153,9 +153,11 @@ void VM::register_datetime_builtins() {
         double epoch = value_to_epoch(args[0]);
         std::string fmt = args.size() >= 2 ? args[1].as_string()->data : "";
         bool shifted = args.size() >= 3;
-        char buf[128];
-        jdb_cal::format_at(buf, sizeof(buf), fmt.c_str(), epoch, shifted,
-                           shifted ? args[2].to_double() : 0.0);
+        char buf[256];
+        if (jdb_cal::format_at(buf, sizeof(buf), fmt.c_str(), epoch, shifted,
+                               shifted ? args[2].to_double() : 0.0) < 0)
+            throw jdError(ErrCode::WRONG_ARG_TYPE,
+                "FORMAT_DATE: the format has an unknown conversion, or the year cannot be shown");
         return Value::make_string(buf);
     });
 

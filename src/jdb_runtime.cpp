@@ -5478,7 +5478,8 @@ char* jdb_format_date(const char* date_str, const char* fmt, double tz_hours) {
     jdb_cal::Civil c;
     if (!jdb_cal::parse_iso(date_str, c)) return _strdup("");
     char buf[256];
-    jdb_cal::format_at(buf, sizeof(buf), fmt, jdb_cal::local_to_epoch(c), tz_hours == tz_hours, tz_hours);
+    if (jdb_cal::format_at(buf, sizeof(buf), fmt, jdb_cal::local_to_epoch(c), tz_hours == tz_hours, tz_hours) < 0)
+        jdb_err_set("FORMAT_DATE: the format has an unknown conversion, or the year cannot be shown", 24);
     return _strdup(buf);
 }
 
@@ -5488,7 +5489,8 @@ char* jdb_format_date_num(double epoch, const char* fmt, double tz_hours) {
     // A date that was declared and never set has no text.
     if (epoch != epoch) return _strdup("");
     char buf[256];
-    jdb_cal::format_at(buf, sizeof(buf), fmt, epoch, tz_hours == tz_hours, tz_hours);
+    if (jdb_cal::format_at(buf, sizeof(buf), fmt, epoch, tz_hours == tz_hours, tz_hours) < 0)
+        jdb_err_set("FORMAT_DATE: the format has an unknown conversion, or the year cannot be shown", 24);
     return _strdup(buf);
 }
 

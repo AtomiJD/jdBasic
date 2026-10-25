@@ -117,6 +117,13 @@ public:
     // The line of the statement under codegen, so the error check can record
     // where an error happened for ERL and STACK$.
     int m_current_stmt_line = 0;
+    // Set once the walk ran out of stack, so the error is reported only once.
+    bool stack_error_reported = false;
+    // Thrown out of an expression walk that ran out of stack; the statement
+    // that contains it catches it.
+    struct StackExhausted : std::runtime_error {
+        StackExhausted() : std::runtime_error("the program nests too deeply to compile") {}
+    };
 
     // Transient codegen state: true while evaluating an expression whose
     // result will be the LEFT of an INDEX chain (e.g. inner `a{"b"}` of

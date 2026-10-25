@@ -77,6 +77,7 @@ void install_seh_translator_for_this_thread() {}
 #include "async_task.h"
 #include "jdb_shape.h"
 #include "jdb_text.h"
+#include "jdb_stack.h"
 static Value array_pair(const Value& a, const Value& b,
                         const std::function<Value(const Value&, const Value&)>& cell);
 
@@ -716,6 +717,10 @@ Value VM::call_function_idx(int32_t idx, const std::vector<Value>& args) {
 
     if (frames.size() >= JDB_MAX_FRAMES)
         throw jdError(ErrCode::STACK_OVERFLOW, "Call stack overflow (max " + std::to_string(JDB_MAX_FRAMES) + " frames)");
+    // A call from a builtin (SELECT, FILTER, a funcref) nests on the C stack
+    // as well, which the frame count does not see.
+    if (jdb_stack::low())
+        throw jdError(ErrCode::STACK_OVERFLOW, "Call stack overflow (calls nest too deeply)");
     size_t saved_min = min_frame_depth;
     size_t saved_frames = frames.size();
     // The caller's TRY entries belong to the caller's run loop: hidden here,
@@ -1342,8 +1347,9 @@ void VM::run() {
                         }
                         case OpCode::MUL: {
                             r = (int64_t)((uint64_t)x * (uint64_t)y);
-                            // Verify by division: classic overflow detector
-                            if (x != 0 && r / x != y) overflow = true;
+                            // Verify by division; x == -1 overflows only for INT64_MIN,
+                            // and r / -1 would trap on exactly that value.
+                            overflow = (x == -1) ? (y == INT64_MIN) : (x != 0 && r / x != y);
                             break;
                         }
                         case OpCode::IDIV:
@@ -2430,6 +2436,9 @@ void VM::run() {
                     auto& idxs = idx.as_array()->elements;
                     if (val.type == ValueType::ARRAY) {
                         auto& vs = val.as_array()->elements;
+                        if (vs.empty() && !idxs.empty())
+                            throw jdError(ErrCode::INDEX_OUT_OF_RANGE,
+                                "scatter: no values to write");
                         for (size_t k = 0; k < idxs.size(); k++) {
                             int64_t pos = idxs[k].to_int();
                             if (pos < 0 || pos >= (int64_t)arr->elements.size())
@@ -2808,7 +2817,7 @@ void VM::run() {
                     }
                     case OpCode::LOAD_VAR_MUL_CONST: {
                         r = (int64_t)((uint64_t)x * (uint64_t)y);
-                        if (x != 0 && r / x != y) overflow = true;
+                        overflow = (x == -1) ? (y == INT64_MIN) : (x != 0 && r / x != y);
                         break;
                     }
                     default: r = 0;

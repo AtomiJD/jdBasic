@@ -9,6 +9,7 @@
 #include "file_streams.h"
 #include "jdb_crypto.h"
 #include "jdb_deflate.h"
+#include "jdb_stack.h"
 #include <clocale>
 #include <locale>
 #ifdef COM
@@ -96,9 +97,18 @@ bool jdb_date_arith(const Value& a, const Value& b, OpCode op, Value& out);
 // leaves costs as much as the array already holds: on 100000 elements
 // that is another 2.4 MB, which is what makes SUM fail on a board with
 // megabytes still free.
+// An array nested deeper than the stack allows, or one that holds itself,
+// ends in an error rather than a stack overflow.
+inline void check_walk_depth() {
+    if (jdb_stack::low())
+        throw jdError(ErrCode::RUNTIME_ERROR,
+                      "the array nests too deeply (or contains itself)");
+}
+
 template <class F>
 static void for_each_leaf(const Value& v, F&& fn) {
     if (v.type == ValueType::ARRAY) {
+        check_walk_depth();
         for (const auto& e : v.as_array()->elements) for_each_leaf(e, fn);
     } else {
         fn(v);
@@ -109,6 +119,7 @@ static void for_each_leaf(const Value& v, F&& fn) {
 template <class F>
 static bool any_leaf(const Value& v, F&& pred) {
     if (v.type == ValueType::ARRAY) {
+        check_walk_depth();
         for (const auto& e : v.as_array()->elements)
             if (any_leaf(e, pred)) return true;
         return false;

@@ -3,6 +3,7 @@
 #include "llvm_codegen.h"
 #include "jdb_tags.h"
 #include "builtin_sigs.h"
+#include "jdb_stack.h"
 #include "llvm-c/Core.h"
 #include "llvm-c/Target.h"
 #include "llvm-c/TargetMachine.h"
@@ -5021,6 +5022,14 @@ LLVMBasicBlockRef LLVMCodegen::get_label_block(const std::string& name) {
 }
 
 void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
+    if (jdb_stack::low()) {
+        if (!stack_error_reported) {
+            stack_error_reported = true;
+            report_error(stmt.source_file(), stmt.line,
+                         "the program nests too deeply to compile");
+        }
+        return;
+    }
     // Skip if current block already has a terminator (unreachable code).
     // A LABEL is still emitted: it opens a new block that a GOTO may reach
     // even when the code right before it cannot fall through.
@@ -5325,6 +5334,8 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
         default:
             break;
     }
+    } catch (const StackExhausted&) {
+        // Already reported; the compile stops on the collected error.
     } catch (const std::exception& e) {
         std::cerr << "[NATIVE] Warning: codegen error at line " << stmt.line
                   << ": " << e.what() << std::endl;
@@ -9941,6 +9952,16 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
 // ── Expression Codegen ──────────────────────────────────────
 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
+    // Out of stack: report once and leave the statement; the collected
+    // error aborts the compile.
+    if (jdb_stack::low()) {
+        if (!stack_error_reported) {
+            stack_error_reported = true;
+            report_error(m_current_stmt_file, expr.line,
+                         "the expression nests too deeply to compile");
+        }
+        throw StackExhausted();
+    }
     switch (expr.kind) {
         case ExprKind::LITERAL_INT:
             return { LLVMConstInt(i64_type, (uint64_t)expr.int_val, 1), JD_TAG_I64 };
@@ -19686,7 +19707,9 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         }
     }
 
-    std::vector<std::string> link_args = { "/NOLOGO", "/OUT:" + exe_path };
+    // 64 MB of reserved stack per thread, as jdBasic.exe has: deep recursion
+    // and deep documents end with an error long before that is used up.
+    std::vector<std::string> link_args = { "/NOLOGO", "/OUT:" + exe_path, "/STACK:67108864" };
     if (gui_subsystem) {
         link_args.push_back("/SUBSYSTEM:WINDOWS");
         link_args.push_back("/ENTRY:mainCRTStartup");

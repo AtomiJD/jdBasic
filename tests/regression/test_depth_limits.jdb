@@ -1,0 +1,51 @@
+' Input that nests deeper than the stack, or that a C library function
+' rejects, raises an error the program's TRY catches, in both backends,
+' instead of ending the program.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM caught AS INTEGER = 0
+DIM doc$ AS STRING = REPEAT$("[", 2000000) + REPEAT$("]", 2000000)
+TRY
+    DIM deep = JSON.PARSE(doc$)
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "JSON nested two million deep is caught")
+
+DIM shallow = JSON.PARSE(REPEAT$("[", 500) + "7" + REPEAT$("]", 500))
+Check(TYPEOF(shallow) = "ARRAY", "JSON nested 500 deep still parses")
+
+caught = 0
+DIM text$ AS STRING
+TRY
+    text$ = FORMAT_DATE(NOW(), "%Q")
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "FORMAT_DATE with an unknown conversion is caught")
+Check(FORMAT_DATE(CVDATE("2024-03-05"), "%Y/%m/%d") = "2024/03/05", "FORMAT_DATE still formats")
+
+DIM grid AS ARRAY = [[1, 2], [3, 4], [5, 6]]
+caught = 0
+TRY
+    DIM bad AS ARRAY = MVLET(grid, 1, 2, [9, 9, 9])
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "MVLET with a column past the matrix is caught")
+DIM good AS ARRAY = MVLET(grid, 1, 1, [7, 8, 9])
+Check(good[2][1] = 9, "MVLET still replaces a column")
+
+DIM after$ AS STRING = "still " + "running"
+Check(after$ = "still running", "the program goes on after the errors")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

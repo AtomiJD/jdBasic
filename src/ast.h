@@ -3,6 +3,8 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <algorithm>
+#include <stdexcept>
 #include "token.h"
 
 enum class VarType {
@@ -94,6 +96,11 @@ struct Expr {
     // result is absent too, so a chain stops instead of faulting.
     bool optional = false;
 
+    // How deep the operator chain under this node is. A chain is built in a
+    // loop rather than by recursion, so the parser bounds it by this count;
+    // every later walk over the tree recurses once per level.
+    int chain_depth = 1;
+
     // BINARY
     TokenType op = TokenType::PLUS;
     ExprPtr left;
@@ -121,6 +128,27 @@ struct Expr {
     // MEMBER_ACCESS: left.str_val
 
     Expr() : kind(ExprKind::LITERAL_INT) {}
+    Expr(Expr&&) = default;
+    Expr& operator=(Expr&&) = default;
+
+    // An operator chain is as deep as it is long, so a tree is taken apart
+    // through a work list rather than by recursion.
+    ~Expr() {
+        if (!left && !right && args.empty()) return;
+        std::vector<ExprPtr> pending;
+        auto detach = [&pending](Expr& e) {
+            if (e.left) pending.push_back(std::move(e.left));
+            if (e.right) pending.push_back(std::move(e.right));
+            for (auto& a : e.args)
+                if (a) pending.push_back(std::move(a));
+        };
+        detach(*this);
+        while (!pending.empty()) {
+            ExprPtr node = std::move(pending.back());
+            pending.pop_back();
+            detach(*node);
+        }
+    }
 };
 
 inline ExprPtr make_int_lit(int64_t v, int line) {
@@ -174,10 +202,22 @@ inline ExprPtr make_var(const std::string& name, int line) {
     return e;
 }
 
+constexpr int MAX_CHAIN_DEPTH = 10000;
+
+inline int chain_depth_over(const ExprPtr& a, const ExprPtr& b, int line) {
+    int d = 1 + (std::max)(a ? a->chain_depth : 0, b ? b->chain_depth : 0);
+    if (d > MAX_CHAIN_DEPTH)
+        throw std::runtime_error("Parse error at line " + std::to_string(line) +
+            ": the expression chains more than " + std::to_string(MAX_CHAIN_DEPTH) +
+            " operators");
+    return d;
+}
+
 inline ExprPtr make_binary(TokenType op, ExprPtr left, ExprPtr right, int line) {
     auto e = std::make_unique<Expr>();
     e->kind = ExprKind::BINARY;
     e->op = op;
+    e->chain_depth = chain_depth_over(left, right, line);
     e->left = std::move(left);
     e->right = std::move(right);
     e->line = line;
@@ -188,6 +228,7 @@ inline ExprPtr make_unary(TokenType op, ExprPtr operand, int line) {
     auto e = std::make_unique<Expr>();
     e->kind = ExprKind::UNARY;
     e->op = op;
+    e->chain_depth = chain_depth_over(operand, nullptr, line);
     e->right = std::move(operand);
     e->line = line;
     return e;
@@ -196,6 +237,8 @@ inline ExprPtr make_unary(TokenType op, ExprPtr operand, int line) {
 inline ExprPtr make_call(const std::string& name, std::vector<ExprPtr> args, int line) {
     auto e = std::make_unique<Expr>();
     e->kind = ExprKind::CALL;
+    for (auto& a : args)
+        e->chain_depth = (std::max)(e->chain_depth, chain_depth_over(a, nullptr, line));
     e->func_name = name;
     e->args = std::move(args);
     e->line = line;
@@ -205,6 +248,7 @@ inline ExprPtr make_call(const std::string& name, std::vector<ExprPtr> args, int
 inline ExprPtr make_index(ExprPtr arr, ExprPtr idx, int line) {
     auto e = std::make_unique<Expr>();
     e->kind = ExprKind::INDEX;
+    e->chain_depth = chain_depth_over(arr, idx, line);
     e->left = std::move(arr);
     e->right = std::move(idx);
     e->line = line;

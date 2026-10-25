@@ -270,6 +270,7 @@ REM mismatched runtimes show up as unresolved __imp__* symbols.
   /Fe:build\jdBasic.exe ^
   /Fo:build\ ^
   /link ^
+  /STACK:67108864 ^
   /LIBPATH:"%MSVC%\lib\x64" ^
   /LIBPATH:"%SDK%\Lib\%SDKV%\ucrt\x64" ^
   /LIBPATH:"%SDK%\Lib\%SDKV%\um\x64" ^

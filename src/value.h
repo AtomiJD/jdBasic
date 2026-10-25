@@ -79,9 +79,53 @@ inline void heap_release(HeapObject* o) {
                 return;
             }
         }
+        // Freeing a container frees its cells, which can free nested
+        // containers in turn. A nested free is queued and run by the
+        // outermost one, so deep nesting does not deepen the C stack.
+        // Both thread_locals are trivially destructible, so a Value released
+        // during static destruction still finds them.
+        static thread_local std::vector<HeapObject*>* queue = nullptr;
+        static thread_local bool active = false;
+        if (active) {
+            if (!queue) queue = new std::vector<HeapObject*>();
+            queue->push_back(o);
+            return;
+        }
+        active = true;
         delete o;
+        if (queue) {
+            while (!queue->empty()) {
+                HeapObject* next = queue->back();
+                queue->pop_back();
+                delete next;
+            }
+            if (queue->capacity() > 4096) std::vector<HeapObject*>().swap(*queue);
+        }
+        active = false;
     }
 }
+
+// The containers a recursive walk (to_string, to_bool) is currently inside,
+// so a container that holds itself is shown once instead of walked forever.
+struct WalkPath {
+    static std::vector<const HeapObject*>& stack() {
+        // A pointer, not a vector: trivially destructible, so a walk during
+        // static destruction still finds it.
+        static thread_local std::vector<const HeapObject*>* s = nullptr;
+        if (!s) s = new std::vector<const HeapObject*>();
+        return *s;
+    }
+    const HeapObject* entered = nullptr;
+    // False when o is already on the path: the walk has come round a cycle.
+    bool enter(const HeapObject* o) {
+        auto& s = stack();
+        for (const HeapObject* p : s) if (p == o) return false;
+        s.push_back(o);
+        entered = o;
+        return true;
+    }
+    ~WalkPath() { if (entered) stack().pop_back(); }
+};
 
 struct StringObj : HeapObject {
     std::string data;
@@ -358,6 +402,8 @@ struct Value {
                 // for `IF y = 0 THEN ...` patterns when y is a vector.
                 auto* a = as_array();
                 if (!a || a->elements.empty()) return false;
+                WalkPath path;
+                if (!path.enter(a)) return true;  // a cycle adds no false cell
                 for (auto& e : a->elements) if (!e.to_bool()) return false;
                 return true;
             }
@@ -397,9 +443,11 @@ struct Value {
                 return format_float_locale(f64);
             case ValueType::STRING:  return as_string() ? as_string()->data : "";
             case ValueType::ARRAY: {
+                auto* arr = as_array();
+                WalkPath path;
+                if (!path.enter(arr)) return "[...]";
                 std::ostringstream os;
                 os << "[";
-                auto* arr = as_array();
                 for (size_t i = 0; i < arr->elements.size(); i++) {
                     if (i > 0) os << ", ";
                     os << arr->elements[i].to_string();
@@ -434,6 +482,8 @@ struct Value {
 #endif
                 auto* o = as_object();
                 if (!o) return "<object>";
+                WalkPath path;
+                if (!path.enter(o)) return "{...}";
                 std::ostringstream os;
                 os << "{";
                 for (size_t i = 0; i < o->fields.size(); i++) {
@@ -492,7 +542,8 @@ inline bool values_equal(const Value& a, const Value& b) {
         case ValueType::STRING:
             return a.as_string() && b.as_string() && a.as_string()->data == b.as_string()->data;
         case ValueType::ARRAY: {
-            if (!a.as_array() || !b.as_array()) return a.obj == b.obj;
+            if (a.obj == b.obj) return true;
+            if (!a.as_array() || !b.as_array()) return false;
             auto& ae = a.as_array()->elements;
             auto& be = b.as_array()->elements;
             if (ae.size() != be.size()) return false;

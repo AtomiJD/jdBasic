@@ -14,6 +14,10 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <cerrno>
+#ifdef _WIN32
+#include <stdlib.h>
+#endif
 
 namespace jdb_cal {
 
@@ -316,15 +320,39 @@ inline void fill_tm(const Civil& c, std::tm& out) {
     out.tm_isdst = 0;
 }
 
+#ifdef _WIN32
+// The MSVC CRT ends the process on a format or a year it does not accept
+// unless an invalid-parameter handler returns; this one does, so strftime
+// answers 0 with EINVAL instead.
+inline void __cdecl ignore_invalid_parameter(const wchar_t*, const wchar_t*, const wchar_t*,
+                                             unsigned int, uintptr_t) {}
+#endif
+
 // strftime of an instant's wall clock, in the zone shift_hours east of UTC
 // when shifted, otherwise in the machine's zone. An empty format is the
-// standard timestamp.
+// standard timestamp. A date that was never set formats as "". Answers -1
+// when the format has a conversion the C library rejects or the year is
+// outside what it can show.
 inline int format_at(char* buf, int cap, const char* fmt, double epoch, bool shifted, double shift_hours) {
+    buf[0] = '\0';
+    if (epoch != epoch) return 0;
     if (!fmt || !*fmt) fmt = "%Y-%m-%d %H:%M:%S";
     std::tm tm;
     fill_tm(civil_at(epoch, shifted, shift_hours), tm);
-    buf[0] = '\0';
-    return (int)std::strftime(buf, (size_t)cap, fmt, &tm);
+#ifdef _WIN32
+    _invalid_parameter_handler prev =
+        _set_thread_local_invalid_parameter_handler(ignore_invalid_parameter);
+#endif
+    errno = 0;
+    size_t n = std::strftime(buf, (size_t)cap, fmt, &tm);
+    bool rejected = (n == 0 && errno == EINVAL);
+#ifdef _WIN32
+    _set_thread_local_invalid_parameter_handler(prev);
+#endif
+    // strftime leaves the buffer undefined when it answers 0, which is also
+    // what it answers for a text that does not fit.
+    if (n == 0) buf[0] = '\0';
+    return rejected ? -1 : (int)n;
 }
 
 // The standard timestamp of an instant, local time.

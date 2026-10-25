@@ -11,6 +11,15 @@
 #include <string>
 #include <vector>
 #include "ast.h"
+#include "jdb_stack.h"
+
+// The walks below recurse once per tree level; a tree deeper than the stack
+// allows ends in an error instead of a stack overflow.
+inline void undeclared_check_depth(const Expr* e) {
+    if (jdb_stack::low())
+        throw std::runtime_error("Line " + std::to_string(e->line) +
+                                 ": the expression nests too deeply");
+}
 
 struct UndeclaredRef {
     std::string name;
@@ -43,6 +52,7 @@ inline std::vector<UndeclaredRef> find_undeclared(
 
     std::function<void(const Expr*)> collect_expr = [&](const Expr* e) {
         if (!e) return;
+        undeclared_check_depth(e);
         if (e->kind == ExprKind::LAMBDA_EXPR) {
             for (auto& p : e->lambda_params) declared.insert(p);
             for (auto& c : e->lambda_captures) declared.insert(c);
@@ -106,6 +116,7 @@ inline std::vector<UndeclaredRef> find_undeclared(
     std::string file;
     std::function<void(const Expr*)> walk_expr = [&](const Expr* e) {
         if (!e) return;
+        undeclared_check_depth(e);
         if (e->kind == ExprKind::VARIABLE && !e->str_val.empty() && !known(e->str_val))
             out.push_back({e->str_val, e->line, file});
         walk_expr(e->left.get());
@@ -156,6 +167,7 @@ inline std::vector<UndeclaredRef> find_builtin_shadows(
     std::function<void(const Expr*, int, const std::string&)> walk_expr =
             [&](const Expr* e, int line, const std::string& file) {
         if (!e) return;
+        undeclared_check_depth(e);
         if (e->kind == ExprKind::LAMBDA_EXPR)
             for (auto& p : e->lambda_params) note(p, line, file);
         walk_expr(e->left.get(), line, file);
@@ -235,6 +247,7 @@ inline std::vector<UndeclaredRef> find_unforeseeable_results(
     std::function<void(const Expr*, int, const std::string&, bool)> walk_expr =
             [&](const Expr* e, int line, const std::string& file, bool value_pos) {
         if (!e) return;
+        undeclared_check_depth(e);
         if (e->kind == ExprKind::CALL) {
             if (value_pos) note(e->func_name, line, file);
             bool args_handled = handles_any_kind.count(upper_of(e->func_name)) != 0;

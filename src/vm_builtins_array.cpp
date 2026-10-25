@@ -606,21 +606,33 @@ void VM::register_array_builtins() {
         // MVLET(matrix, dim, index, vector)
         int rows, cols; get_2d(args[0], rows, cols);
         int dim = (int)args[1].to_int();
-        int idx = (int)args[2].to_int();
+        int64_t idx = args[2].to_int();
+        if (args[3].type != ValueType::ARRAY)
+            throw jdError(ErrCode::WRONG_ARG_TYPE, "MVLET: the fourth argument must be a vector");
         auto* vec = args[3].as_array();
+        int64_t limit = dim == 0 ? rows : cols;
+        if (idx < 0 || idx >= limit)
+            throw jdError(ErrCode::RUNTIME_ERROR, "MVLET: index " + std::to_string(idx) +
+                          " is outside the matrix (0 to " + std::to_string(limit - 1) + ")");
         // Deep copy
         Value r = Value::make_array();
         for (auto& row : args[0].as_array()->elements) {
+            if (row.type != ValueType::ARRAY)
+                throw jdError(ErrCode::WRONG_ARG_TYPE, "MVLET: expected a matrix");
             Value nr = Value::make_array();
             nr.as_array()->elements = row.as_array()->elements;
             r.as_array()->elements.push_back(std::move(nr));
         }
+        auto& out_rows = r.as_array()->elements;
         if (dim == 0) { // replace row
-            for (int c = 0; c < cols && c < (int)vec->elements.size(); c++)
-                r.as_array()->elements[idx].as_array()->elements[c] = vec->elements[c];
+            auto& cells = out_rows[idx].as_array()->elements;
+            for (size_t c = 0; c < cells.size() && c < vec->elements.size(); c++)
+                cells[c] = vec->elements[c];
         } else { // replace column
-            for (int ro = 0; ro < rows && ro < (int)vec->elements.size(); ro++)
-                r.as_array()->elements[ro].as_array()->elements[idx] = vec->elements[ro];
+            for (size_t ro = 0; ro < out_rows.size() && ro < vec->elements.size(); ro++) {
+                auto& cells = out_rows[ro].as_array()->elements;
+                if ((size_t)idx < cells.size()) cells[idx] = vec->elements[ro];
+            }
         }
         return r;
     });

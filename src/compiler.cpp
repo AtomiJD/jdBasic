@@ -2,6 +2,7 @@
 #include "builtin_sigs.h"
 #include "undeclared_check.h"
 #include "errors.h"
+#include "jdb_stack.h"
 #include <stdexcept>
 #include <iostream>
 #include <cmath>
@@ -336,6 +337,9 @@ void Compiler::compile(const std::vector<StmtPtr>& program, const std::string& m
 // ── Statements ───────────────────────────────────────────────
 
 void Compiler::compile_stmt(const Stmt& stmt) {
+    if (jdb_stack::low())
+        throw std::runtime_error("Line " + std::to_string(stmt.line) +
+                                 ": the program nests too deeply to compile");
     if (!stmt.source_file().empty() && stmt.kind != StmtKind::SUB && stmt.kind != StmtKind::FUNCTION)
         current_chunk().note_file(stmt.source_file());
     switch (stmt.kind) {
@@ -1405,6 +1409,9 @@ void Compiler::compile_destructure(const Stmt& stmt) {
 // ── Expressions ──────────────────────────────────────────────
 
 void Compiler::compile_expr(const Expr& expr) {
+    if (jdb_stack::low())
+        throw std::runtime_error("Line " + std::to_string(expr.line) +
+                                 ": the expression nests too deeply to compile");
     switch (expr.kind) {
         case ExprKind::LITERAL_INT:
             emit_constant(Value::make_i64(expr.int_val), expr.line);

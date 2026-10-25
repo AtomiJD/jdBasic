@@ -2,6 +2,7 @@
 
 #include "vm_internal.h"
 #include "jdb_shape.h"
+#include "jdb_stack.h"
 
 // The number a conversion function reads from its argument. A string is
 // parsed whole, surrounding spaces allowed; any other text is a type mismatch.
@@ -255,6 +256,9 @@ void VM::register_data_builtins() {
         };
 
         std::function<Value()> parse_value = [&]() -> Value {
+            if (jdb_stack::low())
+                throw jdError(ErrCode::RUNTIME_ERROR,
+                              "JSON.PARSE: the document nests too deeply");
             skip_ws();
             if (p >= s.size()) return Value::make_none();
             char c = s[p];
