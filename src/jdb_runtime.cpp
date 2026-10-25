@@ -1037,7 +1037,7 @@ struct RtShape {
     // cells become tagged one by one so the number reads as a number.
     static void put_fill(JdbArray* a, int64_t i, double d) {
         if ((a->flags & 2) && !arr_tagged(a)) {
-            if (!ensure_tags(a)) return;
+            if (!ensure_tags(a)) { a->data[i] = 0.0; return; }
             a->flags &= ~2;
         }
         if (a->elem_tags) a->elem_tags[i] = JD_TAG_F64;
@@ -1215,15 +1215,16 @@ void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
 void jdrt_tagged_arr_set(void* rt, int64_t val_bits, int32_t val_tag,
                          int64_t idx, int64_t bits, int32_t tag);
 
-// A position written on a value whose kind only the running program knows.
-// A native array takes the cell through its own setter, a string as a copy
-// of its own; a map or a VM value goes to the bridge; a value without cells
-// is an error, as in the interpreter.
 static int rc_kind_of(uintptr_t k);
+static bool rc_owns_texts(uintptr_t k);
+
+// A position written on a value whose kind only the running program knows.
+// A native array takes the cell with its kind; a map or a VM value goes to
+// the bridge; a value without cells is an error, as in the interpreter.
 void jdb_tagged_arr_set(int64_t base, int32_t base_tag, int64_t idx, int64_t bits, int32_t tag) {
     // An untyped parameter passes a container as a number: the counts say
     // which kind it is, and one they do not know is taken for an array.
-    if ((base_tag == JD_TAG_F64 || base_tag == JD_TAG_I64) &&
+    if (base_tag == JD_TAG_F64 &&
         (uint64_t)base >= 4096 && (uint64_t)base < (1ULL << 47))
         base_tag = rc_kind_of((uintptr_t)base) == JD_TAG_NATIVE_MAP ? JD_TAG_NATIVE_MAP : JD_TAG_ARR;
     if (base_tag == JD_TAG_ARR) {
@@ -1235,7 +1236,9 @@ void jdb_tagged_arr_set(int64_t base, int32_t base_tag, int64_t idx, int64_t bit
         else memcpy(&d, &bits, sizeof d);
         // A value written back into the cell it was read from stays as it is.
         if (tag != JD_TAG_STR && memcmp(&arr->data[idx], &d, sizeof d) == 0) return;
-        if (tag == JD_TAG_STR) {
+        // An array that owns its texts takes a string as its own copy, the way
+        // a plain cell write does; any other keeps the pointer it is handed.
+        if (tag == JD_TAG_STR && rc_owns_texts((uintptr_t)arr)) {
             char* copy = jdb_str_dup_binary((const char*)(intptr_t)bits);
             memcpy(&d, &copy, sizeof d);
         }
@@ -3019,6 +3022,12 @@ static RcEntry* rc_find(uintptr_t k) {
 static int rc_kind_of(uintptr_t k) {
     RcEntry* e = rc_find(k);
     return e ? (int)e->kind : -1;
+}
+
+// Whether an array the counts know owns the texts in its cells.
+static bool rc_owns_texts(uintptr_t k) {
+    RcEntry* e = rc_find(k);
+    return e && e->kind == JD_TAG_ARR && e->owns_cells;
 }
 
 static void rc_rehash(size_t cap) {

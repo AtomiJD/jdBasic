@@ -1589,7 +1589,7 @@ JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
     // A value that is no map has no keys. An untyped parameter passes a map
     // as a number, so a number tag names a map when its bits are a pointer.
     if (val_tag != jd_tag(JdTag::NATIVE_MAP)) {
-        bool numeric = val_tag == jd_tag(JdTag::F64) || val_tag == jd_tag(JdTag::I64);
+        bool numeric = val_tag == jd_tag(JdTag::F64);
         if (!numeric || (uint64_t)val_bits < 4096 || (uint64_t)val_bits >= (1ULL << 47))
             return jd_tag(JdTag::NONE);
     }

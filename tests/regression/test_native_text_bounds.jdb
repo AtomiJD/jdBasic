@@ -48,6 +48,15 @@ CATCH
     caught = 1
 ENDTRY
 Check(caught = 1, "a position written on a string is an error")
+DIM nm = {"n": 5000}
+DIM nv = nm{"n"}
+caught = 0
+TRY
+    nv[0] = 1
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "a position written on an integer is an error")
 
 SUB PutFirst(holder, key$, value)
     DIM cells = holder{key$}
