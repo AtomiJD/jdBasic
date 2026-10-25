@@ -28,6 +28,38 @@ CATCH
 ENDTRY
 Check(caught = 1, "string repeat beyond memory is caught")
 
+caught = 0
+TRY
+    DIM huge AS ARRAY = RANGE(0, 2000000000000)
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "an array beyond memory is caught")
+caught = 0
+TRY
+    DIM zeros_huge AS ARRAY = ZEROS(2000000000000)
+CATCH
+    caught = caught + 1
+ENDTRY
+TRY
+    DIM iota_huge AS ARRAY = IOTA(2000000000000)
+CATCH
+    caught = caught + 1
+ENDTRY
+Check(caught = 2, "ZEROS and IOTA beyond memory are caught")
+
+FUNC GrowCell(x)
+    DIM wide AS ARRAY = ZEROS(2000000000000)
+    RETURN x + LEN(wide)
+ENDFUNC
+caught = 0
+TRY
+    DIM grown AS ARRAY = SELECT(GrowCell@, [1, 2])
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "an array beyond memory inside a FUNC that SELECT calls is caught")
+
 s = "still " + "running"
 Check(s = "still running", "the program goes on after the error")
 

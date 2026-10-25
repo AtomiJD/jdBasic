@@ -95,9 +95,31 @@ static void jdb_report_exception() {
     }
 }
 
+// How many guards are open on this thread: inside one an allocation that
+// fails may throw, outside it must not.
+static thread_local int g_guard_depth = 0;
+struct GuardDepth {
+    GuardDepth() { g_guard_depth++; }
+    ~GuardDepth() { g_guard_depth--; }
+};
+// A call from the runtime into compiled code: nothing in there may throw,
+// guard or no guard around the call, so the depth is 0 while it runs.
+struct CompiledCall {
+    int saved;
+    CompiledCall() : saved(g_guard_depth) { g_guard_depth = 0; }
+    ~CompiledCall() { g_guard_depth = saved; }
+};
+
+template <class Fn, class... A>
+static double call_compiled(Fn fn, A... args) {
+    CompiledCall open;
+    return fn(args...);
+}
+
 template <class F, class G>
 static auto jdb_guard(F&& body, G&& fail) -> decltype(body()) {
     try {
+        GuardDepth open;
         return body();
     } catch (...) {
         jdb_report_exception();
@@ -108,6 +130,7 @@ static auto jdb_guard(F&& body, G&& fail) -> decltype(body()) {
 template <class F>
 static void jdb_guard_void(F&& body) {
     try {
+        GuardDepth open;
         body();
     } catch (...) {
         jdb_report_exception();
@@ -208,17 +231,19 @@ void jdb_output_capture_begin() {
         char* tmp = _tempnam(nullptr, "jdbcap");
         c.path = tmp ? tmp : "jdbcap.tmp";
         free(tmp);
+        g_captures.reserve(g_captures.size() + 1);
         c.file = fopen(c.path.c_str(), "w+b");
         if (!c.file) return;
         c.saved_fd = _dup(_fileno(stdout));
         _dup2(_fileno(c.file), _fileno(stdout));
     #else
+        g_captures.reserve(g_captures.size() + 1);
         c.file = tmpfile();
         if (!c.file) return;
         c.saved_fd = dup(fileno(stdout));
         dup2(fileno(c.file), fileno(stdout));
     #endif
-        g_captures.push_back(c);
+        g_captures.push_back(std::move(c));
     });
 }
 
@@ -784,10 +809,20 @@ JdbArray* jdb_array_new(int64_t size) {
     if (size < 0) size = 0;
     auto* arr = (JdbArray*)malloc(sizeof(JdbArray));
     if (!arr) jdb_fatal_oom();
+    // Cells that do not fit: inside a builtin's guard this throws, so the
+    // builtin raises an error TRY can catch and never writes the cells it
+    // asked for through a null buffer. Called straight from compiled code
+    // (DIM a(N)) it raises the error and answers an empty array.
     arr->data = (double*)calloc(size > 0 ? (size_t)size : 1, sizeof(double));
     if (!arr->data) {
+        if (g_guard_depth > 0) {
+            free(arr);
+            throw std::bad_alloc();
+        }
         jdb_err_set("Out of memory", 99);
         size = 0;
+        arr->data = (double*)calloc(1, sizeof(double));
+        if (!arr->data) jdb_fatal_oom();
     }
     arr->length = size;
     arr->flags = 0;
@@ -797,19 +832,31 @@ JdbArray* jdb_array_new(int64_t size) {
     return arr;
 }
 
+static void array_free_shallow(JdbArray* a);
+
 // rows x cols, every cell fill, built in one piece.
 JdbArray* jdb_array_new_2d(int64_t rows, int64_t cols, double fill) {
-    if (rows < 0) rows = 0;
-    if (cols < 0) cols = 0;
-    JdbArray* outer = jdb_array_new(rows);
-    outer->flags |= 1;
-    for (int64_t r = 0; r < rows; r++) {
-        JdbArray* row = jdb_array_new(cols);
-        if (fill != 0.0)
-            for (int64_t c = 0; c < cols; c++) row->data[c] = fill;
-        outer->data[r] = encode_inner(row);
-    }
-    return outer;
+    return jdb_guard([&]() -> JdbArray* {
+        if (rows < 0) rows = 0;
+        if (cols < 0) cols = 0;
+        JdbArray* outer = jdb_array_new(rows);
+        outer->flags |= 1;
+        int64_t made = 0;
+        try {
+            for (; made < rows; made++) {
+                JdbArray* row = jdb_array_new(cols);
+                if (fill != 0.0)
+                    for (int64_t c = 0; c < cols; c++) row->data[c] = fill;
+                outer->data[made] = encode_inner(row);
+            }
+        } catch (...) {
+            // The rows made so far and the outer array belong to nobody yet.
+            for (int64_t r = 0; r < made; r++) array_free_shallow(decode_inner(outer->data[r]));
+            array_free_shallow(outer);
+            throw;
+        }
+        return outer;
+    }, [] { return jdb_array_new(0); });
 }
 
 // Appends in place, so every holder of the array sees the new element;
@@ -921,20 +968,24 @@ int64_t jdb_array_len(JdbArray* arr) {
 }
 
 JdbArray* jdb_iota(int64_t n) {
-    auto* arr = jdb_array_new(n);
-    for (int64_t i = 0; i < n; i++)
-        arr->data[i] = (double)(i + 1);  // IOTA starts at 1
-    return arr;
+    return jdb_guard([&]() -> JdbArray* {
+        auto* arr = jdb_array_new(n);
+        for (int64_t i = 0; i < n; i++)
+            arr->data[i] = (double)(i + 1);  // IOTA starts at 1
+        return arr;
+    }, [] { return jdb_array_new(0); });
 }
 
 // IOTA(n, start, step) - n elements starting at `start` stepping by `step`.
 JdbArray* jdb_iota3(double n, double start, double step) {
-    int64_t cnt = (int64_t)n;
-    if (cnt < 0) cnt = 0;
-    auto* arr = jdb_array_new(cnt);
-    for (int64_t i = 0; i < cnt; i++)
-        arr->data[i] = start + step * (double)i;
-    return arr;
+    return jdb_guard([&]() -> JdbArray* {
+        int64_t cnt = (int64_t)n;
+        if (cnt < 0) cnt = 0;
+        auto* arr = jdb_array_new(cnt);
+        for (int64_t i = 0; i < cnt; i++)
+            arr->data[i] = start + step * (double)i;
+        return arr;
+    }, [] { return jdb_array_new(0); });
 }
 
 // POP: remove last element, return its value (numeric as double, string as ptr
@@ -1915,9 +1966,11 @@ JdbArray* jdb_linspace(double start, double stop, int64_t n) {
 JdbArray* jdb_zeros(int64_t n) { return jdb_array_new(n); }
 
 JdbArray* jdb_ones(int64_t n) {
-    auto* r = jdb_array_new(n);
-    for (int64_t i = 0; i < n; i++) r->data[i] = 1.0;
-    return r;
+    return jdb_guard([&]() -> JdbArray* {
+        auto* r = jdb_array_new(n);
+        for (int64_t i = 0; i < n; i++) r->data[i] = 1.0;
+        return r;
+    }, [] { return jdb_array_new(0); });
 }
 
 // start up to but not including stop; a step of 0 means 1 or -1 by the
@@ -2841,7 +2894,7 @@ static void call_event_handler(JdbEventFn fn, JdbMap* m) {
     jdb_rc_new(m, JD_TAG_NATIVE_MAP);
     auto* a = (JdbArray*)jdb_rc_new(wrap_map_in_array(m), JD_TAG_ARR);
     jdb_rc_adopt((int64_t)(intptr_t)a, (int64_t)(intptr_t)m);
-    fn(a);
+    { CompiledCall open; fn(a); }
     jdrt_event_writeback(m);
 }
 
@@ -6246,6 +6299,11 @@ typedef double (*JdbReduceFn)(double, double);
 static thread_local int32_t g_hof_elem_tag = JD_TAG_F64;
 static thread_local int64_t g_hof_elem_bits = 0;
 static thread_local int32_t g_hof_depth = 0;
+// One higher-order call open while it lives, also when a cell's work throws.
+struct HofDepth {
+    HofDepth() { g_hof_depth++; }
+    ~HofDepth() { g_hof_depth--; }
+};
 static thread_local int32_t g_hof_ret_tag = -1;
 static thread_local int32_t g_hof_ret_depth = -1;
 
@@ -6322,17 +6380,16 @@ JdbArray* jdb_select_fn(JdbMapFn fn, JdbArray* arr) {
         auto* r = jdb_array_new(arr->length);
         std::vector<int8_t> tags((size_t)arr->length, (int8_t)JD_TAG_F64);
         bool tagged = false;
-        g_hof_depth++;
+        HofDepth hof_depth_scope;
         for (int64_t i = 0; i < arr->length; i++) {
             hof_publish(arr, i);
-            r->data[i] = fn(arr->data[i]);
+            r->data[i] = call_compiled(fn, arr->data[i]);
             int32_t t = hof_answer_tag();
             if (t >= 0) {
                 tags[(size_t)i] = (int8_t)t;
                 if (t != JD_TAG_F64) tagged = true;
             }
         }
-        g_hof_depth--;
         if (tagged) hof_tag_cells(r, tags);
         return r;
     }, [] { return jdb_array_new(0); });
@@ -6398,7 +6455,7 @@ JdbArray* jdb_agg_fn(JdbMapFn reducer, JdbArray* keys, JdbArray* vals, int32_t r
             // The group lives as long as somebody holds it; the reducer's
             // answer may be the group itself, which the row then keeps.
             jdb_rc_new(grp, JD_TAG_ARR);
-            double reduced = reducer(ug.d);
+            double reduced = call_compiled(reducer, ug.d);
             union { double d; int64_t i; } ur0; ur0.d = reduced;
             if (ur0.i == ug.i) jdb_rc_pin(ug.i);
 
@@ -6434,12 +6491,11 @@ JdbArray* jdb_filter_fn(JdbMapFn fn, JdbArray* arr) {
     return jdb_guard([&]() -> JdbArray* {
         if (!arr) return jdb_array_new(0);
         std::vector<int64_t> keep;
-        g_hof_depth++;
+        HofDepth hof_depth_scope;
         for (int64_t i = 0; i < arr->length; i++) {
             hof_publish(arr, i);
-            if (fn(arr->data[i]) != 0.0) keep.push_back(i);
+            if (call_compiled(fn, arr->data[i]) != 0.0) keep.push_back(i);
         }
-        g_hof_depth--;
         return hof_pick(arr, keep);
     }, [] { return jdb_array_new(0); });
 }
@@ -6448,12 +6504,11 @@ double jdb_reduce_fn(JdbReduceFn fn, JdbArray* arr, double init) {
     return jdb_guard([&]() -> double {
         if (!arr) return init;
         double acc = init;
-        g_hof_depth++;
+        HofDepth hof_depth_scope;
         for (int64_t i = 0; i < arr->length; i++) {
             hof_publish(arr, i);
-            acc = fn(acc, arr->data[i]);
+            acc = call_compiled(fn, acc, arr->data[i]);
         }
-        g_hof_depth--;
         return acc;
     }, [] { return 0.0; });
 }
@@ -6463,13 +6518,12 @@ JdbArray* jdb_take_while_fn(JdbMapFn pred, JdbArray* arr) {
     return jdb_guard([&]() -> JdbArray* {
         if (!arr) return jdb_array_new(0);
         std::vector<int64_t> keep;
-        g_hof_depth++;
+        HofDepth hof_depth_scope;
         for (int64_t i = 0; i < arr->length; i++) {
             hof_publish(arr, i);
-            if (pred(arr->data[i]) == 0.0) break;
+            if (call_compiled(pred, arr->data[i]) == 0.0) break;
             keep.push_back(i);
         }
-        g_hof_depth--;
         return hof_pick(arr, keep);
     }, [] { return jdb_array_new(0); });
 }
@@ -6479,13 +6533,12 @@ JdbArray* jdb_drop_while_fn(JdbMapFn pred, JdbArray* arr) {
     return jdb_guard([&]() -> JdbArray* {
         if (!arr) return jdb_array_new(0);
         int64_t start = 0;
-        g_hof_depth++;
+        HofDepth hof_depth_scope;
         while (start < arr->length) {
             hof_publish(arr, start);
-            if (pred(arr->data[start]) == 0.0) break;
+            if (call_compiled(pred, arr->data[start]) == 0.0) break;
             start++;
         }
-        g_hof_depth--;
         std::vector<int64_t> keep;
         for (int64_t i = start; i < arr->length; i++) keep.push_back(i);
         return hof_pick(arr, keep);
@@ -6504,7 +6557,7 @@ JdbArray* jdb_outer_fn(JdbArray* a, JdbArray* b, JdbReduceFn op) {
         for (int64_t i = 0; i < a->length; i++) {
             auto* row = jdb_array_new(b->length);
             for (int64_t j = 0; j < b->length; j++)
-                row->data[j] = op(a->data[i], b->data[j]);
+                row->data[j] = call_compiled(op, a->data[i], b->data[j]);
             r->data[i] = encode_inner(row);
         }
         if (a->length > 0) r->flags |= 1;  // rows are nested arrays

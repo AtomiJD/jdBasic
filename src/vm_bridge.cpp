@@ -913,7 +913,7 @@ JDRT_API const char* jdrt_obj_get_str(JdRT handle, int64_t h, const char* key) {
         if (!v) return _strdup("");
         if (v->type == ValueType::STRING) return native_str_from_string(v->as_string()->data);
         return native_str_from_string(v->to_string());
-    }, [] { return nullptr; });
+    }, [] { return (const char*)_strdup(""); });
 }
 
 JDRT_API int64_t jdrt_obj_get_obj(JdRT handle, int64_t h, const char* key) {
@@ -1383,7 +1383,7 @@ JDRT_API const char* jdrt_val_to_str(JdRT handle, int64_t h) {
         if (it->second.type == ValueType::STRING)
             return native_str_from_string(it->second.as_string()->data);
         return native_str_from_string(it->second.to_string());
-    }, [] { return nullptr; });
+    }, [] { return (const char*)_strdup(""); });
 }
 
 // TYPEOF of a stored Value. A JD_TAG_VM_HANDLE only says that a handle is in
@@ -1398,7 +1398,7 @@ JDRT_API const char* jdrt_val_type_str(JdRT handle, int64_t h) {
         Value t = rt->vm.call_function("TYPEOF", { it->second });
         return _strdup(t.type == ValueType::STRING ? t.as_string()->data.c_str()
                                                    : "UNKNOWN");
-    }, [] { return nullptr; });
+    }, [] { return (const char*)_strdup(""); });
 }
 
 // Returns a fresh handle for the element so the caller sees the real
