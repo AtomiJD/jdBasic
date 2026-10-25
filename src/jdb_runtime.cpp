@@ -2892,6 +2892,15 @@ void jdrt_event_writeback(void* map);
 
 static void call_event_handler(JdbEventFn fn, JdbMap* m) {
     jdb_rc_new(m, JD_TAG_NATIVE_MAP);
+    // A container among the fields (a list the bridge sent) belongs to the
+    // map, so it goes when the map does.
+    for (int64_t i = 0; i < m->count; i++) {
+        int32_t t = m->tags[i];
+        if (t != JD_TAG_ARR && t != JD_TAG_NATIVE_MAP) continue;
+        union { double d; int64_t i; } u; u.d = m->values[i];
+        jdb_rc_new((void*)(intptr_t)u.i, t);
+        jdb_rc_adopt((int64_t)(intptr_t)m, u.i);
+    }
     auto* a = (JdbArray*)jdb_rc_new(wrap_map_in_array(m), JD_TAG_ARR);
     jdb_rc_adopt((int64_t)(intptr_t)a, (int64_t)(intptr_t)m);
     { CompiledCall open; fn(a); }
@@ -2908,6 +2917,7 @@ void jdrt_dispatch_event(const char* event_name,
         if (!g_h_quit) return;
         auto* a = jdb_array_new(0);
         jdb_rc_new(a, JD_TAG_ARR);
+        CompiledCall open;
         g_h_quit(a);
         return;
     }

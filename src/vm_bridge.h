@@ -41,10 +41,6 @@ JDRT_API double jdrt_call_f64(JdRT rt, const char* name,
 JDRT_API char*  jdrt_call_str(JdRT rt, const char* name,
                                const double* args, int nargs);
 
-// Call a function by name, returning an opaque array handle.
-// The handle can be passed back to other jdrt_call functions.
-JDRT_API void*  jdrt_call_arr(JdRT rt, const char* name,
-                               const double* args, int nargs);
 
 // Call a void function (SUB) by name.
 JDRT_API void   jdrt_call_void(JdRT rt, const char* name,

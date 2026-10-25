@@ -419,6 +419,13 @@ ELSEIF pattern$ = "strops" THEN
         sink$ = ("abc" + STR$(i)) - "b"
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "pop" THEN
+    FOR i = 1 TO passes
+        DIM popped_from AS ARRAY = [[i, 2, 3], [4, 5, i]]
+        DIM popped_row AS ARRAY = POP(popped_from)
+        total = total + popped_row[2]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSEIF pattern$ = "eventraise" THEN
     FOR i = 1 TO passes
         RAISEEVENT "LEAKPING", "data" + STR$(i)

@@ -380,26 +380,6 @@ JDRT_API char* jdrt_call_str(JdRT handle, const char* name,
     }
 }
 
-JDRT_API void* jdrt_call_arr(JdRT handle, const char* name,
-                              const double* args, int nargs) {
-    auto* rt = resolve_rt(handle);
-    try {
-        auto vargs = args_to_values(args, nargs);
-        Value result = rt->vm.call_function(name, vargs);
-        rt->last_error.clear();
-        // Borrow the ArrayObj* - owned by the VM, caller must not free.
-        if (result.type == ValueType::ARRAY && result.as_array())
-            return (void*)result.as_array();
-        return nullptr;
-    } catch (const std::exception& e) {
-        rt->last_error = e.what();
-        return nullptr;
-    } catch (...) {
-        rt->last_error = "Internal error in the runtime";
-        return nullptr;
-    }
-}
-
 JDRT_API void jdrt_call_void(JdRT handle, const char* name,
                               const double* args, int nargs) {
     auto* rt = resolve_rt(handle);
@@ -1190,6 +1170,12 @@ static void set_jdbmap_key(JdbMapFwd* m, const std::string& key, double val, int
     if (!m) return;
     for (int64_t i = 0; i < m->count; i++) {
         if (m->keys[i] && key == m->keys[i]) {
+            // The map owns the texts in its cells: the one written over goes.
+            if (m->tags[i] == jd_tag(JdTag::STR)) {
+                char* old = nullptr;
+                memcpy(&old, &m->values[i], sizeof old);
+                if (old) { jdrt_forget_binary(old); free(old); }
+            }
             m->values[i] = val;
             m->tags[i] = tag;
             return;
@@ -2119,6 +2105,7 @@ static bool call_compiled_fn(const std::string& name, const std::vector<Value>& 
     std::vector<int32_t> tags;
     std::vector<std::string> keep;
     keep.reserve(args.size());
+    std::vector<int64_t> arg_handles;
     for (const Value& v : args) {
         switch (v.type) {
             case ValueType::INT64: case ValueType::INT32: case ValueType::INT16:
@@ -2134,10 +2121,19 @@ static bool call_compiled_fn(const std::string& name, const std::vector<Value>& 
                 keep.push_back(v.as_string() ? v.as_string()->data : std::string());
                 bits.push_back((int64_t)(intptr_t)keep.back().c_str());
                 tags.push_back(JD_TAG_STR); break;
-            default:
-                bits.push_back(rt->store_value(v)); tags.push_back(JD_TAG_VM_HANDLE); break;
+            default: {
+                int64_t h = rt->store_value(v);
+                arg_handles.push_back(h);
+                bits.push_back(h); tags.push_back(JD_TAG_VM_HANDLE); break;
+            }
         }
     }
+    // The arguments' handles live as long as the call: what the handler kept
+    // of them it copied into a key of its own.
+    struct ArgHandles {
+        JdRTImpl* rt; std::vector<int64_t>& keys;
+        ~ArgHandles() { for (int64_t k : keys) rt->value_store.erase(k); }
+    } arg_scope{ rt, arg_handles };
     int64_t ob = 0;
     int32_t ot = JD_TAG_NONE;
     fn(bits.data(), tags.data(), (int32_t)bits.size(), &ob, &ot);

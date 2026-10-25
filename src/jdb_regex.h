@@ -30,6 +30,14 @@ inline const std::regex* cached(const std::string& pattern) {
     std::lock_guard<std::mutex> lock(guard);
     auto it = cache.find(pattern);
     if (it == cache.end()) {
+        // Past a bound a new pattern is compiled for this call alone, so a
+        // program that builds its patterns does not keep every one of them.
+        if (cache.size() >= 512) {
+            static thread_local std::regex scratch;
+            try { scratch = compile(pattern); }
+            catch (...) { return nullptr; }
+            return &scratch;
+        }
         try { it = cache.emplace(pattern, compile(pattern)).first; }
         catch (...) { return nullptr; }
     }

@@ -649,7 +649,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"PDF.TEXT$", BuiltinRet::Unknown, BF_NO_VEC},
     {"PLACE", BuiltinRet::Arr, BF_NO_VEC},
     {"PLOTRAW", BuiltinRet::None, BF_NO_VEC},
-    {"POP", BuiltinRet::Unknown, BF_NO_VEC | BF_COMPILER_HANDLES},
+    {"POP", BuiltinRet::Unknown, BF_NO_VEC | BF_COMPILER_HANDLES | BF_READS_ARRS},
     {"PRINT", BuiltinRet::Unknown, BF_READS_ARGS},
     {"PRODUCT", BuiltinRet::F64, BF_NO_VEC | BF_READS_ARRS},
     {"PSET", BuiltinRet::None, BF_NO_VEC},
