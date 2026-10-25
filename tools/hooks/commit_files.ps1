@@ -18,7 +18,7 @@ function Get-StatusPaths([string]$proj, [string[]]$pathspecs, [bool]$trackedOnly
     $e = $entries[$i]
     if ($e.Length -lt 4) { continue }
     $out += $e.Substring(3)
-    if ($e[0] -in 'R', 'C') { $i++ }   # the entry after a rename is its source
+    if ($e[0] -in 'R', 'C' -or $e[1] -in 'R', 'C') { $i++ }   # the entry after a rename is its source
   }
   return $out
 }
