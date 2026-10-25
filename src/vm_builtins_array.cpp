@@ -233,6 +233,7 @@ void VM::register_array_builtins() {
     register_native("IOTA", 1, 3, [](const std::vector<Value>& args) -> Value {
         if (args.empty()) return Value::make_array();
         int64_t n = args[0].to_int();
+        if (n < 0) n = 0;
         double base = (args.size() >= 2) ? args[1].to_double() : 1.0;
         double step = (args.size() >= 3) ? args[2].to_double() : 1.0;
 
@@ -272,6 +273,12 @@ void VM::register_array_builtins() {
             shape.push_back(args[1].to_int());
         }
         if (shape.empty()) return Value::make_array();
+        double cells = 1.0;
+        for (int64_t d : shape) {
+            if (d < 0) throw jdError(ErrCode::TYPE_MISMATCH, "RESHAPE: every dimension of the shape is a count");
+            cells *= (double)d;
+        }
+        if (cells > 4.0e9) throw jdError(ErrCode::RUNTIME_ERROR, "Out of memory");
         size_t idx = 0;
         return jdb_shape::build<VmShape>(shape, 0, flat, idx);
     });
@@ -344,8 +351,8 @@ void VM::register_array_builtins() {
         Value r = Value::make_array();
         r.as_array()->elements = args[0].as_array()->elements;
         auto& elems = r.as_array()->elements;
-        for (int i = (int)elems.size() - 1; i > 0; i--) {
-            int j = rand() % (i + 1);
+        for (int64_t i = (int64_t)elems.size() - 1; i > 0; i--) {
+            int64_t j = jdb_shape::random_below(i + 1);
             std::swap(elems[i], elems[j]);
         }
         return r;

@@ -12635,9 +12635,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::PLUS:      return { LLVMBuildAdd(builder, lhs.val, rhs.val, "add"), JD_TAG_I64 };
             case TokenType::MINUS:     return { LLVMBuildSub(builder, lhs.val, rhs.val, "sub"), JD_TAG_I64 };
             case TokenType::STAR:      return { LLVMBuildMul(builder, lhs.val, rhs.val, "mul"), JD_TAG_I64 };
-            case TokenType::SLASH:     emit_div_zero_check(rhs); return { LLVMBuildSDiv(builder, lhs.val, rhs.val, "div"), JD_TAG_I64 };
-            case TokenType::BACKSLASH: emit_div_zero_check(rhs); return { LLVMBuildSDiv(builder, lhs.val, rhs.val, "idiv"), JD_TAG_I64 };
-            case TokenType::MOD:       emit_div_zero_check(rhs); return { LLVMBuildSRem(builder, lhs.val, rhs.val, "mod"), JD_TAG_I64 };
+            case TokenType::SLASH:
+            case TokenType::BACKSLASH:
+            case TokenType::MOD: {
+                emit_div_zero_check(rhs);
+                // Division by -1 is a negation (jdb_num::int_div): sdiv of the
+                // smallest integer by -1 traps, and a select would still run it.
+                LLVMValueRef minus1 = LLVMBuildICmp(builder, LLVMIntEQ, rhs.val,
+                    LLVMConstInt(i64_type, (unsigned long long)-1, 1), "div_m1");
+                LLVMValueRef safe = LLVMBuildSelect(builder, minus1, LLVMConstInt(i64_type, 1, 0), rhs.val, "div_rhs");
+                if (expr.op == TokenType::MOD)
+                    return { LLVMBuildSRem(builder, lhs.val, safe, "mod"), JD_TAG_I64 };
+                LLVMValueRef q = LLVMBuildSDiv(builder, lhs.val, safe, "div");
+                LLVMValueRef neg = LLVMBuildSub(builder, LLVMConstInt(i64_type, 0, 0), lhs.val, "div_neg");
+                return { LLVMBuildSelect(builder, minus1, neg, q, "div_q"), JD_TAG_I64 };
+            }
             case TokenType::LT:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSLT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
             case TokenType::GT:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSGT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
             case TokenType::LE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSLE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
@@ -12649,11 +12661,26 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::BOR:       return { LLVMBuildOr(builder, lhs.val, rhs.val, "bor"), JD_TAG_I64 };
             case TokenType::XOR:
             case TokenType::BXOR:      return { LLVMBuildXor(builder, lhs.val, rhs.val, "bxor"), JD_TAG_I64 };
-            case TokenType::SHL:       return { LLVMBuildShl(builder, lhs.val, rhs.val, "shl"), JD_TAG_I64 };
-            // Arithmetic right shift (sign-preserving) - matches the
-            // interpreter, which uses C++ `int64_t >> n` (impl-defined but
-            // arithmetic on every mainstream compiler).
-            case TokenType::SHR:       return { LLVMBuildAShr(builder, lhs.val, rhs.val, "shr"), JD_TAG_I64 };
+            // A count outside 0..63 moves every bit out, SHR keeping the sign
+            // (jdb_num::shift_left / shift_right); the shift itself only ever
+            // sees a count inside the range.
+            case TokenType::SHL:
+            case TokenType::SHR: {
+                LLVMValueRef in_range = LLVMBuildICmp(builder, LLVMIntULT, rhs.val,
+                    LLVMConstInt(i64_type, 64, 0), "sh_in");
+                LLVMValueRef count = LLVMBuildSelect(builder, in_range, rhs.val, LLVMConstInt(i64_type, 0, 0), "sh_n");
+                LLVMValueRef zero = LLVMConstInt(i64_type, 0, 0);
+                if (expr.op == TokenType::SHL) {
+                    LLVMValueRef v = LLVMBuildShl(builder, lhs.val, count, "shl");
+                    return { LLVMBuildSelect(builder, in_range, v, zero, "shl_r"), JD_TAG_I64 };
+                }
+                LLVMValueRef v = LLVMBuildAShr(builder, lhs.val, count, "shr");
+                LLVMValueRef neg = LLVMBuildICmp(builder, LLVMIntSLT, lhs.val, zero, "shr_neg");
+                LLVMValueRef sign = LLVMBuildSelect(builder, neg, LLVMConstInt(i64_type, (unsigned long long)-1, 1), zero, "shr_sign");
+                LLVMValueRef neg_n = LLVMBuildICmp(builder, LLVMIntSLT, rhs.val, zero, "shr_negn");
+                LLVMValueRef out = LLVMBuildSelect(builder, neg_n, zero, sign, "shr_out");
+                return { LLVMBuildSelect(builder, in_range, v, out, "shr_r"), JD_TAG_I64 };
+            }
             default: break;
         }
     }

@@ -310,7 +310,7 @@ if %ERRORLEVEL%==0 (
         echo LLVM DLL copied to build\
         REM Pre-compile jdb_runtime.obj for linking into generated executables.
         REM Pass the feature DEFS so jdb_os_feature reports the build's flags.
-        "%CC%" /std:c++17 /O2 /EHsc /c !DEFS! src\jdb_runtime.cpp ^
+        "%CC%" /std:c++17 /O2 /EHs /c !DEFS! src\jdb_runtime.cpp ^
             "/I%MSVC%\include" "/I%SDK%\Include\%SDKV%\ucrt" ^
             "/I%SDK%\Include\%SDKV%\um" "/I%SDK%\Include\%SDKV%\shared" ^
             /Isrc /Ilibs\eigen /Fo:build\jdb_runtime.obj

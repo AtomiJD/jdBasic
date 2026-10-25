@@ -286,6 +286,41 @@ static inline JdRTImpl* resolve_rt(JdRT handle) {
     return rt;
 }
 
+// Compiled code has no unwind tables, so no exception may leave an entry it
+// calls: what body throws becomes the bridge's last error, which the program
+// reads after the statement, and fail() is answered instead.
+static void bridge_report(JdRT handle, const char* msg) {
+    if (!handle) return;
+    if (auto* rt = resolve_rt(handle)) rt->last_error = msg;
+}
+
+}  // extern "C": the guards are templates
+
+template <class F, class G>
+static auto bridge_guard(JdRT handle, F&& body, G&& fail) -> decltype(body()) {
+    try {
+        return body();
+    } catch (const std::exception& e) {
+        bridge_report(handle, e.what());
+    } catch (...) {
+        bridge_report(handle, "Internal error in the runtime");
+    }
+    return fail();
+}
+
+template <class F>
+static void bridge_guard_void(JdRT handle, F&& body) {
+    try {
+        body();
+    } catch (const std::exception& e) {
+        bridge_report(handle, e.what());
+    } catch (...) {
+        bridge_report(handle, "Internal error in the runtime");
+    }
+}
+
+extern "C" {
+
 JDRT_API JdRT jdrt_init(void) {
     auto* rt = new JdRTImpl();
     setup_all_builtins(rt->vm);
@@ -322,6 +357,9 @@ JDRT_API double jdrt_call_f64(JdRT handle, const char* name,
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         return 0.0;
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
+        return 0.0;
     }
 }
 
@@ -335,6 +373,9 @@ JDRT_API char* jdrt_call_str(JdRT handle, const char* name,
         return native_str_from_string(result.to_string());
     } catch (const std::exception& e) {
         rt->last_error = e.what();
+        return _strdup("");
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
         return _strdup("");
     }
 }
@@ -353,6 +394,9 @@ JDRT_API void* jdrt_call_arr(JdRT handle, const char* name,
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         return nullptr;
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
+        return nullptr;
     }
 }
 
@@ -365,6 +409,8 @@ JDRT_API void jdrt_call_void(JdRT handle, const char* name,
         rt->last_error.clear();
     } catch (const std::exception& e) {
         rt->last_error = e.what();
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
     }
 }
 
@@ -580,6 +626,9 @@ JDRT_API double jdrt_call_typed_f64(JdRT handle, const char* name,
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         return 0.0;
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
+        return 0.0;
     }
 }
 
@@ -675,6 +724,9 @@ JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         return _strdup("");
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
+        return _strdup("");
     }
 }
 
@@ -688,6 +740,8 @@ JDRT_API void jdrt_call_typed_void(JdRT handle, const char* name,
         rt->last_error.clear();
     } catch (const std::exception& e) {
         rt->last_error = e.what();
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
     }
 }
 
@@ -702,6 +756,9 @@ JDRT_API int64_t jdrt_call_typed_obj(JdRT handle, const char* name,
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         return 0;
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
+        return 0;
     }
 }
 
@@ -714,8 +771,10 @@ JDRT_API void jdrt_release_value(JdRT handle, int64_t val_handle) {
 // and end is a frame-local temporary and gets swept at end so
 // value_store doesn't grow unbounded across frames.
 JDRT_API int64_t jdrt_frame_begin(JdRT handle) {
-    auto* rt = resolve_rt(handle);
-    return rt->next_handle;
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        return rt->next_handle;
+    }, [] { return 0; });
 }
 
 // Frame temps are exactly the keys watermark..next_handle-1, so the sweep
@@ -723,11 +782,13 @@ JDRT_API int64_t jdrt_frame_begin(JdRT handle) {
 // value_store. Negative keys are persistent (jdrt_promote_handle) and are
 // never in the range.
 JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
-    auto* rt = resolve_rt(handle);
-    if (rt->value_store.empty()) return;
-    int64_t first = watermark > 0 ? watermark : 1;
-    for (int64_t h = first; h < rt->next_handle; ++h)
-        rt->value_store.erase(h);
+    bridge_guard_void(handle, [&] {
+        auto* rt = resolve_rt(handle);
+        if (rt->value_store.empty()) return;
+        int64_t first = watermark > 0 ? watermark : 1;
+        for (int64_t h = first; h < rt->next_handle; ++h)
+            rt->value_store.erase(h);
+    });
 }
 
 // Re-store a frame-temp handle's Value at a persistent (negative) key
@@ -735,14 +796,16 @@ JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
 // next jdrt_frame_end will sweep it. Idempotent on already-persistent
 // handles (returns the input key unchanged).
 JDRT_API int64_t jdrt_promote_handle(JdRT handle, int64_t h) {
-    auto* rt = resolve_rt(handle);
-    // A container now holds the key as well: the variable that adopted it
-    // no longer owns it alone and must not release it on reassignment.
-    if (h < 0) { rt->handle_owner.erase(h); return h; }
-    if (h == 0) return h;
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end()) return h;
-    return rt->store_persistent(it->second);
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        // A container now holds the key as well: the variable that adopted it
+        // no longer owns it alone and must not release it on reassignment.
+        if (h < 0) { rt->handle_owner.erase(h); return h; }
+        if (h == 0) return h;
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end()) return h;
+        return rt->store_persistent(it->second);
+    }, [] { return 0; });
 }
 
 // A VM handle assigned to a variable: the variable gets a persistent copy
@@ -751,73 +814,77 @@ JDRT_API int64_t jdrt_promote_handle(JdRT handle, int64_t h) {
 // variable made it (owner is a number per variable), so a loop that keeps
 // reassigning does not grow value_store.
 JDRT_API int64_t jdrt_adopt_handle(JdRT handle, int64_t owner, int64_t old_key, int32_t old_tag, int64_t h) {
-    auto* rt = resolve_rt(handle);
-    if (h == 0 || (h == old_key && old_tag == jd_tag(JdTag::VM_HANDLE))) return h;
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end()) return h;
-    int64_t k = rt->store_persistent(it->second);
-    rt->handle_owner[k] = owner;
-    if (owner != 0 && old_tag == jd_tag(JdTag::VM_HANDLE) && old_key < 0) {
-        auto o = rt->handle_owner.find(old_key);
-        if (o != rt->handle_owner.end() && o->second == owner) {
-            rt->handle_owner.erase(o);
-            rt->value_store.erase(old_key);
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        if (h == 0 || (h == old_key && old_tag == jd_tag(JdTag::VM_HANDLE))) return h;
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end()) return h;
+        int64_t k = rt->store_persistent(it->second);
+        rt->handle_owner[k] = owner;
+        if (owner != 0 && old_tag == jd_tag(JdTag::VM_HANDLE) && old_key < 0) {
+            auto o = rt->handle_owner.find(old_key);
+            if (o != rt->handle_owner.end() && o->second == owner) {
+                rt->handle_owner.erase(o);
+                rt->value_store.erase(old_key);
+            }
         }
-    }
-    return k;
+        return k;
+    }, [] { return 0; });
 }
 
 // A VM array as a native array for SELECT, FILTER and the other loops that
 // call a function per element: strings and numbers become native cells,
 // every other element a persistent VM handle, each cell with its own tag.
 JDRT_API void* jdrt_handle_to_hof_array(JdRT handle, int64_t h) {
-    auto* rt = resolve_rt(handle);
-    auto* r = (JdbArrayFwd*)malloc(sizeof(JdbArrayFwd));
-    r->data = nullptr;
-    r->length = 0;
-    r->flags = 0;
-    r->elem_tags = nullptr;
-    r->capacity = 0;
-    r->parent = nullptr;
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) return r;
-    Value whole = it->second;
-    auto* arr = whole.as_array();
-    int64_t n = (int64_t)arr->elements.size();
-    r->length = n;
-    r->capacity = n > 0 ? n : 1;
-    r->data = (double*)calloc((size_t)r->capacity, sizeof(double));
-    r->elem_tags = (int8_t*)malloc((size_t)r->capacity);
-    bool any_ptr = false;
-    for (int64_t i = 0; i < n; i++) {
-        const Value& e = arr->elements[(size_t)i];
-        union { int64_t i; double d; } u;
-        if (e.type == ValueType::STRING) {
-            u.i = (int64_t)(intptr_t)native_str_from_string(e.as_string()->data);
-            r->data[i] = u.d;
-            r->elem_tags[i] = (int8_t)jd_tag(JdTag::STR);
-            any_ptr = true;
-        } else if (e.type == ValueType::NONE) {
-            r->data[i] = 0.0;
-            r->elem_tags[i] = (int8_t)jd_tag(JdTag::NONE);
-        } else if (e.type == ValueType::BOOLEAN) {
-            r->data[i] = e.to_int() ? 1.0 : 0.0;
-            r->elem_tags[i] = (int8_t)jd_tag(JdTag::BOOL);
-        } else if (e.type == ValueType::INT64 || e.type == ValueType::INT32 ||
-                   e.type == ValueType::INT16 || e.type == ValueType::BYTE) {
-            r->data[i] = (double)e.to_int();
-            r->elem_tags[i] = (int8_t)jd_tag(JdTag::I64);
-        } else if (e.type == ValueType::ARRAY || e.type == ValueType::OBJECT) {
-            u.i = rt->store_persistent(e);
-            r->data[i] = u.d;
-            r->elem_tags[i] = (int8_t)jd_tag(JdTag::VM_HANDLE);
-        } else {
-            r->data[i] = e.to_double();
-            r->elem_tags[i] = (int8_t)jd_tag(JdTag::F64);
+    return bridge_guard(handle, [&]() -> void* {
+        auto* rt = resolve_rt(handle);
+        auto* r = (JdbArrayFwd*)malloc(sizeof(JdbArrayFwd));
+        r->data = nullptr;
+        r->length = 0;
+        r->flags = 0;
+        r->elem_tags = nullptr;
+        r->capacity = 0;
+        r->parent = nullptr;
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) return r;
+        Value whole = it->second;
+        auto* arr = whole.as_array();
+        int64_t n = (int64_t)arr->elements.size();
+        r->length = n;
+        r->capacity = n > 0 ? n : 1;
+        r->data = (double*)calloc((size_t)r->capacity, sizeof(double));
+        r->elem_tags = (int8_t*)malloc((size_t)r->capacity);
+        bool any_ptr = false;
+        for (int64_t i = 0; i < n; i++) {
+            const Value& e = arr->elements[(size_t)i];
+            union { int64_t i; double d; } u;
+            if (e.type == ValueType::STRING) {
+                u.i = (int64_t)(intptr_t)native_str_from_string(e.as_string()->data);
+                r->data[i] = u.d;
+                r->elem_tags[i] = (int8_t)jd_tag(JdTag::STR);
+                any_ptr = true;
+            } else if (e.type == ValueType::NONE) {
+                r->data[i] = 0.0;
+                r->elem_tags[i] = (int8_t)jd_tag(JdTag::NONE);
+            } else if (e.type == ValueType::BOOLEAN) {
+                r->data[i] = e.to_int() ? 1.0 : 0.0;
+                r->elem_tags[i] = (int8_t)jd_tag(JdTag::BOOL);
+            } else if (e.type == ValueType::INT64 || e.type == ValueType::INT32 ||
+                       e.type == ValueType::INT16 || e.type == ValueType::BYTE) {
+                r->data[i] = (double)e.to_int();
+                r->elem_tags[i] = (int8_t)jd_tag(JdTag::I64);
+            } else if (e.type == ValueType::ARRAY || e.type == ValueType::OBJECT) {
+                u.i = rt->store_persistent(e);
+                r->data[i] = u.d;
+                r->elem_tags[i] = (int8_t)jd_tag(JdTag::VM_HANDLE);
+            } else {
+                r->data[i] = e.to_double();
+                r->elem_tags[i] = (int8_t)jd_tag(JdTag::F64);
+            }
         }
-    }
-    r->flags = 8 | (any_ptr ? 1 : 0);
-    return r;
+        r->flags = 8 | (any_ptr ? 1 : 0);
+        return r;
+    }, [] { return nullptr; });
 }
 
 // Every obj_get_* returns a safe default on unknown-handle or missing-key
@@ -832,78 +899,90 @@ static const Value* obj_field(JdRTImpl* rt, int64_t h, const char* key) {
 }
 
 JDRT_API double jdrt_obj_get_f64(JdRT handle, int64_t h, const char* key) {
-    auto* rt = resolve_rt(handle);
-    const Value* v = obj_field(rt, h, key);
-    return v ? v->to_double() : 0.0;
+    return bridge_guard(handle, [&]() -> double {
+        auto* rt = resolve_rt(handle);
+        const Value* v = obj_field(rt, h, key);
+        return v ? v->to_double() : 0.0;
+    }, [] { return 0.0; });
 }
 
 JDRT_API const char* jdrt_obj_get_str(JdRT handle, int64_t h, const char* key) {
-    auto* rt = resolve_rt(handle);
-    const Value* v = obj_field(rt, h, key);
-    if (!v) return _strdup("");
-    if (v->type == ValueType::STRING) return native_str_from_string(v->as_string()->data);
-    return native_str_from_string(v->to_string());
+    return bridge_guard(handle, [&]() -> const char* {
+        auto* rt = resolve_rt(handle);
+        const Value* v = obj_field(rt, h, key);
+        if (!v) return _strdup("");
+        if (v->type == ValueType::STRING) return native_str_from_string(v->as_string()->data);
+        return native_str_from_string(v->to_string());
+    }, [] { return nullptr; });
 }
 
 JDRT_API int64_t jdrt_obj_get_obj(JdRT handle, int64_t h, const char* key) {
-    auto* rt = resolve_rt(handle);
-    const Value* v = obj_field(rt, h, key);
-    if (!v) return 0;
-    // Store every non-missing field - including scalars - so the caller
-    // always gets a live handle. Scalars materialise via the val_to_*
-    // coerce paths; returning 0 for a string-typed scalar would break
-    // patterns like `title = g{"title"}`.
-    return rt->store_value(*v);
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        const Value* v = obj_field(rt, h, key);
+        if (!v) return 0;
+        // Store every non-missing field - including scalars - so the caller
+        // always gets a live handle. Scalars materialise via the val_to_*
+        // coerce paths; returning 0 for a string-typed scalar would break
+        // patterns like `title = g{"title"}`.
+        return rt->store_value(*v);
+    }, [] { return 0; });
 }
 
 JDRT_API int64_t jdrt_obj_exists(JdRT handle, int64_t h, const char* key) {
-    auto* rt = resolve_rt(handle);
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT)
-        return 0;
-    auto* m = it->second.as_object();
-    return m->get(std::string(key ? key : "")) ? 1 : 0;
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT)
+            return 0;
+        auto* m = it->second.as_object();
+        return m->get(std::string(key ? key : "")) ? 1 : 0;
+    }, [] { return 0; });
 }
 
 JDRT_API int64_t jdrt_obj_delete(JdRT handle, int64_t h, const char* key) {
-    auto* rt = resolve_rt(handle);
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT)
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT)
+            return 0;
+        auto* m = it->second.as_object();
+        std::string k(key ? key : "");
+        for (auto f = m->fields.begin(); f != m->fields.end(); ++f) {
+            if (f->first == k) { m->fields.erase(f); return 1; }
+        }
         return 0;
-    auto* m = it->second.as_object();
-    std::string k(key ? key : "");
-    for (auto f = m->fields.begin(); f != m->fields.end(); ++f) {
-        if (f->first == k) { m->fields.erase(f); return 1; }
-    }
-    return 0;
+    }, [] { return 0; });
 }
 
 // Write `key` into the VM object at handle `h` from a native (bits, tag) pair.
 // Arrays and native maps are copied into VM values.
 JDRT_API void jdrt_obj_set_tagged(JdRT handle, int64_t h, const char* key, int64_t bits, int32_t tag) {
-    auto* rt = resolve_rt(handle);
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT) return;
-    Value cell;
-    switch (static_cast<JdTag>(tag)) {
-        case JdTag::I64:  cell = Value::make_i64(bits); break;
-        case JdTag::BOOL: cell = Value::make_bool(bits != 0); break;
-        case JdTag::STR:  cell = value_from_native_str((const char*)(intptr_t)bits); break;
-        case JdTag::ARR:  cell = jdbarray_to_value((JdbArrayFwd*)(intptr_t)bits); break;
-        case JdTag::NATIVE_MAP: cell = jdbmap_to_value((JdbMapFwd*)(intptr_t)bits); break;
-        case JdTag::VM_HANDLE: {
-            auto f = rt->value_store.find(bits);
-            cell = f != rt->value_store.end() ? f->second : Value::make_none();
-            break;
+    bridge_guard_void(handle, [&] {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT) return;
+        Value cell;
+        switch (static_cast<JdTag>(tag)) {
+            case JdTag::I64:  cell = Value::make_i64(bits); break;
+            case JdTag::BOOL: cell = Value::make_bool(bits != 0); break;
+            case JdTag::STR:  cell = value_from_native_str((const char*)(intptr_t)bits); break;
+            case JdTag::ARR:  cell = jdbarray_to_value((JdbArrayFwd*)(intptr_t)bits); break;
+            case JdTag::NATIVE_MAP: cell = jdbmap_to_value((JdbMapFwd*)(intptr_t)bits); break;
+            case JdTag::VM_HANDLE: {
+                auto f = rt->value_store.find(bits);
+                cell = f != rt->value_store.end() ? f->second : Value::make_none();
+                break;
+            }
+            case JdTag::NONE: cell = Value::make_none(); break;
+            default: {
+                double d;
+                memcpy(&d, &bits, 8);
+                cell = Value::make_f64(d);
+            }
         }
-        case JdTag::NONE: cell = Value::make_none(); break;
-        default: {
-            double d;
-            memcpy(&d, &bits, 8);
-            cell = Value::make_f64(d);
-        }
-    }
-    it->second.as_object()->set(std::string(key ? key : ""), std::move(cell));
+        it->second.as_object()->set(std::string(key ? key : ""), std::move(cell));
+    });
 }
 
 // Must stay layout-compatible with JdbArray in jdb_runtime.cpp.
@@ -1179,16 +1258,20 @@ static JdbMapFwd* value_to_jdbmap(const Value& v) {
 }
 
 JDRT_API void* jdrt_handle_to_map(JdRT handle, int64_t val_handle) {
-    auto* rt = resolve_rt(handle);
-    auto it = rt->value_store.find(val_handle);
-    if (it == rt->value_store.end()) return new_jdbmap(1);
-    return value_to_jdbmap(it->second);
+    return bridge_guard(handle, [&]() -> void* {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(val_handle);
+        if (it == rt->value_store.end()) return new_jdbmap(1);
+        return value_to_jdbmap(it->second);
+    }, [] { return nullptr; });
 }
 
 JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
-    auto* rt = resolve_rt(handle);
-    Value v = jdbmap_to_value(m_ptr ? (JdbMapFwd*)m_ptr : nullptr);
-    return rt->store_value(std::move(v));
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        Value v = jdbmap_to_value(m_ptr ? (JdbMapFwd*)m_ptr : nullptr);
+        return rt->store_value(std::move(v));
+    }, [] { return 0; });
 }
 
 // ── ASYNC FUNC dispatch from native code ───────────────────────
@@ -1208,91 +1291,99 @@ JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
 JDRT_API int64_t jdrt_async_spawn(JdRT handle, void* fn_ptr,
                                    const double* args, int nargs,
                                    int return_tag) {
-    int task_id = g_async_next_id++;
-    auto task = std::make_shared<AsyncTask>();
-    std::vector<double> args_copy(args, args + nargs);
-    int rtag = return_tag;
+    return bridge_guard(handle, [&]() -> int64_t {
+        int task_id = g_async_next_id++;
+        auto task = std::make_shared<AsyncTask>();
+        std::vector<double> args_copy(args, args + nargs);
+        int rtag = return_tag;
 
-    task->thread = std::thread([fn_ptr, args_copy, rtag, task]() {
-        double r = 0.0;
-        try {
-            const auto& A = args_copy;
-            switch ((int)A.size()) {
-                case 0: r = ((double(*)())fn_ptr)(); break;
-                case 1: r = ((double(*)(double))fn_ptr)(A[0]); break;
-                case 2: r = ((double(*)(double,double))fn_ptr)(A[0],A[1]); break;
-                case 3: r = ((double(*)(double,double,double))fn_ptr)(A[0],A[1],A[2]); break;
-                case 4: r = ((double(*)(double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3]); break;
-                case 5: r = ((double(*)(double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4]); break;
-                case 6: r = ((double(*)(double,double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4],A[5]); break;
-                case 7: r = ((double(*)(double,double,double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4],A[5],A[6]); break;
-                case 8: r = ((double(*)(double,double,double,double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4],A[5],A[6],A[7]); break;
-                default:
-                    throw std::runtime_error(
-                        "ASYNC FUNC native dispatch supports up to 8 args");
+        task->thread = std::thread([fn_ptr, args_copy, rtag, task]() {
+            double r = 0.0;
+            try {
+                const auto& A = args_copy;
+                switch ((int)A.size()) {
+                    case 0: r = ((double(*)())fn_ptr)(); break;
+                    case 1: r = ((double(*)(double))fn_ptr)(A[0]); break;
+                    case 2: r = ((double(*)(double,double))fn_ptr)(A[0],A[1]); break;
+                    case 3: r = ((double(*)(double,double,double))fn_ptr)(A[0],A[1],A[2]); break;
+                    case 4: r = ((double(*)(double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3]); break;
+                    case 5: r = ((double(*)(double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4]); break;
+                    case 6: r = ((double(*)(double,double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4],A[5]); break;
+                    case 7: r = ((double(*)(double,double,double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4],A[5],A[6]); break;
+                    case 8: r = ((double(*)(double,double,double,double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4],A[5],A[6],A[7]); break;
+                    default:
+                        throw std::runtime_error(
+                            "ASYNC FUNC native dispatch supports up to 8 args");
+                }
+                Value result;
+                int64_t bits;
+                memcpy(&bits, &r, sizeof(bits));
+                switch (rtag) {
+                    case JD_TAG_I64:
+                    case JD_TAG_BOOL:
+                        result = Value::make_i64(bits);
+                        break;
+                    case JD_TAG_STR: {
+                        const char* s = (const char*)(intptr_t)bits;
+                        result = value_from_native_str(s);
+                        break;
+                    }
+                    case JD_TAG_ARR: {
+                        JdbArrayFwd* arr = (JdbArrayFwd*)(intptr_t)bits;
+                        result = jdbarray_to_value(arr);
+                        break;
+                    }
+                    case JD_TAG_VM_HANDLE: {
+                        JdRTImpl* rt = current_rt();
+                        auto it = rt->value_store.find(bits);
+                        result = it != rt->value_store.end() ? it->second : Value::make_none();
+                        break;
+                    }
+                    case -1: // SUB return - discard
+                        result = Value::make_none();
+                        break;
+                    case JD_TAG_F64:
+                    default:
+                        result = Value::make_f64(r);
+                        break;
+                }
+                task->result = std::move(result);
+            } catch (const std::exception& e) {
+                task->result = Value::make_string("ERROR: " + std::string(e.what()));
+            } catch (...) {
+                task->result = Value::make_string("ERROR: " + std::string("Internal error in the runtime"));
             }
-            Value result;
-            int64_t bits;
-            memcpy(&bits, &r, sizeof(bits));
-            switch (rtag) {
-                case JD_TAG_I64:
-                case JD_TAG_BOOL:
-                    result = Value::make_i64(bits);
-                    break;
-                case JD_TAG_STR: {
-                    const char* s = (const char*)(intptr_t)bits;
-                    result = value_from_native_str(s);
-                    break;
-                }
-                case JD_TAG_ARR: {
-                    JdbArrayFwd* arr = (JdbArrayFwd*)(intptr_t)bits;
-                    result = jdbarray_to_value(arr);
-                    break;
-                }
-                case JD_TAG_VM_HANDLE: {
-                    JdRTImpl* rt = current_rt();
-                    auto it = rt->value_store.find(bits);
-                    result = it != rt->value_store.end() ? it->second : Value::make_none();
-                    break;
-                }
-                case -1: // SUB return - discard
-                    result = Value::make_none();
-                    break;
-                case JD_TAG_F64:
-                default:
-                    result = Value::make_f64(r);
-                    break;
-            }
-            task->result = std::move(result);
-        } catch (const std::exception& e) {
-            task->result = Value::make_string("ERROR: " + std::string(e.what()));
-        }
-        task->done = true;
-    });
-    task->thread.detach();
+            task->done = true;
+        });
+        task->thread.detach();
 
-    { std::lock_guard<std::mutex> lock(g_async_mutex);
-      g_async_tasks[task_id] = task; }
-    (void)handle;
-    return task_id;
+        { std::lock_guard<std::mutex> lock(g_async_mutex);
+          g_async_tasks[task_id] = task; }
+        (void)handle;
+        return task_id;
+    }, [] { return 0; });
 }
 
 // Materialise a handle as a concrete scalar. Numeric values round-trip
 // exactly; Maps/Arrays fall back to to_double()==0 and to_string()'s
 // formatted dump - callers that care must check the type first.
 JDRT_API double jdrt_val_to_f64(JdRT handle, int64_t h) {
-    auto* rt = resolve_rt(handle);
-    auto it = rt->value_store.find(h);
-    return (it != rt->value_store.end()) ? it->second.to_double() : 0.0;
+    return bridge_guard(handle, [&]() -> double {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        return (it != rt->value_store.end()) ? it->second.to_double() : 0.0;
+    }, [] { return 0.0; });
 }
 
 JDRT_API const char* jdrt_val_to_str(JdRT handle, int64_t h) {
-    auto* rt = resolve_rt(handle);
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end()) return _strdup("");
-    if (it->second.type == ValueType::STRING)
-        return native_str_from_string(it->second.as_string()->data);
-    return native_str_from_string(it->second.to_string());
+    return bridge_guard(handle, [&]() -> const char* {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end()) return _strdup("");
+        if (it->second.type == ValueType::STRING)
+            return native_str_from_string(it->second.as_string()->data);
+        return native_str_from_string(it->second.to_string());
+    }, [] { return nullptr; });
 }
 
 // TYPEOF of a stored Value. A JD_TAG_VM_HANDLE only says that a handle is in
@@ -1300,33 +1391,39 @@ JDRT_API const char* jdrt_val_to_str(JdRT handle, int64_t h) {
 // NONE included, which is what an object-returner hands back for a miss. The
 // VM's own TYPEOF does the mapping, so the two runtimes cannot drift apart.
 JDRT_API const char* jdrt_val_type_str(JdRT handle, int64_t h) {
-    auto* rt = resolve_rt(handle);
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end()) return _strdup("NONE");
-    Value t = rt->vm.call_function("TYPEOF", { it->second });
-    return _strdup(t.type == ValueType::STRING ? t.as_string()->data.c_str()
-                                               : "UNKNOWN");
+    return bridge_guard(handle, [&]() -> const char* {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end()) return _strdup("NONE");
+        Value t = rt->vm.call_function("TYPEOF", { it->second });
+        return _strdup(t.type == ValueType::STRING ? t.as_string()->data.c_str()
+                                                   : "UNKNOWN");
+    }, [] { return nullptr; });
 }
 
 // Returns a fresh handle for the element so the caller sees the real
 // element type on subsequent ops (needed for arrays of mixed types).
 JDRT_API int64_t jdrt_val_arr_get(JdRT handle, int64_t h, int64_t idx) {
-    auto* rt = resolve_rt(handle);
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) return 0;
-    auto* arr = it->second.as_array();
-    if (idx < 0 || (size_t)idx >= arr->elements.size()) return 0;
-    return rt->store_value(arr->elements[(size_t)idx]);
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) return 0;
+        auto* arr = it->second.as_array();
+        if (idx < 0 || (size_t)idx >= arr->elements.size()) return 0;
+        return rt->store_value(arr->elements[(size_t)idx]);
+    }, [] { return 0; });
 }
 
 JDRT_API int64_t jdrt_val_length(JdRT handle, int64_t h) {
-    auto* rt = resolve_rt(handle);
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end()) return 0;
-    if (it->second.type == ValueType::ARRAY) return (int64_t)it->second.as_array()->elements.size();
-    if (it->second.type == ValueType::STRING) return (int64_t)it->second.as_string()->data.size();
-    if (it->second.type == ValueType::OBJECT) return (int64_t)it->second.as_object()->fields.size();
-    return 0;
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end()) return 0;
+        if (it->second.type == ValueType::ARRAY) return (int64_t)it->second.as_array()->elements.size();
+        if (it->second.type == ValueType::STRING) return (int64_t)it->second.as_string()->data.size();
+        if (it->second.type == ValueType::OBJECT) return (int64_t)it->second.as_object()->fields.size();
+        return 0;
+    }, [] { return 0; });
 }
 
 // What kind of value a handle actually holds. A compiled program knows only
@@ -1340,18 +1437,20 @@ JDRT_API int64_t jdrt_val_length(JdRT handle, int64_t h) {
 //
 //   0 none   1 bool   2 number   3 string   4 array   5 map/object
 JDRT_API int32_t jdrt_val_kind(JdRT handle, int64_t h) {
-    auto* rt = resolve_rt(handle);
-    auto it = rt->value_store.find(h);
-    if (it == rt->value_store.end()) return 0;
-    switch (it->second.type) {
-        case ValueType::NONE:    return 0;
-        case ValueType::BOOLEAN: return 1;
-        case ValueType::STRING:  return 3;
-        case ValueType::ARRAY:
-        case ValueType::TENSOR:  return 4;
-        case ValueType::OBJECT:  return 5;
-        default:                 return 2;   // every numeric width
-    }
+    return bridge_guard(handle, [&]() -> int32_t {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end()) return 0;
+        switch (it->second.type) {
+            case ValueType::NONE:    return 0;
+            case ValueType::BOOLEAN: return 1;
+            case ValueType::STRING:  return 3;
+            case ValueType::ARRAY:
+            case ValueType::TENSOR:  return 4;
+            case ValueType::OBJECT:  return 5;
+            default:                 return 2;   // every numeric width
+        }
+    }, [] { return jd_tag(JdTag::NONE); });
 }
 
 // Pull `key` out of the VM Value stored at handle `h` and return it as a
@@ -1428,6 +1527,9 @@ JDRT_API int64_t jdrt_call_typed_tagged(JdRT handle, const char* name,
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         return 0;
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
+        return 0;
     }
 }
 
@@ -1458,6 +1560,9 @@ JDRT_API int32_t jdrt_member_get(JdRT handle, int64_t obj_bits, int32_t obj_tag,
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         return jd_tag(JdTag::NONE);
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
+        return jd_tag(JdTag::NONE);
     }
 }
 
@@ -1482,6 +1587,8 @@ JDRT_API void jdrt_member_set(JdRT handle, int64_t obj_bits, int32_t obj_tag,
         throw std::runtime_error(std::string("cannot set member '") + name + "'");
     } catch (const std::exception& e) {
         rt->last_error = e.what();
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
     }
 }
 
@@ -1510,59 +1617,64 @@ JDRT_API int32_t jdrt_member_call(JdRT handle, int64_t obj_bits, int32_t obj_tag
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         return jd_tag(JdTag::NONE);
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
+        return jd_tag(JdTag::NONE);
     }
 }
 
 JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, int64_t* out_val) {
-    *out_val = 0;
-    auto* rt = resolve_rt(handle);
-    const Value* v = obj_field(rt, h, key);
-    if (!v) return jd_tag(JdTag::NONE);
-    union { double d; int64_t i; } u;
-    switch (v->type) {
-        case ValueType::STRING:
-            *out_val = (int64_t)(intptr_t)native_str_from_string(v->as_string()->data);
-            return jd_tag(JdTag::STR);
-        case ValueType::ARRAY: {
-            // Pure-numeric arrays convert cheaply to a flat JdbArray; mixed
-            // arrays need a VM handle so per-element typed access works.
-            auto* arr = v->as_array();
-            bool pure_numeric = true;
-            for (auto& e : arr->elements) {
-                if (e.type == ValueType::STRING || e.type == ValueType::OBJECT ||
-                    e.type == ValueType::ARRAY) {
-                    pure_numeric = false; break;
+    return bridge_guard(handle, [&]() -> int32_t {
+        *out_val = 0;
+        auto* rt = resolve_rt(handle);
+        const Value* v = obj_field(rt, h, key);
+        if (!v) return jd_tag(JdTag::NONE);
+        union { double d; int64_t i; } u;
+        switch (v->type) {
+            case ValueType::STRING:
+                *out_val = (int64_t)(intptr_t)native_str_from_string(v->as_string()->data);
+                return jd_tag(JdTag::STR);
+            case ValueType::ARRAY: {
+                // Pure-numeric arrays convert cheaply to a flat JdbArray; mixed
+                // arrays need a VM handle so per-element typed access works.
+                auto* arr = v->as_array();
+                bool pure_numeric = true;
+                for (auto& e : arr->elements) {
+                    if (e.type == ValueType::STRING || e.type == ValueType::OBJECT ||
+                        e.type == ValueType::ARRAY) {
+                        pure_numeric = false; break;
+                    }
                 }
+                if (pure_numeric) {
+                    *out_val = (int64_t)(intptr_t)value_to_jdbarray(*v);
+                    return jd_tag(JdTag::ARR);
+                }
+                *out_val = rt->store_value(*v);
+                return jd_tag(JdTag::VM_HANDLE);
             }
-            if (pure_numeric) {
-                *out_val = (int64_t)(intptr_t)value_to_jdbarray(*v);
-                return jd_tag(JdTag::ARR);
-            }
-            *out_val = rt->store_value(*v);
-            return jd_tag(JdTag::VM_HANDLE);
+            case ValueType::OBJECT:
+                *out_val = rt->store_value(*v);
+                return jd_tag(JdTag::VM_HANDLE);
+            case ValueType::INT64:
+                // Preserve the integer tag so `TYPEOF(row{"id"}) = "INT64"`
+                // matches in native - vo's load_form() guards `IF TYPEOF(
+                // row{"vertreter_id"}) = "INT64" THEN ...` and silently
+                // falls through to the default -1 if we collapse INT to FLOAT.
+                *out_val = v->to_int();
+                return jd_tag(JdTag::I64);
+            case ValueType::BOOLEAN:
+                *out_val = v->to_int() ? 1 : 0;
+                return jd_tag(JdTag::BOOL);
+            case ValueType::NONE:
+                return jd_tag(JdTag::NONE);
+            default:
+                u.d = v->to_double();
+                *out_val = u.i;
+                if (v->type == ValueType::FLOAT64 && v->subtype == ValueSubtype::DATE)
+                    return jd_tag(JdTag::DATE);
+                return jd_tag(JdTag::F64);
         }
-        case ValueType::OBJECT:
-            *out_val = rt->store_value(*v);
-            return jd_tag(JdTag::VM_HANDLE);
-        case ValueType::INT64:
-            // Preserve the integer tag so `TYPEOF(row{"id"}) = "INT64"`
-            // matches in native - vo's load_form() guards `IF TYPEOF(
-            // row{"vertreter_id"}) = "INT64" THEN ...` and silently
-            // falls through to the default -1 if we collapse INT to FLOAT.
-            *out_val = v->to_int();
-            return jd_tag(JdTag::I64);
-        case ValueType::BOOLEAN:
-            *out_val = v->to_int() ? 1 : 0;
-            return jd_tag(JdTag::BOOL);
-        case ValueType::NONE:
-            return jd_tag(JdTag::NONE);
-        default:
-            u.d = v->to_double();
-            *out_val = u.i;
-            if (v->type == ValueType::FLOAT64 && v->subtype == ValueSubtype::DATE)
-                return jd_tag(JdTag::DATE);
-            return jd_tag(JdTag::F64);
-    }
+    }, [] { return jd_tag(JdTag::NONE); });
 }
 
 // Must stay layout-compatible with JdbMap in jdb_runtime.cpp.
@@ -1580,50 +1692,52 @@ struct JdbMap {
 // (bridge and native runtime are separate DLLs).
 JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
                                   const char* key, int64_t* out_val) {
-    *out_val = 0;
-    if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
-        return jdrt_obj_get_tagged(handle, val_bits, key, out_val);
-    }
-    // Absent stays absent: a base that is not there, and a key that is
-    // not in the map, both read as NONE rather than as the integer zero.
-    // A value that is no map has no keys. An untyped parameter passes a map
-    // as a number, so a number tag names a map when its bits are a pointer.
-    if (val_tag != jd_tag(JdTag::NATIVE_MAP)) {
-        bool numeric = val_tag == jd_tag(JdTag::F64);
-        if (!numeric || (uint64_t)val_bits < 4096 || (uint64_t)val_bits >= (1ULL << 47))
-            return jd_tag(JdTag::NONE);
-    }
-    auto* m = (JdbMap*)(intptr_t)val_bits;
-    if (!m || !key) return jd_tag(JdTag::NONE);
-    int64_t idx = -1;
-    for (int64_t i = 0; i < m->count; i++) {
-        if (m->keys[i] && strcmp(m->keys[i], key) == 0) { idx = i; break; }
-    }
-    if (idx < 0) return jd_tag(JdTag::NONE);
-    union { double d; int64_t i; } u;
-    u.d = m->values[idx];
-    int32_t t = m->tags[idx];
-    if (t == jd_tag(JdTag::STR)) {
-        const char* s = (const char*)(intptr_t)u.i;
-        int64_t n = s ? jdrt_strlen(s) : 0;
-        if (s && n < 0) n = (int64_t)strlen(s);
-        *out_val = (int64_t)(intptr_t)native_str_from_string(
-            s ? std::string(s, (size_t)n) : std::string());
-        return jd_tag(JdTag::STR);
-    }
-    // An integer or a boolean is stored as a double and travels as the
-    // real integer with its own tag, the way jdb_map_get_tagged answers.
-    if (t == jd_tag(JdTag::I64) || t == jd_tag(JdTag::BOOL)) {
-        *out_val = (int64_t)u.d;
-        return t;
-    }
-    // A stored absent value reads back as absent, like a missing key.
-    if (t == jd_tag(JdTag::NONE)) return jd_tag(JdTag::NONE);
-    *out_val = u.i;
-    // Preserve pointer-ish tags; anything else is treated as f64-in-bits.
-    return (t == jd_tag(JdTag::ARR) || t == jd_tag(JdTag::NATIVE_MAP) ||
-            t == jd_tag(JdTag::VM_HANDLE))
-               ? t : jd_tag(JdTag::F64);
+    return bridge_guard(handle, [&]() -> int32_t {
+        *out_val = 0;
+        if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
+            return jdrt_obj_get_tagged(handle, val_bits, key, out_val);
+        }
+        // Absent stays absent: a base that is not there, and a key that is
+        // not in the map, both read as NONE rather than as the integer zero.
+        // A value that is no map has no keys. An untyped parameter passes a map
+        // as a number, so a number tag names a map when its bits are a pointer.
+        if (val_tag != jd_tag(JdTag::NATIVE_MAP)) {
+            bool numeric = val_tag == jd_tag(JdTag::F64);
+            if (!numeric || (uint64_t)val_bits < 4096 || (uint64_t)val_bits >= (1ULL << 47))
+                return jd_tag(JdTag::NONE);
+        }
+        auto* m = (JdbMap*)(intptr_t)val_bits;
+        if (!m || !key) return jd_tag(JdTag::NONE);
+        int64_t idx = -1;
+        for (int64_t i = 0; i < m->count; i++) {
+            if (m->keys[i] && strcmp(m->keys[i], key) == 0) { idx = i; break; }
+        }
+        if (idx < 0) return jd_tag(JdTag::NONE);
+        union { double d; int64_t i; } u;
+        u.d = m->values[idx];
+        int32_t t = m->tags[idx];
+        if (t == jd_tag(JdTag::STR)) {
+            const char* s = (const char*)(intptr_t)u.i;
+            int64_t n = s ? jdrt_strlen(s) : 0;
+            if (s && n < 0) n = (int64_t)strlen(s);
+            *out_val = (int64_t)(intptr_t)native_str_from_string(
+                s ? std::string(s, (size_t)n) : std::string());
+            return jd_tag(JdTag::STR);
+        }
+        // An integer or a boolean is stored as a double and travels as the
+        // real integer with its own tag, the way jdb_map_get_tagged answers.
+        if (t == jd_tag(JdTag::I64) || t == jd_tag(JdTag::BOOL)) {
+            *out_val = (int64_t)u.d;
+            return t;
+        }
+        // A stored absent value reads back as absent, like a missing key.
+        if (t == jd_tag(JdTag::NONE)) return jd_tag(JdTag::NONE);
+        *out_val = u.i;
+        // Preserve pointer-ish tags; anything else is treated as f64-in-bits.
+        return (t == jd_tag(JdTag::ARR) || t == jd_tag(JdTag::NATIVE_MAP) ||
+                t == jd_tag(JdTag::VM_HANDLE))
+                   ? t : jd_tag(JdTag::F64);
+    }, [] { return jd_tag(JdTag::NONE); });
 }
 
 // Entry point for tag-7 INDEX dispatch on an integer index. For VM arrays
@@ -1631,44 +1745,46 @@ JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
 // typed access); for native arrays every element is f64.
 JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_tag,
                                       int64_t idx, int64_t* out_val) {
-    *out_val = 0;
-    auto* rt = resolve_rt(handle);
-    // An index past the end is the interpreter's error, raised through the
-    // bridge's error slot so the statement's check picks it up.
-    auto out_of_range = [&](int64_t i) {
-        rt->last_error = "Array index out of bounds: " + std::to_string(i);
-        return jd_tag(JdTag::NONE);
-    };
-    if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
-        auto it = rt->value_store.find(val_bits);
-        if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY)
+    return bridge_guard(handle, [&]() -> int32_t {
+        *out_val = 0;
+        auto* rt = resolve_rt(handle);
+        // An index past the end is the interpreter's error, raised through the
+        // bridge's error slot so the statement's check picks it up.
+        auto out_of_range = [&](int64_t i) {
+            rt->last_error = "Array index out of bounds: " + std::to_string(i);
             return jd_tag(JdTag::NONE);
-        auto* a = it->second.as_array();
-        if (idx < 0 || (size_t)idx >= a->elements.size()) return out_of_range(idx);
-        *out_val = rt->store_value(a->elements[(size_t)idx]);
-        return jd_tag(JdTag::VM_HANDLE);
-    }
-    if (val_tag == jd_tag(JdTag::NONE)) return jd_tag(JdTag::NONE);
-    auto* arr = (JdbArray*)(intptr_t)val_bits;
-    if (!arr) return jd_tag(JdTag::NONE);
-    if (idx < 0 || idx >= arr->length) return out_of_range(idx);
-    union { double d; int64_t i; } u;
-    u.d = arr->data[idx];
-    *out_val = u.i;
-    // Per-element tags (flags bit 3) win - they're set by the tagged
-    // ARRAY_LITERAL path for `[m{"name"}, m{"age"}, ...]` so each cell
-    // carries its real JdTag. Falls back to the array-wide kind bits and
-    // finally to F64 for pure-numeric arrays.
-    int32_t t;
-    if ((arr->flags & 8) && arr->elem_tags) t = (int32_t)arr->elem_tags[idx];
-    else if (arr->flags & 2) t = jd_tag(JdTag::STR);
-    else if (arr->flags & 4) t = jd_tag(JdTag::BOOL);
-    else if (arr->flags & 1) t = jd_tag(JdTag::ARR);
-    else t = jd_tag(JdTag::F64);
-    // An integer or bool cell holds a real double and travels as the
-    // integer its tag names.
-    if (t == jd_tag(JdTag::I64) || t == jd_tag(JdTag::BOOL)) *out_val = (int64_t)u.d;
-    return t;
+        };
+        if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
+            auto it = rt->value_store.find(val_bits);
+            if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY)
+                return jd_tag(JdTag::NONE);
+            auto* a = it->second.as_array();
+            if (idx < 0 || (size_t)idx >= a->elements.size()) return out_of_range(idx);
+            *out_val = rt->store_value(a->elements[(size_t)idx]);
+            return jd_tag(JdTag::VM_HANDLE);
+        }
+        if (val_tag == jd_tag(JdTag::NONE)) return jd_tag(JdTag::NONE);
+        auto* arr = (JdbArray*)(intptr_t)val_bits;
+        if (!arr) return jd_tag(JdTag::NONE);
+        if (idx < 0 || idx >= arr->length) return out_of_range(idx);
+        union { double d; int64_t i; } u;
+        u.d = arr->data[idx];
+        *out_val = u.i;
+        // Per-element tags (flags bit 3) win - they're set by the tagged
+        // ARRAY_LITERAL path for `[m{"name"}, m{"age"}, ...]` so each cell
+        // carries its real JdTag. Falls back to the array-wide kind bits and
+        // finally to F64 for pure-numeric arrays.
+        int32_t t;
+        if ((arr->flags & 8) && arr->elem_tags) t = (int32_t)arr->elem_tags[idx];
+        else if (arr->flags & 2) t = jd_tag(JdTag::STR);
+        else if (arr->flags & 4) t = jd_tag(JdTag::BOOL);
+        else if (arr->flags & 1) t = jd_tag(JdTag::ARR);
+        else t = jd_tag(JdTag::F64);
+        // An integer or bool cell holds a real double and travels as the
+        // integer its tag names.
+        if (t == jd_tag(JdTag::I64) || t == jd_tag(JdTag::BOOL)) *out_val = (int64_t)u.d;
+        return t;
+    }, [] { return jd_tag(JdTag::NONE); });
 }
 
 // The write that matches jdrt_tagged_arr_get: a cell of a VM array handle or
@@ -1677,100 +1793,102 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
 // as a pointer is what made that shape crash.
 JDRT_API void jdrt_tagged_arr_set(JdRT handle, int64_t val_bits, int32_t val_tag,
                                   int64_t idx, int64_t bits, int32_t tag) {
-    auto* rt = resolve_rt(handle);
-    // A map takes every index as a key, a number included, the way the
-    // interpreter does; only an array has positions.
-    auto cell_of = [&](int32_t t, int64_t b) -> Value {
-        switch (static_cast<JdTag>(t)) {
-            case JdTag::I64:  return Value::make_i64(b);
-            case JdTag::BOOL: return Value::make_bool(b != 0);
-            case JdTag::STR:  return value_from_native_str((const char*)(intptr_t)b);
-            case JdTag::ARR:  return jdbarray_to_value((JdbArrayFwd*)(intptr_t)b);
-            case JdTag::NATIVE_MAP: return jdbmap_to_value((JdbMapFwd*)(intptr_t)b);
-            case JdTag::VM_HANDLE: {
-                auto f = rt->value_store.find(b);
-                return f != rt->value_store.end() ? f->second : Value::make_none();
+    bridge_guard_void(handle, [&] {
+        auto* rt = resolve_rt(handle);
+        // A map takes every index as a key, a number included, the way the
+        // interpreter does; only an array has positions.
+        auto cell_of = [&](int32_t t, int64_t b) -> Value {
+            switch (static_cast<JdTag>(t)) {
+                case JdTag::I64:  return Value::make_i64(b);
+                case JdTag::BOOL: return Value::make_bool(b != 0);
+                case JdTag::STR:  return value_from_native_str((const char*)(intptr_t)b);
+                case JdTag::ARR:  return jdbarray_to_value((JdbArrayFwd*)(intptr_t)b);
+                case JdTag::NATIVE_MAP: return jdbmap_to_value((JdbMapFwd*)(intptr_t)b);
+                case JdTag::VM_HANDLE: {
+                    auto f = rt->value_store.find(b);
+                    return f != rt->value_store.end() ? f->second : Value::make_none();
+                }
+                case JdTag::NONE: return Value::make_none();
+                default: {
+                    double d;
+                    memcpy(&d, &b, 8);
+                    return Value::make_f64(d);
+                }
             }
-            case JdTag::NONE: return Value::make_none();
-            default: {
-                double d;
-                memcpy(&d, &b, 8);
-                return Value::make_f64(d);
+        };
+        // A native container keeps the key itself, so it gets a persistent one
+        // the sweep at the end of a loop pass leaves alone.
+        if (tag == jd_tag(JdTag::VM_HANDLE) && val_tag != jd_tag(JdTag::VM_HANDLE))
+            bits = jdrt_promote_handle(handle, bits);
+        if (val_tag == jd_tag(JdTag::NATIVE_MAP)) {
+            // The native map stores a number as itself and a pointer as its bits.
+            double d;
+            if (tag == jd_tag(JdTag::I64) || tag == jd_tag(JdTag::BOOL)) d = (double)bits;
+            else memcpy(&d, &bits, 8);
+            // The map keeps a copy of a string, as every other setter does, and
+            // releases it when the key is written over.
+            if (tag == jd_tag(JdTag::STR)) {
+                Value text = value_from_native_str((const char*)(intptr_t)bits);
+                char* copy = native_str_from_string(text.as_string() ? text.as_string()->data : std::string());
+                memcpy(&d, &copy, 8);
             }
+            set_jdbmap_key((JdbMapFwd*)(intptr_t)val_bits, std::to_string(idx), d, tag);
+            return;
         }
-    };
-    // A native container keeps the key itself, so it gets a persistent one
-    // the sweep at the end of a loop pass leaves alone.
-    if (tag == jd_tag(JdTag::VM_HANDLE) && val_tag != jd_tag(JdTag::VM_HANDLE))
-        bits = jdrt_promote_handle(handle, bits);
-    if (val_tag == jd_tag(JdTag::NATIVE_MAP)) {
-        // The native map stores a number as itself and a pointer as its bits.
+        if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
+            auto it = rt->value_store.find(val_bits);
+            if (it == rt->value_store.end()) return;
+            if (it->second.type == ValueType::OBJECT) {
+                it->second.as_object()->set(std::to_string(idx), cell_of(tag, bits));
+                return;
+            }
+            if (it->second.type != ValueType::ARRAY) return;
+            auto* a = it->second.as_array();
+            if (idx < 0) {
+                rt->last_error = "Array index out of bounds: " + std::to_string(idx);
+                return;
+            }
+            if ((size_t)idx >= a->elements.size()) a->elements.resize((size_t)idx + 1);
+            Value cell;
+            switch (static_cast<JdTag>(tag)) {
+                case JdTag::I64:  cell = Value::make_i64(bits); break;
+                case JdTag::BOOL: cell = Value::make_bool(bits != 0); break;
+                case JdTag::STR:  cell = value_from_native_str((const char*)(intptr_t)bits); break;
+                case JdTag::ARR:  cell = jdbarray_to_value((JdbArrayFwd*)(intptr_t)bits); break;
+                case JdTag::NATIVE_MAP: cell = jdbmap_to_value((JdbMapFwd*)(intptr_t)bits); break;
+                case JdTag::VM_HANDLE: {
+                    auto f = rt->value_store.find(bits);
+                    cell = f != rt->value_store.end() ? f->second : Value::make_none();
+                    break;
+                }
+                case JdTag::NONE: cell = Value::make_none(); break;
+                default: {
+                    double d;
+                    memcpy(&d, &bits, 8);
+                    cell = Value::make_f64(d);
+                }
+            }
+            a->elements[(size_t)idx] = std::move(cell);
+            return;
+        }
+        if (val_tag == jd_tag(JdTag::NONE)) return;
+        if (val_tag != jd_tag(JdTag::ARR)) {
+            rt->last_error = "Cannot index-assign into this type";
+            return;
+        }
+        // A native array: store the cell the way the runtime's own setter does,
+        // a number as itself and a pointer as its bits, with the cell's tag.
+        auto* arr = (JdbArray*)(intptr_t)val_bits;
+        if (!arr || idx < 0 || idx >= arr->length) {
+            if (arr) rt->last_error = "Array index out of bounds: " + std::to_string(idx);
+            return;
+        }
         double d;
         if (tag == jd_tag(JdTag::I64) || tag == jd_tag(JdTag::BOOL)) d = (double)bits;
         else memcpy(&d, &bits, 8);
-        // The map keeps a copy of a string, as every other setter does, and
-        // releases it when the key is written over.
-        if (tag == jd_tag(JdTag::STR)) {
-            Value text = value_from_native_str((const char*)(intptr_t)bits);
-            char* copy = native_str_from_string(text.as_string() ? text.as_string()->data : std::string());
-            memcpy(&d, &copy, 8);
-        }
-        set_jdbmap_key((JdbMapFwd*)(intptr_t)val_bits, std::to_string(idx), d, tag);
-        return;
-    }
-    if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
-        auto it = rt->value_store.find(val_bits);
-        if (it == rt->value_store.end()) return;
-        if (it->second.type == ValueType::OBJECT) {
-            it->second.as_object()->set(std::to_string(idx), cell_of(tag, bits));
-            return;
-        }
-        if (it->second.type != ValueType::ARRAY) return;
-        auto* a = it->second.as_array();
-        if (idx < 0) {
-            rt->last_error = "Array index out of bounds: " + std::to_string(idx);
-            return;
-        }
-        if ((size_t)idx >= a->elements.size()) a->elements.resize((size_t)idx + 1);
-        Value cell;
-        switch (static_cast<JdTag>(tag)) {
-            case JdTag::I64:  cell = Value::make_i64(bits); break;
-            case JdTag::BOOL: cell = Value::make_bool(bits != 0); break;
-            case JdTag::STR:  cell = value_from_native_str((const char*)(intptr_t)bits); break;
-            case JdTag::ARR:  cell = jdbarray_to_value((JdbArrayFwd*)(intptr_t)bits); break;
-            case JdTag::NATIVE_MAP: cell = jdbmap_to_value((JdbMapFwd*)(intptr_t)bits); break;
-            case JdTag::VM_HANDLE: {
-                auto f = rt->value_store.find(bits);
-                cell = f != rt->value_store.end() ? f->second : Value::make_none();
-                break;
-            }
-            case JdTag::NONE: cell = Value::make_none(); break;
-            default: {
-                double d;
-                memcpy(&d, &bits, 8);
-                cell = Value::make_f64(d);
-            }
-        }
-        a->elements[(size_t)idx] = std::move(cell);
-        return;
-    }
-    if (val_tag == jd_tag(JdTag::NONE)) return;
-    if (val_tag != jd_tag(JdTag::ARR)) {
-        rt->last_error = "Cannot index-assign into this type";
-        return;
-    }
-    // A native array: store the cell the way the runtime's own setter does,
-    // a number as itself and a pointer as its bits, with the cell's tag.
-    auto* arr = (JdbArray*)(intptr_t)val_bits;
-    if (!arr || idx < 0 || idx >= arr->length) {
-        if (arr) rt->last_error = "Array index out of bounds: " + std::to_string(idx);
-        return;
-    }
-    double d;
-    if (tag == jd_tag(JdTag::I64) || tag == jd_tag(JdTag::BOOL)) d = (double)bits;
-    else memcpy(&d, &bits, 8);
-    arr->data[idx] = d;
-    if (arr->elem_tags && (arr->flags & 8)) arr->elem_tags[idx] = (int8_t)tag;
+        arr->data[idx] = d;
+        if (arr->elem_tags && (arr->flags & 8)) arr->elem_tags[idx] = (int8_t)tag;
+    });
 }
 
 // FOR EACH in compiled code: what the loop walks and how many passes it
@@ -1785,99 +1903,103 @@ JDRT_API void jdrt_tagged_arr_set(JdRT handle, int64_t val_bits, int32_t val_tag
 JDRT_API int64_t jdrt_foreach_begin(JdRT handle, int64_t val_bits, int32_t val_tag, int32_t pair,
                                     int64_t* a_bits, int32_t* a_tag,
                                     int64_t* out_bits, int32_t* out_tag) {
-    auto* rt = resolve_rt(handle);
-    *a_bits = 0;
-    *a_tag = jd_tag(JdTag::NONE);
-    *out_bits = 0;
-    *out_tag = jd_tag(JdTag::NONE);
-    auto refuse_other = [&]() -> int64_t {
-        rt->last_error = "FOR EACH needs an array, a string or a map; walking a channel is interpreter-only";
-        return 0;
-    };
-    auto walk_array = [&](int64_t bits) -> int64_t {
-        auto* arr = (JdbArray*)(intptr_t)bits;
-        *out_bits = bits;
-        *out_tag = jd_tag(JdTag::ARR);
-        return arr ? arr->length : 0;
-    };
-    auto walk_map = [&](const Value& obj) -> int64_t {
-        Value keys = Value::make_array();
-        Value vals = Value::make_array();
-        for (auto& [k, v] : obj.as_object()->fields) {
-            keys.as_array()->elements.push_back(Value::make_string(k));
-            vals.as_array()->elements.push_back(v);
-        }
-        int64_t n = (int64_t)keys.as_array()->elements.size();
-        int64_t key_bits = (int64_t)(intptr_t)value_to_jdbarray(keys);
-        rt->foreach_temps.insert(key_bits);
-        if (pair) {
-            *a_bits = key_bits;
-            *a_tag = jd_tag(JdTag::ARR);
-            *out_bits = rt->store_value(std::move(vals));
-            *out_tag = jd_tag(JdTag::VM_HANDLE);
-        } else {
-            *out_bits = key_bits;
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        *a_bits = 0;
+        *a_tag = jd_tag(JdTag::NONE);
+        *out_bits = 0;
+        *out_tag = jd_tag(JdTag::NONE);
+        auto refuse_other = [&]() -> int64_t {
+            rt->last_error = "FOR EACH needs an array, a string or a map; walking a channel is interpreter-only";
+            return 0;
+        };
+        auto walk_array = [&](int64_t bits) -> int64_t {
+            auto* arr = (JdbArray*)(intptr_t)bits;
+            *out_bits = bits;
             *out_tag = jd_tag(JdTag::ARR);
-        }
-        return n;
-    };
-    auto walk_string = [&](const std::string& s) -> int64_t {
-        Value chars = Value::make_array();
-        for (size_t i = 0; i < s.size(); ) {
-            unsigned char c = (unsigned char)s[i];
-            size_t len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
-            if (i + len > s.size()) len = s.size() - i;
-            chars.as_array()->elements.push_back(Value::make_string(s.substr(i, len)));
-            i += len;
-        }
-        JdbArray* arr = value_to_jdbarray(chars);
-        rt->foreach_temps.insert((int64_t)(intptr_t)arr);
-        return walk_array((int64_t)(intptr_t)arr);
-    };
+            return arr ? arr->length : 0;
+        };
+        auto walk_map = [&](const Value& obj) -> int64_t {
+            Value keys = Value::make_array();
+            Value vals = Value::make_array();
+            for (auto& [k, v] : obj.as_object()->fields) {
+                keys.as_array()->elements.push_back(Value::make_string(k));
+                vals.as_array()->elements.push_back(v);
+            }
+            int64_t n = (int64_t)keys.as_array()->elements.size();
+            int64_t key_bits = (int64_t)(intptr_t)value_to_jdbarray(keys);
+            rt->foreach_temps.insert(key_bits);
+            if (pair) {
+                *a_bits = key_bits;
+                *a_tag = jd_tag(JdTag::ARR);
+                *out_bits = rt->store_value(std::move(vals));
+                *out_tag = jd_tag(JdTag::VM_HANDLE);
+            } else {
+                *out_bits = key_bits;
+                *out_tag = jd_tag(JdTag::ARR);
+            }
+            return n;
+        };
+        auto walk_string = [&](const std::string& s) -> int64_t {
+            Value chars = Value::make_array();
+            for (size_t i = 0; i < s.size(); ) {
+                unsigned char c = (unsigned char)s[i];
+                size_t len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+                if (i + len > s.size()) len = s.size() - i;
+                chars.as_array()->elements.push_back(Value::make_string(s.substr(i, len)));
+                i += len;
+            }
+            JdbArray* arr = value_to_jdbarray(chars);
+            rt->foreach_temps.insert((int64_t)(intptr_t)arr);
+            return walk_array((int64_t)(intptr_t)arr);
+        };
 
-    if (val_tag == jd_tag(JdTag::ARR)) return walk_array(val_bits);
-    if (val_tag == jd_tag(JdTag::NONE)) return 0;
-    if (val_tag == jd_tag(JdTag::NATIVE_MAP))
-        return walk_map(jdbmap_to_value((JdbMapFwd*)(intptr_t)val_bits));
-    if (val_tag == jd_tag(JdTag::F64)) {
-        // An untyped slot holds an array as its pointer bits; a real number
-        // never looks like a user-space pointer.
-        uint64_t u = (uint64_t)val_bits;
-        if (u != 0 && u < (1ULL << 47)) return walk_array(val_bits);
-        return refuse_other();
-    }
-    if (val_tag == jd_tag(JdTag::STR)) {
-        const char* s = (const char*)(intptr_t)val_bits;
-        if (!s) return 0;
-        int64_t n = jdrt_strlen(s);
-        return walk_string(n >= 0 ? std::string(s, (size_t)n) : std::string(s));
-    }
-    if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
-        auto it = rt->value_store.find(val_bits);
-        if (it == rt->value_store.end()) return 0;
-        const Value& v = it->second;
-        if (v.type == ValueType::NONE) return 0;
-        if (v.type == ValueType::ARRAY) {
-            *out_bits = val_bits;
-            *out_tag = jd_tag(JdTag::VM_HANDLE);
-            return (int64_t)v.as_array()->elements.size();
+        if (val_tag == jd_tag(JdTag::ARR)) return walk_array(val_bits);
+        if (val_tag == jd_tag(JdTag::NONE)) return 0;
+        if (val_tag == jd_tag(JdTag::NATIVE_MAP))
+            return walk_map(jdbmap_to_value((JdbMapFwd*)(intptr_t)val_bits));
+        if (val_tag == jd_tag(JdTag::F64)) {
+            // An untyped slot holds an array as its pointer bits; a real number
+            // never looks like a user-space pointer.
+            uint64_t u = (uint64_t)val_bits;
+            if (u != 0 && u < (1ULL << 47)) return walk_array(val_bits);
+            return refuse_other();
         }
-        if (v.type == ValueType::STRING) return walk_string(v.as_string()->data);
-        if (v.type == ValueType::OBJECT) return walk_map(v);
+        if (val_tag == jd_tag(JdTag::STR)) {
+            const char* s = (const char*)(intptr_t)val_bits;
+            if (!s) return 0;
+            int64_t n = jdrt_strlen(s);
+            return walk_string(n >= 0 ? std::string(s, (size_t)n) : std::string(s));
+        }
+        if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
+            auto it = rt->value_store.find(val_bits);
+            if (it == rt->value_store.end()) return 0;
+            const Value& v = it->second;
+            if (v.type == ValueType::NONE) return 0;
+            if (v.type == ValueType::ARRAY) {
+                *out_bits = val_bits;
+                *out_tag = jd_tag(JdTag::VM_HANDLE);
+                return (int64_t)v.as_array()->elements.size();
+            }
+            if (v.type == ValueType::STRING) return walk_string(v.as_string()->data);
+            if (v.type == ValueType::OBJECT) return walk_map(v);
+            return refuse_other();
+        }
         return refuse_other();
-    }
-    return refuse_other();
+    }, [] { return 0; });
 }
 
 // The first of two FOR EACH loop variables: the key from walk a, or the
 // position when a is NONE.
 JDRT_API int32_t jdrt_foreach_key(JdRT handle, int64_t a_bits, int32_t a_tag,
                                   int64_t idx, int64_t* out_val) {
-    if (a_tag == jd_tag(JdTag::NONE)) {
-        *out_val = idx;
-        return jd_tag(JdTag::I64);
-    }
-    return jdrt_tagged_arr_get(handle, a_bits, a_tag, idx, out_val);
+    return bridge_guard(handle, [&]() -> int32_t {
+        if (a_tag == jd_tag(JdTag::NONE)) {
+            *out_val = idx;
+            return jd_tag(JdTag::I64);
+        }
+        return jdrt_tagged_arr_get(handle, a_bits, a_tag, idx, out_val);
+    }, [] { return jd_tag(JdTag::NONE); });
 }
 
 // After a FOR EACH whose loop variables kept nothing: the keys or characters
@@ -1908,41 +2030,45 @@ JDRT_API void jdrt_foreach_end(JdRT handle, int64_t bits) {
 // map is the map key spelled as text.
 JDRT_API int32_t jdrt_tagged_index(JdRT handle, int64_t val_bits, int32_t val_tag,
                                     int64_t key_bits, int32_t key_tag, int64_t* out_val) {
-    *out_val = 0;
-    if (key_tag == jd_tag(JdTag::STR)) {
-        const char* key = (const char*)(intptr_t)key_bits;
-        return jdrt_tagged_get(handle, val_bits, val_tag, key ? key : "", out_val);
-    }
-    int64_t idx;
-    if (key_tag == jd_tag(JdTag::I64) || key_tag == jd_tag(JdTag::BOOL)) {
-        idx = key_bits;
-    } else {
-        union { double d; int64_t i; } u;
-        u.i = key_bits;
-        idx = (int64_t)u.d;
-    }
-    if (val_tag == jd_tag(JdTag::ARR)) return jdrt_tagged_arr_get(handle, val_bits, val_tag, idx, out_val);
-    if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
-        auto* rt = resolve_rt(handle);
-        auto it = rt->value_store.find(val_bits);
-        if (it != rt->value_store.end() && it->second.type == ValueType::ARRAY)
-            return jdrt_tagged_arr_get(handle, val_bits, val_tag, idx, out_val);
-    }
-    std::string key = std::to_string(idx);
-    return jdrt_tagged_get(handle, val_bits, val_tag, key.c_str(), out_val);
+    return bridge_guard(handle, [&]() -> int32_t {
+        *out_val = 0;
+        if (key_tag == jd_tag(JdTag::STR)) {
+            const char* key = (const char*)(intptr_t)key_bits;
+            return jdrt_tagged_get(handle, val_bits, val_tag, key ? key : "", out_val);
+        }
+        int64_t idx;
+        if (key_tag == jd_tag(JdTag::I64) || key_tag == jd_tag(JdTag::BOOL)) {
+            idx = key_bits;
+        } else {
+            union { double d; int64_t i; } u;
+            u.i = key_bits;
+            idx = (int64_t)u.d;
+        }
+        if (val_tag == jd_tag(JdTag::ARR)) return jdrt_tagged_arr_get(handle, val_bits, val_tag, idx, out_val);
+        if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
+            auto* rt = resolve_rt(handle);
+            auto it = rt->value_store.find(val_bits);
+            if (it != rt->value_store.end() && it->second.type == ValueType::ARRAY)
+                return jdrt_tagged_arr_get(handle, val_bits, val_tag, idx, out_val);
+        }
+        std::string key = std::to_string(idx);
+        return jdrt_tagged_get(handle, val_bits, val_tag, key.c_str(), out_val);
+    }, [] { return jd_tag(JdTag::NONE); });
 }
 
 // Deferred from the obj_get_* block because value_to_jdbarray and the
 // JdbArray layout aren't in scope up there.
 JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {
-    auto* rt = resolve_rt(handle);
-    const Value* v = obj_field(rt, h, key);
-    if (!v) {
-        auto* r = (JdbArray*)malloc(sizeof(JdbArray));
-        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr; r->capacity = 0; r->parent = nullptr;
-        return r;
-    }
-    return value_to_jdbarray(*v);
+    return bridge_guard(handle, [&]() -> void* {
+        auto* rt = resolve_rt(handle);
+        const Value* v = obj_field(rt, h, key);
+        if (!v) {
+            auto* r = (JdbArray*)malloc(sizeof(JdbArray));
+            r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr; r->capacity = 0; r->parent = nullptr;
+            return r;
+        }
+        return value_to_jdbarray(*v);
+    }, [] { return nullptr; });
 }
 
 // Returns a JdbArray* for functions that return arrays (SPLIT, KEYS, etc.)
@@ -1956,6 +2082,11 @@ JDRT_API void* jdrt_call_typed_arr(JdRT handle, const char* name,
         return value_to_jdbarray(result);
     } catch (const std::exception& e) {
         rt->last_error = e.what();
+        auto* r = (JdbArray*)malloc(sizeof(JdbArray));
+        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr; r->capacity = 0; r->parent = nullptr;
+        return r;
+    } catch (...) {
+        rt->last_error = "Internal error in the runtime";
         auto* r = (JdbArray*)malloc(sizeof(JdbArray));
         r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr; r->capacity = 0; r->parent = nullptr;
         return r;

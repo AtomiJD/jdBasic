@@ -16,6 +16,24 @@
 
 namespace jdb_num {
 
+// The integer operators where C leaves the edge undefined: a shift count
+// outside 0..63 moves every bit out (SHR keeps the sign), and division by -1
+// of the smallest integer wraps instead of trapping. The divisor is not 0.
+inline int64_t shift_left(int64_t a, int64_t n) {
+    return (n < 0 || n > 63) ? 0 : (int64_t)((uint64_t)a << n);
+}
+inline int64_t shift_right(int64_t a, int64_t n) {
+    if (n < 0) return 0;
+    if (n > 63) return a < 0 ? -1 : 0;
+    return a >> n;
+}
+inline int64_t int_div(int64_t a, int64_t b) {
+    return b == -1 ? (int64_t)(0 - (uint64_t)a) : a / b;
+}
+inline int64_t int_mod(int64_t a, int64_t b) {
+    return b == -1 ? 0 : a % b;
+}
+
 // The punctuation a locale writes numbers with: its decimal mark and the
 // separator between groups of three digits, 0 for no grouping.
 struct Punct {

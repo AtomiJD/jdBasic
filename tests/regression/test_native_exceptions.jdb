@@ -1,0 +1,35 @@
+' A builtin that cannot build its answer - a string too long for memory -
+' raises an error the program's TRY catches, in both backends, instead of
+' ending the program.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM caught AS INTEGER = 0
+DIM s AS STRING
+TRY
+    s = SPACE$(4000000000000000000)
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "SPACE$ beyond memory is caught")
+
+caught = 0
+TRY
+    s = "-" * 1000000000000
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "string repeat beyond memory is caught")
+
+s = "still " + "running"
+Check(s = "still running", "the program goes on after the error")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

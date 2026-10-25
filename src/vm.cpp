@@ -1348,8 +1348,8 @@ void VM::run() {
                         }
                         case OpCode::IDIV:
                             if (y == 0) { int eln = cf.chunk->line_at(trace_ip); throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero", eln); }
-                            r = x / y; break; // C++ int division truncates toward zero
-                        case OpCode::MOD_OP: r = (y != 0) ? x % y : 0; break;
+                            r = jdb_num::int_div(x, y); break; // truncates toward zero
+                        case OpCode::MOD_OP: r = (y != 0) ? jdb_num::int_mod(x, y) : 0; break;
                         default: r = 0;
                     }
                     if (overflow) {
@@ -2994,8 +2994,8 @@ Value VM::arithmetic(const Value& a, const Value& b, OpCode op) {
             case OpCode::BIT_AND: r = ia & ib; break;
             case OpCode::BIT_OR:  r = ia | ib; break;
             case OpCode::BIT_XOR: r = ia ^ ib; break;
-            case OpCode::BIT_SHL: r = ia << ib; break;
-            case OpCode::BIT_SHR: r = ia >> ib; break;
+            case OpCode::BIT_SHL: r = jdb_num::shift_left(ia, ib); break;
+            case OpCode::BIT_SHR: r = jdb_num::shift_right(ia, ib); break;
             default:              r = 0;
         }
         return Value::make_i64(r);
@@ -3027,8 +3027,8 @@ Value VM::arithmetic(const Value& a, const Value& b, OpCode op) {
             }
             case OpCode::IDIV:
                 if (ib == 0) throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero");
-                result = ia / ib; break;
-            case OpCode::MOD_OP: result = (ib != 0) ? ia % ib : 0; break;
+                result = jdb_num::int_div(ia, ib); break;
+            case OpCode::MOD_OP: result = (ib != 0) ? jdb_num::int_mod(ia, ib) : 0; break;
             default: result = 0;
         }
         if (overflow) {

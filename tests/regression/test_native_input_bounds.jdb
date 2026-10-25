@@ -1,0 +1,61 @@
+' Builtins given values at or past the edge of their range answer sensibly
+' in both backends: IOTA of a negative count is empty, SLEEP of a negative
+' time returns, RND stays below 1, SHUFFLE moves cells of a big array to any
+' position, RESHAPE refuses a shape that is no count, and the integer
+' operators on arrays keep MOD by -1 and shifts past 63 defined.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM none_yet AS ARRAY = IOTA(-3)
+Check(LEN(none_yet) = 0, "IOTA of a negative count is empty")
+none_yet = APPEND(none_yet, 5)
+Check(LEN(none_yet) = 1 ANDALSO none_yet[0] = 5, "and takes a cell")
+
+SLEEP -5
+Check(TRUE, "SLEEP of a negative time returns")
+
+DIM below AS INTEGER = 1
+DIM k AS INTEGER
+FOR k = 1 TO 20000
+    IF RND(1) >= 1 THEN below = 0
+NEXT k
+Check(below = 1, "RND stays below 1")
+
+DIM big AS ARRAY = IOTA(100000)
+DIM mixed AS ARRAY = SHUFFLE(big)
+DIM far AS INTEGER = 0
+FOR k = 0 TO 99
+    IF mixed[k] > 40000 THEN far = 1
+NEXT k
+Check(far = 1, "SHUFFLE brings cells from past 32768 to the front")
+Check(SUM(mixed) = SUM(big), "SHUFFLE keeps every cell")
+
+DIM caught AS INTEGER = 0
+TRY
+    DIM bad AS ARRAY = RESHAPE([1, 2, 3], [-2, 3])
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "RESHAPE refuses a negative dimension")
+
+DIM m AS ARRAY = [7, -7, 8] MOD -1
+Check(m[0] = 0 ANDALSO m[1] = 0, "MOD by -1")
+DIM sh AS ARRAY = [1, 2] SHL 70
+Check(sh[0] = 0 ANDALSO sh[1] = 0, "SHL past 63 shifts everything out")
+
+DIM smallest AS INTEGER = -9223372036854775807 - 1
+DIM minus_one AS INTEGER = -1
+Check(smallest \ minus_one = smallest, "the smallest integer divided by -1 wraps")
+Check(smallest MOD minus_one = 0, "and MOD -1 is 0")
+DIM one AS INTEGER = 1
+Check((one SHL 70) = 0 ANDALSO (-8 SHR 70) = -1, "integer shifts past 63")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

@@ -18,8 +18,19 @@
 #include <cstdint>
 #include <functional>
 #include <vector>
+#include <cstdlib>
 
 namespace jdb_shape {
+
+// A position below n from the C generator, as SHUFFLE draws it: one rand()
+// while n fits its range, two put together beyond, so a big array is mixed
+// over all of its positions.
+inline int64_t random_below(int64_t n) {
+    if (n <= 1) return 0;
+    if (n <= (int64_t)RAND_MAX + 1) return rand() % n;
+    uint64_t r = (uint64_t)rand() * ((uint64_t)RAND_MAX + 1) + (uint64_t)rand();
+    return (int64_t)(r % (uint64_t)n);
+}
 
 using Lane = std::function<double(const std::vector<double>&)>;
 
@@ -27,7 +38,7 @@ using Lane = std::function<double(const std::vector<double>&)>;
 template <class A>
 int depth(typename A::Arr a) {
     int d = 1;
-    while (A::len(a) > 0 && A::is_row(a, 0)) { a = A::row(a, 0); d++; }
+    while (d < 256 && A::len(a) > 0 && A::is_row(a, 0)) { a = A::row(a, 0); d++; }
     return d;
 }
 

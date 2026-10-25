@@ -68,7 +68,7 @@ void VM::register_math_builtins() {
     });
     register_native("RND", 0, -1, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        return Value::make_f64(static_cast<double>(rand()) / RAND_MAX);
+        return Value::make_f64(static_cast<double>(rand()) / ((double)RAND_MAX + 1.0));
     });
     register_native("LOG10", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(std::log10(args[0].to_double()));
@@ -170,7 +170,7 @@ void VM::register_math_builtins() {
         double lo = 0.0, hi = 1.0;
         if (args.size() == 1)      { hi = args[0].to_double(); }
         else if (args.size() >= 2) { lo = args[0].to_double(); hi = args[1].to_double(); }
-        return Value::make_f64(lo + (double)rand() / RAND_MAX * (hi - lo));
+        return Value::make_f64(lo + (double)rand() / ((double)RAND_MAX + 1.0) * (hi - lo));
     });
     register_native("RANDOMSEED", [](const std::vector<Value>& args) -> Value {
         srand((unsigned)args[0].to_int()); return Value::make_none();
