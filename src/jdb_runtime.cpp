@@ -686,20 +686,26 @@ static inline bool arr_all_num(const JdbArray* a) { return !(a->flags & 3) && !a
 static inline bool arr_all_rows(const JdbArray* a) { return (a->flags & 3) == 1 && !arr_tagged(a); }
 static JdbArray* settle_kinds(JdbArray* r);
 
-// Writes cell i together with its kind. The array keeps per-cell tags from
-// the first call on, the cells it had taking the kinds its flags gave them,
-// so cells of different kinds read back one by one.
-static void put_kind(JdbArray* r, int64_t i, double v, int tag) {
-    if (!arr_tagged(r)) {
-        int64_t cap = r->capacity > r->length ? r->capacity : r->length;
-        int8_t* tags = (int8_t*)malloc((size_t)(cap > 0 ? cap : 1));
-        if (!tags) { r->data[i] = 0.0; return; }
-        memset(tags, JD_TAG_F64, (size_t)(cap > 0 ? cap : 1));
-        for (int64_t j = 0; j < r->length; j++) tags[j] = (int8_t)cell_kind(r, j);
-        free(r->elem_tags);
-        r->elem_tags = tags;
-    }
+// Gives an array per-cell tags, as many as it has room for, the cells it has
+// taking the kinds its flags gave them. False when there is no memory.
+static bool ensure_tags(JdbArray* r) {
+    if (arr_tagged(r)) return true;
+    int64_t cap = r->capacity > r->length ? r->capacity : r->length;
+    if (cap < 1) cap = 1;
+    int8_t* tags = (int8_t*)malloc((size_t)cap);
+    if (!tags) return false;
+    memset(tags, JD_TAG_F64, (size_t)cap);
+    for (int64_t j = 0; j < r->length; j++) tags[j] = (int8_t)cell_kind(r, j);
+    free(r->elem_tags);
+    r->elem_tags = tags;
     r->flags |= 8;
+    return true;
+}
+
+// Writes cell i together with its kind, so cells of different kinds read
+// back one by one.
+static void put_kind(JdbArray* r, int64_t i, double v, int tag) {
+    if (!ensure_tags(r)) { r->data[i] = 0.0; return; }
     if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP) r->flags |= 1;
     if (tag == JD_TAG_STR) r->flags |= 2;
     r->elem_tags[i] = (int8_t)tag;
@@ -1030,10 +1036,9 @@ struct RtShape {
     // A number written where a cell moved away: in an array of strings the
     // cells become tagged one by one so the number reads as a number.
     static void put_fill(JdbArray* a, int64_t i, double d) {
-        if ((a->flags & 2) && !a->elem_tags) {
-            a->elem_tags = (int8_t*)malloc((size_t)(a->length > 0 ? a->length : 1));
-            memset(a->elem_tags, JD_TAG_STR, (size_t)(a->length > 0 ? a->length : 1));
-            a->flags = (a->flags & ~2) | 8;
+        if ((a->flags & 2) && !arr_tagged(a)) {
+            if (!ensure_tags(a)) return;
+            a->flags &= ~2;
         }
         if (a->elem_tags) a->elem_tags[i] = JD_TAG_F64;
         a->data[i] = d;
@@ -1196,12 +1201,7 @@ void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
         jdb_index_out_of_bounds(idx);
         return;
     }
-    if (!arr->elem_tags) {
-        arr->elem_tags = (int8_t*)malloc((size_t)(arr->length > 0 ? arr->length : 1));
-        for (int64_t i = 0; i < arr->length; i++)
-            arr->elem_tags[i] = jdb_tag_from_flags(arr->flags, arr->data[i]);
-    }
-    arr->flags |= 8;  // bit 3: per-element tags present
+    if (!ensure_tags(arr)) return;
     if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP)
         arr->flags |= 1;
     if (rc_holds_rows(arr)) rc_implicit_overwrite(arr, idx);
@@ -1210,6 +1210,58 @@ void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
     if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
     arr->data[idx] = keep_vm_handle(val, tag);
     arr->elem_tags[idx] = (int8_t)tag;
+}
+
+void jdrt_tagged_arr_set(void* rt, int64_t val_bits, int32_t val_tag,
+                         int64_t idx, int64_t bits, int32_t tag);
+
+// A position written on a value whose kind only the running program knows.
+// A native array takes the cell through its own setter, a string as a copy
+// of its own; a map or a VM value goes to the bridge; a value without cells
+// is an error, as in the interpreter.
+static int rc_kind_of(uintptr_t k);
+void jdb_tagged_arr_set(int64_t base, int32_t base_tag, int64_t idx, int64_t bits, int32_t tag) {
+    // An untyped parameter passes a container as a number: the counts say
+    // which kind it is, and one they do not know is taken for an array.
+    if ((base_tag == JD_TAG_F64 || base_tag == JD_TAG_I64) &&
+        (uint64_t)base >= 4096 && (uint64_t)base < (1ULL << 47))
+        base_tag = rc_kind_of((uintptr_t)base) == JD_TAG_NATIVE_MAP ? JD_TAG_NATIVE_MAP : JD_TAG_ARR;
+    if (base_tag == JD_TAG_ARR) {
+        JdbArray* arr = (JdbArray*)(intptr_t)base;
+        if (!arr) return;
+        if (idx < 0 || idx >= arr->length) { jdb_index_out_of_bounds(idx); return; }
+        double d;
+        if (tag == JD_TAG_I64 || tag == JD_TAG_BOOL) d = (double)bits;
+        else memcpy(&d, &bits, sizeof d);
+        // A value written back into the cell it was read from stays as it is.
+        if (tag != JD_TAG_STR && memcmp(&arr->data[idx], &d, sizeof d) == 0) return;
+        if (tag == JD_TAG_STR) {
+            char* copy = jdb_str_dup_binary((const char*)(intptr_t)bits);
+            memcpy(&d, &copy, sizeof d);
+        }
+        // The text the cell held goes, a row of the array is let out; the
+        // counts of a container in the cell are the caller's, as they were
+        // when this write went through the bridge.
+        rc_drop_cell_text(arr, idx);
+        if (rc_holds_rows(arr)) rc_implicit_overwrite(arr, idx);
+        arr->data[idx] = keep_vm_handle(d, tag);
+        // An untyped value the compiler passes as a number may be a
+        // container's bits: an array without per-cell tags keeps reading such
+        // a cell by its bits, as it reads every other one.
+        if (tag == JD_TAG_F64 && bits_look_ptr(d) && !arr_tagged(arr)) return;
+        if (!ensure_tags(arr)) return;
+        int32_t kind = tag == JD_TAG_I64 ? JD_TAG_F64 : tag;
+        if (kind == JD_TAG_STR || kind == JD_TAG_ARR || kind == JD_TAG_NATIVE_MAP) arr->flags |= 1;
+        if (kind == JD_TAG_STR) arr->flags |= 2;
+        arr->elem_tags[idx] = (int8_t)kind;
+        return;
+    }
+    if (base_tag == JD_TAG_NATIVE_MAP || base_tag == JD_TAG_VM_HANDLE) {
+        if (g_jdrt_handle) jdrt_tagged_arr_set(g_jdrt_handle, base, base_tag, idx, bits, tag);
+        return;
+    }
+    if (base_tag == JD_TAG_NONE) return;
+    jdb_err_set("Cannot index-assign into this type", 11);
 }
 
 JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
@@ -2962,6 +3014,13 @@ static RcEntry* rc_find(uintptr_t k) {
     }
 }
 
+// The kind the counts know a container by (JD_TAG_ARR or JD_TAG_NATIVE_MAP),
+// or -1 when they do not know it.
+static int rc_kind_of(uintptr_t k) {
+    RcEntry* e = rc_find(k);
+    return e ? (int)e->kind : -1;
+}
+
 static void rc_rehash(size_t cap) {
     RcEntry* old = g_rc.slots;
     size_t old_cap = g_rc.cap;
@@ -4154,12 +4213,13 @@ const char* jdb_array_get_str(JdbArray* arr, int64_t idx) {
     return (const char*)p;
 }
 
-// VAL for a pointer encoded as double
+// VAL of a cell the compiler holds as a double: the bits of a string
+// pointer (an OS.ARGS cell) are read as that string, a number is itself.
 double jdb_val_ptr(double encoded_ptr) {
+    if (!bits_look_ptr(encoded_ptr)) return encoded_ptr;
     intptr_t p;
     memcpy(&p, &encoded_ptr, sizeof(p));
-    const char* s = (const char*)p;
-    return atof(s);
+    return atof((const char*)p);
 }
 
 // ── FORMAT$ ─────────────────────────────────────────────────
@@ -4406,62 +4466,65 @@ JdbArray* jdb_array_str(JdbArray* arr) {
 // Strings are quoted; numbers use jdb_format_double; booleans render as
 // TRUE/FALSE; nested maps and arrays recurse.
 char* jdb_frmv(JdbArray* arr);  // forward decl - definition below
-static int jdb_map_str_into(JdbMap* m, char* buf, int cap, int pos);
-static int jdb_value_str_tag(char* buf, int cap, int pos, double val, int32_t tag) {
+static void jdb_map_text(JdbMap* m, std::string& out);
+static void jdb_value_text(std::string& out, double val, int32_t tag) {
     union { double d; int64_t i; } u; u.d = val;
+    char num[512];
     switch (tag) {
         case JD_TAG_I64:
             // Map cells hold every number as f64; the tag says how it reads.
-            return pos + snprintf(buf + pos, cap - pos, "%lld", (long long)val);
-        case JD_TAG_F64: {
-            char num[512];
-            jdb_format_double(num, sizeof(num), val);
-            return pos + snprintf(buf + pos, cap - pos, "%s", num);
-        }
+            snprintf(num, sizeof num, "%lld", (long long)val);
+            out += num;
+            return;
         case JD_TAG_STR: {
-            const char* s = (const char*)(intptr_t)u.i;
-            return pos + snprintf(buf + pos, cap - pos, "\"%s\"", s ? s : "");
+            jdb_text::View s = text_in((const char*)(intptr_t)u.i);
+            out += '"';
+            out.append(s.p ? s.p : "", s.n);
+            out += '"';
+            return;
         }
         case JD_TAG_ARR: {
-            JdbArray* arr = (JdbArray*)(intptr_t)u.i;
-            char* sub = jdb_frmv(arr);
-            int r = pos + snprintf(buf + pos, cap - pos, "%s", sub ? sub : "[]");
+            char* sub = jdb_frmv((JdbArray*)(intptr_t)u.i);
+            jdb_text::View s = text_in(sub);
+            if (sub) out.append(s.p, s.n); else out += "[]";
             free(sub);
-            return r;
+            return;
         }
-        case JD_TAG_NATIVE_MAP: {
-            JdbMap* inner = (JdbMap*)(intptr_t)u.i;
-            return jdb_map_str_into(inner, buf, cap, pos);
-        }
+        case JD_TAG_NATIVE_MAP:
+            jdb_map_text((JdbMap*)(intptr_t)u.i, out);
+            return;
         case JD_TAG_BOOL:
-            return pos + snprintf(buf + pos, cap - pos, "%s",
-                val != 0.0 ? "TRUE" : "FALSE");
-        default: {
-            char num[512];
-            jdb_format_double(num, sizeof(num), val);
-            return pos + snprintf(buf + pos, cap - pos, "%s", num);
-        }
+            out += val != 0.0 ? "TRUE" : "FALSE";
+            return;
+        default:
+            jdb_format_double(num, sizeof num, val);
+            out += num;
+            return;
     }
 }
 
-static int jdb_map_str_into(JdbMap* m, char* buf, int cap, int pos) {
-    if (!m || m->count == 0)
-        return pos + snprintf(buf + pos, cap - pos, "{}");
-    pos += snprintf(buf + pos, cap - pos, "{");
-    for (int64_t i = 0; i < m->count && pos < cap - 8; i++) {
-        if (i > 0) pos += snprintf(buf + pos, cap - pos, ", ");
-        pos += snprintf(buf + pos, cap - pos, "\"%s\": ", m->keys[i] ? m->keys[i] : "");
-        pos = jdb_value_str_tag(buf, cap, pos, m->values[i], m->tags[i]);
+static void jdb_map_text(JdbMap* m, std::string& out) {
+    if (!m || m->count == 0) { out += "{}"; return; }
+    out += '{';
+    for (int64_t i = 0; i < m->count; i++) {
+        if (i > 0) out += ", ";
+        out += '"';
+        out += m->keys[i] ? m->keys[i] : "";
+        out += "\": ";
+        jdb_value_text(out, m->values[i], m->tags[i]);
     }
-    pos += snprintf(buf + pos, cap - pos, "}");
-    return pos;
+    out += '}';
 }
 
 char* jdb_map_str(JdbMap* m) {
-    char buf[8192];
-    int n = jdb_map_str_into(m, buf, (int)sizeof(buf), 0);
-    if (n < 0 || n >= (int)sizeof(buf)) buf[sizeof(buf) - 1] = '\0';
-    return _strdup(buf);
+    try {
+        std::string out;
+        jdb_map_text(m, out);
+        return text_out(out);
+    } catch (...) {
+        jdb_err_set("out of memory for the text of a map this size", 1);
+        return _strdup("{}");
+    }
 }
 
 char* jdb_str_bool(int64_t val) {
@@ -4540,28 +4603,36 @@ int64_t jdb_dyn_cmp(int64_t a, int32_t ta, int64_t b, int32_t tb) {
     return x < y ? -1 : (x > y ? 1 : 0);
 }
 
+// A runtime-tagged scalar as a number: a string, a map or a value without a
+// runtime to ask is no number and counts as 0.
+static double dyn_num(int64_t bits, int32_t t) {
+    if (t == JD_TAG_I64 || t == JD_TAG_BOOL) return (double)bits;
+    if (t == JD_TAG_VM_HANDLE) return g_jdrt_handle ? jdrt_val_to_f64(g_jdrt_handle, bits) : 0.0;
+    if (!jd_is_f64_tag(t)) return 0.0;
+    union { double d; int64_t i; } u; u.i = bits; return u.d;
+}
+
 // A comparison where an array hides behind one of the tags: it answers a
 // truth value per element, so the caller needs the kind of the answer too.
 // Anything else falls through to the three-way compare above, which the
 // caller turns into a single truth value.
 int64_t jdb_dyn_cmp_arr(int64_t a, int32_t ta, int64_t b, int32_t tb,
                         int32_t op, int32_t* out_tag) {
-    auto as_num = [](int64_t bits, int32_t t) -> double {
-        if (t == JD_TAG_I64 || t == JD_TAG_BOOL) return (double)bits;
-        if (t == JD_TAG_VM_HANDLE && g_jdrt_handle)
-            return jdrt_val_to_f64(g_jdrt_handle, bits);
-        union { double d; int64_t i; } u; u.i = bits; return u.d;
-    };
     bool a_arr = (ta == JD_TAG_ARR), b_arr = (tb == JD_TAG_ARR);
     if (a_arr || b_arr) {
         if (out_tag) *out_tag = JD_TAG_ARR;
         JdbArray* out = nullptr;
         if (a_arr && b_arr)
             out = jdb_array_cmp_arr((JdbArray*)(intptr_t)a, (JdbArray*)(intptr_t)b, op);
+        else if (a_arr && tb == JD_TAG_STR)
+            out = jdb_array_cmp_scalar_str((JdbArray*)(intptr_t)a, (const char*)(intptr_t)b, op);
+        else if (b_arr && ta == JD_TAG_STR)
+            out = jdb_array_cmp_scalar_str((JdbArray*)(intptr_t)b, (const char*)(intptr_t)a,
+                                           jdb_cmp_op_flipped(op));
         else if (a_arr)
-            out = jdb_array_cmp_scalar((JdbArray*)(intptr_t)a, as_num(b, tb), op);
+            out = jdb_array_cmp_scalar((JdbArray*)(intptr_t)a, dyn_num(b, tb), op);
         else
-            out = jdb_array_cmp_scalar((JdbArray*)(intptr_t)b, as_num(a, ta),
+            out = jdb_array_cmp_scalar((JdbArray*)(intptr_t)b, dyn_num(a, ta),
                                        jdb_cmp_op_flipped(op));
         return (int64_t)(intptr_t)out;
     }
@@ -4571,30 +4642,40 @@ int64_t jdb_dyn_cmp_arr(int64_t a, int32_t ta, int64_t b, int32_t tb,
 
 // Arithmetic where both operands only name their kind when they run - two
 // map values, two cells of a mixed array. An array on either side decides
-// element-wise or array-with-a-scalar; anything else is a number. The caller
-// reads the kind of the answer from out_tag.
+// element-wise or array-with-a-scalar; a string joins (+) or repeats (* by a
+// number); anything else is a number. The caller reads the kind of the
+// answer from out_tag.
 int64_t jdb_dyn_arith(int64_t a, int32_t ta, int64_t b, int32_t tb,
                       int32_t op, int32_t* out_tag) {
-    auto as_num = [](int64_t bits, int32_t t) -> double {
-        if (t == JD_TAG_I64 || t == JD_TAG_BOOL) return (double)bits;
-        if (t == JD_TAG_VM_HANDLE && g_jdrt_handle)
-            return jdrt_val_to_f64(g_jdrt_handle, bits);
-        union { double d; int64_t i; } u; u.i = bits; return u.d;
-    };
     bool a_arr = (ta == JD_TAG_ARR), b_arr = (tb == JD_TAG_ARR);
     if (a_arr || b_arr) {
         if (out_tag) *out_tag = JD_TAG_ARR;
         JdbArray* out = nullptr;
         if (a_arr && b_arr)
             out = jdb_array_binop((JdbArray*)(intptr_t)a, (JdbArray*)(intptr_t)b, op);
+        else if (a_arr && tb == JD_TAG_STR && op == 0)
+            out = jdb_array_str_concat((JdbArray*)(intptr_t)a, (const char*)(intptr_t)b, 0);
+        else if (b_arr && ta == JD_TAG_STR && op == 0)
+            out = jdb_array_str_concat((JdbArray*)(intptr_t)b, (const char*)(intptr_t)a, 1);
         else if (a_arr)
-            out = jdb_array_scalar_op((JdbArray*)(intptr_t)a, as_num(b, tb), op, 0);
+            out = jdb_array_scalar_op((JdbArray*)(intptr_t)a, dyn_num(b, tb), op, 0);
         else
-            out = jdb_array_scalar_op((JdbArray*)(intptr_t)b, as_num(a, ta), op, 1);
+            out = jdb_array_scalar_op((JdbArray*)(intptr_t)b, dyn_num(a, ta), op, 1);
         return (int64_t)(intptr_t)out;
     }
+    if (ta == JD_TAG_STR || tb == JD_TAG_STR) {
+        union { int64_t i; double d; } ua, ub;
+        ua.i = a;
+        ub.i = b;
+        int ka = ta == JD_TAG_STR ? JD_TAG_STR : JD_TAG_F64;
+        int kb = tb == JD_TAG_STR ? JD_TAG_STR : JD_TAG_F64;
+        KindedCell c = cell_op(ka == JD_TAG_STR ? ua.d : dyn_num(a, ta), ka,
+                               kb == JD_TAG_STR ? ub.d : dyn_num(b, tb), kb, op, false);
+        if (out_tag) *out_tag = c.k;
+        union { double d; int64_t i; } u; u.d = c.v; return u.i;
+    }
     if (out_tag) *out_tag = JD_TAG_F64;
-    double x = as_num(a, ta), y = as_num(b, tb), r = 0.0;
+    double x = dyn_num(a, ta), y = dyn_num(b, tb), r = 0.0;
     switch (op) {
         case 0: r = x + y; break;
         case 1: r = x - y; break;
@@ -4650,52 +4731,33 @@ char* jdb_oct(int64_t val) {
 
 char* jdb_join_arr(JdbArray* arr, const char* delim) {
     if (!arr || arr->length == 0) return _strdup("");
-    bool all_str = (arr->flags & 2) != 0;
-    bool all_bool = !all_str && (arr->flags & 4) != 0;
-    bool tagged = (arr->flags & 8) != 0 && arr->elem_tags != nullptr;
-    // A cell's own tag wins where the array carries them; otherwise the
-    // array-wide kind decides.
-    auto cell_is_str = [&](int64_t i) {
-        return tagged ? arr->elem_tags[i] == JD_TAG_STR : all_str;
-    };
-    auto cell_is_bool = [&](int64_t i) {
-        return tagged ? arr->elem_tags[i] == JD_TAG_BOOL : all_bool;
-    };
-    size_t dlen = delim ? (size_t)jdb_str_blen(delim) : 0;
-    // First pass: compute needed length
-    size_t total = 0;
-    for (int64_t i = 0; i < arr->length; i++) {
-        if (i > 0) total += dlen;
-        if (cell_is_str(i)) {
-            union { double d; int64_t i; } u; u.d = arr->data[i];
-            const char* s = (const char*)(intptr_t)u.i;
-            total += (size_t)jdb_str_blen(s);
-        } else {
-            total += 400;  // upper bound for a formatted number (%.6f of 1e308)
+    try {
+        jdb_text::View d = text_in(delim);
+        std::string out;
+        char num[512];
+        for (int64_t i = 0; i < arr->length; i++) {
+            if (i > 0 && d.n) out.append(d.p, d.n);
+            int k = cell_kind(arr, i);
+            if (k == JD_TAG_STR) {
+                jdb_text::View s = text_in(decode_str(arr->data[i]));
+                if (s.n) out.append(s.p, s.n);
+            } else if (k == JD_TAG_BOOL || (k == JD_TAG_F64 && (arr->flags & 4) && !arr_tagged(arr))) {
+                out += arr->data[i] != 0.0 ? "TRUE" : "FALSE";
+            } else if (k == JD_TAG_ARR) {
+                char* sub = jdb_frmv(decode_inner(arr->data[i]));
+                jdb_text::View s = text_in(sub);
+                if (s.n) out.append(s.p, s.n);
+                free(sub);
+            } else {
+                jdb_format_double(num, (int)sizeof num, arr->data[i]);
+                out += num;
+            }
         }
+        return text_out(out);
+    } catch (...) {
+        jdb_err_set("JOIN: out of memory for a text this size", 1);
+        return _strdup("");
     }
-    char* out = (char*)malloc(total + 1);
-    size_t pos = 0;
-    for (int64_t i = 0; i < arr->length; i++) {
-        if (i > 0 && delim) { memcpy(out + pos, delim, dlen); pos += dlen; }
-        if (cell_is_str(i)) {
-            union { double d; int64_t i; } u; u.d = arr->data[i];
-            const char* s = (const char*)(intptr_t)u.i;
-            size_t sl = (size_t)jdb_str_blen(s);
-            if (sl) memcpy(out + pos, s, sl);
-            pos += sl;
-        } else if (cell_is_bool(i)) {
-            const char* s = (arr->data[i] != 0.0) ? "TRUE" : "FALSE";
-            size_t sl = strlen(s);
-            memcpy(out + pos, s, sl);
-            pos += sl;
-        } else {
-            pos += jdb_format_double(out + pos, (int)(total + 1 - pos), arr->data[i]);
-        }
-    }
-    out[pos] = '\0';
-    if (pos != strlen(out)) jdrt_register_binary(out, (int64_t)pos);
-    return out;
 }
 
 // SPLIT answers an array of strings, one per part between the delimiters.
@@ -5075,54 +5137,24 @@ int64_t jdb_isstr(const char* val) { (void)val; return 1; }
 
 // ── Codec ───────────────────────────────────────────────────
 
-// Base64 encoding
-static const char b64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 char* jdb_base64_encode(const char* input) {
-    if (!input) return _strdup("");
-    size_t len = (size_t)jdb_str_blen(input);
-    size_t olen = 4 * ((len + 2) / 3);
-    char* out = (char*)malloc(olen + 1);
-    size_t j = 0;
-    for (size_t i = 0; i < len; i += 3) {
-        uint32_t a = (uint8_t)input[i];
-        uint32_t b = (i+1 < len) ? (uint8_t)input[i+1] : 0;
-        uint32_t c = (i+2 < len) ? (uint8_t)input[i+2] : 0;
-        uint32_t triple = (a << 16) | (b << 8) | c;
-        out[j++] = b64_table[(triple >> 18) & 0x3F];
-        out[j++] = b64_table[(triple >> 12) & 0x3F];
-        out[j++] = (i+1 < len) ? b64_table[(triple >> 6) & 0x3F] : '=';
-        out[j++] = (i+2 < len) ? b64_table[triple & 0x3F] : '=';
+    jdb_text::View s = text_in(input);
+    try {
+        return text_out(jdb_crypto::base64_encode(s.p, s.n));
+    } catch (...) {
+        jdb_err_set("CODEC.BASE64_ENCODE$: out of memory", 1);
+        return _strdup("");
     }
-    out[j] = '\0';
-    return out;
 }
 
 char* jdb_base64_decode(const char* input) {
-    if (!input) return _strdup("");
-    size_t len = strlen(input);
-    size_t olen = len / 4 * 3;
-    char* out = (char*)malloc(olen + 1);
-    auto b64_val = [](char c) -> int {
-        if (c >= 'A' && c <= 'Z') return c - 'A';
-        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-        if (c >= '0' && c <= '9') return c - '0' + 52;
-        if (c == '+') return 62;
-        if (c == '/') return 63;
-        return 0;
-    };
-    size_t j = 0;
-    for (size_t i = 0; i < len; i += 4) {
-        uint32_t a = b64_val(input[i]), b2 = b64_val(input[i+1]);
-        uint32_t c = b64_val(input[i+2]), d = b64_val(input[i+3]);
-        uint32_t triple = (a << 18) | (b2 << 12) | (c << 6) | d;
-        out[j++] = (triple >> 16) & 0xFF;
-        if (input[i+2] != '=') out[j++] = (triple >> 8) & 0xFF;
-        if (input[i+3] != '=') out[j++] = triple & 0xFF;
+    jdb_text::View s = text_in(input);
+    try {
+        return text_out(jdb_crypto::base64_decode(s.p, s.n));
+    } catch (...) {
+        jdb_err_set("CODEC.BASE64_DECODE$: out of memory", 1);
+        return _strdup("");
     }
-    out[j] = '\0';
-    if (j != strlen(out)) jdrt_register_binary(out, (int64_t)j);
-    return out;
 }
 
 char* jdb_uuid() {

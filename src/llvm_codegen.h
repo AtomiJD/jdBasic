@@ -308,6 +308,12 @@ private:
     // we hand back a JD_TAG_RUNTIME value carrying the per-cell tag.
     std::unordered_set<std::string> mixed_array_vars;
 
+    // Vars a DIM gave an array of numbers (a literal without strings, IOTA,
+    // ZEROS, ONES, RANGE, LINSPACE). A string written into one makes it a
+    // mixed array, not a string array.
+    std::unordered_set<std::string> number_array_vars;
+    bool holds_non_strings(const std::string& name) const { return number_array_vars.count(name) > 0; }
+
     // Vars whose array elements are known to hold map pointers - INDEX decodes
     // the punned-f64 and returns tag=4 so `q = arr[i]; q{"k"} = v` mutates
     // the shared map instead of silently bailing in INDEX_ASSIGN.

@@ -1,11 +1,12 @@
-// jdb_crypto.h - the operating system's secure random source and
-// PBKDF2-HMAC-SHA256, shared by the interpreter (vm.cpp) and the native
+// jdb_crypto.h - the operating system's secure random source,
+// PBKDF2-HMAC-SHA256 and Base64, shared by the interpreter and the native
 // runtime (jdb_runtime.cpp).
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 #if defined(_WIN32)
 extern "C" long __stdcall BCryptGenRandom(void* algorithm, unsigned char* buffer,
@@ -234,4 +235,43 @@ inline void uuid4_format(uint8_t b[16], char out[37]) {
     out[pos] = 0;
 }
 
+
+// Base64 with the standard alphabet and '=' padding.
+inline std::string base64_encode(const char* in, size_t n) {
+    static const char t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(4 * ((n + 2) / 3));
+    unsigned val = 0;
+    int bits = -6;
+    for (size_t i = 0; i < n; i++) {
+        val = (val << 8) + (unsigned char)in[i];
+        bits += 8;
+        while (bits >= 0) { out += t[(val >> bits) & 0x3F]; bits -= 6; }
+    }
+    if (bits > -6) out += t[((val << 8) >> (bits + 8)) & 0x3F];
+    while (out.size() % 4) out += '=';
+    return out;
+}
+
+// Decodes up to the first '='; a character outside the alphabet (a line
+// break, a space) is passed over.
+inline std::string base64_decode(const char* in, size_t n) {
+    std::string out;
+    out.reserve(n / 4 * 3 + 3);
+    unsigned val = 0;
+    int bits = -8;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)in[i];
+        if (c == '=') break;
+        int v = c >= 'A' && c <= 'Z' ? c - 'A'
+              : c >= 'a' && c <= 'z' ? c - 'a' + 26
+              : c >= '0' && c <= '9' ? c - '0' + 52
+              : c == '+' ? 62 : c == '/' ? 63 : -1;
+        if (v < 0) continue;
+        val = (val << 6) + (unsigned)v;
+        bits += 6;
+        if (bits >= 0) { out += (char)((val >> bits) & 0xFF); bits -= 8; }
+    }
+    return out;
+}
 }  // namespace jdb_crypto

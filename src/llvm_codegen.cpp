@@ -913,6 +913,8 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_tagged_arr_set", "__jdrt_tagged_arr_set", void_type,
         {i8_ptr_type, i64_type, i32_type, i64_type, i64_type, i32_type}, -1);
+    reg("jdb_tagged_arr_set", "__tagged_arr_set", void_type,
+        {i64_type, i32_type, i64_type, i64_type, i32_type}, -1);
     reg("jdrt_tagged_index", "__jdrt_tagged_index", i32_type,
         {i8_ptr_type, i64_type, i32_type, i64_type, i32_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_foreach_begin", "__jdrt_foreach_begin", i64_type,
@@ -1407,6 +1409,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (all_str) string_array_vars.insert(s.var_name);
                 else if (any_str && !any_nested) mixed_array_vars.insert(s.var_name);
                 if (all_str || (any_str && !any_nested)) top_literal_arrays.insert(s.var_name);
+                if (!any_str) number_array_vars.insert(s.var_name);
+            }
+            if (s.kind == StmtKind::DIM && s.expr && s.expr->kind == ExprKind::CALL) {
+                std::string u = s.expr->func_name;
+                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                if (u == "IOTA" || u == "ZEROS" || u == "ONES" || u == "RANGE" || u == "LINSPACE")
+                    number_array_vars.insert(s.var_name);
             }
         }
     };
@@ -8575,16 +8584,19 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             v = codegen_expr(*stmt.expr);
         }
         auto [bits, tag] = tagged_bits_of(v);
-        auto& set_fn = runtime_funcs["__jdrt_tagged_arr_set"];
-        LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
-        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
-        LLVMValueRef args[] = { rt, base_bits, base_tag, idx, bits, tag };
-        LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 6, "");
+        auto& set_fn = runtime_funcs["__tagged_arr_set"];
+        LLVMValueRef args[] = { base_bits, base_tag, idx, bits, tag };
+        LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 5, "");
+        emit_err_code_branch();
         if (adopt) rc_adopt(base_bits, v);
         if (v.tag == JD_TAG_ARR && !stmt.var_name.empty())
             array_array_vars.insert(stmt.var_name);
-        if (v.tag == JD_TAG_STR && !stmt.var_name.empty())
-            string_array_vars.insert(stmt.var_name);
+        if (v.tag == JD_TAG_STR && !stmt.var_name.empty() && !mixed_array_vars.count(stmt.var_name)) {
+            if (string_array_vars.count(stmt.var_name) || !holds_non_strings(stmt.var_name))
+                string_array_vars.insert(stmt.var_name);
+            else
+                mixed_array_vars.insert(stmt.var_name);
+        }
         return;
     }
 
@@ -8784,13 +8796,19 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     // entry, later `names$[i]` reads returned the raw f64 (= integer 0 in
     // PRINT) instead of the original char*. The runtime flag matters too -
     // map/array-iteration paths consult it to know cells hold pointers.
+    // An array the compiler knows to hold something else keeps its other
+    // cells: it reads per cell from then on, its cells carrying their tags.
     if (val_tv.tag == JD_TAG_STR && stmt.var_name.size() &&
-        stmt.index_chain.size() == 1) {
-        string_array_vars.insert(stmt.var_name);
-        auto* mark = get_runtime_func("__arr_set_string_elems");
-        if (mark) {
-            LLVMValueRef margs[] = { arr_ptr };
-            LLVMBuildCall2(builder, mark->fn_type, mark->fn, margs, 1, "");
+        stmt.index_chain.size() == 1 && !mixed_array_vars.count(stmt.var_name)) {
+        if (string_array_vars.count(stmt.var_name) || !holds_non_strings(stmt.var_name)) {
+            string_array_vars.insert(stmt.var_name);
+            auto* mark = get_runtime_func("__arr_set_string_elems");
+            if (mark) {
+                LLVMValueRef margs[] = { arr_ptr };
+                LLVMBuildCall2(builder, mark->fn_type, mark->fn, margs, 1, "");
+            }
+        } else {
+            mixed_array_vars.insert(stmt.var_name);
         }
     }
 }

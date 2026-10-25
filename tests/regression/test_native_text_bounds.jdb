@@ -1,0 +1,77 @@
+' Text that the runtime builds grows to its full length, and values of the
+' wrong kind are not read as pointers: the text of a map longer than 8 KB,
+' CODEC.BASE64_DECODE$ of input that is not a multiple of 4 or holds line
+' breaks and other characters outside the alphabet, PUSH after POP into an
+' array that keeps per-cell kinds, JOIN of mixed cells, VAL of a number,
+' arithmetic on map values that are strings, a position written on a value
+' that is no array, through an untyped parameter, and a map written back
+' into the cell it came from.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM m = {}
+m{"k"} = SPACE$(9000) + "one"
+m{"j"} = SPACE$(9000) + "two"
+DIM holder AS ARRAY = [m]
+DIM t AS STRING = FRMV$(holder)
+Check(LEN(t) > 18000 ANDALSO INSTR(t, "two") >= 0, "the text of a long map")
+
+Check(CODEC.BASE64_DECODE$("QUJDR") = "ABC", "base64 of a length that is not a multiple of 4")
+Check(CODEC.BASE64_DECODE$("QUJD" + CHR$(13) + CHR$(10) + "REVG") = "ABCDEF", "base64 across a line break")
+Check(CODEC.BASE64_DECODE$("QU~JD") = "ABC", "base64 passes over a character outside the alphabet")
+Check(CODEC.BASE64_ENCODE$("ABCDEF") = "QUJDREVG", "base64 encode")
+Check(CODEC.BASE64_DECODE$(CODEC.BASE64_ENCODE$("x")) = "x", "base64 round trip with padding")
+
+DIM a AS ARRAY = [1, 2, 3, 4, 5]
+DIM p = POP(a)
+a[0] = "q"
+PUSH a, 7
+Check(LEN(a) = 5 ANDALSO a[0] = "q" ANDALSO a[4] = 7, "PUSH after POP keeps every cell's kind")
+
+Check(JOIN([1.5, "x", TRUE], "-") = "1.5-x-TRUE", "JOIN of mixed cells")
+Check(VAL("2.5") + 1 = 3.5, "VAL of a string")
+
+DIM mm = {"s": "abc", "a": "x", "b": 2}
+Check(mm{"a"} + mm{"b"} = "x2", "string + number out of a map")
+DIM ss = mm{"s"}
+DIM caught AS INTEGER = 0
+TRY
+    ss[0] = 1
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "a position written on a string is an error")
+
+SUB PutFirst(holder, key$, value)
+    DIM cells = holder{key$}
+    cells[0] = value
+ENDSUB
+DIM box = {"cells": [0, 0]}
+PutFirst(box, "cells", "set")
+DIM bc = box{"cells"}
+Check(bc[0] = "set", "a position written through an untyped parameter")
+
+SUB WriteBack(deck)
+    DIM slides = deck{"slides"}
+    DIM s = slides[LEN(slides) - 1]
+    s{"notes"} = "kept"
+    slides[LEN(slides) - 1] = s
+ENDSUB
+DIM deck = {"slides": []}
+DIM first = {"notes": ""}
+DIM ds = deck{"slides"}
+PUSH ds, first
+WriteBack(deck)
+DIM dsl = deck{"slides"}
+DIM last = dsl[0]
+Check(last{"notes"} = "kept", "a map written back into the cell it came from")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

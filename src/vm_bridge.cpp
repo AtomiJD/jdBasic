@@ -1586,9 +1586,15 @@ JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
     }
     // Absent stays absent: a base that is not there, and a key that is
     // not in the map, both read as NONE rather than as the integer zero.
-    if (val_tag == jd_tag(JdTag::NONE)) return jd_tag(JdTag::NONE);
+    // A value that is no map has no keys. An untyped parameter passes a map
+    // as a number, so a number tag names a map when its bits are a pointer.
+    if (val_tag != jd_tag(JdTag::NATIVE_MAP)) {
+        bool numeric = val_tag == jd_tag(JdTag::F64) || val_tag == jd_tag(JdTag::I64);
+        if (!numeric || (uint64_t)val_bits < 4096 || (uint64_t)val_bits >= (1ULL << 47))
+            return jd_tag(JdTag::NONE);
+    }
     auto* m = (JdbMap*)(intptr_t)val_bits;
-    if (!m) return jd_tag(JdTag::NONE);
+    if (!m || !key) return jd_tag(JdTag::NONE);
     int64_t idx = -1;
     for (int64_t i = 0; i < m->count; i++) {
         if (m->keys[i] && strcmp(m->keys[i], key) == 0) { idx = i; break; }
@@ -1749,6 +1755,10 @@ JDRT_API void jdrt_tagged_arr_set(JdRT handle, int64_t val_bits, int32_t val_tag
         return;
     }
     if (val_tag == jd_tag(JdTag::NONE)) return;
+    if (val_tag != jd_tag(JdTag::ARR)) {
+        rt->last_error = "Cannot index-assign into this type";
+        return;
+    }
     // A native array: store the cell the way the runtime's own setter does,
     // a number as itself and a pointer as its bits, with the cell's tag.
     auto* arr = (JdbArray*)(intptr_t)val_bits;

@@ -2,6 +2,7 @@
 
 #include "vm_internal.h"
 #include "jdv.h"
+#include "jdb_crypto.h"
 
 // ── SHA-256 (FIPS 180-4) ────────────────────────────────────
 // Byte oriented, so a key or message carrying a NUL is hashed in full.
@@ -386,38 +387,13 @@ void VM::register_codec_builtins() {
     // ── CODEC: Encoding & Hashing ───────────────────────────
 
     register_native("CODEC.BASE64_ENCODE$", [](const std::vector<Value>& args) -> Value {
-        static const char t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         const std::string& in = args[0].as_string()->data;
-        std::string out;
-        unsigned val = 0;
-        int bits = -6;
-        for (unsigned char c : in) {
-            val = (val << 8) + c; bits += 8;
-            while (bits >= 0) { out += t[(val >> bits) & 0x3F]; bits -= 6; }
-        }
-        if (bits > -6) out += t[((val << 8) >> (bits + 8)) & 0x3F];
-        while (out.size() % 4) out += '=';
-        return Value::make_string(out);
+        return Value::make_string(jdb_crypto::base64_encode(in.data(), in.size()));
     });
 
     register_native("CODEC.BASE64_DECODE$", [](const std::vector<Value>& args) -> Value {
-        static const int d[] = {
-            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
-            -1,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
-            -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51
-        };
         const std::string& in = args[0].as_string()->data;
-        std::string out;
-        unsigned val = 0;
-        int bits = -8;
-        for (unsigned char c : in) {
-            if (c == '=' || c >= 128) break;
-            int v = d[c]; if (v < 0) continue;
-            val = (val << 6) + v; bits += 6;
-            if (bits >= 0) { out += (char)((val >> bits) & 0xFF); bits -= 8; }
-        }
-        return Value::make_string(out);
+        return Value::make_string(jdb_crypto::base64_decode(in.data(), in.size()));
     });
 
     register_native("CODEC.SHA256$", [](const std::vector<Value>& args) -> Value {
