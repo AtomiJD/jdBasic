@@ -596,6 +596,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_apply_sfii", "__arr_apply_sfii", i8_ptr_type, {i8_ptr_type, i64_type, i64_type, i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_array_len_shape",   "__arr_len_shape",   i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_matmul",            "__matmul",          i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
+    reg("jdb_rc_cell_out",       "__rc_cell_out",     void_type,   {i64_type}, -1);
     reg("jdb_print_array_elem",  "__print_arr_elem",  void_type, {i8_ptr_type, i64_type}, -1);
     reg("jdb_array_str_concat",  "__arr_str_concat",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
     reg("jdb_trace",             "__trace",           void_type, {i8_ptr_type, i64_type}, -1);
@@ -803,6 +804,7 @@ void LLVMCodegen::declare_runtime_functions() {
     // The element a higher-order loop hands to a lambda, and the tag of its answer.
     reg("jdb_hof_elem_tag", "__hof_elem_tag", i32_type, {}, JD_TAG_I64);
     reg("jdb_hof_elem_bits", "__hof_elem_bits", i64_type, {}, JD_TAG_I64);
+    reg("jdb_hof_arg_tag", "__hof_arg_tag", i32_type, {i64_type}, JD_TAG_I64);
     reg("jdb_hof_set_ret", "__hof_set_ret", void_type, {i32_type}, -1);
     reg("jdb_hof_ret_tagged", "__hof_ret_tagged", f64_type, {i64_type, i32_type}, JD_TAG_F64);
     // The captured values of a LAMBDA USE(...): one closure per instance, the
@@ -5441,6 +5443,23 @@ LLVMValueRef LLVMCodegen::array_or_single(const TypedValue& tv) {
     return rc_born(p, JD_TAG_ARR);
 }
 
+// A cell the bridge read out of a native array and called an array: the
+// runtime enters it into the counts if its matrix still held it outside them.
+void LLVMCodegen::emit_cell_out(LLVMValueRef bits, LLVMValueRef tag) {
+    if (!rc_on || !bits || !tag) return;
+    LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, tag,
+        LLVMConstInt(i32_type, JD_TAG_ARR, 0), "co_isarr");
+    LLVMBasicBlockRef bb_o = LLVMAppendBasicBlock(current_fn, "co.out");
+    LLVMBasicBlockRef bb_e = LLVMAppendBasicBlock(current_fn, "co.end");
+    LLVMBuildCondBr(builder, is_arr, bb_o, bb_e);
+    LLVMPositionBuilderAtEnd(builder, bb_o);
+    auto& co = runtime_funcs["__rc_cell_out"];
+    LLVMValueRef a[] = { bits };
+    LLVMBuildCall2(builder, co.fn_type, co.fn, a, 1, "");
+    LLVMBuildBr(builder, bb_e);
+    LLVMPositionBuilderAtEnd(builder, bb_e);
+}
+
 void LLVMCodegen::emit_err_code_branch() {
     if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) return;
     auto ec_it = runtime_funcs.find("__err_rc");
@@ -9684,6 +9703,7 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
         LLVMValueRef gargs[] = { rt, walk_bits, walk_tag, idx, out };
         LLVMValueRef etag = LLVMBuildCall2(builder, ga.fn_type, ga.fn, gargs, 5, "fe_etag");
         LLVMValueRef ebits = LLVMBuildLoad2(builder, i64_type, out, "fe_ebits");
+        emit_cell_out(ebits, etag);
         if (iter_tag == JD_TAG_STR) {
             LLVMBuildStore(builder, runtime_to_str(ebits, etag), var_vi->alloca_val);
         } else {
@@ -11155,6 +11175,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef otag = LLVMBuildCall2(builder, gi.fn_type, gi.fn,
                                                    targs, 6, "gat_itag");
                 LLVMValueRef oval = LLVMBuildLoad2(builder, i64_type, out, "gat_ival");
+                emit_cell_out(oval, otag);
                 // A key read is a field read: a string is a new buffer, and so
                 // is an array out of a VM object. A position may be a cell
                 // the array still holds.
@@ -11196,6 +11217,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                                              idx_tv.val, idx_tv.runtime_tag, out };
                     LLVMValueRef tv_tag = LLVMBuildCall2(builder, gi.fn_type, gi.fn, targs, 6, "ti7tag");
                     LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "ti7val");
+                    emit_cell_out(tv_val, tv_tag);
                     return { tv_val, JD_TAG_RUNTIME, tv_tag };
                 });
                 // The same rule as a key read through the gather path above.
@@ -11220,6 +11242,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef targs[] = { rt, arr_tv.val, arr_tv.runtime_tag, idx, out };
                     LLVMValueRef tv_tag = LLVMBuildCall2(builder, ga.fn_type, ga.fn, targs, 5, "ia7tag");
                     LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "ia7val");
+                    emit_cell_out(tv_val, tv_tag);
                     return { tv_val, JD_TAG_RUNTIME, tv_tag };
                 });
             }
@@ -12919,13 +12942,19 @@ void LLVMCodegen::funcref_put_arg_tag(unsigned idx, LLVMValueRef tag) {
     LLVMBuildStore(builder, tag, funcref_arg_slot(idx));
 }
 
-// Reads and clears one slot; an unset slot reads as a number.
-LLVMValueRef LLVMCodegen::funcref_take_arg_tag(unsigned idx) {
+// Reads and clears one slot. An unset slot means a runtime higher-order
+// loop made the call, which knows the kind of the element it passed.
+LLVMValueRef LLVMCodegen::funcref_take_arg_tag(unsigned idx, LLVMValueRef bits) {
     if (idx >= kFuncrefTagSlots) return LLVMConstInt(i32_type, JD_TAG_F64, 0);
     LLVMValueRef slot = funcref_arg_slot(idx);
     LLVMValueRef t = LLVMBuildLoad2(builder, i32_type, slot, "fr_tag");
     LLVMBuildStore(builder, LLVMConstInt(i32_type, -1, 1), slot);
-    return funcref_wire_tag(t);
+    auto* hat = get_runtime_func("__hof_arg_tag");
+    LLVMValueRef a[] = { bits };
+    LLVMValueRef from_loop = LLVMBuildCall2(builder, hat->fn_type, hat->fn, a, 1, "fr_hoftag");
+    LLVMValueRef unset = LLVMBuildICmp(builder, LLVMIntEQ, t,
+        LLVMConstInt(i32_type, -1, 1), "fr_unset");
+    return funcref_wire_tag(LLVMBuildSelect(builder, unset, from_loop, t, "fr_tag2"));
 }
 
 // A pointer-shaped tag names what the punned bits hold; every other value
@@ -13124,7 +13153,7 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
             // ABI carries no tag; an indirect call site leaves the tag in
             // the side channel, any other caller leaves it unset and the
             // value is taken as a number.
-            LLVMValueRef tag = funcref_take_arg_tag(i);
+            LLVMValueRef tag = funcref_take_arg_tag(i, pun_f64_to_i64(p));
             inner_args.push_back(pun_f64_to_i64(p));
             inner_args.push_back(tag);
             continue;

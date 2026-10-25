@@ -1,0 +1,104 @@
+' The number rows of a matrix go with the matrix when nothing else points at
+' them, and stay where something does: a row copied into a variable, pushed
+' into another array, popped, kept by TAKE, read by FOR EACH, SELECT or a
+' FUNC, a row of a MATMUL answer. A row written over goes at once, a row of a
+' 3D array is no number row and keeps its own count. Every check reads after
+' the loop passes that free what nobody holds.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC RowSum(row)
+    RETURN SUM(row)
+ENDFUNC
+
+DIM i AS INTEGER
+
+' A row copied into a variable outlives the matrix it came from.
+DIM m AS ARRAY = [[0, 0], [0, 0]]
+DIM kept AS ARRAY = [0]
+FOR i = 1 TO 200
+    m = RESHAPE(IOTA(6) + i, [3, 2])
+    IF i = 42 THEN kept = m[1]
+NEXT i
+Check(LEN(kept) = 2 ANDALSO kept[0] = 45 ANDALSO kept[1] = 46, "row copied into a variable")
+Check(m[2][1] = 206, "last matrix read after the loop")
+
+' A row pushed into another array.
+DIM pile AS ARRAY = []
+FOR i = 1 TO 100
+    m = RESHAPE(IOTA(4) * i, [2, 2])
+    PUSH(pile, m[0])
+NEXT i
+Check(LEN(pile) = 100, "every pushed row is there")
+Check(pile[6][0] = 7 ANDALSO pile[6][1] = 14, "row pushed into another array")
+Check(pile[99][1] = 200, "last pushed row")
+
+' A row popped off the matrix.
+DIM popped AS ARRAY = [0]
+FOR i = 1 TO 100
+    m = RESHAPE(IOTA(6) + 10 * i, [3, 2])
+    IF i = 17 THEN popped = POP(m)
+NEXT i
+Check(LEN(popped) = 2 ANDALSO popped[0] = 175 ANDALSO popped[1] = 176, "popped row")
+
+' A row written over goes; the new row reads back.
+DIM w AS ARRAY = RESHAPE(IOTA(6), [3, 2])
+FOR i = 1 TO 300
+    w[1] = [i, i * 2]
+NEXT i
+Check(w[1][0] = 300 ANDALSO w[1][1] = 600, "row written over")
+Check(w[0][0] = 1 ANDALSO w[2][1] = 6, "rows beside the written one")
+
+' TAKE shares the rows it keeps.
+DIM top AS ARRAY = [0]
+FOR i = 1 TO 100
+    m = RESHAPE(IOTA(8) + i, [4, 2])
+    IF i = 23 THEN top = TAKE(2, m)
+NEXT i
+Check(LEN(top) = 2 ANDALSO top[1][0] = 26 ANDALSO top[1][1] = 27, "rows kept by TAKE")
+
+' FOR EACH and a FUNC read the rows.
+DIM total AS DOUBLE = 0
+DIM last_row AS ARRAY = [0]
+FOR i = 1 TO 50
+    m = RESHAPE(IOTA(6), [3, 2])
+    FOR EACH r IN m
+        total = total + RowSum(r)
+        last_row = r
+    NEXT r
+NEXT i
+Check(total = 50 * 21, "rows summed by a FUNC inside FOR EACH")
+Check(last_row[0] = 5 ANDALSO last_row[1] = 6, "FOR EACH row kept after the loop")
+
+' SELECT over the rows.
+DIM sums AS ARRAY = SELECT(RowSum@, RESHAPE(IOTA(6), [3, 2]))
+Check(LEN(sums) = 3 ANDALSO sums[0] = 3 ANDALSO sums[2] = 11, "SELECT over rows")
+
+' Rows of a MATMUL answer.
+DIM mrow AS ARRAY = [0]
+DIM a AS ARRAY = [[1, 2], [3, 4]]
+FOR i = 1 TO 100
+    m = MATMUL(a, [[i, 0], [0, i]])
+    IF i = 5 THEN mrow = m[1]
+NEXT i
+Check(mrow[0] = 15 ANDALSO mrow[1] = 20, "row of a MATMUL answer")
+
+' A 3D array: its rows hold rows and keep their own count.
+DIM cube AS ARRAY = [0]
+DIM plane AS ARRAY = [0]
+FOR i = 1 TO 60
+    cube = RESHAPE(IOTA(8) + i, [2, 2, 2])
+    IF i = 9 THEN plane = cube[1]
+NEXT i
+Check(LEN(plane) = 2 ANDALSO plane[1][1] = 17, "plane of a 3D array")
+Check(cube[1][1][1] = 68, "last cube read after the loop")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

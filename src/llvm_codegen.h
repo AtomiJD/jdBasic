@@ -216,7 +216,7 @@ private:
     LLVMValueRef funcref_ret_channel();
     LLVMValueRef funcref_arg_slot(unsigned idx);
     void funcref_put_arg_tag(unsigned idx, LLVMValueRef tag);
-    LLVMValueRef funcref_take_arg_tag(unsigned idx);
+    LLVMValueRef funcref_take_arg_tag(unsigned idx, LLVMValueRef bits);
     LLVMValueRef funcref_wire_tag(LLVMValueRef t);
     void emit_scalar_step_check(LLVMValueRef map_ptr, LLVMValueRef key, LLVMValueRef tag);
     LLVMValueRef build_builtin_funcref_wrapper(const std::string& fn_name, int arity);
@@ -385,6 +385,7 @@ private:
     // caller's check carries the error on, or abort when nobody is left.
     void emit_raise_exit();
     void emit_err_code_branch();
+    void emit_cell_out(LLVMValueRef bits, LLVMValueRef tag);
     void codegen_input(const Stmt& stmt);
 
     // LLVM types

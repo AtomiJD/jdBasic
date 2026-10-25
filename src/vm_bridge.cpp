@@ -382,6 +382,7 @@ struct JdbArrayFwd {
     int32_t flags;
     int8_t* elem_tags;
     int64_t capacity;
+    void* parent;
 };
 
 // flags bit 0: element doubles are pointers punned as f64.
@@ -777,6 +778,7 @@ JDRT_API void* jdrt_handle_to_hof_array(JdRT handle, int64_t h) {
     r->flags = 0;
     r->elem_tags = nullptr;
     r->capacity = 0;
+    r->parent = nullptr;
     auto it = rt->value_store.find(h);
     if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) return r;
     Value whole = it->second;
@@ -912,6 +914,7 @@ struct JdbArray {
     int32_t flags;
     int8_t* elem_tags;
     int64_t capacity;
+    JdbArray* parent;
 };
 
 // Inverse of jdbarray_to_value: walk a VM array, copy its numeric cells
@@ -924,6 +927,7 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     r->flags = 0;
     r->elem_tags = nullptr;
     r->capacity = 0;
+    r->parent = nullptr;
     if (v.type != ValueType::ARRAY) return r;
     auto* arr = v.as_array();
     r->length = (int64_t)arr->elements.size();
@@ -1925,7 +1929,7 @@ JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {
     const Value* v = obj_field(rt, h, key);
     if (!v) {
         auto* r = (JdbArray*)malloc(sizeof(JdbArray));
-        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr; r->capacity = 0;
+        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr; r->capacity = 0; r->parent = nullptr;
         return r;
     }
     return value_to_jdbarray(*v);
@@ -1943,7 +1947,7 @@ JDRT_API void* jdrt_call_typed_arr(JdRT handle, const char* name,
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         auto* r = (JdbArray*)malloc(sizeof(JdbArray));
-        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr; r->capacity = 0;
+        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr; r->capacity = 0; r->parent = nullptr;
         return r;
     }
 }

@@ -1,0 +1,88 @@
+' Element-wise operations on arrays of numbers answer what the shape rule
+' says, whichever path computes them: two matrices of one shape, a matrix
+' and a flat array as wide as its rows (either side), two flat arrays, a
+' number on either side, comparisons as truth values, unary math, RESHAPE
+' from a flat array and from rows, a ragged matrix, and arrays big enough to
+' be cut into bands across the cores.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM a AS ARRAY = [[1, 2, 3], [4, 5, 6]]
+DIM b AS ARRAY = [[10, 20, 30], [40, 50, 60]]
+DIM v AS ARRAY = [1, 4, 2]
+
+DIM s AS ARRAY = a + b
+Check(LEN(s) = 2 ANDALSO s[1][2] = 66 ANDALSO s[0][0] = 11, "matrix + matrix")
+DIM d AS ARRAY = b - a
+Check(d[0][1] = 18 ANDALSO d[1][0] = 36, "matrix - matrix keeps the order")
+DIM q AS ARRAY = a / v
+Check(q[0][0] = 1 ANDALSO q[0][1] = 0.5 ANDALSO q[1][2] = 3, "matrix / flat row")
+DIM ql AS ARRAY = v - a
+Check(ql[0][1] = 2 ANDALSO ql[1][0] = -3 ANDALSO ql[1][2] = -4, "flat row - matrix")
+DIM m AS ARRAY = a * 2
+Check(m[1][1] = 10, "matrix * number")
+DIM ml AS ARRAY = 10 - a
+Check(ml[0][0] = 9 ANDALSO ml[1][2] = 4, "number - matrix")
+DIM pw AS ARRAY = a ^ 2
+Check(pw[1][2] = 36, "matrix ^ number")
+DIM md AS ARRAY = a MOD 4
+Check(md[1][0] = 0 ANDALSO md[1][1] = 1, "matrix MOD number")
+
+DIM c AS ARRAY = a > 3
+Check(c[0][2] = 0 ANDALSO c[1][0] = 1, "matrix > number")
+Check(STR$(c[1][0]) = "TRUE", "a comparison answers truth values")
+DIM cm AS ARRAY = a = [[1, 0, 3], [0, 5, 0]]
+Check(cm[0][0] = 1 ANDALSO cm[0][1] = 0 ANDALSO cm[1][1] = 1, "matrix = matrix")
+
+DIM f1 AS ARRAY = [1, 2, 3, 4]
+DIM f2 AS ARRAY = [4, 3, 2, 1]
+DIM ff AS ARRAY = f1 * f2
+Check(ff[0] = 4 ANDALSO ff[3] = 4 ANDALSO ff[1] = 6, "flat * flat")
+
+DIM th AS ARRAY = TANH(a - a)
+Check(th[1][2] = 0, "TANH over rows")
+DIM sq AS ARRAY = SQR([[4, 9], [16, 25]])
+Check(sq[0][1] = 3 ANDALSO sq[1][1] = 5, "SQR over rows")
+
+DIM r1 AS ARRAY = RESHAPE([1, 2, 3], [2, 4])
+Check(r1[0][3] = 1 ANDALSO r1[1][0] = 2 ANDALSO r1[1][3] = 2, "RESHAPE cycles through the cells")
+DIM r2 AS ARRAY = RESHAPE(a, [3, 2])
+Check(r2[0][1] = 2 ANDALSO r2[1][0] = 3 ANDALSO r2[2][1] = 6, "RESHAPE of rows")
+DIM r3 AS ARRAY = RESHAPE(a, [6])
+Check(LEN(r3) = 6 ANDALSO r3[5] = 6, "RESHAPE of rows into one row")
+
+DIM rag AS ARRAY = [[1, 2], [3]]
+DIM rg AS ARRAY = rag + 1
+Check(rg[0][1] = 3 ANDALSO rg[1][0] = 4 ANDALSO LEN(rg[1]) = 1, "a ragged matrix")
+
+DIM n AS INTEGER = 20000
+DIM big AS ARRAY = RESHAPE(IOTA(n * 16) MOD 9, [n, 16])
+DIM w AS ARRAY = IOTA(16)
+DIM bw AS ARRAY = big * w + big
+DIM bt AS ARRAY = TANH(big)
+DIM bc AS ARRAY = big >= 4
+DIM r AS INTEGER = 0
+DIM k AS INTEGER = 0
+DIM ok AS INTEGER = 1
+FOR r = 0 TO n - 1 STEP 997
+    FOR k = 0 TO 15
+        IF bw[r][k] <> big[r][k] * (k + 1) + big[r][k] THEN ok = 0
+        IF ABS(bt[r][k] - TANH(big[r][k])) > 0.000000001 THEN ok = 0
+        IF bc[r][k] <> (big[r][k] >= 4) THEN ok = 0
+    NEXT k
+NEXT r
+Check(ok = 1, "banded matrix work")
+Check(big[n - 1][15] = (n * 16) MOD 9, "last cell of a banded RESHAPE")
+DIM bf AS ARRAY = IOTA(n * 16)
+DIM bff AS ARRAY = bf * 2 - bf
+Check(bff[0] = 1 ANDALSO bff[n * 16 - 1] = n * 16, "banded flat work")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

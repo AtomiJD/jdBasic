@@ -636,11 +636,24 @@ struct JdbArray {
                          // common no-tags case stays cheap.
     int64_t capacity;    // slots allocated in data (and elem_tags when
                          // present); jdb_array_push grows in place up to it.
+    JdbArray* parent;    // the matrix a row belongs to while no count knows
+                         // the row (JDB_ARR_IMPLICIT_ROW); null otherwise.
 };
 
 // Set on an array once a container written into one of its cells belongs to
 // it (jdb_rc_adopt); a cell written over then lets go of what it held.
 static const int32_t JDB_ARR_OWNS_CHILDREN = 1 << 12;
+// The rows of a fresh matrix are its alone and stay out of the counts: such
+// a row carries JDB_ARR_IMPLICIT_ROW and its matrix in `parent`, the matrix
+// JDB_ARR_IMPLICIT_ROWS, and the matrix frees them with itself. A row that is
+// handed out (a cell read, a POP, a higher-order call's element, another
+// array taking it) is entered into the counts first, owned by its matrix.
+static const int32_t JDB_ARR_IMPLICIT_ROW = 1 << 13;
+static const int32_t JDB_ARR_IMPLICIT_ROWS = 1 << 14;
+// Marks a row met once already during one rc_register_children pass.
+static const int32_t JDB_ARR_ROW_SEEN = 1 << 15;
+static void rc_cell_out(JdbArray* arr, int64_t idx);
+static void rc_implicit_overwrite(JdbArray* arr, int64_t idx);
 static void rc_disown_cell(const void* holder, double old);
 // A string POP copied out of an array that owns its cells: the original,
 // now past the end, is not reached by the array's own release.
@@ -655,6 +668,7 @@ JdbArray* jdb_array_new(int64_t size) {
     arr->flags = 0;
     arr->elem_tags = nullptr;
     arr->capacity = size;
+    arr->parent = nullptr;
     return arr;
 }
 
@@ -722,6 +736,7 @@ JdbArray* jdb_array_push(JdbArray* arr, double val, int32_t tag) {
 void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
     if (idx >= 0 && idx < arr->length) {
         rc_drop_cell_text(arr, idx);
+        if (arr->flags & JDB_ARR_IMPLICIT_ROWS) rc_implicit_overwrite(arr, idx);
         if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
         arr->data[idx] = val;
     }
@@ -746,8 +761,10 @@ static JDB_NOINLINE void jdb_index_out_of_bounds(int64_t idx) {
 }
 
 double jdb_array_get(JdbArray* arr, int64_t idx) {
-    if (idx >= 0 && idx < arr->length)
+    if (idx >= 0 && idx < arr->length) {
+        if (arr->flags & (1 | 8)) rc_cell_out(arr, idx);
         return arr->data[idx];
+    }
     jdb_index_out_of_bounds(idx);
     return 0.0;
 }
@@ -796,6 +813,7 @@ JdbArray* jdb_iota3(double n, double start, double step) {
 // via union). Caller knows the type via array flags. Returns 0 on empty.
 double jdb_array_pop(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0.0;
+    if (arr->flags & (1 | 8)) rc_cell_out(arr, arr->length - 1);
     double v = arr->data[arr->length - 1];
     arr->length--;
     return v;
@@ -819,6 +837,7 @@ char* jdb_array_pop_str(JdbArray* arr) {
 int64_t jdb_array_pop_tagged(JdbArray* arr, int32_t* out_tag) {
     if (out_tag) *out_tag = JD_TAG_NONE;
     if (!arr || arr->length == 0) return 0;
+    if (arr->flags & (1 | 8)) rc_cell_out(arr, arr->length - 1);
     int64_t idx = arr->length - 1;
     int32_t tag = JD_TAG_F64;
     extern int32_t jdb_array_classify_elem(JdbArray*, double);
@@ -1047,53 +1066,6 @@ double jdb_array_dot(JdbArray* a, JdbArray* b) {
     return s;
 }
 
-// Per-function array specializations for unary math. The previous path
-// (jdb_array_apply_ff with a function-pointer callback) prevented
-// inlining and SIMD vectorisation. Baking the scalar function in lets
-// the compiler inline std::sin / std::exp / etc. and emit a tight loop
-// the optimiser can vectorise on /O2 (or better with /fp:fast or
-// /arch:AVX2). The flags-bit-0 (nested array) case still recurses,
-// matching apply_ff's behaviour.
-#define JDB_ARRAY_FF(NAME, SCALAR_FN)                                    \
-    JdbArray* jdb_array_##NAME(JdbArray* arr) {                          \
-        if (!arr) return jdb_array_new(0);                               \
-        auto* r = jdb_array_new(arr->length);                            \
-        if (arr->flags & 1) {                                            \
-            r->flags |= 1;                                               \
-            for (int64_t i = 0; i < arr->length; i++) {                  \
-                union { double d; int64_t i; } u; u.d = arr->data[i];    \
-                JdbArray* inner = (JdbArray*)(intptr_t)u.i;              \
-                JdbArray* res = jdb_array_##NAME(inner);                 \
-                union { int64_t i; double d; } ur;                       \
-                ur.i = (int64_t)(intptr_t)res;                           \
-                r->data[i] = ur.d;                                       \
-            }                                                            \
-        } else {                                                         \
-            for (int64_t i = 0; i < arr->length; i++)                    \
-                r->data[i] = SCALAR_FN(arr->data[i]);                    \
-        }                                                                \
-        return r;                                                        \
-    }
-
-JDB_ARRAY_FF(sin,   sin)
-JDB_ARRAY_FF(cos,   cos)
-JDB_ARRAY_FF(tan,   tan)
-JDB_ARRAY_FF(asin,  asin)
-JDB_ARRAY_FF(acos,  acos)
-JDB_ARRAY_FF(atan,  atan)
-JDB_ARRAY_FF(sinh,  sinh)
-JDB_ARRAY_FF(cosh,  cosh)
-JDB_ARRAY_FF(tanh,  tanh)
-JDB_ARRAY_FF(exp,   exp)
-JDB_ARRAY_FF(log,   log)
-JDB_ARRAY_FF(log10, log10)
-JDB_ARRAY_FF(sqr,   sqrt)        // SQR is sqrt in jdBasic
-JDB_ARRAY_FF(abs,   fabs)
-JDB_ARRAY_FF(floor, floor)
-JDB_ARRAY_FF(ceil,  ceil)
-JDB_ARRAY_FF(round, round)
-JDB_ARRAY_FF(trunc, trunc)
-
 int64_t jdb_array_all(JdbArray* arr) {
     if (!arr) return 1;
     if (arr->flags & 1) {
@@ -1178,6 +1150,7 @@ void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
     arr->flags |= 8;  // bit 3: per-element tags present
     if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP)
         arr->flags |= 1;
+    if (arr->flags & JDB_ARR_IMPLICIT_ROWS) rc_implicit_overwrite(arr, idx);
     rc_drop_cell_text(arr, idx);
     if (tag == JD_TAG_STR) arr->flags |= 2;
     if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
@@ -1238,6 +1211,7 @@ double jdb_array_get_tagged(JdbArray* arr, int64_t idx, int32_t* out_tag) {
         jdb_index_out_of_bounds(idx);
         return 0.0;
     }
+    if (arr->flags & (1 | 8)) rc_cell_out(arr, idx);
     double v = arr->data[idx];
     if (out_tag) {
         if (arr->elem_tags && (arr->flags & 8)) {
@@ -1807,11 +1781,286 @@ static void shape_error(int64_t n, int64_t m) {
     jdb_err_set(msg, 11);
 }
 
+}  // extern "C": the band helpers and element-wise fast paths below are C++
+
+static unsigned mat_workers(double work) {
+    static const unsigned cores = (std::max)(1u, std::thread::hardware_concurrency());
+    if (work < 2.0e6) return 1;
+    return (unsigned)std::min<double>(cores, (std::max)(1.0, work / 1.0e6));
+}
+
+// Runs body(lo, hi) over [0, n) in up to `workers` bands at once.
+template <class F>
+static void mat_bands(int64_t n, unsigned workers, F body) {
+    if (workers <= 1 || n < 2) { body(0, n); return; }
+    if ((int64_t)workers > n) workers = (unsigned)n;
+    // A band that throws, or a thread that cannot start, is reported once
+    // every started thread is back.
+    std::atomic<bool> failed{ false };
+    std::vector<std::thread> pool;
+    int64_t step = (n + workers - 1) / workers;
+    int64_t done_to = step;
+    for (unsigned w = 1; w < workers; w++) {
+        int64_t lo = w * step, hi = (std::min)(n, lo + step);
+        if (lo >= hi) break;
+        try {
+            pool.emplace_back([=, &failed] {
+                try { body(lo, hi); } catch (...) { failed = true; }
+            });
+            done_to = hi;
+        } catch (...) {
+            break;
+        }
+    }
+    try {
+        body(0, (std::min)(n, step));
+        if (done_to < n) body(done_to, n);
+    } catch (...) {
+        failed = true;
+    }
+    for (auto& t : pool) t.join();
+    if (failed) throw std::bad_alloc();
+}
+
+// ── Element-wise work on arrays of numbers ──────────────────
+// A matrix here is rows that each are a flat array of numbers, all of one
+// width. Such operands skip the generic shape walk: each answer row is
+// computed in one loop, and a big answer is cut into row bands, one per core.
+static unsigned ew_workers(int64_t cells) {
+    static const unsigned cores = (std::max)(1u, std::thread::hardware_concurrency());
+    if (cells < 100000) return 1;
+    return (unsigned)(std::min<int64_t>)(cores, cells / 50000);
+}
+
+static inline bool ew_flat_numbers(const JdbArray* v) {
+    return v && !(v->flags & (1 | 2)) && !((v->flags & 8) && v->elem_tags);
+}
+
+// The width of a matrix of numbers, or -1 for anything else.
+static int64_t ew_matrix_width(const JdbArray* a) {
+    if (!a || a->length == 0 || !arr_nested(a) || ((a->flags & 8) && a->elem_tags)) return -1;
+    int64_t w = -1;
+    for (int64_t i = 0; i < a->length; i++) {
+        const JdbArray* r = decode_inner(a->data[i]);
+        if (!ew_flat_numbers(r)) return -1;
+        if (w < 0) w = r->length;
+        else if (r->length != w) return -1;
+    }
+    return w;
+}
+
+static inline const double* ew_row(const JdbArray* a, int64_t i) {
+    return decode_inner(a->data[i])->data;
+}
+
+// out[i] = x[i*xs] OP y[i*ys]; a stride of 0 repeats one value.
+static void ew_kernel(const double* x, int64_t xs, const double* y, int64_t ys,
+                      double* out, int64_t n, int op, bool cmp) {
+    if (cmp) {
+        for (int64_t i = 0; i < n; i++) out[i] = scalar_cmp(x[i * xs], y[i * ys], op);
+        return;
+    }
+    switch (op) {
+        case 0: for (int64_t i = 0; i < n; i++) out[i] = x[i * xs] + y[i * ys]; return;
+        case 1: for (int64_t i = 0; i < n; i++) out[i] = x[i * xs] - y[i * ys]; return;
+        case 2: for (int64_t i = 0; i < n; i++) out[i] = x[i * xs] * y[i * ys]; return;
+        default: for (int64_t i = 0; i < n; i++) out[i] = scalar_op(x[i * xs], y[i * ys], op); return;
+    }
+}
+
+// n answer rows of width w, row i filled by fill(i, cells). nullptr when a
+// band failed: the generic path then answers, and no exception reaches the
+// compiled program.
+template <class F>
+static JdbArray* ew_rows(int64_t n, int64_t w, bool as_bool, F fill) {
+    JdbArray* out = jdb_array_new(n);
+    out->flags |= 1;
+    try {
+        mat_bands(n, ew_workers(n * w), [&](int64_t lo, int64_t hi) {
+            for (int64_t i = lo; i < hi; i++) {
+                JdbArray* row = jdb_array_new(w);
+                if (as_bool) row->flags |= 4;
+                fill(i, row->data);
+                out->data[i] = encode_inner(row);
+            }
+        });
+    } catch (...) {
+        for (int64_t i = 0; i < n; i++) {
+            if (JdbArray* row = decode_inner(out->data[i])) {
+                free(row->data);
+                free(row);
+            }
+        }
+        free(out->data);
+        free(out);
+        return nullptr;
+    }
+    return out;
+}
+
+// A flat answer of n cells, filled band by band by fill(lo, hi, cells);
+// nullptr when a band failed.
+template <class F>
+static JdbArray* ew_flat(int64_t n, bool as_bool, F fill) {
+    JdbArray* out = jdb_array_new(n);
+    if (as_bool) out->flags |= 4;
+    try {
+        mat_bands(n, ew_workers(n), [&](int64_t lo, int64_t hi) { fill(lo, hi, out->data); });
+    } catch (...) {
+        free(out->data);
+        free(out);
+        return nullptr;
+    }
+    return out;
+}
+
+// Two arrays of numbers by the shape rule of jdb_shape::pair: two matrices
+// of one shape, a matrix and a flat array as wide as its rows, or two flat
+// arrays of one length. nullptr for anything else.
+static JdbArray* ew_pair(JdbArray* a, JdbArray* b, int op, bool cmp) {
+    int64_t wa = ew_matrix_width(a);
+    if (wa >= 0) {
+        int64_t n = a->length;
+        if (arr_nested(b)) {
+            if (b->length != n || ew_matrix_width(b) != wa) return nullptr;
+            return ew_rows(n, wa, cmp, [&](int64_t i, double* o) {
+                ew_kernel(ew_row(a, i), 1, ew_row(b, i), 1, o, wa, op, cmp);
+            });
+        }
+        if (!ew_flat_numbers(b) || b->length != wa) return nullptr;
+        return ew_rows(n, wa, cmp, [&](int64_t i, double* o) {
+            ew_kernel(ew_row(a, i), 1, b->data, 1, o, wa, op, cmp);
+        });
+    }
+    if (!ew_flat_numbers(a)) return nullptr;
+    if (arr_nested(b)) {
+        int64_t wb = ew_matrix_width(b);
+        if (wb < 0 || a->length != wb) return nullptr;
+        return ew_rows(b->length, wb, cmp, [&](int64_t i, double* o) {
+            ew_kernel(a->data, 1, ew_row(b, i), 1, o, wb, op, cmp);
+        });
+    }
+    if (!ew_flat_numbers(b) || a->length != b->length) return nullptr;
+    return ew_flat(a->length, cmp, [&](int64_t lo, int64_t hi, double* o) {
+        ew_kernel(a->data + lo, 1, b->data + lo, 1, o + lo, hi - lo, op, cmp);
+    });
+}
+
+// An array of numbers and one number; nullptr for any other array.
+static JdbArray* ew_spread(JdbArray* a, double s, int op, bool scalar_left, bool cmp) {
+    auto run = [&](const double* x, double* o, int64_t n) {
+        if (scalar_left) ew_kernel(&s, 0, x, 1, o, n, op, cmp);
+        else ew_kernel(x, 1, &s, 0, o, n, op, cmp);
+    };
+    int64_t w = ew_matrix_width(a);
+    if (w >= 0)
+        return ew_rows(a->length, w, cmp, [&](int64_t i, double* o) { run(ew_row(a, i), o, w); });
+    if (!ew_flat_numbers(a)) return nullptr;
+    return ew_flat(a->length, cmp, [&](int64_t lo, int64_t hi, double* o) {
+        run(a->data + lo, o + lo, hi - lo);
+    });
+}
+
+// A pure function of one number over an array of numbers; nullptr for any
+// other array.
+template <class F>
+static JdbArray* ew_apply(JdbArray* a, F fn) {
+    int64_t w = ew_matrix_width(a);
+    if (w >= 0) {
+        return ew_rows(a->length, w, false, [&](int64_t i, double* o) {
+            const double* x = ew_row(a, i);
+            for (int64_t j = 0; j < w; j++) o[j] = fn(x[j]);
+        });
+    }
+    if (!ew_flat_numbers(a)) return nullptr;
+    return ew_flat(a->length, false, [&](int64_t lo, int64_t hi, double* o) {
+        for (int64_t j = lo; j < hi; j++) o[j] = fn(a->data[j]);
+    });
+}
+
+// RESHAPE of an array of numbers into rows: the cells are read straight from
+// the source, in order and again from the start. nullptr for anything else.
+static JdbArray* ew_reshape(JdbArray* src, const std::vector<int64_t>& dims) {
+    if (dims.size() != 2) return nullptr;
+    const double* cells = nullptr;
+    int64_t n = 0;
+    std::vector<double> joined;
+    if (ew_flat_numbers(src)) {
+        cells = src->data;
+        n = src->length;
+    } else {
+        int64_t w = ew_matrix_width(src);
+        if (w < 0) return nullptr;
+        n = src->length * w;
+        try { joined.resize((size_t)n); } catch (...) { return nullptr; }
+        for (int64_t i = 0; i < src->length && w > 0; i++)
+            memcpy(joined.data() + i * w, ew_row(src, i), (size_t)w * sizeof(double));
+        cells = joined.data();
+    }
+    if (n == 0) return nullptr;
+    int64_t rows = (std::max)((int64_t)0, dims[0]), cols = (std::max)((int64_t)0, dims[1]);
+    return ew_rows(rows, cols, false, [&](int64_t i, double* o) {
+        int64_t k = (i % n) * (cols % n) % n;
+        for (int64_t j = 0; j < cols; j++) {
+            o[j] = cells[k];
+            if (++k == n) k = 0;
+        }
+    });
+}
+
+extern "C" {
+
+// Unary math with the scalar function baked in, so the compiler inlines it
+// into the loop. Arrays of numbers go through ew_apply; anything else
+// recurses its rows.
+#define JDB_ARRAY_FF(NAME, SCALAR_FN)                                    \
+    JdbArray* jdb_array_##NAME(JdbArray* arr) {                          \
+        if (!arr) return jdb_array_new(0);                               \
+        if (JdbArray* fast = ew_apply(arr, [](double x) { return SCALAR_FN(x); })) \
+            return fast;                                                 \
+        auto* r = jdb_array_new(arr->length);                            \
+        if (arr->flags & 1) {                                            \
+            r->flags |= 1;                                               \
+            for (int64_t i = 0; i < arr->length; i++) {                  \
+                union { double d; int64_t i; } u; u.d = arr->data[i];    \
+                JdbArray* inner = (JdbArray*)(intptr_t)u.i;              \
+                JdbArray* res = jdb_array_##NAME(inner);                 \
+                union { int64_t i; double d; } ur;                       \
+                ur.i = (int64_t)(intptr_t)res;                           \
+                r->data[i] = ur.d;                                       \
+            }                                                            \
+        } else {                                                         \
+            for (int64_t i = 0; i < arr->length; i++)                    \
+                r->data[i] = SCALAR_FN(arr->data[i]);                    \
+        }                                                                \
+        return r;                                                        \
+    }
+
+JDB_ARRAY_FF(sin,   sin)
+JDB_ARRAY_FF(cos,   cos)
+JDB_ARRAY_FF(tan,   tan)
+JDB_ARRAY_FF(asin,  asin)
+JDB_ARRAY_FF(acos,  acos)
+JDB_ARRAY_FF(atan,  atan)
+JDB_ARRAY_FF(sinh,  sinh)
+JDB_ARRAY_FF(cosh,  cosh)
+JDB_ARRAY_FF(tanh,  tanh)
+JDB_ARRAY_FF(exp,   exp)
+JDB_ARRAY_FF(log,   log)
+JDB_ARRAY_FF(log10, log10)
+JDB_ARRAY_FF(sqr,   sqrt)        // SQR is sqrt in jdBasic
+JDB_ARRAY_FF(abs,   fabs)
+JDB_ARRAY_FF(floor, floor)
+JDB_ARRAY_FF(ceil,  ceil)
+JDB_ARRAY_FF(round, round)
+JDB_ARRAY_FF(trunc, trunc)
+
 static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op);
 
 // arr OP scalar (recursive for nested arrays, broadcasts scalar to all leaves)
 static JdbArray* arr_scalar_op(JdbArray* a, double s, int op, bool scalar_left) {
     if (!a) return jdb_array_new(0);
+    if (JdbArray* fast = ew_spread(a, s, op, scalar_left, false)) return fast;
     auto* r = jdb_array_new(a->length);
     if ((a->flags & 1) && !(a->flags & 2)) {
         r->flags |= 1;
@@ -1835,6 +2084,7 @@ extern "C" void jdb_array_set_bool_elems(JdbArray* arr);
 // arr CMP scalar (recursive)
 static JdbArray* arr_cmp_scalar(JdbArray* a, double s, int op) {
     if (!a) return jdb_array_new(0);
+    if (JdbArray* fast = ew_spread(a, s, op, false, true)) return fast;
     auto* r = jdb_array_new(a->length);
     if ((a->flags & 1) && !(a->flags & 2)) {
         r->flags |= 1;
@@ -1910,6 +2160,7 @@ static JdbArray* arr_pair(JdbArray* a, JdbArray* b, int op, bool cmp) {
         if (a->length != b->length) { shape_error(a->length, b->length); return jdb_array_new(0); }
         return cmp ? arr_cmp_arr(a, b, op) : arr_binop(a, b, op);
     }
+    if (JdbArray* fast = ew_pair(a, b, op, cmp)) return fast;
     jdb_shape::Op<RtShape> fn = cmp
         ? jdb_shape::Op<RtShape>([op](const double& x, const double& y) { return scalar_cmp(x, y, op); })
         : jdb_shape::Op<RtShape>([op](const double& x, const double& y) { return scalar_op(x, y, op); });
@@ -2596,6 +2847,8 @@ static bool rc_poison() {
 
 static void rc_remove(RcEntry* e);
 static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64_t gen);
+static JdbArray* rc_cell_row(const JdbArray* arr, int64_t idx);
+static void rc_free_implicit_row(JdbArray* row);
 
 // One cell of holder lets go of c: the owner's, else one of the holders
 // beyond it. FALSE when holder does not count for c.
@@ -2635,6 +2888,14 @@ static void rc_release_child(uintptr_t holder, uint64_t holder_gen, double bits)
 static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64_t gen) {
     if (kind == JD_TAG_ARR) {
         JdbArray* a = (JdbArray*)k;
+        // Its rows outside the counts are nobody else's.
+        if ((a->flags & JDB_ARR_IMPLICIT_ROWS) && a->data) {
+            for (int64_t i = 0; i < a->length; i++) {
+                JdbArray* row = rc_cell_row(a, i);
+                if (row && (row->flags & JDB_ARR_IMPLICIT_ROW) && row->parent == a)
+                    rc_free_implicit_row(row);
+            }
+        }
         // The containers its cells own go with it unless something else
         // counts them too.
         if ((a->flags & JDB_ARR_OWNS_CHILDREN) && a->data)
@@ -2701,15 +2962,125 @@ static void rc_forget(const void* p) {
 // matrix goes. A row that is registered already is somebody else's and is
 // left as it is. Only a caller that knows the cells are rows asks for this:
 // the pointer bit alone also marks an array of UDT objects.
+// A row its matrix still holds outside the counts, entered now: the matrix
+// owns it, as if it had been registered with the matrix. A row whose matrix
+// the counts do not know (freed by other means) stays as it is.
+static RcEntry* rc_materialize(JdbArray* row) {
+    if (!(row->flags & JDB_ARR_IMPLICIT_ROW) || !row->parent) return rc_find((uintptr_t)row);
+    JdbArray* p = row->parent;
+    RcEntry* pe = rc_find((uintptr_t)p);
+    if (!pe) return nullptr;
+    uint64_t pgen = pe->gen;
+    row->flags &= ~JDB_ARR_IMPLICIT_ROW;
+    row->parent = nullptr;
+    RcEntry* c = rc_insert((uintptr_t)row);
+    c->gen = g_rc.next_gen++;
+    c->rc = 1;
+    c->kind = JD_TAG_ARR;
+    c->pinned = 0;
+    c->owns_cells = 0;
+    c->owner = (uintptr_t)p;
+    c->owner_gen = pgen;
+    p->flags |= JDB_ARR_OWNS_CHILDREN;
+    return c;
+}
+
+// The array cell at idx as a row pointer, or null when the cell holds no
+// array. A cell the flags call a pointer may hold a UDT object, whose memory
+// is read only where a JdbArray keeps flags and parent.
+static JdbArray* rc_cell_row(const JdbArray* arr, int64_t idx) {
+    if (!arr || idx < 0 || idx >= arr->length || !arr->data) return nullptr;
+    if ((arr->flags & 8) && arr->elem_tags) {
+        if (arr->elem_tags[idx] != JD_TAG_ARR) return nullptr;
+    } else if (!(arr->flags & 1) || (arr->flags & 2)) {
+        return nullptr;
+    }
+    union { double d; int64_t i; } u; u.d = arr->data[idx];
+    return (uintptr_t)u.i < 2 ? nullptr : (JdbArray*)(intptr_t)u.i;
+}
+
+// An implicit row that is about to leave its matrix as a value. Its parent
+// must be an array the counts know that holds implicit rows, which the bits
+// of a UDT object read as a row would not name.
+static void rc_row_out(JdbArray* row) {
+    if (!row || !(row->flags & JDB_ARR_IMPLICIT_ROW) || !row->parent) return;
+    if (!g_rc.cap || !rc_ready()) return;
+    RcEntry* pe = rc_find((uintptr_t)row->parent);
+    if (!pe || pe->kind != JD_TAG_ARR || !(row->parent->flags & JDB_ARR_IMPLICIT_ROWS)) return;
+    rc_materialize(row);
+}
+
+static void rc_cell_out(JdbArray* arr, int64_t idx) {
+    if (!g_rc.cap) return;
+    rc_row_out(rc_cell_row(arr, idx));
+}
+
+// The program read a cell through the bridge, and the bridge called it an
+// array: the bits are a native array (or a UDT object) it now holds.
+extern "C" void jdb_rc_cell_out(int64_t row_bits) {
+    if (!g_rc.cap || (uint64_t)row_bits < 2) return;
+    rc_row_out((JdbArray*)(intptr_t)row_bits);
+}
+
+static void rc_free_implicit_row(JdbArray* row) {
+    row->flags &= ~JDB_ARR_IMPLICIT_ROW;
+    row->parent = nullptr;
+    if (rc_poison()) {
+        if (row->data) memset(row->data, 0xDD, (size_t)row->capacity * sizeof(double));
+        row->length = 0x7DDDDDDD;
+        row->data = nullptr;
+        return;
+    }
+    free(row->data);
+    free(row->elem_tags);
+    free(row);
+}
+
+// The cell idx of arr is written over: an implicit row it held goes now.
+static void rc_implicit_overwrite(JdbArray* arr, int64_t idx) {
+    if (!(arr->flags & JDB_ARR_IMPLICIT_ROWS)) return;
+    JdbArray* row = rc_cell_row(arr, idx);
+    if (row && (row->flags & JDB_ARR_IMPLICIT_ROW) && row->parent == arr) rc_free_implicit_row(row);
+}
+
 static void rc_register_children(uintptr_t parent_key, uint64_t parent_gen) {
     JdbArray* a = (JdbArray*)parent_key;
     if (!a->data || (a->flags & 2) || !((a->flags & 1) || a->elem_tags)) return;
     bool any = false;
+    bool seen_any = false;
     for (int64_t i = 0; i < a->length; i++) {
         if (a->elem_tags ? a->elem_tags[i] != JD_TAG_ARR : !(a->flags & 1)) continue;
         union { double d; int64_t i; } u; u.d = a->data[i];
         uintptr_t ck = (uintptr_t)u.i;
         if (ck < 2 || rc_find(ck)) continue;
+        JdbArray* row = (JdbArray*)ck;
+        if (row->flags & JDB_ARR_ROW_SEEN) {
+            // One row in two cells: it is counted, as it was before rows
+            // stayed outside the counts, so the matrix frees it once.
+            rc_materialize(row);
+            row->flags &= ~JDB_ARR_ROW_SEEN;
+            continue;
+        }
+        if (row->flags & JDB_ARR_IMPLICIT_ROW) {
+            // A row of another matrix stays that matrix's; one of this
+            // matrix is already counted as such.
+            if (row->parent != a) rc_row_out(row);
+            if (row->flags & JDB_ARR_IMPLICIT_ROW) {
+                row->parent = a;
+                row->flags |= JDB_ARR_ROW_SEEN;
+                a->flags |= JDB_ARR_IMPLICIT_ROWS;
+                seen_any = true;
+            }
+            continue;
+        }
+        if (!(row->flags & (1 | 8))) {
+            // A row of numbers belongs to this matrix without an entry.
+            row->flags |= JDB_ARR_IMPLICIT_ROW | JDB_ARR_ROW_SEEN;
+            row->parent = a;
+            a->flags |= JDB_ARR_IMPLICIT_ROWS;
+            seen_any = true;
+            continue;
+        }
         RcEntry* c = rc_insert(ck);
         c->gen = g_rc.next_gen++;
         c->rc = 1;
@@ -2722,11 +3093,19 @@ static void rc_register_children(uintptr_t parent_key, uint64_t parent_gen) {
         rc_register_children(ck, c->gen);
     }
     if (any) a->flags |= JDB_ARR_OWNS_CHILDREN;
+    if (seen_any) {
+        for (int64_t i = 0; i < a->length; i++)
+            if (JdbArray* row = rc_cell_row(a, i))
+                if (row->flags & JDB_ARR_ROW_SEEN) row->flags &= ~JDB_ARR_ROW_SEEN;
+    }
 }
 
 extern "C" void* jdb_rc_new(void* p, int32_t kind) {
     if (!p || !rc_ready()) return p;
     uintptr_t k = (uintptr_t)p;
+    // A row its matrix holds outside the counts is no fresh container: it
+    // is entered as its matrix's.
+    if (kind == JD_TAG_ARR && (((JdbArray*)p)->flags & JDB_ARR_IMPLICIT_ROW)) rc_row_out((JdbArray*)p);
     if (rc_find(k)) return p;
     RcEntry* e = rc_insert(k);
     uint64_t gen = g_rc.next_gen++;
@@ -3034,10 +3413,12 @@ typedef char* (*fn_sfi)(const char*, int64_t);
 typedef char* (*fn_sfii)(const char*, int64_t, int64_t);
 typedef int64_t (*fn_ifs)(const char*);
 
-// Numeric → numeric element-wise. Handles nested arrays recursively.
+// Numeric → numeric element-wise, rows recursed. The function is a pure math
+// builtin, so a big array of numbers is mapped band by band on every core.
 JdbArray* jdb_array_apply_ff(JdbArray* arr, void* fnp) {
     if (!arr) return jdb_array_new(0);
     fn_ff fn = (fn_ff)fnp;
+    if (JdbArray* fast = ew_apply(arr, fn)) return fast;
     auto* r = jdb_array_new(arr->length);
     if (arr->flags & 1) {
         // ptr elements (nested arrays)
@@ -3327,11 +3708,12 @@ static void own_string_leaves(JdbArray* a) {
 // start when they run out, in the dimensions of the shape.
 JdbArray* jdb_reshape(JdbArray* src, JdbArray* shape) {
     if (!src || !shape) return jdb_array_new(0);
+    std::vector<int64_t> dims;
+    for (int64_t i = 0; i < shape->length; i++) dims.push_back((int64_t)shape->data[i]);
+    if (JdbArray* fast = ew_reshape(src, dims)) return fast;
     std::vector<double> flat;
     jdb_shape::flatten<RtShape>(src, flat);
     if (flat.empty()) { jdb_err_set("RESHAPE: the array has no cells", 11); return jdb_array_new(0); }
-    std::vector<int64_t> dims;
-    for (int64_t i = 0; i < shape->length; i++) dims.push_back((int64_t)shape->data[i]);
     if (dims.empty()) return jdb_array_new(0);
     size_t idx = 0;
     JdbArray* out = jdb_shape::build<RtShape>(dims, 0, flat, idx);
@@ -3424,45 +3806,6 @@ static JdbMat mat_from(const JdbArray* a, bool flat, int64_t rows, int64_t cols)
         for (int64_t c = n; c < cols; c++) dst[c] = 0.0;
     }
     return m;
-}
-
-static unsigned mat_workers(double work) {
-    static const unsigned cores = (std::max)(1u, std::thread::hardware_concurrency());
-    if (work < 2.0e6) return 1;
-    return (unsigned)std::min<double>(cores, (std::max)(1.0, work / 1.0e6));
-}
-
-// Runs body(lo, hi) over [0, n) in up to `workers` bands at once.
-template <class F>
-static void mat_bands(int64_t n, unsigned workers, F body) {
-    if (workers <= 1 || n < 2) { body(0, n); return; }
-    if ((int64_t)workers > n) workers = (unsigned)n;
-    // A band that throws, or a thread that cannot start, is reported once
-    // every started thread is back.
-    std::atomic<bool> failed{ false };
-    std::vector<std::thread> pool;
-    int64_t step = (n + workers - 1) / workers;
-    int64_t done_to = step;
-    for (unsigned w = 1; w < workers; w++) {
-        int64_t lo = w * step, hi = (std::min)(n, lo + step);
-        if (lo >= hi) break;
-        try {
-            pool.emplace_back([=, &failed] {
-                try { body(lo, hi); } catch (...) { failed = true; }
-            });
-            done_to = hi;
-        } catch (...) {
-            break;
-        }
-    }
-    try {
-        body(0, (std::min)(n, step));
-        if (done_to < n) body(done_to, n);
-    } catch (...) {
-        failed = true;
-    }
-    for (auto& t : pool) t.join();
-    if (failed) throw std::bad_alloc();
 }
 
 static JdbArray* matmul_body(JdbArray* a, JdbArray* b, int32_t transpose_left, const char* fn) {
@@ -5410,6 +5753,7 @@ static thread_local int32_t g_hof_ret_depth = -1;
 
 // Publishes element i of arr for the lambda about to be called.
 static void hof_publish(JdbArray* arr, int64_t i) {
+    if (arr->flags & (1 | 8)) rc_cell_out(arr, i);
     int32_t t = (arr->flags & 8) && arr->elem_tags ? (int32_t)arr->elem_tags[i]
                                                    : (int32_t)jdb_tag_from_flags(arr->flags, arr->data[i]);
     union { double d; int64_t i; } u; u.d = arr->data[i];
@@ -5420,6 +5764,13 @@ static void hof_publish(JdbArray* arr, int64_t i) {
 
 int32_t jdb_hof_elem_tag(void) { return g_hof_elem_tag; }
 int64_t jdb_hof_elem_bits(void) { return g_hof_elem_bits; }
+
+// The kind of a value a higher-order loop passed through a FUNC's f64
+// wrapper: the published element's when the bits are its bits, else a number.
+int32_t jdb_hof_arg_tag(int64_t bits) {
+    if (g_hof_depth <= 0 || bits != g_hof_elem_bits) return JD_TAG_F64;
+    return g_hof_elem_tag;
+}
 void jdb_hof_set_ret(int32_t tag) { g_hof_ret_tag = tag; g_hof_ret_depth = g_hof_depth; }
 
 // A runtime-typed lambda answer as the f64 slot of the call, with its tag reported.
