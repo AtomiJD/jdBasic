@@ -35,11 +35,8 @@ if ($cmd -match '\[no-test\]') { exit 0 }
 $proj = $env:CLAUDE_PROJECT_DIR
 if (-not $proj) { exit 0 }
 
-$staged = @(git -C $proj diff --cached --name-only 2>$null)
-if ($cmd -match 'commit\s+(-\S*a|--all)') {
-  $staged += @(git -C $proj diff --name-only 2>$null)
-}
-$staged = $staged | Where-Object { $_ } | Select-Object -Unique
+. (Join-Path $PSScriptRoot "commit_files.ps1")
+$staged = Get-CommitFiles $cmd $proj
 if ($staged.Count -eq 0) { exit 0 }
 
 $codeFiles = @($staged | Where-Object { $_ -match '\.(jdb|cpp|cc|c|h|hpp)$' })

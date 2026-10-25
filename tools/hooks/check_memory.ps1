@@ -12,10 +12,8 @@ if ($cmd -notmatch 'git\s+commit') { exit 0 }
 $proj = $env:CLAUDE_PROJECT_DIR
 if (-not $proj) { exit 0 }
 
-$staged = @(git -C $proj diff --cached --name-only 2>$null)
-if ($cmd -match 'commit\s+(-\S*a|--all)') {
-  $staged += @(git -C $proj diff --name-only 2>$null)
-}
+. (Join-Path $PSScriptRoot "commit_files.ps1")
+$staged = Get-CommitFiles $cmd $proj
 $guarded = '^src/(llvm_codegen\.(cpp|h)|jdb_runtime\.cpp|vm_bridge\.cpp|builtin_sigs\.h)$'
 $hits = @($staged | Where-Object { $_ -match $guarded } | Select-Object -Unique)
 if ($hits.Count -eq 0) { exit 0 }

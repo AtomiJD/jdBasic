@@ -16,18 +16,12 @@ if ($cmd -match '\[review-ack\]') { exit 0 }
 $proj = $env:CLAUDE_PROJECT_DIR
 if (-not $proj) { exit 0 }
 
-$all = $cmd -match 'commit\s+(-\S*a|--all)'
-$names = @(git -C $proj diff --cached --name-only 2>$null)
-if ($all) { $names += @(git -C $proj diff --name-only 2>$null) }
-$code = @($names | Where-Object { $_ -and $_ -match '\.(cpp|cc|c|h|hpp|jdb|ps1|sh|py)$' -and $_ -notmatch '^tests/' } |
-          Select-Object -Unique)
+. (Join-Path $PSScriptRoot "commit_files.ps1")
+$names = Get-CommitFiles $cmd $proj
+$code = @($names | Where-Object { $_ -match '\.(cpp|cc|c|h|hpp|jdb|ps1|sh|py)$' -and $_ -notmatch '^tests/' })
 if ($code.Count -eq 0) { exit 0 }
 
-$diffArgs = @('-C', $proj, 'diff', '-U6')
-if (-not $all) { $diffArgs += '--cached' } else { $diffArgs += 'HEAD' }
-$diffArgs += '--'
-$diffArgs += $code
-$diff = (& git @diffArgs 2>$null) -join "`n"
+$diff = Get-CommitDiff $code $proj
 if (-not $diff) { exit 0 }
 $limit = 160000
 $cut = ""
@@ -82,7 +76,7 @@ $diff
   Push-Location $proj
   $verdict = $prompt | & claude -p --model claude-opus-5-5 --setting-sources user `
       --allowedTools "Read,Grep,Glob" --disallowedTools "Bash,Edit,Write,PowerShell" `
-      --no-session-persistence 2>&1 | Out-String
+      --no-session-persistence 2>$null | Out-String
   Pop-Location
   Remove-Item Env:JDB_REVIEW_ACTIVE
   if ($LASTEXITCODE -ne 0 -or -not $verdict.Trim()) {
