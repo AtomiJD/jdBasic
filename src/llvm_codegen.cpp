@@ -115,6 +115,18 @@ void LLVMCodegen::record_stored_lambda(VarInfo& vi, const Expr* e, const TypedVa
     if (!vi.lambda_default) vi.lambda_src = nullptr;
 }
 
+// Comparison op (0=eq,1=ne,2=and,3=or,4=lt,5=le,6=gt,7=ge) with its two
+// sides swapped.
+static int32_t mirror_cmp_op(int32_t op) {
+    switch (op) {
+        case 4: return 6;
+        case 5: return 7;
+        case 6: return 4;
+        case 7: return 5;
+        default: return op;
+    }
+}
+
 // LLVM slot type a parameter of the given JdTag is passed in: ptr-shaped tags
 // take i8*, integer-shaped ones i64, everything else f64.
 static bool is_handle_returner(const std::string& fn_name) {
@@ -8828,7 +8840,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                     LLVMValueRef gargs[] = { arr.val, idx.val };
                     LLVMValueRef gres = LLVMBuildCall2(builder, gather.fn_type,
                                                        gather.fn, gargs, 2, "pgather");
-                    gres = rc_born(gres, JD_TAG_ARR);
+                    gres = rc_born(gres, JD_TAG_ARR, true);
                     auto* frmv = get_runtime_func("__arr_text");
                     if (frmv) {
                         LLVMValueRef fargs[] = { gres };
@@ -11137,7 +11149,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                                                       i8_ptr_type, "gat_base");
                 LLVMValueRef gargs[] = { base, idx_tv.val };
                 return { rc_born(LLVMBuildCall2(builder, gather.fn_type, gather.fn,
-                                                gargs, 2, "gather7"), JD_TAG_ARR), JD_TAG_ARR };
+                                                gargs, 2, "gather7"), JD_TAG_ARR, true), JD_TAG_ARR };
             }
             // The index is a mask or a list of positions whose kind only the
             // running program knows - what a comparison on a runtime-tagged
@@ -11160,7 +11172,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMBuildIntToPtr(builder, idx_tv.val, i8_ptr_type, "gat_idx") };
                 LLVMValueRef gres = LLVMBuildCall2(builder, gather.fn_type, gather.fn,
                                                    gargs, 2, "gather7d");
-                gres = rc_born(gres, JD_TAG_ARR);
+                gres = rc_born(gres, JD_TAG_ARR, true);
                 LLVMValueRef gbits = LLVMBuildPtrToInt(builder, gres, i64_type, "gat_bits");
                 LLVMBuildBr(builder, bb_j);
                 LLVMBasicBlockRef g_end = LLVMGetInsertBlock(builder);
@@ -11275,7 +11287,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 auto& gather = runtime_funcs["__array_gather"];
                 LLVMValueRef gargs[] = { arr_ptr, idx_tv.val };
                 LLVMValueRef gres = LLVMBuildCall2(builder, gather.fn_type, gather.fn, gargs, 2, "gather");
-                gres = rc_born(gres, JD_TAG_ARR);
+                gres = rc_born(gres, JD_TAG_ARR, true);
                 return { gres, JD_TAG_ARR };
             }
 
@@ -12348,7 +12360,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 } else {
                     auto& sfn = runtime_funcs["__arr_cmp_scalar"];
                     LLVMValueRef sargs[] = { arr_tv.val, s_val,
-                        LLVMConstInt(i32_type, cmp_op, 0) };
+                        LLVMConstInt(i32_type, arr_is_lhs ? cmp_op : mirror_cmp_op(cmp_op), 0) };
                     s_res = LLVMBuildCall2(builder, sfn.fn_type, sfn.fn, sargs, 3, "dynop_cs");
                 }
                 LLVMBuildBr(builder, bb_join);
@@ -12400,7 +12412,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), JD_TAG_ARR };
             }
         } else {
-            // scalar OP arr - same string-array dispatch with sides flipped.
+            // scalar OP arr - same dispatch with sides flipped, so an
+            // ordering compare is mirrored: s < a is a > s.
+            cmp_op = mirror_cmp_op(cmp_op);
             if (cmp_op >= 0 && lhs.tag == JD_TAG_STR && expr.right &&
                 expr.right->kind == ExprKind::VARIABLE &&
                 string_array_vars.count(expr.right->str_val)) {

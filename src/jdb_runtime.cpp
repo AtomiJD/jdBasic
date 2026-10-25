@@ -69,7 +69,7 @@ extern "C" {
 
 static inline JdbArray* decode_inner(double val);
 static inline double encode_inner(JdbArray* arr);
-static void flatten_into(JdbArray* arr, std::vector<double>& out);
+static void flatten_into(JdbArray* arr, std::vector<double>& out, std::vector<int8_t>* tags = nullptr);
 
 // ── I/O ─────────────────────────────────────────────────────
 
@@ -658,6 +658,53 @@ static const int32_t JDB_ARR_ROW_SEEN = 1 << 15;
 static void rc_cell_out(JdbArray* arr, int64_t idx);
 static void rc_implicit_overwrite(JdbArray* arr, int64_t idx);
 static void rc_disown_cell(const void* holder, double old);
+
+// ── Cell kinds ──
+// What one cell holds. An array with per-cell tags (bit 3) says so per cell;
+// otherwise the array-wide bits describe every cell: bit 1 strings, bit 0
+// rows, and only a value that looks like a pointer can be a row.
+static inline bool arr_tagged(const JdbArray* a) { return (a->flags & 8) && a->elem_tags; }
+static inline bool bits_look_ptr(double d) {
+    union { double d; uint64_t u; } u; u.d = d;
+    return u.u != 0 && u.u < (1ULL << 47);
+}
+static inline int cell_kind(const JdbArray* a, int64_t i) {
+    if (arr_tagged(a)) return a->elem_tags[i];
+    if (a->flags & 2) return JD_TAG_STR;
+    if ((a->flags & 1) && bits_look_ptr(a->data[i])) return JD_TAG_ARR;
+    return JD_TAG_F64;
+}
+static inline bool kind_is_num(int k) {
+    return k == JD_TAG_F64 || k == JD_TAG_I64 || k == JD_TAG_BOOL || k == JD_TAG_DATE;
+}
+static inline bool cell_is_arr(const JdbArray* a, int64_t i) { return cell_kind(a, i) == JD_TAG_ARR; }
+static inline bool cell_is_text(const JdbArray* a, int64_t i) { return cell_kind(a, i) == JD_TAG_STR; }
+static inline bool cell_is_num(const JdbArray* a, int64_t i) { return kind_is_num(cell_kind(a, i)); }
+// Every cell is a number: no rows, no strings, no per-cell tags.
+static inline bool arr_all_num(const JdbArray* a) { return !(a->flags & 3) && !arr_tagged(a); }
+// Every cell is a row: an untagged matrix.
+static inline bool arr_all_rows(const JdbArray* a) { return (a->flags & 3) == 1 && !arr_tagged(a); }
+static JdbArray* settle_kinds(JdbArray* r);
+
+// Writes cell i together with its kind. The array keeps per-cell tags from
+// the first call on, the cells it had taking the kinds its flags gave them,
+// so cells of different kinds read back one by one.
+static void put_kind(JdbArray* r, int64_t i, double v, int tag) {
+    if (!arr_tagged(r)) {
+        int64_t cap = r->capacity > r->length ? r->capacity : r->length;
+        int8_t* tags = (int8_t*)malloc((size_t)(cap > 0 ? cap : 1));
+        if (!tags) { r->data[i] = 0.0; return; }
+        memset(tags, JD_TAG_F64, (size_t)(cap > 0 ? cap : 1));
+        for (int64_t j = 0; j < r->length; j++) tags[j] = (int8_t)cell_kind(r, j);
+        free(r->elem_tags);
+        r->elem_tags = tags;
+    }
+    r->flags |= 8;
+    if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP) r->flags |= 1;
+    if (tag == JD_TAG_STR) r->flags |= 2;
+    r->elem_tags[i] = (int8_t)tag;
+    r->data[i] = v;
+}
 // A string POP copied out of an array that owns its cells: the original,
 // now past the end, is not reached by the array's own release.
 static void rc_drop_popped_text(const void* arr, const char* s);
@@ -779,15 +826,17 @@ double jdb_array_get(JdbArray* arr, int64_t idx) {
 JdbArray* jdb_array_gather(JdbArray* arr, JdbArray* idx) {
     if (!arr || !idx) return jdb_array_new(0);
     auto* r = jdb_array_new(idx->length);
+    bool tagged = arr_tagged(arr);
+    r->flags = arr->flags & (1 | 2 | 4 | 16);
     for (int64_t i = 0; i < idx->length; i++) {
-        union { double d; int64_t v; } u; u.d = idx->data[i];
         // Indices arrive as plain f64s (IOTA, INT(...), arithmetic
-        // results); double→int64 conversion is the right read here.
-        int64_t k = (int64_t)idx->data[i]; (void)u;
-        if (k >= 0 && k < arr->length) r->data[i] = arr->data[k];
-        else                            r->data[i] = 0.0;
+        // results); double to int64 conversion is the right read here.
+        int64_t k = (int64_t)idx->data[i];
+        bool in = k >= 0 && k < arr->length;
+        double v = in ? arr->data[k] : 0.0;
+        if (tagged) put_kind(r, i, v, in ? arr->elem_tags[k] : JD_TAG_F64);
+        else r->data[i] = v;
     }
-    r->flags = arr->flags & ~JDB_ARR_OWNS_CHILDREN;
     return r;
 }
 
@@ -822,9 +871,18 @@ double jdb_array_pop(JdbArray* arr) {
     return v;
 }
 
+char* jdb_str(double val);
+int64_t jdb_str_cmp(const char* a, const char* b);
+
 // POP returning a string-typed element (array flags indicate string storage).
 char* jdb_array_pop_str(JdbArray* arr) {
     if (!arr || arr->length == 0) return _strdup("");
+    int k = cell_kind(arr, arr->length - 1);
+    if (k != JD_TAG_STR) {
+        double v = arr->data[arr->length - 1];
+        arr->length--;
+        return kind_is_num(k) ? jdb_str(v) : _strdup("");
+    }
     union { double d; int64_t i; } u;
     u.d = arr->data[arr->length - 1];
     arr->length--;
@@ -888,17 +946,57 @@ double jdb_stdev(JdbArray* arr) {
 
 // ── Array operations ────────────────────────────────────────
 
-double jdb_array_sum(JdbArray* arr) {
-    if (!arr) return 0.0;
-    double s = 0.0;
-    if (arr->flags & 1) {
-        for (int64_t i = 0; i < arr->length; i++)
-            s += jdb_array_sum(decode_inner(arr->data[i]));
-    } else {
-        for (int64_t i = 0; i < arr->length; i++) s += arr->data[i];
+static inline const char* decode_str(double val);
+
+// A fold over the leaves of an array, depth first. op: 0 sum, 1 product,
+// 2 min, 3 max, 4 any, 5 all. A string or another non-number leaf counts as
+// 0, except that ANY and ALL take a non-empty string as true.
+struct LeafFold { int op; double acc; bool seen; };
+
+static inline bool fold_one(LeafFold& f, double x) {
+    switch (f.op) {
+        case 0: f.acc += x; break;
+        case 1: f.acc *= x; break;
+        case 2: if (!f.seen || x < f.acc) f.acc = x; break;
+        case 3: if (!f.seen || x > f.acc) f.acc = x; break;
+        case 4: if (x != 0.0) { f.acc = 1.0; f.seen = true; return false; } break;
+        case 5: if (x == 0.0) { f.acc = 0.0; f.seen = true; return false; } break;
     }
-    return s;
+    f.seen = true;
+    return true;
 }
+
+static bool fold_leaves(JdbArray* a, LeafFold& f) {
+    if (!a) return true;
+    if (arr_all_num(a)) {
+        for (int64_t i = 0; i < a->length; i++)
+            if (!fold_one(f, a->data[i])) return false;
+        return true;
+    }
+    for (int64_t i = 0; i < a->length; i++) {
+        int k = cell_kind(a, i);
+        double x = 0.0;
+        if (k == JD_TAG_ARR) {
+            if (!fold_leaves(decode_inner(a->data[i]), f)) return false;
+            continue;
+        }
+        if (kind_is_num(k)) x = a->data[i];
+        else if (k == JD_TAG_STR && f.op >= 4) {
+            const char* s = decode_str(a->data[i]);
+            x = (s && *s) ? 1.0 : 0.0;
+        }
+        if (!fold_one(f, x)) return false;
+    }
+    return true;
+}
+
+static double fold_array(JdbArray* a, int op, double init) {
+    LeafFold f{ op, init, false };
+    fold_leaves(a, f);
+    return f.acc;
+}
+
+double jdb_array_sum(JdbArray* arr) { return fold_array(arr, 0, 0.0); }
 
 // Reduce a matrix along one axis. dim 0 walks down the rows and yields one
 // value per column; dim 1 walks across each row. Mirrors reduce_along_axis
@@ -913,9 +1011,9 @@ struct RtShape {
     using Arr = JdbArray*;
     using Val = double;
     static int64_t len(JdbArray* a) { return a ? a->length : 0; }
-    static bool is_row(JdbArray* a, int64_t) { return a && (a->flags & 1) && !(a->flags & 2); }
+    static bool is_row(JdbArray* a, int64_t i) { return a && ::cell_is_arr(a, i); }
     static JdbArray* row(JdbArray* a, int64_t i) { return decode_inner(a->data[i]); }
-    static double num(JdbArray* a, int64_t i) { return a->data[i]; }
+    static double num(JdbArray* a, int64_t i) { return ::cell_is_num(a, i) ? a->data[i] : 0.0; }
     static double cell(JdbArray* a, int64_t i) { return a->data[i]; }
     static JdbArray* make(int64_t n) { return jdb_array_new(n); }
     static void put_num(JdbArray* a, int64_t i, double d) { a->data[i] = d; }
@@ -934,9 +1032,7 @@ struct RtShape {
         a->data[i] = d;
     }
     // Whether cell i holds a row, by the per-cell tags or the array's flags.
-    static bool cell_is_row(JdbArray* a, int64_t i) {
-        return a->elem_tags ? a->elem_tags[i] == JD_TAG_ARR : is_row(a, i);
-    }
+    static bool cell_is_row(JdbArray* a, int64_t i) { return ::cell_is_arr(a, i); }
     // A copy of the array down to its leaves, sharing no row with the source;
     // string cells are shared, since an array handed to a builtin never frees
     // its own strings.
@@ -1004,58 +1100,10 @@ JdbArray* jdb_array_reduce_axis(JdbArray* arr, int64_t dim, int32_t op) {
     return jdb_shape::reduce_axis<RtShape>(arr, (int)dim, reduce_lane, op == 8 || op == 9).a;
 }
 
-double jdb_array_product(JdbArray* arr) {
-    if (!arr) return 1.0;
-    double s = 1.0;
-    if (arr->flags & 1) {
-        for (int64_t i = 0; i < arr->length; i++)
-            s *= jdb_array_product(decode_inner(arr->data[i]));
-    } else {
-        for (int64_t i = 0; i < arr->length; i++) s *= arr->data[i];
-    }
-    return s;
-}
-
-double jdb_array_min(JdbArray* arr) {
-    if (!arr || arr->length == 0) return 0.0;
-    if (arr->flags & 1) {
-        double m = jdb_array_min(decode_inner(arr->data[0]));
-        for (int64_t i = 1; i < arr->length; i++) {
-            double v = jdb_array_min(decode_inner(arr->data[i]));
-            if (v < m) m = v;
-        }
-        return m;
-    }
-    double m = arr->data[0];
-    for (int64_t i = 1; i < arr->length; i++) if (arr->data[i] < m) m = arr->data[i];
-    return m;
-}
-
-double jdb_array_max(JdbArray* arr) {
-    if (!arr || arr->length == 0) return 0.0;
-    if (arr->flags & 1) {
-        double m = jdb_array_max(decode_inner(arr->data[0]));
-        for (int64_t i = 1; i < arr->length; i++) {
-            double v = jdb_array_max(decode_inner(arr->data[i]));
-            if (v > m) m = v;
-        }
-        return m;
-    }
-    double m = arr->data[0];
-    for (int64_t i = 1; i < arr->length; i++) if (arr->data[i] > m) m = arr->data[i];
-    return m;
-}
-
-int64_t jdb_array_any(JdbArray* arr) {
-    if (!arr) return 0;
-    if (arr->flags & 1) {
-        for (int64_t i = 0; i < arr->length; i++)
-            if (jdb_array_any(decode_inner(arr->data[i]))) return 1;
-        return 0;
-    }
-    for (int64_t i = 0; i < arr->length; i++) if (arr->data[i] != 0.0) return 1;
-    return 0;
-}
+double jdb_array_product(JdbArray* arr) { return fold_array(arr, 1, 1.0); }
+double jdb_array_min(JdbArray* arr) { return fold_array(arr, 2, 0.0); }
+double jdb_array_max(JdbArray* arr) { return fold_array(arr, 3, 0.0); }
+int64_t jdb_array_any(JdbArray* arr) { return fold_array(arr, 4, 0.0) != 0.0; }
 
 // Dot product on flat double buffers, past the bridge's
 // jdbarray_to_value conversion, which allocates 2*N Values before the
@@ -1065,20 +1113,16 @@ double jdb_array_dot(JdbArray* a, JdbArray* b) {
     if (!a || !b) return 0.0;
     int64_t n = a->length < b->length ? a->length : b->length;
     double s = 0.0;
-    for (int64_t i = 0; i < n; i++) s += a->data[i] * b->data[i];
+    if (arr_all_num(a) && arr_all_num(b)) {
+        for (int64_t i = 0; i < n; i++) s += a->data[i] * b->data[i];
+        return s;
+    }
+    for (int64_t i = 0; i < n; i++)
+        if (cell_is_num(a, i) && cell_is_num(b, i)) s += a->data[i] * b->data[i];
     return s;
 }
 
-int64_t jdb_array_all(JdbArray* arr) {
-    if (!arr) return 1;
-    if (arr->flags & 1) {
-        for (int64_t i = 0; i < arr->length; i++)
-            if (!jdb_array_all(decode_inner(arr->data[i]))) return 0;
-        return 1;
-    }
-    for (int64_t i = 0; i < arr->length; i++) if (arr->data[i] == 0.0) return 0;
-    return 1;
-}
+int64_t jdb_array_all(JdbArray* arr) { return fold_array(arr, 5, 1.0) != 0.0; }
 
 struct RtShape;
 JdbArray* jdb_array_reverse(JdbArray* arr);
@@ -1264,40 +1308,40 @@ JdbArray* jdb_array_append_arr(JdbArray* a, JdbArray* b) {
     return r;
 }
 
-// FILLV: bulk in-place fill of a numeric array. memset-speed via std::fill_n
-// over the underlying double buffer. For nested arrays (flag bit 0 set),
-// recursively fills each inner array. Returns the same array for chaining.
+// FILLV: bulk in-place fill of an array, rows recursed; a string cell
+// becomes the number too, a map or a handle stays as it is. Returns the
+// same array for chaining.
 JdbArray* jdb_array_fillv(JdbArray* arr, double val) {
     if (!arr) return nullptr;
-    if (arr->flags & 1) {
-        for (int64_t i = 0; i < arr->length; i++)
-            jdb_array_fillv(decode_inner(arr->data[i]), val);
-    } else if (arr->length > 0) {
-        std::fill_n(arr->data, arr->length, val);
+    if (arr_all_num(arr)) {
+        if (arr->length > 0) std::fill_n(arr->data, arr->length, val);
+        return arr;
     }
+    for (int64_t i = 0; i < arr->length; i++) {
+        int k = cell_kind(arr, i);
+        if (k == JD_TAG_ARR) {
+            jdb_array_fillv(decode_inner(arr->data[i]), val);
+        } else if (kind_is_num(k)) {
+            arr->data[i] = val;
+        } else if (k == JD_TAG_STR) {
+            rc_drop_cell_text(arr, i);
+            put_kind(arr, i, val, JD_TAG_F64);
+        }
+    }
+    settle_kinds(arr);
     return arr;
 }
-// (no fprintf - keep runtime quiet)
 
-// COPYV helper: flatten src leaves into a flat double vector.
-static void copyv_flatten(JdbArray* arr, std::vector<double>& out) {
-    if (!arr) return;
-    if (arr->flags & 1) {
-        for (int64_t i = 0; i < arr->length; i++)
-            copyv_flatten(decode_inner(arr->data[i]), out);
-    } else {
-        out.insert(out.end(), arr->data, arr->data + arr->length);
-    }
-}
-
-// COPYV helper: walk dst leaves and assign cyclically from flat src vector.
+// COPYV helper: walk the number cells of dst and assign cyclically from
+// the flat src vector.
 static void copyv_assign(JdbArray* arr, const std::vector<double>& src, size_t& si) {
     if (!arr) return;
-    if (arr->flags & 1) {
-        for (int64_t i = 0; i < arr->length; i++)
+    bool plain = arr_all_num(arr);
+    for (int64_t i = 0; i < arr->length; i++) {
+        int k = plain ? JD_TAG_F64 : cell_kind(arr, i);
+        if (k == JD_TAG_ARR) {
             copyv_assign(decode_inner(arr->data[i]), src, si);
-    } else {
-        for (int64_t i = 0; i < arr->length; i++) {
+        } else if (kind_is_num(k)) {
             arr->data[i] = src[si % src.size()];
             si++;
         }
@@ -1305,37 +1349,43 @@ static void copyv_assign(JdbArray* arr, const std::vector<double>& src, size_t& 
 }
 
 // COPYV: bulk in-place copy from src into dst with cyclic broadcast if
-// shapes differ. Memcpy fast-path when both are flat with matching lengths;
-// otherwise recursive descent into nested structures. Never throws on size
-// mismatch - broadcasts/truncates/cycles instead.
+// shapes differ. Memcpy fast-path when both are flat numbers with matching
+// lengths; otherwise the number leaves of src fill the number cells of dst.
+// Never throws on size mismatch - broadcasts/truncates/cycles instead.
 JdbArray* jdb_array_copyv(JdbArray* dst, JdbArray* src) {
     if (!dst) return nullptr;
     if (!src) return dst;
-    // Fast path: both flat with matching lengths → single memcpy.
-    if (!(dst->flags & 1) && !(src->flags & 1) &&
+    if (arr_all_num(dst) && arr_all_num(src) &&
         dst->length == src->length && dst->length > 0) {
         std::memcpy(dst->data, src->data, dst->length * sizeof(double));
         return dst;
     }
-    // General path: flatten src into a leaf-vector, then cyclic-assign.
-    std::vector<double> src_flat;
-    copyv_flatten(src, src_flat);
-    if (src_flat.empty()) return dst;
-    size_t si = 0;
-    copyv_assign(dst, src_flat, si);
+    try {
+        std::vector<double> src_flat;
+        flatten_into(src, src_flat);
+        if (src_flat.empty()) return dst;
+        size_t si = 0;
+        copyv_assign(dst, src_flat, si);
+    } catch (...) {
+        jdb_err_set("COPYV: out of memory", 1);
+    }
     return dst;
 }
 
 int64_t jdb_array_count(JdbArray* arr, double val) {
     if (!arr) return 0;
     int64_t c = 0;
-    for (int64_t i = 0; i < arr->length; i++) if (arr->data[i] == val) c++;
+    bool plain = arr_all_num(arr);
+    for (int64_t i = 0; i < arr->length; i++)
+        if (arr->data[i] == val && (plain || cell_is_num(arr, i))) c++;
     return c;
 }
 
 int64_t jdb_array_indexof(JdbArray* arr, double val) {
     if (!arr) return -1;
-    for (int64_t i = 0; i < arr->length; i++) if (arr->data[i] == val) return i;
+    bool plain = arr_all_num(arr);
+    for (int64_t i = 0; i < arr->length; i++)
+        if (arr->data[i] == val && (plain || cell_is_num(arr, i))) return i;
     return -1;
 }
 
@@ -1346,8 +1396,9 @@ int64_t jdb_array_indexof_str(JdbArray* arr, const char* needle) {
     if (!arr || !needle) return -1;
     for (int64_t i = 0; i < arr->length; i++) {
         union { double d; int64_t i; } u; u.d = arr->data[i];
+        if (!cell_is_text(arr, i)) continue;
         const char* s = (const char*)(intptr_t)u.i;
-        if (s && strcmp(s, needle) == 0) return i;
+        if (s && jdb_str_cmp(s, needle) == 0) return i;
     }
     return -1;
 }
@@ -1357,8 +1408,9 @@ int64_t jdb_array_has_str(JdbArray* arr, const char* needle) {
     if (!arr || !needle) return 0;
     for (int64_t i = 0; i < arr->length; i++) {
         union { double d; int64_t i; } u; u.d = arr->data[i];
+        if (!cell_is_text(arr, i)) continue;
         const char* s = (const char*)(intptr_t)u.i;
-        if (s && strcmp(s, needle) == 0) return 1;
+        if (s && jdb_str_cmp(s, needle) == 0) return 1;
     }
     return 0;
 }
@@ -1478,7 +1530,7 @@ JdbArray* jdb_array_slice(JdbArray* arr, int64_t dim, int64_t idx) {
     }
     if (dim == 0) return RtShape::clone(RtShape::row(arr, idx));
     for (int64_t ro = 0; ro < rows; ro++) {
-        JdbArray* row = RtShape::row(arr, ro);
+        JdbArray* row = RtShape::is_row(arr, ro) ? RtShape::row(arr, ro) : nullptr;
         if (!row || idx >= row->length) {
             snprintf(msg, sizeof msg, "SLICE: row %lld has no column %lld", (long long)ro, (long long)idx);
             jdb_err_set(msg, 13);
@@ -1493,6 +1545,18 @@ JdbArray* jdb_array_slice(JdbArray* arr, int64_t dim, int64_t idx) {
 JdbArray* jdb_array_slice_band(JdbArray* arr, int64_t dim, int64_t start, int64_t count) {
     if (!arr) return jdb_array_new(0);
     if (dim == 0) return jdb_shape::take<RtShape>(arr, jdb_shape::span_indices(arr->length, start, count));
+    if (dim != 1) {
+        char msg[96];
+        snprintf(msg, sizeof msg, "SLICE: the axis is 0 for rows or 1 for columns, got %lld", (long long)dim);
+        jdb_err_set(msg, 11);
+        return jdb_array_new(0);
+    }
+    for (int64_t i = 0; i < arr->length; i++) {
+        if (!RtShape::is_row(arr, i)) {
+            jdb_err_set("SLICE: argument 1 is a flat array, a matrix is expected", 11);
+            return jdb_array_new(0);
+        }
+    }
     JdbArray* out = jdb_array_new(arr->length);
     for (int64_t i = 0; i < arr->length; i++) {
         JdbArray* row = RtShape::row(arr, i);
@@ -1523,53 +1587,62 @@ JdbArray* jdb_array_diff(JdbArray* a, JdbArray* b) {
 // Forward-declared; defined later alongside the arithmetic helpers.
 static inline JdbArray* decode_inner(double val);
 
-// Recursive helper: walk any-depth nested array, push all leaf values into out.
-static void flatten_into(JdbArray* arr, std::vector<double>& out) {
+// Every leaf of an array, depth first. With `tags`, a leaf keeps its cell
+// and its kind; without, a leaf that is no number counts as 0.
+static void flatten_into(JdbArray* arr, std::vector<double>& out, std::vector<int8_t>* tags) {
     if (!arr) return;
-    // Per-element tags win when present: a ragged array ([3, [4,5]]) mixes
-    // plain cells with inner-array pointers, so the array-wide nested bit
-    // cannot describe it and decoding every cell as a pointer would fault.
-    if (arr->elem_tags && (arr->flags & 8)) {
-        for (int64_t i = 0; i < arr->length; i++) {
-            if (arr->elem_tags[i] == JD_TAG_ARR)
-                flatten_into(decode_inner(arr->data[i]), out);
-            else
-                out.push_back(arr->data[i]);
-        }
+    if (arr_all_num(arr)) {
+        out.insert(out.end(), arr->data, arr->data + arr->length);
+        if (tags) tags->insert(tags->end(), (size_t)arr->length, (int8_t)JD_TAG_F64);
         return;
     }
-    if (arr->flags & 1) {
-        // Nested: each element is a pointer to an inner JdbArray
-        for (int64_t i = 0; i < arr->length; i++)
-            flatten_into(decode_inner(arr->data[i]), out);
-    } else {
-        for (int64_t i = 0; i < arr->length; i++)
+    for (int64_t i = 0; i < arr->length; i++) {
+        int k = cell_kind(arr, i);
+        if (k == JD_TAG_ARR) {
+            flatten_into(decode_inner(arr->data[i]), out, tags);
+        } else if (tags) {
             out.push_back(arr->data[i]);
+            tags->push_back((int8_t)k);
+        } else {
+            out.push_back(kind_is_num(k) ? arr->data[i] : 0.0);
+        }
     }
 }
 
 JdbArray* jdb_array_flatten(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
-    // Fast path: 1D is identity. A tagged array may still carry inner-array
-    // cells without the array-wide nested bit, so it takes the walking path.
-    bool tagged = arr->elem_tags && (arr->flags & 8);
-    if (!(arr->flags & 1) && !tagged) {
+    // No row anywhere: the cells are the leaves already.
+    if (!arr_tagged(arr) && !arr_all_rows(arr)) {
         auto* r = jdb_array_new(arr->length);
         memcpy(r->data, arr->data, arr->length * sizeof(double));
-        r->flags = arr->flags;
+        r->flags = arr->flags & (2 | 4 | 16);
+        if (r->flags & 2) r->flags |= 1;
         return r;
     }
-    // 2D+: walk leaves, rebuild as flat 1D.
-    std::vector<double> flat;
-    flatten_into(arr, flat);
-    auto* r = jdb_array_new((int64_t)flat.size());
-    if (!flat.empty()) memcpy(r->data, flat.data(), flat.size() * sizeof(double));
-    // Carry over the string-elements bit; the nested-array bit is gone
-    // by definition because we just flattened it out. Bit 3 goes with it -
-    // the result carries no elem_tags, and a set bit with a NULL array
-    // would send every tag-aware reader through a null dereference.
-    r->flags = arr->flags & ~(1 | 8);
-    return r;
+    try {
+        std::vector<double> flat;
+        std::vector<int8_t> kinds;
+        flatten_into(arr, flat, &kinds);
+        auto* r = jdb_array_new((int64_t)flat.size());
+        if (!flat.empty()) memcpy(r->data, flat.data(), flat.size() * sizeof(double));
+        bool all_num = true, all_str = true;
+        for (int8_t k : kinds) {
+            all_num = all_num && kind_is_num(k);
+            all_str = all_str && k == JD_TAG_STR;
+        }
+        if (all_num) {
+            r->flags = arr->flags & (4 | 16);
+        } else if (all_str) {
+            r->flags = 3;
+        } else {
+            for (size_t i = 0; i < kinds.size(); i++)
+                put_kind(r, (int64_t)i, flat[i], kinds[i]);
+        }
+        return r;
+    } catch (...) {
+        jdb_err_set("FLATTEN: out of memory", 1);
+        return jdb_array_new(0);
+    }
 }
 
 // INSERT$ on an array: insert one cell at pos, clamped to [0, length].
@@ -1584,19 +1657,23 @@ JdbArray* jdb_array_insert(JdbArray* arr, double val, int64_t pos, int32_t tag) 
     if (arr && pos < oldlen)
         memcpy(r->data + pos + 1, arr->data + pos, (oldlen - pos) * sizeof(double));
 
-    bool src_tagged = arr && arr->elem_tags && (arr->flags & 8);
-    bool need_tags = src_tagged || tag == JD_TAG_ARR || tag == JD_TAG_STR ||
-                     tag == JD_TAG_NATIVE_MAP || tag == JD_TAG_VM_HANDLE;
-    if (need_tags) {
-        r->flags = (arr ? arr->flags : 0) | 8;
-        r->elem_tags = (int8_t*)malloc((size_t)oldlen + 1);
-        for (int64_t i = 0; i < pos; i++)
-            r->elem_tags[i] = src_tagged ? arr->elem_tags[i] : (int8_t)JD_TAG_F64;
-        r->elem_tags[pos] = (int8_t)tag;
-        for (int64_t i = pos; i < oldlen; i++)
-            r->elem_tags[i + 1] = src_tagged ? arr->elem_tags[i] : (int8_t)JD_TAG_F64;
+    // The new cell fits the array-wide kind of an untagged source, or every
+    // cell keeps its own tag.
+    int src_kind = !arr || oldlen == 0 ? -1
+                 : arr_tagged(arr) ? -2
+                 : arr_all_num(arr) ? JD_TAG_F64
+                 : (arr->flags & 2) ? JD_TAG_STR
+                 : arr_all_rows(arr) ? JD_TAG_ARR : -2;
+    int new_kind = kind_is_num(tag) ? JD_TAG_F64 : tag;
+    if (src_kind == -1 && (new_kind == JD_TAG_F64 || new_kind == JD_TAG_STR || new_kind == JD_TAG_ARR)) {
+        r->flags = new_kind == JD_TAG_STR ? 3 : new_kind == JD_TAG_ARR ? 1 : 0;
+    } else if (src_kind == new_kind) {
+        r->flags = arr->flags & (1 | 2 | 4 | 16);
     } else {
-        r->flags = arr ? arr->flags : 0;
+        r->flags = arr ? arr->flags & (4 | 16) : 0;
+        for (int64_t i = 0; i < pos; i++) put_kind(r, i, r->data[i], cell_kind(arr, i));
+        put_kind(r, pos, r->data[pos], tag);
+        for (int64_t i = pos; i < oldlen; i++) put_kind(r, i + 1, r->data[i + 1], cell_kind(arr, i));
     }
     return r;
 }
@@ -1605,11 +1682,18 @@ JdbArray* jdb_array_shuffle(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
     auto* r = jdb_array_new(arr->length);
     memcpy(r->data, arr->data, arr->length * sizeof(double));
+    bool tagged = arr_tagged(arr);
+    if (tagged) {
+        r->elem_tags = (int8_t*)malloc((size_t)(arr->length > 0 ? arr->length : 1));
+        if (r->elem_tags) memcpy(r->elem_tags, arr->elem_tags, (size_t)arr->length);
+        else tagged = false;
+    }
     for (int64_t i = r->length - 1; i > 0; i--) {
         int64_t j = rand() % (i + 1);
         double tmp = r->data[i]; r->data[i] = r->data[j]; r->data[j] = tmp;
+        if (tagged) { int8_t t = r->elem_tags[i]; r->elem_tags[i] = r->elem_tags[j]; r->elem_tags[j] = t; }
     }
-    r->flags = arr->flags & ~JDB_ARR_OWNS_CHILDREN;
+    r->flags = arr->flags & (1 | 2 | 4 | 16 | (tagged ? 8 : 0));
     return r;
 }
 
@@ -2013,29 +2097,171 @@ static JdbArray* ew_reshape(JdbArray* src, const std::vector<int64_t>& dims) {
 
 extern "C" {
 
+// ── Cells of mixed kinds ──
+// The fallbacks below meet arrays whose cells are not all numbers: rows
+// recurse, numbers compute, and a string cell is answered as the
+// interpreter answers it: + joins the texts, * by a number repeats the
+// string, a comparison orders the texts. Anything else on a string, a map
+// or a handle gives 0.
+struct KindedCell { double v; int k; };
+
+static int mirror_cmp(int op) {
+    switch (op) {
+        case 4: return 6;
+        case 5: return 7;
+        case 6: return 4;
+        case 7: return 5;
+        default: return op;
+    }
+}
+
+static std::string cell_text(double v, int k) {
+    if (k == JD_TAG_STR) {
+        jdb_text::View s = text_in(decode_str(v));
+        return std::string(s.p ? s.p : "", s.n);
+    }
+    char buf[512];
+    jdb_format_double(buf, (int)sizeof buf, v);
+    return buf;
+}
+
+static double cmp_result(int64_t c, int op) {
+    switch (op) {
+        case 0: return c == 0;
+        case 1: return c != 0;
+        case 4: return c < 0;
+        case 5: return c <= 0;
+        case 6: return c > 0;
+        case 7: return c >= 0;
+        default: return 0.0;
+    }
+}
+
+static KindedCell cell_op(double va, int ka, double vb, int kb, int op, bool cmp) {
+    bool na = kind_is_num(ka), nb = kind_is_num(kb);
+    if (na && nb) {
+        if (cmp) return { scalar_cmp(va, vb, op), JD_TAG_BOOL };
+        return { scalar_op(va, vb, op), JD_TAG_F64 };
+    }
+    bool sa = ka == JD_TAG_STR, sb = kb == JD_TAG_STR;
+    if ((sa || na) && (sb || nb)) {
+        try {
+            if (cmp) {
+                std::string ta = cell_text(va, ka), tb = cell_text(vb, kb);
+                return { cmp_result(ta.compare(tb), op), JD_TAG_BOOL };
+            }
+            if (op == 0)
+                return { encode_str(text_out(cell_text(va, ka) + cell_text(vb, kb))), JD_TAG_STR };
+            if (op == 2 && sa != sb) {
+                double n = sa ? vb : va;
+                jdb_text::View s = text_in(decode_str(sa ? va : vb));
+                return { encode_str(text_out(jdb_text::repeat(s, (int64_t)n))), JD_TAG_STR };
+            }
+        } catch (...) {
+            jdb_err_set("out of memory for a string this size", 1);
+        }
+    }
+    return { 0.0, cmp ? JD_TAG_BOOL : JD_TAG_F64 };
+}
+
+// Once every cell of an answer is built: one kind throughout goes back to
+// the array-wide bits, so the answer reads like any other array of it.
+static JdbArray* settle_kinds(JdbArray* r) {
+    if (!arr_tagged(r) || r->length == 0) return r;
+    int k0 = r->elem_tags[0];
+    for (int64_t i = 1; i < r->length; i++)
+        if (r->elem_tags[i] != k0) return r;
+    int32_t bits = k0 == JD_TAG_F64 ? 0 : k0 == JD_TAG_BOOL ? 4
+                 : k0 == JD_TAG_ARR ? 1 : k0 == JD_TAG_STR ? 3 : -1;
+    if (bits < 0) return r;
+    free(r->elem_tags);
+    r->elem_tags = nullptr;
+    r->flags = (r->flags & ~(1 | 2 | 4 | 8)) | bits;
+    return r;
+}
+
+// Some cell holds neither a number nor a row: a string, a map, a handle.
+static bool arr_has_text(const JdbArray* a) {
+    if (!arr_tagged(a)) return (a->flags & 2) != 0;
+    for (int64_t i = 0; i < a->length; i++)
+        if (a->elem_tags[i] != JD_TAG_ARR && !kind_is_num(a->elem_tags[i])) return true;
+    return false;
+}
+
+static JdbArray* arr_scalar_op(JdbArray* a, double s, int op, bool scalar_left);
+static JdbArray* arr_cmp_scalar(JdbArray* a, double s, int op);
+static JdbArray* arr_pair(JdbArray* a, JdbArray* b, int op, bool cmp);
+
+// A number against every cell of an array that is not all numbers.
+static JdbArray* mixed_scalar(JdbArray* a, double s, int op, bool cmp, bool scalar_left) {
+    auto* r = jdb_array_new(a->length);
+    for (int64_t i = 0; i < a->length; i++) {
+        int k = cell_kind(a, i);
+        if (k == JD_TAG_ARR) {
+            JdbArray* row = decode_inner(a->data[i]);
+            JdbArray* sub = cmp ? arr_cmp_scalar(row, s, scalar_left ? mirror_cmp(op) : op)
+                                : arr_scalar_op(row, s, op, scalar_left);
+            put_kind(r, i, encode_inner(sub), JD_TAG_ARR);
+            continue;
+        }
+        KindedCell c = scalar_left ? cell_op(s, JD_TAG_F64, a->data[i], k, op, cmp)
+                                   : cell_op(a->data[i], k, s, JD_TAG_F64, op, cmp);
+        put_kind(r, i, c.v, c.k);
+    }
+    return settle_kinds(r);
+}
+
+// Two arrays of one length, cell by cell, when either is not all numbers.
+static JdbArray* mixed_pair(JdbArray* a, JdbArray* b, int op, bool cmp) {
+    if (a->length != b->length) { shape_error(a->length, b->length); return jdb_array_new(0); }
+    auto* r = jdb_array_new(a->length);
+    for (int64_t i = 0; i < a->length; i++) {
+        int ka = cell_kind(a, i), kb = cell_kind(b, i);
+        double va = a->data[i], vb = b->data[i];
+        JdbArray* sub = nullptr;
+        if (ka == JD_TAG_ARR && kb == JD_TAG_ARR)
+            sub = arr_pair(decode_inner(va), decode_inner(vb), op, cmp);
+        else if (ka == JD_TAG_ARR && kind_is_num(kb))
+            sub = cmp ? arr_cmp_scalar(decode_inner(va), vb, op)
+                      : arr_scalar_op(decode_inner(va), vb, op, false);
+        else if (kb == JD_TAG_ARR && kind_is_num(ka))
+            sub = cmp ? arr_cmp_scalar(decode_inner(vb), va, mirror_cmp(op))
+                      : arr_scalar_op(decode_inner(vb), va, op, true);
+        if (sub) { put_kind(r, i, encode_inner(sub), JD_TAG_ARR); continue; }
+        KindedCell c = (ka == JD_TAG_ARR || kb == JD_TAG_ARR)
+            ? KindedCell{ 0.0, cmp ? JD_TAG_BOOL : JD_TAG_F64 }
+            : cell_op(va, ka, vb, kb, op, cmp);
+        put_kind(r, i, c.v, c.k);
+    }
+    return settle_kinds(r);
+}
+
+// Unary math on an array that is not all numbers: rows recurse, a cell that
+// is no number gives 0.
+static JdbArray* mixed_unary(JdbArray* a, double (*fn)(double), JdbArray* (*self)(JdbArray*)) {
+    auto* r = jdb_array_new(a->length);
+    for (int64_t i = 0; i < a->length; i++) {
+        int k = cell_kind(a, i);
+        if (k == JD_TAG_ARR) put_kind(r, i, encode_inner(self(decode_inner(a->data[i]))), JD_TAG_ARR);
+        else put_kind(r, i, kind_is_num(k) ? fn(a->data[i]) : 0.0, JD_TAG_F64);
+    }
+    return settle_kinds(r);
+}
+
 // Unary math with the scalar function baked in, so the compiler inlines it
-// into the loop. Arrays of numbers go through ew_apply; anything else
-// recurses its rows.
+// into the loop. Arrays of numbers go through ew_apply; a matrix recurses
+// its rows, and anything else goes cell by cell.
 #define JDB_ARRAY_FF(NAME, SCALAR_FN)                                    \
+    static double jdb_ff_##NAME(double x) { return SCALAR_FN(x); }      \
     JdbArray* jdb_array_##NAME(JdbArray* arr) {                          \
         if (!arr) return jdb_array_new(0);                               \
         if (JdbArray* fast = ew_apply(arr, [](double x) { return SCALAR_FN(x); })) \
             return fast;                                                 \
+        if (!arr_all_num(arr))                                           \
+            return mixed_unary(arr, jdb_ff_##NAME, jdb_array_##NAME);    \
         auto* r = jdb_array_new(arr->length);                            \
-        if (arr->flags & 1) {                                            \
-            r->flags |= 1;                                               \
-            for (int64_t i = 0; i < arr->length; i++) {                  \
-                union { double d; int64_t i; } u; u.d = arr->data[i];    \
-                JdbArray* inner = (JdbArray*)(intptr_t)u.i;              \
-                JdbArray* res = jdb_array_##NAME(inner);                 \
-                union { int64_t i; double d; } ur;                       \
-                ur.i = (int64_t)(intptr_t)res;                           \
-                r->data[i] = ur.d;                                       \
-            }                                                            \
-        } else {                                                         \
-            for (int64_t i = 0; i < arr->length; i++)                    \
-                r->data[i] = SCALAR_FN(arr->data[i]);                    \
-        }                                                                \
+        for (int64_t i = 0; i < arr->length; i++)                        \
+            r->data[i] = SCALAR_FN(arr->data[i]);                        \
         return r;                                                        \
     }
 
@@ -2058,24 +2284,15 @@ JDB_ARRAY_FF(ceil,  ceil)
 JDB_ARRAY_FF(round, round)
 JDB_ARRAY_FF(trunc, trunc)
 
-static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op);
-
 // arr OP scalar (recursive for nested arrays, broadcasts scalar to all leaves)
 static JdbArray* arr_scalar_op(JdbArray* a, double s, int op, bool scalar_left) {
     if (!a) return jdb_array_new(0);
     if (JdbArray* fast = ew_spread(a, s, op, scalar_left, false)) return fast;
+    if (!arr_all_num(a)) return mixed_scalar(a, s, op, false, scalar_left);
     auto* r = jdb_array_new(a->length);
-    if ((a->flags & 1) && !(a->flags & 2)) {
-        r->flags |= 1;
-        for (int64_t i = 0; i < a->length; i++) {
-            auto* inner = arr_scalar_op(decode_inner(a->data[i]), s, op, scalar_left);
-            r->data[i] = encode_inner(inner);
-        }
-    } else {
-        for (int64_t i = 0; i < a->length; i++) {
-            double av = a->data[i];
-            r->data[i] = scalar_left ? scalar_op(s, av, op) : scalar_op(av, s, op);
-        }
+    for (int64_t i = 0; i < a->length; i++) {
+        double av = a->data[i];
+        r->data[i] = scalar_left ? scalar_op(s, av, op) : scalar_op(av, s, op);
     }
     return r;
 }
@@ -2088,102 +2305,34 @@ extern "C" void jdb_array_set_bool_elems(JdbArray* arr);
 static JdbArray* arr_cmp_scalar(JdbArray* a, double s, int op) {
     if (!a) return jdb_array_new(0);
     if (JdbArray* fast = ew_spread(a, s, op, false, true)) return fast;
+    if (!arr_all_num(a)) return mixed_scalar(a, s, op, true, false);
     auto* r = jdb_array_new(a->length);
-    if ((a->flags & 1) && !(a->flags & 2)) {
-        r->flags |= 1;
-        for (int64_t i = 0; i < a->length; i++) {
-            auto* inner = arr_cmp_scalar(decode_inner(a->data[i]), s, op);
-            r->data[i] = encode_inner(inner);
-        }
-    } else {
-        for (int64_t i = 0; i < a->length; i++)
-            r->data[i] = scalar_cmp(a->data[i], s, op);
-        jdb_array_set_bool_elems(r);
-    }
-    return r;
-}
-
-// arr CMP arr (recursive)
-static JdbArray* arr_cmp_arr(JdbArray* a, JdbArray* b, int op) {
-    if (!a || !b) return jdb_array_new(0);
-    int64_t n = a->length < b->length ? a->length : b->length;
-    auto* r = jdb_array_new(n);
-    // String arrays: element-wise content comparison (binary-safe), not a
-    // numeric compare of the punned pointer bits.
-    // op: 0=eq,1=ne,4=lt,5=le,6=gt,7=ge.
-    if ((a->flags & 2) && (b->flags & 2)) {
-        for (int64_t i = 0; i < n; i++) {
-            int64_t c = jdb_str_cmp(decode_str(a->data[i]), decode_str(b->data[i]));
-            double res;
-            switch (op) {
-                case 0:  res = (c == 0); break;
-                case 1:  res = (c != 0); break;
-                case 4:  res = (c < 0);  break;
-                case 5:  res = (c <= 0); break;
-                case 6:  res = (c > 0);  break;
-                case 7:  res = (c >= 0); break;
-                default: res = 0.0;      break;
-            }
-            r->data[i] = res;
-        }
-        jdb_array_set_bool_elems(r);
-        return r;
-    }
-    bool nested = arr_nested(a) || arr_nested(b);
-    if (nested) {
-        r->flags |= 1;
-        for (int64_t i = 0; i < n; i++) {
-            auto* inner = arr_cmp_arr(decode_inner(a->data[i]), decode_inner(b->data[i]), op);
-            r->data[i] = encode_inner(inner);
-        }
-    } else {
-        for (int64_t i = 0; i < n; i++)
-            r->data[i] = scalar_cmp(a->data[i], b->data[i], op);
-        jdb_array_set_bool_elems(r);
-    }
+    for (int64_t i = 0; i < a->length; i++)
+        r->data[i] = scalar_cmp(a->data[i], s, op);
+    jdb_array_set_bool_elems(r);
     return r;
 }
 
 // Every array of numbers below a renders as TRUE/FALSE.
 static void mark_bool_leaves(JdbArray* a) {
     if (!a) return;
-    if (arr_nested(a)) {
-        for (int64_t i = 0; i < a->length; i++) mark_bool_leaves(decode_inner(a->data[i]));
-    } else {
-        jdb_array_set_bool_elems(a);
-    }
+    if (arr_all_num(a)) { jdb_array_set_bool_elems(a); return; }
+    for (int64_t i = 0; i < a->length; i++)
+        if (cell_is_arr(a, i)) mark_bool_leaves(decode_inner(a->data[i]));
 }
 
 // Two arrays under an operator, by the shape rule of jdb_shape::pair, which
-// the VM shares. Arithmetic or comparison, by cmp; string arrays go their
-// own way.
+// the VM shares. Arithmetic or comparison, by cmp; an array with strings or
+// cells of several kinds goes cell by cell.
 static JdbArray* arr_pair(JdbArray* a, JdbArray* b, int op, bool cmp) {
     if (!a || !b) return jdb_array_new(0);
-    if ((a->flags & 2) || (b->flags & 2)) {
-        if (a->length != b->length) { shape_error(a->length, b->length); return jdb_array_new(0); }
-        return cmp ? arr_cmp_arr(a, b, op) : arr_binop(a, b, op);
-    }
+    if (arr_has_text(a) || arr_has_text(b)) return mixed_pair(a, b, op, cmp);
     if (JdbArray* fast = ew_pair(a, b, op, cmp)) return fast;
     jdb_shape::Op<RtShape> fn = cmp
         ? jdb_shape::Op<RtShape>([op](const double& x, const double& y) { return scalar_cmp(x, y, op); })
         : jdb_shape::Op<RtShape>([op](const double& x, const double& y) { return scalar_op(x, y, op); });
     JdbArray* r = jdb_shape::pair<RtShape>(a, b, fn);
     if (cmp) mark_bool_leaves(r);
-    return r;
-}
-
-// Two string arrays under an operator, cell by cell: '+' joins, anything
-// else gives empty cells.
-static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op) {
-    if (!a || !b) return jdb_array_new(0);
-    if (!((a->flags & 2) && (b->flags & 2))) return arr_pair(a, b, op, false);
-    int64_t n = a->length < b->length ? a->length : b->length;
-    auto* r = jdb_array_new(n);
-    for (int64_t i = 0; i < n; i++)
-        r->data[i] = (op == 0)
-            ? encode_str(str_concat2(decode_str(a->data[i]), decode_str(b->data[i])))
-            : encode_str(_strdup(""));
-    r->flags |= 3;
     return r;
 }
 
@@ -2208,8 +2357,8 @@ extern "C" void jdb_array_set_bool_elems(JdbArray* arr);
 // String-array vs string-scalar comparison. Each cell of `a` carries an
 // i8* string pointer in punned-f64 bits (the codegen side already tracks
 // these arrays via string_array_vars and dispatches here when the rhs is
-// a JD_TAG_STR). op: 0 = ==, 1 = <>, 4 = <, 5 = >, 6 = <=, 7 = >=
-// (mirrors scalar_cmp's op enum). Returns a fresh boolean-tagged array.
+// a JD_TAG_STR). op: 0 = ==, 1 = <>, 4 = <, 5 = <=, 6 = >, 7 = >=
+// (scalar_cmp's op enum). Returns a fresh boolean-tagged array.
 JdbArray* jdb_array_cmp_scalar_str(JdbArray* a, const char* s, int32_t op) {
     if (!a) return jdb_array_new(0);
     auto* r = jdb_array_new(a->length);
@@ -2219,15 +2368,15 @@ JdbArray* jdb_array_cmp_scalar_str(JdbArray* a, const char* s, int32_t op) {
         union { double d; intptr_t p; } u; u.d = a->data[i];
         const char* cell = (const char*)u.p;
         if (!cell) cell = "";
-        int c = std::strcmp(cell, sval);
+        int64_t c = jdb_str_cmp(cell, sval);
         bool result;
         switch (op) {
-            case 0:  result = (c == 0); break;  // ==
-            case 1:  result = (c != 0); break;  // <>
-            case 4:  result = (c <  0); break;  // <
-            case 5:  result = (c >  0); break;  // >
-            case 6:  result = (c <= 0); break;  // <=
-            case 7:  result = (c >= 0); break;  // >=
+            case 0:  result = (c == 0); break;
+            case 1:  result = (c != 0); break;
+            case 4:  result = (c <  0); break;
+            case 5:  result = (c <= 0); break;
+            case 6:  result = (c >  0); break;
+            case 7:  result = (c >= 0); break;
             default: result = false;
         }
         r->data[i] = result ? 1.0 : 0.0;
@@ -2993,11 +3142,7 @@ static RcEntry* rc_materialize(JdbArray* row) {
 // is read only where a JdbArray keeps flags and parent.
 static JdbArray* rc_cell_row(const JdbArray* arr, int64_t idx) {
     if (!arr || idx < 0 || idx >= arr->length || !arr->data) return nullptr;
-    if ((arr->flags & 8) && arr->elem_tags) {
-        if (arr->elem_tags[idx] != JD_TAG_ARR) return nullptr;
-    } else if (!(arr->flags & 1) || (arr->flags & 2)) {
-        return nullptr;
-    }
+    if (!cell_is_arr(arr, idx)) return nullptr;
     union { double d; int64_t i; } u; u.d = arr->data[idx];
     return (uintptr_t)u.i < 2 ? nullptr : (JdbArray*)(intptr_t)u.i;
 }
@@ -3049,16 +3194,34 @@ static void rc_implicit_overwrite(JdbArray* arr, int64_t idx) {
     if (!rc_materialize(row)) rc_free_implicit_row(row);
 }
 
+// One more holder for c, an array: the owner when c has none, else one of
+// the holders beyond it.
+static void rc_hold(RcEntry* c, uintptr_t holder, uint64_t holder_gen) {
+    if (c->pinned || c->key == holder) return;
+    c->rc++;
+    if (c->owner) {
+        g_rc.extra[c->key].push_back({ holder, holder_gen });
+    } else {
+        c->owner = holder;
+        c->owner_gen = holder_gen;
+    }
+    ((JdbArray*)holder)->flags |= JDB_ARR_OWNS_CHILDREN;
+}
+
 static void rc_register_children(uintptr_t parent_key, uint64_t parent_gen) {
     JdbArray* a = (JdbArray*)parent_key;
-    if (!a->data || (a->flags & 2) || !((a->flags & 1) || a->elem_tags)) return;
+    if (!a->data || (!arr_tagged(a) && !arr_all_rows(a))) return;
     bool any = false;
     bool seen_any = false;
     for (int64_t i = 0; i < a->length; i++) {
-        if (a->elem_tags ? a->elem_tags[i] != JD_TAG_ARR : !(a->flags & 1)) continue;
+        if (!cell_is_arr(a, i)) continue;
         union { double d; int64_t i; } u; u.d = a->data[i];
         uintptr_t ck = (uintptr_t)u.i;
-        if (ck < 2 || rc_find(ck)) continue;
+        if (ck < 2) continue;
+        if (RcEntry* held = rc_find(ck)) {
+            rc_hold(held, parent_key, parent_gen);
+            continue;
+        }
         JdbArray* row = (JdbArray*)ck;
         if (row->flags & JDB_ARR_ROW_SEEN) {
             // One row in two cells: it is counted, as it was before rows
@@ -3068,9 +3231,12 @@ static void rc_register_children(uintptr_t parent_key, uint64_t parent_gen) {
             continue;
         }
         if (row->flags & JDB_ARR_IMPLICIT_ROW) {
-            // A row of another matrix stays that matrix's; one of this
-            // matrix is already counted as such.
-            if (row->parent != a) rc_row_out(row);
+            // A row of another matrix stays that matrix's and is held by
+            // this one too; one of this matrix is already counted as such.
+            if (row->parent != a) {
+                rc_row_out(row);
+                if (RcEntry* held = rc_find(ck)) rc_hold(held, parent_key, parent_gen);
+            }
             if (row->flags & JDB_ARR_IMPLICIT_ROW) {
                 row->parent = a;
                 row->flags |= JDB_ARR_ROW_SEEN;
@@ -3129,7 +3295,10 @@ extern "C" void* jdb_rc_new(void* p, int32_t kind) {
 // A fresh matrix: the array and the rows it owns.
 extern "C" void* jdb_rc_new_rows(void* p) {
     if (!p || !rc_ready()) return p;
+    // An array the counts know already holds its rows already.
+    bool fresh = !rc_find((uintptr_t)p) && !(((JdbArray*)p)->flags & JDB_ARR_IMPLICIT_ROW);
     jdb_rc_new(p, JD_TAG_ARR);
+    if (!fresh) return p;
     if (RcEntry* e = rc_find((uintptr_t)p)) rc_register_children(e->key, e->gen);
     return p;
 }
@@ -3426,16 +3595,15 @@ JdbArray* jdb_array_apply_ff(JdbArray* arr, void* fnp) {
     fn_ff fn = (fn_ff)fnp;
     if (JdbArray* fast = ew_apply(arr, fn)) return fast;
     auto* r = jdb_array_new(arr->length);
-    if (arr->flags & 1) {
-        // ptr elements (nested arrays)
-        r->flags |= 1;
+    if (!arr_all_num(arr)) {
         for (int64_t i = 0; i < arr->length; i++) {
-            union { double d; int64_t i; } u; u.d = arr->data[i];
-            JdbArray* inner = (JdbArray*)(intptr_t)u.i;
-            JdbArray* res = jdb_array_apply_ff(inner, fnp);
-            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
-            r->data[i] = ur.d;
+            int k = cell_kind(arr, i);
+            if (k == JD_TAG_ARR)
+                put_kind(r, i, encode_inner(jdb_array_apply_ff(decode_inner(arr->data[i]), fnp)), JD_TAG_ARR);
+            else
+                put_kind(r, i, kind_is_num(k) ? fn(arr->data[i]) : 0.0, JD_TAG_F64);
         }
+        return settle_kinds(r);
     } else {
         for (int64_t i = 0; i < arr->length; i++)
             r->data[i] = fn(arr->data[i]);
@@ -3477,7 +3645,9 @@ static JdbArray* apply_string_cells(JdbArray* arr, bool str_result,
     if ((arr->flags & 1) && !(arr->flags & 2)) {
         r->flags |= 1;
         for (int64_t i = 0; i < arr->length; i++)
-            r->data[i] = encode_inner(apply_string_cells(decode_inner(arr->data[i]), str_result, leaf));
+            r->data[i] = cell_is_arr(arr, i)
+                ? encode_inner(apply_string_cells(decode_inner(arr->data[i]), str_result, leaf))
+                : arr->data[i];
         return r;
     }
     if (!(arr->flags & 2)) {
@@ -3534,15 +3704,15 @@ JdbArray* jdb_array_apply_ffi(JdbArray* arr, int64_t n, void* fnp) {
     if (!arr) return jdb_array_new(0);
     double (*fn)(double, int64_t) = (double(*)(double, int64_t))fnp;
     auto* r = jdb_array_new(arr->length);
-    if (arr->flags & 1) {
-        r->flags |= 1;
+    if (!arr_all_num(arr)) {
         for (int64_t i = 0; i < arr->length; i++) {
-            union { double d; int64_t i; } u; u.d = arr->data[i];
-            JdbArray* inner = (JdbArray*)(intptr_t)u.i;
-            JdbArray* res = jdb_array_apply_ffi(inner, n, fnp);
-            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
-            r->data[i] = ur.d;
+            int k = cell_kind(arr, i);
+            if (k == JD_TAG_ARR)
+                put_kind(r, i, encode_inner(jdb_array_apply_ffi(decode_inner(arr->data[i]), n, fnp)), JD_TAG_ARR);
+            else
+                put_kind(r, i, kind_is_num(k) ? fn(arr->data[i], n) : 0.0, JD_TAG_F64);
         }
+        return settle_kinds(r);
     } else {
         for (int64_t i = 0; i < arr->length; i++)
             r->data[i] = fn(arr->data[i], n);
@@ -3619,7 +3789,7 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
         union { double d; int64_t i; } u; u.d = val;
         const char* s = (const char*)(intptr_t)u.i;
         if (s) jdb_print_str(s);
-    } else if (has_ptr) {
+    } else if (has_ptr && bits_look_ptr(val)) {
         // Nested array - print as [e0, e1, ...]
         union { double d; int64_t i; } u; u.d = val;
         JdbArray* inner = (JdbArray*)(intptr_t)u.i;
@@ -3650,81 +3820,87 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
 JdbArray* jdb_array_str_concat(JdbArray* arr, const char* s, int32_t scalar_left) {
     if (!arr || !s) return jdb_array_new(0);
     auto* r = jdb_array_new(arr->length);
-    r->flags |= 3;
-    bool strings = (arr->flags & 2) != 0;
-    for (int64_t i = 0; i < arr->length; i++) {
-        char num[512];
-        const char* elem;
-        if (strings) {
-            union { double d; int64_t i; } u; u.d = arr->data[i];
-            elem = (const char*)(intptr_t)u.i;
-            if (!elem) elem = "";
-        } else {
-            jdb_format_double(num, sizeof num, arr->data[i]);
-            elem = num;
+    try {
+        jdb_text::View sv = text_in(s);
+        std::string scalar(sv.p ? sv.p : "", sv.n);
+        for (int64_t i = 0; i < arr->length; i++) {
+            int k = cell_kind(arr, i);
+            if (k == JD_TAG_ARR) {
+                JdbArray* sub = jdb_array_str_concat(decode_inner(arr->data[i]), s, scalar_left);
+                put_kind(r, i, encode_inner(sub), JD_TAG_ARR);
+                continue;
+            }
+            std::string elem = (k == JD_TAG_STR || kind_is_num(k)) ? cell_text(arr->data[i], k) : std::string();
+            put_kind(r, i, encode_str(text_out(scalar_left ? scalar + elem : elem + scalar)), JD_TAG_STR);
         }
-        size_t ls = strlen(s), le = strlen(elem);
-        char* out = (char*)malloc(ls + le + 1);
-        if (scalar_left) { memcpy(out, s, ls); memcpy(out + ls, elem, le); }
-        else             { memcpy(out, elem, le); memcpy(out + le, s, ls); }
-        out[ls + le] = 0;
-        union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)out;
-        r->data[i] = ur.d;
+    } catch (...) {
+        jdb_err_set("out of memory for a string this size", 1);
     }
-    return r;
+    return settle_kinds(r);
 }
 
 // ROUND of every cell to a number of places, into the rows of a matrix.
 JdbArray* jdb_array_round_p(JdbArray* arr, double places) {
     if (!arr) return jdb_array_new(0);
     auto* r = jdb_array_new(arr->length);
-    if (arr_nested(arr)) {
-        r->flags |= 1;
-        for (int64_t i = 0; i < arr->length; i++)
-            r->data[i] = encode_inner(jdb_array_round_p(decode_inner(arr->data[i]), places));
-    } else {
+    if (arr_all_num(arr)) {
         for (int64_t i = 0; i < arr->length; i++) r->data[i] = jdb_round_p(arr->data[i], places);
+        return r;
     }
-    return r;
+    for (int64_t i = 0; i < arr->length; i++) {
+        int k = cell_kind(arr, i);
+        if (k == JD_TAG_ARR)
+            put_kind(r, i, encode_inner(jdb_array_round_p(decode_inner(arr->data[i]), places)), JD_TAG_ARR);
+        else
+            put_kind(r, i, kind_is_num(k) ? jdb_round_p(arr->data[i], places) : 0.0, JD_TAG_F64);
+    }
+    return settle_kinds(r);
 }
 
-// Whether the innermost arrays below a hold strings.
-static bool leaves_are_strings(JdbArray* a) {
-    while (a && (a->flags & 1) && !(a->flags & 2) && a->length > 0) a = decode_inner(a->data[0]);
-    return a && (a->flags & 2) != 0;
-}
-
-// Every string cell below a becomes its own copy, and the arrays say so.
-static void own_string_leaves(JdbArray* a) {
+// The leaves of a fresh RESHAPE answer take the kinds of the cells they
+// were filled from, cyclically; a string leaf is a copy of its own.
+static void kind_leaves(JdbArray* a, const std::vector<int8_t>& kinds, size_t& idx) {
     if (!a) return;
-    if ((a->flags & 1) && !(a->flags & 2)) {
-        for (int64_t i = 0; i < a->length; i++) own_string_leaves(decode_inner(a->data[i]));
+    if (a->flags & 1) {
+        for (int64_t i = 0; i < a->length; i++) kind_leaves(decode_inner(a->data[i]), kinds, idx);
         return;
     }
     for (int64_t i = 0; i < a->length; i++) {
-        union { double d; int64_t i; } u; u.d = a->data[i];
-        const char* s = (const char*)(intptr_t)u.i;
-        union { int64_t i; double d; } w; w.i = (int64_t)(intptr_t)_strdup(s ? s : "");
-        a->data[i] = w.d;
+        int k = kinds[idx++ % kinds.size()];
+        if (k == JD_TAG_STR)
+            put_kind(a, i, encode_str(jdb_str_dup_binary(decode_str(a->data[i]))), JD_TAG_STR);
+        else
+            put_kind(a, i, a->data[i], k);
     }
-    a->flags |= 3;
+    settle_kinds(a);
 }
 
 // RESHAPE(array, shape): the cells of the array, in order and again from the
 // start when they run out, in the dimensions of the shape.
 JdbArray* jdb_reshape(JdbArray* src, JdbArray* shape) {
     if (!src || !shape) return jdb_array_new(0);
-    std::vector<int64_t> dims;
-    for (int64_t i = 0; i < shape->length; i++) dims.push_back((int64_t)shape->data[i]);
-    if (JdbArray* fast = ew_reshape(src, dims)) return fast;
-    std::vector<double> flat;
-    jdb_shape::flatten<RtShape>(src, flat);
-    if (flat.empty()) { jdb_err_set("RESHAPE: the array has no cells", 11); return jdb_array_new(0); }
-    if (dims.empty()) return jdb_array_new(0);
-    size_t idx = 0;
-    JdbArray* out = jdb_shape::build<RtShape>(dims, 0, flat, idx);
-    if (leaves_are_strings(src)) own_string_leaves(out);
-    return out;
+    try {
+        std::vector<int64_t> dims;
+        for (int64_t i = 0; i < shape->length; i++) dims.push_back((int64_t)shape->data[i]);
+        if (JdbArray* fast = ew_reshape(src, dims)) return fast;
+        std::vector<double> flat;
+        std::vector<int8_t> kinds;
+        flatten_into(src, flat, &kinds);
+        if (flat.empty()) { jdb_err_set("RESHAPE: the array has no cells", 11); return jdb_array_new(0); }
+        if (dims.empty()) return jdb_array_new(0);
+        size_t idx = 0;
+        JdbArray* out = jdb_shape::build<RtShape>(dims, 0, flat, idx);
+        bool all_num = true;
+        for (int8_t k : kinds) all_num = all_num && kind_is_num(k);
+        if (!all_num) {
+            size_t kidx = 0;
+            kind_leaves(out, kinds, kidx);
+        }
+        return out;
+    } catch (...) {
+        jdb_err_set("RESHAPE: out of memory", 1);
+        return jdb_array_new(0);
+    }
 }
 
 // Get array element as a pointer (decodes f64-encoded ptr back).
@@ -3992,48 +4168,43 @@ double jdb_val_ptr(double encoded_ptr) {
 // One placeholder of FORMAT$ rendered into out: a number, or a string that
 // is read as a number when the spec asks for one. Raises FORMAT$'s error
 // for a spec the language does not have.
-static int jdb_format_one_arg(char* out, int cap,
-                               const char* spec,
-                               double val,
-                               const char* str_val,
-                               bool is_str) {
-    if (cap < 2) { if (cap > 0) out[0] = 0; return 0; }
+static void jdb_format_one_arg(std::string& out, const char* spec, double val,
+                               const char* str_val, bool is_str) {
     jdb_fmt::Spec s;
     if (!jdb_fmt::parse_spec(spec, s)) {
         const char* shown = spec ? (spec[0] == ':' ? spec + 1 : spec) : "";
         jdb_err_set(jdb_fmt::spec_error(shown).c_str(), 1);
-        out[0] = 0;
-        return 0;
+        return;
     }
     std::string text;
     if (is_str && !jdb_fmt::wants_number(s)) {
-        text = str_val ? str_val : "";
+        jdb_text::View sv = text_in(str_val);
+        text.assign(sv.p ? sv.p : "", sv.n);
     } else {
         if (is_str) val = atof(str_val ? str_val : "");
-        char plain[64];
+        char plain[512];
         jdb_format_double(plain, (int)sizeof(plain), val);
         text = jdb_fmt::number_text(s, val, (int64_t)val, plain);
     }
-    text = jdb_fmt::lay_out(s, text, !is_str);
-    int n = (int)text.size() < cap - 1 ? (int)text.size() : cap - 1;
-    memcpy(out, text.data(), (size_t)n);
-    out[n] = 0;
-    return n;
+    out += jdb_fmt::lay_out(s, text, !is_str);
 }
 
 // FORMAT$ over an array of numbers.
 char* jdb_format(const char* fmt, JdbArray* args) {
     std::string result;
-    jdb_fmt::expand(fmt ? fmt : "", result,
-        [&](int ai, const std::string& spec, std::string& out) {
-            // A placeholder past the arguments renders as "?".
-            if (!args || ai < 0 || ai >= args->length) { out += "?"; return true; }
-            char tmp[320];
-            jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(), args->data[ai], nullptr, false);
-            out += tmp;
-            return true;
-        });
-    return _strdup(result.c_str());
+    try {
+        jdb_fmt::expand(fmt ? fmt : "", result,
+            [&](int ai, const std::string& spec, std::string& out) {
+                // A placeholder past the arguments renders as "?".
+                if (!args || ai < 0 || ai >= args->length) { out += "?"; return true; }
+                jdb_format_one_arg(out, spec.c_str(), args->data[ai], nullptr, false);
+                return true;
+            });
+    } catch (...) {
+        jdb_err_set("FORMAT$: out of memory for a text this size", 1);
+        return _strdup("");
+    }
+    return text_out(result);
 }
 
 // Simple FORMAT$ with individual args (up to 4)
@@ -4078,36 +4249,39 @@ extern "C" void jdb_runtime_set_handle(void* h) { g_jdrt_handle = h; }
 static char* jdb_format_tagged_impl(const char* fmt, const char* types,
                                      int n, const int64_t* raw) {
     std::string result;
-    jdb_fmt::expand(fmt ? fmt : "", result,
-        [&](int ai, const std::string& spec, std::string& out) {
-            if (ai < 0 || ai >= n) { out += "?"; return true; }
-            char tag = types ? types[ai] : 'd';
-            int64_t r64 = raw[ai];
-            char tmp[320] = {0};
-            if (tag == 's') {
-                jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(), 0.0,
-                                   (const char*)(intptr_t)r64, true);
-            } else if (tag == 'h') {
-                jdb_fmt::Spec s;
-                bool numeric = jdb_fmt::parse_spec(spec.c_str(), s) && jdb_fmt::wants_number(s);
-                if (numeric && g_jdrt_handle) {
-                    jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(),
-                                       jdrt_val_to_f64(g_jdrt_handle, r64), nullptr, false);
-                } else if (g_jdrt_handle) {
-                    const char* vt = jdrt_val_to_str(g_jdrt_handle, r64);
-                    jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(), 0.0, vt, true);
-                    bridge_text_free(vt);
+    try {
+        jdb_fmt::expand(fmt ? fmt : "", result,
+            [&](int ai, const std::string& spec, std::string& out) {
+                if (ai < 0 || ai >= n) { out += "?"; return true; }
+                char tag = types ? types[ai] : 'd';
+                int64_t r64 = raw[ai];
+                if (tag == 's') {
+                    jdb_format_one_arg(out, spec.c_str(), 0.0,
+                                       (const char*)(intptr_t)r64, true);
+                } else if (tag == 'h') {
+                    jdb_fmt::Spec s;
+                    bool numeric = jdb_fmt::parse_spec(spec.c_str(), s) && jdb_fmt::wants_number(s);
+                    if (numeric && g_jdrt_handle) {
+                        jdb_format_one_arg(out, spec.c_str(),
+                                           jdrt_val_to_f64(g_jdrt_handle, r64), nullptr, false);
+                    } else if (g_jdrt_handle) {
+                        const char* vt = jdrt_val_to_str(g_jdrt_handle, r64);
+                        jdb_format_one_arg(out, spec.c_str(), 0.0, vt, true);
+                        bridge_text_free(vt);
+                    } else {
+                        out += "<no-runtime>";
+                    }
                 } else {
-                    snprintf(tmp, sizeof(tmp), "<no-runtime>");
+                    union { double d; int64_t i; } u; u.i = r64;
+                    jdb_format_one_arg(out, spec.c_str(), u.d, nullptr, false);
                 }
-            } else {
-                union { double d; int64_t i; } u; u.i = r64;
-                jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(), u.d, nullptr, false);
-            }
-            out += tmp;
-            return true;
-        });
-    return _strdup(result.c_str());
+                return true;
+            });
+    } catch (...) {
+        jdb_err_set("FORMAT$: out of memory for a text this size", 1);
+        return _strdup("");
+    }
+    return text_out(result);
 }
 
 char* jdb_format1_t(const char* fmt, const char* types, int64_t a1) {
@@ -4207,22 +4381,17 @@ char* jdb_str(double val) {
 JdbArray* jdb_array_str(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
     auto* r = jdb_array_new(arr->length);
-    if (arr->flags & 1) {
-        r->flags |= 1;
-        for (int64_t i = 0; i < arr->length; i++) {
-            JdbArray* inner = jdb_array_str(decode_inner(arr->data[i]));
-            r->data[i] = encode_inner(inner);
+    for (int64_t i = 0; i < arr->length; i++) {
+        int k = cell_kind(arr, i);
+        if (k == JD_TAG_ARR) {
+            put_kind(r, i, encode_inner(jdb_array_str(decode_inner(arr->data[i]))), JD_TAG_ARR);
+            continue;
         }
-    } else {
-        r->flags |= 3;  // bit 0 = ptr-encoded, bit 1 = string elems
-        for (int64_t i = 0; i < arr->length; i++) {
-            char* s = jdb_str(arr->data[i]);
-            union { int64_t i; double d; } u;
-            u.i = (int64_t)(intptr_t)s;
-            r->data[i] = u.d;
-        }
+        char* s = k == JD_TAG_STR ? jdb_str_dup_binary(decode_str(arr->data[i]))
+                : kind_is_num(k) ? jdb_str(arr->data[i]) : _strdup("");
+        put_kind(r, i, encode_str(s), JD_TAG_STR);
     }
-    return r;
+    return settle_kinds(r);
 }
 
 // Format a JdbMap* the way the interpreter does:
@@ -4571,9 +4740,9 @@ char* jdb_txtreader(const char* path) {
     // resulting C-string isn't truncated at the first interior NUL byte.
     try {
         std::string out = jdb_enc::decode_to_utf8(raw, "");
-        return _strdup(out.c_str());
-    } catch (const std::exception&) {
-        return _strdup(raw.c_str());
+        return text_out(out);
+    } catch (...) {
+        return text_out(raw);
     }
 }
 
@@ -4619,11 +4788,11 @@ char* jdb_txtreader_enc(const char* path, const char* encoding) {
     std::string enc = encoding ? encoding : "";
     try {
         std::string out = jdb_enc::decode_to_utf8(raw, enc);
-        return _strdup(out.c_str());
-    } catch (const std::exception&) {
+        return text_out(out);
+    } catch (...) {
         // Fall back to pass-through on conversion error so the script can
         // recover; the (corrupt-on-bad-bytes) data is still readable.
-        return _strdup(raw.c_str());
+        return text_out(raw);
     }
 }
 
@@ -5037,12 +5206,11 @@ char* jdb_cvdate_num(double epoch_secs) {
 // JdbArray so existing print / index paths Just Work.
 JdbArray* jdb_cvdate_arr(JdbArray* in) {
     if (!in) return jdb_array_new(0);
-    bool src_is_str = (in->flags & 2) != 0;
     auto* out = jdb_array_new(in->length);
     out->flags |= 2;  // marks element storage as string ptrs
     for (int64_t i = 0; i < in->length; i++) {
         char* s;
-        if (src_is_str) {
+        if (cell_is_text(in, i)) {
             union { double d; int64_t i; } u; u.d = in->data[i];
             const char* in_s = (const char*)(intptr_t)u.i;
             s = jdb_cvdate(in_s);
@@ -5453,15 +5621,11 @@ char* jdb_frmv_matrix(JdbArray* arr) {
         jdb_format_double(num, sizeof num, a->data[i]);
         return num;
     };
-    bool is_2d = false;
-    if (arr->length > 0 && (arr->flags & 1) && !(arr->flags & 2)) {
-        union { double d; int64_t i; } u; u.d = arr->data[0];
-        is_2d = u.i != 0;
-    }
+    bool is_2d = arr->length > 0 && cell_is_arr(arr, 0);
     std::string out;
     if (!is_2d) {
         for (int64_t i = 0; i < arr->length; i++) out += cell_text(arr, i) + "\n";
-        return _strdup(out.c_str());
+        return text_out(out);
     }
     std::vector<std::vector<std::string>> cells;
     std::vector<size_t> widths;
@@ -5469,7 +5633,8 @@ char* jdb_frmv_matrix(JdbArray* arr) {
         union { double d; int64_t i; } u; u.d = arr->data[r];
         JdbArray* row = (JdbArray*)(intptr_t)u.i;
         std::vector<std::string> line;
-        if (row)
+        if (!cell_is_arr(arr, r)) line.push_back(cell_text(arr, r));
+        else if (row)
             for (int64_t c = 0; c < row->length; c++) line.push_back(cell_text(row, c));
         if (widths.size() < line.size()) widths.resize(line.size(), 0);
         for (size_t c = 0; c < line.size(); c++)
@@ -5484,7 +5649,7 @@ char* jdb_frmv_matrix(JdbArray* arr) {
         }
         out += "\n";
     }
-    return _strdup(out.c_str());
+    return text_out(out);
 }
 
 // ── Misc ────────────────────────────────────────────────────
@@ -5853,34 +6018,52 @@ JdbArray* jdb_select_fn(JdbMapFn fn, JdbArray* arr) {
 JdbArray* jdb_agg_fn(JdbMapFn reducer, JdbArray* keys, JdbArray* vals, int32_t reduced_tag) {
     if (!keys || !vals) return jdb_array_new(0);
     int64_t n = keys->length < vals->length ? keys->length : vals->length;
-    bool key_is_str = (keys->flags & 2) != 0;
-    int32_t grp_flags = vals->flags & ~(int32_t)8;  // group element-type flags
-
     std::vector<double> key_cell;               // raw key bits per group
+    std::vector<int8_t> key_kind;               // the kind of each group's key
     std::vector<std::vector<double>> gdata;     // value bits per group
-    auto same_key = [&](double a, double b) -> bool {
-        if (!key_is_str) return a == b;
-        union { double d; int64_t i; } ua, ub; ua.d = a; ub.d = b;
-        const char* sa = (const char*)(intptr_t)ua.i;
-        const char* sb = (const char*)(intptr_t)ub.i;
-        if (!sa || !sb) return sa == sb;
-        return strcmp(sa, sb) == 0;
-    };
-    for (int64_t i = 0; i < n; i++) {
-        double kc = keys->data[i];
-        int64_t g = -1;
-        for (size_t s = 0; s < key_cell.size(); s++)
-            if (same_key(key_cell[s], kc)) { g = (int64_t)s; break; }
-        if (g < 0) { g = (int64_t)key_cell.size(); key_cell.push_back(kc); gdata.push_back({}); }
-        gdata[(size_t)g].push_back(vals->data[i]);
+    std::vector<std::vector<int8_t>> gkind;     // value kinds per group
+    try {
+        // A key is found by its kind and its content: a string by its bytes,
+        // anything else by its bits.
+        std::unordered_map<std::string, int64_t> seen;
+        for (int64_t i = 0; i < n; i++) {
+            double kc = keys->data[i];
+            int kk = cell_kind(keys, i);
+            std::string hk(1, kind_is_num(kk) ? (char)JD_TAG_F64 : (char)kk);
+            if (kk == JD_TAG_STR) {
+                jdb_text::View s = text_in(decode_str(kc));
+                hk.append(s.p ? s.p : "", s.n);
+            } else {
+                hk.append((const char*)&kc, sizeof kc);
+            }
+            auto it = seen.find(hk);
+            int64_t g;
+            if (it == seen.end()) {
+                g = (int64_t)key_cell.size();
+                seen.emplace(std::move(hk), g);
+                key_cell.push_back(kc);
+                key_kind.push_back((int8_t)kk);
+                gdata.push_back({});
+                gkind.push_back({});
+            } else {
+                g = it->second;
+            }
+            gdata[(size_t)g].push_back(vals->data[i]);
+            gkind[(size_t)g].push_back((int8_t)cell_kind(vals, i));
+        }
+    } catch (...) {
+        jdb_err_set("AGG: out of memory", 1);
+        return jdb_array_new(0);
     }
 
     int64_t ng = (int64_t)key_cell.size();
     JdbArray* r = jdb_array_new(ng);
     for (int64_t g = 0; g < ng; g++) {
         JdbArray* grp = jdb_array_new((int64_t)gdata[(size_t)g].size());
-        for (size_t j = 0; j < gdata[(size_t)g].size(); j++) grp->data[j] = gdata[(size_t)g][j];
-        grp->flags = grp_flags & ~JDB_ARR_OWNS_CHILDREN;
+        for (size_t j = 0; j < gdata[(size_t)g].size(); j++)
+            put_kind(grp, (int64_t)j, gdata[(size_t)g][j], gkind[(size_t)g][j]);
+        settle_kinds(grp);
+        grp->flags |= vals->flags & (4 | 16);
         union { double d; int64_t i; } ug; ug.i = (int64_t)(intptr_t)grp;
         // The group lives as long as somebody holds it; the reducer's
         // answer may be the group itself, which the row then keeps.
@@ -5893,7 +6076,7 @@ JdbArray* jdb_agg_fn(JdbMapFn reducer, JdbArray* keys, JdbArray* vals, int32_t r
         row->data[0] = key_cell[(size_t)g];
         row->data[1] = reduced;
         row->elem_tags = (int8_t*)malloc(2);
-        row->elem_tags[0] = key_is_str ? (int8_t)2 : (int8_t)1;  // STR or F64
+        row->elem_tags[0] = key_kind[(size_t)g];
         // The reducer's real return type (F64 for SUM/MEAN/..., STR/ARR for a
         // string/array-producing reducer like JOIN). reduced holds the punned
         // pointer for STR/ARR, so the per-cell tag drives the typed read.
