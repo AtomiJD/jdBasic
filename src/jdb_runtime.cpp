@@ -301,7 +301,27 @@ static void close_devices() {
     jdrt_close_devices();
 }
 
+// A program that ends inside OUTPUT.CAPTURE_BEGIN gets its stdout back and
+// leaves no capture file behind.
+static void abandon_captures() {
+    fflush(stdout);
+    while (!g_captures.empty()) {
+        JdbCapture c = g_captures.back();
+        g_captures.pop_back();
+#ifdef _WIN32
+        _dup2(c.saved_fd, _fileno(stdout));
+        _close(c.saved_fd);
+#else
+        dup2(c.saved_fd, fileno(stdout));
+        close(c.saved_fd);
+#endif
+        fclose(c.file);
+        if (!c.path.empty()) remove(c.path.c_str());
+    }
+}
+
 void jdb_end_program(int64_t code) {
+    abandon_captures();
     fflush(stdout);
     fflush(stderr);
     close_devices();
@@ -309,6 +329,7 @@ void jdb_end_program(int64_t code) {
 }
 
 void jdb_throw_uncaught() {
+    abandon_captures();
     fprintf(stderr, "Unhandled exception: %s\n", g_err_msg);
     fflush(stderr);
     close_devices();
@@ -620,6 +641,9 @@ struct JdbArray {
 // it (jdb_rc_adopt); a cell written over then lets go of what it held.
 static const int32_t JDB_ARR_OWNS_CHILDREN = 1 << 12;
 static void rc_disown_cell(const void* holder, double old);
+// A string POP copied out of an array that owns its cells: the original,
+// now past the end, is not reached by the array's own release.
+static void rc_drop_popped_text(const void* arr, const char* s);
 
 JdbArray* jdb_array_new(int64_t size) {
     auto* arr = (JdbArray*)malloc(sizeof(JdbArray));
@@ -780,7 +804,9 @@ char* jdb_array_pop_str(JdbArray* arr) {
     u.d = arr->data[arr->length - 1];
     arr->length--;
     const char* s = (const char*)(intptr_t)u.i;
-    return jdb_str_dup_binary(s);
+    char* copy = jdb_str_dup_binary(s);
+    rc_drop_popped_text(arr, s);
+    return copy;
 }
 
 // POP that says what it took. The last cell may be a number, a string, a
@@ -799,6 +825,7 @@ int64_t jdb_array_pop_tagged(JdbArray* arr, int32_t* out_tag) {
     int64_t bits = u.i;
     if (tag == JD_TAG_STR) {
         char* copy = jdb_str_dup_binary((const char*)(intptr_t)u.i);
+        rc_drop_popped_text(arr, (const char*)(intptr_t)u.i);
         bits = (int64_t)(intptr_t)copy;
     } else if (tag == JD_TAG_I64 || tag == JD_TAG_BOOL) {
         bits = (int64_t)arr->data[idx];
@@ -2075,6 +2102,12 @@ static std::unordered_map<std::string, JdbEventHandler> g_event_handlers;
 
 extern "C" {
 
+// What an event hands its handler goes to the counts, so the next drain
+// frees it unless the handler kept it.
+void* jdb_rc_new(void* p, int32_t kind);
+void jdb_rc_own_cells(int64_t bits);
+void jdb_rc_adopt(int64_t parent_bits, int64_t child_bits);
+
 void jdb_event_on(const char* name, void* handler) {
     if (!name || !handler) return;
     g_event_handlers[name] = (JdbEventHandler)handler;
@@ -2089,6 +2122,8 @@ void jdb_event_raise_str(const char* name, const char* arg) {
     union { double d; int64_t i; } u;
     u.i = (int64_t)(intptr_t)_strdup(arg ? arg : "");
     arr->data[0] = u.d;
+    jdb_rc_new(arr, JD_TAG_ARR);
+    jdb_rc_own_cells((int64_t)(intptr_t)arr);
     it->second(arr);
 }
 
@@ -2171,7 +2206,10 @@ static JdbArray* wrap_map_in_array(JdbMap* m) {
 void jdrt_event_writeback(void* map);
 
 static void call_event_handler(JdbEventFn fn, JdbMap* m) {
-    fn(wrap_map_in_array(m));
+    jdb_rc_new(m, JD_TAG_NATIVE_MAP);
+    auto* a = (JdbArray*)jdb_rc_new(wrap_map_in_array(m), JD_TAG_ARR);
+    jdb_rc_adopt((int64_t)(intptr_t)a, (int64_t)(intptr_t)m);
+    fn(a);
     jdrt_event_writeback(m);
 }
 
@@ -2184,6 +2222,7 @@ void jdrt_dispatch_event(const char* event_name,
     if (strcmp(event_name, "QUIT") == 0) {
         if (!g_h_quit) return;
         auto* a = jdb_array_new(0);
+        jdb_rc_new(a, JD_TAG_ARR);
         g_h_quit(a);
         return;
     }
@@ -2728,6 +2767,14 @@ extern "C" void jdb_rc_adopt(int64_t parent_bits, int64_t child_bits) {
         c->owner_gen = p->gen;
     }
     if (p->kind == JD_TAG_ARR) ((JdbArray*)p->key)->flags |= JDB_ARR_OWNS_CHILDREN;
+}
+
+static void rc_drop_popped_text(const void* arr, const char* s) {
+    if (!s || !g_rc.cap || !rc_ready()) return;
+    RcEntry* e = rc_find((uintptr_t)arr);
+    if (!e || e->kind != JD_TAG_ARR || !e->owns_cells) return;
+    if (rc_poison()) { if (*s) ((char*)s)[0] = '\x7f'; }
+    else jdb_str_drop((char*)s);
 }
 
 static void rc_disown_cell(const void* holder, double old) {
@@ -3466,7 +3513,10 @@ extern "C" {
     // of a VM_HANDLE.
     double jdrt_val_to_f64(void* rt, int64_t handle);
     const char* jdrt_val_to_str(void* rt, int64_t handle);
+    void jdrt_str_free(char* s);
 }
+// The text of a VM value is a copy the bridge made for the caller.
+static void bridge_text_free(const char* s) { if (s) jdrt_str_free((char*)s); }
 extern "C" void jdb_runtime_set_handle(void* h) { g_jdrt_handle = h; }
 
 // types[i] is 'd' for an f64 bit pun, 's' for a const char*, or 'h' for a
@@ -3493,8 +3543,9 @@ static char* jdb_format_tagged_impl(const char* fmt, const char* types,
                     jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(),
                                        jdrt_val_to_f64(g_jdrt_handle, r64), nullptr, false);
                 } else if (g_jdrt_handle) {
-                    jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(), 0.0,
-                                       jdrt_val_to_str(g_jdrt_handle, r64), true);
+                    const char* vt = jdrt_val_to_str(g_jdrt_handle, r64);
+                    jdb_format_one_arg(tmp, sizeof(tmp), spec.c_str(), 0.0, vt, true);
+                    bridge_text_free(vt);
                 } else {
                     snprintf(tmp, sizeof(tmp), "<no-runtime>");
                 }
@@ -3737,7 +3788,10 @@ int64_t jdb_dyn_cmp(int64_t a, int32_t ta, int64_t b, int32_t tb) {
                                                     : (const char*)(intptr_t)a;
             const char* sb = tb == JD_TAG_VM_HANDLE ? jdrt_val_to_str(g_jdrt_handle, b)
                                                     : (const char*)(intptr_t)b;
-            return jdb_str_cmp(sa, sb);
+            int64_t order = jdb_str_cmp(sa, sb);
+            if (ta == JD_TAG_VM_HANDLE) bridge_text_free(sa);
+            if (tb == JD_TAG_VM_HANDLE) bridge_text_free(sb);
+            return order;
         }
         if (ta == JD_TAG_VM_HANDLE) {
             double d = jdrt_val_to_f64(g_jdrt_handle, a);
@@ -4776,6 +4830,7 @@ char* jdb_frmv(JdbArray* arr) {
                 const char* vs = g_jdrt_handle
                     ? jdrt_val_to_str(g_jdrt_handle, u.i) : nullptr;
                 emit(vs ? vs : "");
+                bridge_text_free(vs);
             } else if (t == 8) {  // BOOL
                 emit(arr->data[i] != 0.0 ? "TRUE" : "FALSE");
             } else {       // F64 / I64 / unknown
@@ -5024,16 +5079,11 @@ JdbObject* jdb_udt_get_obj(JdbObject* obj, const char* field) {
 const char* jdb_udt_get_str(JdbObject* obj, const char* field) {
     if (obj && field) {
         if (strcmp(field, "__TYPE__") == 0) {
-            // Return uppercase copy of the stored type name (interpreter-compat).
-            const char* tn = obj->type_name ? obj->type_name : "";
-            size_t n = strlen(tn);
-            char* out = (char*)malloc(n + 1);
-            for (size_t i = 0; i < n; i++) {
-                char c = tn[i];
-                out[i] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A') : c;
-            }
-            out[n] = '\0';
-            return out;
+            // The type name in capitals (interpreter-compat), one copy per
+            // type, borrowed like every other field read.
+            std::string up = obj->type_name ? obj->type_name : "";
+            for (auto& c : up) if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+            return interned_word(up.c_str());
         }
         auto it = obj->str_fields.find(field);
         if (it != obj->str_fields.end()) return it->second;
@@ -5109,6 +5159,20 @@ void* jdb_closure_enter(void* p) {
 
 void jdb_closure_leave(void) {
     if (!g_closure_stack.empty()) g_closure_stack.pop_back();
+}
+
+// A closure written straight into a call is held by nothing once the call
+// returns. A plain function pointer is left alone.
+void jdb_closure_free(void* p) {
+    uintptr_t a = (uintptr_t)p;
+    if (!p || a < g_clo_lo.load(std::memory_order_relaxed) ||
+        a > g_clo_hi.load(std::memory_order_relaxed)) return;
+    JdbClosure* c = (JdbClosure*)p;
+    if (c->magic != JDB_CLOSURE_MAGIC) return;
+    c->magic = 0;
+    free(c->bits);
+    free(c->tags);
+    free(c);
 }
 
 // Capture i of the closure whose call is innermost. A lambda body only reads
@@ -5257,9 +5321,14 @@ JdbArray* jdb_agg_fn(JdbMapFn reducer, JdbArray* keys, JdbArray* vals, int32_t r
     for (int64_t g = 0; g < ng; g++) {
         JdbArray* grp = jdb_array_new((int64_t)gdata[(size_t)g].size());
         for (size_t j = 0; j < gdata[(size_t)g].size(); j++) grp->data[j] = gdata[(size_t)g][j];
-        grp->flags = grp_flags;
+        grp->flags = grp_flags & ~JDB_ARR_OWNS_CHILDREN;
         union { double d; int64_t i; } ug; ug.i = (int64_t)(intptr_t)grp;
+        // The group lives as long as somebody holds it; the reducer's
+        // answer may be the group itself, which the row then keeps.
+        jdb_rc_new(grp, JD_TAG_ARR);
         double reduced = reducer(ug.d);
+        union { double d; int64_t i; } ur0; ur0.d = reduced;
+        if (ur0.i == ug.i) jdb_rc_pin(ug.i);
 
         JdbArray* row = jdb_array_new(2);
         row->data[0] = key_cell[(size_t)g];

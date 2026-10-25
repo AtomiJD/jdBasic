@@ -31,6 +31,7 @@ DIM glob AS ARRAY = []
 DIM base8 AS ARRAY = RESHAPE(IOTA(64), [8, 8])
 DIM kept$ AS STRING = ""
 DIM shelf AS ARRAY = []
+ON "LEAKPING" CALL OnLeakPing
 
 IF pattern$ = "concat" THEN
     FOR i = 1 TO passes
@@ -418,6 +419,22 @@ ELSEIF pattern$ = "strops" THEN
         sink$ = ("abc" + STR$(i)) - "b"
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "eventraise" THEN
+    FOR i = 1 TO passes
+        RAISEEVENT "LEAKPING", "data" + STR$(i)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "closurefunc" THEN
+    FOR i = 1 TO passes
+        total = total + CountAbove(3)
+        glob = AGG([1, 2, 1], [10, 20, 30], LAMBDA g -> SUM(g))
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "strcells" THEN
+    FOR i = 1 TO passes
+        glob = STR$([1, 2, 3])
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSEIF pattern$ = "mapjoin" THEN
     DIM jbag AS MAP = {}
     jbag{"s"} = "abc"
@@ -520,3 +537,13 @@ ENDFUNC
 FUNC Twice(x)
     RETURN x * 2
 ENDFUNC
+
+' A closure built inside a FUNC for one call.
+FUNC CountAbove(lim AS INTEGER) AS INTEGER
+    DIM seen AS ARRAY = FILTER(LAMBDA USE(lim) x -> x > lim, [1, 2, 3, 4, 5])
+    RETURN LEN(seen)
+ENDFUNC
+
+SUB OnLeakPing(args AS ARRAY)
+    total = total + LEN(args)
+ENDSUB

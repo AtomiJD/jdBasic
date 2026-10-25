@@ -810,6 +810,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_closure_set", "__closure_set", void_type, {i8_ptr_type, i32_type, i64_type, i32_type}, -1);
     reg("jdb_closure_enter", "__closure_enter", i8_ptr_type, {i8_ptr_type}, JD_TAG_I64);
     reg("jdb_closure_leave", "__closure_leave", void_type, {}, -1);
+    reg("jdb_closure_free", "__closure_free", void_type, {i8_ptr_type}, -1);
     reg("jdb_closure_get", "__closure_get", i64_type, {i32_type}, JD_TAG_I64);
     reg("jdb_closure_get_tag", "__closure_get_tag", i32_type, {i32_type}, JD_TAG_I64);
     // jdb_filter_fn(fn_ptr, array) -> array
@@ -10345,6 +10346,33 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 std::transform(up.begin(), up.end(), up.begin(), ::toupper);
                 bool user = user_functions.count(expr.func_name) || user_functions.count(up);
                 escapes = !user && builtin_sig(up) && !builtin_reads_args(up) && !builtin_reads_arrays(up);
+                // A higher-order call keeps nothing of a flat literal: its
+                // answer holds numbers or constant texts, never a row of it.
+                static const std::unordered_set<std::string> hofs = {
+                    "SELECT", "FILTER", "TAKE_WHILE", "DROP_WHILE", "REDUCE", "AGG", "OUTER" };
+                if (escapes && hofs.count(up)) {
+                    auto flat_or_scalar = [](const Expr* a) {
+                        if (!a) return true;
+                        switch (a->kind) {
+                        case ExprKind::LAMBDA_EXPR: case ExprKind::LITERAL_INT:
+                        case ExprKind::LITERAL_FLOAT: case ExprKind::LITERAL_STRING:
+                        case ExprKind::LITERAL_BOOL:
+                            return true;
+                        case ExprKind::ARRAY_LITERAL:
+                            for (auto& x : a->args)
+                                if (x && x->kind != ExprKind::LITERAL_INT &&
+                                    x->kind != ExprKind::LITERAL_FLOAT &&
+                                    x->kind != ExprKind::LITERAL_STRING &&
+                                    x->kind != ExprKind::LITERAL_BOOL) return false;
+                            return true;
+                        default:
+                            return false;
+                        }
+                    };
+                    bool all_flat = true;
+                    for (auto& a : expr.args) if (!flat_or_scalar(a.get())) all_flat = false;
+                    if (all_flat) escapes = false;
+                }
             }
             TypedValue r;
             {
@@ -13972,7 +14000,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // Element-wise stringify, matches interpreter STR$(array).
             auto& fn = runtime_funcs["__str_arr"];
             LLVMValueRef args[] = { av.val };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "sarr"), JD_TAG_ARR };
+            TypedValue out{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "sarr"), JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
         }
         // Numeric path: use existing jdb_str(double).
         auto& fn = runtime_funcs["STR$"];
@@ -14276,9 +14306,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         LLVMValueRef a[] = { fnp };
         return LLVMBuildCall2(builder, c_in->fn_type, c_in->fn, a, 1, "fn_resolved");
     };
-    auto closure_leave = [&]() {
+    // A LAMBDA written into the call itself is held by nothing afterwards.
+    auto closure_leave = [&](LLVMValueRef fnp, const Expr* src) {
         auto* c_out = get_runtime_func("__closure_leave");
         LLVMBuildCall2(builder, c_out->fn_type, c_out->fn, nullptr, 0, "");
+        if (src && src->kind == ExprKind::LAMBDA_EXPR) {
+            auto& cf = runtime_funcs["__closure_free"];
+            LLVMValueRef a[] = { fnp };
+            LLVMBuildCall2(builder, cf.fn_type, cf.fn, a, 1, "");
+        }
     };
     // OUTER(a, b, op@) with a USER funcref operator → native jdb_outer_fn.
     // The string-operator form (OUTER(a, b, "+")) leaves op as a STRING and
@@ -14298,7 +14334,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& fn = runtime_funcs["__outer_fn"];
             LLVMValueRef args[] = { to_ptr(a_val), to_ptr(b_val), closure_enter(op_val.val) };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "outer");
-            closure_leave();
+            closure_leave(op_val.val, expr.args[2].get());
             TypedValue out{ result, JD_TAG_ARR };
             out.fresh_container = true;
             return out;
@@ -14458,7 +14494,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& fn = runtime_funcs[rt_name];
             LLVMValueRef args[] = { closure_enter(fn_val.val), arr_ptr };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "hof");
-            closure_leave();
+            closure_leave(fn_val.val, expr.args[0].get());
             // SELECT mapping to strings → flag the result array so reads/PRINT
             // decode the per-cell ptrs instead of showing the f64 bits as 0.
             // FILTER returns source elements, so it inherits the source's flag
@@ -14523,7 +14559,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& fn = runtime_funcs["__reduce_fn"];
             LLVMValueRef args[] = { closure_enter(fn_val.val), arr_ptr, init_val };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "red");
-            closure_leave();
+            closure_leave(fn_val.val, expr.args[0].get());
             if (acc == JD_TAG_STR || acc == JD_TAG_ARR || acc == JD_TAG_NATIVE_MAP) {
                 LLVMValueRef p = LLVMBuildIntToPtr(builder, pun_f64_to_i64(result),
                                                    i8_ptr_type, "red_s");
@@ -14912,6 +14948,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             coerce_to(arg, i8_ptr_type),
         };
         LLVMBuildCall2(builder, evfn.fn_type, evfn.fn, args, 2, "");
+        // The runtime hands the handler its own copy of both.
+        drop_fresh_temp(*expr.args[0], ev_name);
+        drop_fresh_temp(*expr.args[1], arg);
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
 
@@ -15155,8 +15194,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto* shape_fn = get_runtime_func("__arr_len_shape");
             if (shape_fn) {
                 LLVMValueRef args[] = { av.val };
-                return { LLVMBuildCall2(builder, shape_fn->fn_type,
+                TypedValue out{ LLVMBuildCall2(builder, shape_fn->fn_type,
                     shape_fn->fn, args, 1, "lenv"), JD_TAG_ARR };
+                out.fresh_container = true;
+                out.fresh_flat = true;
+                return out;
             }
         }
         // Non-array: wrap the scalar length in a 1-element array.
