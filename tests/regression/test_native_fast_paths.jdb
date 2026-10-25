@@ -1,0 +1,60 @@
+' The faster paths answer what the slower ones did, in both backends:
+' TRANSPOSE of a matrix of numbers and of one with texts, UNIQUE and DIFF by
+' value and by text (-0 equal to 0), a map big enough to be looked up through
+' its index, also after keys are removed and added again, array literals of
+' mixed cells, and BYTEAT along a string.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM mtx AS ARRAY = RESHAPE(IOTA(12), [3, 4])
+DIM tr AS ARRAY = TRANSPOSE(mtx)
+Check(LEN(tr) = 4 ANDALSO LEN(tr[0]) = 3, "TRANSPOSE shape")
+Check(tr[0][2] = 9 ANDALSO tr[3][0] = 4 ANDALSO tr[2][1] = 7, "TRANSPOSE cells")
+DIM big AS ARRAY = RESHAPE(IOTA(4000 * 32), [4000, 32])
+DIM btr AS ARRAY = TRANSPOSE(big)
+Check(LEN(btr) = 32 ANDALSO btr[31][3999] = 4000 * 32 ANDALSO btr[5][2] = 70, "TRANSPOSE of a big matrix")
+DIM txt AS ARRAY = [["a", "b"], ["c", "d"]]
+DIM ttr AS ARRAY = TRANSPOSE(txt)
+Check(ttr[0][1] = "c" ANDALSO ttr[1][0] = "b", "TRANSPOSE of texts")
+DIM cube AS ARRAY = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+DIM ctr AS ARRAY = TRANSPOSE(cube)
+cube = [[[0]]]
+DIM cell AS ARRAY = ctr[0][1]
+Check(cell[0] = 5 ANDALSO cell[1] = 6, "TRANSPOSE of rows keeps them when the source goes")
+
+DIM uq AS ARRAY = UNIQUE([3, 1, 3, 2, 1, 0, -0])
+Check(LEN(uq) = 4 ANDALSO uq[0] = 3 ANDALSO uq[3] = 0, "UNIQUE keeps the first of each value")
+DIM uqs AS ARRAY = UNIQUE(["b", "a", "b", "c"])
+Check(LEN(uqs) = 3 ANDALSO uqs[2] = "c", "UNIQUE of texts")
+DIM df AS ARRAY = DIFF([1, 2, 3, 4, 0], [2, 4, -0])
+Check(LEN(df) = 2 ANDALSO df[0] = 1 ANDALSO df[1] = 3, "DIFF by value")
+DIM dfs AS ARRAY = DIFF(["x", "y", "z"], ["y"])
+Check(LEN(dfs) = 2 ANDALSO dfs[1] = "z", "DIFF of texts")
+
+DIM m = {}
+DIM k AS INTEGER
+FOR k = 1 TO 200
+    m{"key" + STR$(k)} = k
+NEXT k
+Check(m{"key150"} = 150 ANDALSO m{"key1"} = 1, "a big map finds its keys")
+MAP.DELETE(m, "key100")
+Check(NOT MAP.EXISTS(m, "key100") ANDALSO m{"key101"} = 101 ANDALSO m{"key200"} = 200, "after a key is removed")
+m{"key100"} = 1000
+m{"extra"} = 7
+Check(m{"key100"} = 1000 ANDALSO m{"extra"} = 7 ANDALSO m{"key199"} = 199, "after keys are added again")
+
+DIM lit AS ARRAY = [1, "two", 3, "four", 5, 6, 7, 8, 9, "ten", 11]
+Check(LEN(lit) = 11 ANDALSO lit[1] = "two" ANDALSO lit[10] = 11 ANDALSO lit[9] = "ten", "a mixed literal")
+
+DIM s$ AS STRING = "AB" + SPACE$(1000) + "Z"
+Check(BYTEAT(s$, 0) = 65 ANDALSO BYTEAT(s$, 1002) = 90 ANDALSO BYTEAT(s$, 1003) = 0, "BYTEAT along a string")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

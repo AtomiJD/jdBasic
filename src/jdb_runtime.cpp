@@ -24,6 +24,8 @@
 #include <atomic>
 #include <thread>
 #include <mutex>
+#include <string_view>
+#include <unordered_set>
 #include <new>
 #include <stdexcept>
 
@@ -1430,19 +1432,61 @@ static void array_free_shallow(JdbArray* a) {
     free(a);
 }
 
+// Room for one more cell in a literal's array, doubled as it grows, so a
+// literal of n cells copies O(n) cells rather than O(n*n).
+static void lit_room(JdbArray* a) {
+    if (a->length < a->capacity) return;
+    int64_t grown = a->capacity < 8 ? 8 : a->capacity * 2;
+    double* data = (double*)realloc(a->data, (size_t)grown * sizeof(double));
+    if (!data) throw std::bad_alloc();
+    a->data = data;
+    if (a->elem_tags) {
+        int8_t* tags = (int8_t*)realloc(a->elem_tags, (size_t)grown);
+        if (!tags) throw std::bad_alloc();
+        a->elem_tags = tags;
+    }
+    a->capacity = grown;
+}
+
+// The array is the literal's own until it is done, so it grows in place; the
+// cells and flags come out as jdb_array_append and _append_tagged make them.
 JdbArray* jdb_array_lit_append(JdbArray* arr, double val) {
     return jdb_guard([&]() -> JdbArray* {
-        JdbArray* r = jdb_array_append(arr, val);
-        array_free_shallow(arr);
-        return r;
+        if (!arr) return jdb_array_append(nullptr, val);
+        lit_room(arr);
+        arr->data[arr->length] = val;
+        if (arr->elem_tags) arr->elem_tags[arr->length] = jdb_tag_from_flags(arr->flags, val);
+        arr->length++;
+        return arr;
     }, [] { return jdb_array_new(0); });
 }
 
 JdbArray* jdb_array_lit_append_tagged(JdbArray* arr, double val, int32_t tag) {
     return jdb_guard([&]() -> JdbArray* {
-        JdbArray* r = jdb_array_append_tagged(arr, val, tag);
-        array_free_shallow(arr);
-        return r;
+        if (!arr) return jdb_array_append_tagged(nullptr, val, tag);
+        int32_t base_flags = arr->flags;
+        if (!arr->elem_tags) {
+            int64_t cap = arr->capacity > arr->length ? arr->capacity : arr->length;
+            int8_t* tags = (int8_t*)malloc((size_t)(cap > 0 ? cap : 1));
+            if (!tags) throw std::bad_alloc();
+            for (int64_t i = 0; i < arr->length; i++)
+                tags[i] = jdb_tag_from_flags(arr->flags, arr->data[i]);
+            arr->elem_tags = tags;
+        }
+        lit_room(arr);
+        arr->data[arr->length] = keep_vm_handle(val, tag);
+        arr->elem_tags[arr->length] = (int8_t)tag;
+        arr->flags = base_flags | 8;
+        bool first = arr->length == 0;
+        auto keep_kind = [&](int32_t bit, bool cell_is) {
+            if (cell_is) { if (first || (base_flags & bit)) arr->flags |= bit; else arr->flags &= ~bit; }
+            else arr->flags &= ~bit;
+        };
+        keep_kind(2, tag == JD_TAG_STR);
+        keep_kind(1, tag == JD_TAG_ARR || tag == JD_TAG_STR);
+        keep_kind(4, tag == JD_TAG_BOOL);
+        arr->length++;
+        return arr;
     }, [] { return jdb_array_new(0); });
 }
 
@@ -1620,17 +1664,19 @@ int64_t jdb_array_has_num(JdbArray* arr, double val) {
 // Forward declaration - actual definition follows below.
 extern "C" JdbArray* jdb_array_unique_str(JdbArray* arr);
 
+static bool cell_equality_key(JdbArray* a, int64_t i, std::string& key);
+
 // UNIQUE: the first of every group of equal cells, strings by content and
 // numbers by value, whether the array says string per cell or as a whole.
 JdbArray* jdb_array_unique(JdbArray* arr) {
     return jdb_guard([&]() -> JdbArray* {
         if (!arr) return jdb_array_new(0);
-        std::vector<int64_t> kept = jdb_shape::unique_indices(arr->length, [&](int64_t i, int64_t j) {
-            bool si = rt_cell_is_str(arr, i), sj = rt_cell_is_str(arr, j);
-            if (si != sj) return false;
-            if (si) return strcmp(rt_cell_str(arr, i), rt_cell_str(arr, j)) == 0;
-            return arr->data[i] == arr->data[j];
-        });
+        // The first cell of every group of equal ones, in order.
+        std::unordered_set<std::string> seen;
+        std::vector<int64_t> kept;
+        std::string key;
+        for (int64_t i = 0; i < arr->length; i++)
+            if (!cell_equality_key(arr, i, key) || seen.insert(key).second) kept.push_back(i);
         return jdb_shape::take<RtShape>(arr, kept);
     }, [] { return jdb_array_new(0); });
 }
@@ -1788,19 +1834,34 @@ JdbArray* jdb_array_slice_band(JdbArray* arr, int64_t dim, int64_t start, int64_
 static bool rt_cell_is_str(JdbArray* arr, int64_t i);
 static const char* rt_cell_str(JdbArray* arr, int64_t i);
 
+// What two cells are equal by, as UNIQUE and DIFF compare them: a string by
+// its text, anything else by its value, -0 as 0. A NaN equals nothing, so it
+// has no key (false).
+static bool cell_equality_key(JdbArray* a, int64_t i, std::string& key) {
+    key.clear();
+    if (rt_cell_is_str(a, i)) {
+        key += 's';
+        key += rt_cell_str(a, i);
+        return true;
+    }
+    double d = a->data[i];
+    if (d != d) return false;
+    if (d == 0.0) d = 0.0;
+    key += 'n';
+    key.append((const char*)&d, sizeof d);
+    return true;
+}
+
 // DIFF(a, b): the cells of a that b has no equal of, strings by content.
 JdbArray* jdb_array_diff(JdbArray* a, JdbArray* b) {
     return jdb_guard([&]() -> JdbArray* {
         if (!a) return jdb_array_new(0);
-        auto same = [&](int64_t i, int64_t j) {
-            bool si = rt_cell_is_str(a, i), sj = rt_cell_is_str(b, j);
-            if (si != sj) return false;
-            if (si) return strcmp(rt_cell_str(a, i), rt_cell_str(b, j)) == 0;
-            return a->data[i] == b->data[j];
-        };
+        std::unordered_set<std::string> in_b;
+        std::string key;
+        if (b) for (int64_t j = 0; j < b->length; j++)
+            if (cell_equality_key(b, j, key)) in_b.insert(key);
         std::vector<int64_t> kept = jdb_shape::select_indices(a->length, [&](int64_t i) {
-            if (b) for (int64_t j = 0; j < b->length; j++) if (same(i, j)) return false;
-            return true;
+            return !cell_equality_key(a, i, key) || !in_b.count(key);
         });
         return jdb_shape::take<RtShape>(a, kept);
     }, [] { return jdb_array_new(0); });
@@ -2151,6 +2212,9 @@ static void mat_bands(int64_t n, unsigned workers, F body) {
         if (lo >= hi) break;
         try {
             pool.emplace_back([=, &failed] {
+                // A band's allocation that fails throws, as on the thread
+                // that started the bands.
+                GuardDepth open;
                 try { body(lo, hi); } catch (...) { failed = true; }
             });
             done_to = hi;
@@ -2159,6 +2223,7 @@ static void mat_bands(int64_t n, unsigned workers, F body) {
         }
     }
     try {
+        GuardDepth open;
         body(0, (std::min)(n, step));
         if (done_to < n) body(done_to, n);
     } catch (...) {
@@ -2513,15 +2578,17 @@ static JdbArray* mixed_unary(JdbArray* a, double (*fn)(double), JdbArray* (*self
 #define JDB_ARRAY_FF(NAME, SCALAR_FN)                                    \
     static double jdb_ff_##NAME(double x) { return SCALAR_FN(x); }      \
     JdbArray* jdb_array_##NAME(JdbArray* arr) {                          \
-        if (!arr) return jdb_array_new(0);                               \
-        if (JdbArray* fast = ew_apply(arr, [](double x) { return SCALAR_FN(x); })) \
-            return fast;                                                 \
-        if (!arr_all_num(arr))                                           \
-            return mixed_unary(arr, jdb_ff_##NAME, jdb_array_##NAME);    \
-        auto* r = jdb_array_new(arr->length);                            \
-        for (int64_t i = 0; i < arr->length; i++)                        \
-            r->data[i] = SCALAR_FN(arr->data[i]);                        \
-        return r;                                                        \
+        return jdb_guard([&]() -> JdbArray* {                            \
+            if (!arr) return jdb_array_new(0);                           \
+            if (JdbArray* fast = ew_apply(arr, [](double x) { return SCALAR_FN(x); })) \
+                return fast;                                             \
+            if (!arr_all_num(arr))                                       \
+                return mixed_unary(arr, jdb_ff_##NAME, jdb_array_##NAME); \
+            auto* r = jdb_array_new(arr->length);                        \
+            for (int64_t i = 0; i < arr->length; i++)                    \
+                r->data[i] = SCALAR_FN(arr->data[i]);                    \
+            return r;                                                    \
+        }, [] { return jdb_array_new(0); });                             \
     }
 
 JDB_ARRAY_FF(sin,   sin)
@@ -2747,8 +2814,10 @@ JdbArray* jdb_str_to_chars(const char* s) {
 }
 
 // ── Maps / Objects (string-keyed) ──────────────────────────────
-// Simple linear-scan map; fine for the small maps used in tests.
-// Layout: { count, capacity, char** keys, double* values, int32* tags }
+// Keys in insertion order; a map of 16 keys or more finds them through a
+// hash index built on the first lookup that needs it.
+// Layout: { count, capacity, char** keys, double* values, int32* tags,
+// index } - vm_bridge.cpp mirrors it as JdbMapFwd.
 // Tag values follow JdTag enum (jdb_tags.h): F64, STR, ARR, NATIVE_MAP.
 
 struct JdbMap {
@@ -2757,15 +2826,18 @@ struct JdbMap {
     char** keys;
     double* values;
     int32_t* tags;
+    void* index;     // MapIndex*, or null while none is built
 };
 
 JdbMap* jdb_map_new() {
     auto* m = (JdbMap*)malloc(sizeof(JdbMap));
+    if (!m) jdb_fatal_oom();
     m->count = 0;
     m->capacity = 0;
     m->keys = nullptr;
     m->values = nullptr;
     m->tags = nullptr;
+    m->index = nullptr;
     return m;
 }
 
@@ -2997,12 +3069,45 @@ static void map_grow(JdbMap* m) {
     m->capacity = newcap;
 }
 
-static int64_t map_find(JdbMap* m, const char* key) {
-    if (!m || !key) return -1;
+static bool rc_on_owner();
+
+// The positions of a big map's keys. It covers the first `covered` keys, so
+// keys appended since (the bridge appends without it) join on the next
+// lookup; a removed key drops it, since the keys after it move.
+struct MapIndex {
+    std::unordered_map<std::string_view, int64_t> at;
+    int64_t covered = 0;
+};
+
+static void map_index_drop(JdbMap* m) {
+    delete (MapIndex*)m->index;
+    m->index = nullptr;
+}
+
+static int64_t map_find_linear(JdbMap* m, const char* key) {
     for (int64_t i = 0; i < m->count; i++) {
         if (m->keys[i] && strcmp(m->keys[i], key) == 0) return i;
     }
     return -1;
+}
+
+static int64_t map_find(JdbMap* m, const char* key) {
+    if (!m || !key) return -1;
+    // The index is built and read on the thread the counts belong to only;
+    // another thread (a compiled HTTP handler) scans.
+    if (m->count < 16 || !rc_on_owner()) return map_find_linear(m, key);
+    try {
+        auto* ix = (MapIndex*)m->index;
+        if (!ix) m->index = ix = new MapIndex;
+        if (ix->covered > m->count) { ix->at.clear(); ix->covered = 0; }
+        for (; ix->covered < m->count; ix->covered++)
+            if (const char* k = m->keys[ix->covered]) ix->at.emplace(k, ix->covered);
+        auto it = ix->at.find(std::string_view(key));
+        return it == ix->at.end() ? -1 : it->second;
+    } catch (...) {
+        map_index_drop(m);
+        return map_find_linear(m, key);
+    }
 }
 
 // A map owns the copy of every string it stores (the getters hand out
@@ -3130,6 +3235,7 @@ int64_t jdb_map_delete(JdbMap* m, const char* key) {
     if (!m || !key) return 0;
     int64_t idx = map_find(m, key);
     if (idx < 0) return 0;
+    map_index_drop(m);
     free(m->keys[idx]);
     map_let_go(m, m->tags[idx], m->values[idx]);
     for (int64_t i = idx + 1; i < m->count; i++) {
@@ -3156,6 +3262,7 @@ void jdb_map_free_tree(JdbMap* m) {
             jdb_map_free_tree((JdbMap*)(intptr_t)u.i);
         }
     }
+    map_index_drop(m);
     free(m->keys);
     free(m->values);
     free(m->tags);
@@ -3396,6 +3503,7 @@ static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64
                 m->values[i] = 0;
                 if (m->keys[i]) m->keys[i][0] = '\x7f';
             }
+            map_index_drop(m);
             m->count = 0;
             return;
         }
@@ -3403,6 +3511,7 @@ static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64
             free(m->keys[i]);
             map_drop_cell_str(m->tags[i], m->values[i]);
         }
+        map_index_drop(m);
         free(m->keys);
         free(m->values);
         free(m->tags);
@@ -4410,6 +4519,44 @@ extern "C" JdbArray* jdb_matmul(JdbArray* a, JdbArray* b, int32_t transpose_left
                                    : "MATMUL: out of memory for a product this size", 1);
         return jdb_array_new(0);
     }
+}
+
+// TRANSPOSE: the columns of a matrix become its rows. A matrix of numbers is
+// copied row by row of the answer, banded across the cores; other cells keep
+// their kind, and a row shorter than the first answers 0 where it has no
+// cell. A flat array answers a copy of itself, as in the interpreter.
+extern "C" JdbArray* jdb_transpose(JdbArray* arr) {
+    return jdb_guard([&]() -> JdbArray* {
+        if (!arr) return jdb_array_new(0);
+        int64_t rows = arr->length;
+        if (rows == 0 || !cell_is_arr(arr, 0)) return RtShape::clone(arr);
+        int64_t w = ew_matrix_width(arr);
+        if (w >= 0) {
+            bool as_bool = (decode_inner(arr->data[0])->flags & 4) != 0;
+            JdbArray* out = ew_rows(w, rows, as_bool, [&](int64_t j, double* o) {
+                for (int64_t i = 0; i < rows; i++) o[i] = decode_inner(arr->data[i])->data[j];
+            });
+            if (out) return out;
+        }
+        JdbArray* first = decode_inner(arr->data[0]);
+        int64_t cols = first ? first->length : 0;
+        JdbArray* out = jdb_array_new(cols);
+        out->flags |= 1;
+        for (int64_t j = 0; j < cols; j++) {
+            JdbArray* col = jdb_array_new(rows);
+            for (int64_t i = 0; i < rows; i++) {
+                JdbArray* src = cell_is_arr(arr, i) ? decode_inner(arr->data[i]) : nullptr;
+                int k = src && j < src->length ? cell_kind(src, j) : -1;
+                if (k < 0) put_kind(col, i, 0.0, JD_TAG_F64);
+                // A row in a cell is copied, so the answer shares none with
+                // its source.
+                else if (k == JD_TAG_ARR) put_kind(col, i, encode_inner(RtShape::clone(decode_inner(src->data[j]))), k);
+                else put_kind(col, i, src->data[j], k);
+            }
+            out->data[j] = encode_inner(settle_kinds(col));
+        }
+        return out;
+    }, [] { return jdb_array_new(0); });
 }
 extern "C" {
 
@@ -6065,10 +6212,11 @@ double jdb_tonum(const char* s) { return jdb_num::parse_prefix(s); }
 
 int64_t jdb_byteat(const char* s, int64_t idx) {
     if (!s || idx < 0) return 0;
-    // Honour binary strings (BINREADER$, PACK$) by consulting the
-    // jdrt_strlen registry first - strlen alone truncates at the
-    // first NUL, which makes binary file contents look truncated to
-    // BYTEAT after the first zero byte.
+    // No NUL up to idx: the byte is inside the string, whatever its length.
+    // Only a NUL before it asks the binary registry (BINREADER$, PACK$),
+    // whose strings carry zero bytes; scanning just this far keeps a loop
+    // over a long string from reading all of it on every call.
+    if (!memchr(s, 0, (size_t)idx + 1)) return (uint8_t)s[idx];
     int64_t blen = jdrt_strlen(s);
     if (blen < 0) blen = (int64_t)strlen(s);
     if (idx >= blen) return 0;

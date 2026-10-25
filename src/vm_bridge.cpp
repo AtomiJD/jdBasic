@@ -1074,6 +1074,7 @@ struct JdbMapFwd {
     char**   keys;
     double*  values;
     int32_t* tags;
+    void*    index;  // the runtime's key index; null in a map made here
 };
 
 // Walk a native JdbMap*, build a fresh Value::OBJECT mirroring its
@@ -1084,6 +1085,9 @@ static Value jdbmap_to_value(JdbMapFwd* m) {
     Value v = Value::make_object();
     if (!m) return v;
     auto* obj = v.as_object();
+    // A native map's keys are unique, so each field is appended instead of
+    // looked up first, which made boxing a big map quadratic.
+    obj->fields.reserve((size_t)m->count);
     for (int64_t i = 0; i < m->count; i++) {
         std::string k = m->keys[i] ? m->keys[i] : "";
         int32_t t = m->tags ? m->tags[i] : 0; // F64 default
@@ -1142,7 +1146,7 @@ static Value jdbmap_to_value(JdbMapFwd* m) {
                 cell = Value::make_f64(d);
                 break;
         }
-        obj->set(k, std::move(cell));
+        obj->fields.emplace_back(std::move(k), std::move(cell));
     }
     return v;
 }
@@ -1160,6 +1164,7 @@ static JdbMapFwd* new_jdbmap(int64_t room) {
     m->keys = (char**)malloc(sizeof(char*) * m->capacity);
     m->values = (double*)malloc(sizeof(double) * m->capacity);
     m->tags = (int32_t*)malloc(sizeof(int32_t) * m->capacity);
+    m->index = nullptr;
     return m;
 }
 
