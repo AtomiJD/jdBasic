@@ -739,7 +739,7 @@ JdbArray* jdb_array_gather(JdbArray* arr, JdbArray* idx) {
         if (k >= 0 && k < arr->length) r->data[i] = arr->data[k];
         else                            r->data[i] = 0.0;
     }
-    r->flags = arr->flags;
+    r->flags = arr->flags & ~JDB_ARR_OWNS_CHILDREN;
     return r;
 }
 
@@ -1600,7 +1600,7 @@ JdbArray* jdb_array_shuffle(JdbArray* arr) {
         int64_t j = rand() % (i + 1);
         double tmp = r->data[i]; r->data[i] = r->data[j]; r->data[j] = tmp;
     }
-    r->flags = arr->flags;
+    r->flags = arr->flags & ~JDB_ARR_OWNS_CHILDREN;
     return r;
 }
 
@@ -2471,6 +2471,7 @@ struct RcState {
     // each item a holder and its generation.
     std::unordered_map<uintptr_t, std::vector<RcPoolItem>> extra;
     std::vector<char*> str_later;  // strings global slots let go of inside a FUNC or SUB
+    std::vector<void*> udt_later;  // UDT instances a frame let go of, freed like str_later
     int func_depth = 0;  // FUNC frames on the stack; a SUB chain from the main program is depth 0
     bool init = false;
     bool off = false;
@@ -2800,12 +2801,16 @@ static void rc_compact_zombies() {
     z.resize(keep);
 }
 
+extern "C" void jdb_udt_free(struct JdbObject* obj);
+
 static void rc_drop_later_strings() {
     for (char* s : g_rc.str_later) {
         if (rc_poison()) { if (*s) s[0] = (char)0x7f; }
         else jdb_str_drop(s);
     }
     g_rc.str_later.clear();
+    for (void* o : g_rc.udt_later) jdb_udt_free((struct JdbObject*)o);
+    g_rc.udt_later.clear();
 }
 
 // FUNC frames on the stack. A SUB is called at a statement boundary, so
@@ -2821,7 +2826,8 @@ extern "C" void jdb_rc_func_leave(void) { if (g_rc.func_depth > 0) g_rc.func_dep
 extern "C" void jdb_rc_drain(int64_t mark, int32_t main_level) {
     // A raise that left a FUNC skipped its leave; the main program is depth 0.
     if (main_level) g_rc.func_depth = 0;
-    if (g_rc.func_depth == 0 && !g_rc.str_later.empty()) rc_drop_later_strings();
+    if (g_rc.func_depth == 0 && (!g_rc.str_later.empty() || !g_rc.udt_later.empty()))
+        rc_drop_later_strings();
     size_t from = mark < 0 ? 0 : (size_t)mark;
     if (from >= g_rc.pool.size() && g_rc.zombies.empty()) return;
     if (!g_rc.cap || !rc_ready()) return;
@@ -2837,6 +2843,12 @@ extern "C" void jdb_rc_drain(int64_t mark, int32_t main_level) {
 extern "C" void jdb_str_drop_later(char* s) {
     if (!s) return;
     g_rc.str_later.push_back(s);
+}
+
+// A field read out of the instance may still be on its way to the caller,
+// so the instance goes at the next drain outside every FUNC.
+extern "C" void jdb_udt_free_later(void* obj) {
+    if (obj) g_rc.udt_later.push_back(obj);
 }
 
 // Number of keys in a map.
@@ -4970,8 +4982,31 @@ double jdb_udt_get_f64(JdbObject* obj, const char* field) {
     return 0.0;
 }
 
+static void udt_drop_text(char* s) {
+    if (!s) return;
+    if (rc_poison()) { if (*s) s[0] = '\x7f'; }
+    else free(s);
+}
+
+// An instance the compiler proved nobody else holds: its own texts and the
+// object go. A nested instance may be shared, so it stays.
+void jdb_udt_free(JdbObject* obj) {
+    if (!obj) return;
+    for (auto& kv : obj->str_fields) udt_drop_text(kv.second);
+    if (rc_poison()) {
+        obj->num_fields.clear();
+        return;
+    }
+    free(obj->type_name);
+    delete obj;
+}
+
 void jdb_udt_set_str(JdbObject* obj, const char* field, const char* val) {
-    if (obj) obj->str_fields[field] = _strdup(val ? val : "");
+    if (!obj) return;
+    char* fresh = _strdup(val ? val : "");
+    char*& slot = obj->str_fields[field];
+    udt_drop_text(slot);
+    slot = fresh;
 }
 
 void jdb_udt_set_obj(JdbObject* obj, const char* field, JdbObject* val) {
@@ -5157,7 +5192,7 @@ static void hof_tag_cells(JdbArray* r, const std::vector<int8_t>& tags) {
 static JdbArray* hof_pick(JdbArray* arr, const std::vector<int64_t>& keep) {
     auto* r = jdb_array_new((int64_t)keep.size());
     for (size_t j = 0; j < keep.size(); j++) r->data[j] = arr->data[keep[j]];
-    r->flags = arr->flags & ~(int32_t)8;
+    r->flags = arr->flags & ~((int32_t)8 | JDB_ARR_OWNS_CHILDREN);
     if ((arr->flags & 8) && arr->elem_tags && !keep.empty()) {
         r->elem_tags = (int8_t*)malloc(keep.size());
         for (size_t j = 0; j < keep.size(); j++) r->elem_tags[j] = arr->elem_tags[keep[j]];

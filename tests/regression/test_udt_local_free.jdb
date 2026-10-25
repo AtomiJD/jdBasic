@@ -1,0 +1,75 @@
+' A UDT instance only ever used for its fields and methods is freed when the
+' frame ends or the DIM runs again; what was read out of it stays valid, and
+' a type whose methods hand out THIS is kept.
+
+OPTION "EXPLICIT"
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+TYPE Tag
+    Name AS STRING
+    Size AS DOUBLE
+    SUB DISPOSE()
+        disposed = disposed + 1
+    ENDSUB
+ENDTYPE
+
+TYPE Box
+    Label AS STRING
+    FUNC Shout$()
+        RETURN UCASE$(THIS.Label)
+    ENDFUNC
+    FUNC Self()
+        RETURN THIS
+    ENDFUNC
+ENDTYPE
+
+DIM disposed AS INTEGER = 0
+DIM kept$ AS STRING = ""
+DIM keepers AS ARRAY = []
+
+FUNC NameOf$(k AS INTEGER)
+    DIM t AS Tag
+    t.Name = "tag" + STR$(k)
+    t.Name = t.Name + "!"
+    t.Size = k
+    RETURN t.Name
+ENDFUNC
+
+SUB Loop3()
+    DIM k AS INTEGER = 0
+    FOR k = 1 TO 3
+        DIM t AS Tag
+        t.Name = "pass" + STR$(k)
+        kept$ = t.Name
+    NEXT k
+ENDSUB
+
+FUNC Through$()
+    DIM b AS Box
+    b.Label = "box"
+    DIM again = b.Self()
+    RETURN b.Shout$()
+ENDFUNC
+
+DIM said$ AS STRING = ""
+DIM i AS INTEGER = 0
+FOR i = 1 TO 200
+    said$ = NameOf$(i)
+NEXT i
+Check(said$ = "tag200!", "a field read out survives the instance")
+Check(disposed = 200, "DISPOSE ran once per frame")
+Loop3()
+Check(kept$ = "pass3", "a field read out survives a second DIM")
+Check(disposed = 203, "DISPOSE ran for each DIM in the loop")
+Check(Through$() = "BOX", "a type whose method hands out THIS is kept")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

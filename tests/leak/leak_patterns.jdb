@@ -9,6 +9,11 @@
 
 OPTION "EXPLICIT"
 
+TYPE Probe
+    Label AS STRING
+    Size AS DOUBLE
+ENDTYPE
+
 DIM cli = OS.ARGS()
 DIM pattern$ AS STRING = "concat"
 DIM rounds AS INTEGER = 20000
@@ -363,6 +368,65 @@ ELSEIF pattern$ = "tapenode" THEN
         TapeStep(i)
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "gather" THEN
+    DIM picks AS ARRAY = [0, 2, 4]
+    DIM src8 AS ARRAY = IOTA(8)
+    FOR i = 1 TO passes
+        glob = src8[picks]
+        total = total + SUM(src8[picks])
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "hofresult" THEN
+    DIM hsrc AS ARRAY = IOTA(8)
+    DIM lim AS INTEGER = 3
+    FOR i = 1 TO passes
+        glob = SELECT(Twice@, hsrc)
+        glob = FILTER(LAMBDA USE(lim) x -> x > lim, hsrc)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "udtlocal" THEN
+    FOR i = 1 TO passes
+        total = total + ProbeSize(i)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "strcompare" THEN
+    DIM hits AS INTEGER = 0
+    FOR i = 1 TO passes
+        IF "x" + STR$(i) = "y" THEN hits = hits + 1
+        IF "x" + STR$(i) < "a" THEN hits = hits + 1
+        IF STR$(i) = i THEN hits = hits + 1
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "formattagged" THEN
+    DIM fbag AS MAP = {}
+    fbag{"n"} = 5
+    DIM fsmall AS ARRAY = [1, 2]
+    FOR i = 1 TO passes
+        sink$ = FORMAT$("{} {} {} {}", fbag{"n"}, TRUE, fsmall, "r" + STR$(i))
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "mapkey" THEN
+    DIM kbag AS MAP = {}
+    kbag{"k1"} = 1
+    FOR i = 1 TO passes
+        IF MAP.EXISTS(kbag, "k" + STR$(i)) THEN total = total + 1
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "strops" THEN
+    FOR i = 1 TO passes
+        sink$ = ("a" + STR$(i)) * 2
+        sink$ = ("abc" + STR$(i)) - "b"
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "mapjoin" THEN
+    DIM jbag AS MAP = {}
+    jbag{"s"} = "abc"
+    jbag{"n"} = 5
+    FOR i = 1 TO passes
+        sink$ = jbag{"s"} + jbag{"n"}
+        IF jbag{"s"} = i THEN total = total + 1
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
@@ -443,4 +507,16 @@ ENDSUB
 FUNC LedgerLen(n AS INTEGER) AS INTEGER
     DIM ledger AS ARRAY = [n, n + 1]
     RETURN LEN(Render$(ledger))
+ENDFUNC
+
+' A UDT local only used for its fields: freed with its frame.
+FUNC ProbeSize(n AS INTEGER) AS DOUBLE
+    DIM pr AS Probe
+    pr.Label = "p" + STR$(n)
+    pr.Size = n
+    RETURN pr.Size + LEN(pr.Label)
+ENDFUNC
+
+FUNC Twice(x)
+    RETURN x * 2
 ENDFUNC

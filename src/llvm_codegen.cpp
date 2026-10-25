@@ -784,6 +784,8 @@ void LLVMCodegen::declare_runtime_functions() {
 
     // UDT (User-Defined Types)
     reg("jdb_udt_new",     "__udt_new",     i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_udt_free",    "__udt_free",    void_type,   {i8_ptr_type}, -1);
+    reg("jdb_udt_free_later", "__udt_free_later", void_type, {i8_ptr_type}, -1);
     reg("jdb_udt_set_f64", "__udt_set_f64", void_type, {i8_ptr_type, i8_ptr_type, f64_type}, -1);
     reg("jdb_udt_get_f64", "__udt_get_f64", f64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
     reg("jdb_udt_set_str", "__udt_set_str", void_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, -1);
@@ -4039,6 +4041,7 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
         // Dispose top-level UDT locals (main scope) before VM teardown.
         emit_dispose_cleanup();
+        emit_udt_free_locals();
         auto shut_it = runtime_funcs.find("__jdrt_shutdown");
         if (shut_it != runtime_funcs.end()) {
             LLVMValueRef handle_global = LLVMGetNamedGlobal(module, "__jdrt_handle");
@@ -4400,6 +4403,18 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     for (auto& stmt : program) {
         if (stmt && stmt->kind == StmtKind::TYPE_DECL)
             register_udt_fields(*stmt);
+    }
+    scan_udt_this(program);
+    {
+        std::vector<const std::vector<StmtPtr>*> bodies = { &program };
+        for (auto& s : program)
+            if (s && (s->kind == StmtKind::FUNCTION || s->kind == StmtKind::SUB ||
+                      s->kind == StmtKind::TYPE_DECL)) {
+                bodies.push_back(&s->body);
+                if (s->kind == StmtKind::TYPE_DECL)
+                    for (auto& m : s->body) if (m) bodies.push_back(&m->body);
+            }
+        udt_free_locals = udt_free_candidates(bodies);
     }
 
     // Pre-scan DIM AS TypeName to know which variables are UDT objects
@@ -5159,16 +5174,19 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
         case StmtKind::THROW_STMT: {
             // Evaluate the error message (coerce to string), then either
             // jump to the enclosing catch or abort via jdb_throw_uncaught.
+            TypedValue thrown{ nullptr, JD_TAG_F64 };
             LLVMValueRef msg_str;
             if (stmt.expr) {
-                TypedValue mv = codegen_expr(*stmt.expr);
-                msg_str = coerce_to(mv, i8_ptr_type);
+                thrown = codegen_expr(*stmt.expr);
+                msg_str = coerce_to(thrown, i8_ptr_type);
             } else {
                 msg_str = LLVMBuildGlobalStringPtr(builder, "", ".emsg");
             }
             auto& es = runtime_funcs["__err_set"];
             LLVMValueRef args[] = { msg_str, LLVMConstInt(i64_type, 1, 0) };
             LLVMBuildCall2(builder, es.fn_type, es.fn, args, 2, "");
+            // The runtime keeps its own copy of the message.
+            if (stmt.expr) drop_fresh_temp(*stmt.expr, thrown);
             // A THROW goes straight to the catch without passing an error
             // check, so this is the only place that knows its line.
             emit_err_line(stmt.line);
@@ -5511,6 +5529,144 @@ void LLVMCodegen::emit_dispose_cleanup() {
     }
 }
 
+// Does n stand anywhere as a value of its own: returned, passed, stored,
+// assigned or captured? A field read (n.f), a field write (n.f = v) and a
+// method call (n.m(...)) only reach into it.
+static bool udt_bare_in_expr(const Expr& e, const std::string& n) {
+    if (e.kind == ExprKind::MEMBER_ACCESS && e.left &&
+        e.left->kind == ExprKind::VARIABLE && e.left->str_val == n)
+        return false;
+    if (e.kind == ExprKind::VARIABLE && e.str_val == n) return true;
+    if (e.func_name == n) return true;
+    for (auto& c : e.lambda_captures) if (c == n) return true;
+    if (e.left && udt_bare_in_expr(*e.left, n)) return true;
+    if (e.right && udt_bare_in_expr(*e.right, n)) return true;
+    for (auto& a : e.args) if (a && udt_bare_in_expr(*a, n)) return true;
+    return false;
+}
+
+static bool udt_bare_in_stmt(const Stmt& s, const std::string& n, bool skip_dims) {
+    auto ex = [&](const ExprPtr& e) { return e && udt_bare_in_expr(*e, n); };
+    if (s.var_name == n) {
+        bool its_dim = s.kind == StmtKind::DIM && skip_dims;
+        bool field_write = s.kind == StmtKind::INDEX_ASSIGN;
+        if (!its_dim && !field_write) return true;
+    }
+    if (s.label == n) return true;
+    for (auto& d : s.destruct_vars()) if (d == n) return true;
+    if (ex(s.expr) || ex(s.loop_cond) || ex(s.end_expr) || ex(s.step_expr)) return true;
+    for (size_t i = 0; i < s.print_exprs.size(); i++) {
+        const ExprPtr& e = s.print_exprs[i];
+        bool member_target = i == 0 && s.kind == StmtKind::INDEX_ASSIGN && !s.label.empty() &&
+            e && e->kind == ExprKind::VARIABLE && e->str_val == n;
+        if (!member_target && ex(e)) return true;
+    }
+    for (auto& e : s.index_chain) if (ex(e)) return true;
+    for (auto& e : s.ctor_args()) if (ex(e)) return true;
+    for (auto& br : s.branches) {
+        if (ex(br.condition)) return true;
+        for (auto& lab : br.case_labels) if (ex(lab.first) || ex(lab.second)) return true;
+        for (auto& b : br.body) if (b && udt_bare_in_stmt(*b, n, skip_dims)) return true;
+    }
+    for (auto& b : s.body)           if (b && udt_bare_in_stmt(*b, n, skip_dims)) return true;
+    for (auto& c : s.catch_body())   if (c && udt_bare_in_stmt(*c, n, skip_dims)) return true;
+    for (auto& f : s.finally_body()) if (f && udt_bare_in_stmt(*f, n, skip_dims)) return true;
+    return false;
+}
+
+// A type whose methods hand THIS on can be held by whatever took it.
+void LLVMCodegen::scan_udt_this(const std::vector<StmtPtr>& program) {
+    udt_types_leaking_this.clear();
+    for (auto& s : program) {
+        if (!s || s->kind != StmtKind::TYPE_DECL) continue;
+        for (auto& m : s->body)
+            if (m && udt_bare_in_stmt(*m, "THIS", false))
+                udt_types_leaking_this.insert(s->func_name);
+    }
+}
+
+// bodies[0] is the frame's own code; every body is searched for a use
+// that lets the instance out.
+std::unordered_set<std::string> LLVMCodegen::udt_free_candidates(
+    const std::vector<const std::vector<StmtPtr>*>& bodies) {
+    std::unordered_map<std::string, std::string> found;
+    std::unordered_set<std::string> mixed;
+    std::function<void(const Stmt&)> collect = [&](const Stmt& s) {
+        if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB ||
+            s.kind == StmtKind::TYPE_DECL) return;
+        if (s.kind == StmtKind::DIM && !s.var_name.empty()) {
+            bool udt = !s.label.empty() && udt_types.count(s.label) &&
+                !(s.expr && s.expr->kind == ExprKind::CALL &&
+                  s.expr->func_name == "__MAKE_UDT_ARRAY__");
+            auto it = found.find(s.var_name);
+            if (!udt) mixed.insert(s.var_name);
+            else if (it != found.end() && it->second != s.label) mixed.insert(s.var_name);
+            else found[s.var_name] = s.label;
+        }
+        for (auto& br : s.branches) for (auto& b : br.body) if (b) collect(*b);
+        for (auto& b : s.body)           if (b) collect(*b);
+        for (auto& c : s.catch_body())   if (c) collect(*c);
+        for (auto& f : s.finally_body()) if (f) collect(*f);
+    };
+    for (auto& s : *bodies[0]) if (s) collect(*s);
+    std::unordered_set<std::string> out;
+    for (auto& [name, type] : found) {
+        if (mixed.count(name) || udt_types_leaking_this.count(type)) continue;
+        bool bare = false;
+        for (size_t b = 0; b < bodies.size() && !bare; b++)
+            for (auto& s : *bodies[b])
+                if (s && udt_bare_in_stmt(*s, name, b == 0)) { bare = true; break; }
+        if (!bare) out.insert(name);
+    }
+    return out;
+}
+
+void LLVMCodegen::emit_udt_free(LLVMValueRef slot_ptr, const std::string& type_name) {
+    LLVMValueRef obj = LLVMBuildLoad2(builder, i8_ptr_type, slot_ptr, "udt.old");
+    LLVMValueRef has = LLVMBuildICmp(builder, LLVMIntNE, obj,
+                                     LLVMConstNull(i8_ptr_type), "udt.has");
+    LLVMBasicBlockRef bb_free = LLVMAppendBasicBlockInContext(ctx, current_fn, "udt.free");
+    LLVMBasicBlockRef bb_done = LLVMAppendBasicBlockInContext(ctx, current_fn, "udt.done");
+    LLVMBuildCondBr(builder, has, bb_free, bb_done);
+    LLVMPositionBuilderAtEnd(builder, bb_free);
+    auto dit = user_functions.find(type_name + ".DISPOSE");
+    if (!type_name.empty() && dit != user_functions.end()) {
+        LLVMValueRef dargs[] = { obj };
+        LLVMBuildCall2(builder, LLVMGlobalGetValueType(dit->second.fn), dit->second.fn,
+                       dargs, 1, "");
+    }
+    auto& uf = runtime_funcs["__udt_free_later"];
+    LLVMValueRef fargs[] = { obj };
+    LLVMBuildCall2(builder, uf.fn_type, uf.fn, fargs, 1, "");
+    LLVMBuildStore(builder, LLVMConstNull(i8_ptr_type), slot_ptr);
+    LLVMBuildBr(builder, bb_done);
+    LLVMPositionBuilderAtEnd(builder, bb_done);
+}
+
+// After emit_dispose_cleanup, which has run DISPOSE already.
+void LLVMCodegen::udt_set_text(LLVMValueRef obj, LLVMValueRef field, const TypedValue& val,
+                               const Expr& src) {
+    LLVMValueRef text = to_string_ptr(val);
+    auto& set_fn = runtime_funcs["__udt_set_str"];
+    LLVMValueRef args[] = { obj, field, text };
+    LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+    if (val.tag == JD_TAG_STR) {
+        drop_fresh_temp(src, val);
+    } else if (val.tag == JD_TAG_I64 || jd_is_f64_tag(val.tag)) {
+        auto& drop = runtime_funcs["__str_drop"];
+        LLVMValueRef d[] = { text };
+        LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+    }
+}
+
+void LLVMCodegen::emit_udt_free_locals() {
+    for (auto& name : udt_free_locals) {
+        VarInfo* vi = lookup_var(name);
+        if (!vi || !vi->alloca_val) continue;
+        emit_udt_free(vi->alloca_val, "");
+    }
+}
+
 void LLVMCodegen::codegen_function(const Stmt& stmt) {
     std::string fn_name = stmt.func_name;
     auto fit = user_functions.find(fn_name);
@@ -5525,6 +5681,8 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     LLVMValueRef saved_retval = current_retval_alloca;
     auto saved_dispose = std::move(dispose_locals);
     dispose_locals.clear();
+    auto saved_udt_free = std::move(udt_free_locals);
+    udt_free_locals = udt_free_candidates({ &stmt.body });
     auto saved_labels = std::move(label_blocks);
     label_blocks.clear();
     auto saved_owned_locals = std::move(owned_str_locals);
@@ -5809,6 +5967,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     emit_owned_local_release();
     rc_release_locals(scopes.size() - 1);
     emit_dispose_cleanup();
+    emit_udt_free_locals();
     if (counts_frame) {
         auto& fl = runtime_funcs["__rc_func_leave"];
         LLVMBuildCall2(builder, fl.fn_type, fl.fn, nullptr, 0, "");
@@ -5830,6 +5989,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     current_exit_bb = saved_exit;
     current_retval_alloca = saved_retval;
     dispose_locals = std::move(saved_dispose);
+    udt_free_locals = std::move(saved_udt_free);
     label_blocks = std::move(saved_labels);
     owned_str_locals = std::move(saved_owned_locals);
     runtime_later_locals = std::move(saved_runtime_later);
@@ -6040,9 +6200,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                     LLVMValueRef args[] = { obj_ptr, field_str, udt_ptr_from(val) };
                     LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
                 } else if (is_str) {
-                    auto& set_fn = runtime_funcs["__udt_set_str"];
-                    LLVMValueRef args[] = { obj_ptr, field_str, to_string_ptr(val) };
-                    LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+                    udt_set_text(obj_ptr, field_str, val, *stmt.expr);
                 } else {
                     LLVMValueRef fval = coerce_to(val, f64_type);
                     auto& set_fn = runtime_funcs["__udt_set_f64"];
@@ -7227,13 +7385,10 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                     "' has no SUB INIT, cannot pass constructor arguments");
             }
             VarInfo* vi = dim_slot();
-            if (vi) {
-                LLVMBuildStore(builder, obj, vi->alloca_val);
-                vi->tag = JD_TAG_ARR;
-            } else {
-                VarInfo& nv = create_var(stmt.var_name, JD_TAG_ARR);
-                LLVMBuildStore(builder, obj, nv.alloca_val);
-            }
+            if (!vi) vi = &create_var(stmt.var_name, JD_TAG_ARR);
+            if (udt_free_locals.count(stmt.var_name)) emit_udt_free(vi->alloca_val, stmt.label);
+            LLVMBuildStore(builder, obj, vi->alloca_val);
+            vi->tag = JD_TAG_ARR;
             var_udt_type[stmt.var_name] = stmt.label;
             track_dispose_local(stmt.var_name, stmt.label, /*is_array=*/false);
             return;
@@ -7981,9 +8136,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         }
 
         if (is_str) {
-            auto& set_fn = runtime_funcs["__udt_set_str"];
-            LLVMValueRef args[] = { obj_ptr, field_str, to_string_ptr(val) };
-            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+            udt_set_text(obj_ptr, field_str, val, *stmt.expr);
         } else {
             LLVMValueRef fval = coerce_to(val, f64_type);
             auto& set_fn = runtime_funcs["__udt_set_f64"];
@@ -8329,9 +8482,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             is_str = is_udt_string_field(stmt.var_name, field_name);
 
         if (is_str) {
-            auto& set_fn = runtime_funcs["__udt_set_str"];
-            LLVMValueRef args[] = { obj_ptr, field_str, to_string_ptr(val_tv) };
-            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+            udt_set_text(obj_ptr, field_str, val_tv, *stmt.expr);
         } else {
             LLVMValueRef fval = coerce_to(val_tv, f64_type);
             auto& set_fn = runtime_funcs["__udt_set_f64"];
@@ -8557,6 +8708,13 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
     auto& pr_str    = runtime_funcs["__print_str"];
     auto& pr_nl     = runtime_funcs["__print_nl"];
     auto& pr_space  = runtime_funcs["__print_space"];
+    // Text made only to be printed goes back once it is out.
+    auto& pr_drop   = runtime_funcs["__str_drop"];
+    auto print_text = [&](LLVMValueRef s) {
+        LLVMValueRef a[] = { s };
+        LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, a, 1, "");
+        LLVMBuildCall2(builder, pr_drop.fn_type, pr_drop.fn, a, 1, "");
+    };
 
     for (size_t i = 0; i < stmt.print_exprs.size(); i++) {
         if (i < stmt.print_seps.size() && stmt.print_seps[i] == 1)
@@ -8587,13 +8745,13 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                     LLVMValueRef gargs[] = { arr.val, idx.val };
                     LLVMValueRef gres = LLVMBuildCall2(builder, gather.fn_type,
                                                        gather.fn, gargs, 2, "pgather");
+                    gres = rc_born(gres, JD_TAG_ARR);
                     auto* frmv = get_runtime_func("__arr_text");
                     if (frmv) {
                         LLVMValueRef fargs[] = { gres };
                         LLVMValueRef fs = LLVMBuildCall2(builder, frmv->fn_type,
                                                          frmv->fn, fargs, 1, "pgfmt");
-                        LLVMValueRef pargs[] = { fs };
-                        LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, pargs, 1, "");
+                        print_text(fs);
                         continue;
                     }
                 }
@@ -8631,9 +8789,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
             auto* mfn = get_runtime_func("__map_str");
             if (mfn) {
                 LLVMValueRef margs[] = { tv.val };
-                LLVMValueRef ms = LLVMBuildCall2(builder, mfn->fn_type, mfn->fn, margs, 1, "ms");
-                LLVMValueRef pargs[] = { ms };
-                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, pargs, 1, "");
+                print_text(LLVMBuildCall2(builder, mfn->fn_type, mfn->fn, margs, 1, "ms"));
             }
         } else if (tv.tag == JD_TAG_I64) {
             LLVMValueRef args[] = { tv.val };
@@ -8643,9 +8799,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
             auto& fd = runtime_funcs["__format_date_num"];
             LLVMValueRef fargs[] = { tv.val, LLVMConstNull(i8_ptr_type),
                 LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
-            LLVMValueRef ds = LLVMBuildCall2(builder, fd.fn_type, fd.fn, fargs, 3, "dprt");
-            LLVMValueRef args[] = { ds };
-            LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
+            print_text(LLVMBuildCall2(builder, fd.fn_type, fd.fn, fargs, 3, "dprt"));
         } else if (jd_is_f64_tag(tv.tag)) {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_double.fn_type, pr_double.fn, args, 1, "");
@@ -8654,9 +8808,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
             auto* fmt = get_runtime_func("__arr_text");
             if (fmt) {
                 LLVMValueRef fargs[] = { tv.val };
-                LLVMValueRef fs = LLVMBuildCall2(builder, fmt->fn_type, fmt->fn, fargs, 1, "afmt");
-                LLVMValueRef args[] = { fs };
-                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
+                print_text(LLVMBuildCall2(builder, fmt->fn_type, fmt->fn, fargs, 1, "afmt"));
             }
         } else if (tv.tag == JD_TAG_VM_HANDLE) {
             LLVMValueRef args[] = { to_string_ptr(tv) };
@@ -8682,8 +8834,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMValueRef str_a = frmv
                     ? LLVMBuildCall2(builder, frmv->fn_type, frmv->fn, args_a, 1, "pr_arr_s")
                     : arr_ptr;
-                LLVMValueRef parr[] = { str_a };
-                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, parr, 1, "");
+                if (frmv) print_text(str_a);
                 LLVMBuildBr(builder, bb_join);
 
                 // A cell carrying a truth value renders TRUE/FALSE. Per the
@@ -8717,8 +8868,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMValueRef str_m = mstr
                     ? LLVMBuildCall2(builder, mstr->fn_type, mstr->fn, args_m, 1, "pr_map_s")
                     : mptr;
-                LLVMValueRef pm[] = { str_m };
-                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, pm, 1, "");
+                if (mstr) print_text(str_m);
                 LLVMBuildBr(builder, bb_join);
 
                 // Absent has no bits to render; the interpreter writes NONE.
@@ -8734,12 +8884,38 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, pn, 1, "");
                 LLVMBuildBr(builder, bb_join);
 
+                // A number prints as one; turning it into text first left the
+                // text behind.
                 LLVMPositionBuilderAtEnd(builder, bb_rest3);
+                LLVMValueRef is_f64 = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_F64, 0), "pr_isf64");
+                LLVMValueRef is_i64 = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_I64, 0), "pr_isi64");
+                LLVMBasicBlockRef bb_f64 = LLVMAppendBasicBlock(current_fn, "pr.f64");
+                LLVMBasicBlockRef bb_ni  = LLVMAppendBasicBlock(current_fn, "pr.notf64");
+                LLVMBasicBlockRef bb_i64 = LLVMAppendBasicBlock(current_fn, "pr.i64");
+                LLVMBasicBlockRef bb_txt = LLVMAppendBasicBlock(current_fn, "pr.text");
+                LLVMBuildCondBr(builder, is_f64, bb_f64, bb_ni);
+                LLVMPositionBuilderAtEnd(builder, bb_ni);
+                LLVMBuildCondBr(builder, is_i64, bb_i64, bb_txt);
+
+                LLVMPositionBuilderAtEnd(builder, bb_f64);
+                LLVMValueRef args_f[] = { pun_i64_to_f64(tv.val) };
+                LLVMBuildCall2(builder, pr_double.fn_type, pr_double.fn, args_f, 1, "");
+                LLVMBuildBr(builder, bb_join);
+
+                LLVMPositionBuilderAtEnd(builder, bb_i64);
+                LLVMValueRef args_i[] = { tv.val };
+                LLVMBuildCall2(builder, pr_int.fn_type, pr_int.fn, args_i, 1, "");
+                LLVMBuildBr(builder, bb_join);
+
+                LLVMPositionBuilderAtEnd(builder, bb_txt);
                 LLVMValueRef args_e[] = { coerce_to(tv, i8_ptr_type) };
                 LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args_e, 1, "");
                 LLVMBuildBr(builder, bb_join);
 
                 LLVMPositionBuilderAtEnd(builder, bb_join);
+                drop_read_temp(tv);
             } else {
                 LLVMValueRef args[] = { coerce_to(tv, i8_ptr_type) };
                 LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
@@ -8747,6 +8923,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
         } else {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
+            drop_fresh_temp(*stmt.print_exprs[i], tv);
         }
     }
 
@@ -10176,7 +10353,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             }
             if (r.fresh_container && (r.tag == JD_TAG_ARR || r.tag == JD_TAG_NATIVE_MAP) &&
                 LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind) {
-                r.val = rc_born(r.val, r.tag, true);
+                r.val = rc_born(r.val, r.tag, !r.fresh_flat);
                 if (rc_on && !rc_escape && &expr == cell_owner_rhs && r.tag == JD_TAG_ARR) {
                     auto& fn = runtime_funcs["__rc_own_cells"];
                     LLVMValueRef a[] = { rc_bits(r.val) };
@@ -10680,7 +10857,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     return r;
                 }
                 if (arr_tv.tag == JD_TAG_NATIVE_MAP) {
-                    return map_null_guard(arr_tv.val, expr.optional, [&]() -> TypedValue {
+                    TypedValue nr = map_null_guard(arr_tv.val, expr.optional, [&]() -> TypedValue {
                     if (want_ptr) {
                         // The field may hold a native map, an array or a VM
                         // object; its tag decides how the next step reads it.
@@ -10711,6 +10888,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv_val");
                     return { tv_val, JD_TAG_RUNTIME, tv_tag };
                     });
+                    mark_native_read(nr);
+                    return nr;
                 }
                 if (arr_tv.tag == JD_TAG_VM_HANDLE) {
                     LLVMValueRef handle_g = LLVMGetNamedGlobal(module, "__jdrt_handle");
@@ -10765,7 +10944,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     is_udt = var_udt_type.count(expr.left->left->str_val + "[]") > 0;
 
                 if (!is_udt) {
-                    return map_null_guard(obj_ptr, expr.optional, [&]() -> TypedValue {
+                    TypedValue nr = map_null_guard(obj_ptr, expr.optional, [&]() -> TypedValue {
                     // Native map access (tag-4-like via punned f64).
                     if (want_ptr) {
                         // The field may hold a native map, an array or a VM
@@ -10799,6 +10978,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv_val");
                     return { tv_val, JD_TAG_RUNTIME, tv_tag };
                     });
+                    mark_native_read(nr);
+                    return nr;
                 }
 
                 // UDT field access
@@ -10844,8 +11025,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef base = LLVMBuildIntToPtr(builder, arr_tv.val,
                                                       i8_ptr_type, "gat_base");
                 LLVMValueRef gargs[] = { base, idx_tv.val };
-                return { LLVMBuildCall2(builder, gather.fn_type, gather.fn,
-                                        gargs, 2, "gather7"), JD_TAG_ARR };
+                return { rc_born(LLVMBuildCall2(builder, gather.fn_type, gather.fn,
+                                                gargs, 2, "gather7"), JD_TAG_ARR), JD_TAG_ARR };
             }
             // The index is a mask or a list of positions whose kind only the
             // running program knows - what a comparison on a runtime-tagged
@@ -10868,6 +11049,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMBuildIntToPtr(builder, idx_tv.val, i8_ptr_type, "gat_idx") };
                 LLVMValueRef gres = LLVMBuildCall2(builder, gather.fn_type, gather.fn,
                                                    gargs, 2, "gather7d");
+                gres = rc_born(gres, JD_TAG_ARR);
                 LLVMValueRef gbits = LLVMBuildPtrToInt(builder, gres, i64_type, "gat_bits");
                 LLVMBuildBr(builder, bb_j);
                 LLVMBasicBlockRef g_end = LLVMGetInsertBlock(builder);
@@ -10979,6 +11161,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 auto& gather = runtime_funcs["__array_gather"];
                 LLVMValueRef gargs[] = { arr_ptr, idx_tv.val };
                 LLVMValueRef gres = LLVMBuildCall2(builder, gather.fn_type, gather.fn, gargs, 2, "gather");
+                gres = rc_born(gres, JD_TAG_ARR);
                 return { gres, JD_TAG_ARR };
             }
 
@@ -11049,7 +11232,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn,
                                                          targs, 3, "mtag");
                     LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv_val");
-                    return { tv_val, JD_TAG_RUNTIME, tv_tag };
+                    if (idx_tv.tag == JD_TAG_I64 || jd_is_f64_tag(idx_tv.tag)) {
+                        auto& kdrop = runtime_funcs["__str_drop"];
+                        LLVMBuildCall2(builder, kdrop.fn_type, kdrop.fn, &key, 1, "");
+                    }
+                    TypedValue nr{ tv_val, JD_TAG_RUNTIME, tv_tag };
+                    mark_native_read(nr);
+                    return nr;
                 }
             }
 
@@ -11459,6 +11648,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         LLVMBasicBlockRef bbs[] = { a_end, s_end };
         LLVMAddIncoming(pv, vals, bbs, 2);
         LLVMAddIncoming(pt, tags, bbs, 2);
+        rc_born_if_array(pv, pt);
+        drop_read_temp(lhs);
+        drop_read_temp(rhs);
         return { pv, JD_TAG_RUNTIME, pt };
     }
 
@@ -11582,17 +11774,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     // String comparison: str = str, str <> str
     if ((lhs.tag == JD_TAG_STR && rhs.tag == JD_TAG_STR) &&
         (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN || expr.op == TokenType::NE)) {
-        if (expr.op == TokenType::NE) {
-            auto& fn = runtime_funcs["__str_ne"];
-            LLVMValueRef args[] = { lhs.val, rhs.val };
-            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne");
-            return { result, JD_TAG_BOOL };
-        } else {
-            auto& fn = runtime_funcs["__str_eq"];
-            LLVMValueRef args[] = { lhs.val, rhs.val };
-            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq");
-            return { result, JD_TAG_BOOL };
-        }
+        auto& fn = runtime_funcs[expr.op == TokenType::NE ? "__str_ne" : "__str_eq"];
+        LLVMValueRef args[] = { lhs.val, rhs.val };
+        LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2,
+                                             expr.op == TokenType::NE ? "strne" : "streq");
+        if (expr.left) drop_fresh_temp(*expr.left, lhs);
+        if (expr.right) drop_fresh_temp(*expr.right, rhs);
+        return { result, JD_TAG_BOOL };
     }
 
     // IN operator
@@ -11821,6 +12009,26 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             auto& cat = runtime_funcs["__str_concat"];
             LLVMValueRef cargs[] = { ls, rs };
             LLVMValueRef joined = LLVMBuildCall2(builder, cat.fn_type, cat.fn, cargs, 2, "dyy_cat");
+            // A side that was not a string was turned into text for the join.
+            for (int side = 0; side < 2; side++) {
+                LLVMValueRef tag = side == 0 ? lhs.runtime_tag : rhs.runtime_tag;
+                auto tag_is = [&](int t) {
+                    return LLVMBuildICmp(builder, LLVMIntEQ, tag, LLVMConstInt(i32_type, t, 0), "dyy_is");
+                };
+                LLVMValueRef kept = LLVMBuildOr(builder, tag_is(JD_TAG_STR),
+                    LLVMBuildOr(builder, tag_is(JD_TAG_NONE), tag_is(JD_TAG_VM_HANDLE), "dyy_k1"),
+                    "dyy_k2");
+                LLVMValueRef made = LLVMBuildNot(builder, kept, "dyy_made");
+                LLVMBasicBlockRef bb_drop = LLVMAppendBasicBlock(current_fn, "dyy.drop");
+                LLVMBasicBlockRef bb_kept = LLVMAppendBasicBlock(current_fn, "dyy.kept");
+                LLVMBuildCondBr(builder, made, bb_drop, bb_kept);
+                LLVMPositionBuilderAtEnd(builder, bb_drop);
+                auto& drop = runtime_funcs["__str_drop"];
+                LLVMValueRef d[] = { cargs[side] };
+                LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+                LLVMBuildBr(builder, bb_kept);
+                LLVMPositionBuilderAtEnd(builder, bb_kept);
+            }
             LLVMValueRef jbits = LLVMBuildPtrToInt(builder, joined, i64_type, "dyy_jbits");
             LLVMBuildBr(builder, bb_end);
             LLVMBasicBlockRef bb_join_end = LLVMGetInsertBlock(builder);
@@ -11841,6 +12049,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             LLVMBasicBlockRef bbs[] = { bb_join_end, bb_sum_end };
             LLVMAddIncoming(pv, vals, bbs, 2);
             LLVMAddIncoming(pt, tags, bbs, 2);
+            drop_read_temp(lhs);
+            drop_read_temp(rhs);
             return { pv, JD_TAG_RUNTIME, pt };
         }
     }
@@ -12128,14 +12338,25 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             return to_string_ptr(tv);
         };
         LLVMValueRef ls = to_str2(lhs), rs = to_str2(rhs);
+        // Both texts are only read: a number's text and a temporary go back.
+        auto release = [&](const TypedValue& tv, LLVMValueRef s, const Expr* src) {
+            if (tv.tag == JD_TAG_I64 || jd_is_f64_tag(tv.tag)) {
+                auto& drop = runtime_funcs["__str_drop"];
+                LLVMValueRef d[] = { s };
+                LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+            } else if (src) {
+                drop_fresh_temp(*src, tv);
+            }
+        };
+        LLVMValueRef answer;
         if (expr.op == TokenType::NE) {
             auto& fn = runtime_funcs["__str_ne"];
             LLVMValueRef args[] = { ls, rs };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne"), JD_TAG_BOOL };
+            answer = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne");
         } else if (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN) {
             auto& fn = runtime_funcs["__str_eq"];
             LLVMValueRef args[] = { ls, rs };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq"), JD_TAG_BOOL };
+            answer = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq");
         } else {
             // Ordering: __str_cmp returns <0 / 0 / >0; compare to 0.
             auto& fn = runtime_funcs["__str_cmp"];
@@ -12151,25 +12372,37 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             }
             LLVMValueRef zero = LLVMConstInt(i64_type, 0, 0);
             LLVMValueRef cmp = LLVMBuildICmp(builder, p, c, zero, "scmp");
-            return { LLVMBuildZExt(builder, cmp, i64_type, "ext"), JD_TAG_BOOL };
+            answer = LLVMBuildZExt(builder, cmp, i64_type, "ext");
         }
+        release(lhs, ls, expr.left.get());
+        release(rhs, rs, expr.right.get());
+        return { answer, JD_TAG_BOOL };
     }
 
     // String * int → repeat ("-" * 5 → "-----"), native fast path
     if (expr.op == TokenType::STAR && (lhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_STR)) {
-        LLVMValueRef str_v = (lhs.tag == JD_TAG_STR) ? lhs.val : rhs.val;
-        TypedValue n_tv = (lhs.tag == JD_TAG_STR) ? rhs : lhs;
+        bool str_left = lhs.tag == JD_TAG_STR;
+        LLVMValueRef str_v = str_left ? lhs.val : rhs.val;
+        TypedValue n_tv = str_left ? rhs : lhs;
         LLVMValueRef n = coerce_to(n_tv, i64_type);
         auto& fn = runtime_funcs["__str_repeat"];
         LLVMValueRef args[] = { str_v, n };
-        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "rep"), JD_TAG_STR };
+        TypedValue out{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "rep"), JD_TAG_STR };
+        out.owned = true;
+        if (str_left ? expr.left : expr.right)
+            drop_fresh_temp(str_left ? *expr.left : *expr.right, str_left ? lhs : rhs);
+        return out;
     }
 
     // String - String → remove all occurrences ("abcabc" - "bc" → "aa")
     if (expr.op == TokenType::MINUS && lhs.tag == JD_TAG_STR && rhs.tag == JD_TAG_STR) {
         auto& fn = runtime_funcs["__str_sub"];
         LLVMValueRef args[] = { lhs.val, rhs.val };
-        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ssub"), JD_TAG_STR };
+        TypedValue out{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ssub"), JD_TAG_STR };
+        out.owned = true;
+        if (expr.left) drop_fresh_temp(*expr.left, lhs);
+        if (expr.right) drop_fresh_temp(*expr.right, rhs);
+        return out;
     }
 
     // String slicing via `/`:  "str" / n → last n chars; n / "str" → first n.
@@ -12183,7 +12416,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         int from_left = (lhs.tag == JD_TAG_STR) ? 0 : 1;
         auto& fn = runtime_funcs["__str_slice"];
         LLVMValueRef args[] = { str_v, n, LLVMConstInt(i32_type, from_left, 0) };
-        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "sslice"), JD_TAG_STR };
+        TypedValue out{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "sslice"), JD_TAG_STR };
+        out.owned = true;
+        return out;
     }
 
     // Tag 7 (runtime-tagged) must be materialised to f64 before arithmetic.
@@ -13815,6 +14050,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 };
 
                 std::vector<LLVMValueRef> arg_raws(nargs, nullptr);
+                // Text made only for this call, with the condition under which
+                // it was made (nullptr: always).
+                std::vector<std::pair<LLVMValueRef, LLVMValueRef>> made;
                 for (int i = 0; i < nargs; i++) {
                     auto& av = evald[i];
                     if (av.tag == JD_TAG_STR) {
@@ -13855,6 +14093,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         store_tag(i, 's');
                         LLVMValueRef sptr = runtime_to_text(av.val, av.runtime_tag);
                         LLVMValueRef sraw = LLVMBuildPtrToInt(builder, sptr, i64_type, "rt_sraw");
+                        LLVMValueRef s_made = LLVMBuildAnd(builder,
+                            LLVMBuildICmp(builder, LLVMIntNE, av.runtime_tag,
+                                LLVMConstInt(i32_type, JD_TAG_STR, 0), "rt_notstr"),
+                            LLVMBuildICmp(builder, LLVMIntNE, av.runtime_tag,
+                                LLVMConstInt(i32_type, JD_TAG_NONE, 0), "rt_notnone"), "rt_made");
                         LLVMBuildBr(builder, bb_m);
                         LLVMBasicBlockRef end_s = LLVMGetInsertBlock(builder);
 
@@ -13870,6 +14113,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         LLVMValueRef vals[] = { sraw, nraw, hraw };
                         LLVMBasicBlockRef bbs[] = { end_s, end_n, end_h };
                         LLVMAddIncoming(phi, vals, bbs, 3);
+                        LLVMValueRef mphi = LLVMBuildPhi(builder, LLVMInt1TypeInContext(ctx), "rt_madep");
+                        LLVMValueRef no = LLVMConstInt(LLVMInt1TypeInContext(ctx), 0, 0);
+                        LLVMValueRef mvals[] = { s_made, no, no };
+                        LLVMAddIncoming(mphi, mvals, bbs, 3);
+                        made.push_back({ LLVMBuildIntToPtr(builder, phi, i8_ptr_type, "rt_mptr"), mphi });
                         arg_raws[i] = phi;
                     } else if (av.tag == JD_TAG_BOOL) {
                         store_tag(i, 's');
@@ -13880,18 +14128,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         auto& sb = runtime_funcs["__str_bool"];
                         LLVMValueRef sargs[] = { b };
                         LLVMValueRef s = LLVMBuildCall2(builder, sb.fn_type, sb.fn, sargs, 1, "fmt_bool");
+                        made.push_back({ s, nullptr });
                         arg_raws[i] = LLVMBuildPtrToInt(builder, s, i64_type, "ptoi");
                     } else if (av.tag == JD_TAG_ARR) {
                         store_tag(i, 's');
                         auto& fv = runtime_funcs["__arr_text"];
                         LLVMValueRef fargs[] = { av.val };
                         LLVMValueRef s = LLVMBuildCall2(builder, fv.fn_type, fv.fn, fargs, 1, "fmt_arr");
+                        made.push_back({ s, nullptr });
                         arg_raws[i] = LLVMBuildPtrToInt(builder, s, i64_type, "ptoi");
                     } else if (av.tag == JD_TAG_NATIVE_MAP) {
                         store_tag(i, 's');
                         auto& ms = runtime_funcs["__map_str"];
                         LLVMValueRef margs[] = { av.val };
                         LLVMValueRef s = LLVMBuildCall2(builder, ms.fn_type, ms.fn, margs, 1, "fmt_map");
+                        made.push_back({ s, nullptr });
                         arg_raws[i] = LLVMBuildPtrToInt(builder, s, i64_type, "ptoi");
                     } else if (av.tag == JD_TAG_I64) {
                         store_tag(i, 'd');
@@ -13915,6 +14166,27 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
                 LLVMValueRef result = LLVMBuildCall2(builder, fit3->second.fn_type, fit3->second.fn,
                                                       args.data(), (unsigned)args.size(), "fmt_t");
+                auto& sdrop = runtime_funcs["__str_drop"];
+                for (auto& [ptr, cond] : made) {
+                    LLVMBasicBlockRef bb_d = nullptr, bb_k = nullptr;
+                    if (cond) {
+                        bb_d = LLVMAppendBasicBlock(current_fn, "fmt.drop");
+                        bb_k = LLVMAppendBasicBlock(current_fn, "fmt.kept");
+                        LLVMBuildCondBr(builder, cond, bb_d, bb_k);
+                        LLVMPositionBuilderAtEnd(builder, bb_d);
+                    }
+                    LLVMValueRef d[] = { ptr };
+                    LLVMBuildCall2(builder, sdrop.fn_type, sdrop.fn, d, 1, "");
+                    if (cond) {
+                        LLVMBuildBr(builder, bb_k);
+                        LLVMPositionBuilderAtEnd(builder, bb_k);
+                    }
+                }
+                for (int i = 0; i < nargs; i++) {
+                    drop_fresh_temp(*expr.args[i + 1], evald[i]);
+                    drop_read_temp(evald[i]);
+                }
+                drop_fresh_temp(*expr.args[0], fmt_tv);
                 emit_err_code_branch();
                 return { result, JD_TAG_STR };
             }
@@ -14027,7 +14299,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { to_ptr(a_val), to_ptr(b_val), closure_enter(op_val.val) };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "outer");
             closure_leave();
-            return { result, JD_TAG_ARR };
+            TypedValue out{ result, JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
         }
     }
     // The kind of the elements of a higher-order call's array argument as
@@ -14213,7 +14487,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     }
                 }
             }
-            return { result, JD_TAG_ARR };  // returns array
+            TypedValue out{ result, JD_TAG_ARR };
+            out.fresh_container = true;
+            out.fresh_flat = true;
+            return out;
         }
     }
     if (upper == "REDUCE" && expr.args.size() >= 2) {
@@ -14359,7 +14636,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { reducer, to_ptr(keys_tv), to_ptr(vals_tv),
                                     LLVMConstInt(i32_type, reduced_tag, 0) };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "agg");
-            return { result, JD_TAG_ARR };
+            TypedValue out{ result, JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
         }
         // Reducer we can't shape natively (a non-array-typed named FUNC, an
         // exotic funcref): fall through to the generic dispatch so behaviour
@@ -15934,14 +16213,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "odel");
         };
         if (mtv.tag == JD_TAG_NATIVE_MAP) {
-            return { native_del(coerce_to(mtv, i8_ptr_type)), JD_TAG_I64 };
+            { TypedValue kr{ native_del(coerce_to(mtv, i8_ptr_type)), JD_TAG_I64 }; drop_fresh_temp(*expr.args[1], arg_cache[1]); return kr; }
         }
         if (is_var && jd_is_f64_tag(mtv.tag)) {
             LLVMValueRef as_i64 = pun_f64_to_i64(mtv.val);
-            return { native_del(LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr")), JD_TAG_I64 };
+            { TypedValue kr{ native_del(LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr")), JD_TAG_I64 }; drop_fresh_temp(*expr.args[1], arg_cache[1]); return kr; }
         }
         if (mtv.tag == JD_TAG_VM_HANDLE) {
-            return { vm_del(mtv.val), JD_TAG_I64 };
+            { TypedValue kr{ vm_del(mtv.val), JD_TAG_I64 }; drop_fresh_temp(*expr.args[1], arg_cache[1]); return kr; }
         }
         if (mtv.tag == JD_TAG_RUNTIME && mtv.runtime_tag) {
             LLVMValueRef is_vm = LLVMBuildICmp(builder, LLVMIntEQ, mtv.runtime_tag,
@@ -15963,7 +16242,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef vals[] = { vres, mres };
             LLVMBasicBlockRef bbs[] = { vm_end, map_end };
             LLVMAddIncoming(phi, vals, bbs, 2);
-            return { phi, JD_TAG_I64 };
+            { TypedValue kr{ phi, JD_TAG_I64 }; drop_fresh_temp(*expr.args[1], arg_cache[1]); return kr; }
         }
     }
 
@@ -15990,7 +16269,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             }
             auto& fn = runtime_funcs["__map_has"];
             LLVMValueRef a[] = { mptr, kptr };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "mhas"), JD_TAG_BOOL };
+            { TypedValue kr{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "mhas"), JD_TAG_BOOL }; drop_fresh_temp(*expr.args[1], arg_cache[1]); return kr; }
         }
         // VM handle (JSON.PARSE$, MAP.FROM, etc.): go direct to
         // __jdrt_obj_exists. Routing through jdrt_call_typed_f64 works in
@@ -16005,7 +16284,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle_g, "rt");
             auto& fn = runtime_funcs["__jdrt_obj_exists"];
             LLVMValueRef a[] = { rt, mtv.val, kptr };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "oex"), JD_TAG_BOOL };
+            { TypedValue kr{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "oex"), JD_TAG_BOOL }; drop_fresh_temp(*expr.args[1], arg_cache[1]); return kr; }
         }
         // Runtime-tagged: branch on runtime_tag - if VM_HANDLE, use
         // obj_exists; else fall to __map_has on the punned pointer.
@@ -16041,7 +16320,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef vals[] = { vres, mres };
             LLVMBasicBlockRef blks[] = { vm_end, map_end };
             LLVMAddIncoming(phi, vals, blks, 2);
-            return { phi, JD_TAG_BOOL };
+            { TypedValue kr{ phi, JD_TAG_BOOL }; drop_fresh_temp(*expr.args[1], arg_cache[1]); return kr; }
         }
     }
 
@@ -18136,7 +18415,7 @@ void LLVMCodegen::drop_fresh_temp(const Expr& e, const TypedValue& tv) {
 
 LLVMCodegen::TypedValue LLVMCodegen::runtime_into_str_slot(const TypedValue& rhs) {
     TypedValue out{ runtime_to_str(rhs.val, rhs.runtime_tag), JD_TAG_STR };
-    if (!rhs.fresh_ptr || std::getenv("JDB_NO_STROWN")) return out;
+    if ((!rhs.fresh_ptr && !rhs.fresh_native) || std::getenv("JDB_NO_STROWN")) return out;
     // A field read's buffer belongs to the bridge library: the slot gets a
     // copy in this program's heap, and the read goes back.
     auto& own = runtime_funcs["__str_own"];
@@ -18147,9 +18426,27 @@ LLVMCodegen::TypedValue LLVMCodegen::runtime_into_str_slot(const TypedValue& rhs
     return out;
 }
 
+void LLVMCodegen::mark_native_read(TypedValue& tv) {
+    if (tv.tag != JD_TAG_RUNTIME || !tv.runtime_tag) return;
+    tv.fresh_native = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+        LLVMConstInt(i32_type, JD_TAG_STR, 0), "nat_fresh");
+}
+
 void LLVMCodegen::drop_read_temp(const TypedValue& tv, bool arrays_too) {
-    if (tv.tag != JD_TAG_RUNTIME || !tv.runtime_tag || !tv.fresh_ptr) return;
+    if (tv.tag != JD_TAG_RUNTIME || !tv.runtime_tag) return;
     if (std::getenv("JDB_NO_STROWN")) return;
+    if (tv.fresh_native) {
+        LLVMBasicBlockRef bb_n = LLVMAppendBasicBlock(current_fn, "rd.native");
+        LLVMBasicBlockRef bb_e = LLVMAppendBasicBlock(current_fn, "rd.native_end");
+        LLVMBuildCondBr(builder, tv.fresh_native, bb_n, bb_e);
+        LLVMPositionBuilderAtEnd(builder, bb_n);
+        auto& ndrop = runtime_funcs["__str_drop"];
+        LLVMValueRef np = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "rd_nptr");
+        LLVMBuildCall2(builder, ndrop.fn_type, ndrop.fn, &np, 1, "");
+        LLVMBuildBr(builder, bb_e);
+        LLVMPositionBuilderAtEnd(builder, bb_e);
+    }
+    if (!tv.fresh_ptr) return;
     // Both kinds were allocated by the bridge library, so they go back there.
     auto& drop = runtime_funcs["__jdrt_str_free"];
     auto& afree = runtime_funcs["__jdrt_free_flat_array"];
@@ -18178,7 +18475,10 @@ void LLVMCodegen::drop_read_temp(const TypedValue& tv, bool arrays_too) {
 }
 
 bool LLVMCodegen::expr_yields_fresh_string(const Expr& e) const {
-    if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) return true;
+    // With a string answer each of these built a new one.
+    if (e.kind == ExprKind::BINARY &&
+        (e.op == TokenType::PLUS || e.op == TokenType::STAR ||
+         e.op == TokenType::MINUS || e.op == TokenType::SLASH)) return true;
     if (e.kind != ExprKind::CALL) return false;
     if (fresh_string_funcs.count(e.func_name)) return true;
     std::string upper = e.func_name;

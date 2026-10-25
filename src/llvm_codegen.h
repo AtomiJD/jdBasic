@@ -421,6 +421,11 @@ private:
         // An array or map this call built for its caller alone (the bridge
         // copies every answer); the caller registers it with the counts.
         bool fresh_container = false;
+        // Its cells belong to another array, so its rows are not its own.
+        bool fresh_flat = false;
+        // i1: a string this program's heap copied out for the read (a
+        // native map hands out a copy); drop_read_temp gives it back.
+        LLVMValueRef fresh_native = nullptr;
     };
     // adopt_vm_handle for a value that may be a VM handle only at run time.
     void adopt_if_vm_handle(const std::string& name, TypedValue& rhs, bool local_only);
@@ -434,6 +439,7 @@ private:
     void drop_fresh_temp(const Expr& e, const TypedValue& tv);
     // arrays_too = false where the consumer keeps an array it is handed.
     void drop_read_temp(const TypedValue& tv, bool arrays_too = true);
+    void mark_native_read(TypedValue& tv);
     // A runtime-tagged value bound for a string slot, as an owned string
     // when it is a field read's fresh buffer.
     TypedValue runtime_into_str_slot(const TypedValue& rhs);
@@ -624,6 +630,19 @@ private:
             dispose_locals.push_back({ var, type_name, is_array });
     }
     void emit_dispose_cleanup(); // called before LLVMBuildRet/main-end
+
+    // UDT instances DIMmed in the current function (or the main program)
+    // whose name is only ever used for its fields and methods: nothing else
+    // can hold them, so a second DIM and the end of the frame free them.
+    std::unordered_set<std::string> udt_free_locals;
+    std::unordered_set<std::string> udt_types_leaking_this;
+    void scan_udt_this(const std::vector<StmtPtr>& program);
+    std::unordered_set<std::string> udt_free_candidates(
+        const std::vector<const std::vector<StmtPtr>*>& bodies);
+    void emit_udt_free(LLVMValueRef slot_ptr, const std::string& type_name);
+    void emit_udt_free_locals();
+    // obj.field = text: the field keeps a copy, so a temporary goes back.
+    void udt_set_text(LLVMValueRef obj, LLVMValueRef field, const TypedValue& val, const Expr& src);
 
     // Calls a function the runtime knows by name, with its arguments
     // packed the way the bridge takes them.
