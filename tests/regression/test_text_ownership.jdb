@@ -1,0 +1,84 @@
+' Texts that a variable or an array owns are given back when they are
+' written over; what was read out of them before stays valid. Every check
+' reads after loop passes that free what nobody holds.
+
+OPTION "EXPLICIT"
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM k AS INTEGER = 0
+
+' A cell written over in an array that owns its texts.
+DIM names$ AS ARRAY = ["a", "b", "c"]
+DIM kept$ AS STRING = ""
+FOR k = 1 TO 50
+    names$[1] = "row" + STR$(k)
+    IF k = 20 THEN kept$ = names$[1]
+    names$[2] = names$[1]
+NEXT k
+Check(names$[1] = "row50" ANDALSO names$[2] = "row50", "cells hold the last texts")
+Check(kept$ = "row20", "a text read out of a cell survives its cell")
+Check(names$[0] = "a", "an untouched cell keeps its literal")
+
+' A string array computed and handed straight on.
+DIM words AS ARRAY = [" ab ", " cd "]
+DIM tidy AS ARRAY = [""]
+FOR k = 1 TO 50
+    tidy = TRIM$(UCASE$(words))
+NEXT k
+Check(JOIN(tidy, ",") = "AB,CD", "an inner string array frees its texts, the answer keeps its own")
+
+' A variable that holds a string some passes and a map value others.
+DIM bag AS MAP = {}
+bag{"s"} = "abc"
+bag{"n"} = 7
+DIM v = bag{"s"}
+DIM seen$ AS STRING = ""
+FOR k = 1 TO 50
+    v = "v" + STR$(k)
+    IF k = 30 THEN seen$ = v
+    v = bag{"s"}
+    IF k MOD 2 = 0 THEN v = bag{"n"}
+NEXT k
+Check(seen$ = "v30", "a text read out of a runtime-typed variable survives it")
+Check(v = 7, "the runtime-typed variable holds its last value")
+v = bag{"s"}
+Check(v = "abc", "a map text taken into it reads back")
+
+' An array that MATMUL reads still owns the texts it is given.
+DIM grid AS ARRAY = [0]
+FOR k = 1 TO 50
+    grid = STR$([k, k + 1])
+    grid = MATMUL(RESHAPE([1, 2, 3, 4], [2, 2]), RESHAPE([1, 0, 0, 1], [2, 2]))
+NEXT k
+Check(LEN(grid) = 2, "an array that changes kind keeps working")
+
+' A POP from an owning array hands out its own copy.
+DIM stack$ AS ARRAY = ["x", "y"]
+PUSH(stack$, "z" + STR$(1))
+DIM top$ AS STRING = POP(stack$)
+FOR k = 1 TO 10
+    stack$[0] = "w" + STR$(k)
+NEXT k
+Check(top$ = "z1", "a popped text survives")
+
+' A FUNC named with $ may answer a map; the variable keeps it as it is.
+FUNC Reply$(code AS INTEGER)
+    DIM label = "c" + STR$(code)
+    RETURN { "status": code, "label": label }
+ENDFUNC
+DIM reply = Reply$(1)
+FOR k = 1 TO 30
+    reply = Reply$(k)
+NEXT k
+Check(reply{"status"} = 30 ANDALSO reply{"label"} = "c30", "a map from a $ FUNC survives its variable being written over")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

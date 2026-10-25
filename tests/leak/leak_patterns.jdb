@@ -435,6 +435,19 @@ ELSEIF pattern$ = "strcells" THEN
         glob = STR$([1, 2, 3])
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "textcells" THEN
+    DIM tc$ AS ARRAY = ["a", "b", "c"]
+    DIM twords AS ARRAY = [" ab ", " cd "]
+    DIM tbag AS MAP = {}
+    tbag{"s"} = "abc"
+    DIM tv = tbag{"s"}
+    FOR i = 1 TO passes
+        tc$[1] = "row" + STR$(i)
+        tv = "v" + STR$(i)
+        tv = tbag{"s"}
+        total = total + LEN(JOIN(TRIM$(UCASE$(twords)), ""))
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSEIF pattern$ = "mapjoin" THEN
     DIM jbag AS MAP = {}
     jbag{"s"} = "abc"

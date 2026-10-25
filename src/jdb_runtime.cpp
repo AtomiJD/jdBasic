@@ -644,6 +644,8 @@ static void rc_disown_cell(const void* holder, double old);
 // A string POP copied out of an array that owns its cells: the original,
 // now past the end, is not reached by the array's own release.
 static void rc_drop_popped_text(const void* arr, const char* s);
+// A string cell about to be written over, in an array that owns its texts.
+static void rc_drop_cell_text(JdbArray* arr, int64_t idx);
 
 JdbArray* jdb_array_new(int64_t size) {
     auto* arr = (JdbArray*)malloc(sizeof(JdbArray));
@@ -718,6 +720,7 @@ JdbArray* jdb_array_push(JdbArray* arr, double val, int32_t tag) {
 
 void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
     if (idx >= 0 && idx < arr->length) {
+        rc_drop_cell_text(arr, idx);
         if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
         arr->data[idx] = val;
     }
@@ -1174,6 +1177,7 @@ void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
     arr->flags |= 8;  // bit 3: per-element tags present
     if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP)
         arr->flags |= 1;
+    rc_drop_cell_text(arr, idx);
     if (tag == JD_TAG_STR) arr->flags |= 2;
     if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
     arr->data[idx] = keep_vm_handle(val, tag);
@@ -2767,6 +2771,14 @@ extern "C" void jdb_rc_adopt(int64_t parent_bits, int64_t child_bits) {
         c->owner_gen = p->gen;
     }
     if (p->kind == JD_TAG_ARR) ((JdbArray*)p->key)->flags |= JDB_ARR_OWNS_CHILDREN;
+}
+
+static void rc_drop_cell_text(JdbArray* arr, int64_t idx) {
+    bool text = (arr->flags & 8) && arr->elem_tags ? arr->elem_tags[idx] == JD_TAG_STR
+                                                   : (arr->flags & 2) != 0;
+    if (!text) return;
+    union { double d; int64_t i; } u; u.d = arr->data[idx];
+    rc_drop_popped_text(arr, (const char*)(intptr_t)u.i);
 }
 
 static void rc_drop_popped_text(const void* arr, const char* s) {

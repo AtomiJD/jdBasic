@@ -3,4 +3,3 @@
 # has gone flat, so this file shrinks as the leaks are fixed.
 #
 # backend  pattern   ticket
-native   strcells   #723

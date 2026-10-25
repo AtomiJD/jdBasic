@@ -450,6 +450,11 @@ private:
     // being lost. Computed by scan_owned_str_globals; empty means the older
     // never-free behaviour, which is always safe.
     std::unordered_set<std::string> owned_str_globals;
+    // The same for names without $, whose slot is runtime-tagged: only the
+    // stores into such a slot consult these.
+    std::unordered_set<std::string> owned_rt_globals;
+    std::unordered_map<std::string, std::unordered_set<std::string>> owned_rt_locals_by_fn;
+    std::unordered_set<std::string> owned_rt_locals;
     void scan_owned_str_globals(const std::vector<StmtPtr>& program);
     // The shadow global holding what a slot currently owns. The release
     // targets this rather than the slot, so a write through any path this
@@ -458,6 +463,9 @@ private:
     LLVMValueRef owned_shadow_for(const std::string& var_name);
     // Emits the release-and-take-over sequence. Returns the pointer to store.
     LLVMValueRef take_string_ownership(const std::string& var_name, TypedValue rhs, bool rhs_is_fresh);
+    bool owns_text_slot(const std::string& var_name, VarInfo* vi);
+    void adopt_runtime_text(const std::string& var_name, const TypedValue& rhs);
+    LLVMValueRef own_runtime_str(const std::string& var_name, const TypedValue& rhs, const Expr* src);
     // The same for the $ locals a FUNC/SUB declares with DIM and only ever
     // writes by plain assignment. owned_locals_by_fn holds every function's
     // set; owned_str_locals and owned_local_shadow belong to the function
