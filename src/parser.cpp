@@ -3055,6 +3055,6 @@ ExprPtr Parser::parse_postfix(ExprPtr expr) {
         }
         else break;
     }
-    if (expr) expr->chain_depth = depth;
+    if (expr) expr->chain_depth = (std::max)(expr->chain_depth, depth);
     return expr;
 }

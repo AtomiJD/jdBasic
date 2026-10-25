@@ -1,0 +1,114 @@
+' A value of one kind never reaches code that reads it as another kind:
+' a number compared with a string, a number piped or passed through a
+' function reference, a number cell under a nested write. Each case
+' answers what the interpreter answers, or raises the error it raises.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+TYPE Coin
+    Val AS DOUBLE
+ENDTYPE
+TYPE Label
+    Val AS STRING
+ENDTYPE
+
+TYPE Pt
+    x AS INTEGER
+ENDTYPE
+
+FUNC TextLen(t AS STRING) AS INTEGER
+    RETURN LEN(t)
+ENDFUNC
+
+FUNC Twice(n AS INTEGER) AS INTEGER
+    RETURN n * 2
+ENDFUNC
+
+FUNC CellLen(x)
+    RETURN LEN(x)
+ENDFUNC
+
+FUNC LocalPt() AS INTEGER
+    DIM pt AS Pt
+    pt.x = 5
+    RETURN pt.x
+ENDFUNC
+
+' A number never equals a string.
+DIM d AS DOUBLE = 3.5
+Check(NOT (d = "abc"), "a DOUBLE is not equal to a string")
+Check(d <> "3.5", "a DOUBLE differs from its own text")
+DIM start_date AS DATE = CVDATE("2024-01-01")
+Check(NOT (start_date = "2024-01-01"), "a DATE is not equal to a string")
+DIM words AS ARRAY = ["x", "y"]
+Check(words[0] = "x", "a string cell still compares as text")
+
+' IN with a needle whose kind only the running program knows.
+DIM m AS MAP = {"n": 2, "list": ["a", "b"], "v": 123.5, "nums": [3, 9, 4]}
+Check(NOT (m{"n"} IN m{"list"}), "a number is not IN a list of strings")
+
+' Pipes keep the kind of each value they carry.
+DIM total AS DOUBLE = IOTA(4) |> SUM(?)
+Check(total = 10, "IOTA |> SUM")
+DIM shown AS STRING = IOTA(4) |> SUM(?) |> STR$(?)
+Check(shown = "10", "IOTA |> SUM |> STR$")
+DIM doubled AS INTEGER = 5 |> Twice
+Check(doubled = 10, "a pipe into an INTEGER parameter")
+
+' A function reference to a STRING parameter, handed a number.
+DIM h = TextLen@
+Check(h("abc") = 3, "a funcref with a string")
+Check(h(5) = 0, "a funcref with a number for a STRING parameter")
+
+' MAX and LEN of a value that is a number at run time.
+Check(MAX(m{"nums"}) = 9, "MAX of a list in a map")
+Check(MAX(m{"v"}) = 123.5, "MAX of a number in a map")
+DIM lens AS ARRAY = SELECT(CellLen@, [1, 2, 3])
+Check(lens[0] = 0, "LEN of a number inside a FUNC")
+
+' Nested writes check every step.
+DIM flat AS ARRAY = [1, 2, 3]
+DIM caught AS INTEGER = 0
+TRY
+    flat[1][0] = 5
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "a nested write onto a number cell")
+DIM grid AS ARRAY = [[1, 2], [3, 4]]
+caught = 0
+TRY
+    grid[5][0] = 9
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "a nested write through a row past the end")
+caught = 0
+TRY
+    flat[7] = 9
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "a write past the end of an array")
+grid[1][0] = 30
+Check(grid[1][0] = 30, "a nested write in range still works")
+
+' A field name two types share takes the owner's type.
+DIM coins[2] AS Coin
+coins[0].Val = 2.25
+Check(coins[0].Val + 1 = 3.25, "a DOUBLE field shared by name with a STRING field")
+
+' A local DIM AS <type> does not make a global of that name the type.
+DIM pt AS MAP = {"x": 7}
+Check(LocalPt() = 5, "a local UDT")
+Check(pt{"x"} = 7, "a global map of the same name stays a map")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

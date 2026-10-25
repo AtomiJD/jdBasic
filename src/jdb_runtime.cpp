@@ -907,12 +907,16 @@ JdbArray* jdb_array_push(JdbArray* arr, double val, int32_t tag) {
 }
 
 void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
-    if (idx >= 0 && idx < arr->length) {
+    if (arr && idx >= 0 && idx < arr->length) {
         rc_drop_cell_text(arr, idx);
         if (rc_holds_rows(arr)) rc_implicit_overwrite(arr, idx);
         if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
         arr->data[idx] = val;
+        return;
     }
+    // As in the interpreter, a write outside the array is an error.
+    std::string msg = "Array index out of bounds: " + std::to_string(idx);
+    jdb_err_set(msg.c_str(), 13);
 }
 
 // One line from standard input for INPUT, without its line ending.
@@ -1347,6 +1351,51 @@ void jdrt_tagged_arr_set(void* rt, int64_t val_bits, int32_t val_tag,
 
 static int rc_kind_of(uintptr_t k);
 static bool rc_owns_texts(uintptr_t k);
+
+void jdb_map_set_tagged(JdbMap* m, const char* key, double val, int32_t tag);
+
+// A key written on a value whose kind only the running program knows, other
+// than a VM value: a native map takes it, and so does a map an untyped
+// parameter carries as a number; anything else has no keys, as in the
+// interpreter.
+void jdb_tagged_key_set(int64_t base, int32_t base_tag, const char* key, double val, int32_t tag) {
+    // Not every map is in the counts, so pointer bits are taken for a map
+    // unless the counts know them as an array.
+    if (base_tag == JD_TAG_F64 &&
+        (uint64_t)base >= 4096 && (uint64_t)base < (1ULL << 47) &&
+        rc_kind_of((uintptr_t)base) != JD_TAG_ARR)
+        base_tag = JD_TAG_NATIVE_MAP;
+    if (base_tag != JD_TAG_NATIVE_MAP || !base) {
+        jdb_err_set("Cannot index-assign into this type", 99);
+        return;
+    }
+    jdb_map_set_tagged((JdbMap*)(intptr_t)base, key, val, tag);
+}
+
+int64_t jdb_array_len(JdbArray* arr);
+int64_t jdb_map_count(JdbMap* m);
+
+// LEN of an f64 slot whose kind only the running program knows: pointer
+// bits name a container (a map when the counts say so, otherwise an
+// array); a number has length 0, as in the interpreter.
+int64_t jdb_len_bits(double slot) {
+    union { double d; uint64_t u; } c; c.d = slot;
+    if (c.u < 4096 || c.u >= (1ULL << 47)) return 0;
+    if (rc_kind_of((uintptr_t)c.u) == JD_TAG_NATIVE_MAP)
+        return jdb_map_count((JdbMap*)(intptr_t)c.u);
+    return jdb_array_len((JdbArray*)(intptr_t)c.u);
+}
+
+// The map an f64 slot carries as pointer bits, as an untyped parameter
+// does. A number in the slot, or an array, has no keys: that raises the
+// interpreter's error and answers null.
+void* jdb_slot_map_for_write(double slot) {
+    union { double d; uint64_t u; } c; c.d = slot;
+    if (c.u >= 4096 && c.u < (1ULL << 47) && rc_kind_of((uintptr_t)c.u) != JD_TAG_ARR)
+        return (void*)(intptr_t)c.u;
+    jdb_err_set("Cannot index-assign into this type", 99);
+    return nullptr;
+}
 
 // A position written on a value whose kind only the running program knows.
 // A native array takes the cell with its kind; a map or a VM value goes to
@@ -4355,6 +4404,35 @@ void* jdb_array_get_ptr(JdbArray* arr, int64_t idx) {
     if (!arr || idx < 0 || idx >= arr->length) return nullptr;
     union { double d; int64_t i; } u; u.d = arr->data[idx];
     return (void*)(intptr_t)u.i;
+}
+
+// One step of a nested write, a[i][j] = v or a[i]{"k"} = v: the row or the
+// map in cell i, which the next step writes into. An index outside the
+// array, or a cell that holds no container, raises the interpreter's error
+// and answers null.
+void* jdb_array_step_write(JdbArray* arr, int64_t idx) {
+    if (arr && (idx < 0 || idx >= arr->length)) {
+        std::string msg = "Multi-index: out of bounds " + std::to_string(idx);
+        jdb_err_set(msg.c_str(), 13);
+        return nullptr;
+    }
+    bool container = false;
+    union { double d; uint64_t u; } c; c.u = 0;
+    if (arr) {
+        c.d = arr->data[idx];
+        if ((arr->flags & 8) && arr->elem_tags) {
+            int t = arr->elem_tags[idx];
+            container = (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP);
+        } else {
+            container = (arr->flags & 1) && !(arr->flags & 2) &&
+                        c.u >= 4096 && c.u < (1ULL << 47);
+        }
+    }
+    if (!container) {
+        jdb_err_set("Multi-index assignment: leaf is not array or object", 99);
+        return nullptr;
+    }
+    return (void*)(intptr_t)c.u;
 }
 
 // LEN that returns shape array for nested (2D+) arrays, otherwise scalar length.

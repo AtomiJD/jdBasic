@@ -441,6 +441,9 @@ private:
         // native map hands out a copy); drop_read_temp gives it back.
         LLVMValueRef fresh_native = nullptr;
     };
+    // The values of the pipes whose call is being generated, innermost last;
+    // a ? placeholder reads the last one.
+    std::vector<TypedValue> pipe_values;
     // adopt_vm_handle for a value that may be a VM handle only at run time.
     void adopt_if_vm_handle(const std::string& name, TypedValue& rhs, bool local_only);
 
@@ -720,6 +723,10 @@ private:
     // Type-pun between i64 and f64 (avoids LLVM bitcast restrictions on newer versions)
     LLVMValueRef pun_i64_to_f64(LLVMValueRef i64_val);
     LLVMValueRef pun_f64_to_i64(LLVMValueRef f64_val);
+    // i1: whether the bits of an f64 slot can be a pointer (4096 up to the
+    // 47-bit user address space). A real number never is: those bits read as
+    // a double are subnormals below 1e-309.
+    LLVMValueRef bits_may_be_ptr(LLVMValueRef f64_val);
 
     // Turn a runtime-tagged value into a string pointer, so a slot declared
     // AS STRING keeps its type instead of being retagged by the assignment.
