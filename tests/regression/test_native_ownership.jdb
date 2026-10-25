@@ -1,0 +1,163 @@
+' A buffer or a container is freed by whoever owns it, once, and never
+' while something still reads it: a STATIC initializer, a value passed on
+' through ?? or a pipe, a value handed back from a FUNC, a user-type local
+' with a DISPOSE. Run the compiled form under JDB_RC_POISON=1 to see a
+' freed read as garbage instead of luck.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+TYPE Res
+    Name AS STRING
+    SUB DISPOSE()
+        disposed = disposed + 1
+        THIS.Name = "DEAD"
+    ENDSUB
+ENDTYPE
+
+DIM disposed AS INTEGER = 0
+DIM kept AS ARRAY = []
+DIM held$ AS STRING = ""
+
+FUNC Acc(n AS INTEGER) AS DOUBLE
+    STATIC DIM sa AS ARRAY = IOTA(3) * 2
+    STATIC DIM sm AS MAP = {"k": 7}
+    RETURN sa[0] + sa[2] + sm{"k"} + n * 0
+ENDFUNC
+
+SUB Keep(s$)
+    kept = APPEND(kept, s$)
+ENDSUB
+
+FUNC Fallback$() AS STRING
+    DIM t$ AS STRING = SPACE$(400000) + CHR$(65)
+    RETURN t$ ?? "x"
+ENDFUNC
+
+FUNC Either(n AS INTEGER)
+    DIM t$ AS STRING = SPACE$(300000) + "A"
+    IF n > 0 THEN RETURN t$
+    RETURN 5
+ENDFUNC
+
+SUB WriteFirst()
+    held$ = SPACE$(300000) + "B"
+    DIM held$ AS STRING = "loc" + CHR$(67)
+ENDSUB
+
+FUNC NumberAsText$(n AS INTEGER) AS STRING
+    IF n > 0 THEN RETURN "pos" + CHR$(65)
+    RETURN 5
+ENDFUNC
+
+FUNC MakeRes() AS Res
+    DIM r AS Res
+    r.Name = "alive"
+    RETURN r
+ENDFUNC
+
+FUNC MaybeRes(n AS INTEGER) AS INTEGER
+    IF n > 5 THEN
+        DIM r AS Res
+        r.Name = "made"
+    ENDIF
+    RETURN n
+ENDFUNC
+
+FUNC BranchRes(n AS INTEGER) AS INTEGER
+    IF n > 0 THEN
+        DIM r AS Res
+        r.Name = "one"
+    ELSE
+        DIM r AS Res
+        r.Name = "two"
+    ENDIF
+    RETURN n
+ENDFUNC
+
+FUNC FirstChar$(s$) AS STRING
+    FOR EACH ch IN s$
+        RETURN ch ?? ""
+    NEXT
+    RETURN ""
+ENDFUNC
+
+FUNC FindIt(k AS INTEGER) AS INTEGER
+    DIM loc AS ARRAY = IOTA(500) * 2
+    FOR EACH v IN loc
+        IF v = k THEN RETURN 1
+    NEXT
+    RETURN 0
+ENDFUNC
+
+' A STATIC initializer survives the drains of the caller's loop.
+DIM i AS INTEGER = 0
+DIM junk AS ARRAY = []
+DIM acc_ok AS INTEGER = 1
+FOR i = 1 TO 200
+    junk = [i * 100, i * 200, i * 300]
+    IF Acc(i) <> 15 THEN acc_ok = 0
+NEXT i
+Check(acc_ok = 1, "a STATIC array and map keep their initializer")
+
+' ?? and a pipe pass the owned buffer on; its owner must not free it.
+DIM g$ AS STRING = "abcdefghijklmnop" + CHR$(65)
+kept = APPEND(kept, g$ ?? "x")
+g$ = "w" + CHR$(66)
+g$ = "v" + CHR$(67)
+Check(kept[0] = "abcdefghijklmnopA", "a value passed on through ?? stays")
+DIM p$ AS STRING = "qrstuvwx" + CHR$(68)
+p$ |> Keep
+p$ = "u" + CHR$(69)
+Check(kept[1] = "qrstuvwxD", "a value piped into a SUB that keeps it stays")
+
+' Values handed back from a FUNC.
+DIM back$ AS STRING = Fallback$()
+Check(LEN(back$) = 400001, "RETURN t$ ?? x hands back a live buffer")
+DIM either = Either(1)
+Check(LEN(either) = 300001, "a runtime-typed FUNC hands back its owned local")
+WriteFirst()
+Check(LEN(held$) = 300001, "a global written before a local of its name is kept")
+DIM as_text$ AS STRING = NumberAsText$(0)
+Check(LEN(as_text$) = 1, "a number returned from a STRING FUNC reads as its text")
+
+' User types with a DISPOSE.
+DIM got AS Res
+got = MakeRes()
+Check(got.Name = "alive", "a returned local is not disposed under the caller")
+disposed = 0
+Check(MaybeRes(1) = 1, "MaybeRes")
+Check(disposed = 0, "a DIM that never ran disposes nothing")
+Check(BranchRes(1) = 1, "BranchRes")
+Check(disposed = 1, "a DIM in two branches disposes once")
+
+' A RETURN from inside FOR EACH, many times over.
+DIM found AS INTEGER = 0
+FOR i = 1 TO 2000
+    found = found + FindIt(4)
+NEXT i
+Check(found = 2000, "RETURN from inside FOR EACH")
+DIM first$ AS STRING = ""
+FOR i = 1 TO 500
+    first$ = FirstChar$("hello" + STR$(i))
+NEXT i
+Check(first$ = "h", "RETURN ch ?? \"\" from inside FOR EACH over a string")
+
+' CONTINUEDO still runs every pass.
+DIM passes AS INTEGER = 0
+DIM total AS INTEGER = 0
+DO WHILE passes < 5000
+    passes = passes + 1
+    total = total + LEN([passes, passes + 1] * 2)
+    IF passes > 0 THEN CONTINUEDO
+LOOP
+Check(total = 10000, "CONTINUEDO")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

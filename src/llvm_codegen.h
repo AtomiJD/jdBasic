@@ -503,6 +503,22 @@ private:
     std::unordered_map<std::string, LLVMValueRef> owned_local_shadow;
     void scan_owned_str_locals(const std::vector<StmtPtr>& program);
     bool owns_local_string(const std::string& var_name) const;
+    // Whether a store to this name writes an owned local of the current
+    // function: the function owns a local of that name and the name already
+    // resolves to it (before its DIM it still names the global).
+    bool writes_owned_local(const std::string& var_name);
+    // The name the DIM under codegen declares, empty outside a DIM.
+    std::string dim_declaring;
+    // What each FOR EACH open in the current function holds for its walk: a
+    // RETURN from inside it lets go of these as the loop's end would.
+    struct ForEachHold {
+        LLVMValueRef rc_coll = nullptr;   // counted collection, retained
+        bool rc_global = false;
+        LLVMValueRef walk_bits = nullptr; // bridge walk to end, or null
+        LLVMValueRef key_bits = nullptr;
+    };
+    std::vector<ForEachHold> foreach_holds;
+    void emit_foreach_release(const ForEachHold& h);
     LLVMValueRef owned_local_shadow_for(const std::string& var_name);
     void emit_owned_local_release();
     // User FUNCs whose every RETURN hands back a buffer allocated for the
@@ -651,8 +667,11 @@ private:
     struct DisposeLocal { std::string var_name; std::string type_name; bool is_array; };
     std::vector<DisposeLocal> dispose_locals;
     void track_dispose_local(const std::string& var, const std::string& type_name, bool is_array) {
-        if (user_functions.count(type_name + ".DISPOSE"))
-            dispose_locals.push_back({ var, type_name, is_array });
+        if (!user_functions.count(type_name + ".DISPOSE")) return;
+        // One slot is disposed once, however many DIMs (one per branch) name it.
+        for (auto& d : dispose_locals)
+            if (d.var_name == var) return;
+        dispose_locals.push_back({ var, type_name, is_array });
     }
     void emit_dispose_cleanup(); // called before LLVMBuildRet/main-end
 
