@@ -151,7 +151,7 @@ one-line plots use it: `canvas[Yvector, Xvector] = "*"`.
 | Need | Op |
 |---|---|
 | parse / build | `CVDATE("YYYY-MM-DD")`, `DATE.UTC(y,m,d)` |
-| format | `FORMAT_DATE(date, "%Y-%m-%d")` (strftime specifiers) |
+| format | `FORMAT_DATE$(date, "%Y-%m-%d")` (strftime specifiers) |
 | extract | `YEAR DAY MONTH HOUR MINUTE SECOND WEEKDAY` (vectorise over a date array) |
 | shift | `DATEADD(part$, num, date)`, **num BEFORE date** |
 | difference | `DATEDIFF(part$, d1, d2)` |

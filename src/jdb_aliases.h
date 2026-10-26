@@ -21,14 +21,40 @@ struct NameAlias {
 };
 
 inline constexpr NameAlias kNameAliases[] = {
-    {"CHR",         "CHR$",       false},
-    {"INSTR$",      "INSTR",      false},
-    {"JSON.PARSE$", "JSON.PARSE", false},
-    {"LCASE",       "LCASE$",     false},
-    {"OS.GETOS",    "OS.GETOS$",  false},
-    {"STR",         "STR$",       false},
-    {"TRIM",        "TRIM$",      false},
-    {"UCASE",       "UCASE$",     false},
+    {"AI.CHAT",             "AI.CHAT$",             false},
+    {"AI.CHAT_RAW",         "AI.CHAT_RAW$",         false},
+    {"AI.CHAT_STREAM",      "AI.CHAT_STREAM$",      false},
+    {"AI.DETOKENIZE",       "AI.DETOKENIZE$",       false},
+    {"AI.RAG_QUERY",        "AI.RAG_QUERY$",        false},
+    {"AI.RAG_QUERY_STREAM", "AI.RAG_QUERY_STREAM$", false},
+    {"AI.TOOL_CHAT",        "AI.TOOL_CHAT$",        false},
+    {"CHR",                 "CHR$",                 false},
+    {"CSTR",                "STR$",                 false},
+    {"DIR$",                "FILE.LIST",            false},
+    {"FORMAT_DATE",         "FORMAT_DATE$",         false},
+    {"GFX.POLLEVENT",       "GFX.POLLEVENT$",       false},
+    {"GUI.INPUT",           "GUI.INPUT$",           false},
+    {"GUI.INPUT_MULTILINE", "GUI.INPUT_MULTILINE$", false},
+    {"HTTP.GET_ASYNC$",     "HTTP.GET_ASYNC",       false},
+    {"HTTP.POST_ASYNC$",    "HTTP.POST_ASYNC",      false},
+    {"HTTP.PUT_ASYNC$",     "HTTP.PUT_ASYNC",       false},
+    {"INSTR$",              "INSTR",                false},
+    {"JSON.PARSE$",         "JSON.PARSE",           false},
+    {"LCASE",               "LCASE$",               false},
+    {"LEFT",                "LEFT$",                false},
+    {"MID",                 "MID$",                 false},
+    {"OS.GETOS",            "OS.GETOS$",            false},
+    {"REGEX.REPLACE",       "REGEX.REPLACE$",       false},
+    {"RIGHT",               "RIGHT$",               false},
+    {"SOUND.STATS",         "SOUND.STATS$",         false},
+    {"STR",                 "STR$",                 false},
+    {"SYS.DF",              "SYS.DF$",              false},
+    {"TILED.LAYERS$",       "TILED.LAYERS",         false},
+    {"TOSTR",               "STR$",                 false},
+    {"TRIM",                "TRIM$",                false},
+    {"TUI.INPUT",           "TUI.INPUT$",           false},
+    {"TUI.WAIT_EVENT",      "TUI.WAIT_EVENT$",      true},
+    {"UCASE",               "UCASE$",               false},
 };
 
 inline constexpr size_t kNameAliasCount = sizeof(kNameAliases) / sizeof(kNameAliases[0]);
@@ -48,6 +74,14 @@ inline const NameAlias* jdb_name_alias(std::string_view upper) {
     const NameAlias* it = std::lower_bound(kNameAliases, end, upper,
         [](const NameAlias& a, std::string_view n) { return std::string_view(a.old_name) < n; });
     return (it != end && upper == it->old_name) ? it : nullptr;
+}
+
+// The old name a new name replaced, or nullptr. Several old names may share
+// one new name; any of them carries the same builtin.
+inline const char* jdb_alias_old_name(std::string_view upper) {
+    for (const NameAlias& a : kNameAliases)
+        if (upper == a.new_name) return a.old_name;
+    return nullptr;
 }
 
 // One place a program used an old name.

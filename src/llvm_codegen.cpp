@@ -1,6 +1,7 @@
 #ifdef LLVM_CODEGEN
 #include <limits>
 #include "llvm_codegen.h"
+#include "jdb_aliases.h"
 #include "jdb_tags.h"
 #include "builtin_sigs.h"
 #include "jdb_stack.h"
@@ -369,6 +370,12 @@ void LLVMCodegen::declare_runtime_functions() {
             declared[name] = {fn, ft};
         }
         runtime_funcs[jdb_name] = { fn, ft, ret_tag };
+        // An old name's runtime function also serves its new name, unless
+        // the new name is registered on its own (before or after).
+        if (const NameAlias* a = jdb_name_alias(jdb_name)) {
+            auto& slot = runtime_funcs[a->new_name];
+            if (!slot.fn) slot = { fn, ft, ret_tag };
+        }
     };
 
     // I/O
@@ -2667,11 +2674,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (e.kind == ExprKind::CALL) {
                 std::string u = e.func_name;
                 std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-                if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
+                if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "TILED.LAYERS" || u == "LINES" ||
                     u == "WORDS" || u == "CHARS" || u == "STR$" ||
                     u == "OS.ARGS")
                     return true;
-                if (u == "DIR$") {
+                if (u == "DIR$" || u == "FILE.LIST") {
                     bool extended = false;
                     if (e.args.size() >= 2 && e.args[1]) {
                         auto& a = *e.args[1];
@@ -6606,7 +6613,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         !stmt.expr->func_name.empty()) {
         std::string u = stmt.expr->func_name;
         std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-        if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
+        if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "TILED.LAYERS" || u == "LINES" ||
             u == "WORDS" || u == "CHARS" || u == "MAP.KEYS")
             string_array_vars.insert(stmt.var_name);
     }
@@ -6685,7 +6692,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             array_array_vars.insert(stmt.var_name);
         if (nested_array_returning_funcs.count(stmt.expr->func_name))
             array_array_vars.insert(stmt.var_name);
-        if (u == "DIR$") {
+        if (u == "DIR$" || u == "FILE.LIST") {
             bool extended = false;
             if (stmt.expr->args.size() >= 2 && stmt.expr->args[1]) {
                 auto& arg = *stmt.expr->args[1];
@@ -7747,7 +7754,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         !stmt.expr->func_name.empty()) {
         std::string u = stmt.expr->func_name;
         std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-        if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
+        if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "TILED.LAYERS" || u == "LINES" ||
             u == "WORDS" || u == "CHARS" || u == "MAP.KEYS")
             string_array_vars.insert(stmt.var_name);
     }
@@ -7811,7 +7818,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             array_array_vars.insert(stmt.var_name);
         if (nested_array_returning_funcs.count(stmt.expr->func_name))
             array_array_vars.insert(stmt.var_name);
-        if (u == "DIR$") {
+        if (u == "DIR$" || u == "FILE.LIST") {
             bool extended = false;
             if (stmt.expr->args.size() >= 2 && stmt.expr->args[1]) {
                 auto& arg = *stmt.expr->args[1];
@@ -14609,7 +14616,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // STR$(arg) and STR(arg) - tag-aware. Default `jdb_str(double)` punnes strings
     // and prints booleans as 1/0; route to specific helpers when the
     // input tag is known.
-    if ((upper == "STR$" || upper == "STR" || upper == "CSTR") && expr.args.size() == 1) {
+    if ((upper == "STR$" || upper == "STR" || upper == "CSTR" || upper == "TOSTR") && expr.args.size() == 1) {
         // STR$ renders whatever it is handed, so an outer leaf hint must not
         // reach the argument: a `want string` from the assignment target or a
         // $-suffixed parameter would decode a numeric array cell as a char*
@@ -15690,7 +15697,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
     // FORMAT_DATE - a date is a timestamp here, but one that came out of
     // an array crossed the bridge as an epoch, so the argument decides.
-    if (upper == "FORMAT_DATE" && !expr.args.empty()) {
+    if ((upper == "FORMAT_DATE" || upper == "FORMAT_DATE$") && !expr.args.empty()) {
         TypedValue av = codegen_expr(*expr.args[0]);
         if (av.tag == JD_TAG_ARR) {
             LLVMValueRef fmt = expr.args.size() >= 2
@@ -17351,7 +17358,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 args.push_back(LLVMConstInt(i64_type, pad, 1));
             }
             else if (t == f64_type) {
-                if (upper == "FORMAT_DATE")
+                if (upper == "FORMAT_DATE" || upper == "FORMAT_DATE$")
                     args.push_back(LLVMConstReal(f64_type, std::nan("")));
                 else
                     args.push_back(LLVMConstReal(f64_type, 0.0));

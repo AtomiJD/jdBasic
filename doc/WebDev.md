@@ -192,7 +192,7 @@ application/json`). The `request` map gives you the input:
 | `request{"PATH"}` | string | the request path, e.g. `"/api/hello"`; lets one handler serve several routes |
 | `request{"METHOD"}` | string | `"GET"`, `"POST"`, ... |
 | `request{"PARAMS"}` | map | query-string params: `?name=Kat` -> `{"name"}` = `"Kat"` |
-| `request{"BODY"}` | string | the raw request body; `JSON.PARSE$` it for JSON posts |
+| `request{"BODY"}` | string | the raw request body; `JSON.PARSE` it for JSON posts |
 | `request{"HEADERS"}` | map | request headers, **lowercase** keys: `{"cookie"}`, `{"x-api-key"}` |
 
 ```basic
@@ -206,7 +206,7 @@ ENDFUNC
 
 ' POST /api/echo   body: {"msg":"hi"}   ->  {"you_said":"hi"}
 FUNC API_ECHO(request)
-    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM body = JSON.PARSE(request{"BODY"})
     RETURN { "you_said": "" + body{"msg"} }
 ENDFUNC
 
@@ -281,7 +281,7 @@ Key calls:
 apps:
 
 ```basic
-gCfg = JSON.PARSE$(TXTREADER$(PATH.JOIN$(gAppDir$, "myapp.json")))
+gCfg = JSON.PARSE(TXTREADER$(PATH.JOIN$(gAppDir$, "myapp.json")))
 ```
 
 ```json
@@ -316,7 +316,7 @@ of `key="value"` pairs:
 </div>
 ```
 
-At startup: scan the folder with `DIR$`, parse the front-matter, cache the
+At startup: scan the folder with `FILE.LIST`, parse the front-matter, cache the
 body **eagerly**, and register every discovered route on the same handler:
 
 ```basic
@@ -338,7 +338,7 @@ FUNC page_meta(src$) AS OBJECT
 ENDFUNC
 
 SUB pages_scan(dir$)
-    FOR EACH f$ IN DIR$(PATH.JOIN$(dir$, "*.html"))
+    FOR EACH f$ IN FILE.LIST(PATH.JOIN$(dir$, "*.html"))
         meta = page_meta(TXTREADER$(PATH.JOIN$(dir$, f$)))
         IF TYPEOF(meta{"route"}) <> "NONE" THEN gPages{"" + meta{"route"}} = meta
     NEXT f$
@@ -386,7 +386,7 @@ IMPORT JDWEB
 IMPORT TMPL
 
 gAppDir$ = PATH.DIRNAME$(OS.ARGS()[0])
-gCfg = JSON.PARSE$(TXTREADER$(PATH.JOIN$(gAppDir$, "notes.json")))
+gCfg = JSON.PARSE(TXTREADER$(PATH.JOIN$(gAppDir$, "notes.json")))
 gApp$ = "" + gCfg{"app"}
 
 gDb = SQL.OPEN(gCfg{"db"})
@@ -420,7 +420,7 @@ ENDFUNC
 ' --- the JSON API the form posts to ---
 FUNC AddNote(request)
     IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.UNAUTH()
-    DIM b = JSON.PARSE$(request{"BODY"})
+    DIM b = JSON.PARSE(request{"BODY"})
     DIM text$ = TRIM$("" + b{"body"})
     IF LEN(text$) = 0 THEN RETURN { "error": "empty" }
     SQL.EXEC(gDb, "INSERT INTO notes (body) VALUES ('" + ESC$(text$) + "')")
@@ -503,7 +503,7 @@ FUNC ShowNote(request)
 ENDFUNC
 
 FUNC AddNote(request)
-    DIM note = JSON.PARSE$(request{"BODY"})
+    DIM note = JSON.PARSE(request{"BODY"})
     RETURN JDWEB.REPLY_JSON(note, 201)
 ENDFUNC
 

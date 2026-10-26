@@ -233,8 +233,10 @@ Token Lexer::scan() {
 
         // Identifier / keyword
         if (std::isalpha(c) || c == '_') {
+#ifndef JDB_MCU
             Token aliased;
             if (read_alias(aliased)) return aliased;
+#endif
             Token t = read_identifier();
             // A lone underscore before the end of the line joins it with
             // the next one: neither the underscore nor the newline is a

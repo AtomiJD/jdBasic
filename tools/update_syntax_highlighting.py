@@ -51,6 +51,13 @@ def collect_natives():
                         for line in f:
                             for m in rx.findall(line):
                                 names.add(m)
+    # The new names of src/jdb_aliases.h answer through the old name's
+    # registration, so they appear in no register_native call.
+    aliases = os.path.join(SRC_DIR, "jdb_aliases.h")
+    if os.path.isfile(aliases):
+        with open(aliases, "r", encoding="utf-8") as f:
+            for _old, new in re.findall(r'\{"([^"]+)",\s*"([^"]+)",\s*(?:true|false)\}', f.read()):
+                names.add(new)
     return sorted(names)
 
 

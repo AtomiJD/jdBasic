@@ -216,7 +216,7 @@ PRINT user{"name"}, user{"age"}, MAP.KEYS(user)
 PRINT MAP.EXISTS(user, "email"), TYPEOF(user{"email"})
 PRINT user{"email"} ?? "no email"
 PRINT TYPEOF(user)
-DIM rows = JSON.PARSE$("[{""id"": 1, ""tag"": ""a""}, {""id"": 2, ""tag"": ""b""}]")
+DIM rows = JSON.PARSE("[{""id"": 1, ""tag"": ""a""}, {""id"": 2, ""tag"": ""b""}]")
 PRINT rows[1]{"tag"}, LEN(rows)
 PRINT JSON.STRINGIFY$({"ok": TRUE, "n": [1, 2]})
 FOR EACH k IN MAP.KEYS(user)
@@ -427,7 +427,7 @@ PRINT FILE.EXISTS(path$)
 KILL path$
 PRINT FILE.EXISTS(path$)
 DIM d = CVDATE("2026-10-01")
-PRINT FORMAT_DATE(DATEADD("D", 30, d), "%Y-%m-%d"), YEAR(d), MONTH(d), DAY(d)
+PRINT FORMAT_DATE$(DATEADD("D", 30, d), "%Y-%m-%d"), YEAR(d), MONTH(d), DAY(d)
 PRINT DATEDIFF("D", CVDATE("2026-01-01"), CVDATE("2026-03-01"))
 ```
 

@@ -121,7 +121,7 @@ All tools share a single persistent VM instance: variables, `FUNC`s, and loaded 
 
 The server loads each `module` once at start. A call runs the `handler`
 with the call's `arguments` as a JSON string; the handler parses it with
-`JSON.PARSE$` and returns the text of the answer.
+`JSON.PARSE` and returns the text of the answer.
 
 With `--tools` the built-in tools of the table above stay available,
 so a client can still run any code through `jdb_eval` or

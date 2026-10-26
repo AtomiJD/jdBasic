@@ -306,7 +306,7 @@ DO
     CLS
     GUI.BEGIN "Settings", 20, 20, 360, 200
         GUI.TEXT "Hello, " + name$
-        name$ = GUI.INPUT("Name", name$)
+        name$ = GUI.INPUT$("Name", name$)
         volume = GUI.SLIDER("Volume", volume, 0, 100)
         IF GUI.BUTTON("Click me") THEN clicks = clicks + 1
         GUI.SAME_LINE

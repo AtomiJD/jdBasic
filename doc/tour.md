@@ -290,7 +290,7 @@ Cannot assign to constant 'LIMIT'
 
 ```basic
 DIM d = CVDATE("2026-10-01")
-PRINT FORMAT_DATE(DATEADD("D", 30, d), "%Y-%m-%d")
+PRINT FORMAT_DATE$(DATEADD("D", 30, d), "%Y-%m-%d")
 PRINT YEAR(d), MONTH(d), DAY(d)
 PRINT MATH.PI
 ```

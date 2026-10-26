@@ -31,6 +31,19 @@ DIM b AS Box
 b.str = "kept"
 Check(b.str = "kept", "a member named like an old name stays a member")
 
+Check(LEFT("1234", 2) = "12", "LEFT calls LEFT$")
+Check(RIGHT("abc", 2) + LEFT("abc", 1) = "bca", "RIGHT and LEFT")
+Check(MID("abc", 9) = "", "MID past the end answers empty like MID$")
+Check(CSTR(5) = "5" AND TOSTR(2.5) = "2.5", "CSTR and TOSTR call STR$")
+Check(REGEX.REPLACE("[0-9]", "a1b2", "#") = "a#b#", "REGEX.REPLACE calls REGEX.REPLACE$")
+Check(REGEX.REPLACE$("b", "abc", "x") = "axc", "REGEX.REPLACE$")
+DIM stamp$ AS STRING = FORMAT_DATE(DATE.UTC(2026, 1, 2), "%Y-%m-%d", 0)
+Check(stamp$ = "2026-01-02", "FORMAT_DATE calls FORMAT_DATE$")
+Check(FORMAT_DATE$(DATE.UTC(2026, 1, 2), "%d", 0) = "02", "FORMAT_DATE$")
+DIM here AS ARRAY = DIR$("*.jdb")
+DIM listed AS ARRAY = FILE.LIST("*.jdb")
+Check(LEN(here) = LEN(listed), "DIR$ calls FILE.LIST")
+
 DIM table AS MAP = JDB.ALIASES()
 Check(table{"STR"} = "STR$", "JDB.ALIASES maps STR to STR$")
 Check(table{"JSON.PARSE$"} = "JSON.PARSE", "JDB.ALIASES maps JSON.PARSE$")

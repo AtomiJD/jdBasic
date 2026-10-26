@@ -1,4 +1,5 @@
 #include "vm_internal.h"
+#include "jdb_aliases.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -3399,11 +3400,15 @@ void VM::install_native(int slot, const char* name, NativeFunc fn) {
 // (name, min, max, fn) provides better error messages.
 
 void VM::register_native(const std::string& name, NativeFunc fn) {
-    install_native(native_slot_intern(name.c_str(), true), name.c_str(), std::move(fn));
+    int slot = native_slot_intern(name.c_str(), true);
+    install_native(slot, name.c_str(), std::move(fn));
+    mirror_alias(name.c_str(), slot);
 }
 
 void VM::register_native(const char* name, NativeFunc fn) {
-    install_native(native_slot_intern(name, false), name, std::move(fn));
+    int slot = native_slot_intern(name, false);
+    install_native(slot, name, std::move(fn));
+    mirror_alias(name, slot);
 }
 
 void VM::register_native(const std::string& name, int min_args, int max_args, NativeFunc fn) {
@@ -3411,6 +3416,7 @@ void VM::register_native(const std::string& name, int min_args, int max_args, Na
     install_native(slot, name.c_str(), std::move(fn));
     native_table[slot]->min_args = (int16_t)min_args;
     native_table[slot]->max_args = (int16_t)max_args;
+    mirror_alias(name.c_str(), slot);
 }
 
 void VM::register_native(const char* name, int min_args, int max_args, NativeFunc fn) {
@@ -3418,6 +3424,21 @@ void VM::register_native(const char* name, int min_args, int max_args, NativeFun
     install_native(slot, name, std::move(fn));
     native_table[slot]->min_args = (int16_t)min_args;
     native_table[slot]->max_args = (int16_t)max_args;
+    mirror_alias(name, slot);
+}
+
+void VM::mirror_alias(const char* name, int slot) {
+#ifdef JDB_MCU
+    (void)name; (void)slot;
+#else
+    const NameAlias* a = jdb_name_alias(name);
+    if (!a || native_find(a->new_name)) return;
+    const NativeEntry& old_entry = *native_table[slot];
+    int new_slot = native_slot_intern(a->new_name, false);
+    install_native(new_slot, a->new_name, old_entry.fn);
+    native_table[new_slot]->min_args = old_entry.min_args;
+    native_table[new_slot]->max_args = old_entry.max_args;
+#endif
 }
 
 

@@ -247,15 +247,15 @@ Load a model, set a system prompt and ask a question:
 DIM llm = AI.LOAD_LLM("models/Phi-3-mini-4k-instruct-q4.gguf", 2048, 99)
 AI.SET llm, "system", "You are a concise assistant. Answer in 2 sentences."
 AI.SET llm, "temperature", 0.5
-PRINT AI.CHAT(llm, "Why is BASIC a good language to teach with?")
+PRINT AI.CHAT$(llm, "Why is BASIC a good language to teach with?")
 ```
 
 `AI.LOAD_LLM(path$, [n_ctx], [n_gpu_layers])` puts all layers on the GPU with
-`99`; use `0` for the CPU. `AI.CHAT` keeps the conversation history inside
+`99`; use `0` for the CPU. `AI.CHAT$` keeps the conversation history inside
 the model, so a second call continues the same chat. `AI.CLEAR_HISTORY(llm)`
 starts a new one, and `AI.FREE_LLM(llm)` releases the model.
 
-**Streaming.** `AI.CHAT_STREAM` calls a function of yours for each token.
+**Streaming.** `AI.CHAT_STREAM$` calls a function of yours for each token.
 Return `TRUE` to continue and `FALSE` to stop:
 
 ```basic
@@ -264,7 +264,7 @@ FUNC ON_TOKEN(t)
     RETURN TRUE
 ENDFUNC
 
-DIM answer = AI.CHAT_STREAM(llm, "Name three rivers.", ON_TOKEN@)
+DIM answer = AI.CHAT_STREAM$(llm, "Name three rivers.", ON_TOKEN@)
 PRINT
 ```
 
@@ -284,7 +284,7 @@ PRINT obj{"name"}
 `AI.SET_GRAMMAR(llm, gbnf$)` constrains the output to any GBNF grammar.
 
 **Tools.** Register a jdBasic function as a tool. When the model asks for
-it, `AI.TOOL_CHAT` calls the function and passes the result back to the
+it, `AI.TOOL_CHAT$` calls the function and passes the result back to the
 model:
 
 ```basic
@@ -294,11 +294,11 @@ FUNC GET_WEATHER(city)
 ENDFUNC
 
 AI.TOOL_ADD llm, "WEATHER", "city_name", "Get current weather for a city", GET_WEATHER@
-PRINT AI.TOOL_CHAT(llm, "What is the weather in Berlin right now?")
+PRINT AI.TOOL_CHAT$(llm, "What is the weather in Berlin right now?")
 ```
 
 The arguments are `AI.TOOL_ADD(id, name$, params$, description$, funcref)`
-and `AI.TOOL_CHAT(id, prompt$, [max_rounds=5])`.
+and `AI.TOOL_CHAT$(id, prompt$, [max_rounds=5])`.
 
 ### 13. Embeddings and RAG
 

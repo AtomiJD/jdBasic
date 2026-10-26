@@ -66,7 +66,7 @@ A file written on Windows may end its lines with `CHR$(13) + CHR$(10)`; remove
 the carriage returns first with `REPLACE$(text$, CHR$(13), "")`.
 
 JSON goes through two functions: `JSON.STRINGIFY$` turns arrays and maps into
-JSON text, and `JSON.PARSE$` turns JSON text back into something you index like
+JSON text, and `JSON.PARSE` turns JSON text back into something you index like
 an array or a map. This example writes the sales targets per region and reads
 them back.
 
@@ -75,7 +75,7 @@ DIM targets = [{"region": "North", "target": 40}, {"region": "South", "target": 
 TXTWRITER "targets.json", JSON.STRINGIFY$(targets)
 PRINT TXTREADER$("targets.json")
 
-DIM loaded = JSON.PARSE$(TXTREADER$("targets.json"))
+DIM loaded = JSON.PARSE(TXTREADER$("targets.json"))
 PRINT LEN(loaded); " records"
 PRINT loaded[1]{"region"}; " "; loaded[1]{"target"}
 ```
@@ -231,7 +231,7 @@ East     37.50
 
 Pass `["DATE"]` as the type list and `CSVREADER` turns the first column into
 `DateTime` values. `CVDATE` (or its other name `CDATE`) parses one
-`"YYYY-MM-DD"` string. `FORMAT_DATE` writes a date with `strftime` specifiers.
+`"YYYY-MM-DD"` string. `FORMAT_DATE$` writes a date with `strftime` specifiers.
 
 `DATEADD(part$, count, date)` takes the count before the date. `DATEDIFF("D",
 d1, d2)` counts calendar days on the local clock, so two midnights are always a
@@ -241,13 +241,13 @@ whole number of days apart. `EOMONTH` gives the last day of the month, and
 ```basic
 DIM rows = CSVREADER("sales.csv", ",", TRUE, ["DATE"])
 DIM dates = SLICE(rows, 1, 0)
-PRINT TYPEOF(dates[0]); " "; FORMAT_DATE(dates[0], "%d.%m.%Y")
+PRINT TYPEOF(dates[0]); " "; FORMAT_DATE$(dates[0], "%d.%m.%Y")
 
 DIM due = DATEADD("D", 30, dates[0])
-PRINT "due: "; FORMAT_DATE(due, "%Y-%m-%d")
-PRINT "next month: "; FORMAT_DATE(DATEADD("M", 1, CDATE("2026-01-30")), "%Y-%m-%d")
+PRINT "due: "; FORMAT_DATE$(due, "%Y-%m-%d")
+PRINT "next month: "; FORMAT_DATE$(DATEADD("M", 1, CDATE("2026-01-30")), "%Y-%m-%d")
 PRINT "span: "; DATEDIFF("D", dates[0], dates[LEN(dates) - 1]); " days"
-PRINT "month end: "; FORMAT_DATE(EOMONTH(dates[4]), "%Y-%m-%d")
+PRINT "month end: "; FORMAT_DATE$(EOMONTH(dates[4]), "%Y-%m-%d")
 PRINT "days in Feb 2028: "; DAY(EOMONTH(CVDATE("2028-02-01")))
 PRINT YEAR(dates[4]); " "; MONTH(dates[4]); " "; DAY(dates[4]); " "; WEEKDAY(dates[4])
 ```
@@ -277,12 +277,12 @@ and shows up as zero.
 ```basic
 DIM rows = CSVREADER("sales.csv", ",", TRUE, ["DATE"])
 DIM amount = SLICE(rows, 1, 3) * SLICE(rows, 1, 4)
-DIM ym = SELECT(LAMBDA d -> FORMAT_DATE(d, "%Y-%m"), SLICE(rows, 1, 0))
+DIM ym = SELECT(LAMBDA d -> FORMAT_DATE$(d, "%Y-%m"), SLICE(rows, 1, 0))
 PRINT ym
 PRINT AGG(ym, amount, LAMBDA g -> SUM(g))
 
 DIM months = DATERANGE(CVDATE("2026-01-01"), CVDATE("2026-04-01"), "M")
-DIM labels = SELECT(LAMBDA m -> FORMAT_DATE(m, "%Y-%m"), months)
+DIM labels = SELECT(LAMBDA m -> FORMAT_DATE$(m, "%Y-%m"), months)
 DIM per_month = SELECT(LAMBDA k$ -> SUM(amount * (ym = k$)), labels)
 PRINT FRMV$(ZIP(labels, per_month), "{}  {:>6.2f}")
 ```
@@ -303,7 +303,7 @@ The full list of date functions is under
 
 A row as an array is compact, but `r[3]` says less than `r{"qty"}`. A map
 literal inside `SELECT` turns every row into a record, and the result is an
-array of maps, the shape `JSON.PARSE$` also returns. `FILTER` and `SELECT` work
+array of maps, the shape `JSON.PARSE` also returns. `FILTER` and `SELECT` work
 on it the same way.
 
 ```basic
@@ -328,7 +328,7 @@ A map is also a lookup table. This one maps each region to its target from
 
 ```basic
 DIM goal AS MAP
-FOR EACH t IN JSON.PARSE$(TXTREADER$("targets.json"))
+FOR EACH t IN JSON.PARSE(TXTREADER$("targets.json"))
     goal{t{"region"}} = t{"target"}
 NEXT
 PRINT goal
@@ -381,7 +381,7 @@ report joins the totals with the targets map from section 6.
 DIM rows = CSVREADER("sales.csv", ",", TRUE)
 DIM totals = AGG(SLICE(rows, 1, 1), SLICE(rows, 1, 3) * SLICE(rows, 1, 4), LAMBDA g -> SUM(g))
 DIM goal AS MAP
-FOR EACH t IN JSON.PARSE$(TXTREADER$("targets.json"))
+FOR EACH t IN JSON.PARSE(TXTREADER$("targets.json"))
     goal{t{"region"}} = t{"target"}
 NEXT
 

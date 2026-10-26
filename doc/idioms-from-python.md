@@ -97,7 +97,7 @@ DIM d AS MAP = {"name": "Atomi", "age": 42}
 
 | Python | jdBasic |
 |---|---|
-| `json.loads(s)` | `JSON.PARSE$(s)` |
+| `json.loads(s)` | `JSON.PARSE(s)` |
 | `json.dumps(o)` | `JSON.STRINGIFY$(o)` |
 
 (Roundtrip: numbers/strings/bools/arrays/maps. NONE → null.)
@@ -108,9 +108,9 @@ DIM d AS MAP = {"name": "Atomi", "age": 42}
 |---|---|
 | `re.match(p, s)` / `re.search` | `REGEX.MATCH(p, s)` (returns array of groups or FALSE) |
 | `re.findall(p, s)` | `REGEX.FINDALL(p, s)` |
-| `re.sub(p, r, s)` | `REGEX.REPLACE(p, s, r)` (note arg order: text before replacement) |
+| `re.sub(p, r, s)` | `REGEX.REPLACE$(p, s, r)` (note arg order: text before replacement) |
 
-Backreferences in `REGEX.REPLACE` use `$1`, `$2` not `\1`.
+Backreferences in `REGEX.REPLACE$` use `$1`, `$2` not `\1`.
 
 ## HTTP
 
@@ -121,7 +121,7 @@ Backreferences in `REGEX.REPLACE` use `$1`, `$2` not `\1`.
 | `requests.put / .delete` | `HTTP.PUT$` / `HTTP.DELETE$` |
 | Anything (with status etc.) | `HTTP.REQUEST(method$, url$, [body$, ct$])` → `{status, body, headers}` |
 | Set header per request | `HTTP.SETHEADER name$, value$` (sticky on the client) |
-| Async | `HTTP.GET_ASYNC$(url) → task_id`, then `AWAIT task` |
+| Async | `HTTP.GET_ASYNC(url) → task_id`, then `AWAIT task` |
 
 ## Files
 
@@ -133,7 +133,7 @@ Backreferences in `REGEX.REPLACE` use `$1`, `$2` not `\1`.
 | `open(p, 'a').write(s)` | `TXTWRITER p, s, TRUE` |
 | `os.path.exists(p)` | `FILE.EXISTS(p)` |
 | `os.path.isdir(p)` | `FILE.ISDIR(p)` |
-| `os.listdir(d)` | `DIR$(d)` |
+| `os.listdir(d)` | `FILE.LIST(d)` |
 | `os.system(cmd)` | `OS.EXEC(cmd)` → `{OUTPUT, EXIT_CODE}` |
 | `os.path.join(a, b)` | `PATH.JOIN$(a, b)` |
 | `os.path.basename(p)` | `PATH.BASENAME$(p)` |

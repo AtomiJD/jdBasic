@@ -109,6 +109,9 @@ public:
     void register_native(const std::string& name, int min_args, int max_args, NativeFunc fn);
     void register_native(const char* name, int min_args, int max_args, NativeFunc fn);
     void install_native(int slot, const char* name, NativeFunc fn);
+    // A builtin registered under an old name (jdb_aliases.h) also answers to
+    // its new name, unless the new name has a builtin of its own.
+    void mirror_alias(const char* name, int slot);
 
     // Per-VM no-vectorize extension. Names added here join the static
     // jdb_no_vectorize() set: a call to one of them will pass through

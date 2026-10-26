@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
+#include "jdb_aliases.h"
 
 enum class BuiltinRet : uint8_t {
     Unknown,  // not listed
@@ -1047,7 +1048,7 @@ constexpr bool builtin_sigs_sorted() {
 static_assert(builtin_sigs_sorted(), "kBuiltinSigs must be sorted by name, without duplicates");
 
 // Case-insensitive; nullptr for a name the table does not list.
-inline const BuiltinSig* builtin_sig(std::string_view name) {
+inline const BuiltinSig* builtin_sig_exact(std::string_view name) {
     size_t lo = 0, hi = sizeof(kBuiltinSigs) / sizeof(kBuiltinSigs[0]);
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2;
@@ -1055,6 +1056,13 @@ inline const BuiltinSig* builtin_sig(std::string_view name) {
         if (c == 0) return &kBuiltinSigs[mid];
         if (c < 0) hi = mid; else lo = mid + 1;
     }
+    return nullptr;
+}
+
+// A name that replaced an old one (jdb_aliases.h) has the old one's entry.
+inline const BuiltinSig* builtin_sig(std::string_view name) {
+    if (const BuiltinSig* s = builtin_sig_exact(name)) return s;
+    if (const char* old_name = jdb_alias_old_name(name)) return builtin_sig_exact(old_name);
     return nullptr;
 }
 

@@ -10,21 +10,33 @@ Description: Inverse cosine in radians. Vectorizes element-wise over arrays.
 Syntax: AI.ARGMAX(vec) -> index
 Description: Returns the index of the largest element.
 
+[AI.CHAT$]
+Syntax: AI.CHAT$(id, prompt$) -> response$
+Description: Multi-turn chat using the model's chat template plus its running history.
+
 [AI.CHAT]
 Syntax: AI.CHAT(id, prompt$) -> response$
-Description: Multi-turn chat using the model's chat template plus its running history.
+Description: Old name of AI.CHAT$, still accepted for one release; --lint, jdb_check and -c name AI.CHAT$, and tools/jdb-fix.jdb rewrites it.
 
 [AI.CHAT_JSON]
 Syntax: AI.CHAT_JSON(id, prompt$) -> object
 Description: One-shot JSON generation: temporarily enables JSON mode, generates, and returns the parsed object.
 
+[AI.CHAT_RAW$]
+Syntax: AI.CHAT_RAW$(id, raw_prompt$) -> text$
+Description: Bypasses the chat template and history; sends a raw prompt and returns raw text.
+
 [AI.CHAT_RAW]
 Syntax: AI.CHAT_RAW(id, raw_prompt$) -> text$
-Description: Bypasses the chat template and history; sends a raw prompt and returns raw text.
+Description: Old name of AI.CHAT_RAW$, still accepted for one release; --lint, jdb_check and -c name AI.CHAT_RAW$, and tools/jdb-fix.jdb rewrites it.
+
+[AI.CHAT_STREAM$]
+Syntax: AI.CHAT_STREAM$(id, prompt$, callback) -> response$
+Description: Like AI.CHAT but streams tokens to a callback FUNC OnToken(piece$); returning FALSE aborts generation.
 
 [AI.CHAT_STREAM]
 Syntax: AI.CHAT_STREAM(id, prompt$, callback) -> response$
-Description: Like AI.CHAT but streams tokens to a callback FUNC OnToken(piece$); returning FALSE aborts generation.
+Description: Old name of AI.CHAT_STREAM$, still accepted for one release; --lint, jdb_check and -c name AI.CHAT_STREAM$, and tools/jdb-fix.jdb rewrites it.
 
 [AI.CHAT_TOKENS]
 Syntax: AI.CHAT_TOKENS(id, prompt$, [capacity=64]) -> chan
@@ -78,9 +90,13 @@ Description: Resets the chat history.
 Syntax: AI.COSINE_SIM(a, b) -> number
 Description: Cosine similarity of two vectors.
 
+[AI.DETOKENIZE$]
+Syntax: AI.DETOKENIZE$(id, tokens) -> text$
+Description: Converts token ids back into text.
+
 [AI.DETOKENIZE]
 Syntax: AI.DETOKENIZE(id, tokens) -> text$
-Description: Converts token ids back into text.
+Description: Old name of AI.DETOKENIZE$, still accepted for one release; --lint, jdb_check and -c name AI.DETOKENIZE$, and tools/jdb-fix.jdb rewrites it.
 
 [AI.EMBED]
 Syntax: AI.EMBED(text$) -> array
@@ -166,17 +182,25 @@ Description: Returns store statistics: chunks, num_labels, mode, embed_dim, chun
 Syntax: AI.RAG_LOAD(path$, [llm_id], [embed_llm_id]) -> rag_id
 Description: Loads a saved RAG store; dense stores need the matching embedding model.
 
+[AI.RAG_QUERY$]
+Syntax: AI.RAG_QUERY$(rag_id, question$, [top_k=3]) -> answer$
+Description: Full RAG pipeline: search, build the prompt, and generate an answer.
+
 [AI.RAG_QUERY]
 Syntax: AI.RAG_QUERY(rag_id, question$, [top_k=3]) -> answer$
-Description: Full RAG pipeline: search, build the prompt, and generate an answer.
+Description: Old name of AI.RAG_QUERY$, still accepted for one release; --lint, jdb_check and -c name AI.RAG_QUERY$, and tools/jdb-fix.jdb rewrites it.
 
 [AI.RAG_QUERY_FULL]
 Syntax: AI.RAG_QUERY_FULL(rag_id, question$, [top_k=3]) -> object
 Description: Like AI.RAG_QUERY but returns {answer, sources} with the chunks used.
 
+[AI.RAG_QUERY_STREAM$]
+Syntax: AI.RAG_QUERY_STREAM$(rag_id, question$, callback, [top_k=3]) -> answer$
+Description: Streaming RAG query; tokens are delivered to the callback as they are generated.
+
 [AI.RAG_QUERY_STREAM]
 Syntax: AI.RAG_QUERY_STREAM(rag_id, question$, callback, [top_k=3]) -> answer$
-Description: Streaming RAG query; tokens are delivered to the callback as they are generated.
+Description: Old name of AI.RAG_QUERY_STREAM$, still accepted for one release; --lint, jdb_check and -c name AI.RAG_QUERY_STREAM$, and tools/jdb-fix.jdb rewrites it.
 
 [AI.RAG_SAVE]
 Syntax: AI.RAG_SAVE(rag_id, path$)
@@ -226,9 +250,13 @@ Description: Counts the tokens in text$ without generating.
 Syntax: AI.TOOL_ADD(id, name$, params$, description$, funcref)
 Description: Registers a jdBasic function as an LLM-callable tool. params$ is a human-readable argument description.
 
+[AI.TOOL_CHAT$]
+Syntax: AI.TOOL_CHAT$(id, prompt$, [max_rounds=5]) -> response$
+Description: Like AI.CHAT but executes tool calls automatically, looping up to max_rounds.
+
 [AI.TOOL_CHAT]
 Syntax: AI.TOOL_CHAT(id, prompt$, [max_rounds=5]) -> response$
-Description: Like AI.CHAT but executes tool calls automatically, looping up to max_rounds.
+Description: Old name of AI.TOOL_CHAT$, still accepted for one release; --lint, jdb_check and -c name AI.TOOL_CHAT$, and tools/jdb-fix.jdb rewrites it.
 
 [AI.TOOL_LIST]
 Syntax: AI.TOOL_LIST(id) -> array
@@ -546,7 +574,7 @@ Description: Rounds a number up to the nearest integer.
 
 [CHR]
 Syntax: CHR(ascii_code)
-Description: Alias of CHR$.
+Description: Old name of CHR$, still accepted for one release; --lint, jdb_check and -c name CHR$, and tools/jdb-fix.jdb rewrites it.
 
 [CHR$]
 Syntax: CHR$(code)
@@ -806,7 +834,7 @@ Description: Roundtrips a number through 32-bit float precision, useful for forc
 
 [CSTR]
 Syntax: CSTR(x)
-Description: Converts any value to its string representation. Alias for TOSTR / STR.
+Description: Old name of STR$, still accepted for one release; --lint, jdb_check and -c name STR$, and tools/jdb-fix.jdb rewrites it.
 
 [CSVHEADER]
 Syntax: CSVHEADER(filename$, [delimiter$])
@@ -896,11 +924,15 @@ Description: Declares a variable and optionally sets its type.
 Syntax: DIR [path_with_wildcard]
 Description: Lists files and directories in the current or specified path.
 
-[DIR$]
-Syntax: DIR$(wildcard$, [extended_info_bool])
+[FILE.LIST]
+Syntax: FILE.LIST(wildcard$, [extended_info_bool])
 Description: Lists files matching a pattern.
 If extended_info is TRUE, returns a 2D matrix: [Name, Size, Type, Date, Attr].
 Otherwise, returns a 1D array of filenames.
+
+[DIR$]
+Syntax: DIR$(wildcard$, [extended_info_bool])
+Description: Old name of FILE.LIST, still accepted for one release; --lint, jdb_check and -c name FILE.LIST, and tools/jdb-fix.jdb rewrites it.
 
 [DECLARE]
 Syntax: DECLARE FUNC name LIB "library" ALIAS "export" (p AS type, ...) AS rettype
@@ -1155,9 +1187,13 @@ Description: Begins a loop that repeats a specific number of times.
 Syntax: FORMAT$(format_string$, arg1, ...)
 Description: Formats a string using C++20-style format specifiers: {}, {0}, {:spec} with spec = [[fill]align][sign][#][0][width][.precision][type]; type is d, f, e, E, g, G, x, X, s or % (the value times 100 with a % sign); sign + or a space marks positive numbers; # puts 0x before x and X; 0 pads a number with zeros after its sign, so FORMAT$("{:04X}", 375) is 0177. Any other spec is an error. A compiled program formats at most four values per call; more is a compile error.
 
+[FORMAT_DATE$]
+Syntax: FORMAT_DATE$(date, format_string$ [, tz_hours])
+Description: Formats a DateTime using C strftime specifiers (%Y, %m, %d, %H, %M, %S, ...). Without tz_hours the wall-clock is local time; with tz_hours the output reflects the chosen UTC offset (0 = UTC, 2 = UTC+2, -5 = UTC-5, 5.5 = UTC+5:30). A specifier or a year the C library rejects raises an error.
+
 [FORMAT_DATE]
 Syntax: FORMAT_DATE(date, format_string$ [, tz_hours])
-Description: Formats a DateTime using C strftime specifiers (%Y, %m, %d, %H, %M, %S, ...). Without tz_hours the wall-clock is local time; with tz_hours the output reflects the chosen UTC offset (0 = UTC, 2 = UTC+2, -5 = UTC-5, 5.5 = UTC+5:30). A specifier or a year the C library rejects raises an error.
+Description: Old name of FORMAT_DATE$, still accepted for one release; --lint, jdb_check and -c name FORMAT_DATE$, and tools/jdb-fix.jdb rewrites it.
 
 [FRMV$]
 Syntax: FRMV$(array, [format_string$])
@@ -1263,9 +1299,13 @@ Description: Fast-plots many pixels from parallel x and y arrays, optionally col
 Syntax: GFX.PLOT_POINTS_TEX(xs, ys, rgb_lut, [bg_rgb])
 Description: Scatters many colored pixels into a streaming texture (with optional background fill) and uploads it in a single GPU call.
 
+[GFX.POLLEVENT$]
+Syntax: GFX.POLLEVENT$() -> string
+Description: Polls one pending window event and returns it as a string: "QUIT", "KEYDOWN:Name", "KEYUP:Name" (Name is the SDL key name, such as "A" or "Space"), "MOUSEDOWN:n", "MOUSEUP:n" (n is the button number), "MOUSEMOVE:x,y", or "NONE" when no event of these kinds is pending.
+
 [GFX.POLLEVENT]
 Syntax: GFX.POLLEVENT() -> string
-Description: Polls one pending window event and returns it as a string: "QUIT", "KEYDOWN:Name", "KEYUP:Name" (Name is the SDL key name, such as "A" or "Space"), "MOUSEDOWN:n", "MOUSEUP:n" (n is the button number), "MOUSEMOVE:x,y", or "NONE" when no event of these kinds is pending.
+Description: Old name of GFX.POLLEVENT$, still accepted for one release; --lint, jdb_check and -c name GFX.POLLEVENT$, and tools/jdb-fix.jdb rewrites it.
 
 [GFX.SAVE_IMAGE]
 Syntax: GFX.SAVE_IMAGE(id, filename$)
@@ -1463,17 +1503,29 @@ Description: Counts the values in bins equal-width bins (default 10) spanning th
 Syntax: HOUR(date) -> number
 Description: Extracts the hour (0-23) from a DateTime.
 
+[HTTP.GET_ASYNC]
+Syntax: HTTP.GET_ASYNC(url$) -> task_id
+Description: Starts an asynchronous HTTP GET request and returns a task id whose result is the response body.
+
 [HTTP.GET_ASYNC$]
 Syntax: HTTP.GET_ASYNC$(url$) -> task_id
-Description: Starts an asynchronous HTTP GET request and returns a task id whose result is the response body.
+Description: Old name of HTTP.GET_ASYNC, still accepted for one release; --lint, jdb_check and -c name HTTP.GET_ASYNC, and tools/jdb-fix.jdb rewrites it.
+
+[HTTP.POST_ASYNC]
+Syntax: HTTP.POST_ASYNC(url$, data$, [content_type$]) -> task_id
+Description: Starts an asynchronous HTTP POST request (default content type application/json) and returns a task id whose result is the response body.
 
 [HTTP.POST_ASYNC$]
 Syntax: HTTP.POST_ASYNC$(url$, data$, [content_type$]) -> task_id
-Description: Starts an asynchronous HTTP POST request (default content type application/json) and returns a task id whose result is the response body.
+Description: Old name of HTTP.POST_ASYNC, still accepted for one release; --lint, jdb_check and -c name HTTP.POST_ASYNC, and tools/jdb-fix.jdb rewrites it.
+
+[HTTP.PUT_ASYNC]
+Syntax: HTTP.PUT_ASYNC(url$, data$, [content_type$]) -> task_id
+Description: Starts an asynchronous HTTP PUT request (default content type application/json) and returns a task id whose result is the response body.
 
 [HTTP.PUT_ASYNC$]
 Syntax: HTTP.PUT_ASYNC$(url$, data$, [content_type$]) -> task_id
-Description: Starts an asynchronous HTTP PUT request (default content type application/json) and returns a task id whose result is the response body.
+Description: Old name of HTTP.PUT_ASYNC, still accepted for one release; --lint, jdb_check and -c name HTTP.PUT_ASYNC, and tools/jdb-fix.jdb rewrites it.
 
 [HTTP.SERVER.WAIT]
 Syntax: HTTP.SERVER.WAIT()
@@ -1604,8 +1656,8 @@ Syntax: REGEX_MATCH(pattern$, text$) -> boolean or array
 Description: Back-compatible form of REGEX.MATCH. Returns TRUE/FALSE, or the captured groups if the pattern has any.
 
 [REGEX_REPLACE$]
-Syntax: REGEX_REPLACE$(pattern$, text$, replacement$) -> string$
-Description: Back-compatible form of REGEX.REPLACE. Replaces all matches; $1, $2 backreferences are allowed.
+Syntax: REGEX_REPLACE$(text$, pattern$, replacement$) -> string$
+Description: The older form of REGEX.REPLACE$ with the text first and the pattern second. Replaces all matches; $1, $2 backreferences are allowed.
 
 [RELEASEALL]
 Syntax: RELEASEALL
@@ -1663,9 +1715,13 @@ Description: Sets how much of a track's signal is sent to the global reverb bus.
 Syntax: SOUND.SIDECHAIN(target_track, source_track, amount)
 Description: Sidechains a target track's level to a source track by the given amount.
 
+[SOUND.STATS$]
+Syntax: SOUND.STATS$() -> string
+Description: Returns and resets a debug string of voice trigger and allocation-failure counters.
+
 [SOUND.STATS]
 Syntax: SOUND.STATS() -> string
-Description: Returns and resets a debug string of voice trigger and allocation-failure counters.
+Description: Old name of SOUND.STATS$, still accepted for one release; --lint, jdb_check and -c name SOUND.STATS$, and tools/jdb-fix.jdb rewrites it.
 
 [SOUND.OSC2]
 Syntax: SOUND.OSC2 track, wave$, [semitones], [mix], [cents]
@@ -1905,14 +1961,22 @@ Description: Returns the integer value of an ImGui flag (e.g., "MENUBAR", "NO_RE
 Syntax: GUI.HELPMARKER(text$)
 Description: Displays a (?) icon that shows a tooltip when hovered.
 
+[GUI.INPUT$]
+Syntax: GUI.INPUT$(label$, current_value$)
+Description: Displays a text input field. Returns the new string value.
+
 [GUI.INPUT]
 Syntax: GUI.INPUT(label$, current_value$)
-Description: Displays a text input field. Returns the new string value.
+Description: Old name of GUI.INPUT$, still accepted for one release; --lint, jdb_check and -c name GUI.INPUT$, and tools/jdb-fix.jdb rewrites it.
+
+[GUI.INPUT_MULTILINE$]
+Syntax: GUI.INPUT_MULTILINE$(label$, text$, [width], [height])
+Description: A multi-line text area (up to 64 KB); returns the edited text. 0 or omitted sizes fill the space left.
+Tab types a tab; Ctrl+Enter keeps the focus so a program can use it as a hotkey.
 
 [GUI.INPUT_MULTILINE]
 Syntax: GUI.INPUT_MULTILINE(label$, text$, [width], [height])
-Description: A multi-line text area (up to 64 KB); returns the edited text. 0 or omitted sizes fill the space left.
-Tab types a tab; Ctrl+Enter keeps the focus so a program can use it as a hotkey.
+Description: Old name of GUI.INPUT_MULTILINE$, still accepted for one release; --lint, jdb_check and -c name GUI.INPUT_MULTILINE$, and tools/jdb-fix.jdb rewrites it.
 
 [GUI.INPUT_DOUBLE]
 Syntax: GUI.INPUT_DOUBLE(label$, value)
@@ -2192,7 +2256,7 @@ Description: Returns the 0-based starting position of a substring within a strin
 
 [INSTR$]
 Syntax: INSTR$([start_pos, ]haystack$, needle$)
-Description: The same as INSTR.
+Description: Old name of INSTR, still accepted for one release; --lint, jdb_check and -c name INSTR, and tools/jdb-fix.jdb rewrites it.
 
 [INT]
 Syntax: INT(number)
@@ -2288,7 +2352,7 @@ Description: Parses a JSON string into a map or an array. The same function as J
 
 [JSON.PARSE$]
 Syntax: JSON.PARSE$(json_string$)
-Description: Parses a JSON string into a map or an array. Kept for the code that uses it; JSON.PARSE is the same function under the honest name.
+Description: Old name of JSON.PARSE, still accepted for one release; --lint, jdb_check and -c name JSON.PARSE, and tools/jdb-fix.jdb rewrites it.
 
 [JSON.STRINGIFY$]
 Syntax: JSON.STRINGIFY$(map_or_array)
@@ -2687,7 +2751,7 @@ Description: Executes an external command and captures its output. Without args_
 
 [OS.GETOS]
 Syntax: OS.GETOS()
-Description: Returns a string identifying the operating system ("WINDOWS", "LINUX", "MACOS").
+Description: Old name of OS.GETOS$, still accepted for one release; --lint, jdb_check and -c name OS.GETOS$, and tools/jdb-fix.jdb rewrites it.
 
 [OS.SPAWN]
 Syntax: OS.SPAWN(command$, [args_array$], [options]) -> pid
@@ -2874,9 +2938,13 @@ Description: Every match of a pattern in a string. Without capture groups the an
 Syntax: REGEX.MATCH(pattern$, text$)
 Description: Whether a string matches a pattern in full. The pattern syntax is ECMAScript; a leading (?i) asks for case-insensitive matching. Answers the captured groups instead of TRUE when the pattern has any.
 
+[REGEX.REPLACE$]
+Syntax: REGEX.REPLACE$(pattern$, text$, replacement$)
+Description: Replaces every match of a pattern in a string. In the replacement text $1 to $9 stand for the capture groups, $& for the whole match, and $$ for a single dollar; a dollar that stands alone is kept as it is. The pattern syntax is ECMAScript; a leading (?i) asks for case-insensitive matching.
+
 [REGEX.REPLACE]
 Syntax: REGEX.REPLACE(pattern$, text$, replacement$)
-Description: Replaces every match of a pattern in a string. In the replacement text $1 to $9 stand for the capture groups, $& for the whole match, and $$ for a single dollar; a dollar that stands alone is kept as it is. The pattern syntax is ECMAScript; a leading (?i) asks for case-insensitive matching.
+Description: Old name of REGEX.REPLACE$, still accepted for one release; --lint, jdb_check and -c name REGEX.REPLACE$, and tools/jdb-fix.jdb rewrites it.
 
 [REM]
 Syntax: REM comment_text
@@ -3531,9 +3599,13 @@ Description: Draws a single named layer of a loaded Tiled map, using the global 
 Syntax: TILED.FREE(name$)
 Description: Frees a loaded Tiled map and its resources.
 
+[TILED.LAYERS]
+Syntax: TILED.LAYERS(name$) -> array
+Description: Returns an array of the layer name strings of a Tiled map in draw order.
+
 [TILED.LAYERS$]
 Syntax: TILED.LAYERS$(name$) -> array
-Description: Returns an array of the layer name strings of a Tiled map in draw order.
+Description: Old name of TILED.LAYERS, still accepted for one release; --lint, jdb_check and -c name TILED.LAYERS, and tools/jdb-fix.jdb rewrites it.
 
 [TILED.LOAD]
 Syntax: TILED.LOAD(name$, filename$) -> boolean
@@ -3617,7 +3689,7 @@ Description: Parses a string as a number. Synonym for VAL.
 
 [TOSTR]
 Syntax: TOSTR(value)
-Description: Converts any value to its string representation. Synonym for STR / CSTR.
+Description: Old name of STR$, still accepted for one release; --lint, jdb_check and -c name STR$, and tools/jdb-fix.jdb rewrites it.
 
 [TRANSPOSE]
 Syntax: TRANSPOSE(matrix)
@@ -3711,9 +3783,13 @@ Description: Render the current frame to the terminal and drain pending keypress
 Syntax: TUI.RENDER_HEADLESS$([width], [height]) -> string
 Description: Renders the current frame off-screen at width x height cells (default 120 x 40) and returns it as plain text without ANSI codes, one line per row. Lets a test or an AI agent read the layout without a terminal. TUI builds only.
 
+[TUI.WAIT_EVENT$]
+Syntax: TUI.WAIT_EVENT$
+Description: Block until a key is pressed; returns the key name as a string.
+
 [TUI.WAIT_EVENT]
 Syntax: TUI.WAIT_EVENT
-Description: Block until a key is pressed; returns the key name as a string.
+Description: Old name of TUI.WAIT_EVENT$, still accepted for one release; --lint, jdb_check and -c name TUI.WAIT_EVENT$, and tools/jdb-fix.jdb rewrites it.
 
 [TUI.QUIT]
 Syntax: TUI.QUIT
@@ -3803,9 +3879,13 @@ Description: Toggleable checkbox. Returns the new state (0 or 1).
 Syntax: TUI.RADIO(label$, options[], selected) -> int
 Description: Vertical radio-group. Up/Down cycles when focused; returns the (possibly changed) selection index.
 
+[TUI.INPUT$]
+Syntax: TUI.INPUT$(label$, text$, [width]) -> string
+Description: Single-line text input. Returns the (edited) text. Type characters / Backspace when focused.
+
 [TUI.INPUT]
 Syntax: TUI.INPUT(label$, text$, [width]) -> string
-Description: Single-line text input. Returns the (edited) text. Type characters / Backspace when focused.
+Description: Old name of TUI.INPUT$, still accepted for one release; --lint, jdb_check and -c name TUI.INPUT$, and tools/jdb-fix.jdb rewrites it.
 
 [TUI.INPUT_INT]
 Syntax: TUI.INPUT_INT(label$, value, [width]) -> int
@@ -4582,9 +4662,13 @@ Description: Where the memory a loaded program never gives back actually went, c
 Syntax: SYS.NATIVES -> text$
 Description: How many builtins this build registered, how many bytes of name that is, and what registering them cost. ESP32-S3 only.
 
+[SYS.DF$]
+Syntax: SYS.DF$([path$]) -> text$
+Description: The volume a path lies on as a line: bytes free of bytes total. Without a path, the working directory volume. On a board it answers for the flash store and takes no argument.
+
 [SYS.DF]
 Syntax: SYS.DF([path$]) -> text$
-Description: The volume a path lies on as a line: bytes free of bytes total. Without a path, the working directory volume. On a board it answers for the flash store and takes no argument.
+Description: Old name of SYS.DF$, still accepted for one release; --lint, jdb_check and -c name SYS.DF$, and tools/jdb-fix.jdb rewrites it.
 
 [SYS.FREEDISK]
 Syntax: SYS.FREEDISK([path$]) -> bytes

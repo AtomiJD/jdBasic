@@ -78,11 +78,12 @@ Assert(ok, "div by zero")
 PRINT "-- String out of bounds --"
 ok = FALSE
 TRY
-  LET x = MID("Hi", 999)
+  LET x = MID$("Hi", 999)
+  ok = (x = "")
 CATCH
-  ok = TRUE
+  ok = FALSE
 ENDTRY
-Assert(ok, "MID out of bounds")
+Assert(ok, "MID$ past the end answers an empty string")
 
 ' 6. CD with bad path
 PRINT "-- CD bad path --"
