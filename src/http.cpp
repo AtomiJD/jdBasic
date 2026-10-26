@@ -44,13 +44,17 @@ static std::mutex g_server_mutex;
 // handler signals and leaves the join to WAIT or to process exit.
 static std::thread::id g_server_owner;
 static bool g_http_exit_hook = false;
-// Serialises every HTTP handler's access to g_server_vm. httplib spawns a
-// thread per accepted request, but the embedded VM is single-threaded -
-// without this lock two concurrent POSTs would race on the shared bytecode
-// (Phase-3 commit message has the gory details). Held across the user
-// handler and the auto-JSON-encode call that follows.
-static std::mutex g_server_vm_mutex;
+// httplib runs each request on a thread of its own. A handler takes the
+// VM's exec_lock before it calls in (held across the user handler and the
+// auto-JSON-encode call that follows): it runs only while the program waits
+// or yields between instructions, and never beside another handler.
 static VM* g_server_vm = nullptr;
+
+// The VM this thread runs, whose exec lock a blocking client call lets go
+// while it waits on the network: a request to this process's own server is
+// answered by a handler that needs the lock.
+extern thread_local VM* g_active_vm;
+static ExecLock* waiting_exec_lock() { return g_active_vm ? &g_active_vm->exec_lock : nullptr; }
 static std::unordered_map<std::string, std::string> g_get_handlers;  // path → func name
 static std::unordered_map<std::string, std::string> g_post_handlers;
 static std::string g_notfound_handler;  // optional jdBasic func for 404s ("" = none)
@@ -292,7 +296,8 @@ void register_http_builtins(VM& vm) {
 
         auto run = [&](auto& cli) -> Value {
             configure_client(cli, s);
-            auto res = cli.Get(path, s.headers);
+            const auto hdrs = s.headers;   // read before the lock is let go
+            auto res = [&] { ExecYield net_wait(waiting_exec_lock()); return cli.Get(path, hdrs); }();
             if (res) {
                 std::lock_guard<std::mutex> lock(g_http_mutex);
                 g_http_last_status = res->status;
@@ -322,7 +327,8 @@ void register_http_builtins(VM& vm) {
 
         auto run = [&](auto& cli) -> Value {
             configure_client(cli, s);
-            auto res = cli.Post(path, s.headers, data, content_type);
+            const auto hdrs = s.headers;   // read before the lock is let go
+            auto res = [&] { ExecYield net_wait(waiting_exec_lock()); return cli.Post(path, hdrs, data, content_type); }();
             if (res) {
                 std::lock_guard<std::mutex> lock(g_http_mutex);
                 g_http_last_status = res->status;
@@ -345,7 +351,8 @@ void register_http_builtins(VM& vm) {
 
         auto run = [&](auto& cli) -> Value {
             configure_client(cli, s);
-            auto res = cli.Put(path, s.headers, data, content_type);
+            const auto hdrs = s.headers;   // read before the lock is let go
+            auto res = [&] { ExecYield net_wait(waiting_exec_lock()); return cli.Put(path, hdrs, data, content_type); }();
             if (res) {
                 std::lock_guard<std::mutex> lock(g_http_mutex);
                 g_http_last_status = res->status;
@@ -454,13 +461,19 @@ void register_http_builtins(VM& vm) {
         auto run = [&](auto& cli) -> Value {
             configure_client(cli, s);
             httplib::Result res(nullptr, httplib::Error::Unknown);
-            if (method == "GET")          res = cli.Get(path, s.headers);
-            else if (method == "DELETE")  res = cli.Delete(path, s.headers);
-            else if (method == "HEAD")    res = cli.Head(path, s.headers);
-            else if (method == "POST")    res = cli.Post(path, s.headers, body, ct.c_str());
-            else if (method == "PUT")     res = cli.Put(path, s.headers, body, ct.c_str());
-            else if (method == "PATCH")   res = cli.Patch(path, s.headers, body, ct.c_str());
-            else throw std::runtime_error("HTTP.REQUEST: unknown method " + method);
+            const auto hdrs = s.headers;   // read before the lock is let go
+            if (method != "GET" && method != "DELETE" && method != "HEAD" &&
+                method != "POST" && method != "PUT" && method != "PATCH")
+                throw std::runtime_error("HTTP.REQUEST: unknown method " + method);
+            {
+                ExecYield net_wait(waiting_exec_lock());
+                if (method == "GET")          res = cli.Get(path, hdrs);
+                else if (method == "DELETE")  res = cli.Delete(path, hdrs);
+                else if (method == "HEAD")    res = cli.Head(path, hdrs);
+                else if (method == "POST")    res = cli.Post(path, hdrs, body, ct.c_str());
+                else if (method == "PUT")     res = cli.Put(path, hdrs, body, ct.c_str());
+                else                          res = cli.Patch(path, hdrs, body, ct.c_str());
+            }
             if (!res) throw std::runtime_error("HTTP.REQUEST transport failure: " + url);
             { std::lock_guard<std::mutex> lock(g_http_mutex); g_http_last_status = res->status; }
             return response_to_map(res);
@@ -478,7 +491,8 @@ void register_http_builtins(VM& vm) {
 
         auto run = [&](auto& cli) -> Value {
             configure_client(cli, s);
-            auto res = cli.Delete(path, s.headers);
+            const auto hdrs = s.headers;   // read before the lock is let go
+            auto res = [&] { ExecYield net_wait(waiting_exec_lock()); return cli.Delete(path, hdrs); }();
             if (res) {
                 std::lock_guard<std::mutex> lock(g_http_mutex);
                 g_http_last_status = res->status;
@@ -661,7 +675,7 @@ void register_http_builtins(VM& vm) {
             g_server->Get(path, [fn](const httplib::Request& req, httplib::Response& res) {
                 log_request(req);
                 try {
-                    std::lock_guard<std::mutex> vm_lock(g_server_vm_mutex);
+                    ExecHold vm_lock(g_server_vm->exec_lock);
                     Value req_map = request_to_map(req);
                     Value result = g_server_vm->call_function(fn, {req_map});
 
@@ -689,7 +703,7 @@ void register_http_builtins(VM& vm) {
             g_server->Post(path, [fn](const httplib::Request& req, httplib::Response& res) {
                 log_request(req);
                 try {
-                    std::lock_guard<std::mutex> vm_lock(g_server_vm_mutex);
+                    ExecHold vm_lock(g_server_vm->exec_lock);
                     Value req_map = request_to_map(req);
                     Value result = g_server_vm->call_function(fn, {req_map});
 
@@ -715,7 +729,7 @@ void register_http_builtins(VM& vm) {
             g_server->set_error_handler([](const httplib::Request& req, httplib::Response& res) {
                 if (res.status != 404) return;  // only customize not-found
                 try {
-                    std::lock_guard<std::mutex> vm_lock(g_server_vm_mutex);
+                    ExecHold vm_lock(g_server_vm->exec_lock);
                     Value req_map = request_to_map(req);
                     Value result = g_server_vm->call_function(g_notfound_handler, {req_map});
                     if (!apply_rich_response(result, res)) {
@@ -762,8 +776,10 @@ void register_http_builtins(VM& vm) {
     // that run for seconds, e.g. an LLM query). Parking here in C++ leaves the
     // serialized handlers as the only VM users. Returns when the server is
     // stopped (HTTP.SERVER.STOP from a handler, or process exit).
-    vm.register_native("HTTP.SERVER.WAIT", [](const std::vector<Value>& args) -> Value {
+    vm.register_native("HTTP.SERVER.WAIT", [&vm](const std::vector<Value>& args) -> Value {
         (void)args;
+        // The handlers run while the program waits here.
+        ExecYield wait(&vm.exec_lock);
         for (;;) {
             {
                 std::lock_guard<std::mutex> lock(g_server_mutex);

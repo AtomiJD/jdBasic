@@ -12,9 +12,13 @@ void VM::register_async_builtins() {
           auto it = g_async_tasks.find(task_id);
           if (it == g_async_tasks.end()) throw std::runtime_error("Invalid async task ID: " + std::to_string(task_id));
           task = it->second; }
-        // Busy-wait with small sleep to stay responsive
-        while (!task->done) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // Busy-wait with small sleep to stay responsive; an HTTP handler may
+        // run on this VM meanwhile.
+        {
+            ExecYield wait(g_active_vm ? &g_active_vm->exec_lock : nullptr);
+            while (!task->done) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
         }
         Value result = task->result;
         // Cleanup
@@ -155,6 +159,8 @@ void VM::register_async_builtins() {
             throw std::runtime_error("CHAN.RECV: invalid channel handle " + std::to_string(handle));
         }
         int64_t timeout_ms = args.size() >= 2 ? args[1].to_int() : -1;
+        // An HTTP handler may run on this VM while the receive waits.
+        ExecYield wait(g_active_vm ? &g_active_vm->exec_lock : nullptr);
         std::unique_lock<std::mutex> lock(ch->mtx);
         ++ch->waiting_recv;
         auto ready = [&]() {

@@ -815,12 +815,55 @@ uint16_t VM::ensure_global(uint16_t name_idx) {
 // ── Main execution loop ──────────────────────────────────────
 
 void VM::run() {
+    // Only one thread runs this VM's code at a time. A run started from the
+    // outside makes this thread the program's; a handler already holds the
+    // lock when it gets here.
+    bool outermost = !exec_lock.held_here();
+    ExecHold exec_hold(exec_lock);
+    if (outermost) exec_lock.make_home();
     while (true) {
       try {
         // If a nested call (e.g. an event handler) ran END, abort the
         // outer loop too. Without this, main keeps executing past the
         // RAISEEVENT call site even though the program said END.
         if (is_halted) return;
+
+        // Pending reactive updates, the periodic tick and event polling run
+        // code that pushes frames, so they come before the frame is cached.
+        if (!reactive_pending.empty() && !reactive_updating && !reactive_bindings.empty()) {
+            std::vector<std::string> pending;
+            pending.swap(reactive_pending);
+            for (auto& var : pending) propagate_reactive(var);
+        }
+
+        // Periodic tick for RECUR tasks + event polling.
+        // Low threshold (200) so event handlers fire frequently enough for
+        // interactive graphics (a tight DO/SCREENFLIP loop is ~20 opcodes
+        // per iteration → fires every ~10 frames at 60 FPS).
+        if (++tick_counter >= 200) {
+            tick_counter = 0;
+            if (on_tick) on_tick();
+            if (!event_handlers.empty()) event_poll();
+            // An HTTP handler waiting for this VM runs now, between two
+            // instructions of the program.
+            exec_lock.let_waiters_in();
+            // External STOP request (set from MCP reader thread, joystick
+            // handler in the host, etc). Acts exactly like the in-script
+            // STOP statement: stash state, return; run_code's epilogue
+            // moves frames into stopped_* and inject_stopped_locals exposes
+            // the pause-point's frame. The frame's ip points to the NEXT
+            // opcode (the one we are about to fetch), so the line at it is
+            // the line that will execute on resume.
+            if (stop_requested.exchange(false)) {
+                const CallFrame& sf = frames.back();
+                int stop_line = sf.chunk->line_at(sf.ip);
+                emit("STOP (external) at line " + std::to_string(stop_line)
+                     + ". Type RESUME or call jdb_resume to continue.\n");
+                is_stopped = true;
+                return;
+            }
+            if (is_halted) return;
+        }
 
         // Cache the current frame once per iteration - frames.back() requires
         // multiple loads per access and is a measurable overhead in tight
@@ -839,37 +882,6 @@ void VM::run() {
             return;
         }
 #endif
-
-        // Process pending reactive updates
-        if (!reactive_pending.empty() && !reactive_updating && !reactive_bindings.empty()) {
-            std::vector<std::string> pending;
-            pending.swap(reactive_pending);
-            for (auto& var : pending) propagate_reactive(var);
-        }
-
-        // Periodic tick for RECUR tasks + event polling.
-        // Low threshold (200) so event handlers fire frequently enough for
-        // interactive graphics (a tight DO/SCREENFLIP loop is ~20 opcodes
-        // per iteration → fires every ~10 frames at 60 FPS).
-        if (++tick_counter >= 200) {
-            tick_counter = 0;
-            if (on_tick) on_tick();
-            if (!event_handlers.empty()) event_poll();
-            // External STOP request (set from MCP reader thread, joystick
-            // handler in the host, etc). Acts exactly like the in-script
-            // STOP statement: stash state, return; run_code's epilogue
-            // moves frames into stopped_* and inject_stopped_locals exposes
-            // the pause-point's frame. cf.ip currently points to the NEXT
-            // opcode (the one we are about to fetch), so the line at cf.ip
-            // is the line that will execute on resume.
-            if (stop_requested.exchange(false)) {
-                int stop_line = cf.chunk->line_at(cf.ip);
-                emit("STOP (external) at line " + std::to_string(stop_line)
-                     + ". Type RESUME or call jdb_resume to continue.\n");
-                is_stopped = true;
-                return;
-            }
-        }
 
         size_t trace_ip = cf.ip;
         const Chunk* trace_chunk = cf.chunk;
@@ -2277,7 +2289,10 @@ void VM::run() {
             std::printf("\r\n");
             std::fflush(stdout);
 #else
-            std::getline(std::cin, input);
+            {
+                ExecYield wait(&exec_lock);   // an HTTP handler may run meanwhile
+                std::getline(std::cin, input);
+            }
 #endif
             is_waiting_input = false;
 

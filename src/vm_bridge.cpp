@@ -327,8 +327,23 @@ JDRT_API JdRT jdrt_init(void) {
     if (!g_primary_rt) {
         g_primary_rt = rt;
         g_primary_thread = std::this_thread::get_id();
+        // The compiled program runs on this thread from here on and holds
+        // the VM's exec lock while it does: an HTTP handler, whose compiled
+        // code reads the same globals, runs only while it waits (SLEEP,
+        // HTTP.SERVER.WAIT).
+        rt->vm.exec_lock.acquire();
+        rt->vm.exec_lock.make_home();
     }
     return (JdRT)rt;
+}
+
+// A wait of the compiled program (SLEEP): HTTP handlers may run meanwhile.
+JDRT_API int jdrt_exec_yield_begin(void) {
+    return g_primary_rt ? g_primary_rt->vm.exec_lock.yield_begin() : 0;
+}
+
+JDRT_API void jdrt_exec_yield_end(int depth) {
+    if (g_primary_rt) g_primary_rt->vm.exec_lock.yield_end(depth);
 }
 
 // The program's end, as in the interpreter: the window and the audio

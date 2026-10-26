@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include "bytecode.h"
+#include "exec_lock.h"
 #include "value.h"
 
 struct DebugInfo; // forward
@@ -314,6 +315,9 @@ public:
     // tick polls this every ~200 opcodes; on true, it stashes state exactly
     // like the in-script STOP statement and returns from run().
     std::atomic<bool> stop_requested{false};
+    // Which thread runs this VM's code right now (see exec_lock.h): the
+    // program's own thread, or an HTTP handler while the program waits.
+    ExecLock exec_lock;
 private:
 
     // STOP/RESUME state

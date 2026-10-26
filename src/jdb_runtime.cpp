@@ -697,13 +697,25 @@ double jdb_tick() {
     return std::chrono::duration<double, std::milli>(now - g_start_time).count();
 }
 
+#ifdef _WIN32
+__declspec(dllimport)
+#endif
+int jdrt_exec_yield_begin(void);
+#ifdef _WIN32
+__declspec(dllimport)
+#endif
+void jdrt_exec_yield_end(int depth);
+
+// SLEEP: an HTTP handler may run while the program sleeps (exec_lock.h).
 void jdb_sleep(int64_t ms) {
     if (ms <= 0) return;
+    int held = jdrt_exec_yield_begin();
 #ifdef _WIN32
     Sleep((DWORD)ms);
 #else
     usleep((useconds_t)(ms * 1000));
 #endif
+    jdrt_exec_yield_end(held);
 }
 
 void jdb_randomseed(int64_t seed) {

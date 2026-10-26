@@ -2602,7 +2602,7 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 
 * **`HTTP.SERVER.ON_NOTFOUND(function_name$)`**: Registers a `jdBasic` function to render unmatched routes (HTTP 404). The function receives the request map and may return HTML (sent as `text/html` with status 404) or a rich-response map (`{__http_status, __http_body, __http_content_type, __http_headers}`). Wired through httplib's `set_error_handler`; it fires only for 404, so handler-set statuses like 401/500 keep their own output. Call it before `HTTP.SERVER.START`.
 
-* **`HTTP.SERVER.WAIT`**: Parks the main thread in C++ until the server stops, and returns when a handler calls `HTTP.SERVER.STOP` (or the process exits). Use this instead of a `DO ... SLEEP ... LOOP` keep-alive: handlers run on httplib worker threads that share the one VM, so a jdBasic loop on the main thread would step the VM concurrently with a running handler and corrupt it. That is fatal for handlers that take seconds, an LLM query for example.
+* **`HTTP.SERVER.WAIT`**: Parks the main thread in C++ until the server stops, and returns when a handler calls `HTTP.SERVER.STOP` (or the process exits). A handler never runs at the same time as the program or another handler: it runs while the program waits (`HTTP.SERVER.WAIT`, `SLEEP`, `AWAIT`, `CHAN.RECV`, `INPUT`, `OS.EXEC`, an HTTP client call) or, while the interpreter computes, between two of its instructions, as an event handler does. So a handler reads and writes the program's globals alone. A handler that takes seconds holds the program up for that long; a compiled program serves requests only while it waits.
 
 ### TCP and UDP Sockets (NET)
 

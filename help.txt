@@ -1469,7 +1469,7 @@ Description: Starts an asynchronous HTTP PUT request (default content type appli
 
 [HTTP.SERVER.WAIT]
 Syntax: HTTP.SERVER.WAIT()
-Description: Blocks until the running HTTP server stops, polling every 150 ms.
+Description: Blocks until the running HTTP server stops, polling every 150 ms. Handlers run one at a time, never beside the program: while it waits here or in SLEEP, AWAIT, CHAN.RECV, INPUT, OS.EXEC or an HTTP client call, or between two instructions of the interpreter.
 
 [IIF]
 Syntax: IIF(condition, value_if_true, value_if_false) -> value or array

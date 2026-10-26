@@ -134,7 +134,11 @@ void VM::register_console_builtins() {
             // and key/quit events are delivered, then resume here.
             emscripten_sleep(chunk);
 #else
-            std::this_thread::sleep_for(std::chrono::milliseconds(chunk));
+            {
+                // An HTTP handler may run while the program sleeps.
+                ExecYield wait(&exec_lock);
+                std::this_thread::sleep_for(std::chrono::milliseconds(chunk));
+            }
 #endif
             if (on_tick) on_tick();
             if (!event_handlers.empty()) event_poll();

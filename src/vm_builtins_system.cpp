@@ -296,6 +296,9 @@ void VM::register_system_builtins() {
             std::transform(low.begin(), low.end(), low.begin(), ::tolower);
             while (!low.empty() && low.back() == '"') low.pop_back();
             bool is_batch = low.size() > 4 && (low.compare(low.size() - 4, 4, ".bat") == 0 || low.compare(low.size() - 4, 4, ".cmd") == 0);
+            // The arguments are read; an HTTP handler may run while the program
+            // waits for the child (the child may well send it the request).
+            ExecYield wait(g_active_vm ? &g_active_vm->exec_lock : nullptr);
             SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, TRUE };
             HANDLE rd = nullptr, wr = nullptr;
             if (!CreatePipe(&rd, &wr, &sa, 0)) throw std::runtime_error("OS.EXEC: cannot create a pipe");
@@ -391,6 +394,8 @@ void VM::register_system_builtins() {
 #else
         cmd = cmd + " 2>&1";
 #endif
+        // An HTTP handler may run while the program waits for the child.
+        ExecYield wait(g_active_vm ? &g_active_vm->exec_lock : nullptr);
 #if defined(_WIN32)
         FILE* pipe = _popen(cmd.c_str(), "r");
 #else
@@ -465,6 +470,7 @@ void VM::register_system_builtins() {
     // runs after timeout_ms. Only for processes OS.SPAWN started.
     register_native("OS.WAIT", 1, 2, [](const std::vector<Value>& args) -> Value {
         int64_t pid = args[0].to_int();
+        ExecYield wait(g_active_vm ? &g_active_vm->exec_lock : nullptr);
         int64_t timeout_ms = args.size() >= 2 ? args[1].to_int() : -1;
         auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
         for (;;) {

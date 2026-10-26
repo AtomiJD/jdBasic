@@ -1,0 +1,65 @@
+' An HTTP handler never runs beside the program or beside another handler:
+' it runs alone, between two instructions of the program or while the
+' program waits, as an event handler does. Requests come in from several
+' client threads at once while the program itself keeps computing.
+
+DIM hits AS INTEGER = 0
+DIM busy AS INTEGER = 0
+DIM overlaps AS INTEGER = 0
+
+FUNC Bump(request)
+    IF busy <> 0 THEN overlaps = overlaps + 1
+    busy = 1
+    DIM before AS INTEGER = hits
+    DIM spin AS INTEGER = 0
+    DIM k AS INTEGER = 0
+    FOR k = 1 TO 3000
+        spin = spin + k
+    NEXT k
+    hits = before + 1
+    busy = 0
+    RETURN "ok"
+ENDFUNC
+
+HTTP.SERVER.ON_GET "/bump", "Bump"
+DIM up = HTTP.SERVER.START(18791)
+
+DIM requests AS INTEGER = 24
+DIM tasks AS ARRAY = []
+DIM i AS INTEGER = 0
+FOR i = 1 TO requests
+    PUSH tasks, VAL(HTTP.GET_ASYNC$("http://127.0.0.1:18791/bump"))
+NEXT i
+
+' The program computes meanwhile, on globals of its own.
+DIM total AS INTEGER = 0
+DIM j AS INTEGER = 0
+FOR j = 1 TO 200000
+    total = total + 1
+NEXT j
+
+DIM answers AS INTEGER = 0
+FOR i = 0 TO requests - 1
+    IF AWAIT(tasks[i]) = "ok" THEN answers = answers + 1
+NEXT i
+HTTP.SERVER.STOP
+
+DIM failed AS INTEGER = 0
+IF answers <> requests THEN
+    PRINT "FAIL answers "; answers
+    failed = failed + 1
+ENDIF
+IF hits <> requests THEN
+    PRINT "FAIL hits "; hits
+    failed = failed + 1
+ENDIF
+IF overlaps <> 0 THEN
+    PRINT "FAIL two handlers overlapped "; overlaps
+    failed = failed + 1
+ENDIF
+IF total <> 200000 THEN
+    PRINT "FAIL total "; total
+    failed = failed + 1
+ENDIF
+IF failed > 0 THEN END 1
+PRINT "OK"

@@ -10,6 +10,9 @@
 #include "jdb_crypto.h"
 #include "jdb_deflate.h"
 #include "jdb_stack.h"
+
+// The VM this thread runs (set in VM's constructor, restored in its destructor).
+extern thread_local VM* g_active_vm;
 #include <clocale>
 #include <locale>
 #ifdef COM

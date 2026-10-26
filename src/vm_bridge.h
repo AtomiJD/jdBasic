@@ -31,6 +31,11 @@ JDRT_API void  jdrt_shutdown(JdRT rt);
 // Close the window and the audio device, before exit()
 JDRT_API void  jdrt_close_devices(void);
 
+// Around a wait of the compiled program: lets the VM's exec lock go so an
+// HTTP handler can run, and takes it back (exec_lock.h).
+JDRT_API int   jdrt_exec_yield_begin(void);
+JDRT_API void  jdrt_exec_yield_end(int depth);
+
 // Call a function by name, passing args as doubles.
 // Returns the result as double. Strings are pointer-encoded.
 JDRT_API double jdrt_call_f64(JdRT rt, const char* name,
