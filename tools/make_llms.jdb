@@ -1,0 +1,96 @@
+' Builds llms-full.txt from the documentation: the primer for language
+' models first, then the tour, the guides, the references and the HELP
+' text of every builtin. Relative Markdown links become absolute GitHub
+' URLs, so the file reads correctly away from the repository. Run from the
+' repository root:
+'
+'   jdbasic tools/make_llms.jdb [output.txt]
+'
+' llms.txt (the index) is written by hand; this file only regenerates the
+' full text it points to.
+
+DIM repoBlob$ = "https://github.com/AtomiJD/jdBasic/blob/main/"
+DIM nl$ = CHR$(10)
+
+DIM argv = DROP(1, OS.ARGS())
+DIM outPath$ = "llms-full.txt"
+IF LEN(argv) > 0 THEN outPath$ = argv[0]
+
+DIM sources = ["doc/llms-primer.md", "doc/tour.md", "doc/idioms-from-python.md", _
+    "doc/APL_pipeline.md", "doc/howto-vector-matrix-data.md", _
+    "doc/guides/native.md", "doc/guides/data.md", "doc/guides/gui.md", _
+    "doc/guides/graphics-games.md", "doc/guides/ai-mcp.md", "doc/guides/boards.md", _
+    "doc/WebDev.md", "doc/MCP.md", "lib/README.md", "doc/languages.md"]
+
+' The folder part of a repository path, with its trailing slash.
+FUNC DirOf$(path$)
+    DIM parts = SPLIT(path$, "/")
+    IF LEN(parts) < 2 THEN RETURN ""
+    RETURN JOIN(TAKE(LEN(parts) - 1, parts), "/") + "/"
+ENDFUNC
+
+' A relative path against a folder, with "." and ".." resolved.
+FUNC Resolve$(folder$, rel$)
+    DIM kept = []
+    FOR EACH seg$ IN SPLIT(folder$ + rel$, "/")
+        IF seg$ = ".." THEN
+            IF LEN(kept) > 0 THEN kept = TAKE(LEN(kept) - 1, kept)
+        ELSEIF seg$ <> "." ANDALSO seg$ <> "" THEN
+            kept = APPEND(kept, seg$)
+        ENDIF
+    NEXT
+    RETURN JOIN(kept, "/")
+ENDFUNC
+
+' Every "](target)" whose target is relative points at the file on GitHub.
+FUNC AbsoluteLinks$(text$, folder$, base$)
+    DIM out$ = ""
+    DIM rest$ = text$
+    DIM at = INSTR(rest$, "](")
+    DO WHILE at >= 0
+        out$ = out$ + LEFT$(rest$, at + 2)
+        rest$ = MID$(rest$, at + 2, LEN(rest$))
+        DIM closeAt = INSTR(rest$, ")")
+        IF closeAt < 0 THEN EXITDO
+        DIM target$ = LEFT$(rest$, closeAt)
+        DIM external = STARTSWITH(target$, "http") ORELSE STARTSWITH(target$, "#") _
+            ORELSE STARTSWITH(target$, "mailto:") ORELSE INSTR(target$, " ") >= 0
+        IF external THEN
+            out$ = out$ + target$
+        ELSE
+            out$ = out$ + base$ + Resolve$(folder$, target$)
+        ENDIF
+        rest$ = MID$(rest$, closeAt, LEN(rest$))
+        at = INSTR(rest$, "](")
+    LOOP
+    RETURN out$ + rest$
+ENDFUNC
+
+DIM header$ = "# jdBasic - full documentation for language models" + nl$ + nl$ + _
+    "> jdBasic is a BASIC dialect with a bytecode VM, APL-style arrays, a native" + nl$ + _
+    "> compiler (jdbasic -c, LLVM) and a built-in MCP server for AI agents." + nl$ + _
+    "> Home: https://www.jdbasic.org - Source: https://github.com/AtomiJD/jdBasic" + nl$ + _
+    "> Index of this file: https://www.jdbasic.org/llms.txt" + nl$ + nl$ + _
+    "This file joins the jdBasic documentation into one text. It begins with" + nl$ + _
+    "the primer written for language models (read its rules first), then the" + nl$ + _
+    "tour, the guides, the MCP server, the module library, the full language" + nl$ + _
+    "reference and the HELP text of every builtin. Each part starts with a" + nl$ + _
+    "line 'Source:' naming the file it comes from." + nl$
+
+DIM parts = [header$]
+FOR EACH src$ IN sources
+    IF NOT FILE.EXISTS(src$) THEN
+        PRINT "make_llms: missing " + src$
+        END 1
+    ENDIF
+    DIM body$ = AbsoluteLinks$(REPLACE$(TXTREADER$(src$), CHR$(13), ""), DirOf$(src$), repoBlob$)
+    parts = APPEND(parts, nl$ + "---" + nl$ + "Source: " + repoBlob$ + src$ + nl$ + "---" + nl$ + nl$ + body$)
+NEXT
+
+DIM helpText$ = REPLACE$(TXTREADER$("help.txt"), CHR$(13), "")
+parts = APPEND(parts, nl$ + "---" + nl$ + "Source: " + repoBlob$ + "help.txt" + nl$ + "---" + nl$ + nl$ + _
+    "# Builtin reference (the text HELP ""NAME"" shows)" + nl$ + nl$ + helpText$)
+
+DIM full$ = JOIN(parts, nl$)
+TXTWRITER outPath$, full$
+PRINT "make_llms: wrote " + outPath$ + " (" + STR$(LEN(full$)) + " bytes, " + STR$(LEN(sources) + 1) + " sources)"

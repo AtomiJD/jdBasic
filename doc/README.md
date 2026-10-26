@@ -17,6 +17,7 @@ Four ways in, depending on where you are:
 | [Browser playground](https://jdbasic.org/live/index.html) | Try the language without installing anything. |
 | [Train jdBasic on YouTube](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ) | 14 video lessons, from "Hello, World" to native compilation. |
 | [Sample gallery](../jdb/README.md) | 250+ complete programs by domain: games, emulators, tools, web apps, AI, sound. |
+| [jdBasic for language models](llms-primer.md) | The rules a model gets wrong, the syntax with tested examples and the MCP server; [`llms.txt`](../llms.txt) and [`llms-full.txt`](../llms-full.txt) at the repo root carry it to AI tools. |
 
 ## Guides
 

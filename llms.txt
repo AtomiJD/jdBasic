@@ -1,0 +1,61 @@
+# jdBasic
+
+> jdBasic is a BASIC dialect with a bytecode VM, APL-style arrays and a native compiler (`jdbasic -c`, through LLVM, to a Windows .exe). Graphics, GUI (Win32 forms, ImGui, terminal UI), sound, HTTP client and server, SQLite, JSON, COM automation and local LLMs are built in. `jdbasic --mcp` is a Model Context Protocol server: an AI agent runs code in a persistent VM and can pause a running program, change a SUB and resume it. Created by Atomi JD, MIT licensed, current release line 1.1.
+
+Facts a model needs before it writes jdBasic:
+
+- Strings and arrays are 0-based (`arr[0]`, `MID$(s$, 0, 1)`); `INSTR` answers -1 when absent. `IOTA(5)` is `[1, 2, 3, 4, 5]`; `IOTA(5, 0)` starts at 0.
+- Strings have no escapes: `CHR$(10)`, `CHR$(34)`, `VBNEWLINE`, or `""` for one quote. `$"Hi {{name$}}"` interpolates.
+- Blocks close with `ENDIF`, `ENDFUNC`, `ENDSUB`, `ENDTYPE`, `ENDSWITCH`, `ENDTRY`; loops leave with `EXITFOR`, `EXITDO`, `EXITFUNC` (single tokens).
+- `AND`/`OR` are logical and evaluate both sides; `ANDALSO`/`ORELSE` short-circuit; bitwise is `BAND`, `BOR`, `BXOR`, `SHL`, `SHR`.
+- `APPEND` is a function (`a = APPEND(a, v)`); `SELECT(fn@, arr)` maps, `FILTER`, `REDUCE`, `LAMBDA x -> x * 2`; `MAP` is the dictionary type, indexed `m{"key"}`.
+- `MAX`, `MIN`, `SUM`, `MEAN` reduce one array: `MAX([a, b])`. Constants are `MATH.PI` and `MATH.E`. Timing is `TICK()` in milliseconds.
+- Absence: `x = NONE` is also true for `0` and `""`; test `TYPEOF(x) = "NONE"` or use `x ?? default`. `TYPEOF` of a map is `"OBJECT"`, of numbers `"INT64"` / `"FLOAT64"`.
+- A SUB or FUNC writes a global only if that global already exists; otherwise it creates a local. Builtin names are reserved as identifiers, case-insensitively.
+- `jdbasic -c` always applies STRICT and EXPLICIT: declare every variable (`DIM total AS INTEGER = 0`).
+- When unsure whether a builtin exists, check `HELP "NAME"`, the language reference, or the MCP tool `jdb_doc`. A name found in none of them does not exist.
+
+## Start here
+
+- [jdBasic for language models](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/llms-primer.md): what jdBasic is, the rules models get wrong, the syntax with tested examples, the MCP server
+- [Full documentation in one file](https://www.jdbasic.org/llms-full.txt): the primer, tour, guides, MCP reference, module library, full language reference and HELP text, about 790 KB
+- [A tour of jdBasic](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/tour.md): from the first PRINT to a compiled .exe in fifteen minutes; every example is CI-checked
+- [Idioms from Python](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/idioms-from-python.md): Python-to-jdBasic cheat sheet with the gotchas
+
+## Reference
+
+- [Language reference](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/languages.md): every statement, operator and builtin, with an A-Z index
+- [Builtin HELP text](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/help.txt): syntax and description of every builtin, as `HELP "NAME"` prints it
+- [Module library](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/lib/README.md): 45 importable modules (TESTKIT, JDWEB, TMPL, data frames, SQLite, XLSX, DOCX, PDF, QR, YAML)
+
+## AI agents and MCP
+
+- [The MCP server](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/MCP.md): setup for Claude Code, Cursor, Cline, Zed and others; the tools jdb_eval, jdb_check, jdb_doc, jdb_stop, jdb_recompile, jdb_resume and more, all on one persistent VM
+- [Programming with an AI agent](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/guides/ai-mcp.md): live patching a running program over MCP; local LLMs, RAG and ONNX inside jdBasic
+
+## Guides
+
+- [Compiling to a native .exe](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/guides/native.md): STRICT and EXPLICIT, type annotations, what stays interpreter-only
+- [Working with data](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/guides/data.md): CSV, JSON, grouping, dates, reports
+- [From loops to array pipelines](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/APL_pipeline.md): APL-style whole-array programming
+- [Vectors, matrices and data](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/howto-vector-matrix-data.md): cookbook
+- [Graphics and games](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/guides/graphics-games.md): window, game loop, sprites, tile maps, sound
+- [Desktop applications](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/guides/gui.md): native Windows forms, Dear ImGui, terminal UI
+- [Web development](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/WebDev.md): HTTP server, JDWEB, templates, cookie login, SQLite
+- [jdBasic on a microcontroller](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/guides/boards.md): RP2350 (PicoCalc) and ESP32-S3
+
+## Website
+
+- [jdbasic.org](https://www.jdbasic.org/): project home
+- [Try it in the browser](https://jdbasic.org/live/index.html): REPL and editor, no installation
+- [Learn BASIC](https://www.jdbasic.org/learn-basic/), [BASIC examples](https://www.jdbasic.org/basic-examples/), [BASIC games](https://www.jdbasic.org/basic-games/), [BASIC vs Python](https://www.jdbasic.org/basic-vs-python/), [Advanced arrays](https://www.jdbasic.org/advanced-arrays/), [AI pair coding](https://www.jdbasic.org/ai-pair-coding/), [AI with BASIC](https://www.jdbasic.org/ai-with-basic/), [Workspace](https://www.jdbasic.org/workspace/)
+- [Book: Office automation with jdBasic](https://www.jdbasic.org/book/)
+
+## Optional
+
+- [Source code](https://github.com/AtomiJD/jdBasic): C++ interpreter, LLVM code generator, runtime
+- [Releases](https://github.com/AtomiJD/jdBasic/releases/latest): Windows bundles (core, VB6 pack, mcp-native, game pack) and POSIX tarballs
+- [Sample gallery](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/jdb/README.md): 250+ complete programs
+- [Building from source](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/BUILD.md): Windows, Linux, macOS, build flags
+- [Video lessons: Train jdBasic](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ): 14 lessons
+- [Developer blog](https://www.atomijd.onl/): articles on jdBasic's design and projects
