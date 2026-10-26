@@ -65,6 +65,12 @@ FILE.CLOSE h
 Check(seen = 3, "three lines read")
 Check(last$ = "three", "the last line without a newline is read")
 
+' On Windows a UNC path keeps its server and share, also against "..".
+IF INSTR(PATH.NORMALIZE$("a/b"), "\") >= 0 THEN
+    Check(PATH.NORMALIZE$("\\srv\share\a.txt") = "\\srv\share\a.txt", "a UNC path keeps both separators")
+    Check(PATH.NORMALIZE$("\\srv\share\..\..\evil\x") = "\\srv\share\evil\x", "the UNC root survives ..")
+ENDIF
+
 KILL csv$
 KILL good$
 KILL bad$

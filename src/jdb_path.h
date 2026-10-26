@@ -71,6 +71,7 @@ inline std::string normalize(const std::string& p) {
     s.reserve(p.size());
     for (char c : p) s.push_back(is_sep(c) ? kSep : c);
     std::string prefix;
+    size_t fixed_parts = 0;   // leading parts ".." cannot remove
     std::string body = s;
 #ifdef _WIN32
     if (body.size() >= 2 && std::isalpha((unsigned char)body[0]) && body[1] == ':') {
@@ -80,6 +81,7 @@ inline std::string normalize(const std::string& p) {
         // A UNC path keeps its two leading separators: one would name a
         // path on the current drive.
         prefix.assign(1, kSep);
+        fixed_parts = 2;   // the server and the share are the root of a UNC path
         body = body.substr(1);
     }
 #endif
@@ -97,7 +99,7 @@ inline std::string normalize(const std::string& p) {
     for (auto& part : parts) {
         if (part == ".") continue;
         if (part == "..") {
-            if (!out.empty() && out.back() != "..") out.pop_back();
+            if (out.size() > fixed_parts && out.back() != "..") out.pop_back();
             else if (!rooted) out.push_back("..");
         } else {
             out.push_back(part);
