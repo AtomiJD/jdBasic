@@ -94,7 +94,9 @@ END FUNC
 FOR i = 1 TO 5
     IF i = 3 THEN STOP
     trail = APPEND(trail, value_at(i, rate))
+    PRINT "step "; i; " -> "; trail[LEN(trail) - 1]
 NEXT i
+PRINT "done"
 ```
 
 Then ask the agent:
@@ -102,10 +104,12 @@ Then ask the agent:
 > Load demo.jdb. When it stops, set rate to 5, change value_at to
 > multiply by 100, recompile, resume, and show me trail.
 
-The agent calls `jdb_load`, `jdb_eval "rate = 5"`, edits the file,
-`jdb_recompile`, `jdb_resume`, and reads `trail`: `[2, 4, 1500, 2000, 2500]`.
-The first two steps ran with the old code, the rest with the new one, in
-the same run.
+The agent calls `jdb_load`, which answers with `step 1 -> 2` and
+`step 2 -> 4` and the stop. It sets `rate = 5` with `jdb_eval`, edits the
+file, calls `jdb_recompile` and `jdb_resume`, which answers with
+`step 3 -> 1500` to `step 5 -> 2500` and `done`. `trail` reads
+`[2, 4, 1500, 2000, 2500]`: the first two steps ran with the old code, the
+rest with the new one, in the same run.
 
 ## Native executables
 
