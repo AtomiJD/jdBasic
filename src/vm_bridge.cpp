@@ -1770,6 +1770,23 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
             return jd_tag(JdTag::VM_HANDLE);
         }
         if (val_tag == jd_tag(JdTag::NONE)) return jd_tag(JdTag::NONE);
+        // Only an array has positions. A number names one only as the pointer
+        // bits an untyped slot carries; any other value is the interpreter's
+        // error.
+        bool ptr_bits = (uint64_t)val_bits >= 4096 && (uint64_t)val_bits < (1ULL << 47);
+        bool arr_like = val_tag == jd_tag(JdTag::ARR) ||
+            ((val_tag == jd_tag(JdTag::F64) || val_tag == jd_tag(JdTag::I64)) && ptr_bits);
+        if (!arr_like) {
+            if (val_tag == jd_tag(JdTag::I64)) {
+                rt->last_error = "Cannot index into " + std::to_string(val_bits);
+            } else if (val_tag == jd_tag(JdTag::F64)) {
+                double d; memcpy(&d, &val_bits, sizeof d);
+                rt->last_error = "Cannot index into " + Value::make_f64(d).to_string();
+            } else {
+                rt->last_error = "Cannot index into this type";
+            }
+            return jd_tag(JdTag::NONE);
+        }
         auto* arr = (JdbArray*)(intptr_t)val_bits;
         if (!arr) return jd_tag(JdTag::NONE);
         if (idx < 0 || idx >= arr->length) return out_of_range(idx);

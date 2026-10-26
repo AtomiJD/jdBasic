@@ -1,0 +1,58 @@
+' Values whose kind only the running program knows answer in the compiled
+' form what they answer in the interpreter: indexing a number is an error,
+' a string handed through a function reference stays a string, a variable
+' declared from such a call can be assigned again, and a $-named builtin
+' that answers a number answers a number.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Pair$(a, b)
+    RETURN a + "/" + STR$(b)
+ENDFUNC
+
+' Indexing a cell that holds a number raises the interpreter's error.
+DIM flat AS ARRAY = [1, 2, 3]
+DIM caught AS INTEGER = 0
+TRY
+    DIM nested = flat[1][0]
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "indexing a number cell is an error")
+DIM m AS MAP = {"k": 5}
+caught = 0
+TRY
+    DIM keyed = m{"k"}[0]
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "indexing a number in a map is an error")
+
+' A string through a funcref to an untyped parameter.
+DIM f = Pair$@
+DIM word AS STRING = "hello"
+Check(f(word, 7) = "hello/7", "a string through a funcref stays a string")
+
+' A variable declared from a funcref call can be assigned again.
+DIM r = f(word, 7)
+r = f(word, 8)
+Check(r = "hello/8", "reassigning a variable declared from a funcref call")
+
+' HTTP.GET_ASYNC$ answers its task id as a number.
+DIM task = HTTP.GET_ASYNC$("http://127.0.0.1:1/none")
+Check(TYPEOF(task) = "INT64", "HTTP.GET_ASYNC$ answers a number")
+DIM ignored = AWAIT(task)
+
+' VAL of a number is that number.
+DIM seven AS INTEGER = 7
+Check(VAL(seven) = 7, "VAL of an integer")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

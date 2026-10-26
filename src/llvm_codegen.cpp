@@ -579,6 +579,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_map_set_tagged","__map_set_tagged",void_type, {i8_ptr_type, i8_ptr_type, f64_type, i32_type}, -1);
     reg("jdb_slot_map_for_write", "__slot_map_for_write", i8_ptr_type, {f64_type}, JD_TAG_NATIVE_MAP);
     reg("jdb_len_bits", "__len_bits", i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_index_base", "__index_base", i8_ptr_type, {i64_type, f64_type}, JD_TAG_ARR);
     reg("jdb_tagged_key_set", "__tagged_key_set", void_type,
         {i64_type, i32_type, i8_ptr_type, f64_type, i32_type}, -1);
     reg("jdb_map_get_f64","__map_get_f64",f64_type,    {i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
@@ -1309,6 +1310,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
 
     std::unordered_map<std::string, int> pre_var_tags;
     std::unordered_set<std::string> top_dollar_arrays;
+    // Top-level variables DIMmed with a declared pointer kind (AS STRING, AS
+    // ARRAY, AS MAP): an argument naming one is that kind at every call site.
+    std::unordered_map<std::string, int> top_declared_kinds;
     // An expression that is a date: a call to a builtin flagged BF_DATE, or a
     // variable a date-producing DIM bound.
     auto is_date_expr = [&](const Expr& e) -> bool {
@@ -1461,6 +1465,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                  (s.expr->kind == ExprKind::CALL && !s.expr->func_name.empty() &&
                   s.expr->func_name.back() != '$' && infer_expr_tag(*s.expr) == JD_TAG_ARR)))
                 top_dollar_arrays.insert(s.var_name);
+            if (s.kind == StmtKind::DIM && !s.var_name.empty()) {
+                if (s.var_type == VarType::STRING) top_declared_kinds[s.var_name] = JD_TAG_STR;
+                else if (s.var_type == VarType::ARRAY) top_declared_kinds[s.var_name] = JD_TAG_ARR;
+                else if (s.var_type == VarType::OBJECT && s.label.empty()) top_declared_kinds[s.var_name] = JD_TAG_NATIVE_MAP;
+            }
             for (auto& b : s.body) if (b) find_dollar_arrays(*b);
             for (auto& br : s.branches) for (auto& b : br.body) if (b) find_dollar_arrays(*b);
             for (auto& c : s.catch_body()) if (c) find_dollar_arrays(*c);
@@ -1649,19 +1658,26 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                 auto lk = cur_local_kinds.find(vn);
                                 if (lk != cur_local_kinds.end()) seen = lk->second;
                                 else if (!in_fn_body && top_dollar_arrays.count(vn)) seen = JD_TAG_ARR;
+                                else if (!in_fn_body && top_declared_kinds.count(vn)) seen = top_declared_kinds[vn];
                                 else if (!vn.empty() && vn.back() == '$') seen = JD_TAG_STR;
                                 break;
                             }
                             default: break;
                         }
                         if (seen) {
-                            auto& slot = arg_tag_seen[e.func_name];
+                            // Recorded under the function itself, also for a call
+                            // through a variable holding its funcref.
+                            auto ait2 = funcref_alias.find(e.func_name);
+                            const std::string& callee_key =
+                                (decls.count(e.func_name) || ait2 == funcref_alias.end())
+                                    ? e.func_name : ait2->second;
+                            auto& slot = arg_tag_seen[callee_key];
                             if (slot.size() <= i) slot.resize(i + 1);
                             slot[i].insert(seen);
-                            if (arg_tag_line[e.func_name].size() <= i)
-                                arg_tag_line[e.func_name].resize(i + 1);
-                            if (!arg_tag_line[e.func_name][i].count(seen))
-                                arg_tag_line[e.func_name][i][seen] = e.line;
+                            if (arg_tag_line[callee_key].size() <= i)
+                                arg_tag_line[callee_key].resize(i + 1);
+                            if (!arg_tag_line[callee_key][i].count(seen))
+                                arg_tag_line[callee_key][i][seen] = e.line;
                         }
                     }
                     // A $ parameter the caller hands an array is an array: as a
@@ -1688,8 +1704,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     // holds an array are arrays.
                     bool declared_array = it->second.stmt && i < it->second.stmt->params().size() &&
                                           it->second.stmt->params()[i].type == VarType::ARRAY;
+                    // A top-level variable DIMmed AS STRING is a string even
+                    // without a $ in its name.
+                    bool declared_str_arg = e.args[i] && !in_fn_body &&
+                        e.args[i]->kind == ExprKind::VARIABLE &&
+                        top_declared_kinds.count(e.args[i]->str_val) &&
+                        top_declared_kinds[e.args[i]->str_val] == JD_TAG_STR;
                     if (!declared_array && it->second.tags[i] != JD_TAG_STR && e.args[i] &&
-                        is_str_expr(*e.args[i]))
+                        (is_str_expr(*e.args[i]) || declared_str_arg))
                         it->second.tags[i] = JD_TAG_STR;
                     // Promote param types from the call-site so the callee's
                     // LLVM signature matches and INDEX inside the body
@@ -4556,6 +4578,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
         }
     }
 
+    // Names a top-level DIM or LET declares, also when the slot is created only
+    // at codegen (its type is not known yet): a later bare assignment to one
+    // is no undeclared variable.
+    std::unordered_set<std::string> prepass_declared;
     for (auto& stmt : program) {
         if (!stmt) continue;
         if (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB) continue;
@@ -4584,10 +4610,13 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 // check misses it). DIM and LET both count as declarations;
                 // only bare ASSIGN (x = ...) without prior binding errors.
                 if (is_explicit_here(stmt->source_file()) &&
-                    stmt->kind == StmtKind::ASSIGN) {
+                    stmt->kind == StmtKind::ASSIGN &&
+                    !prepass_declared.count(stmt->var_name)) {
                     report_error(stmt->source_file(), stmt->line,
                         "undeclared variable '" + stmt->var_name + "'");
                 }
+                if (stmt->kind == StmtKind::DIM || stmt->kind == StmtKind::LET)
+                    prepass_declared.insert(stmt->var_name);
                 // Determine type from initial expression
                 // Recursive helper to infer expression result type
                 std::function<int(const Expr*)> infer_tag = [&](const Expr* e) -> int {
@@ -11268,14 +11297,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         return r;
                     }
                 }
-                // Decode ptr from f64 if needed
+                // Decode ptr from f64 if needed; a number there is no container
+                // and raises the error.
                 LLVMValueRef obj_ptr = arr_tv.val;
-                if (jd_is_f64_tag(arr_tv.tag)) {
-                    LLVMValueRef as_i64 = pun_f64_to_i64(arr_tv.val);
-                    obj_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
-                } else if (arr_tv.tag == JD_TAG_I64) {
-                    obj_ptr = LLVMBuildIntToPtr(builder, arr_tv.val, i8_ptr_type, "itoptr");
-                }
+                if (jd_is_f64_tag(arr_tv.tag) || arr_tv.tag == JD_TAG_I64)
+                    obj_ptr = index_base_ptr(arr_tv);
 
                 // Decide UDT vs native-map access. The punned ptr could be
                 // a UDT instance or a JdbMap - same struct, different
@@ -11484,6 +11510,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef out = scratch_alloca(i64_type, "ia7out");
                     LLVMValueRef targs[] = { rt, arr_tv.val, arr_tv.runtime_tag, idx, out };
                     LLVMValueRef tv_tag = LLVMBuildCall2(builder, ga.fn_type, ga.fn, targs, 5, "ia7tag");
+                    // A value with no positions raises the error here, before
+                    // the placeholder it answers reaches the statement.
+                    emit_err_check();
                     LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "ia7val");
                     emit_cell_out(tv_val, tv_tag);
                     return { tv_val, JD_TAG_RUNTIME, tv_tag };
@@ -11500,14 +11529,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "vget"), JD_TAG_VM_HANDLE };
             }
 
-            // Get array pointer - may need to convert from encoded param
+            // Get array pointer - may need to convert from encoded param; a
+            // number there is no container and raises the error.
             LLVMValueRef arr_ptr = arr_tv.val;
-            if (jd_is_f64_tag(arr_tv.tag)) {
-                LLVMValueRef as_i64 = pun_f64_to_i64(arr_tv.val);
-                arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
-            } else if (arr_tv.tag == JD_TAG_I64) {
-                arr_ptr = LLVMBuildIntToPtr(builder, arr_tv.val, i8_ptr_type, "itoptr");
-            }
+            if (jd_is_f64_tag(arr_tv.tag) || arr_tv.tag == JD_TAG_I64)
+                arr_ptr = index_base_ptr(arr_tv);
 
             // Fancy/vector indexing: `arr[indices_array]` returns a new
             // array with arr's elements gathered at the given positions
@@ -16902,6 +16928,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // Handle VAL with pointer-encoded doubles (from OS.ARGS array elements)
     if (upper == "VAL" && expr.args.size() == 1) {
         TypedValue av = arg_cache[0];
+        // VAL of a number is that number, as in the interpreter; handing an
+        // integer to the text parser made a pointer of it.
+        if (av.tag == JD_TAG_I64 || av.tag == JD_TAG_BOOL)
+            return { coerce_to(av, f64_type), JD_TAG_F64 };
         if (jd_is_f64_tag(av.tag)) {
             // f64 value - might be a pointer-encoded string from OS.ARGS
             auto& fn = runtime_funcs["__val_ptr"];
@@ -17300,7 +17330,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             };
 
             const BuiltinRet sig_ret = builtin_ret(upper);
-            bool is_string_fn = (!upper.empty() && upper.back() == '$') ||
+            // A $ name answers a string unless its signature says otherwise
+            // (HTTP.GET_ASYNC$ answers a task id).
+            bool sig_numeric = sig_ret == BuiltinRet::I64 || sig_ret == BuiltinRet::F64 ||
+                               sig_ret == BuiltinRet::Bool;
+            bool is_string_fn = (!upper.empty() && upper.back() == '$' && !sig_numeric) ||
                                 sig_ret == BuiltinRet::Str ||
                                 ffi_string_returners.count(upper);
             bool is_object_fn = sig_ret == BuiltinRet::Handle;
@@ -17863,6 +17897,22 @@ LLVMValueRef LLVMCodegen::pun_f64_to_i64(LLVMValueRef f64_val) {
     LLVMPositionBuilderAtEnd(builder, cur);
     LLVMBuildStore(builder, f64_val, alloca);
     return LLVMBuildLoad2(builder, i64_type, alloca, "pi");
+}
+
+LLVMValueRef LLVMCodegen::index_base_ptr(const TypedValue& tv) {
+    LLVMValueRef bits, shown;
+    if (tv.tag == JD_TAG_I64) {
+        bits = tv.val;
+        shown = LLVMBuildSIToFP(builder, tv.val, f64_type, "ib_shown");
+    } else {
+        bits = pun_f64_to_i64(tv.val);
+        shown = tv.val;
+    }
+    auto& fn = runtime_funcs["__index_base"];
+    LLVMValueRef args[] = { bits, shown };
+    LLVMValueRef p = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ibase");
+    emit_err_check();
+    return p;
 }
 
 LLVMValueRef LLVMCodegen::bits_may_be_ptr(LLVMValueRef f64_val) {

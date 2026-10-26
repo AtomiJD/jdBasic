@@ -1391,6 +1391,18 @@ void jdb_tagged_key_set(int64_t base, int32_t base_tag, const char* key, double 
 int64_t jdb_array_len(JdbArray* arr);
 int64_t jdb_map_count(JdbMap* m);
 
+// The container a value read without its kind names: pointer bits are one,
+// a number is not, and indexing it raises the interpreter's error.
+void* jdb_index_base(int64_t bits, double shown) {
+    if ((uint64_t)bits >= 4096 && (uint64_t)bits < (1ULL << 47))
+        return (void*)(intptr_t)bits;
+    char text[64];
+    jdb_num::format_double(text, sizeof(text), shown, g_punct);
+    std::string msg = std::string("Cannot index into ") + text;
+    jdb_err_set(msg.c_str(), 99);
+    return nullptr;
+}
+
 // LEN of an f64 slot whose kind only the running program knows: pointer
 // bits name a container (a map when the counts say so, otherwise an
 // array); a number has length 0, as in the interpreter.
