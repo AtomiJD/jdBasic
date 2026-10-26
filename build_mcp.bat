@@ -61,9 +61,6 @@ REM End-user README inside the bundle (kept short on purpose).
 >>"%OUT%\README.txt" echo Run as MCP stdio server:
 >>"%OUT%\README.txt" echo     jdBasic.exe --mcp
 >>"%OUT%\README.txt" echo.
->>"%OUT%\README.txt" echo Run as MCP HTTP server (loopback only by default):
->>"%OUT%\README.txt" echo     jdBasic.exe --mcp-http 7321
->>"%OUT%\README.txt" echo.
 >>"%OUT%\README.txt" echo doc\languages.md ships next to the EXE on purpose -
 >>"%OUT%\README.txt" echo jdb_doc looks there first regardless of working dir,
 >>"%OUT%\README.txt" echo so no "cwd" config is required.

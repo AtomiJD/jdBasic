@@ -81,6 +81,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM Agent workshop: project template that gives a coding agent a persistent workspace.
+xcopy /E /I /Y /Q tools\agent_workshop "%OUT%\agent-workshop" >nul
+if errorlevel 1 (
+    echo AGENT WORKSHOP COPY FAILED - bundle not assembled.
+    exit /b 1
+)
+
 REM App-local VC++ runtime so the bundle runs on a clean Windows without the redist installed.
 copy /Y "%SystemRoot%\System32\vcruntime140.dll"   "%OUT%\" >nul
 copy /Y "%SystemRoot%\System32\vcruntime140_1.dll" "%OUT%\" >nul
@@ -96,8 +103,9 @@ REM End-user README inside the bundle.
 >>"%OUT%\README.txt" echo Run as MCP stdio server:
 >>"%OUT%\README.txt" echo     jdBasic.exe --mcp
 >>"%OUT%\README.txt" echo.
->>"%OUT%\README.txt" echo Run as MCP HTTP server (loopback only by default):
->>"%OUT%\README.txt" echo     jdBasic.exe --mcp-http 7321
+>>"%OUT%\README.txt" echo Give a coding agent a persistent jdBasic workshop in any
+>>"%OUT%\README.txt" echo project ^(Claude Code and other MCP clients^):
+>>"%OUT%\README.txt" echo     see agent-workshop\README.md
 >>"%OUT%\README.txt" echo.
 >>"%OUT%\README.txt" echo Compile a script to a native EXE:
 >>"%OUT%\README.txt" echo     jdBasic.exe -c file.jdb
