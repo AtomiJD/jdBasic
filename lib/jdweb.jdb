@@ -252,7 +252,7 @@ ENDFUNC
 
 ' A cookie the request carries, percent-decoded, or "".
 EXPORT FUNC COOKIE_VAL$(request, name$)
-    DIM reqHdrs = request{"HEADERS"}
+    DIM reqHdrs = request{"headers"}
     IF TYPEOF(reqHdrs) = "NONE" THEN RETURN ""
     DIM raw = reqHdrs{"cookie"}
     IF TYPEOF(raw) = "NONE" THEN RETURN ""
@@ -339,7 +339,7 @@ EXPORT SUB AUTH_INIT(db)
 ENDSUB
 
 EXPORT FUNC AUTH_LOGIN(db, request, secure)
-    DIM raw_body = request{"BODY"}
+    DIM raw_body = request{"body"}
     DIM body = JSON.PARSE$(raw_body)
     DIM name$ = FIELD$(body, "name")
     DIM pw$ = FIELD$(body, "password")
@@ -538,8 +538,8 @@ EXPORT FUNC PARAM$(request, name$)
             RETURN rv$
         ENDIF
     ENDIF
-    IF MAP.EXISTS(request, "PARAMS") THEN
-        DIM query = request{"PARAMS"}
+    IF MAP.EXISTS(request, "params") THEN
+        DIM query = request{"params"}
         IF TYPEOF(query) = "OBJECT" THEN
             IF MAP.EXISTS(query, name$) THEN
                 DIM qv = query{name$}
@@ -1037,7 +1037,7 @@ ENDSUB
 ' The CSRF token a request carries: the X-CSRF-Token header, or the
 ' csrf_token field of a form body.
 FUNC SentCsrf$(request)
-    DIM hs = request{"HEADERS"}
+    DIM hs = request{"headers"}
     DIM form = FALSE
     IF TYPEOF(hs) = "OBJECT" THEN
         IF MAP.EXISTS(hs, "x-csrf-token") THEN
@@ -1050,7 +1050,7 @@ FUNC SentCsrf$(request)
         ENDIF
     ENDIF
     IF NOT form THEN RETURN ""
-    DIM body = request{"BODY"}
+    DIM body = request{"body"}
     IF TYPEOF(body) <> "STRING" THEN RETURN ""
     DIM body$ = body
     DIM pairs = SPLIT(body$, "&")
@@ -1136,9 +1136,9 @@ ENDFUNC
 ' route whose pattern and method match, the static folders, the missing
 ' handler, then the after middleware. MOUNT wires it to the server.
 EXPORT FUNC DISPATCH(request)
-    DIM m = request{"METHOD"}
+    DIM m = request{"method"}
     DIM method$ = UCASE$("" + m)
-    DIM pth = request{"PATH"}
+    DIM pth = request{"path"}
     DIM path$ = "" + pth
     DIM no_route AS MAP
     gCurrent{"route"} = no_route

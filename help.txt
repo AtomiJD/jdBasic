@@ -596,7 +596,7 @@ Description: Draws a circle on the graphics screen.
 
 [CIRCLE_SECTOR]
 Syntax: CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b]
-Description: Draws a sector (a pie slice) of a circle.
+Description: Draws a sector (a pie slice) of a circle. The angles are in degrees.
 
 [CLEARWS]
 Syntax: CLEARWS
@@ -700,7 +700,7 @@ Description: Waits until the node exists, at most timeout_ms (default 5000).
 
 [NODE.EVENTS]
 Syntax: NODE.EVENTS([node]) -> channel
-Description: A channel receiving {"EVENT": "JOIN" or "LEAVE", "ADDR": name} as other nodes come and go.
+Description: A channel receiving {"event": "JOIN" or "LEAVE", "addr": name} as other nodes come and go.
 
 [NODE.INBOX]
 Syntax: NODE.INBOX([node]) -> channel
@@ -739,8 +739,8 @@ Syntax: NODE.FAIL(call, message$) -> boolean
 Description: Answers a call with an error, which NODE.CALL raises on the other side.
 
 [NODE.SERVE]
-Syntax: NODE.SERVE method$, func$, [node]
-Description: Calls of method$ go to the FUNC func$ (it takes the call map and returns the answer), run by NODE.POLL.
+Syntax: NODE.SERVE method$, handler@, [node]
+Description: Calls of method$ go to the FUNC handler@ (it takes the call map and returns the answer), run by NODE.POLL.
 
 [NODE.POLL]
 Syntax: NODE.POLL([timeout_ms], [node]) -> number
@@ -1249,7 +1249,7 @@ Description: Draws a loaded image at the given position, using the texture's nat
 
 [GFX.DRAWIMAGE_EX]
 Syntax: GFX.DRAWIMAGE_EX(id, x, y, [w], [h], [angle], [flip_h])
-Description: Draws a loaded image with optional size, rotation angle and horizontal flip.
+Description: Draws a loaded image with optional size, rotation angle in degrees and horizontal flip.
 
 [GFX.DRAWIMAGE_REGION]
 Syntax: GFX.DRAWIMAGE_REGION(id, sx, sy, sw, sh, dx, dy, [dw], [dh])
@@ -2179,15 +2179,15 @@ Syntax: HTTP.REQUEST(method$, url$ [, body$ [, content_type$]])
 Description: Generic HTTP call. Returns a map with 'status', 'body', 'headers'. Does NOT throw on HTTP-level 4xx/5xx; only transport failures throw. method$ is one of GET, DELETE, HEAD, POST, PUT, PATCH.
 
 [HTTP.SERVER.ON_GET]
-Syntax: HTTP.SERVER.ON_GET(path$, function_name$)
+Syntax: HTTP.SERVER.ON_GET(path$, handler@)
 Description: Registers a function to handle incoming HTTP GET requests for the built-in server.
 
 [HTTP.SERVER.ON_POST]
-Syntax: HTTP.SERVER.ON_POST(path$, function_name$)
+Syntax: HTTP.SERVER.ON_POST(path$, handler@)
 Description: Registers a function to handle incoming HTTP POST requests for the built-in server.
 
 [HTTP.SERVER.ON_NOTFOUND]
-Syntax: HTTP.SERVER.ON_NOTFOUND(function_name$)
+Syntax: HTTP.SERVER.ON_NOTFOUND(handler@)
 Description: Registers a function to render unmatched routes (HTTP 404). It receives the request map and returns HTML or a rich-response map. Fires only for 404. Call before HTTP.SERVER.START.
 
 [HTTP.SERVER.START]
@@ -2316,15 +2316,15 @@ Description: Determinant of a square matrix (Eigen).
 
 [SVD]
 Syntax: SVD(matrix)
-Description: Singular Value Decomposition. Returns a map { "U", "S", "V" }: S is the singular-value vector, U/V the thin factor matrices (Eigen).
+Description: Singular Value Decomposition. Returns a map { "u", "s", "v" }: s is the singular-value vector, u and v the thin factor matrices (Eigen).
 
 [QR]
 Syntax: QR(matrix)
-Description: Householder QR decomposition. Returns a map { "Q", "R" } (Eigen).
+Description: Householder QR decomposition. Returns a map { "q", "r" } (Eigen).
 
 [EIG]
 Syntax: EIG(matrix)
-Description: Eigen-decomposition of a square matrix. Returns { "EIGENVALUES", "EIGENVECTORS" } as complex [real,imag] arrays (Eigen).
+Description: Eigen-decomposition of a square matrix. Returns { "eigenvalues", "eigenvectors" } as complex [real,imag] arrays (Eigen).
 
 [FFT]
 Syntax: FFT(signal)
@@ -2552,8 +2552,12 @@ Syntax: MAT4.PERSPECTIVE(fov_deg, aspect, near, far) -> mat4
 Description: Perspective projection matrix. fov_deg is the field of view in DEGREES.
 
 [MAT4.ROTATE]
-Syntax: MAT4.ROTATE(m, angle_rad, ax, ay, az) -> mat4
-Description: Returns m * Rotation(angle about axis ax,ay,az). angle_rad is in RADIANS.
+Syntax: MAT4.ROTATE(m, angle_deg, ax, ay, az) -> mat4
+Description: Returns m * Rotation(angle about axis ax,ay,az). The angle is in degrees, like every graphics angle; MAT4.ROTATE_RAD takes radians.
+
+[MAT4.ROTATE_RAD]
+Syntax: MAT4.ROTATE_RAD(m, angle_rad, ax, ay, az) -> mat4
+Description: Returns m * Rotation(angle about axis ax,ay,az) with the angle in radians. Until 2.0 this was MAT4.ROTATE.
 
 [MAT4.SCALE]
 Syntax: MAT4.SCALE(m, sx, sy, sz) -> mat4
@@ -2726,8 +2730,8 @@ Syntax: NOW_EPOCH()
 Description: Returns the current wallclock time as seconds since 1970-01-01 UTC (a plain number, monotonic across program runs). Available in both interpreter and native -c.
 
 [ON]
-Syntax: ON "event" CALL subroutine
-Description: Registers an event handler (deprecated for error handling).
+Syntax: ON "event" CALL handler@
+Description: Registers a SUB as the handler of an event. The handler without @ still works for one release; --lint names the funcref. Deprecated for error handling.
 
 [OPTION]
 Syntax: OPTION "option_name"
@@ -2755,7 +2759,7 @@ Description: Old name of OS.GETOS$, still accepted for one release; --lint, jdb_
 
 [OS.SPAWN]
 Syntax: OS.SPAWN(command$, [args_array$], [options]) -> pid
-Description: Starts a program and returns its process id at once. With args_array$ the program runs without a shell and gets each element as one argument; without it command$ is a shell line. options map: "CWD" working directory, "ENV" map of extra variables, "OUTPUT" file for stdout and stderr, "HIDDEN" TRUE for no console window (Windows).
+Description: Starts a program and returns its process id at once. With args_array$ the program runs without a shell and gets each element as one argument; without it command$ is a shell line. options map: "cwd" working directory, "env" map of extra variables, "output" file for stdout and stderr, "hidden" TRUE for no console window (Windows).
 
 [OS.WAIT]
 Syntax: OS.WAIT(pid, [timeout_ms]) -> exit code or NONE
@@ -3135,6 +3139,14 @@ Syntax: value SHR bits         (infix)
 Description: Arithmetic (sign-preserving) bitwise right shift. Operands
 are coerced to 64-bit signed integers. Same precedence as SHL.
 
+[RADIANS]
+Syntax: RADIANS(degrees)
+Description: Converts an angle from degrees to radians. Element-wise on arrays. Math builtins take radians, graphics builtins degrees.
+
+[DEGREES]
+Syntax: DEGREES(radians)
+Description: Converts an angle from radians to degrees. Element-wise on arrays. Math builtins take radians, graphics builtins degrees.
+
 [SIN]
 Syntax: SIN(angle_in_radians)
 Description: Returns the sine of an angle.
@@ -3276,7 +3288,7 @@ Description: The sequencer clock in cycles (bars): the whole part is the bar, th
 
 [SOUND.CLOCK]
 Syntax: SOUND.CLOCK()
-Description: When the song is heard: {"CYCLE", "T", "CPS"}, cycle CYCLE leaves the speaker at T (nanoseconds on the NODE.TIME clock, device latency included) and the song moves on at CPS cycles per second. Now heard: CYCLE + (NODE.TIME() - T) / 1E9 * CPS.
+Description: When the song is heard: {"cycle", "t", "cps"}: cycle "cycle" leaves the speaker at "t" (nanoseconds on the NODE.TIME clock, device latency included) and the song moves on at CPS cycles per second. Now heard: CYCLE + (NODE.TIME() - T) / 1E9 * CPS.
 
 [SOUND.NUDGE]
 Syntax: SOUND.NUDGE track, ms
@@ -4048,8 +4060,8 @@ Syntax: TUI.MOUSE_WHEEL
 Description: Mouse wheel delta accumulator.
 
 [TUI.ON]
-Syntax: TUI.ON(event$, handler$)
-Description: Register a callback by FUNC/SUB name (record-only for now; dispatch comes with mouse events).
+Syntax: TUI.ON(event$, handler@)
+Description: Register a callback FUNC/SUB as a funcref (record-only for now; dispatch comes with mouse events).
 
 [TUI.WIDTH]
 Syntax: TUI.WIDTH
@@ -4680,7 +4692,7 @@ Description: Bytes the C heap holds for the process right now, both backends, th
 
 [SYS.MEMORY]
 Syntax: SYS.MEMORY() -> map
-Description: The physical memory of the machine in bytes: "TOTAL", and "FREE" for what programs can still have without the system swapping. Windows, Linux and macOS.
+Description: The physical memory of the machine in bytes: "total", and "free" for what programs can still have without the system swapping. Windows, Linux and macOS.
 
 [WIFI.AP]
 Syntax: WIFI.AP(ssid$ [, password$ [, channel]]) -> 0 | -1

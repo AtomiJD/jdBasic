@@ -374,8 +374,9 @@ void VM::register_system_builtins() {
             }
             CloseHandle(rd);
             Value result = Value::make_object();
-            result.as_object()->set("OUTPUT", Value::make_string(console_text_to_utf8(output)));
-            result.as_object()->set("EXIT_CODE", Value::make_i64(exit_code));
+            result.as_object()->lower_keys = true;
+            result.as_object()->set("output", Value::make_string(console_text_to_utf8(output)));
+            result.as_object()->set("exit_code", Value::make_i64(exit_code));
             return result;
 #else
             auto sh_quote = [](const std::string& s) {
@@ -420,11 +421,12 @@ void VM::register_system_builtins() {
 #endif
         }
         Value result = Value::make_object();
+        result.as_object()->lower_keys = true;
 #if defined(_WIN32)
         output = console_text_to_utf8(output);
 #endif
-        result.as_object()->set("OUTPUT", Value::make_string(output));
-        result.as_object()->set("EXIT_CODE", Value::make_i64(exit_code));
+        result.as_object()->set("output", Value::make_string(output));
+        result.as_object()->set("exit_code", Value::make_i64(exit_code));
         return result;
     });
 #endif
@@ -710,8 +712,9 @@ void VM::register_system_builtins() {
         if (!memory_bytes(total, avail))
             throw std::runtime_error("SYS.MEMORY: this platform cannot report its memory");
         Value m = Value::make_object();
-        m.as_object()->set("TOTAL", Value::make_i64((int64_t)total));
-        m.as_object()->set("FREE", Value::make_i64((int64_t)avail));
+        m.as_object()->lower_keys = true;
+        m.as_object()->set("total", Value::make_i64((int64_t)total));
+        m.as_object()->set("free", Value::make_i64((int64_t)avail));
         return m;
     });
 #endif

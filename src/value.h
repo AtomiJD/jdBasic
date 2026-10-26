@@ -13,6 +13,7 @@
 #include <stdexcept>
 
 #include "jdb_number.h"
+#include "jdb_lower_keys.h"
 
 // The locale SETLOCALE chose, and the punctuation numbers are written with.
 inline std::locale g_jd_locale("C");
@@ -145,6 +146,7 @@ struct TensorObj : HeapObject {
 
 struct ObjectObj : HeapObject {
     std::vector<std::pair<std::string, Value>> fields;
+    bool lower_keys = false;   // made by a builtin; see jdb_lower_keys.h
 
     Value* get(const std::string& name);
     void set(const std::string& name, Value v);
@@ -514,6 +516,12 @@ struct Value {
 
 inline Value* ObjectObj::get(const std::string& name) {
     for (auto& [k, v] : fields) if (k == name) return &v;
+    if (lower_keys) {
+        std::string lower = jdb_lowered_key(name);
+        if (!lower.empty())
+            for (auto& [k, v] : fields)
+                if (k == lower) { jdb_warn_upper_key(name, lower); return &v; }
+    }
     return nullptr;
 }
 

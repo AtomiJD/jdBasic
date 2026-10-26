@@ -25,7 +25,7 @@ FUNC ShowUser(request)
 ENDFUNC
 
 FUNC CreateUser(request)
-    DIM sent = JSON.PARSE$(request{"BODY"})
+    DIM sent = JSON.PARSE$(request{"body"})
     DIM name$ = sent{"name"}
     RETURN JDWEB.REPLY_JSON({"created": name$}, 201)
 ENDFUNC
@@ -66,14 +66,14 @@ FUNC Admin(request)
 ENDFUNC
 
 FUNC Anything(request)
-    DIM method$ = request{"METHOD"}
+    DIM method$ = request{"method"}
     RETURN "any " + method$
 ENDFUNC
 
 FUNC Guard(request)
-    DIM p$ = request{"PATH"}
+    DIM p$ = request{"path"}
     IF LEFT$(p$, 6) = "/admin" THEN
-        DIM hs = request{"HEADERS"}
+        DIM hs = request{"headers"}
         IF NOT MAP.EXISTS(hs, "x-key") THEN RETURN JDWEB.REPLY("no key", 401, "text/plain")
     ENDIF
     RETURN JDWEB.PASS()
@@ -84,7 +84,7 @@ FUNC Stamp(request)
 ENDFUNC
 
 FUNC Missing(request)
-    DIM p$ = request{"PATH"}
+    DIM p$ = request{"path"}
     RETURN "<p>nothing at " + p$ + "</p>"
 ENDFUNC
 
@@ -162,7 +162,7 @@ FUNC Ask(method$, path$, sid$, token$, form$)
     IF sid$ <> "" THEN hs{"cookie"} = "jdwsid=" + sid$
     IF token$ <> "" THEN hs{"x-csrf-token"} = token$
     IF form$ <> "" THEN hs{"content-type"} = "application/x-www-form-urlencoded"
-    RETURN {"METHOD": method$, "PATH": path$, "HEADERS": hs, "PARAMS": no_params, "BODY": form$}
+    RETURN {"method": method$, "path": path$, "headers": hs, "params": no_params, "body": form$}
 ENDFUNC
 
 ' The Set-Cookie line a DISPATCH answer carries for a cookie, or "".
@@ -250,20 +250,20 @@ TESTKIT.ISTRUE(MAP.EXISTS(passing, "__jdweb_pass"), "PASS is recognisable")
 TESTKIT.SUITE("dispatch")
 DIM no_headers AS MAP
 DIM no_params AS MAP
-DIM req_user = {"METHOD": "GET", "PATH": "/users/42", "HEADERS": no_headers, "PARAMS": no_params, "BODY": ""}
+DIM req_user = {"method": "GET", "path": "/users/42", "headers": no_headers, "params": no_params, "body": ""}
 DIM d = JDWEB.DISPATCH(req_user)
 TESTKIT.EQ(d{"__http_status"}, 200, "DISPATCH answers a request map without a server")
 DIM d_body$ = d{"__http_body"}
 TESTKIT.ISTRUE(INSTR(d_body$, "42") >= 0, "with the route's answer")
 DIM d_headers = d{"__http_headers"}
 TESTKIT.ISTRUE(MAP.EXISTS(d_headers, "X-Served-By"), "and the after middleware's header")
-DIM req_put = {"METHOD": "PUT", "PATH": "/users/7", "HEADERS": no_headers, "PARAMS": no_params, "BODY": ""}
+DIM req_put = {"method": "PUT", "path": "/users/7", "headers": no_headers, "params": no_params, "body": ""}
 DIM d2 = JDWEB.DISPATCH(req_put)
 TESTKIT.EQ(d2{"__http_status"}, 405, "a known path with another method is 405")
-DIM req_none = {"METHOD": "GET", "PATH": "/nowhere", "HEADERS": no_headers, "PARAMS": no_params, "BODY": ""}
+DIM req_none = {"method": "GET", "path": "/nowhere", "headers": no_headers, "params": no_params, "body": ""}
 DIM d3 = JDWEB.DISPATCH(req_none)
 TESTKIT.EQ(d3{"__http_status"}, 404, "an unknown path is 404")
-DIM req_admin = {"METHOD": "GET", "PATH": "/admin", "HEADERS": no_headers, "PARAMS": no_params, "BODY": ""}
+DIM req_admin = {"method": "GET", "path": "/admin", "headers": no_headers, "params": no_params, "body": ""}
 DIM d4 = JDWEB.DISPATCH(req_admin)
 TESTKIT.EQ(d4{"__http_status"}, 401, "a before middleware answers")
 
@@ -392,7 +392,7 @@ DIM bare = {"max_age": 0, "httponly": FALSE, "samesite": ""}
 TESTKIT.EQ(JDWEB.COOKIE$("x", "", bare), "x=; Max-Age=0; Path=/", "a cookie deleted, without HttpOnly and SameSite")
 DIM cross = {"samesite": "None"}
 TESTKIT.ISTRUE(INSTR(JDWEB.COOKIE$("t", "1", cross), "; Secure") >= 0, "SameSite None always gets Secure")
-DIM jar_req = {"HEADERS": {"cookie": "pref=a%20b%3Bc; z=1"}}
+DIM jar_req = {"headers": {"cookie": "pref=a%20b%3Bc; z=1"}}
 TESTKIT.EQ(JDWEB.COOKIE_VAL$(jar_req, "pref"), "a b;c", "COOKIE_VAL$ decodes it again")
 DIM with_cookie = JDWEB.SET_COOKIE(JDWEB.REPLY("ok"), "pref", "dark")
 TESTKIT.EQ(SetCookieOf$(with_cookie, "pref"), "pref=dark; Path=/; HttpOnly; SameSite=Lax", "SET_COOKIE puts it on a response")
@@ -538,22 +538,22 @@ TESTKIT.EQ(other_headers{"Location"}, "/shown", "with the new location")
 DIM denied = JDWEB.UNAUTH()
 TESTKIT.EQ(denied{"__http_status"}, 401, "UNAUTH is a 401")
 TESTKIT.EQ(JDWEB.HASH_PW$("salt", "pw"), CODEC.SHA256$("salt:pw"), "HASH_PW$ is a salted SHA-256")
-DIM cookie_req = {"HEADERS": {"cookie": "a=1; jdwsession=tok123; b=2"}}
+DIM cookie_req = {"headers": {"cookie": "a=1; jdwsession=tok123; b=2"}}
 TESTKIT.EQ(JDWEB.COOKIE_VAL$(cookie_req, "jdwsession"), "tok123", "COOKIE_VAL$ finds a cookie between others")
 TESTKIT.EQ(JDWEB.COOKIE_VAL$(cookie_req, "zzz"), "", "and nothing for an absent one")
 IF OS.FEATURE("SQLITE") THEN
     DIM db = SQL.OPEN(":memory:")
     JDWEB.AUTH_INIT(db)
-    DIM login_req = {"BODY": "{" + Q$ + "name" + Q$ + ":" + Q$ + "owner" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "pw1" + Q$ + "}", "HEADERS": {}}
+    DIM login_req = {"body": "{" + Q$ + "name" + Q$ + ":" + Q$ + "owner" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "pw1" + Q$ + "}", "headers": {}}
     DIM login = JDWEB.AUTH_LOGIN(db, login_req, FALSE)
     TESTKIT.EQ(login{"__http_status"}, 200, "the first login creates the owner")
     DIM login_headers = login{"__http_headers"}
     DIM set_cookie$ = login_headers{"Set-Cookie"}
     TESTKIT.ISTRUE(LEFT$(set_cookie$, 11) = "jdwsession=", "and sets the session cookie")
     DIM token$ = MID$(set_cookie$, 11, CINT(INSTR(set_cookie$, ";")) - 11)
-    DIM me_req = {"HEADERS": {"cookie": "jdwsession=" + token$}}
+    DIM me_req = {"headers": {"cookie": "jdwsession=" + token$}}
     TESTKIT.EQ(JDWEB.AUTH_USER$(db, me_req), "owner", "AUTH_USER$ knows the signed-in user")
-    DIM wrong_req = {"BODY": "{" + Q$ + "name" + Q$ + ":" + Q$ + "owner" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "nope" + Q$ + "}", "HEADERS": {}}
+    DIM wrong_req = {"body": "{" + Q$ + "name" + Q$ + ":" + Q$ + "owner" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "nope" + Q$ + "}", "headers": {}}
     DIM wrong = JDWEB.AUTH_LOGIN(db, wrong_req, FALSE)
     TESTKIT.EQ(wrong{"error"}, "wrong password", "a wrong password is refused")
     DIM out = JDWEB.AUTH_LOGOUT(db, me_req)
@@ -565,7 +565,7 @@ IF OS.FEATURE("SQLITE") THEN
     DIM token2$ = MID$(cookie2$, 11, CINT(INSTR(cookie2$, ";")) - 11)
     TESTKIT.EQ(LEN(token2$), 43, "a sign-in token is 43 random characters")
     TESTKIT.ISTRUE(INSTR(cookie2$, "; Secure") >= 0, "a secure sign-in sets a Secure cookie")
-    DIM me2_req = {"HEADERS": {"cookie": "jdwsession=" + token2$}}
+    DIM me2_req = {"headers": {"cookie": "jdwsession=" + token2$}}
     TESTKIT.EQ(JDWEB.AUTH_USER$(db, me2_req), "owner", "the new sign-in is known")
     SQL.EXEC(db, "UPDATE sessions SET last_seen = last_seen - 3000000 WHERE token = '" + token2$ + "'")
     TESTKIT.EQ(JDWEB.AUTH_USER$(db, me2_req), "", "a sign-in unused for longer than auth_ttl ends")
@@ -586,7 +586,7 @@ IF OS.FEATURE("SQLITE") THEN
     TESTKIT.EQ(owner_salt$, "", "without a salt column of its own")
     JDWEB.SESSION_CONFIG({"auth_rounds": 1000})
     SQL.EXEC(db, "INSERT INTO users (name, salt, pass_hash) VALUES ('legacy', 'abc', '" + CODEC.SHA256$("abc:old pw") + "')")
-    DIM legacy_req = {"BODY": "{" + Q$ + "name" + Q$ + ":" + Q$ + "legacy" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "old pw" + Q$ + "}", "HEADERS": {}}
+    DIM legacy_req = {"body": "{" + Q$ + "name" + Q$ + ":" + Q$ + "legacy" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "old pw" + Q$ + "}", "headers": {}}
     DIM legacy_login = JDWEB.AUTH_LOGIN(db, legacy_req, FALSE)
     TESTKIT.EQ(legacy_login{"__http_status"}, 200, "a password of the salted SHA-256 scheme still signs in")
     DIM legacy_rows = SQL.TABLE(db, "SELECT salt, pass_hash FROM users WHERE name = 'legacy'")
@@ -595,7 +595,7 @@ IF OS.FEATURE("SQLITE") THEN
     TESTKIT.ISTRUE(LEFT$(legacy_hash$, 19) = "pbkdf2-sha256$1000$" ANDALSO legacy_salt$ = "", "and is hashed again with PBKDF2 at that sign-in")
     DIM legacy_again = JDWEB.AUTH_LOGIN(db, legacy_req, FALSE)
     TESTKIT.EQ(legacy_again{"__http_status"}, 200, "the new hash verifies")
-    DIM legacy_bad_req = {"BODY": "{" + Q$ + "name" + Q$ + ":" + Q$ + "legacy" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "old pv" + Q$ + "}", "HEADERS": {}}
+    DIM legacy_bad_req = {"body": "{" + Q$ + "name" + Q$ + ":" + Q$ + "legacy" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "old pv" + Q$ + "}", "headers": {}}
     DIM legacy_bad = JDWEB.AUTH_LOGIN(db, legacy_bad_req, FALSE)
     TESTKIT.EQ(legacy_bad{"error"}, "wrong password", "and refuses a wrong password")
     JDWEB.SESSION_CONFIG({"auth_rounds": 2000})

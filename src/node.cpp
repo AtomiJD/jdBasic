@@ -301,6 +301,14 @@ Value map_of(std::initializer_list<std::pair<const char*, Value>> kv) {
     return m;
 }
 
+// A map handed to the program: lower-case keys (jdb_lower_keys.h). The
+// maps that travel between nodes keep their protocol keys.
+Value user_map_of(std::initializer_list<std::pair<const char*, Value>> kv) {
+    Value m = map_of(kv);
+    m.as_object()->lower_keys = true;
+    return m;
+}
+
 std::string field_str(const Value& m, const char* key) {
     if (m.type != ValueType::OBJECT) return "";
     Value* v = m.as_object()->get(key);
@@ -1004,11 +1012,11 @@ void deliver_pub(Attachment& a, const std::string& body, uint64_t seq, int64_t t
     auto oit = g_offsets.find(a.peer_id);
     if (oit != g_offsets.end()) t -= oit->second.offset;
     if (s.envelope) {
-        v = map_of({{"DATA", v},
-                    {"FROM", Value::make_string(a.peer_name)},
-                    {"TOPIC", Value::make_string(a.topic)},
-                    {"SEQ", Value::make_i64((int64_t)seq)},
-                    {"T", Value::make_i64(t)}});
+        v = user_map_of({{"data", v},
+                    {"from", Value::make_string(a.peer_name)},
+                    {"topic", Value::make_string(a.topic)},
+                    {"seq", Value::make_i64((int64_t)seq)},
+                    {"t", Value::make_i64(t)}});
     }
     s.received++;
     s.bytes += body.size();
@@ -1113,9 +1121,9 @@ void handle_frame(Link& l, uint8_t kind, uint16_t flags, uint32_t stream, uint64
             g_tokens[token] = CallToken{l.id, stream};
             std::string method = field_str(m, "M");
             Value* arg = m.as_object()->get("A");
-            Value call = map_of({{"METHOD", Value::make_string(method)},
-                                 {"ARG", arg ? *arg : Value::make_none()},
-                                 {"FROM", Value::make_string(l.peer_name)},
+            Value call = user_map_of({{"method", Value::make_string(method)},
+                                 {"arg", arg ? *arg : Value::make_none()},
+                                 {"from", Value::make_string(l.peer_name)},
                                  {"__call__", Value::make_i64(token)}});
             bool served = n->serve.count(lower(method)) > 0;
             push_value(served ? *n->served : *n->inbox, std::move(call));
@@ -1128,7 +1136,7 @@ void handle_frame(Link& l, uint8_t kind, uint16_t flags, uint32_t stream, uint64
             Value v = value_of(body);
             Value out;
             if (it->second.raw) {
-                out = kind == K_REPLY ? v : map_of({{"ERROR", v}, {"__node_fail__", Value::make_bool(true)}});
+                out = kind == K_REPLY ? v : user_map_of({{"error", v}, {"__node_fail__", Value::make_bool(true)}});
             } else {
                 out = map_of({{kind == K_REPLY ? "__reply__" : "__fail__", v}});
             }
@@ -1594,10 +1602,10 @@ void scan_directory(std::chrono::steady_clock::time_point& next_scan) {
         for (auto& e : seen[kv.first]) if (e.id != n.id) now_names.insert(e.display);
         for (auto& nm : now_names)
             if (!n.known.count(nm))
-                push_value(*n.events, map_of({{"EVENT", Value::make_string("JOIN")}, {"ADDR", Value::make_string(nm)}}));
+                push_value(*n.events, user_map_of({{"event", Value::make_string("JOIN")}, {"addr", Value::make_string(nm)}}));
         for (auto& nm : n.known)
             if (!now_names.count(nm))
-                push_value(*n.events, map_of({{"EVENT", Value::make_string("LEAVE")}, {"ADDR", Value::make_string(nm)}}));
+                push_value(*n.events, user_map_of({{"event", Value::make_string("LEAVE")}, {"addr", Value::make_string(nm)}}));
         n.known = now_names;
     }
 }
@@ -2075,19 +2083,19 @@ Value call_wait(int64_t node, const std::string& addr, const std::string& method
 Value make_peer_map(const DirEntry& e) {
     Value topics = Value::make_array();
     for (auto& t : e.topics) topics.as_array()->elements.push_back(Value::make_string(t));
-    Value m = map_of({{"NAME", Value::make_string(e.display)},
-                   {"ADDR", Value::make_string(e.display + "@" + e.host)},
-                   {"HOST", Value::make_string(e.host)},
-                   {"PID", Value::make_i64(e.pid)},
-                   {"SCOPE", Value::make_string(e.lan ? "lan" : "local")},
-                   {"TOPICS", topics},
-                   {"SINCE", Value::make_date((double)e.started)}});
+    Value m = user_map_of({{"name", Value::make_string(e.display)},
+                   {"addr", Value::make_string(e.display + "@" + e.host)},
+                   {"host", Value::make_string(e.host)},
+                   {"pid", Value::make_i64(e.pid)},
+                   {"scope", Value::make_string(e.lan ? "lan" : "local")},
+                   {"topics", topics},
+                   {"since", Value::make_date((double)e.started)}});
     if (e.lan) {
-        m.as_object()->set("IP", Value::make_string(ip_text(e.ip)));
+        m.as_object()->set("ip", Value::make_string(ip_text(e.ip)));
         auto it = g_offsets.find(e.id);
         if (it != g_offsets.end()) {
-            m.as_object()->set("OFFSET", Value::make_i64(it->second.offset));
-            m.as_object()->set("ERROR", Value::make_i64(it->second.error));
+            m.as_object()->set("offset", Value::make_i64(it->second.offset));
+            m.as_object()->set("error", Value::make_i64(it->second.error));
         }
     }
     return m;
@@ -2404,8 +2412,8 @@ void register_node_builtins(VM& vm) {
         for (auto& e : dir)
             for (auto& t : e.topics)
                 if (glob_match(pat, t))
-                    out.as_array()->elements.push_back(map_of({{"TOPIC", Value::make_string(t)},
-                                                               {"ADDR", Value::make_string(e.display + "@" + e.host)}}));
+                    out.as_array()->elements.push_back(user_map_of({{"topic", Value::make_string(t)},
+                                                               {"addr", Value::make_string(e.display + "@" + e.host)}}));
         return out;
     });
 
@@ -2416,11 +2424,11 @@ void register_node_builtins(VM& vm) {
         auto pit = g_pubs.find(h);
         if (pit != g_pubs.end()) {
             const Publisher& p = pit->second;
-            return map_of({{"TOPIC", Value::make_string(p.topic)},
-                           {"SENT", Value::make_i64((int64_t)p.sent)},
-                           {"DROPPED", Value::make_i64((int64_t)p.dropped)},
-                           {"BYTES", Value::make_i64((int64_t)p.bytes)},
-                           {"SUBSCRIBERS", Value::make_i64((int64_t)p.subs.size())}});
+            return user_map_of({{"topic", Value::make_string(p.topic)},
+                           {"sent", Value::make_i64((int64_t)p.sent)},
+                           {"dropped", Value::make_i64((int64_t)p.dropped)},
+                           {"bytes", Value::make_i64((int64_t)p.bytes)},
+                           {"subscribers", Value::make_i64((int64_t)p.subs.size())}});
         }
         for (auto& kv : g_subs) {
             const Subscription& s = kv.second;
@@ -2432,11 +2440,11 @@ void register_node_builtins(VM& vm) {
                 std::lock_guard<std::mutex> lk(s.ch->mtx);
                 dropped = s.ch->dropped;
             }
-            return map_of({{"PATTERN", Value::make_string(s.pattern)},
-                           {"RECEIVED", Value::make_i64((int64_t)s.received)},
-                           {"DROPPED", Value::make_i64((int64_t)dropped)},
-                           {"BYTES", Value::make_i64((int64_t)s.bytes)},
-                           {"PUBLISHERS", Value::make_i64(attached)}});
+            return user_map_of({{"pattern", Value::make_string(s.pattern)},
+                           {"received", Value::make_i64((int64_t)s.received)},
+                           {"dropped", Value::make_i64((int64_t)dropped)},
+                           {"bytes", Value::make_i64((int64_t)s.bytes)},
+                           {"publishers", Value::make_i64(attached)}});
         }
         throw std::runtime_error("TOPIC.STATS: expects a channel from TOPIC.OPEN, SUBSCRIBE or SHARE");
     });
@@ -2608,10 +2616,10 @@ std::string node_observer_peek(const std::string& topic, int64_t timeout_ms) {
     if (!have) return "no value on \"" + topic + "\" within " + std::to_string(timeout_ms) + " ms\n";
     if (got.type != ValueType::OBJECT) return describe_value(got, 0) + "\n";
     ObjectObj* env = got.as_object();
-    Value* data = env->get("DATA");
-    Value* from = env->get("FROM");
-    Value* name = env->get("TOPIC");
-    Value* seq = env->get("SEQ");
+    Value* data = env->get("data");
+    Value* from = env->get("from");
+    Value* name = env->get("topic");
+    Value* seq = env->get("seq");
     std::ostringstream o;
     o << "topic " << (name ? name->to_string() : topic);
     if (from) o << " from " << from->to_string();

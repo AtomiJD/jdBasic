@@ -54,7 +54,7 @@ FUNC HELLO(request)
     RETURN "<h1>Hello from jdBasic</h1>"
 ENDFUNC
 
-HTTP.SERVER.ON_GET "/", "HELLO"
+HTTP.SERVER.ON_GET "/", HELLO@
 
 IF HTTP.SERVER.START(8080, "127.0.0.1") THEN
     PRINT "Listening on http://127.0.0.1:8080"
@@ -69,8 +69,9 @@ What to notice:
 
 - A **handler** is a `FUNC NAME(request)`. Returning a **string** sends it as the
   response body (HTML by default).
-- `HTTP.SERVER.ON_GET "/path", "HANDLER"` registers it. The second argument is the
-  handler's name as a **string**; it must match the function name.
+- `HTTP.SERVER.ON_GET "/path", HANDLER@` registers it. The second argument is a
+  funcref: the function's name with `@`. The older form, the name as a string
+  (`"HANDLER"`), still works; `--lint` names the funcref to use.
 - `HTTP.SERVER.START(port[, host$])` returns true on success. The default bind
   is **`127.0.0.1` (loopback only)**; pass `"0.0.0.0"` explicitly to expose the
   server to the LAN. (This default changed for security reasons; older examples
@@ -175,7 +176,7 @@ FUNC HOME(request)
     RETURN TMPL.RENDER$("home.html", model)
 ENDFUNC
 
-HTTP.SERVER.ON_GET "/", "HOME"
+HTTP.SERVER.ON_GET "/", HOME@
 IF HTTP.SERVER.START(8080, "127.0.0.1") THEN HTTP.SERVER.WAIT
 HTTP.SERVER.STOP
 ```
@@ -189,16 +190,16 @@ application/json`). The `request` map gives you the input:
 
 | Field | Type | What |
 |---|---|---|
-| `request{"PATH"}` | string | the request path, e.g. `"/api/hello"`; lets one handler serve several routes |
-| `request{"METHOD"}` | string | `"GET"`, `"POST"`, ... |
-| `request{"PARAMS"}` | map | query-string params: `?name=Kat` -> `{"name"}` = `"Kat"` |
-| `request{"BODY"}` | string | the raw request body; `JSON.PARSE` it for JSON posts |
-| `request{"HEADERS"}` | map | request headers, **lowercase** keys: `{"cookie"}`, `{"x-api-key"}` |
+| `request{"path"}` | string | the request path, e.g. `"/api/hello"`; lets one handler serve several routes |
+| `request{"method"}` | string | `"GET"`, `"POST"`, ... |
+| `request{"params"}` | map | query-string params: `?name=Kat` -> `{"name"}` = `"Kat"` |
+| `request{"body"}` | string | the raw request body; `JSON.PARSE` it for JSON posts |
+| `request{"headers"}` | map | request headers, **lowercase** keys: `{"cookie"}`, `{"x-api-key"}` |
 
 ```basic
 ' GET /api/hello?name=Kat   ->  {"greeting":"Hello, Kat"}
 FUNC API_HELLO(request)
-    DIM p = request{"PARAMS"}
+    DIM p = request{"params"}
     DIM name$ = "" + p{"name"}
     IF LEN(name$) = 0 THEN name$ = "world"
     RETURN { "greeting": "Hello, " + name$ }
@@ -206,12 +207,12 @@ ENDFUNC
 
 ' POST /api/echo   body: {"msg":"hi"}   ->  {"you_said":"hi"}
 FUNC API_ECHO(request)
-    DIM body = JSON.PARSE(request{"BODY"})
+    DIM body = JSON.PARSE(request{"body"})
     RETURN { "you_said": "" + body{"msg"} }
 ENDFUNC
 
-HTTP.SERVER.ON_GET  "/api/hello", "API_HELLO"
-HTTP.SERVER.ON_POST "/api/echo",  "API_ECHO"
+HTTP.SERVER.ON_GET  "/api/hello", API_HELLO@
+HTTP.SERVER.ON_POST "/api/echo",  API_ECHO@
 ```
 
 **Custom status / headers / redirects.** Return a *rich-response map* with
@@ -262,8 +263,8 @@ FUNC ABOUT(request)
     RETURN JDWEB.PAGE$(cfg, "MyApp - About", JDWEB.NAV_HTML$(cfg, "/about"), body$)
 ENDFUNC
 
-HTTP.SERVER.ON_GET "/",      "HOME"
-HTTP.SERVER.ON_GET "/about", "ABOUT"
+HTTP.SERVER.ON_GET "/",      HOME@
+HTTP.SERVER.ON_GET "/about", ABOUT@
 IF HTTP.SERVER.START(8080, "127.0.0.1") THEN HTTP.SERVER.WAIT
 HTTP.SERVER.STOP
 ```
@@ -345,14 +346,14 @@ SUB pages_scan(dir$)
 ENDSUB
 
 FUNC HandleStaticPage(request)
-    p = gPages{"" + request{"PATH"}}
+    p = gPages{"" + request{"path"}}
     IF TYPEOF(p) = "NONE" THEN RETURN JDWEB.NOT_FOUND$(gCfg)
     RETURN JDWEB.PAGE$(gCfg, "" + p{"title"}, JDWEB.NAV_HTML$(gCfg, "" + p{"nav"}), "" + p{"__body"})
 ENDFUNC
 
 pages_scan(PATH.JOIN$(gAppDir$, "pages"))
 FOR EACH page_route$ IN MAP.KEYS(gPages)
-    HTTP.SERVER.ON_GET page_route$, "HANDLESTATICPAGE"
+    HTTP.SERVER.ON_GET page_route$, HANDLESTATICPAGE@
 NEXT page_route$
 ```
 
@@ -420,20 +421,20 @@ ENDFUNC
 ' --- the JSON API the form posts to ---
 FUNC AddNote(request)
     IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.UNAUTH()
-    DIM b = JSON.PARSE(request{"BODY"})
+    DIM b = JSON.PARSE(request{"body"})
     DIM text$ = TRIM$("" + b{"body"})
     IF LEN(text$) = 0 THEN RETURN { "error": "empty" }
     SQL.EXEC(gDb, "INSERT INTO notes (body) VALUES ('" + ESC$(text$) + "')")
     RETURN { "ok": TRUE }
 ENDFUNC
 
-HTTP.SERVER.ON_GET  "/",           "HomePage"
-HTTP.SERVER.ON_POST "/api/notes",  "AddNote"
-HTTP.SERVER.ON_GET  "/login",      "HandleLoginPage"
-HTTP.SERVER.ON_POST "/api/login",  "HandleLogin"
-HTTP.SERVER.ON_POST "/api/logout", "HandleLogout"
-HTTP.SERVER.ON_GET  "/api/me",     "HandleMe"
-HTTP.SERVER.ON_NOTFOUND "Handle404"
+HTTP.SERVER.ON_GET  "/",           HomePage@
+HTTP.SERVER.ON_POST "/api/notes",  AddNote@
+HTTP.SERVER.ON_GET  "/login",      HandleLoginPage@
+HTTP.SERVER.ON_POST "/api/login",  HandleLogin@
+HTTP.SERVER.ON_POST "/api/logout", HandleLogout@
+HTTP.SERVER.ON_GET  "/api/me",     HandleMe@
+HTTP.SERVER.ON_NOTFOUND Handle404@
 
 DIM warm$ = JDWEB.THEME$()          ' warm the template cache before going concurrent
 IF HTTP.SERVER.START(INT(gCfg{"port"}), "" + gCfg{"host"}) THEN
@@ -503,12 +504,12 @@ FUNC ShowNote(request)
 ENDFUNC
 
 FUNC AddNote(request)
-    DIM note = JSON.PARSE(request{"BODY"})
+    DIM note = JSON.PARSE(request{"body"})
     RETURN JDWEB.REPLY_JSON(note, 201)
 ENDFUNC
 
 FUNC NeedKey(request)
-    DIM hs = request{"HEADERS"}
+    DIM hs = request{"headers"}
     IF MAP.EXISTS(hs, "x-api-key") THEN RETURN JDWEB.PASS()
     RETURN JDWEB.REPLY_JSON({"error": "no key"}, 401)
 ENDFUNC
@@ -552,8 +553,8 @@ test drives every route without a browser. The whole API is on
 
 ## Gotchas (the ones that bite)
 
-- **Handler name = string.** `HTTP.SERVER.ON_GET "/x", "MYHANDLER"` must match the
-  `FUNC MYHANDLER` name exactly.
+- **Handler = funcref.** `HTTP.SERVER.ON_GET "/x", MYHANDLER@` points at
+  `FUNC MYHANDLER`; names are case-insensitive.
 - **`HTTP.SERVER.WAIT`, never a `SLEEP` loop** (see Level 0).
 - **Escape user input in SQL** with `ESC$` (doubles `'`; complete for SQLite),
   and cast numbers with `STR$(INT(...))`. Never concatenate raw user strings.
@@ -565,14 +566,14 @@ test drives every route without a browser. The whole API is on
 - **Inline `<script>` under a strict CSP must be hashed.** If you deploy behind a
   hash-based Content-Security-Policy, changing a served inline script means you
   must update its `sha256` in the CSP, or the browser silently blocks it.
-- **Header keys are lowercase** in `request{"HEADERS"}` (`"cookie"`,
-  `"x-api-key"`). The request path is `request{"PATH"}` (uppercase key, like
-  `METHOD`/`BODY`/`PARAMS`).
+- **Header keys are lowercase** in `request{"headers"}` (`"cookie"`,
+  `"x-api-key"`). The request path is `request{"path"}`; the other keys are
+  `method`, `body` and `params`, all lower case like every map a builtin returns.
 - **No wildcard routes in HTTP.SERVER.** `ON_GET` and `ON_POST` register exact
   paths only. To serve a family of URLs, use JDWEB routes (`/users/:id`,
   `/files/*path`), or register each path explicitly (a `FOR EACH` over
   discovered routes, see Level 3.5) and dispatch inside the handler on
-  `request{"PATH"}`.
+  `request{"path"}`.
 - **Reserved names** still apply in handlers: don't name variables `LINE`, `VAL`,
   `LEN`, `MAP`, etc.
 

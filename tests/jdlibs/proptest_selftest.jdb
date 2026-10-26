@@ -212,10 +212,10 @@ DIM exe$ = "build\jdBasic.exe"
 IF NOT FILE.EXISTS(exe$) THEN exe$ = "..\..\build\jdBasic.exe"
 IF FILE.EXISTS(exe$) THEN
     DIM child = OS.EXEC(exe$, [fixture_dir$ + "proptest_failing.jdb"])
-    DIM child_out$ = child{"OUTPUT"}
+    DIM child_out$ = child{"output"}
     TESTKIT.ISTRUE(INSTR(child_out$, " FAIL ") >= 0, "a failing FORALL is a TESTKIT failure")
     TESTKIT.ISTRUE(INSTR(child_out$, "falsified by [0, 0] (seed 7") >= 0, "whose message names the minimal input and the seed")
-    TESTKIT.ISTRUE(child{"EXIT_CODE"} <> 0, "and the run exits non-zero")
+    TESTKIT.ISTRUE(child{"exit_code"} <> 0, "and the run exits non-zero")
 ELSE
     TESTKIT.SKIP("no build\jdBasic.exe to run the failing FORALL with")
 ENDIF

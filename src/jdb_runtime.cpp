@@ -11,6 +11,7 @@
 #include <string>
 #include <regex>
 #include "jdb_shape.h"
+#include "jdb_lower_keys.h"
 #include <Eigen/Dense>
 #include "jdb_calendar.h"
 #include "jdb_format.h"
@@ -656,6 +657,8 @@ char* jdb_double_to_str(double val) {
 double jdb_abs(double x)       { return fabs(x); }
 double jdb_sqr(double x)       { return sqrt(x); }
 double jdb_sin(double x)       { return sin(x); }
+double jdb_radians(double x)   { return x * (3.14159265358979323846 / 180.0); }
+double jdb_degrees(double x)   { return x * (180.0 / 3.14159265358979323846); }
 double jdb_cos(double x)       { return cos(x); }
 double jdb_tan(double x)       { return tan(x); }
 double jdb_asin(double x)      { return asin(x); }
@@ -2904,6 +2907,7 @@ struct JdbMap {
     double* values;
     int32_t* tags;
     void* index;     // MapIndex*, or null while none is built
+    int32_t lower_keys;  // made by a builtin; see jdb_lower_keys.h
 };
 
 JdbMap* jdb_map_new() {
@@ -2915,6 +2919,7 @@ JdbMap* jdb_map_new() {
     m->values = nullptr;
     m->tags = nullptr;
     m->index = nullptr;
+    m->lower_keys = 0;
     return m;
 }
 
@@ -3168,7 +3173,19 @@ static int64_t map_find_linear(JdbMap* m, const char* key) {
     return -1;
 }
 
+static int64_t map_find_exact(JdbMap* m, const char* key);
+
 static int64_t map_find(JdbMap* m, const char* key) {
+    int64_t at = map_find_exact(m, key);
+    if (at >= 0 || !m || !key || !m->lower_keys) return at;
+    std::string lower = jdb_lowered_key(key);
+    if (lower.empty()) return -1;
+    at = map_find_exact(m, lower.c_str());
+    if (at >= 0) jdb_warn_upper_key(key, lower);
+    return at;
+}
+
+static int64_t map_find_exact(JdbMap* m, const char* key) {
     if (!m || !key) return -1;
     // The index is built and read on the thread the counts belong to only;
     // another thread (a compiled HTTP handler) scans.

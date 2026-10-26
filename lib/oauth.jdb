@@ -373,7 +373,7 @@ ENDFUNC
 ' The HTTP.SERVER handler of the local redirect: it keeps the code for
 ' LOGIN and answers the browser.
 EXPORT FUNC CALLBACK(req_map)
-    DIM params = req_map{"PARAMS"}
+    DIM params = req_map{"params"}
     gCallbackCode$ = ""
     gCallbackState$ = ""
     gCallbackError$ = ""

@@ -135,8 +135,8 @@ DIM exe$ = ExeFor$()
 IF exe$ <> "" THEN
     SETENV "JDBASIC_PATH", ""
     DIM child = OS.EXEC(exe$, [app_dir$ + "/app.jdb"])
-    DIM run_code = child{"EXIT_CODE"}
-    DIM run_out$ = child{"OUTPUT"}
+    DIM run_code = child{"exit_code"}
+    DIM run_out$ = child{"output"}
     TESTKIT.EQ(run_code, 0, "a new process imports the installed modules: " + LEFT$(run_out$, 300))
     TESTKIT.ISTRUE(INSTR(run_out$, "imports ok") >= 0, "and runs")
 ELSE
@@ -183,7 +183,7 @@ DIM from_zip = PKG.INSTALL(bundle_path$, "", zip_dir$)
 TESTKIT.EQ(from_zip{"GREETPKG"}, "1.1.4", "every module of a ZIP archive")
 TESTKIT.ISTRUE(FILE.EXISTS(zip_dir$ + "/greetpkg.jdb"), "is installed")
 DIM git_check = OS.EXEC("git", ["--version"])
-DIM git_code = git_check{"EXIT_CODE"}
+DIM git_code = git_check{"exit_code"}
 IF git_code = 0 THEN
     DIM repo$ = folder$ + "/repo"
     MKDIR repo$

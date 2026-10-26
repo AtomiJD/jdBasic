@@ -1,0 +1,30 @@
+' Maps that builtins return use lower-case keys. For one release a read of
+' an old upper-case key on such a map still finds the value, while a map
+' the program builds keeps its keys exactly as written.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM r AS MAP = OS.EXEC("echo hi")
+DIM keys AS ARRAY = MAP.KEYS(r)
+Check(INSTR(JOIN(keys, ","), "output") >= 0, "OS.EXEC answers the key output")
+Check(INSTR(JOIN(keys, ","), "exit_code") >= 0, "OS.EXEC answers the key exit_code")
+Check(r{"exit_code"} = 0, "exit_code reads 0")
+Check(INSTR(r{"output"}, "hi") >= 0, "output holds the text")
+Check(r{"OUTPUT"} = r{"output"}, "the old key OUTPUT still reads the value")
+Check(r{"EXIT_CODE"} = 0, "the old key EXIT_CODE still reads the value")
+
+DIM own AS MAP = {"output": 1}
+Check(TYPEOF(own{"OUTPUT"}) = "NONE", "a program's own map keeps its keys exact")
+
+DIM q AS MAP = QR([[1.0, 2.0], [3.0, 4.0]])
+Check(LEN(q{"q"}) = 2 AND LEN(q{"r"}) = 2, "QR answers the keys q and r")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

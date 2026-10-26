@@ -8,25 +8,25 @@ IMPORT REQ
 DIM gFlaky = 0
 
 FUNC HANDLE_ECHO(request)
-    DIM headers = request{"HEADERS"}
+    DIM headers = request{"headers"}
     DIM auth$ = ""
     DIM cookie$ = ""
     IF MAP.EXISTS(headers, "authorization") THEN auth$ = headers{"authorization"}
     IF MAP.EXISTS(headers, "cookie") THEN cookie$ = headers{"cookie"}
-    RETURN {"params": request{"PARAMS"}, "auth": auth$, "cookie": cookie$}
+    RETURN {"params": request{"params"}, "auth": auth$, "cookie": cookie$}
 ENDFUNC
 
 FUNC HANDLE_JSON(request)
-    DIM sent = JSON.PARSE$(request{"BODY"})
-    RETURN {"got": sent{"name"}, "ct": request{"HEADERS"}{"content-type"}}
+    DIM sent = JSON.PARSE$(request{"body"})
+    RETURN {"got": sent{"name"}, "ct": request{"headers"}{"content-type"}}
 ENDFUNC
 
 FUNC HANDLE_FORM(request)
-    RETURN {"body": request{"BODY"}, "ct": request{"HEADERS"}{"content-type"}}
+    RETURN {"body": request{"body"}, "ct": request{"headers"}{"content-type"}}
 ENDFUNC
 
 FUNC HANDLE_UPLOAD(request)
-    RETURN {"ct": request{"HEADERS"}{"content-type"}}
+    RETURN {"ct": request{"headers"}{"content-type"}}
 ENDFUNC
 
 FUNC HANDLE_FLAKY(request)

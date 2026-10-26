@@ -82,8 +82,8 @@ SUB OnKey(info)
     lastKey$ = info[0]{"key"}
     IF lastKey$ = "Escape" THEN running = 0
 ENDSUB
-ON "QUIT" CALL OnQuit
-ON "KEYDOWN" CALL OnKey
+ON "QUIT" CALL OnQuit@
+ON "KEYDOWN" CALL OnKey@
 
 DIM lastT AS DOUBLE = TICK()
 DIM now AS DOUBLE = 0
@@ -133,7 +133,7 @@ There are three ways to read keys, and games usually mix two of them:
   movement. The names are SDL key names: `"Left"`, `"Right"`, `"Up"`,
   `"Down"`, `"Space"`, `"Return"`, `"Escape"`, `"A"` to `"Z"`,
   `"Left Shift"`, `"F6"`.
-* `ON "KEYDOWN" CALL handler` runs a `SUB` once per key press. The `SUB`
+* `ON "KEYDOWN" CALL handler@` runs a `SUB` once per key press. The `SUB`
   takes one parameter; `info[0]` is a map with `"key"` (the key name),
   `"scancode"`, `"keycode"` and `"repeat"` (`TRUE` for auto-repeat). Use it
   for single actions such as pause or menu keys. `ON "KEYUP"` works the same
@@ -189,7 +189,7 @@ DIM alive AS INTEGER = 1
 SUB OnQuit(info)
     running = 0
 ENDSUB
-ON "QUIT" CALL OnQuit
+ON "QUIT" CALL OnQuit@
 
 SUB NewBall()
     bx = W / 2

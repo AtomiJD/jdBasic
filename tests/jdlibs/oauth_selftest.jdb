@@ -63,7 +63,7 @@ FUNC FormValue$(form_map, field$)
 ENDFUNC
 
 FUNC AS_AUTHORIZE(req_map)
-    DIM params = req_map{"PARAMS"}
+    DIM params = req_map{"params"}
     DIM redirect$ = params{"redirect_uri"}
     DIM state$ = params{"state"}
     DIM client$ = params{"client_id"}
@@ -86,8 +86,8 @@ FUNC AS_AUTHORIZE(req_map)
 ENDFUNC
 
 FUNC AS_TOKEN(req_map)
-    DIM form_map = URL.QUERYMAP(req_map{"BODY"})
-    DIM headers = req_map{"HEADERS"}
+    DIM form_map = URL.QUERYMAP(req_map{"body"})
+    DIM headers = req_map{"headers"}
     gLastClientAuth$ = "form"
     DIM client_id$ = FormValue$(form_map, "client_id")
     DIM secret$ = FormValue$(form_map, "client_secret")
@@ -151,7 +151,7 @@ ENDFUNC
 
 FUNC API_ME(req_map)
     gApiCalls = gApiCalls + 1
-    DIM headers = req_map{"HEADERS"}
+    DIM headers = req_map{"headers"}
     DIM auth$ = ""
     IF MAP.EXISTS(headers, "authorization") THEN auth$ = headers{"authorization"}
     DIM token$ = MID$(auth$, 7, LEN(auth$))

@@ -177,7 +177,7 @@ SUB OnTick(d)
     TXTWRITER("log.csv", STR$(samples) + "," + FORMAT$("{:.2f}", c) + CHR$(10), TRUE)
 ENDSUB
 
-ON "TICK" CALL OnTick
+ON "TICK" CALL OnTick@
 TIMER.EVERY(1000)
 DO WHILE samples < 5
     SLEEP 100
@@ -206,7 +206,7 @@ SUB OnPin(d)
     PRINT "pin "; d[0]; " is now "; d[1]
 ENDSUB
 
-ON "PIN" CALL OnPin
+ON "PIN" CALL OnPin@
 GPIO.MODE(2, 1)
 GPIO.WATCH(3, 3)
 FOR i = 1 TO 3

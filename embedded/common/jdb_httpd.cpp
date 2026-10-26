@@ -166,6 +166,7 @@ static std::string url_decode(const std::string& s) {
 
 static Value request_to_map(const std::string& raw) {
     Value m = Value::make_object();
+    m.as_object()->lower_keys = true;
     size_t line_end = raw.find("\r\n");
     std::string line = raw.substr(0, line_end == std::string::npos ? raw.size() : line_end);
 
@@ -179,11 +180,11 @@ static Value request_to_map(const std::string& raw) {
     size_t qm = target.find('?');
     if (qm != std::string::npos) { path = target.substr(0, qm); query = target.substr(qm + 1); }
 
-    m.as_object()->set("METHOD", Value::make_string(method));
-    m.as_object()->set("PATH", Value::make_string(path));
+    m.as_object()->set("method", Value::make_string(method));
+    m.as_object()->set("path", Value::make_string(path));
 
     size_t head = raw.find("\r\n\r\n");
-    m.as_object()->set("BODY", Value::make_string(
+    m.as_object()->set("body", Value::make_string(
         head == std::string::npos ? "" : raw.substr(head + 4)));
 
     // Header names are case-insensitive on the wire, so they arrive
@@ -204,7 +205,7 @@ static Value request_to_map(const std::string& raw) {
         }
         at = e + 2;
     }
-    m.as_object()->set("HEADERS", std::move(hdrs));
+    m.as_object()->set("headers", std::move(hdrs));
 
     Value params = Value::make_object();
     size_t p = 0;
@@ -220,7 +221,7 @@ static Value request_to_map(const std::string& raw) {
         if (amp == std::string::npos) break;
         p = amp + 1;
     }
-    m.as_object()->set("PARAMS", std::move(params));
+    m.as_object()->set("params", std::move(params));
     return m;
 }
 

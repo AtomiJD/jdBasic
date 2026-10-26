@@ -1,0 +1,42 @@
+' Math builtins take radians, graphics builtins degrees. RADIANS and DEGREES
+' convert, on a number and element-wise on an array; MAT4.ROTATE takes
+' degrees and MAT4.ROTATE_RAD the radians it took before.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Near(a AS DOUBLE, b AS DOUBLE) AS INTEGER
+    RETURN ABS(a - b) < 0.000000001
+ENDFUNC
+
+Check(Near(RADIANS(180), MATH.PI), "RADIANS(180) is pi")
+Check(Near(DEGREES(MATH.PI / 2), 90), "DEGREES(pi / 2) is 90")
+Check(Near(SIN(RADIANS(30)), 0.5), "SIN takes radians")
+Check(Near(DEGREES(ATAN2(1, 1)), 45), "ATAN2 answers radians")
+
+DIM turns AS ARRAY = RADIANS([0, 90, 360])
+Check(Near(turns[1], MATH.PI / 2) AND Near(turns[2], 2 * MATH.PI), "RADIANS over an array")
+DIM back AS ARRAY = DEGREES(turns)
+Check(Near(back[2], 360), "DEGREES over an array")
+
+IF OS.FEATURE("OPENGL") AND OS.FEATURE("INTERPRETER") THEN
+    DIM id AS ARRAY = MAT4.IDENTITY()
+    DIM by_deg AS ARRAY = MAT4.ROTATE(id, 90, 0, 0, 1)
+    DIM by_rad AS ARRAY = MAT4.ROTATE_RAD(id, MATH.PI / 2, 0, 0, 1)
+    DIM same AS INTEGER = 1
+    DIM i AS INTEGER
+    FOR i = 0 TO 15
+        IF NOT Near(by_deg[i], by_rad[i]) THEN same = 0
+    NEXT i
+    Check(same = 1, "MAT4.ROTATE in degrees equals MAT4.ROTATE_RAD in radians")
+    Check(Near(by_deg[1], 1), "a quarter turn about z sends x to y")
+ENDIF
+
+IF failed > 0 THEN END 1
+PRINT "OK"

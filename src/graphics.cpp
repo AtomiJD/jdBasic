@@ -1508,13 +1508,14 @@ void register_graphics_builtins(VM& vm) {
             SDL_GetDisplayBounds(ids[i], &b);
             const char* name = SDL_GetDisplayName(ids[i]);
             Value d = Value::make_object();
-            d.as_object()->set("INDEX", Value::make_i64(i + 1));
-            d.as_object()->set("NAME", Value::make_string(name ? name : ""));
-            d.as_object()->set("X", Value::make_i64(b.x));
-            d.as_object()->set("Y", Value::make_i64(b.y));
-            d.as_object()->set("W", Value::make_i64(b.w));
-            d.as_object()->set("H", Value::make_i64(b.h));
-            d.as_object()->set("PRIMARY", Value::make_bool(ids[i] == primary));
+            d.as_object()->lower_keys = true;
+            d.as_object()->set("index", Value::make_i64(i + 1));
+            d.as_object()->set("name", Value::make_string(name ? name : ""));
+            d.as_object()->set("x", Value::make_i64(b.x));
+            d.as_object()->set("y", Value::make_i64(b.y));
+            d.as_object()->set("w", Value::make_i64(b.w));
+            d.as_object()->set("h", Value::make_i64(b.h));
+            d.as_object()->set("primary", Value::make_bool(ids[i] == primary));
             r.as_array()->elements.push_back(d);
         }
         SDL_free(ids);

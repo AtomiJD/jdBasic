@@ -80,10 +80,11 @@ void register_serial_builtins(VM& vm) {
 
         // Return as object with __TYPE__ = "SERIAL_PORT"
         Value v = Value::make_object();
+        v.as_object()->lower_keys = true;
         v.as_object()->set("__TYPE__", Value::make_string("SERIAL_PORT"));
         v.as_object()->set("__HANDLE__", Value::make_i64(id));
-        v.as_object()->set("PORT", Value::make_string(port));
-        v.as_object()->set("BAUD", Value::make_i64(baud));
+        v.as_object()->set("port", Value::make_string(port));
+        v.as_object()->set("baud", Value::make_i64(baud));
         return v;
     });
 

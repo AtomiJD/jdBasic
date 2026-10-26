@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -219,6 +220,49 @@ inline std::vector<UndeclaredRef> find_builtin_shadows(
 //
 // A result handed straight to a conversion or a kind test counts as handled,
 // and a call whose result is thrown away decides nothing.
+// Handlers named by a string where they take a funcref: ON_GET(path$,
+// "Name") instead of ON_GET(path$, Name@), and ON "event" CALL Name. The
+// string still works; the funcref is the form that says what it is.
+inline std::vector<UndeclaredRef> find_string_handlers(const std::vector<StmtPtr>& ast) {
+    static const std::map<std::string, size_t> handler_arg = {
+        {"HTTP.SERVER.ON_GET", 1}, {"HTTP.SERVER.ON_POST", 1}, {"HTTP.SERVER.ON_NOTFOUND", 0},
+        {"NODE.SERVE", 1}, {"TUI.ON", 1}, {"__EVENT_ON", 1},
+    };
+    std::vector<UndeclaredRef> out;
+    std::function<void(const Expr*, int, const std::string&)> walk_expr =
+            [&](const Expr* e, int line, const std::string& file) {
+        if (!e) return;
+        undeclared_check_depth(e);
+        if (e->kind == ExprKind::CALL) {
+            std::string up = e->func_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            auto it = handler_arg.find(up);
+            if (it != handler_arg.end() && it->second < e->args.size()) {
+                const Expr* a = e->args[it->second].get();
+                if (a && a->kind == ExprKind::LITERAL_STRING && !a->is_funcref_lit && !a->str_val.empty())
+                    out.push_back({ (up == "__EVENT_ON" ? "CALL " : "") + a->str_val, line, file });
+            }
+        }
+        walk_expr(e->left.get(), line, file);
+        walk_expr(e->right.get(), line, file);
+        for (auto& a : e->args) walk_expr(a.get(), line, file);
+    };
+    std::function<void(const std::vector<StmtPtr>&)> walk =
+            [&](const std::vector<StmtPtr>& stmts) {
+        for (auto& s : stmts) {
+            if (!s) continue;
+            walk_expr(s->expr.get(), s->line, s->source_file());
+            for (auto& pe : s->print_exprs) walk_expr(pe.get(), s->line, s->source_file());
+            walk(s->body);
+            walk(s->catch_body());
+            walk(s->finally_body());
+            for (auto& br : s->branches) walk(br.body);
+        }
+    };
+    walk(ast);
+    return out;
+}
+
 inline std::vector<UndeclaredRef> find_unforeseeable_results(
         const std::vector<StmtPtr>& ast,
         const std::function<bool(const std::string&)>& kind_unrecorded) {

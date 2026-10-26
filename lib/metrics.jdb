@@ -535,8 +535,8 @@ ENDSUB
 
 ' A JDWEB before middleware: notes the start, the method and the route.
 EXPORT FUNC WEB_BEFORE(request)
-    DIM m = request{"METHOD"}
-    DIM p = request{"PATH"}
+    DIM m = request{"method"}
+    DIM p = request{"path"}
     gWeb{"started"} = TICK()
     gWeb{"method"} = UCASE$("" + m)
     gWeb{"route"} = RouteOf$("" + p)

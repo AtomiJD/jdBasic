@@ -1,0 +1,38 @@
+' Every builtin that takes a handler takes it as a funcref, name@, and
+' JDB.CHECK$ names a handler passed as a string with the funcref to use.
+
+DIM failed AS INTEGER = 0
+DIM keys_seen AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Hello$(request)
+    RETURN "hi"
+ENDFUNC
+
+SUB OnPing(info)
+    keys_seen = keys_seen + 1
+ENDSUB
+
+HTTP.SERVER.ON_GET("/a", Hello$@)
+HTTP.SERVER.ON_POST("/b", Hello$@)
+HTTP.SERVER.ON_NOTFOUND(Hello$@)
+
+ON "PING" CALL OnPing@
+RAISEEVENT "PING", 1
+Check(keys_seen = 1, "ON ... CALL takes a funcref")
+
+IF OS.FEATURE("INTERPRETER") THEN
+    DIM report$ AS STRING = JDB.CHECK$("HTTP.SERVER.ON_GET(" + CHR$(34) + "/x" + CHR$(34) + ", " + CHR$(34) + "Hello$" + CHR$(34) + ")")
+    Check(INSTR(report$, "names a handler by a string, use HELLO$@") >= 0, "a string handler is named")
+    report$ = JDB.CHECK$("HTTP.SERVER.ON_GET(" + CHR$(34) + "/x" + CHR$(34) + ", Hello$@)")
+    Check(report$ = "", "a funcref handler is quiet")
+ENDIF
+
+IF failed > 0 THEN END 1
+PRINT "OK"

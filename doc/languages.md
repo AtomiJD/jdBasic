@@ -1529,7 +1529,7 @@ File and directory names are UTF-8 like every other string. On Windows a program
     PRINT "Launched with " + LEN(CmdArgs) + " arguments."
     ```
 
-* **`OS.EXEC(command$, [args_array$]) -> map`**: Executes an external program or shell command. It returns a `Map` containing two keys, written in capitals: `"OUTPUT"` (the captured standard output and error text) and `"EXIT_CODE"` (the integer return code from the program). On Windows `"OUTPUT"` is UTF-8: console tools such as `schtasks` write in the OEM codepage (850 on a German system), and that text is converted; output that is already UTF-8 stays as it is.
+* **`OS.EXEC(command$, [args_array$]) -> map`**: Executes an external program or shell command. It returns a `Map` with two keys: `"output"` (the captured standard output and error text) and `"exit_code"` (the integer return code from the program). On Windows `"output"` is UTF-8: console tools such as `schtasks` write in the OEM codepage (850 on a German system), and that text is converted; output that is already UTF-8 stays as it is.
 
     > **Note on Windows**: Internal commands like `dir` or `cls` are not standalone programs. To run them, you must execute the command shell `cmd.exe` with the `/c` flag, like this: `OS.EXEC("cmd /c dir")`.
 
@@ -1542,22 +1542,22 @@ File and directory names are UTF-8 like every other string. On Windows a program
     ' On Windows
     Result = OS.EXEC("ping", ["-n", "4", "google.com"])
 
-    PRINT "Exit Code: " + Result{"EXIT_CODE"}
+    PRINT "Exit Code: " + Result{"exit_code"}
     PRINT "--- Output ---"
-    PRINT Result{"OUTPUT"}
+    PRINT Result{"output"}
     ```
 
 * **`OS.SPAWN(command$, [args_array$], [options]) -> pid`**: Starts a program and returns its process id at once, while `OS.EXEC` waits. With `args_array$` (an empty array too) `command$` names the program and each element reaches it as one argument, without a shell; without it, `command$` is a line for `cmd /c` or `sh -c` and the pid is that shell's. The child runs on when the program ends. `options` is a map:
-    * `"CWD"`: the child's working directory.
-    * `"ENV"`: a map of variables added to (or replacing in) the current environment for the child only.
-    * `"OUTPUT"`: a file the child's standard output and error are appended to; without it the child writes to the same console.
-    * `"HIDDEN"`: `TRUE` opens no console window for it (Windows).
+    * `"cwd"`: the child's working directory.
+    * `"env"`: a map of variables added to (or replacing in) the current environment for the child only.
+    * `"output"`: a file the child's standard output and error are appended to; without it the child writes to the same console.
+    * `"hidden"`: `TRUE` opens no console window for it (Windows).
 
-    Only the `"OUTPUT"` file is handed to the child, never the sockets and files the program holds open. A program that cannot be started, or a missing `"CWD"`, raises.
+    Only the `"output"` file is handed to the child, never the sockets and files the program holds open. A program that cannot be started, or a missing `"cwd"`, raises.
 
     ```basic
     ' A second jdBasic program next to this one, its output in a log
-    DIM pid = OS.SPAWN(OS.SELF$(), ["stage.jdb", "--follow"], {"OUTPUT": "stage.log"})
+    DIM pid = OS.SPAWN(OS.SELF$(), ["stage.jdb", "--follow"], {"output": "stage.log"})
     ' ... later
     IF OS.ALIVE(pid) THEN DIM ended = OS.KILL(pid)
     PRINT "stage ended with "; OS.WAIT(pid, 5000)
@@ -1570,7 +1570,7 @@ File and directory names are UTF-8 like every other string. On Windows a program
 * **`OS.HOSTNAME$() -> STRING"`**: Returns the network hostname of the local machine.
 * **`OS.IP$() -> STRING`**: Returns the primary local IPv4 address of the machine.
 * **`OS.LOAD() -> Number`**: The CPU load of the whole machine in percent (0 to 100), measured between this call and the previous one; the first call of a program measures over a tenth of a second. A loop that asks every two seconds gets the load of those two seconds. Windows, Linux and macOS.
-* **`SYS.MEMORY() -> map`**: The physical memory of the machine in bytes: `"TOTAL"`, and `"FREE"` for what programs can still have without the system swapping (on Linux `MemAvailable`, on macOS free, inactive and purgeable pages). Windows, Linux and macOS.
+* **`SYS.MEMORY() -> map`**: The physical memory of the machine in bytes: `"total"`, and `"free"` for what programs can still have without the system swapping (on Linux `MemAvailable`, on macOS free, inactive and purgeable pages). Windows, Linux and macOS.
 * **`OS.FEATURE(name$) -> BOOLEAN`**: Returns `TRUE` when the running binary advertises the named build feature, `FALSE` otherwise. Useful to gate code paths the current backend cannot run, for example programs that should skip reactive variables or `EXECUTE`/`EVAL` blocks when running from a natively compiled `.exe`. Recognised feature names: `"NATIVEC"` (running from `--compile` output), `"INTERPRETER"` (running in the VM), `"COM"`, `"HTTP"`, `"NET"`, `"SERIAL"`, `"GFX"`, `"IMGUI"`, `"FORMS"`, `"OPENGL"`, `"MINIAUDIO"`, `"FX"`, `"MIDI"`, `"LLM"`, `"ONNX"`, `"SQLITE"`, `"PYTHON"`, `"MCPSERVER"` (`--mcp` over stdio), `"LLVMC"` (compiler available). Unknown names return `FALSE`.
 
     ```basic
@@ -2208,6 +2208,7 @@ All numeric functions are vectorized: they also accept arrays and apply element-
 #### Trigonometry
 
 * **`SIN(x)`**, **`COS(x)`**, **`TAN(x)`**: Standard trig functions (radians).
+* **`RADIANS(degrees)`**, **`DEGREES(radians)`**: Convert an angle; both work element-wise on arrays. The rule for angles: math builtins (`SIN`, `COS`, `TAN`, `ASIN`, `ACOS`, `ATAN`, `ATAN2`) take and answer radians, graphics builtins (`SPRITE.ROTATE`, `GFX.DRAWIMAGE_EX`, `CIRCLE_SECTOR`, `TURTLE.*`, `MAT4.ROTATE`, `MAT4.PERSPECTIVE`, the hue of `HSV`) take degrees. `SPRITE.ROTATE(id, DEGREES(ATAN2(dy, dx)))` turns a sprite toward a point.
 * **`ASIN(x)`**, **`ACOS(x)`**, **`ATAN(x)`**: Inverse trig functions.
 * **`ATAN2(y, x)`**: Two-argument arctangent returning the correct quadrant.
 * **`SINH(x)`**, **`COSH(x)`**, **`TANH(x)`**: Hyperbolic functions.
@@ -2342,9 +2343,9 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`SOLVE(matrix A, b) -> x`**: Solves the linear system Ax = b. `b` is a vector and answers the vector x, or a matrix of right-hand sides, one per column, and answers the matrix of solutions. A singular `A` is an error.
 * **`INVERT(matrix) -> matrix`**: Computes the inverse of a square matrix.
 * **`DET(matrix) -> number`**: Determinant of a square matrix (Eigen).
-* **`SVD(matrix) -> map`**: Singular Value Decomposition. Returns a map `{ "U", "S", "V" }` where `S` is the vector of singular values and `U`/`V` are the (thin) factor matrices (Eigen JacobiSVD).
-* **`QR(matrix) -> map`**: Householder QR decomposition. Returns `{ "Q", "R" }` (Eigen).
-* **`EIG(square matrix) -> map`**: Eigen-decomposition. Returns `{ "EIGENVALUES", "EIGENVECTORS" }`; eigenvalues are an `[n][2]` array of `[real, imag]` pairs and eigenvectors an `[n][n][2]` complex array (Eigen EigenSolver).
+* **`SVD(matrix) -> map`**: Singular Value Decomposition. Returns a map `{ "u", "s", "v" }` where `s` is the vector of singular values and `u`/`v` are the (thin) factor matrices (Eigen JacobiSVD).
+* **`QR(matrix) -> map`**: Householder QR decomposition. Returns `{ "q", "r" }` (Eigen).
+* **`EIG(square matrix) -> map`**: Eigen-decomposition. Returns `{ "eigenvalues", "eigenvectors" }`; eigenvalues are an `[n][2]` array of `[real, imag]` pairs and eigenvectors an `[n][n][2]` complex array (Eigen EigenSolver).
 * **`FFT(signal) -> array`** / **`IFFT(spectrum) -> array`**: Fast Fourier transform and its inverse. Input is a 1-D array of reals (or `[real, imag]` pairs); the result is an `[N][2]` array of complex `[real, imag]` pairs. Any length N (Eigen unsupported/FFT, kissfft backend).
 * **`NORMALIZE(array) -> array`**: Scales the elements of a numeric array to the range [0.0, 1.0].
 * **`UNIQUE(array) -> array`**: Returns a new array containing only the unique elements from the source.
@@ -2555,6 +2556,10 @@ number. `FORMAT_DATE$` accepts both and is the portable way to render one.
 * **`JDB.ALIASES() -> map`**: The old names that still resolve, mapped to the names that replaced them. A program that uses an old name runs as before; `--lint`, `jdb_check` and `-c` name each use and its new name, and `tools/jdb-fix.jdb` rewrites the source.
 * **`JDB.CHECK$(code$) -> string`**: Validates a snippet without running it and returns the diagnostics: an empty string, `"ok"` followed by one warning per line for a valid snippet that uses old names, or the error. Backs the MCP `jdb_check` tool, so a generated snippet can be checked before it touches the persistent VM. Returns an "unavailable" message when the host registered no checker.
 
+#### Lower-case keys
+
+Every map a builtin returns uses lower-case keys: `request{"body"}`, `OS.EXEC(..){"output"}`, `QR(m){"q"}`, `NODE.PEERS()[0]{"name"}`. For one release a read of the old upper-case key (`request{"BODY"}`) on such a map still finds the value and prints one warning; `tools/jdb-fix.jdb` rewrites the keys. A map the program builds keeps its keys exactly as written. The option maps builtins take (`OS.SPAWN`, `SVG.WRITEPNG`) accept keys in either case.
+
 #### Old names
 
 These names still work for one release. A program that uses one runs as before; `--lint`, `jdb_check` and `-c` name each use with its new name, and `tools/jdb-fix.jdb` rewrites the source. `JDB.ALIASES()` returns this table.
@@ -2642,10 +2647,10 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 * **`HTTP.SERVER.START(port [, host$])`**: Starts a non-blocking HTTP server on the specified port, returning `TRUE` on success. `host$` defaults to `"127.0.0.1"` (loopback only); pass `"0.0.0.0"` to expose the server to the LAN.
 * **`HTTP.SERVER.STOP`**: Stops the running HTTP server.
 * **`HTTP.SERVER.LOG(on)`**: Writes one line per request (method, path and the start of the body) to the console while `on` is `TRUE`. Off by default, because a request body can hold a password from a form; `JDBASIC_HTTP_LOG=1` in the environment turns it on from the start.
-* **`HTTP.SERVER.ON_GET(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `GET` requests for a specific URL path.
-* **`HTTP.SERVER.ON_POST(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `POST` requests for a specific URL path.
+* **`HTTP.SERVER.ON_GET(path$, handler@)`**: Registers a `jdBasic` function to handle incoming `GET` requests for a specific URL path. Every builtin that takes a handler takes it as a funcref, `Name@`; the name as a string still works for one release and `--lint` names the funcref.
+* **`HTTP.SERVER.ON_POST(path$, handler@)`**: Registers a `jdBasic` function to handle incoming `POST` requests for a specific URL path.
 
-* **`HTTP.SERVER.ON_NOTFOUND(function_name$)`**: Registers a `jdBasic` function to render unmatched routes (HTTP 404). The function receives the request map and may return HTML (sent as `text/html` with status 404) or a rich-response map (`{__http_status, __http_body, __http_content_type, __http_headers}`). Wired through httplib's `set_error_handler`; it fires only for 404, so handler-set statuses like 401/500 keep their own output. Call it before `HTTP.SERVER.START`.
+* **`HTTP.SERVER.ON_NOTFOUND(handler@)`**: Registers a `jdBasic` function to render unmatched routes (HTTP 404). The function receives the request map and may return HTML (sent as `text/html` with status 404) or a rich-response map (`{__http_status, __http_body, __http_content_type, __http_headers}`). Wired through httplib's `set_error_handler`; it fires only for 404, so handler-set statuses like 401/500 keep their own output. Call it before `HTTP.SERVER.START`.
 
 * **`HTTP.SERVER.WAIT`**: Parks the main thread in C++ until the server stops, and returns when a handler calls `HTTP.SERVER.STOP` (or the process exits). A handler never runs at the same time as the program or another handler: it runs while the program waits (`HTTP.SERVER.WAIT`, `SLEEP`, `AWAIT`, `CHAN.RECV`, `INPUT`, `OS.EXEC`, an HTTP client call) or, while the interpreter computes, between two of its instructions, as an event handler does. So a handler reads and writes the program's globals alone. A handler that takes seconds holds the program up for that long; a compiled program serves requests only while it waits.
 
@@ -2730,7 +2735,7 @@ DIM png_idat$ = CODEC.INFLATE$(chunk$, "zlib")
 
 ```basic
 ' Signing a webhook payload the way GitHub and Stripe do
-DIM signature$ = "sha256=" + CODEC.HMAC$(secret$, request{"BODY"})
+DIM signature$ = "sha256=" + CODEC.HMAC$(secret$, request{"body"})
 ```
 * **`CODEC.PBKDF2$(password$, salt$, iterations, bytes) -> string$`**: Derives a key from a password with PBKDF2-HMAC-SHA256 (RFC 8018) and returns `bytes` bytes (1 to 65536) as hex. Password and salt are byte strings, so an embedded `CHR$(0)` is data. The results equal Python's `hashlib.pbkdf2_hmac("sha256", ...)`. For stored passwords take a random salt of 16 bytes or more and a high iteration count (OWASP recommends 600000 for SHA-256); the time per call grows linearly with it.
 * **`CODEC.RANDOMBYTES$(n) -> string$`**: `n` raw bytes (0 to 1048576) from the operating system's secure random source: BCryptGenRandom on Windows, getrandom on Linux, getentropy on macOS. Use it for salts, session ids and tokens; `RND` is a statistical generator and predictable. The result is binary and may hold `CHR$(0)`; hex- or Base64-encode it before it goes into text. Not available on boards.
@@ -2756,8 +2761,8 @@ The built-in HTTP server allows `jdBasic` to serve websites and create simple JS
 
 Handler functions receive one argument: a `Map` containing details about the incoming request:
 
-* `PATH`, `METHOD`, `BODY`, `PARAMS`: request path, method, body bytes, and parsed query parameters.
-* `HEADERS`: a map of incoming request headers. **Keys are normalised to lowercase**, since HTTP header names are case-insensitive (RFC 7230). Look up `req{"HEADERS"}{"content-type"}`, `req{"HEADERS"}{"mcp-session-id"}`, etc.
+* `path`, `method`, `body`, `params`: request path, method, body bytes, and parsed query parameters.
+* `headers`: a map of incoming request headers. **Keys are normalised to lowercase**, since HTTP header names are case-insensitive (RFC 7230). Look up `req{"headers"}{"content-type"}`, `req{"headers"}{"mcp-session-id"}`, etc.
 
 The `RETURN` value of the function is sent back to the client as the response.
 
@@ -2785,7 +2790,7 @@ SUB HandleKeys(data)
     ExitMe = TRUE
 ENDSUB
 
-ON "KEYDOWN" CALL HandleKeys
+ON "KEYDOWN" CALL HandleKeys@
 ' Handler for the main web page at "/"
 FUNC HandleWebsite(request)
     ' Build an HTML string to return as the website
@@ -2813,8 +2818,8 @@ ENDFUNC
 ' --- Main Program ---
 PRINT "Setting up HTTP server..."
 
-HTTP.SERVER.ON_GET "/", "HandleWebsite"
-HTTP.SERVER.ON_POST "/api/info", "HandleApi"
+HTTP.SERVER.ON_GET "/", HandleWebsite@
+HTTP.SERVER.ON_POST "/api/info", HandleApi@
 
 IF HTTP.SERVER.START(8080) THEN
     PRINT "Server is running at http://localhost:8080"
@@ -2870,7 +2875,7 @@ ENDIF
 * **`CIRCLE x, y, r, [fill], [r, g, b] OR CIRCLE matrix, [fill], [colors]`**: Draws a circle. Can also take a matrix of circles.
 * **`ELLIPSE cx, cy, rx, ry, [fill], [r, g, b] OR ELLIPSE matrix, [fill], [colors]`**: Draws an ellipse. Can also take a matrix of ellipses.
 * **`ROUNDED_RECT x, y, w, h, radius, [fill], [r, g, b] OR ROUNDED_RECT matrix, [fill], [colors]`**: Draws a rounded rect. Can also take a matrix of rounded rects.
-* **`CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b] OR CIRCLE_SECTOR matrix, [fill], [colors]`**: Draws a circle sector. Can also take a matrix of sectors.
+* **`CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b] OR CIRCLE_SECTOR matrix, [fill], [colors]`**: Draws a circle sector; the angles are in degrees. Can also take a matrix of sectors.
 * **`TEXT x, y, content$, [r, g, b]`**: Draws a string of text on the graphics screen.
 * **`PLOTRAW x, y, matrix, [scaleX, scaleY]`**: Draws a matrix of color values directly to the screen at a given position and scale.
 * **`GFX.PLOT_POINTS(xs, ys, [rgb])`**: Batch pixel plot from two parallel 1-D coordinate arrays. `rgb` is either a single `[r, g, b]` for all points, or a flat stream of length `N*3`; omit it to use the current `DRAWCOLOR`. A single shared colour goes out as one draw call.
@@ -2878,8 +2883,8 @@ ENDIF
 * **`GFX.BLEND mode$`**: Sets how drawing combines with the screen. `"NONE"` (the default) overwrites, `"BLEND"` mixes by the alpha of `DRAWCOLOR`, `"ADD"` adds the colour, so overlapping shapes brighten into a glow. Applies to every later `LINE`, `RECT`, `CIRCLE`, `ELLIPSE`, `PSET` and their matrix forms.
 * **`GFX.HSV_RGB(h, s, v) -> [r, g, b]`**: HSV to RGB in C++, for per-pixel loops where a jdBasic helper would dominate the frame time. `h` wraps at 360, `s` and `v` clamp to 0..1, the result is three 0-255 components.
 * **`GFX.FADE(direction, duration, [r], [g], [b])`**: Fades the current frame out (`direction = 0`) or in (`direction = 1`) over `duration` seconds against a fill colour (default black). **Blocks** until the fade completes, flipping the screen itself each frame.
-* **`GFX.DISPLAYS() -> array`**: One map per connected display: `"INDEX"` (from 1), `"NAME"`, `"X"`, `"Y"`, `"W"`, `"H"` (its place on the desktop) and `"PRIMARY"`.
-* **`GFX.DISPLAY n`**: The display the next `SCREEN` opens on, `n` an `"INDEX"` of `GFX.DISPLAYS()` or 0 for the primary one. A window that is open moves there, so `TOGGLE_FULLSCREEN` afterwards fills that display: a show on the projector while the desk stays on the laptop.
+* **`GFX.DISPLAYS() -> array`**: One map per connected display: `"index"` (from 1), `"name"`, `"x"`, `"y"`, `"w"`, `"h"` (its place on the desktop) and `"primary"`.
+* **`GFX.DISPLAY n`**: The display the next `SCREEN` opens on, `n` an `"index"` of `GFX.DISPLAYS()` or 0 for the primary one. A window that is open moves there, so `TOGGLE_FULLSCREEN` afterwards fills that display: a show on the projector while the desk stays on the laptop.
 * **`TOGGLE_FULLSCREEN`**: Toggles the graphics window between fullscreen and windowed mode.
 
 #### Graphics Window & Event Handling
@@ -2960,7 +2965,8 @@ The `MAT4.*` helpers build 4x4 transforms for OpenGL. Every function returns a 1
 * **`MAT4.LOOKAT(ex, ey, ez, tx, ty, tz, ux, uy, uz) -> mat4`**: View matrix from eye, target and up vectors (9 scalars).
 * **`MAT4.MUL(a, b) -> mat4`**: Matrix product `a * b`.
 * **`MAT4.TRANSLATE(m, x, y, z) -> mat4`**: `m * Translation(x, y, z)`.
-* **`MAT4.ROTATE(m, angle_rad, ax, ay, az) -> mat4`**: `m * Rotation(angle about axis)`; `angle_rad` in **radians**.
+* **`MAT4.ROTATE(m, angle_deg, ax, ay, az) -> mat4`**: `m * Rotation(angle about axis)`; the angle is in **degrees**, like every graphics angle.
+* **`MAT4.ROTATE_RAD(m, angle_rad, ax, ay, az) -> mat4`**: The same with the angle in radians. Until 2.0 `MAT4.ROTATE` took radians; code written for that calls this one.
 * **`MAT4.SCALE(m, sx, sy, sz) -> mat4`**: `m * Scale(sx, sy, sz)`.
 
 #### Audio File Playback (SDL_mixer)
@@ -3290,7 +3296,7 @@ btn = FORM.BUTTON(frm, "btnOK", "OK", 110, 80, 100, 28)
 SUB BTNOK_CLICK(e)
     MSGBOX("Clicked!", 64, "Hello")
 ENDSUB
-ON "BTNOK_CLICK" CALL BTNOK_CLICK
+ON "BTNOK_CLICK" CALL BTNOK_CLICK@
 
 FORM.RUN(frm)    ' message loop; returns when every form is closed
 ```
@@ -3780,7 +3786,7 @@ Use these functions to retrieve audio data for custom ImGui oscilloscopes or deb
 * **`SOUND.GET_WAVE() -> Array`**: Returns the last 1024 samples of the master output (stereo averaged to mono), oldest first: a scope.
 * **`SOUND.GET_BUS_WAVE(bus_id) -> Array`**: The last 1024 samples sent to the effect buses, all orbits together: `0` the reverb sends, `1` the delay sends.
 * **`SOUND.CYCLE() -> number`**: The sequencer clock in cycles (bars) since the sequencer started; the whole part is the bar, the fraction the position in it.
-* **`SOUND.CLOCK() -> map`**: When the song is heard: `{"CYCLE", "T", "CPS"}` says cycle `CYCLE` leaves the speaker at `T`, in nanoseconds on the clock of `NODE.TIME()`, the device latency included, and the song moves on at `CPS` cycles per second. Another program on the same machine computes the cycle it hears now as `CYCLE + (NODE.TIME() - T) / 1E9 * CPS`, which is how a show in a second process stays in step with the music. `SOUND.SEEK` moves the anchor at once.
+* **`SOUND.CLOCK() -> map`**: When the song is heard: `{"cycle", "t", "cps"}` says cycle `cycle` leaves the speaker at `t`, in nanoseconds on the clock of `NODE.TIME()`, the device latency included, and the song moves on at `cps` cycles per second. Another program on the same machine computes the cycle it hears now as `CYCLE + (NODE.TIME() - T) / 1E9 * CPS`, which is how a show in a second process stays in step with the music. `SOUND.SEEK` moves the anchor at once.
 * `bus_id`: `0` for Reverb, `1` for Delay.
 * **`SOUND.RENDER(frames) -> Array`**: Renders the next `frames` stereo frames of the live sequencer and returns them interleaved as `[L0, R0, L1, R1, ...]` (length `frames * 2`), advancing the sequencer by `frames` at 44100 Hz. For embed hosts built without an audio device (the `SOUND` build flag) that drive their own engine, e.g. feeding a Godot `AudioStreamGenerator`. See SequencerHelp.md "Embedded / Pull-Mode Rendering".
 * **`SOUND.RECORD [path$]`**: Writes everything the mixer puts out from now on into a 16-bit stereo WAV at 44.1 kHz, `path$`; `SOUND.RECORD` with no argument or `""` finishes the file. It records the device output as well as `SOUND.RENDER` in `PULL` mode, so an offline render of a song lands on disk sample for sample. `SOUND.RESET` and `SOUND.SHUTDOWN` finish an open file.
@@ -4322,7 +4328,7 @@ NODE.JOIN "songgen", "lan"
 NODE.JOIN "stage", "lan"
 DIM clock = TOPIC.SUBSCRIBE("song/clock", "latest")
 DIM c = CHAN.RECV(clock, 5000)
-DIM heard_at = NODE.TIME_OF("songgen", c{"T"})     ' on this machine's clock
+DIM heard_at = NODE.TIME_OF("songgen", c{"t"})     ' on this machine's clock
 ```
 
 Recipes for the usual shapes (a viewer of a running program, a work queue, a service, a dashboard, big arrays) are in [NodeBus.md](NodeBus.md). `jdBasic --nodes` lists the nodes of the machine, `tools/nodespy.jdb` shows every topic live, and the MCP server shows the same through `jdb_nodes` and `jdb_peek`.
@@ -4334,10 +4340,10 @@ DIM clock = TOPIC.OPEN("song/clock")
 TOPIC.RETAIN clock, TRUE
 DIM inbox = NODE.INBOX()
 DO
-    CHAN.SEND clock, {"CYCLE": SOUND.CYCLE(), "T": NODE.TIME()}
+    CHAN.SEND clock, {"cycle": SOUND.CYCLE(), "t": NODE.TIME()}
     DIM msg = CHAN.TRY_RECV(inbox)
     IF NODE.IS_CALL(msg) THEN
-        IF msg{"METHOD"} = "JUMP" THEN DIM jumped = NODE.REPLY(msg, TRUE)
+        IF msg{"method"} = "JUMP" THEN DIM jumped = NODE.REPLY(msg, TRUE)
     ENDIF
     SLEEP 16
 LOOP
@@ -4349,7 +4355,7 @@ NODE.JOIN "show"
 DIM clock = TOPIC.SUBSCRIBE("song/clock", "latest")
 DO
     DIM c = CHAN.TRY_RECV(clock)
-    IF NOT CHAN.IS_TIMEOUT(c) THEN PRINT c{"CYCLE"}
+    IF NOT CHAN.IS_TIMEOUT(c) THEN PRINT c{"cycle"}
     SLEEP 16
 LOOP
 ```
@@ -4360,9 +4366,9 @@ LOOP
 * **`NODE.OPEN(name$, [scope$], [key$]) -> handle`**: A further node in the same program, for tests or to split roles. The default node stays as it was. The calls with an optional `node` argument act for the node given there.
 * **`NODE.LEAVE [node]`**: Leaves: links close, the directory file goes, the node's inbox, subscriptions and events read EOF, its topics close. A program that ends leaves on its own.
 * **`NODE.NAME$([node]) -> string$`**: The full address, `name@host`.
-* **`NODE.PEERS([pattern$]) -> array`**: One map per other node whose name matches `pattern$` (`*` and `?`): `"NAME"`, `"ADDR"` (`name@host`), `"HOST"`, `"PID"`, `"SCOPE"`, `"TOPICS"` (the topics it publishes) and `"SINCE"` (a date). The nodes of this machine come first; for a default node in the lan scope the lan nodes with the same key follow, with `"IP"` and, once measured, `"OFFSET"` (their clock minus this one, in nanoseconds) and `"ERROR"` (how far off that may be).
+* **`NODE.PEERS([pattern$]) -> array`**: One map per other node whose name matches `pattern$` (`*` and `?`): `"name"`, `"addr"` (`name@host`), `"host"`, `"pid"`, `"scope"`, `"topics"` (the topics it publishes) and `"since"` (a date). The nodes of this machine come first; for a default node in the lan scope the lan nodes with the same key follow, with `"ip"` and, once measured, `"offset"` (their clock minus this one, in nanoseconds) and `"error"` (how far off that may be).
 * **`NODE.FIND(addr$, [timeout_ms]) -> boolean`**: Waits until the node exists, at most `timeout_ms` (default 5000). For a program that starts another one and waits for it. `addr$` is a name, which finds a node of this machine first and then one on the lan, or `name@host`.
-* **`NODE.EVENTS([node]) -> channel`**: A channel that receives `{"EVENT": "JOIN" or "LEAVE", "ADDR": name}` as other nodes come and go.
+* **`NODE.EVENTS([node]) -> channel`**: A channel that receives `{"event": "JOIN" or "LEAVE", "addr": name}` as other nodes come and go.
 * **`NODE.INBOX([node]) -> channel`**: The channel direct messages and calls arrive on. It keeps the newest 4096 values.
 * **`NODE.SEND(addr$, value, [node]) -> boolean`**: Puts `value` into that node's inbox. `FALSE` when there is no such node or it cannot be reached; `NODE.ERROR$` says why. Messages from one node arrive in the order they were sent.
 * **`NODE.ERROR$() -> string$`**: Why the last `NODE.SEND` or `NODE.FIND` failed.
@@ -4373,8 +4379,8 @@ LOOP
 ### Calls
 
 * **`NODE.CALL(addr$, method$, arg, [timeout_ms], [node]) -> value`**: Asks another node and waits for its answer, at most `timeout_ms` (default 5000); after that it returns the timeout marker (`CHAN.IS_TIMEOUT`). An answer given with `NODE.FAIL`, or a handler that raised, raises here as `remote <addr>: <message>`. A node that does not exist raises.
-* **`NODE.CALL_ASYNC(addr$, method$, arg, [node]) -> channel`**: The same without waiting: the answer arrives on the returned channel, which then closes. A failure arrives as a map `NODE.IS_FAIL` recognises, with the message in `"ERROR"`.
-* **`NODE.IS_CALL(value) -> boolean`**: Whether an inbox value is a call: a map with `"METHOD"`, `"ARG"` and `"FROM"` (the caller's name).
+* **`NODE.CALL_ASYNC(addr$, method$, arg, [node]) -> channel`**: The same without waiting: the answer arrives on the returned channel, which then closes. A failure arrives as a map `NODE.IS_FAIL` recognises, with the message in `"error"`.
+* **`NODE.IS_CALL(value) -> boolean`**: Whether an inbox value is a call: a map with `"method"`, `"arg"` and `"from"` (the caller's name).
 * **`NODE.REPLY(call, value) -> boolean`** / **`NODE.FAIL(call, message$) -> boolean`**: Answer a call taken from the inbox. `FALSE` when it was answered already or the caller has gone.
 * **`NODE.IS_FAIL(value) -> boolean`**: Whether a `CALL_ASYNC` answer is a failure.
 * **`NODE.SERVE method$, func$, [node]`**: Calls of `method$` (case does not matter) go to `func$` instead of the inbox: a `FUNC` that takes the call map and returns the answer. An empty `func$` removes it. Handlers run inside `NODE.POLL`, on the thread that calls it, so they see the program's globals.
@@ -4382,11 +4388,11 @@ LOOP
 
 ```basic
 FUNC ADD_HANDLER(c)
-    RETURN c{"ARG"}[0] + c{"ARG"}[1]
+    RETURN c{"arg"}[0] + c{"arg"}[1]
 ENDFUNC
 
 NODE.JOIN "calc"
-NODE.SERVE "ADD", "ADD_HANDLER"
+NODE.SERVE "ADD", ADD_HANDLER@
 DO
     DIM ran = NODE.POLL(100)
 LOOP
@@ -4404,12 +4410,12 @@ Each subscription chooses a **policy**:
 * `"ring:N"`: the newest N values.
 
 * **`TOPIC.OPEN(name$, [mode$], [node]) -> channel`**: Publishes `name$` (no `*`, `?`, quote or backslash). `mode$` is `"drop"` (default) or `"block"`: what `CHAN.SEND` does when a queue reader is full. `CHAN.CLOSE` on the channel ends the topic.
-* **`TOPIC.SUBSCRIBE(pattern$, [policy$], [envelope], [node]) -> channel`**: Subscribes to every topic matching `pattern$` (`*`, `?`). With `envelope` `TRUE` each value arrives as `{"DATA", "FROM", "TOPIC", "SEQ", "T"}`: the value, the publishing node, the topic, its sequence number and the `NODE.TIME` it was sent at.
+* **`TOPIC.SUBSCRIBE(pattern$, [policy$], [envelope], [node]) -> channel`**: Subscribes to every topic matching `pattern$` (`*`, `?`). With `envelope` `TRUE` each value arrives as `{"data", "from", "topic", "seq", "t"}`: the value, the publishing node, the topic, its sequence number and the `NODE.TIME` it was sent at.
 * **`TOPIC.SHARE(name$, [capacity], [node]) -> channel`**: A work queue: each value of the topic goes to exactly one of the channels sharing it, the next one with room. `capacity` (default 64) is how far a worker may fall behind.
 * **`TOPIC.UNSUBSCRIBE ch`**: Ends a subscription, the same as `CHAN.CLOSE ch`.
 * **`TOPIC.RETAIN pub, flag`**: The topic keeps its last value and hands it to every new subscriber first, so a program that starts late still gets the current state.
-* **`TOPIC.LIST([pattern$]) -> array`**: `{"TOPIC", "ADDR"}` for every topic on this machine that matches.
-* **`TOPIC.STATS(ch) -> map`**: For a publisher `"TOPIC"`, `"SENT"`, `"DROPPED"`, `"BYTES"`, `"SUBSCRIBERS"`; for a subscription `"PATTERN"`, `"RECEIVED"`, `"DROPPED"`, `"BYTES"`, `"PUBLISHERS"`.
+* **`TOPIC.LIST([pattern$]) -> array`**: `{"topic", "addr"}` for every topic on this machine that matches.
+* **`TOPIC.STATS(ch) -> map`**: For a publisher `"topic"`, `"sent"`, `"dropped"`, `"bytes"`, `"subscribers"`; for a subscription `"pattern"`, `"received"`, `"dropped"`, `"bytes"`, `"publishers"`.
 
 ```basic
 ' Jobs go to one worker each; the scope only to whoever wants the newest frame
@@ -4849,7 +4855,7 @@ SUB OnTick(d)
     PRINT ADC.TEMP()
 ENDSUB
 
-ON "TICK" CALL OnTick
+ON "TICK" CALL OnTick@
 TIMER.EVERY(1000)
 ```
 
@@ -4915,7 +4921,7 @@ TIMER.EVERY(1000)
 ```basic
 IF WIFI.AP("jdbasic", "plotter123") = 0 THEN
     PRINT "open http://"; WIFI.IP$()
-    HTTP.SERVER.ON_GET("/", "HOME")
+    HTTP.SERVER.ON_GET("/", HOME@)
     HTTP.SERVER.START(80)
     HTTP.SERVER.WAIT(0)
 ENDIF
@@ -5236,7 +5242,7 @@ Every documented builtin, linked to the section that describes it.
 
 **L** · [LCASE$](#string-functions) · [LCM](#matharithmeticround-functions) · [LEFT$](#string-functions) · [LEN](#string-functions) · [LENV](#string-functions) · [LERP](#array--matrix-functions) · [LIB](#foreign-function-interface-declare-func) · [LINE](#graphics-and-multimedia-functions) · [LINSPACE](#array--matrix-functions) · [LINT](#development--debugging) · [LIST](#development--debugging) · [LIST_RECUR](#background-tasks--timers) · [LOAD](#development--debugging) · [LOADWS](#development--debugging) · [LOG](#matharithmeticround-functions) · [LOG10](#matharithmeticround-functions) · [LPAD$](#string-functions) · [LTRIM$](#string-functions)
 
-**M** · [MAT4.IDENTITY](#graphics-and-multimedia-functions) · [MAT4.LOOKAT](#graphics-and-multimedia-functions) · [MAT4.MUL](#graphics-and-multimedia-functions) · [MAT4.PERSPECTIVE](#graphics-and-multimedia-functions) · [MAT4.ROTATE](#graphics-and-multimedia-functions) · [MAT4.SCALE](#graphics-and-multimedia-functions) · [MAT4.TRANSLATE](#graphics-and-multimedia-functions) · [MATH.E](#built-in-constants) · [MATH.PI](#built-in-constants) · [MATMUL](#array--matrix-functions) · [MATMUL_T](#array--matrix-functions) · [MEAN](#array--matrix-functions) · [MKDIR](#filesystem) · [MKTEMP$](#system-and-time-functions) · [MOUSEB](#mouse--joystick--gamepad-input) · [MOUSEX](#mouse--joystick--gamepad-input) · [MOUSEY](#mouse--joystick--gamepad-input) · [MSGBOX](#native-windows-forms-form) · [MUSIC.PLAY](#imgui-functions) · [MUSIC.STOP](#imgui-functions) · [MVINS](#array--matrix-functions) · [MVLET](#array--matrix-functions)
+**M** · [MAT4.IDENTITY](#graphics-and-multimedia-functions) · [MAT4.LOOKAT](#graphics-and-multimedia-functions) · [MAT4.MUL](#graphics-and-multimedia-functions) · [MAT4.PERSPECTIVE](#graphics-and-multimedia-functions) · [MAT4.ROTATE](#graphics-and-multimedia-functions) · [MAT4.ROTATE_RAD](#graphics-and-multimedia-functions) · [MAT4.SCALE](#graphics-and-multimedia-functions) · [MAT4.TRANSLATE](#graphics-and-multimedia-functions) · [MATH.E](#built-in-constants) · [MATH.PI](#built-in-constants) · [MATMUL](#array--matrix-functions) · [MATMUL_T](#array--matrix-functions) · [MEAN](#array--matrix-functions) · [MKDIR](#filesystem) · [MKTEMP$](#system-and-time-functions) · [MOUSEB](#mouse--joystick--gamepad-input) · [MOUSEX](#mouse--joystick--gamepad-input) · [MOUSEY](#mouse--joystick--gamepad-input) · [MSGBOX](#native-windows-forms-form) · [MUSIC.PLAY](#imgui-functions) · [MUSIC.STOP](#imgui-functions) · [MVINS](#array--matrix-functions) · [MVLET](#array--matrix-functions)
 
 **N** · [NET.ACCEPT](#tcp-and-udp-sockets-net) · [NET.ALIVE](#tcp-and-udp-sockets-net) · [NET.CLOSE](#tcp-and-udp-sockets-net) · [NET.CONNECT](#tcp-and-udp-sockets-net) · [NET.ERROR$](#tcp-and-udp-sockets-net) · [NET.LISTEN](#tcp-and-udp-sockets-net) · [NET.PEER$](#tcp-and-udp-sockets-net) · [NET.PORT](#tcp-and-udp-sockets-net) · [NET.RECV$](#tcp-and-udp-sockets-net) · [NET.RECVFROM](#tcp-and-udp-sockets-net) · [NET.RECVLINE$](#tcp-and-udp-sockets-net) · [NET.SEND](#tcp-and-udp-sockets-net) · [NET.SENDTO](#tcp-and-udp-sockets-net) · [NET.UDP](#tcp-and-udp-sockets-net) · [NEW](#development--debugging) · [NODE.CALL](#calls) · [NODE.CALL_ASYNC](#calls) · [NODE.ERROR$](#nodes-and-messages) · [NODE.EVENTS](#nodes-and-messages) · [NODE.FIND](#nodes-and-messages) · [NODE.INBOX](#nodes-and-messages) · [NODE.IS_CALL](#calls) · [NODE.IS_FAIL](#calls) · [NODE.JOIN](#nodes-and-messages) · [NODE.LEAVE](#nodes-and-messages) · [NODE.NAME$](#nodes-and-messages) · [NODE.OPEN](#nodes-and-messages) · [NODE.PACK$](#encoding--hashing-codec) · [NODE.PEERS](#nodes-and-messages) · [NODE.POLL](#calls) · [NODE.REPLY](#calls) · [NODE.SEND](#nodes-and-messages) · [NODE.SERVE](#calls) · [NODE.TIME](#nodes-and-messages) · [NODE.TIME_OF](#nodes-and-messages) · [NODE.TRACE](#nodes-and-messages) · [NODE.UNPACK](#encoding--hashing-codec) · [NORMALIZE](#array--matrix-functions) · [NOW](#system-and-time-functions) · [NOW_EPOCH](#system-and-time-functions)
 
@@ -5246,7 +5252,7 @@ Every documented builtin, linked to the section that describes it.
 
 **Q** · [QR](#array--matrix-functions)
 
-**R** · [RAISEEVENT](#system--flow-control) · [RANDOM](#matharithmeticround-functions) · [RANDOMSEED](#matharithmeticround-functions) · [RANGE](#array--matrix-functions) · [REACT_BIND](#reactive-variables-and-assignment) · [RECT](#graphics-and-multimedia-functions) · [RECUR](#background-tasks--timers) · [REDUCE](#array--matrix-functions) · [REGEX.FINDALL](#regular-expression-functions) · [REGEX.MATCH](#regular-expression-functions) · [REGEX.REPLACE$](#regular-expression-functions) · [RELEASEALL](#com-automation-functions) · [RELEASEOBJECT](#com-automation-functions) · [REPEAT$](#string-functions) · [REPLACE$](#string-functions) · [RESHAPE](#array--matrix-functions) · [REVERSE](#array--matrix-functions) · [REVERSE$](#string-functions) · [RMDIR](#filesystem) · [RND](#matharithmeticround-functions) · [RNG.FILL](#matharithmeticround-functions) · [RNG.FREE](#matharithmeticround-functions) · [RNG.INT](#matharithmeticround-functions) · [RNG.NEW](#matharithmeticround-functions) · [RNG.NEXT](#matharithmeticround-functions) · [ROTATE](#array--matrix-functions) · [ROTL](#matharithmeticround-functions) · [ROUND](#matharithmeticround-functions) · [ROUNDED_RECT](#graphics-and-multimedia-functions) · [RUN](#development--debugging)
+**R** · [RADIANS](#matharithmeticround-functions) · [RAISEEVENT](#system--flow-control) · [RANDOM](#matharithmeticround-functions) · [RANDOMSEED](#matharithmeticround-functions) · [RANGE](#array--matrix-functions) · [REACT_BIND](#reactive-variables-and-assignment) · [RECT](#graphics-and-multimedia-functions) · [RECUR](#background-tasks--timers) · [REDUCE](#array--matrix-functions) · [REGEX.FINDALL](#regular-expression-functions) · [REGEX.MATCH](#regular-expression-functions) · [REGEX.REPLACE$](#regular-expression-functions) · [RELEASEALL](#com-automation-functions) · [RELEASEOBJECT](#com-automation-functions) · [REPEAT$](#string-functions) · [REPLACE$](#string-functions) · [RESHAPE](#array--matrix-functions) · [REVERSE](#array--matrix-functions) · [REVERSE$](#string-functions) · [RMDIR](#filesystem) · [RND](#matharithmeticround-functions) · [RNG.FILL](#matharithmeticround-functions) · [RNG.FREE](#matharithmeticround-functions) · [RNG.INT](#matharithmeticround-functions) · [RNG.NEW](#matharithmeticround-functions) · [RNG.NEXT](#matharithmeticround-functions) · [ROTATE](#array--matrix-functions) · [ROTL](#matharithmeticround-functions) · [ROUND](#matharithmeticround-functions) · [ROUNDED_RECT](#graphics-and-multimedia-functions) · [RUN](#development--debugging)
 
 **S** · [SAVE](#development--debugging) · [SAVEWS](#development--debugging) · [SCAN](#array--matrix-functions) · [SCREEN](#graphics-and-multimedia-functions) · [SCREENFLIP](#graphics-and-multimedia-functions) · [SCREENWIDTH](#graphics-and-multimedia-functions) · [SELECT](#array--matrix-functions) · [SERIAL.AVAILABLE](#serial-communication-com) · [SERIAL.CLOSE](#serial-communication-com) · [SERIAL.FLUSH](#serial-communication-com) · [SERIAL.OPEN](#serial-communication-com) · [SERIAL.READ$](#serial-communication-com) · [SERIAL.WRITE](#serial-communication-com) · [SETENV](#system-and-time-functions) · [SETFONT](#graphics-and-multimedia-functions) · [SETLOCALE](#system-and-time-functions) · [SFX.LOAD](#imgui-functions) · [SFX.PLAY](#imgui-functions) · [SGN](#matharithmeticround-functions) · [SHIFT](#array--matrix-functions) · [SHUFFLE](#array--matrix-functions) · [SIN](#matharithmeticround-functions) · [SINH](#matharithmeticround-functions) · [SLEEP](#system--flow-control) · [SLICE](#array--matrix-functions) · [SOLVE](#array--matrix-functions) · [SORT](#array--matrix-functions) · [SOUND.AT](#live-coding-sequencer) · [SOUND.BITCRUSH](#live-coding-sequencer) · [SOUND.CHORUS](#live-coding-sequencer) · [SOUND.CLOCK](#visualization--analysis) · [SOUND.COMPRESSOR](#track-sends-and-sidechain) · [SOUND.CYCLE](#visualization--analysis) · [SOUND.DEBUG](#track-sends-and-sidechain) · [SOUND.DELAY](#track-sends-and-sidechain) · [SOUND.DELAYSEND](#track-sends-and-sidechain) · [SOUND.DISTORTION](#track-sends-and-sidechain) · [SOUND.EQ](#live-coding-sequencer) · [SOUND.EVENTS$](#live-coding-sequencer) · [SOUND.FENV](#live-coding-sequencer) · [SOUND.FILTER](#live-coding-sequencer) · [SOUND.FM](#live-coding-sequencer) · [SOUND.FORMANT](#live-coding-sequencer) · [SOUND.GAIN](#live-coding-sequencer) · [SOUND.GET_BUS_WAVE](#visualization--analysis) · [SOUND.GET_WAVE](#visualization--analysis) · [SOUND.GLIDE](#live-coding-sequencer) · [SOUND.INIT](#imgui-functions) · [SOUND.KIT](#live-coding-sequencer) · [SOUND.LEVELS](#live-coding-sequencer) · [SOUND.LFO](#live-coding-sequencer) · [SOUND.LIMITER](#track-sends-and-sidechain) · [SOUND.LOUDNESS](#track-sends-and-sidechain) · [SOUND.MASTER](#track-sends-and-sidechain) · [SOUND.MOD](#live-coding-sequencer) · [SOUND.MUTE](#live-coding-sequencer) · [SOUND.NOTE](#imgui-functions) · [SOUND.NUDGE](#live-coding-sequencer) · [SOUND.ORBIT](#track-sends-and-sidechain) · [SOUND.OSC2](#live-coding-sequencer) · [SOUND.PAN](#live-coding-sequencer) · [SOUND.PENDING](#live-coding-sequencer) · [SOUND.PLAY](#imgui-functions) · [SOUND.PLAYBUFFER](#imgui-functions) · [SOUND.QUEUED](#imgui-functions) · [SOUND.RECORD](#visualization--analysis) · [SOUND.RELEASE](#imgui-functions) · [SOUND.RENDER](#visualization--analysis) · [SOUND.RESET](#track-sends-and-sidechain) · [SOUND.REVERB](#track-sends-and-sidechain) · [SOUND.REVERBSEND](#track-sends-and-sidechain) · [SOUND.RINGMOD](#live-coding-sequencer) · [SOUND.SAMPLE](#imgui-functions) · [SOUND.SEEK](#live-coding-sequencer) · [SOUND.SHUTDOWN](#track-sends-and-sidechain) · [SOUND.SIDECHAIN](#track-sends-and-sidechain) · [SOUND.STATS$](#imgui-functions) · [SOUND.STOP](#imgui-functions) · [SOUND.UNISON](#live-coding-sequencer) · [SOUND.VOICE](#imgui-functions) · [SOUND.WIDTH](#live-coding-sequencer) · [SPACE$](#string-functions) · [SPLIT](#string-functions) · [SPRITE.ALPHA](#graphics-and-multimedia-functions) · [SPRITE.ANIM](#graphics-and-multimedia-functions) · [SPRITE.COLLISION](#graphics-and-multimedia-functions) · [SPRITE.COLLISIONS](#graphics-and-multimedia-functions) · [SPRITE.COLLISION_FIRST](#graphics-and-multimedia-functions) · [SPRITE.CREATE](#graphics-and-multimedia-functions) · [SPRITE.DELETE](#graphics-and-multimedia-functions) · [SPRITE.DRAW](#graphics-and-multimedia-functions) · [SPRITE.DRAW_ALL](#graphics-and-multimedia-functions) · [SPRITE.FLIP](#graphics-and-multimedia-functions) · [SPRITE.FRAME](#graphics-and-multimedia-functions) · [SPRITE.GET_VX](#graphics-and-multimedia-functions) · [SPRITE.GET_X](#graphics-and-multimedia-functions) · [SPRITE.GRAVITY](#graphics-and-multimedia-functions) · [SPRITE.GROUP](#graphics-and-multimedia-functions) · [SPRITE.LAND](#graphics-and-multimedia-functions) · [SPRITE.LOAD](#graphics-and-multimedia-functions) · [SPRITE.ON_GROUND](#graphics-and-multimedia-functions) · [SPRITE.PLAY](#graphics-and-multimedia-functions) · [SPRITE.PLAYING](#graphics-and-multimedia-functions) · [SPRITE.POS](#graphics-and-multimedia-functions) · [SPRITE.ROTATE](#graphics-and-multimedia-functions) · [SPRITE.SAVE](#graphics-and-multimedia-functions) · [SPRITE.SCALE](#graphics-and-multimedia-functions) · [SPRITE.SETBUFFER](#graphics-and-multimedia-functions) · [SPRITE.SETPIXEL](#graphics-and-multimedia-functions) · [SPRITE.SET_ORIGIN](#graphics-and-multimedia-functions) · [SPRITE.STOP](#graphics-and-multimedia-functions) · [SPRITE.UPDATE](#graphics-and-multimedia-functions) · [SPRITE.VELOCITY](#graphics-and-multimedia-functions) · [SPRITE.VISIBLE](#graphics-and-multimedia-functions) · [SPRITE.WIDTH](#graphics-and-multimedia-functions) · [SPRITE.ZORDER](#graphics-and-multimedia-functions) · [SQL.CLOSE](#file-io-functions) · [SQL.COLUMNS](#file-io-functions) · [SQL.ERRMSG$](#file-io-functions) · [SQL.EXEC](#file-io-functions) · [SQL.OPEN](#file-io-functions) · [SQL.QUERY](#file-io-functions) · [SQL.TABLE](#file-io-functions) · [SQR](#matharithmeticround-functions) · [STACK](#array--matrix-functions) · [STACK$](#error-handling-trycatch) · [STARTSWITH](#string-functions) · [STOP](#system--flow-control) · [STR$](#string-functions) · [SUB](#user-defined-types-typeendtype) · [SVD](#array--matrix-functions) · [SWITCH](#switchcaseendswitch) · [SYS.CALL](#bare-metal-the-kernel-target) · [SYS.DF$](#filesystem) · [SYS.FREEDISK](#filesystem) · [SYS.HEAP](#filesystem) · [SYS.INB](#bare-metal-the-kernel-target) · [SYS.MEMORY](#os-functions) · [SYS.OUTB](#bare-metal-the-kernel-target) · [SYS.PEEKB](#bare-metal-the-kernel-target) · [SYS.POKEB](#bare-metal-the-kernel-target)
 

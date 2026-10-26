@@ -54,6 +54,13 @@ void VM::register_math_builtins() {
     register_native("SIN", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(std::sin(args[0].to_double()));
     });
+    // Angles: the math builtins take radians, the graphics builtins degrees.
+    register_native("RADIANS", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_f64(args[0].to_double() * (3.14159265358979323846 / 180.0));
+    });
+    register_native("DEGREES", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_f64(args[0].to_double() * (180.0 / 3.14159265358979323846));
+    });
     register_native("COS", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(std::cos(args[0].to_double()));
     });

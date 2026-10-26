@@ -748,10 +748,19 @@ void register_opengl_builtins(VM& vm) {
         return mat4_to_value(out);
     });
 
-    // MAT4.ROTATE(m, angle_rad, ax, ay, az) → m * R
+    // MAT4.ROTATE(m, angle_deg, ax, ay, az) → m * R; graphics angles are degrees
     vm.register_native("MAT4.ROTATE", 5, 5, [](const std::vector<Value>& args) -> Value {
         double m[16], out[16];
         mat4_from_value(args[0], "MAT4.ROTATE", m);
+        mat4_rotate(out, m, args[1].to_double() * (3.14159265358979323846 / 180.0),
+                    args[2].to_double(), args[3].to_double(), args[4].to_double());
+        return mat4_to_value(out);
+    });
+
+    // MAT4.ROTATE_RAD(m, angle_rad, ax, ay, az) → m * R
+    vm.register_native("MAT4.ROTATE_RAD", 5, 5, [](const std::vector<Value>& args) -> Value {
+        double m[16], out[16];
+        mat4_from_value(args[0], "MAT4.ROTATE_RAD", m);
         mat4_rotate(out, m, args[1].to_double(),
                     args[2].to_double(), args[3].to_double(), args[4].to_double());
         return mat4_to_value(out);

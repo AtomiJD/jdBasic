@@ -794,10 +794,12 @@ StmtPtr Parser::parse_statement() {
             ExprPtr event_name = parse_expr();
             expect(TokenType::CALL, "'CALL'");
             std::string handler = expect(TokenType::IDENTIFIER, "handler name").value;
+            bool funcref = match(TokenType::AT);
             expect_newline();
             std::vector<ExprPtr> args;
             args.push_back(std::move(event_name));
             args.push_back(make_string_lit(handler, ln));
+            args.back()->is_funcref_lit = funcref;
             auto call = make_call("__EVENT_ON", std::move(args), ln);
             return make_expr_stmt(std::move(call), ln);
         }

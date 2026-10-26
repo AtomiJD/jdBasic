@@ -486,9 +486,9 @@ FUNC LocalSource$(source$)
     IF IsGit(source$) THEN
         DIM clone$ = MKTEMP$("pkggit")
         DIM res = OS.EXEC("git", ["clone", "--depth", "1", "--quiet", source$, clone$])
-        DIM code = res{"EXIT_CODE"}
+        DIM code = res{"exit_code"}
         IF code <> 0 THEN
-            DIM why$ = res{"OUTPUT"}
+            DIM why$ = res{"output"}
             THROW "PKG: git clone failed: " + TRIM$(why$)
         ENDIF
         DIM in_lib$ = PATH.JOIN$(clone$, "lib")
@@ -500,7 +500,7 @@ FUNC LocalSource$(source$)
         IF IsUrl(source$) THEN
             zip_path$ = MKTEMP$("pkgzip") + ".zip"
             DIM dl = OS.EXEC("curl", ["-sSL", "-o", zip_path$, source$])
-            DIM dl_code = dl{"EXIT_CODE"}
+            DIM dl_code = dl{"exit_code"}
             IF dl_code <> 0 THEN THROW "PKG: download failed: " + source$
         ENDIF
         DIM unpacked$ = MKTEMP$("pkgunzip")

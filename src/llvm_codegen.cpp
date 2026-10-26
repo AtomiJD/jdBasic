@@ -404,6 +404,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_abs",    "ABS",    f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_sqr",    "SQR",    f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_sin",    "SIN",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_radians", "RADIANS", f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_degrees", "DEGREES", f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_cos",    "COS",    f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_tan",    "TAN",    f64_type, {f64_type}, JD_TAG_F64);
     reg("jdb_asin",   "ASIN",   f64_type, {f64_type}, JD_TAG_F64);
@@ -15668,14 +15670,23 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         TypedValue ev_name = codegen_expr(*expr.args[0]);
         TypedValue arg = codegen_expr(*expr.args[1]);
         auto& evfn = runtime_funcs["__event_raise_s"];
+        // The handler gets the argument as text: a number is written out.
+        bool numeric = arg.tag == JD_TAG_I64 || jd_is_f64_tag(arg.tag);
+        LLVMValueRef arg_text = numeric ? to_string_ptr(arg) : coerce_to(arg, i8_ptr_type);
         LLVMValueRef args[] = {
             coerce_to(ev_name, i8_ptr_type),
-            coerce_to(arg, i8_ptr_type),
+            arg_text,
         };
         LLVMBuildCall2(builder, evfn.fn_type, evfn.fn, args, 2, "");
         // The runtime hands the handler its own copy of both.
         drop_fresh_temp(*expr.args[0], ev_name);
-        drop_fresh_temp(*expr.args[1], arg);
+        if (numeric) {
+            auto& drop = runtime_funcs["__str_drop"];
+            LLVMValueRef dargs[] = { arg_text };
+            LLVMBuildCall2(builder, drop.fn_type, drop.fn, dargs, 1, "");
+        } else {
+            drop_fresh_temp(*expr.args[1], arg);
+        }
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
 
@@ -16480,6 +16491,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     static const std::unordered_map<std::string, VecSpec> native_vec = {
         // Numeric unary: all return double(double)
         {"SIN",  {"__arr_apply_ff", "jdb_sin",  "ff"}},
+        {"RADIANS", {"__arr_apply_ff", "jdb_radians", "ff"}},
+        {"DEGREES", {"__arr_apply_ff", "jdb_degrees", "ff"}},
         {"COS",  {"__arr_apply_ff", "jdb_cos",  "ff"}},
         {"TAN",  {"__arr_apply_ff", "jdb_tan",  "ff"}},
         {"ASIN", {"__arr_apply_ff", "jdb_asin", "ff"}},
@@ -16535,6 +16548,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         static const std::unordered_set<std::string> cellwise_math = {
             "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "SINH", "COSH", "TANH",
             "EXP", "LOG", "LOG10", "SQR", "ABS", "FLOOR", "CEIL", "ROUND", "TRUNC",
+            "RADIANS", "DEGREES",
         };
         bool keeps_kind = cellwise_math.count(upper) > 0 && expr.args.size() == 1;
         for (size_t i = 0; i < expr.args.size(); i++) {

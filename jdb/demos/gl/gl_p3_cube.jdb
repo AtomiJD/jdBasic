@@ -67,7 +67,7 @@ DO
     DIM now AS INTEGER = TICK()
     DIM dt  AS DOUBLE = (now - last_t) / 1000.0
     last_t = now
-    angle = angle + 1.2 * dt          ' rad/sec around tilted axis
+    angle = angle + 69 * dt           ' degrees per second around a tilted axis
 
     DIM model = MAT4.IDENTITY()
     model = MAT4.ROTATE(model, angle, 0.5, 1.0, 0.3)

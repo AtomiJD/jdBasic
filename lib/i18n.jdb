@@ -645,8 +645,8 @@ ENDFUNC
 EXPORT FUNC LOCALE_OF$(request, available, default$ = "")
     DIM header$ = ""
     IF TYPEOF(request) = "OBJECT" THEN
-        IF MAP.EXISTS(request, "HEADERS") THEN
-            DIM hs = request{"HEADERS"}
+        IF MAP.EXISTS(request, "headers") THEN
+            DIM hs = request{"headers"}
             IF TYPEOF(hs) = "OBJECT" ANDALSO MAP.EXISTS(hs, "accept-language") THEN
                 DIM raw = hs{"accept-language"}
                 header$ = "" + raw

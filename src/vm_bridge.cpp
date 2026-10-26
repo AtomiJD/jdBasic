@@ -1090,6 +1090,7 @@ struct JdbMapFwd {
     double*  values;
     int32_t* tags;
     void*    index;  // the runtime's key index; null in a map made here
+    int32_t  lower_keys;  // see jdb_lower_keys.h
 };
 
 // Walk a native JdbMap*, build a fresh Value::OBJECT mirroring its
@@ -1100,6 +1101,7 @@ static Value jdbmap_to_value(JdbMapFwd* m) {
     Value v = Value::make_object();
     if (!m) return v;
     auto* obj = v.as_object();
+    obj->lower_keys = m->lower_keys != 0;
     // A native map's keys are unique, so each field is appended instead of
     // looked up first, which made boxing a big map quadratic.
     obj->fields.reserve((size_t)m->count);
@@ -1180,6 +1182,7 @@ static JdbMapFwd* new_jdbmap(int64_t room) {
     m->values = (double*)malloc(sizeof(double) * m->capacity);
     m->tags = (int32_t*)malloc(sizeof(int32_t) * m->capacity);
     m->index = nullptr;
+    m->lower_keys = 0;
     return m;
 }
 
@@ -1226,6 +1229,7 @@ static JdbMapFwd* value_to_jdbmap(const Value& v) {
     const auto* obj = (v.type == ValueType::OBJECT) ? v.as_object() : nullptr;
     JdbMapFwd* m = new_jdbmap(obj ? (int64_t)obj->fields.size() : 1);
     if (!obj) return m;
+    m->lower_keys = obj->lower_keys ? 1 : 0;
     for (const auto& entry : obj->fields) {
         const Value& cell = entry.second;
         union { double d; int64_t i; } u; u.d = 0.0;

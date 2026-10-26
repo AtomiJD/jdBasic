@@ -168,10 +168,10 @@ TESTKIT.EQ(neg_wrong, 0, STR$(LEN(negotiate_rows)) + " negotiations as babel's n
 TESTKIT.EQ(I18N.NEGOTIATE$(["DE-at"], ["de-AT", "de"]), "de-AT", "the answer spelled as available")
 TESTKIT.EQ(I18N.NEGOTIATE$("de-AT,de;q=0.9", ["en", "de"]), "de", "a header as the preferred list")
 TESTKIT.EQ(I18N.NEGOTIATE$(["de"], ["de-DE", "en"]), "de-DE", "a bare language finds a locale of it")
-DIM req_fr = {"HEADERS": {"accept-language": "fr-CH, fr;q=0.9, en;q=0.8"}}
+DIM req_fr = {"headers": {"accept-language": "fr-CH, fr;q=0.9, en;q=0.8"}}
 TESTKIT.EQ(I18N.LOCALE_OF$(req_fr, ["de", "fr", "en"]), "fr", "LOCALE_OF$ reads a request")
 DIM no_headers AS MAP
-DIM req_none = {"HEADERS": no_headers}
+DIM req_none = {"headers": no_headers}
 TESTKIT.EQ(I18N.LOCALE_OF$(req_none, ["de"], "de"), "de", "and falls back without a header")
 TESTKIT.EQ(I18N.LOCALE_OF$(req_none, ["de"]), "en", "to the default locale")
 

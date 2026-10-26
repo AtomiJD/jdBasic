@@ -32,18 +32,29 @@ static bool unrecorded_return_kind(const std::string& name) {
            (sig->flags & BF_COMPILER_HANDLES) == 0;
 }
 
-// Every old name the program and its modules used (jdb_aliases.h).
-static std::vector<AliasUse> all_alias_uses(const Lexer& lexer, const Parser& parser) {
+// Every old name the program and its modules used (jdb_aliases.h), and
+// every handler named by a string where a funcref belongs.
+static std::vector<AliasUse> all_alias_uses(const Lexer& lexer, const Parser& parser,
+                                            const std::vector<StmtPtr>& ast) {
     std::vector<AliasUse> uses = lexer.alias_uses();
     uses.insert(uses.end(), parser.module_alias_uses.begin(), parser.module_alias_uses.end());
+    for (auto& h : find_string_handlers(ast)) {
+        bool call_form = h.name.rfind("CALL ", 0) == 0;
+        std::string name = call_form ? h.name.substr(5) : h.name;
+        std::string up = name;
+        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+        uses.push_back({ h.file, h.line, call_form ? h.name : "\"" + name + "\"", up + "@" });
+    }
     return uses;
 }
 
 static std::string alias_warning(const AliasUse& u, const std::string& main_file) {
     std::string where = u.file.empty() ? main_file : u.file;
-    return "warning at " + (where.empty() ? std::string("line ") : where + ":") +
-           std::to_string(u.line) + ": " + u.old_name + " is an old name, use " +
-           u.new_name + ".";
+    std::string head = "warning at " + (where.empty() ? std::string("line ") : where + ":") +
+                       std::to_string(u.line) + ": ";
+    if (!u.old_name.empty() && u.old_name[0] == '"')
+        return head + u.old_name + " names a handler by a string, use " + u.new_name + ".";
+    return head + u.old_name + " is an old name, use " + u.new_name + ".";
 }
 
 #if defined(_WIN32)
@@ -504,9 +515,9 @@ static void setup_dynamic_code(VM& vm) {
             Parser parser(std::move(tokens));
             setup_parser_modules(parser);
             parser.predeclared_types = v.known_types;
-            (void)parser.parse();
+            auto ast = parser.parse();
             std::string out;
-            for (auto& u : all_alias_uses(lexer, parser))
+            for (auto& u : all_alias_uses(lexer, parser, ast))
                 out += "\n" + alias_warning(u, "");
             return out.empty() ? "" : "ok" + out;
         } catch (const std::exception& e) {
@@ -1587,7 +1598,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 shadows.push_back(s.name + " (line " + std::to_string(s.line) + ")");
 
             std::vector<std::string> old_names;
-            for (auto& u : all_alias_uses(lexer, parser))
+            for (auto& u : all_alias_uses(lexer, parser, ast))
                 old_names.push_back(u.old_name + " -> " + u.new_name + " (" +
                     (u.file.empty() ? std::string() : u.file + ":") + "line " +
                     std::to_string(u.line) + ")");
@@ -2202,7 +2213,7 @@ int main(int argc, char* argv[]) {
             // name of the importing program is an error here.
             parser.strict_module_writes = true;
             ast = parser.parse();
-            for (auto& u : all_alias_uses(lexer, parser))
+            for (auto& u : all_alias_uses(lexer, parser, ast))
                 std::cerr << alias_warning(u, filename) << std::endl;
         } catch (const jdError& e) {
             std::cerr << "Parse error";

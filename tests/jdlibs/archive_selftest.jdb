@@ -446,7 +446,7 @@ IF tar_exe$ = "" THEN
     TESTKIT.SKIP("no system tar to check against")
 ELSE
     DIM listing = OS.EXEC(tar_exe$, ["-tf", tgz$])
-    DIM listing_text$ = listing{"OUTPUT"}
+    DIM listing_text$ = listing{"output"}
     DIM listed = SPLIT(REPLACE$(REPLACE$(TRIM$(REPLACE$(listing_text$, CHR$(13), "")), "/" + CHR$(10), CHR$(10)), CHR$(10), "|"), "|")
     DIM last_listed$ = listed[LEN(listed) - 1]
     TESTKIT.EQ(LEN(listed), 7, "lists the seven entries of the .tar.gz")
@@ -454,7 +454,7 @@ ELSE
     DIM sys_out$ = root$ + "/sys"
     MKDIR sys_out$
     DIM unpacked = OS.EXEC(tar_exe$, ["-xf", tgz$, "-C", sys_out$])
-    TESTKIT.EQ(unpacked{"EXIT_CODE"}, 0, "extracts it")
+    TESTKIT.EQ(unpacked{"exit_code"}, 0, "extracts it")
     TESTKIT.EQ(BINREADER$(sys_out$ + "/rel-1.0/sub/deeper/data.bin"), all_bytes$, "with the binary file unchanged")
     DIM formats_tar = ["pax", "gnu"]
     DIM ft = 0
@@ -463,13 +463,13 @@ ELSE
         DIM sys_tar$ = root$ + "/long_" + sys_fmt$ + ".tar"
         BINWRITER sys_tar$, ARCHIVE.TAR$(w, sys_fmt$)
         DIM sys_list = OS.EXEC(tar_exe$, ["-tvf", sys_tar$])
-        DIM sys_text$ = sys_list{"OUTPUT"}
-        TESTKIT.EQ(sys_list{"EXIT_CODE"}, 0, sys_fmt$ + ": lists the archive with long names")
+        DIM sys_text$ = sys_list{"output"}
+        TESTKIT.EQ(sys_list{"exit_code"}, 0, sys_fmt$ + ": lists the archive with long names")
         TESTKIT.ISTRUE(INSTR(sys_text$, pax_name$) >= 0, sys_fmt$ + ": with the 250-character name")
         TESTKIT.ISTRUE(INSTR(sys_text$, split_name$) >= 0, sys_fmt$ + ": the split name")
         TESTKIT.ISTRUE(INSTR(sys_text$, "rel/far.txt -> " + long_link$) >= 0, sys_fmt$ + ": and the 987-character link target")
         DIM print_one = OS.EXEC(tar_exe$, ["-xOf", sys_tar$, "rel/hello.txt"])
-        DIM print_text$ = print_one{"OUTPUT"}
+        DIM print_text$ = print_one{"output"}
         TESTKIT.EQ(REPLACE$(print_text$, CHR$(13), ""), "hello" + CHR$(10), sys_fmt$ + ": and the content of a file")
     NEXT ft
 ENDIF

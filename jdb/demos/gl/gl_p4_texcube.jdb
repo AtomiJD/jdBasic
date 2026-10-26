@@ -81,7 +81,7 @@ DO
     DIM now AS INTEGER = TICK()
     DIM dt  AS DOUBLE = (now - last_t) / 1000.0
     last_t = now
-    angle = angle + 0.8 * dt
+    angle = angle + 46 * dt           ' degrees per second
 
     DIM model = MAT4.IDENTITY()
     model = MAT4.ROTATE(model, angle, 0.4, 1.0, 0.2)

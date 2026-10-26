@@ -67,7 +67,7 @@ ENDFUNC
 FUNC Ask(method$, path$)
     DIM hs AS MAP
     DIM no_params AS MAP
-    RETURN {"METHOD": method$, "PATH": path$, "HEADERS": hs, "PARAMS": no_params, "BODY": ""}
+    RETURN {"method": method$, "path": path$, "headers": hs, "params": no_params, "body": ""}
 ENDFUNC
 
 TESTKIT.SUITE("numbers as prometheus_client writes them")

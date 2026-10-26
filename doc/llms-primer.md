@@ -466,11 +466,11 @@ FUNC HandleHome(request)
 ENDFUNC
 
 FUNC HandleApi(request)
-    RETURN {"status": "ok", "path": request{"PATH"}}
+    RETURN {"status": "ok", "path": request{"path"}}
 ENDFUNC
 
-HTTP.SERVER.ON_GET "/", "HandleHome"
-HTTP.SERVER.ON_GET "/api", "HandleApi"
+HTTP.SERVER.ON_GET "/", HandleHome@
+HTTP.SERVER.ON_GET "/api", HandleApi@
 IF HTTP.SERVER.START(8080) THEN
     PRINT "http://localhost:8080"
     HTTP.SERVER.WAIT()
@@ -491,7 +491,7 @@ DIM running AS INTEGER = 1
 SUB OnQuit(info)
     running = 0
 ENDSUB
-ON "QUIT" CALL OnQuit
+ON "QUIT" CALL OnQuit@
 DIM x AS DOUBLE = 320
 DO WHILE running = 1
     IF GFX.KEYSTATE("Left") THEN x = x - 4

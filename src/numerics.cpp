@@ -237,10 +237,11 @@ void register_numerics_builtins(VM& vm) {
         Eigen::MatrixXd M = to_eigen(args[0]);
         Eigen::JacobiSVD<Eigen::MatrixXd> svd(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
         Value o = Value::make_object();
+        o.as_object()->lower_keys = true;
         auto* ob = o.as_object();
-        ob->set("U", from_eigen(svd.matrixU()));
-        ob->set("S", vec_from_eigen(svd.singularValues()));
-        ob->set("V", from_eigen(svd.matrixV()));
+        ob->set("u", from_eigen(svd.matrixU()));
+        ob->set("s", vec_from_eigen(svd.singularValues()));
+        ob->set("v", from_eigen(svd.matrixV()));
         return o;
     });
 
@@ -251,9 +252,10 @@ void register_numerics_builtins(VM& vm) {
         Eigen::MatrixXd Q = qr.householderQ();
         Eigen::MatrixXd R = qr.matrixQR().triangularView<Eigen::Upper>();
         Value o = Value::make_object();
+        o.as_object()->lower_keys = true;
         auto* ob = o.as_object();
-        ob->set("Q", from_eigen(Q));
-        ob->set("R", from_eigen(R));
+        ob->set("q", from_eigen(Q));
+        ob->set("r", from_eigen(R));
         return o;
     });
 
@@ -271,9 +273,10 @@ void register_numerics_builtins(VM& vm) {
         Eigen::EigenSolver<Eigen::MatrixXd> es(M);
         if (es.info() != Eigen::Success) throw std::runtime_error("EIG: failed to converge");
         Value o = Value::make_object();
+        o.as_object()->lower_keys = true;
         auto* ob = o.as_object();
-        ob->set("EIGENVALUES", complex_from_eigen(es.eigenvalues()));
-        ob->set("EIGENVECTORS", complex_from_eigen(es.eigenvectors()));
+        ob->set("eigenvalues", complex_from_eigen(es.eigenvalues()));
+        ob->set("eigenvectors", complex_from_eigen(es.eigenvectors()));
         return o;
     });
 

@@ -2834,9 +2834,10 @@ void register_sound_builtins(VM& vm) {
             SND_UNLOCK();
         }
         Value r = Value::make_object();
-        r.as_object()->set("CYCLE", Value::make_f64(c));
-        r.as_object()->set("T", Value::make_i64(t));
-        r.as_object()->set("CPS", Value::make_f64(cps));
+        r.as_object()->lower_keys = true;
+        r.as_object()->set("cycle", Value::make_f64(c));
+        r.as_object()->set("t", Value::make_i64(t));
+        r.as_object()->set("cps", Value::make_f64(cps));
         return r;
     });
 
@@ -2901,19 +2902,20 @@ void register_sound_builtins(VM& vm) {
     // ── SOUND.LOUDNESS([reset]) - map of the output's loudness ──
     vm.register_native("SOUND.LOUDNESS", 0, 1, [](const std::vector<Value>& args) -> Value {
         Value r = Value::make_object();
+        r.as_object()->lower_keys = true;
         auto* o = r.as_object();
         SND_LOCK();
         auto& m = g_sound.meter;
-        o->set("INTEGRATED", Value::make_f64(m.integrated()));
-        o->set("MOMENTARY", Value::make_f64(m.momentary()));
-        o->set("SHORT", Value::make_f64(m.short_term()));
-        o->set("SHORT_MAX", Value::make_f64(m.short_max()));
-        o->set("PEAK", Value::make_f64(m.peak > 1e-6f ? 20.0 * std::log10(m.peak) : -120.0));
-        o->set("REDUCTION", Value::make_f64(g_sound.limiter_active
+        o->set("integrated", Value::make_f64(m.integrated()));
+        o->set("momentary", Value::make_f64(m.momentary()));
+        o->set("short", Value::make_f64(m.short_term()));
+        o->set("short_max", Value::make_f64(m.short_max()));
+        o->set("peak", Value::make_f64(m.peak > 1e-6f ? 20.0 * std::log10(m.peak) : -120.0));
+        o->set("reduction", Value::make_f64(g_sound.limiter_active
             ? 20.0 * std::log10(std::max(1e-6f, g_sound.limiter.reduction)) : 0.0));
-        o->set("REDUCTION_MAX", Value::make_f64(g_sound.limiter_active
+        o->set("reduction_max", Value::make_f64(g_sound.limiter_active
             ? 20.0 * std::log10(std::max(1e-6f, g_sound.limiter.min_gain)) : 0.0));
-        o->set("SECONDS", Value::make_f64(m.steps.size() / 10.0));
+        o->set("seconds", Value::make_f64(m.steps.size() / 10.0));
         if (!args.empty() && args[0].to_bool()) { m.clear(); g_sound.limiter.min_gain = 1.0f; }
         SND_UNLOCK();
         return r;

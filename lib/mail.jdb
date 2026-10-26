@@ -688,8 +688,8 @@ EXPORT FUNC SEND(msg, server)
     IF FILE.EXISTS(eml_path$) THEN KILL eml_path$
     IF config_path$ <> "" ANDALSO FILE.EXISTS(config_path$) THEN KILL config_path$
     DIM out AS MAP
-    DIM code = CLNG(result{"EXIT_CODE"})
-    DIM out_text$ = result{"OUTPUT"}
+    DIM code = CLNG(result{"exit_code"})
+    DIM out_text$ = result{"output"}
     out{"ok"} = code = 0
     out{"exit_code"} = code
     out{"output"} = out_text$

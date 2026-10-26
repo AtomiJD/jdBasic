@@ -234,9 +234,10 @@ static Value response_to_map(const RespT& res) {
 
 static Value request_to_map(const httplib::Request& req) {
     Value m = Value::make_object();
-    m.as_object()->set("PATH", Value::make_string(req.path));
-    m.as_object()->set("METHOD", Value::make_string(req.method));
-    m.as_object()->set("BODY", Value::make_string(req.body));
+    m.as_object()->lower_keys = true;
+    m.as_object()->set("path", Value::make_string(req.path));
+    m.as_object()->set("method", Value::make_string(req.method));
+    m.as_object()->set("body", Value::make_string(req.body));
 
     // Headers as map - normalised to lowercase keys. HTTP header names are
     // case-insensitive (RFC 7230), but jdBasic maps are case-sensitive, so
@@ -248,13 +249,13 @@ static Value request_to_map(const httplib::Request& req) {
         for (auto& c : lower) c = (char)std::tolower((unsigned char)c);
         hdrs.as_object()->set(lower, Value::make_string(v));
     }
-    m.as_object()->set("HEADERS", std::move(hdrs));
+    m.as_object()->set("headers", std::move(hdrs));
 
     // Query params
     Value params = Value::make_object();
     for (auto& [k, v] : req.params)
         params.as_object()->set(k, Value::make_string(v));
-    m.as_object()->set("PARAMS", std::move(params));
+    m.as_object()->set("params", std::move(params));
 
     return m;
 }

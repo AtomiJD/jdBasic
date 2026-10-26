@@ -20,8 +20,8 @@ FUNC HasToolResult(messages)
 ENDFUNC
 
 FUNC HANDLE_OPENAI(request)
-    gOpenAi = JSON.PARSE$(request{"BODY"})
-    gOpenAiHeaders = request{"HEADERS"}
+    gOpenAi = JSON.PARSE$(request{"body"})
+    gOpenAiHeaders = request{"headers"}
     DIM msg AS MAP
     msg{"role"} = "assistant"
     IF MAP.EXISTS(gOpenAi, "response_format") THEN
@@ -36,8 +36,8 @@ FUNC HANDLE_OPENAI(request)
 ENDFUNC
 
 FUNC HANDLE_CLAUDE(request)
-    gClaude = JSON.PARSE$(request{"BODY"})
-    gClaudeHeaders = request{"HEADERS"}
+    gClaude = JSON.PARSE$(request{"body"})
+    gClaudeHeaders = request{"headers"}
     DIM blocks = []
     IF MAP.EXISTS(gClaude, "tool_choice") THEN
         blocks = [{"type": "tool_use", "id": "toolu_1", "name": "answer", "input": {"city": "Berlin", "population": 3600000}}]
