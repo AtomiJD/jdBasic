@@ -2,16 +2,16 @@
 ' saved workspace holds, so the agent knows what to restore before it starts.
 ' Usage: jdbasic workshop_start.jdb [project_dir]
 
-FUNC WsName$(dir$)
-    DIM chars = -LCASE$(PATH.BASENAME$(PATH.NORMALIZE$(dir$)))
+FUNC WsName$(folder$)
+    DIM chars = -LCASE$(PATH.BASENAME$(PATH.NORMALIZE$(folder$)))
     IF LEN(chars) = 0 THEN RETURN "workshop"
     RETURN JOIN(SELECT(LAMBDA c -> IIF(INSTR("abcdefghijklmnopqrstuvwxyz0123456789_-", c) >= 0, c, "_"), chars), "")
 END FUNC
 
 FUNC DefinedNames(lines)
     DIM found = []
-    FOR EACH chunk IN lines
-        FOR EACH ln IN SPLIT(chunk, CHR$(10))
+    FOR EACH src_chunk IN lines
+        FOR EACH ln IN SPLIT(src_chunk, CHR$(10))
             DIM t$ = UCASE$(TRIM$(ln))
             IF STARTSWITH(t$, "ASYNC FUNC ") THEN t$ = MID$(t$, 6)
             IF STARTSWITH(t$, "FUNC ") ORELSE STARTSWITH(t$, "SUB ") THEN
@@ -21,7 +21,7 @@ FUNC DefinedNames(lines)
                 IF NOT (head$ IN found) THEN found = APPEND(found, head$)
             ENDIF
         NEXT ln
-    NEXT chunk
+    NEXT src_chunk
     RETURN found
 END FUNC
 
@@ -36,11 +36,11 @@ PRINT tag$; "jdBasic is installed. This project's workspace name is '"; ws$; "'.
 IF NOT FILE.EXISTS(file$) THEN
     PRINT tag$; "No saved workspace yet - fresh workshop. Save with jdb_savews name="; CHR$(34); ws$; CHR$(34); " at the first milestone."
 ELSE
-    DIM saved = JSON.PARSE$(TXTREADER$(file$))
-    DIM funcs = DefinedNames(saved{"source_code"})
+    DIM saved = JSON.PARSE(TXTREADER$(file$))
+    DIM func_names = DefinedNames(saved{"source_code"})
     DIM var_names = MAP.KEYS(saved{"variables"})
-    PRINT tag$; "Saved workspace "; ws$; ".jsws ("; FILE.STAT(file$){"mtime"}; "): "; LEN(funcs); IIF(LEN(funcs) = 1, " function, ", " functions, "); LEN(var_names); IIF(LEN(var_names) = 1, " variable.", " variables.")
-    IF LEN(funcs) > 0 THEN PRINT tag$; "Functions: "; JOIN(funcs, " ")
+    PRINT tag$; "Saved workspace "; ws$; ".jsws ("; FILE.STAT(file$){"mtime"}; "): "; LEN(func_names); IIF(LEN(func_names) = 1, " function, ", " functions, "); LEN(var_names); IIF(LEN(var_names) = 1, " variable.", " variables.")
+    IF LEN(func_names) > 0 THEN PRINT tag$; "Functions: "; JOIN(func_names, " ")
     IF LEN(var_names) > 0 THEN PRINT tag$; "Variables: "; JOIN(var_names, " ")
     IF "WORKSHOP_NOTES$" IN var_names THEN PRINT tag$; "Notes: "; saved{"variables"}{"WORKSHOP_NOTES$"}
     PRINT tag$; "Restore it first: jdb_loadws name="; CHR$(34); ws$; CHR$(34); ", then jdb_funcs."

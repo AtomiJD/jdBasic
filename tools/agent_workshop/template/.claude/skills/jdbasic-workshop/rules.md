@@ -9,7 +9,9 @@ same few things wrong every time. Read this once per session.
   are, in which order. Query the full name (`MAP.EXISTS`, not `MAP`).
 - Probe with `jdb_eval "PRINT ..."` before building on a signature, an
   index base or a return shape.
-- `jdb_check` lints source without running it.
+- `jdb_check` lints source without running it. It also names builtins
+  that were renamed (a name ends in `$` exactly when it answers a string:
+  `JSON.PARSE`, `FILE.LIST`, `STR$`); use the new name it gives.
 - The reference is `doc/languages.md` next to the jdbasic executable. A name
   that is not in it and does not probe cleanly does not exist.
 

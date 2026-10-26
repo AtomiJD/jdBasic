@@ -35,7 +35,7 @@ project's workspace name and what the saved workspace holds.
 
 ## Working in the VM
 
-- Load data once (`CSVREADER`, `TXTREADER$`, `JSON.PARSE$`, `IMPORT DF`),
+- Load data once (`CSVREADER`, `TXTREADER$`, `JSON.PARSE`, `IMPORT DF`),
   then operate on it with `jdb_eval`. Never reload per question.
 - **Helpers are FUNCs that take data as parameters.** A FUNC defined in a
   later `jdb_eval` cannot read a global created in an earlier one (it reads
