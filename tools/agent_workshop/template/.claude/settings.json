@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__jdbasic__jdb_doc",
+      "mcp__jdbasic__jdb_check",
+      "mcp__jdbasic__jdb_funcs",
+      "mcp__jdbasic__jdb_vars",
+      "mcp__jdbasic__jdb_status"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${JDBASIC:-jdbasic}\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/workshop_start.jdb\" \"$CLAUDE_PROJECT_DIR\" 2>/dev/null || echo \"[jdBasic workshop] jdbasic did not start: put it on PATH or set JDBASIC to the full path of the executable. The jdb_* tools are unavailable this session.\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
