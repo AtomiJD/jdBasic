@@ -1294,18 +1294,26 @@ JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
 // async_task.h declares g_async_tasks / g_async_mutex / g_async_next_id
 // (defined in vm.cpp).
 
+// The kinds of the arguments travel with them: set_tags is compiled code
+// that writes them into the tag channel of the thread that runs the call,
+// so an untyped parameter reads a string as a string.
 JDRT_API int64_t jdrt_async_spawn(JdRT handle, void* fn_ptr,
                                    const double* args, int nargs,
-                                   int return_tag) {
+                                   int return_tag, const int32_t* tags,
+                                   void* set_tags) {
     return bridge_guard(handle, [&]() -> int64_t {
         int task_id = g_async_next_id++;
         auto task = std::make_shared<AsyncTask>();
         std::vector<double> args_copy(args, args + nargs);
+        std::vector<int32_t> tags_copy;
+        if (tags && nargs > 0) tags_copy.assign(tags, tags + nargs);
         int rtag = return_tag;
 
-        task->thread = std::thread([fn_ptr, args_copy, rtag, task]() {
+        task->thread = std::thread([fn_ptr, args_copy, tags_copy, set_tags, rtag, task]() {
             double r = 0.0;
             try {
+                if (set_tags && !tags_copy.empty())
+                    ((void(*)(const int32_t*))set_tags)(tags_copy.data());
                 const auto& A = args_copy;
                 switch ((int)A.size()) {
                     case 0: r = ((double(*)())fn_ptr)(); break;

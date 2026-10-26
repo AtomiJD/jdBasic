@@ -1,10 +1,10 @@
-' Values whose kind only the running program knows answer in the compiled
-' form what they answer in the interpreter: indexing a number is an error,
-' a string handed through a function reference stays a string, a variable
-' declared from such a call can be assigned again, and a $-named builtin
-' that answers a number answers a number. Dividing one by zero is an error.
+' The compiled form answers what the interpreter answers where a value's
+' kind decides the answer: values read from maps and arrays, untyped
+' parameters of functions, ASYNC functions and methods, the string
+' operators, AND/OR and truth, and FOR EACH over an array that changes.
 
 DIM failed AS INTEGER = 0
+DIM calls AS INTEGER = 0
 
 SUB Check(ok, what$)
     IF NOT ok THEN
@@ -16,6 +16,29 @@ ENDSUB
 FUNC Pair$(a, b)
     RETURN a + "/" + STR$(b)
 ENDFUNC
+
+FUNC Noted(v AS INTEGER) AS INTEGER
+    calls = calls + 1
+    RETURN v
+ENDFUNC
+
+FUNC Pick(x)
+    IF x > 1 THEN
+        RETURN "big"
+    ENDIF
+    RETURN x
+ENDFUNC
+
+ASYNC FUNC KindOf(v)
+    RETURN TYPEOF(v)
+ENDFUNC
+
+TYPE Probe
+    N AS DOUBLE
+    FUNC KindOf(x)
+        RETURN TYPEOF(x)
+    ENDFUNC
+ENDTYPE
 
 ' Indexing a cell that holds a number raises the interpreter's error.
 DIM flat AS ARRAY = [1, 2, 3]
@@ -85,6 +108,60 @@ Check(joined[1] = "2abc", "a map array plus a map string joins per element")
 Check(NOT (texts{"n"} = "9"), "a map number equals no string")
 Check(NOT (texts{"n"} < "10"), "a map number against a string counts it as 0")
 Check(texts{"s"} = "abc", "a map string equals the same text")
+
+' An untyped parameter of an ASYNC FUNC or of a TYPE method holds a string.
+DIM greeting AS STRING = "World"
+DIM t1 = KindOf(greeting)
+DIM k1 = AWAIT t1
+Check(k1 = "STRING", "a string handed to an ASYNC FUNC")
+DIM t2 = KindOf(42)
+DIM k2 = AWAIT t2
+Check(k2 <> "STRING", "a number handed to the same ASYNC FUNC")
+DIM pr AS Probe
+Check(pr.KindOf("abc") = "STRING", "a string handed to a method")
+Check(pr.KindOf(5) <> "STRING", "a number handed to the same method")
+
+' A function answering a number or a string keeps each kind through SELECT.
+DIM picked AS ARRAY = SELECT(Pick@, [1, 2, 3])
+Check(picked[0] = 1 ANDALSO picked[1] = "big", "SELECT over a function of mixed answers")
+
+' A map value handed to a builtin over an array keeps its kind.
+DIM bag AS MAP = {"n": "b", "start": "a", "t": 86400}
+DIM words AS ARRAY = ["abc", "xxb"]
+DIM found AS ARRAY = INSTR(words, bag{"n"})
+Check(found[0] = 1 ANDALSO found[1] = 2, "INSTR over an array with a map needle")
+Check(REDUCE(LAMBDA acc, x -> acc + x, ["b", "c"], bag{"start"}) = "abc", "REDUCE from a map start value")
+Check(CVDATE(bag{"t"}) = CVDATE(86400), "CVDATE of a map number")
+
+' AND and OR evaluate both sides; an empty string is false.
+DIM lhs_zero AS INTEGER = 0
+DIM both = lhs_zero AND Noted(3)
+Check(calls = 1, "AND evaluates its right side")
+DIM empty AS STRING = ""
+Check(NOT empty, "an empty string is false")
+Check((empty ORELSE "b") = "b", "ORELSE passes an empty string by")
+DIM flags AS ARRAY = [1, 0, 1]
+DIM one AS INTEGER = 1
+DIM masked AS ARRAY = one AND flags
+Check(masked[0] = TRUE ANDALSO masked[1] = FALSE, "a number AND an array is element-wise")
+DIM masked2 AS ARRAY = flags AND bag{"start"}
+Check(LEN(masked2) = 3, "an array AND a map value is element-wise")
+
+' A string with MOD, ^, \ or a number subtracted joins the texts.
+DIM word3 AS STRING = "abc"
+Check(word3 MOD 2 = "abc2", "a string MOD a number joins")
+Check(word3 - 1 = "abc1", "a string minus a number joins")
+Check(word3 ^ 2 = "abc2", "a string to a power joins")
+
+' FOR EACH over an array the body shrinks stops at its current end.
+DIM shrink AS ARRAY = [1, 2, 3, 4]
+DIM passes AS INTEGER = 0
+DIM popped = 0
+FOR EACH v IN shrink
+    popped = POP(shrink)
+    passes = passes + 1
+NEXT
+Check(passes = 2, "FOR EACH over an array its body shrinks")
 
 IF failed > 0 THEN END 1
 PRINT "OK"

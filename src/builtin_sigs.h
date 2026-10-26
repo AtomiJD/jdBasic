@@ -982,7 +982,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"TXTENCODING$", BuiltinRet::Unknown, BF_NO_VEC},
     {"TXTREADER$", BuiltinRet::Unknown, BF_NO_VEC},
     {"TXTWRITER", BuiltinRet::None, BF_NO_VEC},
-    {"TYPEOF", BuiltinRet::Unknown, BF_NO_VEC | BF_READS_ARGS | BF_COMPILER_HANDLES},
+    {"TYPEOF", BuiltinRet::Str, BF_NO_VEC | BF_READS_ARGS | BF_COMPILER_HANDLES},
     {"UCASE", BuiltinRet::Str, BF_READS_ARGS | BF_FRESH_STR},
     {"UCASE$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
     {"UNIQUE", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS | BF_READS_ARRS},

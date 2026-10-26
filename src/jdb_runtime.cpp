@@ -5262,6 +5262,22 @@ int64_t jdb_dyn_arith(int64_t a, int32_t ta, int64_t b, int32_t tb,
     union { double d; int64_t i; } u; u.d = r; return u.i;
 }
 
+// The truth of a value whose kind is known only now, as the interpreter
+// reads it: a string is true when it is not empty, an array when every cell
+// is, a map never, a number when it is not 0.
+int64_t jdb_dyn_truth(int64_t bits, int32_t tag) {
+    if (tag == JD_TAG_STR) {
+        const char* s = (const char*)(intptr_t)bits;
+        return s && text_in(s).n > 0;
+    }
+    if (tag == JD_TAG_ARR) {
+        JdbArray* a = (JdbArray*)(intptr_t)bits;
+        return a && a->length > 0 && jdb_array_all(a);
+    }
+    if (tag == JD_TAG_NATIVE_MAP || tag == JD_TAG_NONE) return 0;
+    return dyn_num(bits, tag) != 0.0;
+}
+
 int64_t jdb_str_cmp(const char* a, const char* b) {
     if (a == b) return 0;
     if (!a) return -1;

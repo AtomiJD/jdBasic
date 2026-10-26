@@ -1356,6 +1356,12 @@ void VM::register_array_builtins() {
         int64_t end = args[1].to_int();
         int64_t step = (args.size() >= 3) ? args[2].to_int() : (start <= end ? 1 : -1);
         Value r = Value::make_array();
+        // The whole answer is reserved first, so a range too large for memory
+        // fails at once instead of after filling the swap file.
+        uint64_t span = step > 0 && end > start ? (uint64_t)end - (uint64_t)start
+                      : step < 0 && start > end ? (uint64_t)start - (uint64_t)end : 0;
+        uint64_t stride = step > 0 ? (uint64_t)step : step < 0 ? 0 - (uint64_t)step : 1;
+        if (span) r.as_array()->elements.reserve((size_t)((span - 1) / stride + 1));
         if (step > 0) for (int64_t i = start; i < end; i += step) r.as_array()->elements.push_back(Value::make_i64(i));
         else if (step < 0) for (int64_t i = start; i > end; i += step) r.as_array()->elements.push_back(Value::make_i64(i));
         return r;

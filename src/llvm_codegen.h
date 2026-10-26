@@ -222,6 +222,7 @@ private:
     LLVMValueRef funcref_arg_channel();
     LLVMValueRef funcref_ret_channel();
     LLVMValueRef funcref_arg_slot(unsigned idx);
+    LLVMValueRef funcref_tag_setter(unsigned n);
     void funcref_put_arg_tag(unsigned idx, LLVMValueRef tag);
     LLVMValueRef funcref_take_arg_tag(unsigned idx, LLVMValueRef bits);
     LLVMValueRef funcref_wire_tag(LLVMValueRef t);
@@ -651,6 +652,11 @@ private:
     LLVMValueRef udt_ptr_from(TypedValue tv);
     // A runtime-tagged value in the shape an untyped (f64) parameter takes.
     LLVMValueRef runtime_to_untyped_param(TypedValue tv);
+    // TYPE methods whose untyped parameters a call site hands a pointer
+    // kind: those parameters are runtime-typed (by method name, per index).
+    std::unordered_map<std::string, std::vector<bool>> method_runtime_params;
+    void push_runtime_arg(const TypedValue& av, std::vector<LLVMValueRef>& args);
+    void push_method_arg(const TypedValue& av, int expected, std::vector<LLVMValueRef>& args);
     LLVMValueRef funcref_wire_bits(TypedValue tv);
     // A FUNC whose result kind is only known at run time returns this pair
     // of value bits and JdTag, the shape a tagged map read has.
