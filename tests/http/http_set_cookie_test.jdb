@@ -25,7 +25,7 @@ FUNC THREE_COOKIES(request)
         "__http_headers": {"Set-Cookie": cookies, "X-Single": "one"}}
 ENDFUNC
 
-HTTP.SERVER.ON_GET("/cookies", "THREE_COOKIES")
+HTTP.SERVER.ON_GET("/cookies", THREE_COOKIES@)
 IF NOT HTTP.SERVER.START(port) THEN
     PRINT "could not start the server"
     END 1

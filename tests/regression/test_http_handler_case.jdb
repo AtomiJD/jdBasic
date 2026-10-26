@@ -4,7 +4,7 @@ FUNC Hello(req)
     RETURN "hi"
 ENDFUNC
 
-HTTP.SERVER.ON_GET "/hello", "Hello"
+HTTP.SERVER.ON_GET "/hello", Hello@
 DIM up = HTTP.SERVER.START(18767)
 DIM got$ = HTTP.GET$("http://127.0.0.1:18767/hello")
 HTTP.SERVER.STOP

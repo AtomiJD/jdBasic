@@ -10,8 +10,9 @@
 '             belongs: ON_GET("/", "Home") -> ON_GET("/", Home@),
 '             ON "TICK" CALL OnTick -> ON "TICK" CALL OnTick@
 '   keys      with --keys: the upper-case keys of builtin maps that no
-'             program map is likely to share, read as m{"BODY"}, written as
-'             "BODY": in a map literal or tested with MAP.EXISTS
+'             program map is likely to share, read as m{"BODY"} or tested
+'             with MAP.EXISTS; a key the file writes into a map literal of
+'             its own is left alone in that file
 '
 ' The source is read token by token, so text inside strings and comments
 ' and a name after a dot (a member) stay as they are. --dry-run writes
@@ -46,6 +47,8 @@ NEXT
 DIM gHandlerArg = {"HTTP.SERVER.ON_GET": 1, "HTTP.SERVER.ON_POST": 1, "HTTP.SERVER.ON_NOTFOUND": 0, "NODE.SERVE": 1, "TUI.ON": 1}
 
 DIM gChanges = []          ' one "old -> new" per change on the line being fixed
+DIM gFileKeys = {}         ' keys the current file writes into a map of its own
+DIM gUnwritten = 0         ' files with changes that could not be written
 DIM gFiles = 0
 DIM gFilesChanged = 0
 DIM gLines = 0
@@ -162,11 +165,10 @@ FUNC FixLine$(line$)
             ' an old key of a builtin map
             IF gKeys AND c$ <> "$" AND done <= start THEN
                 DIM up$ = UCASE$(text$)
-                IF text$ = up$ AND MAP.EXISTS(gKeySet, up$) THEN
+                IF text$ = up$ AND MAP.EXISTS(gKeySet, up$) AND NOT MAP.EXISTS(gFileKeys, up$) THEN
                     DIM as_read = prev$ = "{" AND nxt$ = "}"
-                    DIM as_literal = (prev$ = "{" OR prev$ = ",") AND nxt$ = ":"
                     DIM as_exists = has_exists AND prev$ = "," AND nxt$ = ")"
-                    IF as_read OR as_literal OR as_exists THEN
+                    IF as_read OR as_exists THEN
                         out$ = out$ + MID$(line$, done, start - done) + CHR$(34) + LCASE$(text$) + CHR$(34)
                         done = endpos
                         Note("keys", CHR$(34) + text$ + CHR$(34), CHR$(34) + LCASE$(text$) + CHR$(34))
@@ -264,6 +266,18 @@ ENDFUNC
 FUNC FixFile(path$)
     DIM src$ = TXTREADER$(path$)
     DIM lines = SPLIT(src$, CHR$(10))
+    ' A key the file writes into a map literal is a key of the file's own
+    ' maps, so it keeps its spelling throughout the file.
+    gFileKeys = {}
+    IF gKeys THEN
+        FOR EACH key_name$ IN gKeyNames
+            DIM quoted$ = CHR$(34) + key_name$ + CHR$(34)
+            IF INSTR(src$, quoted$ + ":") >= 0 OR INSTR(src$, quoted$ + " :") >= 0 THEN
+                gFileKeys{key_name$} = TRUE
+                IF gDryRun AND NOT gQuiet THEN PRINT path$; ": keeps "; quoted$; ", the file builds a map with it"
+            ENDIF
+        NEXT
+    ENDIF
     DIM changed = FALSE
     DIM ln = 0
     FOR EACH old_line$ IN lines
@@ -285,7 +299,14 @@ FUNC FixFile(path$)
     gLines = gLines + LEN(lines)
     IF changed THEN
         gFilesChanged = gFilesChanged + 1
-        IF NOT gDryRun THEN TXTWRITER path$, JOIN(lines, CHR$(10))
+        IF NOT gDryRun THEN
+            TRY
+                TXTWRITER path$, JOIN(lines, CHR$(10))
+            CATCH
+                PRINT path$; ": not written, "; ERRMSG$
+                gUnwritten = gUnwritten + 1
+            ENDTRY
+        ENDIF
     ENDIF
     RETURN changed
 ENDFUNC
@@ -316,3 +337,7 @@ FOR EACH p$ IN gPaths
     ENDIF
 NEXT
 PRINT "jdb-fix: "; gFiles; " files, "; gLines; " lines; "; gCount; " changes in "; gFilesChanged; " files (names "; gByKind{"names"}; ", handlers "; gByKind{"handlers"}; ", keys "; gByKind{"keys"}; ")"; IIF(gDryRun, " - dry run, nothing written", "")
+IF gUnwritten > 0 THEN
+    PRINT "jdb-fix: "; gUnwritten; " files could not be written"
+    END 1
+ENDIF

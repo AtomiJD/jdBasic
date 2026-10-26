@@ -10,8 +10,8 @@
 PRINT "── FORMAT_DATE default vs explicit ──"
 
 DIM t = NOW()
-DIM def = FORMAT_DATE(t)
-DIM ex  = FORMAT_DATE(t, "%Y-%m-%d")
+DIM def = FORMAT_DATE$(t)
+DIM ex  = FORMAT_DATE$(t, "%Y-%m-%d")
 
 PRINT "1) default fmt non-empty: " + STR$(LEN(def) > 0)
 PRINT "2) default fmt has time : " + STR$(INSTR(def, ":") > 0)

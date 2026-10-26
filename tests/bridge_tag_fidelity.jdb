@@ -54,7 +54,7 @@ CHKS("the bool survives", TYPEOF(m2{"flag"}), "BOOLEAN")
 
 ' An int that reached a map through a runtime-tagged read, which is the path
 ' that produced a bit pattern rather than a number.
-DIM row = JSON.PARSE$("{""id"": 7}")
+DIM row = JSON.PARSE("{""id"": 7}")
 DIM carrier = {"seed": 0}
 carrier{"id"} = row{"id"}
 CHK("a runtime-tagged int in a map", carrier{"id"}, 7)

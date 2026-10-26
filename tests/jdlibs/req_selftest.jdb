@@ -17,7 +17,7 @@ FUNC HANDLE_ECHO(request)
 ENDFUNC
 
 FUNC HANDLE_JSON(request)
-    DIM sent = JSON.PARSE$(request{"body"})
+    DIM sent = JSON.PARSE(request{"body"})
     RETURN {"got": sent{"name"}, "ct": request{"headers"}{"content-type"}}
 ENDFUNC
 
@@ -67,14 +67,14 @@ TESTKIT.EQ(s{"headers"}{"Authorization"}, "Bearer tok", "bearer replaces it")
 REQ.TIMEOUT(s, 5)
 TESTKIT.EQ(s{"timeout"}, 5, "the timeout is kept")
 
-HTTP.SERVER.ON_GET("/echo", "HANDLE_ECHO")
-HTTP.SERVER.ON_POST("/json", "HANDLE_JSON")
-HTTP.SERVER.ON_POST("/form", "HANDLE_FORM")
-HTTP.SERVER.ON_POST("/upload", "HANDLE_UPLOAD")
-HTTP.SERVER.ON_GET("/flaky", "HANDLE_FLAKY")
-HTTP.SERVER.ON_GET("/login", "HANDLE_LOGIN")
-HTTP.SERVER.ON_GET("/teapot", "HANDLE_TEAPOT")
-HTTP.SERVER.ON_GET("/spellings", "HANDLE_SPELLINGS")
+HTTP.SERVER.ON_GET("/echo", HANDLE_ECHO@)
+HTTP.SERVER.ON_POST("/json", HANDLE_JSON@)
+HTTP.SERVER.ON_POST("/form", HANDLE_FORM@)
+HTTP.SERVER.ON_POST("/upload", HANDLE_UPLOAD@)
+HTTP.SERVER.ON_GET("/flaky", HANDLE_FLAKY@)
+HTTP.SERVER.ON_GET("/login", HANDLE_LOGIN@)
+HTTP.SERVER.ON_GET("/teapot", HANDLE_TEAPOT@)
+HTTP.SERVER.ON_GET("/spellings", HANDLE_SPELLINGS@)
 
 IF NOT HTTP.SERVER.START(9977) THEN
     PRINT "could not start the fixture server on 9977"

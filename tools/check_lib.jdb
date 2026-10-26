@@ -33,7 +33,7 @@ IF NOT FILE.ISDIR("lib") THEN
 ENDIF
 
 IF want_all = 1 THEN
-    DIM entries = SORT(DIR$("lib"))
+    DIM entries = SORT(FILE.LIST("lib"))
     DIM ei AS INTEGER = 0
     FOR ei = 0 TO LEN(entries) - 1
         DIM entry$ AS STRING = entries[ei]
@@ -76,7 +76,7 @@ ENDFUNC
 FUNC LintFaults(path$ AS STRING) AS ARRAY
     DIM faults = []
     DIM run = OS.EXEC(OS.SELF$(), ["--lint", path$])
-    DIM out$ AS STRING = run{"OUTPUT"}
+    DIM out$ AS STRING = run{"output"}
     DIM rows = SPLIT(REPLACE$(out$, CHR$(13), ""), CHR$(10))
     DIM src = LinesOf(path$)
     DIM r AS INTEGER = 0
@@ -121,14 +121,14 @@ ENDFUNC
 ' Runs a self test and answers "" when it passed, else what went wrong.
 FUNC RunTest(path$ AS STRING) AS STRING
     DIM run = OS.EXEC(OS.SELF$(), [path$])
-    DIM out$ AS STRING = run{"OUTPUT"}
+    DIM out$ AS STRING = run{"output"}
     IF INSTR(out$, ", 0 failed") < 0 THEN RETURN "the self test does not pass interpreted"
     IF NOT OS.FEATURE("NATIVEC") THEN RETURN ""
     DIM exe$ AS STRING = MKTEMP$("check_lib") + ".exe"
     DIM built = OS.EXEC(OS.SELF$(), ["-c", "-o", exe$, path$])
     IF NOT FILE.EXISTS(exe$) THEN RETURN "the self test does not compile with -c"
     DIM ran = OS.EXEC(exe$, [])
-    DIM native$ AS STRING = ran{"OUTPUT"}
+    DIM native$ AS STRING = ran{"output"}
     KILL exe$
     IF INSTR(native$, ", 0 failed") < 0 THEN RETURN "the self test does not pass compiled"
     RETURN ""

@@ -22,9 +22,9 @@ EXPORT DIM asset_path$ = ""
 
 EXPORT SUB LOAD_DATA(char_file$, skill_file$, apath$)
     asset_path$ = apath$
-    LET data = JSON.PARSE$(TXTREADER$(char_file$))
+    LET data = JSON.PARSE(TXTREADER$(char_file$))
     char_db = data{"characters"}
-    LET sdata = JSON.PARSE$(TXTREADER$(skill_file$))
+    LET sdata = JSON.PARSE(TXTREADER$(skill_file$))
     skill_db = sdata{"skill_trees"}
 ENDSUB
 

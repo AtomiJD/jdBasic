@@ -12,7 +12,7 @@ SUB Check(got$, want$, what$)
 ENDSUB
 
 FUNC Shown$(text$)
-    RETURN FORMAT_DATE(CDATE(text$), "%Y-%m-%d %H:%M")
+    RETURN FORMAT_DATE$(CDATE(text$), "%Y-%m-%d %H:%M")
 ENDFUNC
 
 FUNC Problem$(text$)

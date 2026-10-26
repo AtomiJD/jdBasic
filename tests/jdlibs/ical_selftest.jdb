@@ -297,14 +297,14 @@ DIM fevs = ICAL.EVENTS(fcal)
 TESTKIT.EQ(LEN(fevs), 3, "three events read")
 
 DIM f_noon = fevs[0]
-TESTKIT.EQ(FORMAT_DATE(ICAL.STARTAT(fcal, f_noon), "%Y-%m-%d %H:%M:%S"), _
+TESTKIT.EQ(FORMAT_DATE$(ICAL.STARTAT(fcal, f_noon), "%Y-%m-%d %H:%M:%S"), _
            "2026-03-28 12:00:00", "a floating noon is local noon")
 TESTKIT.EQ(ICAL.ENDAT(fcal, f_noon) - ICAL.STARTAT(fcal, f_noon), 3600, _
            "and its end floats with it")
 
 ' A UTC value is still an instant, so it only reads as noon in UTC
 DIM u_noon = fevs[1]
-TESTKIT.EQ(FORMAT_DATE(ICAL.STARTAT(fcal, u_noon), "%Y-%m-%d %H:%M:%S", 0), _
+TESTKIT.EQ(FORMAT_DATE$(ICAL.STARTAT(fcal, u_noon), "%Y-%m-%d %H:%M:%S", 0), _
            "2026-03-28 12:00:00", "a Z value stays UTC")
 TESTKIT.ISTRUE(ICAL.STARTAT(fcal, f_noon) <> ICAL.STARTAT(fcal, u_noon) ORELSE _
                ABS(DT.LOCAL_OFFSET()) < 0.001, _
@@ -320,7 +320,7 @@ TESTKIT.EQ(LEN(f_occ), 3, "three floating occurrences")
 DIM f_clocks$ = ""
 DIM fo = 0
 FOR fo = 0 TO LEN(f_occ) - 1
-    f_clocks$ = f_clocks$ + FORMAT_DATE(f_occ[fo], "%H:%M") + " "
+    f_clocks$ = f_clocks$ + FORMAT_DATE$(f_occ[fo], "%H:%M") + " "
 NEXT fo
 TESTKIT.EQ(TRIM$(f_clocks$), "09:00 09:00 09:00", _
            "a floating rule keeps its wall clock across the clock change")

@@ -25,7 +25,7 @@ FUNC ShowUser(request)
 ENDFUNC
 
 FUNC CreateUser(request)
-    DIM sent = JSON.PARSE$(request{"body"})
+    DIM sent = JSON.PARSE(request{"body"})
     DIM name$ = sent{"name"}
     RETURN JDWEB.REPLY_JSON({"created": name$}, 201)
 ENDFUNC
@@ -192,7 +192,7 @@ ENDFUNC
 
 FUNC CountOf(response)
     DIM body$ = response{"__http_body"}
-    DIM parsed = JSON.PARSE$(body$)
+    DIM parsed = JSON.PARSE(body$)
     DIM n = parsed{"count"}
     RETURN n
 ENDFUNC
@@ -276,19 +276,19 @@ IF gServed THEN
     TESTKIT.SUITE("routes")
     DIM r = JDWEB.FETCH(PORT, "GET", "/users/42")
     TESTKIT.EQ(r{"status"}, 200, "a path parameter route answers")
-    DIM user = JSON.PARSE$(r{"body"})
+    DIM user = JSON.PARSE(r{"body"})
     TESTKIT.EQ(user{"id"}, "42", "and hands the parameter over")
     TESTKIT.EQ(HeaderOf$(r, "x-served-by"), "jdweb", "the after middleware added its header")
     TESTKIT.EQ(HeaderOf$(r, "x-status"), "200", "knowing the status")
     TESTKIT.ISTRUE(INSTR(HeaderOf$(r, "content-type"), "application/json") >= 0, "a map goes out as JSON")
     r = JDWEB.FETCH(PORT, "GET", "/users/J%C3%BCrgen")
-    user = JSON.PARSE$(r{"body"})
+    user = JSON.PARSE(r{"body"})
     TESTKIT.EQ(user{"id"}, "Jürgen", "a parameter is percent-decoded")
     r = JDWEB.FETCH(PORT, "GET", "/users/42/")
     TESTKIT.EQ(r{"status"}, 200, "a trailing slash matches too")
     r = JDWEB.FETCH(PORT, "POST", "/users", "{" + Q$ + "name" + Q$ + ":" + Q$ + "Ann" + Q$ + "}")
     TESTKIT.EQ(r{"status"}, 201, "POST with a status of its own")
-    DIM made = JSON.PARSE$(r{"body"})
+    DIM made = JSON.PARSE(r{"body"})
     TESTKIT.EQ(made{"created"}, "Ann", "reads the JSON body")
     r = JDWEB.FETCH(PORT, "DELETE", "/users/7")
     TESTKIT.EQ(r{"status"}, 204, "DELETE")
@@ -308,7 +308,7 @@ IF gServed THEN
     TESTKIT.EQ(HeaderOf$(r, "x-status"), "404", "and the after middleware sees the 404")
     r = JDWEB.FETCH(PORT, "GET", "/boom")
     TESTKIT.EQ(r{"status"}, 500, "a handler that throws is 500")
-    DIM failure = JSON.PARSE$(r{"body"})
+    DIM failure = JSON.PARSE(r{"body"})
     TESTKIT.ISTRUE(INSTR(failure{"error"}, "broken on purpose") >= 0, "the error handler gets the message")
 
     TESTKIT.SUITE("middleware")
@@ -322,25 +322,25 @@ IF gServed THEN
 
     TESTKIT.SUITE("sessions")
     r = JDWEB.FETCH(PORT, "GET", "/count")
-    DIM counted = JSON.PARSE$(r{"body"})
+    DIM counted = JSON.PARSE(r{"body"})
     TESTKIT.EQ(counted{"count"}, 1, "a new visitor starts at one")
     DIM sid$ = JDWEB.COOKIE_OF$(r, "jdwsid")
     TESTKIT.ISTRUE(LEN(sid$) > 10, "and gets a session cookie")
     DIM jar = {"Cookie": "jdwsid=" + sid$}
     r = JDWEB.FETCH(PORT, "GET", "/count", "", jar)
-    counted = JSON.PARSE$(r{"body"})
+    counted = JSON.PARSE(r{"body"})
     TESTKIT.EQ(counted{"count"}, 2, "the session remembers")
     TESTKIT.EQ(JDWEB.COOKIE_OF$(r, "jdwsid"), "", "without setting the cookie again")
     r = JDWEB.FETCH(PORT, "GET", "/count", "", jar)
-    counted = JSON.PARSE$(r{"body"})
+    counted = JSON.PARSE(r{"body"})
     TESTKIT.EQ(counted{"count"}, 3, "and counts on")
     r = JDWEB.FETCH(PORT, "GET", "/count")
-    counted = JSON.PARSE$(r{"body"})
+    counted = JSON.PARSE(r{"body"})
     TESTKIT.EQ(counted{"count"}, 1, "another visitor has a session of their own")
     r = JDWEB.FETCH(PORT, "POST", "/logout", "", jar)
     TESTKIT.ISTRUE(INSTR(HeaderOf$(r, "set-cookie"), "Max-Age=0") >= 0, "SESSION_END clears the cookie")
     r = JDWEB.FETCH(PORT, "GET", "/count", "", jar)
-    counted = JSON.PARSE$(r{"body"})
+    counted = JSON.PARSE(r{"body"})
     TESTKIT.EQ(counted{"count"}, 1, "and forgets the session")
     r = JDWEB.FETCH(PORT, "GET", "/themed")
     TESTKIT.EQ(r{"body"}, "themed", "a route that sets a cookie of its own in a new session")

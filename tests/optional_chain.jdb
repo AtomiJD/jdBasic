@@ -21,7 +21,7 @@ SUB CHKS(what$, got$, want$)
     ENDIF
 ENDSUB
 
-DIM r = JSON.PARSE$("{""choices"": [{""message"": {""content"": ""hi""}}], ""n"": 0}")
+DIM r = JSON.PARSE("{""choices"": [{""message"": {""content"": ""hi""}}], ""n"": 0}")
 
 ' ── A guarded chain reads the same as an unguarded one ───────
 CHKS "unguarded good path", r{"choices"}[0]{"message"}{"content"}, "hi"

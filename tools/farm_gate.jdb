@@ -41,8 +41,8 @@ ENDFUNC
 
 FUNC GIT$(args) AS STRING
     DIM r = OS.EXEC("git", args)
-    IF r{"EXIT_CODE"} <> 0 THEN RETURN ""
-    RETURN TRIM$(REPLACE$(REPLACE$(r{"OUTPUT"}, CHR$(13), ""), CHR$(10), " "))
+    IF r{"exit_code"} <> 0 THEN RETURN ""
+    RETURN TRIM$(REPLACE$(REPLACE$(r{"output"}, CHR$(13), ""), CHR$(10), " "))
 ENDFUNC
 
 DIM cli = OS.ARGS()

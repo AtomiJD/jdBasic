@@ -25,7 +25,7 @@ PRINT REPEAT$("─", 48)
 FOR z = 0 TO 5
     DIM city$ = zones[z, 0]
     DIM off = zones[z, 1]
-    DIM local$ = FORMAT_DATE(instant, "%a %Y-%m-%d %H:%M", off)
+    DIM local$ = FORMAT_DATE$(instant, "%a %Y-%m-%d %H:%M", off)
     DIM off_disp$ = "UTC"
     IF off > 0 THEN off_disp$ = "UTC+" + STR$(off)
     IF off < 0 THEN off_disp$ = "UTC"  + STR$(off)
@@ -64,7 +64,7 @@ milestones[2] = 90
 FOR m = 0 TO 2
     DIM offset_days = milestones[m]
     DIM dt = DATEADD("D", offset_days, instant)
-    PRINT "  +"; RPAD$(STR$(offset_days), 3); " days → "; FORMAT_DATE(dt, "%a %Y-%m-%d %H:%M", 2); " (Berlin)"
+    PRINT "  +"; RPAD$(STR$(offset_days), 3); " days → "; FORMAT_DATE$(dt, "%a %Y-%m-%d %H:%M", 2); " (Berlin)"
 NEXT m
 PRINT ""
 

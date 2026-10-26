@@ -78,7 +78,7 @@ DIM clicked = TUI.BUTTON("press")
 expect "BUTTON initial = 0",       clicked = 0
 checked = TUI.CHECKBOX("flag", checked)
 expect "CHECKBOX preserved",        checked = 0
-name$ = TUI.INPUT("name", name$)
+name$ = TUI.INPUT$("name", name$)
 expect "INPUT preserved",           name$ = "atomi"
 count = TUI.INPUT_INT("n", count)
 expect "INPUT_INT preserved",       count = 7

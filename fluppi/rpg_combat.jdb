@@ -141,7 +141,7 @@ EXPORT DIM asset_path$ = ""
 
 EXPORT SUB LOAD_ENEMIES(json_file$, apath$)
     asset_path$ = apath$
-    LET data = JSON.PARSE$(TXTREADER$(json_file$))
+    LET data = JSON.PARSE(TXTREADER$(json_file$))
     LET elist = data{"enemies"}
     FOR i = 0 TO LEN(elist) - 1
         DIM en AS RPG_COMBAT.T_ENEMY

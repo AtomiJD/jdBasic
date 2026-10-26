@@ -69,7 +69,7 @@ r = f(word, 8)
 Check(r = "hello/8", "reassigning a variable declared from a funcref call")
 
 ' HTTP.GET_ASYNC$ answers its task id as a number.
-DIM task = HTTP.GET_ASYNC$("http://127.0.0.1:1/none")
+DIM task = HTTP.GET_ASYNC("http://127.0.0.1:1/none")
 Check(TYPEOF(task) = "INT64", "HTTP.GET_ASYNC$ answers a number")
 DIM ignored = AWAIT(task)
 

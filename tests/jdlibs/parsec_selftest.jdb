@@ -413,8 +413,8 @@ DIM json_min$ = "{" + Q$ + "name" + Q$ + ":" + Q$ + "PARSEC \" + Q$ + "demo\" + 
 DIM t_json = PARSEC.PARSE(json, json_src$)
 DIM json_value$ = t_json{"value"}
 TESTKIT.EQ(json_value$, json_min$, "a document written back without its spaces")
-DIM parsed_ours = JSON.PARSE$(json_value$)
-DIM parsed_orig = JSON.PARSE$(json_src$)
+DIM parsed_ours = JSON.PARSE(json_value$)
+DIM parsed_orig = JSON.PARSE(json_src$)
 TESTKIT.EQ(JSON.STRINGIFY$(parsed_ours), JSON.STRINGIFY$(parsed_orig), "means what JSON.PARSE$ reads in the source")
 DIM strings_found = PARSEC.COLLECT(t_json, "STRING")
 TESTKIT.EQ(LEN(strings_found), 10, "every string found, keys and values")

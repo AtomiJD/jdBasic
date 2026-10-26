@@ -57,7 +57,7 @@ PRINT caught; " "; LIMIT2
 
 ' A held value: length, type and cells belong to the machine holding it.
 FUNC HOLDER(s$) AS OBJECT
-    RETURN JSON.PARSE$(s$)
+    RETURN JSON.PARSE(s$)
 ENDFUNC
 DIM held = HOLDER("[5,6,7]")
 PRINT LEN(held)

@@ -22,7 +22,7 @@ DIM SUITE_MS AS INTEGER = 600000
 DIM INTERP_SUITES$ = ["comprehensive_test", "native_test", "test_apl_complete", "test_apl_pipelines"]
 DIM NATIVE_SUITES$ = ["comprehensive_test", "native_test.strict", "test_apl_complete", "test_apl_pipelines"]
 
-DIM os$ AS STRING = OS.GETOS()
+DIM os$ AS STRING = OS.GETOS$()
 DIM exe_ext$ AS STRING = ".exe"
 DIM out_file$ AS STRING = "tmp/gate_run_" + STR$(OS.PID()) + ".out"
 MKDIR "tmp"
@@ -126,7 +126,7 @@ NEXT i
 ' parity.sh runs every test under GNU timeout, which macOS does not ship
 DIM parity_skip$ AS STRING = ""
 IF want_parity ANDALSO os$ <> "WINDOWS" THEN
-    IF OS.EXEC("sh", ["-c", "command -v timeout"]){"EXIT_CODE"} <> 0 THEN parity_skip$ = "no timeout command (GNU coreutils)"
+    IF OS.EXEC("sh", ["-c", "command -v timeout"]){"exit_code"} <> 0 THEN parity_skip$ = "no timeout command (GNU coreutils)"
 ENDIF
 IF want_parity ANDALSO parity_skip$ <> "" THEN
     DIM pskip = REPORT({"STEP": "parity", "BACKEND": "both", "STATUS": "SKIP", "SECONDS": 0, "EXIT": 0, "SUMMARY": parity_skip$, "FAILS": []})

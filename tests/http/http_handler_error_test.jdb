@@ -15,8 +15,8 @@ FUNC FINE(request)
     RETURN "fine"
 ENDFUNC
 
-HTTP.SERVER.ON_GET("/boom", "BOOM")
-HTTP.SERVER.ON_GET("/fine", "FINE")
+HTTP.SERVER.ON_GET("/boom", BOOM@)
+HTTP.SERVER.ON_GET("/fine", FINE@)
 IF NOT HTTP.SERVER.START(port) THEN
     PRINT "could not start the server"
     END 1

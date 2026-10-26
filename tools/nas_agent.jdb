@@ -33,8 +33,8 @@ ENDFUNC
 ' A command's output through sh, "" when it failed
 FUNC SH$(cmd$) AS STRING
     DIM r = OS.EXEC("sh", ["-c", cmd$])
-    IF r{"EXIT_CODE"} <> 0 THEN RETURN ""
-    RETURN REPLACE$(r{"OUTPUT"}, CHR$(13), "")
+    IF r{"exit_code"} <> 0 THEN RETURN ""
+    RETURN REPLACE$(r{"output"}, CHR$(13), "")
 ENDFUNC
 
 FUNC LINES(text$)
@@ -106,14 +106,14 @@ FUNC STATS()
     DIM mem = SYS.MEMORY()
     DIM free_sum = 0
     IF LEN(volumes) > 0 THEN free_sum = SUM(SELECT(LAMBDA v -> v{"FREE"}, volumes))
-    RETURN {"HOST": host$, "KIND": "nas", "OS": OS.GETOS(), "ADDR": NODE.NAME$(), "PID": OS.PID(), "CPU": OS.LOAD(), "MEM_TOTAL": mem{"TOTAL"}, "MEM_FREE": mem{"FREE"}, "DISK_FREE": free_sum, "VOLUMES": volumes, "TEMP": temp, "HOST_UPTIME": HOST_UPTIME(), "HEAD": "", "BRANCH": "", "DIRTY": 0, "VERSION": version$, "FEATURES": features$, "GPU": "", "BUSY": "", "BUSY_SECONDS": 0, "LAST": {"ACTION": "", "OK": TRUE, "EXIT": 0, "SECONDS": 0, "ENDED": ""}, "UPTIME": INT((TICK() - t_start) / 1000), "T": NODE.TIME()}
+    RETURN {"HOST": host$, "KIND": "nas", "OS": OS.GETOS$(), "ADDR": NODE.NAME$(), "PID": OS.PID(), "CPU": OS.LOAD(), "MEM_TOTAL": mem{"TOTAL"}, "MEM_FREE": mem{"FREE"}, "DISK_FREE": free_sum, "VOLUMES": volumes, "TEMP": temp, "HOST_UPTIME": HOST_UPTIME(), "HEAD": "", "BRANCH": "", "DIRTY": 0, "VERSION": version$, "FEATURES": features$, "GPU": "", "BUSY": "", "BUSY_SECONDS": 0, "LAST": {"ACTION": "", "OK": TRUE, "EXIT": 0, "SECONDS": 0, "ENDED": ""}, "UPTIME": INT((TICK() - t_start) / 1000), "T": NODE.TIME()}
 ENDFUNC
 
 FUNC H_STATUS(c)
     RETURN STATS()
 ENDFUNC
 
-NODE.SERVE "STATUS", "H_STATUS"
+NODE.SERVE "STATUS", H_STATUS@
 
 PRINT "nas_agent "; NODE.NAME$(); " - "; version$; " - volumes under "; vol_root$
 DIM t_stats AS DOUBLE = 0

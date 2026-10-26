@@ -1,11 +1,11 @@
 FUNC Calc(expression)
   DIM r AS STRING = EVAL(expression)
-  RETURN STR(r)
+  RETURN STR$(r)
 ENDFUNC
 
 FUNC OuterEval(x)
   PRINT "OuterEval entered, x="; x
-  DIM y AS STRING = EVAL("100 + " + STR(x))
+  DIM y AS STRING = EVAL("100 + " + STR$(x))
   PRINT "OuterEval y="; y
   RETURN y
 ENDFUNC

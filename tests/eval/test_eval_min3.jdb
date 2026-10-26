@@ -1,5 +1,5 @@
 FUNC F(x)
-  DIM y AS STRING = EVAL("100 + " + STR(x))
+  DIM y AS STRING = EVAL("100 + " + STR$(x))
   PRINT "y="; y
   RETURN y
 ENDFUNC

@@ -50,7 +50,7 @@ DIM reqfile$ AS STRING = MKTEMP$("msr")
 TXTWRITER reqfile$, req$
 
 DIM r AS MAP = OS.EXEC(CHR$(34) + OS.SELF$() + CHR$(34) + " --mcp < " + CHR$(34) + reqfile$ + CHR$(34))
-DIM lines AS ARRAY = SPLIT(r{"OUTPUT"}, CHR$(10))
+DIM lines AS ARRAY = SPLIT(r{"output"}, CHR$(10))
 
 DIM loaded$ AS STRING = ToolText$(lines, 1)
 DIM resumed$ AS STRING = ToolText$(lines, 2)
@@ -64,7 +64,7 @@ Check(INSTR(status$, "idle") >= 0, "the program has finished")
 KILL prog$
 KILL reqfile$
 IF failed > 0 THEN
-    PRINT r{"OUTPUT"}
+    PRINT r{"output"}
     END 1
 ENDIF
 PRINT "OK"

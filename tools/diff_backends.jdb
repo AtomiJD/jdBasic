@@ -25,7 +25,7 @@ FUNC LINES_OF(text$) AS ARRAY
     RETURN out
 ENDFUNC
 
-DIM names = DIR$("tests/diff")
+DIM names = FILE.LIST("tests/diff")
 DIM snippets = []
 DIM ni AS INTEGER
 FOR ni = 0 TO LEN(names) - 1
@@ -47,7 +47,7 @@ FOR si = 0 TO LEN(snippets) - 1
     DIM rc = OS.EXEC(jdb$, ["-c", file$])
     IF NOT FILE.EXISTS(exe$) THEN
         PRINT "== "; base$; ": COMPILE FAILED"
-        PRINT rc{"OUTPUT"}
+        PRINT rc{"output"}
         broken = broken + 1
         CONTINUEFOR
     ENDIF
@@ -55,8 +55,8 @@ FOR si = 0 TO LEN(snippets) - 1
     IF OS.GETOS$() = "WINDOWS" THEN run$ = REPLACE$(exe$, "/", "\") ELSE run$ = "./" + exe$
     DIM rn = OS.EXEC(run$, [])
     KILL exe$
-    DIM li = LINES_OF(ri{"OUTPUT"})
-    DIM ln = LINES_OF(rn{"OUTPUT"})
+    DIM li = LINES_OF(ri{"output"})
+    DIM ln = LINES_OF(rn{"output"})
     DIM n AS INTEGER = MAX([LEN(li), LEN(ln)])
     DIM differ AS INTEGER = 0
     DIM k AS INTEGER
@@ -72,8 +72,8 @@ FOR si = 0 TO LEN(snippets) - 1
         ENDIF
     NEXT k
     DIM status$ AS STRING = ""
-    IF ri{"EXIT_CODE"} <> 0 THEN status$ = status$ + " interp exit " + STR$(ri{"EXIT_CODE"})
-    IF rn{"EXIT_CODE"} <> 0 THEN status$ = status$ + " native exit " + STR$(rn{"EXIT_CODE"})
+    IF ri{"exit_code"} <> 0 THEN status$ = status$ + " interp exit " + STR$(ri{"exit_code"})
+    IF rn{"exit_code"} <> 0 THEN status$ = status$ + " native exit " + STR$(rn{"exit_code"})
     IF status$ <> "" THEN broken = broken + 1
     PRINT "== "; base$; ": "; n; " lines, "; differ; " differ"; status$
     IF differ > 0 THEN PRINT report$;

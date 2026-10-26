@@ -64,7 +64,7 @@ PRINT ""
 
 ' ── 4. TXTWRITER append: build a log across 'sessions' ──────────
 DIM logfile = work + "/session.log"
-DIM stamp$ = FORMAT_DATE(NOW(), "%H:%M:%S")
+DIM stamp$ = FORMAT_DATE$(NOW(), "%H:%M:%S")
 
 ' First session - overwrite
 TXTWRITER logfile, "[" + stamp$ + "] session-1 start" + CHR$(10)
@@ -87,7 +87,7 @@ PRINT ""
 
 ' ── 5. DIR$ detailed listing ──────────────────────────────────────
 PRINT "Workspace listing:"
-DIM listing = DIR$(work + "/*", TRUE)
+DIM listing = FILE.LIST(work + "/*", TRUE)
 PRINT "  Entries found: "; LEN(listing)
 
 ' ── Cleanup ──────────────────────────────────────────────────────

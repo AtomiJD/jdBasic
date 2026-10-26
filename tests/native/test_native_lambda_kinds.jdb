@@ -46,7 +46,7 @@ PRINT JSON.STRINGIFY$(SELECT(LAMBDA t -> t[0], table))
 PRINT JSON.STRINGIFY$(FILTER(LAMBDA t -> t[1] > 10, table))
 PRINT STR$(REDUCE(LAMBDA a, t -> a + t[1], table, 0))
 KILL path$
-DIM doc = JSON.PARSE$("[{" + CHR$(34) + "k" + CHR$(34) + ": 1}, {" + CHR$(34) + "k" + CHR$(34) + ": 7}]")
+DIM doc = JSON.PARSE("[{" + CHR$(34) + "k" + CHR$(34) + ": 1}, {" + CHR$(34) + "k" + CHR$(34) + ": 7}]")
 PRINT JSON.STRINGIFY$(SELECT(LAMBDA d -> d{"k"} * 2, doc))
 PRINT JSON.STRINGIFY$(FILTER(LAMBDA d -> d{"k"} > 5, doc))
 DIM lim = 3

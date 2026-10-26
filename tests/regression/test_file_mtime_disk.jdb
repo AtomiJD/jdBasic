@@ -55,7 +55,7 @@ IF SYS.FREEDISK(".") <> free_bytes THEN
     PRINT "the working directory and an explicit . disagree"
 ENDIF
 
-DIM df_line$ = SYS.DF()
+DIM df_line$ = SYS.DF$()
 IF INSTR(df_line$, "free of") < 0 THEN
     bad = bad + 1
     PRINT "SYS.DF answered ["; df_line$; "]"
@@ -63,7 +63,7 @@ ENDIF
 
 DIM df_told$ = "nothing"
 TRY
-    DIM nowhere$ = SYS.DF("Q:/no/such/volume")
+    DIM nowhere$ = SYS.DF$("Q:/no/such/volume")
     df_told$ = "answered"
 CATCH
     df_told$ = "raised"

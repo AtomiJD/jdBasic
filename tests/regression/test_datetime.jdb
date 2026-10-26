@@ -9,8 +9,8 @@ PRINT "TIME$ = "; TIME$()
 ' DateTime as epoch
 LET N = NOW()
 PRINT "NOW() = "; N
-PRINT "FORMAT_DATE(NOW()) = "; FORMAT_DATE(N)
-PRINT "FORMAT_DATE(NOW(), '%d.%m.%Y') = "; FORMAT_DATE(N, "%d.%m.%Y")
+PRINT "FORMAT_DATE(NOW()) = "; FORMAT_DATE$(N)
+PRINT "FORMAT_DATE(NOW(), '%d.%m.%Y') = "; FORMAT_DATE$(N, "%d.%m.%Y")
 
 ' CVDATE
 LET D1 = CVDATE("2025-01-01")
@@ -19,10 +19,10 @@ PRINT "DATEDIFF('D', 2025-01-01, 2025-12-31) = "; DATEDIFF("D", D1, D2); " days"
 
 ' DATEADD
 LET TOMORROW = DATEADD("D", 1, NOW())
-PRINT "Tomorrow = "; FORMAT_DATE(TOMORROW, "%Y-%m-%d")
+PRINT "Tomorrow = "; FORMAT_DATE$(TOMORROW, "%Y-%m-%d")
 
 LET NEXT_HOUR = DATEADD("H", 1, NOW())
-PRINT "Next hour = "; FORMAT_DATE(NEXT_HOUR, "%H:%M:%S")
+PRINT "Next hour = "; FORMAT_DATE$(NEXT_HOUR, "%H:%M:%S")
 
 ' Performance timing
 LET T1 = TICK()

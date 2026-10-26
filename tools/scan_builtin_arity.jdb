@@ -20,7 +20,7 @@ FOR a = 0 TO LEN(argv) - 1
     IF argv[a] = "--check" THEN check_only = TRUE
 NEXT a
 
-DIM files = SORT(DIR$(PATH.JOIN$("src", "*.cpp")))
+DIM files = SORT(FILE.LIST(PATH.JOIN$("src", "*.cpp")))
 DIM reg$ = "register_native("
 DIM q$ = CHR$(34)
 

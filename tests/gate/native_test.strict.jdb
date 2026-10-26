@@ -368,7 +368,7 @@ DIM day_gaps = DATEDIFF("D", CDATE("2026-09-01"), span)
 Assert(2860,LEN(span) = 5)
 Assert(2861,DATEDIFF("D", span[0], span[4]) = 4)
 Assert(2862,DATEDIFF("S", CDATE("2026-09-01"), span[0]) = 0)
-Assert(2863,FORMAT_DATE(DATEADD("D", 3, span[0]), "%Y-%m-%d") = "2026-09-04")
+Assert(2863,FORMAT_DATE$(DATEADD("D", 3, span[0]), "%Y-%m-%d") = "2026-09-04")
 Assert(2864,day_gaps[4] = 4)
 Assert(2865,WEEKDAY(span[0]) = 2)
 Assert(2866,MONTH(span[0]) = 9 AND YEAR(span[0]) = 2026)
@@ -409,7 +409,7 @@ PRINT "── Regex ──"
 ' REGEX_MATCH(text$, pattern$) does substring search instead.
 Assert(130,REGEX.MATCH("[a-z0-9]+", "abc123"))
 Assert(131,NOT REGEX.MATCH("^[0-9]+$", "abcdef"))
-Assert(132,REGEX.REPLACE("[0-9]+", "Hello 2026", "XXXX") = "Hello XXXX")
+Assert(132,REGEX.REPLACE$("[0-9]+", "Hello 2026", "XXXX") = "Hello XXXX")
 
 ' ── 35. SYSTEM ───────────────────────────────────────────────
 PRINT "── System ──"
@@ -584,7 +584,7 @@ MKDIR "_sa_tmp"
 TXTWRITER "_sa_tmp/alpha.txt", "a"
 TXTWRITER "_sa_tmp/bravo.txt", "b"
 TXTWRITER "_sa_tmp/charlie.txt", "c"
-DIM sa_names = DIR$("_sa_tmp/*", FALSE)
+DIM sa_names = FILE.LIST("_sa_tmp/*", FALSE)
 Assert(183, LEN(sa_names) = 3)
 Assert(184, LEN(sa_names[0]) > 0)
 DIM sa_saw = 0
@@ -803,7 +803,7 @@ Assert(221, ftAW[2] = 3)
 
 ' AS OBJECT - JSON handle direct
 FUNC ft_obj(s$) AS OBJECT
-    RETURN JSON.PARSE$(s$)
+    RETURN JSON.PARSE(s$)
 ENDFUNC
 DIM ftO = ft_obj("[100,200,300]")
 Assert(222, LEN(ftO) = 3)
@@ -865,9 +865,9 @@ Assert(236, STR$(ftMapData[2]) = "30")
 ' (equivalent of SQLITE.QUERY's `RETURN []` in the error path).
 FUNC ft_maybe_obj(empty AS INTEGER) AS OBJECT
     IF empty <> 0 THEN
-        RETURN JSON.PARSE$("[]")
+        RETURN JSON.PARSE("[]")
     ENDIF
-    RETURN JSON.PARSE$("[1,2,3]")
+    RETURN JSON.PARSE("[1,2,3]")
 ENDFUNC
 DIM ftMaybe = ft_maybe_obj(0)
 Assert(237, LEN(ftMaybe) = 3)
@@ -1497,7 +1497,7 @@ Assert(365, LEN(d408_slot) = 0)
 
 ' #410: key writes into a map a builtin handed out.
 DIM d410_q$ = CHR$(34)
-DIM d410_m = JSON.PARSE$("{" + d410_q$ + "a" + d410_q$ + ":" + d410_q$ + "x" + d410_q$ + "}")
+DIM d410_m = JSON.PARSE("{" + d410_q$ + "a" + d410_q$ + ":" + d410_q$ + "x" + d410_q$ + "}")
 d410_m{"a"} = "y"
 d410_m{"b"} = "z"
 DIM d410_a$ = d410_m{"a"}
@@ -1507,14 +1507,14 @@ Assert(367, d410_b$ = "z")
 
 ' #411: RETURN JSON.PARSE$(...) answers the map, not a string.
 FUNC D411Parsed(text$)
-    RETURN JSON.PARSE$(text$)
+    RETURN JSON.PARSE(text$)
 ENDFUNC
 DIM d411_src$ = "{" + d410_q$ + "name" + d410_q$ + ":" + d410_q$ + "Ann" + d410_q$ + "}"
 Assert(368, TYPEOF(D411Parsed(d411_src$)) = "OBJECT")
 
 ' #413: a parameter named like a builtin leaves the builtin call alone.
 FUNC D413List(dir$)
-    DIM found = DIR$(dir$)
+    DIM found = FILE.LIST(dir$)
     RETURN LEN(found)
 ENDFUNC
 DIM d413_file$ = MKTEMP$("d413") + ".txt"
@@ -1527,7 +1527,7 @@ FUNC D414Keys(requires)
     DIM names = MAP.KEYS(requires)
     RETURN LEN(names)
 ENDFUNC
-DIM d414_idx = JSON.PARSE$("{" + d410_q$ + "web" + d410_q$ + ":{" + d410_q$ + "req" + d410_q$ + ":1," + d410_q$ + "url" + d410_q$ + ":2}}")
+DIM d414_idx = JSON.PARSE("{" + d410_q$ + "web" + d410_q$ + ":{" + d410_q$ + "req" + d410_q$ + ":1," + d410_q$ + "url" + d410_q$ + ":2}}")
 DIM d414_web = d414_idx{"web"}
 Assert(370, D414Keys(d414_web) = 2)
 
@@ -1642,15 +1642,15 @@ Assert(2876,LEN(afz_m) = 5 AND LEN(afz_m[0]) = 5)
 PRINT "── Dates out of an array ──"
 
 DIM dar_span = DATERANGE(CDATE("2026-09-01"), CDATE("2026-09-03"), "D")
-DIM dar_fmt = FORMAT_DATE(dar_span, "%Y-%m-%d")
+DIM dar_fmt = FORMAT_DATE$(dar_span, "%Y-%m-%d")
 Assert(2880,dar_fmt[0] = "2026-09-01")
 Assert(2881,dar_fmt[2] = "2026-09-03")
 DIM dar_next = DATEADD("D", 1, dar_span)
-Assert(2882,FORMAT_DATE(dar_next[0], "%Y-%m-%d") = "2026-09-02")
-Assert(2883,FORMAT_DATE(dar_next[2], "%Y-%m-%d") = "2026-09-04")
+Assert(2882,FORMAT_DATE$(dar_next[0], "%Y-%m-%d") = "2026-09-02")
+Assert(2883,FORMAT_DATE$(dar_next[2], "%Y-%m-%d") = "2026-09-04")
 Assert(2884,INSTR(FRMV$(dar_span), "2026-09-01") >= 0)
 DIM dar_strs = [CDATE("2026-01-30"), CDATE("2026-02-28")]
-DIM dar_sfmt = FORMAT_DATE(dar_strs, "%Y-%m-%d")
+DIM dar_sfmt = FORMAT_DATE$(dar_strs, "%Y-%m-%d")
 Assert(2885,dar_sfmt[1] = "2026-02-28")
 Assert(2886,TYPEOF(DATE.UTC(2026, 9, 1)) = "DATE")
 Assert(2887,TYPEOF(EOMONTH(CDATE("2026-09-01"))) = "DATE")
@@ -1670,7 +1670,7 @@ ENDFUNC
 DIM dte_a = CDATE("2026-03-28 12:00:00")
 DIM dte_b = CDATE("2026-03-30 12:00:00")
 Assert(2890,DATEDIFF("D", dte_a, dte_b) = 2)
-Assert(2891,FORMAT_DATE(DATEADD("D", 2, dte_a), "%Y-%m-%d %H:%M") = "2026-03-30 12:00")
+Assert(2891,FORMAT_DATE$(DATEADD("D", 2, dte_a), "%Y-%m-%d %H:%M") = "2026-03-30 12:00")
 DIM dte_span = DATERANGE(CDATE("2026-03-28"), CDATE("2026-03-31"), "D")
 Assert(2892,LEN(dte_span) = 4)
 ' Calendar days between two midnights are whole, across any clock change.
@@ -1794,7 +1794,7 @@ CATCH
     mv_err2941 = "caught"
 ENDTRY
 Assert(2941,mv_err2941 = "caught")
-Assert(2942,LEN(DIR$(mv_dir2937 + "/*.txt")) = 2)
+Assert(2942,LEN(FILE.LIST(mv_dir2937 + "/*.txt")) = 2)
 KILL mv_dir2937 + "/Kopie.txt"
 KILL mv_dir2937 + "/Größe Ü.txt"
 RMDIR mv_dir2937
@@ -1804,19 +1804,19 @@ RMDIR mv_dir2937
 DIM ex_dir2943 = MKTEMP$("ex")
 MKDIR ex_dir2943
 DIM ex_flag2943 = ex_dir2943 + "/hit.txt"
-IF OS.GETOS() = "WINDOWS" THEN
+IF OS.GETOS$() = "WINDOWS" THEN
     DIM ex_r2943 = OS.EXEC("cmd", ["/c", "exit", "4"])
-    Assert(2943,ex_r2943{"EXIT_CODE"} = 4)
+    Assert(2943,ex_r2943{"exit_code"} = 4)
     DIM ex_r2944 = OS.EXEC("where", ["x & echo hit > " + ex_flag2943])
     Assert(2944,NOT FILE.EXISTS(ex_flag2943))
 ELSE
     DIM ex_r2943 = OS.EXEC("sh", ["-c", "exit 4"])
-    Assert(2943,ex_r2943{"EXIT_CODE"} <> 0)
+    Assert(2943,ex_r2943{"exit_code"} <> 0)
     DIM ex_r2944 = OS.EXEC("echo", ["x; echo hit > " + ex_flag2943])
     Assert(2944,NOT FILE.EXISTS(ex_flag2943))
 ENDIF
 RMDIR ex_dir2943
-Assert(2893,FORMAT_DATE(dte_span[3], "%Y-%m-%d") = "2026-03-31")
+Assert(2893,FORMAT_DATE$(dte_span[3], "%Y-%m-%d") = "2026-03-31")
 
 ' A negative epoch.
 DIM dte_old = CDATE("1966-07-30 15:00:00")
@@ -1828,11 +1828,11 @@ Assert(2895,DATEDIFF("D", dte_old, CDATE("1966-08-06 15:00:00")) = 7)
 ' calendar day depends on the local zone.
 DIM dte_cv = CVDATE([0, 86400, 172800])
 Assert(2896,LEN(dte_cv) = 3)
-Assert(2897,FORMAT_DATE(dte_cv[1], "%Y-%m-%d %H:%M") = FORMAT_DATE(CVDATE(86400), "%Y-%m-%d %H:%M"))
-Assert(2898,FORMAT_DATE(dte_cv[2], "%Y-%m-%d %H:%M") = FORMAT_DATE(CVDATE(172800), "%Y-%m-%d %H:%M"))
+Assert(2897,FORMAT_DATE$(dte_cv[1], "%Y-%m-%d %H:%M") = FORMAT_DATE$(CVDATE(86400), "%Y-%m-%d %H:%M"))
+Assert(2898,FORMAT_DATE$(dte_cv[2], "%Y-%m-%d %H:%M") = FORMAT_DATE$(CVDATE(172800), "%Y-%m-%d %H:%M"))
 
 ' A date handed to a FUNC and back.
-Assert(2899,FORMAT_DATE(dte_next(dte_a), "%Y-%m-%d") = "2026-03-29")
+Assert(2899,FORMAT_DATE$(dte_next(dte_a), "%Y-%m-%d") = "2026-03-29")
 
 ' A date is epoch seconds marked as a date in both backends: the VM with a
 ' subtype on the value, the native side with JD_TAG_DATE. So it stays a date
@@ -1847,7 +1847,7 @@ Assert(2900,TYPEOF(dte_map{"when"}) = "DATE")
 Assert(2901,TYPEOF(dte_cell) = "DATE")
 Assert(2902,TYPEOF(dte_span[0]) = "DATE")
 Assert(2903,TYPEOF(dte_diff) = "FLOAT64")
-Assert(2904,FORMAT_DATE(dte_map{"when"}, "%Y-%m-%d") = "2026-03-28")
+Assert(2904,FORMAT_DATE$(dte_map{"when"}, "%Y-%m-%d") = "2026-03-28")
 ' Whole calendar days read the same in every time zone. The seconds of
 ' dte_diff do not: between those two noons a zone that moves its clocks
 ' counts 169200 and one that does not counts 172800, which is why only the

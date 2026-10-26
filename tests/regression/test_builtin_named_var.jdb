@@ -30,7 +30,7 @@ IF ABS(det + 2.0) > 0.000000001 THEN
     PRINT "DET: "; det
 ENDIF
 DIM eig = EIG(mat)
-DIM ev = eig{"EIGENVALUES"}
+DIM ev = eig{"eigenvalues"}
 IF ABS(ev[0][0] + ev[1][0] - 5.0) > 0.000001 THEN
     bad = bad + 1
     PRINT "EIG trace: "; ev[0][0] + ev[1][0]

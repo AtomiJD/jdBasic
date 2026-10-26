@@ -8,8 +8,8 @@
 PRINT "── OS.EXEC native marshalling ──"
 
 DIM r = OS.EXEC("echo hello-from-shell")
-PRINT "1) exit_code = " + STR$(r{"EXIT_CODE"})
-PRINT "2) output    = " + TRIM$(r{"OUTPUT"})
-PRINT "3) output len > 0 ?  " + STR$(LEN(r{"OUTPUT"}) > 0)
+PRINT "1) exit_code = " + STR$(r{"exit_code"})
+PRINT "2) output    = " + TRIM$(r{"output"})
+PRINT "3) output len > 0 ?  " + STR$(LEN(r{"output"}) > 0)
 
 PRINT "── done ──"

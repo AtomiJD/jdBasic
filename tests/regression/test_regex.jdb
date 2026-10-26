@@ -35,16 +35,16 @@ PRINT ""
 PRINT "=== REGEX.REPLACE ==="
 
 ' Simple replace
-PRINT REGEX.REPLACE("[0-9]+", "abc 123 def 456", "NUM")
+PRINT REGEX.REPLACE$("[0-9]+", "abc 123 def 456", "NUM")
 
 ' Backreference: swap first and last name
-PRINT REGEX.REPLACE("(\w+) (\w+)", "John Doe", "$2, $1")
+PRINT REGEX.REPLACE$("(\w+) (\w+)", "John Doe", "$2, $1")
 
 ' Remove HTML tags
-PRINT REGEX.REPLACE("<[^>]+>", "<b>bold</b> and <i>italic</i>", "")
+PRINT REGEX.REPLACE$("<[^>]+>", "<b>bold</b> and <i>italic</i>", "")
 
 ' Replace dates: DD.MM.YYYY → YYYY-MM-DD
-PRINT REGEX.REPLACE("(\d{2})\.(\d{2})\.(\d{4})", "05.04.2026", "$3-$2-$1")
+PRINT REGEX.REPLACE$("(\d{2})\.(\d{2})\.(\d{4})", "05.04.2026", "$3-$2-$1")
 
 PRINT ""
 PRINT "=== ALL TESTS PASSED ==="

@@ -76,7 +76,7 @@ DIM repo$ AS STRING = "."
 DIM slash AS INTEGER = INSTR(REVERSE$(script$), "/")
 IF slash >= 0 THEN repo$ = LEFT$(script$, LEN(script$) - 1 - slash) + "/.."
 DIM ref_r = OS.EXEC("git", ["-C", repo$, "rev-parse", "--short", "HEAD"])
-DIM ref_head$ AS STRING = TRIM$(REPLACE$(REPLACE$(ref_r{"OUTPUT"}, CHR$(13), ""), CHR$(10), ""))
+DIM ref_head$ AS STRING = TRIM$(REPLACE$(REPLACE$(ref_r{"output"}, CHR$(13), ""), CHR$(10), ""))
 
 DIM dash_node = NODE.JOIN("farmdash-" + LCASE$(OS.HOSTNAME$()) + "-" + STR$(OS.PID()), "lan", key$)
 DIM stats_sub = TOPIC.SUBSCRIBE("farm/*/stats", "queue:256", TRUE)
@@ -310,7 +310,7 @@ DIM running AS INTEGER = TRUE
 SUB ON_QUIT()
     running = FALSE
 ENDSUB
-ON "QUIT" CALL ON_QUIT
+ON "QUIT" CALL ON_QUIT@
 
 SCREEN 1280, 760, "jdBasic farm"
 GUI.THEME "DARK"

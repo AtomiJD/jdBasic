@@ -8,20 +8,20 @@ DIM bad = 0
 
 TXTWRITER path$, "Ung" + CHR$(129) + "ltig"
 DIM r = OS.EXEC("cmd", ["/c", "type", REPLACE$(path$, "/", "\")])
-IF TRIM$(r{"OUTPUT"}) = "Ung" + u_uml$ + "ltig" THEN
+IF TRIM$(r{"output"}) = "Ung" + u_uml$ + "ltig" THEN
     PRINT "PASS an OEM byte becomes UTF-8"
 ELSE
-    PRINT "FAIL an OEM byte: got ["; r{"OUTPUT"}; "]"
+    PRINT "FAIL an OEM byte: got ["; r{"output"}; "]"
     bad = bad + 1
 ENDIF
 
 DIM word$ = "Gr" + u_uml$ + sharp_s$ + "e " + CHR$(8364)
 TXTWRITER path$, word$
 DIM u = OS.EXEC("cmd", ["/c", "type", REPLACE$(path$, "/", "\")])
-IF TRIM$(u{"OUTPUT"}) = word$ THEN
+IF TRIM$(u{"output"}) = word$ THEN
     PRINT "PASS UTF-8 output stays as it is"
 ELSE
-    PRINT "FAIL UTF-8 output: got ["; u{"OUTPUT"}; "]"
+    PRINT "FAIL UTF-8 output: got ["; u{"output"}; "]"
     bad = bad + 1
 ENDIF
 KILL path$

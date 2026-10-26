@@ -107,7 +107,7 @@ FUNC GenerateSprite$(prompt$, filename$)
     NEXT attempt
 
     ' Parse JSON response to get base64 image data
-    json = JSON.PARSE$(response$)
+    json = JSON.PARSE(response$)
     TRY
         b64_data$ = json{"data"}[0]{"b64_json"}
     CATCH

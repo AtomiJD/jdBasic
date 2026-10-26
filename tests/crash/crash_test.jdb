@@ -25,7 +25,7 @@ Assert(ok, "ABS() no args no crash")
 
 ok = FALSE
 TRY
-  LET x = LEFT("hi")
+  LET x = LEFT$("hi")
   ok = TRUE
 CATCH
   ok = TRUE
@@ -171,8 +171,8 @@ Assert(2 + 2 = 4, "VM still healthy after crashes")
 '     pop machinery.
 PRINT "-- nested event raise --"
 DIM nested_marker = 0
-ON "ANER_OUTER" CALL ANER_Outer
-ON "ANER_INNER" CALL ANER_Inner
+ON "ANER_OUTER" CALL ANER_Outer@
+ON "ANER_INNER" CALL ANER_Inner@
 SUB ANER_Outer(data)
     RAISEEVENT "ANER_INNER", "from outer"
 ENDSUB

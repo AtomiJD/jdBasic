@@ -112,10 +112,10 @@ ENDFUNC
 
 FUNC stage_ok(flag$, file$, marker$)
     DIM r = OS.EXEC(EXE$, [flag$, file$])
-    IF r{"EXIT_CODE"} <> 0 THEN
+    IF r{"exit_code"} <> 0 THEN
         RETURN FALSE
     ENDIF
-    RETURN INSTR(r{"OUTPUT"}, marker$) >= 0
+    RETURN INSTR(r{"output"}, marker$) >= 0
 ENDFUNC
 
 TRY
@@ -123,7 +123,7 @@ TRY
 CATCH
 ENDTRY
 
-DIM names = DIR$(SRC_DIR$ + CHR$(92) + "*.jdb", FALSE)
+DIM names = FILE.LIST(SRC_DIR$ + CHR$(92) + "*.jdb", FALSE)
 DIM task_recs = []
 DIM conv_recs = []
 DIM n_bad = 0

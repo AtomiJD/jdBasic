@@ -54,12 +54,12 @@ PRINT "--- TYPEOF reports what a bridge handle really holds"
 
 ' A VM handle used to report OBJECT whatever it carried, which made the
 ' documented NONE guard unreachable in compiled code.
-DIM good = JSON.PARSE$("{" + CHR$(34) + "rate" + CHR$(34) + ": 44100}")
+DIM good = JSON.PARSE("{" + CHR$(34) + "rate" + CHR$(34) + ": 44100}")
 CHECK("a parsed map is an OBJECT", TYPEOF(good), "OBJECT")
 CHECK("  its field survives", STR$(good{"rate"}), "44100")
 
 ' Input the parser cannot even start on yields NONE rather than throwing.
-DIM bad = JSON.PARSE$("not json at all")
+DIM bad = JSON.PARSE("not json at all")
 CHECK("a failed parse is NONE", TYPEOF(bad), "NONE")
 
 DIM guard AS INTEGER = 0

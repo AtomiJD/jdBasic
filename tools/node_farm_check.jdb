@@ -41,8 +41,8 @@ IF LEN(cli) > 2 THEN seconds = CINT(VAL(cli[2]))
 DIM host$ AS STRING = LCASE$(OS.HOSTNAME$())
 DIM me$ AS STRING = "farm-" + host$
 DIM self_node = NODE.JOIN(me$, "lan")
-NODE.SERVE "NOW", "H_NOW"
-NODE.SERVE "ECHO", "H_ECHO"
+NODE.SERVE "NOW", H_NOW@
+NODE.SERVE "ECHO", H_ECHO@
 PRINT me$; " waits for "; want - 1; " other machine(s)"
 
 ' everyone keeps serving while it measures and until the others are done

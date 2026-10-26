@@ -28,7 +28,7 @@ fails = fails + chk("QR R00", fac{"R"}[0][0], -3.1622777, 0.00001)
 
 ' EIG: eigenvalues of A are (5 +/- sqrt(33))/2; their real parts sum to the
 ' trace (5) and their product equals the determinant (-2).
-DIM ev = EIG(A){"EIGENVALUES"}
+DIM ev = EIG(A){"eigenvalues"}
 fails = fails + chk("EIG trace", ev[0][0] + ev[1][0], 5.0, 0.000001)
 fails = fails + chk("EIG prod", ev[0][0] * ev[1][0], -2.0, 0.000001)
 

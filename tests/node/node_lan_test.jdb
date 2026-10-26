@@ -33,9 +33,9 @@ ENDFUNC
 IF ARG_AT$(1) = "--child" THEN
     DIM me$ AS STRING = ARG_AT$(2)
     DIM self_node = NODE.JOIN(me$, "lan", ARG_AT$(3))
-    NODE.SERVE "PID", "H_PID"
-    NODE.SERVE "ECHO", "H_ECHO"
-    NODE.SERVE "NOW", "H_NOW"
+    NODE.SERVE "PID", H_PID@
+    NODE.SERVE "ECHO", H_ECHO@
+    NODE.SERVE "NOW", H_NOW@
     DIM tick_pub = TOPIC.OPEN("lan/" + me$ + "/tick")
     TOPIC.RETAIN tick_pub, TRUE
     DIM inbox = NODE.INBOX()
@@ -159,7 +159,7 @@ Ok("PEERS forgets it", LEN(NODE.PEERS(child$)) = 0)
 Ok("KILL the stranger", OS.KILL(pid_s))
 DIM code_s = OS.WAIT(pid_s, 10000)
 NODE.LEAVE
-DIM left_files = DIR$(PATH.JOIN$(other_dir$, "*"))
+DIM left_files = FILE.LIST(PATH.JOIN$(other_dir$, "*"))
 DIM fi AS INTEGER
 FOR fi = 0 TO LEN(left_files) - 1
     TRY

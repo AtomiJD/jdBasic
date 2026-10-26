@@ -24,13 +24,13 @@ IF CHK("nat arr LEN",    STR$(LEN(arr)),"3")     THEN tp = tp + 1 ELSE tf = tf +
 
 ' ── 3. JSON parse + field access ─────────────────────────────
 js$ = "{""x"": 42, ""name"": ""test"", ""items"": [1,2,3]}"
-g = JSON.PARSE$(js$)
+g = JSON.PARSE(js$)
 IF CHK("json f64",       STR$(g{"x"}),   "42")   THEN tp = tp + 1 ELSE tf = tf + 1
 IF CHK("json str",       g{"name"},      "test")  THEN tp = tp + 1 ELSE tf = tf + 1
 
 ' ── 4. JSON nested object ────────────────────────────────────
 js2$ = "{""colors"": {""bg"": [20,20,55], ""fg"": ""white"", ""val"": 99}}"
-g2 = JSON.PARSE$(js2$)
+g2 = JSON.PARSE(js2$)
 c = g2{"colors"}
 IF CHK("nested f64",     STR$(c{"val"}), "99")    THEN tp = tp + 1 ELSE tf = tf + 1
 IF CHK("nested str",     c{"fg"},        "white") THEN tp = tp + 1 ELSE tf = tf + 1
@@ -73,7 +73,7 @@ IF CHK("func json arr",  STR$(SUM_ARR(items_arr)),"6") THEN tp = tp + 1 ELSE tf 
 
 ' ── 11. Deeply nested JSON ───────────────────────────────────
 js3$ = "{""a"": {""b"": {""c"": 777}}}"
-g3 = JSON.PARSE$(js3$)
+g3 = JSON.PARSE(js3$)
 deep = g3{"a"}
 deeper = deep{"b"}
 IF CHK("deep nested",    STR$(deeper{"c"}), "777") THEN tp = tp + 1 ELSE tf = tf + 1

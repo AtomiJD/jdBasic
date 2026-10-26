@@ -27,7 +27,7 @@ AI.CLEAR_HISTORY llm
 ' Eine triviale Grammar: nur ja oder nein
 DIM grammar AS STRING = "root ::= (\"ja\" | \"nein\")"
 AI.SET_GRAMMAR llm, grammar
-DIM r3 = AI.CHAT(llm, "Ist Berlin die Hauptstadt von Deutschland? Nur ja oder nein.")
+DIM r3 = AI.CHAT$(llm, "Ist Berlin die Hauptstadt von Deutschland? Nur ja oder nein.")
 PRINT "Antwort (constrained): "; r3
 AI.CLEAR_GRAMMAR llm
 
@@ -35,9 +35,9 @@ PRINT ""
 PRINT "=== Test 4: SET_JSON_MODE und CHAT statt CHAT_JSON ==="
 AI.CLEAR_HISTORY llm
 AI.SET_JSON_MODE llm
-DIM r4 = AI.CHAT(llm, "Gib eine Antwort als JSON mit einem Feld 'antwort' und Wert 'hallo'. Sonst nichts.")
+DIM r4 = AI.CHAT$(llm, "Gib eine Antwort als JSON mit einem Feld 'antwort' und Wert 'hallo'. Sonst nichts.")
 PRINT "Raw JSON: "; r4
-DIM parsed = JSON.PARSE$(r4)
+DIM parsed = JSON.PARSE(r4)
 PRINT "Geparst, Feld antwort: "; parsed{"antwort"}
 AI.CLEAR_GRAMMAR llm
 

@@ -16,7 +16,7 @@ DIM iso$ = "2026-03-01 00:00:00"
 ' A literal that mixes a date with a number
 DIM mixed = [when, 7]
 bad = bad + SameKind("literal date cell", TYPEOF(mixed[0]), "DATE")
-IF FORMAT_DATE(mixed[0], "%Y-%m-%d %H:%M:%S") <> "2026-03-01 00:00:00" THEN
+IF FORMAT_DATE$(mixed[0], "%Y-%m-%d %H:%M:%S") <> "2026-03-01 00:00:00" THEN
     bad = bad + 1
     PRINT "literal date cell read as "; mixed[0]
 ENDIF
@@ -36,7 +36,7 @@ bag{"count"} = 7
 bad = bad + SameKind("map value date", TYPEOF(MAP.VALUES(bag)[0]), "DATE")
 DIM vals = MAP.VALUES(bag)
 bad = bad + SameKind("map value date in a slot", TYPEOF(vals[0]), "DATE")
-IF FORMAT_DATE(vals[0], "%Y-%m-%d %H:%M:%S") <> "2026-03-01 00:00:00" THEN
+IF FORMAT_DATE$(vals[0], "%Y-%m-%d %H:%M:%S") <> "2026-03-01 00:00:00" THEN
     bad = bad + 1
     PRINT "map value date read as "; vals[0]
 ENDIF

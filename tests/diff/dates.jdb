@@ -6,7 +6,7 @@ DIM old AS DATE = CVDATE("1969-07-20")
 PRINT "parts: "; YEAR(d); " "; MONTH(d); " "; DAY(d); " "; HOUR(d); " "; MINUTE(d); " "; SECOND(d); " "; WEEKDAY(d)
 PRINT "parts old: "; YEAR(old); " "; MONTH(old); " "; DAY(old); " "; WEEKDAY(old)
 PRINT "print: "; d; " "; e; " "; old
-PRINT "format: "; FORMAT_DATE(d, "YYYY-MM-DD"); " "; FORMAT_DATE(d, "DD.MM.YYYY HH:NN:SS"); " "; FORMAT_DATE(e, "MMM D, YYYY")
+PRINT "format: "; FORMAT_DATE$(d, "YYYY-MM-DD"); " "; FORMAT_DATE$(d, "DD.MM.YYYY HH:NN:SS"); " "; FORMAT_DATE$(e, "MMM D, YYYY")
 PRINT "add: "; DATEADD("D", 3, e); " "; DATEADD("M", 1, CVDATE("2026-01-31")); " "; DATEADD("Y", -1, d); " "; DATEADD("H", 25, d)
 PRINT "add n s: "; DATEADD("N", 90, d); " "; DATEADD("S", 3600, d); " "; DATEADD("W", 2, e)
 PRINT "diff: "; DATEDIFF("D", e, d); " "; DATEDIFF("D", CVDATE("2026-01-01"), CVDATE("2026-10-01")); " "; DATEDIFF("H", d, DATEADD("D", 1, d))
@@ -23,7 +23,7 @@ PRINT "epoch: "; CLNG(CVDATE("1970-01-01 00:00:00")); " "; CLNG(CVDATE("2000-01-
 PRINT "str: "; STR$(d); " "; "" + e
 PRINT "parts tz: "; DATE.PARTS(d, 0){"hour"}; " "; DATE.PARTS(d, 5.5){"minute"}; " "; DATE.PARTS(old){"yday"}; " "; DATE.PARTS(d){"weekday"}
 PRINT "utc: "; YEAR(DATE.UTC(1969, 7, 20, 20, 17)); " "; CLNG(DATE.UTC(1969, 7, 20, 20, 17)); " "; CLNG(DATE.UTC(2000, 1, 1))
-PRINT "format tz: "; FORMAT_DATE(d, "%H:%M", 0); " "; FORMAT_DATE(d, "%d.%m.%Y", 8); " "; FORMAT_DATE(d, "%j %w %a")
+PRINT "format tz: "; FORMAT_DATE$(d, "%H:%M", 0); " "; FORMAT_DATE$(d, "%d.%m.%Y", 8); " "; FORMAT_DATE$(d, "%j %w %a")
 PRINT "parts old time: "; HOUR(old); " "; MINUTE(DATEADD("N", 90, old)); " "; DAY(DATEADD("D", -1, old))
 PRINT "range months: "; LEN(DATERANGE(CVDATE("2026-01-31"), CVDATE("2026-06-30"), "M")); " "; DAY(DATERANGE(CVDATE("2026-01-31"), CVDATE("2026-04-30"), "M")[1]); " "; DAY(DATERANGE(CVDATE("2026-01-31"), CVDATE("2026-04-30"), "M")[2])
 PRINT "range weeks: "; LEN(DATERANGE(e, DATEADD("D", 20, e), "W")); " "; LEN(DATERANGE(e, DATEADD("H", 5, e), "H", 2)); " "; LEN(DATERANGE(DATEADD("D", 6, e), e, "D", -3))

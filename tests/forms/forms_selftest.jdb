@@ -66,18 +66,18 @@ click_name$ = ""
 SUB MAIN_LOAD(e)
     loaded = TRUE
 ENDSUB
-ON "MAIN_LOAD" CALL MAIN_LOAD
+ON "MAIN_LOAD" CALL MAIN_LOAD@
 
 SUB BTNADD_CLICK(e)
     clicks = clicks + 1
     click_name$ = e[0]{"name"}
 ENDSUB
-ON "BTNADD_CLICK" CALL BTNADD_CLICK
+ON "BTNADD_CLICK" CALL BTNADD_CLICK@
 
 SUB TXTNAME_CHANGE(e)
     changes = changes + 1
 ENDSUB
-ON "TXTNAME_CHANGE" CALL TXTNAME_CHANGE
+ON "TXTNAME_CHANGE" CALL TXTNAME_CHANGE@
 
 SUB TMRMAIN_TICK(e)
     ticks = ticks + 1
@@ -87,7 +87,7 @@ SUB TMRMAIN_TICK(e)
     IF ticks = 4 THEN Check(FORM.GET(txt, "TEXT") = "changed", "textbox TEXT after event-driven SET")
     IF ticks >= 5 THEN FORM.CLOSE(frm)
 ENDSUB
-ON "TMRMAIN_TICK" CALL TMRMAIN_TICK
+ON "TMRMAIN_TICK" CALL TMRMAIN_TICK@
 
 FORM.RUN(frm)
 

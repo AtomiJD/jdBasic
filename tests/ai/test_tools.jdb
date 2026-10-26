@@ -29,7 +29,7 @@ FUNC Calculate(expression)
     PRINT "Error: "; ERRMSG$
     R = ""
   ENDTRY
-  RETURN STR(R)
+  RETURN STR$(R)
 ENDFUNC
 
 FUNC GetTime()
@@ -53,17 +53,17 @@ NEXT i
 PRINT ""
 PRINT "=== Test 1: Weather ==="
 PRINT "Q: What is the weather in Berlin?"
-PRINT "A: "; AI.TOOL_CHAT(llm, "What is the weather in Berlin right now?")
+PRINT "A: "; AI.TOOL_CHAT$(llm, "What is the weather in Berlin right now?")
 
 PRINT ""
 PRINT "=== Test 2: Calculator ==="
 PRINT "Q: What is 42 * 17?"
-PRINT "A: "; AI.TOOL_CHAT(llm, "Calculate 42 * 17 for me.")
+PRINT "A: "; AI.TOOL_CHAT$(llm, "Calculate 42 * 17 for me.")
 
 PRINT ""
 PRINT "=== Test 3: Time ==="
 PRINT "Q: What time is it?"
-PRINT "A: "; AI.TOOL_CHAT(llm, "What is the current time?")
+PRINT "A: "; AI.TOOL_CHAT$(llm, "What is the current time?")
 
 AI.FREE_LLM llm
 PRINT ""

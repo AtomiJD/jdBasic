@@ -211,7 +211,7 @@ MKDIR folder$
 DIM out_path$ = folder$ + "/built.xml"
 XML.WRITEFILE(made, out_path$)
 TESTKIT.EQ(XML.MARKUP$(XML.PARSEFILE(out_path$)), XML.MARKUP$(made), "WRITEFILE and PARSEFILE round trip")
-IF OS.GETOS() = "WINDOWS" THEN
+IF OS.GETOS$() = "WINDOWS" THEN
     DIM latin_path$ = folder$ + "/latin.xml"
     TXTWRITER latin_path$, "<?xml version='1.0' encoding='ISO-8859-1'?><n>Grüße</n>", FALSE, "cp1252"
     TESTKIT.EQ(XML.VALUE$(XML.PARSEFILE(latin_path$), "/n"), "Grüße", "a declared ISO-8859-1 file is decoded to UTF-8")

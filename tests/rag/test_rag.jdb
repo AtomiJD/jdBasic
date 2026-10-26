@@ -34,22 +34,22 @@ PRINT ""
 PRINT "=== Search Test ==="
 results = AI.RAG_SEARCH(rag, "What graphics can jdBasic do?", 2)
 FOR i = 0 TO LEN(results) - 1
-  PRINT "  ["; ROUND(results[i]{"score"}, 3); "] "; LEFT(results[i]{"text"}, 80); "..."
+  PRINT "  ["; ROUND(results[i]{"score"}, 3); "] "; LEFT$(results[i]{"text"}, 80); "..."
 NEXT i
 
 PRINT ""
 PRINT "=== RAG Q&A ==="
 
 PRINT "Q: What company created jdBasic?"
-PRINT "A: "; AI.RAG_QUERY(rag, "What company created jdBasic?")
+PRINT "A: "; AI.RAG_QUERY$(rag, "What company created jdBasic?")
 
 PRINT ""
 PRINT "Q: What AI features does jdBasic have?"
-PRINT "A: "; AI.RAG_QUERY(rag, "What AI features does jdBasic support?")
+PRINT "A: "; AI.RAG_QUERY$(rag, "What AI features does jdBasic support?")
 
 PRINT ""
 PRINT "Q: Can jdBasic play sound?"
-PRINT "A: "; AI.RAG_QUERY(rag, "Can jdBasic play sound and music?")
+PRINT "A: "; AI.RAG_QUERY$(rag, "Can jdBasic play sound and music?")
 
 AI.RAG_FREE rag
 AI.FREE_LLM llm

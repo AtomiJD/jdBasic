@@ -1,13 +1,13 @@
 ' ── DIR$ (simple) ──────────────────────────────────
 PRINT "=== DIR$ ==="
-DIM files = DIR$("*.jdb")
+DIM files = FILE.LIST("*.jdb")
 PRINT "JDB files: "; LEN(files)
 PRINT "First 3: "; TAKE(3, files)
 
 ' ── DIR$ (extended) ───────────────────────────────
 PRINT ""
 PRINT "=== DIR$ extended ==="
-DIM info = DIR$("*.jdb", TRUE)
+DIM info = FILE.LIST("*.jdb", TRUE)
 PRINT "Columns: name, size, type, date, attr"
 FOR I = 0 TO 2
     PRINT info[I]
@@ -47,9 +47,9 @@ PRINT "EXT(no ext): "; PATH.EXT$("Makefile")
 PRINT ""
 PRINT "=== KILL ==="
 TXTWRITER "test_kill.tmp", "delete me"
-PRINT "Created: "; LEN(DIR$("test_kill.tmp")); " file"
+PRINT "Created: "; LEN(FILE.LIST("test_kill.tmp")); " file"
 KILL "test_kill.tmp"
-PRINT "After kill: "; LEN(DIR$("test_kill.tmp")); " files"
+PRINT "After kill: "; LEN(FILE.LIST("test_kill.tmp")); " files"
 
 PRINT ""
 PRINT "=== ALL TESTS PASSED ==="

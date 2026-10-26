@@ -25,7 +25,7 @@ PRINT "format sign: "; FORMAT$("{:+.1f}", -2); " "; FORMAT$("{: d}", 7); " "; FO
 PRINT "format e g: "; FORMAT$("{:.2e}", 0.000123); " "; FORMAT$("{:E}", 1500); " "; FORMAT$("{:g}", 1500000); " "; FORMAT$("{:.3g}", 3.14159)
 PRINT "format hex: "; FORMAT$("{:X}", 255); " "; FORMAT$("{:#x}", 255); " "; FORMAT$("{:x}", 4095)
 PRINT "braces: "; FORMAT$("{{}} {}", 1)
-PRINT "cstr: "; CSTR(1.5); " "; CSTR(TRUE); " "; TOSTR([1])
+PRINT "cstr: "; STR$(1.5); " "; STR$(TRUE); " "; STR$([1])
 PRINT "format str num: "; FORMAT$("{:d}", "42"); " "; FORMAT$("{:.1f}", "2.25"); " "; FORMAT$("{:>6}|", 3.5); " "; FORMAT$("{:<6}|", "ab")
 PRINT "format zero: "; FORMAT$("{:08.3f}", -3.14159); " "; FORMAT$("{:06d}", -42); " "; FORMAT$("{:#010x}", 255); " "; FORMAT$("{:05}", "ab")
 PRINT "format fill: "; FORMAT$("{:*^9}", "mid"); " "; FORMAT$("{:_<5d}", 7); " "; FORMAT$("{:.2}", 2.345); " "; FORMAT$("{:5.1%}", 0.5)

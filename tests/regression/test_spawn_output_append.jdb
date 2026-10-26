@@ -12,8 +12,8 @@ SUB Check(ok, what$)
 ENDSUB
 
 DIM sh$ = "sh"
-IF OS.GETOS() = "WINDOWS" THEN sh$ = "C:/Program Files/Git/bin/bash.exe"
-IF OS.GETOS() = "WINDOWS" ANDALSO NOT FILE.EXISTS(sh$) THEN
+IF OS.GETOS$() = "WINDOWS" THEN sh$ = "C:/Program Files/Git/bin/bash.exe"
+IF OS.GETOS$() = "WINDOWS" ANDALSO NOT FILE.EXISTS(sh$) THEN
     PRINT "OK (no Git bash)"
     END 0
 ENDIF

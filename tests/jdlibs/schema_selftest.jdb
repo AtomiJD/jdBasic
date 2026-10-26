@@ -111,7 +111,7 @@ TESTKIT.EQ(js{"properties"}{"address"}{"properties"}{"zip"}{"minLength"}, 4, "st
 TESTKIT.EQ(js{"additionalProperties"}, FALSE, "closed for extra keys")
 DIM text$ = SCHEMA.JSONSCHEMA$(person)
 TESTKIT.ISTRUE(STARTSWITH(text$, "{"), "the string form is JSON")
-TESTKIT.EQ(JSON.PARSE$(text$){"type"}, "object", "and parses back")
+TESTKIT.EQ(JSON.PARSE(text$){"type"}, "object", "and parses back")
 
 TESTKIT.SUITE("formats")
 DIM account = SCHEMA.NEW({"iban": {"type": "string", "format": "iban", "required": TRUE}, "vat": {"type": "string", "format": "VATID"}, "currency": {"type": "string", "format": "currency", "default": "EUR"}})

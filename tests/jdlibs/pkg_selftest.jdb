@@ -164,7 +164,7 @@ DIM synced = PKG.SYNC(index$, proj$)
 TESTKIT.EQ(synced{"HELLOPKG"}, "1.2.0", "SYNC installs the manifest's ranges")
 TESTKIT.ISTRUE(FILE.EXISTS(proj$ + "/modules/greetpkg.jdb"), "into the project's modules folder")
 TESTKIT.ISTRUE(FILE.EXISTS(proj$ + "/jdbasic.lock"), "and writes a lock file")
-DIM lock = JSON.PARSE$(TXTREADER$(proj$ + "/jdbasic.lock"))
+DIM lock = JSON.PARSE(TXTREADER$(proj$ + "/jdbasic.lock"))
 DIM lock_hello = lock{"HELLOPKG"}
 TESTKIT.EQ(lock_hello{"version"}, "1.2.0", "the lock names the version")
 TESTKIT.EQ(LEN(lock_hello{"sha256"}), 64, "and the file's hash")

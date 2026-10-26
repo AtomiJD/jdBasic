@@ -47,7 +47,7 @@ ENDFUNC
 ' A folder and everything below it removed.
 SUB RemoveTree(root$)
     IF FILE.ISDIR(root$) THEN
-        DIM rows = DIR$(root$, TRUE)
+        DIM rows = FILE.LIST(root$, TRUE)
         DIM r = 0
         FOR r = 0 TO LEN(rows) - 1
             DIM entry$ = rows[r, 0]
@@ -437,7 +437,7 @@ TESTKIT.THROWS(FolderMissing@, root$ + "/nothing", "FROMFOLDER of a missing fold
 
 TESTKIT.SUITE("the system tar reads archives written here")
 DIM tar_exe$ = ""
-IF OS.GETOS() = "WINDOWS" THEN
+IF OS.GETOS$() = "WINDOWS" THEN
     IF FILE.EXISTS("C:/Windows/System32/tar.exe") THEN tar_exe$ = "C:/Windows/System32/tar.exe"
 ELSE
     IF FILE.EXISTS("/usr/bin/tar") THEN tar_exe$ = "/usr/bin/tar"

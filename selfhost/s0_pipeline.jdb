@@ -72,9 +72,9 @@ cmd = cmd + " -o " + exePath
 
 PRINT "clang ..."
 res = OS.EXEC(cmd)
-IF res{"EXIT_CODE"} <> 0 THEN
-    PRINT "clang failed with "; res{"EXIT_CODE"}
-    PRINT res{"OUTPUT"}
+IF res{"exit_code"} <> 0 THEN
+    PRINT "clang failed with "; res{"exit_code"}
+    PRINT res{"output"}
     END
 ENDIF
 
@@ -83,10 +83,10 @@ ENDIF
 ' Same rule for the produced binary: the shell wants a backslash path.
 res = OS.EXEC("tmp\s0_hello.exe")
 PRINT "--- output of the generated binary ---"
-PRINT res{"OUTPUT"};
-PRINT "--- exit "; res{"EXIT_CODE"}; " ---"
+PRINT res{"output"};
+PRINT "--- exit "; res{"exit_code"}; " ---"
 
-IF INSTR(res{"OUTPUT"}, "42") >= 0 THEN
+IF INSTR(res{"output"}, "42") >= 0 THEN
     PRINT "S0 OK"
 ELSE
     PRINT "S0 FAILED: expected 42 in the output"

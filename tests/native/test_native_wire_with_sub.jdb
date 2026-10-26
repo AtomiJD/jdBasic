@@ -46,8 +46,8 @@ ENDSUB
 SUB OnQuit(QuitData)
     running = 0
 ENDSUB
-ON "KEYDOWN" CALL OnKey
-ON "QUIT"    CALL OnQuit
+ON "KEYDOWN" CALL OnKey@
+ON "QUIT"    CALL OnQuit@
 
 DIM iter AS INTEGER = 0
 DO

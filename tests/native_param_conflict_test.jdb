@@ -62,11 +62,11 @@ PRINT "--- one parameter with two types compiles and runs"
 DIM bad$ = "FUNC id(v)" + nl$ + "  RETURN v" + nl$ + "ENDFUNC" + nl$ + _
     "PRINT id(" + CHR$(34) + "a" + CHR$(34) + ")" + nl$ + "PRINT id(5)" + nl$
 DIM r1 = COMPILE(bad$)
-CHECK("the compile goes through", STR$(r1{"EXIT_CODE"}), "0")
-CHECK("without a conflict message", STR$(INSTR("" + r1{"OUTPUT"}, "is called with") >= 0), "FALSE")
+CHECK("the compile goes through", STR$(r1{"exit_code"}), "0")
+CHECK("without a conflict message", STR$(INSTR("" + r1{"output"}, "is called with") >= 0), "FALSE")
 DIM ran = OS.EXEC(tmpexe$)
-CHECK("the string arrives as a string", STR$(INSTR("" + ran{"OUTPUT"}, "a") >= 0), "TRUE")
-CHECK("the number as a number", STR$(INSTR("" + ran{"OUTPUT"}, "5") >= 0), "TRUE")
+CHECK("the string arrives as a string", STR$(INSTR("" + ran{"output"}, "a") >= 0), "TRUE")
+CHECK("the number as a number", STR$(INSTR("" + ran{"output"}, "5") >= 0), "TRUE")
 
 PRINT "--- with TYPEOF in the body the same call compiles"
 
@@ -77,15 +77,15 @@ DIM good$ = "FUNC show$(v)" + nl$ + _
     "  RETURN STR$(v)" + nl$ + "ENDFUNC" + nl$ + _
     "PRINT show$(" + CHR$(34) + "a" + CHR$(34) + ")" + nl$ + "PRINT show$(5)" + nl$
 DIM r2 = COMPILE(good$)
-CHECK("the compile goes through", STR$(r2{"EXIT_CODE"}), "0")
-CHECK("  without a conflict message", STR$(INSTR("" + r2{"OUTPUT"}, "is called with") >= 0), "FALSE")
+CHECK("the compile goes through", STR$(r2{"exit_code"}), "0")
+CHECK("  without a conflict message", STR$(INSTR("" + r2{"output"}, "is called with") >= 0), "FALSE")
 
 PRINT "--- and an annotated parameter likewise"
 
 DIM ann$ = "FUNC twice(v AS DOUBLE)" + nl$ + "  RETURN v * 2" + nl$ + "ENDFUNC" + nl$ + _
     "PRINT twice(5)" + nl$
 DIM r3 = COMPILE(ann$)
-CHECK("annotated compiles", STR$(r3{"EXIT_CODE"}), "0")
+CHECK("annotated compiles", STR$(r3{"exit_code"}), "0")
 
 PRINT ""
 PRINT "native_param_conflict_test: passed "; pass; ", failed "; fail

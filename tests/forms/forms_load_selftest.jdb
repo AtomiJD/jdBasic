@@ -91,7 +91,7 @@ SUB T2_TICK(e)
     ticks2 = ticks2 + 1
     IF ticks2 >= 2 THEN FORM.CLOSE(frm2)
 ENDSUB
-ON "T2_TICK" CALL T2_TICK
+ON "T2_TICK" CALL T2_TICK@
 
 frm2 = FORM.CREATE("after errors", 200, 120)
 t2 = FORM.TIMER(frm2, "T2", 50)

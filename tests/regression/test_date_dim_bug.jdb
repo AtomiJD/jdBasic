@@ -14,9 +14,9 @@ IF TYPEOF(deadline) <> "DATE" THEN
     bad = bad + 1
     PRINT "assigned kind: "; TYPEOF(deadline)
 ENDIF
-IF FORMAT_DATE(deadline, "%Y-%m-%d") <> "2025-07-01" THEN
+IF FORMAT_DATE$(deadline, "%Y-%m-%d") <> "2025-07-01" THEN
     bad = bad + 1
-    PRINT "assigned text: "; FORMAT_DATE(deadline, "%Y-%m-%d")
+    PRINT "assigned text: "; FORMAT_DATE$(deadline, "%Y-%m-%d")
 ENDIF
 OUTPUT.CAPTURE_BEGIN
 PRINT "Deadline for "; proj; " is "; deadline
@@ -75,7 +75,7 @@ FUNC Remember()
     STATIC DIM seen AS DATE
     IF TYPEOF(seen) <> "DATE" THEN RETURN 1
     seen = CVDate("2025-01-01")
-    IF FORMAT_DATE(seen, "%Y-%m-%d") <> "2025-01-01" THEN RETURN 2
+    IF FORMAT_DATE$(seen, "%Y-%m-%d") <> "2025-01-01" THEN RETURN 2
     RETURN 0
 ENDFUNC
 DIM first_call = Remember()

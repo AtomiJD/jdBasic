@@ -26,12 +26,12 @@ Check(TYPEOF(shallow) = "ARRAY", "JSON nested 500 deep still parses")
 caught = 0
 DIM text$ AS STRING
 TRY
-    text$ = FORMAT_DATE(NOW(), "%Q")
+    text$ = FORMAT_DATE$(NOW(), "%Q")
 CATCH
     caught = 1
 ENDTRY
 Check(caught = 1, "FORMAT_DATE with an unknown conversion is caught")
-Check(FORMAT_DATE(CVDATE("2024-03-05"), "%Y/%m/%d") = "2024/03/05", "FORMAT_DATE still formats")
+Check(FORMAT_DATE$(CVDATE("2024-03-05"), "%Y/%m/%d") = "2024/03/05", "FORMAT_DATE still formats")
 
 DIM grid AS ARRAY = [[1, 2], [3, 4], [5, 6]]
 caught = 0

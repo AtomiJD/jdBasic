@@ -34,8 +34,8 @@ DIM held = Label(9)
 Check(held = "item 9", "answer kept in a variable")
 
 DIM word AS STRING = "abc"
-Check(STR(word) = "abc", "STR of a string")
-Check(STR(12) = "12", "STR of a number")
+Check(STR$(word) = "abc", "STR of a string")
+Check(STR$(12) = "12", "STR of a number")
 
 IF failed > 0 THEN END 1
 PRINT "OK"

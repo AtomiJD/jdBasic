@@ -1,6 +1,6 @@
 FUNC Calc(expression)
   DIM r AS STRING = EVAL(expression)
-  RETURN STR(r)
+  RETURN STR$(r)
 ENDFUNC
 
 FUNC Plain(x)

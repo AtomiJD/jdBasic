@@ -21,7 +21,7 @@ DO
     newsletter = TUI.CHECKBOX("Subscribe", newsletter)
     TUI.SEPARATOR
 
-    name$ = TUI.INPUT("Name", name$)
+    name$ = TUI.INPUT$("Name", name$)
     count_var = TUI.INPUT_INT("Count", count_var)
     volume = TUI.SLIDER("Volume", volume, 0.0, 1.0)
     TUI.SEPARATOR

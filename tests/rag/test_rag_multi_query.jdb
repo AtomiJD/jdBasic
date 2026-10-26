@@ -22,9 +22,9 @@ DIM questions = ["Wie viele Einwohner hat Berlin?", "Nenne mir die Hauptstadt vo
 
 FOR i = 0 TO LEN(questions) - 1
   PRINT ""
-  PRINT "Q" + STR(i+1) + ": " + questions[i]
-  DIM r = AI.RAG_QUERY(rag, questions[i], 3)
-  PRINT "A" + STR(i+1) + ": " + r
+  PRINT "Q" + STR$(i+1) + ": " + questions[i]
+  DIM r = AI.RAG_QUERY$(rag, questions[i], 3)
+  PRINT "A" + STR$(i+1) + ": " + r
 NEXT i
 
 AI.FREE_LLM llm

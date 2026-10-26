@@ -1,6 +1,6 @@
 ' ── OS.GETOS ───────────────────────────────────────
 PRINT "=== OS ==="
-PRINT "OS: "; OS.GETOS()
+PRINT "OS: "; OS.GETOS$()
 
 ' ── OS.ARGS ───────────────────────────────────────
 DIM cmdargs = OS.ARGS()
@@ -13,12 +13,12 @@ PRINT "Hostname: "; OS.HOSTNAME$()
 PRINT ""
 PRINT "=== OS.EXEC ==="
 DIM result = OS.EXEC("echo Hello from shell")
-PRINT "Exit code: "; result{"EXIT_CODE"}
-PRINT "Output: "; TRIM$(result{"OUTPUT"})
+PRINT "Exit code: "; result{"exit_code"}
+PRINT "Output: "; TRIM$(result{"output"})
 
 ' Dir listing (first 3 lines)
 DIM dir_result = OS.EXEC("dir /b *.jdb")
-DIM lines = SPLIT(TRIM$(dir_result{"OUTPUT"}), "\n")
+DIM lines = SPLIT(TRIM$(dir_result{"output"}), "\n")
 PRINT "JDB files found: "; LEN(lines)
 
 PRINT ""

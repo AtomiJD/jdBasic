@@ -165,14 +165,14 @@ Header("Strings & Unicode")
 
 ' Basic string functions
 Assert(LEN("Hello") = 5, "len")
-Assert(LEFT("Hello", 2) = "He", "left")
-Assert(RIGHT("Hello", 3) = "llo", "right")
-Assert(MID("Hello", 1, 3) = "ell", "mid")
-Assert(UCASE("hello") = "HELLO", "ucase")
-Assert(LCASE("HELLO") = "hello", "lcase")
-Assert(CHR(65) = "A", "chr")
+Assert(LEFT$("Hello", 2) = "He", "left")
+Assert(RIGHT$("Hello", 3) = "llo", "right")
+Assert(MID$("Hello", 1, 3) = "ell", "mid")
+Assert(UCASE$("hello") = "HELLO", "ucase")
+Assert(LCASE$("HELLO") = "hello", "lcase")
+Assert(CHR$(65) = "A", "chr")
 Assert(ASC("A") = 65, "asc")
-Assert(STR(42) = "42", "str")
+Assert(STR$(42) = "42", "str")
 Assert(VAL("3.14") > 3.13, "val")
 
 ' String operators
@@ -647,7 +647,7 @@ Assert(neg_sum = 55, "for step -1")
 DIM each_result = ""
 DIM fruits = ["apple", "banana", "cherry"]
 FOR EACH f IN fruits
-  each_result = each_result + LEFT(f, 1)
+  each_result = each_result + LEFT$(f, 1)
 NEXT
 Assert(each_result = "abc", "for each")
 
@@ -940,10 +940,10 @@ Assert(CBOOL(0.0) = 0, "cbool zero float")
 Assert(CBOOL(3.14) = 1, "cbool nonzero float")
 
 ' ── CSTR / TOSTR / STR: any value → string ──
-Assert(CSTR(42) = "42", "cstr int")
-Assert(CSTR(3.14) = "3.14", "cstr float")
-Assert(TOSTR(42) = "42", "tostr int")
-Assert(STR(42) = "42", "str int")
+Assert(STR$(42) = "42", "cstr int")
+Assert(STR$(3.14) = "3.14", "cstr float")
+Assert(STR$(42) = "42", "tostr int")
+Assert(STR$(42) = "42", "str int")
 
 ' ── TONUM / VAL: string → number ──
 Assert(TONUM("1.5") = 1.5, "tonum float")
@@ -967,8 +967,8 @@ Assert(CSNG([1.0, 2.0])[1] = 2.0, "csng arr")
 Assert(CBOOL([0, 1, 2, 0, -5])[4] = 1, "cbool arr nonzero")
 Assert(CBOOL([0, 1, 2, 0, -5])[3] = 0, "cbool arr zero")
 Assert(CDBL([1, 2, 3])[1] = 2.0, "cdbl arr")
-Assert(CSTR([1, 2, 3])[0] = "1", "cstr arr")
-Assert(TOSTR([1, 2, 3])[2] = "3", "tostr arr")
+Assert(STR$([1, 2, 3])[0] = "1", "cstr arr")
+Assert(STR$([1, 2, 3])[2] = "3", "tostr arr")
 Assert(TONUM(["1.5", "2.7", "3.9"])[1] = 2.7, "tonum arr strings")
 
 ' ══════════════════════════════════════════════════════════════════
@@ -1024,7 +1024,7 @@ ENDIF
 Header("Event System")
 
 DIM evt_log = ""
-ON "TEST_EVENT" CALL OnTestEvent
+ON "TEST_EVENT" CALL OnTestEvent@
 SUB OnTestEvent(data)
   evt_log = evt_log + data[0] + ";"
 ENDSUB
@@ -1769,14 +1769,14 @@ Assert(FILE.EXISTS("jdb_comp_rmdir") = 1, "MKDIR created scratch dir")
 ' directory is empty" rather than "you meant something else".
 TXTWRITER("jdb_comp_rmdir/one.txt", "a")
 TXTWRITER("jdb_comp_rmdir/two.txt", "b")
-DIM d_bare = DIR$("jdb_comp_rmdir")
-DIM d_slash = DIR$("jdb_comp_rmdir/")
-DIM d_glob = DIR$("jdb_comp_rmdir/*")
+DIM d_bare = FILE.LIST("jdb_comp_rmdir")
+DIM d_slash = FILE.LIST("jdb_comp_rmdir/")
+DIM d_glob = FILE.LIST("jdb_comp_rmdir/*")
 Assert(LEN(d_bare) = 2, "DIR$ of a directory name lists it")
 Assert(LEN(d_bare) = LEN(d_slash), "DIR$ bare name agrees with trailing slash")
 Assert(LEN(d_bare) = LEN(d_glob), "DIR$ bare name agrees with the glob")
-Assert(LEN(DIR$("jdb_comp_rmdir/one.txt")) = 1, "DIR$ of a file names itself")
-Assert(LEN(DIR$("jdb_comp_rmdir/nothing_here")) = 0, "DIR$ of nothing lists nothing")
+Assert(LEN(FILE.LIST("jdb_comp_rmdir/one.txt")) = 1, "DIR$ of a file names itself")
+Assert(LEN(FILE.LIST("jdb_comp_rmdir/nothing_here")) = 0, "DIR$ of nothing lists nothing")
 KILL "jdb_comp_rmdir/one.txt"
 KILL "jdb_comp_rmdir/two.txt"
 
@@ -1830,7 +1830,7 @@ KILL f_b2
 MKDIR "jdb_dir_probe"
 DIM f_probe = "jdb_dir_probe/probe.txt"
 TXTWRITER f_probe, "abc"
-DIM listing = DIR$("jdb_dir_probe/*", TRUE)
+DIM listing = FILE.LIST("jdb_dir_probe/*", TRUE)
 Assert(LEN(listing) >= 1, "DIR$ detailed returns >= 1 entry")
 ' Native's 2D mixed-matrix access can't decode string columns back to str,
 ' so the probe.txt name/type lookup is interp-only.
@@ -1892,9 +1892,9 @@ DIM d_ut0 = CVDATE("2024-01-15 12:00:00", 0)
 Assert(DATEDIFF("S", d_at2, d_ut0) = 0, "CVDATE(tz=2) matches CVDATE(tz=0) shifted")
 
 ' FORMAT_DATE(date, fmt, tz) renders in requested zone.
-DIM d_utc_fmt = FORMAT_DATE(d_at2, "%H:%M", 0)
+DIM d_utc_fmt = FORMAT_DATE$(d_at2, "%H:%M", 0)
 Assert(d_utc_fmt = "12:00", "FORMAT_DATE tz=0 shows UTC wall-clock")
-DIM d_p3_fmt = FORMAT_DATE(d_at2, "%H:%M", 3)
+DIM d_p3_fmt = FORMAT_DATE$(d_at2, "%H:%M", 3)
 Assert(d_p3_fmt = "15:00", "FORMAT_DATE tz=3 shows UTC+3 wall-clock")
 
 ' DATEADD tz-arg accepted (no effect on arithmetic - symmetry).
@@ -1905,11 +1905,11 @@ Header("Group C: DATE.UTC / DATE.PARTS")
 
 ' DATE.UTC builds an instant from UTC components.
 DIM d_nye = DATE.UTC(2025, 1, 1, 0, 0, 0)
-Assert(FORMAT_DATE(d_nye, "%Y-%m-%d %H:%M", 0) = "2025-01-01 00:00", _
+Assert(FORMAT_DATE$(d_nye, "%Y-%m-%d %H:%M", 0) = "2025-01-01 00:00", _
        "DATE.UTC 3-arg returns UTC midnight")
 
 DIM d_noon = DATE.UTC(2025, 6, 15, 12, 30, 45)
-Assert(FORMAT_DATE(d_noon, "%Y-%m-%d %H:%M:%S", 0) = "2025-06-15 12:30:45", _
+Assert(FORMAT_DATE$(d_noon, "%Y-%m-%d %H:%M:%S", 0) = "2025-06-15 12:30:45", _
        "DATE.UTC 6-arg full components")
 
 ' DATE.PARTS(date, tz) returns a map of components.
@@ -2543,7 +2543,7 @@ MKDIR "_nsa_tmp"
 TXTWRITER "_nsa_tmp/alpha.txt", "a"
 TXTWRITER "_nsa_tmp/bravo.txt", "b"
 TXTWRITER "_nsa_tmp/charlie.txt", "c"
-DIM nsa_names = DIR$("_nsa_tmp/*", FALSE)
+DIM nsa_names = FILE.LIST("_nsa_tmp/*", FALSE)
 Assert(LEN(nsa_names) = 3, "DIR$(FALSE) row count")
 DIM nsa_nm0 AS STRING = nsa_names[0]
 Assert(LEN(nsa_nm0) > 0, "DIR$(FALSE) [0] returns non-empty string")

@@ -20,7 +20,7 @@ FOR EACH c$ IN checks
         cmd$ = "cmd /c " + q$ + "cd /d " + game$ + " && ..\..\..\..\build\jdBasic.exe " + c$ + q$
     ENDIF
     DIM r = OS.EXEC(cmd$)
-    DIM out$ = "" + r{"OUTPUT"}
+    DIM out$ = "" + r{"output"}
     PRINT out$
     IF INSTR(out$, "failed 0") < 0 THEN bad = bad + 1
 NEXT c$

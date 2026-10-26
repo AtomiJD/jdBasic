@@ -20,7 +20,7 @@ FUNC LintOf$(src$)
     DIM one$ = work$ + "/one.jdb"
     TXTWRITER one$, src$
     DIM child = OS.EXEC(exe$, ["--lint", one$])
-    RETURN child{"OUTPUT"}
+    RETURN child{"output"}
 ENDFUNC
 
 DIM told$ = LintOf$("DRAWCOLOR(1, 2, 3)")

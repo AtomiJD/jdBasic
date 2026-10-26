@@ -29,13 +29,13 @@ ENDFUNC
 
 DIM joined$ = ""
 
-DIM parsed = JSON.PARSE$("[" + CHR$(34) + "a" + CHR$(34) + ", 2, true]")
+DIM parsed = JSON.PARSE("[" + CHR$(34) + "a" + CHR$(34) + ", 2, true]")
 FOR EACH item IN parsed
     joined$ = joined$ + item + "|"
 NEXT
 Check("a JSON array", joined$, "a|2|TRUE|")
 
-DIM doc = JSON.PARSE$("{" + CHR$(34) + "name" + CHR$(34) + ": " + CHR$(34) + "ann" + CHR$(34) + ", " + CHR$(34) + "age" + CHR$(34) + ": 41}")
+DIM doc = JSON.PARSE("{" + CHR$(34) + "name" + CHR$(34) + ": " + CHR$(34) + "ann" + CHR$(34) + ", " + CHR$(34) + "age" + CHR$(34) + ": 41}")
 joined$ = ""
 FOR EACH k, v IN doc
     joined$ = joined$ + k + "=" + v + "|"
@@ -129,7 +129,7 @@ DIM task = CountWords("one two  three")
 DIM counted = AWAIT task
 Check("FOR EACH inside an ASYNC FUNC", STR$(counted), "3")
 
-Check("a module FUNC over a parsed JSON array", FOREACH_MOD.JOINED$(JSON.PARSE$("[" + CHR$(34) + "u" + CHR$(34) + ", " + CHR$(34) + "v" + CHR$(34) + "]")), "u|v|")
+Check("a module FUNC over a parsed JSON array", FOREACH_MOD.JOINED$(JSON.PARSE("[" + CHR$(34) + "u" + CHR$(34) + ", " + CHR$(34) + "v" + CHR$(34) + "]")), "u|v|")
 
 PRINT ""
 PRINT "FOR EACH SOURCES TEST RESULTS"

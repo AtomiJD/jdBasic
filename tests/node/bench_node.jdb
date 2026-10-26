@@ -20,7 +20,7 @@ ENDFUNC
 
 IF ARG_AT$(1) = "--child" THEN
     DIM child_node = NODE.JOIN(ARG_AT$(2))
-    NODE.SERVE "ECHO", "H_ECHO"
+    NODE.SERVE "ECHO", H_ECHO@
     DIM child_inbox = NODE.INBOX()
     DIM t_end = TICK() + 120000
     DO WHILE TICK() < t_end

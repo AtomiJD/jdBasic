@@ -47,7 +47,7 @@ DO
     ENDIF
     IF TUI.TAB_BEGIN("Form") THEN
         TUI.HEADING "Form", 2
-        name$ = TUI.INPUT("Name", name$)
+        name$ = TUI.INPUT$("Name", name$)
         count_var = TUI.INPUT_INT("Count", count_var)
         TUI.TAB_END
     ENDIF

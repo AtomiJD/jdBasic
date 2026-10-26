@@ -53,7 +53,7 @@ IF TRIM$(resp$) = "" THEN
     END
 ENDIF
 
-DIM o = JSON.PARSE$(resp$)
+DIM o = JSON.PARSE(resp$)
 DIM ch = o{"choices"}
 IF TYPEOF(ch) = "NONE" THEN
     PRINT "ERROR: unexpected response:"

@@ -8,7 +8,7 @@ DIM bad = 0
 SUB CheckKey(label$, key$)
     DIM m AS MAP
     m{key$} = 1
-    DIM back = JSON.PARSE$(JSON.STRINGIFY$(m))
+    DIM back = JSON.PARSE(JSON.STRINGIFY$(m))
     DIM ks = MAP.KEYS(back)
     IF LEN(ks) <> 1 THEN
         bad = bad + 1
@@ -34,14 +34,14 @@ CheckKey("plain", "ordinary")
 ' A value keeps working the same way
 DIM v AS MAP
 v{"p"} = "C:\x\y"
-DIM vback = JSON.PARSE$(JSON.STRINGIFY$(v))
+DIM vback = JSON.PARSE(JSON.STRINGIFY$(v))
 IF vback{"p"} <> "C:\x\y" THEN
     bad = bad + 1
     PRINT "value: got "; vback{"p"}
 ENDIF
 
 ' Escapes a reader hands over directly, not only ones STRINGIFY wrote
-DIM lit = JSON.PARSE$("{" + CHR$(34) + "a\\b" + CHR$(34) + ": " + CHR$(34) + "v\\w" + CHR$(34) + "}")
+DIM lit = JSON.PARSE("{" + CHR$(34) + "a\\b" + CHR$(34) + ": " + CHR$(34) + "v\\w" + CHR$(34) + "}")
 DIM lk = MAP.KEYS(lit)
 IF lk[0] <> "a\b" THEN
     bad = bad + 1
@@ -53,7 +53,7 @@ IF lit{"a\b"} <> "v\w" THEN
 ENDIF
 
 ' \uXXXX in a key
-DIM uni = JSON.PARSE$("{" + CHR$(34) + "e\u20ac" + CHR$(34) + ": 7}")
+DIM uni = JSON.PARSE("{" + CHR$(34) + "e\u20ac" + CHR$(34) + ": 7}")
 DIM uk = MAP.KEYS(uni)
 IF uk[0] <> "e" + CHR$(8364) THEN
     bad = bad + 1

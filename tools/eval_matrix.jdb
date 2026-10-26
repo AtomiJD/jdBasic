@@ -78,7 +78,7 @@ FUNC query_model(user$)
     IF TRIM$(resp$) = "" THEN
         RETURN ""
     ENDIF
-    DIM o = JSON.PARSE$(resp$)
+    DIM o = JSON.PARSE(resp$)
     DIM ch = o{"choices"}
     IF TYPEOF(ch) <> "NONE" THEN
         RETURN extract_code(ch[0]{"message"}{"content"})
@@ -92,16 +92,16 @@ ENDFUNC
 
 FUNC stage_ok(exe$, flag$, file$, marker$)
     DIM r = OS.EXEC(exe$, [flag$, file$])
-    IF r{"EXIT_CODE"} <> 0 THEN
+    IF r{"exit_code"} <> 0 THEN
         RETURN FALSE
     ENDIF
-    RETURN INSTR(r{"OUTPUT"}, marker$) >= 0
+    RETURN INSTR(r{"output"}, marker$) >= 0
 ENDFUNC
 
 FUNC run_timed(target$)
     DIM cmd$ = "timeout 8 " + REPLACE$(target$, CHR$(92), "/")
     DIM r = OS.EXEC("bash", ["-c", cmd$])
-    RETURN r{"EXIT_CODE"}
+    RETURN r{"exit_code"}
 ENDFUNC
 
 TRY
@@ -119,7 +119,7 @@ ENDTRY
 ' module is passed as its own OS.EXEC argument: a single "bash -c" string
 ' gets word-split by OS.EXEC, so a shell glob would reach cp as no operands.
 IF MODDIR$ <> "" THEN
-    DIM mods = DIR$(MODDIR$ + "/*.jdb")
+    DIM mods = FILE.LIST(MODDIR$ + "/*.jdb")
     IF LEN(mods) > 0 THEN
         DIM cpargs = ["-n"]
         DIM mi
@@ -157,7 +157,7 @@ FOR li = 0 TO LEN(lines) - 1
     IF ln$ = "" THEN
         CONTINUEFOR
     ENDIF
-    o = JSON.PARSE$(ln$)
+    o = JSON.PARSE(ln$)
     msgs = o{"messages"}
     user$ = msgs[1]{"content"}
     IF LEFT$(user$, LEN(CODE_MARK$)) <> CODE_MARK$ THEN

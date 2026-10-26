@@ -31,7 +31,7 @@ DIM glob AS ARRAY = []
 DIM base8 AS ARRAY = RESHAPE(IOTA(64), [8, 8])
 DIM kept$ AS STRING = ""
 DIM shelf AS ARRAY = []
-ON "LEAKPING" CALL OnLeakPing
+ON "LEAKPING" CALL OnLeakPing@
 
 IF pattern$ = "concat" THEN
     FOR i = 1 TO passes

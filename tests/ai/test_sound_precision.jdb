@@ -8,7 +8,7 @@ PRINT "direct: "; ABS(0.123456789) - 0.123456789
 
 ' Through a JSON-parsed object
 json$ = "{ ""filter"": 1500.5, ""gain"": 0.7654321, ""bpm"": 110 }"
-data = JSON.PARSE$(json$)
+data = JSON.PARSE(json$)
 
 filter = data{"filter"}
 gain = data{"gain"}
@@ -25,7 +25,7 @@ IF ABS(bpm - 110) > 0.0001 THEN ok = FALSE
 
 ' Through a nested array - the bv pattern from rpg_music.jdb
 json2$ = "{ ""voice"": [ ""SAW"", 0.01, 0.1, 0.4, 0.1 ] }"
-d2 = JSON.PARSE$(json2$)
+d2 = JSON.PARSE(json2$)
 voice = d2{"voice"}
 PRINT "voice[0] = "; voice[0]; " (expected SAW)"
 PRINT "voice[1] = "; voice[1]; " (expected 0.01)"

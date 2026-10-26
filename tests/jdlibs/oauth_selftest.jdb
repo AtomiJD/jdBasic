@@ -242,10 +242,10 @@ TESTKIT.EQ(ms{"token_url"}, "https://login.microsoftonline.com/contoso.onmicroso
 TESTKIT.EQ(ms{"device_url"}, "https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/devicecode", "with the device endpoint")
 TESTKIT.EQ(TokenError$(app), "OAUTH: no token yet, run a flow first", "no token before a flow")
 
-HTTP.SERVER.ON_GET("/authorize", "AS_AUTHORIZE")
-HTTP.SERVER.ON_POST("/token", "AS_TOKEN")
-HTTP.SERVER.ON_POST("/device", "AS_DEVICE")
-HTTP.SERVER.ON_GET("/api/me", "API_ME")
+HTTP.SERVER.ON_GET("/authorize", AS_AUTHORIZE@)
+HTTP.SERVER.ON_POST("/token", AS_TOKEN@)
+HTTP.SERVER.ON_POST("/device", AS_DEVICE@)
+HTTP.SERVER.ON_GET("/api/me", API_ME@)
 OAUTH.MOUNT("/callback")
 IF NOT HTTP.SERVER.START(PORT) THEN
     PRINT "could not start the fake authorization server on " + STR$(PORT)

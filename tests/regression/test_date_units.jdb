@@ -13,11 +13,11 @@ FOR k = 1 TO 364
     ' A calendar day keeps the time of day, so DATEDIFF("D") is a whole 1
     IF DATEDIFF("D", cur, nxt) <> 1 THEN
         bad = bad + 1
-        PRINT "diff D "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; DATEDIFF("D", cur, nxt)
+        PRINT "diff D "; FORMAT_DATE$(cur, "%Y-%m-%d"); " -> "; DATEDIFF("D", cur, nxt)
     ENDIF
-    IF FORMAT_DATE(nxt, "%H:%M:%S") <> "12:00:00" THEN
+    IF FORMAT_DATE$(nxt, "%H:%M:%S") <> "12:00:00" THEN
         bad = bad + 1
-        PRINT "time of day "; FORMAT_DATE(nxt, "%Y-%m-%d %H:%M:%S")
+        PRINT "time of day "; FORMAT_DATE$(nxt, "%Y-%m-%d %H:%M:%S")
     ENDIF
 
     ' Elapsed hours are 24 except on the two days the clocks move, where
@@ -26,28 +26,28 @@ FOR k = 1 TO 364
     IF hrs <> 24 THEN moved = moved + 1
     IF hrs <> 23 ANDALSO hrs <> 24 ANDALSO hrs <> 25 THEN
         bad = bad + 1
-        PRINT "diff H "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; hrs
+        PRINT "diff H "; FORMAT_DATE$(cur, "%Y-%m-%d"); " -> "; hrs
     ENDIF
     IF CLNG(nxt - cur) <> CLNG(hrs * 3600) THEN
         bad = bad + 1
-        PRINT "subtract vs diff H "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; _
+        PRINT "subtract vs diff H "; FORMAT_DATE$(cur, "%Y-%m-%d"); " -> "; _
               CLNG(nxt - cur); " vs "; CLNG(hrs * 3600)
     ENDIF
 
     ' Adding elapsed hours and adding a calendar day agree on every other day
     IF hrs = 24 THEN
-        IF FORMAT_DATE(DATEADD("H", 24, cur), "%Y-%m-%d %H:%M:%S") <> _
-           FORMAT_DATE(nxt, "%Y-%m-%d %H:%M:%S") THEN
+        IF FORMAT_DATE$(DATEADD("H", 24, cur), "%Y-%m-%d %H:%M:%S") <> _
+           FORMAT_DATE$(nxt, "%Y-%m-%d %H:%M:%S") THEN
             bad = bad + 1
-            PRINT "addH vs addD "; FORMAT_DATE(cur, "%Y-%m-%d"); " -> "; _
-                  FORMAT_DATE(DATEADD("H", 24, cur), "%Y-%m-%d %H:%M:%S")
+            PRINT "addH vs addD "; FORMAT_DATE$(cur, "%Y-%m-%d"); " -> "; _
+                  FORMAT_DATE$(DATEADD("H", 24, cur), "%Y-%m-%d %H:%M:%S")
         ENDIF
     ENDIF
 
     ' A plain number added to a date is elapsed seconds and keeps the type
     IF CLNG(DATEADD("S", 90, cur)) <> CLNG(cur + 90) THEN
         bad = bad + 1
-        PRINT "plus 90 "; FORMAT_DATE(cur, "%Y-%m-%d")
+        PRINT "plus 90 "; FORMAT_DATE$(cur, "%Y-%m-%d")
     ENDIF
     IF TYPEOF(cur + 90) <> "DATE" THEN
         bad = bad + 1
@@ -75,5 +75,5 @@ IF CLNG(span) <> CLNG(DATEDIFF("S", CDATE("2026-03-28 12:00:00"), CDATE("2026-03
     PRINT "span seconds "; CLNG(span)
 ENDIF
 
-PRINT "last "; FORMAT_DATE(cur, "%Y-%m-%d %H:%M:%S"); "  clock changes "; moved
+PRINT "last "; FORMAT_DATE$(cur, "%Y-%m-%d %H:%M:%S"); "  clock changes "; moved
 IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

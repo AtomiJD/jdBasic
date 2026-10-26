@@ -31,11 +31,11 @@ ENDSUB
 FUNC HandleEcho(request)
     ' Return a map that JSON-serializes so the client can round-trip
     ' path, method, params, headers, body.
-    RETURN {"path": request{"PATH"}, _
-            "method": request{"METHOD"}, _
-            "params": request{"PARAMS"}, _
-            "headers": request{"HEADERS"}, _
-            "body": request{"BODY"}}
+    RETURN {"path": request{"path"}, _
+            "method": request{"method"}, _
+            "params": request{"params"}, _
+            "headers": request{"headers"}, _
+            "body": request{"body"}}
 ENDFUNC
 
 FUNC HandleHello(request)
@@ -46,7 +46,7 @@ FUNC HandleNotFound(request)
     ' Simulate a resource that only exists if a magic param is set
     DIM key = ""
     TRY
-        key = request{"PARAMS"}{"key"}
+        key = request{"params"}{"key"}
     CATCH
         key = ""
     ENDTRY
@@ -57,10 +57,10 @@ FUNC HandleNotFound(request)
     ENDIF
 ENDFUNC
 
-HTTP.SERVER.ON_GET("/echo", "HANDLEECHO")
-HTTP.SERVER.ON_GET("/hello", "HANDLEHELLO")
-HTTP.SERVER.ON_GET("/find", "HANDLENOTFOUND")
-HTTP.SERVER.ON_POST("/echo", "HANDLEECHO")
+HTTP.SERVER.ON_GET("/echo", HANDLEECHO@)
+HTTP.SERVER.ON_GET("/hello", HANDLEHELLO@)
+HTTP.SERVER.ON_GET("/find", HANDLENOTFOUND@)
+HTTP.SERVER.ON_POST("/echo", HANDLEECHO@)
 
 DIM ok = HTTP.SERVER.START(9977)
 IF NOT ok THEN

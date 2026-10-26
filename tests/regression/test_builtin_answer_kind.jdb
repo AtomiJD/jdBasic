@@ -10,19 +10,19 @@ FUNC SameKind(label$, kind$, want$)
     RETURN 1
 ENDFUNC
 
-bad = bad + SameKind("TRIM", TYPEOF(TRIM("  x  ")), "STRING")
-bad = bad + SameKind("UCASE", TYPEOF(UCASE("ab")), "STRING")
-bad = bad + SameKind("LCASE", TYPEOF(LCASE("AB")), "STRING")
-bad = bad + SameKind("CSTR", TYPEOF(CSTR(1)), "STRING")
-bad = bad + SameKind("TOSTR", TYPEOF(TOSTR(7)), "STRING")
+bad = bad + SameKind("TRIM", TYPEOF(TRIM$("  x  ")), "STRING")
+bad = bad + SameKind("UCASE", TYPEOF(UCASE$("ab")), "STRING")
+bad = bad + SameKind("LCASE", TYPEOF(LCASE$("AB")), "STRING")
+bad = bad + SameKind("CSTR", TYPEOF(STR$(1)), "STRING")
+bad = bad + SameKind("TOSTR", TYPEOF(STR$(7)), "STRING")
 
-IF TRIM("  x  ") <> "x" THEN
+IF TRIM$("  x  ") <> "x" THEN
     bad = bad + 1
-    PRINT "TRIM gave ["; TRIM("  x  "); "]"
+    PRINT "TRIM gave ["; TRIM$("  x  "); "]"
 ENDIF
-IF UCASE("ab") <> "AB" ORELSE LCASE("AB") <> "ab" THEN
+IF UCASE$("ab") <> "AB" ORELSE LCASE$("AB") <> "ab" THEN
     bad = bad + 1
-    PRINT "UCASE/LCASE gave "; UCASE("ab"); " "; LCASE("AB")
+    PRINT "UCASE/LCASE gave "; UCASE$("ab"); " "; LCASE$("AB")
 ENDIF
 
 DIM nums = [1, 2, 3]
@@ -76,17 +76,17 @@ ENDIF
 bad = bad + SameKind("ABS", TYPEOF(ABS(-2)), "FLOAT64")
 bad = bad + SameKind("CEIL", TYPEOF(CEIL(1.2)), "FLOAT64")
 
-bad = bad + SameKind("OS.GETOS", TYPEOF(OS.GETOS()), "STRING")
+bad = bad + SameKind("OS.GETOS", TYPEOF(OS.GETOS$()), "STRING")
 bad = bad + SameKind("CD", TYPEOF(CD()), "STRING")
-bad = bad + SameKind("REGEX.REPLACE", TYPEOF(REGEX.REPLACE("a", "abc", "x")), "STRING")
+bad = bad + SameKind("REGEX.REPLACE", TYPEOF(REGEX.REPLACE$("a", "abc", "x")), "STRING")
 bad = bad + SameKind("VBTAB", TYPEOF(VBTAB()), "STRING")
 bad = bad + SameKind("PACKSIZE", TYPEOF(PACKSIZE("i")), "INT64")
 
 DIM widths = LENV(["ab", "cde"])
 bad = bad + SameKind("LENV", TYPEOF(widths), "ARRAY")
-IF REGEX.REPLACE("a", "abc", "x") <> "xbc" THEN
+IF REGEX.REPLACE$("a", "abc", "x") <> "xbc" THEN
     bad = bad + 1
-    PRINT "REGEX.REPLACE gave "; REGEX.REPLACE("a", "abc", "x")
+    PRINT "REGEX.REPLACE gave "; REGEX.REPLACE$("a", "abc", "x")
 ENDIF
 
 IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

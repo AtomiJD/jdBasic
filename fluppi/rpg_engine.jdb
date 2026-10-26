@@ -81,7 +81,7 @@ EXPORT DIM map_states = {}
 ' ══ TITLE SCREEN ═════════════════════════════════════════════
 ' ══════════════════════════════════════════════════════════════
 EXPORT FUNC SHOW_TITLE(config_file$)
-    game = JSON.PARSE$(TXTREADER$(config_file$))
+    game = JSON.PARSE(TXTREADER$(config_file$))
     SW = game{"screen_w"} : SH = game{"screen_h"}
     SCREEN SW, SH, game{"title"}
 
@@ -189,7 +189,7 @@ ENDFUNC
 ' ══ INIT ═════════════════════════════════════════════════════
 ' ══════════════════════════════════════════════════════════════
 EXPORT SUB INIT(config_file$)
-    game = JSON.PARSE$(TXTREADER$(config_file$))
+    game = JSON.PARSE(TXTREADER$(config_file$))
     SW = game{"screen_w"} : SH = game{"screen_h"}
     IF MAP.EXISTS(game, "sprite_scale") THEN sprite_scale = game{"sprite_scale"}
     IF MAP.EXISTS(game, "sprite_frame_w") THEN sprite_frame_w = INT(game{"sprite_frame_w"})
@@ -339,7 +339,7 @@ EXPORT SUB ENTER_MAP(map_file$, spawn_name$)
 
     ' Detect ground layers
     ground_layers = []
-    LET layers = TILED.LAYERS$(current_map$)
+    LET layers = TILED.LAYERS(current_map$)
     FOR i = 0 TO LEN(layers) - 1
         IF LEFT$(layers[i], 7) = "ground_" THEN PUSH ground_layers, layers[i]
     NEXT
@@ -416,8 +416,8 @@ SUB LOAD_MAP_ENTITIES()
     portals = [] : portal_count = 0
     chests = [] : chest_count = 0
 
-    LET layers = TILED.LAYERS$(current_map$)
-    LET edata = JSON.PARSE$(TXTREADER$(data_dir$ + "enemies.json"))
+    LET layers = TILED.LAYERS(current_map$)
+    LET edata = JSON.PARSE(TXTREADER$(data_dir$ + "enemies.json"))
     LET elist = edata{"enemies"}
 
     FOR li = 0 TO LEN(layers) - 1
@@ -886,7 +886,7 @@ EXPORT SUB UPDATE()
             IF MAP.EXISTS(m, "respawn_at") AND TICK() >= m{"respawn_at"} THEN
                 ' Respawn at original position
                 TRY
-                    LET edata = JSON.PARSE$(TXTREADER$(data_dir$ + "enemies.json"))
+                    LET edata = JSON.PARSE(TXTREADER$(data_dir$ + "enemies.json"))
                     LET elist = edata{"enemies"}
                     FOR ei = 0 TO LEN(elist) - 1
                         IF elist[ei]{"id"} = m{"id"} AND elist[ei]{"sprite"} <> "" THEN
@@ -1060,7 +1060,7 @@ SUB DRAW_SCENE()
     LET cx = CAM.X() : LET cy = CAM.Y()
 
     ' Draw layers below sprites, then sprites, then layers above
-    LET layers = TILED.LAYERS$(current_map$)
+    LET layers = TILED.LAYERS(current_map$)
     FOR li = 0 TO LEN(layers) - 1
         LET ln$ = layers[li]
         IF LEFT$(ln$, 11) <> "decor_above" THEN
@@ -1235,11 +1235,11 @@ ENDFUNC
 FUNC GET_SLOT_INFO$(slot)
     TRY
         LET sf$ = GET_SLOT_FILE$(slot)
-        LET sg = JSON.PARSE$(TXTREADER$(sf$))
+        LET sg = JSON.PARSE(TXTREADER$(sf$))
         LET name$ = sg{"player_name"}
         LET map$ = sg{"current_map_file"}
-        map$ = mid$(map$,instr$(map$,"/")+1)
-        map$ = left$(map$,instr$(map$,"."))
+        map$ = mid$(map$,instr(map$,"/")+1)
+        map$ = left$(map$,instr(map$,"."))
         LET lv = 1
         IF MAP.EXISTS(sg, "party") THEN
             LET p = sg{"party"}
@@ -1424,7 +1424,7 @@ ENDSUB
 SUB LOAD_FROM_SLOT(slot)
     TRY
         LET sf$ = GET_SLOT_FILE$(slot)
-        LET sg = JSON.PARSE$(TXTREADER$(sf$))
+        LET sg = JSON.PARSE(TXTREADER$(sf$))
         APPLY_SAVE_DATA sg
     CATCH
     ENDTRY
@@ -1450,13 +1450,13 @@ EXPORT FUNC LOAD_GAME()
     ' Fallback: try slot 1, then legacy save file
     TRY
         LET sf$ = GET_SLOT_FILE$(0)
-        LET sg = JSON.PARSE$(TXTREADER$(sf$))
+        LET sg = JSON.PARSE(TXTREADER$(sf$))
         APPLY_SAVE_DATA sg
         RETURN TRUE
     CATCH
     ENDTRY
     TRY
-        sg = JSON.PARSE$(TXTREADER$(save_file$))
+        sg = JSON.PARSE(TXTREADER$(save_file$))
         APPLY_SAVE_DATA sg
         RETURN TRUE
     CATCH

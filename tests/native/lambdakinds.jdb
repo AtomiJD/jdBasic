@@ -43,7 +43,7 @@ EXPORT FUNC RUN$()
     out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA t -> t[1] > 10, table)) + CHR$(10)
     out$ = out$ + STR$(REDUCE(LAMBDA a, t -> a + t[1], table, 0)) + CHR$(10)
     KILL path$
-    DIM doc = JSON.PARSE$("[{" + CHR$(34) + "k" + CHR$(34) + ": 1}, {" + CHR$(34) + "k" + CHR$(34) + ": 7}]")
+    DIM doc = JSON.PARSE("[{" + CHR$(34) + "k" + CHR$(34) + ": 1}, {" + CHR$(34) + "k" + CHR$(34) + ": 7}]")
     out$ = out$ + JSON.STRINGIFY$(SELECT(LAMBDA d -> d{"k"} * 2, doc)) + CHR$(10)
     out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA d -> d{"k"} > 5, doc)) + CHR$(10)
     out$ = out$ + JSON.STRINGIFY$(FILTER(LAMBDA x -> x > gLim, nums)) + CHR$(10)

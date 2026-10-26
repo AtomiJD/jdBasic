@@ -18,7 +18,7 @@ PRINT "hex: "; HEX$(48879); " "; VAL("255")
 PRINT "pack: "; LEN(PACK$("<i", 258)); " "; UNPACK("<i", PACK$("<i", 258)); " "; PACKSIZE("<di")
 PRINT "pack2: "; UNPACK("<di", PACK$("<di", 1.5, 7))
 PRINT "chr utf8: "; LEN(CHR$(8364)); " "; ASC(CHR$(8364)); " "; -CHR$(8364)
-PRINT "regex: "; REGEX.MATCH("a1b22c333", "[0-9]+"); " "; REGEX.FINDALL("a1b22c333", "[0-9]+"); " "; REGEX.REPLACE("a1b22", "[0-9]", "#")
+PRINT "regex: "; REGEX.MATCH("a1b22c333", "[0-9]+"); " "; REGEX.FINDALL("a1b22c333", "[0-9]+"); " "; REGEX.REPLACE$("a1b22", "[0-9]", "#")
 PRINT "regex2: "; REGEX.MATCH("abc", "x"); " "; LEN(REGEX.FINDALL("", "a"))
 DIM u = {"x": 1, "y": [1, 2]}
 u{"x"} = u{"x"} + 1

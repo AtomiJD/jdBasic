@@ -46,8 +46,8 @@ CHECK "CBOOL(0.0)",    CBOOL(0.0),     0
 CHECK "CDBL(7)",       CDBL(7),        7.0
 
 ' CSTR - universal to-string (alias for TOSTR).
-CHECK_S "CSTR(42)",    CSTR(42),      "42"
-CHECK_S "CSTR(3.14)",  CSTR(3.14),    "3.14"
+CHECK_S "CSTR(42)",    STR$(42),      "42"
+CHECK_S "CSTR(3.14)",  STR$(3.14),    "3.14"
 
 PRINT ""
 PRINT "PASS: "; pass

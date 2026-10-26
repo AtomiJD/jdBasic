@@ -61,7 +61,7 @@ FUNC DIFF_RMS(buf, a AS INTEGER, b AS INTEGER) AS DOUBLE
 ENDFUNC
 
 FUNC TRIGGERS() AS INTEGER
-    DIM s AS STRING = SOUND.STATS()
+    DIM s AS STRING = SOUND.STATS$()
     DIM p AS INTEGER = INSTR(s, "triggers=")
     DIM q AS INTEGER = INSTR(s, " ")
     RETURN VAL(MID$(s, p + 9, q - p - 9))
@@ -645,7 +645,7 @@ SOUND.KIT 0, KIT_DIR + "kit.txt"
 SOUND.SEQ 0, "hh*32, bd*8, cp*8", "VOICE"
 n = TRIGGERS()
 buf = SOUND.RENDER(CYC * 4)
-CHECK "long render keeps every hit", INSTR(SOUND.STATS(), "triggers=192 alloc_fail=0") >= 0, ""
+CHECK "long render keeps every hit", INSTR(SOUND.STATS$(), "triggers=192 alloc_fail=0") >= 0, ""
 
 ' the built-in synthesized kit needs no files
 FUNC SYNTH_RMS(pattern$, a AS INTEGER, b AS INTEGER) AS DOUBLE
@@ -809,7 +809,7 @@ DIM lim_ceil AS DOUBLE = 10 ^ (-6 / 20)
 CHECK "LIMITER holds the ceiling", lim_max <= lim_ceil + 0.000001, "max=" + STR$(lim_max)
 CHECK "LIMITER settles on the ceiling", lim_max > lim_ceil - 0.01, "max=" + STR$(lim_max)
 DIM lim_meter = SOUND.LOUDNESS()
-CHECK "LOUDNESS reports the reduction", lim_meter{"REDUCTION_MAX"} < -2.5, "red=" + STR$(lim_meter{"REDUCTION_MAX"})
+CHECK "LOUDNESS reports the reduction", lim_meter{"reduction_max"} < -2.5, "red=" + STR$(lim_meter{"reduction_max"})
 SOUND.LIMITER
 buf = SOUND.RENDER(CYC / 4)
 CHECK "LIMITER off passes the level", MAX(ABS(buf)) > 0.75, "max=" + STR$(MAX(ABS(buf)))
@@ -829,14 +829,14 @@ SOUND.GAIN 0, 0.5
 SOUND.SEQ 0, "legato(1, b5)", "VOICE"
 buf = SOUND.RENDER(CYC * 4)
 DIM lm = SOUND.LOUDNESS(TRUE)
-CHECK "LOUDNESS integrated", ABS(lm{"INTEGRATED"} + 6.02) < 0.15, "lufs=" + STR$(lm{"INTEGRATED"})
+CHECK "LOUDNESS integrated", ABS(lm{"integrated"} + 6.02) < 0.15, "lufs=" + STR$(lm{"integrated"})
 CHECK "LOUDNESS short term", ABS(lm{"SHORT"} + 6.02) < 0.15, "lufs=" + STR$(lm{"SHORT"})
 CHECK "LOUDNESS measured 4 s", lm{"SECONDS"} = 4, "s=" + STR$(lm{"SECONDS"})
 lm = SOUND.LOUDNESS()
-CHECK "LOUDNESS reset", lm{"INTEGRATED"} = -120 ANDALSO lm{"SECONDS"} = 0, "lufs=" + STR$(lm{"INTEGRATED"})
+CHECK "LOUDNESS reset", lm{"integrated"} = -120 ANDALSO lm{"SECONDS"} = 0, "lufs=" + STR$(lm{"integrated"})
 buf = SOUND.RENDER(CYC / 2)
 lm = SOUND.LOUDNESS()
-CHECK "LOUDNESS momentary after 0.5 s", ABS(lm{"MOMENTARY"} + 6.02) < 0.15, "lufs=" + STR$(lm{"MOMENTARY"})
+CHECK "LOUDNESS momentary after 0.5 s", ABS(lm{"momentary"} + 6.02) < 0.15, "lufs=" + STR$(lm{"momentary"})
 CHECK "LOUDNESS short term needs 3 s", lm{"SHORT"} = -120, "lufs=" + STR$(lm{"SHORT"})
 
 ' SEEK moves the clock and holds the score until SOUND.AT ends it;

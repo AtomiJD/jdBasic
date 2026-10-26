@@ -31,8 +31,8 @@ ENDFUNC
 IF ARG_AT$(1) = "--child" THEN
     DIM me$ AS STRING = ARG_AT$(2)
     DIM self_node = NODE.JOIN(me$)
-    NODE.SERVE "PID", "H_PID"
-    NODE.SERVE "ECHO", "H_ECHO"
+    NODE.SERVE "PID", H_PID@
+    NODE.SERVE "ECHO", H_ECHO@
     DIM tick_pub = TOPIC.OPEN("proc/" + me$ + "/tick")
     TOPIC.RETAIN tick_pub, TRUE
     DIM inbox = NODE.INBOX()
@@ -50,7 +50,7 @@ IF ARG_AT$(1) = "--child" THEN
                     END 0
                 ENDIF
             ELSEIF NODE.IS_CALL(m) THEN
-                DIM refused = NODE.FAIL(m, "no handler for " + m{"METHOD"})
+                DIM refused = NODE.FAIL(m, "no handler for " + m{"method"})
             ELSEIF TYPEOF(m) = "OBJECT" THEN
                 DIM echo_sent = NODE.SEND(m{"REPLY_TO"}, m{"BODY"})
             ENDIF

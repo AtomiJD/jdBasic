@@ -20,7 +20,7 @@ FUNC HasToolResult(messages)
 ENDFUNC
 
 FUNC HANDLE_OPENAI(request)
-    gOpenAi = JSON.PARSE$(request{"body"})
+    gOpenAi = JSON.PARSE(request{"body"})
     gOpenAiHeaders = request{"headers"}
     DIM msg AS MAP
     msg{"role"} = "assistant"
@@ -36,7 +36,7 @@ FUNC HANDLE_OPENAI(request)
 ENDFUNC
 
 FUNC HANDLE_CLAUDE(request)
-    gClaude = JSON.PARSE$(request{"body"})
+    gClaude = JSON.PARSE(request{"body"})
     gClaudeHeaders = request{"headers"}
     DIM blocks = []
     IF MAP.EXISTS(gClaude, "tool_choice") THEN
@@ -61,9 +61,9 @@ FUNC Unknown(name$)
     RETURN LLMAPI.NEW(name$, "m")
 ENDFUNC
 
-HTTP.SERVER.ON_POST("/v1/chat/completions", "HANDLE_OPENAI")
-HTTP.SERVER.ON_POST("/v1/messages", "HANDLE_CLAUDE")
-HTTP.SERVER.ON_POST("/denied/chat/completions", "HANDLE_DENIED")
+HTTP.SERVER.ON_POST("/v1/chat/completions", HANDLE_OPENAI@)
+HTTP.SERVER.ON_POST("/v1/messages", HANDLE_CLAUDE@)
+HTTP.SERVER.ON_POST("/denied/chat/completions", HANDLE_DENIED@)
 IF NOT HTTP.SERVER.START(9978) THEN
     PRINT "could not start the stub server on 9978"
     END 1

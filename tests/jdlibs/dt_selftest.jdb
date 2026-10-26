@@ -152,7 +152,7 @@ TESTKIT.EQ(TYPEOF(DT.HUMANIZE$(DT.NOW() - 10)), "STRING", "the default reference
 TESTKIT.SUITE("core interop")
 DIM core = DT.TODATE(t)
 TESTKIT.ISTRUE(TYPEOF(core) = "DATE" ORELSE TYPEOF(core) = "STRING", "a core DateTime (a string under -c)")
-TESTKIT.EQ(FORMAT_DATE(core, "%Y-%m-%d %H:%M:%S", 0), "2026-09-12 15:04:05", "with the same instant")
+TESTKIT.EQ(FORMAT_DATE$(core, "%Y-%m-%d %H:%M:%S", 0), "2026-09-12 15:04:05", "with the same instant")
 TESTKIT.EQ(DT.FROMDATE(core), t, "and back")
 TESTKIT.EQ(TYPEOF(DT.NOW()), "FLOAT64", "now is a number")
 TESTKIT.ISTRUE(ABS(DT.LOCAL_OFFSET()) <= 14, "the local offset is a plausible number of hours")

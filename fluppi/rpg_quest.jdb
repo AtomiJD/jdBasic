@@ -16,7 +16,7 @@ EXPORT DIM quest_count = 0
 
 ' ── Load all quests from JSON ────────────────────────────────
 EXPORT SUB LOAD_QUESTS(json_file$)
-    LET data = JSON.PARSE$(TXTREADER$(json_file$))
+    LET data = JSON.PARSE(TXTREADER$(json_file$))
     LET quest_list = data{"quests"}
     FOR i = 0 TO LEN(quest_list) - 1
         LET qd = quest_list[i]

@@ -103,7 +103,7 @@ FUNC H_STATUS(c)
     RETURN STATS()
 ENDFUNC
 
-NODE.SERVE "STATUS", "H_STATUS"
+NODE.SERVE "STATUS", H_STATUS@
 
 PRINT "pihole_agent "; NODE.NAME$(); " reading "; api$
 DIM t_stats AS DOUBLE = 0

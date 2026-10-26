@@ -32,7 +32,7 @@ IF LEN(docs) = 0 THEN docs = ["doc/tour.md"]
 ' Output as the reader sees it: no carriage returns, no colour codes, no
 ' trailing spaces or blank lines.
 FUNC Clean$(s$)
-    DIM plain$ = REGEX.REPLACE(esc$ + "\[[0-9;]*m", REPLACE$(s$, CHR$(13), ""), "")
+    DIM plain$ = REGEX.REPLACE$(esc$ + "\[[0-9;]*m", REPLACE$(s$, CHR$(13), ""), "")
     DIM kept = SELECT(LAMBDA r -> RTRIM$(r), SPLIT(plain$, nl$))
     DO WHILE LEN(kept) > 0 ANDALSO kept[LEN(kept) - 1] = ""
         kept = TAKE(LEN(kept) - 1, kept)
@@ -71,7 +71,7 @@ FOR EACH doc$ IN docs
         i = i + 1
 
         TXTWRITER scratch$, JOIN(code, nl$) + nl$
-        DIM got$ = Clean$(OS.EXEC(exe$ + " " + scratch$){"OUTPUT"})
+        DIM got$ = Clean$(OS.EXEC(exe$ + " " + scratch$){"output"})
         DIM expected$ = Clean$(JOIN(want, nl$))
         checked = checked + 1
         IF got$ <> expected$ THEN

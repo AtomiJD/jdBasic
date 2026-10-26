@@ -278,7 +278,7 @@ DIM names = []
 DIM kinds = []
 DIM srcs = []
 
-DIM srcfiles = DIR$("src/*.cpp")
+DIM srcfiles = FILE.LIST("src/*.cpp")
 FOR EACH f$ IN srcfiles
     DIM text$ = TXTREADER$("src/" + f$)
     IF INSTR(text$, "register_native(" + q$) < 0 THEN CONTINUEFOR

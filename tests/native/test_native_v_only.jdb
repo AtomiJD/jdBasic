@@ -40,8 +40,8 @@ SUB OnKey(d)
     DIM kc = d[0]{"keycode"}
     IF kc = 27 THEN running = FALSE
 ENDSUB
-ON "QUIT"    CALL OnQuit
-ON "KEYDOWN" CALL OnKey
+ON "QUIT"    CALL OnQuit@
+ON "KEYDOWN" CALL OnKey@
 
 DIM frames = 0
 DO

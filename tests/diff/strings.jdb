@@ -32,7 +32,7 @@ PRINT "cmp: "; "abc" = "abc"; " "; "abc" < "abd"; " "; "a" > "B"; " "; "" = ""; 
 PRINT "binary safe: "; LEN("a" + CHR$(0) + "b"); " "; INSTR("a" + CHR$(0) + "b", "b")
 PRINT "indexof: "; INDEXOF(["a", "b", "c"], "b"); " "; INDEXOF(["a"], "z")
 PRINT "insert: "; INSERT$("ac", "b", 1); " "; INSERT$("ac", "b", 9); " "; INSERT$([1, 3], 2, 1)
-PRINT "tostr: "; TOSTR(3.5); " "; TOSTR(7); " "; CSTR(2)
+PRINT "tostr: "; STR$(3.5); " "; STR$(7); " "; STR$(2)
 PRINT "interp: "; $"x={{1 + 1}} s={{s$}}"
 DIM sv AS ARRAY = ["ab", "cde", "f"]
 DIM nsv AS ARRAY = [["ab", "cd"], ["ef", "gh"]]
@@ -40,8 +40,8 @@ PRINT "vec strings: "; UCASE$(nsv); " "; LEFT$(nsv, 1); " "; MID$(sv, 1, 1); " "
 PRINT "neg counts: ["; LEFT$(s$, -1); "] ["; RIGHT$(s$, -2); "] ["; MID$(s$, -3, 2); "] ["; MID$(s$, 2, -1); "] ["; SPACE$(-1); "] ["; REPEAT$("a", -2); "]"
 PRINT "minus more: "; "aabb" - "ab"; " "; "xyz" - ""; " "; "aaa" - "aa"; " "; "" - "a"
 PRINT "slice more: "; 0 / "abc"; " "; "abc" / 0; " "; 9 / "abc"; " "; "abc" / 9; " "; "" / 2
-PRINT "instr start: "; INSTR(3, s$, "l"); " "; INSTR(99, s$, "l"); " "; INSTR(2, s$, ""); " "; INSTR(50, s$, ""); " "; INSTR$(0, "aXa", "a")
-PRINT "chr more: "; LEN(CHR$(300)); " "; LEN(CHR(300)); " "; ASC(CHR$(200)); " "; LEN(CHR$(0) + CHR$(0)); " "; LEN(CHR$(70000))
+PRINT "instr start: "; INSTR(3, s$, "l"); " "; INSTR(99, s$, "l"); " "; INSTR(2, s$, ""); " "; INSTR(50, s$, ""); " "; INSTR(0, "aXa", "a")
+PRINT "chr more: "; LEN(CHR$(300)); " "; LEN(CHR$(300)); " "; ASC(CHR$(200)); " "; LEN(CHR$(0) + CHR$(0)); " "; LEN(CHR$(70000))
 PRINT "pad more: ["; LPAD$("ab", 7, "xyz"); "] ["; RPAD$("ab", 7, "xyz"); "] ["; LPAD$("ab", 0); "] ["; RPAD$("", 3, ""); "]"
 PRINT "trim more: ["; TRIM$(CHR$(9) + " a" + CHR$(13) + CHR$(10)); "] ["; LTRIM$("   "); "] ["; RTRIM$(CHR$(0) + " "); "]"
 PRINT "utf8 more: "; REVERSE$("aé€𝄞"); " "; LEN(-"aé€𝄞"); " "; (-"aé€")[1]; " "; UCASE$("straße"); " "; LCASE$("ÉCOLE")

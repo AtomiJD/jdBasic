@@ -110,7 +110,7 @@ DIM reply_ch = NODE.CALL_ASYNC(nb$, "ADD", [2, 3])
 DIM call_in = CHAN.RECV(inbox_b, 3000)
 Ok("a call arrives in the inbox", NODE.IS_CALL(call_in))
 Ok("an ordinary message is no call", NOT NODE.IS_CALL(got))
-Ok("with its method", call_in{"METHOD"} = "ADD")
+Ok("with its method", call_in{"method"} = "ADD")
 Ok("its argument", call_in{"ARG"}[1] = 3)
 Ok("and who called", call_in{"FROM"} = na$)
 Ok("REPLY answers it", NODE.REPLY(call_in, call_in{"ARG"}[0] + call_in{"ARG"}[1]))
@@ -124,8 +124,8 @@ DIM failure = CHAN.RECV(fail_ch, 3000)
 Ok("the caller sees a failure", NODE.IS_FAIL(failure))
 Ok("with the message", failure{"ERROR"} = "division by zero")
 
-NODE.SERVE "MUL", "MUL_HANDLER", b
-NODE.SERVE "BOOM", "BOOM_HANDLER", b
+NODE.SERVE "MUL", MUL_HANDLER@, b
+NODE.SERVE "BOOM", BOOM_HANDLER@, b
 DIM mul_ch = NODE.CALL_ASYNC(nb$, "mul", [6, 7])
 Ok("POLL runs the served call", NODE.POLL(3000, b) = 1)
 Ok("the handler's answer arrives", CHAN.RECV(mul_ch, 3000) = 42)
@@ -177,13 +177,13 @@ NEXT k
 DIM q_stats = TOPIC.STATS(q_pub)
 Ok("a drop publisher drops what has no credit", q_stats{"DROPPED"} = 4)
 Ok("and counts what it sent", q_stats{"SENT"} = 28)
-Ok("one subscriber", q_stats{"SUBSCRIBERS"} = 1)
+Ok("one subscriber", q_stats{"subscribers"} = 1)
 FOR k = 1 TO 8
     DIM drain = CHAN.RECV(q_sub, 3000)
 NEXT k
 DIM sub_stats = TOPIC.STATS(q_sub)
 Ok("the subscription counts what arrived", sub_stats{"RECEIVED"} = 24)
-Ok("from one publisher", sub_stats{"PUBLISHERS"} = 1)
+Ok("from one publisher", sub_stats{"publishers"} = 1)
 
 DIM l_pub = TOPIC.OPEN("l/" + tag$, "drop", b)
 DIM l_sub = TOPIC.SUBSCRIBE("l/" + tag$, "latest")
@@ -247,7 +247,7 @@ Ok("and both get work", got_a > 0 ANDALSO got_c > 0)
 
 TOPIC.UNSUBSCRIBE q_sub
 SLEEP 300
-Ok("UNSUBSCRIBE leaves the publisher without subscribers", TOPIC.STATS(q_pub){"SUBSCRIBERS"} = 0)
+Ok("UNSUBSCRIBE leaves the publisher without subscribers", TOPIC.STATS(q_pub){"subscribers"} = 0)
 CHAN.CLOSE l_pub
 SLEEP 300
 Ok("a closed topic leaves the list", LEN(TOPIC.LIST("l/" + tag$)) = 0)

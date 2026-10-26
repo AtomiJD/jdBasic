@@ -31,7 +31,7 @@ DIM script$ AS STRING = REPLACE$(cli[0], "\", "/")
 DIM repo$ AS STRING = "."
 DIM slash AS INTEGER = INSTR(REVERSE$(script$), "/")
 IF slash >= 0 THEN repo$ = LEFT$(script$, LEN(script$) - 1 - slash) + "/.."
-DIM os$ AS STRING = OS.GETOS()
+DIM os$ AS STRING = OS.GETOS$()
 ' The repo's own binary: after a rebuild on Linux, OS.SELF$ names the deleted file
 DIM jdb_exe$ AS STRING = repo$ + "/build/jdbasic"
 IF os$ = "WINDOWS" THEN jdb_exe$ = REPLACE$(repo$ + "/build/jdBasic.exe", "/", "\")
@@ -53,7 +53,7 @@ ENDFUNC
 ' The first line of a command's output, "" when it failed
 FUNC FIRST_LINE$(prog$, args) AS STRING
     DIM r = OS.EXEC(prog$, args)
-    IF r{"EXIT_CODE"} <> 0 THEN RETURN ""
+    IF r{"exit_code"} <> 0 THEN RETURN ""
     DIM out$ AS STRING = REPLACE$(r{"OUTPUT"}, CHR$(13), "")
     DIM nl AS INTEGER = INSTR(out$, CHR$(10))
     IF nl >= 0 THEN out$ = LEFT$(out$, nl)
@@ -100,7 +100,7 @@ SUB READ_SLOW()
     branch$ = FIRST_LINE$("git", ["-C", repo$, "rev-parse", "--abbrev-ref", "HEAD"])
     DIM st = OS.EXEC("git", ["--no-optional-locks", "-C", repo$, "status", "--porcelain", "--untracked-files=no"])
     dirty = 0
-    IF st{"EXIT_CODE"} = 0 THEN
+    IF st{"exit_code"} = 0 THEN
         DIM rows = SPLIT(TRIM$(REPLACE$(st{"OUTPUT"}, CHR$(13), "")), CHR$(10))
         IF LEN(rows) > 0 ANDALSO rows[0] <> "" THEN dirty = LEN(rows)
     ENDIF
@@ -262,12 +262,12 @@ FUNC H_RESTART(c)
     RETURN TRUE
 ENDFUNC
 
-NODE.SERVE "STATUS", "H_STATUS"
-NODE.SERVE "SYNC", "H_SYNC"
-NODE.SERVE "BUILD", "H_BUILD"
-NODE.SERVE "GATE", "H_GATE"
-NODE.SERVE "CANCEL", "H_CANCEL"
-NODE.SERVE "RESTART", "H_RESTART"
+NODE.SERVE "STATUS", H_STATUS@
+NODE.SERVE "SYNC", H_SYNC@
+NODE.SERVE "BUILD", H_BUILD@
+NODE.SERVE "GATE", H_GATE@
+NODE.SERVE "CANCEL", H_CANCEL@
+NODE.SERVE "RESTART", H_RESTART@
 
 READ_SLOW()
 PRINT "farm_agent "; NODE.NAME$(); " in "; repo$; " - "; version$

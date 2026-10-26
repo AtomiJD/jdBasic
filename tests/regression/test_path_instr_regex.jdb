@@ -52,7 +52,7 @@ IF INSTR(3, "abcabc", "c") <> 5 ORELSE INSTR("abcabc", "c") <> 2 THEN
 ENDIF
 
 ' A leading (?i) asks for case-insensitive matching
-bad = bad + SameText("(?i) in REGEX.REPLACE", REGEX.REPLACE("(?i)abc", "ABCdef", "x"), "xdef")
+bad = bad + SameText("(?i) in REGEX.REPLACE", REGEX.REPLACE$("(?i)abc", "ABCdef", "x"), "xdef")
 IF NOT REGEX.MATCH("(?i)ab.*", "ABCdef") THEN
     bad = bad + 1
     PRINT "(?i) in REGEX.MATCH did not match"
@@ -63,7 +63,7 @@ IF LEN(found) <> 1 ORELSE found[0] <> "ABC" THEN
     PRINT "(?i) in REGEX.FINDALL: "; found
 ENDIF
 ' and without it the case still matters
-bad = bad + SameText("no flag", REGEX.REPLACE("abc", "ABCdef", "x"), "ABCdef")
+bad = bad + SameText("no flag", REGEX.REPLACE$("abc", "ABCdef", "x"), "ABCdef")
 
 ' CD answers the current directory without an argument, and an argument that
 ' is empty is a path the caller worked out wrongly - the native side used to

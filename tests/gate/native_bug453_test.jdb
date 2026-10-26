@@ -21,7 +21,7 @@ ENDSUB
 DIM gStore AS MAP
 
 SUB Keep(id$, text$)
-    DIM parsed = JSON.PARSE$(text$)
+    DIM parsed = JSON.PARSE(text$)
     gStore{id$} = parsed
 ENDSUB
 
@@ -51,7 +51,7 @@ Check("written through a second read of the same entry", STR$(direct{"count"}), 
 
 ' A parsed array through a map, written by position.
 DIM gArr AS MAP
-DIM parsed_arr = JSON.PARSE$("[1, 2, 3]")
+DIM parsed_arr = JSON.PARSE("[1, 2, 3]")
 gArr{"list"} = parsed_arr
 DIM lst = gArr{"list"}
 Check("a parsed array read back keeps its kind", TYPEOF(lst), "ARRAY")
@@ -60,7 +60,7 @@ Check("a cell written into it takes", STR$(lst[0]), "9")
 Check("and leaves its neighbours alone", STR$(lst[2]), "3")
 
 ' Controls: the shapes that always worked stay correct.
-DIM plain = JSON.PARSE$(doc$)
+DIM plain = JSON.PARSE(doc$)
 plain{"count"} = 5
 Check("a parsed map written without a detour", STR$(plain{"count"}), "5")
 

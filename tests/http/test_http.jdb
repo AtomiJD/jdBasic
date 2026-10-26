@@ -40,11 +40,11 @@ FUNC HandleRoot(request)
 ENDFUNC
 
 FUNC HandleApi(request)
-    RETURN {"status": "ok", "time": FORMAT_DATE(NOW())}
+    RETURN {"status": "ok", "time": FORMAT_DATE$(NOW())}
 ENDFUNC
 
-HTTP.SERVER.ON_GET("/", "HANDLEROOT")
-HTTP.SERVER.ON_GET("/api", "HANDLEAPI")
+HTTP.SERVER.ON_GET("/", HANDLEROOT@)
+HTTP.SERVER.ON_GET("/api", HANDLEAPI@)
 
 IF HTTP.SERVER.START(9999) THEN
     PRINT "Server running on port 9999"

@@ -21,14 +21,14 @@ FUNC Bump(request)
     RETURN "ok"
 ENDFUNC
 
-HTTP.SERVER.ON_GET "/bump", "Bump"
+HTTP.SERVER.ON_GET "/bump", Bump@
 DIM up = HTTP.SERVER.START(18791)
 
 DIM requests AS INTEGER = 24
 DIM tasks AS ARRAY = []
 DIM i AS INTEGER = 0
 FOR i = 1 TO requests
-    PUSH tasks, VAL(HTTP.GET_ASYNC$("http://127.0.0.1:18791/bump"))
+    PUSH tasks, VAL(HTTP.GET_ASYNC("http://127.0.0.1:18791/bump"))
 NEXT i
 
 ' The program computes meanwhile, on globals of its own.

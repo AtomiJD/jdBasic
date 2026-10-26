@@ -23,7 +23,7 @@ EXPORT SUB SET_ASSET_PATH(path$)
 ENDSUB
 
 EXPORT SUB LOAD_ITEM_DB(json_file$)
-    LET data = JSON.PARSE$(TXTREADER$(json_file$))
+    LET data = JSON.PARSE(TXTREADER$(json_file$))
     item_db = data{"items"}
 ENDSUB
 

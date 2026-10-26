@@ -38,7 +38,7 @@ FUNC RowCount(k$)
     RETURN -1
 ENDFUNC
 
-DIM cards = JSON.PARSE$("[[" + Q$ + "DISC" + Q$ + ", 3], [" + Q$ + "BAR" + Q$ + ", 4, 5]]")
+DIM cards = JSON.PARSE("[[" + Q$ + "DISC" + Q$ + ", 3], [" + Q$ + "BAR" + Q$ + ", 4, 5]]")
 DIM seen$ = ""
 DIM widths AS DOUBLE = 0
 FOR EACH row IN cards

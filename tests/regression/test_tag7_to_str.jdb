@@ -9,7 +9,7 @@ DIM direction$ = "down"
 
 ' Case 1: field exists and IS a string → direction$ = "up"
 json1$ = "{""properties"": {""direction"": ""up""}}"
-outer1 = JSON.PARSE$(json1$)
+outer1 = JSON.PARSE(json1$)
 p1 = outer1{"properties"}
 IF MAP.EXISTS(p1, "direction") THEN direction$ = p1{"direction"}
 PRINT "case1 direction$='"; direction$; "'"
@@ -17,7 +17,7 @@ IF direction$ <> "up" THEN PRINT "FAIL case1" : END
 
 ' Case 2: field missing → direction$ stays "up"
 json2$ = "{""properties"": {""other"": ""x""}}"
-outer2 = JSON.PARSE$(json2$)
+outer2 = JSON.PARSE(json2$)
 p2 = outer2{"properties"}
 IF MAP.EXISTS(p2, "direction") THEN direction$ = p2{"direction"}
 PRINT "case2 direction$='"; direction$; "'"
@@ -31,7 +31,7 @@ IF anim$ <> "idle_up" THEN PRINT "FAIL case3" : END
 ' Case 4: inner field missing → direction$ from previous case stays "up",
 ' then re-concat to simulate the per-frame RPG loop path.
 json3$ = "{""properties"": {""foo"": ""bar""}}"
-outer3 = JSON.PARSE$(json3$)
+outer3 = JSON.PARSE(json3$)
 p3 = outer3{"properties"}
 IF MAP.EXISTS(p3, "direction") THEN direction$ = p3{"direction"}
 anim2$ = "walk_" + direction$

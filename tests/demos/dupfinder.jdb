@@ -10,7 +10,7 @@ OPTION STRICT
 
 FUNC walk(path AS STRING)
   DIM out AS ARRAY = []
-  DIM names = DIR$(path + "/*", FALSE)
+  DIM names = FILE.LIST(path + "/*", FALSE)
   DIM n AS INTEGER = LEN(names)
   IF n = 0 THEN RETURN out
   DIM i AS INTEGER

@@ -26,8 +26,8 @@ SUB ON_QUIT(QuitData)
     RPG_DIALOG.SET_QUIT
 ENDSUB
 
-ON "KEYDOWN" CALL ON_KEY
-ON "QUIT"    CALL ON_QUIT
+ON "KEYDOWN" CALL ON_KEY@
+ON "QUIT"    CALL ON_QUIT@
 
 ' ── Title Screen ──────────────────────────────────────────────
 LET menu_choice = RPG_ENGINE.SHOW_TITLE(config$)
