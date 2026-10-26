@@ -1,6 +1,6 @@
 ---
 name: jdbbuild
-description: Build jdBasic.exe + jdbrt.dll with feature flags. Default is `HTTP NET GFX IMGUI NATIVEC MCPSERVER` (mandatory base - MCPSERVER is needed so the mcp-runtime build can serve the MCP tools). Pass extra flags to extend (`COM SERIAL LLM ONNX SQLITE PYTHON`). Auto-kills stale jdBasic.exe on LNK1104 lock. Verify with --version.
+description: Build jdBasic.exe + jdbrt.dll with feature flags. Default is `HTTP NET COM GFX IMGUI NATIVEC MCPSERVER` (mandatory base on Windows - COM for the VBA customer work, MCPSERVER so the mcp-runtime build can serve the MCP tools). Pass extra flags to extend (`SERIAL LLM ONNX SQLITE PYTHON`). Auto-kills stale jdBasic.exe on LNK1104 lock. Verify with --version.
 ---
 
 # Build jdBasic
@@ -9,13 +9,14 @@ Working dir: `/d/usr/dev/cc`.
 
 ## Choose the flag set
 
-- **Default base (always include):** `HTTP NET GFX IMGUI NATIVEC MCPSERVER`
+- **Default base (always include):** `HTTP NET COM GFX IMGUI NATIVEC MCPSERVER`
+  - COM is always on for Windows builds: Atomi's customer projects need COM in the VBA area. Leave it out only on the POSIX farm, where it does not exist
   - Dropping HTTP silently skips the HTTP slice in `native_test.jdb` / `comprehensive_test.jdb` so regressions go unnoticed
   - Dropping NET removes the `NET.*` socket builtins, and `tests/net/net_test.jdb` turns red in the parity sweep
   - Dropping IMGUI strips SCREEN/RECT/SPRITE from the runtime DLL
   - Dropping NATIVEC means `-c` won't compile
   - Dropping MCPSERVER means the resulting `jdBasic.exe` can't serve as the MCP backend (`--mcp` mode); the `mcp-runtime/` build needs it
-- **Full feature** (AI.LOAD/AI.RUN, COM, Serial, LLM): add `COM SERIAL LLM ONNX SQLITE PYTHON`
+- **Full feature** (AI.LOAD/AI.RUN, Serial, LLM): add `SERIAL LLM ONNX SQLITE PYTHON`
   - PYTHON embeds CPython (PYTHON$ / PY.*); needs dev headers + `python3xx.dll` (set `JDB_PYTHON_HOME` or use the per-user `pythoncore` package). The build copies `python314.dll` next to the exe.
 
 If **Atomi** passed extra flags after `/jdbbuild`, append them to the base. If he passed `full`, use the full feature set. No flags = base.
@@ -45,7 +46,7 @@ Then re-run Step 1. Atomi has standing permission for this - don't ask first.
 ./build/jdBasic.exe --version
 ```
 
-Output should list the features you compiled in. Default base = `Features: HTTP, NET, GFX, ImGui, MCP`. Full feature adds `COM, Serial, ONNX, LLM`.
+Output should list the features you compiled in. Default base = `Features: COM, HTTP, NET, GFX, ImGui, MCP, NativeC`. Full feature adds `Serial, ONNX, LLM`.
 
 ## Notes
 

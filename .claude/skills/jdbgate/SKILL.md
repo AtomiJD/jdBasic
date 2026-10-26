@@ -16,11 +16,11 @@ Build only if `src/` is newer than `build/jdBasic.exe` or `build/jdbrt.dll`. Ski
 If a build is needed:
 
 ```bash
-./build.bat HTTP NET GFX IMGUI NATIVEC 2>&1 | tail -10
-./build_rt.bat HTTP NET GFX IMGUI NATIVEC 2>&1 | tail -3
+./build.bat HTTP NET COM GFX IMGUI NATIVEC 2>&1 | tail -10
+./build_rt.bat HTTP NET COM GFX IMGUI NATIVEC 2>&1 | tail -3
 ```
 
-Both must end with `BUILD OK`. **Always all five flags together** - dropping HTTP silently skips the HTTP slice in the test suites; dropping NET turns `tests/net/net_test.jdb` red in the parity sweep; dropping IMGUI strips SCREEN/RECT/SPRITE from the runtime DLL; dropping NATIVEC means `-c` won't compile.
+Both must end with `BUILD OK`. **Always all six flags together** - COM is part of every Windows build because the VBA customer work needs it; dropping HTTP silently skips the HTTP slice in the test suites; dropping NET turns `tests/net/net_test.jdb` red in the parity sweep; dropping IMGUI strips SCREEN/RECT/SPRITE from the runtime DLL; dropping NATIVEC means `-c` won't compile.
 
 If build fails with `LNK1104: cannot open file 'build\jdBasic.exe'`, kill the stale process directly (no need to ask): `taskkill //F //IM jdBasic.exe` - then retry the build.
 
@@ -40,7 +40,7 @@ Run this **before Step 1, every time**, build or no build:
 FEAT=$(./build/jdBasic.exe --version 2>&1 | sed -n 's/^Features: *//p')
 echo "Features: $FEAT"
 MISSING=""
-for f in HTTP NET GFX ImGui NativeC; do
+for f in HTTP NET COM GFX ImGui NativeC; do
   case ",${FEAT// /}," in *",$f,"*) ;; *) MISSING="$MISSING $f" ;; esac
 done
 if [ -n "$MISSING" ]; then
@@ -101,6 +101,12 @@ done
 produces nothing at all prints nothing at all, and the pass reads as clean.
 If *all four* report `COMPILE FAILED`, the suites are not the problem: go back
 to Step 0b, the binary almost certainly has no `NATIVEC`.
+
+**Steps 1 + 2 in one command:** `./build/jdBasic.exe tools/gate_run.jdb`
+runs the same eight runs (deletes each `.exe` first, judges a missing RESULTS
+line as CRASH) and prints one `GATE {...}` JSON line per step, exit 0 = green;
+`--parity` appends Step 3b. Across all farm machines at once:
+`tools/farm_gate.jdb` (see the jdbfarm skill).
 
 ## Step 3 - GUI smoke
 
@@ -187,11 +193,15 @@ Read the `SCOPE` block before drawing conclusions:
 - IMPORT helpers and the `rag`/`ai`/`http`/`tui` directories are skipped by
   default - they need models, the network, a TTY or a TUI-enabled build, and
   their reds say nothing about the backends. `--all` includes them.
-- A `GAP` is usually **not** a defect. `-c` is STRICT + EXPLICIT and the
-  interpreter is deliberately loose, so loose test source that the native
-  compiler rejects is the two backends working as designed. What matters is
-  a test that compiles and then *behaves* differently, or a new entry in the
-  `VS BASELINE` block.
+- A `GAP` **is** a defect candidate since 2026-10-24: the interpreter is green,
+  the compiled program is red, and nothing explains it. The two by-design
+  disagreements have their own verdicts and sit in the summary, not in the
+  GAP list: `LOOSE` (`-c` is STRICT + EXPLICIT and refused loose test source;
+  the script checks that the named variable really has no declaration) and
+  `UNSUPPORTED` (the compiler, the runtime or the test itself said
+  "interpreter-only": HELP, SQL.QUERY, GROUPBY with a funcref, FOR EACH over
+  a channel, EXECUTE semantics). A test that skips its native half does so
+  through `OS.FEATURE("INTERPRETER")` and prints the words `interpreter-only`.
 - Two demos (`demo_group_d`, `dupfinder`) are timeout-flaky under load and are
   recorded in the baseline at their worst state, so they can only ever report
   FIXED, never a false regression.
