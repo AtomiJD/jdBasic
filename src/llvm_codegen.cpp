@@ -11970,9 +11970,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     // An array on either side compares element-wise, so it belongs to the
     // array block below; answering one truth value for the whole array is
     // what a scalar comparison does. The runtime-tagged side may turn out
-    // to be an array itself, which that block decides when it runs.
-    if (is_compare && lhs.tag != JD_TAG_STR && rhs.tag != JD_TAG_STR &&
-        lhs.tag != JD_TAG_ARR && rhs.tag != JD_TAG_ARR &&
+    // to be an array itself, which that block decides when it runs. Against
+    // a string, a runtime string compares as text and a number as 0.
+    if (is_compare && lhs.tag != JD_TAG_ARR && rhs.tag != JD_TAG_ARR &&
         ((lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag) ||
          (rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag))) {
         LLVMValueRef lb, lt, rb, rt;
@@ -12034,6 +12034,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         rc_born_if_array(pv, pt);
         drop_read_temp(lhs);
         drop_read_temp(rhs);
+        if (lhs.tag == JD_TAG_STR) drop_fresh_temp(*expr.left, lhs);
+        if (rhs.tag == JD_TAG_STR) drop_fresh_temp(*expr.right, rhs);
         return { pv, JD_TAG_RUNTIME, pt };
     }
 
@@ -12398,6 +12400,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             if (dyn_op != 0) {
                 LLVMValueRef bits = LLVMBuildCall2(builder, dyna.fn_type, dyna.fn,
                                                    dargs, 6, "dyy_dyn");
+                if (dyn_op == 3) emit_err_check();
                 LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "dyy_tagv");
                 rc_born_if_array(bits, tag_v);
                 return { bits, JD_TAG_RUNTIME, tag_v };
@@ -12406,7 +12409,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 LLVMConstInt(i32_type, JD_TAG_STR, 0), "dyy_lstr");
             LLVMValueRef r_str = LLVMBuildICmp(builder, LLVMIntEQ, rhs.runtime_tag,
                 LLVMConstInt(i32_type, JD_TAG_STR, 0), "dyy_rstr");
-            LLVMValueRef any_str = LLVMBuildOr(builder, l_str, r_str, "dyy_str");
+            LLVMValueRef any_arr = LLVMBuildOr(builder,
+                LLVMBuildICmp(builder, LLVMIntEQ, lhs.runtime_tag,
+                              LLVMConstInt(i32_type, JD_TAG_ARR, 0), "dyy_larr"),
+                LLVMBuildICmp(builder, LLVMIntEQ, rhs.runtime_tag,
+                              LLVMConstInt(i32_type, JD_TAG_ARR, 0), "dyy_rarr"), "dyy_arr");
+            LLVMValueRef any_str = LLVMBuildAnd(builder,
+                LLVMBuildOr(builder, l_str, r_str, "dyy_anystr"),
+                LLVMBuildNot(builder, any_arr, "dyy_noarr"), "dyy_str");
             LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "dyy.join");
             LLVMBasicBlockRef bb_sum = LLVMAppendBasicBlock(current_fn, "dyy.sum");
             LLVMBasicBlockRef bb_end = LLVMAppendBasicBlock(current_fn, "dyy.end");
@@ -12465,7 +12475,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     }
 
     // One runtime-typed operand and one number: an array behind the tag is
-    // operated on element-wise, anything else as a number.
+    // operated on element-wise, a string by the string operators, anything
+    // else as a number.
     {
         bool l_rt = lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag;
         bool r_rt = rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag;
@@ -12490,7 +12501,28 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             LLVMBasicBlockRef bb_arr = LLVMAppendBasicBlock(current_fn, "dop.arr");
             LLVMBasicBlockRef bb_num = LLVMAppendBasicBlock(current_fn, "dop.num");
             LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "dop.join");
-            LLVMBuildCondBr(builder, is_arr, bb_arr, bb_num);
+            LLVMBasicBlockRef bb_notarr = LLVMAppendBasicBlock(current_fn, "dop.notarr");
+            LLVMBasicBlockRef bb_str = LLVMAppendBasicBlock(current_fn, "dop.str");
+            LLVMBuildCondBr(builder, is_arr, bb_arr, bb_notarr);
+
+            LLVMPositionBuilderAtEnd(builder, bb_notarr);
+            LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, dyn.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_STR, 0), "dop_isstr");
+            LLVMBuildCondBr(builder, is_str, bb_str, bb_num);
+
+            LLVMPositionBuilderAtEnd(builder, bb_str);
+            auto& dyna = runtime_funcs["__dyn_arith"];
+            LLVMValueRef s_tag = scratch_alloca(i32_type, "dop_stag");
+            LLVMValueRef sc_bits = pun_f64_to_i64(scalar);
+            LLVMValueRef f64_tag = LLVMConstInt(i32_type, JD_TAG_F64, 0);
+            LLVMValueRef dargs[] = {
+                l_rt ? dyn.val : sc_bits, l_rt ? dyn.runtime_tag : f64_tag,
+                l_rt ? sc_bits : dyn.val, l_rt ? f64_tag : dyn.runtime_tag,
+                LLVMConstInt(i32_type, aop, 0), s_tag };
+            LLVMValueRef sbits = LLVMBuildCall2(builder, dyna.fn_type, dyna.fn, dargs, 6, "dop_str");
+            LLVMValueRef stag_v = LLVMBuildLoad2(builder, i32_type, s_tag, "dop_stagv");
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_str_end = LLVMGetInsertBlock(builder);
 
             LLVMPositionBuilderAtEnd(builder, bb_arr);
             auto& sop = runtime_funcs["__arr_scalar_op"];
@@ -12512,7 +12544,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 case 0:  nres = LLVMBuildFAdd(builder, lf, rf, "dop_add"); break;
                 case 1:  nres = LLVMBuildFSub(builder, lf, rf, "dop_sub"); break;
                 case 2:  nres = LLVMBuildFMul(builder, lf, rf, "dop_mul"); break;
-                default: nres = LLVMBuildFDiv(builder, lf, rf, "dop_div"); break;
+                default:
+                    emit_div_zero_check({ rf, JD_TAG_F64 });
+                    nres = LLVMBuildFDiv(builder, lf, rf, "dop_div");
+                    break;
             }
             LLVMValueRef nbits = pun_f64_to_i64(nres);
             LLVMBuildBr(builder, bb_join);
@@ -12521,12 +12556,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             LLVMPositionBuilderAtEnd(builder, bb_join);
             LLVMValueRef pv = LLVMBuildPhi(builder, i64_type, "dop_v");
             LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "dop_t");
-            LLVMValueRef vals[] = { abits, nbits };
+            LLVMValueRef vals[] = { abits, nbits, sbits };
             LLVMValueRef tags[] = { LLVMConstInt(i32_type, JD_TAG_ARR, 0),
-                                    LLVMConstInt(i32_type, JD_TAG_F64, 0) };
-            LLVMBasicBlockRef bbs[] = { bb_arr_end, bb_num_end };
-            LLVMAddIncoming(pv, vals, bbs, 2);
-            LLVMAddIncoming(pt, tags, bbs, 2);
+                                    LLVMConstInt(i32_type, JD_TAG_F64, 0), stag_v };
+            LLVMBasicBlockRef bbs[] = { bb_arr_end, bb_num_end, bb_str_end };
+            LLVMAddIncoming(pv, vals, bbs, 3);
+            LLVMAddIncoming(pt, tags, bbs, 3);
             return { pv, JD_TAG_RUNTIME, pt };
         }
     }
@@ -12556,6 +12591,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             LLVMValueRef args[] = { lb, lt, rb, rt,
                 LLVMConstInt(i32_type, (unsigned)dyn_op, 0), out_tag };
             LLVMValueRef bits = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 6, "dyna");
+            if (dyn_op == 3) emit_err_check();
             LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "dyna_tagv");
             rc_born_if_array(bits, tag_v);
             return { bits, JD_TAG_RUNTIME, tag_v };

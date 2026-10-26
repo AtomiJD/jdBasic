@@ -5146,9 +5146,10 @@ int64_t jdb_dyn_cmp(int64_t a, int32_t ta, int64_t b, int32_t tb) {
         return jdb_str_cmp((const char*)(intptr_t)a, (const char*)(intptr_t)b);
     auto as_num = [](int64_t v, int32_t t) -> double {
         if (t == JD_TAG_I64 || t == JD_TAG_BOOL) return (double)v;
-        if (t == JD_TAG_STR) { const char* s = (const char*)(intptr_t)v; return s ? strtod(s, nullptr) : 0.0; }
+        if (t == JD_TAG_STR) return 0.0;
         double d; memcpy(&d, &v, sizeof d); return d;
     };
+    // A string against a number is no number and counts as 0.
     double x = as_num(a, ta), y = as_num(b, tb);
     return x < y ? -1 : (x > y ? 1 : 0);
 }
@@ -5192,8 +5193,9 @@ int64_t jdb_dyn_cmp_arr(int64_t a, int32_t ta, int64_t b, int32_t tb,
 
 // Arithmetic where both operands only name their kind when they run - two
 // map values, two cells of a mixed array. An array on either side decides
-// element-wise or array-with-a-scalar; a string joins (+) or repeats (* by a
-// number); anything else is a number. The caller reads the kind of the
+// element-wise or array-with-a-scalar; a string answers what the
+// interpreter's string operators answer (join, removal, repetition,
+// slicing); anything else is a number. The caller reads the kind of the
 // answer from out_tag.
 int64_t jdb_dyn_arith(int64_t a, int32_t ta, int64_t b, int32_t tb,
                       int32_t op, int32_t* out_tag) {
@@ -5214,15 +5216,36 @@ int64_t jdb_dyn_arith(int64_t a, int32_t ta, int64_t b, int32_t tb,
         return (int64_t)(intptr_t)out;
     }
     if (ta == JD_TAG_STR || tb == JD_TAG_STR) {
-        union { int64_t i; double d; } ua, ub;
-        ua.i = a;
-        ub.i = b;
-        int ka = ta == JD_TAG_STR ? JD_TAG_STR : JD_TAG_F64;
-        int kb = tb == JD_TAG_STR ? JD_TAG_STR : JD_TAG_F64;
-        KindedCell c = cell_op(ka == JD_TAG_STR ? ua.d : dyn_num(a, ta), ka,
-                               kb == JD_TAG_STR ? ub.d : dyn_num(b, tb), kb, op, false);
-        if (out_tag) *out_tag = c.k;
-        union { double d; int64_t i; } u; u.d = c.v; return u.i;
+        bool sa = ta == JD_TAG_STR, sb = tb == JD_TAG_STR;
+        auto text_of = [](int64_t bits, int32_t t) -> std::string {
+            if (t == JD_TAG_STR) {
+                jdb_text::View v = text_in((const char*)(intptr_t)bits);
+                return std::string(v.p ? v.p : "", v.n);
+            }
+            return cell_text(dyn_num(bits, t), JD_TAG_F64);
+        };
+        std::string out;
+        try {
+            if (op == 1 && sa && sb)
+                out = jdb_text::remove_all(text_in((const char*)(intptr_t)a),
+                                           text_in((const char*)(intptr_t)b));
+            else if (op == 2)
+                out = sa ? jdb_text::repeat(text_in((const char*)(intptr_t)a),
+                                            sb ? 0 : (int64_t)dyn_num(b, tb))
+                         : jdb_text::repeat(text_in((const char*)(intptr_t)b), (int64_t)dyn_num(a, ta));
+            else if (op == 3 && sa != sb)
+                out = sa ? jdb_text::slice(text_in((const char*)(intptr_t)a), (int64_t)dyn_num(b, tb), false)
+                         : jdb_text::slice(text_in((const char*)(intptr_t)b), (int64_t)dyn_num(a, ta), true);
+            else if (op == 3)
+                out = text_of(a, ta);
+            else
+                out = text_of(a, ta) + text_of(b, tb);
+        } catch (...) {
+            jdb_err_set("out of memory for a string this size", 1);
+            out.clear();
+        }
+        if (out_tag) *out_tag = JD_TAG_STR;
+        return (int64_t)(intptr_t)text_out(out);
     }
     if (out_tag) *out_tag = JD_TAG_F64;
     double x = dyn_num(a, ta), y = dyn_num(b, tb), r = 0.0;
@@ -5230,7 +5253,10 @@ int64_t jdb_dyn_arith(int64_t a, int32_t ta, int64_t b, int32_t tb,
         case 0: r = x + y; break;
         case 1: r = x - y; break;
         case 2: r = x * y; break;
-        case 3: r = (y != 0.0) ? x / y : 0.0; break;
+        case 3:
+            if (y == 0.0) { jdb_err_set("Division by zero", 12); r = 0.0; }
+            else r = x / y;
+            break;
         default: r = 0.0; break;
     }
     union { double d; int64_t i; } u; u.d = r; return u.i;

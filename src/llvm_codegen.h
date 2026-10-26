@@ -746,6 +746,9 @@ private:
     // 47-bit user address space). A real number never is: those bits read as
     // a double are subnormals below 1e-309.
     LLVMValueRef bits_may_be_ptr(LLVMValueRef f64_val);
+    // The container an f64- or i64-carried value names when it is indexed:
+    // pointer bits as the pointer, a number as the interpreter's error.
+    LLVMValueRef index_base_ptr(const TypedValue& tv);
 
     // Turn a runtime-tagged value into a string pointer, so a slot declared
     // AS STRING keeps its type instead of being retagged by the assignment.

@@ -2,7 +2,7 @@
 ' form what they answer in the interpreter: indexing a number is an error,
 ' a string handed through a function reference stays a string, a variable
 ' declared from such a call can be assigned again, and a $-named builtin
-' that answers a number answers a number.
+' that answers a number answers a number. Dividing one by zero is an error.
 
 DIM failed AS INTEGER = 0
 
@@ -53,6 +53,38 @@ DIM ignored = AWAIT(task)
 ' VAL of a number is that number.
 DIM seven AS INTEGER = 7
 Check(VAL(seven) = 7, "VAL of an integer")
+
+' Dividing a value of runtime kind by zero is an error.
+DIM nums AS MAP = {"a": 6, "z": 0}
+caught = 0
+TRY
+    DIM q1 = nums{"a"} / 0
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "a map value divided by zero")
+caught = 0
+TRY
+    DIM q2 = nums{"a"} / nums{"z"}
+CATCH
+    caught = 1
+ENDTRY
+Check(caught = 1, "a map value divided by a zero map value")
+Check(nums{"a"} / 2 = 3, "a map value divided by a number")
+
+' A string of runtime kind meets a number the way the string operators say.
+DIM texts AS MAP = {"s": "abc", "d": "4", "a": [1, 2], "n": 9}
+Check(texts{"s"} + 1 = "abc1", "a map string plus a number joins")
+Check(1 + texts{"s"} = "1abc", "a number plus a map string joins")
+Check(texts{"d"} * 2 = "44", "a map string times a number repeats")
+Check(texts{"s"} / 2 = "bc", "a map string divided by a number slices")
+DIM joined AS ARRAY = texts{"a"} + texts{"s"}
+Check(joined[1] = "2abc", "a map array plus a map string joins per element")
+
+' A number of runtime kind against a string counts the string as 0.
+Check(NOT (texts{"n"} = "9"), "a map number equals no string")
+Check(NOT (texts{"n"} < "10"), "a map number against a string counts it as 0")
+Check(texts{"s"} = "abc", "a map string equals the same text")
 
 IF failed > 0 THEN END 1
 PRINT "OK"
