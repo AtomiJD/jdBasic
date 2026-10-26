@@ -2557,7 +2557,7 @@ Description: Returns m * Rotation(angle about axis ax,ay,az). The angle is in de
 
 [MAT4.ROTATE_RAD]
 Syntax: MAT4.ROTATE_RAD(m, angle_rad, ax, ay, az) -> mat4
-Description: Returns m * Rotation(angle about axis ax,ay,az) with the angle in radians. Until 2.0 this was MAT4.ROTATE.
+Description: Returns m * Rotation(angle about axis ax,ay,az) with the angle in radians. Before the 1.2 refresh of October 2026 this was MAT4.ROTATE.
 
 [MAT4.SCALE]
 Syntax: MAT4.SCALE(m, sx, sy, sz) -> mat4

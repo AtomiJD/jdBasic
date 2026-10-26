@@ -1,4 +1,4 @@
-' jdb-fix - moves jdBasic source to the 2.0 names.
+' jdb-fix - moves jdBasic source to the names of the 1.2 refresh.
 '
 '   jdbasic tools/jdb-fix.jdb [--dry-run] [--keys] [--quiet] path...
 '

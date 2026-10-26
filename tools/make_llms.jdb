@@ -16,7 +16,7 @@ DIM argv = DROP(1, OS.ARGS())
 DIM outPath$ = "llms-full.txt"
 IF LEN(argv) > 0 THEN outPath$ = argv[0]
 
-DIM sources = ["doc/llms-primer.md", "doc/tour.md", "doc/idioms-from-python.md", _
+DIM sources = ["doc/llms-primer.md", "doc/name-changes.md", "doc/tour.md", "doc/idioms-from-python.md", _
     "doc/APL_pipeline.md", "doc/howto-vector-matrix-data.md", _
     "doc/guides/native.md", "doc/guides/data.md", "doc/guides/gui.md", _
     "doc/guides/graphics-games.md", "doc/guides/ai-mcp.md", "doc/guides/boards.md", _

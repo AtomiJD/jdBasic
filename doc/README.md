@@ -39,6 +39,7 @@ topic guides below go deeper.
 |---|---|
 | [From loops to array pipelines](APL_pipeline.md) | Rewriting tight `FOR` loops as whole-array update steps, and when the array form is slower. |
 | [Vectors, matrices and data](howto-vector-matrix-data.md) | Cookbook: build, transform, group, sort, reshape, dates, rendering. |
+| [Name changes in 1.2](name-changes.md) | The names that changed in the 1.2 refresh, the old names that still work, and `tools/jdb-fix.jdb`, which rewrites a project. |
 | [Idioms from Python](idioms-from-python.md) | Python-to-jdBasic cheat sheet with the gotchas; good context for an AI assistant too. |
 
 **Applications**

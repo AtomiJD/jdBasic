@@ -2976,7 +2976,7 @@ The `MAT4.*` helpers build 4x4 transforms for OpenGL. Every function returns a 1
 * **`MAT4.MUL(a, b) -> mat4`**: Matrix product `a * b`.
 * **`MAT4.TRANSLATE(m, x, y, z) -> mat4`**: `m * Translation(x, y, z)`.
 * **`MAT4.ROTATE(m, angle_deg, ax, ay, az) -> mat4`**: `m * Rotation(angle about axis)`; the angle is in **degrees**, like every graphics angle.
-* **`MAT4.ROTATE_RAD(m, angle_rad, ax, ay, az) -> mat4`**: The same with the angle in radians. Until 2.0 `MAT4.ROTATE` took radians; code written for that calls this one.
+* **`MAT4.ROTATE_RAD(m, angle_rad, ax, ay, az) -> mat4`**: The same with the angle in radians. Before the 1.2 refresh of October 2026 `MAT4.ROTATE` took radians; code written for that calls this one.
 * **`MAT4.SCALE(m, sx, sy, sz) -> mat4`**: `m * Scale(sx, sy, sz)`.
 
 #### Audio File Playback (SDL_mixer)

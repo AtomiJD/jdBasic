@@ -1,6 +1,6 @@
 # jdBasic
 
-> jdBasic is a BASIC dialect with a bytecode VM, APL-style arrays and a native compiler (`jdbasic -c`, through LLVM, to a Windows .exe). Graphics, GUI (Win32 forms, ImGui, terminal UI), sound, HTTP client and server, SQLite, JSON, COM automation and local LLMs are built in. `jdbasic --mcp` is a Model Context Protocol server: an AI agent runs code in a persistent VM and can pause a running program, change a SUB and resume it. Created by Atomi JD, MIT licensed, current release line 1.1.
+> jdBasic is a BASIC dialect with a bytecode VM, APL-style arrays and a native compiler (`jdbasic -c`, through LLVM, to a Windows .exe). Graphics, GUI (Win32 forms, ImGui, terminal UI), sound, HTTP client and server, SQLite, JSON, COM automation and local LLMs are built in. `jdbasic --mcp` is a Model Context Protocol server: an AI agent runs code in a persistent VM and can pause a running program, change a SUB and resume it. Created by Atomi JD, MIT licensed, current release line 1.2.
 
 Facts a model needs before it writes jdBasic:
 
@@ -20,6 +20,7 @@ Facts a model needs before it writes jdBasic:
 - [jdBasic for language models](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/llms-primer.md): what jdBasic is, the rules models get wrong, the syntax with tested examples, the MCP server
 - [Full documentation in one file](https://www.jdbasic.org/llms-full.txt): the primer, tour, guides, MCP reference, module library, full language reference and HELP text, about 790 KB
 - [A tour of jdBasic](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/tour.md): from the first PRINT to a compiled .exe in fifteen minutes; every example is CI-checked
+- [Name changes in 1.2](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/name-changes.md): the names that changed in the 1.2 refresh (a name ends in $ exactly when it answers a string, lower-case keys in builtin maps, handlers as funcrefs, degrees for graphics) and tools/jdb-fix.jdb, which rewrites old code
 - [Idioms from Python](https://raw.githubusercontent.com/AtomiJD/jdBasic/main/doc/idioms-from-python.md): Python-to-jdBasic cheat sheet with the gotchas
 
 ## Reference

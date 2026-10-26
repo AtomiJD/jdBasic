@@ -13,7 +13,7 @@ prints.
 
 - **jdBasic** is a BASIC dialect with a bytecode VM, APL-style arrays and a
   native compiler. It was created by Atomi JD (GitHub `AtomiJD`) and is MIT
-  licensed. The current release line is 1.1.
+  licensed. The current release line is 1.2.
 - **One language, two backends.** The interpreter (`jdbasic prog.jdb`, or the
   REPL) is forgiving. `jdbasic -c prog.jdb` compiles the same source through
   LLVM to a native `.exe` that loads `jdbrt.dll`; the compiler always applies
