@@ -14,7 +14,7 @@ SUB CHECK(what$, got$, want$)
     ENDIF
 ENDSUB
 
-DIM cards = JSON.PARSE$(TXTREADER$("cards.json"))
+DIM cards = JSON.PARSE(TXTREADER$("cards.json"))
 DIM shapes AS MAP = {}
 DIM n_cards = 0
 DIM n_rows = 0

@@ -11,8 +11,8 @@ IMPORT WORKCONF, MERGER
 
 ' The month before the one of the given date, as YYYY-MM.
 FUNC LastMonth$(day)
-    DIM y = VAL(FORMAT_DATE(day, "%Y"))
-    DIM m = VAL(FORMAT_DATE(day, "%m")) - 1
+    DIM y = VAL(FORMAT_DATE$(day, "%Y"))
+    DIM m = VAL(FORMAT_DATE$(day, "%m")) - 1
     IF m = 0 THEN
         m = 12
         y = y - 1

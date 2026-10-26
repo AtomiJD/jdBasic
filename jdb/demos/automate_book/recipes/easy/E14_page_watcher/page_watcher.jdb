@@ -30,7 +30,7 @@ FOR k = 0 TO LEN(pages) - 1
     ENDIF
 NEXT k
 IF LEN(changes) > 0 ANDALSO NOT dry_run THEN
-    DIM stamp$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M")
+    DIM stamp$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M")
     DIM entry$ = stamp$ + CHR$(10) + JOIN(changes, CHR$(10))
     DIM log_file$ = PATH.JOIN$(store$, "changes.log")
     TXTWRITER log_file$, entry$ + CHR$(10), TRUE

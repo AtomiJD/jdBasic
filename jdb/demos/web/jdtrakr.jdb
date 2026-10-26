@@ -6,7 +6,7 @@ IMPORT JDWEB, SECRET
 
 ' --- config (resolved relative to this script, so it works from any cwd) ---
 gAppDir$ = PATH.DIRNAME$(OS.ARGS()[0])
-gCfg = JSON.PARSE$(TXTREADER$(PATH.JOIN$(gAppDir$, "jdtrakr.json")))
+gCfg = JSON.PARSE(TXTREADER$(PATH.JOIN$(gAppDir$, "jdtrakr.json")))
 gApp$ = "" + gCfg{"app"}
 gTrakrTpl$ = PATH.JOIN$(gAppDir$, "jdtrakr_tpl")
 gSecure = FALSE
@@ -84,7 +84,7 @@ FUNC FIELD$(obj, key$)
 ENDFUNC
 
 FUNC PARAM$(request, key$)
-    p = request{"PARAMS"}
+    p = request{"params"}
     IF TYPEOF(p) = "NONE" THEN RETURN ""
     v = p{key$}
     IF TYPEOF(v) = "NONE" THEN RETURN ""
@@ -115,7 +115,7 @@ ENDFUNC
 
 ' --- API-key auth: machine clients send the key in a header; humans use cookies ---
 FUNC API_KEY$(request)
-    h = request{"HEADERS"}
+    h = request{"headers"}
     IF TYPEOF(h) = "NONE" THEN RETURN ""
     v = h{"x-api-key"}
     IF TYPEOF(v) <> "NONE" THEN RETURN TRIM$("" + v)
@@ -280,7 +280,7 @@ ENDFUNC
 FUNC HandleCreate(request)
     u$ = ACTOR$(request)
     IF LEN(u$) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     title$ = FIELD$(body, "title")
     IF LEN(title$) = 0 THEN RETURN { "error": "title required" }
 
@@ -309,7 +309,7 @@ ENDFUNC
 FUNC HandleUpdate(request)
     actor$ = ACTOR$(request)
     IF LEN(actor$) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     id = INT(body{"id"})
 
     rows = SQL.QUERY(gDb, "SELECT * FROM tickets WHERE id = " + STR$(id))
@@ -355,7 +355,7 @@ ENDFUNC
 FUNC HandleMove(request)
     actor$ = ACTOR$(request)
     IF LEN(actor$) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     id = INT(body{"id"})
     st$ = FIELD$(body, "status")
     IF NOT VALID_STATUS(st$) THEN RETURN { "error": "bad status" }
@@ -373,7 +373,7 @@ ENDFUNC
 
 FUNC HandleDelete(request)
     IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     id = INT(body{"id"})
     SQL.EXEC(gDb, "DELETE FROM comments WHERE ticket_id = " + STR$(id))
     SQL.EXEC(gDb, "DELETE FROM history WHERE ticket_id = " + STR$(id))
@@ -387,7 +387,7 @@ ENDFUNC
 FUNC HandleComment(request)
     author$ = ACTOR$(request)
     IF LEN(author$) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     id = INT(body{"ticket_id"})
     text$ = FIELD$(body, "body")
     IF LEN(text$) = 0 THEN RETURN { "error": "comment is empty" }
@@ -413,7 +413,7 @@ ENDFUNC
 
 FUNC HandleProjectCreate(request)
     IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     name$ = FIELD$(body, "name")
     IF LEN(name$) = 0 THEN RETURN { "error": "name required" }
     key$ = FIELD$(body, "key")
@@ -428,7 +428,7 @@ ENDFUNC
 
 FUNC HandleProjectDelete(request)
     IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     pid = PROJ_ID(FIELD$(body, "project"))
     IF pid <= 0 THEN RETURN { "error": "unknown project" }
     IF pid = gDefProj THEN RETURN { "error": "cannot delete the default project" }
@@ -462,7 +462,7 @@ ENDFUNC
 FUNC HandleDepAdd(request)
     actor$ = ACTOR$(request)
     IF LEN(actor$) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     tid = INT(body{"ticket_id"})
     bb = INT(body{"blocked_by"})
     IF tid = bb THEN RETURN { "error": "a ticket cannot block itself" }
@@ -477,7 +477,7 @@ ENDFUNC
 FUNC HandleDepDel(request)
     actor$ = ACTOR$(request)
     IF LEN(actor$) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     tid = INT(body{"ticket_id"})
     bb = INT(body{"blocked_by"})
     SQL.EXEC(gDb, "DELETE FROM deps WHERE ticket_id = " + STR$(tid) + " AND blocked_by = " + STR$(bb))
@@ -493,7 +493,7 @@ ENDFUNC
 
 FUNC HandleSettingsSave(request)
     IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     n = INT(body{"board_rows"})
     IF n < 1 THEN n = 1
     IF n > 99 THEN n = 99
@@ -511,7 +511,7 @@ ENDFUNC
 
 FUNC HandleUserCreate(request)
     IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     name$ = FIELD$(body, "name")
     IF LEN(name$) = 0 THEN RETURN { "error": "name required" }
     IF SQL.EXEC(gDb, "INSERT INTO users (name) VALUES ('" + ESC$(name$) + "')") < 0 THEN
@@ -522,7 +522,7 @@ ENDFUNC
 
 FUNC HandleUserDelete(request)
     IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
-    body = JSON.PARSE$(request{"BODY"})
+    body = JSON.PARSE(request{"body"})
     id = INT(body{"id"})
     IF SQL.EXEC(gDb, "DELETE FROM users WHERE id = " + STR$(id)) < 0 THEN
         RETURN { "error": SQL.ERRMSG$(gDb) }
@@ -571,33 +571,33 @@ ENDFUNC
 
 ' --- routes + server ---
 
-HTTP.SERVER.ON_GET "/", "HANDLEROOT"
-HTTP.SERVER.ON_GET "/projects", "HANDLEPROJECTSPAGE"
-HTTP.SERVER.ON_GET "/settings", "HANDLESETTINGSPAGE"
-HTTP.SERVER.ON_GET "/users", "HANDLEUSERSPAGE"
-HTTP.SERVER.ON_GET "/login", "HANDLELOGINPAGE"
-HTTP.SERVER.ON_POST "/api/login", "HANDLELOGIN"
-HTTP.SERVER.ON_POST "/api/logout", "HANDLELOGOUT"
-HTTP.SERVER.ON_GET "/api/me", "HANDLEME"
-HTTP.SERVER.ON_GET "/api/tickets", "HANDLETICKETS"
-HTTP.SERVER.ON_GET "/api/ticket", "HANDLETICKET"
-HTTP.SERVER.ON_POST "/api/create", "HANDLECREATE"
-HTTP.SERVER.ON_POST "/api/update", "HANDLEUPDATE"
-HTTP.SERVER.ON_POST "/api/move", "HANDLEMOVE"
-HTTP.SERVER.ON_POST "/api/delete", "HANDLEDELETE"
-HTTP.SERVER.ON_POST "/api/comment", "HANDLECOMMENT"
-HTTP.SERVER.ON_GET "/api/settings", "HANDLESETTINGS"
-HTTP.SERVER.ON_POST "/api/settings/save", "HANDLESETTINGSSAVE"
-HTTP.SERVER.ON_GET "/api/projects", "HANDLEPROJECTS"
-HTTP.SERVER.ON_POST "/api/projects/create", "HANDLEPROJECTCREATE"
-HTTP.SERVER.ON_POST "/api/projects/delete", "HANDLEPROJECTDELETE"
-HTTP.SERVER.ON_GET "/api/next", "HANDLENEXT"
-HTTP.SERVER.ON_POST "/api/dep/add", "HANDLEDEPADD"
-HTTP.SERVER.ON_POST "/api/dep/del", "HANDLEDEPDEL"
-HTTP.SERVER.ON_GET "/api/users", "HANDLEUSERS"
-HTTP.SERVER.ON_POST "/api/users/create", "HANDLEUSERCREATE"
-HTTP.SERVER.ON_POST "/api/users/delete", "HANDLEUSERDELETE"
-HTTP.SERVER.ON_NOTFOUND "HANDLE404"
+HTTP.SERVER.ON_GET "/", HANDLEROOT@
+HTTP.SERVER.ON_GET "/projects", HANDLEPROJECTSPAGE@
+HTTP.SERVER.ON_GET "/settings", HANDLESETTINGSPAGE@
+HTTP.SERVER.ON_GET "/users", HANDLEUSERSPAGE@
+HTTP.SERVER.ON_GET "/login", HANDLELOGINPAGE@
+HTTP.SERVER.ON_POST "/api/login", HANDLELOGIN@
+HTTP.SERVER.ON_POST "/api/logout", HANDLELOGOUT@
+HTTP.SERVER.ON_GET "/api/me", HANDLEME@
+HTTP.SERVER.ON_GET "/api/tickets", HANDLETICKETS@
+HTTP.SERVER.ON_GET "/api/ticket", HANDLETICKET@
+HTTP.SERVER.ON_POST "/api/create", HANDLECREATE@
+HTTP.SERVER.ON_POST "/api/update", HANDLEUPDATE@
+HTTP.SERVER.ON_POST "/api/move", HANDLEMOVE@
+HTTP.SERVER.ON_POST "/api/delete", HANDLEDELETE@
+HTTP.SERVER.ON_POST "/api/comment", HANDLECOMMENT@
+HTTP.SERVER.ON_GET "/api/settings", HANDLESETTINGS@
+HTTP.SERVER.ON_POST "/api/settings/save", HANDLESETTINGSSAVE@
+HTTP.SERVER.ON_GET "/api/projects", HANDLEPROJECTS@
+HTTP.SERVER.ON_POST "/api/projects/create", HANDLEPROJECTCREATE@
+HTTP.SERVER.ON_POST "/api/projects/delete", HANDLEPROJECTDELETE@
+HTTP.SERVER.ON_GET "/api/next", HANDLENEXT@
+HTTP.SERVER.ON_POST "/api/dep/add", HANDLEDEPADD@
+HTTP.SERVER.ON_POST "/api/dep/del", HANDLEDEPDEL@
+HTTP.SERVER.ON_GET "/api/users", HANDLEUSERS@
+HTTP.SERVER.ON_POST "/api/users/create", HANDLEUSERCREATE@
+HTTP.SERVER.ON_POST "/api/users/delete", HANDLEUSERDELETE@
+HTTP.SERVER.ON_NOTFOUND HANDLE404@
 
 gPort = INT(gCfg{"port"})
 gHost$ = "127.0.0.1"

@@ -13,10 +13,10 @@ PRINT "--- EIG Test ---"
 A = [[1, 2], [3, 4]]
 EigResult = EIG(A)
 PRINT "Eigenvalues:"
-PRINT FRMV$(EigResult{"EIGENVALUES"})
+PRINT FRMV$(EigResult{"eigenvalues"})
 PRINT "Eigenvectors (Complex):"
 ' This will be a 2x2x2 array [row, col, (real/imag)]
-PRINT EigResult{"EIGENVECTORS"}
+PRINT EigResult{"eigenvectors"}
 PRINT
 
 ' Test SVD / QR / DET

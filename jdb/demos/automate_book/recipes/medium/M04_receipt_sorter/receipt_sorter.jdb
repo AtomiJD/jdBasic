@@ -46,7 +46,7 @@ IF only$ <> "" THEN
 ENDIF
 
 IF NOT FILE.ISDIR(inbox$) THEN THROW "No folder " + inbox$
-DIM names = SORT(DIR$(PATH.JOIN$(inbox$, "*")))
+DIM names = SORT(FILE.LIST(PATH.JOIN$(inbox$, "*")))
 DIM months = []
 DIM odd = []
 DIM k = 0

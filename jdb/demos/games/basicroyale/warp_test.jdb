@@ -1,7 +1,7 @@
 ' Rule check for the recall card and the cards it must not disturb.
 IMPORT ARENA
 TRY
-    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+    ARENA.SETCARDS(JSON.PARSE(TXTREADER$("cards.json")))
 CATCH
 ENDTRY
 DIM cs = ARENA.CARDS()

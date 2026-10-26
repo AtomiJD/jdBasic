@@ -29,10 +29,10 @@ SUB ProcessInlines(line$)
     ' We will replace markdown with placeholder characters and then color them.
     
     ' The order is important: process bold/italic first.
-    line$ = REGEX.REPLACE("\*\*\*([^*]+)\*\*\*", line$, CHR$(1) + "$1" + CHR$(1)) ' Bold+Italic
-    line$ = REGEX.REPLACE("\*\*([^*]+)\*\*", line$, CHR$(2) + "$1" + CHR$(2)) ' Bold
-    line$ = REGEX.REPLACE("\*([^*]+)\*", line$, CHR$(3) + "$1" + CHR$(3))     ' Italic
-    line$ = REGEX.REPLACE("`([^`]+)`", line$, CHR$(4) + "$1" + CHR$(4))       ' Inline Code
+    line$ = REGEX.REPLACE$("\*\*\*([^*]+)\*\*\*", line$, CHR$(1) + "$1" + CHR$(1)) ' Bold+Italic
+    line$ = REGEX.REPLACE$("\*\*([^*]+)\*\*", line$, CHR$(2) + "$1" + CHR$(2)) ' Bold
+    line$ = REGEX.REPLACE$("\*([^*]+)\*", line$, CHR$(3) + "$1" + CHR$(3))     ' Italic
+    line$ = REGEX.REPLACE$("`([^`]+)`", line$, CHR$(4) + "$1" + CHR$(4))       ' Inline Code
 
     ' Now, print character by character, changing color based on our placeholders.
     current_color = COLOR_DEFAULT
@@ -124,7 +124,7 @@ SUB RenderMarkdown(markdown_text$)
             
         ' Unordered List (*, -, +)
         ELSEIF REGEX.MATCH("^\s*[*+-]\s+", trimmed_line$) THEN
-            list_text$ = REGEX.REPLACE("^\s*[*+-]\s+", trimmed_line$, "")
+            list_text$ = REGEX.REPLACE$("^\s*[*+-]\s+", trimmed_line$, "")
             COLOR COLOR_LIST, 0
             PRINT "  • ";
             ProcessInlines(list_text$)

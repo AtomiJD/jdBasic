@@ -54,7 +54,7 @@ ENDFUNC
 ' The Monday of the week a date falls in. The weekday comes from
 ' FORMAT_DATE, 0 for Sunday.
 EXPORT FUNC MONDAY(d)
-    DIM wd = VAL(FORMAT_DATE(d, "%w"))
+    DIM wd = VAL(FORMAT_DATE$(d, "%w"))
     RETURN DATEADD("D", -((wd + 6) MOD 7), d)
 ENDFUNC
 
@@ -90,11 +90,11 @@ EXPORT FUNC TITLE$(monday, n_days)
     DIM last = DATEADD("D", n_days - 1, monday)
     DIM first$ = STR$(DAY(monday))
     IF MONTH(monday) <> MONTH(last) THEN
-        first$ = first$ + " " + FORMAT_DATE(monday, "%B")
+        first$ = first$ + " " + FORMAT_DATE$(monday, "%B")
     ENDIF
-    DIM week$ = "Week " + STR$(VAL(FORMAT_DATE(monday, "%V")))
+    DIM week$ = "Week " + STR$(VAL(FORMAT_DATE$(monday, "%V")))
     DIM span$ = first$ + " to " + STR$(DAY(last)) + " "
-    RETURN week$ + ": " + span$ + FORMAT_DATE(last, "%B %Y")
+    RETURN week$ + ": " + span$ + FORMAT_DATE$(last, "%B %Y")
 ENDFUNC
 
 ' Writes the plan as one A4 page, landscape: a column per day with a

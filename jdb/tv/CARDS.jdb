@@ -27,8 +27,8 @@ FUNC Run(kind$, out_png$, payload)
         + q$ + args_path$ + q$
     DIM r = OS.EXEC(cmd$)
     IF FILE.EXISTS(args_path$) THEN KILL args_path$
-    IF r{"EXIT_CODE"} <> 0 THEN
-        PRINT "[CARDS] "; kind$; " render FAIL: " + r{"OUTPUT"}
+    IF r{"exit_code"} <> 0 THEN
+        PRINT "[CARDS] "; kind$; " render FAIL: " + r{"output"}
         RETURN 0
     ENDIF
     RETURN 1

@@ -39,7 +39,7 @@ PRINT "Triangle ready. ESC to quit."
 
 DIM running AS INTEGER = 1
 DO
-    DIM ev$ AS STRING = GFX.POLLEVENT()
+    DIM ev$ AS STRING = GFX.POLLEVENT$()
     IF ev$ = "QUIT" THEN running = 0
     IF ev$ = "KEYDOWN:Escape" THEN running = 0
 

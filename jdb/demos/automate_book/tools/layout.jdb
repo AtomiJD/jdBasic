@@ -527,7 +527,7 @@ ENDFUNC
 FUNC PlainText$(txt$)
     DIM t$ = REPLACE$(REPLACE$(txt$, "**", ""), "`", "")
     t$ = REPLACE$(t$, "*", "")
-    RETURN REGEX.REPLACE("\[([^\]]*)\]\([^)]*\)", t$, "$1")
+    RETURN REGEX.REPLACE$("\[([^\]]*)\]\([^)]*\)", t$, "$1")
 ENDFUNC
 
 SUB Heading(ctx, b)
@@ -1123,7 +1123,7 @@ ENDFUNC
 ' The words of a text for the index: marks and punctuation removed, a
 ' dot kept inside a word such as WORKCONF.VALUE, the case as written.
 FUNC Tokens(txt$)
-    DIM t$ = REGEX.REPLACE("[^A-Za-z0-9$_.]+", PlainText$(txt$), " ")
+    DIM t$ = REGEX.REPLACE$("[^A-Za-z0-9$_.]+", PlainText$(txt$), " ")
     DIM parts = SPLIT(t$, " ")
     DIM out = []
     DIM k = 0

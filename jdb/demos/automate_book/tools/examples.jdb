@@ -15,7 +15,7 @@ DIM gFence$ = "```"
 ' no trailing spaces or trailing blank lines.
 EXPORT FUNC CLEAN$(s$)
     DIM esc$ = CHR$(27)
-    DIM plain$ = REGEX.REPLACE(esc$ + "\[[0-9;]*m", REPLACE$(s$, CHR$(13), ""), "")
+    DIM plain$ = REGEX.REPLACE$(esc$ + "\[[0-9;]*m", REPLACE$(s$, CHR$(13), ""), "")
     DIM kept = SELECT(LAMBDA r$ -> RTRIM$(r$), SPLIT(plain$, gLF$))
     DO WHILE LEN(kept) > 0 ANDALSO kept[LEN(kept) - 1] = ""
         kept = TAKE(LEN(kept) - 1, kept)
@@ -70,7 +70,7 @@ EXPORT FUNC CHECK(text$, file$, jdbasic$, scratch_dir$)
         DIM ex = found[k]
         TXTWRITER script$, ex{"code"} + gLF$
         DIM r = OS.EXEC(jdbasic$, [script$])
-        DIM got$ = CLEAN$(r{"OUTPUT"})
+        DIM got$ = CLEAN$(r{"output"})
         IF got$ <> ex{"expected"} THEN
             PUSH(problems, file$ + ":" + STR$(ex{"line"}) + " [example prints something else] got: " + REPLACE$(got$, gLF$, " | "))
         ENDIF

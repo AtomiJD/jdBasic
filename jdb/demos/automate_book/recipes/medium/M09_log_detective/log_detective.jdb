@@ -18,7 +18,7 @@ DIM out_dir$ = WORKCONF.FOLDER$(cfg, key$ + "out_folder", work$)
 IF folder$ = "" THEN THROW "Set log_detective.folder first."
 
 DIM stats = LOGSCAN.NEW()
-DIM files = SORT(DIR$(PATH.JOIN$(folder$, pattern$)))
+DIM files = SORT(FILE.LIST(PATH.JOIN$(folder$, pattern$)))
 DIM k = 0
 FOR k = 0 TO LEN(files) - 1
     DIM path$ = PATH.JOIN$(folder$, files[k])

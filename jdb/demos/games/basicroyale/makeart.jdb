@@ -11,7 +11,7 @@ DIM running = 1
 SUB OnQuit()
     running = 0
 ENDSUB
-ON "QUIT" CALL OnQuit
+ON "QUIT" CALL OnQuit@
 
 ' Draws the source so that the region (sx, sy, sw, sh) fills the viewport.
 SUB CROPTO(img, sx, sy, sw, vw, vh)

@@ -42,7 +42,7 @@ ENDFUNC
 FUNC STRIP_LEADING_ZEROS$(N$)
     ' The pattern "^0+" matches one or more zeros at the start of the string.
     ' We replace them with an empty string.
-    Cleaned$ = REGEX.REPLACE("^0+", N$, "")
+    Cleaned$ = REGEX.REPLACE$("^0+", N$, "")
     ' If the result is an empty string (e.g., input was "000"), return "0".
     IF Cleaned$ = "" THEN RETURN "0"
     RETURN Cleaned$

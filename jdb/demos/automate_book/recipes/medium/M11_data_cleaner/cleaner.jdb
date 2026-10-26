@@ -87,7 +87,7 @@ ENDFUNC
 EXPORT FUNC NUMBER(raw, decimal$)
     IF TYPEOF(raw) <> "STRING" THEN RETURN raw
     DIM s$ = REPLACE$(TRIM$(raw), CHR$(194) + CHR$(160), "")
-    s$ = REGEX.REPLACE("\s|€|\$|£|EUR|USD|CHF", s$, "")
+    s$ = REGEX.REPLACE$("\s|€|\$|£|EUR|USD|CHF", s$, "")
     DIM minus = FALSE
     IF STARTSWITH(s$, "(") ANDALSO ENDSWITH(s$, ")") THEN
         minus = TRUE
@@ -120,7 +120,7 @@ ENDFUNC
 ' A text with its spaces tidied: none at the ends, one between words.
 EXPORT FUNC TIDY$(raw)
     DIM s$ = "" + raw
-    RETURN TRIM$(REGEX.REPLACE("\s+", s$, " "))
+    RETURN TRIM$(REGEX.REPLACE$("\s+", s$, " "))
 ENDFUNC
 
 EXPORT FUNC IS_MAIL(s$)

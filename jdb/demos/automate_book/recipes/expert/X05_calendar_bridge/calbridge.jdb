@@ -101,7 +101,7 @@ FUNC GetPage(url$)
         DIM said$ = STR$(status) + ": " + LEFT$(body$, 200)
         THROW "The calendar answered " + said$
     ENDIF
-    RETURN JSON.PARSE$(body$)
+    RETURN JSON.PARSE(body$)
 ENDFUNC
 
 FUNC Text$(row, name$)

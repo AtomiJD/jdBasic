@@ -84,7 +84,7 @@ ENDFUNC
 FUNC PlainText$(txt$)
     DIM t$ = REPLACE$(REPLACE$(txt$, "**", ""), "`", "")
     t$ = REPLACE$(t$, "*", "")
-    RETURN REGEX.REPLACE("\[([^\]]*)\]\([^)]*\)", t$, "$1")
+    RETURN REGEX.REPLACE$("\[([^\]]*)\]\([^)]*\)", t$, "$1")
 ENDFUNC
 
 FUNC WithoutComments$(text$)
@@ -296,7 +296,7 @@ EXPORT FUNC WRITE(cfg, chapters, base$, out_path$, cover_png$)
     NEXT k
     IF publisher$ <> "" THEN PUSH(opf, "<dc:publisher>" + Esc$(publisher$) + "</dc:publisher>")
     IF rights$ <> "" THEN PUSH(opf, "<dc:rights>" + Esc$(rights$) + "</dc:rights>")
-    PUSH(opf, "<meta property=" + gQ$ + "dcterms:modified" + gQ$ + ">" + FORMAT_DATE(NOW(), "%Y-%m-%dT%H:%M:%SZ", 0) + "</meta>")
+    PUSH(opf, "<meta property=" + gQ$ + "dcterms:modified" + gQ$ + ">" + FORMAT_DATE$(NOW(), "%Y-%m-%dT%H:%M:%SZ", 0) + "</meta>")
     IF cover_png$ <> "" ANDALSO FILE.EXISTS(cover_png$) THEN PUSH(opf, "<meta name=" + gQ$ + "cover" + gQ$ + " content=" + gQ$ + "cover-image" + gQ$ + "/>")
     PUSH(opf, "</metadata>")
     PUSH(opf, "<manifest>")

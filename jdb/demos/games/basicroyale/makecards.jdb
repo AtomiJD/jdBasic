@@ -10,7 +10,7 @@ CONST CELL = 40 * K
 
 DIM cards AS MAP = {}
 TRY
-    cards = JSON.PARSE$(TXTREADER$("cards.json"))
+    cards = JSON.PARSE(TXTREADER$("cards.json"))
 CATCH
     PRINT "cards.json not readable"
 ENDTRY

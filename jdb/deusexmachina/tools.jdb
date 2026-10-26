@@ -9,7 +9,7 @@ EXPORT MODULE TOOLS
 
 ' deus_echo - connectivity smoke test, parses args, returns the message.
 EXPORT FUNC tool_echo(args_json$) AS STRING
-    DIM args = JSON.PARSE$(args_json$)
+    DIM args = JSON.PARSE(args_json$)
     DIM msg$ = "(no message)"
     IF MAP.EXISTS(args, "message") THEN msg$ = args{"message"}
     RETURN "echo from deusexmachina: " + msg$

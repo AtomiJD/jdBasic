@@ -195,7 +195,7 @@ FUNC GOAL_MET()
 ENDFUNC
 
 SUB LoadHigh()
-    IF LEN(DIR$("tmp/prisma_high.txt")) = 0 THEN RETURN
+    IF LEN(FILE.LIST("tmp/prisma_high.txt")) = 0 THEN RETURN
     parts = SPLIT(TXTREADER$("tmp/prisma_high.txt"), ";")
     IF LEN(parts) >= 2 THEN
         bestScore = VAL(parts[0])

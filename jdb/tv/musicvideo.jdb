@@ -28,7 +28,7 @@ DIM SONGS$ = ["kaiku_01_neon_highway", "synthwave_highway", "classic", "kaiku_02
 ' Deletes the frames and the WAV of a render, then the directory
 SUB CLEAN_FRAMES(dir$)
     IF FILE.EXISTS(dir$) THEN
-        DIM names = DIR$(dir$)
+        DIM names = FILE.LIST(dir$)
         DIM i AS INTEGER
         FOR i = 0 TO LEN(names) - 1
             DIM nm$ AS STRING = names[i]
@@ -49,7 +49,7 @@ FUNC MAKE_VIDEO(name$, song$, look$) AS INTEGER
 
     DIM t0 AS DOUBLE = TICK()
     DIM r = OS.EXEC(JDB$, [SONG_DIR$ + song$ + ".jdb", "--render", frames$, "--look", look$])
-    DIM run_log$ AS STRING = r{"OUTPUT"}
+    DIM run_log$ AS STRING = r{"output"}
     DIM p AS INTEGER = INSTR(run_log$, "rendered ")
     IF p < 0 THEN
         PRINT "   render failed:"
@@ -63,9 +63,9 @@ FUNC MAKE_VIDEO(name$, song$, look$) AS INTEGER
     DIM vfilter$ AS STRING = "[0:v]fade=t=in:st=0:d=0.7,fade=t=out:st=" + STR$(secs - 1.5) + ":d=1.5[v]"
     DIM afilter$ AS STRING = "[1:a]adelay=" + STR$(INTRO_MS) + "|" + STR$(INTRO_MS) + ",apad,afade=t=out:st=" + STR$(secs - 2) + ":d=2[a]"
     DIM ff = OS.EXEC("ffmpeg", ["-y", "-loglevel", "error", "-framerate", STR$(FPS), "-i", frames$ + "\f%05d.jpg", "-i", frames$ + "\audio.wav", "-filter_complex", vfilter$ + ";" + afilter$, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", "-t", STR$(secs), "-movflags", "+faststart", out$])
-    IF ff{"EXIT_CODE"} <> 0 ORELSE NOT FILE.EXISTS(out$) THEN
+    IF ff{"exit_code"} <> 0 ORELSE NOT FILE.EXISTS(out$) THEN
         PRINT "   ffmpeg failed:"
-        PRINT ff{"OUTPUT"}
+        PRINT ff{"output"}
         RETURN FALSE
     ENDIF
     CLEAN_FRAMES frames$

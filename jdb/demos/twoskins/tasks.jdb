@@ -37,7 +37,7 @@ ENDFUNC
 FUNC Read(store)
     DIM raw$ = TXTREADER$("" + store{"path"})
     IF LEN(TRIM$(raw$)) = 0 THEN RETURN FALSE
-    DIM doc = JSON.PARSE$(raw$)
+    DIM doc = JSON.PARSE(raw$)
     DIM loaded = []
     DIM top = 0
     DIM i = 0

@@ -17,7 +17,7 @@ IMPORT XLSX
 ' first sheet when tab$ is "").
 EXPORT FUNC REPORTS(folder$, tab$)
     DIM out = []
-    DIM names = SORT(DIR$(PATH.JOIN$(folder$, "*.xlsx")))
+    DIM names = SORT(FILE.LIST(PATH.JOIN$(folder$, "*.xlsx")))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM file$ = names[k]
@@ -100,7 +100,7 @@ ENDFUNC
 ' A sheet name Excel accepts: at most 31 characters, none of
 ' : \ / ? * [ ].
 EXPORT FUNC SHEET_NAME$(name$)
-    DIM t$ = REGEX.REPLACE("[:\\/?*\[\]]", name$, "_")
+    DIM t$ = REGEX.REPLACE$("[:\\/?*\[\]]", name$, "_")
     RETURN LEFT$(t$, 31)
 ENDFUNC
 

@@ -59,7 +59,7 @@ TESTKIT.ISFALSE(FILE.EXISTS(PATH.JOIN$(folder$, "offer.pdf")), "and no PDF appea
 TESTKIT.SUITE("with Office")
 DIM ask$ = "if (([type]::GetTypeFromProgID('Word.Application')) -and ([type]::GetTypeFromProgID('PowerPoint.Application'))) { 'yes' }"
 DIM probe = OS.EXEC("powershell", ["-NoProfile", "-Command", ask$])
-IF INSTR(probe{"OUTPUT"}, "yes") < 0 THEN
+IF INSTR(probe{"output"}, "yes") < 0 THEN
     TESTKIT.SKIP("Word or PowerPoint is not installed")
 ELSE
     OUTPUT.CAPTURE_BEGIN

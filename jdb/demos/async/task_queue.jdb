@@ -28,7 +28,7 @@ FUNC BODY_AS_JSON(req)
         CASE "STRING"
             IF TRIM$(b) = "" THEN RETURN {}
             PRINT "BODY_AS_JSON: STRING: "; b
-            RETURN JSON.PARSE$(b)
+            RETURN JSON.PARSE(b)
         CASE "MAP","ARRAY"
             RETURN b
         DEFAULT
@@ -241,7 +241,7 @@ FUNC HandleTool(req)
     ' try to parse; attach routing info
     DIM resp
     TRY
-        resp = JSON.PARSE$(out$)
+        resp = JSON.PARSE(out$)
         resp{"routed_to"} = url$
         RETURN JSON.STRINGIFY$(resp)
     CATCH
@@ -378,12 +378,12 @@ FUNC HandleRoot(req)
 ENDFUNC
 
 ' --- routes & server ---
-HTTP.SERVER.ON_GET  "/",         "HandleRoot"
-HTTP.SERVER.ON_GET  "/status",   "HandleStatus"
-HTTP.SERVER.ON_POST "/register", "HandleRegister"
-HTTP.SERVER.ON_POST "/heartbeat","HandleHeartbeat"
-HTTP.SERVER.ON_POST "/tool",     "HandleTool"
-HTTP.SERVER.ON_GET  "/workers",  "HandleWorkers"
+HTTP.SERVER.ON_GET  "/",         HandleRoot@
+HTTP.SERVER.ON_GET  "/status",   HandleStatus@
+HTTP.SERVER.ON_POST "/register", HandleRegister@
+HTTP.SERVER.ON_POST "/heartbeat",HandleHeartbeat@
+HTTP.SERVER.ON_POST "/tool",     HandleTool@
+HTTP.SERVER.ON_GET  "/workers",  HandleWorkers@
 
 IF HTTP.SERVER.START(8080) THEN
     PRINT "Main dispatcher on http://" + OS.IP$() + ":8080"

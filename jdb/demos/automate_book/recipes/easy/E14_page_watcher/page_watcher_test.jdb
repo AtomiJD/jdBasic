@@ -25,7 +25,7 @@ TESTKIT.EQ(WATCHER.PART$("<b>all</b> of it", "", ""), "all of it", "no markers, 
 TESTKIT.EQ(WATCHER.SLUG$("Desk lamp (Müller GmbH)"), "desk_lamp_m_ller_gmbh_", "a file name from a page name")
 
 TESTKIT.SUITE("a page over three looks")
-HTTP.SERVER.ON_GET("/shop", "SHOP$")
+HTTP.SERVER.ON_GET("/shop", SHOP$@)
 TESTKIT.ISTRUE(HTTP.SERVER.START(gPort), "a local server for the test")
 DIM page = {"name": "Desk lamp", "url": base$ + "/shop", "start": "id=price>", "end": "</span>"}
 DIM first = WATCHER.CHECK(page, store$, FALSE)

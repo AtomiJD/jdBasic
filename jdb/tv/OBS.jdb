@@ -12,10 +12,10 @@ DIM HELPER$ = "python helpers\obs_cmd.py"
 
 FUNC RUN$(args$)
     DIM r = OS.EXEC(HELPER$ + " " + args$)
-    IF r{"EXIT_CODE"} <> 0 THEN
-        PRINT "[OBS] FAIL ("; r{"EXIT_CODE"}; "): "; r{"OUTPUT"}
+    IF r{"exit_code"} <> 0 THEN
+        PRINT "[OBS] FAIL ("; r{"exit_code"}; "): "; r{"output"}
     ENDIF
-    RETURN r{"OUTPUT"}
+    RETURN r{"output"}
 ENDFUNC
 
 EXPORT FUNC StartRecord$()

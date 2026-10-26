@@ -16,7 +16,7 @@ ENDFUNC
 ' TRUE when a moment lies inside working hours; with workdays_only
 ' Saturday and Sunday are outside.
 EXPORT FUNC WORKING(when, start$, end$, workdays_only)
-    DIM wday = CINT(FORMAT_DATE(when, "%w"))
+    DIM wday = CINT(FORMAT_DATE$(when, "%w"))
     DIM weekend = (wday = 0) ORELSE (wday = 6)
     IF workdays_only ANDALSO weekend THEN RETURN FALSE
     DIM now_min = HOUR(when) * 60 + MINUTE(when)
@@ -31,12 +31,12 @@ EXPORT FUNC DUE(when, last$, start$, end$, every_min, workdays_only)
     IF NOT inside THEN RETURN FALSE
     IF last$ = "" THEN RETURN TRUE
     DIM last = CDATE(last$)
-    DIM last_day$ = FORMAT_DATE(last, "%Y-%m-%d")
-    IF last_day$ <> FORMAT_DATE(when, "%Y-%m-%d") THEN RETURN TRUE
+    DIM last_day$ = FORMAT_DATE$(last, "%Y-%m-%d")
+    IF last_day$ <> FORMAT_DATE$(when, "%Y-%m-%d") THEN RETURN TRUE
     RETURN DATEDIFF("N", last, when) >= every_min
 ENDFUNC
 
 ' The text of a moment as DUE expects it for the last reminder.
 EXPORT FUNC STAMP$(when)
-    RETURN FORMAT_DATE(when, "%Y-%m-%d %H:%M:%S")
+    RETURN FORMAT_DATE$(when, "%Y-%m-%d %H:%M:%S")
 ENDFUNC

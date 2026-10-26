@@ -7,7 +7,7 @@ DIM Response AS STRING
 Response = HTTP.GET$("https://api.openweathermap.org/data/2.5/weather?q=" + City + "&appid=" + APIkey + "&units=metric")
 
 IF Response <> "" THEN
-    WeatherData = JSON.PARSE$(Response)
+    WeatherData = JSON.PARSE(Response)
     PRINT WeatherData
 
     IF MAP.EXISTS(WeatherData, "main") THEN

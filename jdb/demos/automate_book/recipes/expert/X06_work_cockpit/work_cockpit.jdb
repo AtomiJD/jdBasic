@@ -104,7 +104,7 @@ SUB RunClick(e)
 ENDSUB
 FOR k = 0 TO gShown - 1
     DIM handler$ = "BTNRUN" + STR$(k) + "_CLICK"
-    ON handler$ CALL RunClick
+    ON handler$ CALL RunClick@
 NEXT k
 
 SUB CKP_LOAD(e)

@@ -17,7 +17,7 @@ ENDFUNC
 
 SUB RemoveTree(root$)
     IF FILE.ISDIR(root$) THEN
-        DIM rows = DIR$(root$, TRUE)
+        DIM rows = FILE.LIST(root$, TRUE)
         DIM r = 0
         FOR r = 0 TO LEN(rows) - 1
             DIM entry$ = rows[r, 0]

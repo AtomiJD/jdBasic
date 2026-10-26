@@ -49,7 +49,7 @@ FUNC Field$(fields, name_of$)
 ENDFUNC
 
 FUNC PROVIDER_AUTHORIZE(req_map)
-    DIM params = req_map{"PARAMS"}
+    DIM params = req_map{"params"}
     DIM back$ = params{"redirect_uri"}
     DIM state_given$ = params{"state"}
     DIM challenge$ = params{"code_challenge"}
@@ -63,7 +63,7 @@ FUNC PROVIDER_AUTHORIZE(req_map)
 ENDFUNC
 
 FUNC PROVIDER_TOKEN(req_map)
-    DIM fields = URL.QUERYMAP(req_map{"BODY"})
+    DIM fields = URL.QUERYMAP(req_map{"body"})
     DIM grant$ = Field$(fields, "grant_type")
     DIM k = 0
     IF grant$ = "client_credentials" ANDALSO Field$(fields, "client_secret") = "demo-secret" THEN RETURN Tokens(0)
@@ -90,7 +90,7 @@ FUNC PROVIDER_TOKEN(req_map)
 ENDFUNC
 
 FUNC PROVIDER_ORDERS(req_map)
-    DIM hdrs = req_map{"HEADERS"}
+    DIM hdrs = req_map{"headers"}
     DIM auth$ = ""
     IF MAP.EXISTS(hdrs, "authorization") THEN auth$ = hdrs{"authorization"}
     DIM k = 0
@@ -101,9 +101,9 @@ FUNC PROVIDER_ORDERS(req_map)
     RETURN Answer(401, "{" + Quote$("error") + ":" + Quote$("invalid_token") + "}")
 ENDFUNC
 
-HTTP.SERVER.ON_GET("/authorize", "PROVIDER_AUTHORIZE")
-HTTP.SERVER.ON_POST("/token", "PROVIDER_TOKEN")
-HTTP.SERVER.ON_GET("/api/orders", "PROVIDER_ORDERS")
+HTTP.SERVER.ON_GET("/authorize", PROVIDER_AUTHORIZE@)
+HTTP.SERVER.ON_POST("/token", PROVIDER_TOKEN@)
+HTTP.SERVER.ON_GET("/api/orders", PROVIDER_ORDERS@)
 OAUTH.MOUNT("/callback")
 IF NOT HTTP.SERVER.START(PORT) THEN
     PRINT "port " + STR$(PORT) + " is taken"

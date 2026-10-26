@@ -114,7 +114,7 @@ direction$ = "down"
 DO
     CLS 0, 0, 0
 
-    ev$ = GFX.POLLEVENT()
+    ev$ = GFX.POLLEVENT$()
     IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN EXITDO
 
     ' Save position for collision rollback

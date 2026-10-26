@@ -105,7 +105,7 @@ EXPORT FUNC READ(path$)
     IF NOT FILE.EXISTS(path$) THEN RETURN empty
     DIM text$ = TXTREADER$(path$)
     IF TRIM$(text$) = "" THEN RETURN empty
-    RETURN JSON.PARSE$(text$)
+    RETURN JSON.PARSE(text$)
 ENDFUNC
 
 ' Writes the state through a temporary file, so a reader never sees

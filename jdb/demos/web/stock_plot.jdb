@@ -35,7 +35,7 @@ PRINT
 PRINT "Parsing JSON response..."
 
 ' The JSON.PARSE$ function converts the string into a nested Map object.
-STOCK_DATA = JSON.PARSE$(JSON_RESPONSE$)
+STOCK_DATA = JSON.PARSE(JSON_RESPONSE$)
 
 ' Extract the main time series object from the parsed data.
 TIME_SERIES = STOCK_DATA{"Time Series (5min)"}

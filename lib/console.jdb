@@ -127,7 +127,7 @@ ENDFUNC
 ' The text without its escapes.
 EXPORT FUNC STRIP$(text$)
     IF INSTR(text$, ESC$) < 0 THEN RETURN text$
-    RETURN REGEX.REPLACE(ESC$ + "\[[0-9;]*[A-Za-z]", text$, "")
+    RETURN REGEX.REPLACE$(ESC$ + "\[[0-9;]*[A-Za-z]", text$, "")
 ENDFUNC
 
 ' The number of visible characters: escapes left out, and a UTF-8

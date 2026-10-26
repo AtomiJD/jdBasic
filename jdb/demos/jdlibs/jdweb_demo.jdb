@@ -33,7 +33,7 @@ FUNC ShowNote(request)
 ENDFUNC
 
 FUNC AddNote(request)
-    DIM sent = JSON.PARSE$(request{"BODY"})
+    DIM sent = JSON.PARSE(request{"body"})
     DIM text$ = sent{"text"}
     DIM id$ = STR$(LEN(MAP.KEYS(gNotes)) + 1)
     gNotes{id$} = text$
@@ -57,9 +57,9 @@ FUNC Visits(request)
 ENDFUNC
 
 FUNC NeedKey(request)
-    DIM method$ = request{"METHOD"}
+    DIM method$ = request{"method"}
     IF method$ = "GET" THEN RETURN JDWEB.PASS()
-    DIM hs = request{"HEADERS"}
+    DIM hs = request{"headers"}
     IF MAP.EXISTS(hs, "x-api-key") THEN
         DIM key$ = hs{"x-api-key"}
         IF key$ = "demo-key" THEN RETURN JDWEB.PASS()
@@ -72,7 +72,7 @@ FUNC Served(request)
 ENDFUNC
 
 FUNC Nothing(request)
-    DIM p$ = request{"PATH"}
+    DIM p$ = request{"path"}
     RETURN JDWEB.REPLY_JSON({"error": "nothing at " + p$}, 404)
 ENDFUNC
 

@@ -122,8 +122,8 @@ SUB OnQuit(QuitData)
     running = FALSE
 ENDSUB
 
-ON "KEYDOWN" CALL OnKey
-ON "QUIT"    CALL OnQuit
+ON "KEYDOWN" CALL OnKey@
+ON "QUIT"    CALL OnQuit@
 
 SCREEN SCREEN_W, SCREEN_H, "Retro Wireframe Sine Wave (WASD / ZX)"
 SETFONT "C:/Windows/Fonts/consola.ttf", 16

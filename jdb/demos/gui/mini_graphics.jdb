@@ -16,8 +16,8 @@
 ' ----------------------------------------------------------
 
 ' --- 0. Evetis
-ON "KEYDOWN" CALL HandleKeys
-ON "KEYUP" CALL HandleKeysUP
+ON "KEYDOWN" CALL HandleKeys@
+ON "KEYUP" CALL HandleKeysUP@
 
 Dim Event As Map
 Event{"type"} = "NA"

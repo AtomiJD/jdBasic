@@ -144,7 +144,7 @@ ENDFUNC
 
 ' pull the model's text out of a provider response
 FUNC AI_EXTRACT$(resp$, kind$)
-    DIM j = JSON.PARSE$(resp$)
+    DIM j = JSON.PARSE(resp$)
     IF TYPEOF(j) = "NONE" THEN RETURN ""
     IF kind$ = "claude" THEN
         IF TYPEOF(j{"content"}) = "NONE" THEN RETURN ""
@@ -212,7 +212,7 @@ SUB AI_GENERATE()
         status$ = "AI gave no JSON chain"
         RETURN
     ENDIF
-    DIM nodes = JSON.PARSE$(arr$)
+    DIM nodes = JSON.PARSE(arr$)
     IF TYPEOF(nodes) = "NONE" THEN
         status$ = "AI chain did not parse"
         RETURN
@@ -423,7 +423,7 @@ SUB LOAD_RACK()
     IF raw$ = "" THEN
         status$ = "no saved rack yet"
     ELSE
-        DIM doc = JSON.PARSE$(raw$)
+        DIM doc = JSON.PARSE(raw$)
         APPLY_DOC(doc{"rack"}, doc)
         status$ = "loaded: " + cfgRack$
     ENDIF
@@ -561,9 +561,9 @@ ENDSUB
 
 ' ---- init ----
 
-schema = JSON.PARSE$(TXTREADER$(cfgEffects$))
+schema = JSON.PARSE(TXTREADER$(cfgEffects$))
 typeNames = schema{"types"}
-presetsDoc = JSON.PARSE$(TXTREADER$(cfgPresets$))
+presetsDoc = JSON.PARSE(TXTREADER$(cfgPresets$))
 pnames = presetsDoc{"names"}
 TRY
     DIM mp = MIDI.PORTS()
@@ -599,7 +599,7 @@ ENDTRY
 DIM aiOk = 0
 IF httpOk = 1 THEN
     TRY
-        aiCfg = JSON.PARSE$(TXTREADER$(cfgAi$))
+        aiCfg = JSON.PARSE(TXTREADER$(cfgAi$))
         aiOk = 1
     CATCH
     ENDTRY
@@ -800,7 +800,7 @@ DO
 
         IF aiReady = 1 THEN
             GUI.SEPARATOR_TEXT("AI tone")
-            aiPrompt$ = GUI.INPUT("Describe", aiPrompt$)
+            aiPrompt$ = GUI.INPUT$("Describe", aiPrompt$)
             DIM apv = GUI.COMBO("##aiprov", aiProvSel, aiOrder)
             IF apv <> aiProvSel THEN aiProvSel = apv
             GUI.SAME_LINE
@@ -808,7 +808,7 @@ DO
         ENDIF
 
         GUI.SEPARATOR_TEXT("Save as preset")
-        saveName$ = GUI.INPUT("Name", saveName$)
+        saveName$ = GUI.INPUT$("Name", saveName$)
         GUI.SAME_LINE
         IF GUI.BUTTON("Save Preset") THEN SAVE_PRESET(saveName$)
 

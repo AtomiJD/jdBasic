@@ -41,7 +41,7 @@ ENDIF
 DIM opts = {"agent": agent$, "delay": delay, "hours": hours}
 opts{"cache"} = PATH.JOIN$(folder$, "cache.json")
 DIM h = HARVEST.NEW(opts)
-DIM now$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+DIM now$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M:%S")
 DIM rows = HARVEST.RUN(h, targets, now$)
 
 DIM failed = 0

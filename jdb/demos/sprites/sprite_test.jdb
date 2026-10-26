@@ -34,7 +34,7 @@ angle = 0
 DO
     CLS 30, 30, 50
 
-    ev$ = GFX.POLLEVENT()
+    ev$ = GFX.POLLEVENT$()
     IF ev$ = "QUIT" THEN EXITDO
     IF ev$ = "KEYDOWN:Escape" THEN EXITDO
 

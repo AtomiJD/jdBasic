@@ -125,8 +125,8 @@ FUNC CHECK(db_name$)
     IF LCASE$(RIGHT$(db_name$,6)) = ".accdb" THEN
         RETURN db_name$
     ELSE
-        IF INSTR$(db_name$,".") > 0 THEN
-            db_name$ = LEFT$(db_name$,INSTR$(db_name$,".")) + ".accdb"
+        IF INSTR(db_name$,".") > 0 THEN
+            db_name$ = LEFT$(db_name$,INSTR(db_name$,".")) + ".accdb"
         ELSE
             db_name$ = db_name$ + ".accdb"
         ENDIF
@@ -141,7 +141,7 @@ SUB CONNECT(path$)
     ENDIF
     
     ' Check if file exists using DIR array check
-    files = DIR$(path$)
+    files = FILE.LIST(path$)
     IF LEN(files)[0] = 0 THEN
         PRINT "Error: File not found: " + path$
         RETURN

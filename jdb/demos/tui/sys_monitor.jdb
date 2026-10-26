@@ -9,7 +9,7 @@ ARGS_ARRAY = OS.ARGS()
 SWITCH ARGS_ARRAY[1]
 CASE 1 :
     ' 1. Get a list of all files with the .jdb extension
-    jdb_files$ = DIR$("*.jdb")
+    jdb_files$ = FILE.LIST("*.jdb")
 
     ' Check if any files were found
     IF LEN(jdb_files$) = 0 THEN

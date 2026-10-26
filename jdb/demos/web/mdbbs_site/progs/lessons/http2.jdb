@@ -11,7 +11,7 @@ ENDIF
 DIM url$ = "http://api.open-meteo.com/v1/forecast?latitude=49.40&longitude=8.69&current_weather=true"
 PRINT "Fetching..."
 DIM body$ = HTTP.GET$(url$)
-DIM data = JSON.PARSE$(body$)
+DIM data = JSON.PARSE(body$)
 DIM w = data["current_weather"]
 PRINT
 PRINT "Temperature : "; w["temperature"]; " degC"

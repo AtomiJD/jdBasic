@@ -120,7 +120,7 @@ TXTWRITER project$ + "/jdbasic.json", "{" + Q$ + "requires" + Q$ + ": {" + Q$ + 
 DIM synced = PKG.SYNC(index_dir$, project$)
 PRINT "  sync from jdbasic.json -> "; Pairs$(synced)
 DIM lock_text$ = TXTREADER$(project$ + "/jdbasic.lock")
-DIM locked = JSON.PARSE$(lock_text$)
+DIM locked = JSON.PARSE(lock_text$)
 DIM locked_greet = locked{"GREET"}
 PRINT "  jdbasic.lock pins GREET "; locked_greet{"version"}; " with sha256 "; LEFT$(locked_greet{"sha256"}, 16); "..."
 

@@ -51,7 +51,7 @@ DIM ev_in = PERSIST.events_by_topic("msg.in", 10)
 DIM ev_out = PERSIST.events_by_topic("msg.out", 10)
 Assert(LEN(ev_in) = 1,                    "inbound logged")
 Assert(LEN(ev_out) = 1,                   "outbound logged")
-DIM logged_in = JSON.PARSE$(ev_in[0]{"payload"})
+DIM logged_in = JSON.PARSE(ev_in[0]{"payload"})
 Assert(logged_in{"msg_text"} = "what is jdBasic?", "inbound payload survives JSON round-trip")
 Assert(ev_in[0]{"ts"} > 1750000000,       "wallclock epoch timestamp")
 

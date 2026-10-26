@@ -40,7 +40,7 @@ SUB OnKeyDown(data)
     IF code = 27 THEN GameOver = TRUE              ' ESC
 ENDSUB
 
-ON "KEYDOWN" CALL OnKeyDown
+ON "KEYDOWN" CALL OnKeyDown@
 
 ' ============================================================
 ' == LOGIC SUBROUTINES

@@ -128,8 +128,8 @@ FOR i = 0 TO LEN(val_texts) - 1
   DIM dash2 = INSTR(expected, " | ")
   DIM p_top = pred
   DIM e_top = expected
-  IF dash1 > 0 THEN p_top = LEFT(pred, dash1 - 1)
-  IF dash2 > 0 THEN e_top = LEFT(expected, dash2 - 1)
+  IF dash1 > 0 THEN p_top = LEFT$(pred, dash1 - 1)
+  IF dash2 > 0 THEN e_top = LEFT$(expected, dash2 - 1)
   IF p_top = e_top THEN correct_top_level = correct_top_level + 1
 NEXT i
 
@@ -148,7 +148,7 @@ PRINT "── Beispiel-Predictions ──"
 FOR i = 0 TO 4
   DIM p = AI.CLASSIFIER_PREDICT(clf, val_texts[i], top_k)
   PRINT ""
-  PRINT "Ticket[" ; i; "]: "; LEFT(val_texts[i], 120); "..."
+  PRINT "Ticket[" ; i; "]: "; LEFT$(val_texts[i], 120); "..."
   PRINT "  Expected:  "; val_labels[i]
   PRINT "  Predicted: "; p{"label"}; "  (conf="; INT(p{"confidence"} * 100); "%)"
 NEXT i

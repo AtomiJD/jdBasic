@@ -246,7 +246,7 @@ ENDSUB
 SUB LOAD_PROJECT(filename$)
     content$ = TXTREADER$(filename$)
     IF content$ <> "" THEN
-        project = JSON.PARSE$(content$)
+        project = JSON.PARSE(content$)
         CANVAS_W = project{"width"}
         CANVAS_H = project{"height"}
         SPRITE_DATA = project{"data"}

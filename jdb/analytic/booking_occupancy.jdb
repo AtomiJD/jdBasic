@@ -33,7 +33,7 @@ DIM stays = SORT(FLATTEN(SELECT(LAMBDA r -> DROP(-1, DATERANGE(CVDATE(r[3]), CVD
 ' days-in-month (DAY(EOMONTH)). occupancy % = nights / (capacity * days-in-month).
 '   AGG row = [ym_key, [label, nights, occ%]]
 DIM ym     = SELECT(LAMBDA d -> YEAR(d) * 100 + MONTH(d), stays)
-DIM rows   = AGG(ym, stays, LAMBDA g -> [FORMAT_DATE(g[0], "%Y-%m"), LEN(g), INT(LEN(g) / (CAPACITY * DAY(EOMONTH(g[0]))) * 100)])
+DIM rows   = AGG(ym, stays, LAMBDA g -> [FORMAT_DATE$(g[0], "%Y-%m"), LEN(g), INT(LEN(g) / (CAPACITY * DAY(EOMONTH(g[0]))) * 100)])
 
 PRINT "Resort occupancy  (capacity "; CAPACITY; " rooms,  "; LEN(stays); " room-nights total)"
 PRINT "  month      nights   occ%"

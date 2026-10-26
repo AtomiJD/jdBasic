@@ -56,7 +56,7 @@ SUB HandleKey(KeyData)
     ENDIF
 ENDSUB
 
-ON "KEYDOWN" CALL HandleKey
+ON "KEYDOWN" CALL HandleKey@
 
 FUNC JDC_FILE$(name$)
     n$ = TRIM$(name$)
@@ -78,7 +78,7 @@ SUB LOAD_JDC(name$)
     IF fname$ = "" THEN RETURN
 
     txt$ = TXTREADER$(fname$)
-    jo = JSON.PARSE$(txt$)
+    jo = JSON.PARSE(txt$)
 
     Cell$ = reshape(jo{"cell"},[jo{"rows"},jo{"cols"}])
 
@@ -120,7 +120,7 @@ FUNC CALC_SHEET(CELLTXT$)
                         FOR cc = 0 TO COLS - 1
                             ref$ = CELLNAME$(rr, cc)
                             pat$ = "\b" + ref$ + "\b"
-                            expr$ = REGEX.REPLACE(pat$, expr$, STR$(OUT[rr, cc]))
+                            expr$ = REGEX.REPLACE$(pat$, expr$, STR$(OUT[rr, cc]))
                         NEXT cc
                     NEXT rr
 
@@ -194,7 +194,7 @@ DO
         IF GUI.BEGIN_POPUP_MODAL("FileDlg", TRUE, 0) THEN
             GUI.TEXT(FileDlgMode$ + " sheet (.jdc)")
             GUI.SEPARATOR
-            FileDlgName$ = GUI.INPUT("Filename", FileDlgName$)
+            FileDlgName$ = GUI.INPUT$("Filename", FileDlgName$)
             GUI.TEXT("Will use: " + JDC_FILE$(FileDlgName$))
             IF FileDlgMsg$ <> "" THEN
                 GUI.SEPARATOR
@@ -248,7 +248,7 @@ DO
         GUI.TEXT "Value: " + FORMAT$("{:.6g}", CDBL(Sheet[SelR, SelC]))
 
         old$ = Cell$[SelR, SelC]
-        new$ = GUI.INPUT("Formula / Value", old$)
+        new$ = GUI.INPUT$("Formula / Value", old$)
         IF new$ <> old$ THEN
             Cell$[SelR, SelC] = new$
             IF AutoRecalc THEN
@@ -312,7 +312,7 @@ DO
             ENDIF
 
             ' Hidden label so it doesn't show text, unique id so no collisions
-            EditBuf$ = GUI.INPUT("##cell_edit", EditBuf$)
+            EditBuf$ = GUI.INPUT$("##cell_edit", EditBuf$)
 
             ' Commit immediately (simple + works everywhere)
             Cell$[SelR, SelC] = EditBuf$

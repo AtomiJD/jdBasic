@@ -112,7 +112,7 @@ FUNC EXECUTE_NODE(node, rdata)
         PRINT "  URL: "; node{"parameters"}{"url"}
         response$ = HTTP.GET$(node{"parameters"}{"url"})
         IF HTTP.STATUSCODE() = 200 THEN
-            result = JSON.PARSE$(response$)
+            result = JSON.PARSE(response$)
         ELSE
             result = {"error": "HTTP Failed", "status": HTTP.STATUSCODE()}
         ENDIF

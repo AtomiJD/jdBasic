@@ -1,0 +1,318 @@
+' jdb-fix - moves jdBasic source to the 2.0 names.
+'
+'   jdbasic tools/jdb-fix.jdb [--dry-run] [--keys] [--quiet] path...
+'
+' A path is a .jdb file or a directory, walked recursively. Three rewrites:
+'
+'   names     an old builtin name from JDB.ALIASES() where it is called or
+'             taken as a funcref: STR(x) -> STR$(x), DIR$(p) -> FILE.LIST(p)
+'   handlers  a handler named by a string or a bare name where a funcref
+'             belongs: ON_GET("/", "Home") -> ON_GET("/", Home@),
+'             ON "TICK" CALL OnTick -> ON "TICK" CALL OnTick@
+'   keys      with --keys: the upper-case keys of builtin maps that no
+'             program map is likely to share, read as m{"BODY"}, written as
+'             "BODY": in a map literal or tested with MAP.EXISTS
+'
+' The source is read token by token, so text inside strings and comments
+' and a name after a dot (a member) stay as they are. --dry-run writes
+' nothing and prints each change as file:line: old -> new.
+
+DIM gDryRun = FALSE
+DIM gKeys = FALSE
+DIM gQuiet = FALSE
+DIM gPaths = []
+' The first argument is the script or program itself.
+DIM gArgs = DROP(1, OS.ARGS())
+FOR EACH arg IN gArgs
+    IF arg = "--dry-run" THEN
+        gDryRun = TRUE
+    ELSEIF arg = "--keys" THEN
+        gKeys = TRUE
+    ELSEIF arg = "--quiet" THEN
+        gQuiet = TRUE
+    ELSE
+        gPaths = APPEND(gPaths, arg)
+    ENDIF
+NEXT
+
+DIM gAliases = JDB.ALIASES()
+' The keys whose old spelling is rewritten with --keys.
+DIM gKeyNames = ["BODY", "HEADERS", "PARAMS", "METHOD", "PATH", "OUTPUT", "EXIT_CODE", "EIGENVALUES", "EIGENVECTORS", "INTEGRATED", "MOMENTARY", "SHORT_MAX", "REDUCTION_MAX", "PRIMARY", "SUBSCRIBERS", "PUBLISHERS"]
+DIM gKeySet = {}
+FOR EACH key_name$ IN gKeyNames
+    gKeySet{key_name$} = TRUE
+NEXT
+' Builtins that take a handler, and the index of the handler argument.
+DIM gHandlerArg = {"HTTP.SERVER.ON_GET": 1, "HTTP.SERVER.ON_POST": 1, "HTTP.SERVER.ON_NOTFOUND": 0, "NODE.SERVE": 1, "TUI.ON": 1}
+
+DIM gChanges = []          ' one "old -> new" per change on the line being fixed
+DIM gFiles = 0
+DIM gFilesChanged = 0
+DIM gLines = 0
+DIM gCount = 0
+DIM gByKind = {"names": 0, "handlers": 0, "keys": 0}
+
+FUNC IsWordStart(c$)
+    RETURN (c$ >= "A" AND c$ <= "Z") OR (c$ >= "a" AND c$ <= "z") OR c$ = "_"
+ENDFUNC
+
+FUNC IsWordChar(c$)
+    RETURN IsWordStart(c$) OR (c$ >= "0" AND c$ <= "9")
+ENDFUNC
+
+' A name a funcref can carry: NAME, NAME$ or MODULE.NAME.
+FUNC IsIdentifier(s$)
+    IF LEN(s$) = 0 THEN RETURN FALSE
+    IF NOT IsWordStart(MID$(s$, 0, 1)) THEN RETURN FALSE
+    DIM k = 1
+    WHILE k < LEN(s$)
+        DIM ch$ = MID$(s$, k, 1)
+        IF ch$ = "." THEN
+            IF k + 1 >= LEN(s$) THEN RETURN FALSE
+            IF NOT IsWordStart(MID$(s$, k + 1, 1)) THEN RETURN FALSE
+        ELSEIF NOT IsWordChar(ch$) THEN
+            IF NOT (ch$ = "$" AND k = LEN(s$) - 1) THEN RETURN FALSE
+        ENDIF
+        k = k + 1
+    WEND
+    RETURN TRUE
+ENDFUNC
+
+' The first character at or after p that is not a space, tab or carriage
+' return, or "".
+FUNC NextSig$(s$, p)
+    WHILE p < LEN(s$)
+        DIM ch$ = MID$(s$, p, 1)
+        IF ch$ <> " " AND ch$ <> CHR$(9) AND ch$ <> CHR$(13) THEN RETURN ch$
+        p = p + 1
+    WEND
+    RETURN ""
+ENDFUNC
+
+' The last character before p that is not a space or tab, or "".
+FUNC PrevSig$(s$, p)
+    p = p - 1
+    WHILE p >= 0
+        DIM ch$ = MID$(s$, p, 1)
+        IF ch$ <> " " AND ch$ <> CHR$(9) THEN RETURN ch$
+        p = p - 1
+    WEND
+    RETURN ""
+ENDFUNC
+
+' The new name in the writer's case: an all lower-case old name gets a
+' lower-case new one.
+FUNC InCase$(old$, new$)
+    IF old$ = LCASE$(old$) THEN RETURN LCASE$(new$)
+    RETURN new$
+ENDFUNC
+
+FUNC Note(kind$, old$, new$)
+    gChanges = APPEND(gChanges, old$ + " -> " + new$)
+    gByKind{kind$} = gByKind{kind$} + 1
+    RETURN 0
+ENDFUNC
+
+' One line, fixed. Calls of handler builtins can span the line only.
+FUNC FixLine$(line$)
+    DIM out$ = ""
+    DIM done = 0               ' line$ is copied to out$ up to here
+    DIM i = 0
+    DIM n = LEN(line$)
+    DIM depth = 0              ' open parentheses
+    DIM stmt_first$ = ""       ' first word of the statement
+    DIM call_name$ = ""        ' a handler builtin whose arguments are being read
+    DIM call_depth = -1        ' its parenthesis depth; -2 for the statement form
+    DIM call_commas = 0
+    DIM after_call_kw = FALSE  ' ON "x" CALL was just read
+    DIM line_up$ = UCASE$(line$)
+    DIM has_exists = INSTR(line_up$, "MAP.EXISTS(") >= 0
+    WHILE i < n
+        DIM c$ = MID$(line$, i, 1)
+        IF c$ = CHR$(34) OR (c$ = "$" AND MID$(line$, i + 1, 1) = CHR$(34)) THEN
+            DIM start = i
+            IF c$ = "$" THEN i = i + 1
+            DIM j = i + 1
+            DIM closed = FALSE
+            WHILE j < n AND NOT closed
+                IF MID$(line$, j, 1) = CHR$(34) THEN
+                    IF MID$(line$, j + 1, 1) = CHR$(34) THEN
+                        j = j + 2
+                    ELSE
+                        closed = TRUE
+                    ENDIF
+                ELSE
+                    j = j + 1
+                ENDIF
+            WEND
+            DIM text$ = MID$(line$, i + 1, j - i - 1)
+            DIM endpos = j + 1
+            DIM prev$ = PrevSig$(line$, start)
+            DIM nxt$ = NextSig$(line$, endpos)
+            ' a handler named by a string
+            IF c$ <> "$" AND call_name$ <> "" AND call_commas = gHandlerArg{call_name$} AND IsIdentifier(text$) THEN
+                IF (call_depth = -2 AND depth = 0) OR (call_depth >= 0 AND depth = call_depth + 1) THEN
+                    IF nxt$ = "" OR nxt$ = "," OR nxt$ = ")" OR nxt$ = ":" OR nxt$ = "'" THEN
+                        out$ = out$ + MID$(line$, done, start - done) + text$ + "@"
+                        done = endpos
+                        Note("handlers", CHR$(34) + text$ + CHR$(34), text$ + "@")
+                    ENDIF
+                ENDIF
+            ENDIF
+            ' an old key of a builtin map
+            IF gKeys AND c$ <> "$" AND done <= start THEN
+                DIM up$ = UCASE$(text$)
+                IF text$ = up$ AND MAP.EXISTS(gKeySet, up$) THEN
+                    DIM as_read = prev$ = "{" AND nxt$ = "}"
+                    DIM as_literal = (prev$ = "{" OR prev$ = ",") AND nxt$ = ":"
+                    DIM as_exists = has_exists AND prev$ = "," AND nxt$ = ")"
+                    IF as_read OR as_literal OR as_exists THEN
+                        out$ = out$ + MID$(line$, done, start - done) + CHR$(34) + LCASE$(text$) + CHR$(34)
+                        done = endpos
+                        Note("keys", CHR$(34) + text$ + CHR$(34), CHR$(34) + LCASE$(text$) + CHR$(34))
+                    ENDIF
+                ENDIF
+            ENDIF
+            i = endpos
+            CONTINUEDO
+        ENDIF
+        IF c$ = "'" THEN EXITDO
+        IF c$ = "(" THEN depth = depth + 1
+        IF c$ = ")" THEN
+            depth = depth - 1
+            IF call_depth >= 0 AND depth = call_depth THEN call_name$ = ""
+        ENDIF
+        IF c$ = "," AND call_name$ <> "" THEN
+            IF (call_depth = -2 AND depth = 0) OR (call_depth >= 0 AND depth = call_depth + 1) THEN call_commas = call_commas + 1
+        ENDIF
+        IF c$ = ":" AND depth = 0 THEN
+            stmt_first$ = ""
+            call_name$ = ""
+            after_call_kw = FALSE
+        ENDIF
+        IF IsWordStart(c$) THEN
+            ' a word, with its dotted segments
+            DIM wstart = i
+            DIM seg_ends = []
+            DIM j2 = i
+            DIM more = TRUE
+            WHILE more
+                WHILE j2 < n AND IsWordChar(MID$(line$, j2, 1))
+                    j2 = j2 + 1
+                WEND
+                IF j2 < n AND MID$(line$, j2, 1) = "$" THEN j2 = j2 + 1
+                seg_ends = APPEND(seg_ends, j2)
+                IF j2 + 1 < n AND MID$(line$, j2, 1) = "." AND IsWordStart(MID$(line$, j2 + 1, 1)) THEN
+                    j2 = j2 + 1
+                ELSE
+                    more = FALSE
+                ENDIF
+            WEND
+            DIM word$ = MID$(line$, wstart, j2 - wstart)
+            DIM wup$ = UCASE$(word$)
+            DIM member = PrevSig$(line$, wstart) = "."
+            IF wup$ = "REM" AND stmt_first$ = "" THEN EXITDO
+            IF stmt_first$ = "" THEN stmt_first$ = wup$
+            DIM follow$ = NextSig$(line$, j2)
+            DIM replaced = FALSE
+            ' an old name: the longest dotted prefix the table knows
+            IF NOT member THEN
+                DIM k = LEN(seg_ends)
+                WHILE k > 0 AND NOT replaced
+                    DIM pend = seg_ends[k - 1]
+                    DIM prefix$ = MID$(line$, wstart, pend - wstart)
+                    DIM pup$ = UCASE$(prefix$)
+                    IF MAP.EXISTS(gAliases, pup$) THEN
+                        DIM pfollow$ = NextSig$(line$, pend)
+                        IF pfollow$ = "(" OR pfollow$ = "@" OR pup$ = "TUI.WAIT_EVENT" THEN
+                            DIM newname$ = InCase$(prefix$, gAliases{pup$})
+                            out$ = out$ + MID$(line$, done, wstart - done) + newname$
+                            done = pend
+                            Note("names", pup$, gAliases{pup$})
+                            replaced = TRUE
+                        ENDIF
+                    ENDIF
+                    k = k - 1
+                WEND
+            ENDIF
+            ' a handler builtin starts its argument list
+            IF NOT member AND MAP.EXISTS(gHandlerArg, wup$) THEN
+                call_name$ = wup$
+                call_commas = 0
+                IF follow$ = "(" THEN
+                    call_depth = depth
+                ELSE
+                    call_depth = -2
+                ENDIF
+            ENDIF
+            ' ON "x" CALL Name
+            IF after_call_kw AND NOT member AND follow$ <> "@" AND IsIdentifier(word$) THEN
+                out$ = out$ + MID$(line$, done, j2 - done) + "@"
+                done = j2
+                Note("handlers", "CALL " + word$, "CALL " + word$ + "@")
+            ENDIF
+            after_call_kw = stmt_first$ = "ON" AND wup$ = "CALL"
+            i = j2
+            CONTINUEDO
+        ENDIF
+        i = i + 1
+    WEND
+    IF done = 0 THEN RETURN line$
+    RETURN out$ + MID$(line$, done, n - done)
+ENDFUNC
+
+FUNC FixFile(path$)
+    DIM src$ = TXTREADER$(path$)
+    DIM lines = SPLIT(src$, CHR$(10))
+    DIM changed = FALSE
+    DIM ln = 0
+    FOR EACH old_line$ IN lines
+        gChanges = []
+        DIM new_line$ = FixLine$(old_line$)
+        IF new_line$ <> old_line$ THEN
+            lines[ln] = new_line$
+            changed = TRUE
+            gCount = gCount + LEN(gChanges)
+            IF gDryRun AND NOT gQuiet THEN
+                FOR EACH ch$ IN gChanges
+                    PRINT path$; ":"; ln + 1; ": "; ch$
+                NEXT
+            ENDIF
+        ENDIF
+        ln = ln + 1
+    NEXT
+    gFiles = gFiles + 1
+    gLines = gLines + LEN(lines)
+    IF changed THEN
+        gFilesChanged = gFilesChanged + 1
+        IF NOT gDryRun THEN TXTWRITER path$, JOIN(lines, CHR$(10))
+    ENDIF
+    RETURN changed
+ENDFUNC
+
+SUB Walk(folder$)
+    FOR EACH entry IN FILE.LIST(folder$ + "/*", TRUE)
+        DIM name$ = entry[0]
+        IF name$ <> "." AND name$ <> ".." THEN
+            DIM full$ = folder$ + "/" + name$
+            IF entry[2] = "DIR" THEN
+                Walk(full$)
+            ELSEIF LCASE$(RIGHT$(name$, 4)) = ".jdb" THEN
+                DIM ignored = FixFile(full$)
+            ENDIF
+        ENDIF
+    NEXT
+ENDSUB
+
+IF LEN(gPaths) = 0 THEN
+    PRINT "usage: jdbasic tools/jdb-fix.jdb [--dry-run] [--keys] [--quiet] path..."
+    END 2
+ENDIF
+FOR EACH p$ IN gPaths
+    IF FILE.ISDIR(p$) THEN
+        Walk(p$)
+    ELSE
+        DIM ignored = FixFile(p$)
+    ENDIF
+NEXT
+PRINT "jdb-fix: "; gFiles; " files, "; gLines; " lines; "; gCount; " changes in "; gFilesChanged; " files (names "; gByKind{"names"}; ", handlers "; gByKind{"handlers"}; ", keys "; gByKind{"keys"}; ")"; IIF(gDryRun, " - dry run, nothing written", "")

@@ -20,7 +20,7 @@ EXPORT FUNC ABS_PATH$(path$)
     DIM rooted = MID$(path$, 1, 1) = ":" ORELSE STARTSWITH(path$, "\")
     IF rooted ORELSE STARTSWITH(path$, "/") THEN RETURN PATH.NORMALIZE$(path$)
     DIM r = OS.EXEC("cmd", ["/c", "cd"])
-    DIM here$ = TRIM$(REPLACE$(r{"OUTPUT"}, CHR$(13), ""))
+    DIM here$ = TRIM$(REPLACE$(r{"output"}, CHR$(13), ""))
     RETURN PATH.NORMALIZE$(PATH.JOIN$(here$, path$))
 ENDFUNC
 

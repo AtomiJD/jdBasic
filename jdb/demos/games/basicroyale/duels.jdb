@@ -10,7 +10,7 @@ CONST CAP = 600
 
 DIM cards AS MAP = {}
 TRY
-    cards = JSON.PARSE$(TXTREADER$("cards.json"))
+    cards = JSON.PARSE(TXTREADER$("cards.json"))
 CATCH
     PRINT "cards.json not readable"
 ENDTRY
@@ -18,7 +18,7 @@ ENDTRY
 DIM args = OS.ARGS()
 IF LEN(args) > 2 THEN
     TRY
-        DIM over = JSON.PARSE$(TXTREADER$(args[2]))
+        DIM over = JSON.PARSE(TXTREADER$(args[2]))
         FOR EACH ok$ IN MAP.KEYS(over)
             cards{ok$} = over{ok$}
         NEXT ok$

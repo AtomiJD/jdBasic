@@ -58,7 +58,7 @@ ENDFUNC
 EXPORT FUNC PENDING(cfg)
     DIM folder$ = FOLDER$(cfg)
     IF NOT FILE.ISDIR(folder$) THEN RETURN []
-    DIM names = SORT(DIR$(PATH.JOIN$(folder$, "*.eml")))
+    DIM names = SORT(FILE.LIST(PATH.JOIN$(folder$, "*.eml")))
     RETURN SELECT(LAMBDA USE(folder$) n$ -> _
         PATH.JOIN$(folder$, n$), names)
 ENDFUNC
@@ -127,11 +127,11 @@ EXPORT FUNC SEND_ALL(cfg, password$)
     FOR k = 0 TO LEN(files) - 1
         DIM args = SEND_ARGS(files[k], server, config_path$)
         DIM r = OS.EXEC("curl", args)
-        IF r{"EXIT_CODE"} = 0 THEN
+        IF r{"exit_code"} = 0 THEN
             FILE.MOVE(files[k], sent_dir$, TRUE)
             n = n + 1
         ELSE
-            DIM why$ = TRIM$(r{"OUTPUT"})
+            DIM why$ = TRIM$(r{"output"})
             PUSH(failed, PATH.BASENAME$(files[k]) + ": " + why$)
         ENDIF
     NEXT k

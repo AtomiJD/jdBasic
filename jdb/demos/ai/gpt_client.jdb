@@ -57,7 +57,7 @@ DO
         JSON_BODY$ = JSON.STRINGIFY$(payload)
         RESPONSE$ = HTTP.POST$(API_URL$, JSON_BODY$, "application/json")
         print RESPONSE$
-        RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
+        RESPONSE_JSON = JSON.PARSE(RESPONSE$)
     CATCH
         PRINT "Error in JSON.PARSE$(RESPONSE$)"
         PRINT "Error Code: "; ERR

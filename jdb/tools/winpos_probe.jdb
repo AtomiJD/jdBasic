@@ -88,8 +88,8 @@ SUB HandleKey(data)
     CLAUDE_LIVE.MOVE_WINDOW(TITLE$, px, py, pw, ph)
 ENDSUB
 
-ON "KEYDOWN" CALL HandleKey
-ON "QUIT" CALL Quit
+ON "KEYDOWN" CALL HandleKey@
+ON "QUIT" CALL Quit@
 SUB Quit(data)
     running = 0
 ENDSUB

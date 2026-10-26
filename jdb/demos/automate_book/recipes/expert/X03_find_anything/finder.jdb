@@ -21,7 +21,7 @@ DIM gState AS MAP
 ' and the lock files Office leaves next to an open document are left
 ' out.
 SUB Walk(folder$, kinds, out)
-    DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM names = FILE.LIST(PATH.JOIN$(folder$, "*"))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM name$ = names[k]
@@ -81,7 +81,7 @@ ENDFUNC
 FUNC NameWords$(path$)
     DIM base$ = PATH.BASENAME$(path$)
     base$ = LEFT$(base$, LEN(base$) - LEN(PATH.EXT$(base$)))
-    RETURN REGEX.REPLACE("[_.\-]+", base$, " ")
+    RETURN REGEX.REPLACE$("[_.\-]+", base$, " ")
 ENDFUNC
 
 ' The index and its catalog from dir$, or new empty ones. lang$ is the
@@ -93,7 +93,7 @@ EXPORT FUNC OPEN(dir$, lang$)
     DIM cat_path$ = PATH.JOIN$(dir$, "catalog.json")
     IF FILE.EXISTS(ix_path$) ANDALSO FILE.EXISTS(cat_path$) THEN
         state{"ix"} = SEARCH.READFILE(ix_path$)
-        state{"catalog"} = JSON.PARSE$(TXTREADER$(cat_path$))
+        state{"catalog"} = JSON.PARSE(TXTREADER$(cat_path$))
     ELSE
         DIM opts = {"lang": lang$, "fields": {"name": 2, "body": 1}}
         state{"ix"} = SEARCH.INDEX(opts)
@@ -202,7 +202,7 @@ ENDSUB
 ' About 200 characters of text around the first query word found in
 ' it, or the start of the text when none is.
 EXPORT FUNC SNIPPET$(text$, query$)
-    DIM flat$ = TRIM$(REGEX.REPLACE("\s+", text$, " "))
+    DIM flat$ = TRIM$(REGEX.REPLACE$("\s+", text$, " "))
     DIM low$ = LCASE$(flat$)
     DIM words = SPLIT(LCASE$(REPLACE$(query$, CHR$(34), " ")), " ")
     DIM at = -1

@@ -37,8 +37,8 @@ ENDFUNC
 EXPORT FUNC DECODE(token$)
     DIM parts = SPLIT(token$, ".")
     IF LEN(parts) <> 3 THEN THROW "JWT: a token has three parts"
-    DIM header = JSON.PARSE$(UNB64URL$(parts[0]))
-    DIM claims = JSON.PARSE$(UNB64URL$(parts[1]))
+    DIM header = JSON.PARSE(UNB64URL$(parts[0]))
+    DIM claims = JSON.PARSE(UNB64URL$(parts[1]))
     IF TYPEOF(header) <> "OBJECT" ORELSE TYPEOF(claims) <> "OBJECT" THEN THROW "JWT: header or claims are not JSON"
     RETURN {"header": header, "claims": claims, "signature": parts[2]}
 ENDFUNC

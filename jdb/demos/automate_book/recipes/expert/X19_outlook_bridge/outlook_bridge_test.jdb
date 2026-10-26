@@ -25,7 +25,7 @@ DIM first = evs[0]
 TESTKIT.EQ(ICAL.PROP$(cal, first, "SUMMARY"), "Budget review", "the title")
 TESTKIT.EQ(ICAL.PROP$(cal, first, "LOCATION"), "Room 2, east wing", "the location, comma and all")
 TESTKIT.EQ(ICAL.STARTAT(cal, first), t0, "the start is the same moment")
-TESTKIT.EQ(FORMAT_DATE(ICAL.STARTAT(cal, first), "%H:%M"), "09:30", "and reads as 09:30 here")
+TESTKIT.EQ(FORMAT_DATE$(ICAL.STARTAT(cal, first), "%H:%M"), "09:30", "and reads as 09:30 here")
 DIM second = evs[1]
 TESTKIT.ISTRUE(ICAL.ALLDAY(cal, second), "an all-day appointment stays all-day")
 TESTKIT.EQ(ICAL.RAW$(cal, second, "DTSTART"), "20261005", "on its own date")

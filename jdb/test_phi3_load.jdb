@@ -18,7 +18,7 @@ DIM rc = AI.SET(llm, "system", "You are a knight in a fantasy world. Reply in on
 DIM rc2 = AI.SET(llm, "max_tokens", 60)
 
 PRINT "asking..."
-DIM reply$ = AI.CHAT(llm, "*A traveler approaches.* What do you say?")
+DIM reply$ = AI.CHAT$(llm, "*A traveler approaches.* What do you say?")
 PRINT "reply: "; reply$
 
 AI.FREE_LLM(llm)

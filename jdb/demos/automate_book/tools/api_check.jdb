@@ -92,7 +92,7 @@ ENDFUNC
 ' [least, most, signature], and the module names.
 SUB AddExports(folder$, exports, modules)
     IF NOT FILE.ISDIR(folder$) THEN RETURN
-    DIM names = DIR$(PATH.JOIN$(folder$, "*.jdb"))
+    DIM names = FILE.LIST(PATH.JOIN$(folder$, "*.jdb"))
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(names) - 1
@@ -120,7 +120,7 @@ ENDSUB
 ' GETENV$ reads in the .jdb files of a folder, as known names.
 SUB AddLocalNames(folder$, known)
     IF NOT FILE.ISDIR(folder$) THEN RETURN
-    DIM names = DIR$(PATH.JOIN$(folder$, "*.jdb"))
+    DIM names = FILE.LIST(PATH.JOIN$(folder$, "*.jdb"))
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(names) - 1
@@ -298,7 +298,7 @@ DIM lv = 0
 FOR lv = 0 TO LEN(levels) - 1
     DIM level_dir$ = PATH.JOIN$("recipes", levels[lv])
     IF FILE.ISDIR(level_dir$) THEN
-        DIM folders = DIR$(PATH.JOIN$(level_dir$, "*"))
+        DIM folders = FILE.LIST(PATH.JOIN$(level_dir$, "*"))
         DIM fo = 0
         FOR fo = 0 TO LEN(folders) - 1
             DIM recipe_dir$ = PATH.JOIN$(level_dir$, folders[fo])

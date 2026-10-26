@@ -99,14 +99,14 @@ ENDFUNC
 EXPORT FUNC MONTH_ROWS(month_folder$)
     DIM rows = [["Date", "Category", "File", "Amount"]]
     IF NOT FILE.ISDIR(month_folder$) THEN RETURN rows
-    DIM cats = SORT(DIR$(PATH.JOIN$(month_folder$, "*")))
+    DIM cats = SORT(FILE.LIST(PATH.JOIN$(month_folder$, "*")))
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(cats) - 1
         DIM cat$ = cats[k]
         DIM cat_dir$ = PATH.JOIN$(month_folder$, cat$)
         IF FILE.ISDIR(cat_dir$) THEN
-            DIM files = SORT(DIR$(PATH.JOIN$(cat_dir$, "*")))
+            DIM files = SORT(FILE.LIST(PATH.JOIN$(cat_dir$, "*")))
             FOR j = 0 TO LEN(files) - 1
                 DIM f$ = files[j]
                 DIM amount = AMOUNT(f$)

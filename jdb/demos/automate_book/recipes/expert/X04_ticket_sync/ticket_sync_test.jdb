@@ -21,7 +21,7 @@ gStates{"104"} = "open"
 
 FUNC ListTickets(request)
     PUSH(gCalls, "GET " + JDWEB.PARAM$(request, "assignee"))
-    DIM hs = request{"HEADERS"}
+    DIM hs = request{"headers"}
     DIM names = MAP.KEYS(hs)
     DIM h = 0
     FOR h = 0 TO LEN(names) - 1
@@ -49,7 +49,7 @@ ENDFUNC
 
 FUNC ChangeTicket(request)
     DIM id$ = JDWEB.PARAM$(request, "id")
-    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM body = JSON.PARSE(request{"body"})
     gStates{id$} = body{"state"}
     PUSH(gCalls, "PATCH " + id$ + " " + body{"state"})
     DIM t AS MAP
@@ -59,7 +59,7 @@ FUNC ChangeTicket(request)
 ENDFUNC
 
 FUNC NewTicket(request)
-    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM body = JSON.PARSE(request{"body"})
     DIM id$ = "105"
     gTitles{id$} = body{"title"}
     gStates{id$} = "open"

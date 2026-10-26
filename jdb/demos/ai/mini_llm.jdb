@@ -22,7 +22,7 @@ ENDFUNC
 
 PRINT "Q: Why is BASIC a good language to teach with?"
 PRINT "A: ";
-DIM full_response = AI.CHAT_STREAM(llm, "Why is BASIC a good language to teach with?", OnToken@)
+DIM full_response = AI.CHAT_STREAM$(llm, "Why is BASIC a good language to teach with?", OnToken@)
 PRINT
 
 DIM rc4 = AI.FREE_LLM(llm)

@@ -99,7 +99,7 @@ reformat_pattern$ = "(\d{4})-(\d{2})-(\d{2})"
 us_format$ = "$2/$3/$1"
 
 PRINT "Original date: "; iso_date$
-new_date$ = REGEX.REPLACE(reformat_pattern$, iso_date$, us_format$)
+new_date$ = REGEX.REPLACE$(reformat_pattern$, iso_date$, us_format$)
 PRINT "Reformatted date: "; new_date$
 PRINT
 
@@ -107,7 +107,7 @@ PRINT
 PRINT "Example 3b: Censoring words"
 secret_message$ = "The secret codes are 'alpha' and 'gamma'."
 censor_pattern$ = "alpha|gamma" ' Matches either 'alpha' or 'gamma'
-censored_message$ = REGEX.REPLACE(censor_pattern$, secret_message$, "[REDACTED]")
+censored_message$ = REGEX.REPLACE$(censor_pattern$, secret_message$, "[REDACTED]")
 
 PRINT "Original message: "; secret_message$
 PRINT "Censored message: "; censored_message$

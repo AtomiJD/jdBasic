@@ -40,7 +40,7 @@ ENDFUNC
 EXPORT FUNC MASK$(line$)
     DIM q$ = CHR$(34)
     DIM quoted$ = q$ + "[^" + q$ + "]+" + q$
-    RETURN REGEX.REPLACE(quoted$, line$, q$ + "****" + q$)
+    RETURN REGEX.REPLACE$(quoted$, line$, q$ + "****" + q$)
 ENDFUNC
 
 ' TRUE when a line sets a password, secret, token or key to a value.
@@ -81,7 +81,7 @@ FUNC Readable(name$)
 ENDFUNC
 
 FUNC Walk(folder$, out)
-    DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM names = FILE.LIST(PATH.JOIN$(folder$, "*"))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM name$ = names[k]

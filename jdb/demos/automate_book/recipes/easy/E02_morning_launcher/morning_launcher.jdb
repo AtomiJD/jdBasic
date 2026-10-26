@@ -10,9 +10,9 @@ DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
 DIM empty AS MAP
 DIM settings = WORKCONF.VALUE(cfg, "morning_launcher", empty)
 DIM dry_run = WORKCONF.FLAG("dry-run")
-DIM today = CINT(FORMAT_DATE(NOW(), "%w"))
+DIM today = CINT(FORMAT_DATE$(NOW(), "%w"))
 
-DIM plan = LAUNCHER.PLAN(settings, today, OS.GETOS())
+DIM plan = LAUNCHER.PLAN(settings, today, OS.GETOS$())
 DIM n_open = LAUNCHER.START(plan, dry_run)
 IF n_open = 0 THEN
     PRINT "Nothing to open on "; LAUNCHER.DAY_KEY$(today); "."

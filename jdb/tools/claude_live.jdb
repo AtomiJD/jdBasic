@@ -89,7 +89,7 @@ EXPORT FUNC MOVE_WINDOW_FROM_JSON(title$, path$) AS INTEGER
         use_path = "jdb/" + path$
     ENDIF
     IF use_path = "" THEN RETURN 0
-    DIM cfg = JSON.PARSE$(TXTREADER$(use_path))
+    DIM cfg = JSON.PARSE(TXTREADER$(use_path))
     DIM hwnd AS INTEGER = MOVE_WINDOW(title$, cfg{"x"}, cfg{"y"}, cfg{"w"}, cfg{"h"})
     IF hwnd <> 0 THEN RETURN 1
     RETURN 0

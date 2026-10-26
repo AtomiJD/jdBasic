@@ -19,7 +19,7 @@ DIM ISSUER$ = "inventory"
 ' ── the service ────────────────────────────────────────────────
 
 FUNC HANDLE_LOGIN(request)
-    DIM body$ = request{"BODY"}
+    DIM body$ = request{"body"}
     DIM role$ = ""
     IF INSTR(body$, "user=ann") >= 0 ANDALSO INSTR(body$, "pass=secret") >= 0 THEN role$ = "admin"
     IF INSTR(body$, "user=bob") >= 0 ANDALSO INSTR(body$, "pass=hunter2") >= 0 THEN role$ = "viewer"
@@ -30,7 +30,7 @@ FUNC HANDLE_LOGIN(request)
 ENDFUNC
 
 FUNC HANDLE_STOCK(request)
-    DIM headers = request{"HEADERS"}
+    DIM headers = request{"headers"}
     IF NOT MAP.EXISTS(headers, "authorization") THEN RETURN {"__http_status": 401, "__http_body": JSON.STRINGIFY$({"error": "no token"})}
     DIM auth$ = headers{"authorization"}
     IF NOT STARTSWITH(auth$, "Bearer ") THEN RETURN {"__http_status": 401, "__http_body": JSON.STRINGIFY$({"error": "not a bearer token"})}
@@ -42,8 +42,8 @@ FUNC HANDLE_STOCK(request)
     RETURN {"user": claims{"sub"}, "role": claims{"role"}, "stock": stock}
 ENDFUNC
 
-HTTP.SERVER.ON_POST("/login", "HANDLE_LOGIN")
-HTTP.SERVER.ON_GET("/stock", "HANDLE_STOCK")
+HTTP.SERVER.ON_POST("/login", HANDLE_LOGIN@)
+HTTP.SERVER.ON_GET("/stock", HANDLE_STOCK@)
 IF NOT HTTP.SERVER.START(PORT) THEN
     PRINT "port "; PORT; " is taken"
     END 1

@@ -28,7 +28,7 @@ ENDFUNC
 ' A message with every number replaced by #, so "job 4711 failed"
 ' and "job 4712 failed" count as one.
 EXPORT FUNC SIGNATURE$(message$)
-    DIM t$ = TRIM$(REGEX.REPLACE("[0-9]+", message$, "#"))
+    DIM t$ = TRIM$(REGEX.REPLACE$("[0-9]+", message$, "#"))
     IF LEN(t$) > 60 THEN t$ = LEFT$(t$, 60)
     RETURN t$
 ENDFUNC
@@ -54,7 +54,7 @@ EXPORT FUNC PARSE(line$)
         found{"level"} = word$
         DIM at = INSTR(upper$, lv[0][0])
         DIM rest$ = MID$(line$, at + LEN(lv[0][0]), LEN(line$))
-        DIM clean$ = REGEX.REPLACE("^[\]:\s-]+", rest$, "")
+        DIM clean$ = REGEX.REPLACE$("^[\]:\s-]+", rest$, "")
         found{"message"} = TRIM$(clean$)
     ENDIF
     RETURN found

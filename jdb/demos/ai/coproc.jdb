@@ -124,7 +124,7 @@ FUNC CO_DIGEST$(path$)
 	CO_LLM_INIT()
 	AI.CLEAR_HISTORY(CO_LLM)
 	DIM p$ = "Summarize what this source file does in 2-4 terse lines (purpose + key functions/symbols). No preamble, no markdown." + CHR$(10) + "FILE: " + path$ + CHR$(10) + CO_CLIP$(TXTREADER$(path$)) + CHR$(10) + "/no_think"
-	RETURN AI.CHAT(CO_LLM, p$)
+	RETURN AI.CHAT$(CO_LLM, p$)
 ENDFUNC
 
 SUB CO_DIGEST(path$)
@@ -146,5 +146,5 @@ FUNC CO_CLASSIFY$(item$, labels$)
 	CO_LLM_INIT()
 	AI.CLEAR_HISTORY(CO_LLM)
 	DIM p$ = "Classify the item into exactly ONE of these labels: " + labels$ + ". Reply with only the label, nothing else." + CHR$(10) + "ITEM: " + item$ + CHR$(10) + "/no_think"
-	RETURN TRIM$(AI.CHAT(CO_LLM, p$))
+	RETURN TRIM$(AI.CHAT$(CO_LLM, p$))
 ENDFUNC

@@ -10,7 +10,7 @@ DIM gCenters = ["Sales", "Marketing", "IT", "Travel"]
 DIM gSeed = {"seed": 20261005, "runs": 200}
 
 FUNC Day$(offset)
-    RETURN FORMAT_DATE(DATEADD("D", offset, gStart), "%Y-%m-%d")
+    RETURN FORMAT_DATE$(DATEADD("D", offset, gStart), "%Y-%m-%d")
 ENDFUNC
 
 FUNC Noon(day$)
@@ -18,7 +18,7 @@ FUNC Noon(day$)
 ENDFUNC
 
 FUNC DayOfWeek(day$)
-    RETURN VAL(FORMAT_DATE(Noon(day$), "%w"))
+    RETURN VAL(FORMAT_DATE$(Noon(day$), "%w"))
 ENDFUNC
 
 FUNC WeekIsBefore(offset)
@@ -35,7 +35,7 @@ FUNC RecipesAgree(offset)
     DIM week = PIPELINE.LAST_WEEK(day$)
     DIM next_monday = DATEADD("D", 7, Noon(week{"from"}))
     DIM m15$ = TIMESHEET.MONDAY$(day$)
-    RETURN FORMAT_DATE(next_monday, "%Y-%m-%d") = m15$
+    RETURN FORMAT_DATE$(next_monday, "%Y-%m-%d") = m15$
 ENDFUNC
 
 FUNC MoneyReadsBack(cents)
@@ -63,8 +63,8 @@ FUNC MonthAddsUp(quarters)
     FOR k = 0 TO LEN(quarters) - 1
         DIM start = DATEADD("D", k, CDATE("2026-09-25 09:00:00"))
         DIM finish = DATEADD("N", 15 * quarters[k], start)
-        DIM s$ = FORMAT_DATE(start, "%Y-%m-%d %H:%M:%S")
-        DIM e$ = FORMAT_DATE(finish, "%Y-%m-%d %H:%M:%S")
+        DIM s$ = FORMAT_DATE$(start, "%Y-%m-%d %H:%M:%S")
+        DIM e$ = FORMAT_DATE$(finish, "%Y-%m-%d %H:%M:%S")
         PUSH(sessions, {"project": gCenters[k MOD 4], "start": s$, _
             "stop": e$})
     NEXT k

@@ -37,7 +37,7 @@ FUNC FIRST_FONT$(cand)
 ENDFUNC
 
 FUNC MONO_FONT$()
-    DIM plat$ = OS.GETOS()
+    DIM plat$ = OS.GETOS$()
     DIM f$ = ""
     IF plat$ = "WINDOWS" THEN
         f$ = FIRST_FONT$([ "C:/Windows/Fonts/consola.ttf", "C:/Windows/Fonts/cour.ttf" ])
@@ -203,8 +203,8 @@ SUB HandleQuit(QuitData)
     running = 0
 ENDSUB
 
-ON "KEYDOWN" CALL HandleKey
-ON "QUIT"    CALL HandleQuit
+ON "KEYDOWN" CALL HandleKey@
+ON "QUIT"    CALL HandleQuit@
 
 ' ─── Open the SCREEN window ───────────────────────────────────
 ' Order matters: SCREEN before SETFONT — SDL_ttf needs the SDL

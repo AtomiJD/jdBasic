@@ -196,7 +196,7 @@ ENDFUNC
 
 ' Everything arrives here: one router, no route table.
 FUNC SERVE(request)
-    p$ = SAFE$("" + request{"PATH"})
+    p$ = SAFE$("" + request{"path"})
     IF LEN(p$) = 0 THEN RETURN REPLY(400, "text/plain", "bad path")
 
     ' A program is handed over as it is.
@@ -227,6 +227,6 @@ FUNC SERVE(request)
 ENDFUNC
 
 PRINT "jdBBS serving "; gRoot$; " on port "; gPort
-HTTP.SERVER.ON_NOTFOUND("SERVE")
+HTTP.SERVER.ON_NOTFOUND(SERVE@)
 HTTP.SERVER.START(gPort)
 HTTP.SERVER.WAIT()

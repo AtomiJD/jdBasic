@@ -616,7 +616,7 @@ ENDFUNC
 ' many ran; a second call answers 0.
 EXPORT FUNC MIGRATE(h, dir_path$)
     DIM current = CurrentVersion(h)
-    DIM listing = DIR$(dir_path$ + "/*.sql")
+    DIM listing = FILE.LIST(dir_path$ + "/*.sql")
     DIM step_nos = []
     DIM file_names = []
     DIM k = 0

@@ -35,7 +35,7 @@ EXPORT FUNC RECIPES(root$)
     FOR k = 0 TO LEN(levels) - 1
         DIM level_dir$ = PATH.JOIN$(root$, levels[k])
         IF FILE.ISDIR(level_dir$) THEN
-            DIM names = SORT(DIR$(PATH.JOIN$(level_dir$, "*")))
+            DIM names = SORT(FILE.LIST(PATH.JOIN$(level_dir$, "*")))
             FOR j = 0 TO LEN(names) - 1
                 DIM dir$ = PATH.JOIN$(level_dir$, names[j])
                 DIM file$ = PATH.JOIN$(dir$, "recipe.toml")
@@ -99,8 +99,8 @@ ENDFUNC
 ' The jdBasic program on the PATH, "" when there is none.
 EXPORT FUNC FIND_JDBASIC$()
     DIM r = OS.EXEC("where", ["jdbasic"])
-    IF r{"EXIT_CODE"} <> 0 THEN RETURN ""
-    DIM first$ = TRIM$(SPLIT(REPLACE$(r{"OUTPUT"}, CHR$(13), ""), gLF$)[0])
+    IF r{"exit_code"} <> 0 THEN RETURN ""
+    DIM first$ = TRIM$(SPLIT(REPLACE$(r{"output"}, CHR$(13), ""), gLF$)[0])
     RETURN first$
 ENDFUNC
 
@@ -207,7 +207,7 @@ EXPORT FUNC INSTALL_PLAN(answers, recipes, lib_dir$)
     NEXT k
     DIM user_lib$ = answers{"user_lib"}
     PUSH(steps, {"mkdir": user_lib$})
-    DIM shared = DIR$(PATH.JOIN$(lib_dir$, "*.jdb"))
+    DIM shared = FILE.LIST(PATH.JOIN$(lib_dir$, "*.jdb"))
     FOR j = 0 TO LEN(shared) - 1
         IF NOT ENDSWITH(shared[j], "_test.jdb") THEN
             DIM lib_from$ = PATH.JOIN$(lib_dir$, shared[j])
@@ -403,7 +403,7 @@ ENDFUNC
 EXPORT FUNC SCHTASKS(args)
     IF LEN(args) = 0 THEN RETURN [TRUE, "not scheduled"]
     DIM r = OS.EXEC("schtasks", args)
-    RETURN [r{"EXIT_CODE"} = 0, TRIM$(r{"OUTPUT"})]
+    RETURN [r{"exit_code"} = 0, TRIM$(r{"output"})]
 ENDFUNC
 
 ' ── checking ──────────────────────────────────────────────────

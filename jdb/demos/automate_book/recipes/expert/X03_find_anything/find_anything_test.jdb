@@ -112,7 +112,7 @@ r = JDWEB.FETCH(port, "GET", "/?q=%3Cb%3E")
 TESTKIT.ISTRUE(INSTR(r{"body"}, "&lt;b&gt;") >= 0, _
     "a query is written safely")
 r = JDWEB.FETCH(port, "GET", "/hits.json?q=thursday")
-DIM got = JSON.PARSE$(r{"body"})
+DIM got = JSON.PARSE(r{"body"})
 TESTKIT.EQ(LEN(got), 1, "the hits as JSON")
 HTTP.SERVER.STOP()
 

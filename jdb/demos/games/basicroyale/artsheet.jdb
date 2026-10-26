@@ -9,7 +9,7 @@ DIM running = 1
 SUB OnQuit()
     running = 0
 ENDSUB
-ON "QUIT" CALL OnQuit
+ON "QUIT" CALL OnQuit@
 
 SCREEN SCR_W, SCR_H, "jdVOID - Art"
 
@@ -19,7 +19,7 @@ DIM kinds = []
 DIM accents AS MAP = {}
 DIM shapes AS MAP = {}
 TRY
-    DIM cs = JSON.PARSE$(TXTREADER$("cards.json"))
+    DIM cs = JSON.PARSE(TXTREADER$("cards.json"))
     FOR EACH k$ IN SORT(MAP.KEYS(cs))
         kinds = APPEND(kinds, k$)
         IF MAP.EXISTS(cs{k$}, "COLOR") THEN accents{k$} = cs{k$}{"COLOR"}

@@ -45,7 +45,7 @@ EXPORT FUNC APPEND(path$, key$, fields)
         prev$ = CODEC.SHA256$(last$)
     ENDIF
     claims{"seq"} = seq
-    claims{"at"} = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+    claims{"at"} = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M:%S")
     claims{"prev"} = prev$
     MKDIR PATH.DIRNAME$(path$)
     TXTWRITER path$, JWT.SIGN$(claims, key$) + CHR$(10), TRUE

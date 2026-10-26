@@ -8,8 +8,8 @@
 DLLIMPORT "sqlitefunc"
 IMPORT WFLIB
 
-ON "KEYDOWN" CALL HandleKeys
-ON "QUIT" CALL HandleQuit
+ON "KEYDOWN" CALL HandleKeys@
+ON "QUIT" CALL HandleQuit@
 
 SUB HandleQuit(data)
   PRINT "Program will be terminated."
@@ -31,7 +31,7 @@ IF workflow_json_string$ = "" THEN
     END
 ENDIF
 
-workflow_definition = JSON.PARSE$(workflow_json_string$)
+workflow_definition = JSON.PARSE(workflow_json_string$)
 PRINT "Workflow loaded: '"; workflow_definition{"description"}; "'"
 PRINT
 
@@ -186,7 +186,7 @@ FUNC HandleWebhook(request)
     PRINT
     PRINT ">>> Webhook received at path: "; request{"path"}; " <<<"
     
-    webhook_data = JSON.PARSE$(request{"body"})
+    webhook_data = JSON.PARSE(request{"body"})
     
     start_node_id$ = ""
     FOR EACH node IN workflow_definition{"nodes"}
@@ -220,7 +220,7 @@ IF telegram_api_key$ = "" THEN
 ENDIF
 
 webhook_path$ = "/telegram"
-HTTP.SERVER.ON_POST webhook_path$, "HandleWebhook"
+HTTP.SERVER.ON_POST webhook_path$, HandleWebhook@
 
 server_url$ = WFLIB.get_ngrok_url()
 server_url$ = server_url$ + webhook_path$

@@ -15,7 +15,7 @@ IMPORT TMPL
 EXPORT FUNC NAMES(folder$)
     DIM out = []
     IF NOT FILE.ISDIR(folder$) THEN RETURN out
-    DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.txt")))
+    DIM files = SORT(FILE.LIST(PATH.JOIN$(folder$, "*.txt")))
     RETURN SELECT(LAMBDA f$ -> LEFT$(f$, LEN(f$) - 4), files)
 ENDFUNC
 
@@ -35,10 +35,10 @@ EXPORT FUNC VALUES(me$, signature$, to$, today)
     v{"me"} = me$
     v{"signature"} = signature$
     v{"to"} = to$
-    DIM day$ = FORMAT_DATE(today, "%d")
+    DIM day$ = FORMAT_DATE$(today, "%d")
     IF LEFT$(day$, 1) = "0" THEN day$ = MID$(day$, 1, 1)
-    v{"date"} = day$ + FORMAT_DATE(today, " %B %Y")
-    v{"weekday"} = FORMAT_DATE(today, "%A")
+    v{"date"} = day$ + FORMAT_DATE$(today, " %B %Y")
+    v{"weekday"} = FORMAT_DATE$(today, "%A")
     RETURN v
 ENDFUNC
 

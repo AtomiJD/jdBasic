@@ -1231,7 +1231,7 @@ SUB DRAW_HEADER()
     DIM info$ AS STRING = genre$ + "  |  " + KEY$ + "  |  " + STR$(BPM) + " BPM  |  seed " + STR$(seed) + "  |  " + PROG_NAME$ + ": " + PROG$
     TEXT 20, 56, info$, 170, 180, 210
     DIM meter = SOUND.LOUDNESS()
-    DIM loud$ AS STRING = "LUFS  M " + FORMAT$("{:.1f}", meter{"MOMENTARY"}) + "   S " + FORMAT$("{:.1f}", meter{"SHORT"}) + "   I " + FORMAT$("{:.1f}", meter{"INTEGRATED"})
+    DIM loud$ AS STRING = "LUFS  M " + FORMAT$("{:.1f}", meter{"momentary"}) + "   S " + FORMAT$("{:.1f}", meter{"SHORT"}) + "   I " + FORMAT$("{:.1f}", meter{"integrated"})
     TEXT 860, 18, loud$, 200, 210, 230
     DIM gr AS DOUBLE = -meter{"REDUCTION"}
     TEXT 860, 46, "LIMITER", 150, 160, 190
@@ -1414,10 +1414,10 @@ ENDSUB
 ' What the show draws from, sent only while someone listens
 SUB PUBLISH_FRAME()
     PUBLISH_CLOCK
-    IF TOPIC.STATS(pub_scope){"SUBSCRIBERS"} > 0 THEN
+    IF TOPIC.STATS(pub_scope){"subscribers"} > 0 THEN
         CHAN.SEND pub_scope, {"T": NODE.TIME(), "MASTER": SOUND.GET_WAVE(), "BUS0": SOUND.GET_BUS_WAVE(0)}
     ENDIF
-    IF TOPIC.STATS(pub_levels){"SUBSCRIBERS"} > 0 THEN
+    IF TOPIC.STATS(pub_levels){"subscribers"} > 0 THEN
         CHAN.SEND pub_levels, {"LEVELS": SHOWN, "MUTED": MUTED, "SOLOED": SOLOED, "LOUDNESS": SOUND.LOUDNESS()}
     ENDIF
 ENDSUB
@@ -1487,12 +1487,12 @@ SUB BUS_OPEN()
     pub_scope = TOPIC.OPEN("song/scope")
     pub_levels = TOPIC.OPEN("song/levels")
     pub_log = TOPIC.OPEN("song/log")
-    NODE.SERVE "JUMP", "H_JUMP"
-    NODE.SERVE "REROLL", "H_REROLL"
-    NODE.SERVE "SEED", "H_SEED"
-    NODE.SERVE "GENRE", "H_GENRE"
-    NODE.SERVE "MUTE", "H_MUTE"
-    NODE.SERVE "LOOK", "H_LOOK"
+    NODE.SERVE "JUMP", H_JUMP@
+    NODE.SERVE "REROLL", H_REROLL@
+    NODE.SERVE "SEED", H_SEED@
+    NODE.SERVE "GENRE", H_GENRE@
+    NODE.SERVE "MUTE", H_MUTE@
+    NODE.SERVE "LOOK", H_LOOK@
     bus_on = TRUE
     PUBLISH_SCORE
 ENDSUB
@@ -1511,7 +1511,7 @@ SUB START_SHOW()
     DIM displays = GFX.DISPLAYS()
     DIM di AS INTEGER
     FOR di = 0 TO LEN(displays) - 1
-        IF NOT displays[di]{"PRIMARY"} THEN
+        IF NOT displays[di]{"primary"} THEN
             show_args = [stage_path$, "--follow", "songgen", "--display", STR$(displays[di]{"INDEX"})]
             EXITFOR
         ENDIF
@@ -1526,7 +1526,7 @@ ENDSUB
 
 SUB DESK_RUN()
     SCREEN DESK_W, DESK_H, "songgen live"
-    ON "QUIT" CALL DESK_QUIT
+    ON "QUIT" CALL DESK_QUIT@
     DIM font_try$ = ["jdbasic_default.ttf", "/jdbasic_default.ttf", "build/jdbasic_default.ttf", "../../../build/jdbasic_default.ttf"]
     DIM fi AS INTEGER
     FOR fi = 0 TO LEN(font_try$) - 1
@@ -1633,8 +1633,8 @@ ELSEIF LEN(wav$) > 0 THEN
     WEND
     SOUND.RECORD
     DIM meter = SOUND.LOUDNESS()
-    PRINT "wrote "; wav$; ", "; FORMAT$("{:.1f}", meter{"INTEGRATED"}); " LUFS, loudest 3 s ";
-    PRINT FORMAT$("{:.1f}", meter{"SHORT_MAX"}); " LUFS, peak "; FORMAT$("{:.1f}", meter{"PEAK"}); " dB, limiter up to "; FORMAT$("{:.1f}", -meter{"REDUCTION_MAX"}); " dB"
+    PRINT "wrote "; wav$; ", "; FORMAT$("{:.1f}", meter{"integrated"}); " LUFS, loudest 3 s ";
+    PRINT FORMAT$("{:.1f}", meter{"short_max"}); " LUFS, peak "; FORMAT$("{:.1f}", meter{"PEAK"}); " dB, limiter up to "; FORMAT$("{:.1f}", -meter{"reduction_max"}); " dB"
 ELSEIF live_mode THEN
     DESK_RUN
 ELSE

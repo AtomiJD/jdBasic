@@ -47,7 +47,7 @@ ENDFUNC
 EXPORT FUNC SERIAL_DATE$(serial)
     DIM base = CDATE("1899-12-30 12:00:00")
     DIM day = DATEADD("D", INT(serial), base)
-    RETURN FORMAT_DATE(day, "%Y-%m-%d")
+    RETURN FORMAT_DATE$(day, "%Y-%m-%d")
 ENDFUNC
 
 ' A YYYY-MM-DD date as an Excel day number.
@@ -473,7 +473,7 @@ EXPORT FUNC SAVE$()
     DIM book = XLSX.READ(gPath$)
     DIM names = XLSX.SHEETS(gPath$)
     MKDIR gBackups$
-    DIM when$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H%M%S")
+    DIM when$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H%M%S")
     DIM copy$ = PATH.BASENAME$(gPath$) + " " + when$ + ".xlsx"
     FILE.COPY(gPath$, PATH.JOIN$(gBackups$, copy$), TRUE)
     DIM wb = XLSX.NEW()

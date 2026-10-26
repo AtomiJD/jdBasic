@@ -27,7 +27,7 @@ FUNC Words(argv)
 ENDFUNC
 
 SUB WriteLog(file$, text$)
-    DIM when$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M")
+    DIM when$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M")
     TXTWRITER file$, when$ + " " + text$ + CHR$(10), TRUE
 ENDSUB
 
@@ -61,7 +61,7 @@ IF command$ = "build" THEN
     ENDIF
     IF FILE.EXISTS(test$) THEN
         DIM t = OS.EXEC(jdbasic$, [test$])
-        IF t{"EXIT_CODE"} <> 0 THEN THROW "The test fails."
+        IF t{"exit_code"} <> 0 THEN THROW "The test fails."
         PRINT "test passed"
     ENDIF
     DIM b = SHIP.BUILD(jdbasic$, target$, stage$)

@@ -14,13 +14,13 @@ DIM gLF$ = CHR$(10)
 
 ' The weekday number of a date given as YYYY-MM-DD, 0 for Sunday.
 EXPORT FUNC WEEKDAY_OF(day$)
-    RETURN VAL(FORMAT_DATE(CDATE(day$), "%w"))
+    RETURN VAL(FORMAT_DATE$(CDATE(day$), "%w"))
 ENDFUNC
 
 ' The Monday of the week a day belongs to, as YYYY-MM-DD.
 EXPORT FUNC MONDAY$(day$)
     DIM back = (WEEKDAY_OF(day$) + 6) MOD 7
-    RETURN FORMAT_DATE(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
+    RETURN FORMAT_DATE$(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
 ENDFUNC
 
 ' A mood answer as a number from 1 to 5, or 0 when it is none.
@@ -32,7 +32,7 @@ ENDFUNC
 
 ' One journal entry as text.
 EXPORT FUNC ENTRY$(day$, done$, tomorrow$, mood)
-    DIM weekday$ = FORMAT_DATE(CDATE(day$), "%A")
+    DIM weekday$ = FORMAT_DATE$(CDATE(day$), "%A")
     DIM out$ = "## " + day$ + " " + weekday$ + gLF$
     out$ = out$ + "Mood: " + STR$(mood) + " of 5" + gLF$
     out$ = out$ + "Done: " + TRIM$(done$) + gLF$
@@ -87,7 +87,7 @@ ENDFUNC
 EXPORT FUNC WEEK(entries, day$)
     DIM first$ = MONDAY$(day$)
     DIM sunday = DATEADD("D", 6, CDATE(first$))
-    DIM last$ = FORMAT_DATE(sunday, "%Y-%m-%d")
+    DIM last$ = FORMAT_DATE$(sunday, "%Y-%m-%d")
     RETURN FILTER(LAMBDA USE(first$, last$) e -> _
         e{"day"} >= first$ ANDALSO e{"day"} <= last$, entries)
 ENDFUNC

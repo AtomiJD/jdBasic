@@ -28,7 +28,7 @@ IF workflow_json_string$ = "" THEN
     END
 ENDIF
 
-workflow_definition = JSON.PARSE$(workflow_json_string$)
+workflow_definition = JSON.PARSE(workflow_json_string$)
 PRINT "Workflow loaded: '"; workflow_definition{"description"}; "'"
 PRINT
 
@@ -153,7 +153,7 @@ FUNC HandleWebhook(request)
     PRINT ">>> Webhook received at path: "; request{"path"}; " <<<"
     
     ' Parse the incoming JSON data from Telegram
-    webhook_data = JSON.PARSE$(request{"body"})
+    webhook_data = JSON.PARSE(request{"body"})
     
     ' Find the correct workflow start node based on the request path
     start_node_id$ = ""
@@ -188,7 +188,7 @@ ENDIF
 
 ' Register the webhook handler with the HTTP server
 webhook_path$ = "/telegram"
-HTTP.SERVER.ON_POST webhook_path$, "HandleWebhook"
+HTTP.SERVER.ON_POST webhook_path$, HandleWebhook@
 
 ' Set the webhook with Telegram's API
 server_url$ = WFLIB.get_ngrok_url()

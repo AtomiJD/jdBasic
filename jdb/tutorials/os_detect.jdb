@@ -1,6 +1,6 @@
-PRINT "Running on OS: " + OS.GETOS()
+PRINT "Running on OS: " + OS.GETOS$()
 
-CurrentOS$ = OS.GETOS()
+CurrentOS$ = OS.GETOS$()
 
 IF CurrentOS$ = "WINDOWS" THEN
     PRINT "This is a Windows machine."
@@ -32,7 +32,7 @@ ELSE
     ping_result = OS.EXEC("ping -c 4 google.com")
 ENDIF
 
-PRINT "Exit Code: " + ping_result{"EXIT_CODE"}
+PRINT "Exit Code: " + ping_result{"exit_code"}
 PRINT "--- Output ---"
-PRINT ping_result{"OUTPUT"}
+PRINT ping_result{"output"}
 PRINT "--------------"

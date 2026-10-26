@@ -50,12 +50,12 @@ ENDFUNC
 ' reads in this zone, so this clock gives back the digits the
 ' file writes.
 FUNC Clock$(t_in)
-    RETURN FORMAT_DATE(CDBL(t_in), "%H:%M")
+    RETURN FORMAT_DATE$(CDBL(t_in), "%H:%M")
 ENDFUNC
 
 ' The date an instant falls on, as YYYY-MM-DD.
 FUNC Day$(t_in)
-    RETURN FORMAT_DATE(CDBL(t_in), "%Y-%m-%d")
+    RETURN FORMAT_DATE$(CDBL(t_in), "%Y-%m-%d")
 ENDFUNC
 
 ' The people of an event as maps with name and mail.
@@ -192,7 +192,7 @@ EXPORT FUNC MAILS(folders, meeting, most)
     FOR f = 0 TO LEN(folders) - 1
         DIM folder$ = folders[f]
         IF FILE.ISDIR(folder$) THEN
-            DIM names = DIR$(PATH.JOIN$(folder$, "*.eml"))
+            DIM names = FILE.LIST(PATH.JOIN$(folder$, "*.eml"))
             FOR k = 0 TO LEN(names) - 1
                 DIM file$ = names[k]
                 DIM path$ = PATH.JOIN$(folder$, file$)

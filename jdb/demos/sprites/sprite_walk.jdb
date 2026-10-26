@@ -60,7 +60,7 @@ DO
     NEXT ty
 
     ' --- Input ---
-    ev$ = GFX.POLLEVENT()
+    ev$ = GFX.POLLEVENT$()
     IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN EXITDO
 
     old_moving = moving

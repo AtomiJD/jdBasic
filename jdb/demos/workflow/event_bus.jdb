@@ -1,8 +1,8 @@
 ' Event Handling Demo
 
-ON "MY_CUSTOM_EVENT" CALL HandleCustomEvent
-ON "KEYDOWN" CALL HandleKeys
-ON "QUIT" CALL HandleQuit
+ON "MY_CUSTOM_EVENT" CALL HandleCustomEvent@
+ON "KEYDOWN" CALL HandleKeys@
+ON "QUIT" CALL HandleQuit@
 
 SUB HandleCustomEvent(data)
   PRINT "Custom event received! Data: "; data[0]

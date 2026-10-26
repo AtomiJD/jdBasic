@@ -13,7 +13,7 @@ IMPORT XLSX
 
 ' Every file under a folder and its subfolders, hidden ones left out.
 FUNC Walk(folder$, out)
-    DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM names = FILE.LIST(PATH.JOIN$(folder$, "*"))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM full$ = PATH.JOIN$(folder$, names[k])

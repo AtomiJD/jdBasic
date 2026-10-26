@@ -78,7 +78,7 @@ ENDFUNC
 EXPORT FUNC PLAN(source$, target$, rules, min_age_hours, now)
     DIM moves = []
     DIM taken = []
-    DIM entries = DIR$(PATH.JOIN$(source$, "*"))
+    DIM entries = FILE.LIST(PATH.JOIN$(source$, "*"))
     DIM k = 0
     FOR k = 0 TO LEN(entries) - 1
         DIM file_name$ = entries[k]

@@ -27,7 +27,7 @@ DIM sources = {"log": log_file$, "todo": todo$, _
 
 DIM save$ = WORKCONF.ARG$("save")
 IF save$ <> "" THEN
-    DIM now$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+    DIM now$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M:%S")
     DIM numbers = DASHBOARD.NUMBERS(sources, now$)
     TXTWRITER save$, DASHBOARD.PAGE$(numbers, tpl$)
     PRINT "wrote "; save$

@@ -31,7 +31,7 @@ DIM mail_dir$ = WORKCONF.FOLDER$(cfg, mail_key$, mail_home$)
 DIM days = WORKCONF.VALUE(cfg, key$ + "days", 1)
 DIM most = WORKCONF.VALUE(cfg, key$ + "mails", 50)
 
-DIM today$ = FORMAT_DATE(NOW(), "%Y-%m-%d")
+DIM today$ = FORMAT_DATE$(NOW(), "%Y-%m-%d")
 DIM t_from = CDBL(CDATE(today$ + " 00:00:00"))
 DIM t_to = CDBL(DATEADD("D", days, CDATE(today$ + " 00:00:00")))
 

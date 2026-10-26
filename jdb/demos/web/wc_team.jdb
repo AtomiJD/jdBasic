@@ -51,7 +51,7 @@ IF LEN(body$) < 10 THEN
     END
 ENDIF
 
-DIM j = JSON.PARSE$(body$)
+DIM j = JSON.PARSE(body$)
 DIM tm = j{"team"}
 IF ISNONE(tm) THEN
     PRINT "Team "; id$; " not found."

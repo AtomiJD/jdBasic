@@ -119,7 +119,7 @@ ENDSUB
 ' time of its file.
 EXPORT SUB ADD_MAILS(totals, folder$, rules)
     IF NOT FILE.ISDIR(folder$) THEN RETURN
-    DIM names = DIR$(PATH.JOIN$(folder$, "*.eml"))
+    DIM names = FILE.LIST(PATH.JOIN$(folder$, "*.eml"))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM file$ = names[k]

@@ -363,7 +363,7 @@ ENDFUNC
 
 ' The body parsed as JSON. Raises when the body is not JSON.
 EXPORT FUNC JSON(r)
-    DIM parsed = JSON.PARSE$(r{"body"})
+    DIM parsed = JSON.PARSE(r{"body"})
     IF TYPEOF(parsed) = "NONE" THEN THROW "REQ.JSON: the body is not JSON: " + LEFT$(r{"body"}, 120)
     RETURN parsed
 ENDFUNC

@@ -139,8 +139,8 @@ ENDSUB
 SUB OnQuitDbg(QuitData)
     running = 0
 ENDSUB
-ON "KEYDOWN" CALL OnKeyDbg
-ON "QUIT"    CALL OnQuitDbg
+ON "KEYDOWN" CALL OnKeyDbg@
+ON "QUIT"    CALL OnQuitDbg@
 
 DO
     SLEEP 50

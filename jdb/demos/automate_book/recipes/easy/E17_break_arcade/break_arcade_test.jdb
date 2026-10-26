@@ -88,8 +88,8 @@ DIM here$ = "recipes/easy/E17_break_arcade/break_arcade.jdb"
 IF FILE.EXISTS(jdbasic$) ANDALSO FILE.EXISTS(here$) THEN
     TESTKIT.SUITE("the window")
     DIM w = OS.EXEC(jdbasic$, [here$, "--selftest"])
-    TESTKIT.EQ(w{"EXIT_CODE"}, 0, "the game plays itself")
-    TESTKIT.ISTRUE(INSTR(w{"OUTPUT"}, "ALL ARCADE WINDOW TESTS PASSED") >= 0, _
+    TESTKIT.EQ(w{"exit_code"}, 0, "the game plays itself")
+    TESTKIT.ISTRUE(INSTR(w{"output"}, "ALL ARCADE WINDOW TESTS PASSED") >= 0, _
         "and every check of it passes")
 ELSE
     TESTKIT.SKIP("the window test needs the book folder and jdbasic")

@@ -57,7 +57,7 @@ LOOP
 TXTWRITER report$, CRUNCH.REPORT_CSV$(totals, sep$)
 
 DIM lines = []
-PUSH(lines, FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M") + " " + folder$)
+PUSH(lines, FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M") + " " + folder$)
 PUSH(lines, "  " + STR$(totals{"files"}) + " files, " + _
     STR$(totals{"rows"}) + " rows, " + STR$(totals{"bad"}) + _
     " lines skipped, " + STR$(workers) + " workers, " + _

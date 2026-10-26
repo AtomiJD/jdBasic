@@ -263,7 +263,7 @@ EXPORT FUNC VALUE$(html$, selector$, attr$)
     DIM at = HTMLDOM.FIND(doc, selector$)
     IF at < 0 THEN THROW "nothing on the page matches " + selector$
     IF attr$ <> "" THEN RETURN TRIM$(HTMLDOM.ATTR$(doc, at, attr$))
-    RETURN TRIM$(REGEX.REPLACE("\s+", HTMLDOM.FLAT$(doc, at), " "))
+    RETURN TRIM$(REGEX.REPLACE$("\s+", HTMLDOM.FLAT$(doc, at), " "))
 ENDFUNC
 
 ' The first number in a text as plain digits with a point, so

@@ -64,7 +64,7 @@ DIM search$ = TESTRUN.SEARCH_PATH$(root$, first)
 DIM results = TESTRUN.RUN_ALL(jdbasic$, tests, search$)
 SETENV "JDBASIC_PATH", given$
 
-DIM now$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M")
+DIM now$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M")
 DIM report$ = TESTRUN.REPORT$(results, now$)
 DIM today$ = LEFT$(now$, 10)
 DIM report_file$ = PATH.JOIN$(reports$, "tests " + today$ + ".txt")

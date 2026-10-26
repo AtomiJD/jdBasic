@@ -129,7 +129,7 @@ SUB draw_graph(data AS DYNAMIC, maxv AS DOUBLE, cw AS INTEGER, ch AS INTEGER)
 ENDSUB
 
 SUB refresh_procs()
-    DIM ents = DIR$("/proc/*")
+    DIM ents = FILE.LIST("/proc/*")
     DIM ids = []
     DIM nm = []
     DIM mb = []

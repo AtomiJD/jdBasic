@@ -340,7 +340,7 @@ ENDSUB
 
 EXPORT FUNC AUTH_LOGIN(db, request, secure)
     DIM raw_body = request{"body"}
-    DIM body = JSON.PARSE$(raw_body)
+    DIM body = JSON.PARSE(raw_body)
     DIM name$ = FIELD$(body, "name")
     DIM pw$ = FIELD$(body, "password")
     IF LEN(name$) = 0 ORELSE LEN(pw$) = 0 THEN RETURN { "error": "name and password required" }
@@ -834,7 +834,7 @@ FUNC HeldOrLoaded(sid$)
     DIM data$ = rows[0, 0]
     DIM created = rows[0, 1]
     DIM seen = rows[0, 2]
-    DIM loaded = JSON.PARSE$(data$)
+    DIM loaded = JSON.PARSE(data$)
     IF TYPEOF(loaded) <> "OBJECT" THEN RETURN FALSE
     gSessions{sid$} = loaded
     gSessionCreated{sid$} = created
@@ -998,7 +998,7 @@ EXPORT FUNC FLASHES(request)
             MAP.DELETE(sess, "__flash")
         ENDIF
     ENDIF
-    DIM parsed = JSON.PARSE$(kept$)
+    DIM parsed = JSON.PARSE(kept$)
     RETURN parsed
 ENDFUNC
 
@@ -1195,7 +1195,7 @@ ENDFUNC
 
 ' The routes put on the server; call before HTTP.SERVER.START.
 EXPORT SUB MOUNT()
-    HTTP.SERVER.ON_NOTFOUND("JDWEB.DISPATCH")
+    HTTP.SERVER.ON_NOTFOUND(JDWEB.DISPATCH@)
 ENDSUB
 
 ' The server started on port with the routes mounted; TRUE when it runs.

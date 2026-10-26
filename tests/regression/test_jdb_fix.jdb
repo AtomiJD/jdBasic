@@ -1,0 +1,58 @@
+' tools/jdb-fix.jdb rewrites old names, string handlers and, with --keys,
+' old builtin map keys; text in strings and comments, members and REM
+' lines stay, and a second run finds nothing left to change.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+IF NOT OS.FEATURE("INTERPRETER") THEN
+    PRINT "interpreter-only: runs tools/jdb-fix.jdb with jdBasic"
+    PRINT "OK"
+    END
+ENDIF
+
+DIM q$ AS STRING = CHR$(34)
+DIM nl$ AS STRING = CHR$(13) + CHR$(10)
+DIM src$ AS STRING = "' STR(1) in a comment" + nl$
+src$ = src$ + "DIM s$ = " + q$ + "STR(2) in a string" + q$ + nl$
+src$ = src$ + "PRINT STR(3); trim(" + q$ + " x " + q$ + ")" + nl$
+src$ = src$ + "DIM r = OS.EXEC(" + q$ + "echo" + q$ + ")" + nl$
+src$ = src$ + "PRINT r{" + q$ + "OUTPUT" + q$ + "}" + nl$
+src$ = src$ + "HTTP.SERVER.ON_GET " + q$ + "/" + q$ + ", " + q$ + "Home" + q$ + nl$
+src$ = src$ + "HTTP.SERVER.ON_NOTFOUND(" + q$ + "JDWEB.DISPATCH" + q$ + ")" + nl$
+src$ = src$ + "ON " + q$ + "TICK" + q$ + " CALL OnTick" + nl$
+src$ = src$ + "b.str = 1 : PRINT b.str" + nl$
+src$ = src$ + "REM STR(4)" + nl$
+
+DIM want$ AS STRING = "' STR(1) in a comment" + nl$
+want$ = want$ + "DIM s$ = " + q$ + "STR(2) in a string" + q$ + nl$
+want$ = want$ + "PRINT STR$(3); trim$(" + q$ + " x " + q$ + ")" + nl$
+want$ = want$ + "DIM r = OS.EXEC(" + q$ + "echo" + q$ + ")" + nl$
+want$ = want$ + "PRINT r{" + q$ + "output" + q$ + "}" + nl$
+want$ = want$ + "HTTP.SERVER.ON_GET " + q$ + "/" + q$ + ", Home@" + nl$
+want$ = want$ + "HTTP.SERVER.ON_NOTFOUND(JDWEB.DISPATCH@)" + nl$
+want$ = want$ + "ON " + q$ + "TICK" + q$ + " CALL OnTick@" + nl$
+want$ = want$ + "b.str = 1 : PRINT b.str" + nl$
+want$ = want$ + "REM STR(4)" + nl$
+
+DIM path$ AS STRING = MKTEMP$("fix") + ".jdb"
+TXTWRITER path$, src$
+DIM tool$ AS STRING = PATH.JOIN$(PATH.DIRNAME$(PATH.DIRNAME$(OS.SELF$())), "tools/jdb-fix.jdb")
+IF NOT FILE.EXISTS(tool$) THEN tool$ = "tools/jdb-fix.jdb"
+DIM run AS MAP = OS.EXEC(OS.SELF$(), [tool$, "--keys", "--quiet", path$])
+Check(run{"exit_code"} = 0, "jdb-fix exits 0")
+Check(INSTR(run{"output"}, " 6 changes") >= 0, "jdb-fix counts 6 changes: " + run{"output"})
+Check(TXTREADER$(path$) = want$, "the file holds the new names")
+
+DIM again AS MAP = OS.EXEC(OS.SELF$(), [tool$, "--keys", "--dry-run", "--quiet", path$])
+Check(INSTR(again{"output"}, " 0 changes") >= 0, "a second run changes nothing")
+
+KILL path$
+IF failed > 0 THEN END 1
+PRINT "OK"

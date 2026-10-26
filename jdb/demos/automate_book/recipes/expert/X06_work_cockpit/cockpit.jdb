@@ -29,7 +29,7 @@ EXPORT FUNC INSTALLED(work$, own$)
     DIM out = []
     DIM root$ = PATH.JOIN$(work$, "recipes")
     IF NOT FILE.ISDIR(root$) THEN RETURN out
-    DIM names = SORT(DIR$(PATH.JOIN$(root$, "*")))
+    DIM names = SORT(FILE.LIST(PATH.JOIN$(root$, "*")))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM folder_name$ = names[k]
@@ -60,8 +60,8 @@ ENDFUNC
 
 ' A program's output without colour codes and carriage returns.
 EXPORT FUNC CLEAN$(output$)
-    DIM t$ = REGEX.REPLACE(CHR$(27) + "[[0-9;]*m", output$, "")
-    t$ = REGEX.REPLACE("Error #[0-9]+: ", t$, "")
+    DIM t$ = REGEX.REPLACE$(CHR$(27) + "[[0-9;]*m", output$, "")
+    t$ = REGEX.REPLACE$("Error #[0-9]+: ", t$, "")
     RETURN TRIM$(REPLACE$(t$, CHR$(13), ""))
 ENDFUNC
 
@@ -83,9 +83,9 @@ EXPORT FUNC RUN(jdbasic$, entry, conf$, dry_run, tries)
     DO
         n = n + 1
         DIM r = OS.EXEC(jdbasic$, args)
-        out{"exit"} = r{"EXIT_CODE"}
-        out{"output"} = r{"OUTPUT"}
-        IF r{"EXIT_CODE"} = 0 ORELSE n >= tries THEN EXITDO
+        out{"exit"} = r{"exit_code"}
+        out{"output"} = r{"output"}
+        IF r{"exit_code"} = 0 ORELSE n >= tries THEN EXITDO
         SLEEP 1000
     LOOP
     out{"ok"} = out{"exit"} = 0
@@ -99,7 +99,7 @@ EXPORT FUNC LOG_LINE$(when, entry, dry_run, result)
     DIM mode$ = "run"
     IF dry_run THEN mode$ = "dry"
     DIM msg$ = REPLACE$(LAST_LINE$(result{"output"}), gTab$, " ")
-    DIM t$ = FORMAT_DATE(when, "%Y-%m-%d %H:%M")
+    DIM t$ = FORMAT_DATE$(when, "%Y-%m-%d %H:%M")
     DIM code$ = STR$(result{"exit"})
     DIM parts = [t$, entry{"id"}, mode$, code$, msg$]
     RETURN JOIN(parts, gTab$)

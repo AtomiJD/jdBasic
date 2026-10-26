@@ -70,7 +70,7 @@ DIM row1 = sheet[1]
 TESTKIT.EQ(row1[1], "Weber; Sohn & Co", "the workbook keeps the quoted name")
 TESTKIT.EQ(FILE.EXISTS(PATH.JOIN$(done$, "originals", "orders.csv")), TRUE, "the CSV file is kept in originals")
 TESTKIT.EQ(FILE.EXISTS(PATH.JOIN$(done$, "scan.pdf")), TRUE, "the other file is moved")
-TESTKIT.EQ(LEN(DIR$(PATH.JOIN$(inbox$, "*"))), 0, "the inbox is empty")
+TESTKIT.EQ(LEN(FILE.LIST(PATH.JOIN$(inbox$, "*"))), 0, "the inbox is empty")
 DIM logged = SPLIT(TRIM$(TXTREADER$(log$)), CHR$(10))
 TESTKIT.EQ(LEN(logged), 2, "the log file has both lines")
 

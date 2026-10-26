@@ -13,7 +13,7 @@ DIM running = 1
 SUB OnQuit()
     running = 0
 ENDSUB
-ON "QUIT" CALL OnQuit
+ON "QUIT" CALL OnQuit@
 
 ' Taps arrive as buffered MOUSEDOWN events - a finger tap is shorter than
 ' one frame, so polling the button state misses it.
@@ -25,11 +25,11 @@ SUB OnTap(info)
     tap_y = info[0]{"y"}
     tap_new = 1
 ENDSUB
-ON "MOUSEDOWN" CALL OnTap
+ON "MOUSEDOWN" CALL OnTap@
 
 ' cards.json overrides the built-in card set when present
 TRY
-    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+    ARENA.SETCARDS(JSON.PARSE(TXTREADER$("cards.json")))
 CATCH
 ENDTRY
 

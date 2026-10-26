@@ -14,7 +14,7 @@ SUB HandleKey(KeyData)
     ENDIF
 ENDSUB
 
-ON "KEYDOWN" CALL HandleKey
+ON "KEYDOWN" CALL HandleKey@
 
 ' 2. Database Setup
 DB_FILE$ = "users.db"
@@ -95,7 +95,7 @@ DO
             IF GUI.COLLAPSING_HEADER("Add New User", TRUE) THEN
                 GUI.TEXT "Name:"
                 GUI.SAME_LINE
-                InputName$ = GUI.INPUT("##Name", InputName$)
+                InputName$ = GUI.INPUT$("##Name", InputName$)
                 
                 GUI.TEXT "Role:"
                 GUI.SAME_LINE
@@ -226,7 +226,7 @@ DO
                 GUI.SEPARATOR
                 
                 GUI.TEXT "Name:"
-                EditName$ = GUI.INPUT("##EditName", EditName$)
+                EditName$ = GUI.INPUT$("##EditName", EditName$)
                 
                 GUI.TEXT "Role:"
                 EditRoleSelection = GUI.COMBO("##EditRole", EditRoleSelection, RoleOptions)

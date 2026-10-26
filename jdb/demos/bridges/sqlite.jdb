@@ -61,7 +61,7 @@ EXPORT FUNC QUERY(db, sql$)
     IF bytes_written = 0 THEN
         RETURN []
     ENDIF
-    RETURN JSON.PARSE$(json$)
+    RETURN JSON.PARSE(json$)
 ENDFUNC
 
 EXPORT FUNC ERROR$(db)

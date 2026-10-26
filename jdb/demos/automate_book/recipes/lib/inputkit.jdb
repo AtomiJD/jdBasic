@@ -311,7 +311,7 @@ EXPORT FUNC PARSE(text$)
                     PUSH(steps, MakeStep(line_no, op$, ms$))
                 ENDIF
             ELSEIF INSTR(gPointer$, "|" + op$ + "|") >= 0 THEN
-                DIM one$ = TRIM$(REGEX.REPLACE(" +", arg$, " "))
+                DIM one$ = TRIM$(REGEX.REPLACE$(" +", arg$, " "))
                 DIM xy = SPLIT(one$, " ")
                 DIM ok = LEN(xy) = 2
                 IF ok THEN ok = IsNumber(xy[0])

@@ -141,9 +141,9 @@ DO WHILE running
   IF GUI.BEGIN("Classification", cpx + 70, 40, 350, 440) THEN
     IF pred_digit >= 0 THEN
       GUI.SEPARATOR_TEXT "Prediction"
-      GUI.TEXT "Digit: " + STR(pred_digit)
-      GUI.TEXT "Confidence: " + STR(INT(pred_conf * 1000) / 10) + "%"
-      GUI.TEXT "Time: " + STR(inf_ms) + " ms"
+      GUI.TEXT "Digit: " + STR$(pred_digit)
+      GUI.TEXT "Confidence: " + STR$(INT(pred_conf * 1000) / 10) + "%"
+      GUI.TEXT "Time: " + STR$(inf_ms) + " ms"
     ELSE
       GUI.TEXT "Draw a digit to classify..."
     ENDIF
@@ -156,7 +156,7 @@ DO WHILE running
     GUI.SEPARATOR_TEXT "Probabilities"
     FOR d = 0 TO 9
       DIM p = preds[d]
-      GUI.PROGRESS p, STR(d) + ": " + STR(INT(p * 1000) / 10) + "%"
+      GUI.PROGRESS p, STR$(d) + ": " + STR$(INT(p * 1000) / 10) + "%"
     NEXT d
 
     IF pred_digit >= 0 THEN
@@ -170,11 +170,11 @@ DO WHILE running
         FOR ti = 0 TO 2
           GUI.TABLE_NEXT_ROW
           GUI.TABLE_NEXT_COLUMN
-          GUI.TEXT "#" + STR(ti + 1)
+          GUI.TEXT "#" + STR$(ti + 1)
           GUI.TABLE_NEXT_COLUMN
-          GUI.TEXT STR(INT(top[ti][0]))
+          GUI.TEXT STR$(INT(top[ti][0]))
           GUI.TABLE_NEXT_COLUMN
-          GUI.TEXT STR(INT(top[ti][1] * 1000) / 10) + "%"
+          GUI.TEXT STR$(INT(top[ti][1] * 1000) / 10) + "%"
         NEXT ti
         GUI.END_TABLE
       ENDIF
@@ -204,7 +204,7 @@ DO WHILE running
         PUSH pd, fv[pi]
       NEXT pi
       GUI.PLOT_LINES "Pixels", pd, "Tensor", 0.0, 1.0
-      GUI.TEXT "Active: " + STR(pcnt) + "/784  Energy: " + STR(INT(psum * 10) / 10)
+      GUI.TEXT "Active: " + STR$(pcnt) + "/784  Energy: " + STR$(INT(psum * 10) / 10)
     ENDIF
     GUI.END
   ENDIF
@@ -212,7 +212,7 @@ DO WHILE running
   ' ── Status Bar ─────────────────────────────────────────────
   DIM sf = GUI.FLAG("NO_TITLEBAR") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("NO_MOVE") + GUI.FLAG("NO_SCROLLBAR")
   IF GUI.BEGIN("##status", 0, 695, 1280, 25, TRUE, sf) THEN
-    GUI.TEXT status_text + "  |  Frame: " + STR(frame)
+    GUI.TEXT status_text + "  |  Frame: " + STR$(frame)
   ENDIF
   GUI.END
 
@@ -312,7 +312,7 @@ DO WHILE running
 
   SCREENFLIP
   SLEEP 10
-  IF INKEY$() = CHR(27) THEN running = FALSE
+  IF INKEY$() = CHR$(27) THEN running = FALSE
 LOOP
 
 IF model_ok THEN AI.FREE model_id

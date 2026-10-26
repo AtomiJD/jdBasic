@@ -23,9 +23,9 @@ ENDFUNC
 
 ' The line with inline code, link targets and double-quoted text emptied.
 FUNC ProseOnly$(line$)
-    DIM t$ = REGEX.REPLACE("`[^`]*`", line$, "``")
-    t$ = REGEX.REPLACE("\]\([^)]*\)", t$, "](..)")
-    RETURN REGEX.REPLACE(CHR$(34) + "[^" + CHR$(34) + "]*" + CHR$(34), t$, CHR$(34) + CHR$(34))
+    DIM t$ = REGEX.REPLACE$("`[^`]*`", line$, "``")
+    t$ = REGEX.REPLACE$("\]\([^)]*\)", t$, "](..)")
+    RETURN REGEX.REPLACE$(CHR$(34) + "[^" + CHR$(34) + "]*" + CHR$(34), t$, CHR$(34) + CHR$(34))
 ENDFUNC
 
 ' The rules a line of prose breaks, as short reasons; empty when it is clean.

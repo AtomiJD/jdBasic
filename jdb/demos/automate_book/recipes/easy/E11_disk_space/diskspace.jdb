@@ -12,7 +12,7 @@ EXPORT MODULE DISKSPACE
 ' their total size. Hidden files and folders are left out.
 FUNC Walk(folder$, found)
     DIM total = 0
-    DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM names = FILE.LIST(PATH.JOIN$(folder$, "*"))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM full$ = PATH.JOIN$(folder$, names[k])
@@ -37,7 +37,7 @@ EXPORT FUNC SCAN(root$)
     DIM folders = []
     DIM loose = 0
     DIM total = 0
-    DIM names = DIR$(PATH.JOIN$(root$, "*"))
+    DIM names = FILE.LIST(PATH.JOIN$(root$, "*"))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM full$ = PATH.JOIN$(root$, names[k])

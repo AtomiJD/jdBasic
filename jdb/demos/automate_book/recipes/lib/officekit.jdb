@@ -36,7 +36,7 @@ EXPORT FUNC INSTALLED(prog_id$)
     DIM look$ = "[type]::GetTypeFromProgID('" + prog_id$ + "')"
     DIM ask$ = "if (" + look$ + ") { 'yes' }"
     DIM r = OS.EXEC("powershell", ["-NoProfile", "-Command", ask$])
-    RETURN INSTR(r{"OUTPUT"}, "yes") >= 0
+    RETURN INSTR(r{"output"}, "yes") >= 0
 ENDFUNC
 
 ' Makes an Office application that CREATEOBJECT started work without
@@ -146,7 +146,7 @@ EXPORT FUNC SHORT_DATE$()
     DIM key$ = "HKCU\Control Panel\International"
     DIM r = OS.EXEC("reg", ["query", key$, "/v", "sShortDate"])
     DIM found$ = "yyyy-MM-dd"
-    DIM rows = SPLIT(REPLACE$(r{"OUTPUT"}, CHR$(13), ""), CHR$(10))
+    DIM rows = SPLIT(REPLACE$(r{"output"}, CHR$(13), ""), CHR$(10))
     DIM k = 0
     FOR k = 0 TO LEN(rows) - 1
         DIM row$ = TRIM$(rows[k])
@@ -174,16 +174,16 @@ EXPORT FUNC LOCAL_DATE$(t, pattern$)
         out$ = out$ + DatePart$(t, c$, run)
         k = k + run
     LOOP
-    RETURN out$ + " " + FORMAT_DATE(t, "%H:%M")
+    RETURN out$ + " " + FORMAT_DATE$(t, "%H:%M")
 ENDFUNC
 
 ' One run of a date pattern, such as "yyyy", "MM" or "d", for a time;
 ' any other character as it is.
 FUNC DatePart$(t, c$, run)
-    IF c$ = "y" ANDALSO run >= 4 THEN RETURN FORMAT_DATE(t, "%Y")
-    IF c$ = "y" THEN RETURN FORMAT_DATE(t, "%y")
-    DIM m = VAL(FORMAT_DATE(t, "%m"))
-    DIM d = VAL(FORMAT_DATE(t, "%d"))
+    IF c$ = "y" ANDALSO run >= 4 THEN RETURN FORMAT_DATE$(t, "%Y")
+    IF c$ = "y" THEN RETURN FORMAT_DATE$(t, "%y")
+    DIM m = VAL(FORMAT_DATE$(t, "%m"))
+    DIM d = VAL(FORMAT_DATE$(t, "%d"))
     IF c$ = "M" ANDALSO run >= 2 THEN RETURN Two$(m)
     IF c$ = "M" THEN RETURN STR$(m)
     IF c$ = "d" ANDALSO run >= 2 THEN RETURN Two$(d)

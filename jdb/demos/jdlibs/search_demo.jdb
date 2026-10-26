@@ -11,7 +11,7 @@ DIM folder$ = "lib"
 IF NOT FILE.EXISTS(folder$ + "/README.md") THEN folder$ = "../../../lib"
 
 DIM ix = SEARCH.INDEX({"lang": "en", "fields": {"title": 3, "body": 1}})
-DIM pages = DIR$(folder$ + "/*_lib_readme.md")
+DIM pages = FILE.LIST(folder$ + "/*_lib_readme.md")
 DIM t0 = TICK()
 DIM i = 0
 FOR i = 0 TO LEN(pages) - 1

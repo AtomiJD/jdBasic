@@ -13,7 +13,7 @@ DIM fallback$ = "~/Documents/AutomateWork/journal/journal.md"
 DIM journal$ = WORKCONF.FOLDER$(cfg, key$ + "journal", fallback$)
 DIM summary_day = WORKCONF.VALUE(cfg, key$ + "summary_weekday", 5)
 DIM dry_run = WORKCONF.FLAG("dry-run")
-DIM today$ = FORMAT_DATE(NOW(), "%Y-%m-%d")
+DIM today$ = FORMAT_DATE$(NOW(), "%Y-%m-%d")
 
 DIM done$ = ""
 DIM tomorrow$ = ""

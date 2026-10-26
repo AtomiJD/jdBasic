@@ -249,7 +249,7 @@ ENDFUNC
 ' "2026-10-05 0930 Budget 2027.eml".
 EXPORT FUNC FILE_NAME$(mail)
     DIM t = CDBL(mail{"received"})
-    DIM day$ = FORMAT_DATE(t, "%Y-%m-%d %H%M")
+    DIM day$ = FORMAT_DATE$(t, "%Y-%m-%d %H%M")
     DIM subject$ = mail{"subject"}
     DIM keep$ = ""
     DIM k = 0

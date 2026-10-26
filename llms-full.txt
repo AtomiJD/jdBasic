@@ -7949,6 +7949,16 @@ number. `FORMAT_DATE$` accepts both and is the portable way to render one.
 
 Every map a builtin returns uses lower-case keys: `request{"body"}`, `OS.EXEC(..){"output"}`, `QR(m){"q"}`, `NODE.PEERS()[0]{"name"}`. For one release a read of the old upper-case key (`request{"BODY"}`) on such a map still finds the value and prints one warning; `tools/jdb-fix.jdb` rewrites the keys. A map the program builds keeps its keys exactly as written. The option maps builtins take (`OS.SPAWN`, `SVG.WRITEPNG`) accept keys in either case.
 
+#### Moving source to the new names
+
+`tools/jdb-fix.jdb` rewrites a file or a directory tree in place:
+
+```text
+jdbasic tools/jdb-fix.jdb [--dry-run] [--keys] [--quiet] path...
+```
+
+It rewrites old builtin names where they are called or taken as a funcref, handlers named by a string (`ON_GET("/", "Home")` becomes `ON_GET("/", Home@)`, `ON "TICK" CALL OnTick` becomes `... CALL OnTick@`) and, with `--keys`, the old upper-case keys of builtin maps that a program's own map is unlikely to share (`BODY`, `HEADERS`, `PARAMS`, `METHOD`, `PATH`, `OUTPUT`, `EXIT_CODE` and a few more). It reads the source token by token, so strings, comments and members stay as they are. `--dry-run` lists each change as `file:line: old -> new` and writes nothing.
+
 #### Old names
 
 These names still work for one release. A program that uses one runs as before; `--lint`, `jdb_check` and `-c` name each use with its new name, and `tools/jdb-fix.jdb` rewrites the source. `JDB.ALIASES()` returns this table.

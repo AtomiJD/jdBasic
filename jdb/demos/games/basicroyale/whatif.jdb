@@ -11,7 +11,7 @@
 ' that was cut short by an admin never had a played ending to begin with.
 IMPORT ARENA
 
-DIM cards = JSON.PARSE$(TXTREADER$("cards.json"))
+DIM cards = JSON.PARSE(TXTREADER$("cards.json"))
 DIM cards_fp$ = "?"
 TRY
     cards_fp$ = MID$(CODEC.SHA256$(TXTREADER$("cards.json")), 0, 12)
@@ -28,7 +28,7 @@ DIM recs = []
 FOR EACH ln$ IN SPLIT(raw$, CHR$(10))
     IF LEN(TRIM$(ln$)) > 2 THEN
         TRY
-            recs = APPEND(recs, [JSON.PARSE$(ln$)])
+            recs = APPEND(recs, [JSON.PARSE(ln$)])
         CATCH
         ENDTRY
     ENDIF

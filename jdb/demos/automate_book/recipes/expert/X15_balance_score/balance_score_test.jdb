@@ -138,7 +138,7 @@ DIM r = JDWEB.FETCH(port, "GET", "/")
 TESTKIT.EQ(r{"status"}, 200, "the page is served")
 TESTKIT.ISTRUE(INSTR(r{"body"}, "Balance score") >= 0, "the page")
 r = JDWEB.FETCH(port, "GET", "/data.json")
-DIM data = JSON.PARSE$(r{"body"})
+DIM data = JSON.PARSE(r{"body"})
 TESTKIT.EQ(LEN(data{"weeks"}), 8, "eight weeks as JSON")
 HTTP.SERVER.STOP()
 

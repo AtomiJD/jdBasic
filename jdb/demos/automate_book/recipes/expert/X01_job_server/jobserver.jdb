@@ -66,8 +66,8 @@ ENDFUNC
 ' Runs a command once; an exit code other than 0 is an error.
 FUNC Execute$(cmd)
     DIM r = OS.EXEC(cmd{"exe"}, cmd{"args"})
-    DIM code = r{"EXIT_CODE"}
-    DIM output$ = r{"OUTPUT"}
+    DIM code = r{"exit_code"}
+    DIM output$ = r{"output"}
     IF code = 0 THEN RETURN output$
     DIM last$ = LastLine$(output$)
     IF last$ = "" THEN THROW "exit " + STR$(code)

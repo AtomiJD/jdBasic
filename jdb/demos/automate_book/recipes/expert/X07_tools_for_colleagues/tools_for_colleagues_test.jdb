@@ -35,7 +35,7 @@ ENDFUNC
 
 FUNC Ran$(exe$)
     DIM r = OS.EXEC(exe$, [])
-    RETURN TRIM$(REPLACE$(r{"OUTPUT"}, CHR$(13), ""))
+    RETURN TRIM$(REPLACE$(r{"output"}, CHR$(13), ""))
 ENDFUNC
 
 TESTKIT.SUITE("names and versions")

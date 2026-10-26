@@ -79,7 +79,7 @@ DO
 
     CLS
     IF GUI.BEGIN("live", 0, 0, W, H) THEN
-        code$ = GUI.INPUT_MULTILINE("##code", code$, 0, H - 190)
+        code$ = GUI.INPUT_MULTILINE$("##code", code$, 0, H - 190)
 
         IF status_err THEN
             GUI.PUSH_STYLE_COLOR GUI.COL("TEXT"), [255, 110, 110, 255]

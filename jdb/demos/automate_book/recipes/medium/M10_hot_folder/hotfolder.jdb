@@ -87,7 +87,7 @@ EXPORT FUNC LOCK(path$, now, stale_minutes)
         DIM age = DATEDIFF("N", CDATE(since$), now)
         IF age < stale_minutes THEN RETURN FALSE
     ENDIF
-    TXTWRITER path$, FORMAT_DATE(now, "%Y-%m-%d %H:%M:%S")
+    TXTWRITER path$, FORMAT_DATE$(now, "%Y-%m-%d %H:%M:%S")
     RETURN TRUE
 ENDFUNC
 
@@ -102,7 +102,7 @@ ENDSUB
 ' and names that start with a dot.
 EXPORT FUNC PLAN(folder$, rules, settle_seconds, now)
     DIM jobs = []
-    DIM entries = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM entries = FILE.LIST(PATH.JOIN$(folder$, "*"))
     DIM k = 0
     FOR k = 0 TO LEN(entries) - 1
         DIM file_name$ = entries[k]
@@ -197,7 +197,7 @@ ENDFUNC
 ' of its target. A job that fails is logged and the rest go on.
 ' Answers the log lines.
 EXPORT FUNC APPLY(jobs, sep$, log$, now)
-    DIM stamp$ = FORMAT_DATE(now, "%Y-%m-%d %H:%M")
+    DIM stamp$ = FORMAT_DATE$(now, "%Y-%m-%d %H:%M")
     DIM lines = []
     DIM k = 0
     FOR k = 0 TO LEN(jobs) - 1

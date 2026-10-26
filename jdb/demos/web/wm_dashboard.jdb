@@ -165,14 +165,14 @@ ENDFUNC
 
 FUNC GET_SQUAD(tid$)
     IF MAP.EXISTS(gRoster, tid$) THEN RETURN gRoster{tid$}
-    DIM ath = JSON.PARSE$(HTTP.GET$(SITE$ + gLeague$ + "/teams/" + tid$ + "?enable=roster")){"team"}{"athletes"}
+    DIM ath = JSON.PARSE(HTTP.GET$(SITE$ + gLeague$ + "/teams/" + tid$ + "?enable=roster")){"team"}{"athletes"}
     gRoster{tid$} = ath
     RETURN ath
 ENDFUNC
 
 FUNC GET_SUMMARY(eid$)
     IF MAP.EXISTS(gSum, eid$) THEN RETURN gSum{eid$}
-    DIM sjj = JSON.PARSE$(HTTP.GET$(SITE$ + gLeague$ + "/summary?event=" + eid$))
+    DIM sjj = JSON.PARSE(HTTP.GET$(SITE$ + gLeague$ + "/summary?event=" + eid$))
     gSum{eid$} = sjj
     RETURN sjj
 ENDFUNC
@@ -574,14 +574,14 @@ ENDSUB
 
 ' periodic refresh: re-pull the scoreboard and re-fetch every live summary
 SUB REFRESH_LIVE()
-    DIM scj = JSON.PARSE$(HTTP.GET$(SITE$ + gLeague$ + "/scoreboard" + DATESPAN$()))
+    DIM scj = JSON.PARSE(HTTP.GET$(SITE$ + gLeague$ + "/scoreboard" + DATESPAN$()))
     DIM ev = scj{"events"}
     IF NOT ISNONE(ev) THEN gSched = ev
     DIM i
     FOR i = 0 TO LEN(gSched) - 1
         IF IS_LIVE(gSched[i]) THEN
             DIM eid$ = TXT$(gSched[i]{"id"})
-            gSum{eid$} = JSON.PARSE$(HTTP.GET$(SITE$ + gLeague$ + "/summary?event=" + eid$))
+            gSum{eid$} = JSON.PARSE(HTTP.GET$(SITE$ + gLeague$ + "/summary?event=" + eid$))
         ENDIF
     NEXT i
     BUILD_SCORERS()
@@ -672,7 +672,7 @@ ENDSUB
 FUNC GET_ODDS(eid$)
     DIM key$ = "odds" + eid$
     IF MAP.EXISTS(gSum, key$) THEN RETURN gSum{key$}
-    DIM oj = JSON.PARSE$(HTTP.GET$(CORE$ + gLeague$ + "/events/" + eid$ + "/competitions/" + eid$ + "/odds")){"items"}
+    DIM oj = JSON.PARSE(HTTP.GET$(CORE$ + gLeague$ + "/events/" + eid$ + "/competitions/" + eid$ + "/odds")){"items"}
     DIM res AS MAP
     IF NOT ISNONE(oj) ANDALSO LEN(oj) > 0 THEN res = oj[0]
     gSum{key$} = res
@@ -740,7 +740,7 @@ SUB LOAD_LEAGUE(lg$, isclub)
     gSelTeam$ = ""
 
     SPLASH "Lade Tabellen...", 0.15
-    DIM sj = JSON.PARSE$(HTTP.GET$(V2$ + lg$ + "/standings"))
+    DIM sj = JSON.PARSE(HTTP.GET$(V2$ + lg$ + "/standings"))
     gStand = sj{"children"}
     IF ISNONE(gStand) THEN gStand = []
     DIM gi
@@ -762,11 +762,11 @@ SUB LOAD_LEAGUE(lg$, isclub)
         NEXT j
     NEXT gi
     SPLASH "Lade Spielplan...", 0.3
-    DIM scj = JSON.PARSE$(HTTP.GET$(SITE$ + lg$ + "/scoreboard" + DATESPAN$()))
+    DIM scj = JSON.PARSE(HTTP.GET$(SITE$ + lg$ + "/scoreboard" + DATESPAN$()))
     gSched = scj{"events"}
     IF ISNONE(gSched) THEN gSched = []
     SPLASH "Lade Nachrichten...", 0.32
-    gNews = JSON.PARSE$(HTTP.GET$(SITE$ + lg$ + "/news")){"articles"}
+    gNews = JSON.PARSE(HTTP.GET$(SITE$ + lg$ + "/news")){"articles"}
     IF ISNONE(gNews) THEN gNews = []
     BUILD_SCORERS()
     DIM pf

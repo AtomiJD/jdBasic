@@ -20,7 +20,7 @@ EXPORT FUNC PLAN(folder$, out_dir$, programs)
     IF NOT FILE.ISDIR(folder$) THEN RETURN out
     DIM target$ = out_dir$
     IF target$ = "" THEN target$ = folder$
-    DIM names = SORT(DIR$(PATH.JOIN$(folder$, "*")))
+    DIM names = SORT(FILE.LIST(PATH.JOIN$(folder$, "*")))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM file_name$ = names[k]

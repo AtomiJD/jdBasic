@@ -7,7 +7,7 @@
 ' --- FILE I/O ---
 EXPORT SUB LOADCONFIG(filename$)
     TRY
-        CONFIG = JSON.PARSE$(TXTREADER$(filename$))
+        CONFIG = JSON.PARSE(TXTREADER$(filename$))
         PRINT "Configuration loaded from " + filename$
     CATCH
         PRINT "Error loading file: " + ERRMSG$
@@ -301,7 +301,7 @@ DO
             GUI.TABLE_NEXT_COLUMN
             GUI.SET_NEXT_ITEM_WIDTH 180
             oldPat$ = Tracks[i].Pattern
-            Tracks[i].Pattern = GUI.INPUT("##Pat", Tracks[i].Pattern)
+            Tracks[i].Pattern = GUI.INPUT$("##Pat", Tracks[i].Pattern)
             ' Apply if user pressed Enter or clicked away
             IF GUI.ITEM_DEACTIVATED_AFTER_EDIT() THEN
                 ApplyTrack(i)

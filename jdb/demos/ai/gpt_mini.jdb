@@ -19,7 +19,7 @@ FUNC CHAT$(USER_PROMPT$)
     ENDIF
     PRINT 
     ' Parse the response
-    RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
+    RESPONSE_JSON = JSON.PARSE(RESPONSE$)
     RETURN RESPONSE_JSON{"choices"}[0]{"message"}{"content"}
 ENDFUNC
 

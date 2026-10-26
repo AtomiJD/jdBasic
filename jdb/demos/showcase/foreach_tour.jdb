@@ -43,7 +43,7 @@ PRINT "  " + word$ + " has " + STR$(LEN(-word$)) + " characters: " + spelled$
 PRINT ""
 
 DIM q$ = CHR$(34)
-DIM order = JSON.PARSE$("{" + q$ + "id" + q$ + ": 7, " + q$ + "customer" + q$ + ": " + q$ + "Ada" + q$ + ", " + q$ + "items" + q$ + ": [" + q$ + "tea" + q$ + ", " + q$ + "cake" + q$ + "]}")
+DIM order = JSON.PARSE("{" + q$ + "id" + q$ + ": 7, " + q$ + "customer" + q$ + ": " + q$ + "Ada" + q$ + ", " + q$ + "items" + q$ + ": [" + q$ + "tea" + q$ + ", " + q$ + "cake" + q$ + "]}")
 PRINT "A parsed JSON order"
 FOR EACH field IN order
     PRINT "  field " + field

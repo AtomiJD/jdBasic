@@ -49,7 +49,7 @@ TESTKIT.EQ(TXTREADER$(PATH.JOIN$(folder$, day$ + " scan 4711 (2).pdf")), "a", "t
 TESTKIT.EQ(TXTREADER$(PATH.JOIN$(folder$, day$ + " scan 4711.pdf")), "taken", "the file that had the name is untouched")
 TESTKIT.EQ(LEN(RENAMER.PLAN(folder$, pat$, ["pdf"])), 0, "a second run finds nothing")
 
-DIM left = DIR$(PATH.JOIN$(folder$, "*"))
+DIM left = FILE.LIST(PATH.JOIN$(folder$, "*"))
 DIM k = 0
 FOR k = 0 TO LEN(left) - 1
     DIM p$ = PATH.JOIN$(folder$, left[k])

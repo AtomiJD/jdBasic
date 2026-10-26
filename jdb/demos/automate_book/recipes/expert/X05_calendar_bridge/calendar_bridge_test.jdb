@@ -42,7 +42,7 @@ FUNC DeviceCode(request)
 ENDFUNC
 
 FUNC Token(request)
-    DIM body$ = request{"BODY"}
+    DIM body$ = request{"body"}
     IF INSTR(body$, "device_code=dev-1") >= 0 THEN
         RETURN JDWEB.REPLY_JSON(Tokens())
     ENDIF
@@ -67,7 +67,7 @@ FUNC Row(id$, subject$, start$, end$, show$, sens$)
 ENDFUNC
 
 FUNC Authorized(request)
-    DIM headers = request{"HEADERS"}
+    DIM headers = request{"headers"}
     DIM names = MAP.KEYS(headers)
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1

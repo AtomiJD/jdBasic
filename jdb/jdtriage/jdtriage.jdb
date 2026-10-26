@@ -13,13 +13,13 @@ OPTION STRICT
 ' ── Template engine: mask the variable bits so near-identical lines collapse ──
 FUNC JT_NORM$(s$)
 	DIM t$ = s$
-	t$ = REGEX.REPLACE("\d{4}-\d{2}-\d{2}[ T,]\d{2}:\d{2}:\d{2}([:.]\d+)?", t$, "<ts>")
-	t$ = REGEX.REPLACE("\d{2}:\d{2}:\d{2}([:.]\d+)?", t$, "<ts>")
-	t$ = REGEX.REPLACE("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", t$, "<uuid>")
-	t$ = REGEX.REPLACE("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", t$, "<ip>")
-	t$ = REGEX.REPLACE("0x[0-9a-fA-F]+", t$, "<hex>")
-	t$ = REGEX.REPLACE("/[\w./\-]+", t$, "<path>")
-	t$ = REGEX.REPLACE("\d+", t$, "<n>")
+	t$ = REGEX.REPLACE$("\d{4}-\d{2}-\d{2}[ T,]\d{2}:\d{2}:\d{2}([:.]\d+)?", t$, "<ts>")
+	t$ = REGEX.REPLACE$("\d{2}:\d{2}:\d{2}([:.]\d+)?", t$, "<ts>")
+	t$ = REGEX.REPLACE$("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", t$, "<uuid>")
+	t$ = REGEX.REPLACE$("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", t$, "<ip>")
+	t$ = REGEX.REPLACE$("0x[0-9a-fA-F]+", t$, "<hex>")
+	t$ = REGEX.REPLACE$("/[\w./\-]+", t$, "<path>")
+	t$ = REGEX.REPLACE$("\d+", t$, "<n>")
 	RETURN t$
 ENDFUNC
 

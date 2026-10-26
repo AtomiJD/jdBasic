@@ -58,7 +58,7 @@ TESTKIT.EQ(BUTLER.APPLY(moves, FALSE), 3, "the real run moves three files")
 TESTKIT.ISTRUE(FILE.EXISTS(ToOf$(moves, "Rechnung Müller.PDF")), "the document is in its folder")
 TESTKIT.EQ(TXTREADER$(PATH.JOIN$(busy$, "holiday (2).jpg")), "jpg", "the image under its new name")
 TESTKIT.EQ(TXTREADER$(PATH.JOIN$(busy$, "holiday.jpg")), "older", "the file that was there is untouched")
-TESTKIT.EQ(JOIN(SORT(DIR$(PATH.JOIN$(source$, "*"))), "|"), "Project files|big video.mp4.crdownload", "only the folder and the partial download remain")
+TESTKIT.EQ(JOIN(SORT(FILE.LIST(PATH.JOIN$(source$, "*"))), "|"), "Project files|big video.mp4.crdownload", "only the folder and the partial download remain")
 TESTKIT.EQ(LEN(BUTLER.PLAN(source$, target$, rules, 24, later)), 0, "a second run finds nothing to do")
 
 KILL ToOf$(moves, "Rechnung Müller.PDF")

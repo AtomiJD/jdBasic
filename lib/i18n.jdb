@@ -176,7 +176,7 @@ ENDFUNC
 EXPORT FUNC LOADTEXT(locale$, text$, fmt$)
     DIM kind$ = LCASE$(TRIM$(fmt$))
     IF kind$ = "json" THEN
-        DIM parsed = JSON.PARSE$(text$)
+        DIM parsed = JSON.PARSE(text$)
         RETURN CLNG(Walk(NORMALIZE$(locale$), "", parsed))
     ENDIF
     IF kind$ = "yaml" ORELSE kind$ = "yml" THEN

@@ -10,7 +10,7 @@ SUB HandleKeys(data)
     ExitMe = TRUE
 ENDSUB
 
-ON "KEYDOWN" CALL HandleKeys
+ON "KEYDOWN" CALL HandleKeys@
 
 FUNC HandleRoot(request)
     ' Create a response map using literal syntax
@@ -50,7 +50,7 @@ FUNC HandleData(request)
     ' The request body is passed as a string.
     ' Use the built-in JSON parser to convert it into a navigable object.
     print typeof(request), request
-    posted_data = JSON.PARSE$(request{"body"})
+    posted_data = JSON.PARSE(request{"body"})
     
     ' Create a response map to echo the received data
     response = { "status": "success", "data_received": posted_data  }
@@ -63,8 +63,8 @@ PRINT "Setting up HTTP server..."
 
 ' Register the handler functions for specific routes.
 ' The second argument is a string containing the exact function name.
-HTTP.SERVER.ON_GET "/", "HandleRoot"
-HTTP.SERVER.ON_POST "/data", "HandleData"
+HTTP.SERVER.ON_GET "/", HandleRoot@
+HTTP.SERVER.ON_POST "/data", HandleData@
 
 ' Start the server on port 8080
 IF HTTP.SERVER.START(8080) THEN

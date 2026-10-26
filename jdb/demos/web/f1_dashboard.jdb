@@ -243,7 +243,7 @@ FUNC GETJ(url$)
     DIM attempt
     FOR attempt = 1 TO 3
         DIM body$ = HTTP.GET$(url$)
-        IF LEN(body$) > 1 ANDALSO LEFT$(body$, 1) = "[" THEN RETURN JSON.PARSE$(body$)
+        IF LEN(body$) > 1 ANDALSO LEFT$(body$, 1) = "[" THEN RETURN JSON.PARSE(body$)
         SLEEP 400 * attempt
     NEXT attempt
     RETURN []

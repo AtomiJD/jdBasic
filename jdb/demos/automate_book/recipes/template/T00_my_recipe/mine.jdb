@@ -13,7 +13,7 @@ EXPORT MODULE MINE
 ' and "age" in days. Folders inside the folder are left out.
 EXPORT FUNC PLAN(folder$, days, now)
     DIM out = []
-    DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM names = FILE.LIST(PATH.JOIN$(folder$, "*"))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM path$ = PATH.JOIN$(folder$, names[k])

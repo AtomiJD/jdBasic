@@ -228,7 +228,7 @@ ENDSUB
 ' Reads one back, each entry with the time it had left when it was
 ' written. An entry that had already run out is dropped.
 EXPORT FUNC LOAD(path$, opts = 0)
-    DIM raw = JSON.PARSE$(TXTREADER$(path$))
+    DIM raw = JSON.PARSE(TXTREADER$(path$))
     DIM settings AS MAP
     settings{"max"} = raw{"max"}
     settings{"ttl"} = raw{"ttl"}

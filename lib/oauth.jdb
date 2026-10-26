@@ -144,7 +144,7 @@ ENDSUB
 SUB TakeTokens(client, body$, grant$)
     DIM parsed = 0
     TRY
-        parsed = JSON.PARSE$(body$)
+        parsed = JSON.PARSE(body$)
     CATCH
         THROW "OAUTH: the token endpoint answered no JSON: " + LEFT$(body$, 200)
     ENDTRY
@@ -399,7 +399,7 @@ ENDFUNC
 ' Puts the redirect handler on a path of the server; LOGIN does it itself.
 EXPORT SUB MOUNT(route$ = "/callback")
     IF gMounted$ <> route$ THEN
-        HTTP.SERVER.ON_GET(route$, "OAUTH.CALLBACK")
+        HTTP.SERVER.ON_GET(route$, OAUTH.CALLBACK@)
         gMounted$ = route$
     ENDIF
 ENDSUB
@@ -465,7 +465,7 @@ EXPORT FUNC DEVICESTART(client, scope_text$ = "")
     DIM body$ = AsText$(body)
     DIM parsed = 0
     TRY
-        parsed = JSON.PARSE$(body$)
+        parsed = JSON.PARSE(body$)
     CATCH
         THROW "OAUTH: the device endpoint answered no JSON: " + LEFT$(body$, 200)
     ENDTRY
@@ -518,7 +518,7 @@ EXPORT FUNC DEVICEPOLL(client, max_seconds = 900)
         ENDIF
         DIM reason$ = ""
         TRY
-            DIM parsed = JSON.PARSE$(body$)
+            DIM parsed = JSON.PARSE(body$)
             IF MAP.EXISTS(parsed, "error") THEN
                 DIM err_value = parsed{"error"}
                 reason$ = AsText$(err_value)

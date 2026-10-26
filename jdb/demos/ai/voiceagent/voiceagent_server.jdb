@@ -100,7 +100,7 @@ FUNC brainReply$(callSid$, userText$)
     DIM t0 = TICK()
     TRY
         DIM resp$ = HTTP.POST$(gBrainUrl$, body$, "application/json")
-        DIM o = JSON.PARSE$(resp$)
+        DIM o = JSON.PARSE(resp$)
         DIM ch = o{"choices"}
         IF TYPEOF(ch) <> "NONE" THEN
             DIM c$ = ch[0]{"message"}{"content"}
@@ -152,7 +152,7 @@ FUNC HandleVoice(request)
 ENDFUNC
 
 FUNC HandleGather(request)
-    DIM params = request{"PARAMS"}
+    DIM params = request{"params"}
     DIM speech$ = paramVal$(params, "SpeechResult")
     DIM callSid$ = paramVal$(params, "CallSid")
     logLine("/gather call=" + callSid$ + "  heard=" + speech$)
@@ -173,7 +173,7 @@ ENDFUNC
 DIM gLocale$ = GETENV$("VA_LOCALE")
 IF gLocale$ = "" THEN gLocale$ = "de"
 DIM gRaw$ = TXTREADER$(gPromptsPath$)
-DIM gAll = JSON.PARSE$(gRaw$)
+DIM gAll = JSON.PARSE(gRaw$)
 DIM gLocs = gAll{"locales"}
 DIM gPr = gLocs{gLocale$}
 IF TYPEOF(gPr) = "NONE" THEN gPr = gLocs{gAll{"default_locale"}}
@@ -196,11 +196,11 @@ ELSE
     SQL.EXEC(gDb, "CREATE INDEX IF NOT EXISTS idx_turns_call ON turns(call_sid, seq)")
 ENDIF
 
-HTTP.SERVER.ON_POST("/voice", "HANDLEVOICE")
-HTTP.SERVER.ON_GET("/voice", "HANDLEVOICE")
-HTTP.SERVER.ON_POST("/gather", "HANDLEGATHER")
-HTTP.SERVER.ON_GET("/gather", "HANDLEGATHER")
-HTTP.SERVER.ON_GET("/health", "HANDLEHEALTH")
+HTTP.SERVER.ON_POST("/voice", HANDLEVOICE@)
+HTTP.SERVER.ON_GET("/voice", HANDLEVOICE@)
+HTTP.SERVER.ON_POST("/gather", HANDLEGATHER@)
+HTTP.SERVER.ON_GET("/gather", HANDLEGATHER@)
+HTTP.SERVER.ON_GET("/health", HANDLEHEALTH@)
 
 IF HTTP.SERVER.START(gPort, gBind$) THEN
     logLine("Voice agent on " + gBind$ + ":" + STR$(gPort) + " locale=" + gLocale$ + " voice=" + gVoice$)

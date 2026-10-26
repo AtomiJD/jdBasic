@@ -96,7 +96,7 @@ SUB HighlightJdBasic(line$)
         ENDIF
 
         ' 3. Tokenize based on common delimiters
-        IF INSTR$("=+-*/\^()[]{},<> ", char$) >= 0 THEN
+        IF INSTR("=+-*/\^()[]{},<> ", char$) >= 0 THEN
             PrintToken(buffer$) ' Delimiter found, process the buffer
             buffer$ = ""
             COLOR COLOR_JDB_DEFAULT, 0 ' Color for operators/delimiters
@@ -146,10 +146,10 @@ SUB ProcessInlines(line$)
     code_end$ = cesc_m(Style.Positive)
 
     ' The order is important to correctly handle nested styles.
-    line$ = REGEX.REPLACE("\*\*\*([^*]+)\*\*\*", line$, bold_italic_start$ + "$1" + bold_italic_end$) ' 1. Bold + Italic (***...***)
-    line$ = REGEX.REPLACE("\*\*([^*]+)\*\*", line$, bold_start$ + "$1" + bold_end$) ' 2. Bold (**...**)
-    line$ = REGEX.REPLACE("\*([^*]+)\*", line$, italic_start$ + "$1" + italic_end$) ' 3. Italic (*...*)
-    line$ = REGEX.REPLACE("`([^`]+)`", line$, code_start$ + "$1" + code_end$)       ' 4. Inline Code (`...`)
+    line$ = REGEX.REPLACE$("\*\*\*([^*]+)\*\*\*", line$, bold_italic_start$ + "$1" + bold_italic_end$) ' 1. Bold + Italic (***...***)
+    line$ = REGEX.REPLACE$("\*\*([^*]+)\*\*", line$, bold_start$ + "$1" + bold_end$) ' 2. Bold (**...**)
+    line$ = REGEX.REPLACE$("\*([^*]+)\*", line$, italic_start$ + "$1" + italic_end$) ' 3. Italic (*...*)
+    line$ = REGEX.REPLACE$("`([^`]+)`", line$, code_start$ + "$1" + code_end$)       ' 4. Inline Code (`...`)
 
     PRINT line$ ' Print the processed line with embedded ANSI codes.
 ENDSUB
@@ -229,7 +229,7 @@ SUB RenderMarkdown(markdown_text$)
             
         ' Unordered List (*, -, +)
         ELSEIF REGEX.MATCH("^\s*[*+-]\s+", trimmed_line$) THEN
-            list_text$ = REGEX.REPLACE("^\s*[*+-]\s+", trimmed_line$, "")
+            list_text$ = REGEX.REPLACE$("^\s*[*+-]\s+", trimmed_line$, "")
             COLOR COLOR_LIST, 0
             PRINT "  • ";
             ProcessInlines(list_text$)

@@ -77,7 +77,7 @@ ENDFUNC
 
 ' The saved mails of inbox$ not yet in the seen list, sorted by name.
 EXPORT FUNC PENDING(inbox$, seen)
-    DIM names = SORT(DIR$(PATH.JOIN$(inbox$, "*.eml")))
+    DIM names = SORT(FILE.LIST(PATH.JOIN$(inbox$, "*.eml")))
     DIM out = []
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
@@ -156,7 +156,7 @@ ENDFUNC
 ' The drafts the person approved and filled in, as file names. A
 ' draft that still holds [CHECK] waits for the person.
 EXPORT FUNC APPROVED(drafts$)
-    DIM names = SORT(DIR$(PATH.JOIN$(drafts$, "*.txt")))
+    DIM names = SORT(FILE.LIST(PATH.JOIN$(drafts$, "*.txt")))
     DIM out = []
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1

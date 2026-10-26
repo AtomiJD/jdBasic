@@ -46,7 +46,7 @@ DO
     CLS 0, 0, 0
 
     ' Input
-    ev = GFX.POLLEVENT()
+    ev = GFX.POLLEVENT$()
     IF ev{"type"} = "QUIT" THEN EXITDO
     IF ev{"type"} = "KEYDOWN" AND ev{"key"} = "Escape" THEN EXITDO
 

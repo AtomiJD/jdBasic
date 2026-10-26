@@ -45,9 +45,9 @@ FUNC HANDLECARDS(request)
     RETURN gModel
 ENDFUNC
 
-HTTP.SERVER.ON_GET "/", "HANDLEROOT"
-HTTP.SERVER.ON_GET "/frag", "HANDLEFRAG"
-HTTP.SERVER.ON_GET "/api/cards", "HANDLECARDS"
+HTTP.SERVER.ON_GET "/", HANDLEROOT@
+HTTP.SERVER.ON_GET "/frag", HANDLEFRAG@
+HTTP.SERVER.ON_GET "/api/cards", HANDLECARDS@
 
 DIM warm$ = TMPL.RENDER$(gPage$, gModel)
 PRINT "cache warmed ("; LEN(warm$); " bytes), parses="; TMPL.COMPILES()

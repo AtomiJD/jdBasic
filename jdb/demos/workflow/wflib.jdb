@@ -18,7 +18,7 @@ EXPORT FUNC get_ngrok_url()
         RESPONSE$ = HTTP.GET$(API_URL$)
 
         ' 2. Parse the JSON string into a navigable JsonObject.
-        RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
+        RESPONSE_JSON = JSON.PARSE(RESPONSE$)
 
         ' 3. Check if the object exist before access.
         IF LEN(RESPONSE_JSON) = 0 THEN

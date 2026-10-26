@@ -1507,7 +1507,7 @@ last_ms = TICK()
 ' ==================== main loop ====================
 
 DO WHILE running = 1
-    ev$ = GFX.POLLEVENT()
+    ev$ = GFX.POLLEVENT$()
     IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN running = 0
     IF ev$ = "KEYDOWN:F" THEN TOGGLE_FULLSCREEN
     IF ev$ = "KEYDOWN:G" THEN debug_axes = NOT debug_axes

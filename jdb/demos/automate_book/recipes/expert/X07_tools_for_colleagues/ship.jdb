@@ -41,8 +41,8 @@ EXPORT FUNC BUILD(jdbasic$, program$, stage$)
     DIM exe$ = PATH.JOIN$(stage$, NAME$(program$) + ".exe")
     IF FILE.EXISTS(exe$) THEN KILL exe$
     DIM r = OS.EXEC(jdbasic$, ["-c", "-o", exe$, program$])
-    DIM text$ = TRIM$(REPLACE$(r{"OUTPUT"}, CHR$(13), ""))
-    out{"ok"} = r{"EXIT_CODE"} = 0 ANDALSO FILE.EXISTS(exe$)
+    DIM text$ = TRIM$(REPLACE$(r{"output"}, CHR$(13), ""))
+    out{"ok"} = r{"exit_code"} = 0 ANDALSO FILE.EXISTS(exe$)
     out{"exe"} = exe$
     out{"stage"} = stage$
     out{"output"} = text$
@@ -53,7 +53,7 @@ ENDFUNC
 EXPORT SUB STAMP(stage$, name$, version$, built)
     DIM t$ = "name = " + gQ$ + name$ + gQ$ + gLF$
     t$ = t$ + "version = " + gQ$ + version$ + gQ$ + gLF$
-    DIM when$ = FORMAT_DATE(built, "%Y-%m-%d %H:%M")
+    DIM when$ = FORMAT_DATE$(built, "%Y-%m-%d %H:%M")
     t$ = t$ + "built = " + gQ$ + when$ + gQ$ + gLF$
     TXTWRITER PATH.JOIN$(stage$, "version.toml"), t$
 ENDSUB
@@ -77,7 +77,7 @@ EXPORT FUNC PACKAGE(stage$, release$, name$, version$)
     DIM dest$ = PATH.JOIN$(release$, dir_name$)
     IF FILE.ISDIR(dest$) THEN THROW dir_name$ + " is already released"
     MKDIR dest$
-    DIM names = SORT(DIR$(PATH.JOIN$(stage$, "*")))
+    DIM names = SORT(FILE.LIST(PATH.JOIN$(stage$, "*")))
     DIM list = []
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
@@ -200,7 +200,7 @@ EXPORT FUNC UPDATE(source$, target$, dry_run)
     MKDIR target$
     DIM keep$ = PATH.JOIN$(target$, "previous")
     MKDIR keep$
-    DIM old = DIR$(PATH.JOIN$(target$, "*"))
+    DIM old = FILE.LIST(PATH.JOIN$(target$, "*"))
     DIM k = 0
     FOR k = 0 TO LEN(old) - 1
         DIM old_name$ = old[k]
@@ -209,7 +209,7 @@ EXPORT FUNC UPDATE(source$, target$, dry_run)
             FILE.COPY(old_path$, PATH.JOIN$(keep$, old_name$), TRUE)
         ENDIF
     NEXT k
-    DIM names = DIR$(PATH.JOIN$(temp$, "*"))
+    DIM names = FILE.LIST(PATH.JOIN$(temp$, "*"))
     FOR k = 0 TO LEN(names) - 1
         DIM new_name$ = names[k]
         DIM new_path$ = PATH.JOIN$(temp$, new_name$)

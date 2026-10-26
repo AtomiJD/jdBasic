@@ -19,14 +19,14 @@ DIM gUploads = 0
 ' ── the service ────────────────────────────────────────────────
 
 FUNC Authorised(request)
-    DIM headers = request{"HEADERS"}
+    DIM headers = request{"headers"}
     IF NOT MAP.EXISTS(headers, "authorization") THEN RETURN FALSE
     RETURN headers{"authorization"} = "Bearer demo-token"
 ENDFUNC
 
 FUNC HANDLE_ITEMS(request)
     IF NOT Authorised(request) THEN RETURN {"__http_status": 401, "__http_body": JSON.STRINGIFY$({"error": "no token"})}
-    DIM params = request{"PARAMS"}
+    DIM params = request{"params"}
     DIM min_qty = 0
     IF MAP.EXISTS(params, "min_qty") THEN min_qty = VAL(params{"min_qty"})
     DIM out = []
@@ -39,7 +39,7 @@ ENDFUNC
 
 FUNC HANDLE_CREATE(request)
     IF NOT Authorised(request) THEN RETURN {"__http_status": 401, "__http_body": JSON.STRINGIFY$({"error": "no token"})}
-    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM body = JSON.PARSE(request{"body"})
     IF TYPEOF(body) <> "OBJECT" ORELSE NOT MAP.EXISTS(body, "name") THEN
         RETURN {"__http_status": 400, "__http_body": JSON.STRINGIFY$({"error": "name is required"})}
     ENDIF
@@ -50,7 +50,7 @@ ENDFUNC
 
 FUNC HANDLE_LOGIN(request)
     DIM fields = REQ.QUERY$({})
-    DIM body$ = request{"BODY"}
+    DIM body$ = request{"body"}
     IF INSTR(body$, "user=ann") >= 0 ANDALSO INSTR(body$, "pass=secret") >= 0 THEN
         RETURN {"__http_status": 200, "__http_body": "welcome ann", "__http_headers": {"Set-Cookie": "session=s3ss10n; Path=/; HttpOnly"}}
     ENDIF
@@ -58,7 +58,7 @@ FUNC HANDLE_LOGIN(request)
 ENDFUNC
 
 FUNC HANDLE_PROFILE(request)
-    DIM headers = request{"HEADERS"}
+    DIM headers = request{"headers"}
     DIM cookie$ = ""
     IF MAP.EXISTS(headers, "cookie") THEN cookie$ = headers{"cookie"}
     IF INSTR(cookie$, "session=s3ss10n") < 0 THEN RETURN {"__http_status": 401, "__http_body": "log in first"}
@@ -67,7 +67,7 @@ ENDFUNC
 
 FUNC HANDLE_UPLOAD(request)
     gUploads = gUploads + 1
-    DIM ct$ = request{"HEADERS"}{"content-type"}
+    DIM ct$ = request{"headers"}{"content-type"}
     RETURN {"received": gUploads, "content_type": LEFT$(ct$, 19)}
 ENDFUNC
 
@@ -77,12 +77,12 @@ FUNC HANDLE_FLAKY(request)
     RETURN {"ready": TRUE, "after": gFlaky}
 ENDFUNC
 
-HTTP.SERVER.ON_GET("/items", "HANDLE_ITEMS")
-HTTP.SERVER.ON_POST("/items", "HANDLE_CREATE")
-HTTP.SERVER.ON_POST("/login", "HANDLE_LOGIN")
-HTTP.SERVER.ON_GET("/profile", "HANDLE_PROFILE")
-HTTP.SERVER.ON_POST("/upload", "HANDLE_UPLOAD")
-HTTP.SERVER.ON_GET("/flaky", "HANDLE_FLAKY")
+HTTP.SERVER.ON_GET("/items", HANDLE_ITEMS@)
+HTTP.SERVER.ON_POST("/items", HANDLE_CREATE@)
+HTTP.SERVER.ON_POST("/login", HANDLE_LOGIN@)
+HTTP.SERVER.ON_GET("/profile", HANDLE_PROFILE@)
+HTTP.SERVER.ON_POST("/upload", HANDLE_UPLOAD@)
+HTTP.SERVER.ON_GET("/flaky", HANDLE_FLAKY@)
 IF NOT HTTP.SERVER.START(PORT) THEN
     PRINT "port "; PORT; " is taken"
     END 1

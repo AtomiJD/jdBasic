@@ -86,7 +86,7 @@ IF send_alerts THEN
     ENDIF
 ENDIF
 IF NOT sent THEN
-    DIM stamp$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H%M%S")
+    DIM stamp$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H%M%S")
     DIM eml$ = "alert " + stamp$ + ".eml"
     DIM put$ = OUTBOX.PUT$(msg, cfg, eml$)
     PRINT "In the outbox: "; eml$

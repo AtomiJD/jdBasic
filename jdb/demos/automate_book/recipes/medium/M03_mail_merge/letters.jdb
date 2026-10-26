@@ -61,7 +61,7 @@ ENDFUNC
 ' A file name from the pattern, without characters Windows forbids.
 EXPORT FUNC FILE_NAME$(pattern$, person)
     DIM t$ = TRIM$(FILL$(pattern$, person))
-    t$ = REGEX.REPLACE("[<>:\x22/\\|?*]", t$, "_")
+    t$ = REGEX.REPLACE$("[<>:\x22/\\|?*]", t$, "_")
     IF t$ = "" THEN t$ = "letter"
     RETURN t$ + ".docx"
 ENDFUNC

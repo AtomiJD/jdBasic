@@ -7,7 +7,7 @@
 IMPORT ARENA
 
 TRY
-    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+    ARENA.SETCARDS(JSON.PARSE(TXTREADER$("cards.json")))
 CATCH
 ENDTRY
 
@@ -35,7 +35,7 @@ DIM recs = []
 FOR EACH ln$ IN lines_all
     IF LEN(TRIM$(ln$)) > 2 THEN
         TRY
-            recs = APPEND(recs, [JSON.PARSE$(ln$)])
+            recs = APPEND(recs, [JSON.PARSE(ln$)])
         CATCH
         ENDTRY
     ENDIF

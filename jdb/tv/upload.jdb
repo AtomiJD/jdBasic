@@ -35,7 +35,7 @@ FUNC LoadEnv()
         DIM ln$ = TRIM$(lines[li])
         IF LEN(ln$) = 0 THEN CONTINUEFOR
         IF LEFT$(ln$, 1) = "#" THEN CONTINUEFOR
-        DIM eq = INSTR$(ln$, "=")
+        DIM eq = INSTR(ln$, "=")
         IF eq < 1 THEN CONTINUEFOR
         DIM k$ = TRIM$(LEFT$(ln$, eq))
         DIM v$ = TRIM$(MID$(ln$, eq + 1))
@@ -51,7 +51,7 @@ FUNC LoadDefaults(path$)
         END
     ENDIF
     DIM raw$ = TXTREADER$(path$)
-    RETURN JSON.PARSE$(raw$)
+    RETURN JSON.PARSE(raw$)
 ENDFUNC
 
 ' ── Markdown parser (frontmatter + body) ─────────────────────────
@@ -108,7 +108,7 @@ FUNC ParseMd(path$)
             ENDIF
         ENDIF
         IF in_fm = 1 THEN
-            DIM eq = INSTR$(ln$, ":")
+            DIM eq = INSTR(ln$, ":")
             IF eq < 1 THEN CONTINUEFOR
             DIM k$ = LCASE$(TRIM$(LEFT$(ln$, eq)))
             DIM v$ = TRIM$(MID$(ln$, eq + 1))
@@ -301,7 +301,7 @@ SUB AddToPlaylist(marker_path$, defaults)
         PRINT "  (no marker, skipping playlist add)"
         RETURN
     ENDIF
-    DIM body = JSON.PARSE$(TXTREADER$(marker_path$))
+    DIM body = JSON.PARSE(TXTREADER$(marker_path$))
     IF NOT MAP.EXISTS(body, "id") THEN
         PRINT "  (marker has no 'id' field, skipping playlist add)"
         RETURN
@@ -311,11 +311,11 @@ SUB AddToPlaylist(marker_path$, defaults)
     PRINT "  appending " + vid$ + " to playlist " + pid$
     DIM cmd$ = "python helpers\yt_add_to_playlist.py " + vid$ + " " + pid$
     DIM r = OS.EXEC(cmd$)
-    IF r{"EXIT_CODE"} <> 0 THEN
+    IF r{"exit_code"} <> 0 THEN
         PRINT "  (playlist add FAILED, video still uploaded - add manually in Studio)"
-        PRINT r{"OUTPUT"}
+        PRINT r{"output"}
     ELSE
-        PRINT "  " + TRIM$(r{"OUTPUT"})
+        PRINT "  " + TRIM$(r{"output"})
     ENDIF
 ENDSUB
 
@@ -382,9 +382,9 @@ SUB UploadOne(base$, env, defaults, dry_run)
     ' (or backticks elsewhere); these characters are XSS-blocked, not
     ' encoded-then-rendered.
     DIM bad$ = ""
-    IF INSTR$(meta{"title"}, "<") >= 0 OR INSTR$(meta{"title"}, ">") >= 0 THEN
+    IF INSTR(meta{"title"}, "<") >= 0 OR INSTR(meta{"title"}, ">") >= 0 THEN
         bad$ = "title"
-    ELSEIF INSTR$(meta{"description"}, "<") >= 0 OR INSTR$(meta{"description"}, ">") >= 0 THEN
+    ELSEIF INSTR(meta{"description"}, "<") >= 0 OR INSTR(meta{"description"}, ">") >= 0 THEN
         bad$ = "description"
     ENDIF
     IF LEN(bad$) > 0 THEN
@@ -419,16 +419,16 @@ SUB UploadOne(base$, env, defaults, dry_run)
     IF FILE.EXISTS(marker$) THEN upload_ok = 1
 
     IF upload_ok = 0 THEN
-        PRINT "  FAIL ("; r{"EXIT_CODE"}; "):"
-        PRINT r{"OUTPUT"}
+        PRINT "  FAIL ("; r{"exit_code"}; "):"
+        PRINT r{"output"}
         IF FILE.EXISTS(meta_tmp$) THEN KILL meta_tmp$
         END
     ENDIF
 
-    IF r{"EXIT_CODE"} <> 0 THEN
-        PRINT "  OK (upload), but youtubeuploader exited "; r{"EXIT_CODE"}; " - last output:"
+    IF r{"exit_code"} <> 0 THEN
+        PRINT "  OK (upload), but youtubeuploader exited "; r{"exit_code"}; " - last output:"
         ' Print only the tail so we see the actual error without 100+ progress lines.
-        DIM out_lines = SPLIT(r{"OUTPUT"}, CHR$(10))
+        DIM out_lines = SPLIT(r{"output"}, CHR$(10))
         DIM start_i = LEN(out_lines) - 3
         IF start_i < 0 THEN start_i = 0
         DIM li AS INTEGER
@@ -444,7 +444,7 @@ ENDSUB
 
 ' ── Walk every final\*.mp4 missing a marker ──────────────────────
 SUB UploadAll(env, defaults, dry_run)
-    DIM files = DIR$("final\*.mp4")
+    DIM files = FILE.LIST("final\*.mp4")
     IF LEN(files) = 0 THEN
         PRINT "[upload] nothing to upload — final\ is empty"
         RETURN
@@ -453,12 +453,12 @@ SUB UploadAll(env, defaults, dry_run)
     FOR fi = 0 TO LEN(files) - 1
         DIM fn$ = files[fi]
         ' Strip directory + ".mp4" suffix.
-        DIM slash = INSTR$(fn$, "\")
+        DIM slash = INSTR(fn$, "\")
         DO WHILE slash >= 0
             fn$ = MID$(fn$, slash + 1)
-            slash = INSTR$(fn$, "\")
+            slash = INSTR(fn$, "\")
         LOOP
-        DIM dot = INSTR$(fn$, ".")
+        DIM dot = INSTR(fn$, ".")
         IF dot < 1 THEN CONTINUEFOR
         DIM base$ = LEFT$(fn$, dot)
         UploadOne(base$, env, defaults, dry_run)

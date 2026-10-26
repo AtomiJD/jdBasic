@@ -87,8 +87,8 @@ DIM here$ = "recipes/expert/X06_work_cockpit/work_cockpit.jdb"
 IF FILE.EXISTS(jdbasic$) ANDALSO FILE.EXISTS(here$) THEN
     TESTKIT.SUITE("the window")
     DIM w = OS.EXEC(jdbasic$, [here$, "--selftest", "--jdbasic", jdbasic$])
-    TESTKIT.EQ(w{"EXIT_CODE"}, 0, "the window test passes")
-    TESTKIT.ISTRUE(INSTR(w{"OUTPUT"}, "ALL COCKPIT WINDOW TESTS PASSED") >= 0, _
+    TESTKIT.EQ(w{"exit_code"}, 0, "the window test passes")
+    TESTKIT.ISTRUE(INSTR(w{"output"}, "ALL COCKPIT WINDOW TESTS PASSED") >= 0, _
         "every check of it")
 ELSE
     TESTKIT.SKIP("the window test needs the book folder and jdbasic")

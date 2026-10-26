@@ -27,7 +27,7 @@ ENDFUNC
 ' The names of the macros in a folder, sorted, without ".txt".
 EXPORT FUNC LIST(folder$)
     IF NOT FILE.ISDIR(folder$) THEN RETURN []
-    DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.txt")))
+    DIM files = SORT(FILE.LIST(PATH.JOIN$(folder$, "*.txt")))
     RETURN SELECT(LAMBDA f$ -> LEFT$(f$, LEN(f$) - 4), files)
 ENDFUNC
 
@@ -75,7 +75,7 @@ EXPORT FUNC PLAY(steps, name$, log_path$, dry_run)
     DIM k = 0
     FOR k = 0 TO LEN(steps) - 1
         DIM s = steps[k]
-        DIM now$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+        DIM now$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M:%S")
         IF dry_run THEN
             PRINT "would "; INPUTKIT.PLAN_LINE$(s)
             PUSH(lines, LOG_LINE$(now$, name$, s, "dry run"))

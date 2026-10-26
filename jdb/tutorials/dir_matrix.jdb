@@ -1,10 +1,10 @@
 ' 1. Classic Mode (List of strings)
-files = DIR$("*.txt")
+files = FILE.LIST("*.txt")
 PRINT files
 
 ' 2. Extended Matrix Mode
 ' Columns: 0=Name, 1=Size, 2=Type, 3=Date, 4=Attributes
-file_matrix = DIR$("*.*", TRUE)
+file_matrix = FILE.LIST("*.*", TRUE)
 
 PRINT "Found " + LEN(file_matrix)[0] + " items:"
 

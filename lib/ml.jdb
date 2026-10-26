@@ -1327,7 +1327,7 @@ ENDFUNC
 
 ' A model from the JSON TOJSON$ wrote.
 EXPORT FUNC FROMJSON(text_in$)
-    DIM parsed = JSON.PARSE$(text_in$)
+    DIM parsed = JSON.PARSE(text_in$)
     DIM parsed_kind$ = TYPEOF(parsed)
     IF parsed_kind$ = "STRING" ORELSE parsed_kind$ = "NONE" ORELSE parsed_kind$ = "ARRAY" THEN THROW "ML: the text is not a model"
     DIM model AS MAP

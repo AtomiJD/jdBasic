@@ -542,7 +542,7 @@ ENDFUNC
 ' formatting them back in UTC recovers the wall clock and CDATE reads it in
 ' the machine's own zone - which is what floating asks for.
 FUNC FloatingInstant(civil_secs)
-    RETURN CDBL(CDATE(FORMAT_DATE(civil_secs, "%Y-%m-%d %H:%M:%S", 0)))
+    RETURN CDBL(CDATE(FORMAT_DATE$(civil_secs, "%Y-%m-%d %H:%M:%S", 0)))
 ENDFUNC
 
 ' The instant of a value: Z is UTC, a TZID is read in that zone, a floating

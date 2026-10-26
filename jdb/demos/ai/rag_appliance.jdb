@@ -141,7 +141,7 @@ FUNC IndexDir(dir$, pattern$)
     IF gChunks > 0 AND gDense THEN AI.RAG_BUILD_INDEX(gRagId, 16, 200)
     AI.RAG_SAVE(gRagId, gIdxPath$)
     RememberDir(dir$, pattern$)
-    gLastMsg$ = "indexed " + STR(added) + " files from " + dir$ + " (" + STR(gChunks) + " chunks total)"
+    gLastMsg$ = "indexed " + STR$(added) + " files from " + dir$ + " (" + STR$(gChunks) + " chunks total)"
   CATCH
     gLastMsg$ = "index error: " + ERRMSG$
   ENDTRY
@@ -210,7 +210,7 @@ FUNC ModelList()
     IF LEN(d$) = 0 THEN CONTINUEFOR
     DIM files = []
     TRY
-      files = DIR$(d$ + "/*.gguf")
+      files = FILE.LIST(d$ + "/*.gguf")
     CATCH
       files = []
     ENDTRY
@@ -353,7 +353,7 @@ FUNC AdminHtml$()
   h$ = h$ + "  #msg{color:#7fd18a;min-height:20px;margin-top:10px}" + CHR$(10)
   h$ = h$ + "</style></head><body><div class='wrap'>" + CHR$(10)
   h$ = h$ + "<h1>Admin <a href='/' style='font-size:13px;float:right'>&larr; back to chat</a></h1>" + CHR$(10)
-  h$ = h$ + "<div class='stat'><b>" + STR(gChunks) + "</b> chunks indexed<br>Indexed directories:" + CHR$(10)
+  h$ = h$ + "<div class='stat'><b>" + STR$(gChunks) + "</b> chunks indexed<br>Indexed directories:" + CHR$(10)
   IF LEN(gDirList$) = 0 THEN
     h$ = h$ + "<pre>(none yet)</pre>"
   ELSE
@@ -388,7 +388,7 @@ ENDFUNC
 
 FUNC HandleAdminAdd(request)
   IF gBusy THEN RETURN { "message": "busy - a query or index is running, retry shortly" }
-  DIM body = JSON.PARSE$(request{"BODY"})
+  DIM body = JSON.PARSE(request{"body"})
   DIM dir$ = TRIM$(body{"dir"})
   DIM pat$ = TRIM$(body{"pattern"})
   IF LEN(dir$) = 0 THEN RETURN { "message": "no directory given" }
@@ -427,7 +427,7 @@ FUNC HandleModels(request)
 ENDFUNC
 
 FUNC HandleModelSet(request)
-  DIM body = JSON.PARSE$(request{"BODY"})
+  DIM body = JSON.PARSE(request{"body"})
   DIM p$ = TRIM$(body{"path"})
   IF LEN(p$) = 0 THEN RETURN { "error": "no model path" }
   IF NOT FILE.EXISTS(p$) THEN RETURN { "error": "model not found: " + p$ }
@@ -440,7 +440,7 @@ FUNC HandleAsk(request)
   IF gChunks = 0 THEN RETURN { "error": "index is empty - no documents were found" }
   IF gBusy THEN RETURN { "error": "busy - one query at a time, please retry" }
 
-  DIM body = JSON.PARSE$(request{"BODY"})
+  DIM body = JSON.PARSE(request{"body"})
   DIM q$ = body{"q"}
   IF LEN(TRIM$(q$)) = 0 THEN RETURN { "error": "empty question" }
 
@@ -457,11 +457,11 @@ FUNC HandleAsk(request)
     DIM ctx$ = ""
     DIM i
     FOR i = 0 TO LEN(hits) - 1
-      ctx$ = ctx$ + "[" + STR(i + 1) + "] (" + hits[i]{"source"} + ")" + CHR$(10) + hits[i]{"text"} + CHR$(10) + CHR$(10)
+      ctx$ = ctx$ + "[" + STR$(i + 1) + "] (" + hits[i]{"source"} + ")" + CHR$(10) + hits[i]{"text"} + CHR$(10) + CHR$(10)
     NEXT i
     DIM prompt$ = "Answer the question using only the context below. If the answer is not in the context, say so plainly." + CHR$(10) + CHR$(10) + "CONTEXT:" + CHR$(10) + ctx$ + "QUESTION: " + qq$
     AI.CLEAR_HISTORY(gLlmId)
-    DIM raw$ = AI.CHAT(gLlmId, prompt$)
+    DIM raw$ = AI.CHAT$(gLlmId, prompt$)
     DIM ms = INT(TICK() - t0)
     out = { "answer": CleanAnswer$(raw$), "sources": hits, "ms": ms }
   CATCH
@@ -494,14 +494,14 @@ BuildOrLoadIndex()
 
 ' Handler names are passed as strings; the lexer upper-cases identifiers,
 ' so a FUNC is stored under its UPPERCASE name - match that here.
-HTTP.SERVER.ON_GET("/", "HANDLEROOT")
-HTTP.SERVER.ON_GET("/health", "HANDLEHEALTH")
-HTTP.SERVER.ON_GET("/models", "HANDLEMODELS")
-HTTP.SERVER.ON_GET("/admin", "HANDLEADMIN")
-HTTP.SERVER.ON_POST("/ask", "HANDLEASK")
-HTTP.SERVER.ON_POST("/model", "HANDLEMODELSET")
-HTTP.SERVER.ON_POST("/admin/add", "HANDLEADMINADD")
-HTTP.SERVER.ON_POST("/admin/clear", "HANDLEADMINCLEAR")
+HTTP.SERVER.ON_GET("/", HANDLEROOT@)
+HTTP.SERVER.ON_GET("/health", HANDLEHEALTH@)
+HTTP.SERVER.ON_GET("/models", HANDLEMODELS@)
+HTTP.SERVER.ON_GET("/admin", HANDLEADMIN@)
+HTTP.SERVER.ON_POST("/ask", HANDLEASK@)
+HTTP.SERVER.ON_POST("/model", HANDLEMODELSET@)
+HTTP.SERVER.ON_POST("/admin/add", HANDLEADMINADD@)
+HTTP.SERVER.ON_POST("/admin/clear", HANDLEADMINCLEAR@)
 
 IF HTTP.SERVER.START(gPort, gBind$) THEN
   PRINT ""

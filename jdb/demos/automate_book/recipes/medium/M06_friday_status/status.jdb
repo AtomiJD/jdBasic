@@ -38,7 +38,7 @@ ENDFUNC
 ' it, sorted by name: maps with "person", "done", "todo", "blocked".
 EXPORT FUNC NOTES(folder$)
     DIM out = []
-    DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.txt")))
+    DIM files = SORT(FILE.LIST(PATH.JOIN$(folder$, "*.txt")))
     DIM k = 0
     FOR k = 0 TO LEN(files) - 1
         DIM file$ = files[k]

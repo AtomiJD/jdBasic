@@ -16,13 +16,13 @@ IMPORT TEXTDIFF
 ' The readable text of HTML: scripts, styles and tags removed, the
 ' common entities turned back into characters, spaces collapsed.
 EXPORT FUNC PLAINTEXT$(html$)
-    DIM t$ = REGEX.REPLACE("<script[\s\S]*?</script>", html$, " ")
-    t$ = REGEX.REPLACE("<style[\s\S]*?</style>", t$, " ")
-    t$ = REGEX.REPLACE("<[^>]*>", t$, " ")
+    DIM t$ = REGEX.REPLACE$("<script[\s\S]*?</script>", html$, " ")
+    t$ = REGEX.REPLACE$("<style[\s\S]*?</style>", t$, " ")
+    t$ = REGEX.REPLACE$("<[^>]*>", t$, " ")
     t$ = REPLACE$(REPLACE$(t$, "&nbsp;", " "), "&quot;", CHR$(34))
     t$ = REPLACE$(REPLACE$(t$, "&#39;", "'"), "&lt;", "<")
     t$ = REPLACE$(REPLACE$(t$, "&gt;", ">"), "&amp;", "&")
-    RETURN TRIM$(REGEX.REPLACE("\s+", t$, " "))
+    RETURN TRIM$(REGEX.REPLACE$("\s+", t$, " "))
 ENDFUNC
 
 ' The text between the first start marker and the end marker after
@@ -45,7 +45,7 @@ ENDFUNC
 ' A file name made from a page's name: letters and digits, the rest
 ' as underscores.
 EXPORT FUNC SLUG$(name$)
-    DIM s$ = REGEX.REPLACE("[^a-z0-9]+", LCASE$(name$), "_")
+    DIM s$ = REGEX.REPLACE$("[^a-z0-9]+", LCASE$(name$), "_")
     IF s$ = "" ORELSE s$ = "_" THEN s$ = "page"
     RETURN s$
 ENDFUNC

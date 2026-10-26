@@ -37,7 +37,7 @@ PRINT "── director: shooting "; SCRIPT_PATH$
 ' Strip extension so we can name the voice WAVs after the script.
 ' INSTR$ is 0-indexed in jdBasic so the prefix length == the index of '.'.
 DIM SCRIPT_BASE$ = SCRIPT_FILE$
-DIM dot_pos = INSTR$(SCRIPT_BASE$, ".")
+DIM dot_pos = INSTR(SCRIPT_BASE$, ".")
 IF dot_pos >= 0 THEN SCRIPT_BASE$ = LEFT$(SCRIPT_BASE$, dot_pos)
 
 
@@ -362,7 +362,7 @@ DIM stop_lines = SPLIT(rec_stop$, CHR$(10))
 DIM si AS INTEGER
 FOR si = 0 TO LEN(stop_lines) - 1
     DIM sl$ = TRIM$(stop_lines[si])
-    DIM colon_pos = INSTR$(sl$, ":")
+    DIM colon_pos = INSTR(sl$, ":")
     IF colon_pos > 0 AND STARTSWITH(sl$, "recording stopped") THEN
         raw_path$ = TRIM$(MID$(sl$, colon_pos + 1))
     ENDIF

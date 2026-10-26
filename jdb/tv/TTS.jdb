@@ -40,13 +40,13 @@ EXPORT FUNC RenderEx(out_path$, voice$, pitch$, rate$, text$)
         + " " + CHR$(34) + pitch$ + CHR$(34) _
         + " " + CHR$(34) + rate$ + CHR$(34)
     DIM r = OS.EXEC(cmd$)
-    IF r{"EXIT_CODE"} <> 0 THEN
-        PRINT "[TTS] FAIL: "; r{"OUTPUT"}
+    IF r{"exit_code"} <> 0 THEN
+        PRINT "[TTS] FAIL: "; r{"output"}
         RETURN 0.0
     ENDIF
 
     ' helper prints duration on its last line. Take the last non-empty.
-    DIM lines = SPLIT(r{"OUTPUT"}, CHR$(10))
+    DIM lines = SPLIT(r{"output"}, CHR$(10))
     DIM j AS INTEGER
     FOR j = LEN(lines) - 1 TO 0 STEP -1
         DIM s$ = TRIM$(lines[j])

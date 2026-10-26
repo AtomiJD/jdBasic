@@ -140,8 +140,8 @@ DIM old_path$ = GETENV$("JDBASIC_PATH")
 SETENV "JDBASIC_PATH", PATH.NORMALIZE$("../../../lib") + ";" + a{"user_lib"}
 DIM r = OS.EXEC(a{"jdbasic"}, [prog$, "--dry-run", "--config", conf$])
 SETENV "JDBASIC_PATH", old_path$
-TESTKIT.EQ(r{"EXIT_CODE"}, 0, "the installed recipe runs with the written settings")
-TESTKIT.ISTRUE(INSTR(r{"OUTPUT"}, "would move report.pdf") >= 0, "and plans to sort the test download")
+TESTKIT.EQ(r{"exit_code"}, 0, "the installed recipe runs with the written settings")
+TESTKIT.ISTRUE(INSTR(r{"output"}, "would move report.pdf") >= 0, "and plans to sort the test download")
 DIM again = WIZARD.FROM_CONF(WIZARD.DEFAULTS(recipes, tmp$), recipes, conf$)
 TESTKIT.EQARRAY(again{"picked"}, ["E01", "E08"], "running again reads the picked recipes back")
 TESTKIT.EQ(again{"values"}{"downloads_butler"}{"source"}, downloads$, "and their settings")

@@ -29,7 +29,7 @@ DIM db_home$ = PATH.JOIN$(folder$, "bookings.db")
 DIM db$ = WORKCONF.FOLDER$(cfg, key$ + "database", db_home$)
 DIM to$ = WORKCONF.VALUE(cfg, key$ + "to", "")
 DIM day$ = WORKCONF.ARG$("day")
-IF day$ = "" THEN day$ = FORMAT_DATE(NOW(), "%Y-%m-%d")
+IF day$ = "" THEN day$ = FORMAT_DATE$(NOW(), "%Y-%m-%d")
 
 MKDIR folder$
 DIM lg = LOGGER.NEW("report_pipeline")

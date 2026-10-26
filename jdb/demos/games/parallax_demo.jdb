@@ -64,7 +64,7 @@ DO
     dt  = (now - last_t) / 1000.0
     last_t = now
 
-    ev$ = GFX.POLLEVENT()
+    ev$ = GFX.POLLEVENT$()
     IF ev$ = "QUIT" THEN EXITDO
     IF ev$ = "KEYDOWN:Escape" THEN EXITDO
 

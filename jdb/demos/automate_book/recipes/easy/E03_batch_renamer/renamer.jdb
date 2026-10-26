@@ -54,7 +54,7 @@ ENDFUNC
 EXPORT FUNC PLAN(folder$, pattern$, extensions)
     DIM plan = []
     DIM taken = []
-    DIM entries = SORT(DIR$(PATH.JOIN$(folder$, "*")))
+    DIM entries = SORT(FILE.LIST(PATH.JOIN$(folder$, "*")))
     DIM k = 0
     FOR k = 0 TO LEN(entries) - 1
         DIM file_name$ = entries[k]

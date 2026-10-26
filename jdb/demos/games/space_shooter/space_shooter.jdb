@@ -461,7 +461,7 @@ DIM g_next_life_gap     AS INTEGER = 4   ' rolled fresh each grant
 SUB on_quit(QuitData)
     running = 0
 ENDSUB
-ON "QUIT" CALL on_quit
+ON "QUIT" CALL on_quit@
 
 ' ──────────────────────────────────────────────────────────────────
 ' SOUND — synthwave loop on voices 0/1, SFX on voices 2/3

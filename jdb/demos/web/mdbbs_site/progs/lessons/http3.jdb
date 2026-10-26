@@ -9,7 +9,7 @@ IF WIFI.AUTO() <> 0 THEN
 ENDIF
 
 DIM body$ = HTTP.GET$("https://api.github.com/users/AtomiJD")
-DIM user = JSON.PARSE$(body$)
+DIM user = JSON.PARSE(body$)
 PRINT "Name        : "; user["name"]
 PRINT "Public repos: "; user["public_repos"]
 PRINT "Followers   : "; user["followers"]

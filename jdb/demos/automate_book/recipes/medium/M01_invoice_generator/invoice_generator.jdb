@@ -24,7 +24,7 @@ DIM sender$ = OUTBOX.FROM$(cfg)
 DIM company AS MAP
 company{"name"} = WORKCONF.VALUE(cfg, key$ + "company", "")
 company{"address"} = WORKCONF.VALUE(cfg, key$ + "address", "")
-company{"date"} = FORMAT_DATE(NOW(), "%Y-%m-%d")
+company{"date"} = FORMAT_DATE$(NOW(), "%Y-%m-%d")
 
 IF WORKCONF.FLAG("send") THEN
     DIM waiting = OUTBOX.PENDING(cfg)
@@ -44,7 +44,7 @@ DIM book = XLSX.READ(sheet$)
 IF tab$ = "" THEN tab$ = XLSX.SHEETS(sheet$)[0]
 IF NOT MAP.EXISTS(book, tab$) THEN THROW "No sheet " + tab$
 DIM list = INVOICES.GROUP(book{tab$})
-DIM year$ = FORMAT_DATE(NOW(), "%Y")
+DIM year$ = FORMAT_DATE$(NOW(), "%Y")
 DIM counter$ = PATH.JOIN$(folder$, "last_number.txt")
 DIM numbers = INVOICES.NEXT_NUMBERS(counter$, prefix$, year$, _
     LEN(list))

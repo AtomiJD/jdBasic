@@ -56,7 +56,7 @@ TRY
   stat_labels  = info{"num_labels"}
   stat_dim     = info{"embed_dim"}
   stat_index   = info{"index"}
-  status_msg   = STR(stat_samples) + " samples, " + STR(stat_labels) + " classes"
+  status_msg   = STR$(stat_samples) + " samples, " + STR$(stat_labels) + " classes"
 CATCH
   clf_status = "FAILED: " + ERRMSG$
   status_msg = clf_status
@@ -103,11 +103,11 @@ DO WHILE running
 
     GUI.SEPARATOR_TEXT "Model Info"
     GUI.TEXT_WRAPPED "Embedding: " + emb_status
-    GUI.TEXT_WRAPPED "Classifier: " + clf_status + "  |  " + STR(stat_samples) + " samples  |  " + STR(stat_labels) + " classes  |  dim=" + STR(stat_dim) + "  |  index=" + stat_index
+    GUI.TEXT_WRAPPED "Classifier: " + clf_status + "  |  " + STR$(stat_samples) + " samples  |  " + STR$(stat_labels) + " classes  |  dim=" + STR$(stat_dim) + "  |  index=" + stat_index
 
     GUI.SEPARATOR_TEXT "Ticket Text"
     GUI.SET_NEXT_ITEM_WIDTH w
-    ticket_input = GUI.INPUT("##tk", ticket_input)
+    ticket_input = GUI.INPUT$("##tk", ticket_input)
 
     GUI.SET_NEXT_ITEM_WIDTH w - 250
     top_k = GUI.SLIDER("Top-K neighbors", top_k, 1, 20)
@@ -126,7 +126,7 @@ DO WHILE running
         neighbor_count = LEN(current_neighbors)
         vote_count = LEN(current_votes)
         last_time_ms = INT(GFX.TICKS() - t0)
-        status_msg = "Predicted in " + STR(last_time_ms) + "ms"
+        status_msg = "Predicted in " + STR$(last_time_ms) + "ms"
       CATCH
         current_label = "Error: " + ERRMSG$
         neighbor_count = 0
@@ -147,7 +147,7 @@ DO WHILE running
     IF LEN(current_label) > 0 THEN
       GUI.SEPARATOR_TEXT "Prediction"
       GUI.TEXT "Label:      " + current_label
-      GUI.TEXT "Confidence: " + STR(INT(current_conf * 100)) + "%   (over " + STR(top_k) + " neighbors, " + STR(last_time_ms) + "ms)"
+      GUI.TEXT "Confidence: " + STR$(INT(current_conf * 100)) + "%   (over " + STR$(top_k) + " neighbors, " + STR$(last_time_ms) + "ms)"
     ENDIF
   ENDIF
   GUI.END
@@ -167,11 +167,11 @@ DO WHILE running
           DIM ntext = nb{"text"}
           DIM pct = INT(score * 100)
 
-          GUI.SEPARATOR_TEXT "[" + STR(pct) + "%] " + nlabel
+          GUI.SEPARATOR_TEXT "[" + STR$(pct) + "%] " + nlabel
 
           ' Excerpt (gekürzt)
           IF LEN(ntext) > 300 THEN
-            GUI.TEXT_WRAPPED LEFT(ntext, 300) + "..."
+            GUI.TEXT_WRAPPED LEFT$(ntext, 300) + "..."
           ELSE
             GUI.TEXT_WRAPPED ntext
           ENDIF
@@ -187,7 +187,7 @@ DO WHILE running
     IF vote_count = 0 THEN
       GUI.TEXT "(no votes yet)"
     ELSE
-      GUI.SEPARATOR_TEXT "Votes (Top-K = " + STR(top_k) + ")"
+      GUI.SEPARATOR_TEXT "Votes (Top-K = " + STR$(top_k) + ")"
       FOR vi = 0 TO vote_count - 1
         DIM v = current_votes[vi]
         DIM vlabel = v{"label"}
@@ -196,7 +196,7 @@ DO WHILE running
         DIM bar_w = bar_pct * (GUI.AVAIL_WIDTH() - 20)
 
         GUI.TEXT_WRAPPED vlabel
-        GUI.TEXT "  " + STR(vcount) + " / " + STR(top_k)
+        GUI.TEXT "  " + STR$(vcount) + " / " + STR$(top_k)
         GUI.SEPARATOR
       NEXT vi
     ENDIF
@@ -206,13 +206,13 @@ DO WHILE running
   ' Status bar
   DIM sbf = GUI.FLAG("NO_TITLEBAR") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("NO_MOVE") + GUI.FLAG("NO_SCROLLBAR")
   IF GUI.BEGIN("##sb", 0, 875, 1500, 25, TRUE, sbf) THEN
-    GUI.TEXT status_msg + "  |  Frame: " + STR(frame)
+    GUI.TEXT status_msg + "  |  Frame: " + STR$(frame)
   ENDIF
   GUI.END
 
   SCREENFLIP
   SLEEP 10
-  IF INKEY$() = CHR(27) THEN running = FALSE
+  IF INKEY$() = CHR$(27) THEN running = FALSE
 LOOP
 
 IF clf_id <> 0 THEN AI.CLASSIFIER_FREE clf_id

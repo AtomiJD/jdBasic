@@ -1335,8 +1335,8 @@ SUB HandleQuit(QuitData)
     running = 0
 ENDSUB
 
-ON "KEYDOWN" CALL HandleKey
-ON "QUIT"    CALL HandleQuit
+ON "KEYDOWN" CALL HandleKey@
+ON "QUIT"    CALL HandleQuit@
 
 ' --- Setup ---------------------------------------------------------
 

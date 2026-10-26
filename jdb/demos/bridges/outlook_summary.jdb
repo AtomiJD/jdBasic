@@ -48,7 +48,7 @@ ENDIF
 
 ' ── Conversation-Daten einlesen ──────────────────────────────────
 DIM raw AS STRING = TXTREADER$(in_path)
-DIM thread = JSON.PARSE$(raw)
+DIM thread = JSON.PARSE(raw)
 
 DIM subject  AS STRING = thread{"subject"}
 DIM messages = thread{"messages"}
@@ -119,7 +119,7 @@ IF LEN(resp) = 0 THEN
 ENDIF
 
 ' ── Antwort parsen ───────────────────────────────────────────────
-DIM parsed = JSON.PARSE$(resp)
+DIM parsed = JSON.PARSE(resp)
 
 ' Anthropic-Response: { "content": [ {"type":"text","text":"..."} ], ... }
 ' Bei Fehler:        { "type":"error", "error": {"type":"...","message":"..."} }

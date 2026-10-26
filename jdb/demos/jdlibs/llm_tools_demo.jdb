@@ -45,7 +45,7 @@ ENDFUNC
 
 FUNC HANDLE_STANDIN(request)
     gCalls = gCalls + 1
-    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM body = JSON.PARSE(request{"body"})
     DIM messages = body{"messages"}
     DIM last = messages[LEN(messages) - 1]
     DIM msg AS MAP
@@ -69,7 +69,7 @@ ENDFUNC
 DIM provider$ = LCASE$(GETENV$("LLM_PROVIDER"))
 DIM ai = 0
 IF LEN(provider$) = 0 THEN
-    HTTP.SERVER.ON_POST("/v1/chat/completions", "HANDLE_STANDIN")
+    HTTP.SERVER.ON_POST("/v1/chat/completions", HANDLE_STANDIN@)
     IF NOT HTTP.SERVER.START(PORT) THEN
         PRINT "port "; PORT; " is taken"
         END 1

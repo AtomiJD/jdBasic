@@ -155,9 +155,9 @@ EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
 
     PRINT "[FFMPEG] ffmpeg " + JOIN(ff_args$, " ")
     DIM r = OS.EXEC("ffmpeg", ff_args$)
-    IF r{"EXIT_CODE"} <> 0 THEN
-        PRINT "[FFMPEG] FAIL ("; r{"EXIT_CODE"}; "):"
-        PRINT r{"OUTPUT"}
+    IF r{"exit_code"} <> 0 THEN
+        PRINT "[FFMPEG] FAIL ("; r{"exit_code"}; "):"
+        PRINT r{"output"}
         RETURN ""
     ENDIF
     PRINT "[FFMPEG] composed → " + out_path$

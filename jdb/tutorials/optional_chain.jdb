@@ -1,6 +1,6 @@
 ' --- ?. ?{ ?[ : reading into something that may not be there ---
 
-DIM reply = JSON.PARSE$("{""choices"": [{""message"": {""content"": ""hello""}}]}")
+DIM reply = JSON.PARSE("{""choices"": [{""message"": {""content"": ""hello""}}]}")
 
 ' The good path needs no guard at all.
 PRINT "found       : "; reply{"choices"}[0]{"message"}{"content"}

@@ -30,12 +30,12 @@ ENDSUB
 
 FUNC GetJson(path$)
     Auth
-    RETURN JSON.PARSE$(HTTP.GET$(Base$() + path$))
+    RETURN JSON.PARSE(HTTP.GET$(Base$() + path$))
 ENDFUNC
 
 FUNC PostJson(path$, payload)
     Auth
-    RETURN JSON.PARSE$(HTTP.POST$(Base$() + path$, JSON.STRINGIFY$(payload)))
+    RETURN JSON.PARSE(HTTP.POST$(Base$() + path$, JSON.STRINGIFY$(payload)))
 ENDFUNC
 
 ' ── reads ────────────────────────────────────────────────────────────

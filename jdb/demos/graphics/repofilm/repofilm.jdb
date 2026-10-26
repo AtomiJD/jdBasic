@@ -193,12 +193,12 @@ CY = INT(SCR_H * 0.489)
 PRINT "reading history of "; repo$
 DIM git$ = "git -C " + CHR$(34) + repo$ + CHR$(34) + " log --reverse --pretty=format:%x01%at%x09%s --numstat"
 DIM res = OS.EXEC(git$)
-IF res{"EXIT_CODE"} <> 0 THEN
-    PRINT "git failed: "; res{"OUTPUT"}
+IF res{"exit_code"} <> 0 THEN
+    PRINT "git failed: "; res{"output"}
     END
 ENDIF
 
-DIM rows$ = SPLIT(res{"OUTPUT"}, CHR$(10))
+DIM rows$ = SPLIT(res{"output"}, CHR$(10))
 DIM n_rows = LEN(rows$)
 DIM TAB$ = CHR$(9)
 DIM MARK$ = CHR$(1)
@@ -566,7 +566,7 @@ ENDIF
 '=============================================================================
 
 DIM toproot = OS.EXEC("git -C " + CHR$(34) + repo$ + CHR$(34) + " rev-parse --show-toplevel")
-DIM reponame$ = SPLIT(toproot{"OUTPUT"}, CHR$(10))[0]
+DIM reponame$ = SPLIT(toproot{"output"}, CHR$(10))[0]
 DIM cutpos = 0
 DO WHILE INSTR(reponame$, "/") >= 0
     cutpos = INSTR(reponame$, "/")

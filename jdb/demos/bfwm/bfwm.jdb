@@ -210,7 +210,7 @@ GUI.THEME "DARK"
 SUB HandleQuit(QuitData)
     Running = 0
 ENDSUB
-ON "QUIT" CALL HandleQuit
+ON "QUIT" CALL HandleQuit@
 
 ' F11 toggles fullscreen (the desktop panel steals width in windowed mode).
 ' SDL3 keycode = scancode | $40000000; F11 scancode is $44.
@@ -219,7 +219,7 @@ SUB HandleKey(KeyData)
         TOGGLE_FULLSCREEN
     ENDIF
 ENDSUB
-ON "KEYDOWN" CALL HandleKey
+ON "KEYDOWN" CALL HandleKey@
 
 DIM Running = 1
 DIM StatusMsg$ = "Ready."
@@ -391,15 +391,15 @@ DO
                 GUI.TEXT "Name:     "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
-                InPartName$ = GUI.INPUT("##pname", InPartName$)
+                InPartName$ = GUI.INPUT$("##pname", InPartName$)
                 GUI.TEXT "Title:    "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
-                InPartTitle$ = GUI.INPUT("##ptitle", InPartTitle$)
+                InPartTitle$ = GUI.INPUT$("##ptitle", InPartTitle$)
                 GUI.TEXT "Extra:    "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
-                InPartExtra$ = GUI.INPUT("##pextra", InPartExtra$)
+                InPartExtra$ = GUI.INPUT$("##pextra", InPartExtra$)
                 IF GUI.BUTTON("Add##addpart", 160, 0) THEN
                     IF LEN(InPartName$) > 0 THEN
                         SQL.EXEC(DB, "INSERT INTO participants(nr, name, title, extra) VALUES(" + STR$(InPartNr) + ", '" + Esc$(InPartName$) + "', '" + Esc$(InPartTitle$) + "', '" + Esc$(InPartExtra$) + "')")
@@ -465,15 +465,15 @@ DO
                     GUI.TEXT "Name:     "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
-                    EditPartName$ = GUI.INPUT("##epname", EditPartName$)
+                    EditPartName$ = GUI.INPUT$("##epname", EditPartName$)
                     GUI.TEXT "Title:    "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
-                    EditPartTitle$ = GUI.INPUT("##eptitle", EditPartTitle$)
+                    EditPartTitle$ = GUI.INPUT$("##eptitle", EditPartTitle$)
                     GUI.TEXT "Extra:    "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
-                    EditPartExtra$ = GUI.INPUT("##epextra", EditPartExtra$)
+                    EditPartExtra$ = GUI.INPUT$("##epextra", EditPartExtra$)
                     GUI.SEPARATOR
                     IF GUI.BUTTON("Save", 200, 0) THEN
                         SQL.EXEC(DB, "UPDATE participants SET nr = " + STR$(EditPartNr) + ", name = '" + Esc$(EditPartName$) + "', title = '" + Esc$(EditPartTitle$) + "', extra = '" + Esc$(EditPartExtra$) + "' WHERE id = " + STR$(EditPartId))
@@ -499,7 +499,7 @@ DO
                 GUI.TEXT "Name:     "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
-                InGameName$ = GUI.INPUT("##gname", InGameName$)
+                InGameName$ = GUI.INPUT$("##gname", InGameName$)
                 GUI.TEXT "1st pts:  "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
@@ -582,7 +582,7 @@ DO
                     GUI.TEXT "Name:     "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
-                    EditGameName$ = GUI.INPUT("##egname", EditGameName$)
+                    EditGameName$ = GUI.INPUT$("##egname", EditGameName$)
                     GUI.TEXT "1st pts:  "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
@@ -618,7 +618,7 @@ DO
                 GUI.TEXT "Name:  "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
-                CompName$ = GUI.INPUT("##comp", CompName$)
+                CompName$ = GUI.INPUT$("##comp", CompName$)
                 IF CompName$ <> CompSaved$ THEN
                     SQL.EXEC(DB, "INSERT OR REPLACE INTO settings(k, v) VALUES('comp', '" + Esc$(CompName$) + "')")
                     CompSaved$ = CompName$
@@ -626,7 +626,7 @@ DO
                 GUI.TEXT "Date:  "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
-                EventDate$ = GUI.INPUT("##date", EventDate$)
+                EventDate$ = GUI.INPUT$("##date", EventDate$)
                 IF EventDate$ <> DateSaved$ THEN
                     SQL.EXEC(DB, "INSERT OR REPLACE INTO settings(k, v) VALUES('date', '" + Esc$(EventDate$) + "')")
                     DateSaved$ = EventDate$

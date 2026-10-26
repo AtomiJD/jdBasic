@@ -20,7 +20,7 @@ TESTKIT.EQ(VAULT.USER$(target$), "", "an empty user name stays empty")
 TESTKIT.SUITE("the Windows tools")
 DIM tool$ = target$ + "-cmdkey"
 DIM made = OS.EXEC("cmdkey", ["/generic:" + tool$, "/user:tester", "/pass:abc"])
-TESTKIT.EQ(made{"EXIT_CODE"}, 0, "cmdkey stores a credential")
+TESTKIT.EQ(made{"exit_code"}, 0, "cmdkey stores a credential")
 TESTKIT.EQ(VAULT.GET$(tool$), "abc", "VAULT reads what Windows itself stored")
 TESTKIT.EQ(VAULT.USER$(tool$), "tester", "with the user name")
 TESTKIT.ISTRUE(VAULT.DELETE(tool$), "and removes it")

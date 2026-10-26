@@ -34,7 +34,7 @@ TESTKIT.EQ(LEN(parsed{"att_names"}), 1, "the PDF is attached")
 TESTKIT.SUITE("with Excel")
 DIM ask$ = "if ([type]::GetTypeFromProgID('Excel.Application')) { 'yes' }"
 DIM probe = OS.EXEC("powershell", ["-NoProfile", "-Command", ask$])
-IF INSTR(probe{"OUTPUT"}, "yes") < 0 THEN
+IF INSTR(probe{"output"}, "yes") < 0 THEN
     TESTKIT.SKIP("Excel is not installed")
 ELSE
     DIM book$ = PATH.JOIN$(folder$, "report.xlsx")

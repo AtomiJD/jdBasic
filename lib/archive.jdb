@@ -947,7 +947,7 @@ EXPORT FUNC FROMFOLDER(folder$, top$ = "", opts = 0)
         DIM rel$ = pending[scan_at]
         DIM here$ = folder$
         IF rel$ <> "" THEN here$ = folder$ + "/" + rel$
-        DIM rows = DIR$(here$, TRUE)
+        DIM rows = FILE.LIST(here$, TRUE)
         DIM r = 0
         FOR r = 0 TO LEN(rows) - 1
             DIM entry_name$ = rows[r, 0]

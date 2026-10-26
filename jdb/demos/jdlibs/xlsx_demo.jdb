@@ -70,7 +70,7 @@ XLSX.COLUMN(by_cat, "C", {"width": 12, "format": "#,##0.00"})
 
 ' ── sheet 3: facts about the run ───────────────────────────────
 
-XLSX.SHEET(wb, "Meta", [["written", FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M")], ["rows", LEN(stock)], ["tool", "jdBasic XLSX"]], FALSE)
+XLSX.SHEET(wb, "Meta", [["written", FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M")], ["rows", LEN(stock)], ["tool", "jdBasic XLSX"]], FALSE)
 
 DIM entries = XLSX.WRITE(path$, wb)
 PRINT "wrote "; path$; " ("; entries; " parts, "; FILE.SIZE(path$); " bytes)"

@@ -81,7 +81,7 @@ DO
             ' --- Basic Inputs ---
             GUI.SEPARATOR_TEXT("User Profile")
             
-            Name$ = GUI.INPUT("Name", Name$)
+            Name$ = GUI.INPUT$("Name", Name$)
             GUI.SAME_LINE
             GUI.HELPMARKER("Enter your full name here.")
             

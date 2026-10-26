@@ -29,7 +29,7 @@ EXPORT FUNC RECIPES(work$)
     DIM root$ = PATH.JOIN$(work$, "recipes")
     DIM out = []
     IF NOT FILE.ISDIR(root$) THEN RETURN out
-    DIM names = SORT(DIR$(PATH.JOIN$(root$, "*")))
+    DIM names = SORT(FILE.LIST(PATH.JOIN$(root$, "*")))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM entry$ = names[k]
@@ -100,7 +100,7 @@ ENDFUNC
 ' recipe_log: the last lines of a recipe's log file.
 EXPORT FUNC TOOL_LOG(args$)
     DIM cfg = Settings()
-    DIM a = JSON.PARSE$(args$)
+    DIM a = JSON.PARSE(args$)
     DIM r = FindRecipe(RECIPES(WorkDir$(cfg)), a{"id"})
     DIM name$ = r{"section"} + ".log"
     DIM path$ = PATH.JOIN$(WorkDir$(cfg), "logs", name$)
@@ -135,7 +135,7 @@ ENDFUNC
 ' unless for_real is true and [ai_drive] allow names the recipe.
 EXPORT FUNC TOOL_RUN(args$)
     DIM cfg = Settings()
-    DIM a = JSON.PARSE$(args$)
+    DIM a = JSON.PARSE(args$)
     DIM r = FindRecipe(RECIPES(WorkDir$(cfg)), a{"id"})
     DIM for_real = FALSE
     IF MAP.EXISTS(a, "for_real") THEN for_real = a{"for_real"}
@@ -148,8 +148,8 @@ EXPORT FUNC TOOL_RUN(args$)
     DIM argv = [program$, "--config", WORKCONF.CONFIG_PATH$()]
     IF NOT for_real THEN PUSH(argv, "--dry-run")
     DIM res = OS.EXEC(jdbasic$, argv)
-    DIM code = res{"EXIT_CODE"}
-    DIM text$ = LEFT$(res{"OUTPUT"}, 4000)
+    DIM code = res{"exit_code"}
+    DIM text$ = LEFT$(res{"output"}, 4000)
     DIM how$ = "dry run"
     IF for_real THEN how$ = "real run"
     Audit(cfg, "run_recipe", args$, how$ + ", exit " + STR$(code))
@@ -214,7 +214,7 @@ EXPORT FUNC CHECK(jdbasic$, tools$, scratch$)
     PUSH(argv, req$)
     DIM res = OS.EXEC("cmd", argv)
     KILL req$
-    DIM rows = SPLIT(res{"OUTPUT"}, gLF$)
+    DIM rows = SPLIT(res{"output"}, gLF$)
     DIM names = []
     DIM k = 0
     FOR k = 0 TO LEN(rows) - 1
@@ -222,7 +222,7 @@ EXPORT FUNC CHECK(jdbasic$, tools$, scratch$)
         ' The server writes one reply per line; what it says
         ' about itself is not JSON and is not a reply.
         IF LEFT$(row$, 1) <> "{" THEN CONTINUEFOR
-        DIM reply = JSON.PARSE$(row$)
+        DIM reply = JSON.PARSE(row$)
         IF TYPEOF(reply) = "OBJECT" ANDALSO IsListReply(reply) THEN
             DIM tools = reply{"result"}{"tools"}
             DIM j = 0

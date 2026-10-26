@@ -161,7 +161,7 @@ ELSE
         NEXT t
         IF NOT gDry THEN
             DIM trial = OS.EXEC(a{"jdbasic"}, [prog$, "--dry-run", "--config", conf$])
-            IF trial{"EXIT_CODE"} <> 0 THEN PRINT "  the dry run of "; rr{"name"}; " failed: "; TRIM$(trial{"OUTPUT"})
+            IF trial{"exit_code"} <> 0 THEN PRINT "  the dry run of "; rr{"name"}; " failed: "; TRIM$(trial{"output"})
         ENDIF
     NEXT k
     IF NOT gDry THEN

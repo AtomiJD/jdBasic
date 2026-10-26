@@ -55,7 +55,7 @@ ENDSUB
 ' ── Synchronous ────────────────────────────────────────────────
 
 EXPORT FUNC ask(llm_id AS INTEGER, prompt$) AS STRING
-    RETURN AI.CHAT(llm_id, prompt$)
+    RETURN AI.CHAT$(llm_id, prompt$)
 ENDFUNC
 
 ' ── Streaming via channel ──────────────────────────────────────
@@ -98,7 +98,7 @@ FUNC rag_prompt$(rag_id AS INTEGER, question$, top_k AS INTEGER) AS STRING
 ENDFUNC
 
 EXPORT FUNC ask_rag(llm_id AS INTEGER, rag_id AS INTEGER, question$, top_k AS INTEGER) AS STRING
-    RETURN AI.CHAT(llm_id, rag_prompt$(rag_id, question$, top_k))
+    RETURN AI.CHAT$(llm_id, rag_prompt$(rag_id, question$, top_k))
 ENDFUNC
 
 EXPORT FUNC ask_rag_streaming(llm_id AS INTEGER, rag_id AS INTEGER, question$, top_k AS INTEGER, capacity AS INTEGER) AS INTEGER
@@ -129,12 +129,12 @@ EXPORT FUNC ask_remote(base_url$, model$, system$, prompt$, max_tokens AS INTEGE
         "-d", "@" + body_file$, _
         base_url$ + "/v1/chat/completions"])
     KILL body_file$
-    IF r{"EXIT_CODE"} <> 0 THEN
-        THROW "LLM_BRAIN.ask_remote: curl exit " + STR$(r{"EXIT_CODE"})
+    IF r{"exit_code"} <> 0 THEN
+        THROW "LLM_BRAIN.ask_remote: curl exit " + STR$(r{"exit_code"})
     ENDIF
-    DIM resp = JSON.PARSE$(r{"OUTPUT"})
+    DIM resp = JSON.PARSE(r{"output"})
     IF TYPEOF(resp) <> "OBJECT" ORELSE NOT MAP.EXISTS(resp, "choices") THEN
-        THROW "LLM_BRAIN.ask_remote: unexpected response: " + LEFT$(r{"OUTPUT"}, 200)
+        THROW "LLM_BRAIN.ask_remote: unexpected response: " + LEFT$(r{"output"}, 200)
     ENDIF
     RETURN resp{"choices"}[0]{"message"}{"content"}
 ENDFUNC

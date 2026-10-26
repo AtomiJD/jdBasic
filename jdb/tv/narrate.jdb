@@ -163,8 +163,8 @@ IF LEN(avatar_x$) > 0 THEN
     DIM avatar_path$ = "raw\" + script_base$ + ".avatar.webm"
     PRINT "avatar: "; avatar_path$
     DIM av_r = OS.EXEC("python", ["helpers/render_avatar.py", "render", manifest_path$, avatar_path$, STR$(clock_ms / 1000.0), "speaking"])
-    IF av_r{"EXIT_CODE"} <> 0 THEN
-        PRINT "avatar render failed: "; av_r{"OUTPUT"}
+    IF av_r{"exit_code"} <> 0 THEN
+        PRINT "avatar render failed: "; av_r{"output"}
         END 1
     ENDIF
     manifest$ = manifest$ + "AVATAR" + CHR$(9) + avatar_x$ + CHR$(9) + avatar_y$ + CHR$(9) + avatar_path$ + CHR$(10)

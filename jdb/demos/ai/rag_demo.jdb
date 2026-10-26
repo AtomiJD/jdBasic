@@ -141,10 +141,10 @@ DO WHILE running
     GUI.SEPARATOR_TEXT "Index a Directory"
     GUI.TEXT "Path:"
     GUI.SET_NEXT_ITEM_WIDTH idx_w
-    dir_input = GUI.INPUT("##dir", dir_input)
+    dir_input = GUI.INPUT$("##dir", dir_input)
     GUI.TEXT "Pattern (e.g. *.{md,txt,pdf,cpp}):"
     GUI.SET_NEXT_ITEM_WIDTH idx_w
-    pattern_input = GUI.INPUT("##pat", pattern_input)
+    pattern_input = GUI.INPUT$("##pat", pattern_input)
 
     DIM can_index = (rag_id <> 0) AND (LEN(dir_input) > 0) AND NOT is_querying
     IF GUI.BUTTON("Index Directory", 200, 30) AND can_index THEN
@@ -154,7 +154,7 @@ DO WHILE running
         DIM stats = AI.RAG_ADD_DIR(rag_id, dir_input, pattern_input, 1)
         DIM dt = GFX.TICKS() - t0
         stat_files = stats{"files_added"}
-        last_action = "Indexed " + STR(stats{"files_added"}) + " files in " + STR(INT(dt)) + "ms"
+        last_action = "Indexed " + STR$(stats{"files_added"}) + " files in " + STR$(INT(dt)) + "ms"
         RefreshStats()
         status_msg = last_action
       CATCH
@@ -163,9 +163,9 @@ DO WHILE running
     ENDIF
 
     GUI.SEPARATOR_TEXT "Statistics"
-    GUI.TEXT "Files added:  " + STR(stat_files)
-    GUI.TEXT "Chunks:       " + STR(stat_chunks)
-    GUI.TEXT "Embed dim:    " + STR(stat_embed_dim)
+    GUI.TEXT "Files added:  " + STR$(stat_files)
+    GUI.TEXT "Chunks:       " + STR$(stat_chunks)
+    GUI.TEXT "Embed dim:    " + STR$(stat_embed_dim)
     GUI.TEXT "Index mode:   " + stat_index_mode
     IF use_dense_embeddings THEN
       GUI.TEXT "Embed mode:   dense (nomic)"
@@ -180,7 +180,7 @@ DO WHILE running
       TRY
         AI.RAG_BUILD_INDEX rag_id, 16, 200
         DIM dt2 = GFX.TICKS() - tb
-        last_action = "HNSW built in " + STR(INT(dt2)) + "ms"
+        last_action = "HNSW built in " + STR$(INT(dt2)) + "ms"
         RefreshStats()
         status_msg = last_action
       CATCH
@@ -191,7 +191,7 @@ DO WHILE running
     GUI.SEPARATOR_TEXT "Persistence"
     GUI.TEXT "File:"
     GUI.SET_NEXT_ITEM_WIDTH idx_w
-    index_path = GUI.INPUT("##idx", index_path)
+    index_path = GUI.INPUT$("##idx", index_path)
 
     IF GUI.BUTTON("Save Index", 120, 28) THEN
       TRY
@@ -211,7 +211,7 @@ DO WHILE running
           rag_id = AI.RAG_LOAD(index_path, llm_id)
         ENDIF
         RefreshStats()
-        last_action = "Loaded " + STR(stat_chunks) + " chunks from " + index_path
+        last_action = "Loaded " + STR$(stat_chunks) + " chunks from " + index_path
         status_msg = last_action
       CATCH
         status_msg = "Load error: " + ERRMSG$
@@ -233,7 +233,7 @@ DO WHILE running
 
     GUI.SEPARATOR_TEXT "Question"
     GUI.SET_NEXT_ITEM_WIDTH input_w
-    query_input = GUI.INPUT("##q", query_input)
+    query_input = GUI.INPUT$("##q", query_input)
 
     use_json_mode = GUI.CHECKBOX("JSON Mode (force structured output)", use_json_mode)
     GUI.SAME_LINE
@@ -249,7 +249,7 @@ DO WHILE running
     IF show_prompt_editor THEN
       GUI.SEPARATOR_TEXT "System Prompt (RAG instruction)"
       GUI.SET_NEXT_ITEM_WIDTH input_w
-      sys_prompt = GUI.INPUT("##sys", sys_prompt)
+      sys_prompt = GUI.INPUT$("##sys", sys_prompt)
     ENDIF
 
     DIM can_ask = (llm_id <> 0) AND (rag_id <> 0) AND (stat_chunks > 0) AND (LEN(query_input) > 0) AND NOT is_querying
@@ -275,7 +275,7 @@ DO WHILE running
           source_count = LEN(current_sources)
         ENDIF
         query_time_ms = INT(GFX.TICKS() - tq)
-        status_msg = "Answered in " + STR(query_time_ms) + "ms"
+        status_msg = "Answered in " + STR$(query_time_ms) + "ms"
       CATCH
         current_answer = "Error: " + ERRMSG$
         source_count = 0
@@ -302,7 +302,7 @@ DO WHILE running
       ENDIF
 
       IF source_count > 0 THEN
-        GUI.SEPARATOR_TEXT "Used " + STR(source_count) + " context chunk(s) — see right panel"
+        GUI.SEPARATOR_TEXT "Used " + STR$(source_count) + " context chunk(s) — see right panel"
       ENDIF
     ENDIF
     GUI.END_CHILD
@@ -327,11 +327,11 @@ DO WHILE running
 
           ' Score als Prozent darstellen
           DIM pct = INT(score * 100)
-          GUI.SEPARATOR_TEXT "[" + STR(pct) + "%] " + source_name
+          GUI.SEPARATOR_TEXT "[" + STR$(pct) + "%] " + source_name
 
           ' Excerpt verkürzt, mit automatischem Zeilenumbruch
           IF LEN(excerpt) > 240 THEN
-            GUI.TEXT_WRAPPED LEFT(excerpt, 240) + "..."
+            GUI.TEXT_WRAPPED LEFT$(excerpt, 240) + "..."
           ELSE
             GUI.TEXT_WRAPPED excerpt
           ENDIF
@@ -347,13 +347,13 @@ DO WHILE running
   IF GUI.BEGIN("##sb", 0, 825, 1500, 25, TRUE, sbf) THEN
     DIM mode = "linear"
     IF rag_id <> 0 THEN mode = stat_index_mode
-    GUI.TEXT status_msg + "  |  Index: " + mode + "  |  Chunks: " + STR(stat_chunks) + "  |  Frame: " + STR(frame)
+    GUI.TEXT status_msg + "  |  Index: " + mode + "  |  Chunks: " + STR$(stat_chunks) + "  |  Frame: " + STR$(frame)
   ENDIF
   GUI.END
 
   SCREENFLIP
   SLEEP 10
-  IF INKEY$() = CHR(27) THEN running = FALSE
+  IF INKEY$() = CHR$(27) THEN running = FALSE
 LOOP
 
 ' Cleanup

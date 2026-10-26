@@ -68,8 +68,8 @@ SUB HandleQuit(QuitData)
     running = 0
 ENDSUB
 
-ON "KEYDOWN" CALL HandleKey
-ON "QUIT"    CALL HandleQuit
+ON "KEYDOWN" CALL HandleKey@
+ON "QUIT"    CALL HandleQuit@
 
 DIM proj = MAT4.PERSPECTIVE(60.0, 800.0 / 600.0, 0.1, 100.0)
 DIM view = MAT4.LOOKAT(0, 0, 5,   0, 0, 0,   0, 1, 0)

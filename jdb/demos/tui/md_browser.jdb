@@ -49,7 +49,7 @@ FUNC ProcessInlines(line$)
     local_links = []
     temp_line$ = line$
     
-    DO WHILE INSTR$(temp_line$, "[") >= 0 AND INSTR$(temp_line$, "](") > INSTR$(temp_line$, "[")
+    DO WHILE INSTR(temp_line$, "[") >= 0 AND INSTR(temp_line$, "](") > INSTR(temp_line$, "[")
         match = REGEX.MATCH("\[([^\]]+)\]\(([^)]+)\)", temp_line$)
         IF TYPEOF(match) = "ARRAY" THEN
             link_text$ = match[0]
@@ -71,10 +71,10 @@ FUNC ProcessInlines(line$)
     code_start$ = cesc_m(Style.Negative)
     code_end$ = cesc_m(Style.Positive)
 
-    line$ = REGEX.REPLACE("\*\*\*([^*]+)\*\*\*", line$, bold_italic_start$ + "$1" + bold_italic_end$)
-    line$ = REGEX.REPLACE("\*\*([^*]+)\*\*", line$, bold_start$ + "$1" + bold_end$)
-    line$ = REGEX.REPLACE("\*([^*]+)\*", line$, italic_start$ + "$1" + italic_end$)
-    line$ = REGEX.REPLACE("`([^`]+)`", line$, code_start$ + "$1" + code_end$)
+    line$ = REGEX.REPLACE$("\*\*\*([^*]+)\*\*\*", line$, bold_italic_start$ + "$1" + bold_italic_end$)
+    line$ = REGEX.REPLACE$("\*\*([^*]+)\*\*", line$, bold_start$ + "$1" + bold_end$)
+    line$ = REGEX.REPLACE$("\*([^*]+)\*", line$, italic_start$ + "$1" + italic_end$)
+    line$ = REGEX.REPLACE$("`([^`]+)`", line$, code_start$ + "$1" + code_end$)
 
     RETURN {"text": line$, "links": local_links}
 ENDFUNC
@@ -143,7 +143,7 @@ SUB RenderMarkdown(markdown_text$)
         ENDIF
         
         IF 1 / trimmed_line$ = "#" THEN
-            level = INSTR$(trimmed_line$, " ")
+            level = INSTR(trimmed_line$, " ")
             heading_text$ = TRIM$(MID$(trimmed_line$, level))
             COLOR COLOR_HEADING, 0
             PRINT
@@ -166,7 +166,7 @@ SUB RenderMarkdown(markdown_text$)
             COLOR COLOR_DEFAULT, 0
             
         ELSEIF REGEX.MATCH("^\s*[*+-]\s+", trimmed_line$) THEN
-            list_text$ = REGEX.REPLACE("^\s*[*+-]\s+", trimmed_line$, "")
+            list_text$ = REGEX.REPLACE$("^\s*[*+-]\s+", trimmed_line$, "")
             COLOR COLOR_LIST, 0
             PRINT "  • ";
             RenderAndCollect(ProcessInlines(list_text$))
@@ -217,7 +217,7 @@ FUNC OpenSelectedLink()
     ENDIF
 
     ' It's an external link, open it with the system
-    os$ = OS.GETOS()
+    os$ = OS.GETOS$()
     LOCATE GETY() + 2, 1
     PRINT "Opening external link: " + url$
     

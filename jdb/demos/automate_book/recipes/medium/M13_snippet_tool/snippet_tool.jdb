@@ -39,7 +39,7 @@ DIM home$ = "~/Documents/AutomateWork/snippets"
 DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", home$)
 DIM empty AS MAP
 DIM standing = WORKCONF.VALUE(cfg, key$ + "values", empty)
-DIM today$ = FORMAT_DATE(NOW(), "%d %B %Y")
+DIM today$ = FORMAT_DATE$(NOW(), "%d %B %Y")
 DIM cmd$ = got{"command"}
 
 IF cmd$ = "list" THEN

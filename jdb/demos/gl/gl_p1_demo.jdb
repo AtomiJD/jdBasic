@@ -18,7 +18,7 @@ DO
 
     ' Drain SDL events. GFX.POLLEVENT works even without a SCREEN
     ' because GL.WINDOW already init'd SDL_INIT_EVENTS.
-    DIM ev$ = GFX.POLLEVENT()
+    DIM ev$ = GFX.POLLEVENT$()
     IF ev$ = "QUIT" THEN running = 0
     IF ev$ = "KEYDOWN:Escape" THEN running = 0
 

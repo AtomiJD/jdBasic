@@ -21,7 +21,7 @@ DIM running = 1
 SUB OnQuit()
     running = 0
 ENDSUB
-ON "QUIT" CALL OnQuit
+ON "QUIT" CALL OnQuit@
 
 ' Taps arrive as buffered MOUSEDOWN events - a finger tap is shorter than
 ' one frame, so polling the button state misses it. The queue also survives
@@ -43,7 +43,7 @@ SUB OnTap(info)
     tap_new = 1
     ptr_down = 1
 ENDSUB
-ON "MOUSEDOWN" CALL OnTap
+ON "MOUSEDOWN" CALL OnTap@
 
 SUB OnRelease(info)
     up_x = info[0]{"x"}
@@ -51,13 +51,13 @@ SUB OnRelease(info)
     up_new = 1
     ptr_down = 0
 ENDSUB
-ON "MOUSEUP" CALL OnRelease
+ON "MOUSEUP" CALL OnRelease@
 
 SUB OnDrag(info)
     ptr_x = info[0]{"x"}
     ptr_y = info[0]{"y"}
 ENDSUB
-ON "MOUSEMOVE" CALL OnDrag
+ON "MOUSEMOVE" CALL OnDrag@
 
 ' Card held down and dragged onto the board - released there it deploys.
 DIM drag_kind$ = ""
@@ -161,7 +161,7 @@ ENDFUNC
 
 SUB LOADLANG()
     TRY
-        langs = JSON.PARSE$(HTTP.GET$(SRV$ + "/lang"))
+        langs = JSON.PARSE(HTTP.GET$(SRV$ + "/lang"))
     CATCH
     ENDTRY
 ENDSUB
@@ -172,7 +172,7 @@ ENDSUB
 DIM room$ = "main"
 DIM mypin$ = ""
 TRY
-    DIM up = JSON.PARSE$(TXTREADER$("/url_params.json"))
+    DIM up = JSON.PARSE(TXTREADER$("/url_params.json"))
     IF MAP.EXISTS(up, "name") THEN myname$ = up{"name"}
     IF MAP.EXISTS(up, "auth") THEN auth$ = up{"auth"}
     IF MAP.EXISTS(up, "pin") THEN mypin$ = up{"pin"}
@@ -225,7 +225,7 @@ ENDFUNC
 SUB LOADCARDS()
     TRY
         DIM r$ = HTTP.GET$(SRV$ + "/cards")
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         DIM cs = m{"CARDS"}
         allcards = cs
         cardorder = SORT(MAP.KEYS(cs))
@@ -317,7 +317,7 @@ SUB LOGIN()
     TRY
         DIM body$ = JSON.STRINGIFY$({ "NAME": myname$, "PIN": mypin$ })
         DIM r$ = HTTP.POST$(SRV$ + "/login", body$, "text/plain")
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         IF m{"OK"} = 1 THEN
             auth$ = m{"AUTH"}
             myname$ = m{"NAME"}
@@ -334,7 +334,7 @@ ENDSUB
 SUB LOADPROFILE()
     TRY
         DIM r$ = HTTP.GET$(SRV$ + "/profile?auth=" + auth$)
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         ' a token the server no longer knows is worse than none: without
         ' this the menu keeps claiming you are signed in
         IF m{"OK"} <> 1 ANDALSO m{"MSG"} = "msg_login" THEN auth$ = ""
@@ -375,7 +375,7 @@ SUB SAVEDECKS()
     TRY
         DIM body$ = JSON.STRINGIFY$({ "AUTH": auth$, "DECKS": mydecks, "ACTIVE": deckidx })
         DIM r$ = HTTP.POST$(SRV$ + "/decks", body$, "text/plain")
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         IF m{"OK"} <> 1 THEN msg$ = m{"MSG"}
     CATCH
     ENDTRY
@@ -420,7 +420,7 @@ SUB SENDUPGRADE(kind$)
     TRY
         DIM body$ = JSON.STRINGIFY$({ "AUTH": auth$, "KIND": kind$ })
         DIM r$ = HTTP.POST$(SRV$ + "/upgrade", body$, "text/plain")
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         IF m{"OK"} = 1 THEN
             PLAYFX("SPAWN")
         ENDIF
@@ -453,7 +453,7 @@ SUB LOADH2H()
     h2h$ = ""
     IF foename$ = "" THEN RETURN
     TRY
-        DIM m = JSON.PARSE$(HTTP.GET$(SRV$ + "/matches?limit=300"))
+        DIM m = JSON.PARSE(HTTP.GET$(SRV$ + "/matches?limit=300"))
         IF m{"OK"} <> 1 THEN RETURN
         DIM mine = 0
         DIM theirs = 0
@@ -492,7 +492,7 @@ SUB SENDBOT()
     TRY
         DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "ROOM": room$ })
         DIM r$ = HTTP.POST$(SRV$ + "/bot", body$, "text/plain")
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         IF m{"OK"} = 1 THEN
             msg$ = ""
             POLLSTATE()
@@ -588,7 +588,7 @@ ENDSUB
 SUB JOINMATCH()
     TRY
         DIM r$ = HTTP.POST$(SRV$ + "/join", JSON.STRINGIFY$({ "AUTH": auth$, "DECK": mydeck, "ROOM": room$ }), "text/plain")
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         IF m{"OK"} = 1 THEN
             mypid = m{"PID"}
             tok$ = m{"TOK"}
@@ -695,7 +695,7 @@ DIM prev_tick = -1
 SUB POLLSTATE()
     TRY
         DIM r$ = HTTP.GET$(SRV$ + "/state?room=" + room$ + "&tok=" + tok$)
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         ' a room that was swept away answers without a state
         IF m{"OK"} = 0 THEN
             msg$ = "" + m{"MSG"}
@@ -742,7 +742,7 @@ ENDSUB
 SUB SENDREMATCH()
     TRY
         DIM r$ = HTTP.POST$(SRV$ + "/rematch", JSON.STRINGIFY$({ "ROOM": room$, "TOK": tok$ }), "text/plain")
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         msg$ = ""
         IF MAP.EXISTS(m, "MSG") THEN msg$ = "" + m{"MSG"}
     CATCH
@@ -848,7 +848,7 @@ SUB SENDWARP(kind$, wx, wyv)
         DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "KIND": kind$, "X": wx, "Y": wyv, _
                                       "CX": warp_cx, "CY": warp_cy, "R": warp_r, "ROOM": room$ })
         DIM r$ = HTTP.POST$(SRV$ + "/play", body$, "text/plain")
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         IF m{"OK"} = 1 THEN
             sel$ = ""
             msg$ = ""
@@ -865,7 +865,7 @@ SUB SENDPLAY(kind$, wx, wyv)
     TRY
         DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "KIND": kind$, "X": wx, "Y": wyv, "ROOM": room$ })
         DIM r$ = HTTP.POST$(SRV$ + "/play", body$, "text/plain")
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         IF m{"OK"} = 1 THEN
             sel$ = ""
             msg$ = ""
@@ -888,7 +888,7 @@ DIM lobby = []
 
 SUB LOADLOBBY()
     TRY
-        DIM m = JSON.PARSE$(HTTP.GET$(SRV$ + "/rooms"))
+        DIM m = JSON.PARSE(HTTP.GET$(SRV$ + "/rooms"))
         IF m{"OK"} = 1 THEN lobby = m{"ROOMS"}
     CATCH
     ENDTRY
@@ -1008,7 +1008,7 @@ SUB SENDEMOTE(id)
     TRY
         DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "ID": id, "ROOM": room$ })
         DIM r$ = HTTP.POST$(SRV$ + "/emote", body$, "text/plain")
-        DIM m = JSON.PARSE$(r$)
+        DIM m = JSON.PARSE(r$)
         IF m{"OK"} <> 1 THEN msg$ = m{"MSG"}
     CATCH
     ENDTRY

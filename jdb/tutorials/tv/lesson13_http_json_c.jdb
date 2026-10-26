@@ -3,7 +3,7 @@
 ' Source: jdb/tv/scripts/script_13_http_json.txt
 
 DIM body$ = HTTP.GET$("https://api.github.com/users/AtomiJD")
-DIM user = JSON.PARSE$(body$)
+DIM user = JSON.PARSE(body$)
 PRINT "Name        : "; user["name"]
 PRINT "Public repos: "; user["public_repos"]
 PRINT "Followers   : "; user["followers"]

@@ -15,7 +15,7 @@ CATCH
     PRINT "cards.json not readable"
     END
 ENDTRY
-ARENA.SETCARDS(JSON.PARSE$(raw$))
+ARENA.SETCARDS(JSON.PARSE(raw$))
 DIM cs = ARENA.CARDS()
 
 DIM args = OS.ARGS()

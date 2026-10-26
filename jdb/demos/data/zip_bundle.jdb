@@ -75,7 +75,7 @@ PRINT ""
 DIM lines$ = SPLIT(back{"data/sales.csv"}, CHR$(10))
 PRINT "the CSV parses straight out of the archive"
 PRINT "  " + STR$(LEN(lines$) - 1) + " data rows, header: " + lines$[0]
-DIM restored = JSON.PARSE$(back{"data/meta.json"})
+DIM restored = JSON.PARSE(back{"data/meta.json"})
 PRINT "  meta says " + STR$(restored{"rows"}) + " rows in " + restored{"currency"}
 PRINT ""
 
@@ -87,7 +87,7 @@ TXTWRITER PATH.JOIN$(export_dir$, "notes.txt"), "Figures approved on " + DATE$()
 TXTWRITER PATH.JOIN$(export_dir$, "totals.csv"), "quarter,total" + CHR$(10) + "Q1,225150" + CHR$(10) + "Q2,141200"
 
 DIM folder AS MAP
-DIM found$ = DIR$(PATH.JOIN$(export_dir$, "*"))
+DIM found$ = FILE.LIST(PATH.JOIN$(export_dir$, "*"))
 DIM entry$ AS STRING = ""
 FOR EACH entry$ IN found$
     DIM full$ = PATH.JOIN$(export_dir$, entry$)

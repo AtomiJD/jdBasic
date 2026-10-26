@@ -4,7 +4,7 @@
 ' -------------------------------------------------
 ' 1. SETUP & INITIALIZATION
 ' -------------------------------------------------
-CurrentOS$ = OS.GETOS()
+CurrentOS$ = OS.GETOS$()
 SCREEN_W = 1920
 SCREEN_H = 1080
 MAX_LINES = 500

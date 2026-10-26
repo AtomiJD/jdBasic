@@ -23,10 +23,10 @@ NEXT
 DIM ref = CVDATE("2026-06-09")
 PRINT ""
 PRINT "Relative month-ends from 2026-06-09:"
-PRINT "  this month : "; FORMAT_DATE(EOMONTH(ref),     "%Y-%m-%d")
-PRINT "  next month : "; FORMAT_DATE(EOMONTH(ref, 1),  "%Y-%m-%d")
-PRINT "  prev month : "; FORMAT_DATE(EOMONTH(ref, -1), "%Y-%m-%d")
-PRINT "  quarter-end: "; FORMAT_DATE(EOMONTH(ref, 2),  "%Y-%m-%d")
+PRINT "  this month : "; FORMAT_DATE$(EOMONTH(ref),     "%Y-%m-%d")
+PRINT "  next month : "; FORMAT_DATE$(EOMONTH(ref, 1),  "%Y-%m-%d")
+PRINT "  prev month : "; FORMAT_DATE$(EOMONTH(ref, -1), "%Y-%m-%d")
+PRINT "  quarter-end: "; FORMAT_DATE$(EOMONTH(ref, 2),  "%Y-%m-%d")
 
 ' --- vectorised over an array of dates ---
 DIM ds = [CVDATE("2024-02-15"), CVDATE("2024-12-25"), CVDATE("2025-02-10")]
@@ -35,7 +35,7 @@ PRINT "Month-ends for a whole list of dates:"
 DIM ends = EOMONTH(ds)
 DIM j
 FOR j = 0 TO LEN(ends) - 1
-    PRINT "  "; FORMAT_DATE(ds[j], "%Y-%m-%d"); "  ->  "; FORMAT_DATE(ends[j], "%Y-%m-%d")
+    PRINT "  "; FORMAT_DATE$(ds[j], "%Y-%m-%d"); "  ->  "; FORMAT_DATE$(ends[j], "%Y-%m-%d")
 NEXT
 
 ' --- leap-year test: February has 29 days ---

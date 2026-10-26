@@ -26,7 +26,7 @@ EXPORT FUNC RECIPES(root$)
     FOR k = 0 TO LEN(levels) - 1
         DIM level_dir$ = PATH.JOIN$(root$, levels[k])
         IF FILE.ISDIR(level_dir$) THEN
-            DIM names = SORT(DIR$(PATH.JOIN$(level_dir$, "*")))
+            DIM names = SORT(FILE.LIST(PATH.JOIN$(level_dir$, "*")))
             FOR j = 0 TO LEN(names) - 1
                 DIM name$ = names[j]
                 DIM dir$ = PATH.JOIN$(level_dir$, name$)
@@ -351,7 +351,7 @@ EXPORT FUNC SETTINGS_MD$(recipes, lib_dir$)
             ENDIF
         NEXT j
     NEXT k
-    DIM libs = SORT(DIR$(PATH.JOIN$(lib_dir$, "*.jdb")))
+    DIM libs = SORT(FILE.LIST(PATH.JOIN$(lib_dir$, "*.jdb")))
     FOR k = 0 TO LEN(libs) - 1
         DIM lib_name$ = libs[k]
         IF NOT ENDSWITH(lib_name$, "_test.jdb") THEN
@@ -484,7 +484,7 @@ ENDFUNC
 ' as a map from the id to the whole heading text. The first one wins.
 EXPORT FUNC HEADINGS(dir$)
     DIM out AS MAP
-    DIM files = SORT(DIR$(PATH.JOIN$(dir$, "*.md")))
+    DIM files = SORT(FILE.LIST(PATH.JOIN$(dir$, "*.md")))
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(files) - 1

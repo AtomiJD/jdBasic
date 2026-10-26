@@ -28,7 +28,7 @@ ENDFUNC
 
 FUNC FakeChat(request)
     gCalls = gCalls + 1
-    gLastBody$ = request{"BODY"}
+    gLastBody$ = request{"body"}
     IF INSTR(gLastBody$, "Busy server") >= 0 ANDALSO gBusy < 1 THEN
         gBusy = gBusy + 1
         RETURN JDWEB.REPLY("try later", 503, "text/plain")

@@ -37,7 +37,7 @@ EXPORT FUNC start(port AS INTEGER, host$) AS BOOLEAN
         ' Uppercase: jdBasic stringifies FUNC-Namen case-insensitive
         ' im func_map; call_function() macht aber exact-match auf den
         ' Stringschlüssel. Hier: Kompatibilität sicherstellen.
-        HTTP.SERVER.ON_POST p$, "DISPATCH.HANDLE_POST"
+        HTTP.SERVER.ON_POST p$, DISPATCH.HANDLE_POST@
     NEXT
     RETURN HTTP.SERVER.START(port, host$)
 ENDFUNC
@@ -56,7 +56,7 @@ ENDSUB
 ' wird ein zurückgegebener Map als JSON serialisiert oder ein String
 ' als text/html gerendert.
 EXPORT FUNC handle_post(req AS MAP) AS MAP
-    DIM path$ = req{"PATH"}
+    DIM path$ = req{"path"}
     DIM resp AS MAP
     IF NOT MAP.EXISTS(g_routes, path$) THEN
         resp{"__http_status"} = 404
@@ -67,9 +67,9 @@ EXPORT FUNC handle_post(req AS MAP) AS MAP
     DIM topic$ = g_routes{path$}
     ' JSON-Body parsen wenn möglich; sonst roh als String publishen.
     DIM payload
-    DIM body$ = req{"BODY"}
+    DIM body$ = req{"body"}
     TRY
-        payload = JSON.PARSE$(body$)
+        payload = JSON.PARSE(body$)
     CATCH
         payload = body$
     ENDTRY

@@ -74,8 +74,8 @@ TESTKIT.EQ(UNPACKER.APPLY(plan, FALSE, done$), 3, "three saved")
 TESTKIT.EQ(BINREADER$(files[0]{"to"}), pdf$, "byte for byte")
 TESTKIT.EQ(TXTREADER$(files[2]{"to"}), "c;d" + CHR$(10), _
     "the second list")
-TESTKIT.EQ(LEN(DIR$(PATH.JOIN$(inbox$, "*.eml"))), 0, "the inbox empty")
-TESTKIT.EQ(LEN(DIR$(PATH.JOIN$(done$, "*.eml"))), 3, "the mails done")
+TESTKIT.EQ(LEN(FILE.LIST(PATH.JOIN$(inbox$, "*.eml"))), 0, "the inbox empty")
+TESTKIT.EQ(LEN(FILE.LIST(PATH.JOIN$(done$, "*.eml"))), 3, "the mails done")
 
 DIM k = 0
 FOR k = 0 TO LEN(files) - 1

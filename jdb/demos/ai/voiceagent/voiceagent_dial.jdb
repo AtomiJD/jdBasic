@@ -87,13 +87,13 @@ DIM r = OS.EXEC("curl", ["-s", "-u", sid$ + ":" + tok$, _
     "--data-urlencode", "From=" + fromNum$, _
     "--data-urlencode", "Url=" + voiceUrl$, url$])
 
-IF r{"EXIT_CODE"} <> 0 THEN
-    PRINT "curl-Fehler, exit " + STR$(r{"EXIT_CODE"})
+IF r{"exit_code"} <> 0 THEN
+    PRINT "curl-Fehler, exit " + STR$(r{"exit_code"})
     END
 ENDIF
 
-DIM resp$ = r{"OUTPUT"}
-DIM o = JSON.PARSE$(resp$)
+DIM resp$ = r{"output"}
+DIM o = JSON.PARSE(resp$)
 DIM callSid = o{"sid"}
 IF TYPEOF(callSid) = "NONE" THEN
     PRINT "Twilio-Fehler:"

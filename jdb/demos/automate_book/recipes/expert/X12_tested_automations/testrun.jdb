@@ -20,7 +20,7 @@ EXPORT FUNC FOLDERS(root$)
         DIM rest$ = MID$(here$, LEN(root$), LEN(here$))
         DIM depth = LEN(SPLIT(rest$, "/"))
         IF depth <= 3 THEN
-            DIM names = SORT(DIR$(PATH.JOIN$(here$, "*")))
+            DIM names = SORT(FILE.LIST(PATH.JOIN$(here$, "*")))
             DIM j = 0
             FOR j = 0 TO LEN(names) - 1
                 DIM name$ = names[j]
@@ -44,7 +44,7 @@ EXPORT FUNC FIND(root$)
     DIM j = 0
     FOR k = 0 TO LEN(dirs) - 1
         DIM dir$ = dirs[k]
-        DIM names = DIR$(PATH.JOIN$(dir$, "*.jdb"))
+        DIM names = FILE.LIST(PATH.JOIN$(dir$, "*.jdb"))
         FOR j = 0 TO LEN(names) - 1
             DIM name$ = names[j]
             IF ENDSWITH(name$, "_test.jdb") ORELSE _
@@ -88,7 +88,7 @@ EXPORT FUNC SEARCH_PATH$(root$, first)
     DIM dirs = FOLDERS(root$)
     FOR k = 0 TO LEN(dirs) - 1
         DIM dir$ = dirs[k]
-        DIM sources = DIR$(PATH.JOIN$(dir$, "*.jdb"))
+        DIM sources = FILE.LIST(PATH.JOIN$(dir$, "*.jdb"))
         IF LEN(sources) > 0 THEN PUSH(parts, dir$)
     NEXT k
     RETURN JOIN(parts, ";")
@@ -148,10 +148,10 @@ FUNC RunOnce(jdbasic$, file$)
     DIM moved$ = CD(PATH.DIRNAME$(full$))
     DIM r = OS.EXEC(program$, [PATH.BASENAME$(full$)])
     moved$ = CD(back$)
-    DIM output$ = r{"OUTPUT"}
+    DIM output$ = r{"output"}
     DIM c = COUNTS(output$)
-    DIM out = {"file": file$, "exit": r{"EXIT_CODE"}}
-    out{"ok"} = r{"EXIT_CODE"} = 0 ANDALSO c{"failed"} <= 0
+    DIM out = {"file": file$, "exit": r{"exit_code"}}
+    out{"ok"} = r{"exit_code"} = 0 ANDALSO c{"failed"} <= 0
     out{"passed"} = c{"passed"}
     out{"failed"} = c{"failed"}
     out{"ms"} = TICK() - t0

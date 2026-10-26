@@ -18,7 +18,7 @@ DIM SRV$ = "http://192.168.0.37:8081"
 
 DIM params AS MAP = {}
 TRY
-    params = JSON.PARSE$(TXTREADER$("/url_params.json"))
+    params = JSON.PARSE(TXTREADER$("/url_params.json"))
 CATCH
 ENDTRY
 IF MAP.EXISTS(params, "__origin") THEN
@@ -33,12 +33,12 @@ ENDIF
 FUNC LOADTABLE()
     DIM t AS MAP = {}
     TRY
-        t = JSON.PARSE$(TXTREADER$("cards.json"))
+        t = JSON.PARSE(TXTREADER$("cards.json"))
     CATCH
     ENDTRY
     IF LEN(MAP.KEYS(t)) > 0 THEN RETURN t
     TRY
-        DIM r = JSON.PARSE$(HTTP.GET$(SRV$ + "/cards"))
+        DIM r = JSON.PARSE(HTTP.GET$(SRV$ + "/cards"))
         IF MAP.EXISTS(r, "CARDS") THEN RETURN r{"CARDS"}
     CATCH
     ENDTRY
@@ -49,7 +49,7 @@ DIM cards = LOADTABLE()
 ' a card straight out of the designer, tried before it is anywhere else
 IF MAP.EXISTS(params, "draft") THEN
     TRY
-        DIM draft = JSON.PARSE$(params{"draft"})
+        DIM draft = JSON.PARSE(params{"draft"})
         FOR EACH dk$ IN MAP.KEYS(draft)
             cards{dk$} = draft{dk$}
         NEXT dk$
@@ -62,7 +62,7 @@ ENDIF
 DIM preargs = OS.ARGS()
 IF LEN(preargs) > 3 THEN
     TRY
-        DIM fromfile = JSON.PARSE$(TXTREADER$(preargs[3]))
+        DIM fromfile = JSON.PARSE(TXTREADER$(preargs[3]))
         FOR EACH fk$ IN MAP.KEYS(fromfile)
             cards{fk$} = fromfile{fk$}
         NEXT fk$
@@ -127,7 +127,7 @@ DIM running = 1
 SUB OnQuit()
     running = 0
 ENDSUB
-ON "QUIT" CALL OnQuit
+ON "QUIT" CALL OnQuit@
 
 DIM tap_new = 0
 DIM tap_x = 0
@@ -137,7 +137,7 @@ SUB OnTap(info)
     tap_y = info[0]{"y"}
     tap_new = 1
 ENDSUB
-ON "MOUSEDOWN" CALL OnTap
+ON "MOUSEDOWN" CALL OnTap@
 
 FUNC PX(tx)
     RETURN INT(tx * TILE)

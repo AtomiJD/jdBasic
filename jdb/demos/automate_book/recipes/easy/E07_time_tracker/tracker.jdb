@@ -85,8 +85,8 @@ ENDFUNC
 
 ' The Monday of the week a day (YYYY-MM-DD) belongs to.
 EXPORT FUNC MONDAY$(day$)
-    DIM back = (VAL(FORMAT_DATE(CDATE(day$), "%w")) + 6) MOD 7
-    RETURN FORMAT_DATE(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
+    DIM back = (VAL(FORMAT_DATE$(CDATE(day$), "%w")) + 6) MOD 7
+    RETURN FORMAT_DATE$(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
 ENDFUNC
 
 ' The minutes between two times written YYYY-MM-DD HH:MM:SS.
@@ -132,7 +132,7 @@ EXPORT FUNC SHEET_ROWS(table, monday$)
     DIM d = 0
     FOR k = 0 TO 6
         DIM day = DATEADD("D", k, CDATE(monday$))
-        PUSH(head, FORMAT_DATE(day, "%a %d.%m."))
+        PUSH(head, FORMAT_DATE$(day, "%a %d.%m."))
     NEXT k
     PUSH(head, "Total")
     DIM rows = [head]

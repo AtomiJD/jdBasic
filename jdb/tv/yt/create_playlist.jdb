@@ -32,7 +32,7 @@ IF NOT FILE.EXISTS(defaults_path$) THEN
     PRINT "FATAL: "; defaults_path$; " missing"
     END
 ENDIF
-DIM defaults = JSON.PARSE$(TXTREADER$(defaults_path$))
+DIM defaults = JSON.PARSE(TXTREADER$(defaults_path$))
 IF MAP.EXISTS(defaults, "playlistID") AND LEN(defaults{"playlistID"}) > 0 THEN
     PRINT "Playlist already configured: "; defaults{"playlistID"}
     PRINT "Delete the playlistID from "; defaults_path$; " to re-create."
@@ -46,18 +46,18 @@ DIM cmd$ = "python helpers\yt_create_playlist.py " _
           + q$ + DESC$  + q$ + " " _
           + PRIV$
 DIM r = OS.EXEC(cmd$)
-IF r{"EXIT_CODE"} <> 0 THEN
-    PRINT "FAIL ("; r{"EXIT_CODE"}; "):"
-    PRINT r{"OUTPUT"}
+IF r{"exit_code"} <> 0 THEN
+    PRINT "FAIL ("; r{"exit_code"}; "):"
+    PRINT r{"output"}
     END
 ENDIF
 
 ' Helper prints exactly one line on success — the playlist ID.
-DIM out_lines = SPLIT(TRIM$(r{"OUTPUT"}), CHR$(10))
+DIM out_lines = SPLIT(TRIM$(r{"output"}), CHR$(10))
 DIM pid$ = TRIM$(out_lines[LEN(out_lines) - 1])
 IF LEFT$(pid$, 2) <> "PL" THEN
     PRINT "  (unexpected output from helper — full stdout follows)"
-    PRINT r{"OUTPUT"}
+    PRINT r{"output"}
     END
 ENDIF
 PRINT "  ID: "; pid$

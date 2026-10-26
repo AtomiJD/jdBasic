@@ -22,7 +22,7 @@ FUNC HandleTool(req)
     IF NOT AUTH_OK(req) THEN RETURN UNAUTHORIZED$()
     DIM jo, name$, args, sm$
     TRY
-        jo = JSON.PARSE$(req{"body"})
+        jo = JSON.PARSE(req{"body"})
         name$ = jo{"name"} : args = jo{"args"} : IF args = NULL THEN args = {}
     CATCH
         sm$ = {"ok":0,"error":"bad_request","msg":ERRMSG$}
@@ -64,7 +64,7 @@ ENDFUNC
 
 ' Windows only
 FUNC TOOL_EXCEL_WRITE_CELL$(args)
-    IF OS.GETOS() <> "WINDOWS" THEN _
+    IF OS.GETOS$() <> "WINDOWS" THEN _
         RETURN JSON.STRINGIFY$("ok":0,"error":"platform")
     ENDIF
     DIM xl, wb, sh, sm$
@@ -131,7 +131,7 @@ ENDFUNC
 
 ' ---- server start ----
 DIM webhook_path$ AS STRING = "/tool"
-HTTP.SERVER.ON_POST webhook_path$, "HandleTool"
+HTTP.SERVER.ON_POST webhook_path$, HandleTool@
 
 IF HTTP.SERVER.START(9090) THEN
     DIM A$ AS STRING

@@ -2,7 +2,7 @@
 ' and who it must not.
 IMPORT ARENA
 TRY
-    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+    ARENA.SETCARDS(JSON.PARSE(TXTREADER$("cards.json")))
 CATCH
 ENDTRY
 DIM cs = ARENA.CARDS()

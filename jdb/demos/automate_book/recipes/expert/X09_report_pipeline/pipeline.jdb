@@ -18,11 +18,11 @@ IMPORT DB, DF, SVG, DOCX, PDFGEN, MAIL, RETRY
 ' the hour that daylight saving time adds or takes keeps the date.
 EXPORT FUNC LAST_WEEK(day$)
     DIM d = CDATE(day$ + " 12:00:00")
-    DIM back = (VAL(FORMAT_DATE(d, "%w")) + 6) MOD 7
+    DIM back = (VAL(FORMAT_DATE$(d, "%w")) + 6) MOD 7
     DIM monday = DATEADD("D", -back - 7, d)
-    DIM from$ = FORMAT_DATE(monday, "%Y-%m-%d")
-    DIM to$ = FORMAT_DATE(DATEADD("D", 6, monday), "%Y-%m-%d")
-    DIM label$ = "Week of " + FORMAT_DATE(monday, "%d %B %Y")
+    DIM from$ = FORMAT_DATE$(monday, "%Y-%m-%d")
+    DIM to$ = FORMAT_DATE$(DATEADD("D", 6, monday), "%Y-%m-%d")
+    DIM label$ = "Week of " + FORMAT_DATE$(monday, "%d %B %Y")
     RETURN {"from": from$, "to": to$, "label": label$}
 ENDFUNC
 
@@ -258,8 +258,8 @@ EXPORT SUB SAMPLE(db_path$, last_day$)
     DIM d = 0
     FOR d = 0 TO 55
         DIM when = DATEADD("D", -d, CDATE(last_day$ + " 12:00:00"))
-        DIM wd = VAL(FORMAT_DATE(when, "%w"))
-        DIM day$ = FORMAT_DATE(when, "%Y-%m-%d")
+        DIM wd = VAL(FORMAT_DATE$(when, "%w"))
+        DIM day$ = FORMAT_DATE$(when, "%Y-%m-%d")
         FOR c = 0 TO 3
             DIM wobble = 0.5 + ((d * 7 + c * 3) MOD 9) / 20
             DIM amount = ROUND(weekly[c] / 5 * wobble)

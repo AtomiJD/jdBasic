@@ -10,7 +10,7 @@ DIM folder$ = MKTEMP$("officekit")
 MKDIR folder$
 
 FUNC Stamp$(t)
-    RETURN FORMAT_DATE(t, "%Y-%m-%d %H:%M:%S")
+    RETURN FORMAT_DATE$(t, "%Y-%m-%d %H:%M:%S")
 ENDFUNC
 
 TESTKIT.SUITE("files")

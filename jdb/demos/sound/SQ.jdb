@@ -14,7 +14,7 @@ EXPORT SUB START()
     ' Try to load existing data, otherwise create defaults
     TRY
         json$ = TXTREADER$("sq_data.json")
-        CONFIG = JSON.PARSE$(json$)
+        CONFIG = JSON.PARSE(json$)
         PRINT "Loaded sq_data.json"
     CATCH
         PRINT "No config found. Loading defaults..."
@@ -150,7 +150,7 @@ ENDSUB
 ' --- FILE I/O ---
 EXPORT SUB LOAD(filename$)
     TRY
-        CONFIG = JSON.PARSE$(TXTREADER$(filename$))
+        CONFIG = JSON.PARSE(TXTREADER$(filename$))
         PRINT "Configuration loaded from " + filename$
     CATCH
         PRINT "Error loading file: " + ERRMSG$

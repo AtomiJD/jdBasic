@@ -219,7 +219,7 @@ ENDFUNC
 ' each module with its version, its file and what it requires.
 EXPORT FUNC INDEX(folder$)
     DIM modules AS MAP
-    DIM found = DIR$(REPLACE$(folder$, "\", "/") + "/*.jdb")
+    DIM found = FILE.LIST(REPLACE$(folder$, "\", "/") + "/*.jdb")
     DIM k = 0
     FOR k = 0 TO LEN(found) - 1
         DIM f$ = found[k]
@@ -267,20 +267,20 @@ ENDFUNC
 EXPORT FUNC OPENINDEX(source$)
     IF IsUrl(source$) THEN
         DIM body$ = HTTP.GET$(source$)
-        DIM remote = JSON.PARSE$(body$)
+        DIM remote = JSON.PARSE(body$)
         RETURN remote
     ENDIF
     IF FILE.ISDIR(source$) THEN
         DIM idx_path$ = PATH.JOIN$(source$, "index.json")
         IF FILE.EXISTS(idx_path$) THEN
-            DIM stored = JSON.PARSE$(TXTREADER$(idx_path$))
+            DIM stored = JSON.PARSE(TXTREADER$(idx_path$))
             RETURN stored
         ENDIF
         DIM built = INDEX(source$)
         RETURN built
     ENDIF
     IF FILE.EXISTS(source$) THEN
-        DIM from_file = JSON.PARSE$(TXTREADER$(source$))
+        DIM from_file = JSON.PARSE(TXTREADER$(source$))
         RETURN from_file
     ENDIF
     THROW "PKG: no index at " + source$
@@ -469,7 +469,7 @@ FUNC ReadRegistry(folder$)
     DIM out AS MAP
     DIM file_path$ = PATH.JOIN$(folder$, "pkg.json")
     IF NOT FILE.EXISTS(file_path$) THEN RETURN out
-    DIM parsed = JSON.PARSE$(TXTREADER$(file_path$))
+    DIM parsed = JSON.PARSE(TXTREADER$(file_path$))
     DIM names = MAP.KEYS(parsed)
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
@@ -640,7 +640,7 @@ EXPORT FUNC SYNC(source$, project_dir$)
     DIM pieces = []
     DIM k = 0
     IF FILE.EXISTS(lock_path$) THEN
-        DIM locked = JSON.PARSE$(TXTREADER$(lock_path$))
+        DIM locked = JSON.PARSE(TXTREADER$(lock_path$))
         DIM lnames = MAP.KEYS(locked)
         FOR k = 0 TO LEN(lnames) - 1
             DIM ln$ = lnames[k]
@@ -651,7 +651,7 @@ EXPORT FUNC SYNC(source$, project_dir$)
     ELSE
         DIM manifest_path$ = PATH.JOIN$(project_dir$, "jdbasic.json")
         IF NOT FILE.EXISTS(manifest_path$) THEN THROW "PKG: " + project_dir$ + " has neither jdbasic.lock nor jdbasic.json"
-        DIM manifest = JSON.PARSE$(TXTREADER$(manifest_path$))
+        DIM manifest = JSON.PARSE(TXTREADER$(manifest_path$))
         DIM req = manifest{"requires"}
         DIM rnames = MAP.KEYS(req)
         FOR k = 0 TO LEN(rnames) - 1

@@ -2,7 +2,7 @@
 ' one card. Both are card data, no code per card.
 IMPORT ARENA
 TRY
-    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+    ARENA.SETCARDS(JSON.PARSE(TXTREADER$("cards.json")))
 CATCH
 ENDTRY
 DIM cs = ARENA.CARDS()

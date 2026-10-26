@@ -132,7 +132,7 @@ EXPORT FUNC JSON(c, messages, shape)
         reply = LocalChat(c, turns, js)
     ENDIF
     IF TYPEOF(reply{"json"}) = "OBJECT" THEN RETURN reply{"json"}
-    DIM parsed = JSON.PARSE$(reply{"text"})
+    DIM parsed = JSON.PARSE(reply{"text"})
     IF TYPEOF(parsed) = "NONE" THEN THROW "LLMAPI: the model did not answer with JSON: " + LEFT$(reply{"text"}, 200)
     RETURN parsed
 ENDFUNC
@@ -201,7 +201,7 @@ FUNC OpenAiChat(c, turns, js)
         DIM k = 0
         FOR k = 0 TO LEN(msg{"tool_calls"}) - 1
             DIM tc = msg{"tool_calls"}[k]
-            DIM args = JSON.PARSE$(tc{"function"}{"arguments"})
+            DIM args = JSON.PARSE(tc{"function"}{"arguments"})
             IF TYPEOF(args) = "NONE" THEN args = {}
             PUSH(calls, {"id": tc{"id"}, "name": tc{"function"}{"name"}, "arguments": args})
         NEXT k
@@ -400,6 +400,6 @@ FUNC LocalChat(c, turns, js)
         reply{"json"} = obj
         RETURN reply
     ENDIF
-    DIM text$ = AI.CHAT(c{"llm"}, prompt$)
+    DIM text$ = AI.CHAT$(c{"llm"}, prompt$)
     RETURN Reply(text$, [], 0, 0, "stop", text$)
 ENDFUNC

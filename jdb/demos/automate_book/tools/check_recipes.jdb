@@ -13,7 +13,7 @@
 IMPORT CONF
 
 DIM gSep$ = ";"
-IF OS.GETOS() <> "WINDOWS" THEN gSep$ = ":"
+IF OS.GETOS$() <> "WINDOWS" THEN gSep$ = ":"
 
 FUNC ArgAfter$(name$, fallback$)
     DIM argv = OS.ARGS()
@@ -42,7 +42,7 @@ FUNC RecipeFolders()
     FOR k = 0 TO LEN(levels) - 1
         DIM level_dir$ = PATH.JOIN$("recipes", levels[k])
         IF FILE.ISDIR(level_dir$) THEN
-            DIM names = SORT(DIR$(PATH.JOIN$(level_dir$, "*")))
+            DIM names = SORT(FILE.LIST(PATH.JOIN$(level_dir$, "*")))
             FOR j = 0 TO LEN(names) - 1
                 DIM d$ = PATH.JOIN$(level_dir$, names[j])
                 IF FILE.ISDIR(d$) THEN PUSH(out, d$)
@@ -55,11 +55,11 @@ ENDFUNC
 ' Runs a program and answers [passed, last line of its output].
 FUNC RunStep(cmd$, args)
     DIM r = OS.EXEC(cmd$, args)
-    DIM text$ = TRIM$(REPLACE$(r{"OUTPUT"}, CHR$(13), ""))
+    DIM text$ = TRIM$(REPLACE$(r{"output"}, CHR$(13), ""))
     DIM lines = SPLIT(text$, CHR$(10))
     DIM last$ = ""
     IF LEN(lines) > 0 THEN last$ = lines[LEN(lines) - 1]
-    RETURN [r{"EXIT_CODE"} = 0, last$]
+    RETURN [r{"exit_code"} = 0, last$]
 ENDFUNC
 
 ' The main program a recipe.toml names, "" when there is none.
@@ -108,7 +108,7 @@ FOR k = 0 TO LEN(folders) - 1
     DIM rname$ = PATH.BASENAME$(folder$)
     DIM wanted = (only$ = "") ORELSE STARTSWITH(rname$, only$)
     IF wanted ANDALSO NOT Skipped(rname$, skip$) THEN
-        DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.jdb")))
+        DIM files = SORT(FILE.LIST(PATH.JOIN$(folder$, "*.jdb")))
         DIM test$ = ""
         DIM lint_ok = TRUE
         DIM notes = []

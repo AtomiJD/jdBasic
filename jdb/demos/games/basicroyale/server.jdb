@@ -11,7 +11,7 @@ IMPORT ARENA
 DIM cards_json$ = ""
 TRY
     cards_json$ = TXTREADER$("cards.json")
-    ARENA.SETCARDS(JSON.PARSE$(cards_json$))
+    ARENA.SETCARDS(JSON.PARSE(cards_json$))
     PRINT "cards.json loaded"
 CATCH
     PRINT "cards.json missing - built-in card set"
@@ -127,8 +127,8 @@ FUNC ROOMFIND(req, b)
     DIM key$ = "main"
     IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "ROOM") THEN
         key$ = ROOMKEY$("" + b{"ROOM"})
-    ELSEIF MAP.EXISTS(req{"PARAMS"}, "room") THEN
-        key$ = ROOMKEY$("" + req{"PARAMS"}{"room"})
+    ELSEIF MAP.EXISTS(req{"params"}, "room") THEN
+        key$ = ROOMKEY$("" + req{"params"}{"room"})
     ENDIF
     IF NOT MAP.EXISTS(rooms, key$) THEN RETURN 0
     RETURN rooms{key$}
@@ -137,7 +137,7 @@ ENDFUNC
 ' Room named in a query parameter (GET) or a parsed body (POST).
 FUNC ROOMOF(req, b)
     IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "ROOM") THEN RETURN ROOM(b{"ROOM"})
-    IF MAP.EXISTS(req{"PARAMS"}, "room") THEN RETURN ROOM(req{"PARAMS"}{"room"})
+    IF MAP.EXISTS(req{"params"}, "room") THEN RETURN ROOM(req{"params"}{"room"})
     RETURN ROOM("main")
 ENDFUNC
 
@@ -159,8 +159,8 @@ FUNC ISADMIN(req, b)
     IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "KEY") THEN
         IF b{"KEY"} = admin_key$ THEN RETURN 1
     ENDIF
-    IF MAP.EXISTS(req{"PARAMS"}, "key") THEN
-        IF req{"PARAMS"}{"key"} = admin_key$ THEN RETURN 1
+    IF MAP.EXISTS(req{"params"}, "key") THEN
+        IF req{"params"}{"key"} = admin_key$ THEN RETURN 1
     ENDIF
     RETURN 0
 ENDFUNC
@@ -173,7 +173,7 @@ ENDFUNC
 ' record, crowns, collected card copies, wildcards and the last chest.
 DIM stats AS MAP = {}
 TRY
-    stats = JSON.PARSE$(TXTREADER$("stats.json"))
+    stats = JSON.PARSE(TXTREADER$("stats.json"))
 CATCH
 ENDTRY
 
@@ -234,7 +234,7 @@ CONST PIN_LOCK_MS = 60000
 
 DIM sessions AS MAP = {}
 TRY
-    sessions = JSON.PARSE$(TXTREADER$("sessions.json"))
+    sessions = JSON.PARSE(TXTREADER$("sessions.json"))
 CATCH
 ENDTRY
 IF TYPEOF(sessions) <> "OBJECT" THEN sessions = {}
@@ -275,7 +275,7 @@ ENDFUNC
 FUNC WHOIS$(req, b)
     DIM tok$ = ""
     IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "AUTH") THEN tok$ = b{"AUTH"}
-    IF tok$ = "" ANDALSO MAP.EXISTS(req{"PARAMS"}, "auth") THEN tok$ = req{"PARAMS"}{"auth"}
+    IF tok$ = "" ANDALSO MAP.EXISTS(req{"params"}, "auth") THEN tok$ = req{"params"}{"auth"}
     IF tok$ = "" ORELSE NOT MAP.EXISTS(sessions, tok$) THEN RETURN ""
     RETURN sessions{tok$}{"NAME"}
 ENDFUNC
@@ -392,7 +392,7 @@ CONST MATCH_KEEP = 300
 
 DIM matches = []
 TRY
-    matches = JSON.PARSE$(TXTREADER$("matches.json"))
+    matches = JSON.PARSE(TXTREADER$("matches.json"))
 CATCH
 ENDTRY
 IF TYPEOF(matches) <> "ARRAY" THEN matches = []
@@ -686,7 +686,7 @@ ENDFUNC
 FUNC HJOIN(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     ' the seat is taken under the name on the session, never under the one
@@ -760,7 +760,7 @@ FUNC HSTATE(req)
     SYNCSIM(rm)
     DIM players = rm{"PLAYERS"}
     DIM pid = -1
-    IF MAP.EXISTS(req{"PARAMS"}, "tok") THEN pid = PIDBYTOK(players, req{"PARAMS"}{"tok"})
+    IF MAP.EXISTS(req{"params"}, "tok") THEN pid = PIDBYTOK(players, req{"params"}{"tok"})
     IF pid >= 0 THEN players[pid]{"LAST"} = TICK()
     DIM names = []
     DIM profiles = []
@@ -781,7 +781,7 @@ ENDFUNC
 FUNC HPLAY(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
@@ -813,7 +813,7 @@ CONST EMOTE_COUNT = 6
 FUNC HEMOTE(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
@@ -842,7 +842,7 @@ ENDFUNC
 FUNC HBOT(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
@@ -863,7 +863,7 @@ ENDFUNC
 FUNC HRESET(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     IF ISADMIN(req, b) = 0 THEN RETURN DENY()
@@ -880,11 +880,11 @@ ENDFUNC
 FUNC HDROP(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     IF ISADMIN(req, b) = 0 THEN RETURN DENY()
-    DIM key$ = ROOMKEY$(IIF(MAP.EXISTS(req{"PARAMS"}, "room"), req{"PARAMS"}{"room"}, "main"))
+    DIM key$ = ROOMKEY$(IIF(MAP.EXISTS(req{"params"}, "room"), req{"params"}{"room"}, "main"))
     IF MAP.EXISTS(rooms, key$) THEN
         DIM keep AS MAP = {}
         FOR EACH k$ IN MAP.KEYS(rooms)
@@ -941,7 +941,7 @@ ENDFUNC
 ' One player's collection, so two of them can be held side by side.
 FUNC HPLAYER(req)
     DIM name$ = ""
-    IF MAP.EXISTS(req{"PARAMS"}, "name") THEN name$ = req{"PARAMS"}{"name"}
+    IF MAP.EXISTS(req{"params"}, "name") THEN name$ = req{"params"}{"name"}
     IF name$ = "" ORELSE NOT MAP.EXISTS(stats, name$) THEN RETURN JJ({ "OK": 0, "MSG": "unbekannter Spieler" })
     DIM s = STATOF(name$)
     DIM cl = []
@@ -955,7 +955,7 @@ ENDFUNC
 ' Recent matches, newest first. The head-to-head tally falls out of this.
 FUNC HMATCHES(req)
     DIM lim = 40
-    IF MAP.EXISTS(req{"PARAMS"}, "limit") THEN lim = INT(VAL(req{"PARAMS"}{"limit"}))
+    IF MAP.EXISTS(req{"params"}, "limit") THEN lim = INT(VAL(req{"params"}{"limit"}))
     IF lim < 1 THEN lim = 1
     IF lim > MATCH_KEEP THEN lim = MATCH_KEEP
     DIM out = []
@@ -973,7 +973,7 @@ ENDFUNC
 FUNC HRESETPIN(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     IF ISADMIN(req, b) = 0 THEN RETURN DENY()
@@ -999,7 +999,7 @@ ENDFUNC
 FUNC HWIPE(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     IF ISADMIN(req, b) = 0 THEN RETURN DENY()
@@ -1026,7 +1026,7 @@ ENDFUNC
 FUNC HREMATCH(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     DIM rm = ROOMFIND(req, b)
@@ -1076,7 +1076,7 @@ ENDFUNC
 FUNC HFORCEEND(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     IF ISADMIN(req, b) = 0 THEN RETURN DENY()
@@ -1141,7 +1141,7 @@ SUB LOADCARDSTATS()
     FOR EACH ln$ IN SPLIT(raw$, CHR$(10))
         IF LEN(TRIM$(ln$)) > 2 THEN
             TRY
-                COUNTMATCH(JSON.PARSE$(ln$))
+                COUNTMATCH(JSON.PARSE(ln$))
             CATCH
             ENDTRY
         ENDIF
@@ -1249,7 +1249,7 @@ ENDFUNC
 FUNC HLOGIN(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
@@ -1349,7 +1349,7 @@ ENDSUB
 FUNC HDECKS(req)
     DIM b = 0
     TRY
-        b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE(req{"body"})
     CATCH
     ENDTRY
     DIM name$ = WHOIS$(req, b)
@@ -1384,7 +1384,7 @@ ENDFUNC
 ' Level a card: costs 2^level copies (2, 4, 8, 16); wildcards fill any
 ' shortage. Applies live to a seated player's next deploys.
 FUNC HUPGRADE(req)
-    DIM b = JSON.PARSE$(req{"BODY"})
+    DIM b = JSON.PARSE(req{"body"})
     DIM name$ = WHOIS$(req, b)
     IF name$ = "" THEN RETURN NEEDAUTH()
     DIM kind$ = b{"KIND"}
@@ -1415,33 +1415,33 @@ FUNC HUPGRADE(req)
     RETURN JJ({ "OK": 1, "LVL": lvl + 1 })
 ENDFUNC
 
-HTTP.SERVER.ON_GET "/", "HROOT"
-HTTP.SERVER.ON_GET "/state", "HSTATE"
-HTTP.SERVER.ON_POST "/login", "HLOGIN"
-HTTP.SERVER.ON_POST "/join", "HJOIN"
-HTTP.SERVER.ON_POST "/play", "HPLAY"
-HTTP.SERVER.ON_POST "/emote", "HEMOTE"
-HTTP.SERVER.ON_POST "/bot", "HBOT"
-HTTP.SERVER.ON_POST "/reset", "HRESET"
+HTTP.SERVER.ON_GET "/", HROOT@
+HTTP.SERVER.ON_GET "/state", HSTATE@
+HTTP.SERVER.ON_POST "/login", HLOGIN@
+HTTP.SERVER.ON_POST "/join", HJOIN@
+HTTP.SERVER.ON_POST "/play", HPLAY@
+HTTP.SERVER.ON_POST "/emote", HEMOTE@
+HTTP.SERVER.ON_POST "/bot", HBOT@
+HTTP.SERVER.ON_POST "/reset", HRESET@
 ' browser-friendly reset - just open the URL
-HTTP.SERVER.ON_GET "/reset", "HRESET"
-HTTP.SERVER.ON_POST "/rematch", "HREMATCH"
-HTTP.SERVER.ON_GET "/cards", "HCARDS"
-HTTP.SERVER.ON_GET "/cardstats", "HCARDSTATS"
-HTTP.SERVER.ON_GET "/profile", "HPROFILE"
-HTTP.SERVER.ON_GET "/lang", "HLANG"
-HTTP.SERVER.ON_GET "/rooms", "HROOMS"
-HTTP.SERVER.ON_GET "/players", "HPLAYERS"
-HTTP.SERVER.ON_GET "/player", "HPLAYER"
-HTTP.SERVER.ON_GET "/matches", "HMATCHES"
-HTTP.SERVER.ON_GET "/leaderboard", "HLEADER"
-HTTP.SERVER.ON_POST "/drop", "HDROP"
-HTTP.SERVER.ON_GET "/drop", "HDROP"
-HTTP.SERVER.ON_POST "/wipe", "HWIPE"
-HTTP.SERVER.ON_POST "/resetpin", "HRESETPIN"
-HTTP.SERVER.ON_POST "/upgrade", "HUPGRADE"
-HTTP.SERVER.ON_POST "/decks", "HDECKS"
-HTTP.SERVER.ON_POST "/forceend", "HFORCEEND"
+HTTP.SERVER.ON_GET "/reset", HRESET@
+HTTP.SERVER.ON_POST "/rematch", HREMATCH@
+HTTP.SERVER.ON_GET "/cards", HCARDS@
+HTTP.SERVER.ON_GET "/cardstats", HCARDSTATS@
+HTTP.SERVER.ON_GET "/profile", HPROFILE@
+HTTP.SERVER.ON_GET "/lang", HLANG@
+HTTP.SERVER.ON_GET "/rooms", HROOMS@
+HTTP.SERVER.ON_GET "/players", HPLAYERS@
+HTTP.SERVER.ON_GET "/player", HPLAYER@
+HTTP.SERVER.ON_GET "/matches", HMATCHES@
+HTTP.SERVER.ON_GET "/leaderboard", HLEADER@
+HTTP.SERVER.ON_POST "/drop", HDROP@
+HTTP.SERVER.ON_GET "/drop", HDROP@
+HTTP.SERVER.ON_POST "/wipe", HWIPE@
+HTTP.SERVER.ON_POST "/resetpin", HRESETPIN@
+HTTP.SERVER.ON_POST "/upgrade", HUPGRADE@
+HTTP.SERVER.ON_POST "/decks", HDECKS@
+HTTP.SERVER.ON_POST "/forceend", HFORCEEND@
 
 LOADCARDSTATS()
 

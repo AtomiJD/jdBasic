@@ -126,7 +126,7 @@ DO WHILE running
 
     ' Input area
     GUI.SET_NEXT_ITEM_WIDTH chat_w - 120
-    chat_input = GUI.INPUT("##input", chat_input)
+    chat_input = GUI.INPUT$("##input", chat_input)
     GUI.SAME_LINE
 
     DIM can_send = llm_loaded AND LEN(chat_input) > 0 AND NOT is_generating
@@ -144,7 +144,7 @@ DO WHILE running
       AI.SET llm_id, "max_tokens", max_tokens
 
       DIM t0 = GFX.TICKS()
-      DIM response = AI.CHAT_STREAM(llm_id, chat_input, PrintToken@)
+      DIM response = AI.CHAT_STREAM$(llm_id, chat_input, PrintToken@)
       DIM elapsed = GFX.TICKS() - t0
 
       ' Count tokens
@@ -170,9 +170,9 @@ DO WHILE running
       DIM tok_info = ""
       IF llm_loaded AND LEN(chat_input) > 0 THEN
         DIM input_toks = AI.TOKEN_COUNT(llm_id, chat_input)
-        tok_info = "Input: " + STR(input_toks) + " tokens | "
+        tok_info = "Input: " + STR$(input_toks) + " tokens | "
       ENDIF
-      GUI.TEXT tok_info + "Total: " + STR(total_tokens) + " tokens | Messages: " + STR(msg_count)
+      GUI.TEXT tok_info + "Total: " + STR$(total_tokens) + " tokens | Messages: " + STR$(msg_count)
     ENDIF
   ENDIF
   GUI.END
@@ -189,7 +189,7 @@ DO WHILE running
       max_tokens = GUI.SLIDER("Max Tokens", max_tokens, 50, 2000)
 
       GUI.SEPARATOR_TEXT "System Prompt"
-      sys_prompt = GUI.INPUT("##sysprompt", sys_prompt)
+      sys_prompt = GUI.INPUT$("##sysprompt", sys_prompt)
       IF GUI.BUTTON("Apply System Prompt") AND llm_loaded THEN
         AI.SET llm_id, "system", sys_prompt
       ENDIF
@@ -197,8 +197,8 @@ DO WHILE running
       IF llm_loaded THEN
         GUI.SEPARATOR_TEXT "Model Info"
         DIM info = AI.LLM_INFO(llm_id)
-        GUI.TEXT "Context: " + STR(info{"n_ctx"})
-        GUI.TEXT "Vocab: " + STR(info{"n_vocab"})
+        GUI.TEXT "Context: " + STR$(info{"n_ctx"})
+        GUI.TEXT "Vocab: " + STR$(info{"n_vocab"})
       ENDIF
     ENDIF
     GUI.END
@@ -208,13 +208,13 @@ DO WHILE running
   IF show_tokenizer AND llm_loaded THEN
     IF GUI.BEGIN("Tokenizer", chat_w + 20, 445, 350, 310) THEN
       GUI.TEXT "Enter text to tokenize:"
-      DIM tok_text = GUI.INPUT("##toktext", "Hello, World!")
+      DIM tok_text = GUI.INPUT$("##toktext", "Hello, World!")
       DIM toks = AI.TOKENIZE(llm_id, tok_text)
-      GUI.TEXT "Tokens (" + STR(LEN(toks)) + "):"
+      GUI.TEXT "Tokens (" + STR$(LEN(toks)) + "):"
       DIM tok_str = ""
       FOR ti = 0 TO LEN(toks) - 1
         IF ti > 0 THEN tok_str = tok_str + ", "
-        tok_str = tok_str + STR(toks[ti])
+        tok_str = tok_str + STR$(toks[ti])
         IF LEN(tok_str) > 200 THEN
           tok_str = tok_str + "..."
           EXITFOR
@@ -224,13 +224,13 @@ DO WHILE running
 
       GUI.SEPARATOR
       GUI.TEXT "Detokenized:"
-      GUI.TEXT AI.DETOKENIZE(llm_id, toks)
+      GUI.TEXT AI.DETOKENIZE$(llm_id, toks)
 
       GUI.SEPARATOR_TEXT "Vector Tools"
       DIM v1 = [1.0, 0.0, 0.0]
       DIM v2 = [0.7, 0.7, 0.0]
       DIM sim = AI.COSINE_SIM(v1, v2)
-      GUI.TEXT "cos([1,0,0], [.7,.7,0]) = " + STR(ROUND(sim, 4))
+      GUI.TEXT "cos([1,0,0], [.7,.7,0]) = " + STR$(ROUND(sim, 4))
     ENDIF
     GUI.END
   ENDIF
@@ -248,7 +248,7 @@ DO WHILE running
           GUI.TABLE_NEXT_COLUMN
           GUI.TEXT hist[hi]{"role"}
           GUI.TABLE_NEXT_COLUMN
-          GUI.TEXT LEFT(hist[hi]{"content"}, 60)
+          GUI.TEXT LEFT$(hist[hi]{"content"}, 60)
         NEXT hi
         GUI.END_TABLE
       ENDIF
@@ -259,13 +259,13 @@ DO WHILE running
   ' ── Status Bar ─────────────────────────────────────────────
   DIM sbf = GUI.FLAG("NO_TITLEBAR") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("NO_MOVE") + GUI.FLAG("NO_SCROLLBAR")
   IF GUI.BEGIN("##sb", 0, 775, 1400, 25, TRUE, sbf) THEN
-    GUI.TEXT llm_status + "  |  GPU: CUDA  |  Frame: " + STR(frame)
+    GUI.TEXT llm_status + "  |  GPU: CUDA  |  Frame: " + STR$(frame)
   ENDIF
   GUI.END
 
   SCREENFLIP
   SLEEP 10
-  IF INKEY$() = CHR(27) THEN running = FALSE
+  IF INKEY$() = CHR$(27) THEN running = FALSE
 LOOP
 
 IF llm_loaded THEN AI.FREE_LLM llm_id

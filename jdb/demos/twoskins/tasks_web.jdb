@@ -19,7 +19,7 @@ SUB HANDLEKEYS(data)
     gStop = TRUE
 ENDSUB
 
-ON "KEYDOWN" CALL HANDLEKEYS
+ON "KEYDOWN" CALL HANDLEKEYS@
 
 ' ── the JSON the page runs on ──────────────────────────────────
 
@@ -42,25 +42,25 @@ FUNC HANDLELIST(request)
 ENDFUNC
 
 FUNC HANDLEADD(request)
-    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM body = JSON.PARSE(request{"body"})
     TASKS.ADD(gStore, Field$(body, "title"))
     RETURN Snapshot()
 ENDFUNC
 
 FUNC HANDLETOGGLE(request)
-    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM body = JSON.PARSE(request{"body"})
     TASKS.TOGGLE(gStore, INT(VAL(Field$(body, "id"))))
     RETURN Snapshot()
 ENDFUNC
 
 FUNC HANDLERENAME(request)
-    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM body = JSON.PARSE(request{"body"})
     TASKS.RENAME(gStore, INT(VAL(Field$(body, "id"))), Field$(body, "title"))
     RETURN Snapshot()
 ENDFUNC
 
 FUNC HANDLEREMOVE(request)
-    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM body = JSON.PARSE(request{"body"})
     TASKS.REMOVE(gStore, INT(VAL(Field$(body, "id"))))
     RETURN Snapshot()
 ENDFUNC
@@ -78,13 +78,13 @@ ENDFUNC
 
 ' ── serving ────────────────────────────────────────────────────
 
-HTTP.SERVER.ON_GET "/", "HANDLEROOT"
-HTTP.SERVER.ON_GET "/api/tasks", "HANDLELIST"
-HTTP.SERVER.ON_POST "/api/add", "HANDLEADD"
-HTTP.SERVER.ON_POST "/api/toggle", "HANDLETOGGLE"
-HTTP.SERVER.ON_POST "/api/rename", "HANDLERENAME"
-HTTP.SERVER.ON_POST "/api/remove", "HANDLEREMOVE"
-HTTP.SERVER.ON_POST "/api/sweep", "HANDLESWEEP"
+HTTP.SERVER.ON_GET "/", HANDLEROOT@
+HTTP.SERVER.ON_GET "/api/tasks", HANDLELIST@
+HTTP.SERVER.ON_POST "/api/add", HANDLEADD@
+HTTP.SERVER.ON_POST "/api/toggle", HANDLETOGGLE@
+HTTP.SERVER.ON_POST "/api/rename", HANDLERENAME@
+HTTP.SERVER.ON_POST "/api/remove", HANDLEREMOVE@
+HTTP.SERVER.ON_POST "/api/sweep", HANDLESWEEP@
 
 IF HTTP.SERVER.START(PORT, "0.0.0.0") THEN
     PRINT "Task list on http://localhost:"; PORT

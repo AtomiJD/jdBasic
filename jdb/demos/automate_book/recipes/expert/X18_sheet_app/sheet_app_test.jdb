@@ -105,7 +105,7 @@ TESTKIT.EQ(row3[3], 470, "a number stays a number")
 TESTKIT.EQ(row3[4], 46315, "a date goes back as a day number")
 TESTKIT.EQ(row3[0], "A-103", "a read-only column keeps its value")
 TESTKIT.EQ(after{"Notes"}[1][0], "keep me", "the other sheet is kept")
-TESTKIT.EQ(LEN(DIR$(PATH.JOIN$(backups$, "*.xlsx"))), 1, "a copy of the workbook before")
+TESTKIT.EQ(LEN(FILE.LIST(PATH.JOIN$(backups$, "*.xlsx"))), 1, "a copy of the workbook before")
 TESTKIT.ISTRUE(INSTR(TXTREADER$(PATH.JOIN$(folder$, "sheet_app.log")), "Status: open -> done") >= 0, "and a log line")
 
 TESTKIT.SUITE("what it refuses")

@@ -111,10 +111,10 @@ G_COLORS = []
 G_QUIT = FALSE
 
 ' Register ALL event handlers
-ON "MOUSEDOWN" CALL OnMouseDown
-ON "MOUSEUP" CALL OnMouseUp
-ON "MOUSEMOVE" CALL OnMouseMove
-ON "KEYDOWN" CALL OnKeyDown
+ON "MOUSEDOWN" CALL OnMouseDown@
+ON "MOUSEUP" CALL OnMouseUp@
+ON "MOUSEMOVE" CALL OnMouseMove@
+ON "KEYDOWN" CALL OnKeyDown@
 
 PRINT "--- Starting Drawing App. Hold left-click to draw. Press ESC to quit. ---"
 

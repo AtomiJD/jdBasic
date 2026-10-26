@@ -132,7 +132,7 @@ SUB render_form()
     ' next frame sees the edited state.
     TUI.HEADING "User Profile", 2
     TUI.SEPARATOR
-    name$       = TUI.INPUT("Display name", name$)
+    name$       = TUI.INPUT$("Display name", name$)
     count_var   = TUI.INPUT_INT("Lucky number", count_var)
     volume      = TUI.SLIDER("Volume", volume, 0.0, 1.0)
     newsletter  = TUI.CHECKBOX("Subscribe to newsletter", newsletter)
@@ -232,7 +232,7 @@ ENDSUB
 SUB on_quit(payload)
     TUI.EXIT
 ENDSUB
-TUI.ON "QUIT", "on_quit"
+TUI.ON "QUIT", on_quit@
 
 ' --- Main loop --------------------------------------------
 TUI.THEME "cool"

@@ -54,7 +54,7 @@ ENDFUNC
 ' messages. Returns [] when ok=false or the result list is empty.
 EXPORT FUNC parse_updates$(json$) AS ARRAY
     DIM out = []
-    DIM resp = JSON.PARSE$(json$)
+    DIM resp = JSON.PARSE(json$)
     IF TYPEOF(resp) <> "OBJECT" THEN RETURN out
     IF NOT MAP.EXISTS(resp, "ok") THEN RETURN out
     IF NOT resp{"ok"} THEN RETURN out
@@ -81,10 +81,10 @@ EXPORT FUNC poll(token$, offset AS INTEGER, timeout_s AS INTEGER) AS ARRAY
     DIM url$ = api_url$(token$, "getUpdates") + _
         "?timeout=" + STR$(timeout_s) + "&offset=" + STR$(offset)
     DIM r = OS.EXEC("curl", ["-s", "-m", STR$(timeout_s + 10), url$])
-    IF r{"EXIT_CODE"} <> 0 THEN
-        THROW "TELEGRAM.poll: curl exit " + STR$(r{"EXIT_CODE"})
+    IF r{"exit_code"} <> 0 THEN
+        THROW "TELEGRAM.poll: curl exit " + STR$(r{"exit_code"})
     ENDIF
-    RETURN parse_updates$(r{"OUTPUT"})
+    RETURN parse_updates$(r{"output"})
 ENDFUNC
 
 ' Send a plain-text message. The text goes through a temp file so
@@ -97,8 +97,8 @@ EXPORT FUNC send_text(token$, chat_id, body$) AS BOOLEAN
         "--data-urlencode", "text@" + body_file$, _
         api_url$(token$, "sendMessage")])
     KILL body_file$
-    IF r{"EXIT_CODE"} <> 0 THEN RETURN FALSE
-    DIM resp = JSON.PARSE$(r{"OUTPUT"})
+    IF r{"exit_code"} <> 0 THEN RETURN FALSE
+    DIM resp = JSON.PARSE(r{"output"})
     IF TYPEOF(resp) <> "OBJECT" THEN RETURN FALSE
     IF NOT MAP.EXISTS(resp, "ok") THEN RETURN FALSE
     RETURN resp{"ok"}

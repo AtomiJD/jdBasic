@@ -17,7 +17,7 @@ ENDFUNC
 ' with forward slashes.
 EXPORT FUNC FILES(root$)
     DIM out = []
-    DIM entries = SORT(DIR$(PATH.JOIN$(root$, "*")))
+    DIM entries = SORT(FILE.LIST(PATH.JOIN$(root$, "*")))
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(entries) - 1
@@ -66,7 +66,7 @@ ENDFUNC
 ' The archive's file name for a moment, such as
 ' "backup 2026-10-01 1830.zip".
 EXPORT FUNC ARCHIVE_NAME$(prefix$, when)
-    RETURN prefix$ + " " + FORMAT_DATE(when, "%Y-%m-%d %H%M") + ".zip"
+    RETURN prefix$ + " " + FORMAT_DATE$(when, "%Y-%m-%d %H%M") + ".zip"
 ENDFUNC
 
 ' Writes the archive; answers the number of files in it.
@@ -86,7 +86,7 @@ ENDFUNC
 ' keep ones, oldest first.
 EXPORT FUNC OLD(target$, prefix$, keep)
     DIM ours = []
-    DIM entries = SORT(DIR$(PATH.JOIN$(target$, "*")))
+    DIM entries = SORT(FILE.LIST(PATH.JOIN$(target$, "*")))
     DIM k = 0
     FOR k = 0 TO LEN(entries) - 1
         DIM file_name$ = entries[k]

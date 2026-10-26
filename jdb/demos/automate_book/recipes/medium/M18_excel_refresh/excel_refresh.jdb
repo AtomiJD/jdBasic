@@ -27,7 +27,7 @@ DIM listed = WORKCONF.VALUE(cfg, key$ + "sheets", [])
 DIM pdf_home$ = "~/Documents/AutomateWork/reports"
 DIM pdf_dir$ = WORKCONF.FOLDER$(cfg, key$ + "pdf_folder", pdf_home$)
 DIM mail_to$ = WORKCONF.VALUE(cfg, key$ + "mail_to", "")
-DIM day$ = FORMAT_DATE(NOW(), "%Y-%m-%d")
+DIM day$ = FORMAT_DATE$(NOW(), "%Y-%m-%d")
 
 IF book$ = "" ORELSE NOT FILE.EXISTS(book$) THEN
     PRINT "No workbook at '"; book$; "'."

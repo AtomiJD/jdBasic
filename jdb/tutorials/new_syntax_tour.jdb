@@ -11,7 +11,7 @@ raw$ = "{""tickets"": [" + _
        "{""id"": 300, ""title"": ""Silent codegen"", ""owner"": {""name"": ""grace""}, ""hours"": 0}" + _
        "]}"
 
-DIM reply = JSON.PARSE$(raw$)
+DIM reply = JSON.PARSE(raw$)
 
 ' The renderer takes one required argument. Everything else has a default,
 ' so the common call stays short and the rare call is still possible.

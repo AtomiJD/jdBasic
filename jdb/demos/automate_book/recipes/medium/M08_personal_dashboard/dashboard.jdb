@@ -16,8 +16,8 @@ DIM gTemplate$ = ""
 
 ' The Monday of the week a day (YYYY-MM-DD) belongs to.
 EXPORT FUNC MONDAY$(day$)
-    DIM back = (VAL(FORMAT_DATE(CDATE(day$), "%w")) + 6) MOD 7
-    RETURN FORMAT_DATE(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
+    DIM back = (VAL(FORMAT_DATE$(CDATE(day$), "%w")) + 6) MOD 7
+    RETURN FORMAT_DATE$(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
 ENDFUNC
 
 SUB AddBlock(per, monday$, start$, stop$, project$)
@@ -82,7 +82,7 @@ EXPORT FUNC FOLDER(folder$)
     DIM files = 0
     DIM bytes = 0
     IF FILE.ISDIR(folder$) THEN
-        DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+        DIM names = FILE.LIST(PATH.JOIN$(folder$, "*"))
         DIM k = 0
         FOR k = 0 TO LEN(names) - 1
             DIM base$ = names[k]
@@ -152,7 +152,7 @@ EXPORT FUNC PAGE$(numbers, template$)
 ENDFUNC
 
 FUNC Now$()
-    RETURN FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+    RETURN FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M:%S")
 ENDFUNC
 
 FUNC ShowPage(request)

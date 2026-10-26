@@ -51,7 +51,7 @@ FUNC LoadEnv()
         DIM ln$ = TRIM$(lines[li])
         IF LEN(ln$) = 0 THEN CONTINUEFOR
         IF LEFT$(ln$, 1) = "#" THEN CONTINUEFOR
-        DIM eq = INSTR$(ln$, "=")
+        DIM eq = INSTR(ln$, "=")
         IF eq < 1 THEN CONTINUEFOR
         DIM k$ = TRIM$(LEFT$(ln$, eq))
         DIM v$ = TRIM$(MID$(ln$, eq + 1))
@@ -64,14 +64,14 @@ FUNC LoadDefaults(path$)
     IF NOT FILE.EXISTS(path$) THEN
         PRINT "[replace] FATAL: defaults missing: "; path$ : END
     ENDIF
-    RETURN JSON.PARSE$(TXTREADER$(path$))
+    RETURN JSON.PARSE(TXTREADER$(path$))
 ENDFUNC
 
 ' ── Locate scripts/<base>.<ext> for a lesson number ──────────────
 '   We need the basename, not just the number, to drive upload.jdb.
 '   DIR$ globs filesystem-style (`scripts/script_02_*.md`).
 FUNC FindBaseForLesson(num$)
-    DIM files = DIR$("scripts\script_" + num$ + "_*.md")
+    DIM files = FILE.LIST("scripts\script_" + num$ + "_*.md")
     IF LEN(files) = 0 THEN RETURN ""
     DIM f$ = files[0]
     ' strip .md suffix
@@ -82,7 +82,7 @@ ENDFUNC
 FUNC ReadMarkerId(base$)
     DIM marker$ = "final\" + base$ + ".uploaded.json"
     IF NOT FILE.EXISTS(marker$) THEN RETURN ""
-    DIM data = JSON.PARSE$(TXTREADER$(marker$))
+    DIM data = JSON.PARSE(TXTREADER$(marker$))
     IF MAP.EXISTS(data, "id") THEN RETURN data{"id"}
     RETURN ""
 ENDFUNC
@@ -90,7 +90,7 @@ ENDFUNC
 FUNC ReadMarkerTitle(base$)
     DIM marker$ = "final\" + base$ + ".uploaded.json"
     IF NOT FILE.EXISTS(marker$) THEN RETURN ""
-    DIM data = JSON.PARSE$(TXTREADER$(marker$))
+    DIM data = JSON.PARSE(TXTREADER$(marker$))
     IF MAP.EXISTS(data, "snippet") THEN
         DIM snip = data{"snippet"}
         IF MAP.EXISTS(snip, "title") THEN RETURN snip{"title"}

@@ -200,7 +200,7 @@ FUNC WM_BUILD2()
     DIM tnow = NOW()
     DIM body$ = HTTP.GET$(base$ + "?dates=" + DKEY$(tnow) + "-" + DKEY$(DATEADD("D", 10, tnow)))
     IF LEN(body$) < 10 THEN RETURN ["WM2026 (kein Netz)", tc$ + " ?", cmap]
-    DIM j = JSON.PARSE$(body$)
+    DIM j = JSON.PARSE(body$)
     DIM evs = j{"events"}
     DIM today$ = DKEY$(tnow)
     DIM i

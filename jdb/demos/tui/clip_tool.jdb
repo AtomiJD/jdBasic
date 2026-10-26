@@ -47,7 +47,7 @@ DO
         GUI.TEXT "--- Path Operations ---"
         GUI.TEXT "Enter a full file path (e.g. /home/user/data.txt):"
         
-        PathInput$ = GUI.INPUT("##path_in", PathInput$)
+        PathInput$ = GUI.INPUT$("##path_in", PathInput$)
         
         IF GUI.BUTTON("Analyze Path") THEN
             ' Use the new PATH functions

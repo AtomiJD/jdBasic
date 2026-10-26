@@ -25,7 +25,7 @@ SUB HandleKeys(data)
     K$ = chr$(data[0]{"scancode"})
 ENDSUB
 
-ON "KEYDOWN" CALL HandleKeys
+ON "KEYDOWN" CALL HandleKeys@
 
 ' --- Initialization ---
 SUB InitGame()

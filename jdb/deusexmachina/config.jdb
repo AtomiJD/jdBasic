@@ -24,7 +24,7 @@ EXPORT FUNC load(path$) AS MAP
         ENDIF
     ENDIF
     DIM raw$ = TXTREADER$(path$)
-    DIM content = JSON.PARSE$(raw$)
+    DIM content = JSON.PARSE(raw$)
     DIM entry AS MAP
     entry{"mtime"} = mtime
     entry{"content"} = content

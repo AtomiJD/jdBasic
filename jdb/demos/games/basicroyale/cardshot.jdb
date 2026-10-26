@@ -5,7 +5,7 @@
 
 IMPORT ART
 
-DIM cards = JSON.PARSE$(TXTREADER$("cards.json"))
+DIM cards = JSON.PARSE(TXTREADER$("cards.json"))
 DIM shapemap AS MAP = {}
 FOR EACH k$ IN MAP.KEYS(cards)
     shapemap{k$} = cards{k$}{"SHAPE"}

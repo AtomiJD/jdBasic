@@ -17,8 +17,8 @@ EXPORT FUNC SAFE$(text$, max_chars)
     DIM bad = ["\", "/", ":", "*", "?", CHR$(34), "<", ">", "|"]
     DIM t$ = REDUCE(LAMBDA acc$, b$ -> REPLACE$(acc$, b$, " "), bad, _
         text$)
-    t$ = REGEX.REPLACE("[\x00-\x1f]", t$, " ")
-    t$ = TRIM$(REGEX.REPLACE(" +", t$, " "))
+    t$ = REGEX.REPLACE$("[\x00-\x1f]", t$, " ")
+    t$ = TRIM$(REGEX.REPLACE$(" +", t$, " "))
     DIM chars = -t$
     IF LEN(chars) > max_chars THEN
         t$ = TRIM$(JOIN(TAKE(max_chars, chars), ""))
@@ -80,7 +80,7 @@ EXPORT FUNC PLAN(inbox$, target$, keep_inline)
     DIM mails = []
     DIM taken = []
     DIM offset = DT.LOCAL_OFFSET()
-    DIM names = SORT(DIR$(PATH.JOIN$(inbox$, "*.eml")))
+    DIM names = SORT(FILE.LIST(PATH.JOIN$(inbox$, "*.eml")))
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(names) - 1

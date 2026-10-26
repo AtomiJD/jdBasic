@@ -15,7 +15,7 @@ DO
             GUI.SEPARATOR
             
             ' Input Text (Functional style)
-            MyName$ = GUI.INPUT("Your Name", MyName$)
+            MyName$ = GUI.INPUT$("Your Name", MyName$)
             
             ' Slider
             Volume = GUI.SLIDER("Volume", Volume, 0, 100)

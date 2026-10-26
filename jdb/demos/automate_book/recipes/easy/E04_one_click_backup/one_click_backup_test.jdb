@@ -53,7 +53,7 @@ TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(target$, "other.zip")), "a file of another
 
 KILL zip$
 KILL PATH.JOIN$(target$, "other.zip")
-DIM rest = DIR$(PATH.JOIN$(target$, "*"))
+DIM rest = FILE.LIST(PATH.JOIN$(target$, "*"))
 FOR k = 0 TO LEN(rest) - 1
     KILL PATH.JOIN$(target$, rest[k])
 NEXT k
