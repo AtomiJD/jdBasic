@@ -50,8 +50,10 @@ When the natural name is taken, qualify it: `n_items`, `tick_ms`,
 - `DATEADD(part$, num, date)`: the number comes before the date.
 - `TICK()` is milliseconds for timing; `TIMER` is whole seconds.
 - Plain `b = a` may share array storage. `b = a + 0` makes a copy.
-- `CSVREADER` reads numbers only. For text columns use `TXTREADER$` and
-  `SPLIT`, or `IMPORT DF` and `DF.READCSV`.
+- `CSVREADER(file$, ",", TRUE)` infers each cell (integer, double, string)
+  and skips the header row; `CSVHEADER(file$, ",")` returns the header. An
+  optional types array forces a column (`"STRING"` keeps leading zeros).
+  For named columns use `IMPORT DF` and `DF.READCSV`.
 
 ## 5. Idiom before loop
 

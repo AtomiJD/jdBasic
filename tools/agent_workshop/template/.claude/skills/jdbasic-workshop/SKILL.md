@@ -44,6 +44,9 @@ project's workspace name and what the saved workspace holds.
   collide with builtins.
 - Before defining: `jdb_check` the source, then `jdb_eval` it, then a
   one-line smoke test on the real data.
+- Every global ends up in the saved workspace. Build throwaway test data
+  inside the call (`PRINT WS_PROFILE([[1, "a"]], ["n", "s"])`), not as a
+  named global.
 - `jdb_doc NAME` before the first use of any builtin. Never guess an
   argument order or whether something is 0- or 1-based.
 

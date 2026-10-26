@@ -23,7 +23,10 @@ works with every other MCP client too.
    export JDBASIC=/opt/jdbasic/jdbasic               (Linux / macOS)
    ```
 
-   Check: `jdbasic --version` (or `"%JDBASIC%" --version`) lists `MCP`.
+   `setx` only reaches terminals opened afterwards: open a new terminal
+   before the next step. Check there: `jdbasic --version` (or
+   `"%JDBASIC%" --version`) lists `MCP`. `JDBASIC` wins over `PATH`, so a
+   wrong `JDBASIC` breaks the workshop even when `jdbasic` is on `PATH`.
 
 2. **Copy `template/` into your project root.** It contains `.mcp.json`,
    `AGENTS.md`, `CLAUDE.md` and a `.claude/` folder. If your project already
@@ -56,7 +59,8 @@ works with every other MCP client too.
 | `CLAUDE.md` | Imports `AGENTS.md` for Claude Code. |
 | `.claude/skills/jdbasic-workshop/SKILL.md` | How to work in the workshop: warm state, helpers, persistence, stop/patch/resume, charts. |
 | `.claude/skills/jdbasic-workshop/rules.md` | The jdBasic rules models get wrong: reserved names, indexing, syntax. |
-| `.claude/hooks/workshop_start.jdb` | SessionStart hook, written in jdBasic: checks that jdbasic runs and summarises the saved workspace. |
+| `.claude/hooks/workshop_start.sh` | SessionStart hook: finds jdbasic like `.mcp.json` does and says why when it cannot. Needs bash (on Windows: Git Bash from Git for Windows). |
+| `.claude/hooks/workshop_start.jdb` | Run by the hook, written in jdBasic: names the workspace and summarises what it holds. |
 | `.claude/settings.json` | Wires the hook and allows the read-only tools without prompts. |
 
 The workspace file is `<project-folder-name>.jsws` in the project root. It

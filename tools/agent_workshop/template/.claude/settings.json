@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${JDBASIC:-jdbasic}\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/workshop_start.jdb\" \"$CLAUDE_PROJECT_DIR\" 2>/dev/null || echo \"[jdBasic workshop] jdbasic did not start: put it on PATH or set JDBASIC to the full path of the executable. The jdb_* tools are unavailable this session.\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/workshop_start.sh\"",
             "timeout": 15
           }
         ]

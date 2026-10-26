@@ -124,9 +124,9 @@ screenshots, and small extracts cross the wire:
   stdio server. Shell work happens in Claude's own Bash tool.
 - Never restart the VM mid-session. If an eval hangs: `jdb_stop` →
   `jdb_status` → retry smaller.
-- `CSVREADER` reads **numbers only**. String columns: `TXTREADER$` + `SPLIT`
-  per line, or keep categorical columns numerically coded with a small
-  lookup array.
+- `CSVREADER` infers each cell (integer, double, string); a `types` array
+  forces a column (`"STRING"` keeps leading zeros). `CSVHEADER` returns the
+  header row. Named columns: `IMPORT DF`.
 - Screenshots before `SCREENFLIP`/`GL.FLIP`, absolute paths into `tmp/`.
 
 ## `/jdlab record` - recording sub-mode
