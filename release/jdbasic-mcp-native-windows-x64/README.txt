@@ -7,8 +7,9 @@ standalone .exe via `jdBasic.exe -c file.jdb`.
 Run as MCP stdio server:
     jdBasic.exe --mcp
 
-Run as MCP HTTP server (loopback only by default):
-    jdBasic.exe --mcp-http 7321
+Give a coding agent a persistent jdBasic workshop in any
+project (Claude Code and other MCP clients):
+    see agent-workshop\README.md
 
 Compile a script to a native EXE:
     jdBasic.exe -c file.jdb
