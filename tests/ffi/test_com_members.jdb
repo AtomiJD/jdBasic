@@ -1,0 +1,54 @@
+' COM members in both backends, with servers every Windows has, so no
+' Office is needed: an unknown member is an error the program catches
+' (reading it never ends the program), a failed call names its HRESULT,
+' an object assigned to a property goes by reference, and COM.MISSING()
+' leaves an optional argument out.
+DIM bad AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        bad = bad + 1
+    ENDIF
+ENDSUB
+
+DIM d = CREATEOBJECT("Scripting.Dictionary")
+d.Add("a", 1)
+DIM caught AS INTEGER = 0
+DIM msg AS STRING = ""
+DIM k AS INTEGER = 0
+FOR k = 1 TO 3
+    TRY
+        DIM ghost = d.Bogus
+    CATCH
+        caught = caught + 1
+        msg = ERRMSG$
+    ENDTRY
+NEXT k
+Check(caught = 3, "reading an unknown member three times is caught each time")
+Check(INSTR(msg, "Unknown member") >= 0, "the error names an unknown member")
+Check(d.Count = 1, "the object still answers after the errors")
+
+DIM fso = CREATEOBJECT("Scripting.FileSystemObject")
+msg = ""
+TRY
+    DIM nofile = fso.GetFile("Z:\no\such\file.txt")
+CATCH
+    msg = ERRMSG$
+ENDTRY
+Check(INSTR(msg, "(0x") >= 0, "a failed call carries its HRESULT")
+
+DIM doc = CREATEOBJECT("MSXML2.DOMDocument.6.0")
+DIM root = doc.createElement("root")
+doc.documentElement = root
+Check(INSTR(doc.xml, "<root/>") >= 0, "an object assigned to a property")
+
+DIM p$ = fso.BuildPath(fso.GetSpecialFolder(2).Path, "jdb_com_missing.txt")
+DIM ts = fso.CreateTextFile(p$, COM.MISSING(), FALSE)
+ts.WriteLine("x")
+ts.Close()
+Check(fso.FileExists(p$), "COM.MISSING() leaves an optional argument out")
+fso.DeleteFile(p$)
+
+IF bad > 0 THEN END 1
+PRINT "OK"

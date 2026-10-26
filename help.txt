@@ -792,9 +792,13 @@ Description: Slides the kernel over a vector (1-D kernel) or a matrix (2-D kerne
 Syntax: COS(angle_in_radians)
 Description: Returns the cosine of an angle.
 
+[COM.MISSING]
+Syntax: COM.MISSING()
+Description: A COM argument left out, for an optional parameter before others: VBA's FindControl(, 2578) is FindControl(COM.MISSING(), 2578) (Windows only).
+
 [CREATEOBJECT]
 Syntax: CREATEOBJECT(progID$)
-Description: Creates an instance of a COM Automation object (Windows only).
+Description: Creates an instance of a COM Automation object (Windows only). A call the busy server rejects is tried again for up to 30 seconds; an object assigned to a property goes by reference; a failed call's error carries the HRESULT.
 
 [CSNG]
 Syntax: CSNG(x)

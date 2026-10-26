@@ -90,6 +90,11 @@ static VARIANT value_to_variant(const Value& v) {
         case ValueType::OBJECT: {
 #ifdef COM
             auto* com = const_cast<Value&>(v).as_com();
+            if (com && com->missing) {
+                var.vt = VT_ERROR;
+                var.scode = DISP_E_PARAMNOTFOUND;
+                break;
+            }
             if (com && com->dispatch) {
                 var.vt = VT_DISPATCH;
                 var.pdispVal = static_cast<IDispatch*>(com->dispatch);
@@ -257,12 +262,104 @@ static Value variant_to_value(const VARIANT& var) {
 // The locale of every COM call: US English, as the object models document it.
 static const LCID kComLocale = 0x0409;
 
+// How long a call that a busy server rejects is tried again.
+static const DWORD kComRetryMs = 30000;
+
+static std::string hresult_hex(HRESULT hr) {
+    char buf[16];
+    snprintf(buf, sizeof buf, "0x%08lX", (unsigned long)hr);
+    return buf;
+}
+
+static bool server_busy(HRESULT hr) {
+    return hr == RPC_E_CALL_REJECTED || hr == RPC_E_SERVERCALL_RETRYLATER;
+}
+
+// Runs a call into the server again while the server says it is busy, as
+// Office loading a workbook does for a few seconds: VBA and .NET clients
+// retry such calls, and so does this.
+template <typename F>
+static HRESULT with_retry(F call) {
+    HRESULT hr = call();
+    if (!server_busy(hr)) return hr;
+    ULONGLONG start = GetTickCount64();
+    DWORD pause = 20;
+    while (server_busy(hr) && GetTickCount64() - start < kComRetryMs) {
+        Sleep(pause);
+        if (pause < 250) pause *= 2;
+        hr = call();
+    }
+    return hr;
+}
+
+// The message filter answers the COM runtime's own question whether a
+// rejected call is tried again, for the calls it handles itself.
+class RetryMessageFilter : public IMessageFilter {
+public:
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
+        if (riid == IID_IUnknown || riid == IID_IMessageFilter) {
+            *ppv = static_cast<IMessageFilter*>(this);
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return 2; }
+    STDMETHODIMP_(ULONG) Release() override { return 1; }
+    STDMETHODIMP_(DWORD) HandleInComingCall(DWORD, HTASK, DWORD, LPINTERFACEINFO) override {
+        return SERVERCALL_ISHANDLED;
+    }
+    STDMETHODIMP_(DWORD) RetryRejectedCall(HTASK, DWORD elapsed, DWORD reject_type) override {
+        if (reject_type == SERVERCALL_RETRYLATER && elapsed < kComRetryMs) return 100;
+        return (DWORD)-1;
+    }
+    STDMETHODIMP_(DWORD) MessagePending(HTASK, DWORD, DWORD) override {
+        return PENDINGMSG_WAITDEFPROCESS;
+    }
+};
+
+// COM is set up once per thread; a host that already did so keeps its mode.
+static void com_thread_init() {
+    static thread_local bool com_ready = false;
+    if (com_ready) return;
+    com_ready = true;
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    if (SUCCEEDED(hr)) {
+        static thread_local RetryMessageFilter filter;
+        IMessageFilter* previous = nullptr;
+        CoRegisterMessageFilter(&filter, &previous);
+        if (previous) previous->Release();
+    }
+}
+
+// The error of a failed Invoke: the server's own description when it gave
+// one, otherwise what was attempted; the HRESULT either way. Every string
+// the server handed over is freed.
+static std::string invoke_error(const char* what, const std::string& name,
+                                HRESULT hr, EXCEPINFO& ei) {
+    if (ei.pfnDeferredFillIn) ei.pfnDeferredFillIn(&ei);
+    std::string desc;
+    if (ei.bstrDescription) desc = from_wide(ei.bstrDescription);
+    if (ei.bstrDescription) SysFreeString(ei.bstrDescription);
+    if (ei.bstrSource) SysFreeString(ei.bstrSource);
+    if (ei.bstrHelpFile) SysFreeString(ei.bstrHelpFile);
+    HRESULT code = (hr == DISP_E_EXCEPTION && ei.scode) ? ei.scode : hr;
+    ei = {};
+    if (!desc.empty()) return "COM: " + desc + " (" + hresult_hex(code) + ")";
+    return std::string("COM: Failed to ") + what + " '" + name + "' (" + hresult_hex(code) + ")";
+}
+
 static DISPID get_dispid(IDispatch* pDisp, const std::string& name) {
     std::wstring wname = to_wide(name);
     LPOLESTR oleName = const_cast<LPOLESTR>(wname.c_str());
-    DISPID dispid;
-    HRESULT hr = pDisp->GetIDsOfNames(IID_NULL, &oleName, 1, kComLocale, &dispid);
-    if (FAILED(hr)) throw std::runtime_error("COM: Unknown member '" + name + "'");
+    DISPID dispid = DISPID_UNKNOWN;
+    HRESULT hr = with_retry([&] {
+        return pDisp->GetIDsOfNames(IID_NULL, &oleName, 1, kComLocale, &dispid);
+    });
+    if (hr == DISP_E_UNKNOWNNAME || hr == DISP_E_MEMBERNOTFOUND)
+        throw std::runtime_error("COM: Unknown member '" + name + "'");
+    if (FAILED(hr))
+        throw std::runtime_error("COM: Cannot look up '" + name + "' (" + hresult_hex(hr) + ")");
     return dispid;
 }
 
@@ -273,39 +370,47 @@ Value com_get(IDispatch* pDisp, const std::string& name) {
     VARIANT result;
     VariantInit(&result);
     EXCEPINFO ei = {};
-    HRESULT hr = pDisp->Invoke(dispid, IID_NULL, kComLocale,
-        DISPATCH_PROPERTYGET | DISPATCH_METHOD, &dp, &result, &ei, NULL);
+    HRESULT hr = with_retry([&] {
+        VariantClear(&result);
+        return pDisp->Invoke(dispid, IID_NULL, kComLocale,
+            DISPATCH_PROPERTYGET | DISPATCH_METHOD, &dp, &result, &ei, NULL);
+    });
     if (FAILED(hr)) {
-        if (ei.bstrDescription) {
-            std::string msg = from_wide(ei.bstrDescription);
-            SysFreeString(ei.bstrDescription);
-            throw std::runtime_error("COM: " + msg);
-        }
-        throw std::runtime_error("COM: Failed to get '" + name + "'");
+        VariantClear(&result);
+        throw std::runtime_error(invoke_error("get", name, hr, ei));
     }
     Value v = variant_to_value(result);
     VariantClear(&result);
     return v;
 }
 
-// COM property put
+// COM property put. An object is assigned by reference, as VBA's
+// `Set x.Prop = obj` does; a server that only takes it by value gets that.
 void com_put(IDispatch* pDisp, const std::string& name, const Value& val) {
     DISPID dispid = get_dispid(pDisp, name);
     VARIANT arg = value_to_variant(val);
     DISPID namedArg = DISPID_PROPERTYPUT;
     DISPPARAMS dp = { &arg, &namedArg, 1, 1 };
     EXCEPINFO ei = {};
-    HRESULT hr = pDisp->Invoke(dispid, IID_NULL, kComLocale,
-        DISPATCH_PROPERTYPUT, &dp, NULL, &ei, NULL);
-    VariantClear(&arg);
-    if (FAILED(hr)) {
-        if (ei.bstrDescription) {
-            std::string msg = from_wide(ei.bstrDescription);
-            SysFreeString(ei.bstrDescription);
-            throw std::runtime_error("COM: " + msg);
+    auto invoke = [&](WORD flags) {
+        return with_retry([&] {
+            return pDisp->Invoke(dispid, IID_NULL, kComLocale, flags, &dp, NULL, &ei, NULL);
+        });
+    };
+    HRESULT hr;
+    if (arg.vt == VT_DISPATCH) {
+        hr = invoke(DISPATCH_PROPERTYPUTREF);
+        if (FAILED(hr) && hr != DISP_E_EXCEPTION) {
+            EXCEPINFO none = {};
+            invoke_error("set", name, hr, ei);
+            ei = none;
+            hr = invoke(DISPATCH_PROPERTYPUT);
         }
-        throw std::runtime_error("COM: Failed to set '" + name + "'");
+    } else {
+        hr = invoke(DISPATCH_PROPERTYPUT);
     }
+    VariantClear(&arg);
+    if (FAILED(hr)) throw std::runtime_error(invoke_error("set", name, hr, ei));
 }
 
 // COM method call with args
@@ -325,18 +430,17 @@ Value com_call(IDispatch* pDisp, const std::string& name, const std::vector<Valu
     VARIANT result;
     VariantInit(&result);
     EXCEPINFO ei = {};
-    HRESULT hr = pDisp->Invoke(dispid, IID_NULL, kComLocale,
-        DISPATCH_METHOD | DISPATCH_PROPERTYGET, &dp, &result, &ei, NULL);
+    HRESULT hr = with_retry([&] {
+        VariantClear(&result);
+        return pDisp->Invoke(dispid, IID_NULL, kComLocale,
+            DISPATCH_METHOD | DISPATCH_PROPERTYGET, &dp, &result, &ei, NULL);
+    });
 
     for (auto& v : vargs) VariantClear(&v);
 
     if (FAILED(hr)) {
-        if (ei.bstrDescription) {
-            std::string msg = from_wide(ei.bstrDescription);
-            SysFreeString(ei.bstrDescription);
-            throw std::runtime_error("COM: " + msg);
-        }
-        throw std::runtime_error("COM: Failed to call '" + name + "'");
+        VariantClear(&result);
+        throw std::runtime_error(invoke_error("call", name, hr, ei));
     }
     Value v = variant_to_value(result);
     VariantClear(&result);
@@ -349,12 +453,7 @@ void register_com_builtins(VM& vm) {
     vm.register_native("CREATEOBJECT", [](const std::vector<Value>& args) -> Value {
         std::string progId = args[0].as_string()->data;
         std::wstring wProgId = to_wide(progId);
-        // COM is set up once per thread; a host that already did so keeps its mode.
-        static thread_local bool com_ready = false;
-        if (!com_ready) {
-            CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-            com_ready = true;
-        }
+        com_thread_init();
 
         CLSID clsid;
         HRESULT hr = CLSIDFromProgID(wProgId.c_str(), &clsid);
@@ -370,6 +469,15 @@ void register_com_builtins(VM& vm) {
         // CoCreateInstance already gives us a ref, make_com adds another → release one
         Value v = Value::make_com(pDisp);
         pDisp->Release(); // balance the AddRef in make_com
+        return v;
+    });
+
+    // COM.MISSING(): an argument left out of a COM call, so a VBA call such
+    // as FindControl(, 2578, , False, True) can be written as it stands.
+    vm.register_native("COM.MISSING", 0, 0, [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        Value v = Value::make_com(nullptr);
+        v.as_com()->missing = true;
         return v;
     });
 
@@ -412,57 +520,34 @@ void register_com_builtins(VM& vm) {
 
 // ── COM-aware field access (called from VM) ──────────────────
 
-// We must distinguish two failure modes:
-//   (a) "this isn't a COM object I know about / no such member" - the
-//       caller should fall through to non-COM handling.
-//   (b) "the member exists, but the COM call itself failed (bad SQL,
-//       file not found, ...)" - the error must propagate so the user
-//       sees a real message instead of a silent NONE / Undefined function
-//       which leaves the value stack inconsistent and crashes the VM.
-//
-// get_dispid throws std::runtime_error starting with "COM: Unknown member"
-// for case (a). Real call failures throw "COM: <description>" from
-// EXCEPINFO or "COM: Failed to ..." for FAILED HRESULTs without info.
-
-static bool is_unknown_member_error(const std::string& msg) {
-    return msg.rfind("COM: Unknown member", 0) == 0;
-}
+// Each answers false only for a value that is not a COM object, so the
+// caller goes on with its own handling. For a COM object every failure is
+// an error the program sees - an unknown member included: a COM object
+// read as a map would be read through the wrong type.
 
 bool com_try_get_field(const Value& obj, const std::string& field, Value& result) {
     auto* com = const_cast<Value&>(obj).as_com();
-    if (!com || !com->dispatch) return false;
-    try {
-        result = com_get(static_cast<IDispatch*>(com->dispatch), field);
-        return true;
-    } catch (const std::exception& e) {
-        if (is_unknown_member_error(e.what())) return false;
-        throw; // real COM error → propagate
-    }
+    if (!com) return false;
+    if (!com->dispatch) throw std::runtime_error("COM: the object was released");
+    result = com_get(static_cast<IDispatch*>(com->dispatch), field);
+    return true;
 }
 
 bool com_try_set_field(const Value& obj, const std::string& field, const Value& val) {
     auto* com = const_cast<Value&>(obj).as_com();
-    if (!com || !com->dispatch) return false;
-    try {
-        com_put(static_cast<IDispatch*>(com->dispatch), field, val);
-        return true;
-    } catch (const std::exception& e) {
-        if (is_unknown_member_error(e.what())) return false;
-        throw;
-    }
+    if (!com) return false;
+    if (!com->dispatch) throw std::runtime_error("COM: the object was released");
+    com_put(static_cast<IDispatch*>(com->dispatch), field, val);
+    return true;
 }
 
 bool com_try_call_method(const Value& obj, const std::string& method,
                          const std::vector<Value>& args, Value& result) {
     auto* com = const_cast<Value&>(obj).as_com();
-    if (!com || !com->dispatch) return false;
-    try {
-        result = com_call(static_cast<IDispatch*>(com->dispatch), method, args);
-        return true;
-    } catch (const std::exception& e) {
-        if (is_unknown_member_error(e.what())) return false;
-        throw;
-    }
+    if (!com) return false;
+    if (!com->dispatch) throw std::runtime_error("COM: the object was released");
+    result = com_call(static_cast<IDispatch*>(com->dispatch), method, args);
+    return true;
 }
 
 #endif // COM

@@ -155,6 +155,7 @@ struct ObjectObj : HeapObject {
 struct IDispatch; // forward declare
 struct ComObj : HeapObject {
     void* dispatch = nullptr; // IDispatch* stored as void* to avoid windows.h in header
+    bool missing = false;     // COM.MISSING(): an argument left out, as VBA's (, x)
     ComObj() = default;
     ~ComObj();
 };

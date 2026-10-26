@@ -1,0 +1,41 @@
+' A call into Excel while it is still loading a workbook's VBA project: the
+' server rejects calls for a few seconds, and every call has to wait and
+' answer instead of failing. Needs Excel and a workbook with VBA (about
+' 1 MB), opened read-only and never saved:
+'   jdBasic tests/ffi/com_excel_busy.jdb <book.xlsm>
+' Without a workbook it skips, so a sweep never starts Excel on its own.
+DIM argv = OS.ARGS()
+IF LEN(argv) < 2 THEN
+    PRINT "skipped: needs a workbook with VBA as argument"
+    END 0
+ENDIF
+DIM book$ = PATH.ABS$(argv[1])
+DIM bad AS INTEGER = 0
+DIM xl = CREATEOBJECT("Excel.Application")
+xl.Visible = FALSE
+xl.DisplayAlerts = FALSE
+xl.EnableEvents = FALSE
+DIM books = xl.Workbooks
+DIM wb = books.Open(book$, 0, TRUE)
+DIM vbe = xl.VBE
+DIM k AS INTEGER = 0
+FOR k = 1 TO 5
+    TRY
+        PRINT "call "; k; ": vbe.Version = "; vbe.Version
+    CATCH
+        PRINT "call "; k; ": ERROR "; ERRMSG$
+        bad = bad + 1
+    ENDTRY
+NEXT k
+TRY
+    vbe.ActiveVBProject = wb.VBProject
+    PRINT "active project: "; vbe.ActiveVBProject.Name
+CATCH
+    PRINT "set ActiveVBProject: ERROR "; ERRMSG$
+    bad = bad + 1
+ENDTRY
+wb.Close(FALSE)
+xl.Quit()
+RELEASEALL
+IF bad > 0 THEN END 1
+PRINT "OK"

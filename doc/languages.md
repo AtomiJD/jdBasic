@@ -223,7 +223,11 @@ Returns `"INT64"` for 64-bit integers and `"FLOAT64"` for floating point values.
 * Other COM numeric types map to **DOUBLE**
 * `CREATEOBJECT(progID$)` answers the object; properties are read and written and methods called with dots, also in chains: `xl.Visible = FALSE`, `DIM wb = xl.Workbooks.Add()`, `PRINT sh.Cells(1, 1).Value`.
 * Compiled with `-c`, the same code runs natively when both `build.bat` and `build_rt.bat` were built with `COM`: a dotted name whose first part is a variable holding an object is resolved at run time through the runtime DLL. A variable that takes such a member is runtime-typed, so `OPTION "STRICT"` accepts `DIM wb = xl.Workbooks.Add()`.
-* An array a COM method answers (a SAFEARRAY, such as `Scripting.Dictionary.Keys()`) arrives empty in both backends.
+* An array a COM method answers (a SAFEARRAY, such as `Scripting.Dictionary.Keys()` or an Excel range) arrives as an array: one dimension a list, two a list of rows.
+* A call the server rejects because it is busy (Excel loading a workbook's VBA project) is tried again for up to 30 seconds, as VBA and .NET clients do.
+* An object assigned to a property goes by reference, as VBA's `Set x.Prop = obj`: `vbe.ActiveVBProject = wb.VBProject`.
+* `COM.MISSING()` leaves an optional argument out: VBA's `FindControl(, 2578, , False, True)` is `bars.FindControl(COM.MISSING(), 2578, COM.MISSING(), FALSE, TRUE)`.
+* A failed COM call raises an error that carries the server's description and the HRESULT, such as `COM: Failed to call 'GETFILE' (0x800A0035)`. An unknown member is the error `COM: Unknown member 'NAME'`.
 
 ### Examples
 

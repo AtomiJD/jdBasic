@@ -191,6 +191,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"CODEC.UUID$", BuiltinRet::Unknown, BF_NO_VEC},
     {"COLOR", BuiltinRet::Unknown, BF_NO_VEC},
     {"COLORDIALOG", BuiltinRet::I64, BF_NO_VEC},
+    {"COM.MISSING", BuiltinRet::Handle, BF_NO_VEC},
     {"CONVOLVE", BuiltinRet::Arr, BF_NO_VEC | BF_READS_ARRS},
     {"COPYV", BuiltinRet::Arr, BF_NO_VEC},
     {"COS", BuiltinRet::F64, BF_READS_ARRS},
