@@ -92,7 +92,7 @@ All tools share a single persistent VM instance: variables, `FUNC`s, and loaded 
 | `echo` | Connectivity smoke test. Returns the input. |
 | `jdb_eval` | Execute jdBasic statements; captured stdout is returned and state persists. Optional `result` expression ships a second pure-JSON block; optional `timeout_ms` watchdog (default 30000, 0 = off) parks a runaway chunk without wedging the VM. |
 | `jdb_check` | Lint without running. Faster than the `--lint` subprocess. |
-| `jdb_load` | Load a `.jdb` file into the VM (so subsequent `jdb_eval` can call its functions). |
+| `jdb_load` | Run a `.jdb` file on the VM in the background (so subsequent `jdb_eval` can call its functions). Waits up to `wait_ms` (default 2000) for the first `STOP` or the end and returns the state and what the program printed; later output and a runtime error come with the next `jdb_status`, `jdb_eval` or `jdb_resume`, under `[script output]`. `jdb_resume` waits and reports the same way. |
 | `jdb_recompile` | Re-read a `.jdb` from disk and merge its `FUNC`/`SUB` into the live VM, for live-coding while a script is STOPped. |
 | `jdb_vars` | List currently-bound variables, each with its shape and a length-capped value preview (`max_chars`). |
 | `jdb_funcs` | List user-defined `FUNC` / `SUB` / `ASYNC FUNC` with signatures. |

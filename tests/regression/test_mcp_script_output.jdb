@@ -1,0 +1,70 @@
+' What a program started with jdb_load prints reaches the MCP client: the
+' lines before the first STOP with the load, the rest with the resume, and
+' a runtime error with the next call. Drives jdBasic --mcp with a file of
+' requests; each tool call answers before the next request is read.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Request$(id AS INTEGER, tool$ AS STRING, args AS MAP) AS STRING
+    DIM params AS MAP = {"name": tool$, "arguments": args}
+    DIM msg AS MAP = {"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params}
+    RETURN JSON.STRINGIFY$(msg) + CHR$(10)
+ENDFUNC
+
+FUNC ToolText$(lines AS ARRAY, id AS INTEGER) AS STRING
+    DIM text$ AS STRING = ""
+    FOR EACH ln IN lines
+        IF INSTR(ln, CHR$(34) + "id" + CHR$(34) + ":" + STR$(id) + ",") >= 0 THEN
+            DIM resp AS MAP = JSON.PARSE(ln)
+            text$ = resp{"result"}{"content"}[0]{"text"}
+        ENDIF
+    NEXT
+    RETURN text$
+ENDFUNC
+
+IF NOT OS.FEATURE("INTERPRETER") OR NOT OS.FEATURE("MCPSERVER") THEN
+    PRINT "interpreter-only: needs jdBasic with the MCP server"
+    PRINT "OK"
+    END
+ENDIF
+
+DIM prog$ AS STRING = MKTEMP$("mso") + ".jdb"
+DIM src$ AS STRING = "FOR i = 1 TO 5" + CHR$(10) + "    IF i = 3 THEN STOP" + CHR$(10) + _
+    "    PRINT " + CHR$(34) + "step " + CHR$(34) + "; i" + CHR$(10) + "NEXT i" + CHR$(10) + _
+    "DIM x = [1]" + CHR$(10) + "PRINT x[5]" + CHR$(10)
+TXTWRITER prog$, src$
+
+DIM init AS MAP = {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}
+DIM req$ AS STRING = JSON.STRINGIFY$({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": init}) + CHR$(10)
+req$ = req$ + Request$(1, "jdb_load", {"path": REPLACE$(prog$, "\", "/")})
+req$ = req$ + Request$(2, "jdb_resume", {})
+req$ = req$ + Request$(3, "jdb_status", {})
+DIM reqfile$ AS STRING = MKTEMP$("msr")
+TXTWRITER reqfile$, req$
+
+DIM r AS MAP = OS.EXEC(CHR$(34) + OS.SELF$() + CHR$(34) + " --mcp < " + CHR$(34) + reqfile$ + CHR$(34))
+DIM lines AS ARRAY = SPLIT(r{"OUTPUT"}, CHR$(10))
+
+DIM loaded$ AS STRING = ToolText$(lines, 1)
+DIM resumed$ AS STRING = ToolText$(lines, 2)
+DIM status$ AS STRING = ToolText$(lines, 3)
+Check(INSTR(loaded$, "stopped at a STOP") >= 0, "load reports the STOP")
+Check(INSTR(loaded$, "step 2") >= 0 AND INSTR(loaded$, "step 3") < 0, "load returns the output before the STOP")
+Check(INSTR(resumed$, "step 3") >= 0 AND INSTR(resumed$, "step 5") >= 0, "resume returns the output after the STOP")
+Check(INSTR(resumed$, "error") >= 0, "resume returns the runtime error")
+Check(INSTR(status$, "idle") >= 0, "the program has finished")
+
+KILL prog$
+KILL reqfile$
+IF failed > 0 THEN
+    PRINT r{"OUTPUT"}
+    END 1
+ENDIF
+PRINT "OK"

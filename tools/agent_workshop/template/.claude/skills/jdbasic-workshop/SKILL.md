@@ -85,8 +85,12 @@ For a program in a `.jdb` file, not a chunk of `jdb_eval`:
 4. `jdb_resume` continues from where it stopped, with the new code and the
    changed values.
 
-What a loaded program PRINTs does not come back to you. Keep the state you
-want to watch in globals and read it with `jdb_eval` and `result`.
+What a loaded program PRINTs comes back to you: `jdb_load` and `jdb_resume`
+wait up to `wait_ms` (default 2000) for the next `STOP` or the end and
+return the output so far, and output printed later comes with the next
+`jdb_status`, `jdb_eval` or `jdb_resume`, under `[script output]`. A runtime
+error of the program arrives the same way. For values you want to compare
+across stops, `jdb_eval` with `result` is still the cleaner channel.
 
 ## Charts: render, look, fix
 

@@ -281,6 +281,75 @@ struct OutputCapture {
     ~OutputCapture() { vm.on_output = prev; }
 };
 
+// PRINT output and run errors of a script started by jdb_load or jdb_resume.
+// The script runs on in the worker after its tool call has answered, so what
+// it prints waits here for the next tool call that reports on the script.
+struct ScriptOutput {
+    static constexpr size_t CAP = 200000;
+    std::mutex m;
+    std::string buf;
+    bool dropped = false;
+    void append(const std::string& s) {
+        std::lock_guard<std::mutex> lk(m);
+        buf += s;
+        if (buf.size() > CAP) {
+            buf.erase(0, buf.size() - CAP);
+            dropped = true;
+        }
+    }
+    std::string take() {
+        std::lock_guard<std::mutex> lk(m);
+        std::string out = dropped ? "[earlier output dropped]\n" : "";
+        out += buf;
+        buf.clear();
+        dropped = false;
+        return out;
+    }
+};
+ScriptOutput g_script_out;
+
+// A tool's text with the script output that is waiting, if any, after it.
+std::string with_script_output(const std::string& text) {
+    std::string out = g_script_out.take();
+    if (out.empty()) return text;
+    if (out.back() != '\n') out += '\n';
+    return text + "\n[script output]\n" + out;
+}
+
+// Runs a script job with its PRINT output going to g_script_out, then lets
+// the tool call that posted it know it reached a STOP or the end.
+void run_script_job(VM& v, const std::function<void(VM&)>& body,
+                    const std::string& what, std::promise<void>& done) {
+    auto prev = v.on_output;
+    v.on_output = [](const std::string& s) { g_script_out.append(s); };
+    try {
+        body(v);
+    } catch (const std::exception& e) {
+        log_line(what + " error: " + e.what());
+        g_script_out.append(std::string("[") + what + " error] " + e.what() + "\n");
+    } catch (...) {
+        log_line(what + " error (unknown exception)");
+        g_script_out.append("[" + what + " error] unknown exception\n");
+    }
+    v.on_output = prev;
+    done.set_value();
+}
+
+// How long jdb_load and jdb_resume wait for the script to reach a STOP or
+// its end before they answer; whatever it prints later comes with the next
+// tool call.
+int script_wait_ms(const Value& args) {
+    int64_t w = obj_get_num(args, "wait_ms", 2000);
+    return (int)std::clamp<int64_t>(w, 0, 600000);
+}
+
+// The state a script job left the VM in, for the answer of load and resume.
+std::string script_state(VM& vm, bool finished) {
+    if (!finished) return "still running, its output comes with the next jdb_status, jdb_eval or jdb_resume";
+    if (vm.is_paused()) return "stopped at a STOP";
+    return "finished";
+}
+
 // ── VM worker thread + job queue ────────────────────────────────
 //
 // All VM-mutating work runs on a single persistent worker thread:
@@ -390,10 +459,17 @@ Value tool_jdb_eval(VM& vm, const Value& args) {
                 "on its own).", true);
         }
     }
+    // Output a loaded script printed after its last report comes first.
+    std::string pending = g_script_out.take();
+    if (!pending.empty()) {
+        if (pending.back() != '\n') pending += '\n';
+        pending = "[script output]\n" + pending + "[end of script output]\n";
+    }
     auto promise = std::make_shared<std::promise<Value>>();
     auto fut = promise->get_future();
-    post_job([code, result_expr, promise](VM& v) {
+    post_job([code, result_expr, promise, pending](VM& v) {
         OutputCapture cap(v);
+        cap.buf = pending;
         try {
             run_on_vm(v, code + "\n");
             // Only append on success - failed snippets shouldn't poison the
@@ -463,7 +539,9 @@ Value tool_jdb_check(VM& vm, const Value& args) {
     }
     std::string err = vm.on_check(vm, code);
     if (err.empty()) return make_text_result("ok", false);
-    return make_text_result(err, true);
+    // "ok" followed by warning lines: the code is valid.
+    bool valid = err.rfind("ok\n", 0) == 0;
+    return make_text_result(err, !valid);
 }
 
 Value tool_jdb_stop(VM& vm, const Value& /*args*/) {
@@ -523,10 +601,10 @@ Value tool_jdb_status(VM& vm, const Value&) {
     } else {
         s = "idle, ready for jdb_load / jdb_eval";
     }
-    return make_text_result(s, false);
+    return make_text_result(with_script_output(s), false);
 }
 
-Value tool_jdb_resume(VM& vm, const Value& /*args*/) {
+Value tool_jdb_resume(VM& vm, const Value& args) {
     {
         std::lock_guard<std::mutex> lk(g_worker.m);
         if (worker_busy_or_queued_locked()) {
@@ -537,24 +615,15 @@ Value tool_jdb_resume(VM& vm, const Value& /*args*/) {
                 "Nothing to resume, VM is not in a STOPped state.", false);
         }
     }
-    post_job([](VM& v) {
-        // Discard PRINT during the async resume - the originating tool
-        // call is already gone. Live-tweak workflows inspect via
-        // jdb_eval after the next STOP, not via load/resume stdout.
-        auto prev = v.on_output;
-        v.on_output = [](const std::string&) {};
-        try {
-            v.resume();
-        } catch (const std::exception& e) {
-            log_line(std::string("resume error: ") + e.what());
-        } catch (...) {
-            log_line("resume error (unknown exception)");
-        }
-        v.on_output = prev;
+    auto done = std::make_shared<std::promise<void>>();
+    auto fut = done->get_future();
+    post_job([done](VM& v) {
+        run_script_job(v, [](VM& vv) { vv.resume(); }, "resume", *done);
     });
-    return make_text_result(
-        "[resumed in worker, script runs until next STOP or running=0]",
-        false);
+    bool finished = fut.wait_for(std::chrono::milliseconds(script_wait_ms(args))) ==
+                    std::future_status::ready;
+    return make_text_result(with_script_output(
+        "[resumed: " + script_state(vm, finished) + "]"), false);
 }
 
 Value tool_jdb_load(VM& vm, const Value& args) {
@@ -591,21 +660,17 @@ Value tool_jdb_load(VM& vm, const Value& args) {
         auto sep = path.find_last_of("/\\");
         g_base_dir = (sep != std::string::npos) ? path.substr(0, sep) : ".";
     }
-    post_job([source, path](VM& v) {
-        // Discard PRINT during async run - the load tool already returned.
-        // For live-tweak workflows, use jdb_eval after STOP to read state.
-        auto prev = v.on_output;
-        v.on_output = [](const std::string&) {};
-        try {
-            run_on_vm(v, source);
-        } catch (const std::exception& e) {
-            log_line("run error in " + path + ": " + e.what());
-        } catch (...) {
-            log_line("run error in " + path + " (unknown exception)");
-        }
-        v.on_output = prev;
+    g_script_out.take();
+    auto done = std::make_shared<std::promise<void>>();
+    auto fut = done->get_future();
+    post_job([source, path, done](VM& v) {
+        run_script_job(v, [&source](VM& vv) { run_on_vm(vv, source); },
+                       "run " + path, *done);
     });
-    return make_text_result(banner, false);
+    bool finished = fut.wait_for(std::chrono::milliseconds(script_wait_ms(args))) ==
+                    std::future_status::ready;
+    return make_text_result(with_script_output(
+        banner + "\n[" + script_state(vm, finished) + "]"), false);
 }
 
 // Cache of variable names that exist on the VM at boot. jdb_vars hides
@@ -1205,13 +1270,14 @@ Value build_tools() {
 
     a.push_back(tool_descriptor(
         "jdb_load",
-        "Read a jdBasic source file (path is relative to the server's working directory) and EXECUTE its contents on the persistent VM. Returns captured stdout, or isError on read/parse/runtime failure.",
-        build_input_schema({{"path", "Relative path to a .jdb file."}}, {"path"})));
+        "Read a jdBasic source file (path is relative to the server's working directory) and run it on the persistent VM in the background. Waits up to wait_ms for the script to reach a STOP or its end, then returns its state and what it printed so far. Output printed later, and a runtime error, come with the next jdb_status, jdb_eval or jdb_resume.",
+        build_input_schema({{"path", "Relative path to a .jdb file."},
+                            {"wait_ms", "How long to wait for a STOP or the end before answering (default 2000)."}}, {"path"})));
 
     a.push_back(tool_descriptor(
         "jdb_resume",
-        "Continue a script that paused via the STOP statement. While paused, the stopped frame's locals are exposed as globals so jdb_eval can inspect/mutate them; jdb_resume folds those changes back and continues execution from the next opcode. Returns any captured stdout. No-op (with a friendly message) if the VM is not stopped.",
-        build_input_schema({}, {})));
+        "Continue a script that paused via the STOP statement. While paused, the stopped frame's locals are exposed as globals so jdb_eval can inspect/mutate them; jdb_resume folds those changes back and continues execution from the next opcode. Waits up to wait_ms for the next STOP or the end, then returns the state and what the script printed. No-op (with a friendly message) if the VM is not stopped.",
+        build_input_schema({{"wait_ms", "How long to wait for the next STOP or the end before answering (default 2000)."}}, {})));
 
     a.push_back(tool_descriptor(
         "jdb_stop",
@@ -1220,7 +1286,7 @@ Value build_tools() {
 
     a.push_back(tool_descriptor(
         "jdb_status",
-        "Report the VM's current state: 'running' (worker executing a script, most tools are busy-rejected, call jdb_stop first), 'stopped' (paused at a STOP, eval/resume work), or 'idle' (no script running, ready for jdb_load).",
+        "Report the VM's current state: 'running' (worker executing a script, most tools are busy-rejected, call jdb_stop first), 'stopped' (paused at a STOP, eval/resume work), or 'idle' (no script running, ready for jdb_load). Also returns what a loaded or resumed script printed since the last report.",
         build_input_schema({}, {})));
 
     a.push_back(tool_descriptor(
