@@ -1,0 +1,48 @@
+' An old name from the alias table runs as its new name, in a call and as a
+' funcref, while a member or a string that spells the same word stays as it
+' is. JDB.CHECK$ accepts the old name and names its replacement.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+Check(STR(42) = STR$(42), "STR calls STR$")
+Check(CHR (65) = "A", "an old name with a space before the parenthesis")
+Check(UCASE("ab") + LCASE("CD") = "ABcd", "UCASE and LCASE")
+Check(TRIM("  x ") = "x", "TRIM")
+Check(INSTR$("hello", "ll") = 2, "INSTR$ calls INSTR")
+Check(OS.GETOS() = OS.GETOS$(), "OS.GETOS calls OS.GETOS$")
+
+DIM m AS MAP
+m = JSON.PARSE$("{" + CHR$(34) + "a" + CHR$(34) + ": 1}")
+Check(m{"a"} = 1, "JSON.PARSE$ calls JSON.PARSE")
+
+Check("STR(1)" = "S" + "TR(1)", "a string spelling an old call stays text")
+
+TYPE Box
+    str AS STRING
+ENDTYPE
+DIM b AS Box
+b.str = "kept"
+Check(b.str = "kept", "a member named like an old name stays a member")
+
+DIM table AS MAP = JDB.ALIASES()
+Check(table{"STR"} = "STR$", "JDB.ALIASES maps STR to STR$")
+Check(table{"JSON.PARSE$"} = "JSON.PARSE", "JDB.ALIASES maps JSON.PARSE$")
+
+IF OS.FEATURE("INTERPRETER") THEN
+    DIM report$ AS STRING = JDB.CHECK$("PRINT STR(1)")
+    Check(LEFT$(report$, 2) = "ok", "JDB.CHECK$ accepts an old name")
+    Check(INSTR(report$, "STR is an old name, use STR$") >= 0, "JDB.CHECK$ names the new name")
+    Check(JDB.CHECK$("PRINT STR$(1)") = "", "JDB.CHECK$ is quiet on new names")
+    report$ = JDB.CHECK$("PRINT SELECT(UCASE@, [1])")
+    Check(INSTR(report$, "UCASE is an old name") >= 0, "an old name as a funcref")
+ENDIF
+
+IF failed > 0 THEN END 1
+PRINT "OK"

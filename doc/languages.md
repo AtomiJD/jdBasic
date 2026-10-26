@@ -2553,7 +2553,8 @@ number. `FORMAT_DATE` accepts both and is the portable way to render one.
 * **`VARS() -> array`**: Returns an array of names of all currently defined global variables, for live debugging and the REPL.
 * **`FUNCS`**: Prints every user-defined `FUNC`, `SUB` and `ASYNC FUNC` with its parameter signature, one per line. The companion to `VARS` for the REPL; names beginning with a double underscore stay hidden.
 * **`JDB.GLOBAL_GET(name$) -> value`** / **`JDB.GLOBAL_SET(name$, value)`**: Read or write a single global by name (case-insensitive). `GET` returns `NONE` for an unknown name; `SET` allocates the slot if the name is new. These back the MCP state-save and state-restore tools, which capture a value copy of each user variable before an experimental snippet runs.
-* **`JDB.CHECK$(code$) -> string`**: Validates a snippet without running it and returns the diagnostics. Backs the MCP `jdb_check` tool, so a generated snippet can be checked before it touches the persistent VM. Returns an "unavailable" message when the host registered no checker.
+* **`JDB.ALIASES() -> map`**: The old names that still resolve, mapped to the names that replaced them. A program that uses an old name runs as before; `--lint`, `jdb_check` and `-c` name each use and its new name, and `tools/jdb-fix.jdb` rewrites the source.
+* **`JDB.CHECK$(code$) -> string`**: Validates a snippet without running it and returns the diagnostics: an empty string, `"ok"` followed by one warning per line for a valid snippet that uses old names, or the error. Backs the MCP `jdb_check` tool, so a generated snippet can be checked before it touches the persistent VM. Returns an "unavailable" message when the host registered no checker.
 
 #### `HELP [topic$]` and `HELP$()`
 
@@ -5189,7 +5190,7 @@ Every documented builtin, linked to the section that describes it.
 
 **I** · [IF](#system--flow-control) · [IIF](#matharithmeticround-functions) · [IMPORT](#system--flow-control) · [INDEXOF](#array--matrix-functions) · [INPUT](#console-io-functions) · [INPUTBOX$](#native-windows-forms-form) · [INPUT_HIDDEN$](#console-io-functions) · [INSERT$](#string-functions) · [INSTR](#string-functions) · [INT](#matharithmeticround-functions) · [INTEGRATE](#array--matrix-functions) · [INVERT](#array--matrix-functions) · [IOTA](#array--matrix-functions) · [ISARR](#type-inspection) · [ISBOOL](#type-inspection) · [ISMAP](#type-inspection) · [ISNONE](#type-inspection) · [ISNUM](#type-inspection) · [ISSTR](#type-inspection)
 
-**J** · [JDB.CHECK$](#type-inspection) · [JDB.GLOBAL_GET](#type-inspection) · [JOIN](#string-functions) · [JOY.AXIS](#mouse--joystick--gamepad-input) · [JOY.BUTTON](#mouse--joystick--gamepad-input) · [JOY.COUNT](#mouse--joystick--gamepad-input) · [JOY.HAT](#mouse--joystick--gamepad-input) · [JOY.NAME$](#mouse--joystick--gamepad-input) · [JSON.PARSE](#json-functions) · [JSON.PARSE$](#json-functions) · [JSON.STRINGIFY$](#json-functions)
+**J** · [JDB.ALIASES](#type-inspection) · [JDB.CHECK$](#type-inspection) · [JDB.GLOBAL_GET](#type-inspection) · [JOIN](#string-functions) · [JOY.AXIS](#mouse--joystick--gamepad-input) · [JOY.BUTTON](#mouse--joystick--gamepad-input) · [JOY.COUNT](#mouse--joystick--gamepad-input) · [JOY.HAT](#mouse--joystick--gamepad-input) · [JOY.NAME$](#mouse--joystick--gamepad-input) · [JSON.PARSE](#json-functions) · [JSON.PARSE$](#json-functions) · [JSON.STRINGIFY$](#json-functions)
 
 **K** · [KILL](#filesystem)
 

@@ -1,5 +1,6 @@
 // VM builtins: environment, OS.* (child processes in os_spawn.h), EXECUTE/EVAL, reactive bindings and internal hooks.
 
+#include "jdb_aliases.h"
 #include "vm_internal.h"
 #include "os_spawn.h"
 #include <fstream>
@@ -820,6 +821,15 @@ void VM::register_system_builtins() {
         return Value::make_string("JDB.CHECK$ unavailable: host did not register on_check");
     });
 #endif
+
+    // JDB.ALIASES() - the old names that still resolve, each mapped to its
+    // new name. tools/jdb-fix.jdb rewrites source files from it.
+    register_native("JDB.ALIASES", 0, 0, [](const std::vector<Value>&) -> Value {
+        Value m = Value::make_object();
+        for (const NameAlias& a : kNameAliases)
+            m.as_object()->set(a.old_name, Value::make_string(a.new_name));
+        return m;
+    });
 
     // JDB.GLOBAL_GET(name$) - read a single global by (case-insensitive)
     // name. Returns NONE if the name is unknown. Companion to set_global.

@@ -32,6 +32,20 @@ static bool unrecorded_return_kind(const std::string& name) {
            (sig->flags & BF_COMPILER_HANDLES) == 0;
 }
 
+// Every old name the program and its modules used (jdb_aliases.h).
+static std::vector<AliasUse> all_alias_uses(const Lexer& lexer, const Parser& parser) {
+    std::vector<AliasUse> uses = lexer.alias_uses();
+    uses.insert(uses.end(), parser.module_alias_uses.begin(), parser.module_alias_uses.end());
+    return uses;
+}
+
+static std::string alias_warning(const AliasUse& u, const std::string& main_file) {
+    std::string where = u.file.empty() ? main_file : u.file;
+    return "warning at " + (where.empty() ? std::string("line ") : where + ":") +
+           std::to_string(u.line) + ": " + u.old_name + " is an old name, use " +
+           u.new_name + ".";
+}
+
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -491,7 +505,10 @@ static void setup_dynamic_code(VM& vm) {
             setup_parser_modules(parser);
             parser.predeclared_types = v.known_types;
             (void)parser.parse();
-            return "";
+            std::string out;
+            for (auto& u : all_alias_uses(lexer, parser))
+                out += "\n" + alias_warning(u, "");
+            return out.empty() ? "" : "ok" + out;
         } catch (const std::exception& e) {
             return e.what();
         }
@@ -1569,6 +1586,12 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 }))
                 shadows.push_back(s.name + " (line " + std::to_string(s.line) + ")");
 
+            std::vector<std::string> old_names;
+            for (auto& u : all_alias_uses(lexer, parser))
+                old_names.push_back(u.old_name + " -> " + u.new_name + " (" +
+                    (u.file.empty() ? std::string() : u.file + ":") + "line " +
+                    std::to_string(u.line) + ")");
+
             // Builtins whose answer the compiler has to guess the kind of.
             std::vector<std::string> unforeseeable;
             for (auto& u : find_unforeseeable_results(ast, unrecorded_return_kind))
@@ -1632,6 +1655,11 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                     }
                     vm.emit("    " + u + "\n");
                 }
+            }
+            if (!old_names.empty()) {
+                warnings += (int)old_names.size();
+                vm.emit("  Old names, still accepted: " + std::to_string(old_names.size()) + "\n");
+                for (auto& o : old_names) vm.emit("    " + o + "\n");
             }
             if (warnings == 0) vm.emit("  No warnings.\n");
             else vm.emit("  Total warnings: " + std::to_string(warnings) + "\n");
@@ -2174,6 +2202,8 @@ int main(int argc, char* argv[]) {
             // name of the importing program is an error here.
             parser.strict_module_writes = true;
             ast = parser.parse();
+            for (auto& u : all_alias_uses(lexer, parser))
+                std::cerr << alias_warning(u, filename) << std::endl;
         } catch (const jdError& e) {
             std::cerr << "Parse error";
             if (e.line > 0) std::cerr << " at line " << e.line;

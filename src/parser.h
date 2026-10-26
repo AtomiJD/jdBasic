@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include "token.h"
 #include "ast.h"
+#include "jdb_aliases.h"
 
 class Lexer;
 
@@ -33,6 +34,9 @@ public:
     // already renamed into their own module's namespace, so the importing
     // module must not rename them again.
     std::unordered_set<const Stmt*> imported_stmts;
+    // Old names (jdb_aliases.h) the imported modules used; the main file's
+    // own uses are on its lexer.
+    std::vector<AliasUse> module_alias_uses;
 
     // Types the caller already knows about - the VM's registry when a REPL line
     // or an EXECUTE chunk is parsed. Compared upper-cased, like every other

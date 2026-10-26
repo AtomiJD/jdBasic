@@ -489,6 +489,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"ISNULL", BuiltinRet::Bool, BF_NO_VEC},
     {"ISNUM", BuiltinRet::Bool, BF_NO_VEC},
     {"ISSTR", BuiltinRet::Bool, BF_NO_VEC},
+    {"JDB.ALIASES", BuiltinRet::Handle, BF_NO_VEC},
     {"JDB.CHECK$", BuiltinRet::Unknown, BF_NO_VEC},
     {"JDB.GLOBAL_GET", BuiltinRet::Any, BF_NO_VEC},
     {"JDB.GLOBAL_SET", BuiltinRet::None, BF_NO_VEC},

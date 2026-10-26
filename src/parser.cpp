@@ -2639,6 +2639,11 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
     auto mod_stmts = mod_parser.parse();
     // Propagate any new imports back
     imported_modules = mod_parser.imported_modules;
+    for (auto u : mod_lexer.alias_uses()) {
+        u.file = module_file_path;
+        module_alias_uses.push_back(std::move(u));
+    }
+    for (auto& u : mod_parser.module_alias_uses) module_alias_uses.push_back(u);
 
     // Separate: statements from sub-imports (already renamed) vs own module stmts
     // Sub-imported stmts were inserted at the beginning by recursive parse_import()

@@ -1519,9 +1519,13 @@ Description: TRUE if v is a number (integer or double).
 Syntax: ISSTR(v) -> bool
 Description: TRUE if v is a string.
 
+[JDB.ALIASES]
+Syntax: JDB.ALIASES() -> map
+Description: The old names that still resolve, each key an old name and its value the name that replaced it. A program that uses an old name runs; --lint, jdb_check and -c warn about it, and tools/jdb-fix.jdb rewrites it.
+
 [JDB.CHECK$]
 Syntax: JDB.CHECK$(code$) -> string
-Description: Lexes and parses a code snippet without executing it, returning an empty string if syntactically valid or the error message otherwise.
+Description: Lexes and parses a code snippet without executing it, returning an empty string if it is valid, "ok" followed by one warning per line if it is valid but uses old names, or the error message otherwise.
 
 [JDB.GLOBAL_GET]
 Syntax: JDB.GLOBAL_GET(name$) -> value

@@ -112,6 +112,66 @@ Token Lexer::read_identifier() {
 }
 
 Token Lexer::next() {
+    Token t;
+    if (!pending.empty()) { t = std::move(pending.front()); pending.pop_front(); }
+    else t = scan();
+    prev_type = t.type;
+    return t;
+}
+
+// An old name from jdb_aliases.h at pos becomes the tokens of its new name.
+// The longest dotted name that has an alias wins: HTTP.GET_ASYNC$ before HTTP.
+bool Lexer::read_alias(Token& out) {
+    if (prev_type == TokenType::DOT) return false;
+    auto word_end = [&](size_t q) {
+        while (q < src.size() && (std::isalnum((unsigned char)src[q]) || src[q] == '_')) ++q;
+        if (q < src.size() && src[q] == '$') ++q;
+        return q;
+    };
+    std::string name;
+    std::vector<std::pair<std::string, size_t>> prefixes;
+    size_t q = pos;
+    for (;;) {
+        size_t e = word_end(q);
+        name += src.substr(q, e - q);
+        prefixes.emplace_back(name, e);
+        if (e + 1 < src.size() && src[e] == '.' &&
+            (std::isalpha((unsigned char)src[e + 1]) || src[e + 1] == '_')) {
+            name += '.';
+            q = e + 1;
+        } else {
+            break;
+        }
+    }
+    for (size_t k = prefixes.size(); k-- > 0; ) {
+        std::string upper = prefixes[k].first;
+        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+        const NameAlias* a = jdb_name_alias(upper);
+        if (!a) continue;
+        size_t e = prefixes[k].second;
+        size_t n = e;
+        while (n < src.size() && (src[n] == ' ' || src[n] == '\t')) ++n;
+        char follow = n < src.size() ? src[n] : '\0';
+        if (!a->bare && follow != '(' && follow != '@') return false;
+        while (pos < e) advance();
+        uses.push_back({"", line, upper, a->new_name});
+        std::string_view rest(a->new_name);
+        bool first = true;
+        while (!rest.empty()) {
+            size_t dot = rest.find('.');
+            std::string seg(rest.substr(0, dot));
+            rest = dot == std::string_view::npos ? std::string_view() : rest.substr(dot + 1);
+            TokenType kw;
+            Token t = make_token(keyword_lookup(seg, kw) ? kw : TokenType::IDENTIFIER, seg);
+            if (first) { out = t; first = false; }
+            else { pending.push_back(make_token(TokenType::DOT, ".")); pending.push_back(t); }
+        }
+        return true;
+    }
+    return false;
+}
+
+Token Lexer::scan() {
     if (done) return make_token(TokenType::EOF_TOKEN, "");
 
     while (pos < src.size()) {
@@ -173,6 +233,8 @@ Token Lexer::next() {
 
         // Identifier / keyword
         if (std::isalpha(c) || c == '_') {
+            Token aliased;
+            if (read_alias(aliased)) return aliased;
             Token t = read_identifier();
             // A lone underscore before the end of the line joins it with
             // the next one: neither the underscore nor the newline is a
