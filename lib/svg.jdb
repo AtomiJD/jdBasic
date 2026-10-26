@@ -282,13 +282,13 @@ EXPORT FUNC TRANSLATE$(xv, yv)
 ENDFUNC
 
 ' A rotation in degrees, about the origin or about (cx, cy).
-FUNC RotateBy$(degrees, cx = 0, cy = 0)
-    IF cx = 0 ANDALSO cy = 0 THEN RETURN "rotate(" + Num$(degrees) + ")"
-    RETURN "rotate(" + Num$(degrees) + " " + Num$(cx) + " " + Num$(cy) + ")"
+FUNC RotateBy$(angle_deg, cx = 0, cy = 0)
+    IF cx = 0 ANDALSO cy = 0 THEN RETURN "rotate(" + Num$(angle_deg) + ")"
+    RETURN "rotate(" + Num$(angle_deg) + " " + Num$(cx) + " " + Num$(cy) + ")"
 ENDFUNC
 
-EXPORT FUNC ROTATE$(degrees, cx = 0, cy = 0)
-    RETURN RotateBy$(degrees, cx, cy)
+EXPORT FUNC ROTATE$(angle_deg, cx = 0, cy = 0)
+    RETURN RotateBy$(angle_deg, cx, cy)
 ENDFUNC
 
 EXPORT FUNC SCALE$(sx, sy = 0)
