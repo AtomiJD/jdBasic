@@ -10,6 +10,7 @@
 
 #include <mutex>
 #include <regex>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -44,11 +45,22 @@ inline const std::regex* cached(const std::string& pattern) {
     return &it->second;
 }
 
+// The engine gives up on some pattern and input pairs (deep backtracking
+// runs out of its stack): that is an error, not a missing match. Any other
+// regex error keeps the helpers' own answer.
+inline void raise_if_engine_gave_up(const std::regex_error& e) {
+    if (e.code() == std::regex_constants::error_stack ||
+        e.code() == std::regex_constants::error_complexity)
+        throw std::runtime_error("REGEX: the pattern needs more backtracking on this text "
+                                 "than the regex engine allows");
+}
+
 // Whether the pattern occurs anywhere in text.
 inline bool search(const std::string& pattern, const std::string& text) {
     const std::regex* re = cached(pattern);
     if (!re) return false;
-    try { return std::regex_search(text, *re); } catch (...) { return false; }
+    try { return std::regex_search(text, *re); }
+    catch (const std::regex_error& e) { raise_if_engine_gave_up(e); return false; }
 }
 
 // Whether the whole text matches; groups receives the captures when the
@@ -62,7 +74,7 @@ inline bool match(const std::string& pattern, const std::string& text, std::vect
         if (!std::regex_match(text, m, *re)) return false;
         for (size_t i = 1; i < m.size(); i++) groups.push_back(m[i].str());
         return true;
-    } catch (...) { return false; }
+    } catch (const std::regex_error& e) { raise_if_engine_gave_up(e); return false; }
 }
 
 // Every whole match in text, in order.
@@ -73,7 +85,7 @@ inline std::vector<std::string> matches(const std::string& pattern, const std::s
     try {
         for (std::sregex_iterator it(text.begin(), text.end(), *re), end; it != end; ++it)
             out.push_back((*it)[0].str());
-    } catch (...) {}
+    } catch (const std::regex_error& e) { raise_if_engine_gave_up(e); }
     return out;
 }
 
@@ -97,7 +109,7 @@ inline void find_all(const std::string& pattern, const std::string& text,
             }
             rows.push_back(std::move(row));
         }
-    } catch (...) {}
+    } catch (const std::regex_error& e) { raise_if_engine_gave_up(e); }
 }
 
 // text with every match replaced; $1, $2 and $& in the replacement refer to
@@ -105,7 +117,8 @@ inline void find_all(const std::string& pattern, const std::string& text,
 inline std::string replace(const std::string& pattern, const std::string& text, const std::string& replacement) {
     const std::regex* re = cached(pattern);
     if (!re) return text;
-    try { return std::regex_replace(text, *re, replacement); } catch (...) { return text; }
+    try { return std::regex_replace(text, *re, replacement); }
+    catch (const std::regex_error& e) { raise_if_engine_gave_up(e); return text; }
 }
 
 } // namespace jdb_regex

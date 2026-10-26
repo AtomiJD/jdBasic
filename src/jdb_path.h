@@ -76,6 +76,11 @@ inline std::string normalize(const std::string& p) {
     if (body.size() >= 2 && std::isalpha((unsigned char)body[0]) && body[1] == ':') {
         prefix = body.substr(0, 2);
         body = body.substr(2);
+    } else if (body.size() >= 2 && body[0] == kSep && body[1] == kSep) {
+        // A UNC path keeps its two leading separators: one would name a
+        // path on the current drive.
+        prefix.assign(1, kSep);
+        body = body.substr(1);
     }
 #endif
     bool rooted = !body.empty() && body[0] == kSep;

@@ -19,6 +19,25 @@
 // reader has to ask instead of answering an empty file.
 static bool path_is_directory(const std::string& p) { return jdb_path::is_dir(p); }
 
+// The current directory, however long: the buffer is sized by asking first.
+static std::string current_dir() {
+#if defined(_WIN32)
+    DWORD need = GetCurrentDirectoryA(0, nullptr);
+    if (need == 0) return std::string();
+    std::string s(need, '\0');
+    DWORD got = GetCurrentDirectoryA(need, &s[0]);
+    s.resize(got < need ? got : 0);
+    return s;
+#else
+    std::vector<char> buf(4096);
+    while (!getcwd(buf.data(), buf.size())) {
+        if (errno != ERANGE || buf.size() > (1u << 20)) return std::string();
+        buf.resize(buf.size() * 2);
+    }
+    return std::string(buf.data());
+#endif
+}
+
 // Skips a UTF-8 byte order mark at the start of a stream.
 static void skip_utf8_bom(std::istream& f) {
     char b[3] = { 0, 0, 0 };
@@ -500,14 +519,7 @@ void VM::register_file_builtins() {
     register_native("CD", 0, 1, [](const std::vector<Value>& args) -> Value {
         if (args.empty()) {
             // CD without args: just return current dir (no print in script mode)
-#if defined(_WIN32)
-            char buf[MAX_PATH];
-            GetCurrentDirectoryA(MAX_PATH, buf);
-#else
-            char buf[4096];
-            if (!getcwd(buf, sizeof(buf))) buf[0] = '\0';
-#endif
-            return Value::make_string(buf);
+            return Value::make_string(current_dir());
         }
         std::string path = args[0].to_string();
         if (path.empty()) {
@@ -516,28 +528,17 @@ void VM::register_file_builtins() {
 #if defined(_WIN32)
         if (!SetCurrentDirectoryA(path.c_str()))
             throw jdError(ErrCode::FILE_NOT_FOUND, "Cannot change to directory: " + path);
-        char buf[MAX_PATH];
-        GetCurrentDirectoryA(MAX_PATH, buf);
-        return Value::make_string(buf);
+        return Value::make_string(current_dir());
 #else
         if (chdir(path.c_str()) != 0)
             throw jdError(ErrCode::FILE_NOT_FOUND, "Cannot change to directory: " + path);
-        char buf[4096];
-        getcwd(buf, sizeof(buf));
-        return Value::make_string(buf);
+        return Value::make_string(current_dir());
 #endif
     });
 
     register_native("PWD", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
-#if defined(_WIN32)
-        char buf[MAX_PATH];
-        GetCurrentDirectoryA(MAX_PATH, buf);
-#else
-        char buf[4096];
-        if (!getcwd(buf, sizeof(buf))) buf[0] = '\0';
-#endif
-        return Value::make_string(buf);
+        return Value::make_string(current_dir());
     });
 
     // MKDIR creates every missing parent too, like mkdir -p.

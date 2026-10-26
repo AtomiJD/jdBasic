@@ -43,8 +43,11 @@ constexpr int FLAG_COMPUTE_ADLER32   = 8;
 // Input: deflate stream (or zlib with header). Output: decompressed bytes.
 // Returns: true = ok, false = error. `consumed`, when given, receives the
 // number of input bytes the stream used up to the end of its last block.
+// A stream that would decode to more than max_out bytes (a deflate bomb
+// reaches about 1000:1) is refused as if it were corrupt.
+constexpr size_t kInflateLimit = (size_t)512 << 20;
 inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out, bool zlib_header = true,
-                    size_t* consumed = nullptr) {
+                    size_t* consumed = nullptr, size_t max_out = kInflateLimit) {
     if (in_size < 2) return false;
 
     size_t ip = 0;
@@ -164,6 +167,7 @@ inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out
             ip += 4;
             if ((uint16_t)~len != nlen) return false;
             if (ip + len > in_size) return false;
+            if (out.size() + len > max_out) return false;
             out.insert(out.end(), in + ip, in + ip + len);
             ip += len;
             bit_buf = 0; bit_count = 0;
@@ -218,6 +222,7 @@ inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out
             int sym = decode_huff(lit_h);
             if (sym < 0) return false;
             if (sym < 256) {
+                if (out.size() >= max_out) return false;
                 out.push_back((uint8_t)sym);
             } else if (sym == 256) {
                 break;
@@ -233,6 +238,7 @@ inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out
                 if (DIST_EXTRA[dsym]) dist += (int)get_bits(DIST_EXTRA[dsym]);
 
                 if (dist > (int)out.size()) return false;
+                if (out.size() + (size_t)len > max_out) return false;
                 size_t src = out.size() - dist;
                 for (int i = 0; i < len; i++) out.push_back(out[src + i]);
             }
@@ -496,6 +502,9 @@ inline CMap parse_cmap(const std::string& src) {
         p = end + 9;
     }
 
+    // A real font maps at most the 65536 codes of a 16-bit CID space; a range
+    // list that claims far more is cut there instead of filling memory.
+    size_t budget = (size_t)1 << 17;
     p = 0;
     while ((p = src.find("beginbfrange", p)) != std::string::npos) {
         size_t end = src.find("endbfrange", p);
@@ -508,6 +517,8 @@ inline CMap parse_cmap(const std::string& src) {
             if (hi.empty()) break;
             uint32_t a = hex_value(lo), b = hex_value(hi);
             if (b < a || b - a > 0xFFFF) break;
+            if ((size_t)(b - a) + 1 > budget) break;
+            budget -= (size_t)(b - a) + 1;
             while (q < end && std::isspace((unsigned char)src[q])) q++;
             if (q < end && src[q] == '[') {
                 q++;

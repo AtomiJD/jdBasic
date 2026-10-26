@@ -620,9 +620,9 @@ void jdb_str_drop(char* s) {
     free(s);
 }
 
-// SETLOCALE: the process locale, so strtod and the C library's number text
-// follow it as in the interpreter, and the punctuation PRINT and STR$ use.
-// A bare name is tried with the .UTF-8 and .utf8 suffixes glibc wants.
+// SETLOCALE: the process locale except for number parsing, as in the
+// interpreter, and the punctuation PRINT and STR$ use. A bare name is tried
+// with the .UTF-8 and .utf8 suffixes glibc wants.
 void jdb_setlocale(const char* name) {
     jdb_guard_void([&] {
         std::string loc = name ? name : "C";
@@ -631,6 +631,10 @@ void jdb_setlocale(const char* name) {
             if (setlocale(LC_ALL, (loc + ".UTF-8").c_str())) loc += ".UTF-8";
             else if (setlocale(LC_ALL, (loc + ".utf8").c_str())) loc += ".utf8";
         }
+        // Numbers keep reading with a point: VAL, CSV and JSON parse through
+        // strtod, which follows LC_NUMERIC; the output takes the locale's
+        // punctuation from g_punct.
+        setlocale(LC_NUMERIC, "C");
         try { g_punct = jdb_num::punct_of(std::locale(loc.c_str())); } catch (...) {}
     });
 }

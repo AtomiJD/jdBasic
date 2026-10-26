@@ -231,6 +231,7 @@ struct ZipEntry {
     uint16_t method = 0;
     uint32_t comp_size = 0;
     uint32_t size = 0;
+    uint32_t crc = 0;
     uint32_t local_offset = 0;
 };
 
@@ -265,6 +266,7 @@ static std::vector<ZipEntry> zip_scan(const std::string& buf) {
             throw std::runtime_error("ZIP: damaged central directory");
         ZipEntry e;
         e.method = get16(buf, p + 10);
+        e.crc = get32(buf, p + 16);
         e.comp_size = get32(buf, p + 20);
         e.size = get32(buf, p + 24);
         uint16_t name_len = get16(buf, p + 28);
@@ -288,15 +290,24 @@ static std::string zip_extract(const std::string& buf, const ZipEntry& e) {
     if (data + e.comp_size > buf.size())
         throw std::runtime_error("ZIP: entry '" + e.name + "' runs past the end of the file");
 
-    if (e.method == 0) return buf.substr(data, e.comp_size);
-    if (e.method == 8) {
+    std::string content;
+    if (e.method == 0) {
+        content = buf.substr(data, e.comp_size);
+    } else if (e.method == 8) {
         std::vector<uint8_t> out;
         if (!pdf_extract::tinfl::inflate((const uint8_t*)buf.data() + data, e.comp_size, out, false))
             throw std::runtime_error("ZIP: cannot inflate '" + e.name + "'");
-        return std::string(out.begin(), out.end());
+        content.assign(out.begin(), out.end());
+    } else {
+        throw std::runtime_error("ZIP: entry '" + e.name + "' uses unsupported method " +
+                                 std::to_string(e.method));
     }
-    throw std::runtime_error("ZIP: entry '" + e.name + "' uses unsupported method " +
-                             std::to_string(e.method));
+    // The central directory's size and CRC-32 say whether this is the
+    // content that was stored.
+    if ((uint32_t)content.size() != e.size ||
+        crc32_bytes((const uint8_t*)content.data(), content.size()) != e.crc)
+        throw std::runtime_error("ZIP: entry '" + e.name + "' is damaged (size or CRC does not match)");
+    return content;
 }
 
 // CODEC.INFLATE$: a raw deflate stream, a zlib stream or a gzip member. With

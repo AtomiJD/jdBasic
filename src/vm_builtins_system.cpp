@@ -5,6 +5,9 @@
 #include <fstream>
 #include <mutex>
 #include <thread>
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#endif
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <sys/sysctl.h>
@@ -183,6 +186,10 @@ void VM::register_system_builtins() {
                 set = std::setlocale(LC_ALL, applied.c_str());
             }
         }
+        // Numbers keep reading with a point: VAL, CSV, JSON and source text
+        // parse through strtod, which follows LC_NUMERIC. The locale's own
+        // punctuation reaches the output through g_jd_punct below.
+        std::setlocale(LC_NUMERIC, "C");
         try {
             g_jd_locale = std::locale(applied.c_str());
             g_jd_punct = jdb_num::punct_of(g_jd_locale);
@@ -299,12 +306,36 @@ void VM::register_system_builtins() {
             si.hStdOutput = wr;
             si.hStdError = wr;
             si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+            // Only this child's own pipe (and an inheritable stdin) is handed
+            // down: a child another thread starts meanwhile must not inherit
+            // the write end too, or this read waits for that child as well.
+            HANDLE inherit[2];
+            DWORD ninherit = 0;
+            inherit[ninherit++] = wr;
+            DWORD in_flags = 0;
+            if (si.hStdInput && si.hStdInput != INVALID_HANDLE_VALUE &&
+                GetHandleInformation(si.hStdInput, &in_flags) && (in_flags & HANDLE_FLAG_INHERIT))
+                inherit[ninherit++] = si.hStdInput;
+            SIZE_T attr_size = 0;
+            InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size);
+            std::vector<char> attr_buf(attr_size);
+            auto attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)attr_buf.data();
+            bool have_list = attr_size > 0 &&
+                InitializeProcThreadAttributeList(attrs, 1, 0, &attr_size) &&
+                UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                          inherit, ninherit * sizeof(HANDLE), nullptr, nullptr);
+            STARTUPINFOEXA six = {};
+            six.StartupInfo = si;
+            six.StartupInfo.cb = sizeof(six);
+            six.lpAttributeList = have_list ? attrs : nullptr;
+            LPSTARTUPINFOA start_info = have_list ? &six.StartupInfo : &si;
+            DWORD create_flags = CREATE_NO_WINDOW | (have_list ? EXTENDED_STARTUPINFO_PRESENT : 0);
             PROCESS_INFORMATION pi = {};
             BOOL ok = FALSE;
             if (!is_batch) {
                 std::vector<char> buf_line(line.begin(), line.end());
                 buf_line.push_back('\0');
-                ok = CreateProcessA(nullptr, buf_line.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+                ok = CreateProcessA(nullptr, buf_line.data(), nullptr, nullptr, TRUE, create_flags, nullptr, nullptr, start_info, &pi);
             }
             if (!ok && (is_batch || GetLastError() == ERROR_FILE_NOT_FOUND)) {
                 // A batch file (.cmd, .bat, or a name such as npm that is no
@@ -312,6 +343,7 @@ void VM::register_system_builtins() {
                 // quotes; every argument is quoted and those characters are
                 // refused.
                 if (!batch_safe) {
+                    if (have_list) DeleteProcThreadAttributeList(attrs);
                     CloseHandle(wr);
                     CloseHandle(rd);
                     throw std::runtime_error("OS.EXEC: an argument with % or a double quote cannot be passed to the batch file " + cmd + " safely");
@@ -319,8 +351,9 @@ void VM::register_system_builtins() {
                 std::string via_cmd = "cmd /d /s /c \"" + all_quoted + "\"";
                 std::vector<char> buf_cmd(via_cmd.begin(), via_cmd.end());
                 buf_cmd.push_back('\0');
-                ok = CreateProcessA(nullptr, buf_cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+                ok = CreateProcessA(nullptr, buf_cmd.data(), nullptr, nullptr, TRUE, create_flags, nullptr, nullptr, start_info, &pi);
             }
+            if (have_list) DeleteProcThreadAttributeList(attrs);
             CloseHandle(wr);
             if (ok) {
                 char buf[4096];
@@ -364,12 +397,20 @@ void VM::register_system_builtins() {
         FILE* pipe = popen(cmd.c_str(), "r");
 #endif
         if (pipe) {
-            char buf[256];
-            while (fgets(buf, sizeof(buf), pipe)) output += buf;
+            // fread, not fgets: binary output keeps its NUL bytes.
+            char buf[4096];
+            size_t got;
+            while ((got = fread(buf, 1, sizeof(buf), pipe)) > 0) output.append(buf, got);
 #if defined(_WIN32)
             exit_code = _pclose(pipe);
 #else
-            exit_code = pclose(pipe);
+            // pclose answers the wait status: the exit code is inside it, and
+            // a signal becomes 128 + its number as in a shell.
+            int status = pclose(pipe);
+            if (status == -1) exit_code = -1;
+            else if (WIFEXITED(status)) exit_code = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status)) exit_code = 128 + WTERMSIG(status);
+            else exit_code = status;
 #endif
         }
         Value result = Value::make_object();

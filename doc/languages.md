@@ -4043,10 +4043,9 @@ ASYNC FUNC is usable from any other.
 ' Slurp replaced with streaming - constant memory regardless of file size.
 DIM h = FILE.OPEN_LINES("huge.log")
 DIM hits = 0
-DO
-    DIM line$ = FILE.READLINE$(h)
-    IF FILE.AT_EOF(h) THEN EXITDO
-    IF INSTR(line$, "ERROR") >= 0 THEN hits = hits + 1
+DO WHILE NOT FILE.AT_EOF(h)
+    DIM entry$ = FILE.READLINE$(h)
+    IF INSTR(entry$, "ERROR") >= 0 THEN hits = hits + 1
 LOOP
 FILE.CLOSE h
 PRINT "ERROR lines: "; hits
