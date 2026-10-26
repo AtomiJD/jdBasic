@@ -118,8 +118,12 @@ compiling. Run shell commands with your own shell tool or `jdb_run_native`.
 
 ## Safety
 
-- Never call `OS.EXEC` inside `jdb_eval`; it can deadlock the stdio server.
-  Use your own shell tool.
+- `OS.EXEC` inside `jdb_eval` brings a command's output straight into the
+  VM: `OS.EXEC("git", ["log", "--format=%H|%s"])` answers a map with
+  `"OUTPUT"` and `"EXIT_CODE"`. Pass the arguments as an array; without it
+  the line goes to `cmd /c` or `sh`, where `|`, `&` and `>` are operators.
+  Never run a command that waits for input: it would read the server's own
+  stdin.
 - An eval that hangs: `jdb_stop`, `jdb_status`, then retry smaller. Do not
   restart the server mid-session; the state lives in it.
 - `jdb_eval` and `jdb_run_native` run code with your user's rights on this
