@@ -16,7 +16,7 @@ to run.
 > - String escape: jdBasic strings have **no** `\n`/`\"` escapes. Use `CHR$(10)` for newline. Embed quotes by ending one string and concatenating: `"He said " + CHR$(34) + "hi" + CHR$(34)`.
 > - `MID$(s, start, len)` is **0-based**. So `MID$("abc", 1, 1)` = `"b"`.
 > - Reserved-as-types/keywords that bite: `DOUBLE`, `EXIT`, `STRING`, `INTEGER`, `MAP`, `FUNC`. Don't use as identifiers.
-> - `EXITFOR` / `EXITDO` / `EXITFUNC` and `CONTINUEFOR` / `CONTINUEDO` are **single tokens**.
+> - `EXITFOR` / `EXITDO` / `EXITFUNC` / `EXITSUB` / `EXITSWITCH` and `CONTINUEFOR` / `CONTINUEDO` are **single tokens**.
 
 ## Strings
 

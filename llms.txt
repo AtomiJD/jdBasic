@@ -6,7 +6,7 @@ Facts a model needs before it writes jdBasic:
 
 - Strings and arrays are 0-based (`arr[0]`, `MID$(s$, 0, 1)`); `INSTR` answers -1 when absent. `IOTA(5)` is `[1, 2, 3, 4, 5]`; `IOTA(5, 0)` starts at 0.
 - Strings have no escapes: `CHR$(10)`, `CHR$(34)`, `VBNEWLINE`, or `""` for one quote. `$"Hi {{name$}}"` interpolates.
-- Blocks close with `ENDIF`, `ENDFUNC`, `ENDSUB`, `ENDTYPE`, `ENDSWITCH`, `ENDTRY`; loops leave with `EXITFOR`, `EXITDO`, `EXITFUNC` (single tokens).
+- Blocks close with `ENDIF`, `ENDFUNC`, `ENDSUB`, `ENDTYPE`, `ENDSWITCH`, `ENDTRY`; `EXITFOR`, `EXITDO`, `EXITFUNC`, `EXITSUB`, `EXITSWITCH` leave a block early (single tokens).
 - `AND`/`OR` are logical and evaluate both sides; `ANDALSO`/`ORELSE` short-circuit; bitwise is `BAND`, `BOR`, `BXOR`, `SHL`, `SHR`.
 - `APPEND` is a function (`a = APPEND(a, v)`); `SELECT(fn@, arr)` maps, `FILTER`, `REDUCE`, `LAMBDA x -> x * 2`; `MAP` is the dictionary type, indexed `m{"key"}`.
 - `MAX`, `MIN`, `SUM`, `MEAN` reduce one array: `MAX([a, b])`. Constants are `MATH.PI` and `MATH.E`. Timing is `TICK()` in milliseconds.

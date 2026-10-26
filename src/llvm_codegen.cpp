@@ -5405,6 +5405,12 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             if (!loop_stack.empty())
                 LLVMBuildBr(builder, loop_stack.top().continue_bb);
             break;
+        case StmtKind::EXIT_SWITCH:
+            if (switch_exits.empty())
+                report_error(stmt.source_file(), stmt.line, "EXITSWITCH outside a SWITCH");
+            else
+                LLVMBuildBr(builder, switch_exits.back());
+            break;
         case StmtKind::OPTION_STMT: {
             // Source directive: OPTION "NAME". The runtime VM handles colors
             // and other knobs via the __OPTION runtime call (interpreter);
@@ -9683,6 +9689,7 @@ void LLVMCodegen::codegen_switch(const Stmt& stmt) {
     // case_labels empty.
     TypedValue switch_val = codegen_expr(*stmt.expr);
     LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.end");
+    switch_exits.push_back(merge_bb);
 
     // 0=eq, 1=ge, 2=le. Returns an i1 (or sign-equivalent) comparison
     // result. Strings only support equality; range bounds with strings is
@@ -9780,6 +9787,7 @@ void LLVMCodegen::codegen_switch(const Stmt& stmt) {
         if (next_bb != merge_bb)
             LLVMPositionBuilderAtEnd(builder, next_bb);
     }
+    switch_exits.pop_back();
     LLVMPositionBuilderAtEnd(builder, merge_bb);
 }
 

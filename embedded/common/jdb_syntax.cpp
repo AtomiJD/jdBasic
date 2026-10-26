@@ -12,7 +12,7 @@
 static const char* const KEYWORDS[] = {
     "AND", "AS", "CATCH", "CLS", "CONTINUEDO", "CONTINUEFOR", "DIM",
     "DO", "ELSE", "ELSEIF", "ENDFUNC", "ENDIF", "ENDSUB", "ENDTRY",
-    "ENDTYPE", "EXITDO", "EXITFOR", "EXITFUNC", "FALSE", "FOR", "FUNC",
+    "ENDTYPE", "EXITDO", "EXITFOR", "EXITFUNC", "EXITSUB", "EXITSWITCH", "FALSE", "FOR", "FUNC",
     "GOSUB", "GOTO", "IF", "INPUT", "LAMBDA", "LET", "LOOP", "MOD",
     "NEXT", "NOT", "OR", "ANDALSO", "ORELSE", "PRINT", "REM",
     "RETURN", "SLEEP", "STEP", "SUB", "THEN", "TO", "TRY",

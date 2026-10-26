@@ -647,6 +647,11 @@ StmtPtr Parser::parse_statement() {
             s->line = ln; s->is_while = is_func; // reuse: is_while=true means EXITFUNC
             expect_newline(); return s;
         }
+        case TokenType::EXITSWITCH: {
+            int ln = current().line; advance();
+            auto s = std::make_unique<Stmt>(); s->kind = StmtKind::EXIT_SWITCH; s->line = ln;
+            expect_newline(); return s;
+        }
         case TokenType::CONTINUEFOR: case TokenType::CONTINUEDO: {
             int ln = current().line; advance();
             auto s = std::make_unique<Stmt>(); s->kind = StmtKind::CONTINUE_LOOP; s->line = ln;

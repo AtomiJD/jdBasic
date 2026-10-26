@@ -1040,20 +1040,24 @@ Syntax: EXECUTE(code_string$)
 Description: Executes a string of jdBasic code at runtime.
 
 [EXITDO]
-Syntax: EXIT DO
+Syntax: EXITDO
 Description: Exits the current DO...LOOP immediately.
 
 [EXITFOR]
-Syntax: EXIT FOR
+Syntax: EXITFOR
 Description: Exits the current FOR...NEXT loop immediately.
 
 [EXITFUNC]
-Syntax: EXIT FUNC
-Description: Exits the current user-defined function immediately.
+Syntax: EXITFUNC
+Description: Exits the current user-defined function immediately. The same statement as EXITSUB.
+
+[EXITSUB]
+Syntax: EXITSUB
+Description: Exits the current SUB immediately. The same statement as EXITFUNC.
 
 [EXITSWITCH]
-Syntax: EXIT SWITCH
-Description: Exits the current SWITCH...CASE block immediately.
+Syntax: EXITSWITCH
+Description: Exits the innermost SWITCH...CASE block immediately, also from a loop inside a CASE body. Outside a SWITCH it is a compile error.
 
 [EXPORT]
 Syntax: EXPORT MODULE

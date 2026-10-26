@@ -82,10 +82,19 @@ private:
         std::vector<size_t> continue_patches; // addresses to patch for CONTINUE
         bool is_for;                      // FOR vs DO
         size_t try_depth = 0;             // TRY blocks open when the loop began
+        size_t switch_depth = 0;          // SWITCH values on the stack when the loop began
     };
     std::vector<LoopCtx> loop_stack;
+    // Each open SWITCH keeps its value on the stack until ENDSWITCH, so a
+    // jump out of one pops the values of the SWITCHes it leaves.
+    struct SwitchCtx {
+        std::vector<size_t> exit_patches; // EXITSWITCH jumps to the ENDSWITCH
+        size_t try_depth = 0;
+    };
+    std::vector<SwitchCtx> switch_stack;
     size_t try_depth = 0;                 // TRY bodies being compiled
     void emit_leave_trys(size_t to_depth, int line);
+    void emit_leave_switches(size_t to_depth, int line);
 
     CompilerScope& current_scope();
     Chunk& current_chunk();

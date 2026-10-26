@@ -901,8 +901,8 @@ Shout("leise")
 one answers `NONE`, which `TYPEOF` reports as `"NONE"` - worth testing for,
 because `= NONE` is true for any value (see the note under *Comparisons*).
 
-`EXITFUNC` leaves either kind early and carries no value. It is the exit for a
-`SUB` as well; there is no `EXITSUB`.
+`EXITSUB` leaves a `SUB` early, `EXITFUNC` a `FUNC`; neither carries a value.
+The two are the same statement, so either one works in either kind.
 
 ### Parameters
 
@@ -1231,7 +1231,7 @@ NEXT
 * **`DO WHILE condition ... LOOP`** / **`DO UNTIL condition ... LOOP`**: The same loop with the test before the body; if the condition fails at the start, the body never runs.
 * **`WHILE condition ... WEND`**: The classic BASIC form of `DO WHILE condition ... LOOP`; the body runs as long as the condition is true. `EXITDO` and `CONTINUEDO` work inside it.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
-* **`EXITFUNC`, `EXITDO`, `EXITFOR`, `EXIT SWITCH`**: Exiting functions, loops and a `SWITCH` block.
+* **`EXITSUB`, `EXITFUNC`, `EXITDO`, `EXITFOR`, `EXITSWITCH`**: Leave a SUB, a function, a loop or a `SWITCH` block. Each is one word.
 * **`CONTINUEFOR`, `CONTINUEDO`, `CONTINUELOOP`**: Skips the rest of the current loop iteration and continues with the next one.
 * **`OPTION option$`**: Sets a VM option.
   * `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
@@ -1295,7 +1295,7 @@ Provides a clear way to execute one of several blocks of code based on the value
 * **`CASE value_expression[, value_expression]...`**: Compares each value to the main switch expression. If any match, the body runs. Each value can also be a range `lo TO hi` (inclusive both ends), and you may mix singletons and ranges in one `CASE`: `CASE 1, 5 TO 9, 12`.
 * **`DEFAULT`**: An optional block that executes if no preceding `CASE` statement matches.
 * **`ENDSWITCH`**: Marks the end of the `SWITCH` block.
-* **`EXIT SWITCH`**: Leaves the block at once, from inside a `CASE` body.
+* **`EXITSWITCH`**: Leaves the innermost `SWITCH` at once, from anywhere inside a `CASE` or `DEFAULT` body, also from a loop nested in it. Outside a `SWITCH` it is a compile error.
 
 **Note**: The interpreter does not "fall through" cases. Once a `CASE` or `DEFAULT` block is executed, control jumps immediately to the statement following `ENDSWITCH`.
 
@@ -5179,7 +5179,7 @@ Every documented builtin, linked to the section that describes it.
 
 **D** · [DATE$](#system-and-time-functions) · [DATE.PARTS](#system-and-time-functions) · [DATE.UTC](#system-and-time-functions) · [DATEADD](#system-and-time-functions) · [DATEDIFF](#system-and-time-functions) · [DATERANGE](#system-and-time-functions) · [DEBUG.ASSERT](#development--debugging) · [DEBUG.PRINT](#development--debugging) · [DECLARE](#system--flow-control) · [DEFAULT](#switchcaseendswitch) · [DET](#array--matrix-functions) · [DIFF](#array--matrix-functions) · [DIR](#filesystem) · [DIR$](#filesystem) · [DISTANCE](#array--matrix-functions) · [DO](#system--flow-control) · [DOT](#array--matrix-functions) · [DRAWCOLOR](#graphics-and-multimedia-functions) · [DROP_WHILE](#array--matrix-functions) · [DUMP](#development--debugging)
 
-**E** · [EDIT](#development--debugging) · [EIG](#array--matrix-functions) · [ELLIPSE](#graphics-and-multimedia-functions) · [END](#system--flow-control) · [ENDSWITCH](#switchcaseendswitch) · [ENDTRY](#error-handling-trycatch) · [ENDTYPE](#user-defined-types-typeendtype) · [ENUM](#enumerations) · [ENUMERATE](#array--matrix-functions) · [EOMONTH](#system-and-time-functions) · [ERL](#error-handling-trycatch) · [ERR](#error-handling-trycatch) · [ERRMSG$](#error-handling-trycatch) · [EVAL](#dynamic-code-functions) · [EXECUTE](#dynamic-code-functions) · [EXIT](#switchcaseendswitch) · [EXITFUNC](#system--flow-control) · [EXP](#matharithmeticround-functions) · [EXPORT](#system--flow-control)
+**E** · [EDIT](#development--debugging) · [EIG](#array--matrix-functions) · [ELLIPSE](#graphics-and-multimedia-functions) · [END](#system--flow-control) · [ENDSWITCH](#switchcaseendswitch) · [ENDTRY](#error-handling-trycatch) · [ENDTYPE](#user-defined-types-typeendtype) · [ENUM](#enumerations) · [ENUMERATE](#array--matrix-functions) · [EOMONTH](#system-and-time-functions) · [ERL](#error-handling-trycatch) · [ERR](#error-handling-trycatch) · [ERRMSG$](#error-handling-trycatch) · [EVAL](#dynamic-code-functions) · [EXECUTE](#dynamic-code-functions) · [EXITFUNC](#system--flow-control) · [EXITSUB](#system--flow-control) · [EXITSWITCH](#switchcaseendswitch) · [EXP](#matharithmeticround-functions) · [EXPORT](#system--flow-control)
 
 **F** · [F1](#repl-keyboard-shortcuts) · [F5](#repl-keyboard-shortcuts) · [F7](#repl-keyboard-shortcuts) · [F8](#repl-keyboard-shortcuts) · [FAC](#matharithmeticround-functions) · [FFT](#array--matrix-functions) · [FILE.COPY](#filesystem) · [FILE.EXISTS](#filesystem) · [FILE.ISDIR](#filesystem) · [FILE.MOVE](#filesystem) · [FILE.SET_MTIME](#filesystem) · [FILE.SIZE](#filesystem) · [FILE.STAT](#filesystem) · [FILLV](#array--matrix-functions) · [FILTER](#array--matrix-functions) · [FINALLY](#error-handling-trycatch) · [FIND_IN_ARRAY](#array--matrix-functions) · [FLATTEN](#array--matrix-functions) · [FLOOR](#matharithmeticround-functions) · [FOR](#system--flow-control) · [FORM.BUTTON](#native-windows-forms-form) · [FORM.CHILD](#native-windows-forms-form) · [FORM.CLOSE](#native-windows-forms-form) · [FORM.CREATE](#native-windows-forms-form) · [FORM.DATETIME](#native-windows-forms-form) · [FORM.DOEVENTS](#native-windows-forms-form) · [FORM.FIND](#native-windows-forms-form) · [FORM.GET](#native-windows-forms-form) · [FORM.LINE](#native-windows-forms-form) · [FORM.LISTBOX](#native-windows-forms-form) · [FORM.LISTVIEW](#native-windows-forms-form) · [FORM.LOAD](#native-windows-forms-form) · [FORM.MDI](#native-windows-forms-form) · [FORM.MENU](#native-windows-forms-form) · [FORM.PICTURE](#native-windows-forms-form) · [FORM.POPUP](#native-windows-forms-form) · [FORM.PROGRESS](#native-windows-forms-form) · [FORM.RADIO](#native-windows-forms-form) · [FORM.RICHTEXT](#native-windows-forms-form) · [FORM.RUN](#native-windows-forms-form) · [FORM.SET](#native-windows-forms-form) · [FORM.SHAPE](#native-windows-forms-form) · [FORM.SHOW](#native-windows-forms-form) · [FORM.SLIDER](#native-windows-forms-form) · [FORM.STATUSBAR](#native-windows-forms-form) · [FORM.TABS](#native-windows-forms-form) · [FORM.TEXTBOX](#native-windows-forms-form) · [FORM.TIMER](#native-windows-forms-form) · [FORM.TOOLBAR](#native-windows-forms-form) · [FORM.TREEVIEW](#native-windows-forms-form) · [FORM.UPDOWN](#native-windows-forms-form) · [FORMAT$](#string-functions) · [FORMAT_DATE](#system-and-time-functions) · [FRMV$](#string-functions) · [FS.ATRANS](#the-prompt-and-the-flash-store) · [FS.NUKEPT](#the-prompt-and-the-flash-store) · [FUNCS](#type-inspection)
 

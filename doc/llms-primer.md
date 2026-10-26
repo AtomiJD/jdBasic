@@ -56,7 +56,7 @@ Read these before writing any jdBasic. Each one is a real, recurring mistake.
 | `TIMER` for frame time | `TICK()` answers milliseconds since start |
 | `DATEADD(d, 30, "D")` | `DATEADD(unit$, count, date)`: unit first, date last |
 | `ENDIF` / `END IF`, `NEXT i` required | blocks close with `ENDIF`, `ENDFUNC`, `ENDSUB`, `ENDTYPE`, `ENDSWITCH`, `ENDTRY`; `NEXT` alone is enough |
-| `EXIT FOR`, `END FUNCTION` | single tokens: `EXITFOR`, `EXITDO`, `EXITFUNC`, `CONTINUEFOR`, `CONTINUEDO`; there is no `EXITSUB` |
+| `EXIT FOR`, `END FUNCTION` | single tokens: `EXITFOR`, `EXITDO`, `EXITFUNC`, `EXITSUB`, `EXITSWITCH`, `CONTINUEFOR`, `CONTINUEDO` |
 | a `SUB` sets a new global | an assignment in a body writes a global **only if it already exists**; otherwise it makes a local |
 | naming a variable `count`, `len`, `line`, `step`, `cls`, `tick`, `val` | every builtin and keyword name is reserved, case-insensitively |
 | `b = a` copies an array | arrays and maps are shared; copy numbers with `a + 0`, strings with `TAKE(LEN(a), a)` |

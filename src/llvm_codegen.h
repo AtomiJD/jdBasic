@@ -236,6 +236,7 @@ private:
         LLVMBasicBlockRef continue_bb;
     };
     std::stack<LoopCtx> loop_stack;
+    std::vector<LLVMBasicBlockRef> switch_exits;  // EXITSWITCH targets, innermost last
 
     // TRY/CATCH: stack of catch-block labels. THROW and guarded div-by-zero
     // branch to try_stack.back() when non-empty, else call jdb_throw_uncaught.

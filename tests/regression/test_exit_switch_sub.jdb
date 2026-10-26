@@ -1,0 +1,128 @@
+' EXITSUB leaves a SUB, EXITSWITCH leaves the innermost SWITCH, and a loop
+' exit or CONTINUE from inside a SWITCH drops the SWITCH value it leaves.
+
+DIM failed AS INTEGER = 0
+DIM trail$ AS STRING = ""
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+SUB Early(n AS INTEGER)
+    trail$ = trail$ + "a"
+    IF n > 0 THEN EXITSUB
+    trail$ = trail$ + "b"
+ENDSUB
+
+Early(1)
+Early(0)
+Check(trail$ = "aab", "EXITSUB after a single-line IF")
+
+SUB Block(n AS INTEGER)
+    IF n > 0 THEN
+        trail$ = trail$ + "x"
+        EXITSUB
+    ENDIF
+    trail$ = trail$ + "y"
+ENDSUB
+
+trail$ = ""
+Block(1)
+Block(0)
+Check(trail$ = "xy", "EXITSUB inside a block IF")
+
+FUNC Classify$(n AS INTEGER) AS STRING
+    DIM r$ AS STRING = ""
+    SWITCH n
+        CASE 1
+            r$ = "one"
+            IF n = 1 THEN EXITSWITCH
+            r$ = "unreached"
+        CASE 2
+            r$ = "two"
+        DEFAULT
+            r$ = "many"
+    ENDSWITCH
+    RETURN r$ + "."
+ENDFUNC
+
+Check(Classify$(1) = "one.", "EXITSWITCH skips the rest of the CASE")
+Check(Classify$(2) = "two.", "CASE without EXITSWITCH")
+Check(Classify$(7) = "many.", "DEFAULT")
+
+DIM outer AS INTEGER = 0
+DIM inner AS INTEGER = 0
+DIM i AS INTEGER
+DIM j AS INTEGER
+FOR i = 1 TO 3
+    SWITCH i
+        CASE 2
+            SWITCH i * 10
+                CASE 20
+                    inner = inner + 1
+                    EXITSWITCH
+            ENDSWITCH
+            outer = outer + 1
+            EXITSWITCH
+        DEFAULT
+            outer = outer + 100
+    ENDSWITCH
+NEXT i
+Check(inner = 1, "nested EXITSWITCH leaves only the inner SWITCH")
+Check(outer = 201, "outer SWITCH goes on after the inner one is left")
+
+DIM hits AS INTEGER = 0
+FOR i = 1 TO 4
+    FOR j = 1 TO 3
+        SWITCH j
+            CASE 2
+                EXITSWITCH
+            CASE 3
+                hits = hits + 1
+        ENDSWITCH
+    NEXT j
+NEXT i
+Check(hits = 4, "EXITSWITCH inside a loop leaves the SWITCH, not the loop")
+
+DIM total AS INTEGER = 0
+FOR i = 1 TO 200000
+    FOR j = 1 TO 3
+        SWITCH j
+            CASE 2
+                EXITFOR
+            DEFAULT
+                total = total + 1
+        ENDSWITCH
+    NEXT j
+    SWITCH i
+        CASE 0
+            total = 0
+        DEFAULT
+            CONTINUEFOR
+    ENDSWITCH
+NEXT i
+Check(total = 200000, "EXITFOR and CONTINUEFOR from inside a SWITCH")
+
+DIM caught AS INTEGER = 0
+SWITCH 1
+    CASE 1
+        TRY
+            EXITSWITCH
+        CATCH
+            caught = 1
+        ENDTRY
+        caught = 2
+ENDSWITCH
+Check(caught = 0, "EXITSWITCH out of a TRY")
+TRY
+    THROW "after"
+CATCH
+    caught = 3
+ENDTRY
+Check(caught = 3, "TRY still works after EXITSWITCH left one")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

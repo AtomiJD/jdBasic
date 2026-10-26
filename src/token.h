@@ -29,7 +29,7 @@ enum class TokenType {
     // FFI keyword
     DECLARE_KW,
     CONST_KW,
-    EXITFUNC, EXITDO, EXITFOR,
+    EXITFUNC, EXITDO, EXITFOR, EXITSWITCH,
     CONTINUEFOR, CONTINUEDO, HELP_KW,
     LAMBDA, ARROW, PIPE, PLACEHOLDER, USE,
     INTERP_STRING,          // $"text {{ expr }} text"
@@ -127,6 +127,8 @@ inline const KeywordEntry* keyword_table(size_t* count) {
         {"EXITDO",          TokenType::EXITDO},
         {"EXITFOR",         TokenType::EXITFOR},
         {"EXITFUNC",        TokenType::EXITFUNC},
+        {"EXITSUB",         TokenType::EXITFUNC},
+        {"EXITSWITCH",      TokenType::EXITSWITCH},
         {"EXPORT",          TokenType::EXPORT_KW},
         {"FALSE",           TokenType::FALSE_KW},
         {"FINALLY",         TokenType::FINALLY},

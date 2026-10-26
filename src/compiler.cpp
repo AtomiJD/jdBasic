@@ -599,14 +599,25 @@ void Compiler::compile_stmt(const Stmt& stmt) {
                 current_chunk().emit(OpCode::RETURN_VOID, stmt.line);
             } else if (!loop_stack.empty()) {
                 emit_leave_trys(loop_stack.back().try_depth, stmt.line);
+                emit_leave_switches(loop_stack.back().switch_depth, stmt.line);
                 size_t jmp = emit_jump(OpCode::JUMP, stmt.line);
                 loop_stack.back().break_patches.push_back(jmp);
             }
             break;
         }
+        case StmtKind::EXIT_SWITCH: {
+            if (switch_stack.empty())
+                throw std::runtime_error("Line " + std::to_string(stmt.line) +
+                                         ": EXITSWITCH outside a SWITCH");
+            emit_leave_trys(switch_stack.back().try_depth, stmt.line);
+            size_t jmp = emit_jump(OpCode::JUMP, stmt.line);
+            switch_stack.back().exit_patches.push_back(jmp);
+            break;
+        }
         case StmtKind::CONTINUE_LOOP: {
             if (!loop_stack.empty()) {
                 emit_leave_trys(loop_stack.back().try_depth, stmt.line);
+                emit_leave_switches(loop_stack.back().switch_depth, stmt.line);
                 if (loop_stack.back().is_for) {
                     // FOR loops: continue_addr not yet known, use patch
                     size_t jmp = emit_jump(OpCode::JUMP, stmt.line);
@@ -650,7 +661,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             emit_constant(Value::make_i64(pair ? 1 : 0), stmt.line);
             emit_store_temp(state_slot);
 
-            { LoopCtx lc; lc.is_for = true; lc.try_depth = try_depth; loop_stack.push_back(std::move(lc)); }
+            { LoopCtx lc; lc.is_for = true; lc.try_depth = try_depth; lc.switch_depth = switch_stack.size(); loop_stack.push_back(std::move(lc)); }
             size_t loop_start = current_chunk().code.size();
 
             // Push iter, state; opcode pops both. On exit it jumps to
@@ -731,6 +742,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
         case StmtKind::SWITCH_STMT: {
             // Evaluate switch expression once, keep on stack
             compile_expr(*stmt.expr);
+            { SwitchCtx sc; sc.try_depth = try_depth; switch_stack.push_back(std::move(sc)); }
 
             std::vector<size_t> end_jumps;
 
@@ -794,6 +806,8 @@ void Compiler::compile_stmt(const Stmt& stmt) {
 
             // Patch all end jumps to here
             for (size_t addr : end_jumps) patch_jump(addr);
+            for (size_t addr : switch_stack.back().exit_patches) patch_jump(addr);
+            switch_stack.pop_back();
 
             // Pop the switch value
             current_chunk().emit(OpCode::POP, stmt.line);
@@ -1157,7 +1171,7 @@ void Compiler::compile_if(const Stmt& stmt) {
 
 void Compiler::compile_do_loop(const Stmt& stmt) {
     size_t loop_start = current_chunk().code.size();
-    { LoopCtx lc; lc.is_for = false; lc.try_depth = try_depth; loop_stack.push_back(std::move(lc)); }
+    { LoopCtx lc; lc.is_for = false; lc.try_depth = try_depth; lc.switch_depth = switch_stack.size(); loop_stack.push_back(std::move(lc)); }
     loop_stack.back().continue_addr = loop_start;
 
     if (stmt.cond_at_top && stmt.loop_cond) {
@@ -1254,7 +1268,7 @@ void Compiler::compile_for(const Stmt& stmt) {
     size_t exit_jump = emit_jump(OpCode::JUMP_IF_FALSE, stmt.line);
 
     // 3. Body (with loop context for EXITFOR/CONTINUEFOR)
-    { LoopCtx lc; lc.is_for = true; lc.try_depth = try_depth; loop_stack.push_back(std::move(lc)); }
+    { LoopCtx lc; lc.is_for = true; lc.try_depth = try_depth; lc.switch_depth = switch_stack.size(); loop_stack.push_back(std::move(lc)); }
     for (auto& s : stmt.body) compile_stmt(*s);
 
     // 4. Continue point + Increment: var = var + step
@@ -1287,6 +1301,11 @@ void Compiler::compile_for(const Stmt& stmt) {
 void Compiler::emit_leave_trys(size_t to_depth, int line) {
     for (size_t d = try_depth; d > to_depth; --d)
         current_chunk().emit(OpCode::POP_TRY, line);
+}
+
+void Compiler::emit_leave_switches(size_t to_depth, int line) {
+    for (size_t d = switch_stack.size(); d > to_depth; --d)
+        current_chunk().emit(OpCode::POP, line);
 }
 
 void Compiler::compile_return(const Stmt& stmt) {
