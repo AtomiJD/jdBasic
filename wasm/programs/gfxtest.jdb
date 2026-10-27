@@ -6,7 +6,7 @@ done = FALSE
 SUB OnKey(d)
     done = TRUE
 ENDSUB
-ON "KEYDOWN" CALL OnKey
+ON "KEYDOWN" CALL OnKey@
 
 x = 0
 DO

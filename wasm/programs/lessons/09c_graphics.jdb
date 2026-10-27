@@ -6,7 +6,7 @@ DIM running = 1
 SUB OnQuit()
     running = 0
 ENDSUB
-ON "QUIT" CALL OnQuit
+ON "QUIT" CALL OnQuit@
 
 SCREEN 600, 400, "Loop"
 DRAWCOLOR 0, 0, 0
