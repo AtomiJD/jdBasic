@@ -5,7 +5,8 @@
 ' Needs a GFX build and a display, so it lives beside the capture smoke
 ' rather than in the sweep. Pass a folder to keep a screenshot of the
 ' tilted panel for a look. GFX.STROKE draws thick lines at any angle and
-' refuses a colour given only in part.
+' refuses a colour given only in part. GFX.LINES draws many lines at once
+' and refuses a partial colour and arrays of two lengths.
 DIM bad AS INTEGER = 0
 DIM shot_dir$ AS STRING = ""
 DIM cli = OS.ARGS()
@@ -43,6 +44,11 @@ GFX.STROKE 40, 300, 600, 440, 6
 GFX.STROKE 320, 250, 320, 470, 9, 255, 46, 136, FALSE
 GFX.STROKE 100, 100, 100, 100, 20, 255, 255, 255
 GFX.STROKE 10, 10, 50, 50, 0
+' GFX.LINES: a polyline, a break at a far point, pairs, wide with joints
+GFX.LINES [20, 120, 220, 320], [460, 400, 460, 400], 1, 255, 255, 0
+GFX.LINES [340, 400, 1E9, 460, 520], [400, 460, 0, 400, 460], 5, 80, 236, 255
+GFX.LINES [540, 600, 540, 600], [400, 400, 420, 420], 2, 255, 46, 136, TRUE
+GFX.LINES [1.0, 2.0], [3.0, 4.0]
 IF shot_dir$ <> "" THEN GFX.SAVE_SCREENSHOT shot_dir$ + "/gfx_target_smoke.png"
 SCREENFLIP
 
@@ -87,7 +93,17 @@ TRY
 CATCH
     caught = caught + 1
 ENDTRY
-Check(caught = 7, "7 bad calls raise, " + STR$(caught) + " did")
+TRY
+    GFX.LINES [0, 10], [0, 10], 2, 255, 0
+CATCH
+    caught = caught + 1
+ENDTRY
+TRY
+    GFX.LINES [0, 10, 20], [0, 10]
+CATCH
+    caught = caught + 1
+ENDTRY
+Check(caught = 9, "9 bad calls raise, " + STR$(caught) + " did")
 
 ' freeing the image drawing points at sends drawing back to the screen
 GFX.TARGET other

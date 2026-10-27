@@ -1279,6 +1279,10 @@ Description: Converts an HSV color (hue in degrees, saturation and value 0-1) to
 Syntax: GFX.KEYSTATE(key) -> boolean
 Description: Returns TRUE if the given key (scancode name string or number) is currently held down.
 
+[GFX.LINES]
+Syntax: GFX.LINES xs, ys, [width], [r, g, b], [pairs]
+Description: Draws many lines in one call from parallel x and y arrays: a polyline through the points, or with pairs (default FALSE) each two points as their own line. A point with a coordinate beyond +-1e7 is skipped and breaks the polyline there. width (default 1) above one pixel fills the lines as triangles, with round joints from 3 pixels up. The colour applies to this call only; the alpha (DRAWCOLOR) and the blend mode (GFX.BLEND) are the current ones.
+
 [GFX.LOADIMAGE]
 Syntax: GFX.LOADIMAGE(path$) -> id
 Description: Loads an image file into a GPU texture and returns its image id.

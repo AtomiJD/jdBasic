@@ -330,6 +330,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"GFX.FREEIMAGE", BuiltinRet::None, BF_NO_VEC},
     {"GFX.HSV_RGB", BuiltinRet::Arr, BF_NO_VEC},
     {"GFX.KEYSTATE", BuiltinRet::Bool, BF_NO_VEC},
+    {"GFX.LINES", BuiltinRet::None, BF_NO_VEC},
     {"GFX.LOADIMAGE", BuiltinRet::I64, BF_NO_VEC},
     {"GFX.MOUSEBUTTON", BuiltinRet::Bool, BF_NO_VEC},
     {"GFX.MOUSEX", BuiltinRet::I64, BF_NO_VEC},

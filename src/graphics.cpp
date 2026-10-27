@@ -2323,6 +2323,107 @@ void register_graphics_builtins(VM& vm) {
         return Value::make_none();
     });
 
+    // ── GFX.LINES xs, ys, [width], [r, g, b], [pairs] ─────────
+    // Many lines in one call: a polyline through the points, or with
+    // pairs every two points as their own line. A point with a coordinate
+    // beyond +-1e7 is left out and breaks the polyline there, so a
+    // projection can mark the points it cannot place. Lines wider than one
+    // pixel are filled as triangles, with round joints from 3 pixels up.
+
+    vm.register_native("GFX.LINES", 2, 7, [](const std::vector<Value>& args) -> Value {
+        ensure_screen("GFX.LINES");
+        auto coords = [](const Value& v, std::vector<float>& out, const char* what) {
+            out.clear();
+            if (v.type == ValueType::TENSOR) {
+                for (double d : v.as_tensor()->data) out.push_back((float)d);
+                return;
+            }
+            if (v.type == ValueType::ARRAY) {
+                for (const Value& e : v.as_array()->elements) out.push_back((float)e.to_double());
+                return;
+            }
+            throw jdError(ErrCode::RUNTIME_ERROR, std::string("GFX.LINES: ") + what + " must be an array");
+        };
+        static std::vector<float> xs, ys;
+        coords(args[0], xs, "xs");
+        coords(args[1], ys, "ys");
+        if (xs.size() != ys.size())
+            throw jdError(ErrCode::RUNTIME_ERROR, "GFX.LINES: xs and ys differ in length");
+        float width = args.size() >= 3 ? (float)args[2].to_double() : 1.0f;
+        if (args.size() == 4 || args.size() == 5)
+            throw jdError(ErrCode::RUNTIME_ERROR, "GFX.LINES: give all three of r, g, b");
+        Uint8 r = g_draw_r, g = g_draw_g, b = g_draw_b;
+        extract_rgb(args, 3, r, g, b);
+        bool pairs = args.size() >= 7 && args[6].to_bool();
+        size_t n = xs.size();
+        if (n < 2 || width <= 0) return Value::make_none();
+        auto ok = [&](size_t i) { return std::fabs(xs[i]) < 1e7f && std::fabs(ys[i]) < 1e7f; };
+
+        if (width <= 1.0f) {
+            SDL_SetRenderDrawColor(g_renderer, r, g, b, g_draw_a);
+            if (pairs) {
+                for (size_t i = 0; i + 1 < n; i += 2)
+                    if (ok(i) && ok(i + 1)) SDL_RenderLine(g_renderer, xs[i], ys[i], xs[i + 1], ys[i + 1]);
+            } else {
+                g_pts_buf.clear();
+                for (size_t i = 0; i <= n; i++) {
+                    if (i < n && ok(i)) {
+                        g_pts_buf.push_back({xs[i], ys[i]});
+                        continue;
+                    }
+                    if (g_pts_buf.size() >= 2)
+                        SDL_RenderLines(g_renderer, g_pts_buf.data(), (int)g_pts_buf.size());
+                    g_pts_buf.clear();
+                }
+            }
+            apply_draw_color();
+            return Value::make_none();
+        }
+
+        float half = width / 2.0f;
+        SDL_FColor col = {r / 255.0f, g / 255.0f, b / 255.0f, g_draw_a / 255.0f};
+        static std::vector<SDL_Vertex> verts;
+        static std::vector<int> idx;
+        verts.clear();
+        idx.clear();
+        auto vert = [&](float x, float y) {
+            SDL_Vertex v;
+            v.position = {x, y};
+            v.color = col;
+            v.tex_coord = {0, 0};
+            verts.push_back(v);
+            return (int)verts.size() - 1;
+        };
+        int joint_steps = std::max(8, std::min(24, (int)(half * 2.5f)));
+        auto joint = [&](float x, float y) {
+            int centre = vert(x, y);
+            int first = (int)verts.size();
+            for (int k = 0; k < joint_steps; k++) {
+                float t = 2.0f * (float)M_PI * k / joint_steps;
+                vert(x + half * std::cos(t), y + half * std::sin(t));
+            }
+            for (int k = 0; k < joint_steps; k++)
+                idx.insert(idx.end(), {centre, first + k, first + (k + 1) % joint_steps});
+        };
+        size_t stride = pairs ? 2 : 1;
+        for (size_t i = 0; i + 1 < n; i += stride) {
+            if (!ok(i) || !ok(i + 1)) continue;
+            float dx = xs[i + 1] - xs[i], dy = ys[i + 1] - ys[i];
+            float len = std::sqrt(dx * dx + dy * dy);
+            if (len > 1e-4f) {
+                float nx = -dy / len * half, ny = dx / len * half;
+                int a = vert(xs[i] + nx, ys[i] + ny), bq = vert(xs[i + 1] + nx, ys[i + 1] + ny);
+                int c = vert(xs[i + 1] - nx, ys[i + 1] - ny), d = vert(xs[i] - nx, ys[i] - ny);
+                idx.insert(idx.end(), {a, bq, c, a, c, d});
+            }
+            if (width >= 3.0f && !pairs && i + 2 < n && ok(i + 2)) joint(xs[i + 1], ys[i + 1]);
+        }
+        if (!idx.empty())
+            SDL_RenderGeometry(g_renderer, nullptr, verts.data(), (int)verts.size(),
+                idx.data(), (int)idx.size());
+        return Value::make_none();
+    });
+
     // ── GFX.DRAWQUAD id, xs, ys, [alpha], [mode$], [grid] ──────
     // Draws an image onto any four corners (top left, top right, bottom
     // right, bottom left), with the perspective of a flat picture seen at
