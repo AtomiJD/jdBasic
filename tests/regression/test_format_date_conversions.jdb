@@ -1,0 +1,38 @@
+' FORMAT_DATE$ accepts the C99 conversions, with the E and O modifiers and
+' the # flag, and raises an error for any other one on every platform.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Rejects(fmt$ AS STRING) AS INTEGER
+    DIM caught AS INTEGER = 0
+    DIM text$ AS STRING
+    TRY
+        text$ = FORMAT_DATE$(CVDATE("2024-03-05"), fmt$)
+    CATCH
+        caught = 1
+    ENDTRY
+    RETURN caught
+ENDFUNC
+
+DIM d = CVDATE("2024-03-05")
+Check(FORMAT_DATE$(d, "%Y-%m-%d") = "2024-03-05", "%Y-%m-%d formats")
+Check(FORMAT_DATE$(d, "100%%") = "100%", "%% is a percent sign")
+Check(FORMAT_DATE$(d, "%Ey") = "24", "the E modifier is accepted")
+Check(FORMAT_DATE$(d, "%Od") = "05", "the O modifier is accepted")
+Check(FORMAT_DATE$(d, "%j %u %V") = "065 2 10", "day of year, weekday, ISO week")
+
+Check(Rejects("%Q") = 1, "%Q is rejected")
+Check(Rejects("%Y-%k") = 1, "%k is rejected")
+Check(Rejects("%Y %") = 1, "a lone % at the end is rejected")
+Check(Rejects("%E") = 1, "a modifier without a conversion is rejected")
+Check(Rejects("%Y-%m-%d") = 0, "a valid format is not rejected")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

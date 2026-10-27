@@ -1189,7 +1189,7 @@ Description: Formats a string using C++20-style format specifiers: {}, {0}, {:sp
 
 [FORMAT_DATE$]
 Syntax: FORMAT_DATE$(date, format_string$ [, tz_hours])
-Description: Formats a DateTime using C strftime specifiers (%Y, %m, %d, %H, %M, %S, ...). Without tz_hours the wall-clock is local time; with tz_hours the output reflects the chosen UTC offset (0 = UTC, 2 = UTC+2, -5 = UTC-5, 5.5 = UTC+5:30). A specifier or a year the C library rejects raises an error.
+Description: Formats a DateTime using C strftime specifiers (%Y, %m, %d, %H, %M, %S, ...). Without tz_hours the wall-clock is local time; with tz_hours the output reflects the chosen UTC offset (0 = UTC, 2 = UTC+2, -5 = UTC-5, 5.5 = UTC+5:30). A specifier outside the C99 set (%a %A %b %B %c %C %d %D %e %F %g %G %h %H %I %j %m %M %n %p %r %R %S %t %T %u %U %V %w %W %x %X %y %Y %z %Z %%, optionally with the E or O modifier or the # flag) raises an error on every platform, as does a year the C library cannot show.
 
 [FORMAT_DATE]
 Syntax: FORMAT_DATE(date, format_string$ [, tz_hours])

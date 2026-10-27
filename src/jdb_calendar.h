@@ -328,15 +328,32 @@ inline void __cdecl ignore_invalid_parameter(const wchar_t*, const wchar_t*, con
                                              unsigned int, uintptr_t) {}
 #endif
 
+// True when every conversion in fmt is one of the C99 set, optionally with
+// the E or O modifier or the # flag. The C libraries differ beyond that set
+// (glibc prints an unknown conversion as text, the MSVC CRT rejects it), so
+// the check runs before strftime and holds on every platform.
+inline bool format_ok(const char* fmt) {
+    static const char kConversions[] = "aAbBcCdDeFgGhHIjmMnprRStTuUVwWxXyYzZ%";
+    for (const char* p = fmt; *p; ++p) {
+        if (*p != '%') continue;
+        ++p;
+        if (*p == '#') ++p;
+        if (*p == 'E' || *p == 'O') ++p;
+        if (!*p || !std::strchr(kConversions, *p)) return false;
+    }
+    return true;
+}
+
 // strftime of an instant's wall clock, in the zone shift_hours east of UTC
 // when shifted, otherwise in the machine's zone. An empty format is the
 // standard timestamp. A date that was never set formats as "". Answers -1
-// when the format has a conversion the C library rejects or the year is
-// outside what it can show.
+// when the format has a conversion outside format_ok's set or the year is
+// outside what the C library can show.
 inline int format_at(char* buf, int cap, const char* fmt, double epoch, bool shifted, double shift_hours) {
     buf[0] = '\0';
-    if (epoch != epoch) return 0;
     if (!fmt || !*fmt) fmt = "%Y-%m-%d %H:%M:%S";
+    if (!format_ok(fmt)) return -1;
+    if (epoch != epoch) return 0;
     std::tm tm;
     fill_tm(civil_at(epoch, shifted, shift_hours), tm);
 #ifdef _WIN32
