@@ -2224,6 +2224,7 @@ void register_graphics_builtins(VM& vm) {
             throw jdError(ErrCode::RUNTIME_ERROR,
                 std::string("GFX.NEWTARGET: SDL_CreateTexture failed: ") + SDL_GetError());
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_LINEAR);
         SDL_Texture* old_target = SDL_GetRenderTarget(g_renderer);
         SDL_SetRenderTarget(g_renderer, tex);
         SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 0);
@@ -2262,6 +2263,63 @@ void register_graphics_builtins(VM& vm) {
             SDL_RenderClear(g_renderer);
         }
         apply_draw_color();
+        return Value::make_none();
+    });
+
+    // ── GFX.STROKE x1, y1, x2, y2, width, [r, g, b], [round] ───
+    // A line width pixels wide, filled as two triangles, so it covers the
+    // same at every angle; round ends add a disc at each end. The colour
+    // is for this stroke only; the alpha and blend mode are the current
+    // ones.
+
+    vm.register_native("GFX.STROKE", 5, 9, [](const std::vector<Value>& args) -> Value {
+        ensure_screen("GFX.STROKE");
+        float x1 = (float)args[0].to_double(), y1 = (float)args[1].to_double();
+        float x2 = (float)args[2].to_double(), y2 = (float)args[3].to_double();
+        float half = (float)args[4].to_double() / 2.0f;
+        if (half <= 0) return Value::make_none();
+        Uint8 r = g_draw_r, g = g_draw_g, b = g_draw_b;
+        if (args.size() >= 6 && args.size() < 8)
+            throw jdError(ErrCode::RUNTIME_ERROR, "GFX.STROKE: give all three of r, g, b");
+        extract_rgb(args, 5, r, g, b);
+        bool round = args.size() >= 9 ? args[8].to_bool() : true;
+        SDL_FColor col = {r / 255.0f, g / 255.0f, b / 255.0f, g_draw_a / 255.0f};
+
+        std::vector<SDL_Vertex> verts;
+        std::vector<int> idx;
+        auto vert = [&](float x, float y) {
+            SDL_Vertex v;
+            v.position = {x, y};
+            v.color = col;
+            v.tex_coord = {0, 0};
+            verts.push_back(v);
+            return (int)verts.size() - 1;
+        };
+        float dx = x2 - x1, dy = y2 - y1;
+        float len = std::sqrt(dx * dx + dy * dy);
+        if (len > 1e-4f) {
+            float nx = -dy / len * half, ny = dx / len * half;
+            int a = vert(x1 + nx, y1 + ny), bq = vert(x2 + nx, y2 + ny);
+            int c = vert(x2 - nx, y2 - ny), d = vert(x1 - nx, y1 - ny);
+            idx.insert(idx.end(), {a, bq, c, a, c, d});
+        }
+        if (round || len <= 1e-4f) {
+            int steps = std::max(8, std::min(48, (int)(half * 2.5f)));
+            const float ends[2][2] = {{x1, y1}, {x2, y2}};
+            for (int e = 0; e < (len > 1e-4f ? 2 : 1); e++) {
+                int centre = vert(ends[e][0], ends[e][1]);
+                int first = (int)verts.size();
+                for (int i = 0; i < steps; i++) {
+                    float t = 2.0f * (float)M_PI * i / steps;
+                    vert(ends[e][0] + half * std::cos(t), ends[e][1] + half * std::sin(t));
+                }
+                for (int i = 0; i < steps; i++)
+                    idx.insert(idx.end(), {centre, first + i, first + (i + 1) % steps});
+            }
+        }
+        if (!idx.empty())
+            SDL_RenderGeometry(g_renderer, nullptr, verts.data(), (int)verts.size(),
+                idx.data(), (int)idx.size());
         return Value::make_none();
     });
 

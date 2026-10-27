@@ -4,7 +4,8 @@
 ' image drawing points at sends drawing back to the screen.
 ' Needs a GFX build and a display, so it lives beside the capture smoke
 ' rather than in the sweep. Pass a folder to keep a screenshot of the
-' tilted panel for a look.
+' tilted panel for a look. GFX.STROKE draws thick lines at any angle and
+' refuses a colour given only in part.
 DIM bad AS INTEGER = 0
 DIM shot_dir$ AS STRING = ""
 DIM cli = OS.ARGS()
@@ -36,6 +37,12 @@ GFX.DRAWQUAD panel, [20, 140, 140, 20], [20, 20, 70, 70], 128, "ADD", 4
 GFX.DRAWIMAGE panel, 480, 10, 160, 100
 DIM xs = [180.0, 460.0, 600.0, 40.0] + 0
 GFX.DRAWQUAD panel, xs, [80, 80, 420, 420], 60
+' GFX.STROKE: thick at every angle, round or square ends, its own colour
+GFX.STROKE 40, 440, 600, 300, 12, 80, 236, 255
+GFX.STROKE 40, 300, 600, 440, 6
+GFX.STROKE 320, 250, 320, 470, 9, 255, 46, 136, FALSE
+GFX.STROKE 100, 100, 100, 100, 20, 255, 255, 255
+GFX.STROKE 10, 10, 50, 50, 0
 IF shot_dir$ <> "" THEN GFX.SAVE_SCREENSHOT shot_dir$ + "/gfx_target_smoke.png"
 SCREENFLIP
 
@@ -75,7 +82,12 @@ CATCH
     caught = caught + 1
 ENDTRY
 GFX.FREEIMAGE snap
-Check(caught = 6, "6 bad calls raise, " + STR$(caught) + " did")
+TRY
+    GFX.STROKE 0, 0, 10, 10, 4, 255, 0
+CATCH
+    caught = caught + 1
+ENDTRY
+Check(caught = 7, "7 bad calls raise, " + STR$(caught) + " did")
 
 ' freeing the image drawing points at sends drawing back to the screen
 GFX.TARGET other

@@ -1323,6 +1323,10 @@ Description: Saves a loaded (and possibly modified) image to a PNG file, preserv
 Syntax: GFX.SAVE_SCREENSHOT(file$, [x], [y], [w], [h])
 Description: Saves the current screen, or a given rectangular region, to a PNG file, or a JPEG when the name ends in .jpg or .jpeg.
 
+[GFX.STROKE]
+Syntax: GFX.STROKE x1, y1, x2, y2, width, [r, g, b], [round]
+Description: Draws a line width pixels wide, filled as triangles so it covers the same at every angle. round (default TRUE) puts a disc on each end. The colour applies to this stroke only; the alpha (DRAWCOLOR) and the blend mode (GFX.BLEND) are the current ones.
+
 [GFX.TARGET]
 Syntax: GFX.TARGET [id], [clear]
 Description: Points all drawing (CLS, LINE, TEXT, images, ...) at an image made by GFX.NEWTARGET; no id or 0 points it back at the screen. clear TRUE empties the image to transparent first.

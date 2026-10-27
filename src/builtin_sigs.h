@@ -340,6 +340,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"GFX.POLLEVENT", BuiltinRet::Str, BF_NO_VEC},
     {"GFX.SAVE_IMAGE", BuiltinRet::None, BF_NO_VEC},
     {"GFX.SAVE_SCREENSHOT", BuiltinRet::None, BF_NO_VEC},
+    {"GFX.STROKE", BuiltinRet::None, BF_NO_VEC},
     {"GFX.TARGET", BuiltinRet::None, BF_NO_VEC},
     {"GFX.TEXTSIZE", BuiltinRet::Arr, BF_NO_VEC},
     {"GFX.TICKS", BuiltinRet::I64, BF_NO_VEC},
