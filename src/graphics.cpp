@@ -114,6 +114,16 @@ SDL_Renderer* g_renderer = nullptr;
 static SDL_Texture* g_screen_tex = nullptr;
 #endif
 
+// The render target that is the screen: the window itself, or the
+// persistent texture above in the browser
+static SDL_Texture* screen_target() {
+#ifdef __EMSCRIPTEN__
+    return g_screen_tex;
+#else
+    return nullptr;
+#endif
+}
+
 // Streaming texture used by GFX.PLOT_POINTS_TEX. File-scope so it can be
 // freed in cleanup_graphics() - otherwise the dangling pointer survives a
 // SCREEN→GFX.CLOSE→SCREEN cycle and crashes the second run.
@@ -1722,6 +1732,10 @@ void register_graphics_builtins(VM& vm) {
         int id = (int)args[0].to_int();
         auto it = g_images.find(id);
         if (it != g_images.end()) {
+            if (g_renderer && SDL_GetRenderTarget(g_renderer) == it->second) {
+                SDL_SetRenderTarget(g_renderer, screen_target());
+                apply_draw_color();
+            }
             SDL_DestroyTexture(it->second);
             g_images.erase(it);
         }
@@ -2191,6 +2205,148 @@ void register_graphics_builtins(VM& vm) {
         SDL_FRect dst = { x, y, w, h };
         SDL_FlipMode flip = flip_h ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE;
         SDL_RenderTextureRotated(g_renderer, it->second, nullptr, &dst, angle, nullptr, flip);
+        return Value::make_none();
+    });
+
+    // ── GFX.NEWTARGET(w, h) -> id ──────────────────────────────
+    // An image that drawing can be pointed at with GFX.TARGET; it starts
+    // transparent and draws like any other image.
+
+    vm.register_native("GFX.NEWTARGET", 2, 2, [](const std::vector<Value>& args) -> Value {
+        ensure_screen("GFX.NEWTARGET");
+        long long w = args[0].to_int();
+        long long h = args[1].to_int();
+        if (w < 1 || h < 1 || w > 16384 || h > 16384)
+            throw jdError(ErrCode::RUNTIME_ERROR, "GFX.NEWTARGET: width and height must be 1 to 16384");
+        SDL_Texture* tex = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_RGBA32,
+            SDL_TEXTUREACCESS_TARGET, (int)w, (int)h);
+        if (!tex)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("GFX.NEWTARGET: SDL_CreateTexture failed: ") + SDL_GetError());
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_Texture* old_target = SDL_GetRenderTarget(g_renderer);
+        SDL_SetRenderTarget(g_renderer, tex);
+        SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 0);
+        SDL_RenderClear(g_renderer);
+        SDL_SetRenderTarget(g_renderer, old_target);
+        apply_draw_color();
+        int id = g_next_image_id++;
+        g_images[id] = tex;
+        return Value::make_i64(id);
+    });
+
+    // ── GFX.TARGET [id], [clear] ───────────────────────────────
+    // Points all drawing at an image made by GFX.NEWTARGET; no id or 0
+    // points it back at the screen. clear TRUE empties the image to
+    // transparent first.
+
+    vm.register_native("GFX.TARGET", 0, 2, [](const std::vector<Value>& args) -> Value {
+        ensure_screen("GFX.TARGET");
+        long long id = args.empty() ? 0 : args[0].to_int();
+        bool clear = args.size() >= 2 && args[1].to_bool();
+        SDL_Texture* tex = screen_target();
+        if (id != 0) {
+            auto it = g_images.find((int)id);
+            if (it == g_images.end())
+                throw jdError(ErrCode::RUNTIME_ERROR, "GFX.TARGET: invalid image id");
+            SDL_PropertiesID props = SDL_GetTextureProperties(it->second);
+            if (SDL_GetNumberProperty(props, SDL_PROP_TEXTURE_ACCESS_NUMBER, -1) != SDL_TEXTUREACCESS_TARGET)
+                throw jdError(ErrCode::RUNTIME_ERROR, "GFX.TARGET: the image was not made by GFX.NEWTARGET");
+            tex = it->second;
+        }
+        if (!SDL_SetRenderTarget(g_renderer, tex))
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("GFX.TARGET: SDL_SetRenderTarget failed: ") + SDL_GetError());
+        if (clear && id != 0) {
+            SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 0);
+            SDL_RenderClear(g_renderer);
+        }
+        apply_draw_color();
+        return Value::make_none();
+    });
+
+    // ── GFX.DRAWQUAD id, xs, ys, [alpha], [mode$], [grid] ──────
+    // Draws an image onto any four corners (top left, top right, bottom
+    // right, bottom left), with the perspective of a flat picture seen at
+    // an angle: the square maps through the homography of the corners,
+    // sampled on a grid x grid mesh of triangles.
+
+    vm.register_native("GFX.DRAWQUAD", 3, 6, [](const std::vector<Value>& args) -> Value {
+        ensure_screen("GFX.DRAWQUAD");
+        auto it = g_images.find((int)args[0].to_int());
+        if (it == g_images.end())
+            throw jdError(ErrCode::RUNTIME_ERROR, "GFX.DRAWQUAD: invalid image id");
+        double px[4], py[4];
+        auto corners = [](const Value& v, double* out, const char* what) {
+            if (v.type == ValueType::TENSOR && v.as_tensor()->data.size() == 4) {
+                for (int i = 0; i < 4; i++) out[i] = v.as_tensor()->data[i];
+                return;
+            }
+            if (v.type == ValueType::ARRAY && v.as_array()->elements.size() == 4) {
+                for (int i = 0; i < 4; i++) out[i] = v.as_array()->elements[i].to_double();
+                return;
+            }
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("GFX.DRAWQUAD: ") + what + " must be an array of 4 numbers");
+        };
+        corners(args[1], px, "xs");
+        corners(args[2], py, "ys");
+        double alpha = args.size() >= 4 ? args[3].to_double() : 255.0;
+        if (alpha < 0) alpha = 0;
+        if (alpha > 255) alpha = 255;
+        SDL_BlendMode bm = SDL_BLENDMODE_BLEND;
+        if (args.size() >= 5) {
+            std::string m = args[4].to_string();
+            std::transform(m.begin(), m.end(), m.begin(), ::toupper);
+            if (m == "ADD") bm = SDL_BLENDMODE_ADD;
+            else if (m == "NONE") bm = SDL_BLENDMODE_NONE;
+            else if (m != "BLEND")
+                throw jdError(ErrCode::RUNTIME_ERROR, "GFX.DRAWQUAD: mode must be BLEND, ADD or NONE");
+        }
+        long long grid = args.size() >= 6 ? args[5].to_int() : 12;
+        if (grid < 1) grid = 1;
+        if (grid > 128) grid = 128;
+
+        // unit square -> quad (Heckbert's square-to-quadrilateral mapping)
+        double dx1 = px[1] - px[2], dx2 = px[3] - px[2], dx3 = px[0] - px[1] + px[2] - px[3];
+        double dy1 = py[1] - py[2], dy2 = py[3] - py[2], dy3 = py[0] - py[1] + py[2] - py[3];
+        double g = 0, h = 0;
+        double den = dx1 * dy2 - dx2 * dy1;
+        if ((dx3 != 0 || dy3 != 0) && den != 0) {
+            g = (dx3 * dy2 - dx2 * dy3) / den;
+            h = (dx1 * dy3 - dx3 * dy1) / den;
+        }
+        double a = px[1] - px[0] + g * px[1], b = px[3] - px[0] + h * px[3], c = px[0];
+        double d = py[1] - py[0] + g * py[1], e = py[3] - py[0] + h * py[3], f = py[0];
+
+        int n = (int)grid;
+        std::vector<SDL_Vertex> verts((size_t)(n + 1) * (n + 1));
+        SDL_FColor col = {1.0f, 1.0f, 1.0f, (float)(alpha / 255.0)};
+        for (int j = 0; j <= n; j++) {
+            for (int i = 0; i <= n; i++) {
+                double u = (double)i / n, v = (double)j / n;
+                double w = g * u + h * v + 1;
+                if (std::fabs(w) < 1e-9) w = 1e-9;
+                SDL_Vertex& vx = verts[(size_t)j * (n + 1) + i];
+                vx.position = {(float)((a * u + b * v + c) / w), (float)((d * u + e * v + f) / w)};
+                vx.color = col;
+                vx.tex_coord = {(float)u, (float)v};
+            }
+        }
+        std::vector<int> idx;
+        idx.reserve((size_t)n * n * 6);
+        for (int j = 0; j < n; j++) {
+            for (int i = 0; i < n; i++) {
+                int p = j * (n + 1) + i;
+                idx.insert(idx.end(), {p, p + 1, p + n + 2, p, p + n + 2, p + n + 1});
+            }
+        }
+        SDL_BlendMode old_bm;
+        SDL_GetTextureBlendMode(it->second, &old_bm);
+        SDL_SetTextureBlendMode(it->second, bm);
+        SDL_RenderGeometry(g_renderer, it->second, verts.data(), (int)verts.size(),
+            idx.data(), (int)idx.size());
+        SDL_SetTextureBlendMode(it->second, old_bm);
         return Value::make_none();
     });
 

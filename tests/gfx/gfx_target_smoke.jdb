@@ -1,0 +1,94 @@
+' GFX.NEWTARGET answers an image id that GFX.TARGET can draw into and
+' GFX.DRAWQUAD can place on any four corners. Ids that are not targets,
+' unknown ids and corners that are not four numbers raise. Freeing the
+' image drawing points at sends drawing back to the screen.
+' Needs a GFX build and a display, so it lives beside the capture smoke
+' rather than in the sweep. Pass a folder to keep a screenshot of the
+' tilted panel for a look.
+DIM bad AS INTEGER = 0
+DIM shot_dir$ AS STRING = ""
+DIM cli = OS.ARGS()
+IF LEN(cli) > 1 THEN shot_dir$ = cli[LEN(cli) - 1]
+
+SUB Check(ok AS INTEGER, what$ AS STRING)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        bad = bad + 1
+    ENDIF
+ENDSUB
+
+SCREEN 640, 480, "gfx target smoke"
+
+DIM panel AS INTEGER = GFX.NEWTARGET(320, 200)
+Check(panel > 0, "GFX.NEWTARGET answers a positive id")
+
+GFX.TARGET panel, TRUE
+CLS 20, 20, 60
+RECT 0, 0, 320, 200, FALSE, 255, 46, 136
+LINE 0, 0, 320, 200, 255, 255, 255
+LINE 320, 0, 0, 200, 255, 255, 255
+TEXT 20, 20, "GFX.TARGET", 255, 255, 255
+GFX.TARGET
+
+CLS 8, 8, 12
+GFX.DRAWQUAD panel, [180, 460, 600, 40], [80, 80, 420, 420]
+GFX.DRAWQUAD panel, [20, 140, 140, 20], [20, 20, 70, 70], 128, "ADD", 4
+GFX.DRAWIMAGE panel, 480, 10, 160, 100
+DIM xs = [180.0, 460.0, 600.0, 40.0] + 0
+GFX.DRAWQUAD panel, xs, [80, 80, 420, 420], 60
+IF shot_dir$ <> "" THEN GFX.SAVE_SCREENSHOT shot_dir$ + "/gfx_target_smoke.png"
+SCREENFLIP
+
+DIM other AS INTEGER = GFX.NEWTARGET(16, 16)
+Check(other <> panel, "a second target answers a fresh id")
+
+DIM caught AS INTEGER = 0
+TRY
+    DIM empty_target AS INTEGER = GFX.NEWTARGET(0, 10)
+CATCH
+    caught = caught + 1
+ENDTRY
+TRY
+    GFX.TARGET 999999
+CATCH
+    caught = caught + 1
+ENDTRY
+TRY
+    GFX.DRAWQUAD 999999, [0, 1, 1, 0], [0, 0, 1, 1]
+CATCH
+    caught = caught + 1
+ENDTRY
+TRY
+    GFX.DRAWQUAD panel, [0, 1, 1], [0, 0, 1, 1]
+CATCH
+    caught = caught + 1
+ENDTRY
+TRY
+    GFX.DRAWQUAD panel, [0, 1, 1, 0], [0, 0, 1, 1], 255, "MUL"
+CATCH
+    caught = caught + 1
+ENDTRY
+DIM snap AS INTEGER = GFX.CAPTURE()
+TRY
+    GFX.TARGET snap
+CATCH
+    caught = caught + 1
+ENDTRY
+GFX.FREEIMAGE snap
+Check(caught = 6, "6 bad calls raise, " + STR$(caught) + " did")
+
+' freeing the image drawing points at sends drawing back to the screen
+GFX.TARGET other
+GFX.FREEIMAGE other
+CLS
+RECT 10, 10, 20, 20, TRUE, 255, 255, 255
+SCREENFLIP
+
+GFX.FREEIMAGE panel
+GFX.CLOSE
+IF bad = 0 THEN
+    PRINT "RESULTS: 1 passed, 0 failed"
+    PRINT "ALL GFX TARGET TESTS PASSED!"
+ELSE
+    PRINT "RESULTS: 0 passed, 1 failed"
+ENDIF

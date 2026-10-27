@@ -1259,6 +1259,10 @@ Description: Draws a sub-rectangle of a loaded image to the screen, optionally s
 Syntax: GFX.DRAW_CAPTURE(id)
 Description: Draws a previously captured image full-screen as a background.
 
+[GFX.DRAWQUAD]
+Syntax: GFX.DRAWQUAD(id, xs, ys, [alpha], [mode$], [grid])
+Description: Draws an image onto four corners given as xs and ys arrays (top left, top right, bottom right, bottom left), in the perspective of a flat picture seen at an angle. alpha is 0-255 (default 255), mode$ is "BLEND" (default), "ADD" or "NONE", grid (default 12) is how finely the picture is cut into triangles.
+
 [GFX.FADE]
 Syntax: GFX.FADE(direction, duration, [r], [g], [b])
 Description: Blocks while fading the screen out to or in from a color (default black) over the given duration in seconds; direction 0 fades out, 1 fades in.
@@ -1278,6 +1282,10 @@ Description: Returns TRUE if the given key (scancode name string or number) is c
 [GFX.LOADIMAGE]
 Syntax: GFX.LOADIMAGE(path$) -> id
 Description: Loads an image file into a GPU texture and returns its image id.
+
+[GFX.NEWTARGET]
+Syntax: GFX.NEWTARGET(w, h) -> id
+Description: Makes an empty, transparent image of w x h pixels that drawing can be pointed at with GFX.TARGET. It draws like any other image (GFX.DRAWIMAGE, GFX.DRAWQUAD) and is freed with GFX.FREEIMAGE.
 
 [GFX.MOUSEBUTTON]
 Syntax: GFX.MOUSEBUTTON([button]) -> boolean
@@ -1314,6 +1322,10 @@ Description: Saves a loaded (and possibly modified) image to a PNG file, preserv
 [GFX.SAVE_SCREENSHOT]
 Syntax: GFX.SAVE_SCREENSHOT(file$, [x], [y], [w], [h])
 Description: Saves the current screen, or a given rectangular region, to a PNG file, or a JPEG when the name ends in .jpg or .jpeg.
+
+[GFX.TARGET]
+Syntax: GFX.TARGET [id], [clear]
+Description: Points all drawing (CLS, LINE, TEXT, images, ...) at an image made by GFX.NEWTARGET; no id or 0 points it back at the screen. clear TRUE empties the image to transparent first.
 
 [GFX.TEXTSIZE]
 Syntax: GFX.TEXTSIZE(text$) -> [w,h]
