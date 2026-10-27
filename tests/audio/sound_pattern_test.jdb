@@ -886,5 +886,47 @@ SOUND.SEQ 0, "legato(1, b5)", "VOICE"
 buf = SOUND.RENDER(CYC / 4)
 CHECK "RESET lifts the mutes", MAX(ABS(buf)) > 0.4, "max=" + STR$(MAX(ABS(buf)))
 
+' singing: every note sings the next syllable of the lyric; the vocoder
+' lets the 20th harmonic of 110 Hz through on ee, hardly on oo
+FUNC SUNG_BRIGHTNESS(lyric$) AS DOUBLE
+    SOUND.RESET
+    SOUND.VOICE 4, "SAW", 0.001, 0.01, 1.0, 0.01
+    SOUND.GAIN 4, 0.3
+    SOUND.SING 4, lyric$
+    SOUND.SEQ 4, "legato(1, a2)", "VOICE"
+    DIM sb = SOUND.RENDER(14192)
+    RETURN TONE_LEVEL(sb, 2200, 6000) / (TONE_LEVEL(sb, 440, 6000) + 0.000001)
+ENDFUNC
+DIM sung_ee AS DOUBLE = SUNG_BRIGHTNESS("ee")
+DIM sung_oo AS DOUBLE = SUNG_BRIGHTNESS("oo")
+CHECK "sung ee brighter than oo", sung_ee > sung_oo * 3, "ee=" + STR$(sung_ee) + " oo=" + STR$(sung_oo)
+
+SOUND.RESET
+SOUND.VOICE 4, "SAW", 0.001, 0.01, 1.0, 0.01
+SOUND.SING 4, "nee - sa _"
+SOUND.SEQ 4, "a2 a2 a2 a2", "VOICE"
+DIM heard$ AS STRING = ""
+DIM q AS INTEGER
+FOR q = 0 TO 3
+    buf = SOUND.RENDER(CYC / 8)
+    heard$ = heard$ + SOUND.SUNG$(4) + ","
+    buf = SOUND.RENDER(CYC / 8)
+NEXT q
+CHECK_STR "SUNG$ follows the syllables", "i,i,a,,", heard$
+CHECK "SUNG counts the notes", SOUND.SUNG(4) = 4, "n=" + STR$(SOUND.SUNG(4))
+SOUND.SING 4, ""
+buf = SOUND.RENDER(CYC / 8)
+CHECK_STR "SING empty stops singing", "", SOUND.SUNG$(4)
+
+err_msg = ""
+TRY
+    SOUND.SING 4, "la 9"
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "unknown sound in a syllable", INSTR(err_msg, "no sound") >= 0, "msg=" + err_msg
+SOUND.RESET
+CHECK "RESET forgets the lyric", SOUND.SUNG(4) = 0, "n=" + STR$(SOUND.SUNG(4))
+
 SOUND.RESET
 PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

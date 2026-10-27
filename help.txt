@@ -1735,6 +1735,19 @@ Description: Sets how much of a track's signal is sent to the global reverb bus.
 Syntax: SOUND.SIDECHAIN(target_track, source_track, amount)
 Description: Sidechains a target track's level to a source track by the given amount.
 
+[SOUND.SING]
+Syntax: SOUND.SING track, lyric$
+Description: Queues syllables for a synth track to sing, one on each note it plays, through a vocoder: the track's oscillator and a noise source pass a bank of band-passes opened to the spectrum of each sound in turn. Syllables are split by spaces and written in a phonetic spelling: vowels a e i o u ae uh ih er aw (ee oo ah eh oh as aliases), glides ai ei oi au ou, consonants m n ng l r w y v dh z zh f th s sh h b d g p t k ch j x. "-" holds the vowel before over one more note, "_" is a silent note, "." splits sounds that would read as one. A further call appends; "" stops the singing. When the lyric runs out, notes hum "oo".
+Example: SOUND.SING 6, "ni awn lait tu nait -"
+
+[SOUND.SUNG]
+Syntax: SOUND.SUNG(track) -> integer
+Description: How many syllables the track has started singing since SOUND.INIT or SOUND.RESET, to find the word under the current note.
+
+[SOUND.SUNG$]
+Syntax: SOUND.SUNG$(track) -> string
+Description: The sound the track sings this moment, as named in SOUND.SING ("a", "m", "s", ...), or "" in silence; for lip sync.
+
 [SOUND.STATS$]
 Syntax: SOUND.STATS$() -> string
 Description: Returns and resets a debug string of voice trigger and allocation-failure counters.

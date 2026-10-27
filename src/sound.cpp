@@ -1,5 +1,6 @@
 #include "sound.h"
 #include "sound_pattern.h"
+#include "sound_sing.h"
 #include "vm.h"
 #include "errors.h"
 
@@ -219,6 +220,8 @@ struct Voice {
     // Glide: the sounding frequency, its step per frame and the frames left
     float glide_cur = 0.0f, glide_ratio = 1.0f;
     int64_t glide_left = 0;
+    // Singing: the syllable on this note and the vocoder's bands
+    jdsing::VoiceState sing;
 };
 
 // ── Parameter modulation ────────────────────────────────────────
@@ -316,6 +319,13 @@ struct TrackParams {
     std::vector<float> chorus_buf;
     int chorus_head = 0;
     float chorus_lfo = 0.0f;
+    // Singing: the lyric still to sing, a syllable a note, how many were
+    // started and the voice singing the latest
+    bool sing = false;
+    std::vector<jdsing::Syllable> lyric;
+    size_t lyric_at = 0;
+    int64_t sung_count = 0;
+    int sung_voice = -1;
     bool has_insert() const { return chorus_mix > 0.0f || width != 1.0f; }
 };
 
@@ -1040,6 +1050,8 @@ static struct SoundSystem {
             sample_r = s;
         }
 
+        if (v.sing.on) jdsing::process(v.sing, sample_l, sample_r);
+
         // Formants: breath noise, then three band-passes on the vowel
         if (tp.formant_mix > 0.0f) {
             formant_coeffs(tp);
@@ -1395,6 +1407,13 @@ static struct SoundSystem {
             v.sample_id = tp.sample_id;
             v.sample_loop = tp.sample_loop;
             v.sample_pos = 0;
+        }
+        if (tp.sing) {
+            static const jdsing::Syllable hum = jdsing::parse_syllable("oo");
+            const jdsing::Syllable& syl = tp.lyric_at < tp.lyric.size() ? tp.lyric[tp.lyric_at++] : hum;
+            jdsing::start(v.sing, syl, v.gate_frames);
+            tp.sung_count++;
+            tp.sung_voice = vi;
         }
         sys->seq_layers[t].active_voice_idx = vi;
     }
@@ -2710,6 +2729,54 @@ void register_sound_builtins(VM& vm) {
         SND_UNLOCK();
         return Value::make_none();
     });
+    // ── SOUND.SING track, lyric$ ─────────────────────────────
+    // Queues syllables for the track to sing, one on each note it plays,
+    // through a vocoder on its own oscillator; "" stops the singing.
+    vm.register_native("SOUND.SING", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
+        std::string text = args[1].to_string();
+        std::vector<jdsing::Syllable> syls;
+        try { syls = jdsing::parse_lyric(text); jdsing::tables(); }
+        catch (const std::exception& e) { throw jdError(ErrCode::RUNTIME_ERROR, std::string("SOUND.SING: ") + e.what()); }
+        SND_LOCK();
+        auto& tp = g_sound.tracks[t];
+        if (syls.empty()) {
+            tp.sing = false;
+            tp.lyric.clear();
+            tp.lyric_at = 0;
+        } else {
+            if (tp.lyric_at > 0) {
+                tp.lyric.erase(tp.lyric.begin(), tp.lyric.begin() + (std::ptrdiff_t)tp.lyric_at);
+                tp.lyric_at = 0;
+            }
+            tp.lyric.insert(tp.lyric.end(), syls.begin(), syls.end());
+            tp.sing = true;
+        }
+        SND_UNLOCK();
+        return Value::make_none();
+    });
+    // How many syllables the track has started singing
+    vm.register_native("SOUND.SUNG", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_i64(0);
+        SND_LOCK();
+        int64_t n = g_sound.tracks[t].sung_count;
+        SND_UNLOCK();
+        return Value::make_i64(n);
+    });
+    // The sound the track sings this moment ("a", "m", "s", ...), "" in silence
+    vm.register_native("SOUND.SUNG$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_string("");
+        std::string name;
+        SND_LOCK();
+        int vi = g_sound.tracks[t].sung_voice;
+        if (vi >= 0 && vi < MAX_VOICES) {
+            const Voice& v = g_sound.voices[vi];
+            if (v.track == t && v.sing.on && v.env.state != EnvState::OFF && v.delay_frames <= 0 && v.sing.cur >= 0)
+                name = jdsing::PHONES[v.sing.cur].name;
+        }
+        SND_UNLOCK();
+        return Value::make_string(name);
+    });
     vm.register_native("SOUND.GLIDE", 2, 3, [](const std::vector<Value>& args) -> Value {
         int t = (int)args[0].to_int(); if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
         std::string mode = args.size() > 2 ? args[2].to_string() : "ALL";
@@ -3144,7 +3211,8 @@ void register_sound_builtins(VM& vm) {
         "SOUND.RINGMOD", "SOUND.REVERBSEND", "SOUND.DELAYSEND",
         "SOUND.SIDECHAIN", "SOUND.SCALE", "SOUND.DELAY", "SOUND.REVERB",
         "SOUND.NUDGE", "SOUND.ORBIT", "SOUND.COMPRESSOR", "SOUND.DISTORTION",
-        "SOUND.MASTER", "SOUND.FORMANT", "SOUND.GLIDE", "SOUND.CHORUS", "SOUND.WIDTH", "SOUND.OSC2"};
+        "SOUND.MASTER", "SOUND.FORMANT", "SOUND.GLIDE", "SOUND.CHORUS", "SOUND.WIDTH", "SOUND.OSC2",
+        "SOUND.SING"};
     for (const char* name : schedulable) {
         const VM::NativeEntry* e = vm.native_find(name);
         if (!e) continue;
