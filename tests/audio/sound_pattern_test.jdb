@@ -901,6 +901,21 @@ DIM sung_ee AS DOUBLE = SUNG_BRIGHTNESS("ee")
 DIM sung_oo AS DOUBLE = SUNG_BRIGHTNESS("oo")
 CHECK "sung ee brighter than oo", sung_ee > sung_oo * 3, "ee=" + STR$(sung_ee) + " oo=" + STR$(sung_oo)
 
+' e has its second formant near 1.9 kHz, oh near 900 Hz: the 17th and the
+' 8th harmonic of 110 Hz weigh the other way round
+FUNC SECOND_FORMANT_TILT(lyric$) AS DOUBLE
+    SOUND.RESET
+    SOUND.VOICE 4, "SAW", 0.001, 0.01, 1.0, 0.01
+    SOUND.GAIN 4, 0.3
+    SOUND.SING 4, lyric$
+    SOUND.SEQ 4, "legato(1, a2)", "VOICE"
+    DIM sb = SOUND.RENDER(14192)
+    RETURN TONE_LEVEL(sb, 1870, 6000) / (TONE_LEVEL(sb, 880, 6000) + 0.000001)
+ENDFUNC
+DIM tilt_e AS DOUBLE = SECOND_FORMANT_TILT("e")
+DIM tilt_oh AS DOUBLE = SECOND_FORMANT_TILT("oh")
+CHECK "sung e and oh apart", tilt_e > tilt_oh * 8, "e=" + STR$(tilt_e) + " oh=" + STR$(tilt_oh)
+
 SOUND.RESET
 SOUND.VOICE 4, "SAW", 0.001, 0.01, 1.0, 0.01
 SOUND.SING 4, "nee - sa _"

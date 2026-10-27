@@ -21,9 +21,10 @@
 
 namespace jdsing {
 
-constexpr int NB = 18;        // bands, 120 Hz to 9 kHz
+constexpr int NB = 28;        // bands, 100 Hz to 9 kHz, each two band-passes deep
 constexpr int MAX_PH = 12;    // sounds in one syllable
 constexpr float RATE = 44100.0f;
+constexpr float MAKEUP = 3.0f;
 
 enum Kind : uint8_t { VOWEL, NASAL, GLIDE, VFRIC, FRIC, ASPIR, PLOSIVE };
 
@@ -93,12 +94,12 @@ struct Tables {
     float centre[NB];
     float g[NB], k[NB];
     float voiced[NPH][NB], noise[NPH][NB];
-    float smooth;
+    float smooth_v, smooth_n;
     Tables() {
         for (int b = 0; b < NB; b++) {
-            centre[b] = 120.0f * std::pow(9000.0f / 120.0f, (float)b / (NB - 1));
+            centre[b] = 100.0f * std::pow(9000.0f / 100.0f, (float)b / (NB - 1));
             g[b] = std::tan(3.14159265f * centre[b] / RATE);
-            k[b] = 1.0f / 4.5f;
+            k[b] = 1.0f / 5.0f;
         }
         for (int p = 0; p < NPH; p++) {
             const Phone& ph = PHONES[p];
@@ -107,14 +108,14 @@ struct Tables {
                 float f = centre[b], v = 0.0f, nz = 0.0f;
                 if (ph.voiced > 0.0f) {
                     for (int i = 0; i < 3; i++) {
-                        float bw = 60.0f + 0.1f * fs[i];
+                        float bw = 50.0f + 0.06f * fs[i];
                         float d = (f - fs[i]) / bw;
                         v += as[i] / (1.0f + d * d);
                     }
                     // an oscillator's harmonics thin out upwards, so the upper
                     // bands open further, as the pre-emphasis of a vocoder does
                     float tilt = std::clamp(std::sqrt(f / 400.0f), 0.7f, 3.5f);
-                    v = std::min(1.0f, v + 0.015f) * ph.voiced * tilt;
+                    v = std::min(1.0f, v + 0.008f) * ph.voiced * tilt;
                 }
                 if (ph.noise > 0.0f && ph.nf > 0.0f) {
                     float o = std::log2(f / ph.nf) / ph.nbw;
@@ -124,7 +125,10 @@ struct Tables {
                 noise[p][b] = nz;
             }
         }
-        smooth = 1.0f - std::exp(-1.0f / (0.006f * RATE));
+        // voiced sounds glide into each other as the mouth moves, noise
+        // starts and stops at once
+        smooth_v = 1.0f - std::exp(-1.0f / (0.012f * RATE));
+        smooth_n = 1.0f - std::exp(-1.0f / (0.003f * RATE));
     }
 };
 
@@ -230,7 +234,7 @@ struct VoiceState {
     int64_t onset_total = 0, coda_start = 0;
     int64_t coda_end[MAX_PH] = {};
     float gv[NB] = {}, gn[NB] = {};
-    float sv[2][NB][2] = {}, sn[NB][2] = {};
+    float sv[2][NB][4] = {}, sn[NB][4] = {};
     int cur = -1;  // the sound now sung, an index into PHONES
 };
 
@@ -281,11 +285,20 @@ inline void process(VoiceState& s, float& l, float& r) {
         const Phone& ph = PHONES[p];
         s.cur = p;
         if (ph.kind == PLOSIVE) {
-            if (frac < 0.6f) {
-                for (int b = 0; b < NB; b++) tv[b] = T.voiced[p][b] * 0.5f;
+            // shut (a murmur when voiced), the burst, then for p t k a puff
+            // of breath coloured like the vowel, for b d g the voice back
+            int shape = vowel >= 0 ? vowel : phone_index("uh");
+            bool voiced = ph.voiced > 0.0f;
+            if (frac < 0.45f) {
+                if (voiced)
+                    for (int b = 0; b < NB; b++) tv[b] = T.voiced[p][b] * 0.5f;
+            } else if (frac < 0.65f) {
+                float burst = 1.0f - (frac - 0.45f) / 0.2f;
+                for (int b = 0; b < NB; b++) tn[b] = T.noise[p][b] * (0.5f + 0.5f * burst) * (voiced ? 0.7f : 1.0f);
+            } else if (!voiced) {
+                for (int b = 0; b < NB; b++) tn[b] = T.voiced[shape][b] * 0.3f;
             } else {
-                float burst = 1.0f - (frac - 0.6f) / 0.4f;
-                for (int b = 0; b < NB; b++) tn[b] = T.noise[p][b] * (0.4f + 0.6f * burst);
+                for (int b = 0; b < NB; b++) tv[b] = T.voiced[shape][b] * 0.6f;
             }
             return;
         }
@@ -341,11 +354,13 @@ inline void process(VoiceState& s, float& l, float& r) {
     float in[2] = {l, r};
     float out[2] = {0.0f, 0.0f}, hiss = 0.0f;
     for (int b = 0; b < NB; b++) {
-        s.gv[b] += (tv[b] - s.gv[b]) * T.smooth;
-        s.gn[b] += (tn[b] - s.gn[b]) * T.smooth;
+        s.gv[b] += (tv[b] - s.gv[b]) * T.smooth_v;
+        s.gn[b] += (tn[b] - s.gn[b]) * T.smooth_n;
         float g = T.g[b], k = T.k[b];
         float a1 = 1.0f / (1.0f + g * (g + k)), a2 = g * a1, a3 = g * a2;
-        auto band = [&](float x, float* st) {
+        // two band-passes in a row: skirts twice as steep, so a band
+        // passes little of its neighbours' harmonics
+        auto stage = [&](float x, float* st) {
             float v3 = x - st[1];
             float v1 = a1 * st[0] + a2 * v3;
             float v2 = st[1] + a2 * st[0] + a3 * v3;
@@ -353,18 +368,15 @@ inline void process(VoiceState& s, float& l, float& r) {
             st[1] = 2.0f * v2 - st[1];
             return k * v1;
         };
-        if (s.gv[b] > 1e-4f) {
-            out[0] += band(in[0], s.sv[0][b]) * s.gv[b];
-            out[1] += band(in[1], s.sv[1][b]) * s.gv[b];
-        } else {
-            band(in[0], s.sv[0][b]);
-            band(in[1], s.sv[1][b]);
-        }
-        float hb = band(nz, s.sn[b]);
-        hiss += hb * s.gn[b];
+        auto band = [&](float x, float* st) { return stage(stage(x, st), st + 2); };
+        float bl = band(in[0], s.sv[0][b]);
+        float br = band(in[1], s.sv[1][b]);
+        out[0] += bl * s.gv[b];
+        out[1] += br * s.gv[b];
+        hiss += band(nz, s.sn[b]) * s.gn[b];
     }
-    l = (out[0] + hiss) * 2.2f;
-    r = (out[1] + hiss) * 2.2f;
+    l = (out[0] + hiss) * MAKEUP;
+    r = (out[1] + hiss) * MAKEUP;
 }
 
 }  // namespace jdsing
