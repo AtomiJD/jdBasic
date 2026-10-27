@@ -11,6 +11,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
 #if defined(_WIN32)
 extern "C" __declspec(dllimport) void __stdcall
 GetCurrentThreadStackLimits(unsigned long long* low_limit, unsigned long long* high_limit);
@@ -63,8 +67,13 @@ inline Bounds query_bounds() {
 inline bool low() {
     static thread_local Bounds bounds = query_bounds();
     if (bounds.low == 0) return false;
-    char here;
-    uintptr_t sp = (uintptr_t)&here;
+    // The frame address, not a local's: under AddressSanitizer locals can
+    // live on a fake stack in the heap.
+#if defined(_MSC_VER)
+    uintptr_t sp = (uintptr_t)_AddressOfReturnAddress();
+#else
+    uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
+#endif
     return sp < bounds.low + bounds.margin;
 }
 

@@ -83,8 +83,9 @@ if [ -d wasm/programs ]; then
     done
 fi
 # The songs of When Kaiku Dreams Techno with the SCORE and STAGE modules they
-# import -> /music; IMPORT finds the modules beside the song.
-for d in jdb/demos/sound/score.jdb jdb/demos/sound/stage.jdb \
+# import, and the CLI module STAGE imports -> /music; IMPORT finds the
+# modules beside the song.
+for d in jdb/demos/sound/score.jdb jdb/demos/sound/stage.jdb lib/cli.jdb \
          jdb/demos/sound/synthwave_highway.jdb jdb/demos/sound/disco_glitter.jdb \
          jdb/demos/sound/house_rooftop.jdb jdb/demos/sound/acid_copper.jdb \
          jdb/demos/sound/trance_live.jdb jdb/demos/sound/dnb_nightbus.jdb; do
