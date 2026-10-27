@@ -36,7 +36,9 @@
   button.run{background:var(--mag);color:#1a0410;border-color:var(--mag);
     box-shadow:0 0 12px rgba(255,46,151,.45);}
   button.cyan{background:var(--cyan);color:#021014;border-color:var(--cyan);}
-  #term{flex:1;min-height:0;padding:6px 4px 4px 8px;}
+  /* content-box: the fit addon takes this element's computed height as the
+     space for rows, so that height must not include the padding. */
+  #term{flex:1;min-height:0;padding:6px 4px 4px 8px;box-sizing:content-box;}
 
   /* EDIT editor overlay (opened by the EDIT command) */
   #editor-overlay{position:fixed;inset:0;display:none;flex-direction:column;
@@ -114,8 +116,8 @@
   <script>
   const ide = (function(){
     let editor=null, term=null, fit=null, Mod=null, ready=false;
-    let lineBuf='', editorOpen=false, running=false;
-    let inputResolver=null, inputBuf='';   // INPUT line-read mode (Asyncify)
+    let editorOpen=false, running=false;
+    let inputResolver=null;   // INPUT line-read mode (Asyncify)
     let keyQueue=[];   // text-mode KEYDOWN / INKEY$ keys, drained by the runtime
     const history=[]; let hpos=0;
     const PROMPT='\x1b[38;2;0;255;65m>\x1b[0m ';
@@ -128,7 +130,19 @@
     // The folder of the loaded program; a run starts there so IMPORT finds
     // the modules beside it (/music/score.jdb, /lessons/mathx.jdb).
     let progDir = '/';
+    // The REPL's own folder: CD changes it, and DIR, LOAD, SAVE and typed
+    // statements resolve against it.
+    let cwd = '/';
     function dirOf(p){ const i = p.lastIndexOf('/'); return i > 0 ? p.substring(0, i) : '/'; }
+    function resolvePath(p){
+      const out = [];
+      for (const s of (p.startsWith('/') ? p : cwd + '/' + p).split('/')){
+        if (!s || s === '.') continue;
+        if (s === '..') out.pop(); else out.push(s);
+      }
+      return '/' + out.join('/');
+    }
+    function isFolder(p){ try { return Mod.FS.isDir(Mod.FS.stat(p).mode); } catch(e){ return false; } }
 
     // jdBasic keywords - shared by the Monaco highlighter and the LIST colorizer.
     const KEYWORDS = ['PRINT','FOR','TO','STEP','NEXT','IF','THEN','ELSE','ELSEIF','ENDIF','END',
@@ -157,27 +171,38 @@
     // ---- LOAD / SAVE / DIR over the in-browser MEMFS (operate on the editor
     //      program, so they stay consistent with RUN / EDIT / LIST) ----
     function fnameOf(cmd){ const m = cmd.match(/^\w+\s+"?([^"]+?)"?\s*$/); return m ? m[1].trim() : ''; }
-    // DIR lists the programs and folders at the root, DIR folder one folder
+    // DIR lists the programs and folders of the current folder, DIR folder another one
     function listFiles(cmd){
+      const arg = fnameOf(cmd || '').replace(/\/+$/, '');
+      const dir = arg ? resolvePath(arg) : cwd;
+      const pre = arg ? arg + '/' : '';
       try {
-        let dir = fnameOf(cmd || '').replace(/\/+$/, '');
-        dir = dir ? (dir.startsWith('/') ? dir : '/' + dir) : '/';
-        const pre = dir === '/' ? '' : dir.substring(1) + '/';
         const all = Mod.FS.readdir(dir).filter(f=> f !== '.' && f !== '..');
-        const isDir = f=> { try { return Mod.FS.isDir(Mod.FS.stat((dir === '/' ? '' : dir) + '/' + f).mode); } catch(e){ return false; } };
-        const dirs = all.filter(f=> isDir(f) && !/^(dev|proc|tmp|home)$/.test(f)).sort();
+        const sub = f=> (dir === '/' ? '' : dir) + '/' + f;
+        const dirs = all.filter(f=> isFolder(sub(f)) && !(dir === '/' && /^(dev|proc|tmp|home)$/.test(f))).sort();
         const fs = all.filter(f=>/\.(jdb|bas)$/i.test(f)).sort();
-        term.write('\r\n\x1b[2mprograms (LOAD "' + pre + 'name" then RUN):\x1b[0m\r\n');
+        term.write('\r\n\x1b[2m' + dir + '  (LOAD "' + pre + 'name" then RUN):\x1b[0m\r\n');
+        if (dir !== '/') term.write('  \x1b[36m../\x1b[0m   (CD ' + pre + '..)\r\n');
         if (!fs.length && !dirs.length) term.write('  (none)\r\n');
-        dirs.forEach(f=> term.write('  \x1b[36m' + f + '/\x1b[0m   (DIR ' + pre + f + ')\r\n'));
+        dirs.forEach(f=> term.write('  \x1b[36m' + f + '/\x1b[0m   (CD ' + pre + f + ')\r\n'));
         fs.forEach(f=> term.write('  ' + f + '\r\n'));
-      } catch(e){ term.write('\r\n\x1b[31mno folder ' + (cmd || '') + '\x1b[0m\r\n'); }
+      } catch(e){ term.write('\r\n\x1b[31mno folder ' + (arg || dir) + '\x1b[0m\r\n'); }
       prompt();
+    }
+    // CD folder, quoted or not; CD alone shows the current folder
+    function changeDir(cmd){
+      const arg = fnameOf(cmd);
+      if (arg){
+        const d = resolvePath(arg);
+        if (!isFolder(d)){ term.write('\r\n\x1b[31mno folder ' + arg + '\x1b[0m'); prompt(); return; }
+        cwd = d;
+      }
+      term.write('\r\n' + cwd); prompt();
     }
     function readMaybe(p){ try{ return Mod.FS.readFile(p,{encoding:'utf8'}); }catch(e){ return null; } }
     function loadProgram(cmd){
       let n = fnameOf(cmd); if(!n){ term.write('\r\nusage: LOAD name'); prompt(); return; }
-      let base = n.startsWith('/') ? n : '/'+n;
+      let base = resolvePath(n);
       let data = readMaybe(base);
       if(data===null && !/\.\w+$/.test(base)){ const d2=readMaybe(base+'.jdb'); if(d2!==null){ data=d2; base+='.jdb'; } }
       if(data===null){ term.write('\r\n\x1b[31mcannot load '+n+'\x1b[0m'); prompt(); return; }
@@ -186,12 +211,12 @@
       term.write('\r\n\x1b[32mloaded '+base+' ('+program.split('\n').length+' lines). RUN or EDIT.\x1b[0m');
       prompt();
     }
-    function newProgram(){ program=''; progDir='/'; if(editor) editor.setValue('');
+    function newProgram(){ program=''; progDir=cwd; if(editor) editor.setValue('');
       term.write('\r\n\x1b[32mnew program\x1b[0m'); prompt(); }
     function saveProgram(cmd){
       let n = fnameOf(cmd); if(!n){ term.write('\r\nusage: SAVE "name.jdb"'); prompt(); return; }
       if(!/\.\w+$/.test(n)) n += '.jdb';
-      if(!n.startsWith('/')) n='/'+n;
+      n = resolvePath(n);
       const src = editor ? editor.getValue() : program; program = src;
       try { Mod.FS.writeFile(n, src); term.write('\r\n\x1b[32msaved '+n+'\x1b[0m'); }
       catch(e){ term.write('\r\n\x1b[31mcannot save '+n+'\x1b[0m'); }
@@ -234,7 +259,8 @@
       if(e.target && e.target.closest && e.target.closest('#editor-overlay,#gfx-overlay,button,input')) return;
       focusTerm();
     }, true);
-    function prompt(){ term.write('\r\n' + PROMPT); }
+    // The prompt is "> ", so a REPL line starts in column 2.
+    function prompt(){ term.write('\r\n' + PROMPT); edReset(); ed.x0 = 2; }
 
     // Phone keyboards autocorrect straight quotes into smart quotes and
     // spaces into NBSP - normalize them back so typed code lexes the same
@@ -260,18 +286,23 @@
       if (up === 'CLS' || up === 'CLEAR'){ term.clear(); prompt(); return; }
       if (up === 'NEW'){ newProgram(); return; }
       if (up === 'DIR' || up === 'FILES' || up.indexOf('DIR ') === 0){ listFiles(t); return; }
+      // A bare word after CD is a folder name; CD with an expression
+      // (CD dir$) goes to the runtime.
+      if (up === 'CD' || /^CD\s+("[^"]*"|[\w.\/-]+)$/i.test(t)){ changeDir(t); return; }
       if (up.indexOf('LOAD') === 0){ loadProgram(t); return; }
       if (up.indexOf('SAVE') === 0){ saveProgram(t); return; }
-      await runCode(t); prompt();
+      await runCode(t, cwd);
+      try { cwd = Mod.FS.cwd(); } catch(e){}
+      prompt();
     }
     // {async:true} returns a promise that resolves when jdb_run FULLY returns -
     // including after the Asyncify suspends of a SLEEP/graphics loop. running
     // gates terminal input while a program (e.g. a game) owns the canvas.
-    async function runCode(code){
+    async function runCode(code, dir = progDir){
       code = normalizeInput(code);
       if (!ready){ term.write('\r\nruntime not ready'); return; }
       keyQueue.length = 0;   // drop keys left over from the previous run
-      try { Mod.FS.chdir(progDir); } catch(e){ progDir = '/'; }
+      try { Mod.FS.chdir(dir); } catch(e){ Mod.FS.chdir('/'); }
       running = true;
       try { await Mod.ccall('jdb_run','void',['string'],[code],{async:true}); }
       catch(e){ term.write('\x1b[31m'+e+'\x1b[0m'); }
@@ -281,14 +312,93 @@
     // When the runtime asks for INPUT, the terminal collects one line and the
     // jdbReadLine promise resolves it (Asyncify resumes the program).
     function inputData(d){
-      if (d.charCodeAt(0) === 27) return;
-      for (const ch of d){
-        const c = ch.charCodeAt(0);
-        if (ch === '\r'){ term.write('\r\n'); const line=inputBuf; inputBuf='';
-          const r=inputResolver; inputResolver=null; r(line); }
-        else if (c === 127){ if(inputBuf.length){ inputBuf=inputBuf.slice(0,-1); term.write('\b \b'); } }
-        else if (c >= 32){ inputBuf += ch; term.write(ch); }
+      edFeed(d, line=>{ const r=inputResolver; inputResolver=null; r(line); });
+    }
+
+    // One input line with a cursor, shared by the REPL prompt and INPUT. x0 is
+    // the column the line starts in, read at the first key once the prompt is
+    // on screen; row is the cursor's row below the line's first row.
+    const ed = { buf:'', cur:0, x0:-1, row:0 };
+    function edReset(){ ed.buf=''; ed.cur=0; ed.x0=-1; ed.row=0; }
+    function edRender(){
+      const cols = term.cols, b = ed.buf;
+      let s = (ed.row > 0 ? '\x1b[' + ed.row + 'A' : '') + '\r' +
+              (ed.x0 > 0 ? '\x1b[' + ed.x0 + 'C' : '') + '\x1b[J' + b;
+      const end = ed.x0 + b.length;
+      // A line that fills the last column leaves the cursor on that row.
+      const endRow = (b.length && end % cols === 0) ? end / cols - 1 : Math.floor(end / cols);
+      if (ed.cur === b.length) ed.row = endRow;
+      else {
+        const pos = ed.x0 + ed.cur, r = Math.floor(pos / cols), c = pos % cols;
+        s += '\r' + (endRow > r ? '\x1b[' + (endRow - r) + 'A' : '') + (c ? '\x1b[' + c + 'C' : '');
+        ed.row = r;
       }
+      term.write(s);
+    }
+    function edSet(b, c){
+      if (ed.x0 < 0) ed.x0 = Math.min(term.buffer.active.cursorX, term.cols - 1);
+      ed.buf = b; ed.cur = c; edRender();
+    }
+    function edInsert(s){ edSet(ed.buf.slice(0, ed.cur) + s + ed.buf.slice(ed.cur), ed.cur + s.length); }
+    // Puts the cursor behind the line and hands the text over.
+    function edTake(){
+      if (ed.cur !== ed.buf.length) edSet(ed.buf, ed.buf.length);
+      const s = ed.buf; edReset(); return s;
+    }
+    const isWordCh = ch=> /[A-Za-z0-9_$]/.test(ch);
+    function wordLeft(i){ const b = ed.buf;
+      while (i > 0 && !isWordCh(b[i-1])) i--;
+      while (i > 0 && isWordCh(b[i-1])) i--;
+      return i; }
+    function wordRight(i){ const b = ed.buf;
+      while (i < b.length && !isWordCh(b[i])) i++;
+      while (i < b.length && isWordCh(b[i])) i++;
+      return i; }
+    // What xterm sends for the editing keys (normal and application cursor
+    // mode, Ctrl and Alt variants, and the readline control keys).
+    const EDIT_KEYS = {
+      '\x1b[D':'left', '\x1bOD':'left', '\x1b[C':'right', '\x1bOC':'right',
+      '\x1b[1;5D':'wleft', '\x1b[1;3D':'wleft', '\x1bb':'wleft',
+      '\x1b[1;5C':'wright', '\x1b[1;3C':'wright', '\x1bf':'wright',
+      '\x1b[H':'home', '\x1bOH':'home', '\x1b[1~':'home', '\x01':'home',
+      '\x1b[F':'end', '\x1bOF':'end', '\x1b[4~':'end', '\x05':'end',
+      '\x7f':'bs', '\x08':'wbs', '\x17':'wbs', '\x1b\x7f':'wbs',
+      '\x1b[3~':'del', '\x04':'del', '\x1b[3;5~':'wdel', '\x1bd':'wdel',
+      '\x15':'kill_left', '\x0b':'kill_right', '\x1b':'clear'
+    };
+    function edKey(d){
+      const k = EDIT_KEYS[d]; if (!k) return false;
+      const b = ed.buf; let c = ed.cur, nb = b;
+      switch (k){
+        case 'left': c = Math.max(0, c - 1); break;
+        case 'right': c = Math.min(b.length, c + 1); break;
+        case 'wleft': c = wordLeft(c); break;
+        case 'wright': c = wordRight(c); break;
+        case 'home': c = 0; break;
+        case 'end': c = b.length; break;
+        case 'bs': if (c > 0){ nb = b.slice(0, c - 1) + b.slice(c); c--; } break;
+        case 'wbs': { const w = wordLeft(c); nb = b.slice(0, w) + b.slice(c); c = w; break; }
+        case 'del': nb = b.slice(0, c) + b.slice(c + 1); break;
+        case 'wdel': nb = b.slice(0, c) + b.slice(wordRight(c)); break;
+        case 'kill_left': nb = b.slice(c); c = 0; break;
+        case 'kill_right': nb = b.slice(0, c); break;
+        case 'clear': nb = ''; c = 0; break;
+      }
+      if (nb !== b || c !== ed.cur) edSet(nb, c);
+      return true;
+    }
+    // Typed or pasted text; onLine gets each finished line.
+    function edFeed(d, onLine){
+      if (edKey(d)) return;
+      if (d.charCodeAt(0) === 27) return;   // other escape sequences
+      let run = '';
+      for (const ch of d){
+        if (ch === '\r'){
+          if (run){ edInsert(run); run = ''; }
+          const line = edTake(); term.write('\r\n'); onLine(line);
+        } else if (ch.charCodeAt(0) >= 32) run += ch;
+      }
+      if (run) edInsert(run);
     }
     // While a program runs, terminal keystrokes feed the program's key queue
     // (text-mode ON "KEYDOWN" / INKEY$ / WAITKEY$). Arrow keys map to the codes
@@ -335,23 +445,14 @@
       if (editorOpen) return;
       if (inputResolver){ inputData(d); return; }
       if (running){ pushKeys(d); return; }
-      if (d === '\x1b[A'){ // up
+      if (d === '\x1b[A' || d === '\x1bOA'){ // up
         if (hpos>0){ hpos--; replaceLine(history[hpos]||''); } return; }
-      if (d === '\x1b[B'){ // down
+      if (d === '\x1b[B' || d === '\x1bOB'){ // down
         if (hpos<history.length){ hpos++; replaceLine(history[hpos]||''); } return; }
-      if (d.charCodeAt(0) === 27) return; // other escape seqs
-      for (const ch of d){
-        const c = ch.charCodeAt(0);
-        if (ch === '\r'){ term.write('\r\n'); processLine(lineBuf); lineBuf=''; }
-        else if (c === 127){ if(lineBuf.length){ lineBuf=lineBuf.slice(0,-1); term.write('\b \b'); } }
-        else if (c === 3){ term.write('^C'); lineBuf=''; prompt(); }
-        else if (c >= 32){ lineBuf += ch; term.write(ch); }
-      }
+      if (d === '\x03'){ edTake(); term.write('^C'); prompt(); return; }
+      edFeed(d, processLine);
     });
-    function replaceLine(s){
-      term.write('\r' + PROMPT + '\x1b[K');  // CR, prompt, clear to EOL
-      term.write(s); lineBuf = s;
-    }
+    function replaceLine(s){ edSet(s, s.length); }
 
     // ---- monaco (the EDIT editor) ----
     require.config({ paths:{ vs:'vendor/monaco/vs' }});
@@ -528,12 +629,16 @@
     createJdBasic({
       canvas: document.getElementById('canvas'),
       jdbTermWrite: (bytes)=> term.write(latin1(bytes)),
-      jdbReadLine: ()=> new Promise(res=>{ inputResolver=res; inputBuf=''; if(!editorOpen) term.focus(); }),
+      // INPUT's line starts where the program's prompt ended; the write
+      // callback runs once xterm has parsed everything written before it.
+      jdbReadLine: ()=> new Promise(res=>{ inputResolver=res; edReset();
+        term.write('', ()=>{ if (ed.x0 < 0) ed.x0 = Math.min(term.buffer.active.cursorX, term.cols - 1); });
+        if(!editorOpen) term.focus(); }),
       jdbPollKey: ()=> keyQueue.length ? keyQueue.shift() : -1,
       onScreenOpen: (w,h)=>{ showGfx(); },
       onScreenClose: ()=>{ hideGfx(); },
       onJdbReady: ()=>{ ready=true; setStatus('runtime ready','var(--green)');
-        term.write('\r\n\x1b[2mDIR [folder] . LOAD name . RUN . NEW . EDIT . SAVE name . LIST . CLS\x1b[0m');
+        term.write('\r\n\x1b[2mDIR [folder] . CD folder . LOAD name . RUN . NEW . EDIT . SAVE name . LIST . CLS\x1b[0m');
         term.write('\r\n\x1b[2mlessons/ = the Train jdBasic samples . music/ = When Kaiku Dreams Techno (LOAD "music/trance_live")\x1b[0m');
         prompt(); focusTerm(); maybeAutoStart(); }
     }).then(M=>{ Mod=M; maybeAutoStart(); }).catch(e=>{ setStatus('runtime failed','var(--red)'); term.write('\r\nload error: '+e); });
