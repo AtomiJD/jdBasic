@@ -1,6 +1,7 @@
 ' kaiku.jdb - Kaiku, the singer: a neon stick girl with violet hair in
 ' one long side ponytail, a fringe parted in the middle, a star clip,
-' a headset and a pleated skirt, who dances and sings to the beat.
+' a headset, a T-shirt with a bow and a heart and a pleated skirt, who
+' dances and sings to the beat.
 '
 '   KAIKU.INIT 600                ' the height she is mostly shown at
 '   KAIKU.POSE "cheer"            ' the pose she moves towards
@@ -57,6 +58,12 @@ DIM SKIN_B AS INTEGER = 250
 DIM CLOTH_R AS INTEGER = 150
 DIM CLOTH_G AS INTEGER = 160
 DIM CLOTH_B AS INTEGER = 190
+DIM SHIRT_R AS INTEGER = 255
+DIM SHIRT_G AS INTEGER = 160
+DIM SHIRT_B AS INTEGER = 214
+DIM SHIRT_FILL_R AS INTEGER = 46
+DIM SHIRT_FILL_G AS INTEGER = 16
+DIM SHIRT_FILL_B AS INTEGER = 44
 
 ' a pose: lean, head tilt, screen-left upper arm, its elbow bend,
 ' screen-right upper arm, its elbow bend, left thigh, its knee bend,
@@ -517,27 +524,50 @@ SUB DRAW_LEGS()
     NEXT side
 ENDSUB
 
+' A little heart, its point down at (x, y + size)
+SUB HEART(x AS DOUBLE, y AS DOUBLE, size AS DOUBLE, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    BLOB x - size * 0.5, y - size * 0.25, size * 0.55, r, g, b
+    BLOB x + size * 0.5, y - size * 0.25, size * 0.55, r, g, b
+    FILL_QUAD x - size * 1.02, y, x + size * 1.02, y, x, y + size, x, y + size, r, g, b
+ENDSUB
+
+' A T-shirt fitted at the waist with a round neckline, a bow at the
+' collar and a heart on the chest, over a pleated skirt
 SUB DRAW_BODY()
     DIM lean AS DOUBLE = cur[0]
     DIM waist_x AS DOUBLE = hip_x + 40 * DSIN(lean)
     DIM waist_y AS DOUBLE = hip_y - 40 * DCOS(lean)
     DIM sh_y AS DOUBLE = neck_y + 14
+    DIM chest_x AS DOUBLE = neck_x + (waist_x - neck_x) * 0.35
+    DIM chest_y AS DOUBLE = sh_y + (waist_y - sh_y) * 0.35
     DIM swing AS DOUBLE = -vel[11] * 0.06 + SIN(beat_now * MATH.PI) * 4
     DIM hem_y AS DOUBLE = hip_y + 58
-    ' the vest and the skirt hide what is behind them
-    FILL_QUAD neck_x - 32, sh_y, neck_x + 32, sh_y, waist_x + 24, waist_y, waist_x - 24, waist_y, 18, 16, 28
+    ' the skirt and the shirt hide what is behind them
     FILL_QUAD waist_x - 28, waist_y + 2, waist_x + 28, waist_y + 2, hip_x + swing + 78, hem_y, hip_x + swing - 78, hem_y, 34, 10, 30
-    SEG hip_x, hip_y - 10, neck_x, neck_y, 9, SKIN_R, SKIN_G, SKIN_B
-    ' the top: a short vest from the shoulders to the waist, with a collar
-    SEG neck_x - 32, sh_y, neck_x + 32, sh_y, 5, CLOTH_R, CLOTH_G, CLOTH_B
-    SEG neck_x - 32, sh_y, waist_x - 24, waist_y, 3.5, CLOTH_R, CLOTH_G, CLOTH_B
-    SEG neck_x + 32, sh_y, waist_x + 24, waist_y, 3.5, CLOTH_R, CLOTH_G, CLOTH_B
-    SEG neck_x - 12, neck_y + 2, neck_x, neck_y + 12, 3.5, CLOTH_R, CLOTH_G, CLOTH_B
-    SEG neck_x + 12, neck_y + 2, neck_x, neck_y + 12, 3.5, CLOTH_R, CLOTH_G, CLOTH_B
-    ' the tie
-    SEG neck_x, neck_y + 12, waist_x, waist_y - 34, 6, PINK_R, PINK_G, PINK_B
-    SEG waist_x - 5, waist_y - 38, waist_x, waist_y - 28, 4, PINK_R, PINK_G, PINK_B
-    SEG waist_x + 5, waist_y - 38, waist_x, waist_y - 28, 4, PINK_R, PINK_G, PINK_B
+    FILL_QUAD neck_x - 30, sh_y, neck_x + 30, sh_y, chest_x + 28, chest_y, chest_x - 28, chest_y, SHIRT_FILL_R, SHIRT_FILL_G, SHIRT_FILL_B
+    FILL_QUAD chest_x - 28, chest_y, chest_x + 28, chest_y, waist_x + 21, waist_y + 3, waist_x - 21, waist_y + 3, SHIRT_FILL_R, SHIRT_FILL_G, SHIRT_FILL_B
+    ' the neck, down into the neckline
+    SEG neck_x, neck_y - 4, neck_x, sh_y + 4, 7, SKIN_R, SKIN_G, SKIN_B
+    ' the outline: shoulders from the neckline, sides in to the waist
+    DIM side AS INTEGER
+    FOR side = 0 TO 1
+        DIM sx AS DOUBLE = 2 * side - 1
+        SEG neck_x + sx * 13, sh_y - 1, neck_x + sx * 30, sh_y + 1, 3, SHIRT_R, SHIRT_G, SHIRT_B
+        SEG neck_x + sx * 30, sh_y + 1, chest_x + sx * 28, chest_y, 3, SHIRT_R, SHIRT_G, SHIRT_B
+        SEG chest_x + sx * 28, chest_y, waist_x + sx * 21, waist_y + 3, 3, SHIRT_R, SHIRT_G, SHIRT_B
+    NEXT side
+    ARC neck_x, sh_y - 1, 13, 11, 0, 180, 3, SHIRT_R, SHIRT_G, SHIRT_B
+    ' the bow at the collar and the heart on the chest
+    DIM bx AS DOUBLE = neck_x
+    DIM by AS DOUBLE = sh_y + 10
+    SEG bx, by, bx - 8, by - 5, 2.5, PINK_R, PINK_G, PINK_B
+    SEG bx - 8, by - 5, bx - 8, by + 5, 2.5, PINK_R, PINK_G, PINK_B
+    SEG bx - 8, by + 5, bx, by, 2.5, PINK_R, PINK_G, PINK_B
+    SEG bx, by, bx + 8, by - 5, 2.5, PINK_R, PINK_G, PINK_B
+    SEG bx + 8, by - 5, bx + 8, by + 5, 2.5, PINK_R, PINK_G, PINK_B
+    SEG bx + 8, by + 5, bx, by, 2.5, PINK_R, PINK_G, PINK_B
+    BLOB bx, by, 3, PINK_R, PINK_G, PINK_B
+    HEART chest_x + 11, chest_y + 6, 7, PINK_R, PINK_G, PINK_B
     ' the pleated skirt, its hem swinging with the hips
     DIM i AS INTEGER
     FOR i = 0 TO 8
@@ -555,7 +585,7 @@ SUB DRAW_BODY()
     SEG waist_x - 28, waist_y + 2, waist_x + 28, waist_y + 2, 6, PINK_R, PINK_G, PINK_B
 ENDSUB
 
-' Arms with detached sleeves from the elbow, flaring to a cuff
+' Arms out of puffed short sleeves, a neon band at the wrist
 SUB DRAW_ARMS()
     DIM sh_y AS DOUBLE = neck_y + 14
     DIM side AS INTEGER
@@ -563,17 +593,26 @@ SUB DRAW_ARMS()
         DIM sx AS DOUBLE = 2 * side - 1
         DIM a1 AS DOUBLE = cur[2 + 2 * side]
         DIM a2 AS DOUBLE = a1 + cur[3 + 2 * side]
-        LIMB neck_x + sx * 34, sh_y, a1, 70, a2, 64, 6, SKIN_R, SKIN_G, SKIN_B
+        DIM ax AS DOUBLE = neck_x + sx * 32
+        LIMB ax, sh_y, a1, 70, a2, 64, 6, SKIN_R, SKIN_G, SKIN_B
         DIM hx AS DOUBLE = rx
         DIM hy AS DOUBLE = ry
-        DIM mx AS DOUBLE = ex_ + 44 * DSIN(a2)
-        DIM my AS DOUBLE = ey_ + 44 * DCOS(a2)
-        DIM nx AS DOUBLE = DCOS(a2)
-        DIM ny AS DOUBLE = -DSIN(a2)
-        SEG ex_ + nx * 7, ey_ + ny * 7, mx + nx * 13, my + ny * 13, 3, CLOTH_R, CLOTH_G, CLOTH_B
-        SEG ex_ - nx * 7, ey_ - ny * 7, mx - nx * 13, my - ny * 13, 3, CLOTH_R, CLOTH_G, CLOTH_B
-        SEG ex_ + nx * 7, ey_ + ny * 7, ex_ - nx * 7, ey_ - ny * 7, 3, CLOTH_R, CLOTH_G, CLOTH_B
-        SEG mx + nx * 13, my + ny * 13, mx - nx * 13, my - ny * 13, 4, CYAN_R, CYAN_G, CYAN_B
+        ' the sleeve: a puff round the shoulder, a band where it ends
+        DIM px AS DOUBLE = ax + 9 * DSIN(a1)
+        DIM py AS DOUBLE = sh_y + 9 * DCOS(a1)
+        BLOB px, py, 14, SHIRT_FILL_R, SHIRT_FILL_G, SHIRT_FILL_B
+        RING px, py, 14, 14, 3, SHIRT_R, SHIRT_G, SHIRT_B
+        DIM cx AS DOUBLE = ax + 21 * DSIN(a1)
+        DIM cy AS DOUBLE = sh_y + 21 * DCOS(a1)
+        DIM nx AS DOUBLE = DCOS(a1)
+        DIM ny AS DOUBLE = -DSIN(a1)
+        SEG cx + nx * 10, cy + ny * 10, cx - nx * 10, cy - ny * 10, 3.5, PINK_R, PINK_G, PINK_B
+        ' the wrist band
+        DIM wx AS DOUBLE = hx - 12 * DSIN(a2)
+        DIM wy AS DOUBLE = hy - 12 * DCOS(a2)
+        DIM mx AS DOUBLE = DCOS(a2)
+        DIM my AS DOUBLE = -DSIN(a2)
+        SEG wx + mx * 6, wy + my * 6, wx - mx * 6, wy - my * 6, 3.5, CYAN_R, CYAN_G, CYAN_B
         BLOB hx, hy, 7, SKIN_R, SKIN_G, SKIN_B
     NEXT side
 ENDSUB

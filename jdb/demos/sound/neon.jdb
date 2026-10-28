@@ -525,6 +525,11 @@ EXPORT SUB GLOW_LEVEL(k AS DOUBLE)
     GLOW = k
 ENDSUB
 
+' How wide the wire lines are, in pixels; 2.2 the default
+EXPORT SUB LINE_WIDTH(w AS DOUBLE)
+    LINE_W = w
+ENDSUB
+
 ' Listens to the music: the last samples of the output, the beat count
 ' and the seconds since the last frame
 EXPORT SUB FEED(wave, beat AS DOUBLE, dt AS DOUBLE)

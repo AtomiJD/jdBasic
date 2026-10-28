@@ -1,0 +1,160 @@
+' termlog.jdb - a terminal log window over a scene: each row a time
+' stamp, a message that types itself out, and a status after it. Bad
+' news (warn, timeout, stalled, retry, "... not found") glows pink,
+' good news (ok, cached) stays dim, anything else is white.
+'
+'   IMPORT TERMLOG
+'   TERMLOG.INIT 40, 40, 640, 12, "KAIKU.LOG"
+'   TERMLOG.PUSH "tuning vocoder (28 bands)", "ok", clock
+'   TERMLOG.DRAW clock, 1          ' after the scene, every frame
+'
+' Times are in seconds, the clock of the caller.
+
+EXPORT MODULE TERMLOG
+
+DIM INK_R AS INTEGER = 228
+DIM INK_G AS INTEGER = 226
+DIM INK_B AS INTEGER = 234
+DIM DIM_R AS INTEGER = 92
+DIM DIM_G AS INTEGER = 92
+DIM DIM_B AS INTEGER = 108
+DIM HOT_R AS INTEGER = 255
+DIM HOT_G AS INTEGER = 46
+DIM HOT_B AS INTEGER = 136
+
+DIM WIN_X AS INTEGER = 40
+DIM WIN_Y AS INTEGER = 40
+DIM WIN_W AS INTEGER = 640
+DIM N_ROWS AS INTEGER = 12
+DIM ROW_H AS INTEGER = 24
+DIM title$ AS STRING = "LOG"
+DIM MONO$ AS STRING = "jdbasic_default.ttf"
+
+DIM row_msg$ = [""]
+DIM row_st$ = [""]
+DIM row_ts$ = [""]
+DIM row_born = [0.0]
+DIM row_count AS INTEGER = 0
+DIM n_logged AS INTEGER = 0
+
+FUNC CLAMP01(x AS DOUBLE) AS DOUBLE
+    IF x < 0 THEN RETURN 0
+    IF x > 1 THEN RETURN 1
+    RETURN x
+ENDFUNC
+
+FUNC FIRST_FONT$(paths$) AS STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(paths$) - 1
+        IF FILE.EXISTS(paths$[i]) THEN RETURN paths$[i]
+    NEXT i
+    RETURN "jdbasic_default.ttf"
+ENDFUNC
+
+' The window's place, width and number of rows, and its title
+EXPORT SUB INIT(x AS INTEGER, y AS INTEGER, w AS INTEGER, rows AS INTEGER, name$)
+    WIN_X = x
+    WIN_Y = y
+    WIN_W = w
+    N_ROWS = rows
+    title$ = name$
+    row_msg$ = [""]
+    row_st$ = [""]
+    row_ts$ = [""]
+    row_born = [0.0]
+    row_count = 0
+    n_logged = 0
+    MONO$ = FIRST_FONT$(["C:/Windows/Fonts/consola.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "/System/Library/Fonts/Menlo.ttc"])
+ENDSUB
+
+' A new row at the bottom; the oldest scrolls out at the top
+EXPORT SUB PUSH(msg$, st$, t AS DOUBLE)
+    DIM ts$ AS STRING = FORMAT$("[{:10.6f}]", t)
+    IF row_count = 0 THEN
+        row_msg$[0] = msg$
+        row_st$[0] = st$
+        row_ts$[0] = ts$
+        row_born[0] = t
+        row_count = 1
+    ELSEIF row_count < N_ROWS THEN
+        row_msg$ = APPEND(row_msg$, msg$)
+        row_st$ = APPEND(row_st$, st$)
+        row_ts$ = APPEND(row_ts$, ts$)
+        row_born = APPEND(row_born, t)
+        row_count = row_count + 1
+    ELSE
+        row_msg$ = APPEND(DROP(1, row_msg$), msg$)
+        row_st$ = APPEND(DROP(1, row_st$), st$)
+        row_ts$ = APPEND(DROP(1, row_ts$), ts$)
+        row_born = APPEND(DROP(1, row_born), t)
+    ENDIF
+    n_logged = n_logged + 1
+ENDSUB
+
+EXPORT FUNC LINES() AS INTEGER
+    RETURN n_logged
+ENDFUNC
+
+FUNC IS_BAD(st$) AS INTEGER
+    IF INSTR(" warn timeout stalled retry overflow ignored ", " " + st$ + " ") >= 0 THEN RETURN TRUE
+    RETURN INSTR(st$, "not found") >= 0
+ENDFUNC
+
+' Text with a soft glow: eight faint copies around it, added on
+SUB GLOW_TEXT(x AS DOUBLE, y AS DOUBLE, s$, r AS INTEGER, g AS INTEGER, b AS INTEGER, k AS DOUBLE)
+    GFX.BLEND "ADD"
+    DIM i AS INTEGER
+    FOR i = 0 TO 7
+        DIM ang AS DOUBLE = i * MATH.PI / 4
+        TEXT x + COS(ang) * 2, y + SIN(ang) * 2, s$, INT(r * k / 4), INT(g * k / 4), INT(b * k / 4)
+    NEXT i
+    TEXT x, y, s$, INT(r * k), INT(g * k), INT(b * k)
+    GFX.BLEND "BLEND"
+ENDSUB
+
+' The window at time t; k from 0 (gone) to 1 fades it
+EXPORT SUB DRAW(t AS DOUBLE, k AS DOUBLE)
+    IF k <= 0.01 THEN RETURN
+    DIM h AS INTEGER = 44 + N_ROWS * ROW_H
+    GFX.BLEND "BLEND"
+    DRAWCOLOR 8, 7, 14, INT(200 * k)
+    RECT WIN_X, WIN_Y, WIN_W, h, TRUE
+    RECT WIN_X, WIN_Y, WIN_W, h, FALSE, INT(70 * k), INT(66 * k), INT(92 * k)
+    LINE WIN_X, WIN_Y + 28, WIN_X + WIN_W, WIN_Y + 28, INT(46 * k), INT(44 * k), INT(62 * k)
+    SETFONT MONO$, 13
+    TEXT WIN_X + 12, WIN_Y + 7, title$, INT((DIM_R + 50) * k), INT((DIM_G + 50) * k), INT((DIM_B + 50) * k)
+    DIM tail$ AS STRING = "tail -f . " + STR$(n_logged) + " lines"
+    DIM tw = GFX.TEXTSIZE(tail$)
+    TEXT WIN_X + WIN_W - 12 - tw[0], WIN_Y + 7, tail$, INT(DIM_R * k), INT(DIM_G * k), INT(DIM_B * k)
+    SETFONT MONO$, 15
+    DIM sw = GFX.TEXTSIZE(row_ts$[0] + " ")
+    DIM mx AS DOUBLE = WIN_X + 12 + sw[0]
+    DIM i AS INTEGER
+    FOR i = 0 TO row_count - 1
+        DIM y AS DOUBLE = WIN_Y + 38 + i * ROW_H
+        DIM age AS DOUBLE = t - row_born[i]
+        ' a row types itself out in a quarter second, its status follows
+        DIM body$ AS STRING = row_msg$[i] + " ... "
+        DIM shown AS INTEGER = INT(CLAMP01(age * 4) * LEN(body$))
+        TEXT WIN_X + 12, y, row_ts$[i], INT(DIM_R * k), INT(DIM_G * k), INT(DIM_B * k)
+        IF shown > 0 THEN TEXT mx, y, LEFT$(body$, shown), INT(INK_R * k), INT(INK_G * k), INT(INK_B * k)
+        IF age >= 0.3 THEN
+            DIM bw = GFX.TEXTSIZE(body$)
+            DIM st$ AS STRING = row_st$[i]
+            IF IS_BAD(st$) THEN
+                GLOW_TEXT mx + bw[0], y, st$, HOT_R, HOT_G, HOT_B, k
+            ELSEIF st$ = "ok" OR st$ = "cached" THEN
+                TEXT mx + bw[0], y, st$, INT((DIM_R + 30) * k), INT((DIM_G + 30) * k), INT((DIM_B + 30) * k)
+            ELSE
+                TEXT mx + bw[0], y, st$, INT(INK_R * k), INT(INK_G * k), INT(INK_B * k)
+            ENDIF
+        ENDIF
+        ' the cursor on the newest row
+        IF i = row_count - 1 ANDALSO t * 2 - INT(t * 2) < 0.5 THEN
+            DIM typed$ AS STRING = LEFT$(body$, shown)
+            IF age >= 0.3 THEN typed$ = body$ + row_st$[i] + " "
+            DIM cw = GFX.TEXTSIZE(typed$)
+            RECT mx + cw[0] + 2, y + 2, 9, 16, TRUE, INT(HOT_R * k), INT(HOT_G * k), INT(HOT_B * k)
+        ENDIF
+    NEXT i
+ENDSUB

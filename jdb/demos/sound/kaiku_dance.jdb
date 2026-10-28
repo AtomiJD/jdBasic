@@ -17,6 +17,7 @@ IMPORT SCORE
 IMPORT KAIKU
 IMPORT NEON
 IMPORT LYRICS
+IMPORT TERMLOG
 
 DIM render_dir$ AS STRING = ""
 DIM windowed AS INTEGER = FALSE
@@ -180,6 +181,9 @@ ELSE
 ENDIF
 KAIKU.INIT 820
 NEON.INIT SW, SH
+NEON.LINE_WIDTH 1.4
+NEON.GLOW_LEVEL 0.8
+TERMLOG.INIT 36, 760, 620, 10, "KAIKU.LOG"
 NEON.SAY LYRICS.TITLE$()
 
 DIM FONT$ AS STRING = ""
@@ -203,8 +207,8 @@ DIM TALL_W AS DOUBLE = 1.7
 
 ' the line of dancers behind her: place across in units of her and
 ' row (0 nearest), drawn back to front
-DIM LINE_X = [-3, 3, -2, 2, -1, 1]
-DIM LINE_ROW = [2, 2, 1, 1, 0, 0]
+DIM LINE_X = [-2.6, 2.6, -1.4, 1.4]
+DIM LINE_ROW = [1, 1, 0, 0]
 DIM line_alpha AS DOUBLE = 0
 
 FUNC SMOOTH01(x AS DOUBLE) AS DOUBLE
@@ -221,19 +225,20 @@ SUB ORBIT_CAMERA(a AS DOUBLE, dist AS DOUBLE, eye_y AS DOUBLE, pitch AS DOUBLE)
     NEON.CAMERA 0 - dist * SIN(r), eye_y, 0 - dist * COS(r), a, pitch, 60
 ENDSUB
 
-' Where the camera goes in each section
+' Where the camera goes in each section: far enough back that she
+' stands in room, with the scene spread out around her
 SUB MOVE_CAMERA(mood$, cyc AS DOUBLE, si AS INTEGER)
     DIM into AS DOUBLE = cyc - SCORE.SECTION_BAR(si)
     IF mood$ = "wave" THEN
         DIM k AS DOUBLE = SMOOTH01(into / 4)
-        ORBIT_CAMERA 20 * (1 - k), 3.45 + 6 * (1 - k), 0.95 + 1.6 * (1 - k), -12 * (1 - k)
+        ORBIT_CAMERA 20 * (1 - k), 4.8 + 6 * (1 - k), 0.95 + 1.6 * (1 - k), -12 * (1 - k)
     ELSEIF mood$ = "groove" THEN
-        ORBIT_CAMERA 12 * SIN(cyc * MATH.PI / 4), 3.6, 1.0, 0
+        ORBIT_CAMERA 12 * SIN(cyc * MATH.PI / 4), 4.9, 0.95, 0
     ELSEIF mood$ = "jump" THEN
-        ORBIT_CAMERA 16 * SIN(cyc * MATH.PI / 4), 3.45 - 0.2 * NEON.PULSE(), 0.95 + 0.15 * SIN(cyc * MATH.PI), 0
+        ORBIT_CAMERA 16 * SIN(cyc * MATH.PI / 4), 5.3 - 0.15 * NEON.PULSE(), 0.9 + 0.1 * SIN(cyc * MATH.PI), 0
     ELSE
         DIM back AS DOUBLE = SMOOTH01(into / 3)
-        ORBIT_CAMERA -10 * back, 3.45 + 5 * back, 0.95 + 1.5 * back, -10 * back
+        ORBIT_CAMERA -10 * back, 4.8 + 5 * back, 0.95 + 1.5 * back, -10 * back
     ENDIF
 ENDSUB
 
@@ -256,50 +261,43 @@ SUB SHOW_ELEMENT(name$, x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, k
     ENDIF
 ENDSUB
 
-' The elements of each section, behind her
+' The elements of each section, behind her: a few, small and far out,
+' so that the picture breathes
 SUB DRAW_SCENE(mood$, cyc AS DOUBLE)
     IF mood$ = "wave" THEN
         NEON.STARS 1.5, 3
-        NEON.MOON -5, 3.5, 14, 2.2, clock * 6
-        NEON.EARTH 6, 2.8, 16, 2.6, clock * 10
+        NEON.MOON -6.5, 4.2, 18, 1.8, clock * 6
+        NEON.EARTH 7.5, 3.4, 20, 2.0, clock * 10
         NEON.FLOOR 0, 0.5, 2
-        NEON.PANEL "hud", 0, 1.0, 5, 3.6, 0, 0, 0, 0, 0.55
-        NEON.PANEL "counter", -4.6, 0.9, 7, 3, -28, 0, 0, 0, 0.9
         DIM into AS DOUBLE = cyc - 1
-        NEON.PANEL "word", 0, 2.7, 7 + 10 * (1 - SMOOTH01(into)), 6, 0, 0, 0, 1, SMOOTH01(into * 2)
+        NEON.PANEL "word", 0, 3.3, 9 + 10 * (1 - SMOOTH01(into)), 5, 0, 0, 0, 1, SMOOTH01(into * 2)
     ELSEIF mood$ = "groove" THEN
         NEON.FLOOR 0, 3, 1
-        NEON.TERRAIN 0, 0.2, 34, 60, 4, 2
-        NEON.MOON -9, 7, 26, 3, clock * 6
-        NEON.CITY -7.5, 0, 13, 1.1, 20, 5, 0
-        NEON.PANEL "dial", 4.2, 2.5, 7.5, 3, 28, 0, 0, 0, 1
-        NEON.PANEL "spectrum", -5.2, 3.8, 8, 4.8, -26, 0, 0, 1, 1
-        NEON.PANEL "vu", 3.4, 5.4, 13, 4, 18, -10, 0, 0, 0.9
+        NEON.TERRAIN 0, 0.2, 40, 70, 4, 2
+        NEON.MOON -11, 8, 32, 2.4, clock * 6
+        NEON.CITY 9, 0, 18, 1.0, -20, 5, 0
+        NEON.PANEL "spectrum", 7.5, 4.2, 12, 3.6, 30, 0, 0, 1, 0.7
     ELSEIF mood$ = "jump" THEN
-        NEON.TUNNEL 0, 1.6, 3, 6, 42, 10, 2
-        NEON.PANEL "polar", 0, 2.2, 13, 8, 0, 0, 0, 1, 0.85
-        NEON.HYPERCUBE -4.6, 3.2, 9, 1.0, clock * 50, 1
-        NEON.KNOT 4.6, 3.2, 9, 1.9, clock * 40, 0
-        NEON.PANEL "scope", -5.6, 0.9, 8, 4, -30, 0, 0, 0, 0.9
-        NEON.PANEL "ecg", 5.6, 0.9, 8, 4, 30, 0, 0, 5, 0.9
+        NEON.TUNNEL 0, 1.8, 6, 7, 46, 10, 2
+        NEON.HYPERCUBE -6, 3.6, 12, 0.9, clock * 50, 1
+        NEON.KNOT 6, 3.6, 12, 1.5, clock * 40, 0
+        NEON.PANEL "ecg", 7.2, 1.2, 11, 3.4, 30, 0, 0, 5, 0.7
     ELSE
         NEON.STARS 4, 3
-        NEON.MOON 0, 4, 18, 2.6, clock * 8
-        NEON.ORBITS 5.5, 2.6, 10, 2, clock * 30, 0
-        NEON.POINT_SPHERE -5.5, 2.6, 10, 1.6, clock * 20, 2
+        NEON.MOON 0, 5, 24, 2.2, clock * 8
+        NEON.ORBITS 7, 3, 14, 1.6, clock * 30, 0
         NEON.FLOOR 0, 1, 2
-        NEON.PANEL "rings", -3.2, 0.8, 5, 2, -20, 0, 0, 1, 0.7
     ENDIF
     IF mood$ = "groove" ORELSE mood$ = "jump" THEN DRAW_LYRIC
 ENDSUB
 
-' The word she sings flying in over her head, and what her line names
-' rising beside her
+' The word she sings drifting in high above her, and what her line
+' names rising out at the sides
 SUB DRAW_LYRIC()
     IF word_t < 1.4 THEN
         DIM fly AS DOUBLE = 1 - SMOOTH01(word_t * 5)
         DIM fade AS DOUBLE = 1 - SMOOTH01((word_t - 0.9) * 2)
-        NEON.PANEL "word", 0, 2.75, 6 + 9 * fly, 4.8, 30 * fly, 0, 0, 3, fade
+        NEON.PANEL "word", 0, 3.2, 9 + 8 * fly, 3.4, 20 * fly, 0, 0, 3, 0.8 * fade
     ENDIF
     IF line_now < 0 ORELSE line_t > 3 THEN RETURN
     DIM elems$ AS STRING = LYRICS.ELEMENTS$(line_now)
@@ -311,14 +309,14 @@ SUB DRAW_LYRIC()
     FOR i = 0 TO MIN([LEN(names$), 2]) - 1
         DIM side AS DOUBLE = -1 + 2 * i
         IF LEN(names$) = 1 THEN side = -1 + 2 * (line_now MOD 2)
-        SHOW_ELEMENT names$[i], side * 3, 1.5 + 2.6 * rise, 6.5, 2.2 * gone, gone
+        SHOW_ELEMENT names$[i], side * 4.4, 1.6 + 2.2 * rise, 8, 1.5 * gone, gone
     NEXT i
 ENDSUB
 
 ' The line as a subtitle, drawn once into an image when it changes
 SUB MAKE_SUBTITLE(text$)
     GFX.TARGET sub_img, TRUE
-    IF FONT$ <> "" THEN SETFONT FONT$, 48
+    IF FONT$ <> "" THEN SETFONT FONT$, 36
     DIM tw AS DOUBLE = GFX.TEXTSIZE(text$)[0]
     TEXT 900 - tw / 2 + 3, 13, text$, 0, 0, 0
     TEXT 900 - tw / 2, 10, text$, 255, 240, 255
@@ -375,14 +373,14 @@ SUB DRAW_LINEUP(mood$, dt AS DOUBLE)
     IF line_alpha < 0.02 THEN RETURN
     DIM i AS INTEGER
     FOR i = 0 TO LEN(LINE_X) - 1
-        DIM wx AS DOUBLE = LINE_X[i] * 0.95
-        DIM wz AS DOUBLE = 1.3 + 1.1 * LINE_ROW[i]
+        DIM wx AS DOUBLE = LINE_X[i]
+        DIM wz AS DOUBLE = 1.8 + 1.4 * LINE_ROW[i]
         DIM ppu AS DOUBLE = NEON.VIEW_SCALE(wx, 0, wz)
         IF ppu <= 0 THEN CONTINUEFOR
         DIM delay AS DOUBLE = 0
         DIM mirror AS INTEGER = LINE_X[i] < 0
         IF mood$ = "groove" OR mood$ = "bye" THEN delay = 0.08 * (ABS(LINE_X[i]))
-        KAIKU.DRAW_ECHO NEON.VIEW_X(wx, 0, wz), NEON.VIEW_Y(wx, 0, wz), TALL_W * ppu, 255 * line_alpha * (0.85 - 0.18 * LINE_ROW[i]), delay, mirror
+        KAIKU.DRAW_ECHO NEON.VIEW_X(wx, 0, wz), NEON.VIEW_Y(wx, 0, wz), TALL_W * ppu, 255 * line_alpha * (0.7 - 0.2 * LINE_ROW[i]), delay, mirror
     NEXT i
 ENDSUB
 
@@ -399,6 +397,8 @@ SUB FOLLOW_SINGING(dt AS DOUBLE)
         line_now = ln
         line_t = 0
         MAKE_SUBTITLE LYRICS.TEXT$(ln)
+        TERMLOG.PUSH "vox> " + LYRICS.TEXT$(ln), STR$(LYRICS.SYLLABLES(ln)) + " syl", clock
+        IF LYRICS.ELEMENTS$(ln) <> "" THEN TERMLOG.PUSH "render " + REPLACE$(LYRICS.ELEMENTS$(ln), ",", " + "), "ok", clock
     ENDIF
     DIM w$ AS STRING = UCASE$(LYRICS.WORD$(ln, syl_k[idx]))
     IF w$ <> word_now$ ORELSE (syl_k[idx] = 0 ANDALSO word_t > 0.5) THEN
@@ -406,6 +406,32 @@ SUB FOLLOW_SINGING(dt AS DOUBLE)
         word_now$ = w$
         NEON.SAY w$
     ENDIF
+ENDSUB
+
+' What the log says between the lines she sings, by the section's mood:
+' "message|status", the status as the log's comment on it
+DIM LOG_WAVE$ = ["booting kaiku.jdb|ok", "loading ponytail physics|ok", "parting fringe in the middle|ok", "calibrating cuteness|overflow", "tuning vocoder (28 bands)|ok", "writing lyrics (" + theme$ + ", seed " + STR$(seed) + ")|ok", "looking for a hook|" + LYRICS.TITLE$(), "spawning dancers (4)|ok", "waiting for the kick|..."]
+DIM LOG_GROOVE$ = ["syncing hips to kick|ok", "counting to four|1 2 3 4", "loading bassline|cached", "untangling ponytail|retry", "checking lyrics for meaning|timeout", "importing feelings|module not found", "asking dancers to keep up|warn", "measuring vibe|ok", "smiling|ok", "linking left foot <-> right foot|ok"]
+DIM LOG_JUMP$ = ["chorus: everybody in sync|ok", "raising cutoff|ok", "turning it up|11", "hearts per minute|124", "mirroring dancers|ok", "neighbours complaining|ignored", "buffering euphoria|stalled", "jump height|+3 px", "spinning|ok"]
+DIM LOG_BYE$ = ["bowing|ok", "saving dance to disk|ok", "freeing dancers|ok", "unloading ponytail|ok", "goodnight|zzz"]
+DIM log_at = {"wave": 0, "groove": 0, "jump": 0, "bye": 0}
+DIM log_si AS INTEGER = -1
+
+' The next filler row of the mood's list; the intro and the goodbye say
+' theirs once, the others go round
+SUB LOG_FILLER(mood$)
+    DIM pool$ = LOG_GROOVE$
+    IF mood$ = "wave" THEN pool$ = LOG_WAVE$
+    IF mood$ = "jump" THEN pool$ = LOG_JUMP$
+    IF mood$ = "bye" THEN pool$ = LOG_BYE$
+    DIM k AS INTEGER = log_at{mood$}
+    IF k >= LEN(pool$) THEN
+        IF mood$ = "wave" OR mood$ = "bye" THEN RETURN
+        k = 0
+    ENDIF
+    log_at{mood$} = k + 1
+    DIM parts$ = SPLIT(pool$[k], "|")
+    TERMLOG.PUSH parts$[0], parts$[1], clock
 ENDSUB
 
 ' One frame: choreography, singing, the scene, her
@@ -421,6 +447,12 @@ SUB FRAME()
 
     IF INT(beat) <> prev_beat THEN
         prev_beat = INT(beat)
+        IF si <> log_si THEN
+            log_si = si
+            TERMLOG.PUSH "section " + SCORE.SECTION_NAME$(si), "bar " + STR$(INT(cyc) + 1), clock
+        ELSEIF prev_beat MOD 2 = 0 THEN
+            LOG_FILLER mood$
+        ENDIF
         DIM bar AS INTEGER = INT(cyc)
         DIM bib AS INTEGER = prev_beat MOD 4
         IF mood$ = "wave" THEN
@@ -453,6 +485,7 @@ SUB FRAME()
     DRAW_LINEUP mood$, dt
     DRAW_HER
     DRAW_SUBTITLE dt
+    TERMLOG.DRAW clock, 1
 
     IF render_dir$ <> "" THEN GFX.SAVE_SCREENSHOT render_dir$ + "/f" + FORMAT$("{:0>5}", frame_no) + ".jpg"
     frame_no = frame_no + 1
