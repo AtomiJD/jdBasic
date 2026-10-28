@@ -17,7 +17,7 @@
 ' World units, y up; the camera at yaw 0 looks along +z. Angles are in
 ' degrees, colours are indices into the palette: 0 cyan, 1 pink,
 ' 2 violet, 3 white, 4 amber, 5 green.
-
+' 2 violet, 3 white, 4 amber, 5 green, 6 rose.
 EXPORT MODULE NEON
 
 DIM SW AS INTEGER = 1920
@@ -41,12 +41,12 @@ DIM spit AS DOUBLE = 0
 DIM scene_img AS INTEGER = 0
 DIM mip_img = [0, 0, 0, 0]
 
-DIM PAL = [[80, 236, 255], [255, 60, 150], [178, 122, 255], [235, 240, 255], [255, 200, 70], [90, 255, 170]]
+DIM PAL = [[80, 236, 255], [255, 60, 150], [178, 122, 255], [235, 240, 255], [255, 200, 70], [90, 255, 170], [255, 150, 205]]
 DIM cr AS DOUBLE = 255
 DIM cg AS DOUBLE = 255
 DIM cb AS DOUBLE = 255
 
-' results of ROTATE and PROJECT
+' results of ORIENT and PROJECT
 DIM qx = [0.0]
 DIM qy = [0.0]
 DIM qz = [0.0]
@@ -88,6 +88,10 @@ DIM FIB_Y = [0.0]
 DIM FIB_Z = [0.0]
 DIM BLIP_A = [0.0]
 DIM BLIP_R = [0.0]
+DIM HEART_X = [0.0]
+DIM HEART_Z = [0.0]
+DIM HEART_P = [0.0]
+DIM HEART_S = [0.0]
 
 ' panels: one image per kind, redrawn at most once a frame per colour
 DIM PANEL_KINDS$ = ["dial", "spectrum", "scope", "radar", "hex", "vu", "rings", "counter", "ecg", "hud", "polar", "word"]
@@ -125,7 +129,7 @@ FUNC CLAMP01(x AS DOUBLE) AS DOUBLE
 ENDFUNC
 
 ' a0, b0, a1, b1, ...
-FUNC ZIP(a, b)
+FUNC WEAVE(a, b)
     RETURN FLATTEN(TRANSPOSE(RESHAPE(APPEND(a, b), [2, LEN(a)])))
 ENDFUNC
 
@@ -152,7 +156,7 @@ ENDFUNC
 
 ' Turns points about their origin: roll about z, then pitch about x,
 ' then yaw about y; sets qx, qy, qz
-SUB ROTATE(xs, ys, zs, yaw AS DOUBLE, pitch AS DOUBLE, roll AS DOUBLE)
+SUB ORIENT(xs, ys, zs, yaw AS DOUBLE, pitch AS DOUBLE, roll AS DOUBLE)
     DIM c1 AS DOUBLE = DCOS(yaw)
     DIM s1 AS DOUBLE = DSIN(yaw)
     DIM c2 AS DOUBLE = DCOS(pitch)
@@ -186,7 +190,7 @@ ENDSUB
 
 ' A model turned, sized and placed, drawn edge by edge
 SUB WIRE(name$, x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, yaw AS DOUBLE, pitch AS DOUBLE, roll AS DOUBLE, ci AS INTEGER, k AS DOUBLE)
-    ROTATE MX{name$}, MY{name$}, MZ{name$}, yaw, pitch, roll
+    ORIENT MX{name$}, MY{name$}, MZ{name$}, yaw, pitch, roll
     PROJECT qx * size + x, qy * size + y, qz * size + z
     SETCOL ci, k * FADE(x, y, z)
     GFX.LINES sx, sy, LINE_W, cr, cg, cb, TRUE
@@ -195,7 +199,7 @@ ENDSUB
 ' A model on a sphere around its origin: the far side faint, the near
 ' side bright
 SUB WIRE_GLOBE(name$, x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, yaw AS DOUBLE, pitch AS DOUBLE, roll AS DOUBLE, ci AS INTEGER, k_near AS DOUBLE, k_far AS DOUBLE)
-    ROTATE MX{name$}, MY{name$}, MZ{name$}, yaw, pitch, roll
+    ORIENT MX{name$}, MY{name$}, MZ{name$}, yaw, pitch, roll
     DIM facing = qx * (cam_x - x) + qy * (cam_y - y) + qz * (cam_z - z) > size
     PROJECT qx * size + x, qy * size + y, qz * size + z
     DIM fx = sx
@@ -435,6 +439,25 @@ SUB BUILD_MODELS()
     B_SAVE "grid"
     GRID_BAND = INT((MX{"grid"} + 0.5) * 31.99)
 
+    ' a heart outline, about 2 wide, and a puffed heart of slices of it
+    ' through z with lines across them
+    DIM hu = IOTA(48, 0) * 2 * MATH.PI / 48
+    DIM hx = SIN(hu) ^ 3
+    DIM hy = (13 * COS(hu) - 5 * COS(2 * hu) - 2 * COS(3 * hu) - COS(4 * hu)) / 16 + 0.15
+    B_POLY hx, hy, ZEROS(48), TRUE
+    B_SAVE "heart2d"
+    DIM sl = [-0.8, -0.45, 0, 0.45, 0.8]
+    FOR i = 0 TO 4
+        DIM f AS DOUBLE = SQR(1 - sl[i] * sl[i])
+        B_POLY hx * f, hy * f, ZEROS(48) + sl[i] * 0.45, TRUE
+    NEXT i
+    DIM ms = IOTA(9, 0) / 4 - 1
+    DIM mf = SQR(1 - ms * ms)
+    FOR i = 0 TO 47 STEP 6
+        B_POLY mf * hx[i], mf * hy[i], ms * 0.45, FALSE
+    NEXT i
+    B_SAVE "heart"
+
     ' stars around the camera, a sphere of points, radar blips
     STAR_X = ZEROS(300)
     STAR_Y = ZEROS(300)
@@ -451,6 +474,16 @@ SUB BUILD_MODELS()
     FIB_X = fr * COS(fa)
     FIB_Y = fy
     FIB_Z = fr * SIN(fa)
+    HEART_X = ZEROS(28)
+    HEART_Z = ZEROS(28)
+    HEART_P = ZEROS(28)
+    HEART_S = ZEROS(28)
+    FOR i = 0 TO 27
+        HEART_X[i] = RANDOM(-10, 10)
+        HEART_Z[i] = RANDOM(4, 22)
+        HEART_P[i] = RANDOM(0, 1)
+        HEART_S[i] = RANDOM(0.12, 0.3)
+    NEXT i
     BLIP_A = ZEROS(9)
     BLIP_R = ZEROS(9)
     FOR i = 0 TO 8
@@ -661,7 +694,7 @@ EXPORT SUB ORBITS(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS
         DIM rr AS DOUBLE = size * (0.6 + 0.25 * i)
         WIRE "ring", x, y, z, rr, turn, tilt, 0, (ci + i) MOD 6, 0.45
         DIM a AS DOUBLE = spin * (2.2 - 0.5 * i) + i * 100
-        ROTATE([DCOS(a)], [0], [DSIN(a)], turn, tilt, 0)
+        ORIENT([DCOS(a)], [0], [DSIN(a)], turn, tilt, 0)
         WIRE "octa", x + qx[0] * rr, y + qy[0] * rr, z + qz[0] * rr, size * 0.07, a * 3, a, 0, (ci + i) MOD 6, 1
     NEXT i
 ENDSUB
@@ -669,16 +702,16 @@ ENDSUB
 ' A sphere of points that breathes with the level
 EXPORT SUB POINT_SPHERE(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE, ci AS INTEGER)
     DIM s AS DOUBLE = size * (1 + 0.25 * level + 0.08 * pulse)
-    ROTATE FIB_X, FIB_Y, FIB_Z, spin, spin * 0.4, 0
+    ORIENT FIB_X, FIB_Y, FIB_Z, spin, spin * 0.4, 0
     PROJECT qx * s + x, qy * s + y, qz * s + z
     SETCOL ci, FADE(x, y, z)
-    GFX.LINES ZIP(sx - 1.2, sx + 1.2), ZIP(sy, sy), 3, cr, cg, cb, TRUE
+    GFX.LINES WEAVE(sx - 1.2, sx + 1.2), WEAVE(sy, sy), 3, cr, cg, cb, TRUE
 ENDSUB
 
 ' The spectrum as a city of 32 towers on an 8 x 4 block
 EXPORT SUB CITY(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, yaw AS DOUBLE, height AS DOUBLE, ci AS INTEGER)
     DIM tall = 0.08 + spec[CITY_BAR] * height
-    ROTATE MX{"city"} * size, MY{"city"} * tall * size, MZ{"city"} * size, yaw, 0, 0
+    ORIENT MX{"city"} * size, MY{"city"} * tall * size, MZ{"city"} * size, yaw, 0, 0
     PROJECT qx + x, qy + y, qz + z
     SETCOL ci, FADE(x, y, z)
     GFX.LINES sx, sy, LINE_W, cr, cg, cb, TRUE
@@ -701,10 +734,10 @@ EXPORT SUB FLOOR(y AS DOUBLE, speed AS DOUBLE, ci AS INTEGER)
     DIM zs = z0 + IOTA(30, 0) * gap
     DIM xs = INT(cam_x / gap) * gap + (IOTA(31, 0) - 15) * gap
     DIM far AS DOUBLE = z0 + 29 * gap
-    PROJECT ZIP(ZEROS(30) + cam_x - 30, ZEROS(30) + cam_x + 30), ZEROS(60) + y, ZIP(zs, zs)
+    PROJECT WEAVE(ZEROS(30) + cam_x - 30, ZEROS(30) + cam_x + 30), ZEROS(60) + y, WEAVE(zs, zs)
     SETCOL ci, 0.45
     GFX.LINES sx, sy, 1.5, cr, cg, cb, TRUE
-    PROJECT ZIP(xs, xs), ZEROS(62) + y, ZIP(ZEROS(31) + MAX([z0, cam_z + 0.5]), ZEROS(31) + far)
+    PROJECT WEAVE(xs, xs), ZEROS(62) + y, WEAVE(ZEROS(31) + MAX([z0, cam_z + 0.5]), ZEROS(31) + far)
     GFX.LINES sx, sy, 1.5, cr, cg, cb, TRUE
 ENDSUB
 
@@ -719,17 +752,51 @@ EXPORT SUB TUNNEL(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, radius AS DOUBLE, depth
         WIRE "oct", x, y, rz, radius * (1 + 0.05 * pulse), 0, 0, beat_now * 11 + i * 7, (ci + (i MOD 2)) MOD 6, 1 - 0.8 * u
     NEXT i
     DIM a = IOTA(8, 0) * MATH.PI / 4
-    PROJECT ZIP(x + radius * COS(a), x + radius * COS(a)), ZIP(y + radius * SIN(a), y + radius * SIN(a)), ZIP(ZEROS(8) + z, ZEROS(8) + z + depth)
+    PROJECT WEAVE(x + radius * COS(a), x + radius * COS(a)), WEAVE(y + radius * SIN(a), y + radius * SIN(a)), WEAVE(ZEROS(8) + z, ZEROS(8) + z + depth)
     SETCOL ci, 0.3
     GFX.LINES sx, sy, LINE_W * 0.6, cr, cg, cb, TRUE
 ENDSUB
 
+' A puffed heart that beats with the music and turns a little to and fro
+EXPORT SUB HEART(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE, ci AS INTEGER)
+    DIM s AS DOUBLE = size * (1 + 0.14 * pulse)
+    WIRE "heart", x, y, z, s, 35 * DSIN(spin), 0, 0, ci, 1
+    WIRE "heart2d", x, y, z, s * 1.18, 35 * DSIN(spin), 0, 0, 6, 0.35
+ENDSUB
+
+' Small hearts rising slowly through the scene, swaying as they go;
+' n of them (up to 28), speed in units a second
+EXPORT SUB HEARTS(n AS INTEGER, speed AS DOUBLE, ci AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO MIN([n, 28]) - 1
+        DIM u AS DOUBLE = (HEART_P[i] + clock * speed / 9) MOD 1
+        IF u < 0 THEN u = u + 1
+        DIM col AS INTEGER = ci
+        IF i MOD 3 = 1 THEN col = 6
+        IF i MOD 3 = 2 THEN col = 2
+        WIRE "heart2d", HEART_X[i] + 0.4 * SIN(clock * 0.8 + i), u * 9 - 0.5, HEART_Z[i], HEART_S[i], 30 * SIN(clock * 1.3 + i), 0, 8 * SIN(clock + i * 2), col, SIN(u * MATH.PI)
+    NEXT i
+ENDSUB
+
+' A tunnel of heart outlines along z from z, coming towards the camera
+EXPORT SUB HEART_TUNNEL(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, radius AS DOUBLE, depth AS DOUBLE, speed AS DOUBLE, ci AS INTEGER)
+    DIM n AS INTEGER = 12
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        DIM u AS DOUBLE = ((i / n) - clock * speed / depth) MOD 1
+        IF u < 0 THEN u = u + 1
+        DIM col AS INTEGER = ci
+        IF i MOD 2 = 1 THEN col = 6
+        WIRE "heart2d", x, y, z + u * depth, radius * (1 + 0.06 * pulse), 0, 0, 6 * SIN(beat_now * MATH.PI / 2 + i), col, 1 - 0.8 * u
+    NEXT i
+ENDSUB
+
 ' Stars streaking past the camera
 EXPORT SUB STARS(speed AS DOUBLE, ci AS INTEGER)
-    DIM shift AS DOUBLE = (clock * speed) MOD 60
-    DIM zz = (STAR_Z - shift + 60) MOD 60 + cam_z
+    DIM travel AS DOUBLE = (clock * speed) MOD 60
+    DIM zz = (STAR_Z - travel + 60) MOD 60 + cam_z
     DIM trail AS DOUBLE = 0.02 + speed * 0.02
-    PROJECT ZIP(STAR_X + cam_x, STAR_X + cam_x), ZIP(STAR_Y + cam_y, STAR_Y + cam_y), ZIP(zz, zz + trail)
+    PROJECT WEAVE(STAR_X + cam_x, STAR_X + cam_x), WEAVE(STAR_Y + cam_y, STAR_Y + cam_y), WEAVE(zz, zz + trail)
     SETCOL ci, 0.8
     GFX.LINES sx, sy, 2, cr, cg, cb, TRUE
 ENDSUB
@@ -740,7 +807,7 @@ EXPORT SUB RIBBON(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, w AS DOUBLE, amp AS DOU
     DIM wv = scope[IOTA(128, 0) * 2]
     DIM k AS INTEGER
     FOR k = 0 TO 2
-        ROTATE u * w, wv * amp * (1 - 0.3 * k), ZEROS(128) + k * 0.4, yaw, 0, 0
+        ORIENT u * w, wv * amp * (1 - 0.3 * k), ZEROS(128) + k * 0.4, yaw, 0, 0
         PROJECT qx + x, qy + y, qz + z
         SETCOL((ci + k) MOD 6, (1 - 0.3 * k) * FADE(x, y, z))
         GFX.LINES sx, sy, LINE_W, cr, cg, cb
@@ -758,7 +825,7 @@ ENDSUB
 ' Ticks from radius r1 to r2 at the given angles; r1 may be an array
 SUB TICKS2(x AS DOUBLE, y AS DOUBLE, r1, r2 AS DOUBLE, angles, w AS DOUBLE)
     DIM a = angles * MATH.PI / 180
-    GFX.LINES ZIP(x + r1 * COS(a), x + r2 * COS(a)), ZIP(y + r1 * SIN(a), y + r2 * SIN(a)), w, cr, cg, cb, TRUE
+    GFX.LINES WEAVE(x + r1 * COS(a), x + r2 * COS(a)), WEAVE(y + r1 * SIN(a), y + r2 * SIN(a)), w, cr, cg, cb, TRUE
 ENDSUB
 
 ' Digits, ':' and '.' as seven-segment strokes, h tall from (x, y)
@@ -861,7 +928,7 @@ ENDSUB
 SUB P_SPECTRUM(ci AS INTEGER)
     SETCOL ci, 0.2
     DIM gy = IOTA(5, 0) * 50 + 20
-    GFX.LINES ZIP(ZEROS(5) + 8, ZEROS(5) + 504), ZIP(gy, gy), 1, cr, cg, cb, TRUE
+    GFX.LINES WEAVE(ZEROS(5) + 8, ZEROS(5) + 504), WEAVE(gy, gy), 1, cr, cg, cb, TRUE
     DIM i AS INTEGER
     FOR i = 0 TO N_BANDS - 1
         DIM bh AS DOUBLE = spec[i] * 220
@@ -872,15 +939,15 @@ SUB P_SPECTRUM(ci AS INTEGER)
         RECT bxx, 236 - peak[i] * 220, 11, 3, TRUE, 255, 255, 255
     NEXT i
     DIM sl = IOTA(22, 0) * 10 + 22
-    GFX.LINES ZIP(ZEROS(22) + 8, ZEROS(22) + 504), ZIP(sl, sl), 2, 0, 0, 0, TRUE
+    GFX.LINES WEAVE(ZEROS(22) + 8, ZEROS(22) + 504), WEAVE(sl, sl), 2, 0, 0, 0, TRUE
 ENDSUB
 
 SUB P_SCOPE(ci AS INTEGER)
     SETCOL ci, 0.18
     DIM gx = IOTA(9, 0) * 64
-    GFX.LINES ZIP(gx, gx), ZIP(ZEROS(9), ZEROS(9) + 256), 1, cr, cg, cb, TRUE
+    GFX.LINES WEAVE(gx, gx), WEAVE(ZEROS(9), ZEROS(9) + 256), 1, cr, cg, cb, TRUE
     DIM gy = IOTA(5, 0) * 64
-    GFX.LINES ZIP(ZEROS(5), ZEROS(5) + 512), ZIP(gy, gy), 1, cr, cg, cb, TRUE
+    GFX.LINES WEAVE(ZEROS(5), ZEROS(5) + 512), WEAVE(gy, gy), 1, cr, cg, cb, TRUE
     SETCOL ci, 0.35
     GFX.LINES IOTA(256, 0) * 2, 128 - scope * 230, 7, cr, cg, cb
     SETCOL ci, 1
@@ -996,9 +1063,9 @@ ENDSUB
 SUB P_ECG(ci AS INTEGER)
     SETCOL 5, 0.15
     DIM gx = IOTA(17, 0) * 32
-    GFX.LINES ZIP(gx, gx), ZIP(ZEROS(17), ZEROS(17) + 256), 1, cr, cg, cb, TRUE
+    GFX.LINES WEAVE(gx, gx), WEAVE(ZEROS(17), ZEROS(17) + 256), 1, cr, cg, cb, TRUE
     DIM gy = IOTA(9, 0) * 32
-    GFX.LINES ZIP(ZEROS(9), ZEROS(9) + 512), ZIP(gy, gy), 1, cr, cg, cb, TRUE
+    GFX.LINES WEAVE(ZEROS(9), ZEROS(9) + 512), WEAVE(gy, gy), 1, cr, cg, cb, TRUE
     DIM n AS INTEGER = LEN(ecg)
     DIM ex = IOTA(n, 0) * 512 / (n - 1)
     DIM ey = 160 - ecg * 150
@@ -1053,7 +1120,7 @@ SUB P_POLAR(ci AS INTEGER)
     DIM r2 = r1 + 8 + spec[bnd] * 140
     SETCOL ci, 1
     DIM ar = a * MATH.PI / 180
-    GFX.LINES ZIP(256 + r1 * COS(ar), 256 + r2 * COS(ar)), ZIP(256 + r1 * SIN(ar), 256 + r2 * SIN(ar)), 6, cr, cg, cb, TRUE
+    GFX.LINES WEAVE(256 + r1 * COS(ar), 256 + r2 * COS(ar)), WEAVE(256 + r1 * SIN(ar), 256 + r2 * SIN(ar)), 6, cr, cg, cb, TRUE
     SETCOL((ci + 1) MOD 6, 0.9)
     ARC2 256, 256, 82 + 8 * pulse, 0, 360, 3
     SETCOL 3, 0.5
@@ -1122,7 +1189,7 @@ EXPORT SUB PANEL(kind$, x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, w AS DOUBLE, yaw 
     DIM id AS INTEGER = PANEL_IMAGE(kind, ci)
     DIM hw AS DOUBLE = w / 2
     DIM hh AS DOUBLE = hw * PANEL_H[kind] / PANEL_W[kind]
-    ROTATE([0 - hw, hw, hw, 0 - hw], [hh, hh, 0 - hh, 0 - hh], [0, 0, 0, 0], yaw, pitch, roll)
+    ORIENT([0 - hw, hw, hw, 0 - hw], [hh, hh, 0 - hh, 0 - hh], [0, 0, 0, 0], yaw, pitch, roll)
     PROJECT qx + x, qy + y, qz + z
     IF MAX(sx) > 1E8 THEN RETURN
     GFX.DRAWQUAD id, sx, sy, 255 * CLAMP01(k * FADE(x, y, z)), "ADD", 12

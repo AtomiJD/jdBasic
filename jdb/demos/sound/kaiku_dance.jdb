@@ -3,9 +3,10 @@
 ' Her lyric is written for the melody by LYRICS, a verse in the groove
 ' and a chorus on the lead, twice, the second verse taking up the chorus,
 ' sung through the vocoder of SOUND.SING; her mouth follows the sound
-' she sings. She stands in a NEON world with a line of dancers behind
-' her, the camera circling her, the word she sings flying in, and the
-' things her words name appearing around her.
+' she sings. She stands in a NEON world (hearts and moonlight for the
+' love theme) with a line of dancers behind her, the camera circling
+' her, the word she sings flying in, and the things her words name
+' appearing around her.
 '
 ' Usage: jdBasic kaiku_dance.jdb [--window] [--render dir] [--bench]
 '                                [--theme neon|space|love|code] [--seed n]
@@ -246,6 +247,7 @@ ENDSUB
 SUB SHOW_ELEMENT(name$, x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, k AS DOUBLE)
     DIM spin AS DOUBLE = clock * 35
     IF name$ = "moon" THEN NEON.MOON x, y, z, size * 0.5, spin
+    IF name$ = "heart" THEN NEON.HEART x, y, z, size * 0.5, spin, 1
     IF name$ = "earth" THEN NEON.EARTH x, y, z, size * 0.5, spin
     IF name$ = "orbits" THEN NEON.ORBITS x, y, z, size * 0.5, spin, 0
     IF name$ = "points" THEN NEON.POINT_SPHERE x, y, z, size * 0.45, spin, 2
@@ -261,9 +263,43 @@ SUB SHOW_ELEMENT(name$, x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, k
     ENDIF
 ENDSUB
 
+' The love scene: a big heart beating far behind her, small hearts
+' rising, a tunnel of hearts in the chorus, the moon and soft stars
+SUB DRAW_LOVE(mood$, cyc AS DOUBLE)
+    IF mood$ = "wave" THEN
+        NEON.STARS 0.6, 3
+        NEON.MOON -6.5, 4.2, 18, 1.8, clock * 6
+        NEON.HEART 0, 3.4, 24, 3, clock * 40, 1
+        NEON.FLOOR 0, 0.3, 6
+        DIM into AS DOUBLE = cyc - 1
+        NEON.PANEL "word", 0, 3.3, 9 + 10 * (1 - SMOOTH01(into)), 5, 0, 0, 0, 1, SMOOTH01(into * 2)
+    ELSEIF mood$ = "groove" THEN
+        NEON.FLOOR 0, 1.5, 6
+        NEON.TERRAIN 0, 0.2, 40, 70, 1.5, 2
+        NEON.MOON -10, 7, 30, 2.2, clock * 6
+        NEON.HEART 8, 4, 18, 1.5, clock * 50, 1
+        NEON.HEARTS 20, 0.6, 1
+    ELSEIF mood$ = "jump" THEN
+        NEON.HEART_TUNNEL 0, 1.6, 5, 3.2, 40, 9, 1
+        NEON.HEARTS 28, 1.4, 1
+        NEON.HEART -6, 3.4, 12, 1, clock * 60, 6
+        NEON.HEART 6, 3.4, 12, 1, clock * 60 + 90, 2
+    ELSE
+        NEON.STARS 0.5, 3
+        NEON.MOON 0, 5, 24, 2.2, clock * 8
+        NEON.HEARTS 12, 0.4, 6
+        NEON.FLOOR 0, 0.5, 6
+    ENDIF
+    IF mood$ = "groove" ORELSE mood$ = "jump" THEN DRAW_LYRIC
+ENDSUB
+
 ' The elements of each section, behind her: a few, small and far out,
 ' so that the picture breathes
 SUB DRAW_SCENE(mood$, cyc AS DOUBLE)
+    IF theme$ = "love" THEN
+        DRAW_LOVE mood$, cyc
+        RETURN
+    ENDIF
     IF mood$ = "wave" THEN
         NEON.STARS 1.5, 3
         NEON.MOON -6.5, 4.2, 18, 1.8, clock * 6
@@ -414,6 +450,7 @@ DIM LOG_WAVE$ = ["booting kaiku.jdb|ok", "loading ponytail physics|ok", "parting
 DIM LOG_GROOVE$ = ["syncing hips to kick|ok", "counting to four|1 2 3 4", "loading bassline|cached", "untangling ponytail|retry", "checking lyrics for meaning|timeout", "importing feelings|module not found", "asking dancers to keep up|warn", "measuring vibe|ok", "smiling|ok", "linking left foot <-> right foot|ok"]
 DIM LOG_JUMP$ = ["chorus: everybody in sync|ok", "raising cutoff|ok", "turning it up|11", "hearts per minute|124", "mirroring dancers|ok", "neighbours complaining|ignored", "buffering euphoria|stalled", "jump height|+3 px", "spinning|ok"]
 DIM LOG_BYE$ = ["bowing|ok", "saving dance to disk|ok", "freeing dancers|ok", "unloading ponytail|ok", "goodnight|zzz"]
+DIM LOG_LOVE$ = ["writing a love letter|draft", "counting heartbeats|124", "blushing|ok", "holding hands|ok", "waiting for a reply|timeout", "looking for the right words|not found", "picking roses|ok", "sending a kiss|delivered", "asking the moon|ok", "butterflies in stomach|warn"]
 DIM log_at = {"wave": 0, "groove": 0, "jump": 0, "bye": 0}
 DIM log_si AS INTEGER = -1
 
@@ -421,6 +458,7 @@ DIM log_si AS INTEGER = -1
 ' theirs once, the others go round
 SUB LOG_FILLER(mood$)
     DIM pool$ = LOG_GROOVE$
+    IF theme$ = "love" THEN pool$ = LOG_LOVE$
     IF mood$ = "wave" THEN pool$ = LOG_WAVE$
     IF mood$ = "jump" THEN pool$ = LOG_JUMP$
     IF mood$ = "bye" THEN pool$ = LOG_BYE$
@@ -478,7 +516,11 @@ SUB FRAME()
     NEON.FEED SOUND.GET_WAVE(), beat, dt
     MOVE_CAMERA mood$, cyc, si
 
-    CLS 6, 5, 12
+    IF theme$ = "love" THEN
+        CLS 14, 4, 14
+    ELSE
+        CLS 6, 5, 12
+    ENDIF
     NEON.BEGIN
     DRAW_SCENE mood$, cyc
     NEON.FINISH
