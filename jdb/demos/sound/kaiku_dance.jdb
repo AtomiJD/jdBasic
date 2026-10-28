@@ -1,10 +1,11 @@
-' kaiku_dance.jdb - Kaiku dances and sings to sixteen bars of techno:
+' kaiku_dance.jdb - Kaiku dances and sings to twenty-nine bars of techno:
 ' a pose a beat chosen by the section's mood, her face on the downbeats.
 ' Her lyric is written for the melody by LYRICS, a verse in the groove
-' and a chorus on the lead, and sung through the vocoder of SOUND.SING;
-' her mouth follows the sound she sings. She stands in a NEON world with
-' a line of dancers behind her, the camera circling her, the word she
-' sings flying in, and the things her words name appearing around her.
+' and a chorus on the lead, twice, the second verse taking up the chorus,
+' sung through the vocoder of SOUND.SING; her mouth follows the sound
+' she sings. She stands in a NEON world with a line of dancers behind
+' her, the camera circling her, the word she sings flying in, and the
+' things her words name appearing around her.
 '
 ' Usage: jdBasic kaiku_dance.jdb [--window] [--render dir] [--bench]
 '                                [--theme neon|space|love|code] [--seed n]
@@ -84,7 +85,8 @@ DIM LEAD$ AS STRING = "<" + JOIN(LEAD_BARS$, " ") + ">"
 DIM VERSE$ AS STRING = "<" + JOIN(VERSE_BARS$, " ") + ">"
 
 ' the lyric: a verse on the four bars of the groove, a chorus on the six
-' bars of the lead, as many syllables in a line as its bar has notes
+' bars of the lead, then a second verse that takes up the chorus and the
+' chorus again; as many syllables in a line as its bar has notes
 LYRICS.INIT theme$, seed
 DIM verse_counts = ZEROS(4)
 DIM chorus_counts = ZEROS(6)
@@ -97,11 +99,12 @@ FOR bi = 0 TO 5
 NEXT bi
 DIM verse_ids = LYRICS.VERSE(verse_counts)
 DIM chorus_ids = LYRICS.CHORUS(chorus_counts)
-DIM song_lines = APPEND(verse_ids, chorus_ids)
+DIM verse2_ids = LYRICS.VERSE(verse_counts)
+DIM song_lines = APPEND(APPEND(APPEND(verse_ids, chorus_ids), verse2_ids), chorus_ids)
 
 PRINT LYRICS.TITLE$()
 FOR bi = 0 TO LEN(song_lines) - 1
-    IF bi = 4 THEN PRINT
+    IF bi = 4 ORELSE bi = 10 ORELSE bi = 14 THEN PRINT
     PRINT "  "; LYRICS.TEXT$(song_lines[bi])
 NEXT bi
 
@@ -136,16 +139,30 @@ SCORE.PLAY VOX, "legato(0.9, " + LEAD$ + ")"
 SCORE.SING VOX, LYRICS.SUNG$(chorus_ids)
 SCORE.PLAY CLAP, "~ cp ~ cp"
 SCORE.PLAY HATS, "gain([0.4 0.7]*8, hh*16)"
-SCORE.SECTION 14, "bye", "bye"
+SCORE.SECTION 14, "break", "groove"
+SCORE.QUIET LEAD
+SCORE.QUIET CLAP
+SCORE.QUIET VOX
+SCORE.PLAY HATS, "gain(0.6, [~ hh]*4)"
+SCORE.SECTION 16, "groove", "groove"
+SCORE.PLAY VOX, "legato(0.9, " + VERSE$ + ")"
+SCORE.SING VOX, LYRICS.SUNG$(verse2_ids)
+SCORE.SECTION 20, "chorus", "jump"
+SCORE.PLAY LEAD, LEAD$
+SCORE.PLAY VOX, "legato(0.9, " + LEAD$ + ")"
+SCORE.SING VOX, LYRICS.SUNG$(chorus_ids)
+SCORE.PLAY CLAP, "~ cp ~ cp"
+SCORE.PLAY HATS, "gain([0.4 0.7]*8, hh*16)"
+SCORE.SECTION 26, "bye", "bye"
 SCORE.QUIET KICK
 SCORE.QUIET CLAP
 SCORE.QUIET HATS
 SCORE.QUIET BASS
 SCORE.QUIET LEAD
 SCORE.QUIET VOX
-SCORE.SECTION 16, "end", "bye"
+SCORE.SECTION 28, "end", "bye"
 SCORE.QUIET PAD
-SCORE.FINE 17
+SCORE.FINE 29
 
 DIM MOVES_WAVE$ = ["sway_l", "sway_l", "sway_r", "sway_r"]
 DIM MOVES_GROOVE$ = ["sway_l", "idle", "sway_r", "point"]

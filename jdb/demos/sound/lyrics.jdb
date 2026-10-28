@@ -41,7 +41,7 @@ DIM THEME_WORDS$ = ["GLOW: neon=ni.awn laser=lei.zer screen=skrin signal=sihg.nu
 ' an object of the last TV verb, {=} the slot word before it again;
 ' {we} {we_are} {our} {us} follow the section's person
 
-DIM CORE_LINES$ AS STRING = "SET: {TIME} in the {IN}; in the {IN}; out in the {IN}; on the {ON}; under the {UNDER}; under {SEE} {GLOWS}; the {GLOW} {GLOWV:s}; the {GLOWS} {GLOWV} | IMG: the {GLOWS} are {GLOWV:ing}; {SEE} {GLOWS}; {SEE} {GLOW}; the {SOUND} {SOUNDV:s}; feel the {SOUND}; {our} {HEART} {HEARTV:s}; the {GLOW} {GLOWV:s} on {us}; the {GLOW} is {GLOWV:ing}; {GLOWS} in {our} eyes | ACT: {we} {MOVE} {TIME}; {we} {MOVE} in the {IN}; {we} {TV} the {OBJ}; {TV} the {OBJ}; {MOVE} with me; {MOVE} with me {TIME}; come and {MOVE}; come and {MOVE} {TIME}; {we_are} {TV:ing} the {OBJ}; {we_are} {MOVE:ing}; let's {MOVE} {TIME} | FEEL: {we_are} {FEEL}; {we_are} {FEEL} {TIME}; {FEEL} {TIME}; {we} feel {FEEL}; {we} feel so {FEEL}; {our} {HEART} on fire; never let it go; never let the {GLOW} go; {MOVE} {TIME} | CHORUS: {MOVE} with me {TIME}; {we} {MOVE} {TIME}; never let the {GLOW} go; light it up {TIME}; {we_are} {FEEL}; {FEEL} {TIME}; {MOVE} {=} {=}; {MOVE} {TIME}; {TV} the {OBJ}; {INT} {=} {FEEL} | HOOK: {TITLE}; oh {TITLE}; {TITLE} {TIME}; my {TITLE}; {TITLE} {INT}; {INT} {=} {TITLE}"
+DIM CORE_LINES$ AS STRING = "SET: {TIME} in the {IN}; in the {IN}; out in the {IN}; on the {ON}; under the {UNDER}; under {SEE} {GLOWS}; the {GLOW} {GLOWV:s}; the {GLOWS} {GLOWV} | IMG: the {GLOWS} are {GLOWV:ing}; {SEE} {GLOWS}; {SEE} {GLOW}; the {SOUND} {SOUNDV:s}; feel the {SOUND}; {our} {HEART} {HEARTV:s}; the {GLOW} {GLOWV:s} on {us}; the {GLOW} is {GLOWV:ing}; {GLOWS} in {our} eyes | ACT: {we} {MOVE} {TIME}; {we} {MOVE} in the {IN}; {we} {TV} the {OBJ}; {TV} the {OBJ}; {MOVE} with me; {MOVE} with me {TIME}; come and {MOVE}; come and {MOVE} {TIME}; {we_are} {TV:ing} the {OBJ}; {we_are} {MOVE:ing}; let's {MOVE} {TIME} | FEEL: {we_are} {FEEL}; {we_are} {FEEL} {TIME}; {FEEL} {TIME}; {we} feel {FEEL}; {we} feel so {FEEL}; {our} {HEART} on fire; never let it go; never let the {GLOW} go; {MOVE} {TIME} | CHORUS: {MOVE} with me {TIME}; {we} {MOVE} {TIME}; never let the {GLOW} go; light it up {TIME}; {we_are} {FEEL}; {FEEL} {TIME}; {MOVE} {=} {=}; {MOVE} {TIME}; {TV} the {OBJ}; {INT} {=} {FEEL} | LEADIN: back to the {TITLE_N}; into the {TITLE_N}; take {us} to the {TITLE_N}; here comes the {TITLE_N}; the {TITLE_N} is calling; feel the {TITLE_N}; {we} {MOVE} to the {TITLE_N}; find the {TITLE_N}; to the {TITLE_N} | HOOK: {TITLE}; oh {TITLE}; {TITLE} {TIME}; my {TITLE}; {TITLE} {INT}; {INT} {=} {TITLE}"
 DIM THEME_LINES$ = ["SET: the {IN} never sleeps; {TIME} on the {ON} | IMG: {SEE} signs {GLOWV}; the {SOUND} is {SEE} | ACT: {we} {MOVE} on the {ON}; {we} drive into the {IN}", "SET: far beyond the {SKY}; {TIME} in {IN} | IMG: {GLOWS} pass {us} by; the {SKY} is calling | ACT: {we} {MOVE} to the {SKY}; {we} {MOVE} through the {IN} | FEEL: lost in space; {we_are} {FEEL} in space", "SET: in your arms {TIME}; kiss me under the {UNDER} | IMG: your eyes are {SEE}; {our} {HEART} {HEARTV:s} for you | ACT: hold me {TIME}; I {LOVEV} you {TIME}; stay with me {TIME} | FEEL: you are my {DEAR}; {we_are} {FEEL}", "SET: deep in the {SYS}; {TIME} in the {IN} | IMG: the {DATA} {DATAV:s}; {SEE} {GLOWS} | ACT: {we} {TV} the {OBJ}; {TV} the {OBJ} {TIME} | FEEL: {we_are} {FEEL}; ghost in the machine"]
 
 ' words the templates spell out
@@ -78,6 +78,7 @@ DIM L_WORDS$ = [""]
 DIM L_RHYME$ = [""]
 DIM L_LAST$ = [""]
 DIM L_ELEMS$ = [""]
+DIM L_SLOTS$ = [""]
 DIM n_lines AS INTEGER = 0
 
 DIM title_words$ AS STRING = ""
@@ -90,6 +91,9 @@ DIM sec_place$ AS STRING = ""
 ' the last syllable the rhyming line should not repeat
 DIM avoid_syl$ AS STRING = ""
 DIM fallback_depth AS INTEGER = 0
+' the words of the chorus, which a verse written after it takes up
+DIM ECHO = {}
+DIM echo_on AS INTEGER = FALSE
 
 ' the template being filled
 DIM c_ok AS INTEGER = TRUE
@@ -264,7 +268,7 @@ SUB LOAD_SECTIONS(spec$, themed AS INTEGER, as_lines AS INTEGER)
                 DIM t$ AS STRING = TRIM$(tpls$[k])
                 IF t$ = "" THEN CONTINUEFOR
                 ADD_TPL cat$, t$
-                IF cat$ <> "CHORUS" ANDALSO cat$ <> "HOOK" THEN ADD_TPL "ALL", t$
+                IF cat$ <> "CHORUS" ANDALSO cat$ <> "HOOK" ANDALSO cat$ <> "LEADIN" THEN ADD_TPL "ALL", t$
             NEXT k
         ELSE
             ADD_WORDS cat$, body$, themed
@@ -298,6 +302,7 @@ EXPORT SUB INIT(theme$, seed AS INTEGER)
     L_RHYME$ = [""]
     L_LAST$ = [""]
     L_ELEMS$ = [""]
+    L_SLOTS$ = [""]
     POOL = {}
     RPOOL = {}
     RCOUNT = {}
@@ -307,6 +312,8 @@ EXPORT SUB INIT(theme$, seed AS INTEGER)
     USED = {}
     USED_T = {}
     CHORUS_CACHE = {}
+    ECHO = {}
+    echo_on = FALSE
     DIM th AS INTEGER = 0
     DIM i AS INTEGER
     FOR i = 0 TO LEN(THEME_NAMES$) - 1
@@ -391,6 +398,14 @@ SUB FILL(tpl$, rhyme$, avoid$)
             w$ = title_words$
             p$ = title_phons$
             c_bonus = c_bonus + 0.5
+        ELSEIF tk$ = "{TITLE_A}" ORELSE tk$ = "{TITLE_N}" THEN
+            DIM tw$ = SPLIT(title_words$, "|")
+            DIM tp$ = SPLIT(title_phons$, "|")
+            DIM ti AS INTEGER = 0
+            IF tk$ = "{TITLE_N}" THEN ti = 1
+            w$ = tw$[ti]
+            p$ = tp$[ti]
+            c_bonus = c_bonus + 0.5
         ELSEIF tk$ = "{=}" THEN
             w$ = prev_w$
             p$ = prev_p$
@@ -443,8 +458,9 @@ SUB FILL(tpl$, rhyme$, avoid$)
             IF cat$ = "INT" THEN c_bonus = c_bonus - 0.8
             IF base$ = sec_place$ THEN
                 c_bonus = c_bonus + 1.2
-            ELSEIF TYPEOF(USED{base$}) <> "NONE" THEN
-                c_bonus = c_bonus - 1.5 * USED{base$}
+            ELSE
+                IF echo_on ANDALSO TYPEOF(ECHO{base$}) <> "NONE" THEN c_bonus = c_bonus + 2.5
+                IF TYPEOF(USED{base$}) <> "NONE" THEN c_bonus = c_bonus - 1.5 * USED{base$}
             ENDIF
             IF INSTR("|" + c_slots$ + "|", "|" + base$ + "|") >= 0 THEN c_bonus = c_bonus - 3
             IF prev_first$ <> "" ANDALSO LEFT$(w$, 1) = prev_first$ THEN c_bonus = c_bonus + 0.6
@@ -617,6 +633,7 @@ FUNC STORE_LINE(n AS INTEGER, words$, phons$, slots$, chorus AS INTEGER) AS INTE
         L_RHYME$[0] = KEY$(ps$[last])
         L_LAST$[0] = ws$[last]
         L_ELEMS$[0] = elems$
+        L_SLOTS$[0] = slots$
     ELSE
         L_TEXT$ = APPEND(L_TEXT$, shown$)
         L_SING$ = APPEND(L_SING$, LTRIM$(sing$))
@@ -624,6 +641,7 @@ FUNC STORE_LINE(n AS INTEGER, words$, phons$, slots$, chorus AS INTEGER) AS INTE
         L_RHYME$ = APPEND(L_RHYME$, KEY$(ps$[last]))
         L_LAST$ = APPEND(L_LAST$, ws$[last])
         L_ELEMS$ = APPEND(L_ELEMS$, elems$)
+        L_SLOTS$ = APPEND(L_SLOTS$, slots$)
     ENDIF
     n_lines = n_lines + 1
     RETURN n_lines - 1
@@ -632,18 +650,35 @@ ENDFUNC
 ' A verse: one line per entry of counts (syllables = notes), rhymed in
 ' pairs, first with second, third with fourth. Its lines walk through
 ' the four stages SET, IMG, ACT, FEEL, in one place and one person.
+' A verse written after the chorus takes it up: the chorus words come
+' back, the title's noun is its place when it is one, and its last line
+' leads into the hook ("back to the zone"), the line before rhyming on it.
 EXPORT FUNC VERSE(counts)
     DIM stages$ = ["SET", "IMG", "ACT", "FEEL"]
     DIM n AS INTEGER = LEN(counts)
     sec_person$ = "we"
     IF RND() < 0.4 THEN sec_person$ = "I"
     PICK_PLACE
+    IF echo_on THEN
+        DIM tw$ = SPLIT(title_words$, "|")
+        DIM tn$ AS STRING = tw$[1]
+        DIM pl = POOL{"IN"}
+        DIM k AS INTEGER
+        FOR k = 0 TO LEN(pl) - 1
+            IF WORD_TXT$[pl[k]] = tn$ THEN sec_place$ = tn$
+        NEXT k
+    ENDIF
     DIM ids = ZEROS(n)
     DIM i AS INTEGER
     FOR i = 0 TO n - 1 STEP 2
         DIM st_a$ AS STRING = stages$[INT(i * 4 / n)]
         IF i + 1 < n THEN
-            PAIR counts[i], counts[i + 1], TPL{st_a$}, TPL{stages$[INT((i + 1) * 4 / n)]}, FALSE
+            DIM st_b$ AS STRING = stages$[INT((i + 1) * 4 / n)]
+            IF echo_on ANDALSO i + 2 >= n THEN
+                PAIR counts[i], counts[i + 1], TPL{st_a$}, TPL{"LEADIN"}, FALSE, TRUE
+            ELSE
+                PAIR counts[i], counts[i + 1], TPL{st_a$}, TPL{st_b$}, FALSE, FALSE
+            ENDIF
             ids[i] = pair_a
             ids[i + 1] = pair_b
         ELSE
@@ -674,13 +709,20 @@ DIM pair_a AS INTEGER = 0
 DIM pair_b AS INTEGER = 0
 
 ' Two lines that rhyme; when the second cannot rhyme on the first, both
-' are written again
-SUB PAIR(n1 AS INTEGER, n2 AS INTEGER, templates_a$, templates_b$, chorus AS INTEGER)
+' are written again. Backwards the second line is written first and
+' the first rhymes on it.
+SUB PAIR(n1 AS INTEGER, n2 AS INTEGER, templates_a$, templates_b$, chorus AS INTEGER, backwards AS INTEGER)
     DIM attempt AS INTEGER
     FOR attempt = 1 TO 6
-        pair_a = MAKE_LINE(n1, "", "", templates_a$, chorus)
-        avoid_syl$ = LAST_SYL$(REPLACE$(REPLACE$(L_SING$[pair_a], " -", ""), " ", "."))
-        pair_b = MAKE_LINE(n2, L_RHYME$[pair_a], L_LAST$[pair_a], templates_b$, chorus)
+        IF backwards THEN
+            pair_b = MAKE_LINE(n2, "", "", templates_b$, chorus)
+            avoid_syl$ = LAST_SYL$(REPLACE$(REPLACE$(L_SING$[pair_b], " -", ""), " ", "."))
+            pair_a = MAKE_LINE(n1, L_RHYME$[pair_b], L_LAST$[pair_b], templates_a$, chorus)
+        ELSE
+            pair_a = MAKE_LINE(n1, "", "", templates_a$, chorus)
+            avoid_syl$ = LAST_SYL$(REPLACE$(REPLACE$(L_SING$[pair_a], " -", ""), " ", "."))
+            pair_b = MAKE_LINE(n2, L_RHYME$[pair_a], L_LAST$[pair_a], templates_b$, chorus)
+        ENDIF
         avoid_syl$ = ""
         IF NUC$(L_RHYME$[pair_b]) = NUC$(L_RHYME$[pair_a]) THEN RETURN
     NEXT attempt
@@ -700,13 +742,22 @@ EXPORT FUNC CHORUS(counts)
         IF i MOD 2 = 0 THEN
             ids[i] = MAKE_LINE(counts[i], "", "", TPL{"HOOK"}, TRUE)
         ELSEIF i + 2 < LEN(counts) THEN
-            PAIR counts[i], counts[i + 2], TPL{"CHORUS"}, TPL{"CHORUS"}, TRUE
+            PAIR counts[i], counts[i + 2], TPL{"CHORUS"}, TPL{"CHORUS"}, TRUE, FALSE
             ids[i] = pair_a
             ids[i + 2] = pair_b
         ELSE
             ids[i] = MAKE_LINE(counts[i], "", "", TPL{"CHORUS"}, TRUE)
         ENDIF
     NEXT i
+    DIM sl$ = [""]
+    FOR i = 0 TO LEN(ids) - 1
+        sl$ = SPLIT(L_SLOTS$[ids[i]], "|")
+        DIM k AS INTEGER
+        FOR k = 0 TO LEN(sl$) - 1
+            IF sl$[k] <> "" THEN ECHO{sl$[k]} = 1
+        NEXT k
+    NEXT i
+    echo_on = TRUE
     CHORUS_CACHE{key$} = ids
     RETURN ids
 ENDFUNC
