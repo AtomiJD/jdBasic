@@ -2,9 +2,10 @@
 ' SVG markup, so a chart or a drawing becomes a PNG on a machine with no
 ' display. Shapes, paths with arcs and curves, strokes, groups with
 ' transforms, the style block and style attributes, linear and radial
-' gradients, and text from a TrueType font. The ground of cairosvg and resvg
-' for the SVG that SVG.RENDER writes; a hand-written file with filters,
-' masks, patterns or markers is drawn without them.
+' gradients, markers (arrowheads on lines and paths), and text from a
+' TrueType font. The ground of cairosvg and resvg for the SVG that
+' SVG.RENDER writes; a hand-written file with filters, masks or patterns
+' is drawn without them.
 '
 '   IMPORT SVG, RASTER
 '   DIM c = SVG.CHART("bar")
@@ -35,6 +36,11 @@ DIM gRuleClasses = []
 DIM gRuleDecls = []
 DIM gRuleSpec = []
 DIM gGrads AS MAP
+DIM gMarkers AS MAP
+DIM gBase AS MAP
+DIM gInMarker = 0
+DIM gCtxFill$ = "none"
+DIM gCtxStroke$ = "none"
 DIM gStackTag = []
 DIM gStackCls = []
 
@@ -713,14 +719,17 @@ FUNC PathTokens(d$)
     RETURN out
 ENDFUNC
 
-' Path data as subpaths: answers {"polys": [...], "closed": [...]}, each
-' subpath a flat polygon and a flag whether a Z closed it.
+' Path data as subpaths: answers {"polys": [...], "closed": [...],
+' "verts": [...]}, each subpath a flat polygon, a flag whether a Z closed
+' it, and the indices of its points where a command ended (the vertices
+' markers sit on, not the points a curve was flattened into).
 FUNC PathPolys(d$, scale_px)
     DIM toks = PathTokens(d$)
     DIM polys = []
     DIM closed = []
     DIM cur = []
-    DIM cur_closed = 0
+    DIM verts = []
+    DIM cur_v = []
     DIM cmd$ = ""
     DIM x = 0.0
     DIM y = 0.0
@@ -741,8 +750,10 @@ FUNC PathPolys(d$, scale_px)
                 IF LEN(cur) >= 4 THEN
                     PUSH(polys, cur)
                     PUSH(closed, 1)
+                    PUSH(verts, cur_v)
                 ENDIF
-                cur = []
+                cur = [sx, sy]
+                cur_v = [0]
                 x = sx
                 y = sy
                 last$ = "z"
@@ -777,7 +788,9 @@ FUNC PathPolys(d$, scale_px)
             IF LEN(cur) >= 4 THEN
                 PUSH(polys, cur)
                 PUSH(closed, 0)
+                PUSH(verts, cur_v)
             ENDIF
+            cur_v = [0]
             x = ox + args[0]
             y = oy + args[1]
             sx = x
@@ -840,13 +853,15 @@ FUNC PathPolys(d$, scale_px)
             x = ex
             y = ey
         ENDIF
+        IF c$ <> "m" THEN PUSH(cur_v, LEN(cur) \ 2 - 1)
         last$ = c$
     LOOP
     IF LEN(cur) >= 4 THEN
         PUSH(polys, cur)
         PUSH(closed, 0)
+        PUSH(verts, cur_v)
     ENDIF
-    RETURN {"polys": polys, "closed": closed}
+    RETURN {"polys": polys, "closed": closed, "verts": verts}
 ENDFUNC
 
 ' ── strokes ────────────────────────────────────────────────────
@@ -920,7 +935,7 @@ ENDFUNC
 ' Which properties pass from a group to what is inside it.
 FUNC Inherited(sty)
     DIM out AS MAP
-    DIM names = ["fill", "stroke", "stroke-width", "fill-opacity", "stroke-opacity", "font-size", "font-weight", "font-family", "text-anchor", "stroke-linecap"]
+    DIM names = ["fill", "stroke", "stroke-width", "fill-opacity", "stroke-opacity", "font-size", "font-weight", "font-family", "text-anchor", "stroke-linecap", "marker-start", "marker-mid", "marker-end"]
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM nm$ = names[k]
@@ -939,7 +954,13 @@ SUB ApplyDecls(sty, decl$)
         IF colon < 0 THEN CONTINUEFOR
         DIM nm$ = LCASE$(TRIM$(LEFT$(part$, colon)))
         DIM value$ = TRIM$(MID$(part$, colon + 1))
-        IF nm$ <> "" THEN sty{nm$} = value$
+        IF nm$ = "marker" THEN
+            sty{"marker-start"} = value$
+            sty{"marker-mid"} = value$
+            sty{"marker-end"} = value$
+        ELSEIF nm$ <> "" THEN
+            sty{nm$} = value$
+        ENDIF
     NEXT k
 ENDSUB
 
@@ -1081,7 +1102,7 @@ FUNC ElementStyle(tree, nid, inherited)
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM nm$ = LCASE$(names[k])
-        IF nm$ = "fill" ORELSE nm$ = "stroke" ORELSE nm$ = "stroke-width" ORELSE nm$ = "opacity" ORELSE nm$ = "fill-opacity" ORELSE nm$ = "stroke-opacity" ORELSE nm$ = "font-size" ORELSE nm$ = "font-weight" ORELSE nm$ = "font-family" ORELSE nm$ = "text-anchor" ORELSE nm$ = "stroke-linecap" ORELSE nm$ = "stop-color" ORELSE nm$ = "stop-opacity" THEN
+        IF nm$ = "fill" ORELSE nm$ = "stroke" ORELSE nm$ = "stroke-width" ORELSE nm$ = "opacity" ORELSE nm$ = "fill-opacity" ORELSE nm$ = "stroke-opacity" ORELSE nm$ = "font-size" ORELSE nm$ = "font-weight" ORELSE nm$ = "font-family" ORELSE nm$ = "text-anchor" ORELSE nm$ = "stroke-linecap" ORELSE nm$ = "stop-color" ORELSE nm$ = "stop-opacity" ORELSE LEFT$(nm$, 7) = "marker-" THEN
             sty{nm$} = attrs{names[k]}
         ENDIF
     NEXT k
@@ -1118,6 +1139,8 @@ ENDFUNC
 ' gradient, {"none": TRUE} for nothing to draw.
 FUNC Paint(value$, opacity)
     DIM v$ = TRIM$(value$)
+    IF LCASE$(v$) = "context-stroke" THEN v$ = gCtxStroke$
+    IF LCASE$(v$) = "context-fill" THEN v$ = gCtxFill$
     IF LEFT$(LCASE$(v$), 4) = "url(" THEN
         DIM hash = INSTR(v$, "#")
         DIM close_at = INSTR(v$, ")")
@@ -1410,8 +1433,8 @@ SUB CollectGradient(tree, nid, kind$)
     gGrads{id$} = grad
 ENDSUB
 
-' Style blocks and gradients anywhere in the document, read before any
-' shape is drawn.
+' Style blocks, gradients and markers anywhere in the document, read
+' before any shape is drawn.
 SUB CollectDefs(tree, nid)
     DIM kids = XML.CHILDREN(tree, nid)
     DIM k = 0
@@ -1425,6 +1448,9 @@ SUB CollectDefs(tree, nid)
             CollectGradient(tree, kid, "linear")
         ELSEIF tag$ = "radialgradient" THEN
             CollectGradient(tree, kid, "radial")
+        ELSEIF tag$ = "marker" THEN
+            DIM marker_id$ = XML.ATTR$(tree, kid, "id", "")
+            IF marker_id$ <> "" THEN gMarkers{marker_id$} = kid
         ELSE
             CollectDefs(tree, kid)
         ENDIF
@@ -1434,6 +1460,151 @@ ENDSUB
 FUNC PointsPoly(tree, nid)
     RETURN Nums(XML.ATTR$(tree, nid, "points", ""))
 ENDFUNC
+
+' ── markers ────────────────────────────────────────────────────
+
+' The id in "url(#id)", "" for anything else.
+FUNC UrlId$(v$)
+    DIM t$ = TRIM$(v$)
+    IF LEFT$(LCASE$(t$), 4) <> "url(" THEN RETURN ""
+    DIM hash = INSTR(t$, "#")
+    DIM close_at = INSTR(t$, ")")
+    IF hash < 0 ORELSE close_at <= hash THEN RETURN ""
+    RETURN MID$(t$, hash + 1, close_at - hash - 1)
+ENDFUNC
+
+' The direction from point a to point b of a flat polygon in radians,
+' -999 when the two points coincide.
+FUNC SegAngle(pts, a, b)
+    DIM dx = pts[2 * b] - pts[2 * a]
+    DIM dy = pts[2 * b + 1] - pts[2 * a + 1]
+    IF ABS(dx) + ABS(dy) < 0.0000001 THEN RETURN -999
+    RETURN ATAN2(dy, dx)
+ENDFUNC
+
+' The vertices of a shape in drawing order, each [x, y, in, out]: where
+' it is and the directions the path arrives and leaves in, -999 for
+' none. verts lists the vertex points of each subpath; a subpath without
+' an entry has a vertex on every point. A closed subpath ends on the
+' point it began with.
+FUNC MarkerVertices(polys, closed, verts)
+    DIM out = []
+    DIM j = 0
+    FOR j = 0 TO LEN(polys) - 1
+        DIM pts = polys[j]
+        DIM n = LEN(pts) \ 2
+        DIM is_closed = 0
+        IF j < LEN(closed) THEN is_closed = closed[j]
+        DIM idx = IOTA(n, 0)
+        IF j < LEN(verts) THEN idx = verts[j]
+        DIM k = 0
+        FOR k = 0 TO LEN(idx) - 1
+            DIM p = idx[k]
+            DIM a_in = -999
+            DIM a_out = -999
+            IF p > 0 THEN a_in = SegAngle(pts, p - 1, p)
+            IF p = 0 ANDALSO is_closed THEN a_in = SegAngle(pts, n - 1, 0)
+            IF p < n - 1 THEN a_out = SegAngle(pts, p, p + 1)
+            IF p = n - 1 ANDALSO is_closed THEN a_out = SegAngle(pts, n - 1, 0)
+            PUSH(out, [pts[2 * p], pts[2 * p + 1], a_in, a_out])
+        NEXT k
+        IF is_closed THEN PUSH(out, [pts[0], pts[1], SegAngle(pts, n - 1, 0), -999])
+    NEXT j
+    RETURN out
+ENDFUNC
+
+' The direction halfway between arriving and leaving.
+FUNC Bisect(a_in, a_out)
+    IF a_in = -999 ANDALSO a_out = -999 THEN RETURN 0
+    IF a_in = -999 THEN RETURN a_out
+    IF a_out = -999 THEN RETURN a_in
+    DIM sx = COS(a_in) + COS(a_out)
+    DIM sy = SIN(a_in) + SIN(a_out)
+    IF ABS(sx) + ABS(sy) < 0.000001 THEN RETURN a_in
+    RETURN ATAN2(sy, sx)
+ENDFUNC
+
+' One marker at a vertex: its viewBox fitted into markerWidth by
+' markerHeight, its refX/refY on the vertex, turned as orient says, and
+' grown with the stroke width unless markerUnits is userSpaceOnUse.
+SUB DrawMarker(tree, marker_nid, x, y, angle, at_start, stroke_w, m, opacity)
+    DIM mw = AttrNum(tree, marker_nid, "markerWidth", 3)
+    DIM mh = AttrNum(tree, marker_nid, "markerHeight", 3)
+    IF mw <= 0 ORELSE mh <= 0 THEN RETURN
+    DIM orient$ = LCASE$(TRIM$(XML.ATTR$(tree, marker_nid, "orient", "0")))
+    DIM turn = 0.0
+    IF orient$ = "auto" THEN
+        turn = angle
+    ELSEIF orient$ = "auto-start-reverse" THEN
+        turn = angle
+        IF at_start THEN turn = angle + MATH.PI
+    ELSE
+        turn = NumOf(orient$, 0) * MATH.PI / 180
+    ENDIF
+    DIM grow = stroke_w
+    IF LCASE$(XML.ATTR$(tree, marker_nid, "markerUnits", "")) = "userspaceonuse" THEN grow = 1
+    DIM sx = 1.0
+    DIM sy = 1.0
+    DIM vb = Nums(XML.ATTR$(tree, marker_nid, "viewBox", ""))
+    IF LEN(vb) = 4 ANDALSO vb[2] > 0 ANDALSO vb[3] > 0 THEN
+        sx = mw / vb[2]
+        sy = mh / vb[3]
+        IF LCASE$(TRIM$(XML.ATTR$(tree, marker_nid, "preserveAspectRatio", ""))) <> "none" THEN
+            IF sx < sy THEN sy = sx
+            IF sy < sx THEN sx = sy
+        ENDIF
+    ENDIF
+    DIM rx = AttrNum(tree, marker_nid, "refX", 0)
+    DIM ry = AttrNum(tree, marker_nid, "refY", 0)
+    DIM at_vertex = [COS(turn) * grow, SIN(turn) * grow, -SIN(turn) * grow, COS(turn) * grow, x, y]
+    DIM mm = MatCompose(m, MatCompose(at_vertex, [sx, 0, 0, sy, -sx * rx, -sy * ry]))
+    DIM saved_tags = gStackTag
+    DIM saved_cls = gStackCls
+    gStackTag = ["svg", "marker"]
+    gStackCls = ["", LCASE$(XML.ATTR$(tree, marker_nid, "class", ""))]
+    DIM msty = ElementStyle(tree, marker_nid, gBase)
+    DIM kids = XML.CHILDREN(tree, marker_nid)
+    DIM k = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        IF XML.KIND$(tree, kid) = "element" THEN DrawElement(tree, kid, mm, msty, opacity)
+    NEXT k
+    gStackTag = saved_tags
+    gStackCls = saved_cls
+ENDSUB
+
+' The markers that marker-start, marker-mid and marker-end name, on the
+' vertices of a shape just drawn; its fill and stroke are what
+' context-fill and context-stroke paint with. A shape inside a marker
+' gets none.
+SUB DrawMarkers(tree, polys, closed, verts, sty, m, opacity)
+    IF gInMarker THEN RETURN
+    DIM id_start$ = UrlId$(StyleText$(sty, "marker-start", ""))
+    DIM id_mid$ = UrlId$(StyleText$(sty, "marker-mid", ""))
+    DIM id_end$ = UrlId$(StyleText$(sty, "marker-end", ""))
+    DIM has_start = MAP.EXISTS(gMarkers, id_start$)
+    DIM has_mid = MAP.EXISTS(gMarkers, id_mid$)
+    DIM has_end = MAP.EXISTS(gMarkers, id_end$)
+    IF NOT has_start ANDALSO NOT has_mid ANDALSO NOT has_end THEN RETURN
+    DIM vs = MarkerVertices(polys, closed, verts)
+    DIM n = LEN(vs)
+    IF n = 0 THEN RETURN
+    DIM stroke_w = StyleNum(sty, "stroke-width", 1)
+    gInMarker = 1
+    gCtxFill$ = StyleText$(sty, "fill", "#000")
+    gCtxStroke$ = StyleText$(sty, "stroke", "none")
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM v = vs[i]
+        DIM angle = Bisect(v[2], v[3])
+        IF i = 0 ANDALSO has_start THEN DrawMarker(tree, gMarkers{id_start$}, v[0], v[1], angle, TRUE, stroke_w, m, opacity)
+        IF i > 0 ANDALSO i < n - 1 ANDALSO has_mid THEN DrawMarker(tree, gMarkers{id_mid$}, v[0], v[1], angle, FALSE, stroke_w, m, opacity)
+        IF i = n - 1 ANDALSO has_end THEN DrawMarker(tree, gMarkers{id_end$}, v[0], v[1], angle, FALSE, stroke_w, m, opacity)
+    NEXT i
+    gInMarker = 0
+    gCtxFill$ = "none"
+    gCtxStroke$ = "none"
+ENDSUB
 
 ' Draws one element and what is inside it.
 SUB DrawElement(tree, nid, parent_m, inherited, parent_opacity)
@@ -1469,16 +1640,27 @@ SUB DrawElement(tree, nid, parent_m, inherited, parent_opacity)
         DIM ery = AttrNum(tree, nid, "ry", 0)
         IF erx > 0 ANDALSO ery > 0 THEN DrawShape([EllipsePoly(AttrNum(tree, nid, "cx", 0), AttrNum(tree, nid, "cy", 0), erx, ery, scale_px)], [1], sty, m, opacity, "#000")
     ELSEIF tag$ = "line" THEN
-        DrawShape([[AttrNum(tree, nid, "x1", 0), AttrNum(tree, nid, "y1", 0), AttrNum(tree, nid, "x2", 0), AttrNum(tree, nid, "y2", 0)]], [0], sty, m, opacity, "none")
+        DIM seg = [AttrNum(tree, nid, "x1", 0), AttrNum(tree, nid, "y1", 0), AttrNum(tree, nid, "x2", 0), AttrNum(tree, nid, "y2", 0)]
+        DrawShape([seg], [0], sty, m, opacity, "none")
+        DrawMarkers(tree, [seg], [0], [], sty, m, opacity)
     ELSEIF tag$ = "polyline" THEN
         DIM pl = PointsPoly(tree, nid)
-        IF LEN(pl) >= 4 THEN DrawShape([pl], [0], sty, m, opacity, "#000")
+        IF LEN(pl) >= 4 THEN
+            DrawShape([pl], [0], sty, m, opacity, "#000")
+            DrawMarkers(tree, [pl], [0], [], sty, m, opacity)
+        ENDIF
     ELSEIF tag$ = "polygon" THEN
         DIM pg = PointsPoly(tree, nid)
-        IF LEN(pg) >= 4 THEN DrawShape([pg], [1], sty, m, opacity, "#000")
+        IF LEN(pg) >= 4 THEN
+            DrawShape([pg], [1], sty, m, opacity, "#000")
+            DrawMarkers(tree, [pg], [1], [], sty, m, opacity)
+        ENDIF
     ELSEIF tag$ = "path" THEN
         DIM parsed = PathPolys(XML.ATTR$(tree, nid, "d", ""), scale_px)
-        IF LEN(parsed{"polys"}) > 0 THEN DrawShape(parsed{"polys"}, parsed{"closed"}, sty, m, opacity, "#000")
+        IF LEN(parsed{"polys"}) > 0 THEN
+            DrawShape(parsed{"polys"}, parsed{"closed"}, sty, m, opacity, "#000")
+            DrawMarkers(tree, parsed{"polys"}, parsed{"closed"}, parsed{"verts"}, sty, m, opacity)
+        ENDIF
     ELSEIF tag$ = "text" THEN
         DrawText(AttrNum(tree, nid, "x", 0), AttrNum(tree, nid, "y", 0), TextContent$(tree, nid), sty, m, opacity)
     ENDIF
@@ -1553,6 +1735,8 @@ EXPORT FUNC RENDER(markup$, opts = 0)
     gRuleDecls = []
     gRuleSpec = []
     gGrads = {}
+    gMarkers = {}
+    gInMarker = 0
     gStackTag = []
     gStackCls = []
     CollectDefs(tree, root)
@@ -1563,6 +1747,7 @@ EXPORT FUNC RENDER(markup$, opts = 0)
     base{"font-size"} = "16"
     base{"font-weight"} = "400"
     base{"text-anchor"} = "start"
+    gBase = base
     DrawElement(tree, root, m, base, 1.0)
     gFontPath$ = saved_font$
     DIM img = {"width": gW, "height": gH, "channels": 4, "pixels": gPix}

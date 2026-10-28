@@ -1,6 +1,6 @@
 ' RASTER: SVG drawn into pixels and probed at known coordinates: fills,
 ' strokes, coverage at an edge, transforms, gradients, the style block,
-' opacity, paths with arcs, text from the font and from the bitmap
+' opacity, paths with arcs, markers, text from the font and from the bitmap
 ' fallback, the viewBox, a transparent page, and a chart from SVG written
 ' as a PNG that IMG reads back.
 
@@ -160,6 +160,27 @@ DIM boxed = RASTER.RENDER("<svg xmlns=" + Q$ + "http://www.w3.org/2000/svg" + Q$
 TESTKIT.EQ(IMG.WIDTH(boxed), 100, "the width attribute sets the pixels")
 TESTKIT.ISTRUE(IsColor(Px(boxed, 48, 50), 0, 0, 0), "and the viewBox maps the units onto them")
 TESTKIT.ISTRUE(IsWhite(Px(boxed, 52, 50)), "half way across")
+
+' ---- markers ----
+
+DIM arrow_def$ = "<defs><marker id='a' viewBox='0 0 10 10' refX='10' refY='5' markerWidth='5' markerHeight='5' orient='auto'><path d='M0 0 L10 5 L0 10 z' fill='context-stroke'/></marker><marker id='d' markerWidth='6' markerHeight='6' refX='3' refY='3' markerUnits='userSpaceOnUse'><circle cx='3' cy='3' r='3' fill='#0000ff'/></marker></defs>"
+DIM bare_img = RASTER.RENDER(head$ + "<line x1='10' y1='30' x2='60' y2='30' stroke='#ff0000' stroke-width='2'/>" + tail$)
+TESTKIT.ISTRUE(IsWhite(Px(bare_img, 55, 27)), "a line alone is two pixels thick")
+DIM arrow_img = RASTER.RENDER(head$ + arrow_def$ + "<line x1='10' y1='30' x2='60' y2='30' stroke='#ff0000' stroke-width='2' marker-end='url(#a)'/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(arrow_img, 53, 27), 255, 0, 0), "marker-end puts an arrowhead on its end, painted with context-stroke")
+TESTKIT.ISTRUE(IsWhite(Px(arrow_img, 15, 27)), "and none on its start")
+DIM down_img = RASTER.RENDER(head$ + arrow_def$ + "<line x1='80' y1='5' x2='80' y2='55' stroke='#00aa00' stroke-width='2' marker-end='url(#a)'/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(down_img, 77, 47), 0, 170, 0), "orient auto turns the head with the line")
+TESTKIT.ISTRUE(IsWhite(Px(down_img, 77, 10)), "a head only at the end")
+DIM mid_img = RASTER.RENDER(head$ + arrow_def$ + "<polyline points='10,50 40,10 70,50' fill='none' stroke='#000' style='marker-mid: url(#d)'/>" + tail$)
+TESTKIT.ISTRUE(IsColor(Px(mid_img, 40, 11), 0, 0, 255), "marker-mid sits on the middle vertex, in user space")
+TESTKIT.ISTRUE(NOT IsColor(Px(mid_img, 10, 49), 0, 0, 255), "but not on the first")
+DIM curve_img = RASTER.RENDER(head$ + arrow_def$ + "<path d='M10 50 C 10 10, 90 10, 90 50' fill='none' stroke='#000' style='marker: url(#d)'/>" + tail$)
+DIM n_marks = 0
+IF IsColor(Px(curve_img, 10, 50), 0, 0, 255) THEN n_marks = n_marks + 1
+IF IsColor(Px(curve_img, 90, 50), 0, 0, 255) THEN n_marks = n_marks + 1
+IF IsColor(Px(curve_img, 50, 20), 0, 0, 255) THEN n_marks = n_marks + 1
+TESTKIT.EQ(n_marks, 2, "a curve has markers on its two vertices, none on the points it was flattened into")
 
 ' ---- a chart, to a file and back ----
 
