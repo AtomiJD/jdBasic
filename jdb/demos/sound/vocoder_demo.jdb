@@ -1,0 +1,85 @@
+' vocoder_demo.jdb - the singing voice alone: a few lines of English,
+' spelled by LYRICS.SPELL$ and sung by SOUND.SING a syllable an eighth
+' note, over a soft pad, to judge how well the words come through.
+'
+' Usage: jdBasic vocoder_demo.jdb [--render out.wav]
+
+OPTION "EXPLICIT"
+
+IMPORT LYRICS
+
+DIM out$ AS STRING = ""
+DIM cli = OS.ARGS()
+DIM ai AS INTEGER
+FOR ai = 0 TO LEN(cli) - 1
+    IF cli[ai] = "--render" ANDALSO ai + 1 < LEN(cli) THEN out$ = cli[ai + 1]
+NEXT ai
+
+DIM LINES$ = ["hello world", "neon lights tonight", "we dance forever", "the moon is shining on the city", "one two three four five", "she sings in basic code"]
+DIM MELODY$ = ["a4", "c5", "e5", "d5", "c5", "a4", "g4", "a4", "c5", "d5", "e5", "c5"]
+DIM VOX AS INTEGER = 0
+DIM PAD AS INTEGER = 1
+
+IF out$ = "" THEN
+    SOUND.INIT "DEVICE"
+ELSE
+    SOUND.INIT "PULL"
+ENDIF
+SOUND.MASTER "FIXED", 0.6
+SOUND.BPM 100
+SOUND.REVERB 0.6, 0.3, 0.9, 0.2
+SOUND.VOICE VOX, "SAW", 0.015, 0.1, 0.85, 0.1
+SOUND.REVERBSEND VOX, 0.2
+SOUND.GAIN VOX, 0.7
+SOUND.VOICE PAD, "SAW", 1.0, 0.5, 0.8, 1.5
+SOUND.UNISON PAD, 4, 0.2, 1.0
+SOUND.FILTER PAD, 900, 0.2
+SOUND.GAIN PAD, 0.12
+
+LYRICS.INIT "neon", 1
+DIM lyric$ AS STRING = ""
+DIM bars$ AS STRING = ""
+DIM n_bars AS INTEGER = 0
+DIM m AS INTEGER = 0
+DIM li AS INTEGER
+FOR li = 0 TO LEN(LINES$) - 1
+    DIM sung$ AS STRING = LYRICS.SPELL$(LINES$[li])
+    PRINT LINES$[li]; "  ->  "; sung$
+    lyric$ = lyric$ + " " + sung$
+    DIM n AS INTEGER = LEN(SPLIT(sung$, " "))
+    ' eight eighths a bar, the line's notes first, then rests to a full bar and one more
+    DIM steps AS INTEGER = (INT((n + 7) / 8) + 1) * 8
+    DIM k AS INTEGER
+    DIM bar$ AS STRING = ""
+    FOR k = 0 TO steps - 1
+        IF k < n THEN
+            bar$ = bar$ + " " + MELODY$[m MOD LEN(MELODY$)]
+            m = m + 1
+        ELSE
+            bar$ = bar$ + " ~"
+        ENDIF
+        IF k MOD 8 = 7 THEN
+            bars$ = bars$ + " [" + LTRIM$(bar$) + "]"
+            bar$ = ""
+            n_bars = n_bars + 1
+        ENDIF
+    NEXT k
+NEXT li
+
+SOUND.SING VOX, LTRIM$(lyric$)
+SOUND.SEQ VOX, "legato(0.9, <" + LTRIM$(bars$) + ">)", "VOICE"
+SOUND.SEQ PAD, "legato(1, <[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>)", "VOICE"
+
+IF out$ <> "" THEN
+    SOUND.RECORD out$
+    DO WHILE SOUND.CYCLE() < n_bars
+        DIM blk = SOUND.RENDER(4410)
+    LOOP
+    SOUND.RECORD
+    PRINT "wrote "; out$; ", "; SOUND.SUNG(VOX); " syllables"
+ELSE
+    DO WHILE SOUND.CYCLE() < n_bars
+        SLEEP 50
+    LOOP
+ENDIF
+SOUND.RESET

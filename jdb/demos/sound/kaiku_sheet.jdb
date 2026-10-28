@@ -1,0 +1,53 @@
+' kaiku_sheet.jdb - a contact sheet of Kaiku: every pose, then the faces
+' and the sung vowels close up, written to a PNG for a look.
+'
+' Usage: jdBasic kaiku_sheet.jdb out.png
+
+IMPORT KAIKU
+
+DIM out$ = "kaiku_sheet.png"
+DIM cli = OS.ARGS()
+IF LEN(cli) > 1 THEN out$ = cli[LEN(cli) - 1]
+
+DIM POSE_LIST$ = ["idle", "sing", "sway_l", "sway_r", "cheer", "heart", "point", "wave", "peace", "jump", "bow"]
+DIM FACE_LIST$ = ["normal", "happy", "wink", "surprised", "normal", "normal", "normal"]
+DIM VOWEL_LIST$ = ["", "", "", "", "a", "o", "i"]
+
+SCREEN 1920, 1080, "kaiku sheet"
+KAIKU.INIT 400
+CLS 8, 8, 12
+
+' settles a pose: a second and a half of springs and hair
+SUB SETTLE(name$)
+    KAIKU.POSE name$
+    DIM f
+    FOR f = 1 TO 90
+        KAIKU.UPDATE 1 / 60, f / 30
+    NEXT f
+ENDSUB
+
+DIM i
+FOR i = 0 TO LEN(POSE_LIST$) - 1
+    KAIKU.FACE "normal"
+    KAIKU.SING "", 0
+    SETTLE POSE_LIST$[i]
+    KAIKU.RENDER
+    DIM cx = 160 + (i MOD 6) * 320
+    DIM cy = 360 + INT(i / 6) * 340
+    KAIKU.DRAW cx, cy, 300, 255
+    TEXT cx + 70, cy - 20, POSE_LIST$[i], 160, 160, 180
+NEXT i
+
+' the faces, close up: she is drawn tall with her feet below the screen
+FOR i = 0 TO LEN(FACE_LIST$) - 1
+    KAIKU.FACE FACE_LIST$[i]
+    KAIKU.SING VOWEL_LIST$[i], 1
+    SETTLE "idle"
+    KAIKU.RENDER
+    DIM fx = 140 + i * 272
+    KAIKU.DRAW fx, 1420, 600, 255
+    TEXT fx - 40, 1050, FACE_LIST$[i] + " " + VOWEL_LIST$[i], 160, 160, 180
+NEXT i
+
+GFX.SAVE_SCREENSHOT out$
+SCREENFLIP

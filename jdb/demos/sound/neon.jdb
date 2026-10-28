@@ -1,0 +1,1124 @@
+' neon.jdb - the elements of a neon music video in 3D: wireframe
+' objects seen through one camera, and flat instrument panels (dials,
+' meters, scopes, words) drawn into images and set on any plane in
+' space. A frame goes into an image of its own between NEON.BEGIN and
+' NEON.FINISH; FINISH adds it to the screen with a glow made of ever
+' smaller copies of it laid on top.
+'
+'   IMPORT NEON
+'   NEON.INIT 1920, 1080
+'   NEON.FEED SOUND.GET_WAVE(), beat, dt
+'   NEON.CAMERA 0, 1.6, -8, 0, 0, 60
+'   NEON.BEGIN
+'   NEON.MOON -3, 3, 6, 1.2, 0
+'   NEON.PANEL "dial", 3, 2, 5, 2, -20, 0, 0, 1
+'   NEON.FINISH
+'
+' World units, y up; the camera at yaw 0 looks along +z. Angles are in
+' degrees, colours are indices into the palette: 0 cyan, 1 pink,
+' 2 violet, 3 white, 4 amber, 5 green.
+
+EXPORT MODULE NEON
+
+DIM SW AS INTEGER = 1920
+DIM SH AS INTEGER = 1080
+DIM CX AS DOUBLE = 960
+DIM CY AS DOUBLE = 540
+DIM FOCAL AS DOUBLE = 935
+DIM NEAR AS DOUBLE = 0.2
+DIM FOG AS DOUBLE = 40
+DIM LINE_W AS DOUBLE = 2.2
+DIM GLOW AS DOUBLE = 1
+
+DIM cam_x AS DOUBLE = 0
+DIM cam_y AS DOUBLE = 0
+DIM cam_z AS DOUBLE = -8
+DIM cyaw AS DOUBLE = 1
+DIM syaw AS DOUBLE = 0
+DIM cpit AS DOUBLE = 1
+DIM spit AS DOUBLE = 0
+
+DIM scene_img AS INTEGER = 0
+DIM mip_img = [0, 0, 0, 0]
+
+DIM PAL = [[80, 236, 255], [255, 60, 150], [178, 122, 255], [235, 240, 255], [255, 200, 70], [90, 255, 170]]
+DIM cr AS DOUBLE = 255
+DIM cg AS DOUBLE = 255
+DIM cb AS DOUBLE = 255
+
+' results of ROTATE and PROJECT
+DIM qx = [0.0]
+DIM qy = [0.0]
+DIM qz = [0.0]
+DIM sx = [0.0]
+DIM sy = [0.0]
+DIM sdepth = [0.0]
+
+' what the music is doing
+DIM N_BANDS AS INTEGER = 32
+DIM spec = [0.0]
+DIM peak = [0.0]
+DIM BAND_BIN = [0]
+DIM HANN = [0.0]
+DIM scope = [0.0]
+DIM ecg = [0.0]
+DIM vu = [0.0]
+DIM level AS DOUBLE = 0
+DIM beat_now AS DOUBLE = 0
+DIM pulse AS DOUBLE = 0
+DIM bpm_seen AS DOUBLE = 120
+DIM clock AS DOUBLE = 0
+DIM frame_no AS INTEGER = 0
+
+' wireframe models: pairs of points, one pair per edge
+DIM MX = {}
+DIM MY = {}
+DIM MZ = {}
+DIM bx = [0.0]
+DIM by = [0.0]
+DIM bz = [0.0]
+DIM nb AS INTEGER = 0
+DIM CITY_BAR = [0]
+DIM GRID_BAND = [0]
+DIM STAR_X = [0.0]
+DIM STAR_Y = [0.0]
+DIM STAR_Z = [0.0]
+DIM FIB_X = [0.0]
+DIM FIB_Y = [0.0]
+DIM FIB_Z = [0.0]
+DIM BLIP_A = [0.0]
+DIM BLIP_R = [0.0]
+
+' panels: one image per kind, redrawn at most once a frame per colour
+DIM PANEL_KINDS$ = ["dial", "spectrum", "scope", "radar", "hex", "vu", "rings", "counter", "ecg", "hud", "polar", "word"]
+DIM PANEL_W = [512, 512, 512, 512, 512, 512, 512, 512, 512, 512, 512, 1024]
+DIM PANEL_H = [512, 256, 256, 512, 512, 256, 512, 256, 256, 512, 512, 256]
+DIM panel_img = [0]
+DIM panel_stamp = [0]
+DIM FONT$ AS STRING = ""
+DIM FONT_SIZE AS INTEGER = 22
+DIM word_now$ AS STRING = ""
+DIM word_drawn$ AS STRING = "-"
+
+' segments of a seven-segment digit: a b c d e f g, in a 0.6 x 1 cell
+DIM SEG_X1 = [0.0, 0.6, 0.6, 0.0, 0.0, 0.0, 0.0]
+DIM SEG_Y1 = [0.0, 0.0, 0.5, 1.0, 0.5, 0.0, 0.5]
+DIM SEG_X2 = [0.6, 0.6, 0.6, 0.6, 0.0, 0.0, 0.6]
+DIM SEG_Y2 = [0.0, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5]
+DIM DIGIT_SEGS$ = ["abcdef", "bc", "abged", "abgcd", "fgbc", "afgcd", "afgedc", "abc", "abcdefg", "abfgcd"]
+
+' coastlines as lon, lat pairs; 999 ends a coast
+DIM COASTS = [-168, 66, -140, 70, -95, 72, -80, 63, -60, 55, -66, 45, -75, 35, -81, 25, -97, 26, -97, 19, -87, 15, -80, 8, -92, 15, -105, 20, -117, 32, -124, 40, -125, 49, -135, 58, -152, 58, -165, 62, -168, 66, 999, 999, -80, 8, -72, 12, -60, 10, -50, 0, -35, -6, -39, -15, -48, -26, -58, -38, -65, -48, -70, -55, -74, -45, -72, -30, -70, -18, -76, -12, -81, -5, -80, 8, 999, 999, -10, 36, -9, 44, -1, 46, -4, 48, 2, 51, 8, 54, 10, 58, 5, 62, 15, 69, 28, 71, 40, 67, 60, 70, 80, 73, 105, 78, 140, 72, 179, 68, 170, 60, 160, 58, 142, 50, 140, 42, 128, 35, 122, 30, 120, 22, 108, 18, 105, 9, 100, 14, 98, 8, 92, 22, 80, 15, 77, 8, 72, 20, 66, 25, 57, 25, 52, 28, 48, 30, 56, 24, 58, 20, 52, 15, 44, 12, 38, 22, 34, 28, 35, 32, 28, 36, 26, 40, 22, 37, 15, 38, 12, 44, 8, 44, 3, 43, -1, 37, -10, 36, 999, 999, -17, 21, -17, 15, -12, 8, -5, 5, 5, 4, 9, 4, 10, -3, 13, -12, 12, -18, 15, -27, 20, -35, 26, -34, 33, -28, 35, -20, 40, -15, 40, -5, 44, 0, 51, 11, 43, 12, 38, 18, 33, 30, 20, 32, 10, 37, 0, 36, -6, 35, -10, 30, -17, 21, 999, 999, 114, -22, 114, -34, 123, -34, 132, -32, 138, -35, 146, -39, 150, -37, 153, -28, 146, -19, 142, -11, 136, -12, 130, -12, 122, -17, 114, -22, 999, 999, -55, 60, -44, 60, -20, 70, -20, 80, -40, 83, -65, 79, -55, 70, -55, 60, 999, 999]
+
+FUNC DSIN(a AS DOUBLE) AS DOUBLE
+    RETURN SIN(a * MATH.PI / 180)
+ENDFUNC
+
+FUNC DCOS(a AS DOUBLE) AS DOUBLE
+    RETURN COS(a * MATH.PI / 180)
+ENDFUNC
+
+FUNC CLAMP01(x AS DOUBLE) AS DOUBLE
+    IF x < 0 THEN RETURN 0
+    IF x > 1 THEN RETURN 1
+    RETURN x
+ENDFUNC
+
+' a0, b0, a1, b1, ...
+FUNC ZIP(a, b)
+    RETURN FLATTEN(TRANSPOSE(RESHAPE(APPEND(a, b), [2, LEN(a)])))
+ENDFUNC
+
+' Element-wise larger of two arrays
+FUNC VMAX(a, b)
+    DIM pick = a > b
+    RETURN a * pick + b * (1 - pick)
+ENDFUNC
+
+SUB SETCOL(ci AS INTEGER, k AS DOUBLE)
+    DIM kk AS DOUBLE = CLAMP01(k)
+    cr = PAL[ci][0] * kk
+    cg = PAL[ci][1] * kk
+    cb = PAL[ci][2] * kk
+ENDSUB
+
+' How bright a thing at (x, y, z) shows: dimmer towards the fog
+FUNC FADE(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE) AS DOUBLE
+    DIM d AS DOUBLE = SQR((x - cam_x) ^ 2 + (y - cam_y) ^ 2 + (z - cam_z) ^ 2)
+    RETURN CLAMP01(1.35 - d / FOG)
+ENDFUNC
+
+' ── Space ───────────────────────────────────────────────────────
+
+' Turns points about their origin: roll about z, then pitch about x,
+' then yaw about y; sets qx, qy, qz
+SUB ROTATE(xs, ys, zs, yaw AS DOUBLE, pitch AS DOUBLE, roll AS DOUBLE)
+    DIM c1 AS DOUBLE = DCOS(yaw)
+    DIM s1 AS DOUBLE = DSIN(yaw)
+    DIM c2 AS DOUBLE = DCOS(pitch)
+    DIM s2 AS DOUBLE = DSIN(pitch)
+    DIM c3 AS DOUBLE = DCOS(roll)
+    DIM s3 AS DOUBLE = DSIN(roll)
+    DIM x1 = xs * c3 - ys * s3
+    DIM y1 = xs * s3 + ys * c3
+    DIM y2 = y1 * c2 - zs * s2
+    DIM z2 = y1 * s2 + zs * c2
+    qx = x1 * c1 + z2 * s1
+    qy = y2
+    qz = z2 * c1 - x1 * s1
+ENDSUB
+
+' World points to screen: sets sx, sy (1E9 behind the camera) and sdepth
+SUB PROJECT(xs, ys, zs)
+    DIM dx = xs - cam_x
+    DIM dy = ys - cam_y
+    DIM dz = zs - cam_z
+    DIM x1 = dx * cyaw - dz * syaw
+    DIM z1 = dx * syaw + dz * cyaw
+    DIM y2 = dy * cpit - z1 * spit
+    DIM z2 = dy * spit + z1 * cpit
+    DIM ok = z2 > NEAR
+    DIM zd = z2 * ok + (1 - ok)
+    sx = (CX + FOCAL * x1 / zd) * ok + 1E9 * (1 - ok)
+    sy = (CY - FOCAL * y2 / zd) * ok + 1E9 * (1 - ok)
+    sdepth = z2
+ENDSUB
+
+' A model turned, sized and placed, drawn edge by edge
+SUB WIRE(name$, x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, yaw AS DOUBLE, pitch AS DOUBLE, roll AS DOUBLE, ci AS INTEGER, k AS DOUBLE)
+    ROTATE MX{name$}, MY{name$}, MZ{name$}, yaw, pitch, roll
+    PROJECT qx * size + x, qy * size + y, qz * size + z
+    SETCOL ci, k * FADE(x, y, z)
+    GFX.LINES sx, sy, LINE_W, cr, cg, cb, TRUE
+ENDSUB
+
+' A model on a sphere around its origin: the far side faint, the near
+' side bright
+SUB WIRE_GLOBE(name$, x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, yaw AS DOUBLE, pitch AS DOUBLE, roll AS DOUBLE, ci AS INTEGER, k_near AS DOUBLE, k_far AS DOUBLE)
+    ROTATE MX{name$}, MY{name$}, MZ{name$}, yaw, pitch, roll
+    DIM facing = qx * (cam_x - x) + qy * (cam_y - y) + qz * (cam_z - z) > size
+    PROJECT qx * size + x, qy * size + y, qz * size + z
+    DIM fx = sx
+    DIM fy = sy
+    DIM fade_k AS DOUBLE = FADE(x, y, z)
+    IF k_far > 0 THEN
+        SETCOL ci, k_far * fade_k
+        GFX.LINES fx * (1 - facing) + 1E9 * facing, fy, LINE_W * 0.7, cr, cg, cb, TRUE
+    ENDIF
+    SETCOL ci, k_near * fade_k
+    GFX.LINES fx * facing + 1E9 * (1 - facing), fy, LINE_W, cr, cg, cb, TRUE
+ENDSUB
+
+' The outline of a sphere of radius size at (x, y, z) as the camera sees it
+SUB SILHOUETTE(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, w AS DOUBLE)
+    PROJECT([x], [y], [z])
+    IF sx[0] > 1E8 THEN RETURN
+    DIM rad AS DOUBLE = FOCAL * size / sdepth[0]
+    DIM a = IOTA(65, 0) * 2 * MATH.PI / 64
+    GFX.LINES sx[0] + rad * COS(a), sy[0] + rad * SIN(a), w, cr, cg, cb
+ENDSUB
+
+' ── Model building ──────────────────────────────────────────────
+
+SUB B_EDGE(x1 AS DOUBLE, y1 AS DOUBLE, z1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE, z2 AS DOUBLE)
+    bx[nb] = x1
+    by[nb] = y1
+    bz[nb] = z1
+    bx[nb + 1] = x2
+    by[nb + 1] = y2
+    bz[nb + 1] = z2
+    nb = nb + 2
+ENDSUB
+
+SUB B_POLY(xs, ys, zs, closed AS INTEGER)
+    DIM n AS INTEGER = LEN(xs)
+    DIM last AS INTEGER = n - 2
+    IF closed THEN last = n - 1
+    DIM i AS INTEGER
+    FOR i = 0 TO last
+        DIM j AS INTEGER = (i + 1) MOD n
+        B_EDGE xs[i], ys[i], zs[i], xs[j], ys[j], zs[j]
+    NEXT i
+ENDSUB
+
+SUB B_SAVE(name$)
+    MX{name$} = TAKE(nb, bx)
+    MY{name$} = TAKE(nb, by)
+    MZ{name$} = TAKE(nb, bz)
+    nb = 0
+ENDSUB
+
+' Circles of latitude and half circles of longitude on the unit sphere
+SUB B_SPHERE(n_lat AS INTEGER, n_lon AS INTEGER, segs AS INTEGER)
+    DIM t = IOTA(segs, 0) * 2 * MATH.PI / segs
+    DIM h = IOTA(INT(segs / 2) + 1, 0) * MATH.PI / INT(segs / 2) - MATH.PI / 2
+    DIM i AS INTEGER
+    FOR i = 1 TO n_lat - 1
+        DIM lat AS DOUBLE = -MATH.PI / 2 + MATH.PI * i / n_lat
+        B_POLY COS(t) * COS(lat), ZEROS(segs) + SIN(lat), SIN(t) * COS(lat), TRUE
+    NEXT i
+    FOR i = 0 TO n_lon - 1
+        DIM lon AS DOUBLE = 2 * MATH.PI * i / n_lon
+        B_POLY COS(h) * COS(lon), SIN(h), COS(h) * SIN(lon), FALSE
+    NEXT i
+ENDSUB
+
+' A circle on the unit sphere around (lon, lat), ang degrees across
+SUB B_CAP(lon AS DOUBLE, lat AS DOUBLE, ang AS DOUBLE, segs AS INTEGER)
+    DIM t = IOTA(segs, 0) * 2 * MATH.PI / segs
+    DIM ca AS DOUBLE = DCOS(ang)
+    DIM sa AS DOUBLE = DSIN(ang)
+    DIM dxx AS DOUBLE = DCOS(lat) * DCOS(lon)
+    DIM dyy AS DOUBLE = DSIN(lat)
+    DIM dzz AS DOUBLE = DCOS(lat) * DSIN(lon)
+    DIM ux AS DOUBLE = -DSIN(lon)
+    DIM uz AS DOUBLE = DCOS(lon)
+    DIM vx AS DOUBLE = -DSIN(lat) * DCOS(lon)
+    DIM vy AS DOUBLE = DCOS(lat)
+    DIM vz AS DOUBLE = -DSIN(lat) * DSIN(lon)
+    B_POLY ca * dxx + sa * (COS(t) * ux + SIN(t) * vx), ca * dyy + sa * SIN(t) * vy, ca * dzz + sa * (COS(t) * uz + SIN(t) * vz), TRUE
+ENDSUB
+
+' The coasts, each step between two points cut in four along the sphere
+SUB B_COASTS()
+    DIM i AS INTEGER = 0
+    DIM n AS INTEGER = LEN(COASTS)
+    DO WHILE i + 3 < n
+        IF COASTS[i] = 999 THEN
+            i = i + 2
+            CONTINUEDO
+        ENDIF
+        IF COASTS[i + 2] = 999 THEN
+            i = i + 2
+            CONTINUEDO
+        ENDIF
+        DIM f = IOTA(5, 0) / 4
+        DIM lon = (COASTS[i] + (COASTS[i + 2] - COASTS[i]) * f) * MATH.PI / 180
+        DIM lat = (COASTS[i + 1] + (COASTS[i + 3] - COASTS[i + 1]) * f) * MATH.PI / 180
+        B_POLY COS(lat) * COS(lon), SIN(lat), COS(lat) * SIN(lon), FALSE
+        i = i + 2
+    LOOP
+ENDSUB
+
+SUB B_TORUS(big AS DOUBLE, small AS DOUBLE, n_ring AS INTEGER, n_tube AS INTEGER)
+    DIM t = IOTA(16, 0) * 2 * MATH.PI / 16
+    DIM u = IOTA(48, 0) * 2 * MATH.PI / 48
+    DIM i AS INTEGER
+    FOR i = 0 TO n_ring - 1
+        DIM phi AS DOUBLE = 2 * MATH.PI * i / n_ring
+        B_POLY((big + small * COS(t)) * COS(phi), small * SIN(t), (big + small * COS(t)) * SIN(phi), TRUE)
+    NEXT i
+    FOR i = 0 TO n_tube - 1
+        DIM th AS DOUBLE = 2 * MATH.PI * i / n_tube
+        B_POLY((big + small * COS(th)) * COS(u), ZEROS(48) + small * SIN(th), (big + small * COS(th)) * SIN(u), TRUE)
+    NEXT i
+ENDSUB
+
+' Edges between the points of a set that lie a given distance apart
+SUB B_EDGES_AT(px, py, pz, d AS DOUBLE)
+    DIM n AS INTEGER = LEN(px)
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    FOR i = 0 TO n - 2
+        FOR j = i + 1 TO n - 1
+            DIM dd AS DOUBLE = SQR((px[i] - px[j]) ^ 2 + (py[i] - py[j]) ^ 2 + (pz[i] - pz[j]) ^ 2)
+            IF ABS(dd - d) < 0.01 THEN B_EDGE px[i], py[i], pz[i], px[j], py[j], pz[j]
+        NEXT j
+    NEXT i
+ENDSUB
+
+SUB BUILD_MODELS()
+    bx = ZEROS(20000)
+    by = ZEROS(20000)
+    bz = ZEROS(20000)
+    nb = 0
+
+    B_SPHERE 9, 12, 36
+    B_CAP 30, 20, 18, 16
+    B_CAP -60, -25, 11, 12
+    B_CAP 110, 40, 14, 14
+    B_CAP 200, -10, 22, 18
+    B_CAP 280, 50, 9, 10
+    B_CAP 160, -55, 12, 12
+    B_SAVE "moon"
+
+    B_SPHERE 6, 12, 48
+    B_SAVE "grat"
+    B_COASTS
+    B_SAVE "coasts"
+
+    B_SPHERE 6, 8, 24
+    B_SAVE "ball"
+
+    B_TORUS 1, 0.38, 24, 8
+    B_SAVE "torus"
+
+    DIM g AS DOUBLE = (1 + SQR(5)) / 2
+    DIM n AS DOUBLE = SQR(1 + g * g)
+    DIM ix = [-1, 1, -1, 1, 0, 0, 0, 0, g, g, -g, -g] / n
+    DIM iy = [g, g, -g, -g, -1, 1, -1, 1, 0, 0, 0, 0] / n
+    DIM iz = [0, 0, 0, 0, g, g, -g, -g, -1, 1, -1, 1] / n
+    B_EDGES_AT ix, iy, iz, 2 / n
+    B_SAVE "ico"
+
+    DIM cx8 = [-1, 1, -1, 1, -1, 1, -1, 1]
+    DIM cy8 = [-1, -1, 1, 1, -1, -1, 1, 1]
+    DIM cz8 = [-1, -1, -1, -1, 1, 1, 1, 1]
+    B_EDGES_AT cx8, cy8, cz8, 2
+    B_EDGES_AT cx8 * 0.5, cy8 * 0.5, cz8 * 0.5, 1
+    DIM i AS INTEGER
+    FOR i = 0 TO 7
+        B_EDGE cx8[i], cy8[i], cz8[i], cx8[i] * 0.5, cy8[i] * 0.5, cz8[i] * 0.5
+    NEXT i
+    B_SAVE "cube"
+
+    B_EDGES_AT([1, -1, 0, 0, 0, 0], [0, 0, 1, -1, 0, 0], [0, 0, 0, 0, 1, -1], SQR(2))
+    B_SAVE "octa"
+
+    B_POLY([-1, 1, 1, -1], [-1, -1, -1, -1], [-1, -1, 1, 1], TRUE)
+    FOR i = 0 TO 3
+        DIM px AS DOUBLE = [-1, 1, 1, -1][i]
+        DIM pz AS DOUBLE = [-1, -1, 1, 1][i]
+        B_EDGE px, -1, pz, 0, 1.3, 0
+    NEXT i
+    FOR i = 1 TO 3
+        DIM f AS DOUBLE = 1 - i * 0.25
+        DIM hy AS DOUBLE = -1 + 2.3 * i * 0.25
+        B_POLY([-f, f, f, -f], [hy, hy, hy, hy], [-f, -f, f, f], TRUE)
+    NEXT i
+    B_SAVE "pyramid"
+
+    DIM ht = IOTA(96, 0) * 6 * MATH.PI / 95
+    DIM helix_y = ht / (3 * MATH.PI) - 1
+    B_POLY 0.5 * COS(ht), helix_y, 0.5 * SIN(ht), FALSE
+    B_POLY 0.5 * COS(ht + MATH.PI), helix_y, 0.5 * SIN(ht + MATH.PI), FALSE
+    FOR i = 0 TO 95 STEP 4
+        B_EDGE 0.5 * COS(ht[i]), helix_y[i], 0.5 * SIN(ht[i]), 0.5 * COS(ht[i] + MATH.PI), helix_y[i], 0.5 * SIN(ht[i] + MATH.PI)
+    NEXT i
+    B_SAVE "helix"
+
+    DIM kt = IOTA(160, 0) * 2 * MATH.PI / 160
+    DIM kr = (COS(3 * kt) + 2) / 3
+    B_POLY kr * COS(2 * kt), 0 - SIN(3 * kt) / 3, kr * SIN(2 * kt), TRUE
+    B_SAVE "knot"
+
+    DIM rt = IOTA(64, 0) * 2 * MATH.PI / 64
+    B_POLY COS(rt), ZEROS(64), SIN(rt), TRUE
+    B_SAVE "ring"
+
+    B_POLY([1, 0.7071, 0, -0.7071, -1, -0.7071, 0, 0.7071], [0, 0.7071, 1, 0.7071, 0, -0.7071, -1, -0.7071], ZEROS(8), TRUE)
+    B_SAVE "oct"
+
+    ' the city: 32 boxes, one per band, y 0 at the foot and 1 at the top
+    DIM bars = ZEROS(32 * 24)
+    DIM k AS INTEGER
+    FOR k = 0 TO 31
+        DIM gx AS DOUBLE = (k MOD 8) - 3.5
+        DIM gz AS DOUBLE = INT(k / 8) - 1.5
+        DIM base AS INTEGER = nb
+        B_EDGES_AT gx + cx8 * 0.35, (cy8 + 1) / 2, gz + cz8 * 0.35, 0.7
+        B_EDGES_AT gx + cx8 * 0.35, (cy8 + 1) / 2, gz + cz8 * 0.35, 1
+        DIM ed AS INTEGER
+        FOR ed = base TO nb - 1
+            bars[ed] = k
+        NEXT ed
+    NEXT k
+    CITY_BAR = TAKE(nb, bars)
+    B_SAVE "city"
+
+    ' the terrain: a 24 x 24 grid in -0.5..0.5, lines both ways
+    DIM gu = IOTA(24, 0) / 23 - 0.5
+    FOR i = 0 TO 23
+        B_POLY gu, ZEROS(24), ZEROS(24) + gu[i], FALSE
+        B_POLY ZEROS(24) + gu[i], ZEROS(24), gu, FALSE
+    NEXT i
+    B_SAVE "grid"
+    GRID_BAND = INT((MX{"grid"} + 0.5) * 31.99)
+
+    ' stars around the camera, a sphere of points, radar blips
+    STAR_X = ZEROS(300)
+    STAR_Y = ZEROS(300)
+    STAR_Z = ZEROS(300)
+    FOR i = 0 TO 299
+        STAR_X[i] = RANDOM(-30, 30)
+        STAR_Y[i] = RANDOM(-18, 18)
+        STAR_Z[i] = RANDOM(0, 60)
+    NEXT i
+    DIM fi = IOTA(260, 0) + 0.5
+    DIM fy = 1 - 2 * fi / 260
+    DIM fr = SQR(1 - fy * fy)
+    DIM fa = fi * MATH.PI * (3 - SQR(5))
+    FIB_X = fr * COS(fa)
+    FIB_Y = fy
+    FIB_Z = fr * SIN(fa)
+    BLIP_A = ZEROS(9)
+    BLIP_R = ZEROS(9)
+    FOR i = 0 TO 8
+        BLIP_A[i] = RANDOM(0, 360)
+        BLIP_R[i] = RANDOM(40, 210)
+    NEXT i
+ENDSUB
+
+' ── Setup and frame ─────────────────────────────────────────────
+
+EXPORT SUB INIT(w AS INTEGER, h AS INTEGER)
+    SW = w
+    SH = h
+    CX = w / 2
+    CY = h / 2
+    scene_img = GFX.NEWTARGET(w, h)
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        mip_img[i] = GFX.NEWTARGET(INT(w / 2 ^ (i + 1)), INT(h / 2 ^ (i + 1)))
+    NEXT i
+    panel_img = ZEROS(LEN(PANEL_KINDS$))
+    panel_stamp = ZEROS(LEN(PANEL_KINDS$)) - 1
+    FOR i = 0 TO LEN(PANEL_KINDS$) - 1
+        panel_img[i] = GFX.NEWTARGET(PANEL_W[i], PANEL_H[i])
+    NEXT i
+    spec = ZEROS(N_BANDS)
+    peak = ZEROS(N_BANDS)
+    scope = ZEROS(256)
+    ecg = ZEROS(160)
+    vu = ZEROS(8)
+    DIM bands = IOTA(N_BANDS, 0)
+    BAND_BIN = INT(2 + 3 * (60 ^ (bands / (N_BANDS - 1)) - 1))
+    HANN = 0.5 - 0.5 * COS(IOTA(512, 0) * 2 * MATH.PI / 511)
+    IF FILE.EXISTS("jdbasic_default.ttf") THEN FONT$ = "jdbasic_default.ttf"
+    IF FONT$ <> "" THEN SETFONT FONT$, FONT_SIZE
+    BUILD_MODELS
+    CAMERA 0, 0, -8, 0, 0, 60
+ENDSUB
+
+' Where the camera stands and looks; fov is the horizontal field of view
+EXPORT SUB CAMERA(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, yaw AS DOUBLE, pitch AS DOUBLE, fov AS DOUBLE)
+    cam_x = x
+    cam_y = y
+    cam_z = z
+    cyaw = DCOS(yaw)
+    syaw = DSIN(yaw)
+    cpit = DCOS(pitch)
+    spit = DSIN(pitch)
+    FOCAL = (SW / 2) / TAN(fov * MATH.PI / 360)
+ENDSUB
+
+' Where a world point lands on the screen, and how many pixels one world
+' unit spans there (0 behind the camera)
+EXPORT FUNC VIEW_X(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE) AS DOUBLE
+    PROJECT([x], [y], [z])
+    RETURN sx[0]
+ENDFUNC
+
+EXPORT FUNC VIEW_Y(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE) AS DOUBLE
+    PROJECT([x], [y], [z])
+    RETURN sy[0]
+ENDFUNC
+
+EXPORT FUNC VIEW_SCALE(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE) AS DOUBLE
+    PROJECT([x], [y], [z])
+    IF sdepth[0] <= NEAR THEN RETURN 0
+    RETURN FOCAL / sdepth[0]
+ENDFUNC
+
+' How strong the glow is, 0 none, 1 the default
+EXPORT SUB GLOW_LEVEL(k AS DOUBLE)
+    GLOW = k
+ENDSUB
+
+' Listens to the music: the last samples of the output, the beat count
+' and the seconds since the last frame
+EXPORT SUB FEED(wave, beat AS DOUBLE, dt AS DOUBLE)
+    clock = clock + dt
+    IF dt > 0 ANDALSO beat > beat_now THEN bpm_seen = bpm_seen + ((beat - beat_now) / dt * 60 - bpm_seen) * 0.05
+    beat_now = beat
+    pulse = EXP(0 - (beat - INT(beat)) * 5)
+    DIM ph AS DOUBLE = beat - INT(beat)
+    DIM beat_v AS DOUBLE = 0.9 * EXP(0 - ((ph - 0.05) / 0.012) ^ 2) - 0.35 * EXP(0 - ((ph - 0.09) / 0.015) ^ 2) + 0.12 * EXP(0 - ((ph - 0.32) / 0.05) ^ 2)
+    ecg = APPEND(DROP(1, ecg), [beat_v + 0.1 * level])
+    DIM n AS INTEGER = LEN(wave)
+    IF n < 512 THEN RETURN
+    DIM w = TAKE(-512, wave)
+    level = level * 0.8 + 0.2 * CLAMP01(SQR(SUM(w * w) / 512) * 3)
+    scope = w[IOTA(256, 0) * 2]
+    DIM f = FFT(w * HANN)
+    DIM re = SLICE(f, 1, 0)
+    DIM im = SLICE(f, 1, 1)
+    DIM mag = SQR(re * re + im * im)
+    DIM bnd = (mag[BAND_BIN - 1] + mag[BAND_BIN] + mag[BAND_BIN + 1]) / 3
+    DIM v = LOG(1 + bnd) / LOG(40)
+    v = v * (v < 1) + (v >= 1)
+    spec = VMAX(spec * (0.86 ^ (dt * 30)), v)
+    peak = VMAX(peak - dt * 0.4, spec)
+ENDSUB
+
+EXPORT FUNC LEVEL() AS DOUBLE
+    RETURN level
+ENDFUNC
+
+EXPORT FUNC PULSE() AS DOUBLE
+    RETURN pulse
+ENDFUNC
+
+' One band of the spectrum, 0 the lowest to 31, as 0-1
+EXPORT FUNC SPECTRUM_BAND(i AS INTEGER) AS DOUBLE
+    RETURN spec[i]
+ENDFUNC
+
+' Starts a frame: everything up to FINISH goes into the scene image
+EXPORT SUB BEGIN()
+    frame_no = frame_no + 1
+    GFX.TARGET scene_img, TRUE
+    CLS 0, 0, 0
+    GFX.BLEND "ADD"
+ENDSUB
+
+' Adds the scene to the screen with its glow: half, quarter, eighth and
+' sixteenth size copies, each blurrier than the last, stretched over it
+EXPORT SUB FINISH()
+    FINISH_AT 0, 0, SW, SH
+ENDSUB
+
+' FINISH into the rectangle at (x, y), w x h pixels of the screen
+EXPORT SUB FINISH_AT(x AS DOUBLE, y AS DOUBLE, w AS DOUBLE, h AS DOUBLE)
+    GFX.BLEND "BLEND"
+    DIM src AS INTEGER = scene_img
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        DIM mw AS DOUBLE = INT(SW / 2 ^ (i + 1))
+        DIM mh AS DOUBLE = INT(SH / 2 ^ (i + 1))
+        GFX.TARGET mip_img[i], TRUE
+        GFX.DRAWQUAD src, [0, mw, mw, 0], [0, 0, mh, mh], 255, "NONE", 1
+        src = mip_img[i]
+    NEXT i
+    GFX.TARGET
+    DIM fx = [x, x + w, x + w, x]
+    DIM fy = [y, y, y + h, y + h]
+    GFX.DRAWQUAD scene_img, fx, fy, 255, "ADD", 1
+    IF GLOW > 0 THEN
+        GFX.DRAWQUAD mip_img[1], fx, fy, CLAMP01(0.45 * GLOW) * 255, "ADD", 1
+        GFX.DRAWQUAD mip_img[2], fx, fy, CLAMP01(0.7 * GLOW) * 255, "ADD", 1
+        GFX.DRAWQUAD mip_img[3], fx, fy, CLAMP01(0.9 * GLOW) * 255, "ADD", 1
+    ENDIF
+ENDSUB
+
+' ── The 3D elements ─────────────────────────────────────────────
+
+' A wire moon with its craters, turned by spin
+EXPORT SUB MOON(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE)
+    WIRE_GLOBE "moon", x, y, z, size, spin, 18, 0, 3, 0.9, 0.18
+    SETCOL 3, 0.6 * FADE(x, y, z)
+    SILHOUETTE x, y, z, size, LINE_W * 1.5
+ENDSUB
+
+' The earth as coasts on a faint net of latitudes and longitudes
+EXPORT SUB EARTH(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE)
+    WIRE_GLOBE "grat", x, y, z, size, spin, 20, 0, 0, 0.3, 0.06
+    WIRE_GLOBE "coasts", x, y, z, size, spin, 20, 0, 5, 1, 0
+    SETCOL 0, 0.8 * FADE(x, y, z)
+    SILHOUETTE x, y, z, size, LINE_W * 1.6
+    SETCOL 0, 0.25 * FADE(x, y, z)
+    SILHOUETTE x, y, z, size * 1.08, LINE_W
+ENDSUB
+
+EXPORT SUB TORUS(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE, ci AS INTEGER)
+    WIRE "torus", x, y, z, size * (1 + 0.06 * pulse), spin, 60 + spin * 0.3, 0, ci, 0.85
+ENDSUB
+
+EXPORT SUB ICO(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE, ci AS INTEGER)
+    WIRE "ico", x, y, z, size * (1 + 0.12 * pulse), spin, spin * 0.7, spin * 0.3, ci, 1
+    WIRE "ico", x, y, z, size * 0.45, 0 - spin * 1.5, spin, 0, ci, 0.5
+ENDSUB
+
+' A cube within a cube, corners joined
+EXPORT SUB HYPERCUBE(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE, ci AS INTEGER)
+    WIRE "cube", x, y, z, size * (1 + 0.08 * pulse), spin, spin * 0.6, 20, ci, 0.95
+ENDSUB
+
+EXPORT SUB PYRAMID(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE, ci AS INTEGER)
+    WIRE "pyramid", x, y + 0.1 * size * pulse, z, size, spin, 0, 0, ci, 0.95
+ENDSUB
+
+EXPORT SUB HELIX(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE, ci AS INTEGER)
+    WIRE "helix", x, y, z, size, spin, 0, 0, ci, 0.9
+ENDSUB
+
+EXPORT SUB KNOT(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE, ci AS INTEGER)
+    WIRE "knot", x, y, z, size * (1 + 0.1 * pulse), spin, 70, spin * 0.5, ci, 1
+ENDSUB
+
+' A small planet with three tilted orbits and a satellite on each
+EXPORT SUB ORBITS(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE, ci AS INTEGER)
+    WIRE_GLOBE "ball", x, y, z, size * 0.3, spin, 15, 0, ci, 1, 0.15
+    DIM i AS INTEGER
+    FOR i = 0 TO 2
+        DIM tilt AS DOUBLE = 25 + i * 30
+        DIM turn AS DOUBLE = i * 60
+        DIM rr AS DOUBLE = size * (0.6 + 0.25 * i)
+        WIRE "ring", x, y, z, rr, turn, tilt, 0, (ci + i) MOD 6, 0.45
+        DIM a AS DOUBLE = spin * (2.2 - 0.5 * i) + i * 100
+        ROTATE([DCOS(a)], [0], [DSIN(a)], turn, tilt, 0)
+        WIRE "octa", x + qx[0] * rr, y + qy[0] * rr, z + qz[0] * rr, size * 0.07, a * 3, a, 0, (ci + i) MOD 6, 1
+    NEXT i
+ENDSUB
+
+' A sphere of points that breathes with the level
+EXPORT SUB POINT_SPHERE(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, spin AS DOUBLE, ci AS INTEGER)
+    DIM s AS DOUBLE = size * (1 + 0.25 * level + 0.08 * pulse)
+    ROTATE FIB_X, FIB_Y, FIB_Z, spin, spin * 0.4, 0
+    PROJECT qx * s + x, qy * s + y, qz * s + z
+    SETCOL ci, FADE(x, y, z)
+    GFX.LINES ZIP(sx - 1.2, sx + 1.2), ZIP(sy, sy), 3, cr, cg, cb, TRUE
+ENDSUB
+
+' The spectrum as a city of 32 towers on an 8 x 4 block
+EXPORT SUB CITY(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, yaw AS DOUBLE, height AS DOUBLE, ci AS INTEGER)
+    DIM tall = 0.08 + spec[CITY_BAR] * height
+    ROTATE MX{"city"} * size, MY{"city"} * tall * size, MZ{"city"} * size, yaw, 0, 0
+    PROJECT qx + x, qy + y, qz + z
+    SETCOL ci, FADE(x, y, z)
+    GFX.LINES sx, sy, LINE_W, cr, cg, cb, TRUE
+ENDSUB
+
+' A landscape of waves, w wide and deep, lifted by the spectrum along x
+EXPORT SUB TERRAIN(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, w AS DOUBLE, amp AS DOUBLE, ci AS INTEGER)
+    DIM gu = MX{"grid"}
+    DIM gv = MZ{"grid"}
+    DIM hy = amp * (0.3 * SIN(gu * 9 + clock * 1.3) * COS(gv * 7 - clock) + spec[GRID_BAND] * EXP(0 - gv * gv * 10))
+    PROJECT gu * w + x, hy + y, gv * w + z
+    SETCOL ci, 0.8 * FADE(x, y, z)
+    GFX.LINES sx, sy, LINE_W * 0.8, cr, cg, cb, TRUE
+ENDSUB
+
+' A floor of lines at height y that runs towards the camera
+EXPORT SUB FLOOR(y AS DOUBLE, speed AS DOUBLE, ci AS INTEGER)
+    DIM gap AS DOUBLE = 2
+    DIM z0 AS DOUBLE = INT(cam_z / gap) * gap - ((clock * speed) MOD gap)
+    DIM zs = z0 + IOTA(30, 0) * gap
+    DIM xs = INT(cam_x / gap) * gap + (IOTA(31, 0) - 15) * gap
+    DIM far AS DOUBLE = z0 + 29 * gap
+    PROJECT ZIP(ZEROS(30) + cam_x - 30, ZEROS(30) + cam_x + 30), ZEROS(60) + y, ZIP(zs, zs)
+    SETCOL ci, 0.45
+    GFX.LINES sx, sy, 1.5, cr, cg, cb, TRUE
+    PROJECT ZIP(xs, xs), ZEROS(62) + y, ZIP(ZEROS(31) + MAX([z0, cam_z + 0.5]), ZEROS(31) + far)
+    GFX.LINES sx, sy, 1.5, cr, cg, cb, TRUE
+ENDSUB
+
+' A tunnel of octagons along z from z, turning with the beat
+EXPORT SUB TUNNEL(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, radius AS DOUBLE, depth AS DOUBLE, speed AS DOUBLE, ci AS INTEGER)
+    DIM n AS INTEGER = 12
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        DIM u AS DOUBLE = ((i / n) - clock * speed / depth) MOD 1
+        IF u < 0 THEN u = u + 1
+        DIM rz AS DOUBLE = z + u * depth
+        WIRE "oct", x, y, rz, radius * (1 + 0.05 * pulse), 0, 0, beat_now * 11 + i * 7, (ci + (i MOD 2)) MOD 6, 1 - 0.8 * u
+    NEXT i
+    DIM a = IOTA(8, 0) * MATH.PI / 4
+    PROJECT ZIP(x + radius * COS(a), x + radius * COS(a)), ZIP(y + radius * SIN(a), y + radius * SIN(a)), ZIP(ZEROS(8) + z, ZEROS(8) + z + depth)
+    SETCOL ci, 0.3
+    GFX.LINES sx, sy, LINE_W * 0.6, cr, cg, cb, TRUE
+ENDSUB
+
+' Stars streaking past the camera
+EXPORT SUB STARS(speed AS DOUBLE, ci AS INTEGER)
+    DIM shift AS DOUBLE = (clock * speed) MOD 60
+    DIM zz = (STAR_Z - shift + 60) MOD 60 + cam_z
+    DIM trail AS DOUBLE = 0.02 + speed * 0.02
+    PROJECT ZIP(STAR_X + cam_x, STAR_X + cam_x), ZIP(STAR_Y + cam_y, STAR_Y + cam_y), ZIP(zz, zz + trail)
+    SETCOL ci, 0.8
+    GFX.LINES sx, sy, 2, cr, cg, cb, TRUE
+ENDSUB
+
+' The output wave as a ribbon in space, w wide
+EXPORT SUB RIBBON(x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, w AS DOUBLE, amp AS DOUBLE, yaw AS DOUBLE, ci AS INTEGER)
+    DIM u = IOTA(128, 0) / 127 - 0.5
+    DIM wv = scope[IOTA(128, 0) * 2]
+    DIM k AS INTEGER
+    FOR k = 0 TO 2
+        ROTATE u * w, wv * amp * (1 - 0.3 * k), ZEROS(128) + k * 0.4, yaw, 0, 0
+        PROJECT qx + x, qy + y, qz + z
+        SETCOL((ci + k) MOD 6, (1 - 0.3 * k) * FADE(x, y, z))
+        GFX.LINES sx, sy, LINE_W, cr, cg, cb
+    NEXT k
+ENDSUB
+
+' ── Panels: flat instruments drawn into images ──────────────────
+
+SUB ARC2(x AS DOUBLE, y AS DOUBLE, rad AS DOUBLE, a0 AS DOUBLE, a1 AS DOUBLE, w AS DOUBLE)
+    DIM n AS INTEGER = MAX([8, INT(ABS(a1 - a0) / 5)])
+    DIM a = (a0 + (a1 - a0) * IOTA(n + 1, 0) / n) * MATH.PI / 180
+    GFX.LINES x + rad * COS(a), y + rad * SIN(a), w, cr, cg, cb
+ENDSUB
+
+' Ticks from radius r1 to r2 at the given angles; r1 may be an array
+SUB TICKS2(x AS DOUBLE, y AS DOUBLE, r1, r2 AS DOUBLE, angles, w AS DOUBLE)
+    DIM a = angles * MATH.PI / 180
+    GFX.LINES ZIP(x + r1 * COS(a), x + r2 * COS(a)), ZIP(y + r1 * SIN(a), y + r2 * SIN(a)), w, cr, cg, cb, TRUE
+ENDSUB
+
+' Digits, ':' and '.' as seven-segment strokes, h tall from (x, y)
+SUB SEGTEXT(x AS DOUBLE, y AS DOUBLE, h AS DOUBLE, s$, w AS DOUBLE)
+    DIM px = [0.0]
+    DIM py = [0.0]
+    DIM n AS INTEGER = 0
+    DIM cx0 AS DOUBLE = x
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    FOR i = 0 TO LEN(s$) - 1
+        DIM ch$ AS STRING = MID$(s$, i, 1)
+        IF ch$ = ":" ORELSE ch$ = "." THEN
+            IF ch$ = ":" THEN
+                CIRCLE cx0 + h * 0.1, y + h * 0.3, w * 0.8, TRUE, cr, cg, cb
+                CIRCLE cx0 + h * 0.1, y + h * 0.7, w * 0.8, TRUE, cr, cg, cb
+            ELSE
+                CIRCLE cx0 + h * 0.1, y + h, w * 0.8, TRUE, cr, cg, cb
+            ENDIF
+            cx0 = cx0 + h * 0.3
+            CONTINUEFOR
+        ENDIF
+        DIM segs$ AS STRING = "g"
+        IF ch$ >= "0" ANDALSO ch$ <= "9" THEN segs$ = DIGIT_SEGS$[VAL(ch$)]
+        IF ch$ = " " THEN segs$ = ""
+        FOR j = 0 TO 6
+            IF INSTR(segs$, MID$("abcdefg", j, 1)) >= 0 THEN
+                DIM pad AS DOUBLE = 0.06
+                DIM ax AS DOUBLE = SEG_X1[j]
+                DIM ay AS DOUBLE = SEG_Y1[j]
+                DIM ex AS DOUBLE = SEG_X2[j]
+                DIM ey AS DOUBLE = SEG_Y2[j]
+                IF ax = ex THEN
+                    ay = ay + pad
+                    ey = ey - pad
+                ELSE
+                    ax = ax + pad
+                    ex = ex - pad
+                ENDIF
+                px = APPEND(px, [cx0 + ax * h, cx0 + ex * h])
+                py = APPEND(py, [y + ay * h, y + ey * h])
+            ENDIF
+        NEXT j
+        cx0 = cx0 + h * 0.85
+    NEXT i
+    IF LEN(px) > 1 THEN GFX.LINES DROP(1, px), DROP(1, py), w, cr, cg, cb, TRUE
+ENDSUB
+
+FUNC SEGTEXT_W(s$, h AS DOUBLE) AS DOUBLE
+    DIM tw AS DOUBLE = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(s$) - 1
+        DIM ch$ AS STRING = MID$(s$, i, 1)
+        IF ch$ = ":" ORELSE ch$ = "." THEN
+            tw = tw + h * 0.3
+        ELSE
+            tw = tw + h * 0.85
+        ENDIF
+    NEXT i
+    RETURN tw - h * 0.25
+ENDFUNC
+
+SUB LABEL(x AS DOUBLE, y AS DOUBLE, s$, centred AS INTEGER)
+    DIM tx AS DOUBLE = x
+    IF centred THEN tx = x - GFX.TEXTSIZE(s$)[0] / 2
+    TEXT tx, y, s$, cr, cg, cb
+ENDSUB
+
+SUB P_DIAL(ci AS INTEGER)
+    DIM grow AS DOUBLE = 1 + 0.05 * pulse
+    DIM spin AS DOUBLE = beat_now * 15
+    SETCOL ci, 1
+    ARC2 256, 256, 238 * grow, 0, 360, 4
+    ARC2 256, 256, 226 * grow, 0, 360, 1.5
+    DIM idx = IOTA(60, 0)
+    TICKS2 256, 256, 226 * grow - 10 - 14 * ((idx MOD 5) = 0), 226 * grow, idx * 6 + spin, 2.5
+    SETCOL((ci + 2) MOD 6, 0.8)
+    TICKS2 256, 256, 150, 162, IOTA(36, 0) * 10 - spin * 2, 2
+    ARC2 256, 256, 168, 0, 360, 1.5
+    DIM lv AS DOUBLE = CLAMP01(level * 1.4)
+    SETCOL 1, 0.25
+    ARC2 256, 256, 196, 135, 405, 10
+    SETCOL 1, 1
+    ARC2 256, 256, 196, 135, 135 + 270 * lv, 10
+    SETCOL 3, 0.9
+    DIM i AS INTEGER
+    FOR i = 0 TO 10
+        DIM a AS DOUBLE = 135 + 27 * i
+        LABEL 256 + 122 * DCOS(a), 248 + 122 * DSIN(a), STR$(i), TRUE
+    NEXT i
+    DIM na AS DOUBLE = 135 + 270 * lv
+    SETCOL 4, 1
+    GFX.STROKE 256, 256, 256 + 178 * DCOS(na), 256 + 178 * DSIN(na), 4, cr, cg, cb
+    CIRCLE 256, 256, 12, TRUE, cr, cg, cb
+    SETCOL ci, 1
+    DIM rd$ AS STRING = FORMAT$("{:0>3}", INT(lv * 999))
+    SEGTEXT 256 - SEGTEXT_W(rd$, 34) / 2, 350, 34, rd$, 3.5
+ENDSUB
+
+SUB P_SPECTRUM(ci AS INTEGER)
+    SETCOL ci, 0.2
+    DIM gy = IOTA(5, 0) * 50 + 20
+    GFX.LINES ZIP(ZEROS(5) + 8, ZEROS(5) + 504), ZIP(gy, gy), 1, cr, cg, cb, TRUE
+    DIM i AS INTEGER
+    FOR i = 0 TO N_BANDS - 1
+        DIM bh AS DOUBLE = spec[i] * 220
+        DIM bxx AS DOUBLE = 10 + i * 15.6
+        DIM hue AS DOUBLE = 190 + i * 4.5
+        DIM rgb = GFX.HSV_RGB(hue, 0.75, 1)
+        RECT bxx, 240 - bh, 11, bh, TRUE, rgb[0], rgb[1], rgb[2]
+        RECT bxx, 236 - peak[i] * 220, 11, 3, TRUE, 255, 255, 255
+    NEXT i
+    DIM sl = IOTA(22, 0) * 10 + 22
+    GFX.LINES ZIP(ZEROS(22) + 8, ZEROS(22) + 504), ZIP(sl, sl), 2, 0, 0, 0, TRUE
+ENDSUB
+
+SUB P_SCOPE(ci AS INTEGER)
+    SETCOL ci, 0.18
+    DIM gx = IOTA(9, 0) * 64
+    GFX.LINES ZIP(gx, gx), ZIP(ZEROS(9), ZEROS(9) + 256), 1, cr, cg, cb, TRUE
+    DIM gy = IOTA(5, 0) * 64
+    GFX.LINES ZIP(ZEROS(5), ZEROS(5) + 512), ZIP(gy, gy), 1, cr, cg, cb, TRUE
+    SETCOL ci, 0.35
+    GFX.LINES IOTA(256, 0) * 2, 128 - scope * 230, 7, cr, cg, cb
+    SETCOL ci, 1
+    GFX.LINES IOTA(256, 0) * 2, 128 - scope * 230, 2.5, cr, cg, cb
+    SETCOL 3, 0.8
+    LABEL 12, 8, "CH1  " + FORMAT$("{:.2f}", level) + " V", FALSE
+ENDSUB
+
+SUB P_RADAR(ci AS INTEGER)
+    DIM sweep AS DOUBLE = clock * 140
+    SETCOL ci, 0.45
+    DIM i AS INTEGER
+    FOR i = 1 TO 4
+        ARC2 256, 256, i * 56, 0, 360, 1.5
+    NEXT i
+    GFX.LINES [26, 486, 256, 256], [256, 256, 26, 486], 1, cr, cg, cb, TRUE
+    FOR i = 0 TO 13
+        SETCOL ci, (1 - i / 14) ^ 2
+        DIM a AS DOUBLE = sweep - i * 2.5
+        GFX.STROKE 256, 256, 256 + 228 * DCOS(a), 256 + 228 * DSIN(a), 3, cr, cg, cb
+    NEXT i
+    FOR i = 0 TO LEN(BLIP_A) - 1
+        DIM since AS DOUBLE = (sweep - BLIP_A[i]) MOD 360
+        IF since < 0 THEN since = since + 360
+        DIM glow_k AS DOUBLE = EXP(0 - since / 90)
+        SETCOL 1, glow_k
+        CIRCLE 256 + BLIP_R[i] * DCOS(BLIP_A[i]), 256 + BLIP_R[i] * DSIN(BLIP_A[i]), 5 + 4 * glow_k, TRUE, cr, cg, cb
+    NEXT i
+    SETCOL ci, 1
+    ARC2 256, 256, 230, 0, 360, 3
+    TICKS2 256, 256, 230, 244, IOTA(72, 0) * 5, 1.5
+ENDSUB
+
+SUB P_HEX(ci AS INTEGER)
+    DIM base AS INTEGER = INT(clock * 6)
+    DIM hot AS INTEGER = INT(beat_now * 2) MOD 18
+    DIM r AS INTEGER
+    FOR r = 0 TO 17
+        DIM addr AS INTEGER = (base + r) * 8
+        DIM row$ AS STRING = FORMAT$("{:0>6}", HEX$(addr MOD 16777216)) + "  "
+        DIM k AS INTEGER
+        FOR k = 0 TO 7
+            DIM octet AS INTEGER = INT((scope[(r * 8 + k + base) MOD 256] + 1) * 127.5) MOD 256
+            row$ = row$ + FORMAT$("{:0>2}", HEX$(octet)) + " "
+        NEXT k
+        IF r = hot THEN
+            SETCOL 1, 0.35
+            RECT 6, 10 + r * 27, 500, 26, TRUE, cr, cg, cb
+            SETCOL 3, 1
+        ELSE
+            SETCOL ci, 0.55 + 0.45 * (r MOD 3 = 0)
+        ENDIF
+        TEXT 12, 12 + r * 27, row$, cr, cg, cb
+    NEXT r
+ENDSUB
+
+SUB P_VU(ci AS INTEGER)
+    DIM lv = SOUND.LEVELS()
+    DIM i AS INTEGER
+    DIM s AS INTEGER
+    FOR i = 0 TO 7
+        DIM want AS DOUBLE = 0
+        IF i < LEN(lv) THEN want = CLAMP01(lv[i] * 1.6)
+        vu[i] = MAX([vu[i] * 0.88, want])
+        DIM lit AS INTEGER = INT(vu[i] * 16 + 0.5)
+        FOR s = 0 TO 15
+            DIM sc AS INTEGER = 5
+            IF s >= 10 THEN sc = 4
+            IF s >= 13 THEN sc = 1
+            DIM k AS DOUBLE = 0.12
+            IF s < lit THEN k = 1
+            SETCOL sc, k
+            RECT 14 + i * 62, 226 - s * 13.5, 50, 10, TRUE, cr, cg, cb
+        NEXT s
+    NEXT i
+ENDSUB
+
+SUB P_RINGS(ci AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO 5
+        DIM rad AS DOUBLE = 70 + i * 30
+        DIM v AS DOUBLE = (spec[i * 5] + spec[i * 5 + 1] + spec[i * 5 + 2]) / 3
+        DIM start AS DOUBLE = beat_now * (12 + i * 9) * (1 - 2 * (i MOD 2))
+        SETCOL((ci + i) MOD 6, 0.2)
+        ARC2 256, 256, rad, 0, 360, 9
+        SETCOL((ci + i) MOD 6, 1)
+        ARC2 256, 256, rad, start, start + 20 + 330 * v, 9
+    NEXT i
+    SETCOL 3, 0.4 + 0.6 * pulse
+    CIRCLE 256, 256, 30 + 12 * pulse, TRUE, cr, cg, cb
+ENDSUB
+
+SUB P_COUNTER(ci AS INTEGER)
+    DIM bar AS INTEGER = INT(beat_now / 4) + 1
+    DIM bt AS INTEGER = INT(beat_now) MOD 4 + 1
+    DIM sixteenth AS INTEGER = INT(beat_now * 4) MOD 4 + 1
+    DIM pos$ AS STRING = FORMAT$("{:0>3}", bar) + "." + STR$(bt) + "." + STR$(sixteenth)
+    SETCOL ci, 1
+    SEGTEXT 30, 40, 92, pos$, 6
+    DIM secs AS DOUBLE = clock
+    DIM tc$ AS STRING = FORMAT$("{:0>2}", INT(secs / 60)) + ":" + FORMAT$("{:0>2}", INT(secs) MOD 60) + "." + FORMAT$("{:0>2}", INT((secs - INT(secs)) * 100))
+    SETCOL((ci + 1) MOD 6, 1)
+    SEGTEXT 30, 170, 40, tc$, 3.5
+    SETCOL 3, 0.85
+    LABEL 330, 180, "BPM " + STR$(INT(bpm_seen + 0.5)), FALSE
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        SETCOL ci, 0.2 + 0.8 * (i = bt - 1)
+        RECT 330 + i * 38, 216, 30, 14, TRUE, cr, cg, cb
+    NEXT i
+ENDSUB
+
+SUB P_ECG(ci AS INTEGER)
+    SETCOL 5, 0.15
+    DIM gx = IOTA(17, 0) * 32
+    GFX.LINES ZIP(gx, gx), ZIP(ZEROS(17), ZEROS(17) + 256), 1, cr, cg, cb, TRUE
+    DIM gy = IOTA(9, 0) * 32
+    GFX.LINES ZIP(ZEROS(9), ZEROS(9) + 512), ZIP(gy, gy), 1, cr, cg, cb, TRUE
+    DIM n AS INTEGER = LEN(ecg)
+    DIM ex = IOTA(n, 0) * 512 / (n - 1)
+    DIM ey = 160 - ecg * 150
+    SETCOL ci, 0.35
+    GFX.LINES ex, ey, 8, cr, cg, cb
+    SETCOL ci, 1
+    GFX.LINES ex, ey, 3, cr, cg, cb
+    SETCOL 3, 1
+    CIRCLE ex[n - 1] - 2, ey[n - 1], 7, TRUE, cr, cg, cb
+    SETCOL ci, 0.9
+    LABEL 12, 10, "HR " + STR$(INT(bpm_seen + 0.5)), FALSE
+ENDSUB
+
+SUB P_HUD(ci AS INTEGER)
+    SETCOL ci, 1
+    DIM c AS DOUBLE = 70
+    GFX.LINES [20, 20, 20 + c], [20 + c, 20, 20], 4, cr, cg, cb
+    GFX.LINES [492 - c, 492, 492], [20, 20, 20 + c], 4, cr, cg, cb
+    GFX.LINES [492, 492, 492 - c], [492 - c, 492, 492], 4, cr, cg, cb
+    GFX.LINES [20 + c, 20, 20], [492, 492, 492 - c], 4, cr, cg, cb
+    DIM spin AS DOUBLE = beat_now * 22
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        ARC2 256, 256, 110, spin + i * 90 + 8, spin + i * 90 + 72, 5
+    NEXT i
+    SETCOL((ci + 1) MOD 6, 1)
+    FOR i = 0 TO 2
+        ARC2 256, 256, 160 + 8 * pulse, 0 - spin * 1.5 + i * 120, 0 - spin * 1.5 + i * 120 + 50, 3
+    NEXT i
+    SETCOL 3, 0.9
+    GFX.LINES [196, 236, 276, 316, 256, 256, 256, 256], [256, 256, 256, 256, 196, 236, 276, 316], 2, cr, cg, cb, TRUE
+    CIRCLE 256, 256, 6 + 6 * pulse, FALSE, cr, cg, cb
+    DIM mv AS DOUBLE = (clock * 0.25) MOD 1
+    SETCOL 4, 1
+    DIM tx AS DOUBLE = 60 + mv * 392
+    GFX.LINES [tx - 10, tx + 10, tx, tx - 10], [500, 500, 486, 500], 2, cr, cg, cb
+    DIM ty AS DOUBLE = 452 - mv * 392
+    GFX.LINES [8, 8, 22, 8], [ty - 10, ty + 10, ty, ty - 10], 2, cr, cg, cb
+    SETCOL ci, 0.8
+    LABEL 34, 30, "LOCK " + FORMAT$("{:0>3}", INT(spin) MOD 360), FALSE
+    LABEL 360, 462, "TRK " + FORMAT$("{:0>2}", HEX$(INT(beat_now) MOD 256)), FALSE
+ENDSUB
+
+SUB P_POLAR(ci AS INTEGER)
+    DIM n AS INTEGER = 64
+    DIM i = IOTA(n, 0)
+    DIM bnd = i MOD 32
+    DIM mirror = i >= 32
+    bnd = bnd * (1 - mirror) + (31 - bnd) * mirror
+    DIM a = i * 360 / n - 90 + beat_now * 4
+    DIM r1 = ZEROS(n) + 92 + 8 * pulse
+    DIM r2 = r1 + 8 + spec[bnd] * 140
+    SETCOL ci, 1
+    DIM ar = a * MATH.PI / 180
+    GFX.LINES ZIP(256 + r1 * COS(ar), 256 + r2 * COS(ar)), ZIP(256 + r1 * SIN(ar), 256 + r2 * SIN(ar)), 6, cr, cg, cb, TRUE
+    SETCOL((ci + 1) MOD 6, 0.9)
+    ARC2 256, 256, 82 + 8 * pulse, 0, 360, 3
+    SETCOL 3, 0.5
+    ARC2 256, 256, 245, 0, 360, 1.5
+ENDSUB
+
+SUB P_WORD(ci AS INTEGER)
+    IF word_now$ = "" THEN RETURN
+    IF FONT$ <> "" THEN SETFONT FONT$, 150
+    DIM tw AS DOUBLE = GFX.TEXTSIZE(word_now$)[0]
+    IF FONT$ <> "" ANDALSO tw > 980 THEN
+        SETFONT FONT$, INT(150 * 980 / tw)
+        tw = GFX.TEXTSIZE(word_now$)[0]
+    ENDIF
+    DIM th AS DOUBLE = GFX.TEXTSIZE(word_now$)[1]
+    SETCOL ci, 1
+    TEXT 512 - tw / 2, 128 - th / 2, word_now$, cr, cg, cb
+    IF FONT$ <> "" THEN SETFONT FONT$, FONT_SIZE
+ENDSUB
+
+' The image of a panel kind, drawn for this frame and colour
+FUNC PANEL_IMAGE(kind AS INTEGER, ci AS INTEGER) AS INTEGER
+    DIM stamp AS INTEGER = frame_no * 8 + ci
+    IF kind = 11 THEN stamp = ci
+    IF panel_stamp[kind] = stamp ANDALSO (kind <> 11 ORELSE word_drawn$ = word_now$) THEN RETURN panel_img[kind]
+    panel_stamp[kind] = stamp
+    GFX.TARGET panel_img[kind], TRUE
+    CLS 0, 0, 0
+    GFX.BLEND "BLEND"
+    DIM k$ AS STRING = PANEL_KINDS$[kind]
+    IF k$ = "dial" THEN P_DIAL ci
+    IF k$ = "spectrum" THEN P_SPECTRUM ci
+    IF k$ = "scope" THEN P_SCOPE ci
+    IF k$ = "radar" THEN P_RADAR ci
+    IF k$ = "hex" THEN P_HEX ci
+    IF k$ = "vu" THEN P_VU ci
+    IF k$ = "rings" THEN P_RINGS ci
+    IF k$ = "counter" THEN P_COUNTER ci
+    IF k$ = "ecg" THEN P_ECG ci
+    IF k$ = "hud" THEN P_HUD ci
+    IF k$ = "polar" THEN P_POLAR ci
+    IF k$ = "word" THEN
+        P_WORD ci
+        word_drawn$ = word_now$
+    ENDIF
+    GFX.TARGET scene_img
+    GFX.BLEND "ADD"
+    RETURN panel_img[kind]
+ENDFUNC
+
+' The word the "word" panel shows
+EXPORT SUB SAY(word$)
+    word_now$ = word$
+ENDSUB
+
+' A panel of the given kind, w world units wide, centred at (x, y, z)
+' and turned by yaw, pitch and roll: dial, spectrum, scope, radar, hex,
+' vu, rings, counter, ecg, hud, polar, word. k dims it, 0-1.
+EXPORT SUB PANEL(kind$, x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, w AS DOUBLE, yaw AS DOUBLE, pitch AS DOUBLE, roll AS DOUBLE, ci AS INTEGER, k AS DOUBLE)
+    DIM kind AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(PANEL_KINDS$) - 1
+        IF PANEL_KINDS$[i] = kind$ THEN kind = i
+    NEXT i
+    IF kind < 0 THEN RETURN
+    DIM id AS INTEGER = PANEL_IMAGE(kind, ci)
+    DIM hw AS DOUBLE = w / 2
+    DIM hh AS DOUBLE = hw * PANEL_H[kind] / PANEL_W[kind]
+    ROTATE([0 - hw, hw, hw, 0 - hw], [hh, hh, 0 - hh, 0 - hh], [0, 0, 0, 0], yaw, pitch, roll)
+    PROJECT qx + x, qy + y, qz + z
+    IF MAX(sx) > 1E8 THEN RETURN
+    GFX.DRAWQUAD id, sx, sy, 255 * CLAMP01(k * FADE(x, y, z)), "ADD", 12
+ENDSUB

@@ -1,0 +1,87 @@
+' neon_sheet.jdb - every NEON element on contact sheets, nine to a
+' page, fed a made-up sound so the meters move.
+'
+' Usage: jdBasic neon_sheet.jdb out_prefix
+'   writes out_prefix1.png, out_prefix2.png, ...
+
+OPTION "EXPLICIT"
+
+IMPORT NEON
+
+DIM out$ AS STRING = "neon_sheet"
+DIM cli = OS.ARGS()
+IF LEN(cli) > 1 THEN out$ = cli[LEN(cli) - 1]
+
+DIM ELEMENTS$ = ["moon", "earth", "torus", "ico", "hypercube", "pyramid", "helix", "knot", "orbits", "points", "city", "terrain", "floor", "tunnel", "stars", "ribbon", "dial", "spectrum", "scope", "radar", "hex", "vu", "rings", "counter", "ecg", "hud", "polar", "word"]
+
+DIM TW AS INTEGER = 640
+DIM TH AS INTEGER = 360
+SCREEN 1920, 1080, "neon sheet"
+NEON.INIT TW, TH
+NEON.SAY "NEON"
+
+' A wave of a few partials and some noise, phase moving with t
+FUNC FAKE_WAVE(t AS DOUBLE)
+    DIM i = IOTA(1024, 0) / 44100
+    DIM w = 0.35 * SIN(2 * MATH.PI * 110 * i + t) + 0.2 * SIN(2 * MATH.PI * 440 * i + t * 3) + 0.12 * SIN(2 * MATH.PI * 1760 * i) + 0.08 * SIN(2 * MATH.PI * 5000 * i)
+    DIM k AS INTEGER
+    FOR k = 0 TO 1023 STEP 8
+        w[k] = w[k] + RANDOM(-0.1, 0.1)
+    NEXT k
+    RETURN w
+ENDFUNC
+
+SUB SHOW(name$, t AS DOUBLE)
+    DIM spin AS DOUBLE = t * 20
+    IF name$ = "moon" THEN NEON.MOON 0, 0, 0, 2.2, spin
+    IF name$ = "earth" THEN NEON.EARTH 0, 0, 0, 2.2, spin
+    IF name$ = "torus" THEN NEON.TORUS 0, 0, 0, 2, spin, 2
+    IF name$ = "ico" THEN NEON.ICO 0, 0, 0, 2.2, spin, 0
+    IF name$ = "hypercube" THEN NEON.HYPERCUBE 0, 0, 0, 1.5, spin, 1
+    IF name$ = "pyramid" THEN NEON.PYRAMID 0, -0.2, 0, 1.6, spin, 4
+    IF name$ = "helix" THEN NEON.HELIX 0, 0, 0, 1.4, spin, 5
+    IF name$ = "knot" THEN NEON.KNOT 0, 0, 0, 2.4, spin, 1
+    IF name$ = "orbits" THEN NEON.ORBITS 0, 0, 0, 2.2, spin, 0
+    IF name$ = "points" THEN NEON.POINT_SPHERE 0, 0, 0, 2, spin, 2
+    IF name$ = "city" THEN NEON.CITY 0, -1.2, 1, 0.8, 25, 4, 0
+    IF name$ = "terrain" THEN NEON.TERRAIN 0, -1.5, 3, 9, 1.6, 2
+    IF name$ = "floor" THEN NEON.FLOOR -1.5, 4, 1
+    IF name$ = "tunnel" THEN NEON.TUNNEL 0, 0, -4, 2.5, 30, 6, 2
+    IF name$ = "stars" THEN NEON.STARS 8, 3
+    IF name$ = "ribbon" THEN NEON.RIBBON 0, 0, 0, 7, 2.5, 25, 0
+    IF name$ = "dial" ORELSE name$ = "radar" ORELSE name$ = "hex" ORELSE name$ = "rings" ORELSE name$ = "hud" ORELSE name$ = "polar" THEN
+        NEON.PANEL name$, 0, 0, 0, 4.4, -18, 0, 0, 0, 1
+    ELSEIF name$ = "spectrum" ORELSE name$ = "scope" ORELSE name$ = "vu" ORELSE name$ = "counter" ORELSE name$ = "ecg" THEN
+        NEON.PANEL name$, 0, 0, 0, 7.5, -18, 0, 0, 0, 1
+    ELSEIF name$ = "word" THEN
+        NEON.PANEL name$, 0, 0, 0, 8, -18, 0, 0, 1, 1
+    ENDIF
+ENDSUB
+
+DIM per_page AS INTEGER = 9
+DIM pages AS INTEGER = INT((LEN(ELEMENTS$) + per_page - 1) / per_page)
+DIM pg AS INTEGER
+DIM e_i AS INTEGER
+DIM warm AS INTEGER
+DIM t AS DOUBLE = 0
+FOR pg = 0 TO pages - 1
+    CLS 8, 8, 12
+    FOR e_i = pg * per_page TO MIN([LEN(ELEMENTS$), (pg + 1) * per_page]) - 1
+        DIM slot AS INTEGER = e_i - pg * per_page
+        DIM tx AS INTEGER = (slot MOD 3) * TW
+        DIM ty AS INTEGER = INT(slot / 3) * TH
+        FOR warm = 0 TO 5
+            t = t + 1 / 30
+            NEON.FEED FAKE_WAVE(t), t * 2, 1 / 30
+        NEXT warm
+        NEON.CAMERA 0, 0.6, -7, 0, -5, 60
+        NEON.BEGIN
+        SHOW ELEMENTS$[e_i], t
+        NEON.FINISH_AT tx, ty, TW, TH
+        RECT tx, ty, TW, TH, FALSE, 40, 40, 60
+        TEXT tx + 10, ty + 8, ELEMENTS$[e_i], 200, 200, 220
+    NEXT e_i
+    GFX.SAVE_SCREENSHOT out$ + STR$(pg + 1) + ".png"
+    SCREENFLIP
+NEXT pg
+PRINT "sheets: "; pages

@@ -1,0 +1,463 @@
+' kaiku_dance.jdb - Kaiku dances and sings to sixteen bars of techno:
+' a pose a beat chosen by the section's mood, her face on the downbeats.
+' Her lyric is written for the melody by LYRICS, a verse in the groove
+' and a chorus on the lead, and sung through the vocoder of SOUND.SING;
+' her mouth follows the sound she sings. She stands in a NEON world with
+' a line of dancers behind her, the camera circling her, the word she
+' sings flying in, and the things her words name appearing around her.
+'
+' Usage: jdBasic kaiku_dance.jdb [--window] [--render dir] [--bench]
+'                                [--theme neon|space|love|code] [--seed n]
+'   --bench runs the song as fast as it renders and prints the time a frame takes
+
+OPTION "EXPLICIT"
+
+IMPORT SCORE
+IMPORT KAIKU
+IMPORT NEON
+IMPORT LYRICS
+
+DIM render_dir$ AS STRING = ""
+DIM windowed AS INTEGER = FALSE
+DIM bench AS INTEGER = FALSE
+DIM theme$ AS STRING = "neon"
+DIM seed AS INTEGER = 7
+DIM cli = OS.ARGS()
+DIM ai AS INTEGER
+FOR ai = 0 TO LEN(cli) - 1
+    IF cli[ai] = "--window" THEN windowed = TRUE
+    IF cli[ai] = "--bench" THEN bench = TRUE
+    IF cli[ai] = "--render" ANDALSO ai + 1 < LEN(cli) THEN render_dir$ = cli[ai + 1]
+    IF cli[ai] = "--theme" ANDALSO ai + 1 < LEN(cli) THEN theme$ = cli[ai + 1]
+    IF cli[ai] = "--seed" ANDALSO ai + 1 < LEN(cli) THEN seed = VAL(cli[ai + 1])
+NEXT ai
+
+DIM BPM AS DOUBLE = 124
+DIM KICK AS INTEGER = 0
+DIM CLAP AS INTEGER = 1
+DIM HATS AS INTEGER = 2
+DIM BASS AS INTEGER = 3
+DIM PAD AS INTEGER = 4
+DIM LEAD AS INTEGER = 5
+DIM VOX AS INTEGER = 6
+DIM TRACK_NAMES$ = ["KICK", "CLAP", "HATS", "BASS", "PAD", "LEAD", "VOX"]
+DIM ti AS INTEGER
+FOR ti = 0 TO LEN(TRACK_NAMES$) - 1
+    SCORE.TRACK ti, TRACK_NAMES$[ti]
+NEXT ti
+
+SOUND.INIT SCORE.AUDIO_MODE$()
+SOUND.MASTER "FIXED", 0.5
+SCORE.TEMPO BPM
+SOUND.COMPRESSOR 0.6, 2.5, 6, 160, 1.1
+SOUND.REVERB 0.75, 0.3, 0.9, 0.25
+SOUND.DELAY TRUE, 3 * 60000 / BPM / 4, 0.4, 0.28
+SOUND.KIT KICK, "SYNTH"
+SOUND.KIT CLAP, "SYNTH"
+SOUND.GAIN CLAP, 0.45
+SOUND.KIT HATS, "SYNTH"
+SOUND.GAIN HATS, 0.3
+SOUND.VOICE BASS, "SAW", 0.002, 0.1, 0.3, 0.05
+SOUND.FILTER BASS, 600, 0.45
+SOUND.SIDECHAIN BASS, KICK, 0.55
+SOUND.GAIN BASS, 0.5
+SOUND.VOICE PAD, "SAW", 1.2, 0.6, 0.85, 2.5
+SOUND.UNISON PAD, 6, 0.25, 1.0
+SOUND.FILTER PAD, 1100, 0.2
+SOUND.REVERBSEND PAD, 0.5
+SOUND.GAIN PAD, 0.22
+SOUND.VOICE LEAD, "SQUARE", 0.01, 0.15, 0.5, 0.2
+SOUND.FILTER LEAD, 2400, 0.3
+SOUND.DELAYSEND LEAD, 0.3
+SOUND.GAIN LEAD, 0.1
+SOUND.VOICE VOX, "SAW", 0.015, 0.1, 0.85, 0.12
+SOUND.UNISON VOX, 3, 0.12, 0.6
+SOUND.REVERBSEND VOX, 0.35
+SOUND.DELAYSEND VOX, 0.18
+SOUND.GAIN VOX, 0.55
+
+DIM CHORDS$ AS STRING = "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>"
+DIM BASS$ AS STRING = "legato(0.5, <[~ a1]*4 [~ f1]*4 [~ c2]*4 [~ g1]*4>)"
+DIM LEAD_BARS$ = ["[e5 c5 ~ a4 c5 ~ e5 ~]", "[f5 e5 ~ c5 a4 ~ ~ ~]", "[g5 e5 ~ c5 e5 ~ g5 ~]", "[d5 ~ b4 ~ g4 ~ ~ ~]"]
+DIM VERSE_BARS$ = ["[a4 ~ a4 c5 ~ a4 g4 ~]", "[a4 ~ c5 ~ d5 ~ ~ ~]", "[c5 ~ c5 d5 ~ c5 a4 ~]", "[g4 ~ e4 ~ g4 a4 ~ ~]"]
+DIM LEAD$ AS STRING = "<" + JOIN(LEAD_BARS$, " ") + ">"
+DIM VERSE$ AS STRING = "<" + JOIN(VERSE_BARS$, " ") + ">"
+
+' the lyric: a verse on the four bars of the groove, a chorus on the six
+' bars of the lead, as many syllables in a line as its bar has notes
+LYRICS.INIT theme$, seed
+DIM verse_counts = ZEROS(4)
+DIM chorus_counts = ZEROS(6)
+DIM bi AS INTEGER
+FOR bi = 0 TO 3
+    verse_counts[bi] = LYRICS.NOTES_IN(VERSE_BARS$[bi])
+NEXT bi
+FOR bi = 0 TO 5
+    chorus_counts[bi] = LYRICS.NOTES_IN(LEAD_BARS$[(8 + bi) MOD 4])
+NEXT bi
+DIM verse_ids = LYRICS.VERSE(verse_counts)
+DIM chorus_ids = LYRICS.CHORUS(chorus_counts)
+DIM song_lines = APPEND(verse_ids, chorus_ids)
+
+PRINT LYRICS.TITLE$()
+FOR bi = 0 TO LEN(song_lines) - 1
+    IF bi = 4 THEN PRINT
+    PRINT "  "; LYRICS.TEXT$(song_lines[bi])
+NEXT bi
+
+' each syllable of the song in the order sung: its line and its place
+DIM n_syl AS INTEGER = 0
+FOR bi = 0 TO LEN(song_lines) - 1
+    n_syl = n_syl + LYRICS.SYLLABLES(song_lines[bi])
+NEXT bi
+DIM syl_line = ZEROS(n_syl)
+DIM syl_k = ZEROS(n_syl)
+DIM si_n AS INTEGER = 0
+DIM sk AS INTEGER
+FOR bi = 0 TO LEN(song_lines) - 1
+    FOR sk = 0 TO LYRICS.SYLLABLES(song_lines[bi]) - 1
+        syl_line[si_n] = song_lines[bi]
+        syl_k[si_n] = sk
+        si_n = si_n + 1
+    NEXT sk
+NEXT bi
+
+SCORE.SECTION 0, "intro", "wave"
+SCORE.PLAY PAD, "legato(1, " + CHORDS$ + ")"
+SCORE.SECTION 4, "groove", "groove"
+SCORE.PLAY KICK, "bd*4"
+SCORE.PLAY HATS, "gain(0.6, [~ hh]*4)"
+SCORE.PLAY BASS, BASS$
+SCORE.PLAY VOX, "legato(0.9, " + VERSE$ + ")"
+SCORE.SING VOX, LYRICS.SUNG$(verse_ids)
+SCORE.SECTION 8, "chorus", "jump"
+SCORE.PLAY LEAD, LEAD$
+SCORE.PLAY VOX, "legato(0.9, " + LEAD$ + ")"
+SCORE.SING VOX, LYRICS.SUNG$(chorus_ids)
+SCORE.PLAY CLAP, "~ cp ~ cp"
+SCORE.PLAY HATS, "gain([0.4 0.7]*8, hh*16)"
+SCORE.SECTION 14, "bye", "bye"
+SCORE.QUIET KICK
+SCORE.QUIET CLAP
+SCORE.QUIET HATS
+SCORE.QUIET BASS
+SCORE.QUIET LEAD
+SCORE.QUIET VOX
+SCORE.SECTION 16, "end", "bye"
+SCORE.QUIET PAD
+SCORE.FINE 17
+
+DIM MOVES_WAVE$ = ["sway_l", "sway_l", "sway_r", "sway_r"]
+DIM MOVES_GROOVE$ = ["sway_l", "idle", "sway_r", "point"]
+DIM MOVES_JUMP$ = ["sing", "sing", "cheer", "jump", "sing", "heart", "peace", "wave"]
+
+DIM SW AS INTEGER = 1920
+DIM SH AS INTEGER = 1080
+IF render_dir$ <> "" ORELSE bench THEN
+    SCREEN SW, SH, "Kaiku"
+ELSEIF windowed THEN
+    SCREEN SW, SH, "Kaiku", 0.5
+ELSE
+    SCREEN SW, SH, "Kaiku"
+    TOGGLE_FULLSCREEN
+ENDIF
+KAIKU.INIT 820
+NEON.INIT SW, SH
+NEON.SAY LYRICS.TITLE$()
+
+DIM FONT$ AS STRING = ""
+IF FILE.EXISTS("jdbasic_default.ttf") THEN FONT$ = "jdbasic_default.ttf"
+DIM sub_img AS INTEGER = GFX.NEWTARGET(1800, 80)
+DIM sub_line AS INTEGER = -1
+DIM sub_alpha AS DOUBLE = 0
+
+DIM prev_beat AS INTEGER = -1
+DIM frame_no AS INTEGER = 0
+DIM last_tick AS DOUBLE = TICK()
+DIM start_tick AS DOUBLE = TICK()
+DIM clock AS DOUBLE = 0
+DIM word_now$ AS STRING = ""
+DIM word_t AS DOUBLE = 9
+DIM line_now AS INTEGER = -1
+DIM line_t AS DOUBLE = 9
+
+' Her height in world units; she stands at the origin facing the camera
+DIM TALL_W AS DOUBLE = 1.7
+
+' the line of dancers behind her: place across in units of her and
+' row (0 nearest), drawn back to front
+DIM LINE_X = [-3, 3, -2, 2, -1, 1]
+DIM LINE_ROW = [2, 2, 1, 1, 0, 0]
+DIM line_alpha AS DOUBLE = 0
+
+FUNC SMOOTH01(x AS DOUBLE) AS DOUBLE
+    DIM u AS DOUBLE = x
+    IF u < 0 THEN u = 0
+    IF u > 1 THEN u = 1
+    RETURN u * u * (3 - 2 * u)
+ENDFUNC
+
+' The camera on a circle around her: turned by a degrees, dist away,
+' its eye at height eye_y
+SUB ORBIT_CAMERA(a AS DOUBLE, dist AS DOUBLE, eye_y AS DOUBLE, pitch AS DOUBLE)
+    DIM r AS DOUBLE = a * MATH.PI / 180
+    NEON.CAMERA 0 - dist * SIN(r), eye_y, 0 - dist * COS(r), a, pitch, 60
+ENDSUB
+
+' Where the camera goes in each section
+SUB MOVE_CAMERA(mood$, cyc AS DOUBLE, si AS INTEGER)
+    DIM into AS DOUBLE = cyc - SCORE.SECTION_BAR(si)
+    IF mood$ = "wave" THEN
+        DIM k AS DOUBLE = SMOOTH01(into / 4)
+        ORBIT_CAMERA 20 * (1 - k), 3.45 + 6 * (1 - k), 0.95 + 1.6 * (1 - k), -12 * (1 - k)
+    ELSEIF mood$ = "groove" THEN
+        ORBIT_CAMERA 12 * SIN(cyc * MATH.PI / 4), 3.6, 1.0, 0
+    ELSEIF mood$ = "jump" THEN
+        ORBIT_CAMERA 16 * SIN(cyc * MATH.PI / 4), 3.45 - 0.2 * NEON.PULSE(), 0.95 + 0.15 * SIN(cyc * MATH.PI), 0
+    ELSE
+        DIM back AS DOUBLE = SMOOTH01(into / 3)
+        ORBIT_CAMERA -10 * back, 3.45 + 5 * back, 0.95 + 1.5 * back, -10 * back
+    ENDIF
+ENDSUB
+
+' One NEON element by name, centred at (x, y, z), about size across
+SUB SHOW_ELEMENT(name$, x AS DOUBLE, y AS DOUBLE, z AS DOUBLE, size AS DOUBLE, k AS DOUBLE)
+    DIM spin AS DOUBLE = clock * 35
+    IF name$ = "moon" THEN NEON.MOON x, y, z, size * 0.5, spin
+    IF name$ = "earth" THEN NEON.EARTH x, y, z, size * 0.5, spin
+    IF name$ = "orbits" THEN NEON.ORBITS x, y, z, size * 0.5, spin, 0
+    IF name$ = "points" THEN NEON.POINT_SPHERE x, y, z, size * 0.45, spin, 2
+    IF name$ = "city" THEN NEON.CITY x, y - size * 0.5, z, size * 0.25, 20, 3, 0
+    IF name$ = "terrain" THEN NEON.TERRAIN x, y - size * 0.4, z, size * 1.5, size * 0.4, 2
+    IF name$ = "hypercube" THEN NEON.HYPERCUBE x, y, z, size * 0.35, spin, 1
+    IF name$ = "knot" THEN NEON.KNOT x, y, z, size * 0.6, spin, 1
+    IF name$ = "ico" THEN NEON.ICO x, y, z, size * 0.45, spin, 4
+    IF name$ = "tunnel" THEN NEON.TUNNEL x, y, z, size * 0.5, size * 3, 4, 2
+    IF name$ = "stars" THEN NEON.STARS 6, 3
+    IF INSTR(",polar,ecg,scope,spectrum,radar,hex,counter,dial,rings,hud,", "," + name$ + ",") >= 0 THEN
+        NEON.PANEL name$, x, y, z, size * 1.3, x * -4, 0, 0, 0, k
+    ENDIF
+ENDSUB
+
+' The elements of each section, behind her
+SUB DRAW_SCENE(mood$, cyc AS DOUBLE)
+    IF mood$ = "wave" THEN
+        NEON.STARS 1.5, 3
+        NEON.MOON -5, 3.5, 14, 2.2, clock * 6
+        NEON.EARTH 6, 2.8, 16, 2.6, clock * 10
+        NEON.FLOOR 0, 0.5, 2
+        NEON.PANEL "hud", 0, 1.0, 5, 3.6, 0, 0, 0, 0, 0.55
+        NEON.PANEL "counter", -4.6, 0.9, 7, 3, -28, 0, 0, 0, 0.9
+        DIM into AS DOUBLE = cyc - 1
+        NEON.PANEL "word", 0, 2.7, 7 + 10 * (1 - SMOOTH01(into)), 6, 0, 0, 0, 1, SMOOTH01(into * 2)
+    ELSEIF mood$ = "groove" THEN
+        NEON.FLOOR 0, 3, 1
+        NEON.TERRAIN 0, 0.2, 34, 60, 4, 2
+        NEON.MOON -9, 7, 26, 3, clock * 6
+        NEON.CITY -7.5, 0, 13, 1.1, 20, 5, 0
+        NEON.PANEL "dial", 4.2, 2.5, 7.5, 3, 28, 0, 0, 0, 1
+        NEON.PANEL "spectrum", -5.2, 3.8, 8, 4.8, -26, 0, 0, 1, 1
+        NEON.PANEL "vu", 3.4, 5.4, 13, 4, 18, -10, 0, 0, 0.9
+    ELSEIF mood$ = "jump" THEN
+        NEON.TUNNEL 0, 1.6, 3, 6, 42, 10, 2
+        NEON.PANEL "polar", 0, 2.2, 13, 8, 0, 0, 0, 1, 0.85
+        NEON.HYPERCUBE -4.6, 3.2, 9, 1.0, clock * 50, 1
+        NEON.KNOT 4.6, 3.2, 9, 1.9, clock * 40, 0
+        NEON.PANEL "scope", -5.6, 0.9, 8, 4, -30, 0, 0, 0, 0.9
+        NEON.PANEL "ecg", 5.6, 0.9, 8, 4, 30, 0, 0, 5, 0.9
+    ELSE
+        NEON.STARS 4, 3
+        NEON.MOON 0, 4, 18, 2.6, clock * 8
+        NEON.ORBITS 5.5, 2.6, 10, 2, clock * 30, 0
+        NEON.POINT_SPHERE -5.5, 2.6, 10, 1.6, clock * 20, 2
+        NEON.FLOOR 0, 1, 2
+        NEON.PANEL "rings", -3.2, 0.8, 5, 2, -20, 0, 0, 1, 0.7
+    ENDIF
+    IF mood$ = "groove" ORELSE mood$ = "jump" THEN DRAW_LYRIC
+ENDSUB
+
+' The word she sings flying in over her head, and what her line names
+' rising beside her
+SUB DRAW_LYRIC()
+    IF word_t < 1.4 THEN
+        DIM fly AS DOUBLE = 1 - SMOOTH01(word_t * 5)
+        DIM fade AS DOUBLE = 1 - SMOOTH01((word_t - 0.9) * 2)
+        NEON.PANEL "word", 0, 2.75, 6 + 9 * fly, 4.8, 30 * fly, 0, 0, 3, fade
+    ENDIF
+    IF line_now < 0 ORELSE line_t > 3 THEN RETURN
+    DIM elems$ AS STRING = LYRICS.ELEMENTS$(line_now)
+    IF elems$ = "" THEN RETURN
+    DIM names$ = SPLIT(elems$, ",")
+    DIM rise AS DOUBLE = SMOOTH01(line_t * 2)
+    DIM gone AS DOUBLE = 1 - SMOOTH01((line_t - 2.4) * 2)
+    DIM i AS INTEGER
+    FOR i = 0 TO MIN([LEN(names$), 2]) - 1
+        DIM side AS DOUBLE = -1 + 2 * i
+        IF LEN(names$) = 1 THEN side = -1 + 2 * (line_now MOD 2)
+        SHOW_ELEMENT names$[i], side * 3, 1.5 + 2.6 * rise, 6.5, 2.2 * gone, gone
+    NEXT i
+ENDSUB
+
+' The line as a subtitle, drawn once into an image when it changes
+SUB MAKE_SUBTITLE(text$)
+    GFX.TARGET sub_img, TRUE
+    IF FONT$ <> "" THEN SETFONT FONT$, 48
+    DIM tw AS DOUBLE = GFX.TEXTSIZE(text$)[0]
+    TEXT 900 - tw / 2 + 3, 13, text$, 0, 0, 0
+    TEXT 900 - tw / 2, 10, text$, 255, 240, 255
+    IF FONT$ <> "" THEN SETFONT FONT$, 22
+    GFX.TARGET
+ENDSUB
+
+SUB DRAW_SUBTITLE(dt AS DOUBLE)
+    DIM want AS DOUBLE = 0
+    IF line_now >= 0 ANDALSO line_t < 2.6 THEN want = 1
+    sub_alpha = sub_alpha + (want - sub_alpha) * MIN([1, dt * 8])
+    IF sub_alpha < 0.02 THEN RETURN
+    GFX.DRAWQUAD sub_img, [60, 1860, 1860, 60], [970, 970, 1050, 1050], 255 * sub_alpha, "BLEND", 1
+ENDSUB
+
+' Her mouth for the sound she sings: open on the vowels, shut on m b p
+SUB MOUTH(ph$)
+    IF ph$ = "" THEN
+        KAIKU.SING "", 0
+    ELSEIF INSTR(" a ae uh aw er ", " " + ph$ + " ") >= 0 THEN
+        KAIKU.SING "a", 1
+    ELSEIF ph$ = "e" THEN
+        KAIKU.SING "e", 1
+    ELSEIF INSTR(" i ih y ", " " + ph$ + " ") >= 0 THEN
+        KAIKU.SING "i", 1
+    ELSEIF ph$ = "o" THEN
+        KAIKU.SING "o", 1
+    ELSEIF ph$ = "u" ORELSE ph$ = "w" THEN
+        KAIKU.SING "u", 1
+    ELSEIF INSTR(" m b p ", " " + ph$ + " ") >= 0 THEN
+        KAIKU.SING "", 0
+    ELSE
+        KAIKU.SING "e", 0.45
+    ENDIF
+ENDSUB
+
+' Her shadow and her, feet at the origin
+SUB DRAW_HER()
+    DIM px AS DOUBLE = NEON.VIEW_X(0, 0, 0)
+    DIM py AS DOUBLE = NEON.VIEW_Y(0, 0, 0)
+    DIM ppu AS DOUBLE = NEON.VIEW_SCALE(0, 0, 0)
+    IF ppu <= 0 THEN RETURN
+    ELLIPSE px, py, 0.42 * ppu, 0.06 * ppu, TRUE, 20, 16, 30
+    KAIKU.DRAW px, py, TALL_W * ppu, 255
+ENDSUB
+
+' The dancers for the section's mood: none in the intro, a ripple in
+' the groove (each a little later than the one in front), all in step
+' and mirrored on the left in the chorus, a slow ripple fading at the end
+SUB DRAW_LINEUP(mood$, dt AS DOUBLE)
+    DIM want AS DOUBLE = 1
+    IF mood$ = "wave" OR mood$ = "bye" THEN want = 0
+    line_alpha = line_alpha + (want - line_alpha) * MIN([1, dt * 1.5])
+    IF line_alpha < 0.02 THEN RETURN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(LINE_X) - 1
+        DIM wx AS DOUBLE = LINE_X[i] * 0.95
+        DIM wz AS DOUBLE = 1.3 + 1.1 * LINE_ROW[i]
+        DIM ppu AS DOUBLE = NEON.VIEW_SCALE(wx, 0, wz)
+        IF ppu <= 0 THEN CONTINUEFOR
+        DIM delay AS DOUBLE = 0
+        DIM mirror AS INTEGER = LINE_X[i] < 0
+        IF mood$ = "groove" OR mood$ = "bye" THEN delay = 0.08 * (ABS(LINE_X[i]))
+        KAIKU.DRAW_ECHO NEON.VIEW_X(wx, 0, wz), NEON.VIEW_Y(wx, 0, wz), TALL_W * ppu, 255 * line_alpha * (0.85 - 0.18 * LINE_ROW[i]), delay, mirror
+    NEXT i
+ENDSUB
+
+' The syllable she sings: her mouth, the word, the line
+SUB FOLLOW_SINGING(dt AS DOUBLE)
+    word_t = word_t + dt
+    line_t = line_t + dt
+    DIM ph$ AS STRING = SOUND.SUNG$(VOX)
+    MOUTH ph$
+    DIM idx AS INTEGER = SOUND.SUNG(VOX) - 1
+    IF idx < 0 ORELSE idx >= n_syl THEN RETURN
+    DIM ln AS INTEGER = syl_line[idx]
+    IF ln <> line_now THEN
+        line_now = ln
+        line_t = 0
+        MAKE_SUBTITLE LYRICS.TEXT$(ln)
+    ENDIF
+    DIM w$ AS STRING = UCASE$(LYRICS.WORD$(ln, syl_k[idx]))
+    IF w$ <> word_now$ ORELSE (syl_k[idx] = 0 ANDALSO word_t > 0.5) THEN
+        IF w$ <> word_now$ THEN word_t = 0
+        word_now$ = w$
+        NEON.SAY w$
+    ENDIF
+ENDSUB
+
+' One frame: choreography, singing, the scene, her
+SUB FRAME()
+    DIM cyc AS DOUBLE = SOUND.CYCLE()
+    DIM beat AS DOUBLE = cyc * 4
+    DIM dt AS DOUBLE = (TICK() - last_tick) / 1000
+    last_tick = TICK()
+    IF render_dir$ <> "" ORELSE bench THEN dt = 1 / 30
+    clock = clock + dt
+    DIM si AS INTEGER = SCORE.SECTION_AT(cyc)
+    DIM mood$ AS STRING = SCORE.SECTION_MOOD$(si)
+
+    IF INT(beat) <> prev_beat THEN
+        prev_beat = INT(beat)
+        DIM bar AS INTEGER = INT(cyc)
+        DIM bib AS INTEGER = prev_beat MOD 4
+        IF mood$ = "wave" THEN
+            KAIKU.POSE MOVES_WAVE$[prev_beat MOD 4]
+            KAIKU.FACE "normal"
+        ELSEIF mood$ = "groove" THEN
+            KAIKU.POSE MOVES_GROOVE$[prev_beat MOD 4]
+            IF bib = 0 THEN KAIKU.FACE "happy"
+            IF bib = 2 THEN KAIKU.FACE "normal"
+        ELSEIF mood$ = "jump" THEN
+            KAIKU.POSE MOVES_JUMP$[prev_beat MOD 8]
+            IF bib = 0 ANDALSO bar MOD 2 = 1 THEN KAIKU.FACE "wink"
+            IF bib = 1 THEN KAIKU.FACE "normal"
+        ELSE
+            KAIKU.POSE "bow"
+            KAIKU.FACE "happy"
+        ENDIF
+    ENDIF
+    FOLLOW_SINGING dt
+
+    KAIKU.UPDATE dt, beat
+    KAIKU.RENDER
+    NEON.FEED SOUND.GET_WAVE(), beat, dt
+    MOVE_CAMERA mood$, cyc, si
+
+    CLS 6, 5, 12
+    NEON.BEGIN
+    DRAW_SCENE mood$, cyc
+    NEON.FINISH
+    DRAW_LINEUP mood$, dt
+    DRAW_HER
+    DRAW_SUBTITLE dt
+
+    IF render_dir$ <> "" THEN GFX.SAVE_SCREENSHOT render_dir$ + "/f" + FORMAT$("{:0>5}", frame_no) + ".jpg"
+    frame_no = frame_no + 1
+    SCREENFLIP
+    IF GFX.KEYSTATE("Escape") THEN
+        SOUND.RESET
+        END 0
+    ENDIF
+ENDSUB
+
+IF render_dir$ <> "" ORELSE bench THEN
+    IF render_dir$ <> "" THEN SOUND.RECORD render_dir$ + "/audio.wav"
+    DO WHILE SOUND.CYCLE() < SCORE.END_BAR()
+        FRAME
+        DIM rendered = SOUND.RENDER(1470)
+    LOOP
+    IF render_dir$ <> "" THEN SOUND.RECORD
+    PRINT "rendered "; frame_no; " frames, "; INT((TICK() - start_tick) / frame_no); " ms each, "; SOUND.SUNG(VOX); " of "; n_syl; " syllables sung"
+ELSE
+    DO WHILE SOUND.CYCLE() < SCORE.END_BAR()
+        FRAME
+    LOOP
+    PRINT frame_no; " frames, "; INT((TICK() - start_tick) / frame_no); " ms each"
+ENDIF
+SOUND.RESET

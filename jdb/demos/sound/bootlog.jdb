@@ -1,0 +1,605 @@
+' bootlog.jdb - a scene for a song written with SCORE: the night boots
+' like a machine. A boot log types along with the beat, a town streams
+' in around the listener while the song plays, the section names come
+' up as big type and a progress bar loads the world.
+'
+'   BOOTLOG.RUN "Boot Sequence"
+'
+' plays the queued score until SCORE.END_BAR() and returns. The beat
+' effects look for tracks named KICK, CLAP and CRASH; each section's
+' mood sets how fast the log runs (wave, groove, shuffle, rise, jump,
+' bye).
+'
+'   --window       a half-size window instead of fullscreen
+'   --render dir   an offline render: every frame as dir/fNNNNN.jpg at
+'                  30 fps and the sound as dir/audio.wav
+'   Esc quits.
+
+EXPORT MODULE BOOTLOG
+IMPORT SCORE
+
+DIM SW AS INTEGER = 1920
+DIM SH AS INTEGER = 1080
+DIM RENDER_FPS AS INTEGER = 30
+
+DIM INK_R AS INTEGER = 228
+DIM INK_G AS INTEGER = 226
+DIM INK_B AS INTEGER = 234
+DIM DIM_R AS INTEGER = 92
+DIM DIM_G AS INTEGER = 92
+DIM DIM_B AS INTEGER = 108
+DIM HOT_R AS INTEGER = 255
+DIM HOT_G AS INTEGER = 46
+DIM HOT_B AS INTEGER = 136
+
+DIM MONO$ AS STRING = ""
+DIM SANS$ AS STRING = ""
+DIM cur_font$ AS STRING = ""
+DIM cur_size AS INTEGER = 0
+
+DIM title$ AS STRING = ""
+DIM windowed AS INTEGER = FALSE
+DIM render_dir$ AS STRING = ""
+
+' the log: what it says, in the order it boots
+DIM BOOT_MSG$ = ["mounting /dev/dreams", "probing oscillators (4)", "seeding rng", "calibrating kick drum", "loading bassline", "tuning A to 440 Hz", "allocating reverb (hall)", "spawning crowd (1 human)", "importing feelings", "syncing clock to tempo", "counting sheep", "compiling dance moves (-c)", "linking left foot <-> right foot", "loading sunrise", "checking for meaning", "warming up subwoofer", "raising cutoff", "turning it up to 11", "disabling sleep mode", "loading weekend", "rendering lasers", "negotiating with neighbours", "buffering euphoria", "dropping bass"]
+DIM BOOT_ST$ = ["ok", "ok", "", "ok", "cached", "ok", "ok", "warn", "module not found", "locked", "skipped (awake)", "ok", "ok", "deferred", "timeout", "ok", "ok", "ok", "ok", "asset not found", "ok", "warn", "stalled", "ok"]
+DIM BYE_MSG$ = ["stopping lasers", "saving dream to disk", "freeing memory", "unmounting /dev/dreams", "syncing disks", "powering down crowd", "goodnight"]
+DIM BYE_ST$ = ["ok", "ok", "ok", "ok", "ok", "ok", "zzz"]
+
+DIM N_ROWS AS INTEGER = 20
+DIM row_msg$ = [""]
+DIM row_st$ = [""]
+DIM row_ts$ = [""]
+DIM row_born = [0.0]
+DIM row_count AS INTEGER = 0
+DIM n_logged AS INTEGER = 0
+DIM boot_i AS INTEGER = 0
+DIM bye_i AS INTEGER = 0
+
+' the town: one rectangle per block, around the listener at (CX, CY)
+DIM CX AS DOUBLE = 1340
+DIM CY AS DOUBLE = 500
+DIM blk_x = [0.0]
+DIM blk_y = [0.0]
+DIM blk_w = [0.0]
+DIM blk_h = [0.0]
+DIM blk_d = [0.0]
+DIM n_blk AS INTEGER = 0
+DIM bye_bar AS DOUBLE = 0
+DIM N_DOTS AS INTEGER = 160
+DIM dot_a = [0.0]
+DIM dot_r = [0.0]
+
+DIM N_BANDS AS INTEGER = 48
+DIM band_lo = [0]
+DIM band_hi = [0]
+DIM spec = [0.0]
+DIM energy AS DOUBLE = 0
+
+DIM kick_t AS INTEGER = -1
+DIM clap_t AS INTEGER = -1
+DIM crash_t AS INTEGER = -1
+DIM live = [0]
+DIM sec_i AS INTEGER = -1
+DIM section_bar AS DOUBLE = 0
+DIM sec_name$ AS STRING = ""
+DIM mood$ AS STRING = ""
+DIM prev_cyc AS DOUBLE = -1
+DIM flash AS DOUBLE = 0
+DIM frame_no AS INTEGER = 0
+
+FUNC FRACT(x AS DOUBLE) AS DOUBLE
+    RETURN x - INT(x)
+ENDFUNC
+
+FUNC CLAMP01(x AS DOUBLE) AS DOUBLE
+    IF x < 0 THEN RETURN 0
+    IF x > 1 THEN RETURN 1
+    RETURN x
+ENDFUNC
+
+FUNC SECONDS(cyc AS DOUBLE) AS DOUBLE
+    RETURN cyc * 240 / SCORE.BPM_OF()
+ENDFUNC
+
+FUNC IS_LIVE(t AS INTEGER) AS INTEGER
+    IF t < 0 THEN RETURN FALSE
+    RETURN live[t]
+ENDFUNC
+
+SUB USE_FONT(path$, size AS INTEGER)
+    IF path$ = cur_font$ ANDALSO size = cur_size THEN RETURN
+    SETFONT path$, size
+    cur_font$ = path$
+    cur_size = size
+ENDSUB
+
+FUNC SHADE(c AS INTEGER, k AS DOUBLE) AS INTEGER
+    RETURN INT(c * CLAMP01(k))
+ENDFUNC
+
+' Text with a soft glow: eight faint copies around it, added onto the screen
+SUB GLOW_TEXT(x AS DOUBLE, y AS DOUBLE, s$, r AS INTEGER, g AS INTEGER, b AS INTEGER, spread AS DOUBLE)
+    GFX.BLEND "ADD"
+    DIM k AS INTEGER
+    FOR k = 0 TO 7
+        DIM ang AS DOUBLE = k * MATH.PI / 4
+        TEXT x + COS(ang) * spread, y + SIN(ang) * spread, s$, INT(r / 4), INT(g / 4), INT(b / 4)
+    NEXT k
+    TEXT x, y, s$, r, g, b
+ENDSUB
+
+SUB PUSH_ROW(msg$, st$, cyc AS DOUBLE)
+    DIM ts$ AS STRING = FORMAT$("[{:10.6f}]", SECONDS(cyc))
+    IF row_count < N_ROWS THEN
+        IF row_count = 0 THEN
+            row_msg$[0] = msg$
+            row_st$[0] = st$
+            row_ts$[0] = ts$
+            row_born[0] = cyc
+        ELSE
+            row_msg$ = APPEND(row_msg$, msg$)
+            row_st$ = APPEND(row_st$, st$)
+            row_ts$ = APPEND(row_ts$, ts$)
+            row_born = APPEND(row_born, cyc)
+        ENDIF
+        row_count = row_count + 1
+    ELSE
+        DIM i AS INTEGER
+        FOR i = 0 TO N_ROWS - 2
+            row_msg$[i] = row_msg$[i + 1]
+            row_st$[i] = row_st$[i + 1]
+            row_ts$[i] = row_ts$[i + 1]
+            row_born[i] = row_born[i + 1]
+        NEXT i
+        row_msg$[N_ROWS - 1] = msg$
+        row_st$[N_ROWS - 1] = st$
+        row_ts$[N_ROWS - 1] = ts$
+        row_born[N_ROWS - 1] = cyc
+    ENDIF
+    n_logged = n_logged + 1
+ENDSUB
+
+SUB NEXT_ROW(cyc AS DOUBLE)
+    IF mood$ = "bye" THEN
+        IF bye_i < LEN(BYE_MSG$) THEN
+            PUSH_ROW BYE_MSG$[bye_i], BYE_ST$[bye_i], cyc
+            bye_i = bye_i + 1
+        ENDIF
+        RETURN
+    ENDIF
+    DIM k AS INTEGER = boot_i - LEN(BOOT_MSG$) * INT(boot_i / LEN(BOOT_MSG$))
+    DIM st$ AS STRING = BOOT_ST$[k]
+    IF st$ = "" THEN st$ = STR$(INT(SCORE.BPM_OF()))
+    PUSH_ROW BOOT_MSG$[k], st$, cyc
+    boot_i = boot_i + 1
+ENDSUB
+
+' Log rows per beat for the section's mood
+FUNC ROW_RATE() AS DOUBLE
+    IF mood$ = "wave" THEN RETURN 0.5
+    IF mood$ = "rise" THEN RETURN 2
+    IF mood$ = "jump" THEN RETURN 2
+    IF mood$ = "bye" THEN RETURN 0.5
+    RETURN 1
+ENDFUNC
+
+FUNC IS_BAD(st$) AS INTEGER
+    IF st$ = "warn" OR st$ = "timeout" OR st$ = "stalled" THEN RETURN TRUE
+    RETURN INSTR(st$, "not found") >= 0
+ENDFUNC
+
+SUB INIT_WORLD()
+    DIM gx AS INTEGER
+    DIM gy AS INTEGER
+    DIM k AS INTEGER
+    ' a street grid of 150 px cells below the header row, skipping the
+    ' cell under the listener
+    FOR gy = 1 TO 7
+        FOR gx = 0 TO 12
+            DIM x0 AS DOUBLE = gx * 150 - 10
+            DIM y0 AS DOUBLE = gy * 150 - 40
+            IF ABS(x0 + 75 - CX) < 80 ANDALSO ABS(y0 + 75 - CY) < 80 THEN CONTINUEFOR
+            ' four lots per cell, two thirds of them built on
+            DIM lot AS INTEGER
+            FOR lot = 0 TO 3
+                IF RND(1) > 0.68 THEN CONTINUEFOR
+                DIM w AS DOUBLE = 24 + INT(RND(1) * 30)
+                DIM h AS DOUBLE = 20 + INT(RND(1) * 34)
+                DIM bx AS DOUBLE = x0 + 14 + (lot MOD 2) * 64 + INT(RND(1) * (58 - w))
+                DIM by AS DOUBLE = y0 + 14 + INT(lot / 2) * 64 + INT(RND(1) * (58 - h))
+                DIM d AS DOUBLE = SQR((bx + w / 2 - CX) ^ 2 + (by + h / 2 - CY) ^ 2)
+                IF n_blk = 0 THEN
+                    blk_x[0] = bx
+                    blk_y[0] = by
+                    blk_w[0] = w
+                    blk_h[0] = h
+                    blk_d[0] = d
+                ELSE
+                    blk_x = APPEND(blk_x, bx)
+                    blk_y = APPEND(blk_y, by)
+                    blk_w = APPEND(blk_w, w)
+                    blk_h = APPEND(blk_h, h)
+                    blk_d = APPEND(blk_d, d)
+                ENDIF
+                n_blk = n_blk + 1
+            NEXT lot
+        NEXT gx
+    NEXT gy
+    bye_bar = SCORE.END_BAR()
+    FOR k = SCORE.SECTIONS() - 1 TO 0 STEP -1
+        IF SCORE.SECTION_MOOD$(k) = "bye" THEN bye_bar = SCORE.SECTION_BAR(k)
+    NEXT k
+    FOR k = 1 TO N_DOTS
+        DIM rr AS DOUBLE = (RND(1) + RND(1) + RND(1)) / 3
+        IF k = 1 THEN
+            dot_a[0] = RND(1) * 2 * MATH.PI
+            dot_r[0] = rr
+        ELSE
+            dot_a = APPEND(dot_a, RND(1) * 2 * MATH.PI)
+            dot_r = APPEND(dot_r, rr)
+        ENDIF
+    NEXT k
+    ' FFT bands, spaced logarithmically
+    FOR k = 0 TO N_BANDS - 1
+        DIM lo AS INTEGER = INT(2 * 90 ^ (k / N_BANDS))
+        DIM hi AS INTEGER = MAX([lo + 1, INT(2 * 90 ^ ((k + 1) / N_BANDS))])
+        IF k = 0 THEN
+            band_lo[0] = lo
+            band_hi[0] = hi
+            spec[0] = 0
+        ELSE
+            band_lo = APPEND(band_lo, lo)
+            band_hi = APPEND(band_hi, hi)
+            spec = APPEND(spec, 0.0)
+        ENDIF
+    NEXT k
+ENDSUB
+
+' ── Layers ───────────────────────────────────────────────────────
+
+SUB DRAW_GRID(kick_env AS DOUBLE)
+    DIM gl AS INTEGER = 22 + INT(26 * kick_env)
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    FOR x = 0 TO SW STEP 150
+        LINE x - 10, 0, x - 10, SH, gl, gl, gl + 6
+    NEXT x
+    FOR y = 0 TO SH STEP 150
+        LINE 0, y - 40, SW, y - 40, gl, gl, gl + 6
+    NEXT y
+ENDSUB
+
+' The town streams in from the listener outwards until the last
+' section and unloads again inwards during it; a block lights up pink
+' the moment it loads
+SUB DRAW_TOWN(cyc AS DOUBLE)
+    DIM radius AS DOUBLE
+    IF cyc < bye_bar THEN
+        radius = 90 + 1400 * CLAMP01(cyc / bye_bar)
+    ELSE
+        radius = 1490 * CLAMP01(1 - (cyc - bye_bar) / (SCORE.END_BAR() - 1 - bye_bar))
+    ENDIF
+    DIM i AS INTEGER
+    FOR i = 0 TO n_blk - 1
+        DIM d AS DOUBLE = blk_d[i]
+        IF d < radius THEN
+            DIM fresh AS DOUBLE = CLAMP01(1 - (radius - d) / 90)
+            DIM r AS INTEGER = INT(70 + (HOT_R - 70) * fresh)
+            DIM g AS INTEGER = INT(70 + (HOT_G - 70) * fresh)
+            DIM b AS INTEGER = INT(80 + (HOT_B - 80) * fresh)
+            RECT blk_x[i], blk_y[i], blk_w[i], blk_h[i], FALSE, r, g, b
+        ENDIF
+    NEXT i
+    ' the loading front
+    DIM a AS DOUBLE
+    FOR a = 0 TO 2 * MATH.PI STEP 0.06
+        PSET CX + COS(a + cyc) * radius, CY + SIN(a + cyc) * radius, 70, 40, 60
+    NEXT a
+ENDSUB
+
+SUB DRAW_LISTENER(cyc AS DOUBLE, kick_env AS DOUBLE)
+    GFX.BLEND "ADD"
+    DIM spread AS DOUBLE = 30 + 260 * CLAMP01(energy * 5)
+    DIM i AS INTEGER
+    FOR i = 0 TO N_DOTS - 1
+        DIM a AS DOUBLE = dot_a[i] + cyc * (0.3 + dot_r[i])
+        DIM rr AS DOUBLE = dot_r[i] * spread
+        DIM c AS INTEGER = INT(110 + 120 * (1 - dot_r[i]))
+        PSET CX + COS(a) * rr, CY + SIN(a) * rr * 0.8, c, c, c
+    NEXT i
+    DIM ring AS DOUBLE = 26 + 40 * (1 - kick_env)
+    CIRCLE CX, CY, ring, FALSE, SHADE(HOT_R, kick_env + 0.2), SHADE(HOT_G, kick_env + 0.2), SHADE(HOT_B, kick_env + 0.2)
+    CIRCLE CX, CY, 24, FALSE, 200, 200, 210
+    CIRCLE CX, CY, 4, TRUE, 255, 255, 255
+    CIRCLE CX, CY, 7, FALSE, HOT_R, HOT_G, HOT_B
+    USE_FONT MONO$, 15
+    GLOW_TEXT CX - 52, CY - 14, "P1", 255, 255, 255, 2
+    TEXT CX + 34, CY - 8, "listener_01 . dreaming", DIM_R + 40, DIM_G + 40, DIM_B + 40
+ENDSUB
+
+SUB DRAW_LOG(cyc AS DOUBLE)
+    DIM x0 AS INTEGER = 56
+    DIM y0 AS INTEGER = 96
+    DIM w AS INTEGER = 800
+    DIM row_h AS INTEGER = 27
+    DIM h AS INTEGER = 50 + N_ROWS * row_h
+    GFX.BLEND "BLEND"
+    DRAWCOLOR 10, 10, 14, 236
+    RECT x0, y0, w, h, TRUE
+    GFX.BLEND "NONE"
+    RECT x0, y0, w, h, FALSE, 70, 70, 84
+    LINE x0, y0 + 32, x0 + w, y0 + 32, 50, 50, 62
+    USE_FONT MONO$, 15
+    TEXT x0 + 14, y0 + 8, "BOOT.LOG", DIM_R + 50, DIM_G + 50, DIM_B + 50
+    TEXT x0 + w - 190, y0 + 8, "TAIL -F . " + STR$(n_logged) + " lines", DIM_R, DIM_G, DIM_B
+    USE_FONT MONO$, 18
+    DIM i AS INTEGER
+    FOR i = 0 TO row_count - 1
+        DIM y AS DOUBLE = y0 + 44 + i * row_h
+        DIM age AS DOUBLE = (cyc - row_born[i]) * 4
+        ' a row types itself out in half a beat
+        DIM body$ AS STRING = row_msg$[i] + " ... "
+        DIM shown AS INTEGER = INT(CLAMP01(age * 2) * LEN(body$))
+        TEXT x0 + 14, y, row_ts$[i], DIM_R, DIM_G, DIM_B
+        IF shown > 0 THEN TEXT x0 + 160, y, LEFT$(body$, shown), INK_R, INK_G, INK_B
+        IF age >= 0.5 THEN
+            DIM tw = GFX.TEXTSIZE(body$)
+            DIM st$ AS STRING = row_st$[i]
+            IF IS_BAD(st$) THEN
+                GLOW_TEXT x0 + 160 + tw[0], y, st$, HOT_R, HOT_G, HOT_B, 2
+                GFX.BLEND "NONE"
+            ELSEIF st$ = "ok" OR st$ = "cached" OR st$ = "deferred" THEN
+                TEXT x0 + 160 + tw[0], y, st$, DIM_R + 30, DIM_G + 30, DIM_B + 30
+            ELSE
+                TEXT x0 + 160 + tw[0], y, st$, INK_R, INK_G, INK_B
+            ENDIF
+        ENDIF
+        ' the cursor on the newest row
+        IF i = row_count - 1 ANDALSO FRACT(cyc * 4) < 0.5 THEN
+            DIM cw = GFX.TEXTSIZE(LEFT$(body$, shown))
+            RECT x0 + 160 + cw[0] + 2, y + 2, 10, 18, TRUE, HOT_R, HOT_G, HOT_B
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB DRAW_HUD(cyc AS DOUBLE)
+    USE_FONT MONO$, 15
+    TEXT 56, 40, "SIM/2   TTY0   " + UCASE$(title$), DIM_R + 30, DIM_G + 30, DIM_B + 30
+    DIM up$ AS STRING = "UPTIME " + FORMAT$("{:8.3f}", SECONDS(cyc)) + " s"
+    DIM tw = GFX.TEXTSIZE(up$)
+    TEXT SW - 56 - tw[0], 40, up$, INK_R, INK_G, INK_B
+    DIM pos$ AS STRING = "BAR " + STR$(INT(cyc) + 1) + "   BEAT " + STR$(INT(FRACT(cyc) * 4) + 1) + "   " + STR$(INT(SCORE.BPM_OF())) + " BPM"
+    tw = GFX.TEXTSIZE(pos$)
+    TEXT SW - 56 - tw[0], 62, pos$, DIM_R, DIM_G, DIM_B
+ENDSUB
+
+SUB DRAW_SPECTRUM()
+    DIM x0 AS INTEGER = SW - 56 - 400
+    DIM y0 AS INTEGER = 800
+    DIM h AS INTEGER = 100
+    GFX.BLEND "BLEND"
+    DRAWCOLOR 10, 10, 14, 220
+    RECT x0, y0, 400, h + 36, TRUE
+    GFX.BLEND "NONE"
+    RECT x0, y0, 400, h + 36, FALSE, 70, 70, 84
+    USE_FONT MONO$, 13
+    TEXT x0 + 10, y0 + 6, "AUDIO.BUS   master", DIM_R + 30, DIM_G + 30, DIM_B + 30
+    GFX.BLEND "ADD"
+    DIM i AS INTEGER
+    FOR i = 0 TO N_BANDS - 1
+        DIM bh AS DOUBLE = spec[i] * h
+        DIM bx AS INTEGER = x0 + 12 + i * 8
+        DIM hot AS DOUBLE = CLAMP01(spec[i] * 1.4 - 0.3)
+        LINE bx, y0 + 28 + h, bx, y0 + 28 + h - bh, INT(120 + 135 * hot), INT(120 - 74 * hot), INT(130 + 6 * hot)
+    NEXT i
+    GFX.BLEND "NONE"
+ENDSUB
+
+' The world loads with the song and sticks at 99 until the last bar
+SUB DRAW_PROGRESS(cyc AS DOUBLE)
+    DIM pct AS INTEGER = INT(100 * CLAMP01(cyc / (SCORE.END_BAR() - 1)))
+    IF pct > 99 ANDALSO cyc < SCORE.END_BAR() - 0.25 THEN pct = 99
+    DIM x0 AS INTEGER = 56
+    DIM y0 AS INTEGER = 1000
+    DIM seg_w AS INTEGER = 18
+    USE_FONT MONO$, 15
+    TEXT x0, y0 - 28, "loading world", DIM_R + 30, DIM_G + 30, DIM_B + 30
+    GLOW_TEXT x0 + 150, y0 - 28, STR$(pct) + "%", HOT_R, HOT_G, HOT_B, 2
+    GFX.BLEND "NONE"
+    DIM i AS INTEGER
+    FOR i = 0 TO 99
+        DIM sx AS INTEGER = x0 + i * seg_w
+        IF i < pct THEN
+            RECT sx, y0, seg_w - 3, 12, TRUE, HOT_R, HOT_G, HOT_B
+        ELSE
+            RECT sx, y0, seg_w - 3, 12, FALSE, 50, 50, 60
+        ENDIF
+    NEXT i
+    IF pct < 100 THEN
+        GFX.BLEND "ADD"
+        RECT x0 + pct * seg_w - 2, y0 - 4, 6, 20, TRUE, 255, 255, 255
+        GFX.BLEND "NONE"
+    ENDIF
+ENDSUB
+
+' The section name, typed out big for its first two bars; the letters
+' still arriving glow pink
+SUB DRAW_CAPTION(cyc AS DOUBLE)
+    DIM age AS DOUBLE = (cyc - section_bar) * 4
+    IF age < 0 OR age > 8 OR sec_name$ = "" THEN RETURN
+    DIM fade AS DOUBLE = CLAMP01((8 - age) / 2)
+    DIM cap$ AS STRING = sec_name$
+    DIM shown AS INTEGER = INT(CLAMP01(age / 1.5) * LEN(cap$))
+    USE_FONT SANS$, 120
+    DIM x AS DOUBLE = 920
+    DIM y AS DOUBLE = 760
+    DIM hot_from AS INTEGER = MAX([0, shown - 3])
+    DIM done$ AS STRING = LEFT$(cap$, hot_from)
+    DIM tail$ AS STRING = MID$(cap$, hot_from, shown - hot_from)
+    IF done$ <> "" THEN GLOW_TEXT x, y, done$, SHADE(INK_R, fade), SHADE(INK_G, fade), SHADE(INK_B, fade), 3
+    IF tail$ <> "" THEN
+        DIM tw = GFX.TEXTSIZE(done$)
+        IF done$ = "" THEN tw[0] = 0
+        GLOW_TEXT x + tw[0], y, tail$, SHADE(HOT_R, fade), SHADE(HOT_G, fade), SHADE(HOT_B, fade), 5
+    ENDIF
+    GFX.BLEND "NONE"
+ENDSUB
+
+' The last section asks before it sleeps
+SUB DRAW_DIALOG(cyc AS DOUBLE)
+    IF mood$ <> "bye" THEN RETURN
+    DIM age AS DOUBLE = cyc - section_bar
+    IF age < 2 THEN RETURN
+    DIM w AS INTEGER = 640
+    DIM h AS INTEGER = 210
+    DIM x0 AS INTEGER = (SW - w) / 2
+    DIM y0 AS INTEGER = (SH - h) / 2 - 40
+    GFX.BLEND "BLEND"
+    DRAWCOLOR 12, 10, 16, 245
+    RECT x0, y0, w, h, TRUE
+    GFX.BLEND "NONE"
+    RECT x0, y0, w, h, FALSE, HOT_R, HOT_G, HOT_B
+    USE_FONT MONO$, 15
+    TEXT x0 + 20, y0 + 16, "SYSTEM", DIM_R + 30, DIM_G + 30, DIM_B + 30
+    USE_FONT SANS$, 30
+    TEXT x0 + 20, y0 + 52, "Save this dream before sleeping?", INK_R, INK_G, INK_B
+    USE_FONT MONO$, 17
+    DIM pick AS INTEGER = (age > 5)
+    RECT x0 + 20, y0 + 140, 280, 44, FALSE, 90, 90, 104
+    TEXT x0 + 46, y0 + 151, "Discard and wake up", DIM_R + 40, DIM_G + 40, DIM_B + 40
+    IF pick THEN
+        RECT x0 + 320, y0 + 140, 300, 44, TRUE, HOT_R, HOT_G, HOT_B
+        TEXT x0 + 400, y0 + 151, "Save and sleep", 20, 10, 18
+    ELSE
+        RECT x0 + 320, y0 + 140, 300, 44, FALSE, HOT_R, HOT_G, HOT_B
+        TEXT x0 + 400, y0 + 151, "Save and sleep", HOT_R, HOT_G, HOT_B
+    ENDIF
+ENDSUB
+
+' ── The frame ────────────────────────────────────────────────────
+
+SUB FRAME()
+    DIM cyc AS DOUBLE = SOUND.CYCLE()
+    DIM beat AS DOUBLE = cyc * 4
+    DIM bf AS DOUBLE = FRACT(beat)
+    DIM bar AS INTEGER = INT(cyc)
+
+    live = SCORE.LIVE_AT(cyc)
+    DIM si AS INTEGER = SCORE.SECTION_AT(cyc)
+    IF si <> sec_i ANDALSO si >= 0 THEN
+        sec_i = si
+        section_bar = SCORE.SECTION_BAR(si)
+        sec_name$ = SCORE.SECTION_NAME$(si)
+        mood$ = SCORE.SECTION_MOOD$(si)
+    ENDIF
+
+    DIM kick_env AS DOUBLE = 0
+    IF IS_LIVE(kick_t) THEN kick_env = EXP(-bf * 6)
+
+    DIM rate AS DOUBLE = ROW_RATE()
+    IF prev_cyc >= 0 ANDALSO INT(beat * rate) > INT(prev_cyc * 4 * rate) THEN NEXT_ROW cyc
+    IF INT(beat) > INT(prev_cyc * 4) ANDALSO IS_LIVE(clap_t) THEN
+        DIM bib AS INTEGER = INT(beat) - 4 * INT(INT(beat) / 4)
+        IF bib = 1 OR bib = 3 THEN flash = MAX([flash, 0.12])
+    ENDIF
+    IF bar > INT(prev_cyc) ANDALSO IS_LIVE(crash_t) ANDALSO bar - 8 * INT(bar / 8) = 4 THEN flash = 0.8
+    prev_cyc = cyc
+
+    DIM wave = SOUND.GET_WAVE()
+    DIM nw AS INTEGER = LEN(wave)
+    energy = energy * 0.9 + SQR(SUM(wave * wave) / nw) * 0.1
+    DIM fq = FFT(wave)
+    DIM re = SLICE(fq, 1, 0)
+    DIM im = SLICE(fq, 1, 1)
+    DIM mag = SQR(re * re + im * im)
+    DIM i AS INTEGER
+    FOR i = 0 TO N_BANDS - 1
+        DIM bv AS DOUBLE = MAX(TAKE(band_hi[i] - band_lo[i], DROP(band_lo[i], mag)))
+        bv = CLAMP01(LOG(1 + bv * (0.3 + i * 0.04)) / 3.4)
+        IF bv > spec[i] THEN
+            spec[i] = bv
+        ELSE
+            spec[i] = spec[i] * 0.88
+        ENDIF
+    NEXT i
+
+    CLS 8, 8, 11
+    GFX.BLEND "NONE"
+    DRAW_GRID kick_env
+    DRAW_TOWN cyc
+    DRAW_LISTENER cyc, kick_env
+    GFX.BLEND "NONE"
+    DRAW_LOG cyc
+    DRAW_SPECTRUM
+    DRAW_HUD cyc
+    DRAW_PROGRESS cyc
+    DRAW_CAPTION cyc
+    DRAW_DIALOG cyc
+    IF flash > 0.01 THEN
+        GFX.BLEND "ADD"
+        RECT 0, 0, SW, SH, TRUE, SHADE(60, flash), SHADE(8, flash), SHADE(30, flash)
+        GFX.BLEND "NONE"
+        flash = flash * 0.82
+    ENDIF
+
+    IF render_dir$ <> "" THEN GFX.SAVE_SCREENSHOT render_dir$ + "/f" + FORMAT$("{:0>5}", frame_no) + ".jpg"
+    frame_no = frame_no + 1
+    SCREENFLIP
+    IF GFX.KEYSTATE("Escape") THEN
+        SOUND.RESET
+        END 0
+    ENDIF
+ENDSUB
+
+SUB READ_ARGS()
+    DIM a = OS.ARGS()
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(a) - 1
+        IF a[i] = "--window" THEN windowed = TRUE
+        IF a[i] = "--render" ANDALSO i + 1 < LEN(a) THEN render_dir$ = a[i + 1]
+    NEXT i
+ENDSUB
+
+FUNC FIRST_FONT$(paths$) AS STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(paths$) - 1
+        IF FILE.EXISTS(paths$[i]) THEN RETURN paths$[i]
+    NEXT i
+    RETURN "jdbasic_default.ttf"
+ENDFUNC
+
+' Opens the window and plays the queued score to its last bar
+EXPORT SUB RUN(name$)
+    title$ = name$
+    READ_ARGS
+    INIT_WORLD
+    MONO$ = FIRST_FONT$(["C:/Windows/Fonts/consola.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "/System/Library/Fonts/Menlo.ttc"])
+    SANS$ = FIRST_FONT$(["C:/Windows/Fonts/bahnschrift.ttf", "C:/Windows/Fonts/segoeuib.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/System/Library/Fonts/Helvetica.ttc"])
+    kick_t = SCORE.TRACK_OF("KICK")
+    clap_t = SCORE.TRACK_OF("CLAP")
+    crash_t = SCORE.TRACK_OF("CRASH")
+    IF render_dir$ <> "" THEN
+        SCREEN SW, SH, title$
+        SOUND.RECORD render_dir$ + "/audio.wav"
+        DIM audio_slice AS INTEGER = INT(44100 / RENDER_FPS)
+        DO WHILE SOUND.CYCLE() < SCORE.END_BAR()
+            FRAME
+            DIM rendered = SOUND.RENDER(audio_slice)
+        LOOP
+        SOUND.RECORD
+        PRINT "rendered "; frame_no; " frames"
+    ELSE
+        IF windowed THEN
+            SCREEN SW, SH, title$, 0.5
+        ELSE
+            SCREEN SW, SH, title$
+            TOGGLE_FULLSCREEN
+        ENDIF
+        DO WHILE SOUND.CYCLE() < SCORE.END_BAR()
+            FRAME
+        LOOP
+    ENDIF
+    SOUND.RESET
+ENDSUB

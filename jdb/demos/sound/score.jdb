@@ -106,6 +106,13 @@ EXPORT SUB PLAY(t AS INTEGER, pat$)
     LOG_TRACK t, 1
 ENDSUB
 
+' What a track sings from the bar on: syllables in the spelling of
+' SOUND.SING, one on each note, the queue from before dropped
+EXPORT SUB SING(t AS INTEGER, lyric$)
+    SOUND.SING t, ""
+    SOUND.SING t, lyric$
+ENDSUB
+
 EXPORT SUB QUIET(t AS INTEGER)
     SOUND.SEQ t, "", "VOICE"
     LOG_TRACK t, 0
@@ -230,12 +237,12 @@ EXPORT SUB FINE(b AS DOUBLE)
 ENDSUB
 
 ' The SOUND.INIT mode: "PULL" when the song is rendered to video
-' (--render on the command line), "DEVICE" otherwise
+' or timed (--render or --bench on the command line), "DEVICE" otherwise
 EXPORT FUNC AUDIO_MODE$() AS STRING
     DIM cli = OS.ARGS()
     DIM i AS INTEGER
     FOR i = 1 TO LEN(cli) - 1
-        IF cli[i] = "--render" THEN RETURN "PULL"
+        IF cli[i] = "--render" ORELSE cli[i] = "--bench" THEN RETURN "PULL"
     NEXT i
     RETURN "DEVICE"
 ENDFUNC

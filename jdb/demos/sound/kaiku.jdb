@@ -1,0 +1,827 @@
+' kaiku.jdb - Kaiku, the singer: a neon stick girl with violet hair in
+' one long side ponytail, a fringe parted in the middle, a star clip,
+' a headset and a pleated skirt, who dances and sings to the beat.
+'
+'   KAIKU.INIT 600                ' the height she is mostly shown at
+'   KAIKU.POSE "cheer"            ' the pose she moves towards
+'   KAIKU.FACE "happy"            ' normal, happy, wink, surprised
+'   KAIKU.SING "a", 0.8           ' vowel a e i o u (or "") and how open
+'   KAIKU.UPDATE dt, beat         ' springs, hair and blinking
+'   KAIKU.RENDER                  ' draws her into her image
+'   KAIKU.DRAW x, y, height, 255  ' feet at (x, y), with glow
+'   KAIKU.DRAW_ECHO x, y, h, 255, 0.2, FALSE  ' her frame of 0.2 s ago
+'
+' She is drawn at twice the height given to INIT into an image of her
+' own, which DRAW places shrunk (smooth edges) over a blurred copy of
+' itself (glow). KAIKU.IMAGE() is that image, for drawing her again
+' elsewhere. Poses: idle, sing, sway_l, sway_r, cheer, heart, point,
+' wave, peace, jump, bow.
+
+EXPORT MODULE KAIKU
+
+' her own units: hip at (0, 0), y down, from the top of her hair at
+' -330 to her soles at +225
+DIM TALL AS DOUBLE = 555
+DIM SC AS DOUBLE = 2
+DIM TW AS INTEGER = 1000
+DIM TH AS INTEGER = 1200
+DIM OX AS DOUBLE = 500
+DIM OY AS DOUBLE = 700
+DIM img AS INTEGER = 0
+DIM half_img AS INTEGER = 0
+DIM quarter_img AS INTEGER = 0
+DIM glow_img AS INTEGER = 0
+
+' the last N_ECHO frames at half size, with the clock they were drawn
+' at, for dancers who follow her a little later
+DIM N_ECHO AS INTEGER = 32
+DIM echo_img = [0]
+DIM echo_t = [0.0]
+DIM echo_at AS INTEGER = 0
+
+DIM HAIR_R AS INTEGER = 178
+DIM HAIR_G AS INTEGER = 122
+DIM HAIR_B AS INTEGER = 255
+DIM CYAN_R AS INTEGER = 80
+DIM CYAN_G AS INTEGER = 236
+DIM CYAN_B AS INTEGER = 255
+DIM EYE_R AS INTEGER = 236
+DIM EYE_G AS INTEGER = 112
+DIM EYE_B AS INTEGER = 255
+DIM PINK_R AS INTEGER = 255
+DIM PINK_G AS INTEGER = 60
+DIM PINK_B AS INTEGER = 150
+DIM SKIN_R AS INTEGER = 250
+DIM SKIN_G AS INTEGER = 240
+DIM SKIN_B AS INTEGER = 250
+DIM CLOTH_R AS INTEGER = 150
+DIM CLOTH_G AS INTEGER = 160
+DIM CLOTH_B AS INTEGER = 190
+
+' a pose: lean, head tilt, screen-left upper arm, its elbow bend,
+' screen-right upper arm, its elbow bend, left thigh, its knee bend,
+' right thigh, its knee bend, bounce (hip down), sway (hip sideways).
+' An upper limb's angle is in degrees from straight down, positive
+' towards screen right; a bend turns the lower limb from there.
+DIM POSE_NAMES$ = ["idle", "sing", "sway_l", "sway_r", "cheer", "heart", "point", "wave", "peace", "jump", "bow"]
+DIM POSES = [[0, 0, -14, 6, 14, -6, -5, 2, 5, -2, 0, 0], [0, -6, -35, 75, 25, 170, -6, 4, 8, -4, 4, 0], [-6, -10, -45, -30, 20, 40, -14, 10, 4, 6, 8, -14], [6, 10, -20, -40, 45, 30, -4, -6, 14, -10, 8, 14], [0, 0, -150, -15, 150, 15, -10, 15, 10, -15, 14, 0], [0, 8, -60, 155, 60, -155, -5, 2, 5, -2, 2, 0], [-4, -8, -160, -10, 35, -75, -8, 4, 12, 10, 4, -6], [3, 10, -14, 6, 120, 40, -5, 2, 8, -2, 0, 4], [2, 12, -30, 50, 30, 160, -8, 12, 8, -6, 6, 6], [0, -4, -135, -20, 135, 20, -18, 30, 18, -30, -36, 0], [-20, 25, -10, 0, 10, 0, -4, 0, 4, 0, 10, 0]]
+DIM N_P AS INTEGER = 12
+DIM cur = [0.0, 0, -14, 6, 14, -6, -5, 2, 5, -2, 0, 0]
+DIM vel = [0.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+DIM goal = [0.0, 0, -14, 6, 14, -6, -5, 2, 5, -2, 0, 0]
+
+DIM pose$ AS STRING = "idle"
+DIM face$ AS STRING = "normal"
+DIM vowel$ AS STRING = ""
+DIM mouth_open AS DOUBLE = 0
+DIM mouth_show AS DOUBLE = 0
+DIM blink_t AS DOUBLE = 2.5
+DIM blink AS DOUBLE = 0
+DIM clock AS DOUBLE = 0
+DIM beat_now AS DOUBLE = 0
+
+' the ponytail: N_T points from its root at (TAIL_X, TAIL_Y) of the head
+DIM N_T AS INTEGER = 12
+DIM T_SEG AS DOUBLE = 25
+DIM TAIL_X AS DOUBLE = 60
+DIM TAIL_Y AS DOUBLE = -72
+DIM tx = [0.0]
+DIM ty = [0.0]
+DIM tpx = [0.0]
+DIM tpy = [0.0]
+DIM tails_ready AS INTEGER = FALSE
+
+' joints of the current frame, in her units
+DIM hip_x AS DOUBLE = 0
+DIM hip_y AS DOUBLE = 0
+DIM neck_x AS DOUBLE = 0
+DIM neck_y AS DOUBLE = 0
+DIM head_x AS DOUBLE = 0
+DIM head_y AS DOUBLE = 0
+DIM head_rot AS DOUBLE = 0
+DIM rx AS DOUBLE = 0
+DIM ry AS DOUBLE = 0
+
+DIM HEAD_R AS DOUBLE = 80
+
+' small springs for the fringe and the strand standing up: offsets in
+' head units, pushed by how the head speeds up
+DIM fringe_x AS DOUBLE = 0
+DIM fringe_vx AS DOUBLE = 0
+DIM fringe_y AS DOUBLE = 0
+DIM fringe_vy AS DOUBLE = 0
+DIM tuft_x AS DOUBLE = 0
+DIM tuft_vx AS DOUBLE = 0
+DIM tuft_y AS DOUBLE = 0
+DIM tuft_vy AS DOUBLE = 0
+DIM last_hx AS DOUBLE = 0
+DIM last_hy AS DOUBLE = 0
+DIM last_hvx AS DOUBLE = 0
+DIM last_hvy AS DOUBLE = 0
+DIM hair_dx AS DOUBLE = 0
+DIM hair_dy AS DOUBLE = 0
+
+FUNC CLAMP01(x AS DOUBLE) AS DOUBLE
+    IF x < 0 THEN RETURN 0
+    IF x > 1 THEN RETURN 1
+    RETURN x
+ENDFUNC
+
+FUNC DSIN(a AS DOUBLE) AS DOUBLE
+    RETURN SIN(a * MATH.PI / 180)
+ENDFUNC
+
+FUNC DCOS(a AS DOUBLE) AS DOUBLE
+    RETURN COS(a * MATH.PI / 180)
+ENDFUNC
+
+' ── Drawing helpers (her units in, image pixels out) ────────────
+
+FUNC PX(x AS DOUBLE) AS DOUBLE
+    RETURN OX + x * SC
+ENDFUNC
+
+FUNC PY(y AS DOUBLE) AS DOUBLE
+    RETURN OY + y * SC
+ENDFUNC
+
+' A stroke w units wide with round ends
+SUB SEG(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE, w AS DOUBLE, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    GFX.STROKE PX(x1), PY(y1), PX(x2), PY(y2), w * SC, r, g, b
+ENDSUB
+
+SUB BLOB(x AS DOUBLE, y AS DOUBLE, rad AS DOUBLE, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    CIRCLE PX(x), PY(y), rad * SC, TRUE, r, g, b
+ENDSUB
+
+SUB OVAL(x AS DOUBLE, y AS DOUBLE, rw AS DOUBLE, rh AS DOUBLE, fill AS INTEGER, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    ELLIPSE PX(x), PY(y), rw * SC, rh * SC, fill, r, g, b
+ENDSUB
+
+' A filled convex quadrilateral, corners in order: one line per pixel row
+SUB FILL_QUAD(x0 AS DOUBLE, y0 AS DOUBLE, x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE, x3 AS DOUBLE, y3 AS DOUBLE, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    DIM qx = [PX(x0), PX(x1), PX(x2), PX(x3)]
+    DIM qy = [PY(y0), PY(y1), PY(y2), PY(y3)]
+    DIM top AS INTEGER = INT(MIN(qy))
+    DIM bottom AS INTEGER = INT(MAX(qy))
+    DIM row AS INTEGER
+    DIM edge AS INTEGER
+    FOR row = top TO bottom
+        DIM lo AS DOUBLE = 1E9
+        DIM hi AS DOUBLE = -1E9
+        FOR edge = 0 TO 3
+            DIM ya AS DOUBLE = qy[edge]
+            DIM yb AS DOUBLE = qy[(edge + 1) MOD 4]
+            IF (row >= ya ANDALSO row <= yb) ORELSE (row >= yb ANDALSO row <= ya) THEN
+                DIM xa AS DOUBLE = qx[edge]
+                DIM xb AS DOUBLE = qx[(edge + 1) MOD 4]
+                DIM xc AS DOUBLE = xa
+                IF yb <> ya THEN xc = xa + (xb - xa) * (row - ya) / (yb - ya)
+                IF xc < lo THEN lo = xc
+                IF xc > hi THEN hi = xc
+            ENDIF
+        NEXT edge
+        IF hi >= lo THEN LINE lo, row, hi, row, r, g, b
+    NEXT row
+ENDSUB
+
+' An outlined ellipse with a stroke of w units
+SUB RING(x AS DOUBLE, y AS DOUBLE, rw AS DOUBLE, rh AS DOUBLE, w AS DOUBLE, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    ARC x, y, rw, rh, 0, 360, w, r, g, b
+ENDSUB
+
+' An arc of an ellipse from a0 to a1 degrees (0 = right, 90 = down)
+SUB ARC(x AS DOUBLE, y AS DOUBLE, rw AS DOUBLE, rh AS DOUBLE, a0 AS DOUBLE, a1 AS DOUBLE, w AS DOUBLE, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    DIM steps AS INTEGER = MAX([6, INT(ABS(a1 - a0) / 12)])
+    DIM i AS INTEGER
+    DIM px0 AS DOUBLE = x + rw * DCOS(a0)
+    DIM py0 AS DOUBLE = y + rh * DSIN(a0)
+    FOR i = 1 TO steps
+        DIM a AS DOUBLE = a0 + (a1 - a0) * i / steps
+        DIM px1 AS DOUBLE = x + rw * DCOS(a)
+        DIM py1 AS DOUBLE = y + rh * DSIN(a)
+        SEG px0, py0, px1, py1, w, r, g, b
+        px0 = px1
+        py0 = py1
+    NEXT i
+ENDSUB
+
+' A point of the head, turned with it around its centre: sets rx, ry
+SUB HEADPT(x AS DOUBLE, y AS DOUBLE)
+    DIM c AS DOUBLE = DCOS(head_rot)
+    DIM s AS DOUBLE = DSIN(head_rot)
+    rx = head_x + x * c - y * s
+    ry = head_y + x * s + y * c
+ENDSUB
+
+' ── State ───────────────────────────────────────────────────────
+
+EXPORT SUB INIT(height AS DOUBLE)
+    SC = 2 * height / TALL
+    TW = INT(500 * SC)
+    TH = INT(600 * SC)
+    OX = 250 * SC
+    OY = 350 * SC
+    img = GFX.NEWTARGET(TW, TH)
+    half_img = GFX.NEWTARGET(INT(TW / 2), INT(TH / 2))
+    quarter_img = GFX.NEWTARGET(INT(TW / 4), INT(TH / 4))
+    glow_img = GFX.NEWTARGET(INT(TW / 8), INT(TH / 8))
+    echo_img = ZEROS(N_ECHO)
+    echo_t = ZEROS(N_ECHO) - 1000
+    DIM i AS INTEGER
+    FOR i = 0 TO N_ECHO - 1
+        echo_img[i] = GFX.NEWTARGET(INT(TW / 2), INT(TH / 2))
+    NEXT i
+    tails_ready = FALSE
+ENDSUB
+
+EXPORT FUNC IMAGE() AS INTEGER
+    RETURN img
+ENDFUNC
+
+EXPORT SUB POSE(name$)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(POSE_NAMES$) - 1
+        IF POSE_NAMES$[i] = name$ THEN
+            goal = POSES[i] + 0
+            pose$ = name$
+        ENDIF
+    NEXT i
+ENDSUB
+
+EXPORT SUB FACE(name$)
+    face$ = name$
+ENDSUB
+
+EXPORT SUB SING(v$, amount AS DOUBLE)
+    vowel$ = v$
+    mouth_open = CLAMP01(amount)
+ENDSUB
+
+' The joints from the current pose
+SUB SKELETON()
+    hip_x = cur[11]
+    hip_y = cur[10]
+    neck_x = hip_x + 150 * DSIN(cur[0])
+    neck_y = hip_y - 150 * DCOS(cur[0])
+    head_rot = cur[1] + cur[0]
+    head_x = neck_x + 72 * DSIN(head_rot)
+    head_y = neck_y - 72 * DCOS(head_rot)
+ENDSUB
+
+' One step of the ponytail: verlet points under gravity, held at the
+' head, kept at their length; the beat swings it a little
+SUB HAIR_STEP(dt AS DOUBLE)
+    DIM i AS INTEGER
+    DIM it AS INTEGER
+    IF NOT tails_ready THEN
+        tx = ZEROS(N_T)
+        ty = ZEROS(N_T)
+        HEADPT TAIL_X, TAIL_Y
+        FOR i = 0 TO N_T - 1
+            tx[i] = rx + 22 * i
+            ty[i] = ry + T_SEG * i * 0.6
+        NEXT i
+        tpx = tx + 0
+        tpy = ty + 0
+        tails_ready = TRUE
+    ENDIF
+    DIM sway AS DOUBLE = SIN(beat_now * MATH.PI) * 160
+    FOR i = 1 TO N_T - 1
+        DIM vx AS DOUBLE = (tx[i] - tpx[i]) * 0.94
+        DIM vy AS DOUBLE = (ty[i] - tpy[i]) * 0.94
+        tpx[i] = tx[i]
+        tpy[i] = ty[i]
+        tx[i] = tx[i] + vx + (sway * i / N_T + 400) * dt * dt
+        ty[i] = ty[i] + vy + 3000 * dt * dt
+    NEXT i
+    HEADPT TAIL_X, TAIL_Y
+    tx[0] = rx
+    ty[0] = ry
+    tpx[0] = rx
+    tpy[0] = ry
+    FOR it = 1 TO 6
+        FOR i = 1 TO N_T - 1
+            DIM a AS INTEGER = i - 1
+            DIM b AS INTEGER = i
+            DIM ddx AS DOUBLE = tx[b] - tx[a]
+            DIM ddy AS DOUBLE = ty[b] - ty[a]
+            DIM d AS DOUBLE = SQR(ddx * ddx + ddy * ddy)
+            IF d > 0.001 THEN
+                ' both ends give way by half; the root is held at the head
+                DIM f AS DOUBLE = (d - T_SEG) / d
+                IF i = 1 THEN
+                    tx[b] = tx[b] - ddx * f
+                    ty[b] = ty[b] - ddy * f
+                ELSE
+                    tx[a] = tx[a] + ddx * f / 2
+                    ty[a] = ty[a] + ddy * f / 2
+                    tx[b] = tx[b] - ddx * f / 2
+                    ty[b] = ty[b] - ddy * f / 2
+                ENDIF
+            ENDIF
+            ' the hair stays outside the head and the body; a point
+            ' pushed out loses its speed, or every push would swing the
+            ' tail higher
+            DIM hx AS DOUBLE = tx[b] - head_x
+            DIM hy AS DOUBLE = ty[b] - head_y
+            DIM hd AS DOUBLE = SQR(hx * hx + hy * hy)
+            IF hd < HEAD_R + 4 ANDALSO hd > 0.001 THEN
+                tx[b] = head_x + hx / hd * (HEAD_R + 4)
+                ty[b] = head_y + hy / hd * (HEAD_R + 4)
+                tpx[b] = tx[b]
+                tpy[b] = ty[b]
+            ENDIF
+            IF ty[b] > neck_y ANDALSO ABS(tx[b] - hip_x) < 74 THEN
+                tx[b] = hip_x + 74
+                tpx[b] = tx[b]
+            ENDIF
+        NEXT i
+        ' the scrunchie holds the first segments out and down, so the tail
+        ' springs away from the head before it falls
+        FOR i = 1 TO 3
+            DIM rest AS DOUBLE = head_rot + 70 - 14 * i
+            DIM gx AS DOUBLE = tx[i - 1] + T_SEG * DSIN(rest)
+            DIM gy AS DOUBLE = ty[i - 1] + T_SEG * DCOS(rest)
+            DIM pull AS DOUBLE = 0.55 - 0.15 * i
+            tx[i] = tx[i] + (gx - tx[i]) * pull
+            ty[i] = ty[i] + (gy - ty[i]) * pull
+        NEXT i
+    NEXT it
+ENDSUB
+
+' The fringe and the standing strand follow the head with a lag: each
+' is a damped spring pushed against the head's acceleration, the strand
+' standing up looser, so it keeps bouncing a moment longer
+SUB FRINGE_STEP(dt AS DOUBLE)
+    DIM hvx AS DOUBLE = (head_x - last_hx) / dt
+    DIM hvy AS DOUBLE = (head_y - last_hy) / dt
+    DIM hax AS DOUBLE = (hvx - last_hvx) / dt
+    DIM hay AS DOUBLE = (hvy - last_hvy) / dt
+    IF ABS(hax) > 20000 THEN hax = 0
+    IF ABS(hay) > 20000 THEN hay = 0
+    last_hx = head_x
+    last_hy = head_y
+    last_hvx = hvx
+    last_hvy = hvy
+    fringe_vx = fringe_vx + (-220 * fringe_x - 14 * fringe_vx - hax * 0.012) * dt
+    fringe_vy = fringe_vy + (-220 * fringe_y - 14 * fringe_vy - hay * 0.012) * dt
+    fringe_x = CLAMP_ABS(fringe_x + fringe_vx * dt, 8)
+    fringe_y = CLAMP_ABS(fringe_y + fringe_vy * dt, 6)
+    tuft_vx = tuft_vx + (-120 * tuft_x - 4 * tuft_vx - hax * 0.03) * dt
+    tuft_vy = tuft_vy + (-120 * tuft_y - 4 * tuft_vy - hay * 0.03) * dt
+    tuft_x = CLAMP_ABS(tuft_x + tuft_vx * dt, 18)
+    tuft_y = CLAMP_ABS(tuft_y + tuft_vy * dt, 14)
+ENDSUB
+
+FUNC CLAMP_ABS(x AS DOUBLE, lim AS DOUBLE) AS DOUBLE
+    IF x > lim THEN RETURN lim
+    IF x < -lim THEN RETURN -lim
+    RETURN x
+ENDFUNC
+
+' Springs towards the pose, blinks, the mouth and the hair
+EXPORT SUB UPDATE(dt AS DOUBLE, beat AS DOUBLE)
+    IF dt > 0.05 THEN dt = 0.05
+    IF dt <= 0 THEN RETURN
+    clock = clock + dt
+    beat_now = beat
+    ' a slightly bouncy spring: arrives quickly, overshoots a little
+    DIM stiff AS DOUBLE = 160
+    DIM damp AS DOUBLE = 17
+    DIM t2 = goal + 0
+    ' a bob on every beat
+    t2[10] = t2[10] + 9 * ABS(SIN(beat * MATH.PI))
+    t2[1] = t2[1] + 4 * SIN(beat * MATH.PI / 2)
+    IF pose$ = "wave" THEN t2[5] = t2[5] + 30 * SIN(clock * 10)
+    IF pose$ = "cheer" THEN
+        t2[2] = t2[2] + 12 * ABS(SIN(beat * MATH.PI))
+        t2[4] = t2[4] - 12 * ABS(SIN(beat * MATH.PI))
+    ENDIF
+    vel = vel + ((t2 - cur) * stiff - vel * damp) * dt
+    cur = cur + vel * dt
+    SKELETON
+    blink_t = blink_t - dt
+    IF blink_t < 0 THEN
+        blink = 1
+        blink_t = 2 + RND(1) * 3
+    ENDIF
+    blink = blink - dt * 7
+    IF blink < 0 THEN blink = 0
+    mouth_show = mouth_show + (mouth_open - mouth_show) * CLAMP01(dt * 25)
+    HAIR_STEP dt
+    FRINGE_STEP dt
+ENDSUB
+
+' ── Drawing her ─────────────────────────────────────────────────
+
+' The ponytail, slim and soft: pinched at the scrunchie, full just
+' below it, then tapering to a fine tip that curls outwards. A slow
+' ripple runs down it; violet turning cyan towards the tip.
+FUNC TAIL_W(u AS DOUBLE) AS DOUBLE
+    RETURN 3 + 32 * (1 - u) ^ 1.1 * (0.6 + 0.4 * SIN(MATH.PI * MIN([u * 2.2 + 0.15, 1])))
+ENDFUNC
+
+SUB DRAW_TAIL()
+    DIM i AS INTEGER
+    ' the centre line with the ripple laid across it
+    DIM cx = tx + 0
+    DIM cy = ty + 0
+    FOR i = 1 TO N_T - 1
+        DIM u AS DOUBLE = i / (N_T - 1)
+        DIM ddx AS DOUBLE = tx[i] - tx[i - 1]
+        DIM ddy AS DOUBLE = ty[i] - ty[i - 1]
+        DIM d AS DOUBLE = SQR(ddx * ddx + ddy * ddy) + 0.001
+        DIM ripple AS DOUBLE = 3 * u * SIN(i * 0.9 - clock * 4)
+        cx[i] = tx[i] - ddy / d * ripple
+        cy[i] = ty[i] + ddx / d * ripple
+    NEXT i
+    FOR i = 0 TO N_T - 2
+        DIM u0 AS DOUBLE = i / (N_T - 1)
+        DIM u1 AS DOUBLE = (i + 1) / (N_T - 1)
+        DIM w0 AS DOUBLE = TAIL_W(u0)
+        DIM w1 AS DOUBLE = TAIL_W(u1)
+        DIM tip AS DOUBLE = CLAMP01((u0 - 0.55) / 0.4)
+        DIM r AS INTEGER = INT(HAIR_R + (CYAN_R - HAIR_R) * tip)
+        DIM g AS INTEGER = INT(HAIR_G + (CYAN_G - HAIR_G) * tip)
+        DIM b AS INTEGER = INT(HAIR_B + (CYAN_B - HAIR_B) * tip)
+        DIM sx AS DOUBLE = cx[i + 1] - cx[i]
+        DIM sy AS DOUBLE = cy[i + 1] - cy[i]
+        DIM sd AS DOUBLE = SQR(sx * sx + sy * sy) + 0.001
+        DIM nx AS DOUBLE = -sy / sd
+        DIM ny AS DOUBLE = sx / sd
+        SEG cx[i], cy[i], cx[i + 1], cy[i + 1], (w0 + w1) / 2, INT(r * 0.24), INT(g * 0.24), INT(b * 0.24)
+        SEG cx[i] + nx * w0 / 2, cy[i] + ny * w0 / 2, cx[i + 1] + nx * w1 / 2, cy[i + 1] + ny * w1 / 2, 2.2, r, g, b
+        SEG cx[i] - nx * w0 / 2, cy[i] - ny * w0 / 2, cx[i + 1] - nx * w1 / 2, cy[i + 1] - ny * w1 / 2, 2.2, r, g, b
+        SEG cx[i] + nx * w0 / 8, cy[i] + ny * w0 / 8, cx[i + 1] + nx * w1 / 8, cy[i + 1] + ny * w1 / 8, 1.2, INT(r * 0.6), INT(g * 0.6), INT(b * 0.6)
+    NEXT i
+    ' the curl at the tip, turning away from her
+    DIM last AS INTEGER = N_T - 1
+    DIM ex AS DOUBLE = cx[last] - cx[last - 1]
+    DIM ey AS DOUBLE = cy[last] - cy[last - 1]
+    DIM el AS DOUBLE = SQR(ex * ex + ey * ey) + 0.001
+    DIM heading AS DOUBLE = ATAN2(ey, ex) * 180 / MATH.PI
+    DIM ccx AS DOUBLE = cx[last] + (-ey / el) * -9
+    DIM ccy AS DOUBLE = cy[last] + (ex / el) * -9
+    ARC ccx, ccy, 9, 9, heading + 90, heading + 300, 2.2, CYAN_R, CYAN_G, CYAN_B
+ENDSUB
+
+' A four-pointed star, the sign she wears in her hair and her eyes
+SUB STAR(x AS DOUBLE, y AS DOUBLE, size AS DOUBLE, w AS DOUBLE, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    SEG x - size, y, x + size, y, w, r, g, b
+    SEG x, y - size, x, y + size, w, r, g, b
+    SEG x - size * 0.4, y - size * 0.4, x + size * 0.4, y + size * 0.4, w * 0.8, r, g, b
+    SEG x - size * 0.4, y + size * 0.4, x + size * 0.4, y - size * 0.4, w * 0.8, r, g, b
+ENDSUB
+
+' The scrunchie at the root of the ponytail: a pink puff with a star
+SUB DRAW_SCRUNCHIE()
+    DIM bx AS DOUBLE = tx[0]
+    DIM by AS DOUBLE = ty[0]
+    BLOB bx, by, 13, PINK_R, PINK_G, PINK_B
+    BLOB bx, by, 8, 70, 14, 46
+    STAR bx, by, 7, 2.5, 255, 225, 240
+ENDSUB
+
+
+' A limb from (x, y): upper part at angle a1, lower part at a2; leaves
+' the elbow or knee in ex_, ey_ and the hand or foot in rx, ry
+DIM ex_ AS DOUBLE = 0
+DIM ey_ AS DOUBLE = 0
+SUB LIMB(x AS DOUBLE, y AS DOUBLE, a1 AS DOUBLE, len1 AS DOUBLE, a2 AS DOUBLE, len2 AS DOUBLE, w AS DOUBLE, r AS INTEGER, g AS INTEGER, b AS INTEGER)
+    ex_ = x + len1 * DSIN(a1)
+    ey_ = y + len1 * DCOS(a1)
+    rx = ex_ + len2 * DSIN(a2)
+    ry = ey_ + len2 * DCOS(a2)
+    SEG x, y, ex_, ey_, w, r, g, b
+    SEG ex_, ey_, rx, ry, w, r, g, b
+ENDSUB
+
+' Legs in thigh-high socks with a pink band, small round shoes
+SUB DRAW_LEGS()
+    DIM side AS INTEGER
+    FOR side = 0 TO 1
+        DIM sx AS DOUBLE = 2 * side - 1
+        DIM a1 AS DOUBLE = cur[6 + 2 * side]
+        DIM a2 AS DOUBLE = a1 + cur[7 + 2 * side]
+        LIMB hip_x + sx * 17, hip_y + 18, a1, 100, a2, 104, 7, SKIN_R, SKIN_G, SKIN_B
+        DIM fx AS DOUBLE = rx
+        DIM fy AS DOUBLE = ry
+        ' the sock from just above the knee
+        DIM kx AS DOUBLE = ex_ - 22 * DSIN(a1)
+        DIM ky AS DOUBLE = ey_ - 22 * DCOS(a1)
+        SEG kx, ky, ex_, ey_, 10, CLOTH_R, CLOTH_G, CLOTH_B
+        SEG ex_, ey_, fx, fy, 10, CLOTH_R, CLOTH_G, CLOTH_B
+        SEG kx - 7 * DCOS(a1), ky + 7 * DSIN(a1), kx + 7 * DCOS(a1), ky - 7 * DSIN(a1), 4, PINK_R, PINK_G, PINK_B
+        SEG fx, fy, fx + sx * 14, fy + 3, 11, PINK_R, PINK_G, PINK_B
+    NEXT side
+ENDSUB
+
+SUB DRAW_BODY()
+    DIM lean AS DOUBLE = cur[0]
+    DIM waist_x AS DOUBLE = hip_x + 40 * DSIN(lean)
+    DIM waist_y AS DOUBLE = hip_y - 40 * DCOS(lean)
+    DIM sh_y AS DOUBLE = neck_y + 14
+    DIM swing AS DOUBLE = -vel[11] * 0.06 + SIN(beat_now * MATH.PI) * 4
+    DIM hem_y AS DOUBLE = hip_y + 58
+    ' the vest and the skirt hide what is behind them
+    FILL_QUAD neck_x - 32, sh_y, neck_x + 32, sh_y, waist_x + 24, waist_y, waist_x - 24, waist_y, 18, 16, 28
+    FILL_QUAD waist_x - 28, waist_y + 2, waist_x + 28, waist_y + 2, hip_x + swing + 78, hem_y, hip_x + swing - 78, hem_y, 34, 10, 30
+    SEG hip_x, hip_y - 10, neck_x, neck_y, 9, SKIN_R, SKIN_G, SKIN_B
+    ' the top: a short vest from the shoulders to the waist, with a collar
+    SEG neck_x - 32, sh_y, neck_x + 32, sh_y, 5, CLOTH_R, CLOTH_G, CLOTH_B
+    SEG neck_x - 32, sh_y, waist_x - 24, waist_y, 3.5, CLOTH_R, CLOTH_G, CLOTH_B
+    SEG neck_x + 32, sh_y, waist_x + 24, waist_y, 3.5, CLOTH_R, CLOTH_G, CLOTH_B
+    SEG neck_x - 12, neck_y + 2, neck_x, neck_y + 12, 3.5, CLOTH_R, CLOTH_G, CLOTH_B
+    SEG neck_x + 12, neck_y + 2, neck_x, neck_y + 12, 3.5, CLOTH_R, CLOTH_G, CLOTH_B
+    ' the tie
+    SEG neck_x, neck_y + 12, waist_x, waist_y - 34, 6, PINK_R, PINK_G, PINK_B
+    SEG waist_x - 5, waist_y - 38, waist_x, waist_y - 28, 4, PINK_R, PINK_G, PINK_B
+    SEG waist_x + 5, waist_y - 38, waist_x, waist_y - 28, 4, PINK_R, PINK_G, PINK_B
+    ' the pleated skirt, its hem swinging with the hips
+    DIM i AS INTEGER
+    FOR i = 0 TO 8
+        DIM fx AS DOUBLE = waist_x - 26 + 52 * i / 8
+        DIM hx AS DOUBLE = hip_x + swing - 78 + 156 * i / 8
+        DIM hy AS DOUBLE = hem_y + 5 * (i MOD 2) - 4 * ABS(i - 4) / 4
+        SEG fx, waist_y + 2, hx, hy, 2.5, PINK_R, PINK_G, PINK_B
+        IF i < 8 THEN
+            DIM i2 AS INTEGER = i + 1
+            DIM hx2 AS DOUBLE = hip_x + swing - 78 + 156 * i2 / 8
+            DIM hy2 AS DOUBLE = hem_y + 5 * (i2 MOD 2) - 4 * ABS(i2 - 4) / 4
+            SEG hx, hy, hx2, hy2, 4, PINK_R, PINK_G, PINK_B
+        ENDIF
+    NEXT i
+    SEG waist_x - 28, waist_y + 2, waist_x + 28, waist_y + 2, 6, PINK_R, PINK_G, PINK_B
+ENDSUB
+
+' Arms with detached sleeves from the elbow, flaring to a cuff
+SUB DRAW_ARMS()
+    DIM sh_y AS DOUBLE = neck_y + 14
+    DIM side AS INTEGER
+    FOR side = 0 TO 1
+        DIM sx AS DOUBLE = 2 * side - 1
+        DIM a1 AS DOUBLE = cur[2 + 2 * side]
+        DIM a2 AS DOUBLE = a1 + cur[3 + 2 * side]
+        LIMB neck_x + sx * 34, sh_y, a1, 70, a2, 64, 6, SKIN_R, SKIN_G, SKIN_B
+        DIM hx AS DOUBLE = rx
+        DIM hy AS DOUBLE = ry
+        DIM mx AS DOUBLE = ex_ + 44 * DSIN(a2)
+        DIM my AS DOUBLE = ey_ + 44 * DCOS(a2)
+        DIM nx AS DOUBLE = DCOS(a2)
+        DIM ny AS DOUBLE = -DSIN(a2)
+        SEG ex_ + nx * 7, ey_ + ny * 7, mx + nx * 13, my + ny * 13, 3, CLOTH_R, CLOTH_G, CLOTH_B
+        SEG ex_ - nx * 7, ey_ - ny * 7, mx - nx * 13, my - ny * 13, 3, CLOTH_R, CLOTH_G, CLOTH_B
+        SEG ex_ + nx * 7, ey_ + ny * 7, ex_ - nx * 7, ey_ - ny * 7, 3, CLOTH_R, CLOTH_G, CLOTH_B
+        SEG mx + nx * 13, my + ny * 13, mx - nx * 13, my - ny * 13, 4, CYAN_R, CYAN_G, CYAN_B
+        BLOB hx, hy, 7, SKIN_R, SKIN_G, SKIN_B
+    NEXT side
+ENDSUB
+
+SUB DRAW_EYE(ex AS DOUBLE, ey AS DOUBLE, sx AS DOUBLE)
+    DIM shut AS DOUBLE = blink
+    IF face$ = "wink" ANDALSO sx > 0 THEN shut = 1
+    IF face$ = "happy" THEN
+        ' closed, smiling eyes
+        HEADPT ex - 14, ey + 5
+        DIM ax AS DOUBLE = rx
+        DIM ay AS DOUBLE = ry
+        HEADPT ex, ey - 7
+        DIM bx AS DOUBLE = rx
+        DIM by AS DOUBLE = ry
+        HEADPT ex + 14, ey + 5
+        SEG ax, ay, bx, by, 4, SKIN_R, SKIN_G, SKIN_B
+        SEG bx, by, rx, ry, 4, SKIN_R, SKIN_G, SKIN_B
+        RETURN
+    ENDIF
+    IF shut > 0.6 THEN
+        ' a closed eye: a lash curving down
+        HEADPT ex - 15, ey
+        DIM cx AS DOUBLE = rx
+        DIM cy AS DOUBLE = ry
+        HEADPT ex, ey + 6
+        DIM dx AS DOUBLE = rx
+        DIM dy AS DOUBLE = ry
+        HEADPT ex + 15, ey
+        SEG cx, cy, dx, dy, 4, SKIN_R, SKIN_G, SKIN_B
+        SEG dx, dy, rx, ry, 4, SKIN_R, SKIN_G, SKIN_B
+        RETURN
+    ENDIF
+    DIM eh AS DOUBLE = 22 * (1 - shut)
+    IF face$ = "surprised" THEN eh = 26
+    HEADPT ex, ey
+    DIM cxe AS DOUBLE = rx
+    DIM cye AS DOUBLE = ry
+    ' iris, pupil, a star and a dot for the light
+    OVAL cxe, cye + 2, 14, eh, TRUE, 70, 24, 96
+    OVAL cxe, cye + 6, 11, eh * 0.72, TRUE, EYE_R, EYE_G, EYE_B
+    OVAL cxe, cye + 8, 5, eh * 0.38, TRUE, 40, 10, 60
+    STAR cxe - 5, cye - eh * 0.3, 5.5, 2.2, 255, 255, 255
+    BLOB cxe + 5, cye + eh * 0.42, 2, 255, 255, 255
+    ' the upper lash, with a flick at the outer corner
+    ARC cxe, cye + 2, 16, eh + 2, 200, 340, 4, SKIN_R, SKIN_G, SKIN_B
+    HEADPT ex + sx * 16, ey - eh * 0.45
+    SEG rx, ry, rx + sx * 7, ry - 6, 3, SKIN_R, SKIN_G, SKIN_B
+ENDSUB
+
+' The mouth stays small: a cat smile at rest, a little rounded shape
+' per vowel that opens only a bit
+SUB DRAW_MOUTH()
+    HEADPT 0, 40
+    DIM mx AS DOUBLE = rx
+    DIM my AS DOUBLE = ry
+    DIM o AS DOUBLE = mouth_show
+    IF vowel$ = "" OR o < 0.08 THEN
+        IF face$ = "surprised" THEN
+            RING mx, my + 1, 3, 3.5, 2, SKIN_R, SKIN_G, SKIN_B
+        ELSEIF face$ = "happy" THEN
+            ARC mx - 5, my - 2, 5, 4, 20, 160, 2.5, SKIN_R, SKIN_G, SKIN_B
+            ARC mx + 5, my - 2, 5, 4, 20, 160, 2.5, SKIN_R, SKIN_G, SKIN_B
+        ELSE
+            ARC mx, my - 5, 8, 6, 35, 145, 2.5, SKIN_R, SKIN_G, SKIN_B
+        ENDIF
+        RETURN
+    ENDIF
+    DIM mw AS DOUBLE = 6
+    DIM mh AS DOUBLE = 2.5 + 4 * o
+    IF vowel$ = "i" OR vowel$ = "e" THEN
+        mw = 7.5
+        mh = 2 + 2.5 * o
+    ELSEIF vowel$ = "o" THEN
+        mw = 3.5
+        mh = 3 + 2 * o
+    ELSEIF vowel$ = "u" THEN
+        mw = 3
+        mh = 2.5 + 1.5 * o
+    ENDIF
+    ' a soft shape wider at the top, with the tip of the tongue
+    OVAL mx, my + mh * 0.5, mw, mh, TRUE, 110, 16, 56
+    IF mh > 4 THEN OVAL mx, my + mh * 1.05, mw * 0.55, mh * 0.35, TRUE, PINK_R, 110, 170
+    RING mx, my + mh * 0.5, mw, mh, 2, SKIN_R, SKIN_G, SKIN_B
+ENDSUB
+
+' A strand of hair from a to c, bowed through b (points of the head),
+' its free end pushed by (hair_dx, hair_dy)
+SUB STRAND(ax AS DOUBLE, ay AS DOUBLE, bx AS DOUBLE, by AS DOUBLE, cx AS DOUBLE, cy AS DOUBLE, w AS DOUBLE)
+    DIM i AS INTEGER
+    HEADPT ax, ay
+    DIM px0 AS DOUBLE = rx
+    DIM py0 AS DOUBLE = ry
+    FOR i = 1 TO 6
+        DIM t AS DOUBLE = i / 6
+        DIM qx AS DOUBLE = (1 - t) * (1 - t) * ax + 2 * (1 - t) * t * bx + t * t * cx
+        DIM qy AS DOUBLE = (1 - t) * (1 - t) * ay + 2 * (1 - t) * t * by + t * t * cy
+        HEADPT qx + hair_dx * t * t, qy + hair_dy * t * t
+        SEG px0, py0, rx, ry, w, HAIR_R, HAIR_G, HAIR_B
+        px0 = rx
+        py0 = ry
+    NEXT i
+ENDSUB
+
+SUB DRAW_HEAD()
+    ' the hair behind the face: a rounded bob to the jaw
+    HEADPT 0, 2
+    OVAL rx, ry, HEAD_R + 10, HEAD_R + 6, TRUE, 34, 20, 58
+    ' the face
+    HEADPT 0, 8
+    OVAL rx, ry, HEAD_R - 6, HEAD_R - 10, TRUE, 16, 12, 22
+    ARC rx, ry, HEAD_R - 6, HEAD_R - 10, 0, 180, 3, SKIN_R, SKIN_G, SKIN_B
+    ' cheeks
+    GFX.BLEND "ADD"
+    HEADPT -44, 30
+    OVAL rx, ry, 13, 6, TRUE, 110, 20, 60
+    HEADPT 44, 30
+    OVAL rx, ry, 13, 6, TRUE, 110, 20, 60
+    GFX.BLEND "BLEND"
+    DRAW_EYE -31, 8, -1
+    DRAW_EYE 31, 8, 1
+    ' eyebrows, raised when surprised
+    DIM brow AS DOUBLE = -24
+    IF face$ = "surprised" THEN brow = -32
+    HEADPT -40, brow
+    DIM ax AS DOUBLE = rx
+    DIM ay AS DOUBLE = ry
+    HEADPT -22, brow - 3
+    SEG ax, ay, rx, ry, 2.5, HAIR_R, HAIR_G, HAIR_B
+    HEADPT 40, brow
+    ax = rx
+    ay = ry
+    HEADPT 22, brow - 3
+    SEG ax, ay, rx, ry, 2.5, HAIR_R, HAIR_G, HAIR_B
+    DRAW_MOUTH
+    ' the outline of the hair over the top and down to the jaw
+    ARC head_x, head_y + 2, HEAD_R + 10, HEAD_R + 6, 150, 390, 4, HAIR_R, HAIR_G, HAIR_B
+    hair_dx = fringe_x
+    hair_dy = fringe_y
+    ' short side locks to the cheeks, curling in at the ends
+    STRAND -80, -20, -94, 30, -78, 66, 4
+    STRAND -78, 60, -74, 72, -64, 70, 3.5
+    STRAND 80, -20, 94, 30, 78, 66, 4
+    STRAND 78, 60, 74, 72, 64, 70, 3.5
+    ' the fringe, parted in the middle: two sweeps falling to the sides
+    STRAND -2, -86, -36, -66, -78, -12, 4.5
+    STRAND -6, -78, -30, -48, -56, -22, 3.5
+    STRAND -10, -68, -20, -40, -34, -30, 3
+    STRAND 2, -86, 36, -66, 78, -12, 4.5
+    STRAND 6, -78, 30, -48, 56, -22, 3.5
+    STRAND 10, -68, 20, -40, 34, -30, 3
+    ' the strand standing up at the parting, on its own looser spring
+    hair_dx = tuft_x
+    hair_dy = tuft_y
+    STRAND 0, -86, -8, -112, -24, -108, 3
+    hair_dx = 0
+    hair_dy = 0
+    ' the star clip in the fringe
+    HEADPT -52, -46
+    STAR rx, ry, 11, 3.5, CYAN_R, CYAN_G, CYAN_B
+    BLOB rx, ry, 3, 255, 255, 255
+    ' the headset: band, ear pads and the microphone
+    ARC head_x, head_y + 2, HEAD_R + 15, HEAD_R + 11, 205, 335, 3, CLOTH_R, CLOTH_G, CLOTH_B
+    HEADPT -HEAD_R - 6, 14
+    DIM ex AS DOUBLE = rx
+    DIM ey AS DOUBLE = ry
+    OVAL ex, ey, 10, 15, TRUE, 30, 26, 40
+    RING ex, ey, 10, 15, 3, PINK_R, PINK_G, PINK_B
+    HEADPT HEAD_R + 6, 14
+    OVAL rx, ry, 10, 15, TRUE, 30, 26, 40
+    RING rx, ry, 10, 15, 3, PINK_R, PINK_G, PINK_B
+    HEADPT -32, 50
+    SEG ex, ey + 10, rx, ry, 2.5, CLOTH_R, CLOTH_G, CLOTH_B
+    BLOB rx, ry, 4, PINK_R, PINK_G, PINK_B
+    DRAW_SCRUNCHIE
+ENDSUB
+
+' Draws her into her image, back to front, and the glow: the image
+' halved three times, each step smooth
+EXPORT SUB RENDER()
+    GFX.TARGET img, TRUE
+    GFX.BLEND "BLEND"
+    DRAW_TAIL
+    DRAW_LEGS
+    DRAW_BODY
+    DRAW_HEAD
+    DRAW_ARMS
+    GFX.TARGET half_img, TRUE
+    GFX.DRAWIMAGE img, 0, 0, INT(TW / 2), INT(TH / 2)
+    echo_at = (echo_at + 1) MOD N_ECHO
+    echo_t[echo_at] = clock
+    GFX.TARGET echo_img[echo_at], TRUE
+    GFX.DRAWIMAGE half_img, 0, 0, INT(TW / 2), INT(TH / 2)
+    GFX.TARGET quarter_img, TRUE
+    GFX.DRAWIMAGE half_img, 0, 0, INT(TW / 4), INT(TH / 4)
+    GFX.TARGET glow_img, TRUE
+    GFX.DRAWIMAGE quarter_img, 0, 0, INT(TW / 8), INT(TH / 8)
+    GFX.TARGET
+    GFX.BLEND "NONE"
+ENDSUB
+
+' The image a size fits best: never shrunk by more than half
+FUNC BEST_IMAGE(k AS DOUBLE) AS INTEGER
+    IF k > 0.5 THEN RETURN img
+    IF k > 0.25 THEN RETURN half_img
+    RETURN quarter_img
+ENDFUNC
+
+' Places her with her feet at (x, y), h pixels tall, over her glow; the
+' glow covers exactly her image, so its blur stays centred on her lines.
+' alpha 0-255 fades her
+EXPORT SUB DRAW(x AS DOUBLE, y AS DOUBLE, h AS DOUBLE, alpha AS DOUBLE)
+    DIM k AS DOUBLE = h / (TALL * SC)
+    DIM w AS DOUBLE = TW * k
+    DIM hh AS DOUBLE = TH * k
+    DIM top AS DOUBLE = y - (OY + 225 * SC) * k
+    DIM x0 AS DOUBLE = x - OX * k
+    DIM bx = [x0, x0 + w, x0 + w, x0]
+    DIM by = [top, top, top + hh, top + hh]
+    GFX.DRAWQUAD glow_img, bx, by, alpha, "ADD", 1
+    GFX.DRAWQUAD quarter_img, bx, by, alpha * 0.5, "ADD", 1
+    GFX.DRAWQUAD BEST_IMAGE(k), bx, by, alpha, "BLEND", 1
+ENDSUB
+
+' Places one of her last frames, the one drawn delay seconds ago (or the
+' oldest kept), feet at (x, y), h pixels tall; mirror flips it. A row
+' of these with growing delays dances a beat behind her, ripple by
+' ripple; with no delay they dance with her.
+EXPORT SUB DRAW_ECHO(x AS DOUBLE, y AS DOUBLE, h AS DOUBLE, alpha AS DOUBLE, delay AS DOUBLE, mirror AS INTEGER)
+    DIM want AS DOUBLE = clock - delay
+    DIM best AS INTEGER = echo_at
+    DIM i AS INTEGER
+    FOR i = 0 TO N_ECHO - 1
+        DIM slot AS INTEGER = (echo_at - i + N_ECHO) MOD N_ECHO
+        IF echo_t[slot] < -999 THEN EXITFOR
+        best = slot
+        IF echo_t[slot] <= want THEN EXITFOR
+    NEXT i
+    DIM k AS DOUBLE = h / (TALL * SC)
+    DIM w AS DOUBLE = TW * k
+    DIM hh AS DOUBLE = TH * k
+    DIM top AS DOUBLE = y - (OY + 225 * SC) * k
+    DIM x0 AS DOUBLE = x - OX * k
+    DIM xl AS DOUBLE = x0
+    DIM xr AS DOUBLE = x0 + w
+    IF mirror THEN
+        xl = x + OX * k
+        xr = xl - w
+    ENDIF
+    GFX.DRAWQUAD echo_img[best], [xl, xr, xr, xl], [top, top, top + hh, top + hh], alpha, "BLEND", 1
+ENDSUB

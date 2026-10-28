@@ -1,0 +1,763 @@
+' lyrics.jdb - lyrics made to measure for a melody: every line has
+' exactly as many syllables as its bar has notes, lines rhyme in pairs,
+' the chorus turns on a hook that becomes the song's title, and a line
+' too short for its notes stutters its hook word or holds its last
+' vowel. Each line comes with its sung spelling for SOUND.SING, the word
+' under every note, and the NEON elements its words call up.
+'
+'   IMPORT LYRICS
+'   LYRICS.INIT "neon", 7
+'   DIM verse = LYRICS.VERSE([5, 4, 5, 3])
+'   DIM chorus = LYRICS.CHORUS([5, 4, 5, 3])
+'   SOUND.SING 6, LYRICS.SUNG$(verse)
+'   PRINT LYRICS.TEXT$(verse[0])
+'
+' Lines are numbers; TEXT$, SING$, WORD$, ELEMENTS$ read them. Themes:
+' neon, space, love, code. LYRICS.SPELL$ spells any English text for
+' SOUND.SING by rule.
+
+EXPORT MODULE LYRICS
+
+' ── The words ───────────────────────────────────────────────────
+' word=spelling, syllables split by "." in the sung spelling; "_" in a
+' word stands for a space
+
+DIM CORE_N$ AS STRING = "light=lait night=nait heart=hart fire=fai.er dream=drim moon=mun star=star sky=skai sound=saund beat=bit body=baw.di shadow=shae.dou rhythm=rih.dhuhm world=werld motion=mou.shuhn thunder=thuhn.der rainbow=rein.bou diamond=dai.muhnd mirror=mih.rer voice=vois soul=soul spark=spark glow=glou time=taim"
+DIM CORE_NP$ AS STRING = "lights=laits stars=starz dreams=drimz eyes=aiz hearts=harts waves=weivz voices=voi.sihz colors=kuh.lerz sparks=sparks hands=haendz feet=fit"
+DIM CORE_ADJ$ AS STRING = "golden=goul.den shining=shai.nihng endless=end.les crazy=krei.zi wild=waild bright=brait burning=ber.nihng glowing=glou.ihng silver=sihl.ver alive=uh.laiv free=fri high=hai loud=laud fast=faest sweet=swit true=tru blue=blu new=nu brave=breiv"
+DIM CORE_V$ AS STRING = "dance=daens shine=shain fly=flai run=ruhn glow=glou burn=bern move=muv ride=raid sing=sihng feel=fil spin=spihn jump=juhmp dream=drim rise=raiz shout=shaut break=breik fall=fawl chase=cheis touch=tuhch wake=weik"
+DIM CORE_PLACE$ AS STRING = "night=nait dark=dark sky=skai light=lait crowd=kraud rain=rein fire=fai.er dream=drim stars=starz street=strit"
+DIM CORE_TIME$ AS STRING = "tonight=tu.nait forever=fer.e.ver right_now=rait.nau all_night=awl.nait again=uh.gen today=tu.dei"
+DIM CORE_INT$ AS STRING = "oh=ou yeah=yae hey=hei ooh=u whoa=wou"
+
+DIM THEME_NAMES$ = ["neon", "space", "love", "code"]
+DIM THEME_N$ = ["neon=ni.awn city=sih.ti signal=sihg.nuhl laser=lei.zer screen=skrin pulse=puhls wire=wai.er satellite=sae.tuh.lait skyline=skai.lain highway=hai.wei voltage=voul.tihj current=ker.ent crystal=krih.stuhl bass=beis frequency=fri.kwen.si", "orbit=awr.biht galaxy=gae.luhk.si rocket=raw.ket comet=kaw.met planet=plae.net earth=erth gravity=grae.vih.ti universe=yu.nih.vers sun=suhn nova=nou.vuh moonlight=mun.lait horizon=huh.rai.zuhn", "love=luhv kiss=kihs touch=tuhch smile=smail promise=praw.mihs angel=ein.jel lover=luh.ver whisper=wihs.per summer=suh.mer rose=rouz", "code=koud data=dei.tuh machine=muh.shin circuit=ser.kiht pixel=pihk.suhl program=prou.graem loop=lup byte=bait memory=me.muh.ri signal=sihg.nuhl system=sihs.tuhm robot=rou.bawt"]
+DIM THEME_NP$ = ["signals=sihg.nuhlz lasers=lei.zerz streets=strits wires=wai.erz screens=skrinz cities=sih.tiz", "planets=plae.nets comets=kaw.mets rockets=raw.kets galaxies=gae.luhk.siz", "kisses=kih.sihz roses=rou.zihz lovers=luh.verz", "pixels=pihk.suhlz numbers=nuhm.berz signals=sihg.nuhlz machines=muh.shinz"]
+DIM THEME_ADJ$ = ["neon=ni.awn electric=ih.lek.trihk digital=dih.jih.tuhl midnight=mihd.nait violet=vai.uh.let wired=wai.erd pink=pihnk", "cosmic=kawz.mihk distant=dihs.tuhnt infinite=ihn.fih.niht weightless=weit.les stellar=ste.ler lunar=lu.ner solar=sou.ler", "tender=ten.der precious=pre.shuhs lonely=loun.li gentle=jen.tuhl secret=si.kret", "digital=dih.jih.tuhl binary=bai.nuh.ri virtual=ver.chu.uhl electric=ih.lek.trihk wired=wai.erd"]
+DIM THEME_V$ = ["flash=flaesh glitter=glih.ter light=lait", "float=flout drift=drihft orbit=awr.biht launch=lawnch", "love=luhv kiss=kihs hold=hould miss=mihs", "compile=kuhm.pail glitch=glihch boot=but loop=lup type=taip"]
+DIM THEME_PLACE$ = ["city=sih.ti neon=ni.awn club=kluhb zone=zoun", "space=speis void=void galaxy=gae.luhk.si orbit=awr.biht", "arms=armz heart=hart summer=suh.mer", "code=koud machine=muh.shin system=sihs.tuhm grid=grihd"]
+
+' words the templates spell out
+DIM FUNCTION_WORDS$ AS STRING = "i=ai you=yu we=wi me=mi my=mai the=dhuh a=uh in=ihn to=tu and=aend of=uhv with=wihdh like=laik all=awl is=ihz are=ar through=thru under=uhn.der every=ev.ri never=nev.er let=let up=uhp come=kuhm hold=hould on=awn go=gou it=iht heart=hart light=lait"
+
+' common words English does not spell the way it sounds
+DIM IRREGULAR$ AS STRING = "one=wuhn two=tu three=thri four=for five=faiv six=sihks seven=se.vuhn eight=eit nine=nain ten=ten hello=huh.lou basic=bei.sihk do=du does=duhz done=duhn what=wuht who=hu where=wer there=dher their=dher they=dhei said=sed says=sez some=suhm come=kuhm love=luhv gone=gawn have=haev give=gihv live=lihv was=wuhz were=wer been=bihn your=yor our=aur hour=aur eye=ai eyes=aiz people=pi.puhl heart=hart night=nait light=lait want=wawnt water=waw.ter money=muh.ni only=oun.li once=wuhns friend=frend friends=frendz does=duhz could=kud would=wud should=shud again=uh.gen away=uh.wei above=uh.buhv because=bih.kuhz many=me.ni any=e.ni every=ev.ri very=ve.ri city=sih.ti music=myu.zihk kaiku=kai.ku jd=jei.di"
+
+' the NEON element a word calls up
+DIM ELEMENT_OF$ AS STRING = "moon=moon moonlight=moon night=moon midnight=moon star=stars stars=stars sky=stars space=stars comet=stars comets=stars rocket=stars rockets=stars earth=earth world=earth planet=orbits planets=orbits orbit=orbits galaxy=points galaxies=points universe=points city=city cities=city skyline=city streets=city street=city highway=floor waves=terrain rain=terrain heart=polar hearts=polar love=polar pulse=ecg beat=ecg body=ecg signal=scope signals=scope voice=scope voices=scope sound=spectrum bass=spectrum rhythm=spectrum frequency=radar satellite=radar code=hex data=hex byte=hex pixel=hex pixels=hex program=hex memory=hex machine=hypercube circuit=hypercube system=hypercube time=counter forever=counter tonight=counter fire=knot spark=knot sparks=knot voltage=dial current=dial wire=dial wires=dial crystal=ico diamond=ico mirror=ico dream=tunnel dreams=tunnel void=tunnel laser=tunnel lasers=tunnel light=points lights=points glow=points rainbow=rings colors=rings"
+
+DIM VERSE_TEMPLATES$ = ["{ADJ} {N} in the {PLACE}", "we {V} through the {PLACE}", "I {V} the {ADJ} {N}", "under {ADJ} {NP}", "every {N} is {ADJ}", "you and me and the {N}", "{V} with me {TIME}", "my heart is a {ADJ} {N}", "light me up like a {N}", "hold on to the {N}", "all the {NP} {V}", "we are {ADJ} {TIME}", "come and {V} {TIME}", "{ADJ} {NP}", "in the {PLACE}", "{N} of {NP}", "you {V} like a {N}", "{INT} {ADJ} {N}", "{TIME}", "{ADJ} {N}"]
+DIM CHORUS_TEMPLATES$ = ["{V} {V} {V}", "{ADJ} {ADJ} {N}", "{V} with me {TIME}", "we {V} {TIME}", "{INT} {INT} {N}", "never let the {N} go", "{V} it up {TIME}", "all the {NP} {V}", "{INT} {TIME}", "{ADJ} {N} {TIME}", "{V} {TIME}"]
+DIM HOOK_TEMPLATES$ = ["{TITLE}", "oh {TITLE}", "{TITLE} {TIME}", "we are {TITLE}", "{TITLE} {INT}", "my {TITLE}", "{INT} {INT} {TITLE}", "{TITLE} {TITLE}"]
+
+' the word table: shown word, sung spelling, syllables, rhyme, theme flag
+DIM WORD_TXT$ = [""]
+DIM WORD_SP$ = [""]
+DIM WORD_SYL = [0]
+DIM WORD_RHY$ = [""]
+DIM WORD_TH = [0]
+DIM n_words AS INTEGER = 0
+DIM POOL = {}
+DIM RPOOL = {}
+DIM RCOUNT = {}
+DIM FW = {}
+DIM ELEM = {}
+DIM USED = {}
+
+' the lines made so far
+DIM L_TEXT$ = [""]
+DIM L_SING$ = [""]
+DIM L_WORDS$ = [""]
+DIM L_RHYME$ = [""]
+DIM L_LAST$ = [""]
+DIM L_ELEMS$ = [""]
+DIM n_lines AS INTEGER = 0
+
+DIM title_words$ AS STRING = ""
+DIM title_phons$ AS STRING = ""
+DIM CHORUS_CACHE = {}
+
+' the template being filled
+DIM c_ok AS INTEGER = TRUE
+DIM c_words$ AS STRING = ""
+DIM c_phons$ AS STRING = ""
+DIM c_slots$ AS STRING = ""
+DIM c_syl AS INTEGER = 0
+DIM c_bonus AS DOUBLE = 0
+
+FUNC PICK(n AS INTEGER) AS INTEGER
+    RETURN INT(RND() * n) MOD n
+ENDFUNC
+
+FUNC SYLS(p$) AS INTEGER
+    RETURN LEN(p$) - LEN(REPLACE$(REPLACE$(p$, ".", ""), "|", "")) + 1
+ENDFUNC
+
+FUNC IS_VOWEL_CH(c$) AS INTEGER
+    RETURN INSTR("aeiou", c$) >= 0
+ENDFUNC
+
+' The rhyme of a spelling: its last syllable from the first vowel on
+FUNC KEY$(p$) AS STRING
+    DIM parts$ = SPLIT(REPLACE$(p$, "|", "."), ".")
+    DIM last$ AS STRING = parts$[LEN(parts$) - 1]
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(last$) - 1
+        IF IS_VOWEL_CH(MID$(last$, i, 1)) THEN RETURN MID$(last$, i, LEN(last$) - i)
+    NEXT i
+    RETURN last$
+ENDFUNC
+
+' Whether a word shares its first four letters (or all of a shorter
+' one) with one of the words, given split by "|"
+FUNC SAME_STEM(w$, words$) AS INTEGER
+    IF words$ = "" THEN RETURN FALSE
+    DIM ws$ = SPLIT(words$, "|")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(ws$) - 1
+        DIM k AS INTEGER = MIN([4, LEN(w$), LEN(ws$[i])])
+        IF k >= 3 ANDALSO LEFT$(LCASE$(w$), k) = LEFT$(LCASE$(ws$[i]), k) THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+SUB ADD_POOL(m, key$, idx AS INTEGER)
+    IF TYPEOF(m{key$}) = "NONE" THEN
+        m{key$} = [idx]
+    ELSE
+        m{key$} = APPEND(m{key$}, idx)
+    ENDIF
+ENDSUB
+
+SUB ADD_WORDS(cat$, list$, themed AS INTEGER)
+    IF list$ = "" THEN RETURN
+    DIM items$ = SPLIT(list$, " ")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items$) - 1
+        DIM eq AS INTEGER = INSTR(items$[i], "=")
+        IF eq < 0 THEN CONTINUEFOR
+        DIM w$ AS STRING = REPLACE$(LEFT$(items$[i], eq), "_", " ")
+        DIM p$ AS STRING = MID$(items$[i], eq + 1, LEN(items$[i]) - eq - 1)
+        IF n_words = 0 THEN
+            WORD_TXT$[0] = w$
+            WORD_SP$[0] = p$
+            WORD_SYL[0] = SYLS(p$)
+            WORD_RHY$[0] = KEY$(p$)
+            WORD_TH[0] = themed
+        ELSE
+            WORD_TXT$ = APPEND(WORD_TXT$, w$)
+            WORD_SP$ = APPEND(WORD_SP$, p$)
+            WORD_SYL = APPEND(WORD_SYL, SYLS(p$))
+            WORD_RHY$ = APPEND(WORD_RHY$, KEY$(p$))
+            WORD_TH = APPEND(WORD_TH, themed)
+        ENDIF
+        ADD_POOL POOL, cat$, n_words
+        ADD_POOL RPOOL, cat$ + ":" + KEY$(p$), n_words
+        IF TYPEOF(RCOUNT{KEY$(p$)}) = "NONE" THEN RCOUNT{KEY$(p$)} = 0
+        RCOUNT{KEY$(p$)} = RCOUNT{KEY$(p$)} + 1
+        n_words = n_words + 1
+    NEXT i
+ENDSUB
+
+SUB LOAD_MAP(m, list$)
+    DIM items$ = SPLIT(list$, " ")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items$) - 1
+        DIM eq AS INTEGER = INSTR(items$[i], "=")
+        IF eq >= 0 THEN m{LEFT$(items$[i], eq)} = MID$(items$[i], eq + 1, LEN(items$[i]) - eq - 1)
+    NEXT i
+ENDSUB
+
+' Starts over with a theme's words; the same seed writes the same song
+EXPORT SUB INIT(theme$, seed AS INTEGER)
+    RANDOMSEED(seed)
+    n_words = 0
+    n_lines = 0
+    WORD_TXT$ = [""]
+    WORD_SP$ = [""]
+    WORD_SYL = [0]
+    WORD_RHY$ = [""]
+    WORD_TH = [0]
+    L_TEXT$ = [""]
+    L_SING$ = [""]
+    L_WORDS$ = [""]
+    L_RHYME$ = [""]
+    L_LAST$ = [""]
+    L_ELEMS$ = [""]
+    POOL = {}
+    RPOOL = {}
+    RCOUNT = {}
+    FW = {}
+    ELEM = {}
+    USED = {}
+    CHORUS_CACHE = {}
+    DIM th AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(THEME_NAMES$) - 1
+        IF THEME_NAMES$[i] = LCASE$(theme$) THEN th = i
+    NEXT i
+    ADD_WORDS "N", CORE_N$, 0
+    ADD_WORDS "NP", CORE_NP$, 0
+    ADD_WORDS "ADJ", CORE_ADJ$, 0
+    ADD_WORDS "V", CORE_V$, 0
+    ADD_WORDS "PLACE", CORE_PLACE$, 0
+    ADD_WORDS "TIME", CORE_TIME$, 0
+    ADD_WORDS "INT", CORE_INT$, 0
+    ADD_WORDS "N", THEME_N$[th], 1
+    ADD_WORDS "NP", THEME_NP$[th], 1
+    ADD_WORDS "ADJ", THEME_ADJ$[th], 1
+    ADD_WORDS "V", THEME_V$[th], 1
+    ADD_WORDS "PLACE", THEME_PLACE$[th], 1
+    LOAD_MAP FW, IRREGULAR$
+    LOAD_MAP FW, FUNCTION_WORDS$
+    LOAD_MAP ELEM, ELEMENT_OF$
+    MAKE_TITLE
+ENDSUB
+
+' The hook: an adjective and a noun of the theme, three or four
+' syllables, alike in their first sound if it can be had
+SUB MAKE_TITLE()
+    DIM best AS DOUBLE = -1E9
+    DIM t AS INTEGER
+    FOR t = 1 TO 200
+        DIM a AS INTEGER = POOL{"ADJ"}[PICK(LEN(POOL{"ADJ"}))]
+        DIM nn AS INTEGER = POOL{"N"}[PICK(LEN(POOL{"N"}))]
+        IF SAME_STEM(WORD_TXT$[a], WORD_TXT$[nn]) THEN CONTINUEFOR
+        DIM s AS INTEGER = WORD_SYL[a] + WORD_SYL[nn]
+        IF s < 3 ORELSE s > 4 THEN CONTINUEFOR
+        DIM sc AS DOUBLE = WORD_TH[a] + WORD_TH[nn] + RND() * 0.8
+        IF LEFT$(WORD_TXT$[a], 1) = LEFT$(WORD_TXT$[nn], 1) THEN sc = sc + 1.5
+        IF sc > best THEN
+            best = sc
+            title_words$ = WORD_TXT$[a] + "|" + WORD_TXT$[nn]
+            title_phons$ = WORD_SP$[a] + "|" + WORD_SP$[nn]
+        ENDIF
+    NEXT t
+ENDSUB
+
+EXPORT FUNC TITLE$() AS STRING
+    DIM ws$ = SPLIT(title_words$, "|")
+    RETURN UCASE$(ws$[0] + " " + ws$[1])
+ENDFUNC
+
+' Fills a template with words: c_words$ and c_phons$ ("|" between
+' words), c_syl, c_bonus; c_ok FALSE when the rhyme cannot be had
+SUB FILL(tpl$, rhyme$, avoid$)
+    c_ok = TRUE
+    c_words$ = ""
+    c_phons$ = ""
+    c_slots$ = ""
+    c_bonus = 0
+    DIM toks$ = SPLIT(tpl$, " ")
+    DIM n AS INTEGER = LEN(toks$)
+    DIM prev_first$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        DIM tk$ AS STRING = toks$[i]
+        DIM w$ AS STRING = ""
+        DIM p$ AS STRING = ""
+        DIM slot AS INTEGER = FALSE
+        IF tk$ = "{TITLE}" THEN
+            w$ = title_words$
+            p$ = title_phons$
+            c_bonus = c_bonus + 0.5
+        ELSEIF LEFT$(tk$, 1) = "{" THEN
+            DIM cat$ AS STRING = MID$(tk$, 1, LEN(tk$) - 2)
+            DIM idx AS INTEGER = 0
+            IF i = n - 1 ANDALSO rhyme$ <> "" THEN
+                DIM rp = RPOOL{cat$ + ":" + rhyme$}
+                IF TYPEOF(rp) = "NONE" THEN
+                    c_ok = FALSE
+                    RETURN
+                ENDIF
+                idx = rp[PICK(LEN(rp))]
+                IF WORD_TXT$[idx] = avoid$ THEN
+                    c_ok = FALSE
+                    RETURN
+                ENDIF
+            ELSE
+                DIM pl = POOL{cat$}
+                idx = pl[PICK(LEN(pl))]
+            ENDIF
+            w$ = WORD_TXT$[idx]
+            p$ = WORD_SP$[idx]
+            slot = TRUE
+            c_bonus = c_bonus + 0.5 * WORD_TH[idx]
+            IF cat$ = "INT" THEN c_bonus = c_bonus - 0.8
+            IF TYPEOF(USED{w$}) <> "NONE" THEN c_bonus = c_bonus - 1.5 * USED{w$}
+            IF INSTR("|" + c_slots$ + "|", "|" + w$ + "|") >= 0 THEN c_bonus = c_bonus - 3
+            IF prev_first$ <> "" ANDALSO LEFT$(w$, 1) = prev_first$ THEN c_bonus = c_bonus + 1.2
+            IF SAME_STEM(w$, c_words$) THEN c_bonus = c_bonus - 2.5
+            prev_first$ = LEFT$(w$, 1)
+            c_slots$ = c_slots$ + "|" + w$
+        ELSE
+            w$ = tk$
+            IF TYPEOF(FW{LCASE$(tk$)}) = "NONE" THEN
+                p$ = SPELL$(tk$)
+            ELSE
+                p$ = FW{LCASE$(tk$)}
+            ENDIF
+            prev_first$ = ""
+        ENDIF
+        IF c_words$ = "" THEN
+            c_words$ = w$
+            c_phons$ = p$
+        ELSE
+            c_words$ = c_words$ + "|" + w$
+            c_phons$ = c_phons$ + "|" + p$
+        ENDIF
+    NEXT i
+    c_syl = SYLS(c_phons$)
+ENDSUB
+
+' The letters of a word up to its first vowel sound: "to" of tonight
+FUNC STUTTER$(w$) AS STRING
+    DIM i AS INTEGER = 0
+    DO WHILE i < LEN(w$) ANDALSO NOT IS_VOWEL_CH(LCASE$(MID$(w$, i, 1)))
+        i = i + 1
+    LOOP
+    DO WHILE i < LEN(w$) ANDALSO IS_VOWEL_CH(LCASE$(MID$(w$, i, 1)))
+        i = i + 1
+    LOOP
+    RETURN LEFT$(w$, MAX([1, i]))
+ENDFUNC
+
+' Writes a line of n syllables from the templates, rhyming on rhyme$
+' when it is given (and not ending on avoid$); answers its number
+FUNC MAKE_LINE(n AS INTEGER, rhyme$, avoid$, templates$, chorus AS INTEGER) AS INTEGER
+    DIM best AS DOUBLE = -1E9
+    DIM b_words$ AS STRING = ""
+    DIM b_phons$ AS STRING = ""
+    DIM b_slots$ AS STRING = ""
+    DIM max_hold AS INTEGER = 2
+    IF chorus THEN max_hold = 3
+    DIM t AS INTEGER
+    FOR t = 1 TO 360
+        FILL templates$[PICK(LEN(templates$))], rhyme$, avoid$
+        IF NOT c_ok THEN CONTINUEFOR
+        IF c_syl > n ORELSE n - c_syl > max_hold THEN CONTINUEFOR
+        DIM ws$ = SPLIT(c_words$, "|")
+        DIM ps$ = SPLIT(c_phons$, "|")
+        DIM k$ AS STRING = KEY$(ps$[LEN(ps$) - 1])
+        IF rhyme$ <> "" ANDALSO k$ <> rhyme$ THEN CONTINUEFOR
+        IF rhyme$ <> "" ANDALSO ws$[LEN(ws$) - 1] = avoid$ THEN CONTINUEFOR
+        DIM sc AS DOUBLE = c_bonus - (n - c_syl) * 1.1 + RND() * 0.4
+        IF chorus THEN sc = sc + (n - c_syl) * 0.5
+        IF rhyme$ = "" ANDALSO TYPEOF(RCOUNT{k$}) <> "NONE" THEN sc = sc + 0.4 * MIN([RCOUNT{k$}, 5])
+        IF sc > best THEN
+            best = sc
+            b_words$ = c_words$
+            b_phons$ = c_phons$
+            b_slots$ = c_slots$
+        ENDIF
+    NEXT t
+    IF best < -1E8 THEN
+        IF rhyme$ <> "" THEN RETURN MAKE_LINE(n, "", "", templates$, chorus)
+        RETURN MAKE_LINE(n, "", "", VERSE_TEMPLATES$, chorus)
+    ENDIF
+    RETURN STORE_LINE(n, b_words$, b_phons$, b_slots$, chorus)
+ENDFUNC
+
+' Lays the chosen words on n notes and keeps the line
+FUNC STORE_LINE(n AS INTEGER, words$, phons$, slots$, chorus AS INTEGER) AS INTEGER
+    DIM ws$ = SPLIT(words$, "|")
+    DIM ps$ = SPLIT(phons$, "|")
+    DIM last AS INTEGER = LEN(ws$) - 1
+    DIM holds AS INTEGER = n - SYLS(phons$)
+    DIM stutter AS INTEGER = FALSE
+    IF holds > 0 ANDALSO chorus ANDALSO SYLS(ps$[last]) >= 2 ANDALSO RND() < 0.7 THEN stutter = TRUE
+    DIM sing$ AS STRING = ""
+    DIM under$ AS STRING = ""
+    DIM shown$ AS STRING = ""
+    DIM i AS INTEGER
+    DIM k AS INTEGER
+    FOR i = 0 TO last
+        DIM syl$ = SPLIT(ps$[i], ".")
+        DIM w$ AS STRING = ws$[i]
+        IF i = last ANDALSO stutter THEN
+            DIM st$ AS STRING = STUTTER$(w$)
+            FOR k = 1 TO holds
+                sing$ = sing$ + " " + syl$[0]
+                under$ = under$ + "|" + w$
+                shown$ = shown$ + " " + st$ + "-"
+            NEXT k
+            shown$ = RTRIM$(shown$)
+            IF RIGHT$(shown$, 1) = "-" THEN
+                shown$ = shown$ + w$
+            ELSE
+                shown$ = shown$ + " " + w$
+            ENDIF
+        ELSE
+            shown$ = shown$ + " " + w$
+        ENDIF
+        FOR k = 0 TO LEN(syl$) - 1
+            sing$ = sing$ + " " + syl$[k]
+            under$ = under$ + "|" + w$
+        NEXT k
+    NEXT i
+    IF NOT stutter THEN
+        FOR k = 1 TO holds
+            sing$ = sing$ + " -"
+            under$ = under$ + "|" + ws$[last]
+        NEXT k
+    ENDIF
+    ' the slot words count as used, so later lines pick others
+    DIM sl$ = SPLIT(slots$, "|")
+    FOR i = 0 TO LEN(sl$) - 1
+        IF sl$[i] <> "" THEN
+            IF TYPEOF(USED{sl$[i]}) = "NONE" THEN USED{sl$[i]} = 0
+            USED{sl$[i]} = USED{sl$[i]} + 1
+        ENDIF
+    NEXT i
+    DIM elems$ AS STRING = ""
+    FOR i = 0 TO last
+        DIM el$ = ELEM{LCASE$(ws$[i])}
+        IF TYPEOF(el$) <> "NONE" ANDALSO INSTR("," + elems$ + ",", "," + el$ + ",") < 0 THEN
+            IF elems$ = "" THEN
+                elems$ = el$
+            ELSE
+                elems$ = elems$ + "," + el$
+            ENDIF
+        ENDIF
+    NEXT i
+    shown$ = LTRIM$(shown$)
+    shown$ = UCASE$(LEFT$(shown$, 1)) + MID$(shown$, 1, LEN(shown$) - 1)
+    IF n_lines = 0 THEN
+        L_TEXT$[0] = shown$
+        L_SING$[0] = LTRIM$(sing$)
+        L_WORDS$[0] = MID$(under$, 1, LEN(under$) - 1)
+        L_RHYME$[0] = KEY$(ps$[last])
+        L_LAST$[0] = ws$[last]
+        L_ELEMS$[0] = elems$
+    ELSE
+        L_TEXT$ = APPEND(L_TEXT$, shown$)
+        L_SING$ = APPEND(L_SING$, LTRIM$(sing$))
+        L_WORDS$ = APPEND(L_WORDS$, MID$(under$, 1, LEN(under$) - 1))
+        L_RHYME$ = APPEND(L_RHYME$, KEY$(ps$[last]))
+        L_LAST$ = APPEND(L_LAST$, ws$[last])
+        L_ELEMS$ = APPEND(L_ELEMS$, elems$)
+    ENDIF
+    n_lines = n_lines + 1
+    RETURN n_lines - 1
+ENDFUNC
+
+' A verse: one line per entry of counts (syllables = notes), rhymed in
+' pairs, first with second, third with fourth
+EXPORT FUNC VERSE(counts)
+    DIM ids = ZEROS(LEN(counts))
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(counts) - 1 STEP 2
+        IF i + 1 < LEN(counts) THEN
+            PAIR counts[i], counts[i + 1], VERSE_TEMPLATES$, FALSE
+            ids[i] = pair_a
+            ids[i + 1] = pair_b
+        ELSE
+            ids[i] = MAKE_LINE(counts[i], "", "", VERSE_TEMPLATES$, FALSE)
+        ENDIF
+    NEXT i
+    RETURN ids
+ENDFUNC
+
+DIM pair_a AS INTEGER = 0
+DIM pair_b AS INTEGER = 0
+
+' Two lines that rhyme; when the second cannot rhyme on the first, both
+' are written again
+SUB PAIR(n1 AS INTEGER, n2 AS INTEGER, templates$, chorus AS INTEGER)
+    DIM attempt AS INTEGER
+    FOR attempt = 1 TO 6
+        pair_a = MAKE_LINE(n1, "", "", templates$, chorus)
+        pair_b = MAKE_LINE(n2, L_RHYME$[pair_a], L_LAST$[pair_a], templates$, chorus)
+        IF L_RHYME$[pair_b] = L_RHYME$[pair_a] THEN RETURN
+    NEXT attempt
+ENDSUB
+
+' The chorus: the hook on every other line, the lines between rhymed in
+' pairs. The same counts give the same chorus again.
+EXPORT FUNC CHORUS(counts)
+    DIM key$ AS STRING = JOIN(counts, ",")
+    IF TYPEOF(CHORUS_CACHE{key$}) <> "NONE" THEN RETURN CHORUS_CACHE{key$}
+    DIM ids = ZEROS(LEN(counts)) - 1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(counts) - 1
+        IF ids[i] >= 0 THEN CONTINUEFOR
+        IF i MOD 2 = 0 THEN
+            ids[i] = MAKE_LINE(counts[i], "", "", HOOK_TEMPLATES$, TRUE)
+        ELSEIF i + 2 < LEN(counts) THEN
+            PAIR counts[i], counts[i + 2], CHORUS_TEMPLATES$, TRUE
+            ids[i] = pair_a
+            ids[i + 2] = pair_b
+        ELSE
+            ids[i] = MAKE_LINE(counts[i], "", "", CHORUS_TEMPLATES$, TRUE)
+        ENDIF
+    NEXT i
+    CHORUS_CACHE{key$} = ids
+    RETURN ids
+ENDFUNC
+
+' The sung spelling of lines, for SOUND.SING
+EXPORT FUNC SUNG$(ids) AS STRING
+    DIM s$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(ids) - 1
+        s$ = s$ + " " + L_SING$[ids[i]]
+    NEXT i
+    RETURN LTRIM$(s$)
+ENDFUNC
+
+EXPORT FUNC TEXT$(id AS INTEGER) AS STRING
+    RETURN L_TEXT$[id]
+ENDFUNC
+
+EXPORT FUNC SING$(id AS INTEGER) AS STRING
+    RETURN L_SING$[id]
+ENDFUNC
+
+' The word under note k of a line
+EXPORT FUNC WORD$(id AS INTEGER, k AS INTEGER) AS STRING
+    DIM ws$ = SPLIT(L_WORDS$[id], "|")
+    IF k < 0 ORELSE k >= LEN(ws$) THEN RETURN ""
+    RETURN ws$[k]
+ENDFUNC
+
+EXPORT FUNC SYLLABLES(id AS INTEGER) AS INTEGER
+    RETURN LEN(SPLIT(L_SING$[id], " "))
+ENDFUNC
+
+' The NEON elements the words of a line call up, "moon,stars"
+EXPORT FUNC ELEMENTS$(id AS INTEGER) AS STRING
+    RETURN L_ELEMS$[id]
+ENDFUNC
+
+' The notes in one bar of a pattern: every step that is no rest
+EXPORT FUNC NOTES_IN(bar$) AS INTEGER
+    DIM s$ AS STRING = REPLACE$(REPLACE$(REPLACE$(REPLACE$(bar$, "[", " "), "]", " "), "<", " "), ">", " ")
+    DIM toks$ = SPLIT(s$, " ")
+    DIM n AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(toks$) - 1
+        IF toks$[i] <> "" ANDALSO toks$[i] <> "~" ANDALSO toks$[i] <> "_" THEN n = n + 1
+    NEXT i
+    RETURN n
+ENDFUNC
+
+' ── Spelling English by rule ────────────────────────────────────
+
+DIM g2p_out$ AS STRING = ""
+DIM g2p_vow = [0]
+DIM g2p_nvow AS INTEGER = 0
+
+SUB EMIT(p$, vowel AS INTEGER)
+    g2p_nvow = g2p_nvow + vowel
+    IF g2p_out$ = "" THEN
+        g2p_out$ = p$
+        g2p_vow[0] = vowel
+    ELSE
+        g2p_out$ = g2p_out$ + "," + p$
+        g2p_vow = APPEND(g2p_vow, vowel)
+    ENDIF
+ENDSUB
+
+' One word in the sung spelling, its syllables split by "."
+FUNC SPELL_WORD$(word$) AS STRING
+    DIM w$ AS STRING = LCASE$(word$)
+    IF TYPEOF(FW{w$}) <> "NONE" THEN RETURN FW{w$}
+    DIM i AS INTEGER
+    FOR i = 0 TO n_words - 1
+        IF WORD_TXT$[i] = w$ THEN RETURN WORD_SP$[i]
+    NEXT i
+    g2p_out$ = ""
+    g2p_vow = [0]
+    DIM n AS INTEGER = LEN(w$)
+    g2p_nvow = 0
+    i = 0
+    DO WHILE i < n
+        DIM c$ AS STRING = MID$(w$, i, 1)
+        DIM rest$ AS STRING = MID$(w$, i, n - i)
+        DIM nxt$ AS STRING = ""
+        IF i + 1 < n THEN nxt$ = MID$(w$, i + 1, 1)
+        IF LEFT$(rest$, 4) = "tion" THEN
+            EMIT "sh", 0
+            EMIT "uh", 1
+            EMIT "n", 0
+            i = i + 4
+        ELSEIF LEFT$(rest$, 3) = "igh" THEN
+            EMIT "ai", 1
+            i = i + 3
+        ELSEIF LEFT$(rest$, 2) = "ee" ORELSE LEFT$(rest$, 2) = "ea" THEN
+            EMIT "i", 1
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "oo" THEN
+            EMIT "u", 1
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "ai" ORELSE LEFT$(rest$, 2) = "ay" ORELSE LEFT$(rest$, 2) = "ey" THEN
+            EMIT "ei", 1
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "oa" THEN
+            EMIT "ou", 1
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "oi" ORELSE LEFT$(rest$, 2) = "oy" THEN
+            EMIT "oi", 1
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "au" ORELSE LEFT$(rest$, 2) = "aw" THEN
+            EMIT "aw", 1
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "ou" THEN
+            EMIT "au", 1
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "ow" THEN
+            IF i + 2 = n ANDALSO n > 3 THEN
+                EMIT "ou", 1
+            ELSE
+                EMIT "au", 1
+            ENDIF
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "ew" ORELSE LEFT$(rest$, 2) = "ue" THEN
+            EMIT "u", 1
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "ar" ANDALSO NOT IS_VOWEL_CH(MID$(rest$, 2, 1)) THEN
+            EMIT "a", 1
+            EMIT "r", 0
+            i = i + 2
+        ELSEIF (LEFT$(rest$, 2) = "er" ORELSE LEFT$(rest$, 2) = "ir" ORELSE LEFT$(rest$, 2) = "ur") ANDALSO NOT IS_VOWEL_CH(MID$(rest$, 2, 1)) THEN
+            EMIT "er", 1
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "or" ANDALSO NOT IS_VOWEL_CH(MID$(rest$, 2, 1)) THEN
+            EMIT "aw", 1
+            EMIT "r", 0
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "sh" ORELSE LEFT$(rest$, 2) = "ch" ORELSE LEFT$(rest$, 2) = "ng" THEN
+            EMIT LEFT$(rest$, 2), 0
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "th" THEN
+            IF i = 0 ANDALSO INSTR(" the this that they them there than then those these ", " " + w$ + " ") >= 0 THEN
+                EMIT "dh", 0
+            ELSE
+                EMIT "th", 0
+            ENDIF
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "ph" THEN
+            EMIT "f", 0
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "wh" ORELSE (i = 0 ANDALSO LEFT$(rest$, 2) = "wr") THEN
+            EMIT MID$(rest$, 1, 1), 0
+            i = i + 2
+        ELSEIF i = 0 ANDALSO LEFT$(rest$, 2) = "kn" THEN
+            EMIT "n", 0
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "ck" ORELSE LEFT$(rest$, 2) = "qu" THEN
+            EMIT "k", 0
+            IF LEFT$(rest$, 2) = "qu" THEN EMIT "w", 0
+            i = i + 2
+        ELSEIF LEFT$(rest$, 2) = "gh" THEN
+            i = i + 2
+        ELSEIF i > 0 ANDALSO c$ = MID$(w$, i - 1, 1) ANDALSO NOT IS_VOWEL_CH(c$) THEN
+            i = i + 1
+        ELSEIF IS_VOWEL_CH(c$) THEN
+            ' a vowel, long before one consonant and a final e
+            DIM long_v AS INTEGER = FALSE
+            IF i + 2 = n - 1 ANDALSO MID$(w$, n - 1, 1) = "e" ANDALSO NOT IS_VOWEL_CH(nxt$) THEN long_v = TRUE
+            IF c$ = "e" ANDALSO i = n - 1 ANDALSO g2p_nvow > 0 THEN
+                i = i + 1
+                CONTINUEDO
+            ENDIF
+            DIM v$ AS STRING = ""
+            IF c$ = "a" THEN v$ = "ae"
+            IF c$ = "e" THEN v$ = "e"
+            IF c$ = "i" THEN v$ = "ih"
+            IF c$ = "o" THEN v$ = "aw"
+            IF c$ = "u" THEN v$ = "uh"
+            IF long_v THEN
+                IF c$ = "a" THEN v$ = "ei"
+                IF c$ = "e" THEN v$ = "i"
+                IF c$ = "i" THEN v$ = "ai"
+                IF c$ = "o" THEN v$ = "ou"
+                IF c$ = "u" THEN v$ = "u"
+            ENDIF
+            IF i = n - 1 ANDALSO c$ = "o" THEN v$ = "ou"
+            IF i = n - 1 ANDALSO c$ = "e" THEN v$ = "i"
+            EMIT v$, 1
+            i = i + 1
+        ELSEIF c$ = "y" THEN
+            IF i = 0 ORELSE (IS_VOWEL_CH(nxt$) ANDALSO IS_VOWEL_CH(MID$(w$, i - 1, 1))) THEN
+                EMIT "y", 0
+            ELSEIF g2p_nvow > 0 THEN
+                EMIT "i", 1
+            ELSE
+                EMIT "ai", 1
+            ENDIF
+            i = i + 1
+        ELSEIF c$ = "c" THEN
+            IF nxt$ = "e" ORELSE nxt$ = "i" ORELSE nxt$ = "y" THEN
+                EMIT "s", 0
+            ELSE
+                EMIT "k", 0
+            ENDIF
+            i = i + 1
+        ELSEIF c$ = "s" ANDALSO i = n - 1 ANDALSO i > 0 ANDALSO INSTR("ptkf", MID$(w$, i - 1, 1)) < 0 THEN
+            EMIT "z", 0
+            i = i + 1
+        ELSEIF c$ = "x" THEN
+            EMIT "k", 0
+            EMIT "s", 0
+            i = i + 1
+        ELSEIF INSTR("bdfghjklmnprstvwz", c$) >= 0 THEN
+            EMIT c$, 0
+            i = i + 1
+        ELSE
+            i = i + 1
+        ENDIF
+    LOOP
+    IF g2p_out$ = "" THEN RETURN "uh"
+    ' syllables: a consonant before a vowel starts one, of a run of
+    ' consonants between vowels the first stays behind
+    DIM ph$ = SPLIT(g2p_out$, ",")
+    DIM np AS INTEGER = LEN(ph$)
+    DIM out$ AS STRING = ""
+    DIM seen_v AS INTEGER = FALSE
+    DIM j AS INTEGER
+    FOR j = 0 TO np - 1
+        DIM cut AS INTEGER = FALSE
+        IF seen_v ANDALSO g2p_vow[j] = 0 THEN
+            DIM k AS INTEGER = j
+            DO WHILE k < np ANDALSO g2p_vow[k] = 0
+                k = k + 1
+            LOOP
+            IF k < np THEN
+                IF k - j = 1 THEN cut = TRUE
+                IF k - j >= 2 ANDALSO j > 0 ANDALSO g2p_vow[j - 1] = 0 THEN cut = TRUE
+            ENDIF
+        ENDIF
+        IF seen_v ANDALSO g2p_vow[j] = 1 ANDALSO j > 0 ANDALSO g2p_vow[j - 1] = 1 THEN cut = TRUE
+        IF cut THEN
+            out$ = out$ + "." + ph$[j]
+            seen_v = FALSE
+        ELSE
+            out$ = out$ + ph$[j]
+        ENDIF
+        IF g2p_vow[j] = 1 THEN seen_v = TRUE
+    NEXT j
+    RETURN out$
+ENDFUNC
+
+' Any English text in the sung spelling: words by the table or by rule,
+' a syllable a note
+EXPORT FUNC SPELL$(text$) AS STRING
+    DIM clean$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(text$) - 1
+        DIM c$ AS STRING = LCASE$(MID$(text$, i, 1))
+        IF (c$ >= "a" ANDALSO c$ <= "z") ORELSE c$ = " " THEN
+            clean$ = clean$ + c$
+        ELSE
+            clean$ = clean$ + " "
+        ENDIF
+    NEXT i
+    DIM ws$ = SPLIT(clean$, " ")
+    DIM out$ AS STRING = ""
+    FOR i = 0 TO LEN(ws$) - 1
+        IF ws$[i] = "" THEN CONTINUEFOR
+        out$ = out$ + " " + REPLACE$(SPELL_WORD$(ws$[i]), ".", " ")
+    NEXT i
+    RETURN LTRIM$(out$)
+ENDFUNC
