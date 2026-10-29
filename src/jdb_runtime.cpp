@@ -5264,6 +5264,20 @@ int64_t jdb_dyn_arith(int64_t a, int32_t ta, int64_t b, int32_t tb,
         if (out_tag) *out_tag = JD_TAG_STR;
         return (int64_t)(intptr_t)text_out(out);
     }
+    // Two integers stay an integer under + - *, as in the interpreter, until
+    // the result leaves the INT64 range.
+    if (ta == JD_TAG_I64 && tb == JD_TAG_I64 && op >= 0 && op <= 2) {
+        uint64_t ua = (uint64_t)a, ub = (uint64_t)b;
+        int64_t r = (int64_t)(op == 0 ? ua + ub : op == 1 ? ua - ub : ua * ub);
+        bool ovf;
+        if (op == 0)      ovf = ((a ^ r) & (b ^ r)) < 0;
+        else if (op == 1) ovf = ((a ^ b) & (a ^ r)) < 0;
+        else              ovf = (a == -1 && b == INT64_MIN) || (a != 0 && r / a != b);
+        if (!ovf) {
+            if (out_tag) *out_tag = JD_TAG_I64;
+            return r;
+        }
+    }
     if (out_tag) *out_tag = JD_TAG_F64;
     double x = dyn_num(a, ta), y = dyn_num(b, tb), r = 0.0;
     switch (op) {

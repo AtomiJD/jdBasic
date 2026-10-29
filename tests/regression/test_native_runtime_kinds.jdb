@@ -22,6 +22,22 @@ FUNC Noted(v AS INTEGER) AS INTEGER
     RETURN v
 ENDFUNC
 
+FUNC KindOf(v)
+    RETURN TYPEOF(v)
+ENDFUNC
+
+ASYNC FUNC KindLater(v)
+    RETURN TYPEOF(v)
+ENDFUNC
+
+FUNC NextOf(v)
+    RETURN v + 1
+ENDFUNC
+
+FUNC TimesTwo(v)
+    RETURN v * 2
+ENDFUNC
+
 FUNC Pick(x)
     IF x > 1 THEN
         RETURN "big"
@@ -162,6 +178,29 @@ FOR EACH v IN shrink
     passes = passes + 1
 NEXT
 Check(passes = 2, "FOR EACH over an array its body shrinks")
+
+' An integer stays an integer through a funcref and an ASYNC call, and
+' runtime-typed integer arithmetic stays integer until it overflows.
+DIM kind_ref = KindOf@
+Check(kind_ref(7) = "INT64", "an integer through a funcref")
+Check(kind_ref("x") = "STRING", "a string through a funcref")
+Check(kind_ref(2.5) = "FLOAT64", "a float through a funcref")
+DIM kind_task = KindLater(7)
+Check(AWAIT kind_task = "INT64", "an integer through an ASYNC call")
+Check(NextOf(7) = 8, "integer plus one on a runtime-typed parameter")
+Check(NextOf("a") = "a1", "string plus one on a runtime-typed parameter")
+DIM next_ref = NextOf@
+Check(TYPEOF(next_ref(7)) = "INT64", "an integer answer through a funcref")
+Check(TYPEOF(NextOf(40)) = "INT64", "an integer answer from a runtime-typed parameter")
+Check(TYPEOF(TimesTwo(40)) = "INT64", "integer times integer stays an integer")
+Check(TYPEOF(TimesTwo(1.5)) = "FLOAT64", "a float times an integer is a float")
+Check(TimesTwo("ab") = "abab", "a string times an integer repeats")
+
+' A map has keys, not members.
+DIM keyed AS MAP
+keyed{"a"} = 1
+Check(TYPEOF(keyed.a) = "NONE", "a dot on a map is NONE")
+Check(keyed{"a"} = 1, "a key on a map reads the value")
 
 IF failed > 0 THEN END 1
 PRINT "OK"

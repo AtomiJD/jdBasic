@@ -226,6 +226,8 @@ private:
     void funcref_put_arg_tag(unsigned idx, LLVMValueRef tag);
     LLVMValueRef funcref_take_arg_tag(unsigned idx, LLVMValueRef bits);
     LLVMValueRef funcref_wire_tag(LLVMValueRef t);
+    LLVMValueRef funcref_num_tag(LLVMValueRef t);
+    LLVMValueRef funcref_unwire_bits(LLVMValueRef f64v, LLVMValueRef tag);
     void emit_scalar_step_check(LLVMValueRef map_ptr, LLVMValueRef key, LLVMValueRef tag);
     LLVMValueRef build_builtin_funcref_wrapper(const std::string& fn_name, int arity);
     LLVMValueRef builtin_funcref_by_name(const std::string& fn_name);
