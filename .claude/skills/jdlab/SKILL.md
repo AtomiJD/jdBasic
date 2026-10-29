@@ -120,11 +120,11 @@ screenshots, and small extracts cross the wire:
 
 ## Hard safety rules (from the MCP server's nature)
 
-- `OS.EXEC` inside `jdb_eval` works for commands that finish on their own
-  and never read input (a child reading stdin eats the server's JSON-RPC).
+- `OS.EXEC` inside `jdb_eval` works for commands that finish on their own;
+  the child reads NUL as stdin, so a command that waits for input gets EOF.
   Pass arguments as an array - without it the line goes to `cmd /c`, where
   `|` is a pipe. Measured 2026-10-26: full `git log --numstat` (677k chars)
-  in 3.4 s. `OS.LOAD` is still untested here - keep it out of `jdb_eval`.
+  in 3.4 s. `OS.LOAD` is the CPU-load reading, no subprocess.
 - Never restart the VM mid-session. If an eval hangs: `jdb_stop` →
   `jdb_status` → retry smaller.
 - `CSVREADER` infers each cell (integer, double, string); a `types` array

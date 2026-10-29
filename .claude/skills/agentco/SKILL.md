@@ -12,12 +12,12 @@ co-processor embeds a repo's files and answers natural-language queries with
 uncommented math still searches weakly - grep those). Local, offline, project- and
 language-agnostic.
 
-## Safety - never shell out from inside the VM
-**Do NOT call `OS.EXEC` / `OS.LOAD` (or any subprocess) from `jdb_eval`.** The MCP
-server speaks over stdio; `_popen` inside it **deadlocks** (even `git --version`
-hangs forever). YOU run shell commands with your own **Bash tool**, outside the VM,
-and hand jdBasic a file list. If an eval ever hangs anyway: `jdb_stop` → `jdb_status`
-→ retry (no server restart needed).
+## Safety - shelling out from inside the VM
+`OS.EXEC` inside `jdb_eval` runs the child with NUL as stdin, so commands such as
+`git ls-files` answer straight into the VM. Pass the arguments as an array. A
+command that runs for minutes blocks the VM for that long; run those with your own
+**Bash tool** and hand jdBasic a file list. If an eval ever hangs: `jdb_stop` →
+`jdb_status` → retry (no server restart needed).
 
 ## Prerequisites
 1. The jdBasic MCP server must be the **LLM build** (has `AI.*`). Check:
