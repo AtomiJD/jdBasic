@@ -120,7 +120,7 @@ compiling. Run shell commands with your own shell tool or `jdb_run_native`.
 
 - `OS.EXEC` inside `jdb_eval` brings a command's output straight into the
   VM: `OS.EXEC("git", ["log", "--format=%H|%s"])` answers a map with
-  `"OUTPUT"` and `"EXIT_CODE"`. Pass the arguments as an array; without it
+  `"output"` and `"exit_code"`. Pass the arguments as an array; without it
   the line goes to `cmd /c` or `sh`, where `|`, `&` and `>` are operators.
   Never run a command that waits for input: it would read the server's own
   stdin.

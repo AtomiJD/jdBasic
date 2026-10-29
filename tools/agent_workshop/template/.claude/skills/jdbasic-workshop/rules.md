@@ -44,6 +44,8 @@ When the natural name is taken, qualify it: `n_items`, `tick_ms`,
 - `APPEND` is a function: `arr = APPEND(arr, v)`.
 - Map access uses braces: `m{"key"}`. A missing key reads as NONE; test it
   with `TYPEOF(v) = "NONE"`, never `v = NONE` (that is TRUE for anything).
+  Maps that builtins answer use lower-case keys: `r{"output"}`,
+  `FILE.STAT(f$){"mtime"}`.
 - Higher-order map is `SELECT(fn@, arr)` or `SELECT(LAMBDA x -> x * 2, arr)`.
   `MAP` is the hashmap type.
 - `AND`/`OR` evaluate both sides. Use `ANDALSO`/`ORELSE` when the right side
