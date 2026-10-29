@@ -829,9 +829,10 @@ std::string exe_dir() {
 #endif
 }
 
-// Open doc/languages.md, trying EXE-relative first (bundle case), then CWD
-// (in-tree dev case). On failure, both attempted paths are returned via
-// out-params so the error message can name them.
+// Open doc/languages.md, trying EXE-relative first (bundle case), then one
+// level up (a dev build in the repo's build/), then CWD. On failure, the
+// attempted paths are returned via out-params so the error message can
+// name them.
 
 bool open_doc_languages(std::ifstream& in,
                         std::string& tried_exe,
@@ -839,12 +840,17 @@ bool open_doc_languages(std::ifstream& in,
     std::string ed = exe_dir();
     if (!ed.empty()) {
 #ifdef _WIN32
-        tried_exe = ed + "\\doc\\languages.md";
+        const char* rels[] = { "\\doc\\languages.md", "\\..\\doc\\languages.md" };
 #else
-        tried_exe = ed + "/doc/languages.md";
+        const char* rels[] = { "/doc/languages.md", "/../doc/languages.md" };
 #endif
-        in.open(tried_exe);
-        if (in.is_open()) return true;
+        for (const char* rel : rels) {
+            std::string p = ed + rel;
+            tried_exe += (tried_exe.empty() ? "" : "', '") + p;
+            in.open(p);
+            if (in.is_open()) return true;
+            in.clear();
+        }
     }
     tried_cwd = "doc/languages.md";
     in.open(tried_cwd);
