@@ -14,6 +14,10 @@
 #include <sys/sysctl.h>
 #endif
 
+// Set by the MCP stdio server: OS.EXEC children then read NUL instead of
+// the server's stdin, which carries the JSON-RPC stream.
+bool g_exec_stdin_null = false;
+
 #if defined(_WIN32)
 // The output of a console program as UTF-8: text that is valid UTF-8 stays
 // as it is, anything else is read in the OEM codepage that Windows console
@@ -309,7 +313,11 @@ void VM::register_system_builtins() {
             si.dwFlags = STARTF_USESTDHANDLES;
             si.hStdOutput = wr;
             si.hStdError = wr;
-            si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+            HANDLE null_in = INVALID_HANDLE_VALUE;
+            if (g_exec_stdin_null)
+                null_in = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+            if (null_in == INVALID_HANDLE_VALUE) null_in = nullptr;
+            si.hStdInput = g_exec_stdin_null ? null_in : GetStdHandle(STD_INPUT_HANDLE);
             // Only this child's own pipe (and an inheritable stdin) is handed
             // down: a child another thread starts meanwhile must not inherit
             // the write end too, or this read waits for that child as well.
@@ -349,6 +357,7 @@ void VM::register_system_builtins() {
                 if (!batch_safe) {
                     if (have_list) DeleteProcThreadAttributeList(attrs);
                     CloseHandle(wr);
+                    if (null_in) CloseHandle(null_in);
                     CloseHandle(rd);
                     throw std::runtime_error("OS.EXEC: an argument with % or a double quote cannot be passed to the batch file " + cmd + " safely");
                 }
@@ -359,6 +368,7 @@ void VM::register_system_builtins() {
             }
             if (have_list) DeleteProcThreadAttributeList(attrs);
             CloseHandle(wr);
+            if (null_in) CloseHandle(null_in);
             if (ok) {
                 char buf[4096];
                 DWORD got = 0;
@@ -392,9 +402,9 @@ void VM::register_system_builtins() {
         }
 #if defined(_WIN32)
         // The outer quotes are what cmd /c strips, so quotes inside survive.
-        cmd = "cmd /c \"" + cmd + " 2>&1\"";
+        cmd = "cmd /c \"" + cmd + " 2>&1" + (g_exec_stdin_null ? " <NUL" : "") + "\"";
 #else
-        cmd = cmd + " 2>&1";
+        cmd = (g_exec_stdin_null ? "exec </dev/null; " : "") + cmd + " 2>&1";
 #endif
         // An HTTP handler may run while the program waits for the child.
         ExecYield wait(g_active_vm ? &g_active_vm->exec_lock : nullptr);

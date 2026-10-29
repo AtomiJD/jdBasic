@@ -30,6 +30,9 @@
 // resolve modules that live next to it.
 extern std::string g_base_dir;
 
+// Defined in vm_builtins_system.cpp.
+extern bool g_exec_stdin_null;
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -1521,6 +1524,7 @@ void reader_loop(VM& vm, McpInbox& inbox) {
 
 int run_mcp_stdio(VM& vm, const std::string& user_tools_dir, bool tools_only) {
     g_tools_only = tools_only;
+    g_exec_stdin_null = true;
 #ifdef _WIN32
     // Windows defaults stdin/stdout to text mode, which translates LF↔CRLF
     // and would corrupt JSON containing escaped newlines. Force binary.
