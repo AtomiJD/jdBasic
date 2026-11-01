@@ -6,7 +6,7 @@
 
 DIM args = OS.ARGS()
 DIM lo = 1
-DIM hi = 20
+DIM hi = 40
 DIM want_wav = 0
 IF LEN(args) > 1 THEN
     lo = VAL(args[1])

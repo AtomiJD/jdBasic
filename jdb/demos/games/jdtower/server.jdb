@@ -1,14 +1,18 @@
-' jdTower server: players, their best result per level, a leaderboard.
+' jdTower server: players, their best result per level, achievements, the
+' endless records, a daily challenge and the leaderboards.
 ' The game itself runs on the client; the server only keeps score.
 '   jdbasic server.jdb [port] [host]          default 8082 on 0.0.0.0
 ' Clients POST JSON as text/plain (a CORS simple request, no preflight) and
 ' every answer carries Access-Control-Allow-Origin: *.
 
-CONST N_LEVELS = 20
+CONST N_LEVELS = 40
+CONST N_ARENAS = 3
 CONST PIN_TRIES = 5
 CONST PIN_LOCK_MS = 60000
 CONST MAX_SCORE = 1000000
+CONST TOP_N = 15
 CONST NAME_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789äöüÄÖÜß _-."
+CONST ID_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 
 DIM players AS MAP = {}
 TRY
@@ -23,6 +27,14 @@ TRY
 CATCH
 ENDTRY
 IF TYPEOF(sessions) <> "OBJECT" THEN sessions = {}
+
+' today's daily challenge results: { "DATE": ..., "SCORES": { name: score } }
+DIM daily AS MAP = {}
+TRY
+    daily = JSON.PARSE(TXTREADER$("daily.json"))
+CATCH
+ENDTRY
+IF TYPEOF(daily) <> "OBJECT" THEN daily = {}
 
 SUB SAVEPLAYERS()
     TRY
@@ -40,6 +52,14 @@ SUB SAVESESSIONS()
     ENDTRY
 ENDSUB
 
+SUB SAVEDAILY()
+    TRY
+        TXTWRITER "daily.json", JSON.STRINGIFY$(daily)
+    CATCH
+        PRINT "cannot write daily.json"
+    ENDTRY
+ENDSUB
+
 FUNC JJ(m)
     RETURN { "__http_status": 200, "__http_body": JSON.STRINGIFY$(m), "__http_content_type": "application/json", "__http_headers": { "Access-Control-Allow-Origin": "*" } }
 ENDFUNC
@@ -52,6 +72,51 @@ FUNC BODY(req)
     ENDTRY
     RETURN b
 ENDFUNC
+
+FUNC NUMOF(m, k$)
+    IF TYPEOF(m) <> "OBJECT" THEN RETURN 0
+    IF NOT MAP.EXISTS(m, k$) THEN RETURN 0
+    RETURN INT(VAL("" + m{k$}))
+ENDFUNC
+
+FUNC QPARAM$(req, k$)
+    DIM qp = req{"params"}
+    IF TYPEOF(qp) <> "OBJECT" THEN RETURN ""
+    IF NOT MAP.EXISTS(qp, k$) THEN RETURN ""
+    RETURN "" + qp{k$}
+ENDFUNC
+
+' ── calendar ────────────────────────────────────────────────────
+
+FUNC DAYNO()
+    RETURN INT(DATEDIFF("d", "1970-01-01", NOW()))
+ENDFUNC
+
+' weeks start on Monday; 1970-01-01 was a Thursday
+FUNC WEEKNO()
+    RETURN INT((DAYNO() + 3) / 7)
+ENDFUNC
+
+' The daily challenge is the same for everyone and follows from the date:
+' a level of world 1 and one rule
+DIM DAILY_RULES = ["ONLY", "FAST", "POOR", "FRAGILE", "TOUGH"]
+FUNC TODAY()
+    DIM d = DAYNO()
+    DIM m AS MAP = {}
+    m{"DATE"} = DATE$()
+    m{"LEVEL"} = 3 + (d * 7) MOD 16
+    m{"RULE"} = DAILY_RULES[d MOD LEN(DAILY_RULES)]
+    m{"ARG"} = (d * 3) MOD 7
+    RETURN m
+ENDFUNC
+
+SUB ROLLDAILY()
+    IF NOT MAP.EXISTS(daily, "DATE") ORELSE daily{"DATE"} <> DATE$() THEN
+        daily = {}
+        daily{"DATE"} = DATE$()
+        daily{"SCORES"} = {}
+    ENDIF
+ENDSUB
 
 ' ── identity ────────────────────────────────────────────────────
 ' A name belongs to whoever claimed it first. Only a salted hash of the PIN
@@ -82,11 +147,25 @@ FUNC NAMEOK(nm$)
     RETURN 1
 ENDFUNC
 
+FUNC IDOK(id$)
+    IF id$ = "" ORELSE LEN(id$) > 24 THEN RETURN 0
+    FOR EACH ch$ IN -id$
+        IF INSTR(ID_CHARS, ch$) < 0 THEN RETURN 0
+    NEXT ch$
+    RETURN 1
+ENDFUNC
+
+' Older records lack the newer sections; they are added on first touch
 FUNC PLAYEROF(name$)
     IF NOT MAP.EXISTS(players, name$) THEN
         players{name$} = { "SALT": "", "PINHASH": "", "TRIES": 0, "LOCKED": 0, "PROGRESS": {} }
     ENDIF
-    RETURN players{name$}
+    DIM p = players{name$}
+    IF NOT MAP.EXISTS(p, "STATS") THEN p{"STATS"} = {}
+    IF NOT MAP.EXISTS(p, "ACH") THEN p{"ACH"} = []
+    IF NOT MAP.EXISTS(p, "ENDLESS") THEN p{"ENDLESS"} = {}
+    IF NOT MAP.EXISTS(p, "WEEK") THEN p{"WEEK"} = { "NO": 0, "LV": {} }
+    RETURN p
 ENDFUNC
 
 FUNC NEWSESSION$(name$)
@@ -99,12 +178,14 @@ ENDFUNC
 FUNC WHOIS$(req, b)
     DIM tok$ = ""
     IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "AUTH") THEN tok$ = "" + b{"AUTH"}
-    DIM qp = req{"params"}
-    IF tok$ = "" ANDALSO TYPEOF(qp) = "OBJECT" THEN
-        IF MAP.EXISTS(qp, "auth") THEN tok$ = qp{"auth"}
-    ENDIF
+    IF tok$ = "" THEN tok$ = QPARAM$(req, "auth")
     IF tok$ = "" ORELSE NOT MAP.EXISTS(sessions, tok$) THEN RETURN ""
     RETURN sessions{tok$}{"NAME"}
+ENDFUNC
+
+FUNC PROFILE(name$)
+    DIM p = PLAYEROF(name$)
+    RETURN { "OK": 1, "NAME": name$, "PROGRESS": p{"PROGRESS"}, "STATS": p{"STATS"}, "ACH": p{"ACH"}, "ENDLESS": p{"ENDLESS"} }
 ENDFUNC
 
 ' ── routes ──────────────────────────────────────────────────────
@@ -145,19 +226,20 @@ ENDFUNC
 FUNC HPROGRESS(req)
     DIM who$ = WHOIS$(req, 0)
     IF who$ = "" THEN RETURN JJ({ "OK": 0, "MSG": "login" })
-    RETURN JJ({ "OK": 1, "NAME": who$, "PROGRESS": PLAYEROF(who$){"PROGRESS"} })
+    RETURN JJ(PROFILE(who$))
 ENDFUNC
 
 FUNC HRESULT(req)
     DIM b = BODY(req)
     DIM who$ = WHOIS$(req, b)
     IF who$ = "" THEN RETURN JJ({ "OK": 0, "MSG": "login" })
-    DIM lvl = INT(VAL("" + b{"LEVEL"}))
-    DIM stars = INT(VAL("" + b{"STARS"}))
-    DIM score = INT(VAL("" + b{"SCORE"}))
+    DIM lvl = NUMOF(b, "LEVEL")
+    DIM stars = NUMOF(b, "STARS")
+    DIM score = NUMOF(b, "SCORE")
     IF lvl < 1 ORELSE lvl > N_LEVELS THEN RETURN JJ({ "OK": 0, "MSG": "level" })
     IF stars < 0 ORELSE stars > 3 ORELSE score < 0 ORELSE score > MAX_SCORE THEN RETURN JJ({ "OK": 0, "MSG": "values" })
-    DIM pr = PLAYEROF(who$){"PROGRESS"}
+    DIM p = PLAYEROF(who$)
+    DIM pr = p{"PROGRESS"}
     ' a level counts only once the one before it was won
     IF lvl > 1 THEN
         IF NOT MAP.EXISTS(pr, STR$(lvl - 1)) THEN RETURN JJ({ "OK": 0, "MSG": "locked" })
@@ -167,43 +249,197 @@ FUNC HRESULT(req)
     DIM row = pr{k$}
     IF stars > row{"STARS"} THEN row{"STARS"} = stars
     IF score > row{"SCORE"} THEN row{"SCORE"} = score
+    DIM wk = p{"WEEK"}
+    IF wk{"NO"} <> WEEKNO() THEN
+        wk{"NO"} = WEEKNO()
+        wk{"LV"} = {}
+    ENDIF
+    IF NUMOF(wk{"LV"}, k$) < score THEN wk{"LV"}{k$} = score
     SAVEPLAYERS()
     PRINT who$; " level "; lvl; " stars "; stars; " score "; score
     RETURN JJ({ "OK": 1, "PROGRESS": pr })
 ENDFUNC
 
-' Everyone with at least one won level: total stars, then total score
+' Counters only grow, achievements only add up
+FUNC HPROFILE(req)
+    DIM b = BODY(req)
+    DIM who$ = WHOIS$(req, b)
+    IF who$ = "" THEN RETURN JJ({ "OK": 0, "MSG": "login" })
+    DIM p = PLAYEROF(who$)
+    IF TYPEOF(b{"STATS"}) = "OBJECT" THEN
+        FOR EACH k$ IN MAP.KEYS(b{"STATS"})
+            IF IDOK(k$) = 1 ANDALSO LEN(MAP.KEYS(p{"STATS"})) < 200 THEN
+                DIM v = NUMOF(b{"STATS"}, k$)
+                IF v > NUMOF(p{"STATS"}, k$) ANDALSO v <= 100000000 THEN p{"STATS"}{k$} = v
+            ENDIF
+        NEXT k$
+    ENDIF
+    IF TYPEOF(b{"ACH"}) = "ARRAY" THEN
+        FOR EACH a IN b{"ACH"}
+            DIM id$ = "" + a
+            IF IDOK(id$) = 1 ANDALSO INDEXOF(p{"ACH"}, id$) < 0 ANDALSO LEN(p{"ACH"}) < 100 THEN
+                p{"ACH"} = APPEND(p{"ACH"}, id$)
+            ENDIF
+        NEXT a
+    ENDIF
+    SAVEPLAYERS()
+    RETURN JJ(PROFILE(who$))
+ENDFUNC
+
+' Endless runs open up once world 1 is done
+FUNC HENDLESS(req)
+    DIM b = BODY(req)
+    DIM who$ = WHOIS$(req, b)
+    IF who$ = "" THEN RETURN JJ({ "OK": 0, "MSG": "login" })
+    DIM arena = NUMOF(b, "ARENA")
+    DIM wv = NUMOF(b, "WAVE")
+    DIM score = NUMOF(b, "SCORE")
+    IF arena < 1 ORELSE arena > N_ARENAS ORELSE wv < 0 ORELSE wv > 10000 ORELSE score < 0 ORELSE score > MAX_SCORE * 10 THEN RETURN JJ({ "OK": 0, "MSG": "values" })
+    DIM p = PLAYEROF(who$)
+    IF NOT MAP.EXISTS(p{"PROGRESS"}, "20") THEN RETURN JJ({ "OK": 0, "MSG": "locked" })
+    DIM k$ = STR$(arena)
+    IF NOT MAP.EXISTS(p{"ENDLESS"}, k$) THEN p{"ENDLESS"}{k$} = { "WAVE": 0, "SCORE": 0 }
+    DIM row = p{"ENDLESS"}{k$}
+    IF wv > row{"WAVE"} THEN row{"WAVE"} = wv
+    IF score > row{"SCORE"} THEN row{"SCORE"} = score
+    SAVEPLAYERS()
+    PRINT who$; " endless "; arena; " wave "; wv
+    RETURN JJ(PROFILE(who$))
+ENDFUNC
+
+FUNC HDAILY(req)
+    ROLLDAILY()
+    DIM m = TODAY()
+    m{"OK"} = 1
+    DIM who$ = WHOIS$(req, 0)
+    m{"MINE"} = 0
+    IF who$ <> "" THEN m{"MINE"} = NUMOF(daily{"SCORES"}, who$)
+    RETURN JJ(m)
+ENDFUNC
+
+FUNC HDAILYRESULT(req)
+    DIM b = BODY(req)
+    DIM who$ = WHOIS$(req, b)
+    IF who$ = "" THEN RETURN JJ({ "OK": 0, "MSG": "login" })
+    DIM score = NUMOF(b, "SCORE")
+    IF score < 0 ORELSE score > MAX_SCORE THEN RETURN JJ({ "OK": 0, "MSG": "values" })
+    ' a result made for yesterday's challenge does not count today
+    IF "" + b{"DATE"} <> DATE$() THEN RETURN JJ({ "OK": 0, "MSG": "day" })
+    ROLLDAILY()
+    DIM is_new = IIF(MAP.EXISTS(daily{"SCORES"}, who$), 0, 1)
+    IF score > NUMOF(daily{"SCORES"}, who$) THEN daily{"SCORES"}{who$} = score
+    SAVEDAILY()
+    PRINT who$; " daily "; score
+    RETURN JJ({ "OK": 1, "NEW": is_new, "MINE": daily{"SCORES"}{who$} })
+ENDFUNC
+
+' ── leaderboards ────────────────────────────────────────────────
+
+' Everything the boards rank a player by, from the stored record
+FUNC TOTALS(name$)
+    DIM p = PLAYEROF(name$)
+    DIM pr = p{"PROGRESS"}
+    DIM m AS MAP = {}
+    DIM w1s = 0
+    DIM w1p = 0
+    DIM w2s = 0
+    DIM w2p = 0
+    DIM w1n = 0
+    FOR EACH k$ IN MAP.KEYS(pr)
+        DIM lv = INT(VAL(k$))
+        IF lv <= 20 THEN
+            w1s = w1s + pr{k$}{"STARS"}
+            w1p = w1p + pr{k$}{"SCORE"}
+            w1n = w1n + 1
+        ELSE
+            w2s = w2s + pr{k$}{"STARS"}
+            w2p = w2p + pr{k$}{"SCORE"}
+        ENDIF
+    NEXT k$
+    DIM ew = 0
+    DIM ep = 0
+    FOR EACH a$ IN MAP.KEYS(p{"ENDLESS"})
+        IF p{"ENDLESS"}{a$}{"WAVE"} > ew THEN ew = p{"ENDLESS"}{a$}{"WAVE"}
+        IF p{"ENDLESS"}{a$}{"SCORE"} > ep THEN ep = p{"ENDLESS"}{a$}{"SCORE"}
+    NEXT a$
+    DIM wkp = 0
+    DIM wkn = 0
+    IF p{"WEEK"}{"NO"} = WEEKNO() THEN
+        FOR EACH k2$ IN MAP.KEYS(p{"WEEK"}{"LV"})
+            wkp = wkp + p{"WEEK"}{"LV"}{k2$}
+            wkn = wkn + 1
+        NEXT k2$
+    ENDIF
+    m{"W1"} = [w1s, w1p, w1n]
+    m{"W2"} = [w2s, w2p, w2s]
+    m{"END"} = [ew, ep, ew]
+    m{"WEEK"} = [wkp, wkn, wkp]
+    m{"DAY"} = [NUMOF(daily{"SCORES"}, name$), 0, NUMOF(daily{"SCORES"}, name$)]
+    DIM crown = 0
+    IF w1s >= 60 THEN crown = 1
+    IF w1s >= 60 ANDALSO w2s >= 60 THEN crown = 2
+    m{"CROWN"} = crown
+    m{"BADGES"} = LEN(p{"ACH"})
+    RETURN m
+ENDFUNC
+
+' One board: rows ranked by VAL then SUB. Whoever asks with a token also
+' gets their own rank, the two places either side and the gap to the next.
 FUNC HBOARD(req)
+    ROLLDAILY()
+    DIM tab$ = UCASE$(QPARAM$(req, "tab"))
+    IF INDEXOF(["W1", "W2", "END", "WEEK", "DAY"], tab$) < 0 THEN tab$ = "W1"
+    DIM who$ = WHOIS$(req, 0)
     DIM rows = []
     DIM sort_keys = []
     FOR EACH name$ IN MAP.KEYS(players)
-        DIM pr = players{name$}{"PROGRESS"}
-        DIM n_stars = 0
-        DIM n_score = 0
-        DIM n_levels = 0
-        FOR EACH k$ IN MAP.KEYS(pr)
-            n_stars = n_stars + pr{k$}{"STARS"}
-            n_score = n_score + pr{k$}{"SCORE"}
-            n_levels = n_levels + 1
-        NEXT k$
-        IF n_levels > 0 THEN
-            rows = APPEND(rows, [{ "NAME": name$, "STARS": n_stars, "SCORE": n_score, "LEVELS": n_levels }])
-            sort_keys = APPEND(sort_keys, n_stars * 10000000 + n_score)
+        DIM t = TOTALS(name$)
+        DIM v = t{tab$}
+        IF v[2] > 0 THEN
+            rows = APPEND(rows, [{ "NAME": name$, "VAL": v[0], "SUB": v[1], "CROWN": t{"CROWN"}, "BADGES": t{"BADGES"} }])
+            sort_keys = APPEND(sort_keys, v[0] * 1000000000 + v[1])
         ENDIF
     NEXT name$
-    DIM sorted = []
+    DIM ranked = []
+    DIM my_rank = 0
     IF LEN(sort_keys) > 0 THEN
+        DIM r = 1
         FOR EACH i IN REVERSE(GRADE(sort_keys))
-            sorted = APPEND(sorted, [rows[i]])
+            DIM row = rows[i]
+            row{"RANK"} = r
+            IF row{"NAME"} = who$ THEN my_rank = r
+            ranked = APPEND(ranked, [row])
+            r = r + 1
         NEXT i
     ENDIF
-    RETURN JJ({ "OK": 1, "ROWS": sorted })
+    DIM out AS MAP = {}
+    out{"OK"} = 1
+    out{"TAB"} = tab$
+    out{"TOTAL"} = LEN(ranked)
+    out{"TOP"} = TAKE(MIN([TOP_N, LEN(ranked)]), ranked)
+    out{"ME"} = my_rank
+    out{"AROUND"} = []
+    out{"GAP"} = 0
+    IF my_rank > 0 THEN
+        DIM lo = MAX([1, my_rank - 2])
+        DIM hi = MIN([LEN(ranked), my_rank + 2])
+        DIM j
+        FOR j = lo TO hi
+            out{"AROUND"} = APPEND(out{"AROUND"}, [ranked[j - 1]])
+        NEXT j
+        IF my_rank > 1 THEN out{"GAP"} = ranked[my_rank - 2]{"VAL"} - ranked[my_rank - 1]{"VAL"}
+    ENDIF
+    RETURN JJ(out)
 ENDFUNC
 
 HTTP.SERVER.ON_GET "/", HROOT@
 HTTP.SERVER.ON_POST "/login", HLOGIN@
 HTTP.SERVER.ON_GET "/progress", HPROGRESS@
 HTTP.SERVER.ON_POST "/result", HRESULT@
+HTTP.SERVER.ON_POST "/profile", HPROFILE@
+HTTP.SERVER.ON_POST "/endless", HENDLESS@
+HTTP.SERVER.ON_GET "/daily", HDAILY@
+HTTP.SERVER.ON_POST "/dailyresult", HDAILYRESULT@
 HTTP.SERVER.ON_GET "/board", HBOARD@
 
 DIM srv_port = 8082

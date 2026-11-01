@@ -1,0 +1,48 @@
+{
+  "ID": 38,
+  "NAME": "Vanta Rise",
+  "COLS": 12,
+  "ROWS": 18,
+  "LIVES": 20,
+  "CREDITS": 1225,
+  "REWARDX": 2.85,
+  "TOWERS": ["LASER","BLASTER","CRYO","BOMB","TESLA","PULSE","PLASMA","RELAY","VORTEX"],
+  "PATHS": [
+    [[5.5,-0.8],[5.5,1.5],[2.5,1.5],[2.5,5.5],[6.5,5.5],[6.5,9.5],[3.5,9.5],[3.5,13.5],[3.5,18.6]],
+    [[9.5,-0.8],[9.5,3.5],[3.5,3.5],[3.5,7.5],[10.5,7.5],[10.5,11.5],[4.5,11.5],[4.5,15.5],[3.5,15.5],[3.5,18.6]],
+    [[2.5,-0.8],[2.5,4.5],[9.5,4.5],[9.5,8.5],[6.5,8.5],[6.5,12.5],[2.5,12.5],[2.5,15.5],[3.5,15.5],[3.5,18.6]]
+  ],
+  "SLOTS": [[1,0],[6,0],[3,2],[5,2],[7,2],[10,2],[1,3],[10,4],[2,6],[4,6],[8,6],[11,6],[3,8],[5,8],[7,9],[11,9],[4,10],[9,10],[2,11],[11,11],[9,12],[5,13],[1,14],[1,16],[4,16]],
+  "WAVES": [
+    {"GROUPS":[{"E":"DRONE","N":8,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":3.5}],"BONUS":30},
+    {"GROUPS":[{"E":"CARRIER","N":1,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":3.798}],"BONUS":35},
+    {"GROUPS":[{"E":"BLINKER","N":6,"GAP":1,"PATH":2,"DELAY":0,"HPX":4.095},{"E":"TANK","N":3,"GAP":1.7,"PATH":0,"DELAY":4,"HPX":4.095}],"BONUS":40},
+    {"GROUPS":[{"E":"BLINKER","N":6,"GAP":1,"PATH":0,"DELAY":0,"HPX":4.393},{"E":"MIRROR","N":5,"GAP":1.3,"PATH":1,"DELAY":5,"HPX":4.393}],"BONUS":45},
+    {"GROUPS":[{"E":"CARRIER","N":1,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":4.69},{"E":"SWARM","N":21,"GAP":0.32,"PATH":2,"DELAY":7,"HPX":4.69}],"BONUS":50},
+    {"GROUPS":[{"E":"BLINKER","N":7,"GAP":1,"PATH":2,"DELAY":0,"HPX":4.988},{"E":"DRONE","N":11,"GAP":0.85,"PATH":0,"DELAY":6,"HPX":4.988}],"BONUS":55},
+    {"GROUPS":[{"E":"BRUTE","N":3,"GAP":2.6,"PATH":0,"DELAY":0,"HPX":5.285},{"E":"HEALER","N":4,"GAP":1.5,"PATH":1,"DELAY":5,"HPX":5.285}],"BONUS":60},
+    {"GROUPS":[{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":5.583},{"E":"SPLITTER","N":6,"GAP":1.3,"PATH":2,"DELAY":6,"HPX":5.583},{"E":"CARRIER","N":2,"GAP":3.2,"PATH":0,"DELAY":8,"HPX":5.583}],"BONUS":65},
+    {"GROUPS":[{"E":"BLINKER","N":8,"GAP":1,"PATH":2,"DELAY":0,"HPX":5.88},{"E":"PHANTOM","N":10,"GAP":0.8,"PATH":0,"DELAY":6,"HPX":5.88},{"E":"PHANTOM","N":10,"GAP":0.8,"PATH":1,"DELAY":8,"HPX":5.88}],"BONUS":70},
+    {"GROUPS":[{"E":"FLYER","N":9,"GAP":0.9,"PATH":0,"DELAY":0,"HPX":6.178},{"E":"SHIELDER","N":9,"GAP":1.1,"PATH":1,"DELAY":7,"HPX":6.178},{"E":"MIRROR","N":7,"GAP":1.3,"PATH":2,"DELAY":10,"HPX":6.178}],"BONUS":75},
+    {"GROUPS":[{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":6.475},{"E":"SHIELDER","N":9,"GAP":1.1,"PATH":2,"DELAY":7,"HPX":6.475},{"E":"CARRIER","N":2,"GAP":3.2,"PATH":0,"DELAY":12,"HPX":6.475}],"BONUS":80},
+    {"GROUPS":[{"E":"FLYER","N":9,"GAP":0.9,"PATH":2,"DELAY":0,"HPX":6.773},{"E":"SPLITTER","N":8,"GAP":1.3,"PATH":0,"DELAY":4,"HPX":6.773},{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":14,"HPX":6.773}],"BONUS":85},
+    {"GROUPS":[{"E":"PHANTOM","N":12,"GAP":0.8,"PATH":0,"DELAY":0,"HPX":7.07},{"E":"SPLITTER","N":8,"GAP":1.3,"PATH":1,"DELAY":7,"HPX":7.07},{"E":"FLYER","N":10,"GAP":0.9,"PATH":2,"DELAY":14,"HPX":7.07},{"E":"MIRROR","N":8,"GAP":1.3,"PATH":0,"DELAY":12,"HPX":7.07}],"BONUS":90},
+    {"GROUPS":[{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":7.368},{"E":"CARRIER","N":2,"GAP":3.2,"PATH":2,"DELAY":6,"HPX":7.368},{"E":"MIRROR","N":8,"GAP":1.3,"PATH":0,"DELAY":12,"HPX":7.368},{"E":"BLINKER","N":10,"GAP":1,"PATH":1,"DELAY":18,"HPX":7.368}],"BONUS":95},
+    {"GROUPS":[{"E":"TANK","N":6,"GAP":1.7,"PATH":2,"DELAY":0,"HPX":7.665},{"E":"DRONE","N":17,"GAP":0.85,"PATH":0,"DELAY":5,"HPX":7.665},{"E":"BRUTE","N":4,"GAP":2.6,"PATH":1,"DELAY":14,"HPX":7.665},{"E":"SWARM","N":34,"GAP":0.32,"PATH":2,"DELAY":18,"HPX":7.665}],"BONUS":100},
+    {"GROUPS":[{"E":"BRUTE","N":4,"GAP":2.6,"PATH":0,"DELAY":0,"HPX":7.963},{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":5,"HPX":7.963},{"E":"HEALER","N":7,"GAP":1.5,"PATH":2,"DELAY":12,"HPX":7.963},{"E":"BRUTE","N":4,"GAP":2.6,"PATH":0,"DELAY":15,"HPX":7.963}],"BONUS":105},
+    {"GROUPS":[{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":8.26},{"E":"FLYER","N":11,"GAP":0.9,"PATH":2,"DELAY":7,"HPX":8.26},{"E":"PHANTOM","N":14,"GAP":0.8,"PATH":0,"DELAY":10,"HPX":8.26},{"E":"BLINKER","N":11,"GAP":1,"PATH":1,"DELAY":12,"HPX":8.26}],"BONUS":110},
+    {"GROUPS":[{"E":"BLINKER","N":12,"GAP":1,"PATH":2,"DELAY":0,"HPX":8.558},{"E":"SPLITTER","N":9,"GAP":1.3,"PATH":0,"DELAY":4,"HPX":8.558},{"E":"BRUTE","N":5,"GAP":2.6,"PATH":1,"DELAY":8,"HPX":8.558},{"E":"PHANTOM","N":14,"GAP":0.8,"PATH":2,"DELAY":18,"HPX":8.558}],"BONUS":115},
+    {"GROUPS":[{"E":"SCOUT","N":22,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":8.855},{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":7,"HPX":8.855},{"E":"BLINKER","N":12,"GAP":1,"PATH":2,"DELAY":12,"HPX":8.855},{"E":"DRONE","N":20,"GAP":0.85,"PATH":0,"DELAY":18,"HPX":8.855}],"BONUS":120},
+    {"GROUPS":[{"E":"CARRIER","N":3,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":9.153},{"E":"MIRROR","N":10,"GAP":1.3,"PATH":2,"DELAY":5,"HPX":9.153},{"E":"SHIELDER","N":13,"GAP":1.1,"PATH":0,"DELAY":14,"HPX":9.153},{"E":"SPLITTER","N":10,"GAP":1.3,"PATH":1,"DELAY":18,"HPX":9.153}],"BONUS":125},
+    {"GROUPS":[{"E":"DRONE","N":21,"GAP":0.85,"PATH":2,"DELAY":0,"HPX":9.45},{"E":"SHIELDER","N":13,"GAP":1.1,"PATH":0,"DELAY":6,"HPX":9.45},{"E":"HEALER","N":8,"GAP":1.5,"PATH":1,"DELAY":14,"HPX":9.45},{"E":"SWARM","N":42,"GAP":0.32,"PATH":2,"DELAY":15,"HPX":9.45}],"BONUS":130},
+    {"GROUPS":[{"E":"TANK","N":8,"GAP":1.7,"PATH":0,"DELAY":0,"HPX":9.748},{"E":"PHANTOM","N":16,"GAP":0.8,"PATH":1,"DELAY":5,"HPX":9.748},{"E":"MIRROR","N":11,"GAP":1.3,"PATH":2,"DELAY":12,"HPX":9.748},{"E":"DRONE","N":21,"GAP":0.85,"PATH":0,"DELAY":21,"HPX":9.748}],"BONUS":135},
+    {"GROUPS":[{"E":"CARRIER","N":3,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":10.045},{"E":"HEALER","N":8,"GAP":1.5,"PATH":2,"DELAY":5,"HPX":10.045},{"E":"PHANTOM","N":17,"GAP":0.8,"PATH":0,"DELAY":10,"HPX":10.045},{"E":"FLYER","N":14,"GAP":0.9,"PATH":1,"DELAY":21,"HPX":10.045}],"BONUS":140}
+  ],
+  "MUSIC": {
+    "BPM": 132,
+    "PAD": "<[f#3,a3,c#4] [e3,g#3,b3] [d3,f#3,a3] [e3,g#3,b3]>",
+    "BASS": "<[f#1 f#2]*4 [e1 e2]*4 [d1 d2]*4 [e1 e2]*4>",
+    "ARP": "<[f#4 a4 c#5 f#5]*4 [e4 g#4 b4 e5]*4 [d4 f#4 a4 d5]*4 [e4 g#4 b4 e5]*4>",
+    "DRUMS": "[bd hh] [sd hh] [bd bd] [sd hh]"
+  }
+}

@@ -154,11 +154,111 @@ FOR st = 1 TO 400
 NEXT st
 CHECK("splitter leaves three swarmers", saw_babies = 1)
 
+' ── world 2 kinds and modes ─────────────────────────────────────
+' A phantom stays out of a laser's sight until a Tesla stands near
+SIM.START(TESTLEVEL("PHANTOM", 1, 1))
+SIM.QUIET(1)
+SIM.BUILD(0, "LASER")
+SIM.LAUNCH()
+RUNFOR(7)
+DIM ph = SIM.ENEMIES()
+CHECK("phantom is cloaked", LEN(ph{"VIS"}) = 1 ANDALSO ph{"VIS"}[0] = 0)
+CHECK("laser cannot hit a phantom", ph{"HPF"}[0] > 0.99)
+SIM.BUILD(1, "TESLA")
+RUNFOR(1.5)
+CHECK("a tesla reveals and hurts it", SIM.KILLS() = 1 ORELSE SIM.ENEMIES(){"HPF"}[0] < 0.99)
+
+' A mirror takes much less from a laser than the same body without its plating
+FUNC LASERDAMAGE()
+    SIM.START(TESTLEVEL("MIRROR", 1, 1))
+    SIM.QUIET(1)
+    SIM.BUILD(0, "LASER")
+    SIM.LAUNCH()
+    RUNFOR(9)
+    DIM en = SIM.ENEMIES()
+    IF LEN(en{"X"}) = 0 THEN RETURN 1
+    RETURN 1 - en{"HPF"}[0]
+ENDFUNC
+DIM with_plate = LASERDAMAGE()
+DIM bare = JSON.PARSE(JSON.STRINGIFY$(enemies_json))
+bare{"ENEMIES"}{"MIRROR"}{"REFLECT"} = 0
+SIM.SETDATA(towers_json, bare)
+DIM without_plate = LASERDAMAGE()
+SIM.SETDATA(towers_json, enemies_json)
+CHECK("mirror throws beams back", with_plate < 0.6 * without_plate)
+
+' Too few credits is answered as such
+DIM poor = TESTLEVEL("DRONE", 1, 1)
+poor{"CREDITS"} = 50
+SIM.START(poor)
+CHECK("not enough credits says so", SIM.BUILD(0, "LASER") = "credits")
+
+' A carrier drops swarmers while it walks
+SIM.START(TESTLEVEL("CARRIER", 1, 1))
+SIM.QUIET(1)
+SIM.LAUNCH()
+RUNFOR(4)
+CHECK("carrier drops two swarmers", LEN(SIM.ENEMIES(){"X"}) = 3)
+
+' A blinker gets further than its pace alone would carry it
+SIM.START(TESTLEVEL("BLINKER", 1, 1))
+SIM.QUIET(0)
+SIM.LAUNCH()
+RUNFOR(3.2)
+DIM saw_blink = 0
+FOR EACH ev IN SIM.EVENTS()
+    IF ev{"T"} = "BLINK" THEN saw_blink = 1
+NEXT ev
+CHECK("blinker jumps", saw_blink = 1)
+SIM.QUIET(1)
+
+' The vortex pulls back, but each pull on the same enemy reaches half as far
+SIM.START(TESTLEVEL("TANK", 1, 50))
+SIM.QUIET(1)
+SIM.BUILD(0, "VORTEX")
+SIM.LAUNCH()
+RUNFOR(60)
+CHECK("vortex cannot hold an enemy forever", SIM.LIVES() < 20)
+
+' Endless runs make their waves as they go and never end in a win
+DIM el = TESTLEVEL("DRONE", 1, 1)
+el{"ENDLESS"} = 1001
+SIM.START(el)
+SIM.QUIET(1)
+CHECK("endless knows its first wave", SIM.ENDLESS() = 1 ANDALSO SIM.NWAVES() = 1)
+SIM.LAUNCH()
+CHECK("endless prepares the next wave", SIM.NWAVES() = 2 ANDALSO LEN(SIM.PREVIEW()) > 0)
+DIM base_cost = SIM.COST("LASER")
+SIM.PERK("COST")
+CHECK("the price perk lowers prices", SIM.COST("LASER") < base_cost)
+DIM lv_before = SIM.LIVES()
+SIM.PERK("LIVES")
+CHECK("the lives perk adds five", SIM.LIVES() = lv_before + 5)
+SIM.BUILD(0, "BLASTER")
+RUNFOR(40)
+CHECK("an endless run is never won", SIM.PHASE$() = "run")
+
+' Daily rules reach the sim through the level map
+DIM tl = TESTLEVEL("DRONE", 1, 1)
+tl{"HPMUL"} = 2
+SIM.START(tl)
+SIM.QUIET(1)
+SIM.BUILD(0, "LASER")
+SIM.LAUNCH()
+RUNFOR(1.5)
+DIM tough_hp = SIM.ENEMIES(){"HPF"}[0]
+SIM.START(TESTLEVEL("DRONE", 1, 1))
+SIM.QUIET(1)
+SIM.BUILD(0, "LASER")
+SIM.LAUNCH()
+RUNFOR(1.5)
+CHECK("tougher enemies lose a smaller share", tough_hp > SIM.ENEMIES(){"HPF"}[0])
+
 ' ── level files ─────────────────────────────────────────────────
 DIM lvl_no
 DIM bad_files = 0
 DIM prev_towers = 0
-FOR lvl_no = 1 TO 20
+FOR lvl_no = 1 TO 40
     DIM lv = JSON.PARSE(TXTREADER$("data/levels/level_" + RIGHT$("0" + STR$(lvl_no), 2) + ".json"))
     IF lv{"ID"} <> lvl_no ORELSE LEN(lv{"WAVES"}) < 8 ORELSE LEN(lv{"SLOTS"}) < 8 THEN bad_files = bad_files + 1
     IF LEN(lv{"TOWERS"}) < prev_towers THEN bad_files = bad_files + 1
@@ -174,7 +274,7 @@ FOR lvl_no = 1 TO 20
         IF NOT MAP.EXISTS(enemies_json{"ENEMIES"}, g{"E"}) THEN bad_files = bad_files + 1
     NEXT g
 NEXT lvl_no
-CHECK("20 level files well formed with music, towers only ever added", bad_files = 0)
-CHECK("all eight towers by the last level", prev_towers = 8)
+CHECK("40 level files well formed with music, towers only ever added", bad_files = 0)
+CHECK("all nine towers by the last level", prev_towers = 9)
 
 PRINT "sim_test: passed "; n_ok; ", failed "; n_bad

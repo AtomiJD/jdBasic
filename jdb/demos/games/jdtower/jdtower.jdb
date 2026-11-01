@@ -84,6 +84,7 @@ ENDFUNC
 
 DIM towers_json = JSON.PARSE(LOADTEXT$("data/towers.json"))
 DIM enemies_json = JSON.PARSE(LOADTEXT$("data/enemies.json"))
+DIM ach_defs = JSON.PARSE(LOADTEXT$("data/achievements.json")){"LIST"}
 DIM langs = JSON.PARSE(LOADTEXT$("data/lang.json"))
 IF NOT MAP.EXISTS(langs, lang$) THEN lang$ = "en"
 SIM.SETDATA(towers_json, enemies_json)
@@ -91,6 +92,24 @@ SIM.SETDATA(towers_json, enemies_json)
 FUNC T$(k$)
     IF MAP.EXISTS(langs{lang$}, k$) THEN RETURN langs{lang$}{k$}
     RETURN k$
+ENDFUNC
+
+FUNC HAST(k$)
+    RETURN IIF(MAP.EXISTS(langs{lang$}, k$), 1, 0)
+ENDFUNC
+
+' A text with {n}, {r} or {k} filled in
+FUNC TF$(k$, n$, r$)
+    RETURN REPLACE$(REPLACE$(REPLACE$(T$(k$), "{n}", n$), "{r}", r$), "{k}", n$)
+ENDFUNC
+
+CONST N_LEVELS = 40
+' the maps endless runs are played on, by level number
+DIM ARENAS = [7, 12, 19]
+
+' A copy the caller may change without touching the cached level
+FUNC CLONE(m)
+    RETURN JSON.PARSE(JSON.STRINGIFY$(m))
 ENDFUNC
 
 DIM level_cache AS MAP = {}
@@ -107,6 +126,7 @@ DIM ek_sides = []
 DIM ek_size = []
 DIM ek_col = []
 DIM ek_spin = []
+DIM ek_mirror = []
 SUB LOADKINDS()
     DIM i = 0
     FOR EACH k$ IN enemies_json{"ORDER"}
@@ -115,6 +135,7 @@ SUB LOADKINDS()
         ek_size = APPEND(ek_size, ed{"SIZE"})
         ek_col = APPEND(ek_col, [ed{"COLOR"}])
         ek_spin = APPEND(ek_spin, 0.6 + (i MOD 4) * 0.35)
+        ek_mirror = APPEND(ek_mirror, IIF(MAP.EXISTS(ed, "REFLECT"), 1, 0))
         i = i + 1
     NEXT k$
 ENDSUB
@@ -125,15 +146,28 @@ FUNC TCOL(kind$)
 ENDFUNC
 
 ' ── progress ────────────────────────────────────────────────────
+' The server keeps a profile: best result per level, counters, earned
+' badges and endless records. A guest on the desktop keeps the same in
+' profile.json next to the game.
 
 DIM progress AS MAP = {}
+DIM stats AS MAP = {}
+DIM ach = []
+DIM endless_rec AS MAP = {}
 DIM online = 0
 DIM net_msg$ = ""
+
+SUB TAKEPROFILE(r)
+    IF TYPEOF(r{"PROGRESS"}) = "OBJECT" THEN progress = r{"PROGRESS"}
+    IF TYPEOF(r{"STATS"}) = "OBJECT" THEN stats = r{"STATS"}
+    IF TYPEOF(r{"ACH"}) = "ARRAY" THEN ach = r{"ACH"}
+    IF TYPEOF(r{"ENDLESS"}) = "OBJECT" THEN endless_rec = r{"ENDLESS"}
+ENDSUB
 
 SUB SAVELOCAL()
     IF auth$ = "" ANDALSO GAMEDIR$ <> "" THEN
         TRY
-            TXTWRITER GAMEDIR$ + "progress.json", JSON.STRINGIFY$(progress)
+            TXTWRITER GAMEDIR$ + "profile.json", JSON.STRINGIFY$({ "PROGRESS": progress, "STATS": stats, "ACH": ach, "ENDLESS": endless_rec })
         CATCH
         ENDTRY
     ENDIF
@@ -141,7 +175,11 @@ ENDSUB
 
 SUB LOADLOCAL()
     TRY
-        IF FILE.EXISTS(GAMEDIR$ + "progress.json") THEN progress = JSON.PARSE(TXTREADER$(GAMEDIR$ + "progress.json"))
+        IF FILE.EXISTS(GAMEDIR$ + "profile.json") THEN
+            TAKEPROFILE(JSON.PARSE(TXTREADER$(GAMEDIR$ + "profile.json")))
+        ELSEIF FILE.EXISTS(GAMEDIR$ + "progress.json") THEN
+            progress = JSON.PARSE(TXTREADER$(GAMEDIR$ + "progress.json"))
+        ENDIF
     CATCH
     ENDTRY
 ENDSUB
@@ -165,7 +203,7 @@ SUB LOGIN()
         TRY
             DIM r2 = JSON.PARSE(HTTP.GET$(SRV$ + "/progress?auth=" + auth$))
             IF r2{"OK"} = 1 THEN
-                progress = r2{"PROGRESS"}
+                TAKEPROFILE(r2)
                 myname$ = r2{"NAME"}
                 online = 1
             ENDIF
@@ -189,9 +227,24 @@ FUNC BESTOF(n)
     RETURN 0
 ENDFUNC
 
+FUNC WORLDSTARS(w)
+    DIM total = 0
+    DIM n
+    FOR n = 20 * (w - 1) + 1 TO 20 * w
+        total = total + STARSOF(n)
+    NEXT n
+    RETURN total
+ENDFUNC
+
 FUNC UNLOCKED(n)
     IF n = 1 THEN RETURN 1
     IF STARSOF(n - 1) > 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC ENDLESSBEST(a)
+    DIM k$ = STR$(a)
+    IF MAP.EXISTS(endless_rec, k$) THEN RETURN endless_rec{k$}{"WAVE"}
     RETURN 0
 ENDFUNC
 
@@ -216,12 +269,172 @@ SUB RECORD(n, stars, score)
     ENDIF
 ENDSUB
 
-DIM board_rows = []
-SUB LOADBOARD()
-    board_rows = []
+' A new endless record; answers 1 when it beat the old one
+FUNC RECORDENDLESS(a, waves_done, score)
+    DIM k$ = STR$(a)
+    DIM better = IIF(waves_done > ENDLESSBEST(a), 1, 0)
+    IF better = 1 THEN endless_rec{k$} = { "WAVE": waves_done, "SCORE": score }
+    IF auth$ <> "" THEN
+        TRY
+            DIM body$ = JSON.STRINGIFY$({ "AUTH": auth$, "ARENA": a, "WAVE": waves_done, "SCORE": score })
+            DIM r = JSON.PARSE(HTTP.POST$(SRV$ + "/endless", body$, "text/plain"))
+            IF r{"OK"} = 1 THEN TAKEPROFILE(r)
+        CATCH
+            net_msg$ = T$("offline")
+        ENDTRY
+    ELSE
+        SAVELOCAL()
+    ENDIF
+    RETURN better
+ENDFUNC
+
+' ── counters and badges ─────────────────────────────────────────
+
+FUNC STAT(k$)
+    IF MAP.EXISTS(stats, k$) THEN RETURN stats{k$}
+    RETURN 0
+ENDFUNC
+
+SUB STATADD(k$, n)
+    stats{k$} = STAT(k$) + n
+ENDSUB
+
+SUB STATMAX(k$, v)
+    IF v > STAT(k$) THEN stats{k$} = v
+ENDSUB
+
+' Counters the badges read that follow from the rest of the profile
+SUB DERIVESTATS()
+    stats{"stars_w1"} = WORLDSTARS(1)
+    stats{"stars_w2"} = WORLDSTARS(2)
+    stats{"w1_done"} = IIF(STARSOF(20) > 0, 1, 0)
+    stats{"w2_done"} = IIF(STARSOF(40) > 0, 1, 0)
+    DIM best = 0
+    DIM a
+    FOR a = 1 TO LEN(ARENAS)
+        IF ENDLESSBEST(a) > best THEN best = ENDLESSBEST(a)
+    NEXT a
+    stats{"endless_best"} = best
+ENDSUB
+
+' How far a badge is, 0..1, the weakest of its counters
+FUNC ACHFRAC(d)
+    DIM f = 1.0
+    FOR EACH k$ IN d{"STATS"}
+        DIM v = STAT(k$) / d{"GOAL"}
+        IF v < f THEN f = v
+    NEXT k$
+    RETURN f
+ENDFUNC
+
+FUNC HASACH(id$)
+    RETURN IIF(INDEXOF(ach, id$) >= 0, 1, 0)
+ENDFUNC
+
+FUNC ACHNAME$(d)
+    IF LEFT$(d{"ID"}, 4) = "max_" THEN RETURN T$("a_max") + ": " + T$(d{"TOWER"})
+    RETURN T$("a_" + d{"ID"})
+ENDFUNC
+
+FUNC ACHDESC$(d)
+    IF LEFT$(d{"ID"}, 4) = "max_" THEN RETURN T$("a_max_d")
+    RETURN T$("a_" + d{"ID"} + "_d")
+ENDFUNC
+
+FUNC ACHCOLOR(d)
+    IF MAP.EXISTS(d, "TOWER") THEN RETURN TCOL(d{"TOWER"})
+    RETURN d{"COLOR"}
+ENDFUNC
+
+DIM ach_queue = []
+DIM ach_dirty = 0
+
+SUB ACHCHECK()
+    DERIVESTATS()
+    FOR EACH d IN ach_defs
+        IF HASACH(d{"ID"}) = 0 ANDALSO ACHFRAC(d) >= 1 THEN
+            ach = APPEND(ach, d{"ID"})
+            ach_queue = APPEND(ach_queue, [d])
+            ach_dirty = 1
+        ENDIF
+    NEXT d
+ENDSUB
+
+SUB SAVEPROFILE()
+    DERIVESTATS()
+    IF auth$ <> "" THEN
+        TRY
+            DIM body$ = JSON.STRINGIFY$({ "AUTH": auth$, "STATS": stats, "ACH": ach })
+            DIM r = JSON.PARSE(HTTP.POST$(SRV$ + "/profile", body$, "text/plain"))
+            IF r{"OK"} = 1 THEN TAKEPROFILE(r)
+        CATCH
+            net_msg$ = T$("offline")
+        ENDTRY
+    ELSE
+        SAVELOCAL()
+    ENDIF
+    ach_dirty = 0
+ENDSUB
+
+' ── boards and the daily challenge ──────────────────────────────
+
+DIM board AS MAP = {}
+DIM board_tab$ = "W1"
+SUB LOADBOARD(tab$)
+    board_tab$ = tab$
+    board = {}
     TRY
-        DIM r = JSON.PARSE(HTTP.GET$(SRV$ + "/board"))
-        IF r{"OK"} = 1 THEN board_rows = r{"ROWS"}
+        DIM url$ = SRV$ + "/board?tab=" + tab$
+        IF auth$ <> "" THEN url$ = url$ + "&auth=" + auth$
+        DIM r = JSON.PARSE(HTTP.GET$(url$))
+        IF r{"OK"} = 1 THEN board = r
+    CATCH
+        net_msg$ = T$("offline")
+    ENDTRY
+ENDSUB
+
+DIM daily AS MAP = {}
+DIM daily_top = []
+SUB LOADDAILY()
+    daily = {}
+    daily_top = []
+    TRY
+        DIM url$ = SRV$ + "/daily"
+        IF auth$ <> "" THEN url$ = url$ + "?auth=" + auth$
+        DIM r = JSON.PARSE(HTTP.GET$(url$))
+        IF r{"OK"} = 1 THEN daily = r
+        DIM b = JSON.PARSE(HTTP.GET$(SRV$ + "/board?tab=DAY"))
+        IF b{"OK"} = 1 THEN daily_top = b{"TOP"}
+    CATCH
+        net_msg$ = T$("offline")
+    ENDTRY
+ENDSUB
+
+' The tower a "one tower only" day allows: one that hits air and ground
+FUNC DAILYKIND$(lv, arg)
+    DIM cands = []
+    FOR EACH k$ IN ["LASER", "BLASTER", "TESLA"]
+        IF INDEXOF(lv{"TOWERS"}, k$) >= 0 THEN cands = APPEND(cands, k$)
+    NEXT k$
+    RETURN cands[arg MOD LEN(cands)]
+ENDFUNC
+
+FUNC DAILYRULE$()
+    IF NOT MAP.EXISTS(daily, "RULE") THEN RETURN ""
+    IF daily{"RULE"} = "ONLY" THEN RETURN TF$("rule_ONLY", T$(DAILYKIND$(LEVELDATA(daily{"LEVEL"}), daily{"ARG"})), "")
+    RETURN T$("rule_" + daily{"RULE"})
+ENDFUNC
+
+' Sends a won daily run; counts a new day for the badges
+SUB RECORDDAILY(score)
+    IF auth$ = "" ORELSE NOT MAP.EXISTS(daily, "DATE") THEN RETURN
+    TRY
+        DIM body$ = JSON.STRINGIFY$({ "AUTH": auth$, "DATE": daily{"DATE"}, "SCORE": score })
+        DIM r = JSON.PARSE(HTTP.POST$(SRV$ + "/dailyresult", body$, "text/plain"))
+        IF r{"OK"} = 1 THEN
+            daily{"MINE"} = r{"MINE"}
+            IF r{"NEW"} = 1 THEN STATADD("daily", 1)
+        ENDIF
     CATCH
         net_msg$ = T$("offline")
     ENDTRY
@@ -265,6 +478,14 @@ MENU_SONG{"PAD"} = "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>"
 MENU_SONG{"BASS"} = "<[a1 ~ a2 ~]*2 [f1 ~ f2 ~]*2 [c2 ~ c3 ~]*2 [g1 ~ g2 ~]*2>"
 MENU_SONG{"ARP"} = "<[a4 c5 e5 c5]*2 [f4 a4 c5 a4]*2 [c5 e5 g5 e5]*2 [g4 b4 d5 b4]*2>"
 MENU_SONG{"DRUMS"} = "[bd ~ ~ ~] [~ hh ~ hh] [~ ~ bd ~] [~ hh ~ hh]"
+
+' The finale: C - G - Am - F, bright and fast
+DIM FINALE_SONG AS MAP = {}
+FINALE_SONG{"BPM"} = 128
+FINALE_SONG{"PAD"} = "<[c4,e4,g4] [g3,b3,d4] [a3,c4,e4] [f3,a3,c4]>"
+FINALE_SONG{"BASS"} = "<[c2 c3]*4 [g1 g2]*4 [a1 a2]*4 [f1 f2]*4>"
+FINALE_SONG{"ARP"} = "<[c5 e5 g5 c6]*4 [b4 d5 g5 b5]*4 [a4 c5 e5 a5]*4 [a4 c5 f5 a5]*4>"
+FINALE_SONG{"DRUMS"} = "[bd hh bd hh] [sd hh bd hh] [bd hh bd oh] [sd hh cp hh]"
 
 ' A song missing a track or carrying a pattern the sequencer refuses keeps
 ' the menu loop for that track instead of going silent
@@ -379,6 +600,15 @@ SUB SFX(name$)
         ELSEIF name$ = "LOSE" THEN
             SOUND.PLAY 4, 110
             SOUND.PLAY 1, 82
+        ELSEIF name$ = "PULL" THEN
+            SOUND.PLAY 4, 130
+            SOUND.PLAY 5, 196
+        ELSEIF name$ = "BLINK" THEN
+            SOUND.PLAY 2, 1568
+        ELSEIF name$ = "ACH" THEN
+            SOUND.PLAY 5, 1047
+            SOUND.PLAY 1, 784
+            SOUND.PLAY 2, 1319
         ENDIF
     CATCH
         snd_on = 0
@@ -578,9 +808,28 @@ DIM flash = 0.0
 DIM sim_acc = 0.0
 DIM dt_frame = 0.0333
 DIM fps_avg = 30.0
+DIM toast2$ = ""
+
+' what is being played: "level", "endless" or "daily", on which map
+DIM play_kind$ = "level"
+DIM cur_lv AS MAP = {}
+DIM cur_arena = 1
+DIM world = 1
+DIM gold_on = 0
+
+' what the badges need to know about the running level
+DIM lv_kinds = []
+DIM lv_max_towers = 0
+DIM lv_turbo = 1
+DIM lost_set AS MAP = {}
+DIM perks_taken = 0
+DIM result_record = 0
+DIM ach_pick = -1
+DIM finale_world = 1
 
 SUB TOAST(s$)
     toast$ = s$
+    toast2$ = ""
     toast_t = tnow + 1.6
 ENDSUB
 
@@ -590,6 +839,21 @@ ENDFUNC
 
 FUNC PXY(ty)
     RETURN FY0 + ty * TILE
+ENDFUNC
+
+FUNC TOWERCOUNT()
+    DIM n = 0
+    DIM i
+    FOR i = 0 TO SIM.NSLOTS() - 1
+        IF SIM.TOWER(i){"KIND"} <> "" THEN n = n + 1
+    NEXT i
+    RETURN n
+ENDFUNC
+
+' Gold look for whoever has every star of world 1
+FUNC THEMECOL(normal, golden)
+    IF gold_on = 1 THEN RETURN golden
+    RETURN normal
 ENDFUNC
 
 ' The field that never changes during a level: grid, roads, portal frames
@@ -608,8 +872,9 @@ SUB BAKEFIELD(lv)
         gx = APPEND(gx, [0, SCR_W])
         gy = APPEND(gy, [i * TILE, i * TILE])
     NEXT i
-    GFX.LINES gx, gy, 1, 26, 18, 52, TRUE
-    DIM edge_cols = [[40, 200, 255], [255, 60, 190]]
+    DIM gc = THEMECOL([26, 18, 52], [44, 32, 10])
+    GFX.LINES gx, gy, 1, gc[0], gc[1], gc[2], TRUE
+    DIM edge_cols = THEMECOL([[40, 200, 255], [255, 60, 190], [140, 255, 120]], [[255, 200, 80], [255, 140, 40], [255, 235, 160]])
     DIM p = 0
     GFX.BLEND "NONE"
     FOR EACH pts IN lv{"PATHS"}
@@ -619,7 +884,7 @@ SUB BAKEFIELD(lv)
             xs = APPEND(xs, q[0] * TILE)
             ys = APPEND(ys, q[1] * TILE)
         NEXT q
-        DIM ec = edge_cols[p MOD 2]
+        DIM ec = edge_cols[p MOD 3]
         GFX.LINES xs, ys, 34, INT(ec[0] * 0.55), INT(ec[1] * 0.55), INT(ec[2] * 0.55)
         p = p + 1
     NEXT pts
@@ -636,9 +901,19 @@ SUB BAKEFIELD(lv)
     GFX.TARGET
 ENDSUB
 
-SUB STARTLEVEL(n)
-    cur_level = n
-    DIM lv = LEVELDATA(n)
+FUNC WAVEKINDS(lv)
+    DIM out = []
+    FOR EACH wv IN lv{"WAVES"}
+        FOR EACH g IN wv{"GROUPS"}
+            IF INDEXOF(out, g{"E"}) < 0 THEN out = APPEND(out, g{"E"})
+        NEXT g
+    NEXT wv
+    RETURN out
+ENDFUNC
+
+' Starts whatever map lv is; the callers set play_kind$ first
+SUB STARTMAP(lv)
+    cur_lv = lv
     SIM.START(lv)
     BAKEFIELD(lv)
     paths_px = []
@@ -657,7 +932,12 @@ SUB STARTLEVEL(n)
     speed = 1
     fx = []
     result_done = 0
+    result_record = 0
     flash = 0.0
+    perks_taken = 0
+    lv_kinds = []
+    lv_max_towers = 0
+    lv_turbo = 1
     uimode$ = "play"
     IF MAP.EXISTS(lv, "MUSIC") THEN
         SETSONG(lv{"MUSIC"})
@@ -665,14 +945,73 @@ SUB STARTLEVEL(n)
         SETSONG(MENU_SONG)
     ENDIF
     MUSICMIX("play")
+ENDSUB
+
+SUB STARTLEVEL(n)
+    cur_level = n
+    play_kind$ = "level"
+    world = IIF(n > 20, 2, 1)
+    DIM lv = LEVELDATA(n)
+    STARTMAP(lv)
     IF n > 1 THEN
-        DIM before = LEVELDATA(n - 1){"TOWERS"}
+        DIM before = LEVELDATA(n - 1)
         FOR EACH k$ IN lv{"TOWERS"}
-            IF INDEXOF(before, k$) < 0 THEN
+            IF INDEXOF(before{"TOWERS"}, k$) < 0 THEN
                 TOAST(T$("new_tower") + ": " + T$(k$))
+                toast2$ = T$(k$ + "_d")
                 toast_t = tnow + 5
             ENDIF
         NEXT k$
+        DIM old_kinds = WAVEKINDS(before)
+        FOR EACH e$ IN WAVEKINDS(lv)
+            IF INDEXOF(old_kinds, e$) < 0 ANDALSO HAST(e$ + "_h") = 1 THEN
+                TOAST(T$("new_enemy") + ": " + T$(e$))
+                toast2$ = T$(e$ + "_h")
+                toast_t = tnow + 6
+            ENDIF
+        NEXT e$
+    ENDIF
+ENDSUB
+
+' An endless run on one of the arenas, with every tower
+SUB STARTENDLESS(a)
+    cur_arena = a
+    play_kind$ = "endless"
+    DIM lv = CLONE(LEVELDATA(ARENAS[a - 1]))
+    lv{"TOWERS"} = towers_json{"ORDER"}
+    lv{"CREDITS"} = 900
+    lv{"LIVES"} = 25
+    lv{"ENDLESS"} = 1000 + a
+    lv{"NAME"} = T$("endless") + " - " + lv{"NAME"}
+    cur_level = ARENAS[a - 1]
+    STARTMAP(lv)
+ENDSUB
+
+' Today's challenge: a level of world 1 with one rule bent
+SUB STARTDAILY()
+    IF NOT MAP.EXISTS(daily, "LEVEL") THEN RETURN
+    play_kind$ = "daily"
+    cur_level = daily{"LEVEL"}
+    DIM lv = CLONE(LEVELDATA(cur_level))
+    DIM rule$ = daily{"RULE"}
+    IF rule$ = "ONLY" THEN lv{"TOWERS"} = [DAILYKIND$(lv, daily{"ARG"})]
+    IF rule$ = "FAST" THEN lv{"SPDX"} = 1.4
+    IF rule$ = "POOR" THEN lv{"CREDITS"} = INT(lv{"CREDITS"} * 0.6)
+    IF rule$ = "FRAGILE" THEN lv{"LIVES"} = 5
+    IF rule$ = "TOUGH" THEN lv{"HPMUL"} = 1.5
+    lv{"NAME"} = T$("daily_title") + " - " + lv{"NAME"}
+    STARTMAP(lv)
+    TOAST(DAILYRULE$())
+    toast_t = tnow + 5
+ENDSUB
+
+SUB RESTART()
+    IF play_kind$ = "endless" THEN
+        STARTENDLESS(cur_arena)
+    ELSEIF play_kind$ = "daily" THEN
+        STARTDAILY()
+    ELSE
+        STARTLEVEL(cur_level)
     ENDIF
 ENDSUB
 
@@ -699,6 +1038,7 @@ SUB EVENTSTOFX()
         ELSEIF t$ = "ZAP" THEN
             ADDFX({ "F": "ZAP", "XS": ev{"XS"} * TILE, "YS": ev{"YS"} * TILE + FY0, "C": TCOL("TESLA"), "DUR": 0.16 })
             SFX("ZAP")
+            IF LEN(ev{"XS"}) >= 6 THEN stats{"chain5"} = 1
         ELSEIF t$ = "RAIL" THEN
             ADDFX({ "F": "LINE", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "X2": PXX(ev{"X2"}), "Y2": PXY(ev{"Y2"}), "C": [200, 255, 210], "W": 5, "DUR": 0.3 })
             SFX("RAIL")
@@ -713,22 +1053,38 @@ SUB EVENTSTOFX()
             ADDFX({ "F": "BURST", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "C": ek_col[kno], "R": ek_size[kno] * 2.2, "N": 7, "DUR": 0.4 })
             ADDFX({ "F": "TXT", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}) - 10, "S": "+" + STR$(ev{"REW"}), "C": [255, 220, 90], "DUR": 0.8 })
             SFX("DIE")
+            STATADD("kills", 1)
+            IF ev{"K"} = "OVERLORD" THEN STATADD("boss_kills", 1)
+            IF ev{"K"} = "TITAN" THEN STATADD("titan_kills", 1)
         ELSEIF t$ = "LEAK" THEN
             flash = 1.0
             SFX("LEAK")
         ELSEIF t$ = "BUILD" ORELSE t$ = "UPGRADE" THEN
             ADDFX({ "F": "RING", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "R0": 22, "R1": 4, "C": TCOL(ev{"K"}), "DUR": 0.35, "W": 3 })
             SFX("BUILD")
+            IF t$ = "BUILD" THEN
+                STATADD("builds", 1)
+                IF INDEXOF(lv_kinds, ev{"K"}) < 0 THEN lv_kinds = APPEND(lv_kinds, ev{"K"})
+                lv_max_towers = MAX([lv_max_towers, TOWERCOUNT()])
+            ENDIF
         ELSEIF t$ = "SELL" THEN
             ADDFX({ "F": "RING", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "R0": 4, "R1": 30, "C": [255, 220, 90], "DUR": 0.4, "W": 3 })
             SFX("SELL")
         ELSEIF t$ = "WAVE" THEN
             SFX("WAVE")
+            STATADD("waves", 1)
+            IF ev{"EARLY"} > 0 THEN STATADD("early", 1)
             IF ev{"EARLY"} > 0 THEN TOAST("+" + STR$(ev{"EARLY"}) + " " + T$("early"))
         ELSEIF t$ = "WIN" THEN
             SFX("WIN")
         ELSEIF t$ = "LOSE" THEN
             SFX("LOSE")
+        ELSEIF t$ = "PULL" THEN
+            ADDFX({ "F": "RING", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "R0": ev{"R"} * TILE, "R1": 8, "C": TCOL("VORTEX"), "DUR": 0.5, "W": 4 })
+            IF ev{"N"} > 0 THEN SFX("PULL")
+        ELSEIF t$ = "BLINK" THEN
+            ADDFX({ "F": "BURST", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "C": [255, 255, 150], "R": 14, "N": 6, "DUR": 0.3 })
+            SFX("BLINK")
         ENDIF
     NEXT ev
 ENDSUB
@@ -882,6 +1238,12 @@ SUB DRAWTOWER(slot)
         DIM st = IOTA(11, 0) * TWO_PI / 10 - 1.5708 + tnow * 0.2
         DIM sr = 6 + 7 * ((IOTA(11, 0) MOD 2) = 0)
         GFX.LINES cx + sr * COS(st), cy + sr * SIN(st), 2.5, c[0], c[1], c[2]
+    ELSEIF k$ = "VORTEX" THEN
+        ' a spiral that winds inwards
+        DIM va = IOTA(25, 0) * 0.42 + tnow * 2.2
+        DIM vr = 14 - IOTA(25, 0) * 0.5
+        GFX.LINES cx + vr * COS(va), cy + vr * SIN(va), 2.5, c[0], c[1], c[2]
+        GFX.LINES cx - vr * COS(va), cy - vr * SIN(va), 1.5, 200, 210, 255
     ENDIF
     ' tier pips under the tower, branch ring around it
     DIM pips = t{"TIER"} + t{"BT"}
@@ -944,15 +1306,26 @@ SUB DRAWENEMIES()
     DIM px = en{"X"} * TILE
     DIM py = en{"Y"} * TILE + FY0
     DIM kinds = en{"K"}
+    DIM vis = en{"VIS"}
     DIM k
     FOR k = 0 TO LEN(ek_sides) - 1
         DIM m = kinds = k
         IF SUM(m) > 0 THEN
-            DIM idx = WHICH(m)
             DIM c = ek_col[k]
             DIM rot = tnow * ek_spin[k]
-            POLYBATCH(px[idx], py[idx], ek_size[k], ek_sides[k], rot, c, 2.5)
-            POLYBATCH(px[idx], py[idx], ek_size[k] * 0.45, ek_sides[k], 0 - rot * 1.7, [255, 245, 250], 1.5)
+            DIM mv = m * vis
+            IF SUM(mv) > 0 THEN
+                DIM idx = WHICH(mv)
+                POLYBATCH(px[idx], py[idx], ek_size[k], ek_sides[k], rot, c, 2.5)
+                POLYBATCH(px[idx], py[idx], ek_size[k] * 0.45, ek_sides[k], 0 - rot * 1.7, [255, 245, 250], 1.5)
+                IF ek_mirror[k] = 1 THEN POLYBATCH(px[idx], py[idx], ek_size[k] + 4, ek_sides[k], 0.785 - rot, [150, 170, 210], 1.2)
+            ENDIF
+            ' cloaked and out of every revealer's reach: a faint shimmer
+            DIM mh = m * (1 - vis)
+            IF SUM(mh) > 0 THEN
+                DIM hid = WHICH(mh)
+                POLYBATCH(px[hid], py[hid], ek_size[k] * (0.9 + 0.1 * SIN(tnow * 5)), ek_sides[k], rot, SHADE(c, 0.22), 1.5)
+            ENDIF
         ENDIF
     NEXT k
     DIM sizes = ek_size[kinds]
@@ -1015,7 +1388,7 @@ FUNC RINGOPTS(slot)
     DIM out = []
     DIM t = SIM.TOWER(slot)
     IF t{"KIND"} = "" THEN
-        FOR EACH k$ IN LEVELDATA(cur_level){"TOWERS"}
+        FOR EACH k$ IN cur_lv{"TOWERS"}
             out = APPEND(out, [["B:" + k$, SIM.COST(k$), k$]])
         NEXT k$
     ELSE
@@ -1110,6 +1483,10 @@ SUB ICON(k$, cx, cy, c)
         POLY(cx, cy, 3, 8, 0, c, 1.5)
     ELSEIF k$ = "PLASMA" THEN
         POLY(cx, cy, 8, 5, -1.5708, c, 2)
+    ELSEIF k$ = "VORTEX" THEN
+        DIM va = IOTA(17, 0) * 0.5
+        DIM vr = 9 - IOTA(17, 0) * 0.5
+        GFX.LINES cx + vr * COS(va), cy + vr * SIN(va), 2, c[0], c[1], c[2]
     ELSE
         DIM st = IOTA(11, 0) * TWO_PI / 10 - 1.5708
         DIM sr = 4 + 5 * ((IOTA(11, 0) MOD 2) = 0)
@@ -1129,6 +1506,11 @@ FUNC STATLINE$(s)
     IF m$ = "AURA" THEN RETURN "-" + STR$(INT(s{"SLOW"} * 100)) + "%   " + r$
     IF m$ = "PULSE" THEN RETURN T$("dmg") + " " + STR$(s{"DMG"}) + "   " + STR$(s{"STUN"}) + "s   " + r$
     IF m$ = "FLAME" THEN RETURN STR$(s{"BURN"}) + "/s   " + r$
+    IF m$ = "PULL" THEN
+        DIM pull$ = "<< " + STR$(s{"PULL"}) + "   " + T$("dmg") + " " + STR$(s{"DMG"})
+        IF s{"PCT"} > 0 THEN pull$ = pull$ + " +" + STR$(INT(s{"PCT"} * 100)) + "%"
+        RETURN pull$ + "   " + r$
+    ENDIF
     IF m$ = "RELAY" THEN
         IF s{"INCOME"} > 0 THEN RETURN "+" + STR$(s{"INCOME"}) + " / " + T$("wave")
         RETURN "+" + STR$(INT(s{"BUFFD"} * 100)) + "% " + T$("dmg") + "   +" + STR$(INT(s{"BUFFR"} * 100)) + "% " + T$("range")
@@ -1192,42 +1574,113 @@ ENDSUB
 ' ── HUD and bars ────────────────────────────────────────────────
 
 SUB DRAWHUD()
-    PANEL(4, 4, SCR_W - 8, FY0 - 10, [120, 80, 255], 210)
+    PANEL(4, 4, SCR_W - 8, FY0 - 10, THEMECOL([120, 80, 255], [255, 190, 80]), 210)
     POLY(26, 30, 9, 4, 0, [255, 220, 90], 2.5)
     QTEXT(42, 18, STR$(SIM.CREDITS()), [255, 230, 130], 20)
     POLY(170, 30, 9, 6, tnow * 0.5, [80, 230, 255], 2.5)
     QTEXT(186, 18, STR$(SIM.LIVES()), IIF(flash > 0.1, [255, 120, 120], [180, 245, 255]), 20)
     DIM w$ = T$("wave") + " " + STR$(SIM.WAVE()) + "/" + STR$(SIM.NWAVES())
+    IF SIM.ENDLESS() = 1 THEN w$ = T$("wave") + " " + STR$(SIM.WAVE())
     QTEXT(SCR_W - 20 - TEXTW(w$, 18), 12, w$, [235, 220, 255], 18)
-    DIM l$ = STR$(cur_level) + "  " + LEVELDATA(cur_level){"NAME"}
+    DIM l$ = STR$(cur_level) + "  " + cur_lv{"NAME"}
+    IF play_kind$ <> "level" THEN l$ = cur_lv{"NAME"}
+    IF play_kind$ = "endless" THEN l$ = T$("record") + " " + STR$(ENDLESSBEST(cur_arena))
     QTEXT(SCR_W - 20 - TEXTW(l$, 12), 36, l$, [150, 130, 200], 12)
     IF show_fps = 1 THEN QTEXT(240, 40, STR$(INT(fps_avg)) + " fps", [120, 255, 160], 12)
 ENDSUB
 
+' An endless run offers a bonus after every tenth wave
+FUNC PERKOPEN()
+    IF play_kind$ <> "endless" ORELSE SIM.PHASE$() <> "run" THEN RETURN 0
+    IF SIM.BUSY() > 0 ORELSE SIM.WAVE() = 0 THEN RETURN 0
+    IF SIM.WAVE() MOD 10 <> 0 THEN RETURN 0
+    RETURN IIF(perks_taken < SIM.WAVE() / 10, 1, 0)
+ENDFUNC
+
 SUB DRAWBAR()
-    DIM ph$ = SIM.PHASE$()
-    DIM has_next = IIF(SIM.WAVE() < SIM.NWAVES(), 1, 0)
+    DIM has_next = IIF(SIM.WAVE() < SIM.NWAVES() ANDALSO PERKOPEN() = 0, 1, 0)
     DIM c = IIF(has_next = 1, [255, 70, 190], [80, 70, 110])
     PANEL(8, BAR_Y + 6, 262, 70, c, 210)
     IF has_next = 1 THEN HIT(8, BAR_Y + 6, 262, 70, "next")
     POLY(34, BAR_Y + 41, 11, 3, 0, c, 3)
     DIM lab$ = T$("next_wave") + " " + STR$(SIM.WAVE() + 1) + "/" + STR$(SIM.NWAVES())
+    IF SIM.ENDLESS() = 1 THEN lab$ = T$("next_wave") + " " + STR$(SIM.WAVE() + 1)
     IF SIM.WAVE() = 0 THEN lab$ = T$("start") + "  " + lab$
-    IF has_next = 0 THEN lab$ = T$("wave") + " " + STR$(SIM.NWAVES()) + "/" + STR$(SIM.NWAVES())
+    IF SIM.WAVE() >= SIM.NWAVES() THEN lab$ = T$("wave") + " " + STR$(SIM.NWAVES()) + "/" + STR$(SIM.NWAVES())
     QTEXT(54, BAR_Y + 14, lab$, [245, 235, 255], 17)
     IF has_next = 1 THEN
+        DIM pv = SIM.PREVIEW()
+        DIM gap = IIF(LEN(pv) > 3, 40, 52)
         DIM px = 56
-        FOR EACH g IN SIM.PREVIEW()
+        FOR EACH g IN pv
             DIM kn = INDEXOF(enemies_json{"ORDER"}, g[0])
             POLY(px + 6, BAR_Y + 55, 6, ek_sides[kn], tnow, ek_col[kn], 1.5)
             QTEXT(px + 15, BAR_Y + 46, "x" + STR$(g[1]), [200, 190, 220], 12)
-            px = px + 52
+            px = px + gap
         NEXT g
         DIM eb = SIM.EARLYBONUS()
-        IF eb > 0 THEN QTEXT(214, BAR_Y + 46, "+" + STR$(eb), [255, 220, 90], 12)
+        IF eb > 0 ANDALSO LEN(pv) <= 3 THEN QTEXT(214, BAR_Y + 46, "+" + STR$(eb), [255, 220, 90], 12)
     ENDIF
     BUTTON(280, BAR_Y + 6, 90, 70, "x" + STR$(speed), [80, 220, 255], "speed", 22)
     BUTTON(380, BAR_Y + 6, 92, 70, "II", [190, 120, 255], "pause", 22)
+ENDSUB
+
+SUB DRAWSTARS(cx, cy, n_lit)
+    DIM s
+    FOR s = 0 TO 2
+        DIM sc = IIF(s < n_lit, [255, 220, 80], [60, 55, 80])
+        DIM sa = IOTA(11, 0) * TWO_PI / 10 - 1.5708
+        DIM srr = 9 + 13 * ((IOTA(11, 0) MOD 2) = 0)
+        GFX.LINES cx + (s - 1) * 62 + srr * COS(sa), cy + srr * SIN(sa), 3, sc[0], sc[1], sc[2]
+    NEXT s
+ENDSUB
+
+SUB DRAWRESULT()
+    DIM won = IIF(SIM.PHASE$() = "won", 1, 0)
+    DIM c = IIF(won = 1, [90, 255, 180], [255, 70, 110])
+    PANEL(50, 230, SCR_W - 100, 380, c, 235)
+    CTEXT(SCR_W / 2, 256, IIF(won = 1, T$("won"), T$("lost")), c, 34)
+    IF play_kind$ = "endless" THEN
+        DIM done = MAX([0, SIM.WAVE() - 1])
+        CTEXT(SCR_W / 2, 318, STR$(done), [235, 235, 255], 44)
+        CTEXT(SCR_W / 2, 374, T$("waves_done"), [180, 170, 220], 16)
+        CTEXT(SCR_W / 2, 404, T$("record") + "  " + STR$(ENDLESSBEST(cur_arena)), [160, 150, 200], 15)
+        IF result_record = 1 THEN CTEXT(SCR_W / 2, 430, T$("new_record"), [255, 220, 90], 18)
+        BUTTON(80, 470, SCR_W - 160, 56, T$("retry"), [255, 200, 90], "res:retry", 20)
+        BUTTON(80, 536, SCR_W - 160, 56, T$("endless"), [150, 120, 255], "endlessmenu", 18)
+        RETURN
+    ENDIF
+    IF won = 1 THEN DRAWSTARS(SCR_W / 2, 345, result_stars)
+    CTEXT(SCR_W / 2, 390, T$("score") + "  " + STR$(result_score), [235, 235, 255], 20)
+    IF play_kind$ = "daily" THEN
+        DIM mine = 0
+        IF MAP.EXISTS(daily, "MINE") THEN mine = daily{"MINE"}
+        CTEXT(SCR_W / 2, 420, T$("daily_best") + "  " + STR$(mine), [160, 150, 200], 15)
+        BUTTON(80, 470, SCR_W - 160, 56, T$("retry"), [255, 200, 90], "res:retry", 20)
+        BUTTON(80, 536, SCR_W - 160, 56, T$("daily_title"), [120, 255, 170], "dailymenu", 18)
+        RETURN
+    ENDIF
+    CTEXT(SCR_W / 2, 420, T$("best") + "  " + STR$(BESTOF(cur_level)), [160, 150, 200], 15)
+    IF won = 1 THEN
+        IF cur_level = 20 ORELSE cur_level = N_LEVELS THEN
+            BUTTON(80, 470, SCR_W - 160, 56, T$("finale"), [255, 210, 90], "res:finale", 20)
+        ELSE
+            BUTTON(80, 470, SCR_W - 160, 56, T$("next_level"), [90, 255, 180], "res:next", 20)
+        ENDIF
+        BUTTON(80, 536, 150, 56, T$("retry"), [255, 200, 90], "res:retry", 18)
+        BUTTON(250, 536, 150, 56, T$("levels"), [150, 120, 255], "res:levels", 18)
+    ELSE
+        BUTTON(80, 470, SCR_W - 160, 56, T$("retry"), [255, 200, 90], "res:retry", 22)
+        BUTTON(80, 536, SCR_W - 160, 56, T$("levels"), [150, 120, 255], "res:levels", 18)
+    ENDIF
+ENDSUB
+
+SUB DRAWPERKS()
+    PANEL(60, 260, SCR_W - 120, 300, [150, 120, 255], 235)
+    CTEXT(SCR_W / 2, 280, T$("perk_title"), [235, 220, 255], 26)
+    BUTTON(90, 330, SCR_W - 180, 56, T$("perk_DMG"), [255, 90, 120], "perk:DMG", 19)
+    BUTTON(90, 400, SCR_W - 180, 56, T$("perk_COST"), [255, 210, 90], "perk:COST", 19)
+    BUTTON(90, 470, SCR_W - 180, 56, T$("perk_LIVES"), [90, 230, 255], "perk:LIVES", 19)
 ENDSUB
 
 SUB DRAWOVERLAY()
@@ -1237,27 +1690,13 @@ SUB DRAWOVERLAY()
         RECT 0, FY0, SCR_W, BAR_Y - FY0, FALSE
         RECT 2, FY0 + 2, SCR_W - 4, BAR_Y - FY0 - 4, FALSE
     ENDIF
-    IF toast$ <> "" ANDALSO tnow < toast_t THEN CTEXT(SCR_W / 2, FY0 + 14, toast$, [255, 230, 140], 18)
+    IF toast$ <> "" ANDALSO tnow < toast_t THEN
+        CTEXT(SCR_W / 2, FY0 + 14, toast$, [255, 230, 140], 18)
+        IF toast2$ <> "" THEN CTEXT(SCR_W / 2, FY0 + 40, toast2$, [200, 200, 240], 14)
+    ENDIF
     DIM ph$ = SIM.PHASE$()
     IF ph$ = "won" ORELSE ph$ = "lost" THEN
-        DIM won = IIF(ph$ = "won", 1, 0)
-        DIM c = IIF(won = 1, [90, 255, 180], [255, 70, 110])
-        PANEL(50, 230, SCR_W - 100, 380, c, 235)
-        CTEXT(SCR_W / 2, 256, IIF(won = 1, T$("won"), T$("lost")), c, 34)
-        IF won = 1 THEN
-            DIM s
-            FOR s = 0 TO 2
-                DIM sc = IIF(s < result_stars, [255, 220, 80], [60, 55, 80])
-                DIM sa = IOTA(11, 0) * TWO_PI / 10 - 1.5708
-                DIM srr = 9 + 13 * ((IOTA(11, 0) MOD 2) = 0)
-                GFX.LINES SCR_W / 2 + (s - 1) * 62 + srr * COS(sa), 345 + srr * SIN(sa), 3, sc[0], sc[1], sc[2]
-            NEXT s
-        ENDIF
-        CTEXT(SCR_W / 2, 390, T$("score") + "  " + STR$(result_score), [235, 235, 255], 20)
-        CTEXT(SCR_W / 2, 420, T$("best") + "  " + STR$(BESTOF(cur_level)), [160, 150, 200], 15)
-        IF won = 1 ANDALSO cur_level < 20 THEN BUTTON(80, 470, SCR_W - 160, 56, T$("next_level"), [90, 255, 180], "res:next", 20)
-        BUTTON(80, 536, 150, 56, T$("retry"), [255, 200, 90], "res:retry", 18)
-        BUTTON(250, 536, 150, 56, T$("levels"), [150, 120, 255], "res:levels", 18)
+        DRAWRESULT()
     ELSEIF paused = 1 THEN
         PANEL(60, 210, SCR_W - 120, 430, [190, 120, 255], 235)
         CTEXT(SCR_W / 2, 232, T$("paused"), [235, 220, 255], 30)
@@ -1267,11 +1706,14 @@ SUB DRAWOVERLAY()
         BUTTON(90, 488, 92, 48, T$("music"), IIF(mus_on = 1, [80, 220, 255], [70, 70, 90]), "music", 13)
         BUTTON(194, 488, 92, 48, T$("sfx"), IIF(sfx_on = 1, [80, 220, 255], [70, 70, 90]), "sfx", 13)
         BUTTON(298, 488, 92, 48, T$("glow"), IIF(glow_on = 1, [80, 220, 255], [70, 70, 90]), "glow", 13)
+        IF WORLDSTARS(1) >= 60 THEN BUTTON(194, 550, 92, 48, T$("gold"), IIF(gold_on = 1, [255, 210, 90], [70, 70, 90]), "gold", 13)
+    ELSEIF PERKOPEN() = 1 THEN
+        DRAWPERKS()
     ENDIF
 ENDSUB
 
 SUB DRAWPLAY()
-    DIM lv = LEVELDATA(cur_level)
+    DIM lv = cur_lv
     GFX.DRAWIMAGE bg_img, 0, FY0
     DRAWFLOW()
     DRAWGATES(lv)
@@ -1296,7 +1738,7 @@ SUB DRAWPLAY()
     DRAWOVERLAY()
 ENDSUB
 
-' ── level select and leaderboard ────────────────────────────────
+' ── menus ───────────────────────────────────────────────────────
 
 ' A synthwave floor running towards the horizon
 SUB DRAWFLOOR(hy)
@@ -1313,81 +1755,379 @@ SUB DRAWFLOOR(hy)
         xs = APPEND(xs, [SCR_W / 2 + i * 10, SCR_W / 2 + i * 120])
         ys = APPEND(ys, [hy, SCR_H])
     NEXT i
-    GFX.LINES xs, ys, 1.5, 120, 30, 110, TRUE
+    DIM fc = THEMECOL([120, 30, 110], [150, 105, 25])
+    GFX.LINES xs, ys, 1.5, fc[0], fc[1], fc[2], TRUE
+ENDSUB
+
+' A small crown; kind 2 burns pink for both worlds complete
+SUB CROWN(cx, cy, kind, k)
+    DIM c = IIF(kind = 2, [255, 110, 220], [255, 210, 80])
+    DIM xs = [-1, -1, -0.5, 0, 0.5, 1, 1, -1] * 8 * k + cx
+    DIM ys = [0.6, -0.5, 0.1, -0.8, 0.1, -0.5, 0.6, 0.6] * 8 * k + cy
+    GFX.LINES xs, ys, 2, c[0], c[1], c[2]
+ENDSUB
+
+SUB TABBUTTON(x, y, w, h, label$, act$, active, sz)
+    DIM c = IIF(active = 1, [120, 240, 255], [70, 70, 120])
+    PANEL(x, y, w, h, c, IIF(active = 1, 220, 160))
+    CTEXT(x + w / 2, y + h / 2 - sz * 0.62, label$, IIF(active = 1, [240, 250, 255], [150, 150, 190]), sz)
+    HIT(x, y, w, h, act$)
 ENDSUB
 
 SUB DRAWMENU()
-    DRAWFLOOR(730)
-    CTEXT(SCR_W / 2, 30, "jdTOWER", [120, 240, 255], 52)
-    CTEXT(SCR_W / 2, 92, T$("subtitle"), [255, 120, 210], 18)
-    DIM who$ = myname$
-    IF auth$ = "" THEN who$ = T$("guest")
-    CTEXT(SCR_W / 2, 124, who$, [170, 160, 210], 13)
-    DIM n
-    FOR n = 1 TO 20
-        DIM col = (n - 1) MOD 4
-        DIM row = INT((n - 1) / 4)
+    DRAWFLOOR(796)
+    CTEXT(SCR_W / 2, 18, "jdTOWER", THEMECOL([120, 240, 255], [255, 220, 120]), 46)
+    CTEXT(SCR_W / 2, 72, T$("subtitle"), [255, 120, 210], 16)
+    TABBUTTON(36, 100, 200, 42, T$("world1"), "world:1", IIF(world = 1, 1, 0), 17)
+    TABBUTTON(244, 100, 200, 42, T$("world2"), "world:2", IIF(world = 2, 1, 0), 17)
+    DIM base = 20 * (world - 1)
+    DIM i
+    FOR i = 1 TO 20
+        DIM n = base + i
+        DIM col = (i - 1) MOD 4
+        DIM row = INT((i - 1) / 4)
         DIM x = 36 + col * 106
-        DIM y = 156 + row * 100
+        DIM y = 156 + row * 92
         DIM is_open = UNLOCKED(n)
         DIM stars = STARSOF(n)
         DIM c = [70, 60, 100]
-        IF is_open = 1 THEN c = IIF(n MOD 5 = 0, [255, 80, 150], [100, 200, 255])
+        IF is_open = 1 THEN c = IIF(n MOD 5 = 0, [255, 80, 150], IIF(world = 2, [255, 150, 70], [100, 200, 255]))
         IF stars = 3 THEN c = [255, 210, 90]
-        PANEL(x, y, 90, 84, c, 190)
-        CTEXT(x + 45, y + 10, STR$(n), IIF(is_open = 1, [240, 245, 255], [90, 85, 120]), 26)
+        PANEL(x, y, 90, 80, c, 190)
+        CTEXT(x + 45, y + 8, STR$(n), IIF(is_open = 1, [240, 245, 255], [90, 85, 120]), 26)
         DIM s
         FOR s = 0 TO 2
             DIM sc = IIF(s < stars, [255, 220, 80], [55, 50, 80])
-            POLY(x + 25 + s * 20, y + 62, 6, 5, -1.5708, sc, 2)
+            POLY(x + 25 + s * 20, y + 60, 6, 5, -1.5708, sc, 2)
         NEXT s
-        IF is_open = 1 THEN HIT(x, y, 90, 84, "lvl:" + STR$(n))
-    NEXT n
-    IF online = 1 THEN BUTTON(110, 668, SCR_W - 220, 56, T$("board"), [255, 120, 210], "board", 19)
-    IF net_msg$ <> "" THEN CTEXT(SCR_W / 2, 740, net_msg$, [255, 130, 130], 13)
+        IF is_open = 1 THEN HIT(x, y, 90, 80, "lvl:" + STR$(n))
+    NEXT i
+    IF world = 2 ANDALSO UNLOCKED(21) = 0 THEN
+        PANEL(60, 330, SCR_W - 120, 70, [255, 150, 70], 235)
+        CTEXT(SCR_W / 2, 354, T$("w2_locked"), [255, 220, 180], 16)
+    ENDIF
+    DIM w_stars = WORLDSTARS(world)
+    CTEXT(SCR_W / 2, 618, STR$(w_stars) + " / 60  " + T$("fin_stars"), [255, 220, 120], 15)
+    BUTTON(36, 646, 200, 52, T$("endless"), IIF(STARSOF(20) > 0, [150, 120, 255], [70, 60, 100]), "endlessmenu", 18)
+    BUTTON(244, 646, 200, 52, T$("daily"), [120, 255, 170], "dailymenu", 18)
+    IF online = 1 THEN
+        BUTTON(36, 708, 200, 52, T$("board"), [255, 120, 210], "board", 18)
+    ELSE
+        BUTTON(36, 708, 200, 52, T$("board"), [70, 60, 100], "", 18)
+    ENDIF
+    BUTTON(244, 708, 200, 52, T$("ach") + "  " + STR$(LEN(ach)), [255, 210, 90], "ach", 18)
+    DIM who$ = myname$
+    IF auth$ = "" THEN who$ = T$("guest")
+    DIM crown_kind = 0
+    IF WORLDSTARS(1) >= 60 THEN crown_kind = 1
+    IF WORLDSTARS(1) >= 60 ANDALSO WORLDSTARS(2) >= 60 THEN crown_kind = 2
+    DIM ww = TEXTW(who$, 13)
+    CTEXT(SCR_W / 2, 774, who$, [170, 160, 210], 13)
+    IF crown_kind > 0 THEN CROWN(SCR_W / 2 - ww / 2 - 14, 782, crown_kind, 1)
+    IF net_msg$ <> "" THEN CTEXT(SCR_W / 2, 800, net_msg$, [255, 130, 130], 13)
+ENDSUB
+
+FUNC GAPTEXT$()
+    IF NOT MAP.EXISTS(board, "ME") THEN RETURN ""
+    IF board{"ME"} = 0 THEN RETURN ""
+    IF board{"ME"} = 1 THEN RETURN T$("lead")
+    DIM key$ = "gap_P"
+    IF board_tab$ = "W1" ORELSE board_tab$ = "W2" THEN key$ = "gap_W"
+    IF board_tab$ = "END" THEN key$ = "gap_END"
+    DIM n = board{"GAP"}
+    IF n = 0 THEN n = 1
+    RETURN TF$(key$, STR$(n), STR$(board{"ME"} - 1))
+ENDFUNC
+
+SUB BOARDROW(r, y)
+    DIM mine = IIF(r{"NAME"} = myname$, 1, 0)
+    DIM c = IIF(mine = 1, [120, 255, 200], [225, 225, 245])
+    IF mine = 1 THEN
+        GFX.BLEND "ADD"
+        DRAWCOLOR 10, 34, 30, 255
+        RECT 28, y - 3, SCR_W - 56, 26, TRUE
+    ENDIF
+    QTEXT(36, y, STR$(r{"RANK"}), c, 15)
+    IF r{"CROWN"} > 0 THEN CROWN(76, y + 11, r{"CROWN"}, 0.9)
+    QTEXT(88, y, LEFT$(r{"NAME"}, 13), c, 15)
+    DIM vc = IIF(board_tab$ = "W1" ORELSE board_tab$ = "W2", [255, 220, 90], c)
+    QTEXT(286, y, STR$(r{"VAL"}), vc, 15)
+    IF board_tab$ <> "DAY" THEN QTEXT(350, y, STR$(r{"SUB"}), [170, 170, 210], 13)
+    IF r{"BADGES"} > 0 THEN
+        POLY(424, y + 10, 6, 5, -1.5708, [255, 210, 90], 1.5)
+        QTEXT(434, y + 2, STR$(r{"BADGES"}), [220, 200, 140], 12)
+    ENDIF
 ENDSUB
 
 SUB DRAWBOARD()
-    DRAWFLOOR(700)
-    CTEXT(SCR_W / 2, 30, T$("board"), [255, 120, 210], 34)
-    PANEL(20, 90, SCR_W - 40, 560, [120, 80, 255], 220)
-    QTEXT(40, 104, "#", [150, 140, 200], 14)
-    QTEXT(80, 104, "Name", [150, 140, 200], 14)
-    QTEXT(270, 104, T$("stars"), [150, 140, 200], 14)
-    QTEXT(360, 104, T$("score"), [150, 140, 200], 14)
-    DIM i = 0
-    FOR EACH r IN board_rows
-        IF i >= 16 THEN EXITFOR
-        DIM y = 136 + i * 31
-        DIM c = IIF(r{"NAME"} = myname$, [120, 255, 200], [225, 225, 245])
-        QTEXT(40, y, STR$(i + 1), c, 16)
-        QTEXT(80, y, LEFT$(r{"NAME"}, 14), c, 16)
-        QTEXT(270, y, STR$(r{"STARS"}), [255, 220, 90], 16)
-        QTEXT(360, y, STR$(r{"SCORE"}), c, 16)
-        i = i + 1
-    NEXT r
+    DRAWFLOOR(720)
+    CTEXT(SCR_W / 2, 20, T$("board"), [255, 120, 210], 32)
+    DIM tabs = ["W1", "W2", "END", "WEEK", "DAY"]
+    DIM i
+    FOR i = 0 TO 4
+        TABBUTTON(20 + i * 89, 72, 84, 40, T$("tab_" + tabs[i]), "btab:" + tabs[i], IIF(board_tab$ = tabs[i], 1, 0), 13)
+    NEXT i
+    PANEL(20, 124, SCR_W - 40, 520, [120, 80, 255], 220)
+    DIM h1$ = T$("stars")
+    DIM h2$ = T$("score")
+    IF board_tab$ = "END" THEN
+        h1$ = T$("col_wave")
+    ELSEIF board_tab$ = "WEEK" THEN
+        h1$ = T$("score")
+        h2$ = T$("col_levels")
+    ELSEIF board_tab$ = "DAY" THEN
+        h1$ = T$("score")
+        h2$ = ""
+    ENDIF
+    QTEXT(36, 136, "#", [150, 140, 200], 13)
+    QTEXT(88, 136, "Name", [150, 140, 200], 13)
+    QTEXT(286, 136, h1$, [150, 140, 200], 13)
+    QTEXT(350, 136, h2$, [150, 140, 200], 13)
+    DIM top = []
+    IF MAP.EXISTS(board, "TOP") THEN top = board{"TOP"}
+    IF LEN(top) = 0 THEN
+        CTEXT(SCR_W / 2, 300, T$("nobody"), [180, 170, 220], 16)
+    ENDIF
+    DIM me = 0
+    IF MAP.EXISTS(board, "ME") THEN me = board{"ME"}
+    DIM n_top = LEN(top)
+    IF me > 12 THEN n_top = MIN([10, n_top])
+    FOR i = 0 TO n_top - 1
+        BOARDROW(top[i], 166 + i * 28)
+    NEXT i
+    IF me > 12 THEN
+        CTEXT(SCR_W / 2, 446, ". . .", [150, 140, 200], 16)
+        DIM j = 0
+        FOR EACH r IN board{"AROUND"}
+            BOARDROW(r, 474 + j * 28)
+            j = j + 1
+        NEXT r
+    ENDIF
+    DIM gap$ = GAPTEXT$()
+    IF gap$ <> "" THEN CTEXT(SCR_W / 2, 612, gap$, [255, 220, 120], 15)
     BUTTON(140, 680, SCR_W - 280, 56, T$("back"), [100, 200, 255], "back", 19)
 ENDSUB
 
+SUB DRAWACH()
+    DRAWFLOOR(760)
+    CTEXT(SCR_W / 2, 20, T$("ach"), [255, 210, 90], 32)
+    CTEXT(SCR_W / 2, 62, STR$(LEN(ach)) + " / " + STR$(LEN(ach_defs)), [200, 190, 230], 15)
+    DIM i = 0
+    FOR EACH d IN ach_defs
+        DIM x = 20 + (i MOD 5) * 89
+        DIM y = 92 + INT(i / 5) * 72
+        DIM have = HASACH(d{"ID"})
+        DIM c = ACHCOLOR(d)
+        DIM cc = IIF(have = 1, c, SHADE(c, 0.3))
+        PANEL(x, y, 84, 66, IIF(ach_pick = i, [255, 255, 255], cc), IIF(have = 1, 210, 150))
+        DIM sides = 6
+        IF MAP.EXISTS(d, "SIDES") THEN sides = d{"SIDES"}
+        IF MAP.EXISTS(d, "TOWER") THEN
+            ICON(d{"TOWER"}, x + 42, y + 22, cc)
+        ELSE
+            POLY(x + 42, y + 22, 13, sides, -1.5708, cc, IIF(have = 1, 2.5, 1.5))
+            IF have = 1 THEN POLY(x + 42, y + 22, 5, sides, 1.5708 + tnow, [255, 255, 255], 1.5)
+        ENDIF
+        DIM nm$ = ACHNAME$(d)
+        IF LEFT$(d{"ID"}, 4) = "max_" THEN nm$ = T$(d{"TOWER"})
+        CTEXT(x + 42, y + 40, LEFT$(nm$, 12), IIF(have = 1, [235, 240, 255], [120, 115, 150]), 10)
+        IF have = 0 THEN
+            DIM f = ACHFRAC(d)
+            IF f > 0 THEN
+                SEG(x + 10, y + 59, x + 74, y + 59, [40, 35, 60], 3)
+                SEG(x + 10, y + 59, x + 10 + 64 * f, y + 59, c, 3)
+            ENDIF
+        ENDIF
+        HIT(x, y, 84, 66, "achpick:" + STR$(i))
+        i = i + 1
+    NEXT d
+    IF ach_pick >= 0 THEN
+        DIM pd = ach_defs[ach_pick]
+        PANEL(20, 672, SCR_W - 40, 76, ACHCOLOR(pd), 230)
+        QTEXT(36, 682, ACHNAME$(pd), [240, 245, 255], 17)
+        QTEXT(36, 708, ACHDESC$(pd), [200, 200, 235], 13)
+        IF HASACH(pd{"ID"}) = 0 ANDALSO LEN(pd{"STATS"}) = 1 ANDALSO pd{"GOAL"} > 1 THEN
+            DIM prog$ = STR$(MIN([STAT(pd{"STATS"}[0]), pd{"GOAL"}])) + " / " + STR$(pd{"GOAL"})
+            QTEXT(SCR_W - 36 - TEXTW(prog$, 13), 684, prog$, [255, 220, 120], 13)
+        ENDIF
+    ENDIF
+    BUTTON(140, 772, SCR_W - 280, 56, T$("back"), [100, 200, 255], "back", 19)
+ENDSUB
+
+SUB DRAWENDLESSMENU()
+    DRAWFLOOR(740)
+    CTEXT(SCR_W / 2, 20, T$("endless"), [150, 120, 255], 36)
+    IF STARSOF(20) = 0 THEN
+        PANEL(60, 300, SCR_W - 120, 80, [150, 120, 255], 230)
+        CTEXT(SCR_W / 2, 328, T$("endless_locked"), [220, 210, 255], 16)
+    ELSE
+        CTEXT(SCR_W / 2, 74, T$("endless_pick"), [200, 190, 230], 16)
+        DIM arena_cols = [[90, 230, 255], [255, 90, 190], [255, 200, 90]]
+        DIM a
+        FOR a = 1 TO LEN(ARENAS)
+            DIM lv = LEVELDATA(ARENAS[a - 1])
+            DIM y = 120 + (a - 1) * 170
+            DIM c = arena_cols[a - 1]
+            PANEL(40, y, SCR_W - 80, 150, c, 210)
+            CTEXT(SCR_W / 2, y + 18, T$("arena_" + STR$(a)), [240, 245, 255], 22)
+            CTEXT(SCR_W / 2, y + 52, lv{"NAME"}, [190, 190, 230], 14)
+            CTEXT(SCR_W / 2, y + 86, T$("record") + ": " + T$("wave") + " " + STR$(ENDLESSBEST(a)), [255, 220, 120], 18)
+            HIT(40, y, SCR_W - 80, 150, "arena:" + STR$(a))
+        NEXT a
+    ENDIF
+    BUTTON(140, 680, SCR_W - 280, 56, T$("back"), [100, 200, 255], "back", 19)
+ENDSUB
+
+SUB DRAWDAILYMENU()
+    DRAWFLOOR(740)
+    CTEXT(SCR_W / 2, 20, T$("daily_title"), [120, 255, 170], 34)
+    IF NOT MAP.EXISTS(daily, "LEVEL") THEN
+        CTEXT(SCR_W / 2, 300, T$("offline"), [255, 130, 130], 16)
+    ELSE
+        DIM lv = LEVELDATA(daily{"LEVEL"})
+        PANEL(40, 90, SCR_W - 80, 200, [120, 255, 170], 215)
+        CTEXT(SCR_W / 2, 104, daily{"DATE"}, [180, 220, 200], 14)
+        CTEXT(SCR_W / 2, 130, T$("level") + " " + STR$(daily{"LEVEL"}) + "  " + lv{"NAME"}, [240, 245, 255], 20)
+        CTEXT(SCR_W / 2, 172, DAILYRULE$(), [255, 220, 120], 18)
+        DIM mine = 0
+        IF MAP.EXISTS(daily, "MINE") THEN mine = daily{"MINE"}
+        CTEXT(SCR_W / 2, 214, T$("daily_best") + ": " + STR$(mine), [200, 200, 235], 15)
+        IF auth$ = "" THEN CTEXT(SCR_W / 2, 244, T$("daily_login"), [255, 160, 160], 12)
+        BUTTON(120, 306, SCR_W - 240, 60, T$("daily_go"), [120, 255, 170], "dailygo", 24)
+        PANEL(40, 386, SCR_W - 80, 250, [120, 80, 255], 210)
+        QTEXT(60, 396, T$("tab_DAY"), [150, 140, 200], 13)
+        DIM i = 0
+        FOR EACH r IN daily_top
+            IF i >= 7 THEN EXITFOR
+            DIM c = IIF(r{"NAME"} = myname$, [120, 255, 200], [225, 225, 245])
+            QTEXT(60, 422 + i * 28, STR$(r{"RANK"}) + "   " + LEFT$(r{"NAME"}, 14), c, 15)
+            QTEXT(340, 422 + i * 28, STR$(r{"VAL"}), c, 15)
+            i = i + 1
+        NEXT r
+        IF LEN(daily_top) = 0 THEN CTEXT(SCR_W / 2, 480, T$("nobody"), [180, 170, 220], 14)
+    ENDIF
+    BUTTON(140, 680, SCR_W - 280, 56, T$("back"), [100, 200, 255], "back", 19)
+ENDSUB
+
+SUB OPENFINALE(w)
+    finale_world = w
+    uimode$ = "finale"
+    fx = []
+    SETSONG(FINALE_SONG)
+    MUSICMIX("play")
+ENDSUB
+
+SUB DRAWFINALE()
+    DRAWFLOOR(700)
+    IF frame MOD 7 = 0 THEN
+        DIM cols = [[255, 90, 190], [90, 230, 255], [255, 210, 90], [150, 255, 140], [190, 140, 255]]
+        DIM fc = cols[INT(RND() * 5)]
+        DIM fxx = 60 + RND() * (SCR_W - 120)
+        DIM fyy = IIF(RND() < 0.4, 70 + RND() * 90, 470 + RND() * 190)
+        ADDFX({ "F": "RING", "X": fxx, "Y": fyy, "R0": 4, "R1": 50 + RND() * 40, "C": fc, "DUR": 0.9, "W": 3 })
+        ADDFX({ "F": "BURST", "X": fxx, "Y": fyy, "C": fc, "R": 70, "N": 12, "DUR": 1.0 })
+    ENDIF
+    DRAWFX()
+    DIM gold = [255, 215, 90]
+    CROWN(SCR_W / 2, 150, finale_world, 4 + 0.3 * SIN(tnow * 3))
+    CTEXT(SCR_W / 2, 200, T$("fin_w" + STR$(finale_world) + "_t"), IIF(finale_world = 2, [255, 120, 220], gold), 44)
+    CTEXT(SCR_W / 2, 262, T$("fin_w" + STR$(finale_world)), [235, 240, 255], 22)
+    DIM who$ = myname$
+    IF auth$ = "" THEN who$ = T$("guest")
+    CTEXT(SCR_W / 2, 306, who$, [170, 230, 255], 20)
+    CTEXT(SCR_W / 2, 350, STR$(WORLDSTARS(finale_world)) + " / 60  " + T$("fin_stars"), gold, 22)
+    IF finale_world = 1 THEN
+        CTEXT(SCR_W / 2, 410, T$("fin_unlock"), [200, 255, 210], 16)
+    ELSE
+        CTEXT(SCR_W / 2, 410, T$("fin_unlock2"), [200, 255, 210], 16)
+    ENDIF
+    IF WORLDSTARS(finale_world) >= 60 ANDALSO finale_world = 1 THEN CTEXT(SCR_W / 2, 440, T$("fin_gold"), gold, 16)
+    BUTTON(120, 690, SCR_W - 240, 60, T$("continue"), [120, 240, 255], "fin:done", 22)
+ENDSUB
+
+' The newest badge slides over whatever is on screen
+DIM banner_t0 = 0.0
+SUB DRAWBANNER()
+    IF LEN(ach_queue) = 0 THEN RETURN
+    IF banner_t0 = 0 THEN
+        banner_t0 = tnow
+        SFX("ACH")
+    ENDIF
+    DIM age = tnow - banner_t0
+    IF age > 2.8 THEN
+        ach_queue = DROP(1, ach_queue)
+        banner_t0 = 0.0
+        RETURN
+    ENDIF
+    DIM d = ach_queue[0]
+    DIM c = ACHCOLOR(d)
+    DIM y = 70 + IIF(age < 0.25, (age - 0.25) * 240, 0)
+    PANEL(40, y, SCR_W - 80, 60, c, 240)
+    DIM sides = 6
+    IF MAP.EXISTS(d, "SIDES") THEN sides = d{"SIDES"}
+    POLY(72, y + 30, 16, sides, -1.5708 + tnow, c, 3)
+    POLY(72, y + 30, 22 + 3 * SIN(tnow * 9), 24, 0, SHADE(c, 0.5), 2)
+    QTEXT(104, y + 8, T$("ach_new"), c, 15)
+    QTEXT(104, y + 28, ACHNAME$(d), [245, 245, 255], 19)
+ENDSUB
+
 ' ── input ───────────────────────────────────────────────────────
+
+SUB TOMENU()
+    uimode$ = "menu"
+    paused = 0
+    IF ach_dirty = 1 THEN SAVEPROFILE()
+    SETSONG(MENU_SONG)
+    MUSICMIX("menu")
+ENDSUB
 
 SUB DOACTION(act$)
     IF act$ = "" THEN RETURN
     IF LEFT$(act$, 4) = "lvl:" THEN
         SFX("TAP")
         STARTLEVEL(VAL(MID$(act$, 4, 4)))
+    ELSEIF LEFT$(act$, 6) = "world:" THEN
+        SFX("TAP")
+        world = VAL(MID$(act$, 6, 2))
     ELSEIF act$ = "board" THEN
         SFX("TAP")
-        LOADBOARD()
+        LOADBOARD(board_tab$)
         uimode$ = "board"
+    ELSEIF LEFT$(act$, 5) = "btab:" THEN
+        SFX("TAP")
+        LOADBOARD(MID$(act$, 5, 8))
+    ELSEIF act$ = "ach" THEN
+        SFX("TAP")
+        ACHCHECK()
+        ach_pick = -1
+        uimode$ = "ach"
+    ELSEIF LEFT$(act$, 8) = "achpick:" THEN
+        SFX("TAP")
+        ach_pick = VAL(MID$(act$, 8, 4))
+    ELSEIF act$ = "endlessmenu" THEN
+        SFX("TAP")
+        IF uimode$ = "play" THEN SETSONG(MENU_SONG)
+        MUSICMIX("menu")
+        uimode$ = "endless"
+    ELSEIF LEFT$(act$, 6) = "arena:" THEN
+        SFX("TAP")
+        STARTENDLESS(VAL(MID$(act$, 6, 2)))
+    ELSEIF act$ = "dailymenu" THEN
+        SFX("TAP")
+        IF uimode$ = "play" THEN SETSONG(MENU_SONG)
+        MUSICMIX("menu")
+        LOADDAILY()
+        uimode$ = "daily"
+    ELSEIF act$ = "dailygo" THEN
+        SFX("TAP")
+        STARTDAILY()
     ELSEIF act$ = "back" ORELSE act$ = "levels" ORELSE act$ = "res:levels" THEN
         SFX("TAP")
-        uimode$ = "menu"
-        paused = 0
-        SETSONG(MENU_SONG)
-        MUSICMIX("menu")
+        TOMENU()
     ELSEIF act$ = "next" THEN
-        IF SIM.LAUNCH() = "" THEN sel_slot = -1
+        IF PERKOPEN() = 0 THEN
+            IF SIM.LAUNCH() = "" THEN sel_slot = -1
+        ENDIF
     ELSEIF act$ = "speed" THEN
         speed = speed + 1
         IF speed > 3 THEN speed = 1
@@ -1399,9 +2139,19 @@ SUB DOACTION(act$)
         paused = 0
         SFX("TAP")
     ELSEIF act$ = "restart" ORELSE act$ = "res:retry" THEN
-        STARTLEVEL(cur_level)
+        RESTART()
     ELSEIF act$ = "res:next" THEN
         STARTLEVEL(cur_level + 1)
+    ELSEIF act$ = "res:finale" THEN
+        OPENFINALE(IIF(cur_level > 20, 2, 1))
+    ELSEIF act$ = "fin:done" THEN
+        SFX("TAP")
+        IF finale_world = 1 THEN world = 2
+        TOMENU()
+    ELSEIF LEFT$(act$, 5) = "perk:" THEN
+        SFX("BUILD")
+        SIM.PERK(MID$(act$, 5, 8))
+        perks_taken = perks_taken + 1
     ELSEIF act$ = "music" THEN
         mus_on = 1 - mus_on
         MUSICMIX(mus_mode$)
@@ -1410,6 +2160,9 @@ SUB DOACTION(act$)
         SFX("TAP")
     ELSEIF act$ = "glow" THEN
         glow_on = 1 - glow_on
+    ELSEIF act$ = "gold" THEN
+        gold_on = 1 - gold_on
+        BAKEFIELD(cur_lv)
     ELSEIF LEFT$(act$, 2) = "R:" THEN
         RINGACT(MID$(act$, 2, 40))
     ENDIF
@@ -1429,6 +2182,10 @@ SUB RINGACT(code$)
         r$ = SIM.SELL(sel_slot)
     ELSE
         r$ = SIM.UPGRADE(sel_slot, MID$(code$, 2, 4))
+        IF r$ = "" THEN
+            DIM t = SIM.TOWER(sel_slot)
+            IF t{"BR"} <> "" ANDALSO LEN(SIM.UPOPTS(sel_slot)) = 0 THEN stats{"max" + t{"BR"} + "_" + t{"KIND"}} = 1
+        ENDIF
     ENDIF
     IF r$ = "credits" THEN
         TOAST(T$("no_credits"))
@@ -1477,30 +2234,61 @@ SUB HANDLEKEY(k$)
             ELSE
                 paused = 1 - paused
             ENDIF
-        ELSEIF uimode$ = "board" THEN
-            uimode$ = "menu"
+        ELSEIF uimode$ <> "menu" THEN
+            TOMENU()
         ELSE
             running = 0
         ENDIF
-    ELSEIF k$ = "Space" ANDALSO uimode$ = "play" ANDALSO paused = 0 THEN
+    ELSEIF k$ = "Space" ANDALSO uimode$ = "play" ANDALSO paused = 0 ANDALSO PERKOPEN() = 0 THEN
         SIM.LAUNCH()
     ENDIF
 ENDSUB
 
 ' ── frame ───────────────────────────────────────────────────────
 
+' Badges a won level can bring, from what happened during it
+SUB WINSTATS()
+    IF SIM.LIVES() >= cur_lv{"LIVES"} THEN stats{"flawless"} = 1
+    IF SIM.LIVES() = 1 THEN stats{"clutch"} = 1
+    IF cur_level >= 5 ANDALSO lv_max_towers <= 3 ANDALSO lv_max_towers > 0 THEN stats{"minimalist"} = 1
+    IF cur_level >= 5 ANDALSO LEN(lv_kinds) = 1 THEN stats{"specialist"} = 1
+    IF lv_turbo = 1 THEN stats{"turbo_win"} = 1
+    IF play_kind$ = "level" ANDALSO MAP.EXISTS(lost_set, STR$(cur_level)) THEN stats{"comeback"} = 1
+ENDSUB
+
+SUB LEVELOVER()
+    result_done = 1
+    result_stars = SIM.STARS()
+    result_score = SIM.SCORE()
+    sel_slot = -1
+    DIM won = IIF(SIM.PHASE$() = "won", 1, 0)
+    DIM finale = 0
+    IF play_kind$ = "level" THEN
+        IF won = 1 THEN
+            IF STARSOF(cur_level) = 0 ANDALSO (cur_level = 20 ORELSE cur_level = N_LEVELS) THEN finale = 1
+            WINSTATS()
+            RECORD(cur_level, result_stars, result_score)
+        ELSE
+            lost_set{STR$(cur_level)} = 1
+        ENDIF
+    ELSEIF play_kind$ = "endless" THEN
+        result_record = RECORDENDLESS(cur_arena, MAX([0, SIM.WAVE() - 1]), result_score)
+    ELSEIF won = 1 THEN
+        WINSTATS()
+        RECORDDAILY(result_score)
+    ENDIF
+    IF WORLDSTARS(1) >= 60 ANDALSO STAT("stars_w1") < 60 THEN gold_on = 1
+    ACHCHECK()
+    SAVEPROFILE()
+    IF finale = 1 THEN OPENFINALE(IIF(cur_level > 20, 2, 1))
+ENDSUB
+
 SUB UPDATE()
     IF uimode$ <> "play" THEN RETURN
     IF paused = 1 THEN RETURN
     DIM ph$ = SIM.PHASE$()
     IF ph$ = "won" ORELSE ph$ = "lost" THEN
-        IF result_done = 0 THEN
-            result_done = 1
-            result_stars = SIM.STARS()
-            result_score = SIM.SCORE()
-            IF ph$ = "won" THEN RECORD(cur_level, result_stars, result_score)
-            sel_slot = -1
-        ENDIF
+        IF result_done = 0 THEN LEVELOVER()
         RETURN
     ENDIF
     ' fixed steps for the time that really passed, so a slow device plays
@@ -1514,6 +2302,11 @@ SUB UPDATE()
     LOOP
     IF n_steps = 8 THEN sim_acc = 0.0
     EVENTSTOFX()
+    IF SIM.WAVE() > 0 ANDALSO speed < 3 ANDALSO SIM.BUSY() > 0 THEN lv_turbo = 0
+    IF frame MOD 30 = 0 THEN
+        STATMAX("credits_peak", SIM.CREDITS())
+        ACHCHECK()
+    ENDIF
 ENDSUB
 
 SUB DRAWFRAME()
@@ -1523,9 +2316,18 @@ SUB DRAWFRAME()
         DRAWPLAY()
     ELSEIF uimode$ = "board" THEN
         DRAWBOARD()
+    ELSEIF uimode$ = "ach" THEN
+        DRAWACH()
+    ELSEIF uimode$ = "endless" THEN
+        DRAWENDLESSMENU()
+    ELSEIF uimode$ = "daily" THEN
+        DRAWDAILYMENU()
+    ELSEIF uimode$ = "finale" THEN
+        DRAWFINALE()
     ELSE
         DRAWMENU()
     ENDIF
+    DRAWBANNER()
     ENDFRAME()
     hits_prev = hits
 ENDSUB
@@ -1535,6 +2337,7 @@ ENDSUB
 DIM shotmode$ = ""
 DIM shot_level = 1
 DIM selftest = 0
+DIM shot_screen$ = "menu"
 
 ' Taps the centre of whatever button the last frame registered for act$
 SUB TAPACT(act$)
@@ -1581,12 +2384,16 @@ DIM plain = []
 DIM ai
 FOR ai = 1 TO LEN(cli) - 1
     DIM arg$ = "" + cli[ai]
-    IF LCASE$(arg$) = "shot" ORELSE LCASE$(arg$) = "shotmenu" THEN
+    IF LCASE$(arg$) = "shot" ORELSE LCASE$(arg$) = "shotmenu" ORELSE LCASE$(arg$) = "shotendless" THEN
         shotmode$ = LCASE$(arg$)
     ELSEIF LCASE$(arg$) = "fps" THEN
         show_fps = 1
     ELSEIF LCASE$(arg$) = "selftest" THEN
         selftest = 1
+    ELSEIF LCASE$(arg$) = "shotscreen" THEN
+        shotmode$ = "shotscreen"
+    ELSEIF shotmode$ = "shotscreen" THEN
+        shot_screen$ = LCASE$(arg$)
     ELSEIF shotmode$ <> "" THEN
         shot_level = VAL(arg$)
     ELSE
@@ -1602,15 +2409,22 @@ SCREEN SCR_W, SCR_H, "jdTower"
 GFXINIT()
 FONTSIZE(18)
 LOGIN()
+DERIVESTATS()
+IF WORLDSTARS(1) >= 60 THEN gold_on = 1
 IF shotmode$ = "" THEN
     SNDINIT()
     MUSICINIT()
 ENDIF
 
 ' Plays a level for a while with a few towers, then saves one frame
+' (n < 0: the first endless arena)
 SUB SHOT(n)
-    STARTLEVEL(n)
-    DIM lv = LEVELDATA(n)
+    IF n < 0 THEN
+        STARTENDLESS(1)
+    ELSE
+        STARTLEVEL(n)
+    ENDIF
+    DIM lv = cur_lv
     DIM kinds = lv{"TOWERS"}
     DIM i
     FOR i = 0 TO SIM.NSLOTS() - 1
@@ -1633,6 +2447,18 @@ ENDSUB
 
 IF shotmode$ <> "" THEN
     IF shotmode$ = "shot" THEN SHOT(shot_level)
+    IF shotmode$ = "shotendless" THEN SHOT(-1)
+    IF shotmode$ = "shotmenu" ANDALSO shot_level = 2 THEN world = 2
+    IF shotmode$ = "shotscreen" THEN
+        IF shot_screen$ = "daily" THEN LOADDAILY()
+        IF shot_screen$ = "board" THEN LOADBOARD("W1")
+        IF shot_screen$ = "finale" THEN
+            OPENFINALE(1)
+        ELSE
+            uimode$ = shot_screen$
+        ENDIF
+        IF shot_screen$ = "ach" THEN ach_pick = 2
+    ENDIF
     tnow = tnow + 0.5
     DIM tf0 = TICK()
     DIM fi

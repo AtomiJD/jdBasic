@@ -1,0 +1,45 @@
+{
+  "ID": 34,
+  "NAME": "Pale Engine",
+  "COLS": 12,
+  "ROWS": 18,
+  "LIVES": 20,
+  "CREDITS": 1125,
+  "REWARDX": 2.65,
+  "TOWERS": ["LASER","BLASTER","CRYO","BOMB","TESLA","PULSE","PLASMA","RELAY","VORTEX"],
+  "PATHS": [
+    [[3.5,-0.8],[3.5,1.5],[10.5,1.5],[10.5,4.5],[6.5,4.5],[6.5,7.5],[10.5,7.5],[10.5,10.5],[3.5,10.5],[3.5,13.5],[3.5,18.6]],
+    [[8.5,-0.8],[8.5,2.5],[1.5,2.5],[1.5,5.5],[4.5,5.5],[4.5,8.5],[1.5,8.5],[1.5,11.5],[5.5,11.5],[5.5,15.5],[3.5,15.5],[3.5,18.6]]
+  ],
+  "SLOTS": [[7,0],[9,0],[11,0],[0,1],[0,3],[4,3],[6,3],[8,3],[11,3],[7,5],[9,5],[0,6],[5,7],[8,8],[5,9],[11,10],[8,11],[1,12],[4,12],[6,12],[5,16]],
+  "WAVES": [
+    {"GROUPS":[{"E":"DRONE","N":8,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":3.1}],"BONUS":30},
+    {"GROUPS":[{"E":"CARRIER","N":1,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":3.364}],"BONUS":35},
+    {"GROUPS":[{"E":"SCOUT","N":10,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":3.627},{"E":"SHIELDER","N":6,"GAP":1.1,"PATH":1,"DELAY":4,"HPX":3.627}],"BONUS":40},
+    {"GROUPS":[{"E":"DRONE","N":10,"GAP":0.85,"PATH":1,"DELAY":0,"HPX":3.891},{"E":"SHIELDER","N":6,"GAP":1.1,"PATH":0,"DELAY":4,"HPX":3.891}],"BONUS":45},
+    {"GROUPS":[{"E":"CARRIER","N":1,"GAP":3.2,"PATH":0,"DELAY":0,"HPX":4.154},{"E":"HEALER","N":4,"GAP":1.5,"PATH":1,"DELAY":5,"HPX":4.154}],"BONUS":50},
+    {"GROUPS":[{"E":"TANK","N":4,"GAP":1.7,"PATH":1,"DELAY":0,"HPX":4.418},{"E":"DRONE","N":11,"GAP":0.85,"PATH":0,"DELAY":4,"HPX":4.418}],"BONUS":55},
+    {"GROUPS":[{"E":"CARRIER","N":1,"GAP":3.2,"PATH":0,"DELAY":0,"HPX":4.681},{"E":"PHANTOM","N":9,"GAP":0.8,"PATH":1,"DELAY":7,"HPX":4.681}],"BONUS":60},
+    {"GROUPS":[{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":4.945},{"E":"HEALER","N":5,"GAP":1.5,"PATH":0,"DELAY":7,"HPX":4.945},{"E":"HEALER","N":5,"GAP":1.5,"PATH":1,"DELAY":14,"HPX":4.945}],"BONUS":65},
+    {"GROUPS":[{"E":"SPLITTER","N":7,"GAP":1.3,"PATH":0,"DELAY":0,"HPX":5.208},{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":5,"HPX":5.208},{"E":"SHIELDER","N":8,"GAP":1.1,"PATH":0,"DELAY":12,"HPX":5.208}],"BONUS":70},
+    {"GROUPS":[{"E":"BLINKER","N":9,"GAP":1,"PATH":1,"DELAY":0,"HPX":5.472},{"E":"BLINKER","N":9,"GAP":1,"PATH":0,"DELAY":4,"HPX":5.472},{"E":"SHIELDER","N":9,"GAP":1.1,"PATH":1,"DELAY":14,"HPX":5.472}],"BONUS":75},
+    {"GROUPS":[{"E":"CARRIER","N":2,"GAP":3.2,"PATH":0,"DELAY":0,"HPX":5.735},{"E":"TANK","N":5,"GAP":1.7,"PATH":1,"DELAY":7,"HPX":5.735},{"E":"MIRROR","N":7,"GAP":1.3,"PATH":0,"DELAY":14,"HPX":5.735}],"BONUS":80},
+    {"GROUPS":[{"E":"HEALER","N":6,"GAP":1.5,"PATH":1,"DELAY":0,"HPX":5.999},{"E":"DRONE","N":15,"GAP":0.85,"PATH":0,"DELAY":6,"HPX":5.999},{"E":"MIRROR","N":8,"GAP":1.3,"PATH":1,"DELAY":12,"HPX":5.999}],"BONUS":85},
+    {"GROUPS":[{"E":"TANK","N":6,"GAP":1.7,"PATH":0,"DELAY":0,"HPX":6.262},{"E":"SWARM","N":31,"GAP":0.32,"PATH":1,"DELAY":4,"HPX":6.262},{"E":"SHIELDER","N":10,"GAP":1.1,"PATH":0,"DELAY":12,"HPX":6.262},{"E":"BLINKER","N":10,"GAP":1,"PATH":1,"DELAY":21,"HPX":6.262}],"BONUS":90},
+    {"GROUPS":[{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":6.526},{"E":"SHIELDER","N":10,"GAP":1.1,"PATH":0,"DELAY":5,"HPX":6.526},{"E":"SPLITTER","N":8,"GAP":1.3,"PATH":1,"DELAY":14,"HPX":6.526},{"E":"DRONE","N":16,"GAP":0.85,"PATH":0,"DELAY":12,"HPX":6.526}],"BONUS":95},
+    {"GROUPS":[{"E":"PHANTOM","N":13,"GAP":0.8,"PATH":0,"DELAY":0,"HPX":6.789},{"E":"HEALER","N":6,"GAP":1.5,"PATH":1,"DELAY":4,"HPX":6.789},{"E":"FLYER","N":11,"GAP":0.9,"PATH":0,"DELAY":14,"HPX":6.789},{"E":"SPLITTER","N":8,"GAP":1.3,"PATH":1,"DELAY":21,"HPX":6.789}],"BONUS":100},
+    {"GROUPS":[{"E":"SHIELDER","N":11,"GAP":1.1,"PATH":1,"DELAY":0,"HPX":7.053},{"E":"CARRIER","N":2,"GAP":3.2,"PATH":0,"DELAY":7,"HPX":7.053},{"E":"SHIELDER","N":11,"GAP":1.1,"PATH":1,"DELAY":8,"HPX":7.053},{"E":"BLINKER","N":11,"GAP":1,"PATH":0,"DELAY":21,"HPX":7.053}],"BONUS":105},
+    {"GROUPS":[{"E":"CARRIER","N":2,"GAP":3.2,"PATH":0,"DELAY":0,"HPX":7.316},{"E":"HEALER","N":7,"GAP":1.5,"PATH":1,"DELAY":7,"HPX":7.316},{"E":"CARRIER","N":2,"GAP":3.2,"PATH":0,"DELAY":14,"HPX":7.316},{"E":"BLINKER","N":11,"GAP":1,"PATH":1,"DELAY":18,"HPX":7.316}],"BONUS":110},
+    {"GROUPS":[{"E":"MIRROR","N":9,"GAP":1.3,"PATH":1,"DELAY":0,"HPX":7.58},{"E":"SPLITTER","N":9,"GAP":1.3,"PATH":0,"DELAY":5,"HPX":7.58},{"E":"SCOUT","N":21,"GAP":0.55,"PATH":1,"DELAY":12,"HPX":7.58},{"E":"TANK","N":7,"GAP":1.7,"PATH":0,"DELAY":18,"HPX":7.58}],"BONUS":115},
+    {"GROUPS":[{"E":"SWARM","N":39,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":7.843},{"E":"SCOUT","N":22,"GAP":0.55,"PATH":1,"DELAY":5,"HPX":7.843},{"E":"DRONE","N":20,"GAP":0.85,"PATH":0,"DELAY":12,"HPX":7.843},{"E":"CARRIER","N":2,"GAP":3.2,"PATH":1,"DELAY":12,"HPX":7.843}],"BONUS":120},
+    {"GROUPS":[{"E":"CARRIER","N":3,"GAP":3.2,"PATH":1,"DELAY":0,"HPX":8.107},{"E":"MIRROR","N":10,"GAP":1.3,"PATH":0,"DELAY":5,"HPX":8.107},{"E":"SPLITTER","N":10,"GAP":1.3,"PATH":1,"DELAY":10,"HPX":8.107},{"E":"SPLITTER","N":10,"GAP":1.3,"PATH":0,"DELAY":12,"HPX":8.107}],"BONUS":125},
+    {"GROUPS":[{"E":"HEALER","N":8,"GAP":1.5,"PATH":0,"DELAY":0,"HPX":8.37},{"E":"CARRIER","N":3,"GAP":3.2,"PATH":1,"DELAY":7,"HPX":8.37},{"E":"TANK","N":8,"GAP":1.7,"PATH":0,"DELAY":12,"HPX":8.37},{"E":"SHIELDER","N":13,"GAP":1.1,"PATH":1,"DELAY":18,"HPX":8.37}],"BONUS":130}
+  ],
+  "MUSIC": {
+    "BPM": 124,
+    "PAD": "<[f3,g#3,c4] [a#3,c#4,f4] [d#3,g3,a#3] [g#3,c4,d#4]>",
+    "BASS": "<[f1 ~ ~ f1 ~ ~ f2 ~] [a#1 ~ ~ a#1 ~ ~ a#2 ~] [d#1 ~ ~ d#1 ~ ~ d#2 ~] [g#1 ~ ~ g#1 ~ ~ g#2 ~]>",
+    "ARP": "<[f4 g#4 c5 f5]*4 [a#4 c#5 f5 a#5]*4 [d#4 g4 a#4 d#5]*4 [g#4 c5 d#5 g#5]*4>",
+    "DRUMS": "[bd hh] [sd hh] [bd bd] [sd hh]"
+  }
+}

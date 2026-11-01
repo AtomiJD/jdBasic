@@ -1,0 +1,41 @@
+{
+  "ID": 26,
+  "NAME": "Static Sea",
+  "COLS": 12,
+  "ROWS": 18,
+  "LIVES": 20,
+  "CREDITS": 925,
+  "REWARDX": 2.25,
+  "TOWERS": ["LASER","BLASTER","CRYO","BOMB","TESLA","PULSE","PLASMA","RELAY","VORTEX"],
+  "PATHS": [
+    [[6.5,-0.8],[6.5,1.5],[3.5,1.5],[3.5,5.5],[6.5,5.5],[6.5,9.5],[9.5,9.5],[9.5,13.5],[9.5,18.6]],
+    [[10.5,-0.8],[10.5,2.5],[4.5,2.5],[4.5,5.5],[1.5,5.5],[1.5,8.5],[4.5,8.5],[4.5,12.5],[7.5,12.5],[7.5,15.5],[9.5,15.5],[9.5,18.6]]
+  ],
+  "SLOTS": [[3,0],[9,0],[7,1],[7,5],[3,6],[0,7],[5,7],[9,8],[1,9],[6,11],[8,11],[10,11],[3,13],[5,13],[10,13],[6,15],[10,15]],
+  "WAVES": [
+    {"GROUPS":[{"E":"DRONE","N":8,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":2.3}],"BONUS":30},
+    {"GROUPS":[{"E":"MIRROR","N":4,"GAP":1.3,"PATH":1,"DELAY":0,"HPX":2.496}],"BONUS":35},
+    {"GROUPS":[{"E":"SCOUT","N":10,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":2.691},{"E":"SWARM","N":19,"GAP":0.32,"PATH":1,"DELAY":6,"HPX":2.691}],"BONUS":40},
+    {"GROUPS":[{"E":"HEALER","N":4,"GAP":1.5,"PATH":1,"DELAY":0,"HPX":2.886},{"E":"MIRROR","N":5,"GAP":1.3,"PATH":0,"DELAY":6,"HPX":2.886}],"BONUS":45},
+    {"GROUPS":[{"E":"MIRROR","N":5,"GAP":1.3,"PATH":0,"DELAY":0,"HPX":3.082},{"E":"PHANTOM","N":8,"GAP":0.8,"PATH":1,"DELAY":4,"HPX":3.082}],"BONUS":50},
+    {"GROUPS":[{"E":"HEALER","N":4,"GAP":1.5,"PATH":1,"DELAY":0,"HPX":3.278},{"E":"MIRROR","N":6,"GAP":1.3,"PATH":0,"DELAY":5,"HPX":3.278}],"BONUS":55},
+    {"GROUPS":[{"E":"PHANTOM","N":9,"GAP":0.8,"PATH":0,"DELAY":0,"HPX":3.473},{"E":"SWARM","N":24,"GAP":0.32,"PATH":1,"DELAY":4,"HPX":3.473}],"BONUS":60},
+    {"GROUPS":[{"E":"MIRROR","N":6,"GAP":1.3,"PATH":1,"DELAY":0,"HPX":3.669},{"E":"TANK","N":5,"GAP":1.7,"PATH":0,"DELAY":4,"HPX":3.669},{"E":"PHANTOM","N":9,"GAP":0.8,"PATH":1,"DELAY":10,"HPX":3.669}],"BONUS":65},
+    {"GROUPS":[{"E":"SCOUT","N":15,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":3.864},{"E":"DRONE","N":13,"GAP":0.85,"PATH":1,"DELAY":7,"HPX":3.864},{"E":"BRUTE","N":3,"GAP":2.6,"PATH":0,"DELAY":12,"HPX":3.864}],"BONUS":70},
+    {"GROUPS":[{"E":"FLYER","N":9,"GAP":0.9,"PATH":1,"DELAY":0,"HPX":4.06},{"E":"SWARM","N":28,"GAP":0.32,"PATH":0,"DELAY":4,"HPX":4.06},{"E":"SWARM","N":28,"GAP":0.32,"PATH":1,"DELAY":12,"HPX":4.06}],"BONUS":75},
+    {"GROUPS":[{"E":"MIRROR","N":7,"GAP":1.3,"PATH":0,"DELAY":0,"HPX":4.255},{"E":"SWARM","N":29,"GAP":0.32,"PATH":1,"DELAY":4,"HPX":4.255},{"E":"FLYER","N":9,"GAP":0.9,"PATH":0,"DELAY":8,"HPX":4.255}],"BONUS":80},
+    {"GROUPS":[{"E":"SPLITTER","N":8,"GAP":1.3,"PATH":1,"DELAY":0,"HPX":4.451},{"E":"MIRROR","N":8,"GAP":1.3,"PATH":0,"DELAY":4,"HPX":4.451},{"E":"SWARM","N":30,"GAP":0.32,"PATH":1,"DELAY":10,"HPX":4.451}],"BONUS":85},
+    {"GROUPS":[{"E":"SWARM","N":31,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":4.646},{"E":"DRONE","N":16,"GAP":0.85,"PATH":1,"DELAY":4,"HPX":4.646},{"E":"PHANTOM","N":12,"GAP":0.8,"PATH":0,"DELAY":8,"HPX":4.646}],"BONUS":90},
+    {"GROUPS":[{"E":"MIRROR","N":8,"GAP":1.3,"PATH":1,"DELAY":0,"HPX":4.842},{"E":"FLYER","N":10,"GAP":0.9,"PATH":0,"DELAY":5,"HPX":4.842},{"E":"MIRROR","N":8,"GAP":1.3,"PATH":1,"DELAY":8,"HPX":4.842}],"BONUS":95},
+    {"GROUPS":[{"E":"SHIELDER","N":11,"GAP":1.1,"PATH":0,"DELAY":0,"HPX":5.037},{"E":"FLYER","N":11,"GAP":0.9,"PATH":1,"DELAY":7,"HPX":5.037},{"E":"SHIELDER","N":11,"GAP":1.1,"PATH":0,"DELAY":12,"HPX":5.037}],"BONUS":100},
+    {"GROUPS":[{"E":"SHIELDER","N":11,"GAP":1.1,"PATH":1,"DELAY":0,"HPX":5.233},{"E":"PHANTOM","N":13,"GAP":0.8,"PATH":0,"DELAY":6,"HPX":5.233},{"E":"MIRROR","N":9,"GAP":1.3,"PATH":1,"DELAY":8,"HPX":5.233}],"BONUS":105},
+    {"GROUPS":[{"E":"MIRROR","N":9,"GAP":1.3,"PATH":0,"DELAY":0,"HPX":5.428},{"E":"SWARM","N":36,"GAP":0.32,"PATH":1,"DELAY":4,"HPX":5.428},{"E":"SHIELDER","N":11,"GAP":1.1,"PATH":0,"DELAY":14,"HPX":5.428}],"BONUS":110}
+  ],
+  "MUSIC": {
+    "BPM": 108,
+    "PAD": "<[c3,d#3,g3] [a#3,d4,f4] [g#3,c4,d#4] [a#3,d4,f4]>",
+    "BASS": "<[c1 c2]*4 [a#1 a#2]*4 [g#1 g#2]*4 [a#1 a#2]*4>",
+    "ARP": "<[c4 ~ g4 d#4 ~ g4 c5 ~] [a#4 ~ f5 d5 ~ f5 a#5 ~] [g#4 ~ d#5 c5 ~ d#5 g#5 ~] [a#4 ~ f5 d5 ~ f5 a#5 ~]>",
+    "DRUMS": "[bd hh] [sd hh] [bd bd] [sd hh]"
+  }
+}

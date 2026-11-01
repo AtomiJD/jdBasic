@@ -1,6 +1,7 @@
 ' A bot plays levels headless under the real rules and reports how it went.
 '   jdbasic simtest.jdb            every level
 '   jdbasic simtest.jdb 3 7        levels 3 to 7
+'   jdbasic simtest.jdb endless    one run per endless arena, until it falls
 ' The bot builds on the slots that see the most path, mixes the tower
 ' kinds the level allows, upgrades the cheapest option when no slot is
 ' worth a new tower, and launches a wave only on a clear field.
@@ -29,11 +30,14 @@ FUNC COVERAGE(lv, sx, sy, r)
 ENDFUNC
 
 DIM MIX = ["LASER", "BLASTER", "LASER", "CRYO", "BOMB", "TESLA", "BLASTER", "PULSE", "PLASMA", "LASER", "RELAY", "TESLA"]
+' world 2 brings cloaked and mirrored enemies: a Tesla first, fewer beams
+DIM MIX2 = ["TESLA", "BOMB", "BLASTER", "CRYO", "PLASMA", "TESLA", "LASER", "PULSE", "VORTEX", "BOMB", "RELAY", "TESLA"]
 
 FUNC NEXTKIND$(lv, n_built)
     DIM k
     FOR k = 0 TO LEN(MIX) - 1
         DIM cand$ = MIX[(n_built + k) MOD LEN(MIX)]
+        IF lv{"ID"} > 20 THEN cand$ = MIX2[(n_built + k) MOD LEN(MIX2)]
         IF INDEXOF(lv{"TOWERS"}, cand$) >= 0 THEN RETURN cand$
     NEXT k
     RETURN "LASER"
@@ -86,8 +90,18 @@ FUNC SPEND(lv, order, n_built)
 ENDFUNC
 
 FUNC PLAYLEVEL(n)
-    DIM nm$ = "data/levels/level_" + RIGHT$("0" + STR$(n), 2) + ".json"
-    DIM lv = JSON.PARSE(TXTREADER$(nm$))
+    DIM lv AS MAP = {}
+    IF n < 0 THEN
+        lv = JSON.PARSE(TXTREADER$("data/levels/level_" + RIGHT$("0" + STR$(ARENAS[-n - 1]), 2) + ".json"))
+        lv{"ID"} = 99
+        lv{"TOWERS"} = towers_json{"ORDER"}
+        lv{"CREDITS"} = 900
+        lv{"LIVES"} = 25
+        lv{"ENDLESS"} = 1000 - n
+    ELSE
+        lv = JSON.PARSE(TXTREADER$("data/levels/level_" + RIGHT$("0" + STR$(n), 2) + ".json"))
+    ENDIF
+    DIM perks = 0
     SIM.START(lv)
     SIM.QUIET(0)
     DIM leaks AS MAP = {}
@@ -104,6 +118,11 @@ FUNC PLAYLEVEL(n)
     DO
         IF SIM.PHASE$() = "won" ORELSE SIM.PHASE$() = "lost" THEN EXITDO
         IF steps MOD 10 = 0 THEN n_built = SPEND(lv, order, n_built)
+        IF n < 0 ANDALSO SIM.BUSY() = 0 ANDALSO SIM.WAVE() > 0 ANDALSO SIM.WAVE() MOD 10 = 0 ANDALSO perks < SIM.WAVE() / 10 THEN
+            DIM perk_codes = ["DMG", "COST", "LIVES"]
+            SIM.PERK(perk_codes[perks MOD 3])
+            perks = perks + 1
+        ENDIF
         IF SIM.BUSY() = 0 THEN SIM.LAUNCH()
         SIM.ADVANCE(DT)
         FOR EACH ev IN SIM.EVENTS()
@@ -115,7 +134,8 @@ FUNC PLAYLEVEL(n)
         steps = steps + 1
         DIM en = LEN(SIM.ENEMIES(){"X"})
         IF en > peak THEN peak = en
-        IF steps > 60000 THEN EXITDO
+        IF steps > 60000 ANDALSO n > 0 THEN EXITDO
+        IF steps > 400000 THEN EXITDO
     LOOP
     DIM ms = TICK() - t0
     DIM out AS MAP = {}
@@ -132,14 +152,25 @@ FUNC PLAYLEVEL(n)
     RETURN out
 ENDFUNC
 
+' the maps endless runs use, as in the client
+DIM ARENAS = [7, 12, 19]
+
 DIM args = OS.ARGS()
 DIM lo = 1
-DIM hi = 20
+DIM hi = 40
 IF LEN(args) > 1 THEN
     lo = VAL(args[1])
     hi = lo
 ENDIF
 IF LEN(args) > 2 THEN hi = VAL(args[2])
+IF LEN(args) > 1 ANDALSO args[1] = "endless" THEN
+    DIM a
+    FOR a = 1 TO 3
+        DIM re = PLAYLEVEL(-a)
+        PRINT "arena "; a; "  reached wave "; re{"WAVE"}; "  towers "; re{"TOWERS"}; "  sim "; re{"SIMS"}; "s  "; re{"LEAKS"}
+    NEXT a
+    END
+ENDIF
 DIM lvl_no
 FOR lvl_no = lo TO hi
     DIM r = PLAYLEVEL(lvl_no)

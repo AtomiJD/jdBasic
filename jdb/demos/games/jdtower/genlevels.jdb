@@ -1,12 +1,13 @@
-' Writes data/levels/level_01.json .. level_20.json. Every level is made
+' Writes data/levels/level_01.json .. level_40.json. Every level is made
 ' from its own seed, so a rerun gives the same files; the files are the
 ' source of truth afterwards and may be edited by hand.
 '   jdbasic genlevels.jdb            all levels
 '   jdbasic genlevels.jdb 7          only level 7
+'   jdbasic genlevels.jdb 21 40      levels 21 to 40
 
 CONST COLS = 12
 CONST ROWS = 18
-CONST N_LEVELS = 20
+CONST N_LEVELS = 40
 
 DIM rng_state = 1
 
@@ -23,11 +24,15 @@ ENDFUNC
 DIM LEVEL_NAMES = ["First Light", "Neon Alley", "Cold Circuit", "Ember Grid", "Iron Herald", _
     "Glass Canyon", "Static Bloom", "Night Market", "Prism Falls", "Twin Gates", _
     "Violet Drift", "Shard Harbor", "Arc Reactor", "Mirror Maze", "The Warden", _
-    "Signal Storm", "Crimson Loop", "Event Horizon", "Last Relay", "Overlord"]
+    "Signal Storm", "Crimson Loop", "Event Horizon", "Last Relay", "Overlord", _
+    "Hollow Sun", "Phantom Pier", "Quartz Spine", "Mirror Lake", "Iron Choir", _
+    "Static Sea", "Blink Street", "Cobalt Gate", "Ghost Relay", "Titan Fall", _
+    "Neon Abyss", "Carrier Deck", "Shatter Point", "Pale Engine", "Sky Furnace", _
+    "Red Mirage", "Tri Gate", "Vanta Rise", "Final Signal", "Neon Crown"]
 
 ' Kinds as they join the roster, with the level they first appear in
-DIM ROSTER = ["DRONE", "SCOUT", "SWARM", "TANK", "FLYER", "SHIELDER", "HEALER", "SPLITTER", "BRUTE"]
-DIM ROSTER_FROM = [1, 1, 2, 3, 4, 6, 8, 11, 13]
+DIM ROSTER = ["DRONE", "SCOUT", "SWARM", "TANK", "FLYER", "SHIELDER", "HEALER", "SPLITTER", "BRUTE", "PHANTOM", "MIRROR", "BLINKER", "CARRIER"]
+DIM ROSTER_FROM = [1, 1, 2, 3, 4, 6, 8, 11, 13, 22, 24, 27, 31]
 
 DIM GROUP_N AS MAP = {}
 GROUP_N{"DRONE"} = 8
@@ -39,6 +44,10 @@ GROUP_N{"SHIELDER"} = 5
 GROUP_N{"HEALER"} = 3
 GROUP_N{"SPLITTER"} = 4
 GROUP_N{"BRUTE"} = 2
+GROUP_N{"PHANTOM"} = 6
+GROUP_N{"MIRROR"} = 4
+GROUP_N{"BLINKER"} = 5
+GROUP_N{"CARRIER"} = 1
 DIM GROUP_GAP AS MAP = {}
 GROUP_GAP{"DRONE"} = 0.85
 GROUP_GAP{"SCOUT"} = 0.55
@@ -49,9 +58,13 @@ GROUP_GAP{"SHIELDER"} = 1.1
 GROUP_GAP{"HEALER"} = 1.5
 GROUP_GAP{"SPLITTER"} = 1.3
 GROUP_GAP{"BRUTE"} = 2.6
+GROUP_GAP{"PHANTOM"} = 0.8
+GROUP_GAP{"MIRROR"} = 1.3
+GROUP_GAP{"BLINKER"} = 1.0
+GROUP_GAP{"CARRIER"} = 3.2
 
-DIM TOWER_ORDER = ["LASER", "BLASTER", "CRYO", "BOMB", "TESLA", "PULSE", "PLASMA", "RELAY"]
-DIM TOWER_FROM = [1, 1, 2, 3, 5, 7, 9, 11]
+DIM TOWER_ORDER = ["LASER", "BLASTER", "CRYO", "BOMB", "TESLA", "PULSE", "PLASMA", "RELAY", "VORTEX"]
+DIM TOWER_FROM = [1, 1, 2, 3, 5, 7, 9, 11, 21]
 
 ' A serpentine of axis-aligned legs from above the top edge to below the
 ' bottom one. end_col >= 0 forces the column the path leaves through.
@@ -174,7 +187,70 @@ FUNC GROUP(kind$, w, hpx, path_id, delay)
     RETURN g
 ENDFUNC
 
+' World 2: newest kind of the second roster, or the strongest of the first
+FUNC LATEST2(lvl)
+    DIM best$ = "BRUTE"
+    DIM i
+    FOR i = 0 TO LEN(ROSTER) - 1
+        IF ROSTER_FROM[i] > 20 ANDALSO ROSTER_FROM[i] <= lvl THEN best$ = ROSTER[i]
+    NEXT i
+    RETURN best$
+ENDFUNC
+
+' World 2 starts where world 1 ended: every tower, more groups per wave,
+' the new kinds mixed in, a Titan as boss on 30 and 40
+FUNC GENWAVES2(lvl, n_paths)
+    DIM kinds_pool = POOL(lvl)
+    DIM fresh$ = LATEST2(lvl)
+    DIM n_waves = 14 + INT((lvl - 20) / 2)
+    DIM lscale = 1.8 + 0.1 * (lvl - 21)
+    DIM waves = []
+    DIM w
+    FOR w = 0 TO n_waves - 1
+        DIM hpx = lscale * (1 + 0.085 * w)
+        DIM groups = []
+        DIM n_groups = 1
+        IF w >= 2 THEN n_groups = 2
+        IF w >= 7 THEN n_groups = 3
+        IF w >= 12 ANDALSO lvl >= 30 THEN n_groups = 4
+        DIM gi
+        FOR gi = 0 TO n_groups - 1
+            DIM kind$ = kinds_pool[RNDI(LEN(kinds_pool))]
+            IF gi = 0 ANDALSO w >= 1 ANDALSO w MOD 3 = 1 THEN kind$ = fresh$
+            IF w = 0 THEN kind$ = "DRONE"
+            DIM pth = (w + gi) MOD n_paths
+            groups = APPEND(groups, [GROUP(kind$, w, hpx, pth, gi * (4 + RNDI(4)))])
+        NEXT gi
+        IF lvl MOD 5 = 0 ANDALSO w = n_waves - 1 THEN
+            DIM boss AS MAP = {}
+            boss{"E"} = IIF(lvl MOD 10 = 0, "TITAN", "OVERLORD")
+            boss{"N"} = 1 + (lvl = 35)
+            boss{"GAP"} = 7
+            boss{"PATH"} = 0
+            boss{"DELAY"} = 8
+            boss{"HPX"} = ROUND(IIF(lvl MOD 10 = 0, 1.6 + 0.12 * (lvl - 30), 3.4 + 0.2 * (lvl - 25)), 3)
+            groups = APPEND(groups, [boss])
+            IF lvl = 40 THEN
+                DIM guard AS MAP = {}
+                guard{"E"} = "OVERLORD"
+                guard{"N"} = 2
+                guard{"GAP"} = 5
+                guard{"PATH"} = 1
+                guard{"DELAY"} = 20
+                guard{"HPX"} = 4.0
+                groups = APPEND(groups, [guard])
+            ENDIF
+        ENDIF
+        DIM wave AS MAP = {}
+        wave{"GROUPS"} = groups
+        wave{"BONUS"} = 30 + 5 * w
+        waves = APPEND(waves, [wave])
+    NEXT w
+    RETURN waves
+ENDFUNC
+
 FUNC GENWAVES(lvl, n_paths)
+    IF lvl > 20 THEN RETURN GENWAVES2(lvl, n_paths)
     DIM kinds_pool = POOL(lvl)
     DIM fresh$ = NEWEST(lvl)
     DIM n_waves = 8 + INT(lvl / 2)
@@ -245,6 +321,29 @@ FUNC GENLEVEL(lvl)
         paths = APPEND(paths, [best])
         tiles = UNIQUE(APPEND(tiles, PATHTILES(best)))
     ENDIF
+    IF lvl >= 30 THEN
+        DIM end3 = INT(p1[LEN(p1) - 1][0])
+        DIM taken = [INT(p1[0][0]), INT(paths[1][0][0])]
+        DIM best3 = []
+        DIM best3_ov = 999
+        DIM tries3
+        FOR tries3 = 1 TO 40
+            DIM sc3 = 1 + RNDI(COLS - 2)
+            IF ABS(sc3 - taken[0]) >= 3 ANDALSO ABS(sc3 - taken[1]) >= 3 THEN
+                DIM p3 = GENPATH(sc3, 3 + RNDI(2), end3)
+                DIM ov3 = OVERLAP(PATHTILES(p3), tiles)
+                IF ov3 < best3_ov THEN
+                    best3_ov = ov3
+                    best3 = p3
+                ENDIF
+            ENDIF
+        NEXT tries3
+        IF LEN(best3) > 0 THEN
+            paths = APPEND(paths, [best3])
+            tiles = UNIQUE(APPEND(tiles, PATHTILES(best3)))
+            n_paths = 3
+        ENDIF
+    ENDIF
     DIM towers = []
     FOR i = 0 TO LEN(TOWER_ORDER) - 1
         IF TOWER_FROM[i] <= lvl THEN towers = APPEND(towers, TOWER_ORDER[i])
@@ -257,9 +356,14 @@ FUNC GENLEVEL(lvl)
     lv{"LIVES"} = 20
     lv{"CREDITS"} = 250 + 35 * (lvl - 1)
     lv{"REWARDX"} = ROUND(1 + 0.05 * (lvl - 1), 3)
+    DIM n_slots = 9 + INT(lvl / 2) + 2 * (n_paths - 1)
+    IF lvl > 20 THEN
+        lv{"CREDITS"} = 800 + 25 * (lvl - 21)
+        n_slots = 12 + INT((lvl - 20) / 2) + 2 * (n_paths - 1)
+    ENDIF
     lv{"TOWERS"} = towers
     lv{"PATHS"} = paths
-    lv{"SLOTS"} = GENSLOTS(tiles, 9 + INT(lvl / 2) + 2 * (n_paths - 1))
+    lv{"SLOTS"} = GENSLOTS(tiles, n_slots)
     lv{"WAVES"} = GENWAVES(lvl, n_paths)
     lv{"MUSIC"} = SONG(lvl)
     RETURN lv
@@ -290,8 +394,11 @@ FUNC TRIAD(root, minor)
     RETURN [root, root + 4 - minor, root + 7]
 ENDFUNC
 
-FUNC SONG(lvl)
-    DIM key_root = SONG_KEYS[(lvl - 1) MOD LEN(SONG_KEYS)]
+' World 2 replays the songs of world 1 a fourth up and a little faster
+FUNC SONG(lvl_in)
+    DIM w2 = IIF(lvl_in > 20, 1, 0)
+    DIM lvl = lvl_in - 20 * w2
+    DIM key_root = (SONG_KEYS[(lvl - 1) MOD LEN(SONG_KEYS)] + 5 * w2) MOD 12
     DIM prog = PROGS[(lvl - 1) MOD LEN(PROGS)]
     DIM boss = IIF(lvl MOD 5 = 0, 1, 0)
     DIM style = (lvl - 1) MOD 3
@@ -316,7 +423,7 @@ FUNC SONG(lvl)
         DIM a1$ = NOTE$(t[1] + 12)
         DIM a2$ = NOTE$(t[2] + 12)
         DIM a3$ = NOTE$(t[0] + 24)
-        IF boss = 1 ORELSE lvl >= 15 THEN
+        IF boss = 1 ORELSE lvl >= 15 ORELSE (w2 = 1 ANDALSO lvl >= 8) THEN
             arp$ = arp$ + " [" + a0$ + " " + a1$ + " " + a2$ + " " + a3$ + "]*4"
         ELSEIF style = 0 THEN
             arp$ = arp$ + " [" + a0$ + " " + a1$ + " " + a2$ + " " + a1$ + "]*2"
@@ -329,10 +436,10 @@ FUNC SONG(lvl)
     DIM drums$ = "[bd ~ ~ ~] [~ hh ~ hh] [~ ~ bd ~] [~ hh ~ hh]"
     IF style = 1 THEN drums$ = "[bd ~ hh ~] [~ hh sd hh] [bd ~ hh bd] [~ hh sd hh]"
     IF style = 2 THEN drums$ = "[bd hh] [~ hh] [bd hh] [cp hh]"
-    IF lvl >= 11 ANDALSO boss = 0 THEN drums$ = "[bd hh] [sd hh] [bd bd] [sd hh]"
+    IF (lvl >= 11 ORELSE w2 = 1) ANDALSO boss = 0 THEN drums$ = "[bd hh] [sd hh] [bd bd] [sd hh]"
     IF boss = 1 THEN drums$ = "[bd hh bd hh] [sd hh bd hh] [bd hh bd hh] [sd hh cp hh]"
     DIM m AS MAP = {}
-    m{"BPM"} = 88 + 2 * lvl + 6 * boss
+    m{"BPM"} = 88 + 2 * lvl + 6 * boss + 8 * w2
     m{"PAD"} = "<" + MID$(pad$, 1, LEN(pad$)) + ">"
     m{"BASS"} = "<" + MID$(bass$, 1, LEN(bass$)) + ">"
     m{"ARP"} = "<" + MID$(arp$, 1, LEN(arp$)) + ">"
@@ -393,14 +500,17 @@ ENDSUB
 SUB MAIN()
     IF NOT FILE.EXISTS("data/levels") THEN MKDIR "data/levels"
     DIM args = OS.ARGS()
+    DIM lo = 1
+    DIM hi = N_LEVELS
     IF LEN(args) > 1 THEN
-        WRITELEVEL(VAL(args[1]))
-    ELSE
-        DIM lvl
-        FOR lvl = 1 TO N_LEVELS
-            WRITELEVEL(lvl)
-        NEXT lvl
+        lo = VAL(args[1])
+        hi = lo
     ENDIF
+    IF LEN(args) > 2 THEN hi = VAL(args[2])
+    DIM lvl
+    FOR lvl = lo TO hi
+        WRITELEVEL(lvl)
+    NEXT lvl
 ENDSUB
 
 MAIN()

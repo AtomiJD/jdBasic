@@ -72,7 +72,7 @@ echo "== pages and game =="
 $SSH 'mkdir -p ~/tower/web/play/data/levels'
 $SCP web/index.html web/manifest.json web/sw.js web/icon-180.png web/icon-192.png web/icon-512.png web/icon-mask.png "$HOST:~/tower/web/"
 $SCP jdtower.jdb sim.jdb $WASM/index.html "$HOST:~/tower/web/play/"
-$SCP data/towers.json data/enemies.json data/lang.json "$HOST:~/tower/web/play/data/"
+$SCP data/towers.json data/enemies.json data/lang.json data/achievements.json "$HOST:~/tower/web/play/data/"
 $SCP data/levels/*.json "$HOST:~/tower/web/play/data/levels/"
 
 if [ "$1" = "--wasm" ]; then

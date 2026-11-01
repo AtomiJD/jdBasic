@@ -1,5 +1,5 @@
 {
-  "ORDER": ["LASER", "BLASTER", "CRYO", "BOMB", "TESLA", "PULSE", "PLASMA", "RELAY"],
+  "ORDER": ["LASER", "BLASTER", "CRYO", "BOMB", "TESLA", "PULSE", "PLASMA", "RELAY", "VORTEX"],
   "TOWERS": {
     "LASER": {
       "MODE": "BEAM", "COLOR": [60, 240, 255], "AIR": 1, "GROUND": 1,
@@ -127,6 +127,22 @@
       "B": {"TIERS": [
         {"COST": 200, "INCOME": 30},
         {"COST": 280, "INCOME": 60, "BUFFD": 0.32}
+      ]}
+    },
+    "VORTEX": {
+      "MODE": "PULL", "COLOR": [130, 150, 255], "AIR": 1, "GROUND": 1,
+      "TIERS": [
+        {"COST": 160, "RANGE": 1.8, "DMG": 10, "RATE": 0.25, "PULL": 0.8},
+        {"COST": 110, "PULL": 1.1, "DMG": 16},
+        {"COST": 140, "RANGE": 2.1, "RATE": 0.3, "DMG": 22}
+      ],
+      "A": {"TIERS": [
+        {"COST": 230, "PULL": 1.6, "RANGE": 2.4},
+        {"COST": 330, "PULL": 2.2, "RATE": 0.36, "RANGE": 2.6}
+      ]},
+      "B": {"TIERS": [
+        {"COST": 240, "PCT": 0.06, "DMG": 40},
+        {"COST": 350, "PCT": 0.1, "DMG": 70, "RATE": 0.36}
       ]}
     }
   }
