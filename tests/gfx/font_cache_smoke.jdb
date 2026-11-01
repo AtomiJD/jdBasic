@@ -1,0 +1,55 @@
+' SETFONT keeps one open font per size and TEXT keeps the rendered strings.
+' Switching sizes back and forth must answer the same measures, a full
+' text cache must empty itself, and a second SCREEN must not draw with
+' textures of the renderer it replaced.
+' Needs a GFX build and a display, so it lives beside the capture smoke
+' rather than in the sweep.
+DIM bad = 0
+
+SUB EXPECT(name$, cond)
+    IF NOT cond THEN
+        bad = bad + 1
+        PRINT "FAIL: "; name$
+    ENDIF
+ENDSUB
+
+DIM font$ = ""
+FOR EACH c$ IN ["jdbasic_default.ttf", "../../build/jdbasic_default.ttf", "build/jdbasic_default.ttf"]
+    IF font$ = "" ANDALSO FILE.EXISTS(c$) THEN font$ = c$
+NEXT c$
+EXPECT("default font found", font$ <> "")
+
+SCREEN 320, 240, "font cache smoke"
+SETFONT font$, 12
+DIM w12 = GFX.TEXTSIZE("Welle 12/18")[0]
+SETFONT font$, 24
+DIM w24 = GFX.TEXTSIZE("Welle 12/18")[0]
+SETFONT font$, 12
+DIM w12b = GFX.TEXTSIZE("Welle 12/18")[0]
+EXPECT("a larger size measures wider", w24 > w12)
+EXPECT("switching back answers the first measure", w12b = w12)
+
+' more distinct strings and fonts than either cache holds
+DIM i AS INTEGER
+FOR i = 1 TO 700
+    SETFONT font$, 10 + (i MOD 30)
+    TEXT 4, 4 + (i MOD 200), "line " + STR$(i), 200, 220, 255
+NEXT i
+SCREENFLIP
+SETFONT font$, 12
+EXPECT("measures hold after the caches emptied", GFX.TEXTSIZE("Welle 12/18")[0] = w12)
+
+' the same strings again on a new renderer
+SCREEN 320, 240, "font cache smoke 2"
+SETFONT font$, 12
+TEXT 4, 4, "line 1", 200, 220, 255
+TEXT 4, 24, "Welle 12/18", 255, 255, 255
+SCREENFLIP
+EXPECT("text draws after a second SCREEN", GFX.TEXTSIZE("Welle 12/18")[0] = w12)
+
+GFX.CLOSE
+IF bad = 0 THEN
+    PRINT "ALL FONT CACHE TESTS PASSED!"
+ELSE
+    PRINT bad; " FONT CACHE TESTS FAILED"
+ENDIF

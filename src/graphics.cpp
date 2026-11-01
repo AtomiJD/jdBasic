@@ -207,6 +207,40 @@ static std::string g_font_path;
 static float g_font_size = 16.0f;
 static bool g_ttf_init = false;
 
+// Fonts stay open per path and size, so switching sizes keeps each one's
+// glyph cache instead of re-rasterising every glyph after a reopen.
+static std::map<std::string, TTF_Font*> g_font_cache;
+static const size_t FONT_CACHE_MAX = 24;
+
+// Rendered TEXT strings per font, colour and content; most labels repeat
+// every frame. Emptied whole when full.
+struct TextTex { SDL_Texture* tex; float w, h; };
+static std::unordered_map<std::string, TextTex> g_text_cache;
+static const size_t TEXT_CACHE_MAX = 512;
+
+static void clear_text_cache() {
+    for (auto& kv : g_text_cache)
+        if (kv.second.tex) SDL_DestroyTexture(kv.second.tex);
+    g_text_cache.clear();
+}
+
+static void close_font_cache() {
+    clear_text_cache();
+    for (auto& kv : g_font_cache) TTF_CloseFont(kv.second);
+    g_font_cache.clear();
+    g_font = nullptr;
+}
+
+static TTF_Font* open_font_cached(const std::string& path, float size) {
+    std::string key = path + "|" + std::to_string(size);
+    auto it = g_font_cache.find(key);
+    if (it != g_font_cache.end()) return it->second;
+    if (g_font_cache.size() >= FONT_CACHE_MAX) close_font_cache();
+    TTF_Font* f = TTF_OpenFont(path.c_str(), size);
+    if (f) g_font_cache[key] = f;
+    return f;
+}
+
 // Attempt to load the bundled default font (jdbasic_default.ttf, sits
 // next to the EXE). NO-OP if a font is already loaded or the file is
 // missing. Silent - callers that REQUIRE a font (TEXT) still throw their
@@ -227,7 +261,7 @@ static void try_load_default_font(float size_pt) {
         if (!TTF_Init()) return;
         g_ttf_init = true;
     }
-    g_font = TTF_OpenFont(path.c_str(), size_pt);
+    g_font = open_font_cached(path, size_pt);
     if (g_font) {
         g_font_path = path;
         g_font_size = size_pt;
@@ -652,7 +686,7 @@ static void cleanup_graphics() {
     g_cam = Camera{};
     g_particles.clear();
 
-    if (g_font) { TTF_CloseFont(g_font); g_font = nullptr; }
+    close_font_cache();
     if (g_ttf_init) { TTF_Quit(); g_ttf_init = false; }
 
     if (g_audio_init) {
@@ -721,6 +755,7 @@ void register_graphics_builtins(VM& vm) {
             g_screen_tex = nullptr;
         }
 #endif
+        clear_text_cache();
         if (g_renderer) { SDL_DestroyRenderer(g_renderer); g_renderer = nullptr; }
         if (g_window) { SDL_DestroyWindow(g_window); g_window = nullptr; }
 
@@ -928,9 +963,7 @@ void register_graphics_builtins(VM& vm) {
             g_ttf_init = true;
         }
 
-        if (g_font) { TTF_CloseFont(g_font); g_font = nullptr; }
-
-        g_font = TTF_OpenFont(path.c_str(), size);
+        g_font = open_font_cached(path, size);
         if (!g_font)
             throw jdError(ErrCode::RUNTIME_ERROR,
                 std::string("TTF_OpenFont failed: ") + SDL_GetError());
@@ -1422,21 +1455,26 @@ void register_graphics_builtins(VM& vm) {
         Uint8 r = g_draw_r, g = g_draw_g, b = g_draw_b;
         extract_rgb(args, 3, r, g, b);
 
-        SDL_Color color = {r, g, b, 255};
-        SDL_Surface* surface = TTF_RenderText_Blended(g_font, text.c_str(), 0, color);
-        if (!surface)
-            throw jdError(ErrCode::RUNTIME_ERROR,
-                std::string("TTF_RenderText failed: ") + SDL_GetError());
-
-        SDL_Texture* texture = SDL_CreateTextureFromSurface(g_renderer, surface);
-        float tw = (float)surface->w, th = (float)surface->h;
-        SDL_DestroySurface(surface);
-
-        if (texture) {
-            SDL_FRect dst = {x, y, tw, th};
-            SDL_RenderTexture(g_renderer, texture, nullptr, &dst);
-            SDL_DestroyTexture(texture);
+        char head[48];
+        snprintf(head, sizeof(head), "%p|%u|%u|%u|", (void*)g_font,
+                 (unsigned)r, (unsigned)g, (unsigned)b);
+        std::string key = head + text;
+        auto hit = g_text_cache.find(key);
+        if (hit == g_text_cache.end()) {
+            SDL_Color color = {r, g, b, 255};
+            SDL_Surface* surface = TTF_RenderText_Blended(g_font, text.c_str(), 0, color);
+            if (!surface)
+                throw jdError(ErrCode::RUNTIME_ERROR,
+                    std::string("TTF_RenderText failed: ") + SDL_GetError());
+            SDL_Texture* texture = SDL_CreateTextureFromSurface(g_renderer, surface);
+            TextTex tt{texture, (float)surface->w, (float)surface->h};
+            SDL_DestroySurface(surface);
+            if (!texture) return Value::make_none();
+            if (g_text_cache.size() >= TEXT_CACHE_MAX) clear_text_cache();
+            hit = g_text_cache.emplace(key, tt).first;
         }
+        SDL_FRect dst = {x, y, hit->second.w, hit->second.h};
+        SDL_RenderTexture(g_renderer, hit->second.tex, nullptr, &dst);
         return Value::make_none();
     });
 

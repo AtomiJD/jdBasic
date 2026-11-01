@@ -157,6 +157,18 @@ rm -f tests/gfx/gfx_capture_smoke.exe
 [ -f tests/gfx/gfx_capture_smoke.exe ] && timeout 25 ./tests/gfx/gfx_capture_smoke.exe
 ```
 
+The font cache smoke works the same way (exit 0 + "ALL FONT CACHE TESTS
+PASSED!"): sizes measure the same after switching back and forth, both
+caches empty themselves when full, and a second `SCREEN` draws text without
+the textures of the renderer it replaced. Run it from `tests/gfx`, where the
+default font sits:
+
+```bash
+rm -f tests/gfx/font_cache_smoke.exe
+./build/jdBasic.exe -c tests/gfx/font_cache_smoke.jdb
+[ -f tests/gfx/font_cache_smoke.exe ] && ( cd tests/gfx && timeout 25 ./font_cache_smoke.exe )
+```
+
 ## Step 3a - leak check (~6 s)
 
 Run it after touching `src/llvm_codegen.cpp`, `src/jdb_runtime.cpp` or
