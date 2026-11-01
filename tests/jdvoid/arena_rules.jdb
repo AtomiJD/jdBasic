@@ -11,15 +11,16 @@ IF here$ = "" THEN here$ = "."
 DIM game$ = PATH.JOIN$(here$, "..", "..", "jdb", "demos", "games", "basicroyale")
 DIM win_exe$ = PATH.JOIN$(here$, "..", "..", "build", "jdBasic.exe")
 
-DIM q$ = CHR$(34)
 DIM checks = ["warp_test.jdb", "art_test.jdb", "pull_test.jdb", "spawn_test.jdb", "splash_test.jdb", "replay_test.jdb", "traits_test.jdb"]
 DIM bad = 0
 FOR EACH c$ IN checks
-    DIM cmd$ = "sh -c " + q$ + "cd " + game$ + " && ../../../../build/jdbasic " + c$ + q$
+    ' arguments as an array: a single command string gets its quotes mangled by cmd
+    DIM r
     IF FILE.EXISTS(win_exe$) THEN
-        cmd$ = "cmd /c " + q$ + "cd /d " + game$ + " && ..\..\..\..\build\jdBasic.exe " + c$ + q$
+        r = OS.EXEC("cmd", ["/c", "cd /d " + REPLACE$(game$, "/", "\") + " && ..\..\..\..\build\jdBasic.exe " + c$])
+    ELSE
+        r = OS.EXEC("sh", ["-c", "cd " + game$ + " && ../../../../build/jdbasic " + c$])
     ENDIF
-    DIM r = OS.EXEC(cmd$)
     DIM out$ = "" + r{"output"}
     PRINT out$
     IF INSTR(out$, "failed 0") < 0 THEN bad = bad + 1
