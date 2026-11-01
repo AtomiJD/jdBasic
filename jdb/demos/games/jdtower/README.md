@@ -25,12 +25,14 @@ tower types with an upgrade path that branches at tier 3.
 | `server.jdb` | login, progress and leaderboard over HTTP |
 | `genlevels.jdb` | writes `data/levels/level_NN.json` from a seed per level |
 | `simtest.jdb` | a bot plays every level headless and reports the outcome |
+| `musiccheck.jdb` | renders every level's MUSIC loop, `<level> wav` writes it to tmp/ |
+| `makeicon.jdb` | renders the app icons into web/ |
 | `sim_test.jdb` | rule checks, gated by `tests/jdtower/sim_rules.jdb` |
-| `web/`, `deploy.sh` | landing page, deployment to vvss.jdbasic.tech/tower/ |
+| `web/`, `deploy.sh` | landing page, manifest, icons, service worker; deployment to vvss.jdbasic.tech/tower/ |
 | `data/towers.json` | tower stats per tier and branch |
 | `data/enemies.json` | enemy kinds |
 | `data/lang.json` | UI strings, de and en |
-| `data/levels/` | one JSON file per level: paths, build slots, waves |
+| `data/levels/` | one JSON file per level: paths, build slots, waves, music |
 
 The level files are the source of truth once written. `genlevels.jdb` is
 how they were made; editing a level by hand is fine, re-running the
@@ -90,3 +92,13 @@ Live since 2026-11-01 at https://vvss.jdbasic.tech/tower/. The score
 server runs on the box's jdBasic 1.2 build in `~/jdbasic-1.2` (the
 26 October refresh, commit `bd2eb677`, built with `GFX=0 NET=0 HTTP=1
 SQLITE=1`); `players.json` and `sessions.json` live in `~/tower`.
+
+## Music
+
+Each level file ends in a `MUSIC` block: `BPM` and four patterns in the
+sequencer's mini-notation, played in a loop on fixed voices - `PAD`
+(chords), `BASS`, `ARP` and `DRUMS` (the built-in synth kit: `bd sd hh oh
+cp ...`). Edit the notes there; a pattern the sequencer refuses falls back
+to the menu loop for that track, and `musiccheck.jdb` names it before
+anyone hears it. The generator composes the blocks from a key, one of six
+progressions and three grooves per level; boss levels drive harder.

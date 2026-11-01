@@ -1,0 +1,57 @@
+' Checks the MUSIC block of every level: the sequencer accepts each track,
+' and one bar renders to sound. Run from this folder:
+'   jdbasic musiccheck.jdb            all levels
+'   jdbasic musiccheck.jdb 7 wav      level 7, also written to tmp/level_07.wav
+' Needs a build with the sequencer (GFX or SOUND).
+
+DIM args = OS.ARGS()
+DIM lo = 1
+DIM hi = 20
+DIM want_wav = 0
+IF LEN(args) > 1 THEN
+    lo = VAL(args[1])
+    hi = lo
+ENDIF
+IF LEN(args) > 2 THEN want_wav = 1
+
+SOUND.INIT "PULL"
+SOUND.VOICE 6, "SAW", 0.6, 0.5, 0.7, 1.2
+SOUND.VOICE 7, "TRIANGLE", 0.005, 0.3, 0.3, 0.1
+SOUND.VOICE 8, "SQUARE", 0.002, 0.09, 0.1, 0.08
+SOUND.KIT 9, "SYNTH"
+
+DIM tracks = ["PAD", "BASS", "ARP", "DRUMS"]
+DIM n_bad = 0
+DIM lvl
+FOR lvl = lo TO hi
+    DIM nm$ = RIGHT$("0" + STR$(lvl), 2)
+    DIM lv = JSON.PARSE(TXTREADER$("data/levels/level_" + nm$ + ".json"))
+    DIM song = lv{"MUSIC"}
+    DIM msg$ = ""
+    DIM t
+    FOR t = 0 TO 3
+        TRY
+            SOUND.SEQ 6 + t, song{tracks[t]}, "VOICE"
+        CATCH
+            msg$ = msg$ + " " + tracks[t] + ": " + ERRMSG$
+        ENDTRY
+    NEXT t
+    SOUND.BPM song{"BPM"}
+    IF want_wav = 1 THEN
+        IF NOT FILE.EXISTS("tmp") THEN MKDIR "tmp"
+        SOUND.RECORD "tmp/level_" + nm$ + ".wav"
+    ENDIF
+    ' four bars, so every chord of the progression sounds once
+    DIM frames = INT(44100 * 60 / song{"BPM"} * 16)
+    DIM wave = SOUND.RENDER(frames)
+    IF want_wav = 1 THEN SOUND.RECORD
+    DIM rms = SQR(SUM(wave * wave) / LEN(wave))
+    IF rms < 0.005 THEN msg$ = msg$ + " silent"
+    IF msg$ = "" THEN
+        PRINT "level "; nm$; "  ok  bpm "; song{"BPM"}; "  rms "; ROUND(rms, 3)
+    ELSE
+        n_bad = n_bad + 1
+        PRINT "level "; nm$; "  BAD"; msg$
+    ENDIF
+NEXT lvl
+PRINT "musiccheck: "; hi - lo + 1 - n_bad; " ok, "; n_bad; " bad"

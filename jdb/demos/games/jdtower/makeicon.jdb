@@ -1,0 +1,109 @@
+' Renders the app icons into web/: icon-512.png, icon-192.png,
+' icon-180.png (apple-touch-icon) and icon-mask.png (maskable, the art
+' inside the safe circle). Same neon as the game: additive lines into an
+' image, glow from ever smaller copies of it.
+'   jdbasic makeicon.jdb          run from this folder
+
+CONST N = 512
+CONST TWO_PI = 6.283185307
+
+SCREEN N, N, "jdTower icon"
+
+DIM scene_img = GFX.NEWTARGET(N, N)
+DIM final_img = GFX.NEWTARGET(N, N)
+DIM mips = [GFX.NEWTARGET(256, 256), GFX.NEWTARGET(128, 128), GFX.NEWTARGET(64, 64), GFX.NEWTARGET(32, 32)]
+
+SUB POLY(cx, cy, r, sides, rot, c, w)
+    DIM a = rot + IOTA(sides + 1, 0) * TWO_PI / sides
+    GFX.LINES cx + r * COS(a), cy + r * SIN(a), w, c[0], c[1], c[2]
+ENDSUB
+
+SUB SEG(x1, y1, x2, y2, c, w)
+    GFX.LINES [x1, x2], [y1, y2], w, c[0], c[1], c[2]
+ENDSUB
+
+' The art in a 512 square, shrunk by k around the centre
+SUB ART(k)
+    DIM cx = N / 2
+    DIM cy = N / 2
+    ' synthwave floor under everything
+    DIM i
+    FOR i = 0 TO 8
+        DIM z = i / 8
+        DIM y = 330 + 182 * z * z
+        SEG(0, y, N, y, [70, 18, 70], 2)
+    NEXT i
+    FOR i = -6 TO 6
+        SEG(cx + i * 12, 330, cx + i * 110, N, [70, 18, 70], 2)
+    NEXT i
+    ' the road the enemies take, bending past the tower
+    DIM rx = [96, 96, 96, 470]
+    DIM ry = [-20, 200, 430, 430]
+    GFX.BLEND "NONE"
+    GFX.LINES cx + (rx - cx) * k, cy + (ry - cy) * k, 50 * k, 30, 150, 200
+    GFX.LINES cx + (rx - cx) * k, cy + (ry - cy) * k, 38 * k, 10, 9, 30
+    GFX.BLEND "ADD"
+    ' build pad and laser tower
+    DIM tx = cx + 50 * k
+    DIM ty = cy - 40 * k
+    POLY(tx, ty, 132 * k, 6, 0, [40, 110, 160], 6 * k)
+    POLY(tx, ty, 108 * k, 6, 0, [70, 230, 255], 9 * k)
+    POLY(tx, ty, 66 * k, 4, 0, [90, 245, 255], 11 * k)
+    POLY(tx, ty, 24 * k, 4, 0, [230, 255, 255], 8 * k)
+    ' the beam onto an enemy on the road
+    DIM ex = cx + (96 - cx) * k
+    DIM ey = cy + (250 - cy) * k
+    SEG(tx, ty, ex, ey, [30, 90, 110], 18 * k)
+    SEG(tx, ty, ex, ey, [150, 240, 255], 5 * k)
+    POLY(ex, ey, 30 * k, 3, 0.3, [255, 70, 180], 9 * k)
+    POLY(ex, ey, 12 * k, 3, -0.6, [255, 230, 245], 5 * k)
+    ' a second enemy further back
+    POLY(cx + (96 - cx) * k, cy + (110 - cy) * k, 22 * k, 4, 0.4, [255, 150, 60], 7 * k)
+ENDSUB
+
+SUB RENDER(k)
+    GFX.TARGET scene_img, TRUE
+    CLS 5, 5, 16
+    GFX.BLEND "ADD"
+    ART(k)
+    GFX.BLEND "BLEND"
+    DIM src = scene_img
+    DIM i
+    FOR i = 0 TO 3
+        DIM m = INT(N / 2 ^ (i + 1))
+        GFX.TARGET mips[i], TRUE
+        GFX.DRAWQUAD src, [0, m, m, 0], [0, 0, m, m], 255, "NONE", 1
+        src = mips[i]
+    NEXT i
+    DIM qx = [0, N, N, 0]
+    DIM qy = [0, 0, N, N]
+    GFX.TARGET final_img, TRUE
+    GFX.DRAWQUAD scene_img, qx, qy, 255, "NONE", 1
+    GFX.DRAWQUAD mips[1], qx, qy, 120, "ADD", 1
+    GFX.DRAWQUAD mips[2], qx, qy, 170, "ADD", 1
+    GFX.DRAWQUAD mips[3], qx, qy, 220, "ADD", 1
+    GFX.TARGET
+ENDSUB
+
+SUB SAVESIZE(sz, path$)
+    DIM t = GFX.NEWTARGET(sz, sz)
+    GFX.TARGET t, TRUE
+    GFX.DRAWQUAD final_img, [0, sz, sz, 0], [0, 0, sz, sz], 255, "NONE", 4
+    GFX.TARGET
+    GFX.SAVE_IMAGE(t, path$)
+    GFX.FREEIMAGE(t)
+    PRINT path$
+ENDSUB
+
+RENDER(1.0)
+SAVESIZE(512, "web/icon-512.png")
+SAVESIZE(192, "web/icon-192.png")
+SAVESIZE(180, "web/icon-180.png")
+' maskable: the platform may cut it to a circle of 80% diameter
+RENDER(0.78)
+SAVESIZE(512, "web/icon-mask.png")
+
+CLS 0, 0, 0
+GFX.DRAWQUAD final_img, [0, N, N, 0], [0, 0, N, N], 255, "NONE", 1
+SCREENFLIP
+GFX.CLOSE

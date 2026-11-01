@@ -261,7 +261,83 @@ FUNC GENLEVEL(lvl)
     lv{"PATHS"} = paths
     lv{"SLOTS"} = GENSLOTS(tiles, 9 + INT(lvl / 2) + 2 * (n_paths - 1))
     lv{"WAVES"} = GENWAVES(lvl, n_paths)
+    lv{"MUSIC"} = SONG(lvl)
     RETURN lv
+ENDFUNC
+
+' ── music ───────────────────────────────────────────────────────
+' Every level gets its own loop in the sequencer's mini-notation: a key, a
+' four-chord progression, an arpeggio and a groove. Boss levels drive harder.
+' Nothing here draws from the level's random stream, so the maps stay put.
+
+DIM NOTE_NAMES = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"]
+' key roots as semitones above c, one per level
+DIM SONG_KEYS = [9, 4, 2, 0, 6, 7, 11, 5, 1, 9, 4, 2, 7, 0, 6, 11, 5, 1, 4, 9]
+' progressions as [semitone offset, 1 = minor] per chord
+DIM PROGS = [[[0, 1], [8, 0], [3, 0], [10, 0]], _
+             [[0, 1], [5, 1], [10, 0], [3, 0]], _
+             [[0, 1], [8, 0], [5, 1], [7, 0]], _
+             [[0, 1], [3, 0], [10, 0], [5, 1]], _
+             [[8, 0], [10, 0], [0, 1], [0, 1]], _
+             [[0, 1], [10, 0], [8, 0], [10, 0]]]
+
+FUNC NOTE$(midi)
+    RETURN NOTE_NAMES[midi MOD 12] + STR$(INT(midi / 12) - 1)
+ENDFUNC
+
+' The three tones of a chord, root first, from a midi root
+FUNC TRIAD(root, minor)
+    RETURN [root, root + 4 - minor, root + 7]
+ENDFUNC
+
+FUNC SONG(lvl)
+    DIM key_root = SONG_KEYS[(lvl - 1) MOD LEN(SONG_KEYS)]
+    DIM prog = PROGS[(lvl - 1) MOD LEN(PROGS)]
+    DIM boss = IIF(lvl MOD 5 = 0, 1, 0)
+    DIM style = (lvl - 1) MOD 3
+    DIM pad$ = ""
+    DIM bass$ = ""
+    DIM arp$ = ""
+    FOR EACH ch IN prog
+        DIM t = TRIAD(48 + (key_root + ch[0]) MOD 12, ch[1])
+        DIM r1$ = NOTE$(t[0] - 24)
+        DIM r2$ = NOTE$(t[0] - 12)
+        pad$ = pad$ + " [" + NOTE$(t[0]) + "," + NOTE$(t[1]) + "," + NOTE$(t[2]) + "]"
+        IF boss = 1 THEN
+            bass$ = bass$ + " [" + r1$ + " " + r1$ + " " + r2$ + " " + r1$ + "]*2"
+        ELSEIF style = 0 THEN
+            bass$ = bass$ + " [" + r1$ + " ~ " + r2$ + " ~]*2"
+        ELSEIF style = 1 THEN
+            bass$ = bass$ + " [" + r1$ + " ~ ~ " + r1$ + " ~ ~ " + r2$ + " ~]"
+        ELSE
+            bass$ = bass$ + " [" + r1$ + " " + r2$ + "]*4"
+        ENDIF
+        DIM a0$ = NOTE$(t[0] + 12)
+        DIM a1$ = NOTE$(t[1] + 12)
+        DIM a2$ = NOTE$(t[2] + 12)
+        DIM a3$ = NOTE$(t[0] + 24)
+        IF boss = 1 ORELSE lvl >= 15 THEN
+            arp$ = arp$ + " [" + a0$ + " " + a1$ + " " + a2$ + " " + a3$ + "]*4"
+        ELSEIF style = 0 THEN
+            arp$ = arp$ + " [" + a0$ + " " + a1$ + " " + a2$ + " " + a1$ + "]*2"
+        ELSEIF style = 1 THEN
+            arp$ = arp$ + " [" + a3$ + " " + a2$ + " " + a1$ + " " + a2$ + "]*2"
+        ELSE
+            arp$ = arp$ + " [" + a0$ + " ~ " + a2$ + " " + a1$ + " ~ " + a2$ + " " + a3$ + " ~]"
+        ENDIF
+    NEXT ch
+    DIM drums$ = "[bd ~ ~ ~] [~ hh ~ hh] [~ ~ bd ~] [~ hh ~ hh]"
+    IF style = 1 THEN drums$ = "[bd ~ hh ~] [~ hh sd hh] [bd ~ hh bd] [~ hh sd hh]"
+    IF style = 2 THEN drums$ = "[bd hh] [~ hh] [bd hh] [cp hh]"
+    IF lvl >= 11 ANDALSO boss = 0 THEN drums$ = "[bd hh] [sd hh] [bd bd] [sd hh]"
+    IF boss = 1 THEN drums$ = "[bd hh bd hh] [sd hh bd hh] [bd hh bd hh] [sd hh cp hh]"
+    DIM m AS MAP = {}
+    m{"BPM"} = 88 + 2 * lvl + 6 * boss
+    m{"PAD"} = "<" + MID$(pad$, 1, LEN(pad$)) + ">"
+    m{"BASS"} = "<" + MID$(bass$, 1, LEN(bass$)) + ">"
+    m{"ARP"} = "<" + MID$(arp$, 1, LEN(arp$)) + ">"
+    m{"DRUMS"} = drums$
+    RETURN m
 ENDFUNC
 
 ' One key per line, one wave per line, so a level reads well in an editor
@@ -283,6 +359,16 @@ FUNC PRETTY$(lv)
                 s$ = s$ + nl$
             NEXT j
             s$ = s$ + "  ]"
+        ELSEIF k$ = "MUSIC" THEN
+            DIM mk = MAP.KEYS(lv{k$})
+            s$ = s$ + "{" + nl$
+            DIM j2
+            FOR j2 = 0 TO LEN(mk) - 1
+                s$ = s$ + "    " + q$ + mk[j2] + q$ + ": " + SCALAR$(lv{k$}{mk[j2]})
+                IF j2 < LEN(mk) - 1 THEN s$ = s$ + ","
+                s$ = s$ + nl$
+            NEXT j2
+            s$ = s$ + "  }"
         ELSE
             s$ = s$ + SCALAR$(lv{k$})
         ENDIF

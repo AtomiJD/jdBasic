@@ -257,11 +257,48 @@ SUB SNDINIT()
     ENDTRY
 ENDSUB
 
-' Am - F - C - G, slow and soft, so it sits under the effects
+' The menu loop: Am - F - C - G, slow and soft. Each level brings its own
+' loop in the MUSIC block of its JSON file, same four tracks.
+DIM MENU_SONG AS MAP = {}
+MENU_SONG{"BPM"} = 92
+MENU_SONG{"PAD"} = "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>"
+MENU_SONG{"BASS"} = "<[a1 ~ a2 ~]*2 [f1 ~ f2 ~]*2 [c2 ~ c3 ~]*2 [g1 ~ g2 ~]*2>"
+MENU_SONG{"ARP"} = "<[a4 c5 e5 c5]*2 [f4 a4 c5 a4]*2 [c5 e5 g5 e5]*2 [g4 b4 d5 b4]*2>"
+MENU_SONG{"DRUMS"} = "[bd ~ ~ ~] [~ hh ~ hh] [~ ~ bd ~] [~ hh ~ hh]"
+
+' A song missing a track or carrying a pattern the sequencer refuses keeps
+' the menu loop for that track instead of going silent
+SUB SETSONG(song)
+    IF snd_on = 0 THEN RETURN
+    DIM tracks = ["PAD", "BASS", "ARP", "DRUMS"]
+    DIM t
+    FOR t = 0 TO 3
+        DIM pat$ = MENU_SONG{tracks[t]}
+        IF TYPEOF(song) = "OBJECT" THEN
+            IF MAP.EXISTS(song, tracks[t]) THEN pat$ = "" + song{tracks[t]}
+        ENDIF
+        TRY
+            SOUND.SEQ 6 + t, pat$, "VOICE"
+        CATCH
+            TRY
+                SOUND.SEQ 6 + t, MENU_SONG{tracks[t]}, "VOICE"
+            CATCH
+            ENDTRY
+        ENDTRY
+    NEXT t
+    DIM bpm = 92
+    IF TYPEOF(song) = "OBJECT" THEN
+        IF MAP.EXISTS(song, "BPM") THEN bpm = song{"BPM"}
+    ENDIF
+    TRY
+        SOUND.BPM bpm
+    CATCH
+    ENDTRY
+ENDSUB
+
 SUB MUSICINIT()
     IF snd_on = 0 THEN RETURN
     TRY
-        SOUND.BPM 92
         SOUND.VOICE 6, "SAW", 0.6, 0.5, 0.7, 1.2
         SOUND.FILTER 6, 900, 0.2
         SOUND.GAIN 6, 0.07
@@ -272,13 +309,10 @@ SUB MUSICINIT()
         SOUND.GAIN 8, 0.05
         SOUND.KIT 9, "SYNTH"
         SOUND.GAIN 9, 0.13
-        SOUND.SEQ 6, "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>", "VOICE"
-        SOUND.SEQ 7, "<[a1 ~ a2 ~]*2 [f1 ~ f2 ~]*2 [c2 ~ c3 ~]*2 [g1 ~ g2 ~]*2>", "VOICE"
-        SOUND.SEQ 8, "<[a4 c5 e5 c5]*2 [f4 a4 c5 a4]*2 [c5 e5 g5 e5]*2 [g4 b4 d5 b4]*2>", "VOICE"
-        SOUND.SEQ 9, "[bd ~ ~ ~] [~ hh ~ hh] [~ ~ bd ~] [~ hh ~ hh]", "VOICE"
-        MUSICMIX("menu")
     CATCH
     ENDTRY
+    SETSONG(MENU_SONG)
+    MUSICMIX("menu")
 ENDSUB
 
 DIM mus_mode$ = "menu"
@@ -625,6 +659,11 @@ SUB STARTLEVEL(n)
     result_done = 0
     flash = 0.0
     uimode$ = "play"
+    IF MAP.EXISTS(lv, "MUSIC") THEN
+        SETSONG(lv{"MUSIC"})
+    ELSE
+        SETSONG(MENU_SONG)
+    ENDIF
     MUSICMIX("play")
     IF n > 1 THEN
         DIM before = LEVELDATA(n - 1){"TOWERS"}
@@ -1345,6 +1384,7 @@ SUB DOACTION(act$)
         SFX("TAP")
         uimode$ = "menu"
         paused = 0
+        SETSONG(MENU_SONG)
         MUSICMIX("menu")
     ELSEIF act$ = "next" THEN
         IF SIM.LAUNCH() = "" THEN sel_slot = -1

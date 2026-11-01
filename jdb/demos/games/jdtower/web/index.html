@@ -9,6 +9,9 @@
 <meta property="og:title" content="jdTOWER - Neon Tower Defense">
 <meta property="og:description" content="Neon Tower Defense in jdBasic. 20 Level, 8 Tower, ein Ziel.">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-title" content="jdTOWER">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#05050f">
@@ -61,6 +64,7 @@
   a.guest{display:block;text-align:center;margin-top:6px;color:#8fe9ff;font-size:14px;letter-spacing:.06em;}
   #err{min-height:20px;color:#ff7a9a;text-align:center;font-size:14px;}
   .hint{font-size:13px;color:#6f6aa8;text-align:center;margin-top:14px;line-height:1.6;max-width:420px;}
+  .hint b{color:#9fe8ff;font-weight:600;}
 </style>
 </head>
 <body>
@@ -88,16 +92,22 @@
     <a class="guest" id="guest" href="#">Als Gast spielen</a>
   </form>
   <div class="hint" id="hint"></div>
+  <div class="hint" id="ios"></div>
 <script>
   const TXT = {
     de:{name:"Name",pin:"PIN (4-8 Ziffern)",lang:"Sprache",go:"SPIELEN",guest:"Als Gast spielen",
         hint:"Der erste Login mit einem Namen reserviert ihn für deine PIN.<br>Sterne und Bestwerte landen in der Bestenliste.",
+        ios:"iPhone: unten auf <b>Teilen</b> tippen, dann <b>Zum Home-Bildschirm</b>.<br>jdTOWER startet dann ohne Browserleiste.",
         net:"Server nicht erreichbar."},
     en:{name:"Name",pin:"PIN (4-8 digits)",lang:"Language",go:"PLAY",guest:"Play as guest",
         hint:"The first login with a name reserves it for your PIN.<br>Stars and best scores go to the leaderboard.",
+        ios:"iPhone: tap <b>Share</b> below, then <b>Add to Home Screen</b>.<br>jdTOWER then starts without the browser bar.",
         net:"Server unreachable."}
   };
   const $ = id => document.getElementById(id);
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const saved = JSON.parse(localStorage.getItem('jdtower') || '{}');
   $('name').value = saved.name || '';
   $('lang').value = saved.lang || (navigator.language || 'de').slice(0,2);
@@ -111,6 +121,7 @@
     $('go').textContent = t.go;
     $('guest').textContent = t.guest;
     $('hint').innerHTML = t.hint;
+    $('ios').innerHTML = (isIOS && !standalone) ? t.ios : '';
     document.documentElement.lang = $('lang').value;
   }
   $('lang').addEventListener('change', applyLang);
@@ -141,6 +152,7 @@
     play({name:r.NAME, auth:r.AUTH});
   });
   $('guest').addEventListener('click', ev => { ev.preventDefault(); play({}); });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', {scope: '/tower/'});
 </script>
 </body>
 </html>

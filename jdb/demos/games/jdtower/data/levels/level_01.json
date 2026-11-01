@@ -20,5 +20,12 @@
     {"GROUPS":[{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.45},{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":7,"HPX":1.45}],"BONUS":40},
     {"GROUPS":[{"E":"DRONE","N":12,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.54},{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":6,"HPX":1.54}],"BONUS":44},
     {"GROUPS":[{"E":"DRONE","N":12,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.63},{"E":"DRONE","N":12,"GAP":0.85,"PATH":0,"DELAY":5,"HPX":1.63}],"BONUS":48}
-  ]
+  ],
+  "MUSIC": {
+    "BPM": 90,
+    "PAD": "<[a3,c4,e4] [f3,a3,c4] [c3,e3,g3] [g3,b3,d4]>",
+    "BASS": "<[a1 ~ a2 ~]*2 [f1 ~ f2 ~]*2 [c1 ~ c2 ~]*2 [g1 ~ g2 ~]*2>",
+    "ARP": "<[a4 c5 e5 c5]*2 [f4 a4 c5 a4]*2 [c4 e4 g4 e4]*2 [g4 b4 d5 b4]*2>",
+    "DRUMS": "[bd ~ ~ ~] [~ hh ~ hh] [~ ~ bd ~] [~ hh ~ hh]"
+  }
 }

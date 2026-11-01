@@ -163,11 +163,18 @@ FOR lvl_no = 1 TO 20
     IF lv{"ID"} <> lvl_no ORELSE LEN(lv{"WAVES"}) < 8 ORELSE LEN(lv{"SLOTS"}) < 8 THEN bad_files = bad_files + 1
     IF LEN(lv{"TOWERS"}) < prev_towers THEN bad_files = bad_files + 1
     prev_towers = LEN(lv{"TOWERS"})
+    IF NOT MAP.EXISTS(lv, "MUSIC") THEN
+        bad_files = bad_files + 1
+    ELSE
+        FOR EACH tr$ IN ["BPM", "PAD", "BASS", "ARP", "DRUMS"]
+            IF NOT MAP.EXISTS(lv{"MUSIC"}, tr$) THEN bad_files = bad_files + 1
+        NEXT tr$
+    ENDIF
     FOR EACH g IN lv{"WAVES"}[0]{"GROUPS"}
         IF NOT MAP.EXISTS(enemies_json{"ENEMIES"}, g{"E"}) THEN bad_files = bad_files + 1
     NEXT g
 NEXT lvl_no
-CHECK("20 level files well formed, towers only ever added", bad_files = 0)
+CHECK("20 level files well formed with music, towers only ever added", bad_files = 0)
 CHECK("all eight towers by the last level", prev_towers = 8)
 
 PRINT "sim_test: passed "; n_ok; ", failed "; n_bad

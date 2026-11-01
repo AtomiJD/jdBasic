@@ -24,5 +24,12 @@
     {"GROUPS":[{"E":"SWARM","N":28,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":2.57},{"E":"SWARM","N":28,"GAP":0.32,"PATH":0,"DELAY":7,"HPX":2.57},{"E":"FLYER","N":9,"GAP":0.9,"PATH":0,"DELAY":10,"HPX":2.57}],"BONUS":56},
     {"GROUPS":[{"E":"TANK","N":5,"GAP":1.7,"PATH":0,"DELAY":0,"HPX":2.698},{"E":"SCOUT","N":16,"GAP":0.55,"PATH":0,"DELAY":4,"HPX":2.698},{"E":"HEALER","N":5,"GAP":1.5,"PATH":0,"DELAY":10,"HPX":2.698}],"BONUS":60},
     {"GROUPS":[{"E":"HEALER","N":6,"GAP":1.5,"PATH":0,"DELAY":0,"HPX":2.826},{"E":"TANK","N":6,"GAP":1.7,"PATH":0,"DELAY":7,"HPX":2.826},{"E":"SWARM","N":30,"GAP":0.32,"PATH":0,"DELAY":10,"HPX":2.826}],"BONUS":64}
-  ]
+  ],
+  "MUSIC": {
+    "BPM": 104,
+    "PAD": "<[f3,g#3,c4] [a#3,c#4,f4] [d#3,g3,a#3] [g#3,c4,d#4]>",
+    "BASS": "<[f1 ~ ~ f1 ~ ~ f2 ~] [a#1 ~ ~ a#1 ~ ~ a#2 ~] [d#1 ~ ~ d#1 ~ ~ d#2 ~] [g#1 ~ ~ g#1 ~ ~ g#2 ~]>",
+    "ARP": "<[f5 c5 g#4 c5]*2 [a#5 f5 c#5 f5]*2 [d#5 a#4 g4 a#4]*2 [g#5 d#5 c5 d#5]*2>",
+    "DRUMS": "[bd ~ hh ~] [~ hh sd hh] [bd ~ hh bd] [~ hh sd hh]"
+  }
 }
