@@ -116,9 +116,9 @@
     "RELAY": {
       "MODE": "RELAY", "COLOR": [255, 230, 90], "AIR": 0, "GROUND": 0,
       "TIERS": [
-        {"COST": 150, "RANGE": 1.6, "BUFFD": 0.15, "BUFFR": 0.08},
+        {"COST": 150, "RANGE": 2.3, "BUFFD": 0.15, "BUFFR": 0.08},
         {"COST": 110, "BUFFD": 0.22},
-        {"COST": 140, "BUFFD": 0.28, "BUFFR": 0.12, "RANGE": 2.1}
+        {"COST": 140, "BUFFD": 0.28, "BUFFR": 0.12, "RANGE": 3.0}
       ],
       "A": {"TIERS": [
         {"COST": 220, "BUFFD": 0.4, "BUFFR": 0.15},

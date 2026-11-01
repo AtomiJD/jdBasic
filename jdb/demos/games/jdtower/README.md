@@ -59,6 +59,9 @@ generator overwrites it.
   Blinkers jump ahead on a timer, Carriers and the Titan drop smaller
   enemies. The Vortex drags enemies back along their path; each further
   pull on the same enemy reaches half as far, so nothing is held forever.
+- A Relay lends damage and range to every tower whose centre lies within
+  its reach: 2.3 tiles from tier 1, 3.0 from tier 3. Build slots stand at
+  least two tiles apart, so anything shorter reaches no one. Relays stack.
 - A leaked enemy costs lives. Stars: 3 at 90% of the lives left or more,
   2 at 50% or more, 1 for any win.
 
@@ -82,6 +85,13 @@ working directory, so run them from inside `jdb/demos/games/jdtower`:
 
 The bot wins 17 of the 20 levels in world 1 and 15 of 20 in world 2, and
 reaches waves 40 to 53 in the endless arenas.
+
+`shot <level>` prints the draw time per frame of a full board. Text is the
+expensive part: the runtime keeps one open font per size and the rendered
+texture of every recent string, so a full board draws in about 4 ms on the
+desktop (22 ms before those caches). Under load the client drops hit sparks
+and reward numbers first (`FX_SOFT`, `FX_HARD`, or below 20 fps) and lets
+the simulation fall behind rather than run more than speed + 2 steps a frame.
 
 The server keeps `players.json`, `sessions.json` and `daily.json` in its
 working directory. Routes: `/login`, `/progress`, `/result`, `/profile`

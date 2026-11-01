@@ -1022,7 +1022,15 @@ ENDSUB
 
 ' ── effects ─────────────────────────────────────────────────────
 
+' Hit sparks and reward numbers are the first to go when the screen is
+' busy or the device falls behind; rings, zaps and deaths always show.
+CONST FX_SOFT = 60
+CONST FX_HARD = 140
 SUB ADDFX(m)
+    DIM n_fx = LEN(fx)
+    IF n_fx >= FX_HARD THEN RETURN
+    DIM minor = IIF(m{"F"} = "TXT" ORELSE (m{"F"} = "BURST" ANDALSO m{"N"} <= 4), 1, 0)
+    IF minor = 1 ANDALSO (n_fx >= FX_SOFT ORELSE fps_avg < 20) THEN RETURN
     m{"T0"} = tnow
     fx = APPEND(fx, [m])
 ENDSUB
@@ -1183,9 +1191,10 @@ ENDSUB
 SUB DRAWSLOTS()
     DIM xs = []
     DIM ys = []
+    DIM ftw = SIM.TOWERS()
     DIM i
     FOR i = 0 TO SIM.NSLOTS() - 1
-        IF SIM.TOWER(i){"KIND"} = "" THEN
+        IF ftw[i]{"KIND"} = "" THEN
             DIM s = SIM.SLOTPOS(i)
             xs = APPEND(xs, PXX(s[0] + 0.5))
             ys = APPEND(ys, PXY(s[1] + 0.5))
@@ -1197,8 +1206,7 @@ SUB DRAWSLOTS()
     GFX.LINES APPEND(WEAVE(xs - pl, xs + pl), WEAVE(xs, xs)), APPEND(WEAVE(ys, ys), WEAVE(ys - pl, ys + pl)), 2, 90, 80, 160, TRUE
 ENDSUB
 
-SUB DRAWTOWER(slot)
-    DIM t = SIM.TOWER(slot)
+SUB DRAWTOWER(t)
     DIM k$ = t{"KIND"}
     DIM cx = PXX(t{"X"})
     DIM cy = PXY(t{"Y"})
@@ -1261,8 +1269,7 @@ SUB DRAWTOWER(slot)
     IF t{"BR"} <> "" THEN POLY(cx, cy, 19, 6, 0, IIF(t{"BR"} = "A", [80, 200, 230], [230, 170, 60]), 1 + t{"BT"})
 ENDSUB
 
-SUB DRAWBEAMS(slot)
-    DIM t = SIM.TOWER(slot)
+SUB DRAWBEAMS(t)
     IF t{"S"}{"MODE"} <> "BEAM" THEN RETURN
     DIM n = LEN(t{"BX"})
     IF n = 0 THEN RETURN
@@ -1282,9 +1289,10 @@ SUB DRAWBEAMS(slot)
 ENDSUB
 
 SUB DRAWAURAS()
+    DIM ftw = SIM.TOWERS()
     DIM i
     FOR i = 0 TO SIM.NSLOTS() - 1
-        DIM t = SIM.TOWER(i)
+        DIM t = ftw[i]
         IF t{"KIND"} = "CRYO" THEN
             DIM r = t{"S"}{"RANGE"} * t{"RBUFF"} * TILE
             DIM ph = (tnow * 0.5 + i * 0.37) - INT(tnow * 0.5 + i * 0.37)
@@ -1293,7 +1301,7 @@ SUB DRAWAURAS()
         ELSEIF t{"KIND"} = "RELAY" THEN
             DIM j
             FOR j = 0 TO SIM.NSLOTS() - 1
-                DIM o = SIM.TOWER(j)
+                DIM o = ftw[j]
                 IF j <> i ANDALSO o{"KIND"} <> "" ANDALSO o{"KIND"} <> "RELAY" THEN
                     IF SQR((o{"X"} - t{"X"}) ^ 2 + (o{"Y"} - t{"Y"}) ^ 2) <= t{"S"}{"RANGE"} + 0.01 THEN
                         SEG(PXX(t{"X"}), PXY(t{"Y"}), PXX(o{"X"}), PXY(o{"Y"}), [70, 60, 20], 1.5)
@@ -1724,14 +1732,14 @@ SUB DRAWPLAY()
     DRAWGATES(lv)
     DRAWAURAS()
     DRAWSLOTS()
-    DIM i
-    FOR i = 0 TO SIM.NSLOTS() - 1
-        IF SIM.TOWER(i){"KIND"} <> "" THEN DRAWTOWER(i)
-    NEXT i
+    DIM ftw = SIM.TOWERS()
+    FOR EACH t IN ftw
+        IF t{"KIND"} <> "" THEN DRAWTOWER(t)
+    NEXT t
     DRAWENEMIES()
-    FOR i = 0 TO SIM.NSLOTS() - 1
-        IF SIM.TOWER(i){"KIND"} <> "" THEN DRAWBEAMS(i)
-    NEXT i
+    FOR EACH t IN ftw
+        IF t{"KIND"} <> "" THEN DRAWBEAMS(t)
+    NEXT t
     DRAWSHOTS()
     DRAWFX()
     DRAWHUD()
@@ -2298,14 +2306,17 @@ SUB UPDATE()
     ENDIF
     ' fixed steps for the time that really passed, so a slow device plays
     ' at the right pace with coarser frames instead of in slow motion
+    ' up to two steps of catch-up per frame; beyond that the game runs a
+    ' little slow rather than making the next frame slower still
     sim_acc = sim_acc + dt_frame * speed
+    DIM max_steps = speed + 2
     DIM n_steps = 0
-    DO WHILE sim_acc >= SIM_DT ANDALSO n_steps < 8
+    DO WHILE sim_acc >= SIM_DT ANDALSO n_steps < max_steps
         SIM.ADVANCE(SIM_DT)
         sim_acc = sim_acc - SIM_DT
         n_steps = n_steps + 1
     LOOP
-    IF n_steps = 8 THEN sim_acc = 0.0
+    IF n_steps = max_steps THEN sim_acc = 0.0
     EVENTSTOFX()
     IF SIM.WAVE() > 0 ANDALSO speed < 3 ANDALSO SIM.BUSY() > 0 THEN lv_turbo = 0
     IF frame MOD 30 = 0 THEN

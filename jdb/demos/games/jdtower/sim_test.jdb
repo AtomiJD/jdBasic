@@ -254,6 +254,19 @@ SIM.LAUNCH()
 RUNFOR(1.5)
 CHECK("tougher enemies lose a smaller share", tough_hp > SIM.ENEMIES(){"HPF"}[0])
 
+' ── relay reach ─────────────────────────────────────────────────
+' Build slots stand at least two tiles apart, so a relay must reach that far
+SIM.START(TESTLEVEL("DRONE", 1, 1))
+SIM.QUIET(1)
+SIM.BUILD(0, "LASER")
+SIM.BUILD(1, "RELAY")
+CHECK("relay tier 1 reaches the slot two tiles away", SIM.TOWER(0){"BUFF"} > 1.1)
+SIM.BUILD(2, "BLASTER")
+CHECK("relay leaves the far slot alone", SIM.TOWER(2){"BUFF"} = 1)
+SIM.UPGRADE(1, "UP")
+SIM.UPGRADE(1, "UP")
+CHECK("relay tier 3 reaches three tiles", SIM.TOWER(1){"S"}{"RANGE"} >= 3)
+
 ' ── level files ─────────────────────────────────────────────────
 DIM lvl_no
 DIM bad_files = 0

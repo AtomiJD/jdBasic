@@ -1,6 +1,6 @@
 // Service worker for jdTower, scope /tower/. Makes the page installable and
 // keeps the ten megabyte runtime out of the network path on every start.
-const CACHE = 'jdtower-v2';
+const CACHE = 'jdtower-v3';
 
 // The runtime and its vendor bundle change only on a --wasm deploy, so they
 // come from the cache and are refreshed in the background. Everything else
@@ -27,7 +27,7 @@ function keyOf(req) {
 async function fromCache(req) {
   const cache = await caches.open(CACHE);
   const hit = await cache.match(req);
-  const fresh = fetch(req).then(res => {
+  const fresh = fetch(req.url, {cache: 'no-cache'}).then(res => {
     if (res && res.ok) cache.put(req, res.clone());
     return res;
   }).catch(() => null);
