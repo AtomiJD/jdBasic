@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>jdTOWER - Neon Tower Defense</title>
+<meta name="description" content="Neon Tower Defense in jdBasic. 20 Level, 8 Tower, ein Ziel.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="jdTOWER - Neon Tower Defense">
+<meta property="og:description" content="Neon Tower Defense in jdBasic. 20 Level, 8 Tower, ein Ziel.">
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#05050f">
+<style>
+  :root{--cyan:#5cf0ff;--pink:#ff4fc1;--violet:#9a6bff;--gold:#ffd25a;--bg:#05050f;--panel:#0d0d24;--line:#2a2560;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{
+    background:var(--bg);color:#e8ecff;
+    font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    min-height:100dvh;padding:0 16px 32px;overflow-x:hidden;
+  }
+  body::before{
+    content:"";position:fixed;left:-50%;right:-50%;bottom:-10%;height:45vh;z-index:-1;
+    background:
+      repeating-linear-gradient(90deg,rgba(255,60,190,.35) 0 2px,transparent 2px 60px),
+      repeating-linear-gradient(0deg,rgba(255,60,190,.35) 0 2px,transparent 2px 40px);
+    transform:perspective(300px) rotateX(60deg);transform-origin:top;
+    mask-image:linear-gradient(to bottom,transparent,#000 40%);
+    -webkit-mask-image:linear-gradient(to bottom,transparent,#000 40%);
+  }
+  h1{
+    margin:44px 0 0;font-size:64px;letter-spacing:.04em;font-weight:800;
+    color:var(--cyan);text-shadow:0 0 6px var(--cyan),0 0 22px rgba(92,240,255,.7),0 0 48px rgba(92,240,255,.4);
+  }
+  .sub{color:var(--pink);font-size:18px;letter-spacing:.2em;text-transform:uppercase;
+    text-shadow:0 0 10px rgba(255,79,193,.7);margin-top:4px;}
+  .icons{display:flex;gap:14px;margin:22px 0 4px;}
+  .icons span{width:34px;height:34px;border:2px solid;border-radius:6px;transform:rotate(45deg);
+    box-shadow:0 0 12px currentColor,inset 0 0 8px currentColor;}
+  form{width:100%;max-width:420px;margin-top:22px;display:flex;flex-direction:column;gap:12px;}
+  label{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:#8a86c8;margin-bottom:-6px;}
+  input,select{
+    width:100%;padding:14px 16px;font-size:17px;font-family:inherit;
+    color:#eaf2ff;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  }
+  input:focus,select:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(92,240,255,.18),0 0 16px rgba(92,240,255,.25);}
+  .row{display:flex;gap:12px;}
+  .row>div{flex:1;display:flex;flex-direction:column;gap:12px;}
+  button{
+    margin-top:8px;padding:18px;font-size:20px;font-weight:700;letter-spacing:.14em;
+    font-family:inherit;color:#fff;cursor:pointer;background:transparent;
+    border:2px solid var(--pink);border-radius:14px;
+    box-shadow:0 0 14px rgba(255,79,193,.6),inset 0 0 14px rgba(255,79,193,.35);
+    text-shadow:0 0 8px var(--pink);
+  }
+  button:active{transform:translateY(2px);}
+  button:disabled{opacity:.5;}
+  a.guest{display:block;text-align:center;margin-top:6px;color:#8fe9ff;font-size:14px;letter-spacing:.06em;}
+  #err{min-height:20px;color:#ff7a9a;text-align:center;font-size:14px;}
+  .hint{font-size:13px;color:#6f6aa8;text-align:center;margin-top:14px;line-height:1.6;max-width:420px;}
+</style>
+</head>
+<body>
+  <h1>jdTOWER</h1>
+  <div class="sub" id="sub">Neon Tower Defense</div>
+  <div class="icons">
+    <span style="color:#5cf0ff"></span><span style="color:#5aff8c"></span><span style="color:#ffaf28"></span>
+    <span style="color:#af78ff"></span><span style="color:#ff46c8"></span>
+  </div>
+  <form id="f">
+    <label id="l_name" for="name">Name</label>
+    <input id="name" maxlength="16" autocomplete="nickname" required>
+    <div class="row">
+      <div>
+        <label id="l_pin" for="pin">PIN</label>
+        <input id="pin" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" required>
+      </div>
+      <div>
+        <label id="l_lang" for="lang">Sprache</label>
+        <select id="lang"><option value="de">Deutsch</option><option value="en">English</option></select>
+      </div>
+    </div>
+    <div id="err"></div>
+    <button id="go" type="submit">SPIELEN</button>
+    <a class="guest" id="guest" href="#">Als Gast spielen</a>
+  </form>
+  <div class="hint" id="hint"></div>
+<script>
+  const TXT = {
+    de:{name:"Name",pin:"PIN (4-8 Ziffern)",lang:"Sprache",go:"SPIELEN",guest:"Als Gast spielen",
+        hint:"Der erste Login mit einem Namen reserviert ihn für deine PIN.<br>Sterne und Bestwerte landen in der Bestenliste.",
+        net:"Server nicht erreichbar."},
+    en:{name:"Name",pin:"PIN (4-8 digits)",lang:"Language",go:"PLAY",guest:"Play as guest",
+        hint:"The first login with a name reserves it for your PIN.<br>Stars and best scores go to the leaderboard.",
+        net:"Server unreachable."}
+  };
+  const $ = id => document.getElementById(id);
+  const saved = JSON.parse(localStorage.getItem('jdtower') || '{}');
+  $('name').value = saved.name || '';
+  $('lang').value = saved.lang || (navigator.language || 'de').slice(0,2);
+  if (!TXT[$('lang').value]) $('lang').value = 'de';
+
+  function applyLang(){
+    const t = TXT[$('lang').value];
+    $('l_name').textContent = t.name;
+    $('l_pin').textContent = t.pin;
+    $('l_lang').textContent = t.lang;
+    $('go').textContent = t.go;
+    $('guest').textContent = t.guest;
+    $('hint').innerHTML = t.hint;
+    document.documentElement.lang = $('lang').value;
+  }
+  $('lang').addEventListener('change', applyLang);
+  applyLang();
+
+  function play(extra){
+    const q = new URLSearchParams(Object.assign({prog:'jdtower', fs:'1', lang:$('lang').value}, extra));
+    location.href = 'play/?' + q.toString();
+  }
+
+  // The PIN is traded for a session token here, so it never reaches the game URL.
+  $('f').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const name = $('name').value.trim();
+    const pin = $('pin').value.trim();
+    const t = TXT[$('lang').value];
+    $('err').textContent = '';
+    $('go').disabled = true;
+    let r;
+    try {
+      const resp = await fetch('api/login', {method:'POST', headers:{'Content-Type':'text/plain'},
+        body: JSON.stringify({NAME:name, PIN:pin})});
+      r = await resp.json();
+    } catch (e) { r = {OK:0, MSG:t.net}; }
+    $('go').disabled = false;
+    if (!r || r.OK !== 1) { $('err').textContent = (r && r.MSG) || t.net; return; }
+    localStorage.setItem('jdtower', JSON.stringify({name:r.NAME, lang:$('lang').value}));
+    play({name:r.NAME, auth:r.AUTH});
+  });
+  $('guest').addEventListener('click', ev => { ev.preventDefault(); play({}); });
+</script>
+</body>
+</html>

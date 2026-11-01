@@ -1,0 +1,26 @@
+{
+  "ID": 4,
+  "NAME": "Ember Grid",
+  "COLS": 12,
+  "ROWS": 18,
+  "LIVES": 20,
+  "CREDITS": 355,
+  "REWARDX": 1.15,
+  "TOWERS": ["LASER","BLASTER","CRYO","BOMB"],
+  "PATHS": [
+    [[8.5,-0.8],[8.5,1.5],[1.5,1.5],[1.5,5.5],[9.5,5.5],[9.5,9.5],[3.5,9.5],[3.5,12.5],[10.5,12.5],[10.5,15.5],[10.5,18.6]]
+  ],
+  "SLOTS": [[1,0],[2,4],[3,6],[8,6],[10,7],[2,8],[4,8],[10,9],[4,10],[6,10],[9,11]],
+  "WAVES": [
+    {"GROUPS":[{"E":"DRONE","N":8,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.18}],"BONUS":20},
+    {"GROUPS":[{"E":"SWARM","N":17,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":1.286}],"BONUS":24},
+    {"GROUPS":[{"E":"FLYER","N":6,"GAP":0.9,"PATH":0,"DELAY":0,"HPX":1.392}],"BONUS":28},
+    {"GROUPS":[{"E":"SWARM","N":20,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":1.499},{"E":"SWARM","N":20,"GAP":0.32,"PATH":0,"DELAY":4,"HPX":1.499}],"BONUS":32},
+    {"GROUPS":[{"E":"SCOUT","N":12,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.605},{"E":"SCOUT","N":12,"GAP":0.55,"PATH":0,"DELAY":7,"HPX":1.605}],"BONUS":36},
+    {"GROUPS":[{"E":"FLYER","N":7,"GAP":0.9,"PATH":0,"DELAY":0,"HPX":1.711},{"E":"DRONE","N":11,"GAP":0.85,"PATH":0,"DELAY":5,"HPX":1.711}],"BONUS":40},
+    {"GROUPS":[{"E":"FLYER","N":7,"GAP":0.9,"PATH":0,"DELAY":0,"HPX":1.817},{"E":"FLYER","N":7,"GAP":0.9,"PATH":0,"DELAY":6,"HPX":1.817}],"BONUS":44},
+    {"GROUPS":[{"E":"TANK","N":5,"GAP":1.7,"PATH":0,"DELAY":0,"HPX":1.923},{"E":"FLYER","N":8,"GAP":0.9,"PATH":0,"DELAY":7,"HPX":1.923}],"BONUS":48},
+    {"GROUPS":[{"E":"FLYER","N":8,"GAP":0.9,"PATH":0,"DELAY":0,"HPX":2.03},{"E":"TANK","N":5,"GAP":1.7,"PATH":0,"DELAY":5,"HPX":2.03}],"BONUS":52},
+    {"GROUPS":[{"E":"SCOUT","N":15,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":2.136},{"E":"TANK","N":5,"GAP":1.7,"PATH":0,"DELAY":5,"HPX":2.136}],"BONUS":56}
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "ID": 1,
+  "NAME": "First Light",
+  "COLS": 12,
+  "ROWS": 18,
+  "LIVES": 20,
+  "CREDITS": 250,
+  "REWARDX": 1,
+  "TOWERS": ["LASER","BLASTER"],
+  "PATHS": [
+    [[9.5,-0.8],[9.5,1.5],[3.5,1.5],[3.5,5.5],[10.5,5.5],[10.5,8.5],[1.5,8.5],[1.5,11.5],[6.5,11.5],[6.5,14.5],[6.5,18.6]]
+  ],
+  "SLOTS": [[5,0],[4,4],[8,4],[11,8],[7,9],[9,9],[0,11],[3,12],[5,15]],
+  "WAVES": [
+    {"GROUPS":[{"E":"DRONE","N":8,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1}],"BONUS":20},
+    {"GROUPS":[{"E":"DRONE","N":9,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.09}],"BONUS":24},
+    {"GROUPS":[{"E":"SCOUT","N":10,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.18}],"BONUS":28},
+    {"GROUPS":[{"E":"DRONE","N":10,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.27},{"E":"DRONE","N":10,"GAP":0.85,"PATH":0,"DELAY":7,"HPX":1.27}],"BONUS":32},
+    {"GROUPS":[{"E":"SCOUT","N":12,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.36},{"E":"DRONE","N":11,"GAP":0.85,"PATH":0,"DELAY":5,"HPX":1.36}],"BONUS":36},
+    {"GROUPS":[{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.45},{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":7,"HPX":1.45}],"BONUS":40},
+    {"GROUPS":[{"E":"DRONE","N":12,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.54},{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":6,"HPX":1.54}],"BONUS":44},
+    {"GROUPS":[{"E":"DRONE","N":12,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.63},{"E":"DRONE","N":12,"GAP":0.85,"PATH":0,"DELAY":5,"HPX":1.63}],"BONUS":48}
+  ]
+}

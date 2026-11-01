@@ -1,0 +1,15 @@
+{
+  "ORDER": ["SCOUT", "DRONE", "SWARM", "TANK", "FLYER", "SHIELDER", "HEALER", "SPLITTER", "BRUTE", "OVERLORD"],
+  "ENEMIES": {
+    "SCOUT":    {"HP": 34,   "SPEED": 1.75, "REWARD": 4,   "LIVES": 1,  "SIZE": 8,  "SIDES": 3, "COLOR": [255, 235, 80]},
+    "DRONE":    {"HP": 62,   "SPEED": 1.0,  "REWARD": 5,   "LIVES": 1,  "SIZE": 10, "SIDES": 4, "COLOR": [255, 80, 170]},
+    "SWARM":    {"HP": 18,   "SPEED": 1.35, "REWARD": 2,   "LIVES": 1,  "SIZE": 6,  "SIDES": 3, "COLOR": [255, 150, 230]},
+    "TANK":     {"HP": 200,  "SPEED": 0.6,  "REWARD": 12,  "LIVES": 2,  "SIZE": 13, "SIDES": 4, "ARMOR": 0.4, "COLOR": [255, 125, 55]},
+    "FLYER":    {"HP": 40,   "SPEED": 0.7,  "REWARD": 6,   "LIVES": 1,  "SIZE": 10, "SIDES": 3, "FLY": 1, "COLOR": [110, 255, 225]},
+    "SHIELDER": {"HP": 90,   "SPEED": 0.9,  "REWARD": 10,  "LIVES": 1,  "SIZE": 11, "SIDES": 6, "SHIELD": 100, "COLOR": [120, 160, 255]},
+    "HEALER":   {"HP": 110,  "SPEED": 0.85, "REWARD": 12,  "LIVES": 1,  "SIZE": 11, "SIDES": 5, "HEAL": 7, "HEALR": 1.2, "COLOR": [140, 255, 120]},
+    "SPLITTER": {"HP": 150,  "SPEED": 0.9,  "REWARD": 8,   "LIVES": 1,  "SIZE": 12, "SIDES": 5, "SPLIT": "SWARM", "SPLITN": 3, "COLOR": [215, 120, 255]},
+    "BRUTE":    {"HP": 360,  "SPEED": 0.55, "REWARD": 26,  "LIVES": 3,  "SIZE": 15, "SIDES": 8, "ARMOR": 0.25, "COLOR": [255, 55, 70]},
+    "OVERLORD": {"HP": 2600, "SPEED": 0.4,  "REWARD": 220, "LIVES": 10, "SIZE": 22, "SIDES": 7, "ARMOR": 0.3, "SHIELD": 500, "STUNRES": 0.3, "BOSS": 1, "COLOR": [255, 40, 120]}
+  }
+}

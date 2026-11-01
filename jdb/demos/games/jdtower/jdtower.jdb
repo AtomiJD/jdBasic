@@ -1,0 +1,1639 @@
+' jdTower - neon tower defence for phone and desktop.
+'   jdbasic jdtower.jdb                       play (guest, or the saved login)
+'   jdbasic jdtower.jdb <name> <pin>          play logged in
+'   jdbasic jdtower.jdb shot [level]          one frame of a running level -> tmp/shot.png
+'   jdbasic jdtower.jdb shotmenu              the level select -> tmp/shot.png
+' The rules live in sim.jdb. Everything bright is drawn additively into an
+' offscreen image; the frame goes to the screen with three ever blurrier
+' copies of itself on top, which is the glow. Text is set afterwards so it
+' stays sharp.
+IMPORT SIM
+
+CONST SCR_W = 480
+CONST SCR_H = 864
+CONST TILE = 40
+CONST FY0 = 64
+CONST BAR_Y = 784
+CONST SIM_DT = 0.0333
+CONST TWO_PI = 6.283185307
+
+DIM running = 1
+SUB OnQuit()
+    running = 0
+ENDSUB
+ON "QUIT" CALL OnQuit@
+
+DIM taps = []
+SUB OnTap(info)
+    taps = APPEND(taps, [[info[0]{"x"}, info[0]{"y"}]])
+ENDSUB
+ON "MOUSEDOWN" CALL OnTap@
+
+DIM keys_in = []
+SUB OnKey(info)
+    keys_in = APPEND(keys_in, info[0]{"key"})
+ENDSUB
+ON "KEYDOWN" CALL OnKey@
+
+' ── where things are ────────────────────────────────────────────
+
+DIM GAMEDIR$ = ""
+DIM cli = OS.ARGS()
+IF LEN(cli) > 0 THEN
+    DIM a0$ = REPLACE$("" + cli[0], "\", "/")
+    DIM cut = -1
+    DIM ci
+    FOR ci = 0 TO LEN(a0$) - 1
+        IF MID$(a0$, ci, 1) = "/" THEN cut = ci
+    NEXT ci
+    IF cut >= 0 THEN GAMEDIR$ = LEFT$(a0$, cut + 1)
+ENDIF
+
+DIM SRV$ = "http://127.0.0.1:8082"
+DIM WEB$ = ""
+DIM WEB_PATH$ = "/tower/play/"
+DIM myname$ = ""
+DIM mypin$ = ""
+DIM auth$ = ""
+DIM lang$ = "de"
+DIM show_fps = 0
+TRY
+    DIM up = JSON.PARSE(TXTREADER$("/url_params.json"))
+    IF MAP.EXISTS(up, "name") THEN myname$ = up{"name"}
+    IF MAP.EXISTS(up, "auth") THEN auth$ = up{"auth"}
+    IF MAP.EXISTS(up, "base") THEN WEB_PATH$ = up{"base"}
+    IF MAP.EXISTS(up, "fps") THEN show_fps = 1
+    IF MAP.EXISTS(up, "__lang") THEN lang$ = LCASE$(MID$(up{"__lang"}, 0, 2))
+    IF MAP.EXISTS(up, "lang") THEN lang$ = LCASE$(MID$(up{"lang"}, 0, 2))
+    IF MAP.EXISTS(up, "__origin") THEN
+        DIM org$ = up{"__origin"}
+        WEB$ = org$ + WEB_PATH$
+        IF INSTR(org$, "://192.168.") < 0 ANDALSO INSTR(org$, "://localhost") < 0 ANDALSO INSTR(org$, "://127.") < 0 THEN
+            SRV$ = org$ + "/tower/api"
+        ENDIF
+    ENDIF
+CATCH
+ENDTRY
+
+' A data file from next to the game, else from the site that served it
+FUNC LOADTEXT$(rel$)
+    IF FILE.EXISTS(GAMEDIR$ + rel$) THEN RETURN TXTREADER$(GAMEDIR$ + rel$)
+    IF FILE.EXISTS(rel$) THEN RETURN TXTREADER$(rel$)
+    RETURN HTTP.GET$(WEB$ + rel$)
+ENDFUNC
+
+DIM towers_json = JSON.PARSE(LOADTEXT$("data/towers.json"))
+DIM enemies_json = JSON.PARSE(LOADTEXT$("data/enemies.json"))
+DIM langs = JSON.PARSE(LOADTEXT$("data/lang.json"))
+IF NOT MAP.EXISTS(langs, lang$) THEN lang$ = "en"
+SIM.SETDATA(towers_json, enemies_json)
+
+FUNC T$(k$)
+    IF MAP.EXISTS(langs{lang$}, k$) THEN RETURN langs{lang$}{k$}
+    RETURN k$
+ENDFUNC
+
+DIM level_cache AS MAP = {}
+FUNC LEVELDATA(n)
+    DIM key$ = STR$(n)
+    IF NOT MAP.EXISTS(level_cache, key$) THEN
+        level_cache{key$} = JSON.PARSE(LOADTEXT$("data/levels/level_" + RIGHT$("0" + key$, 2) + ".json"))
+    ENDIF
+    RETURN level_cache{key$}
+ENDFUNC
+
+' enemy looks, by kind number as the sim counts them
+DIM ek_sides = []
+DIM ek_size = []
+DIM ek_col = []
+DIM ek_spin = []
+SUB LOADKINDS()
+    DIM i = 0
+    FOR EACH k$ IN enemies_json{"ORDER"}
+        DIM ed = enemies_json{"ENEMIES"}{k$}
+        ek_sides = APPEND(ek_sides, ed{"SIDES"})
+        ek_size = APPEND(ek_size, ed{"SIZE"})
+        ek_col = APPEND(ek_col, [ed{"COLOR"}])
+        ek_spin = APPEND(ek_spin, 0.6 + (i MOD 4) * 0.35)
+        i = i + 1
+    NEXT k$
+ENDSUB
+LOADKINDS()
+
+FUNC TCOL(kind$)
+    RETURN towers_json{"TOWERS"}{kind$}{"COLOR"}
+ENDFUNC
+
+' ── progress ────────────────────────────────────────────────────
+
+DIM progress AS MAP = {}
+DIM online = 0
+DIM net_msg$ = ""
+
+SUB SAVELOCAL()
+    IF auth$ = "" ANDALSO GAMEDIR$ <> "" THEN
+        TRY
+            TXTWRITER GAMEDIR$ + "progress.json", JSON.STRINGIFY$(progress)
+        CATCH
+        ENDTRY
+    ENDIF
+ENDSUB
+
+SUB LOADLOCAL()
+    TRY
+        IF FILE.EXISTS(GAMEDIR$ + "progress.json") THEN progress = JSON.PARSE(TXTREADER$(GAMEDIR$ + "progress.json"))
+    CATCH
+    ENDTRY
+ENDSUB
+
+SUB LOGIN()
+    IF auth$ = "" ANDALSO myname$ <> "" ANDALSO mypin$ <> "" THEN
+        TRY
+            DIM body$ = JSON.STRINGIFY$({ "NAME": myname$, "PIN": mypin$ })
+            DIM r = JSON.PARSE(HTTP.POST$(SRV$ + "/login", body$, "text/plain"))
+            IF r{"OK"} = 1 THEN
+                auth$ = r{"AUTH"}
+                myname$ = r{"NAME"}
+            ELSE
+                net_msg$ = r{"MSG"}
+            ENDIF
+        CATCH
+            net_msg$ = T$("offline")
+        ENDTRY
+    ENDIF
+    IF auth$ <> "" THEN
+        TRY
+            DIM r2 = JSON.PARSE(HTTP.GET$(SRV$ + "/progress?auth=" + auth$))
+            IF r2{"OK"} = 1 THEN
+                progress = r2{"PROGRESS"}
+                myname$ = r2{"NAME"}
+                online = 1
+            ENDIF
+        CATCH
+            net_msg$ = T$("offline")
+        ENDTRY
+    ELSE
+        LOADLOCAL()
+    ENDIF
+ENDSUB
+
+FUNC STARSOF(n)
+    DIM k$ = STR$(n)
+    IF MAP.EXISTS(progress, k$) THEN RETURN progress{k$}{"STARS"}
+    RETURN 0
+ENDFUNC
+
+FUNC BESTOF(n)
+    DIM k$ = STR$(n)
+    IF MAP.EXISTS(progress, k$) THEN RETURN progress{k$}{"SCORE"}
+    RETURN 0
+ENDFUNC
+
+FUNC UNLOCKED(n)
+    IF n = 1 THEN RETURN 1
+    IF STARSOF(n - 1) > 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+SUB RECORD(n, stars, score)
+    DIM k$ = STR$(n)
+    DIM old_s = STARSOF(n)
+    DIM old_p = BESTOF(n)
+    DIM row AS MAP = {}
+    row{"STARS"} = MAX([old_s, stars])
+    row{"SCORE"} = MAX([old_p, score])
+    progress{k$} = row
+    IF auth$ <> "" THEN
+        TRY
+            DIM body$ = JSON.STRINGIFY$({ "AUTH": auth$, "LEVEL": n, "STARS": stars, "SCORE": score })
+            DIM r = JSON.PARSE(HTTP.POST$(SRV$ + "/result", body$, "text/plain"))
+            IF r{"OK"} = 1 THEN progress = r{"PROGRESS"}
+        CATCH
+            net_msg$ = T$("offline")
+        ENDTRY
+    ELSE
+        SAVELOCAL()
+    ENDIF
+ENDSUB
+
+DIM board_rows = []
+SUB LOADBOARD()
+    board_rows = []
+    TRY
+        DIM r = JSON.PARSE(HTTP.GET$(SRV$ + "/board"))
+        IF r{"OK"} = 1 THEN board_rows = r{"ROWS"}
+    CATCH
+        net_msg$ = T$("offline")
+    ENDTRY
+ENDSUB
+
+' ── sound ───────────────────────────────────────────────────────
+' Tracks 1-5 are effects played by hand, 6-9 the background loop on the
+' sequencer. Every effect voice has sustain 0, so notes end on their own.
+
+DIM snd_on = 0
+DIM sfx_on = 1
+DIM mus_on = 1
+DIM sfx_last AS MAP = {}
+
+SUB SNDINIT()
+    TRY
+        SOUND.INIT
+        SOUND.VOICE 1, "TRIANGLE", 0.002, 0.12, 0.0, 0.06
+        SOUND.VOICE 2, "SQUARE", 0.001, 0.05, 0.0, 0.03
+        SOUND.VOICE 3, "NOISE", 0.002, 0.28, 0.0, 0.15
+        SOUND.VOICE 4, "SAW", 0.001, 0.09, 0.0, 0.05
+        SOUND.VOICE 5, "SINE", 0.002, 0.16, 0.0, 0.08
+        SOUND.GAIN 1, 0.35
+        SOUND.GAIN 2, 0.14
+        SOUND.GAIN 3, 0.4
+        SOUND.GAIN 4, 0.16
+        SOUND.GAIN 5, 0.28
+        SOUND.FILTER 4, 2600, 0.3
+        SOUND.FILTER 3, 1800
+        snd_on = 1
+    CATCH
+        snd_on = 0
+    ENDTRY
+ENDSUB
+
+' Am - F - C - G, slow and soft, so it sits under the effects
+SUB MUSICINIT()
+    IF snd_on = 0 THEN RETURN
+    TRY
+        SOUND.BPM 92
+        SOUND.VOICE 6, "SAW", 0.6, 0.5, 0.7, 1.2
+        SOUND.FILTER 6, 900, 0.2
+        SOUND.GAIN 6, 0.07
+        SOUND.VOICE 7, "TRIANGLE", 0.005, 0.3, 0.3, 0.1
+        SOUND.GAIN 7, 0.2
+        SOUND.VOICE 8, "SQUARE", 0.002, 0.09, 0.1, 0.08
+        SOUND.FILTER 8, 1700, 0.25
+        SOUND.GAIN 8, 0.05
+        SOUND.KIT 9, "SYNTH"
+        SOUND.GAIN 9, 0.13
+        SOUND.SEQ 6, "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>", "VOICE"
+        SOUND.SEQ 7, "<[a1 ~ a2 ~]*2 [f1 ~ f2 ~]*2 [c2 ~ c3 ~]*2 [g1 ~ g2 ~]*2>", "VOICE"
+        SOUND.SEQ 8, "<[a4 c5 e5 c5]*2 [f4 a4 c5 a4]*2 [c5 e5 g5 e5]*2 [g4 b4 d5 b4]*2>", "VOICE"
+        SOUND.SEQ 9, "[bd ~ ~ ~] [~ hh ~ hh] [~ ~ bd ~] [~ hh ~ hh]", "VOICE"
+        MUSICMIX("menu")
+    CATCH
+    ENDTRY
+ENDSUB
+
+DIM mus_mode$ = "menu"
+SUB MUSICMIX(mode$)
+    mus_mode$ = mode$
+    IF snd_on = 0 THEN RETURN
+    TRY
+        DIM all_off = IIF(mus_on = 1, 0, 1)
+        SOUND.MUTE 6, all_off
+        SOUND.MUTE 8, all_off
+        DIM groove_off = IIF(mus_on = 1 ANDALSO mode$ = "play", 0, 1)
+        SOUND.MUTE 7, groove_off
+        SOUND.MUTE 9, groove_off
+    CATCH
+    ENDTRY
+ENDSUB
+
+SUB SFX(name$)
+    IF snd_on = 0 ORELSE sfx_on = 0 THEN RETURN
+    DIM sfx_now = TICK()
+    IF MAP.EXISTS(sfx_last, name$) THEN
+        IF sfx_now - sfx_last{name$} < 70 THEN RETURN
+    ENDIF
+    sfx_last{name$} = sfx_now
+    TRY
+        IF name$ = "BLASTER" THEN
+            SOUND.PLAY 2, 1320 + RND() * 200
+        ELSEIF name$ = "RAIL" THEN
+            SOUND.PLAY 4, 196
+            SOUND.PLAY 2, 1760
+        ELSEIF name$ = "BOMB" THEN
+            SOUND.PLAY 1, 110
+        ELSEIF name$ = "BOOM" THEN
+            SOUND.PLAY 3, 70 + RND() * 30
+        ELSEIF name$ = "ZAP" THEN
+            SOUND.PLAY 4, 880 + RND() * 300
+        ELSEIF name$ = "PULSE" THEN
+            SOUND.PLAY 1, 165
+            SOUND.PLAY 5, 330
+        ELSEIF name$ = "LASER" THEN
+            SOUND.PLAY 5, 990
+        ELSEIF name$ = "FLAME" THEN
+            SOUND.PLAY 3, 400
+        ELSEIF name$ = "DIE" THEN
+            DIM notes = [523, 587, 659, 784, 880]
+            SOUND.PLAY 5, notes[INT(RND() * 5)] * 2
+        ELSEIF name$ = "BUILD" THEN
+            SOUND.PLAY 1, 523
+            SOUND.PLAY 5, 784
+        ELSEIF name$ = "SELL" THEN
+            SOUND.PLAY 1, 392
+        ELSEIF name$ = "LEAK" THEN
+            SOUND.PLAY 4, 98
+            SOUND.PLAY 3, 60
+        ELSEIF name$ = "WAVE" THEN
+            SOUND.PLAY 1, 220
+            SOUND.PLAY 5, 440
+        ELSEIF name$ = "TAP" THEN
+            SOUND.PLAY 2, 660
+        ELSEIF name$ = "WIN" THEN
+            SOUND.PLAY 1, 523
+            SOUND.PLAY 5, 659
+            SOUND.PLAY 2, 784
+        ELSEIF name$ = "LOSE" THEN
+            SOUND.PLAY 4, 110
+            SOUND.PLAY 1, 82
+        ENDIF
+    CATCH
+        snd_on = 0
+    ENDTRY
+ENDSUB
+
+' ── drawing primitives ──────────────────────────────────────────
+
+DIM glow_on = 1
+DIM scene_img = 0
+DIM mip_img = [0, 0, 0, 0]
+DIM bg_img = 0
+DIM font$ = ""
+DIM font_now = 0
+
+SUB GFXINIT()
+    scene_img = GFX.NEWTARGET(SCR_W, SCR_H)
+    DIM i
+    FOR i = 0 TO 3
+        mip_img[i] = GFX.NEWTARGET(INT(SCR_W / 2 ^ (i + 1)), INT(SCR_H / 2 ^ (i + 1)))
+    NEXT i
+    bg_img = GFX.NEWTARGET(SCR_W, 12 * 0 + 18 * TILE)
+    DIM cands = ["/jdbasic_default.ttf", GAMEDIR$ + "jdbasic_default.ttf", "jdbasic_default.ttf", GAMEDIR$ + "../../../../build/jdbasic_default.ttf"]
+    FOR EACH c$ IN cands
+        IF font$ = "" ANDALSO FILE.EXISTS(c$) THEN font$ = c$
+    NEXT c$
+ENDSUB
+
+SUB FONTSIZE(sz)
+    IF font$ <> "" ANDALSO sz <> font_now THEN
+        SETFONT font$, sz
+        font_now = sz
+    ENDIF
+ENDSUB
+
+SUB BEGINFRAME()
+    GFX.TARGET scene_img, TRUE
+    CLS 3, 3, 12
+    GFX.BLEND "ADD"
+ENDSUB
+
+SUB ENDFRAME()
+    GFX.BLEND "BLEND"
+    GFX.TARGET
+    CLS 0, 0, 0
+    DIM qx = [0, SCR_W, SCR_W, 0]
+    DIM qy = [0, 0, SCR_H, SCR_H]
+    IF glow_on = 1 THEN
+        DIM src = scene_img
+        DIM i
+        FOR i = 0 TO 3
+            DIM mw = INT(SCR_W / 2 ^ (i + 1))
+            DIM mh = INT(SCR_H / 2 ^ (i + 1))
+            GFX.TARGET mip_img[i], TRUE
+            GFX.DRAWQUAD src, [0, mw, mw, 0], [0, 0, mh, mh], 255, "NONE", 1
+            src = mip_img[i]
+        NEXT i
+        GFX.TARGET
+    ENDIF
+    GFX.DRAWQUAD scene_img, qx, qy, 255, "NONE", 1
+    IF glow_on = 1 THEN
+        GFX.DRAWQUAD mip_img[1], qx, qy, 105, "ADD", 1
+        GFX.DRAWQUAD mip_img[2], qx, qy, 160, "ADD", 1
+        GFX.DRAWQUAD mip_img[3], qx, qy, 210, "ADD", 1
+    ENDIF
+    FLUSHTEXT()
+ENDSUB
+
+' a0, b0, a1, b1, ...
+FUNC WEAVE(a, b)
+    RETURN FLATTEN(TRANSPOSE(RESHAPE(APPEND(a, b), [2, LEN(a)])))
+ENDFUNC
+
+FUNC WHICH(mask)
+    RETURN TAKE(SUM(mask), GRADE(0 - mask))
+ENDFUNC
+
+FUNC SHADE(c, k)
+    RETURN [INT(c[0] * k), INT(c[1] * k), INT(c[2] * k)]
+ENDFUNC
+
+' A closed regular polygon around one centre
+SUB POLY(cx, cy, r, sides, rot, c, w)
+    DIM a = rot + IOTA(sides + 1, 0) * TWO_PI / sides
+    GFX.LINES cx + r * COS(a), cy + r * SIN(a), w, c[0], c[1], c[2]
+ENDSUB
+
+' Regular polygons around many centres in one call; rs may be one radius
+' or one per centre
+SUB POLYBATCH(xs, ys, rs, sides, rot, c, w)
+    DIM n = LEN(xs)
+    IF n = 0 THEN RETURN
+    DIM rr = rs + xs * 0
+    DIM a0 = rot + IOTA(sides, 0) * TWO_PI / sides
+    DIM a1 = a0 + TWO_PI / sides
+    DIM unit_row = ONES(sides)
+    DIM bx = OUTER(xs, unit_row, "*")
+    DIM by = OUTER(ys, unit_row, "*")
+    DIM sx = FLATTEN(OUTER(rr, COS(a0), "*") + bx)
+    DIM sy = FLATTEN(OUTER(rr, SIN(a0), "*") + by)
+    DIM ex = FLATTEN(OUTER(rr, COS(a1), "*") + bx)
+    DIM ey = FLATTEN(OUTER(rr, SIN(a1), "*") + by)
+    GFX.LINES WEAVE(sx, ex), WEAVE(sy, ey), w, c[0], c[1], c[2], TRUE
+ENDSUB
+
+SUB SEG(x1, y1, x2, y2, c, w)
+    GFX.LINES [x1, x2], [y1, y2], w, c[0], c[1], c[2]
+ENDSUB
+
+' A neon outline box; filled dark first so it reads over the field
+SUB PANEL(x, y, w, h, c, alpha)
+    GFX.BLEND "BLEND"
+    DRAWCOLOR 4, 4, 16, alpha
+    ROUNDED_RECT x, y, w, h, 12, TRUE
+    GFX.BLEND "ADD"
+    DRAWCOLOR c[0], c[1], c[2], 255
+    ROUNDED_RECT x, y, w, h, 12, FALSE
+    DIM d = SHADE(c, 0.45)
+    DRAWCOLOR d[0], d[1], d[2], 255
+    ROUNDED_RECT x + 2, y + 2, w - 4, h - 4, 10, FALSE
+ENDSUB
+
+' ── text, set after the glow ────────────────────────────────────
+
+DIM text_q = []
+SUB QTEXT(x, y, s$, c, sz)
+    text_q = APPEND(text_q, [[x, y, s$, c, sz]])
+ENDSUB
+
+FUNC TEXTW(s$, sz)
+    FONTSIZE(sz)
+    TRY
+        RETURN GFX.TEXTSIZE(s$)[0]
+    CATCH
+    ENDTRY
+    RETURN LEN(s$) * sz * 0.55
+ENDFUNC
+
+SUB CTEXT(cx, y, s$, c, sz)
+    QTEXT(cx - TEXTW(s$, sz) / 2, y, s$, c, sz)
+ENDSUB
+
+SUB FLUSHTEXT()
+    GFX.BLEND "BLEND"
+    FOR EACH q IN text_q
+        FONTSIZE(q[4])
+        DIM c = q[3]
+        TEXT q[0], q[1], q[2], c[0], c[1], c[2]
+    NEXT q
+    text_q = []
+ENDSUB
+
+' ── hit areas ───────────────────────────────────────────────────
+' Every button registers itself while it is drawn; a tap is tested against
+' the list of the frame the finger saw.
+
+DIM hits = []
+DIM hits_prev = []
+SUB HIT(x, y, w, h, act$)
+    hits = APPEND(hits, [[x, y, w, h, act$]])
+ENDSUB
+
+FUNC HITTEST$(px, py)
+    DIM found$ = ""
+    FOR EACH h IN hits_prev
+        IF px >= h[0] ANDALSO px < h[0] + h[2] ANDALSO py >= h[1] ANDALSO py < h[1] + h[3] THEN found$ = h[4]
+    NEXT h
+    RETURN found$
+ENDFUNC
+
+SUB BUTTON(x, y, w, h, label$, c, act$, sz)
+    PANEL(x, y, w, h, c, 200)
+    CTEXT(x + w / 2, y + h / 2 - sz * 0.62, label$, [235, 240, 255], sz)
+    HIT(x, y, w, h, act$)
+ENDSUB
+
+' ── game state ──────────────────────────────────────────────────
+
+DIM uimode$ = "menu"
+DIM cur_level = 1
+DIM speed = 1
+DIM paused = 0
+DIM sel_slot = -1
+DIM pending$ = ""
+DIM ring_cx = 0
+DIM ring_cy = 0
+DIM toast$ = ""
+DIM toast_t = 0
+DIM result_done = 0
+DIM result_score = 0
+DIM result_stars = 0
+DIM fx = []
+DIM paths_px = []
+DIM tnow = 0.0
+DIM frame = 0
+DIM flash = 0.0
+DIM sim_acc = 0.0
+DIM dt_frame = 0.0333
+DIM fps_avg = 30.0
+
+SUB TOAST(s$)
+    toast$ = s$
+    toast_t = tnow + 1.6
+ENDSUB
+
+FUNC PXX(tx)
+    RETURN tx * TILE
+ENDFUNC
+
+FUNC PXY(ty)
+    RETURN FY0 + ty * TILE
+ENDFUNC
+
+' The field that never changes during a level: grid, roads, portal frames
+SUB BAKEFIELD(lv)
+    GFX.TARGET bg_img, TRUE
+    GFX.BLEND "ADD"
+    DIM fh = lv{"ROWS"} * TILE
+    DIM i
+    DIM gx = []
+    DIM gy = []
+    FOR i = 0 TO lv{"COLS"}
+        gx = APPEND(gx, [i * TILE, i * TILE])
+        gy = APPEND(gy, [0, fh])
+    NEXT i
+    FOR i = 0 TO lv{"ROWS"}
+        gx = APPEND(gx, [0, SCR_W])
+        gy = APPEND(gy, [i * TILE, i * TILE])
+    NEXT i
+    GFX.LINES gx, gy, 1, 26, 18, 52, TRUE
+    DIM edge_cols = [[40, 200, 255], [255, 60, 190]]
+    DIM p = 0
+    GFX.BLEND "NONE"
+    FOR EACH pts IN lv{"PATHS"}
+        DIM xs = []
+        DIM ys = []
+        FOR EACH q IN pts
+            xs = APPEND(xs, q[0] * TILE)
+            ys = APPEND(ys, q[1] * TILE)
+        NEXT q
+        DIM ec = edge_cols[p MOD 2]
+        GFX.LINES xs, ys, 34, INT(ec[0] * 0.55), INT(ec[1] * 0.55), INT(ec[2] * 0.55)
+        p = p + 1
+    NEXT pts
+    FOR EACH pts2 IN lv{"PATHS"}
+        DIM xs2 = []
+        DIM ys2 = []
+        FOR EACH q2 IN pts2
+            xs2 = APPEND(xs2, q2[0] * TILE)
+            ys2 = APPEND(ys2, q2[1] * TILE)
+        NEXT q2
+        GFX.LINES xs2, ys2, 28, 12, 10, 30
+    NEXT pts2
+    GFX.BLEND "ADD"
+    GFX.TARGET
+ENDSUB
+
+SUB STARTLEVEL(n)
+    cur_level = n
+    DIM lv = LEVELDATA(n)
+    SIM.START(lv)
+    BAKEFIELD(lv)
+    paths_px = []
+    DIM p
+    FOR p = 0 TO SIM.NPATHS() - 1
+        DIM pm = SIM.PATHXY(p)
+        DIM m AS MAP = {}
+        m{"X"} = pm{"X"} * TILE
+        m{"Y"} = pm{"Y"} * TILE + FY0
+        m{"N"} = LEN(pm{"X"})
+        paths_px = APPEND(paths_px, [m])
+    NEXT p
+    sel_slot = -1
+    pending$ = ""
+    paused = 0
+    speed = 1
+    fx = []
+    result_done = 0
+    flash = 0.0
+    uimode$ = "play"
+    MUSICMIX("play")
+    IF n > 1 THEN
+        DIM before = LEVELDATA(n - 1){"TOWERS"}
+        FOR EACH k$ IN lv{"TOWERS"}
+            IF INDEXOF(before, k$) < 0 THEN
+                TOAST(T$("new_tower") + ": " + T$(k$))
+                toast_t = tnow + 5
+            ENDIF
+        NEXT k$
+    ENDIF
+ENDSUB
+
+' ── effects ─────────────────────────────────────────────────────
+
+SUB ADDFX(m)
+    m{"T0"} = tnow
+    fx = APPEND(fx, [m])
+ENDSUB
+
+SUB EVENTSTOFX()
+    FOR EACH ev IN SIM.EVENTS()
+        DIM t$ = ev{"T"}
+        IF t$ = "SHOT" THEN
+            SFX(ev{"K"})
+        ELSEIF t$ = "BEAMON" THEN
+            SFX("LASER")
+        ELSEIF t$ = "HIT" THEN
+            ADDFX({ "F": "BURST", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "C": TCOL(ev{"K"}), "R": 9, "N": 4, "DUR": 0.18 })
+        ELSEIF t$ = "BOOM" THEN
+            ADDFX({ "F": "RING", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "R0": 4, "R1": ev{"R"} * TILE, "C": TCOL(ev{"K"}), "DUR": 0.35, "W": 4 })
+            ADDFX({ "F": "BURST", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "C": [255, 220, 140], "R": ev{"R"} * TILE * 0.8, "N": 8, "DUR": 0.3 })
+            SFX("BOOM")
+        ELSEIF t$ = "ZAP" THEN
+            ADDFX({ "F": "ZAP", "XS": ev{"XS"} * TILE, "YS": ev{"YS"} * TILE + FY0, "C": TCOL("TESLA"), "DUR": 0.16 })
+            SFX("ZAP")
+        ELSEIF t$ = "RAIL" THEN
+            ADDFX({ "F": "LINE", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "X2": PXX(ev{"X2"}), "Y2": PXY(ev{"Y2"}), "C": [200, 255, 210], "W": 5, "DUR": 0.3 })
+            SFX("RAIL")
+        ELSEIF t$ = "PULSE" THEN
+            ADDFX({ "F": "RING", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "R0": 10, "R1": ev{"R"} * TILE, "C": TCOL("PULSE"), "DUR": 0.45, "W": 5 })
+            SFX("PULSE")
+        ELSEIF t$ = "FLAME" THEN
+            ADDFX({ "F": "FLAME", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "X2": PXX(ev{"X2"}), "Y2": PXY(ev{"Y2"}), "R": ev{"R"} * TILE, "DUR": 0.3 })
+            SFX("FLAME")
+        ELSEIF t$ = "DIE" THEN
+            DIM kno = INDEXOF(enemies_json{"ORDER"}, ev{"K"})
+            ADDFX({ "F": "BURST", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "C": ek_col[kno], "R": ek_size[kno] * 2.2, "N": 7, "DUR": 0.4 })
+            ADDFX({ "F": "TXT", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}) - 10, "S": "+" + STR$(ev{"REW"}), "C": [255, 220, 90], "DUR": 0.8 })
+            SFX("DIE")
+        ELSEIF t$ = "LEAK" THEN
+            flash = 1.0
+            SFX("LEAK")
+        ELSEIF t$ = "BUILD" ORELSE t$ = "UPGRADE" THEN
+            ADDFX({ "F": "RING", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "R0": 22, "R1": 4, "C": TCOL(ev{"K"}), "DUR": 0.35, "W": 3 })
+            SFX("BUILD")
+        ELSEIF t$ = "SELL" THEN
+            ADDFX({ "F": "RING", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "R0": 4, "R1": 30, "C": [255, 220, 90], "DUR": 0.4, "W": 3 })
+            SFX("SELL")
+        ELSEIF t$ = "WAVE" THEN
+            SFX("WAVE")
+            IF ev{"EARLY"} > 0 THEN TOAST("+" + STR$(ev{"EARLY"}) + " " + T$("early"))
+        ELSEIF t$ = "WIN" THEN
+            SFX("WIN")
+        ELSEIF t$ = "LOSE" THEN
+            SFX("LOSE")
+        ENDIF
+    NEXT ev
+ENDSUB
+
+SUB DRAWFX()
+    DIM keep = []
+    FOR EACH f IN fx
+        DIM age = (tnow - f{"T0"}) / f{"DUR"}
+        IF age < 1 THEN
+            keep = APPEND(keep, [f])
+            DIM k = 1 - age
+            DIM kind$ = f{"F"}
+            IF kind$ = "RING" THEN
+                DIM rr = f{"R0"} + (f{"R1"} - f{"R0"}) * (1 - k * k)
+                POLY(f{"X"}, f{"Y"}, rr, 28, 0, SHADE(f{"C"}, k), f{"W"} * k + 1)
+            ELSEIF kind$ = "BURST" THEN
+                DIM n = f{"N"}
+                DIM a = IOTA(n, 0) * TWO_PI / n + f{"T0"} * 3
+                DIM r1 = f{"R"} * (0.3 + 0.7 * age)
+                DIM r2 = r1 + 5 * k
+                GFX.LINES WEAVE(f{"X"} + r1 * COS(a), f{"X"} + r2 * COS(a)), WEAVE(f{"Y"} + r1 * SIN(a), f{"Y"} + r2 * SIN(a)), 2, INT(f{"C"}[0] * k), INT(f{"C"}[1] * k), INT(f{"C"}[2] * k), TRUE
+            ELSEIF kind$ = "ZAP" THEN
+                DIM jx = f{"XS"} + (RND() - 0.5) * 0 + SIN(IOTA(LEN(f{"XS"}), 0) * 7 + tnow * 40) * 3
+                DIM jy = f{"YS"} + COS(IOTA(LEN(f{"YS"}), 0) * 5 + tnow * 37) * 3
+                DIM zc = SHADE(f{"C"}, k)
+                GFX.LINES jx, jy, 5, INT(zc[0] * 0.5), INT(zc[1] * 0.5), INT(zc[2] * 0.5)
+                GFX.LINES jx, jy, 2, 230, 220, 255
+            ELSEIF kind$ = "LINE" THEN
+                DIM lc = SHADE(f{"C"}, k)
+                SEG(f{"X"}, f{"Y"}, f{"X2"}, f{"Y2"}, lc, f{"W"} * k + 1)
+            ELSEIF kind$ = "FLAME" THEN
+                DIM fa = ATAN2(f{"Y2"} - f{"Y"}, f{"X2"} - f{"X"})
+                DIM fd = SQR((f{"X2"} - f{"X"}) ^ 2 + (f{"Y2"} - f{"Y"}) ^ 2)
+                DIM sp = IOTA(5, 0) * 0.12 - 0.24
+                DIM fl = fd * (0.4 + 0.6 * age)
+                GFX.LINES WEAVE(f{"X"} + 0 * sp, f{"X"} + fl * COS(fa + sp)), WEAVE(f{"Y"} + 0 * sp, f{"Y"} + fl * SIN(fa + sp)), 3, INT(255 * k), INT(110 * k), INT(40 * k), TRUE
+                POLY(f{"X2"}, f{"Y2"}, f{"R"} * (0.5 + 0.5 * age), 10, tnow, SHADE([255, 120, 40], k * 0.7), 2)
+            ELSEIF kind$ = "TXT" THEN
+                CTEXT(f{"X"}, f{"Y"} - age * 26, f{"S"}, SHADE(f{"C"}, 0.4 + 0.6 * k), 15)
+            ENDIF
+        ENDIF
+    NEXT f
+    fx = keep
+ENDSUB
+
+' ── the field ───────────────────────────────────────────────────
+
+SUB DRAWFLOW()
+    DIM p = 0
+    FOR EACH pm IN paths_px
+        DIM gap = 30
+        DIM n = INT((pm{"N"} - 12) / gap)
+        IF n > 0 THEN
+            DIM shift_px = INT(tnow * 22) MOD gap
+            DIM idx = IOTA(n, 0) * gap + shift_px
+            DIM nxt = idx + 6
+            DIM x0 = pm{"X"}[idx]
+            DIM y0 = pm{"Y"}[idx]
+            DIM dx = pm{"X"}[nxt] - x0
+            DIM dy = pm{"Y"}[nxt] - y0
+            DIM dl = SQR(dx * dx + dy * dy) + 0.001
+            dx = dx / dl * 6
+            dy = dy / dl * 6
+            DIM tipx = x0 + dx
+            DIM tipy = y0 + dy
+            DIM lx = x0 - dy
+            DIM ly = y0 + dx
+            DIM rx = x0 + dy
+            DIM ry = y0 - dx
+            DIM c = IIF(p MOD 2 = 0, [30, 120, 160], [150, 40, 120])
+            GFX.LINES APPEND(WEAVE(lx, tipx), WEAVE(rx, tipx)), APPEND(WEAVE(ly, tipy), WEAVE(ry, tipy)), 2, c[0], c[1], c[2], TRUE
+        ENDIF
+        p = p + 1
+    NEXT pm
+ENDSUB
+
+SUB DRAWGATES(lv)
+    DIM pulse = 0.6 + 0.4 * SIN(tnow * 3)
+    FOR EACH pts IN lv{"PATHS"}
+        DIM sx = pts[0][0] * TILE
+        POLY(sx, FY0 + 6, 16, 3, 1.5708, SHADE([255, 70, 160], pulse), 3)
+    NEXT pts
+    DIM last = lv{"PATHS"}[0][LEN(lv{"PATHS"}[0]) - 1]
+    DIM bx = last[0] * TILE
+    DIM by = FY0 + (lv{"ROWS"} - 0.5) * TILE
+    POLY(bx, by, 17, 6, tnow * 0.5, [80, 230, 255], 3)
+    POLY(bx, by, 10 + 2 * pulse, 6, 0 - tnow, [190, 250, 255], 2)
+    POLY(bx, by, 24, 6, 0, SHADE([60, 160, 255], 0.5), 1.5)
+ENDSUB
+
+SUB DRAWSLOTS()
+    DIM xs = []
+    DIM ys = []
+    DIM i
+    FOR i = 0 TO SIM.NSLOTS() - 1
+        IF SIM.TOWER(i){"KIND"} = "" THEN
+            DIM s = SIM.SLOTPOS(i)
+            xs = APPEND(xs, PXX(s[0] + 0.5))
+            ys = APPEND(ys, PXY(s[1] + 0.5))
+        ENDIF
+    NEXT i
+    IF LEN(xs) = 0 THEN RETURN
+    POLYBATCH(xs, ys, 15, 6, 0, [70, 60, 130], 2)
+    DIM pl = 4
+    GFX.LINES APPEND(WEAVE(xs - pl, xs + pl), WEAVE(xs, xs)), APPEND(WEAVE(ys, ys), WEAVE(ys - pl, ys + pl)), 2, 90, 80, 160, TRUE
+ENDSUB
+
+SUB DRAWTOWER(slot)
+    DIM t = SIM.TOWER(slot)
+    DIM k$ = t{"KIND"}
+    DIM cx = PXX(t{"X"})
+    DIM cy = PXY(t{"Y"})
+    DIM c = TCOL(k$)
+    DIM a = t{"AIM"}
+    DIM s = t{"S"}
+    DIM mode$ = s{"MODE"}
+    POLY(cx, cy, 17, 6, 0, SHADE(c, 0.35), 2)
+    IF k$ = "LASER" THEN
+        POLY(cx, cy, 12, 4, a, c, 2.5)
+        POLY(cx, cy, 5, 4, a, [220, 255, 255], 2)
+    ELSEIF k$ = "BLASTER" THEN
+        POLY(cx, cy, 10, 8, 0, c, 2.5)
+        DIM nb = s{"BARRELS"}
+        IF mode$ = "RAIL" THEN nb = 1
+        DIM b
+        FOR b = 0 TO nb - 1
+            DIM bar_off = (b - (nb - 1) / 2) * 5
+            DIM ox = cx - SIN(a) * bar_off
+            DIM oy = cy + COS(a) * bar_off
+            SEG(ox, oy, ox + COS(a) * IIF(mode$ = "RAIL", 22, 15), oy + SIN(a) * IIF(mode$ = "RAIL", 22, 15), c, 3)
+        NEXT b
+    ELSEIF k$ = "CRYO" THEN
+        POLY(cx, cy, 11, 6, 0, c, 2)
+        DIM sa = IOTA(6, 0) * TWO_PI / 6 + tnow * 0.6
+        GFX.LINES WEAVE(cx + sa * 0, cx + 9 * COS(sa)), WEAVE(cy + sa * 0, cy + 9 * SIN(sa)), 2, 200, 240, 255, TRUE
+    ELSEIF k$ = "BOMB" THEN
+        POLY(cx, cy, 13, 4, 0.785, c, 2.5)
+        SEG(cx, cy, cx + COS(a) * 11, cy + SIN(a) * 11, [255, 220, 150], 6)
+    ELSEIF k$ = "TESLA" THEN
+        POLY(cx, cy, 13, 3, -1.5708, c, 2.5)
+        POLY(cx, cy, 6, 3, 1.5708, [230, 210, 255], 2)
+        IF frame MOD 6 < 3 THEN SEG(cx, cy - 13, cx + (RND() - 0.5) * 10, cy - 20, [220, 200, 255], 1.5)
+    ELSEIF k$ = "PULSE" THEN
+        DIM pr = 1 - MAX([0, t{"CD"}]) * s{"RATE"}
+        POLY(cx, cy, 12, 8, tnow * 0.3, c, 2.5)
+        POLY(cx, cy, 3 + 6 * pr, 12, 0, [255, 190, 240], 2)
+    ELSEIF k$ = "PLASMA" THEN
+        POLY(cx, cy, 11, 5, a, c, 2.5)
+        SEG(cx + COS(a) * 6, cy + SIN(a) * 6, cx + COS(a) * 15, cy + SIN(a) * 15, [255, 200, 120], 5)
+    ELSEIF k$ = "RELAY" THEN
+        DIM st = IOTA(11, 0) * TWO_PI / 10 - 1.5708 + tnow * 0.2
+        DIM sr = 6 + 7 * ((IOTA(11, 0) MOD 2) = 0)
+        GFX.LINES cx + sr * COS(st), cy + sr * SIN(st), 2.5, c[0], c[1], c[2]
+    ENDIF
+    ' tier pips under the tower, branch ring around it
+    DIM pips = t{"TIER"} + t{"BT"}
+    DIM pi_x = cx - (pips - 1) * 3.5
+    DIM i
+    FOR i = 0 TO pips - 1
+        DIM pc = IIF(i < t{"TIER"}, [200, 200, 230], IIF(t{"BR"} = "A", [120, 255, 255], [255, 210, 90]))
+        SEG(pi_x + i * 7, cy + 21, pi_x + i * 7 + 3, cy + 21, pc, 3)
+    NEXT i
+    IF t{"BR"} <> "" THEN POLY(cx, cy, 19, 6, 0, IIF(t{"BR"} = "A", [80, 200, 230], [230, 170, 60]), 1 + t{"BT"})
+ENDSUB
+
+SUB DRAWBEAMS(slot)
+    DIM t = SIM.TOWER(slot)
+    IF t{"S"}{"MODE"} <> "BEAM" THEN RETURN
+    DIM n = LEN(t{"BX"})
+    IF n = 0 THEN RETURN
+    DIM cx = PXX(t{"X"})
+    DIM cy = PXY(t{"Y"})
+    DIM ex = t{"BX"} * TILE
+    DIM ey = t{"BY"} * TILE + FY0
+    DIM sx = ex * 0 + cx
+    DIM sy = ey * 0 + cy
+    DIM c = TCOL("LASER")
+    DIM rf = 1.0
+    IF MAP.EXISTS(t, "RAMPF") THEN rf = t{"RAMPF"}
+    DIM w = 2 + 3 * rf + SIN(tnow * 40) * 0.8
+    GFX.LINES WEAVE(sx, ex), WEAVE(sy, ey), w + 3, INT(c[0] * 0.35), INT(c[1] * 0.35), INT(c[2] * 0.35), TRUE
+    GFX.LINES WEAVE(sx, ex), WEAVE(sy, ey), 1.5, 210, 255, 255, TRUE
+    POLYBATCH(ex, ey, 5 + 2 * rf, 6, tnow * 4, [140, 250, 255], 2)
+ENDSUB
+
+SUB DRAWAURAS()
+    DIM i
+    FOR i = 0 TO SIM.NSLOTS() - 1
+        DIM t = SIM.TOWER(i)
+        IF t{"KIND"} = "CRYO" THEN
+            DIM r = t{"S"}{"RANGE"} * t{"RBUFF"} * TILE
+            DIM ph = (tnow * 0.5 + i * 0.37) - INT(tnow * 0.5 + i * 0.37)
+            POLY(PXX(t{"X"}), PXY(t{"Y"}), r, 32, 0, [30, 60, 90], 1.5)
+            POLY(PXX(t{"X"}), PXY(t{"Y"}), r * ph, 24, 0, SHADE([110, 190, 255], 0.5 * (1 - ph)), 2)
+        ELSEIF t{"KIND"} = "RELAY" THEN
+            DIM j
+            FOR j = 0 TO SIM.NSLOTS() - 1
+                DIM o = SIM.TOWER(j)
+                IF j <> i ANDALSO o{"KIND"} <> "" ANDALSO o{"KIND"} <> "RELAY" THEN
+                    IF SQR((o{"X"} - t{"X"}) ^ 2 + (o{"Y"} - t{"Y"}) ^ 2) <= t{"S"}{"RANGE"} + 0.01 THEN
+                        SEG(PXX(t{"X"}), PXY(t{"Y"}), PXX(o{"X"}), PXY(o{"Y"}), [70, 60, 20], 1.5)
+                    ENDIF
+                ENDIF
+            NEXT j
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB DRAWENEMIES()
+    DIM en = SIM.ENEMIES()
+    DIM n = LEN(en{"X"})
+    IF n = 0 THEN RETURN
+    DIM px = en{"X"} * TILE
+    DIM py = en{"Y"} * TILE + FY0
+    DIM kinds = en{"K"}
+    DIM k
+    FOR k = 0 TO LEN(ek_sides) - 1
+        DIM m = kinds = k
+        IF SUM(m) > 0 THEN
+            DIM idx = WHICH(m)
+            DIM c = ek_col[k]
+            DIM rot = tnow * ek_spin[k]
+            POLYBATCH(px[idx], py[idx], ek_size[k], ek_sides[k], rot, c, 2.5)
+            POLYBATCH(px[idx], py[idx], ek_size[k] * 0.45, ek_sides[k], 0 - rot * 1.7, [255, 245, 250], 1.5)
+        ENDIF
+    NEXT k
+    DIM sizes = ek_size[kinds]
+    DIM shm = en{"SHF"} > 0.02
+    IF SUM(shm) > 0 THEN
+        DIM si = WHICH(shm)
+        POLYBATCH(px[si], py[si], sizes[si] + 5, 10, tnow, [90, 140, 255], 1.5)
+    ENDIF
+    DIM stm = en{"STUN"}
+    IF SUM(stm) > 0 THEN
+        DIM sti = WHICH(stm)
+        POLYBATCH(px[sti], py[sti] - sizes[sti] - 5, 3, 4, tnow * 6, [255, 255, 255], 1.5)
+    ENDIF
+    DIM slm = en{"SLOW"} > 0.01
+    IF SUM(slm) > 0 THEN
+        DIM sli = WHICH(slm)
+        POLYBATCH(px[sli], py[sli], sizes[sli] + 2, 6, 0, [80, 150, 220], 1)
+    ENDIF
+    DIM bum = en{"BURN"}
+    IF SUM(bum) > 0 THEN
+        DIM bi = WHICH(bum)
+        POLYBATCH(px[bi], py[bi] - 2, sizes[bi] * 0.7, 3, 0 - 1.5708, [255, 110, 30], 2)
+    ENDIF
+    DIM hm = en{"HPF"} < 0.995
+    IF SUM(hm) > 0 THEN
+        DIM hi = WHICH(hm)
+        DIM bx0 = px[hi] - 11
+        DIM by0 = py[hi] - sizes[hi] - 7
+        DIM bw = en{"HPF"}[hi] * 22
+        GFX.LINES WEAVE(bx0, bx0 + 22), WEAVE(by0, by0), 3, 50, 20, 30, TRUE
+        GFX.LINES WEAVE(bx0, bx0 + bw), WEAVE(by0, by0), 3, 90, 255, 120, TRUE
+    ENDIF
+ENDSUB
+
+SUB DRAWSHOTS()
+    DIM sh = SIM.SHOTS()
+    DIM n = LEN(sh{"X"})
+    IF n = 0 THEN RETURN
+    DIM i
+    FOR i = 0 TO n - 1
+        DIM x = PXX(sh{"X"}[i])
+        DIM y = PXY(sh{"Y"}[i])
+        DIM dx = PXX(sh{"TX"}[i]) - x
+        DIM dy = PXY(sh{"TY"}[i]) - y
+        DIM dl = SQR(dx * dx + dy * dy) + 0.001
+        DIM c = TCOL(sh{"K"}[i])
+        IF sh{"SPL"}[i] > 0 THEN
+            POLY(x, y, 5, 6, tnow * 8, c, 2.5)
+        ELSE
+            SEG(x - dx / dl * 9, y - dy / dl * 9, x, y, c, 3)
+        ENDIF
+    NEXT i
+ENDSUB
+
+' ── ring menu ───────────────────────────────────────────────────
+
+DIM ring_items = []
+
+FUNC RINGOPTS(slot)
+    DIM out = []
+    DIM t = SIM.TOWER(slot)
+    IF t{"KIND"} = "" THEN
+        FOR EACH k$ IN LEVELDATA(cur_level){"TOWERS"}
+            out = APPEND(out, [["B:" + k$, SIM.COST(k$), k$]])
+        NEXT k$
+    ELSE
+        FOR EACH o IN SIM.UPOPTS(slot)
+            out = APPEND(out, [["U:" + o[0], o[1], t{"KIND"}]])
+        NEXT o
+        out = APPEND(out, [["SELL", 0 - SIM.SELLVALUE(slot), t{"KIND"}]])
+    ENDIF
+    RETURN out
+ENDFUNC
+
+SUB OPENRING(slot)
+    sel_slot = slot
+    pending$ = ""
+    DIM s = SIM.SLOTPOS(slot)
+    ring_cx = PXX(s[0] + 0.5)
+    ring_cy = PXY(s[1] + 0.5)
+    SFX("TAP")
+ENDSUB
+
+SUB DRAWRING()
+    IF sel_slot < 0 THEN RETURN
+    DIM t = SIM.TOWER(sel_slot)
+    DIM opts = RINGOPTS(sel_slot)
+    DIM n = LEN(opts)
+    IF t{"KIND"} <> "" THEN
+        DIM r = t{"S"}{"RANGE"} * t{"RBUFF"} * TILE
+        POLY(ring_cx, ring_cy, r, 48, 0, SHADE(TCOL(t{"KIND"}), 0.5), 2)
+    ENDIF
+    DIM ring_r = 64
+    IF n > 6 THEN ring_r = 74
+    ' keep the whole ring on screen
+    DIM ccx = ring_cx
+    DIM ccy = ring_cy
+    IF ccx < ring_r + 26 THEN ccx = ring_r + 26
+    IF ccx > SCR_W - ring_r - 26 THEN ccx = SCR_W - ring_r - 26
+    IF ccy < FY0 + ring_r + 26 THEN ccy = FY0 + ring_r + 26
+    IF ccy > BAR_Y - ring_r - 26 THEN ccy = BAR_Y - ring_r - 26
+    POLY(ring_cx, ring_cy, 19, 6, 0, [255, 255, 255], 2)
+    DIM i
+    FOR i = 0 TO n - 1
+        DIM ang = -1.5708 + i * TWO_PI / n
+        IF t{"KIND"} <> "" THEN
+            ang = -1.5708 + (i - (n - 1) / 2) * 0.95
+            IF opts[i][0] = "SELL" THEN ang = 1.5708
+        ENDIF
+        DIM ix = ccx + ring_r * COS(ang)
+        DIM iy = ccy + ring_r * SIN(ang)
+        DIM code$ = opts[i][0]
+        DIM cost = opts[i][1]
+        DIM afford = IIF(cost <= SIM.CREDITS(), 1, 0)
+        DIM c = TCOL(opts[i][2])
+        IF code$ = "SELL" THEN c = [255, 210, 90]
+        IF afford = 0 THEN c = SHADE(c, 0.35)
+        GFX.BLEND "BLEND"
+        DRAWCOLOR 4, 4, 14, 230
+        CIRCLE ix, iy, 22, TRUE
+        GFX.BLEND "ADD"
+        DIM sel = IIF(pending$ = code$, 1, 0)
+        POLY(ix, iy, 22, 24, 0, c, 2 + sel * 2)
+        IF sel = 1 THEN POLY(ix, iy, 27 + 2 * SIN(tnow * 8), 24, 0, SHADE(c, 0.6), 2)
+        IF LEFT$(code$, 2) = "B:" THEN
+            ICON(opts[i][2], ix, iy - 3, c)
+            CTEXT(ix, iy + 7, STR$(cost), IIF(afford = 1, [255, 230, 120], [140, 120, 90]), 12)
+        ELSEIF code$ = "SELL" THEN
+            CTEXT(ix, iy - 14, "$", [255, 230, 120], 16)
+            CTEXT(ix, iy + 2, "+" + STR$(0 - cost), [255, 230, 120], 12)
+        ELSE
+            DIM lab$ = MID$(code$, 2, 1)
+            IF lab$ = "U" THEN lab$ = "^"
+            CTEXT(ix, iy - 15, lab$, [235, 240, 255], 18)
+            CTEXT(ix, iy + 3, STR$(cost), IIF(afford = 1, [255, 230, 120], [140, 120, 90]), 12)
+        ENDIF
+        HIT(ix - 24, iy - 24, 48, 48, "R:" + code$)
+    NEXT i
+ENDSUB
+
+SUB ICON(k$, cx, cy, c)
+    IF k$ = "LASER" THEN
+        POLY(cx, cy, 8, 4, 0, c, 2)
+    ELSEIF k$ = "BLASTER" THEN
+        POLY(cx, cy, 7, 8, 0, c, 2)
+        SEG(cx, cy, cx + 10, cy - 6, c, 2)
+    ELSEIF k$ = "CRYO" THEN
+        POLY(cx, cy, 8, 6, 0, c, 2)
+    ELSEIF k$ = "BOMB" THEN
+        POLY(cx, cy, 8, 4, 0.785, c, 2)
+    ELSEIF k$ = "TESLA" THEN
+        POLY(cx, cy, 9, 3, -1.5708, c, 2)
+    ELSEIF k$ = "PULSE" THEN
+        POLY(cx, cy, 8, 8, 0, c, 2)
+        POLY(cx, cy, 3, 8, 0, c, 1.5)
+    ELSEIF k$ = "PLASMA" THEN
+        POLY(cx, cy, 8, 5, -1.5708, c, 2)
+    ELSE
+        DIM st = IOTA(11, 0) * TWO_PI / 10 - 1.5708
+        DIM sr = 4 + 5 * ((IOTA(11, 0) MOD 2) = 0)
+        GFX.LINES cx + sr * COS(st), cy + sr * SIN(st), 2, c[0], c[1], c[2]
+    ENDIF
+ENDSUB
+
+' What the selected choice does, in the panel at the bottom of the field
+FUNC STATLINE$(s)
+    DIM m$ = s{"MODE"}
+    DIM r$ = T$("range") + " " + STR$(s{"RANGE"})
+    IF m$ = "BEAM" THEN RETURN T$("dmg") + " " + STR$(s{"DMG"}) + "/s x" + STR$(s{"BEAMS"}) + "   " + r$
+    IF m$ = "BOLT" THEN RETURN T$("dmg") + " " + STR$(s{"DMG"}) + " x" + STR$(s{"BARRELS"}) + "   " + STR$(s{"RATE"}) + "/s   " + r$
+    IF m$ = "RAIL" THEN RETURN T$("dmg") + " " + STR$(s{"DMG"}) + "   " + STR$(s{"RATE"}) + "/s   " + r$
+    IF m$ = "SHELL" THEN RETURN T$("dmg") + " " + STR$(s{"DMG"}) + "   " + STR$(s{"RATE"}) + "/s   " + r$
+    IF m$ = "ZAP" THEN RETURN T$("dmg") + " " + STR$(s{"DMG"}) + "  x" + STR$(s{"CHAIN"}) + "   " + r$
+    IF m$ = "AURA" THEN RETURN "-" + STR$(INT(s{"SLOW"} * 100)) + "%   " + r$
+    IF m$ = "PULSE" THEN RETURN T$("dmg") + " " + STR$(s{"DMG"}) + "   " + STR$(s{"STUN"}) + "s   " + r$
+    IF m$ = "FLAME" THEN RETURN STR$(s{"BURN"}) + "/s   " + r$
+    IF m$ = "RELAY" THEN
+        IF s{"INCOME"} > 0 THEN RETURN "+" + STR$(s{"INCOME"}) + " / " + T$("wave")
+        RETURN "+" + STR$(INT(s{"BUFFD"} * 100)) + "% " + T$("dmg") + "   +" + STR$(INT(s{"BUFFR"} * 100)) + "% " + T$("range")
+    ENDIF
+    RETURN r$
+ENDFUNC
+
+SUB DRAWINFO()
+    IF sel_slot < 0 THEN RETURN
+    DIM t = SIM.TOWER(sel_slot)
+    DIM title$ = ""
+    DIM desc$ = ""
+    DIM stat$ = ""
+    DIM c = [200, 200, 255]
+    DIM code$ = pending$
+    IF t{"KIND"} = "" ANDALSO code$ = "" THEN RETURN
+    IF LEFT$(code$, 2) = "B:" THEN
+        DIM k$ = MID$(code$, 2, 40)
+        c = TCOL(k$)
+        title$ = T$(k$) + "   " + STR$(SIM.COST(k$))
+        desc$ = T$(k$ + "_d")
+        stat$ = STATLINE$(SIM.STATS(k$, 1, "", 0))
+    ELSE
+        DIM kk$ = t{"KIND"}
+        c = TCOL(kk$)
+        DIM name$ = T$(kk$)
+        IF t{"BR"} <> "" THEN name$ = T$(kk$ + "_" + t{"BR"})
+        title$ = name$ + "   " + T$("tier") + " " + STR$(t{"TIER"} + t{"BT"})
+        desc$ = IIF(t{"BR"} <> "", T$(kk$ + "_" + t{"BR"} + "d"), T$(kk$ + "_d"))
+        stat$ = STATLINE$(t{"S"})
+        IF code$ = "U:UP" THEN
+            DIM nt = t{"TIER"}
+            DIM nb = t{"BT"}
+            IF t{"BR"} = "" THEN
+                nt = nt + 1
+            ELSE
+                nb = nb + 1
+            ENDIF
+            stat$ = "> " + STATLINE$(SIM.STATS(kk$, nt, t{"BR"}, nb))
+            desc$ = T$("upgrade")
+        ELSEIF code$ = "U:A" ORELSE code$ = "U:B" THEN
+            DIM br$ = RIGHT$(code$, 1)
+            title$ = T$(kk$ + "_" + br$) + "   (" + br$ + ")"
+            desc$ = T$(kk$ + "_" + br$ + "d")
+            stat$ = "> " + STATLINE$(SIM.STATS(kk$, 3, br$, 1))
+        ELSEIF code$ = "SELL" THEN
+            desc$ = T$("sell") + "  +" + STR$(SIM.SELLVALUE(sel_slot))
+        ELSEIF LEN(SIM.UPOPTS(sel_slot)) = 0 THEN
+            desc$ = T$("maxed")
+        ENDIF
+    ENDIF
+    DIM py = BAR_Y - 92
+    IF ring_cy > FY0 + 420 THEN py = FY0 + 6
+    PANEL(8, py, SCR_W - 16, 84, c, 225)
+    QTEXT(22, py + 8, title$, [240, 245, 255], 18)
+    QTEXT(22, py + 34, desc$, SHADE(c, 0.9), 14)
+    QTEXT(22, py + 56, stat$, [190, 200, 230], 14)
+    IF code$ <> "" THEN QTEXT(SCR_W - 22 - TEXTW(T$("tap_again"), 12), py + 10, T$("tap_again"), [150, 150, 190], 12)
+ENDSUB
+
+' ── HUD and bars ────────────────────────────────────────────────
+
+SUB DRAWHUD()
+    PANEL(4, 4, SCR_W - 8, FY0 - 10, [120, 80, 255], 210)
+    POLY(26, 30, 9, 4, 0, [255, 220, 90], 2.5)
+    QTEXT(42, 18, STR$(SIM.CREDITS()), [255, 230, 130], 20)
+    POLY(170, 30, 9, 6, tnow * 0.5, [80, 230, 255], 2.5)
+    QTEXT(186, 18, STR$(SIM.LIVES()), IIF(flash > 0.1, [255, 120, 120], [180, 245, 255]), 20)
+    DIM w$ = T$("wave") + " " + STR$(SIM.WAVE()) + "/" + STR$(SIM.NWAVES())
+    QTEXT(SCR_W - 20 - TEXTW(w$, 18), 12, w$, [235, 220, 255], 18)
+    DIM l$ = STR$(cur_level) + "  " + LEVELDATA(cur_level){"NAME"}
+    QTEXT(SCR_W - 20 - TEXTW(l$, 12), 36, l$, [150, 130, 200], 12)
+    IF show_fps = 1 THEN QTEXT(240, 40, STR$(INT(fps_avg)) + " fps", [120, 255, 160], 12)
+ENDSUB
+
+SUB DRAWBAR()
+    DIM ph$ = SIM.PHASE$()
+    DIM has_next = IIF(SIM.WAVE() < SIM.NWAVES(), 1, 0)
+    DIM c = IIF(has_next = 1, [255, 70, 190], [80, 70, 110])
+    PANEL(8, BAR_Y + 6, 262, 70, c, 210)
+    IF has_next = 1 THEN HIT(8, BAR_Y + 6, 262, 70, "next")
+    POLY(34, BAR_Y + 41, 11, 3, 0, c, 3)
+    DIM lab$ = T$("next_wave") + " " + STR$(SIM.WAVE() + 1) + "/" + STR$(SIM.NWAVES())
+    IF SIM.WAVE() = 0 THEN lab$ = T$("start") + "  " + lab$
+    IF has_next = 0 THEN lab$ = T$("wave") + " " + STR$(SIM.NWAVES()) + "/" + STR$(SIM.NWAVES())
+    QTEXT(54, BAR_Y + 14, lab$, [245, 235, 255], 17)
+    IF has_next = 1 THEN
+        DIM px = 56
+        FOR EACH g IN SIM.PREVIEW()
+            DIM kn = INDEXOF(enemies_json{"ORDER"}, g[0])
+            POLY(px + 6, BAR_Y + 55, 6, ek_sides[kn], tnow, ek_col[kn], 1.5)
+            QTEXT(px + 15, BAR_Y + 46, "x" + STR$(g[1]), [200, 190, 220], 12)
+            px = px + 52
+        NEXT g
+        DIM eb = SIM.EARLYBONUS()
+        IF eb > 0 THEN QTEXT(214, BAR_Y + 46, "+" + STR$(eb), [255, 220, 90], 12)
+    ENDIF
+    BUTTON(280, BAR_Y + 6, 90, 70, "x" + STR$(speed), [80, 220, 255], "speed", 22)
+    BUTTON(380, BAR_Y + 6, 92, 70, "II", [190, 120, 255], "pause", 22)
+ENDSUB
+
+SUB DRAWOVERLAY()
+    IF flash > 0.02 THEN
+        GFX.BLEND "ADD"
+        DRAWCOLOR INT(90 * flash), 0, INT(20 * flash), 255
+        RECT 0, FY0, SCR_W, BAR_Y - FY0, FALSE
+        RECT 2, FY0 + 2, SCR_W - 4, BAR_Y - FY0 - 4, FALSE
+    ENDIF
+    IF toast$ <> "" ANDALSO tnow < toast_t THEN CTEXT(SCR_W / 2, FY0 + 14, toast$, [255, 230, 140], 18)
+    DIM ph$ = SIM.PHASE$()
+    IF ph$ = "won" ORELSE ph$ = "lost" THEN
+        DIM won = IIF(ph$ = "won", 1, 0)
+        DIM c = IIF(won = 1, [90, 255, 180], [255, 70, 110])
+        PANEL(50, 230, SCR_W - 100, 380, c, 235)
+        CTEXT(SCR_W / 2, 256, IIF(won = 1, T$("won"), T$("lost")), c, 34)
+        IF won = 1 THEN
+            DIM s
+            FOR s = 0 TO 2
+                DIM sc = IIF(s < result_stars, [255, 220, 80], [60, 55, 80])
+                DIM sa = IOTA(11, 0) * TWO_PI / 10 - 1.5708
+                DIM srr = 9 + 13 * ((IOTA(11, 0) MOD 2) = 0)
+                GFX.LINES SCR_W / 2 + (s - 1) * 62 + srr * COS(sa), 345 + srr * SIN(sa), 3, sc[0], sc[1], sc[2]
+            NEXT s
+        ENDIF
+        CTEXT(SCR_W / 2, 390, T$("score") + "  " + STR$(result_score), [235, 235, 255], 20)
+        CTEXT(SCR_W / 2, 420, T$("best") + "  " + STR$(BESTOF(cur_level)), [160, 150, 200], 15)
+        IF won = 1 ANDALSO cur_level < 20 THEN BUTTON(80, 470, SCR_W - 160, 56, T$("next_level"), [90, 255, 180], "res:next", 20)
+        BUTTON(80, 536, 150, 56, T$("retry"), [255, 200, 90], "res:retry", 18)
+        BUTTON(250, 536, 150, 56, T$("levels"), [150, 120, 255], "res:levels", 18)
+    ELSEIF paused = 1 THEN
+        PANEL(60, 210, SCR_W - 120, 430, [190, 120, 255], 235)
+        CTEXT(SCR_W / 2, 232, T$("paused"), [235, 220, 255], 30)
+        BUTTON(90, 290, SCR_W - 180, 52, T$("resume"), [90, 255, 180], "resume", 19)
+        BUTTON(90, 352, SCR_W - 180, 52, T$("restart"), [255, 200, 90], "restart", 19)
+        BUTTON(90, 414, SCR_W - 180, 52, T$("levels"), [150, 120, 255], "levels", 19)
+        BUTTON(90, 488, 92, 48, T$("music"), IIF(mus_on = 1, [80, 220, 255], [70, 70, 90]), "music", 13)
+        BUTTON(194, 488, 92, 48, T$("sfx"), IIF(sfx_on = 1, [80, 220, 255], [70, 70, 90]), "sfx", 13)
+        BUTTON(298, 488, 92, 48, T$("glow"), IIF(glow_on = 1, [80, 220, 255], [70, 70, 90]), "glow", 13)
+    ENDIF
+ENDSUB
+
+SUB DRAWPLAY()
+    DIM lv = LEVELDATA(cur_level)
+    GFX.DRAWIMAGE bg_img, 0, FY0
+    DRAWFLOW()
+    DRAWGATES(lv)
+    DRAWAURAS()
+    DRAWSLOTS()
+    DIM i
+    FOR i = 0 TO SIM.NSLOTS() - 1
+        IF SIM.TOWER(i){"KIND"} <> "" THEN DRAWTOWER(i)
+    NEXT i
+    DRAWENEMIES()
+    FOR i = 0 TO SIM.NSLOTS() - 1
+        IF SIM.TOWER(i){"KIND"} <> "" THEN DRAWBEAMS(i)
+    NEXT i
+    DRAWSHOTS()
+    DRAWFX()
+    DRAWHUD()
+    DRAWBAR()
+    IF paused = 0 ANDALSO SIM.PHASE$() <> "won" ANDALSO SIM.PHASE$() <> "lost" THEN
+        DRAWRING()
+        DRAWINFO()
+    ENDIF
+    DRAWOVERLAY()
+ENDSUB
+
+' ── level select and leaderboard ────────────────────────────────
+
+' A synthwave floor running towards the horizon
+SUB DRAWFLOOR(hy)
+    DIM xs = []
+    DIM ys = []
+    DIM i
+    FOR i = 0 TO 13
+        DIM z = (i + (tnow * 0.6 - INT(tnow * 0.6))) / 14
+        DIM y = hy + (SCR_H - hy) * z * z
+        xs = APPEND(xs, [0, SCR_W])
+        ys = APPEND(ys, [y, y])
+    NEXT i
+    FOR i = -8 TO 8
+        xs = APPEND(xs, [SCR_W / 2 + i * 10, SCR_W / 2 + i * 120])
+        ys = APPEND(ys, [hy, SCR_H])
+    NEXT i
+    GFX.LINES xs, ys, 1.5, 120, 30, 110, TRUE
+ENDSUB
+
+SUB DRAWMENU()
+    DRAWFLOOR(730)
+    CTEXT(SCR_W / 2, 30, "jdTOWER", [120, 240, 255], 52)
+    CTEXT(SCR_W / 2, 92, T$("subtitle"), [255, 120, 210], 18)
+    DIM who$ = myname$
+    IF auth$ = "" THEN who$ = T$("guest")
+    CTEXT(SCR_W / 2, 124, who$, [170, 160, 210], 13)
+    DIM n
+    FOR n = 1 TO 20
+        DIM col = (n - 1) MOD 4
+        DIM row = INT((n - 1) / 4)
+        DIM x = 36 + col * 106
+        DIM y = 156 + row * 100
+        DIM is_open = UNLOCKED(n)
+        DIM stars = STARSOF(n)
+        DIM c = [70, 60, 100]
+        IF is_open = 1 THEN c = IIF(n MOD 5 = 0, [255, 80, 150], [100, 200, 255])
+        IF stars = 3 THEN c = [255, 210, 90]
+        PANEL(x, y, 90, 84, c, 190)
+        CTEXT(x + 45, y + 10, STR$(n), IIF(is_open = 1, [240, 245, 255], [90, 85, 120]), 26)
+        DIM s
+        FOR s = 0 TO 2
+            DIM sc = IIF(s < stars, [255, 220, 80], [55, 50, 80])
+            POLY(x + 25 + s * 20, y + 62, 6, 5, -1.5708, sc, 2)
+        NEXT s
+        IF is_open = 1 THEN HIT(x, y, 90, 84, "lvl:" + STR$(n))
+    NEXT n
+    IF online = 1 THEN BUTTON(110, 668, SCR_W - 220, 56, T$("board"), [255, 120, 210], "board", 19)
+    IF net_msg$ <> "" THEN CTEXT(SCR_W / 2, 740, net_msg$, [255, 130, 130], 13)
+ENDSUB
+
+SUB DRAWBOARD()
+    DRAWFLOOR(700)
+    CTEXT(SCR_W / 2, 30, T$("board"), [255, 120, 210], 34)
+    PANEL(20, 90, SCR_W - 40, 560, [120, 80, 255], 220)
+    QTEXT(40, 104, "#", [150, 140, 200], 14)
+    QTEXT(80, 104, "Name", [150, 140, 200], 14)
+    QTEXT(270, 104, T$("stars"), [150, 140, 200], 14)
+    QTEXT(360, 104, T$("score"), [150, 140, 200], 14)
+    DIM i = 0
+    FOR EACH r IN board_rows
+        IF i >= 16 THEN EXITFOR
+        DIM y = 136 + i * 31
+        DIM c = IIF(r{"NAME"} = myname$, [120, 255, 200], [225, 225, 245])
+        QTEXT(40, y, STR$(i + 1), c, 16)
+        QTEXT(80, y, LEFT$(r{"NAME"}, 14), c, 16)
+        QTEXT(270, y, STR$(r{"STARS"}), [255, 220, 90], 16)
+        QTEXT(360, y, STR$(r{"SCORE"}), c, 16)
+        i = i + 1
+    NEXT r
+    BUTTON(140, 680, SCR_W - 280, 56, T$("back"), [100, 200, 255], "back", 19)
+ENDSUB
+
+' ── input ───────────────────────────────────────────────────────
+
+SUB DOACTION(act$)
+    IF act$ = "" THEN RETURN
+    IF LEFT$(act$, 4) = "lvl:" THEN
+        SFX("TAP")
+        STARTLEVEL(VAL(MID$(act$, 4, 4)))
+    ELSEIF act$ = "board" THEN
+        SFX("TAP")
+        LOADBOARD()
+        uimode$ = "board"
+    ELSEIF act$ = "back" ORELSE act$ = "levels" ORELSE act$ = "res:levels" THEN
+        SFX("TAP")
+        uimode$ = "menu"
+        paused = 0
+        MUSICMIX("menu")
+    ELSEIF act$ = "next" THEN
+        IF SIM.LAUNCH() = "" THEN sel_slot = -1
+    ELSEIF act$ = "speed" THEN
+        speed = speed + 1
+        IF speed > 3 THEN speed = 1
+        SFX("TAP")
+    ELSEIF act$ = "pause" THEN
+        paused = 1 - paused
+        SFX("TAP")
+    ELSEIF act$ = "resume" THEN
+        paused = 0
+        SFX("TAP")
+    ELSEIF act$ = "restart" ORELSE act$ = "res:retry" THEN
+        STARTLEVEL(cur_level)
+    ELSEIF act$ = "res:next" THEN
+        STARTLEVEL(cur_level + 1)
+    ELSEIF act$ = "music" THEN
+        mus_on = 1 - mus_on
+        MUSICMIX(mus_mode$)
+    ELSEIF act$ = "sfx" THEN
+        sfx_on = 1 - sfx_on
+        SFX("TAP")
+    ELSEIF act$ = "glow" THEN
+        glow_on = 1 - glow_on
+    ELSEIF LEFT$(act$, 2) = "R:" THEN
+        RINGACT(MID$(act$, 2, 40))
+    ENDIF
+ENDSUB
+
+' The first tap on a choice explains it, the second one does it
+SUB RINGACT(code$)
+    IF pending$ <> code$ THEN
+        pending$ = code$
+        SFX("TAP")
+        RETURN
+    ENDIF
+    DIM r$ = ""
+    IF LEFT$(code$, 2) = "B:" THEN
+        r$ = SIM.BUILD(sel_slot, MID$(code$, 2, 40))
+    ELSEIF code$ = "SELL" THEN
+        r$ = SIM.SELL(sel_slot)
+    ELSE
+        r$ = SIM.UPGRADE(sel_slot, MID$(code$, 2, 4))
+    ENDIF
+    IF r$ = "credits" THEN
+        TOAST(T$("no_credits"))
+        RETURN
+    ENDIF
+    IF r$ = "" THEN
+        IF code$ = "SELL" ORELSE LEFT$(code$, 2) = "B:" THEN
+            sel_slot = -1
+        ENDIF
+        pending$ = ""
+    ENDIF
+ENDSUB
+
+FUNC SLOTAT(px, py)
+    DIM i
+    FOR i = 0 TO SIM.NSLOTS() - 1
+        DIM s = SIM.SLOTPOS(i)
+        IF ABS(PXX(s[0] + 0.5) - px) < 21 ANDALSO ABS(PXY(s[1] + 0.5) - py) < 21 THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+SUB HANDLETAP(px, py)
+    DIM act$ = HITTEST$(px, py)
+    IF act$ <> "" THEN
+        DOACTION(act$)
+        RETURN
+    ENDIF
+    IF uimode$ <> "play" ORELSE paused = 1 THEN RETURN
+    IF SIM.PHASE$() = "won" ORELSE SIM.PHASE$() = "lost" THEN RETURN
+    IF py < FY0 ORELSE py >= BAR_Y THEN RETURN
+    DIM s = SLOTAT(px, py)
+    IF s >= 0 ANDALSO s <> sel_slot THEN
+        OPENRING(s)
+    ELSE
+        sel_slot = -1
+        pending$ = ""
+    ENDIF
+ENDSUB
+
+SUB HANDLEKEY(k$)
+    IF k$ = "Escape" THEN
+        IF uimode$ = "play" THEN
+            IF sel_slot >= 0 THEN
+                sel_slot = -1
+            ELSE
+                paused = 1 - paused
+            ENDIF
+        ELSEIF uimode$ = "board" THEN
+            uimode$ = "menu"
+        ELSE
+            running = 0
+        ENDIF
+    ELSEIF k$ = "Space" ANDALSO uimode$ = "play" ANDALSO paused = 0 THEN
+        SIM.LAUNCH()
+    ENDIF
+ENDSUB
+
+' ── frame ───────────────────────────────────────────────────────
+
+SUB UPDATE()
+    IF uimode$ <> "play" THEN RETURN
+    IF paused = 1 THEN RETURN
+    DIM ph$ = SIM.PHASE$()
+    IF ph$ = "won" ORELSE ph$ = "lost" THEN
+        IF result_done = 0 THEN
+            result_done = 1
+            result_stars = SIM.STARS()
+            result_score = SIM.SCORE()
+            IF ph$ = "won" THEN RECORD(cur_level, result_stars, result_score)
+            sel_slot = -1
+        ENDIF
+        RETURN
+    ENDIF
+    ' fixed steps for the time that really passed, so a slow device plays
+    ' at the right pace with coarser frames instead of in slow motion
+    sim_acc = sim_acc + dt_frame * speed
+    DIM n_steps = 0
+    DO WHILE sim_acc >= SIM_DT ANDALSO n_steps < 8
+        SIM.ADVANCE(SIM_DT)
+        sim_acc = sim_acc - SIM_DT
+        n_steps = n_steps + 1
+    LOOP
+    IF n_steps = 8 THEN sim_acc = 0.0
+    EVENTSTOFX()
+ENDSUB
+
+SUB DRAWFRAME()
+    hits = []
+    BEGINFRAME()
+    IF uimode$ = "play" THEN
+        DRAWPLAY()
+    ELSEIF uimode$ = "board" THEN
+        DRAWBOARD()
+    ELSE
+        DRAWMENU()
+    ENDIF
+    ENDFRAME()
+    hits_prev = hits
+ENDSUB
+
+' ── start ───────────────────────────────────────────────────────
+
+DIM shotmode$ = ""
+DIM shot_level = 1
+DIM selftest = 0
+
+' Taps the centre of whatever button the last frame registered for act$
+SUB TAPACT(act$)
+    FOR EACH h IN hits_prev
+        IF h[4] = act$ THEN
+            taps = APPEND(taps, [[h[0] + h[2] / 2, h[1] + h[3] / 2]])
+            RETURN
+        ENDIF
+    NEXT h
+    PRINT "selftest: no button "; act$
+ENDSUB
+
+SUB TAPSLOT(i)
+    DIM s = SIM.SLOTPOS(i)
+    taps = APPEND(taps, [[PXX(s[0] + 0.5), PXY(s[1] + 0.5)]])
+ENDSUB
+
+' A scripted session through the real tap path: pick level 1, build two
+' towers with the confirm tap, launch, speed up, upgrade, pause, resume
+SUB SELFTEST_STEP(f)
+    IF f = 3 THEN TAPACT("lvl:1")
+    IF f = 6 THEN TAPSLOT(0)
+    IF f = 9 ORELSE f = 12 THEN TAPACT("R:B:LASER")
+    IF f = 15 THEN TAPSLOT(1)
+    IF f = 18 ORELSE f = 21 THEN TAPACT("R:B:BLASTER")
+    IF f = 24 THEN TAPACT("next")
+    IF f = 27 ORELSE f = 30 THEN TAPACT("speed")
+    IF f = 60 THEN TAPSLOT(0)
+    IF f = 63 ORELSE f = 66 THEN TAPACT("R:U:UP")
+    IF f = 200 THEN TAPACT("pause")
+    IF f = 210 THEN
+        IF NOT FILE.EXISTS(GAMEDIR$ + "tmp") THEN MKDIR GAMEDIR$ + "tmp"
+        GFX.SAVE_SCREENSHOT(GAMEDIR$ + "tmp/pause.png")
+        TAPACT("resume")
+    ENDIF
+    IF f = 300 THEN
+        GFX.SAVE_SCREENSHOT(GAMEDIR$ + "tmp/selftest.png")
+        PRINT "slot0 "; SIM.TOWER(0){"KIND"}; " tier "; SIM.TOWER(0){"TIER"}; "  slot1 "; SIM.TOWER(1){"KIND"}
+        PRINT "wave "; SIM.WAVE(); "  speed "; speed; "  paused "; paused; "  credits "; SIM.CREDITS(); "  kills "; SIM.KILLS(); "  lives "; SIM.LIVES(); "  phase "; SIM.PHASE$()
+        running = 0
+    ENDIF
+ENDSUB
+DIM plain = []
+DIM ai
+FOR ai = 1 TO LEN(cli) - 1
+    DIM arg$ = "" + cli[ai]
+    IF LCASE$(arg$) = "shot" ORELSE LCASE$(arg$) = "shotmenu" THEN
+        shotmode$ = LCASE$(arg$)
+    ELSEIF LCASE$(arg$) = "fps" THEN
+        show_fps = 1
+    ELSEIF LCASE$(arg$) = "selftest" THEN
+        selftest = 1
+    ELSEIF shotmode$ <> "" THEN
+        shot_level = VAL(arg$)
+    ELSE
+        plain = APPEND(plain, arg$)
+    ENDIF
+NEXT ai
+IF LEN(plain) >= 2 THEN
+    myname$ = plain[0]
+    mypin$ = plain[1]
+ENDIF
+
+SCREEN SCR_W, SCR_H, "jdTower"
+GFXINIT()
+FONTSIZE(18)
+LOGIN()
+IF shotmode$ = "" THEN
+    SNDINIT()
+    MUSICINIT()
+ENDIF
+
+' Plays a level for a while with a few towers, then saves one frame
+SUB SHOT(n)
+    STARTLEVEL(n)
+    DIM lv = LEVELDATA(n)
+    DIM kinds = lv{"TOWERS"}
+    DIM i
+    FOR i = 0 TO SIM.NSLOTS() - 1
+        SIM.BUILD(i, kinds[i MOD LEN(kinds)])
+    NEXT i
+    SIM.LAUNCH()
+    SIM.LAUNCH()
+    FOR i = 1 TO 330
+        SIM.ADVANCE(SIM_DT)
+        tnow = tnow + SIM_DT
+        IF i > 300 THEN EVENTSTOFX()
+        IF i < 300 THEN SIM.QUIET(0)
+    NEXT i
+    sel_slot = 0
+    pending$ = "U:UP"
+    DIM s = SIM.SLOTPOS(0)
+    ring_cx = PXX(s[0] + 0.5)
+    ring_cy = PXY(s[1] + 0.5)
+ENDSUB
+
+IF shotmode$ <> "" THEN
+    IF shotmode$ = "shot" THEN SHOT(shot_level)
+    tnow = tnow + 0.5
+    DIM tf0 = TICK()
+    DIM fi
+    FOR fi = 1 TO 10
+        DRAWFRAME()
+    NEXT fi
+    DIM frame_ms = (TICK() - tf0) / 10
+    IF NOT FILE.EXISTS(GAMEDIR$ + "tmp") THEN MKDIR GAMEDIR$ + "tmp"
+    GFX.SAVE_SCREENSHOT(GAMEDIR$ + "tmp/shot.png")
+    SCREENFLIP
+    PRINT "shot saved, phase "; SIM.PHASE$(); "  credits "; SIM.CREDITS(); "  draw "; frame_ms; " ms"
+    GFX.CLOSE
+ELSE
+    DIM t_last = TICK()
+    DO
+        IF running = 0 THEN EXITDO
+        DIM t0 = TICK()
+        dt_frame = (t0 - t_last) / 1000.0
+        IF dt_frame > 0.25 THEN dt_frame = 0.25
+        IF dt_frame > 0 THEN fps_avg = fps_avg * 0.95 + 0.05 / dt_frame
+        tnow = tnow + dt_frame
+        t_last = t0
+        frame = frame + 1
+        IF flash > 0 THEN flash = flash * 0.9
+        IF selftest = 1 THEN SELFTEST_STEP(frame)
+        DO WHILE LEN(taps) > 0
+            DIM tp = taps[0]
+            taps = DROP(1, taps)
+            HANDLETAP(tp[0], tp[1])
+        LOOP
+        DO WHILE LEN(keys_in) > 0
+            DIM kk$ = keys_in[0]
+            keys_in = DROP(1, keys_in)
+            HANDLEKEY(kk$)
+        LOOP
+        UPDATE()
+        DRAWFRAME()
+        SCREENFLIP
+        DIM rest = 33 - (TICK() - t0)
+        IF rest < 1 THEN rest = 1
+        SLEEP rest
+    LOOP
+    GFX.CLOSE
+ENDIF

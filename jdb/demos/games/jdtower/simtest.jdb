@@ -1,0 +1,148 @@
+' A bot plays levels headless under the real rules and reports how it went.
+'   jdbasic simtest.jdb            every level
+'   jdbasic simtest.jdb 3 7        levels 3 to 7
+' The bot builds on the slots that see the most path, mixes the tower
+' kinds the level allows, upgrades the cheapest option when no slot is
+' worth a new tower, and launches a wave only on a clear field.
+IMPORT SIM
+
+CONST DT = 0.1
+
+DIM towers_json = JSON.PARSE(TXTREADER$("data/towers.json"))
+DIM enemies_json = JSON.PARSE(TXTREADER$("data/enemies.json"))
+SIM.SETDATA(towers_json, enemies_json)
+
+' How many path samples a slot sees within radius r
+FUNC COVERAGE(lv, sx, sy, r)
+    DIM n = 0
+    FOR EACH p IN lv{"PATHS"}
+        DIM i
+        FOR i = 0 TO LEN(p) - 2
+            DIM seg_n = INT(SQR((p[i + 1][0] - p[i][0]) ^ 2 + (p[i + 1][1] - p[i][1]) ^ 2) * 4) + 1
+            DIM f = IOTA(seg_n, 0) / seg_n
+            DIM xs = p[i][0] + f * (p[i + 1][0] - p[i][0])
+            DIM ys = p[i][1] + f * (p[i + 1][1] - p[i][1])
+            n = n + SUM(((xs - sx) ^ 2 + (ys - sy) ^ 2) <= r * r)
+        NEXT i
+    NEXT p
+    RETURN n
+ENDFUNC
+
+DIM MIX = ["LASER", "BLASTER", "LASER", "CRYO", "BOMB", "TESLA", "BLASTER", "PULSE", "PLASMA", "LASER", "RELAY", "TESLA"]
+
+FUNC NEXTKIND$(lv, n_built)
+    DIM k
+    FOR k = 0 TO LEN(MIX) - 1
+        DIM cand$ = MIX[(n_built + k) MOD LEN(MIX)]
+        IF INDEXOF(lv{"TOWERS"}, cand$) >= 0 THEN RETURN cand$
+    NEXT k
+    RETURN "LASER"
+ENDFUNC
+
+FUNC SPEND(lv, order, n_built)
+    DIM again = 1
+    DO WHILE again = 1
+        again = 0
+        DIM want$ = NEXTKIND$(lv, n_built)
+        DIM free_slot = -1
+        FOR EACH s IN order
+            IF SIM.TOWER(s){"KIND"} = "" THEN
+                free_slot = s
+                EXITFOR
+            ENDIF
+        NEXT s
+        IF free_slot >= 0 ANDALSO n_built < 3 + SIM.WAVE() THEN
+            IF SIM.BUILD(free_slot, want$) = "" THEN
+                n_built = n_built + 1
+                again = 1
+            ENDIF
+        ELSE
+            DIM best_slot = -1
+            DIM best$ = ""
+            DIM best_cost = 1000000
+            DIM i
+            FOR i = 0 TO SIM.NSLOTS() - 1
+                DIM opts = SIM.UPOPTS(i)
+                IF LEN(opts) > 0 THEN
+                    DIM pick = opts[(i MOD LEN(opts))]
+                    IF pick[1] < best_cost THEN
+                        best_cost = pick[1]
+                        best_slot = i
+                        best$ = pick[0]
+                    ENDIF
+                ENDIF
+            NEXT i
+            IF best_slot >= 0 ANDALSO best_cost <= SIM.CREDITS() THEN
+                IF SIM.UPGRADE(best_slot, best$) = "" THEN again = 1
+            ELSEIF free_slot >= 0 ANDALSO SIM.CREDITS() >= SIM.COST(want$) + 150 THEN
+                IF SIM.BUILD(free_slot, want$) = "" THEN
+                    n_built = n_built + 1
+                    again = 1
+                ENDIF
+            ENDIF
+        ENDIF
+    LOOP
+    RETURN n_built
+ENDFUNC
+
+FUNC PLAYLEVEL(n)
+    DIM nm$ = "data/levels/level_" + RIGHT$("0" + STR$(n), 2) + ".json"
+    DIM lv = JSON.PARSE(TXTREADER$(nm$))
+    SIM.START(lv)
+    SIM.QUIET(0)
+    DIM leaks AS MAP = {}
+    DIM cov = []
+    DIM i
+    FOR i = 0 TO LEN(lv{"SLOTS"}) - 1
+        cov = APPEND(cov, COVERAGE(lv, lv{"SLOTS"}[i][0] + 0.5, lv{"SLOTS"}[i][1] + 0.5, 2.6))
+    NEXT i
+    DIM order = REVERSE(GRADE(cov))
+    DIM n_built = 0
+    DIM t0 = TICK()
+    DIM steps = 0
+    DIM peak = 0
+    DO
+        IF SIM.PHASE$() = "won" ORELSE SIM.PHASE$() = "lost" THEN EXITDO
+        IF steps MOD 10 = 0 THEN n_built = SPEND(lv, order, n_built)
+        IF SIM.BUSY() = 0 THEN SIM.LAUNCH()
+        SIM.ADVANCE(DT)
+        FOR EACH ev IN SIM.EVENTS()
+            IF ev{"T"} = "LEAK" THEN
+                IF NOT MAP.EXISTS(leaks, ev{"K"}) THEN leaks{ev{"K"}} = 0
+                leaks{ev{"K"}} = leaks{ev{"K"}} + ev{"N"}
+            ENDIF
+        NEXT ev
+        steps = steps + 1
+        DIM en = LEN(SIM.ENEMIES(){"X"})
+        IF en > peak THEN peak = en
+        IF steps > 60000 THEN EXITDO
+    LOOP
+    DIM ms = TICK() - t0
+    DIM out AS MAP = {}
+    out{"LEVEL"} = n
+    out{"RESULT"} = SIM.PHASE$()
+    out{"LIVES"} = SIM.LIVES()
+    out{"WAVE"} = SIM.WAVE()
+    out{"STARS"} = SIM.STARS()
+    out{"TOWERS"} = n_built
+    out{"SIMS"} = INT(SIM.CLOCK())
+    out{"MS_STEP"} = ROUND(ms / steps, 2)
+    out{"PEAK"} = peak
+    out{"LEAKS"} = JSON.STRINGIFY$(leaks)
+    RETURN out
+ENDFUNC
+
+DIM args = OS.ARGS()
+DIM lo = 1
+DIM hi = 20
+IF LEN(args) > 1 THEN
+    lo = VAL(args[1])
+    hi = lo
+ENDIF
+IF LEN(args) > 2 THEN hi = VAL(args[2])
+DIM lvl_no
+FOR lvl_no = lo TO hi
+    DIM r = PLAYLEVEL(lvl_no)
+    PRINT "L"; RIGHT$("0" + STR$(lvl_no), 2); "  "; r{"RESULT"}; "  lives "; r{"LIVES"}; "  wave "; r{"WAVE"}; "  stars "; r{"STARS"}; _
+        "  towers "; r{"TOWERS"}; "  sim "; r{"SIMS"}; "s  peak "; r{"PEAK"}; "  "; r{"MS_STEP"}; " ms/step  "; r{"LEAKS"}
+NEXT lvl_no

@@ -1,0 +1,133 @@
+{
+  "ORDER": ["LASER", "BLASTER", "CRYO", "BOMB", "TESLA", "PULSE", "PLASMA", "RELAY"],
+  "TOWERS": {
+    "LASER": {
+      "MODE": "BEAM", "COLOR": [60, 240, 255], "AIR": 1, "GROUND": 1,
+      "TIERS": [
+        {"COST": 100, "RANGE": 2.6, "DMG": 15, "BEAMS": 1, "RAMP": 1.5},
+        {"COST": 70, "BEAMS": 2},
+        {"COST": 110, "BEAMS": 3, "DMG": 20}
+      ],
+      "A": {"TIERS": [
+        {"COST": 180, "BEAMS": 5, "DMG": 24, "RANGE": 2.9},
+        {"COST": 280, "BEAMS": 6, "DMG": 36}
+      ]},
+      "B": {"TIERS": [
+        {"COST": 190, "BEAMS": 1, "DMG": 70, "RAMP": 3.0, "RANGE": 3.3},
+        {"COST": 300, "DMG": 120, "RAMP": 3.5, "RANGE": 3.8, "PEN": 0.5}
+      ]}
+    },
+    "BLASTER": {
+      "MODE": "BOLT", "COLOR": [90, 255, 140], "AIR": 1, "GROUND": 1,
+      "TIERS": [
+        {"COST": 80, "RANGE": 2.8, "DMG": 12, "RATE": 1.8, "BARRELS": 1, "PSPD": 11},
+        {"COST": 60, "BARRELS": 2},
+        {"COST": 100, "BARRELS": 3, "DMG": 15}
+      ],
+      "A": {"TIERS": [
+        {"COST": 170, "RATE": 4.5, "DMG": 15, "BARRELS": 3},
+        {"COST": 260, "RATE": 6.5, "DMG": 19}
+      ]},
+      "B": {"TIERS": [
+        {"COST": 200, "MODE": "RAIL", "BARRELS": 1, "DMG": 140, "RATE": 0.6, "RANGE": 5.0, "PEN": 0.6},
+        {"COST": 320, "DMG": 260, "RATE": 0.7, "RANGE": 5.6, "PEN": 1.0}
+      ]}
+    },
+    "CRYO": {
+      "MODE": "AURA", "COLOR": [150, 215, 255], "AIR": 1, "GROUND": 1,
+      "TIERS": [
+        {"COST": 90, "RANGE": 2.0, "DMG": 3, "SLOW": 0.35},
+        {"COST": 70, "SLOW": 0.45},
+        {"COST": 90, "RANGE": 2.5, "DMG": 5}
+      ],
+      "A": {"TIERS": [
+        {"COST": 160, "SLOW": 0.6, "RANGE": 2.7},
+        {"COST": 230, "SLOW": 0.72, "RANGE": 3.0, "DMG": 8}
+      ]},
+      "B": {"TIERS": [
+        {"COST": 170, "VULN": 0.35},
+        {"COST": 250, "VULN": 0.6, "SLOW": 0.5}
+      ]}
+    },
+    "BOMB": {
+      "MODE": "SHELL", "COLOR": [255, 175, 40], "AIR": 0, "GROUND": 1,
+      "TIERS": [
+        {"COST": 120, "RANGE": 3.0, "DMG": 32, "RATE": 0.7, "SPLASH": 1.0, "PSPD": 5},
+        {"COST": 90, "DMG": 48},
+        {"COST": 130, "DMG": 64, "SPLASH": 1.3}
+      ],
+      "A": {"TIERS": [
+        {"COST": 210, "CLUSTER": 4, "DMG": 70},
+        {"COST": 320, "CLUSTER": 6, "DMG": 95, "RATE": 0.85}
+      ]},
+      "B": {"TIERS": [
+        {"COST": 240, "DMG": 220, "SPLASH": 1.9, "RATE": 0.35, "RANGE": 3.6},
+        {"COST": 360, "DMG": 420, "SPLASH": 2.2, "PEN": 0.5}
+      ]}
+    },
+    "TESLA": {
+      "MODE": "ZAP", "COLOR": [175, 120, 255], "AIR": 1, "GROUND": 1,
+      "TIERS": [
+        {"COST": 130, "RANGE": 2.4, "DMG": 24, "RATE": 1.0, "CHAIN": 3, "SHIELDX": 2.5},
+        {"COST": 90, "CHAIN": 4},
+        {"COST": 130, "CHAIN": 5, "DMG": 34}
+      ],
+      "A": {"TIERS": [
+        {"COST": 210, "CHAIN": 8, "DMG": 40},
+        {"COST": 300, "CHAIN": 12, "DMG": 52, "RATE": 1.3}
+      ]},
+      "B": {"TIERS": [
+        {"COST": 220, "CHAIN": 3, "DMG": 110, "STUN": 0.4},
+        {"COST": 330, "DMG": 190, "STUN": 0.6, "RANGE": 2.9}
+      ]}
+    },
+    "PULSE": {
+      "MODE": "PULSE", "COLOR": [255, 70, 200], "AIR": 1, "GROUND": 1,
+      "TIERS": [
+        {"COST": 140, "RANGE": 1.9, "DMG": 12, "RATE": 0.33, "STUN": 0.55},
+        {"COST": 90, "STUN": 0.75},
+        {"COST": 120, "RATE": 0.42, "DMG": 20}
+      ],
+      "A": {"TIERS": [
+        {"COST": 200, "RANGE": 2.5, "STUN": 1.0},
+        {"COST": 300, "RANGE": 2.9, "STUN": 1.3, "RATE": 0.5}
+      ]},
+      "B": {"TIERS": [
+        {"COST": 210, "STRIP": 1, "DMG": 50},
+        {"COST": 310, "STRIP": 1, "DMG": 110, "RATE": 0.55}
+      ]}
+    },
+    "PLASMA": {
+      "MODE": "FLAME", "COLOR": [255, 105, 50], "AIR": 0, "GROUND": 1,
+      "TIERS": [
+        {"COST": 110, "RANGE": 1.8, "DMG": 6, "RATE": 3.0, "BURN": 14, "BURNT": 2.5, "SPLASH": 0.6},
+        {"COST": 80, "BURN": 22},
+        {"COST": 110, "BURN": 30, "RANGE": 2.1}
+      ],
+      "A": {"TIERS": [
+        {"COST": 180, "SPLASH": 1.1, "BURN": 40},
+        {"COST": 270, "SPLASH": 1.4, "BURN": 58}
+      ]},
+      "B": {"TIERS": [
+        {"COST": 190, "BURN": 75, "BURNT": 4.0},
+        {"COST": 290, "BURN": 120, "BURNT": 5.0, "RANGE": 2.4}
+      ]}
+    },
+    "RELAY": {
+      "MODE": "RELAY", "COLOR": [255, 230, 90], "AIR": 0, "GROUND": 0,
+      "TIERS": [
+        {"COST": 150, "RANGE": 1.6, "BUFFD": 0.15, "BUFFR": 0.08},
+        {"COST": 110, "BUFFD": 0.22},
+        {"COST": 140, "BUFFD": 0.28, "BUFFR": 0.12, "RANGE": 2.1}
+      ],
+      "A": {"TIERS": [
+        {"COST": 220, "BUFFD": 0.4, "BUFFR": 0.15},
+        {"COST": 320, "BUFFD": 0.55, "BUFFR": 0.2}
+      ]},
+      "B": {"TIERS": [
+        {"COST": 200, "INCOME": 30},
+        {"COST": 280, "INCOME": 60, "BUFFD": 0.32}
+      ]}
+    }
+  }
+}

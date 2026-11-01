@@ -1,0 +1,1008 @@
+' jdTower rules. No graphics, no network, no files: the host hands in the
+' tower, enemy and level tables, calls ADVANCE with a time slice and draws
+' what the getters answer.
+'
+' Enemies live in parallel arrays (E_*), one slot per enemy, so movement,
+' range checks, splash and status effects are whole-array expressions.
+' Towers are maps, one per build slot; projectiles are parallel arrays too.
+' Positions are in tiles, tile (c, r) has its centre at (c + 0.5, r + 0.5).
+EXPORT MODULE SIM
+
+CONST SAMP = 0.05
+CONST CHAIN_HOP = 1.7
+CONST SELL_BACK = 0.8
+
+DIM tdata AS MAP = {}
+DIM edata AS MAP = {}
+DIM lvl AS MAP = {}
+
+' enemy kinds, indexed by kind number
+DIM K_NAME = []
+DIM K_HP = []
+DIM K_SPD = []
+DIM K_REW = []
+DIM K_LIV = []
+DIM K_ARM = []
+DIM K_SHD = []
+DIM K_FLY = []
+DIM K_HEAL = []
+DIM K_HEALR = []
+DIM K_SPLIT = []
+DIM K_SPLITN = []
+DIM K_RES = []
+
+' sampled path table: ground paths first, then one straight air line per path
+DIM PTX = []
+DIM PTY = []
+DIM PBASE = []
+DIM PNS = []
+DIM PLEN = []
+DIM n_paths = 0
+
+' enemies
+DIM E_K = []
+DIM E_P = []
+DIM E_D = []
+DIM E_HP = []
+DIM E_MAX = []
+DIM E_SH = []
+DIM E_SHMAX = []
+DIM E_SLOW = []
+DIM E_STUN = []
+DIM E_BURN = []
+DIM E_BURNT = []
+DIM E_VULN = []
+DIM E_UID = []
+DIM E_REW = []
+DIM E_X = []
+DIM E_Y = []
+DIM E_FLYV = []
+DIM next_uid = 1
+
+' projectiles
+DIM R_X = []
+DIM R_Y = []
+DIM R_TX = []
+DIM R_TY = []
+DIM R_U = []
+DIM R_SPD = []
+DIM R_DMG = []
+DIM R_SPL = []
+DIM R_PEN = []
+DIM R_CLU = []
+DIM R_TK = []
+
+' spawn queue, absolute sim times
+DIM Q_T = []
+DIM Q_K = []
+DIM Q_P = []
+DIM Q_H = []
+
+DIM slots = []
+DIM towers = []
+
+DIM g_clock = 0.0
+DIM g_credits = 0
+DIM g_lives = 0
+DIM g_lives0 = 1
+DIM waves_launched = 0
+DIM g_phase$ = "ready"
+DIM g_kills = 0
+DIM score_bonus = 0
+DIM reward_x = 1.0
+DIM g_events = []
+DIM events_on = 1
+
+' ── helpers ─────────────────────────────────────────────────────
+
+FUNC VMAX(a, b)
+    DIM pick = a > b
+    RETURN a * pick + b * (1 - pick)
+ENDFUNC
+
+FUNC VMIN(a, b)
+    DIM pick = a < b
+    RETURN a * pick + b * (1 - pick)
+ENDFUNC
+
+FUNC GETNUM(m, k$, dflt)
+    IF MAP.EXISTS(m, k$) THEN RETURN m{k$}
+    RETURN dflt
+ENDFUNC
+
+' indices where a 0/1 mask is set, in order
+FUNC WHICH(mask)
+    RETURN TAKE(SUM(mask), GRADE(0 - mask))
+ENDFUNC
+
+SUB EMIT(ev)
+    IF events_on = 1 THEN g_events = APPEND(g_events, [ev])
+ENDSUB
+
+FUNC KINDNO(name$)
+    RETURN INDEXOF(K_NAME, name$)
+ENDFUNC
+
+' ── data ────────────────────────────────────────────────────────
+
+EXPORT SUB SETDATA(towers_json, enemies_json)
+    tdata = towers_json
+    edata = enemies_json
+    K_NAME = []
+    K_HP = []
+    K_SPD = []
+    K_REW = []
+    K_LIV = []
+    K_ARM = []
+    K_SHD = []
+    K_FLY = []
+    K_HEAL = []
+    K_HEALR = []
+    K_SPLIT = []
+    K_SPLITN = []
+    K_RES = []
+    FOR EACH k$ IN edata{"ORDER"}
+        DIM ed = edata{"ENEMIES"}{k$}
+        K_NAME = APPEND(K_NAME, k$)
+        K_HP = APPEND(K_HP, ed{"HP"})
+        K_SPD = APPEND(K_SPD, ed{"SPEED"})
+        K_REW = APPEND(K_REW, ed{"REWARD"})
+        K_LIV = APPEND(K_LIV, ed{"LIVES"})
+        K_ARM = APPEND(K_ARM, GETNUM(ed, "ARMOR", 0))
+        K_SHD = APPEND(K_SHD, GETNUM(ed, "SHIELD", 0))
+        K_FLY = APPEND(K_FLY, GETNUM(ed, "FLY", 0))
+        K_HEAL = APPEND(K_HEAL, GETNUM(ed, "HEAL", 0))
+        K_HEALR = APPEND(K_HEALR, GETNUM(ed, "HEALR", 0))
+        K_SPLITN = APPEND(K_SPLITN, GETNUM(ed, "SPLITN", 0))
+        K_RES = APPEND(K_RES, GETNUM(ed, "STUNRES", 1))
+    NEXT k$
+    FOR EACH k2$ IN edata{"ORDER"}
+        DIM e2 = edata{"ENEMIES"}{k2$}
+        IF MAP.EXISTS(e2, "SPLIT") THEN
+            K_SPLIT = APPEND(K_SPLIT, KINDNO(e2{"SPLIT"}))
+        ELSE
+            K_SPLIT = APPEND(K_SPLIT, -1)
+        ENDIF
+    NEXT k2$
+ENDSUB
+
+' Samples one polyline every SAMP tiles into the path table
+SUB ADDPATH(pts)
+    DIM n = LEN(pts)
+    DIM seglen = []
+    DIM total = 0.0
+    DIM i
+    FOR i = 0 TO n - 2
+        DIM sl = SQR((pts[i + 1][0] - pts[i][0]) ^ 2 + (pts[i + 1][1] - pts[i][1]) ^ 2)
+        seglen = APPEND(seglen, sl)
+        total = total + sl
+    NEXT i
+    DIM ns = INT(total / SAMP) + 2
+    DIM dv = IOTA(ns, 0) * SAMP
+    DIM xs = dv * 0.0
+    DIM ys = dv * 0.0
+    DIM c0 = 0.0
+    FOR i = 0 TO n - 2
+        DIM c1 = c0 + seglen[i]
+        DIM m = (dv >= c0) * (dv < c1)
+        IF i = n - 2 THEN m = (dv >= c0)
+        DIM f = (dv - c0) / seglen[i]
+        f = VMIN(f, f * 0 + 1)
+        xs = xs + m * (pts[i][0] + f * (pts[i + 1][0] - pts[i][0]))
+        ys = ys + m * (pts[i][1] + f * (pts[i + 1][1] - pts[i][1]))
+        c0 = c1
+    NEXT i
+    PBASE = APPEND(PBASE, LEN(PTX))
+    PNS = APPEND(PNS, ns)
+    PLEN = APPEND(PLEN, total)
+    PTX = APPEND(PTX, xs)
+    PTY = APPEND(PTY, ys)
+ENDSUB
+
+EXPORT SUB START(level_map)
+    lvl = level_map
+    PTX = []
+    PTY = []
+    PBASE = []
+    PNS = []
+    PLEN = []
+    n_paths = LEN(lvl{"PATHS"})
+    FOR EACH p IN lvl{"PATHS"}
+        ADDPATH(p)
+    NEXT p
+    FOR EACH p2 IN lvl{"PATHS"}
+        ADDPATH([p2[0], p2[LEN(p2) - 1]])
+    NEXT p2
+    E_K = []
+    E_P = []
+    E_D = []
+    E_HP = []
+    E_MAX = []
+    E_SH = []
+    E_SHMAX = []
+    E_SLOW = []
+    E_STUN = []
+    E_BURN = []
+    E_BURNT = []
+    E_VULN = []
+    E_UID = []
+    E_REW = []
+    E_X = []
+    E_Y = []
+    E_FLYV = []
+    R_X = []
+    R_Y = []
+    R_TX = []
+    R_TY = []
+    R_U = []
+    R_SPD = []
+    R_DMG = []
+    R_SPL = []
+    R_PEN = []
+    R_CLU = []
+    R_TK = []
+    Q_T = []
+    Q_K = []
+    Q_P = []
+    Q_H = []
+    slots = lvl{"SLOTS"}
+    towers = []
+    DIM i
+    FOR i = 0 TO LEN(slots) - 1
+        DIM t AS MAP = {}
+        t{"KIND"} = ""
+        towers = APPEND(towers, [t])
+    NEXT i
+    g_clock = 0.0
+    g_credits = lvl{"CREDITS"}
+    g_lives = lvl{"LIVES"}
+    g_lives0 = g_lives
+    reward_x = GETNUM(lvl, "REWARDX", 1)
+    waves_launched = 0
+    g_phase$ = "ready"
+    g_kills = 0
+    score_bonus = 0
+    g_events = []
+ENDSUB
+
+' ── towers ──────────────────────────────────────────────────────
+
+' Stats of a tower: tier rows 1..tier, then branch rows 1..btier, each
+' row overriding what the earlier ones said
+EXPORT FUNC STATS(kind$, tier, br$, btier)
+    DIM td = tdata{"TOWERS"}{kind$}
+    DIM s AS MAP = {}
+    s{"MODE"} = td{"MODE"}
+    s{"AIR"} = td{"AIR"}
+    s{"GROUND"} = td{"GROUND"}
+    DIM rows = []
+    DIM i
+    FOR i = 0 TO tier - 1
+        rows = APPEND(rows, [td{"TIERS"}[i]])
+    NEXT i
+    IF br$ <> "" THEN
+        FOR i = 0 TO btier - 1
+            rows = APPEND(rows, [td{br$}{"TIERS"}[i]])
+        NEXT i
+    ENDIF
+    FOR EACH row IN rows
+        FOR EACH k$ IN MAP.KEYS(row)
+            IF k$ <> "COST" THEN s{k$} = row{k$}
+        NEXT k$
+    NEXT row
+    DIM dflt = ["RANGE", 2, "DMG", 0, "RATE", 1, "BEAMS", 1, "BARRELS", 1, "SPLASH", 0, "CHAIN", 0, _
+        "SLOW", 0, "STUN", 0, "BURN", 0, "BURNT", 0, "PEN", 0, "SHIELDX", 1, "BUFFD", 0, "BUFFR", 0, _
+        "INCOME", 0, "RAMP", 1, "VULN", 0, "STRIP", 0, "CLUSTER", 0, "PSPD", 8]
+    FOR i = 0 TO LEN(dflt) - 1 STEP 2
+        IF NOT MAP.EXISTS(s, dflt[i]) THEN s{dflt[i]} = dflt[i + 1]
+    NEXT i
+    RETURN s
+ENDFUNC
+
+' What the next step for the tower in a slot can be: [[code$, cost], ...]
+' with code "UP" for the next tier, "A"/"B" for a branch choice
+EXPORT FUNC UPOPTS(slot)
+    DIM t = towers[slot]
+    DIM out = []
+    IF t{"KIND"} = "" THEN RETURN out
+    DIM td = tdata{"TOWERS"}{t{"KIND"}}
+    IF t{"TIER"} < 3 THEN
+        out = APPEND(out, [["UP", td{"TIERS"}[t{"TIER"}]{"COST"}]])
+    ELSEIF t{"BR"} = "" THEN
+        out = APPEND(out, [["A", td{"A"}{"TIERS"}[0]{"COST"}]])
+        out = APPEND(out, [["B", td{"B"}{"TIERS"}[0]{"COST"}]])
+    ELSEIF t{"BT"} < LEN(td{t{"BR"}}{"TIERS"}) THEN
+        out = APPEND(out, [["UP", td{t{"BR"}}{"TIERS"}[t{"BT"}]{"COST"}]])
+    ENDIF
+    RETURN out
+ENDFUNC
+
+EXPORT FUNC COST(kind$)
+    RETURN tdata{"TOWERS"}{kind$}{"TIERS"}[0]{"COST"}
+ENDFUNC
+
+FUNC ALLOWED(kind$)
+    RETURN INDEXOF(lvl{"TOWERS"}, kind$) >= 0
+ENDFUNC
+
+' Relays lend damage and range to every other tower in their radius
+SUB REBUFF()
+    DIM i
+    FOR i = 0 TO LEN(towers) - 1
+        IF towers[i]{"KIND"} <> "" THEN
+            towers[i]{"BUFF"} = 1.0
+            towers[i]{"RBUFF"} = 1.0
+        ENDIF
+    NEXT i
+    FOR i = 0 TO LEN(towers) - 1
+        DIM r = towers[i]
+        IF r{"KIND"} <> "" ANDALSO r{"S"}{"MODE"} = "RELAY" THEN
+            DIM j
+            FOR j = 0 TO LEN(towers) - 1
+                IF j <> i ANDALSO towers[j]{"KIND"} <> "" THEN
+                    IF towers[j]{"S"}{"MODE"} <> "RELAY" THEN
+                        DIM d = SQR((towers[j]{"X"} - r{"X"}) ^ 2 + (towers[j]{"Y"} - r{"Y"}) ^ 2)
+                        IF d <= r{"S"}{"RANGE"} + 0.01 THEN
+                            towers[j]{"BUFF"} = towers[j]{"BUFF"} + r{"S"}{"BUFFD"}
+                            towers[j]{"RBUFF"} = towers[j]{"RBUFF"} + r{"S"}{"BUFFR"}
+                        ENDIF
+                    ENDIF
+                ENDIF
+            NEXT j
+        ENDIF
+    NEXT i
+ENDSUB
+
+EXPORT FUNC BUILD(slot, kind$)
+    IF g_phase$ = "won" ORELSE g_phase$ = "lost" THEN RETURN "over"
+    IF slot < 0 ORELSE slot >= LEN(towers) THEN RETURN "slot"
+    IF towers[slot]{"KIND"} <> "" THEN RETURN "taken"
+    IF NOT ALLOWED(kind$) THEN RETURN "locked"
+    DIM c = COST(kind$)
+    IF g_credits < c THEN RETURN "g_credits"
+    g_credits = g_credits - c
+    DIM t AS MAP = {}
+    t{"KIND"} = kind$
+    t{"TIER"} = 1
+    t{"BR"} = ""
+    t{"BT"} = 0
+    t{"SPENT"} = c
+    t{"CD"} = 0.0
+    t{"X"} = slots[slot][0] + 0.5
+    t{"Y"} = slots[slot][1] + 0.5
+    t{"S"} = STATS(kind$, 1, "", 0)
+    t{"BUFF"} = 1.0
+    t{"RBUFF"} = 1.0
+    t{"LASTU"} = -1
+    t{"RAMPT"} = 0.0
+    t{"BX"} = []
+    t{"BY"} = []
+    t{"AIM"} = 0.0
+    t{"KILLS"} = 0
+    towers[slot] = t
+    REBUFF()
+    EMIT({"T": "BUILD", "X": t{"X"}, "Y": t{"Y"}, "K": kind$})
+    RETURN ""
+ENDFUNC
+
+EXPORT FUNC UPGRADE(slot, code$)
+    IF g_phase$ = "won" ORELSE g_phase$ = "lost" THEN RETURN "over"
+    IF slot < 0 ORELSE slot >= LEN(towers) THEN RETURN "slot"
+    DIM opts = UPOPTS(slot)
+    DIM i
+    FOR i = 0 TO LEN(opts) - 1
+        IF opts[i][0] = code$ THEN
+            IF g_credits < opts[i][1] THEN RETURN "g_credits"
+            g_credits = g_credits - opts[i][1]
+            DIM t = towers[slot]
+            t{"SPENT"} = t{"SPENT"} + opts[i][1]
+            IF code$ = "UP" THEN
+                IF t{"BR"} = "" THEN
+                    t{"TIER"} = t{"TIER"} + 1
+                ELSE
+                    t{"BT"} = t{"BT"} + 1
+                ENDIF
+            ELSE
+                t{"BR"} = code$
+                t{"BT"} = 1
+            ENDIF
+            t{"S"} = STATS(t{"KIND"}, t{"TIER"}, t{"BR"}, t{"BT"})
+            towers[slot] = t
+            REBUFF()
+            EMIT({"T": "UPGRADE", "X": t{"X"}, "Y": t{"Y"}, "K": t{"KIND"}})
+            RETURN ""
+        ENDIF
+    NEXT i
+    RETURN "max"
+ENDFUNC
+
+EXPORT FUNC SELLVALUE(slot)
+    IF towers[slot]{"KIND"} = "" THEN RETURN 0
+    RETURN INT(towers[slot]{"SPENT"} * SELL_BACK)
+ENDFUNC
+
+EXPORT FUNC SELL(slot)
+    IF slot < 0 ORELSE slot >= LEN(towers) THEN RETURN "slot"
+    IF towers[slot]{"KIND"} = "" THEN RETURN "empty"
+    g_credits = g_credits + SELLVALUE(slot)
+    EMIT({"T": "SELL", "X": towers[slot]{"X"}, "Y": towers[slot]{"Y"}, "K": towers[slot]{"KIND"}})
+    DIM t AS MAP = {}
+    t{"KIND"} = ""
+    towers[slot] = t
+    REBUFF()
+    RETURN ""
+ENDFUNC
+
+' ── waves ───────────────────────────────────────────────────────
+
+EXPORT FUNC NWAVES()
+    RETURN LEN(lvl{"WAVES"})
+ENDFUNC
+
+EXPORT FUNC EARLYBONUS()
+    IF LEN(E_K) = 0 ANDALSO LEN(Q_T) = 0 THEN RETURN 0
+    RETURN 10 + 3 * waves_launched
+ENDFUNC
+
+EXPORT FUNC LAUNCH()
+    IF g_phase$ = "won" ORELSE g_phase$ = "lost" THEN RETURN "over"
+    IF waves_launched >= NWAVES() THEN RETURN "none"
+    DIM early = EARLYBONUS()
+    DIM wv = lvl{"WAVES"}[waves_launched]
+    FOR EACH g IN wv{"GROUPS"}
+        DIM k = KINDNO(g{"E"})
+        DIM i
+        FOR i = 0 TO g{"N"} - 1
+            Q_T = APPEND(Q_T, g_clock + g{"DELAY"} + i * g{"GAP"})
+            Q_K = APPEND(Q_K, k)
+            Q_P = APPEND(Q_P, g{"PATH"} MOD n_paths)
+            Q_H = APPEND(Q_H, g{"HPX"})
+        NEXT i
+    NEXT g
+    DIM income = 0
+    FOR EACH t IN towers
+        IF t{"KIND"} <> "" THEN income = income + t{"S"}{"INCOME"}
+    NEXT t
+    g_credits = g_credits + wv{"BONUS"} + early + income
+    score_bonus = score_bonus + early
+    waves_launched = waves_launched + 1
+    g_phase$ = "run"
+    EMIT({"T": "WAVE", "N": waves_launched, "EARLY": early, "INCOME": income})
+    RETURN ""
+ENDFUNC
+
+SUB SPAWN(k, path_id, hpx, d0)
+    DIM p = path_id
+    IF K_FLY[k] = 1 THEN p = path_id + n_paths
+    DIM hp = K_HP[k] * hpx
+    E_K = APPEND(E_K, k)
+    E_P = APPEND(E_P, p)
+    E_D = APPEND(E_D, d0)
+    E_HP = APPEND(E_HP, hp)
+    E_MAX = APPEND(E_MAX, hp)
+    E_SH = APPEND(E_SH, K_SHD[k] * hpx)
+    E_SHMAX = APPEND(E_SHMAX, K_SHD[k] * hpx)
+    E_SLOW = APPEND(E_SLOW, 0.0)
+    E_STUN = APPEND(E_STUN, 0.0)
+    E_BURN = APPEND(E_BURN, 0.0)
+    E_BURNT = APPEND(E_BURNT, 0.0)
+    E_VULN = APPEND(E_VULN, 0.0)
+    E_UID = APPEND(E_UID, next_uid)
+    E_REW = APPEND(E_REW, INT(K_REW[k] * reward_x + 0.5))
+    E_FLYV = APPEND(E_FLYV, K_FLY[k])
+    next_uid = next_uid + 1
+ENDSUB
+
+SUB SPAWNDUE()
+    IF LEN(Q_T) = 0 THEN RETURN
+    DIM due = Q_T <= g_clock
+    IF SUM(due) = 0 THEN RETURN
+    FOR EACH qi IN WHICH(due)
+        SPAWN(Q_K[qi], Q_P[qi], Q_H[qi], 0.0)
+    NEXT qi
+    DIM keep = WHICH(1 - due)
+    Q_T = Q_T[keep]
+    Q_K = Q_K[keep]
+    Q_P = Q_P[keep]
+    Q_H = Q_H[keep]
+ENDSUB
+
+SUB PLACE_ENEMIES()
+    IF LEN(E_K) = 0 THEN
+        E_X = []
+        E_Y = []
+        RETURN
+    ENDIF
+    DIM idx = INT(E_D / SAMP)
+    DIM lim = PNS[E_P] - 1
+    idx = VMIN(idx, lim) + PBASE[E_P]
+    E_X = PTX[idx]
+    E_Y = PTY[idx]
+ENDSUB
+
+' ── damage ──────────────────────────────────────────────────────
+
+' Applies a damage vector (one entry per enemy). Shields soak first, sx
+' times as hard; armor cuts what is left unless pen lets it through.
+SUB DAMAGE(dvec, pen, sx)
+    DIM armor = K_ARM[E_K]
+    DIM eff = dvec * (1 - armor * (1 - pen)) * (1 + E_VULN)
+    DIM absorb = eff * sx
+    DIM soaked = VMIN(absorb, E_SH)
+    E_SH = E_SH - soaked
+    E_HP = E_HP - (absorb - soaked) / sx
+ENDSUB
+
+FUNC INRANGE(x, y, r, air, ground)
+    DIM d2 = (E_X - x) ^ 2 + (E_Y - y) ^ 2
+    DIM hit_ok = air * E_FLYV + ground * (1 - E_FLYV)
+    RETURN (d2 <= r * r) * (E_HP > 0) * (hit_ok > 0)
+ENDFUNC
+
+' Up to n enemies of a mask, the ones closest to the end of their path first
+FUNC FRONT(mask, n)
+    DIM cnt = SUM(mask)
+    IF cnt = 0 THEN RETURN []
+    DIM remain = PLEN[E_P] - E_D
+    DIM sc = (0 - remain) * mask - 1000000 * (1 - mask)
+    DIM take_n = n
+    IF cnt < n THEN take_n = cnt
+    RETURN TAKE(take_n, GRADE(0 - sc))
+ENDFUNC
+
+FUNC ONEHOT(i, v)
+    RETURN (IOTA(LEN(E_K), 0) = i) * v
+ENDFUNC
+
+FUNC NEAR(x, y, r, ground_only)
+    DIM d2 = (E_X - x) ^ 2 + (E_Y - y) ^ 2
+    DIM m = (d2 <= r * r) * (E_HP > 0)
+    IF ground_only = 1 THEN m = m * (1 - E_FLYV)
+    RETURN m
+ENDFUNC
+
+SUB SPLASH(x, y, r, dmg, pen, ground_only)
+    IF LEN(E_K) = 0 THEN RETURN
+    DIM m = NEAR(x, y, r, ground_only)
+    IF SUM(m) > 0 THEN DAMAGE(m * dmg, pen, 1)
+ENDSUB
+
+' ── projectiles ─────────────────────────────────────────────────
+
+SUB FIRE(t, tgt, dmg)
+    DIM s = t{"S"}
+    R_X = APPEND(R_X, t{"X"})
+    R_Y = APPEND(R_Y, t{"Y"})
+    R_TX = APPEND(R_TX, E_X[tgt])
+    R_TY = APPEND(R_TY, E_Y[tgt])
+    IF s{"MODE"} = "SHELL" THEN
+        R_U = APPEND(R_U, -1)
+    ELSE
+        R_U = APPEND(R_U, E_UID[tgt])
+    ENDIF
+    R_SPD = APPEND(R_SPD, s{"PSPD"})
+    R_DMG = APPEND(R_DMG, dmg)
+    R_SPL = APPEND(R_SPL, s{"SPLASH"})
+    R_PEN = APPEND(R_PEN, s{"PEN"})
+    R_CLU = APPEND(R_CLU, s{"CLUSTER"})
+    R_TK = APPEND(R_TK, t{"KIND"})
+ENDSUB
+
+SUB MOVE_PROJECTILES(dt)
+    DIM n = LEN(R_X)
+    IF n = 0 THEN RETURN
+    DIM hit = ZEROS(n)
+    DIM i
+    FOR i = 0 TO n - 1
+        IF R_U[i] >= 0 THEN
+            DIM ei = INDEXOF(E_UID, R_U[i])
+            IF ei >= 0 THEN
+                R_TX[i] = E_X[ei]
+                R_TY[i] = E_Y[ei]
+            ENDIF
+        ENDIF
+    NEXT i
+    DIM dx = R_TX - R_X
+    DIM dy = R_TY - R_Y
+    DIM dist = SQR(dx * dx + dy * dy)
+    DIM stp = R_SPD * dt
+    hit = dist <= stp
+    DIM f = stp / (dist + 0.0001)
+    f = VMIN(f, f * 0 + 1)
+    R_X = R_X + dx * f
+    R_Y = R_Y + dy * f
+    IF SUM(hit) = 0 THEN RETURN
+    FOR EACH j IN WHICH(hit)
+        IF R_SPL[j] > 0 THEN
+            SPLASH(R_TX[j], R_TY[j], R_SPL[j], R_DMG[j], R_PEN[j], 1)
+            EMIT({"T": "BOOM", "X": R_TX[j], "Y": R_TY[j], "R": R_SPL[j], "K": R_TK[j]})
+            DIM c
+            FOR c = 1 TO R_CLU[j]
+                DIM ang = c * 6.2832 / R_CLU[j] + g_clock
+                DIM bx = R_TX[j] + COS(ang) * 0.75
+                DIM by = R_TY[j] + SIN(ang) * 0.75
+                SPLASH(bx, by, 0.6, R_DMG[j] * 0.35, R_PEN[j], 1)
+                EMIT({"T": "BOOM", "X": bx, "Y": by, "R": 0.6, "K": R_TK[j]})
+            NEXT c
+        ELSEIF LEN(E_K) > 0 THEN
+            DIM ej = INDEXOF(E_UID, R_U[j])
+            IF ej >= 0 THEN DAMAGE(ONEHOT(ej, R_DMG[j]), R_PEN[j], 1)
+            EMIT({"T": "HIT", "X": R_TX[j], "Y": R_TY[j], "K": R_TK[j]})
+        ENDIF
+    NEXT j
+    DIM keep = WHICH(1 - hit)
+    R_X = R_X[keep]
+    R_Y = R_Y[keep]
+    R_TX = R_TX[keep]
+    R_TY = R_TY[keep]
+    R_U = R_U[keep]
+    R_SPD = R_SPD[keep]
+    R_DMG = R_DMG[keep]
+    R_SPL = R_SPL[keep]
+    R_PEN = R_PEN[keep]
+    R_CLU = R_CLU[keep]
+    R_TK = R_TK[keep]
+ENDSUB
+
+' ── tower behaviour ─────────────────────────────────────────────
+
+SUB RUN_AURA(t, dt)
+    DIM s = t{"S"}
+    DIM m = INRANGE(t{"X"}, t{"Y"}, s{"RANGE"} * t{"RBUFF"}, s{"AIR"}, s{"GROUND"})
+    IF SUM(m) = 0 THEN RETURN
+    E_SLOW = VMAX(E_SLOW, m * s{"SLOW"})
+    IF s{"VULN"} > 0 THEN E_VULN = VMAX(E_VULN, m * s{"VULN"})
+    DAMAGE(m * s{"DMG"} * t{"BUFF"} * dt, 0, 1)
+ENDSUB
+
+SUB RUN_TOWER(slot, dt)
+    DIM t = towers[slot]
+    DIM s = t{"S"}
+    DIM mode$ = s{"MODE"}
+    t{"BX"} = []
+    t{"BY"} = []
+    IF mode$ = "RELAY" ORELSE mode$ = "AURA" THEN RETURN
+    t{"CD"} = t{"CD"} - dt
+    IF LEN(E_K) = 0 THEN
+        t{"RAMPT"} = 0.0
+        towers[slot] = t
+        RETURN
+    ENDIF
+    DIM reach = s{"RANGE"} * t{"RBUFF"}
+    DIM m = INRANGE(t{"X"}, t{"Y"}, reach, s{"AIR"}, s{"GROUND"})
+    IF SUM(m) = 0 THEN
+        t{"RAMPT"} = 0.0
+        towers[slot] = t
+        RETURN
+    ENDIF
+    DIM dmg = s{"DMG"} * t{"BUFF"}
+
+    IF mode$ = "BEAM" THEN
+        DIM tg = FRONT(m, s{"BEAMS"})
+        IF E_UID[tg[0]] = t{"LASTU"} THEN
+            t{"RAMPT"} = t{"RAMPT"} + dt
+        ELSE
+            t{"RAMPT"} = 0.0
+            t{"LASTU"} = E_UID[tg[0]]
+            EMIT({"T": "BEAMON", "K": t{"KIND"}})
+        ENDIF
+        DIM ramp = 1 + (s{"RAMP"} - 1) * MIN([1, t{"RAMPT"} / 2.5])
+        DIM dv = ZEROS(LEN(E_K))
+        FOR EACH bi IN tg
+            dv = dv + ONEHOT(bi, dmg * ramp * dt)
+        NEXT bi
+        DAMAGE(dv, s{"PEN"}, 1)
+        t{"BX"} = E_X[tg]
+        t{"BY"} = E_Y[tg]
+        t{"RAMPF"} = ramp / s{"RAMP"}
+        t{"AIM"} = ATAN2(E_Y[tg[0]] - t{"Y"}, E_X[tg[0]] - t{"X"})
+        towers[slot] = t
+        RETURN
+    ENDIF
+
+    IF mode$ = "FLAME" ANDALSO t{"CD"} <= 0 THEN
+        DIM f0 = FRONT(m, 1)[0]
+        DIM fm = NEAR(E_X[f0], E_Y[f0], s{"SPLASH"}, 1)
+        DAMAGE(fm * dmg, 1, 1)
+        E_BURN = VMAX(E_BURN, fm * s{"BURN"} * t{"BUFF"})
+        E_BURNT = VMAX(E_BURNT, fm * s{"BURNT"})
+        t{"CD"} = 1 / s{"RATE"}
+        t{"AIM"} = ATAN2(E_Y[f0] - t{"Y"}, E_X[f0] - t{"X"})
+        t{"BX"} = [E_X[f0]]
+        t{"BY"} = [E_Y[f0]]
+        EMIT({"T": "FLAME", "X": t{"X"}, "Y": t{"Y"}, "X2": E_X[f0], "Y2": E_Y[f0], "R": s{"SPLASH"}})
+    ENDIF
+
+    IF t{"CD"} > 0 THEN
+        towers[slot] = t
+        RETURN
+    ENDIF
+
+    IF mode$ = "BOLT" ORELSE mode$ = "SHELL" THEN
+        DIM tgs = FRONT(m, s{"BARRELS"})
+        DIM b
+        FOR b = 0 TO s{"BARRELS"} - 1
+            FIRE(t, tgs[b MOD LEN(tgs)], dmg)
+        NEXT b
+        t{"AIM"} = ATAN2(E_Y[tgs[0]] - t{"Y"}, E_X[tgs[0]] - t{"X"})
+        t{"CD"} = 1 / s{"RATE"}
+        EMIT({"T": "SHOT", "K": t{"KIND"}, "X": t{"X"}, "Y": t{"Y"}})
+    ELSEIF mode$ = "RAIL" THEN
+        DIM r0 = FRONT(m, 1)[0]
+        DIM ax = E_X[r0] - t{"X"}
+        DIM ay = E_Y[r0] - t{"Y"}
+        DIM al = SQR(ax * ax + ay * ay) + 0.0001
+        ax = ax / al
+        ay = ay / al
+        DIM ex = t{"X"} + ax * reach
+        DIM ey = t{"Y"} + ay * reach
+        DIM px = E_X - t{"X"}
+        DIM py = E_Y - t{"Y"}
+        DIM along = px * ax + py * ay
+        DIM side = ABS(px * ay - py * ax)
+        DIM lm = (along >= 0) * (along <= reach) * (side <= 0.4) * (E_HP > 0)
+        DAMAGE(lm * dmg, s{"PEN"}, 1)
+        t{"AIM"} = ATAN2(ay, ax)
+        t{"CD"} = 1 / s{"RATE"}
+        EMIT({"T": "RAIL", "X": t{"X"}, "Y": t{"Y"}, "X2": ex, "Y2": ey})
+    ELSEIF mode$ = "ZAP" THEN
+        DIM z0 = FRONT(m, 1)[0]
+        DIM hitm = ZEROS(LEN(E_K))
+        DIM xs = [t{"X"}]
+        DIM ys = [t{"Y"}]
+        DIM cur = z0
+        DIM zd = dmg
+        DIM dv2 = ZEROS(LEN(E_K))
+        DIM hop
+        FOR hop = 0 TO s{"CHAIN"} - 1
+            dv2 = dv2 + ONEHOT(cur, zd)
+            hitm = hitm + ONEHOT(cur, 1)
+            xs = APPEND(xs, E_X[cur])
+            ys = APPEND(ys, E_Y[cur])
+            zd = zd * 0.85
+            DIM nm = NEAR(E_X[cur], E_Y[cur], CHAIN_HOP, 0) * (1 - hitm)
+            IF SUM(nm) = 0 THEN EXITFOR
+            DIM dd = (E_X - E_X[cur]) ^ 2 + (E_Y - E_Y[cur]) ^ 2 + 1000 * (1 - nm)
+            cur = INDEXOF(dd, MIN(dd))
+        NEXT hop
+        DAMAGE(dv2, s{"PEN"}, s{"SHIELDX"})
+        IF s{"STUN"} > 0 THEN E_STUN = VMAX(E_STUN, hitm * s{"STUN"} * K_RES[E_K])
+        t{"CD"} = 1 / s{"RATE"}
+        EMIT({"T": "ZAP", "XS": xs, "YS": ys})
+    ELSEIF mode$ = "PULSE" THEN
+        E_STUN = VMAX(E_STUN, m * s{"STUN"} * K_RES[E_K])
+        IF s{"STRIP"} > 0 THEN E_SH = E_SH * (1 - m)
+        DAMAGE(m * dmg, 0, 1)
+        t{"CD"} = 1 / s{"RATE"}
+        EMIT({"T": "PULSE", "X": t{"X"}, "Y": t{"Y"}, "R": reach})
+    ENDIF
+    towers[slot] = t
+ENDSUB
+
+' ── the step ────────────────────────────────────────────────────
+
+SUB RESOLVE()
+    IF LEN(E_K) = 0 THEN RETURN
+    DIM dead = E_HP <= 0
+    DIM leak = (E_D >= PLEN[E_P]) * (1 - dead)
+    IF SUM(dead) + SUM(leak) = 0 THEN RETURN
+    DIM babies = []
+    FOR EACH i IN WHICH(dead)
+        g_credits = g_credits + E_REW[i]
+        g_kills = g_kills + 1
+        EMIT({"T": "DIE", "X": E_X[i], "Y": E_Y[i], "K": K_NAME[E_K[i]], "REW": E_REW[i]})
+        DIM sk = K_SPLIT[E_K[i]]
+        IF sk >= 0 THEN
+            DIM hpx = E_MAX[i] / K_HP[E_K[i]]
+            DIM c
+            FOR c = 0 TO K_SPLITN[E_K[i]] - 1
+                babies = APPEND(babies, [[sk, E_P[i], hpx, VMAX(E_D[i] - 0.2 * c, 0)]])
+            NEXT c
+        ENDIF
+    NEXT i
+    FOR EACH j IN WHICH(leak)
+        g_lives = g_lives - K_LIV[E_K[j]]
+        EMIT({"T": "LEAK", "K": K_NAME[E_K[j]], "N": K_LIV[E_K[j]]})
+    NEXT j
+    DIM keep = WHICH((1 - dead) * (1 - leak))
+    E_K = E_K[keep]
+    E_P = E_P[keep]
+    E_D = E_D[keep]
+    E_HP = E_HP[keep]
+    E_MAX = E_MAX[keep]
+    E_SH = E_SH[keep]
+    E_SHMAX = E_SHMAX[keep]
+    E_SLOW = E_SLOW[keep]
+    E_STUN = E_STUN[keep]
+    E_BURN = E_BURN[keep]
+    E_BURNT = E_BURNT[keep]
+    E_VULN = E_VULN[keep]
+    E_UID = E_UID[keep]
+    E_REW = E_REW[keep]
+    E_FLYV = E_FLYV[keep]
+    E_X = E_X[keep]
+    E_Y = E_Y[keep]
+    FOR EACH bb IN babies
+        DIM bp = bb[1]
+        IF bp >= n_paths THEN bp = bp - n_paths
+        SPAWN(bb[0], bp, bb[2], bb[3])
+    NEXT bb
+    IF LEN(babies) > 0 THEN PLACE_ENEMIES()
+ENDSUB
+
+SUB HEALERS(dt)
+    DIM hm = K_HEAL[E_K] > 0
+    IF SUM(hm) = 0 THEN RETURN
+    ' healers do not stack: an enemy takes the strongest heal around it
+    DIM heal = ZEROS(LEN(E_K))
+    FOR EACH h IN WHICH(hm)
+        DIM k = E_K[h]
+        DIM m = NEAR(E_X[h], E_Y[h], K_HEALR[k], 0)
+        heal = VMAX(heal, m * (K_HEAL[k] * E_MAX[h] / K_HP[k]))
+    NEXT h
+    E_HP = VMIN(E_HP + heal * dt, E_MAX)
+ENDSUB
+
+EXPORT SUB ADVANCE(dt)
+    IF g_phase$ <> "run" THEN RETURN
+    g_clock = g_clock + dt
+    SPAWNDUE()
+    PLACE_ENEMIES()
+    DIM n = LEN(E_K)
+    IF n > 0 THEN
+        E_SLOW = ZEROS(n)
+        E_VULN = ZEROS(n)
+    ENDIF
+    DIM i
+    FOR i = 0 TO LEN(towers) - 1
+        IF towers[i]{"KIND"} <> "" THEN
+            IF towers[i]{"S"}{"MODE"} = "AURA" ANDALSO n > 0 THEN RUN_AURA(towers[i], dt)
+        ENDIF
+    NEXT i
+    FOR i = 0 TO LEN(towers) - 1
+        IF towers[i]{"KIND"} <> "" THEN RUN_TOWER(i, dt)
+    NEXT i
+    MOVE_PROJECTILES(dt)
+    n = LEN(E_K)
+    IF n > 0 THEN
+        DIM burning = E_BURNT > 0
+        IF SUM(burning) > 0 THEN
+            DAMAGE(E_BURN * burning * dt, 1, 1)
+            E_BURNT = E_BURNT - dt
+            E_BURN = E_BURN * (E_BURNT > 0)
+        ENDIF
+        HEALERS(dt)
+        DIM res = K_RES[E_K]
+        DIM moving = E_STUN <= 0
+        E_D = E_D + K_SPD[E_K] * (1 - E_SLOW * res) * moving * dt
+        E_STUN = E_STUN - dt
+    ENDIF
+    RESOLVE()
+    PLACE_ENEMIES()
+    IF g_lives <= 0 THEN
+        g_lives = 0
+        g_phase$ = "lost"
+        EMIT({"T": "LOSE"})
+    ELSEIF waves_launched >= NWAVES() ANDALSO LEN(Q_T) = 0 ANDALSO LEN(E_K) = 0 THEN
+        g_phase$ = "won"
+        EMIT({"T": "WIN", "STARS": STARS()})
+    ENDIF
+ENDSUB
+
+' ── getters ─────────────────────────────────────────────────────
+
+EXPORT FUNC EVENTS()
+    DIM out = g_events
+    g_events = []
+    RETURN out
+ENDFUNC
+
+EXPORT SUB QUIET(flag)
+    events_on = 1 - flag
+    g_events = []
+ENDSUB
+
+EXPORT FUNC STARS()
+    IF g_phase$ <> "won" THEN RETURN 0
+    IF g_lives >= g_lives0 * 0.9 THEN RETURN 3
+    IF g_lives >= g_lives0 * 0.5 THEN RETURN 2
+    RETURN 1
+ENDFUNC
+
+EXPORT FUNC SCORE()
+    RETURN g_kills * 10 + g_lives * 50 + score_bonus * 2 + INT(g_credits / 10)
+ENDFUNC
+
+EXPORT FUNC PHASE$()
+    RETURN g_phase$
+ENDFUNC
+
+EXPORT FUNC CREDITS()
+    RETURN g_credits
+ENDFUNC
+
+EXPORT FUNC LIVES()
+    RETURN g_lives
+ENDFUNC
+
+EXPORT FUNC WAVE()
+    RETURN waves_launched
+ENDFUNC
+
+EXPORT FUNC KILLS()
+    RETURN g_kills
+ENDFUNC
+
+EXPORT FUNC CLOCK()
+    RETURN g_clock
+ENDFUNC
+
+EXPORT FUNC BUSY()
+    RETURN LEN(E_K) + LEN(Q_T)
+ENDFUNC
+
+EXPORT FUNC TOWER(slot)
+    RETURN towers[slot]
+ENDFUNC
+
+EXPORT FUNC NSLOTS()
+    RETURN LEN(towers)
+ENDFUNC
+
+EXPORT FUNC SLOTPOS(slot)
+    RETURN slots[slot]
+ENDFUNC
+
+' The enemies as one map of parallel arrays, for drawing
+EXPORT FUNC ENEMIES()
+    DIM m AS MAP = {}
+    m{"X"} = E_X
+    m{"Y"} = E_Y
+    m{"K"} = E_K
+    m{"HPF"} = E_HP / (E_MAX + 0.0001)
+    m{"SHF"} = E_SH / (E_SHMAX + 0.0001)
+    m{"SLOW"} = E_SLOW
+    m{"STUN"} = E_STUN > 0
+    m{"BURN"} = E_BURNT > 0
+    m{"UID"} = E_UID
+    RETURN m
+ENDFUNC
+
+EXPORT FUNC SHOTS()
+    DIM m AS MAP = {}
+    m{"X"} = R_X
+    m{"Y"} = R_Y
+    m{"TX"} = R_TX
+    m{"TY"} = R_TY
+    m{"K"} = R_TK
+    m{"SPL"} = R_SPL
+    RETURN m
+ENDFUNC
+
+EXPORT FUNC KINDNAMES()
+    RETURN K_NAME
+ENDFUNC
+
+' What the next wave brings: [[kind$, n], ...]
+EXPORT FUNC PREVIEW()
+    DIM out = []
+    IF waves_launched >= NWAVES() THEN RETURN out
+    FOR EACH g IN lvl{"WAVES"}[waves_launched]{"GROUPS"}
+        out = APPEND(out, [[g{"E"}, g{"N"}]])
+    NEXT g
+    RETURN out
+ENDFUNC
+
+' The sampled points of a path (0.05 tiles apart), air lines included
+EXPORT FUNC PATHXY(p)
+    DIM idx = IOTA(PNS[p], 0) + PBASE[p]
+    DIM m AS MAP = {}
+    m{"X"} = PTX[idx]
+    m{"Y"} = PTY[idx]
+    m{"LEN"} = PLEN[p]
+    RETURN m
+ENDFUNC
+
+EXPORT FUNC NPATHS()
+    RETURN n_paths
+ENDFUNC

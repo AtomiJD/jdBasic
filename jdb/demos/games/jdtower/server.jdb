@@ -1,0 +1,243 @@
+' jdTower server: players, their best result per level, a leaderboard.
+' The game itself runs on the client; the server only keeps score.
+'   jdbasic server.jdb [port] [host]          default 8082 on 0.0.0.0
+' Clients POST JSON as text/plain (a CORS simple request, no preflight) and
+' every answer carries Access-Control-Allow-Origin: *.
+
+CONST N_LEVELS = 20
+CONST PIN_TRIES = 5
+CONST PIN_LOCK_MS = 60000
+CONST MAX_SCORE = 1000000
+CONST NAME_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789äöüÄÖÜß _-."
+
+' The runtime on the live box predates the rename to JSON.PARSE
+FUNC JPARSE(s$)
+    TRY
+        RETURN JSON.PARSE(s$)
+    CATCH
+    ENDTRY
+    RETURN JSON.PARSE$(s$)
+ENDFUNC
+
+' Request fields are lower case now and were upper case in older runtimes
+FUNC REQ(req, k$)
+    IF MAP.EXISTS(req, k$) THEN RETURN req{k$}
+    IF MAP.EXISTS(req, UCASE$(k$)) THEN RETURN req{UCASE$(k$)}
+    RETURN ""
+ENDFUNC
+
+DIM players AS MAP = {}
+TRY
+    players = JPARSE(TXTREADER$("players.json"))
+CATCH
+ENDTRY
+IF TYPEOF(players) <> "OBJECT" THEN players = {}
+
+DIM sessions AS MAP = {}
+TRY
+    sessions = JPARSE(TXTREADER$("sessions.json"))
+CATCH
+ENDTRY
+IF TYPEOF(sessions) <> "OBJECT" THEN sessions = {}
+
+SUB SAVEPLAYERS()
+    TRY
+        TXTWRITER "players.json", JSON.STRINGIFY$(players)
+    CATCH
+        PRINT "cannot write players.json"
+    ENDTRY
+ENDSUB
+
+SUB SAVESESSIONS()
+    TRY
+        TXTWRITER "sessions.json", JSON.STRINGIFY$(sessions)
+    CATCH
+        PRINT "cannot write sessions.json"
+    ENDTRY
+ENDSUB
+
+FUNC JJ(m)
+    RETURN { "__http_status": 200, "__http_body": JSON.STRINGIFY$(m), "__http_content_type": "application/json", "__http_headers": { "Access-Control-Allow-Origin": "*" } }
+ENDFUNC
+
+FUNC BODY(req)
+    DIM b = 0
+    TRY
+        b = JPARSE(REQ(req, "body"))
+    CATCH
+    ENDTRY
+    RETURN b
+ENDFUNC
+
+' ── identity ────────────────────────────────────────────────────
+' A name belongs to whoever claimed it first. Only a salted hash of the PIN
+' is stored, and a session token stands in for the PIN afterwards.
+
+FUNC PINHASH$(salt$, pin$)
+    RETURN CODEC.SHA256$(salt$ + ":" + pin$)
+ENDFUNC
+
+FUNC PINOK(pin$)
+    IF LEN(pin$) < 4 ORELSE LEN(pin$) > 8 THEN RETURN 0
+    DIM i
+    FOR i = 0 TO LEN(pin$) - 1
+        DIM c$ = MID$(pin$, i, 1)
+        IF c$ < "0" ORELSE c$ > "9" THEN RETURN 0
+    NEXT i
+    RETURN 1
+ENDFUNC
+
+' Sixteen characters, not bytes: an umlaut must not cost two letters
+FUNC NAMEOK(nm$)
+    IF nm$ = "" THEN RETURN 0
+    DIM chars = -nm$
+    IF LEN(chars) > 16 THEN RETURN 0
+    FOR EACH ch$ IN chars
+        IF INSTR(NAME_CHARS, ch$) < 0 THEN RETURN 0
+    NEXT ch$
+    RETURN 1
+ENDFUNC
+
+FUNC PLAYEROF(name$)
+    IF NOT MAP.EXISTS(players, name$) THEN
+        players{name$} = { "SALT": "", "PINHASH": "", "TRIES": 0, "LOCKED": 0, "PROGRESS": {} }
+    ENDIF
+    RETURN players{name$}
+ENDFUNC
+
+FUNC NEWSESSION$(name$)
+    DIM tok$ = CODEC.UUID$()
+    sessions{tok$} = { "NAME": name$ }
+    SAVESESSIONS()
+    RETURN tok$
+ENDFUNC
+
+FUNC WHOIS$(req, b)
+    DIM tok$ = ""
+    IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "AUTH") THEN tok$ = "" + b{"AUTH"}
+    DIM qp = REQ(req, "params")
+    IF tok$ = "" ANDALSO TYPEOF(qp) = "OBJECT" THEN
+        IF MAP.EXISTS(qp, "auth") THEN tok$ = qp{"auth"}
+    ENDIF
+    IF tok$ = "" ORELSE NOT MAP.EXISTS(sessions, tok$) THEN RETURN ""
+    RETURN sessions{tok$}{"NAME"}
+ENDFUNC
+
+' ── routes ──────────────────────────────────────────────────────
+
+FUNC HROOT(req)
+    RETURN JJ({ "OK": 1, "GAME": "jdTower", "PLAYERS": LEN(MAP.KEYS(players)) })
+ENDFUNC
+
+FUNC HLOGIN(req)
+    DIM b = BODY(req)
+    IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "bad request" })
+    DIM name$ = TRIM$("" + b{"NAME"})
+    DIM pin$ = TRIM$("" + b{"PIN"})
+    IF NAMEOK(name$) = 0 THEN RETURN JJ({ "OK": 0, "MSG": "bad name" })
+    IF PINOK(pin$) = 0 THEN RETURN JJ({ "OK": 0, "MSG": "PIN: 4-8 digits" })
+    DIM p = PLAYEROF(name$)
+    DIM t_now = TICK()
+    IF p{"LOCKED"} > t_now THEN RETURN JJ({ "OK": 0, "MSG": "locked, try again in a minute" })
+    IF p{"PINHASH"} = "" THEN
+        p{"SALT"} = CODEC.UUID$()
+        p{"PINHASH"} = PINHASH$(p{"SALT"}, pin$)
+        SAVEPLAYERS()
+        PRINT "claimed: "; name$
+        RETURN JJ({ "OK": 1, "AUTH": NEWSESSION$(name$), "NAME": name$, "CLAIMED": 1 })
+    ENDIF
+    IF PINHASH$(p{"SALT"}, pin$) <> p{"PINHASH"} THEN
+        p{"TRIES"} = p{"TRIES"} + 1
+        IF p{"TRIES"} >= PIN_TRIES THEN
+            p{"LOCKED"} = t_now + PIN_LOCK_MS
+            p{"TRIES"} = 0
+        ENDIF
+        RETURN JJ({ "OK": 0, "MSG": "wrong PIN" })
+    ENDIF
+    p{"TRIES"} = 0
+    RETURN JJ({ "OK": 1, "AUTH": NEWSESSION$(name$), "NAME": name$, "CLAIMED": 0 })
+ENDFUNC
+
+FUNC HPROGRESS(req)
+    DIM who$ = WHOIS$(req, 0)
+    IF who$ = "" THEN RETURN JJ({ "OK": 0, "MSG": "login" })
+    RETURN JJ({ "OK": 1, "NAME": who$, "PROGRESS": PLAYEROF(who$){"PROGRESS"} })
+ENDFUNC
+
+FUNC HRESULT(req)
+    DIM b = BODY(req)
+    DIM who$ = WHOIS$(req, b)
+    IF who$ = "" THEN RETURN JJ({ "OK": 0, "MSG": "login" })
+    DIM lvl = INT(VAL("" + b{"LEVEL"}))
+    DIM stars = INT(VAL("" + b{"STARS"}))
+    DIM score = INT(VAL("" + b{"SCORE"}))
+    IF lvl < 1 ORELSE lvl > N_LEVELS THEN RETURN JJ({ "OK": 0, "MSG": "level" })
+    IF stars < 0 ORELSE stars > 3 ORELSE score < 0 ORELSE score > MAX_SCORE THEN RETURN JJ({ "OK": 0, "MSG": "values" })
+    DIM pr = PLAYEROF(who$){"PROGRESS"}
+    ' a level counts only once the one before it was won
+    IF lvl > 1 THEN
+        IF NOT MAP.EXISTS(pr, STR$(lvl - 1)) THEN RETURN JJ({ "OK": 0, "MSG": "locked" })
+    ENDIF
+    DIM k$ = STR$(lvl)
+    IF NOT MAP.EXISTS(pr, k$) THEN pr{k$} = { "STARS": 0, "SCORE": 0 }
+    DIM row = pr{k$}
+    IF stars > row{"STARS"} THEN row{"STARS"} = stars
+    IF score > row{"SCORE"} THEN row{"SCORE"} = score
+    SAVEPLAYERS()
+    PRINT who$; " level "; lvl; " stars "; stars; " score "; score
+    RETURN JJ({ "OK": 1, "PROGRESS": pr })
+ENDFUNC
+
+' Everyone with at least one won level: total stars, then total score
+FUNC HBOARD(req)
+    DIM rows = []
+    DIM sort_keys = []
+    FOR EACH name$ IN MAP.KEYS(players)
+        DIM pr = players{name$}{"PROGRESS"}
+        DIM n_stars = 0
+        DIM n_score = 0
+        DIM n_levels = 0
+        FOR EACH k$ IN MAP.KEYS(pr)
+            n_stars = n_stars + pr{k$}{"STARS"}
+            n_score = n_score + pr{k$}{"SCORE"}
+            n_levels = n_levels + 1
+        NEXT k$
+        IF n_levels > 0 THEN
+            rows = APPEND(rows, [{ "NAME": name$, "STARS": n_stars, "SCORE": n_score, "LEVELS": n_levels }])
+            sort_keys = APPEND(sort_keys, n_stars * 10000000 + n_score)
+        ENDIF
+    NEXT name$
+    DIM sorted = []
+    IF LEN(sort_keys) > 0 THEN
+        FOR EACH i IN REVERSE(GRADE(sort_keys))
+            sorted = APPEND(sorted, [rows[i]])
+        NEXT i
+    ENDIF
+    RETURN JJ({ "OK": 1, "ROWS": sorted })
+ENDFUNC
+
+HTTP.SERVER.ON_GET "/", HROOT@
+HTTP.SERVER.ON_POST "/login", HLOGIN@
+HTTP.SERVER.ON_GET "/progress", HPROGRESS@
+HTTP.SERVER.ON_POST "/result", HRESULT@
+HTTP.SERVER.ON_GET "/board", HBOARD@
+
+DIM srv_port = 8082
+DIM srv_host$ = "0.0.0.0"
+DIM sargs = OS.ARGS()
+DIM si
+FOR si = 1 TO LEN(sargs) - 1
+    DIM a$ = "" + sargs[si]
+    IF INSTR(a$, ".") >= 0 THEN
+        srv_host$ = a$
+    ELSEIF VAL(a$) > 0 THEN
+        srv_port = INT(VAL(a$))
+    ENDIF
+NEXT si
+
+IF HTTP.SERVER.START(srv_port, srv_host$) THEN
+    PRINT "jdTower server on "; srv_host$; ":"; srv_port
+    HTTP.SERVER.WAIT
+ELSE
+    PRINT "cannot bind port "; srv_port
+ENDIF

@@ -1,0 +1,25 @@
+{
+  "ID": 2,
+  "NAME": "Neon Alley",
+  "COLS": 12,
+  "ROWS": 18,
+  "LIVES": 20,
+  "CREDITS": 285,
+  "REWARDX": 1.05,
+  "TOWERS": ["LASER","BLASTER","CRYO"],
+  "PATHS": [
+    [[2.5,-0.8],[2.5,1.5],[5.5,1.5],[5.5,5.5],[9.5,5.5],[9.5,8.5],[6.5,8.5],[6.5,12.5],[1.5,12.5],[1.5,15.5],[1.5,18.6]]
+  ],
+  "SLOTS": [[3,0],[1,2],[8,4],[8,7],[0,11],[2,11],[5,11],[3,13],[0,16],[2,16]],
+  "WAVES": [
+    {"GROUPS":[{"E":"DRONE","N":8,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.06}],"BONUS":20},
+    {"GROUPS":[{"E":"DRONE","N":9,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.155}],"BONUS":24},
+    {"GROUPS":[{"E":"SWARM","N":19,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":1.251}],"BONUS":28},
+    {"GROUPS":[{"E":"DRONE","N":10,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.346},{"E":"DRONE","N":10,"GAP":0.85,"PATH":0,"DELAY":4,"HPX":1.346}],"BONUS":32},
+    {"GROUPS":[{"E":"DRONE","N":11,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.442},{"E":"SCOUT","N":12,"GAP":0.55,"PATH":0,"DELAY":6,"HPX":1.442}],"BONUS":36},
+    {"GROUPS":[{"E":"SWARM","N":22,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":1.537},{"E":"DRONE","N":11,"GAP":0.85,"PATH":0,"DELAY":4,"HPX":1.537}],"BONUS":40},
+    {"GROUPS":[{"E":"SWARM","N":24,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":1.632},{"E":"SWARM","N":24,"GAP":0.32,"PATH":0,"DELAY":5,"HPX":1.632}],"BONUS":44},
+    {"GROUPS":[{"E":"SCOUT","N":14,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.728},{"E":"SWARM","N":25,"GAP":0.32,"PATH":0,"DELAY":5,"HPX":1.728}],"BONUS":48},
+    {"GROUPS":[{"E":"SWARM","N":26,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":1.823},{"E":"DRONE","N":13,"GAP":0.85,"PATH":0,"DELAY":4,"HPX":1.823}],"BONUS":52}
+  ]
+}

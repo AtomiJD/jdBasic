@@ -1,0 +1,27 @@
+{
+  "ID": 6,
+  "NAME": "Glass Canyon",
+  "COLS": 12,
+  "ROWS": 18,
+  "LIVES": 20,
+  "CREDITS": 425,
+  "REWARDX": 1.25,
+  "TOWERS": ["LASER","BLASTER","CRYO","BOMB","TESLA"],
+  "PATHS": [
+    [[4.5,-0.8],[4.5,1.5],[7.5,1.5],[7.5,4.5],[3.5,4.5],[3.5,7.5],[8.5,7.5],[8.5,10.5],[1.5,10.5],[1.5,13.5],[1.5,18.6]]
+  ],
+  "SLOTS": [[5,0],[4,2],[8,3],[2,6],[8,6],[3,8],[7,9],[4,11],[9,11],[2,12],[2,14],[0,16]],
+  "WAVES": [
+    {"GROUPS":[{"E":"DRONE","N":8,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.3}],"BONUS":20},
+    {"GROUPS":[{"E":"SHIELDER","N":5,"GAP":1.1,"PATH":0,"DELAY":0,"HPX":1.417}],"BONUS":24},
+    {"GROUPS":[{"E":"SHIELDER","N":6,"GAP":1.1,"PATH":0,"DELAY":0,"HPX":1.534}],"BONUS":28},
+    {"GROUPS":[{"E":"SHIELDER","N":6,"GAP":1.1,"PATH":0,"DELAY":0,"HPX":1.651},{"E":"FLYER","N":6,"GAP":0.9,"PATH":0,"DELAY":6,"HPX":1.651}],"BONUS":32},
+    {"GROUPS":[{"E":"SHIELDER","N":7,"GAP":1.1,"PATH":0,"DELAY":0,"HPX":1.768},{"E":"SCOUT","N":12,"GAP":0.55,"PATH":0,"DELAY":4,"HPX":1.768}],"BONUS":36},
+    {"GROUPS":[{"E":"SHIELDER","N":7,"GAP":1.1,"PATH":0,"DELAY":0,"HPX":1.885},{"E":"SWARM","N":22,"GAP":0.32,"PATH":0,"DELAY":5,"HPX":1.885}],"BONUS":40},
+    {"GROUPS":[{"E":"TANK","N":4,"GAP":1.7,"PATH":0,"DELAY":0,"HPX":2.002},{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":7,"HPX":2.002}],"BONUS":44},
+    {"GROUPS":[{"E":"SCOUT","N":14,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":2.119},{"E":"SCOUT","N":14,"GAP":0.55,"PATH":0,"DELAY":6,"HPX":2.119}],"BONUS":48},
+    {"GROUPS":[{"E":"SHIELDER","N":8,"GAP":1.1,"PATH":0,"DELAY":0,"HPX":2.236},{"E":"SWARM","N":26,"GAP":0.32,"PATH":0,"DELAY":4,"HPX":2.236}],"BONUS":52},
+    {"GROUPS":[{"E":"SWARM","N":28,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":2.353},{"E":"SHIELDER","N":9,"GAP":1.1,"PATH":0,"DELAY":5,"HPX":2.353}],"BONUS":56},
+    {"GROUPS":[{"E":"DRONE","N":14,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":2.47},{"E":"TANK","N":5,"GAP":1.7,"PATH":0,"DELAY":6,"HPX":2.47}],"BONUS":60}
+  ]
+}

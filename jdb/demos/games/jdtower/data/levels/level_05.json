@@ -1,0 +1,26 @@
+{
+  "ID": 5,
+  "NAME": "Iron Herald",
+  "COLS": 12,
+  "ROWS": 18,
+  "LIVES": 20,
+  "CREDITS": 390,
+  "REWARDX": 1.2,
+  "TOWERS": ["LASER","BLASTER","CRYO","BOMB","TESLA"],
+  "PATHS": [
+    [[1.5,-0.8],[1.5,1.5],[4.5,1.5],[4.5,4.5],[10.5,4.5],[10.5,8.5],[4.5,8.5],[4.5,11.5],[9.5,11.5],[9.5,15.5],[9.5,18.6]]
+  ],
+  "SLOTS": [[3,0],[0,2],[3,2],[7,3],[11,4],[3,5],[9,7],[3,8],[6,12],[10,12],[10,14]],
+  "WAVES": [
+    {"GROUPS":[{"E":"DRONE","N":8,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.24}],"BONUS":20},
+    {"GROUPS":[{"E":"SCOUT","N":10,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.352}],"BONUS":24},
+    {"GROUPS":[{"E":"DRONE","N":9,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.463}],"BONUS":28},
+    {"GROUPS":[{"E":"SCOUT","N":11,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.575},{"E":"DRONE","N":10,"GAP":0.85,"PATH":0,"DELAY":4,"HPX":1.575}],"BONUS":32},
+    {"GROUPS":[{"E":"DRONE","N":11,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.686},{"E":"FLYER","N":7,"GAP":0.9,"PATH":0,"DELAY":4,"HPX":1.686}],"BONUS":36},
+    {"GROUPS":[{"E":"DRONE","N":11,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.798},{"E":"DRONE","N":11,"GAP":0.85,"PATH":0,"DELAY":6,"HPX":1.798}],"BONUS":40},
+    {"GROUPS":[{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.91},{"E":"SWARM","N":24,"GAP":0.32,"PATH":0,"DELAY":6,"HPX":1.91}],"BONUS":44},
+    {"GROUPS":[{"E":"FLYER","N":8,"GAP":0.9,"PATH":0,"DELAY":0,"HPX":2.021},{"E":"DRONE","N":12,"GAP":0.85,"PATH":0,"DELAY":6,"HPX":2.021}],"BONUS":48},
+    {"GROUPS":[{"E":"DRONE","N":13,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":2.133},{"E":"DRONE","N":13,"GAP":0.85,"PATH":0,"DELAY":6,"HPX":2.133}],"BONUS":52},
+    {"GROUPS":[{"E":"SWARM","N":28,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":2.244},{"E":"SWARM","N":28,"GAP":0.32,"PATH":0,"DELAY":7,"HPX":2.244},{"E":"OVERLORD","N":1,"GAP":6,"PATH":0,"DELAY":8,"HPX":1}],"BONUS":56}
+  ]
+}

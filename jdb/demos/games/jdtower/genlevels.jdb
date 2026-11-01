@@ -1,0 +1,320 @@
+' Writes data/levels/level_01.json .. level_20.json. Every level is made
+' from its own seed, so a rerun gives the same files; the files are the
+' source of truth afterwards and may be edited by hand.
+'   jdbasic genlevels.jdb            all levels
+'   jdbasic genlevels.jdb 7          only level 7
+
+CONST COLS = 12
+CONST ROWS = 18
+CONST N_LEVELS = 20
+
+DIM rng_state = 1
+
+FUNC RNDI(n)
+    rng_state = (rng_state * 48271) MOD 2147483647
+    RETURN rng_state MOD n
+ENDFUNC
+
+FUNC RNDF()
+    rng_state = (rng_state * 48271) MOD 2147483647
+    RETURN rng_state / 2147483647.0
+ENDFUNC
+
+DIM LEVEL_NAMES = ["First Light", "Neon Alley", "Cold Circuit", "Ember Grid", "Iron Herald", _
+    "Glass Canyon", "Static Bloom", "Night Market", "Prism Falls", "Twin Gates", _
+    "Violet Drift", "Shard Harbor", "Arc Reactor", "Mirror Maze", "The Warden", _
+    "Signal Storm", "Crimson Loop", "Event Horizon", "Last Relay", "Overlord"]
+
+' Kinds as they join the roster, with the level they first appear in
+DIM ROSTER = ["DRONE", "SCOUT", "SWARM", "TANK", "FLYER", "SHIELDER", "HEALER", "SPLITTER", "BRUTE"]
+DIM ROSTER_FROM = [1, 1, 2, 3, 4, 6, 8, 11, 13]
+
+DIM GROUP_N AS MAP = {}
+GROUP_N{"DRONE"} = 8
+GROUP_N{"SCOUT"} = 9
+GROUP_N{"SWARM"} = 16
+GROUP_N{"TANK"} = 3
+GROUP_N{"FLYER"} = 5
+GROUP_N{"SHIELDER"} = 5
+GROUP_N{"HEALER"} = 3
+GROUP_N{"SPLITTER"} = 4
+GROUP_N{"BRUTE"} = 2
+DIM GROUP_GAP AS MAP = {}
+GROUP_GAP{"DRONE"} = 0.85
+GROUP_GAP{"SCOUT"} = 0.55
+GROUP_GAP{"SWARM"} = 0.32
+GROUP_GAP{"TANK"} = 1.7
+GROUP_GAP{"FLYER"} = 0.9
+GROUP_GAP{"SHIELDER"} = 1.1
+GROUP_GAP{"HEALER"} = 1.5
+GROUP_GAP{"SPLITTER"} = 1.3
+GROUP_GAP{"BRUTE"} = 2.6
+
+DIM TOWER_ORDER = ["LASER", "BLASTER", "CRYO", "BOMB", "TESLA", "PULSE", "PLASMA", "RELAY"]
+DIM TOWER_FROM = [1, 1, 2, 3, 5, 7, 9, 11]
+
+' A serpentine of axis-aligned legs from above the top edge to below the
+' bottom one. end_col >= 0 forces the column the path leaves through.
+FUNC GENPATH(start_col, first_row, end_col)
+    DIM c = start_col
+    DIM r = first_row
+    DIM pts = [[c + 0.5, -0.8], [c + 0.5, r + 0.5]]
+    DO WHILE r < 13
+        DIM c2 = c
+        DO WHILE ABS(c2 - c) < 3
+            c2 = 1 + RNDI(COLS - 2)
+        LOOP
+        c = c2
+        pts = APPEND(pts, [[c + 0.5, r + 0.5]])
+        r = r + 3 + RNDI(2)
+        IF r > 15 THEN r = 15
+        pts = APPEND(pts, [[c + 0.5, r + 0.5]])
+    LOOP
+    IF end_col >= 0 ANDALSO end_col <> c THEN
+        c = end_col
+        pts = APPEND(pts, [[c + 0.5, r + 0.5]])
+    ENDIF
+    pts = APPEND(pts, [[c + 0.5, ROWS + 0.6]])
+    RETURN pts
+ENDFUNC
+
+' Tiles under a path, as row * COLS + col
+FUNC PATHTILES(pts)
+    DIM tiles = []
+    DIM i
+    FOR i = 0 TO LEN(pts) - 2
+        DIM x0 = INT(pts[i][0])
+        DIM y0 = INT(pts[i][1])
+        DIM x1 = INT(pts[i + 1][0])
+        DIM y1 = INT(pts[i + 1][1])
+        DIM n = MAX([ABS(x1 - x0), ABS(y1 - y0)])
+        DIM k
+        FOR k = 0 TO n
+            DIM tx = x0 + SGN(x1 - x0) * k
+            DIM ty = y0 + SGN(y1 - y0) * k
+            IF ty >= 0 ANDALSO ty < ROWS THEN tiles = APPEND(tiles, ty * COLS + tx)
+        NEXT k
+    NEXT i
+    RETURN UNIQUE(tiles)
+ENDFUNC
+
+FUNC OVERLAP(a, b)
+    DIM n = 0
+    FOR EACH t IN a
+        IF INDEXOF(b, t) >= 0 ANDALSO INT(t / COLS) < 15 THEN n = n + 1
+    NEXT t
+    RETURN n
+ENDFUNC
+
+' Build slots: free tiles touching the path, no two slots side by side
+FUNC GENSLOTS(path_tiles, want)
+    DIM cand = []
+    DIM t
+    FOR t = 0 TO COLS * ROWS - 1
+        IF INDEXOF(path_tiles, t) < 0 THEN
+            DIM tc = t MOD COLS
+            DIM tr = INT(t / COLS)
+            DIM near = 0
+            FOR EACH p IN path_tiles
+                IF ABS((p MOD COLS) - tc) <= 1 ANDALSO ABS(INT(p / COLS) - tr) <= 1 THEN near = 1
+            NEXT p
+            IF near = 1 ANDALSO tr < ROWS - 1 THEN cand = APPEND(cand, t)
+        ENDIF
+    NEXT t
+    DIM n = LEN(cand)
+    DIM i
+    FOR i = n - 1 TO 1 STEP -1
+        DIM j = RNDI(i + 1)
+        DIM tmp = cand[i]
+        cand[i] = cand[j]
+        cand[j] = tmp
+    NEXT i
+    DIM picked = []
+    FOR EACH t2 IN cand
+        IF LEN(picked) >= want THEN EXITFOR
+        DIM ok = 1
+        FOR EACH q IN picked
+            IF ABS((q MOD COLS) - (t2 MOD COLS)) <= 1 ANDALSO ABS(INT(q / COLS) - INT(t2 / COLS)) <= 1 THEN ok = 0
+        NEXT q
+        IF ok = 1 THEN picked = APPEND(picked, t2)
+    NEXT t2
+    DIM slots = []
+    FOR EACH s IN SORT(picked)
+        slots = APPEND(slots, [[s MOD COLS, INT(s / COLS)]])
+    NEXT s
+    RETURN slots
+ENDFUNC
+
+FUNC POOL(lvl)
+    DIM found = []
+    DIM i
+    FOR i = 0 TO LEN(ROSTER) - 1
+        IF ROSTER_FROM[i] <= lvl THEN found = APPEND(found, ROSTER[i])
+    NEXT i
+    RETURN found
+ENDFUNC
+
+FUNC NEWEST(lvl)
+    DIM best$ = "DRONE"
+    DIM i
+    FOR i = 0 TO LEN(ROSTER) - 1
+        IF ROSTER_FROM[i] = lvl THEN best$ = ROSTER[i]
+    NEXT i
+    RETURN best$
+ENDFUNC
+
+FUNC GROUP(kind$, w, hpx, path_id, delay)
+    DIM g AS MAP = {}
+    g{"E"} = kind$
+    g{"N"} = INT(GROUP_N{kind$} * (1 + 0.08 * w) + 0.5)
+    g{"GAP"} = GROUP_GAP{kind$}
+    g{"PATH"} = path_id
+    g{"DELAY"} = delay
+    g{"HPX"} = ROUND(hpx, 3)
+    RETURN g
+ENDFUNC
+
+FUNC GENWAVES(lvl, n_paths)
+    DIM kinds_pool = POOL(lvl)
+    DIM fresh$ = NEWEST(lvl)
+    DIM n_waves = 8 + INT(lvl / 2)
+    DIM lscale = 1 + 0.06 * (lvl - 1)
+    DIM waves = []
+    DIM w
+    FOR w = 0 TO n_waves - 1
+        DIM hpx = lscale * (1 + 0.09 * w)
+        DIM groups = []
+        DIM n_groups = 1
+        IF w >= 3 THEN n_groups = 2
+        IF w >= 7 ANDALSO lvl >= 8 THEN n_groups = 3
+        DIM gi
+        FOR gi = 0 TO n_groups - 1
+            DIM kind$ = kinds_pool[RNDI(LEN(kinds_pool))]
+            IF gi = 0 ANDALSO w >= 2 ANDALSO w MOD 3 = 2 THEN kind$ = fresh$
+            IF w = 0 THEN kind$ = "DRONE"
+            DIM pth = 0
+            IF n_paths > 1 THEN pth = (w + gi) MOD n_paths
+            groups = APPEND(groups, [GROUP(kind$, w, hpx, pth, gi * (4 + RNDI(4)))])
+        NEXT gi
+        IF lvl MOD 5 = 0 ANDALSO w = n_waves - 1 THEN
+            DIM boss AS MAP = {}
+            boss{"E"} = "OVERLORD"
+            boss{"N"} = 1 + (lvl = 20)
+            boss{"GAP"} = 6
+            boss{"PATH"} = 0
+            boss{"DELAY"} = 8
+            boss{"HPX"} = ROUND(1 + 0.25 * (lvl - 5), 3)
+            groups = APPEND(groups, [boss])
+        ENDIF
+        DIM wave AS MAP = {}
+        wave{"GROUPS"} = groups
+        wave{"BONUS"} = 20 + 4 * w
+        waves = APPEND(waves, [wave])
+    NEXT w
+    RETURN waves
+ENDFUNC
+
+FUNC GENLEVEL(lvl)
+    rng_state = 7919 * lvl + 104729
+    DIM i
+    FOR i = 1 TO 5
+        DIM burn = RNDI(10)
+    NEXT i
+    DIM n_paths = 1
+    IF lvl >= 10 THEN n_paths = 2
+    DIM p1 = GENPATH(1 + RNDI(COLS - 2), 1, -1)
+    DIM paths = [p1]
+    DIM tiles = PATHTILES(p1)
+    IF n_paths = 2 THEN
+        DIM end_col = INT(p1[LEN(p1) - 1][0])
+        DIM start1 = INT(p1[0][0])
+        DIM best = []
+        DIM best_ov = 999
+        DIM tries
+        FOR tries = 1 TO 30
+            DIM sc = 1 + RNDI(COLS - 2)
+            IF ABS(sc - start1) >= 4 THEN
+                DIM p2 = GENPATH(sc, 2 + RNDI(2), end_col)
+                DIM ov = OVERLAP(PATHTILES(p2), tiles)
+                IF ov < best_ov THEN
+                    best_ov = ov
+                    best = p2
+                ENDIF
+            ENDIF
+        NEXT tries
+        paths = APPEND(paths, [best])
+        tiles = UNIQUE(APPEND(tiles, PATHTILES(best)))
+    ENDIF
+    DIM towers = []
+    FOR i = 0 TO LEN(TOWER_ORDER) - 1
+        IF TOWER_FROM[i] <= lvl THEN towers = APPEND(towers, TOWER_ORDER[i])
+    NEXT i
+    DIM lv AS MAP = {}
+    lv{"ID"} = lvl
+    lv{"NAME"} = LEVEL_NAMES[lvl - 1]
+    lv{"COLS"} = COLS
+    lv{"ROWS"} = ROWS
+    lv{"LIVES"} = 20
+    lv{"CREDITS"} = 250 + 35 * (lvl - 1)
+    lv{"REWARDX"} = ROUND(1 + 0.05 * (lvl - 1), 3)
+    lv{"TOWERS"} = towers
+    lv{"PATHS"} = paths
+    lv{"SLOTS"} = GENSLOTS(tiles, 9 + INT(lvl / 2) + 2 * (n_paths - 1))
+    lv{"WAVES"} = GENWAVES(lvl, n_paths)
+    RETURN lv
+ENDFUNC
+
+' One key per line, one wave per line, so a level reads well in an editor
+FUNC PRETTY$(lv)
+    DIM nl$ = CHR$(10)
+    DIM q$ = CHR$(34)
+    DIM s$ = "{" + nl$
+    DIM ks = MAP.KEYS(lv)
+    DIM i
+    FOR i = 0 TO LEN(ks) - 1
+        DIM k$ = ks[i]
+        s$ = s$ + "  " + q$ + k$ + q$ + ": "
+        IF k$ = "WAVES" ORELSE k$ = "PATHS" THEN
+            s$ = s$ + "[" + nl$
+            DIM j
+            FOR j = 0 TO LEN(lv{k$}) - 1
+                s$ = s$ + "    " + JSON.STRINGIFY$(lv{k$}[j])
+                IF j < LEN(lv{k$}) - 1 THEN s$ = s$ + ","
+                s$ = s$ + nl$
+            NEXT j
+            s$ = s$ + "  ]"
+        ELSE
+            s$ = s$ + SCALAR$(lv{k$})
+        ENDIF
+        IF i < LEN(ks) - 1 THEN s$ = s$ + ","
+        s$ = s$ + nl$
+    NEXT i
+    RETURN s$ + "}" + nl$
+ENDFUNC
+
+FUNC SCALAR$(v)
+    DIM s$ = JSON.STRINGIFY$([v])
+    RETURN MID$(s$, 1, LEN(s$) - 2)
+ENDFUNC
+
+SUB WRITELEVEL(lvl)
+    DIM lv = GENLEVEL(lvl)
+    DIM nm$ = "level_" + RIGHT$("0" + STR$(lvl), 2) + ".json"
+    TXTWRITER "data/levels/" + nm$, PRETTY$(lv)
+    PRINT nm$; "  "; lv{"NAME"}; "  paths "; LEN(lv{"PATHS"}); "  slots "; LEN(lv{"SLOTS"}); "  waves "; LEN(lv{"WAVES"})
+ENDSUB
+
+SUB MAIN()
+    IF NOT FILE.EXISTS("data/levels") THEN MKDIR "data/levels"
+    DIM args = OS.ARGS()
+    IF LEN(args) > 1 THEN
+        WRITELEVEL(VAL(args[1]))
+    ELSE
+        DIM lvl
+        FOR lvl = 1 TO N_LEVELS
+            WRITELEVEL(lvl)
+        NEXT lvl
+    ENDIF
+ENDSUB
+
+MAIN()

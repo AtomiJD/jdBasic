@@ -1,0 +1,13 @@
+{
+  "id": "/tower/",
+  "name": "jdTOWER - Neon Tower Defense",
+  "short_name": "jdTOWER",
+  "description": "Neon Tower Defense in jdBasic.",
+  "start_url": "/tower/",
+  "scope": "/tower/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#05050f",
+  "theme_color": "#05050f",
+  "categories": ["games"]
+}

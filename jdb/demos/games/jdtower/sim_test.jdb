@@ -1,0 +1,173 @@
+' Rule checks for sim.jdb, run from this folder:  jdbasic sim_test.jdb
+' Ends with "failed N"; tests/jdtower/sim_rules.jdb gates on "failed 0".
+IMPORT SIM
+
+DIM n_ok = 0
+DIM n_bad = 0
+SUB CHECK(name$, cond)
+    IF cond THEN
+        n_ok = n_ok + 1
+    ELSE
+        n_bad = n_bad + 1
+        PRINT "FAIL: "; name$
+    ENDIF
+ENDSUB
+
+DIM towers_json = JSON.PARSE(TXTREADER$("data/towers.json"))
+DIM enemies_json = JSON.PARSE(TXTREADER$("data/enemies.json"))
+SIM.SETDATA(towers_json, enemies_json)
+
+' A straight road down column 2, one slot beside it, one wave of n kind$
+FUNC TESTLEVEL(kind$, n, hpx)
+    DIM g AS MAP = {}
+    g{"E"} = kind$
+    g{"N"} = n
+    g{"GAP"} = 0.5
+    g{"PATH"} = 0
+    g{"DELAY"} = 0
+    g{"HPX"} = hpx
+    DIM lv AS MAP = {}
+    lv{"ID"} = 0
+    lv{"NAME"} = "test"
+    lv{"COLS"} = 12
+    lv{"ROWS"} = 18
+    lv{"LIVES"} = 20
+    lv{"CREDITS"} = 5000
+    lv{"REWARDX"} = 1
+    lv{"TOWERS"} = towers_json{"ORDER"}
+    lv{"PATHS"} = [[[2.5, -0.8], [2.5, 18.6]]]
+    lv{"SLOTS"} = [[3, 8], [1, 8], [3, 0]]
+    lv{"WAVES"} = [{ "GROUPS": [g], "BONUS": 20 }]
+    RETURN lv
+ENDFUNC
+
+SUB RUNFOR(secs)
+    DIM i
+    FOR i = 1 TO INT(secs / 0.05)
+        SIM.ADVANCE(0.05)
+    NEXT i
+ENDSUB
+
+' ── building, selling, upgrading ────────────────────────────────
+DIM l1 = JSON.PARSE(TXTREADER$("data/levels/level_01.json"))
+SIM.START(l1)
+SIM.QUIET(1)
+DIM c0 = SIM.CREDITS()
+CHECK("level 1 offers two towers", LEN(l1{"TOWERS"}) = 2)
+CHECK("build laser", SIM.BUILD(0, "LASER") = "")
+CHECK("build costs its price", SIM.CREDITS() = c0 - SIM.COST("LASER"))
+CHECK("slot taken", SIM.BUILD(0, "BLASTER") = "taken")
+CHECK("tesla locked on level 1", SIM.BUILD(1, "TESLA") = "locked")
+CHECK("upgrade to tier 2", SIM.UPGRADE(0, "UP") = "")
+CHECK("tier is 2", SIM.TOWER(0){"TIER"} = 2)
+CHECK("laser tier 2 has two beams", SIM.TOWER(0){"S"}{"BEAMS"} = 2)
+DIM spent = SIM.COST("LASER") + towers_json{"TOWERS"}{"LASER"}{"TIERS"}[1]{"COST"}
+CHECK("sell value is 80%", SIM.SELLVALUE(0) = INT(spent * 0.8))
+DIM before_sell = SIM.CREDITS()
+CHECK("sell", SIM.SELL(0) = "")
+CHECK("sell pays back", SIM.CREDITS() = before_sell + INT(spent * 0.8))
+CHECK("slot free again", SIM.TOWER(0){"KIND"} = "")
+
+SIM.START(TESTLEVEL("DRONE", 1, 1))
+SIM.QUIET(1)
+SIM.BUILD(0, "BLASTER")
+SIM.UPGRADE(0, "UP")
+SIM.UPGRADE(0, "UP")
+DIM opts = SIM.UPOPTS(0)
+CHECK("tier 3 offers two branches", LEN(opts) = 2 ANDALSO opts[0][0] = "A" ANDALSO opts[1][0] = "B")
+CHECK("take branch B", SIM.UPGRADE(0, "B") = "")
+CHECK("branch B is the railgun", SIM.TOWER(0){"S"}{"MODE"} = "RAIL")
+CHECK("branch tier 2", SIM.UPGRADE(0, "UP") = "")
+CHECK("fully upgraded", LEN(SIM.UPOPTS(0)) = 0)
+CHECK("no upgrade past the top", SIM.UPGRADE(0, "UP") = "max")
+
+' ── waves and leaks ─────────────────────────────────────────────
+SIM.START(TESTLEVEL("DRONE", 4, 1))
+SIM.QUIET(1)
+DIM cw = SIM.CREDITS()
+CHECK("launch", SIM.LAUNCH() = "")
+CHECK("wave bonus paid", SIM.CREDITS() = cw + 20)
+CHECK("phase run", SIM.PHASE$() = "run")
+RUNFOR(3)
+CHECK("enemies on the road", LEN(SIM.ENEMIES(){"X"}) = 4)
+RUNFOR(30)
+CHECK("undefended drones leak", SIM.LIVES() = 16)
+CHECK("field empty after leaking", SIM.BUSY() = 0)
+CHECK("won with lives left", SIM.PHASE$() = "won")
+CHECK("16 of 20 lives is 2 stars", SIM.STARS() = 2)
+
+' ── damage, armor, shields ──────────────────────────────────────
+SIM.START(TESTLEVEL("DRONE", 1, 1))
+SIM.QUIET(1)
+SIM.BUILD(0, "LASER")
+SIM.LAUNCH()
+RUNFOR(20)
+CHECK("laser kills a lone drone", SIM.KILLS() = 1 ANDALSO SIM.LIVES() = 20)
+CHECK("one wave won is 3 stars", SIM.STARS() = 3)
+
+' A laser on slot 2, beside the road's first tile, has the enemy in its
+' beam from the moment it spawns; answers the health lost after secs
+FUNC HPLOSS(kind$, secs)
+    SIM.START(TESTLEVEL(kind$, 1, 1))
+    SIM.QUIET(1)
+    SIM.BUILD(2, "LASER")
+    SIM.LAUNCH()
+    RUNFOR(secs)
+    DIM en = SIM.ENEMIES()
+    IF LEN(en{"X"}) = 0 THEN RETURN -1
+    RETURN (1 - en{"HPF"}[0]) * enemies_json{"ENEMIES"}{kind$}{"HP"}
+ENDFUNC
+DIM loss_drone = HPLOSS("DRONE", 1)
+DIM loss_tank = HPLOSS("TANK", 1)
+CHECK("laser hurts a drone", loss_drone > 3)
+CHECK("armor 0.4 cuts damage to 60%", ABS(loss_tank / loss_drone - 0.6) < 0.05)
+
+SIM.START(TESTLEVEL("SHIELDER", 1, 1))
+SIM.QUIET(1)
+SIM.BUILD(2, "LASER")
+SIM.LAUNCH()
+RUNFOR(1)
+DIM en_s = SIM.ENEMIES()
+CHECK("shield soaks first", en_s{"HPF"}[0] > 0.999 ANDALSO en_s{"SHF"}[0] < 0.999)
+
+' ── slow ────────────────────────────────────────────────────────
+FUNC DISTAFTER(with_cryo)
+    SIM.START(TESTLEVEL("DRONE", 1, 1))
+    SIM.QUIET(1)
+    IF with_cryo = 1 THEN SIM.BUILD(0, "CRYO")
+    SIM.LAUNCH()
+    RUNFOR(10)
+    RETURN SIM.ENEMIES(){"Y"}[0]
+ENDFUNC
+CHECK("cryo slows the road", DISTAFTER(1) < DISTAFTER(0) - 0.4)
+
+' ── splitter ────────────────────────────────────────────────────
+SIM.START(TESTLEVEL("SPLITTER", 1, 0.01))
+SIM.QUIET(1)
+SIM.BUILD(0, "BLASTER")
+SIM.LAUNCH()
+DIM saw_babies = 0
+DIM st
+FOR st = 1 TO 400
+    SIM.ADVANCE(0.05)
+    IF SIM.KILLS() >= 1 ANDALSO LEN(SIM.ENEMIES(){"X"}) = 3 THEN saw_babies = 1
+NEXT st
+CHECK("splitter leaves three swarmers", saw_babies = 1)
+
+' ── level files ─────────────────────────────────────────────────
+DIM lvl_no
+DIM bad_files = 0
+DIM prev_towers = 0
+FOR lvl_no = 1 TO 20
+    DIM lv = JSON.PARSE(TXTREADER$("data/levels/level_" + RIGHT$("0" + STR$(lvl_no), 2) + ".json"))
+    IF lv{"ID"} <> lvl_no ORELSE LEN(lv{"WAVES"}) < 8 ORELSE LEN(lv{"SLOTS"}) < 8 THEN bad_files = bad_files + 1
+    IF LEN(lv{"TOWERS"}) < prev_towers THEN bad_files = bad_files + 1
+    prev_towers = LEN(lv{"TOWERS"})
+    FOR EACH g IN lv{"WAVES"}[0]{"GROUPS"}
+        IF NOT MAP.EXISTS(enemies_json{"ENEMIES"}, g{"E"}) THEN bad_files = bad_files + 1
+    NEXT g
+NEXT lvl_no
+CHECK("20 level files well formed, towers only ever added", bad_files = 0)
+CHECK("all eight towers by the last level", prev_towers = 8)
+
+PRINT "sim_test: passed "; n_ok; " failed "; n_bad

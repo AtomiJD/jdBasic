@@ -1,0 +1,25 @@
+{
+  "ID": 3,
+  "NAME": "Cold Circuit",
+  "COLS": 12,
+  "ROWS": 18,
+  "LIVES": 20,
+  "CREDITS": 320,
+  "REWARDX": 1.1,
+  "TOWERS": ["LASER","BLASTER","CRYO","BOMB"],
+  "PATHS": [
+    [[5.5,-0.8],[5.5,1.5],[8.5,1.5],[8.5,4.5],[4.5,4.5],[4.5,7.5],[9.5,7.5],[9.5,10.5],[6.5,10.5],[6.5,14.5],[6.5,18.6]]
+  ],
+  "SLOTS": [[4,0],[7,0],[3,4],[6,5],[10,7],[6,9],[8,9],[7,11],[10,11],[7,14]],
+  "WAVES": [
+    {"GROUPS":[{"E":"DRONE","N":8,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.12}],"BONUS":20},
+    {"GROUPS":[{"E":"SCOUT","N":10,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.221}],"BONUS":24},
+    {"GROUPS":[{"E":"TANK","N":3,"GAP":1.7,"PATH":0,"DELAY":0,"HPX":1.322}],"BONUS":28},
+    {"GROUPS":[{"E":"SWARM","N":20,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":1.422},{"E":"SWARM","N":20,"GAP":0.32,"PATH":0,"DELAY":5,"HPX":1.422}],"BONUS":32},
+    {"GROUPS":[{"E":"DRONE","N":11,"GAP":0.85,"PATH":0,"DELAY":0,"HPX":1.523},{"E":"SWARM","N":21,"GAP":0.32,"PATH":0,"DELAY":6,"HPX":1.523}],"BONUS":36},
+    {"GROUPS":[{"E":"TANK","N":4,"GAP":1.7,"PATH":0,"DELAY":0,"HPX":1.624},{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":7,"HPX":1.624}],"BONUS":40},
+    {"GROUPS":[{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":0,"HPX":1.725},{"E":"SCOUT","N":13,"GAP":0.55,"PATH":0,"DELAY":4,"HPX":1.725}],"BONUS":44},
+    {"GROUPS":[{"E":"SWARM","N":25,"GAP":0.32,"PATH":0,"DELAY":0,"HPX":1.826},{"E":"SWARM","N":25,"GAP":0.32,"PATH":0,"DELAY":5,"HPX":1.826}],"BONUS":48},
+    {"GROUPS":[{"E":"TANK","N":5,"GAP":1.7,"PATH":0,"DELAY":0,"HPX":1.926},{"E":"TANK","N":5,"GAP":1.7,"PATH":0,"DELAY":6,"HPX":1.926}],"BONUS":52}
+  ]
+}

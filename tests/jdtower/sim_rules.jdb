@@ -1,0 +1,25 @@
+' Regression gate for the jdTower rules.
+'
+' The checks live next to sim.jdb in the game folder, where IMPORT finds the
+' module and the data files are read from the working directory. This
+' starts them there and fails on their verdict.
+'   jdbasic sim_rules.jdb
+DIM here$ = PATH.DIRNAME$(OS.ARGS()[0])
+IF here$ = "" THEN here$ = "."
+DIM game$ = PATH.JOIN$(here$, "..", "..", "jdb", "demos", "games", "jdtower")
+DIM win_exe$ = PATH.JOIN$(here$, "..", "..", "build", "jdBasic.exe")
+
+DIM r
+IF FILE.EXISTS(win_exe$) THEN
+    r = OS.EXEC("cmd", ["/c", "cd /d " + REPLACE$(game$, "/", "\") + " && ..\..\..\..\build\jdBasic.exe sim_test.jdb"])
+ELSE
+    r = OS.EXEC("sh", ["-c", "cd " + game$ + " && ../../../../build/jdbasic sim_test.jdb"])
+ENDIF
+DIM out$ = "" + r{"output"}
+PRINT out$
+
+IF INSTR(out$, "failed 0") >= 0 THEN
+    PRINT "sim_rules: ALL OK"
+ELSE
+    PRINT "sim_rules: FAILED"
+ENDIF
