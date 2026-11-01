@@ -71,7 +71,13 @@ $SCP server.jdb "$HOST:~/tower/"
 echo "== pages and game =="
 $SSH 'mkdir -p ~/tower/web/play/data/levels'
 $SCP web/index.html web/manifest.json web/sw.js web/icon-180.png web/icon-192.png web/icon-512.png web/icon-mask.png "$HOST:~/tower/web/"
-$SCP jdtower.jdb sim.jdb $WASM/index.html "$HOST:~/tower/web/play/"
+# the client asks for data files with ?v=<hash of data/>, so browsers drop the old ones
+DATA_VER=$(cat data/*.json data/levels/*.json | md5sum | cut -c1-10)
+sed "s/^DIM DATA_VER$ = \"dev\"/DIM DATA_VER$ = \"$DATA_VER\"/" jdtower.jdb > /tmp/jdtower_deploy.jdb
+grep -q "DATA_VER$ = \"$DATA_VER\"" /tmp/jdtower_deploy.jdb || { echo "DATA_VER stamp failed"; exit 1; }
+$SCP /tmp/jdtower_deploy.jdb "$HOST:~/tower/web/play/jdtower.jdb"
+rm -f /tmp/jdtower_deploy.jdb
+$SCP sim.jdb $WASM/index.html "$HOST:~/tower/web/play/"
 $SCP data/towers.json data/enemies.json data/lang.json data/achievements.json "$HOST:~/tower/web/play/data/"
 $SCP data/levels/*.json "$HOST:~/tower/web/play/data/levels/"
 

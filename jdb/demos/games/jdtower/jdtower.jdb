@@ -75,11 +75,15 @@ TRY
 CATCH
 ENDTRY
 
+' Stamped by deploy.sh with a hash of data/, so a deploy never meets a
+' browser cache that still holds the files of the one before
+DIM DATA_VER$ = "dev"
+
 ' A data file from next to the game, else from the site that served it
 FUNC LOADTEXT$(rel$)
     IF FILE.EXISTS(GAMEDIR$ + rel$) THEN RETURN TXTREADER$(GAMEDIR$ + rel$)
     IF FILE.EXISTS(rel$) THEN RETURN TXTREADER$(rel$)
-    RETURN HTTP.GET$(WEB$ + rel$)
+    RETURN HTTP.GET$(WEB$ + rel$ + "?v=" + DATA_VER$)
 ENDFUNC
 
 DIM towers_json = JSON.PARSE(LOADTEXT$("data/towers.json"))
@@ -142,6 +146,7 @@ ENDSUB
 LOADKINDS()
 
 FUNC TCOL(kind$)
+    IF NOT MAP.EXISTS(towers_json{"TOWERS"}, kind$) THEN RETURN [200, 200, 230]
     RETURN towers_json{"TOWERS"}{kind$}{"COLOR"}
 ENDFUNC
 
