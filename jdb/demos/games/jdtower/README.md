@@ -86,6 +86,7 @@ and copied into `wasm/`.
 (systemd unit `jdtower` on 127.0.0.1:8082, nginx route `/tower/api/`),
 `--wasm` when the runtime changed, plain for game and data updates.
 
-The jdBasic on that box is older than the repo: it knows only
-`JSON.PARSE$` and hands request fields in upper case (`BODY`, `PARAMS`).
-`server.jdb` copes with both through `JPARSE` and `REQ`.
+Live since 2026-11-01 at https://vvss.jdbasic.tech/tower/. The score
+server runs on the box's jdBasic 1.2 build in `~/jdbasic-1.2` (the
+26 October refresh, commit `bd2eb677`, built with `GFX=0 NET=0 HTTP=1
+SQLITE=1`); `players.json` and `sessions.json` live in `~/tower`.

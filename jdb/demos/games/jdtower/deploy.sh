@@ -27,7 +27,7 @@ After=network.target
 Type=simple
 User=deploy
 WorkingDirectory=/home/deploy/tower
-ExecStart=/home/deploy/jdBasic/build/jdbasic /home/deploy/tower/server.jdb 127.0.0.1 8082
+ExecStart=/home/deploy/jdbasic-1.2/build/jdbasic /home/deploy/tower/server.jdb 127.0.0.1 8082
 Restart=always
 RestartSec=3
 
