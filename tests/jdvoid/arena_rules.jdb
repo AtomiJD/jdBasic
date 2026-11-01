@@ -15,12 +15,15 @@ DIM checks = ["warp_test.jdb", "art_test.jdb", "pull_test.jdb", "spawn_test.jdb"
 DIM bad = 0
 FOR EACH c$ IN checks
     ' arguments as an array: a single command string gets its quotes mangled by cmd
-    DIM r
+    DIM shell$ = "sh"
+    DIM flag$ = "-c"
+    DIM cmd$ = "cd " + game$ + " && ../../../../build/jdbasic " + c$
     IF FILE.EXISTS(win_exe$) THEN
-        r = OS.EXEC("cmd", ["/c", "cd /d " + REPLACE$(game$, "/", "\") + " && ..\..\..\..\build\jdBasic.exe " + c$])
-    ELSE
-        r = OS.EXEC("sh", ["-c", "cd " + game$ + " && ../../../../build/jdbasic " + c$])
+        shell$ = "cmd"
+        flag$ = "/c"
+        cmd$ = "cd /d " + REPLACE$(game$, "/", "\") + " && ..\..\..\..\build\jdBasic.exe " + c$
     ENDIF
+    DIM r = OS.EXEC(shell$, [flag$, cmd$])
     DIM out$ = "" + r{"output"}
     PRINT out$
     IF INSTR(out$, "failed 0") < 0 THEN bad = bad + 1

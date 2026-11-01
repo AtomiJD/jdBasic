@@ -170,4 +170,4 @@ NEXT lvl_no
 CHECK("20 level files well formed, towers only ever added", bad_files = 0)
 CHECK("all eight towers by the last level", prev_towers = 8)
 
-PRINT "sim_test: passed "; n_ok; " failed "; n_bad
+PRINT "sim_test: passed "; n_ok; ", failed "; n_bad

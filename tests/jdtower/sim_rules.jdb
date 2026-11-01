@@ -9,16 +9,19 @@ IF here$ = "" THEN here$ = "."
 DIM game$ = PATH.JOIN$(here$, "..", "..", "jdb", "demos", "games", "jdtower")
 DIM win_exe$ = PATH.JOIN$(here$, "..", "..", "build", "jdBasic.exe")
 
-DIM r
+DIM shell$ = "sh"
+DIM flag$ = "-c"
+DIM cmd$ = "cd " + game$ + " && ../../../../build/jdbasic sim_test.jdb"
 IF FILE.EXISTS(win_exe$) THEN
-    r = OS.EXEC("cmd", ["/c", "cd /d " + REPLACE$(game$, "/", "\") + " && ..\..\..\..\build\jdBasic.exe sim_test.jdb"])
-ELSE
-    r = OS.EXEC("sh", ["-c", "cd " + game$ + " && ../../../../build/jdbasic sim_test.jdb"])
+    shell$ = "cmd"
+    flag$ = "/c"
+    cmd$ = "cd /d " + REPLACE$(game$, "/", "\") + " && ..\..\..\..\build\jdBasic.exe sim_test.jdb"
 ENDIF
+DIM r = OS.EXEC(shell$, [flag$, cmd$])
 DIM out$ = "" + r{"output"}
 PRINT out$
 
-IF INSTR(out$, "failed 0") >= 0 THEN
+IF INSTR(out$, ", failed 0") >= 0 THEN
     PRINT "sim_rules: ALL OK"
 ELSE
     PRINT "sim_rules: FAILED"
