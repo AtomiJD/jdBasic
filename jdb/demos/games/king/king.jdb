@@ -454,6 +454,7 @@ DIM round_no = 1
 DIM lives = 3
 DIM paused = 0
 DIM demo = 0
+DIM god_on = 0
 DIM level_deaths = 0
 DIM level_frames = 0
 DIM sel = 0
@@ -508,7 +509,7 @@ ENDSUB
 
 ' badge counters for one attempt, won or not
 SUB COUNTATTEMPT(won)
-    IF demo = 1 THEN RETURN
+    IF demo = 1 ORELSE god_on = 1 THEN RETURN
     DIM st = SIM.STATS()
     BUMP("jumped", st{"jumped"})
     BUMP("bolts", st{"bolts"})
@@ -695,6 +696,24 @@ SUB HANDLEKEY(k$)
         RETURN
     ENDIF
     DIM ok = IIF(k$ = "Return" ORELSE k$ = "Space" ORELSE k$ = "PadA", 1, 0)
+    IF k$ = "F" ORELSE k$ = "F11" THEN
+        TRY
+            TOGGLE_FULLSCREEN
+        CATCH
+        ENDTRY
+        RETURN
+    ENDIF
+    IF k$ = "G" THEN
+        god_on = 1 - god_on
+        SIM.GODMODE(god_on * 2)
+        SAY(IIF(god_on = 1, "GOD MODE AN", "GOD MODE AUS"))
+        RETURN
+    ENDIF
+    IF k$ = "N" ANDALSO god_on = 1 ANDALSO (mode$ = "play" ORELSE mode$ = "intro") THEN
+        lvl_idx = (lvl_idx + 1) MOD LEN(LEVELS)
+        STARTLEVEL()
+        RETURN
+    ENDIF
     IF k$ = "M" THEN
         PROF{"music"} = 1 - PROF{"music"}
         MUSICMUTE()
@@ -1155,6 +1174,7 @@ SUB DRAWHUD()
     NEXT i
     DIM lvn = (round_no - 1) * LEN(LEVELS) + lvl_idx + 1
     TXT("L=" + RIGHT$("0" + STR$(lvn), 2), 192, 19, "#2868f8", 1)
+    IF god_on = 1 THEN TXT("GOD", 64, 17, "#3ddc55", 1)
     DIM pl = SIM.PLAYER()
     IF pl{"power"} <> "" THEN
         DIM nm$ = IIF(pl{"power"} = "spring", "spring", "clock")

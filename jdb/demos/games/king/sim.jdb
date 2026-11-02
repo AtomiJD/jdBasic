@@ -349,6 +349,7 @@ EXPORT SUB NEWGAME()
     next_life = CFG{"extra_life_at"}
 ENDSUB
 
+' 0 off, 1 untouchable but falls still count (route checks), 2 nothing hurts
 EXPORT SUB GODMODE(flag)
     god = flag
 ENDSUB
@@ -526,6 +527,7 @@ ENDFUNC
 ' ── player ──────────────────────────────────────────────────────
 
 SUB HURT(why$)
+    IF god = 2 THEN RETURN
     IF god = 1 ANDALSO why$ <> "fall" THEN RETURN
     IF why$ = "hit" THEN
         IF PL{"inv"} > 0 THEN RETURN
@@ -733,7 +735,13 @@ SUB UPDATEPLAYER(inp)
             ENDIF
         ENDIF
     ENDIF
-    IF PL{"y"} > FH + 12 THEN HURT("fall")
+    IF PL{"y"} > FH + 12 THEN
+        IF god = 2 THEN
+            PLACE_HERO(START{"x"}, START{"y"})
+        ELSE
+            HURT("fall")
+        ENDIF
+    ENDIF
 ENDSUB
 
 ' a gust pushes the hero sideways unless he holds on to a ladder

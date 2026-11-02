@@ -45,7 +45,8 @@ other seven levels and the new mechanics are this port's own.
 ## Rules in short
 
 - Walk, climb ladders (broken ones only carry spools), jump. A fall of more
-  than 20 px is fatal; springboards are safe and throw about 55 px up.
+  than 54 px (about one and a half floors, `max_fall`) is fatal;
+  springboards are safe and throw about 55 px up.
 - KING throws what his `pattern` lists: `spool`, `spoolL`, `spoolR`, `hammer`,
   `wrench`. Spools roll downhill, fall off ends, take ladders now and then and
   vanish in a skip (`sinks`). A hammer bounces once and skids, a wrench is
@@ -93,7 +94,10 @@ From the repo root:
     build\jdBasic.exe jdb\demos\games\king\king.jdb shotscreen title|select|badges|over
 
 Keys: arrows or WASD, Space or K to jump, Enter to pause, M for music, L for
-the level select and B for badges on the title, Esc back. An Xbox pad: stick
+the level select and B for badges on the title, Esc back, F or F11 for
+fullscreen. G switches god mode on and off: nothing hurts, a fall out of the
+picture puts the hero back at the start, N skips to the next level, and no
+badge or hiscore counts. An Xbox pad: stick
 or D-pad, A or B to jump, Start to pause. Ten seconds on the title start a
 demo played by the bot.
 

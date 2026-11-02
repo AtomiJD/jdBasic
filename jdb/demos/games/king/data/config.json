@@ -3,7 +3,7 @@
   "steps_per_second": 60,
   "player": {
     "walk": 0.8, "jump_vy": -2.25, "gravity": 0.118, "jump_buffer": 5,
-    "climb": 0.6, "max_fall": 20, "mover_grace": 3,
+    "climb": 0.6, "max_fall": 54, "mover_grace": 3,
     "box": [-2, -11, 4, 11], "invulnerable_after_hit": 90
   },
   "spring_vy": -3.6,

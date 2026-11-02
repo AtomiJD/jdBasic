@@ -96,15 +96,15 @@ CHECK("a running jump reaches about 30 px (" + STR$(wide) + ")", wide > 28 ANDAL
 
 ' ── falls ───────────────────────────────────────────────────────
 DIM lvf = BASELEVEL()
-lvf{"platforms"} = [PLAT(0, 200, 224, 200, "girder"), PLAT(20, 182, 60, 182, "girder"), PLAT(100, 170, 140, 170, "girder"), PLAT(180, 40, 224, 40, "girder")]
+lvf{"platforms"} = [PLAT(0, 200, 224, 200, "girder"), PLAT(20, 164, 60, 164, "girder"), PLAT(100, 140, 140, 140, "girder"), PLAT(180, 40, 224, 40, "girder")]
 lvf{"button"} = {"x": 200, "on": 3}
 lvf{"king"} = {"x": 20, "plat": 3, "pattern": []}
 lvf{"start"} = {"x": 50, "on": 1}
 SIM.LOAD(lvf, 1, 1)
-CHECK("walking off an 18 px ledge is safe", RUN(PAD(0, 1, 0, 0, 0), 60) = "play")
+CHECK("dropping one floor (36 px) is safe", RUN(PAD(0, 1, 0, 0, 0), 60) = "play")
 lvf{"start"} = {"x": 130, "on": 2}
 SIM.LOAD(lvf, 1, 1)
-CHECK("walking off a 30 px ledge kills", RUN(PAD(0, 1, 0, 0, 0), 80) = "dead")
+CHECK("dropping 60 px kills", RUN(PAD(0, 1, 0, 0, 0), 80) = "dead")
 
 ' ── ladders ─────────────────────────────────────────────────────
 DIM lvl = BASELEVEL()
