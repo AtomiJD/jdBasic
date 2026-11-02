@@ -183,7 +183,12 @@ DIM SPRH AS MAP = {}
 FUNC RASTER(rows, colfn$)
     DIM hgt = LEN(rows)
     DIM wid = LEN(rows[0])
-    DIM img = GFX.NEWTARGET(wid, hgt)
+    DIM img = 0
+    TRY
+        img = GFX.NEWTARGET(wid, hgt, FALSE)
+    CATCH
+        img = GFX.NEWTARGET(wid, hgt)
+    ENDTRY
     GFX.TARGET img, TRUE
     DIM xs = []
     DIM ys = []
@@ -406,16 +411,10 @@ FUNC KEYDOWN2(a$, b$)
     RETURN IIF(GFX.KEYSTATE(a$) ORELSE GFX.KEYSTATE(b$), 1, 0)
 ENDFUNC
 
-FUNC READPAD()
-    DIM m AS MAP = {}
-    m{"l"} = KEYDOWN2("Left", "A")
-    m{"r"} = KEYDOWN2("Right", "D")
-    m{"u"} = KEYDOWN2("Up", "W")
-    m{"d"} = KEYDOWN2("Down", "S")
-    m{"j"} = KEYDOWN2("Space", "K")
-    m{"s"} = 0
+FUNC JOYPAD()
+    DIM m AS MAP = {"l": 0, "r": 0, "u": 0, "d": 0, "j": 0, "s": 0}
     TRY
-        IF JOY.BUMP() > 0 THEN
+        IF JOY.COUNT() > 0 THEN
             pad_seen = 1
             DIM ax = JOY.AXIS(0, 0)
             DIM ay = JOY.AXIS(0, 1)
@@ -432,7 +431,19 @@ FUNC READPAD()
     RETURN m
 ENDFUNC
 
-' pad buttons count as key presses in the menus
+' keyboard and pad together, for playing
+FUNC READPAD(joy)
+    DIM m AS MAP = {}
+    m{"l"} = IIF(KEYDOWN2("Left", "A") = 1 ORELSE joy{"l"} = 1, 1, 0)
+    m{"r"} = IIF(KEYDOWN2("Right", "D") = 1 ORELSE joy{"r"} = 1, 1, 0)
+    m{"u"} = IIF(KEYDOWN2("Up", "W") = 1 ORELSE joy{"u"} = 1, 1, 0)
+    m{"d"} = IIF(KEYDOWN2("Down", "S") = 1 ORELSE joy{"d"} = 1, 1, 0)
+    m{"j"} = IIF(KEYDOWN2("Space", "K") = 1 ORELSE joy{"j"} = 1, 1, 0)
+    m{"s"} = joy{"s"}
+    RETURN m
+ENDFUNC
+
+' pad buttons count as key presses in the menus; the keyboard brings its own
 SUB PADKEYS(m)
     IF m{"j"} = 1 ANDALSO pad_prev{"j"} = 0 THEN keys_in = APPEND(keys_in, "PadA")
     IF m{"s"} = 1 ANDALSO pad_prev{"s"} = 0 THEN keys_in = APPEND(keys_in, "Return")
@@ -1325,7 +1336,7 @@ ELSEIF shot_level > 0 THEN
     SETMODE("play")
     DIM n AS INTEGER
     FOR n = 1 TO shot_frames
-        UPDATE(READPAD())
+        UPDATE(READPAD(JOYPAD()))
         IF mode$ = "intro" THEN SETMODE("play")
     NEXT n
     DIM tf0 = TICK()
@@ -1349,8 +1360,9 @@ ELSE
         t_last = t0
         IF dt > 100 THEN dt = 100
         acc = acc + dt
-        DIM pad = READPAD()
-        PADKEYS(pad)
+        DIM joy = JOYPAD()
+        DIM pad = READPAD(joy)
+        PADKEYS(joy)
         DO WHILE LEN(keys_in) > 0
             DIM kk$ = keys_in[0]
             keys_in = DROP(1, keys_in)
