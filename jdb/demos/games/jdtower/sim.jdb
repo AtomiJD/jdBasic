@@ -38,6 +38,8 @@ DIM K_SPAWN = []
 DIM K_SPAWNN = []
 DIM K_SPAWNT = []
 DIM K_BOSS = []
+DIM K_SAB = []
+DIM K_SABR = []
 
 ' sampled path table: ground paths first, then one straight air line per path
 DIM PTX = []
@@ -114,6 +116,7 @@ DIM g_dmgx = 1.0
 DIM g_costx = 1.0
 DIM g_endless = 0
 DIM e_seed = 1
+DIM wear_forced = 0
 
 ' ── helpers ─────────────────────────────────────────────────────
 
@@ -170,6 +173,8 @@ EXPORT SUB SETDATA(towers_json, enemies_json)
     K_SPAWNN = []
     K_SPAWNT = []
     K_BOSS = []
+    K_SAB = []
+    K_SABR = []
     FOR EACH k$ IN edata{"ORDER"}
         DIM ed = edata{"ENEMIES"}{k$}
         K_NAME = APPEND(K_NAME, k$)
@@ -191,6 +196,8 @@ EXPORT SUB SETDATA(towers_json, enemies_json)
         K_SPAWNN = APPEND(K_SPAWNN, GETNUM(ed, "SPAWNN", 0))
         K_SPAWNT = APPEND(K_SPAWNT, GETNUM(ed, "SPAWNT", 0))
         K_BOSS = APPEND(K_BOSS, GETNUM(ed, "BOSS", 0))
+        K_SAB = APPEND(K_SAB, GETNUM(ed, "SAB", 0))
+        K_SABR = APPEND(K_SABR, GETNUM(ed, "SABR", 0))
     NEXT k$
     K_SPLIT = []
     K_SPAWN = []
@@ -315,6 +322,7 @@ EXPORT SUB START(level_map)
     g_dmgx = 1.0
     g_costx = 1.0
     g_endless = 0
+    wear_forced = 0
     IF GETNUM(lvl, "ENDLESS", 0) > 0 THEN
         g_endless = 1
         e_seed = lvl{"ENDLESS"}
@@ -333,6 +341,7 @@ EXPORT FUNC STATS(kind$, tier, br$, btier)
     s{"MODE"} = td{"MODE"}
     s{"AIR"} = td{"AIR"}
     s{"GROUND"} = td{"GROUND"}
+    s{"REVEAL"} = GETNUM(td, "REVEAL", 0)
     DIM rows = []
     DIM i
     FOR i = 0 TO tier - 1
@@ -398,7 +407,7 @@ SUB REBUFF()
     NEXT i
     FOR i = 0 TO LEN(towers) - 1
         DIM r = towers[i]
-        IF r{"KIND"} <> "" ANDALSO r{"S"}{"MODE"} = "RELAY" THEN
+        IF r{"KIND"} <> "" ANDALSO r{"S"}{"MODE"} = "RELAY" ANDALSO r{"DOWN"} < 0 THEN
             DIM j
             FOR j = 0 TO LEN(towers) - 1
                 IF j <> i ANDALSO towers[j]{"KIND"} <> "" THEN
@@ -441,6 +450,10 @@ EXPORT FUNC BUILD(slot, kind$)
     t{"BY"} = []
     t{"AIM"} = 0.0
     t{"KILLS"} = 0
+    t{"PRIO"} = "FIRST"
+    t{"COND"} = 1.0
+    t{"DOWN"} = -1.0
+    t{"ACT"} = 0
     towers[slot] = t
     REBUFF()
     EMIT({"T": "BUILD", "X": t{"X"}, "Y": t{"Y"}, "K": kind$})
@@ -480,8 +493,189 @@ ENDFUNC
 
 EXPORT FUNC SELLVALUE(slot)
     IF towers[slot]{"KIND"} = "" THEN RETURN 0
-    RETURN INT(towers[slot]{"SPENT"} * SELL_BACK)
+    RETURN INT(towers[slot]{"SPENT"} * SELL_BACK * towers[slot]{"COND"})
 ENDFUNC
+
+' ── targeting and wear ──────────────────────────────────────────
+
+' FIRST and LAST go by the way left to the base, STRONG and WEAK by
+' hit points plus shield
+DIM PRIOS = ["FIRST", "LAST", "STRONG", "WEAK"]
+DIM AIMED = ["BEAM", "BOLT", "SHELL", "RAIL", "ZAP", "FLAME"]
+
+EXPORT FUNC PRIOLIST()
+    RETURN PRIOS
+ENDFUNC
+
+' Whether a tower picks its targets (and so has a priority to set)
+EXPORT FUNC AIMS(slot)
+    IF towers[slot]{"KIND"} = "" THEN RETURN 0
+    RETURN IIF(INDEXOF(AIMED, towers[slot]{"S"}{"MODE"}) >= 0, 1, 0)
+ENDFUNC
+
+EXPORT FUNC SETPRIO(slot, p$)
+    IF slot < 0 ORELSE slot >= LEN(towers) THEN RETURN "slot"
+    IF towers[slot]{"KIND"} = "" THEN RETURN "empty"
+    IF INDEXOF(PRIOS, p$) < 0 THEN RETURN "prio"
+    towers[slot]{"PRIO"} = p$
+    RETURN ""
+ENDFUNC
+
+' The next priority in the list, set and answered
+EXPORT FUNC CYCLEPRIO(slot)
+    IF slot < 0 ORELSE slot >= LEN(towers) THEN RETURN ""
+    IF towers[slot]{"KIND"} = "" THEN RETURN ""
+    DIM p$ = PRIOS[(INDEXOF(PRIOS, towers[slot]{"PRIO"}) + 1) MOD LEN(PRIOS)]
+    towers[slot]{"PRIO"} = p$
+    RETURN p$
+ENDFUNC
+
+FUNC WEARCFG(k$)
+    IF NOT MAP.EXISTS(tdata, "WEAR") THEN RETURN 0
+    RETURN GETNUM(tdata{"WEAR"}, k$, 0)
+ENDFUNC
+
+' Towers wear only in an endless run, from a set wave on, a little faster
+' with every wave after that
+EXPORT FUNC WEARON()
+    IF NOT MAP.EXISTS(tdata, "WEAR") THEN RETURN 0
+    IF wear_forced = 1 THEN RETURN 1
+    IF g_endless = 0 THEN RETURN 0
+    RETURN IIF(waves_launched >= WEARCFG("FROM_WAVE"), 1, 0)
+ENDFUNC
+
+FUNC WEARX()
+    RETURN 1 + WEARCFG("GROWTH") * MAX([0, waves_launched - WEARCFG("FROM_WAVE")])
+ENDFUNC
+
+' Damage share of a worn tower: MIN_EFF at condition 0, all of it at 1
+FUNC EFF(t)
+    DIM lo = WEARCFG("MIN_EFF")
+    IF NOT MAP.EXISTS(tdata, "WEAR") THEN RETURN 1
+    RETURN lo + (1 - lo) * t{"COND"}
+ENDFUNC
+
+EXPORT FUNC REPAIRCOST(slot)
+    IF slot < 0 ORELSE slot >= LEN(towers) THEN RETURN 0
+    DIM t = towers[slot]
+    IF t{"KIND"} = "" THEN RETURN 0
+    IF t{"COND"} >= 1 THEN RETURN 0
+    RETURN MAX([1, INT(t{"SPENT"} * WEARCFG("REPAIR") * (1 - t{"COND"}) + 0.5)])
+ENDFUNC
+
+EXPORT FUNC REPAIR(slot)
+    IF g_phase$ = "won" ORELSE g_phase$ = "lost" THEN RETURN "over"
+    IF slot < 0 ORELSE slot >= LEN(towers) THEN RETURN "slot"
+    IF towers[slot]{"KIND"} = "" THEN RETURN "empty"
+    DIM c = REPAIRCOST(slot)
+    IF c = 0 THEN RETURN "intact"
+    IF g_credits < c THEN RETURN "credits"
+    g_credits = g_credits - c
+    DIM was_down = IIF(towers[slot]{"DOWN"} >= 0, 1, 0)
+    towers[slot]{"COND"} = 1.0
+    towers[slot]{"DOWN"} = -1.0
+    IF was_down = 1 THEN REBUFF()
+    EMIT({"T": "REPAIR", "X": towers[slot]{"X"}, "Y": towers[slot]{"Y"}, "K": towers[slot]{"KIND"}})
+    RETURN ""
+ENDFUNC
+
+' Test hooks: wear from the first wave on, and a tower's condition by hand
+EXPORT SUB FORCEWEAR(flag)
+    wear_forced = flag
+ENDSUB
+
+EXPORT SUB SETCOND(slot, c)
+    IF towers[slot]{"KIND"} = "" THEN RETURN
+    towers[slot]{"COND"} = MAX([c, 0.000001])
+    towers[slot]{"DOWN"} = -1.0
+    IF c <= 0 THEN WEARDOWN(slot, 1)
+ENDSUB
+
+' Slots of worn towers, the worst first
+FUNC WORN()
+    DIM sl = []
+    DIM conds = []
+    DIM i
+    FOR i = 0 TO LEN(towers) - 1
+        IF towers[i]{"KIND"} <> "" THEN
+            IF towers[i]{"COND"} < 1 THEN
+                sl = APPEND(sl, i)
+                conds = APPEND(conds, towers[i]{"COND"})
+            ENDIF
+        ENDIF
+    NEXT i
+    IF LEN(sl) = 0 THEN RETURN []
+    RETURN sl[GRADE(conds)]
+ENDFUNC
+
+EXPORT FUNC REPAIRALLCOST()
+    DIM total = 0
+    FOR EACH i IN WORN()
+        total = total + REPAIRCOST(i)
+    NEXT i
+    RETURN total
+ENDFUNC
+
+EXPORT FUNC NWORN()
+    RETURN LEN(WORN())
+ENDFUNC
+
+' Repairs the worst towers first while the credits last; answers how many
+EXPORT FUNC REPAIRALL()
+    DIM n = 0
+    FOR EACH i IN WORN()
+        IF REPAIR(i) = "" THEN n = n + 1
+    NEXT i
+    RETURN n
+ENDFUNC
+
+SUB WEARDOWN(i, amount)
+    IF towers[i]{"DOWN"} >= 0 THEN RETURN
+    DIM c = towers[i]{"COND"} - amount
+    IF c <= 0 THEN
+        towers[i]{"COND"} = 0.0
+        towers[i]{"DOWN"} = 0.0
+        towers[i]{"BX"} = []
+        towers[i]{"BY"} = []
+        REBUFF()
+        EMIT({"T": "DOWN", "X": towers[i]{"X"}, "Y": towers[i]{"Y"}, "K": towers[i]{"KIND"}})
+    ELSE
+        towers[i]{"COND"} = c
+    ENDIF
+ENDSUB
+
+' Firing wears a tower, so do saboteurs walking past; a tower at zero
+' stops and falls apart after DOWN_SECS unless it is repaired
+SUB WEARSTEP(dt)
+    IF WEARON() = 0 THEN RETURN
+    DIM rate = WEARCFG("PER_SEC") * WEARX() * dt
+    DIM sab_on = 0
+    IF LEN(E_K) > 0 THEN sab_on = SUM((K_SAB[E_K] > 0) * (E_HP > 0))
+    DIM limit = WEARCFG("DOWN_SECS")
+    DIM i
+    FOR i = 0 TO LEN(towers) - 1
+        IF towers[i]{"KIND"} <> "" THEN
+            IF towers[i]{"DOWN"} >= 0 THEN
+                towers[i]{"DOWN"} = towers[i]{"DOWN"} + dt
+                IF towers[i]{"DOWN"} >= limit THEN
+                    EMIT({"T": "COLLAPSE", "X": towers[i]{"X"}, "Y": towers[i]{"Y"}, "K": towers[i]{"KIND"}})
+                    DIM gone AS MAP = {}
+                    gone{"KIND"} = ""
+                    towers[i] = gone
+                    REBUFF()
+                ENDIF
+            ELSE
+                DIM amount = rate * towers[i]{"ACT"}
+                IF sab_on > 0 THEN
+                    DIM d2 = (E_X - towers[i]{"X"}) ^ 2 + (E_Y - towers[i]{"Y"}) ^ 2
+                    DIM near_sab = (d2 <= K_SABR[E_K] ^ 2) * (E_HP > 0)
+                    amount = amount + SUM(near_sab * K_SAB[E_K]) * dt
+                ENDIF
+                IF amount > 0 THEN WEARDOWN(i, amount)
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
 
 EXPORT FUNC SELL(slot)
     IF slot < 0 ORELSE slot >= LEN(towers) THEN RETURN "slot"
@@ -511,10 +705,10 @@ FUNC ERND(n)
 ENDFUNC
 
 ' Kinds an endless run draws from, with the wave they join at
-DIM E_POOL = ["DRONE", "SCOUT", "SWARM", "TANK", "FLYER", "SHIELDER", "HEALER", "PHANTOM", "SPLITTER", "MIRROR", "BLINKER", "BRUTE", "CARRIER"]
-DIM E_POOL_FROM = [1, 1, 2, 3, 4, 6, 8, 11, 12, 14, 16, 18, 22]
-DIM E_GAP = [0.85, 0.55, 0.32, 1.7, 0.9, 1.1, 1.5, 0.8, 1.3, 1.3, 1.0, 2.6, 3.2]
-DIM E_N = [8, 9, 16, 3, 5, 5, 3, 5, 4, 3, 5, 2, 1]
+DIM E_POOL = ["DRONE", "SCOUT", "SWARM", "TANK", "FLYER", "SHIELDER", "HEALER", "PHANTOM", "SPLITTER", "MIRROR", "BLINKER", "BRUTE", "SABOTEUR", "CARRIER"]
+DIM E_POOL_FROM = [1, 1, 2, 3, 4, 6, 8, 11, 12, 14, 16, 18, 20, 22]
+DIM E_GAP = [0.85, 0.55, 0.32, 1.7, 0.9, 1.1, 1.5, 0.8, 1.3, 1.3, 1.0, 2.6, 2.4, 3.2]
+DIM E_N = [8, 9, 16, 3, 5, 5, 3, 5, 4, 3, 5, 2, 2, 1]
 
 FUNC EGROUP(kind$, n, gap, hpx, pth, delay)
     DIM g AS MAP = {}
@@ -613,12 +807,21 @@ EXPORT FUNC LAUNCH()
     NEXT g
     DIM income = 0
     FOR EACH t IN towers
-        IF t{"KIND"} <> "" THEN income = income + t{"S"}{"INCOME"}
+        IF t{"KIND"} <> "" THEN
+            IF t{"DOWN"} < 0 THEN income = income + t{"S"}{"INCOME"}
+        ENDIF
     NEXT t
     g_credits = g_credits + wv{"BONUS"} + early + income
     score_bonus = score_bonus + early
     waves_launched = waves_launched + 1
     ENSUREWAVE()
+    IF WEARON() = 1 THEN
+        DIM base_wear = WEARCFG("PER_WAVE") * WEARX()
+        DIM wi
+        FOR wi = 0 TO LEN(towers) - 1
+            IF towers[wi]{"KIND"} <> "" THEN WEARDOWN(wi, base_wear)
+        NEXT wi
+    ENDIF
     g_phase$ = "run"
     EMIT({"T": "WAVE", "N": waves_launched, "EARLY": early, "INCOME": income})
     RETURN ""
@@ -698,27 +901,30 @@ FUNC INRANGE(x, y, r, air, ground)
     RETURN (d2 <= r * r) * (E_HP > 0) * (hit_ok > 0) * E_VIS
 ENDFUNC
 
-' Cloaked enemies show up only inside the reach of a Tesla, Pulse or Vortex
+' Cloaked enemies show up only inside the reach of a working tower that
+' reveals (REVEAL in towers.json: Cryo, Tesla, Pulse, Vortex)
 SUB REVEAL()
     IF LEN(E_K) = 0 THEN RETURN
     E_VIS = 1 - K_CLOAK[E_K]
     IF SUM(K_CLOAK[E_K]) = 0 THEN RETURN
     FOR EACH t IN towers
         IF t{"KIND"} <> "" THEN
-            DIM md$ = t{"S"}{"MODE"}
-            IF md$ = "ZAP" ORELSE md$ = "PULSE" ORELSE md$ = "PULL" THEN
+            IF t{"S"}{"REVEAL"} = 1 ANDALSO t{"DOWN"} < 0 THEN
                 E_VIS = VMAX(E_VIS, NEAR(t{"X"}, t{"Y"}, t{"S"}{"RANGE"} * t{"RBUFF"} + 0.3, 0))
             ENDIF
         ENDIF
     NEXT t
 ENDSUB
 
-' Up to n enemies of a mask, the ones closest to the end of their path first
-FUNC FRONT(mask, n)
+' Up to n enemies of a mask, best first by the tower's priority
+FUNC PICK(mask, n, prio$)
     DIM cnt = SUM(mask)
-    IF cnt = 0 THEN RETURN []
-    DIM remain = PLEN[E_P] - E_D
-    DIM sc = (0 - remain) * mask - 1000000 * (1 - mask)
+    IF cnt = 0 ORELSE n <= 0 THEN RETURN []
+    DIM key = 0 - (PLEN[E_P] - E_D)
+    IF prio$ = "LAST" THEN key = PLEN[E_P] - E_D
+    IF prio$ = "STRONG" THEN key = E_HP + E_SH
+    IF prio$ = "WEAK" THEN key = 0 - (E_HP + E_SH)
+    DIM sc = key * mask - 1000000000 * (1 - mask)
     DIM take_n = n
     IF cnt < n THEN take_n = cnt
     RETURN TAKE(take_n, GRADE(0 - sc))
@@ -820,14 +1026,15 @@ ENDSUB
 
 ' ── tower behaviour ─────────────────────────────────────────────
 
-SUB RUN_AURA(t, dt)
+FUNC RUN_AURA(t, dt)
     DIM s = t{"S"}
     DIM m = INRANGE(t{"X"}, t{"Y"}, s{"RANGE"} * t{"RBUFF"}, s{"AIR"}, s{"GROUND"})
-    IF SUM(m) = 0 THEN RETURN
+    IF SUM(m) = 0 THEN RETURN 0
     E_SLOW = VMAX(E_SLOW, m * s{"SLOW"})
     IF s{"VULN"} > 0 THEN E_VULN = VMAX(E_VULN, m * s{"VULN"})
-    DAMAGE(m * s{"DMG"} * t{"BUFF"} * dt, 0, 1, 0)
-ENDSUB
+    DAMAGE(m * s{"DMG"} * t{"BUFF"} * EFF(t) * dt, 0, 1, 0)
+    RETURN 1
+ENDFUNC
 
 SUB RUN_TOWER(slot, dt)
     DIM t = towers[slot]
@@ -849,10 +1056,22 @@ SUB RUN_TOWER(slot, dt)
         towers[slot] = t
         RETURN
     ENDIF
-    DIM dmg = s{"DMG"} * t{"BUFF"}
+    DIM dmg = s{"DMG"} * t{"BUFF"} * EFF(t)
+    DIM prio$ = t{"PRIO"}
+    t{"ACT"} = 1
 
     IF mode$ = "BEAM" THEN
-        DIM tg = FRONT(m, s{"BEAMS"})
+        ' a beam holds its target while it stays in reach, so the ramp builds
+        DIM tg = []
+        DIM held = INDEXOF(E_UID, t{"LASTU"})
+        IF held >= 0 THEN
+            IF m[held] = 0 THEN held = -1
+        ENDIF
+        IF held >= 0 THEN
+            tg = APPEND([held], PICK(m * (1 - ONEHOT(held, 1)), s{"BEAMS"} - 1, prio$))
+        ELSE
+            tg = PICK(m, s{"BEAMS"}, prio$)
+        ENDIF
         IF E_UID[tg[0]] = t{"LASTU"} THEN
             t{"RAMPT"} = t{"RAMPT"} + dt
         ELSE
@@ -875,7 +1094,7 @@ SUB RUN_TOWER(slot, dt)
     ENDIF
 
     IF mode$ = "FLAME" ANDALSO t{"CD"} <= 0 THEN
-        DIM f0 = FRONT(m, 1)[0]
+        DIM f0 = PICK(m, 1, prio$)[0]
         DIM fm = NEAR(E_X[f0], E_Y[f0], s{"SPLASH"}, 1)
         DAMAGE(fm * dmg, 1, 1, 0)
         E_BURN = VMAX(E_BURN, fm * s{"BURN"} * t{"BUFF"})
@@ -893,7 +1112,7 @@ SUB RUN_TOWER(slot, dt)
     ENDIF
 
     IF mode$ = "BOLT" ORELSE mode$ = "SHELL" THEN
-        DIM tgs = FRONT(m, s{"BARRELS"})
+        DIM tgs = PICK(m, s{"BARRELS"}, prio$)
         DIM b
         FOR b = 0 TO s{"BARRELS"} - 1
             FIRE(t, tgs[b MOD LEN(tgs)], dmg)
@@ -902,7 +1121,7 @@ SUB RUN_TOWER(slot, dt)
         t{"CD"} = 1 / s{"RATE"}
         EMIT({"T": "SHOT", "K": t{"KIND"}, "X": t{"X"}, "Y": t{"Y"}})
     ELSEIF mode$ = "RAIL" THEN
-        DIM r0 = FRONT(m, 1)[0]
+        DIM r0 = PICK(m, 1, prio$)[0]
         DIM ax = E_X[r0] - t{"X"}
         DIM ay = E_Y[r0] - t{"Y"}
         DIM al = SQR(ax * ax + ay * ay) + 0.0001
@@ -920,7 +1139,7 @@ SUB RUN_TOWER(slot, dt)
         t{"CD"} = 1 / s{"RATE"}
         EMIT({"T": "RAIL", "X": t{"X"}, "Y": t{"Y"}, "X2": ex, "Y2": ey})
     ELSEIF mode$ = "ZAP" THEN
-        DIM z0 = FRONT(m, 1)[0]
+        DIM z0 = PICK(m, 1, prio$)[0]
         DIM hitm = ZEROS(LEN(E_K))
         DIM xs = [t{"X"}]
         DIM ys = [t{"Y"}]
@@ -1084,13 +1303,17 @@ EXPORT SUB ADVANCE(dt)
     DIM i
     FOR i = 0 TO LEN(towers) - 1
         IF towers[i]{"KIND"} <> "" THEN
-            IF towers[i]{"S"}{"MODE"} = "AURA" ANDALSO n > 0 THEN RUN_AURA(towers[i], dt)
+            towers[i]{"ACT"} = 0
+            IF towers[i]{"DOWN"} < 0 ANDALSO towers[i]{"S"}{"MODE"} = "AURA" ANDALSO n > 0 THEN towers[i]{"ACT"} = RUN_AURA(towers[i], dt)
         ENDIF
     NEXT i
     FOR i = 0 TO LEN(towers) - 1
-        IF towers[i]{"KIND"} <> "" THEN RUN_TOWER(i, dt)
+        IF towers[i]{"KIND"} <> "" THEN
+            IF towers[i]{"DOWN"} < 0 THEN RUN_TOWER(i, dt)
+        ENDIF
     NEXT i
     MOVE_PROJECTILES(dt)
+    WEARSTEP(dt)
     n = LEN(E_K)
     IF n > 0 THEN
         DIM burning = E_BURNT > 0

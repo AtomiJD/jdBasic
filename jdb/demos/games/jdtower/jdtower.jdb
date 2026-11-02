@@ -131,6 +131,11 @@ DIM ek_size = []
 DIM ek_col = []
 DIM ek_spin = []
 DIM ek_mirror = []
+DIM ek_cloak = []
+DIM ek_sabr = []
+' cloaked enemies that were in sight last frame, a flash marks new ones
+DIM cloak_seen = []
+DIM phantom_tip = 0
 SUB LOADKINDS()
     DIM i = 0
     FOR EACH k$ IN enemies_json{"ORDER"}
@@ -140,6 +145,8 @@ SUB LOADKINDS()
         ek_col = APPEND(ek_col, [ed{"COLOR"}])
         ek_spin = APPEND(ek_spin, 0.6 + (i MOD 4) * 0.35)
         ek_mirror = APPEND(ek_mirror, IIF(MAP.EXISTS(ed, "REFLECT"), 1, 0))
+        ek_cloak = APPEND(ek_cloak, IIF(MAP.EXISTS(ed, "CLOAK"), 1, 0))
+        ek_sabr = APPEND(ek_sabr, IIF(MAP.EXISTS(ed, "SABR"), ed{"SABR"}, 0))
         i = i + 1
     NEXT k$
 ENDSUB
@@ -590,6 +597,12 @@ SUB SFX(name$)
             SOUND.PLAY 5, 784
         ELSEIF name$ = "SELL" THEN
             SOUND.PLAY 1, 392
+        ELSEIF name$ = "REPAIR" THEN
+            SOUND.PLAY 1, 392
+            SOUND.PLAY 5, 587
+        ELSEIF name$ = "DOWN" THEN
+            SOUND.PLAY 4, 147
+            SOUND.PLAY 2, 220
         ELSEIF name$ = "LEAK" THEN
             SOUND.PLAY 4, 98
             SOUND.PLAY 3, 60
@@ -935,6 +948,8 @@ SUB STARTMAP(lv)
     pending$ = ""
     paused = 0
     speed = 1
+    cloak_seen = []
+    phantom_tip = 0
     fx = []
     result_done = 0
     result_record = 0
@@ -1083,6 +1098,18 @@ SUB EVENTSTOFX()
         ELSEIF t$ = "SELL" THEN
             ADDFX({ "F": "RING", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "R0": 4, "R1": 30, "C": [255, 220, 90], "DUR": 0.4, "W": 3 })
             SFX("SELL")
+        ELSEIF t$ = "REPAIR" THEN
+            ADDFX({ "F": "RING", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "R0": 26, "R1": 6, "C": [110, 255, 150], "DUR": 0.4, "W": 3 })
+            SFX("REPAIR")
+        ELSEIF t$ = "DOWN" THEN
+            ADDFX({ "F": "BURST", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "C": [255, 80, 60], "R": 26, "N": 8, "DUR": 0.5 })
+            TOAST(T$("tower_down"))
+            SFX("DOWN")
+        ELSEIF t$ = "COLLAPSE" THEN
+            ADDFX({ "F": "BURST", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "C": TCOL(ev{"K"}), "R": 34, "N": 12, "DUR": 0.7 })
+            ADDFX({ "F": "RING", "X": PXX(ev{"X"}), "Y": PXY(ev{"Y"}), "R0": 6, "R1": 40, "C": [255, 80, 60], "DUR": 0.6, "W": 4 })
+            TOAST(T$("collapsed"))
+            SFX("LOSE")
         ELSEIF t$ = "WAVE" THEN
             SFX("WAVE")
             STATADD("waves", 1)
@@ -1267,6 +1294,28 @@ SUB DRAWTOWER(t)
         SEG(pi_x + i * 7, cy + 21, pi_x + i * 7 + 3, cy + 21, pc, 3)
     NEXT i
     IF t{"BR"} <> "" THEN POLY(cx, cy, 19, 6, 0, IIF(t{"BR"} = "A", [80, 200, 230], [230, 170, 60]), 1 + t{"BT"})
+    IF t{"COND"} < 1 THEN DRAWWEAR(t, cx, cy)
+ENDSUB
+
+' Condition bar over a worn tower; it blinks when low, a downed tower
+' gets a red cross and the seconds it has left
+SUB DRAWWEAR(t, cx, cy)
+    DIM wc = towers_json{"WEAR"}
+    DIM cond = t{"COND"}
+    IF t{"DOWN"} >= 0 THEN
+        DIM blink = IIF(SIN(tnow * 10) > 0, 1, 0.45)
+        SEG(cx - 12, cy - 12, cx + 12, cy + 12, SHADE([255, 50, 60], blink), 4)
+        SEG(cx - 12, cy + 12, cx + 12, cy - 12, SHADE([255, 50, 60], blink), 4)
+        DIM left_s = MAX([0, INT(wc{"DOWN_SECS"} - t{"DOWN"} + 0.99)])
+        CTEXT(cx, cy - 40, STR$(left_s), [255, 110, 110], 14)
+        RETURN
+    ENDIF
+    DIM bc = [110, 255, 150]
+    IF cond < 0.5 THEN bc = [255, 220, 80]
+    IF cond < wc{"WARN"} THEN bc = [255, 120, 40]
+    SEG(cx - 13, cy - 24, cx + 13, cy - 24, [40, 40, 60], 3)
+    SEG(cx - 13, cy - 24, cx - 13 + 26 * cond, cy - 24, bc, 3)
+    IF cond < wc{"WARN"} ANDALSO SIN(tnow * 8) > 0 THEN POLY(cx, cy, 22, 6, 0, [255, 130, 40], 2)
 ENDSUB
 
 SUB DRAWBEAMS(t)
@@ -1333,14 +1382,18 @@ SUB DRAWENEMIES()
                 POLYBATCH(px[idx], py[idx], ek_size[k] * 0.45, ek_sides[k], 0 - rot * 1.7, [255, 245, 250], 1.5)
                 IF ek_mirror[k] = 1 THEN POLYBATCH(px[idx], py[idx], ek_size[k] + 4, ek_sides[k], 0.785 - rot, [150, 170, 210], 1.2)
             ENDIF
-            ' cloaked and out of every revealer's reach: a faint shimmer
+            ' cloaked and out of every revealer's reach: a pulsing ghost
             DIM mh = m * (1 - vis)
             IF SUM(mh) > 0 THEN
                 DIM hid = WHICH(mh)
-                POLYBATCH(px[hid], py[hid], ek_size[k] * (0.9 + 0.1 * SIN(tnow * 5)), ek_sides[k], rot, SHADE(c, 0.22), 1.5)
+                DIM pulse = 0.5 + 0.5 * SIN(tnow * 5)
+                POLYBATCH(px[hid], py[hid], ek_size[k] * (0.9 + 0.1 * pulse), ek_sides[k], rot, SHADE(c, 0.45 + 0.15 * pulse), 2)
+                POLYBATCH(px[hid], py[hid], ek_size[k] * (1.5 + 0.3 * pulse), 12, 0 - rot, SHADE(c, 0.2), 1.2)
             ENDIF
+            IF ek_sabr[k] > 0 ANDALSO SUM(mv) > 0 THEN POLYBATCH(px[WHICH(mv)], py[WHICH(mv)], ek_sabr[k] * TILE, 24, rot * 0.3, SHADE(c, 0.3), 1.5)
         ENDIF
     NEXT k
+    DRAWCLOAK(en, px, py)
     DIM sizes = ek_size[kinds]
     DIM shm = en{"SHF"} > 0.02
     IF SUM(shm) > 0 THEN
@@ -1371,6 +1424,37 @@ SUB DRAWENEMIES()
         GFX.LINES WEAVE(bx0, bx0 + 22), WEAVE(by0, by0), 3, 50, 20, 30, TRUE
         GFX.LINES WEAVE(bx0, bx0 + bw), WEAVE(by0, by0), 3, 90, 255, 120, TRUE
     ENDIF
+ENDSUB
+
+' Cloaked enemies: a flash when one comes into sight, the reach of every
+' revealing tower while one is hidden, and a hint the first time
+SUB DRAWCLOAK(en, px, py)
+    DIM cm = ek_cloak[en{"K"}]
+    IF SUM(cm) = 0 THEN
+        cloak_seen = []
+        RETURN
+    ENDIF
+    DIM seen_now = []
+    FOR EACH i IN WHICH(cm * en{"VIS"})
+        DIM uid = en{"UID"}[i]
+        seen_now = APPEND(seen_now, uid)
+        IF INDEXOF(cloak_seen, uid) < 0 THEN ADDFX({ "F": "RING", "X": px[i], "Y": py[i], "R0": 30, "R1": 6, "C": [220, 200, 255], "DUR": 0.35, "W": 3 })
+    NEXT i
+    cloak_seen = seen_now
+    IF SUM(cm * (1 - en{"VIS"})) = 0 THEN RETURN
+    IF phantom_tip = 0 THEN
+        phantom_tip = 1
+        TOAST(T$("PHANTOM") + "!")
+        toast2$ = T$("PHANTOM_h")
+        toast_t = tnow + 5
+    ENDIF
+    FOR EACH t IN SIM.TOWERS()
+        IF t{"KIND"} <> "" THEN
+            IF t{"S"}{"REVEAL"} = 1 ANDALSO t{"DOWN"} < 0 THEN
+                POLY(PXX(t{"X"}), PXY(t{"Y"}), (t{"S"}{"RANGE"} * t{"RBUFF"} + 0.3) * TILE, 40, tnow * 0.2, SHADE([190, 170, 255], 0.3), 1.5)
+            ENDIF
+        ENDIF
+    NEXT t
 ENDSUB
 
 SUB DRAWSHOTS()
@@ -1409,6 +1493,9 @@ FUNC RINGOPTS(slot)
             out = APPEND(out, [["U:" + o[0], o[1], t{"KIND"}]])
         NEXT o
         out = APPEND(out, [["SELL", 0 - SIM.SELLVALUE(slot), t{"KIND"}]])
+        IF SIM.AIMS(slot) = 1 THEN out = APPEND(out, [["PRIO", 0, t{"KIND"}]])
+        IF SIM.REPAIRCOST(slot) > 0 THEN out = APPEND(out, [["FIX", SIM.REPAIRCOST(slot), t{"KIND"}]])
+        IF SIM.NWORN() >= 2 THEN out = APPEND(out, [["FIXALL", SIM.REPAIRALLCOST(), t{"KIND"}]])
     ENDIF
     RETURN out
 ENDFUNC
@@ -1441,12 +1528,20 @@ SUB DRAWRING()
     IF ccy < FY0 + ring_r + 26 THEN ccy = FY0 + ring_r + 26
     IF ccy > BAR_Y - ring_r - 26 THEN ccy = BAR_Y - ring_r - 26
     POLY(ring_cx, ring_cy, 19, 6, 0, [255, 255, 255], 2)
+    DIM n_up = 0
+    FOR EACH o IN opts
+        IF LEFT$(o[0], 2) = "U:" THEN n_up = n_up + 1
+    NEXT o
     DIM i
     FOR i = 0 TO n - 1
         DIM ang = -1.5708 + i * TWO_PI / n
         IF t{"KIND"} <> "" THEN
-            ang = -1.5708 + (i - (n - 1) / 2) * 0.95
+            ' upgrades fan out on top, the rest keeps a fixed place
+            ang = -1.5708 + (i - n_up / 2) * 0.95
             IF opts[i][0] = "SELL" THEN ang = 1.5708
+            IF opts[i][0] = "PRIO" THEN ang = 3.1416
+            IF opts[i][0] = "FIX" THEN ang = 0
+            IF opts[i][0] = "FIXALL" THEN ang = 0.785
         ENDIF
         DIM ix = ccx + ring_r * COS(ang)
         DIM iy = ccy + ring_r * SIN(ang)
@@ -1455,6 +1550,8 @@ SUB DRAWRING()
         DIM afford = IIF(cost <= SIM.CREDITS(), 1, 0)
         DIM c = TCOL(opts[i][2])
         IF code$ = "SELL" THEN c = [255, 210, 90]
+        IF code$ = "PRIO" THEN c = [200, 230, 255]
+        IF code$ = "FIX" ORELSE code$ = "FIXALL" THEN c = [110, 255, 150]
         IF afford = 0 THEN c = SHADE(c, 0.35)
         GFX.BLEND "BLEND"
         DRAWCOLOR 4, 4, 14, 230
@@ -1469,6 +1566,20 @@ SUB DRAWRING()
         ELSEIF code$ = "SELL" THEN
             CTEXT(ix, iy - 14, "$", [255, 230, 120], 16)
             CTEXT(ix, iy + 2, "+" + STR$(0 - cost), [255, 230, 120], 12)
+        ELSEIF code$ = "PRIO" THEN
+            POLY(ix, iy - 7, 7, 16, 0, c, 1.5)
+            SEG(ix - 11, iy - 7, ix - 4, iy - 7, c, 1.5)
+            SEG(ix + 4, iy - 7, ix + 11, iy - 7, c, 1.5)
+            CTEXT(ix, iy + 3, PRIOTAG$(t{"PRIO"}), [235, 240, 255], 12)
+        ELSEIF code$ = "FIX" ORELSE code$ = "FIXALL" THEN
+            DIM wx = IIF(code$ = "FIX", 0, 5)
+            SEG(ix - wx - 6, iy - 8, ix - wx + 6, iy - 8, c, 3)
+            SEG(ix - wx, iy - 14, ix - wx, iy - 2, c, 3)
+            IF code$ = "FIXALL" THEN
+                SEG(ix + wx - 6, iy - 8, ix + wx + 6, iy - 8, c, 3)
+                SEG(ix + wx, iy - 14, ix + wx, iy - 2, c, 3)
+            ENDIF
+            CTEXT(ix, iy + 3, STR$(cost), IIF(afford = 1, [255, 230, 120], [140, 120, 90]), 12)
         ELSE
             DIM lab$ = MID$(code$, 2, 1)
             IF lab$ = "U" THEN lab$ = "^"
@@ -1478,6 +1589,14 @@ SUB DRAWRING()
         HIT(ix - 24, iy - 24, 48, 48, "R:" + code$)
     NEXT i
 ENDSUB
+
+' Short tag of a target priority for the ring button
+FUNC PRIOTAG$(p$)
+    IF p$ = "LAST" THEN RETURN "<<"
+    IF p$ = "STRONG" THEN RETURN "HP+"
+    IF p$ = "WEAK" THEN RETURN "HP-"
+    RETURN ">>"
+ENDFUNC
 
 SUB ICON(k$, cx, cy, c)
     IF k$ = "LASER" THEN
@@ -1571,8 +1690,20 @@ SUB DRAWINFO()
             stat$ = "> " + STATLINE$(SIM.STATS(kk$, 3, br$, 1))
         ELSEIF code$ = "SELL" THEN
             desc$ = T$("sell") + "  +" + STR$(SIM.SELLVALUE(sel_slot))
+        ELSEIF code$ = "PRIO" THEN
+            desc$ = T$("prio") + ": " + T$("prio_" + t{"PRIO"})
+            stat$ = T$("prio_d")
+        ELSEIF code$ = "FIX" THEN
+            desc$ = T$("repair") + "  " + STR$(INT(t{"COND"} * 100)) + "% > 100%"
+            stat$ = STR$(SIM.REPAIRCOST(sel_slot)) + " " + T$("credits")
+        ELSEIF code$ = "FIXALL" THEN
+            desc$ = T$("repair_all") + "  (" + STR$(SIM.NWORN()) + ")"
+            stat$ = STR$(SIM.REPAIRALLCOST()) + " " + T$("credits")
         ELSEIF LEN(SIM.UPOPTS(sel_slot)) = 0 THEN
             desc$ = T$("maxed")
+        ENDIF
+        IF t{"COND"} < 1 ANDALSO code$ <> "FIX" ANDALSO code$ <> "FIXALL" THEN
+            title$ = title$ + "   " + T$("cond") + " " + STR$(INT(t{"COND"} * 100)) + "%"
         ENDIF
     ENDIF
     DIM py = BAR_Y - 92
@@ -2183,6 +2314,12 @@ ENDSUB
 
 ' The first tap on a choice explains it, the second one does it
 SUB RINGACT(code$)
+    IF code$ = "PRIO" THEN
+        IF pending$ = "PRIO" THEN SIM.CYCLEPRIO(sel_slot)
+        pending$ = "PRIO"
+        SFX("TAP")
+        RETURN
+    ENDIF
     IF pending$ <> code$ THEN
         pending$ = code$
         SFX("TAP")
@@ -2193,6 +2330,10 @@ SUB RINGACT(code$)
         r$ = SIM.BUILD(sel_slot, MID$(code$, 2, 40))
     ELSEIF code$ = "SELL" THEN
         r$ = SIM.SELL(sel_slot)
+    ELSEIF code$ = "FIX" THEN
+        r$ = SIM.REPAIR(sel_slot)
+    ELSEIF code$ = "FIXALL" THEN
+        IF SIM.REPAIRALL() = 0 THEN r$ = "credits"
     ELSE
         r$ = SIM.UPGRADE(sel_slot, MID$(code$, 2, 4))
         IF r$ = "" THEN
@@ -2383,6 +2524,7 @@ SUB SELFTEST_STEP(f)
     IF f = 27 ORELSE f = 30 THEN TAPACT("speed")
     IF f = 60 THEN TAPSLOT(0)
     IF f = 63 ORELSE f = 66 THEN TAPACT("R:U:UP")
+    IF f = 70 ORELSE f = 73 THEN TAPACT("R:PRIO")
     IF f = 200 THEN TAPACT("pause")
     IF f = 210 THEN
         IF NOT FILE.EXISTS(GAMEDIR$ + "tmp") THEN MKDIR GAMEDIR$ + "tmp"
@@ -2391,7 +2533,7 @@ SUB SELFTEST_STEP(f)
     ENDIF
     IF f = 300 THEN
         GFX.SAVE_SCREENSHOT(GAMEDIR$ + "tmp/selftest.png")
-        PRINT "slot0 "; SIM.TOWER(0){"KIND"}; " tier "; SIM.TOWER(0){"TIER"}; "  slot1 "; SIM.TOWER(1){"KIND"}
+        PRINT "slot0 "; SIM.TOWER(0){"KIND"}; " tier "; SIM.TOWER(0){"TIER"}; " aims "; SIM.TOWER(0){"PRIO"}; "  slot1 "; SIM.TOWER(1){"KIND"}
         PRINT "wave "; SIM.WAVE(); "  speed "; speed; "  paused "; paused; "  credits "; SIM.CREDITS(); "  kills "; SIM.KILLS(); "  lives "; SIM.LIVES(); "  phase "; SIM.PHASE$()
         running = 0
     ENDIF
@@ -2456,6 +2598,14 @@ SUB SHOT(n)
     NEXT i
     sel_slot = 0
     pending$ = "U:UP"
+    IF n < 0 THEN
+        ' worn towers, one of them down, and the ring on a worn one
+        SIM.SETCOND(0, 0.4)
+        SIM.SETCOND(1, 0.7)
+        SIM.SETCOND(2, 0.15)
+        SIM.SETCOND(3, 0)
+        pending$ = "FIX"
+    ENDIF
     DIM s = SIM.SLOTPOS(0)
     ring_cx = PXX(s[0] + 0.5)
     ring_cy = PXY(s[1] + 0.5)

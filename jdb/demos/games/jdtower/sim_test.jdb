@@ -267,6 +267,159 @@ SIM.UPGRADE(1, "UP")
 SIM.UPGRADE(1, "UP")
 CHECK("relay tier 3 reaches three tiles", SIM.TOWER(1){"S"}{"RANGE"} >= 3)
 
+' ── target priority and the beam lock ───────────────────────────
+FUNC TWOGROUPS(k1$, hpx1, k2$, hpx2, delay2)
+    DIM lv = TESTLEVEL(k1$, 1, hpx1)
+    DIM g2 AS MAP = {}
+    g2{"E"} = k2$
+    g2{"N"} = 1
+    g2{"GAP"} = 0.5
+    g2{"PATH"} = 0
+    g2{"DELAY"} = delay2
+    g2{"HPX"} = hpx2
+    lv{"WAVES"}[0]{"GROUPS"} = APPEND(lv{"WAVES"}[0]{"GROUPS"}, [g2])
+    RETURN lv
+ENDFUNC
+
+SIM.START(TESTLEVEL("DRONE", 1, 1))
+SIM.QUIET(1)
+SIM.BUILD(0, "LASER")
+SIM.BUILD(1, "CRYO")
+SIM.BUILD(2, "RELAY")
+CHECK("a new tower aims at the first enemy", SIM.TOWER(0){"PRIO"} = "FIRST")
+CHECK("a laser picks targets", SIM.AIMS(0) = 1)
+CHECK("an aura and a relay do not", SIM.AIMS(1) = 0 ANDALSO SIM.AIMS(2) = 0)
+CHECK("cycle to last", SIM.CYCLEPRIO(0) = "LAST")
+CHECK("cycle to strong", SIM.CYCLEPRIO(0) = "STRONG")
+CHECK("cycle to weak", SIM.CYCLEPRIO(0) = "WEAK")
+CHECK("cycle back to first", SIM.CYCLEPRIO(0) = "FIRST")
+CHECK("unknown priority refused", SIM.SETPRIO(0, "NEAR") = "prio")
+CHECK("set a priority", SIM.SETPRIO(0, "LAST") = "" ANDALSO SIM.TOWER(0){"PRIO"} = "LAST")
+
+' A weak drone walks in front of a strong one, both in reach when the laser
+' goes up: FIRST takes the front one, STRONG the one behind
+FUNC BEAMY(prio$)
+    SIM.START(TWOGROUPS("DRONE", 3, "DRONE", 10, 1))
+    SIM.QUIET(1)
+    SIM.LAUNCH()
+    RUNFOR(9)
+    SIM.BUILD(0, "LASER")
+    SIM.SETPRIO(0, prio$)
+    RUNFOR(0.2)
+    RETURN SIM.TOWER(0){"BY"}[0]
+ENDFUNC
+DIM front_y = BEAMY("FIRST")
+DIM strong_y = BEAMY("STRONG")
+CHECK("first aims at the front enemy", front_y > strong_y + 0.5)
+CHECK("last aims at the rear enemy", ABS(BEAMY("LAST") - strong_y) < 0.01)
+CHECK("weak aims at the front, weaker enemy", ABS(BEAMY("WEAK") - front_y) < 0.01)
+
+' A scout overtakes the tank the laser is on: the beam stays on the tank
+DIM lock_lv = TWOGROUPS("TANK", 5, "SCOUT", 5, 12)
+lock_lv{"SLOTS"} = [[3, 10], [1, 8], [3, 0]]
+SIM.START(lock_lv)
+SIM.QUIET(1)
+SIM.BUILD(0, "LASER")
+SIM.LAUNCH()
+RUNFOR(19)
+DIM le = SIM.ENEMIES()
+DIM tank_no = INDEXOF(SIM.KINDNAMES(), "TANK")
+DIM scout_no = INDEXOF(SIM.KINDNAMES(), "SCOUT")
+DIM tank_i = INDEXOF(le{"K"}, tank_no)
+DIM scout_i = INDEXOF(le{"K"}, scout_no)
+CHECK("the scout is ahead of the tank", scout_i >= 0 ANDALSO tank_i >= 0 ANDALSO le{"Y"}[scout_i] > le{"Y"}[tank_i])
+CHECK("the scout is in the laser's reach", (le{"X"}[scout_i] - 3.5) ^ 2 + (le{"Y"}[scout_i] - 10.5) ^ 2 < 2.6 ^ 2)
+CHECK("the laser holds the tank", SIM.TOWER(0){"LASTU"} = le{"UID"}[tank_i])
+CHECK("and keeps ramping", SIM.TOWER(0){"RAMPT"} > 3)
+
+' ── revealing ───────────────────────────────────────────────────
+SIM.START(TESTLEVEL("PHANTOM", 1, 1))
+SIM.QUIET(1)
+SIM.BUILD(0, "LASER")
+SIM.LAUNCH()
+RUNFOR(7)
+SIM.BUILD(1, "CRYO")
+RUNFOR(1.5)
+CHECK("a cryo reveals a phantom", SIM.KILLS() = 1 ORELSE SIM.ENEMIES(){"VIS"}[0] = 1)
+CHECK("and the laser hurts it", SIM.KILLS() = 1 ORELSE SIM.ENEMIES(){"HPF"}[0] < 0.99)
+
+' ── wear and repair ─────────────────────────────────────────────
+DIM wcfg = towers_json{"WEAR"}
+SIM.START(TESTLEVEL("DRONE", 6, 3))
+SIM.QUIET(1)
+SIM.BUILD(0, "LASER")
+SIM.LAUNCH()
+RUNFOR(15)
+CHECK("no wear outside an endless run", SIM.TOWER(0){"COND"} = 1 ANDALSO SIM.REPAIRCOST(0) = 0)
+CHECK("an intact tower needs no repair", SIM.REPAIR(0) = "intact")
+
+DIM wlv = TESTLEVEL("DRONE", 1, 1)
+wlv{"ENDLESS"} = 7
+wlv{"LIVES"} = 9999
+SIM.START(wlv)
+SIM.QUIET(1)
+SIM.BUILD(0, "LASER")
+SIM.BUILD(2, "LASER")
+DIM wn
+FOR wn = 1 TO wcfg{"FROM_WAVE"} - 1
+    SIM.LAUNCH()
+NEXT wn
+CHECK("no wear before the set wave", SIM.TOWER(0){"COND"} = 1 ANDALSO SIM.WEARON() = 0)
+SIM.LAUNCH()
+CHECK("wear from the set wave on", SIM.WEARON() = 1)
+CHECK("each wave wears every tower", ABS(SIM.TOWER(0){"COND"} - (1 - wcfg{"PER_WAVE"})) < 0.0001)
+RUNFOR(30)
+DIM c_fire = SIM.TOWER(0){"COND"}
+CHECK("firing wears a tower", c_fire < 1 - wcfg{"PER_WAVE"} - 0.01)
+DIM wspent = SIM.TOWER(0){"SPENT"}
+CHECK("sell value falls with the condition", SIM.SELLVALUE(0) = INT(wspent * 0.8 * c_fire))
+DIM rcost = SIM.REPAIRCOST(0)
+CHECK("repair costs its share of the build", rcost = INT(wspent * wcfg{"REPAIR"} * (1 - c_fire) + 0.5))
+CHECK("selling and building anew costs more than a repair", wspent - SIM.SELLVALUE(0) > rcost)
+CHECK("repair all costs the sum", SIM.REPAIRALLCOST() = SIM.REPAIRCOST(0) + SIM.REPAIRCOST(2))
+DIM before_fix = SIM.CREDITS()
+CHECK("repair", SIM.REPAIR(0) = "")
+CHECK("repair pays its price", SIM.CREDITS() = before_fix - rcost)
+CHECK("repaired is as new", SIM.TOWER(0){"COND"} = 1)
+
+SIM.SETCOND(0, 0)
+CHECK("a worn out tower goes down", SIM.TOWER(0){"DOWN"} >= 0)
+RUNFOR(1)
+CHECK("a downed tower does not fire", LEN(SIM.TOWER(0){"BX"}) = 0)
+CHECK("a downed tower sells for nothing", SIM.SELLVALUE(0) = 0)
+CHECK("a downed tower can be saved", SIM.REPAIR(0) = "" ANDALSO SIM.TOWER(0){"DOWN"} < 0)
+SIM.SETCOND(0, 0)
+RUNFOR(wcfg{"DOWN_SECS"} + 0.5)
+CHECK("left down it falls apart", SIM.TOWER(0){"KIND"} = "")
+CHECK("its slot can be built again", SIM.BUILD(0, "BLASTER") = "")
+
+SIM.SETCOND(2, 0.5)
+SIM.SETCOND(0, 0.2)
+DIM fix_n = SIM.NWORN()
+CHECK("repair all mends every worn tower", SIM.REPAIRALL() = fix_n ANDALSO SIM.NWORN() = 0)
+
+' A relay that goes down lends nothing
+SIM.START(TESTLEVEL("DRONE", 1, 1))
+SIM.QUIET(1)
+SIM.FORCEWEAR(1)
+SIM.BUILD(0, "LASER")
+SIM.BUILD(1, "RELAY")
+CHECK("relay buffs while up", SIM.TOWER(0){"BUFF"} > 1)
+SIM.SETCOND(1, 0)
+CHECK("a downed relay lends nothing", SIM.TOWER(0){"BUFF"} = 1)
+SIM.REPAIR(1)
+CHECK("a repaired relay lends again", SIM.TOWER(0){"BUFF"} > 1)
+
+' A saboteur wears down what it walks past
+SIM.START(TESTLEVEL("SABOTEUR", 1, 5))
+SIM.QUIET(1)
+SIM.FORCEWEAR(1)
+SIM.BUILD(1, "RELAY")
+SIM.LAUNCH()
+DIM c_sab0 = SIM.TOWER(1){"COND"}
+RUNFOR(16)
+CHECK("a saboteur wears a tower it passes", SIM.TOWER(1){"COND"} < c_sab0 - 0.05)
+
 ' ── level files ─────────────────────────────────────────────────
 DIM lvl_no
 DIM bad_files = 0

@@ -2,6 +2,7 @@
 '   jdbasic simtest.jdb            every level
 '   jdbasic simtest.jdb 3 7        levels 3 to 7
 '   jdbasic simtest.jdb endless    one run per endless arena, until it falls
+'   jdbasic simtest.jdb endless nowear   the same without tower wear
 ' The bot builds on the slots that see the most path, mixes the tower
 ' kinds the level allows, upgrades the cheapest option when no slot is
 ' worth a new tower, and launches a wave only on a clear field.
@@ -11,6 +12,7 @@ CONST DT = 0.1
 
 DIM towers_json = JSON.PARSE(TXTREADER$("data/towers.json"))
 DIM enemies_json = JSON.PARSE(TXTREADER$("data/enemies.json"))
+IF INDEXOF(OS.ARGS(), "nowear") >= 0 THEN MAP.DELETE(towers_json, "WEAR")
 SIM.SETDATA(towers_json, enemies_json)
 
 ' How many path samples a slot sees within radius r
@@ -44,6 +46,16 @@ FUNC NEXTKIND$(lv, n_built)
 ENDFUNC
 
 FUNC SPEND(lv, order, n_built)
+    ' worn towers first, and nothing new until the credits would mend them all
+    DIM ri
+    FOR ri = 0 TO SIM.NSLOTS() - 1
+        IF SIM.TOWER(ri){"KIND"} <> "" THEN
+            IF SIM.TOWER(ri){"COND"} < 0.6 THEN
+                IF SIM.REPAIR(ri) = "credits" THEN RETURN n_built
+            ENDIF
+        ENDIF
+    NEXT ri
+    IF SIM.CREDITS() < SIM.REPAIRALLCOST() THEN RETURN n_built
     DIM again = 1
     DO WHILE again = 1
         again = 0
@@ -105,6 +117,7 @@ FUNC PLAYLEVEL(n)
     SIM.START(lv)
     SIM.QUIET(0)
     DIM leaks AS MAP = {}
+    DIM wear_ev AS MAP = {"REPAIR": 0, "DOWN": 0, "COLLAPSE": 0}
     DIM cov = []
     DIM i
     FOR i = 0 TO LEN(lv{"SLOTS"}) - 1
@@ -126,6 +139,7 @@ FUNC PLAYLEVEL(n)
         IF SIM.BUSY() = 0 THEN SIM.LAUNCH()
         SIM.ADVANCE(DT)
         FOR EACH ev IN SIM.EVENTS()
+            IF MAP.EXISTS(wear_ev, ev{"T"}) THEN wear_ev{ev{"T"}} = wear_ev{ev{"T"}} + 1
             IF ev{"T"} = "LEAK" THEN
                 IF NOT MAP.EXISTS(leaks, ev{"K"}) THEN leaks{ev{"K"}} = 0
                 leaks{ev{"K"}} = leaks{ev{"K"}} + ev{"N"}
@@ -149,6 +163,7 @@ FUNC PLAYLEVEL(n)
     out{"MS_STEP"} = ROUND(ms / steps, 2)
     out{"PEAK"} = peak
     out{"LEAKS"} = JSON.STRINGIFY$(leaks)
+    out{"WEAR"} = JSON.STRINGIFY$(wear_ev)
     RETURN out
 ENDFUNC
 
@@ -167,7 +182,7 @@ IF LEN(args) > 1 ANDALSO args[1] = "endless" THEN
     DIM a
     FOR a = 1 TO 3
         DIM re = PLAYLEVEL(-a)
-        PRINT "arena "; a; "  reached wave "; re{"WAVE"}; "  towers "; re{"TOWERS"}; "  sim "; re{"SIMS"}; "s  "; re{"LEAKS"}
+        PRINT "arena "; a; "  reached wave "; re{"WAVE"}; "  towers "; re{"TOWERS"}; "  sim "; re{"SIMS"}; "s  "; re{"LEAKS"}; "  "; re{"WEAR"}
     NEXT a
     END
 ENDIF

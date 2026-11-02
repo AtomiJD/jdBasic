@@ -54,14 +54,31 @@ generator overwrites it.
   every upgrade its own price; selling returns 80% of everything spent.
 - Credits come from kills, from launching a wave, and from calling the
   next wave early. A RELAY on branch B pays credits per wave launch.
-- Phantoms are invisible to every tower until a Tesla, Pulse or Vortex
-  has them in reach. Mirrors throw back part of every beam and bolt.
+- Towers that pick targets (Laser, Blaster, Mortar, Tesla, Plasma) aim
+  at the first enemy on the path unless the ring's target button says
+  otherwise: last, strongest or weakest (hit points plus shield). A
+  laser keeps its target while it stays in reach, so its ramp builds
+  even when faster enemies overtake.
+- Phantoms are invisible to every tower until a tower with `REVEAL` in
+  `towers.json` has them in reach: Cryo, Tesla, Pulse and Vortex. While
+  one is hidden the client draws it as a pulsing ghost and shows the
+  revealers' reach; the first one of a run brings a hint.
+  Mirrors throw back part of every beam and bolt.
   Blinkers jump ahead on a timer, Carriers and the Titan drop smaller
   enemies. The Vortex drags enemies back along their path; each further
   pull on the same enemy reaches half as far, so nothing is held forever.
 - A Relay lends damage and range to every tower whose centre lies within
   its reach: 2.3 tiles from tier 1, 3.0 from tier 3. Build slots stand at
   least two tiles apart, so anything shorter reaches no one. Relays stack.
+- Endless runs wear towers down from wave 10 on (`WEAR` in
+  `towers.json`): a little with every wave, more for every second a tower
+  fires, a bit faster each wave, and Saboteurs (from wave 20) wear what
+  they walk past. Damage falls with the condition to `MIN_EFF`; at zero
+  a tower stops, and after `DOWN_SECS` it falls apart and frees its
+  slot. Repairing costs `REPAIR` (65%) of what the tower cost, times the
+  wear; the ring offers it per tower and for all worn towers at once.
+  Selling pays 80% times the condition, so a repair is always cheaper
+  than selling and building anew.
 - A leaked enemy costs lives. Stars: 3 at 90% of the lives left or more,
   2 at 50% or more, 1 for any win.
 
@@ -72,7 +89,7 @@ From the repo root (the client finds its data next to itself):
     build\jdBasic.exe jdb\demos\games\jdtower\jdtower.jdb [name pin] [fps]
     build\jdBasic.exe jdb\demos\games\jdtower\jdtower.jdb shot [level]   -> tmp/shot.png
     build\jdBasic.exe jdb\demos\games\jdtower\jdtower.jdb shotmenu [2]   -> tmp/shot.png, world 1 or 2
-    build\jdBasic.exe jdb\demos\games\jdtower\jdtower.jdb shotendless    an endless run -> tmp/shot.png
+    build\jdBasic.exe jdb\demos\games\jdtower\jdtower.jdb shotendless    an endless run with worn towers -> tmp/shot.png
     build\jdBasic.exe jdb\demos\games\jdtower\jdtower.jdb [name pin] shotscreen board|ach|endless|daily|finale
     build\jdBasic.exe jdb\demos\games\jdtower\jdtower.jdb selftest       scripted taps through the real UI
 
@@ -83,8 +100,10 @@ working directory, so run them from inside `jdb/demos/games/jdtower`:
     ..\..\..\..\build\jdBasic.exe simtest.jdb endless          one bot run per arena
     ..\..\..\..\build\jdBasic.exe genlevels.jdb [from] [to]
 
-The bot wins 17 of the 20 levels in world 1 and 15 of 20 in world 2, and
-reaches waves 40 to 53 in the endless arenas.
+The bot wins 18 of the 20 levels in world 1 and 15 of 20 in world 2. In
+the endless arenas it reaches waves 27 to 38 with tower wear and 40 to
+51 without (`simtest.jdb endless nowear`); it repairs below 60% and
+keeps credits back for repairs before it upgrades.
 
 `shot <level>` prints the draw time per frame of a full board. Text is the
 expensive part: the runtime keeps one open font per size and the rendered

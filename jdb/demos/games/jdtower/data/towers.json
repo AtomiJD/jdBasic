@@ -1,5 +1,6 @@
 {
   "ORDER": ["LASER", "BLASTER", "CRYO", "BOMB", "TESLA", "PULSE", "PLASMA", "RELAY", "VORTEX"],
+  "WEAR": {"FROM_WAVE": 10, "PER_WAVE": 0.015, "PER_SEC": 0.0015, "GROWTH": 0.03, "MIN_EFF": 0.6, "WARN": 0.25, "DOWN_SECS": 20, "REPAIR": 0.65},
   "TOWERS": {
     "LASER": {
       "MODE": "BEAM", "COLOR": [60, 240, 255], "AIR": 1, "GROUND": 1,
@@ -34,7 +35,7 @@
       ]}
     },
     "CRYO": {
-      "MODE": "AURA", "COLOR": [150, 215, 255], "AIR": 1, "GROUND": 1,
+      "MODE": "AURA", "REVEAL": 1, "COLOR": [150, 215, 255], "AIR": 1, "GROUND": 1,
       "TIERS": [
         {"COST": 90, "RANGE": 2.0, "DMG": 3, "SLOW": 0.35},
         {"COST": 70, "SLOW": 0.45},
@@ -66,7 +67,7 @@
       ]}
     },
     "TESLA": {
-      "MODE": "ZAP", "COLOR": [175, 120, 255], "AIR": 1, "GROUND": 1,
+      "MODE": "ZAP", "REVEAL": 1, "COLOR": [175, 120, 255], "AIR": 1, "GROUND": 1,
       "TIERS": [
         {"COST": 130, "RANGE": 2.4, "DMG": 24, "RATE": 1.0, "CHAIN": 3, "SHIELDX": 2.5},
         {"COST": 90, "CHAIN": 4},
@@ -82,7 +83,7 @@
       ]}
     },
     "PULSE": {
-      "MODE": "PULSE", "COLOR": [255, 70, 200], "AIR": 1, "GROUND": 1,
+      "MODE": "PULSE", "REVEAL": 1, "COLOR": [255, 70, 200], "AIR": 1, "GROUND": 1,
       "TIERS": [
         {"COST": 140, "RANGE": 1.9, "DMG": 12, "RATE": 0.33, "STUN": 0.55},
         {"COST": 90, "STUN": 0.75},
@@ -130,7 +131,7 @@
       ]}
     },
     "VORTEX": {
-      "MODE": "PULL", "COLOR": [130, 150, 255], "AIR": 1, "GROUND": 1,
+      "MODE": "PULL", "REVEAL": 1, "COLOR": [130, 150, 255], "AIR": 1, "GROUND": 1,
       "TIERS": [
         {"COST": 160, "RANGE": 1.8, "DMG": 10, "RATE": 0.25, "PULL": 0.8},
         {"COST": 110, "PULL": 1.1, "DMG": 16},

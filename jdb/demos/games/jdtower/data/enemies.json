@@ -1,5 +1,5 @@
 {
-  "ORDER": ["SCOUT", "DRONE", "SWARM", "TANK", "FLYER", "SHIELDER", "HEALER", "SPLITTER", "BRUTE", "OVERLORD", "PHANTOM", "MIRROR", "BLINKER", "CARRIER", "TITAN"],
+  "ORDER": ["SCOUT", "DRONE", "SWARM", "TANK", "FLYER", "SHIELDER", "HEALER", "SPLITTER", "BRUTE", "OVERLORD", "PHANTOM", "MIRROR", "BLINKER", "CARRIER", "TITAN", "SABOTEUR"],
   "ENEMIES": {
     "SCOUT":    {"HP": 34,   "SPEED": 1.75, "REWARD": 4,   "LIVES": 1,  "SIZE": 8,  "SIDES": 3, "COLOR": [255, 235, 80]},
     "DRONE":    {"HP": 62,   "SPEED": 1.0,  "REWARD": 5,   "LIVES": 1,  "SIZE": 10, "SIDES": 4, "COLOR": [255, 80, 170]},
@@ -15,6 +15,7 @@
     "MIRROR":   {"HP": 170,  "SPEED": 0.8,  "REWARD": 12,  "LIVES": 2,  "SIZE": 12, "SIDES": 4, "REFLECT": 0.6, "COLOR": [225, 245, 255]},
     "BLINKER":  {"HP": 95,   "SPEED": 0.85, "REWARD": 10,  "LIVES": 1,  "SIZE": 10, "SIDES": 5, "BLINK": 1.6, "BLINKT": 3.0, "COLOR": [255, 255, 130]},
     "CARRIER":  {"HP": 440,  "SPEED": 0.5,  "REWARD": 32,  "LIVES": 3,  "SIZE": 16, "SIDES": 6, "ARMOR": 0.2, "SPAWN": "SWARM", "SPAWNN": 2, "SPAWNT": 3.5, "COLOR": [255, 130, 255]},
-    "TITAN":    {"HP": 5200, "SPEED": 0.35, "REWARD": 400, "LIVES": 15, "SIZE": 27, "SIDES": 9, "ARMOR": 0.35, "SHIELD": 900, "REFLECT": 0.3, "STUNRES": 0.2, "BOSS": 1, "SPAWN": "DRONE", "SPAWNN": 2, "SPAWNT": 5.0, "COLOR": [255, 95, 40]}
+    "TITAN":    {"HP": 5200, "SPEED": 0.35, "REWARD": 400, "LIVES": 15, "SIZE": 27, "SIDES": 9, "ARMOR": 0.35, "SHIELD": 900, "REFLECT": 0.3, "STUNRES": 0.2, "BOSS": 1, "SPAWN": "DRONE", "SPAWNN": 2, "SPAWNT": 5.0, "COLOR": [255, 95, 40]},
+    "SABOTEUR": {"HP": 240,  "SPEED": 0.75, "REWARD": 18,  "LIVES": 2,  "SIZE": 12, "SIDES": 7, "SAB": 0.025, "SABR": 1.8, "COLOR": [180, 255, 0]}
   }
 }
