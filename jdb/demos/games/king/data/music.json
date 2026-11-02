@@ -1,0 +1,23 @@
+{
+  "voices": [
+    { "id": 6, "wave": "SAW",      "a": 0.4,   "d": 0.5,  "s": 0.6, "r": 0.9,  "gain": 0.05, "filter": 1100 },
+    { "id": 7, "wave": "TRIANGLE", "a": 0.005, "d": 0.25, "s": 0.3, "r": 0.08, "gain": 0.22 },
+    { "id": 8, "wave": "SQUARE",   "a": 0.002, "d": 0.09, "s": 0.1, "r": 0.06, "gain": 0.045, "filter": 2200 },
+    { "id": 9, "kit": "SYNTH", "gain": 0.12 }
+  ],
+  "tracks": ["pad", "bass", "lead", "drums"],
+  "menu": {
+    "bpm": 96,
+    "pad": "<[e3,g3,b3] [c3,e3,g3] [d3,f#3,a3] [b2,d#3,f#3]>",
+    "bass": "<[e1 ~ e2 ~]*2 [c2 ~ c3 ~]*2 [d2 ~ d3 ~]*2 [b1 ~ b2 ~]*2>",
+    "lead": "<[e4 g4 b4 g4]*2 [e4 g4 c5 g4]*2 [d4 f#4 a4 f#4]*2 [d#4 f#4 b4 f#4]*2>",
+    "drums": "[bd ~ ~ ~] [~ hh ~ hh] [~ ~ bd ~] [~ hh ~ hh]"
+  },
+  "finale": {
+    "bpm": 132,
+    "pad": "<[g3,b3,d4] [e3,g3,b3] [c4,e4,g4] [d4,f#4,a4]>",
+    "bass": "<[g1 g2]*4 [e1 e2]*4 [c2 c3]*4 [d2 d3]*4>",
+    "lead": "<[g4 b4 d5 g5]*4 [e4 g4 b4 e5]*4 [e5 g5 c6 g5]*4 [f#5 a5 d6 a5]*4>",
+    "drums": "[bd hh sd hh] [bd bd sd oh]"
+  }
+}

@@ -1,0 +1,221 @@
+' A player that follows the "bot" route of a level file and jumps over what
+' comes at it. It reads the simulation through SIM's getters and answers a
+' pad state per step, the same map the keyboard fills in the client.
+'
+' Route steps:  walk x | up | down | jump dir | board p | wait n
+EXPORT MODULE BOT
+IMPORT SIM
+
+DIM route = []
+DIM idx = 0
+DIM phase = 0
+DIM timer = 0
+DIM air_seen = 0
+DIM start_y = 0
+
+EXPORT SUB START(r)
+    route = r
+    idx = 0
+    phase = 0
+    timer = 0
+    air_seen = 0
+ENDSUB
+
+EXPORT FUNC DONE()
+    RETURN IIF(idx >= LEN(route), 1, 0)
+ENDFUNC
+
+EXPORT FUNC STEPNO()
+    RETURN idx
+ENDFUNC
+
+FUNC PAD()
+    DIM m AS MAP = {}
+    m{"l"} = 0
+    m{"r"} = 0
+    m{"u"} = 0
+    m{"d"} = 0
+    m{"j"} = 0
+    RETURN m
+ENDFUNC
+
+SUB NEXTSTEP()
+    idx = idx + 1
+    phase = 0
+    timer = 0
+    air_seen = 0
+ENDSUB
+
+' something rolling or flying at the hero at jumping distance
+FUNC THREAT(pl)
+    DIM px = pl{"x"}
+    DIM py = pl{"y"}
+    DIM s
+    FOR EACH s IN SIM.SPOOLLIST()
+        IF s{"ladder"} >= 0 THEN CONTINUEFOR
+        IF ABS(s{"y"} - py) > 6 THEN CONTINUEFOR
+        DIM dx = s{"x"} - px
+        IF ABS(dx) < 5 ORELSE ABS(dx) > 20 THEN CONTINUEFOR
+        IF SGN(dx) <> SGN(s{"vx"}) THEN RETURN 1
+    NEXT s
+    DIM o
+    FOR EACH o IN SIM.TOOLLIST()
+        IF o{"plat"} < 0 THEN CONTINUEFOR
+        IF ABS(o{"y"} - py) > 6 THEN CONTINUEFOR
+        DIM dt = o{"x"} - px
+        IF ABS(dt) < 5 ORELSE ABS(dt) > 20 THEN CONTINUEFOR
+        IF SGN(dt) <> SGN(o{"vx"}) THEN RETURN 1
+    NEXT o
+    DIM d
+    FOR EACH d IN SIM.DRONELIST()
+        IF d{"y"} < py - 16 ORELSE d{"y"} > py + 3 THEN CONTINUEFOR
+        DIM dd = d{"x"} - px
+        IF ABS(dd) < 7 ORELSE ABS(dd) > 22 THEN CONTINUEFOR
+        IF SGN(dd) = d{"face"} ANDALSO NOT (pl{"moving"} = 1 ANDALSO SGN(dd) = pl{"face"}) THEN CONTINUEFOR
+        RETURN 1
+    NEXT d
+    RETURN 0
+ENDFUNC
+
+' a spool on the ladder above, or rolling near its upper end
+FUNC LADDERBUSY(pl)
+    DIM px = pl{"x"}
+    DIM py = pl{"y"}
+    DIM s
+    FOR EACH s IN SIM.SPOOLLIST()
+        IF ABS(s{"x"} - px) > 34 THEN CONTINUEFOR
+        IF s{"y"} < py - 50 ORELSE s{"y"} > py - 4 THEN CONTINUEFOR
+        IF s{"ladder"} >= 0 THEN RETURN 1
+        IF ABS(s{"x"} - px) < 6 THEN RETURN 1
+        IF SGN(px - s{"x"}) = SGN(s{"vx"}) THEN RETURN 1
+    NEXT s
+    RETURN 0
+ENDFUNC
+
+EXPORT FUNC PADSTATE()
+    DIM m = PAD()
+    DIM pl = SIM.PLAYER()
+    IF idx >= LEN(route) THEN RETURN m
+    DIM st = route[idx]
+    DIM what$ = st{"do"}
+    DIM grounded = IIF(pl{"plat"} >= 0, 1, 0)
+
+    ' reflex: hop over a threat whenever standing on solid ground
+    IF grounded = 1 ANDALSO what$ <> "board" ANDALSO THREAT(pl) = 1 THEN
+        m{"j"} = 1
+        IF what$ = "walk" THEN
+            DIM fwd = IIF(st{"x"} < pl{"x"}, -1, 1)
+            IF SIM.PLAT_AT(pl{"x"} + 40 * fwd, pl{"y"}, 10) >= 0 THEN
+                IF fwd < 0 THEN m{"l"} = 1 ELSE m{"r"} = 1
+            ENDIF
+        ENDIF
+        RETURN m
+    ENDIF
+
+    IF what$ = "walk" THEN
+        IF grounded = 0 THEN RETURN m
+        DIM dx = st{"x"} - pl{"x"}
+        IF ABS(dx) < 0.6 THEN
+            NEXTSTEP()
+            RETURN m
+        ENDIF
+        IF dx < 0 THEN m{"l"} = 1 ELSE m{"r"} = 1
+        RETURN m
+    ENDIF
+
+    IF what$ = "up" ORELSE what$ = "down" THEN
+        IF timer = 0 THEN start_y = pl{"y"}
+        IF what$ = "up" ANDALSO grounded = 1 ANDALSO (pl{"y"} < start_y - 12 ORELSE ATLADDERTOP(pl) = 1) THEN
+            NEXTSTEP()
+            RETURN m
+        ENDIF
+        IF phase = 0 ANDALSO grounded = 1 ANDALSO LADDERBUSY(pl) = 1 THEN RETURN m
+        IF what$ = "up" THEN m{"u"} = 1 ELSE m{"d"} = 1
+        IF pl{"climb"} >= 0 THEN phase = 1
+        IF phase = 1 ANDALSO pl{"climb"} < 0 ANDALSO grounded = 1 THEN NEXTSTEP()
+        timer = timer + 1
+        RETURN m
+    ENDIF
+
+    IF what$ = "jump" THEN
+        IF st{"dir"} < 0 THEN m{"l"} = 1
+        IF st{"dir"} > 0 THEN m{"r"} = 1
+        IF phase = 0 THEN
+            IF grounded = 1 THEN
+                m{"j"} = 1
+                phase = 1
+            ENDIF
+        ELSEIF grounded = 0 THEN
+            air_seen = 1
+        ELSEIF air_seen = 1 THEN
+            NEXTSTEP()
+            m{"l"} = 0
+            m{"r"} = 0
+        ELSE
+            m{"j"} = 1
+        ENDIF
+        RETURN m
+    ENDIF
+
+    IF what$ = "wait" THEN
+        timer = timer + 1
+        IF timer >= st{"n"} THEN NEXTSTEP()
+        RETURN m
+    ENDIF
+
+    IF what$ = "board" THEN
+        RETURN BOARD(st{"p"}, pl, m)
+    ENDIF
+    NEXTSTEP()
+    RETURN m
+ENDFUNC
+
+' Changes over to platform p: waits at the edge facing it until the surfaces
+' line up (walks across) or p is a little higher and close (jumps across).
+FUNC BOARD(p, pl, m)
+    IF pl{"plat"} = p THEN
+        DIM tp = SIM.PLATFORMS()[p]
+        DIM centre = (tp{"x1"} + tp{"x2"}) / 2
+        IF ABS(pl{"x"} - centre) < 3 THEN
+            NEXTSTEP()
+        ELSEIF pl{"x"} < centre THEN
+            m{"r"} = 1
+        ELSE
+            m{"l"} = 1
+        ENDIF
+        RETURN m
+    ENDIF
+    IF pl{"plat"} < 0 THEN RETURN m
+    DIM cur = SIM.PLATFORMS()[pl{"plat"}]
+    DIM tgt = SIM.PLATFORMS()[p]
+    IF tgt{"solid"} = 0 THEN RETURN m
+    DIM side = IIF((tgt{"x1"} + tgt{"x2"}) / 2 < pl{"x"}, -1, 1)
+    DIM edge = IIF(side < 0, tgt{"x2"}, tgt{"x1"})
+    DIM gap = (edge - pl{"x"}) * side
+    DIM dy = tgt{"y1"} - pl{"y"}
+    ' stand at the end of the current platform that faces the target
+    DIM stand = IIF(side < 0, cur{"x1"} + 2, cur{"x2"} - 2)
+    IF cur{"kind"} = "girder" ANDALSO cur{"mv"} = 0 THEN stand = edge - side * 8
+    IF ABS(dy) < 2 ANDALSO gap < 8 THEN
+        IF side < 0 THEN m{"l"} = 1 ELSE m{"r"} = 1
+        RETURN m
+    ENDIF
+    IF cur{"mv"} = 0 ANDALSO dy < -2 ANDALSO dy > -16 ANDALSO gap < 14 ANDALSO gap > -2 THEN
+        m{"j"} = 1
+        IF side < 0 THEN m{"l"} = 1 ELSE m{"r"} = 1
+        RETURN m
+    ENDIF
+    IF ABS(pl{"x"} - stand) > 1 THEN
+        IF pl{"x"} < stand THEN m{"r"} = 1 ELSE m{"l"} = 1
+    ENDIF
+    RETURN m
+ENDFUNC
+
+' standing at the upper end of a ladder already
+FUNC ATLADDERTOP(pl)
+    DIM l
+    FOR EACH l IN SIM.LADDERS()
+        IF ABS(l{"x"} - pl{"x"}) < 6 ANDALSO ABS(pl{"y"} - l{"top"}) < 3 THEN RETURN 1
+    NEXT l
+    RETURN 0
+ENDFUNC

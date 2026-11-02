@@ -1,0 +1,32 @@
+{
+  "counters": {
+    "wins": "sum", "jumped": "sum", "bolts": "sum", "shield_saves": "sum",
+    "lifts": "sum", "springs": "sum", "nohit": "sum", "allbolts": "sum",
+    "fast": "sum", "flood_won": "sum", "wind_won": "sum", "crane_won": "sum",
+    "items": "sum", "best_round": "max", "best_score": "max", "sites": "max"
+  },
+  "badges": [
+    { "id": "first",   "counter": "wins",         "goal": 1,     "icon": "button",      "de": ["ERSTER KNOPF", "EINEN LEVEL GESCHAFFT"],          "en": ["FIRST STOP", "WIN ONE LEVEL"] },
+    { "id": "foreman", "counter": "wins",         "goal": 10,    "icon": "button",      "de": ["VORARBEITER", "10 LEVEL GESCHAFFT"],              "en": ["FOREMAN", "WIN 10 LEVELS"] },
+    { "id": "boss",    "counter": "wins",         "goal": 50,    "icon": "button",      "de": ["BAULEITER", "50 LEVEL GESCHAFFT"],                "en": ["SITE MANAGER", "WIN 50 LEVELS"] },
+    { "id": "hop",     "counter": "jumped",       "goal": 25,    "icon": "spool0",      "de": ["HUEPFER", "25 MAL DRUEBER GESPRUNGEN"],           "en": ["HOPPER", "JUMP OVER 25 THINGS"] },
+    { "id": "drum",    "counter": "jumped",       "goal": 250,   "icon": "spool1",      "de": ["TROMMELWIRBEL", "250 MAL DRUEBER GESPRUNGEN"],    "en": ["DRUM ROLL", "JUMP OVER 250 THINGS"] },
+    { "id": "bolts",   "counter": "bolts",        "goal": 25,    "icon": "bolt",        "de": ["SCHRAUBER", "25 SCHRAUBEN GESAMMELT"],            "en": ["SCREWER", "COLLECT 25 BOLTS"] },
+    { "id": "bolts2",  "counter": "bolts",        "goal": 150,   "icon": "bolt",        "de": ["SCHRAUBENKOENIG", "150 SCHRAUBEN GESAMMELT"],     "en": ["BOLT KING", "COLLECT 150 BOLTS"] },
+    { "id": "tidy",    "counter": "allbolts",     "goal": 1,     "icon": "bolt",        "de": ["ORDNUNG MUSS SEIN", "ALLE SCHRAUBEN EINES LEVELS"], "en": ["TIDY SITE", "ALL BOLTS IN A LEVEL"] },
+    { "id": "helm",    "counter": "shield_saves", "goal": 1,     "icon": "helm",        "de": ["HELM AUF!", "DER HELM HAT DICH GERETTET"],        "en": ["HARD HAT", "SAVED BY THE HELMET"] },
+    { "id": "lifts",   "counter": "lifts",        "goal": 30,    "icon": "lift",        "de": ["AUFZUGSFAHRER", "30 MAL AUFZUG GEFAHREN"],        "en": ["LIFT RIDER", "RIDE 30 LIFTS"] },
+    { "id": "springs", "counter": "springs",      "goal": 20,    "icon": "springboard", "de": ["GUMMIBAND", "20 MAL VOM BRETT GEFEDERT"],         "en": ["RUBBER BAND", "BOUNCE 20 TIMES"] },
+    { "id": "clean",   "counter": "nohit",        "goal": 1,     "icon": "heroIdle",    "de": ["SAUBER", "EIN LEVEL OHNE UNFALL"],                "en": ["CLEAN", "A LEVEL WITHOUT A MISHAP"] },
+    { "id": "safe",    "counter": "nohit",        "goal": 8,     "icon": "heroIdle",    "de": ["UNFALLFREI", "8 LEVEL OHNE UNFALL"],              "en": ["ACCIDENT FREE", "8 LEVELS WITHOUT A MISHAP"] },
+    { "id": "fast",    "counter": "fast",         "goal": 3,     "icon": "clock",       "de": ["IM AKKORD", "3 LEVEL UNTER 40 SEKUNDEN"],         "en": ["PIECEWORK", "3 LEVELS UNDER 40 SECONDS"] },
+    { "id": "flood",   "counter": "flood_won",    "goal": 1,     "icon": "skip",        "de": ["TROCKENE FUESSE", "DER BETONFLUT ENTKOMMEN"],     "en": ["DRY FEET", "ESCAPE THE CONCRETE"] },
+    { "id": "wind",    "counter": "wind_won",     "goal": 1,     "icon": "beam",        "de": ["STURMFEST", "DAS DACH IM STURM GESCHAFFT"],       "en": ["STORM PROOF", "CLEAR THE STORMY ROOF"] },
+    { "id": "crane",   "counter": "crane_won",    "goal": 2,     "icon": "hook",        "de": ["KRANFUEHRER", "BEIDE KRANBAHNEN GESCHAFFT"],      "en": ["CRANE DRIVER", "CLEAR BOTH CRANE LEVELS"] },
+    { "id": "items",   "counter": "items",        "goal": 15,    "icon": "spring",      "de": ["WERKZEUGKISTE", "15 HILFSMITTEL AUFGEHOBEN"],     "en": ["TOOL KIT", "PICK UP 15 POWER-UPS"] },
+    { "id": "sites",   "counter": "sites",        "goal": 8,     "icon": "king",        "de": ["ALLE BAUSTELLEN", "JEDEN LEVEL EINMAL GESCHAFFT"], "en": ["EVERY SITE", "WIN EVERY LEVEL ONCE"] },
+    { "id": "round2",  "counter": "best_round",   "goal": 2,     "icon": "trolley",     "de": ["ZWEITE SCHICHT", "RUNDE 2 ERREICHT"],             "en": ["SECOND SHIFT", "REACH ROUND 2"] },
+    { "id": "round3",  "counter": "best_round",   "goal": 3,     "icon": "trolley",     "de": ["NACHTSCHICHT", "RUNDE 3 ERREICHT"],               "en": ["NIGHT SHIFT", "REACH ROUND 3"] },
+    { "id": "score",   "counter": "best_score",   "goal": 50000, "icon": "toolbox",     "de": ["GROSSAUFTRAG", "50000 PUNKTE IN EINEM SPIEL"],    "en": ["BIG CONTRACT", "50000 POINTS IN ONE GAME"] }
+  ]
+}

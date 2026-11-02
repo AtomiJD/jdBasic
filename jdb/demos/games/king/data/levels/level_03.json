@@ -1,0 +1,56 @@
+{
+  "name": "ABRISSHAUS",
+  "hint": "MORSCHE BRETTER HALTEN NICHT LANGE",
+  "theme": "dust",
+  "bonus": 6000,
+  "start": { "x": 200, "on": 0 },
+  "button": { "x": 206, "on": 1 },
+  "king": { "x": 24, "plat": 2, "side": 1, "pattern": ["spool"], "interval": 140, "jitter": 50, "spool_speed": 0.8 },
+  "platforms": [
+    { "x1": 0,   "y1": 248, "x2": 224, "y2": 248 },
+    { "x1": 150, "y1": 50,  "x2": 216, "y2": 50 },
+    { "x1": 0,   "y1": 64,  "x2": 120, "y2": 72 },
+    { "x1": 96,  "y1": 108, "x2": 192, "y2": 102 },
+    { "x1": 0,   "y1": 148, "x2": 48,  "y2": 144 },
+    { "x1": 48,  "y1": 144, "x2": 64,  "y2": 144, "kind": "plank" },
+    { "x1": 64,  "y1": 144, "x2": 80,  "y2": 144, "kind": "plank" },
+    { "x1": 80,  "y1": 144, "x2": 96,  "y2": 144, "kind": "plank" },
+    { "x1": 96,  "y1": 144, "x2": 112, "y2": 144, "kind": "plank" },
+    { "x1": 112, "y1": 144, "x2": 200, "y2": 148 },
+    { "x1": 24,  "y1": 184, "x2": 224, "y2": 184 },
+    { "x1": 192, "y1": 102, "x2": 212, "y2": 102, "kind": "spring" }
+  ],
+  "ladders": [
+    { "x": 210, "lo": 0,  "hi": 10 },
+    { "x": 30,  "lo": 10, "hi": 4 },
+    { "x": 180, "lo": 10, "hi": 9, "broken": 1 },
+    { "x": 140, "lo": 9,  "hi": 3 },
+    { "x": 104, "lo": 3,  "hi": 2 }
+  ],
+  "drones": [
+    { "x1": 40,  "x2": 200, "y1": 174, "speed": 0.55 },
+    { "x1": 110, "x2": 186, "y1": 92,  "speed": 0.45, "start": 0.6 }
+  ],
+  "items": [
+    { "type": "helm",  "x": 120, "on": 10 },
+    { "type": "clock", "x": 170, "on": 3 },
+    { "type": "bolt",  "x": 72,  "y": 132 },
+    { "type": "bolt",  "x": 104, "y": 132 },
+    { "type": "bolt",  "x": 60,  "on": 2 },
+    { "type": "bolt",  "x": 8,   "on": 4 },
+    { "type": "bolt",  "x": 170, "on": 1 }
+  ],
+  "bot": [
+    { "do": "walk", "x": 210 }, { "do": "up" },
+    { "do": "walk", "x": 30 }, { "do": "up" },
+    { "do": "walk", "x": 140 }, { "do": "up" },
+    { "do": "walk", "x": 200 }, { "do": "walk", "x": 206 }
+  ],
+  "music": {
+    "bpm": 112,
+    "pad": "<[e3,g3,b3] [e3,g3,b3] [c3,e3,g3] [d3,f#3,a3]>",
+    "bass": "<[e1 ~ e1 e2]*2 [e1 ~ e1 g1]*2 [c2 ~ c2 c3]*2 [d2 ~ d2 d3]*2>",
+    "lead": "<[b4 ~ g4 e4]*2 [b4 ~ a4 g4]*2 [c5 ~ g4 e4]*2 [d5 ~ a4 f#4]*2>",
+    "drums": "[bd ~ sd ~] [bd bd sd hh] [bd ~ sd ~] [bd hh sd cp]"
+  }
+}

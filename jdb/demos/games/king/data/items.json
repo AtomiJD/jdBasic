@@ -1,0 +1,6 @@
+{
+  "helm":   { "sprite": "helm",   "power": "shield", "dur": 0,   "label": "HELM" },
+  "spring": { "sprite": "spring", "power": "spring", "dur": 600, "label": "SPRUNGFEDER", "jump_vy": -2.9 },
+  "clock":  { "sprite": "clock",  "power": "slow",   "dur": 420, "label": "STOPPUHR", "factor": 0.5 },
+  "bolt":   { "sprite": "bolt",   "power": "",       "dur": 0,   "label": "SCHRAUBE" }
+}

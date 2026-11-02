@@ -1,0 +1,1356 @@
+' KING - a building site arcade game. The rules live in sim.jdb, the levels,
+' sprites, sounds, texts and badges in data/*.json; this file draws, reads
+' the keyboard and the pad, plays sound and keeps the profile.
+'
+'   jdbasic king.jdb [en] [level N]
+'   jdbasic king.jdb shot N [frames]      the bot plays N, saves tmp/shot.png
+'   jdbasic king.jdb shotscreen title|select|badges|over
+IMPORT SIM
+IMPORT BOT
+
+DIM running = 1
+SUB ONQUIT()
+    running = 0
+ENDSUB
+ON "QUIT" CALL ONQUIT@
+
+DIM keys_in = []
+SUB ONKEY(info)
+    keys_in = APPEND(keys_in, info[0]{"key"})
+ENDSUB
+ON "KEYDOWN" CALL ONKEY@
+
+' ── where things are ────────────────────────────────────────────
+
+DIM GAMEDIR$ = ""
+DIM cli = OS.ARGS()
+IF LEN(cli) > 0 THEN
+    DIM a0$ = REPLACE$("" + cli[0], "\", "/")
+    DIM cut = -1
+    DIM ci
+    FOR ci = 0 TO LEN(a0$) - 1
+        IF MID$(a0$, ci, 1) = "/" THEN cut = ci
+    NEXT ci
+    IF cut >= 0 THEN GAMEDIR$ = LEFT$(a0$, cut + 1)
+ENDIF
+
+FUNC LOADJSON(name$)
+    RETURN JSON.PARSE(TXTREADER$(GAMEDIR$ + "data/" + name$))
+ENDFUNC
+
+DIM CFG = LOADJSON("config.json")
+DIM ITEMDEF = LOADJSON("items.json")
+DIM SPRDATA = LOADJSON("sprites.json")
+DIM LANG = LOADJSON("lang.json")
+DIM SFXDATA = LOADJSON("sfx.json")
+DIM MUSDATA = LOADJSON("music.json")
+DIM ACH = LOADJSON("achievements.json")
+SIM.SETUP(CFG, ITEMDEF)
+
+FUNC LEVELFILE$(n)
+    RETURN GAMEDIR$ + "data/levels/level_" + RIGHT$("0" + STR$(n), 2) + ".json"
+ENDFUNC
+
+DIM LEVELS = []
+SUB LOADLEVELS()
+    DIM n = 1
+    DO WHILE FILE.EXISTS(LEVELFILE$(n))
+        LEVELS = APPEND(LEVELS, [JSON.PARSE(TXTREADER$(LEVELFILE$(n)))])
+        n = n + 1
+    LOOP
+ENDSUB
+LOADLEVELS()
+
+DIM W = CFG{"screen"}{"w"}
+DIM H = CFG{"screen"}{"h"}
+DIM STEP_MS = 1000 / CFG{"steps_per_second"}
+
+' ── command line ────────────────────────────────────────────────
+
+DIM lang$ = "de"
+DIM shot_level = 0
+DIM shot_frames = 300
+DIM shot_screen$ = ""
+DIM start_level = 0
+DIM ai
+FOR ai = 1 TO LEN(cli) - 1
+    DIM arg$ = "" + cli[ai]
+    IF arg$ = "en" THEN lang$ = "en"
+    IF arg$ = "shot" ANDALSO ai + 1 < LEN(cli) THEN shot_level = VAL(cli[ai + 1])
+    IF arg$ = "shot" ANDALSO ai + 2 < LEN(cli) THEN shot_frames = VAL(cli[ai + 2])
+    IF arg$ = "shotscreen" ANDALSO ai + 1 < LEN(cli) THEN shot_screen$ = "" + cli[ai + 1]
+    IF arg$ = "level" ANDALSO ai + 1 < LEN(cli) THEN start_level = VAL(cli[ai + 1]) - 1
+NEXT ai
+
+FUNC T$(key$)
+    DIM tab = LANG{lang$}
+    IF MAP.EXISTS(tab, key$) THEN RETURN tab{key$}
+    RETURN key$
+ENDFUNC
+
+' ── profile ─────────────────────────────────────────────────────
+' hiscore, unlocked levels, the levels won, badge counters and badges
+
+DIM PROFILE_PATH$ = GAMEDIR$ + "profile.json"
+DIM PROF AS MAP = {}
+SUB LOADPROFILE()
+    PROF = {}
+    TRY
+        IF FILE.EXISTS(PROFILE_PATH$) THEN PROF = JSON.PARSE(TXTREADER$(PROFILE_PATH$))
+    CATCH
+        PROF = {}
+    ENDTRY
+    IF NOT MAP.EXISTS(PROF, "hiscore") THEN PROF{"hiscore"} = 5000
+    IF NOT MAP.EXISTS(PROF, "unlocked") THEN PROF{"unlocked"} = 1
+    IF NOT MAP.EXISTS(PROF, "won") THEN PROF{"won"} = []
+    IF NOT MAP.EXISTS(PROF, "badges") THEN PROF{"badges"} = []
+    IF NOT MAP.EXISTS(PROF, "counters") THEN PROF{"counters"} = {}
+    IF NOT MAP.EXISTS(PROF, "music") THEN PROF{"music"} = 1
+    DIM k
+    FOR EACH k IN MAP.KEYS(ACH{"counters"})
+        IF NOT MAP.EXISTS(PROF{"counters"}, k) THEN PROF{"counters"}{k} = 0
+    NEXT k
+ENDSUB
+
+SUB SAVEPROFILE()
+    IF shot_level > 0 ORELSE shot_screen$ <> "" THEN RETURN
+    TRY
+        TXTWRITER PROFILE_PATH$, JSON.STRINGIFY$(PROF)
+    CATCH
+    ENDTRY
+ENDSUB
+LOADPROFILE()
+
+FUNC HASBADGE(id$)
+    DIM b
+    FOR EACH b IN PROF{"badges"}
+        IF b = id$ THEN RETURN 1
+    NEXT b
+    RETURN 0
+ENDFUNC
+
+FUNC HASWON(name$)
+    DIM b
+    FOR EACH b IN PROF{"won"}
+        IF b = name$ THEN RETURN 1
+    NEXT b
+    RETURN 0
+ENDFUNC
+
+DIM toasts = []
+SUB BUMP(key$, n)
+    DIM c = PROF{"counters"}
+    IF ACH{"counters"}{key$} = "max" THEN
+        IF n > c{key$} THEN c{key$} = n
+    ELSE
+        c{key$} = c{key$} + n
+    ENDIF
+ENDSUB
+
+SUB CHECKBADGES()
+    DIM b
+    FOR EACH b IN ACH{"badges"}
+        IF HASBADGE(b{"id"}) = 1 THEN CONTINUEFOR
+        IF PROF{"counters"}{b{"counter"}} >= b{"goal"} THEN
+            PROF{"badges"} = APPEND(PROF{"badges"}, b{"id"})
+            toasts = APPEND(toasts, [b])
+            SFX("badge")
+        ENDIF
+    NEXT b
+ENDSUB
+
+' ── sprites and the pixel font ──────────────────────────────────
+
+DIM PAL AS MAP = {}
+DIM RGBC AS MAP = {}
+FUNC HEXRGB(h$)
+    IF MAP.EXISTS(RGBC, h$) THEN RETURN RGBC{h$}
+    DIM c = [VAL("0x" + MID$(h$, 1, 2)), VAL("0x" + MID$(h$, 3, 2)), VAL("0x" + MID$(h$, 5, 2))]
+    RGBC{h$} = c
+    RETURN c
+ENDFUNC
+
+DIM PALX AS MAP = {}
+DIM LADC = [40, 216, 255]
+DIM THEMES = LOADJSON("themes.json")
+DIM TH AS MAP = {}
+DIM SKYL = []
+DIM STARS = []
+DIM SPR AS MAP = {}
+DIM SPRW AS MAP = {}
+DIM SPRH AS MAP = {}
+
+FUNC RASTER(rows, colfn$)
+    DIM hgt = LEN(rows)
+    DIM wid = LEN(rows[0])
+    DIM img = GFX.NEWTARGET(wid, hgt)
+    GFX.TARGET img, TRUE
+    DIM xs = []
+    DIM ys = []
+    DIM cols = []
+    DIM y
+    FOR y = 0 TO hgt - 1
+        DIM row$ = rows[y]
+        DIM x
+        FOR x = 0 TO wid - 1
+            DIM ch$ = MID$(row$, x, 1)
+            IF ch$ = "." ORELSE ch$ = " " ORELSE ch$ = "0" THEN CONTINUEFOR
+            DIM c = [255, 0, 255]
+            IF colfn$ <> "" THEN
+                c = HEXRGB(colfn$)
+            ELSEIF MAP.EXISTS(PAL, ch$) THEN
+                c = IIF(MAP.EXISTS(PALX, ch$), PALX{ch$}, PAL{ch$})
+            ENDIF
+            xs = APPEND(xs, x)
+            ys = APPEND(ys, y)
+            cols = APPEND(cols, c)
+        NEXT x
+    NEXT y
+    IF LEN(xs) > 0 THEN GFX.PLOT_POINTS xs, ys, cols
+    GFX.TARGET
+    RETURN img
+ENDFUNC
+
+SUB BUILDSPRITES()
+    DIM k
+    FOR EACH k IN MAP.KEYS(SPRDATA{"pal"})
+        PAL{k} = HEXRGB(SPRDATA{"pal"}{k})
+    NEXT k
+    FOR EACH k IN MAP.KEYS(SPRDATA{"sprites"})
+        DIM rows = SPRDATA{"sprites"}{k}
+        SPR{k} = RASTER(rows, "")
+        SPRW{k} = LEN(rows[0])
+        SPRH{k} = LEN(rows)
+    NEXT k
+ENDSUB
+
+SUB SPRITE_AT(name$, x, y, flip)
+    GFX.DRAWIMAGE_EX SPR{name$}, FLOOR(x), FLOOR(y), SPRW{name$}, SPRH{name$}, 0, flip = 1
+ENDSUB
+
+SUB SPRITE_ROT(name$, x, y, angle)
+    GFX.DRAWIMAGE_EX SPR{name$}, FLOOR(x), FLOOR(y), SPRW{name$}, SPRH{name$}, angle, FALSE
+ENDSUB
+
+' glyphs are rendered once per colour, a string is one blit per letter
+DIM GLYPH AS MAP = {}
+FUNC GLYPHIMG(ch$, col$)
+    DIM key$ = col$ + ch$
+    IF MAP.EXISTS(GLYPH, key$) THEN RETURN GLYPH{key$}
+    DIM fnt = SPRDATA{"font"}
+    DIM img = -1
+    IF MAP.EXISTS(fnt, ch$) THEN
+        DIM bits$ = fnt{ch$}
+        img = RASTER([MID$(bits$, 0, 3), MID$(bits$, 3, 3), MID$(bits$, 6, 3), MID$(bits$, 9, 3), MID$(bits$, 12, 3)], col$)
+    ENDIF
+    GLYPH{key$} = img
+    RETURN img
+ENDFUNC
+
+SUB TXT(s$, x, y, col$, sc)
+    DIM up$ = UCASE$(s$)
+    IF sc > 1 THEN
+        BIGTXT(up$, x, y, col$, sc)
+        RETURN
+    ENDIF
+    DIM i
+    FOR i = 0 TO LEN(up$) - 1
+        DIM ch$ = MID$(up$, i, 1)
+        IF ch$ <> " " THEN
+            DIM img = GLYPHIMG(ch$, col$)
+            IF img >= 0 THEN GFX.DRAWIMAGE img, FLOOR(x + i * 4 * sc), FLOOR(y), 3 * sc, 5 * sc
+        ENDIF
+    NEXT i
+ENDSUB
+
+' scaled text as solid blocks, a stretched glyph image would be smoothed
+SUB BIGTXT(up$, x, y, col$, sc)
+    DIM fnt = SPRDATA{"font"}
+    DIM c = HEXRGB(col$)
+    DIM i
+    FOR i = 0 TO LEN(up$) - 1
+        DIM ch$ = MID$(up$, i, 1)
+        IF NOT MAP.EXISTS(fnt, ch$) THEN CONTINUEFOR
+        DIM bits$ = fnt{ch$}
+        DIM b
+        FOR b = 0 TO 14
+            IF MID$(bits$, b, 1) = "1" THEN RECT FLOOR(x + i * 4 * sc + (b MOD 3) * sc), FLOOR(y + FLOOR(b / 3) * sc), sc, sc, TRUE, c[0], c[1], c[2]
+        NEXT b
+    NEXT i
+ENDSUB
+
+SUB TXTC(s$, cx, y, col$, sc)
+    TXT(s$, FLOOR(cx - LEN(s$) * 4 * sc / 2 + sc / 2), y, col$, sc)
+ENDSUB
+
+SUB BOX(x, y, w, h, col$)
+    DIM c = HEXRGB(col$)
+    RECT FLOOR(x), FLOOR(y), w, h, TRUE, c[0], c[1], c[2]
+ENDSUB
+
+SUB PIXLINE(x1, y1, x2, y2, col$)
+    DIM c = HEXRGB(col$)
+    LINE FLOOR(x1 + 0.5), FLOOR(y1 + 0.5), FLOOR(x2 + 0.5), FLOOR(y2 + 0.5), c[0], c[1], c[2]
+ENDSUB
+
+FUNC PAD6$(n)
+    RETURN RIGHT$("000000" + STR$(FLOOR(n)), 6)
+ENDFUNC
+
+' ── sound ───────────────────────────────────────────────────────
+
+DIM snd_on = 0
+DIM sq = []
+SUB SNDINIT()
+    TRY
+        SOUND.INIT
+        DIM v
+        FOR EACH v IN SFXDATA{"voices"}
+            SOUND.VOICE v{"id"}, v{"wave"}, v{"a"}, v{"d"}, v{"s"}, v{"r"}
+            SOUND.GAIN v{"id"}, v{"gain"}
+        NEXT v
+        FOR EACH v IN MUSDATA{"voices"}
+            IF MAP.EXISTS(v, "kit") THEN
+                SOUND.KIT v{"id"}, v{"kit"}
+            ELSE
+                SOUND.VOICE v{"id"}, v{"wave"}, v{"a"}, v{"d"}, v{"s"}, v{"r"}
+                IF MAP.EXISTS(v, "filter") THEN SOUND.FILTER v{"id"}, v{"filter"}, 0.2
+            ENDIF
+            SOUND.GAIN v{"id"}, v{"gain"}
+        NEXT v
+        snd_on = 1
+    CATCH
+        snd_on = 0
+    ENDTRY
+ENDSUB
+
+SUB SFX(name$)
+    IF snd_on = 0 THEN RETURN
+    IF NOT MAP.EXISTS(SFXDATA{"events"}, name$) THEN RETURN
+    DIM t_now = TICK()
+    DIM nt
+    FOR EACH nt IN SFXDATA{"events"}{name$}
+        sq = APPEND(sq, [[t_now + nt[0], nt[1], nt[2]]])
+    NEXT nt
+ENDSUB
+
+SUB SFXPUMP()
+    IF snd_on = 0 ORELSE LEN(sq) = 0 THEN RETURN
+    DIM t_now = TICK()
+    DIM keep = []
+    DIM nt
+    FOR EACH nt IN sq
+        IF nt[0] <= t_now THEN
+            TRY
+                SOUND.PLAY nt[1], nt[2]
+            CATCH
+            ENDTRY
+        ELSE
+            keep = APPEND(keep, [nt])
+        ENDIF
+    NEXT nt
+    sq = keep
+ENDSUB
+
+DIM song_now$ = ""
+SUB SETSONG(song, tag$)
+    IF snd_on = 0 ORELSE tag$ = song_now$ THEN RETURN
+    song_now$ = tag$
+    DIM tracks = MUSDATA{"tracks"}
+    DIM t
+    FOR t = 0 TO LEN(tracks) - 1
+        DIM pat$ = MUSDATA{"menu"}{tracks[t]}
+        IF TYPEOF(song) = "OBJECT" THEN
+            IF MAP.EXISTS(song, tracks[t]) THEN pat$ = "" + song{tracks[t]}
+        ENDIF
+        TRY
+            SOUND.SEQ 6 + t, pat$, "VOICE"
+        CATCH
+            TRY
+                SOUND.SEQ 6 + t, MUSDATA{"menu"}{tracks[t]}, "VOICE"
+            CATCH
+            ENDTRY
+        ENDTRY
+    NEXT t
+    TRY
+        SOUND.BPM SIM_OPT(song, "bpm", 100)
+    CATCH
+    ENDTRY
+    MUSICMUTE()
+ENDSUB
+
+SUB MUSICMUTE()
+    IF snd_on = 0 THEN RETURN
+    DIM off = IIF(PROF{"music"} = 1, 0, 1)
+    DIM t
+    FOR t = 6 TO 9
+        TRY
+            SOUND.MUTE t, off
+        CATCH
+        ENDTRY
+    NEXT t
+ENDSUB
+
+FUNC SIM_OPT(m, key$, dflt)
+    IF TYPEOF(m) <> "OBJECT" THEN RETURN dflt
+    IF MAP.EXISTS(m, key$) THEN RETURN m{key$}
+    RETURN dflt
+ENDFUNC
+
+' ── input ───────────────────────────────────────────────────────
+
+DIM pad_seen = 0
+DIM pad_prev AS MAP = {"j": 0, "s": 0, "u": 0, "d": 0}
+
+FUNC KEYDOWN2(a$, b$)
+    RETURN IIF(GFX.KEYSTATE(a$) ORELSE GFX.KEYSTATE(b$), 1, 0)
+ENDFUNC
+
+FUNC READPAD()
+    DIM m AS MAP = {}
+    m{"l"} = KEYDOWN2("Left", "A")
+    m{"r"} = KEYDOWN2("Right", "D")
+    m{"u"} = KEYDOWN2("Up", "W")
+    m{"d"} = KEYDOWN2("Down", "S")
+    m{"j"} = KEYDOWN2("Space", "K")
+    m{"s"} = 0
+    TRY
+        IF JOY.BUMP() > 0 THEN
+            pad_seen = 1
+            DIM ax = JOY.AXIS(0, 0)
+            DIM ay = JOY.AXIS(0, 1)
+            DIM hat = JOY.HAT(0, 0)
+            IF ax < -0.4 ORELSE (hat BAND 8) <> 0 THEN m{"l"} = 1
+            IF ax > 0.4 ORELSE (hat BAND 2) <> 0 THEN m{"r"} = 1
+            IF ay < -0.4 ORELSE (hat BAND 1) <> 0 THEN m{"u"} = 1
+            IF ay > 0.4 ORELSE (hat BAND 4) <> 0 THEN m{"d"} = 1
+            IF JOY.BUTTON(0, 0) ORELSE JOY.BUTTON(0, 1) THEN m{"j"} = 1
+            IF JOY.BUTTON(0, 7) ORELSE JOY.BUTTON(0, 6) THEN m{"s"} = 1
+        ENDIF
+    CATCH
+    ENDTRY
+    RETURN m
+ENDFUNC
+
+' pad buttons count as key presses in the menus
+SUB PADKEYS(m)
+    IF m{"j"} = 1 ANDALSO pad_prev{"j"} = 0 THEN keys_in = APPEND(keys_in, "PadA")
+    IF m{"s"} = 1 ANDALSO pad_prev{"s"} = 0 THEN keys_in = APPEND(keys_in, "Return")
+    IF m{"u"} = 1 ANDALSO pad_prev{"u"} = 0 THEN keys_in = APPEND(keys_in, "PadUp")
+    IF m{"d"} = 1 ANDALSO pad_prev{"d"} = 0 THEN keys_in = APPEND(keys_in, "PadDown")
+    pad_prev{"j"} = m{"j"}
+    pad_prev{"s"} = m{"s"}
+    pad_prev{"u"} = m{"u"}
+    pad_prev{"d"} = m{"d"}
+ENDSUB
+
+' ── game flow ───────────────────────────────────────────────────
+
+DIM mode$ = "title"
+DIM mode_t = 0
+DIM frame_no = 0
+DIM lvl_idx = 0
+DIM round_no = 1
+DIM lives = 3
+DIM paused = 0
+DIM demo = 0
+DIM level_deaths = 0
+DIM level_frames = 0
+DIM sel = 0
+DIM badge_sel = 0
+DIM idle_t = 0
+DIM msg$ = ""
+DIM msg_t = 0
+DIM floats = []
+DIM parts = []
+
+SUB SETMODE(m$)
+    mode$ = m$
+    mode_t = 0
+ENDSUB
+
+SUB SAY(s$)
+    msg$ = s$
+    msg_t = 120
+ENDSUB
+
+FUNC LEVELSEED()
+    RETURN 7919 * (lvl_idx + 1) + 104729 * round_no + FLOOR(TICK()) MOD 100000
+ENDFUNC
+
+SUB STARTLEVEL()
+    SIM.LOAD(LEVELS[lvl_idx], round_no, IIF(shot_level > 0, 4242, LEVELSEED()))
+    level_deaths = 0
+    level_frames = 0
+    floats = []
+    parts = []
+    paused = 0
+    IF demo = 1 ORELSE shot_level > 0 THEN BOT.START(LEVELS[lvl_idx]{"bot"})
+    APPLYTHEME(SIM_OPT(LEVELS[lvl_idx], "theme", "arcade"))
+    SETSONG(SIM_OPT(LEVELS[lvl_idx], "music", 0), "level" + STR$(lvl_idx))
+    SETMODE("intro")
+ENDSUB
+
+SUB NEWGAME(first_level)
+    SIM.NEWGAME()
+    lives = CFG{"lives"}
+    round_no = 1
+    lvl_idx = first_level
+    STARTLEVEL()
+ENDSUB
+
+SUB TOTITLE()
+    demo = 0
+    SETSONG(MUSDATA{"menu"}, "menu")
+    idle_t = 0
+    SETMODE("title")
+ENDSUB
+
+' badge counters for one attempt, won or not
+SUB COUNTATTEMPT(won)
+    IF demo = 1 THEN RETURN
+    DIM st = SIM.STATS()
+    BUMP("jumped", st{"jumped"})
+    BUMP("bolts", st{"bolts"})
+    BUMP("shield_saves", st{"shield_saves"})
+    BUMP("lifts", st{"lifts"})
+    BUMP("springs", st{"springs"})
+    BUMP("items", st{"items"})
+    BUMP("best_score", SIM.SCORE())
+    IF won = 1 THEN
+        DIM lv = LEVELS[lvl_idx]
+        BUMP("wins", 1)
+        IF level_deaths = 0 THEN BUMP("nohit", 1)
+        IF st{"bolts_all"} > 0 ANDALSO st{"bolts"} = st{"bolts_all"} THEN BUMP("allbolts", 1)
+        IF level_frames < 40 * CFG{"steps_per_second"} THEN BUMP("fast", 1)
+        IF MAP.EXISTS(lv, "flood") THEN BUMP("flood_won", 1)
+        IF MAP.EXISTS(lv, "wind") THEN BUMP("wind_won", 1)
+        IF HASWON(lv{"name"}) = 0 THEN
+            PROF{"won"} = APPEND(PROF{"won"}, lv{"name"})
+            IF MAP.EXISTS(lv, "crane") THEN BUMP("crane_won", 1)
+        ENDIF
+        BUMP("sites", LEN(PROF{"won"}))
+        IF lvl_idx + 2 > PROF{"unlocked"} THEN PROF{"unlocked"} = lvl_idx + 2
+        IF PROF{"unlocked"} > LEN(LEVELS) THEN PROF{"unlocked"} = LEN(LEVELS)
+    ENDIF
+    IF SIM.SCORE() > PROF{"hiscore"} THEN PROF{"hiscore"} = SIM.SCORE()
+    CHECKBADGES()
+    SAVEPROFILE()
+ENDSUB
+
+SUB PUFF(x, y, n, col$, spread)
+    DIM i
+    FOR i = 1 TO n
+        DIM p AS MAP = {}
+        p{"x"} = x
+        p{"y"} = y
+        p{"vx"} = (RND(1) - 0.5) * spread
+        p{"vy"} = -RND(1) * 1.4
+        p{"t"} = 20 + FLOOR(RND(1) * 12)
+        p{"c"} = col$
+        parts = APPEND(parts, p)
+    NEXT i
+ENDSUB
+
+SUB ADDFLOAT(x, y, s$, col$)
+    DIM f AS MAP = {}
+    f{"x"} = x
+    f{"y"} = y
+    f{"s"} = s$
+    f{"c"} = col$
+    f{"t"} = 60
+    floats = APPEND(floats, f)
+ENDSUB
+
+SUB HANDLEEVENTS()
+    DIM pl = SIM.PLAYER()
+    DIM ev$
+    FOR EACH ev$ IN SIM.EVENTS_TAKE()
+        SFX(ev$)
+        IF ev$ = "over" THEN ADDFLOAT(pl{"x"}, pl{"y"} - 20, STR$(CFG{"score"}{"jump_over"}), "#ffffff")
+        IF ev$ = "bolt" THEN
+            ADDFLOAT(pl{"x"}, pl{"y"} - 20, STR$(CFG{"score"}{"bolt"}), "#c8d0dc")
+            PUFF(pl{"x"}, pl{"y"} - 8, 6, "#ffe438", 1.6)
+        ENDIF
+        IF ev$ = "pickup" THEN PUFF(pl{"x"}, pl{"y"} - 8, 8, "#28d8ff", 2)
+        IF ev$ = "shield" THEN
+            PUFF(pl{"x"}, pl{"y"} - 14, 12, "#2868f8", 2.4)
+            SAY(T$("shield"))
+        ENDIF
+        IF ev$ = "extralife" THEN
+            lives = lives + 1
+            SAY(T$("extra_life"))
+        ENDIF
+        IF ev$ = "spring" THEN PUFF(pl{"x"}, pl{"y"}, 6, "#ff4418", 1.5)
+        IF ev$ = "crumble" THEN PUFF(pl{"x"}, pl{"y"} + 2, 10, "#8a4a1c", 2.4)
+        IF ev$ = "sink" THEN
+            DIM k
+            FOR EACH k IN SIM.SINKLIST()
+                PUFF((k{"x1"} + k{"x2"}) / 2, k{"y"} - 10, 5, "#8a929e", 1.2)
+            NEXT k
+        ENDIF
+    NEXT ev$
+ENDSUB
+
+' one logic frame at 60 per second
+SUB UPDATE(pad)
+    frame_no = frame_no + 1
+    mode_t = mode_t + 1
+    IF msg_t > 0 THEN msg_t = msg_t - 1
+    DIM p
+    FOR EACH p IN parts
+        p{"x"} = p{"x"} + p{"vx"}
+        p{"y"} = p{"y"} + p{"vy"}
+        p{"vy"} = p{"vy"} + 0.08
+        p{"t"} = p{"t"} - 1
+    NEXT p
+    parts = FILTER(LAMBDA z -> z{"t"} > 0, parts)
+    DIM f
+    FOR EACH f IN floats
+        f{"y"} = f{"y"} - 0.3
+        f{"t"} = f{"t"} - 1
+    NEXT f
+    floats = FILTER(LAMBDA z -> z{"t"} > 0, floats)
+
+    IF mode$ = "title" THEN
+        idle_t = idle_t + 1
+        IF idle_t > 600 ANDALSO LEN(LEVELS) > 0 THEN
+            demo = 1
+            NEWGAME(FLOOR(RND(1) * PROF{"unlocked"}))
+        ENDIF
+        RETURN
+    ENDIF
+    IF mode$ = "intro" THEN
+        IF mode_t > CFG{"intro_frames"} THEN SETMODE("play")
+        RETURN
+    ENDIF
+    IF mode$ = "play" THEN
+        IF paused = 1 THEN RETURN
+        DIM inp = pad
+        IF demo = 1 ORELSE shot_level > 0 THEN inp = BOT.PADSTATE()
+        level_frames = level_frames + 1
+        DIM r$ = SIM.TICKSTEP(inp)
+        HANDLEEVENTS()
+        IF r$ = "dead" THEN SETMODE("dying")
+        IF r$ = "win" THEN
+            COUNTATTEMPT(1)
+            SETMODE("win")
+        ENDIF
+        RETURN
+    ENDIF
+    IF mode$ = "dying" THEN
+        IF mode_t > CFG{"death_frames"} THEN
+            COUNTATTEMPT(0)
+            level_deaths = level_deaths + 1
+            lives = lives - 1
+            IF demo = 1 THEN
+                TOTITLE()
+            ELSEIF lives <= 0 THEN
+                SFX("gameover")
+                SETSONG(0, "silent")
+                SETMODE("over")
+            ELSE
+                SIM.RETRY()
+                IF shot_level > 0 THEN BOT.START(LEVELS[lvl_idx]{"bot"})
+                SETMODE("play")
+            ENDIF
+        ENDIF
+        RETURN
+    ENDIF
+    IF mode$ = "win" THEN
+        IF mode_t > CFG{"win_frames"} THEN
+            IF demo = 1 THEN
+                TOTITLE()
+                RETURN
+            ENDIF
+            lvl_idx = lvl_idx + 1
+            IF lvl_idx >= LEN(LEVELS) THEN
+                lvl_idx = 0
+                round_no = round_no + 1
+                BUMP("best_round", round_no)
+                CHECKBADGES()
+                SAVEPROFILE()
+                SETSONG(MUSDATA{"finale"}, "finale")
+                SETMODE("finale")
+            ELSE
+                STARTLEVEL()
+            ENDIF
+        ENDIF
+        RETURN
+    ENDIF
+    IF mode$ = "finale" THEN
+        IF mode_t > 420 THEN STARTLEVEL()
+        RETURN
+    ENDIF
+    IF mode$ = "over" THEN
+        IF mode_t > 300 THEN TOTITLE()
+        RETURN
+    ENDIF
+ENDSUB
+
+SUB HANDLEKEY(k$)
+    idle_t = 0
+    IF demo = 1 THEN
+        TOTITLE()
+        RETURN
+    ENDIF
+    DIM ok = IIF(k$ = "Return" ORELSE k$ = "Space" ORELSE k$ = "PadA", 1, 0)
+    IF k$ = "M" THEN
+        PROF{"music"} = 1 - PROF{"music"}
+        MUSICMUTE()
+        SAVEPROFILE()
+        SAY(IIF(PROF{"music"} = 1, T$("music_on"), T$("music_off")))
+        RETURN
+    ENDIF
+    IF mode$ = "title" THEN
+        IF ok = 1 THEN
+            SFX("menu")
+            NEWGAME(start_level)
+        ELSEIF k$ = "L" THEN
+            sel = 0
+            SETMODE("select")
+        ELSEIF k$ = "B" THEN
+            badge_sel = 0
+            SETMODE("badges")
+        ELSEIF k$ = "Escape" THEN
+            running = 0
+        ENDIF
+        RETURN
+    ENDIF
+    IF mode$ = "select" THEN
+        IF k$ = "Up" ORELSE k$ = "W" ORELSE k$ = "PadUp" THEN sel = (sel + LEN(LEVELS) - 1) MOD LEN(LEVELS)
+        IF k$ = "Down" ORELSE k$ = "S" ORELSE k$ = "PadDown" THEN sel = (sel + 1) MOD LEN(LEVELS)
+        IF k$ = "Escape" THEN TOTITLE()
+        IF ok = 1 ANDALSO sel < PROF{"unlocked"} THEN
+            SFX("menu")
+            NEWGAME(sel)
+        ENDIF
+        RETURN
+    ENDIF
+    IF mode$ = "badges" THEN
+        DIM nb = LEN(ACH{"badges"})
+        IF k$ = "Up" ORELSE k$ = "W" ORELSE k$ = "PadUp" THEN badge_sel = (badge_sel + nb - 1) MOD nb
+        IF k$ = "Down" ORELSE k$ = "S" ORELSE k$ = "PadDown" THEN badge_sel = (badge_sel + 1) MOD nb
+        IF k$ = "Escape" ORELSE ok = 1 THEN TOTITLE()
+        RETURN
+    ENDIF
+    IF mode$ = "play" ORELSE mode$ = "intro" THEN
+        IF k$ = "Return" ORELSE k$ = "P" THEN paused = 1 - paused
+        IF k$ = "Escape" THEN
+            COUNTATTEMPT(0)
+            TOTITLE()
+        ENDIF
+        RETURN
+    ENDIF
+    IF mode$ = "over" ANDALSO (ok = 1 ORELSE k$ = "Escape") ANDALSO mode_t > 40 THEN TOTITLE()
+ENDSUB
+
+' ── drawing the level ───────────────────────────────────────────
+
+FUNC GIRDERTOP(x, y)
+    DIM pi2 = SIM.PLAT_AT(x, y, 4)
+    IF pi2 < 0 THEN RETURN FLOOR(y + 0.5)
+    DIM p = SIM.PLATFORMS()[pi2]
+    DIM x1 = FLOOR(p{"x1"} + 0.5)
+    DIM tx = x1 + FLOOR((x - x1) / 8) * 8
+    DIM sx = tx + 4
+    IF sx > p{"x2"} THEN sx = p{"x2"}
+    RETURN FLOOR(SIM.SURF(pi2, sx) + 0.5)
+ENDFUNC
+
+' 8 px wide with 1 px rails and a rung every 4 px, hanging under the upper
+' girder and standing on the lower one; a broken ladder keeps two stubs
+SUB DRAWLADDER(l)
+    DIM xl = FLOOR(l{"x"} + 0.5) - 4
+    DIM xr = xl + 7
+    DIM topl = GIRDERTOP(xl, l{"top"}) + 7
+    DIM topr = GIRDERTOP(xr, l{"top"}) + 7
+    DIM botl = GIRDERTOP(xl, l{"bot"})
+    DIM botr = GIRDERTOP(xr, l{"bot"})
+    DIM c = LADC
+    IF l{"broken"} = 0 THEN
+        LINE xl, topl, xl, botl - 1, c[0], c[1], c[2]
+        LINE xr, topr, xr, botr - 1, c[0], c[1], c[2]
+    ELSE
+        LINE xl, topl, xl, topl + 5, c[0], c[1], c[2]
+        LINE xr, topr, xr, topr + 5, c[0], c[1], c[2]
+        LINE xl, botl - 10, xl, botl - 1, c[0], c[1], c[2]
+        LINE xr, botr - 10, xr, botr - 1, c[0], c[1], c[2]
+    ENDIF
+    DIM top = topl
+    IF topr > top THEN top = topr
+    DIM bot = botl
+    IF botr < bot THEN bot = botr
+    DIM y = bot - 2
+    DO WHILE y >= top
+        IF l{"broken"} = 0 ORELSE y < top + 6 ORELSE y >= bot - 10 THEN RECT xl, y, 8, 1, TRUE, c[0], c[1], c[2]
+        y = y - 4
+    LOOP
+ENDSUB
+
+SUB DRAWPLATFORM(i, p)
+    DIM kind$ = p{"kind"}
+    IF kind$ = "swing" ORELSE kind$ = "lift" THEN RETURN
+    IF kind$ = "spring" THEN
+        DIM sw = p{"x2"} - p{"x1"}
+        GFX.DRAWIMAGE SPR{"springboard"}, FLOOR(p{"x1"}), FLOOR(p{"y1"}), sw, 6
+        RETURN
+    ENDIF
+    IF kind$ = "plank" THEN
+        IF p{"solid"} = 0 THEN RETURN
+        DIM shake = 0
+        IF p{"t"} > 0 THEN shake = (frame_no MOD 2) * 2 - 1
+        DIM x = FLOOR(p{"x1"})
+        DO WHILE x < p{"x2"}
+            SPRITE_AT("plank", x + shake, SIM.SURF(i, x), 0)
+            x = x + 8
+        LOOP
+        RETURN
+    ENDIF
+    DIM gx = FLOOR(p{"x1"} + 0.5)
+    DO WHILE gx < p{"x2"}
+        DIM sx = gx + 4
+        IF sx > p{"x2"} THEN sx = p{"x2"}
+        SPRITE_AT("girder", gx, FLOOR(SIM.SURF(i, sx) + 0.5), 0)
+        gx = gx + 8
+    LOOP
+ENDSUB
+
+FUNC HOOKXY(p)
+    DIM cx = (p{"x1"} + p{"x2"}) / 2
+    RETURN [cx - 10 * SIN(p{"th"}), p{"y1"} - 10 * COS(p{"th"})]
+ENDFUNC
+
+' rail, trolley, scaffold masts and slings, all behind the beams
+SUB DRAWCRANEBACK(lv)
+    DIM cr = lv{"crane"}
+    DIM ry = cr{"railY"}
+    BOX(0, ry, W, 1, SPRDATA{"pal"}{"G"})
+    BOX(0, ry + 1, W, 1, SPRDATA{"pal"}{"g"})
+    SPRITE_AT("trolley", cr{"pivot"}{"x"} - 5, ry + 1, 0)
+    DIM floor_y = 0
+    DIM p
+    FOR EACH p IN lv{"platforms"}
+        IF p{"y1"} > floor_y THEN floor_y = p{"y1"}
+    NEXT p
+    DIM mx
+    FOR EACH mx IN cr{"masts"}
+        DIM y = ry + 2
+        DO WHILE y < floor_y
+            SPRITE_AT("mast", mx, y, 0)
+            y = y + 8
+        LOOP
+    NEXT mx
+    FOR EACH p IN SIM.PLATFORMS()
+        IF p{"kind"} <> "swing" THEN CONTINUEFOR
+        DIM hk = HOOKXY(p)
+        PIXLINE(cr{"pivot"}{"x"}, cr{"pivot"}{"y"}, hk[0], hk[1] - 3, "#5a6472")
+        PIXLINE(hk[0], hk[1], p{"x1"} + 2, p{"y1"}, SPRDATA{"pal"}{"g"})
+        PIXLINE(hk[0], hk[1], p{"x2"} - 3, p{"y1"}, SPRDATA{"pal"}{"g"})
+    NEXT p
+ENDSUB
+
+SUB DRAWMOVERS()
+    DIM p
+    FOR EACH p IN SIM.PLATFORMS()
+        IF p{"kind"} = "swing" THEN
+            DIM x1 = FLOOR(p{"x1"} + 0.5)
+            DIM y = FLOOR(p{"y1"} + 0.5)
+            DIM x = x1
+            DO WHILE x < x1 + p{"w"}
+                SPRITE_AT("beam", x, y, 0)
+                x = x + 8
+            LOOP
+            DIM hk = HOOKXY(p)
+            SPRITE_AT("hook", FLOOR(hk[0] + 0.5) - 2, FLOOR(hk[1] + 0.5) - 3, 0)
+        ELSEIF p{"kind"} = "lift" THEN
+            DIM ly = FLOOR(p{"y1"} + 0.5)
+            DIM on_left = IIF(p{"x1"} < W / 2, 1, 0)
+            DIM mx = IIF(on_left = 1, p{"x1"} - 8, p{"x2"})
+            BOX(mx, ly - 2, 8, 11, SPRDATA{"pal"}{"h"})
+            BOX(mx + 1, ly - 1, 6, 9, SPRDATA{"pal"}{"H"})
+            BOX(mx + 3, ly + 1, 2, 5, "#000000")
+            PIXLINE(IIF(on_left = 1, p{"x1"}, p{"x2"} - 1), ly + 12, IIF(on_left = 1, p{"x1"} + 12, p{"x2"} - 13), ly + 4, SPRDATA{"pal"}{"u"})
+            DIM lx = FLOOR(p{"x1"})
+            DO WHILE lx < p{"x2"}
+                SPRITE_AT("lift", lx, ly, 0)
+                lx = lx + 8
+            LOOP
+        ENDIF
+    NEXT p
+ENDSUB
+
+SUB DRAWKING(lv)
+    DIM kg = SIM.KINGSTATE()
+    DIM bob = FLOOR(frame_no / 16) MOD 2
+    IF mode$ = "win" THEN bob = (frame_no MOD 4) / 2
+    DIM kx = FLOOR(kg{"x"} + 0.5) - 16
+    DIM ky = FLOOR(kg{"y"} + 0.5) - 30 + bob
+    SPRITE_AT("king", kx, ky, IIF(kg{"side"} < 0, 1, 0))
+    IF mode$ = "win" THEN
+        IF frame_no MOD 6 = 0 THEN PUFF(kg{"x"} + (RND(1) - 0.5) * 20, ky + 4, 2, "#8a929e", 0.8)
+        RETURN
+    ENDIF
+    IF kg{"anim"} > 0 THEN
+        DIM nx$ = kg{"next"}
+        IF LEFT$(nx$, 5) = "spool" THEN
+            SPRITE_AT("spool0", kg{"x"} - 5, ky - 9, 0)
+        ELSEIF nx$ = "hammer" THEN
+            SPRITE_AT("hammer", kg{"x"} - 6, ky - 10, 0)
+        ELSE
+            SPRITE_AT("wrench", kg{"x"} - 6, ky - 6, 0)
+        ENDIF
+    ENDIF
+    IF MAP.EXISTS(lv, "toolbox") THEN
+        SPRITE_AT("toolbox", lv{"toolbox"}{"x"}, FLOOR(kg{"y"} + 0.5) - 7, 0)
+    ELSEIF LEFT$(kg{"pattern"}[0], 5) = "spool" THEN
+        DIM pile_x = kg{"x"} - 26 * kg{"side"} - 5
+        IF pile_x < 0 ORELSE pile_x > W - 10 THEN pile_x = kg{"x"} + 26 * kg{"side"} - 5
+        SPRITE_AT("pile", pile_x, FLOOR(kg{"y"} + 0.5) - 18, 0)
+    ENDIF
+ENDSUB
+
+SUB DRAWHERO()
+    DIM pl = SIM.PLAYER()
+    DIM hx = FLOOR(pl{"x"} + 0.5)
+    DIM hy = FLOOR(pl{"y"} + 0.5)
+    IF mode$ = "dying" THEN
+        IF mode_t < 60 THEN
+            SPRITE_ROT("heroJump", hx - 8, hy - 16, (FLOOR(mode_t / 6) MOD 4) * 90)
+        ELSE
+            SPRITE_ROT("heroIdle", hx - 8, hy - 16, 270)
+            IF FLOOR(mode_t / 8) MOD 2 = 1 THEN CIRCLE hx, hy - 18, 4, FALSE, 255, 255, 255
+        ENDIF
+        RETURN
+    ENDIF
+    IF pl{"inv"} > 0 ANDALSO FLOOR(frame_no / 3) MOD 2 = 0 THEN RETURN
+    DIM name$ = "heroIdle"
+    DIM flip = IIF(pl{"face"} < 0, 1, 0)
+    IF pl{"climb"} >= 0 THEN
+        name$ = "heroClimb"
+        flip = FLOOR(pl{"y"} / 5) MOD 2
+    ELSEIF pl{"plat"} < 0 THEN
+        name$ = "heroJump"
+    ELSEIF pl{"moving"} = 1 THEN
+        DIM phase = FLOOR(pl{"anim"} / 5) MOD 4
+        IF phase = 0 THEN name$ = "heroRunA"
+        IF phase = 1 ORELSE phase = 3 THEN name$ = "heroRunB"
+    ENDIF
+    ' on a moving platform round relative to it, else the hero jitters
+    IF pl{"plat"} >= 0 THEN
+        DIM pp = SIM.PLATFORMS()[pl{"plat"}]
+        IF pp{"mv"} = 1 THEN hx = FLOOR(pp{"x1"} + 0.5) + FLOOR(pl{"x"} - pp{"x1"} + 0.5)
+    ENDIF
+    SPRITE_AT(name$, hx - 8, hy - 16, flip)
+    IF pl{"shield"} = 1 THEN SPRITE_AT("helm", hx - 5 + flip, hy - 20, 0)
+    IF pl{"power"} = "spring" THEN
+        SPRITE_AT("spring", hx - 5, hy - 3, 0)
+    ENDIF
+ENDSUB
+
+SUB DRAWHAZARDS()
+    DIM s
+    FOR EACH s IN SIM.SPOOLLIST()
+        IF s{"ladder"} >= 0 THEN
+            SPRITE_AT("spoolSide", s{"x"} - 6, s{"y"} - 8 - (FLOOR(s{"anim"} / 4) MOD 2), 0)
+        ELSE
+            DIM idx = FLOOR(s{"roll"} / 4) MOD 4
+            IF idx < 0 THEN idx = idx + 4
+            DIM nm$ = IIF(idx MOD 2 = 0, "spool0", "spool1")
+            SPRITE_ROT(nm$, FLOOR(s{"x"} + 0.5) - 5, FLOOR(s{"y"} + 0.5) - 10, FLOOR(idx / 2) * 90)
+        ENDIF
+    NEXT s
+    DIM o
+    FOR EACH o IN SIM.TOOLLIST()
+        DIM q = 0
+        IF o{"plat"} < 0 THEN q = FLOOR(o{"rot"} / 6) * IIF(o{"vx"} < 0, -1, 1)
+        DIM tn$ = o{"kind"}
+        DIM ty = FLOOR(o{"y"} + 0.5) - IIF(tn$ = "hammer", 5, 3)
+        SPRITE_ROT(tn$, FLOOR(o{"x"} + 0.5) - FLOOR(SPRW{tn$} / 2), ty - FLOOR(SPRH{tn$} / 2), ((q MOD 4) + 4) MOD 4 * 90)
+    NEXT o
+    DIM d
+    FOR EACH d IN SIM.DRONELIST()
+        DIM dn$ = IIF(FLOOR(frame_no / 3) MOD 2 = 0, "drone0", "drone1")
+        SPRITE_AT(dn$, FLOOR(d{"x"} + 0.5) - 7, FLOOR(d{"y"} + 0.5) - 8, IIF(d{"face"} < 0, 1, 0))
+    NEXT d
+ENDSUB
+
+SUB DRAWWIND()
+    DIM ws = SIM.WINDLIST()
+    DIM i
+    FOR i = 0 TO LEN(ws) - 1
+        DIM w = ws[i]
+        DIM dirn = SGN(w{"force"})
+        IF SIM.GUST(i) = 1 THEN
+            DIM k
+            FOR k = 0 TO 7
+                DIM sy = w{"y1"} + ((k * 37 + i * 11) MOD FLOOR(w{"y2"} - w{"y1"} + 1))
+                DIM sx = ((k * 53 + frame_no * 4 * dirn) MOD (W + 40) + W + 40) MOD (W + 40) - 20
+                PIXLINE(sx, sy, sx + 10, sy, "#5a6472")
+            NEXT k
+        ELSE
+            ' the windsock droops; it lifts a moment before the next gust
+            DIM t = (SIM.FRAME() + w{"phase"}) MOD w{"period"}
+            DIM warn = IIF(t > w{"period"} - 45, 1, 0)
+            DIM fx = IIF(dirn > 0, 4, W - 12)
+            DIM fy = w{"y1"}
+            BOX(fx + 3, fy, 1, 10, "#c8d0dc")
+            IF warn = 1 THEN
+                BOX(fx + 4 - IIF(dirn < 0, 9, 0), fy, 8, 3, "#ff4418")
+            ELSE
+                BOX(fx + 4 - IIF(dirn < 0, 3, 0), fy, 2, 6, "#ff4418")
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB DRAWFLOOD()
+    DIM fl = SIM.FLOODSTATE()
+    IF fl{"on"} = 0 THEN RETURN
+    DIM fy = FLOOR(fl{"y"} + 0.5)
+    IF fy >= H THEN RETURN
+    BOX(0, fy, W, H - fy, "#4a4e56")
+    DIM x
+    FOR x = 0 TO W - 1 STEP 4
+        DIM wy = fy + FLOOR(SIN((x + frame_no * 1.5) / 9) * 1.5)
+        BOX(x, wy - 1, 4, 2, "#8a929e")
+    NEXT x
+    IF frame_no MOD 9 = 0 THEN PUFF(RND(1) * W, fy, 1, "#c8d0dc", 0.4)
+ENDSUB
+
+' A theme recolours the girders and ladders and paints the sky behind them:
+' a gradient, stars, and a skyline drawn from the level number.
+SUB APPLYTHEME(name$)
+    IF NOT MAP.EXISTS(THEMES, name$) THEN name$ = "arcade"
+    TH = THEMES{name$}
+    PALX = {}
+    DIM k
+    FOR EACH k IN MAP.KEYS(TH{"pal"})
+        PALX{k} = HEXRGB(TH{"pal"}{k})
+    NEXT k
+    GFX.FREEIMAGE SPR{"girder"}
+    SPR{"girder"} = RASTER(SPRDATA{"sprites"}{"girder"}, "")
+    PALX = {}
+    LADC = HEXRGB(TH{"ladder"})
+    DIM seed = 977 * (lvl_idx + 3)
+    SKYL = []
+    DIM x = -4
+    DO WHILE x < W
+        seed = (seed * 16807) MOD 2147483647
+        DIM bw = 14 + seed MOD 22
+        seed = (seed * 16807) MOD 2147483647
+        DIM bh = 30 + seed MOD 90
+        SKYL = APPEND(SKYL, [[x, H - bh, bw, bh]])
+        x = x + bw + seed MOD 4
+    LOOP
+    STARS = []
+    DIM i
+    FOR i = 1 TO TH{"stars"}
+        seed = (seed * 16807) MOD 2147483647
+        DIM sx = seed MOD W
+        seed = (seed * 16807) MOD 2147483647
+        STARS = APPEND(STARS, [[sx, 26 + seed MOD 120]])
+    NEXT i
+ENDSUB
+
+SUB DRAWBACK()
+    DIM c0 = HEXRGB(TH{"sky"}[0])
+    DIM c1 = HEXRGB(TH{"sky"}[1])
+    DIM bands = 16
+    DIM b
+    FOR b = 0 TO bands - 1
+        DIM f = b / (bands - 1)
+        RECT 0, FLOOR(b * H / bands), W, FLOOR(H / bands) + 1, TRUE, FLOOR(c0[0] + (c1[0] - c0[0]) * f), FLOOR(c0[1] + (c1[1] - c0[1]) * f), FLOOR(c0[2] + (c1[2] - c0[2]) * f)
+    NEXT b
+    DIM s
+    FOR EACH s IN STARS
+        IF (s[0] + FLOOR(frame_no / 20)) MOD 7 <> 0 THEN PSET s[0], s[1], 200, 200, 230
+    NEXT s
+    DIM sc = HEXRGB(TH{"skyline"})
+    DIM wc = HEXRGB(TH{"windows"})
+    DIM r
+    FOR EACH r IN SKYL
+        RECT r[0], r[1], r[2], r[3], TRUE, sc[0], sc[1], sc[2]
+        DIM wy = r[1] + 4
+        DO WHILE wy < H - 6
+            DIM wx = r[0] + 3
+            DO WHILE wx < r[0] + r[2] - 3
+                IF (wx * 7 + wy * 13) MOD 5 = 0 THEN PSET wx, wy, wc[0], wc[1], wc[2]
+                wx = wx + 4
+            LOOP
+            wy = wy + 6
+        LOOP
+    NEXT r
+ENDSUB
+
+SUB DRAWLEVEL()
+    DIM lv = SIM.LEVEL()
+    DRAWBACK()
+    IF MAP.EXISTS(lv, "crane") THEN DRAWCRANEBACK(lv)
+    DIM l
+    FOR EACH l IN SIM.LADDERS()
+        DRAWLADDER(l)
+    NEXT l
+    DIM plats = SIM.PLATFORMS()
+    DIM i
+    FOR i = 0 TO LEN(plats) - 1
+        DRAWPLATFORM(i, plats[i])
+    NEXT i
+    DRAWMOVERS()
+    DIM it
+    FOR EACH it IN SIM.ITEMLIST()
+        IF it{"taken"} = 1 THEN CONTINUEFOR
+        DIM nm$ = ITEMDEF{it{"type"}}{"sprite"}
+        DIM bob = IIF(it{"type"} = "bolt", FLOOR(frame_no / 12) MOD 2, 0)
+        SPRITE_AT(nm$, FLOOR(it{"x"}) - FLOOR(SPRW{nm$} / 2), FLOOR(it{"y"}) - FLOOR(SPRH{nm$} / 2) - bob, 0)
+    NEXT it
+    DIM btn = SIM.BUTTON()
+    SPRITE_AT(IIF(mode$ = "win", "buttonDown", "button"), btn{"x"} - 6, btn{"y"} - 16, 0)
+    IF mode$ = "play" ANDALSO FLOOR(frame_no / 32) MOD 2 = 1 THEN
+        IF btn{"y"} - 24 >= 28 THEN
+            TXTC("NOT-AUS", btn{"x"}, btn{"y"} - 24, "#ffe438", 1)
+        ELSEIF btn{"x"} > W / 2 THEN
+            TXT("NOT-AUS", btn{"x"} - 38, btn{"y"} - 12, "#ffe438", 1)
+        ELSE
+            TXT("NOT-AUS", btn{"x"} + 9, btn{"y"} - 12, "#ffe438", 1)
+        ENDIF
+    ENDIF
+    DRAWKING(lv)
+    DRAWHAZARDS()
+    DIM k
+    FOR EACH k IN SIM.SINKLIST()
+        SPRITE_AT("skip", (k{"x1"} + k{"x2"}) / 2 - 10, k{"y"} - 11, 0)
+    NEXT k
+    DRAWHERO()
+    DRAWFLOOD()
+    DRAWWIND()
+    DIM p
+    FOR EACH p IN parts
+        DIM c = HEXRGB(p{"c"})
+        PSET FLOOR(p{"x"}), FLOOR(p{"y"}), c[0], c[1], c[2]
+    NEXT p
+    DIM f
+    FOR EACH f IN floats
+        TXTC(f{"s"}, f{"x"}, f{"y"}, f{"c"}, 1)
+    NEXT f
+ENDSUB
+
+SUB DRAWHUD()
+    TXT("1UP", 8, 2, "#ff3d68", 1)
+    TXT(PAD6$(SIM.SCORE()), 2, 9, "#ffffff", 1)
+    TXTC("HIGH SCORE", 112, 2, "#ff3d68", 1)
+    DIM hs = PROF{"hiscore"}
+    IF SIM.SCORE() > hs THEN hs = SIM.SCORE()
+    TXTC(PAD6$(hs), 112, 9, "#ffffff", 1)
+    BOX(180, 2, 42, 1, "#2868f8")
+    BOX(180, 16, 42, 1, "#2868f8")
+    BOX(180, 2, 1, 15, "#2868f8")
+    BOX(221, 2, 1, 15, "#2868f8")
+    TXT(T$("bonus"), 184, 4, "#28d8ff", 1)
+    TXT(RIGHT$("0000" + STR$(SIM.BONUS()), 4), 190, 10, "#ffd23f", 1)
+    DIM i
+    FOR i = 0 TO lives - 2
+        BOX(8 + i * 8 + 1, 17, 4, 2, "#ffcc00")
+        BOX(8 + i * 8, 19, 6, 1, "#ffcc00")
+    NEXT i
+    DIM lvn = (round_no - 1) * LEN(LEVELS) + lvl_idx + 1
+    TXT("L=" + RIGHT$("0" + STR$(lvn), 2), 192, 19, "#2868f8", 1)
+    DIM pl = SIM.PLAYER()
+    IF pl{"power"} <> "" THEN
+        DIM nm$ = IIF(pl{"power"} = "spring", "spring", "clock")
+        SPRITE_AT(nm$, 92, 16, 0)
+        DIM full = IIF(pl{"power"} = "spring", ITEMDEF{"spring"}{"dur"}, ITEMDEF{"clock"}{"dur"})
+        BOX(104, 20, FLOOR(30 * pl{"power_t"} / full), 2, "#28d8ff")
+    ENDIF
+    IF pl{"power"} = "slow" THEN
+        BOX(0, 24, W, 1, "#28d8ff")
+        BOX(0, H - 1, W, 1, "#28d8ff")
+    ENDIF
+ENDSUB
+
+' ── screens ─────────────────────────────────────────────────────
+
+SUB DRAWTITLE()
+    TXTC("KING", W / 2, 30, "#ff3d68", 6)
+    TXTC(T$("title_sub"), W / 2, 66, "#ffcc00", 1)
+    SPRITE_AT("king", W / 2 - 44, 80 + FLOOR(frame_no / 16) MOD 2, 0)
+    SPRITE_AT("heroIdle", W / 2 + 20, 94, 1)
+    SPRITE_AT("button", W / 2 + 40, 94, 0)
+    TXTC(T$("top") + ": " + PAD6$(PROF{"hiscore"}), W / 2, 122, "#ffffff", 1)
+    TXTC(T$("keys1"), W / 2, 140, "#c8d0dc", 1)
+    TXTC(T$("keys2"), W / 2, 150, "#c8d0dc", 1)
+    TXTC(T$("keys3"), W / 2, 160, "#c8d0dc", 1)
+    TXTC(T$("levels"), W / 2, 174, "#28d8ff", 1)
+    TXTC(IIF(pad_seen = 1, T$("pad_on"), T$("pad_off")), W / 2, 190, IIF(pad_seen = 1, "#3ddc55", "#5a6472"), 1)
+    IF FLOOR(frame_no / 32) MOD 2 = 1 THEN TXTC(T$("start"), W / 2, 212, "#ffffff", 1)
+    TXTC(STR$(LEN(PROF{"badges"})) + "/" + STR$(LEN(ACH{"badges"})) + " " + T$("badges"), W / 2, 226, "#ffcc00", 1)
+    TXTC(T$("footer"), W / 2, 242, "#39414d", 1)
+ENDSUB
+
+SUB DRAWSELECT()
+    TXTC(T$("select"), W / 2, 12, "#ffcc00", 2)
+    DIM i
+    FOR i = 0 TO LEN(LEVELS) - 1
+        DIM y = 40 + i * 20
+        DIM col$ = IIF(i < PROF{"unlocked"}, "#ffffff", "#39414d")
+        IF i = sel THEN
+            BOX(16, y - 4, W - 32, 13, "#1a3aa8")
+            col$ = IIF(i < PROF{"unlocked"}, "#ffcc00", "#5a6472")
+        ENDIF
+        TXT(RIGHT$("0" + STR$(i + 1), 2), 22, y, col$, 1)
+        TXT(IIF(i < PROF{"unlocked"}, LEVELS[i]{"name"}, T$("locked")), 40, y, col$, 1)
+        IF HASWON(LEVELS[i]{"name"}) = 1 THEN SPRITE_AT("bolt", W - 30, y - 1, 0)
+    NEXT i
+    TXTC(T$("select_keys"), W / 2, 240, "#5a6472", 1)
+ENDSUB
+
+SUB DRAWBADGES()
+    DIM bl = ACH{"badges"}
+    TXTC(T$("badges") + " " + STR$(LEN(PROF{"badges"})) + "/" + STR$(LEN(bl)), W / 2, 8, "#ffcc00", 2)
+    DIM per = 10
+    DIM first = FLOOR(badge_sel / per) * per
+    DIM i
+    FOR i = first TO first + per - 1
+        IF i >= LEN(bl) THEN EXITFOR
+        DIM b = bl[i]
+        DIM y = 32 + (i - first) * 18
+        DIM got = HASBADGE(b{"id"})
+        IF i = badge_sel THEN BOX(8, y - 3, W - 16, 16, "#1a3aa8")
+        IF got = 1 THEN
+            DIM ic$ = b{"icon"}
+            DIM sc = 12 / MAX2(SPRW{ic$}, SPRH{ic$})
+            IF sc > 1 THEN sc = 1
+            GFX.DRAWIMAGE SPR{ic$}, 14, y - 2, FLOOR(SPRW{ic$} * sc), FLOOR(SPRH{ic$} * sc)
+        ELSE
+            BOX(14, y - 2, 12, 12, "#39414d")
+            TXT("?", 19, y + 1, "#8a929e", 1)
+        ENDIF
+        DIM nm = b{lang$}
+        TXT(nm[0], 32, y, IIF(got = 1, "#ffcc00", "#8a929e"), 1)
+        DIM have = PROF{"counters"}{b{"counter"}}
+        IF have > b{"goal"} THEN have = b{"goal"}
+        TXT(STR$(have) + "/" + STR$(b{"goal"}), 160, y, "#5a6472", 1)
+    NEXT i
+    DIM cur = bl[badge_sel]
+    TXTC(cur{lang$}[1], W / 2, 220, "#ffffff", 1)
+    TXTC(T$("badges_keys"), W / 2, 240, "#5a6472", 1)
+ENDSUB
+
+FUNC MAX2(a, b)
+    IF a > b THEN RETURN a
+    RETURN b
+ENDFUNC
+
+SUB DRAWFRAME()
+    CLS
+    IF mode$ = "title" THEN
+        DRAWTITLE()
+    ELSEIF mode$ = "select" THEN
+        DRAWSELECT()
+    ELSEIF mode$ = "badges" THEN
+        DRAWBADGES()
+    ELSEIF mode$ = "intro" THEN
+        DRAWHUD()
+        TXTC(T$("round") + " " + STR$(round_no), W / 2, 84, "#ffcc00", 2)
+        TXTC(LEVELS[lvl_idx]{"name"}, W / 2, 110, "#ffffff", 1)
+        TXTC(T$("goal"), W / 2, 130, "#28d8ff", 1)
+        TXTC(SIM_OPT(LEVELS[lvl_idx], "hint", ""), W / 2, 146, "#c8d0dc", 1)
+    ELSEIF mode$ = "over" THEN
+        DRAWHUD()
+        TXTC(T$("gameover"), W / 2, 100, "#ff3d68", 2)
+        TXTC(T$("points") + ": " + PAD6$(SIM.SCORE()), W / 2, 130, "#ffffff", 1)
+    ELSEIF mode$ = "finale" THEN
+        TXTC(T$("round_done"), W / 2, 70, "#3ddc55", 1)
+        SPRITE_ROT("king", W / 2 - 16, 100, (FLOOR(mode_t / 10) MOD 4) * 90)
+        TXTC(T$("next_round") + " " + STR$(round_no), W / 2, 160, "#ffcc00", 1)
+        TXTC(T$("points") + ": " + PAD6$(SIM.SCORE()), W / 2, 180, "#ffffff", 1)
+    ELSE
+        DRAWLEVEL()
+        DRAWHUD()
+        IF mode$ = "win" THEN
+            TXTC(T$("stopped"), W / 2, 130, "#3ddc55", 2)
+            IF SIM.BONUS() > 0 THEN TXTC(T$("bonus") + " +" + STR$(SIM.BONUS()), W / 2, 150, "#ffd23f", 1)
+        ENDIF
+        IF paused = 1 ANDALSO mode$ = "play" THEN TXTC(T$("pause"), W / 2, 120, "#ffffff", 2)
+        IF demo = 1 ANDALSO FLOOR(frame_no / 32) MOD 2 = 1 THEN TXTC(T$("demo"), W / 2, 232, "#ffffff", 1)
+    ENDIF
+    IF msg_t > 0 THEN TXTC(msg$, W / 2, 30, "#3ddc55", 1)
+    IF LEN(toasts) > 0 THEN
+        DIM b = toasts[0]
+        BOX(20, 200, W - 40, 30, "#1a3aa8")
+        TXTC(T$("new_badge"), W / 2, 205, "#ffcc00", 1)
+        TXTC(b{lang$}[0], W / 2, 216, "#ffffff", 1)
+    ENDIF
+ENDSUB
+
+' ── main ────────────────────────────────────────────────────────
+
+SCREEN W, H, "KING", CFG{"screen"}{"scale"}
+BUILDSPRITES()
+SNDINIT()
+
+IF shot_screen$ <> "" THEN
+    IF shot_screen$ = "select" THEN mode$ = "select"
+    IF shot_screen$ = "badges" THEN mode$ = "badges"
+    IF shot_screen$ = "over" THEN mode$ = "over"
+    frame_no = 32
+    DRAWFRAME()
+    GFX.SAVE_SCREENSHOT(GAMEDIR$ + "tmp/shot.png", 0, 0, W * CFG{"screen"}{"scale"}, H * CFG{"screen"}{"scale"})
+    SCREENFLIP
+    PRINT "shot saved: "; shot_screen$
+    GFX.CLOSE
+ELSEIF shot_level > 0 THEN
+    lvl_idx = shot_level - 1
+    NEWGAME(lvl_idx)
+    SETMODE("play")
+    DIM n AS INTEGER
+    FOR n = 1 TO shot_frames
+        UPDATE(READPAD())
+        IF mode$ = "intro" THEN SETMODE("play")
+    NEXT n
+    DIM tf0 = TICK()
+    DIM r AS INTEGER
+    FOR r = 1 TO 10
+        DRAWFRAME()
+    NEXT r
+    DIM frame_ms = (TICK() - tf0) / 10
+    GFX.SAVE_SCREENSHOT(GAMEDIR$ + "tmp/shot.png", 0, 0, W * CFG{"screen"}{"scale"}, H * CFG{"screen"}{"scale"})
+    SCREENFLIP
+    PRINT "shot saved, mode "; mode$; ", score "; SIM.SCORE(); ", draw "; frame_ms; " ms"
+    GFX.CLOSE
+ELSE
+    TOTITLE()
+    DIM t_last = TICK()
+    DIM acc = 0.0
+    DO
+        IF running = 0 THEN EXITDO
+        DIM t0 = TICK()
+        DIM dt = t0 - t_last
+        t_last = t0
+        IF dt > 100 THEN dt = 100
+        acc = acc + dt
+        DIM pad = READPAD()
+        PADKEYS(pad)
+        DO WHILE LEN(keys_in) > 0
+            DIM kk$ = keys_in[0]
+            keys_in = DROP(1, keys_in)
+            HANDLEKEY(kk$)
+        LOOP
+        IF running = 0 THEN EXITDO
+        DIM n_steps = 0
+        DO WHILE acc >= STEP_MS ANDALSO n_steps < 4
+            UPDATE(pad)
+            acc = acc - STEP_MS
+            n_steps = n_steps + 1
+        LOOP
+        IF LEN(toasts) > 0 ANDALSO frame_no MOD 180 = 0 THEN toasts = DROP(1, toasts)
+        SFXPUMP()
+        DRAWFRAME()
+        SCREENFLIP
+        DIM rest = 16 - (TICK() - t0)
+        IF rest < 1 THEN rest = 1
+        SLEEP rest
+    LOOP
+    SAVEPROFILE()
+    GFX.CLOSE
+ENDIF

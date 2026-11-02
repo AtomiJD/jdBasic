@@ -1,0 +1,1277 @@
+' KING rules. No graphics, no sound, no files: the host hands in the config,
+' the item table and one level as maps, calls STEP with the pad state once
+' per 1/60 s and draws what STATE answers.
+'
+' Coordinates are arcade pixels on a 224 x 256 field, y grows downwards and
+' a platform's y is its walking surface. Actors refer to platforms and
+' ladders by index into PLATS and LADS; -1 means none.
+EXPORT MODULE SIM
+
+DIM CFG AS MAP = {}
+DIM ITEMDEF AS MAP = {}
+DIM LV AS MAP = {}
+DIM FW = 224
+DIM FH = 256
+
+DIM PLATS = []
+DIM LADS = []
+DIM SINKS = []
+DIM WINDS = []
+DIM ITEMS = []
+DIM SPOOLS = []
+DIM TOOLS = []
+DIM DRONES = []
+DIM EVENTS = []
+
+DIM PL AS MAP = {}
+DIM KG AS MAP = {}
+DIM FLOOD AS MAP = {}
+DIM BTN AS MAP = {}
+DIM START AS MAP = {}
+DIM ST AS MAP = {}
+
+DIM mode$ = "play"
+DIM frame_no = 0
+DIM round_no = 1
+DIM pts = 0
+DIM next_life = 0
+DIM bonus_left = 0
+DIM bonus_t = 0
+DIM rng = 12345
+DIM god = 0
+DIM e_acc = 0.0
+DIM throw_count = 0
+DIM crane_t = 0
+DIM has_crane = 0
+DIM king_plat = -1
+
+' physics, copied out of CFG on SETUP
+DIM WALK = 0.8
+DIM JUMP_VY = -2.25
+DIM GRAV = 0.118
+DIM JUMP_BUF = 5
+DIM CLIMB_V = 0.6
+DIM MAX_FALL = 20
+DIM GRACE = 3
+
+' ── small helpers ───────────────────────────────────────────────
+
+FUNC OPT(m, key$, dflt)
+    IF TYPEOF(m) <> "OBJECT" THEN RETURN dflt
+    IF MAP.EXISTS(m, key$) THEN RETURN m{key$}
+    RETURN dflt
+ENDFUNC
+
+FUNC CLAMPV(v, lo, hi)
+    IF v < lo THEN RETURN lo
+    IF v > hi THEN RETURN hi
+    RETURN v
+ENDFUNC
+
+FUNC RNDF()
+    rng = (rng * 16807) MOD 2147483647
+    RETURN rng / 2147483647
+ENDFUNC
+
+FUNC PX(v)
+    RETURN FLOOR(v + 0.5)
+ENDFUNC
+
+SUB EMIT(ev$)
+    EVENTS = APPEND(EVENTS, ev$)
+ENDSUB
+
+FUNC RECTHIT(ax, ay, aw, ah, bx, by, bw, bh)
+    RETURN ax < bx + bw ANDALSO ax + aw > bx ANDALSO ay < by + bh ANDALSO ay + ah > by
+ENDFUNC
+
+' ── geometry ────────────────────────────────────────────────────
+
+FUNC SURFY(p, x)
+    IF p{"x2"} = p{"x1"} THEN RETURN p{"y1"}
+    RETURN p{"y1"} + (p{"y2"} - p{"y1"}) * ((x - p{"x1"}) / (p{"x2"} - p{"x1"}))
+ENDFUNC
+
+' a spot in the level file names its y, or the platform it sits on
+FUNC SPOTY(m, x, lift)
+    IF MAP.EXISTS(m, "y") THEN RETURN m{"y"}
+    RETURN SURFY(PLATS[m{"on"}], x) + lift
+ENDFUNC
+
+FUNC DOWNHILL(p)
+    RETURN SGN(p{"y2"} - p{"y1"})
+ENDFUNC
+
+FUNC PLATUNDER(x, y, tol)
+    DIM best = -1
+    DIM bd = 1E9
+    DIM i
+    FOR i = 0 TO LEN(PLATS) - 1
+        DIM p = PLATS[i]
+        IF p{"solid"} = 0 THEN CONTINUEFOR
+        DIM xt = IIF(p{"mv"} = 1, GRACE, 0.5)
+        IF x < p{"x1"} - xt ORELSE x > p{"x2"} + xt THEN CONTINUEFOR
+        DIM d = ABS(SURFY(p, x) - y)
+        IF d <= tol ANDALSO d < bd THEN
+            bd = d
+            best = i
+        ENDIF
+    NEXT i
+    RETURN best
+ENDFUNC
+
+' a falling body crosses a surface between prev_y and y
+FUNC LANDCHECK(x, prev_y, y, skip)
+    DIM best = -1
+    DIM by = 1E9
+    DIM i
+    FOR i = 0 TO LEN(PLATS) - 1
+        IF i = skip THEN CONTINUEFOR
+        DIM p = PLATS[i]
+        IF p{"solid"} = 0 THEN CONTINUEFOR
+        DIM xt = IIF(p{"mv"} = 1, GRACE, 0)
+        IF x < p{"x1"} - xt ORELSE x > p{"x2"} + xt THEN CONTINUEFOR
+        DIM sy = SURFY(p, x)
+        DIM sy0 = IIF(p{"mv"} = 1, p{"y0"}, sy)
+        IF prev_y <= sy0 + 0.5 ANDALSO y >= sy - 0.5 ANDALSO sy < by THEN
+            by = sy
+            best = i
+        ENDIF
+    NEXT i
+    RETURN best
+ENDFUNC
+
+FUNC LADDERAT(x, y, up)
+    DIM i
+    FOR i = 0 TO LEN(LADS) - 1
+        DIM l = LADS[i]
+        IF l{"broken"} = 1 THEN CONTINUEFOR
+        IF ABS(x - l{"x"}) > 5 THEN CONTINUEFOR
+        IF up = 1 ANDALSO y <= l{"bot"} + 2 ANDALSO y > l{"top"} + 2 THEN RETURN i
+        IF up = 0 ANDALSO ABS(y - l{"top"}) < 3 THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' ── moving platforms ────────────────────────────────────────────
+' Swinging beams hang from the trolley on two slings and stay level; their
+' centre runs on the arc around the pivot and rises at the turning points.
+' A lift travels one storey and waits at either end until the swinging beam
+' on its side turns there, so every swing offers one chance to change over.
+
+FUNC EASEIO(v)
+    RETURN v * v * (3 - 2 * v)
+ENDFUNC
+
+FUNC MKPLAT(x1, y1, x2, y2, kind$)
+    DIM p AS MAP = {}
+    p{"x1"} = x1
+    p{"y1"} = y1
+    p{"x2"} = x2
+    p{"y2"} = y2
+    p{"kind"} = kind$
+    p{"mv"} = 0
+    p{"solid"} = 1
+    p{"dx"} = 0
+    p{"y0"} = y1
+    p{"th"} = 0
+    p{"t"} = 0
+    p{"gone"} = 0
+    RETURN p
+ENDFUNC
+
+SUB BUILDMOVERS()
+    IF has_crane = 0 THEN RETURN
+    DIM cr = LV{"crane"}
+    DIM pvx = cr{"pivot"}{"x"}
+    DIM pvy = cr{"pivot"}{"y"}
+    DIM swings = []
+    DIM movers = OPT(LV, "movers", [])
+    DIM m
+    FOR EACH m IN movers
+        IF m{"type"} <> "swing" THEN CONTINUEFOR
+        DIM p = MKPLAT(0, 0, 0, 0, "swing")
+        p{"mv"} = 1
+        p{"w"} = m{"w"}
+        p{"ph"} = m{"ph"}
+        p{"len"} = m{"row"} - pvy
+        p{"amp"} = ASIN((cr{"reach"} - m{"w"} / 2 - pvx) / p{"len"})
+        p{"period"} = 2 * MATH.PI * SQR(p{"len"} / cr{"gravity"})
+        p{"yext"} = pvy + p{"len"} * COS(p{"amp"})
+        p{"vth"} = 0
+        p{"at_r"} = 0
+        p{"at_l"} = 0
+        PLATS = APPEND(PLATS, p)
+        swings = APPEND(swings, LEN(PLATS) - 1)
+    NEXT m
+    FOR EACH m IN movers
+        IF m{"type"} <> "lift" THEN CONTINUEFOR
+        DIM q = MKPLAT(m{"x"}, 0, m{"x"} + m{"w"}, 0, "lift")
+        q{"mv"} = 1
+        q{"lower"} = -1
+        q{"upper"} = -1
+        IF TYPEOF(m{"bot"}) = "OBJECT" THEN
+            q{"lower"} = swings[m{"bot"}{"swing"}]
+            q{"ybot"} = PLATS[q{"lower"}]{"yext"}
+        ELSE
+            q{"ybot"} = m{"bot"}
+        ENDIF
+        IF TYPEOF(m{"top"}) = "OBJECT" THEN
+            q{"upper"} = swings[m{"top"}{"swing"}]
+            q{"ytop"} = PLATS[q{"upper"}]{"yext"}
+        ELSE
+            q{"ytop"} = m{"top"}
+        ENDIF
+        q{"right"} = IIF(m{"x"} > FW / 2, 1, 0)
+        q{"state"} = "bot"
+        q{"k"} = 0
+        q{"armed"} = 0
+        q{"timer"} = 0
+        PLATS = APPEND(PLATS, q)
+    NEXT m
+    PLACEMOVERS(1)
+ENDSUB
+
+SUB STEPLIFT(p)
+    DIM cr = LV{"crane"}
+    IF p{"state"} = "bot" ORELSE p{"state"} = "top" THEN
+        DIM s = IIF(p{"state"} = "bot", p{"lower"}, p{"upper"})
+        IF p{"armed"} = 0 THEN
+            IF s < 0 THEN
+                p{"armed"} = 1
+                p{"timer"} = cr{"liftIdle"}
+            ELSE
+                DIM here = IIF(p{"right"} = 1, PLATS[s]{"at_r"}, PLATS[s]{"at_l"})
+                IF here = 1 THEN
+                    p{"armed"} = 1
+                    p{"timer"} = cr{"liftHold"}
+                ENDIF
+            ENDIF
+        ELSE
+            p{"timer"} = p{"timer"} - 1
+            IF p{"timer"} <= 0 THEN
+                p{"armed"} = 0
+                p{"state"} = IIF(p{"state"} = "bot", "up", "down")
+            ENDIF
+        ENDIF
+    ELSE
+        p{"k"} = p{"k"} + IIF(p{"state"} = "up", 1, -1) / cr{"liftTravel"}
+        IF p{"k"} >= 1 THEN
+            p{"k"} = 1
+            p{"state"} = "top"
+        ENDIF
+        IF p{"k"} <= 0 THEN
+            p{"k"} = 0
+            p{"state"} = "bot"
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB PLACEMOVERS(first)
+    DIM cr = LV{"crane"}
+    DIM pvx = cr{"pivot"}{"x"}
+    DIM pvy = cr{"pivot"}{"y"}
+    DIM p
+    FOR EACH p IN PLATS
+        IF p{"kind"} <> "swing" THEN CONTINUEFOR
+        DIM ox = p{"x1"}
+        DIM oy = p{"y1"}
+        DIM th = p{"amp"} * SIN(2 * MATH.PI * crane_t / p{"period"} + p{"ph"})
+        DIM vth = IIF(first = 1, 0, th - p{"th"})
+        p{"at_r"} = IIF(p{"vth"} > 0 ANDALSO vth <= 0, 1, 0)
+        p{"at_l"} = IIF(p{"vth"} < 0 ANDALSO vth >= 0, 1, 0)
+        p{"vth"} = vth
+        DIM cx = pvx + p{"len"} * SIN(th)
+        p{"th"} = th
+        p{"x1"} = cx - p{"w"} / 2
+        p{"x2"} = cx + p{"w"} / 2
+        p{"y1"} = pvy + p{"len"} * COS(th)
+        p{"y2"} = p{"y1"}
+        p{"dx"} = IIF(first = 1, 0, p{"x1"} - ox)
+        p{"y0"} = IIF(first = 1, p{"y1"}, oy)
+    NEXT p
+    FOR EACH p IN PLATS
+        IF p{"kind"} <> "lift" THEN CONTINUEFOR
+        DIM oy2 = p{"y1"}
+        IF first = 0 THEN STEPLIFT(p)
+        p{"y1"} = p{"ybot"} + (p{"ytop"} - p{"ybot"}) * EASEIO(p{"k"})
+        p{"y2"} = p{"y1"}
+        p{"dx"} = 0
+        p{"y0"} = IIF(first = 1, p{"y1"}, oy2)
+    NEXT p
+ENDSUB
+
+' rotten planks give way a moment after someone stands on them, and grow back
+SUB UPDATEPLANKS()
+    DIM hold = CFG{"crumble"}{"hold"}
+    DIM gone = CFG{"crumble"}{"gone"}
+    DIM i
+    FOR i = 0 TO LEN(PLATS) - 1
+        DIM p = PLATS[i]
+        IF p{"kind"} <> "plank" THEN CONTINUEFOR
+        IF p{"solid"} = 0 THEN
+            p{"gone"} = p{"gone"} - 1
+            IF p{"gone"} <= 0 THEN
+                p{"solid"} = 1
+                p{"t"} = 0
+            ENDIF
+        ELSEIF p{"t"} > 0 ORELSE (PL{"plat"} = i ANDALSO PL{"climb"} < 0) THEN
+            p{"t"} = p{"t"} + 1
+            IF p{"t"} = 1 THEN EMIT("creak")
+            IF p{"t"} >= hold THEN
+                p{"solid"} = 0
+                p{"gone"} = gone
+                EMIT("crumble")
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+' ── setup ───────────────────────────────────────────────────────
+
+EXPORT SUB SETUP(cfg_map, items_map)
+    CFG = cfg_map
+    ITEMDEF = items_map
+    FW = CFG{"screen"}{"w"}
+    FH = CFG{"screen"}{"h"}
+    DIM pc = CFG{"player"}
+    WALK = pc{"walk"}
+    JUMP_VY = pc{"jump_vy"}
+    GRAV = pc{"gravity"}
+    JUMP_BUF = pc{"jump_buffer"}
+    CLIMB_V = pc{"climb"}
+    MAX_FALL = pc{"max_fall"}
+    GRACE = pc{"mover_grace"}
+ENDSUB
+
+EXPORT SUB NEWGAME()
+    pts = 0
+    next_life = CFG{"extra_life_at"}
+ENDSUB
+
+EXPORT SUB GODMODE(flag)
+    god = flag
+ENDSUB
+
+EXPORT SUB LOAD(level, rnd_no, seed)
+    LV = level
+    round_no = rnd_no
+    rng = 1 + (seed MOD 2147483646)
+    frame_no = 0
+    crane_t = 0
+    PLATS = []
+    LADS = []
+    DIM p
+    FOR EACH p IN LV{"platforms"}
+        DIM q = MKPLAT(p{"x1"}, p{"y1"}, p{"x2"}, p{"y2"}, OPT(p, "kind", "girder"))
+        PLATS = APPEND(PLATS, q)
+    NEXT p
+    DIM l
+    FOR EACH l IN OPT(LV, "ladders", [])
+        DIM m AS MAP = {}
+        m{"x"} = l{"x"}
+        IF MAP.EXISTS(l, "top") THEN
+            m{"top"} = l{"top"}
+        ELSE
+            m{"top"} = SURFY(PLATS[l{"hi"}], l{"x"})
+        ENDIF
+        IF MAP.EXISTS(l, "bot") THEN
+            m{"bot"} = l{"bot"}
+        ELSE
+            m{"bot"} = SURFY(PLATS[l{"lo"}], l{"x"})
+        ENDIF
+        m{"broken"} = IIF(OPT(l, "broken", 0) = 1, 1, 0)
+        LADS = APPEND(LADS, m)
+    NEXT l
+    has_crane = IIF(MAP.EXISTS(LV, "crane"), 1, 0)
+    BUILDMOVERS()
+    SINKS = []
+    DIM k
+    FOR EACH k IN OPT(LV, "sinks", [])
+        DIM sk AS MAP = {}
+        sk{"x1"} = k{"x1"}
+        sk{"x2"} = k{"x2"}
+        sk{"y"} = SPOTY(k, (k{"x1"} + k{"x2"}) / 2, 0)
+        SINKS = APPEND(SINKS, sk)
+    NEXT k
+    WINDS = OPT(LV, "wind", [])
+    BTN = {}
+    BTN{"x"} = LV{"button"}{"x"}
+    BTN{"y"} = SPOTY(LV{"button"}, BTN{"x"}, 0)
+    START = {}
+    START{"x"} = LV{"start"}{"x"}
+    START{"y"} = SPOTY(LV{"start"}, START{"x"}, 0)
+
+    DIM kd = LV{"king"}
+    king_plat = OPT(kd, "plat", 1)
+    KG = {}
+    KG{"x"} = kd{"x"}
+    KG{"y"} = SURFY(PLATS[king_plat], kd{"x"})
+    KG{"side"} = OPT(kd, "side", 1)
+    KG{"pattern"} = OPT(kd, "pattern", ["spool"])
+    DIM rs = CFG{"round"}
+    DIM r1 = round_no - 1
+    KG{"interval"} = OPT(kd, "interval", 150) - r1 * rs{"spool_interval_step"}
+    IF KG{"interval"} < rs{"spool_interval_min"} THEN KG{"interval"} = rs{"spool_interval_min"}
+    KG{"jitter"} = OPT(kd, "jitter", 50)
+    KG{"spool_speed"} = OPT(kd, "spool_speed", CFG{"spool"}{"speed"}) * (1 + rs{"spool_speed_step"} * r1)
+    throw_count = 0
+    RETRY()
+ENDSUB
+
+' puts every actor back to the level's start; score and round stay
+EXPORT SUB RETRY()
+    DIM s = START
+    PL = {}
+    PL{"x"} = s{"x"}
+    PL{"y"} = s{"y"}
+    PL{"vx"} = 0
+    PL{"vy"} = 0
+    PL{"face"} = 1
+    PL{"climb"} = -1
+    PL{"jumping"} = 0
+    PL{"fall_y"} = s{"y"}
+    PL{"anim"} = 0
+    PL{"jump_buf"} = 0
+    PL{"ride"} = -1
+    PL{"power"} = ""
+    PL{"power_t"} = 0
+    PL{"shield"} = 0
+    PL{"inv"} = 0
+    PL{"prev_j"} = 1
+    PL{"moving"} = 0
+    PL{"plat"} = PLATUNDER(s{"x"}, s{"y"}, 4)
+    SPOOLS = []
+    TOOLS = []
+    EVENTS = []
+    ITEMS = []
+    DIM it
+    FOR EACH it IN OPT(LV, "items", [])
+        DIM m AS MAP = {}
+        m{"type"} = it{"type"}
+        m{"x"} = it{"x"}
+        m{"y"} = SPOTY(it, it{"x"}, -9)
+        m{"taken"} = 0
+        ITEMS = APPEND(ITEMS, m)
+    NEXT it
+    DRONES = []
+    DIM rs = CFG{"round"}
+    DIM d
+    FOR EACH d IN OPT(LV, "drones", [])
+        DIM n AS MAP = {}
+        n{"x1"} = d{"x1"}
+        n{"x2"} = d{"x2"}
+        n{"y1"} = d{"y1"}
+        n{"y2"} = OPT(d, "y2", d{"y1"})
+        n{"speed"} = d{"speed"} * (1 + rs{"drone_speed_step"} * (round_no - 1))
+        n{"k"} = OPT(d, "start", 0)
+        n{"kdir"} = 1
+        n{"x"} = n{"x1"} + (n{"x2"} - n{"x1"}) * n{"k"}
+        n{"y"} = n{"y1"} + (n{"y2"} - n{"y1"}) * n{"k"}
+        n{"face"} = 1
+        n{"scored"} = 0
+        n{"t"} = 0
+        DRONES = APPEND(DRONES, n)
+    NEXT d
+    FLOOD = {}
+    FLOOD{"on"} = 0
+    IF MAP.EXISTS(LV, "flood") THEN
+        DIM fd = LV{"flood"}
+        FLOOD{"on"} = 1
+        FLOOD{"y"} = fd{"y"}
+        FLOOD{"delay"} = fd{"delay"}
+        FLOOD{"speed"} = fd{"speed"} * (1 + rs{"flood_speed_step"} * (round_no - 1))
+        FLOOD{"top"} = fd{"top"}
+    ENDIF
+    DIM p
+    FOR EACH p IN PLATS
+        IF p{"kind"} = "plank" THEN
+            p{"solid"} = 1
+            p{"t"} = 0
+            p{"gone"} = 0
+        ENDIF
+    NEXT p
+    KG{"t"} = 90
+    KG{"anim"} = 0
+    KG{"next"} = ""
+    IF LEN(KG{"pattern"}) > 0 THEN KG{"next"} = KG{"pattern"}[0]
+    bonus_left = OPT(LV, "bonus", 5000)
+    bonus_t = 0
+    e_acc = 0
+    mode$ = "play"
+    ST = {}
+    ST{"jumped"} = 0
+    ST{"bolts"} = 0
+    ST{"bolts_all"} = 0
+    ST{"shield_saves"} = 0
+    ST{"lifts"} = 0
+    ST{"frames"} = 0
+    ST{"items"} = 0
+    ST{"springs"} = 0
+    DIM b
+    FOR EACH b IN ITEMS
+        IF b{"type"} = "bolt" THEN ST{"bolts_all"} = ST{"bolts_all"} + 1
+    NEXT b
+ENDSUB
+
+FUNC ADDSCORE(n)
+    pts = pts + n
+    IF pts >= next_life THEN
+        next_life = next_life + CFG{"extra_life_at"}
+        EMIT("extralife")
+    ENDIF
+    RETURN n
+ENDFUNC
+
+' ── player ──────────────────────────────────────────────────────
+
+SUB HURT(why$)
+    IF god = 1 ANDALSO why$ <> "fall" THEN RETURN
+    IF why$ = "hit" THEN
+        IF PL{"inv"} > 0 THEN RETURN
+        IF PL{"shield"} = 1 THEN
+            PL{"shield"} = 0
+            PL{"inv"} = CFG{"player"}{"invulnerable_after_hit"}
+            ST{"shield_saves"} = ST{"shield_saves"} + 1
+            EMIT("shield")
+            RETURN
+        ENDIF
+    ENDIF
+    mode$ = "dead"
+    EMIT("die")
+ENDSUB
+
+SUB STARTCLIMB(li)
+    PL{"climb"} = li
+    PL{"x"} = LADS[li]{"x"}
+    PL{"vx"} = 0
+    PL{"plat"} = -1
+    PL{"jumping"} = 0
+ENDSUB
+
+FUNC JUMPV()
+    IF PL{"power"} = "spring" THEN RETURN ITEMDEF{"spring"}{"jump_vy"}
+    RETURN JUMP_VY
+ENDFUNC
+
+SUB BOUNCE(dirx)
+    PL{"vy"} = CFG{"spring_vy"}
+    PL{"vx"} = dirx * WALK * CFG{"spring_carry"}
+    PL{"plat"} = -1
+    PL{"jumping"} = 1
+    PL{"fall_y"} = PL{"y"}
+    PL{"ride"} = -1
+    ST{"springs"} = ST{"springs"} + 1
+    EMIT("spring")
+ENDSUB
+
+SUB UPDATEPLAYER(inp)
+    IF PL{"power_t"} > 0 THEN
+        PL{"power_t"} = PL{"power_t"} - 1
+        IF PL{"power_t"} = 0 THEN
+            PL{"power"} = ""
+            EMIT("powerend")
+        ENDIF
+    ENDIF
+    IF PL{"inv"} > 0 THEN PL{"inv"} = PL{"inv"} - 1
+
+    DIM kl = inp{"l"}
+    DIM kr = inp{"r"}
+    DIM ku = inp{"u"}
+    DIM kd = inp{"d"}
+    DIM jp = IIF(inp{"j"} = 1 ANDALSO PL{"prev_j"} = 0, 1, 0)
+    PL{"prev_j"} = inp{"j"}
+    IF jp = 1 THEN
+        PL{"jump_buf"} = JUMP_BUF
+    ELSEIF PL{"jump_buf"} > 0 THEN
+        PL{"jump_buf"} = PL{"jump_buf"} - 1
+    ENDIF
+    PL{"moving"} = 0
+
+    ' on a ladder
+    IF PL{"climb"} >= 0 THEN
+        PL{"jump_buf"} = 0
+        DIM l = LADS[PL{"climb"}]
+        DIM moved = 0
+        IF ku = 1 THEN
+            PL{"y"} = PL{"y"} - CLIMB_V
+            moved = 1
+        ENDIF
+        IF kd = 1 THEN
+            PL{"y"} = PL{"y"} + CLIMB_V
+            moved = 1
+        ENDIF
+        IF moved = 1 THEN
+            PL{"anim"} = PL{"anim"} + 1
+            PL{"moving"} = 1
+            IF PL{"anim"} MOD 8 = 0 THEN EMIT("climb")
+        ENDIF
+        IF PL{"y"} <= l{"top"} THEN
+            PL{"y"} = l{"top"}
+            PL{"climb"} = -1
+            PL{"plat"} = PLATUNDER(PL{"x"}, PL{"y"}, 4)
+        ELSEIF PL{"y"} >= l{"bot"} THEN
+            PL{"y"} = l{"bot"}
+            PL{"climb"} = -1
+            PL{"plat"} = PLATUNDER(PL{"x"}, PL{"y"}, 4)
+        ENDIF
+        RETURN
+    ENDIF
+
+    ' on the ground
+    IF PL{"plat"} >= 0 THEN
+        DIM ci = PL{"plat"}
+        DIM cp = PLATS[ci]
+        IF cp{"mv"} = 1 THEN
+            PL{"x"} = PL{"x"} + cp{"dx"}
+            PL{"y"} = cp{"y1"}
+        ENDIF
+        DIM walked = 0
+        IF kl = 1 ANDALSO kr = 0 THEN
+            PL{"x"} = PL{"x"} - WALK
+            PL{"face"} = -1
+            walked = 1
+        ENDIF
+        IF kr = 1 ANDALSO kl = 0 THEN
+            PL{"x"} = PL{"x"} + WALK
+            PL{"face"} = 1
+            walked = 1
+        ENDIF
+        PL{"x"} = PL{"x"} + WINDPUSH()
+        PL{"x"} = CLAMPV(PL{"x"}, 4, FW - 4)
+        DIM pi2 = -1
+        IF cp{"solid"} = 1 ANDALSO cp{"mv"} = 1 ANDALSO PL{"x"} >= cp{"x1"} - GRACE ANDALSO PL{"x"} <= cp{"x2"} + GRACE THEN
+            pi2 = ci
+        ELSE
+            pi2 = PLATUNDER(PL{"x"}, PL{"y"}, IIF(cp{"mv"} = 1, 2, 6))
+        ENDIF
+        IF pi2 < 0 THEN
+            ' slipped off: keeps the platform's swing
+            PL{"plat"} = -1
+            PL{"vy"} = 0
+            PL{"vx"} = IIF(cp{"mv"} = 1, cp{"dx"}, 0)
+            PL{"ride"} = -1
+            PL{"jumping"} = 0
+            PL{"fall_y"} = PL{"y"}
+            RETURN
+        ENDIF
+        IF pi2 <> ci ANDALSO PLATS[pi2]{"kind"} = "lift" THEN ST{"lifts"} = ST{"lifts"} + 1
+        PL{"plat"} = pi2
+        DIM p = PLATS[pi2]
+        PL{"y"} = SURFY(p, PL{"x"})
+        IF p{"kind"} = "spring" THEN
+            BOUNCE(IIF(kl = 1 ANDALSO kr = 0, -1, IIF(kr = 1 ANDALSO kl = 0, 1, 0)))
+            RETURN
+        ENDIF
+        IF walked = 1 THEN
+            PL{"anim"} = PL{"anim"} + 1
+            PL{"moving"} = 1
+            IF PL{"anim"} MOD 10 = 0 THEN EMIT("step")
+        ELSE
+            PL{"anim"} = 0
+        ENDIF
+        IF ku = 1 THEN
+            DIM lu = LADDERAT(PL{"x"}, PL{"y"}, 1)
+            IF lu >= 0 THEN
+                STARTCLIMB(lu)
+                RETURN
+            ENDIF
+        ENDIF
+        IF kd = 1 THEN
+            DIM ld = LADDERAT(PL{"x"}, PL{"y"}, 0)
+            IF ld >= 0 THEN
+                STARTCLIMB(ld)
+                PL{"y"} = PL{"y"} + 1
+                IF PL{"y"} > LADS[ld]{"bot"} THEN PL{"y"} = LADS[ld]{"bot"}
+                RETURN
+            ENDIF
+        ENDIF
+        IF PL{"jump_buf"} > 0 THEN
+            PL{"jump_buf"} = 0
+            PL{"vy"} = JUMPV()
+            PL{"vx"} = 0
+            IF kl = 1 ANDALSO kr = 0 THEN PL{"vx"} = -WALK
+            IF kr = 1 ANDALSO kl = 0 THEN PL{"vx"} = WALK
+            ' a jump from a moving platform carries on in its frame
+            PL{"ride"} = IIF(p{"mv"} = 1, pi2, -1)
+            PL{"plat"} = -1
+            PL{"jumping"} = 1
+            PL{"fall_y"} = PL{"y"}
+            EMIT("jump")
+        ENDIF
+        RETURN
+    ENDIF
+
+    ' in the air
+    DIM prev_y = PL{"y"}
+    PL{"vy"} = PL{"vy"} + GRAV
+    PL{"y"} = PL{"y"} + PL{"vy"}
+    DIM rdx = 0
+    IF PL{"ride"} >= 0 THEN rdx = PLATS[PL{"ride"}]{"dx"}
+    PL{"x"} = CLAMPV(PL{"x"} + PL{"vx"} + rdx + WINDPUSH(), 4, FW - 4)
+    IF PL{"vy"} > 0 THEN
+        DIM li = LANDCHECK(PL{"x"}, prev_y, PL{"y"}, -1)
+        IF li >= 0 THEN
+            DIM lp = PLATS[li]
+            DIM sy = SURFY(lp, PL{"x"})
+            DIM fall = sy - PL{"fall_y"}
+            PL{"y"} = sy
+            PL{"plat"} = li
+            PL{"vy"} = 0
+            PL{"vx"} = 0
+            PL{"jumping"} = 0
+            PL{"ride"} = -1
+            IF lp{"kind"} = "lift" THEN ST{"lifts"} = ST{"lifts"} + 1
+            IF lp{"kind"} = "spring" THEN
+                BOUNCE(IIF(kl = 1 ANDALSO kr = 0, -1, IIF(kr = 1 ANDALSO kl = 0, 1, 0)))
+                RETURN
+            ENDIF
+            EMIT("land")
+            IF fall > MAX_FALL THEN
+                HURT("fall")
+                RETURN
+            ENDIF
+        ENDIF
+    ENDIF
+    IF PL{"y"} > FH + 12 THEN HURT("fall")
+ENDSUB
+
+' a gust pushes the hero sideways unless he holds on to a ladder
+FUNC WINDPUSH()
+    IF LEN(WINDS) = 0 THEN RETURN 0
+    DIM shove = 0
+    DIM w
+    FOR EACH w IN WINDS
+        IF GUSTON(w) = 0 THEN CONTINUEFOR
+        IF PL{"y"} < w{"y1"} ORELSE PL{"y"} > w{"y2"} THEN CONTINUEFOR
+        shove = shove + w{"force"}
+    NEXT w
+    RETURN shove
+ENDFUNC
+
+FUNC GUSTON(w)
+    RETURN IIF((frame_no + w{"phase"}) MOD w{"period"} < w{"duty"}, 1, 0)
+ENDFUNC
+
+' ── KING and what he throws ─────────────────────────────────────
+
+SUB SPAWNSPOOL(side)
+    DIM p = PLATS[king_plat]
+    DIM x = KG{"x"} + 16 * side
+    DIM s AS MAP = {}
+    s{"x"} = x
+    s{"y"} = SURFY(p, x)
+    s{"plat"} = king_plat
+    DIM dh = DOWNHILL(p)
+    IF dh = 0 THEN dh = side
+    s{"vx"} = dh * KG{"spool_speed"}
+    s{"vy"} = 0
+    s{"ladder"} = -1
+    s{"last_ladder"} = -1
+    s{"scored"} = 0
+    s{"anim"} = 0
+    s{"roll"} = 0
+    s{"dead"} = 0
+    SPOOLS = APPEND(SPOOLS, s)
+    EMIT("throw")
+ENDSUB
+
+SUB SPAWNTOOL(kind$)
+    DIM tc = CFG{"tool"}
+    DIM x = KG{"x"}
+    DIM y = KG{"y"} - 30
+    DIM o AS MAP = {}
+    o{"kind"} = kind$
+    o{"x"} = x
+    o{"y"} = y
+    o{"rot"} = 0
+    o{"plat"} = -1
+    o{"rel"} = 0
+    o{"b"} = 0
+    o{"scored"} = 0
+    o{"dead"} = 0
+    IF kind$ = "hammer" THEN
+        o{"vx"} = -0.3 + RNDF() * 1.2
+        o{"vy"} = -1.2
+    ELSE
+        ' aims at the hero's waist, a little off
+        DIM dy = PL{"y"} - 6 - y
+        IF dy < 10 THEN dy = 10
+        DIM g = tc{"gravity"}
+        DIM tt = (1 + SQR(1 + 2 * g * dy)) / g
+        DIM tx = PL{"x"} + (RNDF() - 0.5) * tc{"aim_spread"}
+        o{"vx"} = CLAMPV((tx - x) / tt, -1.8, 1.8)
+        o{"vy"} = -1
+    ENDIF
+    TOOLS = APPEND(TOOLS, o)
+    EMIT("throw")
+ENDSUB
+
+SUB UPDATEKING()
+    DIM pat = KG{"pattern"}
+    IF LEN(pat) = 0 THEN RETURN
+    KG{"t"} = KG{"t"} - 1
+    DIM hold = CFG{"king_hold"}
+    IF KG{"t"} = hold THEN
+        KG{"anim"} = hold
+        KG{"next"} = pat[throw_count MOD LEN(pat)]
+    ENDIF
+    IF KG{"anim"} > 0 THEN KG{"anim"} = KG{"anim"} - 1
+    IF KG{"t"} <= 0 THEN
+        DIM what$ = pat[throw_count MOD LEN(pat)]
+        throw_count = throw_count + 1
+        IF LEFT$(what$, 5) = "spool" THEN
+            SPAWNSPOOL(IIF(what$ = "spoolL", -1, IIF(what$ = "spoolR", 1, KG{"side"})))
+        ELSE
+            SPAWNTOOL(what$)
+        ENDIF
+        KG{"t"} = KG{"interval"} + FLOOR(RNDF() * KG{"jitter"}) - FLOOR(KG{"jitter"} * 0.3)
+        KG{"next"} = pat[throw_count MOD LEN(pat)]
+    ENDIF
+ENDSUB
+
+FUNC INSINK(s)
+    DIM k
+    FOR EACH k IN SINKS
+        IF s{"x"} >= k{"x1"} ANDALSO s{"x"} <= k{"x2"} ANDALSO ABS(s{"y"} - k{"y"}) < 4 THEN RETURN 1
+    NEXT k
+    RETURN 0
+ENDFUNC
+
+SUB UPDATESPOOL(s)
+    DIM sc = CFG{"spool"}
+    s{"anim"} = s{"anim"} + 1
+    IF s{"ladder"} >= 0 THEN
+        DIM l = LADS[s{"ladder"}]
+        s{"y"} = s{"y"} + sc{"ladder_speed"}
+        IF s{"y"} >= l{"bot"} THEN
+            s{"y"} = l{"bot"}
+            DIM pb = PLATUNDER(s{"x"}, s{"y"}, 4)
+            s{"plat"} = pb
+            s{"ladder"} = -1
+            IF pb >= 0 THEN
+                DIM dh = DOWNHILL(PLATS[pb])
+                IF dh = 0 THEN dh = SGN(s{"vx"})
+                IF dh = 0 THEN dh = 1
+                s{"vx"} = dh * KG{"spool_speed"}
+            ENDIF
+        ENDIF
+        RETURN
+    ENDIF
+    IF s{"plat"} >= 0 THEN
+        DIM p = PLATS[s{"plat"}]
+        s{"x"} = s{"x"} + s{"vx"} + p{"dx"}
+        s{"roll"} = s{"roll"} + s{"vx"}
+        IF p{"solid"} = 0 ORELSE s{"x"} < p{"x1"} ORELSE s{"x"} > p{"x2"} THEN
+            DIM pn = PLATUNDER(s{"x"}, s{"y"}, 4)
+            IF pn >= 0 ANDALSO pn <> s{"plat"} THEN
+                s{"plat"} = pn
+                s{"y"} = SURFY(PLATS[pn], s{"x"})
+                DIM dh2 = DOWNHILL(PLATS[pn])
+                IF dh2 <> 0 THEN s{"vx"} = dh2 * KG{"spool_speed"}
+            ELSE
+                s{"plat"} = -1
+                s{"vy"} = 0.5
+            ENDIF
+        ELSE
+            s{"y"} = SURFY(p, s{"x"})
+        ENDIF
+        IF INSINK(s) = 1 THEN
+            s{"dead"} = 1
+            EMIT("sink")
+            RETURN
+        ENDIF
+        IF s{"last_ladder"} >= 0 THEN
+            IF ABS(s{"x"} - LADS[s{"last_ladder"}]{"x"}) > 4 THEN s{"last_ladder"} = -1
+        ENDIF
+        DIM i
+        FOR i = 0 TO LEN(LADS) - 1
+            IF i = s{"last_ladder"} THEN CONTINUEFOR
+            DIM ld = LADS[i]
+            IF ABS(s{"x"} - ld{"x"}) < 1.5 ANDALSO ABS(ld{"top"} - s{"y"}) < 3 THEN
+                s{"last_ladder"} = i
+                IF RNDF() < sc{"ladder_chance"} THEN
+                    s{"ladder"} = i
+                    s{"x"} = ld{"x"}
+                    s{"plat"} = -1
+                ENDIF
+                EXITFOR
+            ENDIF
+        NEXT i
+        RETURN
+    ENDIF
+    ' falling
+    DIM prev = s{"y"}
+    s{"roll"} = s{"roll"} + s{"vx"}
+    s{"vy"} = s{"vy"} + sc{"fall_gravity"}
+    s{"y"} = s{"y"} + s{"vy"}
+    DIM pl2 = LANDCHECK(s{"x"}, prev, s{"y"}, -1)
+    IF pl2 >= 0 THEN
+        s{"y"} = SURFY(PLATS[pl2], s{"x"})
+        s{"plat"} = pl2
+        s{"vy"} = 0
+        DIM dh3 = DOWNHILL(PLATS[pl2])
+        IF dh3 = 0 THEN dh3 = SGN(s{"vx"})
+        IF dh3 = 0 THEN dh3 = 1
+        s{"vx"} = dh3 * KG{"spool_speed"}
+    ENDIF
+    IF s{"y"} > FH + 12 ORELSE s{"x"} < -8 ORELSE s{"x"} > FW + 8 THEN s{"dead"} = 1
+ENDSUB
+
+' A hammer drops, bounces once and then skids along the beam it lands on.
+' A wrench is aimed at the hero and bounces up to three times. Both fly past
+' the platform KING stands on.
+SUB UPDATETOOL(o)
+    DIM tc = CFG{"tool"}
+    o{"rot"} = o{"rot"} + IIF(o{"kind"} = "wrench", 1, 0.5)
+    IF o{"plat"} >= 0 THEN
+        DIM p = PLATS[o{"plat"}]
+        o{"rel"} = o{"rel"} + o{"vx"}
+        o{"x"} = p{"x1"} + o{"rel"}
+        o{"y"} = SURFY(p, CLAMPV(o{"x"}, p{"x1"}, p{"x2"}))
+        IF p{"solid"} = 0 ORELSE o{"x"} < p{"x1"} - 2 ORELSE o{"x"} > p{"x2"} + 2 THEN
+            o{"plat"} = -1
+            o{"vy"} = 0
+            o{"b"} = 0
+            o{"vx"} = o{"vx"} + p{"dx"}
+        ENDIF
+        RETURN
+    ENDIF
+    DIM prev = o{"y"}
+    o{"vy"} = o{"vy"} + tc{"gravity"}
+    IF o{"vy"} > tc{"max_vy"} THEN o{"vy"} = tc{"max_vy"}
+    o{"x"} = o{"x"} + o{"vx"}
+    o{"y"} = o{"y"} + o{"vy"}
+    IF o{"vy"} > 0 ANDALSO o{"b"} < 3 THEN
+        DIM i
+        FOR i = 0 TO LEN(PLATS) - 1
+            IF i = king_plat THEN CONTINUEFOR
+            DIM q = PLATS[i]
+            IF q{"solid"} = 0 ORELSE o{"x"} < q{"x1"} ORELSE o{"x"} > q{"x2"} THEN CONTINUEFOR
+            DIM sy = SURFY(q, o{"x"})
+            DIM sy0 = IIF(q{"mv"} = 1, q{"y0"}, sy)
+            IF prev > sy0 + 0.5 ORELSE o{"y"} < sy THEN CONTINUEFOR
+            o{"y"} = sy
+            IF o{"kind"} = "hammer" THEN
+                IF o{"b"} = 0 THEN
+                    o{"vy"} = -1
+                    o{"b"} = 1
+                ELSE
+                    o{"plat"} = i
+                    o{"rel"} = o{"x"} - q{"x1"}
+                    o{"vy"} = 0
+                    o{"vx"} = IIF(o{"vx"} < 0, -1, 1) * tc{"skid"}
+                ENDIF
+            ELSE
+                DIM up = o{"vy"} * 0.65
+                IF up < 1.5 THEN up = 1.5
+                o{"vy"} = -up
+                o{"vx"} = o{"vx"} + q{"dx"} * 0.5
+                o{"b"} = o{"b"} + 1
+            ENDIF
+            EMIT("clank")
+            EXITFOR
+        NEXT i
+    ENDIF
+    IF o{"x"} < -12 ORELSE o{"x"} > FW + 12 ORELSE o{"y"} > FH + 14 THEN o{"dead"} = 1
+ENDSUB
+
+' drones fly back and forth between two points with a slow bob
+SUB UPDATEDRONE(d)
+    d{"t"} = d{"t"} + 1
+    DIM dist = SQR((d{"x2"} - d{"x1"}) ^ 2 + (d{"y2"} - d{"y1"}) ^ 2)
+    IF dist < 1 THEN dist = 1
+    d{"k"} = d{"k"} + d{"kdir"} * d{"speed"} / dist
+    IF d{"k"} >= 1 THEN
+        d{"k"} = 1
+        d{"kdir"} = -1
+    ENDIF
+    IF d{"k"} <= 0 THEN
+        d{"k"} = 0
+        d{"kdir"} = 1
+    ENDIF
+    DIM nx = d{"x1"} + (d{"x2"} - d{"x1"}) * d{"k"}
+    IF nx <> d{"x"} THEN d{"face"} = SGN(nx - d{"x"})
+    d{"x"} = nx
+    d{"y"} = d{"y1"} + (d{"y2"} - d{"y1"}) * d{"k"} + CFG{"drone"}{"bob"} * SIN(d{"t"} / 12)
+ENDSUB
+
+' ── collisions ──────────────────────────────────────────────────
+
+FUNC BOXOF(spec, x, y)
+    RETURN [PX(x) + spec[0], PX(y) + spec[1], spec[2], spec[3]]
+ENDFUNC
+
+' a hero in the air right above a hazard scores once per pass
+FUNC OVERHAZARD(h, hy)
+    IF ABS(h{"x"} - PL{"x"}) > 16 THEN h{"scored"} = 0
+    IF PL{"plat"} >= 0 ORELSE PL{"climb"} >= 0 ORELSE h{"scored"} = 1 THEN RETURN 0
+    IF ABS(h{"x"} - PL{"x"}) < 8 ANDALSO hy > PL{"y"} ANDALSO hy - PL{"y"} < 32 THEN
+        h{"scored"} = 1
+        ADDSCORE(CFG{"score"}{"jump_over"})
+        ST{"jumped"} = ST{"jumped"} + 1
+        EMIT("over")
+        RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
+SUB COLLIDE()
+    ' items
+    DIM it
+    FOR EACH it IN ITEMS
+        IF it{"taken"} = 1 THEN CONTINUEFOR
+        IF ABS(PL{"x"} - it{"x"}) < 7 ANDALSO ABS((PL{"y"} - 8) - it{"y"}) < 10 THEN
+            DIM idef = ITEMDEF{it{"type"}}
+            DIM pw$ = idef{"power"}
+            IF it{"type"} = "bolt" THEN
+                it{"taken"} = 1
+                ST{"bolts"} = ST{"bolts"} + 1
+                ADDSCORE(CFG{"score"}{"bolt"})
+                EMIT("bolt")
+            ELSEIF pw$ = "shield" THEN
+                IF PL{"shield"} = 0 THEN
+                    it{"taken"} = 1
+                    PL{"shield"} = 1
+                    ST{"items"} = ST{"items"} + 1
+                    EMIT("pickup")
+                ENDIF
+            ELSEIF PL{"power"} = "" THEN
+                it{"taken"} = 1
+                PL{"power"} = pw$
+                PL{"power_t"} = idef{"dur"}
+                ST{"items"} = ST{"items"} + 1
+                EMIT("pickup")
+            ENDIF
+        ENDIF
+    NEXT it
+
+    DIM pb = BOXOF(CFG{"player"}{"box"}, PL{"x"}, PL{"y"})
+    DIM sbox = CFG{"spool"}{"box"}
+    DIM s
+    FOR EACH s IN SPOOLS
+        IF s{"dead"} = 1 THEN CONTINUEFOR
+        OVERHAZARD(s, s{"y"})
+        DIM b = BOXOF(sbox, s{"x"}, s{"y"})
+        IF RECTHIT(pb[0], pb[1], pb[2], pb[3], b[0], b[1], b[2], b[3]) THEN
+            HURT("hit")
+            IF mode$ <> "play" THEN RETURN
+        ENDIF
+    NEXT s
+    DIM tc = CFG{"tool"}
+    DIM o
+    FOR EACH o IN TOOLS
+        IF o{"dead"} = 1 THEN CONTINUEFOR
+        OVERHAZARD(o, o{"y"})
+        DIM tb = BOXOF(IIF(o{"kind"} = "hammer", tc{"box_hammer"}, tc{"box_wrench"}), o{"x"}, o{"y"})
+        IF RECTHIT(pb[0], pb[1], pb[2], pb[3], tb[0], tb[1], tb[2], tb[3]) THEN
+            HURT("hit")
+            IF mode$ <> "play" THEN RETURN
+        ENDIF
+    NEXT o
+    DIM dbox = CFG{"drone"}{"box"}
+    DIM d
+    FOR EACH d IN DRONES
+        OVERHAZARD(d, d{"y"})
+        DIM db = BOXOF(dbox, d{"x"}, d{"y"})
+        IF RECTHIT(pb[0], pb[1], pb[2], pb[3], db[0], db[1], db[2], db[3]) THEN
+            HURT("hit")
+            IF mode$ <> "play" THEN RETURN
+        ENDIF
+    NEXT d
+    IF FLOOD{"on"} = 1 THEN
+        IF PL{"y"} - 4 > FLOOD{"y"} THEN HURT("flood")
+    ENDIF
+ENDSUB
+
+' ── the step ────────────────────────────────────────────────────
+
+EXPORT FUNC TICKSTEP(inp)
+    IF mode$ <> "play" THEN RETURN mode$
+    frame_no = frame_no + 1
+    ST{"frames"} = ST{"frames"} + 1
+    IF has_crane = 1 THEN
+        crane_t = crane_t + 1
+        PLACEMOVERS(0)
+    ENDIF
+    UPDATEPLANKS()
+    UPDATEPLAYER(inp)
+    IF mode$ <> "play" THEN RETURN mode$
+
+    ' the stopwatch slows everything that is out to get the hero
+    DIM slow = 1
+    IF PL{"power"} = "slow" THEN slow = ITEMDEF{"clock"}{"factor"}
+    e_acc = e_acc + slow
+    DO WHILE e_acc >= 1
+        e_acc = e_acc - 1
+        UPDATEKING()
+        DIM s
+        FOR EACH s IN SPOOLS
+            UPDATESPOOL(s)
+        NEXT s
+        DIM o
+        FOR EACH o IN TOOLS
+            UPDATETOOL(o)
+        NEXT o
+        DIM d
+        FOR EACH d IN DRONES
+            UPDATEDRONE(d)
+        NEXT d
+        IF FLOOD{"on"} = 1 THEN
+            IF FLOOD{"delay"} > 0 THEN
+                FLOOD{"delay"} = FLOOD{"delay"} - 1
+            ELSEIF FLOOD{"y"} > FLOOD{"top"} THEN
+                FLOOD{"y"} = FLOOD{"y"} - FLOOD{"speed"}
+            ENDIF
+        ENDIF
+    LOOP
+    SPOOLS = FILTER(LAMBDA z -> z{"dead"} = 0 ANDALSO (FLOOD{"on"} = 0 ORELSE z{"y"} - 3 < FLOOD{"y"}), SPOOLS)
+    TOOLS = FILTER(LAMBDA z -> z{"dead"} = 0, TOOLS)
+
+    COLLIDE()
+    IF mode$ <> "play" THEN RETURN mode$
+
+    bonus_t = bonus_t + 1
+    IF bonus_t >= CFG{"bonus_tick"} THEN
+        bonus_t = 0
+        bonus_left = bonus_left - CFG{"bonus_step"}
+        IF bonus_left < 0 THEN bonus_left = 0
+    ENDIF
+
+    IF PL{"plat"} >= 0 ANDALSO ABS(PL{"x"} - BTN{"x"}) < 6 ANDALSO ABS(PL{"y"} - BTN{"y"}) < 3 THEN
+        ADDSCORE(CFG{"score"}{"button"})
+        ADDSCORE(bonus_left)
+        mode$ = "win"
+        EMIT("win")
+    ENDIF
+    RETURN mode$
+ENDFUNC
+
+' ── getters ─────────────────────────────────────────────────────
+
+EXPORT FUNC EVENTS_TAKE()
+    DIM taken = EVENTS
+    EVENTS = []
+    RETURN taken
+ENDFUNC
+
+EXPORT FUNC STATUS$()
+    RETURN mode$
+ENDFUNC
+
+EXPORT FUNC PLAYER()
+    RETURN PL
+ENDFUNC
+
+EXPORT FUNC KINGSTATE()
+    RETURN KG
+ENDFUNC
+
+EXPORT FUNC PLATFORMS()
+    RETURN PLATS
+ENDFUNC
+
+EXPORT FUNC LADDERS()
+    RETURN LADS
+ENDFUNC
+
+EXPORT FUNC SPOOLLIST()
+    RETURN SPOOLS
+ENDFUNC
+
+EXPORT FUNC TOOLLIST()
+    RETURN TOOLS
+ENDFUNC
+
+EXPORT FUNC DRONELIST()
+    RETURN DRONES
+ENDFUNC
+
+EXPORT FUNC ITEMLIST()
+    RETURN ITEMS
+ENDFUNC
+
+EXPORT FUNC FLOODSTATE()
+    RETURN FLOOD
+ENDFUNC
+
+EXPORT FUNC WINDLIST()
+    RETURN WINDS
+ENDFUNC
+
+EXPORT FUNC GUST(i)
+    RETURN GUSTON(WINDS[i])
+ENDFUNC
+
+EXPORT FUNC STATS()
+    RETURN ST
+ENDFUNC
+
+EXPORT FUNC SCORE()
+    RETURN pts
+ENDFUNC
+
+EXPORT FUNC BONUS()
+    RETURN bonus_left
+ENDFUNC
+
+EXPORT FUNC FRAME()
+    RETURN frame_no
+ENDFUNC
+
+EXPORT FUNC SURF(pidx, x)
+    RETURN SURFY(PLATS[pidx], x)
+ENDFUNC
+
+EXPORT FUNC PLAT_AT(x, y, tol)
+    RETURN PLATUNDER(x, y, tol)
+ENDFUNC
+
+EXPORT FUNC KINGPLAT()
+    RETURN king_plat
+ENDFUNC
+
+' test hook: put the hero somewhere
+EXPORT SUB PLACE_HERO(x, y)
+    PL{"x"} = x
+    PL{"y"} = y
+    PL{"vx"} = 0
+    PL{"vy"} = 0
+    PL{"climb"} = -1
+    PL{"plat"} = PLATUNDER(x, y, 4)
+    PL{"fall_y"} = y
+    PL{"ride"} = -1
+ENDSUB
+
+' test hook: drop a spool at x on platform pi rolling at vx
+EXPORT SUB ADD_SPOOL(pidx, x, vx)
+    DIM s AS MAP = {}
+    s{"x"} = x
+    s{"y"} = SURFY(PLATS[pidx], x)
+    s{"plat"} = pidx
+    s{"vx"} = vx
+    s{"vy"} = 0
+    s{"ladder"} = -1
+    s{"last_ladder"} = -1
+    s{"scored"} = 0
+    s{"anim"} = 0
+    s{"roll"} = 0
+    s{"dead"} = 0
+    SPOOLS = APPEND(SPOOLS, s)
+ENDSUB
+
+EXPORT SUB SET_KING_TIMER(t)
+    KG{"t"} = t
+ENDSUB
+
+EXPORT FUNC BUTTON()
+    RETURN BTN
+ENDFUNC
+
+EXPORT FUNC SINKLIST()
+    RETURN SINKS
+ENDFUNC
+
+EXPORT FUNC LEVEL()
+    RETURN LV
+ENDFUNC

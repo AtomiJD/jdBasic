@@ -1,0 +1,63 @@
+{
+  "name": "DACH IM STURM",
+  "hint": "BOEEN! AUF DIE WINDFAHNE ACHTEN",
+  "theme": "storm",
+  "bonus": 7000,
+  "start": { "x": 16, "on": 0 },
+  "button": { "x": 208, "on": 1 },
+  "king": { "x": 120, "plat": 9, "side": -1, "pattern": ["spoolL"], "interval": 180, "jitter": 60, "spool_speed": 0.7 },
+  "platforms": [
+    { "x1": 0,   "y1": 220, "x2": 72,  "y2": 220 },
+    { "x1": 176, "y1": 46,  "x2": 220, "y2": 46 },
+    { "x1": 96,  "y1": 220, "x2": 150, "y2": 220 },
+    { "x1": 176, "y1": 220, "x2": 224, "y2": 220 },
+    { "x1": 150, "y1": 186, "x2": 224, "y2": 186 },
+    { "x1": 40,  "y1": 152, "x2": 160, "y2": 152 },
+    { "x1": 16,  "y1": 160, "x2": 40,  "y2": 160, "kind": "spring" },
+    { "x1": 0,   "y1": 108, "x2": 60,  "y2": 108 },
+    { "x1": 84,  "y1": 108, "x2": 150, "y2": 104 },
+    { "x1": 100, "y1": 70,  "x2": 210, "y2": 70 }
+  ],
+  "ladders": [
+    { "x": 200, "lo": 3, "hi": 4 },
+    { "x": 156, "lo": 4, "hi": 5 },
+    { "x": 140, "lo": 8, "hi": 9 },
+    { "x": 196, "lo": 9, "hi": 1 }
+  ],
+  "wind": [
+    { "y1": 88,  "y2": 120, "force": -0.45, "period": 300, "duty": 110, "phase": 0 },
+    { "y1": 140, "y2": 226, "force": 0.35,  "period": 360, "duty": 100, "phase": 150 }
+  ],
+  "drones": [
+    { "x1": 142, "x2": 186, "y1": 62,  "speed": 0.4 },
+    { "x1": 100, "x2": 146, "y1": 197, "speed": 0.4 }
+  ],
+  "items": [
+    { "type": "helm",   "x": 210, "on": 4 },
+    { "type": "spring", "x": 120, "on": 5 },
+    { "type": "bolt",   "x": 36,  "on": 0 },
+    { "type": "bolt",   "x": 84,  "y": 196 },
+    { "type": "bolt",   "x": 163, "y": 196 },
+    { "type": "bolt",   "x": 70,  "on": 5 },
+    { "type": "bolt",   "x": 72,  "y": 90 },
+    { "type": "bolt",   "x": 110, "on": 9 }
+  ],
+  "bot": [
+    { "do": "walk", "x": 68 }, { "do": "jump", "dir": 1 },
+    { "do": "walk", "x": 148 }, { "do": "jump", "dir": 1 },
+    { "do": "walk", "x": 200 }, { "do": "up" },
+    { "do": "walk", "x": 156 }, { "do": "up" },
+    { "do": "walk", "x": 30 },
+    { "do": "walk", "x": 56 }, { "do": "jump", "dir": 1 },
+    { "do": "walk", "x": 140 }, { "do": "up" },
+    { "do": "walk", "x": 196 }, { "do": "up" },
+    { "do": "walk", "x": 208 }
+  ],
+  "music": {
+    "bpm": 126,
+    "pad": "<[d3,f3,a3] [c3,e3,g3] [bb2,d3,f3] [a2,c#3,e3]>",
+    "bass": "<[d2 d2 ~ d3]*2 [c2 c2 ~ c3]*2 [bb1 bb1 ~ bb2]*2 [a1 a1 ~ a2]*2>",
+    "lead": "<[a4 d5 f5 d5]*2 [g4 c5 e5 c5]*2 [f4 bb4 d5 bb4]*2 [e4 a4 c#5 a4]*2>",
+    "drums": "[bd ~ hh sd] [~ bd hh sd] [bd ~ hh sd] [bd bd oh sd]"
+  }
+}

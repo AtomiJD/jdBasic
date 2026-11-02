@@ -1,0 +1,46 @@
+' Regression gate for the KING rules and levels.
+'
+' The checks live next to sim.jdb in the game folder, where IMPORT finds the
+' module and the data files are read from the working directory. This runs
+' the rule checks and the bot on every level with the hero untouchable, so a
+' level edit that leaves no way through fails here.
+'   jdbasic sim_rules.jdb
+DIM here$ = PATH.DIRNAME$(OS.ARGS()[0])
+IF here$ = "" THEN here$ = "."
+DIM game$ = PATH.JOIN$(here$, "..", "..", "jdb", "demos", "games", "king")
+DIM win_exe$ = PATH.JOIN$(here$, "..", "..", "build", "jdBasic.exe")
+
+FUNC RUNIN$(args$)
+    DIM shell$ = "sh"
+    DIM flag$ = "-c"
+    DIM cmd$ = "cd " + game$ + " && ../../../../build/jdbasic " + args$
+    IF FILE.EXISTS(win_exe$) THEN
+        shell$ = "cmd"
+        flag$ = "/c"
+        cmd$ = "cd /d " + REPLACE$(game$, "/", "\") + " && ..\..\..\..\build\jdBasic.exe " + args$
+    ENDIF
+    DIM r = OS.EXEC(shell$, [flag$, cmd$])
+    RETURN "" + r{"output"}
+ENDFUNC
+
+DIM rules$ = RUNIN$("sim_test.jdb")
+PRINT rules$
+DIM routes$ = RUNIN$("simtest.jdb 1 99 god 1")
+PRINT routes$
+
+DIM n_levels = 0
+DIM n_won = 0
+DIM lines = SPLIT(routes$, CHR$(10))
+DIM ln$
+FOR EACH ln$ IN lines
+    IF STARTSWITH(ln$, "level ") THEN
+        n_levels = n_levels + 1
+        IF INSTR(ln$, ": WIN") >= 0 THEN n_won = n_won + 1
+    ENDIF
+NEXT ln$
+
+IF INSTR(rules$, ", failed 0") >= 0 ANDALSO n_levels > 0 ANDALSO n_won = n_levels THEN
+    PRINT "king sim_rules: ALL OK"
+ELSE
+    PRINT "king sim_rules: FAILED"
+ENDIF

@@ -1,0 +1,60 @@
+{
+  "name": "KINGS KABINE",
+  "hint": "ALLES AUF EINMAL - DRUECK DEN KNOPF!",
+  "theme": "storm",
+  "bonus": 9000,
+  "start": { "x": 200, "on": 0 },
+  "button": { "x": 134, "on": 1 },
+  "king": { "x": 100, "plat": 1, "pattern": ["spoolL", "hammer", "spoolR", "wrench"], "interval": 130, "jitter": 40, "spool_speed": 0.8 },
+  "flood": { "y": 262, "top": 66, "delay": 300, "speed": 0.045 },
+  "platforms": [
+    { "x1": 0,  "y1": 248, "x2": 224, "y2": 248 },
+    { "x1": 80, "y1": 56,  "x2": 144, "y2": 56 },
+    { "x1": 0,  "y1": 214, "x2": 150, "y2": 214 },
+    { "x1": 74, "y1": 180, "x2": 224, "y2": 180 },
+    { "x1": 0,  "y1": 146, "x2": 150, "y2": 146 },
+    { "x1": 74, "y1": 112, "x2": 224, "y2": 112 },
+    { "x1": 16, "y1": 76,  "x2": 208, "y2": 76 }
+  ],
+  "ladders": [
+    { "x": 20,  "lo": 0, "hi": 2 },
+    { "x": 140, "lo": 2, "hi": 3 },
+    { "x": 84,  "lo": 3, "hi": 4 },
+    { "x": 140, "lo": 4, "hi": 5 },
+    { "x": 84,  "lo": 5, "hi": 6 },
+    { "x": 136, "lo": 6, "hi": 1 },
+    { "x": 200, "lo": 5, "hi": 6, "broken": 1 }
+  ],
+  "wind": [
+    { "y1": 100, "y2": 150, "force": 0.4, "period": 330, "duty": 100, "phase": 60 }
+  ],
+  "drones": [
+    { "x1": 10,  "x2": 140, "y1": 138, "speed": 0.5 }
+  ],
+  "items": [
+    { "type": "helm",  "x": 100, "on": 2 },
+    { "type": "clock", "x": 210, "on": 3 },
+    { "type": "helm",  "x": 200, "on": 5 },
+    { "type": "bolt",  "x": 60,  "on": 2 },
+    { "type": "bolt",  "x": 180, "on": 3 },
+    { "type": "bolt",  "x": 30,  "on": 4 },
+    { "type": "bolt",  "x": 180, "on": 5 },
+    { "type": "bolt",  "x": 40,  "on": 6 }
+  ],
+  "bot": [
+    { "do": "walk", "x": 20 }, { "do": "up" },
+    { "do": "walk", "x": 140 }, { "do": "up" },
+    { "do": "walk", "x": 84 }, { "do": "up" },
+    { "do": "walk", "x": 140 }, { "do": "up" },
+    { "do": "walk", "x": 84 }, { "do": "up" },
+    { "do": "walk", "x": 136 }, { "do": "up" },
+    { "do": "walk", "x": 134 }
+  ],
+  "music": {
+    "bpm": 140,
+    "pad": "<[e3,g3,b3] [c3,e3,g3] [a2,c3,e3] [b2,d#3,f#3]>",
+    "bass": "<[e1 e2]*4 [c2 c3]*4 [a1 a2]*4 [b1 b2]*4>",
+    "lead": "<[e5 b4 g4 b4]*2 [e5 c5 g4 c5]*2 [e5 c5 a4 c5]*2 [d#5 b4 f#4 b4]*2>",
+    "drums": "[bd hh sd hh] [bd bd sd hh] [bd hh sd hh] [bd sd sd oh]"
+  }
+}

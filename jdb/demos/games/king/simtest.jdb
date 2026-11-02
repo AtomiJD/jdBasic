@@ -1,0 +1,68 @@
+' The bot plays levels headless and reports how far it got.
+'   jdbasic simtest.jdb [from] [to] [god] [tries]
+' Run from this folder. "god" makes the hero untouchable, which proves the
+' route through the level; without it the result says how hard it is.
+IMPORT SIM
+IMPORT BOT
+
+DIM cfg = JSON.PARSE(TXTREADER$("data/config.json"))
+DIM items = JSON.PARSE(TXTREADER$("data/items.json"))
+SIM.SETUP(cfg, items)
+
+DIM args = OS.ARGS()
+DIM lv_from = 1
+DIM lv_to = 99
+DIM god_on = 0
+DIM tries = 3
+IF LEN(args) > 1 THEN lv_from = VAL(args[1])
+IF LEN(args) > 2 THEN lv_to = VAL(args[2])
+IF LEN(args) > 3 THEN god_on = IIF(args[3] = "god", 1, 0)
+IF LEN(args) > 4 THEN tries = VAL(args[4])
+SIM.GODMODE(god_on)
+
+FUNC LEVELFILE$(n)
+    RETURN "data/levels/level_" + RIGHT$("0" + STR$(n), 2) + ".json"
+ENDFUNC
+
+DIM n_win = 0
+DIM n_run = 0
+DIM lv_no
+FOR lv_no = lv_from TO lv_to
+    IF NOT FILE.EXISTS(LEVELFILE$(lv_no)) THEN EXITFOR
+    DIM lv = JSON.PARSE(TXTREADER$(LEVELFILE$(lv_no)))
+    n_run = n_run + 1
+    SIM.NEWGAME()
+    SIM.LOAD(lv, 1, 1000 + lv_no)
+    DIM deaths = 0
+    DIM result$ = ""
+    DIM total = 0
+    DO
+        BOT.START(lv{"bot"})
+        DIM r$ = "play"
+        DIM n_steps = 0
+        DO WHILE r$ = "play" ANDALSO n_steps < 60 * 240
+            r$ = SIM.TICKSTEP(BOT.PADSTATE())
+            SIM.EVENTS_TAKE()
+            n_steps = n_steps + 1
+        LOOP
+        total = total + n_steps
+        IF r$ = "win" THEN
+            result$ = "WIN"
+            EXITDO
+        ENDIF
+        IF r$ = "play" THEN
+            result$ = "STUCK at step " + STR$(BOT.STEPNO())
+            EXITDO
+        ENDIF
+        deaths = deaths + 1
+        IF deaths >= tries THEN
+            result$ = "LOST at step " + STR$(BOT.STEPNO())
+            EXITDO
+        ENDIF
+        SIM.RETRY()
+    LOOP
+    IF result$ = "WIN" THEN n_win = n_win + 1
+    DIM pl = SIM.PLAYER()
+    PRINT "level "; lv_no; " "; lv{"name"}; ": "; result$; ", deaths "; deaths; ", "; INT(total / 60); " s, score "; SIM.SCORE(); ", hero at "; INT(pl{"x"}); ","; INT(pl{"y"})
+NEXT lv_no
+PRINT "bot won "; n_win; " of "; n_run

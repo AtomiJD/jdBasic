@@ -1,0 +1,53 @@
+{
+  "name": "KRANBAHN 50M",
+  "hint": "AUFZUG - TRAEGER - AUFZUG ...",
+  "bonus": 6000,
+  "start": { "x": 160, "on": 1 },
+  "button": { "x": 180, "on": 0 },
+  "king": { "x": 76, "plat": 0, "side": 1, "pattern": ["hammer", "hammer", "wrench"], "interval": 150, "jitter": 30 },
+  "toolbox": { "x": 102 },
+  "theme": "arcade",
+  "platforms": [
+    { "x1": 48, "y1": 56,  "x2": 192, "y2": 56 },
+    { "x1": 0,  "y1": 248, "x2": 224, "y2": 248 }
+  ],
+  "ladders": [],
+  "crane": {
+    "railY": 27, "pivot": { "x": 112, "y": 31 }, "gravity": 0.081, "reach": 190,
+    "masts": [0, 216], "liftTravel": 90, "liftHold": 24, "liftIdle": 90
+  },
+  "movers": [
+    { "type": "swing", "row": 216, "w": 32, "ph": 0.0 },
+    { "type": "swing", "row": 182, "w": 32, "ph": 1.9 },
+    { "type": "swing", "row": 148, "w": 40, "ph": 3.7 },
+    { "type": "swing", "row": 114, "w": 48, "ph": 0.9 },
+    { "type": "lift", "x": 192, "w": 24, "bot": 244,          "top": { "swing": 0 } },
+    { "type": "lift", "x": 8,   "w": 24, "bot": { "swing": 0 }, "top": { "swing": 1 } },
+    { "type": "lift", "x": 192, "w": 24, "bot": { "swing": 1 }, "top": { "swing": 2 } },
+    { "type": "lift", "x": 8,   "w": 24, "bot": { "swing": 2 }, "top": { "swing": 3 } },
+    { "type": "lift", "x": 192, "w": 24, "bot": { "swing": 3 }, "top": 56 }
+  ],
+  "items": [
+    { "type": "helm", "x": 100, "on": 1 },
+    { "type": "bolt", "x": 204, "y": 200 },
+    { "type": "bolt", "x": 20,  "y": 165 },
+    { "type": "bolt", "x": 204, "y": 132 },
+    { "type": "bolt", "x": 20,  "y": 98 }
+  ],
+  "bot": [
+    { "do": "walk", "x": 100 }, { "do": "walk", "x": 186 },
+    { "do": "board", "p": 6 }, { "do": "board", "p": 2 },
+    { "do": "board", "p": 7 }, { "do": "board", "p": 3 },
+    { "do": "board", "p": 8 }, { "do": "board", "p": 4 },
+    { "do": "board", "p": 9 }, { "do": "board", "p": 5 },
+    { "do": "board", "p": 10 }, { "do": "board", "p": 0 },
+    { "do": "walk", "x": 180 }
+  ],
+  "music": {
+    "bpm": 108,
+    "pad": "<[d3,f3,a3] [bb2,d3,f3] [c3,e3,g3] [a2,c#3,e3]>",
+    "bass": "<[d2 ~ d2 a1]*2 [bb1 ~ bb1 f1]*2 [c2 ~ c2 g1]*2 [a1 ~ a1 e1]*2>",
+    "lead": "<[d5 ~ f5 a5]*2 [d5 ~ f5 bb5]*2 [c5 ~ e5 g5]*2 [c#5 ~ e5 a5]*2>",
+    "drums": "[bd ~ hh ~] [sd ~ hh hh] [bd bd hh ~] [sd ~ hh oh]"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "BETONFLUT",
+  "hint": "DER BETON STEIGT - SCHNELL NACH OBEN!",
+  "theme": "concrete",
+  "bonus": 6000,
+  "start": { "x": 200, "on": 0 },
+  "button": { "x": 140, "on": 1 },
+  "king": { "x": 84, "plat": 1, "pattern": ["hammer", "wrench", "hammer"], "interval": 150, "jitter": 40 },
+  "toolbox": { "x": 100 },
+  "flood": { "y": 262, "top": 60, "delay": 240, "speed": 0.05 },
+  "platforms": [
+    { "x1": 0,  "y1": 248, "x2": 224, "y2": 248 },
+    { "x1": 72, "y1": 52,  "x2": 152, "y2": 52 },
+    { "x1": 0,  "y1": 214, "x2": 160, "y2": 214 },
+    { "x1": 64, "y1": 180, "x2": 224, "y2": 180 },
+    { "x1": 0,  "y1": 146, "x2": 160, "y2": 146 },
+    { "x1": 64, "y1": 112, "x2": 224, "y2": 112 },
+    { "x1": 0,  "y1": 78,  "x2": 160, "y2": 78 }
+  ],
+  "ladders": [
+    { "x": 20,  "lo": 0, "hi": 2 },
+    { "x": 120, "lo": 0, "hi": 2, "broken": 1 },
+    { "x": 150, "lo": 2, "hi": 3 },
+    { "x": 74,  "lo": 3, "hi": 4 },
+    { "x": 200, "lo": 3, "hi": 4, "broken": 1 },
+    { "x": 150, "lo": 4, "hi": 5 },
+    { "x": 74,  "lo": 5, "hi": 6 },
+    { "x": 146, "lo": 6, "hi": 1 }
+  ],
+  "items": [
+    { "type": "helm",   "x": 110, "on": 2 },
+    { "type": "clock",  "x": 200, "on": 5 },
+    { "type": "spring", "x": 20,  "on": 4 },
+    { "type": "bolt",   "x": 100, "on": 3 },
+    { "type": "bolt",   "x": 50,  "on": 4 },
+    { "type": "bolt",   "x": 110, "on": 5 },
+    { "type": "bolt",   "x": 30,  "on": 6 },
+    { "type": "bolt",   "x": 210, "on": 3 }
+  ],
+  "bot": [
+    { "do": "walk", "x": 20 }, { "do": "up" },
+    { "do": "walk", "x": 150 }, { "do": "up" },
+    { "do": "walk", "x": 74 }, { "do": "up" },
+    { "do": "walk", "x": 150 }, { "do": "up" },
+    { "do": "walk", "x": 74 }, { "do": "up" },
+    { "do": "walk", "x": 146 }, { "do": "up" },
+    { "do": "walk", "x": 140 }
+  ],
+  "music": {
+    "bpm": 136,
+    "pad": "<[a3,c4,e4] [a3,c4,e4] [g3,b3,d4] [f3,a3,c4]>",
+    "bass": "<[a1 a1 a2 a1]*4 [a1 a1 a2 a1]*4 [g1 g1 g2 g1]*4 [f1 f1 f2 f1]*4>",
+    "lead": "<[a4 c5 e5 a5]*2 [e5 c5 a4 c5]*2 [g4 b4 d5 g5]*2 [f4 a4 c5 f5]*2>",
+    "drums": "[bd hh bd hh] [sd hh bd sd]"
+  }
+}

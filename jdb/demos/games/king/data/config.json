@@ -1,0 +1,36 @@
+{
+  "screen": { "w": 224, "h": 256, "scale": 3 },
+  "steps_per_second": 60,
+  "player": {
+    "walk": 0.8, "jump_vy": -2.25, "gravity": 0.118, "jump_buffer": 5,
+    "climb": 0.6, "max_fall": 20, "mover_grace": 3,
+    "box": [-2, -11, 4, 11], "invulnerable_after_hit": 90
+  },
+  "spring_vy": -3.6,
+  "spring_carry": 0.5,
+  "lives": 3,
+  "extra_life_at": 20000,
+  "score": { "jump_over": 100, "bolt": 50, "button": 500, "lift_ride": 20 },
+  "bonus_tick": 120, "bonus_step": 100,
+  "spool": {
+    "speed": 0.75, "fall_gravity": 0.16, "ladder_speed": 0.7,
+    "ladder_chance": 0.3, "box": [-2, -4, 4, 4]
+  },
+  "tool": {
+    "gravity": 0.1, "max_vy": 2.8, "skid": 0.8, "aim_spread": 24,
+    "pattern": ["hammer", "hammer", "wrench"],
+    "box_hammer": [-2, -5, 4, 5], "box_wrench": [-2, -5, 4, 4]
+  },
+  "drone": { "box": [-4, -6, 8, 5], "bob": 2 },
+  "crumble": { "hold": 40, "gone": 240 },
+  "round": {
+    "spool_interval_step": 20, "spool_interval_min": 70,
+    "spool_speed_step": 0.12,
+    "tool_interval_step": 15, "tool_interval_min": 60,
+    "drone_speed_step": 0.1, "flood_speed_step": 0.15
+  },
+  "king_hold": 25,
+  "death_frames": 150,
+  "win_frames": 240,
+  "intro_frames": 110
+}

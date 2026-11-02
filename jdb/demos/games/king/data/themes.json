@@ -1,0 +1,30 @@
+{
+  "dusk": {
+    "sky": ["#0b1030", "#3a2050"], "skyline": "#140c26", "windows": "#5a3a6a", "stars": 30,
+    "pal": { "P": "#e8781e", "p": "#8a3c0a", "R": "#ffb060" }, "ladder": "#ffd23f"
+  },
+  "day": {
+    "sky": ["#2a70b8", "#9fd0f0"], "skyline": "#5a7898", "windows": "#7a98b8", "stars": 0,
+    "pal": { "P": "#d03838", "p": "#701414", "R": "#ff8888" }, "ladder": "#f0f0f0"
+  },
+  "night": {
+    "sky": ["#02040c", "#0c1430"], "skyline": "#070a18", "windows": "#ffd23f", "stars": 60,
+    "pal": { "P": "#3ab0ff", "p": "#105888", "R": "#a0e0ff" }, "ladder": "#ffcc00"
+  },
+  "storm": {
+    "sky": ["#1a2028", "#4a525e"], "skyline": "#14181e", "windows": "#3a424c", "stars": 0,
+    "pal": { "P": "#9aa8b8", "p": "#4a5868", "R": "#d0dae6" }, "ladder": "#ff8c28"
+  },
+  "dust": {
+    "sky": ["#2a1a10", "#7a5232"], "skyline": "#1e140a", "windows": "#4a3420", "stars": 0,
+    "pal": { "P": "#c8a060", "p": "#6a4a20", "R": "#f0d090" }, "ladder": "#ffe438"
+  },
+  "concrete": {
+    "sky": ["#101418", "#303840"], "skyline": "#0a0c10", "windows": "#2a3038", "stars": 10,
+    "pal": { "P": "#58c060", "p": "#1e6a28", "R": "#a0f0a0" }, "ladder": "#ffcc00"
+  },
+  "arcade": {
+    "sky": ["#000000", "#000000"], "skyline": "#000000", "windows": "#000000", "stars": 0,
+    "pal": {}, "ladder": "#28d8ff"
+  }
+}

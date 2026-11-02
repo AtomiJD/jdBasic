@@ -1,0 +1,270 @@
+' Rule checks for sim.jdb, run from this folder:  jdbasic sim_test.jdb
+' Ends with "failed N"; tests/king/sim_rules.jdb gates on "failed 0".
+IMPORT SIM
+
+DIM n_ok = 0
+DIM n_bad = 0
+SUB CHECK(name$, cond)
+    IF cond THEN
+        n_ok = n_ok + 1
+    ELSE
+        n_bad = n_bad + 1
+        PRINT "FAIL: "; name$
+    ENDIF
+ENDSUB
+
+DIM cfg = JSON.PARSE(TXTREADER$("data/config.json"))
+DIM items = JSON.PARSE(TXTREADER$("data/items.json"))
+SIM.SETUP(cfg, items)
+
+FUNC PAD(l, r, u, d, j)
+    DIM m AS MAP = {}
+    m{"l"} = l
+    m{"r"} = r
+    m{"u"} = u
+    m{"d"} = d
+    m{"j"} = j
+    RETURN m
+ENDFUNC
+
+DIM IDLE = PAD(0, 0, 0, 0, 0)
+
+FUNC PLAT(x1, y1, x2, y2, kind$)
+    DIM p AS MAP = {}
+    p{"x1"} = x1
+    p{"y1"} = y1
+    p{"x2"} = x2
+    p{"y2"} = y2
+    p{"kind"} = kind$
+    RETURN p
+ENDFUNC
+
+' a flat floor at 200, a shelf at 160 with a ladder up to it, KING far away
+' and idle; the caller adds what the check needs
+FUNC BASELEVEL()
+    DIM lv AS MAP = {}
+    lv{"name"} = "test"
+    lv{"bonus"} = 1000
+    lv{"start"} = {"x": 40, "on": 0}
+    lv{"button"} = {"x": 200, "on": 2}
+    lv{"king"} = {"x": 20, "plat": 2, "pattern": []}
+    lv{"platforms"} = [PLAT(0, 200, 224, 200, "girder"), PLAT(60, 160, 140, 160, "girder"), PLAT(180, 40, 224, 40, "girder")]
+    lv{"ladders"} = [{"x": 100, "lo": 0, "hi": 1}, {"x": 70, "lo": 0, "hi": 1, "broken": 1}]
+    lv{"items"} = []
+    RETURN lv
+ENDFUNC
+
+FUNC RUN(inp, n)
+    DIM r$ = "play"
+    DIM i
+    FOR i = 1 TO n
+        r$ = SIM.TICKSTEP(inp)
+        IF r$ <> "play" THEN RETURN r$
+    NEXT i
+    RETURN r$
+ENDFUNC
+
+' ── jump ────────────────────────────────────────────────────────
+SIM.NEWGAME()
+SIM.LOAD(BASELEVEL(), 1, 1)
+DIM pl = SIM.PLAYER()
+CHECK("hero starts on the floor", pl{"plat"} = 0 ANDALSO pl{"y"} = 200)
+SIM.TICKSTEP(IDLE)
+SIM.TICKSTEP(PAD(0, 0, 0, 0, 1))
+DIM top_y = 200
+DIM air = 0
+DIM i
+FOR i = 1 TO 80
+    SIM.TICKSTEP(IDLE)
+    pl = SIM.PLAYER()
+    IF pl{"y"} < top_y THEN top_y = pl{"y"}
+    IF pl{"plat"} < 0 THEN air = air + 1
+NEXT i
+CHECK("a jump rises 20 px (" + STR$(200 - top_y) + ")", ABS((200 - top_y) - 20) < 1.5)
+CHECK("a jump stays 37-39 frames in the air (" + STR$(air) + ")", air >= 36 ANDALSO air <= 40)
+CHECK("lands back on the floor", pl{"plat"} = 0)
+
+SIM.LOAD(BASELEVEL(), 1, 1)
+SIM.TICKSTEP(IDLE)
+DIM x0 = SIM.PLAYER()["x"]
+SIM.TICKSTEP(PAD(0, 1, 0, 0, 1))
+FOR i = 1 TO 60
+    SIM.TICKSTEP(PAD(0, 0, 0, 0, 0))
+NEXT i
+DIM wide = SIM.PLAYER(){"x"} - x0
+CHECK("a running jump reaches about 30 px (" + STR$(wide) + ")", wide > 28 ANDALSO wide < 33)
+
+' ── falls ───────────────────────────────────────────────────────
+DIM lvf = BASELEVEL()
+lvf{"platforms"} = [PLAT(0, 200, 224, 200, "girder"), PLAT(20, 182, 60, 182, "girder"), PLAT(100, 170, 140, 170, "girder"), PLAT(180, 40, 224, 40, "girder")]
+lvf{"button"} = {"x": 200, "on": 3}
+lvf{"king"} = {"x": 20, "plat": 3, "pattern": []}
+lvf{"start"} = {"x": 50, "on": 1}
+SIM.LOAD(lvf, 1, 1)
+CHECK("walking off an 18 px ledge is safe", RUN(PAD(0, 1, 0, 0, 0), 60) = "play")
+lvf{"start"} = {"x": 130, "on": 2}
+SIM.LOAD(lvf, 1, 1)
+CHECK("walking off a 30 px ledge kills", RUN(PAD(0, 1, 0, 0, 0), 80) = "dead")
+
+' ── ladders ─────────────────────────────────────────────────────
+DIM lvl = BASELEVEL()
+lvl{"start"} = {"x": 100, "on": 0}
+SIM.LOAD(lvl, 1, 1)
+RUN(PAD(0, 0, 1, 0, 0), 120)
+pl = SIM.PLAYER()
+CHECK("climbing a ladder ends on the shelf", pl{"plat"} = 1 ANDALSO pl{"climb"} < 0)
+RUN(PAD(0, 0, 0, 1, 0), 120)
+CHECK("climbing down ends on the floor", SIM.PLAYER(){"plat"} = 0)
+lvl{"start"} = {"x": 70, "on": 0}
+SIM.LOAD(lvl, 1, 1)
+RUN(PAD(0, 0, 1, 0, 0), 60)
+CHECK("a broken ladder cannot be climbed", SIM.PLAYER(){"climb"} < 0 ANDALSO SIM.PLAYER(){"y"} = 200)
+
+' ── spools ──────────────────────────────────────────────────────
+SIM.LOAD(BASELEVEL(), 1, 1)
+SIM.ADD_SPOOL(0, 80, -0.75)
+CHECK("a spool rolling into the hero kills", RUN(IDLE, 120) = "dead")
+
+SIM.NEWGAME()
+SIM.LOAD(BASELEVEL(), 1, 1)
+SIM.ADD_SPOOL(0, 58, -0.75)
+SIM.TICKSTEP(IDLE)
+RUN(PAD(0, 0, 0, 0, 1), 1)
+DIM r$ = RUN(IDLE, 80)
+CHECK("jumping a spool in time survives", r$ = "play")
+CHECK("and scores 100 (" + STR$(SIM.SCORE()) + ")", SIM.SCORE() = 100)
+
+' ── helmet ──────────────────────────────────────────────────────
+DIM lvh = BASELEVEL()
+lvh{"items"} = [{"type": "helm", "x": 44, "on": 0}]
+SIM.LOAD(lvh, 1, 1)
+SIM.TICKSTEP(IDLE)
+CHECK("the helmet is picked up", SIM.PLAYER(){"shield"} = 1)
+SIM.ADD_SPOOL(0, 70, -0.75)
+CHECK("the helmet takes one hit", RUN(IDLE, 60) = "play" ANDALSO SIM.PLAYER(){"shield"} = 0)
+CHECK("and counts it", SIM.STATS(){"shield_saves"} = 1)
+SIM.EVENTS_TAKE()
+RUN(IDLE, 100)
+SIM.ADD_SPOOL(0, 60, -0.75)
+CHECK("the next hit kills", RUN(IDLE, 60) = "dead")
+
+' ── bolts and the stopwatch ─────────────────────────────────────
+SIM.NEWGAME()
+DIM lvb = BASELEVEL()
+lvb{"items"} = [{"type": "bolt", "x": 44, "on": 0}, {"type": "clock", "x": 52, "on": 0}]
+SIM.LOAD(lvb, 1, 1)
+SIM.TICKSTEP(IDLE)
+CHECK("a bolt scores 50", SIM.SCORE() = 50 ANDALSO SIM.STATS(){"bolts"} = 1)
+RUN(PAD(0, 1, 0, 0, 0), 12)
+CHECK("the stopwatch is picked up", SIM.PLAYER(){"power"} = "slow")
+SIM.ADD_SPOOL(0, 200, -0.8)
+RUN(IDLE, 40)
+DIM sp = SIM.SPOOLLIST()[0]
+CHECK("the stopwatch halves a spool's way (" + STR$(200 - sp{"x"}) + ")", ABS((200 - sp{"x"}) - 16) < 1)
+
+' ── planks ──────────────────────────────────────────────────────
+DIM lvp = BASELEVEL()
+lvp{"platforms"} = [PLAT(0, 200, 224, 200, "girder"), PLAT(30, 190, 60, 190, "plank"), PLAT(180, 40, 224, 40, "girder")]
+lvp{"start"} = {"x": 40, "on": 1}
+lvp{"king"} = {"x": 200, "plat": 2, "pattern": []}
+lvp{"ladders"} = []
+SIM.LOAD(lvp, 1, 1)
+RUN(IDLE, cfg{"crumble"}{"hold"} - 2)
+CHECK("a plank holds for a moment", SIM.PLATFORMS()[1]{"solid"} = 1 ANDALSO SIM.PLAYER(){"plat"} = 1)
+RUN(IDLE, 20)
+CHECK("then gives way", SIM.PLATFORMS()[1]{"solid"} = 0 ANDALSO SIM.PLAYER(){"plat"} = 0)
+RUN(IDLE, cfg{"crumble"}{"gone"})
+CHECK("and grows back", SIM.PLATFORMS()[1]{"solid"} = 1)
+
+' ── springboard ─────────────────────────────────────────────────
+DIM lvs = BASELEVEL()
+lvs{"platforms"} = [PLAT(0, 200, 100, 200, "girder"), PLAT(100, 200, 120, 200, "spring"), PLAT(120, 200, 224, 200, "girder"), PLAT(180, 40, 224, 40, "girder")]
+lvs{"start"} = {"x": 96, "on": 0}
+lvs{"king"} = {"x": 200, "plat": 3, "pattern": []}
+lvs{"ladders"} = []
+SIM.LOAD(lvs, 1, 1)
+DIM low = 200
+FOR i = 1 TO 90
+    SIM.TICKSTEP(IIF(i < 8, PAD(0, 1, 0, 0, 0), IDLE))
+    IF SIM.PLAYER(){"y"} < low THEN low = SIM.PLAYER(){"y"}
+NEXT i
+CHECK("a springboard throws the hero about 55 px up (" + STR$(200 - low) + ")", 200 - low > 50 ANDALSO 200 - low < 60)
+
+' ── wind ────────────────────────────────────────────────────────
+DIM lvw = BASELEVEL()
+lvw{"wind"} = [{"y1": 150, "y2": 210, "force": 0.4, "period": 100, "duty": 50, "phase": 0}]
+SIM.LOAD(lvw, 1, 1)
+DIM wx0 = SIM.PLAYER(){"x"}
+RUN(IDLE, 49)
+CHECK("a gust pushes the hero (" + STR$(SIM.PLAYER(){"x"} - wx0) + ")", SIM.PLAYER(){"x"} - wx0 > 10)
+DIM wx1 = SIM.PLAYER(){"x"}
+RUN(IDLE, 40)
+CHECK("between gusts nothing moves", ABS(SIM.PLAYER(){"x"} - wx1) < 0.01)
+
+' ── concrete ────────────────────────────────────────────────────
+DIM lvc = BASELEVEL()
+lvc{"flood"} = {"y": 230, "top": 100, "delay": 10, "speed": 1}
+SIM.LOAD(lvc, 1, 1)
+CHECK("rising concrete drowns the hero", RUN(IDLE, 60) = "dead")
+
+' ── the button ──────────────────────────────────────────────────
+SIM.NEWGAME()
+DIM lvg = BASELEVEL()
+lvg{"button"} = {"x": 60, "on": 0}
+SIM.LOAD(lvg, 1, 1)
+CHECK("reaching the button wins", RUN(PAD(0, 1, 0, 0, 0), 60) = "win")
+CHECK("and pays the bonus", SIM.SCORE() = cfg{"score"}{"button"} + 1000)
+
+' ── the crane level ─────────────────────────────────────────────
+DIM lv2 = JSON.PARSE(TXTREADER$("data/levels/level_02.json"))
+SIM.LOAD(lv2, 1, 1)
+DIM pls = SIM.PLATFORMS()
+CHECK("the crane level has four beams and five lifts", LEN(pls) = 11)
+DIM l0 = pls[6]
+CHECK("the first lift tops out where the lowest beam turns", ABS(l0{"ytop"} - pls[2]{"yext"}) < 0.01)
+DIM saw_top = 0
+DIM saw_turn = 0
+FOR i = 1 TO 900
+    SIM.TICKSTEP(IDLE)
+    IF l0{"state"} = "top" THEN saw_top = 1
+    IF saw_top = 1 ANDALSO pls[2]{"at_r"} = 1 THEN saw_turn = 1
+NEXT i
+CHECK("the lift reaches the top and the beam turns at its side", saw_top = 1 ANDALSO saw_turn = 1)
+
+' ── determinism ─────────────────────────────────────────────────
+FUNC REPLAY(seed)
+    DIM lv1 = JSON.PARSE(TXTREADER$("data/levels/level_01.json"))
+    SIM.NEWGAME()
+    SIM.LOAD(lv1, 1, seed)
+    DIM k
+    FOR k = 1 TO 900
+        SIM.TICKSTEP(IDLE)
+    NEXT k
+    DIM s = SIM.SPOOLLIST()
+    DIM sig = LEN(s) * 1000
+    DIM q
+    FOR EACH q IN s
+        sig = sig + q{"x"} + q{"y"}
+    NEXT q
+    RETURN sig
+ENDFUNC
+CHECK("the same seed plays the same", REPLAY(7) = REPLAY(7))
+
+' ── every level file is complete ────────────────────────────────
+DIM n = 1
+DO WHILE FILE.EXISTS("data/levels/level_" + RIGHT$("0" + STR$(n), 2) + ".json")
+    DIM lvx = JSON.PARSE(TXTREADER$("data/levels/level_" + RIGHT$("0" + STR$(n), 2) + ".json"))
+    DIM good = 1
+    DIM key$
+    FOR EACH key$ IN ["name", "start", "button", "king", "platforms", "bot", "music", "theme"]
+        IF NOT MAP.EXISTS(lvx, key$) THEN
+            good = 0
+            PRINT "level "; n; " lacks "; key$
+        ENDIF
+    NEXT key$
+    CHECK("level " + STR$(n) + " has every part", good = 1)
+    n = n + 1
+LOOP
+CHECK("there are 8 levels", n - 1 = 8)
+
+PRINT "passed "; n_ok; ", failed "; n_bad

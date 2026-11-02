@@ -1,0 +1,58 @@
+{
+  "name": "KRANBAHN 80M",
+  "hint": "FUENF TRAEGER - UND KING ZIELT BESSER",
+  "theme": "night",
+  "bonus": 8000,
+  "start": { "x": 160, "on": 1 },
+  "button": { "x": 44, "on": 0 },
+  "king": { "x": 120, "plat": 0, "pattern": ["wrench", "hammer", "wrench"], "interval": 140, "jitter": 30 },
+  "toolbox": { "x": 140 },
+  "platforms": [
+    { "x1": 32, "y1": 56,  "x2": 176, "y2": 56 },
+    { "x1": 0,  "y1": 248, "x2": 224, "y2": 248 }
+  ],
+  "ladders": [],
+  "crane": {
+    "railY": 27, "pivot": { "x": 112, "y": 31 }, "gravity": 0.09, "reach": 188,
+    "masts": [0, 216], "liftTravel": 80, "liftHold": 22, "liftIdle": 80
+  },
+  "movers": [
+    { "type": "swing", "row": 222, "w": 32, "ph": 0.0 },
+    { "type": "swing", "row": 190, "w": 32, "ph": 2.3 },
+    { "type": "swing", "row": 158, "w": 40, "ph": 4.1 },
+    { "type": "swing", "row": 126, "w": 40, "ph": 1.2 },
+    { "type": "swing", "row": 94,  "w": 48, "ph": 3.0 },
+    { "type": "lift", "x": 192, "w": 24, "bot": 244,          "top": { "swing": 0 } },
+    { "type": "lift", "x": 8,   "w": 24, "bot": { "swing": 0 }, "top": { "swing": 1 } },
+    { "type": "lift", "x": 192, "w": 24, "bot": { "swing": 1 }, "top": { "swing": 2 } },
+    { "type": "lift", "x": 8,   "w": 24, "bot": { "swing": 2 }, "top": { "swing": 3 } },
+    { "type": "lift", "x": 192, "w": 24, "bot": { "swing": 3 }, "top": { "swing": 4 } },
+    { "type": "lift", "x": 8,   "w": 24, "bot": { "swing": 4 }, "top": 56 }
+  ],
+  "items": [
+    { "type": "helm",  "x": 100, "on": 1 },
+    { "type": "bolt",  "x": 204, "y": 206 },
+    { "type": "bolt",  "x": 20,  "y": 172 },
+    { "type": "bolt",  "x": 204, "y": 140 },
+    { "type": "bolt",  "x": 20,  "y": 108 },
+    { "type": "bolt",  "x": 204, "y": 76 },
+    { "type": "clock", "x": 60,  "on": 1 }
+  ],
+  "bot": [
+    { "do": "walk", "x": 100 }, { "do": "walk", "x": 186 },
+    { "do": "board", "p": 7 }, { "do": "board", "p": 2 },
+    { "do": "board", "p": 8 }, { "do": "board", "p": 3 },
+    { "do": "board", "p": 9 }, { "do": "board", "p": 4 },
+    { "do": "board", "p": 10 }, { "do": "board", "p": 5 },
+    { "do": "board", "p": 11 }, { "do": "board", "p": 6 },
+    { "do": "board", "p": 12 }, { "do": "board", "p": 0 },
+    { "do": "walk", "x": 44 }
+  ],
+  "music": {
+    "bpm": 100,
+    "pad": "<[f#3,a3,c#4] [d3,f#3,a3] [e3,g#3,b3] [c#3,e#3,g#3]>",
+    "bass": "<[f#1 ~ ~ f#2]*2 [d1 ~ ~ d2]*2 [e1 ~ ~ e2]*2 [c#1 ~ ~ c#2]*2>",
+    "lead": "<[c#5 ~ a4 f#4]*2 [a4 ~ f#4 d4]*2 [b4 ~ g#4 e4]*2 [g#4 ~ e#4 c#4]*2>",
+    "drums": "[bd ~ ~ hh] [sd ~ hh ~] [bd ~ bd hh] [sd ~ hh hh]"
+  }
+}
