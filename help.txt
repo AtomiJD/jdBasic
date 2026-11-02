@@ -1288,8 +1288,8 @@ Syntax: GFX.LOADIMAGE(path$) -> id
 Description: Loads an image file into a GPU texture and returns its image id.
 
 [GFX.NEWTARGET]
-Syntax: GFX.NEWTARGET(w, h) -> id
-Description: Makes an empty, transparent image of w x h pixels that drawing can be pointed at with GFX.TARGET. It draws like any other image (GFX.DRAWIMAGE, GFX.DRAWQUAD) and is freed with GFX.FREEIMAGE.
+Syntax: GFX.NEWTARGET(w, h, [smooth]) -> id
+Description: Makes an empty, transparent image of w x h pixels that drawing can be pointed at with GFX.TARGET. It draws like any other image (GFX.DRAWIMAGE, GFX.DRAWQUAD) and is freed with GFX.FREEIMAGE. smooth (default TRUE) filters the image when it is drawn larger or smaller; FALSE keeps hard pixel edges for pixel art.
 
 [GFX.MOUSEBUTTON]
 Syntax: GFX.MOUSEBUTTON([button]) -> boolean

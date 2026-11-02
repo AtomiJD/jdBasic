@@ -169,6 +169,16 @@ rm -f tests/gfx/font_cache_smoke.exe
 [ -f tests/gfx/font_cache_smoke.exe ] && ( cd tests/gfx && timeout 25 ./font_cache_smoke.exe )
 ```
 
+The smooth smoke (exit 0 + "ALL NEWTARGET SMOOTH TESTS PASSED!") checks that
+`GFX.NEWTARGET(w, h, FALSE)` keeps a hard pixel edge when drawn larger and
+that the default still filters:
+
+```bash
+rm -f tests/gfx/newtarget_smooth_smoke.exe
+./build/jdBasic.exe -c tests/gfx/newtarget_smooth_smoke.jdb
+[ -f tests/gfx/newtarget_smooth_smoke.exe ] && ( cd tests/gfx && timeout 25 ./newtarget_smooth_smoke.exe )
+```
+
 ## Step 3a - leak check (~6 s)
 
 Run it after touching `src/llvm_codegen.cpp`, `src/jdb_runtime.cpp` or

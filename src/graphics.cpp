@@ -2246,11 +2246,12 @@ void register_graphics_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // ── GFX.NEWTARGET(w, h) -> id ──────────────────────────────
+    // ── GFX.NEWTARGET(w, h, [smooth]) -> id ────────────────────
     // An image that drawing can be pointed at with GFX.TARGET; it starts
-    // transparent and draws like any other image.
+    // transparent and draws like any other image. smooth FALSE scales it
+    // nearest-neighbour, so pixel art stays sharp when drawn larger.
 
-    vm.register_native("GFX.NEWTARGET", 2, 2, [](const std::vector<Value>& args) -> Value {
+    vm.register_native("GFX.NEWTARGET", 2, 3, [](const std::vector<Value>& args) -> Value {
         ensure_screen("GFX.NEWTARGET");
         long long w = args[0].to_int();
         long long h = args[1].to_int();
@@ -2262,7 +2263,8 @@ void register_graphics_builtins(VM& vm) {
             throw jdError(ErrCode::RUNTIME_ERROR,
                 std::string("GFX.NEWTARGET: SDL_CreateTexture failed: ") + SDL_GetError());
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_LINEAR);
+        bool smooth = args.size() < 3 || args[2].to_bool();
+        SDL_SetTextureScaleMode(tex, smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
         SDL_Texture* old_target = SDL_GetRenderTarget(g_renderer);
         SDL_SetRenderTarget(g_renderer, tex);
         SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 0);

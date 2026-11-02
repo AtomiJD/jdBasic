@@ -1,0 +1,45 @@
+' GFX.NEWTARGET(w, h, FALSE) scales nearest-neighbour: a white and a black
+' pixel drawn eight times wider keep a hard edge, where the default filter
+' blends them into grey. Needs a GFX build and a display, like the other
+' smokes in this folder.
+IMPORT IMG
+DIM bad = 0
+
+SUB EXPECT(name$, cond)
+    IF NOT cond THEN
+        bad = bad + 1
+        PRINT "FAIL: "; name$
+    ENDIF
+ENDSUB
+
+FUNC TWOPIXELS(smooth)
+    DIM img = GFX.NEWTARGET(2, 1, smooth)
+    GFX.TARGET img, TRUE
+    GFX.PLOT_POINTS [0, 1], [0, 0], [255, 255, 255, 0, 0, 0]
+    GFX.TARGET
+    RETURN img
+ENDFUNC
+
+DIM png$ = "newtarget_smooth_smoke.png"
+SCREEN 64, 32, "newtarget smooth smoke"
+CLS
+GFX.DRAWIMAGE TWOPIXELS(FALSE), 0, 0, 16, 8
+GFX.DRAWIMAGE TWOPIXELS(TRUE), 0, 16, 16, 8
+GFX.SAVE_SCREENSHOT(png$)
+SCREENFLIP
+GFX.CLOSE
+
+DIM shot = IMG.READPNG(png$)
+DIM sharp_l = IMG.GETPIXEL(shot, 7, 4)
+DIM sharp_r = IMG.GETPIXEL(shot, 8, 4)
+DIM soft_l = IMG.GETPIXEL(shot, 7, 20)
+EXPECT("FALSE keeps the white half white", sharp_l[0] = 255)
+EXPECT("FALSE keeps the black half black", sharp_r[0] = 0)
+EXPECT("the default still blends at the edge", soft_l[0] > 0 ANDALSO soft_l[0] < 255)
+KILL png$
+
+IF bad = 0 THEN
+    PRINT "ALL NEWTARGET SMOOTH TESTS PASSED!"
+ELSE
+    PRINT bad; " NEWTARGET SMOOTH TESTS FAILED"
+ENDIF
