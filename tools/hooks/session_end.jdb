@@ -1,0 +1,102 @@
+' Session wrap-up for Claude Code: collects what a session leaves open in a
+' git repository and writes it to <repo>/.claude/last_session.md, which the
+' next SessionStart prints, plus one JSON line in <repo>/.claude/sessions.jsonl.
+'
+' Usage: jdBasic session_end.jdb [trakr_project] [repo_dir]
+'   trakr_project  jdTrakr key whose Kaiku tickets in doing/review are listed
+'                  (empty: skip the board)
+'   repo_dir       default: CLAUDE_PROJECT_DIR, else the current directory
+'
+' The session start time comes from <repo>/.claude/session_started (ISO text,
+' written by the SessionStart hook); without it, commits since midnight count.
+' Never fails loudly: a hook that errors must not disturb the session end.
+
+CONST MAX_LISTED = 15
+
+FUNC GitText$(args)
+    DIM r = OS.EXEC("git", args)
+    IF r{"exit_code"} <> 0 THEN RETURN ""
+    RETURN TRIM$(r{"output"})
+ENDFUNC
+
+FUNC NonEmptyLines(text$)
+    IF LEN(text$) = 0 THEN RETURN []
+    RETURN SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+ENDFUNC
+
+FUNC Bullets$(items, indent$)
+    DIM out$ = ""
+    FOR EACH it$ IN TAKE(MAX_LISTED, items)
+        out$ = out$ + indent$ + "- " + it$ + CHR$(10)
+    NEXT it$
+    IF LEN(items) > MAX_LISTED THEN out$ = out$ + indent$ + "- ... " + STR$(LEN(items) - MAX_LISTED) + " more" + CHR$(10)
+    RETURN out$
+ENDFUNC
+
+FUNC TrakrKey$()
+    DIM key$ = GETENV$("JDTRAKR_API")
+    DIM key_file$ = GETENV$("USERPROFILE") + "\.jdtrakr_key"
+    IF LEN(key$) = 0 ANDALSO FILE.EXISTS(key_file$) THEN key$ = TRIM$(TXTREADER$(key_file$))
+    RETURN key$
+ENDFUNC
+
+FUNC TrakrTickets(project$, state$)
+    DIM base$ = GETENV$("JDTRAKR_URL")
+    IF LEN(base$) = 0 THEN RETURN []
+    DIM key$ = TrakrKey$()
+    IF LEN(key$) = 0 THEN RETURN []
+    TRY
+        HTTP.CLEARHEADERS
+        HTTP.SETHEADER "X-API-Key", key$
+        DIM body$ = HTTP.GET$(base$ + "/api/tickets?project=" + project$ + "&assignee=Kaiku&status=" + state$)
+        IF HTTP.STATUSCODE() <> 200 THEN RETURN []
+        DIM found = []
+        FOR EACH t IN JSON.PARSE(body$){"tickets"}
+            found = APPEND(found, "#" + STR$(t{"id"}) + " " + t{"title"})
+        NEXT t
+        RETURN found
+    CATCH
+        RETURN []
+    ENDTRY
+ENDFUNC
+
+DIM argv = OS.ARGS()
+DIM project$ = ""
+IF LEN(argv) > 1 THEN project$ = argv[1]
+DIM repo$ = GETENV$("CLAUDE_PROJECT_DIR")
+IF LEN(argv) > 2 THEN repo$ = argv[2]
+IF LEN(repo$) = 0 THEN repo$ = "."
+
+DIM state_dir$ = repo$ + "/.claude"
+MKDIR state_dir$
+
+DIM since$ = "midnight"
+IF FILE.EXISTS(state_dir$ + "/session_started") THEN since$ = TRIM$(TXTREADER$(state_dir$ + "/session_started"))
+
+DIM dirty = NonEmptyLines(GitText$(["-C", repo$, "status", "--porcelain"]))
+DIM unpushed = NonEmptyLines(GitText$(["-C", repo$, "log", "--oneline", "@{u}..HEAD"]))
+DIM session_commits = NonEmptyLines(GitText$(["-C", repo$, "log", "--oneline", "--since=" + since$]))
+DIM branch$ = GitText$(["-C", repo$, "rev-parse", "--abbrev-ref", "HEAD"])
+
+DIM doing = []
+DIM in_review = []
+IF LEN(project$) > 0 THEN
+    doing = TrakrTickets(project$, "doing")
+    in_review = TrakrTickets(project$, "review")
+ENDIF
+
+DIM ended$ = DATE$() + " " + TIME$()
+DIM md$ = "# Open from the last session (ended " + ended$ + ")" + CHR$(10) + CHR$(10)
+md$ = md$ + "Repository: " + repo$ + " (branch " + branch$ + ")" + CHR$(10) + CHR$(10)
+md$ = md$ + "- Commits this session: " + STR$(LEN(session_commits)) + CHR$(10) + Bullets$(session_commits, "  ")
+md$ = md$ + "- Unpushed commits: " + STR$(LEN(unpushed)) + CHR$(10) + Bullets$(unpushed, "  ")
+md$ = md$ + "- Uncommitted files: " + STR$(LEN(dirty)) + CHR$(10) + Bullets$(dirty, "  ")
+IF LEN(project$) > 0 THEN
+    md$ = md$ + "- Trakr " + project$ + ", Kaiku in doing: " + STR$(LEN(doing)) + CHR$(10) + Bullets$(doing, "  ")
+    md$ = md$ + "- Trakr " + project$ + ", Kaiku in review: " + STR$(LEN(in_review)) + CHR$(10) + Bullets$(in_review, "  ")
+ENDIF
+md$ = md$ + CHR$(10) + "Before new work: recap these in chat, update tickets and memory if they are stale." + CHR$(10)
+TXTWRITER state_dir$ + "/last_session.md", md$
+
+DIM rec = {"ended": ended$, "repo": repo$, "branch": branch$, "since": since$, "commits": session_commits, "unpushed": LEN(unpushed), "dirty": LEN(dirty), "trakr_project": project$, "doing": doing, "review": in_review}
+TXTWRITER state_dir$ + "/sessions.jsonl", JSON.STRINGIFY$(rec) + CHR$(10), TRUE

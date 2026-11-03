@@ -13,6 +13,30 @@ machine that works on this repository behaves the same way.
 | `mark_tests_ok.ps1` | PostToolUse (Bash) | Writes `.claude/.tests_ok` when a gate run came back green. `check_commit.ps1` reads its timestamp. |
 | `lab_reflex.ps1` | SessionStart | Prints the workshop manifest so the persistent lab is restored rather than rebuilt. |
 | `check_co_reward.ps1` | PostToolUse | Logs co-processor use for the wins ledger. |
+| `session_end.jdb` | SessionEnd | jdBasic. Collects what the session leaves open: commits since the session started, unpushed commits, uncommitted files, and the Kaiku tickets in `doing`/`review` of one jdTrakr project. Writes `.claude/last_session.md` and appends a line to `.claude/sessions.jsonl`. Never fails the session end. |
+
+## Session wrap-up
+
+A SessionEnd hook cannot talk to the agent any more, so the wrap-up travels
+to the next session instead:
+
+1. SessionStart (`startup` only) prints `.claude/last_session.md` from the
+   previous session and writes the start time to `.claude/session_started`.
+2. SessionEnd runs `session_end.jdb <trakr-project>`, which counts commits
+   since that start time (since midnight when the file is missing).
+
+```json
+"SessionEnd": [{ "hooks": [{ "type": "command",
+  "command": "\"$CLAUDE_PROJECT_DIR/build/jdBasic.exe\" \"$CLAUDE_PROJECT_DIR/tools/hooks/session_end.jdb\" jdbasic >/dev/null 2>&1 || true",
+  "timeout": 30 }] }]
+```
+
+The script takes the trakr project and the repository as arguments and has
+nothing jdBasic-specific in it. It is meant to move to user level
+(`~/.claude/settings.json`) for every project, with the trakr key read from
+the project's CLAUDE.md or a small per-project file. Two sessions in the same
+repository share `session_started` and `last_session.md`; the later one wins.
+`sessions.jsonl` is the raw feed for the planned daily/weekly status reports.
 
 ## Wiring them up
 
