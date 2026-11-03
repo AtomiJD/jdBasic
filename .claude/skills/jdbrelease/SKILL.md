@@ -26,6 +26,20 @@ number and date), a commit with `[no-test]`, an annotated tag `vX.Y.0`, and
 **Order matters:** build (versions + zips) → **sign** (re-zips + re-hashes) → upload. Do
 not upload the zips produced by the build step; the sign step rewrites them.
 
+## Release notes - `doc/release_notes/` (read its README first)
+
+- **Before building**: curate `doc/release_notes/unreleased.md` against
+  `git log <last tag in INDEX.md>..HEAD` and the trakr tickets moved to done since then.
+  Facts only, headings New / Changed / Fixed, each line with ticket and commit.
+- **New version**: `unreleased.md` becomes `vX.Y.Z.md`; the GitHub body is that file plus
+  the downloads/hashes table; `unreleased.md` starts empty again.
+- **Refresh of the same version**: append "Refresh, Build N" with the new lines to
+  `vX.Y.Z.md`.
+- **Always**: a row in `doc/release_notes/INDEX.md` with tag, the **exact commit the assets
+  were built from** (`git rev-parse HEAD` at build time), date, asset build numbers,
+  commit range and tickets. That row is how we know later what went into which release.
+- Commit the notes with the version bump (`[no-test]`).
+
 ## 0 - Pre-flight
 
 - Gate must be green first - run `jdbgate`. Don't release red.
