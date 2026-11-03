@@ -30,6 +30,10 @@ not upload the zips produced by the build step; the sign step rewrites them.
 
 - **Before building**: curate `doc/release_notes/unreleased.md` against
   `git log <last tag in INDEX.md>..HEAD` and the trakr tickets moved to done since then.
+  The raw material comes from the private fact store:
+  `D:/usr/dev/cc/release/jdbasic-vb6-windows-x64/jdBasic.exe D:/usr/reports/release_draft.jdb <last tag>`
+  (run `collect.jdb` there first). After publishing, run it again with
+  `<last tag> <asset commit> --mark vX.Y.Z` so the commit facts carry the release.
   Facts only, headings New / Changed / Fixed, each line with ticket and commit.
 - **New version**: `unreleased.md` becomes `vX.Y.Z.md`; the GitHub body is that file plus
   the downloads/hashes table; `unreleased.md` starts empty again.
