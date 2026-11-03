@@ -1,0 +1,59 @@
+' JSON.PARSE string escapes: a \u without four hex digits stays in the text
+' as written (no NUL, nothing swallowed), a surrogate pair becomes one 4-byte
+' UTF-8 character, and the parser stays lenient - it never throws on broken
+' input.
+
+DIM failed AS INTEGER = 0
+DIM q$ AS STRING = CHR$(34)
+DIM bs$ AS STRING = CHR$(92)
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Bytes$(s$ AS STRING) AS STRING
+    DIM out$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(s$) - 1
+        IF i > 0 THEN out$ = out$ + " "
+        out$ = out$ + STR$(BYTEAT(s$, i))
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC Field$(body$ AS STRING) AS STRING
+    DIM doc AS MAP = JSON.PARSE("{" + CHR$(34) + "a" + CHR$(34) + ":" + CHR$(34) + body$ + CHR$(34) + "}")
+    RETURN doc{"a"}
+ENDFUNC
+
+DIM got$ AS STRING
+
+got$ = Field$("x D:" + bs$ + "usr y")
+Check(got$ = "x D:" + bs$ + "usr y", "invalid \u stays as written: [" + got$ + "] " + Bytes$(got$))
+
+got$ = Field$("ab" + bs$ + "u")
+Check(got$ = "ab" + bs$ + "u", "\u at the end of the string: [" + got$ + "]")
+
+got$ = Field$(bs$ + "u12")
+Check(got$ = bs$ + "u12", "\u with two hex digits: [" + got$ + "]")
+
+got$ = Field$(bs$ + "u0041" + bs$ + "u00e4")
+Check(Bytes$(got$) = "65 195 164", "A and ä: " + Bytes$(got$))
+
+got$ = Field$(bs$ + "ud83d" + bs$ + "ude00!")
+Check(Bytes$(got$) = "240 159 152 128 33", "surrogate pair to one 4-byte character: " + Bytes$(got$))
+
+got$ = Field$("it" + bs$ + "'s")
+Check(got$ = "it's", "unknown escape keeps the character: [" + got$ + "]")
+
+got$ = Field$("tab" + bs$ + "tend")
+Check(Bytes$(MID$(got$, 3, 1)) = "9", "\t is a tab")
+
+DIM cut AS MAP = JSON.PARSE("{" + q$ + "a" + q$ + ": ")
+Check(LEN(MAP.KEYS(cut)) = 1, "a cut document still parses to one key")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

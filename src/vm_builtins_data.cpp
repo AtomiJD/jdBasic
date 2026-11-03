@@ -232,21 +232,40 @@ void VM::register_data_builtins() {
                         case '\\': r += '\\'; break;
                         case '"': r += '"'; break;
                         case 'u': {
-                            // \uXXXX → UTF-8
-                            if (p + 4 < s.size()) {
-                                std::string hex = s.substr(p+1, 4);
-                                unsigned int cp = 0;
-                                for (char h : hex) {
-                                    cp <<= 4;
-                                    if (h >= '0' && h <= '9') cp |= (h - '0');
-                                    else if (h >= 'a' && h <= 'f') cp |= (h - 'a' + 10);
-                                    else if (h >= 'A' && h <= 'F') cp |= (h - 'A' + 10);
+                            // \uXXXX to UTF-8. A high surrogate followed by a
+                            // \u low surrogate joins into one code point. An
+                            // escape without four hex digits stays in the text
+                            // as written and parsing goes on after the 'u':
+                            // JSON.PARSE is lenient and never throws.
+                            auto hex4 = [&](size_t at, unsigned int& out) -> bool {
+                                if (at + 4 > s.size()) return false;
+                                unsigned int v = 0;
+                                for (size_t k = at; k < at + 4; k++) {
+                                    char h = s[k];
+                                    v <<= 4;
+                                    if (h >= '0' && h <= '9') v |= (unsigned int)(h - '0');
+                                    else if (h >= 'a' && h <= 'f') v |= (unsigned int)(h - 'a' + 10);
+                                    else if (h >= 'A' && h <= 'F') v |= (unsigned int)(h - 'A' + 10);
+                                    else return false;
                                 }
-                                p += 4;
-                                if (cp < 0x80) { r += (char)cp; }
-                                else if (cp < 0x800) { r += (char)(0xC0 | (cp >> 6)); r += (char)(0x80 | (cp & 0x3F)); }
-                                else { r += (char)(0xE0 | (cp >> 12)); r += (char)(0x80 | ((cp >> 6) & 0x3F)); r += (char)(0x80 | (cp & 0x3F)); }
-                            } else { r += s[p]; }
+                                out = v;
+                                return true;
+                            };
+                            unsigned int cp = 0;
+                            if (!hex4(p + 1, cp)) { r += "\\u"; break; }
+                            p += 4;
+                            if (cp >= 0xD800 && cp <= 0xDBFF) {
+                                unsigned int lo = 0;
+                                if (p + 2 < s.size() && s[p + 1] == '\\' && s[p + 2] == 'u' &&
+                                    hex4(p + 3, lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
+                                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                                    p += 6;
+                                }
+                            }
+                            if (cp < 0x80) { r += (char)cp; }
+                            else if (cp < 0x800) { r += (char)(0xC0 | (cp >> 6)); r += (char)(0x80 | (cp & 0x3F)); }
+                            else if (cp < 0x10000) { r += (char)(0xE0 | (cp >> 12)); r += (char)(0x80 | ((cp >> 6) & 0x3F)); r += (char)(0x80 | (cp & 0x3F)); }
+                            else { r += (char)(0xF0 | (cp >> 18)); r += (char)(0x80 | ((cp >> 12) & 0x3F)); r += (char)(0x80 | ((cp >> 6) & 0x3F)); r += (char)(0x80 | (cp & 0x3F)); }
                             break;
                         }
                         default: r += s[p];
