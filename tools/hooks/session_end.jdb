@@ -4,7 +4,8 @@
 '
 ' Usage: jdBasic session_end.jdb [trakr_project] [repo_dir]
 '   trakr_project  jdTrakr key whose Kaiku tickets in doing/review are listed
-'                  (empty: skip the board)
+'                  (empty: skip the board). The board URL comes from
+'                  JDTRAKR_URL, the key from JDTRAKR_API or ~/.jdtrakr_key.
 '   repo_dir       default: CLAUDE_PROJECT_DIR, else the current directory
 '
 ' The session start time comes from <repo>/.claude/session_started (ISO text,
@@ -42,9 +43,8 @@ ENDFUNC
 
 FUNC TrakrTickets(project$, state$)
     DIM base$ = GETENV$("JDTRAKR_URL")
-    IF LEN(base$) = 0 THEN RETURN []
     DIM key$ = TrakrKey$()
-    IF LEN(key$) = 0 THEN RETURN []
+    IF LEN(base$) = 0 ORELSE LEN(key$) = 0 THEN RETURN []
     TRY
         HTTP.CLEARHEADERS
         HTTP.SETHEADER "X-API-Key", key$

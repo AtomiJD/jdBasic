@@ -58,6 +58,24 @@ if (-not (Test-Path $path)) {
   exit 0
 }
 
+# Internal URLs and customer names stay out of the public repository. Terms
+# come from .claude/private_terms.txt (ignored by the checkout); only files
+# inside the repository are checked, code and text alike.
+$repoRoot = $env:CLAUDE_PROJECT_DIR
+if (-not $repoRoot) { $repoRoot = (Get-Location).Path }
+$termFile = Join-Path $repoRoot ".claude/private_terms.txt"
+$fullPath = [System.IO.Path]::GetFullPath($path)
+$inRepo = $fullPath.StartsWith([System.IO.Path]::GetFullPath($repoRoot), [System.StringComparison]::OrdinalIgnoreCase)
+$inIgnoredClaude = $fullPath -match '(?i)[\\/]\.claude[\\/](?!skills[\\/])'
+if ($inRepo -and -not $inIgnoredClaude -and (Test-Path $termFile)) {
+  $whole = Get-Content -Raw -LiteralPath $path
+  foreach ($term in @(Get-Content -LiteralPath $termFile | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith("#") })) {
+    if ($whole -match ('(?i)\b' + [regex]::Escape($term) + '\b')) {
+      $problems += "private term '$term' found in $path - internal URLs and customer names stay out of the public repository"
+    }
+  }
+}
+
 # A .bat/.cmd/.ps1 must be pure ASCII. cmd resolves goto and call by BYTE
 # offset, so one multi-byte character above such a jump moves the resume
 # position and the interpreter restarts mid-line - the failure then surfaces

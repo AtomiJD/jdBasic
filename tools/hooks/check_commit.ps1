@@ -30,13 +30,37 @@ foreach ($pname in (Get-PrivateNames)) {
   }
 }
 
-if ($cmd -match '\[no-test\]') { exit 0 }
-
 $proj = $env:CLAUDE_PROJECT_DIR
 if (-not $proj) { exit 0 }
 
 . (Join-Path $PSScriptRoot "commit_files.ps1")
 $staged = Get-CommitFiles $cmd $proj
+
+# Gate 0: internal URLs and customer names stay out of the public repository.
+# Terms come from .claude/private_terms.txt (ignored by the checkout); every
+# added line of the commit is checked, docs included, [no-test] or not.
+$termFile = Join-Path $proj ".claude/private_terms.txt"
+if ((Test-Path $termFile) -and $staged.Count -gt 0) {
+  $terms = @(Get-Content -LiteralPath $termFile |
+             ForEach-Object { $_.Trim() } |
+             Where-Object { $_ -and -not $_.StartsWith("#") })
+  $diff = (& git -C $proj diff --cached -U0 -- $staged) + (& git -C $proj diff -U0 -- $staged)
+  $added = @($diff | Where-Object { $_ -match '^\+' -and $_ -notmatch '^\+\+\+' })
+  foreach ($term in $terms) {
+    foreach ($ln in $added) {
+      if ($ln -match ('(?i)\b' + [regex]::Escape($term) + '\b')) {
+        [Console]::Error.WriteLine("Blocked: private term '$term' in an added line: $ln - internal URLs and customer names stay out of the public repository.")
+        exit 2
+      }
+    }
+    if ($cmd -match ('(?i)\b' + [regex]::Escape($term) + '\b')) {
+      [Console]::Error.WriteLine("Blocked: private term '$term' in the commit message.")
+      exit 2
+    }
+  }
+}
+
+if ($cmd -match '\[no-test\]') { exit 0 }
 if ($staged.Count -eq 0) { exit 0 }
 
 $codeFiles = @($staged | Where-Object { $_ -match '\.(jdb|cpp|cc|c|h|hpp)$' })
