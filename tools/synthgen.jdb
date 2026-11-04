@@ -28,14 +28,19 @@
 '         error-and-program -> diagnosis-and-fix training pair.
 '
 ' Environment: ANTHROPIC_API_KEY, SYNTH_MODEL (claude-opus-5-5),
-' SYNTH_EFFORT (high).
+' SYNTH_EFFORT (high), SYNTH_BIN (build; a folder relative to the repo).
 
 IMPORT REQ
 
 DIM SYNTH_DIR$ = "dataset/synth"
 DIM WORK_DIR$ = SYNTH_DIR$ + "/work"
-DIM EXE_FROM_RUN$ = "../../../../build/jdBasic.exe"
-DIM EXE$ = "build" + CHR$(92) + "jdBasic.exe"
+' SYNTH_BIN names a folder with a copy of the build (jdBasic.exe, jdbrt.dll,
+' jdbrt.lib, jdb_runtime.obj, the DLLs and lib/), so a verify run is not
+' disturbed by a rebuild in build/.
+DIM BIN_DIR$ = GETENV$("SYNTH_BIN")
+IF BIN_DIR$ = "" THEN BIN_DIR$ = "build"
+DIM EXE$ = REPLACE$(BIN_DIR$, "/", CHR$(92)) + CHR$(92) + "jdBasic.exe"
+DIM EXE_FROM_RUN$ = "../../../../" + REPLACE$(BIN_DIR$, CHR$(92), "/") + "/jdBasic.exe"
 DIM API_VERSION$ = "2026-10-21"
 DIM PROGRAMS_PER_REQUEST = 4
 DIM RUN_SECONDS = 15
