@@ -37,6 +37,8 @@
 #                  (a failure marker in the output, whatever the exit code)
 #                  FAIL:<code> TIMEOUT CFAIL
 #   VERDICT:       OK | GAP (interp green, native red, and not by design) |
+#                  DIVERGE (both green, the output differs) | NONDET (both
+#                  green, the output differs, and so do two interpreter runs) |
 #                  LOOSE (loose source: -c refused it as STRICT or EXPLICIT and
 #                  the named variable really has no declaration) | UNSUPPORTED
 #                  (the compiler, the runtime or the test itself said
@@ -108,6 +110,12 @@ classify() {
 }
 
 green() { case "$1" in PASS|OK) return 0 ;; *) return 1 ;; esac; }
+
+# Two logs print the same, line endings and trailing blanks aside.
+same_output() {
+    diff -q <(tr -d '\r' < "$1" | sed 's/[[:space:]]*$//') \
+            <(tr -d '\r' < "$2" | sed 's/[[:space:]]*$//') >/dev/null 2>&1
+}
 
 # The backends disagree by design in two ways, and neither is a GAP. Prints
 # LOOSE or UNSUPPORTED, or nothing when the disagreement is unexplained.
@@ -183,6 +191,16 @@ run_one() {
     esac
     if green "$istat" && green "$nstat"; then
         verdict="OK"
+        # Green on both sides is not yet the same answer: a test without
+        # asserts, or one whose asserts miss a value, prints what each
+        # backend computed. Different output is DIVERGE, unless the
+        # interpreter disagrees with itself on a second run (time, random
+        # numbers, addresses), which is NONDET and says nothing either way.
+        if ! same_output "$ilog" "$nlog"; then
+            local ilog2="$WORK/log/$id.interp2.txt"
+            ( cd "$REPO" && timeout -k 2 "$tmo" "$JDB" "$rel" ) >"$ilog2" 2>&1 </dev/null
+            if same_output "$ilog" "$ilog2"; then verdict="DIVERGE"; else verdict="NONDET"; fi
+        fi
         # A test that skipped its native half says so; green on both sides
         # then proves nothing about parity.
         grep -qa 'interpreter-only' "$nlog" 2>/dev/null && verdict="UNSUPPORTED"
@@ -196,7 +214,7 @@ run_one() {
     printf '%s\t%s\t%s\t%s\n' "$rel" "$istat" "$nstat" "$verdict"
 }
 
-export -f run_one classify green design_verdict
+export -f run_one classify green same_output design_verdict
 export REPO JDB WORK TIMEOUT COM_TIMEOUT
 
 cd "$REPO" || exit 1
@@ -259,11 +277,13 @@ echo
 echo "=== SUMMARY ==="
 awk -F'\t' '{v[$4]++} END {for (k in v) printf "%-12s %d\n", k, v[k]}' "$RESULTS" | sort
 echo
-echo "=== PARITY GAPS (interp green, native red, not explained by design) ==="
+echo "=== PARITY GAPS (interp green, native red or printing something else) ==="
 echo "note: loose source that STRICT/EXPLICIT refuses is LOOSE, a construct the"
-echo "      compiler names as interpreter-only is UNSUPPORTED; both sit in the"
-echo "      summary above. What is listed here needs a look."
-awk -F'\t' '$4=="GAP" {printf "%-52s interp=%-6s native=%s\n", $1, $2, $3}' "$RESULTS"
+echo "      compiler names as interpreter-only is UNSUPPORTED, a test whose"
+echo "      interpreter output changes from run to run is NONDET; they sit in the"
+echo "      summary above. What is listed here needs a look: GAP (native red) or"
+echo "      DIVERGE (both green, different output)."
+awk -F'\t' '$4=="GAP" || $4=="DIVERGE" {printf "%-52s interp=%-6s native=%-6s %s\n", $1, $2, $3, $4}' "$RESULTS"
 echo
 
 # Compare against the recorded baseline. A summary count alone hides the case
@@ -275,7 +295,7 @@ case "$(uname -s)" in
     Darwin) BASELINE="$REPO/tests/parity_baseline.macos.tsv" ;;
     *)      BASELINE="$REPO/tests/parity_baseline.tsv" ;;
 esac
-rank() { case "$1" in OK|XFAIL) echo 0 ;; LOOSE|UNSUPPORTED) echo 1 ;; NATIVE_ONLY) echo 2 ;; GAP) echo 3 ;; *) echo 4 ;; esac; }
+rank() { case "$1" in OK|XFAIL|NONDET) echo 0 ;; LOOSE|UNSUPPORTED) echo 1 ;; NATIVE_ONLY) echo 2 ;; GAP|DIVERGE) echo 3 ;; *) echo 4 ;; esac; }
 
 if [ "$UPDATE_BASELINE" -eq 1 ]; then
     cp "$RESULTS" "$BASELINE"

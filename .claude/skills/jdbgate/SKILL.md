@@ -215,6 +215,14 @@ Read the `SCOPE` block before drawing conclusions:
 - IMPORT helpers and the `rag`/`ai`/`http`/`tui` directories are skipped by
   default - they need models, the network, a TTY or a TUI-enabled build, and
   their reds say nothing about the backends. `--all` includes them.
+- Since 2026-11-04 the sweep also compares **output**: both backends green
+  but printing something else is `DIVERGE` (ranked like a GAP, listed with
+  the gaps), unless the interpreter disagrees with itself on a second run
+  (timings, random numbers), which is `NONDET` and ranks like OK. The
+  baseline of that day records 30 DIVERGE already in the bank - some by
+  design (comprehensive_test skips interpreter-only sections natively),
+  most real (test_math IIF over an array, test_slice, test_type UDT print).
+  A test moving from OK to DIVERGE is a regression like any other.
 - A `GAP` **is** a defect candidate since 2026-10-24: the interpreter is green,
   the compiled program is red, and nothing explains it. The two by-design
   disagreements have their own verdicts and sit in the summary, not in the
