@@ -366,27 +366,43 @@ ENDFUNC
 ' Paths are checked in the raw source, since they live in string literals.
 DIM PATH_PAT$ = "(:[\\/]|""[\\/]{1,2}\w|""\.\.""|\.\.[\\/]|CHR\$\(\s*(58|92)\s*\))"
 
-' The source with string literals emptied and comments dropped.
+' The source with plain string literals emptied and comments dropped. It
+' reads literals as src/lexer.cpp does: a literal runs past a line end to a
+' single quote, "" is a quote inside it, and the text of an interpolated
+' $"..." is kept whole because its {{ }} parts are code.
 FUNC CodeOnly$(code$)
+    DIM q$ = CHR$(34)
     DIM chars = -code$
+    DIM n_chars = LEN(chars)
     DIM kept = []
     DIM in_string = FALSE
+    DIM in_interp = FALSE
     DIM in_comment = FALSE
     DIM i = 0
-    FOR i = 0 TO LEN(chars) - 1
+    DO WHILE i < n_chars
         DIM ch$ = chars[i]
-        IF ch$ = CHR$(10) THEN
-            in_string = FALSE
+        DIM doubled = ch$ = q$ ANDALSO i + 1 < n_chars ANDALSO chars[i + 1] = q$
+        IF in_string ORELSE in_interp THEN
+            IF in_interp THEN PUSH(kept, ch$)
+            IF doubled THEN
+                IF in_interp THEN PUSH(kept, ch$)
+                i = i + 1
+            ELSEIF ch$ = q$ THEN
+                IF in_string THEN PUSH(kept, ch$)
+                in_string = FALSE
+                in_interp = FALSE
+            ENDIF
+        ELSEIF ch$ = CHR$(10) THEN
             in_comment = FALSE
             PUSH(kept, ch$)
         ELSEIF in_comment THEN
-            CONTINUEFOR
-        ELSEIF in_string THEN
-            IF ch$ = CHR$(34) THEN
-                in_string = FALSE
-                PUSH(kept, ch$)
-            ENDIF
-        ELSEIF ch$ = CHR$(34) THEN
+            ' dropped
+        ELSEIF ch$ = "$" ANDALSO i + 1 < n_chars ANDALSO chars[i + 1] = q$ THEN
+            PUSH(kept, ch$)
+            PUSH(kept, q$)
+            in_interp = TRUE
+            i = i + 1
+        ELSEIF ch$ = q$ THEN
             in_string = TRUE
             PUSH(kept, ch$)
         ELSEIF ch$ = "'" THEN
@@ -394,7 +410,8 @@ FUNC CodeOnly$(code$)
         ELSE
             PUSH(kept, ch$)
         ENDIF
-    NEXT
+        i = i + 1
+    LOOP
     RETURN REGEX.REPLACE$("(?i)\bREM\b[^\n]*", JOIN(kept, ""), "")
 ENDFUNC
 
