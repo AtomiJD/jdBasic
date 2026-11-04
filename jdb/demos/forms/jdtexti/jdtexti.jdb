@@ -2,18 +2,23 @@
 ' Multi-level undo, find/replace with whole-word and wrap-around, go to
 ' line, word wrap, zoom, spell check, tab width, dark mode, printing,
 ' recent files, and files kept in their own encoding and line endings.
-' Watches the open file for changes made by other programs.
+' Watches the open file for changes made by other programs. Markdown files
+' open next to their rendered view: both panes are editable and kept in
+' step, and an edit in the view changes only the Markdown it reached.
 '
-'   jdbasic jdtexti.jdb [file.txt]
+'   jdbasic jdtexti.jdb [file.txt | file.md]
 '   jdbasic -c jdtexti.jdb       (jdtexti.jdb.props gives the .exe its icon)
 OPTION "EXPLICIT"
+IMPORT MDSYNC
 
 DIM APP_NAME AS STRING = "jdTexti"
 DIM CR AS STRING = CHR$(13)
 DIM LF AS STRING = CHR$(10)
 DIM CRLF AS STRING = CR + LF
-DIM TXT_FILTER AS STRING = "Text files (*.txt)|*.txt|All files (*.*)|*.*"
+DIM TXT_FILTER AS STRING = "Text files (*.txt)|*.txt|Markdown (*.md)|*.md;*.markdown|All files (*.*)|*.*"
 DIM SB_HEIGHT AS INTEGER = 22
+DIM MDBAR_HEIGHT AS INTEGER = 30
+DIM CODE_BACK AS INTEGER = $F0F0F0
 DIM MAX_RECENT AS INTEGER = 8
 DIM WORD_CHARS AS STRING = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 DIM DARK_BACK AS INTEGER = $1E1E1E
@@ -55,6 +60,18 @@ DIM disk_prompt AS INTEGER = 0
 DIM client_w AS INTEGER = 760
 DIM client_h AS INTEGER = 500
 
+' Markdown: md_on while the file is shown rendered; md_layout 1 shows source
+' and view side by side, 2 the view alone. The source pane stays the
+' document: saving, encodings and line endings work on it as before.
+DIM mdv AS DOUBLE = 0
+DIM md_on AS INTEGER = 0
+DIM md_layout AS INTEGER = 1
+DIM md_doc AS MAP
+DIM md_dirty_view AS INTEGER = 0
+DIM md_dirty_src AS INTEGER = 0
+DIM view_active AS INTEGER = 0
+DIM md_bar AS ARRAY = []
+
 ' ── document state ──────────────────────────────────────────────
 
 FUNC DOC_NAME$()
@@ -89,10 +106,19 @@ SUB UPDATE_TITLE()
     FORM.SET(frm, "TEXT", mark + DOC_NAME$() + ro + " - " + APP_NAME)
 ENDSUB
 
+' The pane the user works in: the rendered view when it has the focus or
+' stands alone, else the source.
+FUNC ED() AS DOUBLE
+    IF md_on ANDALSO (md_layout = 2 ORELSE view_active = 1) THEN RETURN mdv
+    RETURN txt
+ENDFUNC
+
 SUB UPDATE_STATUS()
-    DIM pos AS STRING = "Ln " + STR$(FORM.GET(txt, "CARETLINE")) + ", Col " + STR$(FORM.GET(txt, "CARETCOL"))
+    DIM ed_now AS DOUBLE = ED()
+    DIM pos AS STRING = "Ln " + STR$(FORM.GET(ed_now, "CARETLINE")) + ", Col " + STR$(FORM.GET(ed_now, "CARETCOL"))
+    IF ed_now = mdv THEN pos = "Rendered"
     DIM chars AS STRING = STR$(doc_chars) + " characters"
-    DIM sel AS STRING = FORM.GET(txt, "SELTEXT")
+    DIM sel AS STRING = FORM.GET(ed_now, "SELTEXT")
     IF sel <> "" THEN chars = STR$(CHAR_COUNT(sel)) + " of " + chars
     DIM eol AS STRING = "Windows (CRLF)"
     IF file_eol <> CRLF THEN eol = "Unix (LF)"
@@ -100,10 +126,38 @@ SUB UPDATE_STATUS()
 ENDSUB
 
 SUB LAYOUT()
-    DIM h AS INTEGER = client_h
+    DIM top AS INTEGER = 0
+    IF md_on THEN top = MDBAR_HEIGHT
+    DIM h AS INTEGER = client_h - top
     IF status_on THEN h = h - SB_HEIGHT
-    FORM.SET(txt, "WIDTH", client_w)
-    FORM.SET(txt, "HEIGHT", h)
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(md_bar) - 1
+        FORM.SET(md_bar[i], "VISIBLE", md_on = 1)
+    NEXT
+    IF NOT md_on THEN
+        FORM.SET(mdv, "VISIBLE", FALSE)
+        FORM.SET(txt, "VISIBLE", TRUE)
+        FORM.SET(txt, "Y", 0)
+        FORM.SET(txt, "WIDTH", client_w)
+        FORM.SET(txt, "HEIGHT", h)
+        RETURN
+    ENDIF
+    FORM.SET(mdv, "VISIBLE", TRUE)
+    FORM.SET(mdv, "Y", top)
+    FORM.SET(mdv, "HEIGHT", h)
+    IF md_layout = 2 THEN
+        FORM.SET(txt, "VISIBLE", FALSE)
+        FORM.SET(mdv, "X", 0)
+        FORM.SET(mdv, "WIDTH", client_w)
+    ELSE
+        DIM half AS INTEGER = INT(client_w / 2)
+        FORM.SET(txt, "VISIBLE", TRUE)
+        FORM.SET(txt, "Y", top)
+        FORM.SET(txt, "WIDTH", half)
+        FORM.SET(txt, "HEIGHT", h)
+        FORM.SET(mdv, "X", half)
+        FORM.SET(mdv, "WIDTH", client_w - half)
+    ENDIF
 ENDSUB
 
 SUB APPLY_COLORS()
@@ -131,6 +185,154 @@ SUB REMEMBER_DISK()
     file_mtime = st{"mtime"}
     file_ro = 0
     IF st{"readonly"} THEN file_ro = 1
+ENDSUB
+
+' ── Markdown ────────────────────────────────────────────────────
+
+FUNC IS_MD_PATH(path AS STRING)
+    DIM ext AS STRING = LCASE$(PATH.EXT$(path))
+    RETURN ext = ".md" ORELSE ext = ".markdown"
+ENDFUNC
+
+' Shows the source rendered next to it (or alone, md_layout 2).
+SUB MD_START(layout_kind AS INTEGER)
+    DIM base AS STRING = "."
+    IF file_path <> "" THEN base = PATH.DIRNAME$(file_path)
+    md_doc = MDSYNC.OPEN(mdv, FORM.GET(txt, "TEXT"), {"base": base})
+    md_on = 1
+    md_layout = layout_kind
+    md_dirty_view = 0
+    md_dirty_src = 0
+    view_active = 0
+    IF md_layout = 2 THEN view_active = 1
+    LAYOUT()
+    MENU_CHECKS()
+    UPDATE_STATUS()
+ENDSUB
+
+SUB MD_STOP()
+    MD_FLUSH()
+    md_on = 0
+    view_active = 0
+    LAYOUT()
+    MENU_CHECKS()
+    FORM.SET(txt, "FOCUS")
+    UPDATE_STATUS()
+ENDSUB
+
+' Puts a source span from MDSYNC into the source pane: one undoable edit
+' there, its own caret kept where it was relative to the text.
+SUB APPLY_SPAN(d AS MAP)
+    IF d{"changed"} <> TRUE THEN RETURN
+    DIM at AS INTEGER = CINT(d{"start"})
+    DIM gone AS INTEGER = CINT(d{"old_len"})
+    DIM put AS STRING = d{"text"}
+    DIM keep AS INTEGER = CINT(FORM.GET(txt, "SELSTART"))
+    FORM.SET(txt, "SELSTART", at)
+    FORM.SET(txt, "SELLENGTH", gone)
+    FORM.SET(txt, "SELTEXT", put)
+    IF keep > at THEN keep = CINT(MAX([at, keep + LEN(put) - gone]))
+    FORM.SET(txt, "SELSTART", keep)
+    doc_chars = CHAR_COUNT(FORM.GET(txt, "TEXT"))
+ENDSUB
+
+SUB MD_FROM_VIEW()
+    md_dirty_view = 0
+    DIM d AS MAP = MDSYNC.VIEWCHANGED(md_doc)
+    APPLY_SPAN(d)
+ENDSUB
+
+SUB MD_FROM_SOURCE()
+    md_dirty_src = 0
+    DIM redrawn AS INTEGER = MDSYNC.SOURCECHANGED(md_doc, FORM.GET(txt, "TEXT"))
+ENDSUB
+
+' Brings the other pane up to date now instead of on the next sync tick.
+SUB MD_FLUSH()
+    IF NOT md_on THEN RETURN
+    IF md_dirty_view THEN MD_FROM_VIEW()
+    IF md_dirty_src THEN MD_FROM_SOURCE()
+ENDSUB
+
+' Bold, italic, strikethrough and code on the selection. In the view the
+' format is set and read back; in the source the selection gets markers.
+SUB MD_INLINE(which AS STRING)
+    IF NOT md_on THEN RETURN
+    MD_FLUSH()
+    IF ED() = txt THEN
+        DIM mark AS STRING = "**"
+        IF which = "italic" THEN mark = "*"
+        IF which = "strike" THEN mark = "~~"
+        IF which = "code" THEN mark = "`"
+        FORM.SET(txt, "SELTEXT", mark + FORM.GET(txt, "SELTEXT") + mark)
+        md_dirty_src = 1
+        MD_FLUSH()
+        RETURN
+    ENDIF
+    IF which = "bold" THEN
+        FORM.SET(mdv, "SELBOLD", FORM.GET(mdv, "SELBOLD") <> TRUE)
+    ELSEIF which = "italic" THEN
+        FORM.SET(mdv, "SELITALIC", FORM.GET(mdv, "SELITALIC") <> TRUE)
+    ELSEIF which = "strike" THEN
+        FORM.SET(mdv, "SELSTRIKETHRU", FORM.GET(mdv, "SELSTRIKETHRU") <> TRUE)
+    ELSE
+        IF FORM.GET(mdv, "SELFONTNAME") = "Consolas" THEN
+            FORM.SET(mdv, "SELFONTNAME", "Segoe UI")
+            FORM.SET(mdv, "SELFONTSIZE", 11)
+            FORM.SET(mdv, "SELBACKCOLOR", -1)
+        ELSE
+            FORM.SET(mdv, "SELFONTNAME", "Consolas")
+            FORM.SET(mdv, "SELFONTSIZE", 10)
+            FORM.SET(mdv, "SELBACKCOLOR", CODE_BACK)
+        ENDIF
+    ENDIF
+    MD_FROM_VIEW()
+    FORM.SET(mdv, "FOCUS")
+ENDSUB
+
+' Turns the block under the caret (of either pane) into another kind.
+SUB MD_KIND(kind AS STRING, level AS INTEGER)
+    IF NOT md_on THEN RETURN
+    MD_FLUSH()
+    DIM k AS INTEGER = 0
+    IF ED() = txt THEN
+        k = CINT(MDSYNC.BLOCKOFSOURCE(md_doc, CINT(FORM.GET(txt, "SELSTART"))))
+    ELSE
+        k = CINT(MDSYNC.BLOCKAT(md_doc, CINT(FORM.GET(mdv, "SELSTART"))))
+    ENDIF
+    DIM d AS MAP = MDSYNC.SETKIND(md_doc, k, kind, level)
+    APPLY_SPAN(d)
+    FORM.SET(ED(), "FOCUS")
+ENDSUB
+
+SUB MD_LINK()
+    IF NOT md_on THEN RETURN
+    MD_FLUSH()
+    DIM url AS STRING = INPUTBOX$("Link address:", "Insert Link", "https://")
+    IF url = "" THEN RETURN
+    IF ED() = txt THEN
+        FORM.SET(txt, "SELTEXT", "[" + FORM.GET(txt, "SELTEXT") + "](" + url + ")")
+        md_dirty_src = 1
+        MD_FLUSH()
+        RETURN
+    ENDIF
+    DIM d AS MAP = MDSYNC.SETLINK(md_doc, url)
+    APPLY_SPAN(d)
+    FORM.SET(mdv, "FOCUS")
+ENDSUB
+
+' Keeps the other pane on the block the caret is in.
+SUB MD_FOLLOW()
+    IF NOT md_on ORELSE md_layout <> 1 THEN RETURN
+    IF md_dirty_view ORELSE md_dirty_src THEN RETURN
+    DIM k AS INTEGER = 0
+    IF view_active THEN
+        k = CINT(MDSYNC.BLOCKAT(md_doc, CINT(FORM.GET(mdv, "SELSTART"))))
+        FORM.SET(txt, "SELSTART", CINT(MDSYNC.SOURCEPOS(md_doc, k)))
+    ELSE
+        k = CINT(MDSYNC.BLOCKOFSOURCE(md_doc, CINT(FORM.GET(txt, "SELSTART"))))
+        FORM.SET(mdv, "SELSTART", CINT(MDSYNC.VIEWPOS(md_doc, k)))
+    ENDIF
 ENDSUB
 
 ' ── recent files ────────────────────────────────────────────────
@@ -230,8 +432,28 @@ SUB BUILD_MENU()
                 {"text": "2", "name": "mnuTab2"}, _
                 {"text": "4", "name": "mnuTab4"}, _
                 {"text": "8", "name": "mnuTab8"}]}, _
-            {"text": "&Spell Check", "name": "mnuSpell"}]}, _
+            {"text": "&Spell Check", "name": "mnuSpell"}, _
+            "-", _
+            {"text": "Mark&down", "items": [ _
+                {"text": "&Bold", "name": "mnuMdBold", "key": "Ctrl+B"}, _
+                {"text": "&Italic", "name": "mnuMdItalic", "key": "Ctrl+I"}, _
+                {"text": "&Strikethrough", "name": "mnuMdStrike", "key": "Ctrl+Shift+X"}, _
+                {"text": "&Code", "name": "mnuMdCode", "key": "Ctrl+Shift+C"}, _
+                {"text": "&Link...", "name": "mnuMdLink", "key": "Ctrl+K"}, _
+                "-", _
+                {"text": "Heading &1", "name": "mnuMdH1", "key": "Ctrl+1"}, _
+                {"text": "Heading &2", "name": "mnuMdH2", "key": "Ctrl+2"}, _
+                {"text": "Heading &3", "name": "mnuMdH3", "key": "Ctrl+3"}, _
+                {"text": "&Paragraph", "name": "mnuMdPara", "key": "Ctrl+Shift+P"}, _
+                {"text": "B&ullet List", "name": "mnuMdBullet", "key": "Ctrl+Shift+8"}, _
+                {"text": "&Numbered List", "name": "mnuMdNumber", "key": "Ctrl+Shift+7"}, _
+                {"text": "&Quote", "name": "mnuMdQuote", "key": "Ctrl+Shift+Q"}, _
+                {"text": "Code Bloc&k", "name": "mnuMdCodeBlock", "key": "Ctrl+Shift+K"}]}]}, _
         {"text": "&View", "items": [ _
+            {"text": "&Plain Text", "name": "mnuMdOff"}, _
+            {"text": "Markdown S&plit", "name": "mnuMdSplit", "key": "Ctrl+M"}, _
+            {"text": "Markdown &Rendered", "name": "mnuMdRendered", "key": "Ctrl+Shift+M"}, _
+            "-", _
             {"text": "&Zoom", "items": [ _
                 {"text": "Zoom &In", "name": "mnuZoomIn", "key": "Ctrl+Plus"}, _
                 {"text": "Zoom &Out", "name": "mnuZoomOut", "key": "Ctrl+Minus"}, _
@@ -263,6 +485,14 @@ SUB MENU_CHECKS()
     CHECK_ITEM("mnuSpell", spell_on)
     CHECK_ITEM("mnuStatus", status_on)
     CHECK_ITEM("mnuDark", dark_on)
+    CHECK_ITEM("mnuMdOff", md_on = 0)
+    CHECK_ITEM("mnuMdSplit", md_on = 1 ANDALSO md_layout = 1)
+    CHECK_ITEM("mnuMdRendered", md_on = 1 ANDALSO md_layout = 2)
+    DIM names AS ARRAY = ["mnuMdBold", "mnuMdItalic", "mnuMdStrike", "mnuMdCode", "mnuMdLink", "mnuMdH1", "mnuMdH2", "mnuMdH3", "mnuMdPara", "mnuMdBullet", "mnuMdNumber", "mnuMdQuote", "mnuMdCodeBlock"]
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(names) - 1
+        FORM.SET(FORM.FIND(frm, names[i]), "ENABLED", md_on = 1)
+    NEXT
 ENDSUB
 
 ' ── load and save ───────────────────────────────────────────────
@@ -281,6 +511,7 @@ FUNC ANSI_SAFE(body AS STRING)
 ENDFUNC
 
 FUNC SAVE_TO(path AS STRING)
+    MD_FLUSH()
     DIM body AS STRING = FORM.GET(txt, "TEXT")
     IF file_eol <> CRLF THEN body = REPLACE$(body, CRLF, file_eol)
     IF file_enc = "cp1252" ANDALSO NOT ANSI_SAFE(body) THEN
@@ -308,7 +539,9 @@ ENDFUNC
 FUNC SAVE_AS()
     DIM path AS STRING = FILESAVE$(TXT_FILTER, "Save As", DOC_NAME$())
     IF path = "" THEN RETURN FALSE
-    IF PATH.EXT$(path) = "" THEN path = path + ".txt"
+    IF PATH.EXT$(path) = "" THEN
+        IF md_on THEN path = path + ".md" ELSE path = path + ".txt"
+    ENDIF
     RETURN SAVE_TO(path)
 ENDFUNC
 
@@ -323,6 +556,7 @@ ENDFUNC
 
 ' "Do you want to save changes?" - FALSE means stay put.
 FUNC CONFIRM_DISCARD()
+    MD_FLUSH()
     IF NOT FORM.GET(txt, "MODIFIED") THEN RETURN TRUE
     DIM answer AS INTEGER = MSGBOX("Do you want to save changes to " + DOC_NAME$() + "?", 3 + 48, APP_NAME)
     IF answer = 2 THEN RETURN FALSE
@@ -350,11 +584,19 @@ SUB LOAD_DOC(path AS STRING)
     REMEMBER_DISK()
     doc_chars = CHAR_COUNT(FORM.GET(txt, "TEXT"))
     ADD_RECENT(path)
+    IF IS_MD_PATH(path) THEN
+        MD_START(1)
+    ELSEIF md_on THEN
+        md_on = 0
+        LAYOUT()
+        MENU_CHECKS()
+    ENDIF
     UPDATE_TITLE()
     UPDATE_STATUS()
 ENDSUB
 
 SUB NEW_DOC()
+    IF md_on THEN MD_STOP()
     FORM.SET(txt, "TEXT", "")
     FORM.SET(txt, "MODIFIED", FALSE)
     file_path = ""
@@ -403,15 +645,15 @@ FUNC NEXT_HIT(hay AS STRING, needle AS STRING, start_at AS INTEGER) AS INTEGER
 ENDFUNC
 
 FUNC FIND_FROM(needle AS STRING, upward AS INTEGER) AS INTEGER
-    DIM hay AS STRING = FORM.GET(txt, "TEXT")
+    DIM hay AS STRING = FORM.GET(ED(), "TEXT")
     IF NOT FORM.GET(chkCase, "CHECKED") THEN
         hay = UCASE$(hay)
         needle = UCASE$(needle)
     ENDIF
     DIM wrap_around AS INTEGER = FORM.GET(chkWrap, "CHECKED")
-    DIM sel_start AS INTEGER = FORM.GET(txt, "SELSTART")
+    DIM sel_start AS INTEGER = FORM.GET(ED(), "SELSTART")
     IF NOT upward THEN
-        DIM hit AS INTEGER = NEXT_HIT(hay, needle, sel_start + FORM.GET(txt, "SELLENGTH"))
+        DIM hit AS INTEGER = NEXT_HIT(hay, needle, sel_start + FORM.GET(ED(), "SELLENGTH"))
         IF hit < 0 ANDALSO wrap_around THEN hit = NEXT_HIT(hay, needle, 0)
         RETURN hit
     ENDIF
@@ -438,13 +680,13 @@ SUB FIND_IN(upward AS INTEGER)
         MSGBOX("Cannot find " + CHR$(34) + needle + CHR$(34), 64, APP_NAME)
         RETURN
     ENDIF
-    FORM.SET(txt, "SELSTART", hit)
-    FORM.SET(txt, "SELLENGTH", LEN(needle))
+    FORM.SET(ED(), "SELSTART", hit)
+    FORM.SET(ED(), "SELLENGTH", LEN(needle))
     UPDATE_STATUS()
 ENDSUB
 
 FUNC SELECTION_MATCHES(needle AS STRING)
-    DIM sel AS STRING = FORM.GET(txt, "SELTEXT")
+    DIM sel AS STRING = FORM.GET(ED(), "SELTEXT")
     IF FORM.GET(chkCase, "CHECKED") THEN RETURN sel = needle
     RETURN UCASE$(sel) = UCASE$(needle)
 ENDFUNC
@@ -459,7 +701,7 @@ SUB SHOW_FIND(with_replace AS INTEGER)
     ELSE
         FORM.SET(dlg, "TEXT", "Find")
     ENDIF
-    DIM sel AS STRING = FORM.GET(txt, "SELTEXT")
+    DIM sel AS STRING = FORM.GET(ED(), "SELTEXT")
     IF sel <> "" ANDALSO INSTR(sel, LF) < 0 THEN FORM.SET(txtFind, "TEXT", sel)
     FORM.SHOW(dlg)
     FORM.SET(txtFind, "FOCUS")
@@ -472,6 +714,7 @@ SUB SET_ZOOM(pct AS INTEGER)
     IF pct > 500 THEN pct = 500
     zoom_pct = pct
     FORM.SET(txt, "ZOOM", pct)
+    FORM.SET(mdv, "ZOOM", pct)
     UPDATE_STATUS()
 ENDSUB
 
@@ -512,24 +755,65 @@ ENDSUB
 
 SUB TXT_CHANGE(e)
     IF quitting THEN RETURN
-    doc_chars = CHAR_COUNT(FORM.GET(txt, "TEXT"))
+    DIM now_text AS STRING = FORM.GET(txt, "TEXT")
+    doc_chars = CHAR_COUNT(now_text)
+    ' a span the view put here is no edit of the source
+    IF md_on ANDALSO now_text <> MDSYNC.SOURCE$(md_doc) THEN md_dirty_src = 1
     UPDATE_TITLE()
     UPDATE_STATUS()
 ENDSUB
 
 SUB TXT_KEYUP(e)
     IF quitting THEN RETURN
+    MD_FOLLOW()
     UPDATE_STATUS()
 ENDSUB
 
 SUB TXT_MOUSEUP(e)
     IF quitting THEN RETURN
+    MD_FOLLOW()
     UPDATE_STATUS()
 ENDSUB
 
 SUB TXT_GOTFOCUS(e)
     IF quitting THEN RETURN
+    view_active = 0
     CHECK_DISK()
+ENDSUB
+
+SUB MDV_CHANGE(e)
+    IF quitting ORELSE NOT md_on THEN RETURN
+    md_dirty_view = 1
+ENDSUB
+
+SUB MDV_GOTFOCUS(e)
+    IF quitting THEN RETURN
+    view_active = 1
+    UPDATE_STATUS()
+ENDSUB
+
+SUB MDV_KEYUP(e)
+    IF quitting THEN RETURN
+    MD_FOLLOW()
+    UPDATE_STATUS()
+ENDSUB
+
+SUB MDV_MOUSEUP(e)
+    IF quitting THEN RETURN
+    MD_FOLLOW()
+    UPDATE_STATUS()
+ENDSUB
+
+' Edits are carried to the other pane a moment after typing stops, so a
+' long file stays quick to type in; saving and the format commands carry
+' them at once.
+SUB TMRSYNC_TICK(e)
+    IF quitting ORELSE NOT md_on THEN RETURN
+    IF md_dirty_view ORELSE md_dirty_src THEN
+        MD_FLUSH()
+        UPDATE_TITLE()
+        UPDATE_STATUS()
+    ENDIF
 ENDSUB
 
 ' Ctrl+wheel zooms inside the control; the status bar follows it here.
@@ -683,27 +967,27 @@ ENDSUB
 ' ── Edit ────────────────────────────────────────────────────────
 
 SUB MNUUNDO_CLICK(e)
-    FORM.SET(txt, "UNDO", TRUE)
+    FORM.SET(ED(), "UNDO", TRUE)
 ENDSUB
 
 SUB MNUREDO_CLICK(e)
-    FORM.SET(txt, "REDO", TRUE)
+    FORM.SET(ED(), "REDO", TRUE)
 ENDSUB
 
 SUB MNUCUT_CLICK(e)
-    FORM.SET(txt, "CUT", TRUE)
+    FORM.SET(ED(), "CUT", TRUE)
 ENDSUB
 
 SUB MNUCOPY_CLICK(e)
-    FORM.SET(txt, "COPY", TRUE)
+    FORM.SET(ED(), "COPY", TRUE)
 ENDSUB
 
 SUB MNUPASTE_CLICK(e)
-    FORM.SET(txt, "PASTE", TRUE)
+    FORM.SET(ED(), "PASTE", TRUE)
 ENDSUB
 
 SUB MNUDELETE_CLICK(e)
-    FORM.SET(txt, "SELTEXT", "")
+    FORM.SET(ED(), "SELTEXT", "")
 ENDSUB
 
 SUB MNUFIND_CLICK(e)
@@ -719,7 +1003,7 @@ SUB MNUFINDPREV_CLICK(e)
 ENDSUB
 
 SUB MNUFINDSEL_CLICK(e)
-    DIM sel AS STRING = FORM.GET(txt, "SELTEXT")
+    DIM sel AS STRING = FORM.GET(ED(), "SELTEXT")
     IF sel <> "" ANDALSO INSTR(sel, LF) < 0 THEN FORM.SET(txtFind, "TEXT", sel)
     FIND_IN(FALSE)
 ENDSUB
@@ -748,13 +1032,13 @@ SUB MNUGOTO_CLICK(e)
 ENDSUB
 
 SUB MNUSELALL_CLICK(e)
-    FORM.SET(txt, "SELSTART", 0)
-    FORM.SET(txt, "SELLENGTH", LEN(FORM.GET(txt, "TEXT")))
+    FORM.SET(ED(), "SELSTART", 0)
+    FORM.SET(ED(), "SELLENGTH", LEN(FORM.GET(ED(), "TEXT")))
     UPDATE_STATUS()
 ENDSUB
 
 SUB MNUTIMEDATE_CLICK(e)
-    FORM.SET(txt, "SELTEXT", TIME$() + " " + DATE$())
+    FORM.SET(ED(), "SELTEXT", TIME$() + " " + DATE$())
 ENDSUB
 
 ' ── Format ──────────────────────────────────────────────────────
@@ -799,6 +1083,7 @@ ENDSUB
 SUB MNUSPELL_CLICK(e)
     spell_on = 1 - spell_on
     FORM.SET(txt, "SPELLCHECK", spell_on)
+    FORM.SET(mdv, "SPELLCHECK", spell_on)
     MENU_CHECKS()
 ENDSUB
 
@@ -831,7 +1116,141 @@ SUB MNUDARK_CLICK(e)
 ENDSUB
 
 SUB MNUABOUT_CLICK(e)
-    MSGBOX(APP_NAME + CRLF + CRLF + "A plain-text editor written in jdBasic" + CRLF + "on native Windows forms.", 64, "About " + APP_NAME)
+    MSGBOX(APP_NAME + CRLF + CRLF + "A plain-text and Markdown editor written in jdBasic" + CRLF + "on native Windows forms.", 64, "About " + APP_NAME)
+ENDSUB
+
+' ── Markdown commands ───────────────────────────────────────────
+
+SUB MNUMDOFF_CLICK(e)
+    IF md_on THEN MD_STOP()
+ENDSUB
+
+SUB MNUMDSPLIT_CLICK(e)
+    IF md_on THEN
+        md_layout = 1
+        LAYOUT()
+        MENU_CHECKS()
+    ELSE
+        MD_START(1)
+    ENDIF
+ENDSUB
+
+SUB MNUMDRENDERED_CLICK(e)
+    IF md_on THEN
+        MD_FLUSH()
+        md_layout = 2
+        view_active = 1
+        LAYOUT()
+        MENU_CHECKS()
+        FORM.SET(mdv, "FOCUS")
+    ELSE
+        MD_START(2)
+    ENDIF
+ENDSUB
+
+SUB MNUMDBOLD_CLICK(e)
+    MD_INLINE("bold")
+ENDSUB
+
+SUB MNUMDITALIC_CLICK(e)
+    MD_INLINE("italic")
+ENDSUB
+
+SUB MNUMDSTRIKE_CLICK(e)
+    MD_INLINE("strike")
+ENDSUB
+
+SUB MNUMDCODE_CLICK(e)
+    MD_INLINE("code")
+ENDSUB
+
+SUB MNUMDLINK_CLICK(e)
+    MD_LINK()
+ENDSUB
+
+SUB MNUMDH1_CLICK(e)
+    MD_KIND("heading", 1)
+ENDSUB
+
+SUB MNUMDH2_CLICK(e)
+    MD_KIND("heading", 2)
+ENDSUB
+
+SUB MNUMDH3_CLICK(e)
+    MD_KIND("heading", 3)
+ENDSUB
+
+SUB MNUMDPARA_CLICK(e)
+    MD_KIND("para", 0)
+ENDSUB
+
+SUB MNUMDBULLET_CLICK(e)
+    MD_KIND("item", 0)
+ENDSUB
+
+SUB MNUMDNUMBER_CLICK(e)
+    MD_KIND("ordered", 0)
+ENDSUB
+
+SUB MNUMDQUOTE_CLICK(e)
+    MD_KIND("quote", 0)
+ENDSUB
+
+SUB MNUMDCODEBLOCK_CLICK(e)
+    MD_KIND("code", 0)
+ENDSUB
+
+' The button bar over the panes runs the same commands.
+SUB BTNMDB_CLICK(e)
+    MD_INLINE("bold")
+ENDSUB
+
+SUB BTNMDI_CLICK(e)
+    MD_INLINE("italic")
+ENDSUB
+
+SUB BTNMDS_CLICK(e)
+    MD_INLINE("strike")
+ENDSUB
+
+SUB BTNMDCODE_CLICK(e)
+    MD_INLINE("code")
+ENDSUB
+
+SUB BTNMDH1_CLICK(e)
+    MD_KIND("heading", 1)
+ENDSUB
+
+SUB BTNMDH2_CLICK(e)
+    MD_KIND("heading", 2)
+ENDSUB
+
+SUB BTNMDH3_CLICK(e)
+    MD_KIND("heading", 3)
+ENDSUB
+
+SUB BTNMDPARA_CLICK(e)
+    MD_KIND("para", 0)
+ENDSUB
+
+SUB BTNMDBULLET_CLICK(e)
+    MD_KIND("item", 0)
+ENDSUB
+
+SUB BTNMDNUMBER_CLICK(e)
+    MD_KIND("ordered", 0)
+ENDSUB
+
+SUB BTNMDQUOTE_CLICK(e)
+    MD_KIND("quote", 0)
+ENDSUB
+
+SUB BTNMDBLOCK_CLICK(e)
+    MD_KIND("code", 0)
+ENDSUB
+
+SUB BTNMDLINK_CLICK(e)
+    MD_LINK()
 ENDSUB
 
 ' ── Find / Replace window ───────────────────────────────────────
@@ -850,7 +1269,7 @@ ENDSUB
 SUB BTNREPLACE_CLICK(e)
     DIM needle AS STRING = FORM.GET(txtFind, "TEXT")
     IF needle = "" THEN RETURN
-    IF SELECTION_MATCHES(needle) THEN FORM.SET(txt, "SELTEXT", FORM.GET(txtRepl, "TEXT"))
+    IF SELECTION_MATCHES(needle) THEN FORM.SET(ED(), "SELTEXT", FORM.GET(txtRepl, "TEXT"))
     FIND_IN(FORM.GET(optUp, "CHECKED"))
 ENDSUB
 
@@ -858,6 +1277,7 @@ ENDSUB
 SUB BTNREPLACEALL_CLICK(e)
     DIM needle AS STRING = FORM.GET(txtFind, "TEXT")
     IF needle = "" THEN RETURN
+    MD_FLUSH()
     DIM src AS STRING = FORM.GET(txt, "TEXT")
     DIM repl AS STRING = FORM.GET(txtRepl, "TEXT")
     DIM hay AS STRING = src
@@ -884,12 +1304,16 @@ SUB BTNREPLACEALL_CLICK(e)
     FORM.SET(txt, "SELLENGTH", LEN(src))
     FORM.SET(txt, "SELTEXT", rebuilt)
     FORM.SET(txt, "SELSTART", 0)
+    IF md_on THEN
+        md_dirty_src = 1
+        MD_FLUSH()
+    ENDIF
     UPDATE_STATUS()
 ENDSUB
 
 SUB BTNCANCEL_CLICK(e)
     FORM.SET(dlg, "VISIBLE", FALSE)
-    FORM.SET(txt, "FOCUS")
+    FORM.SET(ED(), "FOCUS")
 ENDSUB
 
 ' ── build the windows ───────────────────────────────────────────
@@ -908,9 +1332,32 @@ FORM.SET(txt, "DROPFILES", TRUE)
 FORM.SET(frm, "DROPFILES", TRUE)
 APPLY_FONT()
 FORM.SET(txt, "TABWIDTH", tab_w)
+mdv = FORM.RICHTEXT(frm, "mdv", 0, 0, client_w, client_h - SB_HEIGHT)
+FORM.SET(mdv, "MAXLENGTH", 0)
+FORM.SET(mdv, "HIDESELECTION", FALSE)
+FORM.SET(mdv, "SPELLCHECK", TRUE)
+FORM.SET(mdv, "VISIBLE", FALSE)
+
+DIM bar_spec AS ARRAY = [["btnMdB", "B", 30], ["btnMdI", "I", 30], ["btnMdS", "S", 30], ["btnMdCode", "</>", 40], _
+    ["btnMdH1", "H1", 36], ["btnMdH2", "H2", 36], ["btnMdH3", "H3", 36], ["btnMdPara", "Text", 44], _
+    ["btnMdBullet", "List", 44], ["btnMdNumber", "1. List", 54], ["btnMdQuote", "Quote", 50], _
+    ["btnMdBlock", "Code", 48], ["btnMdLink", "Link", 44]]
+DIM bar_x AS INTEGER = 4
+DIM bi AS INTEGER = 0
+FOR bi = 0 TO LEN(bar_spec) - 1
+    DIM spec AS ARRAY = bar_spec[bi]
+    DIM bw AS INTEGER = CINT(spec[2])
+    DIM bh AS DOUBLE = FORM.BUTTON(frm, spec[0], spec[1], bar_x, 3, bw, 24)
+    FORM.SET(bh, "VISIBLE", FALSE)
+    md_bar = APPEND(md_bar, bh)
+    bar_x = bar_x + bw + 2
+    IF bi = 3 ORELSE bi = 7 ORELSE bi = 11 THEN bar_x = bar_x + 8
+NEXT
+
 sb = FORM.STATUSBAR(frm, "sb", [140, 180, 60, 120, -1])
 BUILD_MENU()
 FORM.TIMER(frm, "tmrZoom", 400)
+FORM.TIMER(frm, "tmrSync", 250)
 
 dlg = FORM.CREATE("Find", 430, 150, "FINDDLG")
 FORM.SET(dlg, "BORDERSTYLE", 3)
