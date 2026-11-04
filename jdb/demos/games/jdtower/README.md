@@ -52,6 +52,8 @@ generator overwrites it.
   from the path's start to its end.
 - Towers stand on fixed build slots. Building costs the tier-1 price,
   every upgrade its own price; selling returns 80% of everything spent.
+- At most three waves are on the field at once; a wave counts until its
+  last enemy, children included, is gone, and the next-wave button waits.
 - Credits come from kills, from launching a wave, and from calling the
   next wave early. A RELAY on branch B pays credits per wave launch.
 - Towers that pick targets (Laser, Blaster, Mortar, Tesla, Plasma) aim
