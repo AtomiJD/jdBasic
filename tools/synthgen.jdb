@@ -366,7 +366,8 @@ ENDFUNC
 ' Paths are checked in the raw source, since they live in string literals.
 DIM PATH_PAT$ = "(:[\\/]|""[\\/]{1,2}\w|""\.\.""|\.\.[\\/]|CHR\$\(\s*(58|92)\s*\))"
 
-' The source with plain string literals emptied and comments dropped. It
+' The source with plain string literals emptied and ' comments dropped (REM text
+' stays and is screened like code). It
 ' reads literals as src/lexer.cpp does: a literal runs past a line end to a
 ' single quote, "" is a quote inside it, and the text of an interpolated
 ' $"..." is kept whole because its {{ }} parts are code.
@@ -412,7 +413,7 @@ FUNC CodeOnly$(code$)
         ENDIF
         i = i + 1
     LOOP
-    RETURN REGEX.REPLACE$("(?i)\bREM\b[^\n]*", JOIN(kept, ""), "")
+    RETURN JOIN(kept, "")
 ENDFUNC
 
 FUNC FirstMatch$(pat$, text$)
