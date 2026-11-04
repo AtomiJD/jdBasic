@@ -343,6 +343,21 @@ RUNFOR(1.5)
 CHECK("a cryo reveals a phantom", SIM.KILLS() = 1 ORELSE SIM.ENEMIES(){"VIS"}[0] = 1)
 CHECK("and the laser hurts it", SIM.KILLS() = 1 ORELSE SIM.ENEMIES(){"HPF"}[0] < 0.99)
 
+' ── waves on the field at once ──────────────────────────────────
+DIM mlv = TESTLEVEL("DRONE", 6, 6)
+mlv{"WAVES"} = [mlv{"WAVES"}[0], mlv{"WAVES"}[0], mlv{"WAVES"}[0], mlv{"WAVES"}[0], mlv{"WAVES"}[0]]
+mlv{"LIVES"} = 999
+SIM.START(mlv)
+SIM.QUIET(1)
+SIM.LAUNCH()
+SIM.LAUNCH()
+SIM.LAUNCH()
+CHECK("three waves may run at once", SIM.LIVEWAVES() = 3 ANDALSO SIM.CANLAUNCH() = 0)
+CHECK("a fourth one waits", SIM.LAUNCH() = "busy" ANDALSO SIM.WAVE() = 3)
+RUNFOR(120)
+CHECK("a cleared field opens the next launch", SIM.LIVEWAVES() = 0 ANDALSO SIM.CANLAUNCH() = 1)
+SIM.MAXLIVE(99)
+
 ' ── wear and repair ─────────────────────────────────────────────
 DIM wcfg = towers_json{"WEAR"}
 SIM.START(TESTLEVEL("DRONE", 6, 3))

@@ -1742,7 +1742,7 @@ FUNC PERKOPEN()
 ENDFUNC
 
 SUB DRAWBAR()
-    DIM has_next = IIF(SIM.WAVE() < SIM.NWAVES() ANDALSO PERKOPEN() = 0, 1, 0)
+    DIM has_next = IIF(SIM.CANLAUNCH() = 1 ANDALSO PERKOPEN() = 0, 1, 0)
     DIM c = IIF(has_next = 1, [255, 70, 190], [80, 70, 110])
     PANEL(8, BAR_Y + 6, 262, 70, c, 210)
     IF has_next = 1 THEN HIT(8, BAR_Y + 6, 262, 70, "next")

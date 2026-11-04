@@ -72,6 +72,8 @@ DIM E_BT = []
 DIM E_ST = []
 ' how often an enemy was pulled back; each pull reaches half as far
 DIM E_PN = []
+' the wave each enemy came with; children inherit it
+DIM E_W = []
 DIM next_uid = 1
 
 ' projectiles
@@ -92,6 +94,7 @@ DIM Q_T = []
 DIM Q_K = []
 DIM Q_P = []
 DIM Q_H = []
+DIM Q_W = []
 
 DIM slots = []
 DIM towers = []
@@ -284,6 +287,7 @@ EXPORT SUB START(level_map)
     E_BT = []
     E_ST = []
     E_PN = []
+    E_W = []
     R_X = []
     R_Y = []
     R_TX = []
@@ -299,6 +303,7 @@ EXPORT SUB START(level_map)
     Q_K = []
     Q_P = []
     Q_H = []
+    Q_W = []
     slots = lvl{"SLOTS"}
     towers = []
     DIM i
@@ -785,6 +790,24 @@ EXPORT SUB PERK(code$)
     ENDIF
 ENDSUB
 
+' At most this many waves on the field at once: a wave counts until its
+' last enemy, children included, is gone
+DIM max_live_waves = 3
+EXPORT SUB MAXLIVE(n)
+    max_live_waves = n
+ENDSUB
+
+EXPORT FUNC LIVEWAVES()
+    IF LEN(E_W) + LEN(Q_W) = 0 THEN RETURN 0
+    RETURN LEN(UNIQUE(APPEND(E_W, Q_W)))
+ENDFUNC
+
+EXPORT FUNC CANLAUNCH()
+    IF waves_launched >= NWAVES() THEN RETURN 0
+    IF LIVEWAVES() >= max_live_waves THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
 EXPORT FUNC EARLYBONUS()
     IF LEN(E_K) = 0 ANDALSO LEN(Q_T) = 0 THEN RETURN 0
     RETURN 10 + 3 * waves_launched
@@ -793,6 +816,7 @@ ENDFUNC
 EXPORT FUNC LAUNCH()
     IF g_phase$ = "won" ORELSE g_phase$ = "lost" THEN RETURN "over"
     IF waves_launched >= NWAVES() THEN RETURN "none"
+    IF LIVEWAVES() >= max_live_waves THEN RETURN "busy"
     DIM early = EARLYBONUS()
     DIM wv = lvl{"WAVES"}[waves_launched]
     FOR EACH g IN wv{"GROUPS"}
@@ -803,6 +827,7 @@ EXPORT FUNC LAUNCH()
             Q_K = APPEND(Q_K, k)
             Q_P = APPEND(Q_P, g{"PATH"} MOD n_paths)
             Q_H = APPEND(Q_H, g{"HPX"})
+            Q_W = APPEND(Q_W, waves_launched + 1)
         NEXT i
     NEXT g
     DIM income = 0
@@ -827,7 +852,7 @@ EXPORT FUNC LAUNCH()
     RETURN ""
 ENDFUNC
 
-SUB SPAWN(k, path_id, hpx, d0)
+SUB SPAWN(k, path_id, hpx, d0, wave_no)
     DIM p = path_id
     IF K_FLY[k] = 1 THEN p = path_id + n_paths
     DIM hp = K_HP[k] * hpx * g_hpx
@@ -850,6 +875,7 @@ SUB SPAWN(k, path_id, hpx, d0)
     E_BT = APPEND(E_BT, K_BLINKT[k])
     E_ST = APPEND(E_ST, K_SPAWNT[k])
     E_PN = APPEND(E_PN, 0)
+    E_W = APPEND(E_W, wave_no)
     next_uid = next_uid + 1
 ENDSUB
 
@@ -858,13 +884,14 @@ SUB SPAWNDUE()
     DIM due = Q_T <= g_clock
     IF SUM(due) = 0 THEN RETURN
     FOR EACH qi IN WHICH(due)
-        SPAWN(Q_K[qi], Q_P[qi], Q_H[qi], 0.0)
+        SPAWN(Q_K[qi], Q_P[qi], Q_H[qi], 0.0, Q_W[qi])
     NEXT qi
     DIM keep = WHICH(1 - due)
     Q_T = Q_T[keep]
     Q_K = Q_K[keep]
     Q_P = Q_P[keep]
     Q_H = Q_H[keep]
+    Q_W = Q_W[keep]
 ENDSUB
 
 SUB PLACE_ENEMIES()
@@ -1198,7 +1225,7 @@ SUB RESOLVE()
             DIM hpx = E_MAX[i] / K_HP[E_K[i]] / g_hpx
             DIM c
             FOR c = 0 TO K_SPLITN[E_K[i]] - 1
-                babies = APPEND(babies, [[sk, E_P[i], hpx, VMAX(E_D[i] - 0.2 * c, 0)]])
+                babies = APPEND(babies, [[sk, E_P[i], hpx, VMAX(E_D[i] - 0.2 * c, 0), E_W[i]]])
             NEXT c
         ENDIF
     NEXT i
@@ -1226,12 +1253,13 @@ SUB RESOLVE()
     E_BT = E_BT[keep]
     E_ST = E_ST[keep]
     E_PN = E_PN[keep]
+    E_W = E_W[keep]
     E_X = E_X[keep]
     E_Y = E_Y[keep]
     FOR EACH bb IN babies
         DIM bp = bb[1]
         IF bp >= n_paths THEN bp = bp - n_paths
-        SPAWN(bb[0], bp, bb[2], bb[3])
+        SPAWN(bb[0], bp, bb[2], bb[3], bb[4])
     NEXT bb
     IF LEN(babies) > 0 THEN PLACE_ENEMIES()
 ENDSUB
@@ -1278,12 +1306,12 @@ SUB SPAWNERS(dt, moving)
         DIM hpx = E_MAX[j] / K_HP[k] / g_hpx
         DIM c
         FOR c = 0 TO K_SPAWNN[k] - 1
-            drops = APPEND(drops, [[K_SPAWN[k], bp, hpx, VMAX(E_D[j] - 0.3 - 0.25 * c, 0)]])
+            drops = APPEND(drops, [[K_SPAWN[k], bp, hpx, VMAX(E_D[j] - 0.3 - 0.25 * c, 0), E_W[j]]])
         NEXT c
     NEXT j
     E_ST = E_ST + due * K_SPAWNT[E_K]
     FOR EACH d IN drops
-        SPAWN(d[0], d[1], d[2], d[3])
+        SPAWN(d[0], d[1], d[2], d[3], d[4])
     NEXT d
     PLACE_ENEMIES()
     REVEAL()
