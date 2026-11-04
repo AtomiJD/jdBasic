@@ -40,6 +40,7 @@ runs whose text is CRLF; the view has exactly one paragraph per block.
 | `HEAD$()` | The RTF header: fonts and the colour table. |
 | `SAME(b, runs)` | `TRUE` when the runs show what the block drew. |
 | `MD$(b, runs)` | The block's source for the runs: unchanged when `SAME`, else rewritten. |
+| `BODY$(b, runs, [drawn$])` | The same without lead and tail; `drawn$` is the kind the paragraph still looks like when that differs (a paragraph split off a heading). |
 | `NEWBLOCK(kind$, [model])` | An empty block for the editor: `para`, `heading`, `item` (continuing model's list, the next number), `quote`, `code`. |
 
 `opts{"base"}` is the folder image paths are relative to.

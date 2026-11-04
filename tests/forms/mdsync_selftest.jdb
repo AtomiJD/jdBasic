@@ -1,0 +1,209 @@
+' MDSYNC: a Markdown source and its view in a RICHTEXT kept in step. Edits
+' are made the way a user makes them (typing over a selection, a format on
+' the selection, a paragraph break, a joined paragraph), each followed by
+' VIEWCHANGED; the source must change only where the edit reached, and the
+' span VIEWCHANGED answers must turn the old source into the new one.
+' Needs a FORMS build on Windows.
+OPTION "EXPLICIT"
+IMPORT MDSYNC
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+DIM NL AS STRING = CHR$(10)
+DIM CRLF AS STRING = CHR$(13) + CHR$(10)
+DIM mirror AS STRING = ""
+
+SUB Check(cond AS BOOLEAN, label AS STRING)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label
+    ENDIF
+ENDSUB
+
+' Applies a source span to the mirror, as an editor showing the source would.
+SUB Apply(d AS MAP)
+    IF d{"changed"} = TRUE THEN
+        DIM at AS INTEGER = d{"start"}
+        DIM gone AS INTEGER = d{"old_len"}
+        DIM put AS STRING = d{"text"}
+        mirror = LEFT$(mirror, at) + put + MID$(mirror, at + gone, LEN(mirror) - at - gone)
+    ENDIF
+ENDSUB
+
+SUB SelectText(h AS DOUBLE, part AS STRING)
+    DIM t AS STRING = FORM.GET(h, "TEXT")
+    FORM.SET(h, "SELSTART", INSTR(t, part))
+    FORM.SET(h, "SELLENGTH", LEN(part))
+ENDSUB
+
+' Puts the caret right after part.
+SUB CaretAfter(h AS DOUBLE, part AS STRING)
+    DIM t AS STRING = FORM.GET(h, "TEXT")
+    FORM.SET(h, "SELSTART", INSTR(t, part) + LEN(part))
+    FORM.SET(h, "SELLENGTH", 0)
+ENDSUB
+
+DIM md AS STRING = "# Title" + NL + NL + "First paragraph here." + NL + NL
+md = md + "- one" + NL + "- two" + NL + NL + "1. alpha" + NL + "2. beta" + NL + NL
+md = md + "Last words." + NL
+mirror = md
+
+DIM frm AS DOUBLE = FORM.CREATE("MDSYNC selftest", 640, 480, "MAIN")
+DIM rt AS DOUBLE = FORM.RICHTEXT(frm, "rtView", 0, 0, 640, 480)
+DIM doc AS MAP = MDSYNC.OPEN(rt, md)
+DIM d AS MAP
+Check(MDSYNC.SOURCE$(doc) = md, "OPEN keeps the source")
+Check(LEN(SPLIT(FORM.GET(rt, "TEXT"), CRLF)) = LEN(MDSYNC.BLOCKS(doc)), "one paragraph per block")
+
+d = MDSYNC.VIEWCHANGED(doc)
+Check(d{"changed"} = FALSE, "nothing changed, nothing to do")
+
+' typing over a word
+SelectText(rt, "here")
+FORM.SET(rt, "SELTEXT", "there")
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+Check(MDSYNC.SOURCE$(doc) = REPLACE$(md, "here.", "there."), "typed text reaches the source")
+Check(d{"old_len"} < 10, "the span is only what changed")
+Check(mirror = MDSYNC.SOURCE$(doc), "the span turns the old source into the new")
+
+' a format on the selection
+SelectText(rt, "First")
+FORM.SET(rt, "SELBOLD", TRUE)
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(doc), "**First** paragraph there." + NL) >= 0, "bold reaches the source")
+Check(mirror = MDSYNC.SOURCE$(doc), "span after bold")
+
+' Enter after a paragraph, then typing
+CaretAfter(rt, "there.")
+FORM.SET(rt, "SELTEXT", CRLF)
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+FORM.SET(rt, "SELTEXT", "Second one.")
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(doc), "**First** paragraph there." + NL + NL + "Second one." + NL + NL + "- one") >= 0, "a new paragraph with blank lines around it")
+Check(mirror = MDSYNC.SOURCE$(doc), "span after a new paragraph")
+
+' Enter after the heading gives a plain paragraph
+CaretAfter(rt, "Title")
+FORM.SET(rt, "SELTEXT", CRLF)
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+FORM.SET(rt, "SELTEXT", "Intro")
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+Check(LEFT$(MDSYNC.SOURCE$(doc), 15) = "# Title" + NL + NL + "Intro" + NL, "a paragraph after the heading, not a heading")
+SelectText(rt, "Intro")
+Check(FORM.GET(rt, "SELBOLD") = FALSE, "the new paragraph is drawn plain")
+Check(mirror = MDSYNC.SOURCE$(doc), "span after the heading split")
+
+' Enter after a bullet item gives the next item
+CaretAfter(rt, "two")
+FORM.SET(rt, "SELTEXT", CRLF)
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+FORM.SET(rt, "SELTEXT", "three")
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(doc), "- one" + NL + "- two" + NL + "- three" + NL + NL + "1. alpha") >= 0, "a new bullet item")
+Check(mirror = MDSYNC.SOURCE$(doc), "span after a new item")
+
+' Enter after a numbered item continues the numbers
+CaretAfter(rt, "beta")
+FORM.SET(rt, "SELTEXT", CRLF)
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+FORM.SET(rt, "SELTEXT", "gamma")
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(doc), "2. beta" + NL + "3. gamma" + NL) >= 0, "a new numbered item is 3.")
+Check(INSTR(FORM.GET(rt, "TEXT"), "3." + CHR$(9) + "gamma") >= 0, "the view draws its number")
+Check(mirror = MDSYNC.SOURCE$(doc), "span after a numbered item")
+
+' Backspace at the start of an item joins it to the paragraph before
+DIM t AS STRING = FORM.GET(rt, "TEXT")
+FORM.SET(rt, "SELSTART", INSTR(t, "Second one.") + LEN("Second one."))
+FORM.SET(rt, "SELLENGTH", 2)
+FORM.SET(rt, "SELTEXT", "")
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(doc), NL + "Second one.one" + NL + "- two" + NL) >= 0, "a joined paragraph and item: the paragraph kind, the next item stays")
+Check(LEN(SPLIT(FORM.GET(rt, "TEXT"), CRLF)) = LEN(MDSYNC.BLOCKS(doc)), "still one paragraph per block")
+Check(mirror = MDSYNC.SOURCE$(doc), "span after a join")
+
+' an edit of the source redraws its block
+DIM src AS STRING = MDSYNC.SOURCE$(doc)
+src = REPLACE$(src, "Last words.", "Final *words*.")
+Check(MDSYNC.SOURCECHANGED(doc, src) = TRUE, "a source edit redraws")
+mirror = src
+Check(INSTR(FORM.GET(rt, "TEXT"), "Final words.") >= 0, "the view shows the new text")
+SelectText(rt, "words")
+Check(FORM.GET(rt, "SELITALIC") = TRUE, "and its format")
+Check(LEN(SPLIT(FORM.GET(rt, "TEXT"), CRLF)) = LEN(MDSYNC.BLOCKS(doc)), "paragraphs after a source edit")
+Check(MDSYNC.SOURCECHANGED(doc, src) = FALSE, "the same source changes nothing")
+
+' a new block in the source
+src = src + NL + "## Appendix" + NL
+Check(MDSYNC.SOURCECHANGED(doc, src) = TRUE, "an appended heading")
+mirror = src
+SelectText(rt, "Appendix")
+Check(FORM.GET(rt, "SELFONTSIZE") = 18, "drawn as a level 2 heading")
+
+' a kind change from the toolbar
+CaretAfter(rt, "Intro")
+d = MDSYNC.SETKIND(doc, MDSYNC.BLOCKAT(doc, CINT(FORM.GET(rt, "SELSTART"))), "heading", 3)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(doc), NL + "### Intro" + NL) >= 0, "a paragraph becomes a level 3 heading")
+Check(mirror = MDSYNC.SOURCE$(doc), "span after a kind change")
+
+' a link
+SelectText(rt, "Final")
+d = MDSYNC.SETLINK(doc, "https://jdbasic.org")
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(doc), "[Final](https://jdbasic.org) *words*.") >= 0, "a link with its URL")
+Check(mirror = MDSYNC.SOURCE$(doc), "span after a link")
+
+' a paragraph of spaces only is an empty paragraph
+CaretAfter(rt, "Intro")
+FORM.SET(rt, "SELTEXT", CRLF)
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+FORM.SET(rt, "SELTEXT", "   ")
+d = MDSYNC.VIEWCHANGED(doc)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(doc), "### Intro" + NL) >= 0, "a blank paragraph leaves the heading alone")
+Check(mirror = MDSYNC.SOURCE$(doc), "span after a blank paragraph")
+Check(LEN(SPLIT(FORM.GET(rt, "TEXT"), CRLF)) = LEN(MDSYNC.BLOCKS(doc)), "the blank paragraph is a block")
+
+' everything still reads back to the same view
+DIM again AS MAP = MDSYNC.OPEN(rt, MDSYNC.SOURCE$(doc))
+Check(MDSYNC.SOURCE$(again) = mirror, "the edited source opens again")
+
+' an empty document: a link before anything is typed, then text
+DIM empty AS MAP = MDSYNC.OPEN(rt, "")
+FORM.SET(rt, "SELSTART", 0)
+FORM.SET(rt, "SELTEXT", "Hello")
+FORM.SET(rt, "SELSTART", 0)
+FORM.SET(rt, "SELLENGTH", 5)
+d = MDSYNC.SETLINK(empty, "https://x.y/")
+Check(MDSYNC.SOURCE$(empty) = "[Hello](https://x.y/)" + NL, "typing into an empty document, with a link")
+
+' Enter in an empty document, then text in the second paragraph
+DIM blank AS MAP = MDSYNC.OPEN(rt, "")
+FORM.SET(rt, "SELSTART", 0)
+FORM.SET(rt, "SELTEXT", CRLF)
+d = MDSYNC.VIEWCHANGED(blank)
+FORM.SET(rt, "SELTEXT", "Second")
+d = MDSYNC.VIEWCHANGED(blank)
+Check(INSTR(MDSYNC.SOURCE$(blank), "Second" + NL) >= 0, "Enter in an empty document")
+Check(LEN(SPLIT(FORM.GET(rt, "TEXT"), CRLF)) = LEN(MDSYNC.BLOCKS(blank)), "paragraphs and blocks after Enter in an empty document")
+
+FORM.CLOSE(frm)
+
+PRINT
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL MDSYNC TESTS PASSED!"

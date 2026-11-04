@@ -144,6 +144,15 @@ DIM numbered = ViewRuns(blocks[5])
 DIM num_run = R("3." + CHR$(9), "")
 num_run{"color"} = 8355714
 TESTKIT.EQ(MDRICH.MD$(blocks[5], APPEND([num_run], numbered)), blocks[5]{"src"}, "the drawn number is not content")
+DIM typed_on = R("3." + CHR$(9) + "drei", "")
+typed_on{"color"} = 8355714
+TESTKIT.EQ(MDRICH.BODY$(blocks[5], [typed_on]), "3. drei" + NL$, "text typed behind the number takes its colour but is content")
+
+TESTKIT.SUITE("body")
+TESTKIT.EQ(MDRICH.BODY$(blocks[1], ViewRuns(blocks[1])), blocks[1]{"body"}, "BODY$ of an unchanged view is the body")
+TESTKIT.EQ(MDRICH.BODY$(MDRICH.NEWBLOCK("para"), [R("Split off", "b")], "heading"), "Split off" + NL$, "a paragraph still drawn as a heading: its bold is the heading's")
+TESTKIT.EQ(MDRICH.BODY$(MDRICH.NEWBLOCK("para"), []), "", "an empty new paragraph has no lines")
+TESTKIT.EQ(MDRICH.BODY$(MDRICH.NEWBLOCK("item", blocks[2]), []), "-" + NL$, "an empty new item is its marker")
 TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(blocks[1]), "{\i text}") >= 0, "emphasis in a paragraph")
 TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(One("Grün " + CHR$(8364) + NL$)), "\u252?") >= 0, "non-ASCII as \u")
 TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(One("x " + CHR$(128512) + NL$)), "\u-10179?\u-8704?") >= 0, "a character above U+FFFF as a surrogate pair")

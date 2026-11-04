@@ -998,7 +998,15 @@ FUNC RunSegs(kind$, runs)
         t$ = REPLACE$(t$, VT_CH, NL_CH)
         DIM col = -1
         IF MAP.EXISTS(r, "color") THEN col = r{"color"}
-        IF col = NUM_RGB THEN CONTINUEFOR
+        ' the drawn number of an ordered item runs up to its tab; text typed
+        ' behind it takes its colour but is content
+        IF col = NUM_RGB THEN
+            DIM tab_at = INSTR(t$, TAB_CH)
+            IF tab_at < 0 THEN CONTINUEFOR
+            t$ = MID$(t$, tab_at + 1, LEN(t$) - tab_at - 1)
+            IF t$ = "" THEN CONTINUEFOR
+            col = -1
+        ENDIF
         DIM fcode = INSTR(r{"font"}, CODE_FONT) >= 0
         IF MAP.EXISTS(r, "backcolor") THEN fcode = fcode ORELSE r{"backcolor"} = CODE_BG_RGB
         DIM flink = Flag(r, "link") ORELSE col = LINK_RGB ORELSE col = LINK_MARK_RGB ORELSE col = LINK_RAW_RGB
@@ -1339,23 +1347,34 @@ FUNC SplitCells(row)
     RETURN cells
 ENDFUNC
 
-' The block's source after its paragraph was edited to show runs. An
-' unchanged view gives the source back byte for byte; a changed one is
+' The block's own lines (no lead, no tail) for a paragraph that shows runs.
+' An unchanged view gives the body back byte for byte; a changed one is
 ' written in the block's marker style, and if that would read back
-' differently, with every special character escaped.
-EXPORT FUNC MD$(b, runs)
-    IF SAME(b, runs) THEN RETURN b{"src"}
+' differently, with every special character escaped. drawn$ is the kind
+' the paragraph was drawn as, when that differs from the block's kind
+' (a paragraph split off a heading still looks like the heading).
+EXPORT FUNC BODY$(b, runs, drawn$ = "")
     DIM kind$ = b{"kind"}
-    IF kind$ = "rule" ORELSE kind$ = "image" THEN RETURN b{"src"}
-    DIM segs = RunSegs(kind$, runs)
+    DIM look$ = drawn$
+    IF look$ = "" THEN look$ = kind$
+    IF look$ = kind$ ANDALSO b{"body"} <> "" ANDALSO SAME(b, runs) THEN RETURN b{"body"}
+    IF kind$ = "rule" ORELSE kind$ = "image" THEN RETURN b{"body"}
+    DIM segs = RunSegs(look$, runs)
+    IF kind$ = "para" ANDALSO TRIM$(REPLACE$(PlainOf$(segs), VT_CH, "")) = "" THEN RETURN ""
     DIM body$ = BodyFor$(b, segs, FALSE)
     IF kind$ <> "code" ANDALSO kind$ <> "raw" THEN
         DIM back = BLOCKS(body$)
         DIM ok = LEN(back) = 1
-        IF ok THEN ok = back[0]{"kind"} = kind$ ANDALSO SameSegs(NormSegs(kind$, back[0]{"segs"}), MergeLinkless(segs))
+        IF ok THEN ok = back[0]{"kind"} = kind$ ANDALSO SameSegs(NormSegs(kind$, back[0]{"segs"}), MergeLinkless(NormSegs(kind$, segs)))
         IF NOT ok THEN body$ = BodyFor$(b, segs, TRUE)
     ENDIF
-    RETURN b{"lead"} + body$ + b{"tail"}
+    RETURN body$
+ENDFUNC
+
+' The block's source (lead, body, tail) for a paragraph that shows runs.
+EXPORT FUNC MD$(b, runs)
+    IF SAME(b, runs) THEN RETURN b{"src"}
+    RETURN b{"lead"} + BODY$(b, runs) + b{"tail"}
 ENDFUNC
 
 ' A new, empty block for the editor: a paragraph, a heading of a level, or

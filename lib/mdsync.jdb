@@ -1,0 +1,628 @@
+' mdsync.jdb - a Markdown source and its rendered view in a FORM.RICHTEXT,
+' kept in step both ways. An edit in the view rewrites only the blocks it
+' reached and answers the span of the source that changed, so an editor
+' showing the source can replace just that span; an edit of the source
+' redraws only the blocks that changed. Every other byte stays as it was.
+'
+'   IMPORT MDSYNC
+'   DIM doc = MDSYNC.OPEN(rt, md$)
+'   SUB RTVIEW_CHANGE(e)
+'       DIM d = MDSYNC.VIEWCHANGED(doc)
+'       IF d{"changed"} THEN ...replace d{"old_len"} bytes at d{"start"} with d{"text"}
+'   ENDSUB
+'
+' Needs a FORMS build (Windows). Built on MDRICH.
+'
+' version: 1.0.0
+' requires: MDRICH ^1
+
+EXPORT MODULE MDSYNC
+
+IMPORT MDRICH
+
+DIM CRLF_CH AS STRING = CHR$(13) + CHR$(10)
+DIM TAB_SYNC AS STRING = CHR$(9)
+
+' The view's paragraphs: their texts and the byte offset each starts at.
+FUNC ViewParas(rt AS DOUBLE)
+    DIM t$ = FORM.GET(rt, "TEXT")
+    DIM texts = SPLIT(t$, CRLF_CH)
+    DIM starts = []
+    DIM at_pos AS INTEGER = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(texts) - 1
+        starts = APPEND(starts, at_pos)
+        at_pos = at_pos + LEN(texts[k]) + 2
+    NEXT k
+    DIM vp AS MAP
+    vp{"texts"} = texts
+    vp{"starts"} = starts
+    vp{"length"} = LEN(t$)
+    RETURN vp
+ENDFUNC
+
+' The paragraph a view byte offset falls in.
+FUNC ParaAt(vp, at_pos AS INTEGER) AS INTEGER
+    DIM target AS INTEGER = at_pos
+    DIM starts AS ARRAY = vp{"starts"}
+    DIM k AS INTEGER = LEN(starts) - 1
+    DIM here AS INTEGER = 0
+    DO WHILE k > 0
+        here = starts[k]
+        IF here <= target THEN EXITDO
+        k = k - 1
+    LOOP
+    RETURN k
+ENDFUNC
+
+FUNC ParaStart(vp, k AS INTEGER) AS INTEGER
+    DIM starts AS ARRAY = vp{"starts"}
+    DIM at AS INTEGER = starts[k]
+    RETURN at
+ENDFUNC
+
+' The byte offset where paragraph k's text ends (before its break).
+FUNC ParaEnd(vp, k AS INTEGER) AS INTEGER
+    DIM texts AS ARRAY = vp{"texts"}
+    DIM one$ = texts[k]
+    RETURN ParaStart(vp, k) + LEN(one$)
+ENDFUNC
+
+' RUNS of paragraphs [a, b), one array per paragraph. Selection and scroll
+' are left as they were.
+FUNC RunsOf(rt AS DOUBLE, vp, a, b)
+    DIM out = []
+    IF b <= a THEN RETURN out
+    DIM texts = vp{"texts"}
+    DIM starts = vp{"starts"}
+    DIM from = starts[a]
+    DIM upto = starts[b - 1] + LEN(texts[b - 1])
+    DIM whole = []
+    IF upto > from THEN
+        DIM keep_start AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
+        DIM keep_len AS INTEGER = CINT(FORM.GET(rt, "SELLENGTH"))
+        FORM.SET(rt, "SELSTART", from)
+        FORM.SET(rt, "SELLENGTH", upto - from)
+        whole = FORM.GET(rt, "RUNS")
+        FORM.SET(rt, "SELSTART", keep_start)
+        FORM.SET(rt, "SELLENGTH", keep_len)
+    ENDIF
+    DIM cur = []
+    DIM k = 0
+    FOR k = 0 TO LEN(whole) - 1
+        IF whole[k]{"text"} = CRLF_CH THEN
+            out = APPEND(out, [cur])
+            cur = []
+        ELSE
+            cur = APPEND(cur, whole[k])
+        ENDIF
+    NEXT k
+    out = APPEND(out, [cur])
+    DO WHILE LEN(out) < b - a
+        out = APPEND(out, [[]])
+    LOOP
+    RETURN out
+ENDFUNC
+
+FUNC RtfOf$(doc, blocks)
+    DIM parts = []
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        parts = APPEND(parts, MDRICH.RTF$(blocks[k], doc{"opts"}))
+    NEXT k
+    RETURN MDRICH.HEAD$() + JOIN(parts, "\par" + CHR$(10)) + "\par}"
+ENDFUNC
+
+' Replaces view paragraphs [a, b) with the drawing of blocks. The caller
+' keeps the selection.
+SUB ReplaceParas(doc, a, b, blocks)
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM vp = ViewParas(rt)
+    DIM n = LEN(vp{"texts"})
+    DIM starts = vp{"starts"}
+    DIM from = 0
+    IF a < n THEN from = starts[a] ELSE from = vp{"length"}
+    DIM upto = vp{"length"}
+    IF b < n THEN upto = starts[b]
+    IF LEN(blocks) = 0 ANDALSO b >= n ANDALSO a > 0 THEN
+        ' dropping the last paragraphs takes the break in front of them
+        from = starts[a] - 2
+    ENDIF
+    IF a >= n ANDALSO n > 0 ANDALSO LEN(blocks) > 0 THEN
+        ' appending: a new break after the current last paragraph
+        FORM.SET(rt, "SELSTART", vp{"length"})
+        FORM.SET(rt, "SELLENGTH", 0)
+        FORM.SET(rt, "SELTEXT", CRLF_CH)
+        from = vp{"length"} + 2
+        upto = from
+    ENDIF
+    FORM.SET(rt, "SELSTART", from)
+    FORM.SET(rt, "SELLENGTH", upto - from)
+    IF LEN(blocks) = 0 THEN
+        FORM.SET(rt, "SELTEXT", "")
+    ELSE
+        FORM.SET(rt, "SELRTF", RtfOf$(doc, blocks))
+        ' at the end of the document the closing \par of the drawing is a
+        ' paragraph too many; dropping it keeps the last one's format
+        IF b >= n THEN
+            DIM after = ViewParas(rt)
+            IF LEN(after{"texts"}) > a + LEN(blocks) THEN
+                FORM.SET(rt, "SELSTART", after{"length"} - 2)
+                FORM.SET(rt, "SELLENGTH", 2)
+                FORM.SET(rt, "SELTEXT", "")
+            ENDIF
+        ENDIF
+    ENDIF
+ENDSUB
+
+FUNC Offsets(blocks)
+    DIM offset = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        DIM b = blocks[k]
+        b{"src"} = b{"lead"} + b{"body"} + b{"tail"}
+        b{"start"} = offset
+        offset = offset + LEN(b{"src"})
+        b{"end"} = offset
+    NEXT k
+    RETURN blocks
+ENDFUNC
+
+FUNC JoinSrc$(blocks, a, b)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = a TO b - 1
+        out$ = out$ + blocks[k]{"src"}
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' Binds a RICHTEXT to a Markdown source and draws it. opts{"base"} is the
+' folder image paths are relative to.
+EXPORT FUNC OPEN(rt AS DOUBLE, md$, opts = 0)
+    DIM doc AS MAP
+    doc{"rt"} = rt
+    DIM o AS MAP
+    IF TYPEOF(opts) = "OBJECT" THEN o = opts
+    doc{"opts"} = o
+    doc{"blocks"} = MDRICH.BLOCKS(md$)
+    doc{"src"} = md$
+    FORM.SET(rt, "PLAINTEXT", FALSE)
+    FORM.SET(rt, "TEXTRTF", MDRICH.DOC$(doc{"blocks"}, o))
+    FORM.SET(rt, "SELSTART", 0)
+    FORM.SET(rt, "MODIFIED", FALSE)
+    doc{"vtexts"} = ViewParas(rt){"texts"}
+    RETURN doc
+ENDFUNC
+
+EXPORT FUNC SOURCE$(doc)
+    RETURN doc{"src"}
+ENDFUNC
+
+EXPORT FUNC BLOCKS(doc)
+    RETURN doc{"blocks"}
+ENDFUNC
+
+' The block whose paragraph holds a view byte offset.
+EXPORT FUNC BLOCKAT(doc, at_pos AS INTEGER)
+    DIM rt AS DOUBLE = doc{"rt"}
+    RETURN ParaAt(ViewParas(rt), at_pos)
+ENDFUNC
+
+' The view byte offset where block k's paragraph starts.
+EXPORT FUNC VIEWPOS(doc, k AS INTEGER)
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM vp = ViewParas(rt)
+    IF k >= LEN(vp{"starts"}) THEN RETURN ParaStart(vp, LEN(vp{"starts"}) - 1)
+    RETURN ParaStart(vp, k)
+ENDFUNC
+
+' The source byte offset where block k's own lines start.
+EXPORT FUNC SOURCEPOS(doc, k)
+    DIM blocks = doc{"blocks"}
+    IF k >= LEN(blocks) THEN RETURN LEN(doc{"src"})
+    RETURN blocks[k]{"start"} + LEN(blocks[k]{"lead"})
+ENDFUNC
+
+' The block a source byte offset falls in.
+EXPORT FUNC BLOCKOFSOURCE(doc, at_pos AS INTEGER)
+    DIM target AS INTEGER = at_pos
+    DIM blocks = doc{"blocks"}
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        IF target < blocks[k]{"end"} THEN RETURN k
+    NEXT k
+    RETURN MAX([0, LEN(blocks) - 1])
+ENDFUNC
+
+' The kind a paragraph made by Enter after a block of this kind gets.
+FUNC NextKind$(kind$)
+    IF kind$ = "item" ORELSE kind$ = "quote" THEN RETURN kind$
+    RETURN "para"
+ENDFUNC
+
+' Whether a blank line has to stand between two blocks so the source reads
+' back as two: anything followed by a paragraph, a paragraph followed by a
+' rule (it would turn the paragraph into a heading).
+FUNC NeedsGap(prev, nxt)
+    IF nxt{"kind"} = "para" ANDALSO nxt{"body"} <> "" THEN RETURN TRUE
+    IF prev{"kind"} = "para" ANDALSO nxt{"kind"} = "rule" THEN RETURN TRUE
+    IF prev{"kind"} = "item" ANDALSO nxt{"kind"} <> "item" THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+FUNC Gap(prev, nxt)
+    IF prev{"tail"} = "" ANDALSO NeedsGap(prev, nxt) THEN prev{"tail"} = prev{"eol"}
+    RETURN prev
+ENDFUNC
+
+' A block for a paragraph that shows runs, modelled on model, drawn as the
+' paragraph currently looks (drawn$).
+FUNC Rebuild(model, runs, drawn$)
+    DIM body$ = MDRICH.BODY$(model, runs, drawn$)
+    DIM nb = 0
+    IF body$ = "" ANDALSO model{"kind"} = "para" THEN
+        nb = MDRICH.NEWBLOCK("para", model)
+        nb{"body"} = ""
+    ELSEIF body$ = model{"body"} THEN
+        nb = model
+    ELSE
+        DIM parsed = MDRICH.BLOCKS(body$)
+        IF LEN(parsed) = 0 THEN
+            nb = MDRICH.NEWBLOCK("para", model)
+            nb{"body"} = ""
+            RETURN nb
+        ENDIF
+        nb = parsed[0]
+        IF nb{"kind"} = model{"kind"} THEN
+            IF MAP.EXISTS(model, "level") THEN nb{"level"} = model{"level"}
+            IF MAP.EXISTS(model, "list_start") THEN nb{"list_start"} = model{"list_start"}
+        ENDIF
+        nb{"lead"} = ""
+        nb{"tail"} = ""
+        nb{"body"} = body$
+    ENDIF
+    RETURN nb
+ENDFUNC
+
+' The source span between old and new text, trimmed to what differs.
+FUNC Span(old$, new$, base)
+    DIM p = 0
+    DIM lim = MIN([LEN(old$), LEN(new$)])
+    DO WHILE p < lim ANDALSO MID$(old$, p, 1) = MID$(new$, p, 1)
+        p = p + 1
+    LOOP
+    DIM s = 0
+    DO WHILE s < lim - p ANDALSO MID$(old$, LEN(old$) - 1 - s, 1) = MID$(new$, LEN(new$) - 1 - s, 1)
+        s = s + 1
+    LOOP
+    DIM d AS MAP
+    d{"changed"} = old$ <> new$
+    d{"start"} = base + p
+    d{"old_len"} = LEN(old$) - p - s
+    d{"text"} = MID$(new$, p, LEN(new$) - p - s)
+    RETURN d
+ENDFUNC
+
+FUNC NoChange()
+    DIM d AS MAP
+    d{"changed"} = FALSE
+    d{"start"} = 0
+    d{"old_len"} = 0
+    d{"text"} = ""
+    RETURN d
+ENDFUNC
+
+' Reconciles the source with the view after an edit there. Answers a map:
+' changed, and the source span start / old_len / text that replaces it.
+EXPORT FUNC VIEWCHANGED(doc)
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM vp = ViewParas(rt)
+    DIM newt = vp{"texts"}
+    DIM oldt = doc{"vtexts"}
+    DIM blocks = doc{"blocks"}
+    ' an empty document still shows one empty paragraph, which is no block
+    IF LEN(blocks) = 0 THEN oldt = []
+    DIM n_old = LEN(oldt)
+    DIM n_new = LEN(newt)
+    DIM p = 0
+    DO WHILE p < n_old ANDALSO p < n_new ANDALSO oldt[p] = newt[p]
+        p = p + 1
+    LOOP
+    DIM s = 0
+    DO WHILE s < n_old - p ANDALSO s < n_new - p ANDALSO oldt[n_old - 1 - s] = newt[n_new - 1 - s]
+        s = s + 1
+    LOOP
+    ' the paragraphs under the selection count as touched: a format change
+    ' leaves the text alone
+    DIM sel_start AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
+    DIM sel_len AS INTEGER = CINT(FORM.GET(rt, "SELLENGTH"))
+    DIM sel_a = ParaAt(vp, sel_start)
+    DIM sel_end AS INTEGER = sel_start + sel_len
+    DIM sel_b = ParaAt(vp, sel_end)
+    DIM na = p
+    DIM nb = n_new - s
+    IF nb <= na ANDALSO n_new = n_old THEN
+        na = sel_a
+        nb = sel_b + 1
+    ELSE
+        IF sel_a < na THEN na = sel_a
+        IF sel_b + 1 > nb THEN nb = sel_b + 1
+    ENDIF
+    DIM oa = na
+    DIM ob = nb - n_new + n_old
+    IF nb > n_new THEN nb = n_new
+    IF oa > LEN(blocks) THEN oa = LEN(blocks)
+    IF ob > LEN(blocks) THEN ob = LEN(blocks)
+    IF ob < oa THEN ob = oa
+
+    DIM runs = RunsOf(rt, vp, na, nb)
+    DIM q = ob - oa
+    DIM m = nb - na
+    IF m = 0 ANDALSO q = 0 THEN RETURN NoChange()
+
+    ' Which new paragraph is which old block: in order, except that new
+    ' empty paragraphs in front of an unchanged run of old ones are new
+    ' blocks (Enter at the start of a paragraph).
+    DIM lead_new = 0
+    DIM k = 0
+    IF m > q ANDALSO q > 0 THEN
+        DIM aligned = TRUE
+        FOR k = 0 TO q - 1
+            IF newt[na + m - q + k] <> oldt[oa + k] THEN aligned = FALSE
+        NEXT k
+        FOR k = 0 TO m - q - 1
+            IF newt[na + k] <> "" THEN aligned = FALSE
+        NEXT k
+        IF aligned THEN lead_new = m - q
+    ENDIF
+
+    DIM end_tail$ = ""
+    IF q > 0 THEN end_tail$ = blocks[ob - 1]{"tail"}
+    DIM first_lead$ = ""
+    IF LEN(blocks) > 0 THEN first_lead$ = blocks[0]{"lead"}
+    DIM fresh = []
+    DIM redraw = []
+    DIM identity = []
+    DIM j = 0
+    FOR j = 0 TO m - 1
+        DIM model = 0
+        DIM drawn$ = "para"
+        DIM idx = j - lead_new
+        DIM is_old = idx >= 0 ANDALSO idx < q
+        IF is_old THEN
+            model = blocks[oa + idx]
+            drawn$ = model{"kind"}
+        ELSE
+            DIM prev = 0
+            IF j < lead_new THEN
+                prev = blocks[oa]
+            ELSEIF LEN(fresh) > 0 THEN
+                prev = fresh[LEN(fresh) - 1]
+            ELSEIF oa > 0 THEN
+                prev = blocks[oa - 1]
+            ENDIF
+            IF TYPEOF(prev) = "OBJECT" THEN
+                model = MDRICH.NEWBLOCK(NextKind$(prev{"kind"}), prev)
+                drawn$ = prev{"kind"}
+            ELSE
+                model = MDRICH.NEWBLOCK("para")
+            ENDIF
+        ENDIF
+        DIM keep_lead$ = model{"lead"}
+        DIM keep_tail$ = model{"tail"}
+        DIM nbk = Rebuild(model, runs[j], drawn$)
+        nbk{"lead"} = ""
+        nbk{"tail"} = ""
+        IF is_old THEN
+            nbk{"lead"} = keep_lead$
+            IF idx < q - 1 THEN nbk{"tail"} = keep_tail$
+        ENDIF
+        fresh = APPEND(fresh, nbk)
+        identity = APPEND(identity, is_old)
+        DIM again = NOT is_old ORELSE drawn$ <> nbk{"kind"} ORELSE NOT MDRICH.SAME(nbk, runs[j])
+        IF nbk{"kind"} = "item" ANDALSO nbk{"ordered"} THEN
+            IF LEFT$(newt[na + j], LEN(nbk{"marker"}) + 1) <> nbk{"marker"} + TAB_SYNC THEN again = TRUE
+        ENDIF
+        redraw = APPEND(redraw, again)
+    NEXT j
+
+    DIM before = []
+    IF oa > 0 THEN before = TAKE(oa, blocks)
+    DIM after = []
+    IF ob < LEN(blocks) THEN after = DROP(ob, blocks)
+    DIM old_from = 0
+    IF oa > 0 THEN old_from = blocks[oa - 1]{"start"}
+    DIM old_to = LEN(doc{"src"})
+    IF ob < LEN(blocks) THEN old_to = blocks[ob]{"end"}
+    DIM old_span$ = MID$(doc{"src"}, old_from, old_to - old_from)
+
+    ' The blank lines after the range stay at its end: those of the last
+    ' old block, or, for paragraphs only inserted, those of the block in
+    ' front, which moves them on.
+    IF LEN(fresh) > 0 THEN
+        IF q > 0 THEN
+            fresh[LEN(fresh) - 1]{"tail"} = end_tail$
+        ELSEIF LEN(before) > 0 THEN
+            fresh[LEN(fresh) - 1]{"tail"} = before[LEN(before) - 1]{"tail"}
+            before[LEN(before) - 1]{"tail"} = ""
+        ENDIF
+        IF oa = 0 ANDALSO q > 0 THEN fresh[0]{"lead"} = first_lead$
+    ENDIF
+    DIM g = 0
+    FOR g = 0 TO LEN(fresh) - 2
+        fresh[g] = Gap(fresh[g], fresh[g + 1])
+    NEXT g
+    IF LEN(before) > 0 ANDALSO LEN(fresh) > 0 THEN before[LEN(before) - 1] = Gap(before[LEN(before) - 1], fresh[0])
+    IF LEN(fresh) > 0 ANDALSO LEN(after) > 0 THEN fresh[LEN(fresh) - 1] = Gap(fresh[LEN(fresh) - 1], after[0])
+    IF LEN(fresh) = 0 ANDALSO LEN(before) > 0 ANDALSO LEN(after) > 0 THEN before[LEN(before) - 1] = Gap(before[LEN(before) - 1], after[0])
+
+    DIM whole = []
+    FOR k = 0 TO LEN(before) - 1
+        whole = APPEND(whole, before[k])
+    NEXT k
+    FOR k = 0 TO LEN(fresh) - 1
+        whole = APPEND(whole, fresh[k])
+    NEXT k
+    FOR k = 0 TO LEN(after) - 1
+        whole = APPEND(whole, after[k])
+    NEXT k
+    whole = Offsets(whole)
+    DIM new_from = 0
+    IF oa > 0 THEN new_from = whole[oa - 1]{"start"}
+    DIM new_to = LEN(JoinSrc$(whole, 0, LEN(whole)))
+    IF ob < LEN(blocks) THEN new_to = whole[oa + LEN(fresh)]{"end"}
+    DIM new_src$ = JoinSrc$(whole, 0, LEN(whole))
+    DIM d = Span(old_span$, MID$(new_src$, new_from, new_to - new_from), old_from)
+    doc{"blocks"} = whole
+    doc{"src"} = new_src$
+
+    ' redraw the paragraphs whose look no longer fits their block, keeping
+    ' the caret the same distance from its paragraph's end
+    DIM caret AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
+    DIM caret_para = ParaAt(vp, caret)
+    DIM from_end AS INTEGER = ParaEnd(vp, caret_para) - caret
+    DIM touched = FALSE
+    j = 0
+    DO WHILE j < m
+        IF NOT redraw[j] THEN
+            j = j + 1
+            CONTINUEDO
+        ENDIF
+        DIM run_end = j
+        DO WHILE run_end < m ANDALSO redraw[run_end]
+            run_end = run_end + 1
+        LOOP
+        ReplaceParas(doc, na + j, na + run_end, TAKE(run_end - j, DROP(oa + j, whole)))
+        touched = TRUE
+        j = run_end
+    LOOP
+    IF touched THEN
+        DIM vp2 = ViewParas(rt)
+        DIM cp = MIN([caret_para, LEN(vp2{"texts"}) - 1])
+        DIM at_pos AS INTEGER = ParaEnd(vp2, cp) - from_end
+        IF at_pos < ParaStart(vp2, cp) THEN at_pos = ParaStart(vp2, cp)
+        FORM.SET(rt, "SELSTART", at_pos)
+        FORM.SET(rt, "SELLENGTH", 0)
+    ENDIF
+    doc{"vtexts"} = ViewParas(rt){"texts"}
+    RETURN d
+ENDFUNC
+
+' Takes a new source (an edit in the source editor) and redraws the blocks
+' that changed. Answers TRUE when the view changed.
+EXPORT FUNC SOURCECHANGED(doc, md$)
+    IF md$ = doc{"src"} THEN RETURN FALSE
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM old = doc{"blocks"}
+    DIM fresh = MDRICH.BLOCKS(md$)
+    DIM n_old = LEN(old)
+    DIM n_new = LEN(fresh)
+    DIM p = 0
+    DO WHILE p < n_old ANDALSO p < n_new ANDALSO SameBlock(old[p], fresh[p])
+        p = p + 1
+    LOOP
+    DIM s = 0
+    DO WHILE s < n_old - p ANDALSO s < n_new - p ANDALSO SameBlock(old[n_old - 1 - s], fresh[n_new - 1 - s])
+        s = s + 1
+    LOOP
+    doc{"blocks"} = fresh
+    doc{"src"} = md$
+    IF n_old - s - p = 0 ANDALSO n_new - s - p = 0 THEN RETURN FALSE
+    DIM keep AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
+    ReplaceParas(doc, p, n_old - s, TAKE(n_new - s - p, DROP(p, fresh)))
+    FORM.SET(rt, "SELSTART", MIN([keep, LEN(FORM.GET(rt, "TEXT"))]))
+    doc{"vtexts"} = ViewParas(rt){"texts"}
+    RETURN TRUE
+ENDFUNC
+
+' Two blocks draw the same paragraph.
+FUNC SameBlock(a, b)
+    IF a{"body"} <> b{"body"} ORELSE a{"kind"} <> b{"kind"} THEN RETURN FALSE
+    IF a{"kind"} = "item" THEN RETURN a{"level"} = b{"level"}
+    RETURN TRUE
+ENDFUNC
+
+' Turns block k into another kind (para, heading with a level, item,
+' ordered item, quote, code), keeping its text. Answers the source span as
+' VIEWCHANGED does.
+EXPORT FUNC SETKIND(doc, k, kind$, level = 1)
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM blocks = doc{"blocks"}
+    IF k < 0 ORELSE k >= LEN(blocks) THEN RETURN NoChange()
+    DIM old = blocks[k]
+    DIM vp = ViewParas(rt)
+    DIM runs = RunsOf(rt, vp, k, k + 1)
+    DIM want$ = kind$
+    IF kind$ = "ordered" THEN want$ = "item"
+    DIM model = MDRICH.NEWBLOCK(want$, old)
+    IF want$ = "heading" THEN model{"level"} = level
+    IF kind$ = "ordered" THEN
+        model{"ordered"} = TRUE
+        model{"number"} = 1
+        model{"list_start"} = 1
+        IF k > 0 ANDALSO blocks[k - 1]{"kind"} = "item" ANDALSO blocks[k - 1]{"ordered"} THEN
+            model{"number"} = blocks[k - 1]{"number"} + 1
+            model{"list_start"} = blocks[k - 1]{"list_start"}
+        ENDIF
+        model{"marker"} = STR$(model{"number"}) + "."
+        model{"cont"} = SPACE$(LEN(model{"marker"}) + 1)
+    ELSEIF kind$ = "item" THEN
+        model{"marker"} = "-"
+        model{"ordered"} = FALSE
+        model{"cont"} = "  "
+    ENDIF
+    DIM nb = Rebuild(model, runs[0], old{"kind"})
+    nb{"lead"} = old{"lead"}
+    nb{"tail"} = old{"tail"}
+    DIM old_from = old{"start"}
+    DIM old_span$ = old{"src"}
+    blocks[k] = nb
+    IF k > 0 THEN blocks[k - 1] = Gap(blocks[k - 1], nb)
+    IF k + 1 < LEN(blocks) THEN blocks[k] = Gap(nb, blocks[k + 1])
+    IF k > 0 THEN
+        old_from = blocks[k - 1]{"start"}
+        old_span$ = MID$(doc{"src"}, old_from, old{"end"} - old_from)
+    ENDIF
+    blocks = Offsets(blocks)
+    doc{"blocks"} = blocks
+    DIM new_src$ = JoinSrc$(blocks, 0, LEN(blocks))
+    DIM d = Span(old_span$, MID$(new_src$, old_from, blocks[k]{"end"} - old_from), old_from)
+    doc{"src"} = new_src$
+    DIM caret AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
+    DIM from_end AS INTEGER = ParaEnd(vp, k) - caret
+    ReplaceParas(doc, k, k + 1, [blocks[k]])
+    DIM vp2 = ViewParas(rt)
+    FORM.SET(rt, "SELSTART", MAX([ParaStart(vp2, k), ParaEnd(vp2, k) - from_end]))
+    doc{"vtexts"} = vp2{"texts"}
+    RETURN d
+ENDFUNC
+
+' Makes the selection in the view a link to url$ and reconciles.
+EXPORT FUNC SETLINK(doc, url$)
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM text$ = FORM.GET(rt, "SELTEXT")
+    IF text$ = "" THEN RETURN NoChange()
+    DIM before$ = doc{"src"}
+    DIM sel_at AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
+    DIM sel_len AS INTEGER = CINT(FORM.GET(rt, "SELLENGTH"))
+    ' text typed but not yet reconciled has no block to hold the URL; a
+    ' redraw while reconciling leaves the text but drops the selection
+    DIM pending = VIEWCHANGED(doc)
+    FORM.SET(rt, "SELSTART", sel_at)
+    FORM.SET(rt, "SELLENGTH", sel_len)
+    DIM k = BLOCKAT(doc, sel_at)
+    IF k < LEN(doc{"blocks"}) THEN
+        DIM b = doc{"blocks"}[k]
+        DIM ln AS MAP
+        ln{"text"} = text$
+        ln{"inner"} = text$
+        ln{"dest"} = "(" + url$ + ")"
+        b{"links"} = APPEND([ln], b{"links"})
+    ENDIF
+    FORM.SET(rt, "SELLINK", TRUE)
+    FORM.SET(rt, "SELCOLOR", 26316)
+    FORM.SET(rt, "SELUNDERLINE", TRUE)
+    DIM after = VIEWCHANGED(doc)
+    RETURN Span(before$, doc{"src"}, 0)
+ENDFUNC

@@ -1,0 +1,89 @@
+' MDSYNC demo: a Markdown file as source (left) and rendered (right), both
+' editable and kept in step. Type in either pane; closing the window writes
+' the source to tmp/mdsync_demo_out.md.
+'
+'   jdBasic jdb/demos/jdlibs/mdsync_demo.jdb [file.md] [--auto]
+'
+' --auto makes one word bold in the rendered pane, shows that the source
+' pane followed, and closes. Needs the FORMS build.
+
+IMPORT MDSYNC
+
+DIM path$ = "lib/mdsync_lib_readme.md"
+DIM auto = FALSE
+DIM argv = OS.ARGS()
+DIM a = 0
+FOR a = 1 TO LEN(argv) - 1
+    IF argv[a] = "--auto" THEN
+        auto = TRUE
+    ELSEIF ENDSWITH(LCASE$(argv[a]), ".md") THEN
+        path$ = argv[a]
+    ENDIF
+NEXT a
+
+IF NOT OS.FEATURE("FORMS") THEN
+    PRINT "No FORMS in this build."
+    END
+ENDIF
+
+' Both panes work in CRLF, the line ending a RICHTEXT reads and writes.
+DIM md$ = REPLACE$(REPLACE$(TXTREADER$(path$), CHR$(13) + CHR$(10), CHR$(10)), CHR$(10), CHR$(13) + CHR$(10))
+
+DIM frm = FORM.CREATE("MDSYNC - " + path$, 1100, 700, "MAIN")
+DIM src_box = FORM.RICHTEXT(frm, "txtSource", 0, 0, 500, 700)
+FORM.SET(src_box, "PLAINTEXT", TRUE)
+FORM.SET(src_box, "FONT", {"name": "Consolas", "size": 10})
+FORM.SET(src_box, "TEXT", md$)
+DIM view = FORM.RICHTEXT(frm, "rtView", 500, 0, 600, 700)
+DIM doc = MDSYNC.OPEN(view, md$, {"base": PATH.DIRNAME$(path$)})
+
+SUB RTVIEW_CHANGE(e)
+    DIM d = MDSYNC.VIEWCHANGED(doc)
+    IF NOT d{"changed"} THEN RETURN
+    DIM keep_start = FORM.GET(src_box, "SELSTART")
+    FORM.SET(src_box, "SELSTART", d{"start"})
+    FORM.SET(src_box, "SELLENGTH", d{"old_len"})
+    FORM.SET(src_box, "SELTEXT", d{"text"})
+    FORM.SET(src_box, "SELSTART", keep_start)
+ENDSUB
+
+SUB TXTSOURCE_CHANGE(e)
+    DIM changed = MDSYNC.SOURCECHANGED(doc, FORM.GET(src_box, "TEXT"))
+ENDSUB
+
+SUB MAIN_RESIZE(e)
+    DIM w = e[0]{"width"}
+    DIM h = e[0]{"height"}
+    FORM.SET(src_box, "WIDTH", INT(w * 0.45))
+    FORM.SET(src_box, "HEIGHT", h)
+    FORM.SET(view, "X", INT(w * 0.45))
+    FORM.SET(view, "WIDTH", w - INT(w * 0.45))
+    FORM.SET(view, "HEIGHT", h)
+ENDSUB
+
+SUB MAIN_UNLOAD(e)
+    MKDIR "tmp"
+    TXTWRITER "tmp/mdsync_demo_out.md", REPLACE$(MDSYNC.SOURCE$(doc), CHR$(13) + CHR$(10), CHR$(10))
+    PRINT "source written to tmp/mdsync_demo_out.md"
+ENDSUB
+
+DIM auto_step = 0
+SUB TMRAUTO_TICK(e)
+    auto_step = auto_step + 1
+    IF auto_step = 1 THEN
+        DIM t$ = FORM.GET(view, "TEXT")
+        DIM at = INSTR(t$, "both ways")
+        IF at < 0 THEN at = 0
+        FORM.SET(view, "SELSTART", at)
+        FORM.SET(view, "SELLENGTH", 9)
+        FORM.SET(view, "SELBOLD", TRUE)
+        RTVIEW_CHANGE([{}])
+        DIM shown$ = FORM.GET(src_box, "TEXT")
+        PRINT "source pane now has **both ways**: "; INSTR(shown$, "**both ways**") >= 0
+    ELSE
+        FORM.CLOSE(frm)
+    ENDIF
+ENDSUB
+IF auto THEN DIM tmr = FORM.TIMER(frm, "tmrAuto", 800)
+
+FORM.RUN(frm)

@@ -1,0 +1,42 @@
+' MDSYNC: open, an edit in the view and its source span, an edit of the
+' source. The module needs a window, so a build without FORMS skips; the
+' full walk through Enter, joins, kinds and links is
+' tests/forms/mdsync_selftest.jdb.
+
+IMPORT TESTKIT, MDSYNC
+
+IF NOT OS.FEATURE("FORMS") THEN
+    TESTKIT.SKIP("MDSYNC needs a FORMS build")
+    TESTKIT.REPORT()
+    END
+ENDIF
+
+DIM NL$ = CHR$(10)
+DIM md$ = "# Notes" + NL$ + NL$ + "Some text here." + NL$ + NL$ + "- one" + NL$
+DIM frm = FORM.CREATE("MDSYNC check", 480, 320, "MAIN")
+DIM rt = FORM.RICHTEXT(frm, "rtView", 0, 0, 480, 320)
+DIM doc = MDSYNC.OPEN(rt, md$)
+
+TESTKIT.SUITE("open")
+TESTKIT.EQ(MDSYNC.SOURCE$(doc), md$, "the source as given")
+TESTKIT.EQ(LEN(MDSYNC.BLOCKS(doc)), 3, "three blocks")
+TESTKIT.EQ(MDSYNC.VIEWCHANGED(doc){"changed"}, FALSE, "no edit, no change")
+
+TESTKIT.SUITE("view to source")
+DIM t$ = FORM.GET(rt, "TEXT")
+FORM.SET(rt, "SELSTART", INSTR(t$, "text"))
+FORM.SET(rt, "SELLENGTH", 4)
+FORM.SET(rt, "SELITALIC", TRUE)
+DIM d = MDSYNC.VIEWCHANGED(doc)
+TESTKIT.EQ(MDSYNC.SOURCE$(doc), REPLACE$(md$, "Some text", "Some *text*"), "italic in the source")
+DIM patched$ = LEFT$(md$, d{"start"}) + d{"text"} + MID$(md$, d{"start"} + d{"old_len"}, LEN(md$) - d{"start"} - d{"old_len"})
+TESTKIT.EQ(patched$, MDSYNC.SOURCE$(doc), "the span turns the old source into the new")
+
+TESTKIT.SUITE("source to view")
+DIM edited$ = REPLACE$(MDSYNC.SOURCE$(doc), "- one", "- one" + NL$ + "- two")
+TESTKIT.EQ(MDSYNC.SOURCECHANGED(doc, edited$), TRUE, "a new item redraws")
+TESTKIT.ISTRUE(INSTR(FORM.GET(rt, "TEXT"), "two") >= 0, "the view shows it")
+TESTKIT.EQ(LEN(MDSYNC.BLOCKS(doc)), 4, "four blocks")
+
+FORM.CLOSE(frm)
+TESTKIT.REPORT()
