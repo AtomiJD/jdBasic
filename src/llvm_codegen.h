@@ -655,6 +655,7 @@ private:
     LLVMValueRef udt_ptr_from(TypedValue tv);
     // A runtime-tagged value in the shape an untyped (f64) parameter takes.
     LLVMValueRef runtime_to_untyped_param(TypedValue tv);
+    LLVMValueRef runtime_ptr_arg(TypedValue tv);
     // TYPE methods whose untyped parameters a call site hands a pointer
     // kind: those parameters are runtime-typed (by method name, per index).
     std::unordered_map<std::string, std::vector<bool>> method_runtime_params;

@@ -1,0 +1,48 @@
+' A FUNC parameter that one call site hands a number and another an array
+' is runtime-typed, and so is the answer read off it; ROUND with digits on
+' such a value rounds per element or as a number; a VM array handed to a
+' builtin that reads an array (JOIN) arrives as an array.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok AS BOOLEAN, what AS STRING)
+    IF NOT ok THEN
+        PRINT "FAIL "; what
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Halve(price, coin)
+    RETURN FLOOR(price / coin)
+ENDFUNC
+
+FUNC NearestCoin(price, coin)
+    RETURN ROUND(FLOOR(price / coin + 0.5) * coin, 2)
+ENDFUNC
+
+FUNC Flatten$(v)
+    IF ISSTR(v) THEN RETURN v
+    IF ISARR(v) THEN RETURN JOIN(v, " / ")
+    RETURN "[" + TYPEOF(v) + "]"
+ENDFUNC
+
+DIM one = Halve(7, 2)
+DIM many = Halve([7, 9], 2)
+Check(one = 3, "a number through a mixed-site parameter")
+Check(LEN(many) = 2 ANDALSO many[1] = 4, "an array through the same parameter")
+
+DIM coin = NearestCoin(2.37, 0.05)
+DIM coins = NearestCoin([1.02, 1.08], 0.05)
+Check(ABS(coin - 2.35) < 0.000001, "ROUND with digits of a number of run-time kind")
+Check(LEN(coins) = 2 ANDALSO ABS(coins[1] - 1.1) < 0.000001, "ROUND with digits of an array of run-time kind")
+
+DIM msgs = JSON.PARSE("[{""text"": ""hi""}, {""text"": [""a"", ""b""]}]")
+Check(Flatten$(msgs[0]{"text"}) = "hi", "a VM string")
+Check(Flatten$(msgs[1]{"text"}) = "a / b", "a VM array handed to JOIN")
+
+IF failed = 0 THEN
+    PRINT "ALL NATIVE MIXED SITE TESTS PASSED!"
+ELSE
+    PRINT failed; " failed"
+    END 1
+ENDIF

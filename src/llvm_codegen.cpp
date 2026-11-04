@@ -3234,8 +3234,12 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     }
                     if (!a_ptr || !a_num) continue;
                     // A pointer at one site and a number at another share the
-                    // slot as a runtime-typed parameter.
+                    // slot as a runtime-typed parameter. An array or map
+                    // answer read off the pointer kind the slot had (FLOOR of
+                    // an array parameter) is now one of either kind too.
                     decl.tags[pi] = JD_TAG_RUNTIME;
+                    if (decl.return_tag == JD_TAG_ARR || decl.return_tag == JD_TAG_NATIVE_MAP)
+                        decl.return_tag = JD_TAG_RUNTIME;
                 }
             }
         };
@@ -16054,6 +16058,39 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             out.fresh_container = true;
             return out;
         }
+        // A value of run-time kind rounds per element when it is an array
+        // and as a number otherwise; the answer keeps that kind.
+        if (x.tag == JD_TAG_RUNTIME && x.runtime_tag) {
+            LLVMValueRef digits = coerce_to(p, f64_type);
+            LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, x.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_ARR, 0), "rnd_isarr");
+            LLVMBasicBlockRef bb_a = LLVMAppendBasicBlockInContext(ctx, current_fn, "rnd.arr");
+            LLVMBasicBlockRef bb_n = LLVMAppendBasicBlockInContext(ctx, current_fn, "rnd.num");
+            LLVMBasicBlockRef bb_j = LLVMAppendBasicBlockInContext(ctx, current_fn, "rnd.join");
+            LLVMBuildCondBr(builder, is_arr, bb_a, bb_n);
+            LLVMPositionBuilderAtEnd(builder, bb_a);
+            auto& afn = runtime_funcs["__arr_round_p"];
+            LLVMValueRef aargs[] = { LLVMBuildIntToPtr(builder, x.val, i8_ptr_type, "rnd_ap"), digits };
+            LLVMValueRef ar = LLVMBuildCall2(builder, afn.fn_type, afn.fn, aargs, 2, "arnd");
+            LLVMValueRef a_bits = LLVMBuildPtrToInt(builder, ar, i64_type, "arnd_i");
+            LLVMBasicBlockRef bb_a_end = LLVMGetInsertBlock(builder);
+            LLVMBuildBr(builder, bb_j);
+            LLVMPositionBuilderAtEnd(builder, bb_n);
+            auto& nfn = runtime_funcs["__round_p"];
+            LLVMValueRef nargs[] = { coerce_to(x, f64_type), digits };
+            LLVMValueRef nr = LLVMBuildCall2(builder, nfn.fn_type, nfn.fn, nargs, 2, "rnd");
+            LLVMValueRef n_bits = pun_f64_to_i64(nr);
+            LLVMBasicBlockRef bb_n_end = LLVMGetInsertBlock(builder);
+            LLVMBuildBr(builder, bb_j);
+            LLVMPositionBuilderAtEnd(builder, bb_j);
+            LLVMValueRef bits = LLVMBuildPhi(builder, i64_type, "rnd_bits");
+            LLVMValueRef bv[] = { a_bits, n_bits };
+            LLVMBasicBlockRef bb[] = { bb_a_end, bb_n_end };
+            LLVMAddIncoming(bits, bv, bb, 2);
+            LLVMValueRef tag = LLVMBuildSelect(builder, is_arr,
+                LLVMConstInt(i32_type, JD_TAG_ARR, 0), LLVMConstInt(i32_type, JD_TAG_F64, 0), "rnd_tag");
+            return { bits, JD_TAG_RUNTIME, tag };
+        }
         auto& fn = runtime_funcs["__round_p"];
         LLVMValueRef args[] = {
             coerce_to(x, f64_type),
@@ -17579,7 +17616,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // the tagged path; coerce_to handles the resulting RUNTIME tag.
             // Already evaluated exactly once up top with this param's hint.
             TypedValue av = arg_cache[i];
-            args.push_back(coerce_to(av, param_types[i]));
+            if (param_types[i] == i8_ptr_type && av.tag == JD_TAG_RUNTIME && av.runtime_tag)
+                args.push_back(runtime_ptr_arg(av));
+            else
+                args.push_back(coerce_to(av, param_types[i]));
         }
         // Pad any unsupplied parameters with type-appropriate defaults so the
         // call is well-formed. -1 is the "rest of string / open length"
@@ -20047,6 +20087,58 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
         return tv.val;
     }
     return tv.val;
+}
+
+// A run-time typed argument for a pointer parameter of a direct binding. A
+// native string or array rides on the bits as coerce_to reads them; a VM
+// value is a key into the bridge's store, so a VM array becomes a native
+// array and any other VM value its text.
+LLVMValueRef LLVMCodegen::runtime_ptr_arg(TypedValue tv) {
+    auto* conv = get_runtime_func("__jdrt_handle_to_hof_array");
+    auto* vts = get_runtime_func("__jdrt_val_to_str");
+    auto* vk = get_runtime_func("__jdrt_val_kind");
+    if (!conv || !vts || !vk) return coerce_to(tv, i8_ptr_type);
+    LLVMValueRef is_vmh = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+        LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "rpa_isvmh");
+    LLVMBasicBlockRef bb_vm = LLVMAppendBasicBlockInContext(ctx, current_fn, "rpa.vm");
+    LLVMBasicBlockRef bb_vm_arr = LLVMAppendBasicBlockInContext(ctx, current_fn, "rpa.vmarr");
+    LLVMBasicBlockRef bb_vm_txt = LLVMAppendBasicBlockInContext(ctx, current_fn, "rpa.vmtxt");
+    LLVMBasicBlockRef bb_nat = LLVMAppendBasicBlockInContext(ctx, current_fn, "rpa.native");
+    LLVMBasicBlockRef bb_join = LLVMAppendBasicBlockInContext(ctx, current_fn, "rpa.join");
+    LLVMBuildCondBr(builder, is_vmh, bb_vm, bb_nat);
+
+    LLVMPositionBuilderAtEnd(builder, bb_vm);
+    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+    LLVMValueRef ka[] = { rt, tv.val };
+    LLVMValueRef kind = LLVMBuildCall2(builder, vk->fn_type, vk->fn, ka, 2, "rpa_kind");
+    LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, kind,
+        LLVMConstInt(i32_type, kValKindArray, 0), "rpa_isarr");
+    LLVMBuildCondBr(builder, is_arr, bb_vm_arr, bb_vm_txt);
+
+    LLVMPositionBuilderAtEnd(builder, bb_vm_arr);
+    LLVMValueRef ca[] = { rt, tv.val };
+    LLVMValueRef as_arr = LLVMBuildCall2(builder, conv->fn_type, conv->fn, ca, 2, "rpa_arr");
+    LLVMBasicBlockRef bb_vm_arr_end = LLVMGetInsertBlock(builder);
+    LLVMBuildBr(builder, bb_join);
+
+    LLVMPositionBuilderAtEnd(builder, bb_vm_txt);
+    LLVMValueRef sa[] = { rt, tv.val };
+    LLVMValueRef as_txt = LLVMBuildCall2(builder, vts->fn_type, vts->fn, sa, 2, "rpa_txt");
+    LLVMBasicBlockRef bb_vm_txt_end = LLVMGetInsertBlock(builder);
+    LLVMBuildBr(builder, bb_join);
+
+    LLVMPositionBuilderAtEnd(builder, bb_nat);
+    LLVMValueRef as_nat = coerce_to(tv, i8_ptr_type);
+    LLVMBasicBlockRef bb_nat_end = LLVMGetInsertBlock(builder);
+    LLVMBuildBr(builder, bb_join);
+
+    LLVMPositionBuilderAtEnd(builder, bb_join);
+    LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "rpa");
+    LLVMValueRef vals[] = { as_arr, as_txt, as_nat };
+    LLVMBasicBlockRef bbs[] = { bb_vm_arr_end, bb_vm_txt_end, bb_nat_end };
+    LLVMAddIncoming(phi, vals, bbs, 3);
+    return phi;
 }
 
 LLVMValueRef LLVMCodegen::runtime_to_untyped_param(TypedValue tv) {
