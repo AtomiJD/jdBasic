@@ -557,6 +557,7 @@ SUB DoRepair(tag$, limit, sources)
     DIM s = 0
     FOR s = 0 TO LEN(sources) - 1
         IF NOT IsSafeName(sources[s]) THEN CONTINUEFOR
+        IF sources[s] = tag$ THEN THROW "the repair tag must differ from its sources: " + tag$
         DIM rep_path$ = SYNTH_DIR$ + "/" + sources[s] + ".report.json"
         IF NOT FILE.EXISTS(rep_path$) THEN
             PRINT "no report for "; sources[s]; ", run verify first"
