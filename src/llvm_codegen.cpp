@@ -16266,6 +16266,62 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             }
         }
 
+        // A variable whose type is only known at run time (a REGEX.MATCH
+        // answer, an untyped FUNC result) carries its real tag in
+        // runtime_tag; answer from that, and from the stored Value when the
+        // tag says VM handle, the way TYPEOF does.
+        if (upper != "ISNONE" && upper != "ISNULL" && arg.kind == ExprKind::VARIABLE) {
+            VarInfo* v = lookup_var(arg.str_val);
+            if (v && v->tag == JD_TAG_RUNTIME) {
+                TypedValue av = codegen_expr(arg);
+                RuntimeFunc* vk = get_runtime_func("__jdrt_val_kind");
+                if (av.tag == JD_TAG_RUNTIME && av.runtime_tag && vk) {
+                    auto tag_is = [&](int t) {
+                        return LLVMBuildICmp(builder, LLVMIntEQ, av.runtime_tag,
+                                             LLVMConstInt(i32_type, t, 0), "rt_is");
+                    };
+                    LLVMValueRef hit;
+                    int want = kValKindNone;
+                    if (upper == "ISARR") {
+                        hit = tag_is(JD_TAG_ARR);
+                        want = kValKindArray;
+                    } else if (upper == "ISMAP") {
+                        hit = tag_is(JD_TAG_NATIVE_MAP);
+                        want = kValKindMap;
+                    } else if (upper == "ISSTR") {
+                        hit = tag_is(JD_TAG_STR);
+                        want = kValKindString;
+                    } else if (upper == "ISBOOL") {
+                        hit = tag_is(JD_TAG_BOOL);
+                        want = kValKindBool;
+                    } else {
+                        hit = LLVMBuildOr(builder, tag_is(JD_TAG_I64), tag_is(JD_TAG_F64), "rt_num");
+                        want = kValKindNumber;
+                    }
+                    LLVMValueRef is_vmh = tag_is(JD_TAG_VM_HANDLE);
+                    LLVMBasicBlockRef bb_vmh = LLVMAppendBasicBlock(current_fn, "isx.vmh");
+                    LLVMBasicBlockRef bb_merge = LLVMAppendBasicBlock(current_fn, "isx.merge");
+                    LLVMBasicBlockRef bb_from = LLVMGetInsertBlock(builder);
+                    LLVMBuildCondBr(builder, is_vmh, bb_vmh, bb_merge);
+                    LLVMPositionBuilderAtEnd(builder, bb_vmh);
+                    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                    LLVMValueRef ka[] = { rt, av.val };
+                    LLVMValueRef kind = LLVMBuildCall2(builder, vk->fn_type, vk->fn, ka, 2, "vkind");
+                    LLVMValueRef vhit = LLVMBuildICmp(builder, LLVMIntEQ, kind,
+                        LLVMConstInt(i32_type, want, 0), "vkind_eq");
+                    LLVMBuildBr(builder, bb_merge);
+                    LLVMBasicBlockRef bb_vmh_end = LLVMGetInsertBlock(builder);
+                    LLVMPositionBuilderAtEnd(builder, bb_merge);
+                    LLVMValueRef phi = LLVMBuildPhi(builder, LLVMInt1TypeInContext(ctx), "isx");
+                    LLVMValueRef vals[] = { hit, vhit };
+                    LLVMBasicBlockRef bbs[] = { bb_from, bb_vmh_end };
+                    LLVMAddIncoming(phi, vals, bbs, 2);
+                    return { LLVMBuildZExt(builder, phi, i64_type, "ext"), JD_TAG_BOOL };
+                }
+            }
+        }
+
         if (upper == "ISNONE" || upper == "ISNULL")
             return { LLVMConstInt(i64_type, 0, 0), JD_TAG_BOOL };
 

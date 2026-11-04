@@ -1,0 +1,35 @@
+' ISARR, ISSTR, ISNUM and ISMAP on a variable whose type is only known at
+' run time: REGEX.MATCH answers an array of groups or FALSE, and the type
+' tests have to look at the value, not at the declaration.
+
+DIM n_fail AS INTEGER = 0
+
+SUB Expect(cond AS BOOLEAN, label AS STRING)
+    IF NOT cond THEN
+        n_fail = n_fail + 1
+        PRINT "FAIL: "; label
+    ENDIF
+ENDSUB
+
+FUNC GroupCount(pattern AS STRING, subject AS STRING) AS INTEGER
+    DIM g = REGEX.MATCH(pattern, subject)
+    IF ISARR(g) THEN RETURN LEN(g)
+    RETURN -1
+ENDFUNC
+
+DIM hit = REGEX.MATCH("^(a)(b)$", "ab")
+DIM miss = REGEX.MATCH("^(a)(b)$", "zz")
+Expect(ISARR(hit), "a match with groups is an array")
+Expect(NOT ISARR(miss), "no match is not an array")
+Expect(NOT ISSTR(hit), "the array is not a string")
+Expect(NOT ISNUM(hit), "the array is not a number")
+Expect(NOT ISMAP(hit), "the array is not a map")
+Expect(GroupCount("^(x)(y)(z)$", "xyz") = 3, "ISARR inside a FUNC sees the groups")
+Expect(GroupCount("^(x)$", "q") = -1, "ISARR inside a FUNC sees the miss")
+
+IF n_fail = 0 THEN
+    PRINT "ALL ISARR RUNTIME TESTS PASSED!"
+ELSE
+    PRINT n_fail; " failed"
+    END 1
+ENDIF
