@@ -1,0 +1,162 @@
+' MDRICH: blocks that tile the source, the view of each kind, SAME and MD$
+' on unchanged and edited runs, escaping, and new blocks. Runs are built as
+' FORM.RICHTEXT would report them, so the test needs no window;
+' tests/forms/mdrich_view_selftest.jdb does the same through a real one.
+
+IMPORT TESTKIT, MDRICH
+
+DIM NL$ = CHR$(10)
+DIM CRLF$ = CHR$(13) + CHR$(10)
+DIM CODE_BG = 15790320
+DIM LINK_RGB = 26316
+
+' One run; flags$ holds b, i, s (strike), c (code), l (link).
+FUNC R(text$, flags$)
+    DIM r AS MAP
+    r{"text"} = text$
+    r{"bold"} = INSTR(flags$, "b") >= 0
+    r{"italic"} = INSTR(flags$, "i") >= 0
+    r{"strike"} = INSTR(flags$, "s") >= 0
+    r{"link"} = INSTR(flags$, "l") >= 0
+    r{"font"} = IIF(INSTR(flags$, "c") >= 0, "Consolas", "Segoe UI")
+    r{"backcolor"} = IIF(INSTR(flags$, "c") >= 0, CODE_BG, -1)
+    r{"color"} = IIF(INSTR(flags$, "l") >= 0, LINK_RGB, -1)
+    r{"object"} = FALSE
+    RETURN r
+ENDFUNC
+
+' The runs a block's own view shows.
+FUNC ViewRuns(b)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(b{"segs"}) - 1
+        DIM s = b{"segs"}[k]
+        DIM f$ = ""
+        IF s{"b"} ORELSE b{"kind"} = "heading" THEN f$ = f$ + "b"
+        IF s{"i"} THEN f$ = f$ + "i"
+        IF s{"s"} THEN f$ = f$ + "s"
+        IF s{"code"} ORELSE b{"kind"} = "code" THEN f$ = f$ + "c"
+        IF s{"link"} THEN f$ = f$ + "l"
+        DIM r = R(REPLACE$(s{"text"}, NL$, CHR$(11)), f$)
+        IF s{"mark"} THEN r{"color"} = IIF(s{"link"}, 8355713, 8355712)
+        IF s{"raw"} THEN r{"color"} = IIF(s{"link"}, 8355969, 8355968)
+        out = APPEND(out, r)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC One(md$)
+    DIM all_blocks = MDRICH.BLOCKS(md$)
+    DIM first AS MAP = all_blocks[0]
+    RETURN first
+ENDFUNC
+
+FUNC Kinds$(blocks)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        IF k > 0 THEN out$ = out$ + " "
+        out$ = out$ + blocks[k]{"kind"}
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+TESTKIT.SUITE("blocks")
+DIM doc$ = NL$ + "# Title" + NL$ + NL$ + "Some *text* here" + NL$ + "and a second line." + NL$ + NL$
+doc$ = doc$ + "- one" + NL$ + "- two" + NL$ + "  - nested" + NL$ + "3. three" + NL$ + NL$
+doc$ = doc$ + "> quoted" + NL$ + "> more" + NL$ + NL$ + "```basic" + NL$ + "PRINT 1" + NL$ + "```" + NL$ + NL$
+doc$ = doc$ + "| a | b |" + NL$ + "|---|:-:|" + NL$ + "| 1 | 2 |" + NL$ + NL$ + "---" + NL$ + NL$
+doc$ = doc$ + "![logo](img/logo.png)" + NL$ + NL$ + "<div>html</div>" + NL$ + NL$ + "    indented" + NL$ + NL$
+doc$ = doc$ + "Setext" + NL$ + "======" + NL$ + "last line, no newline"
+DIM blocks = MDRICH.BLOCKS(doc$)
+TESTKIT.EQ(MDRICH.SOURCE$(blocks), doc$, "the blocks tile the source")
+TESTKIT.EQ(Kinds$(blocks), "heading para item item item item quote code table rule image raw code heading para", "block kinds")
+TESTKIT.EQ(blocks[0]{"lead"}, NL$, "leading blank lines are the first block's lead")
+TESTKIT.EQ(blocks[1]{"tail"}, NL$, "blank lines after a block are its tail")
+TESTKIT.EQ(blocks[1]{"text"}, "Some *text* here" + NL$ + "and a second line.", "a paragraph's lines")
+TESTKIT.EQ(blocks[4]{"level"}, 1, "a nested item has level 1")
+TESTKIT.EQ(blocks[5]{"number"}, 3, "an ordered item keeps its number")
+TESTKIT.EQ(blocks[7]{"info"}, "basic", "a fence keeps its info string")
+TESTKIT.EQ(blocks[8]{"text"}, "a" + CHR$(9) + "b" + NL$ + "1" + CHR$(9) + "2", "table rows and cells")
+TESTKIT.EQ(blocks[10]{"path"}, "img/logo.png", "an image line")
+TESTKIT.EQ(blocks[13]{"style"}, "setext", "a setext heading")
+TESTKIT.EQ(blocks[0]{"start"}, 0, "offsets start at 0")
+TESTKIT.EQ(blocks[1]{"start"}, blocks[0]{"end"}, "offsets are contiguous")
+TESTKIT.EQ(blocks[LEN(blocks) - 1]{"end"}, LEN(doc$), "the last block ends at the end")
+DIM crlf_doc$ = "# A" + CRLF$ + CRLF$ + "b" + CRLF$
+TESTKIT.EQ(MDRICH.SOURCE$(MDRICH.BLOCKS(crlf_doc$)), crlf_doc$, "CRLF sources tile too")
+TESTKIT.EQ(MDRICH.BLOCKS(crlf_doc$)[1]{"eol"}, CRLF$, "a block knows its line ending")
+TESTKIT.EQ(LEN(MDRICH.BLOCKS("")), 0, "an empty document has no blocks")
+
+TESTKIT.SUITE("unchanged")
+DIM all_same = TRUE
+DIM all_src = TRUE
+DIM k = 0
+FOR k = 0 TO LEN(blocks) - 1
+    IF NOT MDRICH.SAME(blocks[k], ViewRuns(blocks[k])) THEN all_same = FALSE
+    IF MDRICH.MD$(blocks[k], ViewRuns(blocks[k])) <> blocks[k]{"src"} THEN all_src = FALSE
+NEXT k
+TESTKIT.ISTRUE(all_same, "every block's own view is SAME")
+TESTKIT.ISTRUE(all_src, "an unchanged view gives the source back")
+DIM odd = One("__bold__ _it_ ***both*** \*lit\* <b>x</b> [ref][1]" + NL$)
+TESTKIT.EQ(MDRICH.MD$(odd, ViewRuns(odd)), odd{"src"}, "unusual markup survives when untouched")
+TESTKIT.EQ(odd{"bmark"}, "__", "the block's bold marker")
+TESTKIT.EQ(odd{"imark"}, "_", "the block's italic marker")
+
+TESTKIT.SUITE("edits")
+DIM p = One("Hello *world* and more." + NL$ + NL$)
+TESTKIT.EQ(MDRICH.MD$(p, [R("Hello ", ""), R("world", "i"), R(" ", ""), R("and", "b"), R(" more.", "")]), "Hello *world* **and** more." + NL$ + NL$, "bold added, tail kept")
+DIM u = One("__a__ and _b_" + NL$)
+TESTKIT.EQ(MDRICH.MD$(u, [R("a", "b"), R(" and ", ""), R("b", "i"), R(" c", "i")]), "__a__ and _b c_" + NL$, "the block's own markers")
+TESTKIT.EQ(MDRICH.MD$(p, [R("Hello ", ""), R("big world", "bi")]), "Hello **_big world_**" + NL$ + NL$, "bold and italic together")
+TESTKIT.EQ(MDRICH.MD$(p, [R("Hello ", ""), R(" world ", "b"), R("!", "")]), "Hello  **world** !" + NL$ + NL$, "spaces move outside the markers")
+TESTKIT.EQ(MDRICH.MD$(p, [R("2 * 3 = 6", "")]), "2 \* 3 = 6" + NL$ + NL$, "a typed star is escaped")
+TESTKIT.EQ(MDRICH.MD$(p, [R("# not a heading", "")]), "\# not a heading" + NL$ + NL$, "a line that would start a block is escaped")
+TESTKIT.EQ(MDRICH.MD$(p, [R("snake_case stays", "")]), "snake_case stays" + NL$ + NL$, "underscores inside words stay")
+TESTKIT.EQ(MDRICH.MD$(p, [R("use ", ""), R("a*b", "c"), R(" here", "")]), "use `a*b` here" + NL$ + NL$, "a code span")
+TESTKIT.EQ(MDRICH.MD$(p, [R("one" + CHR$(11) + "two", "")]), "one" + NL$ + "two" + NL$ + NL$, "a line break inside the paragraph")
+DIM ln = One("see [the site](http://x.y/ " + CHR$(34) + "T" + CHR$(34) + ") now" + NL$)
+TESTKIT.EQ(MDRICH.MD$(ln, [R("see ", ""), R("the site", "l"), R(" today", "")]), "see [the site](http://x.y/ " + CHR$(34) + "T" + CHR$(34) + ") today" + NL$, "a link keeps its destination")
+TESTKIT.EQ(MDRICH.MD$(ln, [R("see ", ""), R("our site", "l"), R(" now", "")]), "see [our site](http://x.y/ " + CHR$(34) + "T" + CHR$(34) + ") now" + NL$, "renamed link text keeps the destination")
+TESTKIT.EQ(MDRICH.MD$(ln, [R("see ", ""), R("our ", "l"), R("site", "lb")]), "see [our **site**](http://x.y/ " + CHR$(34) + "T" + CHR$(34) + ")" + NL$, "bold inside a link")
+
+DIM h2 = One("## Title ##" + NL$)
+TESTKIT.EQ(MDRICH.MD$(h2, [R("New title", "b")]), "## New title ##" + NL$, "an ATX heading keeps level and closing")
+DIM se = One("Title" + NL$ + "=====" + NL$)
+TESTKIT.EQ(MDRICH.MD$(se, [R("Longer title", "b")]), "Longer title" + NL$ + "============" + NL$, "a setext heading")
+DIM it = One("  12) item" + NL$ + "      more" + NL$)
+TESTKIT.EQ(MDRICH.MD$(it, [R("thing" + CHR$(11) + "more", "")]), "  12) thing" + NL$ + "      more" + NL$, "an item keeps marker, number and continuation indent")
+DIM qt = One("> a" + NL$ + "> b" + NL$)
+TESTKIT.EQ(MDRICH.MD$(qt, [R("a" + CHR$(11) + "c", "")]), "> a" + NL$ + "> c" + NL$, "a quote")
+DIM cd = One("~~~js" + NL$ + "x = 1" + NL$ + "~~~" + NL$)
+TESTKIT.EQ(MDRICH.MD$(cd, [R("x = 2" + CHR$(11) + "y = *3*", "c")]), "~~~js" + NL$ + "x = 2" + NL$ + "y = *3*" + NL$ + "~~~" + NL$, "a code block is verbatim")
+DIM tb = One("| a | b |" + NL$ + "|:--|--:|" + NL$ + "| 1 | 2 |" + NL$)
+TESTKIT.EQ(MDRICH.MD$(tb, [R("a" + CHR$(9) + "b", "b"), R(CHR$(11) + "1" + CHR$(9), ""), R("two", "b")]), "| a | b |" + NL$ + "|:--|--:|" + NL$ + "| 1 | **two** |" + NL$, "a table cell, the delimiter row kept")
+TESTKIT.EQ(MDRICH.MD$(tb, [R("a" + CHR$(9) + "b" + CHR$(9) + "c", "b"), R(CHR$(11) + "1" + CHR$(9) + "2" + CHR$(9) + "x|y", "")]), "| a | b | c |" + NL$ + "| --- | --- | --- |" + NL$ + "| 1 | 2 | x\|y |" + NL$, "a new column, a pipe in a cell")
+DIM im = One("![logo](a.png)" + NL$)
+TESTKIT.EQ(MDRICH.MD$(im, [R("", "")]), im{"src"}, "an image block keeps its source")
+
+TESTKIT.SUITE("rtf")
+TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(blocks[0]), "\b\fs44") >= 0, "a level 1 heading is bold and large")
+TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(blocks[2]), "\pnlvlblt") >= 0, "a bullet item")
+TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(blocks[5]), "{\cf8 3.\tab}") >= 0, "an ordered item shows its number")
+DIM numbered = ViewRuns(blocks[5])
+DIM num_run = R("3." + CHR$(9), "")
+num_run{"color"} = 8355714
+TESTKIT.EQ(MDRICH.MD$(blocks[5], APPEND([num_run], numbered)), blocks[5]{"src"}, "the drawn number is not content")
+TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(blocks[1]), "{\i text}") >= 0, "emphasis in a paragraph")
+TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(One("Grün " + CHR$(8364) + NL$)), "\u252?") >= 0, "non-ASCII as \u")
+TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(One("x " + CHR$(128512) + NL$)), "\u-10179?\u-8704?") >= 0, "a character above U+FFFF as a surrogate pair")
+TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(One("a {b} \c" + NL$)), "a \{b\} \\c") >= 0, "braces and backslashes escaped")
+TESTKIT.ISTRUE(STARTSWITH(MDRICH.DOC$(blocks), "{\rtf1"), "DOC$ is an RTF document")
+TESTKIT.ISTRUE(INSTR(MDRICH.FRAGMENT$(blocks[1]), "\par" + NL$) < 0, "a fragment is one paragraph")
+
+TESTKIT.SUITE("new blocks")
+DIM nb = MDRICH.NEWBLOCK("item", blocks[5])
+TESTKIT.EQ(MDRICH.MD$(nb, [R("four", "")]), "4. four" + NL$, "an item after 3. is 4.")
+DIM nh = MDRICH.NEWBLOCK("heading")
+nh{"level"} = 2
+TESTKIT.EQ(MDRICH.MD$(nh, [R("Part", "b")]), "## Part" + NL$, "a new heading")
+TESTKIT.EQ(MDRICH.MD$(MDRICH.NEWBLOCK("para"), [R("Plain ", ""), R("x", "i")]), "Plain *x*" + NL$, "a new paragraph")
+
+TESTKIT.REPORT()

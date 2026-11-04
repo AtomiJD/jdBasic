@@ -1,0 +1,97 @@
+' MDRICH demo: a Markdown file shown rendered in a RICHTEXT. Edit the text
+' (Ctrl+B, Ctrl+I, typing) and close the window: the paragraphs that
+' changed are written back as Markdown into tmp/mdrich_demo_out.md, every
+' other block byte for byte as it was.
+'
+'   jdBasic jdb/demos/jdlibs/mdrich_demo.jdb [file.md] [--auto]
+'
+' --auto closes the window after two seconds. Without the FORMS build the
+' demo lists the blocks instead.
+
+IMPORT MDRICH
+
+DIM path$ = "lib/mdrich_lib_readme.md"
+DIM auto = FALSE
+DIM argv = OS.ARGS()
+DIM a = 0
+FOR a = 1 TO LEN(argv) - 1
+    IF argv[a] = "--auto" THEN
+        auto = TRUE
+    ELSEIF ENDSWITH(LCASE$(argv[a]), ".md") THEN
+        path$ = argv[a]
+    ENDIF
+NEXT a
+
+DIM md$ = TXTREADER$(path$)
+DIM blocks = MDRICH.BLOCKS(md$)
+PRINT path$; ": "; LEN(md$); " bytes, "; LEN(blocks); " blocks"
+DIM counts AS MAP
+DIM k = 0
+FOR k = 0 TO LEN(blocks) - 1
+    DIM kind$ = blocks[k]{"kind"}
+    IF MAP.EXISTS(counts, kind$) THEN counts{kind$} = counts{kind$} + 1 ELSE counts{kind$} = 1
+NEXT k
+FOR EACH kind$ IN MAP.KEYS(counts)
+    PRINT "  "; kind$; ": "; counts{kind$}
+NEXT
+
+IF NOT OS.FEATURE("FORMS") THEN
+    PRINT "No FORMS in this build: nothing to show."
+    END
+ENDIF
+
+DIM frm = FORM.CREATE("MDRICH - " + path$, 760, 600, "MAIN")
+DIM rt = FORM.RICHTEXT(frm, "rtView", 0, 0, 760, 600)
+FORM.SET(rt, "TEXTRTF", MDRICH.DOC$(blocks, {"base": PATH.DIRNAME$(path$)}))
+FORM.SET(rt, "MODIFIED", FALSE)
+IF auto THEN DIM tmr = FORM.TIMER(frm, "tmrAuto", 2000)
+
+SUB TMRAUTO_TICK(e)
+    FORM.CLOSE(frm)
+ENDSUB
+
+SUB MAIN_RESIZE(e)
+    FORM.SET(rt, "WIDTH", e[0]{"width"})
+    FORM.SET(rt, "HEIGHT", e[0]{"height"})
+ENDSUB
+
+' The view's runs cut at its paragraph breaks.
+FUNC Paragraphs(h)
+    FORM.SET(h, "SELLENGTH", 0)
+    DIM paras = []
+    DIM cur = []
+    FOR EACH r IN FORM.GET(h, "RUNS")
+        IF r{"text"} = CHR$(13) + CHR$(10) THEN
+            paras = APPEND(paras, [cur])
+            cur = []
+        ELSE
+            cur = APPEND(cur, r)
+        ENDIF
+    NEXT
+    RETURN APPEND(paras, [cur])
+ENDFUNC
+
+SUB MAIN_UNLOAD(e)
+    DIM paras = Paragraphs(rt)
+    IF LEN(paras) <> LEN(blocks) THEN
+        PRINT "Paragraphs were added or joined; this demo writes back edits inside paragraphs only."
+        RETURN
+    ENDIF
+    DIM out$ = ""
+    DIM changed = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(blocks) - 1
+        DIM src$ = MDRICH.MD$(blocks[i], paras[i])
+        IF src$ <> blocks[i]{"src"} THEN
+            changed = changed + 1
+            PRINT "changed block "; i; " ("; blocks[i]{"kind"}; "):"
+            PRINT "  "; REPLACE$(TRIM$(src$), CHR$(10), CHR$(10) + "  ")
+        ENDIF
+        out$ = out$ + src$
+    NEXT i
+    MKDIR "tmp"
+    TXTWRITER "tmp/mdrich_demo_out.md", out$
+    PRINT changed; " of "; LEN(blocks); " blocks changed, written to tmp/mdrich_demo_out.md"
+ENDSUB
+
+FORM.RUN(frm)

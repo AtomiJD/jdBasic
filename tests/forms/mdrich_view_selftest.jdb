@@ -1,0 +1,118 @@
+' MDRICH through a real FORM.RICHTEXT: a document of every block kind is
+' drawn, read back with RUNS paragraph by paragraph and found unchanged;
+' then a word is made bold, a word is typed over, and the paragraph's
+' Markdown follows. Needs a FORMS build on Windows.
+OPTION "EXPLICIT"
+IMPORT MDRICH
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB Check(cond AS BOOLEAN, label AS STRING)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label
+    ENDIF
+ENDSUB
+
+' The runs of the whole control, cut at paragraph breaks.
+FUNC Paragraphs(h AS DOUBLE)
+    FORM.SET(h, "SELLENGTH", 0)
+    DIM runs AS ARRAY = FORM.GET(h, "RUNS")
+    DIM paras = []
+    DIM cur = []
+    DIM run AS MAP
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(runs) - 1
+        run = runs[i]
+        IF run{"text"} = CHR$(13) + CHR$(10) THEN
+            paras = APPEND(paras, [cur])
+            cur = []
+        ELSE
+            cur = APPEND(cur, run)
+        ENDIF
+    NEXT i
+    paras = APPEND(paras, [cur])
+    RETURN paras
+ENDFUNC
+
+DIM NL AS STRING = CHR$(10)
+DIM png_hex AS STRING = "89504e470d0a1a0a0000000d49484452000000100000001008060000001ff3ff6100000050494441547801cd92c10d002008033b9883b9a943f8f6ad4f220124a209247df668a040da990d932b64764336432f240f443472691071f3a8a45312d3ac40b2026e6f10fe8299c4db0311f2b2cef8310b42278633ea6a01270000000049454e44ae426082"
+DIM png_bytes AS STRING = ""
+DIM b AS INTEGER = 0
+FOR b = 0 TO LEN(png_hex) / 2 - 1
+    png_bytes = png_bytes + CHR$(VAL("0x" + MID$(png_hex, b * 2, 2)))
+NEXT b
+DIM png_path AS STRING = MKTEMP$("mdrich") + ".png"
+BINWRITER png_path, png_bytes
+
+DIM doc AS STRING = "# Title" + NL + NL + "Some *text* here, `DOUBLE " + CHR$(8594) + " INTEGER` and [a link](http://x.y/)." + NL + NL
+doc = doc + "- one" + NL + "- two" + NL + "  - nested" + NL + "3. three" + NL + NL
+doc = doc + "> quoted" + NL + "> more" + NL + NL + "```basic" + NL + "PRINT 1" + NL + "```" + NL + NL
+doc = doc + "| a | b |" + NL + "|---|---|" + NL + "| 1 | **2** |" + NL + NL + "---" + NL + NL
+doc = doc + "![logo](" + png_path + ")" + NL + NL + "Grüße ~~old~~ last" + NL
+
+DIM frm AS DOUBLE = FORM.CREATE("MDRICH view selftest", 640, 480, "MAIN")
+DIM rt AS DOUBLE = FORM.RICHTEXT(frm, "rtView", 0, 0, 640, 480)
+DIM blocks AS ARRAY = MDRICH.BLOCKS(doc)
+FORM.SET(rt, "TEXTRTF", MDRICH.DOC$(blocks))
+DIM paras AS ARRAY = Paragraphs(rt)
+DIM blk AS MAP
+DIM k AS INTEGER = 0
+Check(LEN(paras) = LEN(blocks), "one paragraph per block")
+
+DIM all_same AS BOOLEAN = TRUE
+DIM all_src AS BOOLEAN = TRUE
+
+FOR k = 0 TO LEN(blocks) - 1
+    blk = blocks[k]
+    IF NOT MDRICH.SAME(blk, paras[k]) THEN
+        all_same = FALSE
+        PRINT "  not the same: block "; k; " "; blk{"kind"}
+    ENDIF
+    IF MDRICH.MD$(blk, paras[k]) <> blk{"src"} THEN all_src = FALSE
+NEXT k
+Check(all_same, "every paragraph shows its block unchanged")
+Check(all_src, "every unchanged paragraph gives its source back")
+
+DIM view_text AS STRING = FORM.GET(rt, "TEXT")
+Check(INSTR(view_text, CHR$(239) + CHR$(191) + CHR$(188)) >= 0, "the image is a picture in the view")
+
+' make "here" bold
+FORM.SET(rt, "SELSTART", INSTR(view_text, "here"))
+FORM.SET(rt, "SELLENGTH", 4)
+FORM.SET(rt, "SELBOLD", TRUE)
+paras = Paragraphs(rt)
+blk = blocks[1]
+Check(MDRICH.SAME(blk, paras[1]) = FALSE, "the edited paragraph is not the same")
+DIM edited AS STRING = MDRICH.MD$(blk, paras[1])
+Check(edited = "Some *text* **here**, `DOUBLE " + CHR$(8594) + " INTEGER` and [a link](http://x.y/)." + NL + NL, "bold in the Markdown, link and code kept")
+
+' type over a word in the list
+view_text = FORM.GET(rt, "TEXT")
+FORM.SET(rt, "SELSTART", INSTR(view_text, "two"))
+FORM.SET(rt, "SELLENGTH", 3)
+FORM.SET(rt, "SELTEXT", "2 * 2")
+paras = Paragraphs(rt)
+blk = blocks[3]
+Check(MDRICH.MD$(blk, paras[3]) = "- 2 \* 2" + NL, "typed text in an item, the star escaped")
+blk = blocks[2]
+Check(MDRICH.MD$(blk, paras[2]) = blk{"src"}, "the item next to it is untouched")
+
+' a table cell
+view_text = FORM.GET(rt, "TEXT")
+FORM.SET(rt, "SELSTART", INSTR(view_text, "1" + CHR$(9)))
+FORM.SET(rt, "SELLENGTH", 1)
+FORM.SET(rt, "SELTEXT", "one")
+paras = Paragraphs(rt)
+blk = blocks[8]
+Check(MDRICH.MD$(blk, paras[8]) = "| a | b |" + NL + "|---|---|" + NL + "| one | **2** |" + NL + NL, "a table cell edit")
+
+FORM.CLOSE(frm)
+KILL png_path
+
+PRINT
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL MDRICH VIEW TESTS PASSED!"

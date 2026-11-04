@@ -1,0 +1,1406 @@
+' mdrich.jdb - Markdown as editable rich text. A document is cut into
+' blocks that tile the source byte for byte; each block is drawn as one RTF
+' paragraph for a FORM.RICHTEXT, and the RUNS of an edited paragraph are
+' written back as Markdown in the block's own marker style. A block whose
+' view did not change gives its source back unchanged, so an edit touches
+' only the blocks it reaches.
+'
+'   IMPORT MDRICH
+'   DIM blocks = MDRICH.BLOCKS(md$)
+'   FORM.SET(rt, "TEXTRTF", MDRICH.DOC$(blocks))
+'   DIM src$ = MDRICH.MD$(blocks[k], runs_of_paragraph_k)
+'
+' Stands in for: the Markdown round trip of WYSIWYG editors (Typora,
+' prosemirror-markdown, remark-stringify).
+'
+' version: 1.0.0
+
+EXPORT MODULE MDRICH
+
+DIM NL_CH AS STRING = CHR$(10)
+DIM CR_CH AS STRING = CHR$(13)
+DIM VT_CH AS STRING = CHR$(11)
+DIM TAB_CH AS STRING = CHR$(9)
+DIM QUOTE_CH AS STRING = CHR$(34)
+DIM PUNCT AS STRING = "!" + CHR$(34) + "#$%&'()*+,-./:;<=>?@[\]^_`{|}~"
+
+' Colours mark what Markdown has no format for; RUNS reads them back.
+DIM LINK_RGB AS INTEGER = 26316        ' 0,102,204
+DIM QUOTE_RGB AS INTEGER = 5921370     ' 90,90,90
+DIM MARK_RGB AS INTEGER = 8355712      ' 127,127,128  image stand-ins, rules
+DIM RAW_RGB AS INTEGER = 8355968       ' 127,128,128  verbatim Markdown
+DIM LINK_MARK_RGB AS INTEGER = 8355713  ' 127,127,129  an image stand-in inside a link
+DIM LINK_RAW_RGB AS INTEGER = 8355969   ' 127,128,129  verbatim Markdown inside a link
+DIM NUM_RGB AS INTEGER = 8355714        ' 127,127,130  the number of an ordered item
+DIM MAX_PICT_BYTES AS INTEGER = 8388608  ' larger pictures show as their [alt] text
+DIM CODE_FONT AS STRING = "Consolas"
+DIM CODE_BG_RGB AS INTEGER = 15790320  ' 240,240,240
+DIM HEAD_SIZES AS ARRAY = [44, 36, 30, 26, 24, 23]
+DIM RULE_TEXT AS STRING = REPEAT$(CHR$(9472), 24)
+
+' ---------------------------------------------------------------- blocks
+
+FUNC SplitLines(md$)
+    DIM out = []
+    DIM pos = 0
+    DIM n = LEN(md$)
+    DO WHILE pos < n
+        DIM k = INSTR(pos, md$, NL_CH)
+        IF k < 0 THEN
+            out = APPEND(out, MID$(md$, pos, n - pos))
+            pos = n
+        ELSE
+            out = APPEND(out, MID$(md$, pos, k - pos + 1))
+            pos = k + 1
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+FUNC Bare$(src_line$)
+    DIM t$ = src_line$
+    IF RIGHT$(t$, 1) = NL_CH THEN t$ = LEFT$(t$, LEN(t$) - 1)
+    IF RIGHT$(t$, 1) = CR_CH THEN t$ = LEFT$(t$, LEN(t$) - 1)
+    RETURN t$
+ENDFUNC
+
+FUNC Eol$(src_line$)
+    IF RIGHT$(src_line$, 2) = CR_CH + NL_CH THEN RETURN CR_CH + NL_CH
+    IF RIGHT$(src_line$, 1) = NL_CH THEN RETURN NL_CH
+    RETURN ""
+ENDFUNC
+
+FUNC IsBlank(src_line$)
+    RETURN TRIM$(Bare$(src_line$)) = ""
+ENDFUNC
+
+' The capture groups of a whole-line match, or an empty array.
+FUNC Groups(pattern$, text$)
+    DIM out = []
+    DIM g = REGEX.MATCH(pattern$, text$)
+    IF ISARR(g) THEN
+        DIM k = 0
+        FOR k = 0 TO LEN(g) - 1
+            out = APPEND(out, "" + g[k])
+        NEXT k
+    ENDIF
+    RETURN out
+ENDFUNC
+
+FUNC Matches(pattern$, text$)
+    RETURN LEN(Groups("(" + pattern$ + ")", text$)) > 0
+ENDFUNC
+
+FUNC FenceOf(bare$)
+    DIM g = Groups("^( {0,3})(`{3,}|~{3,})(.*)$", bare$)
+    IF LEN(g) = 0 THEN RETURN g
+    IF LEFT$(g[1], 1) = "`" ANDALSO INSTR(g[2], "`") >= 0 THEN RETURN []
+    RETURN g
+ENDFUNC
+
+FUNC AtxOf(bare$)
+    RETURN Groups("^( {0,3})(#{1,6})(?:([ \t]+)(.*))?$", bare$)
+ENDFUNC
+
+FUNC IsRule(bare$)
+    RETURN LEN(Groups("^ {0,3}([-*_])([ \t]*\1){2,}[ \t]*$", bare$)) > 0
+ENDFUNC
+
+FUNC ItemOf(bare$)
+    RETURN Groups("^( *)([-*+]|[0-9]{1,9}[.)])(?:([ \t]+)(.*))?$", bare$)
+ENDFUNC
+
+FUNC QuoteOf(bare$)
+    RETURN Groups("^( {0,3}> ?)(.*)$", bare$)
+ENDFUNC
+
+FUNC ImageLineOf(bare$)
+    RETURN Groups("^ {0,3}!\[([^\]]*)\]\(([^)\s]*)[^)]*\)[ \t]*$", bare$)
+ENDFUNC
+
+FUNC IsDelimRow(bare$)
+    IF INSTR(bare$, "-") < 0 THEN RETURN FALSE
+    RETURN Matches("^ *\|? *(:?(-+):? *\| *)*:?-+:? *\|? *$", bare$)
+ENDFUNC
+
+FUNC IsHtmlStart(bare$)
+    RETURN Matches("^ {0,3}<(/?[A-Za-z][A-Za-z0-9-]*|!--)(.*)$", bare$)
+ENDFUNC
+
+' A line that ends a paragraph or an item's lazy continuation.
+FUNC StartsBlock(lines, i)
+    DIM bare$ = Bare$(lines[i])
+    IF LEN(FenceOf(bare$)) > 0 THEN RETURN TRUE
+    IF LEN(AtxOf(bare$)) > 0 THEN RETURN TRUE
+    IF IsRule(bare$) THEN RETURN TRUE
+    IF LEN(ItemOf(bare$)) > 0 THEN RETURN TRUE
+    IF LEN(QuoteOf(bare$)) > 0 THEN RETURN TRUE
+    IF LEN(ImageLineOf(bare$)) > 0 THEN RETURN TRUE
+    IF IsHtmlStart(bare$) THEN RETURN TRUE
+    IF INSTR(bare$, "|") >= 0 ANDALSO i + 1 < LEN(lines) THEN
+        IF IsDelimRow(Bare$(lines[i + 1])) THEN RETURN TRUE
+    ENDIF
+    RETURN FALSE
+ENDFUNC
+
+FUNC NewBlockMap(kind$)
+    DIM b AS MAP
+    b{"kind"} = kind$
+    b{"lead"} = ""
+    b{"body"} = ""
+    b{"tail"} = ""
+    b{"eol"} = NL_CH
+    b{"text"} = ""
+    b{"level"} = 0
+    b{"bmark"} = "**"
+    b{"imark"} = "*"
+    b{"links"} = []
+    b{"images"} = []
+    b{"segs"} = []
+    RETURN b
+ENDFUNC
+
+' Table cells of one row, outer pipes dropped; "\|" stays inside a cell.
+FUNC RowCells(bare$)
+    DIM t$ = TRIM$(bare$)
+    IF LEFT$(t$, 1) = "|" THEN t$ = MID$(t$, 1, LEN(t$) - 1)
+    IF RIGHT$(t$, 1) = "|" ANDALSO RIGHT$(t$, 2) <> "\|" THEN t$ = LEFT$(t$, LEN(t$) - 1)
+    DIM cells = []
+    DIM cur$ = ""
+    DIM p = 0
+    DO WHILE p < LEN(t$)
+        DIM c$ = MID$(t$, p, 1)
+        IF c$ = "\" ANDALSO MID$(t$, p + 1, 1) = "|" THEN
+            cur$ = cur$ + "\|"
+            p = p + 2
+            CONTINUEDO
+        ENDIF
+        IF c$ = "|" THEN
+            cells = APPEND(cells, TRIM$(cur$))
+            cur$ = ""
+        ELSE
+            cur$ = cur$ + c$
+        ENDIF
+        p = p + 1
+    LOOP
+    cells = APPEND(cells, TRIM$(cur$))
+    RETURN cells
+ENDFUNC
+
+' The source cut into blocks. Blank lines go to the tail of the block before
+' them (the lead of the first block); every block's lead + body + tail is its
+' "src", and the srcs put together are md$. Offsets are bytes.
+EXPORT FUNC BLOCKS(md$)
+    DIM lines = SplitLines(md$)
+    DIM n = LEN(lines)
+    DIM blocks = []
+    DIM lead$ = ""
+    DIM levels = []
+    DIM starts = []
+    DIM i = 0
+    DO WHILE i < n
+        DIM src_line$ = lines[i]
+        DIM bare$ = Bare$(src_line$)
+        IF IsBlank(src_line$) THEN
+            IF LEN(blocks) = 0 THEN
+                lead$ = lead$ + src_line$
+            ELSE
+                DIM last = blocks[LEN(blocks) - 1]
+                last{"tail"} = last{"tail"} + src_line$
+            ENDIF
+            levels = []
+            starts = []
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM b = 0
+        DIM j = i + 1
+        DIM fence = FenceOf(bare$)
+        DIM atx = AtxOf(bare$)
+        DIM item = ItemOf(bare$)
+        DIM quote = QuoteOf(bare$)
+        DIM img = ImageLineOf(bare$)
+        IF LEN(fence) > 0 THEN
+            b = NewBlockMap("code")
+            b{"fence"} = fence[1]
+            b{"info"} = fence[2]
+            b{"indent"} = fence[0]
+            DIM code_lines = []
+            DIM closed = FALSE
+            DO WHILE j < n
+                DIM cb$ = Bare$(lines[j])
+                DIM cf = FenceOf(cb$)
+                IF LEN(cf) > 0 ANDALSO LEFT$(cf[1], 1) = LEFT$(fence[1], 1) ANDALSO LEN(cf[1]) >= LEN(fence[1]) ANDALSO TRIM$(cf[2]) = "" THEN
+                    closed = TRUE
+                    j = j + 1
+                    EXITDO
+                ENDIF
+                code_lines = APPEND(code_lines, cb$)
+                j = j + 1
+            LOOP
+            b{"closed"} = closed
+            b{"text"} = JOIN(code_lines, NL_CH)
+        ELSEIF LEN(atx) > 0 THEN
+            b = NewBlockMap("heading")
+            b{"level"} = LEN(atx[1])
+            b{"style"} = "atx"
+            DIM htext$ = TRIM$(atx[3])
+            DIM closing = Groups("^(.*?)([ \t]+#+)$", htext$)
+            b{"closing"} = ""
+            IF LEN(closing) > 0 THEN
+                htext$ = closing[0]
+                b{"closing"} = closing[1]
+            ELSEIF Matches("^(#+)$", htext$) THEN
+                b{"closing"} = htext$
+                htext$ = ""
+            ENDIF
+            b{"text"} = htext$
+        ELSEIF IsRule(bare$) THEN
+            b = NewBlockMap("rule")
+            b{"text"} = RULE_TEXT
+        ELSEIF LEN(img) > 0 THEN
+            b = NewBlockMap("image")
+            b{"alt"} = img[0]
+            b{"path"} = img[1]
+            b{"text"} = img[0]
+        ELSEIF LEN(item) > 0 THEN
+            b = NewBlockMap("item")
+            DIM ind = LEN(item[0])
+            DO WHILE LEN(levels) > 0 ANDALSO ind < levels[LEN(levels) - 1]
+                levels = TAKE(LEN(levels) - 1, levels)
+                starts = TAKE(LEN(starts) - 1, starts)
+            LOOP
+            IF LEN(levels) = 0 ORELSE ind > levels[LEN(levels) - 1] THEN
+                levels = APPEND(levels, ind)
+                starts = APPEND(starts, -1)
+            ENDIF
+            b{"level"} = LEN(levels) - 1
+            b{"indent"} = item[0]
+            b{"marker"} = item[1]
+            b{"sep"} = IIF(item[2] = "", " ", item[2])
+            b{"ordered"} = INSTR("-*+", item[1]) < 0
+            b{"number"} = 0
+            IF b{"ordered"} THEN
+                b{"number"} = VAL(LEFT$(item[1], LEN(item[1]) - 1))
+                IF starts[LEN(starts) - 1] < 0 THEN starts[LEN(starts) - 1] = b{"number"}
+            ENDIF
+            b{"list_start"} = starts[LEN(starts) - 1]
+            b{"cont"} = SPACE$(LEN(item[0]) + LEN(item[1]) + LEN(b{"sep"}))
+            DIM itext$ = item[3]
+            DIM first_cont = TRUE
+            DO WHILE j < n
+                IF IsBlank(lines[j]) ORELSE StartsBlock(lines, j) THEN EXITDO
+                DIM ib$ = Bare$(lines[j])
+                IF first_cont THEN
+                    b{"cont"} = LEFT$(ib$, LEN(ib$) - LEN(LTRIM$(ib$)))
+                    first_cont = FALSE
+                ENDIF
+                itext$ = itext$ + NL_CH + LTRIM$(ib$)
+                j = j + 1
+            LOOP
+            b{"text"} = itext$
+        ELSEIF LEN(quote) > 0 THEN
+            b = NewBlockMap("quote")
+            b{"prefix"} = quote[0]
+            DIM qtext$ = quote[1]
+            DO WHILE j < n
+                DIM qn = QuoteOf(Bare$(lines[j]))
+                IF NOT LEN(qn) > 0 THEN EXITDO
+                qtext$ = qtext$ + NL_CH + qn[1]
+                j = j + 1
+            LOOP
+            b{"text"} = qtext$
+        ELSEIF INSTR(bare$, "|") >= 0 ANDALSO j < n ANDALSO IsDelimRow(Bare$(lines[j])) THEN
+            b = NewBlockMap("table")
+            b{"delim"} = Bare$(lines[j])
+            b{"pipes"} = LEFT$(TRIM$(bare$), 1) = "|"
+            DIM rows = [RowCells(bare$)]
+            j = j + 1
+            DO WHILE j < n
+                DIM tb$ = Bare$(lines[j])
+                IF IsBlank(lines[j]) ORELSE INSTR(tb$, "|") < 0 THEN EXITDO
+                rows = APPEND(rows, [RowCells(tb$)])
+                j = j + 1
+            LOOP
+            b{"ncols"} = LEN(RowCells(b{"delim"}))
+            DIM row_texts = []
+            DIM r = 0
+            FOR r = 0 TO LEN(rows) - 1
+                row_texts = APPEND(row_texts, JOIN(rows[r], TAB_CH))
+            NEXT r
+            b{"text"} = JOIN(row_texts, NL_CH)
+        ELSEIF IsHtmlStart(bare$) ORELSE (i = 0 ANDALSO TRIM$(bare$) = "---") THEN
+            b = NewBlockMap("raw")
+            DIM front = i = 0 ANDALSO TRIM$(bare$) = "---"
+            DIM raw_lines = [bare$]
+            DO WHILE j < n
+                IF front THEN
+                    raw_lines = APPEND(raw_lines, Bare$(lines[j]))
+                    j = j + 1
+                    IF TRIM$(Bare$(lines[j - 1])) = "---" ORELSE TRIM$(Bare$(lines[j - 1])) = "..." THEN EXITDO
+                ELSE
+                    IF IsBlank(lines[j]) THEN EXITDO
+                    raw_lines = APPEND(raw_lines, Bare$(lines[j]))
+                    j = j + 1
+                ENDIF
+            LOOP
+            b{"text"} = JOIN(raw_lines, NL_CH)
+        ELSEIF LEFT$(src_line$, 4) = "    " ORELSE LEFT$(src_line$, 1) = TAB_CH THEN
+            b = NewBlockMap("code")
+            b{"fence"} = ""
+            b{"info"} = ""
+            b{"indent"} = ""
+            DIM ilines = [MID$(bare$, IIF(LEFT$(bare$, 1) = TAB_CH, 1, 4), LEN(bare$))]
+            DO WHILE j < n
+                DIM il$ = lines[j]
+                IF LEFT$(il$, 4) <> "    " ANDALSO LEFT$(il$, 1) <> TAB_CH THEN EXITDO
+                DIM ilb$ = Bare$(il$)
+                ilines = APPEND(ilines, MID$(ilb$, IIF(LEFT$(ilb$, 1) = TAB_CH, 1, 4), LEN(ilb$)))
+                j = j + 1
+            LOOP
+            b{"text"} = JOIN(ilines, NL_CH)
+        ELSE
+            b = NewBlockMap("para")
+            DIM ptext$ = LTRIM$(bare$)
+            b{"indent"} = LEFT$(bare$, LEN(bare$) - LEN(ptext$))
+            b{"cont"} = ""
+            DIM first_line = TRUE
+            DO WHILE j < n
+                IF IsBlank(lines[j]) THEN EXITDO
+                DIM pb$ = Bare$(lines[j])
+                DIM under = Groups("^ {0,3}(=+|-+)[ \t]*$", pb$)
+                IF LEN(under) > 0 THEN
+                    b{"kind"} = "heading"
+                    b{"style"} = "setext"
+                    b{"level"} = IIF(LEFT$(under[0], 1) = "=", 1, 2)
+                    b{"underline"} = pb$
+                    b{"closing"} = ""
+                    j = j + 1
+                    EXITDO
+                ENDIF
+                IF StartsBlock(lines, j) THEN EXITDO
+                IF first_line THEN
+                    b{"cont"} = LEFT$(pb$, LEN(pb$) - LEN(LTRIM$(pb$)))
+                    first_line = FALSE
+                ENDIF
+                ptext$ = ptext$ + NL_CH + LTRIM$(pb$)
+                j = j + 1
+            LOOP
+            b{"text"} = ptext$
+        ENDIF
+        IF b{"kind"} <> "item" THEN
+            levels = []
+            starts = []
+        ENDIF
+        DIM body$ = ""
+        DIM k = 0
+        FOR k = i TO j - 1
+            body$ = body$ + lines[k]
+        NEXT k
+        b{"body"} = body$
+        b{"eol"} = IIF(Eol$(lines[i]) = "", NL_CH, Eol$(lines[i]))
+        IF LEN(blocks) = 0 THEN
+            b{"lead"} = lead$
+            lead$ = ""
+        ENDIF
+        Analyse(b)
+        blocks = APPEND(blocks, b)
+        i = j
+    LOOP
+    IF LEN(blocks) = 0 ANDALSO lead$ <> "" THEN
+        DIM only = NewBlockMap("blank")
+        only{"lead"} = lead$
+        blocks = APPEND(blocks, only)
+    ENDIF
+    DIM offset = 0
+    DIM q = 0
+    FOR q = 0 TO LEN(blocks) - 1
+        DIM bq = blocks[q]
+        bq{"src"} = bq{"lead"} + bq{"body"} + bq{"tail"}
+        bq{"start"} = offset
+        offset = offset + LEN(bq{"src"})
+        bq{"end"} = offset
+    NEXT q
+    RETURN blocks
+ENDFUNC
+
+' The view of a block: its inline segments, links, images and the marker
+' style its emphasis uses.
+SUB Analyse(b)
+    DIM st AS MAP
+    st{"segs"} = []
+    st{"links"} = []
+    st{"images"} = []
+    st{"bmark"} = ""
+    st{"imark"} = ""
+    DIM kind$ = b{"kind"}
+    IF kind$ = "code" ORELSE kind$ = "raw" ORELSE kind$ = "rule" ORELSE kind$ = "image" ORELSE kind$ = "blank" THEN
+        IF b{"text"} <> "" THEN st{"segs"} = [Seg(b{"text"}, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)]
+    ELSEIF kind$ = "table" THEN
+        DIM rows = SPLIT(b{"text"}, NL_CH)
+        DIM r = 0
+        FOR r = 0 TO LEN(rows) - 1
+            IF r > 0 THEN AddSeg(st, NL_CH, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)
+            DIM cells = SPLIT(rows[r], TAB_CH)
+            DIM c = 0
+            FOR c = 0 TO LEN(cells) - 1
+                IF c > 0 THEN AddSeg(st, TAB_CH, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)
+                ParseInline(cells[c], FALSE, FALSE, FALSE, FALSE, st)
+            NEXT c
+        NEXT r
+    ELSE
+        ParseInline(b{"text"}, FALSE, FALSE, FALSE, FALSE, st)
+    ENDIF
+    b{"segs"} = st{"segs"}
+    b{"links"} = st{"links"}
+    b{"images"} = st{"images"}
+    IF st{"bmark"} <> "" THEN b{"bmark"} = st{"bmark"}
+    IF st{"imark"} <> "" THEN b{"imark"} = st{"imark"}
+ENDSUB
+
+' ---------------------------------------------------------------- inline
+
+FUNC Seg(text$, fb, fi, fs, fcode, flink, fmark, fraw)
+    DIM s AS MAP
+    s{"text"} = text$
+    s{"b"} = fb
+    s{"i"} = fi
+    s{"s"} = fs
+    s{"code"} = fcode
+    s{"link"} = flink
+    s{"mark"} = fmark
+    s{"raw"} = fraw
+    RETURN s
+ENDFUNC
+
+SUB AddSeg(st, text$, fb, fi, fs, fcode, flink, fmark, fraw)
+    IF text$ = "" THEN RETURN
+    st{"segs"} = APPEND(st{"segs"}, Seg(text$, fb, fi, fs, fcode, flink, fmark, fraw))
+ENDSUB
+
+FUNC IsSpaceAt(t$, p)
+    IF p < 0 ORELSE p >= LEN(t$) THEN RETURN TRUE
+    DIM c$ = MID$(t$, p, 1)
+    RETURN c$ = " " ORELSE c$ = TAB_CH ORELSE c$ = NL_CH
+ENDFUNC
+
+FUNC IsAlnumAt(t$, p)
+    IF p < 0 ORELSE p >= LEN(t$) THEN RETURN FALSE
+    DIM a = BYTEAT(t$, p)
+    RETURN (a >= 48 ANDALSO a <= 57) ORELSE (a >= 65 ANDALSO a <= 90) ORELSE (a >= 97 ANDALSO a <= 122) ORELSE a >= 128
+ENDFUNC
+
+FUNC RunLen(t$, p, c$)
+    DIM k = 0
+    DO WHILE p + k < LEN(t$) ANDALSO MID$(t$, p + k, 1) = c$
+        k = k + 1
+    LOOP
+    RETURN k
+ENDFUNC
+
+' Position of the bracket closing the one at p, or -1.
+FUNC CloseBracket(t$, p, open$, close$)
+    DIM depth = 0
+    DIM q = p
+    DO WHILE q < LEN(t$)
+        DIM c$ = MID$(t$, q, 1)
+        IF c$ = "\" THEN
+            q = q + 2
+            CONTINUEDO
+        ENDIF
+        IF c$ = open$ THEN depth = depth + 1
+        IF c$ = close$ THEN
+            depth = depth - 1
+            IF depth = 0 THEN RETURN q
+        ENDIF
+        q = q + 1
+    LOOP
+    RETURN -1
+ENDFUNC
+
+' The closing delimiter of an emphasis opened at p with marker char c$:
+' a run of the char that is not preceded by a space. Bold takes the last two
+' characters of a run of two or more, italic a run of one or three.
+FUNC CloseEmphasis(t$, p, c$, want)
+    DIM q = p
+    DO WHILE q < LEN(t$)
+        DIM ch$ = MID$(t$, q, 1)
+        IF ch$ = "\" THEN
+            q = q + 2
+            CONTINUEDO
+        ENDIF
+        IF ch$ = "`" THEN
+            DIM k = RunLen(t$, q, "`")
+            DIM close_at = INSTR(q + k, t$, REPEAT$("`", k))
+            IF close_at >= 0 THEN
+                q = close_at + k
+                CONTINUEDO
+            ENDIF
+        ENDIF
+        IF ch$ = c$ THEN
+            DIM m = RunLen(t$, q, c$)
+            IF q > p ANDALSO NOT IsSpaceAt(t$, q - 1) THEN
+                DIM ok = TRUE
+                IF c$ = "_" ANDALSO IsAlnumAt(t$, q + m) THEN ok = FALSE
+                IF ok ANDALSO want = 2 ANDALSO m >= 2 THEN RETURN q + m - 2
+                IF ok ANDALSO want = 1 ANDALSO (m = 1 ORELSE m = 3) THEN RETURN q + m - 1
+            ENDIF
+            q = q + m
+            CONTINUEDO
+        ENDIF
+        q = q + 1
+    LOOP
+    RETURN -1
+ENDFUNC
+
+SUB ParseInline(t$, fb, fi, fs, flink, st)
+    DIM buf$ = ""
+    DIM p = 0
+    DIM n = LEN(t$)
+    DO WHILE p < n
+        DIM c$ = MID$(t$, p, 1)
+        IF c$ = "\" ANDALSO p + 1 < n ANDALSO INSTR(PUNCT, MID$(t$, p + 1, 1)) >= 0 THEN
+            buf$ = buf$ + MID$(t$, p + 1, 1)
+            p = p + 2
+            CONTINUEDO
+        ENDIF
+        IF c$ = "`" THEN
+            DIM k = RunLen(t$, p, "`")
+            DIM close_at = INSTR(p + k, t$, REPEAT$("`", k))
+            DO WHILE close_at >= 0 ANDALSO RunLen(t$, close_at, "`") <> k
+                close_at = INSTR(close_at + RunLen(t$, close_at, "`"), t$, REPEAT$("`", k))
+            LOOP
+            IF close_at >= 0 THEN
+                AddSeg(st, buf$, fb, fi, fs, FALSE, flink, FALSE, FALSE)
+                buf$ = ""
+                DIM code$ = MID$(t$, p + k, close_at - p - k)
+                IF LEN(code$) >= 2 ANDALSO LEFT$(code$, 1) = " " ANDALSO RIGHT$(code$, 1) = " " ANDALSO TRIM$(code$) <> "" THEN code$ = MID$(code$, 1, LEN(code$) - 2)
+                AddSeg(st, code$, fb, fi, fs, TRUE, flink, FALSE, FALSE)
+                p = close_at + k
+                CONTINUEDO
+            ENDIF
+            buf$ = buf$ + REPEAT$("`", k)
+            p = p + k
+            CONTINUEDO
+        ENDIF
+        IF c$ = "!" ANDALSO MID$(t$, p + 1, 1) = "[" THEN
+            DIM ib = CloseBracket(t$, p + 1, "[", "]")
+            IF ib > 0 ANDALSO MID$(t$, ib + 1, 1) = "(" THEN
+                DIM ip = CloseBracket(t$, ib + 1, "(", ")")
+                IF ip > 0 THEN
+                    AddSeg(st, buf$, fb, fi, fs, FALSE, flink, FALSE, FALSE)
+                    buf$ = ""
+                    DIM alt$ = MID$(t$, p + 2, ib - p - 2)
+                    DIM im AS MAP
+                    im{"alt"} = alt$
+                    im{"src"} = MID$(t$, p, ip - p + 1)
+                    st{"images"} = APPEND(st{"images"}, im)
+                    AddSeg(st, "[" + alt$ + "]", fb, fi, fs, FALSE, flink, TRUE, FALSE)
+                    p = ip + 1
+                    CONTINUEDO
+                ENDIF
+            ENDIF
+        ENDIF
+        IF c$ = "[" ANDALSO NOT flink THEN
+            DIM lb = CloseBracket(t$, p, "[", "]")
+            IF lb > 0 ANDALSO MID$(t$, lb + 1, 1) = "(" THEN
+                DIM lp = CloseBracket(t$, lb + 1, "(", ")")
+                IF lp > 0 THEN
+                    AddSeg(st, buf$, fb, fi, fs, FALSE, flink, FALSE, FALSE)
+                    buf$ = ""
+                    DIM inner$ = MID$(t$, p + 1, lb - p - 1)
+                    DIM ln AS MAP
+                    ln{"inner"} = inner$
+                    ln{"dest"} = MID$(t$, lb + 1, lp - lb)
+                    st{"links"} = APPEND(st{"links"}, ln)
+                    DIM before = LEN(st{"segs"})
+                    ParseInline(inner$, fb, fi, fs, TRUE, st)
+                    ln{"text"} = SegsText$(st{"segs"}, before)
+                    p = lp + 1
+                    CONTINUEDO
+                ENDIF
+            ENDIF
+            IF lb > 0 THEN
+                AddSeg(st, buf$, fb, fi, fs, FALSE, flink, FALSE, FALSE)
+                buf$ = ""
+                DIM ref_end = lb
+                IF MID$(t$, lb + 1, 1) = "[" THEN
+                    DIM rb = CloseBracket(t$, lb + 1, "[", "]")
+                    IF rb > 0 THEN ref_end = rb
+                ENDIF
+                IF MID$(t$, p + 1, 1) = "^" ORELSE ref_end > lb THEN
+                    AddSeg(st, MID$(t$, p, ref_end - p + 1), fb, fi, fs, FALSE, flink, FALSE, TRUE)
+                    p = ref_end + 1
+                    CONTINUEDO
+                ENDIF
+            ENDIF
+        ENDIF
+        IF c$ = "<" THEN
+            DIM gt = INSTR(p, t$, ">")
+            IF gt > p ANDALSO INSTR(MID$(t$, p, gt - p), " ") < 0 ORELSE gt > p ANDALSO Matches("^</?[A-Za-z][^>]*>$", MID$(t$, p, gt - p + 1)) THEN
+                IF Matches("^<([A-Za-z][A-Za-z0-9+.-]*:[^ <>]*|/?[A-Za-z][^>]*|!--.*--)>$", MID$(t$, p, gt - p + 1)) THEN
+                    AddSeg(st, buf$, fb, fi, fs, FALSE, flink, FALSE, FALSE)
+                    buf$ = ""
+                    AddSeg(st, MID$(t$, p, gt - p + 1), fb, fi, fs, FALSE, flink, FALSE, TRUE)
+                    p = gt + 1
+                    CONTINUEDO
+                ENDIF
+            ENDIF
+        ENDIF
+        IF c$ = "~" ANDALSO MID$(t$, p + 1, 1) = "~" ANDALSO NOT IsSpaceAt(t$, p + 2) THEN
+            DIM ts = INSTR(p + 3, t$, "~~")
+            IF ts > p + 2 ANDALSO NOT IsSpaceAt(t$, ts - 1) THEN
+                AddSeg(st, buf$, fb, fi, fs, FALSE, flink, FALSE, FALSE)
+                buf$ = ""
+                ParseInline(MID$(t$, p + 2, ts - p - 2), fb, fi, TRUE, flink, st)
+                p = ts + 2
+                CONTINUEDO
+            ENDIF
+        ENDIF
+        IF (c$ = "*" ORELSE c$ = "_") ANDALSO NOT (c$ = "_" ANDALSO IsAlnumAt(t$, p - 1)) THEN
+            DIM m = RunLen(t$, p, c$)
+            IF m >= 2 ANDALSO NOT IsSpaceAt(t$, p + 2) THEN
+                DIM bq = CloseEmphasis(t$, p + 2, c$, 2)
+                IF bq > p + 2 THEN
+                    AddSeg(st, buf$, fb, fi, fs, FALSE, flink, FALSE, FALSE)
+                    buf$ = ""
+                    IF st{"bmark"} = "" THEN st{"bmark"} = c$ + c$
+                    ParseInline(MID$(t$, p + 2, bq - p - 2), TRUE, fi, fs, flink, st)
+                    p = bq + 2
+                    CONTINUEDO
+                ENDIF
+            ENDIF
+            IF NOT IsSpaceAt(t$, p + 1) THEN
+                DIM iq = CloseEmphasis(t$, p + 1, c$, 1)
+                IF iq > p + 1 THEN
+                    AddSeg(st, buf$, fb, fi, fs, FALSE, flink, FALSE, FALSE)
+                    buf$ = ""
+                    IF st{"imark"} = "" THEN st{"imark"} = c$
+                    ParseInline(MID$(t$, p + 1, iq - p - 1), fb, TRUE, fs, flink, st)
+                    p = iq + 1
+                    CONTINUEDO
+                ENDIF
+            ENDIF
+            buf$ = buf$ + REPEAT$(c$, m)
+            p = p + m
+            CONTINUEDO
+        ENDIF
+        buf$ = buf$ + c$
+        p = p + 1
+    LOOP
+    AddSeg(st, buf$, fb, fi, fs, FALSE, flink, FALSE, FALSE)
+ENDSUB
+
+FUNC SegsText$(segs, from)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = from TO LEN(segs) - 1
+        out$ = out$ + segs[k]{"text"}
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' ---------------------------------------------------------------- RTF
+
+FUNC CodePoint(ch$)
+    DIM b0 = BYTEAT(ch$, 0)
+    IF b0 < 128 THEN RETURN b0
+    IF b0 < 224 THEN RETURN (b0 MOD 32) * 64 + BYTEAT(ch$, 1) MOD 64
+    IF b0 < 240 THEN RETURN (b0 MOD 16) * 4096 + (BYTEAT(ch$, 1) MOD 64) * 64 + BYTEAT(ch$, 2) MOD 64
+    RETURN (b0 MOD 8) * 262144 + (BYTEAT(ch$, 1) MOD 64) * 4096 + (BYTEAT(ch$, 2) MOD 64) * 64 + BYTEAT(ch$, 3) MOD 64
+ENDFUNC
+
+FUNC RtfUnit$(cp)
+    DIM v = cp
+    IF v > 32767 THEN v = v - 65536
+    RETURN "\u" + STR$(v) + "?"
+ENDFUNC
+
+FUNC RtfEsc$(t$)
+    DIM out$ = ""
+    DIM chars = -t$
+    DIM k = 0
+    FOR k = 0 TO LEN(chars) - 1
+        DIM ch$ = chars[k]
+        IF ch$ = "\" ORELSE ch$ = "{" ORELSE ch$ = "}" THEN
+            out$ = out$ + "\" + ch$
+        ELSEIF ch$ = NL_CH THEN
+            out$ = out$ + "\line "
+        ELSEIF ch$ = TAB_CH THEN
+            out$ = out$ + "\tab "
+        ELSEIF LEN(ch$) = 1 THEN
+            out$ = out$ + ch$
+        ELSE
+            DIM cp = CodePoint(ch$)
+            IF cp > 65535 THEN
+                cp = cp - 65536
+                out$ = out$ + RtfUnit$(55296 + INT(cp / 1024)) + RtfUnit$(56320 + cp MOD 1024)
+            ELSE
+                out$ = out$ + RtfUnit$(cp)
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' The document header: Segoe UI and Consolas; colours 1 link, 2 quote,
+' 3 mark, 4 raw, 5 code background, 6 and 7 mark and raw inside a link,
+' 8 the number of an ordered item.
+EXPORT FUNC HEAD$()
+    DIM h$ = "{\rtf1\ansi\deff0{\fonttbl{\f0\fswiss Segoe UI;}{\f1\fmodern " + CODE_FONT + ";}}"
+    h$ = h$ + "{\colortbl;\red0\green102\blue204;\red90\green90\blue90;\red127\green127\blue128;\red127\green128\blue128;\red240\green240\blue240;\red127\green127\blue129;\red127\green128\blue129;\red127\green127\blue130;}"
+    RETURN h$ + "\f0\fs22 "
+ENDFUNC
+
+FUNC SegRtf$(s)
+    DIM ctl$ = ""
+    IF s{"b"} THEN ctl$ = ctl$ + "\b"
+    IF s{"i"} THEN ctl$ = ctl$ + "\i"
+    IF s{"s"} THEN ctl$ = ctl$ + "\strike"
+    IF s{"code"} THEN ctl$ = ctl$ + "\f1\fs20\highlight5"
+    IF s{"link"} THEN ctl$ = ctl$ + "\cf1\ul"
+    IF s{"mark"} THEN ctl$ = ctl$ + IIF(s{"link"}, "\cf6", "\cf3")
+    IF s{"raw"} THEN ctl$ = ctl$ + IIF(s{"link"}, "\cf7", "\cf4")
+    IF ctl$ = "" THEN RETURN RtfEsc$(s{"text"})
+    RETURN "{" + ctl$ + " " + RtfEsc$(s{"text"}) + "}"
+ENDFUNC
+
+FUNC SegsRtf$(segs)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(segs) - 1
+        out$ = out$ + SegRtf$(segs[k])
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC HexDump$(bytes$)
+    DIM codes = UNPACK(STR$(LEN(bytes$)) + "b", bytes$)
+    RETURN JOIN(SELECT(LAMBDA h -> RIGHT$("0" + h, 2), HEX$(codes)), "")
+ENDFUNC
+
+FUNC Be16(s$, p)
+    RETURN BYTEAT(s$, p) * 256 + BYTEAT(s$, p + 1)
+ENDFUNC
+
+' A PNG or JPEG file as an RTF picture, or "" when it cannot be read.
+FUNC PictRtf$(path$)
+    IF path$ = "" ORELSE NOT FILE.EXISTS(path$) THEN RETURN ""
+    IF FILE.SIZE(path$) > MAX_PICT_BYTES THEN RETURN ""
+    DIM data$ = BINREADER$(path$)
+    DIM kind$ = ""
+    DIM w = 0
+    DIM h = 0
+    IF LEFT$(data$, 4) = CHR$(137) + "PNG" ANDALSO LEN(data$) > 24 THEN
+        kind$ = "\pngblip"
+        w = Be16(data$, 18)
+        h = Be16(data$, 22)
+    ELSEIF LEN(data$) > 4 ANDALSO BYTEAT(data$, 0) = 255 ANDALSO BYTEAT(data$, 1) = 216 THEN
+        kind$ = "\jpegblip"
+        DIM p = 2
+        DO WHILE p + 9 < LEN(data$)
+            IF BYTEAT(data$, p) <> 255 THEN EXITDO
+            DIM mk = BYTEAT(data$, p + 1)
+            IF mk = 192 ORELSE mk = 193 ORELSE mk = 194 THEN
+                h = Be16(data$, p + 5)
+                w = Be16(data$, p + 7)
+                EXITDO
+            ENDIF
+            p = p + 2 + Be16(data$, p + 2)
+        LOOP
+    ENDIF
+    IF kind$ = "" ORELSE w <= 0 ORELSE h <= 0 THEN RETURN ""
+    DIM gw = w * 15
+    DIM gh = h * 15
+    IF gw > 9000 THEN
+        gh = INT(gh * 9000 / gw)
+        gw = 9000
+    ENDIF
+    RETURN "{\pict" + kind$ + "\picw" + STR$(w) + "\pich" + STR$(h) + "\picwgoal" + STR$(gw) + "\pichgoal" + STR$(gh) + " " + HexDump$(data$) + "}"
+ENDFUNC
+
+FUNC JoinPath$(base$, rel$)
+    IF base$ = "" ORELSE INSTR(rel$, ":") >= 0 ORELSE LEFT$(rel$, 1) = "/" ORELSE LEFT$(rel$, 1) = "\" THEN RETURN rel$
+    DIM sep$ = IIF(RIGHT$(base$, 1) = "/" ORELSE RIGHT$(base$, 1) = "\", "", "/")
+    RETURN base$ + sep$ + rel$
+ENDFUNC
+
+' One block as an RTF paragraph: paragraph format and content, no \par.
+' opts{"base"} is the folder image paths are relative to.
+EXPORT FUNC RTF$(b, opts = 0)
+    DIM kind$ = b{"kind"}
+    DIM base$ = ""
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "base") THEN base$ = opts{"base"}
+    ENDIF
+    DIM body$ = SegsRtf$(b{"segs"})
+    IF kind$ = "heading" THEN
+        DIM lv = MAX([1, MIN([6, b{"level"}])])
+        RETURN "\pard\sb240\sa120\b\fs" + STR$(HEAD_SIZES[lv - 1]) + " " + body$ + "\b0\fs22"
+    ELSEIF kind$ = "item" THEN
+        DIM li = 360 * (b{"level"} + 1)
+        DIM pn$ = ""
+        ' A number is drawn as text in its own colour, which RUNS skips:
+        ' RichEdit numbering drops itself after a nested bullet list.
+        IF b{"ordered"} THEN
+            pn$ = "{\cf8 " + RtfEsc$(b{"marker"}) + "\tab}"
+        ELSE
+            pn$ = "{\*\pn\pnlvlblt\pnf0\pnindent360{\pntxtb" + RtfEsc$(CHR$(8226)) + "}}"
+        ENDIF
+        RETURN "\pard\sa60\li" + STR$(li) + "\fi-360" + pn$ + body$
+    ELSEIF kind$ = "quote" THEN
+        RETURN "\pard\li360\sa120\cf2 " + body$ + "\cf0"
+    ELSEIF kind$ = "code" THEN
+        RETURN "\pard\li240\sa120\f1\fs20\highlight5 " + body$ + "\highlight0\f0\fs22"
+    ELSEIF kind$ = "raw" THEN
+        RETURN "\pard\sa120\f1\fs20\cf4 " + body$ + "\cf0\f0\fs22"
+    ELSEIF kind$ = "rule" THEN
+        RETURN "\pard\qc\sa120\cf3 " + body$ + "\cf0"
+    ELSEIF kind$ = "image" THEN
+        DIM pict$ = PictRtf$(JoinPath$(base$, b{"path"}))
+        IF pict$ <> "" THEN RETURN "\pard\sa120 " + pict$
+        RETURN "\pard\sa120{\cf3 " + RtfEsc$("[" + b{"alt"} + "]") + "}"
+    ELSEIF kind$ = "table" THEN
+        DIM tabs$ = ""
+        DIM c = 1
+        FOR c = 1 TO MAX([1, b{"ncols"}])
+            tabs$ = tabs$ + "\tx" + STR$(c * 2400)
+        NEXT c
+        DIM first_nl = 0
+        DIM rows$ = ""
+        DIM k = 0
+        DIM header = TRUE
+        FOR k = 0 TO LEN(b{"segs"}) - 1
+            DIM s = b{"segs"}[k]
+            IF header ANDALSO s{"text"} = NL_CH THEN header = FALSE
+            IF header THEN
+                DIM hs = Seg(s{"text"}, TRUE, s{"i"}, s{"s"}, s{"code"}, s{"link"}, s{"mark"}, s{"raw"})
+                rows$ = rows$ + SegRtf$(hs)
+            ELSE
+                rows$ = rows$ + SegRtf$(s)
+            ENDIF
+        NEXT k
+        RETURN "\pard\sa120" + tabs$ + " " + rows$
+    ELSEIF kind$ = "blank" THEN
+        RETURN "\pard "
+    ENDIF
+    RETURN "\pard\sa120 " + body$
+ENDFUNC
+
+' The whole document as RTF, one paragraph per block.
+EXPORT FUNC DOC$(blocks, opts = 0)
+    DIM parts = []
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        parts = APPEND(parts, RTF$(blocks[k], opts))
+    NEXT k
+    ' The last \par gives the last paragraph its format; it adds no paragraph.
+    RETURN HEAD$() + JOIN(parts, "\par" + NL_CH) + "\par}"
+ENDFUNC
+
+' One block as a stand-alone RTF document, for SELRTF.
+EXPORT FUNC FRAGMENT$(b, opts = 0)
+    RETURN HEAD$() + RTF$(b, opts) + "}"
+ENDFUNC
+
+' ---------------------------------------------------------------- back
+
+FUNC Flag(m, key$)
+    IF MAP.EXISTS(m, key$) THEN RETURN m{key$} = TRUE
+    RETURN FALSE
+ENDFUNC
+
+' What a format means for this kind of block: heading and header-row bold,
+' and the look of code, raw and rule blocks, say nothing.
+FUNC Norm(kind$, row, fb, fi, fs, fcode, flink, fmark, fraw, text$)
+    IF kind$ = "code" ORELSE kind$ = "raw" ORELSE kind$ = "rule" ORELSE kind$ = "image" ORELSE kind$ = "blank" THEN RETURN Seg(text$, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)
+    DIM b2 = fb
+    IF kind$ = "heading" ORELSE (kind$ = "table" ANDALSO row = 0) THEN b2 = FALSE
+    RETURN Seg(text$, b2, fi, fs, fcode, flink, fmark, fraw)
+ENDFUNC
+
+FUNC SegKey$(s)
+    RETURN IIF(s{"b"}, "b", "-") + IIF(s{"i"}, "i", "-") + IIF(s{"s"}, "s", "-") + IIF(s{"code"}, "c", "-") + IIF(s{"link"}, "l", "-") + IIF(s{"mark"}, "m", "-") + IIF(s{"raw"}, "r", "-")
+ENDFUNC
+
+' Adjacent segments of the same format become one.
+FUNC MergeSegs(segs)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(segs) - 1
+        DIM s = segs[k]
+        IF s{"text"} = "" THEN CONTINUEFOR
+        IF LEN(out) > 0 THEN
+            DIM last = out[LEN(out) - 1]
+            IF SegKey$(last) = SegKey$(s) ANDALSO NOT s{"link"} THEN
+                last{"text"} = last{"text"} + s{"text"}
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+        out = APPEND(out, Seg(s{"text"}, s{"b"}, s{"i"}, s{"s"}, s{"code"}, s{"link"}, s{"mark"}, s{"raw"}))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC NormSegs(kind$, segs)
+    DIM out = []
+    DIM row = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(segs) - 1
+        DIM s = segs[k]
+        out = APPEND(out, Norm(kind$, row, s{"b"}, s{"i"}, s{"s"}, s{"code"}, s{"link"}, s{"mark"}, s{"raw"}, s{"text"}))
+        IF INSTR(s{"text"}, NL_CH) >= 0 THEN row = row + 1
+    NEXT k
+    RETURN MergeLinkless(out)
+ENDFUNC
+
+' For comparing: links merge too, the text of the view is what counts.
+FUNC MergeLinkless(segs)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(segs) - 1
+        DIM s = segs[k]
+        IF s{"text"} = "" THEN CONTINUEFOR
+        IF LEN(out) > 0 THEN
+            DIM last = out[LEN(out) - 1]
+            IF SegKey$(last) = SegKey$(s) THEN
+                last{"text"} = last{"text"} + s{"text"}
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+        out = APPEND(out, Seg(s{"text"}, s{"b"}, s{"i"}, s{"s"}, s{"code"}, s{"link"}, s{"mark"}, s{"raw"}))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' RUNS of one paragraph as segments; the paragraph break run is dropped and
+' a line break inside the paragraph reads as LF.
+FUNC RunSegs(kind$, runs)
+    DIM out = []
+    DIM row = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(runs) - 1
+        DIM r = runs[k]
+        DIM t$ = r{"text"}
+        IF t$ = CR_CH + NL_CH ORELSE t$ = NL_CH ORELSE t$ = CR_CH THEN CONTINUEFOR
+        IF Flag(r, "object") THEN t$ = "[]"
+        t$ = REPLACE$(t$, VT_CH, NL_CH)
+        DIM col = -1
+        IF MAP.EXISTS(r, "color") THEN col = r{"color"}
+        IF col = NUM_RGB THEN CONTINUEFOR
+        DIM fcode = INSTR(r{"font"}, CODE_FONT) >= 0
+        IF MAP.EXISTS(r, "backcolor") THEN fcode = fcode ORELSE r{"backcolor"} = CODE_BG_RGB
+        DIM flink = Flag(r, "link") ORELSE col = LINK_RGB ORELSE col = LINK_MARK_RGB ORELSE col = LINK_RAW_RGB
+        out = APPEND(out, Norm(kind$, row, Flag(r, "bold"), Flag(r, "italic"), Flag(r, "strike"), fcode, flink, col = MARK_RGB ORELSE col = LINK_MARK_RGB, col = RAW_RGB ORELSE col = LINK_RAW_RGB, t$))
+        IF INSTR(t$, NL_CH) >= 0 THEN row = row + 1
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' One character per byte of the text: the format code, or "." for white
+' space, whose format Markdown cannot say.
+FUNC FormatMask$(segs)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(segs) - 1
+        DIM s = segs[k]
+        DIM code = IIF(s{"b"}, 1, 0) + IIF(s{"i"}, 2, 0) + IIF(s{"s"}, 4, 0) + IIF(s{"code"}, 8, 0) + IIF(s{"link"}, 16, 0) + IIF(s{"mark"}, 32, 0) + IIF(s{"raw"}, 64, 0)
+        DIM t$ = s{"text"}
+        IF code = 0 ORELSE s{"code"} ORELSE s{"raw"} THEN
+            out$ = out$ + REPEAT$(CHR$(65 + code), LEN(t$))
+            CONTINUEFOR
+        ENDIF
+        DIM p = 0
+        FOR p = 0 TO LEN(t$) - 1
+            DIM c$ = MID$(t$, p, 1)
+            out$ = out$ + IIF(c$ = " " ORELSE c$ = TAB_CH ORELSE c$ = NL_CH, ".", CHR$(65 + code))
+        NEXT p
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' Two views show the same: equal text, and every character that is not
+' white space in the same format.
+FUNC SameSegs(a, b)
+    IF SegsText$(a, 0) <> SegsText$(b, 0) THEN RETURN FALSE
+    RETURN REPLACE$(FormatMask$(a), "A", ".") = REPLACE$(FormatMask$(b), "A", ".")
+ENDFUNC
+
+' TRUE when the paragraph's runs show exactly what the block drew.
+EXPORT FUNC SAME(b, runs)
+    IF b{"kind"} = "image" THEN RETURN TRUE
+    RETURN SameSegs(NormSegs(b{"kind"}, b{"segs"}), MergeLinkless(RunSegs(b{"kind"}, runs)))
+ENDFUNC
+
+FUNC EscapePlain$(t$, every, in_table)
+    DIM out$ = ""
+    DIM p = 0
+    DIM n = LEN(t$)
+    DO WHILE p < n
+        DIM c$ = MID$(t$, p, 1)
+        DIM esc = FALSE
+        IF every THEN
+            esc = INSTR("\`*_[]<>~#|!", c$) >= 0
+        ELSE
+            IF c$ = "\" ANDALSO p + 1 < n ANDALSO INSTR(PUNCT, MID$(t$, p + 1, 1)) >= 0 THEN esc = TRUE
+            IF c$ = "\" ANDALSO p + 1 = n THEN esc = TRUE
+            IF c$ = "`" ORELSE c$ = "*" THEN esc = TRUE
+            IF c$ = "_" ANDALSO NOT (IsAlnumAt(t$, p - 1) ANDALSO IsAlnumAt(t$, p + 1)) THEN esc = TRUE
+            IF c$ = "~" ANDALSO MID$(t$, p + 1, 1) = "~" THEN esc = TRUE
+            IF c$ = "<" ANDALSO Matches("^([A-Za-z/!]).*$", MID$(t$, p + 1, 1)) THEN esc = TRUE
+            IF c$ = "[" ANDALSO INSTR(p, t$, "](") >= 0 THEN esc = TRUE
+            IF c$ = "!" ANDALSO MID$(t$, p + 1, 1) = "[" THEN esc = TRUE
+        ENDIF
+        IF c$ = "|" ANDALSO in_table THEN esc = TRUE
+        IF esc THEN out$ = out$ + "\"
+        out$ = out$ + c$
+        p = p + 1
+    LOOP
+    RETURN out$
+ENDFUNC
+
+FUNC CodeSpan$(t$)
+    DIM longest = 0
+    DIM p = 0
+    DO WHILE p < LEN(t$)
+        IF MID$(t$, p, 1) = "`" THEN
+            DIM k = RunLen(t$, p, "`")
+            IF k > longest THEN longest = k
+            p = p + k
+        ELSE
+            p = p + 1
+        ENDIF
+    LOOP
+    DIM fence$ = REPEAT$("`", longest + 1)
+    IF LEFT$(t$, 1) = "`" ORELSE RIGHT$(t$, 1) = "`" ORELSE (LEFT$(t$, 1) = " " ANDALSO RIGHT$(t$, 1) = " ") THEN RETURN fence$ + " " + t$ + " " + fence$
+    RETURN fence$ + t$ + fence$
+ENDFUNC
+
+FUNC LeafMd$(s, ctx)
+    DIM t$ = s{"text"}
+    IF s{"raw"} THEN RETURN t$
+    IF s{"code"} THEN RETURN CodeSpan$(t$)
+    IF s{"mark"} THEN
+        DIM imgs = ctx{"images"}
+        DIM used = ctx{"img_used"}
+        IF used < LEN(imgs) THEN
+            ctx{"img_used"} = used + 1
+            RETURN imgs[used]{"src"}
+        ENDIF
+        RETURN EscapePlain$(t$, ctx{"every"}, ctx{"table"})
+    ENDIF
+    RETURN EscapePlain$(t$, ctx{"every"}, ctx{"table"})
+ENDFUNC
+
+FUNC FlagOf(s, level)
+    IF level = 0 THEN RETURN s{"link"}
+    IF level = 1 THEN RETURN s{"s"}
+    IF level = 2 THEN RETURN s{"b"}
+    RETURN s{"i"}
+ENDFUNC
+
+' Moves the spaces at both ends of a piece outside the delimiters around it.
+FUNC Wrap$(inner$, open$, close$)
+    DIM core$ = TRIM$(inner$)
+    IF core$ = "" THEN RETURN inner$
+    DIM lead_n = LEN(inner$) - LEN(LTRIM$(inner$))
+    DIM tail_n = LEN(inner$) - LEN(RTRIM$(inner$))
+    RETURN LEFT$(inner$, lead_n) + open$ + core$ + close$ + RIGHT$(inner$, tail_n)
+ENDFUNC
+
+' The link destination for a link whose text is text$: the block's own link
+' with that text, else the next unused one, else an empty destination.
+FUNC LinkDest$(text$, ctx)
+    DIM links = ctx{"links"}
+    DIM used = ctx{"link_used"}
+    DIM k = 0
+    FOR k = 0 TO LEN(links) - 1
+        IF used[k] = 0 ANDALSO links[k]{"text"} = text$ THEN
+            used[k] = 1
+            RETURN links[k]{"dest"}
+        ENDIF
+    NEXT k
+    FOR k = 0 TO LEN(links) - 1
+        IF used[k] = 0 THEN
+            used[k] = 1
+            RETURN links[k]{"dest"}
+        ENDIF
+    NEXT k
+    RETURN "()"
+ENDFUNC
+
+' Markdown of segs[a..b) with delimiters nested link > strike > bold > italic.
+FUNC GroupMd$(segs, a, b, level, ctx)
+    IF level > 3 THEN
+        DIM leaf$ = ""
+        DIM k = 0
+        FOR k = a TO b - 1
+            leaf$ = leaf$ + LeafMd$(segs[k], ctx)
+        NEXT k
+        RETURN leaf$
+    ENDIF
+    DIM out$ = ""
+    DIM p = a
+    DO WHILE p < b
+        DIM flag_on = FlagOf(segs[p], level)
+        DIM q = p + 1
+        DO WHILE q < b ANDALSO FlagOf(segs[q], level) = flag_on
+            q = q + 1
+        LOOP
+        DIM inner$ = GroupMd$(segs, p, q, level + 1, ctx)
+        IF flag_on THEN
+            IF level = 0 THEN
+                out$ = out$ + "[" + inner$ + "]" + LinkDest$(SegsText$(TAKE(q, segs), p), ctx)
+            ELSEIF level = 1 THEN
+                out$ = out$ + Wrap$(inner$, "~~", "~~")
+            ELSEIF level = 2 THEN
+                out$ = out$ + Wrap$(inner$, ctx{"bmark"}, ctx{"bmark"})
+            ELSE
+                DIM im$ = ctx{"imark"}
+                IF Flag(segs[p], "b") ANDALSO LEFT$(ctx{"bmark"}, 1) = im$ THEN im$ = IIF(im$ = "*", "_", "*")
+                out$ = out$ + Wrap$(inner$, im$, im$)
+            ENDIF
+        ELSE
+            out$ = out$ + inner$
+        ENDIF
+        p = q
+    LOOP
+    RETURN out$
+ENDFUNC
+
+FUNC InlineMd$(segs, b, every, in_table)
+    DIM ctx AS MAP
+    ctx{"links"} = b{"links"}
+    DIM used = []
+    DIM k = 0
+    FOR k = 0 TO LEN(b{"links"}) - 1
+        used = APPEND(used, 0)
+    NEXT k
+    ctx{"link_used"} = used
+    ctx{"images"} = b{"images"}
+    ctx{"img_used"} = 0
+    ctx{"bmark"} = b{"bmark"}
+    ctx{"imark"} = b{"imark"}
+    ctx{"every"} = every
+    ctx{"table"} = in_table
+    RETURN GroupMd$(MergeSegs(segs), 0, LEN(MergeSegs(segs)), 0, ctx)
+ENDFUNC
+
+' A backslash in front of what would start another block at a line start.
+FUNC GuardLine$(src_line$)
+    IF Matches("^(#{1,6})( .*)?$", src_line$) ORELSE LEFT$(src_line$, 1) = ">" THEN RETURN "\" + src_line$
+    IF Matches("^([-+*])( .*)?$", src_line$) ORELSE IsRule(src_line$) THEN RETURN "\" + src_line$
+    DIM num = Groups("^([0-9]{1,9})([.)])( .*)?$", src_line$)
+    IF LEN(num) > 0 THEN RETURN num[0] + "\" + MID$(src_line$, LEN(num[0]), LEN(src_line$))
+    IF LEFT$(src_line$, 3) = "```" ORELSE LEFT$(src_line$, 3) = "~~~" THEN RETURN "\" + src_line$
+    IF Matches("^ {0,3}(=+|-+)[ \t]*$", src_line$) THEN RETURN "\" + src_line$
+    RETURN src_line$
+ENDFUNC
+
+' Splits segments at LF into lines of segments.
+FUNC SegLines(segs)
+    DIM lines = []
+    DIM cur = []
+    DIM k = 0
+    FOR k = 0 TO LEN(segs) - 1
+        DIM s = segs[k]
+        DIM parts = SPLIT(s{"text"}, NL_CH)
+        DIM j = 0
+        FOR j = 0 TO LEN(parts) - 1
+            IF j > 0 THEN
+                lines = APPEND(lines, [cur])
+                cur = []
+            ENDIF
+            IF parts[j] <> "" THEN cur = APPEND(cur, Seg(parts[j], s{"b"}, s{"i"}, s{"s"}, s{"code"}, s{"link"}, s{"mark"}, s{"raw"}))
+        NEXT j
+    NEXT k
+    lines = APPEND(lines, [cur])
+    RETURN lines
+ENDFUNC
+
+FUNC PlainOf$(segs)
+    RETURN SegsText$(segs, 0)
+ENDFUNC
+
+FUNC BodyFor$(b, segs, every)
+    DIM kind$ = b{"kind"}
+    DIM eol$ = b{"eol"}
+    IF kind$ = "code" THEN
+        DIM code$ = PlainOf$(segs)
+        IF b{"fence"} = "" THEN RETURN "    " + REPLACE$(code$, NL_CH, eol$ + "    ") + eol$
+        DIM out$ = b{"indent"} + b{"fence"} + b{"info"} + eol$
+        IF code$ <> "" THEN out$ = out$ + REPLACE$(code$, NL_CH, eol$) + eol$
+        RETURN out$ + b{"indent"} + b{"fence"} + eol$
+    ELSEIF kind$ = "raw" THEN
+        RETURN REPLACE$(PlainOf$(segs), NL_CH, eol$) + eol$
+    ELSEIF kind$ = "heading" THEN
+        DIM htext$ = InlineMd$(segs, b, every, FALSE)
+        htext$ = REPLACE$(htext$, NL_CH, " ")
+        IF MAP.EXISTS(b, "style") ANDALSO b{"style"} = "setext" ANDALSO b{"level"} <= 2 THEN
+            DIM uch$ = IIF(b{"level"} = 1, "=", "-")
+            RETURN htext$ + eol$ + REPEAT$(uch$, MAX([3, LEN(htext$)])) + eol$
+        ENDIF
+        DIM closing$ = ""
+        IF MAP.EXISTS(b, "closing") THEN closing$ = b{"closing"}
+        RETURN REPEAT$("#", MAX([1, MIN([6, b{"level"}])])) + IIF(htext$ = "", "", " " + htext$) + closing$ + eol$
+    ELSEIF kind$ = "table" THEN
+        DIM rows = SegLines(segs)
+        DIM out_rows = []
+        DIM ncols = 0
+        DIM r = 0
+        FOR r = 0 TO LEN(rows) - 1
+            DIM cells = SplitCells(rows[r])
+            IF LEN(cells) > ncols THEN ncols = LEN(cells)
+            DIM md_cells = []
+            DIM c = 0
+            FOR c = 0 TO LEN(cells) - 1
+                md_cells = APPEND(md_cells, InlineMd$(cells[c], b, every, TRUE))
+            NEXT c
+            DIM row$ = JOIN(md_cells, " | ")
+            IF b{"pipes"} THEN row$ = "| " + row$ + " |"
+            out_rows = APPEND(out_rows, row$)
+        NEXT r
+        DIM delim$ = b{"delim"}
+        IF ncols <> b{"ncols"} THEN
+            delim$ = JOIN(SELECT(LAMBDA z -> "---", IOTA(ncols)), " | ")
+            IF b{"pipes"} THEN delim$ = "| " + delim$ + " |"
+        ENDIF
+        DIM tout$ = out_rows[0] + eol$ + delim$ + eol$
+        FOR r = 1 TO LEN(out_rows) - 1
+            tout$ = tout$ + out_rows[r] + eol$
+        NEXT r
+        RETURN tout$
+    ENDIF
+    DIM lines = SegLines(segs)
+    DIM md_lines = []
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        md_lines = APPEND(md_lines, GuardLine$(InlineMd$(lines[k], b, every, FALSE)))
+    NEXT k
+    IF kind$ = "item" THEN
+        DIM itm$ = b{"indent"} + b{"marker"} + IIF(md_lines[0] = "", "", b{"sep"} + md_lines[0]) + eol$
+        FOR k = 1 TO LEN(md_lines) - 1
+            itm$ = itm$ + b{"cont"} + md_lines[k] + eol$
+        NEXT k
+        RETURN itm$
+    ELSEIF kind$ = "quote" THEN
+        DIM q$ = ""
+        DIM prefix$ = b{"prefix"}
+        FOR k = 0 TO LEN(md_lines) - 1
+            DIM qline$ = md_lines[k]
+            IF qline$ = "" THEN
+                q$ = q$ + RTRIM$(prefix$) + eol$
+            ELSE
+                q$ = q$ + prefix$ + qline$ + eol$
+            ENDIF
+        NEXT k
+        RETURN q$
+    ENDIF
+    DIM indent$ = ""
+    IF MAP.EXISTS(b, "indent") THEN indent$ = b{"indent"}
+    DIM cont$ = ""
+    IF MAP.EXISTS(b, "cont") THEN cont$ = b{"cont"}
+    DIM para$ = indent$ + md_lines[0] + eol$
+    FOR k = 1 TO LEN(md_lines) - 1
+        para$ = para$ + cont$ + md_lines[k] + eol$
+    NEXT k
+    RETURN para$
+ENDFUNC
+
+' Splits one row of segments at TAB into cells of segments.
+FUNC SplitCells(row)
+    DIM cells = []
+    DIM cur = []
+    DIM k = 0
+    FOR k = 0 TO LEN(row) - 1
+        DIM s = row[k]
+        DIM parts = SPLIT(s{"text"}, TAB_CH)
+        DIM j = 0
+        FOR j = 0 TO LEN(parts) - 1
+            IF j > 0 THEN
+                cells = APPEND(cells, [cur])
+                cur = []
+            ENDIF
+            IF parts[j] <> "" THEN cur = APPEND(cur, Seg(parts[j], s{"b"}, s{"i"}, s{"s"}, s{"code"}, s{"link"}, s{"mark"}, s{"raw"}))
+        NEXT j
+    NEXT k
+    cells = APPEND(cells, [cur])
+    RETURN cells
+ENDFUNC
+
+' The block's source after its paragraph was edited to show runs. An
+' unchanged view gives the source back byte for byte; a changed one is
+' written in the block's marker style, and if that would read back
+' differently, with every special character escaped.
+EXPORT FUNC MD$(b, runs)
+    IF SAME(b, runs) THEN RETURN b{"src"}
+    DIM kind$ = b{"kind"}
+    IF kind$ = "rule" ORELSE kind$ = "image" THEN RETURN b{"src"}
+    DIM segs = RunSegs(kind$, runs)
+    DIM body$ = BodyFor$(b, segs, FALSE)
+    IF kind$ <> "code" ANDALSO kind$ <> "raw" THEN
+        DIM back = BLOCKS(body$)
+        DIM ok = LEN(back) = 1
+        IF ok THEN ok = back[0]{"kind"} = kind$ ANDALSO SameSegs(NormSegs(kind$, back[0]{"segs"}), MergeLinkless(segs))
+        IF NOT ok THEN body$ = BodyFor$(b, segs, TRUE)
+    ENDIF
+    RETURN b{"lead"} + body$ + b{"tail"}
+ENDFUNC
+
+' A new, empty block for the editor: a paragraph, a heading of a level, or
+' a list item that continues model's list.
+EXPORT FUNC NEWBLOCK(kind$, model = 0)
+    DIM b = NewBlockMap(kind$)
+    IF TYPEOF(model) = "OBJECT" THEN
+        b{"eol"} = model{"eol"}
+        b{"bmark"} = model{"bmark"}
+        b{"imark"} = model{"imark"}
+    ENDIF
+    IF kind$ = "heading" THEN
+        b{"level"} = 1
+        b{"style"} = "atx"
+        b{"closing"} = ""
+        IF TYPEOF(model) = "OBJECT" ANDALSO model{"kind"} = "heading" THEN b{"level"} = model{"level"}
+    ELSEIF kind$ = "item" THEN
+        b{"indent"} = ""
+        b{"marker"} = "-"
+        b{"sep"} = " "
+        b{"ordered"} = FALSE
+        b{"number"} = 0
+        b{"list_start"} = -1
+        IF TYPEOF(model) = "OBJECT" ANDALSO model{"kind"} = "item" THEN
+            b{"indent"} = model{"indent"}
+            b{"sep"} = model{"sep"}
+            b{"level"} = model{"level"}
+            b{"ordered"} = model{"ordered"}
+            b{"list_start"} = model{"list_start"}
+            b{"marker"} = model{"marker"}
+            IF model{"ordered"} THEN
+                b{"number"} = model{"number"} + 1
+                b{"marker"} = STR$(b{"number"}) + RIGHT$(model{"marker"}, 1)
+            ENDIF
+        ENDIF
+        b{"cont"} = SPACE$(LEN(b{"indent"}) + LEN(b{"marker"}) + LEN(b{"sep"}))
+    ELSEIF kind$ = "quote" THEN
+        b{"prefix"} = "> "
+    ELSEIF kind$ = "code" THEN
+        b{"fence"} = "```"
+        b{"info"} = ""
+        b{"indent"} = ""
+    ELSEIF kind$ = "para" THEN
+        b{"indent"} = ""
+        b{"cont"} = ""
+    ENDIF
+    b{"src"} = ""
+    RETURN b
+ENDFUNC
+
+' The source of all blocks put together.
+EXPORT FUNC SOURCE$(blocks)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        out$ = out$ + blocks[k]{"src"}
+    NEXT k
+    RETURN out$
+ENDFUNC
