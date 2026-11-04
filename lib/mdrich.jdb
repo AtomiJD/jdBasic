@@ -824,6 +824,8 @@ ENDFUNC
 FUNC IsRemotePath(p$)
     DIM two$ = LEFT$(p$, 2)
     IF two$ = "\\" ORELSE two$ = "//" ORELSE two$ = "\/" ORELSE two$ = "/\" THEN RETURN TRUE
+    ' "?" is no file name character; it marks \??\ and \\?\ device paths
+    IF INSTR(p$, "?") >= 0 THEN RETURN TRUE
     RETURN INSTR(p$, "://") >= 0
 ENDFUNC
 
