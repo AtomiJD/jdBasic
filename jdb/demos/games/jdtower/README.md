@@ -84,6 +84,13 @@ generator overwrites it.
 - A leaked enemy costs lives. Stars: 3 at 90% of the lives left or more,
   2 at 50% or more, 1 for any win.
 
+## Errors
+
+Each frame runs inside a TRY. A runtime error sends the player back to
+the menu and shows the message with its `STACK$` (line, module and
+function of every call) for 15 seconds, and prints it to the terminal as
+`jdTower error: ...`. Thirty failing frames in a row end the game.
+
 ## Running
 
 From the repo root (the client finds its data next to itself):

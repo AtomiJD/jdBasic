@@ -2486,7 +2486,49 @@ SUB DRAWFRAME()
     ENDIF
     DRAWBANNER()
     ENDFRAME()
+    DRAWCRASH()
     hits_prev = hits
+ENDSUB
+
+' A runtime error in a frame does not end the game: it goes back to the
+' menu and shows the message with module and line for a screenshot. Only
+' errors in many frames in a row end it. The notice is drawn on the screen
+' after the glow pass, so nothing of the frame below shows through it.
+DIM crash$ = ""
+DIM crash_t = 0.0
+DIM crash_run = 0
+CONST CRASH_LIMIT = 30
+
+SUB REPORTCRASH(msg$, where$)
+    crash$ = msg$ + " - " + where$
+    crash_t = tnow + 15
+    crash_run = crash_run + 1
+    PRINT "jdTower error: "; crash$
+    IF crash_run >= CRASH_LIMIT THEN
+        running = 0
+        RETURN
+    ENDIF
+    text_q = []
+    TRY
+        GFX.TARGET
+        TOMENU()
+    CATCH
+        uimode$ = "menu"
+    ENDTRY
+ENDSUB
+
+SUB DRAWCRASH()
+    IF crash$ = "" ORELSE tnow > crash_t THEN RETURN
+    DIM per_row = 46
+    DIM n_rows = INT((LEN(crash$) + per_row - 1) / per_row)
+    IF n_rows > 6 THEN n_rows = 6
+    PANEL(16, SCR_H - 150 - 20 * n_rows, SCR_W - 32, 50 + 20 * n_rows, [255, 60, 90], 245)
+    QTEXT(32, SCR_H - 138 - 20 * n_rows, T$("crash"), [255, 120, 140], 17)
+    DIM r
+    FOR r = 0 TO n_rows - 1
+        QTEXT(32, SCR_H - 112 - 20 * n_rows + 20 * r, MID$(crash$, r * per_row, per_row), [245, 225, 235], 13)
+    NEXT r
+    FLUSHTEXT()
 ENDSUB
 
 ' ── start ───────────────────────────────────────────────────────
@@ -2649,19 +2691,24 @@ ELSE
         t_last = t0
         frame = frame + 1
         IF flash > 0 THEN flash = flash * 0.9
-        IF selftest = 1 THEN SELFTEST_STEP(frame)
-        DO WHILE LEN(taps) > 0
-            DIM tp = taps[0]
-            taps = DROP(1, taps)
-            HANDLETAP(tp[0], tp[1])
-        LOOP
-        DO WHILE LEN(keys_in) > 0
-            DIM kk$ = keys_in[0]
-            keys_in = DROP(1, keys_in)
-            HANDLEKEY(kk$)
-        LOOP
-        UPDATE()
-        DRAWFRAME()
+        TRY
+            IF selftest = 1 THEN SELFTEST_STEP(frame)
+            DO WHILE LEN(taps) > 0
+                DIM tp = taps[0]
+                taps = DROP(1, taps)
+                HANDLETAP(tp[0], tp[1])
+            LOOP
+            DO WHILE LEN(keys_in) > 0
+                DIM kk$ = keys_in[0]
+                keys_in = DROP(1, keys_in)
+                HANDLEKEY(kk$)
+            LOOP
+            UPDATE()
+            DRAWFRAME()
+            crash_run = 0
+        CATCH
+            REPORTCRASH(ERRMSG$, STACK$)
+        ENDTRY
         SCREENFLIP
         DIM rest = 33 - (TICK() - t0)
         IF rest < 1 THEN rest = 1
