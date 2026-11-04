@@ -368,9 +368,34 @@ DIM PATH_PAT$ = "(:[\\/]|""[\\/]{1,2}\w|""\.\.""|\.\.[\\/]|CHR\$\(\s*(58|92)\s*\
 
 ' The source with string literals emptied and comments dropped.
 FUNC CodeOnly$(code$)
-    DIM bare$ = REGEX.REPLACE$("""(""""|[^""\n])*""", code$, """""")
-    bare$ = REGEX.REPLACE$("'[^\n]*", bare$, "")
-    RETURN REGEX.REPLACE$("(?i)\bREM\b[^\n]*", bare$, "")
+    DIM chars = -code$
+    DIM kept = []
+    DIM in_string = FALSE
+    DIM in_comment = FALSE
+    DIM i = 0
+    FOR i = 0 TO LEN(chars) - 1
+        DIM ch$ = chars[i]
+        IF ch$ = CHR$(10) THEN
+            in_string = FALSE
+            in_comment = FALSE
+            PUSH(kept, ch$)
+        ELSEIF in_comment THEN
+            CONTINUEFOR
+        ELSEIF in_string THEN
+            IF ch$ = CHR$(34) THEN
+                in_string = FALSE
+                PUSH(kept, ch$)
+            ENDIF
+        ELSEIF ch$ = CHR$(34) THEN
+            in_string = TRUE
+            PUSH(kept, ch$)
+        ELSEIF ch$ = "'" THEN
+            in_comment = TRUE
+        ELSE
+            PUSH(kept, ch$)
+        ENDIF
+    NEXT
+    RETURN REGEX.REPLACE$("(?i)\bREM\b[^\n]*", JOIN(kept, ""), "")
 ENDFUNC
 
 FUNC FirstMatch$(pat$, text$)
@@ -400,7 +425,12 @@ ENDFUNC
 
 FUNC Verdict(name$, code$)
     DIM v = {"name": name$, "lint": FALSE, "interp": FALSE, "compile": FALSE, "native": FALSE, "same": FALSE, "green": FALSE, "detail": ""}
-    DIM unsafe$ = UnsafeReason$(code$, 0)
+    DIM unsafe$ = ""
+    TRY
+        unsafe$ = UnsafeReason$(code$, 0)
+    CATCH
+        unsafe$ = "screen failed: " + ERRMSG$
+    ENDTRY
     IF unsafe$ <> "" THEN
         v{"detail"} = "unsafe, not run: " + unsafe$
         RETURN v
