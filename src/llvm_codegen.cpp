@@ -889,6 +889,8 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_handle_to_hof_array", "__jdrt_handle_to_hof_array", i8_ptr_type,
         {i8_ptr_type, i64_type}, JD_TAG_ARR);
+    reg("jdrt_free_hof_array", "__jdrt_free_hof_array", void_type,
+        {i8_ptr_type, i8_ptr_type}, -1);
     reg("jdrt_handle_to_map", "__jdrt_handle_to_map", i8_ptr_type,
         {i8_ptr_type, i64_type}, JD_TAG_NATIVE_MAP);
     reg("jdrt_map_to_handle", "__jdrt_map_to_handle", i64_type,
@@ -16072,6 +16074,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& afn = runtime_funcs["__arr_round_p"];
             LLVMValueRef aargs[] = { LLVMBuildIntToPtr(builder, x.val, i8_ptr_type, "rnd_ap"), digits };
             LLVMValueRef ar = LLVMBuildCall2(builder, afn.fn_type, afn.fn, aargs, 2, "arnd");
+            ar = rc_born(ar, JD_TAG_ARR, true);
             LLVMValueRef a_bits = LLVMBuildPtrToInt(builder, ar, i64_type, "arnd_i");
             LLVMBasicBlockRef bb_a_end = LLVMGetInsertBlock(builder);
             LLVMBuildBr(builder, bb_j);
@@ -17605,6 +17608,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
             }
         }
+        std::vector<LLVMValueRef> converted_arrs;
+        std::vector<LLVMValueRef> converted_strs;
         for (size_t i = 0; i < expr.args.size() && i < param_count; i++) {
             // Propagate the parameter's expected LLVM type as an INDEX-leaf
             // hint so `SCREEN SW, SH, game{"title"}` asks the runtime for
@@ -17616,9 +17621,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // the tagged path; coerce_to handles the resulting RUNTIME tag.
             // Already evaluated exactly once up top with this param's hint.
             TypedValue av = arg_cache[i];
-            if (param_types[i] == i8_ptr_type && av.tag == JD_TAG_RUNTIME && av.runtime_tag)
-                args.push_back(runtime_ptr_arg(av));
-            else
+            if (param_types[i] == i8_ptr_type && av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
+                LLVMValueRef fa = nullptr, fs = nullptr;
+                args.push_back(runtime_ptr_arg(av, &fa, &fs));
+                if (fa) converted_arrs.push_back(fa);
+                if (fs) converted_strs.push_back(fs);
+            } else
                 args.push_back(coerce_to(av, param_types[i]));
         }
         // Pad any unsupplied parameters with type-appropriate defaults so the
@@ -17657,11 +17665,37 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     (arg_cache[i].owned || expr_yields_fresh_string(*expr.args[i])) &&
                     LLVMGetTypeKind(LLVMTypeOf(arg_cache[i].val)) == LLVMPointerTypeKind)
                     native_drops.push_back(arg_cache[i].val);
+        // An array or text made from a VM value for this call goes back to
+        // the bridge afterwards, when the builtin only reads its arguments
+        // and answers something that cannot share their cells: a number, a
+        // truth value or a fresh string. TAKE, SORT and the like copy cells
+        // into their answer, so theirs stay.
+        const BuiltinRet conv_ret = builtin_ret(upper);
+        bool answer_shares_nothing = conv_ret == BuiltinRet::F64 || conv_ret == BuiltinRet::I64 ||
+                                     conv_ret == BuiltinRet::Bool ||
+                                     (conv_ret == BuiltinRet::Str && builtin_fresh_string(upper));
+        bool frees_conversions = answer_shares_nothing &&
+                                 (builtin_reads_args(upper) || builtin_has(upper, BF_READS_ARRS)) &&
+                                 !builtin_has(upper, BF_KEEPS_ARGS) &&
+                                 !builtin_has(upper, BF_TAGGED_CELLS);
         auto drop_native_args = [&]() {
             auto& drop = runtime_funcs["__str_drop"];
             for (LLVMValueRef p : native_drops) {
                 LLVMValueRef d[] = { p };
                 LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+            }
+            if (!frees_conversions) return;
+            auto& afree = runtime_funcs["__jdrt_free_hof_array"];
+            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            for (LLVMValueRef p : converted_arrs) {
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef d[] = { rt, p };
+                LLVMBuildCall2(builder, afree.fn_type, afree.fn, d, 2, "");
+            }
+            auto& sfree = runtime_funcs["__jdrt_str_free"];
+            for (LLVMValueRef p : converted_strs) {
+                LLVMValueRef d[] = { p };
+                LLVMBuildCall2(builder, sfree.fn_type, sfree.fn, d, 1, "");
             }
         };
 
@@ -20093,10 +20127,12 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
 // native string or array rides on the bits as coerce_to reads them; a VM
 // value is a key into the bridge's store, so a VM array becomes a native
 // array and any other VM value its text.
-LLVMValueRef LLVMCodegen::runtime_ptr_arg(TypedValue tv) {
+LLVMValueRef LLVMCodegen::runtime_ptr_arg(TypedValue tv, LLVMValueRef* fresh_arr, LLVMValueRef* fresh_str) {
     auto* conv = get_runtime_func("__jdrt_handle_to_hof_array");
     auto* vts = get_runtime_func("__jdrt_val_to_str");
     auto* vk = get_runtime_func("__jdrt_val_kind");
+    if (fresh_arr) *fresh_arr = nullptr;
+    if (fresh_str) *fresh_str = nullptr;
     if (!conv || !vts || !vk) return coerce_to(tv, i8_ptr_type);
     LLVMValueRef is_vmh = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
         LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "rpa_isvmh");
@@ -20138,6 +20174,19 @@ LLVMValueRef LLVMCodegen::runtime_ptr_arg(TypedValue tv) {
     LLVMValueRef vals[] = { as_arr, as_txt, as_nat };
     LLVMBasicBlockRef bbs[] = { bb_vm_arr_end, bb_vm_txt_end, bb_nat_end };
     LLVMAddIncoming(phi, vals, bbs, 3);
+    LLVMValueRef null_p = LLVMConstNull(i8_ptr_type);
+    if (fresh_arr) {
+        LLVMValueRef fa = LLVMBuildPhi(builder, i8_ptr_type, "rpa_fresh_arr");
+        LLVMValueRef fav[] = { as_arr, null_p, null_p };
+        LLVMAddIncoming(fa, fav, bbs, 3);
+        *fresh_arr = fa;
+    }
+    if (fresh_str) {
+        LLVMValueRef fs = LLVMBuildPhi(builder, i8_ptr_type, "rpa_fresh_str");
+        LLVMValueRef fsv[] = { null_p, as_txt, null_p };
+        LLVMAddIncoming(fs, fsv, bbs, 3);
+        *fresh_str = fs;
+    }
     return phi;
 }
 

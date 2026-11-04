@@ -26,6 +26,7 @@ DIM passes AS INTEGER = 3 * rounds
 DIM i AS INTEGER = 0
 DIM sink$ AS STRING = ""
 DIM total AS DOUBLE = 0.0
+DIM warm_round = LeakRound(1.25, 1)
 DIM marks$ AS STRING = ""
 DIM glob AS ARRAY = []
 DIM base8 AS ARRAY = RESHAPE(IOTA(64), [8, 8])
@@ -464,6 +465,19 @@ ELSEIF pattern$ = "mapjoin" THEN
         IF jbag{"s"} = i THEN total = total + 1
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "vmarrarg" THEN
+    ' a JSON array cell handed to JOIN: the native array made from it is freed
+    DIM vdoc = JSON.PARSE("{""t"": [""a"", ""b"", ""c""]}")
+    FOR i = 1 TO passes
+        sink$ = LeakJoin$(vdoc{"t"})
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "rtround" THEN
+    ' ROUND with digits on a run-time typed array answers a counted array
+    FOR i = 1 TO passes
+        sink$ = STR$(SUM(LeakRound([1.234, 2.345], 2)))
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
@@ -472,6 +486,16 @@ ELSE
 ENDIF
 
 PRINT "HEAP " + pattern$ + marks$
+
+FUNC LeakJoin$(v)
+    IF ISARR(v) THEN RETURN JOIN(v, ",")
+    RETURN ""
+ENDFUNC
+
+' called with a number and with arrays, so x is of run-time kind
+FUNC LeakRound(x, digits)
+    RETURN ROUND(x * 1, digits)
+ENDFUNC
 
 FUNC Decorate$(n)
     DIM body$ = "row " + STR$(n)

@@ -882,6 +882,26 @@ JDRT_API void* jdrt_handle_to_hof_array(JdRT handle, int64_t h) {
     }, [] { return nullptr; });
 }
 
+// Frees an array jdrt_handle_to_hof_array made: its string cells, the VM
+// values its array and map cells were stored as, then the array itself.
+JDRT_API void jdrt_free_hof_array(JdRT handle, void* p) {
+    auto* a = (JdbArrayFwd*)p;
+    if (!a) return;
+    auto* rt = resolve_rt(handle);
+    for (int64_t i = 0; i < a->length; i++) {
+        if (!a->elem_tags) break;
+        union { int64_t i; double d; } u;
+        u.d = a->data[i];
+        if (a->elem_tags[i] == (int8_t)jd_tag(JdTag::STR))
+            jdrt_str_free((char*)(intptr_t)u.i);
+        else if (a->elem_tags[i] == (int8_t)jd_tag(JdTag::VM_HANDLE) && rt)
+            rt->value_store.erase(u.i);
+    }
+    free(a->data);
+    free(a->elem_tags);
+    free(a);
+}
+
 // Every obj_get_* returns a safe default on unknown-handle or missing-key
 // so a typo in compiled code never crashes the exe.
 static const Value* obj_field(JdRTImpl* rt, int64_t h, const char* key) {

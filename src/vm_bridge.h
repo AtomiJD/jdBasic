@@ -109,6 +109,7 @@ JDRT_API int64_t     jdrt_promote_handle(JdRT rt, int64_t h);
 // the variable's previous copy is released when it owned that one.
 JDRT_API int64_t     jdrt_adopt_handle(JdRT rt, int64_t owner, int64_t old_key, int32_t old_tag, int64_t h);
 JDRT_API void*       jdrt_handle_to_hof_array(JdRT rt, int64_t h);
+JDRT_API void        jdrt_free_hof_array(JdRT rt, void* p);
 
 // Type-aware call: each arg has a JdTag (see jdb_tags.h). The wire only
 // carries I64 / F64 / STR / ARR / VM_HANDLE; NATIVE_MAP and FUNCREF have
