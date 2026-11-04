@@ -1,0 +1,55 @@
+' STACK$ in a CATCH block: the interpreter names every call from the
+' failing line down to the frame that holds the TRY, innermost first,
+' with the function's name; a compiled program answers the line only.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+SUB InnerFail(m AS MAP)
+    PRINT m{"A"}{"B"}
+ENDSUB
+
+SUB Wrapper(m AS MAP)
+    InnerFail(m)
+ENDSUB
+
+SUB TryInside()
+    TRY
+        InnerFail({})
+    CATCH
+        IF OS.FEATURE("INTERPRETER") THEN
+            Check(STACK$ = "line 15 in INNERFAIL < line 24 in TRYINSIDE", "TRY in a SUB: " + STACK$)
+        ELSE
+            Check(STACK$ = "line 15", "TRY in a SUB, compiled: " + STACK$)
+        ENDIF
+    ENDTRY
+ENDSUB
+
+DIM empty AS MAP = {}
+TRY
+    Wrapper(empty)
+CATCH
+    Check(ERL = 15, "ERL is the failing line: " + STR$(ERL))
+    IF OS.FEATURE("INTERPRETER") THEN
+        Check(STACK$ = "line 15 in INNERFAIL < line 19 in WRAPPER < line 36", "nested calls: " + STACK$)
+    ELSE
+        Check(STACK$ = "line 15", "nested calls, compiled: " + STACK$)
+    ENDIF
+ENDTRY
+
+TryInside()
+
+TRY
+    THROW "plain"
+CATCH
+    Check(STACK$ = "line 49", "top level: " + STACK$)
+ENDTRY
+
+IF failed > 0 THEN END 1
+PRINT "OK"

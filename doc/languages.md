@@ -1354,7 +1354,7 @@ Inside a CATCH block, you can use the following built-in variables:
 * **`ERR`**: The numeric error code.
 * **`ERL`**: The line number where the error occurred.
 * **`ERRMSG$`**: The descriptive error message string. `ERR$` is not one of these names - `err$` is an ordinary variable, and a `CATCH` leaves it alone.
-* **`STACK$`**: The call stack .
+* **`STACK$`**: Where the error happened, innermost call first, down to the code that holds the `TRY`: each step names its line, the module file when it is not the main program, and the function, e.g. `line 4 of BADM.jdb in BADM.POKE < line 12 in UPDATE < line 80`. A compiled program answers the failing line only (`line 4`).
 
 ```basic
 TRY

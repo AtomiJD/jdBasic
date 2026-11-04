@@ -2703,6 +2703,14 @@ void jdb_run(const char* src) {
     if (!g_wasm_vm) wasm_init_vm();
     try {
         run_on_vm(*g_wasm_vm, std::string(src ? src : ""));
+    } catch (const jdError& e) {
+        std::cout << "\033[31mError #" << (int)e.code << ": " << e.what();
+        if (e.line > 0) {
+            std::cout << " at line " << e.line;
+            if (!e.file.empty()) std::cout << " of " << e.file;
+        }
+        std::cout << "\033[0m\r\n";
+        std::cout.flush();
     } catch (const std::exception& e) {
         std::cout << "\033[31mError: " << e.what() << "\033[0m\r\n";
         std::cout.flush();

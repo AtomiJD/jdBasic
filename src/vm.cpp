@@ -2980,6 +2980,28 @@ void VM::run() {
             if (!frames.empty() && frame().ip > 0)
                 err_line = frame().chunk->line_at(frame().ip - 1);
 
+            // STACK$: innermost first, down to the frame that holds the TRY,
+            // e.g. "line 4 of BADM.jdb in POKE < line 12"
+            std::string err_stack;
+            {
+                const std::string& main_file = frames.front().chunk->source_file;
+                size_t lowest = handler.saved_frame_count > 0 ? handler.saved_frame_count - 1 : 0;
+                for (size_t fi = frames.size(); fi-- > lowest;) {
+                    const CallFrame& f = frames[fi];
+                    size_t ip = f.ip > 0 ? f.ip - 1 : 0;
+                    std::string part = "line " + std::to_string(f.chunk->line_at(ip));
+                    const std::string& file = f.chunk->file_at(ip);
+                    if (!file.empty() && file != main_file)
+                        part += " of " + file.substr(file.find_last_of("/\\") + 1);
+                    if (fi > 0 && func_protos) {
+                        for (auto& fp : *func_protos)
+                            if (&fp.chunk == f.chunk) { part += " in " + fp.name; break; }
+                    }
+                    if (!err_stack.empty()) err_stack += " < ";
+                    err_stack += part;
+                }
+            }
+
             // Restore VM state
             while (frames.size() > handler.saved_frame_count) frames.pop_back();
             sp = handler.saved_sp;
@@ -2988,7 +3010,7 @@ void VM::run() {
             set_global("ERR", Value::make_i64(1));
             set_global("ERL", Value::make_i64(err_line));
             set_global("ERRMSG$", Value::make_string(e.what()));
-            set_global("STACK$", Value::make_string("line " + std::to_string(err_line)));
+            set_global("STACK$", Value::make_string(err_stack));
 
             // Jump to catch block
             frame().ip = handler.catch_addr;
