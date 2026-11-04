@@ -73,11 +73,15 @@ The diff:
 $diff
 "@
   $env:JDB_REVIEW_ACTIVE = "1"
+  # Without the key, claude -p runs on the subscription login instead of billing the API.
+  $apiKey = $env:ANTHROPIC_API_KEY
+  Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
   Push-Location $proj
   $verdict = $prompt | & claude -p --model claude-opus-5-5 --setting-sources user `
       --allowedTools "Read,Grep,Glob" --disallowedTools "Bash,Edit,Write,PowerShell" `
       --no-session-persistence 2>$null | Out-String
   Pop-Location
+  if ($apiKey) { $env:ANTHROPIC_API_KEY = $apiKey }
   Remove-Item Env:JDB_REVIEW_ACTIVE
   if ($LASTEXITCODE -ne 0 -or -not $verdict.Trim()) {
     $msg = "Code review agent could not run (exit $LASTEXITCODE); the commit goes ahead unreviewed."
