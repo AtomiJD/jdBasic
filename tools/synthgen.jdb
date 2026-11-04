@@ -39,6 +39,10 @@ DIM WORK_DIR$ = SYNTH_DIR$ + "/work"
 ' disturbed by a rebuild in build/.
 DIM BIN_DIR$ = GETENV$("SYNTH_BIN")
 IF BIN_DIR$ = "" THEN BIN_DIR$ = "build"
+IF LEN(REGEX.FINDALL("^[A-Za-z0-9_][A-Za-z0-9_/-]*$", BIN_DIR$)) = 0 THEN
+    PRINT "SYNTH_BIN must be a relative folder of letters, digits, _, - and /"
+    END
+ENDIF
 DIM EXE$ = REPLACE$(BIN_DIR$, "/", CHR$(92)) + CHR$(92) + "jdBasic.exe"
 DIM EXE_FROM_RUN$ = "../../../../" + REPLACE$(BIN_DIR$, CHR$(92), "/") + "/jdBasic.exe"
 DIM API_VERSION$ = "2026-10-21"
