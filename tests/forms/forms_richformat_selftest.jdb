@@ -140,7 +140,7 @@ FOR i = 0 TO LEN(runs) - 1
     run_text = run{"text"}
     IF run_text = "bold" THEN found_bold = run{"bold"} = TRUE ANDALSO run{"para"} = 1 ANDALSO run{"start"} = INSTR(doc_text, "bold") ANDALSO run{"length"} = 4
     IF run_text = "code" THEN found_code = run{"font"} = "Consolas"
-    IF INSTR(run_text, "Grüße") >= 0 THEN found_umlaut = run{"start"} + INSTR(run_text, "Grüße") = INSTR(doc_text, "Grüße")
+    IF INSTR(run_text, "ß") >= 0 THEN found_umlaut = run{"start"} + INSTR(run_text, "ß") = INSTR(doc_text, "ß")
 NEXT i
 Check(found_bold, "bold run with paragraph, start and length in bytes")
 Check(found_code, "code run carries its font")

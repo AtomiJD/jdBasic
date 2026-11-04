@@ -15,6 +15,8 @@
 #include <objbase.h>
 #include <commdlg.h>
 #include <richedit.h>
+#include <richole.h>
+#include <tom.h>
 #include <shellapi.h>
 #include <wincodec.h>
 #include <dwmapi.h>
@@ -1910,6 +1912,18 @@ Value rich_runs(HWND h) {
         return (rich_sel_cf(h).dwMask & RICH_RUN_MASK) == RICH_RUN_MASK;
     };
 
+    ITextDocument* tdoc = nullptr;
+    IRichEditOle* ole = nullptr;
+    SendMessageW(h, EM_GETOLEINTERFACE, 0, (LPARAM)&ole);
+    if (ole) {
+        ole->QueryInterface(__uuidof(ITextDocument), (void**)&tdoc);
+        ole->Release();
+    }
+    struct TomRelease {
+        ITextDocument*& d;
+        ~TomRelease() { if (d) d->Release(); }
+    } tom_release{tdoc};
+
     Value runs = Value::make_array();
     PARAFORMAT2 pf = {};
     size_t para_start = (size_t)-1;
@@ -1936,7 +1950,18 @@ Value rich_runs(HWND h) {
             size_t lim = i + 1;
             while (lim < to && w[lim] != L'\r' && w[lim] != 0xFFFC && m.cp[lim] == m.cp[lim - 1] + 1) lim++;
             size_t good = i + 1, step = 1;
-            while (good < lim) {
+            ITextRange* tr = nullptr;
+            if (tdoc && SUCCEEDED(tdoc->Range(m.cp[i], m.cp[i], &tr)) && tr) {
+                // TOM knows where the character format changes; no probing
+                long moved = 0, end = 0;
+                tr->MoveEnd(tomCharFormat, 1, &moved);
+                tr->GetEnd(&end);
+                tr->Release();
+                size_t k = rich_cp_to_vis(m, (LONG)end);
+                good = std::max(i + 1, std::min(lim, k));
+                step = 0;
+            }
+            while (step > 0 && good < lim) {
                 size_t t = std::min(lim, good + step);
                 if (uniform(i, t)) { good = t; step *= 2; continue; }
                 size_t lo = good, hi = t;
