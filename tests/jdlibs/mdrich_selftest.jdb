@@ -149,6 +149,12 @@ TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(One("Grün " + CHR$(8364) + NL$)), "\u252?") >=
 TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(One("x " + CHR$(128512) + NL$)), "\u-10179?\u-8704?") >= 0, "a character above U+FFFF as a surrogate pair")
 TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(One("a {b} \c" + NL$)), "a \{b\} \\c") >= 0, "braces and backslashes escaped")
 TESTKIT.ISTRUE(STARTSWITH(MDRICH.DOC$(blocks), "{\rtf1"), "DOC$ is an RTF document")
+DIM remote = ["\\host\share\a.png", "//host/share/a.png", "http://host/a.png"]
+DIM all_placeholders = TRUE
+FOR k = 0 TO LEN(remote) - 1
+    IF INSTR(MDRICH.RTF$(One("![x](" + remote[k] + ")" + NL$)), "{\cf3 [x]}") < 0 THEN all_placeholders = FALSE
+NEXT k
+TESTKIT.ISTRUE(all_placeholders, "network paths and URLs are never read, the alt text shows")
 TESTKIT.ISTRUE(INSTR(MDRICH.FRAGMENT$(blocks[1]), "\par" + NL$) < 0, "a fragment is one paragraph")
 
 TESTKIT.SUITE("new blocks")

@@ -71,7 +71,7 @@ table; `alt`, `path` for an image.
 | `**b**`, `*i*`, `~~s~~` | bold, italic, strikethrough |
 | `` `code` `` | Consolas on light grey (`backcolor` 240,240,240) |
 | link | blue (0,102,204), underlined; the destination stays with the block |
-| image line | the picture, PNG or JPEG up to 8 MB, read through `base`; anything else shows `[alt]` in grey. Paths are read as written, as any local Markdown preview does |
+| image line | the picture, PNG or JPEG up to 8 MB, read through `base`; anything else shows `[alt]` in grey. Local paths are read as written, as any Markdown preview does; network paths (`\host`, `//host`) and URLs never are |
 | inline image | `[alt]` in grey (127,127,128) |
 | HTML, reference links, footnotes | verbatim in grey (127,128,128) |
 | bullet item | a RichEdit bullet, indented per level |

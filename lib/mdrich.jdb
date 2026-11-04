@@ -819,7 +819,16 @@ FUNC PictRtf$(path$)
     RETURN "{\pict" + kind$ + "\picw" + STR$(w) + "\pich" + STR$(h) + "\picwgoal" + STR$(gw) + "\pichgoal" + STR$(gh) + " " + HexDump$(data$) + "}"
 ENDFUNC
 
+' A network path or a URL would open a connection (an SMB one hands the
+' user's Windows credentials to the host), so it is never read.
+FUNC IsRemotePath(p$)
+    DIM two$ = LEFT$(p$, 2)
+    IF two$ = "\\" ORELSE two$ = "//" ORELSE two$ = "\/" ORELSE two$ = "/\" THEN RETURN TRUE
+    RETURN INSTR(p$, "://") >= 0
+ENDFUNC
+
 FUNC JoinPath$(base$, rel$)
+    IF IsRemotePath(rel$) THEN RETURN ""
     IF base$ = "" ORELSE INSTR(rel$, ":") >= 0 ORELSE LEFT$(rel$, 1) = "/" ORELSE LEFT$(rel$, 1) = "\" THEN RETURN rel$
     DIM sep$ = IIF(RIGHT$(base$, 1) = "/" ORELSE RIGHT$(base$, 1) = "\", "", "/")
     RETURN base$ + sep$ + rel$
