@@ -1,0 +1,172 @@
+' The RichTextBox formatting surface of FORM.RICHTEXT: SEL* character and
+' paragraph properties with NONE for a mixed selection, TEXTRTF and SELRTF,
+' the link effect, pictures as U+FFFC, and RUNS.
+' Needs a FORMS build on Windows.
+
+OPTION "EXPLICIT"
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB Check(cond AS BOOLEAN, label AS STRING)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label
+    ENDIF
+ENDSUB
+
+SUB SelectText(h AS DOUBLE, doc AS STRING, part AS STRING)
+    FORM.SET(h, "SELSTART", INSTR(doc, part))
+    FORM.SET(h, "SELLENGTH", LEN(part))
+ENDSUB
+
+DIM crlf AS STRING = CHR$(13) + CHR$(10)
+DIM frm AS DOUBLE = FORM.CREATE("Richformat Selftest", 480, 320, "MAIN")
+DIM rt AS DOUBLE = FORM.RICHTEXT(frm, "rtDoc", 0, 0, 480, 320)
+
+DIM rtf AS STRING = "{\rtf1\ansi{\fonttbl{\f0 Segoe UI;}{\f1 Consolas;}}\f0\fs22 "
+rtf = rtf + "{\b\fs36 Title}\par "
+rtf = rtf + "plain {\b bold} {\i slanted} {\strike gone} {\f1 code} Gr\u252?\u223?e\par "
+rtf = rtf + "last line}"
+FORM.SET(rt, "TEXTRTF", rtf)
+DIM doc_text AS STRING = FORM.GET(rt, "TEXT")
+Check(doc_text = "Title" + crlf + "plain bold slanted gone code Grüße" + crlf + "last line", "TEXTRTF loads, TEXT has CRLF")
+Check(FORM.GET(rt, "MODIFIED") = FALSE, "TEXTRTF leaves MODIFIED clear")
+
+' character properties read back
+SelectText(rt, doc_text, "bold")
+Check(FORM.GET(rt, "SELBOLD") = TRUE, "SELBOLD reads TRUE")
+Check(FORM.GET(rt, "SELITALIC") = FALSE, "SELITALIC reads FALSE")
+SelectText(rt, doc_text, "slanted")
+Check(FORM.GET(rt, "SELITALIC") = TRUE, "SELITALIC reads TRUE")
+SelectText(rt, doc_text, "gone")
+Check(FORM.GET(rt, "SELSTRIKETHRU") = TRUE, "SELSTRIKETHRU reads TRUE")
+SelectText(rt, doc_text, "code")
+Check(FORM.GET(rt, "SELFONTNAME") = "Consolas", "SELFONTNAME")
+SelectText(rt, doc_text, "Title")
+Check(FORM.GET(rt, "SELFONTSIZE") = 18, "SELFONTSIZE in points")
+SelectText(rt, doc_text, "plain bold")
+Check(TYPEOF(FORM.GET(rt, "SELBOLD")) = "NONE", "mixed SELBOLD reads NONE")
+SelectText(rt, doc_text, "Title" + crlf + "plain")
+Check(TYPEOF(FORM.GET(rt, "SELFONTSIZE")) = "NONE", "mixed SELFONTSIZE reads NONE")
+
+' character properties set
+SelectText(rt, doc_text, "plain")
+FORM.SET(rt, "SELUNDERLINE", TRUE)
+Check(FORM.GET(rt, "SELUNDERLINE") = TRUE, "SELUNDERLINE set")
+Check(FORM.GET(rt, "CANUNDO") = TRUE, "a format change is undoable")
+FORM.SET(rt, "UNDO", TRUE)
+SelectText(rt, doc_text, "plain")
+Check(FORM.GET(rt, "SELUNDERLINE") = FALSE, "UNDO takes the format back")
+FORM.SET(rt, "SELCOLOR", 12582912)
+Check(FORM.GET(rt, "SELCOLOR") = 12582912, "SELCOLOR is RGB")
+FORM.SET(rt, "SELCOLOR", -1)
+Check(FORM.GET(rt, "SELCOLOR") = -1, "SELCOLOR -1 is the automatic colour")
+FORM.SET(rt, "SELBACKCOLOR", 65280)
+Check(FORM.GET(rt, "SELBACKCOLOR") = 65280, "SELBACKCOLOR")
+FORM.SET(rt, "SELBACKCOLOR", -1)
+FORM.SET(rt, "SELFONTSIZE", 14)
+Check(FORM.GET(rt, "SELFONTSIZE") = 14, "SELFONTSIZE set")
+FORM.SET(rt, "SELFONTSIZE", 11)
+FORM.SET(rt, "SELFONTNAME", "Consolas")
+Check(FORM.GET(rt, "SELFONTNAME") = "Consolas", "SELFONTNAME set")
+FORM.SET(rt, "SELFONTNAME", "Segoe UI")
+FORM.SET(rt, "SELLINK", TRUE)
+Check(FORM.GET(rt, "SELLINK") = TRUE, "SELLINK set")
+Check(FORM.GET(rt, "TEXT") = doc_text, "the link effect leaves TEXT as it was")
+FORM.SET(rt, "SELLINK", FALSE)
+Check(FORM.GET(rt, "SELLINK") = FALSE, "SELLINK cleared")
+
+' paragraph properties
+SelectText(rt, doc_text, "last")
+FORM.SET(rt, "SELBULLET", 1)
+Check(FORM.GET(rt, "SELBULLET") = 1, "SELBULLET 1 is a bullet")
+FORM.SET(rt, "SELBULLET", 2)
+Check(FORM.GET(rt, "SELBULLET") = 2, "SELBULLET 2 is numbered")
+FORM.SET(rt, "SELNUMBERSTART", 3)
+Check(FORM.GET(rt, "SELNUMBERSTART") = 3, "SELNUMBERSTART")
+FORM.SET(rt, "SELBULLET", 0)
+Check(FORM.GET(rt, "SELBULLET") = 0, "SELBULLET 0 ends the list")
+FORM.SET(rt, "SELINDENT", 720)
+Check(FORM.GET(rt, "SELINDENT") = 720, "SELINDENT in twips")
+FORM.SET(rt, "SELHANGINGINDENT", 360)
+Check(FORM.GET(rt, "SELHANGINGINDENT") = 360, "SELHANGINGINDENT in twips")
+FORM.SET(rt, "SELALIGNMENT", 2)
+Check(FORM.GET(rt, "SELALIGNMENT") = 2, "SELALIGNMENT 2 is centred")
+SelectText(rt, doc_text, "Grüße" + crlf + "last")
+Check(TYPEOF(FORM.GET(rt, "SELALIGNMENT")) = "NONE", "mixed SELALIGNMENT reads NONE")
+SelectText(rt, doc_text, "last")
+FORM.SET(rt, "SELALIGNMENT", 0)
+FORM.SET(rt, "SELINDENT", 0)
+FORM.SET(rt, "SELHANGINGINDENT", 0)
+
+' SELRTF reads and replaces the selection
+SelectText(rt, doc_text, "bold")
+Check(INSTR(FORM.GET(rt, "SELRTF"), "\b") >= 0, "SELRTF carries the bold")
+Check(INSTR(FORM.GET(rt, "TEXTRTF"), "\rtf1") = 1, "TEXTRTF reads the document")
+FORM.SET(rt, "SELRTF", "{\rtf1\ansi {\i fat}}")
+DIM doc_after AS STRING = FORM.GET(rt, "TEXT")
+Check(INSTR(doc_after, "plain fat slanted") >= 0, "SELRTF replaces the selection")
+SelectText(rt, doc_after, "fat")
+Check(FORM.GET(rt, "SELITALIC") = TRUE, "SELRTF brings its format")
+FORM.SET(rt, "UNDO", TRUE)
+Check(FORM.GET(rt, "TEXT") = doc_text, "SELRTF is one undo step")
+
+' RUNS
+FORM.SET(rt, "SELSTART", 3)
+FORM.SET(rt, "SELLENGTH", 0)
+DIM runs AS ARRAY = FORM.GET(rt, "RUNS")
+DIM joined AS STRING = ""
+DIM run AS MAP
+DIM i AS INTEGER = 0
+FOR i = 0 TO LEN(runs) - 1
+    run = runs[i]
+    joined = joined + run{"text"}
+NEXT i
+Check(joined = doc_text, "the runs put together are TEXT")
+Check(FORM.GET(rt, "SELSTART") = 3, "RUNS puts the selection back")
+run = runs[0]
+Check(run{"text"} = "Title" ANDALSO run{"bold"} = TRUE ANDALSO run{"size"} = 18, "first run is the bold title")
+run = runs[1]
+Check(run{"text"} = crlf ANDALSO run{"para"} = 0, "a paragraph break is a run of its own")
+DIM found_bold AS BOOLEAN = FALSE
+DIM found_code AS BOOLEAN = FALSE
+DIM found_umlaut AS BOOLEAN = FALSE
+DIM run_text AS STRING = ""
+FOR i = 0 TO LEN(runs) - 1
+    run = runs[i]
+    run_text = run{"text"}
+    IF run_text = "bold" THEN found_bold = run{"bold"} = TRUE ANDALSO run{"para"} = 1 ANDALSO run{"start"} = INSTR(doc_text, "bold") ANDALSO run{"length"} = 4
+    IF run_text = "code" THEN found_code = run{"font"} = "Consolas"
+    IF INSTR(run_text, "Grüße") >= 0 THEN found_umlaut = run{"start"} + INSTR(run_text, "Grüße") = INSTR(doc_text, "Grüße")
+NEXT i
+Check(found_bold, "bold run with paragraph, start and length in bytes")
+Check(found_code, "code run carries its font")
+Check(found_umlaut, "offsets after multibyte text are UTF-8 bytes")
+SelectText(rt, doc_text, "last line")
+FORM.SET(rt, "SELBULLET", 1)
+DIM some AS ARRAY = FORM.GET(rt, "RUNS")
+run = some[0]
+Check(LEN(some) = 1 ANDALSO run{"text"} = "last line", "RUNS honours a selection")
+Check(run{"bullet"} = 1 ANDALSO run{"para"} = 2, "a run carries its paragraph's format")
+
+' a picture is U+FFFC in TEXT and an object run in RUNS
+DIM png AS STRING = "89504e470d0a1a0a0000000d49484452000000100000001008060000001ff3ff6100000050494441547801cd92c10d002008033b9883b9a943f8f6ad4f220124a209247df668a040da990d932b64764336432f240f443472691071f3a8a45312d3ac40b2026e6f10fe8299c4db0311f2b2cef8310b42278633ea6a01270000000049454e44ae426082"
+FORM.SET(rt, "TEXTRTF", "{\rtf1\ansi before {\pict\pngblip\picw16\pich16\picwgoal480\pichgoal480 " + png + "} after}")
+DIM obj_char AS STRING = CHR$(239) + CHR$(191) + CHR$(188)
+Check(FORM.GET(rt, "TEXT") = "before " + obj_char + " after", "a picture reads as U+FFFC")
+DIM pics AS ARRAY = FORM.GET(rt, "RUNS")
+run = pics[1]
+Check(LEN(pics) = 3 ANDALSO run{"object"} = TRUE ANDALSO run{"start"} = 7 ANDALSO run{"length"} = 3, "the picture is an object run")
+FORM.SET(rt, "SELSTART", 11)
+Check(FORM.GET(rt, "SELSTART") = 11, "SELSTART behind a picture round-trips")
+FORM.SET(rt, "SELLENGTH", 5)
+Check(FORM.GET(rt, "SELTEXT") = "after", "SELTEXT behind a picture")
+
+FORM.CLOSE(frm)
+
+PRINT
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL RICHFORMAT TESTS PASSED!"

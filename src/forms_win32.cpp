@@ -128,12 +128,16 @@ std::string resolve_data_path(const std::string& path) {
     return path;
 }
 
+bool is_rich_hwnd(HWND h);
+std::wstring edit_wtext(HWND h);
+
 std::string get_hwnd_text(HWND h) {
+    if (is_rich_hwnd(h)) return narrow(edit_wtext(h));
     int len = GetWindowTextLengthW(h);
     if (len <= 0) return std::string();
     std::wstring w(len + 1, 0);
-    GetWindowTextW(h, &w[0], len + 1);
-    w.resize(len);
+    len = GetWindowTextW(h, &w[0], len + 1);
+    w.resize(len > 0 ? len : 0);
     return narrow(w);
 }
 
@@ -1277,7 +1281,57 @@ bool is_edit_kind(const std::string& kind) {
 }
 
 
+bool is_rich_hwnd(HWND h) {
+    wchar_t cls[32] = {};
+    GetClassNameW(h, cls, 32);
+    return wcscmp(cls, L"RICHEDIT50W") == 0;
+}
+
+// A rich edit counts a paragraph break as one position and keeps its text
+// with CR alone. RichMap is the text as the control stores it (GT_RAWTEXT:
+// one character per position, U+FFFC for a picture) with CRLF breaks and,
+// for every index into it, the control position. Hyperlink fields and
+// tables would put their structure characters into that text, so the
+// formatting surface makes links with the link effect alone and a program
+// lays tables out with tabs.
+struct RichMap {
+    std::wstring vis;              // the text, CRLF breaks
+    std::vector<LONG> cp;          // vis index -> control position (size vis+1)
+};
+
+RichMap rich_map(HWND h) {
+    RichMap m;
+    GETTEXTLENGTHEX gl = { GTL_NUMCHARS | GTL_PRECISE, 1200 };
+    LONG n = (LONG)SendMessageW(h, EM_GETTEXTLENGTHEX, (WPARAM)&gl, 0);
+    std::wstring raw(n + 1, 0);
+    GETTEXTEX gt = { (DWORD)((n + 1) * sizeof(wchar_t)), 4 /* GT_RAWTEXT */, 1200, nullptr, nullptr };
+    raw.resize((size_t)SendMessageW(h, EM_GETTEXTEX, (WPARAM)&gt, (LPARAM)&raw[0]));
+    m.vis.reserve(raw.size() + raw.size() / 16);
+    m.cp.reserve(raw.size() + raw.size() / 16 + 1);
+    for (LONG i = 0; i < (LONG)raw.size(); i++) {
+        m.cp.push_back(i);
+        m.vis.push_back(raw[i]);
+        if (raw[i] == L'\r') { m.cp.push_back(i); m.vis.push_back(L'\n'); }
+    }
+    m.cp.push_back((LONG)raw.size());
+    return m;
+}
+
+// vis index -> control position; the LF of a CRLF maps to the CR's position.
+LONG rich_vis_to_cp(const RichMap& m, size_t i) {
+    if (i >= m.cp.size()) i = m.cp.size() - 1;
+    if (i > 0 && i < m.vis.size() && m.vis[i] == L'\n' && m.vis[i - 1] == L'\r') return m.cp[i] + 1;
+    return m.cp[i];
+}
+
+// control position -> vis index: the first visible character at or after it.
+size_t rich_cp_to_vis(const RichMap& m, LONG c) {
+    auto it = std::lower_bound(m.cp.begin(), m.cp.end() - 1, c);
+    return (size_t)(it - m.cp.begin());
+}
+
 std::wstring edit_wtext(HWND h) {
+    if (is_rich_hwnd(h)) return rich_map(h).vis;
     int len = GetWindowTextLengthW(h);
     std::wstring w(len + 1, 0);
     if (len > 0) len = GetWindowTextW(h, &w[0], len + 1);
@@ -1319,14 +1373,23 @@ size_t cpos_to_w(bool rich, const std::wstring& w, DWORD cpos) {
 void edit_getsel(const FormsItem& it, const std::wstring& w, size_t& a, size_t& b) {
     DWORD ca = 0, cb = 0;
     SendMessageW(it.hwnd, EM_GETSEL, (WPARAM)&ca, (LPARAM)&cb);
-    bool rich = it.kind == "RICHTEXT";
-    a = cpos_to_w(rich, w, ca);
-    b = cpos_to_w(rich, w, cb);
+    if (it.kind == "RICHTEXT") {
+        RichMap m = rich_map(it.hwnd);
+        a = rich_cp_to_vis(m, (LONG)ca);
+        b = rich_cp_to_vis(m, (LONG)cb);
+        return;
+    }
+    a = cpos_to_w(false, w, ca);
+    b = cpos_to_w(false, w, cb);
 }
 
 void edit_setsel(const FormsItem& it, const std::wstring& w, size_t a, size_t b) {
-    bool rich = it.kind == "RICHTEXT";
-    SendMessageW(it.hwnd, EM_SETSEL, w_to_cpos(rich, w, a), w_to_cpos(rich, w, b));
+    if (it.kind == "RICHTEXT") {
+        RichMap m = rich_map(it.hwnd);
+        SendMessageW(it.hwnd, EM_SETSEL, rich_vis_to_cp(m, a), rich_vis_to_cp(m, b));
+    } else {
+        SendMessageW(it.hwnd, EM_SETSEL, w_to_cpos(false, w, a), w_to_cpos(false, w, b));
+    }
     SendMessageW(it.hwnd, EM_SCROLLCARET, 0, 0);
 }
 
@@ -1617,6 +1680,292 @@ void rich_set_options(HWND h, bool on, LPARAM opt) {
     SendMessageW(h, EM_SETOPTIONS, on ? ECOOP_OR : ECOOP_AND, on ? opt : ~opt);
 }
 
+// ── Rich text formatting (the VB6 RichTextBox surface) ──────────
+// SEL* properties read and write the character and paragraph format of the
+// selection; a property the selection does not hold uniformly reads NONE,
+// as VB6 answers Null. Indents are in twips, font sizes in points, colours
+// RGB with -1 for the automatic colour.
+
+int colorref_to_rgb(COLORREF c) {
+    return (GetRValue(c) << 16) | (GetGValue(c) << 8) | GetBValue(c);
+}
+
+CHARFORMAT2W rich_sel_cf(HWND h) {
+    CHARFORMAT2W cf = {};
+    cf.cbSize = sizeof(cf);
+    SendMessageW(h, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
+    return cf;
+}
+
+PARAFORMAT2 rich_sel_pf(HWND h) {
+    PARAFORMAT2 pf = {};
+    pf.cbSize = sizeof(pf);
+    SendMessageW(h, EM_GETPARAFORMAT, 0, (LPARAM)&pf);
+    return pf;
+}
+
+DWORD CALLBACK rich_out_cb(DWORD_PTR cookie, LPBYTE buf, LONG n, LONG* done) {
+    ((std::string*)cookie)->append((const char*)buf, (size_t)n);
+    *done = n;
+    return 0;
+}
+
+std::string rich_stream_out(HWND h, bool selection) {
+    std::string out;
+    EDITSTREAM es = {};
+    es.dwCookie = (DWORD_PTR)&out;
+    es.pfnCallback = rich_out_cb;
+    SendMessageW(h, EM_STREAMOUT, SF_RTF | (selection ? SFF_SELECTION : 0), (LPARAM)&es);
+    return out;
+}
+
+// Replaces the whole text (resetting undo) or the selection (one undo step).
+// Text that does not start with {\rtf goes in as plain UTF-8.
+void rich_set_rtf(HWND h, const std::string& rtf, bool selection) {
+    SETTEXTEX st = { (DWORD)(selection ? ST_SELECTION | ST_KEEPUNDO : ST_DEFAULT), CP_UTF8 };
+    SendMessageW(h, EM_SETTEXTEX, (WPARAM)&st, (LPARAM)rtf.c_str());
+}
+
+const DWORD RICH_RUN_MASK = CFM_BOLD | CFM_ITALIC | CFM_UNDERLINE | CFM_STRIKEOUT |
+                            CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_BACKCOLOR | CFM_LINK;
+
+int pf_bullet(const PARAFORMAT2& pf) {
+    if (pf.wNumbering == PFN_BULLET) return 1;
+    if (pf.wNumbering == 0) return 0;
+    return 2;
+}
+
+bool rich_get_format(HWND h, const std::string& prop, Value& out) {
+    static const std::map<std::string, std::pair<DWORD, DWORD>> flags = {
+        {"SELBOLD", {CFM_BOLD, CFE_BOLD}}, {"SELITALIC", {CFM_ITALIC, CFE_ITALIC}},
+        {"SELUNDERLINE", {CFM_UNDERLINE, CFE_UNDERLINE}},
+        {"SELSTRIKETHRU", {CFM_STRIKEOUT, CFE_STRIKEOUT}}, {"SELLINK", {CFM_LINK, CFE_LINK}},
+    };
+    auto fl = flags.find(prop);
+    if (fl != flags.end()) {
+        CHARFORMAT2W cf = rich_sel_cf(h);
+        out = (cf.dwMask & fl->second.first) ? Value::make_bool((cf.dwEffects & fl->second.second) != 0)
+                                              : Value::make_none();
+        return true;
+    }
+    if (prop == "SELFONTNAME" || prop == "SELFONTSIZE" || prop == "SELCOLOR" ||
+        prop == "SELBACKCOLOR") {
+        CHARFORMAT2W cf = rich_sel_cf(h);
+        if (prop == "SELFONTNAME") {
+            out = (cf.dwMask & CFM_FACE) ? Value::make_string(narrow(cf.szFaceName)) : Value::make_none();
+        } else if (prop == "SELFONTSIZE") {
+            out = (cf.dwMask & CFM_SIZE) ? Value::make_f64(cf.yHeight / 20.0) : Value::make_none();
+        } else if (prop == "SELCOLOR") {
+            if (!(cf.dwMask & CFM_COLOR)) out = Value::make_none();
+            else out = Value::make_i64((cf.dwEffects & CFE_AUTOCOLOR) ? -1 : colorref_to_rgb(cf.crTextColor));
+        } else {
+            if (!(cf.dwMask & CFM_BACKCOLOR)) out = Value::make_none();
+            else out = Value::make_i64((cf.dwEffects & CFE_AUTOBACKCOLOR) ? -1 : colorref_to_rgb(cf.crBackColor));
+        }
+        return true;
+    }
+    if (prop == "SELBULLET" || prop == "SELNUMBERSTART" || prop == "SELINDENT" ||
+        prop == "SELHANGINGINDENT" || prop == "SELALIGNMENT") {
+        PARAFORMAT2 pf = rich_sel_pf(h);
+        if (prop == "SELBULLET") {
+            out = (pf.dwMask & PFM_NUMBERING) ? Value::make_i64(pf_bullet(pf)) : Value::make_none();
+        } else if (prop == "SELNUMBERSTART") {
+            out = (pf.dwMask & PFM_NUMBERINGSTART) ? Value::make_i64(pf.wNumberingStart) : Value::make_none();
+        } else if (prop == "SELINDENT") {
+            out = (pf.dwMask & PFM_STARTINDENT) ? Value::make_i64(pf.dxStartIndent) : Value::make_none();
+        } else if (prop == "SELHANGINGINDENT") {
+            out = (pf.dwMask & PFM_OFFSET) ? Value::make_i64(pf.dxOffset) : Value::make_none();
+        } else {
+            out = (pf.dwMask & PFM_ALIGNMENT) ? Value::make_i64(pf.wAlignment > 0 ? pf.wAlignment - 1 : 0)
+                                              : Value::make_none();
+        }
+        return true;
+    }
+    if (prop == "TEXTRTF" || prop == "SELRTF") {
+        out = Value::make_string(rich_stream_out(h, prop == "SELRTF"));
+        return true;
+    }
+    return false;
+}
+
+bool rich_set_format(HWND h, const std::string& prop, const Value& v) {
+    static const std::map<std::string, std::pair<DWORD, DWORD>> flags = {
+        {"SELBOLD", {CFM_BOLD, CFE_BOLD}}, {"SELITALIC", {CFM_ITALIC, CFE_ITALIC}},
+        {"SELUNDERLINE", {CFM_UNDERLINE, CFE_UNDERLINE}},
+        {"SELSTRIKETHRU", {CFM_STRIKEOUT, CFE_STRIKEOUT}}, {"SELLINK", {CFM_LINK, CFE_LINK}},
+    };
+    CHARFORMAT2W cf = {};
+    cf.cbSize = sizeof(cf);
+    auto fl = flags.find(prop);
+    if (fl != flags.end()) {
+        cf.dwMask = fl->second.first;
+        cf.dwEffects = v.to_bool() ? fl->second.second : 0;
+    } else if (prop == "SELFONTNAME") {
+        cf.dwMask = CFM_FACE;
+        wcsncpy(cf.szFaceName, widen(value_text(v)).c_str(), LF_FACESIZE - 1);
+    } else if (prop == "SELFONTSIZE") {
+        cf.dwMask = CFM_SIZE;
+        cf.yHeight = (LONG)(v.to_double() * 20.0 + 0.5);
+    } else if (prop == "SELCOLOR") {
+        cf.dwMask = CFM_COLOR;
+        if (v.to_int() < 0) cf.dwEffects = CFE_AUTOCOLOR;
+        else cf.crTextColor = rgb_to_colorref((int)v.to_int());
+    } else if (prop == "SELBACKCOLOR") {
+        cf.dwMask = CFM_BACKCOLOR;
+        if (v.to_int() < 0) cf.dwEffects = CFE_AUTOBACKCOLOR;
+        else cf.crBackColor = rgb_to_colorref((int)v.to_int());
+    } else if (prop == "TEXTRTF") {
+        rich_set_rtf(h, value_text(v), false);
+        SendMessageW(h, EM_SETMODIFY, FALSE, 0);
+        return true;
+    } else if (prop == "SELRTF") {
+        rich_set_rtf(h, value_text(v), true);
+        return true;
+    } else {
+        PARAFORMAT2 pf = {};
+        pf.cbSize = sizeof(pf);
+        if (prop == "SELBULLET") {
+            int64_t b = v.to_int();
+            pf.dwMask = PFM_NUMBERING | PFM_NUMBERINGSTYLE | PFM_NUMBERINGSTART;
+            pf.wNumbering = b == 1 ? PFN_BULLET : b >= 2 ? PFN_ARABIC : 0;
+            pf.wNumberingStyle = PFNS_PERIOD;
+            pf.wNumberingStart = rich_sel_pf(h).wNumberingStart;
+            if (pf.wNumberingStart == 0) pf.wNumberingStart = 1;
+        } else if (prop == "SELNUMBERSTART") {
+            pf.dwMask = PFM_NUMBERINGSTART;
+            pf.wNumberingStart = (WORD)v.to_int();
+        } else if (prop == "SELINDENT") {
+            pf.dwMask = PFM_STARTINDENT;
+            pf.dxStartIndent = (LONG)v.to_int();
+        } else if (prop == "SELHANGINGINDENT") {
+            pf.dwMask = PFM_OFFSET;
+            pf.dxOffset = (LONG)v.to_int();
+        } else if (prop == "SELALIGNMENT") {
+            pf.dwMask = PFM_ALIGNMENT;
+            pf.wAlignment = (WORD)(v.to_int() + 1);
+        } else {
+            return false;
+        }
+        SendMessageW(h, EM_SETPARAFORMAT, 0, (LPARAM)&pf);
+        return true;
+    }
+    SendMessageW(h, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
+    return true;
+}
+
+// RUNS: the text (or the selection, when one is made) cut into stretches of
+// equal character format inside one paragraph; a paragraph break is a run
+// of its own, and so is an embedded object. Offsets are UTF-8 bytes of TEXT,
+// like SELSTART. Each run carries its paragraph's format too. The selection,
+// the scroll position and the event mask are put back afterwards.
+Value rich_runs(HWND h) {
+    RichMap m = rich_map(h);
+    const std::wstring& w = m.vis;
+    std::vector<int64_t> u8(w.size() + 1, 0);
+    for (size_t i = 0; i < w.size(); i++) {
+        wchar_t c = w[i];
+        int n = c < 0x80 ? 1 : c < 0x800 ? 2 : (c >= 0xD800 && c < 0xDC00) ? 4 : (c >= 0xDC00 && c < 0xE000) ? 0 : 3;
+        u8[i + 1] = u8[i] + n;
+    }
+
+    CHARRANGE keep;
+    SendMessageW(h, EM_EXGETSEL, 0, (LPARAM)&keep);
+    POINT scroll = {};
+    SendMessageW(h, EM_GETSCROLLPOS, 0, (LPARAM)&scroll);
+    LRESULT mask = SendMessageW(h, EM_SETEVENTMASK, 0, 0);
+    SendMessageW(h, WM_SETREDRAW, FALSE, 0);
+
+    size_t from = 0, to = w.size();
+    if (keep.cpMax > keep.cpMin) {
+        from = rich_cp_to_vis(m, keep.cpMin);
+        to = rich_cp_to_vis(m, keep.cpMax);
+    }
+    auto select = [&](LONG a, LONG b) {
+        CHARRANGE cr = { a, b };
+        SendMessageW(h, EM_EXSETSEL, 0, (LPARAM)&cr);
+    };
+    // vis indices [i, k) as a control range
+    auto uniform = [&](size_t i, size_t k) {
+        select(m.cp[i], m.cp[k - 1] + 1);
+        return (rich_sel_cf(h).dwMask & RICH_RUN_MASK) == RICH_RUN_MASK;
+    };
+
+    Value runs = Value::make_array();
+    PARAFORMAT2 pf = {};
+    size_t para_start = (size_t)-1;
+    int64_t para = (int64_t)std::count(w.begin(), w.begin() + from, L'\r');
+
+    size_t i = from;
+    while (i < to) {
+        size_t ps = i;
+        while (ps > 0 && w[ps - 1] != L'\n') ps--;
+        if (ps != para_start) {
+            select(m.cp[ps], m.cp[ps]);
+            pf = rich_sel_pf(h);
+            para_start = ps;
+        }
+        wchar_t c = w[i];
+        bool is_break = c == L'\r' || c == L'\n';
+        bool is_object = c == 0xFFFC;
+        size_t j;
+        if (is_break) {
+            j = (c == L'\r' && i + 1 < w.size() && w[i + 1] == L'\n') ? i + 2 : i + 1;
+        } else if (is_object) {
+            j = i + 1;
+        } else {
+            size_t lim = i + 1;
+            while (lim < to && w[lim] != L'\r' && w[lim] != 0xFFFC && m.cp[lim] == m.cp[lim - 1] + 1) lim++;
+            size_t good = i + 1, step = 1;
+            while (good < lim) {
+                size_t t = std::min(lim, good + step);
+                if (uniform(i, t)) { good = t; step *= 2; continue; }
+                size_t lo = good, hi = t;
+                while (hi - lo > 1) {
+                    size_t mid = lo + (hi - lo) / 2;
+                    if (uniform(i, mid)) lo = mid; else hi = mid;
+                }
+                good = lo;
+                break;
+            }
+            j = good;
+        }
+        select(m.cp[i], m.cp[j - 1] + 1);
+        CHARFORMAT2W cf = rich_sel_cf(h);
+        Value r = Value::make_object();
+        auto* o = r.as_object();
+        o->set("start", Value::make_i64(u8[i]));
+        o->set("length", Value::make_i64(u8[j] - u8[i]));
+        o->set("text", Value::make_string(narrow(w.substr(i, j - i))));
+        o->set("para", Value::make_i64(para));
+        o->set("bold", Value::make_bool((cf.dwEffects & CFE_BOLD) != 0));
+        o->set("italic", Value::make_bool((cf.dwEffects & CFE_ITALIC) != 0));
+        o->set("underline", Value::make_bool((cf.dwEffects & CFE_UNDERLINE) != 0));
+        o->set("strike", Value::make_bool((cf.dwEffects & CFE_STRIKEOUT) != 0));
+        o->set("font", Value::make_string(narrow(cf.szFaceName)));
+        o->set("size", Value::make_f64(cf.yHeight / 20.0));
+        o->set("color", Value::make_i64((cf.dwEffects & CFE_AUTOCOLOR) ? -1 : colorref_to_rgb(cf.crTextColor)));
+        o->set("backcolor", Value::make_i64((cf.dwEffects & CFE_AUTOBACKCOLOR) ? -1 : colorref_to_rgb(cf.crBackColor)));
+        o->set("link", Value::make_bool((cf.dwEffects & CFE_LINK) != 0 && !is_break));
+        o->set("object", Value::make_bool(is_object));
+        o->set("bullet", Value::make_i64(pf_bullet(pf)));
+        o->set("number_start", Value::make_i64(pf.wNumberingStart));
+        o->set("indent", Value::make_i64(pf.dxStartIndent));
+        o->set("hanging", Value::make_i64(pf.dxOffset));
+        o->set("align", Value::make_i64(pf.wAlignment > 0 ? pf.wAlignment - 1 : 0));
+        o->set("table", Value::make_bool((pf.wEffects & PFE_TABLE) != 0));
+        runs.as_array()->elements.push_back(r);
+        if (is_break) para++;
+        i = j;
+    }
+
+    SendMessageW(h, EM_EXSETSEL, 0, (LPARAM)&keep);
+    SendMessageW(h, EM_SETSCROLLPOS, 0, (LPARAM)&scroll);
+    SendMessageW(h, WM_SETREDRAW, TRUE, 0);
+    SendMessageW(h, EM_SETEVENTMASK, 0, mask);
+    InvalidateRect(h, nullptr, TRUE);
+    return runs;
+}
+
 bool edit_set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v) {
     HWND h = it.hwnd;
     bool rich = it.kind == "RICHTEXT";
@@ -1705,6 +2054,8 @@ bool edit_set_prop(int handle, FormsItem& it, const std::string& prop, const Val
         SendMessageW(h, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf);
         SendMessageW(h, EM_SETCHARFORMAT, SCF_DEFAULT, (LPARAM)&cf);
         return false;
+    } else if (rich && rich_set_format(h, prop, v)) {
+        return true;
     } else {
         return false;
     }
@@ -1749,6 +2100,9 @@ bool edit_get_prop(int handle, FormsItem& it, const std::string& prop, Value& ou
         out = Value::make_i64(den > 0 && num > 0 ? MulDiv(num, 100, den) : 100);
     } else if (prop == "SPELLCHECK" && rich) {
         out = Value::make_bool((SendMessageW(h, EM_GETLANGOPTIONS, 0, 0) & IMF_SPELLCHECKING) != 0);
+    } else if (prop == "RUNS" && rich) {
+        out = rich_runs(h);
+    } else if (rich && rich_get_format(h, prop, out)) {
     } else if (prop == "LINECOUNT" || prop == "CARETLINE" || prop == "CARETCOL") {
         // Lines of the text, not of the display: a wrapped line counts once.
         std::wstring w = edit_wtext(h);
