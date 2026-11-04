@@ -1636,6 +1636,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (!vn.empty() && vn.back() == '$') return JD_TAG_STR;
                 return 0;
             }
+            case ExprKind::BINARY:
+            case ExprKind::UNARY: {
+                // arithmetic the compiler knows to be a number counts as one,
+                // so a site handing a pointer kind meets it as a conflict
+                int t = infer_expr_tag(a);
+                if (t == JD_TAG_I64 || jd_is_f64_tag(t)) return JD_TAG_F64;
+                return 0;
+            }
             default: return 0;
         }
     };
@@ -1974,6 +1982,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (s.var_type == VarType::STRING) k = JD_TAG_STR;
             else if (s.var_type == VarType::ARRAY) k = JD_TAG_ARR;
             else if (s.var_type == VarType::OBJECT) k = JD_TAG_NATIVE_MAP;
+            // a declared number holds a number whatever its initializer
+            // answers; codegen_dim reads a VM value out into it
+            else if (s.var_type != VarType::NONE && s.var_type != VarType::ANY &&
+                     s.var_type != VarType::TENSOR) k = -1;
             else if (s.expr) {
                 if (s.expr->kind == ExprKind::MAP_LITERAL) k = JD_TAG_NATIVE_MAP;
                 else if (s.expr->kind == ExprKind::ARRAY_LITERAL) k = JD_TAG_ARR;
@@ -3087,6 +3099,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (st.var_type == VarType::STRING) return JD_TAG_STR;
                 if (st.var_type == VarType::ARRAY) return JD_TAG_ARR;
                 if (st.var_type == VarType::OBJECT) return JD_TAG_NATIVE_MAP;
+                // a declared number holds a number whatever its initializer
+                // answers; codegen_dim reads a VM value out into it
+                if (st.var_type != VarType::NONE && st.var_type != VarType::ANY &&
+                    st.var_type != VarType::TENSOR) return -1;
                 if (!st.expr) return -1;
                 int t = infer_expr_tag(*st.expr);
                 if (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP || t == JD_TAG_STR ||
@@ -3477,6 +3493,16 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         if (lit != local_kind.end() &&
                             (lit->second == JD_TAG_ARR || lit->second == JD_TAG_NATIVE_MAP ||
                              lit->second == JD_TAG_VM_HANDLE || lit->second == JD_TAG_RUNTIME)) {
+                            index_hit = true;
+                            return JD_TAG_RUNTIME;
+                        }
+                    }
+                    // the same for a cell of what a call answers:
+                    // RETURN SPLIT(s$, ",")[0], RETURN Rows()[0]
+                    if (base && base->kind == ExprKind::CALL) {
+                        int bk = kind_of_ref(*base);
+                        if (bk == JD_TAG_ARR || bk == JD_TAG_NATIVE_MAP ||
+                            bk == JD_TAG_VM_HANDLE || bk == JD_TAG_RUNTIME) {
                             index_hit = true;
                             return JD_TAG_RUNTIME;
                         }
@@ -6300,6 +6326,49 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
             { LLVMValueRef ret_out = phi; walks.now(); emit_fn_return(ret_out); }
             return;
         }
+        // An ARRAY function answering a VM array (REGEX.MATCH, FORM.GET):
+        // it becomes a native array the caller owns; coerce_to made text of
+        // the handle. Every other run-time kind goes through coerce_to.
+        {
+            auto uf = user_functions.find(current_fn_name);
+            bool arr_fn = ret_ty == i8_ptr_type && uf != user_functions.end() &&
+                          uf->second.return_tag == JD_TAG_ARR;
+            auto* conv = get_runtime_func("__jdrt_handle_to_hof_array");
+            if (arr_fn && conv && rv.tag == JD_TAG_VM_HANDLE) {
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef a[] = { rt, rv.val };
+                LLVMValueRef out = LLVMBuildCall2(builder, conv->fn_type, conv->fn, a, 2, "ret_vmarr");
+                walks.now(); emit_fn_return(out);
+                return;
+            }
+            if (arr_fn && conv && rv.tag == JD_TAG_RUNTIME && rv.runtime_tag) {
+                LLVMBasicBlockRef bb_vmh = LLVMAppendBasicBlockInContext(ctx, current_fn, "ret.vmarr");
+                LLVMBasicBlockRef bb_other = LLVMAppendBasicBlockInContext(ctx, current_fn, "ret.other");
+                LLVMBasicBlockRef bb_j = LLVMAppendBasicBlockInContext(ctx, current_fn, "ret.arrjoin");
+                LLVMValueRef is_vmh = LLVMBuildICmp(builder, LLVMIntEQ, rv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "ret_isvmh");
+                LLVMBuildCondBr(builder, is_vmh, bb_vmh, bb_other);
+                LLVMPositionBuilderAtEnd(builder, bb_vmh);
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef a[] = { rt, rv.val };
+                LLVMValueRef from_vm = LLVMBuildCall2(builder, conv->fn_type, conv->fn, a, 2, "ret_vmarr");
+                LLVMBasicBlockRef bb_vmh_end = LLVMGetInsertBlock(builder);
+                LLVMBuildBr(builder, bb_j);
+                LLVMPositionBuilderAtEnd(builder, bb_other);
+                LLVMValueRef as_ptr = coerce_to(rv, i8_ptr_type);
+                LLVMBasicBlockRef bb_other_end = LLVMGetInsertBlock(builder);
+                LLVMBuildBr(builder, bb_j);
+                LLVMPositionBuilderAtEnd(builder, bb_j);
+                LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "ret_arr");
+                LLVMValueRef vals[] = { from_vm, as_ptr };
+                LLVMBasicBlockRef bbs[] = { bb_vmh_end, bb_other_end };
+                LLVMAddIncoming(phi, vals, bbs, 2);
+                walks.now(); emit_fn_return(phi);
+                return;
+            }
+        }
         { LLVMValueRef ret_out = coerce_to(rv, ret_ty); walks.now(); emit_fn_return(ret_out); }
     } else {
         { LLVMValueRef ret_out = nullptr; walks.now(); emit_fn_return(ret_out); }
@@ -8197,6 +8266,34 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         if (it != scopes.back().vars.end()) vi = &it->second;
     } else {
         vi = lookup_var(stmt.var_name);
+    }
+    // VM_HANDLE -> a declared number or BOOLEAN: the AS clause wins and the
+    // stored Value is read out once. Kept as a handle, the variable stood
+    // for the handle id wherever its kind was taken from the declaration's
+    // initializer (a FUNC it was handed to got a handle parameter, and
+    // every other argument to that parameter was read as a handle id).
+    if (rhs.tag == JD_TAG_VM_HANDLE &&
+        (stmt.var_type == VarType::BOOLEAN || stmt.var_type == VarType::BYTE ||
+         stmt.var_type == VarType::INT16 || stmt.var_type == VarType::INT32 ||
+         stmt.var_type == VarType::INT64 || stmt.var_type == VarType::FLOAT16 ||
+         stmt.var_type == VarType::FLOAT32 || stmt.var_type == VarType::FLOAT64)) {
+        auto* vtf = get_runtime_func("__jdrt_val_to_f64");
+        if (vtf) {
+            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+            LLVMValueRef args[] = { rt, rhs.val };
+            LLVMValueRef d = LLVMBuildCall2(builder, vtf->fn_type, vtf->fn, args, 2, "vmh2f_dim");
+            if (stmt.var_type == VarType::BOOLEAN) {
+                LLVMValueRef nz = LLVMBuildFCmp(builder, LLVMRealUNE, d,
+                    LLVMConstReal(f64_type, 0.0), "vmh2b");
+                rhs = { LLVMBuildZExt(builder, nz, i64_type, "vmh2b_ext"), JD_TAG_BOOL };
+            } else if (stmt.var_type == VarType::FLOAT16 || stmt.var_type == VarType::FLOAT32 ||
+                       stmt.var_type == VarType::FLOAT64) {
+                rhs = { d, JD_TAG_F64 };
+            } else {
+                rhs = { LLVMBuildFPToSI(builder, d, i64_type, "vmh2i"), JD_TAG_I64 };
+            }
+        }
     }
     // Same exception as in codegen_let_or_assign: an existing slot the
     // programmer declared AS STRING keeps its type, and the runtime-tagged
@@ -17144,10 +17241,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return { LLVMBuildSelect(builder, cond_i1, val1.val, val2.val, "iif"),
                      JD_TAG_STR };
         }
-        if (val1.tag == JD_TAG_STR || val2.tag == JD_TAG_STR) {
-            // The arms are of different kinds, so the answer takes the kind of
-            // the arm that is chosen. Making both a string handed back "9" for
-            // the number arm, and the slot then held a string.
+        auto rt_arm = [](const TypedValue& v) {
+            return (v.tag == JD_TAG_RUNTIME && v.runtime_tag) || v.tag == JD_TAG_VM_HANDLE;
+        };
+        if (val1.tag == JD_TAG_STR || val2.tag == JD_TAG_STR || rt_arm(val1) || rt_arm(val2)) {
+            // The arms are of different kinds, or of a kind only the running
+            // program knows (a map cell, an element of an untyped array), so
+            // the answer takes the kind of the arm that is chosen. Making both
+            // a string handed back "9" for the number arm; making both a
+            // number handed back 0 for a text read from a map.
             LLVMValueRef cond_i1 = to_i1(cond);
             LLVMValueRef b1, t1, b2, t2;
             to_bits_tag(val1, b1, t1);

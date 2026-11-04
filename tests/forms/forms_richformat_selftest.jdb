@@ -22,6 +22,11 @@ SUB SelectText(h AS DOUBLE, doc AS STRING, part AS STRING)
     FORM.SET(h, "SELLENGTH", LEN(part))
 ENDSUB
 
+FUNC HeldPos(x)
+    DIM y AS INTEGER = x
+    RETURN y
+ENDFUNC
+
 DIM crlf AS STRING = CHR$(13) + CHR$(10)
 DIM frm AS DOUBLE = FORM.CREATE("Richformat Selftest", 480, 320, "MAIN")
 DIM rt AS DOUBLE = FORM.RICHTEXT(frm, "rtDoc", 0, 0, 480, 320)
@@ -164,6 +169,14 @@ FORM.SET(rt, "SELSTART", 11)
 Check(FORM.GET(rt, "SELSTART") = 11, "SELSTART behind a picture round-trips")
 FORM.SET(rt, "SELLENGTH", 5)
 Check(FORM.GET(rt, "SELTEXT") = "after", "SELTEXT behind a picture")
+
+' an offset read into a declared INTEGER is a number wherever it goes
+DIM caret_now AS INTEGER = FORM.GET(rt, "SELSTART")
+DIM base_a AS INTEGER = 5
+DIM base_b AS INTEGER = 3
+Check(HeldPos(caret_now) = 11, "a FORM.GET offset in a declared INTEGER handed on")
+Check(HeldPos(base_a + base_b) = 8, "arithmetic to the same parameter")
+Check(HeldPos(caret_now + 1) = 12, "the offset in arithmetic")
 
 FORM.CLOSE(frm)
 

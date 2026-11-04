@@ -1,0 +1,100 @@
+' Values whose kind only the running program knows, compiled as the
+' interpreter runs them: a VM value read into a declared number, a FUNC
+' parameter handed such a value at one call site and arithmetic at
+' another, an array of groups handed on and returned, a cell of what a call
+' answers returned from a FUNC, and IIF over map and array cells.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok AS BOOLEAN, what AS STRING)
+    IF NOT ok THEN
+        PRINT "FAIL "; what
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Held(x)
+    DIM y AS INTEGER = x
+    RETURN y
+ENDFUNC
+
+FUNC Parsed(doc)
+    DIM n AS INTEGER = JSON.PARSE(doc{"json"})
+    DIM a AS INTEGER = 5
+    DIM b AS INTEGER = 3
+    RETURN STR$(Held(n)) + "," + STR$(Held(a + b)) + "," + STR$(Held(n + 1))
+ENDFUNC
+
+FUNC Untyped(doc)
+    DIM n = JSON.PARSE(doc{"json"})
+    DIM a AS INTEGER = 5
+    DIM b AS INTEGER = 3
+    RETURN STR$(Held(n)) + "," + STR$(Held(a + b))
+ENDFUNC
+
+FUNC Groups(pattern AS STRING, subject AS STRING)
+    DIM out = []
+    DIM g = REGEX.MATCH(pattern, subject)
+    IF ISARR(g) THEN out = g
+    RETURN out
+ENDFUNC
+
+FUNC FirstWord$(csv AS STRING)
+    RETURN SPLIT(csv, ",")[0]
+ENDFUNC
+
+FUNC Rows()
+    DIM m AS MAP
+    m{"k"} = "v"
+    DIM arr = [m]
+    RETURN arr
+ENDFUNC
+
+FUNC FirstRow()
+    RETURN Rows()[0]
+ENDFUNC
+
+FUNC Quoted$(b, lines)
+    DIM q$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        q$ = q$ + IIF(lines[k] = "", RTRIM$(b{"prefix"}), b{"prefix"} + lines[k]) + "|"
+    NEXT k
+    RETURN q$
+ENDFUNC
+
+' a VM value in a declared INTEGER, and the FUNC it is handed to
+DIM top AS INTEGER = JSON.PARSE("7")
+DIM p AS INTEGER = 5
+DIM q AS INTEGER = 3
+Check(top + 1 = 8, "a parsed number in a declared INTEGER")
+Check(Held(top) = 7, "a declared INTEGER from a VM value handed on")
+Check(Held(p + q) = 8, "integer arithmetic to the same parameter")
+DIM doc AS MAP
+doc{"json"} = "9"
+Check(Parsed(doc) = "9,8,10", "the same inside a FUNC")
+Check(Untyped(doc) = "9,8", "an untyped VM value and arithmetic at two call sites")
+
+' arrays of groups
+DIM grp = Groups("^(a)(b)$", "ab")
+Check(LEN(grp) = 2, "an array from REGEX.MATCH handed on and returned")
+Check(grp[1] = "b", "and its cells")
+DIM none = Groups("^(a)(b)$", "zz")
+Check(LEN(none) = 0, "no match is an empty array")
+
+' a cell of what a call answers, returned
+Check(FirstWord$("x,y") = "x", "RETURN SPLIT(...)[0]")
+DIM row = FirstRow()
+Check(row{"k"} = "v", "RETURN Rows()[0] is the map")
+
+' IIF over cells of a map and an array
+DIM pre AS MAP
+pre{"prefix"} = "> "
+Check(Quoted$(pre, ["a", "", "c"]) = "> a|>|> c|", "IIF over map and array cells")
+
+IF failed = 0 THEN
+    PRINT "ALL NATIVE VM VALUE TESTS PASSED!"
+ELSE
+    PRINT failed; " failed"
+    END 1
+ENDIF
