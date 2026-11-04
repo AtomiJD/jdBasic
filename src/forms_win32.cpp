@@ -1853,6 +1853,30 @@ bool rich_set_format(HWND h, const std::string& prop, const Value& v) {
     return true;
 }
 
+// Freezes redraw and events while a reader moves the selection around, and
+// puts selection, scroll position, events and redraw back on every way out.
+struct RichQuiet {
+    HWND h;
+    CHARRANGE keep = {};
+    POINT scroll = {};
+    LRESULT mask = 0;
+    explicit RichQuiet(HWND hwnd) : h(hwnd) {
+        SendMessageW(h, EM_EXGETSEL, 0, (LPARAM)&keep);
+        SendMessageW(h, EM_GETSCROLLPOS, 0, (LPARAM)&scroll);
+        mask = SendMessageW(h, EM_SETEVENTMASK, 0, 0);
+        SendMessageW(h, WM_SETREDRAW, FALSE, 0);
+    }
+    ~RichQuiet() {
+        SendMessageW(h, EM_EXSETSEL, 0, (LPARAM)&keep);
+        SendMessageW(h, EM_SETSCROLLPOS, 0, (LPARAM)&scroll);
+        SendMessageW(h, WM_SETREDRAW, TRUE, 0);
+        SendMessageW(h, EM_SETEVENTMASK, 0, mask);
+        InvalidateRect(h, nullptr, TRUE);
+    }
+    RichQuiet(const RichQuiet&) = delete;
+    RichQuiet& operator=(const RichQuiet&) = delete;
+};
+
 // RUNS: the text (or the selection, when one is made) cut into stretches of
 // equal character format inside one paragraph; a paragraph break is a run
 // of its own, and so is an embedded object. Offsets are UTF-8 bytes of TEXT,
@@ -1868,12 +1892,8 @@ Value rich_runs(HWND h) {
         u8[i + 1] = u8[i] + n;
     }
 
-    CHARRANGE keep;
-    SendMessageW(h, EM_EXGETSEL, 0, (LPARAM)&keep);
-    POINT scroll = {};
-    SendMessageW(h, EM_GETSCROLLPOS, 0, (LPARAM)&scroll);
-    LRESULT mask = SendMessageW(h, EM_SETEVENTMASK, 0, 0);
-    SendMessageW(h, WM_SETREDRAW, FALSE, 0);
+    RichQuiet quiet(h);
+    const CHARRANGE& keep = quiet.keep;
 
     size_t from = 0, to = w.size();
     if (keep.cpMax > keep.cpMin) {
@@ -1957,12 +1977,6 @@ Value rich_runs(HWND h) {
         if (is_break) para++;
         i = j;
     }
-
-    SendMessageW(h, EM_EXSETSEL, 0, (LPARAM)&keep);
-    SendMessageW(h, EM_SETSCROLLPOS, 0, (LPARAM)&scroll);
-    SendMessageW(h, WM_SETREDRAW, TRUE, 0);
-    SendMessageW(h, EM_SETEVENTMASK, 0, mask);
-    InvalidateRect(h, nullptr, TRUE);
     return runs;
 }
 
