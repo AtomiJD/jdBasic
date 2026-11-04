@@ -1,0 +1,534 @@
+' synthgen.jdb - synthetic jdBasic training data through the Claude Message
+' Batches API, kept only when both backends agree on it.
+'
+'   jdBasic tools/synthgen.jdb build  <tag> <replicas> [limit]
+'   jdBasic tools/synthgen.jdb submit <tag>
+'   jdBasic tools/synthgen.jdb status <tag>
+'   jdBasic tools/synthgen.jdb fetch  <tag>
+'   jdBasic tools/synthgen.jdb verify <tag>
+'
+' build   one request per (topic x angle x replica); a topic is a set of
+'         sections of doc/languages.md, sent with doc/llms-primer.md as a
+'         cached system prompt. limit > 0 spreads that many requests over
+'         the topics and angles instead (a pilot).
+' submit  posts dataset/synth/<tag>.requests.json, keeps the batch id.
+' status  prints the batch's counts.
+' fetch   saves the results as dataset/synth/<tag>.results.jsonl and
+'         prints token use and an estimated cost.
+' verify  runs every program through lint, the interpreter, -c and the
+'         compiled exe. A program is green when both runs exit 0 and print
+'         the same non-empty output. Greens go to dataset/synth/<tag>.train.jsonl
+'         (the ChatML shape of dataset/train.jsonl), every outcome to
+'         dataset/synth/<tag>.report.json.
+'
+' Environment: ANTHROPIC_API_KEY, SYNTH_MODEL (claude-opus-5-5),
+' SYNTH_EFFORT (high).
+
+IMPORT REQ
+
+DIM SYNTH_DIR$ = "dataset/synth"
+DIM WORK_DIR$ = SYNTH_DIR$ + "/work"
+DIM EXE_FROM_RUN$ = "../../../../build/jdBasic.exe"
+DIM EXE$ = "build" + CHR$(92) + "jdBasic.exe"
+DIM API_VERSION$ = "2026-10-21"
+DIM PROGRAMS_PER_REQUEST = 4
+DIM RUN_SECONDS = 15
+
+DIM MODEL$ = GETENV$("SYNTH_MODEL")
+IF MODEL$ = "" THEN MODEL$ = "claude-opus-5-5"
+DIM EFFORT$ = GETENV$("SYNTH_EFFORT")
+IF EFFORT$ = "" THEN EFFORT$ = "high"
+
+' Each topic names headings of doc/languages.md by prefix.
+DIM TOPICS = []
+PUSH(TOPICS, ["Data Types", "Numeric Semantics", "Literals", "Conversions", "Operators matrix", "Comparisons", "`TYPEOF`"])
+PUSH(TOPICS, ["Variables and Assignment", "STATIC Local Variables", "Constants"])
+PUSH(TOPICS, ["`$", "`??`", "`?.`"])
+PUSH(TOPICS, ["Optional parameters", "Defining FUNC and SUB", "Parameters", "What a body can see", "Names", "Function references"])
+PUSH(TOPICS, ["Destructuring Assignment", "Array Slicing and Vectorized Assignment", "Enumerations"])
+PUSH(TOPICS, ["User-Defined Types", "Instantiation and Usage", "Constructor / Destructor example"])
+PUSH(TOPICS, ["String Operators", "String Functions"])
+PUSH(TOPICS, ["Bitwise Operators", "Logical Operators"])
+PUSH(TOPICS, ["Functional Syntax", "Function as operators", "Higher Order Function"])
+PUSH(TOPICS, ["SWITCH...CASE...ENDSWITCH", "Error Handling (TRY...CATCH)"])
+PUSH(TOPICS, ["Map Functions", "JSON Functions"])
+PUSH(TOPICS, ["Math/Arithmetic/Round Functions"])
+PUSH(TOPICS, ["Regular Expression Functions", "String Functions"])
+PUSH(TOPICS, ["Array & Matrix Functions"])
+PUSH(TOPICS, ["File I/O Functions", "Filesystem"])
+PUSH(TOPICS, ["System and Time Functions"])
+PUSH(TOPICS, ["Type Inspection", "Type Functions"])
+PUSH(TOPICS, ["Encoding & Hashing (CODEC)"])
+PUSH(TOPICS, ["Channels (Phase 1)", "Async Functions", "Thread Functions"])
+PUSH(TOPICS, ["File streaming (handle-based reads)", "Output capture"])
+PUSH(TOPICS, ["Reactive Variables and Assignment", "Chained Access Syntax"])
+PUSH(TOPICS, ["Console I/O Functions", "System & Flow Control"])
+PUSH(TOPICS, ["Memory in a compiled program", "What `-c` will not compile"])
+PUSH(TOPICS, ["The module library"])
+PUSH(TOPICS, ["Neural networks in plain jdBasic", "Array & Matrix Functions"])
+
+DIM ANGLES = []
+PUSH(ANGLES, "a small algorithm: searching, sorting, number theory, recursion or dynamic programming")
+PUSH(ANGLES, "text processing over an inline text or list of strings")
+PUSH(ANGLES, "business data: orders, invoices, stock or payroll held in arrays and maps")
+PUSH(ANGLES, "data analysis over a generated numeric dataset: statistics, grouping, ranking")
+PUSH(ANGLES, "a deterministic simulation or puzzle: a board, a queue, a state machine")
+PUSH(ANGLES, "a small library of functions with a self-test that prints each check")
+PUSH(ANGLES, "parsing and validating structured text formats: CSV, key=value, simple JSON")
+PUSH(ANGLES, "a report that formats a table of results with aligned columns")
+
+FUNC MakeDir(path$)
+    TRY
+        MKDIR path$
+    CATCH
+    ENDTRY
+    RETURN path$
+ENDFUNC
+
+FUNC HeadingTitle$(text$)
+    DIM k = 0
+    DO WHILE k < LEN(text$) ANDALSO MID$(text$, k, 1) = "#"
+        k = k + 1
+    LOOP
+    RETURN TRIM$(MID$(text$, k))
+ENDFUNC
+
+' The text of every heading that starts with key$, up to the next heading;
+' a "#" inside a code fence is not a heading.
+FUNC SectionText$(doc_lines, key$)
+    DIM out$ = ""
+    DIM inside = FALSE
+    DIM in_fence = FALSE
+    DIM i = 0
+    FOR i = 0 TO LEN(doc_lines) - 1
+        DIM ln$ = doc_lines[i]
+        IF STARTSWITH(LTRIM$(ln$), "```") THEN in_fence = NOT in_fence
+        IF NOT in_fence ANDALSO STARTSWITH(ln$, "#") THEN
+            inside = STARTSWITH(HeadingTitle$(ln$), key$)
+        ENDIF
+        IF inside THEN out$ = out$ + ln$ + CHR$(10)
+    NEXT
+    RETURN out$
+ENDFUNC
+
+FUNC TopicText$(doc_lines, keys)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM part$ = SectionText$(doc_lines, keys[k])
+        IF part$ = "" THEN PRINT "warning: no section starts with "; keys[k]
+        out$ = out$ + part$ + CHR$(10)
+    NEXT
+    RETURN out$
+ENDFUNC
+
+FUNC UserText$(reference$, angle$, replica)
+    DIM nl$ = CHR$(10)
+    DIM t$ = "Reference sections of the jdBasic language manual:" + nl$ + "<reference>" + nl$ + reference$ + "</reference>" + nl$ + nl$
+    t$ = t$ + "Write " + STR$(PROGRAMS_PER_REQUEST) + " complete, self-contained jdBasic programs that use the features documented in the reference, in this setting: " + angle$ + "." + nl$ + nl$
+    t$ = t$ + "Each program becomes a training example for a jdBasic coding model, so it must be correct, idiomatic jdBasic that uses the features the way an expert would." + nl$ + nl$
+    t$ = t$ + "Every program:" + nl$
+    t$ = t$ + "- runs without user input, network, graphics, sound or command-line arguments and ends within a few seconds;" + nl$
+    t$ = t$ + "- behaves the same under the interpreter (jdbasic prog.jdb) and the native compiler (jdbasic -c prog.jdb), which applies STRICT and EXPLICIT: DIM every variable before its first use;" + nl$
+    t$ = t$ + "- prints its results with PRINT, and the output is deterministic: no current date or time, no TICK values, no random numbers without a fixed seed, no machine-specific paths;" + nl$
+    t$ = t$ + "- writes files only under relative names in the current directory and deletes them before it ends;" + nl$
+    t$ = t$ + "- uses only syntax and builtins shown in the reference or the primer; never guess a builtin or its argument order;" + nl$
+    t$ = t$ + "- has English identifiers and comments, and comments only where the code does not explain itself." + nl$ + nl$
+    t$ = t$ + "Lengths: two short programs (10 to 30 lines), one medium (30 to 70 lines), one longer (70 to 150 lines). Make the four different from each other and avoid textbook examples (variant " + STR$(replica + 1) + ")." + nl$ + nl$
+    t$ = t$ + "For each program, task is the request a user would type to get it: one to four sentences on what the program does and what it prints, without mentioning the reference or these rules. code is the full source without a Markdown fence."
+    RETURN t$
+ENDFUNC
+
+FUNC OutputSchema()
+    DIM program_schema = {"type": "object", "additionalProperties": FALSE, "required": ["task", "code"], "properties": {"task": {"type": "string"}, "code": {"type": "string"}}}
+    RETURN {"type": "object", "additionalProperties": FALSE, "required": ["programs"], "properties": {"programs": {"type": "array", "items": program_schema}}}
+ENDFUNC
+
+FUNC RequestFor(custom_id$, system$, user$)
+    DIM sys_block = {"type": "text", "text": system$, "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+    DIM params = {}
+    params{"model"} = MODEL$
+    params{"max_tokens"} = 32000
+    params{"thinking"} = {"type": "adaptive"}
+    params{"output_config"} = {"effort": EFFORT$, "format": {"type": "json_schema", "schema": OutputSchema()}}
+    params{"system"} = [sys_block]
+    params{"messages"} = [{"role": "user", "content": user$}]
+    RETURN {"custom_id": custom_id$, "params": params}
+ENDFUNC
+
+FUNC Api()
+    DIM key$ = GETENV$("ANTHROPIC_API_KEY")
+    IF key$ = "" THEN THROW "ANTHROPIC_API_KEY is not set"
+    DIM s = REQ.NEW("https://api.anthropic.com")
+    REQ.HEADER(s, "x-api-key", key$)
+    REQ.HEADER(s, "anthropic-version", API_VERSION$)
+    REQ.TIMEOUT(s, 600)
+    REQ.RETRIES(s, 4, 2000)
+    RETURN s
+ENDFUNC
+
+FUNC Checked(r)
+    IF NOT r{"ok"} THEN THROW "HTTP " + STR$(r{"status"}) + ": " + LEFT$(r{"body"}, 600)
+    RETURN REQ.JSON(r)
+ENDFUNC
+
+' Plain builtin names (no module prefix) from the help registry.
+FUNC BuiltinNames$()
+    DIM rows = SPLIT(OS.EXEC(EXE$, ["--dump-help"]){"output"}, CHR$(10))
+    DIM names = []
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM tab = INSTR(rows[i], CHR$(9))
+        IF tab <= 0 THEN CONTINUEFOR
+        DIM nm$ = LEFT$(rows[i], tab)
+        IF INSTR(nm$, ".") < 0 ANDALSO INSTR(nm$, " ") < 0 THEN names = APPEND(names, nm$)
+    NEXT
+    RETURN JOIN(SORT(UNIQUE(names)), " ")
+ENDFUNC
+
+FUNC SystemText$(doc_lines)
+    DIM nl$ = CHR$(10)
+    DIM t$ = "You write jdBasic programs. The primer below states the language rules a model gets wrong; follow it." + nl$ + nl$
+    t$ = t$ + TXTREADER$("doc/llms-primer.md") + nl$ + nl$
+    t$ = t$ + "# Rules of the native compiler (-c), which every program must pass" + nl$ + nl$
+    t$ = t$ + "- A slot keeps the kind it was declared with. DIM n = 0 is an INTEGER, DIM x = 0.0 a DOUBLE, DIM s$ = """" a STRING, DIM a = [] an ARRAY, DIM m = {} a MAP. Assigning another kind later is a compile error." + nl$
+    t$ = t$ + "- / always answers a DOUBLE, and so do functions such as SQR and MEAN. To store into an INTEGER slot use integer division \ or wrap the value in CINT(). If a value may be fractional, declare the slot as DOUBLE (DIM x = 0.0)." + nl$
+    t$ = t$ + "- A DIM without an initializer needs a type: DIM total AS INTEGER, DIM label AS STRING. Prefer initializing it." + nl$
+    t$ = t$ + "- FORMAT$ takes at most four values in a compiled program. For more columns join several FORMAT$ calls with +." + nl$
+    t$ = t$ + "- Never name a variable, parameter, FUNC or SUB like a builtin or keyword. Identifiers are case-insensitive, so gcd collides with GCD. These names are taken: " + BuiltinNames$() + nl$ + nl$
+    t$ = t$ + SectionText$(doc_lines, "What `-c` will not compile")
+    RETURN t$
+ENDFUNC
+
+SUB DoBuild(tag$, replicas, limit)
+    DIM doc_lines = SPLIT(TXTREADER$("doc/languages.md"), CHR$(10))
+    DIM system$ = SystemText$(doc_lines)
+    TXTWRITER SYNTH_DIR$ + "/" + tag$ + ".system.txt", system$
+    DIM texts = []
+    DIM ti = 0
+    FOR ti = 0 TO LEN(TOPICS) - 1
+        texts = APPEND(texts, TopicText$(doc_lines, TOPICS[ti]))
+    NEXT
+    DIM requests = []
+    DIM n_topics = LEN(TOPICS)
+    DIM n_angles = LEN(ANGLES)
+    IF limit > 0 THEN
+        DIM q = 0
+        FOR q = 0 TO limit - 1
+            DIM tq = q MOD n_topics
+            DIM aq = (q * 3 + q \ n_topics) MOD n_angles
+            requests = APPEND(requests, RequestFor(tag$ + "-t" + STR$(tq) + "-a" + STR$(aq) + "-r0", system$, UserText$(texts[tq], ANGLES[aq], 0)))
+        NEXT
+    ELSE
+        DIM rr = 0
+        DIM ai = 0
+        FOR rr = 0 TO replicas - 1
+            FOR ti = 0 TO n_topics - 1
+                FOR ai = 0 TO n_angles - 1
+                    requests = APPEND(requests, RequestFor(tag$ + "-t" + STR$(ti) + "-a" + STR$(ai) + "-r" + STR$(rr), system$, UserText$(texts[ti], ANGLES[ai], rr)))
+                NEXT
+            NEXT
+        NEXT
+    ENDIF
+    DIM path$ = SYNTH_DIR$ + "/" + tag$ + ".requests.json"
+    TXTWRITER path$, JSON.STRINGIFY$({"requests": requests})
+    PRINT LEN(requests); " requests -> "; path$
+ENDSUB
+
+SUB DoSubmit(tag$)
+    DIM body$ = TXTREADER$(SYNTH_DIR$ + "/" + tag$ + ".requests.json")
+    DIM b = Checked(REQ.POST(Api(), "/v1/messages/batches", body$))
+    TXTWRITER SYNTH_DIR$ + "/" + tag$ + ".batch", b{"id"}
+    PRINT "batch "; b{"id"}; " "; b{"processing_status"}
+ENDSUB
+
+FUNC BatchId$(tag$)
+    RETURN TRIM$(TXTREADER$(SYNTH_DIR$ + "/" + tag$ + ".batch"))
+ENDFUNC
+
+FUNC DoStatus(tag$)
+    DIM b = Checked(REQ.GET(Api(), "/v1/messages/batches/" + BatchId$(tag$)))
+    DIM c = b{"request_counts"}
+    PRINT b{"id"}; " "; b{"processing_status"}; "  processing "; c{"processing"}; ", succeeded "; c{"succeeded"}; ", errored "; c{"errored"}; ", expired "; c{"expired"}; ", canceled "; c{"canceled"}
+    RETURN b
+ENDFUNC
+
+FUNC UsageOf(u, key$)
+    IF TYPEOF(u) <> "OBJECT" THEN RETURN 0
+    IF NOT MAP.EXISTS(u, key$) THEN RETURN 0
+    DIM v = u{key$}
+    IF NOT ISNUM(v) THEN RETURN 0
+    RETURN v
+ENDFUNC
+
+SUB DoFetch(tag$)
+    DIM b = DoStatus(tag$)
+    IF b{"processing_status"} <> "ended" THEN
+        PRINT "not ended yet"
+        RETURN
+    ENDIF
+    DIM r = REQ.GET(Api(), "/v1/messages/batches/" + b{"id"} + "/results")
+    IF NOT r{"ok"} THEN THROW "HTTP " + STR$(r{"status"}) + ": " + LEFT$(r{"body"}, 600)
+    DIM raw$ = REQ.TEXT$(r)
+    TXTWRITER SYNTH_DIR$ + "/" + tag$ + ".results.jsonl", raw$
+    DIM rows = SPLIT(raw$, CHR$(10))
+    DIM tok_in = 0
+    DIM tok_write = 0
+    DIM tok_read = 0
+    DIM tok_out = 0
+    DIM n_ok = 0
+    DIM n_bad = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        IF TRIM$(rows[i]) = "" THEN CONTINUEFOR
+        DIM row = JSON.PARSE(rows[i])
+        IF row{"result"}{"type"} = "succeeded" THEN
+            n_ok = n_ok + 1
+            DIM u = row{"result"}{"message"}{"usage"}
+            tok_in = tok_in + UsageOf(u, "input_tokens")
+            tok_write = tok_write + UsageOf(u, "cache_creation_input_tokens")
+            tok_read = tok_read + UsageOf(u, "cache_read_input_tokens")
+            tok_out = tok_out + UsageOf(u, "output_tokens")
+        ELSE
+            n_bad = n_bad + 1
+            PRINT row{"custom_id"}; ": "; LEFT$(JSON.STRINGIFY$(row{"result"}), 300)
+        ENDIF
+    NEXT
+    ' Opus 5.5 at batch prices: input 2, 1h cache write 4, cache read 0.10, output 10 USD per million tokens.
+    DIM usd = (tok_in * 2 + tok_write * 4 + tok_read * 0.1 + tok_out * 10) / 1000000
+    PRINT n_ok; " succeeded, "; n_bad; " failed"
+    PRINT "tokens: input "; tok_in; ", cache write "; tok_write; ", cache read "; tok_read; ", output "; tok_out
+    PRINT "estimated cost: "; FORMAT$("{:.2f}", usd); " USD"
+ENDSUB
+
+FUNC Shell(cmd$)
+    RETURN OS.EXEC("bash", ["-c", cmd$])
+ENDFUNC
+
+FUNC Normalized$(text$)
+    RETURN TRIM$(REPLACE$(text$, CHR$(13), ""))
+ENDFUNC
+
+' The reply's text block holds the JSON; thinking blocks come before it.
+FUNC ProgramsOf(message)
+    DIM blocks = message{"content"}
+    DIM i = 0
+    FOR i = 0 TO LEN(blocks) - 1
+        IF blocks[i]{"type"} = "text" THEN
+            DIM parsed = NONE
+            TRY
+                parsed = JSON.PARSE(blocks[i]{"text"})
+            CATCH
+                PRINT "reply is not JSON (cut off?): "; LEFT$(blocks[i]{"text"}, 80)
+            ENDTRY
+            IF TYPEOF(parsed) = "OBJECT" ANDALSO MAP.EXISTS(parsed, "programs") THEN RETURN parsed{"programs"}
+        ENDIF
+    NEXT
+    RETURN []
+ENDFUNC
+
+FUNC IsSafeName(text$)
+    RETURN LEN(text$) > 0 ANDALSO LEN(REGEX.FINDALL("[^A-Za-z0-9_-]", text$)) = 0
+ENDFUNC
+
+' The generated programs run unsandboxed with the user's rights. They come
+' from our own prompts, not from an adversary, and this screen is a guard
+' against a program that wanders, not a sandbox: a path assembled at run time
+' from pieces still gets through. A program runs
+' only when every builtin module it names is on SAFE_MODULES, it uses none of
+' the plain builtins below, builds no path that leaves the work folder, and
+' every module it IMPORTs passes the same screen.
+DIM SAFE_MODULES = ["MATH", "MAP", "JSON", "REGEX", "CODEC", "CHAN", "THREAD", "DATE", "PATH", "FILE", "ZIP", "OUTPUT", "RNG", "MAT4"]
+DIM UNSAFE_PAT$ = ""
+
+FUNC UnsafePattern$()
+    DIM rows = SPLIT(OS.EXEC(EXE$, ["--dump-help"]){"output"}, CHR$(10))
+    DIM prefixes = []
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM dot = INSTR(rows[i], ".")
+        DIM tab = INSTR(rows[i], CHR$(9))
+        IF dot <= 0 ORELSE tab < dot THEN CONTINUEFOR
+        DIM prefix$ = LEFT$(rows[i], dot)
+        IF LEN(REGEX.FINDALL("^[A-Z][A-Z0-9_]*$", prefix$)) = 0 THEN CONTINUEFOR
+        DIM listed = FALSE
+        DIM s = 0
+        FOR s = 0 TO LEN(SAFE_MODULES) - 1
+            IF SAFE_MODULES[s] = prefix$ THEN listed = TRUE
+        NEXT
+        IF NOT listed THEN prefixes = APPEND(prefixes, prefix$)
+    NEXT
+    IF LEN(prefixes) = 0 THEN THROW "no builtin module prefixes read from --dump-help"
+    DIM words$ = "SHELL|DECLARE|CREATEOBJECT|GETOBJECT|EXECUTE|EVAL|COMPILE|RMDIR|CD|CHDIR|SETENV|SAVE|LOAD|SAVEWS|LOADWS|RUN|CHAIN|INPUTBOX\$|FILESAVE\$|PYTHON\$"
+    RETURN "(?i)(\b(" + JOIN(UNIQUE(prefixes), "|") + ")\.\w+|(^|[^\w.])(" + words$ + ")(?![\w$]))"
+ENDFUNC
+
+' Paths are checked in the raw source, since they live in string literals.
+DIM PATH_PAT$ = "(:[\\/]|""[\\/]{1,2}\w|""\.\.""|\.\.[\\/]|CHR\$\(\s*(58|92)\s*\))"
+
+' The source with string literals emptied and comments dropped.
+FUNC CodeOnly$(code$)
+    DIM bare$ = REGEX.REPLACE$("""(""""|[^""\n])*""", code$, """""")
+    bare$ = REGEX.REPLACE$("'[^\n]*", bare$, "")
+    RETURN REGEX.REPLACE$("(?i)\bREM\b[^\n]*", bare$, "")
+ENDFUNC
+
+FUNC FirstMatch$(pat$, text$)
+    DIM hits = REGEX.FINDALL(pat$, text$)
+    IF LEN(hits) = 0 THEN RETURN ""
+    RETURN TRIM$(hits[0][0])
+ENDFUNC
+
+FUNC UnsafeReason$(code$, depth)
+    IF UNSAFE_PAT$ = "" THEN UNSAFE_PAT$ = UnsafePattern$()
+    DIM hit$ = FirstMatch$(UNSAFE_PAT$, CodeOnly$(code$))
+    IF hit$ = "" THEN hit$ = FirstMatch$(PATH_PAT$, code$)
+    IF hit$ <> "" THEN RETURN hit$
+    DIM src_lines = SPLIT(code$, CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(src_lines) - 1
+        DIM words = SPLIT(TRIM$(REPLACE$(src_lines[k], CHR$(9), " ")), " ")
+        IF LEN(words) < 2 ORELSE UCASE$(words[0]) <> "IMPORT" THEN CONTINUEFOR
+        DIM module$ = LCASE$(words[1])
+        DIM path$ = "lib/" + module$ + ".jdb"
+        IF depth > 4 ORELSE NOT FILE.EXISTS(path$) THEN RETURN "IMPORT " + module$
+        DIM inner$ = UnsafeReason$(TXTREADER$(path$), depth + 1)
+        IF inner$ <> "" THEN RETURN "IMPORT " + module$ + ": " + inner$
+    NEXT
+    RETURN ""
+ENDFUNC
+
+FUNC Verdict(name$, code$)
+    DIM v = {"name": name$, "lint": FALSE, "interp": FALSE, "compile": FALSE, "native": FALSE, "same": FALSE, "green": FALSE, "detail": ""}
+    DIM unsafe$ = UnsafeReason$(code$, 0)
+    IF unsafe$ <> "" THEN
+        v{"detail"} = "unsafe, not run: " + unsafe$
+        RETURN v
+    ENDIF
+    ' A copy for reading stays in WORK_DIR$; the runs happen in a folder of
+    ' their own that is removed afterwards, so no program sees another's files
+    ' or can plant a module that a later IMPORT would pick up.
+    TXTWRITER WORK_DIR$ + "/" + name$ + ".jdb", code$
+    DIM run_dir$ = MakeDir(WORK_DIR$ + "/run_" + name$)
+    TXTWRITER run_dir$ + "/" + name$ + ".jdb", code$
+    RunChecks(v, run_dir$, name$)
+    Shell("rm -rf " + run_dir$)
+    RETURN v
+ENDFUNC
+
+SUB RunChecks(v, run_dir$, name$)
+    DIM lint_r = OS.EXEC(EXE$, ["--lint", run_dir$ + "/" + name$ + ".jdb"])
+    v{"lint"} = lint_r{"exit_code"} = 0 ANDALSO INSTR(lint_r{"output"}, "Parsed OK") >= 0
+    IF NOT v{"lint"} THEN
+        v{"detail"} = "lint: " + RIGHT$(TRIM$(lint_r{"output"}), 400)
+        RETURN
+    ENDIF
+    DIM cd$ = "cd " + run_dir$ + " && "
+    DIM i_r = Shell(cd$ + "timeout " + STR$(RUN_SECONDS) + " " + EXE_FROM_RUN$ + " " + name$ + ".jdb < /dev/null")
+    v{"interp"} = i_r{"exit_code"} = 0
+    DIM c_r = Shell(cd$ + "timeout 300 " + EXE_FROM_RUN$ + " -c " + name$ + ".jdb")
+    v{"compile"} = c_r{"exit_code"} = 0 ANDALSO INSTR(c_r{"output"}, "Compiled:") >= 0
+    IF NOT v{"compile"} THEN
+        v{"detail"} = "compile: " + RIGHT$(TRIM$(c_r{"output"}), 400)
+        RETURN
+    ENDIF
+    DIM n_r = Shell(cd$ + "timeout " + STR$(RUN_SECONDS) + " ./" + name$ + ".exe < /dev/null")
+    v{"native"} = n_r{"exit_code"} = 0
+    DIM out_i$ = Normalized$(i_r{"output"})
+    DIM out_n$ = Normalized$(n_r{"output"})
+    v{"same"} = out_i$ = out_n$
+    v{"green"} = v{"interp"} ANDALSO v{"native"} ANDALSO v{"same"} ANDALSO out_i$ <> ""
+    IF NOT v{"green"} THEN
+        v{"detail"} = "interp(" + STR$(i_r{"exit_code"}) + "): " + LEFT$(out_i$, 300) + " | native(" + STR$(n_r{"exit_code"}) + "): " + LEFT$(out_n$, 300)
+    ENDIF
+ENDSUB
+
+FUNC TrainRecord$(task$, code$)
+    DIM sys_m = {"role": "system", "content": "You are a jdBasic coding assistant. Write correct, idiomatic jdBasic."}
+    DIM user_m = {"role": "user", "content": "Write a jdBasic program that does the following: " + task$}
+    DIM asst_m = {"role": "assistant", "content": code$}
+    RETURN JSON.STRINGIFY$({"messages": [sys_m, user_m, asst_m]})
+ENDFUNC
+
+SUB DoVerify(tag$)
+    MakeDir(WORK_DIR$)
+    DIM rows = SPLIT(TXTREADER$(SYNTH_DIR$ + "/" + tag$ + ".results.jsonl"), CHR$(10))
+    DIM train_path$ = SYNTH_DIR$ + "/" + tag$ + ".train.jsonl"
+    TXTWRITER train_path$, ""
+    DIM div_dir$ = MakeDir(SYNTH_DIR$ + "/divergent")
+    DIM n_diverge = 0
+    DIM verdicts = []
+    DIM n_prog = 0
+    DIM n_lint = 0
+    DIM n_interp = 0
+    DIM n_compile = 0
+    DIM n_native = 0
+    DIM n_green = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        IF TRIM$(rows[i]) = "" THEN CONTINUEFOR
+        DIM row = JSON.PARSE(rows[i])
+        IF row{"result"}{"type"} <> "succeeded" THEN CONTINUEFOR
+        IF NOT IsSafeName(row{"custom_id"}) THEN CONTINUEFOR
+        DIM programs = ProgramsOf(row{"result"}{"message"})
+        DIM p = 0
+        FOR p = 0 TO LEN(programs) - 1
+            DIM name$ = REPLACE$(row{"custom_id"}, "-", "_") + "_p" + STR$(p)
+            DIM code$ = programs[p]{"code"}
+            DIM v = Verdict(name$, code$)
+            v{"task"} = programs[p]{"task"}
+            verdicts = APPEND(verdicts, v)
+            n_prog = n_prog + 1
+            IF v{"lint"} THEN n_lint = n_lint + 1
+            IF v{"interp"} THEN n_interp = n_interp + 1
+            IF v{"compile"} THEN n_compile = n_compile + 1
+            IF v{"native"} THEN n_native = n_native + 1
+            IF v{"green"} THEN
+                n_green = n_green + 1
+                TXTWRITER train_path$, TrainRecord$(programs[p]{"task"}, code$) + CHR$(10), TRUE
+            ELSEIF v{"interp"} ANDALSO v{"compile"} THEN
+                ' The interpreter accepted it and -c compiled it, yet the
+                ' exe failed or printed something else: a backend divergence.
+                n_diverge = n_diverge + 1
+                TXTWRITER div_dir$ + "/" + name$ + ".jdb", code$
+            ENDIF
+            PRINT name$; IIF(v{"green"}, "  green", "  red  " + LEFT$(REPLACE$(v{"detail"}, CHR$(10), " "), 160))
+        NEXT
+    NEXT
+    TXTWRITER SYNTH_DIR$ + "/" + tag$ + ".report.json", JSON.STRINGIFY$({"programs": n_prog, "lint": n_lint, "interp": n_interp, "compile": n_compile, "native": n_native, "green": n_green, "verdicts": verdicts})
+    PRINT
+    PRINT "programs "; n_prog; "  lint "; n_lint; "  interp "; n_interp; "  compile "; n_compile; "  native "; n_native; "  green "; n_green; "  divergent "; n_diverge
+    PRINT "train -> "; train_path$
+ENDSUB
+
+DIM args = OS.ARGS()
+IF LEN(args) < 3 THEN
+    PRINT "usage: synthgen.jdb build|submit|status|fetch|verify <tag> [replicas] [limit]"
+    END
+ENDIF
+DIM mode$ = args[1]
+DIM tag$ = args[2]
+IF NOT IsSafeName(tag$) THEN
+    PRINT "a tag holds only letters, digits, _ and -"
+    END
+ENDIF
+MakeDir("dataset")
+MakeDir(SYNTH_DIR$)
+SWITCH mode$
+    CASE "build"
+        DIM replicas = 1
+        DIM limit = 0
+        IF LEN(args) > 3 THEN replicas = VAL(args[3])
+        IF LEN(args) > 4 THEN limit = VAL(args[4])
+        DoBuild(tag$, replicas, limit)
+    CASE "submit"
+        DoSubmit(tag$)
+    CASE "status"
+        DIM ignored = DoStatus(tag$)
+    CASE "fetch"
+        DoFetch(tag$)
+    CASE "verify"
+        DoVerify(tag$)
+    DEFAULT
+        PRINT "unknown mode "; mode$
+ENDSWITCH
