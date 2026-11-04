@@ -6,6 +6,7 @@
 '   jdBasic tools/synthgen.jdb status <tag>
 '   jdBasic tools/synthgen.jdb fetch  <tag>
 '   jdBasic tools/synthgen.jdb verify <tag>
+'   jdBasic tools/synthgen.jdb repair <tag> <limit> <source_tag>...
 '
 ' build   one request per (topic x angle x replica); a topic is a set of
 '         sections of doc/languages.md, sent with doc/llms-primer.md as a
@@ -20,6 +21,11 @@
 '         the same non-empty output. Greens go to dataset/synth/<tag>.train.jsonl
 '         (the ChatML shape of dataset/train.jsonl), every outcome to
 '         dataset/synth/<tag>.report.json.
+' repair  builds a batch from the red programs of the source tags' reports
+'         whose own code is at fault (lint, compile or interpreter error),
+'         each sent back with its error. submit, fetch and verify it like any
+'         tag; a green fix also lands in <tag>.repair.jsonl as an
+'         error-and-program -> diagnosis-and-fix training pair.
 '
 ' Environment: ANTHROPIC_API_KEY, SYNTH_MODEL (claude-opus-5-5),
 ' SYNTH_EFFORT (high).
@@ -144,13 +150,17 @@ FUNC OutputSchema()
     RETURN {"type": "object", "additionalProperties": FALSE, "required": ["programs"], "properties": {"programs": {"type": "array", "items": program_schema}}}
 ENDFUNC
 
-FUNC RequestFor(custom_id$, system$, user$)
+FUNC RepairSchema()
+    RETURN {"type": "object", "additionalProperties": FALSE, "required": ["diagnosis", "code"], "properties": {"diagnosis": {"type": "string"}, "code": {"type": "string"}}}
+ENDFUNC
+
+FUNC RequestFor(custom_id$, system$, user$, schema)
     DIM sys_block = {"type": "text", "text": system$, "cache_control": {"type": "ephemeral", "ttl": "1h"}}
     DIM params = {}
     params{"model"} = MODEL$
     params{"max_tokens"} = 32000
     params{"thinking"} = {"type": "adaptive"}
-    params{"output_config"} = {"effort": EFFORT$, "format": {"type": "json_schema", "schema": OutputSchema()}}
+    params{"output_config"} = {"effort": EFFORT$, "format": {"type": "json_schema", "schema": schema}}
     params{"system"} = [sys_block]
     params{"messages"} = [{"role": "user", "content": user$}]
     RETURN {"custom_id": custom_id$, "params": params}
@@ -217,7 +227,7 @@ SUB DoBuild(tag$, replicas, limit)
         FOR q = 0 TO limit - 1
             DIM tq = q MOD n_topics
             DIM aq = (q * 3 + q \ n_topics) MOD n_angles
-            requests = APPEND(requests, RequestFor(tag$ + "-t" + STR$(tq) + "-a" + STR$(aq) + "-r0", system$, UserText$(texts[tq], ANGLES[aq], 0)))
+            requests = APPEND(requests, RequestFor(tag$ + "-t" + STR$(tq) + "-a" + STR$(aq) + "-r0", system$, UserText$(texts[tq], ANGLES[aq], 0), OutputSchema()))
         NEXT
     ELSE
         DIM rr = 0
@@ -225,7 +235,7 @@ SUB DoBuild(tag$, replicas, limit)
         FOR rr = 0 TO replicas - 1
             FOR ti = 0 TO n_topics - 1
                 FOR ai = 0 TO n_angles - 1
-                    requests = APPEND(requests, RequestFor(tag$ + "-t" + STR$(ti) + "-a" + STR$(ai) + "-r" + STR$(rr), system$, UserText$(texts[ti], ANGLES[ai], rr)))
+                    requests = APPEND(requests, RequestFor(tag$ + "-t" + STR$(ti) + "-a" + STR$(ai) + "-r" + STR$(rr), system$, UserText$(texts[ti], ANGLES[ai], rr), OutputSchema()))
                 NEXT
             NEXT
         NEXT
@@ -309,7 +319,8 @@ FUNC Normalized$(text$)
     RETURN TRIM$(REPLACE$(text$, CHR$(13), ""))
 ENDFUNC
 
-' The reply's text block holds the JSON; thinking blocks come before it.
+' The reply's text block holds the JSON; thinking blocks come before it. A
+' repair reply holds one program and its diagnosis instead of a list.
 FUNC ProgramsOf(message)
     DIM blocks = message{"content"}
     DIM i = 0
@@ -322,6 +333,7 @@ FUNC ProgramsOf(message)
                 PRINT "reply is not JSON (cut off?): "; LEFT$(blocks[i]{"text"}, 80)
             ENDTRY
             IF TYPEOF(parsed) = "OBJECT" ANDALSO MAP.EXISTS(parsed, "programs") THEN RETURN parsed{"programs"}
+            IF TYPEOF(parsed) = "OBJECT" ANDALSO MAP.EXISTS(parsed, "code") THEN RETURN [{"task": "", "code": parsed{"code"}, "diagnosis": parsed{"diagnosis"}}]
         ENDIF
     NEXT
     RETURN []
@@ -486,7 +498,9 @@ SUB RunChecks(v, run_dir$, name$)
     DIM out_n$ = Normalized$(n_r{"output"})
     v{"same"} = out_i$ = out_n$
     v{"green"} = v{"interp"} ANDALSO v{"native"} ANDALSO v{"same"} ANDALSO out_i$ <> ""
-    IF NOT v{"green"} THEN
+    IF NOT v{"interp"} THEN
+        v{"detail"} = "interpreter run failed (exit " + STR$(i_r{"exit_code"}) + "): " + RIGHT$(out_i$, 400)
+    ELSEIF NOT v{"green"} THEN
         v{"detail"} = "interp(" + STR$(i_r{"exit_code"}) + "): " + LEFT$(out_i$, 300) + " | native(" + STR$(n_r{"exit_code"}) + "): " + LEFT$(out_n$, 300)
     ENDIF
 ENDSUB
@@ -498,11 +512,88 @@ FUNC TrainRecord$(task$, code$)
     RETURN JSON.STRINGIFY$({"messages": [sys_m, user_m, asst_m]})
 ENDFUNC
 
+' The compiler's progress lines say nothing about the failure; keep the
+' message from its first error on.
+FUNC CleanError$(detail$)
+    DIM at = INSTR(detail$, "error at")
+    IF at >= 0 THEN RETURN "native compiler: " + MID$(detail$, at)
+    RETURN detail$
+ENDFUNC
+
+FUNC RepairRecord$(origin, diagnosis$, fixed$)
+    DIM nl$ = CHR$(10)
+    DIM sys_m = {"role": "system", "content": "You are a jdBasic coding assistant. Write correct, idiomatic jdBasic."}
+    DIM ask$ = "This jdBasic program fails with the error below. Fix it." + nl$ + nl$ + "Error:" + nl$ + origin{"error"} + nl$ + nl$ + "Program:" + nl$ + origin{"code"}
+    DIM answer$ = diagnosis$ + nl$ + nl$ + "```basic" + nl$ + fixed$ + nl$ + "```"
+    RETURN JSON.STRINGIFY$({"messages": [sys_m, {"role": "user", "content": ask$}, {"role": "assistant", "content": answer$}]})
+ENDFUNC
+
+FUNC RepairText$(task$, error$, code$)
+    DIM nl$ = CHR$(10)
+    DIM t$ = "This jdBasic program was written for the task below. It fails the check every program must pass: lint, a run in the interpreter, a native compile with jdbasic -c, a run of the compiled exe, and the same output from both runs." + nl$ + nl$
+    t$ = t$ + "<task>" + nl$ + task$ + nl$ + "</task>" + nl$ + nl$
+    t$ = t$ + "<error>" + nl$ + error$ + nl$ + "</error>" + nl$ + nl$
+    t$ = t$ + "<program>" + nl$ + code$ + nl$ + "</program>" + nl$ + nl$
+    t$ = t$ + "Find the cause and return the corrected complete program in code. Keep what the task asks for and what the program prints; change only what the fix needs, and keep the rules from the primer and the native compiler section. In diagnosis, state the cause in one or two plain sentences, the way you would explain it to the person who wrote the program."
+    RETURN t$
+ENDFUNC
+
+' A red program is worth a repair when its own code is at fault: lint, the
+' compiler or the interpreter run refused it. A divergence (both accepted it,
+' the exe disagreed) is a fault in jdBasic, and a screened program never ran.
+FUNC Repairable(v)
+    IF v{"green"} THEN RETURN FALSE
+    IF v{"interp"} ANDALSO v{"compile"} THEN RETURN FALSE
+    DIM d$ = v{"detail"}
+    IF STARTSWITH(d$, "unsafe") ORELSE STARTSWITH(d$, "screen failed") ORELSE d$ = "" THEN RETURN FALSE
+    RETURN FILE.EXISTS(WORK_DIR$ + "/" + v{"name"} + ".jdb")
+ENDFUNC
+
+SUB DoRepair(tag$, limit, sources)
+    DIM doc_lines = SPLIT(TXTREADER$("doc/languages.md"), CHR$(10))
+    DIM system$ = SystemText$(doc_lines)
+    DIM requests = []
+    DIM meta = {}
+    DIM s = 0
+    FOR s = 0 TO LEN(sources) - 1
+        IF NOT IsSafeName(sources[s]) THEN CONTINUEFOR
+        DIM rep_path$ = SYNTH_DIR$ + "/" + sources[s] + ".report.json"
+        IF NOT FILE.EXISTS(rep_path$) THEN
+            PRINT "no report for "; sources[s]; ", run verify first"
+            CONTINUEFOR
+        ENDIF
+        DIM verdicts = JSON.PARSE(TXTREADER$(rep_path$)){"verdicts"}
+        DIM k = 0
+        FOR k = 0 TO LEN(verdicts) - 1
+            IF limit > 0 ANDALSO LEN(requests) >= limit THEN EXITFOR
+            DIM v = verdicts[k]
+            IF NOT Repairable(v) THEN CONTINUEFOR
+            DIM custom_id$ = tag$ + "-" + v{"name"}
+            IF LEN(custom_id$) > 64 THEN CONTINUEFOR
+            DIM old_code$ = TXTREADER$(WORK_DIR$ + "/" + v{"name"} + ".jdb")
+            DIM error$ = CleanError$(v{"detail"})
+            meta{custom_id$} = {"name": v{"name"}, "task": v{"task"}, "error": error$, "code": old_code$}
+            requests = APPEND(requests, RequestFor(custom_id$, system$, RepairText$(v{"task"}, error$, old_code$), RepairSchema()))
+        NEXT
+    NEXT
+    TXTWRITER SYNTH_DIR$ + "/" + tag$ + ".requests.json", JSON.STRINGIFY$({"requests": requests})
+    TXTWRITER SYNTH_DIR$ + "/" + tag$ + ".meta.json", JSON.STRINGIFY$(meta)
+    PRINT LEN(requests); " repair requests -> "; SYNTH_DIR$; "/"; tag$; ".requests.json"
+ENDSUB
+
 SUB DoVerify(tag$)
     MakeDir(WORK_DIR$)
     DIM rows = SPLIT(TXTREADER$(SYNTH_DIR$ + "/" + tag$ + ".results.jsonl"), CHR$(10))
     DIM train_path$ = SYNTH_DIR$ + "/" + tag$ + ".train.jsonl"
     TXTWRITER train_path$, ""
+    ' A repair batch has a meta file with each request's task and failure.
+    DIM meta = {}
+    DIM meta_path$ = SYNTH_DIR$ + "/" + tag$ + ".meta.json"
+    DIM repair_path$ = SYNTH_DIR$ + "/" + tag$ + ".repair.jsonl"
+    IF FILE.EXISTS(meta_path$) THEN
+        meta = JSON.PARSE(TXTREADER$(meta_path$))
+        TXTWRITER repair_path$, ""
+    ENDIF
     DIM div_dir$ = MakeDir(SYNTH_DIR$ + "/divergent")
     DIM n_diverge = 0
     DIM verdicts = []
@@ -523,8 +614,14 @@ SUB DoVerify(tag$)
         FOR p = 0 TO LEN(programs) - 1
             DIM name$ = REPLACE$(row{"custom_id"}, "-", "_") + "_p" + STR$(p)
             DIM code$ = programs[p]{"code"}
+            DIM task$ = programs[p]{"task"}
+            DIM origin = NONE
+            IF MAP.EXISTS(meta, row{"custom_id"}) THEN
+                origin = meta{row{"custom_id"}}
+                task$ = origin{"task"}
+            ENDIF
             DIM v = Verdict(name$, code$)
-            v{"task"} = programs[p]{"task"}
+            v{"task"} = task$
             verdicts = APPEND(verdicts, v)
             n_prog = n_prog + 1
             IF v{"lint"} THEN n_lint = n_lint + 1
@@ -533,7 +630,8 @@ SUB DoVerify(tag$)
             IF v{"native"} THEN n_native = n_native + 1
             IF v{"green"} THEN
                 n_green = n_green + 1
-                TXTWRITER train_path$, TrainRecord$(programs[p]{"task"}, code$) + CHR$(10), TRUE
+                TXTWRITER train_path$, TrainRecord$(task$, code$) + CHR$(10), TRUE
+                IF TYPEOF(origin) = "OBJECT" THEN TXTWRITER repair_path$, RepairRecord$(origin, programs[p]{"diagnosis"}, code$) + CHR$(10), TRUE
             ELSEIF v{"interp"} ANDALSO v{"compile"} THEN
                 ' The interpreter accepted it and -c compiled it, yet the
                 ' exe failed or printed something else: a backend divergence.
@@ -577,6 +675,15 @@ SWITCH mode$
         DoFetch(tag$)
     CASE "verify"
         DoVerify(tag$)
+    CASE "repair"
+        DIM cap = 0
+        IF LEN(args) > 3 THEN cap = VAL(args[3])
+        DIM sources = []
+        DIM a = 4
+        FOR a = 4 TO LEN(args) - 1
+            PUSH(sources, args[a])
+        NEXT
+        DoRepair(tag$, cap, sources)
     DEFAULT
         PRINT "unknown mode "; mode$
 ENDSWITCH
