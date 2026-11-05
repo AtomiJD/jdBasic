@@ -501,6 +501,11 @@ private:
     // Parameter names of the function being generated: an element read
     // out of an untyped array parameter asks the cell for its kind.
     std::unordered_set<std::string> current_param_names;
+    // Those of them declared without a user type: a global object of the
+    // same name does not describe them.
+    std::unordered_set<std::string> current_untyped_params;
+    // Locals of that function declared AS a user type.
+    std::unordered_set<std::string> current_udt_locals;
     // The same for top-level variables, over the whole program: a SUB body
     // may assign a global long after the main body has read it statically.
     std::unordered_set<std::string> runtime_later_globals;

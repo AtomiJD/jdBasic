@@ -1,0 +1,104 @@
+' TYPE members: a keyword cannot name one, and the parser says so instead of
+' skipping it (`In AS Inner` used to leave a member called INNER without a
+' type, which read NONE). A member may be written with or without DIM. An
+' instance of a user type, a member declared AS one and a FUNC's answer are
+' OBJECT to TYPEOF on both backends.
+DIM bad = 0.0
+
+TYPE Inner
+    Score AS INTEGER
+ENDTYPE
+TYPE Holder
+    Core AS Inner
+    DIM Label AS STRING
+ENDTYPE
+
+FUNC MakeHolder()
+    DIM h AS Holder
+    h.Core.Score = 6
+    h.Label = "made"
+    RETURN h
+ENDFUNC
+
+DIM held AS Holder
+held.Core.Score = 9
+DIM made = MakeHolder()
+DIM slots[2] AS Holder
+
+DIM kinds$ = TYPEOF(held) + " " + TYPEOF(held.Core) + " " + TYPEOF(made) + " " + TYPEOF(made.Core) + " " + TYPEOF(slots[0]) + " " + TYPEOF(slots[0].Core)
+IF kinds$ <> "OBJECT OBJECT OBJECT OBJECT OBJECT OBJECT" THEN
+    bad = bad + 1
+    PRINT "TYPEOF of user type values: ["; kinds$; "]"
+ENDIF
+IF held.Core.Score <> 9 OR made.Core.Score <> 6 OR made.Label <> "made" THEN
+    bad = bad + 1
+    PRINT "nested members read back wrong"
+ENDIF
+
+' A parameter or a local that shares the name of a global object is not one.
+DIM shadow AS Holder
+FUNC ParamKind$(shadow)
+    RETURN TYPEOF(shadow)
+ENDFUNC
+FUNC LocalKind$()
+    DIM shadow = 5
+    RETURN TYPEOF(shadow)
+ENDFUNC
+FUNC TypedLocalKind$()
+    DIM own AS Holder
+    RETURN TYPEOF(own) + " " + TYPEOF(own.Core)
+ENDFUNC
+DIM shadows$ = ParamKind$("text") + " " + LocalKind$() + " " + TypedLocalKind$()
+IF shadows$ <> "STRING INT64 OBJECT OBJECT" THEN
+    bad = bad + 1
+    PRINT "TYPEOF under a shadowing name: ["; shadows$; "]"
+ENDIF
+
+DIM exe$ = "build\jdBasic.exe"
+IF NOT FILE.EXISTS(exe$) THEN exe$ = "..\..\build\jdBasic.exe"
+IF FILE.EXISTS(exe$) THEN
+    DIM work$ = MKTEMP$("typemembers")
+    MKDIR work$
+    DIM one$ = work$ + "/one.jdb"
+    DIM told$ = ""
+    DIM child = 0
+
+    TXTWRITER one$, "TYPE T" + CHR$(10) + "    In AS INTEGER" + CHR$(10) + "ENDTYPE" + CHR$(10)
+    child = OS.EXEC(exe$, ["--lint", one$])
+    told$ = child{"output"}
+    IF INSTR(told$, "'IN' is a keyword and cannot name a member of TYPE T") < 0 THEN
+        bad = bad + 1
+        PRINT "a keyword member was answered with ["; told$; "]"
+    ENDIF
+
+    TXTWRITER one$, "TYPE T" + CHR$(10) + "    DIM In AS INTEGER" + CHR$(10) + "ENDTYPE" + CHR$(10)
+    child = OS.EXEC(exe$, ["--lint", one$])
+    told$ = child{"output"}
+    IF INSTR(told$, "is a keyword and cannot name a member") < 0 THEN
+        bad = bad + 1
+        PRINT "a keyword member after DIM was answered with ["; told$; "]"
+    ENDIF
+
+    TXTWRITER one$, "TYPE T" + CHR$(10) + "    x AS INTEGER" + CHR$(10) + "    PRINT 1" + CHR$(10) + "ENDTYPE" + CHR$(10)
+    child = OS.EXEC(exe$, ["--lint", one$])
+    told$ = child{"output"}
+    IF INSTR(told$, "unexpected 'PRINT' in TYPE T") < 0 THEN
+        bad = bad + 1
+        PRINT "a stray statement in a TYPE was answered with ["; told$; "]"
+    ENDIF
+
+    TXTWRITER one$, "TYPE T" + CHR$(10) + "    DIM a" + CHR$(10) + "    b AS INTEGER" + CHR$(10) + "ENDTYPE" + CHR$(10)
+    child = OS.EXEC(exe$, ["--lint", one$])
+    told$ = child{"output"}
+    IF INSTR(told$, "Parsed OK") < 0 THEN
+        bad = bad + 1
+        PRINT "members with and without DIM were refused: ["; told$; "]"
+    ENDIF
+
+    KILL one$
+    RMDIR work$
+ELSE
+    PRINT "no build\jdBasic.exe: the parser half is skipped"
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

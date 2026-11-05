@@ -376,8 +376,14 @@ StmtPtr Parser::parse_statement() {
                     Param this_param; this_param.name = "THIS"; this_param.type = VarType::OBJECT;
                     method->ext().params.insert(method->ext().params.begin(), std::move(this_param));
                     s->body.push_back(std::move(method));
-                } else if (check(TokenType::IDENTIFIER)) {
-                    // Member declaration: Name AS Type
+                } else if (check(TokenType::DIM) && peek_at(1).type != TokenType::IDENTIFIER &&
+                           peek_at(2).type == TokenType::AS) {
+                    advance(); // DIM
+                    continue;  // the keyword after it is reported below
+                } else if (check(TokenType::IDENTIFIER) ||
+                           (check(TokenType::DIM) && peek_at(1).type == TokenType::IDENTIFIER)) {
+                    // Member declaration: [DIM] Name [AS Type]
+                    match(TokenType::DIM);
                     Stmt::TypeMember mem;
                     mem.name = advance().value;
                     if (match(TokenType::AS)) {
@@ -388,8 +394,14 @@ StmtPtr Parser::parse_statement() {
                     }
                     s->ext().type_members.push_back(std::move(mem));
                     expect_newline();
+                } else if (peek_at(1).type == TokenType::AS) {
+                    throw std::runtime_error("Parse error at line " + std::to_string(current().line) +
+                        ": '" + current().value + "' is a keyword and cannot name a member of TYPE " +
+                        type_name + " - choose another name");
                 } else {
-                    advance(); // skip unexpected
+                    throw std::runtime_error("Parse error at line " + std::to_string(current().line) +
+                        ": unexpected '" + current().value + "' in TYPE " + type_name +
+                        " (a member is 'Name AS Type', a method SUB or FUNC)");
                 }
                 skip_newlines();
             }

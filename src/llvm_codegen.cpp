@@ -6211,8 +6211,15 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     auto saved_runtime_later = std::move(runtime_later_locals);
     runtime_later_locals.clear();
     auto saved_param_names = std::move(current_param_names);
+    auto saved_untyped_params = std::move(current_untyped_params);
+    auto saved_udt_locals = std::move(current_udt_locals);
     current_param_names.clear();
-    for (auto& pn : stmt.params()) current_param_names.insert(pn.name);
+    current_untyped_params.clear();
+    current_udt_locals.clear();
+    for (auto& pn : stmt.params()) {
+        current_param_names.insert(pn.name);
+        if (pn.type_name.empty()) current_untyped_params.insert(pn.name);
+    }
     bool saved_copy_param_returns = copy_param_returns;
     copy_param_returns = fresh_string_funcs.count(stmt.func_name) > 0;
     // The element-kind sets are keyed by name; what this body registers
@@ -6511,6 +6518,8 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     owned_rt_locals = std::move(saved_owned_rt);
     runtime_later_locals = std::move(saved_runtime_later);
     current_param_names = std::move(saved_param_names);
+    current_untyped_params = std::move(saved_untyped_params);
+    current_udt_locals = std::move(saved_udt_locals);
     copy_param_returns = saved_copy_param_returns;
     array_array_vars = std::move(saved_array_array);
     field_array_vars = std::move(saved_field_array);
@@ -8034,6 +8043,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             LLVMBuildStore(builder, obj, vi->alloca_val);
             vi->tag = JD_TAG_ARR;
             var_udt_type[stmt.var_name] = stmt.label;
+            if (scopes.size() > 1) current_udt_locals.insert(stmt.var_name);
             track_dispose_local(stmt.var_name, stmt.label, /*is_array=*/false);
             return;
         }
@@ -17205,6 +17215,26 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // Special-case BOOL literals at compile time
         if (expr.args[0]->kind == ExprKind::LITERAL_BOOL) {
             return { LLVMBuildGlobalStringPtr(builder, "BOOLEAN", ".tof"), JD_TAG_STR };
+        }
+        // An instance of a user type, also a member declared AS one or a
+        // cell of a typed array: OBJECT, as in the interpreter.
+        {
+            const Expr* root = expr.args[0].get();
+            while (root && (root->kind == ExprKind::MEMBER_ACCESS || root->kind == ExprKind::INDEX))
+                root = root->left.get();
+            std::string root_name = root && root->kind == ExprKind::VARIABLE ? root->str_val : std::string();
+            root_name = root_name.substr(0, root_name.find('.'));
+            // The name table is program-wide, so a local or an untyped
+            // parameter only counts when this function declared it AS a
+            // user type itself.
+            bool local = false;
+            for (size_t si = scopes.size(); si-- > 1; )
+                if (scopes[si].vars.count(root_name)) { local = true; break; }
+            bool declared = !local ||
+                (current_param_names.count(root_name) && !current_untyped_params.count(root_name)) ||
+                current_udt_locals.count(root_name);
+            if (!root_name.empty() && declared && !expr_udt_type(*expr.args[0]).empty())
+                return { LLVMBuildGlobalStringPtr(builder, "OBJECT", ".tof"), JD_TAG_STR };
         }
         // Variables declared AS BOOLEAN or bound to a bool literal
         if (expr.args[0]->kind == ExprKind::VARIABLE) {
