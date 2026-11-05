@@ -64,6 +64,8 @@ extern "C" JdbArray* jdb_array_new(int64_t size);
 // at the end of a loop pass does not take the value from under the cell.
 static void* g_jdrt_handle = nullptr;
 extern "C" int64_t jdrt_promote_handle(void* rt, int64_t h);
+extern "C" int32_t jdrt_val_kind(void* rt, int64_t h);
+extern "C" double jdrt_val_to_f64(void* rt, int64_t handle);
 static inline double keep_vm_handle(double val, int32_t tag) {
     if (tag != JD_TAG_VM_HANDLE || !g_jdrt_handle) return val;
     union { double d; int64_t i; } u; u.d = val;
@@ -1030,8 +1032,22 @@ static bool write_into_row(JdbArray* arr, int64_t idx, double d, int32_t tag) {
     return true;
 }
 
+// A cell written the value it already holds: the cell keeps its count, so
+// the adopt the compiled store makes right after is skipped once.
+static thread_local const JdbArray* g_kept_arr = nullptr;
+static thread_local int64_t g_kept_idx = -1;
+static inline bool cell_kept(JdbArray* arr, int64_t idx) {
+    g_kept_arr = arr;
+    g_kept_idx = idx;
+    return true;
+}
+
 void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
+    g_kept_arr = nullptr;
     if (arr && idx >= 0 && idx < arr->length) {
+        // A row written back into the cell it was read from stays as it is;
+        // letting the cell's row out first would free the value being stored.
+        if (memcmp(&arr->data[idx], &val, sizeof val) == 0 && cell_kept(arr, idx)) return;
         if (write_into_row(arr, idx, val, JD_TAG_F64)) return;
         rc_drop_cell_text(arr, idx);
         if (rc_holds_rows(arr)) rc_implicit_overwrite(arr, idx);
@@ -1464,10 +1480,13 @@ JdbArray* jdb_array_append(JdbArray* arr, double val) {
 // Writes a cell together with the kind it holds, so an array whose
 // cells are of different kinds can be read back one cell at a time.
 void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
+    g_kept_arr = nullptr;
     if (!arr || idx < 0 || idx >= arr->length) {
         jdb_index_out_of_bounds(idx);
         return;
     }
+    if (tag == JD_TAG_ARR && cell_is_arr(arr, idx) &&
+        memcmp(&arr->data[idx], &val, sizeof val) == 0 && cell_kept(arr, idx)) return;
     if (write_into_row(arr, idx, val, tag)) return;
     if (!ensure_tags(arr)) return;
     if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP)
@@ -1595,6 +1614,16 @@ void jdb_tagged_arr_set(int64_t base, int32_t base_tag, int64_t idx, int64_t bit
 
 JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
     return jdb_guard([&]() -> JdbArray* {
+        // A number held in a VM value is stored as the number, so the
+        // array's own builtins (MEAN, MIN, SORT) read it.
+        if (tag == JD_TAG_VM_HANDLE && g_jdrt_handle) {
+            union { double d; int64_t i; } u; u.d = val;
+            int32_t kind = jdrt_val_kind(g_jdrt_handle, u.i);
+            if (kind == 2 || kind == 1) {
+                val = jdrt_val_to_f64(g_jdrt_handle, u.i);
+                tag = kind == 2 ? JD_TAG_F64 : JD_TAG_BOOL;
+            }
+        }
         int64_t newlen = arr ? arr->length + 1 : 1;
         auto* r = jdb_array_new(newlen);
         if (arr) memcpy(r->data, arr->data, arr->length * sizeof(double));
@@ -3973,6 +4002,10 @@ extern "C" void jdb_rc_adopt_cell(int64_t parent_bits, int64_t idx, int64_t chil
         if (idx < 0 || idx >= arr->length || !arr->data) return;
         union { double d; int64_t i; } u; u.d = arr->data[idx];
         if (u.i != child_bits) return;
+        if (g_kept_arr == arr && g_kept_idx == idx) {
+            g_kept_arr = nullptr;
+            return;
+        }
     }
     jdb_rc_adopt(parent_bits, child_bits);
 }
@@ -5523,6 +5556,11 @@ char* jdb_join_arr(JdbArray* arr, const char* delim) {
                     jdb_text::View s = text_in(sub);
                     if (s.n) out.append(s.p, s.n);
                     free(sub);
+                } else if (k == JD_TAG_VM_HANDLE && g_jdrt_handle) {
+                    union { double d; int64_t i; } u; u.d = arr->data[i];
+                    const char* vt = jdrt_val_to_str(g_jdrt_handle, u.i);
+                    if (vt) out += vt;
+                    bridge_text_free(vt);
                 } else {
                     jdb_format_double(num, (int)sizeof num, arr->data[i]);
                     out += num;

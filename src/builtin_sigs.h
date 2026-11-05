@@ -55,7 +55,7 @@ struct BuiltinSig {
 inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"ABS", BuiltinRet::F64, BF_READS_ARRS},
     {"ACOS", BuiltinRet::F64, BF_READS_ARRS},
-    {"AGG", BuiltinRet::Handle, BF_NO_VEC},
+    {"AGG", BuiltinRet::Arr, BF_NO_VEC},
     {"AI.ARGMAX", BuiltinRet::I64, BF_NO_VEC},
     {"AI.CHAT", BuiltinRet::Str, BF_NO_VEC},
     {"AI.CHAT_JSON", BuiltinRet::Any, BF_NO_VEC},

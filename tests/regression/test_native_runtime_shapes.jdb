@@ -242,6 +242,178 @@ FOR q = 0 TO 3
 NEXT
 Check(JOIN(letters, "") = "DCBA", "a text variable stored in a cell keeps the cell valid")
 
+' --- an index whose kind only the run knows, inside loops ---
+FUNC FewestCoins(coins, target AS INTEGER)
+    DIM best = [0]
+    DIM pick = [0]
+    FOR v = 1 TO target
+        best = APPEND(best, -1)
+        pick = APPEND(pick, 0)
+        FOR EACH c IN coins
+            IF c <= v ANDALSO best[v - c] >= 0 ANDALSO (best[v] < 0 ORELSE best[v - c] + 1 < best[v]) THEN
+                best[v] = best[v - c] + 1
+                pick[v] = c
+            ENDIF
+        NEXT
+    NEXT
+    DIM used = []
+    DIM rest = target
+    DO WHILE rest > 0 ANDALSO best[target] >= 0
+        used = APPEND(used, pick[rest])
+        rest = rest - pick[rest]
+    LOOP
+    RETURN used
+ENDFUNC
+
+DIM coinSpec = JSON.PARSE("{""coins"": [1, 7, 10, 22]}")
+Check(JOIN(FewestCoins(coinSpec{"coins"}, 14), ",") = "7,7", "a cell difference indexes inside a FOR EACH")
+Check(JOIN(FewestCoins([1, 7, 10, 22], 29), ",") = "7,22", "a loop variable fed by a mixed array cell")
+
+FUNC PeekAt(xs)
+    DIM out$ = ""
+    DIM ref = [10, 20, 30, 40]
+    FOR EACH x IN xs
+        out$ = out$ + STR$(ref[3 - x])
+    NEXT
+    RETURN out$
+ENDFUNC
+Check(PeekAt([1, 2]) = "3020", "a runtime-typed index into a local array")
+
+' --- a row written back into the cell it was read from, in a loop ---
+DIM tally = RESHAPE(IOTA(12) * 0, [3, 4])
+SUB Bump(club AS INTEGER, n AS INTEGER)
+    DIM rowCopy = tally[club]
+    rowCopy[1] = rowCopy[1] + n
+    tally[club] = rowCopy
+ENDSUB
+FOR q = 0 TO 2
+    Bump(q, 1)
+    Bump(2 - q, 2)
+NEXT
+DIM churn = [[9, 9, 9, 9], [9, 9, 9, 9]]
+Check(SUM(SLICE(tally, 1, 1)) = 9 ANDALSO tally[0][1] = 3, "a row written back into its own cell stays valid")
+
+' --- SWITCH ranges on a value of run-time kind ---
+FUNC Bands$(xs)
+    DIM out$ = ""
+    FOR EACH x IN xs
+        SWITCH x
+            CASE 1 TO 5
+                out$ = out$ + "l"
+            CASE 6
+                out$ = out$ + "s"
+            DEFAULT
+                out$ = out$ + "h"
+        ENDSWITCH
+    NEXT
+    RETURN out$
+ENDFUNC
+Check(Bands$([3, 6, 9]) = "lsh", "SWITCH on cells of a native array")
+Check(Bands$(JSON.PARSE("[2, 6, 70]")) = "lsh", "SWITCH on cells of a VM array")
+
+' --- ISNONE on a parameter, keys typed AS STRING ---
+FUNC FieldKind$(v)
+    IF ISNONE(v) THEN RETURN "missing"
+    IF ISNUM(v) THEN RETURN "number"
+    RETURN "other"
+ENDFUNC
+DIM parsedCfg = JSON.PARSE("{""a"": 1}")
+DIM nativeCfg = {"a": 1}
+DIM gone$ = "zz"
+Check(FieldKind$(parsedCfg{"zz"}) = "missing" ANDALSO FieldKind$(parsedCfg{"a"}) = "number", "ISNONE of a VM map miss through a parameter")
+Check(FieldKind$(nativeCfg{gone$}) = "missing" ANDALSO FieldKind$(5) = "number", "ISNONE of a native map miss through a parameter")
+
+SUB Debit(m AS MAP, item AS STRING, n AS INTEGER)
+    m{item} = m{item} - n
+ENDSUB
+DIM stockMap = {"bolt": 120}
+Debit(stockMap, "bolt", 5)
+Check(stockMap{"bolt"} = 115, "a map key held in a variable AS STRING")
+
+' --- MAP fields and MAP parameters of a user type ---
+TYPE Shelf
+    Stock AS MAP
+    SUB INIT(m AS MAP, item AS STRING, n AS INTEGER)
+        THIS.Stock = {"seed": 1}
+        m{item} = m{item} - n
+    ENDSUB
+    FUNC Total() AS DOUBLE
+        DIM t = 0.0
+        FOR EACH k IN MAP.KEYS(THIS.Stock)
+            t = t + THIS.Stock{k}
+        NEXT
+        RETURN t
+    ENDFUNC
+    SUB Put(item AS STRING, n AS DOUBLE)
+        DIM m = THIS.Stock
+        m{item} = n
+    ENDSUB
+ENDTYPE
+DIM store = {"bolt": 120}
+DIM shelfA AS Shelf(store, "bolt", 25)
+shelfA.Put("rice", 2.5)
+Check(store{"bolt"} = 95, "a MAP parameter of INIT writes the caller's map")
+Check(shelfA.Total() = 3.5, "MAP.KEYS and reads of a MAP field with an untyped key")
+
+' --- JOIN of values a channel handed out ---
+DIM ring = CHAN.OPEN(3, "ring")
+FOR EACH entry$ IN ["boot", "sync", "idle"]
+    CHAN.SEND ring, entry$
+NEXT
+DIM drained = []
+DIM got = CHAN.TRY_RECV(ring)
+DO WHILE NOT (CHAN.IS_TIMEOUT(got) ORELSE CHAN.IS_EOF(got))
+    drained = APPEND(drained, got)
+    got = CHAN.TRY_RECV(ring)
+LOOP
+Check(JOIN(drained, "|") = "boot|sync|idle", "JOIN of values received from a channel")
+
+' --- numbers received from a channel, summed by array builtins ---
+DIM feed = CHAN.OPEN(4)
+CHAN.SEND feed, 120
+CHAN.SEND feed, 80
+CHAN.CLOSE feed
+DIM samplesIn = []
+DIM msgIn = CHAN.TRY_RECV(feed)
+DO WHILE NOT (CHAN.IS_TIMEOUT(msgIn) ORELSE CHAN.IS_EOF(msgIn))
+    samplesIn = APPEND(samplesIn, msgIn)
+    msgIn = CHAN.TRY_RECV(feed)
+LOOP
+Check(MEAN(samplesIn) = 100 ANDALSO MAX(samplesIn) = 120, "MEAN and MAX of numbers received from a channel")
+
+' --- a method calling one the TYPE lists further down; AGG answered by a FUNC ---
+TYPE Banner
+    Wide AS INTEGER
+    SUB INIT(w AS INTEGER)
+        THIS.Wide = w
+        THIS.Draw("=")
+    ENDSUB
+    SUB Draw(ch$)
+        bannerLine$ = REPLACE$(SPACE$(THIS.Wide), " ", ch$)
+    ENDSUB
+ENDTYPE
+DIM bannerLine$ = ""
+DIM banner AS Banner(3)
+Check(bannerLine$ = "===", "INIT calls a method declared after it")
+
+FUNC SumsBy(keys AS ARRAY, amounts AS ARRAY)
+    RETURN AGG(keys, amounts, LAMBDA grp -> SUM(grp))
+ENDFUNC
+DIM grouped = SumsBy(["a", "b", "a"], [1, 2, 3])
+Check(LEN(grouped) = 2 ANDALSO JOIN(SLICE(grouped, 1, 0), ",") = "a,b", "a FUNC answers what AGG built")
+
+' --- a global text array that also takes text cell writes ---
+DIM board = []
+SUB FillBoard()
+    board = []
+    FOR EACH g$ IN SPLIT("#,R,c", ",")
+        board = APPEND(board, g$)
+    NEXT
+ENDSUB
+FillBoard()
+board[1] = "."
+Check(JOIN(board, "") = "#.c" ANDALSO board[2] + "!" = "c!", "a global text array written cell by cell")
+
 ' --- a reactive binding stops a compiled program with a message ---
 IF NOT OS.FEATURE("INTERPRETER") THEN
     DIM rx AS REACT INTEGER

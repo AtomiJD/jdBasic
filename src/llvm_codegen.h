@@ -644,7 +644,7 @@ private:
     // UDT type registry: type_name → list of {field_name, is_string, udt_type}
     // udt_type names the user type of a member declared AS <user type>,
     // empty for every other member.
-    struct UDTField { std::string name; bool is_string; std::string udt_type; };
+    struct UDTField { std::string name; bool is_string; std::string udt_type; bool is_map = false; };
     std::unordered_map<std::string, std::vector<UDTField>> udt_types;
     void register_udt_fields(const Stmt& type_decl);
     const UDTField* udt_field(const std::string& type_name, const std::string& field_name);

@@ -500,6 +500,15 @@ ELSEIF pattern$ = "rowfill" THEN
         fillgrid[2] = [i, 0]
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "rowback" THEN
+    ' a row read out of its cell and written back into it
+    DIM backrows = [[1, 2], [3, 4]]
+    DIM backrow = []
+    FOR i = 1 TO passes
+        backrow = backrows[i MOD 2]
+        backrows[i MOD 2] = backrow
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
