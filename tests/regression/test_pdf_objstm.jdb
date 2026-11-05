@@ -1,0 +1,89 @@
+' ============================================================
+' Regression: PDF.TEXT$ finds fonts packed into an object stream
+' ============================================================
+' Self-checking. Each failure prints [FAIL].
+'
+' A PDF 1.5 file may keep its page, the page's /Font dictionary and the
+' font objects inside a compressed /Type /ObjStm, where they carry no
+' "N 0 obj" header. The font's /ToUnicode CMap has to be reached through
+' them, or the text comes out as raw glyph codes.
+'
+' Covers:
+'   1. Font objects inside a FlateDecode object stream.
+'   2. A /Font dictionary that is an object of its own (/Font 4 0 R).
+'   3. An object stream without a filter, with the font dict inline.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+DIM NL AS STRING = CHR$(10)
+
+SUB CHECK_STR(name$, expected AS STRING, actual AS STRING)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected=["; expected; "]  actual=["; actual; "]"
+    ENDIF
+ENDSUB
+
+FUNC CMAP_STREAM$() AS STRING
+    DIM src AS STRING = "/CIDInit /ProcSet findresource begin" + NL
+    src = src + "12 dict begin begincmap" + NL
+    src = src + "1 begincodespacerange <0000> <FFFF> endcodespacerange" + NL
+    src = src + "5 beginbfchar" + NL
+    src = src + "<0001> <0047>" + NL + "<0002> <0072>" + NL + "<0003> <00FC>" + NL
+    src = src + "<0004> <00DF>" + NL + "<0005> <0065>" + NL
+    src = src + "endbfchar" + NL + "endcmap end end" + NL
+    RETURN "6 0 obj" + NL + "<< /Length " + STR$(LEN(src)) + " >>" + NL + "stream" + NL + src + "endstream" + NL + "endobj" + NL
+ENDFUNC
+
+FUNC CONTENT_STREAM$() AS STRING
+    DIM src AS STRING = "BT /F1 12 Tf 72 700 Td <00010002000300040005> Tj ET" + NL
+    RETURN "7 0 obj" + NL + "<< /Length " + STR$(LEN(src)) + " >>" + NL + "stream" + NL + src + "endstream" + NL + "endobj" + NL
+ENDFUNC
+
+' The objects 1-5 as one object stream, numbered 8.
+FUNC OBJSTM$(objs AS ARRAY, packed AS INTEGER) AS STRING
+    DIM header AS STRING = ""
+    DIM body AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(objs) - 1
+        header = header + STR$(i + 1) + " " + STR$(LEN(body)) + " "
+        body = body + objs[i] + NL
+    NEXT i
+    DIM plain AS STRING = header + body
+    DIM dict AS STRING = "<< /Type /ObjStm /N " + STR$(LEN(objs)) + " /First " + STR$(LEN(header))
+    DIM data AS STRING = plain
+    IF packed THEN
+        data = CODEC.DEFLATE$(plain)
+        dict = dict + " /Filter /FlateDecode"
+    ENDIF
+    dict = dict + " /Length " + STR$(LEN(data)) + " >>"
+    RETURN "8 0 obj" + NL + dict + NL + "stream" + NL + data + NL + "endstream" + NL + "endobj" + NL
+ENDFUNC
+
+FUNC WRITE_PDF$(objs AS ARRAY, packed AS INTEGER) AS STRING
+    DIM path AS STRING = MKTEMP$("objstm") + ".pdf"
+    DIM doc AS STRING = "%PDF-1.7" + NL + OBJSTM$(objs, packed) + CMAP_STREAM$() + CONTENT_STREAM$()
+    doc = doc + "trailer" + NL + "<< /Root 1 0 R /Size 9 >>" + NL + "%%EOF" + NL
+    BINWRITER path, doc
+    RETURN path
+ENDFUNC
+
+DIM font AS STRING = "<< /Type /Font /Subtype /Type0 /BaseFont /ABCDEF+Sans /Encoding /Identity-H /ToUnicode 6 0 R >>"
+
+DIM indirect AS ARRAY = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /Resources << /Font 4 0 R >> /Contents 7 0 R >>", "<< /F1 5 0 R >>", font]
+DIM p1 AS STRING = WRITE_PDF$(indirect, TRUE)
+CHECK_STR("packed objects, indirect /Font", "Grüße", TRIM$(PDF.TEXT$(p1)))
+KILL p1
+
+DIM inline AS ARRAY = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>", "<< /Producer (test) >>", font]
+DIM p2 AS STRING = WRITE_PDF$(inline, FALSE)
+CHECK_STR("unfiltered object stream, inline /Font", "Grüße", TRIM$(PDF.TEXT$(p2)))
+KILL p2
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+IF FAIL_COUNT = 0 THEN PRINT "ALL TESTS PASSED!"

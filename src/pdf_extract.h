@@ -585,15 +585,91 @@ inline std::string object_stream(const std::string& pdf, long num) {
     return std::string((const char*)out.data(), out.size());
 }
 
+inline long dict_int(const std::string& dict, const char* key) {
+    size_t k = dict.find(key);
+    if (k == std::string::npos) return -1;
+    return std::strtol(dict.c_str() + k + std::strlen(key), nullptr, 10);
+}
+
+// PDF 1.5 packs objects into compressed /Type /ObjStm streams, where they
+// have no "N 0 obj" header of their own. The answer is the file with each
+// packed object appended as a plain "N 0 obj ... endobj", so the lookups
+// below find them like any other object. Each stream is read once, and the
+// unpacked text stops growing at kUnpackBudget bytes.
+inline std::string unpack_object_streams(const std::string& pdf) {
+    const size_t kUnpackBudget = (size_t)64 << 20;
+    std::string extra;
+    size_t p = 0;
+    while ((p = pdf.find("/ObjStm", p)) != std::string::npos) {
+        size_t dict_start = pdf.rfind("<<", p);
+        size_t s = pdf.find("stream", p);
+        p += 7;
+        if (dict_start == std::string::npos || s == std::string::npos) continue;
+        std::string dict = pdf.substr(dict_start, s - dict_start);
+        long n = dict_int(dict, "/N ");
+        long first = dict_int(dict, "/First ");
+        if (n <= 0 || first < 0) continue;
+        size_t data_start = s + 6;
+        if (data_start < pdf.size() && pdf[data_start] == '\r') data_start++;
+        if (data_start < pdf.size() && pdf[data_start] == '\n') data_start++;
+        size_t e = pdf.find("endstream", data_start);
+        if (e == std::string::npos) break;
+        p = e + 9;
+        std::string body = pdf.substr(data_start, e - data_start);
+        if (dict.find("/Filter") != std::string::npos) {
+            if (dict.find("FlateDecode") == std::string::npos) continue;
+            std::vector<uint8_t> out;
+            if (!tinfl::inflate((const uint8_t*)body.data(), body.size(), out, true)) continue;
+            body.assign((const char*)out.data(), out.size());
+        }
+        if ((size_t)first > body.size()) continue;
+        if (extra.size() + body.size() > kUnpackBudget) break;
+        std::vector<std::pair<long, size_t>> index;
+        const char* c = body.c_str();
+        char* end = nullptr;
+        for (long i = 0; i < n; i++) {
+            long num = std::strtol(c, &end, 10);
+            if (end == c) break;
+            c = end;
+            long off = std::strtol(c, &end, 10);
+            if (end == c) break;
+            c = end;
+            index.push_back({ num, (size_t)first + (size_t)off });
+        }
+        for (size_t i = 0; i < index.size(); i++) {
+            size_t from = index[i].second;
+            size_t to = i + 1 < index.size() ? index[i + 1].second : body.size();
+            if (from >= body.size() || to < from) continue;
+            extra += "\n" + std::to_string(index[i].first) + " 0 obj\n" +
+                     body.substr(from, to - from) + "\nendobj\n";
+        }
+    }
+    return extra.empty() ? pdf : pdf + extra;
+}
+
 // The ToUnicode CMap behind each font resource name (/F1, /F2, ...). Resource
 // names belong to a page in the spec, so a file that gives two different
 // fonts the same name on two pages is the case this does not separate.
+// The /Font dictionary is inline (/Font << ... >>) or an object of its own
+// (/Font 12 0 R).
 inline std::unordered_map<std::string, CMap> collect_fonts(const std::string& pdf) {
     std::unordered_map<std::string, CMap> fonts;
     size_t p = 0;
     while ((p = pdf.find("/Font", p)) != std::string::npos) {
         size_t q = p + 5;
+        size_t resume = 0;
         while (q < pdf.size() && std::isspace((unsigned char)pdf[q])) q++;
+        if (q < pdf.size() && std::isdigit((unsigned char)pdf[q])) {
+            char* ref_end = nullptr;
+            long ref = std::strtol(pdf.c_str() + q, &ref_end, 10);
+            size_t after = (size_t)(ref_end - pdf.c_str());
+            std::pair<size_t, size_t> fd = { std::string::npos, std::string::npos };
+            if (pdf.compare(after, 4, " 0 R") == 0) fd = find_object(pdf, ref);
+            if (fd.first != std::string::npos) {
+                size_t open = pdf.find("<<", fd.first);
+                if (open != std::string::npos && open < fd.second) { resume = p + 5; q = open; }
+            }
+        }
         // /Type /Font inside a font object names a type, not a dictionary.
         if (q + 1 >= pdf.size() || pdf[q] != '<' || pdf[q + 1] != '<') { p += 5; continue; }
         q += 2;
@@ -628,7 +704,7 @@ inline std::unordered_map<std::string, CMap> collect_fonts(const std::string& pd
             std::string cmap_src = object_stream(pdf, uni);
             if (!cmap_src.empty()) fonts[name] = parse_cmap(cmap_src);
         }
-        p = q;
+        p = resume ? resume : q;
     }
     return fonts;
 }
@@ -787,7 +863,7 @@ inline std::string extract_text(const std::string& filepath) {
     if (pdf.empty()) return {};
     if (pdf.substr(0, 4) != "%PDF") return {};
 
-    std::unordered_map<std::string, CMap> fonts = collect_fonts(pdf);
+    std::unordered_map<std::string, CMap> fonts = collect_fonts(unpack_object_streams(pdf));
     auto streams = find_streams(pdf);
     std::string all_text;
 
