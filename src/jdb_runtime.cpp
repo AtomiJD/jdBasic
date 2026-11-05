@@ -1037,6 +1037,10 @@ static bool write_into_row(JdbArray* arr, int64_t idx, double d, int32_t tag) {
 static thread_local const JdbArray* g_kept_arr = nullptr;
 static thread_local int64_t g_kept_idx = -1;
 static inline bool cell_kept(JdbArray* arr, int64_t idx) {
+    // Only a container cell is adopted after the store.
+    int kind = cell_kind(arr, idx);
+    bool container = kind == JD_TAG_ARR || kind == JD_TAG_NATIVE_MAP || bits_look_ptr(arr->data[idx]);
+    if (!container) return true;
     g_kept_arr = arr;
     g_kept_idx = idx;
     return true;
@@ -1566,6 +1570,7 @@ void* jdb_slot_map_for_write(double slot) {
 // A native array takes the cell with its kind; a map or a VM value goes to
 // the bridge; a value without cells is an error, as in the interpreter.
 void jdb_tagged_arr_set(int64_t base, int32_t base_tag, int64_t idx, int64_t bits, int32_t tag) {
+    g_kept_arr = nullptr;
     // An untyped parameter passes a container as a number: the counts say
     // which kind it is, and one they do not know is taken for an array.
     if (base_tag == JD_TAG_F64 &&
@@ -1579,7 +1584,7 @@ void jdb_tagged_arr_set(int64_t base, int32_t base_tag, int64_t idx, int64_t bit
         if (tag == JD_TAG_I64 || tag == JD_TAG_BOOL) d = (double)bits;
         else memcpy(&d, &bits, sizeof d);
         // A value written back into the cell it was read from stays as it is.
-        if (tag != JD_TAG_STR && memcmp(&arr->data[idx], &d, sizeof d) == 0) return;
+        if (tag != JD_TAG_STR && memcmp(&arr->data[idx], &d, sizeof d) == 0 && cell_kept(arr, idx)) return;
         if (write_into_row(arr, idx, d, tag)) return;
         // An array that owns its texts takes a string as its own copy, the way
         // a plain cell write does; any other keeps the pointer it is handed.
@@ -3997,15 +4002,15 @@ extern "C" void jdb_rc_adopt(int64_t parent_bits, int64_t child_bits) {
 // jdb_rc_adopt for a child written into cell idx of an array, unless the
 // write laid it over a row there instead of storing it.
 extern "C" void jdb_rc_adopt_cell(int64_t parent_bits, int64_t idx, int64_t child_bits) {
+    // The marker a same-value store left is for this adopt only.
+    bool kept = g_kept_arr == (const JdbArray*)(intptr_t)parent_bits && g_kept_idx == idx;
+    g_kept_arr = nullptr;
+    if (kept) return;
     if (rc_kind_of((uintptr_t)parent_bits) == JD_TAG_ARR) {
         JdbArray* arr = (JdbArray*)(intptr_t)parent_bits;
         if (idx < 0 || idx >= arr->length || !arr->data) return;
         union { double d; int64_t i; } u; u.d = arr->data[idx];
         if (u.i != child_bits) return;
-        if (g_kept_arr == arr && g_kept_idx == idx) {
-            g_kept_arr = nullptr;
-            return;
-        }
     }
     jdb_rc_adopt(parent_bits, child_bits);
 }

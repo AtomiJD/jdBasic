@@ -509,6 +509,13 @@ ELSEIF pattern$ = "rowback" THEN
         backrows[i MOD 2] = backrow
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "rowbackparam" THEN
+    ' the same through an untyped parameter
+    DIM backgrid = [[1, 2], [3, 4]]
+    FOR i = 1 TO passes
+        LeakRowBack(backgrid, i MOD 2)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
@@ -517,6 +524,11 @@ ELSE
 ENDIF
 
 PRINT "HEAP " + pattern$ + marks$
+
+SUB LeakRowBack(backCells, r AS INTEGER)
+    DIM backCell = backCells[r]
+    backCells[r] = backCell
+ENDSUB
 
 FUNC LeakHas(bag AS MAP, field$) AS BOOLEAN
     RETURN MAP.EXISTS(bag, field$)
