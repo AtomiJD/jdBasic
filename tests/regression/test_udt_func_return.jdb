@@ -1,0 +1,117 @@
+' ============================================================
+' Regression: a FUNC that answers a user type, typed or not
+' ============================================================
+' Self-checking. Each failure prints [FAIL].
+'
+' The receiver of `DIM x = F()` is an object of the type F hands back, so
+' x.Field reads the field. Covered: an untyped and a typed FUNC, a FUNC
+' that answers another FUNC's object, a parameter handed back, the call in
+' a loop, a receiver inside a SUB, a field read straight off the call.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK_STR(name$, expected AS STRING, actual AS STRING)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected=["; expected; "]  actual=["; actual; "]"
+    ENDIF
+ENDSUB
+
+TYPE Tag
+    Name AS STRING
+    N AS INTEGER
+ENDTYPE
+
+FUNC Keep(k AS INTEGER)
+    DIM t AS Tag
+    t.Name = "kept" + STR$(k)
+    t.N = k * 2
+    RETURN t
+ENDFUNC
+
+FUNC KeepTyped(k AS INTEGER) AS Tag
+    DIM t AS Tag
+    t.Name = "typed" + STR$(k)
+    t.N = k
+    RETURN t
+ENDFUNC
+
+FUNC Again(k AS INTEGER)
+    RETURN Keep(k + 1)
+ENDFUNC
+
+FUNC Bump(x AS Tag)
+    x.N = x.N + 1
+    RETURN x
+ENDFUNC
+
+FUNC Pick(k AS INTEGER)
+    DIM a AS Tag
+    DIM b AS Tag
+    a.Name = "a"
+    b.Name = "b"
+    IF k > 0 THEN RETURN a
+    RETURN b
+ENDFUNC
+
+FUNC ViaLocal(k AS INTEGER)
+    DIM got = Keep(k)
+    got.N = got.N + 1000
+    RETURN got
+ENDFUNC
+
+DIM shadow AS Tag
+
+FUNC ShadowMap()
+    DIM shadow AS MAP
+    shadow{"k"} = 1
+    RETURN shadow
+ENDFUNC
+
+FUNC InsideName$()
+    DIM inner = Keep(3)
+    RETURN inner.Name + "/" + STR$(inner.N)
+ENDFUNC
+
+DIM held = Keep(7)
+CHECK_STR("untyped FUNC, string field", "kept7", held.Name)
+CHECK_STR("untyped FUNC, number field", "14", STR$(held.N))
+
+DIM typed = KeepTyped(5)
+CHECK_STR("typed FUNC", "typed5", typed.Name)
+
+DIM total AS DOUBLE = 0
+DIM i AS INTEGER
+FOR i = 1 TO 50
+    held = Keep(i)
+    total = total + held.N
+NEXT i
+CHECK_STR("reassigned in a loop", "2550", STR$(total))
+CHECK_STR("last of the loop", "kept50", held.Name)
+
+DIM chained = Again(4)
+CHECK_STR("FUNC answering another FUNC", "kept5", chained.Name)
+
+DIM bumped = Bump(Keep(9))
+CHECK_STR("parameter handed back", "19", STR$(bumped.N))
+
+DIM p = Pick(0)
+CHECK_STR("one of two locals", "b", p.Name)
+CHECK_STR("field read off the call", "a", Pick(1).Name)
+
+CHECK_STR("receiver inside a FUNC", "kept3/6", InsideName$())
+CHECK_STR("fields in an expression", "200", STR$(bumped.N * 5 + chained.N + held.N - 5))
+
+DIM viaLocal = ViaLocal(2)
+CHECK_STR("local copy of a FUNC answer", "1004", STR$(viaLocal.N))
+DIM m = ShadowMap()
+CHECK_STR("a local map shadows a global object", "{" + CHR$(34) + "k" + CHR$(34) + ":1}", JSON.STRINGIFY$(m))
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+IF FAIL_COUNT = 0 THEN PRINT "ALL TESTS PASSED!"

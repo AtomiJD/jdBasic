@@ -4716,6 +4716,61 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     // in main still resolve field accesses (t2.n$) through the dotted-VARIABLE
     // path, which needs var_udt_type[obj] set.
     {
+        // The user type a FUNC answers, upper-case name -> type: every RETURN
+        // that hands back an object names the same one, through a local or
+        // parameter declared AS it, a global already known, or another FUNC.
+        std::unordered_map<std::string, std::string> func_ret_udt;
+        auto upper = [](std::string n) {
+            std::transform(n.begin(), n.end(), n.begin(), ::toupper);
+            return n;
+        };
+        auto scan_func_return = [&](const Stmt& fn) -> bool {
+            // Every local and parameter name, mapped to its user type or to
+            // "" when it has none, so a local shadows a global of that name.
+            std::unordered_map<std::string, std::string> locals;
+            for (auto& p : fn.params())
+                locals[p.name] = (!p.type_name.empty() && type_names.count(p.type_name)) ? p.type_name : "";
+            std::string found;
+            bool mixed = false;
+            std::function<void(const Stmt*)> walk = [&](const Stmt* s) {
+                if (!s || s->kind == StmtKind::FUNCTION || s->kind == StmtKind::SUB) return;
+                if (s->kind == StmtKind::DIM && !s->var_name.empty()) {
+                    std::string t = (!s->label.empty() && type_names.count(s->label)) ? s->label : "";
+                    if (t.empty() && s->expr && s->expr->kind == ExprKind::CALL) {
+                        auto it = func_ret_udt.find(upper(s->expr->func_name));
+                        if (it != func_ret_udt.end()) t = it->second;
+                    }
+                    locals[s->var_name] = t;
+                }
+                // A RETURN that answers anything but an object of the one type
+                // leaves the FUNC without a user type.
+                if (s->kind == StmtKind::RETURN && s->expr) {
+                    std::string t;
+                    if (s->expr->kind == ExprKind::VARIABLE) {
+                        auto it = locals.find(s->expr->str_val);
+                        t = it != locals.end() ? it->second : dotted_udt_type(s->expr->str_val);
+                    } else if (s->expr->kind == ExprKind::CALL) {
+                        auto it = func_ret_udt.find(upper(s->expr->func_name));
+                        if (it != func_ret_udt.end()) t = it->second;
+                    }
+                    if (t.empty()) mixed = true;
+                    else if (found.empty()) found = t;
+                    else if (found != t) mixed = true;
+                }
+                for (auto& b : s->body) walk(b.get());
+                for (auto& b : s->catch_body()) walk(b.get());
+                for (auto& b : s->finally_body()) walk(b.get());
+                for (auto& br : s->branches)
+                    for (auto& bs : br.body) walk(bs.get());
+            };
+            for (auto& b : fn.body) walk(b.get());
+            if (found.empty() || mixed) return false;
+            auto& slot = func_ret_udt[upper(fn.func_name)];
+            if (slot == found) return false;
+            slot = found;
+            return true;
+        };
+
         // Fixpoint walk: a propagation may unlock another (arr[]->lhs->arr2[]).
         bool changed = true;
         int guard = 0;
@@ -4723,6 +4778,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             changed = false;
             std::function<void(const Stmt*)> scan = [&](const Stmt* s) {
                 if (!s) return;
+                if (s->kind == StmtKind::FUNCTION && scan_func_return(*s)) changed = true;
                 // PUSH list, udt_var → var_udt_type[list[]] = type-of(udt_var)
                 if ((s->kind == StmtKind::EXPR_STMT || s->kind == StmtKind::LET) &&
                     s->expr && s->expr->kind == ExprKind::CALL) {
@@ -4762,6 +4818,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         if (!t.empty()) {
                             auto& slot = var_udt_type[s->var_name];
                             if (slot != t) { slot = t; changed = true; }
+                        }
+                    } else if (s->expr->kind == ExprKind::CALL) {
+                        auto it = func_ret_udt.find(upper(s->expr->func_name));
+                        if (it != func_ret_udt.end()) {
+                            auto& slot = var_udt_type[s->var_name];
+                            if (slot != it->second) { slot = it->second; changed = true; }
                         }
                     } else if (s->expr->kind == ExprKind::ARRAY_LITERAL) {
                         // DIM arr = [udt_var, ...] → register the element UDT
