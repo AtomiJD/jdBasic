@@ -6569,8 +6569,9 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
                 LLVMBuildStore(builder, LLVMConstNull(i8_ptr_type), dv->alloca_val);
         }
         if (!kept_local && copy_param_returns && ret_ty == i8_ptr_type && rv.tag == JD_TAG_STR &&
-                 stmt.expr->kind == ExprKind::VARIABLE &&
-                 current_param_names.count(stmt.expr->str_val)) {
+                 (stmt.expr->kind == ExprKind::LITERAL_STRING ||
+                  (stmt.expr->kind == ExprKind::VARIABLE &&
+                   current_param_names.count(stmt.expr->str_val)))) {
             auto& own = runtime_funcs["__str_own"];
             rv.val = LLVMBuildCall2(builder, own.fn_type, own.fn, &rv.val, 1, "ret_own");
         }
@@ -20477,12 +20478,13 @@ void LLVMCodegen::scan_fresh_string_funcs(const std::vector<StmtPtr>& program) {
     }
 
     // What a RETURN may hand back: a concatenation or a number (both
-    // become a new buffer), a call that allocates, or an owned local of
-    // this function. A literal, a parameter, a global, an element read or
-    // a map value is somebody else's buffer.
+    // become a new buffer), a call that allocates, an owned local of this
+    // function, or a string parameter or literal, which the RETURN copies.
+    // A global, an element read or a map value is somebody else's buffer.
     auto fresh_expr = [&](const Stmt& fn, const Expr& e, const std::unordered_set<std::string>& owned) -> bool {
         if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) return true;
         if (e.kind == ExprKind::LITERAL_INT || e.kind == ExprKind::LITERAL_FLOAT) return true;
+        if (e.kind == ExprKind::LITERAL_STRING) return true;
         if (e.kind == ExprKind::VARIABLE)
             return owned.count(e.str_val) > 0 || string_param(fn, e.str_val);
         if (e.kind == ExprKind::CALL) return expr_yields_fresh_string(e);

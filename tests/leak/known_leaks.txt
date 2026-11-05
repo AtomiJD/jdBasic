@@ -3,5 +3,4 @@
 # has gone flat, so this file shrinks as the leaks are fixed.
 #
 # backend  pattern   ticket
-native   vmarrarg  913
 native   strcells  914
