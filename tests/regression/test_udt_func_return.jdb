@@ -74,6 +74,13 @@ FUNC ShadowMap()
     RETURN shadow
 ENDFUNC
 
+FUNC Several()
+    DIM several[2] AS Tag
+    several[0].Name = "x"
+    several[1].Name = "y"
+    RETURN several
+ENDFUNC
+
 FUNC InsideName$()
     DIM inner = Keep(3)
     RETURN inner.Name + "/" + STR$(inner.N)
@@ -112,6 +119,9 @@ DIM viaLocal = ViaLocal(2)
 CHECK_STR("local copy of a FUNC answer", "1004", STR$(viaLocal.N))
 DIM m = ShadowMap()
 CHECK_STR("a local map shadows a global object", "{" + CHR$(34) + "k" + CHR$(34) + ":1}", JSON.STRINGIFY$(m))
+
+DIM listed = Several()
+CHECK_STR("an array of objects stays an array", "2", STR$(LEN(listed)))
 
 PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
 IF FAIL_COUNT = 0 THEN PRINT "ALL TESTS PASSED!"

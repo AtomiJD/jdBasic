@@ -4729,13 +4729,15 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             // "" when it has none, so a local shadows a global of that name.
             std::unordered_map<std::string, std::string> locals;
             for (auto& p : fn.params())
-                locals[p.name] = (!p.type_name.empty() && type_names.count(p.type_name)) ? p.type_name : "";
+                locals[p.name] = (p.type == VarType::OBJECT && !p.type_name.empty() && type_names.count(p.type_name)) ? p.type_name : "";
             std::string found;
             bool mixed = false;
             std::function<void(const Stmt*)> walk = [&](const Stmt* s) {
                 if (!s || s->kind == StmtKind::FUNCTION || s->kind == StmtKind::SUB) return;
                 if (s->kind == StmtKind::DIM && !s->var_name.empty()) {
-                    std::string t = (!s->label.empty() && type_names.count(s->label)) ? s->label : "";
+                    bool scalar = s->var_type != VarType::ARRAY &&
+                                  !(s->expr && s->expr->kind == ExprKind::CALL && s->expr->func_name == "__MAKE_UDT_ARRAY__");
+                    std::string t = (scalar && !s->label.empty() && type_names.count(s->label)) ? s->label : "";
                     if (t.empty() && s->expr && s->expr->kind == ExprKind::CALL) {
                         auto it = func_ret_udt.find(upper(s->expr->func_name));
                         if (it != func_ret_udt.end()) t = it->second;
@@ -4744,6 +4746,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 }
                 // A RETURN that answers anything but an object of the one type
                 // leaves the FUNC without a user type.
+                if (s->kind == StmtKind::RETURN && !s->expr) mixed = true;
                 if (s->kind == StmtKind::RETURN && s->expr) {
                     std::string t;
                     if (s->expr->kind == ExprKind::VARIABLE) {
@@ -4764,6 +4767,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     for (auto& bs : br.body) walk(bs.get());
             };
             for (auto& b : fn.body) walk(b.get());
+            // A FUNC that can run off its end answers no object on that path.
+            if (fn.body.empty() || !fn.body.back() || fn.body.back()->kind != StmtKind::RETURN) return false;
             if (found.empty() || mixed) return false;
             auto& slot = func_ret_udt[upper(fn.func_name)];
             if (slot == found) return false;
