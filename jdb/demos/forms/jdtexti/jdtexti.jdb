@@ -71,6 +71,7 @@ DIM md_dirty_view AS INTEGER = 0
 DIM md_dirty_src AS INTEGER = 0
 DIM view_active AS INTEGER = 0
 DIM md_bar AS ARRAY = []
+DIM md_state AS STRING = ""
 
 ' ── document state ──────────────────────────────────────────────
 
@@ -207,6 +208,8 @@ SUB MD_START(layout_kind AS INTEGER)
     IF md_layout = 2 THEN view_active = 1
     LAYOUT()
     MENU_CHECKS()
+    md_state = ""
+    MD_STATE()
     UPDATE_STATUS()
 ENDSUB
 
@@ -288,6 +291,7 @@ SUB MD_INLINE(which AS STRING)
     ENDIF
     MD_FROM_VIEW()
     FORM.SET(mdv, "FOCUS")
+    MD_STATE()
 ENDSUB
 
 ' Turns the block under the caret (of either pane) into another kind.
@@ -303,6 +307,7 @@ SUB MD_KIND(kind AS STRING, level AS INTEGER)
     DIM d AS MAP = MDSYNC.SETKIND(md_doc, k, kind, level)
     APPLY_SPAN(d)
     FORM.SET(ED(), "FOCUS")
+    MD_STATE()
 ENDSUB
 
 SUB MD_LINK()
@@ -319,6 +324,97 @@ SUB MD_LINK()
     DIM d AS MAP = MDSYNC.SETLINK(md_doc, url)
     APPLY_SPAN(d)
     FORM.SET(mdv, "FOCUS")
+ENDSUB
+
+' The block the caret of the working pane is in, -1 in an empty document.
+FUNC MD_CARET_BLOCK() AS INTEGER
+    IF LEN(MDSYNC.BLOCKS(md_doc)) = 0 THEN RETURN -1
+    IF ED() = txt THEN RETURN CINT(MDSYNC.BLOCKOFSOURCE(md_doc, CINT(FORM.GET(txt, "SELSTART"))))
+    RETURN CINT(MDSYNC.BLOCKAT(md_doc, CINT(FORM.GET(mdv, "SELSTART"))))
+ENDFUNC
+
+' Puts Markdown in as blocks of its own after the block under the caret.
+SUB MD_INSERT(piece AS STRING)
+    IF NOT md_on THEN RETURN
+    MD_FLUSH()
+    DIM k AS INTEGER = MD_CARET_BLOCK()
+    DIM d AS MAP = MDSYNC.INSERT(md_doc, k, piece)
+    APPLY_SPAN(d)
+    IF ED() = txt THEN FORM.SET(txt, "SELSTART", CINT(MDSYNC.SOURCEPOS(md_doc, k + 1)))
+    FORM.SET(ED(), "FOCUS")
+    MD_STATE()
+    UPDATE_TITLE()
+    UPDATE_STATUS()
+ENDSUB
+
+SUB MD_INSERT_TABLE()
+    MD_INSERT("| Column 1 | Column 2 |" + LF + "| --- | --- |" + LF + "|  |  |")
+ENDSUB
+
+' An image next to the document is written relative to it, with / and
+' spaces as %20 so the link target stays one word.
+SUB MD_INSERT_IMAGE()
+    IF NOT md_on THEN RETURN
+    DIM path AS STRING = FILEOPEN$("Images (*.png;*.jpg;*.jpeg;*.gif;*.bmp)|*.png;*.jpg;*.jpeg;*.gif;*.bmp|All files (*.*)|*.*", "Insert Image")
+    IF path = "" THEN RETURN
+    DIM target AS STRING = path
+    IF file_path <> "" THEN
+        DIM doc_dir AS STRING = PATH.DIRNAME$(file_path) + "\"
+        IF LCASE$(LEFT$(path, LEN(doc_dir))) = LCASE$(doc_dir) THEN target = MID$(path, LEN(doc_dir), LEN(path))
+    ENDIF
+    target = REPLACE$(REPLACE$(target, "\", "/"), " ", "%20")
+    DIM alt AS STRING = PATH.BASENAME$(path)
+    DIM ext AS STRING = PATH.EXT$(path)
+    IF ext <> "" THEN alt = LEFT$(alt, LEN(alt) - LEN(ext))
+    MD_INSERT("![" + alt + "](" + target + ")")
+ENDSUB
+
+' Shows the format under the caret: the Markdown menu ticks it, the button
+' bar draws the matching buttons bold. Inline formats are known in the
+' rendered view only.
+SUB MD_MARK(btn_name AS STRING, item_name AS STRING, on_now AS BOOLEAN)
+    FORM.SET(FORM.FIND(frm, item_name), "CHECKED", on_now)
+    FORM.SET(FORM.FIND(frm, btn_name), "FONT", {"bold": on_now, "underline": on_now})
+ENDSUB
+
+SUB MD_STATE()
+    IF NOT md_on ORELSE md_dirty_view ORELSE md_dirty_src THEN RETURN
+    DIM kind AS STRING = ""
+    DIM level AS INTEGER = 0
+    DIM ordered AS INTEGER = 0
+    DIM k AS INTEGER = MD_CARET_BLOCK()
+    DIM blocks AS ARRAY = MDSYNC.BLOCKS(md_doc)
+    IF k >= 0 ANDALSO k < LEN(blocks) THEN
+        DIM b AS MAP = blocks[k]
+        kind = b{"kind"}
+        IF kind = "heading" THEN level = CINT(b{"level"})
+        IF kind = "item" ANDALSO b{"ordered"} = TRUE THEN ordered = 1
+    ENDIF
+    DIM bold_on AS INTEGER = 0
+    DIM italic_on AS INTEGER = 0
+    DIM strike_on AS INTEGER = 0
+    DIM code_on AS INTEGER = 0
+    IF ED() = mdv THEN
+        IF FORM.GET(mdv, "SELBOLD") = TRUE THEN bold_on = 1
+        IF FORM.GET(mdv, "SELITALIC") = TRUE THEN italic_on = 1
+        IF FORM.GET(mdv, "SELSTRIKETHRU") = TRUE THEN strike_on = 1
+        IF FORM.GET(mdv, "SELFONTNAME") = "Consolas" ANDALSO kind <> "code" THEN code_on = 1
+    ENDIF
+    DIM state AS STRING = kind + STR$(level) + STR$(ordered) + STR$(bold_on) + STR$(italic_on) + STR$(strike_on) + STR$(code_on)
+    IF state = md_state THEN RETURN
+    md_state = state
+    MD_MARK("btnMdB", "mnuMdBold", bold_on = 1)
+    MD_MARK("btnMdI", "mnuMdItalic", italic_on = 1)
+    MD_MARK("btnMdS", "mnuMdStrike", strike_on = 1)
+    MD_MARK("btnMdCode", "mnuMdCode", code_on = 1)
+    MD_MARK("btnMdH1", "mnuMdH1", kind = "heading" ANDALSO level = 1)
+    MD_MARK("btnMdH2", "mnuMdH2", kind = "heading" ANDALSO level = 2)
+    MD_MARK("btnMdH3", "mnuMdH3", kind = "heading" ANDALSO level = 3)
+    MD_MARK("btnMdPara", "mnuMdPara", kind = "para")
+    MD_MARK("btnMdBullet", "mnuMdBullet", kind = "item" ANDALSO ordered = 0)
+    MD_MARK("btnMdNumber", "mnuMdNumber", ordered = 1)
+    MD_MARK("btnMdQuote", "mnuMdQuote", kind = "quote")
+    MD_MARK("btnMdBlock", "mnuMdCodeBlock", kind = "code")
 ENDSUB
 
 ' Keeps the other pane on the block the caret is in.
@@ -448,7 +544,11 @@ SUB BUILD_MENU()
                 {"text": "B&ullet List", "name": "mnuMdBullet", "key": "Ctrl+Shift+8"}, _
                 {"text": "&Numbered List", "name": "mnuMdNumber", "key": "Ctrl+Shift+7"}, _
                 {"text": "&Quote", "name": "mnuMdQuote", "key": "Ctrl+Shift+Q"}, _
-                {"text": "Code Bloc&k", "name": "mnuMdCodeBlock", "key": "Ctrl+Shift+K"}]}]}, _
+                {"text": "Code Bloc&k", "name": "mnuMdCodeBlock", "key": "Ctrl+Shift+K"}, _
+                "-", _
+                {"text": "Insert &Table", "name": "mnuMdTable", "key": "Ctrl+Shift+T"}, _
+                {"text": "Insert I&mage...", "name": "mnuMdImage", "key": "Ctrl+Shift+G"}, _
+                {"text": "Insert Horizontal &Rule", "name": "mnuMdRule", "key": "Ctrl+Shift+R"}]}]}, _
         {"text": "&View", "items": [ _
             {"text": "&Plain Text", "name": "mnuMdOff"}, _
             {"text": "Markdown S&plit", "name": "mnuMdSplit", "key": "Ctrl+M"}, _
@@ -488,7 +588,7 @@ SUB MENU_CHECKS()
     CHECK_ITEM("mnuMdOff", md_on = 0)
     CHECK_ITEM("mnuMdSplit", md_on = 1 ANDALSO md_layout = 1)
     CHECK_ITEM("mnuMdRendered", md_on = 1 ANDALSO md_layout = 2)
-    DIM names AS ARRAY = ["mnuMdBold", "mnuMdItalic", "mnuMdStrike", "mnuMdCode", "mnuMdLink", "mnuMdH1", "mnuMdH2", "mnuMdH3", "mnuMdPara", "mnuMdBullet", "mnuMdNumber", "mnuMdQuote", "mnuMdCodeBlock"]
+    DIM names AS ARRAY = ["mnuMdBold", "mnuMdItalic", "mnuMdStrike", "mnuMdCode", "mnuMdLink", "mnuMdH1", "mnuMdH2", "mnuMdH3", "mnuMdPara", "mnuMdBullet", "mnuMdNumber", "mnuMdQuote", "mnuMdCodeBlock", "mnuMdTable", "mnuMdImage", "mnuMdRule"]
     DIM i AS INTEGER = 0
     FOR i = 0 TO LEN(names) - 1
         FORM.SET(FORM.FIND(frm, names[i]), "ENABLED", md_on = 1)
@@ -766,18 +866,21 @@ ENDSUB
 SUB TXT_KEYUP(e)
     IF quitting THEN RETURN
     MD_FOLLOW()
+    MD_STATE()
     UPDATE_STATUS()
 ENDSUB
 
 SUB TXT_MOUSEUP(e)
     IF quitting THEN RETURN
     MD_FOLLOW()
+    MD_STATE()
     UPDATE_STATUS()
 ENDSUB
 
 SUB TXT_GOTFOCUS(e)
     IF quitting THEN RETURN
     view_active = 0
+    MD_STATE()
     CHECK_DISK()
 ENDSUB
 
@@ -789,18 +892,21 @@ ENDSUB
 SUB MDV_GOTFOCUS(e)
     IF quitting THEN RETURN
     view_active = 1
+    MD_STATE()
     UPDATE_STATUS()
 ENDSUB
 
 SUB MDV_KEYUP(e)
     IF quitting THEN RETURN
     MD_FOLLOW()
+    MD_STATE()
     UPDATE_STATUS()
 ENDSUB
 
 SUB MDV_MOUSEUP(e)
     IF quitting THEN RETURN
     MD_FOLLOW()
+    MD_STATE()
     UPDATE_STATUS()
 ENDSUB
 
@@ -811,6 +917,7 @@ SUB TMRSYNC_TICK(e)
     IF quitting ORELSE NOT md_on THEN RETURN
     IF md_dirty_view ORELSE md_dirty_src THEN
         MD_FLUSH()
+        MD_STATE()
         UPDATE_TITLE()
         UPDATE_STATUS()
     ENDIF
@@ -1253,6 +1360,30 @@ SUB BTNMDLINK_CLICK(e)
     MD_LINK()
 ENDSUB
 
+SUB BTNMDTABLE_CLICK(e)
+    MD_INSERT_TABLE()
+ENDSUB
+
+SUB BTNMDIMAGE_CLICK(e)
+    MD_INSERT_IMAGE()
+ENDSUB
+
+SUB BTNMDRULE_CLICK(e)
+    MD_INSERT("---")
+ENDSUB
+
+SUB MNUMDTABLE_CLICK(e)
+    MD_INSERT_TABLE()
+ENDSUB
+
+SUB MNUMDIMAGE_CLICK(e)
+    MD_INSERT_IMAGE()
+ENDSUB
+
+SUB MNUMDRULE_CLICK(e)
+    MD_INSERT("---")
+ENDSUB
+
 ' ── Find / Replace window ───────────────────────────────────────
 
 SUB FINDDLG_UNLOAD(e)
@@ -1341,7 +1472,8 @@ FORM.SET(mdv, "VISIBLE", FALSE)
 DIM bar_spec AS ARRAY = [["btnMdB", "B", 30], ["btnMdI", "I", 30], ["btnMdS", "S", 30], ["btnMdCode", "</>", 40], _
     ["btnMdH1", "H1", 36], ["btnMdH2", "H2", 36], ["btnMdH3", "H3", 36], ["btnMdPara", "Text", 44], _
     ["btnMdBullet", "List", 44], ["btnMdNumber", "1. List", 54], ["btnMdQuote", "Quote", 50], _
-    ["btnMdBlock", "Code", 48], ["btnMdLink", "Link", 44]]
+    ["btnMdBlock", "Code", 48], ["btnMdLink", "Link", 44], _
+    ["btnMdTable", "Table", 48], ["btnMdImage", "Image", 50], ["btnMdRule", "Rule", 42]]
 DIM bar_x AS INTEGER = 4
 DIM bi AS INTEGER = 0
 FOR bi = 0 TO LEN(bar_spec) - 1
@@ -1351,7 +1483,7 @@ FOR bi = 0 TO LEN(bar_spec) - 1
     FORM.SET(bh, "VISIBLE", FALSE)
     md_bar = APPEND(md_bar, bh)
     bar_x = bar_x + bw + 2
-    IF bi = 3 ORELSE bi = 7 ORELSE bi = 11 THEN bar_x = bar_x + 8
+    IF bi = 3 ORELSE bi = 7 ORELSE bi = 11 ORELSE bi = 12 THEN bar_x = bar_x + 8
 NEXT
 
 sb = FORM.STATUSBAR(frm, "sb", [140, 180, 60, 120, -1])

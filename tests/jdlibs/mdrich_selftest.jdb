@@ -46,9 +46,7 @@ FUNC ViewRuns(b)
 ENDFUNC
 
 FUNC One(md$)
-    DIM all_blocks = MDRICH.BLOCKS(md$)
-    DIM first AS MAP = all_blocks[0]
-    RETURN first
+    RETURN MDRICH.BLOCKS(md$)[0]
 ENDFUNC
 
 FUNC Kinds$(blocks)

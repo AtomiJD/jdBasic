@@ -202,6 +202,66 @@ d = MDSYNC.VIEWCHANGED(blank)
 Check(INSTR(MDSYNC.SOURCE$(blank), "Second" + NL) >= 0, "Enter in an empty document")
 Check(LEN(SPLIT(FORM.GET(rt, "TEXT"), CRLF)) = LEN(MDSYNC.BLOCKS(blank)), "paragraphs and blocks after Enter in an empty document")
 
+' ordered lists count on after an item is added, made or removed
+DIM listMd AS STRING = "Intro" + NL + NL + "1. alpha" + NL + "2. beta" + NL + "3. gamma" + NL + NL + "End" + NL
+mirror = listMd
+DIM lst AS MAP = MDSYNC.OPEN(rt, listMd)
+CaretAfter(rt, "alpha")
+FORM.SET(rt, "SELTEXT", CRLF)
+d = MDSYNC.VIEWCHANGED(lst)
+Apply(d)
+FORM.SET(rt, "SELTEXT", "between")
+d = MDSYNC.VIEWCHANGED(lst)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(lst), "1. alpha" + NL + "2. between" + NL + "3. beta" + NL + "4. gamma" + NL) >= 0, "items after an inserted one count on")
+Check(INSTR(FORM.GET(rt, "TEXT"), "4." + CHR$(9) + "gamma") >= 0, "the view draws the new numbers")
+Check(mirror = MDSYNC.SOURCE$(lst), "span after renumbering")
+
+SelectText(rt, "between")
+FORM.SET(rt, "SELSTART", INSTR(FORM.GET(rt, "TEXT"), "alpha") + 5)
+FORM.SET(rt, "SELLENGTH", INSTR(FORM.GET(rt, "TEXT"), "between") + 7 - INSTR(FORM.GET(rt, "TEXT"), "alpha") - 5)
+FORM.SET(rt, "SELTEXT", "")
+d = MDSYNC.VIEWCHANGED(lst)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(lst), "1. alpha" + NL + "2. beta" + NL + "3. gamma" + NL) >= 0, "items after a removed one count back")
+Check(mirror = MDSYNC.SOURCE$(lst), "span after removing an item")
+
+DIM mix AS MAP = MDSYNC.OPEN(rt, "1. one" + NL + NL + "plain" + NL + NL + "1. two" + NL + "2. three" + NL)
+mirror = MDSYNC.SOURCE$(mix)
+d = MDSYNC.SETKIND(mix, 1, "ordered", 0)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(mix), "2. plain" + NL) >= 0, "a paragraph made an item takes the next number")
+Check(INSTR(MDSYNC.SOURCE$(mix), "3. two" + NL + "4. three" + NL) >= 0, "the items after it count on")
+Check(mirror = MDSYNC.SOURCE$(mix), "span after making an item")
+
+DIM odd AS MAP = MDSYNC.OPEN(rt, "Top" + NL + NL + "1. a" + NL + "1. b" + NL)
+mirror = MDSYNC.SOURCE$(odd)
+CaretAfter(rt, "Top")
+FORM.SET(rt, "SELTEXT", "!")
+d = MDSYNC.VIEWCHANGED(odd)
+Apply(d)
+Check(INSTR(MDSYNC.SOURCE$(odd), "1. a" + NL + "1. b" + NL) >= 0, "a list the edit did not reach keeps its numbers")
+
+' INSERT puts blocks of their own after a block
+DIM insMd AS STRING = "# Head" + NL + "Text here." + NL + NL + "More." + NL
+DIM ins AS MAP = MDSYNC.OPEN(rt, insMd)
+mirror = insMd
+d = MDSYNC.INSERT(ins, 1, "---")
+Apply(d)
+Check(MDSYNC.SOURCE$(ins) = "# Head" + NL + "Text here." + NL + NL + "---" + NL + NL + "More." + NL, "a rule between two paragraphs")
+Check(mirror = MDSYNC.SOURCE$(ins), "span after an insert")
+Check(MDSYNC.BLOCKS(ins)[2]{"kind"} = "rule", "the rule is a block")
+d = MDSYNC.INSERT(ins, LEN(MDSYNC.BLOCKS(ins)) - 1, "| A | B |" + NL + "| --- | --- |" + NL + "| 1 | 2 |")
+Apply(d)
+Check(RIGHT$(MDSYNC.SOURCE$(ins), 40) = RIGHT$("More." + NL + NL + "| A | B |" + NL + "| --- | --- |" + NL + "| 1 | 2 |" + NL, 40), "a table at the end")
+Check(mirror = MDSYNC.SOURCE$(ins), "span after a table at the end")
+Check(LEN(SPLIT(FORM.GET(rt, "TEXT"), CRLF)) = LEN(MDSYNC.BLOCKS(ins)), "one paragraph per block after inserts")
+d = MDSYNC.INSERT(ins, -1, "Lead line")
+Apply(d)
+Check(LEFT$(MDSYNC.SOURCE$(ins), 18) = "Lead line" + NL + NL + "# Head" + NL, "a paragraph at the top")
+Check(mirror = MDSYNC.SOURCE$(ins), "span after an insert at the top")
+Check(CINT(FORM.GET(rt, "SELSTART")) = 0, "the caret is on the inserted block")
+
 FORM.CLOSE(frm)
 
 PRINT

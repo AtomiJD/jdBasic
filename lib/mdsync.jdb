@@ -13,7 +13,7 @@
 '
 ' Needs a FORMS build (Windows). Built on MDRICH.
 '
-' version: 1.0.0
+' version: 1.1.0
 ' requires: MDRICH ^1
 
 EXPORT MODULE MDSYNC
@@ -79,8 +79,8 @@ FUNC RunsOf(rt AS DOUBLE, vp, a, b)
     DIM upto = starts[b - 1] + LEN(texts[b - 1])
     DIM whole = []
     IF upto > from THEN
-        DIM keep_start AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
-        DIM keep_len AS INTEGER = CINT(FORM.GET(rt, "SELLENGTH"))
+        DIM keep_start AS INTEGER = FORM.GET(rt, "SELSTART")
+        DIM keep_len AS INTEGER = FORM.GET(rt, "SELLENGTH")
         FORM.SET(rt, "SELSTART", from)
         FORM.SET(rt, "SELLENGTH", upto - from)
         whole = FORM.GET(rt, "RUNS")
@@ -335,8 +335,8 @@ EXPORT FUNC VIEWCHANGED(doc)
     LOOP
     ' the paragraphs under the selection count as touched: a format change
     ' leaves the text alone
-    DIM sel_start AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
-    DIM sel_len AS INTEGER = CINT(FORM.GET(rt, "SELLENGTH"))
+    DIM sel_start AS INTEGER = FORM.GET(rt, "SELSTART")
+    DIM sel_len AS INTEGER = FORM.GET(rt, "SELLENGTH")
     DIM sel_a = ParaAt(vp, sel_start)
     DIM sel_end AS INTEGER = sel_start + sel_len
     DIM sel_b = ParaAt(vp, sel_end)
@@ -467,11 +467,32 @@ EXPORT FUNC VIEWCHANGED(doc)
     FOR k = 0 TO LEN(after) - 1
         whole = APPEND(whole, after[k])
     NEXT k
-    whole = Offsets(whole)
+    ' the old blocks share their maps with whole: their ends are read now
+    DIM old_ends = []
+    FOR k = 0 TO LEN(blocks) - 1
+        old_ends = APPEND(old_ends, blocks[k]{"end"})
+    NEXT k
+    DIM rn = Renumber(whole, oa, oa + LEN(fresh))
+    whole = Offsets(rn{"blocks"})
+    DIM renumbered = rn{"changed"}
+    DIM grown = LEN(fresh) - q
+    DIM last_ren = -1
+    IF LEN(renumbered) > 0 THEN last_ren = renumbered[LEN(renumbered) - 1]
     DIM new_from = 0
     IF oa > 0 THEN new_from = whole[oa - 1]{"start"}
     DIM new_to = LEN(JoinSrc$(whole, 0, LEN(whole)))
     IF ob < LEN(blocks) THEN new_to = whole[oa + LEN(fresh)]{"end"}
+    ' items renumbered past the edit belong to the span too
+    IF last_ren >= oa + LEN(fresh) THEN
+        IF whole[last_ren]{"end"} > new_to THEN new_to = whole[last_ren]{"end"}
+        IF old_ends[last_ren - grown] > old_to THEN
+            old_to = old_ends[last_ren - grown]
+            old_span$ = MID$(doc{"src"}, old_from, old_to - old_from)
+        ENDIF
+    ENDIF
+    FOR k = 0 TO LEN(renumbered) - 1
+        IF renumbered[k] >= oa ANDALSO renumbered[k] < oa + m THEN redraw[renumbered[k] - oa] = TRUE
+    NEXT k
     DIM new_src$ = JoinSrc$(whole, 0, LEN(whole))
     DIM d = Span(old_span$, MID$(new_src$, new_from, new_to - new_from), old_from)
     doc{"blocks"} = whole
@@ -479,7 +500,7 @@ EXPORT FUNC VIEWCHANGED(doc)
 
     ' redraw the paragraphs whose look no longer fits their block, keeping
     ' the caret the same distance from its paragraph's end
-    DIM caret AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
+    DIM caret AS INTEGER = FORM.GET(rt, "SELSTART")
     DIM caret_para = ParaAt(vp, caret)
     DIM from_end AS INTEGER = ParaEnd(vp, caret_para) - caret
     DIM touched = FALSE
@@ -497,6 +518,15 @@ EXPORT FUNC VIEWCHANGED(doc)
         touched = TRUE
         j = run_end
     LOOP
+    ' the numbers are drawn as text: an item renumbered past the edit is
+    ' drawn again too
+    FOR k = 0 TO LEN(renumbered) - 1
+        DIM ri = renumbered[k]
+        IF ri >= oa + m THEN
+            ReplaceParas(doc, na + ri - oa, na + ri - oa + 1, [whole[ri]])
+            touched = TRUE
+        ENDIF
+    NEXT k
     IF touched THEN
         DIM vp2 = ViewParas(rt)
         DIM cp = MIN([caret_para, LEN(vp2{"texts"}) - 1])
@@ -529,7 +559,7 @@ EXPORT FUNC SOURCECHANGED(doc, md$)
     doc{"blocks"} = fresh
     doc{"src"} = md$
     IF n_old - s - p = 0 ANDALSO n_new - s - p = 0 THEN RETURN FALSE
-    DIM keep AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
+    DIM keep AS INTEGER = FORM.GET(rt, "SELSTART")
     ReplaceParas(doc, p, n_old - s, TAKE(n_new - s - p, DROP(p, fresh)))
     FORM.SET(rt, "SELSTART", MIN([keep, LEN(FORM.GET(rt, "TEXT"))]))
     doc{"vtexts"} = ViewParas(rt){"texts"}
@@ -543,6 +573,100 @@ FUNC SameBlock(a, b)
     RETURN TRUE
 ENDFUNC
 
+' Block b as ordered item number n, its marker's delimiter kept.
+FUNC WithNumber(b, n)
+    DIM old_m$ = b{"marker"}
+    DIM new_m$ = STR$(n) + RIGHT$(old_m$, 1)
+    DIM ind$ = b{"indent"}
+    b{"body"} = ind$ + new_m$ + MID$(b{"body"}, LEN(ind$) + LEN(old_m$), LEN(b{"body"}))
+    b{"marker"} = new_m$
+    b{"number"} = n
+    RETURN b
+ENDFUNC
+
+' Ordered items count on from the item in front of them after an edit of
+' blocks [a, b): each ordered item of the run at that level gets the number
+' after the one before it. Past b the first item that already has its
+' number ends the walk, so a list nobody touched keeps its bytes. Nested
+' items are passed over. Answers {blocks, changed: indices renumbered}.
+FUNC Renumber(blocks, a, b)
+    DIM changed = []
+    DIM expect = -1
+    DIM lvl = -1
+    DIM delim$ = ""
+    DIM k = 0
+    IF a > 0 ANDALSO a <= LEN(blocks) THEN
+        DIM pb = blocks[a - 1]
+        IF pb{"kind"} = "item" ANDALSO pb{"ordered"} THEN
+            expect = pb{"number"} + 1
+            lvl = pb{"level"}
+            delim$ = RIGHT$(pb{"marker"}, 1)
+        ENDIF
+    ENDIF
+    FOR k = MAX([0, a]) TO LEN(blocks) - 1
+        DIM bk = blocks[k]
+        IF bk{"kind"} <> "item" THEN EXITFOR
+        IF lvl >= 0 ANDALSO bk{"level"} > lvl THEN CONTINUEFOR
+        IF lvl >= 0 ANDALSO bk{"level"} < lvl THEN EXITFOR
+        IF NOT bk{"ordered"} THEN
+            IF lvl >= 0 ORELSE k >= b THEN EXITFOR
+            CONTINUEFOR
+        ENDIF
+        IF lvl < 0 ORELSE RIGHT$(bk{"marker"}, 1) <> delim$ THEN
+            ' the first ordered item of a run keeps its number
+            IF lvl >= 0 ANDALSO k >= b THEN EXITFOR
+            lvl = bk{"level"}
+            delim$ = RIGHT$(bk{"marker"}, 1)
+            expect = bk{"number"} + 1
+            CONTINUEFOR
+        ENDIF
+        IF bk{"number"} = expect THEN
+            IF k >= b THEN EXITFOR
+        ELSE
+            blocks[k] = WithNumber(bk, expect)
+            changed = APPEND(changed, k)
+        ENDIF
+        expect = expect + 1
+    NEXT k
+    DIM r AS MAP
+    r{"blocks"} = blocks
+    r{"changed"} = changed
+    RETURN r
+ENDFUNC
+
+' Inserts Markdown after block k (k = -1: at the top) as blocks of their
+' own, with the blank lines that keep them apart, and puts the view caret
+' at the first of them. Answers the source span as VIEWCHANGED does.
+EXPORT FUNC INSERT(doc, k, md$)
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM blocks = doc{"blocks"}
+    DIM src$ = doc{"src"}
+    DIM eol$ = CHR$(10)
+    IF LEN(blocks) > 0 THEN eol$ = blocks[0]{"eol"}
+    DIM piece$ = REPLACE$(REPLACE$(md$, CHR$(13) + CHR$(10), CHR$(10)), CHR$(10), eol$)
+    IF RIGHT$(piece$, LEN(eol$)) <> eol$ THEN piece$ = piece$ + eol$
+    DIM at_pos AS INTEGER = 0
+    IF k >= 0 ANDALSO LEN(blocks) > 0 THEN at_pos = blocks[MIN([k, LEN(blocks) - 1])]{"end"}
+    DIM head$ = LEFT$(src$, at_pos)
+    DIM rest$ = MID$(src$, at_pos, LEN(src$))
+    DIM lead$ = ""
+    IF head$ <> "" THEN
+        IF RIGHT$(head$, LEN(eol$)) <> eol$ THEN lead$ = eol$
+        IF RIGHT$(head$, 2 * LEN(eol$)) <> eol$ + eol$ THEN lead$ = lead$ + eol$
+    ENDIF
+    IF rest$ <> "" ANDALSO LEFT$(rest$, LEN(eol$)) <> eol$ THEN piece$ = piece$ + eol$
+    DIM d AS MAP
+    d{"changed"} = TRUE
+    d{"start"} = at_pos
+    d{"old_len"} = 0
+    d{"text"} = lead$ + piece$
+    DIM redrawn = SOURCECHANGED(doc, head$ + lead$ + piece$ + rest$)
+    DIM first AS INTEGER = CINT(BLOCKOFSOURCE(doc, at_pos + LEN(lead$)))
+    FORM.SET(rt, "SELSTART", CINT(VIEWPOS(doc, first)))
+    FORM.SET(rt, "SELLENGTH", 0)
+    RETURN d
+ENDFUNC
+
 ' Turns block k into another kind (para, heading with a level, item,
 ' ordered item, quote, code), keeping its text. Answers the source span as
 ' VIEWCHANGED does.
@@ -551,6 +675,11 @@ EXPORT FUNC SETKIND(doc, k, kind$, level = 1)
     DIM blocks = doc{"blocks"}
     IF k < 0 ORELSE k >= LEN(blocks) THEN RETURN NoChange()
     DIM old = blocks[k]
+    DIM old_ends = []
+    DIM bi = 0
+    FOR bi = 0 TO LEN(blocks) - 1
+        old_ends = APPEND(old_ends, blocks[bi]{"end"})
+    NEXT bi
     DIM vp = ViewParas(rt)
     DIM runs = RunsOf(rt, vp, k, k + 1)
     DIM want$ = kind$
@@ -584,14 +713,22 @@ EXPORT FUNC SETKIND(doc, k, kind$, level = 1)
         old_from = blocks[k - 1]{"start"}
         old_span$ = MID$(doc{"src"}, old_from, old{"end"} - old_from)
     ENDIF
-    blocks = Offsets(blocks)
+    DIM rn = Renumber(Offsets(blocks), k, k + 1)
+    blocks = Offsets(rn{"blocks"})
+    DIM renumbered = rn{"changed"}
     doc{"blocks"} = blocks
     DIM new_src$ = JoinSrc$(blocks, 0, LEN(blocks))
-    DIM d = Span(old_span$, MID$(new_src$, old_from, blocks[k]{"end"} - old_from), old_from)
+    DIM span_to = k
+    IF LEN(renumbered) > 0 THEN span_to = MAX([k, renumbered[LEN(renumbered) - 1]])
+    IF span_to > k THEN old_span$ = MID$(doc{"src"}, old_from, old_ends[span_to] - old_from)
+    DIM d = Span(old_span$, MID$(new_src$, old_from, blocks[span_to]{"end"} - old_from), old_from)
     doc{"src"} = new_src$
-    DIM caret AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
+    DIM caret AS INTEGER = FORM.GET(rt, "SELSTART")
     DIM from_end AS INTEGER = ParaEnd(vp, k) - caret
     ReplaceParas(doc, k, k + 1, [blocks[k]])
+    FOR bi = 0 TO LEN(renumbered) - 1
+        IF renumbered[bi] <> k THEN ReplaceParas(doc, renumbered[bi], renumbered[bi] + 1, [blocks[renumbered[bi]]])
+    NEXT bi
     DIM vp2 = ViewParas(rt)
     FORM.SET(rt, "SELSTART", MAX([ParaStart(vp2, k), ParaEnd(vp2, k) - from_end]))
     doc{"vtexts"} = vp2{"texts"}
@@ -604,8 +741,8 @@ EXPORT FUNC SETLINK(doc, url$)
     DIM text$ = FORM.GET(rt, "SELTEXT")
     IF text$ = "" THEN RETURN NoChange()
     DIM before$ = doc{"src"}
-    DIM sel_at AS INTEGER = CINT(FORM.GET(rt, "SELSTART"))
-    DIM sel_len AS INTEGER = CINT(FORM.GET(rt, "SELLENGTH"))
+    DIM sel_at AS INTEGER = FORM.GET(rt, "SELSTART")
+    DIM sel_len AS INTEGER = FORM.GET(rt, "SELLENGTH")
     ' text typed but not yet reconciled has no block to hold the URL; a
     ' redraw while reconciling leaves the text but drops the selection
     DIM pending = VIEWCHANGED(doc)

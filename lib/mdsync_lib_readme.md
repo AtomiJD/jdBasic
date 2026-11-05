@@ -44,6 +44,7 @@ other's echo without a guard.
 | `SOURCECHANGED(doc, md$)` | After an edit of the source: redraws the blocks that changed; `TRUE` when the view changed. |
 | `SETKIND(doc, k, kind$, [level])` | Turns block `k` into `para`, `heading` (with a level), `item`, `ordered`, `quote` or `code`, keeping its text. Answers the span. |
 | `SETLINK(doc, url$)` | Makes the view's selection a link to `url$`. Answers the span. |
+| `INSERT(doc, k, md$)` | Puts Markdown in after block `k` (`-1`: at the top) as blocks of their own, with the blank lines that keep them apart; the view caret goes to the first of them. Answers the span. |
 | `SOURCE$(doc)` | The current source. |
 | `BLOCKS(doc)` | The current blocks (see MDRICH). |
 | `BLOCKAT(doc, pos)` | The block whose paragraph holds a view offset (`SELSTART`). |
@@ -84,11 +85,12 @@ caret.
   spans then fit the source pane's offsets directly.
 - **Replacing a paragraph break with text** keeps the break in RichEdit;
   deleting it joins the paragraphs. Backspace and Delete delete.
-- **Ordered lists are not renumbered**: a new item takes the number after
-  the one before, the items after it keep theirs, as written.
-- **Compiled programs**: the module reads selection offsets with
-  `CINT(FORM.GET(...))`; a typed DIM straight from `FORM.GET` inside a
-  module keeps the bridge handle under `-c` (trakr #911).
+- **Ordered lists count on**: after an edit in the view, `SETKIND` or
+  `INSERT`, the ordered items from the edit on take the number after the
+  one in front of them, and are part of the span and redrawn. Past the
+  edit the walk ends at the first item that already has its number, so a
+  list the edit did not reach keeps its numbers as written (also `1. 1. 1.`).
+  `SOURCECHANGED` never renumbers: the source is the writer's.
 
 ## Files
 
@@ -96,5 +98,5 @@ caret.
 |------|------|
 | `lib/mdsync.jdb` | the module |
 | `tests/jdlibs/mdsync_selftest.jdb` | open, a view edit and its span, a source edit; skips without FORMS |
-| `tests/forms/mdsync_selftest.jdb` | typing, formats, Enter after a paragraph, heading and items, joining, source edits, kind changes, links; both backends |
+| `tests/forms/mdsync_selftest.jdb` | typing, formats, Enter after a paragraph, heading and items, joining, source edits, kind changes, links, renumbering, inserts; both backends |
 | `jdb/demos/jdlibs/mdsync_demo.jdb` | source and rendered view side by side, edited both ways |

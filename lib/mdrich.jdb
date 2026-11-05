@@ -13,7 +13,7 @@
 ' Stands in for: the Markdown round trip of WYSIWYG editors (Typora,
 ' prosemirror-markdown, remark-stringify).
 '
-' version: 1.0.0
+' version: 1.0.1
 
 EXPORT MODULE MDRICH
 
@@ -78,12 +78,7 @@ ENDFUNC
 FUNC Groups(pattern$, text$)
     DIM out = []
     DIM g = REGEX.MATCH(pattern$, text$)
-    IF ISARR(g) THEN
-        DIM k = 0
-        FOR k = 0 TO LEN(g) - 1
-            out = APPEND(out, "" + g[k])
-        NEXT k
-    ENDIF
+    IF ISARR(g) THEN out = g
     RETURN out
 ENDFUNC
 
@@ -868,7 +863,8 @@ EXPORT FUNC RTF$(b, opts = 0)
     ELSEIF kind$ = "rule" THEN
         RETURN "\pard\qc\sa120\cf3 " + body$ + "\cf0"
     ELSEIF kind$ = "image" THEN
-        DIM pict$ = PictRtf$(JoinPath$(base$, b{"path"}))
+        ' a space in a Markdown link target is written %20
+        DIM pict$ = PictRtf$(JoinPath$(base$, REPLACE$(b{"path"}, "%20", " ")))
         IF pict$ <> "" THEN RETURN "\pard\sa120 " + pict$
         RETURN "\pard\sa120{\cf3 " + RtfEsc$("[" + b{"alt"} + "]") + "}"
     ELSEIF kind$ = "table" THEN
@@ -1304,14 +1300,9 @@ FUNC BodyFor$(b, segs, every)
         RETURN itm$
     ELSEIF kind$ = "quote" THEN
         DIM q$ = ""
-        DIM prefix$ = b{"prefix"}
         FOR k = 0 TO LEN(md_lines) - 1
             DIM qline$ = md_lines[k]
-            IF qline$ = "" THEN
-                q$ = q$ + RTRIM$(prefix$) + eol$
-            ELSE
-                q$ = q$ + prefix$ + qline$ + eol$
-            ENDIF
+            q$ = q$ + IIF(qline$ = "", RTRIM$(b{"prefix"}), b{"prefix"} + qline$) + eol$
         NEXT k
         RETURN q$
     ENDIF
