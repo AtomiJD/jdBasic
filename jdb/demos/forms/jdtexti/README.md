@@ -29,6 +29,9 @@ document on the right. Both panes are editable and kept in step:
 - An edit in the source redraws only the blocks that changed.
 - The other pane follows the caret to the same block.
 - Saving writes the source pane, in the file's own encoding and line endings.
+- Undo and Redo (Ctrl+Z, Ctrl+Y) step one history, the source's, from
+  either pane: an edit in the view is one step there, a typing burst one
+  step per sync, and the view is redrawn from the source.
 
 View menu: **Plain Text**, **Markdown Split** (Ctrl+M), **Markdown
 Rendered** (Ctrl+Shift+M, the view alone).

@@ -1097,12 +1097,34 @@ ENDSUB
 
 ' ── Edit ────────────────────────────────────────────────────────
 
+' With Markdown shown there is one history, the source's: every edit in the
+' view reaches the source as one undoable step, and a redraw of the view
+' (a table, a kind change) leaves the view's own history empty. Undo and
+' Redo step the source and redraw the view from it.
+SUB MD_HISTORY(prop AS STRING)
+    MD_FLUSH()
+    FORM.SET(txt, prop, TRUE)
+    md_dirty_src = 1
+    MD_FLUSH()
+    MD_STATE()
+    UPDATE_TITLE()
+    UPDATE_STATUS()
+ENDSUB
+
 SUB MNUUNDO_CLICK(e)
-    FORM.SET(ED(), "UNDO", TRUE)
+    IF md_on THEN
+        MD_HISTORY("UNDO")
+    ELSE
+        FORM.SET(ED(), "UNDO", TRUE)
+    ENDIF
 ENDSUB
 
 SUB MNUREDO_CLICK(e)
-    FORM.SET(ED(), "REDO", TRUE)
+    IF md_on THEN
+        MD_HISTORY("REDO")
+    ELSE
+        FORM.SET(ED(), "REDO", TRUE)
+    ENDIF
 ENDSUB
 
 SUB MNUCUT_CLICK(e)

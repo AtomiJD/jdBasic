@@ -352,6 +352,36 @@ FORM.SET(rt, "SELTEXT", "Head")
 d = MDSYNC.VIEWCHANGED(tblEnd)
 Check(MDSYNC.SOURCE$(tblEnd) = "Head" + NL + NL + "| a | b |" + NL + "|---|---|" + NL + "| 1 | 2 |" + NL, "an edit in front of a table at the end")
 
+' an editor whose source pane holds the history: a span from the view goes
+' in as one step, Undo there and a redraw of the view take it back
+DIM src_box AS DOUBLE = FORM.RICHTEXT(frm, "rtSource", 0, 0, 320, 480)
+FORM.SET(src_box, "PLAINTEXT", TRUE)
+DIM histMd AS STRING = "Intro" + CRLF + CRLF + "Body text." + CRLF
+FORM.SET(src_box, "TEXT", histMd)
+FORM.SET(src_box, "MODIFIED", FALSE)
+DIM hist AS MAP = MDSYNC.OPEN(rt, FORM.GET(src_box, "TEXT"))
+d = MDSYNC.INSERT(hist, 0, "| A | B |" + NL + "|---|---|" + NL + "| 1 | 2 |")
+FORM.SET(src_box, "SELSTART", d{"start"})
+FORM.SET(src_box, "SELLENGTH", d{"old_len"})
+FORM.SET(src_box, "SELTEXT", d{"text"})
+Check(FORM.GET(src_box, "TEXT") = MDSYNC.SOURCE$(hist), "the inserted table is in the source pane")
+FORM.SET(src_box, "UNDO", TRUE)
+Check(FORM.GET(src_box, "TEXT") = histMd, "Undo in the source pane takes the table out")
+Check(MDSYNC.SOURCECHANGED(hist, FORM.GET(src_box, "TEXT")) = TRUE, "the view is redrawn from the source")
+Check(INSTR(FORM.GET(rt, "TEXT"), CHR$(65529)) < 0 ANDALSO MDSYNC.SOURCE$(hist) = histMd, "and shows no table any more")
+FORM.SET(src_box, "REDO", TRUE)
+DIM redone AS BOOLEAN = MDSYNC.SOURCECHANGED(hist, FORM.GET(src_box, "TEXT"))
+Check(INSTR(FORM.GET(rt, "TEXT"), CHR$(65529)) >= 0, "Redo brings the table back")
+SelectText(rt, "Body")
+FORM.SET(rt, "SELTEXT", "Main")
+d = MDSYNC.VIEWCHANGED(hist)
+FORM.SET(src_box, "SELSTART", d{"start"})
+FORM.SET(src_box, "SELLENGTH", d{"old_len"})
+FORM.SET(src_box, "SELTEXT", d{"text"})
+FORM.SET(src_box, "UNDO", TRUE)
+redone = MDSYNC.SOURCECHANGED(hist, FORM.GET(src_box, "TEXT"))
+Check(INSTR(FORM.GET(rt, "TEXT"), "Body text.") >= 0 ANDALSO INSTR(MDSYNC.SOURCE$(hist), "Main") < 0, "text typed in the view is undone the same way")
+
 FORM.CLOSE(frm)
 
 PRINT
