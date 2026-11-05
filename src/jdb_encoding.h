@@ -12,6 +12,7 @@
 #include <string>
 #include <stdexcept>
 #include <cstring>
+#include <cstdio>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -44,6 +45,8 @@ inline int codepage_id(const std::string& enc) {
     // UTF-16: not a Windows codepage - handled by the portable path below.
     if (n == "utf16" || n == "utf16le" || n == "ucs2" || n == "ucs2le" || n == "unicode") return -2;
     if (n == "utf16be" || n == "ucs2be") return -3;
+    if (n == "utf16lebom" || n == "utf16bom" || n == "unicodebom") return -5;
+    if (n == "utf16bebom") return -6;
     return -1;
 }
 
@@ -169,6 +172,8 @@ inline bool valid_utf8(const std::string& s) {
 // well-formed UTF-8; anything else is taken as the Windows ANSI codepage.
 inline std::string detect_encoding(const std::string& b) {
     if (has_utf8_bom(b)) return "utf-8-bom";
+    if (b.size() >= 2 && (unsigned char)b[0] == 0xFF && (unsigned char)b[1] == 0xFE) return "utf-16le-bom";
+    if (b.size() >= 2 && (unsigned char)b[0] == 0xFE && (unsigned char)b[1] == 0xFF) return "utf-16be-bom";
     int u16 = sniff_utf16(b);
     if (u16 == 1) return "utf-16le";
     if (u16 == 2) return "utf-16be";
@@ -180,8 +185,8 @@ inline std::string detect_encoding(const std::string& b) {
 inline std::string decode_to_utf8(const std::string& bytes, const std::string& encoding) {
     int cp = codepage_id(encoding);
     if (cp == -4) return has_utf8_bom(bytes) ? bytes.substr(3) : bytes;
-    if (cp == -2) return utf16_to_utf8(bytes, false);
-    if (cp == -3) return utf16_to_utf8(bytes, true);
+    if (cp == -2 || cp == -5) return utf16_to_utf8(bytes, false);
+    if (cp == -3 || cp == -6) return utf16_to_utf8(bytes, true);
     if (cp == -1) throw std::runtime_error("unknown encoding: " + encoding);
     if (bytes.empty()) return bytes;
     if (cp == 0) {
@@ -207,10 +212,25 @@ inline std::string decode_to_utf8(const std::string& bytes, const std::string& e
 #endif
 }
 
-// Encode UTF-8 -> bytes (in `encoding`). Empty/utf-8 pass through.
-inline std::string encode_from_utf8(const std::string& utf8, const std::string& encoding) {
+// True when the file exists and holds at least one byte: an append in a -bom
+// encoding then continues the text without a second byte order mark.
+inline bool file_has_bytes(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    bool any = fgetc(f) != EOF;
+    fclose(f);
+    return any;
+}
+
+// Encode UTF-8 -> bytes (in `encoding`). Empty/utf-8 pass through. The -bom
+// names lead with a byte order mark only at the start of a file: an append to
+// a file that already has bytes passes at_start = false.
+inline std::string encode_from_utf8(const std::string& utf8, const std::string& encoding,
+                                    bool at_start = true) {
     int cp = codepage_id(encoding);
-    if (cp == -4) return std::string("\xEF\xBB\xBF") + utf8;
+    if (cp == -4) return at_start ? std::string("\xEF\xBB\xBF") + utf8 : utf8;
+    if (cp == -5) return (at_start ? std::string("\xFF\xFE") : std::string()) + utf8_to_utf16(utf8, false);
+    if (cp == -6) return (at_start ? std::string("\xFE\xFF") : std::string()) + utf8_to_utf16(utf8, true);
     if (cp == -2) return utf8_to_utf16(utf8, false);
     if (cp == -3) return utf8_to_utf16(utf8, true);
     if (cp == -1) throw std::runtime_error("unknown encoding: " + encoding);

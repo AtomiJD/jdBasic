@@ -5711,7 +5711,7 @@ void jdb_txtwriter_enc(const char* path, const char* content, int64_t append,
     std::string enc = encoding ? encoding : "";
     std::string out;
     try {
-        out = jdb_enc::encode_from_utf8(in, enc);
+        out = jdb_enc::encode_from_utf8(in, enc, !append || !jdb_enc::file_has_bytes(path ? path : ""));
     } catch (const std::exception&) {
         out = in;
     }

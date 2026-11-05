@@ -4114,11 +4114,11 @@ Description: TUI namespace version string.
 
 [TXTREADER$]
 TXTREADER$(filename$, [encoding$]) -> string$
-Reads the entire contents of a text file into a string. If `encoding$` is given, the file's bytes are decoded from that codepage to UTF-8. Default (no arg / "" / "utf-8") is byte-pass-through; "utf-8-bom" drops a leading byte order mark (TXTWRITER writes one). TXTENCODING$ guesses the right name for a file. Supported: "cp1252"/"windows-1252"/"latin1", "cp850", "cp437", "cp1250", "cp1251", "cp936", "cp932". Codepage decode is Windows-only.
+Reads the entire contents of a text file into a string. If `encoding$` is given, the file's bytes are decoded from that codepage to UTF-8. Default (no arg / "" / "utf-8") is byte-pass-through; "utf-8-bom", "utf-16le-bom" and "utf-16be-bom" drop a leading byte order mark (TXTWRITER writes one at the start of a file, not on an append to one with content); "utf-16le"/"utf-16be" write none. TXTENCODING$ guesses the right name for a file. Supported: "cp1252"/"windows-1252"/"latin1", "cp850", "cp437", "cp1250", "cp1251", "cp936", "cp932". Codepage decode is Windows-only.
 
 [TXTENCODING$]
 TXTENCODING$(filename$) -> string$
-Guesses a text file's encoding like Windows Notepad: "utf-8-bom", "utf-16le" or "utf-16be" from a byte order mark or the UTF-16 NUL pattern, "utf-8" for well-formed UTF-8 (ASCII included), otherwise "cp1252". The answer is a name TXTREADER$ and TXTWRITER take, so a file can be opened and saved in its own encoding.
+Guesses a text file's encoding like Windows Notepad: "utf-8-bom", "utf-16le-bom" or "utf-16be-bom" from a byte order mark, "utf-16le" or "utf-16be" from the UTF-16 NUL pattern of a file without one, "utf-8" for well-formed UTF-8 (ASCII included), otherwise "cp1252". The answer is a name TXTREADER$ and TXTWRITER take, so a file can be opened and saved in its own encoding.
 
 [TXTWRITER]
 TXTWRITER filename$, content$, [append], [encoding$]

@@ -1,0 +1,89 @@
+' ============================================================
+' Regression: UTF-16 with and without a byte order mark
+' ============================================================
+' Self-checking. Each failure prints [FAIL].
+'
+' Covers:
+'   1. "utf-16le-bom" / "utf-16be-bom" write the mark, "utf-16le" does not.
+'   2. TXTENCODING$ answers the -bom name for a file that has the mark and
+'      the plain name for the NUL-pattern guess, so a read and write in the
+'      detected encoding gives back the same bytes.
+'   3. An append in a -bom encoding to a file with content adds no second
+'      mark (utf-8-bom as well).
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK_STR(name$, expected AS STRING, actual AS STRING)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected=["; expected; "]  actual=["; actual; "]"
+    ENDIF
+ENDSUB
+
+FUNC HEAD_HEX$(path AS STRING, n AS INTEGER) AS STRING
+    DIM raw AS STRING = BINREADER$(path)
+    DIM out AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        out = out + RIGHT$("0" + HEX$(ASC(MID$(raw, i, 1))), 2)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC ROUND_TRIP_SAME(path AS STRING) AS INTEGER
+    DIM before AS STRING = BINREADER$(path)
+    DIM enc AS STRING = TXTENCODING$(path)
+    TXTWRITER path, TXTREADER$(path, enc), FALSE, enc
+    RETURN BINREADER$(path) = before
+ENDFUNC
+
+DIM le_bom AS STRING = MKTEMP$("u16a") + ".txt"
+TXTWRITER le_bom, "Grüße", FALSE, "utf-16le-bom"
+CHECK_STR("le-bom leads with FF FE", "FFFE4700", HEAD_HEX$(le_bom, 4))
+CHECK_STR("le-bom size", "12", STR$(LEN(BINREADER$(le_bom))))
+CHECK_STR("le-bom detected", "utf-16le-bom", TXTENCODING$(le_bom))
+CHECK_STR("le-bom read", "Grüße", TXTREADER$(le_bom, "utf-16le-bom"))
+CHECK_STR("plain utf-16le reads it too", "Grüße", TXTREADER$(le_bom, "utf-16le"))
+CHECK_STR("le-bom round trip", "1", STR$(ROUND_TRIP_SAME(le_bom)))
+
+TXTWRITER le_bom, "!", TRUE, "utf-16le-bom"
+CHECK_STR("append adds no second mark", "14", STR$(LEN(BINREADER$(le_bom))))
+CHECK_STR("appended text reads back", "Grüße!", TXTREADER$(le_bom, "utf-16le-bom"))
+
+DIM be_bom AS STRING = MKTEMP$("u16b") + ".txt"
+TXTWRITER be_bom, "Hi", FALSE, "utf-16be-bom"
+CHECK_STR("be-bom leads with FE FF", "FEFF0048", HEAD_HEX$(be_bom, 4))
+CHECK_STR("be-bom detected", "utf-16be-bom", TXTENCODING$(be_bom))
+CHECK_STR("be-bom read", "Hi", TXTREADER$(be_bom, "utf-16be-bom"))
+CHECK_STR("be-bom round trip", "1", STR$(ROUND_TRIP_SAME(be_bom)))
+
+DIM le_plain AS STRING = MKTEMP$("u16c") + ".txt"
+TXTWRITER le_plain, "Hello there", FALSE, "utf-16le"
+CHECK_STR("plain utf-16le has no mark", "48006500", HEAD_HEX$(le_plain, 4))
+CHECK_STR("plain utf-16le detected by its NULs", "utf-16le", TXTENCODING$(le_plain))
+CHECK_STR("plain utf-16le round trip", "1", STR$(ROUND_TRIP_SAME(le_plain)))
+
+DIM u8_bom AS STRING = MKTEMP$("u8b") + ".txt"
+TXTWRITER u8_bom, "ab", FALSE, "utf-8-bom"
+TXTWRITER u8_bom, "cd", TRUE, "utf-8-bom"
+CHECK_STR("utf-8-bom append adds no second mark", "7", STR$(LEN(BINREADER$(u8_bom))))
+CHECK_STR("utf-8-bom appended text", "abcd", TXTREADER$(u8_bom, "utf-8-bom"))
+
+DIM fresh AS STRING = MKTEMP$("u16d") + ".txt"
+TXTWRITER fresh, "x", TRUE, "utf-16le-bom"
+CHECK_STR("append to a new file starts with the mark", "FFFE7800", HEAD_HEX$(fresh, 4))
+
+KILL le_bom
+KILL be_bom
+KILL le_plain
+KILL u8_bom
+KILL fresh
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+IF FAIL_COUNT = 0 THEN PRINT "ALL TESTS PASSED!"

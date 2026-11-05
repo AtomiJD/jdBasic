@@ -131,7 +131,8 @@ void VM::register_file_builtins() {
         std::string content = args[1].as_string()->data;
         bool append = (args.size() >= 3) ? args[2].to_bool() : false;
         std::string encoding = (args.size() >= 4) ? args[3].as_string()->data : std::string();
-        std::string out = jdb_enc::encode_from_utf8(content, encoding);
+        std::string out = jdb_enc::encode_from_utf8(content, encoding,
+                                                    !append || !jdb_enc::file_has_bytes(fname));
         // Binary mode to match native jdb_txtwriter - avoids \r\n translation
         // so FILE.SIZE returns the same byte count in both runtimes.
         std::ios::openmode mode = std::ios::out | std::ios::binary |

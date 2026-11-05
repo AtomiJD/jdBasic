@@ -81,13 +81,11 @@ FUNC DOC_NAME$()
 ENDFUNC
 
 FUNC ENC_LABEL$(enc AS STRING)
+    IF LEFT$(enc, 8) = "utf-16le" THEN RETURN "UTF-16 LE"
+    IF LEFT$(enc, 8) = "utf-16be" THEN RETURN "UTF-16 BE"
     SWITCH enc
         CASE "utf-8-bom"
             RETURN "UTF-8 with BOM"
-        CASE "utf-16le"
-            RETURN "UTF-16 LE"
-        CASE "utf-16be"
-            RETURN "UTF-16 BE"
         CASE "cp1252"
             RETURN "ANSI"
     ENDSWITCH
@@ -597,8 +595,8 @@ ENDSUB
 SUB MENU_CHECKS()
     CHECK_ITEM("mnuEncUtf8", file_enc = "utf-8")
     CHECK_ITEM("mnuEncUtf8Bom", file_enc = "utf-8-bom")
-    CHECK_ITEM("mnuEncUtf16Le", file_enc = "utf-16le")
-    CHECK_ITEM("mnuEncUtf16Be", file_enc = "utf-16be")
+    CHECK_ITEM("mnuEncUtf16Le", LEFT$(file_enc, 8) = "utf-16le")
+    CHECK_ITEM("mnuEncUtf16Be", LEFT$(file_enc, 8) = "utf-16be")
     CHECK_ITEM("mnuEncAnsi", file_enc = "cp1252")
     CHECK_ITEM("mnuEolCrlf", file_eol = CRLF)
     CHECK_ITEM("mnuEolLf", file_eol <> CRLF)
@@ -643,8 +641,6 @@ FUNC SAVE_TO(path AS STRING)
         IF answer = 2 THEN RETURN FALSE
         IF answer = 6 THEN file_enc = "utf-8"
     ENDIF
-    ' TXTWRITER writes UTF-16 without a BOM; the files Windows writes carry one
-    IF LEFT$(file_enc, 6) = "utf-16" THEN body = CHR$(65279) + body
     TRY
         TXTWRITER path, body, FALSE, file_enc
     CATCH
@@ -1051,11 +1047,11 @@ SUB MNUENCUTF8BOM_CLICK(e)
 ENDSUB
 
 SUB MNUENCUTF16LE_CLICK(e)
-    SET_ENCODING("utf-16le")
+    SET_ENCODING("utf-16le-bom")
 ENDSUB
 
 SUB MNUENCUTF16BE_CLICK(e)
-    SET_ENCODING("utf-16be")
+    SET_ENCODING("utf-16be-bom")
 ENDSUB
 
 SUB MNUENCANSI_CLICK(e)

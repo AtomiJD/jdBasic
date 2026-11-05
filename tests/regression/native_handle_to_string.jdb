@@ -65,7 +65,7 @@ CHECK_STR("utf-8 detected", "utf-8", TXTENCODING$(u8_path))
 
 DIM u16_path AS STRING = MKTEMP$("encD") + ".txt"
 TXTWRITER u16_path, CHR$(65279) + "abc", FALSE, "utf-16le"
-CHECK_STR("utf-16le detected", "utf-16le", TXTENCODING$(u16_path))
+CHECK_STR("utf-16le with a BOM detected", "utf-16le-bom", TXTENCODING$(u16_path))
 CHECK_STR("utf-16le decoded", "abc", TXTREADER$(u16_path, "utf-16le"))
 
 KILL ansi_path
