@@ -5325,7 +5325,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 if (!ok) filled[s.var_name] = false;
             }
             if (s.kind == StmtKind::INDEX_ASSIGN && global_name(s.var_name)) filled[s.var_name] = false;
-            if (s.kind == StmtKind::FOR_EACH && global_name(s.var_name)) filled[s.var_name] = false;
+            if ((s.kind == StmtKind::FOR_EACH || s.kind == StmtKind::FOR_LOOP) &&
+                global_name(s.var_name)) filled[s.var_name] = false;
             for (auto& n : s.destruct_vars()) if (global_name(n)) filled[n] = false;
             for (auto& b : s.body) if (b) check(*b, locals);
             for (auto& br : s.branches) for (auto& b : br.body) if (b) check(*b, locals);
