@@ -640,6 +640,7 @@ inline std::string unpack_object_streams(const std::string& pdf) {
             size_t from = index[i].second;
             size_t to = i + 1 < index.size() ? index[i + 1].second : body.size();
             if (from >= body.size() || to < from) continue;
+            if (extra.size() + (to - from) > kUnpackBudget) break;
             extra += "\n" + std::to_string(index[i].first) + " 0 obj\n" +
                      body.substr(from, to - from) + "\nendobj\n";
         }
