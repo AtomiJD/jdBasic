@@ -85,8 +85,17 @@ done
 # display for the same reason.
 EXCLUDE_DIRS='^tests/(rag|ai|http|tui|forms|gfx)/'
 
-WORK="${PARITY_WORK:-${TMPDIR:-/tmp}/jdb_parity}"
+# Every sweep works in a folder of its own: two sweeps at once (two sessions,
+# a farm gate) in one shared folder overwrite each other's exes and logs and
+# report verdicts neither run earned. The exes (each with a copy of
+# jdbrt.dll) go when the sweep ends; the logs stay for reading.
+if [ -n "${PARITY_WORK:-}" ]; then
+    WORK="$PARITY_WORK"
+else
+    WORK=$(mktemp -d "${TMPDIR:-/tmp}/jdb_parity.XXXXXX")
+fi
 mkdir -p "$WORK/exe" "$WORK/log"
+trap 'rm -rf "$WORK/exe"' EXIT
 
 # Classify one run: exit code + captured output -> status word.
 classify() {
@@ -111,10 +120,16 @@ classify() {
 
 green() { case "$1" in PASS|OK) return 0 ;; *) return 1 ;; esac; }
 
-# Two logs print the same, line endings and trailing blanks aside.
+# Two logs print the same, line endings and trailing blanks aside. The
+# normalized copies go to files: under Git Bash a diff over two process
+# substitutions can hang for good once diff stops reading early.
 same_output() {
-    diff -q <(tr -d '\r' < "$1" | sed 's/[[:space:]]*$//') \
-            <(tr -d '\r' < "$2" | sed 's/[[:space:]]*$//') >/dev/null 2>&1
+    tr -d '\r' < "$1" | sed 's/[[:space:]]*$//' > "$1.norm"
+    tr -d '\r' < "$2" | sed 's/[[:space:]]*$//' > "$2.norm"
+    cmp -s "$1.norm" "$2.norm"
+    local rc=$?
+    rm -f "$1.norm" "$2.norm"
+    return $rc
 }
 
 # The backends disagree by design in two ways, and neither is a GAP. Prints
