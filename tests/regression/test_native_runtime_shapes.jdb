@@ -412,6 +412,8 @@ DIM parts = REGEX.MATCH("^( *)([0-9]+[.)])(?:([ \t]+)(.*))?$", "3.")
 Check(IIF(parts[2] = "", " ", parts[2]) = " ", "an IIF arm over an empty capture group")
 DIM nums = PassOn([4, 5])
 Check(IIF(nums[0] > 4, nums[0], nums[1]) + 1 = 6, "an IIF arm that is a number cell stays a number")
+DIM picked = IIF([7, 1, 9] > 5, nums[0], nums[1])
+Check(LEN(picked) = 3 ANDALSO picked[0] = 4 ANDALSO picked[1] = 5, "an array condition picks cell arms cell by cell")
 
 ' --- a global text array that also takes text cell writes ---
 DIM board = []

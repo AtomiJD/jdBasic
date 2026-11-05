@@ -17875,7 +17875,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         TypedValue val1 = arg_cache[1];
         TypedValue val2 = arg_cache[2];
         auto num_or_arr = [&](const TypedValue& v) {
-            return v.tag == JD_TAG_ARR || jd_is_f64_tag(v.tag) || v.tag == JD_TAG_I64 || v.tag == JD_TAG_BOOL;
+            return v.tag == JD_TAG_ARR || jd_is_f64_tag(v.tag) || v.tag == JD_TAG_I64 || v.tag == JD_TAG_BOOL ||
+                   (v.tag == JD_TAG_RUNTIME && v.runtime_tag);
         };
         // An array condition picks cell by cell in the runtime; the branches
         // go as bits with their kind, since a branch may be an array itself.
@@ -17885,6 +17886,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 if (v.tag == JD_TAG_ARR) {
                     f = pun_i64_to_f64(LLVMBuildPtrToInt(builder, v.val, i64_type, "iif_p2i"));
                     t = LLVMConstInt(i32_type, JD_TAG_ARR, 0);
+                } else if (v.tag == JD_TAG_RUNTIME) {
+                    // a cell read: an array arm by its pointer, else the number
+                    LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, v.runtime_tag,
+                        LLVMConstInt(i32_type, JD_TAG_ARR, 0), "iif_rtarr");
+                    f = LLVMBuildSelect(builder, is_arr, pun_i64_to_f64(v.val),
+                                        coerce_to(v, f64_type), "iif_rtf");
+                    t = LLVMBuildSelect(builder, is_arr, LLVMConstInt(i32_type, JD_TAG_ARR, 0),
+                                        LLVMConstInt(i32_type, JD_TAG_F64, 0), "iif_rtt");
                 } else {
                     f = coerce_to(v, f64_type);
                     t = LLVMConstInt(i32_type, JD_TAG_F64, 0);
