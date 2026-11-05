@@ -9,15 +9,15 @@ EXPORT MODULE RPG_TYPES
 
 ' ── NPC ──────────────────────────────────────────────────────
 EXPORT TYPE T_NPC
-    sprite_id
+    sprite_id AS INTEGER
     name$
     dialog$
-    visible
-    can_recruit
+    visible AS BOOLEAN
+    can_recruit AS BOOLEAN
     recruit_id$
     dialog_joined$
-    recruited
-    is_shop
+    recruited AS BOOLEAN
+    is_shop AS BOOLEAN
     shop_items$
 
     SUB INIT(data, asset_path$)

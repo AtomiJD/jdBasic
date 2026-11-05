@@ -69,19 +69,19 @@ EXPORT TYPE T_ENEMY
     id$
     name$
     sprite_file$
-    frame_w
-    frame_h
-    anim_frames
-    anim_fps
-    hp
-    max_hp
-    atk
-    def
-    xp
-    gold
+    frame_w AS INTEGER
+    frame_h AS INTEGER
+    anim_frames AS ARRAY
+    anim_fps AS INTEGER
+    hp AS INTEGER
+    max_hp AS INTEGER
+    atk AS INTEGER
+    def AS INTEGER
+    xp AS INTEGER
+    gold AS INTEGER
     drop_item$
-    drop_chance
-    sprite_id
+    drop_chance AS DOUBLE
+    sprite_id AS INTEGER
 
     SUB INIT_FROM_MAP(data, apath$)
         THIS.id$ = data{"id"}

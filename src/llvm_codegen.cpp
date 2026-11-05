@@ -10736,6 +10736,18 @@ const LLVMCodegen::UDTField* LLVMCodegen::udt_field(const std::string& type_name
 void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
     register_udt_fields(stmt);
 
+    // STRICT: a member commits to a type with `AS <type>` (a `$` name is a
+    // STRING). An untyped member has no native slot kind to read back.
+    if (is_strict_here(stmt.source_file())) {
+        for (auto& mem : stmt.type_members()) {
+            if (mem.type != VarType::NONE) continue;
+            if (!mem.name.empty() && mem.name.back() == '$') continue;
+            report_error(stmt.source_file(), stmt.line,
+                "STRICT: member '" + mem.name + "' of TYPE " + stmt.func_name +
+                " has no type; add `AS <type>`");
+        }
+    }
+
     // Create constructor function: TYPENAME() → returns new object (ptr).
     // A nested type's constructor may already have been declared by an
     // enclosing type compiled earlier; reuse that declaration.

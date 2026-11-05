@@ -1303,7 +1303,7 @@ Assert(CAPTURED_ERR = 1, "ERR visible in SUB CATCH")
 Header("TYPE method calls")
 
 TYPE T_TestObj
-    val
+    val AS INTEGER
     name$
 
     SUB SET_VAL(v)
@@ -1601,7 +1601,7 @@ Header("FUNC returns map/array + UDT in FUNC")
 
 TYPE T_X_COMP
     n$
-    v
+    v AS INTEGER
     SUB INIT(a$, b)
         THIS.n$ = a$
         THIS.v = b
@@ -2056,8 +2056,8 @@ Assert(ng_xm[0] = 1 AND ng_xm[2] = 3, "XSORT 1D numeric unchanged")
 Header("UDT INIT / DISPOSE")
 
 TYPE T_LifecyclePoint
-    X
-    Y
+    X AS INTEGER
+    Y AS INTEGER
     SUB INIT(x, y)
         THIS.X = x
         THIS.Y = y
@@ -2079,7 +2079,7 @@ LET lc_p2 = lc_pts[2] : Assert(lc_p2.SUM() = 33, "vec INIT slot 2 (30+3)")
 ' DISPOSE on scope exit increments a global counter - proves it ran.
 DIM lc_disp_count = 0
 TYPE T_LifecycleResource
-    Tag
+    Tag AS INTEGER
     SUB INIT(t)
         THIS.Tag = t
     ENDSUB

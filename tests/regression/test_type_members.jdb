@@ -95,7 +95,32 @@ IF FILE.EXISTS(exe$) THEN
         PRINT "members with and without DIM were refused: ["; told$; "]"
     ENDIF
 
-    KILL one$
+    DIM version = OS.EXEC(exe$, ["--version"])
+    DIM native$ = work$ + "/one.exe"
+    IF INSTR(version{"output"}, "NativeC") >= 0 THEN
+        TXTWRITER one$, "TYPE T" + CHR$(10) + "    a" + CHR$(10) + "    b$" + CHR$(10) + "    c AS INTEGER" + CHR$(10) + "ENDTYPE" + CHR$(10) + "DIM t AS T" + CHR$(10) + "t.c = 1" + CHR$(10)
+        child = OS.EXEC(exe$, ["-c", one$])
+        told$ = child{"output"}
+        IF INSTR(told$, "STRICT: member 'A' of TYPE T has no type") < 0 OR INSTR(told$, "'B$'") >= 0 THEN
+            bad = bad + 1
+            PRINT "an untyped member under -c was answered with ["; told$; "]"
+        ENDIF
+        IF FILE.EXISTS(native$) THEN KILL native$
+
+        TXTWRITER one$, "OPTION " + CHR$(34) + "NOSTRICT" + CHR$(34) + CHR$(10) + "TYPE T" + CHR$(10) + "    a" + CHR$(10) + "ENDTYPE" + CHR$(10) + "DIM t AS T" + CHR$(10) + "t.a = 2" + CHR$(10)
+        child = OS.EXEC(exe$, ["-c", one$])
+        told$ = child{"output"}
+        IF INSTR(told$, "has no type") >= 0 OR NOT FILE.EXISTS(native$) THEN
+            bad = bad + 1
+            PRINT "an untyped member under NOSTRICT was refused: ["; told$; "]"
+        ENDIF
+        IF FILE.EXISTS(native$) THEN KILL native$
+    ENDIF
+
+    DIM left$ = ""
+    FOR EACH left$ IN FILE.LIST(work$ + "/*")
+        KILL work$ + "/" + left$
+    NEXT left$
     RMDIR work$
 ELSE
     PRINT "no build\jdBasic.exe: the parser half is skipped"

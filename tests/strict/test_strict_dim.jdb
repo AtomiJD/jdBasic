@@ -4,7 +4,7 @@ OPTION "EXPLICIT"
 
 TYPE T_ITEM
     name$
-    price
+    price AS DOUBLE
 ENDTYPE
 
 DIM items AS T_ITEM[]
