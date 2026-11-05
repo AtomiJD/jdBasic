@@ -949,10 +949,15 @@ static bool udt_is_live(const void* p) {
     return g_udt_live && g_udt_live->count(p) > 0;
 }
 
+static int rc_kind_of(uintptr_t k);
 static JdbArray* known_row(const JdbArray* arr, int64_t idx) {
     JdbArray* row = rc_cell_row(arr, idx);
     if (!row || udt_is_live(row)) return nullptr;
-    return row;
+    if (rc_kind_of((uintptr_t)row) == JD_TAG_ARR) return row;
+    // A cell written as an array carries that tag of its own.
+    if (arr_tagged(arr) && arr->elem_tags[idx] == JD_TAG_ARR) return row;
+    if ((row->flags & JDB_ARR_IMPLICIT_ROW) && row->parent == arr) return row;
+    return nullptr;
 }
 
 // A number written over a row fills the row, at every depth, as the

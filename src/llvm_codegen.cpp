@@ -5267,29 +5267,42 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             }
             return false;
         };
-        for (auto& fs : program) {
-            if (!fs || (fs->kind != StmtKind::FUNCTION && fs->kind != StmtKind::SUB)) continue;
+        // Names of each FUNC/SUB's own slots, so a write there is not the
+        // global's.
+        auto locals_of = [](const Stmt& fs) {
             std::unordered_set<std::string> locals;
-            for (auto& pn : fs->params()) locals.insert(pn.name);
+            for (auto& pn : fs.params()) locals.insert(pn.name);
             std::function<void(const Stmt&)> dims = [&](const Stmt& s) {
                 if (s.kind == StmtKind::DIM && !s.var_name.empty()) locals.insert(s.var_name);
                 for (auto& b : s.body) if (b) dims(*b);
                 for (auto& br : s.branches) for (auto& b : br.body) if (b) dims(*b);
+                for (auto& c : s.catch_body()) if (c) dims(*c);
+                for (auto& f : s.finally_body()) if (f) dims(*f);
             };
-            for (auto& b : fs->body) if (b) dims(*b);
+            for (auto& b : fs.body) if (b) dims(*b);
+            return locals;
+        };
+        auto is_text_append = [&](const Stmt& s) {
+            if (!s.expr || s.expr->kind != ExprKind::CALL || s.expr->args.size() != 2) return false;
+            std::string u = s.expr->func_name;
+            std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+            const Expr* a0 = s.expr->args[0].get();
+            return u == "APPEND" && a0 && a0->kind == ExprKind::VARIABLE &&
+                   a0->str_val == s.var_name && texty(s.expr->args[1].get());
+        };
+        auto is_text_literal = [&](const Expr* e) {
+            if (!e || e->kind != ExprKind::ARRAY_LITERAL) return false;
+            for (auto& a : e->args) if (!texty(a.get())) return false;
+            return true;
+        };
+        // Candidates: names a FUNC or SUB appends texts to.
+        for (auto& fs : program) {
+            if (!fs || (fs->kind != StmtKind::FUNCTION && fs->kind != StmtKind::SUB)) continue;
+            auto locals = locals_of(*fs);
             std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
                 if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) && !s.var_name.empty() &&
-                    !locals.count(s.var_name) && s.index_chain.empty() && s.expr &&
-                    s.expr->kind == ExprKind::CALL && s.expr->args.size() == 2) {
-                    std::string u = s.expr->func_name;
-                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-                    const Expr* a0 = s.expr->args[0].get();
-                    if (u == "APPEND" && a0 && a0->kind == ExprKind::VARIABLE && a0->str_val == s.var_name) {
-                        bool t = texty(s.expr->args[1].get());
-                        auto it = filled.find(s.var_name);
-                        filled[s.var_name] = (it == filled.end() ? true : it->second) && t;
-                    }
-                }
+                    !locals.count(s.var_name) && s.index_chain.empty() && is_text_append(s))
+                    filled[s.var_name] = true;
                 for (auto& b : s.body) if (b) walk(*b);
                 for (auto& br : s.branches) for (auto& b : br.body) if (b) walk(*b);
                 for (auto& c : s.catch_body()) if (c) walk(*c);
@@ -5297,19 +5310,37 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             };
             for (auto& b : fs->body) if (b) walk(*b);
         }
-        // The main program's own appends to such a name count too.
-        std::function<void(const Stmt&)> top = [&](const Stmt& s) {
-            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB || s.kind == StmtKind::TYPE_DECL) return;
-            if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) && filled.count(s.var_name) &&
-                s.expr && s.expr->kind == ExprKind::CALL && s.expr->args.size() == 2) {
-                std::string u = s.expr->func_name;
-                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-                if (u == "APPEND" && !texty(s.expr->args[1].get())) filled[s.var_name] = false;
+        // Every other write to the global, anywhere, has to be a text append
+        // or an array literal of texts (the empty one among them).
+        std::function<void(const Stmt&, const std::unordered_set<std::string>*)> check =
+            [&](const Stmt& s, const std::unordered_set<std::string>* locals) {
+            auto global_name = [&](const std::string& n) {
+                return !n.empty() && filled.count(n) && (!locals || !locals->count(n));
+            };
+            if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM) &&
+                global_name(s.var_name)) {
+                bool ok = s.index_chain.empty() &&
+                          (is_text_append(s) || (s.kind == StmtKind::DIM && !s.expr) ||
+                           is_text_literal(s.expr.get()));
+                if (!ok) filled[s.var_name] = false;
             }
-            for (auto& b : s.body) if (b) top(*b);
-            for (auto& br : s.branches) for (auto& b : br.body) if (b) top(*b);
+            if (s.kind == StmtKind::INDEX_ASSIGN && global_name(s.var_name)) filled[s.var_name] = false;
+            if (s.kind == StmtKind::FOR_EACH && global_name(s.var_name)) filled[s.var_name] = false;
+            for (auto& n : s.destruct_vars()) if (global_name(n)) filled[n] = false;
+            for (auto& b : s.body) if (b) check(*b, locals);
+            for (auto& br : s.branches) for (auto& b : br.body) if (b) check(*b, locals);
+            for (auto& c : s.catch_body()) if (c) check(*c, locals);
+            for (auto& f : s.finally_body()) if (f) check(*f, locals);
         };
-        for (auto& ts : program) if (ts) top(*ts);
+        for (auto& ts : program) {
+            if (!ts || ts->kind == StmtKind::TYPE_DECL) continue;
+            if (ts->kind == StmtKind::FUNCTION || ts->kind == StmtKind::SUB) {
+                auto locals = locals_of(*ts);
+                for (auto& b : ts->body) if (b) check(*b, &locals);
+            } else {
+                check(*ts, nullptr);
+            }
+        }
         for (auto& [n, only_texts] : filled)
             if (only_texts && !mixed_array_vars.count(n)) string_array_vars.insert(n);
     }
@@ -19345,6 +19376,9 @@ void LLVMCodegen::scan_owned_str_globals(const std::vector<StmtPtr>& program) {
             banned.insert(s.var_name);
         if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty())
             banned.insert(s.var_name);
+        // A bare read written into a cell leaves the buffer in the array.
+        if (s.kind == StmtKind::INDEX_ASSIGN && s.expr)
+            collect_passthrough_names(*s.expr, banned);
         for (auto& n : s.destruct_vars()) banned.insert(n);
 
         for (auto& b : s.body)           if (b) walk(*b, locals);

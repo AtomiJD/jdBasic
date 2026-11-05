@@ -223,6 +223,25 @@ FOR c2 = 0 TO 2
 NEXT
 Check(rowsum = 27, "a declared INTEGER keeps its kind when cells are added in a loop")
 
+' --- a text variable written into a cell, then reassigned ---
+FUNC Mirror(v AS INTEGER) AS INTEGER
+    RETURN 3 - v
+ENDFUNC
+DIM letters = SPLIT("A,B,C,D", ",")
+DIM perm = []
+FOR q = 0 TO 3
+    perm = APPEND(perm, Mirror(q))
+NEXT
+DIM held$ = ""
+FOR q = 0 TO 3
+    IF q < perm[q] THEN
+        held$ = letters[q]
+        letters[q] = letters[perm[q]]
+        letters[perm[q]] = held$
+    ENDIF
+NEXT
+Check(JOIN(letters, "") = "DCBA", "a text variable stored in a cell keeps the cell valid")
+
 ' --- a reactive binding stops a compiled program with a message ---
 IF NOT OS.FEATURE("INTERPRETER") THEN
     DIM rx AS REACT INTEGER
