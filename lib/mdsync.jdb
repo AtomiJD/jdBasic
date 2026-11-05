@@ -13,7 +13,7 @@
 '
 ' Needs a FORMS build (Windows). Built on MDRICH.
 '
-' version: 1.1.0
+' version: 1.2.0
 ' requires: MDRICH ^1
 
 EXPORT MODULE MDSYNC
@@ -22,11 +22,45 @@ IMPORT MDRICH
 
 DIM CRLF_CH AS STRING = CHR$(13) + CHR$(10)
 DIM TAB_SYNC AS STRING = CHR$(9)
+DIM ROW_ON_SYNC AS STRING = CHR$(65529)
+DIM ROW_OFF_SYNC AS STRING = CHR$(65531)
 
 ' The view's paragraphs: their texts and the byte offset each starts at.
+' A table is one paragraph: its rows, each a row-start line and a line of
+' cells ending in the row end, with the breaks between them; at the end of
+' the document the empty line after it belongs to it too.
 FUNC ViewParas(rt AS DOUBLE)
     DIM t$ = FORM.GET(rt, "TEXT")
-    DIM texts = SPLIT(t$, CRLF_CH)
+    DIM lines = SPLIT(t$, CRLF_CH)
+    DIM texts = []
+    DIM i = 0
+    DO WHILE i < LEN(lines)
+        DIM one$ = lines[i]
+        i = i + 1
+        IF one$ = ROW_ON_SYNC THEN
+            DO WHILE i < LEN(lines)
+                one$ = one$ + CRLF_CH + lines[i]
+                i = i + 1
+                IF RIGHT$(lines[i - 1], LEN(ROW_OFF_SYNC)) <> ROW_OFF_SYNC THEN CONTINUEDO
+                IF i < LEN(lines) ANDALSO lines[i] = ROW_ON_SYNC THEN
+                    one$ = one$ + CRLF_CH + lines[i]
+                    i = i + 1
+                    CONTINUEDO
+                ENDIF
+                EXITDO
+            LOOP
+            IF i = LEN(lines) - 1 ANDALSO lines[i] = "" THEN
+                one$ = one$ + CRLF_CH
+                i = i + 1
+            ELSEIF i + 1 < LEN(lines) ANDALSO lines[i] = "" ANDALSO lines[i + 1] = ROW_ON_SYNC THEN
+                ' the empty paragraph that keeps two tables apart
+                one$ = one$ + CRLF_CH
+                i = i + 1
+            ENDIF
+        ENDIF
+        texts = APPEND(texts, one$)
+    LOOP
+    IF LEN(texts) = 0 THEN texts = [""]
     DIM starts = []
     DIM at_pos AS INTEGER = 0
     DIM k = 0
@@ -39,6 +73,17 @@ FUNC ViewParas(rt AS DOUBLE)
     vp{"starts"} = starts
     vp{"length"} = LEN(t$)
     RETURN vp
+ENDFUNC
+
+' TRUE when a table paragraph has a break inside a cell: every line but the
+' last is a row start or ends a row.
+FUNC StrayBreak(text$)
+    DIM lines = SPLIT(text$, CRLF_CH)
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 2
+        IF lines[k] <> ROW_ON_SYNC ANDALSO RIGHT$(lines[k], LEN(ROW_OFF_SYNC)) <> ROW_OFF_SYNC THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
 ENDFUNC
 
 ' The paragraph a view byte offset falls in.
@@ -87,30 +132,40 @@ FUNC RunsOf(rt AS DOUBLE, vp, a, b)
         FORM.SET(rt, "SELSTART", keep_start)
         FORM.SET(rt, "SELLENGTH", keep_len)
     ENDIF
+    ' each run goes to the paragraph it starts in; the break that ends a
+    ' paragraph is no run of it, a break inside a table is
     DIM cur = []
+    DIM cur_p = a
     DIM k = 0
     FOR k = 0 TO LEN(whole) - 1
-        IF whole[k]{"text"} = CRLF_CH THEN
+        DIM run_at AS INTEGER = whole[k]{"start"}
+        DIM pk = ParaAt(vp, run_at)
+        IF pk < a ORELSE pk >= b THEN CONTINUEFOR
+        IF whole[k]{"text"} = CRLF_CH ANDALSO run_at >= ParaEnd(vp, pk) THEN CONTINUEFOR
+        DO WHILE cur_p < pk
             out = APPEND(out, [cur])
             cur = []
-        ELSE
-            cur = APPEND(cur, whole[k])
-        ENDIF
+            cur_p = cur_p + 1
+        LOOP
+        cur = APPEND(cur, whole[k])
     NEXT k
-    out = APPEND(out, [cur])
-    DO WHILE LEN(out) < b - a
-        out = APPEND(out, [[]])
+    DO WHILE cur_p < b
+        out = APPEND(out, [cur])
+        cur = []
+        cur_p = cur_p + 1
     LOOP
     RETURN out
 ENDFUNC
 
 FUNC RtfOf$(doc, blocks)
     DIM parts = []
+    DIM kinds = []
     DIM k = 0
     FOR k = 0 TO LEN(blocks) - 1
         parts = APPEND(parts, MDRICH.RTF$(blocks[k], doc{"opts"}))
+        kinds = APPEND(kinds, blocks[k]{"kind"})
     NEXT k
-    RETURN MDRICH.HEAD$() + JOIN(parts, "\par" + CHR$(10)) + "\par}"
+    RETURN MDRICH.HEAD$() + MDRICH.JOINRTF$(parts, kinds) + "}"
 ENDFUNC
 
 ' Replaces view paragraphs [a, b) with the drawing of blocks. The caller
@@ -119,6 +174,21 @@ SUB ReplaceParas(doc, a, b, blocks)
     DIM rt AS DOUBLE = doc{"rt"}
     DIM vp = ViewParas(rt)
     DIM n = LEN(vp{"texts"})
+    ' RichEdit widens a selection that reaches a table past the table's end,
+    ' so a range with a table in it, before or after, is drawn by drawing
+    ' the whole document again
+    DIM k = 0
+    DIM with_table = FALSE
+    FOR k = 0 TO LEN(blocks) - 1
+        IF blocks[k]{"kind"} = "table" THEN with_table = TRUE
+    NEXT k
+    FOR k = a TO MIN([b, n]) - 1
+        IF LEFT$(vp{"texts"}[k], LEN(ROW_ON_SYNC)) = ROW_ON_SYNC THEN with_table = TRUE
+    NEXT k
+    IF with_table THEN
+        FORM.SET(rt, "TEXTRTF", MDRICH.DOC$(doc{"blocks"}, doc{"opts"}))
+        RETURN
+    ENDIF
     DIM starts = vp{"starts"}
     DIM from = 0
     IF a < n THEN from = starts[a] ELSE from = vp{"length"}
@@ -201,6 +271,14 @@ ENDFUNC
 
 EXPORT FUNC BLOCKS(doc)
     RETURN doc{"blocks"}
+ENDFUNC
+
+' The RUNS of every view paragraph, one array per paragraph, a table as
+' one; what MDRICH.SAME and MDRICH.MD$ read for a block.
+EXPORT FUNC VIEWRUNS(doc)
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM vp = ViewParas(rt)
+    RETURN RunsOf(rt, vp, 0, LEN(vp{"texts"}))
 ENDFUNC
 
 ' The block whose paragraph holds a view byte offset.
@@ -424,6 +502,8 @@ EXPORT FUNC VIEWCHANGED(doc)
         IF nbk{"kind"} = "item" ANDALSO nbk{"ordered"} THEN
             IF LEFT$(newt[na + j], LEN(nbk{"marker"}) + 1) <> nbk{"marker"} + TAB_SYNC THEN again = TRUE
         ENDIF
+        ' a Markdown table cell holds one line: a break typed in one is undone
+        IF nbk{"kind"} = "table" ANDALSO StrayBreak(newt[na + j]) THEN again = TRUE
         redraw = APPEND(redraw, again)
     NEXT j
 
@@ -732,6 +812,162 @@ EXPORT FUNC SETKIND(doc, k, kind$, level = 1)
     DIM vp2 = ViewParas(rt)
     FORM.SET(rt, "SELSTART", MAX([ParaStart(vp2, k), ParaEnd(vp2, k) - from_end]))
     doc{"vtexts"} = vp2{"texts"}
+    RETURN d
+ENDFUNC
+
+' Where the view caret is in a table: {block, row, col} with row 0 the
+' header, or block -1 outside a table.
+EXPORT FUNC TABLEPOS(doc)
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM vp = ViewParas(rt)
+    DIM caret AS INTEGER = FORM.GET(rt, "SELSTART")
+    DIM k = ParaAt(vp, caret)
+    DIM r AS MAP
+    r{"block"} = -1
+    r{"row"} = 0
+    r{"col"} = 0
+    DIM blocks = doc{"blocks"}
+    IF k >= LEN(blocks) THEN RETURN r
+    IF blocks[k]{"kind"} <> "table" THEN RETURN r
+    DIM before$ = LEFT$(vp{"texts"}[k], caret - ParaStart(vp, k))
+    r{"block"} = k
+    r{"row"} = MAX([0, LEN(SPLIT(before$, ROW_ON_SYNC)) - 2])
+    DIM in_row$ = before$
+    DIM row_at = INSTR(before$, ROW_ON_SYNC)
+    DO WHILE row_at >= 0
+        in_row$ = MID$(before$, row_at + LEN(ROW_ON_SYNC), LEN(before$))
+        row_at = INSTR(row_at + 1, before$, ROW_ON_SYNC)
+    LOOP
+    r{"col"} = LEN(SPLIT(in_row$, CHR$(7))) - 1
+    RETURN r
+ENDFUNC
+
+' The same for a source byte offset: the line of the table it is on (the
+' delimiter row counts as the header) and the cells left of it.
+EXPORT FUNC SOURCETABLEPOS(doc, at_pos AS INTEGER)
+    DIM r AS MAP
+    r{"block"} = -1
+    r{"row"} = 0
+    r{"col"} = 0
+    DIM blocks = doc{"blocks"}
+    IF LEN(blocks) = 0 THEN RETURN r
+    DIM k = BLOCKOFSOURCE(doc, at_pos)
+    DIM b = blocks[k]
+    IF b{"kind"} <> "table" THEN RETURN r
+    DIM body_at = b{"start"} + LEN(b{"lead"})
+    DIM before$ = MID$(doc{"src"}, body_at, MAX([0, MIN([at_pos - body_at, LEN(b{"body"})])]))
+    DIM lines = SPLIT(before$, b{"eol"})
+    DIM line_no = LEN(lines) - 1
+    r{"block"} = k
+    r{"row"} = MAX([0, line_no - 1])
+    DIM cols = LEN(MDRICH.CELLS(lines[line_no] + "x")) - 1
+    r{"col"} = MAX([0, cols])
+    RETURN r
+ENDFUNC
+
+' The source lines of table block k, and a row of empty cells for it.
+FUNC TableLines(doc, k)
+    DIM b = doc{"blocks"}[k]
+    DIM body$ = b{"body"}
+    IF RIGHT$(body$, LEN(b{"eol"})) = b{"eol"} THEN body$ = LEFT$(body$, LEN(body$) - LEN(b{"eol"}))
+    RETURN SPLIT(body$, b{"eol"})
+ENDFUNC
+
+FUNC TableLine$(cells, pipes)
+    DIM row_text$ = JOIN(cells, " | ")
+    IF pipes THEN row_text$ = "| " + row_text$ + " |"
+    RETURN row_text$
+ENDFUNC
+
+' Replaces table block k's lines and redraws; answers the span.
+FUNC SetTableLines(doc, k, lines)
+    DIM b = doc{"blocks"}[k]
+    DIM old$ = doc{"src"}
+    DIM at_pos = b{"start"} + LEN(b{"lead"})
+    DIM new_body$ = JOIN(lines, b{"eol"})
+    IF RIGHT$(b{"body"}, LEN(b{"eol"})) = b{"eol"} THEN new_body$ = new_body$ + b{"eol"}
+    DIM new$ = LEFT$(old$, at_pos) + new_body$ + MID$(old$, at_pos + LEN(b{"body"}), LEN(old$))
+    DIM d AS MAP
+    d{"changed"} = TRUE
+    d{"start"} = at_pos
+    d{"old_len"} = LEN(b{"body"})
+    d{"text"} = new_body$
+    DIM redrawn = SOURCECHANGED(doc, new$)
+    RETURN d
+ENDFUNC
+
+' Puts the view caret into cell (row, col) of table block k.
+SUB CaretToCell(doc, k, row, col)
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM vp = ViewParas(rt)
+    IF k >= LEN(vp{"texts"}) THEN RETURN
+    DIM t$ = vp{"texts"}[k]
+    DIM p = 0
+    DIM n = 0
+    FOR n = 0 TO row
+        p = INSTR(p, t$, ROW_ON_SYNC) + LEN(ROW_ON_SYNC) + 2
+    NEXT n
+    FOR n = 1 TO col
+        p = INSTR(p, t$, CHR$(7)) + 1
+    NEXT n
+    FORM.SET(rt, "SELSTART", ParaStart(vp, k) + p)
+    FORM.SET(rt, "SELLENGTH", 0)
+ENDSUB
+
+' Adds an empty row below the row the view caret is in (below the header
+' for the header row), or with from_source the row at source offset src_pos.
+' Answers the span, unchanged outside a table.
+EXPORT FUNC ADDROW(doc, from_source = FALSE, src_pos = 0)
+    DIM pos = TABLEPOS(doc)
+    IF from_source THEN pos = SOURCETABLEPOS(doc, src_pos)
+    IF pos{"block"} < 0 THEN RETURN NoChange()
+    DIM k = pos{"block"}
+    DIM b = doc{"blocks"}[k]
+    DIM lines = TableLines(doc, k)
+    DIM empties = []
+    DIM c = 0
+    FOR c = 1 TO LEN(MDRICH.CELLS(lines[1]))
+        empties = APPEND(empties, " ")
+    NEXT c
+    DIM at_line = pos{"row"} + 2
+    IF pos{"row"} = 0 THEN at_line = 2
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(lines) - 1
+        IF i = at_line THEN out = APPEND(out, TableLine$(empties, b{"pipes"}))
+        out = APPEND(out, lines[i])
+    NEXT i
+    IF at_line >= LEN(lines) THEN out = APPEND(out, TableLine$(empties, b{"pipes"}))
+    DIM d = SetTableLines(doc, k, out)
+    CaretToCell(doc, k, at_line - 1, 0)
+    RETURN d
+ENDFUNC
+
+' Adds an empty column right of the cell the view caret is in, or with
+' from_source the cell at source offset src_pos.
+EXPORT FUNC ADDCOL(doc, from_source = FALSE, src_pos = 0)
+    DIM pos = TABLEPOS(doc)
+    IF from_source THEN pos = SOURCETABLEPOS(doc, src_pos)
+    IF pos{"block"} < 0 THEN RETURN NoChange()
+    DIM k = pos{"block"}
+    DIM b = doc{"blocks"}[k]
+    DIM lines = TableLines(doc, k)
+    DIM after = pos{"col"}
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(lines) - 1
+        DIM cells = MDRICH.CELLS(lines[i])
+        DIM fresh = []
+        DIM c = 0
+        FOR c = 0 TO LEN(cells) - 1
+            fresh = APPEND(fresh, cells[c])
+            IF c = after THEN fresh = APPEND(fresh, IIF(i = 1, "---", " "))
+        NEXT c
+        IF after >= LEN(cells) THEN fresh = APPEND(fresh, IIF(i = 1, "---", " "))
+        out = APPEND(out, TableLine$(fresh, b{"pipes"}))
+    NEXT i
+    DIM d = SetTableLines(doc, k, out)
+    CaretToCell(doc, k, pos{"row"}, after + 1)
     RETURN d
 ENDFUNC
 

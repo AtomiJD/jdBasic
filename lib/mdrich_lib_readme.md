@@ -34,7 +34,9 @@ runs whose text is CRLF; the view has exactly one paragraph per block.
 |------|--------------|
 | `BLOCKS(md$)` | The blocks of the source, an array of maps. `SOURCE$` of them is `md$`. |
 | `SOURCE$(blocks)` | The sources put together. |
-| `RTF$(b, [opts])` | One block as an RTF paragraph (paragraph format and content, no `\par`). |
+| `RTF$(b, [opts])` | One block as an RTF paragraph (paragraph format and content, no `\par`); a table as RichEdit table rows. |
+| `JOINRTF$(parts, kinds)` | The `RTF$` parts of consecutive blocks with what goes between them: `\par`, nothing after a table, an empty paragraph between two tables. |
+| `CELLS(row$)` | The cells of one table source line, outer pipes dropped, trimmed. |
 | `DOC$(blocks, [opts])` | The whole document as RTF for `TEXTRTF`. |
 | `FRAGMENT$(b, [opts])` | One block as a stand-alone RTF document for `SELRTF`. |
 | `HEAD$()` | The RTF header: fonts and the colour table. |
@@ -78,7 +80,7 @@ table; `alt`, `path` for an image.
 | bullet item | a RichEdit bullet, indented per level |
 | numbered item | its marker (`3.`) as text in its own colour (127,127,130) and a tab; RUNS of that colour are skipped, so the number is the block's, not content |
 | line break inside a paragraph | a line break (`\line`, VT in `RUNS`) |
-| table | rows as lines, cells split by TAB, header row bold |
+| table | a RichEdit table with a border round every cell: a column as wide as its longest cell, aligned by the delimiter row's colons, header row bold; a row has as many cells as its source line. In `TEXT` a row reads U+FFF9, CRLF, the cells each ended by 0x07, U+FFFB, CRLF; `RunSegs` turns that back into cells split by TAB and rows by LF |
 | quote, code block, raw block | grey text, Consolas on grey, Consolas grey |
 
 ## Notes
@@ -93,6 +95,10 @@ table; `alt`, `path` for an image.
   hidden characters into the control positions, so the URL stays in
   `links`. A link's text is matched to the block's links by text, then
   by order; a new link without one gets `()`.
+- **Tables in the view**: a `\par` right after a table's last `\row`
+  makes RichEdit drop the paragraph after it, so `JOINRTF$` puts
+  nothing there; two tables in a row get an empty paragraph between
+  them, or RichEdit draws them as one.
 - **White space keeps no format**: whether the space beside a bold word is
   bold does not count as a change, Markdown cannot say it.
 - **Not in the subset**: nested blocks inside list items and quotes (they

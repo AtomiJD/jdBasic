@@ -17,7 +17,8 @@ SUB Check(cond AS BOOLEAN, label AS STRING)
     ENDIF
 ENDSUB
 
-' The runs of the whole control, cut at paragraph breaks.
+' The runs of the whole control, cut at paragraph breaks; the breaks inside
+' a table (after a row start, between rows) are part of it.
 FUNC Paragraphs(h AS DOUBLE)
     FORM.SET(h, "SELLENGTH", 0)
     DIM runs AS ARRAY = FORM.GET(h, "RUNS")
@@ -27,7 +28,9 @@ FUNC Paragraphs(h AS DOUBLE)
     DIM i AS INTEGER = 0
     FOR i = 0 TO LEN(runs) - 1
         run = runs[i]
-        IF run{"text"} = CHR$(13) + CHR$(10) THEN
+        DIM in_table AS BOOLEAN = FALSE
+        IF run{"table"} = TRUE ANDALSO i + 1 < LEN(runs) THEN in_table = runs[i + 1]{"table"} = TRUE
+        IF run{"text"} = CHR$(13) + CHR$(10) ANDALSO NOT in_table THEN
             paras = APPEND(paras, [cur])
             cur = []
         ELSE
@@ -103,7 +106,7 @@ Check(MDRICH.MD$(blk, paras[2]) = blk{"src"}, "the item next to it is untouched"
 
 ' a table cell
 view_text = FORM.GET(rt, "TEXT")
-FORM.SET(rt, "SELSTART", INSTR(view_text, "1" + CHR$(9)))
+FORM.SET(rt, "SELSTART", INSTR(view_text, "1" + CHR$(7)))
 FORM.SET(rt, "SELLENGTH", 1)
 FORM.SET(rt, "SELTEXT", "one")
 paras = Paragraphs(rt)

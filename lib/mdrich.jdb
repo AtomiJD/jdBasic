@@ -13,7 +13,7 @@
 ' Stands in for: the Markdown round trip of WYSIWYG editors (Typora,
 ' prosemirror-markdown, remark-stringify).
 '
-' version: 1.0.1
+' version: 1.1.0
 
 EXPORT MODULE MDRICH
 
@@ -21,6 +21,9 @@ DIM NL_CH AS STRING = CHR$(10)
 DIM CR_CH AS STRING = CHR$(13)
 DIM VT_CH AS STRING = CHR$(11)
 DIM TAB_CH AS STRING = CHR$(9)
+DIM CELL_CH AS STRING = CHR$(7)
+DIM ROW_ON_CH AS STRING = CHR$(65529)
+DIM ROW_OFF_CH AS STRING = CHR$(65531)
 DIM QUOTE_CH AS STRING = CHR$(34)
 DIM PUNCT AS STRING = "!" + CHR$(34) + "#$%&'()*+,-./:;<=>?@[\]^_`{|}~"
 
@@ -833,6 +836,95 @@ ENDFUNC
 
 ' One block as an RTF paragraph: paragraph format and content, no \par.
 ' opts{"base"} is the folder image paths are relative to.
+' The cells of one table source line, outer pipes dropped, trimmed.
+EXPORT FUNC CELLS(row$)
+    RETURN RowCells(row$)
+ENDFUNC
+
+' A table block as RichEdit table rows with a border round every cell. A
+' column is as wide as its longest cell; the delimiter row's colons align
+' it; the header row is bold. Rows end in \row and no paragraph follows:
+' a \par right after \row makes RichEdit drop the next paragraph.
+FUNC TableRtf$(b)
+    DIM rows = SegLines(b{"segs"})
+    DIM cells_of = []
+    DIM ncols = 1
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO LEN(rows) - 1
+        DIM cs = SplitCells(rows[r])
+        cells_of = APPEND(cells_of, [cs])
+        IF LEN(cs) > ncols THEN ncols = LEN(cs)
+    NEXT r
+    DIM delim_cells = RowCells(b{"delim"})
+    DIM widths = []
+    DIM aligns = []
+    FOR c = 0 TO ncols - 1
+        DIM w = 3
+        FOR r = 0 TO LEN(cells_of) - 1
+            IF c < LEN(cells_of[r]) THEN w = MAX([w, LEN(-SegsText$(cells_of[r][c], 0))])
+        NEXT r
+        widths = APPEND(widths, MIN([60, w]) * 130 + 260)
+        DIM d$ = ""
+        IF c < LEN(delim_cells) THEN d$ = TRIM$(delim_cells[c])
+        DIM al$ = ""
+        IF LEFT$(d$, 1) = ":" ANDALSO RIGHT$(d$, 1) = ":" THEN
+            al$ = "\qc"
+        ELSEIF RIGHT$(d$, 1) = ":" THEN
+            al$ = "\qr"
+        ENDIF
+        aligns = APPEND(aligns, al$)
+    NEXT c
+    DIM border$ = "\clbrdrt\brdrs\brdrw10\brdrcf3\clbrdrl\brdrs\brdrw10\brdrcf3\clbrdrb\brdrs\brdrw10\brdrcf3\clbrdrr\brdrs\brdrw10\brdrcf3"
+    DIM out$ = ""
+    FOR r = 0 TO LEN(cells_of) - 1
+        ' a row has as many cells as its source line, so it reads back as written
+        DIM row_cols = MAX([1, LEN(cells_of[r])])
+        DIM def$ = "\trowd\trgaph100\trleft0"
+        DIM x = 0
+        FOR c = 0 TO row_cols - 1
+            x = x + widths[c]
+            def$ = def$ + border$ + "\cellx" + STR$(x)
+        NEXT c
+        out$ = out$ + def$ + "\pard\intbl"
+        FOR c = 0 TO row_cols - 1
+            DIM cell_rtf$ = ""
+            IF c < LEN(cells_of[r]) THEN
+                DIM segs = cells_of[r][c]
+                DIM k = 0
+                FOR k = 0 TO LEN(segs) - 1
+                    DIM s = segs[k]
+                    IF r = 0 THEN s = Seg(s{"text"}, TRUE, s{"i"}, s{"s"}, s{"code"}, s{"link"}, s{"mark"}, s{"raw"})
+                    cell_rtf$ = cell_rtf$ + SegRtf$(s)
+                NEXT k
+            ENDIF
+            out$ = out$ + aligns[c] + " " + cell_rtf$ + "\cell"
+        NEXT c
+        out$ = out$ + "\row"
+    NEXT r
+    RETURN out$
+ENDFUNC
+
+' The RTF that comes between two blocks: a paragraph break, except after a
+' table, whose last row ends the paragraph already. Two tables in a row
+' get an empty paragraph between them, which belongs to the first, or
+' RichEdit would draw them as one.
+EXPORT FUNC JOINRTF$(parts, kinds)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        out$ = out$ + parts[k]
+        IF kinds[k] <> "table" THEN
+            out$ = out$ + "\par" + NL_CH
+        ELSEIF k + 1 < LEN(parts) ANDALSO kinds[k + 1] = "table" THEN
+            out$ = out$ + "\pard\par" + NL_CH
+        ELSE
+            out$ = out$ + NL_CH
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
 EXPORT FUNC RTF$(b, opts = 0)
     DIM kind$ = b{"kind"}
     DIM base$ = ""
@@ -868,26 +960,7 @@ EXPORT FUNC RTF$(b, opts = 0)
         IF pict$ <> "" THEN RETURN "\pard\sa120 " + pict$
         RETURN "\pard\sa120{\cf3 " + RtfEsc$("[" + b{"alt"} + "]") + "}"
     ELSEIF kind$ = "table" THEN
-        DIM tabs$ = ""
-        DIM c = 1
-        FOR c = 1 TO MAX([1, b{"ncols"}])
-            tabs$ = tabs$ + "\tx" + STR$(c * 2400)
-        NEXT c
-        DIM first_nl = 0
-        DIM rows$ = ""
-        DIM k = 0
-        DIM header = TRUE
-        FOR k = 0 TO LEN(b{"segs"}) - 1
-            DIM s = b{"segs"}[k]
-            IF header ANDALSO s{"text"} = NL_CH THEN header = FALSE
-            IF header THEN
-                DIM hs = Seg(s{"text"}, TRUE, s{"i"}, s{"s"}, s{"code"}, s{"link"}, s{"mark"}, s{"raw"})
-                rows$ = rows$ + SegRtf$(hs)
-            ELSE
-                rows$ = rows$ + SegRtf$(s)
-            ENDIF
-        NEXT k
-        RETURN "\pard\sa120" + tabs$ + " " + rows$
+        RETURN TableRtf$(b)
     ELSEIF kind$ = "blank" THEN
         RETURN "\pard "
     ENDIF
@@ -897,12 +970,14 @@ ENDFUNC
 ' The whole document as RTF, one paragraph per block.
 EXPORT FUNC DOC$(blocks, opts = 0)
     DIM parts = []
+    DIM kinds = []
     DIM k = 0
     FOR k = 0 TO LEN(blocks) - 1
         parts = APPEND(parts, RTF$(blocks[k], opts))
+        kinds = APPEND(kinds, blocks[k]{"kind"})
     NEXT k
-    ' The last \par gives the last paragraph its format; it adds no paragraph.
-    RETURN HEAD$() + JOIN(parts, "\par" + NL_CH) + "\par}"
+    ' The \par after the last paragraph gives it its format; it adds no paragraph.
+    RETURN HEAD$() + JOINRTF$(parts, kinds) + "}"
 ENDFUNC
 
 ' One block as a stand-alone RTF document, for SELRTF.
@@ -992,6 +1067,15 @@ FUNC RunSegs(kind$, runs)
         IF t$ = CR_CH + NL_CH ORELSE t$ = NL_CH ORELSE t$ = CR_CH THEN CONTINUEFOR
         IF Flag(r, "object") THEN t$ = "[]"
         t$ = REPLACE$(t$, VT_CH, NL_CH)
+        IF kind$ = "table" THEN
+            ' a RichEdit table: row start dropped, a cell end is a TAB, a
+            ' row end a line break
+            t$ = REPLACE$(t$, ROW_ON_CH, "")
+            t$ = REPLACE$(t$, CELL_CH, TAB_CH)
+            t$ = REPLACE$(t$, ROW_OFF_CH, NL_CH)
+            t$ = REPLACE$(t$, CR_CH, "")
+            IF t$ = "" THEN CONTINUEFOR
+        ENDIF
         DIM col = -1
         IF MAP.EXISTS(r, "color") THEN col = r{"color"}
         ' the drawn number of an ordered item runs up to its tab; text typed
@@ -1009,7 +1093,37 @@ FUNC RunSegs(kind$, runs)
         out = APPEND(out, Norm(kind$, row, Flag(r, "bold"), Flag(r, "italic"), Flag(r, "strike"), fcode, flink, col = MARK_RGB ORELSE col = LINK_MARK_RGB, col = RAW_RGB ORELSE col = LINK_RAW_RGB, t$))
         IF INSTR(t$, NL_CH) >= 0 THEN row = row + 1
     NEXT k
+    IF kind$ = "table" THEN RETURN TidyTableSegs(out)
     RETURN out
+ENDFUNC
+
+' The last cell of a row ends in a TAB right before the row's line break,
+' and the last row in one before the end: neither is a cell boundary.
+FUNC TidyTableSegs(segs)
+    DIM k = 0
+    FOR k = 0 TO LEN(segs) - 1
+        DIM s = segs[k]
+        s{"text"} = REPLACE$(s{"text"}, TAB_CH + NL_CH, NL_CH)
+        IF RIGHT$(s{"text"}, 1) = TAB_CH ANDALSO k + 1 < LEN(segs) THEN
+            IF LEFT$(segs[k + 1]{"text"}, 1) = NL_CH THEN s{"text"} = LEFT$(s{"text"}, LEN(s{"text"}) - 1)
+        ENDIF
+        segs[k] = s
+    NEXT k
+    ' the break of the last row ends the table, not a row
+    DO WHILE LEN(segs) > 0
+        DIM last = segs[LEN(segs) - 1]
+        DIM lt$ = last{"text"}
+        IF lt$ = "" THEN
+            segs = TAKE(LEN(segs) - 1, segs)
+            CONTINUEDO
+        ENDIF
+        IF RIGHT$(lt$, 1) = NL_CH THEN
+            last{"text"} = LEFT$(lt$, LEN(lt$) - 1)
+            segs[LEN(segs) - 1] = last
+        ENDIF
+        EXITDO
+    LOOP
+    RETURN segs
 ENDFUNC
 
 ' One character per byte of the text: the format code, or "." for white

@@ -45,8 +45,13 @@ other's echo without a guard.
 | `SETKIND(doc, k, kind$, [level])` | Turns block `k` into `para`, `heading` (with a level), `item`, `ordered`, `quote` or `code`, keeping its text. Answers the span. |
 | `SETLINK(doc, url$)` | Makes the view's selection a link to `url$`. Answers the span. |
 | `INSERT(doc, k, md$)` | Puts Markdown in after block `k` (`-1`: at the top) as blocks of their own, with the blank lines that keep them apart; the view caret goes to the first of them. Answers the span. |
+| `TABLEPOS(doc)` | Where the view caret is in a table: `{block, row, col}`, row 0 the header; block -1 outside a table. |
+| `SOURCETABLEPOS(doc, pos)` | The same for a source offset. |
+| `ADDROW(doc, [from_source, pos])` | An empty row below the caret's row (below the header for the header row); the view caret goes to its first cell. Answers the span. |
+| `ADDCOL(doc, [from_source, pos])` | An empty column right of the caret's cell, `---` in the delimiter row. Answers the span. |
 | `SOURCE$(doc)` | The current source. |
 | `BLOCKS(doc)` | The current blocks (see MDRICH). |
+| `VIEWRUNS(doc)` | The `RUNS` of every view paragraph, one array per block, a table as one: what `MDRICH.SAME` and `MDRICH.MD$` read. |
 | `BLOCKAT(doc, pos)` | The block whose paragraph holds a view offset (`SELSTART`). |
 | `VIEWPOS(doc, k)` | The view offset where block `k` starts. |
 | `SOURCEPOS(doc, k)` | The source offset where block `k`'s own lines start. |
@@ -80,6 +85,13 @@ caret.
 
 ## Notes
 
+- **Tables** are RichEdit tables. A table is one view paragraph: its
+  rows with their structure characters, and the empty paragraph that
+  keeps it from a table after it. Typing in a cell reconciles like any
+  paragraph; a break typed into a cell is undone, a Markdown cell holds
+  one line. A redraw that reaches a table draws the whole document, since
+  RichEdit widens a selection that touches a table past its end; the
+  caret is put back, the view's undo starts over.
 - **Line endings**: a RICHTEXT reads and writes CRLF, so an editor that
   shows the source in one passes CRLF text in and converts on save; the
   spans then fit the source pane's offsets directly.
@@ -98,5 +110,5 @@ caret.
 |------|------|
 | `lib/mdsync.jdb` | the module |
 | `tests/jdlibs/mdsync_selftest.jdb` | open, a view edit and its span, a source edit; skips without FORMS |
-| `tests/forms/mdsync_selftest.jdb` | typing, formats, Enter after a paragraph, heading and items, joining, source edits, kind changes, links, renumbering, inserts; both backends |
+| `tests/forms/mdsync_selftest.jdb` | typing, formats, Enter after a paragraph, heading and items, joining, source edits, kind changes, links, renumbering, inserts, tables (cells, rows, columns, two in a row, one at the end); both backends |
 | `jdb/demos/jdlibs/mdsync_demo.jdb` | source and rendered view side by side, edited both ways |

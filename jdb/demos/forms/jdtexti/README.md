@@ -42,6 +42,7 @@ Format > Markdown and the button bar above the panes:
 | Heading 1 to 3, paragraph | Ctrl+1..3, Ctrl+Shift+P | H1-H3, Text |
 | Bullet list, numbered list, quote, code block | Ctrl+Shift+8, Ctrl+Shift+7, Ctrl+Shift+Q, Ctrl+Shift+K | List, 1. List, Quote, Code |
 | Insert table, image, horizontal rule | Ctrl+Shift+T, Ctrl+Shift+G, Ctrl+Shift+R | Table, Image, Rule |
+| Table: insert row, insert column | Ctrl+Shift+W, Ctrl+Shift+U | |
 
 The menu ticks and the buttons are drawn bold for the format under the caret:
 the block kind in either pane, the inline formats in the rendered view.
@@ -51,6 +52,11 @@ markers; in the view they set the format, and the Markdown follows. Inserted
 blocks go after the block under the caret, with the blank lines that keep
 them apart. An image inside the document's folder is written with a path
 relative to the document.
+
+Tables are drawn with a border round every cell. Type in a cell as
+anywhere else; the Markdown row follows. A new row goes below the row the
+caret is in, a new column right of its cell, from either pane. A cell
+holds one line: Enter inside a cell is taken back.
 
 A numbered list counts on by itself: an item added, made or removed in the
 view renumbers the items after it. A list the edit did not reach keeps its

@@ -369,6 +369,28 @@ SUB MD_INSERT_IMAGE()
     MD_INSERT("![" + alt + "](" + target + ")")
 ENDSUB
 
+' A row below, or a column right of, the table cell under the caret of
+' either pane.
+SUB MD_TABLE_ADD(what AS STRING)
+    IF NOT md_on THEN RETURN
+    MD_FLUSH()
+    DIM from_src AS BOOLEAN = ED() = txt
+    DIM at AS INTEGER = CINT(FORM.GET(txt, "SELSTART"))
+    DIM d AS MAP
+    IF what = "row" THEN
+        d = MDSYNC.ADDROW(md_doc, from_src, at)
+    ELSE
+        d = MDSYNC.ADDCOL(md_doc, from_src, at)
+    ENDIF
+    IF d{"changed"} <> TRUE THEN RETURN
+    APPLY_SPAN(d)
+    IF from_src THEN FORM.SET(txt, "SELSTART", at)
+    FORM.SET(ED(), "FOCUS")
+    MD_STATE()
+    UPDATE_TITLE()
+    UPDATE_STATUS()
+ENDSUB
+
 ' Shows the format under the caret: the Markdown menu ticks it, the button
 ' bar draws the matching buttons bold. Inline formats are known in the
 ' rendered view only.
@@ -548,7 +570,9 @@ SUB BUILD_MENU()
                 "-", _
                 {"text": "Insert &Table", "name": "mnuMdTable", "key": "Ctrl+Shift+T"}, _
                 {"text": "Insert I&mage...", "name": "mnuMdImage", "key": "Ctrl+Shift+G"}, _
-                {"text": "Insert Horizontal &Rule", "name": "mnuMdRule", "key": "Ctrl+Shift+R"}]}]}, _
+                {"text": "Insert Horizontal &Rule", "name": "mnuMdRule", "key": "Ctrl+Shift+R"}, _
+                {"text": "Table: Insert Ro&w", "name": "mnuMdRow", "key": "Ctrl+Shift+W"}, _
+                {"text": "Table: Insert Col&umn", "name": "mnuMdCol", "key": "Ctrl+Shift+U"}]}]}, _
         {"text": "&View", "items": [ _
             {"text": "&Plain Text", "name": "mnuMdOff"}, _
             {"text": "Markdown S&plit", "name": "mnuMdSplit", "key": "Ctrl+M"}, _
@@ -588,7 +612,7 @@ SUB MENU_CHECKS()
     CHECK_ITEM("mnuMdOff", md_on = 0)
     CHECK_ITEM("mnuMdSplit", md_on = 1 ANDALSO md_layout = 1)
     CHECK_ITEM("mnuMdRendered", md_on = 1 ANDALSO md_layout = 2)
-    DIM names AS ARRAY = ["mnuMdBold", "mnuMdItalic", "mnuMdStrike", "mnuMdCode", "mnuMdLink", "mnuMdH1", "mnuMdH2", "mnuMdH3", "mnuMdPara", "mnuMdBullet", "mnuMdNumber", "mnuMdQuote", "mnuMdCodeBlock", "mnuMdTable", "mnuMdImage", "mnuMdRule"]
+    DIM names AS ARRAY = ["mnuMdBold", "mnuMdItalic", "mnuMdStrike", "mnuMdCode", "mnuMdLink", "mnuMdH1", "mnuMdH2", "mnuMdH3", "mnuMdPara", "mnuMdBullet", "mnuMdNumber", "mnuMdQuote", "mnuMdCodeBlock", "mnuMdTable", "mnuMdImage", "mnuMdRule", "mnuMdRow", "mnuMdCol"]
     DIM i AS INTEGER = 0
     FOR i = 0 TO LEN(names) - 1
         FORM.SET(FORM.FIND(frm, names[i]), "ENABLED", md_on = 1)
@@ -1378,6 +1402,14 @@ ENDSUB
 
 SUB MNUMDIMAGE_CLICK(e)
     MD_INSERT_IMAGE()
+ENDSUB
+
+SUB MNUMDROW_CLICK(e)
+    MD_TABLE_ADD("row")
+ENDSUB
+
+SUB MNUMDCOL_CLICK(e)
+    MD_TABLE_ADD("col")
 ENDSUB
 
 SUB MNUMDRULE_CLICK(e)
