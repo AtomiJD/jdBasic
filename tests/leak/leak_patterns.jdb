@@ -478,6 +478,28 @@ ELSEIF pattern$ = "rtround" THEN
         sink$ = STR$(SUM(LeakRound([1.234, 2.345], 2)))
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "vmmapparam" THEN
+    ' a JSON object handed to a MAP parameter is rebuilt as a counted map
+    DIM vrec = JSON.PARSE("{""id"": 1, ""user"": ""ada""}")
+    FOR i = 1 TO passes
+        sink$ = STR$(LeakHas(vrec, "id"))
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "vmkeypath" THEN
+    ' a key path written into a JSON object lets go of the inner handles
+    DIM vcfg = JSON.PARSE("{""s"": {""k"": 1}}")
+    FOR i = 1 TO passes
+        vcfg{"s"}{"k"} = i
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "rowfill" THEN
+    ' a number and a shorter vector written over matrix rows
+    DIM fillgrid = RESHAPE(IOTA(12), [3, 4])
+    FOR i = 1 TO passes
+        fillgrid[1] = i
+        fillgrid[2] = [i, 0]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
@@ -486,6 +508,10 @@ ELSE
 ENDIF
 
 PRINT "HEAP " + pattern$ + marks$
+
+FUNC LeakHas(bag AS MAP, field$) AS BOOLEAN
+    RETURN MAP.EXISTS(bag, field$)
+ENDFUNC
 
 FUNC LeakJoin$(v)
     IF ISARR(v) THEN RETURN JOIN(v, ",")

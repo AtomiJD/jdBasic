@@ -544,6 +544,7 @@ private:
     // (a cell, a builtin that keeps its arguments): what is made there is
     // not registered, and what a variable or a FUNC hands over is pinned.
     friend struct ScopedRcEscape;
+    friend struct ScopedJoin;
     bool rc_on = false;
     int rc_escape = 0;
     static bool rc_tag(int t) {
@@ -595,7 +596,8 @@ private:
     std::string owner_key_here(const std::string& name) const { return owner_key(current_fn_name, name); }
     bool adopts_value(const std::string& var, const Expr* value);
     bool literal_cell_counts(const Expr& e);
-    void rc_adopt(LLVMValueRef parent, const TypedValue& child);
+    // cell_idx: adopt only if that cell of the array parent holds the child.
+    void rc_adopt(LLVMValueRef parent, const TypedValue& child, LLVMValueRef cell_idx = nullptr);
     void scan_cell_owners(const std::vector<StmtPtr>& program);
     bool param_escapes_at(const std::string& fn, size_t i) const;
 
@@ -624,6 +626,10 @@ private:
     void codegen_static_dim(const Stmt& stmt);
     void codegen_index_assign(const Stmt& stmt);
     void codegen_print(const Stmt& stmt);
+    void runtime_type_loop_vars(const Stmt& loop);
+    // Names DIMmed with a type (AS INTEGER, AS DOUBLE...): a loop never
+    // turns them runtime-typed.
+    std::unordered_set<std::string> declared_type_vars;
     void codegen_for(const Stmt& stmt);
     void codegen_if(const Stmt& stmt);
     void codegen_do_loop(const Stmt& stmt);
@@ -658,6 +664,7 @@ private:
     // A run-time typed argument for a pointer parameter; fresh_arr and
     // fresh_str receive the array or text made from a VM value (null on the
     // other paths), for the caller to free after the call.
+    LLVMValueRef vm_container_param(const TypedValue& av, int expected_tag);
     LLVMValueRef runtime_ptr_arg(TypedValue tv, LLVMValueRef* fresh_arr = nullptr,
                                  LLVMValueRef* fresh_str = nullptr);
     // TYPE methods whose untyped parameters a call site hands a pointer
@@ -796,6 +803,21 @@ struct ScopedLeafTag {
     ~ScopedLeafTag() { gen->m_want_leaf_tag = saved; }
     ScopedLeafTag(const ScopedLeafTag&) = delete;
     ScopedLeafTag& operator=(const ScopedLeafTag&) = delete;
+};
+
+// The other arm of a branch opened mid-statement: when the scope ends, the
+// block it finished in falls through to `after`, where code goes on.
+struct ScopedJoin {
+    LLVMCodegen* gen;
+    LLVMBasicBlockRef after;
+    ScopedJoin(LLVMCodegen* g, LLVMBasicBlockRef a) : gen(g), after(a) {}
+    ~ScopedJoin() {
+        LLVMBasicBlockRef cur = LLVMGetInsertBlock(gen->builder);
+        if (cur && !LLVMGetBasicBlockTerminator(cur)) LLVMBuildBr(gen->builder, after);
+        LLVMPositionBuilderAtEnd(gen->builder, after);
+    }
+    ScopedJoin(const ScopedJoin&) = delete;
+    ScopedJoin& operator=(const ScopedJoin&) = delete;
 };
 
 // Sets whether the expressions codegen'd in this scope hand their value to a

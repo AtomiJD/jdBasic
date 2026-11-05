@@ -925,8 +925,93 @@ JdbArray* jdb_array_push(JdbArray* arr, double val, int32_t tag) {
     return arr;
 }
 
+static JdbArray* rc_cell_row(const JdbArray* arr, int64_t idx);
+
+// The cell's row when it surely is one: a row its matrix holds outside the
+// counts, or an array the counts know. The pointer bit alone may also mark
+// a UDT object, whose memory is read here only where a JdbArray keeps flags
+// and parent.
+static int rc_kind_of(uintptr_t k);
+static JdbArray* known_row(const JdbArray* arr, int64_t idx) {
+    JdbArray* row = rc_cell_row(arr, idx);
+    if (!row) return nullptr;
+    if ((row->flags & JDB_ARR_IMPLICIT_ROW) && row->parent == arr) return row;
+    if (rc_kind_of((uintptr_t)row) == JD_TAG_ARR) return row;
+    return nullptr;
+}
+
+// A number written over a row fills the row, at every depth, as the
+// interpreter broadcasts a scalar into a matrix row.
+static void fill_row(JdbArray* row, double val, int depth) {
+    if (!row || !row->data || depth > 64) return;
+    bool rows_left = false;
+    for (int64_t i = 0; i < row->length; i++) {
+        if (JdbArray* sub = known_row(row, i)) {
+            fill_row(sub, val, depth + 1);
+            rows_left = true;
+            continue;
+        }
+        rc_drop_cell_text(row, i);
+        if (row->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(row, row->data[i]);
+        row->data[i] = val;
+        if (arr_tagged(row)) row->elem_tags[i] = (int8_t)JD_TAG_F64;
+    }
+    row->flags &= ~(2 | 4);
+    if (!rows_left) row->flags &= ~1;
+}
+
+// The numbers of src written over the leaves of row in order, src starting
+// over when it runs out, as the interpreter writes a vector into a matrix
+// row of another shape.
+static void fill_row_cyclic(JdbArray* row, const JdbArray* src, int64_t& pos, int depth) {
+    if (!row || !row->data || depth > 64) return;
+    bool rows_left = false;
+    for (int64_t i = 0; i < row->length; i++) {
+        if (JdbArray* sub = known_row(row, i)) {
+            fill_row_cyclic(sub, src, pos, depth + 1);
+            rows_left = true;
+            continue;
+        }
+        rc_drop_cell_text(row, i);
+        if (row->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(row, row->data[i]);
+        row->data[i] = src->data[pos % src->length];
+        pos++;
+        if (arr_tagged(row)) row->elem_tags[i] = (int8_t)JD_TAG_F64;
+    }
+    row->flags &= ~(2 | 4);
+    if (!rows_left) row->flags &= ~1;
+}
+
+static bool row_has_rows(const JdbArray* row) {
+    for (int64_t i = 0; i < row->length; i++)
+        if (cell_is_arr(row, i)) return true;
+    return false;
+}
+
+// A write into a cell that holds a row, where the interpreter keeps the
+// row's shape: a number fills it, and a vector of numbers of another shape
+// is laid over it. FALSE leaves the write to the caller.
+static bool write_into_row(JdbArray* arr, int64_t idx, double d, int32_t tag) {
+    JdbArray* row = known_row(arr, idx);
+    if (!row) return false;
+    if (tag == JD_TAG_F64 || tag == JD_TAG_I64 || tag == JD_TAG_BOOL) {
+        if (bits_look_ptr(d)) return false;
+        fill_row(row, d, 0);
+        return true;
+    }
+    if (tag != JD_TAG_ARR) return false;
+    union { double d; int64_t i; } u; u.d = d;
+    const JdbArray* src = (const JdbArray*)(intptr_t)u.i;
+    if (!src || src == row || src->length <= 0 || !src->data || !arr_all_num(src)) return false;
+    if (src->length == row->length && !row_has_rows(row)) return false;
+    int64_t pos = 0;
+    fill_row_cyclic(row, src, pos, 0);
+    return true;
+}
+
 void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
     if (arr && idx >= 0 && idx < arr->length) {
+        if (write_into_row(arr, idx, val, JD_TAG_F64)) return;
         rc_drop_cell_text(arr, idx);
         if (rc_holds_rows(arr)) rc_implicit_overwrite(arr, idx);
         if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
@@ -1354,6 +1439,7 @@ void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
         jdb_index_out_of_bounds(idx);
         return;
     }
+    if (write_into_row(arr, idx, val, tag)) return;
     if (!ensure_tags(arr)) return;
     if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP)
         arr->flags |= 1;
@@ -1446,6 +1532,7 @@ void jdb_tagged_arr_set(int64_t base, int32_t base_tag, int64_t idx, int64_t bit
         else memcpy(&d, &bits, sizeof d);
         // A value written back into the cell it was read from stays as it is.
         if (tag != JD_TAG_STR && memcmp(&arr->data[idx], &d, sizeof d) == 0) return;
+        if (write_into_row(arr, idx, d, tag)) return;
         // An array that owns its texts takes a string as its own copy, the way
         // a plain cell write does; any other keeps the pointer it is handed.
         if (tag == JD_TAG_STR && rc_owns_texts((uintptr_t)arr)) {
@@ -3845,8 +3932,35 @@ extern "C" void jdb_rc_adopt(int64_t parent_bits, int64_t child_bits) {
     if (p->kind == JD_TAG_ARR) ((JdbArray*)p->key)->flags |= JDB_ARR_OWNS_CHILDREN;
 }
 
+// jdb_rc_adopt for a child written into cell idx of an array, unless the
+// write laid it over a row there instead of storing it.
+extern "C" void jdb_rc_adopt_cell(int64_t parent_bits, int64_t idx, int64_t child_bits) {
+    if (rc_kind_of((uintptr_t)parent_bits) == JD_TAG_ARR) {
+        JdbArray* arr = (JdbArray*)(intptr_t)parent_bits;
+        if (idx < 0 || idx >= arr->length || !arr->data) return;
+        union { double d; int64_t i; } u; u.d = arr->data[idx];
+        if (u.i != child_bits) return;
+    }
+    jdb_rc_adopt(parent_bits, child_bits);
+}
+
+// An array literal written into a cell that kept its row's shape instead
+// (write_into_row) was read and is held by nothing: it goes now.
+extern "C" void jdb_array_drop_unstored(JdbArray* arr, int64_t idx, JdbArray* lit) {
+    if (!lit || rc_kind_of((uintptr_t)arr) != JD_TAG_ARR) return;
+    if (arr && idx >= 0 && idx < arr->length && arr->data) {
+        union { double d; int64_t i; } u; u.d = arr->data[idx];
+        if ((JdbArray*)(intptr_t)u.i == lit) return;
+    }
+    if (g_rc.cap && rc_ready() && rc_find((uintptr_t)lit)) return;
+    if (!arr_all_num(lit)) return;
+    free(lit->data);
+    free(lit->elem_tags);
+    free(lit);
+}
+
 static void rc_drop_cell_text(JdbArray* arr, int64_t idx) {
-    bool text = (arr->flags & 8) && arr->elem_tags ? arr->elem_tags[idx] == JD_TAG_STR
+    bool text =(arr->flags & 8) && arr->elem_tags ? arr->elem_tags[idx] == JD_TAG_STR
                                                    : (arr->flags & 2) != 0;
     if (!text) return;
     union { double d; int64_t i; } u; u.d = arr->data[idx];

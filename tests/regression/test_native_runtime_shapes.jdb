@@ -1,0 +1,163 @@
+' Values whose shape only the running program knows, in the forms real
+' programs write them: a number or a vector written over a matrix row, a
+' VM map handed to a MAP parameter, kind tests on element reads, a key
+' path into a VM map, minus on a cell of unknown kind, FORMAT_DATE$ on a
+' cell inside a call, a parameter handed on from a mixed-site answer, a
+' map cell read by MEAN, and a sum carried through a loop.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok AS BOOLEAN, what AS STRING)
+    IF NOT ok THEN
+        PRINT "FAIL "; what
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+' --- a number or a vector written over a matrix row ---
+SUB FillRow(grid, r AS INTEGER, v AS INTEGER)
+    grid[r] = v
+ENDSUB
+
+SUB PatternRow(grid, r AS INTEGER, pattern)
+    grid[r] = pattern
+ENDSUB
+
+DIM stats = RESHAPE(IOTA(9), [3, 3])
+stats[1] = 0
+Check(SUM(stats[1]) = 0 ANDALSO LEN(stats[1]) = 3, "a number fills a matrix row")
+DIM w = 0
+DIM l = 0
+DIM v = 0
+[w, l, v] = stats[2]
+Check(w = 7 AND l = 8 AND v = 9, "a row after the fill destructures")
+
+DIM g = RESHAPE(IOTA(12), [3, 4])
+FillRow(g, 0, 7)
+Check(SUM(g[0]) = 28, "a number fills a row through a SUB parameter")
+PatternRow(g, 2, [1, 0])
+Check(g[2][0] = 1 AND g[2][1] = 0 AND g[2][2] = 1 AND g[2][3] = 0, "a shorter vector repeats across a row")
+DIM cube = RESHAPE(IOTA(8), [2, 2, 2])
+cube[0] = 99
+Check(SUM(cube[0]) = 396 ANDALSO SUM(cube[1]) = 26, "a number fills a layer of a cube")
+
+TYPE ShapePt
+    px AS DOUBLE
+ENDTYPE
+DIM pa AS ShapePt
+DIM pb AS ShapePt
+pa.px = 1
+pb.px = 2
+DIM objs = [pa, pb]
+objs[0] = 0
+Check(objs[0] = 0 AND pb.px = 2, "a number over a UDT cell replaces the cell")
+
+' --- a VM map handed to a MAP parameter; kind tests on element reads ---
+FUNC Has(rec AS MAP, f$) AS BOOLEAN
+    RETURN MAP.EXISTS(rec, f$)
+ENDFUNC
+
+FUNC IsNumField(rec AS MAP, f$) AS BOOLEAN
+    RETURN ISNUM(rec{f$})
+ENDFUNC
+
+DIM rec = {}
+rec = JSON.PARSE("{""id"": 1, ""user"": ""ada""}")
+Check(Has(rec, "id") AND NOT Has(rec, "zz"), "MAP.EXISTS on a VM map through a MAP parameter")
+Check(IsNumField(rec, "id") AND NOT IsNumField(rec, "user"), "ISNUM of a key read through a MAP parameter")
+DIM mixed = [1, "x", [2]]
+Check(ISNUM(mixed[0]) AND ISSTR(mixed[1]) AND ISARR(mixed[2]), "kind tests on cells of a mixed array")
+
+' --- a key path into a VM map, at top level and in a SUB ---
+DIM cfg = JSON.PARSE("{""server"": {""host"": ""a"", ""port"": 8080}}")
+SUB PutKey(s$, k$, val$)
+    cfg{s$}{k$} = val$
+ENDSUB
+cfg{"server"}{"port"} = 9443
+PutKey("server", "host", "z")
+Check(cfg{"server"}{"port"} = 9443, "a key path written at top level")
+Check(cfg{"server"}{"host"} = "z", "a key path written in a SUB")
+
+' --- minus on a cell of unknown kind; a string array FILTER keeps ---
+FUNC WordsOf(s$) AS ARRAY
+    RETURN FILTER(LAMBDA wd -> LEN(wd) > 0, SPLIT(s$, " "))
+ENDFUNC
+
+DIM fields = []
+fields = SPLIT("A-17,4x", ",")
+DIM bad = FILTER(LAMBDA c -> INSTR("0123456789", c) < 0, -TRIM$(fields[1]))
+Check(LEN(bad) = 1 ANDALSO bad[0] = "x", "minus splits a string cell into characters")
+DIM words = WordsOf("level ab noon")
+DIM pals = FILTER(LAMBDA wd -> JOIN(REVERSE(-wd), "") = wd, words)
+Check(LEN(pals) = 2 ANDALSO pals[1] = "noon", "a FILTERed string array keeps string cells")
+
+' --- FORMAT_DATE$ on a cell inside a call ---
+FUNC Weekday$(key$, wd AS INTEGER)
+    RETURN key$ + "/" + STR$(wd)
+ENDFUNC
+
+DIM days = DATERANGE(CVDATE("2026-03-01"), CVDATE("2026-03-03"), "D")
+Check(Weekday$(FORMAT_DATE$(days[1], "%Y-%m-%d"), CINT(WEEKDAY(days[1]))) = "2026-03-02/1", "FORMAT_DATE$ of a date cell handed to a string parameter")
+
+' --- a parameter handed on from a mixed-site answer ---
+FUNC FracPart(x)
+    RETURN x - TRUNC(x)
+ENDFUNC
+
+FUNC Near(got, want)
+    RETURN ABS(got - want) < 0.000001
+ENDFUNC
+
+SUB Relay(got, want)
+    Check(Near(got, want), "a mixed-site answer handed on through two parameters")
+ENDSUB
+
+DIM fracs = FracPart([3.75, -3.75])
+Relay(FracPart(-0.25), -0.25)
+Check(LEN(fracs) = 2 ANDALSO ABS(fracs[0] - 0.75) < 0.000001, "the array call site of the same FUNC")
+
+FUNC ToCents(amount)
+    RETURN FLOOR(amount * 100 + 0.5)
+ENDFUNC
+
+DIM prices = [4.99, 0.35]
+Check(ToCents(19.99) = 1999, "a number where another site hands a top-level array")
+Check(SUM(ToCents(prices)) = 534, "the array site through a top-level variable")
+
+' --- a map cell read by MEAN; a sum carried through a loop ---
+FUNC Spread(xs)
+    DIM m = MEAN(xs)
+    RETURN SUM(ABS(xs - m))
+ENDFUNC
+
+FUNC Total(jobs)
+    DIM t = 0
+    FOR i = 0 TO LEN(jobs) - 1
+        t = t + jobs[i]
+    NEXT
+    RETURN t
+ENDFUNC
+
+FUNC Divisor(weights, scale)
+    DIM d = scale
+    IF d = 0 THEN
+        FOR i = 0 TO LEN(weights) - 1
+            d = d + weights[i]
+        NEXT
+    ENDIF
+    RETURN d
+ENDFUNC
+
+DIM batches = {"A": [12, 15, 11, 14, 13]}
+DIM key$ = "A"
+Check(Spread(batches{key$}) = 6, "MEAN and SUM of a map cell through an untyped parameter")
+Check(Total([17, 23, 8.5]) = 48.5, "a sum of array cells carried through a loop")
+Check(Divisor([1, 2, 3], 0) = 6, "a sum in a loop inside a branch that runs")
+Check(Divisor([1, 2, 3], 16) = 16, "the same variable when the branch is skipped")
+
+IF failed = 0 THEN
+    PRINT "ALL NATIVE RUNTIME SHAPE TESTS PASSED!"
+ELSE
+    PRINT failed; " failed"
+    END 1
+ENDIF
