@@ -9489,21 +9489,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         // not free what this one still holds.
         auto& fn = runtime_funcs["__rc_adopt_cell_read"];
         LLVMValueRef a[] = { rc_bits(arr_ptr), rc_bits(idx), rc_bits(val_tv.val) };
-        if (val_tv.tag != JD_TAG_RUNTIME || !val_tv.runtime_tag) {
-            LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "");
-        } else {
-            LLVMValueRef boxed = LLVMBuildOr(builder,
-                LLVMBuildICmp(builder, LLVMIntEQ, val_tv.runtime_tag, LLVMConstInt(i32_type, JD_TAG_ARR, 0), "rcr_isarr"),
-                LLVMBuildICmp(builder, LLVMIntEQ, val_tv.runtime_tag, LLVMConstInt(i32_type, JD_TAG_NATIVE_MAP, 0), "rcr_ismap"),
-                "rcr_box");
-            LLVMBasicBlockRef bb_do = LLVMAppendBasicBlock(current_fn, "rcr.do");
-            LLVMBasicBlockRef bb_end = LLVMAppendBasicBlock(current_fn, "rcr.end");
-            LLVMBuildCondBr(builder, boxed, bb_do, bb_end);
-            LLVMPositionBuilderAtEnd(builder, bb_do);
-            LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "");
-            LLVMBuildBr(builder, bb_end);
-            LLVMPositionBuilderAtEnd(builder, bb_end);
-        }
+        LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "");
     }
 
     // Track element-type for the outer array so subsequent reads can
