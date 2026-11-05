@@ -7,7 +7,7 @@
 '   LLMAPI.SYSTEM(ai, "You answer in one sentence.")
 '   PRINT LLMAPI.ASK$(ai, "Why is the sky blue?")
 '
-'   DIM claude = LLMAPI.NEW("anthropic", "claude-sonnet-5")
+'   DIM claude = LLMAPI.NEW("anthropic", "claude-opus-5-5")
 '   DIM reply = LLMAPI.CHAT(claude, [LLMAPI.USER("Name three rivers.")])
 '   PRINT reply{"text"}; " ("; reply{"usage"}{"output"}; " tokens)"
 '
@@ -46,7 +46,7 @@ EXPORT MODULE LLMAPI
 
 CONST OPENAI_BASE = "https://api.openai.com/v1"
 CONST ANTHROPIC_BASE = "https://api.anthropic.com"
-CONST ANTHROPIC_VERSION = "2023-06-01"
+CONST ANTHROPIC_VERSION = "2026-10-21"
 
 EXPORT FUNC NEW(provider$, model$, api_key$ = "", base_url$ = "")
     DIM c AS MAP
@@ -76,7 +76,7 @@ EXPORT SUB SYSTEM(c, text$)
     c{"system"} = text$
 ENDSUB
 
-' Keys: "temperature", "max_tokens", "timeout".
+' Keys: "temperature" (OpenAI and local only), "max_tokens", "timeout".
 EXPORT SUB SET(c, key$, value)
     c{key$} = value
 ENDSUB
@@ -217,10 +217,10 @@ FUNC OpenAiChat(c, turns, js)
     RETURN Reply(text$, calls, used_in, used_out, finish$, raw)
 ENDFUNC
 
-' OpenAI's strict mode takes only type, properties, required, items, enum
-' and description, wants every property required and no extra keys, so
-' the schema is reduced to that before it goes out. SCHEMA.CHECK on the
-' answer still applies the full declaration.
+' Strict structured output (OpenAI and Anthropic) takes only type,
+' properties, required, items, enum and description, wants every property
+' required and no extra keys, so the schema is reduced to that before it
+' goes out. SCHEMA.CHECK on the answer still applies the full declaration.
 FUNC StrictSchema(js)
     DIM out AS MAP
     IF MAP.EXISTS(js, "type") THEN out{"type"} = js{"type"}
@@ -294,19 +294,17 @@ FUNC AnthropicChat(c, turns, js)
     body{"max_tokens"} = c{"max_tokens"}
     body{"messages"} = AnthropicMessages(turns)
     IF LEN(c{"system"}) > 0 THEN body{"system"} = c{"system"}
-    IF c{"temperature"} >= 0 THEN body{"temperature"} = c{"temperature"}
+    ' Sampling settings are not sent: the Messages API refuses them.
     DIM tools = []
     DIM i = 0
     FOR i = 0 TO LEN(c{"tools"}) - 1
         DIM t = c{"tools"}[i]
         PUSH(tools, {"name": t{"name"}, "description": t{"description"}, "input_schema": t{"parameters"}})
     NEXT i
-    ' Structured output is a forced call of a tool whose input is the schema.
-    IF TYPEOF(js) = "OBJECT" THEN
-        PUSH(tools, {"name": "answer", "description": "The answer in the requested shape.", "input_schema": js})
-        body{"tool_choice"} = {"type": "tool", "name": "answer"}
-    ENDIF
     IF LEN(tools) > 0 THEN body{"tools"} = tools
+    IF TYPEOF(js) = "OBJECT" THEN
+        body{"output_config"} = {"format": {"type": "json_schema", "schema": StrictSchema(js)}}
+    ENDIF
     DIM s = Session(c)
     REQ.HEADER(s, "x-api-key", c{"key"})
     REQ.HEADER(s, "anthropic-version", ANTHROPIC_VERSION)
@@ -315,7 +313,6 @@ FUNC AnthropicChat(c, turns, js)
     DIM raw = REQ.JSON(r)
     DIM text$ = ""
     DIM calls = []
-    DIM answer = 0
     DIM blocks = raw{"content"}
     DIM k = 0
     FOR k = 0 TO LEN(blocks) - 1
@@ -323,11 +320,7 @@ FUNC AnthropicChat(c, turns, js)
         IF b{"type"} = "text" THEN
             text$ = text$ + b{"text"}
         ELSEIF b{"type"} = "tool_use" THEN
-            IF TYPEOF(js) = "OBJECT" ANDALSO b{"name"} = "answer" THEN
-                answer = b{"input"}
-            ELSE
-                PUSH(calls, {"id": b{"id"}, "name": b{"name"}, "arguments": b{"input"}})
-            ENDIF
+            PUSH(calls, {"id": b{"id"}, "name": b{"name"}, "arguments": b{"input"}})
         ENDIF
     NEXT k
     DIM used_in = 0
@@ -338,9 +331,7 @@ FUNC AnthropicChat(c, turns, js)
     ENDIF
     DIM finish$ = ""
     IF MAP.EXISTS(raw, "stop_reason") ANDALSO TYPEOF(raw{"stop_reason"}) = "STRING" THEN finish$ = raw{"stop_reason"}
-    DIM reply = Reply(text$, calls, used_in, used_out, finish$, raw)
-    IF TYPEOF(answer) = "OBJECT" THEN reply{"json"} = answer
-    RETURN reply
+    RETURN Reply(text$, calls, used_in, used_out, finish$, raw)
 ENDFUNC
 
 ' Anthropic takes only user and assistant turns; a tool answer is a user

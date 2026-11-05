@@ -39,8 +39,8 @@ FUNC HANDLE_CLAUDE(request)
     gClaude = JSON.PARSE(request{"body"})
     gClaudeHeaders = request{"headers"}
     DIM blocks = []
-    IF MAP.EXISTS(gClaude, "tool_choice") THEN
-        blocks = [{"type": "tool_use", "id": "toolu_1", "name": "answer", "input": {"city": "Berlin", "population": 3600000}}]
+    IF MAP.EXISTS(gClaude, "output_config") THEN
+        blocks = [{"type": "thinking", "thinking": "", "signature": "s"}, {"type": "text", "text": JSON.STRINGIFY$({"city": "Berlin", "population": 3600000})}]
     ELSEIF MAP.EXISTS(gClaude, "tools") ANDALSO NOT HasToolResult(gClaude{"messages"}) THEN
         blocks = [{"type": "text", "text": "Let me check."}, {"type": "tool_use", "id": "toolu_2", "name": "weather", "input": {"city": "Bonn"}}]
     ELSE
@@ -141,17 +141,23 @@ TESTKIT.EQ(creply{"finish"}, "end_turn", "the stop reason")
 TESTKIT.EQ(creply{"usage"}{"input"}, 20, "input tokens")
 TESTKIT.EQ(creply{"usage"}{"output"}, 7, "output tokens")
 TESTKIT.EQ(gClaudeHeaders{"x-api-key"}, "ak-test", "the key header")
-TESTKIT.EQ(gClaudeHeaders{"anthropic-version"}, "2023-06-01", "the version header")
+TESTKIT.EQ(gClaudeHeaders{"anthropic-version"}, "2026-10-21", "the version header")
 TESTKIT.EQ(gClaude{"system"}, "Be brief.", "the system prompt is a top-level field")
 TESTKIT.EQ(LEN(gClaude{"messages"}), 3, "and not a message")
 TESTKIT.EQ(gClaude{"messages"}[1]{"role"}, "assistant", "turns keep their roles")
 TESTKIT.EQ(gClaude{"max_tokens"}, 1024, "max_tokens is always sent")
+LLMAPI.SET(claude, "temperature", 0.2)
+DIM onceMore$ = LLMAPI.ASK$(claude, "once more")
+TESTKIT.ISFALSE(MAP.EXISTS(gClaude, "temperature"), "temperature is never sent")
 
 TESTKIT.SUITE("Anthropic: structured output")
 DIM cfacts = LLMAPI.JSON(claude, "Berlin, please.", shape)
-TESTKIT.EQ(cfacts{"population"}, 3600000, "the tool input is the answer")
-TESTKIT.EQ(gClaude{"tool_choice"}{"name"}, "answer", "the answer tool is forced")
-TESTKIT.EQ(gClaude{"tools"}[0]{"input_schema"}{"properties"}{"population"}{"type"}, "integer", "its input schema is the shape")
+TESTKIT.EQ(cfacts{"population"}, 3600000, "the text is the answer")
+TESTKIT.ISFALSE(MAP.EXISTS(gClaude, "tool_choice"), "no forced tool")
+TESTKIT.ISFALSE(MAP.EXISTS(gClaude, "tools"), "and no answer tool")
+TESTKIT.EQ(gClaude{"output_config"}{"format"}{"type"}, "json_schema", "asked for a JSON schema format")
+TESTKIT.ISFALSE(gClaude{"output_config"}{"format"}{"schema"}{"additionalProperties"}, "a closed schema")
+TESTKIT.EQ(gClaude{"output_config"}{"format"}{"schema"}{"properties"}{"population"}{"type"}, "integer", "carrying the shape")
 
 TESTKIT.SUITE("Anthropic: tools")
 LLMAPI.TOOL(claude, "weather", "Current weather for a city", {"city": "string!"})

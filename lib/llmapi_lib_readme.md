@@ -16,7 +16,7 @@ DIM ai = LLMAPI.NEW("openai", "gpt-4o-mini")        ' key from OPENAI_API_KEY
 LLMAPI.SYSTEM(ai, "You answer in one sentence.")
 PRINT LLMAPI.ASK$(ai, "Why is the sky blue?")
 
-DIM claude = LLMAPI.NEW("anthropic", "claude-sonnet-5")
+DIM claude = LLMAPI.NEW("anthropic", "claude-opus-5-5")
 DIM reply = LLMAPI.CHAT(claude, [LLMAPI.USER("Name three rivers.")])
 PRINT reply{"text"}; " ("; reply{"usage"}{"output"}; " output tokens)"
 
@@ -50,7 +50,7 @@ to each vendor's own format on the way out.
 |------|--------------|
 | `NEW(provider$, model$, [key$], [base_url$])` | `"openai"`, `"anthropic"` or `"local"`. The key comes from the call or from `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`; the base URL points an OpenAI-style call at another server. For `"local"` the model is a GGUF path. |
 | `SYSTEM(c, text$)` | The system prompt. |
-| `SET(c, key$, value)` | `"temperature"`, `"max_tokens"` (1024), `"timeout"` (120 s). |
+| `SET(c, key$, value)` | `"temperature"` (OpenAI and local; never sent to Anthropic), `"max_tokens"` (1024), `"timeout"` (120 s). |
 | `TOOL(c, name$, description$, params)` | Declares a tool; `params` is a SCHEMA declaration map, a schema from `SCHEMA.NEW`, or a JSON Schema object. |
 | `CLEAR_TOOLS(c)` | Removes them. |
 | `CHAT(c, messages)` | A reply map, see above. |
@@ -68,9 +68,10 @@ to each vendor's own format on the way out.
   limits it cannot carry are spelled out in the descriptions.
   `SCHEMA.CHECK` on the answer applies the full declaration.
 - **Anthropic**: `POST {base}/v1/messages` with `x-api-key` and the
-  version header. The system prompt is a top-level field, tools carry
-  `input_schema`, structured output is a forced call of an `answer`
-  tool whose input is the schema, tool answers are `tool_result` blocks.
+  version header `2026-10-21`. The system prompt is a top-level field,
+  tools carry `input_schema`, structured output is
+  `output_config.format` with the same reduced schema as OpenAI, tool
+  answers are `tool_result` blocks. No sampling settings are sent.
 - **Local**: `AI.LOAD_LLM` on first use, then `AI.CHAT`; JSON through
   `AI.CHAT_JSON`. The model keeps its own history, so only the last turn
   is sent and earlier turns are folded into the prompt. No tools.
