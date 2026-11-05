@@ -11,7 +11,8 @@
 ' build   one request per (topic x angle x replica); a topic is a set of
 '         sections of doc/languages.md, sent with doc/llms-primer.md as a
 '         cached system prompt. limit > 0 spreads that many requests over
-'         the topics and angles instead (a pilot).
+'         the topics and angles instead, all with replica number <replicas>
+'         (0 for a pilot; the count of replicas run before for a top-up).
 ' submit  posts dataset/synth/<tag>.requests.json, keeps the batch id.
 ' status  prints the batch's counts.
 ' fetch   saves the results as dataset/synth/<tag>.results.jsonl and
@@ -235,8 +236,8 @@ SUB DoBuild(tag$, replicas, limit)
         DIM q = 0
         FOR q = 0 TO limit - 1
             DIM tq = q MOD n_topics
-            DIM aq = (q * 3 + q \ n_topics) MOD n_angles
-            requests = APPEND(requests, RequestFor(tag$ + "-t" + STR$(tq) + "-a" + STR$(aq) + "-r0", system$, UserText$(texts[tq], ANGLES[aq], 0), OutputSchema()))
+            DIM aq = (tq * 3 + q \ n_topics) MOD n_angles
+            requests = APPEND(requests, RequestFor(tag$ + "-t" + STR$(tq) + "-a" + STR$(aq) + "-r" + STR$(replicas), system$, UserText$(texts[tq], ANGLES[aq], replicas), OutputSchema()))
         NEXT
     ELSE
         DIM rr = 0
