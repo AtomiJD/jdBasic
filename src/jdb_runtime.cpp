@@ -931,13 +931,28 @@ static JdbArray* rc_cell_row(const JdbArray* arr, int64_t idx);
 // counts, or an array the counts know. The pointer bit alone may also mark
 // a UDT object, whose memory is read here only where a JdbArray keeps flags
 // and parent.
-static int rc_kind_of(uintptr_t k);
+// The UDT instances alive now, so a cell the pointer bit marks can be told
+// from a row without reading its memory.
+static std::mutex g_udt_live_mu;
+static std::unordered_set<const void*>* g_udt_live = nullptr;
+static void udt_live_add(const void* p) {
+    std::lock_guard<std::mutex> lk(g_udt_live_mu);
+    if (!g_udt_live) g_udt_live = new std::unordered_set<const void*>();
+    g_udt_live->insert(p);
+}
+static void udt_live_remove(const void* p) {
+    std::lock_guard<std::mutex> lk(g_udt_live_mu);
+    if (g_udt_live) g_udt_live->erase(p);
+}
+static bool udt_is_live(const void* p) {
+    std::lock_guard<std::mutex> lk(g_udt_live_mu);
+    return g_udt_live && g_udt_live->count(p) > 0;
+}
+
 static JdbArray* known_row(const JdbArray* arr, int64_t idx) {
     JdbArray* row = rc_cell_row(arr, idx);
-    if (!row) return nullptr;
-    if ((row->flags & JDB_ARR_IMPLICIT_ROW) && row->parent == arr) return row;
-    if (rc_kind_of((uintptr_t)row) == JD_TAG_ARR) return row;
-    return nullptr;
+    if (!row || udt_is_live(row)) return nullptr;
+    return row;
 }
 
 // A number written over a row fills the row, at every depth, as the
@@ -1416,11 +1431,19 @@ JdbArray* jdb_array_append(JdbArray* arr, double val) {
         if (arr) memcpy(r->data, arr->data, arr->length * sizeof(double));
         r->data[newlen - 1] = val;
         if (arr) {
-            r->flags = arr->flags;  // preserve element-type marker
+            // The new cell is no truth value (those go in tagged), so an
+            // array of truth values is one no longer.
+            r->flags = arr->flags & ~4;
             if (arr->elem_tags) {
                 r->elem_tags = (int8_t*)malloc(newlen);
                 memcpy(r->elem_tags, arr->elem_tags, arr->length);
-                r->elem_tags[newlen - 1] = jdb_tag_from_flags(arr->flags, val);
+                r->elem_tags[newlen - 1] = jdb_tag_from_flags(r->flags, val);
+            } else if ((arr->flags & 4) && arr->length > 0) {
+                // The truth values there keep their kind cell by cell.
+                r->elem_tags = (int8_t*)malloc(newlen);
+                memset(r->elem_tags, JD_TAG_BOOL, (size_t)arr->length);
+                r->elem_tags[newlen - 1] = (int8_t)JD_TAG_F64;
+                r->flags |= 8;
             }
         }
         return r;
@@ -6564,6 +6587,7 @@ JdbObject* jdb_udt_new(const char* type_name) {
     return jdb_guard([&]() -> JdbObject* {
         auto* obj = new JdbObject();
         obj->type_name = _strdup(type_name ? type_name : "");
+        udt_live_add(obj);
         return obj;
     }, [] { return nullptr; });
 }
@@ -6597,6 +6621,7 @@ void jdb_udt_free(JdbObject* obj) {
         obj->num_fields.clear();
         return;
     }
+    udt_live_remove(obj);
     free(obj->type_name);
     delete obj;
 }

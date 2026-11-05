@@ -2705,6 +2705,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     auto scan_for_str_arr = [&](const Stmt& body, const FuncDecl& fd) -> bool {
         std::unordered_set<std::string> local_str_arr;
         std::unordered_set<std::string> local_str_var;
+        // Locals that also had a value of another kind appended.
+        std::unordered_set<std::string> local_mixed_arr;
         // Seed scalar-string locals from string-typed params.
         for (size_t pi = 0; pi < fd.stmt->params().size(); pi++) {
             auto& p = fd.stmt->params()[pi];
@@ -2737,7 +2739,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         };
         // Recognise expressions that produce a string-array.
         std::function<bool(const Expr&)> is_str_arr_expr = [&](const Expr& e) -> bool {
-            if (e.kind == ExprKind::VARIABLE) return local_str_arr.count(e.str_val) != 0;
+            if (e.kind == ExprKind::VARIABLE)
+                return local_str_arr.count(e.str_val) != 0 && !local_mixed_arr.count(e.str_val);
             if (e.kind == ExprKind::ARRAY_LITERAL) {
                 bool any = false;
                 for (auto& a : e.args) {
@@ -2785,6 +2788,17 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         std::function<void(const Stmt&)> rec = [&](const Stmt& s) {
             if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
                  s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr) {
+                // x = APPEND(x, v) with v no text: the array holds more kinds.
+                if (s.expr->kind == ExprKind::CALL && s.expr->args.size() == 2 &&
+                    s.expr->args[1] && s.expr->args[0] &&
+                    s.expr->args[0]->kind == ExprKind::VARIABLE &&
+                    s.expr->args[0]->str_val == s.var_name) {
+                    std::string au = s.expr->func_name;
+                    std::transform(au.begin(), au.end(), au.begin(), ::toupper);
+                    if (au == "APPEND" && !is_string_scalar(*s.expr->args[1]) &&
+                        !is_str_arr_expr(*s.expr->args[1]))
+                        local_mixed_arr.insert(s.var_name);
+                }
                 if (is_str_arr_expr(*s.expr)) local_str_arr.insert(s.var_name);
                 if (is_string_scalar(*s.expr)) local_str_var.insert(s.var_name);
                 // DIM ... AS STRING (with or without RHS) is also a scalar
@@ -2955,7 +2969,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (x.kind == ExprKind::CALL) {
                 std::string fn = x.func_name;
                 std::transform(fn.begin(), fn.end(), fn.begin(), ::toupper);
-                if (fn == "TYPEOF" || fn == "TYPEOF$") {
+                // A kind test on the parameter says it may hold any kind.
+                if (fn == "TYPEOF" || fn == "TYPEOF$" || fn == "ISNUM" || fn == "ISSTR" ||
+                    fn == "ISBOOL" || fn == "ISARR" || fn == "ISMAP" || fn == "ISNONE" ||
+                    fn == "ISNULL") {
                     for (auto& a : x.args)
                         if (a && a->kind == ExprKind::VARIABLE &&
                             a->str_val == pname)
@@ -5229,6 +5246,74 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             }
     }
 
+    // A global a FUNC or SUB fills with texts only (g = APPEND(g, s$)) is a
+    // string array everywhere: the body is compiled before the main program
+    // and keeps what it learns about its own names.
+    {
+        std::unordered_map<std::string, bool> filled;   // name -> texts only
+        auto texty = [](const Expr* e) {
+            if (!e) return false;
+            if (e->kind == ExprKind::LITERAL_STRING) return !e->is_funcref_lit;
+            if (e->kind == ExprKind::VARIABLE) return !e->str_val.empty() && e->str_val.back() == '$';
+            if (e->kind == ExprKind::CALL) return !e->func_name.empty() && e->func_name.back() == '$';
+            if (e->kind == ExprKind::BINARY && e->op == TokenType::PLUS) {
+                auto side = [](const Expr* x) {
+                    return x && (x->kind == ExprKind::LITERAL_STRING ||
+                                 ((x->kind == ExprKind::VARIABLE || x->kind == ExprKind::CALL) &&
+                                  !(x->kind == ExprKind::VARIABLE ? x->str_val : x->func_name).empty() &&
+                                  (x->kind == ExprKind::VARIABLE ? x->str_val : x->func_name).back() == '$'));
+                };
+                return side(e->left.get()) || side(e->right.get());
+            }
+            return false;
+        };
+        for (auto& fs : program) {
+            if (!fs || (fs->kind != StmtKind::FUNCTION && fs->kind != StmtKind::SUB)) continue;
+            std::unordered_set<std::string> locals;
+            for (auto& pn : fs->params()) locals.insert(pn.name);
+            std::function<void(const Stmt&)> dims = [&](const Stmt& s) {
+                if (s.kind == StmtKind::DIM && !s.var_name.empty()) locals.insert(s.var_name);
+                for (auto& b : s.body) if (b) dims(*b);
+                for (auto& br : s.branches) for (auto& b : br.body) if (b) dims(*b);
+            };
+            for (auto& b : fs->body) if (b) dims(*b);
+            std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+                if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) && !s.var_name.empty() &&
+                    !locals.count(s.var_name) && s.index_chain.empty() && s.expr &&
+                    s.expr->kind == ExprKind::CALL && s.expr->args.size() == 2) {
+                    std::string u = s.expr->func_name;
+                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                    const Expr* a0 = s.expr->args[0].get();
+                    if (u == "APPEND" && a0 && a0->kind == ExprKind::VARIABLE && a0->str_val == s.var_name) {
+                        bool t = texty(s.expr->args[1].get());
+                        auto it = filled.find(s.var_name);
+                        filled[s.var_name] = (it == filled.end() ? true : it->second) && t;
+                    }
+                }
+                for (auto& b : s.body) if (b) walk(*b);
+                for (auto& br : s.branches) for (auto& b : br.body) if (b) walk(*b);
+                for (auto& c : s.catch_body()) if (c) walk(*c);
+                for (auto& f : s.finally_body()) if (f) walk(*f);
+            };
+            for (auto& b : fs->body) if (b) walk(*b);
+        }
+        // The main program's own appends to such a name count too.
+        std::function<void(const Stmt&)> top = [&](const Stmt& s) {
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB || s.kind == StmtKind::TYPE_DECL) return;
+            if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) && filled.count(s.var_name) &&
+                s.expr && s.expr->kind == ExprKind::CALL && s.expr->args.size() == 2) {
+                std::string u = s.expr->func_name;
+                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                if (u == "APPEND" && !texty(s.expr->args[1].get())) filled[s.var_name] = false;
+            }
+            for (auto& b : s.body) if (b) top(*b);
+            for (auto& br : s.branches) for (auto& b : br.body) if (b) top(*b);
+        };
+        for (auto& ts : program) if (ts) top(*ts);
+        for (auto& [n, only_texts] : filled)
+            if (only_texts && !mixed_array_vars.count(n)) string_array_vars.insert(n);
+    }
+
     // Second pass: compile all FUNC/SUB bodies
     for (auto& stmt : program) {
         if (stmt && (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB))
@@ -5278,6 +5363,18 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
 
     try {
     switch (stmt.kind) {
+        case StmtKind::REACT_ASSIGN: {
+            // A program may guard the binding with OS.FEATURE, so reaching it
+            // is the error, not compiling it.
+            std::string msg = "A reactive binding (" + stmt.var_name +
+                " -> ...) is interpreter-only: the compiled program has no dependency tracking";
+            auto& es = runtime_funcs["__err_set"];
+            LLVMValueRef ea[] = { LLVMBuildGlobalStringPtr(builder, msg.c_str(), ".reactmsg"),
+                                  LLVMConstInt(i64_type, 99, 0) };
+            LLVMBuildCall2(builder, es.fn_type, es.fn, ea, 2, "");
+            emit_err_code_branch();
+            break;
+        }
         case StmtKind::LET:
         case StmtKind::ASSIGN:
             codegen_let_or_assign(stmt);
@@ -7118,6 +7215,15 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // array element arrives runtime-tagged.
     if (vi && vi->tag == JD_TAG_STR && rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag)
         rhs = runtime_into_str_slot(rhs);
+    // A variable DIMmed AS a number keeps that kind: the value is read out as
+    // a number, as codegen_dim does for its initializer.
+    if (vi && (vi->tag == JD_TAG_I64 || vi->tag == JD_TAG_F64) &&
+        declared_type_vars.count(stmt.var_name) &&
+        rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
+        LLVMValueRef f = coerce_to(rhs, f64_type);
+        if (vi->tag == JD_TAG_I64) rhs = { LLVMBuildFPToSI(builder, f, i64_type, "decl_i"), JD_TAG_I64 };
+        else rhs = { f, vi->tag };
+    }
     // Tag 7 (runtime-tagged): ALWAYS store as tag 7 with companion alloca.
     // Never coerce to a concrete type - the runtime tag carries the truth
     // about what the value IS (could be f64, string, array, VM handle).
@@ -14512,6 +14618,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                                     LLVMConstInt(i32_type, (unsigned)b.tag, 0) };
             return appended_array(LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "appm"));
         }
+        if (a.tag == JD_TAG_ARR && b.tag == JD_TAG_BOOL) {
+            // A truth value keeps its kind in the cell, as in the interpreter.
+            LLVMValueRef bf = LLVMBuildSIToFP(builder,
+                LLVMBuildIntCast2(builder, b.val, i64_type, 0, "app_b"), f64_type, "app_bd");
+            auto& fn = runtime_funcs["__arr_append_tagged"];
+            LLVMValueRef args[] = { a.val, bf, LLVMConstInt(i32_type, JD_TAG_BOOL, 0) };
+            return appended_array(LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "appb"));
+        }
         if (a.tag == JD_TAG_ARR) {
             LLVMValueRef bf = b.tag == JD_TAG_I64
                 ? LLVMBuildSIToFP(builder, b.val, f64_type, "itof")
@@ -16594,7 +16708,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
     // Handle LEN - dispatch based on argument type (string vs array)
     if (upper == "LEN" && expr.args.size() == 1) {
-        TypedValue av = codegen_expr(*expr.args[0]);
+        // A cell read asks the cell what it holds, whatever kind the caller
+        // of LEN wants back.
+        TypedValue av;
+        {
+            bool cell = expr.args[0] && expr.args[0]->kind == ExprKind::INDEX;
+            ScopedLeafTag _lt(this, cell ? JD_TAG_RUNTIME : -1);
+            av = codegen_expr(*expr.args[0]);
+        }
         if (av.tag == JD_TAG_STR) {
             auto& fn = runtime_funcs["LEN$"];
             LLVMValueRef args[] = { av.val };
@@ -19680,6 +19801,22 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
         if (assigns && s.expr && !s.var_name.empty() &&
             (s.expr->kind == ExprKind::CALL || s.expr->kind == ExprKind::ARRAY_LITERAL))
             candidates.insert(K(s.var_name));
+        // A builtin that hands on cells of an argument (TAKE, DROP, SORT,
+        // FILTER...) answers texts another array still holds.
+        if (assigns && s.expr && !s.var_name.empty() && s.expr->kind == ExprKind::CALL) {
+            std::string up = s.expr->func_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            static const std::unordered_set<std::string> fresh_texts = {
+                "SPLIT", "LINES", "WORDS", "CHARS", "MAP.KEYS", "OS.ARGS", "ZIP.LIST",
+                "STR$", "DIR$", "FILE.LIST" };
+            bool hands_on = false;
+            if (!user_fn(s.expr->func_name, up) && !answers_new(up) && !fresh_texts.count(up))
+                for (auto& a : s.expr->args)
+                    if (a && a->kind != ExprKind::LITERAL_INT && a->kind != ExprKind::LITERAL_FLOAT &&
+                        a->kind != ExprKind::LITERAL_STRING && a->kind != ExprKind::LITERAL_BOOL &&
+                        a->kind != ExprKind::LAMBDA_EXPR) { hands_on = true; break; }
+            if (hands_on) banned.insert(K(s.var_name));
+        }
         // One cell written over keeps the array its own; a write further down
         // or into a member reaches past it.
         if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty() &&

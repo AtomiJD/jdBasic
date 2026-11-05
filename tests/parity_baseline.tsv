@@ -353,6 +353,7 @@ tests/regression/test_native_mixed_sites.jdb	PASS	PASS	OK
 tests/regression/test_native_ownership.jdb	OK	OK	OK
 tests/regression/test_native_ragged_array.jdb	PASS	PASS	OK
 tests/regression/test_native_runtime_kinds.jdb	OK	OK	OK
+tests/regression/test_native_runtime_shapes.jdb	PASS	PASS	OK
 tests/regression/test_native_str_tags.jdb	PASS	PASS	OK
 tests/regression/test_native_text_bounds.jdb	OK	OK	OK
 tests/regression/test_native_vm_values.jdb	PASS	PASS	OK
@@ -385,10 +386,10 @@ tests/regression/test_rc_implicit_rows.jdb	OK	OK	OK
 tests/regression/test_rc_slot_kinds.jdb	OK	OK	OK
 tests/regression/test_rc_split_cells.jdb	OK	OK	OK
 tests/regression/test_rc_sub_loop_globals.jdb	OK	OK	OK
-tests/regression/test_react.jdb	PASS	PASS	DIVERGE
-tests/regression/test_react_cache.jdb	OK	OK	DIVERGE
-tests/regression/test_react_udt.jdb	OK	OK	DIVERGE
-tests/regression/test_react_udt2.jdb	OK	OK	DIVERGE
+tests/regression/test_react.jdb	PASS	FAIL:1	UNSUPPORTED
+tests/regression/test_react_cache.jdb	OK	FAIL:1	UNSUPPORTED
+tests/regression/test_react_udt.jdb	OK	FAIL:1	UNSUPPORTED
+tests/regression/test_react_udt2.jdb	OK	FAIL:1	UNSUPPORTED
 tests/regression/test_reader_and_sigs.jdb	PASS	PASS	OK
 tests/regression/test_reduce_acc_kind.jdb	PASS	PASS	OK
 tests/regression/test_reduce_axis.jdb	PASS	PASS	OK
@@ -404,7 +405,7 @@ tests/regression/test_semi.jdb	OK	OK	OK
 tests/regression/test_shadow_param.jdb	FAIL:1	OK	NATIVE_ONLY
 tests/regression/test_shift_infix.jdb	OK	OK	OK
 tests/regression/test_sin_arr.jdb	OK	CFAIL	LOOSE
-tests/regression/test_slice.jdb	OK	OK	DIVERGE
+tests/regression/test_slice.jdb	OK	OK	OK
 tests/regression/test_slice_moves.jdb	OK	OK	OK
 tests/regression/test_slice_shapes.jdb	OK	OK	OK
 tests/regression/test_spawn_output_append.jdb	OK	OK	OK

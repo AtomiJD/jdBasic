@@ -25,7 +25,12 @@ DIM x = 0
 FOR i = 1 TO 100000: x = x + 1: NEXT i
 PRINT "Main: done (x="; x; ")"
 
-' Check if done
+' Check if done - waits, since compiled work above can outrun the task
+DIM waits = 0
+DO WHILE NOT THREAD.ISDONE(t2) ANDALSO waits < 5000
+    SLEEP 1
+    waits = waits + 1
+LOOP
 PRINT "t2 done? "; THREAD.ISDONE(t2)
 
 ' Wait for results

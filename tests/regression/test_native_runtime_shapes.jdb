@@ -155,6 +155,87 @@ Check(Total([17, 23, 8.5]) = 48.5, "a sum of array cells carried through a loop"
 Check(Divisor([1, 2, 3], 0) = 6, "a sum in a loop inside a branch that runs")
 Check(Divisor([1, 2, 3], 16) = 16, "the same variable when the branch is skipped")
 
+' --- TAKE and DROP hand on the cells of a string array ---
+DIM waiting = ["A", "B", "C", "D", "E"]
+DIM cargo = []
+DIM trips AS INTEGER = 0
+DO WHILE LEN(waiting) > 0
+    trips = trips + 1
+    cargo = TAKE(2, waiting)
+    waiting = DROP(2, waiting)
+LOOP
+Check(trips = 3 ANDALSO LEN(cargo) = 1 ANDALSO cargo[0] = "E", "TAKE and DROP of a string array in a loop")
+
+' --- LEN of a cell into a number, texts appended to a global in a SUB ---
+FUNC Widest(cells AS ARRAY, minWidth = 0) AS INTEGER
+    DIM best AS INTEGER = minWidth
+    FOR i = 0 TO LEN(cells) - 1
+        IF LEN(cells[i]) > best THEN best = LEN(cells[i])
+    NEXT
+    RETURN best
+ENDFUNC
+
+DIM regions = []
+SUB AddRegion(r$)
+    regions = APPEND(regions, r$)
+ENDSUB
+AddRegion("North")
+AddRegion("South-East")
+Check(Widest(regions, 3) = 10, "LEN of a text cell assigned to an INTEGER")
+Check(regions[1] + "!" = "South-East!", "a global a SUB filled with texts reads them back")
+
+' --- kind tests on a parameter, a mixed answer, truth values in cells ---
+FUNC Kind$(tok)
+    IF ISBOOL(tok) THEN RETURN "flag"
+    IF ISNUM(tok) THEN RETURN "num"
+    IF ISSTR(tok) THEN RETURN "word"
+    RETURN "?"
+ENDFUNC
+
+FUNC Tokens(line$)
+    DIM parts = []
+    FOR EACH w$ IN SPLIT(line$, " ")
+        IF w$ = "yes" OR w$ = "no" THEN
+            parts = APPEND(parts, w$ = "yes")
+        ELSEIF INSTR("0123456789", LEFT$(w$, 1)) >= 0 THEN
+            parts = APPEND(parts, VAL(w$))
+        ELSE
+            parts = APPEND(parts, w$)
+        ENDIF
+    NEXT
+    RETURN parts
+ENDFUNC
+
+DIM toks = Tokens("crate 12 yes")
+Check(Kind$(toks[0]) = "word" AND Kind$(toks[1]) = "num" AND Kind$(toks[2]) = "flag", "kind tests on cells of a mixed answer")
+DIM flags = [TRUE]
+flags = APPEND(flags, 3)
+Check(ISBOOL(flags[0]) AND NOT ISBOOL(flags[1]), "a number appended to truth values keeps both kinds")
+
+' --- a variable DIMmed AS INTEGER summing cells of a 2D array ---
+DIM grid2[2, 3]
+grid2[1, 0] = 8
+grid2[1, 1] = 9
+grid2[1, 2] = 10
+DIM rowsum AS INTEGER = 0
+FOR c2 = 0 TO 2
+    rowsum = rowsum + grid2[1, c2]
+NEXT
+Check(rowsum = 27, "a declared INTEGER keeps its kind when cells are added in a loop")
+
+' --- a reactive binding stops a compiled program with a message ---
+IF NOT OS.FEATURE("INTERPRETER") THEN
+    DIM rx AS REACT INTEGER
+    DIM ry AS REACT INTEGER
+    DIM stopped AS BOOLEAN = FALSE
+    TRY
+        ry -> rx * 2
+    CATCH
+        stopped = INSTR(ERRMSG$, "reactive binding") >= 0
+    ENDTRY
+    Check(stopped, "a reactive binding raises an error natively")
+ENDIF
+
 IF failed = 0 THEN
     PRINT "ALL NATIVE RUNTIME SHAPE TESTS PASSED!"
 ELSE
