@@ -17441,6 +17441,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         for (size_t i = 0; i < expr.args.size(); i++) {
             int hint = (i < pc_h && (pts_h[i] == f64_type || pts_h[i] == i64_type)) ? JD_TAG_F64 : -1;
             if (keeps_kind && expr.args[i] && expr.args[i]->kind == ExprKind::INDEX) hint = JD_TAG_RUNTIME;
+            // An IIF arm answers whatever it holds: a cell read keeps its kind.
+            if (upper == "IIF" && i > 0 && expr.args[i] && expr.args[i]->kind == ExprKind::INDEX)
+                hint = JD_TAG_RUNTIME;
             ScopedLeafTag _lt(this, hint);
             arg_cache.push_back(codegen_expr(*expr.args[i]));
         }

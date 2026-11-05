@@ -402,6 +402,17 @@ ENDFUNC
 DIM grouped = SumsBy(["a", "b", "a"], [1, 2, 3])
 Check(LEN(grouped) = 2 ANDALSO JOIN(SLICE(grouped, 1, 0), ",") = "a,b", "a FUNC answers what AGG built")
 
+' --- an IIF arm read from a cell whose kind only the run knows ---
+FUNC PassOn(xs)
+    RETURN xs
+ENDFUNC
+DIM handed = PassOn(["a", "b", "c"])
+Check(IIF(handed[1] = "", "-", handed[1]) = "b", "an IIF arm that is a text cell of an untyped answer")
+DIM parts = REGEX.MATCH("^( *)([0-9]+[.)])(?:([ \t]+)(.*))?$", "3.")
+Check(IIF(parts[2] = "", " ", parts[2]) = " ", "an IIF arm over an empty capture group")
+DIM nums = PassOn([4, 5])
+Check(IIF(nums[0] > 4, nums[0], nums[1]) + 1 = 6, "an IIF arm that is a number cell stays a number")
+
 ' --- a global text array that also takes text cell writes ---
 DIM board = []
 SUB FillBoard()
