@@ -4015,6 +4015,19 @@ extern "C" void jdb_rc_adopt_cell(int64_t parent_bits, int64_t idx, int64_t chil
     jdb_rc_adopt(parent_bits, child_bits);
 }
 
+// jdb_rc_adopt_cell for a value read out of a cell: the new cell counts it
+// only when a container counts it already, as a matrix does for a row it
+// handed out. A container some cell holds without counting stays as it is.
+extern "C" void jdb_rc_adopt_cell_read(int64_t parent_bits, int64_t idx, int64_t child_bits) {
+    if (!g_rc.cap || !rc_ready()) return;
+    RcEntry* c = rc_find((uintptr_t)child_bits);
+    if (!c || c->pinned || (!c->owner && !g_rc.extra.count(c->key))) {
+        g_kept_arr = nullptr;
+        return;
+    }
+    jdb_rc_adopt_cell(parent_bits, idx, child_bits);
+}
+
 // An array literal written into a cell that kept its row's shape instead
 // (write_into_row) was read and is held by nothing: it goes now.
 extern "C" void jdb_array_drop_unstored(JdbArray* arr, int64_t idx, JdbArray* lit) {

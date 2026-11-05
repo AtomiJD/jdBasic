@@ -605,6 +605,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_rc_own_cells", "__rc_own_cells", void_type, {i64_type}, -1);
     reg("jdb_rc_adopt",   "__rc_adopt",   void_type, {i64_type, i64_type}, -1);
     reg("jdb_rc_adopt_cell", "__rc_adopt_cell", void_type, {i64_type, i64_type, i64_type}, -1);
+    reg("jdb_rc_adopt_cell_read", "__rc_adopt_cell_read", void_type, {i64_type, i64_type, i64_type}, -1);
     reg("jdb_rc_retain",  "__rc_retain",  void_type, {i64_type}, -1);
     reg("jdb_rc_release", "__rc_release", void_type, {i64_type, i32_type}, -1);
     reg("jdb_rc_assign",  "__rc_assign",  void_type, {i64_type, i64_type, i32_type}, -1);
@@ -9479,7 +9480,17 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         LLVMValueRef args[] = { arr_ptr, idx, val };
         LLVMBuildCall2(builder, arr_set.fn_type, arr_set.fn, args, 3, "");
     }
-    if (adopt) rc_adopt(arr_ptr, val_tv, idx);
+    if (adopt) {
+        rc_adopt(arr_ptr, val_tv, idx);
+    } else if (rc_on && rc_tag(val_tv.tag) && val_tv.val && stmt.expr &&
+               stmt.expr->kind == ExprKind::INDEX) {
+        // A row read out of a matrix is counted by the matrix; the cell it
+        // goes to holds it too, so overwriting the source cell later does
+        // not free what this one still holds.
+        auto& fn = runtime_funcs["__rc_adopt_cell_read"];
+        LLVMValueRef a[] = { rc_bits(arr_ptr), rc_bits(idx), rc_bits(val_tv.val) };
+        LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "");
+    }
 
     // Track element-type for the outer array so subsequent reads can
     // pun the f64 slot back to the right tag. `arr[i] = some_matrix`

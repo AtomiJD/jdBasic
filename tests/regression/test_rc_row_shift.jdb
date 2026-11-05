@@ -1,0 +1,106 @@
+' ============================================================
+' Regression: matrix rows copied into other cells under -c
+' ============================================================
+' Self-checking. Each failure prints [FAIL]. tests/memory_check.sh runs it
+' under JDB_RC_POISON=1 as well, where a row freed while a cell still holds
+' it reads garbage or crashes.
+'
+' `m[k] = m[k - 1]` puts the row of one cell into another. The row read out
+' is counted by its matrix; the cell it lands in has to count it too, or
+' writing over the source cell later frees a row the other cell still
+' shows. Inside a loop the frame drain after every pass made that visible.
+'
+' Covers:
+'   1. Rows shifted down in a FOR loop, twice.
+'   2. The same from a SUB that a FUNC calls while a local holds a row.
+'   3. Rows swapped back and forth between two matrices.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK_STR(name$, expected AS STRING, actual AS STRING)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected=["; expected; "]  actual=["; actual; "]"
+    ENDIF
+ENDSUB
+
+' The cells of a matrix row by row: STR$ of an array answers an array.
+FUNC CELLS$(m AS ARRAY) AS STRING
+    DIM out AS STRING = ""
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    FOR r = 0 TO LEN(m) - 1
+        FOR c = 0 TO LEN(m[0]) - 1
+            out = out + STR$(m[r][c]) + " "
+        NEXT c
+    NEXT r
+    RETURN out
+ENDFUNC
+
+DIM shifted AS ARRAY = RESHAPE(IOTA(12), [3, 4])
+DIM k AS INTEGER
+FOR k = 2 TO 1 STEP -1
+    shifted[k] = shifted[k - 1]
+NEXT k
+FOR k = 2 TO 1 STEP -1
+    shifted[k] = shifted[k - 1]
+NEXT k
+CHECK_STR("rows shifted down twice", "1 2 3 4 1 2 3 4 1 2 3 4 ", CELLS$(shifted))
+
+DIM board AS ARRAY = RESHAPE(IOTA(20) * 0, [5, 4])
+
+SUB ClearRow(fullRow AS INTEGER)
+    DIM j AS INTEGER
+    FOR j = fullRow TO 1 STEP -1
+        board[j] = board[j - 1]
+    NEXT j
+    board[0] = 0
+ENDSUB
+
+FUNC Put(col AS INTEGER) AS INTEGER
+    DIM r AS INTEGER = 4
+    DIM cells AS ARRAY = []
+    DO WHILE r >= 0
+        cells = board[r]
+        IF cells[col] = 0 THEN
+            cells[col] = 1
+            board[r] = cells
+            IF SUM(cells) = 4 THEN
+                ClearRow(r)
+                RETURN 1
+            ENDIF
+            RETURN 0
+        ENDIF
+        r = r - 1
+    LOOP
+    RETURN -1
+ENDFUNC
+
+DIM answers AS STRING = ""
+DIM q AS INTEGER
+FOR q = 0 TO 9
+    answers = answers + STR$(Put(q MOD 4))
+NEXT q
+CHECK_STR("a full row is cleared", "0001000100", answers)
+CHECK_STR("the board after the clears", "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 0 0 ", CELLS$(board))
+
+DIM a AS ARRAY = RESHAPE(IOTA(8), [2, 4])
+DIM b AS ARRAY = RESHAPE(IOTA(8) + 10, [2, 4])
+DIM pass AS INTEGER
+FOR pass = 1 TO 50
+    FOR k = 0 TO 1
+        a[k] = b[k]
+        b[k] = a[1 - k]
+    NEXT k
+NEXT pass
+CHECK_STR("rows swapped between two matrices", "5 6 7 8 11 12 13 14 ", CELLS$(a))
+CHECK_STR("and the other one", "15 16 17 18 5 6 7 8 ", CELLS$(b))
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+IF FAIL_COUNT = 0 THEN PRINT "ALL TESTS PASSED!"
