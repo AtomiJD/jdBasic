@@ -3,7 +3,7 @@
 '   fast    takes the audio device alone (MON.SYNTH exclusive): under 10 ms
 '           from key to speaker instead of 20, other programs go silent
 '   panel   opens a window with every parameter, the knob map, the
-'           modulation matrix and a scope (Esc closes it)
+'           modulation matrix and a scope, fullscreen (F toggles, Esc closes)
 '
 ' Left of the split: mono legato saw bass, one octave down.
 ' Right of the split: the lead, a patch from oxygen_patches.json (plus the
@@ -78,6 +78,9 @@ SOUND.GAIN 0, 0.7
 
 DIM split_key = 60
 DIM status$ = ""
+' ImGui scale for a 4K screen: SCREEN multiplies fonts and spacing by it,
+' the widths given to GUI calls are raw pixels and are multiplied here
+DIM ui = 2
 
 SUB SAY(msg$)
     status$ = msg$
@@ -215,7 +218,7 @@ ENDSUB
 ' A parameter slider; times and cutoff on a log2 scale
 SUB PARAM_SLIDER(label$, t, p$, lo, hi, logscale)
     DIM v = SOUND.PARAM(t, p$)
-    GUI.SET_NEXT_ITEM_WIDTH 260
+    GUI.SET_NEXT_ITEM_WIDTH 260 * ui
     IF logscale THEN
         DIM lv = LOG(MAX([v, lo])) / LOG(2)
         DIM nv = GUI.SLIDER(label$ + " " + STR$(IIF(v >= 100, ROUND(v, 0), ROUND(v, 3))) + "##" + STR$(t) + p$, lv, LOG(lo) / LOG(2), LOG(hi) / LOG(2))
@@ -231,12 +234,14 @@ SUB METER(label$, v, bipolar)
     IF bipolar THEN f = (v + 1) / 2
     GUI.TEXT LEFT$(label$ + "            ", 11)
     GUI.SAME_LINE
-    GUI.SET_NEXT_ITEM_WIDTH 200
+    GUI.SET_NEXT_ITEM_WIDTH 200 * ui
     GUI.PROGRESS MAX([0, MIN([1, f])]), STR$(ROUND(v, 2))
 ENDSUB
 
 SUB DRAW_PANEL()
-    GUI.BEGIN "Oxygen Synth", 0, 0, 980, 860
+    DIM dw = GUI.DISPLAY_WIDTH()
+    DIM dh = GUI.DISPLAY_HEIGHT()
+    GUI.BEGIN "Oxygen Synth##" + STR$(INT(dw)) + "x" + STR$(INT(dh)), 0, 0, dw, dh, GUI.FLAG("NOTITLEBAR") + GUI.FLAG("NORESIZE") + GUI.FLAG("NOMOVE") + GUI.FLAG("NOCOLLAPSE") + GUI.FLAG("NOSAVEDSETTINGS")
     GUI.SEPARATOR_TEXT("Lead patch")
     IF GUI.BUTTON("<") THEN SELECT_PATCH((cur + LEN(bank) - 1) MOD LEN(bank))
     GUI.SAME_LINE
@@ -247,7 +252,7 @@ SUB DRAW_PANEL()
     IF GUI.BUTTON("Save as user patch") THEN SAVE_LEAD()
     GUI.SAME_LINE
     IF GUI.BUTTON("Learn split (" + STR$(split_key) + ")") THEN START_LEARN()
-    GUI.SET_NEXT_ITEM_WIDTH 260
+    GUI.SET_NEXT_ITEM_WIDTH 260 * ui
     DIM nm = GUI.SLIDER("Morph to " + bank[(cur + 1) MOD LEN(bank)]{"name"} + "##morph", morph, 0, 1)
     IF nm <> morph THEN SET_MORPH(nm)
     GUI.TEXT "Key to speaker: " + lat$ + IIF(fast, "   output " + STR$(ROUND(out_ms, 1)) + " ms exclusive", "")
@@ -280,13 +285,13 @@ SUB DRAW_PANEL()
         DIM changed = FALSE
         FOR r = 0 TO 3
             GUI.PUSH_ID r
-            GUI.SET_NEXT_ITEM_WIDTH 110
+            GUI.SET_NEXT_ITEM_WIDTH 110 * ui
             DIM ns = GUI.COMBO("##src", mm_src[r], mm_sources$)
             GUI.SAME_LINE
-            GUI.SET_NEXT_ITEM_WIDTH 110
+            GUI.SET_NEXT_ITEM_WIDTH 110 * ui
             DIM nd = GUI.COMBO("##dst", mm_dst[r], mm_targets$)
             GUI.SAME_LINE
-            GUI.SET_NEXT_ITEM_WIDTH 150
+            GUI.SET_NEXT_ITEM_WIDTH 150 * ui
             DIM na = GUI.SLIDER("##amt", mm_amt[r], -4, 4)
             IF ns <> mm_src[r] ORELSE nd <> mm_dst[r] ORELSE na <> mm_amt[r] THEN changed = TRUE
             mm_src[r] = ns
@@ -297,10 +302,10 @@ SUB DRAW_PANEL()
         GUI.TEXT "amount: octaves for cutoff and times, semitones for pitch"
         FOR l = 0 TO 1
             GUI.PUSH_ID 10 + l
-            GUI.SET_NEXT_ITEM_WIDTH 150
+            GUI.SET_NEXT_ITEM_WIDTH 150 * ui
             DIM nr = GUI.SLIDER("LFO" + STR$(l + 1) + " Hz", lfo_rate[l], 0.05, 12)
             GUI.SAME_LINE
-            GUI.SET_NEXT_ITEM_WIDTH 100
+            GUI.SET_NEXT_ITEM_WIDTH 100 * ui
             DIM nsh = GUI.COMBO("##shape", lfo_shape[l], lfo_shapes$)
             IF nr <> lfo_rate[l] ORELSE nsh <> lfo_shape[l] THEN changed = TRUE
             lfo_rate[l] = nr
@@ -334,7 +339,8 @@ DIM t0 = TICK()
 DIM t_stats = t0
 TAKE_STATS(FALSE)
 IF panel THEN
-    SCREEN 980, 860, "jdBasic Oxygen Synth", 1
+    SCREEN 980, 860, "jdBasic Oxygen Synth", ui
+    TOGGLE_FULLSCREEN
     DIM key$ = ""
     DO
         CLS
@@ -346,6 +352,7 @@ IF panel THEN
             TAKE_STATS(FALSE)
         ENDIF
         key$ = INKEY$()
+        IF UCASE$(key$) = "F" THEN TOGGLE_FULLSCREEN
     LOOP UNTIL key$ = CHR$(27) ORELSE TICK() - t0 >= run_secs * 1000
 ELSE
     DO WHILE TICK() - t0 < run_secs * 1000
