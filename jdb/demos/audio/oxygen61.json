@@ -27,7 +27,7 @@
   "pads": {
     "daw":    { "port": "daw",  "channel": 1, "notes": [36, 37, 38, 39, 40, 41, 42, 43] },
     "preset": { "port": "main", "channel": 1, "notes_seen": [40, 41] },
-    "note": "Bottom row 36-39, top row 40-43; velocity was always 127 (fixed-velocity setting)"
+    "note": "Bottom row 36-39, top row 40-43; velocity-sensitive in both modes. In preset mode the pads share port and channel with the keys"
   },
   "transport": {
     "daw_port_cc": { "loop": 114, "stop": 117, "play": 118, "rec": 119 },

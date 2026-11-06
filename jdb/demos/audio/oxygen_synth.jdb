@@ -18,6 +18,8 @@
 '   REC          record the pads into the loop, with a click; again stops
 '   STOP         stop the loop; STOP when stopped clears it
 '   LOOP + key   that key becomes the new split
+' The pads reach the drums only in DAW mode (DAW button lit); in preset mode
+' they send keys 36-43 on the keyboard port and play the bass.
 
 IMPORT SYNTHPATCH
 
@@ -268,11 +270,14 @@ DIM daw_h = -1
 IF daw_idx >= 0 THEN
     daw_h = MIDI.OPEN_IN(daw_idx)
     PRINT "Controls " + ins[daw_idx] + ": " + STR$(MIDI.ROUTE(daw_h, "ALL", 10))
+    PRINT "Drums on the pads need DAW mode (press DAW until it lights)"
 ENDIF
 
 DIM tp = cfg{"transport"}{"daw_port_cc"}
 DIM mode_left = cfg{"mode_buttons"}{"left_cc"}
 DIM mode_right = cfg{"mode_buttons"}{"right_cc"}
+DIM preset_cc = cfg{"mode_report"}{"preset_mode_cc"}
+DIM daw_cc = cfg{"mode_report"}{"daw_mode_cc"}
 DIM morph_cc = fader[8]
 DIM learning = FALSE
 DIM seen = 0
@@ -308,6 +313,10 @@ SUB HANDLE_MIDI()
                     LOOP_REC()
                 ELSEIF m[2] = 127 ANDALSO m[1] = tp{"loop"} THEN
                     START_LEARN()
+                ELSEIF m[2] = 127 ANDALSO m[1] = daw_cc THEN
+                    SAY("DAW mode: the pads play the drums")
+                ELSEIF m[2] = 127 ANDALSO m[1] = preset_cc THEN
+                    SAY("Preset mode: the pads play keys 36-43, press DAW for the drums")
                 ENDIF
             ELSEIF m[0] = 144 ANDALSO m[2] > 0 ANDALSO recording THEN
                 RECORD_HIT(m[1])
