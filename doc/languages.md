@@ -3948,8 +3948,34 @@ real-time-safe.
 | `MIDI.NOTEON(handle, channel, note, velocity)` -> bool | Note On. |
 | `MIDI.NOTEOFF(handle, channel, note)` -> bool | Note Off. |
 | `MIDI.CC(handle, channel, cc, value)` -> bool | Control Change. |
-| `MIDI.POLL(handle)` -> `[[status, d1, d2], ...]` | Drain incoming events. |
+| `MIDI.POLL(handle)` -> `[[status, d1, d2], ...]` | Drain incoming events (up to 4096 are kept per port). |
+| `MIDI.ROUTE(handle, [on])` -> bool | An input port plays the synth directly: every message goes to the audio thread as it arrives, without the script loop in between. `MIDI.POLL` still sees the messages. `on` = FALSE stops it. Needs a sound build. |
 | `MIDI.CLOSE(handle)` | Close a port. |
+
+#### Playing the synth from MIDI
+
+`MIDI.ROUTE` and `SOUND.MIDIIN` feed the same queue. The audio thread plays it at the start of each buffer:
+
+- Note on starts a voice on every zone that holds the key, at the key's velocity (gain = velocity / 127). Note off releases only the voices of that key and channel.
+- The sustain pedal (CC 64) holds released keys until it goes up. CC 120 cuts every voice of the channel, CC 123 releases them.
+- Pitch bend moves every track of the channel's zones by up to 2 semitones.
+- With the audio device open, a message lands as far into the buffer as it arrived into the last callback period. Every key then waits the same time instead of anywhere between zero and one buffer.
+
+| Function | Description |
+|---|---|
+| `SOUND.ZONE(track, [lo], [hi], [channel], [transpose])` -> zone count | Keys `lo`..`hi` (default 0..127) on `channel` (1-16, default 0 = any) play `track`, shifted by `transpose` semitones. Overlapping zones layer. `SOUND.ZONE(-1)` clears every zone. Without zones every key plays track 0. |
+| `SOUND.MIDIIN(status, [data1], [data2])` | Play one raw MIDI message on the synth, the same way a routed port does. |
+| `SOUND.MIDISTATS()` -> map | Latency since the last call, in ms: `events`, `wait_ms` / `wait_max_ms` (arrival until the audio thread took it), `offset_ms` / `offset_max_ms` (into the buffer), `output_ms` (stream plus device), `total_ms` / `total_max_ms` (key to speaker). |
+
+```basic
+SOUND.INIT
+SOUND.VOICE 0, "SAW", 0.005, 0.2, 0.7, 0.3
+SOUND.VOICE 1, "SQUARE", 0.01, 0.1, 0.8, 0.2
+SOUND.ZONE 0, 0, 59, 0, -12        ' left hand: bass, an octave down
+SOUND.ZONE 1, 60, 127              ' right hand: lead
+DIM h = MIDI.OPEN_IN(0)
+MIDI.ROUTE(h)
+```
 
 ### Live monitor (`MINIAUDIO` flag)
 

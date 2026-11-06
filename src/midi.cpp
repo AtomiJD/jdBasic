@@ -5,6 +5,9 @@
 #ifdef MIDI
 
 #include "RtMidi.h"
+#include "sound.h"
+#include <atomic>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -13,10 +16,32 @@
 
 namespace {
 
+// An input port collects its messages for MIDI.POLL from RtMidi's callback
+// thread; a routed port also hands each one to the synth right away.
 struct MidiPort {
+    std::mutex qmtx;
+    std::deque<std::vector<unsigned char>> queue;
+    std::atomic<bool> routed{false};
     std::unique_ptr<RtMidiOut> out;
     std::unique_ptr<RtMidiIn>  in;
 };
+
+constexpr size_t MAX_QUEUED = 4096;
+
+void on_midi_in(double, std::vector<unsigned char>* msg, void* user) {
+    auto* p = static_cast<MidiPort*>(user);
+    if (!msg || msg->empty()) return;
+    if (p->routed.load(std::memory_order_relaxed)) sound_midi_push(msg->data(), msg->size());
+    std::lock_guard<std::mutex> lk(p->qmtx);
+    if (p->queue.size() >= MAX_QUEUED) p->queue.pop_front();
+    p->queue.push_back(*msg);
+}
+
+void close_port(MidiPort& p) {
+    if (p.in) {
+        try { p.in->cancelCallback(); p.in->closePort(); } catch (...) {}
+    }
+}
 
 std::map<int, MidiPort> g_ports;
 std::mutex              g_mtx;
@@ -79,7 +104,9 @@ void register_midi_builtins(VM& vm) {
             in->openPort(idx);
             std::lock_guard<std::mutex> lk(g_mtx);
             int h = g_next++;
-            g_ports[h].in = std::move(in);
+            MidiPort& p = g_ports[h];
+            p.in = std::move(in);
+            p.in->setCallback(&on_midi_in, &p);
             return Value::make_i64(h);
         } catch (...) { return Value::make_i64(-1); }
     });
@@ -122,11 +149,12 @@ void register_midi_builtins(VM& vm) {
         std::lock_guard<std::mutex> lk(g_mtx);
         auto it = g_ports.find(h);
         if (it == g_ports.end() || !it->second.in) return arr;
-        std::vector<unsigned char> msg;
-        while (true) {
-            msg.clear();
-            try { it->second.in->getMessage(&msg); } catch (...) { break; }
-            if (msg.empty()) break;
+        std::deque<std::vector<unsigned char>> got;
+        {
+            std::lock_guard<std::mutex> qlk(it->second.qmtx);
+            got.swap(it->second.queue);
+        }
+        for (const auto& msg : got) {
             Value ev = Value::make_array();
             for (unsigned char b : msg) ev.as_array()->elements.push_back(Value::make_i64(b));
             arr.as_array()->elements.push_back(std::move(ev));
@@ -134,10 +162,25 @@ void register_midi_builtins(VM& vm) {
         return arr;
     });
 
+    // MIDI.ROUTE(handle [, on]) -> bool: an input port plays the synth
+    // directly, inside the audio thread (zones: SOUND.ZONE)
+    vm.register_native("MIDI.ROUTE", 1, 2, [](const std::vector<Value>& args) -> Value {
+        int h = (int)args[0].to_int();
+        bool on = args.size() < 2 || args[1].to_bool();
+        std::lock_guard<std::mutex> lk(g_mtx);
+        auto it = g_ports.find(h);
+        if (it == g_ports.end() || !it->second.in) return Value::make_bool(false);
+        it->second.routed.store(on);
+        return Value::make_bool(true);
+    });
+
     // MIDI.CLOSE(handle)
     vm.register_native("MIDI.CLOSE", 1, 1, [](const std::vector<Value>& args) -> Value {
         std::lock_guard<std::mutex> lk(g_mtx);
-        g_ports.erase((int)args[0].to_int());
+        auto it = g_ports.find((int)args[0].to_int());
+        if (it == g_ports.end()) return Value::make_none();
+        close_port(it->second);
+        g_ports.erase(it);
         return Value::make_none();
     });
 }

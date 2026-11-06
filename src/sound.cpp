@@ -7,6 +7,7 @@
 #if !defined(GFX) && !defined(SOUND_DSP)
 // Stub when neither the SDL device (GFX) nor the standalone DSP (SOUND_DSP) is built.
 void sound_shutdown() {}
+void sound_midi_push(const unsigned char*, size_t) {}
 void register_sound_builtins(VM& vm) {
     vm.register_native("SOUND.INIT", [](const std::vector<Value>&) -> Value {
         throw jdError(ErrCode::RUNTIME_ERROR, "SOUND requires a GFX or SOUND build");
@@ -222,6 +223,10 @@ struct Voice {
     int64_t glide_left = 0;
     // Singing: the syllable on this note and the vocoder's bands
     jdsing::VoiceState sing;
+    // MIDI input: the key and channel that started the voice, whether its
+    // key is up, and whether the sustain pedal holds it
+    int midi_note = -1, midi_ch = 0;
+    bool midi_released = false, midi_sustained = false;
 };
 
 // ── Parameter modulation ────────────────────────────────────────
@@ -311,6 +316,8 @@ struct TrackParams {
     bool glide_marked = false;
     float last_freq = 0.0f;
     float pitch_semis = 0.0f;
+    // Pitch bend from MIDI input, as a frequency factor
+    float bend_ratio = 1.0f;
     // A second oscillator per voice: its wave, interval, cents and level
     Waveform osc2_wave = Waveform::SAW;
     float osc2_ratio = 1.0f, osc2_mix = 0.0f;
@@ -846,6 +853,140 @@ static struct SoundSystem {
     int dbg_triggers = 0;
     int dbg_alloc_fail = 0;
 
+    // ── MIDI input played on the synth ──────────────────────────
+    // Producers (MIDI port threads, SOUND.MIDIIN) append under midi_mtx; the
+    // audio thread only try-locks and swaps, so it never waits.
+    struct MidiMsg { uint8_t st, d1, d2; int64_t ns; };
+    // A key range on one channel (0 = any) that plays a track, shifted by transpose
+    struct MidiZone { int track, lo, hi, channel, transpose; };
+    std::mutex midi_mtx;
+    std::vector<MidiMsg> midi_in, midi_take;
+    std::vector<MidiZone> zones;
+    bool sustain_on[16] = {};
+    float bend_range = 2.0f;
+    bool device_mode = false;
+    int64_t last_render_ns = 0;
+    // Latency counters for SOUND.MIDISTATS: time in the queue, the offset
+    // into the buffer, and the output latency, summed and maximal
+    int64_t ms_events = 0;
+    double ms_wait_sum = 0, ms_wait_max = 0, ms_sched_sum = 0, ms_sched_max = 0;
+    double ms_total_sum = 0, ms_total_max = 0;
+
+    void push_midi(const unsigned char* m, size_t n) {
+        if (n == 0) return;
+        MidiMsg e{m[0], (uint8_t)(n > 1 ? m[1] : 0), (uint8_t)(n > 2 ? m[2] : 0), steady_ns()};
+        std::lock_guard<std::mutex> lk(midi_mtx);
+        if (midi_in.size() < 1024) midi_in.push_back(e);
+    }
+
+    bool zone_plays(const MidiZone& z, int ch, int note) const {
+        return (z.channel == 0 || z.channel == ch) && note >= z.lo && note <= z.hi;
+    }
+
+    // Gate-off `off` frames into the current buffer, after a delayed onset
+    static void gate_off_at(Voice& v, int64_t off) {
+        v.seq_controlled = true;
+        v.gate_frames = std::max<int64_t>(0, off - v.delay_frames);
+    }
+
+    void midi_note_on(const MidiZone& z, int ch, int note, int vel, int64_t off) {
+        int n = note + z.transpose;
+        if (n < 0 || n > 127) return;
+        auto& tp = tracks[z.track];
+        int vi = allocate_voice(z.track);
+        if (vi < 0) { dbg_alloc_fail++; return; }
+        auto& v = voices[vi];
+        float freq = midi_to_freq(n);
+        v.frequency = freq;
+        if (tp.glide_time > 0.0f && tp.last_freq > 0.0f && !tp.glide_marked) {
+            v.glide_left = std::max<int64_t>(1, (int64_t)(tp.glide_time * SAMPLE_RATE));
+            v.glide_cur = tp.last_freq;
+            v.glide_ratio = std::pow(freq / tp.last_freq, 1.0f / (float)v.glide_left);
+        }
+        tp.last_freq = freq;
+        start_envelopes(v, tp);
+        if (tp.waveform == Waveform::SAMPLE) {
+            v.sample_id = tp.sample_id;
+            v.sample_loop = tp.sample_loop;
+            v.sample_pos = 0;
+        }
+        v.gain = vel / 127.0f;
+        v.delay_frames = off;
+        v.midi_note = note;
+        v.midi_ch = ch;
+    }
+
+    void midi_event(const MidiMsg& e, int64_t off) {
+        int kind = e.st >> 4, ch = (e.st & 15) + 1;
+        if (kind == 9 && e.d2 > 0) {
+            if (zones.empty()) midi_note_on(MidiZone{0, 0, 127, 0, 0}, ch, e.d1, e.d2, off);
+            for (const auto& z : zones)
+                if (zone_plays(z, ch, e.d1)) midi_note_on(z, ch, e.d1, e.d2, off);
+        } else if (kind == 8 || kind == 9) {
+            for (auto& v : voices) {
+                if (v.midi_note != e.d1 || v.midi_ch != ch || v.midi_released) continue;
+                if (v.env.state == EnvState::OFF) continue;
+                v.midi_released = true;
+                if (sustain_on[ch - 1]) v.midi_sustained = true;
+                else gate_off_at(v, off);
+            }
+        } else if (kind == 11 && e.d1 == 64) {
+            sustain_on[ch - 1] = e.d2 >= 64;
+            if (!sustain_on[ch - 1])
+                for (auto& v : voices)
+                    if (v.midi_sustained && v.midi_ch == ch) {
+                        v.midi_sustained = false;
+                        if (v.env.state != EnvState::OFF) gate_off_at(v, off);
+                    }
+        } else if (kind == 11 && (e.d1 == 120 || e.d1 == 123)) {
+            // All sound off (120) cuts at once, all notes off (123) releases
+            sustain_on[ch - 1] = false;
+            for (auto& v : voices) {
+                if (v.midi_ch != ch || v.env.state == EnvState::OFF) continue;
+                v.midi_released = true;
+                v.midi_sustained = false;
+                if (e.d1 == 120) v.env.state = EnvState::OFF;
+                else gate_off_at(v, off);
+            }
+        } else if (kind == 14) {
+            float semis = (float)(((e.d2 << 7) | e.d1) - 8192) / 8192.0f * bend_range;
+            float ratio = std::exp2(semis / 12.0f);
+            if (zones.empty()) tracks[0].bend_ratio = ratio;
+            for (const auto& z : zones)
+                if (z.channel == 0 || z.channel == ch) tracks[z.track].bend_ratio = ratio;
+        }
+    }
+
+    // Plays the queued MIDI input at the start of a buffer. With a device,
+    // an event lands as far into this buffer as it arrived into the last
+    // callback period, so every key waits the same time instead of up to
+    // a whole buffer.
+    void drain_midi(int num_frames) {
+        int64_t now = steady_ns();
+        {
+            std::unique_lock<std::mutex> lk(midi_mtx, std::try_to_lock);
+            if (lk.owns_lock()) midi_take.swap(midi_in);
+        }
+        int64_t period = now - last_render_ns;
+        for (const auto& e : midi_take) {
+            int64_t off = 0;
+            if (device_mode && last_render_ns > 0 && period > 0 && num_frames > 1) {
+                double frac = std::clamp((double)(e.ns - last_render_ns) / (double)period, 0.0, 1.0);
+                off = (int64_t)(frac * (num_frames - 1));
+            }
+            double wait_ms = (now - e.ns) / 1e6;
+            double sched_ms = off * 1000.0 / SAMPLE_RATE;
+            double total_ms = wait_ms + sched_ms + out_latency_ns / 1e6;
+            ms_events++;
+            ms_wait_sum += wait_ms;  ms_wait_max = std::max(ms_wait_max, wait_ms);
+            ms_sched_sum += sched_ms; ms_sched_max = std::max(ms_sched_max, sched_ms);
+            ms_total_sum += total_ms; ms_total_max = std::max(ms_total_max, total_ms);
+            midi_event(e, off);
+        }
+        midi_take.clear();
+        last_render_ns = now;
+    }
+
     // Effect buses: track sends go to the bus of the track's orbit
     FxBus buses[NUM_ORBITS];
     Compressor compressor;
@@ -977,6 +1118,7 @@ static struct SoundSystem {
             v.glide_left--;
         }
         if (tp.pitch_semis != 0.0f) freq *= std::exp2(tp.pitch_semis / 12.0f);
+        freq *= tp.bend_ratio;
 
         // LFO
         if (tp.lfo_freq > 0 && tp.lfo_depth > 0) {
@@ -1453,6 +1595,7 @@ static struct SoundSystem {
         const int block = 256;
         int done = 0;
         sys->set_anchor();
+        sys->drain_midi(num_frames);
         while (done < num_frames) {
             int n = std::min(block, num_frames - done);
             // A block ends on the last frame before a queued command is due,
@@ -1726,6 +1869,7 @@ void sound_shutdown() {
     }
 #endif
     g_sound.initialized = false;
+    g_sound.device_mode = false;
 }
 
 // Pull-mode render entry point: fill `out` with num_frames interleaved
@@ -1735,6 +1879,11 @@ int sound_render(float* out, int num_frames) {
     if (!g_sound.initialized || num_frames <= 0) return 0;
     SoundSystem::render_frames(&g_sound, out, num_frames);
     return num_frames;
+}
+
+// One raw MIDI message for the synth; called from MIDI port threads.
+void sound_midi_push(const unsigned char* msg, size_t len) {
+    g_sound.push_midi(msg, len);
 }
 
 // ── Built-in drum kit, synthesized (SOUND.KIT track, "SYNTH") ──
@@ -2050,6 +2199,7 @@ void register_sound_builtins(VM& vm) {
             throw jdError(ErrCode::RUNTIME_ERROR, std::string("SOUND.INIT failed: ") + SDL_GetError());
 
         SDL_ResumeAudioStreamDevice(g_sound.stream);
+        g_sound.device_mode = true;
         {
             SDL_AudioSpec dev_spec;
             int dev_frames = 0;
@@ -2369,6 +2519,64 @@ void register_sound_builtins(VM& vm) {
 #else
         return Value::make_i64(0);
 #endif
+    });
+
+    // ── MIDI input: zones, raw messages, latency ────────────────
+
+    // SOUND.ZONE track [, lo, hi [, channel [, transpose]]] -> zone count.
+    // SOUND.ZONE -1 clears every zone; without zones all keys play track 0.
+    vm.register_native("SOUND.ZONE", 1, 5, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        int lo = args.size() > 1 ? (int)args[1].to_int() : 0;
+        int hi = args.size() > 2 ? (int)args[2].to_int() : 127;
+        int ch = args.size() > 3 ? (int)args[3].to_int() : 0;
+        int tr = args.size() > 4 ? (int)args[4].to_int() : 0;
+        if (t >= NUM_TRACKS || t < -1)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: track is 0-" + std::to_string(NUM_TRACKS - 1) + " or -1");
+        if (ch < 0 || ch > 16)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: channel is 1-16, or 0 for any");
+        if (g_sound.initialized) SND_LOCK();
+        if (t < 0) {
+            g_sound.zones.clear();
+            for (auto& tp : g_sound.tracks) tp.bend_ratio = 1.0f;
+        } else {
+            g_sound.zones.push_back({t, std::max(0, lo), std::min(127, hi), ch, tr});
+        }
+        int n = (int)g_sound.zones.size();
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_i64(n);
+    });
+
+    // SOUND.MIDIIN status [, data1 [, data2]]: play one MIDI message
+    vm.register_native("SOUND.MIDIIN", 1, 3, [](const std::vector<Value>& args) -> Value {
+        unsigned char m[3];
+        size_t n = args.size();
+        for (size_t i = 0; i < n; i++) m[i] = (unsigned char)(args[i].to_int() & 0xFF);
+        g_sound.push_midi(m, n);
+        return Value::make_none();
+    });
+
+    // SOUND.MIDISTATS() -> map of latency figures in ms since the last call
+    vm.register_native("SOUND.MIDISTATS", 0, 0, [](const std::vector<Value>&) -> Value {
+        if (g_sound.initialized) SND_LOCK();
+        int64_t n = g_sound.ms_events;
+        double d = n > 0 ? (double)n : 1.0;
+        Value m = Value::make_object();
+        auto* o = m.as_object();
+        o->set("events", Value::make_i64(n));
+        o->set("wait_ms", Value::make_f64(g_sound.ms_wait_sum / d));
+        o->set("wait_max_ms", Value::make_f64(g_sound.ms_wait_max));
+        o->set("offset_ms", Value::make_f64(g_sound.ms_sched_sum / d));
+        o->set("offset_max_ms", Value::make_f64(g_sound.ms_sched_max));
+        o->set("output_ms", Value::make_f64(g_sound.out_latency_ns / 1e6));
+        o->set("total_ms", Value::make_f64(g_sound.ms_total_sum / d));
+        o->set("total_max_ms", Value::make_f64(g_sound.ms_total_max));
+        g_sound.ms_events = 0;
+        g_sound.ms_wait_sum = g_sound.ms_wait_max = 0;
+        g_sound.ms_sched_sum = g_sound.ms_sched_max = 0;
+        g_sound.ms_total_sum = g_sound.ms_total_max = 0;
+        if (g_sound.initialized) SND_UNLOCK();
+        return m;
     });
 
     // ── SFX.LOAD id, filepath ───────────────────────────────────
@@ -3070,6 +3278,12 @@ void register_sound_builtins(VM& vm) {
         ensure_sound("SOUND"); SND_LOCK();
         for (auto& v : g_sound.voices) v.env.state = EnvState::OFF;
         for (auto& ch : g_sound.sfx_channels) ch.active = false;
+        g_sound.zones.clear();
+        for (bool& s : g_sound.sustain_on) s = false;
+        {
+            std::lock_guard<std::mutex> lk(g_sound.midi_mtx);
+            g_sound.midi_in.clear();
+        }
         for (auto& l : g_sound.seq_layers) {
             l.events.clear(); l.active_voice_idx = -1;
             l.is_linear = false; l.looping = false;

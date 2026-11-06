@@ -1,0 +1,230 @@
+' ============================================================
+' MIDI input on the synth: SOUND.MIDIIN, SOUND.ZONE, SOUND.MIDISTATS,
+' MIDI.ROUTE. Note on/off per key, velocity, sustain pedal, all sound
+' off, pitch bend, zones with channel, range and transpose.
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' Renders offline (SOUND.INIT "PULL"): no audio device, no MIDI device.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+' Root mean square of the left channel, frames a..b-1
+FUNC RMS(buf, a AS INTEGER, b AS INTEGER) AS DOUBLE
+    DIM acc AS DOUBLE = 0
+    DIM i AS INTEGER
+    DIM x AS DOUBLE
+    FOR i = a TO b - 1
+        x = buf[i * 2]
+        acc = acc + x * x
+    NEXT i
+    RETURN SQR(acc / (b - a))
+ENDFUNC
+
+' Upward zero crossings of the left channel, frames a..b-1
+FUNC CROSSINGS(buf, a AS INTEGER, b AS INTEGER) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = a + 1 TO b - 1
+        IF buf[i * 2 - 2] < 0 ANDALSO buf[i * 2] >= 0 THEN n = n + 1
+    NEXT i
+    RETURN n
+ENDFUNC
+
+' The level of the next `frames` frames, skipping the first 500
+FUNC LEVEL(frames AS INTEGER) AS DOUBLE
+    DIM buf = SOUND.RENDER(frames)
+    RETURN RMS(buf, 500, frames)
+ENDFUNC
+
+SUB FRESH()
+    SOUND.RESET
+    SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+    SOUND.VOICE 1, "SINE", 0.001, 0.01, 1.0, 0.005
+ENDSUB
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "SKIP: build has no SOUND sequencer"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+SOUND.INIT "PULL"
+DIM lvl AS DOUBLE
+DIM lvl2 AS DOUBLE
+
+' ---------- note on / note off ----------
+FRESH()
+CHECK "silent before a key", LEVEL(2000) < 0.001, ""
+SOUND.MIDIIN 144, 60, 127
+lvl = LEVEL(4000)
+CHECK "note on sounds", lvl > 0.3, "rms=" + STR$(lvl)
+SOUND.MIDIIN 128, 60, 0
+lvl = LEVEL(4000)
+CHECK "note off releases", lvl < 0.001, "rms=" + STR$(lvl)
+SOUND.MIDIIN 144, 60, 100
+SOUND.MIDIIN 144, 60, 0
+lvl = LEVEL(4000)
+CHECK "note on with velocity 0 is a note off", lvl < 0.001, "rms=" + STR$(lvl)
+
+' ---------- velocity ----------
+FRESH()
+SOUND.MIDIIN 144, 60, 127
+lvl = LEVEL(4000)
+SOUND.MIDIIN 128, 60, 0
+lvl2 = LEVEL(4000)
+SOUND.MIDIIN 144, 60, 32
+lvl2 = LEVEL(4000)
+CHECK "velocity 32 is a quarter of 127", ABS(lvl2 / lvl - 32.0 / 127.0) < 0.02, "ratio=" + STR$(lvl2 / lvl)
+
+' ---------- note off releases only its own key ----------
+FRESH()
+SOUND.MIDIIN 144, 60, 127
+SOUND.MIDIIN 144, 67, 127
+lvl = LEVEL(2000)
+SOUND.MIDIIN 128, 60, 0
+lvl2 = LEVEL(4000)
+CHECK "the other key keeps sounding", lvl2 > 0.3, "rms=" + STR$(lvl2)
+SOUND.MIDIIN 128, 67, 0
+CHECK "both keys up is silence", LEVEL(4000) < 0.001, ""
+
+' ---------- channel of the note off ----------
+FRESH()
+SOUND.MIDIIN 144, 60, 127
+SOUND.MIDIIN 129, 60, 0
+CHECK "note off on another channel keeps the key", LEVEL(4000) > 0.3, ""
+SOUND.MIDIIN 128, 60, 0
+CHECK "note off on its channel releases", LEVEL(4000) < 0.001, ""
+
+' ---------- sustain pedal ----------
+FRESH()
+SOUND.MIDIIN 176, 64, 127
+SOUND.MIDIIN 144, 60, 127
+lvl = LEVEL(2000)
+SOUND.MIDIIN 128, 60, 0
+lvl = LEVEL(4000)
+CHECK "pedal holds a released key", lvl > 0.3, "rms=" + STR$(lvl)
+SOUND.MIDIIN 176, 64, 0
+lvl = LEVEL(4000)
+CHECK "pedal up releases it", lvl < 0.001, "rms=" + STR$(lvl)
+SOUND.MIDIIN 144, 62, 127
+SOUND.MIDIIN 128, 62, 0
+CHECK "without pedal the key releases at once", LEVEL(4000) < 0.001, ""
+
+' ---------- all sound off / all notes off ----------
+FRESH()
+SOUND.MIDIIN 144, 60, 127
+SOUND.MIDIIN 144, 64, 127
+lvl = LEVEL(2000)
+SOUND.MIDIIN 176, 120, 0
+CHECK "CC 120 cuts every voice", LEVEL(2000) < 0.001, ""
+SOUND.MIDIIN 176, 64, 127
+SOUND.MIDIIN 144, 60, 127
+lvl = LEVEL(2000)
+SOUND.MIDIIN 176, 123, 0
+CHECK "CC 123 releases even under the pedal", LEVEL(4000) < 0.001, ""
+SOUND.MIDIIN 176, 64, 0
+
+' ---------- pitch bend ----------
+FRESH()
+DIM buf = []
+DIM zc0 AS INTEGER
+DIM zc1 AS INTEGER
+SOUND.MIDIIN 144, 69, 127
+buf = SOUND.RENDER(44100)
+zc0 = CROSSINGS(buf, 0, 44100)
+CHECK "A4 is 440 Hz", ABS(zc0 - 440) <= 2, "crossings=" + STR$(zc0)
+SOUND.MIDIIN 224, 127, 127
+buf = SOUND.RENDER(44100)
+zc1 = CROSSINGS(buf, 0, 44100)
+CHECK "full bend up is 2 semitones", ABS(zc1 - 494) <= 2, "crossings=" + STR$(zc1)
+SOUND.MIDIIN 224, 0, 64
+buf = SOUND.RENDER(44100)
+zc1 = CROSSINGS(buf, 0, 44100)
+CHECK "centre bend is back at 440", ABS(zc1 - 440) <= 2, "crossings=" + STR$(zc1)
+SOUND.MIDIIN 128, 69, 0
+
+' ---------- zones ----------
+FRESH()
+CHECK "two zones", SOUND.ZONE(0, 0, 59) = 1 ANDALSO SOUND.ZONE(1, 60, 127, 0, 12) = 2, ""
+SOUND.GAIN 1, 0
+SOUND.MIDIIN 144, 72, 127
+CHECK "a key in the muted zone is silent", LEVEL(4000) < 0.001, ""
+SOUND.MIDIIN 128, 72, 0
+SOUND.MIDIIN 144, 57, 127
+buf = SOUND.RENDER(44100)
+zc0 = CROSSINGS(buf, 0, 44100)
+CHECK "the left zone plays its track", ABS(zc0 - 220) <= 2, "crossings=" + STR$(zc0)
+SOUND.MIDIIN 128, 57, 0
+SOUND.GAIN 1, 1
+SOUND.GAIN 0, 0
+SOUND.MIDIIN 144, 69, 127
+buf = SOUND.RENDER(44100)
+zc0 = CROSSINGS(buf, 0, 44100)
+CHECK "transpose 12 plays an octave up", ABS(zc0 - 880) <= 3, "crossings=" + STR$(zc0)
+SOUND.MIDIIN 128, 69, 0
+
+FRESH()
+CHECK "zone on channel 2", SOUND.ZONE(0, 0, 127, 2) = 1, ""
+SOUND.MIDIIN 144, 60, 127
+CHECK "channel 1 does not play a channel 2 zone", LEVEL(4000) < 0.001, ""
+SOUND.MIDIIN 145, 60, 127
+CHECK "channel 2 plays it", LEVEL(4000) > 0.3, ""
+SOUND.MIDIIN 129, 60, 0
+
+FRESH()
+CHECK "two zones on the same keys", SOUND.ZONE(0) = 1 ANDALSO SOUND.ZONE(1) = 2, ""
+DIM levels = SOUND.LEVELS()
+SOUND.MIDIIN 144, 60, 127
+lvl = LEVEL(4000)
+levels = SOUND.LEVELS()
+SOUND.MIDIIN 128, 60, 0
+CHECK "a layer plays both tracks", levels[0] > 0.3 ANDALSO levels[1] > 0.3, "levels=" + STR$(levels[0]) + "," + STR$(levels[1])
+CHECK "SOUND.ZONE -1 clears", SOUND.ZONE(-1) = 0, ""
+
+DIM err_msg AS STRING = ""
+TRY
+    lvl = SOUND.ZONE(16)
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "track 16 is refused", INSTR(err_msg, "SOUND.ZONE") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    lvl = SOUND.ZONE(0, 0, 127, 17)
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "channel 17 is refused", INSTR(err_msg, "channel") >= 0, "msg=" + err_msg
+
+' ---------- latency counters ----------
+FRESH()
+DIM stats = SOUND.MIDISTATS()
+SOUND.MIDIIN 144, 60, 127
+SOUND.MIDIIN 128, 60, 0
+lvl = LEVEL(1000)
+stats = SOUND.MIDISTATS()
+CHECK "two events counted", stats{"events"} = 2, "events=" + STR$(stats{"events"})
+CHECK "no offset without a device", stats{"offset_max_ms"} = 0, ""
+stats = SOUND.MIDISTATS()
+CHECK "counters reset after a read", stats{"events"} = 0, ""
+
+' ---------- MIDI.ROUTE ----------
+IF OS.FEATURE("MIDI") THEN
+    CHECK "ROUTE on an unknown handle is FALSE", MIDI.ROUTE(9999) = FALSE, ""
+ENDIF
+
+SOUND.RESET
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

@@ -3276,6 +3276,18 @@ Description: Renders the next 'frames' stereo frames of the live sequencer and r
 Syntax: SOUND.QUEUED()
 Description: Returns the number of bytes still waiting in the PLAYBUFFER queue. Useful for pacing pushes to avoid underrun/overflow.
 
+[SOUND.ZONE]
+Syntax: SOUND.ZONE(track, [lo], [hi], [channel], [transpose]) -> zone count
+Description: MIDI keys lo..hi (default 0..127) on channel (1-16, default 0 = any) play the track, shifted by transpose semitones. Overlapping zones layer. SOUND.ZONE(-1) clears every zone. Without zones every key plays track 0.
+
+[SOUND.MIDIIN]
+Syntax: SOUND.MIDIIN(status, [data1], [data2])
+Description: Plays one raw MIDI message on the synth, the same way a port routed with MIDI.ROUTE does: note on/off with velocity, sustain pedal (CC 64), all sound off (CC 120), all notes off (CC 123), pitch bend (2 semitones).
+
+[SOUND.MIDISTATS]
+Syntax: SOUND.MIDISTATS() -> map
+Description: Latency of the MIDI input since the last call, in ms: events, wait_ms, wait_max_ms (arrival until the audio thread took it), offset_ms, offset_max_ms (into the buffer), output_ms (stream plus device), total_ms, total_max_ms (key to speaker).
+
 [SOUND.VOICE]
 Syntax: SOUND.VOICE track, waveform$, attack, decay, sustain, release
 Description: Configures the ADSR envelope and waveform for a synthesizer track.
@@ -4363,6 +4375,10 @@ Description: Send a Control Change message.
 [MIDI.POLL]
 Syntax: MIDI.POLL(handle) -> [[status, data1, data2], ...]
 Description: Drain buffered incoming MIDI events (lock-free); empty array if none.
+
+[MIDI.ROUTE]
+Syntax: MIDI.ROUTE(handle, [on]) -> bool
+Description: An input port plays the synth directly: every message goes to the audio thread as it arrives, without the script loop in between. MIDI.POLL still sees the messages. on = FALSE stops it. Keys go to the tracks of SOUND.ZONE; without zones every key plays track 0. Needs a sound build.
 
 [MIDI.CLOSE]
 Syntax: MIDI.CLOSE(handle)
