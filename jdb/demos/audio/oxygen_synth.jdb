@@ -14,8 +14,8 @@
 '   faders 1-2   lead / bass level
 '   fader 9      morph from the lead patch to the next one
 '   MODE < >     previous / next lead patch
-'   PLAY         start the drum loop (pads play the kit live, on channel 10)
-'   REC          record the pads into the loop, with a click; again stops
+'   PLAY         start the loop (pads play the kit live, on channel 10)
+'   REC          record pads and keys into the loop, with a click; again stops
 '   STOP         stop the loop; STOP when stopped clears it
 '   LOOP + key   that key becomes the new split
 ' The pads reach the drums only in DAW mode (DAW button lit); in preset mode
@@ -133,20 +133,47 @@ FOR i = 0 TO n_rows - 1
 NEXT i
 SET_SPLIT(60)
 
-DIM grid = IOTA(n_rows * STEPS, 0) * 0
+DIM loop_bars = 1
+DIM n_steps = STEPS
+DIM grid = IOTA(n_rows * n_steps, 0) * 0
 DIM bpm = 110
 DIM looping = FALSE
 DIM recording = FALSE
+DIM view_bar = 0
+DIM follow = TRUE
 SOUND.BPM bpm
 
-' One bar of 16 steps in mini-notation: a rest, a sound, or [a,b] stacked
+' Recorded keyboard notes, one entry per note: track, sounding note, first
+' step, length in steps, and the take it came from (for undo)
+DIM mel_trk = []
+DIM mel_note = []
+DIM mel_start = []
+DIM mel_len = []
+DIM mel_take = []
+DIM take_no = 0
+' step position where each held key went down while recording, -1 when up
+DIM key_start = IOTA(128, 0) * 0 - 1
+DIM note_names$ = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"]
+
+' Where in the loop the music is that is leaving the speaker, in steps
+FUNC HEARD_STEP()
+    DIM heard = SOUND.CYCLE() - (out_ms / 1000 + 0.01) * bpm / 240
+    RETURN (heard - INT(heard / loop_bars) * loop_bars) * STEPS
+ENDFUNC
+
+FUNC SLOWED$(steps$)
+    IF loop_bars = 1 THEN RETURN steps$
+    RETURN "[" + steps$ + "]/" + STR$(loop_bars)
+ENDFUNC
+
+' The drum loop in mini-notation: per step a rest, a sound, or [a,b] stacked
 FUNC LOOP_PATTERN$()
     DIM steps$ = ""
-    FOR s = 0 TO STEPS - 1
+    FOR s = 0 TO n_steps - 1
         DIM hits$ = ""
         DIM n_hits = 0
         FOR r = 0 TO n_rows - 1
-            IF grid[r * STEPS + s] THEN
+            IF grid[r * n_steps + s] THEN
                 hits$ = hits$ + IIF(n_hits > 0, ",", "") + pad_names$[r]
                 n_hits = n_hits + 1
             ENDIF
@@ -155,16 +182,104 @@ FUNC LOOP_PATTERN$()
         IF n_hits > 1 THEN hits$ = "[" + hits$ + "]"
         steps$ = steps$ + IIF(s > 0, " ", "") + hits$
     NEXT s
-    RETURN steps$
+    RETURN SLOWED$(steps$)
+ENDFUNC
+
+' The notes of one track as stacked lanes; in each lane a note lasts its
+' length (name@len) and the gaps are weighted rests, so a lane spans the loop
+FUNC MELODY_PATTERN$(trk)
+    DIM idx = []
+    FOR i = 0 TO LEN(mel_trk) - 1
+        IF mel_trk[i] = trk THEN idx = APPEND(idx, i)
+    NEXT i
+    IF LEN(idx) = 0 THEN RETURN "~"
+    DIM order = idx[GRADE(mel_start[idx])]
+    DIM lanes$ = []
+    DIM lane_end = []
+    FOR EACH i IN order
+        DIM k = -1
+        FOR l = 0 TO LEN(lane_end) - 1
+            IF k < 0 ANDALSO lane_end[l] <= mel_start[i] THEN k = l
+        NEXT l
+        IF k < 0 THEN
+            lanes$ = APPEND(lanes$, "")
+            lane_end = APPEND(lane_end, 0)
+            k = LEN(lane_end) - 1
+        ENDIF
+        DIM gap = mel_start[i] - lane_end[k]
+        IF gap > 0 THEN lanes$[k] = lanes$[k] + " ~@" + STR$(gap)
+        DIM nn = mel_note[i]
+        lanes$[k] = lanes$[k] + " " + note_names$[nn MOD 12] + STR$(INT(nn / 12) - 1) + "@" + STR$(mel_len[i])
+        lane_end[k] = mel_start[i] + mel_len[i]
+    NEXT i
+    FOR l = 0 TO LEN(lane_end) - 1
+        IF lane_end[l] < n_steps THEN lanes$[l] = lanes$[l] + " ~@" + STR$(n_steps - lane_end[l])
+    NEXT l
+    RETURN "legato(1, " + SLOWED$(JOIN(lanes$, ",")) + ")"
 ENDFUNC
 
 SUB SEND_LOOP()
     IF looping THEN
         SOUND.SEQ DRUMS, LOOP_PATTERN$(), "VOICE"
+        SOUND.SEQ 0, MELODY_PATTERN$(0), "VOICE"
+        SOUND.SEQ 1, MELODY_PATTERN$(1), "VOICE"
     ELSE
         SOUND.SEQ DRUMS, "~", "VOICE"
+        SOUND.SEQ 0, "~", "VOICE"
+        SOUND.SEQ 1, "~", "VOICE"
     ENDIF
     SOUND.SEQ CLICK, IIF(recording, "cl ~ ~ ~ rim ~ ~ ~ rim ~ ~ ~ rim ~ ~ ~", "~"), "VOICE"
+ENDSUB
+
+SUB CLEAR_LOOP()
+    grid = grid * 0
+    mel_trk = []
+    mel_note = []
+    mel_start = []
+    mel_len = []
+    mel_take = []
+    SEND_LOOP()
+ENDSUB
+
+' Longer loops repeat what is there; shorter ones keep the first bars
+SUB SET_BARS(bars)
+    IF bars = loop_bars THEN RETURN
+    DIM new_steps = bars * STEPS
+    DIM new_grid = IOTA(n_rows * new_steps, 0) * 0
+    FOR r = 0 TO n_rows - 1
+        FOR s = 0 TO new_steps - 1
+            new_grid[r * new_steps + s] = grid[r * n_steps + (s MOD n_steps)]
+        NEXT s
+    NEXT r
+    DIM n_mel = LEN(mel_trk)
+    FOR i = 0 TO n_mel - 1
+        FOR c = 1 TO bars / loop_bars - 1
+            mel_trk = APPEND(mel_trk, mel_trk[i])
+            mel_note = APPEND(mel_note, mel_note[i])
+            mel_start = APPEND(mel_start, mel_start[i] + c * n_steps)
+            mel_len = APPEND(mel_len, mel_len[i])
+            mel_take = APPEND(mel_take, mel_take[i])
+        NEXT c
+    NEXT i
+    IF bars < loop_bars THEN
+        DIM keep = []
+        FOR i = 0 TO n_mel - 1
+            IF mel_start[i] < new_steps THEN
+                keep = APPEND(keep, i)
+                mel_len[i] = MIN([mel_len[i], new_steps - mel_start[i]])
+            ENDIF
+        NEXT i
+        mel_trk = mel_trk[keep]
+        mel_note = mel_note[keep]
+        mel_start = mel_start[keep]
+        mel_len = mel_len[keep]
+        mel_take = mel_take[keep]
+    ENDIF
+    grid = new_grid
+    loop_bars = bars
+    n_steps = new_steps
+    SEND_LOOP()
+    SAY("Loop length " + STR$(bars) + IIF(bars = 1, " bar", " bars"))
 ENDSUB
 
 SUB LOOP_PLAY()
@@ -175,9 +290,10 @@ ENDSUB
 
 SUB LOOP_STOP()
     IF NOT looping ANDALSO NOT recording THEN
-        grid = grid * 0
+        CLEAR_LOOP()
         SAY("Loop cleared")
     ELSE
+        CLOSE_HELD()
         SAY("Loop stopped (STOP again clears it)")
     ENDIF
     looping = FALSE
@@ -186,27 +302,70 @@ SUB LOOP_STOP()
 ENDSUB
 
 SUB LOOP_REC()
+    IF recording THEN CLOSE_HELD()
     recording = NOT recording
+    IF recording THEN take_no = take_no + 1
     looping = TRUE
     SEND_LOOP()
-    SAY(IIF(recording, "Recording pads into the loop", "Recording off, loop plays on"))
+    SAY(IIF(recording, "Recording pads and keys into the loop", "Recording off, loop plays on"))
 ENDSUB
 
-' A pad hit lands on the nearest 16th of the bar that is being heard
+SUB UNDO_TAKE()
+    DIM keep = []
+    FOR i = 0 TO LEN(mel_take) - 1
+        IF mel_take[i] <> take_no THEN keep = APPEND(keep, i)
+    NEXT i
+    mel_trk = mel_trk[keep]
+    mel_note = mel_note[keep]
+    mel_start = mel_start[keep]
+    mel_len = mel_len[keep]
+    mel_take = mel_take[keep]
+    IF take_no > 0 THEN take_no = take_no - 1
+    SEND_LOOP()
+    SAY("Last take of keys removed")
+ENDSUB
+
+' A pad hit lands on the nearest 16th of the loop that is being heard
 SUB RECORD_HIT(note)
     DIM row = -1
     FOR i = 0 TO n_rows - 1
         IF pad_notes[i] = note THEN row = i
     NEXT i
     IF row < 0 THEN RETURN
-    DIM cps = bpm / 240
-    DIM heard = SOUND.CYCLE() - (out_ms / 1000 + 0.01) * cps
-    DIM pos = heard - INT(heard)
-    DIM s = INT(pos * STEPS + 0.5) MOD STEPS
-    IF grid[row * STEPS + s] = 0 THEN
-        grid[row * STEPS + s] = 1
+    DIM s = INT(HEARD_STEP() + 0.5) MOD n_steps
+    IF grid[row * n_steps + s] = 0 THEN
+        grid[row * n_steps + s] = 1
         SEND_LOOP()
     ENDIF
+ENDSUB
+
+SUB KEY_DOWN(note)
+    IF recording THEN key_start[note] = HEARD_STEP()
+ENDSUB
+
+' A key starts on the nearest 16th and lasts at least one; a note that would
+' run past the loop end stops there
+SUB KEY_UP(note)
+    DIM from = key_start[note]
+    IF from < 0 THEN RETURN
+    key_start[note] = -1
+    DIM held = HEARD_STEP() - from
+    IF held < 0 THEN held = held + n_steps
+    DIM s0 = INT(from + 0.5) MOD n_steps
+    DIM ln = MIN([MAX([1, INT(held + 0.5)]), n_steps - s0])
+    DIM trk = IIF(note < split_key, 0, 1)
+    mel_trk = APPEND(mel_trk, trk)
+    mel_note = APPEND(mel_note, note + IIF(trk = 0, -12, 0))
+    mel_start = APPEND(mel_start, s0)
+    mel_len = APPEND(mel_len, ln)
+    mel_take = APPEND(mel_take, take_no)
+    SEND_LOOP()
+ENDSUB
+
+SUB CLOSE_HELD()
+    FOR n = 0 TO 127
+        IF key_start[n] >= 0 THEN KEY_UP(n)
+    NEXT n
 ENDSUB
 
 ' What the hardware moves: [label, cc index list key, index, track, param, lo, hi, curve]
@@ -295,7 +454,13 @@ SUB START_LEARN()
 ENDSUB
 
 SUB HANDLE_MIDI()
-    MIDI.POLL(main_h)
+    FOR EACH k IN MIDI.POLL(main_h)
+        IF LEN(k) >= 3 ANDALSO k[0] = 144 ANDALSO k[2] > 0 THEN
+            KEY_DOWN(k[1])
+        ELSEIF LEN(k) >= 3 ANDALSO (k[0] = 128 ORELSE k[0] = 144) THEN
+            KEY_UP(k[1])
+        ENDIF
+    NEXT k
     IF daw_h >= 0 THEN
         FOR EACH m IN MIDI.POLL(daw_h)
             IF m[0] = 176 THEN
@@ -456,22 +621,21 @@ SUB DRAW_PANEL()
             GUI.TEXT m[0] + "  ->  " + IIF(m[3] = 1, "lead ", "bass ") + LCASE$(m[4])
         NEXT m
         GUI.TEXT "Fader 9  ->  morph       MODE < >  ->  patch"
-        GUI.TEXT "PLAY STOP REC  ->  drum loop    LOOP + key  ->  split"
+        GUI.TEXT "PLAY STOP REC  ->  loop (pads and keys)    LOOP + key  ->  split"
         GUI.TEXT "Pads  ->  bd sd hh oh (bottom row), cp rim lt cr (top row)"
         GUI.END_TABLE
     ENDIF
 
-    GUI.SEPARATOR_TEXT("Drum loop (pads, channel 10)")
+    GUI.SEPARATOR_TEXT("Loop (pads on channel 10, keys of bass and lead)")
     IF GUI.BUTTON(IIF(looping, "Playing", "Play")) THEN LOOP_PLAY()
     GUI.SAME_LINE
     IF GUI.BUTTON("Stop") THEN LOOP_STOP()
     GUI.SAME_LINE
     IF GUI.BUTTON(IIF(recording, "Recording", "Rec")) THEN LOOP_REC()
     GUI.SAME_LINE
-    IF GUI.BUTTON("Clear") THEN
-        grid = grid * 0
-        SEND_LOOP()
-    ENDIF
+    IF GUI.BUTTON("Clear") THEN CLEAR_LOOP()
+    GUI.SAME_LINE
+    IF GUI.BUTTON("Undo keys") THEN UNDO_TAKE()
     GUI.SAME_LINE
     GUI.SET_NEXT_ITEM_WIDTH 200 * ui
     DIM nb = INT(GUI.SLIDER("BPM", bpm, 60, 180))
@@ -479,19 +643,46 @@ SUB DRAW_PANEL()
         bpm = nb
         SOUND.BPM bpm
     ENDIF
-    DIM cyc = SOUND.CYCLE()
-    DIM now_step = INT((cyc - INT(cyc)) * STEPS)
+    GUI.TEXT "Bars"
+    FOR EACH b IN [1, 2, 4, 8]
+        GUI.SAME_LINE
+        IF GUI.BUTTON(IIF(b = loop_bars, "[" + STR$(b) + "]", " " + STR$(b) + " ") + "###bars" + STR$(b)) THEN SET_BARS(b)
+    NEXT b
+    DIM play_step = INT(HEARD_STEP())
+    IF follow ANDALSO looping THEN view_bar = INT(play_step / STEPS)
+    view_bar = view_bar MOD loop_bars
+    GUI.SAME_LINE
+    IF GUI.BUTTON("<") THEN
+        view_bar = (view_bar + loop_bars - 1) MOD loop_bars
+        follow = FALSE
+    ENDIF
+    GUI.SAME_LINE
+    GUI.TEXT "bar " + STR$(view_bar + 1) + "/" + STR$(loop_bars)
+    GUI.SAME_LINE
+    IF GUI.BUTTON(">") THEN
+        view_bar = (view_bar + 1) MOD loop_bars
+        follow = FALSE
+    ENDIF
+    GUI.SAME_LINE
+    follow = GUI.CHECKBOX("Follow", follow)
+    DIM n_lead = 0
+    FOR EACH t IN mel_trk
+        IF t = 1 THEN n_lead = n_lead + 1
+    NEXT t
+    GUI.SAME_LINE
+    GUI.TEXT "   keys: " + STR$(n_lead) + " lead, " + STR$(LEN(mel_trk) - n_lead) + " bass notes"
     DIM edited = FALSE
     FOR r = 0 TO n_rows - 1
         GUI.TEXT LEFT$(pad_names$[r] + "    ", 4)
         FOR s = 0 TO STEPS - 1
+            DIM cell = r * n_steps + view_bar * STEPS + s
             GUI.SAME_LINE
             GUI.PUSH_ID r * STEPS + s
-            DIM was = grid[r * STEPS + s]
-            DIM lbl$ = IIF(looping ANDALSO s = now_step, ">", "") + "###cell"
+            DIM was = grid[cell]
+            DIM lbl$ = IIF(looping ANDALSO view_bar * STEPS + s = play_step, ">", "") + "###cell"
             DIM now_on = GUI.CHECKBOX(lbl$, was)
             IF now_on <> was THEN
-                grid[r * STEPS + s] = IIF(now_on, 1, 0)
+                grid[cell] = IIF(now_on, 1, 0)
                 edited = TRUE
             ENDIF
             GUI.POP_ID
