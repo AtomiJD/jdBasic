@@ -212,6 +212,67 @@ inline size_t utf8_len(View s, size_t at) {
     return len;
 }
 
+// The byte length of the character at byte at, for the functions that count
+// characters (LENW, MIDW$, ...): a lead byte with all its continuation bytes
+// is one character, and any byte that does not start a whole sequence (a
+// stray continuation byte, a lead cut short) is one character on its own.
+inline size_t char_bytes(View s, size_t at) {
+    unsigned char c = (unsigned char)s.p[at];
+    size_t len = (c >= 0xC2 && c <= 0xDF) ? 2 : (c >= 0xE0 && c <= 0xEF) ? 3 :
+                 (c >= 0xF0 && c <= 0xF4) ? 4 : 1;
+    if (at + len > s.n) return 1;
+    for (size_t k = 1; k < len; k++)
+        if (((unsigned char)s.p[at + k] & 0xC0) != 0x80) return 1;
+    return len;
+}
+
+// The number of characters in s.
+inline int64_t char_count(View s) {
+    int64_t n = 0;
+    for (size_t i = 0; i < s.n; i += char_bytes(s, i)) n++;
+    return n;
+}
+
+// The byte offset of character ch; past the last character it is the end.
+inline size_t char_offset(View s, int64_t ch) {
+    size_t i = 0;
+    for (; ch > 0 && i < s.n; ch--) i += char_bytes(s, i);
+    return i;
+}
+
+// MIDW$: len characters from character start, with MID$'s rules for a
+// start outside the text and a negative len.
+inline std::string midw(View s, int64_t start, int64_t len) {
+    if (start < 0) start = 0;
+    size_t from = char_offset(s, start);
+    if (len < 0) return s.sub(from, s.n - from);
+    View rest(s.p + from, s.n - from);
+    return s.sub(from, char_offset(rest, len));
+}
+
+// LEFTW$ / RIGHTW$: the first or last n characters.
+inline std::string leftw(View s, int64_t n) {
+    if (n <= 0) return std::string();
+    return s.sub(0, char_offset(s, n));
+}
+inline std::string rightw(View s, int64_t n) {
+    if (n <= 0) return std::string();
+    int64_t total = char_count(s);
+    if (n >= total) return s.str();
+    size_t from = char_offset(s, total - n);
+    return s.sub(from, s.n - from);
+}
+
+// INSTRW: the character index of needle in s at or after character start,
+// -1 for none.
+inline int64_t findw(View s, View needle, int64_t start = 0) {
+    if (start < 0) start = 0;
+    if (start > char_count(s)) return -1;
+    int64_t at = find(s, needle, (int64_t)char_offset(s, start));
+    if (at < 0) return -1;
+    return char_count(View(s.p, (size_t)at));
+}
+
 // The UTF-8 characters of s, each handed to emit as its own string.
 template <typename Emit>
 inline void chars(View s, Emit emit) {

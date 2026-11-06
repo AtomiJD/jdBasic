@@ -5191,6 +5191,33 @@ int64_t jdb_instr(const char* haystack, const char* needle) {
     return jdb_text::find(text_in(haystack), text_in(needle));
 }
 
+int64_t jdb_lenw(const char* s) {
+    return jdb_text::char_count(text_in(s));
+}
+
+char* jdb_midw(const char* s, int64_t start, int64_t length) {
+    return jdb_guard([&]() -> char* {
+        return text_out(jdb_text::midw(text_in(s), start, length));
+    }, [] { return _strdup(""); });
+}
+
+char* jdb_leftw(const char* s, int64_t n) {
+    return jdb_guard([&]() -> char* {
+        return text_out(jdb_text::leftw(text_in(s), n));
+    }, [] { return _strdup(""); });
+}
+
+char* jdb_rightw(const char* s, int64_t n) {
+    return jdb_guard([&]() -> char* {
+        return text_out(jdb_text::rightw(text_in(s), n));
+    }, [] { return _strdup(""); });
+}
+
+int64_t jdb_instrw(const char* haystack, const char* needle) {
+    if (!haystack || !needle) return -1;
+    return jdb_text::findw(text_in(haystack), text_in(needle));
+}
+
 char* jdb_replace(const char* src, const char* find, const char* rep) {
     return jdb_guard([&]() -> char* {
         if (!src || !find || !rep) return _strdup(src ? src : "");

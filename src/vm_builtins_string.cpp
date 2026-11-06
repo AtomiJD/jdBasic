@@ -168,6 +168,31 @@ void VM::register_string_builtins() {
         return Value::make_i64(jdb_text::find(haystack, needle, start));
     });
 
+    // The twins that count UTF-8 characters instead of bytes.
+    register_native("LENW", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_i64(jdb_text::char_count(args[0].to_string()));
+    });
+    register_native("MIDW$", 2, 3, [](const std::vector<Value>& args) -> Value {
+        int64_t len = args.size() > 2 ? args[2].to_int() : -1;
+        return Value::make_string(jdb_text::midw(args[0].to_string(), args[1].to_int(), len));
+    });
+    register_native("LEFTW$", 2, 2, [](const std::vector<Value>& args) -> Value {
+        return Value::make_string(jdb_text::leftw(args[0].to_string(), args[1].to_int()));
+    });
+    register_native("RIGHTW$", 2, 2, [](const std::vector<Value>& args) -> Value {
+        return Value::make_string(jdb_text::rightw(args[0].to_string(), args[1].to_int()));
+    });
+    register_native("INSTRW", 2, 3, [](const std::vector<Value>& args) -> Value {
+        if (args.size() >= 3) {
+            if (args[0].type == ValueType::STRING)
+                throw jdError(ErrCode::WRONG_ARG_TYPE,
+                    "INSTRW: the position comes first - INSTRW(start, haystack, needle)");
+            return Value::make_i64(jdb_text::findw(args[1].to_string(), args[2].to_string(),
+                                                   args[0].to_int()));
+        }
+        return Value::make_i64(jdb_text::findw(args[0].to_string(), args[1].to_string()));
+    });
+
     // INSERT$: insert text into string or element into array at position
     register_native("INSERT$", 3, 3, [](const std::vector<Value>& args) -> Value {
         if (args[2].type == ValueType::STRING || args[2].type == ValueType::ARRAY)

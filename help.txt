@@ -2291,6 +2291,10 @@ Description: Returns the 0-based starting position of a substring within a strin
 Syntax: INSTR$([start_pos, ]haystack$, needle$)
 Description: Old name of INSTR, still accepted for one release; --lint, jdb_check and -c name INSTR, and tools/jdb-fix.jdb rewrites it.
 
+[INSTRW]
+Syntax: INSTRW([start_char, ]haystack$, needle$)
+Description: INSTR counted in UTF-8 characters: the start and the answer are 0-based character positions, -1 when the needle is not there.
+
 [INT]
 Syntax: INT(number)
 Description: Truncates a number to its integer part (classic floor behavior).
@@ -2472,6 +2476,10 @@ Description: Converts a string to uppercase. VB6-style alias of UCASE$.
 Syntax: LEFT$(string$, length)
 Description: Returns the specified number of characters from the beginning of a string.
 
+[LEFTW$]
+Syntax: LEFTW$(string$, n)
+Description: The first n UTF-8 characters of a string; LEFT$ counts bytes.
+
 [LEN]
 Syntax: LEN(expression)
 Description: Returns a scalar length. For strings: byte count. For maps: number
@@ -2483,6 +2491,11 @@ Syntax: LENV(expression)
 Description: Returns a shape vector [dim0, dim1, ...] describing the full
 extent of a (possibly nested) array. For 1D arrays returns [n]; for strings
 returns [byte_count].
+
+[LENW]
+Syntax: LENW(string$)
+Description: The number of UTF-8 characters in a string; LEN counts bytes. A
+byte that does not start a whole UTF-8 sequence counts as one character.
 
 [LERP]
 Syntax: LERP(start, end, alpha)
@@ -2625,6 +2638,10 @@ a second value to compare; write MAX([a, b]) for that.
 [MID$]
 Syntax: MID$(string$, start, [length])
 Description: Returns a substring from a string.
+
+[MIDW$]
+Syntax: MIDW$(string$, start, [length])
+Description: MID$ counted in UTF-8 characters: length characters from the 0-based character start, to the end without a length.
 
 [MIN]
 Syntax: MIN(array) or MIN(array, axis)
@@ -3022,6 +3039,10 @@ Description: Returns string$ concatenated count times. Returns "" for count <= 0
 [RIGHT$]
 Syntax: RIGHT$(string$, length)
 Description: Returns the specified number of characters from the end of a string.
+
+[RIGHTW$]
+Syntax: RIGHTW$(string$, n)
+Description: The last n UTF-8 characters of a string; RIGHT$ counts bytes.
 
 [RMDIR]
 Syntax: RMDIR "path"

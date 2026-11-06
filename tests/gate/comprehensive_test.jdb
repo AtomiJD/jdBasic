@@ -196,6 +196,19 @@ LET emoji_str = "Hello World!😀🌴👍"
 Assert(LEN(emoji_str) > 0, "emoji string")
 PRINT "  Emoji test: "; emoji_str
 
+' Character-counting twins: umlaut 2 bytes, euro sign 3, emoji 4, a stray
+' continuation byte and a cut-short lead byte one character each
+DIM wtext$ = "aä€😀b"
+Assert(LEN(wtext$) = 11 AND LENW(wtext$) = 5, "LENW counts characters")
+Assert(MIDW$(wtext$, 1, 1) = "ä" AND MIDW$(wtext$, 3, 1) = "😀", "MIDW$ cuts on characters")
+Assert(MIDW$(wtext$, 2) = "€😀b" AND MIDW$(wtext$, 9, 2) = "", "MIDW$ without length, start past the end")
+Assert(LEFTW$(wtext$, 2) = "aä" AND RIGHTW$(wtext$, 2) = "😀b", "LEFTW$ / RIGHTW$")
+Assert(LEFTW$(wtext$, 0) = "" AND RIGHTW$(wtext$, 99) = wtext$, "LEFTW$ / RIGHTW$ bounds")
+Assert(INSTRW(wtext$, "😀") = 3 AND INSTRW(wtext$, "z") = -1, "INSTRW answers a character index")
+Assert(INSTRW(3, wtext$, "b") = 4 AND INSTRW(4, wtext$, "😀") = -1, "INSTRW from a start character")
+DIM broken$ = "x" + CHR$(128) + "y" + CHR$(195)
+Assert(LENW(broken$) = 4 AND MIDW$(broken$, 2, 1) = "y", "stray bytes count as one character")
+
 ' PRINT variations
 PRINT "  Multi-value:"; " A="; 1; " B="; 2; " C="; 3
 PRINT "  No newline test: ";

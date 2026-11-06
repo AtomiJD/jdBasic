@@ -718,6 +718,11 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_chr",      "CHR",      i8_ptr_type, {i64_type}, JD_TAG_STR);
     reg("jdb_asc",      "ASC",      i64_type, {i8_ptr_type}, JD_TAG_I64);
     reg("jdb_instr",    "INSTR",    i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_lenw",     "LENW",     i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_midw",     "MIDW$",    i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, JD_TAG_STR);
+    reg("jdb_leftw",    "LEFTW$",   i8_ptr_type, {i8_ptr_type, i64_type}, JD_TAG_STR);
+    reg("jdb_rightw",   "RIGHTW$",  i8_ptr_type, {i8_ptr_type, i64_type}, JD_TAG_STR);
+    reg("jdb_instrw",   "INSTRW",   i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdb_replace",  "REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_str",      "STR$",     i8_ptr_type, {f64_type}, JD_TAG_STR);
     reg("jdb_array_str","__str_arr",i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
