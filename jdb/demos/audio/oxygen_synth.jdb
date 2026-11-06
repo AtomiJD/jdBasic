@@ -1,7 +1,9 @@
 ' oxygen_synth.jdb - play the synth from an Oxygen 61 (or any MIDI keyboard).
-' Usage: jdBasic oxygen_synth.jdb [seconds] [fast]   (default 300)
-' "fast" takes the audio device alone (MON.SYNTH exclusive): under 10 ms from
-' key to speaker instead of 20, but other programs are silent meanwhile.
+' Usage: jdBasic oxygen_synth.jdb [seconds] [fast] [panel]   (default 300 s)
+'   fast    takes the audio device alone (MON.SYNTH exclusive): under 10 ms
+'           from key to speaker instead of 20, other programs go silent
+'   panel   opens a window with every parameter, the knob map, the
+'           modulation matrix and a scope (Esc closes it)
 '
 ' Left of the split: mono legato saw bass, one octave down.
 ' Right of the split: the lead, a patch from oxygen_patches.json (plus the
@@ -14,16 +16,24 @@
 '   MODE < >     previous / next lead patch
 '   REC          save the lead as the knobs left it, as a new user patch
 '   LOOP + key   that key becomes the new split
-' Latency is printed every 2 s while keys are played.
 
 IMPORT SYNTHPATCH
 
 DIM run_secs = 300
-IF LEN(OS.ARGS()) > 1 THEN run_secs = VAL(OS.ARGS()[1])
-DIM fast = LEN(OS.ARGS()) > 2 ANDALSO LCASE$(OS.ARGS()[2]) = "fast"
+DIM fast = FALSE
+DIM panel = FALSE
+FOR EACH a$ IN OS.ARGS()[IOTA(LEN(OS.ARGS()) - 1) ]
+    IF LCASE$(a$) = "fast" THEN
+        fast = TRUE
+    ELSEIF LCASE$(a$) = "panel" THEN
+        panel = TRUE
+    ELSEIF VAL(a$) > 0 THEN
+        run_secs = VAL(a$)
+    ENDIF
+NEXT a$
 
 DIM here$ = PATH.DIRNAME$(OS.ARGS()[0])
-DIM cfg = JSON.PARSE$(TXTREADER$(here$ + "/oxygen61.json"))
+DIM cfg = JSON.PARSE(TXTREADER$(here$ + "/oxygen61.json"))
 DIM user_bank$ = here$ + "/oxygen_patches_user.json"
 DIM bank = SYNTHPATCH.LOAD_BANK(here$ + "/oxygen_patches.json")
 DIM n_shipped = LEN(bank)
@@ -49,9 +59,10 @@ IF main_idx < 0 THEN
     END
 ENDIF
 
+DIM out_ms = 0
 IF fast THEN
     SOUND.INIT "PULL"
-    DIM out_ms = MON.SYNTH(128, -1, TRUE)
+    out_ms = MON.SYNTH(128, -1, TRUE)
     IF out_ms < 0 THEN
         PRINT "Exclusive device refused, falling back to the shared one"
         out_ms = MON.SYNTH(128)
@@ -65,40 +76,77 @@ SOUND.FILTER 0, 900, 0.3, "LP"
 SOUND.GLIDE 0, 60
 SOUND.GAIN 0, 0.7
 
-SUB SET_SPLIT(split)
+DIM split_key = 60
+DIM status$ = ""
+
+SUB SAY(msg$)
+    status$ = msg$
+    PRINT msg$
+ENDSUB
+
+SUB SET_SPLIT(key)
+    split_key = key
     SOUND.ZONE -1
-    SOUND.ZONE 0, 0, split - 1, 0, -12, {"legato": TRUE}
-    SOUND.ZONE 1, split, 127, 0, 0, {"vel_cutoff": 2, "mod_vibrato": 0.4}
-    PRINT "Split at key " + STR$(split)
+    SOUND.ZONE 0, 0, split_key - 1, 0, -12, {"legato": TRUE}
+    SOUND.ZONE 1, split_key, 127, 0, 0, {"vel_cutoff": 2, "mod_vibrato": 0.4}
+    SAY("Split at key " + STR$(split_key))
 ENDSUB
 SET_SPLIT(60)
 
-' Mapping anew also restarts the pickup, so a knob waits for the new sound
-SUB MAP_KNOBS(knob, fader)
-    SOUND.CCMAP -1
-    SOUND.CCMAP knob[0], 1, "CUTOFF", 150, 9000, "EXP"
-    SOUND.CCMAP knob[1], 1, "RESONANCE", 0, 0.9
-    SOUND.CCMAP knob[2], 1, "ATTACK", 0.002, 1.5, "EXP"
-    SOUND.CCMAP knob[3], 1, "RELEASE", 0.02, 3, "EXP"
-    SOUND.CCMAP knob[4], 0, "CUTOFF", 80, 4000, "EXP"
-    SOUND.CCMAP knob[5], 0, "RESONANCE", 0, 0.9
-    SOUND.CCMAP knob[6], 1, "DETUNE", 0, 0.5
-    SOUND.CCMAP knob[7], 1, "REVERB", 0, 0.8
-    SOUND.CCMAP fader[0], 1, "GAIN", 0, 1
-    SOUND.CCMAP fader[1], 0, "GAIN", 0, 1
-ENDSUB
-
-' The DAW port carries the knobs and faders in both keyboard modes
+' What the hardware moves: [label, cc index list key, index, track, param, lo, hi, curve]
 DIM knob = cfg{"knobs"}{"daw"}{"cc"}
 DIM fader = cfg{"faders"}{"daw"}{"cc"}
+DIM hw_map = [["Knob 1", "knob", 0, 1, "CUTOFF", 150, 9000, "EXP"], ["Knob 2", "knob", 1, 1, "RESONANCE", 0, 0.9, "LIN"], ["Knob 3", "knob", 2, 1, "ATTACK", 0.002, 1.5, "EXP"], ["Knob 4", "knob", 3, 1, "RELEASE", 0.02, 3, "EXP"], ["Knob 5", "knob", 4, 0, "CUTOFF", 80, 4000, "EXP"], ["Knob 6", "knob", 5, 0, "RESONANCE", 0, 0.9, "LIN"], ["Knob 7", "knob", 6, 1, "DETUNE", 0, 0.5, "LIN"], ["Knob 8", "knob", 7, 1, "REVERB", 0, 0.8, "LIN"], ["Fader 1", "fader", 0, 1, "GAIN", 0, 1, "LIN"], ["Fader 2", "fader", 1, 0, "GAIN", 0, 1, "LIN"]]
+
+' Mapping anew also restarts the pickup, so a knob waits for the new sound
+SUB MAP_KNOBS()
+    SOUND.CCMAP -1
+    FOR EACH m IN hw_map
+        DIM cc = knob[m[2]]
+        IF m[1] = "fader" THEN cc = fader[m[2]]
+        SOUND.CCMAP cc, m[3], m[4], m[5], m[6], m[7]
+    NEXT m
+ENDSUB
+
 DIM cur = 0
+DIM morph = 0
 
 SUB SELECT_PATCH(i)
+    cur = i
+    morph = 0
     SYNTHPATCH.APPLY 1, bank[i]
-    MAP_KNOBS(knob, fader)
-    PRINT "Lead patch " + STR$(i + 1) + "/" + STR$(LEN(bank)) + ": " + bank[i]{"name"} + "   (fader 9 morphs to " + bank[(i + 1) MOD LEN(bank)]{"name"} + ")"
+    MAP_KNOBS()
+    SAY("Lead patch " + STR$(i + 1) + "/" + STR$(LEN(bank)) + ": " + bank[i]{"name"} + "   (fader 9 morphs to " + bank[(i + 1) MOD LEN(bank)]{"name"} + ")")
 ENDSUB
-SELECT_PATCH(cur)
+SELECT_PATCH(0)
+
+SUB SAVE_LEAD()
+    DIM mine = SYNTHPATCH.CAPTURE(1, bank[cur])
+    mine{"name"} = "user_" + STR$(LEN(bank) - n_shipped + 1)
+    bank = APPEND(bank, mine)
+    SYNTHPATCH.SAVE_BANK user_bank$, bank[IOTA(LEN(bank) - n_shipped, 0) + n_shipped]
+    SAY("Saved " + mine{"name"} + " to " + user_bank$)
+ENDSUB
+
+' ---- modulation matrix rows of the lead: source, target, amount ----
+DIM mm_sources$ = ["OFF", "LFO1", "LFO2", "MODWHEEL", "AFTERTOUCH", "VELOCITY", "NOTE", "RANDOM"]
+DIM mm_targets$ = ["CUTOFF", "RESONANCE", "GAIN", "PAN", "DETUNE", "PITCH", "REVERB", "DELAY", "FENV", "ATTACK", "RELEASE"]
+DIM mm_src = [1, 4, 0, 0]
+DIM mm_dst = [0, 5, 0, 0]
+DIM mm_amt = [0.0, 0.0, 0.0, 0.0]
+DIM lfo_shapes$ = ["SINE", "TRI", "SAW", "ISAW", "SQUARE", "RAND", "PERLIN"]
+DIM lfo_rate = [1.0, 0.25]
+DIM lfo_shape = [0, 1]
+
+SUB APPLY_MATRIX()
+    DIM n = SOUND.MATRIX("OFF")
+    FOR r = 0 TO 3
+        IF mm_src[r] > 0 ANDALSO mm_amt[r] <> 0 THEN n = SOUND.MATRIX(mm_sources$[mm_src[r]], 1, mm_targets$[mm_dst[r]], mm_amt[r])
+    NEXT r
+    SOUND.MODLFO 1, lfo_rate[0], lfo_shapes$[lfo_shape[0]]
+    SOUND.MODLFO 2, lfo_rate[1], lfo_shapes$[lfo_shape[1]]
+ENDSUB
+APPLY_MATRIX()
 
 DIM main_h = MIDI.OPEN_IN(main_idx)
 PRINT "Route " + ins[main_idx] + ": " + STR$(MIDI.ROUTE(main_h))
@@ -114,32 +162,34 @@ DIM mode_right = cfg{"mode_buttons"}{"right_cc"}
 DIM morph_cc = fader[8]
 DIM learning = FALSE
 DIM seen = 0
-DIM t0 = TICK()
-DIM t_stats = t0
-DIM stats = SOUND.MIDISTATS()
-DO WHILE TICK() - t0 < run_secs * 1000
+DIM lat$ = "-"
+
+SUB SET_MORPH(x)
+    morph = x
+    SYNTHPATCH.MORPH 1, bank[cur], bank[(cur + 1) MOD LEN(bank)], x
+ENDSUB
+
+SUB START_LEARN()
+    learning = TRUE
+    seen = SOUND.LASTNOTE(){"count"}
+    SAY("Press the key for the new split")
+ENDSUB
+
+SUB HANDLE_MIDI()
     MIDI.POLL(main_h)
     IF daw_h >= 0 THEN
         FOR EACH m IN MIDI.POLL(daw_h)
             IF m[0] = 176 THEN
                 IF m[1] = morph_cc THEN
-                    SYNTHPATCH.MORPH 1, bank[cur], bank[(cur + 1) MOD LEN(bank)], m[2] / 127
+                    SET_MORPH(m[2] / 127)
                 ELSEIF m[2] = 127 ANDALSO m[1] = mode_right THEN
-                    cur = (cur + 1) MOD LEN(bank)
-                    SELECT_PATCH(cur)
+                    SELECT_PATCH((cur + 1) MOD LEN(bank))
                 ELSEIF m[2] = 127 ANDALSO m[1] = mode_left THEN
-                    cur = (cur + LEN(bank) - 1) MOD LEN(bank)
-                    SELECT_PATCH(cur)
+                    SELECT_PATCH((cur + LEN(bank) - 1) MOD LEN(bank))
                 ELSEIF m[2] = 127 ANDALSO m[1] = tp{"rec"} THEN
-                    DIM mine = SYNTHPATCH.CAPTURE(1, bank[cur])
-                    mine{"name"} = "user_" + STR$(LEN(bank) - n_shipped + 1)
-                    bank = APPEND(bank, mine)
-                    SYNTHPATCH.SAVE_BANK user_bank$, bank[IOTA(LEN(bank) - n_shipped, 0) + n_shipped]
-                    PRINT "Saved " + mine{"name"} + " to " + user_bank$
+                    SAVE_LEAD()
                 ELSEIF m[2] = 127 ANDALSO m[1] = tp{"loop"} THEN
-                    learning = TRUE
-                    seen = SOUND.LASTNOTE(){"count"}
-                    PRINT "Press the key for the new split"
+                    START_LEARN()
                 ENDIF
             ENDIF
         NEXT m
@@ -151,15 +201,162 @@ DO WHILE TICK() - t0 < run_secs * 1000
             SET_SPLIT(ln{"note"})
         ENDIF
     ENDIF
-    IF TICK() - t_stats >= 2000 THEN
-        t_stats = TICK()
-        stats = SOUND.MIDISTATS()
-        IF stats{"events"} > 0 THEN
-            PRINT STR$(stats{"events"}) + " events  key->speaker " + STR$(ROUND(stats{"total_ms"}, 1)) + " ms (max " + STR$(ROUND(stats{"total_max_ms"}, 1)) + ")"
-        ENDIF
+ENDSUB
+
+SUB TAKE_STATS(to_console)
+    DIM stats = SOUND.MIDISTATS()
+    IF stats{"events"} > 0 THEN
+        lat$ = STR$(ROUND(stats{"total_ms"}, 1)) + " ms (max " + STR$(ROUND(stats{"total_max_ms"}, 1)) + ")"
+        IF to_console THEN PRINT STR$(stats{"events"}) + " events  key->speaker " + lat$
     ENDIF
-    SLEEP 10
-LOOP
+ENDSUB
+
+' ---- panel ----
+' A parameter slider; times and cutoff on a log2 scale
+SUB PARAM_SLIDER(label$, t, p$, lo, hi, logscale)
+    DIM v = SOUND.PARAM(t, p$)
+    GUI.SET_NEXT_ITEM_WIDTH 260
+    IF logscale THEN
+        DIM lv = LOG(MAX([v, lo])) / LOG(2)
+        DIM nv = GUI.SLIDER(label$ + " " + STR$(IIF(v >= 100, ROUND(v, 0), ROUND(v, 3))) + "##" + STR$(t) + p$, lv, LOG(lo) / LOG(2), LOG(hi) / LOG(2))
+        IF nv <> lv THEN v = SOUND.PARAM(t, p$, 2 ^ nv)
+    ELSE
+        DIM nl = GUI.SLIDER(label$ + "##" + STR$(t) + p$, v, lo, hi)
+        IF nl <> v THEN v = SOUND.PARAM(t, p$, nl)
+    ENDIF
+ENDSUB
+
+SUB METER(label$, v, bipolar)
+    DIM f = v
+    IF bipolar THEN f = (v + 1) / 2
+    GUI.TEXT LEFT$(label$ + "            ", 11)
+    GUI.SAME_LINE
+    GUI.SET_NEXT_ITEM_WIDTH 200
+    GUI.PROGRESS MAX([0, MIN([1, f])]), STR$(ROUND(v, 2))
+ENDSUB
+
+SUB DRAW_PANEL()
+    GUI.BEGIN "Oxygen Synth", 0, 0, 980, 860
+    GUI.SEPARATOR_TEXT("Lead patch")
+    IF GUI.BUTTON("<") THEN SELECT_PATCH((cur + LEN(bank) - 1) MOD LEN(bank))
+    GUI.SAME_LINE
+    GUI.TEXT STR$(cur + 1) + "/" + STR$(LEN(bank)) + "  " + bank[cur]{"name"}
+    GUI.SAME_LINE
+    IF GUI.BUTTON(">") THEN SELECT_PATCH((cur + 1) MOD LEN(bank))
+    GUI.SAME_LINE
+    IF GUI.BUTTON("Save as user patch") THEN SAVE_LEAD()
+    GUI.SAME_LINE
+    IF GUI.BUTTON("Learn split (" + STR$(split_key) + ")") THEN START_LEARN()
+    GUI.SET_NEXT_ITEM_WIDTH 260
+    DIM nm = GUI.SLIDER("Morph to " + bank[(cur + 1) MOD LEN(bank)]{"name"} + "##morph", morph, 0, 1)
+    IF nm <> morph THEN SET_MORPH(nm)
+    GUI.TEXT "Key to speaker: " + lat$ + IIF(fast, "   output " + STR$(ROUND(out_ms, 1)) + " ms exclusive", "")
+    GUI.TEXT status$
+
+    IF GUI.BEGIN_TABLE("cols", 2) THEN
+        GUI.TABLE_NEXT_ROW
+        GUI.TABLE_NEXT_COLUMN
+        GUI.SEPARATOR_TEXT("Lead (track 1)")
+        PARAM_SLIDER("Cutoff", 1, "CUTOFF", 40, 18000, TRUE)
+        PARAM_SLIDER("Resonance", 1, "RESONANCE", 0, 1, FALSE)
+        PARAM_SLIDER("Filter env", 1, "FENV", 0, 5, FALSE)
+        PARAM_SLIDER("Attack", 1, "ATTACK", 0.001, 3, TRUE)
+        PARAM_SLIDER("Decay", 1, "DECAY", 0.01, 3, TRUE)
+        PARAM_SLIDER("Sustain", 1, "SUSTAIN", 0, 1, FALSE)
+        PARAM_SLIDER("Release", 1, "RELEASE", 0.01, 5, TRUE)
+        PARAM_SLIDER("Detune", 1, "DETUNE", 0, 0.6, FALSE)
+        PARAM_SLIDER("FM", 1, "FM", 0, 3, FALSE)
+        PARAM_SLIDER("Reverb", 1, "REVERB", 0, 1, FALSE)
+        PARAM_SLIDER("Delay", 1, "DELAY", 0, 1, FALSE)
+        PARAM_SLIDER("Level", 1, "GAIN", 0, 1, FALSE)
+        GUI.SEPARATOR_TEXT("Bass (track 0)")
+        PARAM_SLIDER("Cutoff", 0, "CUTOFF", 40, 8000, TRUE)
+        PARAM_SLIDER("Resonance", 0, "RESONANCE", 0, 1, FALSE)
+        PARAM_SLIDER("Release", 0, "RELEASE", 0.01, 2, TRUE)
+        PARAM_SLIDER("Level", 0, "GAIN", 0, 1, FALSE)
+
+        GUI.TABLE_NEXT_COLUMN
+        GUI.SEPARATOR_TEXT("Modulation matrix (lead)")
+        DIM changed = FALSE
+        FOR r = 0 TO 3
+            GUI.PUSH_ID r
+            GUI.SET_NEXT_ITEM_WIDTH 110
+            DIM ns = GUI.COMBO("##src", mm_src[r], mm_sources$)
+            GUI.SAME_LINE
+            GUI.SET_NEXT_ITEM_WIDTH 110
+            DIM nd = GUI.COMBO("##dst", mm_dst[r], mm_targets$)
+            GUI.SAME_LINE
+            GUI.SET_NEXT_ITEM_WIDTH 150
+            DIM na = GUI.SLIDER("##amt", mm_amt[r], -4, 4)
+            IF ns <> mm_src[r] ORELSE nd <> mm_dst[r] ORELSE na <> mm_amt[r] THEN changed = TRUE
+            mm_src[r] = ns
+            mm_dst[r] = nd
+            mm_amt[r] = na
+            GUI.POP_ID
+        NEXT r
+        GUI.TEXT "amount: octaves for cutoff and times, semitones for pitch"
+        FOR l = 0 TO 1
+            GUI.PUSH_ID 10 + l
+            GUI.SET_NEXT_ITEM_WIDTH 150
+            DIM nr = GUI.SLIDER("LFO" + STR$(l + 1) + " Hz", lfo_rate[l], 0.05, 12)
+            GUI.SAME_LINE
+            GUI.SET_NEXT_ITEM_WIDTH 100
+            DIM nsh = GUI.COMBO("##shape", lfo_shape[l], lfo_shapes$)
+            IF nr <> lfo_rate[l] ORELSE nsh <> lfo_shape[l] THEN changed = TRUE
+            lfo_rate[l] = nr
+            lfo_shape[l] = nsh
+            GUI.POP_ID
+        NEXT l
+        IF changed THEN APPLY_MATRIX()
+        METER("LFO1", SOUND.MODSRC("LFO1"), TRUE)
+        METER("LFO2", SOUND.MODSRC("LFO2"), TRUE)
+        METER("Mod wheel", SOUND.MODSRC("MODWHEEL"), FALSE)
+        METER("Aftertouch", SOUND.MODSRC("AFTERTOUCH"), FALSE)
+        METER("Velocity", SOUND.MODSRC("VELOCITY"), FALSE)
+        METER("Note", SOUND.MODSRC("NOTE"), TRUE)
+        METER("Random", SOUND.MODSRC("RANDOM"), TRUE)
+
+        GUI.SEPARATOR_TEXT("Hardware map")
+        FOR EACH m IN hw_map
+            GUI.TEXT m[0] + "  ->  " + IIF(m[3] = 1, "lead ", "bass ") + LCASE$(m[4])
+        NEXT m
+        GUI.TEXT "Fader 9  ->  morph       MODE < >  ->  patch"
+        GUI.TEXT "REC      ->  save        LOOP + key  ->  split"
+        GUI.END_TABLE
+    ENDIF
+
+    GUI.SEPARATOR_TEXT("Output")
+    GUI.PLOT_LINES "##scope", SOUND.GET_WAVE(), "", -1.0, 1.0
+    GUI.END
+ENDSUB
+
+DIM t0 = TICK()
+DIM t_stats = t0
+TAKE_STATS(FALSE)
+IF panel THEN
+    SCREEN 980, 860, "jdBasic Oxygen Synth", 1
+    DIM key$ = ""
+    DO
+        CLS
+        HANDLE_MIDI()
+        DRAW_PANEL()
+        SCREENFLIP
+        IF TICK() - t_stats >= 1000 THEN
+            t_stats = TICK()
+            TAKE_STATS(FALSE)
+        ENDIF
+        key$ = INKEY$()
+    LOOP UNTIL key$ = CHR$(27) ORELSE TICK() - t0 >= run_secs * 1000
+ELSE
+    DO WHILE TICK() - t0 < run_secs * 1000
+        HANDLE_MIDI()
+        IF TICK() - t_stats >= 2000 THEN
+            t_stats = TICK()
+            TAKE_STATS(TRUE)
+        ENDIF
+        SLEEP 10
+    LOOP
+ENDIF
 
 MIDI.CLOSE(main_h)
 IF daw_h >= 0 THEN MIDI.CLOSE(daw_h)

@@ -33,7 +33,7 @@ FUNC TXT$(p, key$, fallback$)
 ENDFUNC
 
 EXPORT FUNC LOAD_BANK(path$)
-    RETURN JSON.PARSE$(TXTREADER$(path$))
+    RETURN JSON.PARSE(TXTREADER$(path$))
 ENDFUNC
 
 EXPORT SUB SAVE_BANK(path$, bank)
@@ -70,7 +70,7 @@ ENDSUB
 ' A copy of base with the continuous keys read back from track t, so a
 ' sound shaped with the knobs can be stored
 EXPORT FUNC CAPTURE(t, base)
-    DIM p = JSON.PARSE$(JSON.STRINGIFY$(base))
+    DIM p = JSON.PARSE(JSON.STRINGIFY$(base))
     FOR EACH k$ IN CONT_KEYS$
         p{k$} = ROUND(SOUND.PARAM(t, k$), 5)
     NEXT k$
