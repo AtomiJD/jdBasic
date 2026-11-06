@@ -32,6 +32,23 @@ TESTKIT.EQ(MDSYNC.SOURCE$(doc), REPLACE$(md$, "Some text", "Some *text*"), "ital
 DIM patched$ = LEFT$(md$, d{"start"}) + d{"text"} + MID$(md$, d{"start"} + d{"old_len"}, LEN(md$) - d{"start"} - d{"old_len"})
 TESTKIT.EQ(patched$, MDSYNC.SOURCE$(doc), "the span turns the old source into the new")
 
+TESTKIT.SUITE("an umlaut typed over another")
+' ä and ü share their first byte (C3), so the span has to replace the
+' whole character, not just its second byte.
+DIM uml$ = "Die Gräte." + NL$
+DIM udoc = MDSYNC.OPEN(rt, uml$)
+DIM ut$ = FORM.GET(rt, "TEXT")
+FORM.SET(rt, "SELSTART", INSTR(ut$, "ä"))
+FORM.SET(rt, "SELLENGTH", LEN("ä"))
+FORM.SET(rt, "SELTEXT", "ü")
+DIM ud = MDSYNC.VIEWCHANGED(udoc)
+TESTKIT.EQ(MDSYNC.SOURCE$(udoc), "Die Grüte." + NL$, "the source holds the new umlaut")
+TESTKIT.EQ(ud{"text"}, "ü", "the span carries the whole character")
+DIM upatched$ = LEFT$(uml$, ud{"start"}) + ud{"text"} + MID$(uml$, ud{"start"} + ud{"old_len"})
+TESTKIT.EQ(upatched$, MDSYNC.SOURCE$(udoc), "the span turns the old source into the new")
+TESTKIT.EQ(LENW(upatched$), LENW(uml$), "no character is cut in two")
+doc = MDSYNC.OPEN(rt, MDSYNC.SOURCE$(doc))
+
 TESTKIT.SUITE("source to view")
 DIM edited$ = REPLACE$(MDSYNC.SOURCE$(doc), "- one", "- one" + NL$ + "- two")
 TESTKIT.EQ(MDSYNC.SOURCECHANGED(doc, edited$), TRUE, "a new item redraws")
