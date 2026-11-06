@@ -1,0 +1,49 @@
+{
+  "device": "M-Audio Oxygen 61 MKV",
+  "ports": {
+    "main": "Oxygen 61 MKV",
+    "daw": "MIDIIN2 (Oxygen 61 MKV)",
+    "unused": "MIDIIN3 (Oxygen 61 MKV)",
+    "note": "Windows names; open ports by name, the index order is not guaranteed"
+  },
+  "mode_report": {
+    "port": "daw", "channel": 1,
+    "preset_mode_cc": 112, "daw_mode_cc": 113,
+    "note": "DAW/PRESET toggles and reports the new mode as CC 112 / 113 value 127"
+  },
+  "keys": { "port": "main", "channel": 1, "velocity": true },
+  "pitch_bend": { "port": "main", "channel": 1, "resolution": 128 },
+  "mod_wheel": { "port": "main", "channel": 1, "cc": 1 },
+  "knobs": {
+    "daw":    { "port": "daw",  "channel": 1,  "cc": [22, 23, 24, 25, 26, 27, 28, 29] },
+    "preset": { "port": "main", "channel": 13, "cc_seen": { "1": 44, "2": 45 } },
+    "note": "The DAW-port CCs are sent in both modes; the preset-mode CCs depend on the selected preset"
+  },
+  "faders": {
+    "daw":    { "port": "daw",  "channel": 1,  "cc": [12, 13, 14, 15, 16, 17, 18, 19, 41] },
+    "preset": { "port": "main", "channel": 13, "cc_seen": { "1": 33, "2": 34 } },
+    "note": "Index 8 (CC 41) is fader 9, the master fader"
+  },
+  "pads": {
+    "daw":    { "port": "daw",  "channel": 1, "notes": [36, 37, 38, 39, 40, 41, 42, 43] },
+    "preset": { "port": "main", "channel": 1, "notes_seen": [40, 41] },
+    "note": "Bottom row 36-39, top row 40-43; velocity was always 127 (fixed-velocity setting)"
+  },
+  "transport": {
+    "daw_port_cc": { "loop": 114, "stop": 117, "play": 118, "rec": 119 },
+    "main_port_realtime": { "play": "FA start", "rec": "FA start", "stop": "FC stop" },
+    "note": "Each button sends CC value 127 on press and 0 on release; play and rec also send FF on the main port"
+  },
+  "mode_buttons": {
+    "port": "daw", "channel": 1, "left_cc": 110, "right_cc": 111,
+    "note": "The two MODE arrow buttons next to DAW/PRESET; value 127 on press, 0 on release"
+  },
+  "octave_transpose": {
+    "sends": false,
+    "note": "OCTAVE/TRANSPOSE -/+ send no message; they shift the key notes inside the keyboard (middle C 60 -> 72 -> 48)"
+  },
+  "daw_button_mode": {
+    "port": "daw", "channel": 16, "cc": [58, 59, 60, 61],
+    "note": "DAW BUTTON MODE cycles four modes and reports the active one as CC 58-61 value 127"
+  }
+}

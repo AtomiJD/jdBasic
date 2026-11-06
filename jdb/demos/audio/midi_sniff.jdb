@@ -1,0 +1,76 @@
+' midi_sniff.jdb - log every MIDI message from every input port.
+' Usage: jdBasic midi_sniff.jdb [seconds]   (default 180)
+' Prints one line per message and appends it to midi_sniff.log next to the script.
+
+DIM run_secs = 180
+IF LEN(OS.ARGS()) > 1 THEN run_secs = VAL(OS.ARGS()[1])
+
+DIM logPath$ = PATH.DIRNAME$(OS.ARGS()[0]) + "/midi_sniff.log"
+DIM ports = MIDI.PORTS()
+DIM names = ports{"in"}
+DIM n_ports = LEN(names)
+DIM handles = []
+FOR i = 0 TO n_ports - 1
+    handles = APPEND(handles, MIDI.OPEN_IN(i))
+    PRINT "in " + STR$(i) + ": " + names[i] + "  handle " + STR$(handles[i])
+NEXT i
+
+FUNC HEX2$(b)
+    DIM digits$ = "0123456789ABCDEF"
+    RETURN MID$(digits$, b \ 16, 1) + MID$(digits$, b MOD 16, 1)
+ENDFUNC
+
+FUNC DESCRIBE$(msg)
+    DIM st = msg[0]
+    DIM ch = st MOD 16 + 1
+    DIM kind = st \ 16
+    DIM d1 = -1
+    DIM d2 = -1
+    IF LEN(msg) > 1 THEN d1 = msg[1]
+    IF LEN(msg) > 2 THEN d2 = msg[2]
+    IF kind = 9 ANDALSO d2 > 0 THEN RETURN "note on  ch" + STR$(ch) + " note " + STR$(d1) + " vel " + STR$(d2)
+    IF kind = 9 ORELSE kind = 8 THEN RETURN "note off ch" + STR$(ch) + " note " + STR$(d1)
+    IF kind = 11 THEN RETURN "cc       ch" + STR$(ch) + " cc " + STR$(d1) + " val " + STR$(d2)
+    IF kind = 12 THEN RETURN "program  ch" + STR$(ch) + " " + STR$(d1)
+    IF kind = 13 THEN RETURN "chan AT  ch" + STR$(ch) + " " + STR$(d1)
+    IF kind = 10 THEN RETURN "poly AT  ch" + STR$(ch) + " note " + STR$(d1) + " " + STR$(d2)
+    IF kind = 14 THEN RETURN "bend     ch" + STR$(ch) + " " + STR$(d2 * 128 + d1 - 8192)
+    IF st = 240 THEN RETURN "sysex    " + STR$(LEN(msg)) + " bytes"
+    IF st = 248 THEN RETURN "clock"
+    IF st = 250 THEN RETURN "start"
+    IF st = 251 THEN RETURN "continue"
+    IF st = 252 THEN RETURN "stop"
+    RETURN "other"
+ENDFUNC
+
+DIM t0 = TICK()
+DIM n_msgs = 0
+DIM n_clock = 0
+PRINT "Listening for " + STR$(run_secs) + " s. Clock messages are counted, not printed."
+DO WHILE TICK() - t0 < run_secs * 1000
+    FOR i = 0 TO n_ports - 1
+        IF handles[i] >= 0 THEN
+            DIM evs = MIDI.POLL(handles[i])
+            FOR EACH m IN evs
+                IF m[0] = 248 THEN
+                    n_clock = n_clock + 1
+                ELSE
+                    DIM raw$ = ""
+                    FOR EACH b IN m
+                        raw$ = raw$ + HEX2$(b) + " "
+                    NEXT b
+                    DIM row$ = STR$(INT(TICK() - t0)) + CHR$(9) + "p" + STR$(i) + CHR$(9) + raw$ + CHR$(9) + DESCRIBE$(m)
+                    PRINT row$
+                    TXTWRITER logPath$, row$ + CHR$(10), TRUE
+                    n_msgs = n_msgs + 1
+                ENDIF
+            NEXT m
+        ENDIF
+    NEXT i
+    SLEEP 1
+LOOP
+
+FOR i = 0 TO n_ports - 1
+    IF handles[i] >= 0 THEN MIDI.CLOSE(handles[i])
+NEXT i
+PRINT STR$(n_msgs) + " messages, " + STR$(n_clock) + " clock ticks. Log: " + logPath$
