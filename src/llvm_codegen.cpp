@@ -9540,6 +9540,8 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                                      LLVMConstInt(i32_type, adopt && rc_on ? 1 : 0, 0),
                                      LLVMConstInt(i32_type, literal ? 1 : 0, 0) };
             LLVMBuildCall2(builder, any_fn.fn_type, any_fn.fn, aargs, 8, "");
+            // The runtime copied a text key; a key the bridge read out goes back.
+            drop_read_temp(idx_tv);
             emit_err_code_branch();
         } else {
             auto& set_fn = runtime_funcs["__tagged_arr_set"];
@@ -12518,6 +12520,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMAddIncoming(pv, vals, bbs, 2);
                 LLVMAddIncoming(pt, tags, bbs, 2);
                 LLVMAddIncoming(pf, fresh, bbs, 2);
+                // A key the bridge read out is not needed past the lookup.
+                drop_read_temp(idx_tv);
                 TypedValue r{ pv, JD_TAG_RUNTIME, pt };
                 r.fresh_ptr = pf;
                 return r;
@@ -12546,6 +12550,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMBuildICmp(builder, LLVMIntEQ, arr_tv.runtime_tag,
                                   LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "ti7_vmbase"), "ti7_fsrc"),
                     "ti7_fresh");
+                // A key the bridge read out is not needed past the lookup.
+                drop_read_temp(idx_tv);
                 return r;
             }
 
@@ -12653,6 +12659,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMBasicBlockRef bbs[] = { bb_map_end, bb_arr_end };
                     LLVMAddIncoming(pv, vals, bbs, 2);
                     LLVMAddIncoming(pt, tags, bbs, 2);
+                    // A key the bridge read out is not needed past the lookup.
+                    drop_read_temp(idx_tv);
                     return { pv, JD_TAG_RUNTIME, pt };
                 }
                 // A declared map takes every index as a key, a number
@@ -12672,6 +12680,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         auto& kdrop = runtime_funcs["__str_drop"];
                         LLVMBuildCall2(builder, kdrop.fn_type, kdrop.fn, &key, 1, "");
                     }
+                    // A key the bridge read out is not needed past the lookup.
+                    drop_read_temp(idx_tv);
                     TypedValue nr{ tv_val, JD_TAG_RUNTIME, tv_tag };
                     mark_native_read(nr);
                     return nr;
@@ -19896,7 +19906,36 @@ bool LLVMCodegen::writes_owned_local(const std::string& var_name) {
     return false;
 }
 
-void LLVMCodegen::adopt_runtime_text(const std::string& var_name, const TypedValue& rhs) {
+void LLVMCodegen::adopt_runtime_text(const std::string& var_name, TypedValue& rhs) {
+    // A text the bridge read out lives in the bridge's heap: the slot takes
+    // a copy in this program's heap, the bridge's buffer goes back, and the
+    // copy is the slot's to drop like any text made here.
+    if (rhs.fresh_ptr && rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag && !std::getenv("JDB_NO_STROWN")) {
+        LLVMValueRef is_str = LLVMBuildAnd(builder, rhs.fresh_ptr,
+            LLVMBuildICmp(builder, LLVMIntEQ, rhs.runtime_tag, LLVMConstInt(i32_type, JD_TAG_STR, 0), "rt_isstr"),
+            "rt_bridge_str");
+        LLVMBasicBlockRef bb_from = LLVMGetInsertBlock(builder);
+        LLVMBasicBlockRef bb_c = LLVMAppendBasicBlock(current_fn, "rt.copy");
+        LLVMBasicBlockRef bb_m = LLVMAppendBasicBlock(current_fn, "rt.copied");
+        LLVMBuildCondBr(builder, is_str, bb_c, bb_m);
+        LLVMPositionBuilderAtEnd(builder, bb_c);
+        auto& own = runtime_funcs["__str_own"];
+        auto& bfree = runtime_funcs["__jdrt_str_free"];
+        LLVMValueRef sp = LLVMBuildIntToPtr(builder, rhs.val, i8_ptr_type, "rt_bstr");
+        LLVMValueRef copy = LLVMBuildCall2(builder, own.fn_type, own.fn, &sp, 1, "rt_copy");
+        LLVMBuildCall2(builder, bfree.fn_type, bfree.fn, &sp, 1, "");
+        LLVMValueRef copy_bits = LLVMBuildPtrToInt(builder, copy, i64_type, "rt_copy_bits");
+        LLVMBasicBlockRef bb_c_end = LLVMGetInsertBlock(builder);
+        LLVMBuildBr(builder, bb_m);
+        LLVMPositionBuilderAtEnd(builder, bb_m);
+        LLVMValueRef v = LLVMBuildPhi(builder, i64_type, "rt_val");
+        LLVMValueRef vals[] = { copy_bits, rhs.val };
+        LLVMBasicBlockRef bbs[] = { bb_c_end, bb_from };
+        LLVMAddIncoming(v, vals, bbs, 2);
+        rhs.val = v;
+        rhs.fresh_native = rhs.fresh_native ? LLVMBuildOr(builder, rhs.fresh_native, is_str, "rt_fresh") : is_str;
+        rhs.fresh_ptr = LLVMBuildAnd(builder, rhs.fresh_ptr, LLVMBuildNot(builder, is_str, "rt_notstr"), "rt_bridge_rest");
+    }
     bool local = writes_owned_local(var_name);
     LLVMValueRef shadow = local ? owned_local_shadow_for(var_name) : owned_shadow_for(var_name);
     auto& drop = runtime_funcs[!local && scopes.size() > 1 ? "__str_drop_later" : "__str_drop"];
@@ -19928,6 +19967,7 @@ LLVMValueRef LLVMCodegen::own_runtime_str(const std::string& var_name, const Typ
     if (fresh) return take_string_ownership(var_name, rhs, true);
     TypedValue none = rhs;
     none.fresh_native = nullptr;
+    none.fresh_ptr = nullptr;
     adopt_runtime_text(var_name, none);
     return rhs.val;
 }
@@ -20634,7 +20674,19 @@ void LLVMCodegen::scan_child_owners(const std::vector<StmtPtr>& program) {
 // holder of; a variable's slot counts what it holds, so the cell joins it. A
 // cell read stays out: the cell it came from may hold it without counting.
 bool LLVMCodegen::adopts_value(const std::string& var, const Expr* value) {
-    if (!rc_on || !value || !child_owner_vars.count(owner_key_here(var))) return false;
+    if (!rc_on || !value) return false;
+    // A container made by the write itself (a literal, a call, an operator)
+    // has the cell of a parameter's container as its first holder too: the
+    // runtime counts it there when it knows that container and holds it for
+    // good when it does not. Without this every write into a map handed in
+    // left its value uncounted, and it leaked when the next write replaced it.
+    if (!child_owner_vars.count(owner_key_here(var))) {
+        bool param = current_param_names.count(var) > 0;
+        bool fresh = value->kind == ExprKind::ARRAY_LITERAL || value->kind == ExprKind::MAP_LITERAL ||
+                     value->kind == ExprKind::CALL || value->kind == ExprKind::BINARY ||
+                     value->kind == ExprKind::UNARY;
+        return param && fresh;
+    }
     switch (value->kind) {
     case ExprKind::ARRAY_LITERAL: case ExprKind::MAP_LITERAL: case ExprKind::CALL:
     case ExprKind::BINARY: case ExprKind::UNARY:

@@ -53,4 +53,31 @@ DIM groups = {}
 r = Group(JSON.PARSE("{""user"": ""ada"", ""score"": 3}"), groups)
 Check(groups{"ada"}[0] = 3 ANDALSO LEN(groups{"ada"}) = 2, "an array written under a parsed key")
 
+' A text field kept in an untyped local is the local's own copy, and a key
+' read out for one lookup goes back afterwards: both must still read right
+' after the bridge's buffers are gone (JDB_RC_POISON=1 turns a freed text
+' into rubbish), also over many calls.
+FUNC KeepName$(rec)
+    DIM name = rec{"user"}
+    DIM again = rec{"user"}
+    name = rec{"score"}
+    name = rec{"user"}
+    RETURN name + "/" + again
+ENDFUNC
+FUNC CountUnder(rec, acc) AS INTEGER
+    acc{rec{"user"}} = [rec{"score"}, 1]
+    RETURN LEN(acc{rec{"user"}})
+ENDFUNC
+DIM probe = JSON.PARSE("{""user"": ""ada"", ""score"": 3}")
+DIM kept$ = ""
+DIM counted AS INTEGER = 0
+DIM round AS INTEGER
+DIM store = {}
+FOR round = 1 TO 200
+    kept$ = KeepName$(probe)
+    counted = counted + CountUnder(probe, store)
+NEXT round
+Check(kept$ = "ada/ada", "a text field kept in an untyped local")
+Check(counted = 400 ANDALSO store{"ada"}[1] = 1, "a key read out for each lookup, 200 times")
+
 IF failed = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

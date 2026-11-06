@@ -485,7 +485,7 @@ private:
     // Emits the release-and-take-over sequence. Returns the pointer to store.
     LLVMValueRef take_string_ownership(const std::string& var_name, TypedValue rhs, bool rhs_is_fresh);
     bool owns_text_slot(const std::string& var_name, VarInfo* vi);
-    void adopt_runtime_text(const std::string& var_name, const TypedValue& rhs);
+    void adopt_runtime_text(const std::string& var_name, TypedValue& rhs);
     LLVMValueRef own_runtime_str(const std::string& var_name, const TypedValue& rhs, const Expr* src);
     // The same for the $ locals a FUNC/SUB declares with DIM and only ever
     // writes by plain assignment. owned_locals_by_fn holds every function's
