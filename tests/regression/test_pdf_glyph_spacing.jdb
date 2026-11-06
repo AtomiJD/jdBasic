@@ -1,0 +1,108 @@
+' ============================================================
+' Regression: PDF.TEXT$ puts a space where the text leaves a gap
+' ============================================================
+' Self-checking. Each failure prints [FAIL].
+'
+' The extractor follows the text matrix and the glyph widths, so it adds
+' a space where the next piece of text starts away from where the last one
+' ended, or on a new line, and not after every string. A file that shows
+' one glyph per Tj reads as words instead of "O h n e".
+'
+' Covers:
+'   1. A Type0 font with /W widths, one glyph per Tm ... Tj, the space a
+'      glyph of its own.
+'   2. Words placed by Td in a font without widths.
+'   3. A simple font with /Widths, one glyph per Td, a gap between words.
+'   4. A TJ array with kerning and one word gap.
+'   5. A new line by T*, and text in two BT blocks.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+DIM NL AS STRING = CHR$(10)
+
+SUB CHECK_STR(name$, expected AS STRING, actual AS STRING)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected=["; expected; "]  actual=["; actual; "]"
+    ENDIF
+ENDSUB
+
+FUNC OBJ$(num AS INTEGER, body AS STRING) AS STRING
+    RETURN STR$(num) + " 0 obj" + NL + body + NL + "endobj" + NL
+ENDFUNC
+
+FUNC STREAM_OBJ$(num AS INTEGER, src AS STRING) AS STRING
+    RETURN OBJ$(num, "<< /Length " + STR$(LEN(src)) + " >>" + NL + "stream" + NL + src + "endstream")
+ENDFUNC
+
+' Objects 1-3 are catalog, pages and the page with font resource /F1 = 4.
+FUNC WRITE_PDF$(fonts AS STRING, content AS STRING) AS STRING
+    DIM path AS STRING = MKTEMP$("glyphs") + ".pdf"
+    DIM doc AS STRING = "%PDF-1.4" + NL
+    doc = doc + OBJ$(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    doc = doc + OBJ$(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    doc = doc + OBJ$(3, "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 9 0 R >>")
+    doc = doc + fonts + STREAM_OBJ$(9, content)
+    doc = doc + "trailer" + NL + "<< /Root 1 0 R /Size 10 >>" + NL + "%%EOF" + NL
+    BINWRITER path, doc
+    RETURN path
+ENDFUNC
+
+FUNC READ_BACK$(fonts AS STRING, content AS STRING) AS STRING
+    DIM path AS STRING = WRITE_PDF$(fonts, content)
+    DIM got AS STRING = TRIM$(PDF.TEXT$(path))
+    KILL path
+    RETURN got
+ENDFUNC
+
+' --- 1. Type0 font, one glyph per Tm ... Tj, widths from /W ---
+DIM cmap AS STRING = "/CIDInit /ProcSet findresource begin" + NL
+cmap = cmap + "12 dict begin begincmap" + NL
+cmap = cmap + "1 begincodespacerange <0000> <FFFF> endcodespacerange" + NL
+cmap = cmap + "5 beginbfchar" + NL
+cmap = cmap + "<0001> <0048>" + NL + "<0002> <0069>" + NL + "<0003> <0020>" + NL
+cmap = cmap + "<0004> <0042>" + NL + "<0005> <006F>" + NL
+cmap = cmap + "endbfchar" + NL + "endcmap end end" + NL
+DIM type0 AS STRING = OBJ$(4, "<< /Type /Font /Subtype /Type0 /BaseFont /ABCDEF+Sans /Encoding /Identity-H /DescendantFonts [5 0 R] /ToUnicode 6 0 R >>")
+type0 = type0 + OBJ$(5, "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /ABCDEF+Sans /DW 500 /W [1 [720 280 250 660 560]] >>")
+type0 = type0 + STREAM_OBJ$(6, cmap)
+' H at 0, i at 0.72, space at 1.00, B at 1.25, o at 1.91 (in em), each with its own Tm.
+DIM per_glyph AS STRING = "BT 7 Tr" + NL
+DIM codes AS ARRAY = ["0001", "0002", "0003", "0004", "0005"]
+DIM xs AS ARRAY = [0, 0.72, 1.0, 1.25, 1.91]
+DIM g AS INTEGER
+FOR g = 0 TO 4
+    per_glyph = per_glyph + "/F1 1.0 Tf 0.02 0 0 0.015 0.03 0.95 Tm " + STR$(xs[g]) + " -0.8 Td <" + codes[g] + "> Tj" + NL
+NEXT g
+per_glyph = per_glyph + "ET" + NL
+CHECK_STR("one glyph per Tj, the space a glyph", "Hi Bo", READ_BACK$(type0, per_glyph))
+
+' A /W array with codes past two bytes and below zero is read without them.
+DIM hostile AS STRING = REPLACE$(type0, "/W [1 [720 280 250 660 560]]", "/W [4294967290 4294967295 500 -5 10 500 1 [720 280 250 660 560]]")
+CHECK_STR("a /W array with codes out of range", "Hi Bo", READ_BACK$(hostile, per_glyph))
+
+' --- 2. words placed by Td, a font without widths ---
+DIM helv AS STRING = OBJ$(4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+CHECK_STR("words placed by Td", "Hello World", READ_BACK$(helv, "BT /F1 12 Tf 72 700 Td (Hello) Tj 40 0 Td (World) Tj ET" + NL))
+CHECK_STR("strings shown back to back", "HelloWorld", READ_BACK$(helv, "BT /F1 12 Tf 72 700 Td (Hello) Tj (World) Tj ET" + NL))
+
+' --- 3. a simple font with /Widths, one glyph per Td ---
+DIM simple AS STRING = OBJ$(4, "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /FirstChar 97 /Widths [600 600 600] >>")
+' a at 0, b right after it (600/1000 * 10 = 6), c after a gap of 6.
+DIM glyphs AS STRING = "BT /F1 10 Tf 100 500 Td (a) Tj 6 0 Td (b) Tj 12 0 Td (c) Tj ET" + NL
+CHECK_STR("one glyph per Td with widths", "ab c", READ_BACK$(simple, glyphs))
+
+' --- 4. TJ with kerning and a word gap ---
+CHECK_STR("TJ kerning and a word gap", "Hello World", READ_BACK$(helv, "BT /F1 12 Tf 72 700 Td [(Hel) -20 (lo) -400 (World)] TJ ET" + NL))
+
+' --- 5. a new line by T*, and two BT blocks ---
+CHECK_STR("a new line by T*", "one two", READ_BACK$(helv, "BT /F1 12 Tf 14 TL 72 700 Td (one) Tj T* (two) Tj ET" + NL))
+CHECK_STR("two BT blocks", "first second", READ_BACK$(helv, "BT /F1 12 Tf 72 700 Td (first) Tj ET BT /F1 12 Tf 72 680 Td (second) Tj ET" + NL))
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+IF FAIL_COUNT = 0 THEN PRINT "ALL TESTS PASSED!"

@@ -18,6 +18,7 @@
 
 #include <string>
 #include <vector>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -648,13 +649,147 @@ inline std::string unpack_object_streams(const std::string& pdf) {
     return extra.empty() ? pdf : pdf + extra;
 }
 
-// The ToUnicode CMap behind each font resource name (/F1, /F2, ...). Resource
-// names belong to a page in the spec, so a file that gives two different
-// fonts the same name on two pages is the case this does not separate.
-// The /Font dictionary is inline (/Font << ... >>) or an object of its own
-// (/Font 12 0 R).
-inline std::unordered_map<std::string, CMap> collect_fonts(const std::string& pdf) {
-    std::unordered_map<std::string, CMap> fonts;
+// The advance widths of a font's glyphs, in thousandths of the font size,
+// by character code. A font without them gets an estimate where it is shown.
+struct FontWidths {
+    std::unordered_map<uint32_t, double> w;
+    double dw = -1;       // a code /W does not list; -1: none given
+    int code_bytes = 1;
+    bool known = false;
+};
+
+// What the text extractor knows about one font resource.
+struct FontInfo {
+    CMap cmap;
+    bool has_cmap = false;
+    FontWidths widths;
+};
+
+// The text of the array a key names in dict, inline ([...]) or as an
+// object of its own (N 0 R); empty when there is none.
+inline std::string dict_array(const std::string& pdf, const std::string& dict, const char* key) {
+    size_t k = dict.find(key);
+    if (k == std::string::npos) return {};
+    size_t p = k + std::strlen(key);
+    while (p < dict.size() && std::isspace((unsigned char)dict[p])) p++;
+    const std::string* src = &dict;
+    std::string obj_text;
+    if (p < dict.size() && std::isdigit((unsigned char)dict[p])) {
+        char* end = nullptr;
+        long ref = std::strtol(dict.c_str() + p, &end, 10);
+        size_t after = (size_t)(end - dict.c_str());
+        if (dict.compare(after, 4, " 0 R") != 0) return {};
+        std::pair<size_t, size_t> range = find_object(pdf, ref);
+        if (range.first == std::string::npos) return {};
+        obj_text = pdf.substr(range.first, range.second - range.first);
+        src = &obj_text;
+        p = 0;
+        while (p < src->size() && (*src)[p] != '[') p++;
+    }
+    if (p >= src->size() || (*src)[p] != '[') return {};
+    int depth = 0;
+    for (size_t e = p; e < src->size(); e++) {
+        if ((*src)[e] == '[') depth++;
+        else if ((*src)[e] == ']' && --depth == 0) return src->substr(p + 1, e - p - 1);
+    }
+    return {};
+}
+
+// Walks an array text: each number goes to `num`, each nested '[' to
+// `open` and each ']' to `close`.
+template <typename Num, typename Open, typename Close>
+inline void walk_array(const std::string& a, Num num, Open open, Close close) {
+    size_t i = 0;
+    while (i < a.size()) {
+        char c = a[i];
+        if (c == '[') { open(); i++; continue; }
+        if (c == ']') { close(); i++; continue; }
+        if (std::isdigit((unsigned char)c) || c == '-' || c == '+' || c == '.') {
+            char* end = nullptr;
+            double v = std::strtod(a.c_str() + i, &end);
+            size_t ni = (size_t)(end - a.c_str());
+            if (ni == i) { i++; continue; }
+            num(v);
+            i = ni;
+            continue;
+        }
+        i++;
+    }
+}
+
+// The glyph widths of a font object: /FirstChar and /Widths for a simple
+// font, /DW and /W of the descendant for a Type0 font.
+inline FontWidths parse_widths(const std::string& pdf, const std::string& fdict) {
+    FontWidths fw;
+    size_t df = fdict.find("/DescendantFonts");
+    if (df != std::string::npos) {
+        fw.code_bytes = 2;
+        size_t p = df + 16;
+        while (p < fdict.size() && (std::isspace((unsigned char)fdict[p]) || fdict[p] == '[')) p++;
+        long ref = std::strtol(fdict.c_str() + p, nullptr, 10);
+        if (ref <= 0) return fw;
+        std::pair<size_t, size_t> range = find_object(pdf, ref);
+        if (range.first == std::string::npos) return fw;
+        std::string desc = pdf.substr(range.first, range.second - range.first);
+        long dw = dict_int(desc, "/DW");
+        fw.dw = dw >= 0 ? (double)dw : 1000.0;
+        std::string w = dict_array(pdf, desc, "/W");
+        // c [w1 w2 ...] gives codes from c on; c_first c_last w one width.
+        // A CID has two bytes, so a code outside 0..65535 is ignored, and
+        // the whole array writes at most kWidthBudget widths.
+        const double kMaxCode = 65535;
+        const size_t kWidthBudget = (size_t)1 << 20;
+        size_t written = 0;
+        std::vector<double> pending;
+        bool in_list = false;
+        double next_code = 0;
+        walk_array(w,
+            [&](double v) {
+                if (in_list) {
+                    if (next_code >= 0 && next_code <= kMaxCode && written < kWidthBudget) {
+                        fw.w[(uint32_t)next_code] = v;
+                        written++;
+                    }
+                    next_code += 1;
+                    return;
+                }
+                pending.push_back(v);
+                if (pending.size() == 3) {
+                    double lo = pending[0], hi = pending[1];
+                    if (lo >= 0 && hi >= lo && hi <= kMaxCode) {
+                        for (uint32_t c = (uint32_t)lo; c <= (uint32_t)hi && written < kWidthBudget; c++) {
+                            fw.w[c] = pending[2];
+                            written++;
+                        }
+                    }
+                    pending.clear();
+                }
+            },
+            [&]() {
+                if (pending.size() == 1) { next_code = pending[0]; in_list = true; }
+                pending.clear();
+            },
+            [&]() { in_list = false; });
+        fw.known = true;
+        return fw;
+    }
+    // A simple font's codes are one byte.
+    long first = dict_int(fdict, "/FirstChar");
+    std::string w = dict_array(pdf, fdict, "/Widths");
+    if (first < 0 || first > 255 || w.empty()) return fw;
+    uint32_t code = (uint32_t)first;
+    walk_array(w, [&](double v) { if (code <= 255) fw.w[code++] = v; }, [] {}, [] {});
+    fw.known = !fw.w.empty();
+    return fw;
+}
+
+// The ToUnicode CMap and the glyph widths behind each font resource name
+// (/F1, /F2, ...). Resource names belong to a page in the spec, so a file
+// that gives two different fonts the same name on two pages is the case
+// this does not separate. The /Font dictionary is inline (/Font << ... >>)
+// or an object of its own (/Font 12 0 R).
+inline std::unordered_map<std::string, FontInfo> collect_fonts(const std::string& pdf) {
+    std::unordered_map<std::string, FontInfo> fonts;
     size_t p = 0;
     while ((p = pdf.find("/Font", p)) != std::string::npos) {
         size_t q = p + 5;
@@ -696,14 +831,17 @@ inline std::unordered_map<std::string, CMap> collect_fonts(const std::string& pd
             std::pair<size_t, size_t> font_obj = find_object(pdf, obj);
             if (font_obj.first == std::string::npos) continue;
             std::string fdict = pdf.substr(font_obj.first, font_obj.second - font_obj.first);
+            FontInfo info;
+            info.widths = parse_widths(pdf, fdict);
             size_t tu = fdict.find("/ToUnicode");
-            if (tu == std::string::npos) continue;
-            size_t t = tu + 10;
-            while (t < fdict.size() && std::isspace((unsigned char)fdict[t])) t++;
-            long uni = std::strtol(fdict.c_str() + t, nullptr, 10);
-            if (uni <= 0) continue;
-            std::string cmap_src = object_stream(pdf, uni);
-            if (!cmap_src.empty()) fonts[name] = parse_cmap(cmap_src);
+            if (tu != std::string::npos) {
+                size_t t = tu + 10;
+                while (t < fdict.size() && std::isspace((unsigned char)fdict[t])) t++;
+                long uni = std::strtol(fdict.c_str() + t, nullptr, 10);
+                std::string cmap_src = uni > 0 ? object_stream(pdf, uni) : std::string();
+                if (!cmap_src.empty()) { info.cmap = parse_cmap(cmap_src); info.has_cmap = true; }
+            }
+            if (info.has_cmap || info.widths.known) fonts[name] = std::move(info);
         }
         p = resume ? resume : q;
     }
@@ -725,17 +863,18 @@ inline std::string map_codes(const std::string& raw, const CMap* cm) {
     return out;
 }
 
-// Where a `/Name Tf` switches the font, as offsets into one content stream.
+// Where a `/Name size Tf` switches the font, as offsets into one content
+// stream. The size is kept for fonts the file does not describe too.
 struct FontSwitch {
     size_t at;
-    const CMap* cm;
+    const FontInfo* font;
+    double size;
 };
 
 inline std::vector<FontSwitch> find_font_switches(
         const std::string& content,
-        const std::unordered_map<std::string, CMap>* fonts) {
+        const std::unordered_map<std::string, FontInfo>* fonts) {
     std::vector<FontSwitch> out;
-    if (!fonts || fonts->empty()) return out;
     size_t p = 0;
     while ((p = content.find("Tf", p)) != std::string::npos) {
         size_t next = p + 2;
@@ -749,81 +888,233 @@ inline std::vector<FontSwitch> find_font_switches(
             while (e < p && !std::isspace((unsigned char)content[e]) && content[e] != '/' &&
                    content[e] != '(' && content[e] != '<')
                 e++;
-            std::unordered_map<std::string, CMap>::const_iterator it =
-                fonts->find(content.substr(slash + 1, e - slash - 1));
-            out.push_back({ p, it == fonts->end() ? nullptr : &it->second });
+            const FontInfo* found = nullptr;
+            if (fonts) {
+                std::unordered_map<std::string, FontInfo>::const_iterator it =
+                    fonts->find(content.substr(slash + 1, e - slash - 1));
+                if (it != fonts->end()) found = &it->second;
+            }
+            double size = std::strtod(content.c_str() + e, nullptr);
+            out.push_back({ p, found, size != 0 ? size : 1.0 });
         }
         p = next;
     }
     return out;
 }
 
-// Extract all Tj/TJ texts from a decompressed content stream. `switches` and
-// `base` place this piece inside the stream they were found in, so the font
-// in force at each string is known.
-inline std::string extract_text_from_content(const std::string& content,
-        const std::vector<FontSwitch>* switches = nullptr, size_t base = 0) {
-    std::string out;
-    size_t i = 0;
-    const CMap* font = nullptr;
+// Where the last piece of text ended, carried from one BT..ET block to the
+// next so two words in two blocks are still told apart.
+struct TextFlow {
+    bool have_prev = false;
+    double prev_end_x = 0, prev_y = 0, prev_line_h = 0;
+    const FontInfo* font = nullptr;
+    double size = 1.0;
     size_t next_switch = 0;
-    if (switches) {
-        while (next_switch < switches->size() && (*switches)[next_switch].at < base) {
-            font = (*switches)[next_switch].cm;
-            next_switch++;
+};
+
+// Extract the text a decompressed content piece shows. The text matrix is
+// followed through Tm, Td, TD, T*, ' and " and advanced by each string's
+// width, so a space goes in where the text leaves a gap or starts a new
+// line, and not after each string: a file that shows one glyph per Tj
+// reads as words. `switches` and `base` place this piece inside the stream
+// they were found in, so the font and size in force at each string are known.
+inline std::string extract_text_from_content(const std::string& content,
+        const std::vector<FontSwitch>* switches = nullptr, size_t base = 0,
+        TextFlow* flow_in = nullptr) {
+    TextFlow local;
+    TextFlow& flow = flow_in ? *flow_in : local;
+    std::string out;
+    auto sync_font = [&](size_t at) {
+        if (!switches) return;
+        while (flow.next_switch < switches->size() && (*switches)[flow.next_switch].at < base + at) {
+            flow.font = (*switches)[flow.next_switch].font;
+            flow.size = (*switches)[flow.next_switch].size;
+            flow.next_switch++;
         }
-    }
-    auto font_at = [&](size_t at) -> const CMap* {
-        if (switches) {
-            while (next_switch < switches->size() && (*switches)[next_switch].at < base + at) {
-                font = (*switches)[next_switch].cm;
-                next_switch++;
-            }
-        }
-        return font;
     };
+    sync_font(0);
+
+    double tm[6] = { 1, 0, 0, 1, 0, 0 };
+    double tlm[6] = { 1, 0, 0, 1, 0, 0 };
+    double leading = 0, char_sp = 0, word_sp = 0, hscale = 1;
+
+    auto move_line = [&](double tx, double ty) {
+        tlm[4] += tx * tlm[0] + ty * tlm[2];
+        tlm[5] += tx * tlm[1] + ty * tlm[3];
+        std::memcpy(tm, tlm, sizeof tm);
+    };
+    auto show = [&](const std::string& raw) {
+        const FontInfo* f = flow.font;
+        const CMap* cm = f && f->has_cmap ? &f->cmap : nullptr;
+        std::string text = map_codes(raw, cm);
+        double em = flow.size * std::hypot(tm[0], tm[1]);
+        double line_h = flow.size * std::hypot(tm[2], tm[3]);
+        if (em <= 0) em = 1;
+        if (line_h <= 0) line_h = em;
+        double x = tm[4], y = tm[5];
+        if (flow.have_prev && !text.empty()) {
+            double h = std::max(line_h, flow.prev_line_h);
+            double gap = x - flow.prev_end_x;
+            bool apart = std::fabs(y - flow.prev_y) > 0.5 * h || gap > 0.2 * em || gap < -em;
+            if (apart && !out.empty() && out.back() != ' ' && text.front() != ' ') out += ' ';
+            else if (apart && out.empty() && text.front() != ' ') out += ' ';
+        }
+        out += text;
+        size_t cb = cm ? (size_t)cm->code_bytes : f && f->widths.known ? (size_t)f->widths.code_bytes : 1;
+        if (cb < 1) cb = 1;
+        double adv = 0;
+        for (size_t k = 0; k + cb <= raw.size(); k += cb) {
+            uint32_t code = 0;
+            for (size_t b = 0; b < cb; b++) code = (code << 8) | (unsigned char)raw[k + b];
+            double w = 500;
+            if (f && f->widths.known) {
+                std::unordered_map<uint32_t, double>::const_iterator it = f->widths.w.find(code);
+                if (it != f->widths.w.end()) w = it->second;
+                else if (f->widths.dw >= 0) w = f->widths.dw;
+            }
+            adv += w / 1000.0 * flow.size + char_sp + (cb == 1 && code == 32 ? word_sp : 0);
+        }
+        adv *= hscale;
+        tm[4] += adv * tm[0];
+        tm[5] += adv * tm[1];
+        if (!text.empty()) {
+            flow.prev_end_x = tm[4];
+            flow.prev_y = y;
+            flow.prev_line_h = line_h;
+            flow.have_prev = true;
+        }
+    };
+
+    // Operands wait on a stack until their operator comes.
+    std::vector<double> nums;
+    std::vector<std::string> strs;
+    struct TjItem { bool is_num; double num; std::string str; };
+    std::vector<TjItem> array;
+    bool have_array = false;
+    size_t i = 0;
     while (i < content.size()) {
-        char c = content[i];
+        unsigned char c = (unsigned char)content[i];
+        if (std::isspace(c)) { i++; continue; }
+        if (c == '%') {
+            while (i < content.size() && content[i] != '\n' && content[i] != '\r') i++;
+            continue;
+        }
         if (c == '(') {
             auto [text, np] = parse_pdf_string(content, i);
-            // Find the next operator: Tj, TJ, ', "
-            size_t op = np;
-            while (op < content.size() && (content[op] == ' ' || content[op] == '\t' || content[op] == '\r' || content[op] == '\n')) op++;
-            // Accept the text unconditionally (a bit liberal, but works)
-            out += map_codes(text, font_at(i));
-            // Newline after Tj-style operators
-            if (op < content.size() && (content[op] == 'T' || content[op] == '\'' || content[op] == '"')) {
-                out += ' ';
-            }
+            strs.push_back(text);
             i = np;
-        } else if (c == '<' && i + 1 < content.size() && content[i+1] != '<') {
+            continue;
+        }
+        if (c == '<' && i + 1 < content.size() && content[i + 1] == '<') {
+            size_t e = content.find(">>", i + 2);
+            i = e == std::string::npos ? content.size() : e + 2;
+            continue;
+        }
+        if (c == '<') {
             auto [text, np] = parse_hex_string(content, i);
-            out += map_codes(text, font_at(i));
-            out += ' ';
+            strs.push_back(text);
             i = np;
-        } else if (c == '[') {
-            // TJ array: [(text) num (more) ...] TJ
+            continue;
+        }
+        if (c == '[') {
+            array.clear();
+            have_array = true;
             i++;
-            std::string buf;
             while (i < content.size() && content[i] != ']') {
-                if (content[i] == '(') {
+                unsigned char a = (unsigned char)content[i];
+                if (a == '(') {
                     auto [text, np] = parse_pdf_string(content, i);
-                    buf += map_codes(text, font_at(i));
+                    array.push_back({ false, 0, text });
                     i = np;
-                } else if (content[i] == '<') {
+                } else if (a == '<') {
                     auto [text, np] = parse_hex_string(content, i);
-                    buf += map_codes(text, font_at(i));
+                    array.push_back({ false, 0, text });
                     i = np;
+                } else if (std::isdigit(a) || a == '-' || a == '+' || a == '.') {
+                    char* end = nullptr;
+                    double v = std::strtod(content.c_str() + i, &end);
+                    size_t ni = (size_t)(end - content.c_str());
+                    if (ni == i) { i++; continue; }
+                    array.push_back({ true, v, std::string() });
+                    i = ni;
                 } else {
                     i++;
                 }
             }
-            if (i < content.size()) i++; // skip ]
-            out += buf;
-            out += ' ';
-        } else {
-            i++;
+            if (i < content.size()) i++;
+            continue;
         }
+        if (c == '/') {
+            i++;
+            while (i < content.size() && !std::isspace((unsigned char)content[i]) &&
+                   std::strchr("/[]()<>{}%", content[i]) == nullptr)
+                i++;
+            continue;
+        }
+        if (std::isdigit(c) || c == '-' || c == '+' || c == '.') {
+            char* end = nullptr;
+            double v = std::strtod(content.c_str() + i, &end);
+            size_t ni = (size_t)(end - content.c_str());
+            if (ni == i) { i++; continue; }
+            nums.push_back(v);
+            i = ni;
+            continue;
+        }
+        // An operator: letters, digits after the first, '*', ' and ".
+        size_t op_at = i;
+        size_t e = i;
+        while (e < content.size()) {
+            unsigned char o = (unsigned char)content[e];
+            if (std::isalpha(o) || o == '*' || o == '\'' || o == '"' || (e > i && std::isdigit(o))) e++;
+            else break;
+        }
+        if (e == i) e = i + 1;
+        std::string op = content.substr(i, e - i);
+        i = e;
+        sync_font(op_at);
+        size_t n = nums.size();
+        if (op == "Tm" && n >= 6) {
+            for (int k = 0; k < 6; k++) tm[k] = nums[n - 6 + k];
+            std::memcpy(tlm, tm, sizeof tm);
+        } else if (op == "Td" && n >= 2) {
+            move_line(nums[n - 2], nums[n - 1]);
+        } else if (op == "TD" && n >= 2) {
+            leading = -nums[n - 1];
+            move_line(nums[n - 2], nums[n - 1]);
+        } else if (op == "TL" && n >= 1) {
+            leading = nums[n - 1];
+        } else if (op == "Tc" && n >= 1) {
+            char_sp = nums[n - 1];
+        } else if (op == "Tw" && n >= 1) {
+            word_sp = nums[n - 1];
+        } else if (op == "Tz" && n >= 1) {
+            hscale = nums[n - 1] / 100.0;
+        } else if (op == "T*") {
+            move_line(0, -leading);
+        } else if (op == "Tj" && !strs.empty()) {
+            show(strs.back());
+        } else if (op == "'" && !strs.empty()) {
+            move_line(0, -leading);
+            show(strs.back());
+        } else if (op == "\"" && !strs.empty()) {
+            if (n >= 2) { word_sp = nums[n - 2]; char_sp = nums[n - 1]; }
+            move_line(0, -leading);
+            show(strs.back());
+        } else if (op == "TJ" && have_array) {
+            for (const TjItem& it : array) {
+                if (it.is_num) {
+                    double adv = -it.num / 1000.0 * flow.size * hscale;
+                    tm[4] += adv * tm[0];
+                    tm[5] += adv * tm[1];
+                } else {
+                    show(it.str);
+                }
+            }
+        }
+        nums.clear();
+        strs.clear();
+        array.clear();
+        have_array = false;
     }
     return out;
 }
@@ -832,9 +1123,10 @@ inline std::string extract_text_from_content(const std::string& content,
 // only valid inside them, so binary streams (fonts, images) that happen to
 // contain the byte pairs "BT"/"Tj" cannot leak garbage into the output.
 inline std::string extract_text_blocks(const std::string& content,
-        const std::unordered_map<std::string, CMap>* fonts = nullptr) {
+        const std::unordered_map<std::string, FontInfo>* fonts = nullptr) {
     std::string out;
     std::vector<FontSwitch> switches = find_font_switches(content, fonts);
+    TextFlow flow;
     auto delim_after = [&](size_t idx) {
         if (idx >= content.size()) return true;
         unsigned char c = content[idx];
@@ -852,7 +1144,7 @@ inline std::string extract_text_blocks(const std::string& content,
             et = content.find("ET", et + 2);
         }
         if (et == std::string::npos) break;
-        out += extract_text_from_content(content.substr(bt + 2, et - bt - 2), &switches, bt + 2);
+        out += extract_text_from_content(content.substr(bt + 2, et - bt - 2), &switches, bt + 2, &flow);
         pos = et + 2;
     }
     return out;
@@ -864,7 +1156,7 @@ inline std::string extract_text(const std::string& filepath) {
     if (pdf.empty()) return {};
     if (pdf.substr(0, 4) != "%PDF") return {};
 
-    std::unordered_map<std::string, CMap> fonts = collect_fonts(unpack_object_streams(pdf));
+    std::unordered_map<std::string, FontInfo> fonts = collect_fonts(unpack_object_streams(pdf));
     auto streams = find_streams(pdf);
     std::string all_text;
 
