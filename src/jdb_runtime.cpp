@@ -4857,25 +4857,31 @@ static JdbArray* batch_body(JdbArray* a, JdbArray* b, const char* fn) {
     }
     int64_t err_before = jdb_err_code();
     std::vector<JdbArray*> parts;
-    parts.reserve((size_t)n);
-    for (int64_t i = 0; i < n; i++) {
-        JdbArray* sa = ba ? (cell_is_arr(a, i) ? decode_inner(a->data[i]) : nullptr) : a;
-        JdbArray* sb = bb ? (cell_is_arr(b, i) ? decode_inner(b->data[i]) : nullptr) : b;
-        JdbArray* m = matmul_body(sa, sb, 0, fn);
-        if (jdb_err_code() != err_before) {
-            mat_free(m);
-            for (JdbArray* p : parts) mat_free(p);
-            return jdb_array_new(0);
+    // Memory running out partway frees what was built and goes on up.
+    try {
+        parts.reserve((size_t)n);
+        for (int64_t i = 0; i < n; i++) {
+            JdbArray* sa = ba ? (cell_is_arr(a, i) ? decode_inner(a->data[i]) : nullptr) : a;
+            JdbArray* sb = bb ? (cell_is_arr(b, i) ? decode_inner(b->data[i]) : nullptr) : b;
+            JdbArray* m = matmul_body(sa, sb, 0, fn);
+            if (jdb_err_code() != err_before) {
+                mat_free(m);
+                for (JdbArray* p : parts) mat_free(p);
+                return jdb_array_new(0);
+            }
+            parts.push_back(m);
         }
-        parts.push_back(m);
+        JdbArray* out = jdb_array_new(n);
+        out->flags |= 1;
+        for (int64_t i = 0; i < n; i++) {
+            union { double d; int64_t i; } u; u.i = (int64_t)(intptr_t)parts[(size_t)i];
+            out->data[i] = u.d;
+        }
+        return out;
+    } catch (...) {
+        for (JdbArray* p : parts) mat_free(p);
+        throw;
     }
-    JdbArray* out = jdb_array_new(n);
-    out->flags |= 1;
-    for (int64_t i = 0; i < n; i++) {
-        union { double d; int64_t i; } u; u.i = (int64_t)(intptr_t)parts[(size_t)i];
-        out->data[i] = u.d;
-    }
-    return out;
 }
 
 // The C entry the compiled program calls: nothing of C++ crosses it.
