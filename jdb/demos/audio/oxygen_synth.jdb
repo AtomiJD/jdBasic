@@ -18,6 +18,8 @@
 '   REC          record pads and keys into the loop, with a click; again stops
 '   STOP         stop the loop; STOP when stopped clears it
 '   LOOP + key   that key becomes the new split
+' MIDI clock goes out to the keyboard (Start with PLAY, Stop with STOP); a
+' clock coming in on the keyboard port sets the tempo and starts the loop.
 ' The pads reach the drums only in DAW mode (DAW button lit); in preset mode
 ' they send keys 36-43 on the keyboard port and play the bass.
 
@@ -141,6 +143,8 @@ DIM looping = FALSE
 DIM recording = FALSE
 DIM view_bar = 0
 DIM follow = TRUE
+DIM clock_h = -1
+DIM ext_running = FALSE
 SOUND.BPM bpm
 
 ' Recorded keyboard notes, one entry per note: track, sounding note, first
@@ -285,6 +289,7 @@ ENDSUB
 SUB LOOP_PLAY()
     looping = TRUE
     SEND_LOOP()
+    IF clock_h >= 0 THEN MIDI.CLOCK(clock_h, "START")
     SAY("Loop playing at " + STR$(bpm) + " BPM")
 ENDSUB
 
@@ -299,6 +304,7 @@ SUB LOOP_STOP()
     looping = FALSE
     recording = FALSE
     SEND_LOOP()
+    IF clock_h >= 0 THEN MIDI.CLOCK(clock_h, "STOP")
 ENDSUB
 
 SUB LOOP_REC()
@@ -433,6 +439,34 @@ IF daw_idx >= 0 THEN
     PRINT "Drums on the pads need DAW mode (press DAW until it lights)"
 ENDIF
 
+' MIDI clock out to the keyboard (its arpeggiator can sync to it): ticks all
+' the time, Start with PLAY on the next bar line, Stop with STOP
+DIM clock_idx = PORT_INDEX(MIDI.PORTS(){"out"}, cfg{"ports"}{"main"})
+IF clock_idx >= 0 THEN
+    clock_h = MIDI.OPEN_OUT(clock_idx)
+    IF clock_h >= 0 THEN PRINT "Clock out " + MIDI.PORTS(){"out"}[clock_idx] + ": " + STR$(MIDI.CLOCK(clock_h, TRUE))
+ENDIF
+
+' A clock arriving on the keyboard port sets the tempo; its Start and Stop
+' start and stop the loop
+SUB FOLLOW_CLOCK()
+    DIM ck = MIDI.CLOCKIN(main_h)
+    IF ck{"bpm"} > 0 ANDALSO ABS(ck{"bpm"} - bpm) >= 0.5 THEN
+        bpm = ROUND(ck{"bpm"})
+        SOUND.BPM bpm
+    ENDIF
+    IF ck{"running"} <> ext_running THEN
+        ext_running = ck{"running"}
+        IF ext_running THEN
+            SOUND.SEEK FLOOR(SOUND.CYCLE() / loop_bars + 1) * loop_bars
+            SOUND.AT
+            LOOP_PLAY()
+        ELSE
+            LOOP_STOP()
+        ENDIF
+    ENDIF
+ENDSUB
+
 DIM tp = cfg{"transport"}{"daw_port_cc"}
 DIM mode_left = cfg{"mode_buttons"}{"left_cc"}
 DIM mode_right = cfg{"mode_buttons"}{"right_cc"}
@@ -500,6 +534,7 @@ SUB HANDLE_MIDI()
             ENDIF
         ENDIF
     ENDIF
+    FOLLOW_CLOCK()
 ENDSUB
 
 SUB TAKE_STATS(to_console)
@@ -727,6 +762,8 @@ ELSE
     LOOP
 ENDIF
 
+IF clock_h >= 0 THEN MIDI.CLOCK(clock_h, FALSE)
+IF clock_h >= 0 THEN MIDI.CLOSE(clock_h)
 MIDI.CLOSE(main_h)
 IF daw_h >= 0 THEN MIDI.CLOSE(daw_h)
 IF fast THEN MON.SYNTH(0)
