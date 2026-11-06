@@ -7,6 +7,7 @@
 
 #include "RtMidi.h"
 #include "sound.h"
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <deque>
@@ -24,6 +25,7 @@ struct MidiPort {
     std::mutex qmtx;
     std::deque<std::vector<unsigned char>> queue;
     std::atomic<int> routed{0};
+    std::atomic<int> to_channel{0};   // 1-16: routed messages move to this channel
     std::unique_ptr<RtMidiOut> out;
     std::unique_ptr<RtMidiIn>  in;
 };
@@ -35,8 +37,18 @@ void on_midi_in(double, std::vector<unsigned char>* msg, void* user) {
     auto* p = static_cast<MidiPort*>(user);
     if (!msg || msg->empty()) return;
     int mode = p->routed.load(std::memory_order_relaxed);
-    if (mode == ROUTE_ALL || (mode == ROUTE_CC && ((*msg)[0] & 0xF0) == 0xB0))
-        sound_midi_push(msg->data(), msg->size());
+    if (mode == ROUTE_ALL || (mode == ROUTE_CC && ((*msg)[0] & 0xF0) == 0xB0)) {
+        int ch = p->to_channel.load(std::memory_order_relaxed);
+        unsigned char st = (*msg)[0];
+        if (ch > 0 && st >= 0x80 && st < 0xF0) {
+            unsigned char m[3] = {(unsigned char)((st & 0xF0) | (ch - 1)), 0, 0};
+            size_t n = std::min<size_t>(msg->size(), 3);
+            for (size_t i = 1; i < n; i++) m[i] = (*msg)[i];
+            sound_midi_push(m, n);
+        } else {
+            sound_midi_push(msg->data(), msg->size());
+        }
+    }
     std::lock_guard<std::mutex> lk(p->qmtx);
     if (p->queue.size() >= MAX_QUEUED) p->queue.pop_front();
     p->queue.push_back(*msg);
@@ -167,10 +179,11 @@ void register_midi_builtins(VM& vm) {
         return arr;
     });
 
-    // MIDI.ROUTE(handle [, on]) -> bool: an input port plays the synth
+    // MIDI.ROUTE(handle [, on [, channel]]) -> bool: an input port plays the synth
     // directly, inside the audio thread (zones: SOUND.ZONE). on is TRUE,
     // FALSE, or "CC" to pass only controllers (SOUND.CCMAP) and no notes.
-    vm.register_native("MIDI.ROUTE", 1, 2, [](const std::vector<Value>& args) -> Value {
+    // channel 1-16 moves every routed message to that channel (0 keeps it).
+    vm.register_native("MIDI.ROUTE", 1, 3, [](const std::vector<Value>& args) -> Value {
         int h = (int)args[0].to_int();
         int mode = ROUTE_ALL;
         if (args.size() >= 2) {
@@ -185,10 +198,14 @@ void register_midi_builtins(VM& vm) {
                 mode = args[1].to_bool() ? ROUTE_ALL : ROUTE_OFF;
             }
         }
+        int ch = args.size() >= 3 ? (int)args[2].to_int() : 0;
+        if (ch < 0 || ch > 16)
+            throw jdError(ErrCode::RUNTIME_ERROR, "MIDI.ROUTE: channel is 1-16, or 0 to keep it");
         std::lock_guard<std::mutex> lk(g_mtx);
         auto it = g_ports.find(h);
         if (it == g_ports.end() || !it->second.in) return Value::make_bool(false);
         it->second.routed.store(mode);
+        it->second.to_channel.store(ch);
         return Value::make_bool(true);
     });
 

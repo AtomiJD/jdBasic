@@ -3292,6 +3292,11 @@ Syntax: SOUND.CCMAP(cc, track, param$, lo, hi, [curve$], [channel], [pickup]) ->
 Description: MIDI controller cc on channel (default 0 = any) sets param$ of the track between lo (at 0) and hi (at 127). curve$ is "LIN" (default) or "EXP" (equal steps per octave; lo and hi above 0). The value glides there in about 10 ms. With pickup (default TRUE) the controller takes over only once it passes the present value. param$ takes the names of SOUND.MOD. SOUND.CCMAP(-1) clears every mapping.
 Example: SOUND.CCMAP 22, 1, "CUTOFF", 200, 8000, "EXP"
 
+[SOUND.PADMAP]
+Syntax: SOUND.PADMAP track, note, name$
+Description: The kit sound a MIDI note plays on a kit track (SOUND.KIT), for pads that send other notes than General MIDI. Without an entry a note plays its General MIDI drum: 35/36 bd, 37 rim, 38/40 sd, 39 cp, 41/43/45 lt, 47/48 mt, 50 ht, 42/44 hh, 46 oh, 49/51/52/55/57/59 cr, 56 cb, 75 cl, 69/70/82 sh. name$ "" removes the entry.
+Example: SOUND.PADMAP 9, 40, "oh"
+
 [SOUND.PARAM]
 Syntax: SOUND.PARAM(track, param$, [value]) -> value
 Description: Reads a track parameter, or sets it first and answers the new value. param$ takes the names of SOUND.MOD: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV, VOWEL, PITCH, ATTACK, DECAY, SUSTAIN, RELEASE, LFORATE, LFODEPTH. A value set here stops a SOUND.CCMAP knob that was still gliding on that parameter. The SYNTHPATCH module (lib/synthpatch.jdb) uses it to capture and morph sounds.
@@ -4409,8 +4414,8 @@ Syntax: MIDI.POLL(handle) -> [[status, data1, data2], ...]
 Description: Drain buffered incoming MIDI events (lock-free); empty array if none.
 
 [MIDI.ROUTE]
-Syntax: MIDI.ROUTE(handle, [on]) -> bool
-Description: An input port plays the synth directly: every message goes to the audio thread as it arrives, without the script loop in between. MIDI.POLL still sees the messages. on is TRUE (default), FALSE, or "CC" to pass only controllers (SOUND.CCMAP), for a port whose pads must not play notes. Keys go to the tracks of SOUND.ZONE; without zones every key plays track 0. Needs a sound build.
+Syntax: MIDI.ROUTE(handle, [on], [channel]) -> bool
+Description: An input port plays the synth directly: every message goes to the audio thread as it arrives, without the script loop in between. MIDI.POLL still sees the messages. on is TRUE (default), FALSE, or "CC" to pass only controllers (SOUND.CCMAP), for a port whose pads must not play notes. channel 1-16 moves every routed message to that channel, so a second port (pads on the same channel as the keys) can play its own zone. Keys go to the tracks of SOUND.ZONE; without zones every key plays track 0. A zone on a kit track (SOUND.KIT) plays drums: each note is a one-shot hit of its General MIDI sound (see SOUND.PADMAP). Needs a sound build.
 
 [MIDI.CLOSE]
 Syntax: MIDI.CLOSE(handle)

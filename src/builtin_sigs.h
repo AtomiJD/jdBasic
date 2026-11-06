@@ -786,6 +786,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SOUND.NOTE", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.NUDGE", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.ORBIT", BuiltinRet::None, BF_NO_VEC},
+    {"SOUND.PADMAP", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.PAN", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.PARAM", BuiltinRet::F64, BF_NO_VEC},
     {"SOUND.PENDING", BuiltinRet::I64, BF_NO_VEC},

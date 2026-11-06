@@ -3949,7 +3949,7 @@ real-time-safe.
 | `MIDI.NOTEOFF(handle, channel, note)` -> bool | Note Off. |
 | `MIDI.CC(handle, channel, cc, value)` -> bool | Control Change. |
 | `MIDI.POLL(handle)` -> `[[status, d1, d2], ...]` | Drain incoming events (up to 4096 are kept per port). |
-| `MIDI.ROUTE(handle, [on])` -> bool | An input port plays the synth directly: every message goes to the audio thread as it arrives, without the script loop in between. `MIDI.POLL` still sees the messages. `on` is TRUE (default), FALSE or `"CC"`: then only controllers pass, for a port whose pads must not play notes. Needs a sound build. |
+| `MIDI.ROUTE(handle, [on], [channel])` -> bool | An input port plays the synth directly: every message goes to the audio thread as it arrives, without the script loop in between. `MIDI.POLL` still sees the messages. `on` is TRUE (default), FALSE or `"CC"`: then only controllers pass, for a port whose pads must not play notes. `channel` 1-16 moves every routed message to that channel, so a second port whose pads send on the channel of the keys can play its own zone. Needs a sound build. |
 | `MIDI.CLOSE(handle)` | Close a port. |
 
 #### Playing the synth from MIDI
@@ -3959,6 +3959,7 @@ real-time-safe.
 - Note on starts a voice on every zone that holds the key, at the key's velocity (gain = velocity / 127). Note off releases only the voices of that key and channel.
 - The sustain pedal (CC 64) holds released keys until it goes up. CC 120 cuts every voice of the channel, CC 123 releases them.
 - Pitch bend moves every track of the channel's zones, by 2 semitones at full bend unless the zone sets `bend`.
+- A zone on a kit track (`SOUND.KIT`) plays drums: each note is a one-shot hit of its General MIDI sound (36 bd, 38 sd, 42 hh, 46 oh, 39 cp ...), at the key's velocity; note off does not stop it. `SOUND.PADMAP` names other notes.
 - The mod wheel (CC 1) drives the `mod_vibrato` and `mod_cutoff` of the zones. Every other controller goes to `SOUND.CCMAP`.
 - With the audio device open, a message lands as far into the buffer as it arrived into the last callback period. Every key then waits the same time instead of anywhere between zero and one buffer.
 
@@ -3967,6 +3968,7 @@ real-time-safe.
 | `SOUND.ZONE(track, [lo], [hi], [channel], [transpose], [options])` -> zone count | Keys `lo`..`hi` (default 0..127) on `channel` (1-16, default 0 = any) play `track`, shifted by `transpose` semitones. Overlapping zones layer. `SOUND.ZONE(-1)` clears every zone. Without zones every key plays track 0. `options` is a map, see below. |
 | `SOUND.LASTNOTE()` -> map | The last key played through MIDI input: `note` (-1 before the first), `velocity`, `channel`, and `count`, the number of keys so far. Waiting for `count` to grow and then reading `note` learns a split point. |
 | `SOUND.CCMAP(cc, track, param$, lo, hi, [curve$], [channel], [pickup])` -> mapping count | Controller `cc` on `channel` (default 0 = any) sets `param$` of `track` between `lo` (at 0) and `hi` (at 127), `curve$` `"LIN"` (default) or `"EXP"` (equal steps per octave, for cutoff and times; `lo` and `hi` above 0). The value glides there in about 10 ms, so a knob turn does not crackle. With `pickup` (default TRUE) a controller only takes over once it passes the present value, so a fader that is not where the sound is does not make it jump. `param$` takes the names of `SOUND.MOD`. `SOUND.CCMAP(-1)` clears every mapping. |
+| `SOUND.PADMAP track, note, name$` | The kit sound a MIDI note plays on a kit track, for pads that send other notes than General MIDI; `""` returns the note to its General MIDI drum. |
 | `SOUND.PARAM(track, param$, [value])` -> value | Read a track parameter by the names of `SOUND.MOD`, or set it first. A value set here stops a `SOUND.CCMAP` knob still gliding on that parameter. The SYNTHPATCH module (`lib/synthpatch.jdb`, see `lib/synthpatch_lib_readme.md`) builds patches, capture and morphing on it. |
 | `SOUND.MATRIX(source$, track, param$, amount)` -> slot count | A modulation slot: `source$` moves `param$` of `track` around its base value. Cutoff, attack, decay, release and LFORATE move by `amount` octaves at full source, the rest by `amount` in their own units; slots on one parameter add up. The base follows every outside write (`SOUND.FILTER`, `SOUND.PARAM`, a `SOUND.CCMAP` knob), so knobs and modulation stack, and `SOUND.PARAM` reads and sets the base. `amount` 0 removes the slot; `SOUND.MATRIX "OFF"` removes them all and returns each parameter to its base. Sources: `LFO1`, `LFO2` (-1..1), `MODWHEEL`, `AFTERTOUCH`, `VELOCITY` (of the last key), `CC0`-`CC127` (0..1), `NOTE` (-1..1, 0 at middle C), `RANDOM` (-1..1, new on every key). |
 | `SOUND.MODLFO n, rate_hz, [shape$]` | Rate and shape of matrix LFO 1 or 2 (the shapes of `SOUND.MOD`). They run free, at 1 Hz sine and 0.25 Hz triangle until set. |

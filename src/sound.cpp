@@ -343,6 +343,8 @@ struct TrackParams {
     bool glide_marked = false;
     float last_freq = 0.0f;
     float pitch_semis = 0.0f;
+    // MIDI notes a kit track plays by other names than the General MIDI ones
+    std::unordered_map<int, std::string> padmap;
     // Pitch bend from MIDI input, as a frequency factor; the mod wheel as
     // vibrato depth in semitones and as a cutoff factor
     float bend_ratio = 1.0f;
@@ -973,10 +975,54 @@ static struct SoundSystem {
         v.midi_note = note;
     }
 
+    // The kit sound a MIDI note names: the track's own map, else General MIDI
+    static std::string kit_name_of(const TrackParams& tp, int note) {
+        auto it = tp.padmap.find(note);
+        if (it != tp.padmap.end()) return it->second;
+        switch (note) {
+            case 35: case 36: return "bd";
+            case 37: return "rim";
+            case 38: case 40: return "sd";
+            case 39: return "cp";
+            case 41: case 43: case 45: return "lt";
+            case 47: case 48: return "mt";
+            case 50: return "ht";
+            case 42: case 44: return "hh";
+            case 46: return "oh";
+            case 49: case 51: case 52: case 55: case 57: case 59: return "cr";
+            case 56: return "cb";
+            case 75: return "cl";
+            case 69: case 70: case 82: return "sh";
+            default: return "";
+        }
+    }
+
+    // A one-shot hit of the kit sound the note names; note off does not stop it
+    int start_kit_voice(const MidiZone& z, int ch, int n, int vel, int64_t off) {
+        auto& tp = tracks[z.track];
+        auto it = tp.kit.find(kit_name_of(tp, n));
+        if (it == tp.kit.end() || it->second.ids.empty()) return -1;
+        int vi = allocate_voice(z.track);
+        if (vi < 0) { dbg_alloc_fail++; return -1; }
+        auto& v = voices[vi];
+        v.frequency = tp.sample_base_freq;
+        start_envelopes(v, tp);
+        v.sample_id = it->second.ids[0];
+        v.sample_gain = it->second.gain;
+        v.sample_loop = false;
+        v.gain = vel / 127.0f;
+        v.delay_frames = off;
+        v.choke = it->second.choke;
+        v.choke_pending = v.choke > 0;
+        v.midi_ch = ch;
+        return vi;
+    }
+
     int start_midi_voice(MidiZone& z, int zi, int ch, int note, int vel, int64_t off) {
         int n = note + z.transpose;
         if (n < 0 || n > 127) return -1;
         auto& tp = tracks[z.track];
+        if (!tp.kit.empty()) return start_kit_voice(z, ch, n, vel, off);
         int vi = allocate_voice(z.track);
         if (vi < 0) { dbg_alloc_fail++; return -1; }
         auto& v = voices[vi];
@@ -2905,6 +2951,24 @@ void register_sound_builtins(VM& vm) {
         int n = (int)g_sound.zones.size();
         if (g_sound.initialized) SND_UNLOCK();
         return Value::make_i64(n);
+    });
+
+    // SOUND.PADMAP track, note, name$: the kit sound a MIDI note plays on a
+    // kit track; "" returns the note to its General MIDI sound
+    vm.register_native("SOUND.PADMAP", 3, 3, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        int note = (int)args[1].to_int();
+        if (t < 0 || t >= NUM_TRACKS)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.PADMAP: track is 0-" + std::to_string(NUM_TRACKS - 1));
+        if (note < 0 || note > 127)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.PADMAP: note is 0-127");
+        std::string name = args[2].to_string();
+        std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+        if (g_sound.initialized) SND_LOCK();
+        if (name.empty()) g_sound.tracks[t].padmap.erase(note);
+        else g_sound.tracks[t].padmap[note] = name;
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_none();
     });
 
     // SOUND.LASTNOTE() -> {note, velocity, channel, count}: the last key

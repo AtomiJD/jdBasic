@@ -418,6 +418,57 @@ CHECK "no offset without a device", stats{"offset_max_ms"} = 0, ""
 stats = SOUND.MIDISTATS()
 CHECK "counters reset after a read", stats{"events"} = 0, ""
 
+' ---------- kit tracks play MIDI notes as drums ----------
+FRESH()
+SOUND.KIT 2, "SYNTH"
+lvl = SOUND.ZONE(2, 0, 127, 10)
+lvl = SOUND.ZONE(0, 0, 127, 1)
+SOUND.GAIN 0, 0
+SOUND.MIDIIN 153, 36, 127
+lvl = LEVEL(6000)
+CHECK "note 36 on channel 10 is a kick", lvl > 0.05, "rms=" + STR$(lvl)
+SOUND.MIDIIN 137, 36, 0
+lvl = LEVEL(4000)
+SOUND.MIDIIN 153, 38, 127
+SOUND.MIDIIN 137, 38, 0
+lvl = LEVEL(3000)
+CHECK "a hit plays on after its note off", lvl > 0.01, "rms=" + STR$(lvl)
+lvl = LEVEL(44100)
+SOUND.MIDIIN 153, 100, 127
+lvl = LEVEL(4000)
+CHECK "a note with no General MIDI drum is silent", lvl < 0.001, "rms=" + STR$(lvl)
+SOUND.PADMAP 2, 100, "cp"
+SOUND.MIDIIN 153, 100, 127
+lvl = LEVEL(4000)
+CHECK "PADMAP gives a note a sound", lvl > 0.01, "rms=" + STR$(lvl)
+SOUND.PADMAP 2, 100, ""
+lvl = LEVEL(44100)
+SOUND.MIDIIN 153, 100, 127
+lvl = LEVEL(4000)
+CHECK "PADMAP with an empty name forgets it", lvl < 0.001, "rms=" + STR$(lvl)
+lvl = LEVEL(44100)
+SOUND.MIDIIN 153, 36, 127
+DIM hard AS DOUBLE = LEVEL(6000)
+lvl = LEVEL(44100)
+SOUND.MIDIIN 153, 36, 32
+lvl2 = LEVEL(6000)
+CHECK "velocity scales a hit", lvl2 < hard * 0.5 ANDALSO lvl2 > 0, "hard=" + STR$(hard) + " soft=" + STR$(lvl2)
+lvl = LEVEL(44100)
+lv = SOUND.LEVELS()
+SOUND.MIDIIN 144, 36, 127
+lvl = LEVEL(4000)
+lv = SOUND.LEVELS()
+CHECK "the channel 1 zone does not play the kit", lv[2] = 0, "kit=" + STR$(lv[2])
+SOUND.MIDIIN 128, 36, 0
+err_msg = ""
+TRY
+    SOUND.PADMAP 2, 128, "bd"
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "PADMAP note 128 is refused", INSTR(err_msg, "note") >= 0, "msg=" + err_msg
+SOUND.KIT 2
+
 ' ---------- MIDI.ROUTE ----------
 DIM route_ok AS BOOLEAN = FALSE
 IF OS.FEATURE("MIDI") THEN
@@ -430,6 +481,13 @@ IF OS.FEATURE("MIDI") THEN
         err_msg = ERRMSG$
     ENDTRY
     CHECK "an unknown ROUTE mode is refused", INSTR(err_msg, "mode") >= 0, "msg=" + err_msg
+    err_msg = ""
+    TRY
+        route_ok = MIDI.ROUTE(9999, "ALL", 17)
+    CATCH
+        err_msg = ERRMSG$
+    ENDTRY
+    CHECK "ROUTE to channel 17 is refused", INSTR(err_msg, "channel") >= 0, "msg=" + err_msg
 ENDIF
 
 ' ---------- MON.SYNTH (no device opened here) ----------
