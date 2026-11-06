@@ -461,7 +461,7 @@ SUB FOLLOW_CLOCK()
             SOUND.SEEK FLOOR(SOUND.CYCLE() / loop_bars + 1) * loop_bars
             SOUND.AT
             LOOP_PLAY()
-        ELSE
+        ELSEIF looping ORELSE recording THEN
             LOOP_STOP()
         ENDIF
     ENDIF
