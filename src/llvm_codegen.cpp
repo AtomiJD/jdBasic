@@ -5402,20 +5402,34 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             for (auto& a : e->args) if (!texty(a.get())) return false;
             return true;
         };
-        // Candidates: names a FUNC or SUB appends texts to.
+        // Candidates: names a FUNC, a SUB or the top level appends texts to
+        // or writes a text into a cell of.
+        auto is_text_cell_write = [&](const Stmt& s) {
+            return s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty() && s.label.empty() &&
+                   s.print_exprs.empty() && s.index_chain.size() == 1 && texty(s.expr.get());
+        };
+        std::function<void(const Stmt&, const std::unordered_set<std::string>*)> candidates =
+            [&](const Stmt& s, const std::unordered_set<std::string>* locals) {
+            bool own = locals && locals->count(s.var_name);
+            if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) && !s.var_name.empty() &&
+                !own && s.index_chain.empty() && is_text_append(s))
+                filled[s.var_name] = true;
+            if (!own && is_text_cell_write(s)) filled[s.var_name] = true;
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB || s.kind == StmtKind::TYPE_DECL)
+                return;
+            for (auto& b : s.body) if (b) candidates(*b, locals);
+            for (auto& br : s.branches) for (auto& b : br.body) if (b) candidates(*b, locals);
+            for (auto& c : s.catch_body()) if (c) candidates(*c, locals);
+            for (auto& f : s.finally_body()) if (f) candidates(*f, locals);
+        };
         for (auto& fs : program) {
-            if (!fs || (fs->kind != StmtKind::FUNCTION && fs->kind != StmtKind::SUB)) continue;
-            auto locals = locals_of(*fs);
-            std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
-                if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) && !s.var_name.empty() &&
-                    !locals.count(s.var_name) && s.index_chain.empty() && is_text_append(s))
-                    filled[s.var_name] = true;
-                for (auto& b : s.body) if (b) walk(*b);
-                for (auto& br : s.branches) for (auto& b : br.body) if (b) walk(*b);
-                for (auto& c : s.catch_body()) if (c) walk(*c);
-                for (auto& f : s.finally_body()) if (f) walk(*f);
-            };
-            for (auto& b : fs->body) if (b) walk(*b);
+            if (!fs || fs->kind == StmtKind::TYPE_DECL) continue;
+            if (fs->kind == StmtKind::FUNCTION || fs->kind == StmtKind::SUB) {
+                auto locals = locals_of(*fs);
+                for (auto& b : fs->body) if (b) candidates(*b, &locals);
+            } else {
+                candidates(*fs, nullptr);
+            }
         }
         // Every other write to the global, anywhere, has to be a text append
         // or an array literal of texts (the empty one among them).
@@ -5438,6 +5452,32 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             if ((s.kind == StmtKind::FOR_EACH || s.kind == StmtKind::FOR_LOOP) &&
                 global_name(s.var_name)) filled[s.var_name] = false;
             for (auto& n : s.destruct_vars()) if (global_name(n)) filled[n] = false;
+            // Handed to a FUNC, a SUB or a funcref, the array may get a number
+            // written into it there; only a builtin is known to leave it be.
+            std::function<void(const Expr*)> handed_on = [&](const Expr* e) {
+                if (!e) return;
+                if (e->kind == ExprKind::CALL) {
+                    std::string u = e->func_name;
+                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                    if (!builtin_sig(u))
+                        for (auto& a : e->args)
+                            if (a && a->kind == ExprKind::VARIABLE && global_name(a->str_val))
+                                filled[a->str_val] = false;
+                }
+                handed_on(e->left.get());
+                handed_on(e->right.get());
+                for (auto& a : e->args) handed_on(a.get());
+            };
+            handed_on(s.expr.get());
+            for (auto& e : s.print_exprs) handed_on(e.get());
+            for (auto& e : s.index_chain) handed_on(e.get());
+            handed_on(s.loop_cond.get());
+            handed_on(s.end_expr.get());
+            handed_on(s.step_expr.get());
+            for (auto& br : s.branches) {
+                handed_on(br.condition.get());
+                for (auto& cl : br.case_labels) { handed_on(cl.first.get()); handed_on(cl.second.get()); }
+            }
             for (auto& b : s.body) if (b) check(*b, locals);
             for (auto& br : s.branches) for (auto& b : br.body) if (b) check(*b, locals);
             for (auto& c : s.catch_body()) if (c) check(*c, locals);
@@ -5452,8 +5492,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 check(*ts, nullptr);
             }
         }
+        text_globals.clear();
         for (auto& [n, only_texts] : filled)
-            if (only_texts && !mixed_array_vars.count(n)) string_array_vars.insert(n);
+            if (only_texts && !mixed_array_vars.count(n)) {
+                string_array_vars.insert(n);
+                text_globals.insert(n);
+            }
     }
 
     // Second pass: compile all FUNC/SUB bodies
@@ -6333,6 +6377,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
                 string_array_vars.erase(n);
                 mixed_array_vars.erase(n);
             }
+            if (text_globals.count(n)) string_array_vars.erase(n);
         };
         for (auto& pn : stmt.params()) forget(pn.name);
         std::function<void(const Stmt&)> forget_dims = [&](const Stmt& s) {

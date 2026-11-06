@@ -641,6 +641,9 @@ private:
     // Top-level names DIMmed to a table (rows), marked before the FUNCs and
     // SUBs that read them are compiled.
     std::unordered_set<std::string> table_globals;
+    // Globals whose every write is a text (appended or into a cell), marked
+    // as string arrays before the FUNCs and SUBs are compiled.
+    std::unordered_set<std::string> text_globals;
     void codegen_for(const Stmt& stmt);
     void codegen_if(const Stmt& stmt);
     void codegen_do_loop(const Stmt& stmt);

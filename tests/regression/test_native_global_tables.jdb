@@ -83,4 +83,51 @@ Check(OwnBoard() = 18, "a FUNC local that shares the name of a global table")
 Check(ParamBoard([1, 2, 3]) = 20, "a parameter that shares the name of a global table")
 Check(LEN(board) = 6 ANDALSO LEN(board[0]) = 6, "the global table after the shadowing FUNCs")
 
+' --- a global array of texts, filled at the top level and in a SUB ---
+DIM tickets AS ARRAY = []
+FUNC NextTicket$(prefix$)
+    RETURN prefix$ + "001"
+ENDFUNC
+FUNC PickFirst() AS INTEGER
+    RETURN 0
+ENDFUNC
+SUB Issue(c AS INTEGER, prefix$)
+    tickets[c] = NextTicket$(prefix$)
+ENDSUB
+FUNC Called$() AS STRING
+    DIM who = -1
+    who = PickFirst()
+    RETURN "calls " + tickets[who]
+ENDFUNC
+FUNC Arrived$(c AS INTEGER) AS STRING
+    RETURN "arrives " + tickets[c]
+ENDFUNC
+DIM slot AS INTEGER
+FOR slot = 0 TO 1
+    tickets = APPEND(tickets, "")
+NEXT slot
+Issue(0, "N")
+Issue(1, "P")
+Check(Called$() = "calls N001", "a cell of a text global read by a computed index in a FUNC")
+Check(Arrived$(1) = "arrives P001", "a cell of a text global read by a parameter index")
+Check(FORMAT$("{}|{}", tickets[0], tickets[1]) = "N001|P001", "the text global at the top level")
+FUNC OwnTickets() AS INTEGER
+    DIM tickets = [4, 5]
+    RETURN tickets[0] + tickets[1]
+ENDFUNC
+Check(OwnTickets() = 9, "a FUNC local that shares the name of a text global")
+
+' A global handed to a SUB that writes a number into it is not a text global.
+DIM labels AS ARRAY = []
+labels = APPEND(labels, "a")
+labels = APPEND(labels, "b")
+SUB PutNumber(arr)
+    arr[1] = 5
+ENDSUB
+FUNC SecondLabel$() AS STRING
+    RETURN STR$(labels[1])
+ENDFUNC
+PutNumber(labels)
+Check(SecondLabel$() = "5", "a global handed to a SUB that writes a number")
+
 IF failed = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
