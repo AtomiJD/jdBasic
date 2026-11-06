@@ -10,7 +10,7 @@
 # So the default is the set that can actually carry a parity signal, and every
 # excluded file is counted in the summary rather than silently dropped.
 #
-#   parity.sh [-t SECONDS] [-j JOBS] [-o OUTFILE] [--all] [pattern]
+#   parity.sh [-t SECONDS] [-j JOBS] [-o OUTFILE] [--all] [--net] [pattern]
 #              [--update-baseline]
 #
 #   -j      tests run in parallel, 8 by default (-j 1 for a serial run); each
@@ -18,6 +18,13 @@
 #
 #   --all   include the excluded directories too (needs models, network, a TTY
 #           and a TUI-enabled build; expect reds that say nothing about parity)
+#
+#   --net   run only the tests that open the network (HTTP, NET, sockets).
+#           Each sweep compiles into a fresh folder, so every compiled program
+#           is new to the Windows firewall, which asks before it may listen;
+#           unattended the prompt stalls the sweep. The default run leaves
+#           these tests out and counts them; run --net with someone at the
+#           machine to answer the prompts.
 #
 # The run is compared per test against the platform's baseline
 # (tests/parity_baseline.tsv on Windows, parity_baseline.linux.tsv,
@@ -65,6 +72,7 @@ JOBS=8
 OUT=""
 PATTERN=""
 ALL=0
+NET=0
 UPDATE_BASELINE=0
 
 while [ $# -gt 0 ]; do
@@ -73,6 +81,7 @@ while [ $# -gt 0 ]; do
         -j) JOBS="$2"; shift 2 ;;
         -o) OUT="$2"; shift 2 ;;
         --all) ALL=1; shift ;;
+        --net) NET=1; shift ;;
         --update-baseline) UPDATE_BASELINE=1; shift ;;
         *)  PATTERN="$1"; shift ;;
     esac
@@ -84,6 +93,10 @@ done
 # Windows FORMS build and opens real windows, and gfx needs a GFX build and a
 # display for the same reason.
 EXCLUDE_DIRS='^tests/(rag|ai|http|tui|forms|gfx)/'
+# A test opens the network when its source calls one of these, or when it
+# lives under tests/net.
+NET_DIRS='^tests/net/'
+NET_CALLS='\b(HTTP\.(SERVER|GET|POST|PUT|DELETE|PATCH|HEAD|REQUEST|FETCH|DOWNLOAD)|NET\.[A-Z]|SOCKET\.|TCP\.|UDP\.|WS\.|WEBSOCKET)'
 
 # Every sweep works in a folder of its own: two sweeps at once (two sessions,
 # a farm gate) in one shared folder overwrite each other's exes and logs and
@@ -257,6 +270,25 @@ if [ "$ALL" -eq 0 ]; then
     LIST=$(printf '%s' "$LIST" | grep -vE "$EXCLUDE_DIRS" || true)
 fi
 
+# Split off the tests that open the network: left out by default, the only
+# ones run with --net. OUT_OF_SCOPE keeps their names for the baseline.
+NET_LIST=""
+REST_LIST=""
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if printf '%s\n' "$f" | grep -qE "$NET_DIRS" || grep -qiE "$NET_CALLS" "$f" 2>/dev/null; then
+        NET_LIST="$NET_LIST$f"$'\n'
+    else
+        REST_LIST="$REST_LIST$f"$'\n'
+    fi
+done <<< "$LIST"
+N_NET=$(printf '%s' "$NET_LIST" | grep -c . || true)
+if [ "$NET" -eq 1 ]; then
+    LIST="$NET_LIST"; OUT_OF_SCOPE="$REST_LIST"
+else
+    LIST="$REST_LIST"; OUT_OF_SCOPE="$NET_LIST"
+fi
+
 [ -n "$PATTERN" ] && LIST=$(printf '%s\n' "$LIST" | grep -- "$PATTERN")
 
 TOTAL=$(printf '%s\n' "$LIST" | grep -c .)
@@ -288,6 +320,12 @@ if [ "$ALL" -eq 0 ]; then
     printf '%-34s %d   (rag/ai/http/tui/forms/gfx - rerun with --all)\n' \
         "skipped: needs environment" "$N_ENV"
 fi
+if [ "$NET" -eq 1 ]; then
+    printf '%-34s %d   (--net: only the tests that open the network)\n' "network tests" "$N_NET"
+else
+    printf '%-34s %d   (open the network - rerun with --net while someone answers the firewall)\n' \
+        "skipped: network" "$N_NET"
+fi
 echo
 echo "=== SUMMARY ==="
 awk -F'\t' '{v[$4]++} END {for (k in v) printf "%-12s %d\n", k, v[k]}' "$RESULTS" | sort
@@ -313,7 +351,15 @@ esac
 rank() { case "$1" in OK|XFAIL|NONDET) echo 0 ;; LOOSE|UNSUPPORTED) echo 1 ;; NATIVE_ONLY) echo 2 ;; GAP|DIVERGE) echo 3 ;; *) echo 4 ;; esac; }
 
 if [ "$UPDATE_BASELINE" -eq 1 ]; then
-    cp "$RESULTS" "$BASELINE"
+    # The rows of the tests this run left out (network or not) stay as recorded.
+    {
+        cat "$RESULTS"
+        if [ -f "$BASELINE" ]; then
+            awk -F'\t' 'NR==FNR { if ($0 != "") keep[$0]=1; next } ($1 in keep)' \
+                <(printf '%s' "$OUT_OF_SCOPE") "$BASELINE"
+        fi
+    } | sort > "$WORK/baseline.new"
+    cp "$WORK/baseline.new" "$BASELINE"
     echo "baseline updated: $BASELINE"
 elif [ -f "$BASELINE" ] && [ -z "$PATTERN" ] && [ "$ALL" -eq 0 ]; then
     echo "=== VS BASELINE ==="
@@ -331,7 +377,8 @@ elif [ -f "$BASELINE" ] && [ -z "$PATTERN" ] && [ "$ALL" -eq 0 ]; then
             better=$((better+1)); printf '  FIXED     %-46s %s -> %s\n' "$rel" "$old" "$verdict"
         fi
     done < "$RESULTS"
-    gone=$(comm -23 <(cut -f1 "$BASELINE" | sort) <(cut -f1 "$RESULTS" | sort) | grep -c . || true)
+    gone=$(comm -23 <(cut -f1 "$BASELINE" | sort) \
+                    <({ cut -f1 "$RESULTS"; printf '%s' "$OUT_OF_SCOPE"; } | sort) | grep -c . || true)
     printf '  regressed %d, fixed %d, new %d, removed %d\n' "$worse" "$better" "$added" "$gone"
     [ "$worse" -eq 0 ] && echo "  no regression against the baseline"
 else

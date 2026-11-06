@@ -210,6 +210,19 @@ Exit 1 = at least one test got worse than the baseline; the `VS BASELINE`
 block names it. Exit 0 = no regression. Run it after touching `src/vm.cpp`, `src/vm_builtins_*.cpp`,
 `src/llvm_codegen.cpp`, `src/jdb_runtime.cpp` or `src/vm_bridge.cpp`.
 
+The default sweep leaves out the tests that open the network (HTTP, NET,
+sockets): every sweep compiles into a fresh folder, each exe is new to the
+Windows firewall, and its prompt stalls an unattended run. Run that part
+separately, only while Atomi is at the machine to answer the prompts:
+
+```bash
+./tests/parity.sh -t 12 --net
+```
+
+Never start a second sweep while one is still running, and do not build while
+one runs: a build removes `build/jdBasic.exe` for a moment and every test
+started in that window reads as red.
+
 Read the `SCOPE` block before drawing conclusions:
 
 - IMPORT helpers and the `rag`/`ai`/`http`/`tui` directories are skipped by
