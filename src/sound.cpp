@@ -225,14 +225,35 @@ struct Voice {
     jdsing::VoiceState sing;
     // MIDI input: the key and channel that started the voice, whether its
     // key is up, and whether the sustain pedal holds it
-    int midi_note = -1, midi_ch = 0;
+    int midi_note = -1, midi_ch = 0, midi_zone = -1;
     bool midi_released = false, midi_sustained = false;
+    // Cutoff factor from the key velocity, and the mod-wheel vibrato phase
+    float vel_cutoff = 1.0f;
+    float wheel_phase = 0.0f;
 };
 
 // ── Parameter modulation ────────────────────────────────────────
 
 enum ModParam { MP_CUTOFF, MP_RESONANCE, MP_GAIN, MP_PAN, MP_DETUNE, MP_FM,
-                MP_CRUSH, MP_REVERB, MP_DELAY, MP_FENV, MP_VOWEL, MP_PITCH, MP_COUNT };
+                MP_CRUSH, MP_REVERB, MP_DELAY, MP_FENV, MP_VOWEL, MP_PITCH,
+                MP_ATTACK, MP_DECAY, MP_SUSTAIN, MP_RELEASE, MP_LFORATE, MP_LFODEPTH, MP_COUNT };
+
+// The parameter names SOUND.MOD and SOUND.CCMAP take, or -1
+static int mod_param_from_name(std::string name) {
+    std::transform(name.begin(), name.end(), name.begin(), ::toupper);
+    static const std::pair<const char*, int> params[] = {
+        {"CUTOFF", MP_CUTOFF}, {"RESONANCE", MP_RESONANCE}, {"GAIN", MP_GAIN},
+        {"PAN", MP_PAN}, {"DETUNE", MP_DETUNE}, {"FM", MP_FM}, {"CRUSH", MP_CRUSH},
+        {"REVERB", MP_REVERB}, {"DELAY", MP_DELAY}, {"FENV", MP_FENV},
+        {"VOWEL", MP_VOWEL}, {"PITCH", MP_PITCH}, {"ATTACK", MP_ATTACK},
+        {"DECAY", MP_DECAY}, {"SUSTAIN", MP_SUSTAIN}, {"RELEASE", MP_RELEASE},
+        {"LFORATE", MP_LFORATE}, {"LFODEPTH", MP_LFODEPTH}};
+    for (auto& p : params) if (name == p.first) return p.second;
+    return -1;
+}
+static const char* MOD_PARAM_NAMES =
+    "CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV, VOWEL, PITCH, "
+    "ATTACK, DECAY, SUSTAIN, RELEASE, LFORATE, LFODEPTH";
 enum class ModShape { NONE, SINE, COSINE, SAW, ISAW, TRI, SQUARE, RAND, PERLIN };
 
 // A parameter moving between lo and hi, one period every `cycles` cycles.
@@ -316,8 +337,10 @@ struct TrackParams {
     bool glide_marked = false;
     float last_freq = 0.0f;
     float pitch_semis = 0.0f;
-    // Pitch bend from MIDI input, as a frequency factor
+    // Pitch bend from MIDI input, as a frequency factor; the mod wheel as
+    // vibrato depth in semitones and as a cutoff factor
     float bend_ratio = 1.0f;
+    float wheel_vib = 0.0f, wheel_cutoff = 1.0f;
     // A second oscillator per voice: its wave, interval, cents and level
     Waveform osc2_wave = Waveform::SAW;
     float osc2_ratio = 1.0f, osc2_mix = 0.0f;
@@ -400,6 +423,12 @@ static float* mod_target(TrackParams& tp, int param) {
         case MP_FENV:      return &tp.fenv_amount;
         case MP_VOWEL:     return &tp.formant_vowel;
         case MP_PITCH:     return &tp.pitch_semis;
+        case MP_ATTACK:    return &tp.attack;
+        case MP_DECAY:     return &tp.decay;
+        case MP_SUSTAIN:   return &tp.sustain;
+        case MP_RELEASE:   return &tp.release;
+        case MP_LFORATE:   return &tp.lfo_freq;
+        case MP_LFODEPTH:  return &tp.lfo_depth;
         default:           return nullptr;
     }
 }
@@ -857,15 +886,43 @@ static struct SoundSystem {
     // Producers (MIDI port threads, SOUND.MIDIIN) append under midi_mtx; the
     // audio thread only try-locks and swaps, so it never waits.
     struct MidiMsg { uint8_t st, d1, d2; int64_t ns; };
-    // A key range on one channel (0 = any) that plays a track, shifted by transpose
-    struct MidiZone { int track, lo, hi, channel, transpose; };
+    // A key range on one channel (0 = any) that plays a track, shifted by
+    // transpose, for velocities vel_lo..vel_hi. bend = semitones at full
+    // bend (0 ignores it); sustain = whether the pedal holds its keys.
+    // mono plays one voice, legato glides it instead of restarting.
+    // vel_cutoff / mod_cutoff = octaves the cutoff closes for a soft key /
+    // opens at full mod wheel; mod_vibrato = semitones at full mod wheel.
+    struct MidiZone {
+        int track = 0, lo = 0, hi = 127, channel = 0, transpose = 0;
+        int vel_lo = 1, vel_hi = 127;
+        float bend = 2.0f;
+        bool sustain = true, mono = false, legato = false;
+        float vel_cutoff = 0.0f, mod_cutoff = 0.0f, mod_vibrato = 0.0f;
+        // Mono: the keys held in order, the voice and the last velocity
+        std::vector<int> held;
+        int voice = -1, last_vel = 100;
+    };
+    // A controller driving a parameter: lo..hi along a straight or an
+    // exponential curve, smoothed; with pickup it waits until the knob
+    // passes the present value of the parameter.
+    struct CcMap {
+        int cc = 0, channel = 0, track = 0, param = 0;
+        float lo = 0.0f, hi = 1.0f;
+        bool expo = false, pickup = true, picked = false, moving = false;
+        float target = 0.0f, cur = 0.0f;
+        int last_cc = -1;
+    };
     std::mutex midi_mtx;
     std::vector<MidiMsg> midi_in, midi_take;
     std::vector<MidiZone> zones;
+    MidiZone all_keys;
+    std::vector<CcMap> ccmaps;
     bool sustain_on[16] = {};
-    float bend_range = 2.0f;
     bool device_mode = false;
     int64_t last_render_ns = 0;
+    // The last key played, for split-point learning
+    int last_note = -1, last_vel = 0, last_ch = 0;
+    int64_t note_count = 0;
     // Latency counters for SOUND.MIDISTATS: time in the queue, the offset
     // into the buffer, and the output latency, summed and maximal
     int64_t ms_events = 0;
@@ -879,9 +936,7 @@ static struct SoundSystem {
         if (midi_in.size() < 1024) midi_in.push_back(e);
     }
 
-    bool zone_plays(const MidiZone& z, int ch, int note) const {
-        return (z.channel == 0 || z.channel == ch) && note >= z.lo && note <= z.hi;
-    }
+    static bool zone_hears(const MidiZone& z, int ch) { return z.channel == 0 || z.channel == ch; }
 
     // Gate-off `off` frames into the current buffer, after a delayed onset
     static void gate_off_at(Voice& v, int64_t off) {
@@ -889,12 +944,35 @@ static struct SoundSystem {
         v.gate_frames = std::max<int64_t>(0, off - v.delay_frames);
     }
 
-    void midi_note_on(const MidiZone& z, int ch, int note, int vel, int64_t off) {
+    MidiZone* zone_of(const Voice& v) {
+        if (v.midi_zone == -2) return &all_keys;
+        if (v.midi_zone >= 0 && v.midi_zone < (int)zones.size()) return &zones[v.midi_zone];
+        return nullptr;
+    }
+
+    // Glides or jumps a sounding voice to another key
+    void retune(Voice& v, int note, const MidiZone& z) {
+        auto& tp = tracks[z.track];
+        float freq = midi_to_freq(std::clamp(note + z.transpose, 0, 127));
+        if (tp.glide_time > 0.0f) {
+            float from = v.glide_left > 0 ? v.glide_cur : v.frequency;
+            v.glide_left = std::max<int64_t>(1, (int64_t)(tp.glide_time * SAMPLE_RATE));
+            v.glide_cur = from;
+            v.glide_ratio = std::pow(freq / from, 1.0f / (float)v.glide_left);
+        } else {
+            v.glide_left = 0;
+        }
+        v.frequency = freq;
+        tp.last_freq = freq;
+        v.midi_note = note;
+    }
+
+    int start_midi_voice(MidiZone& z, int zi, int ch, int note, int vel, int64_t off) {
         int n = note + z.transpose;
-        if (n < 0 || n > 127) return;
+        if (n < 0 || n > 127) return -1;
         auto& tp = tracks[z.track];
         int vi = allocate_voice(z.track);
-        if (vi < 0) { dbg_alloc_fail++; return; }
+        if (vi < 0) { dbg_alloc_fail++; return -1; }
         auto& v = voices[vi];
         float freq = midi_to_freq(n);
         v.frequency = freq;
@@ -911,36 +989,139 @@ static struct SoundSystem {
             v.sample_pos = 0;
         }
         v.gain = vel / 127.0f;
+        v.vel_cutoff = std::exp2(z.vel_cutoff * (vel / 127.0f - 1.0f));
         v.delay_frames = off;
         v.midi_note = note;
         v.midi_ch = ch;
+        v.midi_zone = zi;
+        return vi;
+    }
+
+    bool mono_voice_live(const MidiZone& z) const {
+        if (z.voice < 0) return false;
+        const auto& v = voices[z.voice];
+        return v.track == z.track && v.midi_note >= 0 && !v.midi_released && v.env.state != EnvState::OFF;
+    }
+
+    void zone_note_on(MidiZone& z, int zi, int ch, int note, int vel, int64_t off) {
+        if (vel < z.vel_lo || vel > z.vel_hi) return;
+        if (!z.mono) { start_midi_voice(z, zi, ch, note, vel, off); return; }
+        z.held.erase(std::remove(z.held.begin(), z.held.end(), note), z.held.end());
+        z.held.push_back(note);
+        z.last_vel = vel;
+        if (mono_voice_live(z)) {
+            auto& v = voices[z.voice];
+            if (z.legato) { retune(v, note, z); v.midi_ch = ch; return; }
+            v.midi_released = true;
+            gate_off_at(v, off);
+        }
+        z.voice = start_midi_voice(z, zi, ch, note, vel, off);
+    }
+
+    // A key up in a mono zone falls back to the last key still held
+    void zone_note_off(MidiZone& z, int zi, int ch, int note, int64_t off) {
+        z.held.erase(std::remove(z.held.begin(), z.held.end(), note), z.held.end());
+        if (!mono_voice_live(z) || voices[z.voice].midi_note != note || z.held.empty()) return;
+        if (sustain_on[ch - 1] && z.sustain) return;
+        int back = z.held.back();
+        auto& v = voices[z.voice];
+        if (z.legato) { retune(v, back, z); return; }
+        v.midi_released = true;
+        gate_off_at(v, off);
+        z.voice = start_midi_voice(z, zi, ch, back, z.last_vel, off);
+    }
+
+    // The present value of a mapped parameter on the 0..1 scale of the knob
+    float cc_position(const CcMap& m) {
+        float* dst = mod_target(tracks[m.track], m.param);
+        float v = dst ? *dst : m.lo;
+        if (m.expo) return (float)(std::log(std::max(v, 1e-6f) / m.lo) / std::log(m.hi / m.lo));
+        return (m.hi != m.lo) ? (v - m.lo) / (m.hi - m.lo) : 0.0f;
+    }
+
+    void cc_event(int ch, int cc, int val) {
+        float x = val / 127.0f;
+        for (auto& m : ccmaps) {
+            if (m.cc != cc || (m.channel != 0 && m.channel != ch)) continue;
+            if (m.pickup && !m.picked) {
+                float p = std::clamp(cc_position(m), 0.0f, 1.0f);
+                float lastx = m.last_cc / 127.0f;
+                if (std::abs(x - p) <= 1.5f / 127.0f || (m.last_cc >= 0 && (lastx - p) * (x - p) <= 0.0f))
+                    m.picked = true;
+                m.last_cc = val;
+                if (!m.picked) continue;
+            }
+            m.target = m.expo ? m.lo * std::pow(m.hi / m.lo, x) : m.lo + (m.hi - m.lo) * x;
+            if (!m.moving) {
+                float* dst = mod_target(tracks[m.track], m.param);
+                m.cur = dst ? *dst : m.target;
+                m.moving = true;
+            }
+        }
+    }
+
+    // Moves the mapped parameters towards their targets, about 10 ms to settle
+    void apply_ccmaps(int frames) {
+        float k = 1.0f - std::exp(-(float)frames / (0.01f * SAMPLE_RATE));
+        for (auto& m : ccmaps) {
+            if (!m.moving) continue;
+            float* dst = mod_target(tracks[m.track], m.param);
+            if (!dst) { m.moving = false; continue; }
+            m.cur += (m.target - m.cur) * k;
+            if (std::abs(m.target - m.cur) <= 1e-4f * std::max(1.0f, std::abs(m.target))) {
+                m.cur = m.target;
+                m.moving = false;
+            }
+            *dst = m.cur;
+        }
+    }
+
+    template <typename F> void each_zone(int ch, F f) {
+        if (zones.empty()) { if (zone_hears(all_keys, ch)) f(all_keys, -2); return; }
+        for (int i = 0; i < (int)zones.size(); i++)
+            if (zone_hears(zones[i], ch)) f(zones[i], i);
     }
 
     void midi_event(const MidiMsg& e, int64_t off) {
         int kind = e.st >> 4, ch = (e.st & 15) + 1;
+        int note = e.d1;
         if (kind == 9 && e.d2 > 0) {
-            if (zones.empty()) midi_note_on(MidiZone{0, 0, 127, 0, 0}, ch, e.d1, e.d2, off);
-            for (const auto& z : zones)
-                if (zone_plays(z, ch, e.d1)) midi_note_on(z, ch, e.d1, e.d2, off);
+            last_note = note; last_vel = e.d2; last_ch = ch; note_count++;
+            each_zone(ch, [&](MidiZone& z, int zi) {
+                if (note >= z.lo && note <= z.hi) zone_note_on(z, zi, ch, note, e.d2, off);
+            });
         } else if (kind == 8 || kind == 9) {
+            each_zone(ch, [&](MidiZone& z, int zi) {
+                if (z.mono && note >= z.lo && note <= z.hi) zone_note_off(z, zi, ch, note, off);
+            });
             for (auto& v : voices) {
-                if (v.midi_note != e.d1 || v.midi_ch != ch || v.midi_released) continue;
+                if (v.midi_note != note || v.midi_ch != ch || v.midi_released) continue;
                 if (v.env.state == EnvState::OFF) continue;
+                MidiZone* z = zone_of(v);
+                if (z && z->mono && !z->held.empty()) continue;
                 v.midi_released = true;
-                if (sustain_on[ch - 1]) v.midi_sustained = true;
+                if (sustain_on[ch - 1] && (!z || z->sustain)) v.midi_sustained = true;
                 else gate_off_at(v, off);
             }
         } else if (kind == 11 && e.d1 == 64) {
             sustain_on[ch - 1] = e.d2 >= 64;
-            if (!sustain_on[ch - 1])
+            if (!sustain_on[ch - 1]) {
                 for (auto& v : voices)
                     if (v.midi_sustained && v.midi_ch == ch) {
                         v.midi_sustained = false;
                         if (v.env.state != EnvState::OFF) gate_off_at(v, off);
                     }
+                each_zone(ch, [&](MidiZone& z, int) {
+                    if (z.mono && z.held.empty() && mono_voice_live(z)) {
+                        voices[z.voice].midi_released = true;
+                        gate_off_at(voices[z.voice], off);
+                    }
+                });
+            }
         } else if (kind == 11 && (e.d1 == 120 || e.d1 == 123)) {
             // All sound off (120) cuts at once, all notes off (123) releases
             sustain_on[ch - 1] = false;
+            each_zone(ch, [&](MidiZone& z, int) { z.held.clear(); });
             for (auto& v : voices) {
                 if (v.midi_ch != ch || v.env.state == EnvState::OFF) continue;
                 v.midi_released = true;
@@ -948,12 +1129,21 @@ static struct SoundSystem {
                 if (e.d1 == 120) v.env.state = EnvState::OFF;
                 else gate_off_at(v, off);
             }
+        } else if (kind == 11) {
+            if (e.d1 == 1) {
+                float w = e.d2 / 127.0f;
+                each_zone(ch, [&](MidiZone& z, int) {
+                    auto& tp = tracks[z.track];
+                    tp.wheel_vib = z.mod_vibrato * w;
+                    tp.wheel_cutoff = std::exp2(z.mod_cutoff * w);
+                });
+            }
+            cc_event(ch, e.d1, e.d2);
         } else if (kind == 14) {
-            float semis = (float)(((e.d2 << 7) | e.d1) - 8192) / 8192.0f * bend_range;
-            float ratio = std::exp2(semis / 12.0f);
-            if (zones.empty()) tracks[0].bend_ratio = ratio;
-            for (const auto& z : zones)
-                if (z.channel == 0 || z.channel == ch) tracks[z.track].bend_ratio = ratio;
+            float amount = (float)(((e.d2 << 7) | e.d1) - 8192) / 8192.0f;
+            each_zone(ch, [&](MidiZone& z, int) {
+                if (z.bend != 0.0f) tracks[z.track].bend_ratio = std::exp2(amount * z.bend / 12.0f);
+            });
         }
     }
 
@@ -1119,6 +1309,11 @@ static struct SoundSystem {
         }
         if (tp.pitch_semis != 0.0f) freq *= std::exp2(tp.pitch_semis / 12.0f);
         freq *= tp.bend_ratio;
+        if (tp.wheel_vib > 0.0f) {
+            freq *= std::exp2(std::sin(v.wheel_phase * 2.0f * (float)M_PI) * tp.wheel_vib / 12.0f);
+            v.wheel_phase += 5.5f * dt;
+            if (v.wheel_phase >= 1.0f) v.wheel_phase -= 1.0f;
+        }
 
         // LFO
         if (tp.lfo_freq > 0 && tp.lfo_depth > 0) {
@@ -1238,7 +1433,7 @@ static struct SoundSystem {
             fe = v.fenv.process(dt);
         }
         if (tp.filter_mode != 0 || tp.filter_cutoff < 19999.0f || tp.fenv_amount != 0.0f) {
-            float fc = tp.filter_cutoff;
+            float fc = tp.filter_cutoff * tp.wheel_cutoff * v.vel_cutoff;
             if (fe != 0.0f) fc *= std::exp2(tp.fenv_amount * fe);
             fc = std::clamp(fc, 10.0f, 0.45f * SAMPLE_RATE);
             if (tp.filter_mode == 0) {
@@ -1713,7 +1908,10 @@ static struct SoundSystem {
             float ins_l[NUM_TRACKS] = {}, ins_r[NUM_TRACKS] = {};
 
             // Synth voices
-            if ((f & 31) == 0) sys->apply_mods(t0 + f * phase_inc);
+            if ((f & 31) == 0) {
+                sys->apply_mods(t0 + f * phase_inc);
+                if (!sys->ccmaps.empty()) sys->apply_ccmaps(32);
+            }
             for (int i = 0; i < MAX_VOICES; i++) {
                 auto& v = sys->voices[i];
                 if (v.env.state == EnvState::OFF || v.track < 0) continue;
@@ -2167,6 +2365,9 @@ void register_sound_builtins(VM& vm) {
 
         // Effect buffers - needed in both device and pull mode.
         g_sound.buses[0].prepare(0.3f);
+        g_sound.all_keys.held.reserve(128);
+        g_sound.midi_in.reserve(1024);
+        g_sound.midi_take.reserve(1024);
         g_sound.wave_buffer.resize(1024, 0.0f);
         g_sound.reverb_bus_wave.resize(1024, 0.0f);
         g_sound.delay_bus_wave.resize(1024, 0.0f);
@@ -2523,26 +2724,100 @@ void register_sound_builtins(VM& vm) {
 
     // ── MIDI input: zones, raw messages, latency ────────────────
 
-    // SOUND.ZONE track [, lo, hi [, channel [, transpose]]] -> zone count.
+    // SOUND.ZONE track [, lo, hi [, channel [, transpose [, options]]]] -> zone count.
     // SOUND.ZONE -1 clears every zone; without zones all keys play track 0.
-    vm.register_native("SOUND.ZONE", 1, 5, [](const std::vector<Value>& args) -> Value {
+    vm.register_native("SOUND.ZONE", 1, 6, [](const std::vector<Value>& args) -> Value {
         int t = (int)args[0].to_int();
-        int lo = args.size() > 1 ? (int)args[1].to_int() : 0;
-        int hi = args.size() > 2 ? (int)args[2].to_int() : 127;
-        int ch = args.size() > 3 ? (int)args[3].to_int() : 0;
-        int tr = args.size() > 4 ? (int)args[4].to_int() : 0;
         if (t >= NUM_TRACKS || t < -1)
             throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: track is 0-" + std::to_string(NUM_TRACKS - 1) + " or -1");
-        if (ch < 0 || ch > 16)
+        SoundSystem::MidiZone z;
+        z.track = std::max(0, t);
+        if (args.size() > 1) z.lo = std::max(0, (int)args[1].to_int());
+        if (args.size() > 2) z.hi = std::min(127, (int)args[2].to_int());
+        if (args.size() > 3) z.channel = (int)args[3].to_int();
+        if (args.size() > 4) z.transpose = (int)args[4].to_int();
+        if (z.channel < 0 || z.channel > 16)
             throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: channel is 1-16, or 0 for any");
+        if (args.size() > 5 && args[5].type == ValueType::OBJECT) {
+            for (auto& kv : args[5].as_object()->fields) {
+                std::string k = kv.first;
+                std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+                const Value& v = kv.second;
+                if (k == "vel_lo") z.vel_lo = (int)v.to_int();
+                else if (k == "vel_hi") z.vel_hi = (int)v.to_int();
+                else if (k == "bend") z.bend = (float)v.to_double();
+                else if (k == "sustain") z.sustain = v.to_bool();
+                else if (k == "mono") z.mono = v.to_bool();
+                else if (k == "legato") { z.legato = v.to_bool(); if (z.legato) z.mono = true; }
+                else if (k == "vel_cutoff") z.vel_cutoff = (float)v.to_double();
+                else if (k == "mod_cutoff") z.mod_cutoff = (float)v.to_double();
+                else if (k == "mod_vibrato") z.mod_vibrato = (float)v.to_double();
+                else throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: unknown option " + kv.first +
+                    " (vel_lo, vel_hi, bend, sustain, mono, legato, vel_cutoff, mod_cutoff, mod_vibrato)");
+            }
+        }
+        z.held.reserve(128);
         if (g_sound.initialized) SND_LOCK();
         if (t < 0) {
             g_sound.zones.clear();
-            for (auto& tp : g_sound.tracks) tp.bend_ratio = 1.0f;
+            for (auto& tp : g_sound.tracks) { tp.bend_ratio = 1.0f; tp.wheel_vib = 0.0f; tp.wheel_cutoff = 1.0f; }
         } else {
-            g_sound.zones.push_back({t, std::max(0, lo), std::min(127, hi), ch, tr});
+            g_sound.zones.push_back(std::move(z));
         }
         int n = (int)g_sound.zones.size();
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_i64(n);
+    });
+
+    // SOUND.LASTNOTE() -> {note, velocity, channel, count}: the last key
+    // played through MIDI input (note -1 before the first), and how many so far
+    vm.register_native("SOUND.LASTNOTE", 0, 0, [](const std::vector<Value>&) -> Value {
+        if (g_sound.initialized) SND_LOCK();
+        Value m = Value::make_object();
+        auto* o = m.as_object();
+        o->set("note", Value::make_i64(g_sound.last_note));
+        o->set("velocity", Value::make_i64(g_sound.last_vel));
+        o->set("channel", Value::make_i64(g_sound.last_ch));
+        o->set("count", Value::make_i64(g_sound.note_count));
+        if (g_sound.initialized) SND_UNLOCK();
+        return m;
+    });
+
+    // SOUND.CCMAP cc, track, param$, lo, hi [, curve$ [, channel [, pickup]]] -> map count.
+    // SOUND.CCMAP -1 clears every mapping.
+    vm.register_native("SOUND.CCMAP", 1, 8, [](const std::vector<Value>& args) -> Value {
+        int cc = (int)args[0].to_int();
+        SoundSystem::CcMap m;
+        if (cc >= 0) {
+            if (cc > 127) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.CCMAP: cc is 0-127, or -1 to clear");
+            if (args.size() < 5) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.CCMAP: cc, track, param$, lo, hi");
+            m.cc = cc;
+            m.track = (int)args[1].to_int();
+            if (m.track < 0 || m.track >= NUM_TRACKS)
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.CCMAP: track is 0-" + std::to_string(NUM_TRACKS - 1));
+            m.param = mod_param_from_name(args[2].to_string());
+            if (m.param < 0)
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.CCMAP: unknown parameter " + args[2].to_string() +
+                    " (" + std::string(MOD_PARAM_NAMES) + ")");
+            m.lo = (float)args[3].to_double();
+            m.hi = (float)args[4].to_double();
+            if (args.size() > 5) {
+                std::string c = args[5].to_string();
+                std::transform(c.begin(), c.end(), c.begin(), ::toupper);
+                if (c == "EXP") m.expo = true;
+                else if (c != "LIN") throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.CCMAP: curve is LIN or EXP, not " + c);
+            }
+            if (m.expo && (m.lo <= 0.0f || m.hi <= 0.0f))
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.CCMAP: an EXP curve needs lo and hi above 0");
+            if (args.size() > 6) m.channel = (int)args[6].to_int();
+            if (m.channel < 0 || m.channel > 16)
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.CCMAP: channel is 1-16, or 0 for any");
+            if (args.size() > 7) m.pickup = args[7].to_bool();
+        }
+        if (g_sound.initialized) SND_LOCK();
+        if (cc < 0) g_sound.ccmaps.clear();
+        else g_sound.ccmaps.push_back(m);
+        int n = (int)g_sound.ccmaps.size();
         if (g_sound.initialized) SND_UNLOCK();
         return Value::make_i64(n);
     });
@@ -2823,20 +3098,14 @@ void register_sound_builtins(VM& vm) {
         std::string pn = args[1].to_string(), sn = args[2].to_string();
         std::transform(pn.begin(), pn.end(), pn.begin(), ::toupper);
         std::transform(sn.begin(), sn.end(), sn.begin(), ::toupper);
-        static const std::pair<const char*, int> params[] = {
-            {"CUTOFF", MP_CUTOFF}, {"RESONANCE", MP_RESONANCE}, {"GAIN", MP_GAIN},
-            {"PAN", MP_PAN}, {"DETUNE", MP_DETUNE}, {"FM", MP_FM}, {"CRUSH", MP_CRUSH},
-            {"REVERB", MP_REVERB}, {"DELAY", MP_DELAY}, {"FENV", MP_FENV},
-            {"VOWEL", MP_VOWEL}, {"PITCH", MP_PITCH}};
         static const std::pair<const char*, ModShape> shapes[] = {
             {"OFF", ModShape::NONE}, {"SINE", ModShape::SINE}, {"COSINE", ModShape::COSINE},
             {"SAW", ModShape::SAW}, {"ISAW", ModShape::ISAW}, {"TRI", ModShape::TRI},
             {"SQUARE", ModShape::SQUARE}, {"RAND", ModShape::RAND}, {"PERLIN", ModShape::PERLIN}};
-        int param = -1;
-        for (auto& p : params) if (pn == p.first) param = p.second;
+        int param = mod_param_from_name(pn);
         if (param < 0)
             throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MOD: unknown parameter " + pn +
-                " (CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV)");
+                " (" + std::string(MOD_PARAM_NAMES) + ")");
         int shape = -1;
         for (auto& s : shapes) if (sn == s.first) shape = (int)s.second;
         if (shape < 0)
@@ -3279,6 +3548,10 @@ void register_sound_builtins(VM& vm) {
         for (auto& v : g_sound.voices) v.env.state = EnvState::OFF;
         for (auto& ch : g_sound.sfx_channels) ch.active = false;
         g_sound.zones.clear();
+        g_sound.ccmaps.clear();
+        g_sound.all_keys.held.clear();
+        g_sound.all_keys.voice = -1;
+        g_sound.last_note = -1; g_sound.last_vel = 0; g_sound.last_ch = 0; g_sound.note_count = 0;
         for (bool& s : g_sound.sustain_on) s = false;
         {
             std::lock_guard<std::mutex> lk(g_sound.midi_mtx);

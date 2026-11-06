@@ -3705,7 +3705,7 @@ These effects apply to one track, numbered 0 to 15.
 * **`SOUND.FILTER track, cutoff_hz, [resonance], [mode$]`**: Filters the track. With two arguments it is a gentle one-pole low-pass. A `resonance` (0.0-1.0, near 1.0 it rings) or a `mode$` selects the resonant state-variable filter: `"LP"` low-pass, `"HP"` high-pass, `"BP"` band-pass; `"LP1"` returns to the one-pole low-pass.
 * **`SOUND.FENV track, octaves, attack, decay, [sustain], [release]`**: Filter envelope. Every note opens the cutoff by up to `octaves` and closes it again, the classic acid and pluck sound. Times in seconds; `sustain` (0.0-1.0) defaults to 0 and `release` to 0.1.
 * **`SOUND.MOD track, param$, shape$, [lo], [hi], [cycles], [offset]`**: Moves a track parameter continuously between `lo` and `hi` (default 0 and 1), one period every `cycles` sequencer cycles (default 1), so a sweep stays locked to the bar. `offset` shifts the start in periods.
-  * `param$`: `"CUTOFF"`, `"RESONANCE"`, `"GAIN"`, `"PAN"`, `"DETUNE"` (unison), `"FM"` (amount), `"CRUSH"` (bits), `"REVERB"` and `"DELAY"` (sends), `"FENV"` (octaves), `"VOWEL"` (0 a to 4 u, with `SOUND.FORMANT`), `"PITCH"` (semitones, for risers and drops).
+  * `param$`: `"CUTOFF"`, `"RESONANCE"`, `"GAIN"`, `"PAN"`, `"DETUNE"` (unison), `"FM"` (amount), `"CRUSH"` (bits), `"REVERB"` and `"DELAY"` (sends), `"FENV"` (octaves), `"VOWEL"` (0 a to 4 u, with `SOUND.FORMANT`), `"PITCH"` (semitones, for risers and drops), `"ATTACK"`, `"DECAY"`, `"SUSTAIN"`, `"RELEASE"` (the envelope of the notes that start next), `"LFORATE"` and `"LFODEPTH"` (Hz, `SOUND.LFO`).
   * `shape$`: `"SINE"`, `"COSINE"`, `"SAW"` (rising), `"ISAW"` (falling), `"TRI"`, `"SQUARE"`, `"RAND"` (a new random value each period), `"PERLIN"` (smooth random). `"OFF"` stops the modulation and restores the value it started from.
   * *Example*: `SOUND.MOD 1, "CUTOFF", "SINE", 300, 3000, 8` sweeps the filter of track 1 open and closed over eight bars.
 * **`SOUND.AT [cycle]`**: Queues the track and mix commands that follow for sequencer cycle `cycle` instead of applying them now. The mixer applies them on the frame the clock reaches that cycle, so a section change lands exactly on its bar whatever the program is doing at the time, and a whole arrangement can be sent before the first note. `SOUND.AT` with no argument, or a negative cycle, applies commands at once again; a cycle the clock has already reached applies them at once too. Commands for the same cycle apply in the order they were sent. Queued are `SOUND.SEQ`, `SOUND.NOTE`, `SOUND.VOICE`, `SOUND.BPM`, `SOUND.GAIN`, `SOUND.PAN`, `SOUND.FILTER`, `SOUND.FENV`, `SOUND.MOD`, `SOUND.EQ`, `SOUND.LFO`, `SOUND.FM`, `SOUND.UNISON`, `SOUND.BITCRUSH`, `SOUND.RINGMOD`, `SOUND.REVERBSEND`, `SOUND.DELAYSEND`, `SOUND.SIDECHAIN`, `SOUND.SCALE`, `SOUND.DELAY`, `SOUND.REVERB`, `SOUND.NUDGE`, `SOUND.ORBIT`, `SOUND.COMPRESSOR`, `SOUND.DISTORTION`, `SOUND.MASTER`, `SOUND.FORMANT`, `SOUND.GLIDE`, `SOUND.CHORUS`, `SOUND.WIDTH`, `SOUND.OSC2` and `SOUND.SING`; a pattern is checked when it is sent, so a mistake fails at the call. `SOUND.RESET` empties the queue and ends `SOUND.AT`.
@@ -3949,7 +3949,7 @@ real-time-safe.
 | `MIDI.NOTEOFF(handle, channel, note)` -> bool | Note Off. |
 | `MIDI.CC(handle, channel, cc, value)` -> bool | Control Change. |
 | `MIDI.POLL(handle)` -> `[[status, d1, d2], ...]` | Drain incoming events (up to 4096 are kept per port). |
-| `MIDI.ROUTE(handle, [on])` -> bool | An input port plays the synth directly: every message goes to the audio thread as it arrives, without the script loop in between. `MIDI.POLL` still sees the messages. `on` = FALSE stops it. Needs a sound build. |
+| `MIDI.ROUTE(handle, [on])` -> bool | An input port plays the synth directly: every message goes to the audio thread as it arrives, without the script loop in between. `MIDI.POLL` still sees the messages. `on` is TRUE (default), FALSE or `"CC"`: then only controllers pass, for a port whose pads must not play notes. Needs a sound build. |
 | `MIDI.CLOSE(handle)` | Close a port. |
 
 #### Playing the synth from MIDI
@@ -3958,12 +3958,15 @@ real-time-safe.
 
 - Note on starts a voice on every zone that holds the key, at the key's velocity (gain = velocity / 127). Note off releases only the voices of that key and channel.
 - The sustain pedal (CC 64) holds released keys until it goes up. CC 120 cuts every voice of the channel, CC 123 releases them.
-- Pitch bend moves every track of the channel's zones by up to 2 semitones.
+- Pitch bend moves every track of the channel's zones, by 2 semitones at full bend unless the zone sets `bend`.
+- The mod wheel (CC 1) drives the `mod_vibrato` and `mod_cutoff` of the zones. Every other controller goes to `SOUND.CCMAP`.
 - With the audio device open, a message lands as far into the buffer as it arrived into the last callback period. Every key then waits the same time instead of anywhere between zero and one buffer.
 
 | Function | Description |
 |---|---|
-| `SOUND.ZONE(track, [lo], [hi], [channel], [transpose])` -> zone count | Keys `lo`..`hi` (default 0..127) on `channel` (1-16, default 0 = any) play `track`, shifted by `transpose` semitones. Overlapping zones layer. `SOUND.ZONE(-1)` clears every zone. Without zones every key plays track 0. |
+| `SOUND.ZONE(track, [lo], [hi], [channel], [transpose], [options])` -> zone count | Keys `lo`..`hi` (default 0..127) on `channel` (1-16, default 0 = any) play `track`, shifted by `transpose` semitones. Overlapping zones layer. `SOUND.ZONE(-1)` clears every zone. Without zones every key plays track 0. `options` is a map, see below. |
+| `SOUND.LASTNOTE()` -> map | The last key played through MIDI input: `note` (-1 before the first), `velocity`, `channel`, and `count`, the number of keys so far. Waiting for `count` to grow and then reading `note` learns a split point. |
+| `SOUND.CCMAP(cc, track, param$, lo, hi, [curve$], [channel], [pickup])` -> mapping count | Controller `cc` on `channel` (default 0 = any) sets `param$` of `track` between `lo` (at 0) and `hi` (at 127), `curve$` `"LIN"` (default) or `"EXP"` (equal steps per octave, for cutoff and times; `lo` and `hi` above 0). The value glides there in about 10 ms, so a knob turn does not crackle. With `pickup` (default TRUE) a controller only takes over once it passes the present value, so a fader that is not where the sound is does not make it jump. `param$` takes the names of `SOUND.MOD`. `SOUND.CCMAP(-1)` clears every mapping. |
 | `SOUND.MIDIIN(status, [data1], [data2])` | Play one raw MIDI message on the synth, the same way a routed port does. |
 | `SOUND.MIDISTATS()` -> map | Latency since the last call, in ms: `events`, `wait_ms` / `wait_max_ms` (arrival until the audio thread took it), `offset_ms` / `offset_max_ms` (into the buffer), `output_ms` (stream plus device), `total_ms` / `total_max_ms` (key to speaker). |
 
@@ -3975,6 +3978,29 @@ SOUND.ZONE 0, 0, 59, 0, -12        ' left hand: bass, an octave down
 SOUND.ZONE 1, 60, 127              ' right hand: lead
 DIM h = MIDI.OPEN_IN(0)
 MIDI.ROUTE(h)
+```
+
+The `options` of `SOUND.ZONE`, all optional:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `vel_lo`, `vel_hi` | 1, 127 | The zone plays only keys struck within this velocity range (velocity split). |
+| `bend` | 2 | Semitones at full pitch bend; 0 ignores the wheel. |
+| `sustain` | TRUE | Whether the sustain pedal holds the keys of the zone. |
+| `mono` | FALSE | One voice: a new key takes over, and letting go returns to the last key still held. |
+| `legato` | FALSE | Mono without restarting the envelope: the voice moves to the new key, gliding over `SOUND.GLIDE` time. |
+| `vel_cutoff` | 0 | Octaves the filter cutoff closes for the softest key compared with a full one. Needs `SOUND.FILTER` on the track. |
+| `mod_cutoff` | 0 | Octaves the cutoff opens at full mod wheel (negative closes it). |
+| `mod_vibrato` | 0 | Vibrato depth in semitones at full mod wheel, at 5.5 Hz. |
+
+```basic
+SOUND.FILTER 1, 1200, 0.3, "LP"
+SOUND.ZONE 0, 0, 47, 0, -12, {"mono": TRUE, "legato": TRUE}     ' mono bass
+SOUND.ZONE 1, 48, 127, 0, 0, {"vel_cutoff": 2, "mod_vibrato": 0.5}
+SOUND.CCMAP 22, 1, "CUTOFF", 200, 8000, "EXP"                   ' knob 1
+SOUND.CCMAP 23, 1, "RESONANCE", 0, 0.9                          ' knob 2
+DIM pads = MIDI.OPEN_IN(1)
+MIDI.ROUTE(pads, "CC")                                          ' knobs only
 ```
 
 ### Live monitor (`MINIAUDIO` flag)

@@ -209,6 +209,203 @@ CATCH
 ENDTRY
 CHECK "channel 17 is refused", INSTR(err_msg, "channel") >= 0, "msg=" + err_msg
 
+' ---------- zone options ----------
+FRESH()
+lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"vel_hi": 64})
+lvl = SOUND.ZONE(1, 0, 127, 0, 0, {"vel_lo": 65})
+DIM lv = SOUND.LEVELS()
+SOUND.MIDIIN 144, 60, 40
+lvl = LEVEL(4000)
+lv = SOUND.LEVELS()
+SOUND.MIDIIN 128, 60, 0
+lvl = LEVEL(4000)
+CHECK "a soft key plays the soft zone only", lv[0] > 0.1 ANDALSO lv[1] = 0, "levels=" + STR$(lv[0]) + "," + STR$(lv[1])
+lv = SOUND.LEVELS()
+SOUND.MIDIIN 144, 60, 120
+lvl = LEVEL(4000)
+lv = SOUND.LEVELS()
+SOUND.MIDIIN 128, 60, 0
+CHECK "a hard key plays the hard zone only", lv[0] = 0 ANDALSO lv[1] > 0.1, "levels=" + STR$(lv[0]) + "," + STR$(lv[1])
+
+FRESH()
+lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"bend": 0})
+SOUND.MIDIIN 144, 69, 127
+SOUND.MIDIIN 224, 127, 127
+buf = SOUND.RENDER(44100)
+zc0 = CROSSINGS(buf, 0, 44100)
+CHECK "bend 0 ignores the wheel", ABS(zc0 - 440) <= 2, "crossings=" + STR$(zc0)
+SOUND.MIDIIN 128, 69, 0
+lvl = SOUND.ZONE(-1)
+lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"bend": 12})
+SOUND.MIDIIN 144, 69, 127
+SOUND.MIDIIN 224, 127, 127
+buf = SOUND.RENDER(44100)
+zc0 = CROSSINGS(buf, 0, 44100)
+CHECK "bend 12 bends an octave", ABS(zc0 - 880) <= 3, "crossings=" + STR$(zc0)
+SOUND.MIDIIN 224, 0, 64
+SOUND.MIDIIN 128, 69, 0
+
+FRESH()
+lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"sustain": FALSE})
+SOUND.MIDIIN 176, 64, 127
+SOUND.MIDIIN 144, 60, 127
+lvl = LEVEL(2000)
+SOUND.MIDIIN 128, 60, 0
+CHECK "a zone without sustain ignores the pedal", LEVEL(4000) < 0.001, ""
+SOUND.MIDIIN 176, 64, 0
+
+' ---------- mono and legato ----------
+FRESH()
+lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"mono": TRUE})
+SOUND.MIDIIN 144, 69, 127
+SOUND.MIDIIN 144, 81, 127
+buf = SOUND.RENDER(44100)
+zc0 = CROSSINGS(buf, 0, 44100)
+CHECK "mono plays only the newest key", ABS(zc0 - 880) <= 3, "crossings=" + STR$(zc0)
+SOUND.MIDIIN 128, 81, 0
+buf = SOUND.RENDER(44100)
+zc0 = CROSSINGS(buf, 0, 44100)
+CHECK "mono falls back to the key still held", ABS(zc0 - 440) <= 3, "crossings=" + STR$(zc0)
+SOUND.MIDIIN 128, 69, 0
+CHECK "mono is silent with no key held", LEVEL(4000) < 0.001, ""
+
+FRESH()
+SOUND.VOICE 0, "SINE", 0.3, 0.01, 1.0, 0.005
+lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"mono": TRUE})
+SOUND.MIDIIN 144, 69, 127
+lvl = LEVEL(30000)
+SOUND.MIDIIN 144, 81, 127
+buf = SOUND.RENDER(2000)
+lvl = RMS(buf, 0, 2000)
+CHECK "mono restarts the envelope", lvl < 0.2, "rms=" + STR$(lvl)
+SOUND.MIDIIN 176, 123, 0
+lvl = LEVEL(4000)
+
+FRESH()
+SOUND.VOICE 0, "SINE", 0.3, 0.01, 1.0, 0.005
+lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"legato": TRUE})
+SOUND.MIDIIN 144, 69, 127
+lvl = LEVEL(30000)
+SOUND.MIDIIN 144, 81, 127
+buf = SOUND.RENDER(2000)
+lvl = RMS(buf, 0, 2000)
+CHECK "legato keeps the envelope", lvl > 0.3, "rms=" + STR$(lvl)
+buf = SOUND.RENDER(44100)
+zc0 = CROSSINGS(buf, 0, 44100)
+CHECK "legato moves to the new key", ABS(zc0 - 880) <= 3, "crossings=" + STR$(zc0)
+SOUND.MIDIIN 176, 123, 0
+lvl = LEVEL(4000)
+
+' ---------- velocity and mod wheel on the filter ----------
+FRESH()
+SOUND.FILTER 0, 2000, 0, "LP"
+lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"vel_cutoff": 4})
+SOUND.MIDIIN 144, 93, 127
+lvl = LEVEL(8000) / 1.0
+SOUND.MIDIIN 128, 93, 0
+lvl2 = LEVEL(4000)
+SOUND.MIDIIN 144, 93, 64
+lvl2 = LEVEL(8000) / (64.0 / 127.0)
+SOUND.MIDIIN 128, 93, 0
+CHECK "a soft key closes the filter", lvl2 < lvl * 0.5, "hard=" + STR$(lvl) + " soft=" + STR$(lvl2)
+
+FRESH()
+SOUND.FILTER 0, 300, 0, "LP"
+lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"mod_cutoff": 3})
+SOUND.MIDIIN 144, 93, 127
+lvl = LEVEL(8000)
+SOUND.MIDIIN 176, 1, 127
+lvl2 = LEVEL(8000)
+SOUND.MIDIIN 176, 1, 0
+SOUND.MIDIIN 128, 93, 0
+CHECK "the mod wheel opens the filter", lvl2 > lvl * 3, "closed=" + STR$(lvl) + " open=" + STR$(lvl2)
+
+FRESH()
+lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"mod_vibrato": 3})
+SOUND.MIDIIN 144, 69, 127
+SOUND.MIDIIN 176, 1, 127
+buf = SOUND.RENDER(44100)
+DIM zmin AS INTEGER = 9999
+DIM zmax AS INTEGER = 0
+DIM w AS INTEGER
+FOR w = 0 TO 9
+    zc0 = CROSSINGS(buf, w * 4410, w * 4410 + 4410)
+    IF zc0 < zmin THEN zmin = zc0
+    IF zc0 > zmax THEN zmax = zc0
+NEXT w
+CHECK "the mod wheel adds vibrato", zmax - zmin >= 5, "min=" + STR$(zmin) + " max=" + STR$(zmax)
+SOUND.MIDIIN 176, 1, 0
+SOUND.MIDIIN 128, 69, 0
+
+DIM opt_err AS STRING = ""
+TRY
+    lvl = SOUND.ZONE(0, 0, 127, 0, 0, {"velocity": 1})
+CATCH
+    opt_err = ERRMSG$
+ENDTRY
+CHECK "an unknown zone option is refused", INSTR(opt_err, "unknown option") >= 0, "msg=" + opt_err
+
+' ---------- last note, for split learning ----------
+FRESH()
+DIM ln = SOUND.LASTNOTE()
+CHECK "no key yet", ln{"note"} = -1 ANDALSO ln{"count"} = 0, ""
+SOUND.MIDIIN 146, 55, 99
+SOUND.MIDIIN 130, 55, 0
+lvl = LEVEL(1000)
+ln = SOUND.LASTNOTE()
+CHECK "the last key is known", ln{"note"} = 55 ANDALSO ln{"velocity"} = 99 ANDALSO ln{"channel"} = 3 ANDALSO ln{"count"} = 1, ""
+
+' ---------- controllers mapped to parameters ----------
+FRESH()
+SOUND.FILTER 0, 5000, 0, "LP"
+CHECK "one mapping", SOUND.CCMAP(74, 0, "cutoff", 200, 5000, "EXP", 0, FALSE) = 1, ""
+SOUND.MIDIIN 144, 93, 127
+lvl = LEVEL(8000)
+SOUND.MIDIIN 176, 74, 0
+lvl2 = LEVEL(8000)
+CHECK "CC 74 at 0 closes the filter", lvl2 < lvl * 0.2, "open=" + STR$(lvl) + " closed=" + STR$(lvl2)
+SOUND.MIDIIN 176, 74, 127
+lvl2 = LEVEL(8000)
+CHECK "CC 74 at 127 opens it again", ABS(lvl2 - lvl) < 0.02, "open=" + STR$(lvl) + " again=" + STR$(lvl2)
+SOUND.MIDIIN 128, 93, 0
+
+FRESH()
+SOUND.FILTER 0, 5000, 0, "LP"
+lvl = SOUND.CCMAP(74, 0, "cutoff", 200, 5000, "EXP")
+SOUND.MIDIIN 144, 93, 127
+lvl = LEVEL(8000)
+SOUND.MIDIIN 176, 74, 10
+lvl2 = LEVEL(8000)
+CHECK "pickup ignores a knob far from the value", ABS(lvl2 - lvl) < 0.02, "before=" + STR$(lvl) + " after=" + STR$(lvl2)
+SOUND.MIDIIN 176, 74, 127
+SOUND.MIDIIN 176, 74, 0
+lvl2 = LEVEL(8000)
+CHECK "after passing the value the knob takes over", lvl2 < lvl * 0.2, "before=" + STR$(lvl) + " after=" + STR$(lvl2)
+SOUND.MIDIIN 128, 93, 0
+CHECK "SOUND.CCMAP -1 clears", SOUND.CCMAP(-1) = 0, ""
+
+err_msg = ""
+TRY
+    lvl = SOUND.CCMAP(74, 0, "colour", 0, 1)
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "an unknown parameter is refused", INSTR(err_msg, "unknown parameter") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    lvl = SOUND.CCMAP(74, 0, "cutoff", 0, 1000, "EXP")
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "EXP needs lo above 0", INSTR(err_msg, "above 0") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    SOUND.MOD 0, "release", "OFF"
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "SOUND.MOD takes the envelope parameters", err_msg = "", "msg=" + err_msg
+
 ' ---------- latency counters ----------
 FRESH()
 DIM stats = SOUND.MIDISTATS()
@@ -222,8 +419,17 @@ stats = SOUND.MIDISTATS()
 CHECK "counters reset after a read", stats{"events"} = 0, ""
 
 ' ---------- MIDI.ROUTE ----------
+DIM route_ok AS BOOLEAN = FALSE
 IF OS.FEATURE("MIDI") THEN
     CHECK "ROUTE on an unknown handle is FALSE", MIDI.ROUTE(9999) = FALSE, ""
+    CHECK "ROUTE CC on an unknown handle is FALSE", MIDI.ROUTE(9999, "CC") = FALSE, ""
+    err_msg = ""
+    TRY
+        route_ok = MIDI.ROUTE(9999, "DRUMS")
+    CATCH
+        err_msg = ERRMSG$
+    ENDTRY
+    CHECK "an unknown ROUTE mode is refused", INSTR(err_msg, "mode") >= 0, "msg=" + err_msg
 ENDIF
 
 SOUND.RESET

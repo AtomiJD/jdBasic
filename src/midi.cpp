@@ -1,12 +1,14 @@
 #include "midi.h"
 #include "vm.h"
 #include "value.h"
+#include "errors.h"
 
 #ifdef MIDI
 
 #include "RtMidi.h"
 #include "sound.h"
 #include <atomic>
+#include <cctype>
 #include <deque>
 #include <map>
 #include <memory>
@@ -21,17 +23,20 @@ namespace {
 struct MidiPort {
     std::mutex qmtx;
     std::deque<std::vector<unsigned char>> queue;
-    std::atomic<bool> routed{false};
+    std::atomic<int> routed{0};
     std::unique_ptr<RtMidiOut> out;
     std::unique_ptr<RtMidiIn>  in;
 };
 
 constexpr size_t MAX_QUEUED = 4096;
+enum { ROUTE_OFF = 0, ROUTE_ALL = 1, ROUTE_CC = 2 };
 
 void on_midi_in(double, std::vector<unsigned char>* msg, void* user) {
     auto* p = static_cast<MidiPort*>(user);
     if (!msg || msg->empty()) return;
-    if (p->routed.load(std::memory_order_relaxed)) sound_midi_push(msg->data(), msg->size());
+    int mode = p->routed.load(std::memory_order_relaxed);
+    if (mode == ROUTE_ALL || (mode == ROUTE_CC && ((*msg)[0] & 0xF0) == 0xB0))
+        sound_midi_push(msg->data(), msg->size());
     std::lock_guard<std::mutex> lk(p->qmtx);
     if (p->queue.size() >= MAX_QUEUED) p->queue.pop_front();
     p->queue.push_back(*msg);
@@ -163,14 +168,27 @@ void register_midi_builtins(VM& vm) {
     });
 
     // MIDI.ROUTE(handle [, on]) -> bool: an input port plays the synth
-    // directly, inside the audio thread (zones: SOUND.ZONE)
+    // directly, inside the audio thread (zones: SOUND.ZONE). on is TRUE,
+    // FALSE, or "CC" to pass only controllers (SOUND.CCMAP) and no notes.
     vm.register_native("MIDI.ROUTE", 1, 2, [](const std::vector<Value>& args) -> Value {
         int h = (int)args[0].to_int();
-        bool on = args.size() < 2 || args[1].to_bool();
+        int mode = ROUTE_ALL;
+        if (args.size() >= 2) {
+            if (args[1].type == ValueType::STRING) {
+                std::string s = args[1].to_string();
+                for (auto& c : s) c = (char)toupper((unsigned char)c);
+                if (s == "CC") mode = ROUTE_CC;
+                else if (s == "ALL") mode = ROUTE_ALL;
+                else if (s == "OFF") mode = ROUTE_OFF;
+                else throw jdError(ErrCode::RUNTIME_ERROR, "MIDI.ROUTE: mode is TRUE, FALSE, \"ALL\", \"CC\" or \"OFF\", not " + s);
+            } else {
+                mode = args[1].to_bool() ? ROUTE_ALL : ROUTE_OFF;
+            }
+        }
         std::lock_guard<std::mutex> lk(g_mtx);
         auto it = g_ports.find(h);
         if (it == g_ports.end() || !it->second.in) return Value::make_bool(false);
-        it->second.routed.store(on);
+        it->second.routed.store(mode);
         return Value::make_bool(true);
     });
 
