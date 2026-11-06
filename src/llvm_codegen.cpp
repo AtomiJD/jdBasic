@@ -603,6 +603,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_rc_new_rows", "__rc_new_rows", i8_ptr_type, {i8_ptr_type}, -1);
     reg("jdb_rc_pin",     "__rc_pin",     void_type, {i64_type}, -1);
     reg("jdb_rc_own_cells", "__rc_own_cells", void_type, {i64_type}, -1);
+    reg("jdb_rc_take_cells", "__rc_take_cells", void_type, {i64_type}, -1);
     reg("jdb_rc_adopt",   "__rc_adopt",   void_type, {i64_type, i64_type}, -1);
     reg("jdb_rc_adopt_cell", "__rc_adopt_cell", void_type, {i64_type, i64_type, i64_type}, -1);
     reg("jdb_rc_adopt_cell_read", "__rc_adopt_cell_read", void_type, {i64_type, i64_type, i64_type}, -1);
@@ -11730,7 +11731,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind) {
                 r.val = rc_born(r.val, r.tag, !r.fresh_flat);
                 if (rc_on && !rc_escape && &expr == cell_owner_rhs && r.tag == JD_TAG_ARR) {
-                    auto& fn = runtime_funcs["__rc_own_cells"];
+                    // Texts handed on from an argument become the array's
+                    // own copies; texts made for this answer are its already.
+                    auto& fn = runtime_funcs[hands_on_cells(expr) ? "__rc_take_cells" : "__rc_own_cells"];
                     LLVMValueRef a[] = { rc_bits(r.val) };
                     LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "");
                 }
@@ -20191,6 +20194,39 @@ bool LLVMCodegen::body_lets_escape(const std::vector<StmtPtr>& body, const std::
 // string variable that owns what it holds. A bare read of the variable is
 // safe only as LEN-like argument or as an index base. Anything else, and
 // any write into its cells, rules the name out.
+// A builtin whose answer holds nothing of its arguments: a number, a new
+// string, or an array computed from the argument's numbers.
+static bool builtin_answers_new(const std::string& up) {
+    BuiltinRet r = builtin_ret(up);
+    if (r == BuiltinRet::F64 || r == BuiltinRet::I64 || r == BuiltinRet::Bool) return true;
+    static const std::unordered_set<std::string> computed = {
+        "MATMUL", "MATMUL_T", "BMM", "CONVOLVE", "CUMPROD", "CUMSUM", "DIFF",
+        "FFT", "IFFT", "GRADE", "HISTEDGES", "HISTOGRAM", "INVERT", "LINSPACE",
+        "NORMALIZE", "ONES", "ZEROS", "IOTA", "RANGE", "SOLVE" };
+    if (computed.count(up)) return true;
+    bool str = r == BuiltinRet::Str || (!up.empty() && up.back() == '$');
+    return str && builtin_fresh_string(up);
+}
+
+// A builtin call that hands on cells of an argument (TAKE, DROP, SORT,
+// FILTER...): its answer holds texts another array still holds.
+bool LLVMCodegen::hands_on_cells(const Expr& e) {
+    if (e.kind != ExprKind::CALL) return false;
+    std::string up = e.func_name;
+    std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+    if (user_functions.count(e.func_name) || user_functions.count(up) || param_escapes.count(e.func_name))
+        return false;
+    static const std::unordered_set<std::string> fresh_texts = {
+        "SPLIT", "LINES", "WORDS", "CHARS", "MAP.KEYS", "OS.ARGS", "ZIP.LIST",
+        "STR$", "DIR$", "FILE.LIST" };
+    if (builtin_answers_new(up) || fresh_texts.count(up)) return false;
+    for (auto& a : e.args)
+        if (a && a->kind != ExprKind::LITERAL_INT && a->kind != ExprKind::LITERAL_FLOAT &&
+            a->kind != ExprKind::LITERAL_STRING && a->kind != ExprKind::LITERAL_BOOL &&
+            a->kind != ExprKind::LAMBDA_EXPR) return true;
+    return false;
+}
+
 void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
     if (!rc_on || std::getenv("JDB_NO_STROWN")) return;
     std::unordered_set<std::string> candidates, banned;
@@ -20200,18 +20236,7 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
     auto user_fn = [&](const std::string& n, const std::string& up) {
         return user_functions.count(n) || user_functions.count(up) || param_escapes.count(n);
     };
-    auto answers_new = [](const std::string& up) {
-        BuiltinRet r = builtin_ret(up);
-        if (r == BuiltinRet::F64 || r == BuiltinRet::I64 || r == BuiltinRet::Bool) return true;
-        // Arrays computed from the argument's numbers: no cell of it goes in.
-        static const std::unordered_set<std::string> computed = {
-            "MATMUL", "MATMUL_T", "BMM", "CONVOLVE", "CUMPROD", "CUMSUM", "DIFF",
-            "FFT", "IFFT", "GRADE", "HISTEDGES", "HISTOGRAM", "INVERT", "LINSPACE",
-            "NORMALIZE", "ONES", "ZEROS", "IOTA", "RANGE", "SOLVE" };
-        if (computed.count(up)) return true;
-        bool str = r == BuiltinRet::Str || (!up.empty() && up.back() == '$');
-        return str && builtin_fresh_string(up);
-    };
+    auto answers_new = [](const std::string& up) { return builtin_answers_new(up); };
 
     std::function<void(const Expr&, bool)> scan = [&](const Expr& e, bool keeps) {
         for (auto& c : e.lambda_captures) banned.insert(K(c));
@@ -20274,21 +20299,9 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
             (s.expr->kind == ExprKind::CALL || s.expr->kind == ExprKind::ARRAY_LITERAL))
             candidates.insert(K(s.var_name));
         // A builtin that hands on cells of an argument (TAKE, DROP, SORT,
-        // FILTER...) answers texts another array still holds.
-        if (assigns && s.expr && !s.var_name.empty() && s.expr->kind == ExprKind::CALL) {
-            std::string up = s.expr->func_name;
-            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-            static const std::unordered_set<std::string> fresh_texts = {
-                "SPLIT", "LINES", "WORDS", "CHARS", "MAP.KEYS", "OS.ARGS", "ZIP.LIST",
-                "STR$", "DIR$", "FILE.LIST" };
-            bool hands_on = false;
-            if (!user_fn(s.expr->func_name, up) && !answers_new(up) && !fresh_texts.count(up))
-                for (auto& a : s.expr->args)
-                    if (a && a->kind != ExprKind::LITERAL_INT && a->kind != ExprKind::LITERAL_FLOAT &&
-                        a->kind != ExprKind::LITERAL_STRING && a->kind != ExprKind::LITERAL_BOOL &&
-                        a->kind != ExprKind::LAMBDA_EXPR) { hands_on = true; break; }
-            if (hands_on) banned.insert(K(s.var_name));
-        }
+        // FILTER...) answers texts another array still holds; the
+        // assignment copies them in (see hands_on_cells), so the name stays
+        // an owner.
         // One cell written over keeps the array its own; a write further down
         // or into a member reaches past it.
         if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty() &&

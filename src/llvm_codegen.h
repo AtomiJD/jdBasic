@@ -604,6 +604,7 @@ private:
     // cell_idx: adopt only if that cell of the array parent holds the child.
     void rc_adopt(LLVMValueRef parent, const TypedValue& child, LLVMValueRef cell_idx = nullptr);
     void scan_cell_owners(const std::vector<StmtPtr>& program);
+    bool hands_on_cells(const Expr& e);
     bool param_escapes_at(const std::string& fn, size_t i) const;
 
     std::string dim_funcref_name(const TypedValue& tv);

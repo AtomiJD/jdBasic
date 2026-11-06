@@ -4076,6 +4076,28 @@ extern "C" void jdb_rc_own_cells(int64_t bits) {
     if (RcEntry* e = rc_find((uintptr_t)bits)) if (e->kind == JD_TAG_ARR) e->owns_cells = 1;
 }
 
+// An array whose texts are another array's (TAKE, FILTER, SORT answer
+// cells of their argument) going into a variable whose array owns its
+// texts: each text cell gets the array's own copy, so it owns them all.
+extern "C" void jdb_rc_take_cells(int64_t bits) {
+    if (!g_rc.cap || !rc_ready()) return;
+    RcEntry* e = rc_find((uintptr_t)bits);
+    if (!e || e->kind != JD_TAG_ARR || e->owns_cells) return;
+    JdbArray* a = (JdbArray*)(intptr_t)bits;
+    if (a->data) {
+        for (int64_t i = 0; i < a->length; i++) {
+            bool str = a->elem_tags ? a->elem_tags[i] == JD_TAG_STR : (a->flags & 2) != 0;
+            if (!str) continue;
+            union { double d; int64_t i; } u; u.d = a->data[i];
+            const char* s = (const char*)(intptr_t)u.i;
+            if (!s) continue;
+            u.i = (int64_t)(intptr_t)jdb_str_own(s);
+            a->data[i] = u.d;
+        }
+    }
+    e->owns_cells = 1;
+}
+
 extern "C" void jdb_rc_pin(int64_t bits) {
     if (!g_rc.cap || !rc_ready()) return;
     if (RcEntry* e = rc_find((uintptr_t)bits)) e->pinned = 1;
