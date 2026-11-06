@@ -5437,6 +5437,93 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 candidates(*fs, nullptr);
             }
         }
+        // Whether argument k of builtin u may come back as, or be stored as,
+        // the same array: IIF answers a branch itself, and a builtin that
+        // keeps its arguments puts them into a container or channel (the
+        // array APPEND or PUSH extends is their target, not a kept value).
+        auto builtin_keeps_arg = [&](const std::string& u, size_t k) {
+            if (u == "IIF") return k > 0;
+            bool target = k == 0 && (u == "APPEND" || u == "PUSH" || u == "UNSHIFT" ||
+                                     u == "INSERT" || u == "PLACE");
+            return !target && builtin_has(u, BF_KEEPS_ARGS);
+        };
+        // ?? answers one of its sides itself.
+        auto operands_only_read = [](const Expr& e) {
+            return e.kind == ExprKind::UNARY ||
+                   (e.kind == ExprKind::BINARY && e.op != TokenType::COALESCE);
+        };
+        // For each FUNC and SUB, the positions of the parameters it may write
+        // into. A parameter counts as left alone only where it is read: as
+        // the base of an index, an argument of a builtin that puts nothing
+        // in, an operand of arithmetic or a comparison, a PRINT item or a
+        // condition. Anywhere else - a cell or whole-name write, `q = p`,
+        // RETURN p, an array literal, a pipe, a call to a FUNC or SUB - it
+        // may alias or reach a writer.
+        std::unordered_map<std::string, std::unordered_set<size_t>> writes_param;
+        for (auto& fs : program) {
+            if (!fs || (fs->kind != StmtKind::FUNCTION && fs->kind != StmtKind::SUB)) continue;
+            std::string fname = fs->func_name;
+            std::transform(fname.begin(), fname.end(), fname.begin(), ::toupper);
+            std::unordered_map<std::string, size_t> pos;
+            for (size_t k = 0; k < fs->params().size(); k++) pos[fs->params()[k].name] = k;
+            std::unordered_set<size_t>& written = writes_param[fname];
+            std::function<void(const Expr*, bool)> passes = [&](const Expr* e, bool read_only) {
+                if (!e) return;
+                if (e->kind == ExprKind::VARIABLE) {
+                    auto p = pos.find(e->str_val);
+                    if (p != pos.end() && !read_only) written.insert(p->second);
+                    return;
+                }
+                if (e->kind == ExprKind::CALL) {
+                    std::string u = e->func_name;
+                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                    bool puts = u == "PUSH" || u == "UNSHIFT" || u == "INSERT" || u == "PLACE";
+                    bool builtin = builtin_sig(u) != nullptr;
+                    for (size_t k = 0; k < e->args.size(); k++)
+                        passes(e->args[k].get(), builtin && !(puts && k == 0) && !builtin_keeps_arg(u, k));
+                    passes(e->left.get(), false);
+                    passes(e->right.get(), false);
+                    return;
+                }
+                if (e->kind == ExprKind::INDEX) {
+                    passes(e->left.get(), true);
+                    passes(e->right.get(), true);
+                    for (auto& a : e->args) passes(a.get(), true);
+                    return;
+                }
+                bool operands_read = operands_only_read(*e);
+                passes(e->left.get(), operands_read);
+                passes(e->right.get(), operands_read);
+                for (auto& a : e->args) passes(a.get(), operands_read);
+            };
+            std::function<void(const Stmt&)> scan = [&](const Stmt& s) {
+                auto p = pos.find(s.var_name);
+                if (p != pos.end() &&
+                    (s.kind == StmtKind::INDEX_ASSIGN || s.kind == StmtKind::LET ||
+                     s.kind == StmtKind::ASSIGN || s.kind == StmtKind::FOR_EACH ||
+                     s.kind == StmtKind::FOR_LOOP))
+                    written.insert(p->second);
+                for (auto& n : s.destruct_vars()) {
+                    auto q = pos.find(n);
+                    if (q != pos.end()) written.insert(q->second);
+                }
+                passes(s.expr.get(), false);
+                for (auto& e : s.print_exprs) passes(e.get(), true);
+                for (auto& e : s.index_chain) passes(e.get(), true);
+                passes(s.loop_cond.get(), true);
+                passes(s.end_expr.get(), true);
+                passes(s.step_expr.get(), true);
+                for (auto& br : s.branches) {
+                    passes(br.condition.get(), true);
+                    for (auto& cl : br.case_labels) { passes(cl.first.get(), true); passes(cl.second.get(), true); }
+                    for (auto& b : br.body) if (b) scan(*b);
+                }
+                for (auto& b : s.body) if (b) scan(*b);
+                for (auto& c : s.catch_body()) if (c) scan(*c);
+                for (auto& f : s.finally_body()) if (f) scan(*f);
+            };
+            for (auto& b : fs->body) if (b) scan(*b);
+        }
         // Every other write to the global, anywhere, has to be a text append
         // or an array literal of texts (the empty one among them).
         std::function<void(const Stmt&, const std::unordered_set<std::string>*)> check =
@@ -5461,17 +5548,21 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             if ((s.kind == StmtKind::FOR_EACH || s.kind == StmtKind::FOR_LOOP) &&
                 global_name(s.var_name)) filled[s.var_name] = false;
             for (auto& n : s.destruct_vars()) if (global_name(n)) filled[n] = false;
-            // Handed to a FUNC, a SUB or a funcref, the array may get a number
-            // written into it there; only a builtin is known to leave it be.
-            std::function<void(const Expr*)> handed_on = [&](const Expr* e) {
+            // The global as a bare name anywhere but where it is only read
+            // (see writes_param) may alias another name or reach a writer:
+            // `q = g`, RETURN g, [g], a pipe, a funcref or a method. Handed to
+            // a FUNC or SUB, it is ruled out only when that one writes into
+            // the parameter.
+            std::function<void(const Expr*, bool)> handed_on = [&](const Expr* e, bool read_only) {
                 if (!e) return;
+                if (e->kind == ExprKind::VARIABLE) {
+                    if (!read_only && global_name(e->str_val)) filled[e->str_val] = false;
+                    return;
+                }
                 if (e->kind == ExprKind::CALL) {
                     std::string u = e->func_name;
                     std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-                    if (!builtin_sig(u))
-                        for (auto& a : e->args)
-                            if (a && a->kind == ExprKind::VARIABLE && global_name(a->str_val))
-                                filled[a->str_val] = false;
+                    bool builtin = builtin_sig(u) != nullptr;
                     // The builtins that put values into the array they are given.
                     bool puts = u == "PUSH" || u == "UNSHIFT" || u == "INSERT" || u == "PLACE";
                     if (puts && !e->args.empty() && e->args[0] &&
@@ -5479,20 +5570,43 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         for (size_t k = 1; k < e->args.size(); k++)
                             if (!texty(e->args[k].get())) filled[e->args[0]->str_val] = false;
                     }
+                    auto wp = writes_param.find(u);
+                    for (size_t k = 0; k < e->args.size(); k++) {
+                        const Expr* a = e->args[k].get();
+                        if (builtin) { handed_on(a, !builtin_keeps_arg(u, k)); continue; }
+                        if (a && a->kind == ExprKind::VARIABLE && wp != writes_param.end()) {
+                            if (wp->second.count(k) && global_name(a->str_val)) filled[a->str_val] = false;
+                            continue;
+                        }
+                        handed_on(a, false);
+                    }
+                    handed_on(e->left.get(), false);
+                    handed_on(e->right.get(), false);
+                    return;
                 }
-                handed_on(e->left.get());
-                handed_on(e->right.get());
-                for (auto& a : e->args) handed_on(a.get());
+                if (e->kind == ExprKind::INDEX) {
+                    handed_on(e->left.get(), true);
+                    handed_on(e->right.get(), true);
+                    for (auto& a : e->args) handed_on(a.get(), true);
+                    return;
+                }
+                bool operands_read = operands_only_read(*e);
+                handed_on(e->left.get(), operands_read);
+                handed_on(e->right.get(), operands_read);
+                for (auto& a : e->args) handed_on(a.get(), operands_read);
             };
-            handed_on(s.expr.get());
-            for (auto& e : s.print_exprs) handed_on(e.get());
-            for (auto& e : s.index_chain) handed_on(e.get());
-            handed_on(s.loop_cond.get());
-            handed_on(s.end_expr.get());
-            handed_on(s.step_expr.get());
+            bool stores = s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+                          s.kind == StmtKind::DIM || s.kind == StmtKind::RETURN ||
+                          s.kind == StmtKind::INDEX_ASSIGN;
+            handed_on(s.expr.get(), !stores);
+            for (auto& e : s.print_exprs) handed_on(e.get(), true);
+            for (auto& e : s.index_chain) handed_on(e.get(), true);
+            handed_on(s.loop_cond.get(), true);
+            handed_on(s.end_expr.get(), true);
+            handed_on(s.step_expr.get(), true);
             for (auto& br : s.branches) {
-                handed_on(br.condition.get());
-                for (auto& cl : br.case_labels) { handed_on(cl.first.get()); handed_on(cl.second.get()); }
+                handed_on(br.condition.get(), true);
+                for (auto& cl : br.case_labels) { handed_on(cl.first.get(), true); handed_on(cl.second.get(), true); }
             }
             for (auto& b : s.body) if (b) check(*b, locals);
             for (auto& br : s.branches) for (auto& b : br.body) if (b) check(*b, locals);

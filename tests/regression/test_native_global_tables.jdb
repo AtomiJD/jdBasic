@@ -130,6 +130,46 @@ ENDFUNC
 PutNumber(labels)
 Check(SecondLabel$() = "5", "a global handed to a SUB that writes a number")
 
+' A FUNC that writes through another name for its parameter, or through a
+' pipe, rules the global out too.
+DIM aliased AS ARRAY = []
+aliased = APPEND(aliased, "a")
+SUB ThroughAlias(p)
+    DIM q = p
+    q[0] = 7
+ENDSUB
+FUNC AliasedFirst$() AS STRING
+    RETURN STR$(aliased[0] + 1)
+ENDFUNC
+ThroughAlias(aliased)
+Check(AliasedFirst$() = "8", "a global written through another name in a SUB")
+DIM piped AS ARRAY = []
+piped = APPEND(piped, "a")
+FUNC PutSeven(p)
+    p[0] = 7
+    RETURN 0
+ENDFUNC
+SUB PipeOn(p)
+    DIM done = p |> PutSeven(?)
+ENDSUB
+FUNC PipedFirst$() AS STRING
+    RETURN STR$(piped[0] + 1)
+ENDFUNC
+PipeOn(piped)
+Check(PipedFirst$() = "8", "a global written through a pipe in a SUB")
+
+' IIF answers a branch itself, so a write through its answer is a write
+' into the global.
+DIM branched AS ARRAY = []
+branched = APPEND(branched, "a")
+DIM other_side AS ARRAY = [0]
+DIM picked = IIF(1, branched, other_side)
+picked[0] = 7
+FUNC BranchedFirst$() AS STRING
+    RETURN STR$(branched[0] + 1)
+ENDFUNC
+Check(BranchedFirst$() = "8", "a global written through the answer of IIF")
+
 ' A number PUSHed into it, or a map whose keys look like cells, is not one either.
 DIM pushed = []
 PUSH pushed, "a"
