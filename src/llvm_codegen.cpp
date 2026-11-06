@@ -950,7 +950,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_tagged_arr_set", "__tagged_arr_set", void_type,
         {i64_type, i32_type, i64_type, i64_type, i32_type}, -1);
     reg("jdb_tagged_any_set", "__tagged_any_set", void_type,
-        {i64_type, i32_type, i64_type, i32_type, i64_type, i32_type}, -1);
+        {i64_type, i32_type, i64_type, i32_type, i64_type, i32_type, i32_type, i32_type}, -1);
     reg("jdrt_tagged_index", "__jdrt_tagged_index", i32_type,
         {i8_ptr_type, i64_type, i32_type, i64_type, i32_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_foreach_begin", "__jdrt_foreach_begin", i64_type,
@@ -9531,28 +9531,29 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         }
         auto [bits, tag] = tagged_bits_of(v);
         if (key_kind_open) {
+            // Where the value goes is decided at run time, so the runtime
+            // counts a container value there as the paths below do.
             auto [kbits, ktag] = tagged_bits_of(idx_tv);
             auto& any_fn = runtime_funcs["__tagged_any_set"];
-            LLVMValueRef aargs[] = { base_bits, base_tag, kbits, ktag, bits, tag };
-            LLVMBuildCall2(builder, any_fn.fn_type, any_fn.fn, aargs, 6, "");
+            bool literal = v.tag == JD_TAG_ARR && stmt.expr->kind == ExprKind::ARRAY_LITERAL;
+            LLVMValueRef aargs[] = { base_bits, base_tag, kbits, ktag, bits, tag,
+                                     LLVMConstInt(i32_type, adopt && rc_on ? 1 : 0, 0),
+                                     LLVMConstInt(i32_type, literal ? 1 : 0, 0) };
+            LLVMBuildCall2(builder, any_fn.fn_type, any_fn.fn, aargs, 8, "");
             emit_err_code_branch();
-            // Which container takes the value is only known at run time: a
-            // container value is held for good rather than counted by a
-            // cell that may not exist.
-            if (adopt) rc_pin(v);
-            return;
+        } else {
+            auto& set_fn = runtime_funcs["__tagged_arr_set"];
+            LLVMValueRef args[] = { base_bits, base_tag, idx, bits, tag };
+            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 5, "");
+            if (v.tag == JD_TAG_ARR && stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
+                auto& drop = runtime_funcs["__array_drop_unstored"];
+                LLVMValueRef dargs[] = { LLVMBuildIntToPtr(builder, base_bits, i8_ptr_type, "drop_base"),
+                                         idx, v.val };
+                LLVMBuildCall2(builder, drop.fn_type, drop.fn, dargs, 3, "");
+            }
+            emit_err_code_branch();
+            if (adopt) rc_adopt(base_bits, v, idx);
         }
-        auto& set_fn = runtime_funcs["__tagged_arr_set"];
-        LLVMValueRef args[] = { base_bits, base_tag, idx, bits, tag };
-        LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 5, "");
-        if (v.tag == JD_TAG_ARR && stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
-            auto& drop = runtime_funcs["__array_drop_unstored"];
-            LLVMValueRef dargs[] = { LLVMBuildIntToPtr(builder, base_bits, i8_ptr_type, "drop_base"),
-                                     idx, v.val };
-            LLVMBuildCall2(builder, drop.fn_type, drop.fn, dargs, 3, "");
-        }
-        emit_err_code_branch();
-        if (adopt) rc_adopt(base_bits, v, idx);
         if (v.tag == JD_TAG_ARR && !stmt.var_name.empty())
             array_array_vars.insert(stmt.var_name);
         if (v.tag == JD_TAG_STR && !stmt.var_name.empty() && !mixed_array_vars.count(stmt.var_name)) {

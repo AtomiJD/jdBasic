@@ -447,6 +447,13 @@ ELSEIF pattern$ = "closurefunc" THEN
         glob = AGG([1, 2, 1], [10, 20, 30], LAMBDA g -> SUM(g))
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "anykey" THEN
+    DIM akeys AS MAP = {}
+    DIM akrec = JSON.PARSE("{""user"": ""ada"", ""score"": 3}")
+    FOR i = 1 TO passes
+        total = total + KeyedPut(akrec, akeys)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSEIF pattern$ = "strcells" THEN
     FOR i = 1 TO passes
         glob = STR$([1, 2, 3])
@@ -636,6 +643,12 @@ ENDFUNC
 
 FUNC Twice(x)
     RETURN x * 2
+ENDFUNC
+
+' A key whose kind is only known at run time, an array written under it.
+FUNC KeyedPut(rec, acc)
+    acc{rec{"user"}} = [rec{"score"}, 1]
+    RETURN LEN(acc{rec{"user"}})
 ENDFUNC
 
 ' A closure built inside a FUNC for one call.

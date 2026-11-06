@@ -1620,14 +1620,30 @@ void jdb_tagged_arr_set(int64_t base, int32_t base_tag, int64_t idx, int64_t bit
 extern "C" const char* jdrt_val_to_str(void* rt, int64_t handle);
 extern "C" void jdrt_str_free(char* s);
 extern "C" void jdrt_obj_set_tagged(void* rt, int64_t h, const char* key, int64_t bits, int32_t tag);
+extern "C" void jdb_rc_adopt_cell(int64_t parent_bits, int64_t idx, int64_t child_bits);
+extern "C" void jdb_rc_adopt(int64_t parent_bits, int64_t child_bits);
+extern "C" void jdb_array_drop_unstored(JdbArray* arr, int64_t idx, JdbArray* lit);
+extern "C" void jdb_rc_pin(int64_t bits);
+
+// A position from a number: one outside the int64 range (or NaN) is -1,
+// which the bounds check refuses.
+static int64_t key_position(double d) {
+    if (!(d >= -9.0e18 && d <= 9.0e18)) return -1;
+    return (int64_t)d;
+}
 
 // base{key} = value where neither the base nor the key has a kind the
 // compiler knows: a number is a position, a text (or a VM value holding
-// one) a key, as the interpreter decides it when the line runs.
+// one) a key, as the interpreter decides it when the line runs. With
+// `adopt` a container value is counted by where it went, as the fixed
+// paths count it: by the cell at a position, by a native map, and held for
+// good by a VM object; `literal` is an array literal, which a position
+// that lays it over a row lets go of.
 void jdb_tagged_any_set(int64_t base, int32_t base_tag, int64_t key_bits, int32_t key_tag,
-                        int64_t bits, int32_t tag) {
+                        int64_t bits, int32_t tag, int32_t adopt, int32_t literal) {
     std::string key;
     bool text = key_tag == JD_TAG_STR;
+    int64_t idx = -1;
     if (key_tag == JD_TAG_VM_HANDLE && g_jdrt_handle) {
         if (jdrt_val_kind(g_jdrt_handle, key_bits) == 3) {
             const char* s = jdrt_val_to_str(g_jdrt_handle, key_bits);
@@ -1635,31 +1651,41 @@ void jdb_tagged_any_set(int64_t base, int32_t base_tag, int64_t key_bits, int32_
             if (s) jdrt_str_free((char*)s);
             text = true;
         } else {
-            double d = jdrt_val_to_f64(g_jdrt_handle, key_bits);
-            jdb_tagged_arr_set(base, base_tag, (int64_t)d, bits, tag);
-            return;
+            idx = key_position(jdrt_val_to_f64(g_jdrt_handle, key_bits));
         }
     } else if (text) {
         const char* s = (const char*)(intptr_t)key_bits;
         key = s ? s : "";
+    } else if (key_tag == JD_TAG_I64 || key_tag == JD_TAG_BOOL) {
+        idx = key_bits;
+    } else {
+        double d; memcpy(&d, &key_bits, sizeof d);
+        idx = key_position(d);
     }
+    bool container = tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP;
     if (!text) {
-        int64_t idx = key_bits;
-        if (key_tag != JD_TAG_I64 && key_tag != JD_TAG_BOOL) {
-            double d; memcpy(&d, &key_bits, sizeof d);
-            idx = (int64_t)d;
-        }
         jdb_tagged_arr_set(base, base_tag, idx, bits, tag);
+        if (jdb_err_code()) return;
+        bool native_arr = base_tag == JD_TAG_ARR ||
+            (base_tag == JD_TAG_F64 && rc_kind_of((uintptr_t)base) == JD_TAG_ARR);
+        if (literal && native_arr && tag == JD_TAG_ARR)
+            jdb_array_drop_unstored((JdbArray*)(intptr_t)base, idx, (JdbArray*)(intptr_t)bits);
+        if (adopt && container) {
+            if (native_arr) jdb_rc_adopt_cell(base, idx, bits);
+            else jdb_rc_pin(bits);
+        }
         return;
     }
     if (base_tag == JD_TAG_VM_HANDLE) {
         if (g_jdrt_handle) jdrt_obj_set_tagged(g_jdrt_handle, base, key.c_str(), bits, tag);
+        if (adopt && container) jdb_rc_pin(bits);
         return;
     }
     double d;
     if (tag == JD_TAG_I64 || tag == JD_TAG_BOOL) d = (double)bits;
     else memcpy(&d, &bits, sizeof d);
     jdb_tagged_key_set(base, base_tag, key.c_str(), d, tag);
+    if (adopt && container && !jdb_err_code()) jdb_rc_adopt(base, bits);
 }
 
 JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
