@@ -4757,6 +4757,8 @@ static JdbMat mat_from(const JdbArray* a, bool flat, int64_t rows, int64_t cols)
     return m;
 }
 
+static void mat_free(JdbArray* m);
+
 static JdbArray* matmul_body(JdbArray* a, JdbArray* b, int32_t transpose_left, const char* fn) {
     int64_t ra, ca, rb, cb;
     bool fa, fb;
@@ -4818,14 +4820,21 @@ static JdbArray* matmul_body(JdbArray* a, JdbArray* b, int32_t transpose_left, c
     }
     JdbArray* out = jdb_array_new(lrows);
     out->flags |= 1;
-    mat_bands(lrows, mat_workers((double)lrows * (double)pcols * 4.0), [&](int64_t lo, int64_t hi) {
-        for (int64_t r = lo; r < hi; r++) {
-            JdbArray* row = jdb_array_new(pcols);
-            if (pcols) memcpy(row->data, P.data() + r * pcols, (size_t)pcols * sizeof(double));
-            union { double d; int64_t i; } u; u.i = (int64_t)(intptr_t)row;
-            out->data[r] = u.d;
-        }
-    });
+    // A row that cannot be allocated throws under the guard: the rows
+    // already made go with the matrix.
+    try {
+        mat_bands(lrows, mat_workers((double)lrows * (double)pcols * 4.0), [&](int64_t lo, int64_t hi) {
+            for (int64_t r = lo; r < hi; r++) {
+                JdbArray* row = jdb_array_new(pcols);
+                if (pcols) memcpy(row->data, P.data() + r * pcols, (size_t)pcols * sizeof(double));
+                union { double d; int64_t i; } u; u.i = (int64_t)(intptr_t)row;
+                out->data[r] = u.d;
+            }
+        });
+    } catch (...) {
+        mat_free(out);
+        throw;
+    }
     return out;
 }
 
@@ -4837,11 +4846,14 @@ static bool mat_is_batch(JdbArray* a) {
 }
 
 // A product matmul_body built and nothing holds yet: its rows, then itself.
+// A cell still 0 has no row yet.
 static void mat_free(JdbArray* m) {
     if (!m) return;
     if (m->flags & 1)
-        for (int64_t r = 0; r < m->length; r++)
-            if (cell_is_arr(m, r)) array_free_shallow(decode_inner(m->data[r]));
+        for (int64_t r = 0; r < m->length; r++) {
+            union { double d; int64_t i; } u; u.d = m->data[r];
+            if (u.i != 0 && cell_is_arr(m, r)) array_free_shallow(decode_inner(m->data[r]));
+        }
     array_free_shallow(m);
 }
 
@@ -4888,6 +4900,9 @@ static JdbArray* batch_body(JdbArray* a, JdbArray* b, const char* fn) {
 extern "C" JdbArray* jdb_matmul(JdbArray* a, JdbArray* b, int32_t transpose_left) {
     const char* fn = transpose_left ? "MATMUL_T" : "MATMUL";
     try {
+        // Under the guard an allocation that fails throws, so it reaches
+        // the cleanup and the catch below instead of answering a short array.
+        GuardDepth open;
         if (!transpose_left && (mat_is_batch(a) || mat_is_batch(b))) return batch_body(a, b, fn);
         return matmul_body(a, b, transpose_left, fn);
     } catch (...) {
