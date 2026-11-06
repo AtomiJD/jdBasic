@@ -94,9 +94,10 @@ done
 # display for the same reason.
 EXCLUDE_DIRS='^tests/(rag|ai|http|tui|forms|gfx)/'
 # A test opens the network when its source calls one of these, or when it
-# lives under tests/net.
+# lives under tests/net. A Node Bus node in the "lan" scope listens on every
+# interface (the "local" scope stays on loopback and a local socket).
 NET_DIRS='^tests/net/'
-NET_CALLS='\b(HTTP\.(SERVER|GET|POST|PUT|DELETE|PATCH|HEAD|REQUEST|FETCH|DOWNLOAD)|NET\.[A-Z]|SOCKET\.|TCP\.|UDP\.|WS\.|WEBSOCKET)'
+NET_CALLS='\b(HTTP\.(SERVER|GET|POST|PUT|DELETE|PATCH|HEAD|REQUEST|FETCH|DOWNLOAD)|NET\.[A-Z]|SOCKET\.|TCP\.|UDP\.|WS\.|WEBSOCKET)|NODE\.JOIN\([^)]*"lan"'
 
 # Every sweep works in a folder of its own: two sweeps at once (two sessions,
 # a farm gate) in one shared folder overwrite each other's exes and logs and
