@@ -283,6 +283,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"FORM.PICTURE", BuiltinRet::I64, BF_NO_VEC},
     {"FORM.POPUP", BuiltinRet::None, BF_NO_VEC},
     {"FORM.PRINT", BuiltinRet::Bool, BF_NO_VEC},
+    {"FORM.PRINTRICH", BuiltinRet::Bool, BF_NO_VEC},
     {"FORM.PROGRESS", BuiltinRet::I64, BF_NO_VEC},
     {"FORM.RADIO", BuiltinRet::I64, BF_NO_VEC},
     {"FORM.RICHTEXT", BuiltinRet::I64, BF_NO_VEC},

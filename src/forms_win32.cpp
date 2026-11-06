@@ -1624,6 +1624,83 @@ bool do_print(const std::string& text, const std::string& title, const Value& fo
     return true;
 }
 
+// Prints a RICHTEXT's formatted content: the page setup's margins, the
+// title centred at the top and "Page n" at the bottom as FORM.PRINT puts
+// them, the text laid out by the control itself (EM_FORMATRANGE), so
+// fonts, colours, tables and pictures print the way they are shown.
+bool do_print_rich(HWND rt, const std::string& title, const std::string& printer,
+                   const std::string& outfile) {
+    bool cancelled = false;
+    HDC dc = printer_dc(widen(printer), cancelled);
+    if (!dc) {
+        if (cancelled) return false;
+        throw std::runtime_error("FORM.PRINTRICH: no printer '" + printer + "'");
+    }
+    int dpx = GetDeviceCaps(dc, LOGPIXELSX), dpy = GetDeviceCaps(dc, LOGPIXELSY);
+    int offx = GetDeviceCaps(dc, PHYSICALOFFSETX), offy = GetDeviceCaps(dc, PHYSICALOFFSETY);
+    int pagew = GetDeviceCaps(dc, PHYSICALWIDTH), pageh = GetDeviceCaps(dc, PHYSICALHEIGHT);
+    int left = MulDiv(g_print_margins.left, dpx, 1000) - offx;
+    int right = pagew - MulDiv(g_print_margins.right, dpx, 1000) - offx;
+    int top = MulDiv(g_print_margins.top, dpy, 1000) - offy;
+    int bottom = pageh - MulDiv(g_print_margins.bottom, dpy, 1000) - offy;
+
+    LOGFONTW lf = {};
+    wcsncpy(lf.lfFaceName, L"Segoe UI", LF_FACESIZE - 1);
+    lf.lfHeight = -MulDiv(9, dpy, 72);
+    HFONT hf = CreateFontIndirectW(&lf);
+    HGDIOBJ old_font = SelectObject(dc, hf);
+    TEXTMETRICW tm = {};
+    GetTextMetricsW(dc, &tm);
+    int line_h = tm.tmHeight + tm.tmExternalLeading;
+
+    std::wstring wtitle = widen(title.empty() ? "Untitled" : title);
+    std::wstring wout = widen(outfile);
+    DOCINFOW di = { sizeof(di) };
+    di.lpszDocName = wtitle.c_str();
+    di.lpszOutput = wout.empty() ? nullptr : wout.c_str();
+    if (StartDocW(dc, &di) <= 0) {
+        SelectObject(dc, old_font);
+        DeleteObject(hf);
+        DeleteDC(dc);
+        throw std::runtime_error("FORM.PRINTRICH: the printer refused the document");
+    }
+    auto twips_x = [&](int v) { return MulDiv(v, 1440, dpx); };
+    auto twips_y = [&](int v) { return MulDiv(v, 1440, dpy); };
+    FORMATRANGE fr = {};
+    fr.hdc = dc;
+    fr.hdcTarget = dc;
+    fr.rcPage = { 0, 0, twips_x(pagew), twips_y(pageh) };
+    GETTEXTLENGTHEX gl = { GTL_NUMCHARS | GTL_PRECISE, 1200 };
+    LONG total = (LONG)SendMessageW(rt, EM_GETTEXTLENGTHEX, (WPARAM)&gl, 0);
+    LONG next = 0;
+    int pg = 0;
+    do {
+        StartPage(dc);
+        SelectObject(dc, hf);
+        SetTextAlign(dc, TA_CENTER | TA_TOP);
+        TextOutW(dc, (left + right) / 2, std::max(0, top / 2 - line_h / 2),
+                 wtitle.c_str(), (int)wtitle.size());
+        std::wstring foot = L"Page " + std::to_wstring(++pg);
+        TextOutW(dc, (left + right) / 2, bottom + (pageh - offy - bottom) / 2 - line_h,
+                 foot.c_str(), (int)foot.size());
+        SetTextAlign(dc, TA_LEFT | TA_TOP);
+        fr.rc = { twips_x(left), twips_y(top), twips_x(right), twips_y(bottom) };
+        fr.chrg.cpMin = next;
+        fr.chrg.cpMax = -1;
+        LONG after = (LONG)SendMessageW(rt, EM_FORMATRANGE, TRUE, (LPARAM)&fr);
+        EndPage(dc);
+        // a page that takes nothing (a picture taller than the page) ends it
+        if (after <= next) break;
+        next = after;
+    } while (next < total);
+    SendMessageW(rt, EM_FORMATRANGE, FALSE, 0);
+    EndDoc(dc);
+    SelectObject(dc, old_font);
+    DeleteObject(hf);
+    DeleteDC(dc);
+    return true;
+}
+
 // ── Form border styles (VB6 BorderStyle) ────────────────────────
 // 0 None, 1 Fixed Single, 2 Sizable, 3 Fixed Dialog, 4 Fixed ToolWindow,
 // 5 Sizable ToolWindow.
@@ -3756,6 +3833,17 @@ void register_forms_builtins(VM& vm) {
         std::string printer = args.size() > 3 ? value_text(args[3]) : "";
         std::string outfile = args.size() > 4 ? value_text(args[4]) : "";
         return Value::make_bool(do_print(value_text(args[0]), title, font, printer, outfile));
+    });
+
+    // FORM.PRINTRICH(rt, [title$], [printer$], [outfile$]) -> TRUE when printed
+    vm.register_native("FORM.PRINTRICH", 1, 4, [](const std::vector<Value>& args) -> Value {
+        FormsItem& it = item_of(arg_int(args, 0), "FORM.PRINTRICH");
+        if (it.kind != "RICHTEXT")
+            throw std::runtime_error("FORM.PRINTRICH: the handle is a " + it.kind + ", not a RICHTEXT");
+        std::string title = args.size() > 1 ? value_text(args[1]) : "";
+        std::string printer = args.size() > 2 ? value_text(args[2]) : "";
+        std::string outfile = args.size() > 3 ? value_text(args[3]) : "";
+        return Value::make_bool(do_print_rich(it.hwnd, title, printer, outfile));
     });
 
     // FORM.SET(handle, prop$, [value])
