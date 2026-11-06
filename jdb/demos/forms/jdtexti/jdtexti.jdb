@@ -11,6 +11,7 @@
 OPTION "EXPLICIT"
 IMPORT MDSYNC
 IMPORT MDRICH
+IMPORT TEXTX
 
 DIM APP_NAME AS STRING = "jdTexti"
 DIM CR AS STRING = CHR$(13)
@@ -21,7 +22,6 @@ DIM SB_HEIGHT AS INTEGER = 22
 DIM MDBAR_HEIGHT AS INTEGER = 30
 DIM CODE_BACK AS INTEGER = $F0F0F0
 DIM MAX_RECENT AS INTEGER = 8
-DIM WORD_CHARS AS STRING = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 DIM DARK_BACK AS INTEGER = $1E1E1E
 DIM DARK_FORE AS INTEGER = $D4D4D4
 
@@ -836,22 +836,10 @@ ENDSUB
 
 ' ── find and replace ────────────────────────────────────────────
 
-FUNC IS_WORD_BYTE(s AS STRING, idx AS INTEGER)
-    IF idx < 0 ORELSE idx >= LEN(s) THEN RETURN FALSE
-    DIM c AS STRING = MID$(s, idx, 1)
-    IF ASC(c) >= 128 THEN RETURN TRUE
-    RETURN INSTR(WORD_CHARS, c) >= 0
-ENDFUNC
-
 ' First hit at or after `from`, honouring "whole word"; -1 when none.
 FUNC NEXT_HIT(hay AS STRING, needle AS STRING, start_at AS INTEGER) AS INTEGER
-    DIM hit AS INTEGER = INSTR(start_at, hay, needle)
-    IF NOT FORM.GET(chkWord, "CHECKED") THEN RETURN hit
-    DO WHILE hit >= 0
-        IF NOT IS_WORD_BYTE(hay, hit - 1) ANDALSO NOT IS_WORD_BYTE(hay, hit + LEN(needle)) THEN RETURN hit
-        hit = INSTR(hit + 1, hay, needle)
-    LOOP
-    RETURN -1
+    IF NOT FORM.GET(chkWord, "CHECKED") THEN RETURN INSTR(start_at, hay, needle)
+    RETURN CINT(TEXTX.FINDWORD(hay, needle, start_at))
 ENDFUNC
 
 FUNC FIND_FROM(needle AS STRING, upward AS INTEGER) AS INTEGER

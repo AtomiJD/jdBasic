@@ -54,6 +54,13 @@ PRINT TEXTX.PRECISE$(3725)                                       ' 1 hour, 2 min
 | `SLICE$(text$, start, count_n)` | Characters from position `start`, counted from 0. |
 | `ELLIPSIS$(text$, width, [mark$])` | The text cut to `width` characters with `mark$` (`"…"`) at the end when it is longer; spaces before the mark are dropped. |
 
+### Whole words
+
+| Call | What it does |
+|------|--------------|
+| `ISWORDCHAR(c$)` | `TRUE` when the character belongs to a word: an ASCII letter, digit or underscore, or a letter past ASCII (`ä`, `é`, `ß`, `Ж`). Punctuation, symbols, spaces and emoji do not (`„`, `“`, `–`, `…`, `€`, `×`, a no-break space). |
+| `FINDWORD(hay$, needle$, [start])` | The byte position of the first `needle$` at or after byte `start` (0) that stands as a whole word, `-1` when there is none. The characters on either side are read whole, so `Wort` is found in `„Wort“` and not in `Wörter`. Positions count bytes like `INSTR`, so the answer addresses `SELSTART` of an edit field directly. |
+
 ### Slugs and ASCII
 
 | Call | What it does |

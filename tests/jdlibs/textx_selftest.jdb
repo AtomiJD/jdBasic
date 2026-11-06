@@ -97,6 +97,20 @@ TESTKIT.EQ(TEXTX.ELLIPSIS$("Grüße aus Köln", 10), "Grüße aus…", "cut with
 TESTKIT.EQ(TEXTX.ELLIPSIS$("Grüße aus Köln", 7, "..."), "Grüß...", "with three dots")
 TESTKIT.EQ(TEXTX.ELLIPSIS$("kurz", 10), "kurz", "short enough")
 
+TESTKIT.SUITE("whole words")
+TESTKIT.ISTRUE(TEXTX.ISWORDCHAR("ä") ANDALSO TEXTX.ISWORDCHAR("ß") ANDALSO TEXTX.ISWORDCHAR("Ж"), "letters past ASCII are word characters")
+TESTKIT.ISTRUE(TEXTX.ISWORDCHAR("a") ANDALSO TEXTX.ISWORDCHAR("7") ANDALSO TEXTX.ISWORDCHAR("_"), "ASCII letters, digits, underscore")
+TESTKIT.ISTRUE(NOT TEXTX.ISWORDCHAR("„") ANDALSO NOT TEXTX.ISWORDCHAR("“") ANDALSO NOT TEXTX.ISWORDCHAR("–"), "quote marks and dashes are not")
+TESTKIT.ISTRUE(NOT TEXTX.ISWORDCHAR("€") ANDALSO NOT TEXTX.ISWORDCHAR(CHR$(160)) ANDALSO NOT TEXTX.ISWORDCHAR("😀"), "symbols, a no-break space and emoji are not")
+TESTKIT.ISTRUE(NOT TEXTX.ISWORDCHAR("") ANDALSO NOT TEXTX.ISWORDCHAR(" ") ANDALSO NOT TEXTX.ISWORDCHAR(","), "nothing, a space, a comma")
+TESTKIT.EQ(TEXTX.FINDWORD("Er sagte „Wort“ und ging.", "Wort"), INSTR("Er sagte „Wort“ und ging.", "Wort"), "a word between German quote marks")
+TESTKIT.EQ(TEXTX.FINDWORD("Wörter, Wort", "Wort"), INSTR("Wörter, Wort", ", W") + 2, "not inside a longer word with an umlaut")
+TESTKIT.EQ(TEXTX.FINDWORD("Grüße", "Gr"), -1, "not before an umlaut")
+TESTKIT.EQ(TEXTX.FINDWORD("Wort–Spiel", "Wort"), 0, "before a dash")
+TESTKIT.EQ(TEXTX.FINDWORD("Preis 5€", "5"), 6, "before a currency sign")
+TESTKIT.EQ(TEXTX.FINDWORD("ab ab", "ab", 1), 3, "from a start position")
+TESTKIT.EQ(TEXTX.FINDWORD("abc", "ab"), -1, "no whole word")
+
 TESTKIT.SUITE("slugs and ASCII")
 DIM slug_rows = RowsOf(base$ + "textx_slug.tsv")
 DIM slugs = 0

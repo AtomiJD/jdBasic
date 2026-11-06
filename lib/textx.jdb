@@ -12,7 +12,7 @@
 '   PRINT TEXTX.RELATIVE$(180)                          ' 3 minutes ago
 '
 ' Every length is a number of characters: an umlaut counts once.
-' version: 1.0.0
+' version: 1.1.0
 
 EXPORT MODULE TEXTX
 
@@ -89,7 +89,7 @@ FUNC IsNonAsciiWord(c$)
     RETURN TRUE
 ENDFUNC
 
-FUNC IsWordChar(c$)
+FUNC IsAsciiWordChar(c$)
     IF c$ = "" THEN RETURN FALSE
     IF LEN(c$) > 1 THEN RETURN IsNonAsciiWord(c$)
     DIM b0 = ASC(c$)
@@ -101,13 +101,13 @@ ENDFUNC
 
 ' A letter for textwrap: a word character that is not an ASCII digit.
 FUNC IsLetterChar(c$)
-    IF NOT IsWordChar(c$) THEN RETURN FALSE
+    IF NOT IsAsciiWordChar(c$) THEN RETURN FALSE
     IF LEN(c$) = 1 ANDALSO ASC(c$) >= 48 ANDALSO ASC(c$) <= 57 THEN RETURN FALSE
     RETURN TRUE
 ENDFUNC
 
 FUNC IsWordPunct(c$)
-    IF IsWordChar(c$) THEN RETURN TRUE
+    IF IsAsciiWordChar(c$) THEN RETURN TRUE
     RETURN c$ = "!" ORELSE c$ = CHR$(34) ORELSE c$ = "'" ORELSE c$ = "&" ORELSE c$ = "." ORELSE c$ = "," ORELSE c$ = "?"
 ENDFUNC
 
@@ -178,6 +178,49 @@ EXPORT FUNC ELLIPSIS$(text$, width, mark$ = "…")
     RETURN RTrimSpaces$(HEAD$(text$, keep_n)) + mark$
 ENDFUNC
 
+' ── whole words ────────────────────────────────────────────────
+
+' The Unicode code point of the first character of c$.
+FUNC CodePoint(c$)
+    DIM b0 = BYTEAT(c$, 0)
+    IF b0 < 192 ORELSE LEN(c$) < 2 THEN RETURN b0
+    IF b0 < 224 THEN RETURN (b0 MOD 32) * 64 + BYTEAT(c$, 1) MOD 64
+    IF b0 < 240 ORELSE LEN(c$) < 4 THEN RETURN (b0 MOD 16) * 4096 + (BYTEAT(c$, 1) MOD 64) * 64 + BYTEAT(c$, 2) MOD 64
+    RETURN (b0 MOD 8) * 262144 + (BYTEAT(c$, 1) MOD 64) * 4096 + (BYTEAT(c$, 2) MOD 64) * 64 + BYTEAT(c$, 3) MOD 64
+ENDFUNC
+
+' TRUE when the character c$ belongs to a word: an ASCII letter, digit or
+' underscore, or a letter past ASCII. Punctuation, symbols, spaces and
+' emoji do not: ä, é, ß and Ж count, „ “ – … €, × and a no-break space not.
+EXPORT FUNC ISWORDCHAR(c$)
+    IF c$ = "" THEN RETURN FALSE
+    DIM b0 = BYTEAT(c$, 0)
+    IF b0 < 128 THEN RETURN INSTR("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", LEFT$(c$, 1)) >= 0
+    DIM cp = CodePoint(c$)
+    IF cp < 192 ORELSE cp = 215 ORELSE cp = 247 THEN RETURN FALSE
+    IF cp >= 8192 ANDALSO cp <= 11263 THEN RETURN FALSE
+    IF cp >= 12288 ANDALSO cp <= 12351 THEN RETURN FALSE
+    IF cp = 65279 ORELSE cp >= 126976 THEN RETURN FALSE
+    RETURN TRUE
+ENDFUNC
+
+' The byte position of the first needle$ in hay$ at or after byte start that
+' stands as a whole word, -1 when there is none. The characters on either
+' side of a hit are read whole, so an umlaut next to it is part of the word
+' and a quote mark or a dash is not. Positions count bytes, as INSTR does.
+EXPORT FUNC FINDWORD(hay$, needle$, start = 0)
+    DIM hit = INSTR(start, hay$, needle$)
+    DO WHILE hit >= 0
+        DIM back = hit - 4
+        IF back < 0 THEN back = 0
+        DIM before$ = RIGHTW$(MID$(hay$, back, hit - back), 1)
+        DIM after$ = MIDW$(MID$(hay$, hit + LEN(needle$), 4), 0, 1)
+        IF NOT ISWORDCHAR(before$) ANDALSO NOT ISWORDCHAR(after$) THEN RETURN hit
+        hit = INSTR(hit + 1, hay$, needle$)
+    LOOP
+    RETURN -1
+ENDFUNC
+
 ' ── wrapping ───────────────────────────────────────────────────
 
 ' Tabs expanded to the next multiple of eight, every other ASCII whitespace
@@ -221,7 +264,7 @@ FUNC DashRun(cs, q)
         stop_i = stop_i + 1
     LOOP
     IF stop_i - q < 2 ORELSE stop_i >= n THEN RETURN 0
-    IF IsWordChar(CharAt$(cs, stop_i)) THEN RETURN stop_i - q
+    IF IsAsciiWordChar(CharAt$(cs, stop_i)) THEN RETURN stop_i - q
     RETURN 0
 ENDFUNC
 
