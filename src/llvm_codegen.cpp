@@ -12095,10 +12095,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // an `i64` into a function whose signature is `double`, and
             // the IR verifier rejects the module ("return type does not
             // match"). Coerce both i64 and bool back to f64 before ret.
-            if (body.tag == JD_TAG_I64 || body.tag == JD_TAG_BOOL)
+            // The answer's kind goes into the return channel, as the wrapper
+            // of a named FUNC puts it there, so a call through a variable
+            // (f("x")) reads a text as a text and not its pointer as a number.
+            int ret_wire = JD_TAG_F64;
+            LLVMValueRef ret_wire_dyn = nullptr;
+            if (body.tag == JD_TAG_I64 || body.tag == JD_TAG_BOOL) {
                 ret_val = LLVMBuildSIToFP(builder, ret_val, f64_type, "itof");
-            else if (body.tag == JD_TAG_STR || body.tag == JD_TAG_ARR ||
-                     body.tag == JD_TAG_NATIVE_MAP)
+                ret_wire = body.tag == JD_TAG_I64 ? JD_TAG_I64 : JD_TAG_F64;
+            } else if (body.tag == JD_TAG_STR || body.tag == JD_TAG_ARR ||
+                       body.tag == JD_TAG_NATIVE_MAP) {
                 // A string/array/map body is a pointer; pun its bits into the
                 // f64 return slot (the funcref calling convention is double(..))
                 // instead of letting an i8* flow into an f64 Ret - that made the
@@ -12107,8 +12113,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // the pointer from the f64 bits.
                 ret_val = pun_i64_to_f64(
                     LLVMBuildPtrToInt(builder, ret_val, i64_type, "lret2i"));
-            else if (body.tag == JD_TAG_RUNTIME)
+                ret_wire = body.tag;
+            } else if (body.tag == JD_TAG_VM_HANDLE) {
+                ret_val = pun_i64_to_f64(body.val);
+                ret_wire = JD_TAG_VM_HANDLE;
+            } else if (body.tag == JD_TAG_RUNTIME && body.runtime_tag) {
+                ret_wire_dyn = body.runtime_tag;
+                ret_val = funcref_wire_bits(body);
+            } else if (body.tag == JD_TAG_RUNTIME) {
                 ret_val = coerce_to(body, f64_type);
+            }
+            LLVMBuildStore(builder, ret_wire_dyn ? ret_wire_dyn : LLVMConstInt(i32_type, ret_wire, 0),
+                           funcref_ret_channel());
             LLVMBuildRet(builder, ret_val);
 
             // Restore state - position builder back at the EXACT block we were in

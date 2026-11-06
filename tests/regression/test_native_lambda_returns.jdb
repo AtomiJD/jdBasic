@@ -1,0 +1,64 @@
+' A lambda called through a variable answers with its own kind: a text is
+' a text (it read as 0 under -c, the lambda never named its kind to the
+' caller), an array an array, a number a number; also a closure a FUNC
+' made with USE, and one called many times.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC MakeTagger(tag$)
+    RETURN LAMBDA USE(tag$) s$ -> "<" + tag$ + ">" + s$ + "</" + tag$ + ">"
+ENDFUNC
+
+FUNC MakePad(w)
+    RETURN LAMBDA USE(w) s$ -> FORMAT$("{:<" + STR$(w) + "}", s$) + "|"
+ENDFUNC
+
+FUNC MakeMinLength(limit)
+    RETURN LAMBDA USE(limit) w$ -> LEN(w$) >= limit
+ENDFUNC
+
+DIM shout = LAMBDA s$ -> s$ + "!"
+Check(shout("x") = "x!", "a text lambda at the top level")
+DIM r$ = shout("y")
+Check(r$ = "y!", "a text lambda into a string variable")
+
+DIM bold = MakeTagger("b")
+DIM italic = MakeTagger("i")
+Check(bold("hi") = "<b>hi</b>", "a closure over a text answers a text")
+Check(bold("a") + italic("b") = "<b>a</b><i>b</i>", "two closures joined")
+DIM pad = MakePad(6)
+Check(pad("ab") = "ab    |", "a closure with FORMAT$ inside")
+
+DIM isLong = MakeMinLength(5)
+DIM marked$ = ""
+DIM w$ = ""
+FOR EACH w$ IN SPLIT("Parsers turn raw tokens", " ")
+    IF isLong(w$) THEN
+        marked$ = marked$ + bold(w$) + " "
+    ELSE
+        marked$ = marked$ + italic(w$) + " "
+    ENDIF
+NEXT
+Check(RTRIM$(marked$) = "<b>Parsers</b> <i>turn</i> <i>raw</i> <b>tokens</b>", "closures chosen per word in a loop")
+
+DIM twice = LAMBDA x -> x * 2
+DIM pair = LAMBDA x -> [x, x + 1]
+Check(twice(21) = 42, "a number lambda")
+Check(LEN(pair(4)) = 2 ANDALSO pair(4)[1] = 5, "an array lambda")
+Check(JOIN(SELECT(LAMBDA s$ -> s$ + "?", ["a", "b"]), ",") = "a?,b?", "a text lambda in SELECT")
+
+DIM n AS INTEGER
+DIM all$ = ""
+FOR n = 1 TO 300
+    all$ = shout(STR$(n))
+NEXT n
+Check(all$ = "300!", "a text lambda called 300 times")
+
+IF failed = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
