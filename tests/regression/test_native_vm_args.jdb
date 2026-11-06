@@ -104,4 +104,20 @@ DIM nums = JSON.PARSE("[10, 20, 30]")
 DIM at = nums[0] - 9
 Check(nums[at] = 20, "a VM array read by a position of run-time kind")
 
+' An element of a VM array looked up with IN in a native array: a text is
+' found by its content and a number by its value.
+DIM allowed = ["admin", "dev", 3]
+DIM roles = []
+roles = JSON.PARSE("{""roles"": [""admin"", ""root"", 3]}"){"roles"}
+DIM hits$ = ""
+FOR EACH role IN roles
+    IF role IN allowed THEN hits$ = hits$ + "+" ELSE hits$ = hits$ + "-"
+NEXT
+Check(hits$ = "+-+", "VM array elements found with IN in a native array")
+Check(roles[0] IN allowed ANDALSO NOT (roles[1] IN allowed), "a VM array element read by position, with IN")
+DIM first = roles[0]
+Check(first IN allowed, "a VM array element kept in a variable, with IN")
+Check(roles[0] IN "the admin role", "a VM text found inside a text")
+Check(roles[0] IN {"admin": 1}, "a VM text as a map key with IN")
+
 IF failed = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

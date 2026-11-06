@@ -682,6 +682,10 @@ private:
     LLVMValueRef vm_container_param(const TypedValue& av, int expected_tag);
     LLVMValueRef runtime_ptr_arg(TypedValue tv, LLVMValueRef* fresh_arr = nullptr,
                                  LLVMValueRef* fresh_str = nullptr);
+    // A VM value read where only a scalar fits becomes the native value it
+    // holds: a VM text a bridge text (fresh_ptr set, give it back with
+    // drop_read_temp), any other VM value its number. Native values pass.
+    TypedValue vm_scalar_as_native(const TypedValue& tv);
     // TYPE methods whose untyped parameters a call site hands a pointer
     // kind: those parameters are runtime-typed (by method name, per index).
     std::unordered_map<std::string, std::vector<bool>> method_runtime_params;

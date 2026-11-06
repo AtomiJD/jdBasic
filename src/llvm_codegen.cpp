@@ -13301,6 +13301,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
 
     // IN operator
     if (expr.op == TokenType::IN) {
+      TypedValue needle = vm_scalar_as_native(lhs);
+      auto in_search = [&](TypedValue lhs) -> TypedValue {
         // A runtime-typed haystack: a map answers by key, a string by
         // substring, anything else is read as an array.
         if (rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
@@ -13496,6 +13498,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ahn"), JD_TAG_BOOL };
         }
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_BOOL };
+      };
+      TypedValue found = in_search(needle);
+      if (needle.fresh_ptr != lhs.fresh_ptr) drop_read_temp(needle);
+      return found;
     }
 
     // A string with an operator that has no string meaning of its own
@@ -21354,6 +21360,61 @@ LLVMValueRef LLVMCodegen::vm_container_param(const TypedValue& av, int expected_
     LLVMBasicBlockRef bbs[] = { bb_vm_end, bb_nat_end };
     LLVMAddIncoming(phi, vals, bbs, 2);
     return phi;
+}
+
+LLVMCodegen::TypedValue LLVMCodegen::vm_scalar_as_native(const TypedValue& tv) {
+    bool static_vmh = tv.tag == JD_TAG_VM_HANDLE;
+    if (!static_vmh && !(tv.tag == JD_TAG_RUNTIME && tv.runtime_tag)) return tv;
+    auto* vk = get_runtime_func("__jdrt_val_kind");
+    auto* vts = get_runtime_func("__jdrt_val_to_str");
+    auto* vtf = get_runtime_func("__jdrt_val_to_f64");
+    if (!vk || !vts || !vtf) return tv;
+    LLVMTypeRef i1 = LLVMInt1TypeInContext(ctx);
+    LLVMValueRef tag_in = static_vmh ? LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0) : tv.runtime_tag;
+    LLVMValueRef is_vmh = static_vmh ? LLVMConstInt(i1, 1, 0)
+        : LLVMBuildICmp(builder, LLVMIntEQ, tag_in, LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "vsn_isvmh");
+    LLVMBasicBlockRef bb_from = LLVMGetInsertBlock(builder);
+    LLVMBasicBlockRef bb_vm = LLVMAppendBasicBlockInContext(ctx, current_fn, "vsn.vm");
+    LLVMBasicBlockRef bb_txt = LLVMAppendBasicBlockInContext(ctx, current_fn, "vsn.txt");
+    LLVMBasicBlockRef bb_num = LLVMAppendBasicBlockInContext(ctx, current_fn, "vsn.num");
+    LLVMBasicBlockRef bb_join = LLVMAppendBasicBlockInContext(ctx, current_fn, "vsn.join");
+    LLVMBuildCondBr(builder, is_vmh, bb_vm, bb_join);
+
+    LLVMPositionBuilderAtEnd(builder, bb_vm);
+    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+    LLVMValueRef ka[] = { rt, tv.val };
+    LLVMValueRef kind = LLVMBuildCall2(builder, vk->fn_type, vk->fn, ka, 2, "vsn_kind");
+    LLVMValueRef is_txt = LLVMBuildICmp(builder, LLVMIntEQ, kind,
+        LLVMConstInt(i32_type, kValKindString, 0), "vsn_istxt");
+    LLVMBuildCondBr(builder, is_txt, bb_txt, bb_num);
+
+    LLVMPositionBuilderAtEnd(builder, bb_txt);
+    LLVMValueRef s = LLVMBuildCall2(builder, vts->fn_type, vts->fn, ka, 2, "vsn_s");
+    LLVMValueRef s_bits = LLVMBuildPtrToInt(builder, s, i64_type, "vsn_sbits");
+    LLVMBasicBlockRef bb_txt_end = LLVMGetInsertBlock(builder);
+    LLVMBuildBr(builder, bb_join);
+
+    LLVMPositionBuilderAtEnd(builder, bb_num);
+    LLVMValueRef f = LLVMBuildCall2(builder, vtf->fn_type, vtf->fn, ka, 2, "vsn_f");
+    LLVMValueRef f_bits = LLVMBuildBitCast(builder, f, i64_type, "vsn_fbits");
+    LLVMBasicBlockRef bb_num_end = LLVMGetInsertBlock(builder);
+    LLVMBuildBr(builder, bb_join);
+
+    LLVMPositionBuilderAtEnd(builder, bb_join);
+    LLVMValueRef pv = LLVMBuildPhi(builder, i64_type, "vsn_v");
+    LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "vsn_t");
+    LLVMValueRef pf = LLVMBuildPhi(builder, i1, "vsn_fresh");
+    LLVMValueRef vals[] = { tv.val, s_bits, f_bits };
+    LLVMValueRef tags[] = { tag_in, LLVMConstInt(i32_type, JD_TAG_STR, 0), LLVMConstInt(i32_type, JD_TAG_F64, 0) };
+    LLVMValueRef frs[] = { LLVMConstInt(i1, 0, 0), LLVMConstInt(i1, 1, 0), LLVMConstInt(i1, 0, 0) };
+    LLVMBasicBlockRef bbs[] = { bb_from, bb_txt_end, bb_num_end };
+    LLVMAddIncoming(pv, vals, bbs, 3);
+    LLVMAddIncoming(pt, tags, bbs, 3);
+    LLVMAddIncoming(pf, frs, bbs, 3);
+    TypedValue r{ pv, JD_TAG_RUNTIME, pt };
+    r.fresh_ptr = pf;
+    return r;
 }
 
 // A run-time typed argument for a pointer parameter of a direct binding. A
