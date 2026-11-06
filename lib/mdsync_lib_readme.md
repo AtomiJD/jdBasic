@@ -39,7 +39,7 @@ other's echo without a guard.
 
 | Call | What it does |
 |------|--------------|
-| `OPEN(rt, md$, [opts])` | Binds the control, draws the source; `opts{"base"}` is the image folder. Answers the document map. |
+| `OPEN(rt, md$, [opts])` | Binds the control, draws the source; `opts{"base"}` is the image folder, `opts{"dark"}` draws light text for a dark background. Answers the document map. |
 | `VIEWCHANGED(doc)` | After an edit in the view: reconciles, redraws paragraphs whose look no longer fits their block, answers `{changed, start, old_len, text}`. |
 | `SOURCECHANGED(doc, md$)` | After an edit of the source: redraws the blocks that changed; `TRUE` when the view changed. |
 | `SETKIND(doc, k, kind$, [level])` | Turns block `k` into `para`, `heading` (with a level), `item`, `ordered`, `quote` or `code`, keeping its text. Answers the span. |
@@ -49,6 +49,7 @@ other's echo without a guard.
 | `SOURCETABLEPOS(doc, pos)` | The same for a source offset. |
 | `ADDROW(doc, [from_source, pos])` | An empty row below the caret's row (below the header for the header row); the view caret goes to its first cell. Answers the span. |
 | `ADDCOL(doc, [from_source, pos])` | An empty column right of the caret's cell, `---` in the delimiter row. Answers the span. |
+| `SETOPTS(doc, opts)` | Changes drawing options (`base`, `dark`) and draws the view again, the selection kept; answers TRUE when an option changed. |
 | `SOURCE$(doc)` | The current source. |
 | `BLOCKS(doc)` | The current blocks (see MDRICH). |
 | `VIEWRUNS(doc)` | The `RUNS` of every view paragraph, one array per block, a table as one: what `MDRICH.SAME` and `MDRICH.MD$` read. |
@@ -75,7 +76,9 @@ caret.
    after a quote a quote, else a paragraph. Empty paragraphs in front of
    unchanged ones (Enter at a paragraph's start) are the new ones. Fewer
    paragraphs (Backspace at a paragraph's start) keep the first block's
-   kind.
+   kind. Enter in a code or raw block is a new line of that block (the
+   paragraph break becomes a line break again); Enter on its empty last
+   line leaves it.
 4. Blank lines after the touched range stay at its end; a blank line is
    added where two blocks would otherwise read back as one (before a
    paragraph, after an item, between a paragraph and a rule).

@@ -13,7 +13,7 @@
 '
 ' Needs a FORMS build (Windows). Built on MDRICH.
 '
-' version: 1.2.0
+' version: 1.3.0
 ' requires: MDRICH ^1
 
 EXPORT MODULE MDSYNC
@@ -22,6 +22,7 @@ IMPORT MDRICH
 
 DIM CRLF_CH AS STRING = CHR$(13) + CHR$(10)
 DIM TAB_SYNC AS STRING = CHR$(9)
+DIM VT_SYNC AS STRING = CHR$(11)
 DIM ROW_ON_SYNC AS STRING = CHR$(65529)
 DIM ROW_OFF_SYNC AS STRING = CHR$(65531)
 
@@ -165,7 +166,7 @@ FUNC RtfOf$(doc, blocks)
         parts = APPEND(parts, MDRICH.RTF$(blocks[k], doc{"opts"}))
         kinds = APPEND(kinds, blocks[k]{"kind"})
     NEXT k
-    RETURN MDRICH.HEAD$() + MDRICH.JOINRTF$(parts, kinds) + "}"
+    RETURN MDRICH.HEAD$(doc{"opts"}) + MDRICH.JOINRTF$(parts, kinds) + "}"
 ENDFUNC
 
 ' Replaces view paragraphs [a, b) with the drawing of blocks. The caller
@@ -263,6 +264,35 @@ EXPORT FUNC OPEN(rt AS DOUBLE, md$, opts = 0)
     FORM.SET(rt, "MODIFIED", FALSE)
     doc{"vtexts"} = ViewParas(rt){"texts"}
     RETURN doc
+ENDFUNC
+
+' Changes drawing options (base, dark) and draws the view again, the
+' selection kept. Answers TRUE when an option changed.
+EXPORT FUNC SETOPTS(doc, opts)
+    DIM o = doc{"opts"}
+    DIM changed = FALSE
+    DIM keys = MAP.KEYS(opts)
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM same = FALSE
+        IF MAP.EXISTS(o, keys[k]) THEN same = o{keys[k]} = opts{keys[k]}
+        IF NOT same THEN
+            o{keys[k]} = opts{keys[k]}
+            changed = TRUE
+        ENDIF
+    NEXT k
+    IF NOT changed THEN RETURN FALSE
+    doc{"opts"} = o
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM sel_start AS INTEGER = FORM.GET(rt, "SELSTART")
+    DIM sel_len AS INTEGER = FORM.GET(rt, "SELLENGTH")
+    DIM was_modified = FORM.GET(rt, "MODIFIED")
+    FORM.SET(rt, "TEXTRTF", MDRICH.DOC$(doc{"blocks"}, o))
+    FORM.SET(rt, "SELSTART", sel_start)
+    FORM.SET(rt, "SELLENGTH", sel_len)
+    FORM.SET(rt, "MODIFIED", was_modified)
+    doc{"vtexts"} = ViewParas(rt){"texts"}
+    RETURN TRUE
 ENDFUNC
 
 EXPORT FUNC SOURCE$(doc)
@@ -363,16 +393,31 @@ FUNC Rebuild(model, runs, drawn$)
     RETURN nb
 ENDFUNC
 
-' The source span between old and new text, trimmed to what differs.
+' TRUE when byte i of t$ continues a UTF-8 character.
+FUNC IsCont(t$, i)
+    IF i < 0 ORELSE i >= LEN(t$) THEN RETURN FALSE
+    DIM c = BYTEAT(t$, i)
+    RETURN c >= 128 ANDALSO c < 192
+ENDFUNC
+
+' The source span between old and new text, trimmed to what differs. Both
+' ends fall on character boundaries, so a changed character is replaced
+' whole even where its first bytes agree (ä and ü share C3).
 FUNC Span(old$, new$, base)
     DIM p = 0
     DIM lim = MIN([LEN(old$), LEN(new$)])
     DO WHILE p < lim ANDALSO MID$(old$, p, 1) = MID$(new$, p, 1)
         p = p + 1
     LOOP
+    DO WHILE p > 0 ANDALSO (IsCont(old$, p) ORELSE IsCont(new$, p))
+        p = p - 1
+    LOOP
     DIM s = 0
     DO WHILE s < lim - p ANDALSO MID$(old$, LEN(old$) - 1 - s, 1) = MID$(new$, LEN(new$) - 1 - s, 1)
         s = s + 1
+    LOOP
+    DO WHILE s > 0 ANDALSO (IsCont(old$, LEN(old$) - s) ORELSE IsCont(new$, LEN(new$) - s))
+        s = s - 1
     LOOP
     DIM d AS MAP
     d{"changed"} = old$ <> new$
@@ -391,11 +436,56 @@ FUNC NoChange()
     RETURN d
 ENDFUNC
 
+' Enter inside a code or raw block splits its paragraph in the view; the
+' break is turned back into a line break of the block. Enter on the empty
+' last line of the block leaves it: that line goes and the new paragraph,
+' with whatever was typed into it since, stays. Answers the view's
+' paragraphs as they are afterwards.
+FUNC KeepInBlock(doc, vp)
+    DIM rt AS DOUBLE = doc{"rt"}
+    DIM newt = vp{"texts"}
+    DIM oldt = doc{"vtexts"}
+    DIM blocks = doc{"blocks"}
+    IF LEN(blocks) = 0 ORELSE LEN(oldt) <> LEN(blocks) ORELSE LEN(newt) <> LEN(oldt) + 1 THEN RETURN vp
+    IF FORM.GET(rt, "SELLENGTH") <> 0 THEN RETURN vp
+    DIM caret AS INTEGER = FORM.GET(rt, "SELSTART")
+    ' after Enter the caret is in the paragraph split off, at its start
+    ' unless more was typed before this sync
+    DIM p = ParaAt(vp, caret) - 1
+    IF p < 0 ORELSE p >= LEN(blocks) THEN RETURN vp
+    DIM kind$ = blocks[p]{"kind"}
+    IF kind$ <> "code" ANDALSO kind$ <> "raw" THEN RETURN vp
+    DIM k = 0
+    FOR k = 0 TO p - 1
+        IF newt[k] <> oldt[k] THEN RETURN vp
+    NEXT k
+    FOR k = p + 2 TO LEN(newt) - 1
+        IF newt[k] <> oldt[k - 1] THEN RETURN vp
+    NEXT k
+    DIM brk AS INTEGER = vp{"starts"}[p + 1] - 2
+    ' split on the block's last line, and that line was empty
+    IF RIGHT$(newt[p], 1) = VT_SYNC ANDALSO INSTR(newt[p + 1], VT_SYNC) < 0 THEN
+        FORM.SET(rt, "SELSTART", brk - 1)
+        FORM.SET(rt, "SELLENGTH", 1)
+        FORM.SET(rt, "SELTEXT", "")
+        caret = caret - 1
+    ELSE
+        FORM.SET(rt, "SELSTART", brk)
+        FORM.SET(rt, "SELLENGTH", 2)
+        ' SELTEXT would make a VT a paragraph break again
+        FORM.SET(rt, "SELRTF", "{\rtf1\ansi\line}")
+        IF caret >= brk + 2 THEN caret = caret - 1
+    ENDIF
+    FORM.SET(rt, "SELSTART", caret)
+    FORM.SET(rt, "SELLENGTH", 0)
+    RETURN ViewParas(rt)
+ENDFUNC
+
 ' Reconciles the source with the view after an edit there. Answers a map:
 ' changed, and the source span start / old_len / text that replaces it.
 EXPORT FUNC VIEWCHANGED(doc)
     DIM rt AS DOUBLE = doc{"rt"}
-    DIM vp = ViewParas(rt)
+    DIM vp = KeepInBlock(doc, ViewParas(rt))
     DIM newt = vp{"texts"}
     DIM oldt = doc{"vtexts"}
     DIM blocks = doc{"blocks"}

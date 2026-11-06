@@ -10,6 +10,7 @@
 '   jdbasic -c jdtexti.jdb       (jdtexti.jdb.props gives the .exe its icon)
 OPTION "EXPLICIT"
 IMPORT MDSYNC
+IMPORT MDRICH
 
 DIM APP_NAME AS STRING = "jdTexti"
 DIM CR AS STRING = CHR$(13)
@@ -41,6 +42,12 @@ DIM btnAll AS DOUBLE = 0
 DIM file_path AS STRING = ""
 DIM file_enc AS STRING = "utf-8"
 DIM file_eol AS STRING = CRLF
+' A file with both CRLF and LF keeps each line's own ending where the line
+' was not edited; disk_lines and disk_ends hold the file as last read or
+' written, until a line ending is chosen in the menu.
+DIM file_mixed AS INTEGER = 0
+DIM disk_lines AS ARRAY = []
+DIM disk_ends AS ARRAY = []
 DIM file_mtime AS STRING = ""
 DIM file_ro AS INTEGER = 0
 DIM font_face AS STRING = "Consolas"
@@ -64,11 +71,16 @@ DIM client_h AS INTEGER = 500
 ' and view side by side, 2 the view alone. The source pane stays the
 ' document: saving, encodings and line endings work on it as before.
 DIM mdv AS DOUBLE = 0
+' a hidden copy of the view drawn light, for printing in dark mode
+DIM mdprint AS DOUBLE = 0
 DIM md_on AS INTEGER = 0
 DIM md_layout AS INTEGER = 1
 DIM md_doc AS MAP
 DIM md_dirty_view AS INTEGER = 0
 DIM md_dirty_src AS INTEGER = 0
+' the other pane follows once typing has rested this long
+DIM SYNC_QUIET_MS AS DOUBLE = 400.0
+DIM md_edit_at AS DOUBLE = 0.0
 DIM view_active AS INTEGER = 0
 DIM md_bar AS ARRAY = []
 DIM md_state AS STRING = ""
@@ -121,6 +133,7 @@ SUB UPDATE_STATUS()
     IF sel <> "" THEN chars = STR$(CHAR_COUNT(sel)) + " of " + chars
     DIM eol AS STRING = "Windows (CRLF)"
     IF file_eol <> CRLF THEN eol = "Unix (LF)"
+    IF file_mixed THEN eol = "Mixed (CRLF/LF)"
     FORM.SET(sb, "TEXT", [pos, chars, STR$(zoom_pct) + "%", eol, ENC_LABEL$(file_enc)])
 ENDSUB
 
@@ -160,14 +173,27 @@ SUB LAYOUT()
 ENDSUB
 
 SUB APPLY_COLORS()
+    DIM back AS INTEGER = $FFFFFF
+    DIM fore AS INTEGER = $000000
     IF dark_on THEN
-        FORM.SET(txt, "BACKCOLOR", DARK_BACK)
-        FORM.SET(txt, "FORECOLOR", DARK_FORE)
-    ELSE
-        FORM.SET(txt, "BACKCOLOR", $FFFFFF)
-        FORM.SET(txt, "FORECOLOR", $000000)
+        back = DARK_BACK
+        fore = DARK_FORE
+    ENDIF
+    FORM.SET(txt, "BACKCOLOR", back)
+    FORM.SET(txt, "FORECOLOR", fore)
+    IF mdv = 0 THEN RETURN
+    FORM.SET(mdv, "BACKCOLOR", back)
+    IF md_on THEN
+        MD_FLUSH()
+        DIM redrawn AS INTEGER = MDSYNC.SETOPTS(md_doc, {"dark": dark_on = 1})
     ENDIF
 ENDSUB
+
+' The folder relative image paths in the view resolve against.
+FUNC MD_BASE$()
+    IF file_path = "" THEN RETURN "."
+    RETURN PATH.DIRNAME$(file_path)
+ENDFUNC
 
 SUB APPLY_FONT()
     FORM.SET(txt, "FONT", {"name": font_face, "size": font_size, "bold": font_bold = 1, "italic": font_italic = 1})
@@ -177,6 +203,62 @@ ENDSUB
 ' The control wants CRLF; files arrive with LF, CRLF or a mix.
 FUNC TO_CRLF$(s AS STRING)
     RETURN REPLACE$(REPLACE$(s, CRLF, LF), LF, CRLF)
+ENDFUNC
+
+' Notes each line of the file's text and the ending after it ("" for the
+' last); file_mixed when both CRLF and a bare LF occur.
+SUB REMEMBER_LINES(content AS STRING)
+    file_mixed = 0
+    disk_lines = []
+    disk_ends = []
+    IF INSTR(content, CRLF) < 0 ORELSE INSTR(REPLACE$(content, CRLF, ""), LF) < 0 THEN RETURN
+    file_mixed = 1
+    DIM pieces AS ARRAY = SPLIT(content, LF)
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(pieces) - 1
+        DIM one AS STRING = pieces[i]
+        DIM ending AS STRING = LF
+        IF RIGHT$(one, 1) = CR THEN
+            one = LEFT$(one, LEN(one) - 1)
+            ending = CRLF
+        ENDIF
+        IF i = LEN(pieces) - 1 THEN ending = ""
+        PUSH(disk_lines, one)
+        PUSH(disk_ends, ending)
+    NEXT
+ENDSUB
+
+' The editor's CRLF text with the endings of a mixed file: lines that match
+' the file from its start or its end keep their own ending, the edited
+' lines between get file_eol.
+FUNC MIXED_BODY$(body AS STRING)
+    DIM now_lines AS ARRAY = SPLIT(body, CRLF)
+    DIM n_now AS INTEGER = LEN(now_lines)
+    DIM n_disk AS INTEGER = LEN(disk_lines)
+    DIM lim AS INTEGER = n_now
+    IF n_disk < lim THEN lim = n_disk
+    DIM p AS INTEGER = 0
+    DO WHILE p < lim ANDALSO now_lines[p] = disk_lines[p]
+        p = p + 1
+    LOOP
+    DIM s AS INTEGER = 0
+    DO WHILE s < lim - p ANDALSO now_lines[n_now - 1 - s] = disk_lines[n_disk - 1 - s]
+        s = s + 1
+    LOOP
+    DIM out AS ARRAY = []
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO n_now - 1
+        DIM ending AS STRING = file_eol
+        IF i < p THEN
+            ending = disk_ends[i]
+        ELSEIF i >= n_now - s THEN
+            ending = disk_ends[i - n_now + n_disk]
+        ENDIF
+        IF ending = "" THEN ending = file_eol
+        IF i = n_now - 1 THEN ending = ""
+        PUSH(out, now_lines[i] + ending)
+    NEXT
+    RETURN JOIN(out, "")
 ENDFUNC
 
 SUB REMEMBER_DISK()
@@ -195,9 +277,7 @@ ENDFUNC
 
 ' Shows the source rendered next to it (or alone, md_layout 2).
 SUB MD_START(layout_kind AS INTEGER)
-    DIM base AS STRING = "."
-    IF file_path <> "" THEN base = PATH.DIRNAME$(file_path)
-    md_doc = MDSYNC.OPEN(mdv, FORM.GET(txt, "TEXT"), {"base": base})
+    md_doc = MDSYNC.OPEN(mdv, FORM.GET(txt, "TEXT"), {"base": MD_BASE$(), "dark": dark_on = 1})
     md_on = 1
     md_layout = layout_kind
     md_dirty_view = 0
@@ -598,8 +678,8 @@ SUB MENU_CHECKS()
     CHECK_ITEM("mnuEncUtf16Le", LEFT$(file_enc, 8) = "utf-16le")
     CHECK_ITEM("mnuEncUtf16Be", LEFT$(file_enc, 8) = "utf-16be")
     CHECK_ITEM("mnuEncAnsi", file_enc = "cp1252")
-    CHECK_ITEM("mnuEolCrlf", file_eol = CRLF)
-    CHECK_ITEM("mnuEolLf", file_eol <> CRLF)
+    CHECK_ITEM("mnuEolCrlf", file_eol = CRLF ANDALSO NOT file_mixed)
+    CHECK_ITEM("mnuEolLf", file_eol <> CRLF ANDALSO NOT file_mixed)
     CHECK_ITEM("mnuWrap", wrap_on)
     CHECK_ITEM("mnuTab2", tab_w = 2)
     CHECK_ITEM("mnuTab4", tab_w = 4)
@@ -635,7 +715,11 @@ ENDFUNC
 FUNC SAVE_TO(path AS STRING)
     MD_FLUSH()
     DIM body AS STRING = FORM.GET(txt, "TEXT")
-    IF file_eol <> CRLF THEN body = REPLACE$(body, CRLF, file_eol)
+    IF file_mixed THEN
+        body = MIXED_BODY$(body)
+    ELSEIF file_eol <> CRLF THEN
+        body = REPLACE$(body, CRLF, file_eol)
+    ENDIF
     IF file_enc = "cp1252" ANDALSO NOT ANSI_SAFE(body) THEN
         DIM answer AS INTEGER = MSGBOX("This file contains characters that ANSI cannot store; they would be lost." + CRLF + CRLF + "Save it as UTF-8 instead?", 3 + 48, APP_NAME)
         IF answer = 2 THEN RETURN FALSE
@@ -647,7 +731,11 @@ FUNC SAVE_TO(path AS STRING)
         MSGBOX("Cannot save " + path + CRLF + ERRMSG$, 16, APP_NAME)
         RETURN FALSE
     ENDTRY
+    IF file_mixed THEN REMEMBER_LINES(body)
     file_path = path
+    IF md_on THEN
+        DIM rebased AS INTEGER = MDSYNC.SETOPTS(md_doc, {"base": MD_BASE$()})
+    ENDIF
     REMEMBER_DISK()
     FORM.SET(txt, "MODIFIED", FALSE)
     ADD_RECENT(path)
@@ -697,6 +785,7 @@ SUB LOAD_DOC(path AS STRING)
     file_enc = enc
     file_eol = CRLF
     IF INSTR(content, LF) >= 0 ANDALSO INSTR(content, CRLF) < 0 THEN file_eol = LF
+    REMEMBER_LINES(content)
     FORM.SET(txt, "TEXT", TO_CRLF$(content))
     FORM.SET(txt, "MODIFIED", FALSE)
     FORM.SET(txt, "SELSTART", 0)
@@ -723,6 +812,7 @@ SUB NEW_DOC()
     file_enc = "utf-8"
     file_eol = CRLF
     file_mtime = ""
+    REMEMBER_LINES("")
     file_ro = 0
     doc_chars = 0
     MENU_CHECKS()
@@ -878,7 +968,10 @@ SUB TXT_CHANGE(e)
     DIM now_text AS STRING = FORM.GET(txt, "TEXT")
     doc_chars = CHAR_COUNT(now_text)
     ' a span the view put here is no edit of the source
-    IF md_on ANDALSO now_text <> MDSYNC.SOURCE$(md_doc) THEN md_dirty_src = 1
+    IF md_on ANDALSO now_text <> MDSYNC.SOURCE$(md_doc) THEN
+        md_dirty_src = 1
+        md_edit_at = TICK()
+    ENDIF
     UPDATE_TITLE()
     UPDATE_STATUS()
 ENDSUB
@@ -907,6 +1000,7 @@ ENDSUB
 SUB MDV_CHANGE(e)
     IF quitting ORELSE NOT md_on THEN RETURN
     md_dirty_view = 1
+    md_edit_at = TICK()
 ENDSUB
 
 SUB MDV_GOTFOCUS(e)
@@ -914,6 +1008,7 @@ SUB MDV_GOTFOCUS(e)
     view_active = 1
     MD_STATE()
     UPDATE_STATUS()
+    CHECK_DISK()
 ENDSUB
 
 SUB MDV_KEYUP(e)
@@ -935,6 +1030,7 @@ ENDSUB
 ' them at once.
 SUB TMRSYNC_TICK(e)
     IF quitting ORELSE NOT md_on THEN RETURN
+    IF TICK() - md_edit_at < SYNC_QUIET_MS THEN RETURN
     IF md_dirty_view ORELSE md_dirty_src THEN
         MD_FLUSH()
         MD_STATE()
@@ -1059,8 +1155,9 @@ SUB MNUENCANSI_CLICK(e)
 ENDSUB
 
 SUB SET_EOL(eol AS STRING)
-    IF eol = file_eol THEN RETURN
+    IF eol = file_eol ANDALSO NOT file_mixed THEN RETURN
     file_eol = eol
+    file_mixed = 0
     FORM.SET(txt, "MODIFIED", TRUE)
     MENU_CHECKS()
     UPDATE_TITLE()
@@ -1079,9 +1176,22 @@ SUB MNUPAGESETUP_CLICK(e)
     FORM.PAGESETUP()
 ENDSUB
 
+' The rendered view prints as it is shown while it has the focus or is
+' shown alone, the source as plain text otherwise. A dark view goes to
+' paper drawn light.
 SUB MNUPRINT_CLICK(e)
     TRY
-        FORM.PRINT(FORM.GET(txt, "TEXT"), DOC_NAME$(), {"name": font_face, "size": font_size})
+        IF md_on ANDALSO (view_active ORELSE md_layout = 2) THEN
+            MD_FLUSH()
+            DIM page_rt AS DOUBLE = mdv
+            IF dark_on THEN
+                FORM.SET(mdprint, "TEXTRTF", MDRICH.DOC$(MDSYNC.BLOCKS(md_doc), {"base": MD_BASE$()}))
+                page_rt = mdprint
+            ENDIF
+            FORM.PRINTRICH(page_rt, DOC_NAME$())
+        ELSE
+            FORM.PRINT(FORM.GET(txt, "TEXT"), DOC_NAME$(), {"name": font_face, "size": font_size})
+        ENDIF
     CATCH
         MSGBOX("Printing failed." + CRLF + ERRMSG$, 16, APP_NAME)
     ENDTRY
@@ -1518,6 +1628,9 @@ FORM.SET(mdv, "MAXLENGTH", 0)
 FORM.SET(mdv, "HIDESELECTION", FALSE)
 FORM.SET(mdv, "SPELLCHECK", TRUE)
 FORM.SET(mdv, "VISIBLE", FALSE)
+mdprint = FORM.RICHTEXT(frm, "mdprint", 0, 0, client_w, client_h - SB_HEIGHT)
+FORM.SET(mdprint, "MAXLENGTH", 0)
+FORM.SET(mdprint, "VISIBLE", FALSE)
 
 DIM bar_spec AS ARRAY = [["btnMdB", "B", 30], ["btnMdI", "I", 30], ["btnMdS", "S", 30], ["btnMdCode", "</>", 40], _
     ["btnMdH1", "H1", 36], ["btnMdH2", "H2", 36], ["btnMdH3", "H3", 36], ["btnMdPara", "Text", 44], _

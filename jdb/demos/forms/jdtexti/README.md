@@ -14,9 +14,11 @@ Multi-level undo, Find / Replace (match case, whole word, wrap around, up or
 down), Go To line, word wrap, zoom (Ctrl+wheel, Ctrl+Plus / Minus / 0),
 spell check, tab width 2 / 4 / 8, dark mode, page setup and printing, and
 the eight most recent files. A file keeps its encoding (UTF-8 with or
-without BOM, UTF-16 LE / BE, ANSI) and its line endings (CRLF or LF); both
-can be changed from the File menu. A change made to the open file by another
-program is noticed when the window gets the focus again.
+without BOM, UTF-16 LE / BE, ANSI) and its line endings (CRLF or LF; a file
+with both keeps the ending of every line that was not edited); both can be
+changed from the File menu, and choosing a line ending there makes them all
+the same. A change made to the open file by another program is noticed when
+either pane gets the focus again.
 
 ## Markdown
 
@@ -29,6 +31,11 @@ document on the right. Both panes are editable and kept in step:
 - An edit in the source redraws only the blocks that changed.
 - The other pane follows the caret to the same block.
 - Saving writes the source pane, in the file's own encoding and line endings.
+- Printing from the rendered view (focused, or shown alone) prints it as
+  shown, with headings, tables and pictures; in dark mode it goes to paper
+  drawn light. From the source pane the source prints as plain text.
+- Dark mode darkens both panes. Saving under another folder resolves
+  relative image paths against the new one.
 - Undo and Redo (Ctrl+Z, Ctrl+Y) step one history, the source's, from
   either pane: an edit in the view is one step there, a typing burst one
   step per sync, and the view is redrawn from the source.

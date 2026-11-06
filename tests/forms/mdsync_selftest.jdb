@@ -382,6 +382,71 @@ FORM.SET(src_box, "UNDO", TRUE)
 redone = MDSYNC.SOURCECHANGED(hist, FORM.GET(src_box, "TEXT"))
 Check(INSTR(FORM.GET(rt, "TEXT"), "Body text.") >= 0 ANDALSO INSTR(MDSYNC.SOURCE$(hist), "Main") < 0, "text typed in the view is undone the same way")
 
+' a changed character that shares its first UTF-8 byte with the old one is
+' replaced whole: ä (C3 A4) to ü (C3 BC)
+DIM umlMd AS STRING = "Die ähre." + NL
+DIM uml AS MAP = MDSYNC.OPEN(rt, umlMd)
+mirror = umlMd
+SelectText(rt, "ä")
+FORM.SET(rt, "SELTEXT", "ü")
+d = MDSYNC.VIEWCHANGED(uml)
+Apply(d)
+Check(mirror = MDSYNC.SOURCE$(uml) ANDALSO mirror = "Die ühre." + NL, "an umlaut changed in the view reaches the source whole")
+Check(d{"old_len"} = 2 ANDALSO d{"text"} = "ü", "the span covers the whole character")
+
+' Enter in a code block is a new line of the block; Enter on its empty last
+' line leaves it
+DIM codeMd AS STRING = "```" + NL + "a = 1" + NL + "```" + NL + NL + "After." + NL
+DIM cb AS MAP = MDSYNC.OPEN(rt, codeMd)
+mirror = codeMd
+CaretAfter(rt, "a = 1")
+FORM.SET(rt, "SELTEXT", CRLF)
+FORM.SET(rt, "SELTEXT", "b = 2")
+d = MDSYNC.VIEWCHANGED(cb)
+Apply(d)
+Check(mirror = MDSYNC.SOURCE$(cb) ANDALSO mirror = "```" + NL + "a = 1" + NL + "b = 2" + NL + "```" + NL + NL + "After." + NL, "Enter in a code block adds a line to it")
+Check(LEN(MDSYNC.BLOCKS(cb)) = 2 ANDALSO ViewParaCount(rt) = 2, "the code block stays one block")
+CaretAfter(rt, "b = 2")
+FORM.SET(rt, "SELTEXT", CRLF)
+d = MDSYNC.VIEWCHANGED(cb)
+Apply(d)
+FORM.SET(rt, "SELTEXT", CRLF)
+FORM.SET(rt, "SELTEXT", "New")
+d = MDSYNC.VIEWCHANGED(cb)
+Apply(d)
+Check(mirror = MDSYNC.SOURCE$(cb) ANDALSO INSTR(mirror, "b = 2" + NL + "```" + NL + NL + "New" + NL) >= 0, "Enter on the empty last line leaves the block")
+
+' a deleted picture leaves the source too
+DIM picMd AS STRING = "Top" + NL + NL + "![gone](no_such_file.png)" + NL + NL + "End" + NL
+DIM pic AS MAP = MDSYNC.OPEN(rt, picMd)
+mirror = picMd
+SelectText(rt, "[gone]")
+FORM.SET(rt, "SELTEXT", "")
+d = MDSYNC.VIEWCHANGED(pic)
+Apply(d)
+Check(mirror = MDSYNC.SOURCE$(pic) ANDALSO INSTR(mirror, "![gone]") < 0, "a picture deleted in the view leaves the source")
+
+' YAML front matter is shown verbatim, not as a rule and a heading
+DIM fmMd AS STRING = "---" + NL + "title: x" + NL + "---" + NL + NL + "Body" + NL
+DIM fm AS MAP = MDSYNC.OPEN(rt, fmMd)
+Check(MDSYNC.BLOCKS(fm)[0]{"kind"} = "raw" ANDALSO INSTR(FORM.GET(rt, "TEXT"), "title: x") >= 0, "front matter is one raw block")
+
+' dark mode and a new base redraw the view and keep the source
+Check(MDSYNC.SETOPTS(fm, {"dark": TRUE}) = TRUE, "a new option redraws")
+Check(MDSYNC.SETOPTS(fm, {"dark": TRUE}) = FALSE, "the same option does not")
+Check(INSTR(FORM.GET(rt, "TEXTRTF"), "\red212\green212\blue212") >= 0, "the dark view draws light text")
+Check(MDSYNC.VIEWCHANGED(fm){"changed"} = FALSE ANDALSO MDSYNC.SOURCE$(fm) = fmMd, "redrawing is no edit")
+mirror = fmMd
+SelectText(rt, "Body")
+FORM.SET(rt, "SELTEXT", "Dark body")
+d = MDSYNC.VIEWCHANGED(fm)
+Apply(d)
+SelectText(rt, "Dark")
+FORM.SET(rt, "SELBOLD", TRUE)
+d = MDSYNC.VIEWCHANGED(fm)
+Apply(d)
+Check(mirror = MDSYNC.SOURCE$(fm) ANDALSO INSTR(mirror, "**Dark** body" + NL) >= 0, "text typed and made bold in the dark view")
+
 FORM.CLOSE(frm)
 
 PRINT

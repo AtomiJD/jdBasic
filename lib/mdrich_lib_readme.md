@@ -39,7 +39,7 @@ runs whose text is CRLF; the view has exactly one paragraph per block.
 | `CELLS(row$)` | The cells of one table source line, outer pipes dropped, trimmed. |
 | `DOC$(blocks, [opts])` | The whole document as RTF for `TEXTRTF`. |
 | `FRAGMENT$(b, [opts])` | One block as a stand-alone RTF document for `SELRTF`. |
-| `HEAD$()` | The RTF header: fonts and the colour table. |
+| `HEAD$([opts])` | The RTF header: fonts and the colour table; `opts{"dark"}` gives light text and dark quote and code colours. |
 | `SAME(b, runs)` | `TRUE` when the runs show what the block drew. |
 | `MD$(b, runs)` | The block's source for the runs: unchanged when `SAME`, else rewritten. |
 | `BODY$(b, runs, [drawn$])` | The same without lead and tail; `drawn$` is the kind the paragraph still looks like when that differs (a paragraph split off a heading). |
@@ -51,7 +51,7 @@ runs whose text is CRLF; the view has exactly one paragraph per block.
 
 | Key | Meaning |
 |-----|---------|
-| `kind` | `heading`, `para`, `item`, `quote`, `code`, `table`, `rule`, `image`, `raw` (HTML, front matter), `blank` (a document of blank lines) |
+| `kind` | `heading`, `para`, `item`, `quote`, `code`, `table`, `rule`, `image`, `raw` (HTML, YAML front matter between a first-line `---` and the next `---` or `...`), `blank` (a document of blank lines) |
 | `lead`, `body`, `tail` | Blank lines before (the first block only), the block's own lines, blank lines after |
 | `src`, `start`, `end` | `lead + body + tail` and its byte offsets in the source |
 | `eol` | The block's line ending, LF or CRLF |
@@ -74,7 +74,7 @@ table; `alt`, `path` for an image.
 | `**b**`, `*i*`, `~~s~~` | bold, italic, strikethrough |
 | `` `code` `` | Consolas on light grey (`backcolor` 240,240,240) |
 | link | blue (0,102,204), underlined; the destination stays with the block |
-| image line | the picture, PNG or JPEG up to 8 MB, read through `base`; anything else shows `[alt]` in grey. Local paths are read as written, as any Markdown preview does; network and device paths (`\\host`, `//host`, `\??\`) and URLs never are |
+| image line | the picture, PNG or JPEG up to 8 MB, read through `base`; anything else shows `[alt]` in grey. Text typed next to the picture is kept with it (the image then sits inline in a paragraph); deleting the picture deletes the image line. Local paths are read as written, as any Markdown preview does; network and device paths (`\\host`, `//host`, `\??\`) and URLs never are |
 | inline image | `[alt]` in grey (127,127,128) |
 | HTML, reference links, footnotes | verbatim in grey (127,128,128) |
 | bullet item | a RichEdit bullet, indented per level |

@@ -25,9 +25,17 @@ FUNC R(text$, flags$)
     RETURN r
 ENDFUNC
 
+' The run of a drawn picture.
+FUNC Pic()
+    DIM r = R(CHR$(65532), "")
+    r{"object"} = TRUE
+    RETURN r
+ENDFUNC
+
 ' The runs a block's own view shows.
 FUNC ViewRuns(b)
     DIM out = []
+    IF b{"kind"} = "image" THEN RETURN [Pic()]
     DIM k = 0
     FOR k = 0 TO LEN(b{"segs"}) - 1
         DIM s = b{"segs"}[k]
@@ -132,7 +140,16 @@ DIM tb = One("| a | b |" + NL$ + "|:--|--:|" + NL$ + "| 1 | 2 |" + NL$)
 TESTKIT.EQ(MDRICH.MD$(tb, [R("a" + CHR$(9) + "b", "b"), R(CHR$(11) + "1" + CHR$(9), ""), R("two", "b")]), "| a | b |" + NL$ + "|:--|--:|" + NL$ + "| 1 | **two** |" + NL$, "a table cell, the delimiter row kept")
 TESTKIT.EQ(MDRICH.MD$(tb, [R("a" + CHR$(9) + "b" + CHR$(9) + "c", "b"), R(CHR$(11) + "1" + CHR$(9) + "2" + CHR$(9) + "x|y", "")]), "| a | b | c |" + NL$ + "| --- | --- | --- |" + NL$ + "| 1 | 2 | x\|y |" + NL$, "a new column, a pipe in a cell")
 DIM im = One("![logo](a.png)" + NL$)
-TESTKIT.EQ(MDRICH.MD$(im, [R("", "")]), im{"src"}, "an image block keeps its source")
+TESTKIT.EQ(MDRICH.MD$(im, [Pic()]), im{"src"}, "an image block keeps its source")
+TESTKIT.EQ(MDRICH.MD$(im, [R("[logo]", "")]), im{"src"}, "the [alt] stand-in of a missing picture is the image")
+TESTKIT.EQ(MDRICH.MD$(im, [R("", "")]), "", "a deleted picture leaves an empty paragraph")
+TESTKIT.EQ(MDRICH.MD$(im, [R("caption", "")]), "caption" + NL$, "text typed over the picture is kept")
+TESTKIT.EQ(MDRICH.MD$(im, [Pic(), R(" see *this*", "")]), "![logo](a.png) see \*this\*" + NL$, "text next to the picture is kept with it")
+TESTKIT.ISTRUE(NOT MDRICH.SAME(im, [R("", "")]), "a deleted picture is a change")
+TESTKIT.EQ(Kinds$(MDRICH.BLOCKS("---" + NL$ + "title: x" + NL$ + "---" + NL$ + NL$ + "Text" + NL$)), "raw para", "YAML front matter is one raw block")
+TESTKIT.EQ(Kinds$(MDRICH.BLOCKS("---" + NL$ + NL$ + "Text" + NL$)), "rule para", "a first-line rule with no closing line stays a rule")
+DIM fm$ = "---" + NL$ + "a: 1" + NL$ + "..." + NL$ + "# H" + NL$
+TESTKIT.EQ(MDRICH.SOURCE$(MDRICH.BLOCKS(fm$)), fm$, "front matter closed by ... tiles the source")
 
 TESTKIT.SUITE("rtf")
 TESTKIT.ISTRUE(INSTR(MDRICH.RTF$(blocks[0]), "\b\fs44") >= 0, "a level 1 heading is bold and large")

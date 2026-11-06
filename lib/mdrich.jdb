@@ -13,7 +13,7 @@
 ' Stands in for: the Markdown round trip of WYSIWYG editors (Typora,
 ' prosemirror-markdown, remark-stringify).
 '
-' version: 1.1.0
+' version: 1.2.0
 
 EXPORT MODULE MDRICH
 
@@ -141,6 +141,17 @@ FUNC StartsBlock(lines, i)
     RETURN FALSE
 ENDFUNC
 
+' The line that closes YAML front matter opened by the first line ("---"
+' or "..."), or -1 when none does.
+FUNC FrontEnd(lines)
+    DIM k = 1
+    FOR k = 1 TO LEN(lines) - 1
+        DIM t$ = TRIM$(Bare$(lines[k]))
+        IF t$ = "---" ORELSE t$ = "..." THEN RETURN k
+    NEXT k
+    RETURN -1
+ENDFUNC
+
 FUNC NewBlockMap(kind$)
     DIM b AS MAP
     b{"kind"} = kind$
@@ -253,6 +264,16 @@ EXPORT FUNC BLOCKS(md$)
                 htext$ = ""
             ENDIF
             b{"text"} = htext$
+        ELSEIF i = 0 ANDALSO TRIM$(bare$) = "---" ANDALSO FrontEnd(lines) > 0 THEN
+            b = NewBlockMap("raw")
+            DIM fm_end = FrontEnd(lines)
+            DIM fm_lines = []
+            DIM f = 0
+            FOR f = 0 TO fm_end
+                fm_lines = APPEND(fm_lines, Bare$(lines[f]))
+            NEXT f
+            j = fm_end + 1
+            b{"text"} = JOIN(fm_lines, NL_CH)
         ELSEIF IsRule(bare$) THEN
             b = NewBlockMap("rule")
             b{"text"} = RULE_TEXT
@@ -327,20 +348,13 @@ EXPORT FUNC BLOCKS(md$)
                 row_texts = APPEND(row_texts, JOIN(rows[r], TAB_CH))
             NEXT r
             b{"text"} = JOIN(row_texts, NL_CH)
-        ELSEIF IsHtmlStart(bare$) ORELSE (i = 0 ANDALSO TRIM$(bare$) = "---") THEN
+        ELSEIF IsHtmlStart(bare$) THEN
             b = NewBlockMap("raw")
-            DIM front = i = 0 ANDALSO TRIM$(bare$) = "---"
             DIM raw_lines = [bare$]
             DO WHILE j < n
-                IF front THEN
-                    raw_lines = APPEND(raw_lines, Bare$(lines[j]))
-                    j = j + 1
-                    IF TRIM$(Bare$(lines[j - 1])) = "---" ORELSE TRIM$(Bare$(lines[j - 1])) = "..." THEN EXITDO
-                ELSE
-                    IF IsBlank(lines[j]) THEN EXITDO
-                    raw_lines = APPEND(raw_lines, Bare$(lines[j]))
-                    j = j + 1
-                ENDIF
+                IF IsBlank(lines[j]) THEN EXITDO
+                raw_lines = APPEND(raw_lines, Bare$(lines[j]))
+                j = j + 1
             LOOP
             b{"text"} = JOIN(raw_lines, NL_CH)
         ELSEIF LEFT$(src_line$, 4) = "    " ORELSE LEFT$(src_line$, 1) = TAB_CH THEN
@@ -743,11 +757,36 @@ ENDFUNC
 
 ' The document header: Segoe UI and Consolas; colours 1 link, 2 quote,
 ' 3 mark, 4 raw, 5 code background, 6 and 7 mark and raw inside a link,
-' 8 the number of an ordered item.
-EXPORT FUNC HEAD$()
+' 8 the number of an ordered item. opts{"dark"} draws for a dark page:
+' colour 9 is light text, which every paragraph uses instead of the
+' automatic colour, and the quote and code background colours darken; the
+' marker colours stay as they are, RUNS reads them back.
+EXPORT FUNC HEAD$(opts = 0)
+    DIM dark = IsDark(opts)
+    DIM quote_c$ = "\red90\green90\blue90;"
+    DIM code_bg$ = "\red240\green240\blue240;"
+    DIM text_c$ = ""
+    IF dark THEN
+        quote_c$ = "\red170\green170\blue170;"
+        code_bg$ = "\red52\green52\blue52;"
+        text_c$ = "\red212\green212\blue212;"
+    ENDIF
     DIM h$ = "{\rtf1\ansi\deff0{\fonttbl{\f0\fswiss Segoe UI;}{\f1\fmodern " + CODE_FONT + ";}}"
-    h$ = h$ + "{\colortbl;\red0\green102\blue204;\red90\green90\blue90;\red127\green127\blue128;\red127\green128\blue128;\red240\green240\blue240;\red127\green127\blue129;\red127\green128\blue129;\red127\green127\blue130;}"
-    RETURN h$ + "\f0\fs22 "
+    h$ = h$ + "{\colortbl;\red0\green102\blue204;" + quote_c$ + "\red127\green127\blue128;\red127\green128\blue128;" + code_bg$ + "\red127\green127\blue129;\red127\green128\blue129;\red127\green127\blue130;" + text_c$ + "}"
+    RETURN h$ + "\f0\fs22" + TextColor$(opts) + " "
+ENDFUNC
+
+FUNC IsDark(opts)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN FALSE
+    IF NOT MAP.EXISTS(opts, "dark") THEN RETURN FALSE
+    IF opts{"dark"} THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+' The colour text goes back to after a coloured stretch.
+FUNC TextColor$(opts)
+    IF IsDark(opts) THEN RETURN "\cf9"
+    RETURN "\cf0"
 ENDFUNC
 
 FUNC SegRtf$(s)
@@ -947,13 +986,13 @@ EXPORT FUNC RTF$(b, opts = 0)
         ENDIF
         RETURN "\pard\sa60\li" + STR$(li) + "\fi-360" + pn$ + body$
     ELSEIF kind$ = "quote" THEN
-        RETURN "\pard\li360\sa120\cf2 " + body$ + "\cf0"
+        RETURN "\pard\li360\sa120\cf2 " + body$ + TextColor$(opts)
     ELSEIF kind$ = "code" THEN
         RETURN "\pard\li240\sa120\f1\fs20\highlight5 " + body$ + "\highlight0\f0\fs22"
     ELSEIF kind$ = "raw" THEN
-        RETURN "\pard\sa120\f1\fs20\cf4 " + body$ + "\cf0\f0\fs22"
+        RETURN "\pard\sa120\f1\fs20\cf4 " + body$ + TextColor$(opts) + "\f0\fs22"
     ELSEIF kind$ = "rule" THEN
-        RETURN "\pard\qc\sa120\cf3 " + body$ + "\cf0"
+        RETURN "\pard\qc\sa120\cf3 " + body$ + TextColor$(opts)
     ELSEIF kind$ = "image" THEN
         ' a space in a Markdown link target is written %20
         DIM pict$ = PictRtf$(JoinPath$(base$, REPLACE$(b{"path"}, "%20", " ")))
@@ -977,12 +1016,12 @@ EXPORT FUNC DOC$(blocks, opts = 0)
         kinds = APPEND(kinds, blocks[k]{"kind"})
     NEXT k
     ' The \par after the last paragraph gives it its format; it adds no paragraph.
-    RETURN HEAD$() + JOINRTF$(parts, kinds) + "}"
+    RETURN HEAD$(opts) + JOINRTF$(parts, kinds) + "}"
 ENDFUNC
 
 ' One block as a stand-alone RTF document, for SELRTF.
 EXPORT FUNC FRAGMENT$(b, opts = 0)
-    RETURN HEAD$() + RTF$(b, opts) + "}"
+    RETURN HEAD$(opts) + RTF$(b, opts) + "}"
 ENDFUNC
 
 ' ---------------------------------------------------------------- back
@@ -1155,9 +1194,54 @@ FUNC SameSegs(a, b)
     RETURN REPLACE$(FormatMask$(a), "A", ".") = REPLACE$(FormatMask$(b), "A", ".")
 ENDFUNC
 
+' The Markdown of an image block's paragraph: the picture, or its [alt]
+' stand-in when the file could not be drawn, is the block's image; text
+' typed around it is kept, and with the picture deleted only that text is
+' left (an empty paragraph when there is none).
+FUNC ImageBody$(b, runs)
+    DIM pic$ = CHR$(1)
+    DIM t$ = ""
+    DIM has_pic = FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(runs) - 1
+        DIM r = runs[k]
+        DIM rt$ = r{"text"}
+        IF rt$ = CR_CH + NL_CH ORELSE rt$ = NL_CH ORELSE rt$ = CR_CH THEN CONTINUEFOR
+        IF Flag(r, "object") THEN
+            t$ = t$ + pic$
+            has_pic = TRUE
+        ELSE
+            t$ = t$ + REPLACE$(REPLACE$(rt$, CR_CH, ""), VT_CH, NL_CH)
+        ENDIF
+    NEXT k
+    IF NOT has_pic THEN
+        DIM stand$ = "[" + b{"alt"} + "]"
+        DIM at = INSTR(t$, stand$)
+        IF at >= 0 THEN t$ = LEFT$(t$, at) + pic$ + RIGHT$(t$, LEN(t$) - at - LEN(stand$))
+    ENDIF
+    IF t$ = pic$ THEN RETURN b{"body"}
+    IF TRIM$(t$) = "" THEN RETURN ""
+    DIM parts = SPLIT(t$, pic$)
+    DIM every = FALSE
+    DIM pass = 0
+    DIM out$ = ""
+    FOR pass = 0 TO 1
+        out$ = ""
+        DIM q = 0
+        FOR q = 0 TO LEN(parts) - 1
+            IF q > 0 THEN out$ = out$ + TRIM$(b{"body"})
+            out$ = out$ + EscapePlain$(parts[q], every, FALSE)
+        NEXT q
+        out$ = out$ + b{"eol"}
+        IF LEN(BLOCKS(out$)) = 1 THEN RETURN out$
+        every = TRUE
+    NEXT pass
+    RETURN out$
+ENDFUNC
+
 ' TRUE when the paragraph's runs show exactly what the block drew.
 EXPORT FUNC SAME(b, runs)
-    IF b{"kind"} = "image" THEN RETURN TRUE
+    IF b{"kind"} = "image" THEN RETURN ImageBody$(b, runs) = b{"body"}
     RETURN SameSegs(NormSegs(b{"kind"}, b{"segs"}), MergeLinkless(RunSegs(b{"kind"}, runs)))
 ENDFUNC
 
@@ -1463,7 +1547,8 @@ EXPORT FUNC BODY$(b, runs, drawn$ = "")
     DIM look$ = drawn$
     IF look$ = "" THEN look$ = kind$
     IF look$ = kind$ ANDALSO b{"body"} <> "" ANDALSO SAME(b, runs) THEN RETURN b{"body"}
-    IF kind$ = "rule" ORELSE kind$ = "image" THEN RETURN b{"body"}
+    IF kind$ = "image" THEN RETURN ImageBody$(b, runs)
+    IF kind$ = "rule" THEN RETURN b{"body"}
     DIM segs = RunSegs(look$, runs)
     IF kind$ = "para" ANDALSO TRIM$(REPLACE$(PlainOf$(segs), VT_CH, "")) = "" THEN RETURN ""
     DIM body$ = BodyFor$(b, segs, FALSE)
