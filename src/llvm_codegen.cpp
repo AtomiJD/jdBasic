@@ -4691,7 +4691,14 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
 
     // Pre-scan DIM AS TypeName to know which variables are UDT objects
     std::unordered_set<std::string> udt_var_names;
+    declared_number_globals.clear();
     for (auto& stmt : program) {
+        if (stmt && stmt->kind == StmtKind::DIM && stmt->label.empty() &&
+            (stmt->var_type == VarType::BYTE || stmt->var_type == VarType::INT16 ||
+             stmt->var_type == VarType::INT32 || stmt->var_type == VarType::INT64 ||
+             stmt->var_type == VarType::FLOAT16 || stmt->var_type == VarType::FLOAT32 ||
+             stmt->var_type == VarType::FLOAT64))
+            declared_number_globals.insert(stmt->var_name);
         if (stmt && stmt->kind == StmtKind::DIM && !stmt->label.empty() &&
             type_names.count(stmt->label)) {
             udt_var_names.insert(stmt->var_name);
@@ -7001,7 +7008,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         std::string u = stmt.expr->func_name;
         std::transform(u.begin(), u.end(), u.begin(), ::toupper);
         if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "TILED.LAYERS" || u == "LINES" ||
-            u == "WORDS" || u == "CHARS" || u == "MAP.KEYS")
+            u == "WORDS" || u == "CHARS" || u == "MAP.KEYS" || u == "CSVHEADER")
             string_array_vars.insert(stmt.var_name);
     }
     // A literal of literals is an array of arrays.
@@ -7069,7 +7076,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             mixed_array_vars.insert(stmt.var_name);
         // Builtins that answer a table: rows taken out of the result read
         // their cells per kind.
-        if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" ||
+        if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" || u == "AGG" ||
             u == "TILED.OBJECTS" || u == "SQL.QUERY" || u == "SQLITE.QUERY")
             array_array_vars.insert(stmt.var_name);
         // RESHAPE to a literal shape of two or more axes answers rows.
@@ -7330,8 +7337,11 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         rhs = runtime_into_str_slot(rhs);
     // A variable DIMmed AS a number keeps that kind: the value is read out as
     // a number, as codegen_dim does for its initializer.
+    bool declared_number_global = declared_number_globals.count(stmt.var_name) &&
+        !scopes.empty() && scopes[0].vars.count(stmt.var_name) &&
+        &scopes[0].vars.at(stmt.var_name) == vi;
     if (vi && (vi->tag == JD_TAG_I64 || vi->tag == JD_TAG_F64) &&
-        declared_type_vars.count(stmt.var_name) &&
+        (declared_type_vars.count(stmt.var_name) || declared_number_global) &&
         rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
         LLVMValueRef f = coerce_to(rhs, f64_type);
         if (vi->tag == JD_TAG_I64) rhs = { LLVMBuildFPToSI(builder, f, i64_type, "decl_i"), JD_TAG_I64 };
@@ -8154,7 +8164,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         std::string u = stmt.expr->func_name;
         std::transform(u.begin(), u.end(), u.begin(), ::toupper);
         if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "TILED.LAYERS" || u == "LINES" ||
-            u == "WORDS" || u == "CHARS" || u == "MAP.KEYS")
+            u == "WORDS" || u == "CHARS" || u == "MAP.KEYS" || u == "CSVHEADER")
             string_array_vars.insert(stmt.var_name);
     }
     // A literal of literals is an array of arrays.
@@ -8207,7 +8217,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             mixed_array_vars.insert(stmt.var_name);
         // Builtins that answer a table: rows taken out of the result read
         // their cells per kind.
-        if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" ||
+        if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" || u == "AGG" ||
             u == "TILED.OBJECTS" || u == "SQL.QUERY" || u == "SQLITE.QUERY")
             array_array_vars.insert(stmt.var_name);
         // RESHAPE to a literal shape of two or more axes answers rows.
@@ -9777,9 +9787,28 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
 // body is compiled: a read earlier in the body, compiled while the slot was
 // still a number, would otherwise read the bits of what a later pass stored.
 void LLVMCodegen::runtime_type_loop_vars(const Stmt& loop) {
+    // Arrays the body assigns a builtin answer of mixed cells to: their cells
+    // read per kind once that assignment is compiled, later in the body.
+    std::unordered_set<std::string> mixed_in_body;
+    std::function<void(const Stmt&)> collect = [&](const Stmt& s) {
+        if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) && !s.var_name.empty() &&
+            s.expr && s.index_chain.empty() && s.expr->kind == ExprKind::CALL) {
+            std::string u = s.expr->func_name;
+            std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+            if (builtin_has(u, BF_TAGGED_CELLS)) mixed_in_body.insert(s.var_name);
+        }
+        for (auto& b : s.body) if (b) collect(*b);
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b) collect(*b);
+        for (auto& c : s.catch_body()) if (c) collect(*c);
+        for (auto& f : s.finally_body()) if (f) collect(*f);
+    };
+    for (auto& b : loop.body) if (b) collect(*b);
     std::function<bool(const Expr&)> runtime_kind = [&](const Expr& e) -> bool {
         if (e.kind == ExprKind::INDEX && e.left) {
             if (e.left->kind == ExprKind::INDEX) return true;
+            if (e.left->kind == ExprKind::VARIABLE && mixed_in_body.count(e.left->str_val))
+                return true;
             if (e.left->kind == ExprKind::VARIABLE && current_param_names.count(e.left->str_val)) {
                 VarInfo* b = lookup_var(e.left->str_val);
                 if (b && (b->tag == JD_TAG_ARR || b->tag == JD_TAG_RUNTIME)) return true;
@@ -9794,6 +9823,9 @@ void LLVMCodegen::runtime_type_loop_vars(const Stmt& loop) {
         if (e.kind == ExprKind::CALL) {
             auto uit = user_functions.find(e.func_name);
             if (uit != user_functions.end() && uit->second.return_tag == JD_TAG_RUNTIME) return true;
+            // A call through a funcref variable answers with the tag the
+            // callee sets.
+            if (uit == user_functions.end() && lookup_var(e.func_name)) return true;
             return false;
         }
         if (e.kind != ExprKind::BINARY && e.kind != ExprKind::UNARY && e.kind != ExprKind::INDEX)
@@ -14275,6 +14307,12 @@ void LLVMCodegen::push_method_arg(const TypedValue& av, int expected,
     LLVMTypeRef pt = param_slot_type(expected);
     if (pt == f64_type && av.tag == JD_TAG_RUNTIME && av.runtime_tag)
         args.push_back(runtime_to_untyped_param(av));
+    else if ((expected == JD_TAG_NATIVE_MAP || expected == JD_TAG_ARR) &&
+             ((av.tag == JD_TAG_RUNTIME && av.runtime_tag) || av.tag == JD_TAG_VM_HANDLE))
+        args.push_back(vm_container_param(av, expected));
+    else if (pt == i8_ptr_type && expected != JD_TAG_STR &&
+             av.tag == JD_TAG_RUNTIME && av.runtime_tag)
+        args.push_back(LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "mav_itop"));
     else
         args.push_back(coerce_to(av, pt));
 }

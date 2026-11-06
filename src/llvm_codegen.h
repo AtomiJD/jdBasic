@@ -635,6 +635,9 @@ private:
     // Names DIMmed with a type (AS INTEGER, AS DOUBLE...): a loop never
     // turns them runtime-typed.
     std::unordered_set<std::string> declared_type_vars;
+    // Top-level names DIMmed AS a number, known before any FUNC or SUB that
+    // writes them is compiled.
+    std::unordered_set<std::string> declared_number_globals;
     void codegen_for(const Stmt& stmt);
     void codegen_if(const Stmt& stmt);
     void codegen_do_loop(const Stmt& stmt);

@@ -1,0 +1,137 @@
+' Values that keep their kind on the way through a compiled program: the
+' key column of an AGG table read by FORMAT$, a JSON map handed to a MAP
+' parameter of a method, and a global DIMmed AS DOUBLE = 0 that a SUB
+' adds run-time numbers to.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok AS BOOLEAN, what AS STRING)
+    IF NOT ok THEN
+        PRINT "FAIL "; what
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+' --- the key column of an AGG table ---
+DIM carriers = ["north", "south", "north", "east"]
+DIM costs = [3, 5, 4, 1]
+DIM table = AGG(carriers, costs, LEN@)
+DIM names = SLICE(table, 1, 0)
+DIM counts = SLICE(table, 1, 1)
+DIM pick AS INTEGER = 1
+Check(FORMAT$("{}", names[pick]) = "south", "FORMAT$ of an AGG key read through a variable index")
+Check(FORMAT$("{} x{}", names[0], counts[0]) = "north x2", "FORMAT$ of a key beside its count")
+Check(names[2] + "!" = "east!", "an AGG key joined to a text")
+DIM label$ = names[pick]
+Check(label$ = "south", "an AGG key into a text variable")
+table = AGG(carriers, costs, SUM@)
+DIM again = SLICE(table, 1, 0)
+Check(FORMAT$("{}", again[0]) = "north", "an AGG table assigned again")
+
+' --- a JSON map handed to a MAP parameter of a method ---
+TYPE FieldSpec
+    Name AS STRING
+    Kind AS STRING
+
+    FUNC Check$(rec AS MAP)
+        DIM actual$ = TYPEOF(rec{THIS.Name})
+        IF actual$ = "NONE" THEN RETURN "missing " + THIS.Name
+        RETURN THIS.Name + " is " + actual$
+    ENDFUNC
+
+    FUNC Count(rec AS MAP) AS INTEGER
+        RETURN LEN(MAP.KEYS(rec))
+    ENDFUNC
+ENDTYPE
+
+DIM spec AS FieldSpec
+spec.Name = "email"
+DIM parsed AS MAP
+parsed = JSON.PARSE("{""id"": 1, ""email"": ""ada@example.org""}")
+Check(spec.Check$(parsed) = "email is STRING", "a method reads a JSON map by a member key")
+Check(spec.Count(parsed) = 2, "a method counts the keys of a JSON map")
+DIM loose = JSON.PARSE("{""id"": 2}")
+Check(spec.Check$(loose) = "missing email", "a method gets a JSON map from an untyped variable")
+Check(spec.Check$({"email": "x"}) = "email is STRING", "a method gets a native map literal")
+DIM specs[2] AS FieldSpec
+specs[1].Name = "id"
+Check(specs[1].Check$(parsed) = "id is INT64", "a method of an array cell gets a JSON map")
+
+' --- a global DIMmed AS DOUBLE = 0 that a SUB adds run-time numbers to ---
+DIM total AS DOUBLE = 0
+DIM steps AS INTEGER = 0
+SUB AddNumber(node)
+    IF ISNUM(node) THEN
+        total = total + node
+    ENDIF
+ENDSUB
+SUB AddWhole(node)
+    IF ISNUM(node) THEN steps = steps + node
+ENDSUB
+DIM shipment = JSON.PARSE("{""qty"": 2, ""price"": 9.5, ""note"": ""fragile""}")
+AddNumber(shipment{"qty"})
+AddNumber(shipment{"price"})
+AddNumber(shipment{"note"})
+AddNumber(3)
+AddWhole(shipment{"qty"})
+AddWhole(shipment{"note"})
+AddWhole(12)
+Check(total = 14.5, "a DOUBLE global adds run-time numbers in a SUB")
+Check(TYPEOF(total) = "FLOAT64", "the DOUBLE global stays FLOAT64")
+Check(steps = 14, "an INTEGER global adds run-time numbers in a SUB")
+Check(TYPEOF(steps) = "INT64", "the INTEGER global stays INT64")
+Check(FORMAT$("{:.2f}", total) = "14.50", "the DOUBLE global formats as a number")
+
+' --- the column names CSVHEADER answers ---
+DIM csv_dir$ = MKTEMP$("cellkinds")
+MKDIR csv_dir$
+DIM csv$ = csv_dir$ + "/laps.csv"
+CSVWRITER csv$, [["Okafor", 42], ["Haddad", 41]], ",", ["Driver", "Laps"], 6
+DIM header = CSVHEADER(csv$)
+DIM col AS INTEGER = 1
+Check(FORMAT$("{:<4}{:<8}{}", "Pos", header[0], header[col]) = "Pos Driver  Laps", "FORMAT$ of CSVHEADER names")
+Check(header[0] + "/" + header[1] = "Driver/Laps", "CSVHEADER names joined")
+DIM cols = []
+cols = CSVHEADER(csv$, ",")
+Check(FORMAT$("{}", cols[1]) = "Laps", "CSVHEADER assigned to a declared name")
+KILL csv$
+RMDIR csv_dir$
+
+' --- a loop accumulator fed by a call through a funcref ---
+FUNC AddPair(a AS INTEGER, b AS INTEGER)
+    RETURN a + b
+ENDFUNC
+FUNC MulPair(a, b)
+    RETURN a * b
+ENDFUNC
+FUNC Fold(op, items AS ARRAY, start AS INTEGER)
+    DIM acc = start
+    FOR i = 0 TO LEN(items) - 1
+        acc = op(acc, items[i])
+    NEXT
+    RETURN acc
+ENDFUNC
+Check(Fold(AddPair@, [1, 2, 3], 0) = 6, "a fold through a funcref with INTEGER parameters")
+Check(Fold(MulPair@, IOTA(5), 1) = 120, "a fold through a funcref with untyped parameters")
+DIM folded = 10
+DIM fn = AddPair@
+FOR k = 1 TO 3
+    folded = fn(folded, k)
+NEXT
+Check(folded = 16, "a top-level loop accumulator fed by a funcref")
+
+' --- a loop accumulator fed by cells UNPACK answers in the loop ---
+DIM arrivals = [0, 1, 3]
+DIM blob$ = PACK$("<sbsb", 4, 1, 2, 0) + PACK$("<sbsb", 6, 2, 2, 1)
+DIM rec = []
+DIM wait_total = 0
+FOR r = 0 TO 1
+    rec = UNPACK("<sbsb", blob$, r * 6)
+    IF rec[1] >= 1 THEN
+        wait_total = wait_total + rec[0] - arrivals[rec[2]]
+    ENDIF
+NEXT
+Check(wait_total = 4, "a sum over UNPACK cells read in the loop")
+Check(FORMAT$("{:.2f}", wait_total / 3) = "1.33", "the sum divides as a number")
+
+IF failed = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
