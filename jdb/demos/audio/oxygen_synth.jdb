@@ -158,7 +158,7 @@ DIM note_names$ = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "
 ' Where in the loop the music is that is leaving the speaker, in steps
 FUNC HEARD_STEP()
     DIM heard = SOUND.CYCLE() - (out_ms / 1000 + 0.01) * bpm / 240
-    RETURN (heard - INT(heard / loop_bars) * loop_bars) * STEPS
+    RETURN (heard - FLOOR(heard / loop_bars) * loop_bars) * STEPS
 ENDFUNC
 
 FUNC SLOWED$(steps$)
@@ -354,6 +354,7 @@ SUB KEY_UP(note)
     DIM s0 = INT(from + 0.5) MOD n_steps
     DIM ln = MIN([MAX([1, INT(held + 0.5)]), n_steps - s0])
     DIM trk = IIF(note < split_key, 0, 1)
+    IF note + IIF(trk = 0, -12, 0) < 12 THEN RETURN
     mel_trk = APPEND(mel_trk, trk)
     mel_note = APPEND(mel_note, note + IIF(trk = 0, -12, 0))
     mel_start = APPEND(mel_start, s0)
