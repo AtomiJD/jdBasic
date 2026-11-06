@@ -4,7 +4,7 @@
     "main": "Oxygen 61 MKV",
     "daw": "MIDIIN2 (Oxygen 61 MKV)",
     "unused": "MIDIIN3 (Oxygen 61 MKV)",
-    "note": "Windows names; open ports by name, the index order is not guaranteed"
+    "note": "Windows names; RtMidi appends the port number (\"Oxygen 61 MKV 0\"), so match the start of the name"
   },
   "mode_report": {
     "port": "daw", "channel": 1,
