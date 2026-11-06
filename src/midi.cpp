@@ -264,6 +264,7 @@ void register_midi_builtins(VM& vm) {
             int h = g_next++;
             MidiPort& p = g_ports[h];
             p.in = std::move(in);
+            p.in->ignoreTypes(true, false, true);   // SysEx and active sensing out, clock in
             p.in->setCallback(&on_midi_in, &p);
             return Value::make_i64(h);
         } catch (...) { return Value::make_i64(-1); }
