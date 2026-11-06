@@ -583,6 +583,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"MON.SCOPE", BuiltinRet::Arr, BF_NONE},
     {"MON.START", BuiltinRet::Bool, BF_NONE},
     {"MON.STOP", BuiltinRet::None, BF_NO_VEC},
+    {"MON.SYNTH", BuiltinRet::F64, BF_NO_VEC},
     {"MONTH", BuiltinRet::I64, BF_NONE},
     {"MOUSEB", BuiltinRet::Bool, BF_NO_VEC},
     {"MOUSEX", BuiltinRet::I64, BF_NO_VEC},

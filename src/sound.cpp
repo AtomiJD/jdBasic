@@ -8,6 +8,8 @@
 // Stub when neither the SDL device (GFX) nor the standalone DSP (SOUND_DSP) is built.
 void sound_shutdown() {}
 void sound_midi_push(const unsigned char*, size_t) {}
+int sound_render(float*, int) { return 0; }
+bool sound_attach_output(bool, int64_t) { return false; }
 void register_sound_builtins(VM& vm) {
     vm.register_native("SOUND.INIT", [](const std::vector<Value>&) -> Value {
         throw jdError(ErrCode::RUNTIME_ERROR, "SOUND requires a GFX or SOUND build");
@@ -18,8 +20,12 @@ void register_sound_builtins(VM& vm) {
 // DSP core compiles for both builds; SDL (the audio device) only under GFX.
 #ifdef GFX
 #include <SDL3/SDL.h>
-#define SND_LOCK()   SDL_LockAudioStream(g_sound.stream)
-#define SND_UNLOCK() SDL_UnlockAudioStream(g_sound.stream)
+// The SDL stream lock while SOUND.INIT owns the device; otherwise (PULL)
+// a mutex shared with whatever renders, such as an outside device thread.
+static void snd_lock();
+static void snd_unlock();
+#define SND_LOCK()   snd_lock()
+#define SND_UNLOCK() snd_unlock()
 #else
 #define SND_LOCK()   ((void)0)
 #define SND_UNLOCK() ((void)0)
@@ -2045,6 +2051,18 @@ static struct SoundSystem {
 #endif
 } g_sound;
 
+#ifdef GFX
+static std::recursive_mutex g_pull_mtx;
+static void snd_lock() {
+    if (g_sound.stream) SDL_LockAudioStream(g_sound.stream);
+    else g_pull_mtx.lock();
+}
+static void snd_unlock() {
+    if (g_sound.stream) SDL_UnlockAudioStream(g_sound.stream);
+    else g_pull_mtx.unlock();
+}
+#endif
+
 // ── Helpers ─────────────────────────────────────────────────────
 
 static void ensure_sound(const char* fn) {
@@ -2075,8 +2093,22 @@ void sound_shutdown() {
 // drive their own audio device. Returns frames produced.
 int sound_render(float* out, int num_frames) {
     if (!g_sound.initialized || num_frames <= 0) return 0;
+    SND_LOCK();
     SoundSystem::render_frames(&g_sound, out, num_frames);
+    SND_UNLOCK();
     return num_frames;
+}
+
+bool sound_attach_output(bool on, int64_t out_latency_ns) {
+#ifdef GFX
+    if (g_sound.stream) return false;
+#endif
+    SND_LOCK();
+    g_sound.device_mode = on;
+    g_sound.out_latency_ns = on ? out_latency_ns : 0;
+    g_sound.last_render_ns = 0;
+    SND_UNLOCK();
+    return true;
 }
 
 // One raw MIDI message for the synth; called from MIDI port threads.
@@ -2349,9 +2381,10 @@ void register_sound_builtins(VM& vm) {
 
     // ── SOUND.INIT ──────────────────────────────────────────────
 
-    // SOUND.INIT [mode$]: "PULL" opens no audio device; SOUND.RENDER is
-    // then the only clock, which makes a render reproducible.
-    vm.register_native("SOUND.INIT", 0, 1, [](const std::vector<Value>& args) -> Value {
+    // SOUND.INIT [mode$], [frames]: "PULL" opens no audio device; SOUND.RENDER
+    // is then the only clock, which makes a render reproducible. frames asks
+    // the device for that many sample frames per buffer (less latency).
+    vm.register_native("SOUND.INIT", 0, 2, [](const std::vector<Value>& args) -> Value {
         if (g_sound.initialized) return Value::make_none();
         bool pull = false;
         if (!args.empty()) {
@@ -2385,6 +2418,13 @@ void register_sound_builtins(VM& vm) {
             // SDL initialized but not audio subsystem
             if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
                 throw jdError(ErrCode::RUNTIME_ERROR, std::string("SDL_InitSubSystem(AUDIO) failed: ") + SDL_GetError());
+        }
+
+        if (args.size() >= 2) {
+            int frames = (int)args[1].to_int();
+            if (frames < 16 || frames > 8192)
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.INIT: frames is 16-8192");
+            SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, std::to_string(frames).c_str());
         }
 
         SDL_AudioSpec spec;
@@ -3480,7 +3520,9 @@ void register_sound_builtins(VM& vm) {
         Value r = Value::make_array();
         if (frames <= 0 || !g_sound.initialized) return r;
         std::vector<float> buf((size_t)frames * 2, 0.0f);
+        SND_LOCK();
         SoundSystem::render_frames(&g_sound, buf.data(), frames);
+        SND_UNLOCK();
         r.as_array()->elements.reserve(buf.size());
         for (float f : buf)
             r.as_array()->elements.push_back(Value::make_f64(f));

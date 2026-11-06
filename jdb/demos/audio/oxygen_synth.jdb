@@ -1,5 +1,7 @@
 ' oxygen_synth.jdb - play the synth from an Oxygen 61 (or any MIDI keyboard).
-' Usage: jdBasic oxygen_synth.jdb [seconds]   (default 300)
+' Usage: jdBasic oxygen_synth.jdb [seconds] [fast]   (default 300)
+' "fast" takes the audio device alone (MON.SYNTH exclusive): under 10 ms from
+' key to speaker instead of 20, but other programs are silent meanwhile.
 '
 ' Left of the split: mono legato saw bass, one octave down.
 ' Right of the split: detuned lead; velocity opens its filter, the mod
@@ -9,6 +11,7 @@
 
 DIM run_secs = 300
 IF LEN(OS.ARGS()) > 1 THEN run_secs = VAL(OS.ARGS()[1])
+DIM fast = LEN(OS.ARGS()) > 2 ANDALSO LCASE$(OS.ARGS()[2]) = "fast"
 
 DIM cfg = JSON.PARSE$(TXTREADER$(PATH.DIRNAME$(OS.ARGS()[0]) + "/oxygen61.json"))
 
@@ -28,7 +31,17 @@ IF main_idx < 0 THEN
     END
 ENDIF
 
-SOUND.INIT
+IF fast THEN
+    SOUND.INIT "PULL"
+    DIM out_ms = MON.SYNTH(128, -1, TRUE)
+    IF out_ms < 0 THEN
+        PRINT "Exclusive device refused, falling back to the shared one"
+        out_ms = MON.SYNTH(128)
+    ENDIF
+    PRINT "Output buffer: " + STR$(ROUND(out_ms, 1)) + " ms"
+ELSE
+    SOUND.INIT
+ENDIF
 SOUND.VOICE 0, "SAW", 0.005, 0.25, 0.6, 0.15
 SOUND.FILTER 0, 900, 0.3, "LP"
 SOUND.GLIDE 0, 60
@@ -108,4 +121,5 @@ LOOP
 
 MIDI.CLOSE(main_h)
 IF daw_h >= 0 THEN MIDI.CLOSE(daw_h)
+IF fast THEN MON.SYNTH(0)
 SOUND.SHUTDOWN

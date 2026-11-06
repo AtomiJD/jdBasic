@@ -432,5 +432,16 @@ IF OS.FEATURE("MIDI") THEN
     CHECK "an unknown ROUTE mode is refused", INSTR(err_msg, "mode") >= 0, "msg=" + err_msg
 ENDIF
 
+' ---------- MON.SYNTH (no device opened here) ----------
+DIM syn_ms AS DOUBLE
+IF OS.FEATURE("MINIAUDIO") THEN
+    syn_ms = MON.SYNTH(0)
+    CHECK "MON.SYNTH 0 with nothing playing", syn_ms = 0, "ms=" + STR$(syn_ms)
+    FRESH()
+    SOUND.MIDIIN 144, 60, 127
+    CHECK "PULL renders by itself after MON.SYNTH 0", LEVEL(4000) > 0.3, ""
+    SOUND.MIDIIN 128, 60, 0
+ENDIF
+
 SOUND.RESET
 PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

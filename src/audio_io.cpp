@@ -13,6 +13,7 @@
 #include "miniaudio.h"
 
 #include "audio_fx.h"
+#include "sound.h"
 #include <string>
 #include <vector>
 #include <atomic>
@@ -45,6 +46,16 @@ std::atomic<unsigned> g_rec_pos{0};
 std::atomic<bool>  g_recording{false};
 
 float              g_dry[FX_RT_MAX_BLOCK];    // mono input block handed to the chain
+
+// The synth of SOUND.INIT "PULL" on a low-latency playback device
+ma_device          g_syn_device;
+std::atomic<bool>  g_syn_active{false};
+const unsigned     SYNTH_RATE = 44100;
+
+void syn_callback(ma_device*, void* pOut, const void*, ma_uint32 frames) {
+    if (sound_render((float*)pOut, (int)frames) == 0)
+        std::memset(pOut, 0, (size_t)frames * 2 * sizeof(float));
+}
 
 // realtime: input -> gain -> FX chain -> output. NO allocation, NO locks, NO VM.
 void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames) {
@@ -326,6 +337,60 @@ void register_audioio_builtins(VM& vm) {
         if (ma_device_start(&g_mon_device) != MA_SUCCESS) { ma_device_uninit(&g_mon_device); return Value::make_bool(false); }
         g_mon_active.store(true);
         return Value::make_bool(true);
+    });
+
+    // MON.SYNTH([frames], [playbackIdx], [exclusive]) -> latency in ms, or -1:
+    // plays the synth of SOUND.INIT "PULL" on a playback device with periods
+    // of `frames` (default 128); playbackIdx -1 is the default device;
+    // exclusive takes the device alone for the shortest buffers.
+    // MON.SYNTH(0) stops it.
+    vm.register_native("MON.SYNTH", 0, 3, [](const std::vector<Value>& args) -> Value {
+        int frames = args.empty() ? 128 : (int)args[0].to_int();
+        if (g_syn_active.exchange(false)) {
+            ma_device_uninit(&g_syn_device);
+            sound_attach_output(false, 0);
+        }
+        if (frames <= 0) return Value::make_f64(0.0);
+        ma_device_id outId; bool haveOut = false;
+        if (args.size() >= 2) {
+            ma_context ctx;
+            if (ma_context_init(NULL, 0, NULL, &ctx) == MA_SUCCESS) {
+                ma_device_info* p = nullptr; ma_uint32 pc = 0;
+                ma_device_info* c = nullptr; ma_uint32 cc = 0;
+                int oi = (int)args[1].to_int();
+                if (ma_context_get_devices(&ctx, &p, &pc, &c, &cc) == MA_SUCCESS && oi >= 0 && (ma_uint32)oi < pc) {
+                    outId = p[oi].id; haveOut = true;
+                }
+                ma_context_uninit(&ctx);
+            }
+        }
+        if (!sound_attach_output(true, 0)) return Value::make_f64(-1.0);
+        ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
+        cfg.playback.format   = ma_format_f32;
+        cfg.playback.channels = 2;
+        cfg.sampleRate         = SYNTH_RATE;
+        cfg.periodSizeInFrames = (ma_uint32)frames;
+        cfg.periods            = 2;
+        cfg.performanceProfile = ma_performance_profile_low_latency;
+        cfg.dataCallback       = syn_callback;
+        if (args.size() >= 3 && args[2].to_bool()) cfg.playback.shareMode = ma_share_mode_exclusive;
+        if (haveOut) cfg.playback.pDeviceID = &outId;
+        if (ma_device_init(NULL, &cfg, &g_syn_device) != MA_SUCCESS) {
+            sound_attach_output(false, 0);
+            return Value::make_f64(-1.0);
+        }
+        ma_uint32 period = g_syn_device.playback.internalPeriodSizeInFrames;
+        ma_uint32 periods = g_syn_device.playback.internalPeriods;
+        ma_uint32 rate = g_syn_device.playback.internalSampleRate;
+        double ms = rate > 0 ? 1000.0 * period * periods / rate : 0.0;
+        sound_attach_output(true, (int64_t)(ms * 1e6));
+        if (ma_device_start(&g_syn_device) != MA_SUCCESS) {
+            ma_device_uninit(&g_syn_device);
+            sound_attach_output(false, 0);
+            return Value::make_f64(-1.0);
+        }
+        g_syn_active.store(true);
+        return Value::make_f64(ms);
     });
 
     // MON.STOP()

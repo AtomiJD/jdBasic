@@ -4014,6 +4014,7 @@ Use headphones with a line/instrument input (mic -> speakers howls).
 | `MON.BACKEND$()` -> string | Backend in use (WASAPI / CoreAudio / ALSA). |
 | `MON.START([captureIdx], [playbackIdx])` -> bool | Start monitoring (defaults = system devices). |
 | `MON.STOP()` / `MON.RUNNING()` -> bool | Stop / query. |
+| `MON.SYNTH([frames], [playbackIdx], [exclusive])` -> ms or -1 | Plays the synth of `SOUND.INIT "PULL"` on a playback device with buffers of `frames` (default 128), instead of the SDL device. `playbackIdx` -1 (default) is the default device. `exclusive` = TRUE takes the device alone: on Windows key-to-speaker drops from 20 ms to under 10 ms, but other programs are silent on that device meanwhile. Returns the output latency; -1 when the device does not open or `SOUND.INIT` opened its own. `MON.SYNTH(0)` stops it. Needs `SOUND` too. |
 | `MON.GAIN(g)` | Output gain (lock-free). |
 | `MON.FX(chain)` | Route the monitor through a chain (0 = bypass; cabinet skipped live). |
 | `MON.LEVEL()` -> `{ in, out }` | Decaying peak levels for a VU meter. |

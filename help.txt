@@ -4408,6 +4408,11 @@ Description: The audio backend in use (WASAPI / CoreAudio / ALSA).
 Syntax: MON.START([captureIdx], [playbackIdx]) -> bool
 Description: Start live input -> FX -> output monitoring. Use headphones with a line/instrument input.
 
+[MON.SYNTH]
+Syntax: MON.SYNTH([frames], [playbackIdx], [exclusive]) -> latency in ms, or -1
+Description: Plays the synth of SOUND.INIT "PULL" on a playback device with buffers of frames sample frames (default 128) instead of the SDL device, for keyboard play with less latency. playbackIdx -1 (default) is the default device. exclusive = TRUE takes the device alone: on Windows that brings key-to-speaker from 20 ms to under 10 ms, but other programs are silent on that device meanwhile. Returns the output latency in ms, or -1 when the device does not open or SOUND.INIT opened its own. MON.SYNTH(0) stops it. Needs the MINIAUDIO and SOUND build flags.
+Example: SOUND.INIT "PULL" : PRINT MON.SYNTH(128, -1, TRUE)
+
 [MON.STOP]
 Syntax: MON.STOP()
 Description: Stop live monitoring.
