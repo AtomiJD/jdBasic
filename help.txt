@@ -4417,6 +4417,14 @@ Description: Drain buffered incoming MIDI events (lock-free); empty array if non
 Syntax: MIDI.ROUTE(handle, [on], [channel]) -> bool
 Description: An input port plays the synth directly: every message goes to the audio thread as it arrives, without the script loop in between. MIDI.POLL still sees the messages. on is TRUE (default), FALSE, or "CC" to pass only controllers (SOUND.CCMAP), for a port whose pads must not play notes. channel 1-16 moves every routed message to that channel, so a second port (pads on the same channel as the keys) can play its own zone. Keys go to the tracks of SOUND.ZONE; without zones every key plays track 0. A zone on a kit track (SOUND.KIT) plays drums: each note is a one-shot hit of its General MIDI sound (see SOUND.PADMAP). Needs a sound build.
 
+[MIDI.CLOCK]
+Syntax: MIDI.CLOCK(handle, mode) -> bool
+Description: MIDI clock out on an output port, 24 ticks per beat in step with the sequencer as it leaves the speaker (SOUND.BPM, SOUND.SEEK). mode TRUE or "ON" sends ticks only, "START" also sends Start on the next bar line, "STOP" sends Stop and keeps ticking, FALSE or "OFF" sends Stop and ends the ticks. FALSE for a handle that is not an output. Needs a sound build.
+
+[MIDI.CLOCKIN]
+Syntax: MIDI.CLOCKIN(handle) -> {bpm, running, ticks}
+Description: The MIDI clock an input port receives: bpm from the spacing of the ticks (0 when no tick came for a second), running between Start or Continue and Stop, ticks since the last Start (24 per beat). MIDI.POLL sees Start, Continue and Stop but not the ticks (F8).
+
 [MIDI.CLOSE]
 Syntax: MIDI.CLOSE(handle)
 Description: Close a MIDI port.

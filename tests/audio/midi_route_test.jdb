@@ -488,6 +488,20 @@ IF OS.FEATURE("MIDI") THEN
         err_msg = ERRMSG$
     ENDTRY
     CHECK "ROUTE to channel 17 is refused", INSTR(err_msg, "channel") >= 0, "msg=" + err_msg
+
+    CHECK "CLOCK on an unknown handle is FALSE", MIDI.CLOCK(9999, TRUE) = FALSE, ""
+    CHECK "CLOCK START on an unknown handle is FALSE", MIDI.CLOCK(9999, "START") = FALSE, ""
+    err_msg = ""
+    TRY
+        route_ok = MIDI.CLOCK(9999, "FAST")
+    CATCH
+        err_msg = ERRMSG$
+    ENDTRY
+    CHECK "an unknown CLOCK mode is refused", INSTR(err_msg, "mode") >= 0, "msg=" + err_msg
+    DIM ck = MIDI.CLOCKIN(9999)
+    CHECK "CLOCKIN of an unknown handle has no tempo", ck{"bpm"} = 0, "bpm=" + STR$(ck{"bpm"})
+    CHECK "CLOCKIN of an unknown handle is not running", ck{"running"} = FALSE, ""
+    CHECK "CLOCKIN of an unknown handle has no ticks", ck{"ticks"} = 0, ""
 ENDIF
 
 ' ---------- MON.SYNTH (no device opened here) ----------

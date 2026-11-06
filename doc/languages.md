@@ -1,3 +1,5 @@
+| `MIDI.CLOCK(handle, mode)` -> bool | MIDI clock out on an output port, 24 ticks per beat in step with the sequencer as it leaves the speaker (`SOUND.BPM`, `SOUND.SEEK`), so a drum machine or an arpeggiator plays with the song. `mode` TRUE or `"ON"` sends ticks only, `"START"` also sends Start on the next bar line, `"STOP"` sends Stop and keeps ticking, FALSE or `"OFF"` sends Stop and ends the ticks. Needs a sound build. |
+| `MIDI.CLOCKIN(handle)` -> `{bpm, running, ticks}` | The clock an input port receives: `bpm` from the tick spacing (0 when no tick came for a second), `running` between Start or Continue and Stop, `ticks` since the last Start (24 per beat). `MIDI.POLL` sees Start, Continue and Stop but not the ticks. |
 # jdBasic Language Reference
 
 [Docs home](README.md) · [Tour](tour.md) · **Language reference** · [Module library](../lib/README.md)

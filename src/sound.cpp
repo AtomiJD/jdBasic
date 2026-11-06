@@ -10,6 +10,7 @@ void sound_shutdown() {}
 void sound_midi_push(const unsigned char*, size_t) {}
 int sound_render(float*, int) { return 0; }
 bool sound_attach_output(bool, int64_t) { return false; }
+bool sound_clock_anchor(double*, int64_t*, double*) { return false; }
 void register_sound_builtins(VM& vm) {
     vm.register_native("SOUND.INIT", [](const std::vector<Value>&) -> Value {
         throw jdError(ErrCode::RUNTIME_ERROR, "SOUND requires a GFX or SOUND build");
@@ -52,6 +53,15 @@ static constexpr int SAMPLE_RATE = 44100;
 static constexpr int NUM_TRACKS = 16;
 static constexpr int MAX_VOICES = 64;
 static constexpr int MAX_SFX_CHANNELS = 16;
+
+// The clock anchor as other threads read it without the audio lock (a
+// seqlock: odd while the audio thread writes). Plain atomics, so they stay
+// readable while the program shuts down.
+static std::atomic<uint32_t> g_anchor_seq{0};
+static std::atomic<bool>     g_anchor_valid{false};
+static std::atomic<double>   g_anchor_cycle{0.0};
+static std::atomic<int64_t>  g_anchor_ns{0};
+static std::atomic<double>   g_anchor_cps{0.5};
 
 // ── Note Map ────────────────────────────────────────────────────
 
@@ -803,6 +813,12 @@ static struct SoundSystem {
     void set_anchor() {
         clock_cycle = seq_time;
         clock_ns = steady_ns() + out_latency_ns;
+        g_anchor_seq.fetch_add(1, std::memory_order_acq_rel);
+        g_anchor_cycle.store(clock_cycle, std::memory_order_relaxed);
+        g_anchor_ns.store(clock_ns, std::memory_order_relaxed);
+        g_anchor_cps.store(bpm / 240.0, std::memory_order_relaxed);
+        g_anchor_seq.fetch_add(1, std::memory_order_release);
+        g_anchor_valid.store(true, std::memory_order_release);
     }
 
     // Commands queued by SOUND.AT, applied by the mixer when the clock
@@ -2228,6 +2244,7 @@ void sound_shutdown() {
         g_sound.pcm_stream = nullptr;
     }
 #endif
+    g_anchor_valid.store(false, std::memory_order_release);
     g_sound.initialized = false;
     g_sound.device_mode = false;
 }
@@ -2258,6 +2275,24 @@ bool sound_attach_output(bool on, int64_t out_latency_ns) {
 // One raw MIDI message for the synth; called from MIDI port threads.
 void sound_midi_push(const unsigned char* msg, size_t len) {
     g_sound.push_midi(msg, len);
+}
+
+bool sound_clock_anchor(double* cycle, int64_t* t_ns, double* cps) {
+    for (int tries = 0; tries < 100; tries++) {
+        if (!g_anchor_valid.load(std::memory_order_acquire)) return false;
+        uint32_t s1 = g_anchor_seq.load(std::memory_order_acquire);
+        if (s1 & 1u) continue;
+        double c = g_anchor_cycle.load(std::memory_order_relaxed);
+        int64_t t = g_anchor_ns.load(std::memory_order_relaxed);
+        double r = g_anchor_cps.load(std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (g_anchor_seq.load(std::memory_order_relaxed) != s1) continue;
+        *cycle = c;
+        *t_ns = t;
+        *cps = r;
+        return true;
+    }
+    return false;
 }
 
 // ── Built-in drum kit, synthesized (SOUND.KIT track, "SYNTH") ──

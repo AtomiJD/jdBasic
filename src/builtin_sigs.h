@@ -559,6 +559,8 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"MEDIAN", BuiltinRet::F64, BF_NO_VEC | BF_READS_ARRS},
     {"MID", BuiltinRet::Str, BF_FRESH_STR},
     {"MID$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
+    {"MIDI.CLOCK", BuiltinRet::Bool, BF_NO_VEC},
+    {"MIDI.CLOCKIN", BuiltinRet::Handle, BF_NO_VEC},
     {"MIDI.CLOSE", BuiltinRet::None, BF_NO_VEC},
     {"MIDI.OPEN_IN", BuiltinRet::I64, BF_NO_VEC},
     {"MIDI.OPEN_OUT", BuiltinRet::I64, BF_NO_VEC},

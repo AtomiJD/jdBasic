@@ -19,3 +19,8 @@ void sound_midi_push(const unsigned char* msg, size_t len);
 // is spread over its buffers and its latency is reported. FALSE when
 // SOUND.INIT opened its own device.
 bool sound_attach_output(bool on, int64_t out_latency_ns);
+
+// Where the sequencer is heard: cycle `cycle` leaves the speaker at steady-clock
+// time t_ns (nanoseconds) and the song moves at cps cycles per second.
+// FALSE before SOUND.INIT.
+bool sound_clock_anchor(double* cycle, int64_t* t_ns, double* cps);
