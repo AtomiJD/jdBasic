@@ -1,0 +1,162 @@
+' ============================================================
+' The modulation matrix: SOUND.MATRIX, SOUND.MODLFO, SOUND.MODSRC.
+' Sources, slots stacking on a moving base, removal, errors.
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' Renders offline (SOUND.INIT "PULL").
+
+DIM PASS_COUNT = 0
+DIM FAIL_COUNT = 0
+
+SUB CHECK(name$, cond, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+FUNC NEAR(a, b, tol)
+    RETURN ABS(a - b) <= tol
+ENDFUNC
+
+' RMS of the left channel, frames a..b-1
+FUNC RMS(buf, a, b)
+    DIM acc = 0
+    FOR i = a TO b - 1
+        acc = acc + buf[i * 2] * buf[i * 2]
+    NEXT i
+    RETURN SQR(acc / (b - a))
+ENDFUNC
+
+FUNC LEVEL(frames)
+    DIM buf = SOUND.RENDER(frames)
+    RETURN RMS(buf, 500, frames)
+ENDFUNC
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "SKIP: build has no SOUND sequencer"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+SOUND.INIT "PULL"
+SOUND.RESET
+DIM buf = []
+DIM n = 0
+DIM lvl = 0
+DIM lvl2 = 0
+
+' ---------- sources ----------
+CHECK "the mod wheel starts at 0", SOUND.MODSRC("MODWHEEL") = 0, ""
+SOUND.MIDIIN 176, 1, 127
+SOUND.MIDIIN 176, 74, 64
+SOUND.MIDIIN 208, 32
+SOUND.MIDIIN 144, 120, 127
+buf = SOUND.RENDER(64)
+CHECK "MODWHEEL follows CC 1", NEAR(SOUND.MODSRC("modwheel"), 1, 1e-6), STR$(SOUND.MODSRC("modwheel"))
+CHECK "CC74 follows CC 74", NEAR(SOUND.MODSRC("CC74"), 64 / 127, 1e-6), ""
+CHECK "AFTERTOUCH follows channel pressure", NEAR(SOUND.MODSRC("AFTERTOUCH"), 32 / 127, 1e-6), ""
+CHECK "VELOCITY is the last key", NEAR(SOUND.MODSRC("VELOCITY"), 1, 1e-6), ""
+CHECK "NOTE is 1 at key 120", NEAR(SOUND.MODSRC("NOTE"), 1, 1e-6), ""
+DIM r1 = SOUND.MODSRC("RANDOM")
+SOUND.MIDIIN 144, 60, 100
+buf = SOUND.RENDER(64)
+DIM r2 = SOUND.MODSRC("RANDOM")
+CHECK "RANDOM changes with each key", r1 <> r2 ANDALSO ABS(r1) <= 1 ANDALSO ABS(r2) <= 1, STR$(r1) + " " + STR$(r2)
+CHECK "NOTE is 0 at middle C", NEAR(SOUND.MODSRC("NOTE"), 0, 1e-6), ""
+SOUND.MIDIIN 176, 123, 0
+
+SOUND.RESET
+SOUND.MODLFO 1, 1, "SINE"
+buf = SOUND.RENDER(11025)
+CHECK "LFO1 is at its top after a quarter period", NEAR(SOUND.MODSRC("LFO1"), 1, 0.01), STR$(SOUND.MODSRC("LFO1"))
+buf = SOUND.RENDER(22050)
+CHECK "and at its bottom half a period later", NEAR(SOUND.MODSRC("LFO1"), -1, 0.01), STR$(SOUND.MODSRC("LFO1"))
+
+' ---------- a slot moves a parameter around its base ----------
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.GAIN 0, 0.5
+SOUND.MODLFO 1, 1, "SQUARE"
+n = SOUND.MATRIX("LFO1", 0, "GAIN", 0.5)
+CHECK "one slot", n = 1, STR$(n)
+SOUND.MIDIIN 144, 69, 127
+buf = SOUND.RENDER(44100)
+lvl = RMS(buf, 2000, 20000)
+lvl2 = RMS(buf, 24000, 42000)
+CHECK "the square LFO mutes the first half", lvl < 0.001, "rms=" + STR$(lvl)
+CHECK "and doubles the second", lvl2 > 0.3, "rms=" + STR$(lvl2)
+CHECK "PARAM answers the base, not the moving value", NEAR(SOUND.PARAM(0, "GAIN"), 0.5, 1e-6), STR$(SOUND.PARAM(0, "GAIN"))
+SOUND.MIDIIN 128, 69, 0
+
+' ---------- the base follows outside writes ----------
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.005
+SOUND.FILTER 0, 300, 0, "LP"
+n = SOUND.MATRIX("MODWHEEL", 0, "CUTOFF", 3)
+SOUND.MIDIIN 144, 93, 127
+lvl = LEVEL(8000)
+SOUND.MIDIIN 176, 1, 127
+lvl2 = LEVEL(8000)
+CHECK "the wheel opens the cutoff by 3 octaves", lvl2 > lvl * 3, "closed=" + STR$(lvl) + " open=" + STR$(lvl2)
+SOUND.FILTER 0, 1500, 0, "LP"
+buf = SOUND.RENDER(256)
+CHECK "SOUND.FILTER becomes the new base", NEAR(SOUND.PARAM(0, "CUTOFF"), 1500, 0.01), STR$(SOUND.PARAM(0, "CUTOFF"))
+n = SOUND.PARAM(0, "CUTOFF", 300)
+buf = SOUND.RENDER(256)
+CHECK "so does SOUND.PARAM", NEAR(SOUND.PARAM(0, "CUTOFF"), 300, 0.01), STR$(SOUND.PARAM(0, "CUTOFF"))
+lvl2 = LEVEL(8000)
+CHECK "and the wheel still opens it", lvl2 > lvl * 3, "open=" + STR$(lvl2)
+
+' ---------- slots add up, amount 0 and OFF remove ----------
+n = SOUND.MATRIX("CC74", 0, "CUTOFF", -3)
+CHECK "a second slot on the same parameter", n = 2, STR$(n)
+SOUND.MIDIIN 176, 74, 127
+lvl2 = LEVEL(8000)
+CHECK "the two slots cancel", lvl2 < lvl * 1.5, "closed=" + STR$(lvl) + " now=" + STR$(lvl2)
+n = SOUND.MATRIX("CC74", 0, "CUTOFF", 0)
+CHECK "amount 0 removes the slot", n = 1, STR$(n)
+lvl2 = LEVEL(8000)
+CHECK "the wheel alone opens it again", lvl2 > lvl * 3, "open=" + STR$(lvl2)
+n = SOUND.MATRIX("CC74", 0, "CUTOFF", -1)
+n = SOUND.MATRIX("CC74", 0, "CUTOFF", -3)
+CHECK "the same source and target replace the amount", n = 2, STR$(n)
+CHECK "OFF removes every slot", SOUND.MATRIX("OFF") = 0, ""
+lvl2 = LEVEL(8000)
+CHECK "after OFF the cutoff is its base again", lvl2 < lvl * 1.5, "now=" + STR$(lvl2)
+SOUND.MIDIIN 128, 93, 0
+
+' ---------- errors ----------
+DIM err_msg = ""
+TRY
+    n = SOUND.MATRIX("LFO3", 0, "CUTOFF", 1)
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "an unknown source is refused", INSTR(err_msg, "unknown source") >= 0, err_msg
+err_msg = ""
+TRY
+    n = SOUND.MATRIX("CC200", 0, "CUTOFF", 1)
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "CC200 is refused", INSTR(err_msg, "unknown source") >= 0, err_msg
+err_msg = ""
+TRY
+    n = SOUND.MATRIX("LFO1", 0, "colour", 1)
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "an unknown parameter is refused", INSTR(err_msg, "unknown parameter") >= 0, err_msg
+err_msg = ""
+TRY
+    SOUND.MODLFO 3, 1
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "LFO 3 is refused", INSTR(err_msg, "1 or 2") >= 0, err_msg
+
+SOUND.RESET
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

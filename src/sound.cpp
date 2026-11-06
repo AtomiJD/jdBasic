@@ -1041,6 +1041,7 @@ static struct SoundSystem {
     float cc_position(const CcMap& m) {
         float* dst = mod_target(tracks[m.track], m.param);
         float v = dst ? *dst : m.lo;
+        if (mm_on[m.track][m.param]) v = mm_base[m.track][m.param];
         if (m.expo) return (float)(std::log(std::max(v, 1e-6f) / m.lo) / std::log(m.hi / m.lo));
         return (m.hi != m.lo) ? (v - m.lo) / (m.hi - m.lo) : 0.0f;
     }
@@ -1082,6 +1083,95 @@ static struct SoundSystem {
         }
     }
 
+    // ── Modulation matrix ───────────────────────────────────────
+    // A slot adds amount x source to a track parameter, on top of its base
+    // value. Cutoff and the times move in octaves, the rest in their own
+    // units. The base follows any outside write (a knob, SOUND.PARAM,
+    // SOUND.FILTER), so modulation and hands-on control stack.
+    enum MmSource { MM_LFO1, MM_LFO2, MM_WHEEL, MM_AFTER, MM_VEL, MM_NOTE, MM_RAND, MM_CC };
+    struct MmSlot { int src = 0, cc = 0, track = 0, param = 0; float amount = 0.0f; };
+    std::vector<MmSlot> mm_slots;
+    float mm_base[NUM_TRACKS][MP_COUNT] = {};
+    float mm_last[NUM_TRACKS][MP_COUNT] = {};
+    bool mm_on[NUM_TRACKS][MP_COUNT] = {};
+    double mm_lfo_phase[2] = {0.0, 0.0};
+    float mm_lfo_rate[2] = {1.0f, 0.25f};
+    ModShape mm_lfo_shape[2] = {ModShape::SINE, ModShape::TRI};
+    float mm_cc[128] = {};
+    float mm_after = 0.0f, mm_vel = 0.0f, mm_note = 0.0f, mm_rand = 0.0f;
+    uint32_t mm_seed = 0x9E3779B9u;
+
+    // Sources: LFOs, note and random are -1..1, the rest 0..1
+    float mm_value(int src, int cc) const {
+        switch (src) {
+            case MM_LFO1: case MM_LFO2: {
+                int i = src - MM_LFO1;
+                return 2.0f * mod_signal(mm_lfo_shape[i], mm_lfo_phase[i]) - 1.0f;
+            }
+            case MM_WHEEL: return mm_cc[1];
+            case MM_AFTER: return mm_after;
+            case MM_VEL:   return mm_vel;
+            case MM_NOTE:  return mm_note;
+            case MM_RAND:  return mm_rand;
+            default:       return mm_cc[cc & 127];
+        }
+    }
+
+    static bool mm_by_ratio(int p) {
+        return p == MP_CUTOFF || p == MP_ATTACK || p == MP_DECAY || p == MP_RELEASE || p == MP_LFORATE;
+    }
+
+    static float mm_clamp(int p, float v) {
+        switch (p) {
+            case MP_CUTOFF: return std::clamp(v, 10.0f, 20000.0f);
+            case MP_RESONANCE: case MP_SUSTAIN: case MP_PAN: case MP_REVERB: case MP_DELAY:
+                return std::clamp(v, 0.0f, 1.0f);
+            case MP_CRUSH: return std::clamp(v, 1.0f, 16.0f);
+            case MP_VOWEL: return std::clamp(v, 0.0f, 4.0f);
+            case MP_PITCH: case MP_FENV: return v;
+            default: return std::max(v, 0.0f);
+        }
+    }
+
+    void apply_matrix(int frames) {
+        for (int i = 0; i < 2; i++) {
+            mm_lfo_phase[i] += mm_lfo_rate[i] * frames / (double)SAMPLE_RATE;
+            if (mm_lfo_phase[i] > 1e6) mm_lfo_phase[i] -= 1e6;
+        }
+        for (size_t i = 0; i < mm_slots.size(); i++) {
+            const auto& s = mm_slots[i];
+            bool first = true;
+            for (size_t j = 0; j < i && first; j++)
+                if (mm_slots[j].track == s.track && mm_slots[j].param == s.param) first = false;
+            if (!first) continue;
+            float* dst = mod_target(tracks[s.track], s.param);
+            if (!dst) continue;
+            float& base = mm_base[s.track][s.param];
+            float& last = mm_last[s.track][s.param];
+            if (*dst != last) base = *dst;
+            float total = 0.0f;
+            for (size_t j = i; j < mm_slots.size(); j++) {
+                const auto& o = mm_slots[j];
+                if (o.track == s.track && o.param == s.param) total += o.amount * mm_value(o.src, o.cc);
+            }
+            float v = mm_by_ratio(s.param) ? base * std::exp2(total) : base + total;
+            v = mm_clamp(s.param, v);
+            *dst = v;
+            last = v;
+        }
+    }
+
+    // Starts or stops the matrix on one parameter, keeping its base value
+    void mm_refresh(int t, int p) {
+        bool used = false;
+        for (const auto& s : mm_slots) if (s.track == t && s.param == p) used = true;
+        float* dst = mod_target(tracks[t], p);
+        if (!dst) return;
+        if (used && !mm_on[t][p]) { mm_base[t][p] = *dst; mm_last[t][p] = *dst; }
+        if (!used && mm_on[t][p]) *dst = mm_base[t][p];
+        mm_on[t][p] = used;
+    }
+
     template <typename F> void each_zone(int ch, F f) {
         if (zones.empty()) { if (zone_hears(all_keys, ch)) f(all_keys, -2); return; }
         for (int i = 0; i < (int)zones.size(); i++)
@@ -1091,8 +1181,15 @@ static struct SoundSystem {
     void midi_event(const MidiMsg& e, int64_t off) {
         int kind = e.st >> 4, ch = (e.st & 15) + 1;
         int note = e.d1;
+        if (kind == 11) mm_cc[e.d1 & 127] = e.d2 / 127.0f;
+        else if (kind == 13) mm_after = e.d1 / 127.0f;
+        else if (kind == 10) mm_after = e.d2 / 127.0f;
         if (kind == 9 && e.d2 > 0) {
             last_note = note; last_vel = e.d2; last_ch = ch; note_count++;
+            mm_vel = e.d2 / 127.0f;
+            mm_note = (note - 60) / 60.0f;
+            mm_seed = mm_seed * 1664525u + 1013904223u;
+            mm_rand = (float)(mm_seed >> 8) / (float)(1u << 23) - 1.0f;
             each_zone(ch, [&](MidiZone& z, int zi) {
                 if (note >= z.lo && note <= z.hi) zone_note_on(z, zi, ch, note, e.d2, off);
             });
@@ -1917,6 +2014,7 @@ static struct SoundSystem {
             if ((f & 31) == 0) {
                 sys->apply_mods(t0 + f * phase_inc);
                 if (!sys->ccmaps.empty()) sys->apply_ccmaps(32);
+                sys->apply_matrix(32);
             }
             for (int i = 0; i < MAX_VOICES; i++) {
                 auto& v = sys->voices[i];
@@ -2835,15 +2933,117 @@ void register_sound_builtins(VM& vm) {
                 " (" + std::string(MOD_PARAM_NAMES) + ")");
         if (g_sound.initialized) SND_LOCK();
         float* dst = mod_target(g_sound.tracks[t], p);
+        // under the matrix the parameter is its base; the live value moves
+        float* val = g_sound.mm_on[t][p] ? &g_sound.mm_base[t][p] : dst;
         if (args.size() >= 3) {
             float v = (float)args[2].to_double();
             if (p == MP_CRUSH) v = std::clamp(v, 1.0f, 16.0f);
-            *dst = v;
+            *val = v;
             // a mapped knob sliding towards an old target would undo this
             for (auto& m : g_sound.ccmaps)
                 if (m.track == t && m.param == p) m.moving = false;
         }
-        double v = *dst;
+        double v = *val;
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_f64(v);
+    });
+
+    // Source names of the modulation matrix, or -1; CC<n> sets cc
+    auto mm_source = [](std::string s, int& cc) -> int {
+        std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+        cc = 0;
+        if (s == "LFO1") return SoundSystem::MM_LFO1;
+        if (s == "LFO2") return SoundSystem::MM_LFO2;
+        if (s == "MODWHEEL" || s == "WHEEL") return SoundSystem::MM_WHEEL;
+        if (s == "AFTERTOUCH") return SoundSystem::MM_AFTER;
+        if (s == "VELOCITY") return SoundSystem::MM_VEL;
+        if (s == "NOTE") return SoundSystem::MM_NOTE;
+        if (s == "RANDOM") return SoundSystem::MM_RAND;
+        if (s.size() > 2 && s.compare(0, 2, "CC") == 0) {
+            try {
+                size_t used = 0;
+                int n = std::stoi(s.substr(2), &used);
+                if (used == s.size() - 2 && n >= 0 && n <= 127) { cc = n; return SoundSystem::MM_CC; }
+            } catch (...) {}
+        }
+        return -1;
+    };
+    static const char* MM_SOURCES = "LFO1, LFO2, MODWHEEL, AFTERTOUCH, VELOCITY, NOTE, RANDOM, CC0-CC127";
+
+    // SOUND.MATRIX source$, track, param$, amount -> slot count. amount 0
+    // removes the slot; SOUND.MATRIX "OFF" removes every slot.
+    vm.register_native("SOUND.MATRIX", 1, 4, [mm_source](const std::vector<Value>& args) -> Value {
+        std::string src = args[0].to_string();
+        std::string up = src;
+        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+        if (up == "OFF") {
+            if (g_sound.initialized) SND_LOCK();
+            std::vector<SoundSystem::MmSlot> old;
+            old.swap(g_sound.mm_slots);
+            for (const auto& s : old) g_sound.mm_refresh(s.track, s.param);
+            if (g_sound.initialized) SND_UNLOCK();
+            return Value::make_i64(0);
+        }
+        if (args.size() < 4)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MATRIX: source$, track, param$, amount (or \"OFF\")");
+        SoundSystem::MmSlot slot;
+        slot.src = mm_source(src, slot.cc);
+        if (slot.src < 0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MATRIX: unknown source " + src + " (" + std::string(MM_SOURCES) + ")");
+        slot.track = (int)args[1].to_int();
+        if (slot.track < 0 || slot.track >= NUM_TRACKS)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MATRIX: track is 0-" + std::to_string(NUM_TRACKS - 1));
+        slot.param = mod_param_from_name(args[2].to_string());
+        if (slot.param < 0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MATRIX: unknown parameter " + args[2].to_string() +
+                " (" + std::string(MOD_PARAM_NAMES) + ")");
+        slot.amount = (float)args[3].to_double();
+        if (g_sound.initialized) SND_LOCK();
+        auto& v = g_sound.mm_slots;
+        v.erase(std::remove_if(v.begin(), v.end(), [&](const SoundSystem::MmSlot& s) {
+            return s.src == slot.src && s.cc == slot.cc && s.track == slot.track && s.param == slot.param;
+        }), v.end());
+        if (slot.amount != 0.0f) v.push_back(slot);
+        g_sound.mm_refresh(slot.track, slot.param);
+        int n = (int)v.size();
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_i64(n);
+    });
+
+    // SOUND.MODLFO n, rate_hz [, shape$]: the two free LFOs of the matrix
+    vm.register_native("SOUND.MODLFO", 2, 3, [](const std::vector<Value>& args) -> Value {
+        int n = (int)args[0].to_int();
+        if (n < 1 || n > 2) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MODLFO: n is 1 or 2");
+        float rate = (float)args[1].to_double();
+        ModShape shape = g_sound.mm_lfo_shape[n - 1];
+        if (args.size() >= 3) {
+            std::string sn = args[2].to_string();
+            std::transform(sn.begin(), sn.end(), sn.begin(), ::toupper);
+            static const std::pair<const char*, ModShape> shapes[] = {
+                {"SINE", ModShape::SINE}, {"COSINE", ModShape::COSINE}, {"SAW", ModShape::SAW},
+                {"ISAW", ModShape::ISAW}, {"TRI", ModShape::TRI}, {"SQUARE", ModShape::SQUARE},
+                {"RAND", ModShape::RAND}, {"PERLIN", ModShape::PERLIN}};
+            bool found = false;
+            for (auto& s : shapes) if (sn == s.first) { shape = s.second; found = true; }
+            if (!found)
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MODLFO: unknown shape " + sn +
+                    " (SINE, COSINE, SAW, ISAW, TRI, SQUARE, RAND, PERLIN)");
+        }
+        if (g_sound.initialized) SND_LOCK();
+        g_sound.mm_lfo_rate[n - 1] = std::max(0.0f, rate);
+        g_sound.mm_lfo_shape[n - 1] = shape;
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_none();
+    });
+
+    // SOUND.MODSRC(source$) -> the present value of a matrix source
+    vm.register_native("SOUND.MODSRC", 1, 1, [mm_source](const std::vector<Value>& args) -> Value {
+        int cc = 0;
+        int src = mm_source(args[0].to_string(), cc);
+        if (src < 0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.MODSRC: unknown source " + args[0].to_string() + " (" + std::string(MM_SOURCES) + ")");
+        if (g_sound.initialized) SND_LOCK();
+        double v = g_sound.mm_value(src, cc);
         if (g_sound.initialized) SND_UNLOCK();
         return Value::make_f64(v);
     });
@@ -3616,6 +3816,13 @@ void register_sound_builtins(VM& vm) {
         for (auto& ch : g_sound.sfx_channels) ch.active = false;
         g_sound.zones.clear();
         g_sound.ccmaps.clear();
+        g_sound.mm_slots.clear();
+        std::memset(g_sound.mm_on, 0, sizeof(g_sound.mm_on));
+        std::memset(g_sound.mm_cc, 0, sizeof(g_sound.mm_cc));
+        g_sound.mm_after = g_sound.mm_vel = g_sound.mm_note = g_sound.mm_rand = 0.0f;
+        g_sound.mm_lfo_phase[0] = g_sound.mm_lfo_phase[1] = 0.0;
+        g_sound.mm_lfo_rate[0] = 1.0f; g_sound.mm_lfo_rate[1] = 0.25f;
+        g_sound.mm_lfo_shape[0] = ModShape::SINE; g_sound.mm_lfo_shape[1] = ModShape::TRI;
         g_sound.all_keys.held.clear();
         g_sound.all_keys.voice = -1;
         g_sound.last_note = -1; g_sound.last_vel = 0; g_sound.last_ch = 0; g_sound.note_count = 0;
