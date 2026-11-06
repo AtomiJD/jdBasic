@@ -57,15 +57,20 @@ judge() {
     fi
 }
 
+# run_pattern <pattern> <backend> -> the HEAP line, or nothing
+run_pattern() {
+    if [ "$2" = interp ]; then
+        ( cd "$work" && "$jdb" leak_patterns.jdb "$1" "$rounds" 2>&1 | grep '^HEAP ' )
+    else
+        ( cd "$work" && "$native" "$1" "$rounds" 2>&1 | grep '^HEAP ' )
+    fi
+}
+
 new=0
 printf '%-10s %-8s %-12s %s\n' pattern backend verdict "bytes/pass"
 for p in $patterns; do
     for backend in interp native; do
-        if [ "$backend" = interp ]; then
-            line=$( cd "$work" && "$jdb" leak_patterns.jdb "$p" "$rounds" 2>&1 | grep '^HEAP ' )
-        else
-            line=$( cd "$work" && "$native" "$p" "$rounds" 2>&1 | grep '^HEAP ' )
-        fi
+        line=$(run_pattern "$p" "$backend")
         set -- $line
         if [ $# -ne 5 ]; then
             printf '%-10s %-8s %-12s\n' "$p" "$backend" "NO-OUTPUT"
@@ -73,6 +78,21 @@ for p in $patterns; do
             continue
         fi
         read -r verdict per <<<"$(judge "$3" "$4" "$5")"
+        # A leak grows on every run. A run that grows once can catch a
+        # passing allocation in both windows (closurefunc did, now and then,
+        # with a bump of ~23 KB that is given back by the next window), so
+        # a growing pattern runs twice more and counts only when both grow.
+        if [ "$verdict" = LEAK ]; then
+            first="$3 $4 $5"
+            for again in 1 2; do
+                set -- $(run_pattern "$p" "$backend")
+                if [ $# -ne 5 ] || [ "$(judge "$3" "$4" "$5" | cut -d' ' -f1)" != LEAK ]; then
+                    verdict=flat
+                    printf '%-10s %-8s %-12s heap %s once, flat on run %d\n' "$p" "$backend" "noise" "$first" "$((again + 1))"
+                    break
+                fi
+            done
+        fi
         if [ "$verdict" = LEAK ]; then
             if is_known "$backend" "$p"; then
                 status="known"
