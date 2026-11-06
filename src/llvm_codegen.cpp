@@ -4692,6 +4692,33 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     // Pre-scan DIM AS TypeName to know which variables are UDT objects
     std::unordered_set<std::string> udt_var_names;
     declared_number_globals.clear();
+    // A global DIMmed to a table is an array of rows for the FUNCs and SUBs
+    // too, which are compiled before its DIM; codegen_function takes the
+    // mark off again for its own parameters and locals of the same name.
+    table_globals.clear();
+    {
+        auto answers_table = [&](const Expr& e) -> bool {
+            if (e.kind == ExprKind::ARRAY_LITERAL) {
+                for (auto& a : e.args)
+                    if (a && a->kind == ExprKind::ARRAY_LITERAL) return true;
+                return false;
+            }
+            if (e.kind != ExprKind::CALL) return false;
+            std::string u = e.func_name;
+            std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+            if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" || u == "AGG" ||
+                u == "TILED.OBJECTS" || u == "SQL.QUERY" || u == "SQLITE.QUERY")
+                return true;
+            return u == "RESHAPE" && e.args.size() >= 2 && e.args[1] &&
+                   e.args[1]->kind == ExprKind::ARRAY_LITERAL && e.args[1]->args.size() >= 2;
+        };
+        for (auto& s : program)
+            if (s && s->kind == StmtKind::DIM && s->expr && s->label.empty() &&
+                answers_table(*s->expr)) {
+                array_array_vars.insert(s->var_name);
+                table_globals.insert(s->var_name);
+            }
+    }
     for (auto& stmt : program) {
         if (stmt && stmt->kind == StmtKind::DIM && stmt->label.empty() &&
             (stmt->var_type == VarType::BYTE || stmt->var_type == VarType::INT16 ||
@@ -6271,6 +6298,23 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
                 for (auto& b : br.body) if (b) drop_flat(*b);
         };
         for (auto& b : stmt.body) if (b) drop_flat(*b);
+        // A global marked as a table before its DIM ran says nothing about a
+        // parameter or a local of the same name.
+        auto drop_table_global = [&](const std::string& n) {
+            if (table_globals.count(n) && !own(local_array_array_by_fn, lit, n))
+                array_array_vars.erase(n);
+        };
+        for (auto& pn : stmt.params()) drop_table_global(pn.name);
+        std::function<void(const Stmt&)> drop_local_tables = [&](const Stmt& s) {
+            if (s.kind == StmtKind::DIM && !s.var_name.empty()) drop_table_global(s.var_name);
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) return;
+            for (auto& b : s.body)         if (b) drop_local_tables(*b);
+            for (auto& b : s.catch_body())   if (b) drop_local_tables(*b);
+            for (auto& b : s.finally_body()) if (b) drop_local_tables(*b);
+            for (auto& br : s.branches)
+                for (auto& b : br.body) if (b) drop_local_tables(*b);
+        };
+        for (auto& b : stmt.body) if (b) drop_local_tables(*b);
     }
     auto saved_string_array = string_array_vars;
     auto saved_mixed_array = mixed_array_vars;

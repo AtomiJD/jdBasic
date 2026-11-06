@@ -638,6 +638,9 @@ private:
     // Top-level names DIMmed AS a number, known before any FUNC or SUB that
     // writes them is compiled.
     std::unordered_set<std::string> declared_number_globals;
+    // Top-level names DIMmed to a table (rows), marked before the FUNCs and
+    // SUBs that read them are compiled.
+    std::unordered_set<std::string> table_globals;
     void codegen_for(const Stmt& stmt);
     void codegen_if(const Stmt& stmt);
     void codegen_do_loop(const Stmt& stmt);

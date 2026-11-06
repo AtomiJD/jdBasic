@@ -1,0 +1,86 @@
+' A global that holds a table is an array of rows inside FUNCs and SUBs
+' too, which are compiled before its DIM: rows shifted down in a loop, a
+' row copied out and written back, a number filling a row, the rows of a
+' literal and of an AGG table read in a FUNC. A FUNC whose own local or
+' parameter has the same name keeps its own kind.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok AS BOOLEAN, what AS STRING)
+    IF NOT ok THEN
+        PRINT "FAIL "; what
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM board = RESHAPE(IOTA(36) * 0, [6, 6])
+
+SUB ShiftDown(fromRow AS INTEGER)
+    FOR sk = fromRow TO 1 STEP -1
+        board[sk] = board[sk - 1] + 0
+    NEXT
+    board[0] = 0
+ENDSUB
+
+FUNC PlaceBar(rowNo AS INTEGER, firstCol AS INTEGER, span AS INTEGER, id AS INTEGER) AS INTEGER
+    DIM rowCells = board[rowNo] + 0
+    FOR pk = firstCol TO firstCol + span - 1
+        rowCells[pk] = id
+    NEXT
+    board[rowNo] = rowCells
+    RETURN SUM(board[rowNo] > 0)
+ENDFUNC
+
+FUNC RowIsFull(rowNo AS INTEGER) AS BOOLEAN
+    RETURN SUM(board[rowNo] > 0) = 6
+ENDFUNC
+
+Check(PlaceBar(5, 0, 3, 1) = 3, "a row copied out and written back in a FUNC")
+Check(PlaceBar(4, 2, 2, 2) = 2, "a second row written back")
+DIM pass AS INTEGER
+FOR pass = 1 TO 3
+    ShiftDown(5)
+NEXT
+Check(SUM(board[5]) = 0 ANDALSO SUM(board[0]) = 0, "rows shifted down three times in a SUB loop")
+Check(PlaceBar(5, 0, 6, 3) = 6 ANDALSO RowIsFull(5), "a full row after the shifts")
+ShiftDown(5)
+Check(NOT RowIsFull(5) ANDALSO LEN(board[5]) = 6, "a full row cleared by a shift keeps its width")
+board[2] = 7
+Check(SUM(board[2]) = 42, "a number fills a row at the top level")
+
+DIM grid = [[1, 2, 3], [4, 5, 6]]
+FUNC RowSum(r AS INTEGER) AS INTEGER
+    RETURN SUM(grid[r])
+ENDFUNC
+FUNC SwapRows()
+    DIM keep = grid[0] + 0
+    grid[0] = grid[1] + 0
+    grid[1] = keep
+    RETURN 0
+ENDFUNC
+Check(RowSum(1) = 15, "a row of a literal table read in a FUNC")
+DIM swapped = SwapRows()
+Check(RowSum(0) = 15 ANDALSO RowSum(1) = 6, "rows of a literal table swapped in a FUNC")
+Check(grid[0][2] = 6, "a cell of a swapped row")
+
+DIM tally = AGG(["a", "b", "a"], [1, 2, 3], SUM@)
+FUNC KeyOf$(r AS INTEGER)
+    RETURN tally[r][0]
+ENDFUNC
+FUNC TotalOf(r AS INTEGER) AS INTEGER
+    RETURN tally[r][1]
+ENDFUNC
+Check(KeyOf$(1) = "b" ANDALSO TotalOf(0) = 4, "the rows of an AGG table read in a FUNC")
+
+FUNC OwnBoard() AS INTEGER
+    DIM board = [5, 6, 7]
+    RETURN SUM(board) + board[2] - 7
+ENDFUNC
+FUNC ParamBoard(board) AS INTEGER
+    RETURN board[1] * 10
+ENDFUNC
+Check(OwnBoard() = 18, "a FUNC local that shares the name of a global table")
+Check(ParamBoard([1, 2, 3]) = 20, "a parameter that shares the name of a global table")
+Check(LEN(board) = 6 ANDALSO LEN(board[0]) = 6, "the global table after the shadowing FUNCs")
+
+IF failed = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
