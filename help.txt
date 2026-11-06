@@ -3219,9 +3219,10 @@ Syntax: SOLVE(matrixA, vectorB)
 Description: Solves the linear system Ax = b for the unknown vector x.
 
 [SOUND.INIT]
-Syntax: SOUND.INIT [mode$]
+Syntax: SOUND.INIT [mode$], [frames]
 Description: Initializes the audio system for synthesized sound.
-mode$ "PULL" opens no audio device: SOUND.RENDER is then the only clock, so a render is reproducible.
+mode$ "PULL" opens no audio device: SOUND.RENDER (or MON.SYNTH) is then the only clock, so a render is reproducible.
+frames asks the device for buffers of that many sample frames (16-8192). On Windows shared mode keeps its 10 ms period anyway; MON.SYNTH exclusive goes lower.
 
 [SOUND.KIT]
 Syntax: SOUND.KIT track, [kit]

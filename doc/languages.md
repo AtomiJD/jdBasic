@@ -3275,7 +3275,7 @@ GUI.END
 
 #### Sound
 
-* **`SOUND.INIT [mode$]`**: Initializes the audio system. Must be called before other sound functions. `mode$` `"PULL"` opens no audio device: `SOUND.RENDER` is then the only clock, so the same program renders the same samples on every run (tests, offline rendering). The default is `"DEVICE"`.
+* **`SOUND.INIT [mode$], [frames]`**: Initializes the audio system. Must be called before other sound functions. `mode$` `"PULL"` opens no audio device: `SOUND.RENDER` (or `MON.SYNTH`) is then the only clock, so the same program renders the same samples on every run (tests, offline rendering). The default is `"DEVICE"`. `frames` asks the device for buffers of that many sample frames (16-8192); Windows shared mode keeps its 10 ms period anyway, `MON.SYNTH` with `exclusive` goes lower.
 * **`SOUND.VOICE track, waveform$, attack, decay, sustain, release`**: Configures the ADSR envelope and waveform for a sound track.
   * **Waveforms**: `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`, `"SAMPLE"`.
 
