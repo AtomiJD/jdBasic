@@ -249,7 +249,32 @@ std::vector<StmtPtr> Parser::parse() {
         skip_newlines();
     }
     validate_type_refs(stmts);
+    validate_unique_procs(stmts);
     return stmts;
+}
+
+// Names ignore case, so a second FUNC or SUB of the same name in one file
+// (`IsWordChar` and `ISWORDCHAR`) is the same procedure defined twice, and
+// the two backends would each pick another one. Methods count per TYPE.
+void Parser::validate_unique_procs(const std::vector<StmtPtr>& stmts) {
+    if (later_definition_wins) return;
+    std::unordered_map<std::string, int> first_line;
+    auto check = [&](const Stmt& s) {
+        std::string key = s.source_file() + "|" + upper_copy(s.func_name);
+        auto it = first_line.find(key);
+        if (it == first_line.end()) { first_line[key] = s.line; return; }
+        throw std::runtime_error("Parse error at line " + std::to_string(s.line) + ": " +
+            (s.kind == StmtKind::SUB ? "SUB " : "FUNC ") + s.func_name +
+            " is defined a second time; the first is at line " + std::to_string(it->second) +
+            " (names ignore case) - rename one of them");
+    };
+    for (const auto& s : stmts) {
+        if (!s) continue;
+        if (s->kind == StmtKind::FUNCTION || s->kind == StmtKind::SUB) check(*s);
+        if (s->kind == StmtKind::TYPE_DECL)
+            for (const auto& m : s->body)
+                if (m && (m->kind == StmtKind::FUNCTION || m->kind == StmtKind::SUB)) check(*m);
+    }
 }
 
 // ── Statements ───────────────────────────────────────────────

@@ -45,7 +45,7 @@ FUNC Pick(x)
     RETURN x
 ENDFUNC
 
-ASYNC FUNC KindOf(v)
+ASYNC FUNC KindAsync(v)
     RETURN TYPEOF(v)
 ENDFUNC
 
@@ -127,10 +127,10 @@ Check(texts{"s"} = "abc", "a map string equals the same text")
 
 ' An untyped parameter of an ASYNC FUNC or of a TYPE method holds a string.
 DIM greeting AS STRING = "World"
-DIM t1 = KindOf(greeting)
+DIM t1 = KindAsync(greeting)
 DIM k1 = AWAIT t1
 Check(k1 = "STRING", "a string handed to an ASYNC FUNC")
-DIM t2 = KindOf(42)
+DIM t2 = KindAsync(42)
 DIM k2 = AWAIT t2
 Check(k2 <> "STRING", "a number handed to the same ASYNC FUNC")
 DIM pr AS Probe

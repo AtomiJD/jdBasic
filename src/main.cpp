@@ -324,8 +324,11 @@ static std::string read_file(const std::string& path) {
     return ss.str();
 }
 
-void run_on_vm(VM& vm, const std::string& source);
+void run_on_vm(VM& vm, const std::string& source, bool later_definition_wins = false);
 static void setup_dynamic_code(VM& vm);
+// The REPL's program buffer came from a restored workspace, which replays
+// every input of a session: a FUNC defined again there replaces the earlier.
+static bool g_buffer_from_workspace = false;
 
 // Module file reader: tries modulename.jdb in base_dir, then cwd
 // Directory of main source file. Non-static so other TUs (graphics.cpp)
@@ -457,12 +460,13 @@ bool run_pcode_file(VM& vm, const std::string& path, std::string& err) {
     return true;
 }
 
-void run_on_vm(VM& vm, const std::string& source) {
+void run_on_vm(VM& vm, const std::string& source, bool later_definition_wins) {
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
     Parser parser(std::move(tokens));
     setup_parser_modules(parser);  // enable IMPORT in REPL/EXECUTE/EVAL
     parser.predeclared_types = vm.known_types;
+    parser.later_definition_wins = later_definition_wins;
     auto ast = parser.parse();
     Compiler compiler;
     compiler.seed_types(vm.known_types);
@@ -902,6 +906,8 @@ void load_workspace(VM& vm, std::string& program_buffer, const std::string& name
             auto tokens = lexer.tokenize();
             Parser parser(std::move(tokens));
             setup_parser_modules(parser);
+            parser.later_definition_wins = true;
+            g_buffer_from_workspace = true;
             auto ast = parser.parse();
             Compiler compiler;
             compiler.compile(ast);
@@ -1155,6 +1161,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             if (!f) throw std::runtime_error("Cannot open: " + filename);
             std::ostringstream ss; ss << f.rdbuf();
             program_buffer = ss.str();
+            g_buffer_from_workspace = false;
             g_loaded_filename = filename;
             int lines = (int)std::count(program_buffer.begin(), program_buffer.end(), '\n') + 1;
             vm.emit("Loaded: " + filename + " (" + std::to_string(lines) + " lines)\n");
@@ -1224,7 +1231,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
     }
     if (cmd_upper == "RUN") {
         if (!program_buffer.empty()) {
-            try { run_on_vm(vm, program_buffer); }
+            try { run_on_vm(vm, program_buffer, g_buffer_from_workspace); }
             catch (const std::exception& e) { std::cerr << "Error: " << e.what() << std::endl; }
             // If the script hit a STOP, return immediately so the REPL
             // prompt comes back. Console::run pumps SDL events from the
@@ -1243,6 +1250,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             auto tokens = lexer.tokenize();
             Parser parser(std::move(tokens));
             setup_parser_modules(parser);
+            parser.later_definition_wins = g_buffer_from_workspace;
             auto ast = parser.parse();
             Compiler compiler;
             compiler.compile(ast);
@@ -1260,6 +1268,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
     // ── NEW (clear source + functions, keep globals) ─────────
     if (cmd_upper == "NEW") {
         program_buffer.clear();
+        g_buffer_from_workspace = false;
         vm.emit("Program cleared.\n");
         return;
     }
@@ -1273,6 +1282,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
 
     if (cmd_upper == "CLEARWS") {
         program_buffer.clear();
+        g_buffer_from_workspace = false;
         vm.reset();
 #ifdef GFX
         gfx_shutdown();
@@ -1382,6 +1392,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 auto tokens = lexer.tokenize();
                 Parser parser(std::move(tokens));
                 setup_parser_modules(parser);
+                parser.later_definition_wins = g_buffer_from_workspace;
                 auto ast = parser.parse();
                 Compiler compiler;
                 compiler.compile(ast);
@@ -1715,7 +1726,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             // F5: compile + run the buffer, no save. Ctrl-R: the editor has
             // saved; run, then any key reopens it on the error line.
             int err_line = 0;
-            try { run_on_vm(vm, program_buffer); }
+            try { run_on_vm(vm, program_buffer, g_buffer_from_workspace); }
             catch (const jdError& e) { print_error(e.code, e.what(), e.line, e.file); err_line = e.line; }
             catch (const std::exception& e) {
                 print_error(ErrCode::RUNTIME_ERROR, e.what());

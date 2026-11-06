@@ -49,6 +49,10 @@ public:
     // OPTION "EXPLICIT" / "STRICT" (found in the token stream).
     bool strict_module_writes = false;
     bool explicit_seen = false;
+    // A restored workspace replays every input of a session, a FUNC
+    // redefined later among them: there the later definition wins instead
+    // of a second one being refused (the caller sets this).
+    bool later_definition_wins = false;
 
 private:
     // The token window, a ring: token number `base` sits at ring[head],
@@ -95,6 +99,7 @@ private:
     std::vector<std::pair<std::string, int>> udt_type_refs;
     void record_type_ref(const std::string& name, int line);
     void validate_type_refs(const std::vector<StmtPtr>& stmts);
+    void validate_unique_procs(const std::vector<StmtPtr>& stmts);
 
     // Helpers
     const Token& current();

@@ -1,0 +1,66 @@
+' A FUNC or SUB defined twice in one file is refused with both lines, names
+' compared without case: the two backends would each call another one.
+' The same method name in two TYPEs, and a module's own FUNC that shares a
+' name with one of the program, are not duplicates.
+DIM bad = 0
+DIM NL$ = CHR$(10)
+
+DIM exe$ = "build\jdBasic.exe"
+IF NOT FILE.EXISTS(exe$) THEN exe$ = "..\..\build\jdBasic.exe"
+IF FILE.EXISTS(exe$) THEN
+    DIM work$ = MKTEMP$("dupprocs")
+    MKDIR work$
+    DIM one$ = work$ + "/one.jdb"
+    DIM told$ = ""
+    DIM child = 0
+
+    TXTWRITER one$, "FUNC IsWordChar(c$)" + NL$ + "    RETURN 1" + NL$ + "ENDFUNC" + NL$ + NL$ + "FUNC ISWORDCHAR(c$)" + NL$ + "    RETURN 2" + NL$ + "ENDFUNC" + NL$
+    child = OS.EXEC(exe$, ["--lint", one$])
+    told$ = child{"output"}
+    IF INSTR(told$, "FUNC ISWORDCHAR is defined a second time; the first is at line 1") < 0 THEN
+        bad = bad + 1
+        PRINT "two FUNCs that differ in case were answered with ["; told$; "]"
+    ENDIF
+
+    TXTWRITER one$, "SUB Tick()" + NL$ + "ENDSUB" + NL$ + "FUNC tick()" + NL$ + "    RETURN 0" + NL$ + "ENDFUNC" + NL$
+    child = OS.EXEC(exe$, ["--lint", one$])
+    told$ = child{"output"}
+    IF INSTR(told$, "is defined a second time; the first is at line 1") < 0 THEN
+        bad = bad + 1
+        PRINT "a SUB and a FUNC of one name were answered with ["; told$; "]"
+    ENDIF
+
+    TXTWRITER one$, "TYPE A" + NL$ + "    n AS INTEGER" + NL$ + "    FUNC Size()" + NL$ + "        RETURN 1" + NL$ + "    ENDFUNC" + NL$ + "ENDTYPE" + NL$ + "TYPE B" + NL$ + "    n AS INTEGER" + NL$ + "    FUNC Size()" + NL$ + "        RETURN 2" + NL$ + "    ENDFUNC" + NL$ + "ENDTYPE" + NL$
+    child = OS.EXEC(exe$, ["--lint", one$])
+    told$ = child{"output"}
+    IF INSTR(told$, "Parsed OK") < 0 THEN
+        bad = bad + 1
+        PRINT "one method name in two TYPEs was refused: ["; told$; "]"
+    ENDIF
+
+    TXTWRITER one$, "TYPE A" + NL$ + "    n AS INTEGER" + NL$ + "    FUNC Size()" + NL$ + "        RETURN 1" + NL$ + "    ENDFUNC" + NL$ + "    FUNC SIZE()" + NL$ + "        RETURN 2" + NL$ + "    ENDFUNC" + NL$ + "ENDTYPE" + NL$
+    child = OS.EXEC(exe$, ["--lint", one$])
+    told$ = child{"output"}
+    IF INSTR(told$, "is defined a second time") < 0 THEN
+        bad = bad + 1
+        PRINT "one method twice in a TYPE was answered with ["; told$; "]"
+    ENDIF
+
+    DIM mod$ = work$ + "/dupmod.jdb"
+    TXTWRITER mod$, "EXPORT MODULE DUPMOD" + NL$ + "FUNC Helper()" + NL$ + "    RETURN 1" + NL$ + "ENDFUNC" + NL$ + "EXPORT FUNC VALUE()" + NL$ + "    RETURN Helper()" + NL$ + "ENDFUNC" + NL$
+    TXTWRITER one$, "IMPORT DUPMOD" + NL$ + "FUNC Helper()" + NL$ + "    RETURN 2" + NL$ + "ENDFUNC" + NL$ + "PRINT DUPMOD.VALUE() + Helper()" + NL$
+    child = OS.EXEC(exe$, ["--lint", one$])
+    told$ = child{"output"}
+    IF INSTR(told$, "Parsed OK") < 0 THEN
+        bad = bad + 1
+        PRINT "a module FUNC sharing a name with the program was refused: ["; told$; "]"
+    ENDIF
+
+    KILL mod$
+    KILL one$
+    RMDIR work$
+ELSE
+    PRINT "no build\jdBasic.exe: the lint checks are skipped"
+ENDIF
+
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
