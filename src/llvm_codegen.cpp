@@ -12590,6 +12590,29 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 });
             }
 
+            // A VM value read with an index whose kind only the running
+            // program knows (a key out of FOR EACH ... MAP.KEYS of it): the
+            // dispatcher takes a text as a key and a number as a position.
+            if (arr_tv.tag == JD_TAG_VM_HANDLE && idx_tv.tag == JD_TAG_RUNTIME && idx_tv.runtime_tag) {
+                auto& gi = runtime_funcs["__jdrt_tagged_index"];
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef out = scratch_alloca(i64_type, "tivout");
+                LLVMValueRef base_tag = LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0);
+                LLVMValueRef targs[] = { rt, arr_tv.val, base_tag, idx_tv.val, idx_tv.runtime_tag, out };
+                LLVMValueRef tv_tag = LLVMBuildCall2(builder, gi.fn_type, gi.fn, targs, 6, "tivtag");
+                emit_err_check();
+                LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tivval");
+                emit_cell_out(tv_val, tv_tag);
+                TypedValue r{ tv_val, JD_TAG_RUNTIME, tv_tag };
+                // The rule of the gather path above: a key read out of a VM
+                // object answers a new buffer.
+                r.fresh_ptr = LLVMBuildICmp(builder, LLVMIntEQ, idx_tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_STR, 0), "tiv_keystr");
+                drop_read_temp(idx_tv);
+                return r;
+            }
+
             // Int-indexed access on a VM Value handle (lazy array/map element).
             if (arr_tv.tag == JD_TAG_VM_HANDLE) {
                 LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");

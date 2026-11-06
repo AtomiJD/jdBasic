@@ -80,4 +80,28 @@ NEXT round
 Check(kept$ = "ada/ada", "a text field kept in an untyped local")
 Check(counted = 400 ANDALSO store{"ada"}[1] = 1, "a key read out for each lookup, 200 times")
 
+' A VM map read with a key out of FOR EACH ... MAP.KEYS of it: the key is a
+' text, so it is a key and not a position (the copy came out all null).
+FUNC WithDefaults(overrides, base)
+    DIM merged = {}
+    FOR EACH k IN MAP.KEYS(base)
+        merged{k} = base{k}
+    NEXT
+    FOR EACH k IN MAP.KEYS(overrides)
+        merged{k} = overrides{k}
+    NEXT
+    RETURN merged
+ENDFUNC
+DIM user = JSON.PARSE("{""size"": 14, ""font"": ""mono"", ""tags"": [1, 2]}")
+DIM merged = WithDefaults(user, {"theme": "dark", "size": 12})
+Check(JSON.STRINGIFY$(merged) = "{""theme"":""dark"",""size"":14,""font"":""mono"",""tags"":[1,2]}", "a VM map merged key by key")
+DIM copied = {}
+FOR EACH key IN MAP.KEYS(user)
+    copied{key} = user{key}
+NEXT
+Check(copied{"font"} = "mono" ANDALSO copied{"size"} = 14, "a VM map copied at the top level")
+DIM nums = JSON.PARSE("[10, 20, 30]")
+DIM at = nums[0] - 9
+Check(nums[at] = 20, "a VM array read by a position of run-time kind")
+
 IF failed = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
