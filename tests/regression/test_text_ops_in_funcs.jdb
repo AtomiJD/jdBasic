@@ -1,0 +1,41 @@
+' The text operators with a constant on the right inside a FUNC or SUB, where
+' a variable and a constant are read in one step: s$ - "b" removes, s$ * 3
+' repeats, s$ + "x" joins, exactly as at the top level, also for a text that
+' looks like a number.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC Without$(s$)
+    RETURN s$ - "b"
+ENDFUNC
+
+FUNC Thrice$(s$)
+    RETURN s$ * 3
+ENDFUNC
+
+FUNC Tagged$(s$)
+    RETURN s$ + "x"
+ENDFUNC
+
+DIM seen$ = ""
+SUB Strip(s$)
+    seen$ = s$ - " "
+ENDSUB
+
+Check(Without$("abcabc") = "acac", "text minus a constant in a FUNC")
+Check(Without$("1b2b3") = "123", "a text that looks like a number minus a constant in a FUNC")
+Check(Thrice$("ab") = "ababab", "text times a constant in a FUNC")
+Check(Tagged$("a") = "ax", "text plus a constant in a FUNC")
+Strip("+49 170 55")
+Check(seen$ = "+4917055", "text minus a constant in a SUB")
+DIM g$ = "a b"
+Check(g$ - " " = "ab", "text minus a constant at the top level")
+
+IF failed = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

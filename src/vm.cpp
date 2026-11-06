@@ -79,6 +79,25 @@ void install_seh_translator_for_this_thread() {}
 #include "jdb_shape.h"
 #include "jdb_text.h"
 #include "jdb_stack.h"
+// The text operators: + joins, text - text removes every occurrence,
+// text * n repeats, text / n and n / text slice; anything else joins.
+static Value string_binop(const Value& a, const Value& b, OpCode op) {
+    if (op == OpCode::SUB && a.type == ValueType::STRING && b.type == ValueType::STRING)
+        return Value::make_string(jdb_text::remove_all(a.as_string()->data, b.as_string()->data));
+    if (op == OpCode::MUL && a.type == ValueType::STRING)
+        return Value::make_string(jdb_text::repeat(a.as_string()->data, b.to_int()));
+    if (op == OpCode::MUL && b.type == ValueType::STRING)
+        return Value::make_string(jdb_text::repeat(b.as_string()->data, a.to_int()));
+    if (op == OpCode::DIV) {
+        if (a.type == ValueType::STRING && is_numeric(b.type))
+            return Value::make_string(jdb_text::slice(a.as_string()->data, b.to_int(), false));
+        if (is_numeric(a.type) && b.type == ValueType::STRING)
+            return Value::make_string(jdb_text::slice(b.as_string()->data, a.to_int(), true));
+        return Value::make_string(a.to_string());
+    }
+    return Value::make_string(a.to_string() + b.to_string());
+}
+
 static Value array_pair(const Value& a, const Value& b,
                         const std::function<Value(const Value&, const Value&)>& cell);
 
@@ -1447,30 +1466,7 @@ void VM::run() {
             }
             // String operators
             else if (a.type == ValueType::STRING || b.type == ValueType::STRING) {
-                if (op == OpCode::ADD) {
-                    // Concatenation: "Hello " + "World"
-                    push(Value::make_string(a.to_string() + b.to_string()));
-                } else if (op == OpCode::SUB && a.type == ValueType::STRING && b.type == ValueType::STRING) {
-                    // Removal: "abababac" - "ab" is "ac"
-                    push(Value::make_string(jdb_text::remove_all(a.as_string()->data, b.as_string()->data)));
-                } else if (op == OpCode::MUL && a.type == ValueType::STRING) {
-                    // Repetition: "-" * 10
-                    push(Value::make_string(jdb_text::repeat(a.as_string()->data, b.to_int())));
-                } else if (op == OpCode::MUL && b.type == ValueType::STRING) {
-                    // Repetition: 10 * "-"
-                    push(Value::make_string(jdb_text::repeat(b.as_string()->data, a.to_int())));
-                } else if (op == OpCode::DIV) {
-                    // Slicing: 5 / "Welcome" is "Welco", "Welcome" / 4 is "come"
-                    if (a.type == ValueType::STRING && is_numeric(b.type)) {
-                        push(Value::make_string(jdb_text::slice(a.as_string()->data, b.to_int(), false)));
-                    } else if (is_numeric(a.type) && b.type == ValueType::STRING) {
-                        push(Value::make_string(jdb_text::slice(b.as_string()->data, a.to_int(), true)));
-                    } else {
-                        push(Value::make_string(a.to_string()));
-                    }
-                } else {
-                    push(Value::make_string(a.to_string() + b.to_string()));
-                }
+                push(string_binop(a, b, op));
             } else {
                 push(arithmetic(a, b, op));
             }
@@ -2869,7 +2865,7 @@ void VM::run() {
                 if (a.type == ValueType::ARRAY || c.type == ValueType::ARRAY) {
                     result = array_arithmetic(a, c, arith_op);
                 } else if (a.type == ValueType::STRING || c.type == ValueType::STRING) {
-                    result = scalar_binop(a, c, arith_op);
+                    result = string_binop(a, c, arith_op);
                 } else {
                     result = arithmetic(a, c, arith_op);
                 }
