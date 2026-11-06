@@ -76,7 +76,7 @@ extern bool g_exec_stdin_null;
 
 // run_on_vm lives in main.cpp. Declared extern here so mcp_stdio.cpp can
 // drive code execution on the persistent VM.
-extern void run_on_vm(VM& vm, const std::string& source);
+extern void run_on_vm(VM& vm, const std::string& source, bool later_definition_wins = false);
 extern std::string recompile_on_vm(VM& vm, const std::string& source);
 
 // Workspace persistence - defined in main.cpp. SAVEWS / LOADWS are REPL
