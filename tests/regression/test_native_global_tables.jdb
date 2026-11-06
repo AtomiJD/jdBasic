@@ -130,4 +130,20 @@ ENDFUNC
 PutNumber(labels)
 Check(SecondLabel$() = "5", "a global handed to a SUB that writes a number")
 
+' A number PUSHed into it, or a map whose keys look like cells, is not one either.
+DIM pushed = []
+PUSH pushed, "a"
+PUSH pushed, 1
+pushed[0] = "x"
+FUNC PushedNumber$() AS STRING
+    RETURN STR$(LEN(pushed)) + ":" + STR$(pushed[1] + 1)
+ENDFUNC
+Check(PushedNumber$() = "2:2", "a global with a number PUSHed into it reads the number as one")
+DIM tags AS MAP
+tags{"k"} = "v"
+FUNC TagOf$() AS STRING
+    RETURN tags{"k"}
+ENDFUNC
+Check(TagOf$() = "v" ANDALSO LEN(MAP.KEYS(tags)) = 1, "a map whose key write looks like a text cell")
+
 IF failed = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

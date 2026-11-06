@@ -5404,9 +5404,15 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
         };
         // Candidates: names a FUNC, a SUB or the top level appends texts to
         // or writes a text into a cell of.
+        // A key in quotes writes a map (`m{"k"} = v$`), not a cell.
+        auto keyed = [](const Stmt& s) {
+            return !s.index_chain.empty() && s.index_chain[0] &&
+                   s.index_chain[0]->kind == ExprKind::LITERAL_STRING;
+        };
         auto is_text_cell_write = [&](const Stmt& s) {
             return s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty() && s.label.empty() &&
-                   s.print_exprs.empty() && s.index_chain.size() == 1 && texty(s.expr.get());
+                   s.print_exprs.empty() && s.index_chain.size() == 1 && !keyed(s) &&
+                   texty(s.expr.get());
         };
         std::function<void(const Stmt&, const std::unordered_set<std::string>*)> candidates =
             [&](const Stmt& s, const std::unordered_set<std::string>* locals) {
@@ -5440,14 +5446,17 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             };
             if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM) &&
                 global_name(s.var_name)) {
+                // A DIM without a value is an empty array only when it names no
+                // type: `DIM m AS MAP` is a map whose key writes look like cells.
+                bool empty_dim = s.kind == StmtKind::DIM && !s.expr &&
+                                 (s.var_type == VarType::NONE || s.var_type == VarType::ARRAY) &&
+                                 s.label.empty();
                 bool ok = s.index_chain.empty() &&
-                          (is_text_append(s) || (s.kind == StmtKind::DIM && !s.expr) ||
-                           is_text_literal(s.expr.get()));
+                          (is_text_append(s) || empty_dim || is_text_literal(s.expr.get()));
                 if (!ok) filled[s.var_name] = false;
             }
             if (s.kind == StmtKind::INDEX_ASSIGN && global_name(s.var_name) &&
-                !(s.label.empty() && s.print_exprs.empty() && s.index_chain.size() == 1 &&
-                  texty(s.expr.get())))
+                !is_text_cell_write(s))
                 filled[s.var_name] = false;
             if ((s.kind == StmtKind::FOR_EACH || s.kind == StmtKind::FOR_LOOP) &&
                 global_name(s.var_name)) filled[s.var_name] = false;
@@ -5463,6 +5472,13 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         for (auto& a : e->args)
                             if (a && a->kind == ExprKind::VARIABLE && global_name(a->str_val))
                                 filled[a->str_val] = false;
+                    // The builtins that put values into the array they are given.
+                    bool puts = u == "PUSH" || u == "UNSHIFT" || u == "INSERT" || u == "PLACE";
+                    if (puts && !e->args.empty() && e->args[0] &&
+                        e->args[0]->kind == ExprKind::VARIABLE && global_name(e->args[0]->str_val)) {
+                        for (size_t k = 1; k < e->args.size(); k++)
+                            if (!texty(e->args[k].get())) filled[e->args[0]->str_val] = false;
+                    }
                 }
                 handed_on(e->left.get());
                 handed_on(e->right.get());
