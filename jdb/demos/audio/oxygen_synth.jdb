@@ -78,9 +78,25 @@ SOUND.GAIN 0, 0.7
 
 DIM split_key = 60
 DIM status$ = ""
-' ImGui scale for a 4K screen: SCREEN multiplies fonts and spacing by it,
-' the widths given to GUI calls are raw pixels and are multiplied here
-DIM ui = 2
+' ImGui scale: the largest whole factor at which the 980 x 860 panel fits
+' the primary display (2 on 4K, 1 on 1920 x 1080). SCREEN multiplies fonts
+' and spacing by it; the widths given to GUI calls are raw pixels and are
+' multiplied here.
+CONST PANEL_W = 980
+CONST PANEL_H = 860
+FUNC PANEL_SCALE()
+    DIM w = 1920
+    DIM h = 1080
+    FOR EACH d IN GFX.DISPLAYS()
+        IF d{"primary"} THEN
+            w = d{"w"}
+            h = d{"h"}
+        ENDIF
+    NEXT d
+    RETURN MAX([1, INT(MIN([w / PANEL_W, h / PANEL_H]))])
+ENDFUNC
+DIM ui = 1
+IF panel THEN ui = PANEL_SCALE()
 
 SUB SAY(msg$)
     status$ = msg$
@@ -339,7 +355,8 @@ DIM t0 = TICK()
 DIM t_stats = t0
 TAKE_STATS(FALSE)
 IF panel THEN
-    SCREEN 980, 860, "jdBasic Oxygen Synth", ui
+    SCREEN PANEL_W, PANEL_H, "jdBasic Oxygen Synth", ui
+    PRINT "Panel scale " + STR$(ui)
     TOGGLE_FULLSCREEN
     DIM key$ = ""
     DO
