@@ -4,16 +4,34 @@
 ' key to speaker instead of 20, but other programs are silent meanwhile.
 '
 ' Left of the split: mono legato saw bass, one octave down.
-' Right of the split: detuned lead; velocity opens its filter, the mod
-' wheel adds vibrato. Knobs and faders on the DAW port drive the sound in
-' the audio thread. LOOP, then a key: that key becomes the new split.
+' Right of the split: the lead, a patch from oxygen_patches.json (plus the
+' ones saved in oxygen_patches_user.json). Velocity opens its filter, the
+' mod wheel adds vibrato. On the DAW port:
+'   knobs 1-8    lead cutoff, resonance, attack, release; bass cutoff,
+'                resonance; lead detune, reverb
+'   faders 1-2   lead / bass level
+'   fader 9      morph from the lead patch to the next one
+'   MODE < >     previous / next lead patch
+'   REC          save the lead as the knobs left it, as a new user patch
+'   LOOP + key   that key becomes the new split
 ' Latency is printed every 2 s while keys are played.
+
+IMPORT SYNTHPATCH
 
 DIM run_secs = 300
 IF LEN(OS.ARGS()) > 1 THEN run_secs = VAL(OS.ARGS()[1])
 DIM fast = LEN(OS.ARGS()) > 2 ANDALSO LCASE$(OS.ARGS()[2]) = "fast"
 
-DIM cfg = JSON.PARSE$(TXTREADER$(PATH.DIRNAME$(OS.ARGS()[0]) + "/oxygen61.json"))
+DIM here$ = PATH.DIRNAME$(OS.ARGS()[0])
+DIM cfg = JSON.PARSE$(TXTREADER$(here$ + "/oxygen61.json"))
+DIM user_bank$ = here$ + "/oxygen_patches_user.json"
+DIM bank = SYNTHPATCH.LOAD_BANK(here$ + "/oxygen_patches.json")
+DIM n_shipped = LEN(bank)
+IF FILE.EXISTS(user_bank$) THEN
+    FOR EACH up IN SYNTHPATCH.LOAD_BANK(user_bank$)
+        bank = APPEND(bank, up)
+    NEXT up
+ENDIF
 
 FUNC PORT_INDEX(names, wanted$)
     FOR i = 0 TO LEN(names) - 1
@@ -46,11 +64,6 @@ SOUND.VOICE 0, "SAW", 0.005, 0.25, 0.6, 0.15
 SOUND.FILTER 0, 900, 0.3, "LP"
 SOUND.GLIDE 0, 60
 SOUND.GAIN 0, 0.7
-SOUND.VOICE 1, "SAW", 0.01, 0.3, 0.7, 0.35
-SOUND.UNISON(1, 3, 0.12, 0.6)
-SOUND.FILTER 1, 2500, 0.2, "LP"
-SOUND.GAIN 1, 0.5
-SOUND.REVERBSEND 1, 0.25
 
 SUB SET_SPLIT(split)
     SOUND.ZONE -1
@@ -60,19 +73,32 @@ SUB SET_SPLIT(split)
 ENDSUB
 SET_SPLIT(60)
 
+' Mapping anew also restarts the pickup, so a knob waits for the new sound
+SUB MAP_KNOBS(knob, fader)
+    SOUND.CCMAP -1
+    SOUND.CCMAP knob[0], 1, "CUTOFF", 150, 9000, "EXP"
+    SOUND.CCMAP knob[1], 1, "RESONANCE", 0, 0.9
+    SOUND.CCMAP knob[2], 1, "ATTACK", 0.002, 1.5, "EXP"
+    SOUND.CCMAP knob[3], 1, "RELEASE", 0.02, 3, "EXP"
+    SOUND.CCMAP knob[4], 0, "CUTOFF", 80, 4000, "EXP"
+    SOUND.CCMAP knob[5], 0, "RESONANCE", 0, 0.9
+    SOUND.CCMAP knob[6], 1, "DETUNE", 0, 0.5
+    SOUND.CCMAP knob[7], 1, "REVERB", 0, 0.8
+    SOUND.CCMAP fader[0], 1, "GAIN", 0, 1
+    SOUND.CCMAP fader[1], 0, "GAIN", 0, 1
+ENDSUB
+
 ' The DAW port carries the knobs and faders in both keyboard modes
 DIM knob = cfg{"knobs"}{"daw"}{"cc"}
 DIM fader = cfg{"faders"}{"daw"}{"cc"}
-SOUND.CCMAP knob[0], 1, "CUTOFF", 150, 9000, "EXP"
-SOUND.CCMAP knob[1], 1, "RESONANCE", 0, 0.9
-SOUND.CCMAP knob[2], 1, "ATTACK", 0.002, 1.5, "EXP"
-SOUND.CCMAP knob[3], 1, "RELEASE", 0.02, 3, "EXP"
-SOUND.CCMAP knob[4], 0, "CUTOFF", 80, 4000, "EXP"
-SOUND.CCMAP knob[5], 0, "RESONANCE", 0, 0.9
-SOUND.CCMAP knob[6], 1, "DETUNE", 0, 0.5
-SOUND.CCMAP knob[7], 1, "REVERB", 0, 0.8
-SOUND.CCMAP fader[0], 1, "GAIN", 0, 1
-SOUND.CCMAP fader[1], 0, "GAIN", 0, 1
+DIM cur = 0
+
+SUB SELECT_PATCH(i)
+    SYNTHPATCH.APPLY 1, bank[i]
+    MAP_KNOBS(knob, fader)
+    PRINT "Lead patch " + STR$(i + 1) + "/" + STR$(LEN(bank)) + ": " + bank[i]{"name"} + "   (fader 9 morphs to " + bank[(i + 1) MOD LEN(bank)]{"name"} + ")"
+ENDSUB
+SELECT_PATCH(cur)
 
 DIM main_h = MIDI.OPEN_IN(main_idx)
 PRINT "Route " + ins[main_idx] + ": " + STR$(MIDI.ROUTE(main_h))
@@ -82,10 +108,10 @@ IF daw_idx >= 0 THEN
     PRINT "Controls " + ins[daw_idx] + ": " + STR$(MIDI.ROUTE(daw_h, "CC"))
 ENDIF
 
-PRINT "Knobs 1-4: lead cutoff, resonance, attack, release. 5-6: bass cutoff, resonance."
-PRINT "Knobs 7-8: lead detune, reverb. Faders 1-2: lead / bass level. LOOP + key: new split."
-
-DIM loop_cc = cfg{"transport"}{"daw_port_cc"}{"loop"}
+DIM tp = cfg{"transport"}{"daw_port_cc"}
+DIM mode_left = cfg{"mode_buttons"}{"left_cc"}
+DIM mode_right = cfg{"mode_buttons"}{"right_cc"}
+DIM morph_cc = fader[8]
 DIM learning = FALSE
 DIM seen = 0
 DIM t0 = TICK()
@@ -95,10 +121,26 @@ DO WHILE TICK() - t0 < run_secs * 1000
     MIDI.POLL(main_h)
     IF daw_h >= 0 THEN
         FOR EACH m IN MIDI.POLL(daw_h)
-            IF m[0] = 176 ANDALSO m[1] = loop_cc ANDALSO m[2] = 127 THEN
-                learning = TRUE
-                seen = SOUND.LASTNOTE(){"count"}
-                PRINT "Press the key for the new split"
+            IF m[0] = 176 THEN
+                IF m[1] = morph_cc THEN
+                    SYNTHPATCH.MORPH 1, bank[cur], bank[(cur + 1) MOD LEN(bank)], m[2] / 127
+                ELSEIF m[2] = 127 ANDALSO m[1] = mode_right THEN
+                    cur = (cur + 1) MOD LEN(bank)
+                    SELECT_PATCH(cur)
+                ELSEIF m[2] = 127 ANDALSO m[1] = mode_left THEN
+                    cur = (cur + LEN(bank) - 1) MOD LEN(bank)
+                    SELECT_PATCH(cur)
+                ELSEIF m[2] = 127 ANDALSO m[1] = tp{"rec"} THEN
+                    DIM mine = SYNTHPATCH.CAPTURE(1, bank[cur])
+                    mine{"name"} = "user_" + STR$(LEN(bank) - n_shipped + 1)
+                    bank = APPEND(bank, mine)
+                    SYNTHPATCH.SAVE_BANK user_bank$, bank[IOTA(LEN(bank) - n_shipped, 0) + n_shipped]
+                    PRINT "Saved " + mine{"name"} + " to " + user_bank$
+                ELSEIF m[2] = 127 ANDALSO m[1] = tp{"loop"} THEN
+                    learning = TRUE
+                    seen = SOUND.LASTNOTE(){"count"}
+                    PRINT "Press the key for the new split"
+                ENDIF
             ENDIF
         NEXT m
     ENDIF
@@ -116,7 +158,7 @@ DO WHILE TICK() - t0 < run_secs * 1000
             PRINT STR$(stats{"events"}) + " events  key->speaker " + STR$(ROUND(stats{"total_ms"}, 1)) + " ms (max " + STR$(ROUND(stats{"total_max_ms"}, 1)) + ")"
         ENDIF
     ENDIF
-    SLEEP 20
+    SLEEP 10
 LOOP
 
 MIDI.CLOSE(main_h)

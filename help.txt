@@ -3292,6 +3292,11 @@ Syntax: SOUND.CCMAP(cc, track, param$, lo, hi, [curve$], [channel], [pickup]) ->
 Description: MIDI controller cc on channel (default 0 = any) sets param$ of the track between lo (at 0) and hi (at 127). curve$ is "LIN" (default) or "EXP" (equal steps per octave; lo and hi above 0). The value glides there in about 10 ms. With pickup (default TRUE) the controller takes over only once it passes the present value. param$ takes the names of SOUND.MOD. SOUND.CCMAP(-1) clears every mapping.
 Example: SOUND.CCMAP 22, 1, "CUTOFF", 200, 8000, "EXP"
 
+[SOUND.PARAM]
+Syntax: SOUND.PARAM(track, param$, [value]) -> value
+Description: Reads a track parameter, or sets it first and answers the new value. param$ takes the names of SOUND.MOD: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV, VOWEL, PITCH, ATTACK, DECAY, SUSTAIN, RELEASE, LFORATE, LFODEPTH. A value set here stops a SOUND.CCMAP knob that was still gliding on that parameter. The SYNTHPATCH module (lib/synthpatch.jdb) uses it to capture and morph sounds.
+Example: SOUND.PARAM 1, "CUTOFF", 1200 : PRINT SOUND.PARAM(1, "RESONANCE")
+
 [SOUND.MIDIIN]
 Syntax: SOUND.MIDIIN(status, [data1], [data2])
 Description: Plays one raw MIDI message on the synth, the same way a port routed with MIDI.ROUTE does: note on/off with velocity, sustain pedal (CC 64), all sound off (CC 120), all notes off (CC 123), pitch bend (2 semitones).

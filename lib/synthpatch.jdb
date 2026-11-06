@@ -1,0 +1,100 @@
+' synthpatch.jdb - synth sounds as JSON maps: apply, capture, morph, banks.
+'
+'   IMPORT SYNTHPATCH
+'   DIM bank = SYNTHPATCH.LOAD_BANK("jdb/demos/audio/oxygen_patches.json")
+'   SYNTHPATCH.APPLY 1, bank[0]
+'   SYNTHPATCH.MORPH 1, bank[0], bank[1], 0.5      ' halfway between two
+'   DIM mine = SYNTHPATCH.CAPTURE(1, bank[0])      ' the sound as knobs left it
+'
+' A patch holds (every key optional, missing keys take the plain default):
+'   name, wave, attack, decay, sustain, release,
+'   cutoff, resonance, filter ("LP", "HP", "BP"),
+'   fenv (octaves), fenv_attack, fenv_decay,
+'   unison (voices), detune, spread,
+'   osc2 (wave or "OFF"), osc2_semis, osc2_mix,
+'   lforate, lfodepth, fm, fm_ratio, chorus, glide (ms),
+'   reverb, delay, gain
+' MORPH and CAPTURE cover the continuous keys, the ones SOUND.PARAM reaches.
+
+EXPORT MODULE SYNTHPATCH
+
+DIM CONT_KEYS$ = ["attack", "decay", "sustain", "release", "cutoff", "resonance", "fenv", "detune", "fm", "reverb", "delay", "gain", "lforate", "lfodepth"]
+' keys that morph along a ratio rather than a straight line
+DIM LOG_KEYS$ = ["attack", "decay", "release", "cutoff", "lforate"]
+
+FUNC NUM(p, key$, fallback)
+    IF TYPEOF(p{key$}) = "NONE" THEN RETURN fallback
+    RETURN p{key$}
+ENDFUNC
+
+FUNC TXT$(p, key$, fallback$)
+    IF TYPEOF(p{key$}) = "NONE" THEN RETURN fallback$
+    RETURN p{key$}
+ENDFUNC
+
+EXPORT FUNC LOAD_BANK(path$)
+    RETURN JSON.PARSE$(TXTREADER$(path$))
+ENDFUNC
+
+EXPORT SUB SAVE_BANK(path$, bank)
+    TXTWRITER path$, JSON.STRINGIFY$(bank)
+ENDSUB
+
+' The patch called name$ in a bank, or -1
+EXPORT FUNC FIND(bank, name$)
+    FOR i = 0 TO LEN(bank) - 1
+        IF LCASE$(TXT$(bank[i], "name", "")) = LCASE$(name$) THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+EXPORT SUB APPLY(t, p)
+    SOUND.VOICE t, TXT$(p, "wave", "SINE"), NUM(p, "attack", 0.01), NUM(p, "decay", 0.1), NUM(p, "sustain", 0.7), NUM(p, "release", 0.3)
+    SOUND.FILTER t, NUM(p, "cutoff", 20000), NUM(p, "resonance", 0), TXT$(p, "filter", "LP")
+    SOUND.FENV t, NUM(p, "fenv", 0), NUM(p, "fenv_attack", 0.005), NUM(p, "fenv_decay", 0.2)
+    SOUND.UNISON(t, NUM(p, "unison", 1), NUM(p, "detune", 0), NUM(p, "spread", 0.5))
+    IF UCASE$(TXT$(p, "osc2", "OFF")) = "OFF" THEN
+        SOUND.OSC2 t, "OFF"
+    ELSE
+        SOUND.OSC2 t, TXT$(p, "osc2", "OFF"), NUM(p, "osc2_semis", 0), NUM(p, "osc2_mix", 0.5)
+    ENDIF
+    SOUND.LFO t, NUM(p, "lforate", 0), NUM(p, "lfodepth", 0)
+    SOUND.FM t, NUM(p, "fm", 0), NUM(p, "fm_ratio", 1)
+    SOUND.CHORUS t, NUM(p, "chorus", 0)
+    SOUND.GLIDE t, NUM(p, "glide", 0)
+    SOUND.REVERBSEND(t, NUM(p, "reverb", 0))
+    SOUND.DELAYSEND(t, NUM(p, "delay", 0))
+    SOUND.GAIN t, NUM(p, "gain", 0.5)
+ENDSUB
+
+' A copy of base with the continuous keys read back from track t, so a
+' sound shaped with the knobs can be stored
+EXPORT FUNC CAPTURE(t, base)
+    DIM p = JSON.PARSE$(JSON.STRINGIFY$(base))
+    FOR EACH k$ IN CONT_KEYS$
+        p{k$} = ROUND(SOUND.PARAM(t, k$), 5)
+    NEXT k$
+    RETURN p
+ENDFUNC
+
+FUNC MORPHS_BY_RATIO(key$)
+    FOR EACH k$ IN LOG_KEYS$
+        IF k$ = key$ THEN RETURN TRUE
+    NEXT k$
+    RETURN FALSE
+ENDFUNC
+
+' Sets the continuous keys of track t between patch a (x = 0) and b (x = 1)
+EXPORT SUB MORPH(t, a, b, x)
+    DIM w = MAX([0, MIN([1, x])])
+    DIM va = 0
+    DIM vb = 0
+    DIM v = 0
+    FOR EACH k$ IN CONT_KEYS$
+        va = NUM(a, k$, SOUND.PARAM(t, k$))
+        vb = NUM(b, k$, va)
+        v = va + (vb - va) * w
+        IF MORPHS_BY_RATIO(k$) ANDALSO va > 0 ANDALSO vb > 0 THEN v = va * (vb / va) ^ w
+        v = SOUND.PARAM(t, k$, v)
+    NEXT k$
+ENDSUB

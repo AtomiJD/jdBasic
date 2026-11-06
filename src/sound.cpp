@@ -2823,6 +2823,31 @@ void register_sound_builtins(VM& vm) {
         return m;
     });
 
+    // SOUND.PARAM(track, param$ [, value]) -> the value: reads a track
+    // parameter by the names of SOUND.MOD, or sets it first
+    vm.register_native("SOUND.PARAM", 2, 3, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        if (t < 0 || t >= NUM_TRACKS)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.PARAM: track is 0-" + std::to_string(NUM_TRACKS - 1));
+        int p = mod_param_from_name(args[1].to_string());
+        if (p < 0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.PARAM: unknown parameter " + args[1].to_string() +
+                " (" + std::string(MOD_PARAM_NAMES) + ")");
+        if (g_sound.initialized) SND_LOCK();
+        float* dst = mod_target(g_sound.tracks[t], p);
+        if (args.size() >= 3) {
+            float v = (float)args[2].to_double();
+            if (p == MP_CRUSH) v = std::clamp(v, 1.0f, 16.0f);
+            *dst = v;
+            // a mapped knob sliding towards an old target would undo this
+            for (auto& m : g_sound.ccmaps)
+                if (m.track == t && m.param == p) m.moving = false;
+        }
+        double v = *dst;
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_f64(v);
+    });
+
     // SOUND.CCMAP cc, track, param$, lo, hi [, curve$ [, channel [, pickup]]] -> map count.
     // SOUND.CCMAP -1 clears every mapping.
     vm.register_native("SOUND.CCMAP", 1, 8, [](const std::vector<Value>& args) -> Value {

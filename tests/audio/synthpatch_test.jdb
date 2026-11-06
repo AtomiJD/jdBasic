@@ -1,0 +1,120 @@
+' ============================================================
+' SOUND.PARAM and the SYNTHPATCH module (lib/synthpatch.jdb):
+' apply, capture, morph, banks.
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' Renders offline (SOUND.INIT "PULL").
+
+IMPORT SYNTHPATCH
+
+DIM PASS_COUNT = 0
+DIM FAIL_COUNT = 0
+
+SUB CHECK(name$, cond, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+FUNC NEAR(a, b, tol)
+    RETURN ABS(a - b) <= tol
+ENDFUNC
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "SKIP: build has no SOUND sequencer"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+SOUND.INIT "PULL"
+SOUND.RESET
+
+' ---------- SOUND.PARAM ----------
+CHECK "cutoff starts open", NEAR(SOUND.PARAM(1, "CUTOFF"), 20000, 0.01), STR$(SOUND.PARAM(1, "CUTOFF"))
+CHECK "setting answers the new value", NEAR(SOUND.PARAM(1, "cutoff", 1234), 1234, 0.01), ""
+CHECK "and it reads back", NEAR(SOUND.PARAM(1, "Cutoff"), 1234, 0.01), ""
+SOUND.FILTER 1, 777, 0.4, "LP"
+CHECK "SOUND.FILTER shows in PARAM", NEAR(SOUND.PARAM(1, "CUTOFF"), 777, 0.01) ANDALSO NEAR(SOUND.PARAM(1, "RESONANCE"), 0.4, 0.001), ""
+SOUND.VOICE 1, "SAW", 0.02, 0.3, 0.6, 0.9
+CHECK "the envelope shows in PARAM", NEAR(SOUND.PARAM(1, "ATTACK"), 0.02, 1e-6) ANDALSO NEAR(SOUND.PARAM(1, "RELEASE"), 0.9, 1e-6), ""
+DIM err_msg = ""
+TRY
+    DIM bad = SOUND.PARAM(1, "colour")
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "an unknown parameter is refused", INSTR(err_msg, "unknown parameter") >= 0, err_msg
+err_msg = ""
+TRY
+    bad = SOUND.PARAM(16, "CUTOFF")
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "track 16 is refused", INSTR(err_msg, "track") >= 0, err_msg
+
+' a mapped knob still gliding does not overwrite a value set afterwards
+SOUND.RESET
+DIM n_maps = SOUND.CCMAP(74, 1, "CUTOFF", 200, 5000, "EXP", 0, FALSE)
+SOUND.MIDIIN 176, 74, 127
+DIM buf = SOUND.RENDER(64)
+CHECK "the knob is still on its way", SOUND.PARAM(1, "CUTOFF") > 5000, STR$(SOUND.PARAM(1, "CUTOFF"))
+DIM got = SOUND.PARAM(1, "CUTOFF", 3000)
+buf = SOUND.RENDER(4410)
+CHECK "PARAM wins over a gliding knob", NEAR(SOUND.PARAM(1, "CUTOFF"), 3000, 0.01), STR$(SOUND.PARAM(1, "CUTOFF"))
+
+' ---------- banks ----------
+SOUND.RESET
+DIM bank = SYNTHPATCH.LOAD_BANK("jdb/demos/audio/oxygen_patches.json")
+CHECK "the shipped bank has 8 patches", LEN(bank) = 8, STR$(LEN(bank))
+CHECK "FIND pad", SYNTHPATCH.FIND(bank, "PAD") = 3, ""
+CHECK "FIND nothing", SYNTHPATCH.FIND(bank, "kazoo") = -1, ""
+DIM tmp$ = "tests/audio/synthpatch_test_bank.json"
+SYNTHPATCH.SAVE_BANK tmp$, bank[[0, 6]]
+DIM back = SYNTHPATCH.LOAD_BANK(tmp$)
+KILL tmp$
+CHECK "a saved bank loads back", LEN(back) = 2 ANDALSO back[1]{"name"} = "acid" ANDALSO NEAR(back[1]{"resonance"}, 0.75, 1e-9), ""
+
+' ---------- APPLY ----------
+DIM a = {"name": "a", "wave": "SAW", "attack": 0.01, "decay": 0.2, "sustain": 0.5, "release": 0.4, "cutoff": 900, "resonance": 0.2, "reverb": 0.1, "gain": 0.4}
+DIM b = {"name": "b", "wave": "SQUARE", "attack": 0.04, "decay": 0.2, "sustain": 0.9, "release": 1.6, "cutoff": 3600, "resonance": 0.6, "gain": 0.8}
+SYNTHPATCH.APPLY 1, a
+CHECK "APPLY sets the cutoff", NEAR(SOUND.PARAM(1, "CUTOFF"), 900, 0.01), ""
+CHECK "APPLY sets the envelope", NEAR(SOUND.PARAM(1, "SUSTAIN"), 0.5, 1e-6), ""
+CHECK "APPLY sets the sends", NEAR(SOUND.PARAM(1, "REVERB"), 0.1, 1e-6), ""
+CHECK "a missing key takes the default", NEAR(SOUND.PARAM(1, "FM"), 0, 1e-9), ""
+SOUND.MIDIIN 144, 60, 127
+buf = SOUND.RENDER(4000)
+DIM acc = 0
+FOR i = 500 TO 3999
+    acc = acc + buf[i * 2] * buf[i * 2]
+NEXT i
+CHECK "an applied patch plays", SQR(acc / 3500) > 0.05, STR$(SQR(acc / 3500))
+SOUND.MIDIIN 128, 60, 0
+
+' ---------- MORPH ----------
+SYNTHPATCH.MORPH 1, a, b, 0
+CHECK "morph 0 is patch a", NEAR(SOUND.PARAM(1, "CUTOFF"), 900, 0.01) ANDALSO NEAR(SOUND.PARAM(1, "GAIN"), 0.4, 1e-6), ""
+SYNTHPATCH.MORPH 1, a, b, 1
+CHECK "morph 1 is patch b", NEAR(SOUND.PARAM(1, "CUTOFF"), 3600, 0.05) ANDALSO NEAR(SOUND.PARAM(1, "GAIN"), 0.8, 1e-6), ""
+SYNTHPATCH.MORPH 1, a, b, 0.5
+CHECK "the cutoff morphs by ratio", NEAR(SOUND.PARAM(1, "CUTOFF"), 1800, 0.05), STR$(SOUND.PARAM(1, "CUTOFF"))
+CHECK "the release morphs by ratio", NEAR(SOUND.PARAM(1, "RELEASE"), 0.8, 1e-5), STR$(SOUND.PARAM(1, "RELEASE"))
+CHECK "the sustain morphs straight", NEAR(SOUND.PARAM(1, "SUSTAIN"), 0.7, 1e-6), STR$(SOUND.PARAM(1, "SUSTAIN"))
+CHECK "a key only in a stays", NEAR(SOUND.PARAM(1, "REVERB"), 0.1, 1e-6), STR$(SOUND.PARAM(1, "REVERB"))
+SYNTHPATCH.MORPH 1, a, b, 7
+CHECK "morph clamps above 1", NEAR(SOUND.PARAM(1, "CUTOFF"), 3600, 0.05), ""
+
+' ---------- CAPTURE ----------
+SYNTHPATCH.APPLY 1, a
+got = SOUND.PARAM(1, "CUTOFF", 2222)
+got = SOUND.PARAM(1, "RESONANCE", 0.33)
+DIM mine = SYNTHPATCH.CAPTURE(1, a)
+CHECK "CAPTURE reads the knob values", NEAR(mine{"cutoff"}, 2222, 0.01) ANDALSO NEAR(mine{"resonance"}, 0.33, 1e-5), ""
+CHECK "CAPTURE keeps the rest of the patch", mine{"wave"} = "SAW" ANDALSO mine{"name"} = "a", ""
+CHECK "CAPTURE leaves the base alone", NEAR(a{"cutoff"}, 900, 0.01), ""
+
+SOUND.RESET
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
