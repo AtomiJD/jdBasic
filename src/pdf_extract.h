@@ -718,8 +718,9 @@ inline void walk_array(const std::string& a, Num num, Open open, Close close) {
 }
 
 // The glyph widths of a font object: /FirstChar and /Widths for a simple
-// font, /DW and /W of the descendant for a Type0 font.
-inline FontWidths parse_widths(const std::string& pdf, const std::string& fdict) {
+// font, /DW and /W of the descendant for a Type0 font. `budget` is how many
+// widths the whole file may still write; each one written takes one off.
+inline FontWidths parse_widths(const std::string& pdf, const std::string& fdict, size_t& budget) {
     FontWidths fw;
     size_t df = fdict.find("/DescendantFonts");
     if (df != std::string::npos) {
@@ -735,20 +736,17 @@ inline FontWidths parse_widths(const std::string& pdf, const std::string& fdict)
         fw.dw = dw >= 0 ? (double)dw : 1000.0;
         std::string w = dict_array(pdf, desc, "/W");
         // c [w1 w2 ...] gives codes from c on; c_first c_last w one width.
-        // A CID has two bytes, so a code outside 0..65535 is ignored, and
-        // the whole array writes at most kWidthBudget widths.
+        // A CID has two bytes, so a code outside 0..65535 is ignored.
         const double kMaxCode = 65535;
-        const size_t kWidthBudget = (size_t)1 << 20;
-        size_t written = 0;
         std::vector<double> pending;
         bool in_list = false;
         double next_code = 0;
         walk_array(w,
             [&](double v) {
                 if (in_list) {
-                    if (next_code >= 0 && next_code <= kMaxCode && written < kWidthBudget) {
+                    if (next_code >= 0 && next_code <= kMaxCode && budget > 0) {
                         fw.w[(uint32_t)next_code] = v;
-                        written++;
+                        budget--;
                     }
                     next_code += 1;
                     return;
@@ -757,9 +755,9 @@ inline FontWidths parse_widths(const std::string& pdf, const std::string& fdict)
                 if (pending.size() == 3) {
                     double lo = pending[0], hi = pending[1];
                     if (lo >= 0 && hi >= lo && hi <= kMaxCode) {
-                        for (uint32_t c = (uint32_t)lo; c <= (uint32_t)hi && written < kWidthBudget; c++) {
+                        for (uint32_t c = (uint32_t)lo; c <= (uint32_t)hi && budget > 0; c++) {
                             fw.w[c] = pending[2];
-                            written++;
+                            budget--;
                         }
                     }
                     pending.clear();
@@ -778,7 +776,7 @@ inline FontWidths parse_widths(const std::string& pdf, const std::string& fdict)
     std::string w = dict_array(pdf, fdict, "/Widths");
     if (first < 0 || first > 255 || w.empty()) return fw;
     uint32_t code = (uint32_t)first;
-    walk_array(w, [&](double v) { if (code <= 255) fw.w[code++] = v; }, [] {}, [] {});
+    walk_array(w, [&](double v) { if (code <= 255 && budget > 0) { fw.w[code++] = v; budget--; } }, [] {}, [] {});
     fw.known = !fw.w.empty();
     return fw;
 }
@@ -790,6 +788,9 @@ inline FontWidths parse_widths(const std::string& pdf, const std::string& fdict)
 // or an object of its own (/Font 12 0 R).
 inline std::unordered_map<std::string, FontInfo> collect_fonts(const std::string& pdf) {
     std::unordered_map<std::string, FontInfo> fonts;
+    // All fonts of the file together write at most this many widths; the
+    // fonts past it are shown with estimated widths.
+    size_t width_budget = (size_t)1 << 20;
     size_t p = 0;
     while ((p = pdf.find("/Font", p)) != std::string::npos) {
         size_t q = p + 5;
@@ -832,7 +833,7 @@ inline std::unordered_map<std::string, FontInfo> collect_fonts(const std::string
             if (font_obj.first == std::string::npos) continue;
             std::string fdict = pdf.substr(font_obj.first, font_obj.second - font_obj.first);
             FontInfo info;
-            info.widths = parse_widths(pdf, fdict);
+            info.widths = parse_widths(pdf, fdict, width_budget);
             size_t tu = fdict.find("/ToUnicode");
             if (tu != std::string::npos) {
                 size_t t = tu + 10;

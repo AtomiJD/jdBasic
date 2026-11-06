@@ -104,5 +104,34 @@ CHECK_STR("TJ kerning and a word gap", "Hello World", READ_BACK$(helv, "BT /F1 1
 CHECK_STR("a new line by T*", "one two", READ_BACK$(helv, "BT /F1 12 Tf 14 TL 72 700 Td (one) Tj T* (two) Tj ET" + NL))
 CHECK_STR("two BT blocks", "first second", READ_BACK$(helv, "BT /F1 12 Tf 72 700 Td (first) Tj ET BT /F1 12 Tf 72 680 Td (second) Tj ET" + NL))
 
+' --- 6. forty resource names on one font with large /W ranges ---
+' All fonts of a file share one budget of widths, so this reads in a
+' moment instead of building a full width table per name.
+DIM wide_w AS STRING = ""
+DIM r AS INTEGER
+FOR r = 1 TO 10
+    wide_w = wide_w + "0 65535 1 "
+NEXT r
+DIM many AS STRING = REPLACE$(type0, "/W [1 [720 280 250 660 560]]", "/W [" + wide_w + "1 [720 280 250 660 560]]")
+DIM names AS STRING = ""
+FOR r = 1 TO 40
+    names = names + "/F" + STR$(r) + " 4 0 R "
+NEXT r
+DIM many_path AS STRING = MKTEMP$("glyphs") + ".pdf"
+DIM many_doc AS STRING = "%PDF-1.4" + NL + OBJ$(1, "<< /Type /Catalog /Pages 2 0 R >>")
+many_doc = many_doc + OBJ$(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+many_doc = many_doc + OBJ$(3, "<< /Type /Page /Parent 2 0 R /Resources << /Font << " + names + ">> >> /Contents 9 0 R >>")
+many_doc = many_doc + many + STREAM_OBJ$(9, per_glyph) + "trailer" + NL + "<< /Root 1 0 R /Size 10 >>" + NL + "%%EOF" + NL
+BINWRITER many_path, many_doc
+DIM t0 AS INTEGER = TICK()
+DIM many_text AS STRING = TRIM$(PDF.TEXT$(many_path))
+DIM took AS INTEGER = TICK() - t0
+KILL many_path
+CHECK_STR("forty names on one font with large /W ranges", "Hi Bo", many_text)
+IF took > 10000 THEN
+    FAIL_COUNT = FAIL_COUNT + 1
+    PRINT "[FAIL] forty font names took "; took; " ms"
+ENDIF
+
 PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
 IF FAIL_COUNT = 0 THEN PRINT "ALL TESTS PASSED!"
