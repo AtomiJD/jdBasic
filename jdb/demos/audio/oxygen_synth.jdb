@@ -14,7 +14,9 @@
 '   faders 1-2   lead / bass level
 '   fader 9      morph from the lead patch to the next one
 '   MODE < >     previous / next lead patch
-'   REC          save the lead as the knobs left it, as a new user patch
+'   PLAY         start the drum loop (pads play the kit live, on channel 10)
+'   REC          record the pads into the loop, with a click; again stops
+'   STOP         stop the loop; STOP when stopped clears it
 '   LOOP + key   that key becomes the new split
 
 IMPORT SYNTHPATCH
@@ -106,11 +108,104 @@ ENDSUB
 SUB SET_SPLIT(key)
     split_key = key
     SOUND.ZONE -1
-    SOUND.ZONE 0, 0, split_key - 1, 0, -12, {"legato": TRUE}
-    SOUND.ZONE 1, split_key, 127, 0, 0, {"vel_cutoff": 2, "mod_vibrato": 0.4}
+    SOUND.ZONE 0, 0, split_key - 1, 1, -12, {"legato": TRUE}
+    SOUND.ZONE 1, split_key, 127, 1, 0, {"vel_cutoff": 2, "mod_vibrato": 0.4}
+    SOUND.ZONE DRUMS, 0, 127, 10
     SAY("Split at key " + STR$(split_key))
 ENDSUB
+
+' ---- drums: the pads play kit track DRUMS live, the looper records them ----
+CONST DRUMS = 2
+CONST CLICK = 3
+CONST STEPS = 16
+' pad notes 36-43 (bottom row 36-39) and the kit sound each one plays
+DIM pad_notes = [36, 37, 38, 39, 40, 41, 42, 43]
+DIM pad_names$ = ["bd", "sd", "hh", "oh", "cp", "rim", "lt", "cr"]
+DIM n_rows = LEN(pad_names$)
+SOUND.KIT DRUMS, "SYNTH"
+SOUND.GAIN DRUMS, 0.9
+SOUND.KIT CLICK, "SYNTH"
+SOUND.GAIN CLICK, 0.35
+FOR i = 0 TO n_rows - 1
+    SOUND.PADMAP DRUMS, pad_notes[i], pad_names$[i]
+NEXT i
 SET_SPLIT(60)
+
+DIM grid = IOTA(n_rows * STEPS, 0) * 0
+DIM bpm = 110
+DIM looping = FALSE
+DIM recording = FALSE
+SOUND.BPM bpm
+
+' One bar of 16 steps in mini-notation: a rest, a sound, or [a,b] stacked
+FUNC LOOP_PATTERN$()
+    DIM steps$ = ""
+    FOR s = 0 TO STEPS - 1
+        DIM hits$ = ""
+        DIM n_hits = 0
+        FOR r = 0 TO n_rows - 1
+            IF grid[r * STEPS + s] THEN
+                hits$ = hits$ + IIF(n_hits > 0, ",", "") + pad_names$[r]
+                n_hits = n_hits + 1
+            ENDIF
+        NEXT r
+        IF n_hits = 0 THEN hits$ = "~"
+        IF n_hits > 1 THEN hits$ = "[" + hits$ + "]"
+        steps$ = steps$ + IIF(s > 0, " ", "") + hits$
+    NEXT s
+    RETURN steps$
+ENDFUNC
+
+SUB SEND_LOOP()
+    IF looping THEN
+        SOUND.SEQ DRUMS, LOOP_PATTERN$(), "VOICE"
+    ELSE
+        SOUND.SEQ DRUMS, "~", "VOICE"
+    ENDIF
+    SOUND.SEQ CLICK, IIF(recording, "cl ~ ~ ~ rim ~ ~ ~ rim ~ ~ ~ rim ~ ~ ~", "~"), "VOICE"
+ENDSUB
+
+SUB LOOP_PLAY()
+    looping = TRUE
+    SEND_LOOP()
+    SAY("Loop playing at " + STR$(bpm) + " BPM")
+ENDSUB
+
+SUB LOOP_STOP()
+    IF NOT looping ANDALSO NOT recording THEN
+        grid = grid * 0
+        SAY("Loop cleared")
+    ELSE
+        SAY("Loop stopped (STOP again clears it)")
+    ENDIF
+    looping = FALSE
+    recording = FALSE
+    SEND_LOOP()
+ENDSUB
+
+SUB LOOP_REC()
+    recording = NOT recording
+    looping = TRUE
+    SEND_LOOP()
+    SAY(IIF(recording, "Recording pads into the loop", "Recording off, loop plays on"))
+ENDSUB
+
+' A pad hit lands on the nearest 16th of the bar that is being heard
+SUB RECORD_HIT(note)
+    DIM row = -1
+    FOR i = 0 TO n_rows - 1
+        IF pad_notes[i] = note THEN row = i
+    NEXT i
+    IF row < 0 THEN RETURN
+    DIM cps = bpm / 240
+    DIM heard = SOUND.CYCLE() - (out_ms / 1000 + 0.01) * cps
+    DIM pos = heard - INT(heard)
+    DIM s = INT(pos * STEPS + 0.5) MOD STEPS
+    IF grid[row * STEPS + s] = 0 THEN
+        grid[row * STEPS + s] = 1
+        SEND_LOOP()
+    ENDIF
+ENDSUB
 
 ' What the hardware moves: [label, cc index list key, index, track, param, lo, hi, curve]
 DIM knob = cfg{"knobs"}{"daw"}{"cc"}
@@ -172,7 +267,7 @@ PRINT "Route " + ins[main_idx] + ": " + STR$(MIDI.ROUTE(main_h))
 DIM daw_h = -1
 IF daw_idx >= 0 THEN
     daw_h = MIDI.OPEN_IN(daw_idx)
-    PRINT "Controls " + ins[daw_idx] + ": " + STR$(MIDI.ROUTE(daw_h, "CC"))
+    PRINT "Controls " + ins[daw_idx] + ": " + STR$(MIDI.ROUTE(daw_h, "ALL", 10))
 ENDIF
 
 DIM tp = cfg{"transport"}{"daw_port_cc"}
@@ -205,19 +300,29 @@ SUB HANDLE_MIDI()
                     SELECT_PATCH((cur + 1) MOD LEN(bank))
                 ELSEIF m[2] = 127 ANDALSO m[1] = mode_left THEN
                     SELECT_PATCH((cur + LEN(bank) - 1) MOD LEN(bank))
+                ELSEIF m[2] = 127 ANDALSO m[1] = tp{"play"} THEN
+                    LOOP_PLAY()
+                ELSEIF m[2] = 127 ANDALSO m[1] = tp{"stop"} THEN
+                    LOOP_STOP()
                 ELSEIF m[2] = 127 ANDALSO m[1] = tp{"rec"} THEN
-                    SAVE_LEAD()
+                    LOOP_REC()
                 ELSEIF m[2] = 127 ANDALSO m[1] = tp{"loop"} THEN
                     START_LEARN()
                 ENDIF
+            ELSEIF m[0] = 144 ANDALSO m[2] > 0 ANDALSO recording THEN
+                RECORD_HIT(m[1])
             ENDIF
         NEXT m
     ENDIF
     IF learning THEN
         DIM ln = SOUND.LASTNOTE()
         IF ln{"count"} > seen THEN
-            learning = FALSE
-            SET_SPLIT(ln{"note"})
+            IF ln{"channel"} = 1 THEN
+                learning = FALSE
+                SET_SPLIT(ln{"note"})
+            ELSE
+                seen = ln{"count"}
+            ENDIF
         ENDIF
     ENDIF
 ENDSUB
@@ -342,9 +447,48 @@ SUB DRAW_PANEL()
             GUI.TEXT m[0] + "  ->  " + IIF(m[3] = 1, "lead ", "bass ") + LCASE$(m[4])
         NEXT m
         GUI.TEXT "Fader 9  ->  morph       MODE < >  ->  patch"
-        GUI.TEXT "REC      ->  save        LOOP + key  ->  split"
+        GUI.TEXT "PLAY STOP REC  ->  drum loop    LOOP + key  ->  split"
+        GUI.TEXT "Pads  ->  bd sd hh oh (bottom row), cp rim lt cr (top row)"
         GUI.END_TABLE
     ENDIF
+
+    GUI.SEPARATOR_TEXT("Drum loop (pads, channel 10)")
+    IF GUI.BUTTON(IIF(looping, "Playing", "Play")) THEN LOOP_PLAY()
+    GUI.SAME_LINE
+    IF GUI.BUTTON("Stop") THEN LOOP_STOP()
+    GUI.SAME_LINE
+    IF GUI.BUTTON(IIF(recording, "Recording", "Rec")) THEN LOOP_REC()
+    GUI.SAME_LINE
+    IF GUI.BUTTON("Clear") THEN
+        grid = grid * 0
+        SEND_LOOP()
+    ENDIF
+    GUI.SAME_LINE
+    GUI.SET_NEXT_ITEM_WIDTH 200 * ui
+    DIM nb = INT(GUI.SLIDER("BPM", bpm, 60, 180))
+    IF nb <> bpm THEN
+        bpm = nb
+        SOUND.BPM bpm
+    ENDIF
+    DIM cyc = SOUND.CYCLE()
+    DIM now_step = INT((cyc - INT(cyc)) * STEPS)
+    DIM edited = FALSE
+    FOR r = 0 TO n_rows - 1
+        GUI.TEXT LEFT$(pad_names$[r] + "    ", 4)
+        FOR s = 0 TO STEPS - 1
+            GUI.SAME_LINE
+            GUI.PUSH_ID r * STEPS + s
+            DIM was = grid[r * STEPS + s]
+            DIM lbl$ = IIF(looping ANDALSO s = now_step, ">", "") + "###cell"
+            DIM now_on = GUI.CHECKBOX(lbl$, was)
+            IF now_on <> was THEN
+                grid[r * STEPS + s] = IIF(now_on, 1, 0)
+                edited = TRUE
+            ENDIF
+            GUI.POP_ID
+        NEXT s
+    NEXT r
+    IF edited THEN SEND_LOOP()
 
     GUI.SEPARATOR_TEXT("Output")
     GUI.PLOT_LINES "##scope", SOUND.GET_WAVE(), "", -1.0, 1.0
