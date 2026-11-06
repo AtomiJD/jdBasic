@@ -174,6 +174,25 @@ Value matrix_product(const char* fn, const Value& a, const Value& b, bool transp
     return from_eigen(P);
 }
 
+// The product per batch of [B][M][K] x [B][K][N]; a side that is one matrix
+// meets every batch of the other, and two matrices are one product.
+Value batch_product(const char* fn, const Value& a, const Value& b) {
+    bool ba = is_batch(a), bb = is_batch(b);
+    if (!ba && !bb) return matrix_product(fn, a, b, false);
+    auto& la = a.as_array()->elements;
+    auto& lb = b.as_array()->elements;
+    size_t n = ba ? la.size() : lb.size();
+    if (ba && bb && la.size() != lb.size())
+        throw std::runtime_error(std::string(fn) + ": batch sizes differ, " + std::to_string(la.size()) +
+                                 " and " + std::to_string(lb.size()));
+    Value out = Value::make_array();
+    auto& cells = out.as_array()->elements;
+    cells.reserve(n);
+    for (size_t i = 0; i < n; i++)
+        cells.push_back(matrix_product(fn, ba ? la[i] : a, bb ? lb[i] : b, false));
+    return out;
+}
+
 Eigen::MatrixXd square_of(const Value& v, const char* fn) {
     Eigen::MatrixXd M = to_eigen(v);
     if (M.rows() != M.cols())
@@ -184,9 +203,10 @@ Eigen::MatrixXd square_of(const Value& v, const char* fn) {
 } // namespace
 
 void register_numerics_builtins(VM& vm) {
-    // MATMUL(a, b) -> a * b; MATMUL_T(a, b) -> TRANSPOSE(a) * b without the copy.
+    // MATMUL(a, b) -> a * b, per batch when a side is 3-D (as BMM);
+    // MATMUL_T(a, b) -> TRANSPOSE(a) * b without the copy.
     vm.register_native("MATMUL", 2, 2, [](const std::vector<Value>& args) -> Value {
-        return matrix_product("MATMUL", args[0], args[1], false);
+        return batch_product("MATMUL", args[0], args[1]);
     });
     vm.register_native("MATMUL_T", 2, 2, [](const std::vector<Value>& args) -> Value {
         return matrix_product("MATMUL_T", args[0], args[1], true);
@@ -195,20 +215,7 @@ void register_numerics_builtins(VM& vm) {
     // BMM(a, b): the product per batch of two [B][M][K] x [B][K][N] arrays;
     // a side that is one matrix meets every batch of the other.
     vm.register_native("BMM", 2, 2, [](const std::vector<Value>& args) -> Value {
-        bool ba = is_batch(args[0]), bb = is_batch(args[1]);
-        if (!ba && !bb) return matrix_product("BMM", args[0], args[1], false);
-        auto& la = args[0].as_array()->elements;
-        auto& lb = args[1].as_array()->elements;
-        size_t n = ba ? la.size() : lb.size();
-        if (ba && bb && la.size() != lb.size())
-            throw std::runtime_error("BMM: batch sizes differ, " + std::to_string(la.size()) +
-                                     " and " + std::to_string(lb.size()));
-        Value out = Value::make_array();
-        auto& cells = out.as_array()->elements;
-        cells.reserve(n);
-        for (size_t i = 0; i < n; i++)
-            cells.push_back(matrix_product("BMM", ba ? la[i] : args[0], bb ? lb[i] : args[1], false));
-        return out;
+        return batch_product("BMM", args[0], args[1]);
     });
 
     // SOLVE(a, b) -> x with a * x = b; b is a vector or a matrix of right-hand sides.

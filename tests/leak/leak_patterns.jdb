@@ -172,6 +172,15 @@ ELSEIF pattern$ = "matmul" THEN
         total = total + p[1][1]
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "matmulbatch" THEN
+    DIM xb AS ARRAY = RESHAPE(IOTA(48), [3, 4, 4])
+    DIM wb AS ARRAY = RESHAPE(IOTA(8), [4, 2])
+    DIM pb AS ARRAY = []
+    FOR i = 1 TO passes
+        pb = MATMUL(xb, wb)
+        total = total + pb[2][3][1]
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSEIF pattern$ = "zerosgrid" THEN
     DIM z AS ARRAY = []
     FOR i = 1 TO passes

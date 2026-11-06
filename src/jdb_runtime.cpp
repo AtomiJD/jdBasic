@@ -4829,10 +4829,60 @@ static JdbArray* matmul_body(JdbArray* a, JdbArray* b, int32_t transpose_left, c
     return out;
 }
 
+// Whether a holds matrices: its first cell is an array whose first cell is one.
+static bool mat_is_batch(JdbArray* a) {
+    if (!a || a->length == 0 || !cell_is_arr(a, 0)) return false;
+    JdbArray* first = decode_inner(a->data[0]);
+    return first && first->length > 0 && cell_is_arr(first, 0);
+}
+
+// A product matmul_body built and nothing holds yet: its rows, then itself.
+static void mat_free(JdbArray* m) {
+    if (!m) return;
+    if (m->flags & 1)
+        for (int64_t r = 0; r < m->length; r++)
+            if (cell_is_arr(m, r)) array_free_shallow(decode_inner(m->data[r]));
+    array_free_shallow(m);
+}
+
+// MATMUL with a 3-D side: the product per batch, as BMM answers it; a side
+// that is one matrix meets every batch of the other.
+static JdbArray* batch_body(JdbArray* a, JdbArray* b, const char* fn) {
+    bool ba = mat_is_batch(a), bb = mat_is_batch(b);
+    int64_t n = ba ? a->length : b->length;
+    if (ba && bb && a->length != b->length) {
+        jdb_err_set((std::string(fn) + ": batch sizes differ, " + std::to_string(a->length) +
+                     " and " + std::to_string(b->length)).c_str(), 1);
+        return jdb_array_new(0);
+    }
+    int64_t err_before = jdb_err_code();
+    std::vector<JdbArray*> parts;
+    parts.reserve((size_t)n);
+    for (int64_t i = 0; i < n; i++) {
+        JdbArray* sa = ba ? (cell_is_arr(a, i) ? decode_inner(a->data[i]) : nullptr) : a;
+        JdbArray* sb = bb ? (cell_is_arr(b, i) ? decode_inner(b->data[i]) : nullptr) : b;
+        JdbArray* m = matmul_body(sa, sb, 0, fn);
+        if (jdb_err_code() != err_before) {
+            mat_free(m);
+            for (JdbArray* p : parts) mat_free(p);
+            return jdb_array_new(0);
+        }
+        parts.push_back(m);
+    }
+    JdbArray* out = jdb_array_new(n);
+    out->flags |= 1;
+    for (int64_t i = 0; i < n; i++) {
+        union { double d; int64_t i; } u; u.i = (int64_t)(intptr_t)parts[(size_t)i];
+        out->data[i] = u.d;
+    }
+    return out;
+}
+
 // The C entry the compiled program calls: nothing of C++ crosses it.
 extern "C" JdbArray* jdb_matmul(JdbArray* a, JdbArray* b, int32_t transpose_left) {
     const char* fn = transpose_left ? "MATMUL_T" : "MATMUL";
     try {
+        if (!transpose_left && (mat_is_batch(a) || mat_is_batch(b))) return batch_body(a, b, fn);
         return matmul_body(a, b, transpose_left, fn);
     } catch (...) {
         // Fixed texts: a message built here could need the memory that ran out.

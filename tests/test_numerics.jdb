@@ -82,6 +82,15 @@ fails = fails + chk("BMM broadcast 1 = B*A", BA[1][0][0], 23.0, 0.000000001)
 DIM BM = BMM(A, B)
 fails = fails + chk("BMM two matrices", BM[1][1], 50.0, 0.000000001)
 
+' MATMUL with a 3-D side answers per batch, as BMM does
+DIM MB = MATMUL(batch, batch)
+fails = fails + chk("MATMUL batches", LEN(MB), 2, 0)
+fails = fails + chk("MATMUL batch 1 = B*B", MB[1][1][1], 106.0, 0.000000001)
+DIM MA = MATMUL(batch, A)
+fails = fails + chk("MATMUL batch meets a matrix", MA[1][0][0], 23.0, 0.000000001)
+DIM AM = MATMUL(A, batch)
+fails = fails + chk("MATMUL matrix meets a batch", AM[0][0][0], 7.0, 0.000000001)
+
 ' SOLVE and INVERT: A x = [5, 11] has x = [1, 2]; A * INVERT(A) = I
 DIM x = SOLVE(A, [5.0, 11.0])
 fails = fails + chk("SOLVE x0", x[0], 1.0, 0.000000001)
