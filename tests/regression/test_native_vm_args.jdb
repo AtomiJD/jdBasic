@@ -1,0 +1,56 @@
+' A VM value handed straight from a builtin to an untyped parameter, and a
+' key whose kind only the running program knows: JSON.PARSE(...) written
+' as the argument reaches the FUNC as the map it is (it read as 0), and
+' acc{rec{"user"}} = v writes the key "ada" (it wrote the text's pointer as
+' a number), while arr[rec{"i"}] = v with a number field still writes a
+' position.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+FUNC UserOf$(rec)
+    RETURN rec{"user"}
+ENDFUNC
+
+FUNC Record(rec, acc)
+    acc{rec{"user"}} = rec{"score"}
+    RETURN LEN(MAP.KEYS(acc))
+ENDFUNC
+
+FUNC PutAt(rec, arr)
+    arr[rec{"i"}] = 7
+    RETURN 0
+ENDFUNC
+
+FUNC Group(rec, acc)
+    acc{rec{"user"}} = [rec{"score"}, 1]
+    RETURN 0
+ENDFUNC
+
+Check(UserOf$(JSON.PARSE("{""user"": ""ada""}")) = "ada", "a parsed map handed straight to a FUNC")
+Check(UserOf$({"user": "bob"}) = "bob", "a native map at another call site of the same FUNC")
+DIM parsed = JSON.PARSE("{""user"": ""cy""}")
+Check(UserOf$(parsed) = "cy", "a parsed map through a variable")
+
+DIM accepted = {}
+DIM n AS INTEGER = Record(JSON.PARSE("{""user"": ""ada"", ""score"": 90}"), accepted)
+n = Record(JSON.PARSE("{""user"": ""margaret"", ""score"": 89.5}"), accepted)
+Check(n = 2, "two keys written by a parsed field")
+Check(JOIN(MAP.KEYS(accepted), ", ") = "ada, margaret", "the keys are the names, not numbers")
+Check(accepted{"margaret"} = 89.5, "the value under a parsed key")
+
+DIM cells = [1, 2, 3]
+DIM r = PutAt(JSON.PARSE("{""i"": 1}"), cells)
+Check(cells[1] = 7 ANDALSO cells[0] = 1, "a number field is a position")
+
+DIM groups = {}
+r = Group(JSON.PARSE("{""user"": ""ada"", ""score"": 3}"), groups)
+Check(groups{"ada"}[0] = 3 ANDALSO LEN(groups{"ada"}) = 2, "an array written under a parsed key")
+
+IF failed = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"

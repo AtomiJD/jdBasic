@@ -1617,6 +1617,51 @@ void jdb_tagged_arr_set(int64_t base, int32_t base_tag, int64_t idx, int64_t bit
     jdb_err_set("Cannot index-assign into this type", 11);
 }
 
+extern "C" const char* jdrt_val_to_str(void* rt, int64_t handle);
+extern "C" void jdrt_str_free(char* s);
+extern "C" void jdrt_obj_set_tagged(void* rt, int64_t h, const char* key, int64_t bits, int32_t tag);
+
+// base{key} = value where neither the base nor the key has a kind the
+// compiler knows: a number is a position, a text (or a VM value holding
+// one) a key, as the interpreter decides it when the line runs.
+void jdb_tagged_any_set(int64_t base, int32_t base_tag, int64_t key_bits, int32_t key_tag,
+                        int64_t bits, int32_t tag) {
+    std::string key;
+    bool text = key_tag == JD_TAG_STR;
+    if (key_tag == JD_TAG_VM_HANDLE && g_jdrt_handle) {
+        if (jdrt_val_kind(g_jdrt_handle, key_bits) == 3) {
+            const char* s = jdrt_val_to_str(g_jdrt_handle, key_bits);
+            key = s ? s : "";
+            if (s) jdrt_str_free((char*)s);
+            text = true;
+        } else {
+            double d = jdrt_val_to_f64(g_jdrt_handle, key_bits);
+            jdb_tagged_arr_set(base, base_tag, (int64_t)d, bits, tag);
+            return;
+        }
+    } else if (text) {
+        const char* s = (const char*)(intptr_t)key_bits;
+        key = s ? s : "";
+    }
+    if (!text) {
+        int64_t idx = key_bits;
+        if (key_tag != JD_TAG_I64 && key_tag != JD_TAG_BOOL) {
+            double d; memcpy(&d, &key_bits, sizeof d);
+            idx = (int64_t)d;
+        }
+        jdb_tagged_arr_set(base, base_tag, idx, bits, tag);
+        return;
+    }
+    if (base_tag == JD_TAG_VM_HANDLE) {
+        if (g_jdrt_handle) jdrt_obj_set_tagged(g_jdrt_handle, base, key.c_str(), bits, tag);
+        return;
+    }
+    double d;
+    if (tag == JD_TAG_I64 || tag == JD_TAG_BOOL) d = (double)bits;
+    else memcpy(&d, &bits, sizeof d);
+    jdb_tagged_key_set(base, base_tag, key.c_str(), d, tag);
+}
+
 JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
     return jdb_guard([&]() -> JdbArray* {
         // A number held in a VM value is stored as the number, so the
