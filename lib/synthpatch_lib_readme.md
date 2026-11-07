@@ -42,7 +42,8 @@ SYNTHPATCH.SAVE_BANK "my_patches.json", [mine]
 | Key | Meaning | Default |
 |---|---|---|
 | `name` | The name `FIND` looks for | |
-| `wave` | `SINE`, `SAW`, `SQUARE`, `TRIANGLE`, `NOISE` | `SINE` |
+| `wave` | `SINE`, `SAW`, `SQUARE`, `TRIANGLE`, `NOISE`, `WAVETABLE` | `SINE` |
+| `wavetable`, `wtpos` | For `WAVETABLE`: a `SOUND.WAVETABLE` name (`BASIC`, `PWM`, `HARMONIC`, `VOCAL`) or an array of single-cycle frames, and the scan position 0..1 | `BASIC`, 0 |
 | `attack`, `decay`, `sustain`, `release` | Envelope in seconds, sustain 0..1 | 0.01, 0.1, 0.7, 0.3 |
 | `cutoff`, `resonance`, `filter` | Filter in Hz, 0..1, `LP` / `HP` / `BP` | 20000, 0, `LP` |
 | `fenv`, `fenv_attack`, `fenv_decay` | Filter envelope: octaves, seconds | 0, 0.005, 0.2 |
@@ -58,7 +59,7 @@ SYNTHPATCH.SAVE_BANK "my_patches.json", [mine]
 The continuous keys, the ones `MORPH` and `CAPTURE` cover, are those
 `SOUND.PARAM` reaches: `attack`, `decay`, `sustain`, `release`, `cutoff`,
 `resonance`, `fenv`, `detune`, `fm`, `reverb`, `delay`, `gain`, `lforate`,
-`lfodepth`.
+`lfodepth`, `wtpos`.
 
 ## Example
 

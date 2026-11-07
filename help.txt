@@ -3299,7 +3299,7 @@ Example: SOUND.PADMAP 9, 40, "oh"
 
 [SOUND.PARAM]
 Syntax: SOUND.PARAM(track, param$, [value]) -> value
-Description: Reads a track parameter, or sets it first and answers the new value. param$ takes the names of SOUND.MOD: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV, VOWEL, PITCH, ATTACK, DECAY, SUSTAIN, RELEASE, LFORATE, LFODEPTH. A value set here stops a SOUND.CCMAP knob that was still gliding on that parameter. The SYNTHPATCH module (lib/synthpatch.jdb) uses it to capture and morph sounds.
+Description: Reads a track parameter, or sets it first and answers the new value. param$ takes the names of SOUND.MOD: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV, VOWEL, PITCH, ATTACK, DECAY, SUSTAIN, RELEASE, LFORATE, LFODEPTH, WTPOS. A value set here stops a SOUND.CCMAP knob that was still gliding on that parameter. The SYNTHPATCH module (lib/synthpatch.jdb) uses it to capture and morph sounds.
 Example: SOUND.PARAM 1, "CUTOFF", 1200 : PRINT SOUND.PARAM(1, "RESONANCE")
 
 [SOUND.MATRIX]
@@ -3326,7 +3326,11 @@ Description: Latency of the MIDI input since the last call, in ms: events, wait_
 
 [SOUND.VOICE]
 Syntax: SOUND.VOICE track, waveform$, attack, decay, sustain, release
-Description: Configures the ADSR envelope and waveform for a synthesizer track.
+Description: Configures the ADSR envelope and waveform for a synthesizer track. waveform$ is SINE, SAW, SQUARE, TRIANGLE, NOISE, or WAVETABLE (the table of SOUND.WAVETABLE).
+
+[SOUND.WAVETABLE]
+Syntax: SOUND.WAVETABLE(track, [frames], [frame_len]) -> frames
+Description: Gives the track a wavetable oscillator and makes WAVETABLE its waveform. frames is a built-in table (BASIC sine-triangle-saw-square, PWM eight pulse widths, HARMONIC 1 to 16 harmonics, VOCAL five vowel spectra), an array of single-cycle waves of any length (up to 256 frames), or one flat array cut every frame_len samples. Each frame is resampled to 2048 samples with its DC removed, the table scaled to a peak of 1, and every frame kept in band-limited copies so high notes do not alias. The WTPOS parameter (0..1; SOUND.PARAM, SOUND.CCMAP, SOUND.MATRIX, SOUND.MOD) scans through the frames, blending neighbours. Without frames the table is removed and the track plays a sine. SOUND.OSC2 can use WAVETABLE too. SOUND.RESET removes it.
 
 [SOUND.AT]
 Syntax: SOUND.AT [cycle]
@@ -3368,7 +3372,7 @@ Syntax: SOUND.MOD track, param$, shape$, [lo], [hi], [cycles], [offset]
 Description: Moves a track parameter between lo and hi, one period every `cycles` sequencer cycles.
 Parameters: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV,
 VOWEL (0 a .. 4 u, see SOUND.FORMANT), PITCH (semitones), ATTACK, DECAY, SUSTAIN, RELEASE
-(envelope of the next notes), LFORATE (Hz), LFODEPTH (Hz).
+(envelope of the next notes), LFORATE (Hz), LFODEPTH (Hz), WTPOS (wavetable scan 0..1, SOUND.WAVETABLE).
 Shapes: SINE, COSINE, SAW, ISAW, TRI, SQUARE, RAND, PERLIN. "OFF" stops it and restores the value.
 Example: SOUND.MOD 1, "CUTOFF", "SINE", 300, 3000, 8
 

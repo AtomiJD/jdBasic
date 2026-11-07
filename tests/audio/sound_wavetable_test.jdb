@@ -1,0 +1,148 @@
+' ============================================================
+' Wavetable oscillator: SOUND.WAVETABLE with built-in tables, custom
+' frames and flat arrays, the WTPOS scan, band-limiting at high notes,
+' removal, and the error cases.
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' Renders offline (SOUND.INIT "PULL"): no audio device.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+CONST N_FFT = 8192
+
+' Power spectrum of the left channel, from frame 8000, Hann-windowed;
+' bin i is i * 44100 / N_FFT Hz
+FUNC POWER(buf)
+    DIM k = IOTA(N_FFT, 0)
+    DIM mono = buf[k * 2 + 16000]
+    DIM sp = TRANSPOSE(FFT(mono * (0.5 - 0.5 * COS(2 * MATH.PI * k / (N_FFT - 1)))))
+    DIM h = IOTA(N_FFT / 2 - 1)
+    RETURN sp[0][h] * sp[0][h] + sp[1][h] * sp[1][h]
+ENDFUNC
+
+FUNC CENTROID(pw) AS DOUBLE
+    DIM hz = IOTA(N_FFT / 2 - 1) * 44100 / N_FFT
+    RETURN SUM(hz * pw) / SUM(pw)
+ENDFUNC
+
+' Share of the power below hz_lim
+FUNC SHARE_BELOW(pw, hz_lim AS DOUBLE) AS DOUBLE
+    DIM hz = IOTA(N_FFT / 2 - 1) * 44100 / N_FFT
+    RETURN SUM(pw * (hz < hz_lim)) / SUM(pw)
+ENDFUNC
+
+FUNC F0(note AS INTEGER) AS DOUBLE
+    RETURN 440 * 2 ^ ((note - 69) / 12)
+ENDFUNC
+
+' One note on track 0 at scan position pos, 0.5 s rendered
+FUNC PLAY(table, pos AS DOUBLE, note AS INTEGER)
+    SOUND.RESET
+    SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.01
+    DIM n AS INTEGER = SOUND.WAVETABLE(0, table)
+    DIM p AS DOUBLE = SOUND.PARAM(0, "WTPOS", pos)
+    SOUND.MIDIIN 144, note, 100
+    DIM b = SOUND.RENDER(22050)
+    SOUND.MIDIIN 128, note, 0
+    RETURN b
+ENDFUNC
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "SKIP: build has no SOUND sequencer"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+SOUND.INIT "PULL"
+
+' ---------- built-in tables ----------
+DIM nf AS INTEGER
+nf = SOUND.WAVETABLE(0, "BASIC")
+CHECK "BASIC has 4 frames", nf = 4, "n=" + STR$(nf)
+nf = SOUND.WAVETABLE(0, "pwm")
+CHECK "PWM has 8 frames, any case", nf = 8, "n=" + STR$(nf)
+nf = SOUND.WAVETABLE(0, "HARMONIC")
+CHECK "HARMONIC has 16 frames", nf = 16, "n=" + STR$(nf)
+nf = SOUND.WAVETABLE(0, "VOCAL")
+CHECK "VOCAL has 5 frames", nf = 5, "n=" + STR$(nf)
+
+' ---------- the scan: sine, triangle, saw, square ----------
+DIM pw_sine = POWER(PLAY("BASIC", 0.0, 57))
+DIM c_sine AS DOUBLE = CENTROID(pw_sine)
+CHECK "WTPOS 0 of BASIC is a sine at the note", ABS(c_sine - F0(57)) < F0(57) * 0.05, "centroid=" + STR$(c_sine)
+DIM c_saw AS DOUBLE = CENTROID(POWER(PLAY("BASIC", 2.0 / 3.0, 57)))
+CHECK "the saw frame is much brighter than the sine", c_saw > c_sine * 2, "saw=" + STR$(c_saw) + " sine=" + STR$(c_sine)
+DIM c_half AS DOUBLE = CENTROID(POWER(PLAY("BASIC", 0.5, 57)))
+CHECK "between triangle and saw the brightness lies between", c_half > c_sine ANDALSO c_half < c_saw, "mid=" + STR$(c_half)
+CHECK "WTPOS reads back", ABS(SOUND.PARAM(0, "WTPOS") - 0.5) < 1E-6, ""
+
+' ---------- custom frames ----------
+DIM k = IOTA(64, 0)
+DIM sine_frame = SIN(2 * MATH.PI * k / 64)
+DIM square_frame = (k < 32) * 2 - 1
+nf = SOUND.WAVETABLE(0, [sine_frame, square_frame])
+CHECK "two custom frames", nf = 2, "n=" + STR$(nf)
+DIM c_custom AS DOUBLE = CENTROID(POWER(PLAY([sine_frame, square_frame], 0.0, 57)))
+CHECK "a 64-sample sine frame plays the note", ABS(c_custom - F0(57)) < F0(57) * 0.05, "centroid=" + STR$(c_custom)
+DIM c_custom_sq AS DOUBLE = CENTROID(POWER(PLAY([sine_frame, square_frame], 1.0, 57)))
+CHECK "the square frame is brighter", c_custom_sq > c_custom * 1.5, "square=" + STR$(c_custom_sq)
+nf = SOUND.WAVETABLE(0, APPEND(sine_frame, square_frame), 64)
+CHECK "a flat array cut every 64 samples", nf = 2, "n=" + STR$(nf)
+
+' ---------- band-limited at high notes ----------
+DIM pw_hi = POWER(PLAY("BASIC", 2.0 / 3.0, 108))
+DIM alias_share AS DOUBLE = SHARE_BELOW(pw_hi, F0(108) * 0.9)
+CHECK "c8 saw frame has no alias below the note", alias_share < 0.001, "share=" + STR$(alias_share)
+DIM pw_mid = POWER(PLAY("BASIC", 2.0 / 3.0, 84))
+CHECK "c6 saw frame keeps its overtones", SHARE_BELOW(pw_mid, F0(84) * 1.5) < 0.95, "share=" + STR$(SHARE_BELOW(pw_mid, F0(84) * 1.5))
+
+' ---------- removal ----------
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.01
+nf = SOUND.WAVETABLE(0, "BASIC")
+nf = SOUND.WAVETABLE(0)
+CHECK "removing answers 0 frames", nf = 0, "n=" + STR$(nf)
+DIM pp AS DOUBLE = SOUND.PARAM(0, "WTPOS", 0.66)
+SOUND.MIDIIN 144, 57, 100
+DIM c_gone AS DOUBLE = CENTROID(POWER(SOUND.RENDER(22050)))
+SOUND.MIDIIN 128, 57, 0
+CHECK "without a table the track plays a sine", ABS(c_gone - F0(57)) < F0(57) * 0.05, "centroid=" + STR$(c_gone)
+
+' ---------- errors ----------
+DIM err_msg AS STRING = ""
+TRY
+    nf = SOUND.WAVETABLE(0, "NOPE")
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "an unknown table is refused", INSTR(err_msg, "unknown table") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    nf = SOUND.WAVETABLE(16, "BASIC")
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "track 16 is refused", INSTR(err_msg, "track") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    nf = SOUND.WAVETABLE(0, [1])
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "a one-sample frame is refused", INSTR(err_msg, "2 samples") >= 0, "msg=" + err_msg
+
+SOUND.RESET
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

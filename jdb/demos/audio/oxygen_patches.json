@@ -24,5 +24,11 @@
    "glide": 70, "gain": 0.5},
   {"name": "choir", "wave": "SAW", "attack": 0.7, "decay": 0.4, "sustain": 0.9, "release": 1.8,
    "cutoff": 20000, "resonance": 0, "filter": "LP", "unison": 6, "detune": 0.22, "spread": 0.9,
-   "lforate": 5, "lfodepth": 1.5, "chorus": 0.5, "reverb": 0.65, "gain": 0.25}
+   "lforate": 5, "lfodepth": 1.5, "chorus": 0.5, "reverb": 0.65, "gain": 0.25},
+  {"name": "wavescan", "wave": "WAVETABLE", "wavetable": "BASIC", "wtpos": 0.35, "attack": 0.004, "decay": 0.4, "sustain": 0.7, "release": 0.35,
+   "cutoff": 5200, "resonance": 0.2, "filter": "LP", "fenv": 0.6, "fenv_attack": 0.003, "fenv_decay": 0.3,
+   "unison": 3, "detune": 0.12, "spread": 0.7, "chorus": 0.3, "delay": 0.25, "reverb": 0.35, "gain": 0.3},
+  {"name": "vowel_scan", "wave": "WAVETABLE", "wavetable": "VOCAL", "wtpos": 0, "attack": 0.08, "decay": 0.5, "sustain": 0.85, "release": 0.6,
+   "cutoff": 6000, "resonance": 0.1, "filter": "LP", "unison": 4, "detune": 0.15, "spread": 0.8,
+   "lforate": 4.5, "lfodepth": 0.8, "chorus": 0.4, "reverb": 0.5, "gain": 0.3}
 ]

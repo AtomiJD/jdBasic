@@ -68,7 +68,7 @@ CHECK "PARAM wins over a gliding knob", NEAR(SOUND.PARAM(1, "CUTOFF"), 3000, 0.0
 ' ---------- banks ----------
 SOUND.RESET
 DIM bank = SYNTHPATCH.LOAD_BANK("jdb/demos/audio/oxygen_patches.json")
-CHECK "the shipped bank has 8 patches", LEN(bank) = 8, STR$(LEN(bank))
+CHECK "the shipped bank has 10 patches", LEN(bank) = 10, STR$(LEN(bank))
 CHECK "FIND pad", SYNTHPATCH.FIND(bank, "PAD") = 3, ""
 CHECK "FIND nothing", SYNTHPATCH.FIND(bank, "kazoo") = -1, ""
 DIM tmp$ = "tests/audio/synthpatch_test_bank.json"
@@ -76,6 +76,15 @@ SYNTHPATCH.SAVE_BANK tmp$, bank[[0, 6]]
 DIM back = SYNTHPATCH.LOAD_BANK(tmp$)
 KILL tmp$
 CHECK "a saved bank loads back", LEN(back) = 2 ANDALSO back[1]{"name"} = "acid" ANDALSO NEAR(back[1]{"resonance"}, 0.75, 1e-9), ""
+
+' ---------- a wavetable patch ----------
+SOUND.RESET
+SYNTHPATCH.APPLY 1, bank[SYNTHPATCH.FIND(bank, "wavescan")]
+CHECK "a wavetable patch sets its scan position", NEAR(SOUND.PARAM(1, "WTPOS"), 0.35, 1e-6), STR$(SOUND.PARAM(1, "WTPOS"))
+DIM wt_cap = SYNTHPATCH.CAPTURE(1, bank[SYNTHPATCH.FIND(bank, "wavescan")])
+CHECK "CAPTURE keeps wtpos", NEAR(wt_cap{"wtpos"}, 0.35, 1e-4), ""
+SYNTHPATCH.MORPH 1, bank[SYNTHPATCH.FIND(bank, "wavescan")], {"wtpos": 0.85}, 0.5
+CHECK "MORPH moves wtpos in a straight line", NEAR(SOUND.PARAM(1, "WTPOS"), 0.6, 1e-4), STR$(SOUND.PARAM(1, "WTPOS"))
 
 ' ---------- APPLY ----------
 DIM a = {"name": "a", "wave": "SAW", "attack": 0.01, "decay": 0.2, "sustain": 0.5, "release": 0.4, "cutoff": 900, "resonance": 0.2, "reverb": 0.1, "gain": 0.4}

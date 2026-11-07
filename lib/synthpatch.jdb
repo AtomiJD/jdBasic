@@ -8,6 +8,8 @@
 '
 ' A patch holds (every key optional, missing keys take the plain default):
 '   name, wave, attack, decay, sustain, release,
+'   wavetable (a SOUND.WAVETABLE name or array of frames, for wave "WAVETABLE"),
+'   wtpos (its scan position 0..1),
 '   cutoff, resonance, filter ("LP", "HP", "BP"),
 '   fenv (octaves), fenv_attack, fenv_decay,
 '   unison (voices), detune, spread,
@@ -18,7 +20,7 @@
 
 EXPORT MODULE SYNTHPATCH
 
-DIM CONT_KEYS$ = ["attack", "decay", "sustain", "release", "cutoff", "resonance", "fenv", "detune", "fm", "reverb", "delay", "gain", "lforate", "lfodepth"]
+DIM CONT_KEYS$ = ["attack", "decay", "sustain", "release", "cutoff", "resonance", "fenv", "detune", "fm", "reverb", "delay", "gain", "lforate", "lfodepth", "wtpos"]
 ' keys that morph along a ratio rather than a straight line
 DIM LOG_KEYS$ = ["attack", "decay", "release", "cutoff", "lforate"]
 
@@ -50,6 +52,12 @@ ENDFUNC
 
 EXPORT SUB APPLY(t, p)
     SOUND.VOICE t, TXT$(p, "wave", "SINE"), NUM(p, "attack", 0.01), NUM(p, "decay", 0.1), NUM(p, "sustain", 0.7), NUM(p, "release", 0.3)
+    IF UCASE$(TXT$(p, "wave", "SINE")) = "WAVETABLE" THEN
+        DIM src = p{"wavetable"}
+        IF TYPEOF(src) = "NONE" THEN src = "BASIC"
+        DIM n_frames = SOUND.WAVETABLE(t, src)
+        DIM pos = SOUND.PARAM(t, "WTPOS", NUM(p, "wtpos", 0))
+    ENDIF
     SOUND.FILTER t, NUM(p, "cutoff", 20000), NUM(p, "resonance", 0), TXT$(p, "filter", "LP")
     SOUND.FENV t, NUM(p, "fenv", 0), NUM(p, "fenv_attack", 0.005), NUM(p, "fenv_decay", 0.2)
     SOUND.UNISON(t, NUM(p, "unison", 1), NUM(p, "detune", 0), NUM(p, "spread", 0.5))

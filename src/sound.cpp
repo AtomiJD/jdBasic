@@ -37,6 +37,7 @@ static void snd_unlock();
 #include <cstdio>
 #include <cstdint>
 #include <vector>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <sstream>
@@ -116,7 +117,7 @@ static const std::unordered_map<std::string, std::vector<int>> g_scales = {
 
 // ── Waveforms ───────────────────────────────────────────────────
 
-enum class Waveform { SINE, SQUARE, SAW, TRIANGLE, NOISE, SAMPLE };
+enum class Waveform { SINE, SQUARE, SAW, TRIANGLE, NOISE, SAMPLE, WAVETABLE };
 
 static Waveform parse_waveform(const std::string& s) {
     if (s == "SINE") return Waveform::SINE;
@@ -125,6 +126,7 @@ static Waveform parse_waveform(const std::string& s) {
     if (s == "TRIANGLE") return Waveform::TRIANGLE;
     if (s == "NOISE") return Waveform::NOISE;
     if (s == "SAMPLE") return Waveform::SAMPLE;
+    if (s == "WAVETABLE") return Waveform::WAVETABLE;
     return Waveform::SINE;
 }
 
@@ -252,7 +254,7 @@ struct Voice {
 
 enum ModParam { MP_CUTOFF, MP_RESONANCE, MP_GAIN, MP_PAN, MP_DETUNE, MP_FM,
                 MP_CRUSH, MP_REVERB, MP_DELAY, MP_FENV, MP_VOWEL, MP_PITCH,
-                MP_ATTACK, MP_DECAY, MP_SUSTAIN, MP_RELEASE, MP_LFORATE, MP_LFODEPTH, MP_COUNT };
+                MP_ATTACK, MP_DECAY, MP_SUSTAIN, MP_RELEASE, MP_LFORATE, MP_LFODEPTH, MP_WTPOS, MP_COUNT };
 
 // The parameter names SOUND.MOD and SOUND.CCMAP take, or -1
 static int mod_param_from_name(std::string name) {
@@ -263,13 +265,13 @@ static int mod_param_from_name(std::string name) {
         {"REVERB", MP_REVERB}, {"DELAY", MP_DELAY}, {"FENV", MP_FENV},
         {"VOWEL", MP_VOWEL}, {"PITCH", MP_PITCH}, {"ATTACK", MP_ATTACK},
         {"DECAY", MP_DECAY}, {"SUSTAIN", MP_SUSTAIN}, {"RELEASE", MP_RELEASE},
-        {"LFORATE", MP_LFORATE}, {"LFODEPTH", MP_LFODEPTH}};
+        {"LFORATE", MP_LFORATE}, {"LFODEPTH", MP_LFODEPTH}, {"WTPOS", MP_WTPOS}};
     for (auto& p : params) if (name == p.first) return p.second;
     return -1;
 }
 static const char* MOD_PARAM_NAMES =
     "CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV, VOWEL, PITCH, "
-    "ATTACK, DECAY, SUSTAIN, RELEASE, LFORATE, LFODEPTH";
+    "ATTACK, DECAY, SUSTAIN, RELEASE, LFORATE, LFODEPTH, WTPOS";
 enum class ModShape { NONE, SINE, COSINE, SAW, ISAW, TRI, SQUARE, RAND, PERLIN };
 
 // A parameter moving between lo and hi, one period every `cycles` cycles.
@@ -304,6 +306,133 @@ static float mod_signal(ModShape sh, double x) {
     }
 }
 
+// ── Wavetables ──────────────────────────────────────────────────
+
+// A wavetable: `frames` single-cycle waves of WT_LEN samples, each kept in
+// WT_LEVELS band-limited copies. Level l holds the harmonics up to
+// WT_LEN / 2 >> l, so a note picks the richest copy that stays under Nyquist.
+static constexpr int WT_LEN = 2048;
+static constexpr int WT_LEVELS = 11;
+
+struct Wavetable {
+    int frames = 0;
+    std::vector<float> data;   // [frame][level][WT_LEN]
+    const float* wave(int frame, int level) const {
+        return &data[((size_t)frame * WT_LEVELS + level) * WT_LEN];
+    }
+};
+
+// In-place radix-2 FFT of n (a power of two) complex values; inverse
+// without the 1/n scale.
+static void wt_fft(std::vector<float>& re, std::vector<float>& im, bool inverse) {
+    size_t n = re.size();
+    for (size_t i = 1, j = 0; i < n; i++) {
+        size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
+    }
+    for (size_t len = 2; len <= n; len <<= 1) {
+        double ang = 2.0 * M_PI / (double)len * (inverse ? 1.0 : -1.0);
+        float wr = (float)std::cos(ang), wi = (float)std::sin(ang);
+        for (size_t i = 0; i < n; i += len) {
+            float cr = 1.0f, ci = 0.0f;
+            for (size_t k = 0; k < len / 2; k++) {
+                size_t a = i + k, b = i + k + len / 2;
+                float tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+                re[b] = re[a] - tr; im[b] = im[a] - ti;
+                re[a] += tr; im[a] += ti;
+                float nr = cr * wr - ci * wi;
+                ci = cr * wi + ci * wr; cr = nr;
+            }
+        }
+    }
+}
+
+// Builds the table from single-cycle frames of any length: each is resampled
+// to WT_LEN, its DC removed, and the whole table scaled to a peak of 1.
+static std::shared_ptr<const Wavetable> make_wavetable(const std::vector<std::vector<float>>& src) {
+    auto wt = std::make_shared<Wavetable>();
+    wt->frames = (int)src.size();
+    wt->data.assign((size_t)wt->frames * WT_LEVELS * WT_LEN, 0.0f);
+    std::vector<float> re(WT_LEN), im(WT_LEN), lr(WT_LEN), li(WT_LEN);
+    float peak = 0.0f;
+    for (int f = 0; f < wt->frames; f++) {
+        const auto& s = src[f];
+        size_t m = s.size();
+        for (int i = 0; i < WT_LEN; i++) {
+            double x = (double)i * m / WT_LEN;
+            size_t i0 = (size_t)x % m, i1 = (i0 + 1) % m;
+            float fr = (float)(x - std::floor(x));
+            re[i] = s[i0] * (1.0f - fr) + s[i1] * fr;
+            im[i] = 0.0f;
+        }
+        wt_fft(re, im, false);
+        re[0] = im[0] = 0.0f;
+        for (int l = 0; l < WT_LEVELS; l++) {
+            int keep = (WT_LEN / 2) >> l;
+            for (int k = 0; k < WT_LEN; k++) {
+                int h = k <= WT_LEN / 2 ? k : WT_LEN - k;
+                bool on = h < keep;
+                lr[k] = on ? re[k] : 0.0f;
+                li[k] = on ? im[k] : 0.0f;
+            }
+            wt_fft(lr, li, true);
+            float* out = &wt->data[((size_t)f * WT_LEVELS + l) * WT_LEN];
+            for (int i = 0; i < WT_LEN; i++) {
+                out[i] = lr[i] / WT_LEN;
+                if (l == 0) peak = std::max(peak, std::abs(out[i]));
+            }
+        }
+    }
+    if (peak > 0.0f)
+        for (auto& x : wt->data) x /= peak;
+    return wt;
+}
+
+// The built-in tables SOUND.WAVETABLE takes by name
+static std::vector<std::vector<float>> builtin_wavetable(const std::string& name) {
+    std::vector<std::vector<float>> fr;
+    const int n = WT_LEN;
+    auto frame = [&](auto fn) {
+        std::vector<float> w(n);
+        for (int i = 0; i < n; i++) w[i] = fn((double)i / n);
+        fr.push_back(std::move(w));
+    };
+    if (name == "BASIC") {
+        frame([](double t) { return (float)std::sin(2 * M_PI * t); });
+        frame([](double t) { return (float)(t < 0.5 ? 4 * t - 1 : 3 - 4 * t); });
+        frame([](double t) { return (float)(2 * t - 1); });
+        frame([](double t) { return t < 0.5 ? 1.0f : -1.0f; });
+    } else if (name == "PWM") {
+        for (int k = 0; k < 8; k++) {
+            double w = 0.5 - k * 0.06;
+            frame([w](double t) { return t < w ? 1.0f : -1.0f; });
+        }
+    } else if (name == "HARMONIC") {
+        for (int k = 1; k <= 16; k++)
+            frame([k](double t) {
+                double s = 0;
+                for (int h = 1; h <= k; h++) s += std::sin(2 * M_PI * h * t) / h;
+                return (float)s;
+            });
+    } else if (name == "VOCAL") {
+        // formant-like spectra moving a -> e -> i -> o -> u on a 110 Hz grid
+        static const double fm[5][2] = {{800, 1150}, {400, 1600}, {270, 2300}, {450, 800}, {325, 700}};
+        for (auto& v : fm)
+            frame([v](double t) {
+                double s = 0;
+                for (int h = 1; h <= 40; h++) {
+                    double hz = 110.0 * h;
+                    double a = std::exp(-std::pow((hz - v[0]) / 120, 2)) + 0.6 * std::exp(-std::pow((hz - v[1]) / 160, 2));
+                    s += a * std::sin(2 * M_PI * h * t);
+                }
+                return (float)s;
+            });
+    }
+    return fr;
+}
+
 // ── Track Parameters ────────────────────────────────────────────
 
 // One named kit sound: its variants (name:n picks one) and a level.
@@ -326,6 +455,8 @@ struct TrackParams {
     float eq_low = 1.0f, eq_mid = 1.0f, eq_high = 1.0f;
     float lfo_freq = 0.0f, lfo_depth = 0.0f;
     float fm_amount = 0.0f, fm_ratio = 1.0f;
+    std::shared_ptr<const Wavetable> wavetable;   // SOUND.WAVETABLE
+    float wt_pos = 0.0f;                          // scan position 0..1 (WTPOS)
     int unison_voices = 1;
     float unison_detune = 0.0f, unison_spread = 0.5f;
     float crush_bits = 16.0f, crush_rate = 1.0f;
@@ -447,6 +578,7 @@ static float* mod_target(TrackParams& tp, int param) {
         case MP_RELEASE:   return &tp.release;
         case MP_LFORATE:   return &tp.lfo_freq;
         case MP_LFODEPTH:  return &tp.lfo_depth;
+        case MP_WTPOS:     return &tp.wt_pos;
         default:           return nullptr;
     }
 }
@@ -1461,6 +1593,32 @@ static struct SoundSystem {
         }
     }
 
+    // One oscillator sample; a wavetable reads the band-limited copy that fits
+    // under Nyquist at this pitch and blends the two frames around WTPOS
+    float osc(const TrackParams& tp, Waveform wf, float phase, float dt) {
+        if (wf != Waveform::WAVETABLE) return generate_waveform(wf, phase, dt);
+        const Wavetable* wt = tp.wavetable.get();
+        if (!wt || wt->frames == 0) return generate_waveform(Waveform::SINE, phase, dt);
+        float t = phase - std::floor(phase);
+        float fits = dt > 0.0f ? 0.5f / dt : (float)(WT_LEN / 2);
+        int level = 0;
+        while (level < WT_LEVELS - 1 && (float)((WT_LEN / 2) >> level) > fits) level++;
+        float pos = std::clamp(tp.wt_pos, 0.0f, 1.0f) * (float)(wt->frames - 1);
+        // integer clamps: a NaN position must not index outside the table
+        int f0 = std::clamp((int)pos, 0, wt->frames - 1);
+        int f1 = std::min(f0 + 1, wt->frames - 1);
+        float ff = std::clamp(pos - (float)f0, 0.0f, 1.0f);
+        float x = t * WT_LEN;
+        int i0 = (int)x & (WT_LEN - 1);
+        int i1 = (i0 + 1) & (WT_LEN - 1);
+        float fx = x - std::floor(x);
+        const float* a = wt->wave(f0, level);
+        const float* b = wt->wave(f1, level);
+        float va = a[i0] + (a[i1] - a[i0]) * fx;
+        float vb = b[i0] + (b[i1] - b[i0]) * fx;
+        return va + (vb - va) * ff;
+    }
+
     void generate_voice(Voice& v, float& out_l, float& out_r) {
         auto& tp = tracks[v.track];
         float dt = 1.0f / SAMPLE_RATE;
@@ -1527,11 +1685,11 @@ static struct SoundSystem {
                 float pan_u = 0.5f + ratio * tp.unison_spread;
                 float f = freq * det / SAMPLE_RATE;
                 v.unison_phases[u] += f;
-                float s = generate_waveform(tp.waveform, v.unison_phases[u] + fm_mod, f);
+                float s = osc(tp, tp.waveform, v.unison_phases[u] + fm_mod, f);
                 if (tp.osc2_mix > 0.0f) {
                     float f2 = f * tp.osc2_ratio;
                     v.osc2_phases[u] += f2;
-                    s += tp.osc2_mix * generate_waveform(tp.osc2_wave, v.osc2_phases[u] + fm_mod, f2);
+                    s += tp.osc2_mix * osc(tp, tp.osc2_wave, v.osc2_phases[u] + fm_mod, f2);
                 }
                 sample_l += s * (1.0f - pan_u) * norm;
                 sample_r += s * pan_u * norm;
@@ -1541,11 +1699,11 @@ static struct SoundSystem {
         else {
             float f = freq / SAMPLE_RATE;
             v.phase += f;
-            float s = generate_waveform(tp.waveform, v.phase + fm_mod, f);
+            float s = osc(tp, tp.waveform, v.phase + fm_mod, f);
             if (tp.osc2_mix > 0.0f) {
                 float f2 = f * tp.osc2_ratio;
                 v.osc2_phase += f2;
-                s += tp.osc2_mix * generate_waveform(tp.osc2_wave, v.osc2_phase + fm_mod, f2);
+                s += tp.osc2_mix * osc(tp, tp.osc2_wave, v.osc2_phase + fm_mod, f2);
                 s /= 1.0f + 0.5f * tp.osc2_mix;
             }
             sample_l = s;
@@ -2657,6 +2815,75 @@ void register_sound_builtins(VM& vm) {
         g_sound.tracks[t].sustain = (float)args[4].to_double();
         g_sound.tracks[t].release = (float)args[5].to_double();
         return Value::make_none();
+    });
+
+    // ── SOUND.WAVETABLE track, [frames], [frame_len] -> frames ──
+    // frames: a built-in name, an array of single-cycle arrays, or one flat
+    // array cut every frame_len samples. Omitted: the table is removed.
+
+    vm.register_native("SOUND.WAVETABLE", 1, 3, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        if (t < 0 || t >= NUM_TRACKS)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.WAVETABLE: track is 0-" + std::to_string(NUM_TRACKS - 1));
+        std::shared_ptr<const Wavetable> wt;
+        if (args.size() >= 2) {
+            std::vector<std::vector<float>> frames;
+            auto numbers = [](const Value& v, std::vector<float>& out) {
+                if (v.type == ValueType::TENSOR) {
+                    for (double d : v.as_tensor()->data) out.push_back((float)d);
+                } else if (v.type == ValueType::ARRAY) {
+                    for (auto& e : v.as_array()->elements) {
+                        if (e.type == ValueType::ARRAY || e.type == ValueType::TENSOR)
+                            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.WAVETABLE: a frame holds numbers");
+                        out.push_back((float)e.to_double());
+                    }
+                }
+            };
+            int frame_len = args.size() >= 3 ? (int)args[2].to_int() : 0;
+            const Value& src = args[1];
+            if (src.type == ValueType::STRING) {
+                std::string name = src.to_string();
+                std::transform(name.begin(), name.end(), name.begin(), ::toupper);
+                frames = builtin_wavetable(name);
+                if (frames.empty())
+                    throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.WAVETABLE: unknown table " + name + " (BASIC, PWM, HARMONIC, VOCAL)");
+            } else if (src.type == ValueType::TENSOR && src.as_tensor()->shape.size() == 2 && frame_len == 0) {
+                auto* tz = src.as_tensor();
+                size_t rows = tz->shape[0], cols = tz->shape[1];
+                for (size_t r = 0; r < rows; r++)
+                    frames.emplace_back(tz->data.begin() + r * cols, tz->data.begin() + (r + 1) * cols);
+            } else if (src.type == ValueType::ARRAY && !src.as_array()->elements.empty() &&
+                       (src.as_array()->elements[0].type == ValueType::ARRAY ||
+                        src.as_array()->elements[0].type == ValueType::TENSOR)) {
+                for (auto& e : src.as_array()->elements) {
+                    frames.emplace_back();
+                    numbers(e, frames.back());
+                }
+            } else {
+                std::vector<float> flat;
+                numbers(src, flat);
+                if (frame_len <= 0) frame_len = (int)flat.size();
+                for (size_t i = 0; frame_len > 0 && i + frame_len <= flat.size(); i += frame_len)
+                    frames.emplace_back(flat.begin() + i, flat.begin() + i + frame_len);
+            }
+            if (frames.empty())
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.WAVETABLE: no frames");
+            if (frames.size() > 256)
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.WAVETABLE: at most 256 frames");
+            for (auto& f : frames)
+                if (f.size() < 2)
+                    throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.WAVETABLE: a frame needs at least 2 samples");
+            wt = make_wavetable(frames);
+        }
+        std::shared_ptr<const Wavetable> old;
+        int n = wt ? wt->frames : 0;
+        if (g_sound.initialized) SND_LOCK();
+        old = std::move(g_sound.tracks[t].wavetable);
+        g_sound.tracks[t].wavetable = std::move(wt);
+        if (n > 0) g_sound.tracks[t].waveform = Waveform::WAVETABLE;
+        else if (g_sound.tracks[t].waveform == Waveform::WAVETABLE) g_sound.tracks[t].waveform = Waveform::SINE;
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_i64(n);
     });
 
     // ── SOUND.SAMPLE track, sample_id, [base_note$], [loop] ─────
