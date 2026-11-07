@@ -15,6 +15,10 @@
 '   DRUM_ROW("hh", "x.x.x.x.x.x.x.x.")       one drum row, one char per 16th,
 '                                            repeated over the loop
 '   SET_BARS(2), LOOP_PLAY(), LOOP_STOP(), CLEAR_LOOP()
+'   arp_i = 3 : chord_i = 3 : APPLY_ARP()   arp and chord on the lead keys,
+'                                         indexes into arp_modes$, arp_rates$,
+'                                         chord_names$, scale_roots$, scale_modes$
+'   SOUND.ZONESET 1, {"arp": "random", "arp_rate": "1/16T"}   the same, direct
 ' Tracks 0-3 belong to the synth and the looper. Tracks 4-15 are free for
 ' patterns of your own; the program never touches them:
 '   SOUND.VOICE 4, "SQUARE", 0.01, 0.1, 0.5, 0.2

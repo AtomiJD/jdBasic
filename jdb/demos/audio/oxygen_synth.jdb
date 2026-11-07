@@ -20,6 +20,9 @@
 '   LOOP + key   that key becomes the new split
 ' MIDI clock goes out to the keyboard (Start with PLAY, Stop with STOP); a
 ' clock coming in on the keyboard port sets the tempo and starts the loop.
+' The lead keys can run an arpeggiator on the loop clock, play a chord per
+' key and lock to a scale (panel "Arp and chords", or APPLY_ARP from live
+' code). The looper records the keys, not the arp steps.
 ' Live code: oxygen_live.jdb next to this file runs again each time it is
 ' saved, while the keyboard plays on (see oxygen_live_example.jdb).
 ' The pads reach the drums only in DAW mode (DAW button lit); in preset mode
@@ -111,12 +114,43 @@ SUB SAY(msg$)
     PRINT msg$
 ENDSUB
 
-SUB SET_SPLIT(key)
-    split_key = key
+' ---- arp and chords on the lead zone, run by the engine on the loop clock ----
+DIM arp_modes$ = ["off", "up", "down", "updown", "downup", "random", "played"]
+DIM arp_rates$ = ["1/8", "1/8T", "1/16", "1/16T", "1/32"]
+DIM chord_names$ = ["off", "maj", "min", "triad", "seventh", "ninth", "power", "oct", "sus4", "maj7", "min7"]
+DIM scale_roots$ = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+DIM scale_modes$ = ["MAJOR", "MINOR", "DORIAN", "PHRYGIAN", "LYDIAN", "MIXOLYDIAN", "PENT_MAJ", "PENT_MIN", "BLUES"]
+DIM arp_i = 0
+DIM arp_rate_i = 2
+DIM arp_oct = 1
+DIM arp_gate = 0.5
+DIM arp_latch = FALSE
+DIM chord_i = 0
+DIM scale_lock = FALSE
+DIM scale_root_i = 0
+DIM scale_mode_i = 0
+
+FUNC LEAD_ZONE_OPTS(arp$, rate$, octaves, gate, latch, chord$, lock)
+    RETURN {"vel_cutoff": 2, "mod_vibrato": 0.4, "arp": arp$, "arp_rate": rate$, "arp_octaves": octaves, "arp_gate": gate, "arp_latch": latch, "chord": chord$, "scale": lock}
+ENDFUNC
+
+' Lead zone is zone 1 (bass 0, drums 2); held keys and a running arp stay
+SUB APPLY_ARP()
+    SOUND.SCALE 1, scale_roots$[scale_root_i] + "3", scale_modes$[scale_mode_i]
+    SOUND.ZONESET 1, LEAD_ZONE_OPTS(arp_modes$[arp_i], arp_rates$[arp_rate_i], arp_oct, arp_gate, arp_latch, chord_names$[chord_i], scale_lock)
+ENDSUB
+
+SUB APPLY_ZONES()
+    SOUND.SCALE 1, scale_roots$[scale_root_i] + "3", scale_modes$[scale_mode_i]
     SOUND.ZONE -1
     SOUND.ZONE 0, 0, split_key - 1, 1, -12, {"legato": TRUE}
-    SOUND.ZONE 1, split_key, 127, 1, 0, {"vel_cutoff": 2, "mod_vibrato": 0.4}
+    SOUND.ZONE 1, split_key, 127, 1, 0, LEAD_ZONE_OPTS(arp_modes$[arp_i], arp_rates$[arp_rate_i], arp_oct, arp_gate, arp_latch, chord_names$[chord_i], scale_lock)
     SOUND.ZONE DRUMS, 0, 127, 10
+ENDSUB
+
+SUB SET_SPLIT(key)
+    split_key = key
+    APPLY_ZONES()
     SAY("Split at key " + STR$(split_key))
 ENDSUB
 
@@ -656,6 +690,32 @@ SUB DRAW_PANEL()
         PARAM_SLIDER("Resonance", 0, "RESONANCE", 0, 1, FALSE)
         PARAM_SLIDER("Release", 0, "RELEASE", 0.01, 2, TRUE)
         PARAM_SLIDER("Level", 0, "GAIN", 0, 1, FALSE)
+        GUI.SEPARATOR_TEXT("Arp and chords (lead keys)")
+        DIM zone_was$ = STR$(arp_i) + STR$(arp_rate_i) + STR$(arp_oct) + STR$(arp_gate) + STR$(arp_latch) + STR$(chord_i) + STR$(scale_lock) + STR$(scale_root_i) + STR$(scale_mode_i)
+        GUI.SET_NEXT_ITEM_WIDTH 100 * ui
+        arp_i = GUI.COMBO("Arp##arp", arp_i, arp_modes$)
+        GUI.SAME_LINE
+        GUI.SET_NEXT_ITEM_WIDTH 80 * ui
+        arp_rate_i = GUI.COMBO("##arprate", arp_rate_i, arp_rates$)
+        GUI.SAME_LINE
+        GUI.SET_NEXT_ITEM_WIDTH 70 * ui
+        arp_oct = GUI.COMBO("Oct##arpoct", arp_oct - 1, ["1", "2", "3", "4"]) + 1
+        GUI.SAME_LINE
+        arp_latch = GUI.CHECKBOX("Latch##arplatch", arp_latch)
+        GUI.SET_NEXT_ITEM_WIDTH 260 * ui
+        arp_gate = GUI.SLIDER("Gate##arpgate", arp_gate, 0.05, 1)
+        GUI.SET_NEXT_ITEM_WIDTH 100 * ui
+        chord_i = GUI.COMBO("Chord##chord", chord_i, chord_names$)
+        GUI.SAME_LINE
+        scale_lock = GUI.CHECKBOX("Scale##scalelock", scale_lock)
+        GUI.SAME_LINE
+        GUI.SET_NEXT_ITEM_WIDTH 60 * ui
+        scale_root_i = GUI.COMBO("##scaleroot", scale_root_i, scale_roots$)
+        GUI.SAME_LINE
+        GUI.SET_NEXT_ITEM_WIDTH 110 * ui
+        scale_mode_i = GUI.COMBO("##scalemode", scale_mode_i, scale_modes$)
+        DIM zone_now$ = STR$(arp_i) + STR$(arp_rate_i) + STR$(arp_oct) + STR$(arp_gate) + STR$(arp_latch) + STR$(chord_i) + STR$(scale_lock) + STR$(scale_root_i) + STR$(scale_mode_i)
+        IF zone_now$ <> zone_was$ THEN APPLY_ARP()
 
         GUI.TABLE_NEXT_COLUMN
         GUI.SEPARATOR_TEXT("Modulation matrix (lead)")
