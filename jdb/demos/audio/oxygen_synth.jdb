@@ -383,7 +383,13 @@ DIM fader = cfg{"faders"}{"daw"}{"cc"}
 DIM hw_map = [["Knob 1", "knob", 0, 1, "CUTOFF", 150, 9000, "EXP"], ["Knob 2", "knob", 1, 1, "RESONANCE", 0, 0.9, "LIN"], ["Knob 3", "knob", 2, 1, "ATTACK", 0.002, 1.5, "EXP"], ["Knob 4", "knob", 3, 1, "RELEASE", 0.02, 3, "EXP"], ["Knob 5", "knob", 4, 0, "CUTOFF", 80, 4000, "EXP"], ["Knob 6", "knob", 5, 0, "RESONANCE", 0, 0.9, "LIN"], ["Knob 7", "knob", 6, 1, "DETUNE", 0, 0.5, "LIN"], ["Knob 8", "knob", 7, 1, "REVERB", 0, 0.8, "LIN"], ["Fader 1", "fader", 0, 1, "GAIN", 0, 1, "LIN"], ["Fader 2", "fader", 1, 0, "GAIN", 0, 1, "LIN"]]
 
 ' Mapping anew also restarts the pickup, so a knob waits for the new sound
+' Knob 7 scans the wavetable when the lead patch has one, else it detunes
 SUB MAP_KNOBS()
+    IF UCASE$("" + bank[cur]{"wave"}) = "WAVETABLE" THEN
+        hw_map[6] = ["Knob 7", "knob", 6, 1, "WTPOS", 0, 1, "LIN"]
+    ELSE
+        hw_map[6] = ["Knob 7", "knob", 6, 1, "DETUNE", 0, 0.5, "LIN"]
+    ENDIF
     SOUND.CCMAP -1
     FOR EACH m IN hw_map
         DIM cc = knob[m[2]]
@@ -640,6 +646,7 @@ SUB DRAW_PANEL()
         PARAM_SLIDER("Sustain", 1, "SUSTAIN", 0, 1, FALSE)
         PARAM_SLIDER("Release", 1, "RELEASE", 0.01, 5, TRUE)
         PARAM_SLIDER("Detune", 1, "DETUNE", 0, 0.6, FALSE)
+        PARAM_SLIDER("Wave scan", 1, "WTPOS", 0, 1, FALSE)
         PARAM_SLIDER("FM", 1, "FM", 0, 3, FALSE)
         PARAM_SLIDER("Reverb", 1, "REVERB", 0, 1, FALSE)
         PARAM_SLIDER("Delay", 1, "DELAY", 0, 1, FALSE)
