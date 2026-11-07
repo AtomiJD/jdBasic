@@ -1,5 +1,7 @@
 {
   "device": "M-Audio Oxygen 61 MKV",
+  "capture": 2,
+  "capture_note": "Index into MON.DEVICES() capture list; 2 = Microphone (Logi C525 HD WebCam)",
   "ports": {
     "main": "Oxygen 61 MKV",
     "daw": "MIDIIN2 (Oxygen 61 MKV)",
