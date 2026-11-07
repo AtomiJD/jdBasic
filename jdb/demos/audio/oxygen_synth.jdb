@@ -20,6 +20,8 @@
 '   LOOP + key   that key becomes the new split
 ' MIDI clock goes out to the keyboard (Start with PLAY, Stop with STOP); a
 ' clock coming in on the keyboard port sets the tempo and starts the loop.
+' Live code: oxygen_live.jdb next to this file runs again each time it is
+' saved, while the keyboard plays on (see oxygen_live_example.jdb).
 ' The pads reach the drums only in DAW mode (DAW button lit); in preset mode
 ' they send keys 36-43 on the keyboard port and play the bass.
 
@@ -467,6 +469,43 @@ SUB FOLLOW_CLOCK()
     ENDIF
 ENDSUB
 
+
+' ---- live code: oxygen_live.jdb runs again each time it is saved ----
+DIM live$ = here$ + "/oxygen_live.jdb"
+IF NOT FILE.EXISTS(live$) THEN FILE.COPY(here$ + "/oxygen_live_example.jdb", live$)
+DIM live_sig$ = ""
+DIM live_t = 0
+
+' One drum row from a step string ("x" or "X" a hit), repeated over the loop
+SUB DRUM_ROW(name$, steps$)
+    DIM row = -1
+    FOR i = 0 TO n_rows - 1
+        IF pad_names$[i] = name$ THEN row = i
+    NEXT i
+    IF row < 0 ORELSE LEN(steps$) = 0 THEN RETURN
+    DIM chars = -steps$
+    FOR s = 0 TO n_steps - 1
+        grid[row * n_steps + s] = IIF(UCASE$(chars[s MOD LEN(chars)]) = "X", 1, 0)
+    NEXT s
+    SEND_LOOP()
+ENDSUB
+
+SUB LIVE_CHECK()
+    IF TICK() - live_t < 250 THEN RETURN
+    live_t = TICK()
+    IF NOT FILE.EXISTS(live$) THEN RETURN
+    DIM st = FILE.STAT(live$)
+    DIM sig$ = STR$(st{"mtime"}) + "/" + STR$(st{"size"})
+    IF sig$ = live_sig$ THEN RETURN
+    live_sig$ = sig$
+    TRY
+        EXECUTE TXTREADER$(live$)
+        SAY("Live code applied (" + PATH.BASENAME$(live$) + ")")
+    CATCH
+        SAY("Live code error: " + ERRMSG$)
+    ENDTRY
+ENDSUB
+
 DIM tp = cfg{"transport"}{"daw_port_cc"}
 DIM mode_left = cfg{"mode_buttons"}{"left_cc"}
 DIM mode_right = cfg{"mode_buttons"}{"right_cc"}
@@ -742,6 +781,7 @@ IF panel THEN
     DO
         CLS
         HANDLE_MIDI()
+        LIVE_CHECK()
         DRAW_PANEL()
         SCREENFLIP
         IF TICK() - t_stats >= 1000 THEN
@@ -754,6 +794,7 @@ IF panel THEN
 ELSE
     DO WHILE TICK() - t0 < run_secs * 1000
         HANDLE_MIDI()
+        LIVE_CHECK()
         IF TICK() - t_stats >= 2000 THEN
             t_stats = TICK()
             TAKE_STATS(TRUE)

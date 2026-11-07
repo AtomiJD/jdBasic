@@ -1,0 +1,35 @@
+' oxygen_live.jdb - live code for oxygen_synth.jdb while it plays.
+'
+' oxygen_synth.jdb copies this example to oxygen_live.jdb (not in git) on its
+' first start and runs that file again each time it is saved: the keyboard
+' keeps playing, the audio does not stop, and a mistake only shows up in the
+' status line (and the console). Edit it in any editor, or have Claude write
+' it through the jdBasic MCP.
+'
+' The file runs at the top level of the running program, so it reads and
+' sets its globals and calls its SUBs:
+'   bpm, SOUND.BPM bpm              tempo
+'   SELECT_PATCH(i)                 lead patch i of the bank (0-based)
+'   SOUND.PARAM(1, "CUTOFF", 2400)  any parameter; track 1 lead, 0 bass, 2 drums
+'   SOUND.MATRIX("LFO1", 1, "CUTOFF", 0.4)   a modulation slot
+'   DRUM_ROW("hh", "x.x.x.x.x.x.x.x.")       one drum row, one char per 16th,
+'                                            repeated over the loop
+'   SET_BARS(2), LOOP_PLAY(), LOOP_STOP(), CLEAR_LOOP()
+' Tracks 0-3 belong to the synth and the looper. Tracks 4-15 are free for
+' patterns of your own; the program never touches them:
+'   SOUND.VOICE 4, "SQUARE", 0.01, 0.1, 0.5, 0.2
+'   SOUND.SEQ 4, "<c5 e5 g5 b4>*4", "VOICE"
+' A FUNC or LAMBDA written here sees only what this file defines; give it
+' what it needs as parameters.
+
+' Everything below is an example; every line is a comment until you remove
+' the quote in front of it.
+
+' bpm = 118
+' SOUND.BPM bpm
+' DRUM_ROW("bd", "x...x...x...x...")
+' DRUM_ROW("hh", "..x...x...x...x.")
+' SOUND.PARAM(1, "REVERB", 0.4)
+' SOUND.VOICE 4, "TRIANGLE", 0.01, 0.2, 0.4, 0.3
+' SOUND.SEQ 4, "~ [e5 g5] ~ b5", "VOICE"
+' SAY("live: groove 1")
