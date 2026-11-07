@@ -1,0 +1,177 @@
+' ============================================================
+' JAMCORE: loop recording as data - arming, the first bar, quantizing,
+' note lengths, passes as takes, undo, clear, loop length, scenes, and
+' the patterns rendered offline with the notes on the grid.
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' Time is fed as sequencer cycles, so nothing waits on a clock.
+
+IMPORT JAMCORE
+
+DIM PASS_COUNT = 0
+DIM FAIL_COUNT = 0
+
+SUB CHECK(name$, cond, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+' a 16th as cycles
+CONST SX = 1 / 16
+
+FUNC STARTS(evs)
+    DIM out = []
+    FOR EACH ev IN evs
+        out = APPEND(out, ev{"start"})
+    NEXT ev
+    RETURN out
+ENDFUNC
+
+DIM jam = JAMCORE.NEW(["DRUMS", "BASS", "LEAD"], [TRUE, FALSE, FALSE], 1)
+JAMCORE.PAD(jam, 36, "bd")
+JAMCORE.PAD(jam, 37, "sd")
+
+' ---------- arming ----------
+JAMCORE.KEY_DOWN(jam, 2, 60, 100, 0.2)
+JAMCORE.KEY_UP(jam, 2, 60, 0.3)
+CHECK "nothing records before REC", LEN(JAMCORE.EVENTS(jam, 2)) = 0, ""
+JAMCORE.REC(jam, 4.3)
+CHECK "REC arms", JAMCORE.REC_STATE$(jam, 4.5) = "armed", JAMCORE.REC_STATE$(jam, 4.5)
+JAMCORE.KEY_DOWN(jam, 0, 36, 100, 4.5)
+CHECK "a hit in the count-in bar is not recorded", LEN(JAMCORE.EVENTS(jam, 0)) = 0, ""
+JAMCORE.KEY_DOWN(jam, 0, 36, 100, 5 - 0.02)
+CHECK "a hit just before the bar lands on its first step", JAMCORE.REC_STATE$(jam, 5) = "on" ANDALSO LEN(JAMCORE.EVENTS(jam, 0)) = 1 ANDALSO JAMCORE.EVENTS(jam, 0)[0]{"start"} = 0, JSON.STRINGIFY$(JAMCORE.EVENTS(jam, 0))
+
+' ---------- quantizing and lengths ----------
+JAMCORE.KEY_DOWN(jam, 0, 37, 90, 5 + 4 * SX + 0.01)
+JAMCORE.KEY_DOWN(jam, 0, 42, 90, 5 + 8 * SX - 0.01)
+JAMCORE.KEY_DOWN(jam, 0, 99, 90, 5 + 9 * SX)
+DIM kit = JAMCORE.EVENTS(jam, 0)
+CHECK "hits land on the nearest 16th", JSON.STRINGIFY$(STARTS(kit)) = "[0,4,8]", JSON.STRINGIFY$(STARTS(kit))
+CHECK "a note without a drum is left out", LEN(kit) = 3, STR$(LEN(kit))
+CHECK "an unmapped note plays its General MIDI drum", kit[2]{"note"} = "hh", kit[2]{"note"}
+CHECK "a pad plays its mapped sound", kit[1]{"note"} = "sd", kit[1]{"note"}
+
+JAMCORE.KEY_DOWN(jam, 1, 45, 100, 5 + 2 * SX)
+JAMCORE.KEY_UP(jam, 1, 45, 5 + 5.8 * SX)
+JAMCORE.KEY_DOWN(jam, 1, 48, 100, 5 + 12 * SX)
+JAMCORE.KEY_UP(jam, 1, 48, 5 + 12.1 * SX)
+JAMCORE.KEY_DOWN(jam, 1, 52, 100, 5 + 14 * SX)
+JAMCORE.KEY_UP(jam, 1, 52, 6 + 3 * SX)
+DIM bass = JAMCORE.EVENTS(jam, 1)
+CHECK "a held key keeps its length", bass[0]{"len"} = 4 ANDALSO bass[0]{"note"} = "a2", JSON.STRINGIFY$(bass[0])
+CHECK "a short tap lasts a 16th", bass[1]{"len"} = 1, JSON.STRINGIFY$(bass[1])
+CHECK "a note past the loop end stops there", bass[2]{"start"} = 14 ANDALSO bass[2]{"len"} = 2, JSON.STRINGIFY$(bass[2])
+CHECK "the bass pattern spans the bar", JAMCORE.PATTERN$(jam, 1) = "legato(1,  ~@2 a2@4 ~@6 c3@1 ~@1 e3@2)", JAMCORE.PATTERN$(jam, 1)
+CHECK "the kit pattern names a sound per step", JAMCORE.PATTERN$(jam, 0) = "bd ~ ~ ~ sd ~ ~ ~ hh ~ ~ ~ ~ ~ ~ ~", JAMCORE.PATTERN$(jam, 0)
+
+' ---------- passes and undo ----------
+JAMCORE.KEY_DOWN(jam, 0, 36, 100, 6 + 8 * SX)
+JAMCORE.KEY_DOWN(jam, 0, 36, 100, 7 + 12 * SX)
+JAMCORE.KEY_DOWN(jam, 0, 36, 100, 7 + 8 * SX)
+CHECK "overdub stacks on the same step", INSTR(JAMCORE.PATTERN$(jam, 0), "[hh,bd]") >= 0, JAMCORE.PATTERN$(jam, 0)
+CHECK "undo removes the last pass only", JAMCORE.UNDO(jam) = 2 ANDALSO LEN(JAMCORE.EVENTS(jam, 0)) = 4, STR$(LEN(JAMCORE.EVENTS(jam, 0)))
+CHECK "undo again removes the pass before", JAMCORE.UNDO(jam) = 1 ANDALSO LEN(JAMCORE.EVENTS(jam, 0)) = 3, STR$(LEN(JAMCORE.EVENTS(jam, 0)))
+DIM before_first = LEN(JAMCORE.EVENTS(jam, 1))
+CHECK "and then the first pass, keys and pads", JAMCORE.UNDO(jam) = 6 ANDALSO LEN(JAMCORE.EVENTS(jam, 0)) = 0 ANDALSO LEN(JAMCORE.EVENTS(jam, 1)) = 0, STR$(before_first)
+CHECK "undo with nothing left removes nothing", JAMCORE.UNDO(jam) = 0, ""
+
+' ---------- REC off closes held keys ----------
+JAMCORE.KEY_DOWN(jam, 2, 64, 100, 8 + 2 * SX)
+JAMCORE.REC(jam, 8 + 6 * SX)
+CHECK "REC off ends a held key there", LEN(JAMCORE.EVENTS(jam, 2)) = 1 ANDALSO JAMCORE.EVENTS(jam, 2)[0]{"len"} = 4, JSON.STRINGIFY$(JAMCORE.EVENTS(jam, 2))
+CHECK "and recording is off", JAMCORE.REC_STATE$(jam, 9) = "off", ""
+JAMCORE.KEY_DOWN(jam, 2, 65, 100, 9)
+JAMCORE.KEY_UP(jam, 2, 65, 9.5)
+CHECK "keys after REC off are not recorded", LEN(JAMCORE.EVENTS(jam, 2)) = 1, ""
+DIM lead_take = JAMCORE.EVENTS(jam, 2)[0]{"take"}
+JAMCORE.REC(jam, 9.1)
+JAMCORE.KEY_DOWN(jam, 0, 36, 100, 10)
+CHECK "a new recording is a new take", JAMCORE.EVENTS(jam, 0)[0]{"take"} > lead_take, ""
+JAMCORE.REC(jam, 10.5)
+
+' ---------- clear and loop length ----------
+JAMCORE.CLEAR_TRACK(jam, 2)
+CHECK "clear empties one track", LEN(JAMCORE.EVENTS(jam, 2)) = 0 ANDALSO LEN(JAMCORE.EVENTS(jam, 0)) = 1, ""
+JAMCORE.SET_BARS(jam, 4)
+CHECK "a longer loop repeats what is there", JSON.STRINGIFY$(STARTS(JAMCORE.EVENTS(jam, 0))) = "[0,16,32,48]", JSON.STRINGIFY$(STARTS(JAMCORE.EVENTS(jam, 0)))
+DIM bar$ = "bd" + REPLACE$(SPACE$(15), " ", " ~")
+CHECK "and is slowed over its bars", JAMCORE.PATTERN$(jam, 0) = "[" + bar$ + " " + bar$ + " " + bar$ + " " + bar$ + "]/4", JAMCORE.PATTERN$(jam, 0)
+JAMCORE.SET_BARS(jam, 2)
+CHECK "a shorter one keeps the first bars", JSON.STRINGIFY$(STARTS(JAMCORE.EVENTS(jam, 0))) = "[0,16]", JSON.STRINGIFY$(STARTS(JAMCORE.EVENTS(jam, 0)))
+
+JAMCORE.REC(jam, 11.5)
+JAMCORE.KEY_DOWN(jam, 0, 37, 100, 13 + 4 * SX)
+JAMCORE.REC(jam, 13.9)
+CHECK "in a 2-bar loop an odd bar is its second half", JAMCORE.EVENTS(jam, 0)[2]{"start"} = 20, JSON.STRINGIFY$(JAMCORE.EVENTS(jam, 0))
+
+' ---------- scenes ----------
+JAMCORE.SELECT_SCENE(jam, 1)
+CHECK "a new scene is empty", JAMCORE.PATTERN$(jam, 0) = "~" ANDALSO JAMCORE.SCENE_COUNT(jam) = 2, ""
+CHECK "with the default length", JAMCORE.BARS(jam) = 1, STR$(JAMCORE.BARS(jam))
+JAMCORE.SELECT_SCENE(jam, 0)
+CHECK "the first scene keeps its loop", LEN(JAMCORE.EVENTS(jam, 0)) = 3 ANDALSO JAMCORE.BARS(jam) = 2, ""
+
+' ---------- played offline: the notes on the grid ----------
+' Onset frames: where the level rises above thr after `quiet` frames below
+FUNC ONSETS(buf, thr, quiet)
+    DIM mono = ABS(buf[IOTA(LEN(buf) / 2, 0) * 2])
+    DIM out = []
+    DIM last_loud = -quiet - 1
+    FOR i = 0 TO LEN(mono) - 1
+        IF mono[i] > thr THEN
+            IF i - last_loud > quiet THEN out = APPEND(out, i)
+            last_loud = i
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+IF OS.FEATURE("SOUND") THEN
+    SOUND.INIT "PULL"
+    SOUND.RESET
+    SOUND.BPM 120
+    SOUND.KIT 0, "SYNTH"
+    SOUND.VOICE 1, "SAW", 0.001, 0.05, 0.8, 0.01
+    DIM grid = JAMCORE.NEW(["DRUMS", "BASS"], [TRUE, FALSE], 2)
+    JAMCORE.REC(grid, -0.5)
+    JAMCORE.KEY_DOWN(grid, 0, 36, 100, 0)
+    JAMCORE.KEY_DOWN(grid, 0, 36, 100, 1 + 4 * SX)
+    JAMCORE.KEY_DOWN(grid, 1, 45, 100, 6 * SX)
+    JAMCORE.KEY_UP(grid, 1, 45, 10 * SX)
+    JAMCORE.REC(grid, 2)
+    SOUND.SEQ 0, JAMCORE.PATTERN$(grid, 0), "VOICE"
+    DIM b = SOUND.RENDER(4 * 88200)
+    ' 120 BPM: a bar is 88200 frames, a 16th 5512.5
+    DIM hits = ONSETS(b, 0.05, 20000)
+    CHECK "the kit loop plays its two hits a loop", LEN(hits) = 4, JSON.STRINGIFY$(hits)
+    IF LEN(hits) = 4 THEN
+        CHECK "a bar and four 16ths apart", ABS(hits[1] - hits[0] - 88200 - 4 * 5512.5) < 200, STR$(hits[1] - hits[0])
+        CHECK "and the loop repeats after two bars", ABS(hits[2] - hits[0] - 2 * 88200) < 200, STR$(hits[2] - hits[0])
+    ENDIF
+    SOUND.SEQ 0, "~", "VOICE"
+    b = SOUND.RENDER(2 * 88200)
+    SOUND.SEQ 0, "bd ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~", "VOICE"
+    SOUND.SEQ 1, JAMCORE.PATTERN$(grid, 1), "VOICE"
+    b = SOUND.RENDER(4 * 88200)
+    DIM ons = ONSETS(b, 0.05, 2000)
+    ' the kick marks each bar; the bass note starts 6 16ths into the loop
+    DIM found = FALSE
+    FOR EACH o IN ons
+        FOR EACH k IN ons
+            IF ABS(o - k - 6 * 5512.5) < 300 THEN found = TRUE
+        NEXT k
+    NEXT o
+    CHECK "the bass note starts six 16ths after the bar", found, JSON.STRINGIFY$(ons)
+    SOUND.SEQ 0, "~", "VOICE"
+    SOUND.SEQ 1, "~", "VOICE"
+    SOUND.RESET
+ELSE
+    PRINT "SKIP: build has no SOUND sequencer (offline render checks)"
+ENDIF
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

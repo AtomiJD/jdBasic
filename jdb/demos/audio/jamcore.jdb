@@ -1,0 +1,312 @@
+' jamcore.jdb - the loops of a jam as data: tracks, scenes, takes.
+'
+'   IMPORT JAMCORE
+'   DIM jam = JAMCORE.NEW(["DRUMS", "BASS", "LEAD"], [TRUE, FALSE, FALSE], 4)
+'   JAMCORE.REC(jam, SOUND.CYCLE())          ' armed, records from the next bar
+'   JAMCORE.KEY_DOWN(jam, 1, 60, 100, t)     ' track, note, velocity, cycle
+'   JAMCORE.KEY_UP(jam, 1, 60, t)
+'   SOUND.SEQ 1, JAMCORE.PATTERN$(jam, 1), "VOICE"
+'
+' Time is the sequencer clock in cycles (one cycle a bar), as heard: the
+' caller subtracts the output delay. A loop of n bars repeats on the
+' cycles that are multiples of n, so it lines up with SOUND.SEQ "[...]/n".
+' Notes land on the nearest 16th. Every pass of the loop while recording
+' is a take of its own: UNDO removes the last pass that added notes.
+' A kit track records a hit at the key-down, its sound named from the note.
+
+EXPORT MODULE JAMCORE
+
+DIM NOTE_NAMES$ = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"]
+
+' General MIDI drum notes and the SOUND.KIT name each one plays
+FUNC GM_DRUM$(note)
+    IF note = 35 ORELSE note = 36 THEN RETURN "bd"
+    IF note = 37 THEN RETURN "rim"
+    IF note = 38 ORELSE note = 40 THEN RETURN "sd"
+    IF note = 39 THEN RETURN "cp"
+    IF note = 41 ORELSE note = 43 ORELSE note = 45 THEN RETURN "lt"
+    IF note = 47 ORELSE note = 48 THEN RETURN "mt"
+    IF note = 50 THEN RETURN "ht"
+    IF note = 42 ORELSE note = 44 THEN RETURN "hh"
+    IF note = 46 THEN RETURN "oh"
+    IF note = 49 ORELSE note = 51 ORELSE note = 52 ORELSE note = 55 ORELSE note = 57 ORELSE note = 59 THEN RETURN "cr"
+    IF note = 56 THEN RETURN "cb"
+    IF note = 75 THEN RETURN "cl"
+    IF note = 69 ORELSE note = 70 ORELSE note = 82 THEN RETURN "sh"
+    RETURN ""
+ENDFUNC
+
+' A jam with the named tracks (kit flags say which are drum kits), one
+' empty scene of `bars` bars
+EXPORT FUNC NEW(names, kits, bars)
+    DIM jam = {"names": names, "kits": kits, "steps": 16, "default_bars": bars, "scenes": [], "scene": 0}
+    jam{"rec"} = "off"
+    jam{"rec_from"} = 0
+    jam{"rec_take"} = 0
+    jam{"next_take"} = 1
+    jam{"takes"} = []
+    jam{"held"} = {}
+    jam{"pads"} = {}
+    jam{"scenes"} = APPEND(jam{"scenes"}, NEW_SCENE(bars))
+    RETURN jam
+ENDFUNC
+
+FUNC NEW_SCENE(bars)
+    RETURN {"bars": bars, "events": []}
+ENDFUNC
+
+' The kit sound a note plays on a kit track: a pad mapped with PAD, else
+' its General MIDI drum ("" for none)
+EXPORT FUNC SOUND_OF$(jam, note)
+    DIM pads = jam{"pads"}
+    IF MAP.EXISTS(pads, STR$(note)) THEN RETURN pads{STR$(note)}
+    RETURN GM_DRUM$(note)
+ENDFUNC
+
+' Names the kit sound of a pad note, as SOUND.PADMAP does
+EXPORT SUB PAD(jam, note, name$)
+    DIM pads = jam{"pads"}
+    pads{STR$(note)} = name$
+ENDSUB
+
+EXPORT FUNC SCENE_COUNT(jam)
+    RETURN LEN(jam{"scenes"})
+ENDFUNC
+
+' Makes scene i current, adding empty scenes up to it
+EXPORT SUB SELECT_SCENE(jam, i)
+    DO WHILE LEN(jam{"scenes"}) <= i
+        jam{"scenes"} = APPEND(jam{"scenes"}, NEW_SCENE(jam{"default_bars"}))
+    LOOP
+    jam{"scene"} = i
+ENDSUB
+
+FUNC CUR_SCENE(jam)
+    RETURN jam{"scenes"}[jam{"scene"}]
+ENDFUNC
+
+EXPORT FUNC BARS(jam)
+    RETURN CUR_SCENE(jam){"bars"}
+ENDFUNC
+
+FUNC N_STEPS(jam)
+    RETURN CUR_SCENE(jam){"bars"} * jam{"steps"}
+ENDFUNC
+
+' ---------------------------------------------------------------- recording
+
+' REC: off -> armed (records from the next bar), armed or on -> off
+EXPORT SUB REC(jam, at_t)
+    IF jam{"rec"} = "off" THEN
+        jam{"rec"} = "armed"
+        jam{"rec_from"} = FLOOR(at_t) + 1
+        jam{"rec_take"} = jam{"next_take"}
+    ELSE
+        CLOSE_HELD(jam, at_t)
+        jam{"rec"} = "off"
+    ENDIF
+ENDSUB
+
+' "off", "armed" or "on", as it is at `at_t`
+EXPORT FUNC REC_STATE$(jam, at_t)
+    IF jam{"rec"} = "armed" ANDALSO at_t >= jam{"rec_from"} - EARLY(jam) THEN jam{"rec"} = "on"
+    RETURN jam{"rec"}
+ENDFUNC
+
+' Half a 16th: a key this early on the first bar still counts
+FUNC EARLY(jam)
+    RETURN 0.5 / jam{"steps"}
+ENDFUNC
+
+FUNC TAKE_AT(jam, t)
+    DIM pass = FLOOR((t - jam{"rec_from"} + EARLY(jam)) / BARS(jam))
+    IF pass < 0 THEN pass = 0
+    RETURN jam{"rec_take"} + pass
+ENDFUNC
+
+' The step of the loop that time t falls on (nearest 16th)
+FUNC STEP_AT(jam, t)
+    DIM n = N_STEPS(jam)
+    DIM bars = BARS(jam)
+    DIM in_loop = t - FLOOR(t / bars) * bars
+    DIM s = INT(in_loop * jam{"steps"} + 0.5)
+    RETURN s MOD n
+ENDFUNC
+
+SUB ADD_EVENT(jam, trk, note$, start, length, vel, take_id)
+    DIM sc = CUR_SCENE(jam)
+    sc{"events"} = APPEND(sc{"events"}, {"trk": trk, "note": note$, "start": start, "len": length, "vel": vel, "take": take_id})
+    DIM takes = jam{"takes"}
+    IF LEN(takes) = 0 ORELSE takes[LEN(takes) - 1] <> take_id THEN jam{"takes"} = APPEND(takes, take_id)
+    IF take_id >= jam{"next_take"} THEN jam{"next_take"} = take_id + 1
+ENDSUB
+
+EXPORT SUB KEY_DOWN(jam, trk, note, vel, at_t)
+    IF REC_STATE$(jam, at_t) <> "on" THEN RETURN
+    IF jam{"kits"}[trk] THEN
+        DIM name$ = SOUND_OF$(jam, note)
+        IF name$ <> "" THEN ADD_EVENT(jam, trk, name$, STEP_AT(jam, at_t), 1, vel, TAKE_AT(jam, at_t))
+        RETURN
+    ENDIF
+    DIM held = jam{"held"}
+    held{STR$(trk) + ":" + STR$(note)} = {"t": at_t, "vel": vel}
+ENDSUB
+
+' A held key becomes a note of at least one 16th; one that would run past
+' the loop end stops there
+EXPORT SUB KEY_UP(jam, trk, note, at_t)
+    DIM held = jam{"held"}
+    DIM k$ = STR$(trk) + ":" + STR$(note)
+    IF NOT MAP.EXISTS(held, k$) THEN RETURN
+    DIM h = held{k$}
+    MAP.DELETE(held, k$)
+    IF note < 12 ORELSE note > 119 THEN RETURN
+    DIM s0 = STEP_AT(jam, h{"t"})
+    DIM ln = INT((at_t - h{"t"}) * jam{"steps"} + 0.5)
+    IF ln < 1 THEN ln = 1
+    IF ln > N_STEPS(jam) - s0 THEN ln = N_STEPS(jam) - s0
+    ADD_EVENT(jam, trk, NOTE_NAMES$[note MOD 12] + STR$(INT(note / 12) - 1), s0, ln, h{"vel"}, TAKE_AT(jam, h{"t"}))
+ENDSUB
+
+' Ends every held key at `at_t`
+EXPORT SUB CLOSE_HELD(jam, at_t)
+    DIM held = jam{"held"}
+    FOR EACH k$ IN MAP.KEYS(held)
+        DIM parts = SPLIT(k$, ":")
+        KEY_UP(jam, VAL(parts[0]), VAL(parts[1]), at_t)
+    NEXT k$
+ENDSUB
+
+' Removes the last take; answers how many notes went with it
+EXPORT FUNC UNDO(jam)
+    DIM takes = jam{"takes"}
+    IF LEN(takes) = 0 THEN RETURN 0
+    DIM last = takes[LEN(takes) - 1]
+    jam{"takes"} = takes[IOTA(LEN(takes) - 1, 0)]
+    DIM removed = 0
+    FOR EACH sc IN jam{"scenes"}
+        DIM keep = []
+        FOR EACH ev IN sc{"events"}
+            IF ev{"take"} = last THEN
+                removed = removed + 1
+            ELSE
+                keep = APPEND(keep, ev)
+            ENDIF
+        NEXT ev
+        sc{"events"} = keep
+    NEXT sc
+    RETURN removed
+ENDFUNC
+
+' Empties one track of the current scene
+EXPORT SUB CLEAR_TRACK(jam, trk)
+    DIM sc = CUR_SCENE(jam)
+    DIM keep = []
+    FOR EACH ev IN sc{"events"}
+        IF ev{"trk"} <> trk THEN keep = APPEND(keep, ev)
+    NEXT ev
+    sc{"events"} = keep
+ENDSUB
+
+' The notes of one track in the current scene
+EXPORT FUNC EVENTS(jam, trk)
+    DIM out = []
+    FOR EACH ev IN CUR_SCENE(jam){"events"}
+        IF ev{"trk"} = trk THEN out = APPEND(out, ev)
+    NEXT ev
+    RETURN out
+ENDFUNC
+
+' Sets the loop length of the current scene: longer repeats what is
+' there, shorter keeps the first bars
+EXPORT SUB SET_BARS(jam, bars)
+    DIM sc = CUR_SCENE(jam)
+    DIM old = sc{"bars"}
+    IF bars = old ORELSE bars < 1 THEN RETURN
+    DIM old_n = old * jam{"steps"}
+    DIM new_n = bars * jam{"steps"}
+    DIM out = []
+    FOR EACH ev IN sc{"events"}
+        DIM c = 0
+        DO WHILE ev{"start"} + c * old_n < new_n
+            DIM copy = {"trk": ev{"trk"}, "note": ev{"note"}, "start": ev{"start"} + c * old_n, "len": ev{"len"}, "vel": ev{"vel"}, "take": ev{"take"}}
+            IF copy{"start"} + copy{"len"} > new_n THEN copy{"len"} = new_n - copy{"start"}
+            out = APPEND(out, copy)
+            c = c + 1
+            IF bars <= old THEN EXITDO
+        LOOP
+    NEXT ev
+    sc{"events"} = out
+    sc{"bars"} = bars
+ENDSUB
+
+' ---------------------------------------------------------------- patterns
+
+FUNC SLOWED$(jam, steps$)
+    IF BARS(jam) = 1 THEN RETURN steps$
+    RETURN "[" + steps$ + "]/" + STR$(BARS(jam))
+ENDFUNC
+
+' A kit track: per step a rest, a sound, or [a,b] stacked
+FUNC KIT_PATTERN$(jam, evs)
+    DIM n = N_STEPS(jam)
+    DIM cells$ = []
+    FOR s = 0 TO n - 1
+        cells$ = APPEND(cells$, "")
+    NEXT s
+    FOR EACH ev IN evs
+        DIM s0 = ev{"start"}
+        IF INSTR("," + cells$[s0] + ",", "," + ev{"note"} + ",") < 0 THEN cells$[s0] = cells$[s0] + IIF(cells$[s0] = "", "", ",") + ev{"note"}
+    NEXT ev
+    DIM steps$ = ""
+    FOR s = 0 TO n - 1
+        DIM c$ = cells$[s]
+        IF c$ = "" THEN
+            c$ = "~"
+        ELSEIF INSTR(c$, ",") >= 0 THEN
+            c$ = "[" + c$ + "]"
+        ENDIF
+        steps$ = steps$ + IIF(s > 0, " ", "") + c$
+    NEXT s
+    RETURN SLOWED$(jam, steps$)
+ENDFUNC
+
+' A melodic track as stacked lanes; in each lane a note lasts its length
+' (name@len) and the gaps are weighted rests, so a lane spans the loop
+FUNC NOTE_PATTERN$(jam, evs)
+    DIM n = N_STEPS(jam)
+    DIM starts = []
+    FOR EACH ev IN evs
+        starts = APPEND(starts, ev{"start"})
+    NEXT ev
+    DIM lanes$ = []
+    DIM lane_end = []
+    FOR EACH i IN GRADE(starts)
+        DIM ev = evs[i]
+        DIM k = -1
+        FOR l = 0 TO LEN(lane_end) - 1
+            IF k < 0 ANDALSO lane_end[l] <= ev{"start"} THEN k = l
+        NEXT l
+        IF k < 0 THEN
+            lanes$ = APPEND(lanes$, "")
+            lane_end = APPEND(lane_end, 0)
+            k = LEN(lane_end) - 1
+        ENDIF
+        DIM gap = ev{"start"} - lane_end[k]
+        IF gap > 0 THEN lanes$[k] = lanes$[k] + " ~@" + STR$(gap)
+        lanes$[k] = lanes$[k] + " " + ev{"note"} + "@" + STR$(ev{"len"})
+        lane_end[k] = ev{"start"} + ev{"len"}
+    NEXT i
+    FOR l = 0 TO LEN(lane_end) - 1
+        IF lane_end[l] < n THEN lanes$[l] = lanes$[l] + " ~@" + STR$(n - lane_end[l])
+    NEXT l
+    RETURN "legato(1, " + SLOWED$(jam, JOIN(lanes$, ",")) + ")"
+ENDFUNC
+
+' What SOUND.SEQ plays for track trk of the current scene ("~" when empty)
+EXPORT FUNC PATTERN$(jam, trk)
+    DIM evs = EVENTS(jam, trk)
+    IF LEN(evs) = 0 THEN RETURN "~"
+    IF jam{"kits"}[trk] THEN RETURN KIT_PATTERN$(jam, evs)
+    RETURN NOTE_PATTERN$(jam, evs)
+ENDFUNC

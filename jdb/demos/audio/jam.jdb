@@ -1,0 +1,405 @@
+' jam.jdb - a loop groovebox played from the Oxygen 61: six tracks, loops
+' recorded at the bar with a count-in, layered pass by pass, undone pass by
+' pass, in scenes.
+' Usage: jdBasic jam.jdb [fast] [console]
+'   fast      takes the audio device alone (MON.SYNTH exclusive)
+'   console   no window, status on the console
+'
+' Tracks: DRUMS BASS ARP CHORDS LEAD FX. The keys play the selected track,
+' the pads (DAW mode) always play DRUMS.
+'   MODE < >          previous / next track
+'   PLAY              play the scene from its first bar
+'   STOP              stop (and stop recording)
+'   REC               record from the next bar (from a stop: one bar of
+'                     count-in first); again stops recording
+'   LOOP              undo the last pass
+'   LOOP + STOP       clear the selected track of this scene
+'   LOOP + MODE < >   previous / next scene
+'   LOOP + PLAY       loop length of this scene: 1, 2, 4, 8 bars
+'   faders 1-6        track levels      knobs 1-6  sound of the selected track
+' On the PC: space play/stop, R rec, U undo, C clear, [ ] track, 1-8 scene,
+' B loop length, F fullscreen, Esc quit.
+
+IMPORT SYNTHPATCH
+IMPORT JAMCORE
+
+DIM fast = FALSE
+DIM panel = TRUE
+FOR EACH a$ IN OS.ARGS()[IOTA(LEN(OS.ARGS()) - 1)]
+    IF LCASE$(a$) = "fast" THEN fast = TRUE
+    IF LCASE$(a$) = "console" THEN panel = FALSE
+NEXT a$
+
+DIM here$ = PATH.DIRNAME$(OS.ARGS()[0])
+DIM cfg = JSON.PARSE(TXTREADER$(here$ + "/oxygen61.json"))
+DIM bank = SYNTHPATCH.LOAD_BANK(here$ + "/oxygen_patches.json")
+
+DIM track_names$ = ["DRUMS", "BASS", "ARP", "CHORDS", "LEAD", "FX"]
+DIM track_kits = [TRUE, FALSE, FALSE, FALSE, FALSE, FALSE]
+DIM track_patch$ = ["", "", "neon_pluck", "pad", "neon_lead", "wavescan"]
+DIM track_transpose = [0, -12, 0, 0, 0, 0]
+DIM n_tracks = LEN(track_names$)
+CONST DRUMS = 0
+CONST CLICK = 6
+DIM bar_choices = [1, 2, 4, 8]
+
+DIM jam = JAMCORE.NEW(track_names$, track_kits, 4)
+DIM pad_notes = cfg{"pads"}{"daw"}{"notes"}
+DIM pad_sounds$ = ["bd", "sd", "hh", "oh", "cp", "rim", "lt", "cr"]
+
+FUNC PORT_INDEX(names, wanted$)
+    FOR i = 0 TO LEN(names) - 1
+        IF STARTSWITH(names[i], wanted$) THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+DIM ins = MIDI.PORTS(){"in"}
+DIM main_idx = PORT_INDEX(ins, cfg{"ports"}{"main"})
+DIM daw_idx = PORT_INDEX(ins, cfg{"ports"}{"daw"})
+IF main_idx < 0 THEN
+    PRINT "Keyboard port not found: " + cfg{"ports"}{"main"}
+    PRINT ins
+    END
+ENDIF
+
+DIM out_ms = 0
+IF fast THEN
+    SOUND.INIT "PULL"
+    out_ms = MON.SYNTH(128, -1, TRUE)
+    IF out_ms < 0 THEN out_ms = MON.SYNTH(128)
+ELSE
+    SOUND.INIT
+ENDIF
+
+' ---- the instruments ----
+SOUND.KIT DRUMS, "SYNTH"
+SOUND.GAIN DRUMS, 0.9
+FOR i = 0 TO LEN(pad_notes) - 1
+    SOUND.PADMAP DRUMS, pad_notes[i], pad_sounds$[i]
+    JAMCORE.PAD(jam, pad_notes[i], pad_sounds$[i])
+NEXT i
+SOUND.VOICE 1, "SAW", 0.005, 0.25, 0.6, 0.15
+SOUND.FILTER 1, 900, 0.3, "LP"
+SOUND.GLIDE 1, 60
+SOUND.GAIN 1, 0.7
+FOR t = 2 TO n_tracks - 1
+    DIM bank_i = SYNTHPATCH.FIND(bank, track_patch$[t])
+    IF bank_i >= 0 THEN SYNTHPATCH.APPLY t, bank[bank_i]
+NEXT t
+SOUND.KIT CLICK, "SYNTH"
+SOUND.GAIN CLICK, 0.35
+
+DIM bpm = 110
+SOUND.BPM bpm
+FOR t = 0 TO CLICK
+    SOUND.SEQ t, "~", "VOICE"
+NEXT t
+
+DIM sel = 4
+DIM playing = FALSE
+DIM status$ = ""
+DIM click_on = FALSE
+
+SUB SAY(msg$)
+    status$ = msg$
+    IF NOT panel THEN PRINT msg$
+ENDSUB
+
+' The keys play the selected track; the pads, moved to channel 10, the drums
+SUB APPLY_ZONES()
+    SOUND.ZONE -1
+    DIM opts = {"vel_cutoff": 1.5}
+    IF sel = 1 THEN opts = {"mono": TRUE, "legato": TRUE}
+    SOUND.ZONE sel, 0, 127, 1, track_transpose[sel], opts
+    IF sel <> DRUMS THEN SOUND.ZONE DRUMS, 0, 127, 10
+ENDSUB
+
+DIM knob = cfg{"knobs"}{"daw"}{"cc"}
+DIM fader = cfg{"faders"}{"daw"}{"cc"}
+' knobs 1-6 on the selected track: param, lo, hi, curve
+DIM knob_map = [["CUTOFF", 150, 9000, "EXP"], ["RESONANCE", 0, 0.9, "LIN"], ["ATTACK", 0.002, 1.5, "EXP"], ["RELEASE", 0.02, 3, "EXP"], ["REVERB", 0, 0.8, "LIN"], ["DELAY", 0, 0.8, "LIN"]]
+
+SUB MAP_CONTROLS()
+    SOUND.CCMAP -1
+    FOR t = 0 TO n_tracks - 1
+        SOUND.CCMAP fader[t], t, "GAIN", 0, 1, "LIN"
+    NEXT t
+    FOR k = 0 TO LEN(knob_map) - 1
+        DIM m = knob_map[k]
+        SOUND.CCMAP knob[k], sel, m[0], m[1], m[2], m[3]
+    NEXT k
+ENDSUB
+
+SUB SELECT_TRACK(t)
+    sel = (t + n_tracks) MOD n_tracks
+    APPLY_ZONES()
+    MAP_CONTROLS()
+    SAY("Keys play " + track_names$[sel])
+ENDSUB
+
+' ---- loops into the sequencer ----
+' Where the music leaving the speaker is, in cycles
+FUNC HEARD()
+    RETURN SOUND.CYCLE() - (out_ms / 1000 + 0.01) * bpm / 240
+ENDFUNC
+
+SUB SEND_TRACK(t)
+    IF playing THEN
+        SOUND.SEQ t, JAMCORE.PATTERN$(jam, t), "VOICE"
+    ELSE
+        SOUND.SEQ t, "~", "VOICE"
+    ENDIF
+ENDSUB
+
+SUB SEND_ALL()
+    FOR t = 0 TO n_tracks - 1
+        SEND_TRACK(t)
+    NEXT t
+ENDSUB
+
+SUB SET_CLICK(want)
+    IF want = click_on THEN RETURN
+    click_on = want
+    SOUND.SEQ CLICK, IIF(want, "cl ~ ~ ~ rim ~ ~ ~ rim ~ ~ ~ rim ~ ~ ~", "~"), "VOICE"
+ENDSUB
+
+' The loop starts on its first bar: the clock jumps to the next multiple
+' of its length (count_in: one bar before it, with the click)
+SUB START(count_in)
+    DIM bars = JAMCORE.BARS(jam)
+    DIM first = (FLOOR(SOUND.CYCLE() / bars) + 2) * bars
+    playing = TRUE
+    IF count_in THEN
+        SOUND.SEEK first - 1
+        SOUND.AT
+        SET_CLICK(TRUE)
+        SOUND.AT first
+        SEND_ALL()
+        SOUND.AT
+    ELSE
+        SOUND.SEEK first
+        SOUND.AT
+        SEND_ALL()
+    ENDIF
+ENDSUB
+
+SUB PLAY()
+    IF playing THEN RETURN
+    START(FALSE)
+    SAY("Playing scene " + STR$(jam{"scene"} + 1) + " at " + STR$(bpm) + " BPM")
+ENDSUB
+
+SUB STOP_ALL()
+    IF JAMCORE.REC_STATE$(jam, HEARD()) <> "off" THEN JAMCORE.REC(jam, HEARD())
+    playing = FALSE
+    SEND_ALL()
+    SET_CLICK(FALSE)
+    SAY("Stopped")
+ENDSUB
+
+SUB REC_TOGGLE()
+    IF JAMCORE.REC_STATE$(jam, HEARD()) <> "off" THEN
+        JAMCORE.REC(jam, HEARD())
+        SET_CLICK(FALSE)
+        SEND_ALL()
+        SAY("Recording off, the loop plays on")
+        RETURN
+    ENDIF
+    IF playing THEN
+        JAMCORE.REC(jam, HEARD())
+        SET_CLICK(TRUE)
+    ELSE
+        START(TRUE)
+        JAMCORE.REC(jam, SOUND.CYCLE() + 0.5)
+    ENDIF
+    SAY("Recording " + track_names$[sel] + " from the next bar")
+ENDSUB
+
+SUB UNDO()
+    DIM n = JAMCORE.UNDO(jam)
+    SEND_ALL()
+    SAY(IIF(n > 0, "Undo: " + STR$(n) + " notes of the last pass", "Nothing to undo"))
+ENDSUB
+
+SUB CLEAR_SEL()
+    JAMCORE.CLEAR_TRACK(jam, sel)
+    SEND_TRACK(sel)
+    SAY(track_names$[sel] + " cleared in scene " + STR$(jam{"scene"} + 1))
+ENDSUB
+
+SUB SCENE(i)
+    IF i < 0 ORELSE i > 7 THEN RETURN
+    IF JAMCORE.REC_STATE$(jam, HEARD()) <> "off" THEN REC_TOGGLE()
+    JAMCORE.SELECT_SCENE(jam, i)
+    SEND_ALL()
+    SAY("Scene " + STR$(i + 1) + " (" + STR$(JAMCORE.BARS(jam)) + " bars)")
+ENDSUB
+
+SUB NEXT_BARS()
+    DIM b = JAMCORE.BARS(jam)
+    DIM k = 0
+    FOR i = 0 TO LEN(bar_choices) - 1
+        IF bar_choices[i] = b THEN k = i
+    NEXT i
+    JAMCORE.SET_BARS(jam, bar_choices[(k + 1) MOD LEN(bar_choices)])
+    SEND_ALL()
+    SAY("Scene " + STR$(jam{"scene"} + 1) + ": loop of " + STR$(JAMCORE.BARS(jam)) + " bars")
+ENDSUB
+
+' ---- MIDI ----
+DIM main_h = MIDI.OPEN_IN(main_idx)
+DIM routed = MIDI.ROUTE(main_h)
+DIM daw_h = -1
+IF daw_idx >= 0 THEN
+    daw_h = MIDI.OPEN_IN(daw_idx)
+    routed = MIDI.ROUTE(daw_h, "ALL", 10)
+ENDIF
+SELECT_TRACK(sel)
+SAY("Ready: keys on LEAD, pads on DRUMS (DAW mode). REC records from the next bar.")
+
+DIM tp = cfg{"transport"}{"daw_port_cc"}
+DIM mode_left = cfg{"mode_buttons"}{"left_cc"}
+DIM mode_right = cfg{"mode_buttons"}{"right_cc"}
+DIM loop_down = FALSE
+DIM loop_used = FALSE
+
+FUNC IS_PAD(note)
+    FOR EACH p IN pad_notes
+        IF p = note THEN RETURN TRUE
+    NEXT p
+    RETURN FALSE
+ENDFUNC
+
+SUB BUTTON(cc)
+    IF loop_down THEN
+        loop_used = TRUE
+        IF cc = tp{"stop"} THEN CLEAR_SEL()
+        IF cc = mode_left THEN SCENE(jam{"scene"} - 1)
+        IF cc = mode_right THEN SCENE(jam{"scene"} + 1)
+        IF cc = tp{"play"} THEN NEXT_BARS()
+        RETURN
+    ENDIF
+    IF cc = tp{"play"} THEN PLAY()
+    IF cc = tp{"stop"} THEN STOP_ALL()
+    IF cc = tp{"rec"} THEN REC_TOGGLE()
+    IF cc = mode_left THEN SELECT_TRACK(sel - 1)
+    IF cc = mode_right THEN SELECT_TRACK(sel + 1)
+ENDSUB
+
+SUB HANDLE_MIDI()
+    DIM at_t = HEARD()
+    FOR EACH k IN MIDI.POLL(main_h)
+        IF LEN(k) >= 3 ANDALSO k[0] = 144 ANDALSO k[2] > 0 THEN
+            JAMCORE.KEY_DOWN(jam, sel, k[1] + track_transpose[sel], k[2], at_t)
+            IF track_kits[sel] THEN SEND_TRACK(sel)
+        ELSEIF LEN(k) >= 3 ANDALSO (k[0] = 128 ORELSE k[0] = 144) THEN
+            DIM before = LEN(JAMCORE.EVENTS(jam, sel))
+            JAMCORE.KEY_UP(jam, sel, k[1] + track_transpose[sel], at_t)
+            IF LEN(JAMCORE.EVENTS(jam, sel)) <> before THEN SEND_TRACK(sel)
+        ENDIF
+    NEXT k
+    IF daw_h < 0 THEN RETURN
+    FOR EACH m IN MIDI.POLL(daw_h)
+        IF LEN(m) >= 3 ANDALSO m[0] = 176 THEN
+            IF m[1] = tp{"loop"} THEN
+                IF m[2] = 127 THEN
+                    loop_down = TRUE
+                    loop_used = FALSE
+                ELSE
+                    loop_down = FALSE
+                    IF NOT loop_used THEN UNDO()
+                ENDIF
+            ELSEIF m[2] = 127 THEN
+                BUTTON(m[1])
+            ENDIF
+        ELSEIF LEN(m) >= 3 ANDALSO m[0] = 144 ANDALSO m[2] > 0 ANDALSO IS_PAD(m[1]) THEN
+            JAMCORE.KEY_DOWN(jam, DRUMS, m[1], m[2], at_t)
+            SEND_TRACK(DRUMS)
+        ENDIF
+    NEXT m
+ENDSUB
+
+' The click follows the recording state: on from REC until it stops
+SUB TICK_STATE()
+    DIM st$ = JAMCORE.REC_STATE$(jam, HEARD())
+    IF st$ = "off" ANDALSO click_on THEN SET_CLICK(FALSE)
+ENDSUB
+
+SUB PC_KEY(key$)
+    DIM u$ = UCASE$(key$)
+    IF key$ = " " THEN
+        IF playing THEN
+            STOP_ALL()
+        ELSE
+            PLAY()
+        ENDIF
+    ENDIF
+    IF u$ = "R" THEN REC_TOGGLE()
+    IF u$ = "U" THEN UNDO()
+    IF u$ = "C" THEN CLEAR_SEL()
+    IF u$ = "B" THEN NEXT_BARS()
+    IF key$ = "[" THEN SELECT_TRACK(sel - 1)
+    IF key$ = "]" THEN SELECT_TRACK(sel + 1)
+    IF key$ >= "1" ANDALSO key$ <= "8" THEN SCENE(VAL(key$) - 1)
+ENDSUB
+
+' ---- screen ----
+FUNC BAR_TEXT$()
+    DIM bars = JAMCORE.BARS(jam)
+    DIM c = HEARD()
+    DIM in_loop = c - FLOOR(c / bars) * bars
+    RETURN STR$(INT(in_loop) + 1) + "." + STR$(INT((in_loop - INT(in_loop)) * 4) + 1) + " / " + STR$(bars)
+ENDFUNC
+
+SUB DRAW()
+    DIM dw = GUI.DISPLAY_WIDTH()
+    DIM dh = GUI.DISPLAY_HEIGHT()
+    GUI.BEGIN "Jam##" + STR$(INT(dw)), 0, 0, dw, dh, GUI.FLAG("NOTITLEBAR") + GUI.FLAG("NORESIZE") + GUI.FLAG("NOMOVE") + GUI.FLAG("NOCOLLAPSE") + GUI.FLAG("NOSAVEDSETTINGS")
+    DIM st$ = JAMCORE.REC_STATE$(jam, HEARD())
+    DIM rec$ = ""
+    IF st$ = "armed" THEN rec$ = "   COUNT-IN"
+    IF st$ = "on" THEN rec$ = "   * REC"
+    GUI.TEXT "BPM " + STR$(bpm) + "   bar " + BAR_TEXT$() + "   scene " + STR$(jam{"scene"} + 1) + IIF(playing, "   PLAY", "   STOP") + rec$
+    GUI.SEPARATOR
+    FOR t = 0 TO n_tracks - 1
+        DIM n_notes = LEN(JAMCORE.EVENTS(jam, t))
+        DIM mark$ = IIF(t = sel, "> ", "  ")
+        GUI.TEXT mark$ + LEFT$(track_names$[t] + "        ", 8) + IIF(n_notes > 0, STR$(n_notes) + " notes", "-")
+    NEXT t
+    GUI.SEPARATOR
+    DIM sc$ = "Scenes:"
+    FOR i = 0 TO MAX([JAMCORE.SCENE_COUNT(jam), 2]) - 1
+        sc$ = sc$ + IIF(i = jam{"scene"}, "  [" + STR$(i + 1) + "]", "   " + STR$(i + 1) + " ")
+    NEXT i
+    GUI.TEXT sc$
+    GUI.SEPARATOR
+    GUI.TEXT status$
+    GUI.END
+ENDSUB
+
+DIM key$ = ""
+IF panel THEN
+    SCREEN 900, 520, "jdBasic Jam", 2
+    DO
+        CLS
+        HANDLE_MIDI()
+        TICK_STATE()
+        DRAW()
+        SCREENFLIP
+        key$ = INKEY$()
+        IF UCASE$(key$) = "F" THEN TOGGLE_FULLSCREEN
+        IF key$ <> "" ANDALSO key$ <> CHR$(27) THEN PC_KEY(key$)
+    LOOP UNTIL key$ = CHR$(27)
+ELSE
+    DO
+        HANDLE_MIDI()
+        TICK_STATE()
+        SLEEP 5
+    LOOP
+ENDIF
+
+MIDI.CLOSE(main_h)
+IF daw_h >= 0 THEN MIDI.CLOSE(daw_h)
+IF fast THEN MON.SYNTH(0)
+SOUND.SHUTDOWN
