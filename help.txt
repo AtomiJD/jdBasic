@@ -3280,8 +3280,14 @@ Description: Returns the number of bytes still waiting in the PLAYBUFFER queue. 
 [SOUND.ZONE]
 Syntax: SOUND.ZONE(track, [lo], [hi], [channel], [transpose], [options]) -> zone count
 Description: MIDI keys lo..hi (default 0..127) on channel (1-16, default 0 = any) play the track, shifted by transpose semitones. Overlapping zones layer. SOUND.ZONE(-1) clears every zone. Without zones every key plays track 0.
-Options (a map): vel_lo, vel_hi (velocity split, default 1..127); bend (semitones at full bend, default 2, 0 ignores it); sustain (pedal holds the keys, default TRUE); mono (one voice, back to the last held key); legato (mono without restarting the envelope); vel_cutoff (octaves the cutoff closes for the softest key); mod_cutoff (octaves the cutoff opens at full mod wheel); mod_vibrato (semitones of vibrato at full mod wheel).
+Options (a map): vel_lo, vel_hi (velocity split, default 1..127); bend (semitones at full bend, default 2, 0 ignores it); sustain (pedal holds the keys, default TRUE); mono (one voice, back to the last held key); legato (mono without restarting the envelope); vel_cutoff (octaves the cutoff closes for the softest key); mod_cutoff (octaves the cutoff opens at full mod wheel); mod_vibrato (semitones of vibrato at full mod wheel); chord (one key plays a chord: an array of semitones, a name maj min dim aug sus2 sus4 7 maj7 min7 power oct, or triad seventh ninth stacked on the track scale); scale (TRUE moves every note onto the track scale of SOUND.SCALE); arp (off, up, down, updown, downup, random, played: the held keys one after another on the sequencer clock); arp_rate (steps per cycle 1-64, or "1/16", "1/8T", default 16); arp_octaves (1-4); arp_gate (share of the step that sounds, default 0.5); arp_latch (keeps playing after the keys go up). A mono zone takes no chord and no arp.
 Example: SOUND.ZONE 0, 0, 47, 0, -12, {"mono": TRUE, "legato": TRUE}
+Example: SOUND.ZONE 1, 48, 127, 0, 0, {"arp": "updown", "arp_rate": "1/16", "chord": "triad"}
+
+[SOUND.ZONESET]
+Syntax: SOUND.ZONESET index, options
+Description: New options for zone index (0-based, in the order SOUND.ZONE made them), with the keys of SOUND.ZONE. Options left out keep their values. Held keys, a running arp and sounding notes carry on, so a knob or a live edit can change the arp or the chord while it plays.
+Example: SOUND.ZONESET 1, {"arp": "random", "arp_gate": 0.3}
 
 [SOUND.LASTNOTE]
 Syntax: SOUND.LASTNOTE() -> map

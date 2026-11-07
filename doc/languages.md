@@ -3970,6 +3970,7 @@ real-time-safe.
 | Function | Description |
 |---|---|
 | `SOUND.ZONE(track, [lo], [hi], [channel], [transpose], [options])` -> zone count | Keys `lo`..`hi` (default 0..127) on `channel` (1-16, default 0 = any) play `track`, shifted by `transpose` semitones. Overlapping zones layer. `SOUND.ZONE(-1)` clears every zone. Without zones every key plays track 0. `options` is a map, see below. |
+| `SOUND.ZONESET index, options` | New `options` for zone `index` (0-based, in the order `SOUND.ZONE` made them). Options left out keep their values; held keys, a running arp and sounding notes carry on, so a panel or a live edit changes the arp or the chord while it plays. |
 | `SOUND.LASTNOTE()` -> map | The last key played through MIDI input: `note` (-1 before the first), `velocity`, `channel`, and `count`, the number of keys so far. Waiting for `count` to grow and then reading `note` learns a split point. |
 | `SOUND.CCMAP(cc, track, param$, lo, hi, [curve$], [channel], [pickup])` -> mapping count | Controller `cc` on `channel` (default 0 = any) sets `param$` of `track` between `lo` (at 0) and `hi` (at 127), `curve$` `"LIN"` (default) or `"EXP"` (equal steps per octave, for cutoff and times; `lo` and `hi` above 0). The value glides there in about 10 ms, so a knob turn does not crackle. With `pickup` (default TRUE) a controller only takes over once it passes the present value, so a fader that is not where the sound is does not make it jump. `param$` takes the names of `SOUND.MOD`. `SOUND.CCMAP(-1)` clears every mapping. |
 | `SOUND.PADMAP track, note, name$` | The kit sound a MIDI note plays on a kit track, for pads that send other notes than General MIDI; `""` returns the note to its General MIDI drum. |
@@ -4002,6 +4003,13 @@ The `options` of `SOUND.ZONE`, all optional:
 | `vel_cutoff` | 0 | Octaves the filter cutoff closes for the softest key compared with a full one. Needs `SOUND.FILTER` on the track. |
 | `mod_cutoff` | 0 | Octaves the cutoff opens at full mod wheel (negative closes it). |
 | `mod_vibrato` | 0 | Vibrato depth in semitones at full mod wheel, at 5.5 Hz. |
+| `chord` | none | One key plays a chord: an array of semitones above the key (`[0, 7, 12]`), a name (`"maj"`, `"min"`, `"dim"`, `"aug"`, `"sus2"`, `"sus4"`, `"7"`, `"maj7"`, `"min7"`, `"power"`, `"oct"`), or thirds stacked on the track scale (`"triad"`, `"seventh"`, `"ninth"`), which gives the chord of the scale on each key. Key up releases the whole chord. A mono zone takes no chord and no arp. |
+| `scale` | FALSE | Scale lock: every note moves to the nearest note of the track scale set with `SOUND.SCALE` (C major until set); a tie goes down. |
+| `arp` | `"off"` | Arpeggiator over the held keys (with their chords): `"up"`, `"down"`, `"updown"`, `"downup"` (the ends once), `"random"`, `"played"` (in the order the keys went down). The steps run on the sequencer clock, so they stay on the beat of `SOUND.SEQ`, `SOUND.BPM` and `MIDI.CLOCK`; a first key in the first quarter of a step plays at once, a later one waits for the next step. Each step plays at the velocity of its key. |
+| `arp_rate` | 16 | Steps per cycle (one bar), 1-64, or a note value: `"1/8"`, `"1/16"`, `"1/8T"` (triplets). |
+| `arp_octaves` | 1 | 1-4: the notes again one, two or three octaves up. |
+| `arp_gate` | 0.5 | How long each step sounds, as a share of the step (0.05-2). |
+| `arp_latch` | FALSE | The arp keeps playing after the keys go up; the next key after a full release starts a new set. The sustain pedal holds released keys in the arp too. |
 
 ```basic
 SOUND.FILTER 1, 1200, 0.3, "LP"
@@ -4009,6 +4017,8 @@ SOUND.ZONE 0, 0, 47, 0, -12, {"mono": TRUE, "legato": TRUE}     ' mono bass
 SOUND.ZONE 1, 48, 127, 0, 0, {"vel_cutoff": 2, "mod_vibrato": 0.5}
 SOUND.CCMAP 22, 1, "CUTOFF", 200, 8000, "EXP"                   ' knob 1
 SOUND.CCMAP 23, 1, "RESONANCE", 0, 0.9                          ' knob 2
+SOUND.SCALE 1, "A3", "MINOR"
+SOUND.ZONE 1, 48, 127, 0, 0, {"arp": "updown", "arp_rate": "1/16", "chord": "triad"}   ' A minor chords, arpeggiated
 DIM pads = MIDI.OPEN_IN(1)
 MIDI.ROUTE(pads, "CC")                                          ' knobs only
 ```

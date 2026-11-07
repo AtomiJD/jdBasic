@@ -1057,7 +1057,26 @@ static struct SoundSystem {
         // Mono: the keys held in order, the voice and the last velocity
         std::vector<int> held;
         int voice = -1, last_vel = 100;
+        // Chord: semitones above each key, or chord_thirds > 0 stacks that
+        // many thirds of the track scale. scale_lock moves every note onto
+        // the track scale (SOUND.SCALE).
+        std::vector<int> chord;
+        int chord_thirds = 0;
+        bool scale_lock = false;
+        // Arpeggiator: the held keys play one after another, arp_rate steps
+        // per cycle on the sequencer clock, over arp_octaves octaves; each
+        // step sounds for arp_gate of its length. Latch keeps the keys after
+        // they are let go, until the next key after a full release.
+        int arp = 0, arp_rate = 16, arp_octaves = 1;
+        float arp_gate = 0.5f;
+        bool arp_latch = false;
+        struct ArpKey { int note, vel, ch; bool down; };
+        std::vector<ArpKey> arp_keys;
+        int64_t arp_pos = 0, arp_last_step = INT64_MIN;
+        bool arp_fresh = false;
+        uint32_t arp_seed = 0x2545F491u;
     };
+    enum ArpMode { ARP_OFF, ARP_UP, ARP_DOWN, ARP_UPDOWN, ARP_DOWNUP, ARP_RANDOM, ARP_PLAYED };
     // A controller driving a parameter: lo..hi along a straight or an
     // exponential curve, smoothed; with pickup it waits until the knob
     // passes the present value of the parameter.
@@ -1072,6 +1091,8 @@ static struct SoundSystem {
     std::vector<MidiMsg> midi_in, midi_take;
     std::vector<MidiZone> zones;
     MidiZone all_keys;
+    // Scratch for chords and arp steps, reserved once for the audio thread
+    std::vector<int> chord_scratch, arp_seq, arp_vel;
     std::vector<CcMap> ccmaps;
     bool sustain_on[16] = {};
     bool device_mode = false;
@@ -1166,6 +1187,47 @@ static struct SoundSystem {
         return vi;
     }
 
+    // A note moved onto the nearest note of the track scale; a tie goes down
+    int scale_snap(const TrackParams& tp, int note) const {
+        if (tp.scale_intervals.empty()) return note;
+        int rel = note - tp.scale_root_midi;
+        int pc = ((rel % 12) + 12) % 12;
+        int best = 0, best_d = 99;
+        for (int iv : tp.scale_intervals) {
+            for (int wrap = -12; wrap <= 12; wrap += 12) {
+                int d = iv + wrap - pc;
+                if (std::abs(d) < std::abs(best_d) || (std::abs(d) == std::abs(best_d) && d < best_d)) {
+                    best_d = d;
+                    best = d;
+                }
+            }
+        }
+        return note + best;
+    }
+
+    // The notes one key plays: the key, its chord, all on the scale if locked
+    void key_notes(const MidiZone& z, int key, std::vector<int>& out) const {
+        const auto& tp = tracks[z.track];
+        out.clear();
+        if (z.chord_thirds > 0 && !tp.scale_intervals.empty()) {
+            int n = (int)tp.scale_intervals.size();
+            int root = scale_snap(tp, key);
+            int rel = root - tp.scale_root_midi;
+            int oct = (rel >= 0) ? rel / 12 : (rel - 11) / 12;
+            int pc = rel - oct * 12;
+            int idx = 0;
+            for (int i = 0; i < n; i++) if (tp.scale_intervals[i] == pc) idx = i;
+            for (int k = 0; k < z.chord_thirds; k++) {
+                int d = idx + 2 * k;
+                out.push_back(tp.scale_root_midi + (oct + d / n) * 12 + tp.scale_intervals[d % n]);
+            }
+            return;
+        }
+        if (z.chord.empty()) out.push_back(key);
+        else for (int iv : z.chord) out.push_back(key + iv);
+        if (z.scale_lock) for (auto& x : out) x = scale_snap(tp, x);
+    }
+
     int start_midi_voice(MidiZone& z, int zi, int ch, int note, int vel, int64_t off) {
         int n = note + z.transpose;
         if (n < 0 || n > 127) return -1;
@@ -1205,7 +1267,15 @@ static struct SoundSystem {
 
     void zone_note_on(MidiZone& z, int zi, int ch, int note, int vel, int64_t off) {
         if (vel < z.vel_lo || vel > z.vel_hi) return;
-        if (!z.mono) { start_midi_voice(z, zi, ch, note, vel, off); return; }
+        if (z.arp != ARP_OFF) { arp_key_on(z, ch, note, vel); return; }
+        if (!z.mono) {
+            key_notes(z, note, chord_scratch);
+            for (int n : chord_scratch) {
+                int vi = start_midi_voice(z, zi, ch, n, vel, off);
+                if (vi >= 0 && voices[vi].midi_note >= 0) voices[vi].midi_note = note;
+            }
+            return;
+        }
         z.held.erase(std::remove(z.held.begin(), z.held.end(), note), z.held.end());
         z.held.push_back(note);
         z.last_vel = vel;
@@ -1218,8 +1288,115 @@ static struct SoundSystem {
         z.voice = start_midi_voice(z, zi, ch, note, vel, off);
     }
 
+    void arp_key_on(MidiZone& z, int ch, int note, int vel) {
+        bool any_down = false;
+        for (const auto& k : z.arp_keys) any_down = any_down || k.down;
+        if (!any_down && z.arp_latch) z.arp_keys.clear();
+        if (z.arp_keys.empty()) { z.arp_pos = 0; z.arp_fresh = true; }
+        z.arp_keys.erase(std::remove_if(z.arp_keys.begin(), z.arp_keys.end(),
+            [&](const MidiZone::ArpKey& k) { return k.note == note; }), z.arp_keys.end());
+        z.arp_keys.push_back({note, vel, ch, true});
+    }
+
+    // A key let go leaves the arp, unless latch or the pedal holds it
+    void arp_key_off(MidiZone& z, int ch, int note) {
+        for (size_t i = 0; i < z.arp_keys.size(); i++) {
+            if (z.arp_keys[i].note != note) continue;
+            if (z.arp_latch || (sustain_on[ch - 1] && z.sustain)) z.arp_keys[i].down = false;
+            else z.arp_keys.erase(z.arp_keys.begin() + i);
+            return;
+        }
+    }
+
+    // The notes of one arp step, in playing order, with the velocity of the
+    // key each one comes from
+    void arp_sequence(MidiZone& z) {
+        arp_seq.clear();
+        arp_vel.clear();
+        for (const auto& k : z.arp_keys) {
+            key_notes(z, k.note, chord_scratch);
+            for (int n : chord_scratch) {
+                bool dup = false;
+                for (int x : arp_seq) dup = dup || x == n;
+                if (!dup) { arp_seq.push_back(n); arp_vel.push_back(k.vel); }
+            }
+        }
+        if (z.arp != ARP_PLAYED) {
+            for (size_t i = 1; i < arp_seq.size(); i++)
+                for (size_t j = i; j > 0 && arp_seq[j - 1] > arp_seq[j]; j--) {
+                    std::swap(arp_seq[j - 1], arp_seq[j]);
+                    std::swap(arp_vel[j - 1], arp_vel[j]);
+                }
+        }
+        size_t one = arp_seq.size();
+        for (int o = 1; o < z.arp_octaves; o++)
+            for (size_t i = 0; i < one; i++) {
+                arp_seq.push_back(arp_seq[i] + 12 * o);
+                arp_vel.push_back(arp_vel[i]);
+            }
+        size_t n = arp_seq.size();
+        if (z.arp == ARP_DOWN || z.arp == ARP_DOWNUP) {
+            std::reverse(arp_seq.begin(), arp_seq.end());
+            std::reverse(arp_vel.begin(), arp_vel.end());
+        }
+        if ((z.arp == ARP_UPDOWN || z.arp == ARP_DOWNUP) && n > 2)
+            for (size_t i = n - 2; i >= 1; i--) {
+                arp_seq.push_back(arp_seq[i]);
+                arp_vel.push_back(arp_vel[i]);
+            }
+    }
+
+    void arp_step(MidiZone& z, int zi, int64_t off, double step_cycles, double cps) {
+        if (z.arp_keys.empty()) return;
+        arp_sequence(z);
+        if (arp_seq.empty()) return;
+        size_t i;
+        if (z.arp == ARP_RANDOM) {
+            z.arp_seed = z.arp_seed * 1664525u + 1013904223u;
+            i = (z.arp_seed >> 8) % arp_seq.size();
+        } else {
+            i = (size_t)(z.arp_pos % (int64_t)arp_seq.size());
+        }
+        z.arp_pos++;
+        int ch = z.arp_keys.back().ch;
+        int vi = start_midi_voice(z, zi, ch, arp_seq[i], arp_vel[i], off);
+        if (vi < 0) return;
+        auto& v = voices[vi];
+        v.midi_note = -1;
+        v.seq_controlled = true;
+        v.gate_frames = std::max<int64_t>(1, (int64_t)(z.arp_gate * step_cycles / cps * SAMPLE_RATE));
+    }
+
+    // The arp steps that fall into cycles t0..t1 of this block. A first key
+    // in the first quarter of a step plays at once, else it waits for the
+    // next step.
+    void run_arps(double t0, double t1, double phase_inc, double cps) {
+        auto run = [&](MidiZone& z, int zi) {
+            if (z.arp == ARP_OFF) return;
+            if (z.arp_keys.empty()) { z.arp_fresh = false; return; }
+            double r = (double)z.arp_rate;
+            if (z.arp_fresh) {
+                z.arp_fresh = false;
+                double s = std::floor(t0 * r);
+                if (t0 * r - s < 0.25 && (int64_t)s != z.arp_last_step) {
+                    z.arp_last_step = (int64_t)s;
+                    arp_step(z, zi, 0, 1.0 / r, cps);
+                }
+            }
+            for (int64_t k = (int64_t)std::ceil(t0 * r - 1e-9); (double)k / r < t1; k++) {
+                if (k == z.arp_last_step) continue;
+                z.arp_last_step = k;
+                int64_t off = (int64_t)(((double)k / r - t0) / phase_inc);
+                arp_step(z, zi, std::max<int64_t>(0, off), 1.0 / r, cps);
+            }
+        };
+        if (zones.empty()) run(all_keys, -2);
+        else for (int i = 0; i < (int)zones.size(); i++) run(zones[i], i);
+    }
+
     // A key up in a mono zone falls back to the last key still held
     void zone_note_off(MidiZone& z, int zi, int ch, int note, int64_t off) {
+        if (z.arp != ARP_OFF) { arp_key_off(z, ch, note); return; }
         z.held.erase(std::remove(z.held.begin(), z.held.end(), note), z.held.end());
         if (!mono_voice_live(z) || voices[z.voice].midi_note != note || z.held.empty()) return;
         if (sustain_on[ch - 1] && z.sustain) return;
@@ -1389,7 +1566,7 @@ static struct SoundSystem {
             });
         } else if (kind == 8 || kind == 9) {
             each_zone(ch, [&](MidiZone& z, int zi) {
-                if (z.mono && note >= z.lo && note <= z.hi) zone_note_off(z, zi, ch, note, off);
+                if ((z.mono || z.arp != ARP_OFF) && note >= z.lo && note <= z.hi) zone_note_off(z, zi, ch, note, off);
             });
             for (auto& v : voices) {
                 if (v.midi_note != note || v.midi_ch != ch || v.midi_released) continue;
@@ -1409,6 +1586,11 @@ static struct SoundSystem {
                         if (v.env.state != EnvState::OFF) gate_off_at(v, off);
                     }
                 each_zone(ch, [&](MidiZone& z, int) {
+                    if (!z.arp_latch)
+                        z.arp_keys.erase(std::remove_if(z.arp_keys.begin(), z.arp_keys.end(),
+                            [](const MidiZone::ArpKey& k) { return !k.down; }), z.arp_keys.end());
+                });
+                each_zone(ch, [&](MidiZone& z, int) {
                     if (z.mono && z.held.empty() && mono_voice_live(z)) {
                         voices[z.voice].midi_released = true;
                         gate_off_at(voices[z.voice], off);
@@ -1418,7 +1600,7 @@ static struct SoundSystem {
         } else if (kind == 11 && (e.d1 == 120 || e.d1 == 123)) {
             // All sound off (120) cuts at once, all notes off (123) releases
             sustain_on[ch - 1] = false;
-            each_zone(ch, [&](MidiZone& z, int) { z.held.clear(); });
+            each_zone(ch, [&](MidiZone& z, int) { z.held.clear(); z.arp_keys.clear(); });
             for (auto& v : voices) {
                 if (v.midi_ch != ch || v.env.state == EnvState::OFF) continue;
                 v.midi_released = true;
@@ -2148,6 +2330,7 @@ static struct SoundSystem {
         }
         double t0 = sys->seq_base + (double)sys->seq_frames * cps / SAMPLE_RATE;
         double t1 = sys->seq_base + (double)(sys->seq_frames + num_frames) * cps / SAMPLE_RATE;
+        sys->run_arps(t0, t1, phase_inc, cps);
 
         for (int t = 0; t < NUM_TRACKS; t++) {
             auto& layer = sys->seq_layers[t];
@@ -2713,6 +2896,113 @@ static SoundChunk load_wav_file(const std::string& path, const std::string& who)
 #endif
 }
 
+static int arp_mode(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    if (s == "off" || s.empty()) return SoundSystem::ARP_OFF;
+    if (s == "up") return SoundSystem::ARP_UP;
+    if (s == "down") return SoundSystem::ARP_DOWN;
+    if (s == "updown") return SoundSystem::ARP_UPDOWN;
+    if (s == "downup") return SoundSystem::ARP_DOWNUP;
+    if (s == "random") return SoundSystem::ARP_RANDOM;
+    if (s == "played") return SoundSystem::ARP_PLAYED;
+    throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: arp is off, up, down, updown, downup, random or played");
+}
+
+// Steps per cycle: a number, or a note value "1/16", "1/8T" (triplet)
+static int arp_rate(const Value& v) {
+    int r = 0;
+    if (v.type == ValueType::STRING) {
+        std::string s = v.to_string();
+        bool triplet = !s.empty() && (s.back() == 'T' || s.back() == 't');
+        if (triplet) s.pop_back();
+        if (s.rfind("1/", 0) == 0) r = std::atoi(s.c_str() + 2);
+        if (triplet) r = r * 3 / 2;
+    } else {
+        r = (int)v.to_int();
+    }
+    if (r < 1 || r > 64)
+        throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: arp_rate is 1-64 steps per cycle, or a note value like \"1/16\" or \"1/8T\"");
+    return r;
+}
+
+// A chord: semitones above the key, a name, or thirds stacked on the scale
+static void zone_chord(SoundSystem::MidiZone& z, const Value& v) {
+    z.chord.clear();
+    z.chord_thirds = 0;
+    if (v.type == ValueType::ARRAY || v.type == ValueType::TENSOR) {
+        if (v.type == ValueType::TENSOR) for (double d : v.as_tensor()->data) z.chord.push_back((int)d);
+        else for (auto& e : v.as_array()->elements) z.chord.push_back((int)e.to_int());
+        for (int iv : z.chord)
+            if (iv < -48 || iv > 48) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: a chord interval is -48..48 semitones");
+        if (z.chord.size() > 8) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: a chord has at most 8 notes");
+        return;
+    }
+    std::string s = v.to_string();
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    static const std::unordered_map<std::string, std::vector<int>> named = {
+        {"", {}}, {"off", {}}, {"maj", {0, 4, 7}}, {"min", {0, 3, 7}}, {"dim", {0, 3, 6}}, {"aug", {0, 4, 8}},
+        {"sus2", {0, 2, 7}}, {"sus4", {0, 5, 7}}, {"7", {0, 4, 7, 10}}, {"maj7", {0, 4, 7, 11}},
+        {"min7", {0, 3, 7, 10}}, {"power", {0, 7}}, {"oct", {0, 12}},
+    };
+    if (s == "triad") { z.chord_thirds = 3; return; }
+    if (s == "seventh") { z.chord_thirds = 4; return; }
+    if (s == "ninth") { z.chord_thirds = 5; return; }
+    auto it = named.find(s);
+    if (it == named.end())
+        throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: chord is an array of semitones or maj, min, dim, aug, sus2, sus4, 7, maj7, min7, power, oct, triad, seventh, ninth");
+    z.chord = it->second;
+}
+
+// The options map of SOUND.ZONE and SOUND.ZONESET, onto z
+static void zone_options(SoundSystem::MidiZone& z, const Value& opts) {
+    if (opts.type != ValueType::OBJECT) return;
+    for (auto& kv : opts.as_object()->fields) {
+        std::string k = kv.first;
+        std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+        const Value& v = kv.second;
+        if (k == "vel_lo") z.vel_lo = (int)v.to_int();
+        else if (k == "vel_hi") z.vel_hi = (int)v.to_int();
+        else if (k == "bend") z.bend = (float)v.to_double();
+        else if (k == "sustain") z.sustain = v.to_bool();
+        else if (k == "mono") z.mono = v.to_bool();
+        else if (k == "legato") { z.legato = v.to_bool(); if (z.legato) z.mono = true; }
+        else if (k == "vel_cutoff") z.vel_cutoff = (float)v.to_double();
+        else if (k == "mod_cutoff") z.mod_cutoff = (float)v.to_double();
+        else if (k == "mod_vibrato") z.mod_vibrato = (float)v.to_double();
+        else if (k == "chord") zone_chord(z, v);
+        else if (k == "scale") z.scale_lock = v.to_bool();
+        else if (k == "arp") z.arp = arp_mode(v.to_string());
+        else if (k == "arp_rate") z.arp_rate = arp_rate(v);
+        else if (k == "arp_octaves") {
+            z.arp_octaves = (int)v.to_int();
+            if (z.arp_octaves < 1 || z.arp_octaves > 4)
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: arp_octaves is 1-4");
+        }
+        else if (k == "arp_gate") {
+            z.arp_gate = (float)v.to_double();
+            if (!(z.arp_gate >= 0.05f && z.arp_gate <= 2.0f))
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: arp_gate is 0.05-2");
+        }
+        else if (k == "arp_latch") z.arp_latch = v.to_bool();
+        else throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: unknown option " + kv.first +
+            " (vel_lo, vel_hi, bend, sustain, mono, legato, vel_cutoff, mod_cutoff, mod_vibrato,"
+            " chord, scale, arp, arp_rate, arp_octaves, arp_gate, arp_latch)");
+    }
+    if (z.mono && (z.arp != SoundSystem::ARP_OFF || !z.chord.empty() || z.chord_thirds > 0))
+        throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: a mono zone plays no chord and no arp");
+}
+
+// Copies the settings of a zone, not its held keys and voices
+static void copy_zone_settings(SoundSystem::MidiZone& dst, const SoundSystem::MidiZone& s) {
+    dst.vel_lo = s.vel_lo; dst.vel_hi = s.vel_hi; dst.bend = s.bend;
+    dst.sustain = s.sustain; dst.mono = s.mono; dst.legato = s.legato;
+    dst.vel_cutoff = s.vel_cutoff; dst.mod_cutoff = s.mod_cutoff; dst.mod_vibrato = s.mod_vibrato;
+    dst.chord = s.chord; dst.chord_thirds = s.chord_thirds; dst.scale_lock = s.scale_lock;
+    if (s.arp == SoundSystem::ARP_OFF) dst.arp_keys.clear();
+    dst.arp = s.arp; dst.arp_rate = s.arp_rate; dst.arp_octaves = s.arp_octaves;
+    dst.arp_gate = s.arp_gate; dst.arp_latch = s.arp_latch;
+}
+
 void register_sound_builtins(VM& vm) {
     init_note_map();
 
@@ -2738,6 +3028,9 @@ void register_sound_builtins(VM& vm) {
         g_sound.all_keys.held.reserve(128);
         g_sound.midi_in.reserve(1024);
         g_sound.midi_take.reserve(1024);
+        g_sound.chord_scratch.reserve(128);
+        g_sound.arp_seq.reserve(1024);
+        g_sound.arp_vel.reserve(1024);
         g_sound.wave_buffer.resize(1024, 0.0f);
         g_sound.reverb_bus_wave.resize(1024, 0.0f);
         g_sound.delay_bus_wave.resize(1024, 0.0f);
@@ -3184,24 +3477,7 @@ void register_sound_builtins(VM& vm) {
         if (args.size() > 4) z.transpose = (int)args[4].to_int();
         if (z.channel < 0 || z.channel > 16)
             throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: channel is 1-16, or 0 for any");
-        if (args.size() > 5 && args[5].type == ValueType::OBJECT) {
-            for (auto& kv : args[5].as_object()->fields) {
-                std::string k = kv.first;
-                std::transform(k.begin(), k.end(), k.begin(), ::tolower);
-                const Value& v = kv.second;
-                if (k == "vel_lo") z.vel_lo = (int)v.to_int();
-                else if (k == "vel_hi") z.vel_hi = (int)v.to_int();
-                else if (k == "bend") z.bend = (float)v.to_double();
-                else if (k == "sustain") z.sustain = v.to_bool();
-                else if (k == "mono") z.mono = v.to_bool();
-                else if (k == "legato") { z.legato = v.to_bool(); if (z.legato) z.mono = true; }
-                else if (k == "vel_cutoff") z.vel_cutoff = (float)v.to_double();
-                else if (k == "mod_cutoff") z.mod_cutoff = (float)v.to_double();
-                else if (k == "mod_vibrato") z.mod_vibrato = (float)v.to_double();
-                else throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: unknown option " + kv.first +
-                    " (vel_lo, vel_hi, bend, sustain, mono, legato, vel_cutoff, mod_cutoff, mod_vibrato)");
-            }
-        }
+        if (args.size() > 5) zone_options(z, args[5]);
         z.held.reserve(128);
         if (g_sound.initialized) SND_LOCK();
         if (t < 0) {
@@ -3213,6 +3489,27 @@ void register_sound_builtins(VM& vm) {
         int n = (int)g_sound.zones.size();
         if (g_sound.initialized) SND_UNLOCK();
         return Value::make_i64(n);
+    });
+
+    // SOUND.ZONESET index, options: new options for zone index (0-based,
+    // in the order SOUND.ZONE made them); held keys and sounding notes stay
+    vm.register_native("SOUND.ZONESET", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int i = (int)args[0].to_int();
+        if (args[1].type != ValueType::OBJECT)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONESET: options is a map");
+        SoundSystem::MidiZone z;
+        if (g_sound.initialized) SND_LOCK();
+        bool ok = i >= 0 && i < (int)g_sound.zones.size();
+        if (ok) copy_zone_settings(z, g_sound.zones[i]);
+        int n = (int)g_sound.zones.size();
+        if (g_sound.initialized) SND_UNLOCK();
+        if (!ok)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONESET: no zone " + std::to_string(i) + " (" + std::to_string(n) + " zones)");
+        zone_options(z, args[1]);
+        if (g_sound.initialized) SND_LOCK();
+        if (i < (int)g_sound.zones.size()) copy_zone_settings(g_sound.zones[i], z);
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_none();
     });
 
     // SOUND.PADMAP track, note, name$: the kit sound a MIDI note plays on a
@@ -3775,11 +4072,13 @@ void register_sound_builtins(VM& vm) {
         std::string root = args[1].to_string();
         std::transform(root.begin(), root.end(), root.begin(), ::toupper);
         int midi = note_name_to_midi(root);
-        if (midi >= 0) g_sound.tracks[t].scale_root_midi = midi;
         std::string mode = args[2].to_string();
         std::transform(mode.begin(), mode.end(), mode.begin(), ::toupper);
         auto sit = g_scales.find(mode);
+        if (g_sound.initialized) SND_LOCK();
+        if (midi >= 0) g_sound.tracks[t].scale_root_midi = midi;
         if (sit != g_scales.end()) g_sound.tracks[t].scale_intervals = sit->second;
+        if (g_sound.initialized) SND_UNLOCK();
         return Value::make_none();
     });
 

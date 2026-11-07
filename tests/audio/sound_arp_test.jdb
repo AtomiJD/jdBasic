@@ -1,0 +1,260 @@
+' ============================================================
+' Arpeggiator, chord mode and scale lock of SOUND.ZONE: the arp modes,
+' octaves, rate on the sequencer clock, key release and latch, chords
+' by semitones, by name and stacked on the scale, scale lock, and the
+' option errors.
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' Renders offline (SOUND.INIT "PULL"): no audio device.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+' At 120 BPM a cycle is 2 s; an eighth-note step is 11025 frames
+CONST STEP_FRAMES = 11025
+CONST N_WIN = 4096
+
+' The MIDI note of a sine in buf (interleaved stereo), from its zero
+' crossings; -1 when it is silent
+FUNC PITCH(buf) AS INTEGER
+    DIM k = IOTA(N_WIN, 0)
+    DIM mono = buf[(k + 300) * 2]
+    IF MAX(ABS(mono)) < 0.01 THEN RETURN -1
+    DIM pos = mono > 0
+    DIM flips AS DOUBLE = SUM(ABS(DROP(1, pos) - DROP(-1, pos)))
+    DIM hz AS DOUBLE = flips / 2 / (N_WIN / 44100)
+    RETURN INT(12 * LOG(hz / 440) / LOG(2) + 69 + 0.5)
+ENDFUNC
+
+' The notes of the next n steps, as text
+FUNC STEPS$(n AS INTEGER) AS STRING
+    DIM out$ AS STRING = ""
+    FOR i = 1 TO n
+        IF i > 1 THEN out$ = out$ + " "
+        out$ = out$ + STR$(PITCH(SOUND.RENDER(STEP_FRAMES)))
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' Renders up to the next step boundary, so a key pressed now plays at once
+SUB ALIGN()
+    DIM c AS DOUBLE = SOUND.CYCLE()
+    DIM rest AS DOUBLE = CEIL(c * 8 - 1E-9) - c * 8
+    DIM frames AS INTEGER = INT(rest * STEP_FRAMES + 0.5)
+    IF frames > 0 THEN
+        DIM skip = SOUND.RENDER(frames)
+    ENDIF
+ENDSUB
+
+SUB KEYS_UP()
+    SOUND.MIDIIN 176, 123, 0
+    DIM tail = SOUND.RENDER(STEP_FRAMES)
+ENDSUB
+
+' A fresh zone with options, keys pressed in the given order
+SUB ARP(opts, keys)
+    KEYS_UP()
+    SOUND.ZONE -1
+    DIM nz AS INTEGER = SOUND.ZONE(0, 0, 127, 0, 0, opts)
+    ALIGN()
+    FOR i = 0 TO LEN(keys) - 1
+        SOUND.MIDIIN 144, keys[i], 100
+    NEXT i
+ENDSUB
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "SKIP: build has no SOUND sequencer"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+SOUND.INIT "PULL"
+SOUND.RESET
+SOUND.BPM 120
+SOUND.VOICE 0, "SINE", 0.002, 0.01, 1.0, 0.005
+
+' ---------- arp modes ----------
+DIM got$ AS STRING
+ARP({"arp": "up", "arp_rate": "1/8", "arp_gate": 0.8}, [79, 72, 76])
+got$ = STEPS$(6)
+CHECK "up plays the held keys low to high", got$ = "72 76 79 72 76 79", got$
+ARP({"arp": "down", "arp_rate": 8, "arp_gate": 0.8}, [79, 72, 76])
+got$ = STEPS$(4)
+CHECK "down plays them high to low", got$ = "79 76 72 79", got$
+ARP({"arp": "updown", "arp_rate": 8, "arp_gate": 0.8}, [79, 72, 76])
+got$ = STEPS$(6)
+CHECK "updown turns without repeating the ends", got$ = "72 76 79 76 72 76", got$
+ARP({"arp": "downup", "arp_rate": 8, "arp_gate": 0.8}, [79, 72, 76])
+got$ = STEPS$(5)
+CHECK "downup", got$ = "79 76 72 76 79", got$
+ARP({"arp": "played", "arp_rate": 8, "arp_gate": 0.8}, [79, 72, 76])
+got$ = STEPS$(4)
+CHECK "played keeps the order of the keys", got$ = "79 72 76 79", got$
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8, "arp_octaves": 2}, [72, 76, 79])
+got$ = STEPS$(7)
+CHECK "two octaves", got$ = "72 76 79 84 88 91 72", got$
+ARP({"arp": "random", "arp_rate": 8, "arp_gate": 0.8}, [72, 76, 79])
+got$ = STEPS$(12)
+DIM parts$ = SPLIT(got$, " ")
+DIM in_set AS INTEGER = TRUE
+FOR i = 0 TO LEN(parts$) - 1
+    IF parts$[i] <> "72" ANDALSO parts$[i] <> "76" ANDALSO parts$[i] <> "79" THEN in_set = FALSE
+NEXT i
+CHECK "random stays on the held keys", in_set, got$
+CHECK "random does not repeat one key", LEN(UNIQUE(parts$)) > 1, got$
+
+' ---------- rate on the clock ----------
+ARP({"arp": "up", "arp_rate": "1/16", "arp_gate": 0.8}, [72, 76])
+DIM two$ AS STRING = STR$(PITCH(SOUND.RENDER(STEP_FRAMES / 2))) + " " + STR$(PITCH(SOUND.RENDER(STEP_FRAMES / 2)))
+CHECK "1/16 steps twice as fast", two$ = "72 76", two$
+
+' ---------- release and latch ----------
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8}, [72, 76])
+got$ = STEPS$(2)
+SOUND.MIDIIN 128, 72, 0
+got$ = STEPS$(2)
+CHECK "a key let go leaves the arp", got$ = "76 76", got$
+SOUND.MIDIIN 128, 76, 0
+got$ = STEPS$(2)
+CHECK "no keys, no steps", got$ = "-1 -1", got$
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8, "arp_latch": TRUE}, [72, 76])
+SOUND.MIDIIN 128, 72, 0
+SOUND.MIDIIN 128, 76, 0
+got$ = STEPS$(3)
+CHECK "latch keeps playing after the keys are up", got$ = "72 76 72", got$
+SOUND.MIDIIN 144, 79, 100
+got$ = STEPS$(2)
+CHECK "the next key after a full release replaces the latched ones", got$ = "79 79", got$
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8}, [72])
+SOUND.MIDIIN 176, 64, 127
+SOUND.MIDIIN 128, 72, 0
+SOUND.MIDIIN 144, 76, 100
+SOUND.MIDIIN 128, 76, 0
+got$ = STEPS$(2)
+CHECK "the pedal holds released keys", got$ = "72 76", got$
+SOUND.MIDIIN 176, 64, 0
+got$ = STEPS$(1)
+CHECK "pedal up lets them go", got$ = "-1", got$
+
+' ---------- chords through the arp ----------
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8, "chord": "min"}, [72])
+got$ = STEPS$(3)
+CHECK "a named chord", got$ = "72 75 79", got$
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8, "chord": [0, 7, 12]}, [72])
+got$ = STEPS$(3)
+CHECK "a chord in semitones", got$ = "72 79 84", got$
+SOUND.SCALE 0, "C4", "MAJOR"
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8, "chord": "triad"}, [74])
+got$ = STEPS$(3)
+CHECK "triad stacks thirds of the scale: D F A", got$ = "74 77 81", got$
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8, "chord": "seventh"}, [79])
+got$ = STEPS$(4)
+CHECK "seventh on G: G B D F", got$ = "79 83 86 89", got$
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8, "chord": "maj", "scale": TRUE}, [76])
+got$ = STEPS$(3)
+CHECK "scale lock bends E major onto C major: E G B", got$ = "76 79 83", got$
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8, "scale": TRUE}, [73, 78])
+got$ = STEPS$(2)
+CHECK "a key off the scale goes down on a tie", got$ = "72 77", got$
+SOUND.SCALE 0, "A3", "PENT_MIN"
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8, "scale": TRUE}, [73])
+got$ = STEPS$(1)
+CHECK "the scale follows SOUND.SCALE", got$ = "72", got$
+
+' ---------- chord without arp ----------
+KEYS_UP()
+SOUND.ZONE -1
+DIM nz AS INTEGER = SOUND.ZONE(0, 0, 127, 0, 0, {"chord": "maj"})
+SOUND.MIDIIN 144, 72, 100
+DIM b = SOUND.RENDER(8192)
+DIM k = IOTA(8192, 0)
+DIM sp = TRANSPOSE(FFT(b[k * 2] * (0.5 - 0.5 * COS(2 * MATH.PI * k / 8191))))
+DIM h = IOTA(4095)
+DIM pw = sp[0][h] * sp[0][h] + sp[1][h] * sp[1][h]
+DIM hz = h * 44100 / 8192
+DIM total AS DOUBLE = SUM(pw)
+DIM share_c AS DOUBLE = SUM(pw * (ABS(hz - 523.25) < 15)) / total
+DIM share_e AS DOUBLE = SUM(pw * (ABS(hz - 659.26) < 15)) / total
+DIM share_g AS DOUBLE = SUM(pw * (ABS(hz - 783.99) < 15)) / total
+CHECK "one key plays the whole chord", share_c > 0.2 ANDALSO share_e > 0.2 ANDALSO share_g > 0.2, STR$(share_c) + " " + STR$(share_e) + " " + STR$(share_g)
+SOUND.MIDIIN 128, 72, 0
+b = SOUND.RENDER(4410)
+b = SOUND.RENDER(4410)
+CHECK "its key up releases every chord note", MAX(ABS(b)) < 0.001, "peak=" + STR$(MAX(ABS(b)))
+
+' ---------- SOUND.ZONESET while the arp plays ----------
+SOUND.SCALE 0, "C4", "MAJOR"
+ARP({"arp": "up", "arp_rate": 8, "arp_gate": 0.8}, [72, 76, 79])
+got$ = STEPS$(2)
+SOUND.ZONESET 0, {"arp": "down"}
+got$ = STEPS$(3)
+CHECK "ZONESET changes the mode and keeps the held keys", got$ = "72 79 76", got$
+SOUND.ZONESET 0, {"chord": "oct"}
+got$ = STEPS$(6)
+CHECK "ZONESET adds a chord to held keys, other options stay", INSTR(got$, "91") >= 0 ANDALSO INSTR(got$, "72") >= 0, got$
+SOUND.ZONESET 0, {"arp": "off", "chord": "off"}
+got$ = STEPS$(2)
+CHECK "arp off stops the steps", got$ = "-1 -1", got$
+SOUND.ZONESET 0, {"arp": "up"}
+got$ = STEPS$(1)
+CHECK "the keys of an arp switched off do not come back", got$ = "-1", got$
+
+' ---------- errors ----------
+DIM err_msg AS STRING = ""
+TRY
+    SOUND.ZONESET 5, {"arp": "up"}
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "ZONESET on a missing zone is refused", INSTR(err_msg, "no zone 5") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    SOUND.ZONESET 0, {"mono": TRUE, "arp": "up"}
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "ZONESET checks like SOUND.ZONE", INSTR(err_msg, "mono") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    nz = SOUND.ZONE(0, 0, 127, 0, 0, {"arp": "sideways"})
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "an unknown arp mode is refused", INSTR(err_msg, "updown") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    nz = SOUND.ZONE(0, 0, 127, 0, 0, {"arp": "up", "mono": TRUE})
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "mono and arp are refused together", INSTR(err_msg, "mono") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    nz = SOUND.ZONE(0, 0, 127, 0, 0, {"arp_rate": "1/0"})
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "a rate of zero is refused", INSTR(err_msg, "arp_rate") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    nz = SOUND.ZONE(0, 0, 127, 0, 0, {"chord": "jazz"})
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "an unknown chord is refused", INSTR(err_msg, "chord") >= 0, "msg=" + err_msg
+
+SOUND.ZONE -1
+SOUND.RESET
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
