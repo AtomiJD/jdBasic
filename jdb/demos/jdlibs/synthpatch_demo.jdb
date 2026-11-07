@@ -1,0 +1,79 @@
+' synthpatch_demo.jdb - a patch bank heard without an audio device: every
+' sound of the Oxygen bank plays the same phrase, rendered offline into
+' one WAV each, then a held chord morphs from the first patch to the
+' second in eight steps. A copy of the first patch with its cutoff turned
+' down by hand is captured and saved as a bank of its own.
+'
+'   jdBasic jdb/demos/jdlibs/synthpatch_demo.jdb
+
+IMPORT SYNTHPATCH
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "This demo needs a build with SOUND"
+    END
+ENDIF
+
+DIM bank_path$ = "jdb/demos/audio/oxygen_patches.json"
+DIM out_dir$ = "tmp/synthpatch_demo/"
+DIM phrase = [57, 60, 64, 69, 64, 60]
+DIM can_write = OS.FEATURE("FX")
+DIM i = 0
+DIM k = 0
+
+IF NOT FILE.EXISTS(out_dir$) THEN MKDIR out_dir$
+
+SOUND.INIT "PULL"
+DIM bank = SYNTHPATCH.LOAD_BANK(bank_path$)
+PRINT LEN(bank); " patches in "; bank_path$
+
+' Renders one phrase on track 1 and answers the stereo samples
+FUNC PLAY_PHRASE(notes)
+    DIM out = []
+    FOR EACH note IN notes
+        SOUND.MIDIIN 144, note, 100
+        out = APPEND(out, SOUND.RENDER(8820))
+        SOUND.MIDIIN 128, note, 0
+        out = APPEND(out, SOUND.RENDER(2205))
+    NEXT note
+    RETURN APPEND(out, SOUND.RENDER(22050))
+ENDFUNC
+
+SOUND.RESET
+DIM nz = SOUND.ZONE(1, 0, 127, 0, 0)
+FOR i = 0 TO LEN(bank) - 1
+    SYNTHPATCH.APPLY(1, bank[i])
+    DIM wav = PLAY_PHRASE(phrase)
+    DIM name$ = bank[i]{"name"}
+    PRINT FORMAT$("{:<12}", name$); " peak "; FORMAT$("{:.2f}", MAX(ABS(wav)))
+    IF can_write THEN DIM ok = WAV.WRITE(out_dir$ + name$ + ".wav", wav, 44100, 2)
+NEXT i
+
+' A chord held while the sound moves from the first patch to the second
+SYNTHPATCH.APPLY(1, bank[0])
+DIM chord = [57, 64, 69]
+FOR EACH note IN chord
+    SOUND.MIDIIN 144, note, 100
+NEXT note
+DIM morph = []
+FOR k = 0 TO 7
+    SYNTHPATCH.MORPH(1, bank[0], bank[1], k / 7)
+    morph = APPEND(morph, SOUND.RENDER(11025))
+NEXT k
+FOR EACH note IN chord
+    SOUND.MIDIIN 128, note, 0
+NEXT note
+morph = APPEND(morph, SOUND.RENDER(22050))
+PRINT "morph "; bank[0]{"name"}; " -> "; bank[1]{"name"}; ", cutoff now "; ROUND(SOUND.PARAM(1, "CUTOFF"))
+IF can_write THEN DIM ok2 = WAV.WRITE(out_dir$ + "morph.wav", morph, 44100, 2)
+
+' The first patch with a knob turned, kept as a new sound
+SYNTHPATCH.APPLY(1, bank[0])
+DIM turned = SOUND.PARAM(1, "CUTOFF", 700)
+DIM mine = SYNTHPATCH.CAPTURE(1, bank[0])
+mine{"name"} = "dark_" + bank[0]{"name"}
+SYNTHPATCH.SAVE_BANK(out_dir$ + "my_patches.json", [mine])
+PRINT "saved "; mine{"name"}; " (cutoff "; mine{"cutoff"}; ") to "; out_dir$; "my_patches.json"
+IF can_write THEN PRINT "WAV files in "; out_dir$
+
+SOUND.ZONE -1
+SOUND.RESET

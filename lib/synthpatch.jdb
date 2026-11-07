@@ -17,6 +17,7 @@
 '   lforate, lfodepth, fm, fm_ratio, chorus, glide (ms),
 '   reverb, delay, gain
 ' MORPH and CAPTURE cover the continuous keys, the ones SOUND.PARAM reaches.
+' version: 1.0.0
 
 EXPORT MODULE SYNTHPATCH
 

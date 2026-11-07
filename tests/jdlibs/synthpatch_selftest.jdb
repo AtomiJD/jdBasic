@@ -1,0 +1,67 @@
+' SYNTHPATCH: a bank saved and loaded back, patches found by name; with a
+' SOUND build, a patch applied to a track and read back with SOUND.PARAM,
+' captured from the knobs, and morphed: straight for most keys, along a
+' ratio for times and the cutoff, clamped outside 0..1. Renders offline
+' (SOUND.INIT "PULL"): no audio device.
+
+IMPORT TESTKIT, SYNTHPATCH
+
+DIM a = {"name": "Dark", "wave": "SAW", "cutoff": 400, "resonance": 0.2, "attack": 0.01, "gain": 0.2}
+DIM b = {"name": "bright", "wave": "SQUARE", "cutoff": 6400, "resonance": 0.6, "attack": 0.16, "gain": 0.6}
+DIM bank = [a, b]
+
+' ---------------------------------------------------------------- banks
+TESTKIT.SUITE("banks")
+DIM path$ = MKTEMP$("synthpatch") + ".json"
+SYNTHPATCH.SAVE_BANK(path$, bank)
+DIM back = SYNTHPATCH.LOAD_BANK(path$)
+KILL path$
+TESTKIT.EQ(LEN(back), 2, "a saved bank loads back with both patches")
+TESTKIT.EQ(back[1]{"wave"}, "SQUARE", "and their keys")
+TESTKIT.EQ(back[0]{"cutoff"}, 400, "numbers stay numbers")
+TESTKIT.EQ(SYNTHPATCH.FIND(bank, "bright"), 1, "FIND names a patch")
+TESTKIT.EQ(SYNTHPATCH.FIND(bank, "dark"), 0, "regardless of case")
+TESTKIT.EQ(SYNTHPATCH.FIND(bank, "missing"), -1, "and answers -1 for none")
+
+IF NOT OS.FEATURE("SOUND") THEN
+    TESTKIT.SKIP("APPLY, CAPTURE and MORPH need a build with SOUND")
+    TESTKIT.REPORT()
+    END
+ENDIF
+
+SOUND.INIT "PULL"
+SOUND.RESET
+
+' ---------------------------------------------------------------- apply
+TESTKIT.SUITE("apply")
+SYNTHPATCH.APPLY(1, a)
+TESTKIT.NEAR(SOUND.PARAM(1, "CUTOFF"), 400, 0.01, "the cutoff reaches the track")
+TESTKIT.NEAR(SOUND.PARAM(1, "RESONANCE"), 0.2, 0.001, "and the resonance")
+TESTKIT.NEAR(SOUND.PARAM(1, "GAIN"), 0.2, 0.001, "and the gain")
+SYNTHPATCH.APPLY(1, {"name": "bare"})
+TESTKIT.NEAR(SOUND.PARAM(1, "CUTOFF"), 20000, 0.01, "a missing key takes the plain default")
+
+' ---------------------------------------------------------------- capture
+TESTKIT.SUITE("capture")
+SYNTHPATCH.APPLY(1, a)
+DIM knob = SOUND.PARAM(1, "CUTOFF", 1234)
+DIM mine = SYNTHPATCH.CAPTURE(1, a)
+TESTKIT.NEAR(mine{"cutoff"}, 1234, 0.01, "CAPTURE reads what the knob left")
+TESTKIT.EQ(mine{"wave"}, "SAW", "and keeps the keys of the base")
+TESTKIT.EQ(a{"cutoff"}, 400, "the base itself is untouched")
+
+' ---------------------------------------------------------------- morph
+TESTKIT.SUITE("morph")
+SYNTHPATCH.APPLY(1, a)
+SYNTHPATCH.MORPH(1, a, b, 0.5)
+TESTKIT.NEAR(SOUND.PARAM(1, "RESONANCE"), 0.4, 0.001, "halfway is the middle for a level")
+TESTKIT.NEAR(SOUND.PARAM(1, "CUTOFF"), 1600, 1, "and the geometric middle for the cutoff")
+TESTKIT.NEAR(SOUND.PARAM(1, "ATTACK"), 0.04, 0.0001, "and for a time")
+SYNTHPATCH.MORPH(1, a, b, 0)
+TESTKIT.NEAR(SOUND.PARAM(1, "CUTOFF"), 400, 0.01, "0 is the first patch")
+SYNTHPATCH.MORPH(1, a, b, 3)
+TESTKIT.NEAR(SOUND.PARAM(1, "CUTOFF"), 6400, 0.01, "past 1 stays at the second")
+TESTKIT.NEAR(SOUND.PARAM(1, "GAIN"), 0.6, 0.001, "for every key")
+
+SOUND.RESET
+TESTKIT.REPORT()
