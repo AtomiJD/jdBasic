@@ -1458,8 +1458,11 @@ JDRT_API int64_t jdrt_val_arr_get(JdRT handle, int64_t h, int64_t idx) {
 static Value gather_positions(const Value& container, const Value& iv) {
     if (iv.type == ValueType::TENSOR) {
         Value out = Value::make_array();
-        for (double d : iv.as_tensor()->data)
+        for (double d : iv.as_tensor()->data) {
+            if (!(d >= 0.0 && d < (double)container.as_array()->elements.size()))
+                throw std::runtime_error("Array index out of bounds: " + std::to_string(d));
             out.as_array()->elements.push_back(gather_positions(container, Value::make_i64((int64_t)d)));
+        }
         return out;
     }
     if (iv.type == ValueType::ARRAY) {
