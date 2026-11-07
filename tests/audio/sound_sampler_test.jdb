@@ -112,8 +112,15 @@ CHECK "the looped note keeps its pitch", NEAR(lp, 110, 1), STR$(lp)
 SOUND.MIDIIN 128, 45, 0
 rest = SOUND.RENDER(8820)
 
-' ---------- granular ----------
 SOUND.SAMPLELOOP 0, 0, 0
+SOUND.MIDIIN 144, 45, 100
+b = SOUND.RENDER(88200)
+DIM tail_off AS DOUBLE = PEAK(LEFT_OF(b)[IOTA(8820, 0) + 75000])
+SOUND.MIDIIN 128, 45, 0
+rest = SOUND.RENDER(8820)
+CHECK "a loop end of 0 turns the loop off again", tail_off < 0.001, STR$(tail_off)
+
+' ---------- granular ----------
 SOUND.GRAIN 0, 80, 40, 0.02
 DIM gp AS DOUBLE = SOUND.PARAM(0, "GRAINPOS", 0.3)
 CHECK "GRAINPOS reads back", NEAR(SOUND.PARAM(0, "GRAINPOS"), 0.3, 1E-6), STR$(SOUND.PARAM(0, "GRAINPOS"))
@@ -144,6 +151,18 @@ b = SOUND.RENDER(4410)
 SOUND.MIDIIN 128, 48, 0
 CHECK "the WAV sounds", PEAK(b) > 0.01, STR$(PEAK(b))
 rest = SOUND.RENDER(8820)
+
+' ---------- a new take replaces the old one ----------
+DIM rs AS DOUBLE
+FOR k = 1 TO 5
+    rs = SOUND.SAMPLE(2, pluck, 45, FALSE, REC_RATE)
+NEXT k
+DIM heap0 AS DOUBLE = SYS.HEAP()
+FOR k = 1 TO 40
+    rs = SOUND.SAMPLE(2, pluck, 45, FALSE, REC_RATE)
+NEXT k
+DIM grown AS DOUBLE = SYS.HEAP() - heap0
+CHECK "40 new takes on one track do not pile up", grown < 2000000, STR$(grown) + " bytes"
 
 ' ---------- errors ----------
 DIM err_msg AS STRING = ""

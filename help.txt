@@ -3513,7 +3513,7 @@ Example: DIM s = SOUND.SAMPLE(1, take, 45.2, FALSE, 48000)
 
 [SOUND.SAMPLELOOP]
 Syntax: SOUND.SAMPLELOOP track, start_s, end_s, [xfade_s]
-Description: A held note of the track's sample loops between start_s and end_s and fades over xfade_s (default 0.01) before the end into the frames before the start, so the seam does not click. end_s 0 removes the region. Sets loop on.
+Description: A held note of the track's sample loops between start_s and end_s and fades over xfade_s (default 0.01) before the end into the frames before the start, so the seam does not click. end_s 0 removes the region and turns the loop off; any other end turns it on.
 
 [SOUND.GRAIN]
 Syntax: SOUND.GRAIN track, size_ms, [density], [spray]

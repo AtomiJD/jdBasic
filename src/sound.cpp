@@ -40,6 +40,7 @@ static void snd_unlock();
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <sstream>
 #include <algorithm>
 #include <mutex>
@@ -926,6 +927,8 @@ static struct SoundSystem {
 
     // SFX
     std::unordered_map<int, SoundChunk> samples;
+    // Samples SOUND.SAMPLE made itself; one no track uses any more is freed
+    std::unordered_set<int> owned_samples;
     // Kit samples loaded by path, under ids above any SFX.LOAD id
     std::unordered_map<std::string, int> kit_paths;
     int next_kit_id = 1 << 30;
@@ -3369,13 +3372,20 @@ void register_sound_builtins(VM& vm) {
         if (fresh) {
             id = g_sound.next_kit_id++;
             g_sound.samples[id] = std::move(chunk);
+            g_sound.owned_samples.insert(id);
         }
         auto& tp = g_sound.tracks[t];
+        int old_id = tp.sample_id;
         tp.sample_id = id;
         tp.waveform = Waveform::SAMPLE;
         tp.loop_start = tp.loop_end = tp.loop_xfade = 0;
         if (base_freq > 0.0f) tp.sample_base_freq = base_freq;
         if (args.size() >= 4) tp.sample_loop = args[3].to_bool();
+        if (old_id != id && g_sound.owned_samples.count(old_id)) {
+            bool used = false;
+            for (auto& other : g_sound.tracks) used = used || other.sample_id == old_id;
+            if (!used) { g_sound.samples.erase(old_id); g_sound.owned_samples.erase(old_id); }
+        }
         auto sit = g_sound.samples.find(id);
         if (sit != g_sound.samples.end()) secs = (double)(sit->second.data.size() / 2) / SAMPLE_RATE;
         if (g_sound.initialized) SND_UNLOCK();
@@ -3384,7 +3394,8 @@ void register_sound_builtins(VM& vm) {
 
     // SOUND.SAMPLELOOP track, start_s, end_s, [xfade_s]: a held note loops
     // between start and end of the track's sample, fading over xfade before
-    // the end into the frames before the start. end 0 removes the region.
+    // the end into the frames before the start. end 0 removes the region and
+    // the loop.
     vm.register_native("SOUND.SAMPLELOOP", 3, 4, [](const std::vector<Value>& args) -> Value {
         int t = (int)args[0].to_int();
         if (t < 0 || t >= NUM_TRACKS)
@@ -3398,7 +3409,7 @@ void register_sound_builtins(VM& vm) {
         tp.loop_start = (int64_t)(s * SAMPLE_RATE);
         tp.loop_end = (int64_t)(e * SAMPLE_RATE);
         tp.loop_xfade = (int64_t)(xf * SAMPLE_RATE);
-        if (e > 0.0) tp.sample_loop = true;
+        tp.sample_loop = e > 0.0;
         if (g_sound.initialized) SND_UNLOCK();
         return Value::make_none();
     });
