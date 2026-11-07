@@ -11,7 +11,7 @@
 ' mod wheel adds vibrato. On the DAW port:
 '   knobs 1-8    lead cutoff, resonance, attack, release; bass cutoff,
 '                resonance; lead detune, reverb
-'   faders 1-2   lead / bass level
+'   faders 1-3   lead / bass / drum level
 '   fader 9      morph from the lead patch to the next one
 '   MODE < >     previous / next lead patch
 '   PLAY         start the loop (pads play the kit live, on channel 10)
@@ -420,7 +420,7 @@ ENDSUB
 ' What the hardware moves: [label, cc index list key, index, track, param, lo, hi, curve]
 DIM knob = cfg{"knobs"}{"daw"}{"cc"}
 DIM fader = cfg{"faders"}{"daw"}{"cc"}
-DIM hw_map = [["Knob 1", "knob", 0, 1, "CUTOFF", 150, 9000, "EXP"], ["Knob 2", "knob", 1, 1, "RESONANCE", 0, 0.9, "LIN"], ["Knob 3", "knob", 2, 1, "ATTACK", 0.002, 1.5, "EXP"], ["Knob 4", "knob", 3, 1, "RELEASE", 0.02, 3, "EXP"], ["Knob 5", "knob", 4, 0, "CUTOFF", 80, 4000, "EXP"], ["Knob 6", "knob", 5, 0, "RESONANCE", 0, 0.9, "LIN"], ["Knob 7", "knob", 6, 1, "DETUNE", 0, 0.5, "LIN"], ["Knob 8", "knob", 7, 1, "REVERB", 0, 0.8, "LIN"], ["Fader 1", "fader", 0, 1, "GAIN", 0, 1, "LIN"], ["Fader 2", "fader", 1, 0, "GAIN", 0, 1, "LIN"]]
+DIM hw_map = [["Knob 1", "knob", 0, 1, "CUTOFF", 150, 9000, "EXP"], ["Knob 2", "knob", 1, 1, "RESONANCE", 0, 0.9, "LIN"], ["Knob 3", "knob", 2, 1, "ATTACK", 0.002, 1.5, "EXP"], ["Knob 4", "knob", 3, 1, "RELEASE", 0.02, 3, "EXP"], ["Knob 5", "knob", 4, 0, "CUTOFF", 80, 4000, "EXP"], ["Knob 6", "knob", 5, 0, "RESONANCE", 0, 0.9, "LIN"], ["Knob 7", "knob", 6, 1, "DETUNE", 0, 0.5, "LIN"], ["Knob 8", "knob", 7, 1, "REVERB", 0, 0.8, "LIN"], ["Fader 1", "fader", 0, 1, "GAIN", 0, 1, "LIN"], ["Fader 2", "fader", 1, 0, "GAIN", 0, 1, "LIN"], ["Fader 3", "fader", 2, DRUMS, "GAIN", 0, 1, "LIN"]]
 
 ' Mapping anew also restarts the pickup, so a knob waits for the new sound
 ' Knob 7 scans the wavetable when the lead patch has one, else it detunes
@@ -1015,7 +1015,7 @@ SUB DRAW_PANEL()
 
         GUI.SEPARATOR_TEXT("Hardware map")
         FOR EACH m IN hw_map
-            GUI.TEXT m[0] + "  ->  " + IIF(m[3] = 1, "lead ", "bass ") + LCASE$(m[4])
+            GUI.TEXT m[0] + "  ->  " + ["bass ", "lead ", "drums "][m[3]] + LCASE$(m[4])
         NEXT m
         GUI.TEXT "Fader 9  ->  morph       MODE < >  ->  patch"
         GUI.TEXT "PLAY STOP REC  ->  loop (pads and keys)    LOOP + key  ->  split"
