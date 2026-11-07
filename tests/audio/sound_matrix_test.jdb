@@ -44,9 +44,9 @@ ENDIF
 SOUND.INIT "PULL"
 SOUND.RESET
 DIM buf = []
-DIM n = 0
-DIM lvl = 0
-DIM lvl2 = 0
+DIM n AS DOUBLE = 0
+DIM lvl AS DOUBLE = 0
+DIM lvl2 AS DOUBLE = 0
 
 ' ---------- sources ----------
 CHECK "the mod wheel starts at 0", SOUND.MODSRC("MODWHEEL") = 0, ""

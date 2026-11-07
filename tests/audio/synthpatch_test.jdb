@@ -96,7 +96,7 @@ CHECK "APPLY sets the sends", NEAR(SOUND.PARAM(1, "REVERB"), 0.1, 1e-6), ""
 CHECK "a missing key takes the default", NEAR(SOUND.PARAM(1, "FM"), 0, 1e-9), ""
 SOUND.MIDIIN 144, 60, 127
 buf = SOUND.RENDER(4000)
-DIM acc = 0
+DIM acc AS DOUBLE = 0
 FOR i = 500 TO 3999
     acc = acc + buf[i * 2] * buf[i * 2]
 NEXT i
