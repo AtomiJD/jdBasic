@@ -24,8 +24,8 @@
 #include <thread>
 #endif
 
-inline void jdb_sleep_ms(int64_t ms) {
-    if (ms <= 0) return;
+// One wait of at most a day, so the 100 ns count and Sleep's DWORD both hold it
+inline void jdb_sleep_ms_once(int64_t ms) {
 #ifdef _WIN32
     struct TimerHolder {
         HANDLE h = nullptr;
@@ -51,4 +51,13 @@ inline void jdb_sleep_ms(int64_t ms) {
 #else
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 #endif
+}
+
+inline void jdb_sleep_ms(int64_t ms) {
+    const int64_t day = 86400000;
+    while (ms > 0) {
+        int64_t step = ms < day ? ms : day;
+        jdb_sleep_ms_once(step);
+        ms -= step;
+    }
 }
