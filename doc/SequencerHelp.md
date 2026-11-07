@@ -154,6 +154,71 @@ All design commands (`SOUND.VOICE` / `SEQ` / `NOTE` / `FM` / `UNISON` / `REVERB`
 / ...) work identically in pull mode; only `SFX.LOAD` and `SOUND.PLAYBUFFER`
 (which need the SDL device and WAV decoder) require a `GFX` build.
 
+## 8. Playing the Synth from a MIDI Keyboard
+
+The sequencer's tracks are also a playable synthesizer. A MIDI keyboard (or
+pads, or any controller) reaches them through the `MIDI` build flag. Notes go
+straight to the audio thread, so the script loop adds no latency, and the
+same tracks keep playing their `SOUND.SEQ` patterns underneath.
+
+### Ports and routing
+
+* **`MIDI.PORTS()`**: `{in: [names], out: [names]}`, the connected ports.
+* **`MIDI.OPEN_IN(index)`** / **`MIDI.OPEN_OUT(index)`**: a handle, or -1.
+* **`MIDI.ROUTE(handle, [on], [channel])`**: the port plays the synth directly. `on` is `TRUE`, `FALSE`, or `"CC"` (controllers only, for a port whose pads must not play notes); `channel` moves every message to that channel, so a second port can play its own zone. `MIDI.POLL` still sees every message, for recording or for buttons the script handles itself.
+* **`MIDI.POLL(handle)`**: the messages since the last call, `[[status, data1, data2], ...]`. **`MIDI.SEND(handle, status, [d1], [d2])`** sends one. **`MIDI.CLOSE handle`**.
+* **`SOUND.MIDIIN status, [d1], [d2]`**: plays one message as if it came from a routed port, for tests and for scripts that filter first.
+* `jdb/demos/audio/midi_sniff.jdb` prints what each key, pad and knob of a controller sends.
+
+### Zones: which keys play which track
+
+* **`SOUND.ZONE track, [lo], [hi], [channel], [transpose], [options]`**: keys `lo`..`hi` on `channel` (0 = any) play `track`, shifted by `transpose`. Zones may overlap (layers). `SOUND.ZONE -1` clears them; without zones every key plays track 0.
+* Options (a map): `vel_lo`/`vel_hi` (velocity split), `bend` (semitones), `sustain` (pedal), `mono`, `legato` (mono glide without restarting the envelope), `vel_cutoff` (softer keys close the filter), `mod_cutoff` and `mod_vibrato` (what the mod wheel does).
+* **Chords**: `chord` makes one key play several notes: semitones (`[0, 7, 12]`), a name (`"maj"`, `"min"`, `"dim"`, `"aug"`, `"sus2"`, `"sus4"`, `"7"`, `"maj7"`, `"min7"`, `"power"`, `"oct"`), or `"triad"` / `"seventh"` / `"ninth"`, stacked from the track scale, so each white key in C major gives its own chord (D gives D minor, G gives G7).
+* **Scale lock**: `scale: TRUE` moves every note to the nearest note of the track's `SOUND.SCALE`.
+* **Arpeggiator**: `arp` plays the held keys (and their chords) one after another: `"up"`, `"down"`, `"updown"`, `"downup"`, `"random"`, `"played"`. `arp_rate` is steps per bar or a note value (`"1/16"`, `"1/8T"`), `arp_octaves` 1-4, `arp_gate` the share of each step that sounds, `arp_latch` keeps it running after the keys go up. The steps run on the sequencer clock, so the arp stays on the beat of the patterns and of `MIDI.CLOCK`.
+* **`SOUND.ZONESET index, options`**: changes a zone (0-based, in the order made) while it plays; held keys and a running arp carry on.
+* A zone on a kit track (`SOUND.KIT`) plays drums: each note hits its General MIDI sound (36 bd, 38 sd, 42 hh ...). **`SOUND.PADMAP track, note, name$`** names other notes.
+* **`SOUND.LASTNOTE()`**: the last key (`note`, `velocity`, `channel`, `count`), for learning a split point.
+
+```basic
+SOUND.INIT
+SOUND.KIT 2, "SYNTH"
+SOUND.SCALE 1, "A3", "MINOR"
+SOUND.ZONE 0, 0, 47, 0, -12, {"legato": TRUE}                    ' mono bass
+SOUND.ZONE 1, 48, 127, 0, 0, {"chord": "triad", "arp": "updown", "arp_rate": "1/16"}
+SOUND.ZONE 2, 0, 127, 10                                         ' pads on channel 10
+DIM keys = MIDI.OPEN_IN(0)
+MIDI.ROUTE(keys)
+```
+
+### Knobs, faders and modulation
+
+* **`SOUND.CCMAP cc, track, param$, lo, hi, [curve$], [channel], [pickup]`**: a controller sets a parameter (`"EXP"` for cutoff and times). The value glides in about 10 ms; with `pickup` a knob takes over only once it passes the present value. `SOUND.CCMAP -1` clears.
+* **`SOUND.PARAM(track, param$, [value])`**: reads or sets `CUTOFF`, `RESONANCE`, `GAIN`, `PAN`, `DETUNE`, `FM`, `CRUSH`, `REVERB`, `DELAY`, `FENV`, `VOWEL`, `PITCH`, `ATTACK`, `DECAY`, `SUSTAIN`, `RELEASE`, `LFORATE`, `LFODEPTH`, `WTPOS`.
+* **`SOUND.MATRIX source$, track, param$, amount`**: a modulation slot. Sources: `LFO1`, `LFO2`, `MODWHEEL`, `AFTERTOUCH`, `VELOCITY`, `NOTE`, `RANDOM`, `CC0`-`CC127`. Knobs and slots stack on the same parameter. **`SOUND.MODLFO n, hz, [shape$]`** sets the two LFOs, **`SOUND.MODSRC(source$)`** reads a source for a meter.
+* **Wavetables**: **`SOUND.WAVETABLE track, [frames]`** gives a track a band-limited wavetable oscillator, built in (`"BASIC"`, `"PWM"`, `"HARMONIC"`, `"VOCAL"`) or drawn as jdBasic arrays; `WTPOS` (0..1) scans through it, by knob, LFO or `SOUND.MOD`.
+* **Patches**: `lib/synthpatch.jdb` (`IMPORT SYNTHPATCH`) loads a bank of sounds from JSON (`LOAD_BANK`, `FIND`), sets one in a call (`APPLY`), reads back what the knobs did (`CAPTURE`) and blends two (`MORPH`). See `lib/synthpatch_lib_readme.md`.
+
+### Clock and latency
+
+* **`MIDI.CLOCK(out, mode)`**: sends MIDI clock (24 per beat) in step with the sequencer as it leaves the speaker; `"START"` also sends Start on the next bar line, `"STOP"` sends Stop. A hardware arpeggiator or drum machine set to external sync follows `SOUND.BPM`.
+* **`MIDI.CLOCKIN(in)`**: the clock a port receives, `{bpm, running, ticks}`, to follow another device's tempo.
+* **`SOUND.CYCLE()`**: the clock in bars, for a looper that records on the grid.
+* **`MON.SYNTH([frames], [device], [exclusive])`** after `SOUND.INIT "PULL"` plays the synth on a low-latency device (`MINIAUDIO` flag): on Windows exclusive mode brings key-to-speaker under 10 ms. **`SOUND.MIDISTATS()`** measures it.
+
+### The Oxygen demo
+
+`jdb/demos/audio/oxygen_synth.jdb [seconds] [fast] [panel]` turns an M-Audio
+Oxygen 61 (or any keyboard, ports in `oxygen61.json`) into a synth and looper:
+split bass and lead, drums on the pads, knobs and faders mapped, a patch bank
+with morphing, a modulation matrix, the arp and chord panel, a looper that
+records pads and keys in 1-8 bars, and MIDI clock out. `oxygen_live.jdb`
+next to it runs again each time it is saved, so the sound and the patterns
+change while the keyboard plays. `patch_designer.jdb "glassy bell pad"` lets
+an LLM design a patch, renders and measures each try and saves the result
+into the demo's bank.
+
 ---
 
 ## Comprehensive Command Table
@@ -187,6 +252,13 @@ All design commands (`SOUND.VOICE` / `SEQ` / `NOTE` / `FM` / `UNISON` / `REVERB`
 |  | `SOUND.LIMITER` | `[ceil_db, drive_db, rel]` | Peak limiter, master end |
 |  | `SOUND.MASTER` | `mode$, [headroom]` | AUTO or FIXED mix level |
 |  | `SOUND.DISTORTION` | `amount` | Master saturation |
+| **MIDI** | `MIDI.OPEN_IN` / `MIDI.ROUTE` | `index` / `handle, [on], [ch]` | A keyboard plays the synth directly |
+|  | `SOUND.ZONE` | `track, [lo], [hi], [ch], [transpose], [opts]` | Key ranges, chords, scale lock, arpeggiator |
+|  | `SOUND.ZONESET` | `index, opts` | Change a zone while it plays |
+|  | `SOUND.CCMAP` | `cc, track, param$, lo, hi, ...` | Knob or fader to a parameter |
+|  | `SOUND.MATRIX` | `source$, track, param$, amount` | Modulation slot |
+|  | `SOUND.WAVETABLE` | `track, [frames]` | Wavetable oscillator, `WTPOS` scans |
+|  | `MIDI.CLOCK` / `MIDI.CLOCKIN` | `out, mode` / `in` | Clock out in step, clock in |
 | **Analysis** | `SOUND.GET_WAVE` | none | Get master waveform array |
 |  | `SOUND.RENDER` | `frames` | Pull stereo samples (embed/no-device) |
 |  | `SOUND.GET_BUS_WAVE` | `bus_id` | Get wet-only waveform |
@@ -194,7 +266,7 @@ All design commands (`SOUND.VOICE` / `SEQ` / `NOTE` / `FM` / `UNISON` / `REVERB`
 
 ---
 
-## 7. Examples
+## 9. Examples
 
 ### Sidechain Pumping
 
@@ -415,7 +487,7 @@ I have organized them by category. You can copy the **Pattern String** directly 
 
 #### 21-30: Arpeggios & Chords
 
-*Since a single track is monophonic, we simulate chords by playing their notes quickly in sequence (Arpeggios).*
+*Arpeggios written as patterns. A track also plays real chords: a stack `[c3,e3,g3]` or a chord symbol `"Cmaj7"` in a pattern, and from a keyboard the `chord` and `arp` options of `SOUND.ZONE` (section 8).*
 
 21. **Major Triad Arp** (Root, 3rd, 5th)
     `"[c3 e3] [g3 c4] [c3 e3] [g3 c4]"`
