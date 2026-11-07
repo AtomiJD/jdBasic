@@ -395,7 +395,7 @@ private:
     //     the default retval (caller's per-stmt check picks it up)
     //   - inside main with no TRY → __throw_uncaught + unreachable
     // The builder is left positioned at the fall-through ok block.
-    void emit_err_check();
+    void emit_err_check(const std::function<void()>& on_err = {});
     // Record the line an error happened on, for ERL and STACK$. Every place
     // that raises and jumps straight to the handler needs it: such a jump
     // passes no error check, and the check is the only other place that knows.
@@ -403,7 +403,7 @@ private:
     // Leave a raise: for the enclosing TRY, or out of the function so the
     // caller's check carries the error on, or abort when nobody is left.
     void emit_raise_exit();
-    void emit_err_code_branch();
+    void emit_err_code_branch(const std::function<void()>& on_err = {});
     void emit_cell_out(LLVMValueRef bits, LLVMValueRef tag);
     void codegen_input(const Stmt& stmt);
 

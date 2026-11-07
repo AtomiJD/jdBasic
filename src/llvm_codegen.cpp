@@ -6056,7 +6056,7 @@ void LLVMCodegen::codegen_input(const Stmt& stmt) {
 
 // ── FUNC / SUB ──────────────────────────────────────────────
 
-void LLVMCodegen::emit_err_check() {
+void LLVMCodegen::emit_err_check(const std::function<void()>& on_err) {
     if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) return;
     auto ec_it = runtime_funcs.find("__err_rc");
     if (ec_it == runtime_funcs.end()) return;
@@ -6091,7 +6091,7 @@ void LLVMCodegen::emit_err_check() {
         LLVMPositionBuilderAtEnd(builder, post_bb);
     }
 
-    emit_err_code_branch();
+    emit_err_code_branch(on_err);
 }
 
 // The error-code half of emit_err_check: leaves for the enclosing TRY, the
@@ -6151,7 +6151,7 @@ void LLVMCodegen::emit_cell_out(LLVMValueRef bits, LLVMValueRef tag) {
     LLVMPositionBuilderAtEnd(builder, bb_e);
 }
 
-void LLVMCodegen::emit_err_code_branch() {
+void LLVMCodegen::emit_err_code_branch(const std::function<void()>& on_err) {
     if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) return;
     auto ec_it = runtime_funcs.find("__err_rc");
     if (ec_it == runtime_funcs.end()) return;
@@ -6164,6 +6164,7 @@ void LLVMCodegen::emit_err_code_branch() {
     LLVMBuildCondBr(builder, has_err, err_bb, ok_bb);
 
     LLVMPositionBuilderAtEnd(builder, err_bb);
+    if (on_err) on_err();
     // Where it happened, for ERL and STACK$. The innermost check to see the
     // error records the line; the runtime keeps the first one, so the checks
     // the error passes on its way out do not claim it as theirs.
@@ -15681,10 +15682,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             else
                 args.push_back(coerce_to(av, pt));
         }
-        // An argument that raised leaves for CATCH before the body runs, as
-        // the VM throws while evaluating it.
-        if (m_raise_pending) emit_err_check();
-        LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
         // A string this call allocated for a parameter that does not
         // outlive the call dies with it.
         auto drop_user_args = [&]() {
@@ -15695,6 +15692,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             }
             for (auto& tv : user_read_drops) drop_read_temp(tv);
         };
+        // An argument that raised leaves for CATCH before the body runs, as
+        // the VM throws while evaluating it; the arguments made so far go too.
+        if (m_raise_pending) emit_err_check(drop_user_args);
+        LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
         if (fi.return_tag == -1) {
             LLVMBuildCall2(builder, fn_type, fi.fn,
                            args.empty() ? nullptr : args.data(),
