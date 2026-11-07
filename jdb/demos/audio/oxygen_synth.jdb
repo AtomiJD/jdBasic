@@ -23,6 +23,10 @@
 ' The lead keys can run an arpeggiator on the loop clock, play a chord per
 ' key and lock to a scale (panel "Arp and chords", or APPLY_ARP from live
 ' code). The looper records the keys, not the arp steps.
+' Sampler (panel): Record takes a note from the audio input (capture in
+' oxygen61.json picks the device), finds its root and plays it on the lead
+' keys through the patch's filter and envelope; Loop sustains it, Grains
+' plays it granular with knob 7 moving through the take.
 ' Live code: oxygen_live.jdb next to this file runs again each time it is
 ' saved, while the keyboard plays on (see oxygen_live_example.jdb).
 ' The pads reach the drums only in DAW mode (DAW button lit); in preset mode
@@ -418,8 +422,134 @@ DIM hw_map = [["Knob 1", "knob", 0, 1, "CUTOFF", 150, 9000, "EXP"], ["Knob 2", "
 
 ' Mapping anew also restarts the pickup, so a knob waits for the new sound
 ' Knob 7 scans the wavetable when the lead patch has one, else it detunes
+' ---- sampler: a recorded take on the lead keys, through the lead patch ----
+' The take is recorded from the audio input (WAV.RECSTART), trimmed, its
+' root found with SOUND.PITCHOF, and played chromatically on track 1 in
+' place of the patch's oscillator; filter, envelope and sends stay the
+' patch's. oxygen_take.wav next to this file keeps the last take.
+DIM can_record = OS.FEATURE("MINIAUDIO") ANDALSO OS.FEATURE("FX")
+DIM take_path$ = here$ + "/oxygen_take.wav"
+DIM take_buf = [0.0, 0.0]
+DIM take_rate = 44100
+DIM take_secs = 0
+DIM take_root = 60.0
+DIM sampler_on = FALSE
+DIM take_recording = FALSE
+DIM take_loop = FALSE
+DIM take_loop_a = 0.2
+DIM take_loop_b = 0.8
+DIM grain_on = FALSE
+DIM grain_ms = 80
+DIM grain_dens = 40
+DIM grain_spray = 0.03
+
+' Loop region and grains, without loading the take again
+SUB SAMPLER_SETTINGS()
+    IF NOT sampler_on ORELSE take_secs <= 0 THEN RETURN
+    IF take_loop ANDALSO take_loop_b > take_loop_a + 0.02 THEN
+        SOUND.SAMPLELOOP 1, take_loop_a * take_secs, take_loop_b * take_secs, 0.03
+    ELSE
+        SOUND.SAMPLELOOP 1, 0, 0
+    ENDIF
+    SOUND.GRAIN 1, IIF(grain_on, grain_ms, 0), grain_dens, grain_spray
+ENDSUB
+
+SUB APPLY_SAMPLER()
+    IF NOT sampler_on ORELSE take_secs <= 0 THEN RETURN
+    DIM secs = SOUND.SAMPLE(1, take_buf, take_root, FALSE, take_rate)
+    SAMPLER_SETTINGS()
+ENDSUB
+
+' A take from samples at a rate: trimmed to where it is louder than 2 % of
+' its peak, scaled to a peak of 0.9, its root measured
+SUB SET_TAKE(raw, rate)
+    DIM pk = MAX(ABS(raw))
+    IF pk < 0.001 THEN
+        SAY("The take is silent: check the input")
+        RETURN
+    ENDIF
+    DIM loud = ABS(raw) > pk * 0.02
+    DIM first = MAX([0, INDEXOF(loud, TRUE) - INT(rate * 0.005)])
+    DIM last = LEN(raw) - 1 - INDEXOF(REVERSE(loud), TRUE)
+    IF last <= first + 64 THEN
+        SAY("The take is too short")
+        RETURN
+    ENDIF
+    take_buf = raw[IOTA(last - first + 1, 0) + first] * (0.9 / pk)
+    take_rate = rate
+    take_secs = LEN(take_buf) / rate
+    DIM hz = SOUND.PITCHOF(take_buf, rate)
+    IF hz > 0 THEN
+        take_root = 69 + 12 * LOG(hz / 440) / LOG(2)
+        SAY("Take: " + STR$(ROUND(take_secs, 2)) + " s, root " + UCASE$(note_names$[INT(take_root + 0.5) MOD 12]) + STR$(INT((take_root + 0.5) / 12) - 1) + IIF(ABS(take_root - INT(take_root + 0.5)) > 0.1, " (" + STR$(ROUND(hz, 1)) + " Hz)", ""))
+    ELSE
+        take_root = 60
+        SAY("Take: " + STR$(ROUND(take_secs, 2)) + " s, no clear pitch: root set to C4")
+    ENDIF
+    sampler_on = TRUE
+    APPLY_SAMPLER()
+    MAP_KNOBS()
+ENDSUB
+
+SUB TAKE_RECORD()
+    IF NOT can_record THEN
+        SAY("Recording needs a build with MINIAUDIO and FX")
+        RETURN
+    ENDIF
+    IF take_recording THEN
+        DIM got = WAV.RECSTOP()
+        take_recording = FALSE
+        IF TYPEOF(got) = "NONE" THEN
+            SAY("The recording came back empty")
+            RETURN
+        ENDIF
+        DIM raw = got{"samples"}
+        IF got{"channels"} > 1 THEN raw = raw[IOTA(got{"frames"}, 0) * got{"channels"}]
+        SET_TAKE(raw, got{"rate"})
+        IF take_secs > 0 THEN
+            DIM ok = WAV.WRITE(take_path$, take_buf, take_rate, 1)
+        ENDIF
+        RETURN
+    ENDIF
+    DIM opts = {"channels": 1, "seconds": 30}
+    IF MAP.EXISTS(cfg, "capture") THEN opts{"device"} = cfg{"capture"}
+    IF WAV.RECSTART(opts) THEN
+        take_recording = TRUE
+        SAY("Recording the input: play the note, then Stop (30 s at most)")
+    ELSE
+        SAY("No audio input opened (set capture in oxygen61.json to an index of MON.DEVICES())")
+    ENDIF
+ENDSUB
+
+SUB TAKE_LOAD()
+    IF NOT can_record THEN
+        SAY("Loading a take needs a build with FX")
+        RETURN
+    ENDIF
+    IF NOT FILE.EXISTS(take_path$) THEN
+        SAY("No take saved yet: record one")
+        RETURN
+    ENDIF
+    DIM w = WAV.READ(take_path$)
+    IF TYPEOF(w) = "NONE" THEN
+        SAY("Cannot read " + take_path$)
+        RETURN
+    ENDIF
+    DIM raw = w{"samples"}
+    IF w{"channels"} > 1 THEN raw = raw[IOTA(w{"frames"}, 0) * w{"channels"}]
+    SET_TAKE(raw, w{"rate"})
+ENDSUB
+
+SUB SAMPLER_OFF()
+    sampler_on = FALSE
+    SOUND.GRAIN 1, 0
+    SELECT_PATCH(cur)
+ENDSUB
+
 SUB MAP_KNOBS()
-    IF UCASE$("" + bank[cur]{"wave"}) = "WAVETABLE" THEN
+    IF sampler_on ANDALSO grain_on THEN
+        hw_map[6] = ["Knob 7", "knob", 6, 1, "GRAINPOS", 0, 1, "LIN"]
+    ELSEIF UCASE$("" + bank[cur]{"wave"}) = "WAVETABLE" THEN
         hw_map[6] = ["Knob 7", "knob", 6, 1, "WTPOS", 0, 1, "LIN"]
     ELSE
         hw_map[6] = ["Knob 7", "knob", 6, 1, "DETUNE", 0, 0.5, "LIN"]
@@ -439,6 +569,7 @@ SUB SELECT_PATCH(i)
     cur = i
     morph = 0
     SYNTHPATCH.APPLY 1, bank[i]
+    APPLY_SAMPLER()
     MAP_KNOBS()
     SAY("Lead patch " + STR$(i + 1) + "/" + STR$(LEN(bank)) + ": " + bank[i]{"name"} + "   (fader 9 morphs to " + bank[(i + 1) MOD LEN(bank)]{"name"} + ")")
 ENDSUB
@@ -716,6 +847,60 @@ SUB DRAW_PANEL()
         scale_mode_i = GUI.COMBO("##scalemode", scale_mode_i, scale_modes$)
         DIM zone_now$ = STR$(arp_i) + STR$(arp_rate_i) + STR$(arp_oct) + STR$(arp_gate) + STR$(arp_latch) + STR$(chord_i) + STR$(scale_lock) + STR$(scale_root_i) + STR$(scale_mode_i)
         IF zone_now$ <> zone_was$ THEN APPLY_ARP()
+        GUI.SEPARATOR_TEXT("Sampler (lead keys)")
+        IF GUI.BUTTON(IIF(take_recording, "Stop rec##take", "Record##take")) THEN TAKE_RECORD()
+        GUI.SAME_LINE
+        IF GUI.BUTTON("Load last##take") THEN TAKE_LOAD()
+        GUI.SAME_LINE
+        DIM s_was = sampler_on
+        sampler_on = GUI.CHECKBOX("On##sampler", sampler_on) ANDALSO take_secs > 0
+        IF sampler_on <> s_was THEN
+            IF sampler_on THEN
+                APPLY_SAMPLER()
+                MAP_KNOBS()
+            ELSE
+                SAMPLER_OFF()
+            ENDIF
+        ENDIF
+        IF take_secs > 0 THEN
+            GUI.SAME_LINE
+            GUI.TEXT STR$(ROUND(take_secs, 2)) + " s, root " + UCASE$(note_names$[INT(take_root + 0.5) MOD 12]) + STR$(INT((take_root + 0.5) / 12) - 1)
+            GUI.SAME_LINE
+            IF GUI.BUTTON("-##root") THEN
+                take_root = take_root - 1
+                APPLY_SAMPLER()
+            ENDIF
+            GUI.SAME_LINE
+            IF GUI.BUTTON("+##root") THEN
+                take_root = take_root + 1
+                APPLY_SAMPLER()
+            ENDIF
+        ENDIF
+        DIM smp_was$ = STR$(take_loop) + STR$(take_loop_a) + STR$(take_loop_b) + STR$(grain_on) + STR$(grain_ms) + STR$(grain_dens) + STR$(grain_spray)
+        take_loop = GUI.CHECKBOX("Loop##takeloop", take_loop)
+        GUI.SAME_LINE
+        GUI.SET_NEXT_ITEM_WIDTH 120 * ui
+        take_loop_a = GUI.SLIDER("##loopa", take_loop_a, 0, 0.95)
+        GUI.SAME_LINE
+        GUI.SET_NEXT_ITEM_WIDTH 120 * ui
+        take_loop_b = GUI.SLIDER("##loopb", take_loop_b, 0.05, 1)
+        grain_on = GUI.CHECKBOX("Grains##grain", grain_on)
+        GUI.SAME_LINE
+        GUI.SET_NEXT_ITEM_WIDTH 90 * ui
+        grain_ms = GUI.SLIDER("ms##grainms", grain_ms, 10, 400)
+        GUI.SAME_LINE
+        GUI.SET_NEXT_ITEM_WIDTH 90 * ui
+        grain_dens = GUI.SLIDER("/s##graind", grain_dens, 5, 120)
+        GUI.SAME_LINE
+        GUI.SET_NEXT_ITEM_WIDTH 70 * ui
+        grain_spray = GUI.SLIDER("spray##grains", grain_spray, 0, 0.3)
+        IF grain_on THEN PARAM_SLIDER("Grain pos", 1, "GRAINPOS", 0, 1, FALSE)
+        DIM smp_now$ = STR$(take_loop) + STR$(take_loop_a) + STR$(take_loop_b) + STR$(grain_on) + STR$(grain_ms) + STR$(grain_dens) + STR$(grain_spray)
+        IF smp_now$ <> smp_was$ ANDALSO sampler_on THEN
+            SAMPLER_SETTINGS()
+            MAP_KNOBS()
+        ENDIF
+
 
         GUI.TABLE_NEXT_COLUMN
         GUI.SEPARATOR_TEXT("Modulation matrix (lead)")
