@@ -27,6 +27,8 @@
 ' oxygen61.json picks the device), finds its root and plays it on the lead
 ' keys through the patch's filter and envelope; Loop sustains it, Grains
 ' plays it granular with knob 7 moving through the take.
+' Voice (panel): the lead keys sing a phonetic lyric, a syllable a key, or
+' say the recorded take through a vocoder at the pitch of each key.
 ' Live code: oxygen_live.jdb next to this file runs again each time it is
 ' saved, while the keyboard plays on (see oxygen_live_example.jdb).
 ' The pads reach the drums only in DAW mode (DAW button lit); in preset mode
@@ -486,9 +488,13 @@ SUB SET_TAKE(raw, rate)
         take_root = 60
         SAY("Take: " + STR$(ROUND(take_secs, 2)) + " s, no clear pitch: root set to C4")
     ENDIF
-    sampler_on = TRUE
-    APPLY_SAMPLER()
-    MAP_KNOBS()
+    IF voc_on THEN
+        VOCODER_APPLY()
+    ELSE
+        sampler_on = TRUE
+        APPLY_SAMPLER()
+        MAP_KNOBS()
+    ENDIF
 ENDSUB
 
 SUB TAKE_RECORD()
@@ -545,6 +551,42 @@ SUB SAMPLER_OFF()
     SOUND.GRAIN 1, 0
     SELECT_PATCH(cur)
 ENDSUB
+
+' ---- voice: the lead keys sing a lyric, or say the take through a vocoder ----
+' The lyric is phonetic (SOUND.SING spelling): each key sings the next
+' syllable; it starts over when it runs out.
+DIM lyric$ = "hel lo neon wer ld"
+DIM sing_on = FALSE
+DIM sing_base = 0
+DIM voc_on = FALSE
+DIM voc_loop = TRUE
+
+SUB SING_START()
+    SOUND.SING 1, ""
+    IF sing_on ANDALSO TRIM$(lyric$) <> "" THEN
+        SOUND.SING 1, lyric$
+        sing_base = SOUND.SUNG(1)
+    ENDIF
+ENDSUB
+
+' Queues the lyric again before it runs out, so the keys never just hum
+SUB VOICE_TICK()
+    IF NOT sing_on THEN RETURN
+    DIM n_syl = LEN(SPLIT(TRIM$(lyric$), " "))
+    IF n_syl > 0 ANDALSO SOUND.SUNG(1) - sing_base >= n_syl - 1 THEN
+        SOUND.SING 1, lyric$
+        sing_base = sing_base + n_syl
+    ENDIF
+ENDSUB
+
+SUB VOCODER_APPLY()
+    IF voc_on ANDALSO take_secs > 0 THEN
+        DIM secs = SOUND.VOCODER(1, take_buf, {"rate": take_rate, "loop": voc_loop, "bands": 20})
+    ELSE
+        DIM secs = SOUND.VOCODER(1)
+    ENDIF
+ENDSUB
+
 
 SUB MAP_KNOBS()
     IF sampler_on ANDALSO grain_on THEN
@@ -901,6 +943,26 @@ SUB DRAW_PANEL()
             MAP_KNOBS()
         ENDIF
 
+        GUI.SEPARATOR_TEXT("Voice (lead keys)")
+        DIM v_was$ = STR$(sing_on) + lyric$
+        sing_on = GUI.CHECKBOX("Sing##sing", sing_on)
+        GUI.SAME_LINE
+        GUI.SET_NEXT_ITEM_WIDTH 300 * ui
+        lyric$ = GUI.INPUT$("##lyric", lyric$)
+        IF STR$(sing_on) + lyric$ <> v_was$ THEN SING_START()
+        DIM voc_was$ = STR$(voc_on) + STR$(voc_loop)
+        voc_on = GUI.CHECKBOX("Vocode take##voc", voc_on) ANDALSO take_secs > 0
+        GUI.SAME_LINE
+        voc_loop = GUI.CHECKBOX("Loop##vocloop", voc_loop)
+        IF take_secs <= 0 THEN
+            GUI.SAME_LINE
+            GUI.TEXT "(record some words in the sampler first)"
+        ENDIF
+        IF STR$(voc_on) + STR$(voc_loop) <> voc_was$ THEN
+            IF voc_on ANDALSO sampler_on THEN SAMPLER_OFF()
+            VOCODER_APPLY()
+        ENDIF
+
 
         GUI.TABLE_NEXT_COLUMN
         GUI.SEPARATOR_TEXT("Modulation matrix (lead)")
@@ -1034,6 +1096,7 @@ IF panel THEN
         CLS
         HANDLE_MIDI()
         LIVE_CHECK()
+        VOICE_TICK()
         DRAW_PANEL()
         SCREENFLIP
         IF TICK() - t_stats >= 1000 THEN
@@ -1047,6 +1110,7 @@ ELSE
     DO WHILE TICK() - t0 < run_secs * 1000
         HANDLE_MIDI()
         LIVE_CHECK()
+        VOICE_TICK()
         IF TICK() - t_stats >= 2000 THEN
             t_stats = TICK()
             TAKE_STATS(TRUE)

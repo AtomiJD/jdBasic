@@ -19,6 +19,7 @@
 '                                         indexes into arp_modes$, arp_rates$,
 '                                         chord_names$, scale_roots$, scale_modes$
 '   SOUND.ZONESET 1, {"arp": "random", "arp_rate": "1/16T"}   the same, direct
+'   lyric$ = "wi ar ro bots" : sing_on = TRUE : SING_START()   the lead keys sing
 ' Tracks 0-3 belong to the synth and the looper. Tracks 4-15 are free for
 ' patterns of your own; the program never touches them:
 '   SOUND.VOICE 4, "SQUARE", 0.01, 0.1, 0.5, 0.2
