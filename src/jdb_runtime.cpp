@@ -33,6 +33,7 @@
 #include "jdb_tags.h"
 #include "jdb_encoding.h"
 #include "jdb_crypto.h"
+#include "jdb_sleep.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -715,11 +716,7 @@ void jdrt_exec_yield_end(int depth);
 void jdb_sleep(int64_t ms) {
     if (ms <= 0) return;
     int held = jdrt_exec_yield_begin();
-#ifdef _WIN32
-    Sleep((DWORD)ms);
-#else
-    usleep((useconds_t)(ms * 1000));
-#endif
+    jdb_sleep_ms(ms);
     jdrt_exec_yield_end(held);
 }
 

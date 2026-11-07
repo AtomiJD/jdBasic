@@ -1,0 +1,33 @@
+' SLEEP keeps to the millisecond: SLEEP 1 does not wait a whole Windows
+' system tick (15.6 ms) and SLEEP 16 paces a 60 fps loop at about 16 ms.
+' The bounds leave room for a loaded machine; the old wait was 15 ms for
+' SLEEP 1 and 27 ms for SLEEP 16.
+
+DIM PASS_COUNT = 0
+DIM FAIL_COUNT = 0
+
+SUB CHECK(name$, cond, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+FUNC AVERAGE_WAIT(ms, n)
+    DIM t0 = TICK()
+    FOR i = 1 TO n
+        SLEEP ms
+    NEXT i
+    RETURN (TICK() - t0) / n
+ENDFUNC
+
+DIM w1 = AVERAGE_WAIT(1, 50)
+CHECK "SLEEP 1 stays under 5 ms", w1 >= 0.9 ANDALSO w1 < 5, STR$(w1) + " ms"
+DIM w16 = AVERAGE_WAIT(16, 20)
+CHECK "SLEEP 16 paces near 16 ms", w16 >= 15.9 ANDALSO w16 < 21, STR$(w16) + " ms"
+DIM w0 = AVERAGE_WAIT(0, 100)
+CHECK "SLEEP 0 returns at once", w0 < 1, STR$(w0) + " ms"
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

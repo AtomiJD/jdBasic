@@ -1242,7 +1242,7 @@ NEXT
     * `DIM` always declares (even with EXPLICIT on).
     * `FOR` and `FOR EACH` declare their loop variables themselves, also with EXPLICIT on and under `-c`; no `DIM` is needed.
     * Disable with `OPTION "NOEXPLICIT"` or `OPTION "EXPLICITOFF"`.
-* **`SLEEP milliseconds`**: Pauses execution for a specified duration. The wait is measured against a deadline and sliced so events still get polled, so it does not overshoot by a multiple; what remains is one tick of the platform timer per slice, about 15.6 ms on Windows and under a millisecond elsewhere.
+* **`SLEEP milliseconds`**: Pauses execution for a specified duration, to about half a millisecond on every platform: `SLEEP 1` waits about 1 ms, `SLEEP 16` about 16 ms, so a frame loop paced with `SLEEP` runs at the rate it asks for. The wait is sliced so events still get polled; it blocks and costs no CPU. On Windows it uses a high-resolution waitable timer (Windows 10 1803 or later; older Windows wakes on the 15.6 ms system tick).
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
 * **`IMPORT module [, module ...]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb; `IMPORT SCHEMA, LLMAPI, CLI` imports three modules in that order, exactly as three IMPORT lines would.
 

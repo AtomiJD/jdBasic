@@ -1,6 +1,7 @@
 // VM builtins: screen, keyboard, clipboard and diagnostic output.
 
 #include "vm_internal.h"
+#include "jdb_sleep.h"
 
 #ifdef __EMSCRIPTEN__
 extern "C" int jdb_poll_key_js(void);   // EM_JS, defined in vm.cpp
@@ -137,7 +138,7 @@ void VM::register_console_builtins() {
             {
                 // An HTTP handler may run while the program sleeps.
                 ExecYield wait(&exec_lock);
-                std::this_thread::sleep_for(std::chrono::milliseconds(chunk));
+                jdb_sleep_ms(chunk);
             }
 #endif
             if (on_tick) on_tick();

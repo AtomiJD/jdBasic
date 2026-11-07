@@ -3207,7 +3207,7 @@ Description: Returns the sine of an angle.
 
 [SLEEP]
 Syntax: SLEEP milliseconds
-Description: Pauses program execution for a specified duration. The wait is measured against a deadline and sliced so events still get polled, so it does not overshoot by a multiple; what remains is one tick of the platform timer per slice, which is about 15.6 ms on Windows and under a millisecond elsewhere. Twenty SLEEP 10 in a row therefore take longer than 200 ms on Windows.
+Description: Pauses program execution for a specified duration, to about half a millisecond on every platform: SLEEP 1 waits about 1 ms, SLEEP 16 about 16 ms, so a frame loop paced with SLEEP runs at the rate it asks for. The wait is sliced so events still get polled while it lasts; it blocks and costs no CPU. On Windows it uses a high-resolution waitable timer (Windows 10 1803 or later; older Windows wakes on the 15.6 ms system tick).
 
 [SLICE]
 Syntax: SLICE(matrix, dimension, index)
