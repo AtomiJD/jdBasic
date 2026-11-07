@@ -1371,6 +1371,7 @@ static struct SoundSystem {
     // in the first quarter of a step plays at once, else it waits for the
     // next step.
     void run_arps(double t0, double t1, double phase_inc, double cps) {
+        if (!(cps > 0.0) || !(phase_inc > 0.0)) return;
         auto run = [&](MidiZone& z, int zi) {
             if (z.arp == ARP_OFF) return;
             if (z.arp_keys.empty()) { z.arp_fresh = false; return; }
@@ -2915,7 +2916,7 @@ static int arp_rate(const Value& v) {
         std::string s = v.to_string();
         bool triplet = !s.empty() && (s.back() == 'T' || s.back() == 't');
         if (triplet) s.pop_back();
-        if (s.rfind("1/", 0) == 0) r = std::atoi(s.c_str() + 2);
+        if (s.rfind("1/", 0) == 0) r = (s.size() > 2 && s.size() <= 4) ? std::atoi(s.c_str() + 2) : 0;
         if (triplet) r = r * 3 / 2;
     } else {
         r = (int)v.to_int();
@@ -3029,8 +3030,8 @@ void register_sound_builtins(VM& vm) {
         g_sound.midi_in.reserve(1024);
         g_sound.midi_take.reserve(1024);
         g_sound.chord_scratch.reserve(128);
-        g_sound.arp_seq.reserve(1024);
-        g_sound.arp_vel.reserve(1024);
+        g_sound.arp_seq.reserve(4096);
+        g_sound.arp_vel.reserve(4096);
         g_sound.wave_buffer.resize(1024, 0.0f);
         g_sound.reverb_bus_wave.resize(1024, 0.0f);
         g_sound.delay_bus_wave.resize(1024, 0.0f);
@@ -3479,6 +3480,7 @@ void register_sound_builtins(VM& vm) {
             throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.ZONE: channel is 1-16, or 0 for any");
         if (args.size() > 5) zone_options(z, args[5]);
         z.held.reserve(128);
+        z.arp_keys.reserve(128);
         if (g_sound.initialized) SND_LOCK();
         if (t < 0) {
             g_sound.zones.clear();
