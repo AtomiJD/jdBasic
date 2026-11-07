@@ -130,6 +130,18 @@ ENDFUNC
 
 DIM limits = {"attack": [0.001, 4], "decay": [0.01, 4], "sustain": [0, 1], "release": [0.01, 6], "cutoff": [40, 20000], "resonance": [0, 0.95], "fenv": [-4, 6], "fenv_attack": [0.001, 2], "fenv_decay": [0.01, 4], "unison": [1, 8], "detune": [0, 0.6], "spread": [0, 1], "osc2_semis": [-24, 24], "osc2_mix": [0, 1], "lforate": [0, 12], "lfodepth": [0, 4], "fm": [0, 4], "fm_ratio": [0.25, 8], "chorus": [0, 1], "glide": [0, 400], "reverb": [0, 0.9], "delay": [0, 0.8], "gain": [0.05, 0.6]}
 
+' Only a-z, 0-9 and _ survive in the name, which also names the WAV files
+FUNC SAFE_NAME$(raw)
+    DIM out$ = ""
+    IF TYPEOF(raw) = "STRING" THEN
+        FOR EACH ch$ IN -LCASE$(raw)
+            IF INSTR("abcdefghijklmnopqrstuvwxyz0123456789_", ch$) >= 0 THEN out$ = out$ + ch$
+        NEXT ch$
+    ENDIF
+    IF LEN(out$) = 0 THEN out$ = "llm_patch"
+    RETURN LEFT$(out$, 40)
+ENDFUNC
+
 FUNC CLAMPED(p)
     FOR EACH k$ IN MAP.KEYS(limits)
         IF MAP.EXISTS(p, k$) THEN
@@ -141,6 +153,7 @@ FUNC CLAMPED(p)
         ENDIF
     NEXT k$
     IF MAP.EXISTS(p, "unison") THEN p{"unison"} = INT(p{"unison"})
+    p{"name"} = SAFE_NAME$(p{"name"})
     RETURN p
 ENDFUNC
 
@@ -197,7 +210,7 @@ FOR rnd = 1 TO rounds
         EXITFOR
     ENDTRY
     DIM done = p{"done"}
-    PRINT "Round " + STR$(rnd) + ": " + p{"name"} + " - " + p{"notes"}
+    PRINT "Round " + STR$(rnd) + ": " + SAFE_NAME$(p{"name"}) + " - " + p{"notes"}
     talk = APPEND(talk, LLMAPI.ASSISTANT(JSON.STRINGIFY$(p)))
     MAP.DELETE(p, "done")
     MAP.DELETE(p, "notes")
