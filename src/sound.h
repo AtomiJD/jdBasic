@@ -27,6 +27,8 @@ bool sound_clock_anchor(double* cycle, int64_t* t_ns, double* cps);
 
 // Live audio input for SOUND.VOCODER track, "INPUT": mono samples at
 // 44.1 kHz, from an audio device's thread or a script. Reset empties it;
-// burst is the most the source delivers at once, when it is known.
-void sound_input_push(const float* mono, int frames);
+// burst is the most the source delivers at once, when it is known. A push
+// that finds another writer drops its piece, unless it may wait (not from
+// an audio callback).
+void sound_input_push(const float* mono, int frames, bool wait = false);
 void sound_input_reset(int burst = 0);

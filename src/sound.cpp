@@ -10,7 +10,7 @@
 void sound_shutdown() {}
 void sound_midi_push(const unsigned char*, size_t) {}
 int sound_render(float*, int) { return 0; }
-void sound_input_push(const float*, int) {}
+void sound_input_push(const float*, int, bool) {}
 void sound_input_reset(int) {}
 bool sound_attach_output(bool, int64_t) { return false; }
 bool sound_clock_anchor(double*, int64_t*, double*) { return false; }
@@ -922,8 +922,8 @@ struct LoudnessMeter {
 // ── Sound System ────────────────────────────────────────────────
 
 // Live audio input (MON.SYNTHIN, SOUND.INPUT) for SOUND.VOCODER "INPUT":
-// mono at SAMPLE_RATE in a ring, filled by one writer at a time (the flag
-// keeps a script's SOUND.INPUT off a running capture callback) and read by
+// mono at SAMPLE_RATE in a ring, filled by one writer at a time (a device
+// callback that finds a script writing drops its piece rather than wait) and read by
 // the render. The writer and the render run on different device clocks;
 // the render waits for a cushion of the largest chunk written (or the
 // burst a device names) and a little more before it starts reading,
@@ -940,10 +940,15 @@ static std::atomic<bool> primed{false}, reset_req{false};
 static std::atomic<uint32_t> reset_w{0};
 }  // namespace live_in
 
-void sound_input_push(const float* x, int n) {
+void sound_input_push(const float* x, int n, bool wait) {
     using namespace live_in;
     if (n <= 0) return;
-    while (writing.test_and_set(std::memory_order_acquire)) {}
+    while (writing.test_and_set(std::memory_order_acquire)) {
+        if (!wait) {
+            overflowed.fetch_add((uint64_t)n, std::memory_order_relaxed);
+            return;
+        }
+    }
     uint32_t wi = w.load(std::memory_order_relaxed), ri = r.load(std::memory_order_acquire);
     if (reset_req.load(std::memory_order_acquire)) ri = reset_w.load(std::memory_order_relaxed);
     int k = 0;
@@ -977,7 +982,7 @@ static void live_input_pull(float* x, int n) {
     }
     uint32_t wi = w.load(std::memory_order_acquire);
     uint32_t avail = wi - ri;
-    uint32_t cushion = max_chunk.load(std::memory_order_relaxed) + 256u;
+    uint32_t cushion = std::min<uint32_t>(max_chunk.load(std::memory_order_relaxed) + 256u, N / 4);
     bool on = primed.load(std::memory_order_relaxed);
     if (!on && avail >= cushion + (uint32_t)n) on = true;
     if (on && avail > 3 * cushion + (uint32_t)n + 256u) {
@@ -3683,7 +3688,7 @@ void register_sound_builtins(VM& vm) {
                     }
                 }
                 for (size_t at = 0; at < out.size(); at += 4096)
-                    sound_input_push(out.data() + at, (int)std::min<size_t>(4096, out.size() - at));
+                    sound_input_push(out.data() + at, (int)std::min<size_t>(4096, out.size() - at), true);
             } else {
                 throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.INPUT: samples are an array, or \"\" to empty the input");
             }

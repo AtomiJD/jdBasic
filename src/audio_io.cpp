@@ -404,11 +404,12 @@ void register_audioio_builtins(VM& vm) {
 
     // MON.SYNTHIN([frames], [captureIdx]) -> latency in ms, or -1: opens a
     // capture device (captureIdx into MON.DEVICES() capture, -1 the default)
-    // with periods of `frames` (default 128) and feeds it, as mono at
-    // 44.1 kHz, to the live input that SOUND.VOCODER track, "INPUT" listens
-    // to. MON.SYNTHIN(0) closes it.
+    // with periods of `frames` (default 128, at most 8192) and feeds it, as
+    // mono at 44.1 kHz, to the live input that SOUND.VOCODER track, "INPUT"
+    // listens to. MON.SYNTHIN(0) closes it.
     vm.register_native("MON.SYNTHIN", 0, 2, [](const std::vector<Value>& args) -> Value {
         int frames = args.empty() ? 128 : (int)args[0].to_int();
+        if (frames > 8192) frames = 8192;
         if (g_sin_active.exchange(false)) ma_device_uninit(&g_sin_device);
         sound_input_reset();
         if (frames <= 0) return Value::make_f64(0.0);

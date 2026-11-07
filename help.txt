@@ -4481,7 +4481,7 @@ Example: SOUND.INIT "PULL" : PRINT MON.SYNTH(128, -1, TRUE)
 
 [MON.SYNTHIN]
 Syntax: MON.SYNTHIN([frames], [captureIdx]) -> latency in ms, or -1
-Description: Opens a capture device (captureIdx into the capture list of MON.DEVICES(), -1 or nothing the default) with periods of frames (default 128) and feeds it as mono at 44.1 kHz to the live input of the synth, for SOUND.VOCODER track, "INPUT": talk into the microphone while playing the keys. Returns the capture latency in ms, or -1 when the device does not open. MON.SYNTHIN(0) closes it. Runs beside MON.SYNTH and WAV.RECSTART. SOUND.INPUT() tells how far behind the input runs. Needs the MINIAUDIO and SOUND build flags.
+Description: Opens a capture device (captureIdx into the capture list of MON.DEVICES(), -1 or nothing the default) with periods of frames (default 128, at most 8192) and feeds it as mono at 44.1 kHz to the live input of the synth, for SOUND.VOCODER track, "INPUT": talk into the microphone while playing the keys. Returns the capture latency in ms, or -1 when the device does not open. MON.SYNTHIN(0) closes it. Runs beside MON.SYNTH and WAV.RECSTART. SOUND.INPUT() tells how far behind the input runs. Needs the MINIAUDIO and SOUND build flags.
 Example: PRINT MON.SYNTHIN(128, 2) : DIM s = SOUND.VOCODER(1, "INPUT", {"bands": 20})
 
 [MON.STOP]
