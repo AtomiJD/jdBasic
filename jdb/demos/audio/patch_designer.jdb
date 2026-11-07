@@ -1,0 +1,224 @@
+' patch_designer.jdb - a text request becomes a synth patch for oxygen_synth.jdb.
+' Usage: jdBasic patch_designer.jdb "glassy bell pad, slow swell" [rounds] [provider]
+'   rounds    design rounds, default 3
+'   provider  anthropic (default), openai, or local:<url> for a server that
+'             speaks the OpenAI chat API, e.g. local:http://192.168.0.113:8080/v1
+'   offline   instead of a provider: no model, renders and measures one
+'             built-in patch (checks the ear without a key or network)
+'
+' Each round the model writes a patch (the keys of SYNTHPATCH). The patch is
+' rendered offline, a note held for a second and let go, and an "ear" measures
+' it: attack, sustain and release times, brightness at the start and later
+' (filter movement), the low/mid/high balance, stereo width and level. The
+' numbers go back to the model, which judges them against the request and
+' answers with a better patch, until it is satisfied or the rounds run out.
+' The patch lands in oxygen_patches_user.json, where oxygen_synth.jdb finds
+' it with the MODE buttons, and every round is written to tmp/ as a WAV.
+
+IMPORT SYNTHPATCH
+IMPORT LLMAPI
+
+CONST RATE = 44100
+CONST WIN = 441
+
+DIM args = OS.ARGS()
+IF LEN(args) < 2 THEN
+    PRINT "Usage: jdBasic patch_designer.jdb " + CHR$(34) + "description" + CHR$(34) + " [rounds] [anthropic|openai|local:<url>|offline]"
+    END
+ENDIF
+DIM request$ = args[1]
+DIM rounds = 3
+DIM provider$ = "anthropic"
+FOR EACH a$ IN args[IOTA(LEN(args) - 2) + 1]
+    IF VAL(a$) > 0 THEN
+        rounds = VAL(a$)
+    ELSE
+        provider$ = a$
+    ENDIF
+NEXT a$
+
+DIM here$ = PATH.DIRNAME$(args[0])
+DIM user_bank$ = here$ + "/oxygen_patches_user.json"
+
+' ---- the ear ----
+
+' Root mean square per 10 ms window
+FUNC ENVELOPE(mono)
+    DIM n_win = INT(LEN(mono) / WIN)
+    DIM sq = mono[IOTA(n_win * WIN, 0)]
+    RETURN SQR(SUM(RESHAPE(sq * sq, [n_win, WIN]), 1) / WIN)
+ENDFUNC
+
+' Spectral centroid in Hz and the low/mid/high split in percent of 4096
+' samples from `start`, Hann-windowed
+FUNC SPECTRUM(mono, start)
+    DIM n = 4096
+    DIM k = IOTA(n, 0)
+    DIM hann = 0.5 - 0.5 * COS(2 * MATH.PI * k / (n - 1))
+    DIM spec = TRANSPOSE(FFT(mono[k + start] * hann))
+    DIM half = IOTA(n / 2 - 1)
+    DIM re = spec[0][half]
+    DIM im = spec[1][half]
+    DIM pw = re * re + im * im
+    DIM hz = half * RATE / n
+    DIM tot = MAX([SUM(pw), 1E-12])
+    DIM r AS MAP
+    r{"centroid"} = INT(SUM(hz * pw) / tot)
+    r{"low"} = INT(SUM(pw * (hz < 250)) / tot * 100)
+    r{"high"} = INT(SUM(pw * (hz >= 2500)) / tot * 100)
+    r{"mid"} = 100 - r{"low"} - r{"high"}
+    RETURN r
+ENDFUNC
+
+FUNC FIRST_AT_LEAST(env, from, level)
+    FOR i = from TO LEN(env) - 1
+        IF env[i] >= level THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC FIRST_BELOW(env, from, level)
+    FOR i = from TO LEN(env) - 1
+        IF env[i] < level THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' Plays c4 for one second on track 0, lets go, listens one more second
+FUNC RENDER_NOTE(patch)
+    SOUND.RESET
+    SYNTHPATCH.APPLY 0, patch
+    SOUND.MIDIIN 144, 60, 100
+    DIM held = SOUND.RENDER(RATE)
+    SOUND.MIDIIN 128, 60, 0
+    RETURN APPEND(held, SOUND.RENDER(RATE))
+ENDFUNC
+
+FUNC MEASURE(buf)
+    DIM n = LEN(buf) / 2
+    DIM lch = buf[IOTA(n, 0) * 2]
+    DIM rch = buf[IOTA(n, 0) * 2 + 1]
+    DIM mono = (lch + rch) / 2
+    DIM env = ENVELOPE(mono)
+    DIM peak = MAX([MAX(env), 1E-9])
+    DIM m AS MAP
+    m{"peak_dbfs"} = ROUND(20 * LOG(MAX([MAX(ABS(mono)), 1E-9])) / LOG(10), 1)
+    DIM a = FIRST_AT_LEAST(env, 0, 0.9 * peak)
+    m{"attack_ms"} = a * 10
+    m{"level_at_900ms"} = ROUND(env[90] / peak, 2)
+    DIM r = FIRST_BELOW(env, 100, 0.1 * env[99])
+    m{"release_ms"} = IIF(r < 0, 1000, (r - 100) * 10)
+    DIM early = SPECTRUM(mono, INT(0.05 * RATE))
+    DIM later = SPECTRUM(mono, INT(0.6 * RATE))
+    m{"brightness_hz_at_50ms"} = early{"centroid"}
+    m{"brightness_hz_at_600ms"} = later{"centroid"}
+    m{"bands_low_mid_high_pct"} = [later{"low"}, later{"mid"}, later{"high"}]
+    DIM span = IOTA(INT(0.7 * RATE), 0) + INT(0.2 * RATE)
+    DIM ls = lch[span]
+    DIM rs = rch[span]
+    DIM corr = DOT(ls, rs) / MAX([SQR(DOT(ls, ls) * DOT(rs, rs)), 1E-12])
+    m{"stereo_width"} = ROUND(1 - corr, 2)
+    RETURN m
+ENDFUNC
+
+FUNC EAR$(m)
+    DIM b = m{"bands_low_mid_high_pct"}
+    RETURN "attack " + STR$(m{"attack_ms"}) + " ms, level at 900 ms " + STR$(m{"level_at_900ms"}) + " of peak, release " + IIF(m{"release_ms"} >= 1000, "over 1000", STR$(m{"release_ms"})) + " ms to -20 dB after note off, brightness " + STR$(m{"brightness_hz_at_50ms"}) + " Hz at 50 ms and " + STR$(m{"brightness_hz_at_600ms"}) + " Hz at 600 ms, low/mid/high " + STR$(b[0]) + "/" + STR$(b[1]) + "/" + STR$(b[2]) + " %, stereo width " + STR$(m{"stereo_width"}) + ", peak " + STR$(m{"peak_dbfs"}) + " dBFS"
+ENDFUNC
+
+' ---- the patch the model may write, and its limits ----
+
+DIM limits = {"attack": [0.001, 4], "decay": [0.01, 4], "sustain": [0, 1], "release": [0.01, 6], "cutoff": [40, 20000], "resonance": [0, 0.95], "fenv": [-4, 6], "fenv_attack": [0.001, 2], "fenv_decay": [0.01, 4], "unison": [1, 8], "detune": [0, 0.6], "spread": [0, 1], "osc2_semis": [-24, 24], "osc2_mix": [0, 1], "lforate": [0, 12], "lfodepth": [0, 4], "fm": [0, 4], "fm_ratio": [0.25, 8], "chorus": [0, 1], "glide": [0, 400], "reverb": [0, 0.9], "delay": [0, 0.8], "gain": [0.05, 0.6]}
+
+FUNC CLAMPED(p)
+    FOR EACH k$ IN MAP.KEYS(limits)
+        IF MAP.EXISTS(p, k$) THEN
+            IF TYPEOF(p{k$}) = "FLOAT64" ORELSE TYPEOF(p{k$}) = "INT64" THEN
+                p{k$} = MIN([limits{k$}[1], MAX([limits{k$}[0], p{k$}])])
+            ELSE
+                MAP.DELETE(p, k$)
+            ENDIF
+        ENDIF
+    NEXT k$
+    IF MAP.EXISTS(p, "unison") THEN p{"unison"} = INT(p{"unison"})
+    RETURN p
+ENDFUNC
+
+FUNC SHAPE_DECL()
+    DIM f AS MAP
+    f{"name"} = {"type": "string", "required": TRUE, "description": "short snake_case name"}
+    f{"wave"} = {"type": "string", "required": TRUE, "enum": ["SINE", "SAW", "SQUARE", "TRIANGLE", "NOISE"]}
+    f{"filter"} = {"type": "string", "enum": ["LP", "HP", "BP"]}
+    f{"osc2"} = {"type": "string", "enum": ["OFF", "SINE", "SAW", "SQUARE", "TRIANGLE", "NOISE"]}
+    FOR EACH k$ IN MAP.KEYS(limits)
+        f{k$} = {"type": "number", "required": TRUE, "description": "from " + STR$(limits{k$}[0]) + " to " + STR$(limits{k$}[1])}
+    NEXT k$
+    f{"done"} = {"type": "boolean", "required": TRUE, "description": "TRUE when the measured sound already matches the request and this patch is final"}
+    f{"notes"} = {"type": "string", "required": TRUE, "description": "one sentence: what you changed and why"}
+    RETURN f
+ENDFUNC
+
+DIM system$ = "You design patches for a subtractive software synth. A patch is a map. wave is the main oscillator. attack, decay, release are seconds, sustain 0..1. cutoff is the filter in Hz, resonance 0..0.95, filter LP/HP/BP. fenv is how far the filter envelope opens, in octaves above the cutoff (negative closes it), with its own fenv_attack and fenv_decay in seconds. unison stacks 1-8 voices, detune 0..0.6 semitones between them, spread their stereo width 0..1. osc2 is a second oscillator (OFF for none) osc2_semis semitones away at level osc2_mix. lforate (Hz) and lfodepth (semitones) are vibrato. fm 0..4 and fm_ratio frequency-modulate the main oscillator. chorus, reverb, delay are effect amounts, gain the level (keep the peak between -12 and -3 dBFS). glide is portamento in ms. Every number you write must lie in its range. After each patch you get measurements of a c4 held for one second and released: judge them against the request, then answer with an improved complete patch; set done TRUE only when the numbers fit the request."
+
+DIM offline_patch = {"name": "offline_check", "wave": "SAW", "attack": 0.02, "decay": 0.3, "sustain": 0.6, "release": 0.4, "cutoff": 1800, "resonance": 0.3, "filter": "LP", "fenv": 1.5, "fenv_attack": 0.003, "fenv_decay": 0.25, "unison": 5, "detune": 0.2, "spread": 0.8, "osc2": "OFF", "osc2_semis": 0, "osc2_mix": 0, "lforate": 0, "lfodepth": 0, "fm": 0, "fm_ratio": 1, "chorus": 0.3, "glide": 0, "reverb": 0.3, "delay": 0.1, "gain": 0.3}
+
+FUNC CLIENT(prov$)
+    IF prov$ = "openai" THEN RETURN LLMAPI.NEW("openai", "gpt-4o")
+    IF STARTSWITH(LCASE$(prov$), "local:") THEN RETURN LLMAPI.NEW("openai", "local", "none", MID$(prov$, 6))
+    RETURN LLMAPI.NEW("anthropic", "claude-opus-5-5")
+ENDFUNC
+
+SOUND.INIT "PULL"
+MKDIR "tmp"
+DIM best = offline_patch
+DIM ear$ = ""
+
+IF provider$ = "offline" THEN
+    DIM ob = RENDER_NOTE(offline_patch)
+    WAV.WRITE "tmp/patch_offline_check.wav", ob, RATE, 2
+    DIM om = MEASURE(ob)
+    PRINT "ear: " + EAR$(om)
+    PRINT JSON.STRINGIFY$(om)
+    SOUND.SHUTDOWN
+    END
+ENDIF
+
+DIM ai = CLIENT(provider$)
+LLMAPI.SYSTEM(ai, system$)
+LLMAPI.SET(ai, "max_tokens", 2048)
+DIM shape = SHAPE_DECL()
+DIM talk = [LLMAPI.USER("Design this sound: " + request$)]
+FOR rnd = 1 TO rounds
+    DIM p = 0
+    TRY
+        p = LLMAPI.JSON(ai, talk, shape)
+    CATCH
+        PRINT "Round " + STR$(rnd) + ": the model call failed: " + ERRMSG$
+        EXITFOR
+    ENDTRY
+    DIM done = p{"done"}
+    PRINT "Round " + STR$(rnd) + ": " + p{"name"} + " - " + p{"notes"}
+    talk = APPEND(talk, LLMAPI.ASSISTANT(JSON.STRINGIFY$(p)))
+    MAP.DELETE(p, "done")
+    MAP.DELETE(p, "notes")
+    p = CLAMPED(p)
+    best = p
+    DIM buf = RENDER_NOTE(p)
+    WAV.WRITE "tmp/patch_" + p{"name"} + "_r" + STR$(rnd) + ".wav", buf, RATE, 2
+    ear$ = EAR$(MEASURE(buf))
+    PRINT "  ear: " + ear$
+    IF done THEN EXITFOR
+    talk = APPEND(talk, LLMAPI.USER("Measured: " + ear$ + ". The request was: " + request$ + ". Judge it and answer with the improved patch."))
+NEXT rnd
+
+DIM bank = []
+IF FILE.EXISTS(user_bank$) THEN bank = SYNTHPATCH.LOAD_BANK(user_bank$)
+DIM slot = SYNTHPATCH.FIND(bank, best{"name"})
+IF slot >= 0 THEN
+    bank[slot] = best
+ELSE
+    bank = APPEND(bank, best)
+ENDIF
+SYNTHPATCH.SAVE_BANK user_bank$, bank
+PRINT "Saved " + best{"name"} + " to " + user_bank$ + " (" + ear$ + ")"
+SOUND.SHUTDOWN
