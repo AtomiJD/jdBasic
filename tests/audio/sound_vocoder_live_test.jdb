@@ -1,0 +1,143 @@
+' ============================================================
+' The live vocoder: SOUND.VOCODER track, "INPUT" makes every note of the
+' track follow the live input (MON.SYNTHIN, or SOUND.INPUT here), one
+' analysis shared by all its voices, so a note starts on what is being
+' said now, not at the start of a recording.
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' Renders offline (SOUND.INIT "PULL"): no audio device. The input is fed
+' in 10 ms pieces with 10 ms rendered after each, as a device would.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+FUNC LEFT_OF(buf)
+    RETURN buf[IOTA(LEN(buf) / 2, 0) * 2]
+ENDFUNC
+
+FUNC PEAK(buf) AS DOUBLE
+    RETURN MAX(ABS(buf))
+ENDFUNC
+
+CONST N_FFT = 8192
+CONST PIECE = 441
+
+' Spectral centroid of the left channel, from frame `from`
+FUNC CENTROID(buf, from AS INTEGER) AS DOUBLE
+    DIM k = IOTA(N_FFT, 0)
+    DIM mono = buf[(k + from) * 2]
+    DIM sp = TRANSPOSE(FFT(mono * (0.5 - 0.5 * COS(2 * MATH.PI * k / (N_FFT - 1)))))
+    DIM h = IOTA(N_FFT / 2 - 1)
+    DIM pw = sp[0][h] * sp[0][h] + sp[1][h] * sp[1][h]
+    RETURN SUM(h * 44100 / N_FFT * pw) / SUM(pw)
+ENDFUNC
+
+' Feeds `src` piece by piece, rendering a piece after each; answers the
+' stereo output of the whole run
+FUNC FEED(src)
+    DIM n_pieces AS INTEGER = INT(LEN(src) / PIECE)
+    DIM out = []
+    DIM st = SOUND.INPUT()
+    FOR i = 0 TO n_pieces - 1
+        st = SOUND.INPUT(src[IOTA(PIECE, 0) + i * PIECE])
+        out = APPEND(out, SOUND.RENDER(PIECE))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "SKIP: build has no SOUND sequencer"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+SOUND.INIT "PULL"
+DIM b = SOUND.RENDER(2)
+DIM nz AS INTEGER
+DIM st = SOUND.INPUT()
+
+st = SOUND.INPUT("")
+CHECK "an emptied input has fed nothing", st{"frames"} = 0 ANDALSO st{"underruns"} = 0, JSON.STRINGIFY$(st)
+
+' 0.5 s of silence, then 1.5 s of a 2 kHz tone
+DIM mt = IOTA(88200, 0) / 44100
+DIM tone = SIN(2 * MATH.PI * 2000 * mt) * 0.5 * (mt >= 0.5)
+
+SOUND.RESET
+SOUND.VOICE 0, "SAW", 0.005, 0.05, 1.0, 0.05
+nz = SOUND.ZONE(0, 0, 127, 0, 0)
+DIM vsecs AS DOUBLE = SOUND.VOCODER(0, "INPUT")
+CHECK "VOCODER on the input answers 0 seconds", vsecs = 0, STR$(vsecs)
+SOUND.MIDIIN 144, 45, 100
+b = FEED(tone)
+DIM vl = LEFT_OF(b)
+DIM quiet AS DOUBLE = PEAK(vl[IOTA(8820, 0) + 8820])
+DIM loud AS DOUBLE = PEAK(vl[IOTA(8820, 0) + 66150])
+CHECK "silence at the input silences the note", quiet < loud * 0.05, "quiet=" + STR$(quiet) + " loud=" + STR$(loud)
+CHECK "the input's tone opens the note", loud > 0.05, STR$(loud)
+DIM c_hi AS DOUBLE = CENTROID(b, 50000)
+CHECK "a 2 kHz input puts the note's energy near 2 kHz", c_hi > 1400 ANDALSO c_hi < 2800, STR$(c_hi)
+st = SOUND.INPUT()
+CHECK "fed a piece at a time it never runs dry", st{"underruns"} = 0 ANDALSO st{"skipped"} = 0, JSON.STRINGIFY$(st)
+CHECK "the input waits less than 25 ms", st{"ms"} < 25, STR$(st{"ms"})
+CHECK "every frame was taken", st{"frames"} = 88200 ANDALSO st{"overflowed"} = 0, JSON.STRINGIFY$(st)
+
+' A key pressed while the input talks is heard at once: the analysis is
+' shared, not started with the note
+SOUND.MIDIIN 128, 45, 0
+DIM steady = SIN(2 * MATH.PI * 2000 * mt) * 0.5
+b = FEED(steady[IOTA(22050, 0)])
+SOUND.MIDIIN 144, 57, 100
+b = FEED(steady[IOTA(4410, 0)])
+DIM early AS DOUBLE = PEAK(LEFT_OF(b)[IOTA(1323, 0) + 441])
+CHECK "a late key speaks within 40 ms", early > 0.05, STR$(early)
+SOUND.MIDIIN 128, 57, 0
+b = FEED(steady[IOTA(4410, 0)])
+
+' A source at another rate is resampled: 1 s at 48 kHz is 44100 frames
+st = SOUND.INPUT("")
+DIM r48 = SIN(2 * MATH.PI * 300 * IOTA(48000, 0) / 48000) * 0.5
+st = SOUND.INPUT(r48, 48000)
+CHECK "48 kHz input arrives as 44.1 kHz frames", ABS(st{"frames"} - 44100) <= 1, STR$(st{"frames"})
+
+' A source that runs ahead is caught up instead of lagging further
+b = SOUND.RENDER(PIECE)
+st = SOUND.INPUT()
+CHECK "a source far ahead is skipped down to a short wait", st{"skipped"} > 0 ANDALSO st{"ms"} < 300, JSON.STRINGIFY$(st)
+b = SOUND.RENDER(44100)
+b = SOUND.RENDER(PIECE)
+st = SOUND.INPUT()
+CHECK "a silent source counts as running dry", st{"underruns"} >= 1, JSON.STRINGIFY$(st)
+
+' Off again
+DIM off AS DOUBLE = SOUND.VOCODER(0)
+st = SOUND.INPUT("")
+SOUND.MIDIIN 144, 57, 100
+b = SOUND.RENDER(22050)
+SOUND.MIDIIN 128, 57, 0
+CHECK "VOCODER off gives the plain saw back", PEAK(b) > 0.1, STR$(PEAK(b))
+b = SOUND.RENDER(8820)
+
+DIM err_msg AS STRING = ""
+TRY
+    st = SOUND.INPUT("mic")
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "a string other than empty is refused", INSTR(err_msg, "array") >= 0, "msg=" + err_msg
+
+SOUND.ZONE -1
+SOUND.RESET
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

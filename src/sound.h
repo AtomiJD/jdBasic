@@ -24,3 +24,9 @@ bool sound_attach_output(bool on, int64_t out_latency_ns);
 // time t_ns (nanoseconds) and the song moves at cps cycles per second.
 // FALSE before SOUND.INIT.
 bool sound_clock_anchor(double* cycle, int64_t* t_ns, double* cps);
+
+// Live audio input for SOUND.VOCODER track, "INPUT": mono samples at
+// 44.1 kHz, from an audio device's thread or a script. Reset empties it;
+// burst is the most the source delivers at once, when it is known.
+void sound_input_push(const float* mono, int frames);
+void sound_input_reset(int burst = 0);

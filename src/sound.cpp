@@ -10,6 +10,8 @@
 void sound_shutdown() {}
 void sound_midi_push(const unsigned char*, size_t) {}
 int sound_render(float*, int) { return 0; }
+void sound_input_push(const float*, int) {}
+void sound_input_reset(int) {}
 bool sound_attach_output(bool, int64_t) { return false; }
 bool sound_clock_anchor(double*, int64_t*, double*) { return false; }
 void register_sound_builtins(VM& vm) {
@@ -526,6 +528,8 @@ struct TrackParams {
     std::shared_ptr<const jdvoc::Bank> voc_bank;
     float voc_noise = 0.15f, voc_mix = 1.0f;
     bool voc_loop = false;
+    // The modulator is the live input (SOUND.VOCODER track, "INPUT")
+    bool voc_live = false;
     bool has_insert() const { return chorus_mix > 0.0f || width != 1.0f; }
 };
 
@@ -916,6 +920,87 @@ struct LoudnessMeter {
 };
 
 // ── Sound System ────────────────────────────────────────────────
+
+// Live audio input (MON.SYNTHIN, SOUND.INPUT) for SOUND.VOCODER "INPUT":
+// mono at SAMPLE_RATE in a ring, filled by one writer at a time (the flag
+// keeps a script's SOUND.INPUT off a running capture callback) and read by
+// the render. The writer and the render run on different device clocks;
+// the render waits for a cushion of the largest chunk written (or the
+// burst a device names) and a little more before it starts reading,
+// starts again after it ran dry, and skips ahead when the writer runs
+// fast, so the delay stays near one chunk.
+namespace live_in {
+constexpr uint32_t N = 1u << 16;
+static float ring[N];
+static std::atomic<uint32_t> w{0}, r{0};
+static std::atomic_flag writing = ATOMIC_FLAG_INIT;
+static std::atomic<uint32_t> max_chunk{0}, fill{0};
+static std::atomic<uint64_t> pushed{0}, underruns{0}, skipped{0}, overflowed{0};
+static std::atomic<bool> primed{false}, reset_req{false};
+static std::atomic<uint32_t> reset_w{0};
+}  // namespace live_in
+
+void sound_input_push(const float* x, int n) {
+    using namespace live_in;
+    if (n <= 0) return;
+    while (writing.test_and_set(std::memory_order_acquire)) {}
+    uint32_t wi = w.load(std::memory_order_relaxed), ri = r.load(std::memory_order_acquire);
+    if (reset_req.load(std::memory_order_acquire)) ri = reset_w.load(std::memory_order_relaxed);
+    int k = 0;
+    for (; k < n && wi - ri < N; k++, wi++) ring[wi & (N - 1)] = x[k];
+    w.store(wi, std::memory_order_release);
+    if (k < n) overflowed.fetch_add((uint64_t)(n - k), std::memory_order_relaxed);
+    pushed.fetch_add((uint64_t)k, std::memory_order_relaxed);
+    if ((uint32_t)n > max_chunk.load(std::memory_order_relaxed)) max_chunk.store((uint32_t)n, std::memory_order_relaxed);
+    writing.clear(std::memory_order_release);
+}
+
+// Empties the ring and the counters; the render drops what is left on its
+// next block. burst: the most a source delivers at once, when it is known
+void sound_input_reset(int burst) {
+    using namespace live_in;
+    while (writing.test_and_set(std::memory_order_acquire)) {}
+    max_chunk.store(burst > 0 ? (uint32_t)burst : 0u); pushed.store(0); underruns.store(0); skipped.store(0); overflowed.store(0);
+    fill.store(0);
+    reset_w.store(w.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    reset_req.store(true, std::memory_order_release);
+    writing.clear(std::memory_order_release);
+}
+
+// The next n frames of the input into x (silence while it is not there)
+static void live_input_pull(float* x, int n) {
+    using namespace live_in;
+    uint32_t ri = r.load(std::memory_order_relaxed);
+    if (reset_req.exchange(false, std::memory_order_acq_rel)) {
+        ri = reset_w.load(std::memory_order_relaxed);
+        primed.store(false, std::memory_order_relaxed);
+    }
+    uint32_t wi = w.load(std::memory_order_acquire);
+    uint32_t avail = wi - ri;
+    uint32_t cushion = max_chunk.load(std::memory_order_relaxed) + 256u;
+    bool on = primed.load(std::memory_order_relaxed);
+    if (!on && avail >= cushion + (uint32_t)n) on = true;
+    if (on && avail > 3 * cushion + (uint32_t)n + 256u) {
+        uint32_t keep = cushion + (uint32_t)n;
+        skipped.fetch_add(avail - keep, std::memory_order_relaxed);
+        ri = wi - keep;
+        avail = keep;
+    }
+    int got = 0;
+    if (on) {
+        got = (int)std::min<uint32_t>(avail, (uint32_t)n);
+        for (int f = 0; f < got; f++) x[f] = ring[(ri + (uint32_t)f) & (N - 1)];
+        if (got < n) {
+            underruns.fetch_add(1, std::memory_order_relaxed);
+            on = false;
+        }
+    }
+    for (int f = got; f < n; f++) x[f] = 0.0f;
+    r.store(ri + (uint32_t)got, std::memory_order_release);
+    fill.store(avail - (uint32_t)got, std::memory_order_relaxed);
+    primed.store(on, std::memory_order_relaxed);
+}
+
 
 static struct SoundSystem {
     bool initialized = false;
@@ -1519,6 +1604,9 @@ static struct SoundSystem {
     uint32_t mm_seed = 0x9E3779B9u;
     uint32_t grain_seed = 0x6C8E9CF5u;
     uint32_t voc_seed = 0x1B873593u;
+    // The live input's bands, analysed once a frame for each track that
+    // vocodes it
+    jdvoc::Live live_voc[NUM_TRACKS];
 
     // Sources: LFOs, note and random are -1..1, the rest 0..1
     float mm_value(int src, int cc) const {
@@ -1994,7 +2082,10 @@ static struct SoundSystem {
         }
 
         if (v.sing.on) jdsing::process(v.sing, sample_l, sample_r);
-        if (v.voc.on && tp.voc_mod && tp.voc_bank)
+        if (v.voc.on && tp.voc_live && tp.voc_bank)
+            jdvoc::carry(v.voc, *tp.voc_bank, live_voc[v.track].e, tp.voc_noise, tp.voc_mix, voc_seed,
+                         sample_l, sample_r);
+        else if (v.voc.on && tp.voc_mod && tp.voc_bank)
             jdvoc::process(v.voc, *tp.voc_bank, *tp.voc_mod, tp.voc_loop, tp.voc_noise, tp.voc_mix,
                            voc_seed, sample_l, sample_r);
 
@@ -2277,7 +2368,7 @@ static struct SoundSystem {
 
     // Envelopes for a voice that starts a note on track `tp`
     static void start_envelopes(Voice& v, const TrackParams& tp) {
-        v.voc.on = tp.voc_mod != nullptr;
+        v.voc.on = tp.voc_mod != nullptr || tp.voc_live;
         v.env = Envelope{tp.attack, tp.decay, tp.sustain, tp.release};
         v.env.gate_on();
         v.fenv = Envelope{tp.fenv_attack, tp.fenv_decay, tp.fenv_sustain, tp.fenv_release};
@@ -2506,9 +2597,21 @@ static struct SoundSystem {
         sys->seq_time = t1;
         sys->seq_frames += num_frames;
 
+        float live_x[256];
+        live_input_pull(live_x, std::min(num_frames, 256));
+        bool live_any = false;
+        for (int t = 0; t < NUM_TRACKS; t++)
+            live_any = live_any || (sys->tracks[t].voc_live && sys->tracks[t].voc_bank);
+
         // Per-sample generation
         for (int f = 0; f < num_frames; f++) {
             float mix_l = 0, mix_r = 0;
+            if (live_any)
+                for (int t = 0; t < NUM_TRACKS; t++) {
+                    auto& ltp = sys->tracks[t];
+                    if (ltp.voc_live && ltp.voc_bank)
+                        jdvoc::analyze(live_x[f], *ltp.voc_bank, sys->live_voc[t].m, sys->live_voc[t].e);
+                }
             float rev_l[NUM_ORBITS] = {}, rev_r[NUM_ORBITS] = {};
             float del_l[NUM_ORBITS] = {}, del_r[NUM_ORBITS] = {};
             int active = 0;
@@ -3503,7 +3606,13 @@ void register_sound_builtins(VM& vm) {
         if (!(noise >= 0.0f && noise <= 1.0f) || !(mix >= 0.0f && mix <= 1.0f))
             throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.VOCODER: noise and mix are 0-1");
         std::shared_ptr<std::vector<float>> mod;
-        if (args.size() >= 2) {
+        bool live = false;
+        if (args.size() >= 2 && args[1].type == ValueType::STRING) {
+            std::string up = args[1].to_string();
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            live = up == "INPUT";
+        }
+        if (args.size() >= 2 && !live) {
             const Value& src = args[1];
             if (src.type == ValueType::STRING && !src.to_string().empty()) {
                 SoundChunk c = load_wav_file(src.to_string(), "SOUND.VOCODER");
@@ -3526,7 +3635,7 @@ void register_sound_builtins(VM& vm) {
                 throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.VOCODER: source is an array of samples, a WAV path or \"\"");
             }
         }
-        auto bank = mod ? jdvoc::make_bank(bands, (float)SAMPLE_RATE) : nullptr;
+        auto bank = (mod || live) ? jdvoc::make_bank(bands, (float)SAMPLE_RATE) : nullptr;
         double secs = mod ? (double)mod->size() / SAMPLE_RATE : 0.0;
         if (g_sound.initialized) SND_LOCK();
         auto& tp = g_sound.tracks[t];
@@ -3535,8 +3644,58 @@ void register_sound_builtins(VM& vm) {
         tp.voc_noise = noise;
         tp.voc_mix = mix;
         tp.voc_loop = loop;
+        tp.voc_live = live;
+        if (live) g_sound.live_voc[t] = jdvoc::Live{};
         if (g_sound.initialized) SND_UNLOCK();
         return Value::make_f64(secs);
+    });
+
+    // SOUND.INPUT([samples], [rate]) -> map: feeds mono samples into the
+    // live input that SOUND.VOCODER track, "INPUT" listens to (MON.SYNTHIN
+    // feeds it from an audio device), and answers its state: ms (what waits
+    // in the buffer), frames (all fed), underruns (times it ran dry),
+    // skipped (frames left out to catch up with a fast source), overflowed
+    // (frames that found the buffer full). SOUND.INPUT("") empties it.
+    vm.register_native("SOUND.INPUT", 0, 2, [](const std::vector<Value>& args) -> Value {
+        if (!args.empty()) {
+            const Value& src = args[0];
+            if (src.type == ValueType::STRING) {
+                if (!src.to_string().empty())
+                    throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.INPUT: samples are an array, or \"\" to empty the input");
+                sound_input_reset(0);
+            } else if (src.type == ValueType::ARRAY || src.type == ValueType::TENSOR) {
+                double rate = args.size() >= 2 ? args[1].to_double() : (double)SAMPLE_RATE;
+                if (!(rate >= 1000.0 && rate <= 384000.0)) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.INPUT: rate is 1000-384000 Hz");
+                std::vector<float> in;
+                if (src.type == ValueType::TENSOR) for (double x : src.as_tensor()->data) in.push_back((float)x);
+                else for (auto& e : src.as_array()->elements) in.push_back((float)e.to_double());
+                std::vector<float> out;
+                if (rate == (double)SAMPLE_RATE || in.size() < 2) {
+                    out = std::move(in);
+                } else {
+                    size_t frames = (size_t)std::floor((double)(in.size() - 1) * SAMPLE_RATE / rate) + 1;
+                    out.resize(frames);
+                    for (size_t i = 0; i < frames; i++) {
+                        double p = (double)i * rate / SAMPLE_RATE;
+                        size_t k = std::min((size_t)p, in.size() - 1);
+                        size_t k2 = std::min(k + 1, in.size() - 1);
+                        out[i] = in[k] + (in[k2] - in[k]) * (float)(p - (double)k);
+                    }
+                }
+                for (size_t at = 0; at < out.size(); at += 4096)
+                    sound_input_push(out.data() + at, (int)std::min<size_t>(4096, out.size() - at));
+            } else {
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.INPUT: samples are an array, or \"\" to empty the input");
+            }
+        }
+        Value m = Value::make_object();
+        auto* o = m.as_object();
+        o->set("ms", Value::make_f64(1000.0 * live_in::fill.load() / SAMPLE_RATE));
+        o->set("frames", Value::make_i64((int64_t)live_in::pushed.load()));
+        o->set("underruns", Value::make_i64((int64_t)live_in::underruns.load()));
+        o->set("skipped", Value::make_i64((int64_t)live_in::skipped.load()));
+        o->set("overflowed", Value::make_i64((int64_t)live_in::overflowed.load()));
+        return m;
     });
 
     // SOUND.PITCHOF(samples, [rate]) -> Hz: the fundamental of a mono

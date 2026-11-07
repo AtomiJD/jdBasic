@@ -66,8 +66,31 @@ inline float band(float x, float g, float k, float* st) {
     return k * v1;
 }
 
-// One frame: the carrier l and r in, the vocoded l and r out. mix 0 is the
-// plain carrier, 1 the vocoder alone.
+// The modulator side: one sample through the bands, the band levels follow
+inline void analyze(float x, const Bank& b, float (*m)[2], float* e) {
+    for (int i = 0; i < b.n; i++) {
+        float a = std::fabs(band(x, b.g[i], b.k[i], m[i]));
+        e[i] += (a > e[i] ? b.att : b.rel) * (a - e[i]);
+    }
+}
+
+// The carrier side: the voice's l and r cut into the same bands at the
+// levels e. mix 0 is the plain carrier, 1 the vocoder alone.
+inline void carry(State& s, const Bank& b, const float* e, float noise, float mix, uint32_t& seed,
+                  float& l, float& r) {
+    seed = seed * 1664525u + 1013904223u;
+    float nz = ((float)(seed >> 8) / (float)(1u << 24) * 2.0f - 1.0f) * noise;
+    float cl = l + nz, cr = r + nz;
+    float ol = 0.0f, orr = 0.0f;
+    for (int i = 0; i < b.n; i++) {
+        ol += band(cl, b.g[i], b.k[i], s.c[0][i]) * e[i];
+        orr += band(cr, b.g[i], b.k[i], s.c[1][i]) * e[i];
+    }
+    l += (ol * b.makeup - l) * mix;
+    r += (orr * b.makeup - r) * mix;
+}
+
+// One frame of a voice that plays the recording `mod` from its own start
 inline void process(State& s, const Bank& b, const std::vector<float>& mod, bool loop,
                     float noise, float mix, uint32_t& seed, float& l, float& r) {
     float x = 0.0f;
@@ -76,18 +99,14 @@ inline void process(State& s, const Bank& b, const std::vector<float>& mod, bool
         if (s.pos < (double)mod.size()) x = mod[(size_t)s.pos];
         s.pos += 1.0;
     }
-    seed = seed * 1664525u + 1013904223u;
-    float nz = ((float)(seed >> 8) / (float)(1u << 24) * 2.0f - 1.0f) * noise;
-    float cl = l + nz, cr = r + nz;
-    float ol = 0.0f, orr = 0.0f;
-    for (int i = 0; i < b.n; i++) {
-        float a = std::fabs(band(x, b.g[i], b.k[i], s.m[i]));
-        s.e[i] += (a > s.e[i] ? b.att : b.rel) * (a - s.e[i]);
-        ol += band(cl, b.g[i], b.k[i], s.c[0][i]) * s.e[i];
-        orr += band(cr, b.g[i], b.k[i], s.c[1][i]) * s.e[i];
-    }
-    l += (ol * b.makeup - l) * mix;
-    r += (orr * b.makeup - r) * mix;
+    analyze(x, b, s.m, s.e);
+    carry(s, b, s.e, noise, mix, seed, l, r);
 }
+
+// A live input shared by every voice of a track: its bands analysed once
+struct Live {
+    float m[MAXB][2] = {};
+    float e[MAXB] = {};
+};
 
 }  // namespace jdvoc

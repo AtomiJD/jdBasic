@@ -211,7 +211,7 @@ MIDI.ROUTE(keys)
 ### Voices: singing and vocoder
 
 * **`SOUND.SING track, lyric$`** on a keyboard track: each key sings the next syllable, the vowel lasts while the key is held, the closing consonants come when it goes up. A `chord` zone sings one syllable on all its notes (a choir), an `arp` zone one syllable a step.
-* **`SOUND.VOCODER track, [source], [options]`**: each note says what a recording says, at the pitch of the key: speech as the modulator, the track's oscillator as the carrier, 4-32 bands. `source` is an array (a take recorded with `WAV.RECSTART`) or a WAV path; `{"loop": TRUE}` repeats it while the key is held. Play a chord on a saw track for the classic robot choir.
+* **`SOUND.VOCODER track, [source], [options]`**: each note says what a recording says, at the pitch of the key: speech as the modulator, the track's oscillator as the carrier, 4-32 bands. `source` is an array (a take recorded with `WAV.RECSTART`) or a WAV path; `{"loop": TRUE}` repeats it while the key is held. Play a chord on a saw track for the classic robot choir. With `"INPUT"` as the source the notes follow the microphone live: open it with **`MON.SYNTHIN(128, captureIdx)`** and talk while you play; **`SOUND.INPUT()`** tells how far behind the input runs.
 * The sampler takes of section 4 (`SOUND.SAMPLE`, `SOUND.GRAIN`) play from the keys the same way.
 
 ### Clock and latency

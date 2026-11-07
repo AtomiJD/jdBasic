@@ -57,6 +57,15 @@ void syn_callback(ma_device*, void* pOut, const void*, ma_uint32 frames) {
         std::memset(pOut, 0, (size_t)frames * 2 * sizeof(float));
 }
 
+// The live input of the synth (MON.SYNTHIN): a capture device whose mono
+// samples go to SOUND.VOCODER track, "INPUT"
+ma_device          g_sin_device;
+std::atomic<bool>  g_sin_active{false};
+
+void sin_callback(ma_device*, void*, const void* pIn, ma_uint32 frames) {
+    if (pIn) sound_input_push((const float*)pIn, (int)frames);
+}
+
 // realtime: input -> gain -> FX chain -> output. NO allocation, NO locks, NO VM.
 void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames) {
     unsigned outCh = dev->playback.channels;
@@ -390,6 +399,45 @@ void register_audioio_builtins(VM& vm) {
             return Value::make_f64(-1.0);
         }
         g_syn_active.store(true);
+        return Value::make_f64(ms);
+    });
+
+    // MON.SYNTHIN([frames], [captureIdx]) -> latency in ms, or -1: opens a
+    // capture device (captureIdx into MON.DEVICES() capture, -1 the default)
+    // with periods of `frames` (default 128) and feeds it, as mono at
+    // 44.1 kHz, to the live input that SOUND.VOCODER track, "INPUT" listens
+    // to. MON.SYNTHIN(0) closes it.
+    vm.register_native("MON.SYNTHIN", 0, 2, [](const std::vector<Value>& args) -> Value {
+        int frames = args.empty() ? 128 : (int)args[0].to_int();
+        if (g_sin_active.exchange(false)) ma_device_uninit(&g_sin_device);
+        sound_input_reset();
+        if (frames <= 0) return Value::make_f64(0.0);
+        ma_device_config cfg = ma_device_config_init(ma_device_type_capture);
+        cfg.capture.format   = ma_format_f32;
+        cfg.capture.channels = 1;
+        cfg.sampleRate         = SYNTH_RATE;
+        cfg.periodSizeInFrames = (ma_uint32)frames;
+        cfg.periods            = 2;
+        cfg.performanceProfile = ma_performance_profile_low_latency;
+        cfg.dataCallback       = sin_callback;
+        ma_device_id inId;
+        int ci = args.size() >= 2 ? (int)args[1].to_int() : -1;
+        if (ci >= 0) {
+            if (!find_device_id(true, ci, inId)) return Value::make_f64(-1.0);
+            cfg.capture.pDeviceID = &inId;
+        }
+        if (ma_device_init(NULL, &cfg, &g_sin_device) != MA_SUCCESS) return Value::make_f64(-1.0);
+        ma_uint32 period = g_sin_device.capture.internalPeriodSizeInFrames;
+        ma_uint32 periods = g_sin_device.capture.internalPeriods;
+        ma_uint32 rate = g_sin_device.capture.internalSampleRate;
+        double ms = rate > 0 ? 1000.0 * period * periods / rate : 0.0;
+        // the device hands over a whole period at once, however its callbacks cut it
+        sound_input_reset(rate > 0 ? (int)((uint64_t)period * SYNTH_RATE / rate) + 1 : 0);
+        if (ma_device_start(&g_sin_device) != MA_SUCCESS) {
+            ma_device_uninit(&g_sin_device);
+            return Value::make_f64(-1.0);
+        }
+        g_sin_active.store(true);
         return Value::make_f64(ms);
     });
 
