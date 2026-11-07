@@ -734,14 +734,14 @@ SUB DRAW_PANEL()
     IF follow ANDALSO looping THEN view_bar = INT(play_step / STEPS)
     view_bar = view_bar MOD loop_bars
     GUI.SAME_LINE
-    IF GUI.BUTTON("<") THEN
+    IF GUI.BUTTON("<##bar") THEN
         view_bar = (view_bar + loop_bars - 1) MOD loop_bars
         follow = FALSE
     ENDIF
     GUI.SAME_LINE
     GUI.TEXT "bar " + STR$(view_bar + 1) + "/" + STR$(loop_bars)
     GUI.SAME_LINE
-    IF GUI.BUTTON(">") THEN
+    IF GUI.BUTTON(">##bar") THEN
         view_bar = (view_bar + 1) MOD loop_bars
         follow = FALSE
     ENDIF
