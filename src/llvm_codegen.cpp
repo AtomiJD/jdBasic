@@ -6170,6 +6170,7 @@ void LLVMCodegen::emit_err_code_branch() {
     emit_err_line(m_current_stmt_line);
     emit_raise_exit();
     LLVMPositionBuilderAtEnd(builder, ok_bb);
+    m_raise_pending = false;
 }
 
 void LLVMCodegen::emit_fn_return(LLVMValueRef val) {
@@ -11754,6 +11755,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 ScopedRcEscape _esc(this, escapes);
                 r = codegen_call(expr);
             }
+            m_raise_pending = true;
             if (r.fresh_container && (r.tag == JD_TAG_ARR || r.tag == JD_TAG_NATIVE_MAP) &&
                 LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind) {
                 r.val = rc_born(r.val, r.tag, !r.fresh_flat);
@@ -15679,6 +15681,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             else
                 args.push_back(coerce_to(av, pt));
         }
+        // An argument that raised leaves for CATCH before the body runs, as
+        // the VM throws while evaluating it.
+        if (m_raise_pending) emit_err_check();
         LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
         // A string this call allocated for a parameter that does not
         // outlive the call dies with it.

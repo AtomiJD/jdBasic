@@ -1,0 +1,92 @@
+' An argument that raises inside TRY goes to CATCH before the SUB or FUNC
+' it was meant for runs: SUB statements, FUNCs in expressions, nested calls,
+' a later argument that is a call itself, a TRY in the caller of the caller,
+' and the EXPORT SUB and FUNC of a module. Both backends.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+IMPORT RAISEARG
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+DIM runs AS INTEGER = 0
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+SUB TAKE_TEXT(a$)
+    runs = runs + 1
+ENDSUB
+
+SUB TAKE_TWO(a$, b AS INTEGER)
+    runs = runs + 1
+ENDSUB
+
+FUNC LENGTH_OF(a$) AS INTEGER
+    runs = runs + 1
+    RETURN LEN(a$)
+ENDFUNC
+
+FUNC BUMP() AS INTEGER
+    runs = runs + 1
+    RETURN 1
+ENDFUNC
+
+FUNC INNER_RAISES() AS INTEGER
+    TAKE_TEXT(TXTREADER$("no/such/file.txt"))
+    runs = runs + 100
+    RETURN 0
+ENDFUNC
+
+FUNC CAUGHT$(which AS INTEGER) AS STRING
+    DIM msg AS STRING = ""
+    DIM r AS INTEGER = 0
+    runs = 0
+    TRY
+        IF which = 1 THEN TAKE_TEXT(TXTREADER$("no/such/file.txt"))
+        IF which = 2 THEN r = LENGTH_OF(TXTREADER$("no/such/file.txt")) + 1
+        IF which = 3 THEN r = LENGTH_OF(STR$(LENGTH_OF(TXTREADER$("no/such/file.txt"))))
+        IF which = 4 THEN TAKE_TWO(TXTREADER$("no/such/file.txt"), BUMP())
+        IF which = 5 THEN TAKE_TEXT("x" + STR$(DATEADD("zz", 1, NOW())))
+        IF which = 6 THEN r = INNER_RAISES()
+        IF which = 7 THEN RAISEARG.NOTE(TXTREADER$("no/such/file.txt"))
+        IF which = 8 THEN r = RAISEARG.TWICE(LEN(TXTREADER$("no/such/file.txt")))
+        msg = "no error"
+    CATCH
+        msg = ERRMSG$
+    ENDTRY
+    RETURN msg
+ENDFUNC
+
+DIM m$ AS STRING
+m$ = CAUGHT$(1)
+CHECK "SUB statement: CATCH, body skipped", INSTR(m$, "TXTREADER$") >= 0 ANDALSO runs = 0, m$ + " runs=" + STR$(runs)
+m$ = CAUGHT$(2)
+CHECK "FUNC in an expression", INSTR(m$, "TXTREADER$") >= 0 ANDALSO runs = 0, m$ + " runs=" + STR$(runs)
+m$ = CAUGHT$(3)
+CHECK "nested FUNCs: neither body runs", INSTR(m$, "TXTREADER$") >= 0 ANDALSO runs = 0, m$ + " runs=" + STR$(runs)
+m$ = CAUGHT$(4)
+CHECK "a later argument that is a call does not run", INSTR(m$, "TXTREADER$") >= 0 ANDALSO runs = 0, m$ + " runs=" + STR$(runs)
+m$ = CAUGHT$(5)
+CHECK "a raise deep in a string expression", INSTR(m$, "DATEADD") >= 0 ANDALSO runs = 0, m$ + " runs=" + STR$(runs)
+m$ = CAUGHT$(6)
+CHECK "a raise inside a FUNC reaches the caller's CATCH", INSTR(m$, "TXTREADER$") >= 0 ANDALSO runs = 0, m$ + " runs=" + STR$(runs)
+DIM before AS INTEGER = RAISEARG.RUNS()
+m$ = CAUGHT$(7)
+CHECK "module EXPORT SUB", INSTR(m$, "TXTREADER$") >= 0 ANDALSO RAISEARG.RUNS() = before, m$ + " runs=" + STR$(RAISEARG.RUNS() - before)
+m$ = CAUGHT$(8)
+CHECK "module EXPORT FUNC", INSTR(m$, "TXTREADER$") >= 0 ANDALSO RAISEARG.RUNS() = before, m$ + " runs=" + STR$(RAISEARG.RUNS() - before)
+
+' Without a raise every call still runs once
+runs = 0
+TAKE_TWO("a", BUMP())
+DIM n AS INTEGER = LENGTH_OF(STR$(LENGTH_OF("abc")))
+RAISEARG.NOTE("ok")
+CHECK "calls without a raise run", runs = 4 ANDALSO n = 1 ANDALSO RAISEARG.TWICE(3) = 6, "runs=" + STR$(runs)
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

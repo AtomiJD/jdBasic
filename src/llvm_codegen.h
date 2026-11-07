@@ -117,6 +117,8 @@ public:
     // The line of the statement under codegen, so the error check can record
     // where an error happened for ERL and STACK$.
     int m_current_stmt_line = 0;
+    // A call was emitted since the last error check, so an error may be set
+    bool m_raise_pending = false;
     // Set once the walk ran out of stack, so the error is reported only once.
     bool stack_error_reported = false;
     // Thrown out of an expression walk that ran out of stack; the statement

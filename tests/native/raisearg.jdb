@@ -1,0 +1,18 @@
+' Helper module for test_native_raising_arg.jdb: an EXPORT SUB and FUNC that
+' count how often their bodies run.
+EXPORT MODULE RAISEARG
+
+DIM gRuns = 0
+
+EXPORT SUB NOTE(a$)
+    gRuns = gRuns + 1
+ENDSUB
+
+EXPORT FUNC TWICE(x) AS INTEGER
+    gRuns = gRuns + 1
+    RETURN x * 2
+ENDFUNC
+
+EXPORT FUNC RUNS() AS INTEGER
+    RETURN gRuns
+ENDFUNC
