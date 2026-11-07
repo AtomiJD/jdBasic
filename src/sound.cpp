@@ -1,6 +1,7 @@
 #include "sound.h"
 #include "sound_pattern.h"
 #include "sound_sing.h"
+#include "sound_vocoder.h"
 #include "vm.h"
 #include "errors.h"
 
@@ -246,6 +247,8 @@ struct Voice {
     int64_t glide_left = 0;
     // Singing: the syllable on this note and the vocoder's bands
     jdsing::VoiceState sing;
+    // Vocoder: the modulator position, filter states and band levels
+    jdvoc::State voc;
     // MIDI input: the key and channel that started the voice, whether its
     // key is up, and whether the sustain pedal holds it
     int midi_note = -1, midi_ch = 0, midi_zone = -1;
@@ -517,6 +520,12 @@ struct TrackParams {
     size_t lyric_at = 0;
     int64_t sung_count = 0;
     int sung_voice = -1;
+    // Vocoder (SOUND.VOCODER): the modulator recording, its bands, the noise
+    // mixed into the carrier, the wet share, and whether it repeats
+    std::shared_ptr<const std::vector<float>> voc_mod;
+    std::shared_ptr<const jdvoc::Bank> voc_bank;
+    float voc_noise = 0.15f, voc_mix = 1.0f;
+    bool voc_loop = false;
     bool has_insert() const { return chorus_mix > 0.0f || width != 1.0f; }
 };
 
@@ -1134,6 +1143,7 @@ static struct SoundSystem {
     static void gate_off_at(Voice& v, int64_t off) {
         v.seq_controlled = true;
         v.gate_frames = std::max<int64_t>(0, off - v.delay_frames);
+        if (v.sing.on) jdsing::release(v.sing, v.sing.t + v.gate_frames);
     }
 
     MidiZone* zone_of(const Voice& v) {
@@ -1243,6 +1253,12 @@ static struct SoundSystem {
         if (z.scale_lock) for (auto& x : out) x = scale_snap(tp, x);
     }
 
+    // The next syllable of the track's lyric, or a hum once it has run out
+    static const jdsing::Syllable& next_syllable(TrackParams& tp) {
+        static const jdsing::Syllable hum = jdsing::parse_syllable("oo");
+        return tp.lyric_at < tp.lyric.size() ? tp.lyric[tp.lyric_at++] : hum;
+    }
+
     int start_midi_voice(MidiZone& z, int zi, int ch, int note, int vel, int64_t off) {
         int n = note + z.transpose;
         if (n < 0 || n > 127) return -1;
@@ -1271,6 +1287,11 @@ static struct SoundSystem {
         v.midi_note = note;
         v.midi_ch = ch;
         v.midi_zone = zi;
+        if (tp.sing) {
+            jdsing::start_open(v.sing, next_syllable(tp));
+            tp.sung_count++;
+            tp.sung_voice = vi;
+        }
         return vi;
     }
 
@@ -1285,9 +1306,17 @@ static struct SoundSystem {
         if (z.arp != ARP_OFF) { arp_key_on(z, ch, note, vel); return; }
         if (!z.mono) {
             key_notes(z, note, chord_scratch);
+            auto& stp = tracks[z.track];
+            size_t lyric_was = stp.lyric_at;
+            int64_t sung_was = stp.sung_count;
             for (int n : chord_scratch) {
+                stp.lyric_at = lyric_was;
                 int vi = start_midi_voice(z, zi, ch, n, vel, off);
                 if (vi >= 0 && voices[vi].midi_note >= 0) voices[vi].midi_note = note;
+            }
+            if (stp.sing && stp.sung_count > sung_was) {
+                stp.lyric_at = std::min(lyric_was + 1, std::max(lyric_was, stp.lyric.size()));
+                stp.sung_count = sung_was + 1;
             }
             return;
         }
@@ -1380,6 +1409,7 @@ static struct SoundSystem {
         v.midi_note = -1;
         v.seq_controlled = true;
         v.gate_frames = std::max<int64_t>(1, (int64_t)(z.arp_gate * step_cycles / cps * SAMPLE_RATE));
+        if (v.sing.on) jdsing::start(v.sing, v.sing.syl, v.gate_frames);
     }
 
     // The arp steps that fall into cycles t0..t1 of this block. A first key
@@ -1488,6 +1518,7 @@ static struct SoundSystem {
     float mm_after = 0.0f, mm_vel = 0.0f, mm_note = 0.0f, mm_rand = 0.0f;
     uint32_t mm_seed = 0x9E3779B9u;
     uint32_t grain_seed = 0x6C8E9CF5u;
+    uint32_t voc_seed = 0x1B873593u;
 
     // Sources: LFOs, note and random are -1..1, the rest 0..1
     float mm_value(int src, int cc) const {
@@ -1963,6 +1994,9 @@ static struct SoundSystem {
         }
 
         if (v.sing.on) jdsing::process(v.sing, sample_l, sample_r);
+        if (v.voc.on && tp.voc_mod && tp.voc_bank)
+            jdvoc::process(v.voc, *tp.voc_bank, *tp.voc_mod, tp.voc_loop, tp.voc_noise, tp.voc_mix,
+                           voc_seed, sample_l, sample_r);
 
         // Formants: breath noise, then three band-passes on the vowel
         if (tp.formant_mix > 0.0f) {
@@ -2243,6 +2277,7 @@ static struct SoundSystem {
 
     // Envelopes for a voice that starts a note on track `tp`
     static void start_envelopes(Voice& v, const TrackParams& tp) {
+        v.voc.on = tp.voc_mod != nullptr;
         v.env = Envelope{tp.attack, tp.decay, tp.sustain, tp.release};
         v.env.gate_on();
         v.fenv = Envelope{tp.fenv_attack, tp.fenv_decay, tp.fenv_sustain, tp.fenv_release};
@@ -3434,6 +3469,74 @@ void register_sound_builtins(VM& vm) {
         tp.grain_spray = (float)spray;
         if (g_sound.initialized) SND_UNLOCK();
         return Value::make_none();
+    });
+
+    // SOUND.VOCODER track, [source], [options] -> seconds: the track's notes
+    // say what a recording says (a channel vocoder, the recording as the
+    // modulator, each voice's oscillator as the carrier). source: an array
+    // of mono samples, a WAV path, or "" or nothing to switch it off.
+    // options: rate (of the array, 44100), bands (4-32, 16), noise (0-1,
+    // 0.15), mix (0-1, 1), loop (FALSE: each note says it once).
+    vm.register_native("SOUND.VOCODER", 1, 3, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        if (t < 0 || t >= NUM_TRACKS)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.VOCODER: track is 0-" + std::to_string(NUM_TRACKS - 1));
+        double rate = (double)SAMPLE_RATE;
+        int bands = 16;
+        float noise = 0.15f, mix = 1.0f;
+        bool loop = false;
+        if (args.size() >= 3 && args[2].type == ValueType::OBJECT) {
+            for (auto& kv : args[2].as_object()->fields) {
+                std::string k = kv.first;
+                std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+                const Value& v = kv.second;
+                if (k == "rate") rate = v.to_double();
+                else if (k == "bands") bands = (int)v.to_int();
+                else if (k == "noise") noise = (float)v.to_double();
+                else if (k == "mix") mix = (float)v.to_double();
+                else if (k == "loop") loop = v.to_bool();
+                else throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.VOCODER: unknown option " + kv.first + " (rate, bands, noise, mix, loop)");
+            }
+        }
+        if (!(rate >= 1000.0 && rate <= 384000.0)) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.VOCODER: rate is 1000-384000 Hz");
+        if (bands < 4 || bands > jdvoc::MAXB) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.VOCODER: bands is 4-32");
+        if (!(noise >= 0.0f && noise <= 1.0f) || !(mix >= 0.0f && mix <= 1.0f))
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.VOCODER: noise and mix are 0-1");
+        std::shared_ptr<std::vector<float>> mod;
+        if (args.size() >= 2) {
+            const Value& src = args[1];
+            if (src.type == ValueType::STRING && !src.to_string().empty()) {
+                SoundChunk c = load_wav_file(src.to_string(), "SOUND.VOCODER");
+                mod = std::make_shared<std::vector<float>>(c.data.size() / 2);
+                for (size_t i = 0; i < mod->size(); i++) (*mod)[i] = 0.5f * (c.data[i * 2] + c.data[i * 2 + 1]);
+            } else if (src.type == ValueType::ARRAY || src.type == ValueType::TENSOR) {
+                std::vector<float> in;
+                if (src.type == ValueType::TENSOR) for (double x : src.as_tensor()->data) in.push_back((float)x);
+                else for (auto& e : src.as_array()->elements) in.push_back((float)e.to_double());
+                if (in.size() < 2) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.VOCODER: the recording needs at least 2 samples");
+                size_t frames = (size_t)std::max(2.0, std::floor((double)(in.size() - 1) * SAMPLE_RATE / rate) + 1.0);
+                mod = std::make_shared<std::vector<float>>(frames);
+                for (size_t i = 0; i < frames; i++) {
+                    double p = (double)i * rate / SAMPLE_RATE;
+                    size_t k = std::min((size_t)p, in.size() - 1);
+                    size_t k2 = std::min(k + 1, in.size() - 1);
+                    (*mod)[i] = in[k] + (in[k2] - in[k]) * (float)(p - (double)k);
+                }
+            } else if (src.type != ValueType::STRING && src.type != ValueType::NONE) {
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.VOCODER: source is an array of samples, a WAV path or \"\"");
+            }
+        }
+        auto bank = mod ? jdvoc::make_bank(bands, (float)SAMPLE_RATE) : nullptr;
+        double secs = mod ? (double)mod->size() / SAMPLE_RATE : 0.0;
+        if (g_sound.initialized) SND_LOCK();
+        auto& tp = g_sound.tracks[t];
+        tp.voc_mod = mod;
+        tp.voc_bank = bank;
+        tp.voc_noise = noise;
+        tp.voc_mix = mix;
+        tp.voc_loop = loop;
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_f64(secs);
     });
 
     // SOUND.PITCHOF(samples, [rate]) -> Hz: the fundamental of a mono

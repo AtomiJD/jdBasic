@@ -1,0 +1,172 @@
+' ============================================================
+' Singing and vocoding from the keys: SOUND.SING on a MIDI zone holds the
+' vowel while the key is down and sings the closing consonant when it goes
+' up, a chord sings one syllable, an arp a syllable a step; SOUND.VOCODER
+' makes each note follow a recording's spectrum and loudness at the key's
+' pitch.
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' Renders offline (SOUND.INIT "PULL"): no audio device.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+FUNC LEFT_OF(buf)
+    RETURN buf[IOTA(LEN(buf) / 2, 0) * 2]
+ENDFUNC
+
+FUNC PEAK(buf) AS DOUBLE
+    RETURN MAX(ABS(buf))
+ENDFUNC
+
+CONST N_FFT = 8192
+
+' Spectral centroid of the left channel, from frame `from`
+FUNC CENTROID(buf, from AS INTEGER) AS DOUBLE
+    DIM k = IOTA(N_FFT, 0)
+    DIM mono = buf[(k + from) * 2]
+    DIM sp = TRANSPOSE(FFT(mono * (0.5 - 0.5 * COS(2 * MATH.PI * k / (N_FFT - 1)))))
+    DIM h = IOTA(N_FFT / 2 - 1)
+    DIM pw = sp[0][h] * sp[0][h] + sp[1][h] * sp[1][h]
+    RETURN SUM(h * 44100 / N_FFT * pw) / SUM(pw)
+ENDFUNC
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "SKIP: build has no SOUND sequencer"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+SOUND.INIT "PULL"
+DIM b = SOUND.RENDER(2)
+DIM nz AS INTEGER
+
+' ---------- singing from the keys ----------
+SOUND.RESET
+SOUND.VOICE 0, "SAW", 0.01, 0.05, 0.9, 0.15
+SOUND.SING 0, "lat mi"
+nz = SOUND.ZONE(0, 0, 127, 0, 0)
+SOUND.MIDIIN 144, 57, 100
+b = SOUND.RENDER(44100)
+CHECK "a key starts the first syllable", SOUND.SUNG(0) = 1, STR$(SOUND.SUNG(0))
+CHECK "a held key holds the vowel after a second", SOUND.SUNG$(0) = "a", "sings " + SOUND.SUNG$(0)
+b = SOUND.RENDER(22050)
+CHECK "still the vowel after 1.5 s", SOUND.SUNG$(0) = "a", "sings " + SOUND.SUNG$(0)
+SOUND.MIDIIN 128, 57, 0
+b = SOUND.RENDER(1500)
+CHECK "key up sings the closing t", SOUND.SUNG$(0) = "t", "sings " + SOUND.SUNG$(0)
+b = SOUND.RENDER(22050)
+SOUND.MIDIIN 144, 60, 100
+b = SOUND.RENDER(22050)
+CHECK "the next key takes the next syllable", SOUND.SUNG(0) = 2 ANDALSO SOUND.SUNG$(0) = "i", STR$(SOUND.SUNG(0)) + " " + SOUND.SUNG$(0)
+SOUND.MIDIIN 128, 60, 0
+b = SOUND.RENDER(22050)
+
+SOUND.SING 0, "a o u"
+SOUND.ZONE -1
+nz = SOUND.ZONE(0, 0, 127, 0, 0, {"chord": "maj"})
+DIM before AS INTEGER = SOUND.SUNG(0)
+SOUND.MIDIIN 144, 57, 100
+b = SOUND.RENDER(11025)
+CHECK "a chord sings one syllable on all its notes", SOUND.SUNG(0) = before + 1, STR$(SOUND.SUNG(0) - before)
+SOUND.MIDIIN 128, 57, 0
+b = SOUND.RENDER(11025)
+SOUND.MIDIIN 144, 59, 100
+b = SOUND.RENDER(11025)
+CHECK "the next chord sings the next one", SOUND.SUNG(0) = before + 2 ANDALSO SOUND.SUNG$(0) = "o", STR$(SOUND.SUNG(0) - before) + " " + SOUND.SUNG$(0)
+SOUND.MIDIIN 128, 59, 0
+b = SOUND.RENDER(11025)
+
+SOUND.SING 0, "da di do du"
+SOUND.ZONE -1
+SOUND.BPM 120
+nz = SOUND.ZONE(0, 0, 127, 0, 0, {"arp": "up", "arp_rate": 8})
+before = SOUND.SUNG(0)
+SOUND.MIDIIN 144, 57, 100
+SOUND.MIDIIN 144, 60, 100
+b = SOUND.RENDER(44100)
+CHECK "an arp sings a syllable a step", SOUND.SUNG(0) - before >= 3 ANDALSO SOUND.SUNG(0) - before <= 5, STR$(SOUND.SUNG(0) - before)
+SOUND.MIDIIN 176, 123, 0
+b = SOUND.RENDER(22050)
+SOUND.SING 0, ""
+SOUND.ZONE -1
+
+' ---------- vocoder ----------
+' The modulator: 0.5 s of silence, then 1 s of a 2 kHz tone
+DIM mt = IOTA(66150, 0) / 44100
+DIM tone = SIN(2 * MATH.PI * 2000 * mt) * 0.5 * (mt >= 0.5)
+SOUND.RESET
+SOUND.VOICE 0, "SAW", 0.005, 0.05, 1.0, 0.05
+nz = SOUND.ZONE(0, 0, 127, 0, 0)
+DIM vsecs AS DOUBLE = SOUND.VOCODER(0, tone)
+CHECK "VOCODER answers the recording's length", ABS(vsecs - 1.5) < 0.01, STR$(vsecs)
+SOUND.MIDIIN 144, 45, 100
+b = SOUND.RENDER(66150)
+SOUND.MIDIIN 128, 45, 0
+DIM vl = LEFT_OF(b)
+DIM quiet AS DOUBLE = PEAK(vl[IOTA(8820, 0) + 8820])
+DIM loud AS DOUBLE = PEAK(vl[IOTA(8820, 0) + 44100])
+CHECK "silence in the recording silences the note", quiet < loud * 0.05, "quiet=" + STR$(quiet) + " loud=" + STR$(loud)
+CHECK "the recording's tone opens the note", loud > 0.05, STR$(loud)
+DIM c_hi AS DOUBLE = CENTROID(b, 30000)
+CHECK "a 2 kHz recording puts the note's energy near 2 kHz", c_hi > 1400 ANDALSO c_hi < 2800, STR$(c_hi)
+b = SOUND.RENDER(8820)
+
+DIM low = SIN(2 * MATH.PI * 300 * mt) * 0.5
+DIM v2 AS DOUBLE = SOUND.VOCODER(0, low, {"noise": 0})
+SOUND.MIDIIN 144, 45, 100
+b = SOUND.RENDER(44100)
+SOUND.MIDIIN 128, 45, 0
+DIM c_lo AS DOUBLE = CENTROID(b, 20000)
+CHECK "a 300 Hz recording keeps it low", c_lo < 700, STR$(c_lo)
+b = SOUND.RENDER(8820)
+
+' the carrier's pitch is the key's: two keys an octave apart
+SOUND.VOICE 0, "SAW", 0.005, 0.05, 1.0, 0.05
+DIM wide = (SIN(2 * MATH.PI * 600 * mt) + SIN(2 * MATH.PI * 1200 * mt) + SIN(2 * MATH.PI * 2400 * mt)) * 0.3
+DIM v3 AS DOUBLE = SOUND.VOCODER(0, wide, {"noise": 0, "loop": TRUE})
+SOUND.MIDIIN 144, 57, 100
+b = SOUND.RENDER(44100)
+SOUND.MIDIIN 128, 57, 0
+DIM p1 AS DOUBLE = SOUND.PITCHOF(LEFT_OF(b)[IOTA(20000, 0) + 20000])
+b = SOUND.RENDER(8820)
+CHECK "the vocoded note keeps the key's pitch", ABS(p1 - 220) < 4, STR$(p1)
+
+DIM off AS DOUBLE = SOUND.VOCODER(0)
+SOUND.MIDIIN 144, 57, 100
+b = SOUND.RENDER(22050)
+SOUND.MIDIIN 128, 57, 0
+CHECK "VOCODER with no source gives the plain saw back", off = 0 ANDALSO PEAK(b) > 0.1, STR$(PEAK(b))
+b = SOUND.RENDER(8820)
+
+' ---------- errors ----------
+DIM err_msg AS STRING = ""
+TRY
+    off = SOUND.VOCODER(0, tone, {"bands": 64})
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "64 bands are refused", INSTR(err_msg, "4-32") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    off = SOUND.VOCODER(0, tone, {"pitch": 1})
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "an unknown option is refused", INSTR(err_msg, "unknown option") >= 0, "msg=" + err_msg
+
+SOUND.ZONE -1
+SOUND.RESET
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

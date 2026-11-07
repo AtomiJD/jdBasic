@@ -208,6 +208,12 @@ MIDI.ROUTE(keys)
 * **Wavetables**: **`SOUND.WAVETABLE track, [frames]`** gives a track a band-limited wavetable oscillator, built in (`"BASIC"`, `"PWM"`, `"HARMONIC"`, `"VOCAL"`) or drawn as jdBasic arrays; `WTPOS` (0..1) scans through it, by knob, LFO or `SOUND.MOD`.
 * **Patches**: `lib/synthpatch.jdb` (`IMPORT SYNTHPATCH`) loads a bank of sounds from JSON (`LOAD_BANK`, `FIND`), sets one in a call (`APPLY`), reads back what the knobs did (`CAPTURE`) and blends two (`MORPH`). See `lib/synthpatch_lib_readme.md`.
 
+### Voices: singing and vocoder
+
+* **`SOUND.SING track, lyric$`** on a keyboard track: each key sings the next syllable, the vowel lasts while the key is held, the closing consonants come when it goes up. A `chord` zone sings one syllable on all its notes (a choir), an `arp` zone one syllable a step.
+* **`SOUND.VOCODER track, [source], [options]`**: each note says what a recording says, at the pitch of the key: speech as the modulator, the track's oscillator as the carrier, 4-32 bands. `source` is an array (a take recorded with `WAV.RECSTART`) or a WAV path; `{"loop": TRUE}` repeats it while the key is held. Play a chord on a saw track for the classic robot choir.
+* The sampler takes of section 4 (`SOUND.SAMPLE`, `SOUND.GRAIN`) play from the keys the same way.
+
 ### Clock and latency
 
 * **`MIDI.CLOCK(out, mode)`**: sends MIDI clock (24 per beat) in step with the sequencer as it leaves the speaker; `"START"` also sends Start on the next bar line, `"STOP"` sends Stop. A hardware arpeggiator or drum machine set to external sync follows `SOUND.BPM`.

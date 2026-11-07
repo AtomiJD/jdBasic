@@ -817,6 +817,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SOUND.SUNG", BuiltinRet::I64, BF_NO_VEC},
     {"SOUND.SUNG$", BuiltinRet::Str, BF_NO_VEC},
     {"SOUND.UNISON", BuiltinRet::None, BF_NO_VEC},
+    {"SOUND.VOCODER", BuiltinRet::F64, BF_NO_VEC},
     {"SOUND.VOICE", BuiltinRet::None, BF_NO_VEC},
     {"SOUND.WAVETABLE", BuiltinRet::I64, BF_NO_VEC},
     {"SOUND.ZONE", BuiltinRet::I64, BF_NO_VEC},

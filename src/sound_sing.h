@@ -236,6 +236,7 @@ struct VoiceState {
     float gv[NB] = {}, gn[NB] = {};
     float sv[2][NB][4] = {}, sn[NB][4] = {};
     int cur = -1;  // the sound now sung, an index into PHONES
+    bool open = false;  // a held key: the vowel lasts until release()
 };
 
 inline int64_t ms_frames(float ms) { return (int64_t)(ms * 0.001f * RATE); }
@@ -264,6 +265,27 @@ inline void start(VoiceState& s, const Syllable& syl, int64_t len) {
         acc += (int64_t)(ms_frames(PHONES[syl.ph[i]].ms) * fit);
         s.coda_end[i] = acc;
     }
+}
+
+// A key held for an unknown time: the onset as usual, then the vowel until
+// release() lays out the coda
+inline void start_open(VoiceState& s, const Syllable& syl) {
+    start(s, syl, (int64_t)1 << 40);
+    s.open = true;
+}
+
+// The note ends `at` frames after its onset: the coda starts there
+inline void release(VoiceState& s, int64_t at) {
+    if (!s.on || !s.open) return;
+    s.open = false;
+    const Syllable& syl = s.syl;
+    s.coda_start = std::max(at, s.onset_total);
+    int64_t acc = s.coda_start;
+    for (int i = syl.nuc1; i < syl.n; i++) {
+        acc += ms_frames(PHONES[syl.ph[i]].ms);
+        s.coda_end[i] = acc;
+    }
+    s.len = acc;
 }
 
 inline float smoothstep01(float x) {
@@ -331,7 +353,8 @@ inline void process(VoiceState& s, float& l, float& r) {
     } else {
         // the vowels: the first held, then a glide to each next one
         int k = syl.nuc1 - syl.nuc0;
-        int64_t span = std::max<int64_t>(1, (syl.n > syl.nuc1 ? s.coda_start : s.len) - s.onset_total);
+        int64_t span = s.open ? ms_frames(350.0f)
+                              : std::max<int64_t>(1, (syl.n > syl.nuc1 ? s.coda_start : s.len) - s.onset_total);
         float pos = std::min(1.0f, (float)(s.t - s.onset_total) / (float)span);
         int a = 0;
         float w = 0.0f;

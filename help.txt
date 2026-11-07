@@ -1737,7 +1737,7 @@ Description: Sidechains a target track's level to a source track by the given am
 
 [SOUND.SING]
 Syntax: SOUND.SING track, lyric$
-Description: Queues syllables for a synth track to sing, one on each note it plays, through a vocoder: the track's oscillator and a noise source pass a bank of band-passes opened to the spectrum of each sound in turn. Syllables are split by spaces and written in a phonetic spelling: vowels a e i o u ae uh ih er aw (ee oo ah eh oh as aliases), glides ai ei oi au ou, consonants m n ng l r w y v dh z zh f th s sh h b d g p t k ch j x. "-" holds the vowel before over one more note, "_" is a silent note, "." splits sounds that would read as one. A further call appends; "" stops the singing. When the lyric runs out, notes hum "oo".
+Description: Queues syllables for a synth track to sing, one on each note it plays, through a vocoder: the track's oscillator and a noise source pass a bank of band-passes opened to the spectrum of each sound in turn. Syllables are split by spaces and written in a phonetic spelling: vowels a e i o u ae uh ih er aw (ee oo ah eh oh as aliases), glides ai ei oi au ou, consonants m n ng l r w y v dh z zh f th s sh h b d g p t k ch j x. "-" holds the vowel before over one more note, "_" is a silent note, "." splits sounds that would read as one. A further call appends; "" stops the singing. When the lyric runs out, notes hum "oo". Keys played through SOUND.ZONE or MIDI.ROUTE sing too: the vowel lasts while the key is held and the closing consonants come when it goes up; a chord sings one syllable on all its notes, an arp one a step.
 Example: SOUND.SING 6, "ni awn lait tu nait -"
 
 [SOUND.SUNG]
@@ -3519,6 +3519,11 @@ Description: A held note of the track's sample loops between start_s and end_s a
 Syntax: SOUND.GRAIN track, size_ms, [density], [spray]
 Description: Plays the track's sample granular: Hann-windowed grains of size_ms (5-2000), density a second (1-500, default 30), read around the GRAINPOS parameter (0..1 of the sample) and scattered by spray (0-1 of the sample, default 0.05). The key sets the pitch of the grains; the time stands still where GRAINPOS points, so a knob or an LFO on GRAINPOS (SOUND.CCMAP, SOUND.MATRIX, SOUND.MOD) moves through the recording at any speed. size 0 returns to plain playback.
 Example: SOUND.GRAIN 1, 80, 40, 0.02 : SOUND.CCMAP 22, 1, "GRAINPOS", 0, 1
+
+[SOUND.VOCODER]
+Syntax: SOUND.VOCODER(track, [source], [options]) -> seconds
+Description: A channel vocoder: every note of the track says what a recording says, at the pitch of the note. The recording (the modulator, usually speech) passes a bank of band-passes, log-spaced from 120 Hz to 8 kHz; each band of the note's own oscillator (the carrier) follows the level of the same band in the recording, plus a little noise so s, f and t come through. Each note starts the recording from its beginning. source is an array of mono samples, a WAV path, or "" or nothing to switch the vocoder off. options (a map): rate of the array (44100), bands 4-32 (16), noise 0-1 (0.15), mix 0-1 (1, the vocoder alone), loop (FALSE: a note says it once). Answers the recording's length in seconds. A saw or a supersaw carrier gives the classic sound; a chord makes a choir of it.
+Example: DIM s = SOUND.VOCODER(1, "hello.wav", {"bands": 20, "loop": TRUE})
 
 [SOUND.PITCHOF]
 Syntax: SOUND.PITCHOF(samples, [rate]) -> Hz
