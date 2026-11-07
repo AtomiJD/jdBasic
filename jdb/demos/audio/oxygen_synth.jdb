@@ -558,23 +558,31 @@ ENDSUB
 DIM lyric$ = "hel lo neon wer ld"
 DIM sing_on = FALSE
 DIM sing_base = 0
+DIM sung_lyric$ = ""
 DIM voc_on = FALSE
 DIM voc_loop = TRUE
 
+' The lyric being sung: a text SOUND.SING cannot spell (a digit, a comma)
+' is reported, and the keys hum until the lyric reads again
 SUB SING_START()
     SOUND.SING 1, ""
-    IF sing_on ANDALSO TRIM$(lyric$) <> "" THEN
+    sung_lyric$ = ""
+    IF NOT sing_on ORELSE TRIM$(lyric$) = "" THEN RETURN
+    TRY
         SOUND.SING 1, lyric$
+        sung_lyric$ = lyric$
         sing_base = SOUND.SUNG(1)
-    ENDIF
+    CATCH
+        SAY("Lyric: " + ERRMSG$)
+    ENDTRY
 ENDSUB
 
 ' Queues the lyric again before it runs out, so the keys never just hum
 SUB VOICE_TICK()
-    IF NOT sing_on THEN RETURN
-    DIM n_syl = LEN(SPLIT(TRIM$(lyric$), " "))
+    IF NOT sing_on ORELSE sung_lyric$ = "" THEN RETURN
+    DIM n_syl = LEN(SPLIT(TRIM$(sung_lyric$), " "))
     IF n_syl > 0 ANDALSO SOUND.SUNG(1) - sing_base >= n_syl - 1 THEN
-        SOUND.SING 1, lyric$
+        SOUND.SING 1, sung_lyric$
         sing_base = sing_base + n_syl
     ENDIF
 ENDSUB
