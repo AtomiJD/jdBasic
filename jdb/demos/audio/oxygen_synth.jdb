@@ -28,7 +28,8 @@
 ' keys through the patch's filter and envelope; Loop sustains it, Grains
 ' plays it granular with knob 7 moving through the take.
 ' Voice (panel): the lead keys sing a phonetic lyric, a syllable a key, or
-' say the recorded take through a vocoder at the pitch of each key.
+' say the recorded take, or the microphone live (Vocode mic), through a
+' vocoder at the pitch of each key.
 ' Live code: oxygen_live.jdb next to this file runs again each time it is
 ' saved, while the keyboard plays on (see oxygen_live_example.jdb).
 ' The pads reach the drums only in DAW mode (DAW button lit); in preset mode
@@ -561,6 +562,9 @@ DIM sing_base = 0
 DIM sung_lyric$ = ""
 DIM voc_on = FALSE
 DIM voc_loop = TRUE
+DIM can_mic = OS.FEATURE("MINIAUDIO")
+DIM voc_mic = FALSE
+DIM mic_ms = -1
 
 ' The lyric being sung: a text SOUND.SING cannot spell (a digit, a comma)
 ' is reported, and the keys hum until the lyric reads again
@@ -587,8 +591,23 @@ SUB VOICE_TICK()
     ENDIF
 ENDSUB
 
+' The microphone as the live input of the synth (capture in oxygen61.json)
+SUB MIC_INPUT(want)
+    IF want THEN
+        DIM dev = -1
+        IF MAP.EXISTS(cfg, "capture") THEN dev = cfg{"capture"}
+        mic_ms = MON.SYNTHIN(128, dev)
+        IF mic_ms < 0 THEN SAY("No audio input opened for the vocoder (set capture in oxygen61.json to an index of MON.DEVICES())")
+    ELSE
+        mic_ms = -1
+        DIM shut = MON.SYNTHIN(0)
+    ENDIF
+ENDSUB
+
 SUB VOCODER_APPLY()
-    IF voc_on ANDALSO take_secs > 0 THEN
+    IF voc_mic ANDALSO mic_ms >= 0 THEN
+        DIM secs = SOUND.VOCODER(1, "INPUT", {"bands": 20})
+    ELSEIF voc_on ANDALSO take_secs > 0 THEN
         DIM secs = SOUND.VOCODER(1, take_buf, {"rate": take_rate, "loop": voc_loop, "bands": 20})
     ELSE
         DIM secs = SOUND.VOCODER(1)
@@ -958,16 +977,28 @@ SUB DRAW_PANEL()
         GUI.SET_NEXT_ITEM_WIDTH 300 * ui
         lyric$ = GUI.INPUT$("##lyric", lyric$)
         IF STR$(sing_on) + lyric$ <> v_was$ THEN SING_START()
-        DIM voc_was$ = STR$(voc_on) + STR$(voc_loop)
+        DIM was_on = voc_on
+        DIM was_mic = voc_mic
+        DIM voc_was$ = STR$(voc_on) + STR$(voc_loop) + STR$(voc_mic)
         voc_on = GUI.CHECKBOX("Vocode take##voc", voc_on) ANDALSO take_secs > 0
         GUI.SAME_LINE
         voc_loop = GUI.CHECKBOX("Loop##vocloop", voc_loop)
-        IF take_secs <= 0 THEN
+        IF can_mic THEN
+            GUI.SAME_LINE
+            voc_mic = GUI.CHECKBOX("Vocode mic##vocmic", voc_mic)
+        ENDIF
+        IF voc_mic ANDALSO mic_ms >= 0 THEN
+            DIM ist = SOUND.INPUT()
+            GUI.TEXT "Mic " + STR$(ROUND(mic_ms + ist{"ms"}, 1)) + " ms behind, " + STR$(ist{"underruns"}) + " dropouts"
+        ELSEIF take_secs <= 0 THEN
             GUI.SAME_LINE
             GUI.TEXT "(record some words in the sampler first)"
         ENDIF
-        IF STR$(voc_on) + STR$(voc_loop) <> voc_was$ THEN
-            IF voc_on ANDALSO sampler_on THEN SAMPLER_OFF()
+        IF STR$(voc_on) + STR$(voc_loop) + STR$(voc_mic) <> voc_was$ THEN
+            IF voc_mic ANDALSO NOT was_mic THEN voc_on = FALSE
+            IF voc_on ANDALSO NOT was_on THEN voc_mic = FALSE
+            IF voc_mic <> was_mic THEN MIC_INPUT(voc_mic)
+            IF (voc_on ORELSE voc_mic) ANDALSO sampler_on THEN SAMPLER_OFF()
             VOCODER_APPLY()
         ENDIF
 
@@ -1131,5 +1162,6 @@ IF clock_h >= 0 THEN MIDI.CLOCK(clock_h, FALSE)
 IF clock_h >= 0 THEN MIDI.CLOSE(clock_h)
 MIDI.CLOSE(main_h)
 IF daw_h >= 0 THEN MIDI.CLOSE(daw_h)
+IF mic_ms >= 0 THEN MIC_INPUT(FALSE)
 IF fast THEN MON.SYNTH(0)
 SOUND.SHUTDOWN
