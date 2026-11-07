@@ -1,0 +1,172 @@
+' ============================================================
+' Sampler: SOUND.PITCHOF finds the root of a recording, SOUND.SAMPLE plays
+' an array (at its own rate) or a WAV chromatically from that root, a loop
+' region with a crossfade sustains a held note, and SOUND.GRAIN plays it
+' granular: the pitch follows the key while GRAINPOS holds the time.
+' ============================================================
+' Self-checking. Each failure prints [FAIL]; the RESULTS line last.
+' Renders offline (SOUND.INIT "PULL"): no audio device.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+FUNC NEAR(a AS DOUBLE, b AS DOUBLE, tol AS DOUBLE) AS INTEGER
+    RETURN ABS(a - b) <= tol
+ENDFUNC
+
+FUNC F0(note AS DOUBLE) AS DOUBLE
+    RETURN 440 * 2 ^ ((note - 69) / 12)
+ENDFUNC
+
+' The left channel of an interleaved stereo render
+FUNC LEFT_OF(buf)
+    RETURN buf[IOTA(LEN(buf) / 2, 0) * 2]
+ENDFUNC
+
+FUNC PEAK(buf) AS DOUBLE
+    RETURN MAX(ABS(buf))
+ENDFUNC
+
+' A plucked-string stand-in: three harmonics of 110 Hz (A2, MIDI 45)
+' dying away over 1.5 s, recorded at 48 kHz
+CONST REC_RATE = 48000
+DIM tt = IOTA(72000, 0) / REC_RATE
+DIM pluck = (SIN(2 * MATH.PI * 110 * tt) + 0.5 * SIN(2 * MATH.PI * 220 * tt) + 0.25 * SIN(2 * MATH.PI * 330 * tt)) * EXP(-tt * 1.2) * 0.4
+
+IF NOT OS.FEATURE("SOUND") THEN
+    PRINT "SKIP: build has no SOUND sequencer"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+SOUND.INIT "PULL"
+
+' ---------- root detection ----------
+DIM hz AS DOUBLE = SOUND.PITCHOF(pluck, REC_RATE)
+CHECK "PITCHOF finds 110 Hz", NEAR(hz, 110, 0.5), STR$(hz)
+DIM root AS DOUBLE = 69 + 12 * LOG(hz / 440) / LOG(2)
+CHECK "as a MIDI note that is A2 (45)", NEAR(root, 45, 0.05), STR$(root)
+DIM hz2 AS DOUBLE = SOUND.PITCHOF(SIN(2 * MATH.PI * 329.63 * IOTA(44100, 0) / 44100) * 0.3)
+CHECK "PITCHOF at the default rate", NEAR(hz2, 329.63, 1), STR$(hz2)
+CHECK "silence has no pitch", SOUND.PITCHOF(IOTA(20000, 0) * 0) = 0, ""
+
+' ---------- chromatic playback from the root ----------
+SOUND.RESET
+SOUND.VOICE 0, "SINE", 0.001, 0.01, 1.0, 0.05
+DIM secs AS DOUBLE = SOUND.SAMPLE(0, pluck, root, FALSE, REC_RATE)
+CHECK "SAMPLE answers the length in seconds", NEAR(secs, 1.5, 0.01), STR$(secs)
+
+FUNC KEY_PITCH(note AS INTEGER) AS DOUBLE
+    SOUND.MIDIIN 144, note, 100
+    DIM skip = SOUND.RENDER(2205)
+    DIM b = SOUND.RENDER(16384)
+    SOUND.MIDIIN 128, note, 0
+    skip = SOUND.RENDER(8820)
+    RETURN SOUND.PITCHOF(LEFT_OF(b))
+ENDFUNC
+
+DIM p45 AS DOUBLE = KEY_PITCH(45)
+CHECK "the root key plays the sample at its pitch", NEAR(p45, 110, 1), STR$(p45)
+DIM p57 AS DOUBLE = KEY_PITCH(57)
+CHECK "an octave up plays 220 Hz", NEAR(p57, 220, 2), STR$(p57)
+DIM p52 AS DOUBLE = KEY_PITCH(52)
+CHECK "a fifth up plays E3", NEAR(p52, F0(52), 1.5), STR$(p52)
+DIM p40 AS DOUBLE = KEY_PITCH(40)
+CHECK "a fourth down plays E2", NEAR(p40, F0(40), 1), STR$(p40)
+
+DIM s2 AS DOUBLE = SOUND.SAMPLE(0, pluck, 45.5, FALSE, REC_RATE)
+DIM pq AS DOUBLE = KEY_PITCH(45)
+CHECK "a fractional root shifts by a quarter tone", NEAR(pq, 110 / 2 ^ (0.5 / 12), 1), STR$(pq)
+
+' ---------- one shot, then a loop region ----------
+DIM s3 AS DOUBLE = SOUND.SAMPLE(0, pluck, 45, FALSE, REC_RATE)
+SOUND.MIDIIN 144, 45, 100
+DIM b = SOUND.RENDER(88200)
+DIM tail_once AS DOUBLE = PEAK(LEFT_OF(b)[IOTA(8820, 0) + 75000])
+SOUND.MIDIIN 128, 45, 0
+DIM rest = SOUND.RENDER(8820)
+CHECK "without a loop the sample ends after 1.5 s", tail_once < 0.001, STR$(tail_once)
+
+SOUND.SAMPLELOOP 0, 0.5, 1.0, 0.05
+SOUND.MIDIIN 144, 45, 100
+b = SOUND.RENDER(132300)
+DIM held = LEFT_OF(b)
+DIM tail_loop AS DOUBLE = PEAK(held[IOTA(8820, 0) + 120000])
+CHECK "a loop region holds the note for 3 s", tail_loop > 0.02, STR$(tail_loop)
+DIM steps = ABS(DROP(1, held) - DROP(-1, held))
+CHECK "the loop seam does not click", MAX(steps[IOTA(80000, 0) + 44100]) < 0.05, STR$(MAX(steps[IOTA(80000, 0) + 44100]))
+DIM lp AS DOUBLE = SOUND.PITCHOF(held[IOTA(16384, 0) + 100000])
+CHECK "the looped note keeps its pitch", NEAR(lp, 110, 1), STR$(lp)
+SOUND.MIDIIN 128, 45, 0
+rest = SOUND.RENDER(8820)
+
+' ---------- granular ----------
+SOUND.SAMPLELOOP 0, 0, 0
+SOUND.GRAIN 0, 80, 40, 0.02
+DIM gp AS DOUBLE = SOUND.PARAM(0, "GRAINPOS", 0.3)
+CHECK "GRAINPOS reads back", NEAR(SOUND.PARAM(0, "GRAINPOS"), 0.3, 1E-6), STR$(SOUND.PARAM(0, "GRAINPOS"))
+SOUND.MIDIIN 144, 45, 100
+b = SOUND.RENDER(132300)
+DIM grains = LEFT_OF(b)
+DIM g_late AS DOUBLE = PEAK(grains[IOTA(8820, 0) + 120000])
+CHECK "grains hold the sound past the sample's end", g_late > 0.02, STR$(g_late)
+DIM g_hz AS DOUBLE = SOUND.PITCHOF(grains[IOTA(16384, 0) + 60000])
+CHECK "grains at the root key keep 110 Hz", NEAR(g_hz, 110, 2), STR$(g_hz)
+SOUND.MIDIIN 128, 45, 0
+rest = SOUND.RENDER(8820)
+SOUND.MIDIIN 144, 57, 100
+b = SOUND.RENDER(44100)
+DIM g_up AS DOUBLE = SOUND.PITCHOF(LEFT_OF(b)[IOTA(16384, 0) + 20000])
+CHECK "grains an octave up play 220 Hz", NEAR(g_up, 220, 3), STR$(g_up)
+SOUND.MIDIIN 128, 57, 0
+rest = SOUND.RENDER(8820)
+SOUND.GRAIN 0, 0
+
+' ---------- a WAV file ----------
+DIM wsecs AS DOUBLE = SOUND.SAMPLE(1, "jdb/demos/sound/Korg_KPR77/KPRHITOM.WAV", "C3")
+CHECK "a WAV path loads", wsecs > 0.05 ANDALSO wsecs < 5, STR$(wsecs)
+SOUND.VOICE 1, "SINE", 0.001, 0.01, 1.0, 0.05
+SOUND.SAMPLE 1, "jdb/demos/sound/Korg_KPR77/KPRHITOM.WAV", "C3"
+SOUND.MIDIIN 144, 48, 100
+b = SOUND.RENDER(4410)
+SOUND.MIDIIN 128, 48, 0
+CHECK "the WAV sounds", PEAK(b) > 0.01, STR$(PEAK(b))
+rest = SOUND.RENDER(8820)
+
+' ---------- errors ----------
+DIM err_msg AS STRING = ""
+TRY
+    s3 = SOUND.SAMPLE(0, pluck, "zz")
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "a base that is no note is refused", INSTR(err_msg, "note name") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    SOUND.GRAIN 0, 2
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "a 2 ms grain is refused", INSTR(err_msg, "5-2000") >= 0, "msg=" + err_msg
+err_msg = ""
+TRY
+    SOUND.SAMPLELOOP 0, 1.0, 0.5
+CATCH
+    err_msg = ERRMSG$
+ENDTRY
+CHECK "a loop that ends before it starts is refused", INSTR(err_msg, "start < end") >= 0, "msg=" + err_msg
+
+SOUND.RESET
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

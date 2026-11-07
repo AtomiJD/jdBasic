@@ -109,11 +109,19 @@ jdBasic can load and play WAV files.
 
 ### Samples as Sequencer Instruments
 
-You can use a loaded sample as a sound source for a sequencer track.
+You can use a sample, or a recording of your own, as a sound source for a track and play it from patterns or from a keyboard (section 8).
 
-* **`SOUND.SAMPLE track, sfx_id, [base_note$], [loop_bool]`**: Assigns a loaded `SFX` ID to a track for pitched playback.
-* `base_note$`: The root pitch of the original sample (e.g., "C3").
-* `loop_bool`: If `TRUE`, the sample loops continuously while the note is active.
+* **`SOUND.SAMPLE(track, source, [base], [loop], [rate]) -> seconds`**: `source` is a loaded `SFX` id, a WAV path, or an array of mono samples at `rate` (default 44100). `base` is the note the sample sounds at, a name (`"C3"`) or a MIDI number; each key plays it faster or slower from there, read between frames by linear interpolation. `loop` repeats it while the note is held.
+* **`SOUND.PITCHOF(samples, [rate]) -> Hz`**: finds the root of a recording, so a guitar note played into a microphone lands on the right keys: `SOUND.SAMPLE 1, take, 69 + 12 * LOG(hz / 440) / LOG(2), FALSE, 48000`.
+* **`SOUND.SAMPLELOOP track, start_s, end_s, [xfade_s]`**: a held note loops over a region with a crossfade at the seam, so a short recording sustains.
+* **`SOUND.GRAIN track, size_ms, [density], [spray]`**: granular playback. The key sets the pitch, the `GRAINPOS` parameter (0..1) the place in the recording, so a knob or an LFO on `GRAINPOS` freezes, scrubs or stretches it.
+
+```basic
+DIM secs = SOUND.SAMPLE(1, "guitar_a.wav", "A2")
+SOUND.SAMPLELOOP 1, 0.4, 1.2, 0.05
+SOUND.GRAIN 1, 90, 40, 0.03
+SOUND.CCMAP 22, 1, "GRAINPOS", 0, 1      ' knob 1 scrubs through the note
+```
 
 ## 5. Global Effects (Master Bus)
 

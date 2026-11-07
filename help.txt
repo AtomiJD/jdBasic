@@ -3305,7 +3305,7 @@ Example: SOUND.PADMAP 9, 40, "oh"
 
 [SOUND.PARAM]
 Syntax: SOUND.PARAM(track, param$, [value]) -> value
-Description: Reads a track parameter, or sets it first and answers the new value. param$ takes the names of SOUND.MOD: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV, VOWEL, PITCH, ATTACK, DECAY, SUSTAIN, RELEASE, LFORATE, LFODEPTH, WTPOS. A value set here stops a SOUND.CCMAP knob that was still gliding on that parameter. The SYNTHPATCH module (lib/synthpatch.jdb) uses it to capture and morph sounds.
+Description: Reads a track parameter, or sets it first and answers the new value. param$ takes the names of SOUND.MOD: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV, VOWEL, PITCH, ATTACK, DECAY, SUSTAIN, RELEASE, LFORATE, LFODEPTH, WTPOS, GRAINPOS. A value set here stops a SOUND.CCMAP knob that was still gliding on that parameter. The SYNTHPATCH module (lib/synthpatch.jdb) uses it to capture and morph sounds.
 Example: SOUND.PARAM 1, "CUTOFF", 1200 : PRINT SOUND.PARAM(1, "RESONANCE")
 
 [SOUND.MATRIX]
@@ -3378,7 +3378,7 @@ Syntax: SOUND.MOD track, param$, shape$, [lo], [hi], [cycles], [offset]
 Description: Moves a track parameter between lo and hi, one period every `cycles` sequencer cycles.
 Parameters: CUTOFF, RESONANCE, GAIN, PAN, DETUNE, FM, CRUSH, REVERB, DELAY, FENV,
 VOWEL (0 a .. 4 u, see SOUND.FORMANT), PITCH (semitones), ATTACK, DECAY, SUSTAIN, RELEASE
-(envelope of the next notes), LFORATE (Hz), LFODEPTH (Hz), WTPOS (wavetable scan 0..1, SOUND.WAVETABLE).
+(envelope of the next notes), LFORATE (Hz), LFODEPTH (Hz), WTPOS (wavetable scan 0..1, SOUND.WAVETABLE), GRAINPOS (granular read position 0..1, SOUND.GRAIN).
 Shapes: SINE, COSINE, SAW, ISAW, TRI, SQUARE, RAND, PERLIN. "OFF" stops it and restores the value.
 Example: SOUND.MOD 1, "CUTOFF", "SINE", 300, 3000, 8
 
@@ -3507,9 +3507,22 @@ Description: Activates the master reverb effect.
 Room: 0.7-0.99. Damp: 0.0-1.0. Width: 0.0-1.0. Wet: 0.0-1.0. orbit (0-3, default 0) picks the effect bus; see SOUND.ORBIT.
 
 [SOUND.SAMPLE]
-Syntax: SOUND.SAMPLE track, sample_id, base_note$, loop_bool
-Description: Assigns a loaded SFX sample to a synth track for melodic playback.
-Base note (e.g., "C3") sets the pitch of the original WAV.
+Syntax: SOUND.SAMPLE(track, source, [base], [loop], [rate]) -> seconds
+Description: Makes a sample the track's sound, played chromatically: each key reads it faster or slower than base, the note it was recorded at (a name like "C3", or a MIDI number, fractional for a root measured with SOUND.PITCHOF). source is an SFX id (SFX.LOAD), a WAV path, or an array of mono samples at rate (default 44100), such as a recording read back from a file. The sample is read between frames by linear interpolation. loop repeats it while the key is held (the whole sample, or the region of SOUND.SAMPLELOOP). Answers the length in seconds.
+Example: DIM s = SOUND.SAMPLE(1, take, 45.2, FALSE, 48000)
+
+[SOUND.SAMPLELOOP]
+Syntax: SOUND.SAMPLELOOP track, start_s, end_s, [xfade_s]
+Description: A held note of the track's sample loops between start_s and end_s and fades over xfade_s (default 0.01) before the end into the frames before the start, so the seam does not click. end_s 0 removes the region. Sets loop on.
+
+[SOUND.GRAIN]
+Syntax: SOUND.GRAIN track, size_ms, [density], [spray]
+Description: Plays the track's sample granular: Hann-windowed grains of size_ms (5-2000), density a second (1-500, default 30), read around the GRAINPOS parameter (0..1 of the sample) and scattered by spray (0-1 of the sample, default 0.05). The key sets the pitch of the grains; the time stands still where GRAINPOS points, so a knob or an LFO on GRAINPOS (SOUND.CCMAP, SOUND.MATRIX, SOUND.MOD) moves through the recording at any speed. size 0 returns to plain playback.
+Example: SOUND.GRAIN 1, 80, 40, 0.02 : SOUND.CCMAP 22, 1, "GRAINPOS", 0, 1
+
+[SOUND.PITCHOF]
+Syntax: SOUND.PITCHOF(samples, [rate]) -> Hz
+Description: The fundamental of a mono recording in Hz (40-2000), 0 when it has no clear pitch. YIN over windows of the loud, sustained part; their median. 69 + 12 * LOG(hz / 440) / LOG(2) gives the MIDI note for SOUND.SAMPLE.
 
 [SOUND.SHUTDOWN]
 Syntax: SOUND.SHUTDOWN

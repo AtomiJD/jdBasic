@@ -222,7 +222,11 @@ struct Voice {
     // Sample playback
     int sample_id = -1;
     float sample_rate_ratio = 1.0f;
-    float sample_pos = 0.0f;
+    double sample_pos = 0.0;
+    // Granular: up to 16 grains, each its read position, step, age and length
+    struct Grain { double pos = 0.0, step = 1.0; int64_t age = 0, len = 0; bool on = false; };
+    Grain grains[16];
+    double grain_clock = 1.0;
     float sample_gain = 1.0f;
     float pan = -1.0f;  // below 0: the track pan
     float gain = 1.0f;     // per-event level
@@ -254,7 +258,7 @@ struct Voice {
 
 enum ModParam { MP_CUTOFF, MP_RESONANCE, MP_GAIN, MP_PAN, MP_DETUNE, MP_FM,
                 MP_CRUSH, MP_REVERB, MP_DELAY, MP_FENV, MP_VOWEL, MP_PITCH,
-                MP_ATTACK, MP_DECAY, MP_SUSTAIN, MP_RELEASE, MP_LFORATE, MP_LFODEPTH, MP_WTPOS, MP_COUNT };
+                MP_ATTACK, MP_DECAY, MP_SUSTAIN, MP_RELEASE, MP_LFORATE, MP_LFODEPTH, MP_WTPOS, MP_GRAINPOS, MP_COUNT };
 
 // The parameter names SOUND.MOD and SOUND.CCMAP take, or -1
 static int mod_param_from_name(std::string name) {
@@ -265,7 +269,7 @@ static int mod_param_from_name(std::string name) {
         {"REVERB", MP_REVERB}, {"DELAY", MP_DELAY}, {"FENV", MP_FENV},
         {"VOWEL", MP_VOWEL}, {"PITCH", MP_PITCH}, {"ATTACK", MP_ATTACK},
         {"DECAY", MP_DECAY}, {"SUSTAIN", MP_SUSTAIN}, {"RELEASE", MP_RELEASE},
-        {"LFORATE", MP_LFORATE}, {"LFODEPTH", MP_LFODEPTH}, {"WTPOS", MP_WTPOS}};
+        {"LFORATE", MP_LFORATE}, {"LFODEPTH", MP_LFODEPTH}, {"WTPOS", MP_WTPOS}, {"GRAINPOS", MP_GRAINPOS}};
     for (auto& p : params) if (name == p.first) return p.second;
     return -1;
 }
@@ -473,6 +477,13 @@ struct TrackParams {
     int sample_id = -1;
     float sample_base_freq = 261.63f; // C4
     bool sample_loop = false;
+    // Loop region in frames (loop_end <= 0: the whole sample) and its
+    // crossfade, so a held note sustains without a click at the seam
+    int64_t loop_start = 0, loop_end = 0, loop_xfade = 0;
+    // Granular (grain_size > 0): grains of grain_size seconds, grain_density
+    // a second, read around grain_pos (0..1 of the sample), scattered by
+    // grain_spray; their pitch follows the key, the time stands still
+    float grain_size = 0.0f, grain_density = 30.0f, grain_spray = 0.05f, grain_pos = 0.0f;
     // Drum kit: pattern atoms name sounds instead of notes
     std::unordered_map<std::string, KitSound> kit;
     // Formants: the vowel as a position a=0 e=1 i=2 o=3 u=4, the wet share,
@@ -579,6 +590,7 @@ static float* mod_target(TrackParams& tp, int param) {
         case MP_LFORATE:   return &tp.lfo_freq;
         case MP_LFODEPTH:  return &tp.lfo_depth;
         case MP_WTPOS:     return &tp.wt_pos;
+        case MP_GRAINPOS:  return &tp.grain_pos;
         default:           return nullptr;
     }
 }
@@ -1472,6 +1484,7 @@ static struct SoundSystem {
     float mm_cc[128] = {};
     float mm_after = 0.0f, mm_vel = 0.0f, mm_note = 0.0f, mm_rand = 0.0f;
     uint32_t mm_seed = 0x9E3779B9u;
+    uint32_t grain_seed = 0x6C8E9CF5u;
 
     // Sources: LFOs, note and random are -1..1, the rest 0..1
     float mm_value(int src, int cc) const {
@@ -1837,23 +1850,76 @@ static struct SoundSystem {
 
         float sample_l = 0, sample_r = 0;
 
-        // Sample playback
+        // Sample playback, read between frames by linear interpolation
         if (v.sample_id >= 0) {
             auto sit = samples.find(v.sample_id);
             if (sit != samples.end()) {
-                auto& chunk = sit->second;
-                float rate = freq / tp.sample_base_freq;
-                if (v.sample_pos < chunk.data.size() / 2) {
-                    size_t idx = (size_t)v.sample_pos * 2;
-                    sample_l = (idx < chunk.data.size()) ? chunk.data[idx] : 0;
-                    sample_r = (idx + 1 < chunk.data.size()) ? chunk.data[idx + 1] : sample_l;
+                const auto& d = sit->second.data;
+                const int64_t n = (int64_t)(d.size() / 2);
+                auto at = [&](double p, float& l, float& r) {
+                    int64_t i = (int64_t)p;
+                    if (p < 0.0 || i >= n) { l = r = 0.0f; return; }
+                    int64_t j = i + 1 < n ? i + 1 : i;
+                    float f = (float)(p - (double)i);
+                    l = d[i * 2] + (d[j * 2] - d[i * 2]) * f;
+                    r = d[i * 2 + 1] + (d[j * 2 + 1] - d[i * 2 + 1]) * f;
+                };
+                const bool own = v.sample_id == tp.sample_id;
+                const double rate = freq / tp.sample_base_freq;
+                if (own && tp.grain_size > 0.0f && n > 0) {
+                    // Granular: Hann-windowed grains around grain_pos at the
+                    // key's pitch, summed and scaled by their overlap
+                    int64_t glen = std::max<int64_t>(16, (int64_t)(tp.grain_size * SAMPLE_RATE));
+                    v.grain_clock += tp.grain_density / (double)SAMPLE_RATE;
+                    if (v.grain_clock >= 1.0) {
+                        v.grain_clock -= std::floor(v.grain_clock);
+                        for (auto& g : v.grains) {
+                            if (g.on) continue;
+                            grain_seed = grain_seed * 1664525u + 1013904223u;
+                            double jitter = ((double)(grain_seed >> 8) / (double)(1u << 24) * 2.0 - 1.0) * tp.grain_spray;
+                            double centre = std::clamp((double)tp.grain_pos + jitter, 0.0, 1.0) * (double)(n - 1);
+                            g.pos = std::max(0.0, centre - 0.5 * (double)glen * rate);
+                            g.step = rate;
+                            g.age = 0;
+                            g.len = glen;
+                            g.on = true;
+                            break;
+                        }
+                    }
+                    for (auto& g : v.grains) {
+                        if (!g.on) continue;
+                        float gl, gr;
+                        at(g.pos, gl, gr);
+                        float w = 0.5f - 0.5f * std::cos(2.0f * (float)M_PI * (float)g.age / (float)g.len);
+                        sample_l += gl * w;
+                        sample_r += gr * w;
+                        g.pos += g.step;
+                        if (++g.age >= g.len || g.pos >= (double)n) g.on = false;
+                    }
+                    float overlap = std::max(1.0f, 0.5f * tp.grain_density * (float)glen / (float)SAMPLE_RATE);
+                    sample_l *= v.sample_gain / overlap;
+                    sample_r *= v.sample_gain / overlap;
+                } else if (v.sample_pos < (double)n) {
+                    at(v.sample_pos, sample_l, sample_r);
+                    // A loop runs over the track's region when it has one, else
+                    // the whole sample; before the seam it fades into the
+                    // frames before the loop start
+                    bool region = own && tp.loop_end > tp.loop_start;
+                    int64_t ls = region ? tp.loop_start : 0;
+                    int64_t le = region ? std::min(tp.loop_end, n) : n;
+                    int64_t xf = (own && v.sample_loop) ? std::min<int64_t>(tp.loop_xfade, ls) : 0;
+                    if (v.sample_loop && xf > 0 && le > ls && v.sample_pos >= (double)(le - xf)) {
+                        float a = (float)((v.sample_pos - (double)(le - xf)) / (double)xf);
+                        float l2, r2;
+                        at(v.sample_pos - (double)(le - ls), l2, r2);
+                        sample_l += (l2 - sample_l) * a;
+                        sample_r += (r2 - sample_r) * a;
+                    }
                     sample_l *= v.sample_gain;
                     sample_r *= v.sample_gain;
                     v.sample_pos += rate;
-                    if (v.sample_pos >= chunk.data.size() / 2) {
-                        if (v.sample_loop) v.sample_pos = 0;
-                        else v.env.state = EnvState::OFF;
-                    }
+                    if (v.sample_loop && le > ls && v.sample_pos >= (double)le) v.sample_pos -= (double)(le - ls);
+                    else if (v.sample_pos >= (double)n) v.env.state = EnvState::OFF;
                 }
             }
         }
@@ -2897,6 +2963,70 @@ static SoundChunk load_wav_file(const std::string& path, const std::string& who)
 #endif
 }
 
+// The fundamental of a mono recording by YIN (de Cheveigne and Kawahara):
+// up to twelve windows from the loud part after the attack each give a
+// period from the first dip of the cumulative mean normalized difference;
+// the answer is their median, 0 when no window has a clear one. 40-2000 Hz.
+static double yin_pitch(const std::vector<float>& x, double rate) {
+    const int maxTau = (int)(rate / 40.0);
+    const int minTau = std::max(2, (int)(rate / 2000.0));
+    const int W = std::max(1024, 2 * maxTau);
+    const int n = (int)x.size();
+    if (n < W + maxTau + 1) return 0.0;
+    // loudness per window, to skip silence and pick the sustained part
+    int span = n - W - maxTau;
+    int count = std::min(12, std::max(1, span / (W / 2) + 1));
+    std::vector<int> starts;
+    std::vector<double> rms;
+    double loudest = 0.0;
+    for (int k = 0; k < count; k++) {
+        int s = count == 1 ? 0 : (int)((double)span * k / (count - 1));
+        double e = 0.0;
+        for (int i = 0; i < W; i++) e += (double)x[s + i] * x[s + i];
+        e = std::sqrt(e / W);
+        starts.push_back(s);
+        rms.push_back(e);
+        loudest = std::max(loudest, e);
+    }
+    if (loudest < 1e-4) return 0.0;
+    std::vector<double> d(maxTau + 1), periods;
+    for (int k = 0; k < count; k++) {
+        if (rms[k] < 0.25 * loudest) continue;
+        const float* p = x.data() + starts[k];
+        d[0] = 1.0;
+        double run = 0.0;
+        for (int tau = 1; tau <= maxTau; tau++) {
+            double s = 0.0;
+            for (int i = 0; i < W; i++) {
+                double diff = (double)p[i] - p[i + tau];
+                s += diff * diff;
+            }
+            run += s;
+            d[tau] = run > 0.0 ? s * tau / run : 1.0;
+        }
+        int pick = -1;
+        for (int tau = minTau; tau < maxTau; tau++) {
+            if (d[tau] < 0.15) {
+                while (tau + 1 < maxTau && d[tau + 1] < d[tau]) tau++;
+                pick = tau;
+                break;
+            }
+        }
+        if (pick < 0) continue;
+        double t = pick;
+        if (pick > 1 && pick < maxTau) {
+            double a = d[pick - 1], b = d[pick], c = d[pick + 1];
+            double den = a - 2.0 * b + c;
+            if (den != 0.0) t += 0.5 * (a - c) / den;
+        }
+        periods.push_back(t);
+    }
+    if (periods.empty()) return 0.0;
+    std::sort(periods.begin(), periods.end());
+    return rate / periods[periods.size() / 2];
+}
+
+
 static int arp_mode(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
     if (s == "off" || s.empty()) return SoundSystem::ARP_OFF;
@@ -3182,17 +3312,131 @@ void register_sound_builtins(VM& vm) {
 
     // ── SOUND.SAMPLE track, sample_id, [base_note$], [loop] ─────
 
-    vm.register_native("SOUND.SAMPLE", 2, 4, [](const std::vector<Value>& args) -> Value {
+    // SOUND.SAMPLE track, source, [base], [loop], [rate] -> seconds
+    // source: an SFX id, a WAV path, or an array of mono samples at rate
+    // (default 44100). base: the note the sample sounds at, a name ("C3") or
+    // a MIDI number, fractional for a measured root (SOUND.PITCHOF).
+    vm.register_native("SOUND.SAMPLE", 2, 5, [](const std::vector<Value>& args) -> Value {
         int t = (int)args[0].to_int();
-        if (t < 0 || t >= NUM_TRACKS) return Value::make_none();
-        g_sound.tracks[t].sample_id = (int)args[1].to_int();
-        g_sound.tracks[t].waveform = Waveform::SAMPLE;
-        if (args.size() >= 3) {
-            int midi = note_name_to_midi(args[2].to_string());
-            if (midi >= 0) g_sound.tracks[t].sample_base_freq = midi_to_freq(midi);
+        if (t < 0 || t >= NUM_TRACKS)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.SAMPLE: track is 0-" + std::to_string(NUM_TRACKS - 1));
+        const Value& src = args[1];
+        int id = -1;
+        bool fresh = false;
+        SoundChunk chunk;
+        if (src.type == ValueType::STRING) {
+            chunk = load_wav_file(src.to_string(), "SOUND.SAMPLE");
+            fresh = true;
+        } else if (src.type == ValueType::ARRAY || src.type == ValueType::TENSOR) {
+            std::vector<float> mono;
+            if (src.type == ValueType::TENSOR) for (double x : src.as_tensor()->data) mono.push_back((float)x);
+            else for (auto& e : src.as_array()->elements) {
+                if (e.type == ValueType::ARRAY || e.type == ValueType::TENSOR)
+                    throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.SAMPLE: the array holds numbers (mono samples)");
+                mono.push_back((float)e.to_double());
+            }
+            if (mono.size() < 2) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.SAMPLE: a sample needs at least 2 frames");
+            double rate = args.size() >= 5 ? args[4].to_double() : (double)SAMPLE_RATE;
+            if (!(rate >= 1000.0 && rate <= 384000.0))
+                throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.SAMPLE: rate is 1000-384000 Hz");
+            size_t frames = (size_t)std::max(2.0, std::floor((double)(mono.size() - 1) * SAMPLE_RATE / rate) + 1.0);
+            chunk.data.resize(frames * 2);
+            for (size_t i = 0; i < frames; i++) {
+                double p = (double)i * rate / SAMPLE_RATE;
+                size_t k = std::min((size_t)p, mono.size() - 1);
+                size_t k2 = std::min(k + 1, mono.size() - 1);
+                float x = mono[k] + (mono[k2] - mono[k]) * (float)(p - (double)k);
+                chunk.data[i * 2] = chunk.data[i * 2 + 1] = x;
+            }
+            fresh = true;
+        } else {
+            id = (int)src.to_int();
         }
-        if (args.size() >= 4) g_sound.tracks[t].sample_loop = args[3].to_bool();
+        float base_freq = -1.0f;
+        if (args.size() >= 3) {
+            if (args[2].type == ValueType::STRING) {
+                int midi = note_name_to_midi(args[2].to_string());
+                if (midi < 0) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.SAMPLE: base note " + args[2].to_string() + " is not a note name");
+                base_freq = midi_to_freq(midi);
+            } else {
+                double m = args[2].to_double();
+                if (!(m > 0.0 && m < 140.0)) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.SAMPLE: base note is a MIDI number 1-139 or a name like C3");
+                base_freq = (float)(440.0 * std::pow(2.0, (m - 69.0) / 12.0));
+            }
+        }
+        double secs = 0.0;
+        if (g_sound.initialized) SND_LOCK();
+        if (fresh) {
+            id = g_sound.next_kit_id++;
+            g_sound.samples[id] = std::move(chunk);
+        }
+        auto& tp = g_sound.tracks[t];
+        tp.sample_id = id;
+        tp.waveform = Waveform::SAMPLE;
+        tp.loop_start = tp.loop_end = tp.loop_xfade = 0;
+        if (base_freq > 0.0f) tp.sample_base_freq = base_freq;
+        if (args.size() >= 4) tp.sample_loop = args[3].to_bool();
+        auto sit = g_sound.samples.find(id);
+        if (sit != g_sound.samples.end()) secs = (double)(sit->second.data.size() / 2) / SAMPLE_RATE;
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_f64(secs);
+    });
+
+    // SOUND.SAMPLELOOP track, start_s, end_s, [xfade_s]: a held note loops
+    // between start and end of the track's sample, fading over xfade before
+    // the end into the frames before the start. end 0 removes the region.
+    vm.register_native("SOUND.SAMPLELOOP", 3, 4, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        if (t < 0 || t >= NUM_TRACKS)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.SAMPLELOOP: track is 0-" + std::to_string(NUM_TRACKS - 1));
+        double s = args[1].to_double(), e = args[2].to_double();
+        double xf = args.size() >= 4 ? args[3].to_double() : 0.01;
+        if (!(s >= 0.0) || !(e >= 0.0) || !(xf >= 0.0) || (e > 0.0 && e <= s))
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.SAMPLELOOP: 0 <= start < end, crossfade 0 or more seconds");
+        if (g_sound.initialized) SND_LOCK();
+        auto& tp = g_sound.tracks[t];
+        tp.loop_start = (int64_t)(s * SAMPLE_RATE);
+        tp.loop_end = (int64_t)(e * SAMPLE_RATE);
+        tp.loop_xfade = (int64_t)(xf * SAMPLE_RATE);
+        if (e > 0.0) tp.sample_loop = true;
+        if (g_sound.initialized) SND_UNLOCK();
         return Value::make_none();
+    });
+
+    // SOUND.GRAIN track, size_ms, [density], [spray]: granular playback of
+    // the track's sample. size 0 returns to plain playback.
+    vm.register_native("SOUND.GRAIN", 2, 4, [](const std::vector<Value>& args) -> Value {
+        int t = (int)args[0].to_int();
+        if (t < 0 || t >= NUM_TRACKS)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.GRAIN: track is 0-" + std::to_string(NUM_TRACKS - 1));
+        double size = args[1].to_double();
+        double dens = args.size() >= 3 ? args[2].to_double() : 30.0;
+        double spray = args.size() >= 4 ? args[3].to_double() : 0.05;
+        if (!(size == 0.0 || (size >= 5.0 && size <= 2000.0)))
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.GRAIN: size is 5-2000 ms, or 0 for off");
+        if (!(dens >= 1.0 && dens <= 500.0)) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.GRAIN: density is 1-500 grains a second");
+        if (!(spray >= 0.0 && spray <= 1.0)) throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.GRAIN: spray is 0-1");
+        if (g_sound.initialized) SND_LOCK();
+        auto& tp = g_sound.tracks[t];
+        tp.grain_size = (float)(size / 1000.0);
+        tp.grain_density = (float)dens;
+        tp.grain_spray = (float)spray;
+        if (g_sound.initialized) SND_UNLOCK();
+        return Value::make_none();
+    });
+
+    // SOUND.PITCHOF(samples, [rate]) -> Hz: the fundamental of a mono
+    // recording, 0 when it has no clear pitch
+    vm.register_native("SOUND.PITCHOF", 1, 2, [](const std::vector<Value>& args) -> Value {
+        std::vector<float> x;
+        const Value& src = args[0];
+        if (src.type == ValueType::TENSOR) for (double d : src.as_tensor()->data) x.push_back((float)d);
+        else if (src.type == ValueType::ARRAY) for (auto& e : src.as_array()->elements) x.push_back((float)e.to_double());
+        else throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.PITCHOF: samples is an array of numbers");
+        double rate = args.size() >= 2 ? args[1].to_double() : (double)SAMPLE_RATE;
+        if (!(rate >= 1000.0 && rate <= 384000.0))
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.PITCHOF: rate is 1000-384000 Hz");
+        return Value::make_f64(yin_pitch(x, rate));
     });
 
     // ── SOUND.KIT track, [kit] ──────────────────────────────────
