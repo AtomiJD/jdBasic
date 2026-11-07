@@ -82,6 +82,7 @@ JDRT_API const char* jdrt_val_type_str(JdRT rt, int64_t h);
 JDRT_API int64_t     jdrt_val_length (JdRT rt, int64_t h);
 // Integer-indexed access on an array-typed handle; returns a fresh handle.
 JDRT_API int64_t     jdrt_val_arr_get(JdRT rt, int64_t h, int64_t idx);
+JDRT_API int64_t     jdrt_val_arr_gather(JdRT rt, int64_t h, int64_t idx_bits, int32_t idx_tag);
 
 // Tagged field access: writes val to *out_val, returns tag.
 JDRT_API int32_t jdrt_obj_get_tagged(JdRT rt, int64_t h, const char* key, int64_t* out_val);

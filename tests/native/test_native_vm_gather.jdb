@@ -1,0 +1,65 @@
+' An array that comes from the VM (JSON.PARSE$, a FUNC answering it) read at
+' an array of positions gives the gathered elements in both backends: literal,
+' computed and VM-made index arrays, nested index arrays, inside a FUNC, on a
+' call's answer, and an index out of range caught by TRY.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK(name$, cond AS INTEGER, detail$)
+    IF cond THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  "; detail$
+    ENDIF
+ENDSUB
+
+DIM q$ = CHR$(34)
+
+FUNC ROWS()
+    DIM t$ = CHR$(34)
+    RETURN JSON.PARSE("[{" + t$ + "n" + t$ + ":10},{" + t$ + "n" + t$ + ":20},{" + t$ + "n" + t$ + ":30},{" + t$ + "n" + t$ + ":40}]")
+ENDFUNC
+
+FUNC PICK(rows, at)
+    RETURN rows[at]
+ENDFUNC
+
+FUNC NAMES$(rows) AS STRING
+    DIM out$ AS STRING = ""
+    FOR i = 0 TO LEN(rows) - 1
+        out$ = out$ + STR$(rows[i]{"n"}) + " "
+    NEXT i
+    RETURN TRIM$(out$)
+ENDFUNC
+
+DIM rows = ROWS()
+DIM g = rows[[0, 2]]
+CHECK "literal positions", LEN(g) = 2 ANDALSO NAMES$(g) = "10 30", NAMES$(g)
+DIM at = IOTA(3, 0)
+CHECK "computed positions (IOTA)", NAMES$(rows[at]) = "10 20 30", NAMES$(rows[at])
+DIM keys = [3, 1, 2, 0]
+CHECK "positions from GRADE", NAMES$(rows[GRADE(keys)]) = "40 20 30 10", NAMES$(rows[GRADE(keys)])
+DIM vm_at = JSON.PARSE("[3, 0]")
+CHECK "positions that come from the VM", NAMES$(rows[vm_at]) = "40 10", NAMES$(rows[vm_at])
+CHECK "inside a FUNC", NAMES$(PICK(rows, [1, 3])) = "20 40", NAMES$(PICK(rows, [1, 3]))
+CHECK "on a call's answer", NAMES$(ROWS()[[2, 2, 1]]) = "30 30 20", NAMES$(ROWS()[[2, 2, 1]])
+DIM nest = rows[[[0, 1], [2, 3]]]
+CHECK "nested positions keep their shape", LEN(nest) = 2 ANDALSO NAMES$(nest[1]) = "30 40", STR$(LEN(nest))
+CHECK "an element of the gathered rows", g[1]{"n"} = 30, STR$(g[1]{"n"})
+DIM nums = JSON.PARSE("[5, 6, 7]")
+CHECK "VM numbers", SUM(nums[[2, 0]]) = 12, STR$(SUM(nums[[2, 0]]))
+DIM cfg = JSON.PARSE("{" + q$ + "i" + q$ + ":2}")
+CHECK "one position that comes from the VM", rows[cfg{"i"}]{"n"} = 30, STR$(rows[cfg{"i"}]{"n"})
+DIM msg AS STRING = ""
+TRY
+    g = rows[[0, 9]]
+CATCH
+    msg = ERRMSG$
+ENDTRY
+CHECK "a position out of range raises", INSTR(msg, "out of bounds") >= 0, "msg=" + msg
+
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"

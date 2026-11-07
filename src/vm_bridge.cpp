@@ -1452,6 +1452,51 @@ JDRT_API int64_t jdrt_val_arr_get(JdRT handle, int64_t h, int64_t idx) {
     }, [] { return 0; });
 }
 
+// arr[[i, j, ...]] on a VM array: the elements at the positions of the
+// index array, nested index arrays keeping their shape, as the VM's
+// INDEX_GET does. A position out of range raises.
+static Value gather_positions(const Value& container, const Value& iv) {
+    if (iv.type == ValueType::TENSOR) {
+        Value out = Value::make_array();
+        for (double d : iv.as_tensor()->data)
+            out.as_array()->elements.push_back(gather_positions(container, Value::make_i64((int64_t)d)));
+        return out;
+    }
+    if (iv.type == ValueType::ARRAY) {
+        Value out = Value::make_array();
+        auto& dst = out.as_array()->elements;
+        for (auto& e : iv.as_array()->elements) dst.push_back(gather_positions(container, e));
+        return out;
+    }
+    auto* arr = container.as_array();
+    int64_t i = iv.to_int();
+    if (i < 0 || i >= (int64_t)arr->elements.size())
+        throw std::runtime_error("Array index out of bounds: " + std::to_string(i));
+    return arr->elements[(size_t)i];
+}
+
+// The positions come as a native array (tag ARR) or as a VM array (tag
+// VM_HANDLE).
+JDRT_API int64_t jdrt_val_arr_gather(JdRT handle, int64_t h, int64_t idx_bits, int32_t idx_tag) {
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        Value idx;
+        if (idx_tag == jd_tag(JdTag::VM_HANDLE)) {
+            auto ii = rt->value_store.find(idx_bits);
+            idx = ii == rt->value_store.end() ? Value::make_none() : ii->second;
+        } else {
+            idx = jdbarray_to_value((JdbArrayFwd*)(intptr_t)idx_bits);
+        }
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) {
+            if (idx.type == ValueType::ARRAY || idx.type == ValueType::TENSOR)
+                throw std::runtime_error("Only an array takes an array of positions");
+            return (int64_t)0;
+        }
+        return rt->store_value(gather_positions(it->second, idx));
+    }, [] { return 0; });
+}
+
 JDRT_API int64_t jdrt_val_length(JdRT handle, int64_t h) {
     return bridge_guard(handle, [&]() -> int64_t {
         auto* rt = resolve_rt(handle);

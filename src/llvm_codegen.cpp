@@ -919,6 +919,8 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type}, JD_TAG_STR);
     reg("jdrt_val_arr_get", "__jdrt_val_arr_get", i64_type,
         {i8_ptr_type, i64_type, i64_type}, JD_TAG_I64);
+    reg("jdrt_val_arr_gather", "__jdrt_val_arr_gather", i64_type,
+        {i8_ptr_type, i64_type, i64_type, i32_type}, JD_TAG_I64);
     reg("jdrt_val_length",  "__jdrt_val_length",  i64_type,
         {i8_ptr_type, i64_type}, JD_TAG_I64);
     reg("jdrt_val_kind",    "__jdrt_val_kind",    i32_type,
@@ -12614,6 +12616,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMConstInt(i32_type, JD_TAG_STR, 0), "tiv_keystr");
                 drop_read_temp(idx_tv);
                 return r;
+            }
+
+            // A VM array gathered at an array of positions answers a VM array.
+            if (arr_tv.tag == JD_TAG_VM_HANDLE && (idx_tv.tag == JD_TAG_ARR || idx_tv.tag == JD_TAG_VM_HANDLE)) {
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                auto& fn = runtime_funcs["__jdrt_val_arr_gather"];
+                LLVMValueRef bits = idx_tv.tag == JD_TAG_ARR
+                    ? LLVMBuildPtrToInt(builder, idx_tv.val, i64_type, "gidx") : idx_tv.val;
+                LLVMValueRef args[] = { rt, arr_tv.val, bits, LLVMConstInt(i32_type, idx_tv.tag, 0) };
+                LLVMValueRef h = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "vgather");
+                emit_err_check();
+                return { h, JD_TAG_VM_HANDLE };
             }
 
             // Int-indexed access on a VM Value handle (lazy array/map element).
