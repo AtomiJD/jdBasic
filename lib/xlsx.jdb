@@ -27,7 +27,7 @@
 ' cached value. Dates arrive as the serial number Excel stores.
 '
 ' The archive is written with stored entries through ZIP.WRITE.
-' version: 1.0.0
+' version: 1.0.1
 
 EXPORT MODULE XLSX
 
@@ -172,12 +172,62 @@ FUNC Attr$(name$, value$)
     RETURN " " + name$ + "=" + CHR$(34) + Escape$(value$) + CHR$(34)
 ENDFUNC
 
+' A code point in UTF-8. CHR$ answers a single byte for 128 to 255.
+FUNC CharOf$(code)
+    IF code < 128 ORELSE code > 255 THEN RETURN CHR$(code)
+    RETURN CHR$(192 + INT(code / 64)) + CHR$(128 + code MOD 64)
+ENDFUNC
+
+' The number of a character reference without its &# and ;, decimal or
+' x and hex digits; -1 when it is none.
+FUNC RefCode(t$)
+    DIM digits$ = "0123456789"
+    DIM base = 10
+    DIM body$ = t$
+    IF LEFT$(t$, 1) = "x" ORELSE LEFT$(t$, 1) = "X" THEN
+        digits$ = "0123456789abcdef"
+        base = 16
+        body$ = MID$(t$, 1)
+    ENDIF
+    IF body$ = "" THEN RETURN -1
+    DIM code = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(body$) - 1
+        DIM d = INSTR(digits$, LCASE$(MID$(body$, i, 1)))
+        IF d < 0 THEN RETURN -1
+        code = code * base + d
+    NEXT i
+    IF code < 1 ORELSE code > 1114111 THEN RETURN -1
+    RETURN code
+ENDFUNC
+
+' &#252; and &#xFC; as the characters they stand for; anything that only
+' looks like one stays as it is.
+FUNC NumRefs$(text$)
+    IF INSTR(text$, "&#") < 0 THEN RETURN text$
+    DIM parts = SPLIT(text$, "&#")
+    DIM out$ = parts[0]
+    DIM i = 0
+    FOR i = 1 TO LEN(parts) - 1
+        DIM p$ = parts[i]
+        DIM semi = INSTR(p$, ";")
+        DIM code = -1
+        IF semi > 0 ANDALSO semi <= 8 THEN code = RefCode(LEFT$(p$, semi))
+        IF code > 0 THEN
+            out$ = out$ + CharOf$(code) + MID$(p$, semi + 1)
+        ELSE
+            out$ = out$ + "&#" + p$
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
+
 FUNC Unescape$(text$)
     DIM out$ = REPLACE$(text$, "&lt;", "<")
     out$ = REPLACE$(out$, "&gt;", ">")
     out$ = REPLACE$(out$, "&quot;", CHR$(34))
     out$ = REPLACE$(out$, "&apos;", "'")
-    out$ = REPLACE$(out$, "&#10;", CHR$(10))
+    out$ = NumRefs$(out$)
     out$ = REPLACE$(out$, "&amp;", "&")
     RETURN out$
 ENDFUNC

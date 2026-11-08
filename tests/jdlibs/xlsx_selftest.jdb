@@ -131,6 +131,25 @@ ELSE
     TESTKIT.SKIP("fixture not found")
 ENDIF
 
+TESTKIT.SUITE("character references")
+' Writers such as openpyxl store a character outside ASCII as &#252; or
+' &#xFC; in the XML; the cell reads as the character.
+DIM ref_path$ = work$ + "/refs.xlsx"
+DIM ref_wb = XLSX.NEW()
+DIM ref_sheet = XLSX.SHEET(ref_wb, "Refs", [["MARKER1"], ["MARKER2"], ["MARKER3"]], FALSE)
+XLSX.WRITE(ref_path$, ref_wb)
+DIM ref_parts = ZIP.READ(ref_path$)
+DIM shared$ = ref_parts{"xl/sharedStrings.xml"}
+shared$ = REPLACE$(shared$, "MARKER1", "M&#252;ller &amp; S&#xF6;hne GmbH")
+shared$ = REPLACE$(shared$, "MARKER2", "&#8364; 5 &#x1F600;")
+shared$ = REPLACE$(shared$, "MARKER3", "&amp;#252; &#; &#xZZ; &#12")
+ref_parts{"xl/sharedStrings.xml"} = shared$
+ZIP.WRITE(ref_path$, ref_parts)
+DIM refs = XLSX.READ(ref_path$){"Refs"}
+TESTKIT.EQ(refs[0][0], "Müller & Söhne GmbH", "decimal and hex references below 256")
+TESTKIT.EQ(refs[1][0], "€ 5 " + CHR$(128512), "above 255 and beyond the first plane")
+TESTKIT.EQ(refs[2][0], "&#252; &#; &#xZZ; &#12", "an escaped ampersand and broken ones stay")
+
 TESTKIT.SUITE("editing a workbook that exists")
 
 ' READ answers values and WRITE builds from scratch, so reading a workbook,

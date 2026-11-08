@@ -79,8 +79,9 @@ Writing: a string goes to the shared strings table, a number is a
 number, a boolean a boolean, a string starting with `=` is a formula,
 `NONE` leaves the cell empty.
 
-Reading: numbers and booleans come back typed, strings unescaped,
-rows are padded to the widest row, a row the writer skipped is an empty
+Reading: numbers and booleans come back typed, strings unescaped
+(numeric character references such as `&#252;` and `&#xFC;`, which
+writers like openpyxl use, included), rows are padded to the widest row, a row the writer skipped is an empty
 row, a sparse row keeps its columns. A formula cell yields the value
 Excel cached; a file written by this module has none, so those cells
 read back empty. Dates arrive as the serial number Excel stores (days
