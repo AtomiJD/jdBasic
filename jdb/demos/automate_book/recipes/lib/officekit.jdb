@@ -57,11 +57,20 @@ EXPORT SUB PREPARE(app, prog_id$)
 ENDSUB
 
 ' Quits an Office application and lets go of it; Outlook is left
-' running.
+' running. PowerPoint runs once per user: CREATEOBJECT hands over the
+' PowerPoint the person has open, so it is quit only when it is hidden
+' and holds no presentation, which means this program started it.
 EXPORT SUB CLOSE_APP(app, prog_id$)
-    IF STARTSWITH(UCASE$(prog_id$), "OUTLOOK") THEN RETURN
+    DIM id$ = UCASE$(prog_id$)
+    IF STARTSWITH(id$, "OUTLOOK") THEN RETURN
     TRY
-        app.Quit()
+        DIM ours = TRUE
+        IF STARTSWITH(id$, "POWERPOINT") THEN
+            DIM open_list = app.Presentations
+            ours = open_list.Count = 0 ANDALSO NOT app.Visible
+            RELEASEOBJECT(open_list)
+        ENDIF
+        IF ours THEN app.Quit()
     CATCH
     ENDTRY
     RELEASEOBJECT(app)

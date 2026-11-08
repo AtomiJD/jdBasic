@@ -34,7 +34,9 @@ point the recipe at the folder where their offers already live.
 > under your own account, the way you start them, so it runs from the
 > Task Scheduler while you are logged in and not as a Windows service.
 > A document that is open in Word while the recipe runs is still
-> converted; the PDF shows the last saved state.
+> converted; the PDF shows the last saved state. PowerPoint runs only
+> once per person, so when you have it open the recipe borrows it and
+> leaves it open afterwards, with your presentations as they were.
 
 ### The program
 
