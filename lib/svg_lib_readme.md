@@ -144,7 +144,12 @@ on a box, `data-ref` and `data-note` on reference lines and notes), and a
 so a chart can be checked or scripted in the page. Text and grid take
 their colours from a style sheet with a `prefers-color-scheme: dark`
 rule, and the series colours (Tableau 10) are mid-toned, so the same
-chart reads on a light and a dark page.
+chart reads on a light and a dark page. The system's dark mode says
+nothing about the page a chart lands on: a chart for a white card, a
+mail or a document takes `SVG.SETOPT(chart, "theme", "light")` and keeps
+dark text; `"dark"` gives light text on a dark background of its own.
+Labels along the axis are spaced by their number of characters, so
+umlauts count once.
 
 ## PNG
 

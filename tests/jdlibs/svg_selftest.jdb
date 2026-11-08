@@ -259,6 +259,33 @@ TESTKIT.EQ(bar_titles[0], "q1, North: 120", "every bar has a tooltip")
 DIM css$ = XML.VALUE$(bar_tree, "//defs/style")
 TESTKIT.ISTRUE(INSTR(css$, "prefers-color-scheme: dark") >= 0, "the page's dark mode changes text and grid colours")
 
+' The theme: light keeps dark text whatever the system says, dark brings
+' its own background.
+DIM light_chart = SVG.CHART("bar")
+SVG.LABELS(light_chart, ["a", "b"])
+SVG.SERIES(light_chart, "n", [1, 2])
+SVG.SETOPT(light_chart, "theme", "light")
+DIM light_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(light_chart)))
+TESTKIT.ISTRUE(INSTR(XML.VALUE$(light_tree, "//defs/style"), "prefers-color-scheme") < 0, "theme light ignores the system's dark mode")
+DIM dark_chart = SVG.CHART("bar")
+SVG.LABELS(dark_chart, ["a", "b"])
+SVG.SERIES(dark_chart, "n", [1, 2])
+SVG.SETOPT(dark_chart, "theme", "dark")
+DIM dark_markup$ = SVG.MARKUP$(SVG.RENDER(dark_chart))
+TESTKIT.ISTRUE(INSTR(dark_markup$, "fill:#ddd") >= 0 ANDALSO INSTR(dark_markup$, "prefers-color-scheme") < 0, "theme dark always has light text")
+TESTKIT.ISTRUE(INSTR(dark_markup$, "#1e1e1e") >= 0, "on a dark background of its own")
+
+' Label spacing counts characters: an umlaut does not drop a neighbour's label.
+DIM names_chart = SVG.CHART("bar", 520, 300)
+SVG.LABELS(names_chart, ["Miller offer", "Admin", "Müller & Söhne", "Customer calls"])
+SVG.SERIES(names_chart, "hours", [5, 2, 4, 3])
+DIM names_markup$ = SVG.MARKUP$(SVG.RENDER(names_chart))
+DIM ascii_chart = SVG.CHART("bar", 520, 300)
+SVG.LABELS(ascii_chart, ["Miller offer", "Admin", "Muller & Sohne", "Customer calls"])
+SVG.SERIES(ascii_chart, "hours", [5, 2, 4, 3])
+DIM ascii_markup$ = SVG.MARKUP$(SVG.RENDER(ascii_chart))
+TESTKIT.EQ(INSTR(names_markup$, ">Admin<") >= 0, INSTR(ascii_markup$, ">Admin<") >= 0, "umlauts space the labels like plain letters")
+
 ' ── other charts ───────────────────────────────────────────────
 
 TESTKIT.SUITE("line, stacked, scatter, pie")

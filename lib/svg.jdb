@@ -12,7 +12,7 @@
 '   SVG.SERIES(c, "2026", [120, 95.5, 143])
 '   SVG.WRITEFILE(SVG.RENDER(c), "sales.svg")
 '   SVG.WRITEPNG(SVG.RENDER(c), "sales.png", {"scale": 2})
-' version: 1.0.0
+' version: 1.0.1
 
 EXPORT MODULE SVG
 
@@ -365,7 +365,9 @@ ENDFUNC
 ' the bars), donut (the hole of a pie, 0 to 0.9), background (a colour),
 ' colors (a list separated by commas), decimals (of the axis labels),
 ' x_min, x_max (with numbers along x), y_log, x_log (1 for a log scale in
-' decades), stacked (1 stacks the series of an area chart).
+' decades), stacked (1 stacks the series of an area chart), theme (auto
+' follows the system's dark mode, light and dark are fixed; dark brings a
+' dark background).
 EXPORT SUB SETOPT(chart, opt_name$, value)
     gOpts{STR$(CINT(chart)) + ":" + LCASE$(opt_name$)} = value
 ENDSUB
@@ -597,12 +599,18 @@ FUNC TickText$(v, decimals)
     RETURN shown$
 ENDFUNC
 
-FUNC ChartCss$()
+' theme$: auto follows the dark mode of the system, light and dark are
+' fixed. The system's dark mode says nothing about the page a chart lands
+' on (a white card, a mail, Word), so a file that is passed on is safer
+' light.
+FUNC ChartCss$(theme$)
+    DIM dark$ = ".jdsvg text{fill:#ddd}.jdsvg .g{stroke:#474747}.jdsvg .a{stroke:#9a9a9a}.jdsvg .m{stroke:#222}"
     DIM css$ = ".jdsvg text{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:12px;fill:#333}"
     css$ = css$ + ".jdsvg .t{font-size:16px;font-weight:600}.jdsvg .g{stroke:#d6d6d6;stroke-width:1}.jdsvg .a{stroke:#888;stroke-width:1}"
     css$ = css$ + ".jdsvg .m{stroke:#fff;stroke-width:1}"
-    css$ = css$ + "@media (prefers-color-scheme: dark){.jdsvg text{fill:#ddd}.jdsvg .g{stroke:#474747}.jdsvg .a{stroke:#9a9a9a}.jdsvg .m{stroke:#222}}"
-    RETURN css$
+    IF theme$ = "dark" THEN RETURN css$ + dark$
+    IF theme$ = "light" THEN RETURN css$
+    RETURN css$ + "@media (prefers-color-scheme: dark){" + dark$ + "}"
 ENDFUNC
 
 ' Text with an anchor (start, middle or end) and a class; extra$ is more
@@ -651,11 +659,13 @@ EXPORT FUNC RENDER(chart)
     DIM w = gChW[c]
     DIM h = gChH[c]
     DIM doc = NewDoc(w, h)
-    STYLE(doc, ChartCss$())
+    DIM theme$ = LCASE$(OptStr$(chart, "theme", "auto"))
+    STYLE(doc, ChartCss$(theme$))
     DIM root AS MAP
     root{"class"} = "jdsvg"
     OpenGroup(doc, root)
     DIM bg$ = OptStr$(chart, "background", "")
+    IF bg$ = "" ANDALSO theme$ = "dark" THEN bg$ = "#1e1e1e"
     IF bg$ <> "" THEN
         DIM bga AS MAP
         bga{"fill"} = bg$
@@ -888,7 +898,7 @@ SUB DrawAxes(doc, chart, series, kind$, top)
         IF n_labels > 0 THEN
             DIM longest = 1
             FOR k = 0 TO n_labels - 1
-                IF LEN(LabelAt$(chart, k)) > longest THEN longest = LEN(LabelAt$(chart, k))
+                IF LEN(-LabelAt$(chart, k)) > longest THEN longest = LEN(-LabelAt$(chart, k))
             NEXT k
             DIM slot = pw / n_labels
             DO WHILE slot * label_every < longest * 7 + 8 ANDALSO label_every < n_labels
@@ -1666,7 +1676,7 @@ SUB DrawPlot(doc, chart, series, kind$, top)
                 ELSE
                     cat_text$ = LabelAt$(chart, k)
                 ENDIF
-                IF LEN(cat_text$) > longest THEN longest = LEN(cat_text$)
+                IF LEN(-cat_text$) > longest THEN longest = LEN(-cat_text$)
             NEXT k
             FOR k = 1 TO n_cats
                 label_every = k
