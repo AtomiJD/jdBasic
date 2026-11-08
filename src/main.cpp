@@ -1590,12 +1590,26 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             // always lists them, OPTION "EXPLICIT" makes the compiler refuse them.
             std::vector<std::string> defined_funcs;
             std::vector<std::string> undeclared;
+            // A finding inside an IMPORTed module is not the program's to
+            // fix: it is listed apart, with its file, and not counted.
+            std::vector<std::string> in_modules;
+            auto file_of = [](const std::string& f) {
+                return std::filesystem::path(f).filename().string();
+            };
+            auto sort_in = [&](std::vector<std::string>& own, const UndeclaredRef& u,
+                               const std::string& kind) {
+                if (u.file.empty())
+                    own.push_back(u.name + " (line " + std::to_string(u.line) + ")");
+                else
+                    in_modules.push_back(u.name + " (" + file_of(u.file) + ":" +
+                                         std::to_string(u.line) + ", " + kind + ")");
+            };
             {
                 auto natives = vm.native_names();
                 std::set<std::string> native_set(natives.begin(), natives.end());
                 auto is_builtin = [&](const std::string& n) { return native_set.count(n) > 0; };
                 for (auto& u : find_undeclared(ast, is_builtin, &defined_funcs))
-                    undeclared.push_back(u.name + " (line " + std::to_string(u.line) + ")");
+                    sort_in(undeclared, u, "undeclared");
             }
             // Variables that carry a builtin's name. The signature table is
             // the declared set of builtins, which is wider than whatever this
@@ -1606,7 +1620,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                     std::transform(up.begin(), up.end(), up.begin(), ::toupper);
                     return builtin_sig(up) != nullptr;
                 }))
-                shadows.push_back(s.name + " (line " + std::to_string(s.line) + ")");
+                sort_in(shadows, s, "a builtin's name");
 
             std::vector<std::string> old_names;
             for (auto& u : all_alias_uses(lexer, parser, ast))
@@ -1617,7 +1631,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             // Builtins whose answer the compiler has to guess the kind of.
             std::vector<std::string> unforeseeable;
             for (auto& u : find_unforeseeable_results(ast, unrecorded_return_kind))
-                unforeseeable.push_back(u.name + " (line " + std::to_string(u.line) + ")");
+                sort_in(unforeseeable, u, "a kind read as a number");
 
             vm.emit("LINT: Parsed OK.\n");
             vm.emit("  " + std::to_string(ast.size()) + " top-level statements\n");
@@ -1682,6 +1696,19 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 warnings += (int)old_names.size();
                 vm.emit("  Old names, still accepted: " + std::to_string(old_names.size()) + "\n");
                 for (auto& o : old_names) vm.emit("    " + o + "\n");
+            }
+            if (!in_modules.empty()) {
+                vm.emit("  In imported modules, not counted: " +
+                        std::to_string(in_modules.size()) + "\n");
+                int shown = 0;
+                for (auto& m : in_modules) {
+                    if (++shown > 10) {
+                        vm.emit("    ... (+" + std::to_string(in_modules.size() - 10) +
+                                " more)\n");
+                        break;
+                    }
+                    vm.emit("    " + m + "\n");
+                }
             }
             if (warnings == 0) vm.emit("  No warnings.\n");
             else vm.emit("  Total warnings: " + std::to_string(warnings) + "\n");

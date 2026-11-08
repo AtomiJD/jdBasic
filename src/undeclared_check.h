@@ -162,7 +162,7 @@ inline std::vector<UndeclaredRef> find_builtin_shadows(
         if (n.empty() || !is_builtin_name(n)) return;
         std::string up = n;
         std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-        if (!seen.insert(up).second) return;
+        if (!seen.insert(file + "|" + up).second) return;
         out.push_back({ n, line, file });
     };
     std::function<void(const Expr*, int, const std::string&)> walk_expr =

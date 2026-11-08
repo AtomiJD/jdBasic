@@ -1,0 +1,57 @@
+' --lint counts only what the program itself holds: a builtin's name used
+' in an IMPORTed module is listed apart with its file and line, and the same
+' name in the program is still reported although the module has it too.
+
+DIM passed = 0
+DIM failed = 0
+
+SUB Check(label$, ok)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+' --lint is a switch of jdBasic itself; a compiled test has no jdBasic to
+' run, and OS.SELF$() there is the test program.
+IF NOT OS.FEATURE("INTERPRETER") THEN
+    PRINT "skipped: --lint needs the interpreter"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    PRINT "ALL TESTS PASSED!"
+    END
+ENDIF
+
+DIM nl$ = CHR$(10)
+DIM dir$ = PATH.JOIN$(GETENV$("TEMP"), "jdb_lintmod_" + STR$(TICK()))
+MKDIR dir$
+DIM mod$ = PATH.JOIN$(dir$, "lintmod.jdb")
+DIM clean$ = PATH.JOIN$(dir$, "clean.jdb")
+DIM own$ = PATH.JOIN$(dir$, "own.jdb")
+TXTWRITER mod$, "EXPORT MODULE LINTMOD" + nl$ + "EXPORT FUNC STAMP$(now)" + nl$ + _
+    "    RETURN STR$(now)" + nl$ + "ENDFUNC" + nl$
+TXTWRITER clean$, "IMPORT LINTMOD" + nl$ + "PRINT LINTMOD.STAMP$(1)" + nl$
+TXTWRITER own$, "IMPORT LINTMOD" + nl$ + "DIM now = 5" + nl$ + "PRINT LINTMOD.STAMP$(now)" + nl$
+
+DIM r = OS.EXEC(OS.SELF$(), ["--lint", clean$])
+DIM out$ = r{"output"}
+Check("a clean program has no warnings", INSTR(out$, "No warnings.") >= 0)
+Check("the module's finding is listed apart", INSTR(out$, "In imported modules, not counted: 1") >= 0)
+Check("with its file and line", INSTR(UCASE$(out$), "NOW (LINTMOD.JDB:2") >= 0)
+
+r = OS.EXEC(OS.SELF$(), ["--lint", own$])
+out$ = r{"output"}
+Check("the program's own name is reported", INSTR(out$, "Names a builtin already carries: 1") >= 0)
+Check("at its line", INSTR(UCASE$(out$), "NOW (LINE 2)") >= 0)
+Check("and counted", INSTR(out$, "Total warnings: 1") >= 0)
+
+KILL mod$
+KILL clean$
+KILL own$
+RMDIR dir$
+
+PRINT ""
+PRINT "LINT MODULE WARNINGS TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
