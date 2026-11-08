@@ -80,18 +80,18 @@ Look at the steps first:
 
 ```
 jdbasic macro_player.jdb new_order --dry-run
-would line 3: bring 'Orders - Main Menu' to the front
-would line 4: press ctrl+n
-would line 5: wait 800 ms
-would line 6: type 'Miller Ltd' (10 characters)
-would line 7: press tab
-would line 8: type 'Copy paper, 10 packs' (20 characters)
-would line 9: press tab
-would line 10: press tab
-would line 11: type 'Jonas Example' (13 characters)
-would line 12: click at 640, 520
-would line 13: wait 300 ms
-would line 14: press ctrl+s
+line 3: would bring 'Orders - Main Menu' to the front
+line 4: would press ctrl+n
+line 5: would wait 800 ms
+line 6: would type 'Miller Ltd' (10 characters)
+line 7: would press tab
+line 8: would type 'Copy paper, 10 packs' (20 characters)
+line 9: would press tab
+line 10: would press tab
+line 11: would type 'Jonas Example' (13 characters)
+line 12: would click at 640, 520
+line 13: would wait 300 ms
+line 14: would press ctrl+s
 12 steps. Run without --dry-run to play them.
 ```
 
@@ -100,8 +100,8 @@ Then open the order program and play it for real with
 folder. The log tells what happened:
 
 ```
-2026-10-02 09:35:12  new_order  line 13: wait 300 ms  dry run
-2026-10-02 09:35:12  new_order  line 14: press ctrl+s  dry run
+2026-10-02 09:41:07  new_order  line 13: wait 300 ms  ok
+2026-10-02 09:41:07  new_order  line 14: press ctrl+s  ok
 ```
 
 ### Schedule it

@@ -30,7 +30,7 @@ OUTPUT.CAPTURE_BEGIN
 DIM n = INPUTKIT.RUN_STEPS(job{"steps"}, TRUE)
 DIM said$ = OUTPUT.CAPTURE_END$()
 TESTKIT.EQ(n, 6, "every step is counted")
-TESTKIT.ISTRUE(INSTR(said$, "would line 1: type 'Mia Example'") >= 0, "and printed")
-TESTKIT.ISTRUE(INSTR(said$, "would line 2: press tab") >= 0, "with the Tabs")
+TESTKIT.ISTRUE(INSTR(said$, "line 1: would type 'Mia Example'") >= 0, "and printed")
+TESTKIT.ISTRUE(INSTR(said$, "line 2: would press tab") >= 0, "with the Tabs")
 
 TESTKIT.REPORT()

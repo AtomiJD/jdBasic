@@ -26,6 +26,13 @@ DIM c5 = INPUTKIT.COMBO("hyper+s", FALSE)
 TESTKIT.ISTRUE(INSTR(c5{"error"}, "'hyper'") >= 0, "an unknown modifier")
 DIM c6 = INPUTKIT.COMBO("ctrl+", FALSE)
 TESTKIT.ISTRUE(INSTR(c6{"error"}, "unknown key") >= 0, "a missing key")
+DIM closers = ["shift+alt+f4", "ctrl+f4", "Ctrl + Shift + F4", "ctrl+alt+del"]
+DIM ci = 0
+FOR ci = 0 TO LEN(closers) - 1
+    DIM cc = INPUTKIT.COMBO(closers[ci], FALSE)
+    TESTKIT.ISTRUE(INSTR(cc{"error"}, "not allowed") >= 0, closers[ci] + " is refused too")
+NEXT ci
+TESTKIT.EQ(INPUTKIT.COMBO("f4", FALSE){"error"}, "", "F4 alone is fine")
 
 TESTKIT.SUITE("the emergency stop")
 TESTKIT.ISTRUE(INPUTKIT.KEYDOWN(-32767), "a key down, as a negative short")
@@ -81,6 +88,9 @@ TESTKIT.ISTRUE(STARTSWITH(errors[0], "line 1: unknown command"), "a typo")
 TESTKIT.ISTRUE(INSTR(errors[1], "two numbers") >= 0, "a click without y")
 TESTKIT.ISTRUE(STARTSWITH(errors[3], "line 4:"), "a refused key")
 TESTKIT.EQ(LEN(wrong{"steps"}), 0, "and nothing is left to run")
+DIM left_screen = INPUTKIT.PARSE("click -1500 300" + LF$ + "move 20 -40")
+TESTKIT.EQ(LEN(left_screen{"errors"}), 0, "a screen left of or above the main one")
+TESTKIT.EQ(left_screen{"steps"}[0]{"x"}, -1500, "keeps its negative x")
 
 TESTKIT.SUITE("the dry run")
 DIM lines = INPUTKIT.PLAN_LINES(steps)
@@ -93,6 +103,6 @@ OUTPUT.CAPTURE_BEGIN
 DIM n = INPUTKIT.RUN_STEPS(steps, TRUE)
 DIM said$ = OUTPUT.CAPTURE_END$()
 TESTKIT.EQ(n, 6, "a dry run counts every step")
-TESTKIT.ISTRUE(STARTSWITH(said$, "would line 3: bring"), "and only prints them")
+TESTKIT.ISTRUE(STARTSWITH(said$, "line 3: would bring"), "and only prints them")
 
 TESTKIT.REPORT()

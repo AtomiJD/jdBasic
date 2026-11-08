@@ -76,14 +76,14 @@ shows every key stroke before anything happens:
 
 ```
 jdbasic form_filler.jdb --dry-run
-would line 1: type 'Mia Example' (11 characters)
-would line 2: press tab
-would line 3: type '4711' (4 characters)
-would line 4: press tab
-would line 5: press tab
-would line 6: type 'CC 3100 Sales' (13 characters)
-would line 7: press tab
-would line 8: type 'Anna Berg' (9 characters)
+line 1: would type 'Mia Example' (11 characters)
+line 2: would press tab
+line 3: would type '4711' (4 characters)
+line 4: would press tab
+line 5: would press tab
+line 6: would type 'CC 3100 Sales' (13 characters)
+line 7: would press tab
+line 8: would type 'Anna Berg' (9 characters)
 8 steps. Run without --dry-run to type them.
 ```
 

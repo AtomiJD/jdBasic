@@ -127,6 +127,12 @@ EXPORT FUNC COMBO(spec$, allow_close)
         RETURN out
     ENDIF
     DIM refused = INSTR(gRefused$, "|" + low$ + "|") >= 0
+    ' F4 with Alt or Ctrl in any combination closes a window or a tab;
+    ' Del with Ctrl and Alt is Ctrl+Alt+Delete.
+    DIM has_ctrl = INSTR("+" + low$ + "+", "+ctrl+") >= 0
+    DIM has_alt = INSTR("+" + low$ + "+", "+alt+") >= 0
+    IF ENDSWITH(low$, "+f4") ANDALSO (has_ctrl ORELSE has_alt) THEN refused = TRUE
+    IF ENDSWITH(low$, "+del") ANDALSO has_ctrl ANDALSO has_alt THEN refused = TRUE
     IF NOT allow_close ANDALSO refused THEN
         out{"error"} = low$ + " is not allowed; it closes or locks"
         RETURN out
@@ -261,6 +267,12 @@ FUNC IsNumber(t$)
     RETURN REGEX.MATCH("^[0-9]{1,6}$", t$)
 ENDFUNC
 
+' A screen coordinate: a screen left of or above the main one has
+' negative ones, such as -1500.
+FUNC IsPoint(t$)
+    RETURN REGEX.MATCH("^-?[0-9]{1,6}$", t$)
+ENDFUNC
+
 ' A macro as {"steps": [...], "errors": [...]}; each error names its
 ' line. A step is a map of "line", "op", "arg", "x" and "y".
 EXPORT FUNC PARSE(text$)
@@ -314,8 +326,8 @@ EXPORT FUNC PARSE(text$)
                 DIM one$ = TRIM$(REGEX.REPLACE$(" +", arg$, " "))
                 DIM xy = SPLIT(one$, " ")
                 DIM ok = LEN(xy) = 2
-                IF ok THEN ok = IsNumber(xy[0])
-                IF ok THEN ok = IsNumber(xy[1])
+                IF ok THEN ok = IsPoint(xy[0])
+                IF ok THEN ok = IsPoint(xy[1])
                 IF NOT ok THEN
                     DIM two$ = " needs two numbers, x and y"
                     PUSH(errors, where$ + op$ + two$)
@@ -343,14 +355,21 @@ EXPORT FUNC PLAN_LINE$(s)
     ENDIF
     IF op$ = "type" THEN
         DIM n = LEN(UNITS(s{"arg"}))
-        DIM count$ = " (" + STR$(n) + " characters)"
-        RETURN head$ + "type " + quoted$ + count$
+        DIM chars$ = " (" + STR$(n) + " characters)"
+        RETURN head$ + "type " + quoted$ + chars$
     ENDIF
     IF op$ = "key" THEN RETURN head$ + "press " + s{"arg"}
     IF op$ = "wait" THEN RETURN head$ + "wait " + s{"arg"} + " ms"
     DIM at$ = STR$(s{"x"}) + ", " + STR$(s{"y"})
     IF op$ = "move" THEN RETURN head$ + "move the mouse to " + at$
     RETURN head$ + op$ + " at " + at$
+ENDFUNC
+
+' A step as a dry run prints it: "line 3: would press ctrl+n".
+EXPORT FUNC DRY_LINE$(s)
+    DIM plan$ = PLAN_LINE$(s)
+    DIM colon = INSTR(plan$, ": ")
+    RETURN LEFT$(plan$, colon + 2) + "would " + MID$(plan$, colon + 2)
 ENDFUNC
 
 ' Every step as a line of a plan, for a dry run.
@@ -566,7 +585,7 @@ EXPORT FUNC RUN_STEPS(steps, dry_run)
     DIM k = 0
     FOR k = 0 TO LEN(steps) - 1
         IF dry_run THEN
-            PRINT "would "; PLAN_LINE$(steps[k])
+            PRINT DRY_LINE$(steps[k])
         ELSE
             RUN_STEP(steps[k])
             SLEEP 60

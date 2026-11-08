@@ -264,7 +264,7 @@ folder.
 | VAULT | `PUT(target$, user$, secret$)`, `GET$(target$)`, `HAS`, `USER$`, `DELETE`, `FIND$(target$, env$, prompt$)`, `ASK$(prompt$)`: secrets in the Windows Credential Manager | OUTBOX, X01, X13, X14 |
 | JOBSTATE | `JOBS(path$)`, `READ`, `WRITE`, `HEARTBEAT_AGE`, and the paths `FOLDER$`, `JOBS_PATH$`, `STATE_PATH$`, `LOG_PATH$`, `LOCK_PATH$`: the files of the job server | X01, X13, X14 |
 | AUDIT | `APPEND(path$, key$, fields)`, `LINES`, `ENTRIES`, `VERIFY(path$, key$)`: a signed record of every run | X01, X14 |
-| INPUTKIT | `PARSE`, `PLAN_LINES`, `COUNTDOWN`, `RUN_STEPS`, `ACTIVATE`, `TYPETEXT`, `PRESS`, `CLICK`: keyboard and mouse for programs without another way in, with an emergency stop | the bonus recipes |
+| INPUTKIT | `PARSE`, `PLAN_LINES`, `DRY_LINE$`, `COUNTDOWN`, `RUN_STEPS`, `ACTIVATE`, `TYPETEXT`, `PRESS`, `CLICK`: keyboard and mouse for programs without another way in, with an emergency stop | the bonus recipes |
 
 `OUTBOX.ASK$` takes the mail password from the Credential Manager when
 you stored it there as `AutomateWork/mail`, and otherwise asks for it

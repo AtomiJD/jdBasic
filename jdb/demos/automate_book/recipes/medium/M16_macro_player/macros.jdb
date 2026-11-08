@@ -77,7 +77,7 @@ EXPORT FUNC PLAY(steps, name$, log_path$, dry_run)
         DIM s = steps[k]
         DIM now$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M:%S")
         IF dry_run THEN
-            PRINT "would "; INPUTKIT.PLAN_LINE$(s)
+            PRINT INPUTKIT.DRY_LINE$(s)
             PUSH(lines, LOG_LINE$(now$, name$, s, "dry run"))
         ELSE
             TRY
