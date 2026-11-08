@@ -46,7 +46,13 @@ EXPORT FUNC SERVER(cfg, password$)
 ENDFUNC
 
 ' Writes a message into the outbox under file_name$; answers its path.
+' A message without a sender address is refused before it is written.
 EXPORT FUNC PUT$(msg, cfg, file_name$)
+    DIM from$ = ""
+    IF MAP.EXISTS(msg, "from") THEN from$ = msg{"from"}
+    IF INSTR(from$, "@") < 0 THEN
+        THROW "Set from in the [mail] part of work.conf first."
+    ENDIF
     DIM folder$ = FOLDER$(cfg)
     MKDIR folder$
     DIM path$ = PATH.JOIN$(folder$, file_name$)
@@ -76,6 +82,7 @@ ENDFUNC
 EXPORT FUNC ASK$(cfg)
     IF WORKCONF.FLAG("dry-run") THEN RETURN ""
     IF SENDS_WITH$(cfg) = "outlook" THEN RETURN ""
+    IF LEN(PENDING(cfg)) = 0 THEN RETURN ""
     DIM user$ = WORKCONF.VALUE(cfg, "mail.user", "")
     DIM ask$ = "Mail password for " + user$ + ": "
     RETURN VAULT.FIND$("AutomateWork/mail", "", ask$)
@@ -133,6 +140,16 @@ EXPORT FUNC SEND_ALL(cfg, password$)
         ELSE
             DIM why$ = TRIM$(r{"output"})
             PUSH(failed, PATH.BASENAME$(files[k]) + ": " + why$)
+            ' curl 67: the server refused the password. Each further try
+            ' is one more failed login, and many servers lock the account.
+            IF r{"exit_code"} = 67 THEN
+                DIM rest = 0
+                FOR rest = k + 1 TO LEN(files) - 1
+                    PUSH(failed, PATH.BASENAME$(files[rest]) + _
+                        ": not tried, the password was refused")
+                NEXT rest
+                EXITFOR
+            ENDIF
         ENDIF
     NEXT k
     KILL config_path$

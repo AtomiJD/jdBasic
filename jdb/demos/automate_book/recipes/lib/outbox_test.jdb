@@ -61,5 +61,73 @@ DIM none = OUTBOX.SEND_ALL(ol_cfg, "")
 TESTKIT.EQ(none{"sent"}, 0, "an empty outbox leaves Outlook alone")
 TESTKIT.EQ(LEN(none{"failed"}), 0, "and nothing fails")
 
+TESTKIT.SUITE("a refused password and a missing sender")
+FUNC NoSender(x)
+    DIM bare = MAIL.MESSAGE("", "anna@example.com", "Status")
+    RETURN OUTBOX.PUT$(bare, cfg, "nosender.eml")
+ENDFUNC
+TESTKIT.THROWS(NoSender@, 0, "a message without a sender is refused")
+TESTKIT.ISTRUE(NOT FILE.EXISTS(PATH.JOIN$(box$, "nosender.eml")), "and not written")
+DIM quiet$ = REPLACE$(PATH.JOIN$(folder$, "quiet"), "\", "/")
+DIM quiet_cfg = CONF.TOML_TEXT("[mail]" + LF$ + "outbox = " + Q$ + quiet$ + Q$ + LF$)
+TESTKIT.EQ(OUTBOX.ASK$(quiet_cfg), "", "an empty outbox asks for no password")
+
+' A server that refuses every login: three mails cost one failed login,
+' the other two are not tried. The server is a second jdBasic process.
+IF OS.FEATURE("INTERPRETER") THEN
+    DIM stub$ = PATH.JOIN$(folder$, "refuse.jdb")
+    DIM log$ = PATH.JOIN$(folder$, "logins.txt")
+    DIM s$ = "DIM l = NET.LISTEN(0, " + Q$ + "127.0.0.1" + Q$ + ")" + LF$
+    s$ = s$ + "TXTWRITER " + Q$ + REPLACE$(log$, "\", "/") + ".port" + Q$ + ", STR$(NET.PORT(l))" + LF$
+    s$ = s$ + "DIM logins = 0" + LF$
+    s$ = s$ + "DO" + LF$
+    s$ = s$ + "    DIM c = NET.ACCEPT(l, 8000)" + LF$
+    s$ = s$ + "    IF c = 0 THEN EXITDO" + LF$
+    s$ = s$ + "    DIM sent = NET.SEND(c, " + Q$ + "220 stub" + Q$ + " + CHR$(13) + CHR$(10))" + LF$
+    s$ = s$ + "    DO" + LF$
+    s$ = s$ + "        DIM line$ = UCASE$(NET.RECVLINE$(c, 4000))" + LF$
+    s$ = s$ + "        IF line$ = " + Q$ + Q$ + " THEN EXITDO" + LF$
+    s$ = s$ + "        IF LEFT$(line$, 4) = " + Q$ + "EHLO" + Q$ + " THEN sent = NET.SEND(c, " + Q$ + "250-stub" + Q$ + " + CHR$(13) + CHR$(10) + " + Q$ + "250 AUTH PLAIN LOGIN" + Q$ + " + CHR$(13) + CHR$(10))" + LF$
+    s$ = s$ + "        IF LEFT$(line$, 4) = " + Q$ + "AUTH" + Q$ + " THEN" + LF$
+    s$ = s$ + "            logins = logins + 1" + LF$
+    s$ = s$ + "            sent = NET.SEND(c, " + Q$ + "535 denied" + Q$ + " + CHR$(13) + CHR$(10))" + LF$
+    s$ = s$ + "        ENDIF" + LF$
+    s$ = s$ + "        IF LEFT$(line$, 4) = " + Q$ + "QUIT" + Q$ + " THEN EXITDO" + LF$
+    s$ = s$ + "    LOOP" + LF$
+    s$ = s$ + "    DIM closed = NET.CLOSE(c)" + LF$
+    s$ = s$ + "    TXTWRITER " + Q$ + REPLACE$(log$, "\", "/") + Q$ + ", STR$(logins)" + LF$
+    s$ = s$ + "LOOP" + LF$
+    TXTWRITER stub$, s$
+    DIM pid = OS.SPAWN(OS.SELF$(), [stub$])
+    DIM waited = 0
+    DO WHILE NOT FILE.EXISTS(log$ + ".port") ANDALSO waited < 50
+        SLEEP 100
+        waited = waited + 1
+    LOOP
+    DIM port$ = TRIM$(TXTREADER$(log$ + ".port"))
+    DIM deny$ = REPLACE$(PATH.JOIN$(folder$, "deny"), "\", "/")
+    DIM d$ = "[user]" + LF$ + "name = " + Q$ + "Jonas" + Q$ + LF$
+    d$ = d$ + "email = " + Q$ + "jonas@example.com" + Q$ + LF$
+    d$ = d$ + "[mail]" + LF$ + "server = " + Q$ + "smtp://127.0.0.1:" + port$ + Q$ + LF$
+    d$ = d$ + "user = " + Q$ + "jonas" + Q$ + LF$
+    d$ = d$ + "outbox = " + Q$ + deny$ + Q$ + LF$
+    DIM deny_cfg = CONF.TOML_TEXT(d$)
+    DIM m = 0
+    FOR m = 1 TO 3
+        DIM dm = MAIL.MESSAGE(OUTBOX.FROM$(deny_cfg), "anna@example.com", "Mail " + STR$(m))
+        MAIL.PLAIN(dm, "text")
+        DIM put$ = OUTBOX.PUT$(dm, deny_cfg, "m" + STR$(m) + ".eml")
+    NEXT m
+    DIM denied = OUTBOX.SEND_ALL(deny_cfg, "wrong")
+    DIM ended = OS.KILL(pid)
+    TESTKIT.EQ(denied{"sent"}, 0, "nothing is sent with a refused password")
+    TESTKIT.EQ(LEN(denied{"failed"}), 3, "every mail is reported")
+    TESTKIT.ISTRUE(INSTR(denied{"failed"}[2], "not tried") >= 0, "the later ones as not tried")
+    TESTKIT.EQ(TRIM$(TXTREADER$(log$)), "1", "the server saw one login, not three")
+    TESTKIT.EQ(LEN(OUTBOX.PENDING(deny_cfg)), 3, "and all three still wait")
+ELSE
+    TESTKIT.SKIP("the refusing server runs as a second jdBasic process")
+ENDIF
+
 OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
 TESTKIT.REPORT()
