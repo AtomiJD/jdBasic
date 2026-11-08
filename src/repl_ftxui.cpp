@@ -50,7 +50,7 @@
   #include <windows.h>
 #endif
 
-extern void run_on_vm(VM& vm, const std::string& source);
+extern void run_on_vm(VM& vm, const std::string& source, bool later_definition_wins = false);
 // console_execute handles LOAD / SAVE / RUN / NEW / LINT / etc. and
 // falls through to run_on_vm for plain code. Per-workspace
 // program_buffer keeps each tab's loaded source independent.
