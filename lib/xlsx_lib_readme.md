@@ -35,7 +35,7 @@ PRINT JOIN(XLSX.SHEETS("sales.xlsx"), ", ")
 | `STYLE(sheet, ref, opts)` | `ref` is a cell (`"B7"`) or a range (`"A7:H7"`); `opts` carries `fill` (`RRGGBB`, `AARRGGBB`, a leading `#` allowed), `bold` and `format`, which beats the column's. |
 | `FREEZE(sheet, rows, [cols])` | Keeps the first rows and columns in view. |
 | `WRITE(path$, wb)` | Writes the file; returns the number of archive parts. |
-| `READ(path$)` | Every sheet as a 2D array, keyed by sheet name. |
+| `READ(path$, [dates_as_text])` | Every sheet as a 2D array, keyed by sheet name. With `dates_as_text` `TRUE`, a number in a cell formatted as a date comes back as `"YYYY-MM-DD"` (with ` HH:MM` when it has a time of day) instead of its serial number. |
 | `SHEETS(path$)` | The sheet names in workbook order. |
 | `EDIT(path$)` | Opens a workbook that exists, for changing single cells. See **Editing**. |
 | `SETCELL(h, sheet$, ref$, value)` | Writes one cell of an opened workbook. |
@@ -85,7 +85,7 @@ writers like openpyxl use, included), rows are padded to the widest row, a row t
 row, a sparse row keeps its columns. A formula cell yields the value
 Excel cached; a file written by this module has none, so those cells
 read back empty. Dates arrive as the serial number Excel stores (days
-since 1899-12-30).
+since 1899-12-30); `READ(path$, TRUE)` gives them as text the way Excel shows them.
 
 ## Notes
 

@@ -27,7 +27,7 @@
 ' cached value. Dates arrive as the serial number Excel stores.
 '
 ' The archive is written with stored entries through ZIP.WRITE.
-' version: 1.0.1
+' version: 1.1.0
 
 EXPORT MODULE XLSX
 
@@ -469,18 +469,65 @@ EXPORT FUNC SHEETS(path$)
     RETURN names
 ENDFUNC
 
-EXPORT FUNC READ(path$)
+' dates_as_text: a number in a cell formatted as a date comes back as
+' the text YYYY-MM-DD (YYYY-MM-DD HH:MM with a time of day), the way Excel
+' shows a date, instead of its serial number.
+EXPORT FUNC READ(path$, dates_as_text = FALSE)
     DIM parts = ZIP.READ(path$)
     DIM strings = SharedStringList(parts)
+    DIM date_styles = []
+    IF dates_as_text THEN date_styles = DateStyles(parts)
     DIM out AS MAP
     DIM found = SheetList(parts)
     DIM i = 0
     FOR i = 0 TO LEN(found) - 1
         DIM entry$ = found[i]{"entry"}
         IF NOT MAP.EXISTS(parts, entry$) THEN THROW "XLSX.READ: missing " + entry$
-        out{found[i]{"name"}} = SheetRows(parts{entry$}, strings)
+        out{found[i]{"name"}} = SheetRows(parts{entry$}, strings, date_styles)
     NEXT i
     RETURN out
+ENDFUNC
+
+' A number format that shows a date: a day or a year outside quoted text
+' and [colour] or [condition] sections.
+FUNC IsDateCode(code$)
+    DIM bare$ = REGEX.REPLACE$(CHR$(34) + "[^" + CHR$(34) + "]*" + CHR$(34), code$, "")
+    bare$ = LCASE$(REGEX.REPLACE$("\[[^\]]*\]", bare$, ""))
+    RETURN INSTR(bare$, "d") >= 0 ORELSE INSTR(bare$, "y") >= 0
+ENDFUNC
+
+' Per cell style (the s attribute of a cell): TRUE when it shows a date.
+' Built-in formats 14 to 17 and 22 are dates; 164 and up are the
+' workbook's own, named in numFmts.
+FUNC DateStyles(parts)
+    DIM out = []
+    IF NOT MAP.EXISTS(parts, "xl/styles.xml") THEN RETURN out
+    DIM styles$ = parts{"xl/styles.xml"}
+    DIM custom AS MAP
+    DIM fmts = REGEX.FINDALL("<numFmt\b([^>]*)>", styles$)
+    DIM i = 0
+    FOR i = 0 TO LEN(fmts) - 1
+        custom{AttrOf$(fmts[i][0], "numFmtId")} = Unescape$(AttrOf$(fmts[i][0], "formatCode"))
+    NEXT i
+    DIM section = REGEX.FINDALL("<cellXfs\b[^>]*>([\s\S]*?)</cellXfs>", styles$)
+    IF LEN(section) = 0 THEN RETURN out
+    DIM xfs = REGEX.FINDALL("<xf\b([^>]*)>", section[0][0])
+    FOR i = 0 TO LEN(xfs) - 1
+        DIM id$ = AttrOf$(xfs[i][0], "numFmtId")
+        DIM id = CINT(VAL(id$))
+        DIM is_date = (id >= 14 ANDALSO id <= 17) ORELSE id = 22
+        IF NOT is_date ANDALSO MAP.EXISTS(custom, id$) THEN is_date = IsDateCode(custom{id$})
+        PUSH(out, is_date)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' A serial number as Excel shows a date: days since 1899-12-30, a fraction
+' is the time of day.
+FUNC DateText$(serial)
+    DIM d = DATEADD("d", serial, "1899-12-30")
+    IF serial = INT(serial) THEN RETURN FORMAT_DATE$(d, "%Y-%m-%d")
+    RETURN FORMAT_DATE$(d, "%Y-%m-%d %H:%M")
 ENDFUNC
 
 ' Sheet names with the archive entry each points to, in workbook order.
@@ -544,7 +591,7 @@ FUNC TextOf$(si$)
     RETURN Unescape$(text$)
 ENDFUNC
 
-FUNC SheetRows(xml$, strings)
+FUNC SheetRows(xml$, strings, date_styles)
     DIM rows = []
     DIM width = 0
     DIM row_tags = REGEX.FINDALL("<row\b([^>]*)>([\s\S]*?)</row>", xml$)
@@ -563,7 +610,7 @@ FUNC SheetRows(xml$, strings)
             DO WHILE LEN(row) < col - 1
                 PUSH(row, "")
             LOOP
-            PUSH(row, CellValue(cells[c][2], cells[c][3], strings))
+            PUSH(row, CellValue(cells[c][2], cells[c][3], strings, date_styles))
         NEXT c
         IF LEN(row) > width THEN width = LEN(row)
         PUSH(rows, row)
@@ -577,7 +624,7 @@ FUNC SheetRows(xml$, strings)
     RETURN rows
 ENDFUNC
 
-FUNC CellValue(attrs$, inner$, strings)
+FUNC CellValue(attrs$, inner$, strings, date_styles)
     DIM t$ = AttrOf$(attrs$, "t")
     IF t$ = "inlineStr" THEN RETURN TextOf$(inner$)
     DIM v = REGEX.FINDALL("<v>([\s\S]*?)</v>", inner$)
@@ -586,6 +633,13 @@ FUNC CellValue(attrs$, inner$, strings)
     IF t$ = "s" THEN RETURN strings[CINT(VAL(raw$))]
     IF t$ = "b" THEN RETURN raw$ = "1"
     IF t$ = "str" OR t$ = "e" THEN RETURN Unescape$(raw$)
+    IF LEN(date_styles) > 0 THEN
+        DIM s$ = AttrOf$(attrs$, "s")
+        IF s$ <> "" THEN
+            DIM style = CINT(VAL(s$))
+            IF style < LEN(date_styles) ANDALSO date_styles[style] THEN RETURN DateText$(VAL(raw$))
+        ENDIF
+    ENDIF
     RETURN VAL(raw$)
 ENDFUNC
 

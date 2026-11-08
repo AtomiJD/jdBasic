@@ -127,6 +127,10 @@ IF FILE.EXISTS(fixture$) THEN
     TESTKIT.EQ(other[2][4], "line" + CHR$(10) + "break", "a string with a line break")
     TESTKIT.EQARRAY(other[3], ["", "", "", "", ""], "the skipped row is empty")
     TESTKIT.EQ(other[4][3], 9, "a sparse row keeps its column")
+    DIM as_text = XLSX.READ(fixture$, TRUE){"Data"}
+    TESTKIT.EQ(as_text[1][1], "2026-09-11", "dates as text: a date as Excel shows it")
+    TESTKIT.EQ(as_text[2][1], "2026-09-11 15:30", "a datetime with its time")
+    TESTKIT.EQ(as_text[1][2], 1234.5, "a plain number stays a number")
 ELSE
     TESTKIT.SKIP("fixture not found")
 ENDIF
@@ -149,6 +153,18 @@ DIM refs = XLSX.READ(ref_path$){"Refs"}
 TESTKIT.EQ(refs[0][0], "Müller & Söhne GmbH", "decimal and hex references below 256")
 TESTKIT.EQ(refs[1][0], "€ 5 " + CHR$(128512), "above 255 and beyond the first plane")
 TESTKIT.EQ(refs[2][0], "&#252; &#; &#xZZ; &#12", "an escaped ampersand and broken ones stay")
+
+TESTKIT.SUITE("dates as text")
+DIM day_path$ = work$ + "/days.xlsx"
+DIM day_wb = XLSX.NEW()
+DIM day_sheet = XLSX.SHEET(day_wb, "Days", [["Name", "Date", "Postcode"], ["Anna", 46340, 1067]])
+XLSX.COLUMN(day_sheet, "B", {"format": "dd.mm.yyyy"})
+XLSX.COLUMN(day_sheet, "C", {"format": "00000"})
+XLSX.WRITE(day_path$, day_wb)
+DIM days = XLSX.READ(day_path$, TRUE){"Days"}
+TESTKIT.EQ(days[1][1], "2026-11-14", "a German date format is a date")
+TESTKIT.EQ(days[1][2], 1067, "a number format without day or year is not")
+TESTKIT.EQ(XLSX.READ(day_path$){"Days"}[1][1], 46340, "without the option the serial number, as before")
 
 TESTKIT.SUITE("editing a workbook that exists")
 
