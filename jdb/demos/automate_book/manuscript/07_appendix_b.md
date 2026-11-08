@@ -29,12 +29,13 @@ Arguments with a value, such as `fallback = 0`, may be left out.
 |---|---|
 | `WORKCONF.CONFIG_PATH$()` | Where `work.conf` is: `--config`, then `AUTOMATEWORK_CONF`, then the work folder |
 | `WORKCONF.SETTINGS(path$)` | The settings; a missing file is an error that says what to do |
-| `WORKCONF.VALUE(cfg, key$, fallback)` | A value by its dotted key |
+| `WORKCONF.VALUE(cfg, key$, fallback)` | A value by its dotted key; text where the fallback is a number is an error |
 | `WORKCONF.FOLDER$(cfg, key$, fallback$)` | A folder setting with `~` turned into the home folder |
 | `WORKCONF.FLAG(name$)` | Whether `--name` is on the command line |
 | `WORKCONF.ARG$(name$)` | The word after `--name`, or `""` |
 | `WORKCONF.EXPAND$(path$)` | A path with `~` expanded |
 | `WORKCONF.HOME$()` | The home folder |
+| `WORKCONF.PLURAL$(n, one$, [many$])` | A count with its noun: `1 file`, `3 files` |
 
 ### LOGGER: a diary for programs
 

@@ -26,11 +26,12 @@ IF mails = 0 THEN
     PRINT "No .eml files in "; inbox$
     END
 ENDIF
-PRINT mails; " mails in "; inbox$
+PRINT WORKCONF.PLURAL$(mails, "mail"); " in "; inbox$
 DIM saved = UNPACKER.APPLY(plan, dry_run, done$)
 IF dry_run THEN
-    PRINT "Nothing written. Run without --dry-run to save "; saved; _
-        " files."
+    PRINT "Nothing written. Run without --dry-run to save "; _
+        WORKCONF.PLURAL$(saved, "file"); "."
 ELSE
-    PRINT saved; " files saved, the mails moved to "; done$
+    DIM saved$ = WORKCONF.PLURAL$(saved, "file")
+    PRINT saved$; " saved, the mails moved to "; done$
 ENDIF

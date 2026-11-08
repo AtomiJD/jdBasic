@@ -55,7 +55,7 @@ old archives:
 jdbasic one_click_backup.jdb --dry-run
 would write backup 2026-10-02 1630.zip with 1240 files
 would delete backup 2026-07-24 1630.zip
-1 older archives cleaned up.
+1 older archive would be cleaned up.
 ```
 
 ### Schedule it

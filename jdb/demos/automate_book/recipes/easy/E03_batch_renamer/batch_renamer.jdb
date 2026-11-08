@@ -18,10 +18,11 @@ DIM dry_run = WORKCONF.FLAG("dry-run")
 
 DIM plan = RENAMER.PLAN(folder$, pattern$, extensions)
 DIM n_renamed = RENAMER.APPLY(plan, dry_run)
+DIM files$ = WORKCONF.PLURAL$(n_renamed, "file")
 IF n_renamed = 0 THEN
     PRINT "Nothing to rename in "; folder$
 ELSEIF dry_run THEN
-    PRINT n_renamed; " files would get a new name."
+    PRINT files$; " would get a new name."
 ELSE
-    PRINT n_renamed; " files renamed."
+    PRINT files$; " renamed."
 ENDIF

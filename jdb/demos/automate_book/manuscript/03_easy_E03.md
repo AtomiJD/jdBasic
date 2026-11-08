@@ -50,8 +50,8 @@ The renamer makes the names and checks that none is taken:
 
 ```
 jdbasic batch_renamer.jdb --dry-run
-would rename scan 4711.pdf -> 2026-10-01 scan 4711.pdf
 would rename IMG_0932.jpg -> 2026-10-01 IMG_0932.jpg
+would rename scan 4711.pdf -> 2026-10-01 scan 4711.pdf
 2 files would get a new name.
 ```
 

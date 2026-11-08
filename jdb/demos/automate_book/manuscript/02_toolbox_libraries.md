@@ -126,7 +126,9 @@ say, and did the person start the program with `--dry-run`?
   error says so and tells you to run the wizard, instead of a recipe
   failing later with a puzzling message.
 - `WORKCONF.VALUE(cfg, key$, fallback)` reads one value, like
-  `CONF.GET`.
+  `CONF.GET`. Where the fallback is a number and `work.conf` holds
+  text, such as `"24"` in quotes, it stops with *is not a number* and
+  names the setting.
 - `WORKCONF.FOLDER$(cfg, key$, fallback$)` reads a folder and turns a
   leading `~` into your home folder, so `~/Downloads` works on every
   computer.

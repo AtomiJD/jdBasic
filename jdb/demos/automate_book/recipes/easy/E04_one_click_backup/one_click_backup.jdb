@@ -27,10 +27,14 @@ FOR k = 0 TO LEN(skipped) - 1
     PRINT "too large, left out: "; skipped[k]
 NEXT k
 IF dry_run THEN
-    PRINT "would write "; zip_name$; " with "; LEN(entries); " files"
+    DIM n_entries$ = WORKCONF.PLURAL$(LEN(entries), "file")
+    PRINT "would write "; zip_name$; " with "; n_entries$
 ELSE
     DIM n_files = BACKUP.WRITE(entries, zip_path$)
-    PRINT "wrote "; zip_path$; " with "; n_files; " files"
+    DIM n_written$ = WORKCONF.PLURAL$(n_files, "file")
+    PRINT "wrote "; zip_path$; " with "; n_written$
 ENDIF
 DIM n_old = BACKUP.PRUNE(BACKUP.OLD(target$, "backup", keep), dry_run)
-IF n_old > 0 THEN PRINT n_old; " older archives cleaned up."
+DIM old$ = WORKCONF.PLURAL$(n_old, "older archive")
+IF n_old > 0 ANDALSO dry_run THEN PRINT old$; " would be cleaned up."
+IF n_old > 0 ANDALSO NOT dry_run THEN PRINT old$; " cleaned up."

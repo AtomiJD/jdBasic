@@ -19,10 +19,11 @@ DIM dry_run = WORKCONF.FLAG("dry-run")
 
 DIM moves = BUTLER.PLAN(source$, target$, rules, min_age, NOW())
 DIM n_sorted = BUTLER.APPLY(moves, dry_run)
+DIM files$ = WORKCONF.PLURAL$(n_sorted, "file")
 IF n_sorted = 0 THEN
     PRINT "Nothing to sort in "; source$
 ELSEIF dry_run THEN
-    PRINT n_sorted; " files would move. Run without --dry-run."
+    PRINT files$; " would move. Run without --dry-run."
 ELSE
-    PRINT n_sorted; " files sorted."
+    PRINT files$; " sorted."
 ENDIF

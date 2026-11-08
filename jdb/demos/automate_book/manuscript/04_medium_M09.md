@@ -90,7 +90,7 @@ With the example log of the recipe's folder:
 
 ```
 jdbasic log_detective.jdb
-1 files in C:/Logs/import
+1 file in C:/Logs/import
 11 lines, 5 errors, 3 warnings
 Most errors: 2026-10-05 09:00
 

@@ -97,5 +97,6 @@ NEXT k
 
 IF LEN(people) = 0 THEN PRINT "No contacts in "; tab$
 IF mails > 0 THEN
-    PRINT mails; " mails wait in the outbox. Send them with --send."
+    PRINT WORKCONF.PLURAL$(mails, "mail"); " in the outbox."
+    PRINT "Send them with --send."
 ENDIF

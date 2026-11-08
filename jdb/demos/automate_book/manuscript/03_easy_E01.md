@@ -71,8 +71,8 @@ Try it with `--dry-run` first. Nothing moves; you see the plan:
 
 ```
 jdbasic downloads_butler.jdb --dry-run
-would move holiday.jpg -> Images\2026-10\holiday.jpg
 would move budget.xlsx -> Documents\2026-10\budget.xlsx
+would move holiday.jpg -> Images\2026-10\holiday.jpg
 2 files would move. Run without --dry-run.
 ```
 

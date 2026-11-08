@@ -27,8 +27,8 @@ FOR k = 0 TO LEN(files) - 1
     ENDIF
 NEXT k
 
-DIM report$ = STR$(LEN(files)) + " files in " + folder$ + CHR$(10)
-report$ = report$ + LOGSCAN.REPORT$(stats, top_n)
+DIM report$ = WORKCONF.PLURAL$(LEN(files), "file") + " in " + folder$
+report$ = report$ + CHR$(10) + LOGSCAN.REPORT$(stats, top_n)
 PRINT report$
 IF NOT WORKCONF.FLAG("dry-run") THEN
     MKDIR out_dir$

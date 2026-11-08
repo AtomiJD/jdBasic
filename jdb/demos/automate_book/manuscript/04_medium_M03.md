@@ -92,7 +92,8 @@ jdbasic mail_merge.jdb
 wrote Anna Berg.docx  to anna@stone.example
 wrote Ben Cole.docx
 wrote Cleo Dunn.docx  to cleo@miller.example
-2 mails wait in the outbox. Send them with --send.
+2 mails in the outbox.
+Send them with --send.
 ```
 
 Open two or three of the letters before you send:

@@ -14,10 +14,13 @@ DIM today = CINT(FORMAT_DATE$(NOW(), "%w"))
 
 DIM plan = LAUNCHER.PLAN(settings, today, OS.GETOS$())
 DIM n_open = LAUNCHER.START(plan, dry_run)
+DIM things$ = WORKCONF.PLURAL$(n_open, "thing")
 IF n_open = 0 THEN
     PRINT "Nothing to open on "; LAUNCHER.DAY_KEY$(today); "."
 ELSEIF dry_run THEN
-    PRINT n_open; " things would open. Run without --dry-run."
+    PRINT things$; " would open. Run without --dry-run."
 ELSE
-    PRINT "Good morning. "; n_open; " things are opening."
+    DIM verb$ = " are opening."
+    IF n_open = 1 THEN verb$ = " is opening."
+    PRINT "Good morning. "; things$; verb$
 ENDIF

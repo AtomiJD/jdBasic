@@ -25,6 +25,6 @@ IF WORKCONF.FLAG("dry-run") THEN
 ELSE
     MKDIR PATH.DIRNAME$(out$)
     DIM r = WIFICARD.SHEET(ssid$, password$, payload$, out$, n_cards)
-    PRINT "Wrote "; r{"cards"}; " cards to"
+    PRINT "Wrote "; WORKCONF.PLURAL$(r{"cards"}, "card"); " to"
     PRINT "    "; out$
 ENDIF

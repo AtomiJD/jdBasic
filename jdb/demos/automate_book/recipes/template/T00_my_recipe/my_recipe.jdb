@@ -20,5 +20,6 @@ DIM n = MINE.APPLY(moves, archive$, dry_run)
 IF n = 0 THEN
     PRINT "Nothing older than "; days; " days in "; folder$
 ELSEIF dry_run THEN
-    PRINT n; " files would move. Run without --dry-run."
+    PRINT WORKCONF.PLURAL$(n, "file"); " would move."
+    PRINT "Run without --dry-run to move them."
 ENDIF

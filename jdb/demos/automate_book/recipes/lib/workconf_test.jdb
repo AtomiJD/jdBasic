@@ -1,0 +1,41 @@
+' WORKCONF: a setting that should be a number and holds text stops with
+' a message that names it, the other values come back as they are, and
+' PLURAL$ writes a count with its noun.
+
+IMPORT TESTKIT, WORKCONF, CONF
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM toml$ = "[downloads_butler]" + LF$
+toml$ = toml$ + "min_age_hours = " + Q$ + "24" + Q$ + LF$
+toml$ = toml$ + "keep = 3" + LF$
+toml$ = toml$ + "share = 0.5" + LF$
+toml$ = toml$ + "source = " + Q$ + "~/Downloads" + Q$ + LF$
+DIM cfg = CONF.TOML_TEXT(toml$)
+
+FUNC QuotedNumber(x)
+    RETURN WORKCONF.VALUE(cfg, "downloads_butler.min_age_hours", 24)
+ENDFUNC
+
+TESTKIT.SUITE("values")
+TESTKIT.EQ(WORKCONF.VALUE(cfg, "downloads_butler.keep", 10), 3, "a number")
+TESTKIT.EQ(WORKCONF.VALUE(cfg, "downloads_butler.share", 1.0), 0.5, "a fraction")
+TESTKIT.EQ(WORKCONF.VALUE(cfg, "downloads_butler.missing", 7), 7, "the fallback")
+TESTKIT.EQ(WORKCONF.VALUE(cfg, "downloads_butler.source", ""), "~/Downloads", "text where text is expected")
+TESTKIT.THROWS(QuotedNumber@, 0, "a number in quotes stops")
+DIM msg$ = ""
+TRY
+    DIM v = WORKCONF.VALUE(cfg, "downloads_butler.min_age_hours", 24)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+TESTKIT.ISTRUE(INSTR(msg$, "downloads_butler.min_age_hours is not a number") >= 0, "the message names the setting")
+
+TESTKIT.SUITE("counts")
+TESTKIT.EQ(WORKCONF.PLURAL$(1, "file"), "1 file", "one")
+TESTKIT.EQ(WORKCONF.PLURAL$(0, "file"), "0 files", "none")
+TESTKIT.EQ(WORKCONF.PLURAL$(3, "file"), "3 files", "more")
+TESTKIT.EQ(WORKCONF.PLURAL$(2, "entry", "entries"), "2 entries", "an irregular plural")
+TESTKIT.EQ(WORKCONF.PLURAL$(1, "entry", "entries"), "1 entry", "and its singular")
+
+TESTKIT.REPORT()

@@ -60,8 +60,23 @@ EXPORT FUNC SETTINGS(path$)
 ENDFUNC
 
 ' A value by its dotted key, such as "downloads_butler.min_age_hours".
+' Where the fallback is a number, text is an error: "24" in quotes would
+' compare as text and turn the setting around.
 EXPORT FUNC VALUE(cfg, key$, fallback)
-    RETURN CONF.GET(cfg, key$, fallback)
+    DIM v = CONF.GET(cfg, key$, fallback)
+    DIM want$ = TYPEOF(fallback)
+    IF (want$ = "INT64" ORELSE want$ = "FLOAT64") ANDALSO TYPEOF(v) = "STRING" THEN
+        THROW key$ + " is not a number: " + CHR$(34) + v + CHR$(34) + ". Write it without quotes in work.conf."
+    ENDIF
+    RETURN v
+ENDFUNC
+
+' A count with its noun: "1 file", "3 files"; many$ for a plural that
+' is not the noun with an s.
+EXPORT FUNC PLURAL$(n, one$, many$ = "")
+    IF n = 1 THEN RETURN "1 " + one$
+    IF many$ = "" THEN many$ = one$ + "s"
+    RETURN STR$(n) + " " + many$
 ENDFUNC
 
 ' A folder setting with ~ expanded.
