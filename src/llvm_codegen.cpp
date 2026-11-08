@@ -2929,10 +2929,17 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (e.kind == ExprKind::CALL) {
                     std::string u = e.func_name;
                     std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-                    if ((u == "PUSH" || u == "APPEND") && e.args.size() >= 2 &&
-                        e.args[0] && e.args[1] &&
-                        e.args[0]->kind == ExprKind::VARIABLE &&
-                        is_arr_expr(*e.args[1]))
+                    // PUSH adds an array as one element. APPEND adds the
+                    // elements of an array, so only a literal that holds
+                    // arrays itself ([[a, b]]) makes rows.
+                    bool rows_added = false;
+                    if (u == "PUSH" && e.args.size() >= 2 && e.args[1])
+                        rows_added = is_arr_expr(*e.args[1]);
+                    if (u == "APPEND" && e.args.size() >= 2 && e.args[1] &&
+                        e.args[1]->kind == ExprKind::ARRAY_LITERAL)
+                        for (auto& el : e.args[1]->args)
+                            if (el && is_arr_expr(*el)) rows_added = true;
+                    if (rows_added && e.args[0] && e.args[0]->kind == ExprKind::VARIABLE)
                         nested.insert(e.args[0]->str_val);
                 }
                 for (auto& a : e.args) if (a) scan(*a);

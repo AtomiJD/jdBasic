@@ -80,6 +80,24 @@ Check("a new map", Due$(fresh, 1100), "new")
 DIM got = Entry(state, "ok")
 Check("its fields", STR$(got{"runs"}), "1")
 
+' APPEND adds the maps of another array one by one: the function answers
+' an array of maps, not rows
+FUNC Groups(n)
+    DIM out = []
+    DIM k = 0
+    FOR k = 1 TO n
+        DIM part = []
+        PUSH(part, {"size": k * 100, "name": "g" + STR$(k)})
+        out = APPEND(out, part)
+    NEXT k
+    RETURN out
+ENDFUNC
+DIM groups = Groups(2)
+DIM first_group = groups[0]
+Check("APPEND keeps the maps flat", STR$(LEN(groups)), "2")
+Check("a map read out of the result", STR$(first_group{"size"}), "100")
+Check("its text field", groups[1]{"name"}, "g2")
+
 ' An untaken IF that would assign a module result
 DIM cfg AS MAP
 DIM rules = NATIVE_BOOK_EXE_MOD.DEFAULT_RULES("C:/x", "{name}")
