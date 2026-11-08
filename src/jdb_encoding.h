@@ -191,7 +191,10 @@ inline std::string decode_to_utf8(const std::string& bytes, const std::string& e
     if (bytes.empty()) return bytes;
     if (cp == 0) {
         // No 8-bit codepage requested: auto-detect UTF-16 (BOM or NUL pattern),
-        // otherwise pass the bytes through unchanged as UTF-8 / ASCII.
+        // otherwise the bytes are UTF-8 / ASCII. A UTF-8 byte order mark is
+        // not text: Notepad and PowerShell 5 write one, and a first line that
+        // starts with it matches no keyword, header or marker.
+        if (has_utf8_bom(bytes)) return bytes.substr(3);
         int u16 = sniff_utf16(bytes);
         if (u16 == 1) return utf16_to_utf8(bytes, false);
         if (u16 == 2) return utf16_to_utf8(bytes, true);

@@ -2450,7 +2450,7 @@ Description: Defines a small, anonymous function.
 
 [LCASE$]
 Syntax: LCASE$(string$)
-Description: Converts a string to lowercase.
+Description: Converts a string to lowercase, letters beyond ASCII too (umlauts, accents, Greek, Cyrillic). The sharp s has no capital and stays as it is.
 
 [LCM]
 Syntax: LCM(a, b, ...)
@@ -4217,7 +4217,7 @@ Description: TUI namespace version string.
 
 [TXTREADER$]
 TXTREADER$(filename$, [encoding$]) -> string$
-Reads the entire contents of a text file into a string. If `encoding$` is given, the file's bytes are decoded from that codepage to UTF-8. Default (no arg / "" / "utf-8") is byte-pass-through; "utf-8-bom", "utf-16le-bom" and "utf-16be-bom" drop a leading byte order mark (TXTWRITER writes one at the start of a file, not on an append to one with content); "utf-16le"/"utf-16be" write none. TXTENCODING$ guesses the right name for a file. Supported: "cp1252"/"windows-1252"/"latin1", "cp850", "cp437", "cp1250", "cp1251", "cp936", "cp932". Codepage decode is Windows-only.
+Reads the entire contents of a text file into a string. If `encoding$` is given, the file's bytes are decoded from that codepage to UTF-8. Default (no arg / "" / "utf-8") passes the bytes through and leaves out a leading UTF-8 byte order mark; "utf-8-bom", "utf-16le-bom" and "utf-16be-bom" drop a leading byte order mark (TXTWRITER writes one at the start of a file, not on an append to one with content); "utf-16le"/"utf-16be" write none. TXTENCODING$ guesses the right name for a file. Supported: "cp1252"/"windows-1252"/"latin1", "cp850", "cp437", "cp1250", "cp1251", "cp936", "cp932". Codepage decode is Windows-only.
 
 [TXTENCODING$]
 TXTENCODING$(filename$) -> string$
@@ -4263,7 +4263,7 @@ Description: Returns the type name of a value: "INT64", "FLOAT64", "STRING", "BO
 
 [UCASE$]
 Syntax: UCASE$(string$)
-Description: Converts a string to uppercase.
+Description: Converts a string to uppercase, letters beyond ASCII too (umlauts, accents, Greek, Cyrillic). The sharp s has no capital and stays as it is.
 
 [UNIQUE]
 Syntax: UNIQUE(array)

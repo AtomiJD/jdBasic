@@ -76,17 +76,68 @@ inline std::string slice(View s, int64_t n, bool from_left) {
     return from_left ? left(s, n) : right(s, n);
 }
 
-inline std::string upper(View s) {
-    std::string r = s.str();
-    for (auto& c : r) c = (char)toupper((unsigned char)c);
+// Simple case mapping of one code point, the same on every platform:
+// ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic. ß has no simple
+// capital and stays; everything else outside these blocks stays as it is.
+inline uint32_t case_map(uint32_t c, bool to_upper) {
+    if (c < 0x80) {
+        if (to_upper && c >= 'a' && c <= 'z') return c - 32;
+        if (!to_upper && c >= 'A' && c <= 'Z') return c + 32;
+        return c;
+    }
+    if (to_upper) {
+        if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return c - 0x20;
+        if (c == 0xFF) return 0x178;
+        if ((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177))
+            return (c & 1) ? c - 1 : c;
+        if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E))
+            return (c & 1) ? c : c - 1;
+        if (c >= 0x3B1 && c <= 0x3C9) return c == 0x3C2 ? 0x3A3 : c - 0x20;
+        if (c >= 0x430 && c <= 0x44F) return c - 0x20;
+        if (c >= 0x450 && c <= 0x45F) return c - 0x50;
+        return c;
+    }
+    if (c >= 0xC0 && c <= 0xDE && c != 0xD7) return c + 0x20;
+    if (c == 0x178) return 0xFF;
+    if (c == 0x1E9E) return 0xDF;
+    if ((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177))
+        return (c & 1) ? c : c + 1;
+    if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E))
+        return (c & 1) ? c + 1 : c;
+    if (c >= 0x391 && c <= 0x3A9 && c != 0x3A2) return c + 0x20;
+    if (c >= 0x410 && c <= 0x42F) return c + 0x20;
+    if (c >= 0x400 && c <= 0x40F) return c + 0x50;
+    return c;
+}
+
+// UTF-8 in, UTF-8 out; a byte that starts no well-formed sequence is copied
+// as it is.
+inline std::string change_case(View s, bool to_upper) {
+    std::string r;
+    r.reserve(s.n);
+    size_t i = 0;
+    while (i < s.n) {
+        unsigned char b = (unsigned char)s.p[i];
+        size_t need = b < 0x80 ? 0 : (b >> 5) == 0x6 ? 1 : (b >> 4) == 0xE ? 2 : (b >> 3) == 0x1E ? 3 : 99;
+        bool ok = need != 99 && i + need < s.n;
+        for (size_t k = 1; ok && k <= need; k++)
+            if (((unsigned char)s.p[i + k] >> 6) != 0x2) ok = false;
+        if (!ok) { r += (char)b; i++; continue; }
+        uint32_t c = need == 0 ? b : need == 1 ? (b & 0x1F) : need == 2 ? (b & 0x0F) : (b & 0x07);
+        for (size_t k = 1; k <= need; k++) c = (c << 6) | ((unsigned char)s.p[i + k] & 0x3F);
+        uint32_t m = case_map(c, to_upper);
+        if (m == c) { r.append(s.p + i, need + 1); i += need + 1; continue; }
+        if (m < 0x80) r += (char)m;
+        else if (m < 0x800) { r += (char)(0xC0 | (m >> 6)); r += (char)(0x80 | (m & 0x3F)); }
+        else { r += (char)(0xE0 | (m >> 12)); r += (char)(0x80 | ((m >> 6) & 0x3F)); r += (char)(0x80 | (m & 0x3F)); }
+        i += need + 1;
+    }
     return r;
 }
 
-inline std::string lower(View s) {
-    std::string r = s.str();
-    for (auto& c : r) c = (char)tolower((unsigned char)c);
-    return r;
-}
+inline std::string upper(View s) { return change_case(s, true); }
+
+inline std::string lower(View s) { return change_case(s, false); }
 
 // The blanks TRIM$ removes: space, tab, carriage return and line feed.
 inline bool is_blank(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }

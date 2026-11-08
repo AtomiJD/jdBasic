@@ -57,7 +57,7 @@ DIM bom_path AS STRING = MKTEMP$("encB") + ".txt"
 TXTWRITER bom_path, "abc", FALSE, "utf-8-bom"
 CHECK_STR("utf-8-bom detected", "utf-8-bom", TXTENCODING$(bom_path))
 CHECK_STR("utf-8-bom stripped on read", "abc", TXTREADER$(bom_path, "utf-8-bom"))
-CHECK_STR("BOM kept by plain read", "6", STR$(LEN(TXTREADER$(bom_path))))
+CHECK_STR("BOM left out by a plain read", "3", STR$(LEN(TXTREADER$(bom_path))))
 
 DIM u8_path AS STRING = MKTEMP$("encC") + ".txt"
 TXTWRITER u8_path, "Grüe"

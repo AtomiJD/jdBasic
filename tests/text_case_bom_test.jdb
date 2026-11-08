@@ -1,0 +1,47 @@
+' UCASE$ and LCASE$ change the case of letters beyond ASCII (umlauts,
+' accents, Greek, Cyrillic) the same in both backends, and TXTREADER$
+' leaves out the UTF-8 byte order mark that Notepad and PowerShell 5 write.
+
+DIM passed = 0
+DIM failed = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+Check("LCASE$ umlauts", LCASE$("ÜBERSICHT ÄRGER ÖL"), "übersicht ärger öl")
+Check("UCASE$ umlauts", UCASE$("müller grüße"), "MÜLLER GRÜßE")
+Check("UCASE$ accents", UCASE$("café crème à la façon"), "CAFÉ CRÈME À LA FAÇON")
+Check("LCASE$ Latin Extended-A", LCASE$("ŁÓDŹ ŠKODA ČEŠTINA"), "łódź škoda čeština")
+Check("UCASE$ Latin Extended-A", UCASE$("łódź škoda"), "ŁÓDŹ ŠKODA")
+Check("UCASE$ Greek, final sigma", UCASE$("λόγος"), "ΛόΓΟΣ")
+Check("LCASE$ Cyrillic", LCASE$("МОСКВА ЁЛКА"), "москва ёлка")
+Check("UCASE$ Cyrillic", UCASE$("привет"), "ПРИВЕТ")
+Check("capital sharp s", LCASE$(CHR$(7838)), "ß")
+Check("ÿ and Ÿ", UCASE$("ÿ") + LCASE$("Ÿ"), "Ÿÿ")
+Check("signs stay", UCASE$("× ÷ € 1,5 kg"), "× ÷ € 1,5 KG")
+Check("ASCII as before", UCASE$("abc XYZ 123") + LCASE$("ABC xyz"), "ABC XYZ 123abc xyz")
+DIM stray$ = LEFT$("ü", 1)
+Check("a stray byte stays", STR$(UCASE$("a" + stray$ + "b") = "A" + stray$ + "B"), "TRUE")
+Check("case-blind compare", STR$(LCASE$("Übersicht") = LCASE$("übersicht")), "TRUE")
+
+DIM path$ = PATH.JOIN$(GETENV$("TEMP"), "jdb_bom_" + STR$(TICK()) + ".txt")
+TXTWRITER path$, "[downloads_butler]" + CHR$(10) + "min_age_hours = 24" + CHR$(10), FALSE, "utf-8-bom"
+DIM raw$ = BINREADER$(path$)
+Check("the file starts with the mark", STR$(LEFT$(raw$, 3) = CHR$(65279)), "TRUE")
+DIM text$ = TXTREADER$(path$)
+Check("TXTREADER$ leaves the mark out", LEFT$(text$, 18), "[downloads_butler]")
+Check("and keeps the rest", STR$(LEN(text$)), STR$(LEN(raw$) - 3))
+KILL path$
+
+PRINT ""
+PRINT "TEXT CASE AND BOM TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
