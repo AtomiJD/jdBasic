@@ -99,8 +99,8 @@ SUB DrawEnd(game, best, new_best)
     Centred(W / 2, 170, "Break is over", 119, 110, 101)
     Font(FALSE, 20)
     DIM top$ = STR$(ARCADE.TOP_TILE(game{"board"}))
-    DIM line$ = "Score " + STR$(game{"score"}) + ", top tile " + top$
-    Centred(W / 2, 230, line$, 119, 110, 101)
+    DIM info$ = "Score " + STR$(game{"score"}) + ", top tile " + top$
+    Centred(W / 2, 230, info$, 119, 110, 101)
     IF new_best THEN
         Centred(W / 2, 262, "A new best score!", 246, 124, 95)
     ELSE
@@ -117,6 +117,11 @@ SUB Shot(name$)
     GFX.SAVE_SCREENSHOT(PATH.JOIN$(shots$, name$))
 ENDSUB
 
+' The window was closed with its cross: the round ends like with Esc.
+SUB OnQuit(info)
+    closed = TRUE
+ENDSUB
+
 DIM seed = (TICK() MOD 2147483645) + 1
 IF selftest THEN seed = 7
 DIM game = ARCADE.NEW_GAME(seed)
@@ -127,8 +132,10 @@ DIM script = ["left", "up", "right", "down"]
 DIM fed = 0
 DIM moves = 0
 DIM over = FALSE
+DIM closed = FALSE
 
 SCREEN W, H, "Break Arcade"
+ON "QUIT" CALL OnQuit@
 DIM started = TICK()
 DO
     DIM left_ms = length_ms - (TICK() - started)
@@ -155,18 +162,21 @@ DO
     DrawGame(game, left_ms, best, note$)
     IF selftest ANDALSO fed = 38 THEN Shot("arcade_game.png")
     SCREENFLIP
+    IF closed THEN EXITDO
     SLEEP 16
 LOOP
 
 DIM new_best = ARCADE.KEEP_BEST(best_file$, game{"score"})
 DIM best_now = ARCADE.BEST(best_file$)
-DrawEnd(game, best_now, new_best)
-Shot("arcade_end.png")
-SCREENFLIP
-DIM pause_ms = 4000
-IF selftest THEN pause_ms = 600
-SLEEP pause_ms
-GFX.CLOSE()
+IF NOT closed THEN
+    DrawEnd(game, best_now, new_best)
+    Shot("arcade_end.png")
+    SCREENFLIP
+    DIM pause_ms = 4000
+    IF selftest THEN pause_ms = 600
+    SLEEP pause_ms
+    GFX.CLOSE()
+ENDIF
 PRINT "Score "; game{"score"}; ", best "; best_now
 
 IF selftest THEN

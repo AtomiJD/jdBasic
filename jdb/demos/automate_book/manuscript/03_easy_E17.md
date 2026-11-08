@@ -72,8 +72,8 @@ jdbasic break_arcade.jdb
 ```
 
 The window opens and the clock starts. Slide with the arrow keys or
-with W, A, S and D. Esc ends the game early; the best score still
-counts. With `--selftest` the game plays a round of its own, about
+with W, A, S and D. Esc ends the game early, and so does the cross
+of the window; the best score still counts. With `--selftest` the game plays a round of its own, about
 four seconds long, checks that the moves scored and the best score was
 kept, and closes again. It is how the test of this recipe knows that
 the window works.
