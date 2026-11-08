@@ -1,0 +1,17 @@
+' A compiled program is per-monitor DPI aware as jdBasic.exe is: screen
+' sizes, screenshots and cursor positions are physical pixels in both.
+' Windows only.
+
+DECLARE FUNC IsProcessDPIAware LIB "user32.dll" ALIAS "IsProcessDPIAware" () AS INTEGER
+
+DIM passed = 0
+DIM failed = 0
+IF IsProcessDPIAware() <> 0 THEN
+    passed = passed + 1
+ELSE
+    failed = failed + 1
+    PRINT "FAIL the process is not DPI aware"
+ENDIF
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

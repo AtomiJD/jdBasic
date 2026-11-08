@@ -25,8 +25,8 @@ if not exist build\jdBasic.exe (
 )
 
 echo.
-echo === build_mcp_native: build runtime DLL (NET GFX IMGUI) ===
-call .\build_rt.bat NET GFX IMGUI
+echo === build_mcp_native: build runtime DLL (HTTP NET GFX IMGUI) ===
+call .\build_rt.bat HTTP NET GFX IMGUI
 if errorlevel 1 (
     echo RT BUILD FAILED - bundle not assembled.
     exit /b 1

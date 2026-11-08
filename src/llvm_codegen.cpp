@@ -22157,7 +22157,9 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     }
 
     // UTF-8 as the process code page, so file names and paths reach the
-    // narrow Win32 and CRT calls as the UTF-8 the program holds.
+    // narrow Win32 and CRT calls as the UTF-8 the program holds. Per-monitor
+    // DPI awareness as jdBasic.exe has it, so screen sizes, screenshots and
+    // cursor positions are physical pixels in both.
     std::string manifest_path = obj_path + ".manifest";
     bool use_manifest = false;
     std::string sdk_bin = sdk + "\\bin\\" + sdkv + "\\x64";
@@ -22170,6 +22172,8 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
                   "<assembly xmlns='urn:schemas-microsoft-com:asm.v1' manifestVersion='1.0'>\n"
                   "  <application xmlns='urn:schemas-microsoft-com:asm.v3'>\n"
                   "    <windowsSettings>\n"
+                  "      <dpiAware xmlns='http://schemas.microsoft.com/SMI/2005/WindowsSettings'>true/pm</dpiAware>\n"
+                  "      <dpiAwareness xmlns='http://schemas.microsoft.com/SMI/2016/WindowsSettings'>PerMonitorV2</dpiAwareness>\n"
                   "      <activeCodePage xmlns='http://schemas.microsoft.com/SMI/2019/WindowsSettings'>UTF-8</activeCodePage>\n"
                   "    </windowsSettings>\n"
                   "  </application>\n"
