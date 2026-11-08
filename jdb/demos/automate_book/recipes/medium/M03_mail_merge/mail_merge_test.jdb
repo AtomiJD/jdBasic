@@ -18,6 +18,9 @@ TESTKIT.EQ(people[0]{"name"}, "Anna Berg", "by column name")
 TESTKIT.EQ(people[0]{"email"}, "anna@stone.example", "in lower case")
 TESTKIT.EQ(people[1]{"city"}, "1010", "a number as text")
 TESTKIT.EQ(people[1]{"name"}, "Ben Cole", "each contact its own")
+DIM dated = LETTERS.CONTACTS([["Name", "Date"], ["Anna", "2026-11-04"], ["Ben", "Monday"]])
+TESTKIT.EQ(dated[0]{"date"}, "4 November 2026", "a date as a letter writes it")
+TESTKIT.EQ(dated[1]{"date"}, "Monday", "other text stays as it is")
 
 TESTKIT.SUITE("names and texts")
 TESTKIT.EQ(LETTERS.FILL$("Dear {{salutation}},", people[0]), _

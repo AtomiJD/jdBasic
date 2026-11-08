@@ -52,7 +52,9 @@ letters and mails:
    further row into a map from column name to cell text. The names
    are made lower case, so `Email`, `EMAIL` and `email` are the same
    column. A number in the sheet, such as a postcode, becomes text
-   without a decimal point.
+   without a decimal point. A date reaches the program as text,
+   because the program reads the sheet with `XLSX.READ(list$, TRUE)`,
+   and the letter writes it as *14 November 2026*.
 2. **Checking the template.** `UNFILLED` asks `DOCX.PLACEHOLDERS` for
    the placeholders in the template and keeps with `FILTER` the ones
    no column fills. The letters are written all the same; the
@@ -154,6 +156,9 @@ Changes in the code:
   `{{ name }}` or `{name}`. Write it exactly as `{{name}}`.
 - **"No sheet ..."**: `tab` names a sheet the contact list does not
   have. Leave `tab` empty to use the first sheet.
+- **A postcode lost its leading 0**: Excel turned `01067` into the
+  number 1067 when it was typed. Format the column as *Text* before
+  you type, or type a `'` in front of the postcode.
 - **The letters look odd in Word**: the formatting comes only from the
   template. Change fonts and spacing there; the program copies it as
   it is.

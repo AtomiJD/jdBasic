@@ -53,7 +53,7 @@ IF NOT FILE.EXISTS(template$) THEN
     END
 ENDIF
 
-DIM book = XLSX.READ(list$)
+DIM book = XLSX.READ(list$, TRUE)
 IF tab$ = "" THEN tab$ = XLSX.SHEETS(list$)[0]
 IF NOT MAP.EXISTS(book, tab$) THEN THROW "No sheet " + tab$
 DIM people = LETTERS.CONTACTS(book{tab$})

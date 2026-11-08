@@ -34,9 +34,16 @@ EXPORT FUNC CONTACTS(rows)
     RETURN out
 ENDFUNC
 
-' A cell as text; whole numbers without a decimal point.
+' A cell as text; whole numbers without a decimal point, a date the
+' way a letter writes it.
 FUNC CellText$(v)
-    IF TYPEOF(v) = "STRING" THEN RETURN v
+    IF TYPEOF(v) = "STRING" THEN
+        DIM iso$ = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        IF NOT REGEX.MATCH(iso$, v) THEN RETURN v
+        DIM when$ = FORMAT_DATE$(v, "%d %B %Y")
+        IF LEFT$(when$, 1) = "0" THEN when$ = MID$(when$, 1)
+        RETURN when$
+    ENDIF
     IF v = INT(v) THEN RETURN STR$(INT(v))
     RETURN STR$(v)
 ENDFUNC
