@@ -1,0 +1,22 @@
+' Helpers for native_book_exe_test.jdb: functions in a module whose
+' results reach the program through an untaken branch.
+
+EXPORT MODULE NATIVE_BOOK_EXE_MOD
+
+EXPORT FUNC DEFAULT_RULES(folder$, name$)
+    DIM rules = []
+    DIM one AS MAP
+    one{"match"} = "*.csv"
+    one{"to"} = folder$ + "/" + name$
+    rules = APPEND(rules, one)
+    DIM two AS MAP
+    two{"match"} = "*.txt"
+    two{"to"} = folder$
+    rules = APPEND(rules, two)
+    RETURN rules
+ENDFUNC
+
+EXPORT FUNC VALUE(cfg, key$, fallback)
+    IF MAP.EXISTS(cfg, key$) THEN RETURN cfg{key$}
+    RETURN fallback
+ENDFUNC

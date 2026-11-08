@@ -2950,6 +2950,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     s2.expr->kind == ExprKind::VARIABLE &&
                     nested.count(s2.expr->str_val))
                     answer = true;
+                if (s2.kind == StmtKind::RETURN && s2.expr &&
+                    s2.expr->kind == ExprKind::ARRAY_LITERAL)
+                    for (auto& el : s2.expr->args)
+                        if (el && el->kind == ExprKind::ARRAY_LITERAL) answer = true;
                 for (auto& b : s2.body) if (b) rec(*b);
                 for (auto& br : s2.branches) {
                     if (br.condition) scan(*br.condition);
@@ -6916,6 +6920,56 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
                 walks.now(); emit_fn_return(phi);
                 return;
             }
+            // A MAP function answering a map it read out of a VM object (a
+            // parameter, a JSON tree): the handle becomes a native map.
+            // coerce_to would hand back the text of the handle.
+            bool map_fn = ret_ty == i8_ptr_type && uf != user_functions.end() &&
+                          uf->second.return_tag == JD_TAG_NATIVE_MAP;
+            auto* to_map = get_runtime_func("__jdrt_handle_to_map");
+            if (map_fn && to_map && rv.tag == JD_TAG_VM_HANDLE) {
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef a[] = { rt, rv.val };
+                LLVMValueRef out = LLVMBuildCall2(builder, to_map->fn_type, to_map->fn, a, 2, "ret_vmmap");
+                walks.now(); emit_fn_return(out);
+                return;
+            }
+            if (map_fn && to_map && rv.tag == JD_TAG_RUNTIME && rv.runtime_tag) {
+                LLVMBasicBlockRef bb_vmh = LLVMAppendBasicBlockInContext(ctx, current_fn, "ret.vmmap");
+                LLVMBasicBlockRef bb_chk = LLVMAppendBasicBlockInContext(ctx, current_fn, "ret.chkmap");
+                LLVMBasicBlockRef bb_map = LLVMAppendBasicBlockInContext(ctx, current_fn, "ret.map");
+                LLVMBasicBlockRef bb_other = LLVMAppendBasicBlockInContext(ctx, current_fn, "ret.mother");
+                LLVMBasicBlockRef bb_j = LLVMAppendBasicBlockInContext(ctx, current_fn, "ret.mapjoin");
+                LLVMValueRef is_vmh = LLVMBuildICmp(builder, LLVMIntEQ, rv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "ret_ismvmh");
+                LLVMBuildCondBr(builder, is_vmh, bb_vmh, bb_chk);
+                LLVMPositionBuilderAtEnd(builder, bb_vmh);
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef a[] = { rt, rv.val };
+                LLVMValueRef from_vm = LLVMBuildCall2(builder, to_map->fn_type, to_map->fn, a, 2, "ret_vmmap");
+                LLVMBasicBlockRef bb_vmh_end = LLVMGetInsertBlock(builder);
+                LLVMBuildBr(builder, bb_j);
+                LLVMPositionBuilderAtEnd(builder, bb_chk);
+                LLVMValueRef is_map = LLVMBuildICmp(builder, LLVMIntEQ, rv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_NATIVE_MAP, 0), "ret_ismap");
+                LLVMBuildCondBr(builder, is_map, bb_map, bb_other);
+                LLVMPositionBuilderAtEnd(builder, bb_map);
+                LLVMValueRef as_map = LLVMBuildIntToPtr(builder, rv.val, i8_ptr_type, "ret_mptr");
+                LLVMBasicBlockRef bb_map_end = LLVMGetInsertBlock(builder);
+                LLVMBuildBr(builder, bb_j);
+                LLVMPositionBuilderAtEnd(builder, bb_other);
+                LLVMValueRef as_ptr = coerce_to(rv, i8_ptr_type);
+                LLVMBasicBlockRef bb_other_end = LLVMGetInsertBlock(builder);
+                LLVMBuildBr(builder, bb_j);
+                LLVMPositionBuilderAtEnd(builder, bb_j);
+                LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "ret_map");
+                LLVMValueRef vals[] = { from_vm, as_map, as_ptr };
+                LLVMBasicBlockRef bbs[] = { bb_vmh_end, bb_map_end, bb_other_end };
+                LLVMAddIncoming(phi, vals, bbs, 3);
+                walks.now(); emit_fn_return(phi);
+                return;
+            }
         }
         { LLVMValueRef ret_out = coerce_to(rv, ret_ty); walks.now(); emit_fn_return(ret_out); }
     } else {
@@ -7364,7 +7418,8 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                     std::transform(fu.begin(), fu.end(), fu.begin(), ::toupper);
                     return fu == "SPLIT" || fu == "MAP.KEYS" || fu == "LINES" ||
                            fu == "WORDS" || fu == "CHARS" || fu == "OS.ARGS" ||
-                           fu == "ZIP.LIST";
+                           fu == "ZIP.LIST" ||
+                           ((fu == "DIR$" || fu == "FILE.LIST") && e->args.size() < 2);
                 }
                 return false;
             };
@@ -8501,7 +8556,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                     std::transform(fu.begin(), fu.end(), fu.begin(), ::toupper);
                     return fu == "SPLIT" || fu == "MAP.KEYS" || fu == "LINES" ||
                            fu == "WORDS" || fu == "CHARS" || fu == "OS.ARGS" ||
-                           fu == "ZIP.LIST";
+                           fu == "ZIP.LIST" ||
+                           ((fu == "DIR$" || fu == "FILE.LIST") && e->args.size() < 2);
                 }
                 return false;
             };
@@ -11390,6 +11446,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                               literal_cell_counts(*expr.args[i]);
                 TypedValue v;
                 {
+                    ScopedLeafTag _lt(this, expr.args[i] &&
+                                            expr.args[i]->kind == ExprKind::INDEX
+                                            ? JD_TAG_RUNTIME : -1);
                     ScopedRcEscape _esc(this, !nested);
                     v = codegen_expr(*expr.args[i]);
                 }

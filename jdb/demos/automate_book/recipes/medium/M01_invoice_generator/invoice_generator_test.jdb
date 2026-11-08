@@ -50,6 +50,7 @@ TESTKIT.EQ(LEFT$(bytes$, 5), "%PDF-", "a PDF is written")
 TESTKIT.ISTRUE(INSTR(bytes$, "(Invoice RE-2026-0042) Tj") >= 0, _
     "with its number")
 TESTKIT.ISTRUE(INSTR(bytes$, "(67.83 EUR) Tj") >= 0, "and its total")
+TESTKIT.ISTRUE(INSTR(bytes$, "(Item) Tj") >= 0, "the table has its header row")
 
 TESTKIT.SUITE("the mail")
 DIM m = INVOICES.MAIL_FOR(inv, "RE-2026-0042", _

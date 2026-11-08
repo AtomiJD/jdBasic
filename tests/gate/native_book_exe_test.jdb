@@ -1,0 +1,94 @@
+' Programs that print the same compiled and interpreted: an array element
+' as a map literal value, an element of SORT over DIR$ inside an
+' expression, a map function that answers a field of a JSON tree or a new
+' map, and an untaken IF that assigns a module result.
+
+IMPORT NATIVE_BOOK_EXE_MOD
+
+DIM passed = 0
+DIM failed = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+FUNC Rows()
+    RETURN [["a", "b"], ["c", "d"]]
+ENDFUNC
+
+' Map literal values read out of arrays
+DIM r = Rows()
+DIM h = r[0]
+Check("a row of a function result", JOIN(h, ","), "a,b")
+DIM m1 = {"h": r[0], "n": 5, "s": "x"}
+Check("an element in a map literal", JOIN(m1{"h"}, ","), "a,b")
+Check("the number beside it", STR$(m1{"n"} + 1), "6")
+Check("the text beside it", m1{"s"}, "x")
+DIM m2 = {"h": h}
+Check("a variable holding the row", JOIN(m2{"h"}, ","), "a,b")
+DIM grid = [["p", 1], ["q", 2]]
+DIM m3 = {"row": grid[1], "num": grid[0][1], "txt": grid[1][0]}
+Check("a row of a literal", JOIN(m3{"row"}, ","), "q,2")
+Check("a number cell", STR$(m3{"num"} + 1), "2")
+Check("a text cell", m3{"txt"}, "q")
+DIM nums = [10, 20, 30]
+DIM m4 = {"v": nums[2]}
+Check("a plain number element", STR$(m4{"v"} + 1), "31")
+
+' Elements of SORT(DIR$(...)) in expressions
+DIM folder$ = PATH.JOIN$(GETENV$("TEMP"), "jdb_bookexe_" + STR$(TICK()))
+MKDIR folder$
+TXTWRITER PATH.JOIN$(folder$, "b.log"), "b"
+TXTWRITER PATH.JOIN$(folder$, "a.log"), "a"
+DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.log")))
+Check("an element in PATH.JOIN$", PATH.BASENAME$(PATH.JOIN$(folder$, files[0])), "a.log")
+Check("an element in a concatenation", RIGHT$(folder$ + "/" + files[1], 6), "/b.log")
+DIM back = REVERSE(DIR$(PATH.JOIN$(folder$, "*.log")))
+Check("REVERSE of DIR$", "x" + back[0], "x" + DIR$(PATH.JOIN$(folder$, "*.log"))[1])
+KILL PATH.JOIN$(folder$, "a.log")
+KILL PATH.JOIN$(folder$, "b.log")
+RMDIR folder$
+
+' A map function with two answers: a field of its parameter or a new map
+FUNC Entry(state, name$)
+    IF MAP.EXISTS(state, name$) THEN RETURN state{name$}
+    DIM rec AS MAP
+    rec{"runs"} = 0
+    RETURN rec
+ENDFUNC
+
+FUNC Due$(state, at)
+    DIM rec = Entry(state, "ok")
+    IF NOT MAP.EXISTS(rec, "last_due") THEN RETURN "new"
+    IF at <= rec{"last_due"} THEN RETURN "not due"
+    RETURN "due"
+ENDFUNC
+
+DIM q$ = CHR$(34)
+DIM state = JSON.PARSE$("{" + q$ + "ok" + q$ + ":{" + q$ + "last_due" + q$ + ":1000.5," + q$ + "runs" + q$ + ":1}}")
+Check("a field of a JSON tree, earlier", Due$(state, 900), "not due")
+Check("a field of a JSON tree, later", Due$(state, 1100), "due")
+DIM fresh = JSON.PARSE$("{}")
+Check("a new map", Due$(fresh, 1100), "new")
+DIM got = Entry(state, "ok")
+Check("its fields", STR$(got{"runs"}), "1")
+
+' An untaken IF that would assign a module result
+DIM cfg AS MAP
+DIM rules = NATIVE_BOOK_EXE_MOD.DEFAULT_RULES("C:/x", "{name}")
+DIM own = NATIVE_BOOK_EXE_MOD.VALUE(cfg, "rule", [])
+IF LEN(own) > 0 THEN rules = own
+Check("rules kept", STR$(LEN(rules)), "2")
+Check("the first rule", rules[0]{"match"}, "*.csv")
+
+PRINT ""
+PRINT "NATIVE BOOK EXE TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
