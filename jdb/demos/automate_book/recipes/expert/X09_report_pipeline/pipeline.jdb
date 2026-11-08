@@ -146,6 +146,7 @@ ENDFUNC
 ' Spent and budget per cost center as a bar chart, SVG markup.
 EXPORT FUNC CHART$(report, week)
     DIM c = SVG.CHART("bar", 640, 360)
+    SVG.SETOPT(c, "theme", "light")
     SVG.SETOPT(c, "title", week{"label"})
     SVG.SETOPT(c, "y_title", "EUR")
     SVG.LABELS(c, DF.COL(report, "cost_center"))

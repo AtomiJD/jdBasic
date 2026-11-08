@@ -156,6 +156,7 @@ EXPORT SUB CHART(stats, path$)
     DIM warnings = SELECT(LAMBDA USE(hours) h$ -> hours{h$}{"WARN"}, _
         keys)
     DIM c = SVG.CHART("stackedbar", 640, 320)
+    SVG.SETOPT(c, "theme", "light")
     SVG.SETOPT(c, "title", "Errors and warnings per hour")
     SVG.LABELS(c, labels)
     SVG.SERIES(c, "errors", errors)
