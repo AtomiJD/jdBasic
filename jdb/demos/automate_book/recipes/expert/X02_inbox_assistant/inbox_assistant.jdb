@@ -8,7 +8,7 @@
 '   jdbasic inbox_assistant.jdb --approve  approved drafts to outbox
 '   jdbasic inbox_assistant.jdb --send     send the outbox
 
-IMPORT WORKCONF, INBOXAI, MAIL, OUTBOX, LOGGER
+IMPORT WORKCONF, INBOXAI, MAIL, OUTBOX, LOGGER, VAULT
 
 DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
 DIM key$ = "inbox_assistant."
@@ -65,7 +65,7 @@ DIM api_key$ = ""
 DIM own_server$ = WORKCONF.VALUE(cfg, key$ + "base_url", "")
 IF own_server$ = "" ANDALSO GETENV$("OPENAI_API_KEY") = "" ANDALSO _
     GETENV$("ANTHROPIC_API_KEY") = "" THEN
-    INPUT "API key (not stored): "; api_key$
+    api_key$ = VAULT.FIND$("AutomateWork/ai-key", "", "API key: ")
 ENDIF
 DIM ai = INBOXAI.CLIENT(cfg, api_key$)
 DIM drafted = 0
@@ -88,8 +88,14 @@ FOR k = 0 TO LEN(pending) - 1
         about{"summary"} = d{"summary"}
         LOGGER.INFO(lg, "read " + file$, about)
     CATCH
-        PRINT file$; ": not read, "; ERRMSG$
-        LOGGER.ERROR(lg, "failed " + file$, {"error": ERRMSG$})
+        DIM why$ = ERRMSG$
+        PRINT file$; ": not read, "; why$
+        LOGGER.ERROR(lg, "failed " + file$, {"error": why$})
+        ' A refused key is refused for every mail: stop asking.
+        IF INSTR(why$, "401") >= 0 ORELSE INSTR(why$, "403") >= 0 THEN
+            PRINT "The key was refused; the other mails wait."
+            EXITFOR
+        ENDIF
     ENDTRY
 NEXT k
 PRINT drafted; " draft(s) in "; drafts$

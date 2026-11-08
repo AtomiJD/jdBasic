@@ -34,8 +34,9 @@ You need three things:
 2. **A language model.** Either a service such as OpenAI or Anthropic,
    or a model on your own computer. For a service you need an API key;
    put it into the environment variable `OPENAI_API_KEY` (or
-   `ANTHROPIC_API_KEY`), or let the recipe ask for it each time. The
-   key is never written into `work.conf`. For a model of your own,
+   `ANTHROPIC_API_KEY`), keep it in the Windows Credential Manager as
+   `AutomateWork/ai-key`, or let the recipe ask for it, with a star
+   for each key. The key is never written into `work.conf`. For a model of your own,
    install a model server such as Ollama and set `base_url` to its
    address; then no key is needed and no mail leaves your computer.
 3. **The outbox rule of Chapter 4.** The `[mail]` part of `work.conf`
@@ -184,8 +185,9 @@ max_mails = 20
 
 ### When it goes wrong
 
-- **"answered 401"**: the key is wrong or has expired. The recipe does
-  not ask twice for the same mail; fix the key and run it again.
+- **"answered 401"**: the key is wrong or has expired. The recipe
+  stops at the first refusal, so the key is not tried on every mail;
+  the mails wait for the next run. Fix the key and run it again.
 - **"transport failure"**: the service or your model server cannot be
   reached. For Ollama, check that it runs and that `base_url` ends in
   `/v1`. The mail stays pending and comes up on the next run.

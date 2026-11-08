@@ -7,7 +7,7 @@
 '   jdbasic ticket_sync.jdb            sync now
 '   jdbasic ticket_sync.jdb --dry-run  show the changes, make none
 
-IMPORT WORKCONF, TICKETSYNC, LOGGER
+IMPORT WORKCONF, TICKETSYNC, LOGGER, VAULT
 
 DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
 DIM key$ = "ticket_sync."
@@ -28,8 +28,8 @@ IF tracker$ = "" ORELSE user$ = "" THEN
     PRINT "Set tracker and user in [ticket_sync] of work.conf."
     END 1
 ENDIF
-DIM token$ = GETENV$(token_var$)
-IF token$ = "" THEN INPUT "Tracker token (not stored): "; token$
+DIM target$ = "AutomateWork/ticket-token"
+DIM token$ = VAULT.FIND$(target$, token_var$, "Tracker token: ")
 
 DIM text$ = ""
 IF FILE.EXISTS(todo$) THEN text$ = TXTREADER$(todo$)

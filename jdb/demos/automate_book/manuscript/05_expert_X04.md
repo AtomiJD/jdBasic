@@ -34,15 +34,13 @@ the ticket number in brackets, such as `(#204)`.
 
 You need the address of your tracker, your user name there and a
 token, the kind of password a program uses for a tracker's REST
-interface. Most trackers let you create one in your profile. Put it
-into an environment variable once, in a command prompt:
-
-```
-setx TICKETS_TOKEN "the token from your profile"
-```
-
-New command prompts see it; the recipe asks for the token when the
-variable is empty. The token is never written into `work.conf`.
+interface. Most trackers let you create one in your profile. Keep it
+in the Windows Credential Manager as a generic credential named
+`AutomateWork/ticket-token`, the way Chapter 4 keeps the mail
+password; recipe X14 shows how to store it from the command prompt.
+The recipe looks there first, then in the
+environment variable `TICKETS_TOKEN`, and asks for the token otherwise,
+with a star for each key. The token is never written into `work.conf`.
 
 The recipe talks to a simple REST interface: `GET /api/tickets` with
 `assignee` and `state` lists the open tickets, `PATCH
