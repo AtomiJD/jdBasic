@@ -67,7 +67,11 @@ FUNC EntrySmtp$(holder, sender)
     DIM addr$ = ""
     TRY
         DIM entry = NONE
-        IF sender THEN entry = holder.Sender ELSE entry = holder.AddressEntry
+        IF sender THEN
+            entry = holder.Sender
+        ELSE
+            entry = holder.AddressEntry
+        ENDIF
         IF TYPEOF(entry) <> "NONE" THEN
             addr$ = SmtpOf$(entry)
             RELEASEOBJECT(entry)
@@ -210,20 +214,21 @@ EXPORT FUNC ICS$(events)
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(events) - 1
-        DIM e = events[k]
-        DIM t0 = CDBL(e{"start"})
-        DIM t1 = CDBL(e{"end"})
+        DIM meeting = events[k]
+        DIM t0 = CDBL(meeting{"start"})
+        DIM t1 = CDBL(meeting{"end"})
         DIM ev = 0
-        IF e{"all_day"} THEN
+        DIM title$ = meeting{"title"}
+        IF meeting{"all_day"} THEN
             DIM days = MAX([1, ROUND((t1 - t0) / 86400)])
-            ev = ICAL.ADDALLDAY(cal, e{"title"}, t0 + 43200, days)
+            ev = ICAL.ADDALLDAY(cal, title$, t0 + 43200, days)
         ELSE
-            ev = ICAL.ADDEVENT(cal, e{"title"}, t0, t1)
+            ev = ICAL.ADDEVENT(cal, title$, t0, t1)
         ENDIF
-        IF e{"location"} <> "" THEN
-            ICAL.SETTEXT(cal, ev, "LOCATION", e{"location"})
+        IF meeting{"location"} <> "" THEN
+            ICAL.SETTEXT(cal, ev, "LOCATION", meeting{"location"})
         ENDIF
-        DIM people = e{"people"}
+        DIM people = meeting{"people"}
         FOR j = 0 TO LEN(people) - 1
             DIM p = people[j]
             DIM cn$ = CHR$(34) + Plain$(p{"name"}) + CHR$(34)
@@ -292,9 +297,9 @@ EXPORT FUNC FILE_NAME$(mail)
         IF c$ >= "0" ANDALSO c$ <= "9" THEN ok = TRUE
         IF c$ = "." ORELSE c$ = "-" THEN ok = TRUE
         ' A letter beyond ASCII, such as "ü", is several bytes. The
-        ' punctuation block U+2000-U+207F holds the invisible marks that
-        ' turn text round or hide in it, so it becomes a space, as
-        ' does a byte order mark.
+        ' block U+2000-U+207F holds invisible marks that turn text
+        ' round or hide in it; they become a space, as does a byte
+        ' order mark.
         IF LEN(c$) > 1 THEN ok = TRUE
         DIM lead$ = LEFT$(c$, 2)
         IF lead$ = gMarks1$ ORELSE lead$ = gMarks2$ THEN ok = FALSE
