@@ -36,6 +36,7 @@ Arguments with a value, such as `fallback = 0`, may be left out.
 | `WORKCONF.EXPAND$(path$)` | A path with `~` expanded |
 | `WORKCONF.HOME$()` | The home folder |
 | `WORKCONF.PLURAL$(n, one$, [many$])` | A count with its noun: `1 file`, `3 files` |
+| `WORKCONF.READ_CSV(path$, sep$, header, kinds)` | The rows of a CSV file as `CSVREADER` reads them, in UTF-8, UTF-16 or ANSI |
 
 ### LOGGER: a diary for programs
 

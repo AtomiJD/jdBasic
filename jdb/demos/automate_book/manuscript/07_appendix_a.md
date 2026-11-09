@@ -273,6 +273,7 @@ Monday, 05 October 2026
 | `RMDIR path$` | Removes an empty folder |
 | `KILL path$` | Deletes a file |
 | `TXTREADER$(path$)` | A text file as one string |
+| `TXTREADER$(path$, TXTENCODING$(path$))` | The same for a file in ANSI or UTF-16, as Excel's "CSV" and older programs write it |
 | `TXTWRITER path$, text$` | Writes a text file, replacing what was there |
 | `BINREADER$(path$)`, `BINWRITER path$, data$` | The same for bytes |
 | `CSVREADER(path$, sep$, header, types)` | A CSV file as rows of cells |
