@@ -5,6 +5,7 @@
 '   jdbasic break_arcade.jdb             play until the break ends
 '   jdbasic break_arcade.jdb --selftest  play itself and check
 '   jdbasic break_arcade.jdb --selftest --shots out/arcade
+'   jdbasic break_arcade.jdb --dry-run   no window, only the plan
 
 IMPORT WORKCONF, CONF, ARCADE
 
@@ -133,6 +134,11 @@ DIM fed = 0
 DIM moves = 0
 DIM over = FALSE
 DIM closed = FALSE
+
+IF WORKCONF.FLAG("dry-run") ANDALSO NOT selftest THEN
+    PRINT "would open the game for "; minutes; " minutes"
+    END
+ENDIF
 
 SCREEN W, H, "Break Arcade"
 ON "QUIT" CALL OnQuit@

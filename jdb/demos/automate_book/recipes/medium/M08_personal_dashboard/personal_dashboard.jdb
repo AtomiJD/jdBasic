@@ -5,6 +5,7 @@
 '
 '   jdbasic personal_dashboard.jdb               serve until Ctrl+C
 '   jdbasic personal_dashboard.jdb --save my.html  write the page once
+'   jdbasic personal_dashboard.jdb --dry-run       only the numbers
 
 IMPORT WORKCONF, DASHBOARD, JDWEB
 
@@ -31,6 +32,18 @@ IF save$ <> "" THEN
     DIM numbers = DASHBOARD.NUMBERS(sources, now$)
     TXTWRITER save$, DASHBOARD.PAGE$(numbers, tpl$)
     PRINT "wrote "; save$
+    END
+ENDIF
+
+IF WORKCONF.FLAG("dry-run") THEN
+    DIM stamp$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M:%S")
+    DIM seen = DASHBOARD.NUMBERS(sources, stamp$)
+    DIM names = SORT(MAP.KEYS(seen))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        PRINT names[k]; ": "; seen{names[k]}
+    NEXT k
+    PRINT "Nothing served. Run without --dry-run for the page."
     END
 ENDIF
 

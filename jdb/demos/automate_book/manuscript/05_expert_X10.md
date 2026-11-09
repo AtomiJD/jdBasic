@@ -93,6 +93,9 @@ asks the server which tools it offers:
    `ALLOWED` finds the recipe's id in `[ai_drive] allow` does it leave
    out `--dry-run`. Otherwise it refuses and tells the agent to ask
    you. The answer is the program's output, cut to 4000 characters.
+   A program gets two minutes; one that still runs then, such as a
+   web page that serves until stopped, is ended, so the agent gets an
+   answer and nothing is left running.
 6. **The audit trail.** `Audit` writes one JSON line per call into
    `logs/ai_drive.jsonl` through the LOGGER library: time, tool,
    arguments and outcome, the refusals included.
@@ -148,12 +151,12 @@ The setting is in the part of `work.conf` that starts with
 
 ```toml
 [ai_drive]
-allow = ["E11", "M08"]
+allow = ["E10", "E11"]
 ```
 
 - **Real runs.** `allow` names the recipes the agent may run for real.
   Start with recipes that only read and report, such as the Disk Space
-  Report (E11) or the Personal Dashboard (M08). A recipe that moves
+  Report (E11) or the Duplicate Finder (E10). A recipe that moves
   files or writes mail is better left to a dry run, with you deciding.
 - **Ask before every call.** Claude Code asks before it calls a tool.
   Allow `list_recipes`, `recipe_log` and `outbox` for good, since they

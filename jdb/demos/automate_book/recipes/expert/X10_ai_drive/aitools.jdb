@@ -147,9 +147,22 @@ EXPORT FUNC TOOL_RUN(args$)
     DIM program$ = PATH.JOIN$(r{"folder"}, r{"program"})
     DIM argv = [program$, "--config", WORKCONF.CONFIG_PATH$()]
     IF NOT for_real THEN PUSH(argv, "--dry-run")
-    DIM res = OS.EXEC(jdbasic$, argv)
-    DIM code = res{"exit_code"}
-    DIM text$ = LEFT$(res{"output"}, 4000)
+    ' A recipe gets two minutes; a server or a window that never ends
+    ' is ended, so the assistant gets an answer and nothing runs on.
+    DIM log$ = MKTEMP$("airun") + ".txt"
+    DIM opts = {"output": log$, "hidden": TRUE}
+    DIM pid = OS.SPAWN(jdbasic$, argv, opts)
+    DIM code = OS.WAIT(pid, 120000)
+    DIM text$ = ""
+    IF TYPEOF(code) = "NONE" THEN
+        DIM ended = OS.KILL(pid)
+        code = -1
+        text$ = "ended after two minutes without finishing" + gLF$
+    ENDIF
+    IF FILE.EXISTS(log$) THEN
+        text$ = text$ + LEFT$(TXTREADER$(log$), 4000)
+        KILL log$
+    ENDIF
     DIM how$ = "dry run"
     IF for_real THEN how$ = "real run"
     Audit(cfg, "run_recipe", args$, how$ + ", exit " + STR$(code))

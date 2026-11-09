@@ -2,7 +2,8 @@
 ' warns above a limit. The report is printed and saved as a text file.
 ' The settings are the [disk_space] part of work.conf.
 '
-'   jdbasic disk_space.jdb
+'   jdbasic disk_space.jdb            the report, also into a file
+'   jdbasic disk_space.jdb --dry-run  the report, no file written
 
 IMPORT WORKCONF, DISKSPACE
 
@@ -17,6 +18,7 @@ DIM report$ = WORKCONF.FOLDER$(cfg, key$ + "report", file_default$)
 DIM scan = DISKSPACE.SCAN(root$)
 DIM report_text$ = DISKSPACE.REPORT$(scan, top, warn_gb)
 PRINT report_text$
+IF WORKCONF.FLAG("dry-run") THEN END
 MKDIR PATH.DIRNAME$(report$)
 TXTWRITER report$, report_text$ + CHR$(10)
 PRINT

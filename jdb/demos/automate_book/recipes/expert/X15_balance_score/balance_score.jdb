@@ -7,6 +7,7 @@
 '   jdbasic balance_score.jdb                 serve until Ctrl+C
 '   jdbasic balance_score.jdb --save my.html  write the page once
 '   jdbasic balance_score.jdb --print         the scores as text
+'   jdbasic balance_score.jdb --dry-run       the same, nothing served
 
 IMPORT WORKCONF, BALANCE, OUTBOX, JDWEB, DT
 
@@ -42,7 +43,7 @@ DIM log_file$ = PATH.JOIN$(time_dir$, "log.csv")
 DIM sources = {"log": log_file$, "calendar": ics$}
 sources{"outbox"} = OUTBOX.FOLDER$(cfg)
 
-IF WORKCONF.FLAG("print") THEN
+IF WORKCONF.FLAG("print") ORELSE WORKCONF.FLAG("dry-run") THEN
     DIM n = rules{"weeks"}
     DIM weeks = BALANCE.WEEKS(sources, rules, DT.NOW(), n)
     DIM k = 0
