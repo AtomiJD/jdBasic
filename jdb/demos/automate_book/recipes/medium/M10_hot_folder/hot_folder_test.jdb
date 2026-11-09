@@ -36,6 +36,19 @@ DIM g = HOTFOLDER.CSV_FIELDS(Q$ + "say " + Q$ + Q$ + "hi" + Q$ + Q$ + Q$ + ";", 
 TESTKIT.EQ(g[0], "say " + Q$ + "hi" + Q$, "doubled quotes")
 TESTKIT.EQ(g[1], "", "an empty last field")
 
+TESTKIT.SUITE("cells as a German Excel writes them")
+TESTKIT.EQ(HOTFOLDER.NUMBER$("00123", ","), "", "a leading zero keeps an article number text")
+TESTKIT.EQ(HOTFOLDER.NUMBER$("01067", ","), "", "and a postcode")
+TESTKIT.EQ(HOTFOLDER.NUMBER$("4,50", ","), "4.50", "a decimal comma is a number")
+TESTKIT.EQ(HOTFOLDER.NUMBER$("1.234,56", ","), "1234.56", "with points between the thousands")
+TESTKIT.EQ(HOTFOLDER.NUMBER$("12345678901234567890", ","), "", "more than 15 digits stay text")
+TESTKIT.EQ(HOTFOLDER.NUMBER$("0,5", ","), "0.5", "a zero before the comma is a number")
+TESTKIT.EQ(HOTFOLDER.DECIMAL$(";"), ",", "a semicolon file has a decimal comma")
+DIM alt_enter = HOTFOLDER.CSV_ROWS("1;" + Q$ + "line one" + CHR$(10) + "line two" + Q$ + ";10" + CHR$(10), ";", ",")
+TESTKIT.EQ(LEN(alt_enter), 1, "a line break inside quotes stays in its cell")
+TESTKIT.EQ(alt_enter[0][1], "line one" + CHR$(10) + "line two", "with both lines")
+TESTKIT.EQ(alt_enter[0][2], 10, "and the cell after it")
+
 TESTKIT.SUITE("the lock file")
 DIM tmp$ = MKTEMP$("hotfolder")
 MKDIR tmp$
@@ -44,6 +57,9 @@ DIM t0 = CDATE("2026-10-05 09:00:00")
 TESTKIT.EQ(HOTFOLDER.LOCK(lock$, t0, 30), TRUE, "the first run gets the lock")
 TESTKIT.EQ(HOTFOLDER.LOCK(lock$, CDATE("2026-10-05 09:05:00"), 30), FALSE, "a second run five minutes later waits")
 TESTKIT.EQ(HOTFOLDER.LOCK(lock$, CDATE("2026-10-05 09:40:00"), 30), TRUE, "a lock older than 30 minutes is taken over")
+TXTWRITER lock$, "broken"
+TESTKIT.EQ(HOTFOLDER.LOCK(lock$, t0, 30), TRUE, "a lock without a readable time is taken over")
+HOTFOLDER.RELEASE(lock$)
 HOTFOLDER.RELEASE(lock$)
 TESTKIT.EQ(FILE.EXISTS(lock$), FALSE, "unlock removes the file")
 

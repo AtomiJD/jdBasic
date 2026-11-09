@@ -84,8 +84,13 @@ ENDFUNC
 EXPORT FUNC LOCK(path$, now, stale_minutes)
     IF FILE.EXISTS(path$) THEN
         DIM since$ = TRIM$(TXTREADER$(path$))
-        DIM age = DATEDIFF("N", CDATE(since$), now)
-        IF age < stale_minutes THEN RETURN FALSE
+        ' A lock without a readable time, left by a crash while it was
+        ' written, counts as stale.
+        DIM stamp$ = "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}.*"
+        IF REGEX.MATCH(stamp$, since$) THEN
+            DIM age = DATEDIFF("N", CDATE(since$), now)
+            IF age < stale_minutes THEN RETURN FALSE
+        ENDIF
     ENDIF
     TXTWRITER path$, FORMAT_DATE$(now, "%Y-%m-%d %H:%M:%S")
     RETURN TRUE
@@ -125,54 +130,110 @@ EXPORT FUNC PLAN(folder$, rules, settle_seconds, now)
     RETURN jobs
 ENDFUNC
 
-' The fields of one CSV line, with quoted fields that hold the
-' separator or doubled quotes. Fields that are plain numbers become
-' numbers.
-EXPORT FUNC CSV_FIELDS(line$, sep$)
-    DIM out = []
+' A field written as a number, such as "1.234,56", as the number in
+' plain notation, "1234.56"; "" when the field is no number. A leading
+' zero (a postcode or an article number) and more than 15 digits
+' (more do not fit a number exactly) keep a field text; the decimal
+' mark is the one of the file, a point or a comma.
+EXPORT FUNC NUMBER$(field$, decimal$)
+    DIM t$ = TRIM$(field$)
+    DIM digits = LEN(REGEX.REPLACE$("[^0-9]", t$, ""))
+    IF digits = 0 ORELSE digits > 15 THEN RETURN ""
+    DIM whole$ = "-?(?:0|[1-9][0-9]*)"
+    IF decimal$ = "," THEN
+        ' 1.234,56: the points group the thousands.
+        DIM grouped$ = "^-?[1-9][0-9]{0,2}(?:\.[0-9]{3})+"
+        grouped$ = grouped$ + "(?:,[0-9]+)?$"
+        IF REGEX.MATCH(grouped$, t$) THEN t$ = REPLACE$(t$, ".", "")
+        IF REGEX.MATCH("^" + whole$ + "(?:,[0-9]+)?$", t$) THEN
+            RETURN REPLACE$(t$, ",", ".")
+        ENDIF
+    ELSEIF REGEX.MATCH("^" + whole$ + "(?:\.[0-9]+)?$", t$) THEN
+        RETURN t$
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' The rows of a CSV text: quoted fields may hold the separator,
+' doubled quotes and line breaks, as Excel writes a cell with
+' Alt+Enter. A quoted field stays text; other fields that are numbers
+' become numbers. Empty lines are left out.
+EXPORT FUNC CSV_ROWS(text$, sep$, decimal$)
+    DIM rows = []
+    DIM row = []
     DIM cur$ = ""
     DIM quoted = FALSE
+    DIM was_quoted = FALSE
+    DIM row_text$ = ""
     DIM q$ = CHR$(34)
-    DIM chars = -line$
+    DIM nl$ = CHR$(10)
+    DIM chars = -REPLACE$(text$, CHR$(13), "")
+    DIM n = LEN(chars)
     DIM k = 0
-    FOR k = 0 TO LEN(chars)
-        DIM ch$ = sep$
-        IF k < LEN(chars) THEN ch$ = chars[k]
+    FOR k = 0 TO n
+        DIM ch$ = nl$
+        IF k < n THEN ch$ = chars[k]
         DIM after$ = ""
-        IF k + 1 < LEN(chars) THEN after$ = chars[k + 1]
+        IF k + 1 < n THEN after$ = chars[k + 1]
         IF quoted ANDALSO ch$ = q$ ANDALSO after$ = q$ THEN
             cur$ = cur$ + q$
             k = k + 1
         ELSEIF quoted ANDALSO ch$ = q$ THEN
             quoted = FALSE
-        ELSEIF quoted THEN
+        ELSEIF quoted ANDALSO k < n THEN
             cur$ = cur$ + ch$
         ELSEIF ch$ = q$ THEN
             quoted = TRUE
-        ELSEIF ch$ = sep$ THEN
-            DIM plain = REGEX.FINDALL("^-?[0-9]+([.][0-9]+)?$", cur$)
-            IF LEN(plain) > 0 THEN
-                PUSH(out, VAL(cur$))
+            was_quoted = TRUE
+        ELSEIF ch$ = sep$ ORELSE ch$ = nl$ THEN
+            IF was_quoted THEN
+                PUSH(row, cur$)
             ELSE
-                PUSH(out, cur$)
+                DIM num$ = NUMBER$(cur$, decimal$)
+                IF num$ = "" THEN
+                    PUSH(row, cur$)
+                ELSE
+                    PUSH(row, VAL(num$))
+                ENDIF
             ENDIF
+            row_text$ = row_text$ + cur$
             cur$ = ""
+            was_quoted = FALSE
+            IF ch$ = nl$ THEN
+                IF LEN(row) > 1 ORELSE TRIM$(row_text$) <> "" THEN
+                    PUSH(rows, row)
+                ENDIF
+                row = []
+                row_text$ = ""
+            ENDIF
         ELSE
             cur$ = cur$ + ch$
         ENDIF
     NEXT k
-    RETURN out
+    RETURN rows
+ENDFUNC
+
+' The fields of one CSV line, with quoted fields that hold the
+' separator or doubled quotes; numbers with a decimal point.
+EXPORT FUNC CSV_FIELDS(line$, sep$)
+    DIM rows = CSV_ROWS(line$, sep$, ".")
+    IF LEN(rows) = 0 THEN RETURN []
+    RETURN rows[0]
+ENDFUNC
+
+' The decimal mark that goes with a separator: a comma with ";", as
+' German Excel writes its CSV files, a point otherwise.
+EXPORT FUNC DECIMAL$(sep$)
+    IF sep$ = ";" THEN RETURN ","
+    RETURN "."
 ENDFUNC
 
 ' A CSV file written as a workbook with one sheet "Data" and a frozen
 ' header row. Answers the number of rows below the header.
 EXPORT FUNC CSV_TO_XLSX(src$, dest$, sep$)
     DIM enc$ = TXTENCODING$(src$)
-    DIM text$ = REPLACE$(TXTREADER$(src$, enc$), CHR$(13), "")
-    DIM lines = SPLIT(text$, CHR$(10))
-    DIM filled = FILTER(LAMBDA l$ -> TRIM$(l$) <> "", lines)
-    DIM rows = SELECT(LAMBDA USE(sep$) l$ -> CSV_FIELDS(l$, sep$), _
-        filled)
+    DIM text$ = TXTREADER$(src$, enc$)
+    DIM rows = CSV_ROWS(text$, sep$, DECIMAL$(sep$))
     DIM wb = XLSX.NEW()
     DIM sheet = XLSX.SHEET(wb, "Data", rows)
     XLSX.FREEZE(sheet, 1)

@@ -62,7 +62,9 @@ The module holds the rules, the lock and the work on each file:
    prints *Another run is working on the folder* and ends. `RELEASE`
    removes the file when the work is done. If a run is stopped halfway,
    by a crash or a shutdown, its lock stays behind. That is why the
-   lock holds the time: a lock older than 30 minutes is taken over.
+   lock holds the time: a lock older than 30 minutes is taken over,
+   and so is a lock without a readable time, which a crash while
+   writing it leaves behind.
 
 3. **Files that are still arriving.** A large file is copied into the
    folder over several seconds. A run that picks it up halfway would
@@ -80,15 +82,19 @@ The module holds the rules, the lock and the work on each file:
    first rule that fits, which is why the catch-all rule `*` comes
    last.
 
-5. **The CSV conversion.** `CSV_FIELDS` reads a line character by
+5. **The CSV conversion.** `CSV_ROWS` reads the text character by
    character, so a quoted field like `"Weber; Sohn & Co"` keeps its
-   semicolon, and two quotes in a row stand for one. A field made of
-   digits with an optional decimal point becomes a number, which lets
-   Excel add up the column. `CSV_TO_XLSX` reads the file in the
-   encoding `TXTENCODING$` finds, so a CSV that German Excel saved in
-   ANSI keeps its umlauts. It drops the empty lines with a `FILTER`,
-   splits the others with a `SELECT` over `CSV_FIELDS` and writes the
-   rows as a sheet.
+   semicolon, two quotes in a row stand for one, and a cell that
+   holds a line break, as Excel writes a cell typed with Alt+Enter,
+   stays one cell. `NUMBER$` decides which fields are numbers, so
+   Excel can add up the column: with `;` as the separator the comma
+   is the decimal mark, as German Excel writes `4,50` and `1.234,56`.
+   A field with a leading zero, such as the postcode `01067` or the
+   article number `00123`, stays text, and so does a number of more
+   than 15 digits, which Excel could not hold exactly. `CSV_TO_XLSX`
+   reads the file in the encoding `TXTENCODING$` finds, so a CSV that
+   German Excel saved in ANSI keeps its umlauts, and writes the rows
+   as a sheet.
 
 6. **Never lose a file.** `FreePath$` adds ` (2)` to a name that is
    already taken in the target folder, so a second `orders.csv` on the
@@ -193,7 +199,11 @@ the old name without its extension. An empty `rename` keeps the names.
   program, or the target folder is not writable. The file stays and is
   tried again on the next run.
 - **Every row is one long field in the workbook**: the CSV file uses a
-  different separator. Set `separator` in `work.conf`.
+  different separator. Set `separator` in `work.conf`; with `,` the
+  point is the decimal mark.
+- **Prices are text in the workbook**: the separator is not `;` but
+  the prices are written with a decimal comma. Set `separator = ";"`
+  and export the CSV with semicolons.
 
 > **Balance dividend**
 > About 20 minutes a week of renaming, converting and moving, and files
