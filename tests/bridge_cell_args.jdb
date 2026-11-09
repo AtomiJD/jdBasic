@@ -1,0 +1,55 @@
+' A cell of an array whose kind the compiler does not know, handed to a
+' builtin that runs in the VM (PATH.JOIN$ and its kin), keeps its kind:
+' a text cell arrives as text. Checked in the shapes programs use: a
+' literal list, a copy, a FILTER result, a loop index, a value from a
+' function, a list in a map, and a call inside a FUNC.
+
+DIM fails = 0
+
+SUB CHKS(what$, got$, want$)
+    IF got$ <> want$ THEN
+        PRINT "FAIL: "; what$; " = "; got$; ", expected "; want$
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+FUNC Names()
+    RETURN ["app.log", "web.log"]
+ENDFUNC
+
+FUNC JoinedIn$(items, k)
+    RETURN PATH.BASENAME$(PATH.JOIN$("logs", items[k]))
+ENDFUNC
+
+DIM sep$ = "\"
+IF OS.GETOS$() <> "WINDOWS" THEN sep$ = "/"
+
+DIM names = ["app.log", "web.log"]
+CHKS("literal list", PATH.JOIN$("x", names[0]), "x" + sep$ + "app.log")
+
+DIM copied = names
+CHKS("a copy", PATH.JOIN$("x", copied[1]), "x" + sep$ + "web.log")
+
+DIM kept = FILTER(LAMBDA f$ -> LEN(f$) > 0, names)
+DIM k = 0
+DIM joined = []
+FOR k = 0 TO LEN(kept) - 1
+    PUSH(joined, PATH.JOIN$("x", kept[k]))
+NEXT k
+CHKS("a FILTER result in a loop", JOIN(joined, ","), _
+    "x" + sep$ + "app.log,x" + sep$ + "web.log")
+
+DIM made = Names()
+CHKS("a list from a function", PATH.BASENAME$(PATH.JOIN$("x", made[1])), "web.log")
+
+DIM box = {"files": ["a.txt", "b.txt"]}
+DIM inner = box{"files"}
+CHKS("a list from a map", PATH.EXT$(inner[0]), ".txt")
+
+CHKS("inside a FUNC", JoinedIn$(names, 1), "web.log")
+
+DIM nums = [3, 4]
+CHKS("a number cell stays a number", STR$(PATH.JOIN$("x", STR$(nums[0])) = "x" + sep$ + "3"), "TRUE")
+
+IF fails = 0 THEN PRINT "bridge_cell_args: all passed"
+IF fails > 0 THEN END 1

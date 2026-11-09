@@ -18062,6 +18062,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // An IIF arm answers whatever it holds: a cell read keeps its kind.
             if (upper == "IIF" && i > 0 && expr.args[i] && expr.args[i]->kind == ExprKind::INDEX)
                 hint = JD_TAG_RUNTIME;
+            // A builtin without a native binding runs in the VM, which takes
+            // every argument with its tag: a cell read keeps its kind, so a
+            // text cell of an untyped array arrives as text, not as a number.
+            if (rit_h == runtime_funcs.end() && hint == -1 &&
+                expr.args[i] && expr.args[i]->kind == ExprKind::INDEX)
+                hint = JD_TAG_RUNTIME;
             ScopedLeafTag _lt(this, hint);
             arg_cache.push_back(codegen_expr(*expr.args[i]));
         }
