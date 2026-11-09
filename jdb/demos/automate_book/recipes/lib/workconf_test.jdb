@@ -45,11 +45,16 @@ DIM ansi$ = PATH.JOIN$(enc_dir$, "ansi.csv")
 TXTWRITER ansi$, "name,city" + CHR$(10) + "Müller,Köln" + CHR$(10), FALSE, "cp1252"
 DIM bom$ = PATH.JOIN$(enc_dir$, "bom.csv")
 TXTWRITER bom$, "name,city" + CHR$(10) + "Müller,Köln" + CHR$(10), FALSE, "utf-8-bom"
+DIM temp_csv$ = PATH.JOIN$(PATH.DIRNAME$(MKTEMP$("x")), "csv*.csv")
+DIM copies_before = LEN(FILE.LIST(temp_csv$))
 DIM ansi_rows = WORKCONF.READ_CSV(ansi$, ",", TRUE, ["STRING", "STRING"])
 TESTKIT.EQ(ansi_rows[0][0], "Müller", "an ANSI CSV keeps its umlauts")
 TESTKIT.EQ(ansi_rows[0][1], "Köln", "in every cell")
 DIM bom_rows = WORKCONF.READ_CSV(bom$, ",", TRUE, ["STRING", "STRING"])
 TESTKIT.EQ(bom_rows[0][0], "Müller", "a CSV with a BOM as well")
-TESTKIT.EQ(LEN(FILE.LIST(PATH.JOIN$(enc_dir$, "*"))), 2, "and no copy is left behind there")
+TESTKIT.EQ(LEN(FILE.LIST(temp_csv$)), copies_before, "and no copy is left behind")
+KILL ansi$
+KILL bom$
+RMDIR enc_dir$
 
 TESTKIT.REPORT()
