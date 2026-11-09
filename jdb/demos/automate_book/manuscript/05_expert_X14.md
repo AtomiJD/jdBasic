@@ -98,9 +98,13 @@ only when both are empty:
 4. **The search.** `TRAIL.SCAN` walks through the folder and its sub
    folders and reads every file that ends in `.jdb`, `.toml`, `.conf`,
    `.ini`, `.json`, `.txt`, `.bat`, `.cmd` or `.ps1`. A line counts when
-   a word like *password*, *pwd*, *secret*, *token* or *api_key* is
-   followed by `=` or `:` and a value in quotes. The report shows the
-   line with every quoted value replaced by stars.
+   a word like *password*, *Passwort*, *pwd*, *secret*, *token* or
+   *api_key* is followed by `=` or `:` and a value, in quotes or not:
+   `password=Summer2026` in an INI file, `set PASSWORD=...` in a batch
+   file, `"apiKey": "..."` in JSON and `Pwd=...` in a connection string
+   all count, and so does the word after `/user:name` of `net use`. In
+   a `.jdb` file a bare name after `=` is a variable, not a password.
+   The report shows the line with every such value replaced by stars.
 5. **Signing.** `--init-audit` makes a random key of 32 bytes and
    stores it as `AutomateWork/audit-key`. From then on the job server
    finds it and calls `AUDIT.APPEND` after each run. Every line is a
@@ -196,8 +200,8 @@ names = ["vpn", "ticket-token"]
   `AUTOMATEWORK_MAIL`, which helps on a computer where the job runs
   under an account that has no stored credentials.
 - **More words for the search.** The list of words is the text
-  `names$` in `LEAKY`. To find connection strings as well, add
-  `|connstr` before its closing bracket.
+  `words$` in `LEAKY` and in `MASK$`. To find a word of your own, such
+  as `credential`, add `|credential` to both.
 
 ### When it goes wrong
 

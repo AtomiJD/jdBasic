@@ -37,20 +37,55 @@ EXPORT FUNC NEW_KEY$()
 ENDFUNC
 
 ' The line with every quoted value replaced by stars.
-EXPORT FUNC MASK$(line$)
+' Values without quotes after a password name, and the word after
+' /user:name, become stars as well.
+EXPORT FUNC MASK$(txt$)
     DIM q$ = CHR$(34)
     DIM quoted$ = q$ + "[^" + q$ + "]+" + q$
-    RETURN REGEX.REPLACE$(quoted$, line$, q$ + "****" + q$)
+    DIM out$ = REGEX.REPLACE$(quoted$, txt$, q$ + "****" + q$)
+    DIM words$ = "password|passwd|passwort|kennwort|pwd|pass|secret"
+    DIM names$ = "(?:" + words$ + "|token|api_?key)"
+    DIM bare$ = "([^\s;#" + q$ + "'(),*]+)"
+    DIM pat$ = names$ + "[a-z_$]*\s*[=:]\s*" + bare$
+    DIM found = REGEX.FINDALL(pat$, LCASE$(out$))
+    DIM user_pat$ = "/user:\S+\s+([^\s/]+)"
+    found = APPEND(found, REGEX.FINDALL(user_pat$, LCASE$(out$)))
+    DIM k = 0
+    FOR k = 0 TO LEN(found) - 1
+        DIM v$ = found[k][0]
+        DIM at = INSTR(LCASE$(out$), v$)
+        IF at >= 0 THEN
+            out$ = LEFT$(out$, at) + "****" + MID$(out$, at + LEN(v$))
+        ENDIF
+    NEXT k
+    RETURN out$
 ENDFUNC
 
-' TRUE when a line sets a password, secret, token or key to a value.
-EXPORT FUNC LEAKY(line$)
+' TRUE when a line sets a password, secret, token or key to a value:
+' in quotes or not, as a JSON key, in a connection string (Pwd=...)
+' or after /user: of net use. In a jdBasic program (code TRUE) a bare
+' name after = is a variable, not a password.
+EXPORT FUNC LEAKY(txt$, code = FALSE)
     DIM q$ = CHR$(34)
-    DIM names$ = "(?:password|passwd|pwd|pass|secret|token|api_?key)"
-    DIM value$ = q$ + "[^" + q$ + "]+" + q$
-    DIM pat$ = names$ + "[a-z_$]*\s*[=:]\s*" + value$
-    DIM hits = REGEX.FINDALL(pat$, LCASE$(line$))
-    RETURN LEN(hits) > 0
+    DIM low$ = LCASE$(txt$)
+    DIM words$ = "password|passwd|passwort|kennwort|pwd|pass|secret"
+    DIM names$ = "(?:" + words$ + "|token|api_?key)"
+    DIM quoted$ = q$ + "[^" + q$ + "]+" + q$ + "|'[^']+'"
+    DIM bare$ = "[^\s;#" + q$ + "'(),{}]+(?=$|[\s;#,'" + q$ + "])"
+    DIM key$ = names$ + "[a-z_$]*" + q$ + "?\s*[=:]\s*"
+    IF LEN(REGEX.FINDALL(key$ + "(?:" + quoted$ + ")", low$)) > 0 THEN
+        RETURN TRUE
+    ENDIF
+    DIM loose = REGEX.FINDALL(key$ + "(" + bare$ + ")", low$)
+    DIM k = 0
+    FOR k = 0 TO LEN(loose) - 1
+        DIM v$ = loose[k][0]
+        DIM a_name = REGEX.MATCH("^[a-z_][a-z0-9_.]*\$?$", v$)
+        DIM worded = REGEX.MATCH(".*[a-z].*", v$)
+        IF worded ANDALSO NOT (code ANDALSO a_name) THEN RETURN TRUE
+    NEXT k
+    IF code THEN RETURN FALSE
+    RETURN LEN(REGEX.FINDALL("/user:\S+\s+[^\s/]+", low$)) > 0
 ENDFUNC
 
 ' The lines of a text that look like a written down secret, as maps
@@ -58,14 +93,15 @@ ENDFUNC
 EXPORT FUNC LEAKS(text$, file$)
     DIM out = []
     DIM lines = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    DIM code = LCASE$(PATH.EXT$(file$)) = ".jdb"
     DIM k = 0
     FOR k = 0 TO LEN(lines) - 1
-        DIM line$ = lines[k]
-        IF LEAKY(line$) THEN
+        DIM txt$ = lines[k]
+        IF LEAKY(txt$, code) THEN
             DIM hit AS MAP
             hit{"file"} = file$
             hit{"line"} = k + 1
-            hit{"text"} = TRIM$(MASK$(line$))
+            hit{"text"} = TRIM$(MASK$(txt$))
             PUSH(out, hit)
         ENDIF
     NEXT k
@@ -116,16 +152,16 @@ EXPORT FUNC SUMMARY(entries, from$)
     DIM out AS MAP
     DIM k = 0
     FOR k = 0 TO LEN(entries) - 1
-        DIM e = entries[k]
-        DIM at$ = e{"at"}
-        IF at$ >= from$ ANDALSO MAP.EXISTS(e, "job") THEN
-            DIM name$ = e{"job"}
+        DIM ent = entries[k]
+        DIM at$ = ent{"at"}
+        IF at$ >= from$ ANDALSO MAP.EXISTS(ent, "job") THEN
+            DIM name$ = ent{"job"}
             DIM row AS MAP
             row{"runs"} = 0
             row{"fails"} = 0
             IF MAP.EXISTS(out, name$) THEN row = out{name$}
             row{"runs"} = row{"runs"} + 1
-            IF NOT e{"ok"} THEN row{"fails"} = row{"fails"} + 1
+            IF NOT ent{"ok"} THEN row{"fails"} = row{"fails"} + 1
             row{"last"} = at$
             out{name$} = row
         ENDIF
@@ -149,10 +185,10 @@ EXPORT FUNC REPORT_LINES(check, summary)
     FOR j = 0 TO LEN(names) - 1
         DIM name$ = names[j]
         DIM row = summary{name$}
-        DIM line$ = "  " + name$ + ": " + STR$(row{"runs"}) + " runs"
+        DIM txt$ = "  " + name$ + ": " + STR$(row{"runs"}) + " runs"
         DIM f$ = STR$(row{"fails"})
-        IF row{"fails"} > 0 THEN line$ = line$ + ", " + f$ + " failed"
-        PUSH(out, line$ + ", last " + row{"last"})
+        IF row{"fails"} > 0 THEN txt$ = txt$ + ", " + f$ + " failed"
+        PUSH(out, txt$ + ", last " + row{"last"})
     NEXT j
     RETURN out
 ENDFUNC
