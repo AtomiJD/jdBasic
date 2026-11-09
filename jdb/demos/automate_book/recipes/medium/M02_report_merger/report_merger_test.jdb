@@ -1,7 +1,8 @@
 ' Report Merger: three reports in a folder, one with an extra row, one
 ' with a text cell; the totals add up by the first column, the missing
 ' person is named, an odd header is noticed, and the workbook reads
-' back with a sheet per person.
+' back with a sheet per person; columns in another order add up by
+' name, an empty workbook is left out, and sheet names stay apart.
 
 IMPORT TESTKIT, MERGER, XLSX
 
@@ -22,7 +23,8 @@ Report("ben.xlsx", [head, ["Beta", 6, 120, "late"], _
 Report("cleo.xlsx", [head, ["Alpha", 3, 75, ""], ["", "", "", ""]])
 
 TESTKIT.SUITE("reading")
-DIM reports = MERGER.REPORTS(folder$, "")
+DIM empty = []
+DIM reports = MERGER.REPORTS(folder$, "", empty)
 TESTKIT.EQ(LEN(reports), 3, "every workbook in the folder")
 TESTKIT.EQ(reports[1]{"person"}, "ben", "named after its file")
 TESTKIT.EQARRAY(MERGER.MISSING(reports, ["Anna", "Ben", "Dora"]), _
@@ -54,8 +56,34 @@ TESTKIT.EQ(MERGER.SHEET_NAME$("a/b:c*d?e[f]"), "a_b_c_d_e_f_", _
 
 TESTKIT.SUITE("an odd report")
 Report("dan.xlsx", [["Project", "Hours"], ["Alpha", 1]])
-DIM more = MERGER.REPORTS(folder$, "")
+DIM more = MERGER.REPORTS(folder$, "", empty)
 TESTKIT.EQARRAY(MERGER.ODD_HEADERS(more), ["dan"], "other columns")
+
+TESTKIT.SUITE("columns in another order")
+KILL out$
+Report("erin.xlsx", [["Project", "Costs", "Hours", "Note"], ["Beta", 99.99, 2, ""]])
+DIM empty_book = XLSX.NEW()
+DIM blank = XLSX.SHEET(empty_book, "Sheet1", [])
+XLSX.WRITE(PATH.JOIN$(folder$, "blank.xlsx"), empty_book)
+DIM left_out = []
+DIM mixed = MERGER.REPORTS(folder$, "", left_out)
+TESTKIT.EQARRAY(left_out, ["blank.xlsx"], "an empty workbook is left out and named")
+TESTKIT.EQARRAY(MERGER.ODD_HEADERS(mixed), ["dan"], "another order is not odd")
+DIM mt = MERGER.TOTALS(mixed)
+TESTKIT.NEAR(mt[2][1], 12, 0.0001, "Beta's hours by the column name")
+TESTKIT.NEAR(mt[2][2], 299.99, 0.0001, "and its costs")
+
+TESTKIT.SUITE("sheet names")
+DIM used AS MAP
+TESTKIT.EQ(MERGER.UNIQUE_NAME$("Total", used), "Total", "the first name as it is")
+TESTKIT.EQ(MERGER.UNIQUE_NAME$("total", used), "total (2)", "the same name in another case gets a number")
+DIM long1$ = MERGER.UNIQUE_NAME$("Projektleitung Nord-Ost Region 1", used)
+DIM long2$ = MERGER.UNIQUE_NAME$("Projektleitung Nord-Ost Region 2", used)
+TESTKIT.EQ(long1$, "Projektleitung Nord-Ost Region", "cut to 31 without the space at the end")
+TESTKIT.EQ(long2$, "Projektleitung Nord-Ost Reg (2)", "and the second one stays apart")
+TESTKIT.ISTRUE(LEN(long2$) <= 31, "within 31 characters")
+TESTKIT.EQ(MERGER.SHEET_NAME$("a\b"), "a_b", "a backslash is replaced too")
+TESTKIT.EQ(MERGER.SHEET_NAME$("   "), "Sheet", "a name of spaces becomes Sheet")
 
 OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
 TESTKIT.REPORT()

@@ -55,24 +55,30 @@ The module `MERGER` reads, compares, adds up and writes:
    in name order and reads each one with `XLSX.READ`. The person is
    the file name without `.xlsx`. Files that start with `~$` are the
    lock files Excel leaves while a workbook is open; they are skipped.
+   A workbook without rows, saved by mistake, is left out and named.
 3. **Who is missing.** `MISSING` turns the reports into a list of
    their names in small letters with `SELECT`, and keeps with `FILTER`
    the people of the `team` list from the settings who are not in it.
    An empty list means that nobody is checked.
-4. **Odd columns.** `ODD_HEADERS` joins each header row into one text
-   and keeps with `FILTER` the reports whose text differs from the
-   first report's; a `SELECT` answers their names. A report with a
-   column more, a column less or the columns in another order is
-   named, and its numbers still count by position.
+4. **Odd columns.** `ODD_HEADERS` sorts the column names of each
+   header and joins them into one text, and keeps with `FILTER` the
+   reports whose text differs from the first report's; a `SELECT`
+   answers their names. A report with a column more or a column less
+   is named. The order of the columns does not matter.
 5. **Adding up.** `TOTALS` keeps a map from the first column to the
-   position of its row in the totals. The first time a project appears
-   it gets a row of empty cells; after that every number in a report
-   row is added to the cell in the same column. A text cell, such as
+   position of its row in the totals. `Positions` finds each column of
+   the first report in the header of the others by its name, so `Hours`
+   adds to `Hours` wherever it stands. The first time a project
+   appears it gets a row of empty cells; after that every number in a
+   report row is added to the cell of its column. A column the first
+   report does not have is left out. A text cell, such as
    the note, keeps the first text that is not empty.
 6. **Writing.** `WRITE` puts the totals on the sheet *Total*, freezes
    its header row, and adds one sheet per report. `SHEET_NAME$`
    replaces the characters Excel does not allow in sheet names and
-   cuts the name to 31 characters.
+   cuts the name to 31 characters. `UNIQUE_NAME$` makes sure no two
+   sheets share a name, in any case: a second `Total` or two long names
+   that are the same after the cut get ` (2)`.
 
 ### Run it
 
@@ -120,8 +126,9 @@ Changes in the code:
 
 - **Add up by two columns,** such as project and task: in `TOTALS`,
   build the key from both cells,
-  `DIM key$ = TRIM$("" + row[0]) + " / " + TRIM$("" + row[1])`.
-  Start a new row as `[row[0], row[1]]` instead of `[key$]`, and let
+  `key$ = TRIM$("" + row[pos[0]]) + " / " + TRIM$("" + row[pos[1]])`.
+  Start a new row as `[row[pos[0]], row[pos[1]]]` instead of `[key$]`,
+  and let
   both `FOR c = 1` loops start at 2.
 - **Leave out a sum row** that people add at the bottom of their
   report: in `TOTALS`, change `IF key$ <> "" THEN` to
@@ -130,7 +137,7 @@ Changes in the code:
   after the line that prints them, add `THROW "Fix the columns first."`
   inside the `IF`.
 - **The workbook in another folder,** such as a shared drive: change
-  `out$` in the program to `PATH.JOIN$("S:/Team", month$ + ".xlsx")`.
+  `out$` in the program to `PATH.JOIN$("S:/Team", ym$ + ".xlsx")`.
 - **Mail the workbook** to the head of the department: build a message
   with `MAIL.MESSAGE` and `MAIL.ATTACH(m, out$)` and put it into the
   outbox with `OUTBOX.PUT$`, following the outbox rule of this
@@ -150,6 +157,12 @@ Changes in the code:
 - **A project appears twice in the totals**: it was written two ways,
   such as `Alpha` and `Alpha `. Spaces at the ends are removed;
   any other difference makes a new row.
+- **"Empty, left out: Leer.xlsx"**: the workbook has no rows, often
+  a new file saved by mistake. Delete it or fill it in.
+- **"Other columns than the first report: Cleo"**: Cleo's report has
+  a column more or less. Only the columns of the first report are
+  added up, matched by name; a column with another name, such as
+  `Cost` for `Costs`, is not counted until it is renamed.
 - **Writing fails**: the workbook of the last run is still open in
   Excel, which locks the file. Close it and run again.
 

@@ -4,7 +4,8 @@
 ' kept on a sheet of its own.
 '
 '   IMPORT MERGER
-'   DIM reports = MERGER.REPORTS("reports/2026-10", "")
+'   DIM empty = []
+'   DIM reports = MERGER.REPORTS("reports/2026-10", "", empty)
 '   DIM totals = MERGER.TOTALS(reports)
 '   MERGER.WRITE("team.xlsx", reports, totals)
 
@@ -14,8 +15,9 @@ IMPORT XLSX
 
 ' The reports in a folder, sorted by file name: maps with "person"
 ' (the file name without .xlsx) and "rows" (the sheet tab$, or the
-' first sheet when tab$ is "").
-EXPORT FUNC REPORTS(folder$, tab$)
+' first sheet when tab$ is ""). A workbook whose sheet has no rows is
+' left out, and its file name goes into the list empty.
+EXPORT FUNC REPORTS(folder$, tab$, empty)
     DIM out = []
     DIM names = SORT(FILE.LIST(PATH.JOIN$(folder$, "*.xlsx")))
     DIM k = 0
@@ -29,8 +31,13 @@ EXPORT FUNC REPORTS(folder$, tab$)
             IF NOT MAP.EXISTS(book, sheet$) THEN
                 THROW file$ + " has no sheet " + sheet$
             ENDIF
-            DIM who$ = LEFT$(file$, LEN(file$) - 5)
-            PUSH(out, {"person": who$, "rows": book{sheet$}})
+            DIM rows = book{sheet$}
+            IF LEN(rows) = 0 THEN
+                PUSH(empty, file$)
+            ELSE
+                DIM who$ = LEFT$(file$, LEN(file$) - 5)
+                PUSH(out, {"person": who$, "rows": rows})
+            ENDIF
         ENDIF
     NEXT k
     RETURN out
@@ -43,17 +50,48 @@ EXPORT FUNC MISSING(reports, team)
         team)
 ENDFUNC
 
-' The reports whose header row differs from the first one's.
+' The column names of a header row, trimmed and in lower case.
+FUNC Names(header)
+    RETURN SELECT(LAMBDA h -> LCASE$(TRIM$("" + h)), header)
+ENDFUNC
+
+' The column names of a report in one text, in any order.
+FUNC ColumnSet$(report)
+    RETURN JOIN(SORT(Names(report{"rows"}[0])), "|")
+ENDFUNC
+
+' The reports that have other columns than the first one: a column
+' more or less, whatever the order.
 EXPORT FUNC ODD_HEADERS(reports)
     IF LEN(reports) = 0 THEN RETURN []
-    DIM first$ = LCASE$(JOIN(reports[0]{"rows"}[0], "|"))
+    DIM first$ = ColumnSet$(reports[0])
     DIM odd = FILTER(LAMBDA USE(first$) r -> _
-        LCASE$(JOIN(r{"rows"}[0], "|")) <> first$, DROP(1, reports))
+        ColumnSet$(r) <> first$, DROP(1, reports))
     RETURN SELECT(LAMBDA r -> r{"person"}, odd)
 ENDFUNC
 
+' Where each column of the first report stands in another report's
+' header, found by its name; -1 where that report has no such column.
+FUNC Positions(header, other)
+    DIM want = Names(header)
+    DIM have = Names(other)
+    DIM out = []
+    DIM c = 0
+    DIM j = 0
+    FOR c = 0 TO LEN(want) - 1
+        DIM at = -1
+        FOR j = 0 TO LEN(have) - 1
+            IF have[j] = want[c] ANDALSO at < 0 THEN at = j
+        NEXT j
+        PUSH(out, at)
+    NEXT c
+    RETURN out
+ENDFUNC
+
 ' The totals: the header of the first report, then one row per value
-' of the first column in the order it first appears. Number cells are
+' of the first column in the order it first appears. The columns are
+' matched by their names, so another order adds up all the same; a
+' column the first report does not have is left out. Number cells are
 ' added up, any other cell keeps the first value seen.
 EXPORT FUNC TOTALS(reports)
     IF LEN(reports) = 0 THEN RETURN []
@@ -66,9 +104,13 @@ EXPORT FUNC TOTALS(reports)
     DIM c = 0
     FOR k = 0 TO LEN(reports) - 1
         DIM rows = reports[k]{"rows"}
+        DIM pos = Positions(header, rows[0])
         FOR r = 1 TO LEN(rows) - 1
             DIM row = rows[r]
-            DIM key$ = TRIM$("" + row[0])
+            DIM key$ = ""
+            IF pos[0] >= 0 ANDALSO pos[0] < LEN(row) THEN
+                key$ = TRIM$("" + row[pos[0]])
+            ENDIF
             IF key$ <> "" THEN
                 IF NOT MAP.EXISTS(where, key$) THEN
                     where{key$} = LEN(out)
@@ -80,8 +122,9 @@ EXPORT FUNC TOTALS(reports)
                 ENDIF
                 DIM target = out[where{key$}]
                 FOR c = 1 TO n_cols - 1
-                    IF c < LEN(row) THEN
-                        DIM cell = row[c]
+                    DIM at = pos[c]
+                    IF at >= 0 ANDALSO at < LEN(row) THEN
+                        DIM cell = row[at]
                         DIM have = target[c]
                         IF TYPEOF(cell) <> "STRING" THEN
                             IF TYPEOF(have) = "STRING" THEN have = 0
@@ -98,23 +141,42 @@ EXPORT FUNC TOTALS(reports)
 ENDFUNC
 
 ' A sheet name Excel accepts: at most 31 characters, none of
-' : \ / ? * [ ].
+' : \ / ? * [ ], no space at the end, and never empty.
 EXPORT FUNC SHEET_NAME$(name$)
     DIM t$ = REGEX.REPLACE$("[:\\/?*\[\]]", name$, "_")
-    RETURN LEFT$(t$, 31)
+    t$ = RTRIM$(LEFT$(t$, 31))
+    IF t$ = "" THEN t$ = "Sheet"
+    RETURN t$
 ENDFUNC
 
-' Writes the workbook: "Total" first, then one sheet per report.
-' Answers the number of sheets.
+' A sheet name that no sheet in used has yet, in any case: the name,
+' or the name with " (2)", " (3)" ... shortened to fit 31 characters.
+' The name is added to used.
+EXPORT FUNC UNIQUE_NAME$(name$, used)
+    DIM base$ = SHEET_NAME$(name$)
+    DIM out$ = base$
+    DIM n = 1
+    DO WHILE MAP.EXISTS(used, LCASE$(out$))
+        n = n + 1
+        DIM tail$ = " (" + STR$(n) + ")"
+        out$ = RTRIM$(LEFT$(base$, 31 - LEN(tail$))) + tail$
+    LOOP
+    used{LCASE$(out$)} = TRUE
+    RETURN out$
+ENDFUNC
+
+' Writes the workbook: "Total" first, then one sheet per report, each
+' with a name of its own. Answers the number of sheets.
 EXPORT FUNC WRITE(path$, reports, totals)
     DIM wb = XLSX.NEW()
-    DIM s = XLSX.SHEET(wb, "Total", totals)
+    DIM used AS MAP
+    DIM s = XLSX.SHEET(wb, UNIQUE_NAME$("Total", used), totals)
     XLSX.COLUMN(s, "A", {"width": 24})
     XLSX.FREEZE(s, 1)
     DIM k = 0
     FOR k = 0 TO LEN(reports) - 1
         DIM rep = reports[k]
-        DIM tab$ = SHEET_NAME$(rep{"person"})
+        DIM tab$ = UNIQUE_NAME$(rep{"person"}, used)
         DIM ps = XLSX.SHEET(wb, tab$, rep{"rows"})
         XLSX.COLUMN(ps, "A", {"width": 24})
     NEXT k
