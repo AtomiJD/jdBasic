@@ -8,7 +8,7 @@
 
 EXPORT MODULE TIMESHEET
 
-IMPORT DOCX, MAIL
+IMPORT DOCX, MAIL, WORKCONF
 
 ' The events of the Time Tracker's log as rows [time, event, project].
 EXPORT FUNC EVENTS(log_path$)
@@ -16,7 +16,7 @@ EXPORT FUNC EVENTS(log_path$)
         THROW "No time log at " + log_path$
     ENDIF
     DIM kinds = ["STRING", "STRING", "STRING"]
-    RETURN CSVREADER(log_path$, ",", TRUE, kinds)
+    RETURN WORKCONF.READ_CSV(log_path$, ",", TRUE, kinds)
 ENDFUNC
 
 ' The blocks of work: maps with "project", "start" and "stop"

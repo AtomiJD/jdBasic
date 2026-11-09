@@ -401,7 +401,8 @@ EXPORT FUNC READ_TABLE(path$, sep$)
         DIM book = XLSX.READ(path$)
         RETURN book{sheets[0]}
     ENDIF
-    DIM text$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DIM enc$ = TXTENCODING$(path$)
+    DIM text$ = REPLACE$(TXTREADER$(path$, enc$), CHR$(13), "")
     DIM lines = SPLIT(text$, CHR$(10))
     DIM rows = []
     DIM k = 0

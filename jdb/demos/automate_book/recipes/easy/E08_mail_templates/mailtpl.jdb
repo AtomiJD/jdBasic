@@ -26,7 +26,8 @@ EXPORT FUNC TEMPLATE$(folder$, name$)
         DIM have$ = JOIN(NAMES(folder$), ", ")
         THROW "No template " + name$ + ". There are: " + have$
     ENDIF
-    RETURN REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DIM enc$ = TXTENCODING$(path$)
+    RETURN REPLACE$(TXTREADER$(path$, enc$), CHR$(13), "")
 ENDFUNC
 
 ' The values a template can use: me, signature, to, date, weekday and

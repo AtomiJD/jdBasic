@@ -24,7 +24,7 @@ DIM files = FILTER(LAMBDA USE(folder$) f$ -> _
 DIM k = 0
 FOR k = 0 TO LEN(files) - 1
     DIM path$ = PATH.JOIN$(folder$, files[k])
-    LOGSCAN.SCAN_TEXT(stats, TXTREADER$(path$))
+    LOGSCAN.SCAN_TEXT(stats, TXTREADER$(path$, TXTENCODING$(path$)))
 NEXT k
 
 DIM report$ = WORKCONF.PLURAL$(LEN(files), "file") + " in " + folder$

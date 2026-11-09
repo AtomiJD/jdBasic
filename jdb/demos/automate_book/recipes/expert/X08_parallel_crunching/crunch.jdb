@@ -51,7 +51,8 @@ ENDFUNC
 ' in which more than a tenth of the lines cannot be read. Categories
 ' count in small letters, so "Hotel " and "hotel" are one.
 EXPORT FUNC SUMMARY$(path$, sep$)
-    DIM text$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DIM enc$ = TXTENCODING$(path$)
+    DIM text$ = REPLACE$(TXTREADER$(path$, enc$), CHR$(13), "")
     DIM lines = SPLIT(text$, CHR$(10))
     DIM names = SELECT(LAMBDA h$ -> LCASE$(TRIM$(h$)), _
         SPLIT(lines[0], sep$))

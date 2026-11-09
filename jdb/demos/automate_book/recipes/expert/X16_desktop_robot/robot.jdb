@@ -138,7 +138,8 @@ EXPORT FUNC LOAD(path$)
         DIM missing$ = "no job file " + PATH.NORMALIZE$(path$)
         RETURN {"window": "", "steps": [], "errors": [missing$]}
     ENDIF
-    RETURN PARSE_JOB(TXTREADER$(path$), PATH.DIRNAME$(path$))
+    DIM enc$ = TXTENCODING$(path$)
+    RETURN PARSE_JOB(TXTREADER$(path$, enc$), PATH.DIRNAME$(path$))
 ENDFUNC
 
 ' One step as a line of a plan.

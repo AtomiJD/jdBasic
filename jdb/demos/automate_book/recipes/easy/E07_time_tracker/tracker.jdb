@@ -9,7 +9,7 @@
 
 EXPORT MODULE TRACKER
 
-IMPORT XLSX
+IMPORT XLSX, WORKCONF
 
 DIM gLF$ = CHR$(10)
 
@@ -44,7 +44,7 @@ ENDSUB
 EXPORT FUNC EVENTS(log_path$)
     IF NOT FILE.EXISTS(log_path$) THEN RETURN []
     DIM kinds = ["STRING", "STRING", "STRING"]
-    RETURN CSVREADER(log_path$, ",", TRUE, kinds)
+    RETURN WORKCONF.READ_CSV(log_path$, ",", TRUE, kinds)
 ENDFUNC
 
 ' The blocks of work the events describe: maps with "project",

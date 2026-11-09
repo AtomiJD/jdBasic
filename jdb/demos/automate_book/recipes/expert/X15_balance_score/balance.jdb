@@ -11,7 +11,7 @@
 
 EXPORT MODULE BALANCE
 
-IMPORT DT, ICAL, DF, SVG, TMPL, JDWEB, MAIL
+IMPORT DT, ICAL, DF, SVG, TMPL, JDWEB, MAIL, WORKCONF
 
 DIM gSources AS MAP
 DIM gRules AS MAP
@@ -82,7 +82,7 @@ ENDSUB
 EXPORT SUB ADD_LOG(totals, log_path$, rules, now)
     IF NOT FILE.EXISTS(log_path$) THEN RETURN
     DIM kinds = ["STRING", "STRING", "STRING"]
-    DIM rows = CSVREADER(log_path$, ",", TRUE, kinds)
+    DIM rows = WORKCONF.READ_CSV(log_path$, ",", TRUE, kinds)
     DIM offset = rules{"offset"}
     DIM open = -1.0
     DIM k = 0

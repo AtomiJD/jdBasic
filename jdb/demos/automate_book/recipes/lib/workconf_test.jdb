@@ -38,4 +38,18 @@ TESTKIT.EQ(WORKCONF.PLURAL$(3, "file"), "3 files", "more")
 TESTKIT.EQ(WORKCONF.PLURAL$(2, "entry", "entries"), "2 entries", "an irregular plural")
 TESTKIT.EQ(WORKCONF.PLURAL$(1, "entry", "entries"), "1 entry", "and its singular")
 
+TESTKIT.SUITE("files in their own encoding")
+DIM enc_dir$ = MKTEMP$("wcenc")
+MKDIR enc_dir$
+DIM ansi$ = PATH.JOIN$(enc_dir$, "ansi.csv")
+TXTWRITER ansi$, "name,city" + CHR$(10) + "Müller,Köln" + CHR$(10), FALSE, "cp1252"
+DIM bom$ = PATH.JOIN$(enc_dir$, "bom.csv")
+TXTWRITER bom$, "name,city" + CHR$(10) + "Müller,Köln" + CHR$(10), FALSE, "utf-8-bom"
+DIM ansi_rows = WORKCONF.READ_CSV(ansi$, ",", TRUE, ["STRING", "STRING"])
+TESTKIT.EQ(ansi_rows[0][0], "Müller", "an ANSI CSV keeps its umlauts")
+TESTKIT.EQ(ansi_rows[0][1], "Köln", "in every cell")
+DIM bom_rows = WORKCONF.READ_CSV(bom$, ",", TRUE, ["STRING", "STRING"])
+TESTKIT.EQ(bom_rows[0][0], "Müller", "a CSV with a BOM as well")
+TESTKIT.EQ(LEN(FILE.LIST(PATH.JOIN$(enc_dir$, "*"))), 2, "and no copy is left behind there")
+
 TESTKIT.REPORT()

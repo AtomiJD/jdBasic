@@ -60,7 +60,10 @@ ENDFUNC
 EXPORT FUNC TEXT$(path$)
     DIM ext$ = LCASE$(PATH.EXT$(path$))
     IF ext$ = ".pdf" THEN RETURN PDF.TEXT$(path$)
-    IF ext$ <> ".docx" THEN RETURN TXTREADER$(path$)
+    IF ext$ <> ".docx" THEN
+        DIM enc$ = TXTENCODING$(path$)
+        RETURN TXTREADER$(path$, enc$)
+    ENDIF
     DIM got = DOCX.READ(path$)
     DIM parts = got{"paragraphs"}
     DIM tables = got{"tables"}

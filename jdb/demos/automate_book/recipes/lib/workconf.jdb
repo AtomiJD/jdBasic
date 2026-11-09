@@ -84,3 +84,25 @@ EXPORT FUNC FOLDER$(cfg, key$, fallback$)
     DIM v$ = CONF.GET(cfg, key$, fallback$)
     RETURN EXPAND$(v$)
 ENDFUNC
+
+' The rows of a CSV file a person or another program wrote, as CSVREADER
+' reads them, in the file's own encoding: UTF-8 with or without a byte
+' order mark, UTF-16, or ANSI (Windows-1252) as Excel's "CSV" and older
+' programs save it. An ANSI or UTF-16 file is read through a UTF-8 copy.
+EXPORT FUNC READ_CSV(path$, sep$, has_header, kinds)
+    DIM enc$ = TXTENCODING$(path$)
+    IF enc$ = "utf-8" ORELSE enc$ = "utf-8-bom" THEN
+        RETURN CSVREADER(path$, sep$, has_header, kinds)
+    ENDIF
+    DIM copy$ = MKTEMP$("csv") + ".csv"
+    TXTWRITER copy$, TXTREADER$(path$, enc$)
+    DIM rows = []
+    TRY
+        rows = CSVREADER(copy$, sep$, has_header, kinds)
+    CATCH
+        KILL copy$
+        THROW ERRMSG$
+    ENDTRY
+    KILL copy$
+    RETURN rows
+ENDFUNC

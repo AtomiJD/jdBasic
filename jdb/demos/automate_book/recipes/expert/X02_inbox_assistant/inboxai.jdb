@@ -131,7 +131,8 @@ ENDFUNC
 ' A draft file read back as a map: approve, to, subject, in_reply_to,
 ' summary, source and body.
 EXPORT FUNC READ_DRAFT(path$)
-    DIM text$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DIM enc$ = TXTENCODING$(path$)
+    DIM text$ = REPLACE$(TXTREADER$(path$, enc$), CHR$(13), "")
     DIM cut = INSTR(text$, gLF$ + "---" + gLF$)
     IF cut < 0 THEN THROW "No line --- in " + path$
     DIM d AS MAP

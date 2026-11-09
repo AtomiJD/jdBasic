@@ -34,7 +34,7 @@ ENDFUNC
 ' A macro file read and checked: {"steps": [...], "errors": [...]}.
 EXPORT FUNC LOAD(path$)
     IF NOT FILE.EXISTS(path$) THEN THROW "MACROS: no file " + path$
-    RETURN INPUTKIT.PARSE(TXTREADER$(path$))
+    RETURN INPUTKIT.PARSE(TXTREADER$(path$, TXTENCODING$(path$)))
 ENDFUNC
 
 ' The macro named first on the command line: the first argument after

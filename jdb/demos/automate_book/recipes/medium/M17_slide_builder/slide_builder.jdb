@@ -44,7 +44,8 @@ IF LCASE$(RIGHT$(source$, 5)) = ".xlsx" THEN
     ENDIF
     got = SLIDES.FROM_ROWS(book{tab$}, base$)
 ELSE
-    got = SLIDES.FROM_OUTLINE(TXTREADER$(source$), base$)
+    DIM enc$ = TXTENCODING$(source$)
+    got = SLIDES.FROM_OUTLINE(TXTREADER$(source$, enc$), base$)
 ENDIF
 
 DIM errors = got{"errors"}

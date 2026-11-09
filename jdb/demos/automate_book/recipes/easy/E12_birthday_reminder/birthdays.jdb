@@ -10,7 +10,7 @@
 
 EXPORT MODULE BIRTHDAYS
 
-IMPORT DT, ICAL
+IMPORT DT, ICAL, WORKCONF
 
 FUNC Part(date$, from, n)
     RETURN CINT(MID$(date$, from, n))
@@ -54,7 +54,7 @@ ENDFUNC
 ' into the list problems.
 EXPORT FUNC CONTACTS(path$, problems)
     DIM kinds = ["STRING", "STRING", "STRING"]
-    DIM rows = CSVREADER(path$, ",", TRUE, kinds)
+    DIM rows = WORKCONF.READ_CSV(path$, ",", TRUE, kinds)
     DIM out = []
     DIM k = 0
     FOR k = 0 TO LEN(rows) - 1

@@ -45,7 +45,8 @@ ENDFUNC
 EXPORT FUNC READ$(folder$, snip$)
     DIM path$ = FileOf$(folder$, snip$)
     IF NOT FILE.EXISTS(path$) THEN THROW "No snippet called " + snip$
-    RETURN REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DIM enc$ = TXTENCODING$(path$)
+    RETURN REPLACE$(TXTREADER$(path$, enc$), CHR$(13), "")
 ENDFUNC
 
 ' Saves a snippet; an existing one is replaced only with replace.

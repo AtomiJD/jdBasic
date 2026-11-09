@@ -32,7 +32,10 @@ DIM target$ = "AutomateWork/ticket-token"
 DIM token$ = VAULT.FIND$(target$, token_var$, "Tracker token: ")
 
 DIM text$ = ""
-IF FILE.EXISTS(todo$) THEN text$ = TXTREADER$(todo$)
+IF FILE.EXISTS(todo$) THEN
+    DIM enc$ = TXTENCODING$(todo$)
+    text$ = TXTREADER$(todo$, enc$)
+ENDIF
 DIM api = TICKETSYNC.SESSION(tracker$, token$)
 TRY
     DIM tickets = TICKETSYNC.OPEN_TICKETS(api, user$)

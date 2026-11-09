@@ -9,7 +9,7 @@
 
 EXPORT MODULE DASHBOARD
 
-IMPORT JDWEB, SVG, TMPL, OUTBOX
+IMPORT JDWEB, SVG, TMPL, OUTBOX, WORKCONF
 
 DIM gSources AS MAP
 DIM gTemplate$ = ""
@@ -37,7 +37,7 @@ EXPORT FUNC HOURS(log_path$, monday$, now$)
     DIM rows = []
     IF FILE.EXISTS(log_path$) THEN
         DIM kinds = ["STRING", "STRING", "STRING"]
-        rows = CSVREADER(log_path$, ",", TRUE, kinds)
+        rows = WORKCONF.READ_CSV(log_path$, ",", TRUE, kinds)
     ENDIF
     DIM start$ = ""
     DIM project$ = ""
@@ -70,7 +70,8 @@ ENDFUNC
 ' The open items (lines starting "- [ ]") of a notes file.
 EXPORT FUNC TODO(file$)
     IF NOT FILE.EXISTS(file$) THEN RETURN []
-    DIM lines = SPLIT(TXTREADER$(file$), CHR$(10))
+    DIM enc$ = TXTENCODING$(file$)
+    DIM lines = SPLIT(TXTREADER$(file$, enc$), CHR$(10))
     DIM open = FILTER(LAMBDA l$ -> LEFT$(TRIM$(l$), 5) = "- [ ]", _
         lines)
     RETURN SELECT(LAMBDA l$ -> TRIM$(MID$(TRIM$(l$), 5, LEN(l$))), _

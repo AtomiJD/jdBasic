@@ -99,7 +99,7 @@ EXPORT FUNC MEETINGS(ics_path$, day$)
     IF NOT FILE.EXISTS(ics_path$) THEN
         THROW "No calendar file at " + ics_path$
     ENDIF
-    DIM text$ = TXTREADER$(ics_path$)
+    DIM text$ = TXTREADER$(ics_path$, TXTENCODING$(ics_path$))
     DIM names = NAMES(text$)
     DIM cal = ICAL.PARSE(text$)
     DIM noon = CDATE(day$ + " 12:00:00")
@@ -248,7 +248,8 @@ EXPORT FUNC ITEMS(notes_path$, meeting)
     DIM real = FILTER(LAMBDA s$ -> _
         LEN(s$) >= 3 ANDALSO INSTR(s$, "@") < 0, firsts)
     DIM words = APPEND([LCASE$(meeting{"title"})], real)
-    DIM text$ = REPLACE$(TXTREADER$(notes_path$), CHR$(13), "")
+    DIM enc$ = TXTENCODING$(notes_path$)
+    DIM text$ = REPLACE$(TXTREADER$(notes_path$, enc$), CHR$(13), "")
     DIM rows = SELECT(LAMBDA s$ -> TRIM$(s$), SPLIT(text$, gLF$))
     DIM open = FILTER(LAMBDA s$ -> STARTSWITH(s$, "- [ ]"), rows)
     DIM texts = SELECT(LAMBDA s$ -> TRIM$(MID$(s$, 5)), open)

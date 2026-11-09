@@ -18,7 +18,7 @@ DIM n_days = WORKCONF.VALUE(cfg, key$ + "days", 5)
 DIM ahead = WORKCONF.VALUE(cfg, key$ + "weeks_ahead", 1)
 
 IF NOT FILE.EXISTS(todo$) THEN THROW "No to-do list at " + todo$
-DIM tasks = PLANNER.PARSE(TXTREADER$(todo$))
+DIM tasks = PLANNER.PARSE(TXTREADER$(todo$, TXTENCODING$(todo$)))
 DIM monday = PLANNER.MONDAY(DATEADD("D", 7 * ahead, NOW()))
 DIM plan = PLANNER.PLAN(tasks, monday, n_days)
 PRINT plan{"title"}
