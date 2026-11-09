@@ -74,6 +74,32 @@ DIM guess = CLEANER.GUESS_KINDS(rows[0])
 TESTKIT.EQ(guess{"Date"} + " " + guess{"Amount"} + " " + guess{"Mail"}, "date number mail", "kinds guessed from the column names")
 TESTKIT.EQ(guess{"Customer"}, "text", "the rest is text")
 
+TESTKIT.SUITE("names that only look like a kind")
+DIM lookalike = CLEANER.GUESS_KINDS(["Datum", "Mandat", "Consumer", "Summe", "Mailing", "E-Mail", "Update"])
+TESTKIT.EQ(lookalike{"Datum"}, "date", "Datum is a date")
+TESTKIT.EQ(lookalike{"Mandat"}, "text", "Mandat holds no date")
+TESTKIT.EQ(lookalike{"Consumer"}, "text", "Consumer holds no sum")
+TESTKIT.EQ(lookalike{"Summe"}, "number", "Summe is a number")
+TESTKIT.EQ(lookalike{"Mailing"}, "text", "Mailing is no mail address")
+TESTKIT.EQ(lookalike{"E-Mail"}, "mail", "E-Mail is")
+TESTKIT.EQ(lookalike{"Update"}, "text", "Update holds no date")
+DIM odd_rows = [["Date of note", "Total"], ["call back", "12,50"], ["urgent", "3"], ["2026-10-05", "x"]]
+DIM checked = CLEANER.CHECK_KINDS(odd_rows, CLEANER.GUESS_KINDS(odd_rows[0]), {"day_first": TRUE, "decimal": "auto"})
+TESTKIT.EQ(checked{"Date of note"}, "text", "a date column whose cells are mostly text is text")
+TESTKIT.EQ(checked{"Total"}, "number", "a number column with one odd cell stays a number")
+TESTKIT.EQ(CLEANER.ISO_DATE$("6. Okt. 2026", TRUE), "2026-10-06", "a German month name")
+TESTKIT.EQ(CLEANER.ISO_DATE$("3. März 2026", TRUE), "2026-03-03", "also with an umlaut")
+DIM thousands = [["Betrag"], ["1.234"], ["2.500"], ["3,75"]]
+DIM by_col = CLEANER.CHECK_KINDS(thousands, CLEANER.GUESS_KINDS(thousands[0]), {"day_first": TRUE, "decimal": "auto"})
+TESTKIT.EQ(by_col{"Betrag"}, "number", "the column's own decimal mark decides, as in CLEAN")
+DIM bad_dates = {"rows": [["Date"], ["2026-10-05"], ["2026-02-30"]]}
+DIM bad_out$ = PATH.JOIN$(MKTEMP$("cleaner"), "bad.xlsx")
+MKDIR PATH.DIRNAME$(bad_out$)
+CLEANER.WRITE_XLSX({"rows": bad_dates{"rows"}, "problems": []}, [], bad_out$)
+TESTKIT.EQ(XLSX.READ(bad_out$){"Clean"}[2][0], "2026-02-30", "a day that does not exist stays text in a date column")
+KILL bad_out$
+RMDIR PATH.DIRNAME$(bad_out$)
+
 TESTKIT.SUITE("the workbook")
 DIM tmp$ = MKTEMP$("cleaner")
 MKDIR tmp$
@@ -82,6 +108,12 @@ CLEANER.WRITE_XLSX(result, similar, out$)
 TESTKIT.EQARRAY(XLSX.SHEETS(out$), ["Clean", "Problems", "Similar names"], "three sheets")
 DIM back = CLEANER.READ_TABLE(out$, ";")
 TESTKIT.EQ(back[1][2], 1234.5, "the clean sheet first, numbers as numbers")
+DIM date_cols = CLEANER.DATE_COLUMNS(clean)
+TESTKIT.EQ(LEN(date_cols), 1, "one column of dates")
+DIM dc = date_cols[0]
+DIM as_text = XLSX.READ(out$, TRUE){"Clean"}
+TESTKIT.EQ(as_text[1][dc], clean[1][dc], "written as an Excel date that reads back as the day")
+TESTKIT.ISTRUE(TYPEOF(XLSX.READ(out$){"Clean"}[1][dc]) <> "STRING", "and is a number in the cell")
 DIM book = XLSX.READ(out$)
 DIM sheet = book{"Problems"}
 DIM first = sheet[1]

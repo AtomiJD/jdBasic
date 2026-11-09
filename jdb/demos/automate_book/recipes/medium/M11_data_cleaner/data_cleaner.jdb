@@ -25,7 +25,8 @@ IF output$ = "" THEN
 ENDIF
 
 DIM rows = CLEANER.READ_TABLE(input$, sep$)
-DIM spec = CLEANER.GUESS_KINDS(rows[0])
+DIM guessed = CLEANER.GUESS_KINDS(rows[0])
+DIM spec = CLEANER.CHECK_KINDS(rows, guessed, opts)
 DIM given = WORKCONF.VALUE(cfg, key$ + "columns", spec)
 DIM cols = MAP.KEYS(given)
 DIM k = 0

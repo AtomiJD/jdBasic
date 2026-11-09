@@ -14,6 +14,10 @@ IMPORT DT, FUZZY, VALID, XLSX
 
 DIM gMonths = ["jan", "feb", "mar", "apr", "may", "jun", "jul", _
     "aug", "sep", "oct", "nov", "dec"]
+' The German names where they differ: Mai, Okt, Dez (Maerz is read
+' as mar once its umlaut is gone).
+DIM gMonthsDe = ["", "", "", "", "mai", "", "", "", "", "okt", _
+    "", "dez"]
 
 DIM gIso$ = "^([0-9]{4})[-/.]([0-9]{1,2})[-/.]([0-9]{1,2})"
 DIM gDmy$ = "^([0-9]{1,2})([./-])([0-9]{1,2})[./-]([0-9]{2,4})$"
@@ -24,7 +28,7 @@ DIM gNameDay$ = "^([a-z]{3})[a-z]*\.? ([0-9]{1,2}),? ([0-9]{4})$"
 FUNC MonthNo(s$)
     DIM k = 0
     FOR k = 0 TO 11
-        IF gMonths[k] = s$ THEN RETURN k + 1
+        IF gMonths[k] = s$ ORELSE gMonthsDe[k] = s$ THEN RETURN k + 1
     NEXT k
     RETURN 0
 ENDFUNC
@@ -44,8 +48,9 @@ ENDFUNC
 
 ' A date as YYYY-MM-DD from any of the forms exports use: an Excel
 ' serial number, 2026-10-05, 05.10.2026, 5/10/26, 5 Oct 2026 or
-' Oct 5, 2026. day_first reads 05/10 as the 5th of October. Answers
-' "" for a text that is no date.
+' Oct 5, 2026, also with German month names (6. Okt. 2026). day_first
+' reads 05/10 as the 5th of October. Answers "" for a text that is no
+' date.
 EXPORT FUNC ISO_DATE$(raw, day_first)
     IF TYPEOF(raw) <> "STRING" THEN
         DIM serial = FLOOR(raw)
@@ -53,7 +58,7 @@ EXPORT FUNC ISO_DATE$(raw, day_first)
         DIM t = DT.MAKE(1899, 12, 30) + serial * 86400
         RETURN DT.FMT$(t, "%Y-%m-%d", 0)
     ENDIF
-    DIM s$ = LCASE$(TRIM$(raw))
+    DIM s$ = REPLACE$(LCASE$(TRIM$(raw)), CHR$(195) + CHR$(164), "a")
     DIM g = REGEX.FINDALL(gIso$, s$)
     IF LEN(g) > 0 THEN
         RETURN Ymd$(VAL(g[0][0]), VAL(g[0][1]), VAL(g[0][2]))
@@ -207,16 +212,66 @@ EXPORT FUNC GUESS_KINDS(header)
     DIM c = 0
     FOR c = 0 TO LEN(header) - 1
         DIM col$ = "" + header[c]
+        ' The words of the name, so "Mandat" holds no "dat" and
+        ' "Consumer" no "sum": a word has to start with the hint.
         DIM low$ = LCASE$(col$)
+        DIM words$ = " " + REGEX.REPLACE$("[^a-z0-9]+", low$, " ")
         DIM kind$ = "text"
-        IF INSTR(low$, "dat") >= 0 THEN kind$ = "date"
-        DIM money$ = "amount|betrag|price|preis|sum|total"
-        IF LEN(REGEX.FINDALL(money$, low$)) > 0 THEN kind$ = "number"
-        IF INSTR(low$, "iban") >= 0 THEN kind$ = "iban"
-        IF INSTR(low$, "mail") >= 0 THEN kind$ = "mail"
+        IF INSTR(words$, " dat") >= 0 THEN kind$ = "date"
+        DIM money = [" amount", " betrag", " price", _
+            " preis", " sum", " total"]
+        DIM hits = FILTER(LAMBDA USE(words$) m$ -> _
+            INSTR(words$, m$) >= 0, money)
+        IF LEN(hits) > 0 THEN kind$ = "number"
+        IF INSTR(words$, " iban") >= 0 THEN kind$ = "iban"
+        IF INSTR(words$, " mail") >= 0 ORELSE _
+            INSTR(words$, " email") >= 0 THEN kind$ = "mail"
+        IF INSTR(words$, " mailing") >= 0 THEN kind$ = "text"
         spec{col$} = kind$
     NEXT c
     RETURN spec
+ENDFUNC
+
+' The kinds checked against the values: a column whose name looked
+' like a date, a number, an IBAN or a mail address keeps that kind
+' only when most of its filled cells are one; otherwise it is text, so
+' a name that only looks right fills the problem list with nothing.
+EXPORT FUNC CHECK_KINDS(rows, spec, opts)
+    DIM out AS MAP
+    DIM header = rows[0]
+    DIM c = 0
+    DIM r = 0
+    FOR c = 0 TO LEN(header) - 1
+        DIM col$ = "" + header[c]
+        DIM kind$ = "text"
+        IF MAP.EXISTS(spec, col$) THEN kind$ = spec{col$}
+        IF kind$ <> "text" ANDALSO kind$ <> "keep" THEN
+            ' The column's own decimal mark, as CLEAN finds it.
+            DIM one AS MAP
+            one{"day_first"} = opts{"day_first"}
+            one{"decimal"} = opts{"decimal"}
+            IF opts{"decimal"} = "auto" THEN
+                one{"decimal"} = COLUMN_DECIMAL$(rows, c)
+            ENDIF
+            DIM filled = 0
+            DIM fits = 0
+            FOR r = 1 TO LEN(rows) - 1
+                IF c < LEN(rows[r]) THEN
+                    DIM raw = rows[r][c]
+                    IF TRIM$("" + raw) <> "" THEN
+                        filled = filled + 1
+                        DIM res = CELL(raw, kind$, one)
+                        IF res{"problem"} = "" THEN fits = fits + 1
+                    ENDIF
+                ENDIF
+            NEXT r
+            IF filled > 0 ANDALSO fits * 2 < filled THEN
+                kind$ = "text"
+            ENDIF
+        ENDIF
+        out{col$} = kind$
+    NEXT c
+    RETURN out
 ENDFUNC
 
 ' A table cleaned: rows[0] holds the column names, spec maps a name to
@@ -368,10 +423,71 @@ FUNC WithHeader(head, rows)
     RETURN out
 ENDFUNC
 
-' The result as a workbook: Clean, Problems and Similar names.
+' The columns of a table whose filled cells are mostly dates written
+' YYYY-MM-DD, by their position.
+EXPORT FUNC DATE_COLUMNS(rows)
+    DIM out = []
+    IF LEN(rows) < 2 THEN RETURN out
+    DIM iso$ = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    DIM c = 0
+    DIM r = 0
+    FOR c = 0 TO LEN(rows[0]) - 1
+        DIM dates = 0
+        DIM others = 0
+        FOR r = 1 TO LEN(rows) - 1
+            DIM cell$ = ""
+            IF c < LEN(rows[r]) THEN cell$ = "" + rows[r][c]
+            IF REGEX.MATCH(iso$, cell$) THEN
+                dates = dates + 1
+            ELSEIF cell$ <> "" THEN
+                others = others + 1
+            ENDIF
+        NEXT r
+        IF dates > others THEN PUSH(out, c)
+    NEXT c
+    RETURN out
+ENDFUNC
+
+' The table with the cells of its date columns as Excel day numbers,
+' which a column format shows as dates that sort, filter and count;
+' a cell that is no date stays as it is.
+FUNC AsExcelDates(rows, cols)
+    DIM out = [rows[0]]
+    DIM day0 = DT.MAKE(1899, 12, 30)
+    DIM iso$ = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    DIM r = 0
+    DIM c = 0
+    FOR r = 1 TO LEN(rows) - 1
+        DIM row = []
+        FOR c = 0 TO LEN(rows[r]) - 1
+            DIM cell = rows[r][c]
+            DIM t = NONE
+            IF c IN cols ANDALSO REGEX.MATCH(iso$, "" + cell) THEN
+                t = DT.PARSE("" + cell)
+            ENDIF
+            IF TYPEOF(t) = "NONE" THEN
+                PUSH(row, cell)
+            ELSE
+                PUSH(row, (t - day0) / 86400)
+            ENDIF
+        NEXT c
+        PUSH(out, row)
+    NEXT r
+    RETURN out
+ENDFUNC
+
+' The result as a workbook: Clean, Problems and Similar names. Date
+' columns hold real Excel dates.
 EXPORT FUNC WRITE_XLSX(result, similar, path$)
     DIM wb = XLSX.NEW()
-    DIM clean = XLSX.SHEET(wb, "Clean", result{"rows"})
+    DIM rows = result{"rows"}
+    DIM cols = DATE_COLUMNS(rows)
+    DIM clean = XLSX.SHEET(wb, "Clean", AsExcelDates(rows, cols))
+    DIM k = 0
+    FOR k = 0 TO LEN(cols) - 1
+        XLSX.COLUMN(clean, cols[k] + 1, {"format": "yyyy-mm-dd", _
+            "width": 12})
+    NEXT k
     XLSX.FREEZE(clean, 1)
     DIM head = ["Row", "Column", "Value", "Problem"]
     DIM prob = WithHeader(head, result{"problems"})

@@ -18,7 +18,9 @@ nobody sees until the bank sends the payment back.
 The Data Cleaner reads the export, a CSV file or a workbook, and
 repairs what it can:
 
-- dates in any of the usual forms become ISO dates (`2026-10-05`);
+- dates in any of the usual forms, `6. Okt. 2026` included, become
+  real Excel dates shown as `2026-10-05`, which sort and filter by
+  time;
 - amounts with a decimal comma or point, thousands separators, a
   currency sign or a minus behind become real numbers;
 - spaces are tidied, IBANs are written in groups of four, mail
@@ -68,9 +70,12 @@ workbook:
    wants every cell exactly as written, a postcode with its leading
    zero included, so it reads the text itself.
 
-2. **One kind per column.** `GUESS_KINDS` looks at the column names:
-   a name with *dat* in it is a date, *Amount* or *Betrag* a number,
-   and so on. A `[data_cleaner.columns]` table in `work.conf` can
+2. **One kind per column.** `GUESS_KINDS` looks at the words of the
+   column names: a word that starts with *dat* is a date, *Amount* or
+   *Betrag* a number, and so on; *Mandat* or *Consumer* are not.
+   `CHECK_KINDS` then looks at the cells: a column keeps its kind only
+   when most of its filled cells fit it, so a name that merely looks
+   like a date does not fill the problem list. A `[data_cleaner.columns]` table in `work.conf` can
    overrule the guess for any column. Every column the cleaner does
    not know stays text, which means its spaces are tidied and nothing
    else.
@@ -221,6 +226,9 @@ The interesting changes are in the code:
 - **Too many similar names**: raise `similar` to 90. Names like *Weber
   AG* and *Weber KG* are different companies that differ in one
   letter, and a lower cutoff will pair them.
+- **A column is cleaned as the wrong kind**: the kind comes from its
+  name and its cells. Name the column in `[data_cleaner.columns]`
+  with the kind it has, `text` to leave it alone.
 - **Leading zeros are gone**: the column was guessed as a number. Set
   it to `keep` in `[data_cleaner.columns]`.
 
