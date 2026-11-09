@@ -52,7 +52,7 @@ The minutes (*Min.*) are the time each recipe gives back in a normal week, as it
 | X08 Parallel Crunching | 10 | by hand | POOL | {{page:X08 Parallel Crunching}} |
 | X09 Report Pipeline | 60 | weekly mon 07:00 | OUTBOX, LOGGER, SVG, DB, DF, DOCX, PDFGEN, MAIL, RETRY | {{page:X09 Report Pipeline}} |
 | X10 Let an AI Drive | 20 | by hand | CONF, OUTBOX, MAIL, LOGGER | {{page:X10 Let an AI Drive}} |
-| X11 Web Harvester | 45 | weekdays 07:00 | CONF, LOGGER, REQ, CACHE, RETRY, HTMLDOM | {{page:X11 Web Harvester}} |
+| X11 Web Harvester | 45 | weekdays 07:00 | CONF, LOGGER, REQ, CACHE, RETRY, HTMLDOM, XLSX | {{page:X11 Web Harvester}} |
 | X12 Tested Automations | 30 | weekly sun 20:00 | OUTBOX, MAIL, LOGGER | {{page:X12 Tested Automations}} |
 | X13 Health Checks and Alerts | 20 | every 15 minutes | JOBSTATE, OUTBOX, VAULT, DT, SCHED, METRICS, MAIL, RETRY | {{page:X13 Health Checks and Alerts}} |
 | X14 Secrets and Audit Trail | 10 | by hand | JOBSTATE, VAULT, AUDIT, SECRET | {{page:X14 Secrets and Audit Trail}} |

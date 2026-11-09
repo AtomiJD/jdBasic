@@ -32,7 +32,7 @@ The setup wizard writes `[user]` and `[paths]`, and `[mail]` when you give a mai
 |---|---|---|
 | `server` | the mail server, such as `smtps://mail.example.com:465` | OUTBOX |
 | `user` | your user name on the mail server | X14, OUTBOX |
-| `from` | the sender of every message; without it your name and address from `[user]` | OUTBOX |
+| `from` | the sender of every message; without it your name and address from `[user]` | M12, OUTBOX |
 | `outbox` | the folder the messages wait in | OUTBOX |
 | `starttls` | `true` when the server wants STARTTLS on port 587 | OUTBOX |
 | `send_with` | read by a program, not written by the wizard | OUTBOX |
@@ -217,6 +217,10 @@ For a key marked *see below*, add it to `[page_watcher]` yourself to change it; 
 | `prefix` | Start of every invoice number | text | `"RE-"` |
 | `format` | Invoice file: pdf or docx | text | `"pdf"` |
 | `vat_percent` | VAT in percent | number | `19` |
+| `tax_id` | read by the program, not asked by the wizard (see below) |  | `""` |
+| `period` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
+
+For a key marked *see below*, add it to `[invoice_generator]` yourself to change it; the default is the program's.
 
 ### M02 Report Merger: `[report_merger]`
 
@@ -262,6 +266,9 @@ For a key marked *see below*, add it to `[receipt_sorter]` yourself to change it
 | `away_kinds` | Kinds that mean away | list | `["Vacation", "Sick", "Training"]` |
 | `sheet` | Name of the sheet in the workbook | text | `"Plan"` |
 | `title` | Title of the plan | text | `"Team plan"` |
+| `work_days` | read by the program, not asked by the wizard (see below) |  | `[1, 2, 3, 4, 5]` |
+
+For a key marked *see below*, add it to `[shift_planner]` yourself to change it; the default is the program's.
 
 ### M06 Friday Status Mail: `[friday_status]`
 
@@ -508,6 +515,7 @@ For a key marked *see below*, add it to `[web_harvester]` yourself to change it;
 | `recipes` | Folder with the recipes to test | folder | `"~/Documents/AutomateWork/recipes"` |
 | `reports` | Folder for the test reports and the log | folder | `"~/Documents/AutomateWork/test reports"` |
 | `to` | Who gets the mail when a test fails (empty: you) | text | `""` |
+| `timeout_seconds` | Seconds a test may run before it is ended | number | `120` |
 
 ### X13 Health Checks and Alerts: `[health_checks]`
 
