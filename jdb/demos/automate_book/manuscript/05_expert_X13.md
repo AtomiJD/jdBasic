@@ -104,7 +104,10 @@ In the outbox: alert 2026-10-09 164501.eml
 A window lists the new problem. Fifteen minutes later the problem is
 still there, and the check prints it but stays silent. After the next
 backup works, one more alert follows: *AutomateWork: all clear*, with
-the backup under *Over now*.
+the backup under *Over now*. The subject says *all clear* only when
+nothing is open any more; while other problems remain it reads
+*AutomateWork: 1 over, 2 still open*, and the text names each open
+one.
 
 The numbers file starts like this:
 

@@ -46,7 +46,9 @@ SUB JobProblems(out, job, rec, now, offset, late_s)
     IF MAP.EXISTS(rec, "last_ok") THEN
         IF NOT rec{"last_ok"} THEN
             DIM ended$ = rec{"last_end"}
-            DIM why$ = rec{"last_error"}
+            ' Colour codes of the console are no text for a mail.
+            DIM colour$ = CHR$(27) + "\[[0-9;]*m"
+            DIM why$ = REGEX.REPLACE$(colour$, rec{"last_error"}, "")
             DIM t$ = name$ + " failed at " + ended$ + ": " + why$
             Add(out, "failed:" + name$, "failed", t$)
         ENDIF
@@ -123,7 +125,8 @@ EXPORT FUNC DIFF(alerts, problems, now)
     RETURN out
 ENDFUNC
 
-' The alert as text: new problems, then the ones that are over.
+' The alert as text: new problems, the ones that are over, and every
+' one that is still open.
 EXPORT FUNC TEXT$(change)
     DIM lines = []
     DIM fresh = change{"new"}
@@ -132,17 +135,32 @@ EXPORT FUNC TEXT$(change)
     lines = APPEND(lines, SELECT(LAMBDA p -> "  " + p{"text"}, fresh))
     IF LEN(gone) > 0 THEN PUSH(lines, "Over now:")
     lines = APPEND(lines, SELECT(LAMBDA g -> "  " + g{"text"}, gone))
-    PUSH(lines, "Still open: " + STR$(LEN(MAP.KEYS(change{"open"}))))
+    DIM open = change{"open"}
+    DIM keys = SORT(MAP.KEYS(open))
+    PUSH(lines, "Still open: " + STR$(LEN(keys)))
+    lines = APPEND(lines, SELECT(LAMBDA USE(open) k$ -> _
+        "  " + open{k$}{"text"}, keys))
     RETURN JOIN(lines, CHR$(10))
+ENDFUNC
+
+' The subject of the alert mail: the new problems first; without new
+' ones, what is over and what is still open; "all clear" only when
+' nothing is open any more.
+EXPORT FUNC SUBJECT$(change)
+    DIM n = LEN(change{"new"})
+    DIM still = LEN(MAP.KEYS(change{"open"}))
+    DIM over = LEN(change{"resolved"})
+    DIM head$ = "AutomateWork: "
+    IF n = 1 THEN RETURN head$ + "1 new problem"
+    IF n > 1 THEN RETURN head$ + STR$(n) + " new problems"
+    IF still = 0 THEN RETURN head$ + "all clear"
+    DIM over$ = STR$(over) + " over, "
+    RETURN head$ + over$ + STR$(still) + " still open"
 ENDFUNC
 
 ' The alert mail.
 EXPORT FUNC MESSAGE(from$, to$, change)
-    DIM n = LEN(change{"new"})
-    DIM subject$ = "AutomateWork: all clear"
-    IF n = 1 THEN subject$ = "AutomateWork: 1 new problem"
-    DIM n$ = STR$(n)
-    IF n > 1 THEN subject$ = "AutomateWork: " + n$ + " new problems"
+    DIM subject$ = SUBJECT$(change)
     DIM msg = MAIL.MESSAGE(from$, to$, subject$)
     MAIL.PLAIN(msg, TEXT$(change))
     RETURN msg

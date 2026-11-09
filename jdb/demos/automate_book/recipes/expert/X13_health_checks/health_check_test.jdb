@@ -39,7 +39,7 @@ ENDFUNC
 
 DIM jobs = [Job("backup", "daily 08:00"), Job("report", "daily 09:00"), Job("tidy", "daily 07:00")]
 DIM state AS MAP
-state{"backup"} = Rec(DT.MAKE(2026, 10, 2, 8, 0, 0, offset), FALSE, "exit 2: disk full")
+state{"backup"} = Rec(DT.MAKE(2026, 10, 2, 8, 0, 0, offset), FALSE, "exit 2: " + CHR$(27) + "[91mdisk full" + CHR$(27) + "[0m")
 state{"report"} = Rec(DT.MAKE(2026, 10, 1, 9, 0, 0, offset), TRUE, "")
 state{"tidy"} = Rec(DT.MAKE(2026, 10, 2, 7, 0, 0, offset), TRUE, "")
 
@@ -54,6 +54,7 @@ TESTKIT.SUITE("checks")
 DIM problems = HEALTH.CHECK(jobs, state, now, offset, facts)
 TESTKIT.EQ(LEN(problems), 3, "a failure, a late job and an old mail")
 TESTKIT.ISTRUE(INSTR(Find(problems, "failed:backup"), "disk full") >= 0, "the failure with its reason")
+TESTKIT.ISTRUE(INSTR(Find(problems, "failed:backup"), CHR$(27)) < 0, "without the colour codes of the console")
 TESTKIT.ISTRUE(INSTR(Find(problems, "late:report"), "09:00") >= 0, "the late job with the time it was due")
 TESTKIT.EQ(Find(problems, "late:tidy"), "", "a job that ran on time is fine")
 TESTKIT.ISTRUE(Find(problems, "outbox:invoice.eml") <> "", "a mail older than a day")
@@ -87,7 +88,10 @@ TESTKIT.ISTRUE(INSTR(text$, "Still open: 2") >= 0, "and how many are left")
 DIM msg = HEALTH.MESSAGE("lena@example.com", "lena@example.com", first)
 TESTKIT.EQ(msg{"subject"}, "AutomateWork: 3 new problems", "the subject counts them")
 DIM calm = HEALTH.MESSAGE("lena@example.com", "lena@example.com", third)
-TESTKIT.EQ(calm{"subject"}, "AutomateWork: all clear", "nothing new is all clear")
+TESTKIT.EQ(calm{"subject"}, "AutomateWork: 1 over, 2 still open", "nothing new but still open is not all clear")
+TESTKIT.ISTRUE(INSTR(text$, "Still open: 2" + CHR$(10) + "  ") >= 0, "and names the open ones")
+DIM all_fixed = HEALTH.DIFF(third{"open"}, [], now + 2700)
+TESTKIT.EQ(HEALTH.SUBJECT$(all_fixed), "AutomateWork: all clear", "all clear when nothing is open")
 
 TESTKIT.SUITE("numbers and sending")
 DIM prom$ = HEALTH.METRICS_TEXT$(jobs, state, problems, 30)
