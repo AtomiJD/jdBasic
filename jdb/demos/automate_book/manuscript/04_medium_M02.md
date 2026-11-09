@@ -9,7 +9,7 @@ the projects they worked on, the hours, the costs, a note. Jonas opens
 eight files, copies the rows into one workbook, sorts them by project,
 adds up the hours with a formula that he fixes each time because the
 row count changed, and then notices that one report is missing and
-another one has a column more than the rest.
+another one has one column more than the rest.
 
 ### What you get
 
@@ -57,13 +57,13 @@ The module `MERGER` reads, compares, adds up and writes:
    lock files Excel leaves while a workbook is open; they are skipped.
    A workbook without rows, saved by mistake, is left out and named.
 3. **Who is missing.** `MISSING` turns the reports into a list of
-   their names in small letters with `SELECT`, and keeps with `FILTER`
+   their names in lower case with `SELECT`, and keeps with `FILTER`
    the people of the `team` list from the settings who are not in it.
    An empty list means that nobody is checked.
 4. **Odd columns.** `ODD_HEADERS` sorts the column names of each
    header and joins them into one text, and keeps with `FILTER` the
    reports whose text differs from the first report's; a `SELECT`
-   answers their names. A report with a column more or a column less
+   answers their names. A report with an extra column or one missing
    is named. The order of the columns does not matter.
 5. **Adding up.** `TOTALS` keeps a map from the first column to the
    position of its row in the totals. `Positions` finds each column of
@@ -77,7 +77,7 @@ The module `MERGER` reads, compares, adds up and writes:
    its header row, and adds one sheet per report. `SHEET_NAME$`
    replaces the characters Excel does not allow in sheet names and
    cuts the name to 31 characters. `UNIQUE_NAME$` makes sure no two
-   sheets share a name, in any case: a second `Total` or two long names
+   sheets share a name, whatever the case of its letters: a second `Total` or two long names
    that are the same after the cut get ` (2)`.
 
 ### Run it

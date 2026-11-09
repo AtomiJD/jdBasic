@@ -53,17 +53,17 @@ The module knows the folder and the placeholders:
    missing name, by printing the usage and ending the program.
 
 2. **One file per snippet.** `FileOf$` turns a name into a file name in
-   the folder, always in small letters, so `Late` and `late` are the
+   the folder, always in lower case, so `Late` and `late` are the
    same snippet. `VALID_NAME` allows letters, German ones included,
    digits, `_` and `-` only. That keeps a name from reaching outside the folder: `..\boot`
-   is no snippet name. `WRITE` refuses to overwrite a snippet unless
+   is not a valid snippet name. `WRITE` refuses to overwrite a snippet unless
    you pass `--force`, so a typo in `add` does not cost you a text you
    spent care on.
 
 3. **Finding the placeholders.** `PLACEHOLDERS` asks `REGEX.FINDALL`
    for every `{{name}}` in the text. The pattern allows spaces inside
    the braces, so `{{ name }}` counts as well. A `SELECT` takes the
-   name out of each hit in small letters, and `UNIQUE` keeps each name
+   name out of each hit in lower case, and `UNIQUE` keeps each name
    once, in the order it first appears, which is the order `list`
    shows.
 

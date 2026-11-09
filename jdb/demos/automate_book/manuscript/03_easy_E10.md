@@ -88,12 +88,12 @@ min_size_kb = 1
 
 ### When it goes wrong
 
-- **It takes long**: the first run on a full disk reads many files. Leave
+- **It takes a long time**: the first run on a full disk reads many files. Leave
   out folders such as program installations, or raise `min_size_kb`.
 - **"No file is stored twice"**: check the folder names in `folders`; a
   folder that does not exist is skipped without a message.
 - **Files with the same name are missing**: the recipe compares content,
-  not names. Two different versions of `budget.xlsx` are no duplicates.
+  not names. Two different versions of `budget.xlsx` are not duplicates.
 
 > **Balance dividend**
 > About 10 minutes a week, and the afternoon a full disk would cost.

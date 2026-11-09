@@ -295,7 +295,7 @@ of February. The core language has date functions too (`NOW`,
 `DATEADD`, `DATEDIFF`, `FORMAT_DATE`), which E01 uses for the age of a
 download; DT is the choice when a date comes from a file.
 
-### DF: tables, and the CSV builtins
+### DF: tables, and the CSV built-ins
 
 Many chores are about tables: a list of hours, an export from the
 accounting program, the contacts of a team. A *data frame* is a table
@@ -346,7 +346,7 @@ Office: 3.5 hours
 ```
 
 For a small file you do not always need a whole data frame. jdBasic has
-three builtins for CSV that need no `IMPORT` at all. `CSVWRITER` writes
+three built-ins for CSV that need no `IMPORT` at all. `CSVWRITER` writes
 a two-dimensional array, with an optional header row; `CSVHEADER` reads
 the names in the first line; `CSVREADER` reads the rows back. The last
 argument of `CSVREADER` names the type of each column, so that a date
@@ -515,7 +515,7 @@ A PDF looks the same on every screen and every printer, which makes it
 the right format for a page you print for your desk, a card you hang in
 the meeting room or an invoice you send. PDFGEN writes PDF files
 without any other program. You place text, lines, boxes, pictures and
-tables on a page by position in millimetres, measured from the top left
+tables on a page by position in millimetres, measured from the top-left
 corner. Paragraphs wrap and tables continue on a new page by
 themselves.
 
@@ -811,13 +811,13 @@ with `EXPORT` and carries a comment saying what it does. Searching the
 file for `EXPORT FUNC` lists them all. Reading the code of a function
 is the surest way to find out what it does with an unusual input.
 
-The third is the self test. Every library has a test in the folder
+The third is the self-test. Every library has a test in the folder
 `tests/jdlibs` of the jdBasic sources, named after the library, such
 as `xlsx_selftest.jdb`. A test is a list of small, exact examples, each
 with the answer it expects: often the quickest way to see how a call
 behaves at its edges.
 
-For the builtins, the functions that need no `IMPORT` such as
+For the built-ins, the functions that need no `IMPORT` such as
 `CSVREADER`, `FILE.MOVE` or `DIR$`, the reference is the file
 `help.txt` next to `jdbasic.exe`, and the command `HELP` followed by a
 name shows the same text in the jdBasic console.

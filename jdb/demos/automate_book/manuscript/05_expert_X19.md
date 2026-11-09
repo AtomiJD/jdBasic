@@ -50,7 +50,7 @@ line, the outbox works as Chapter 4 describes.
 > mail. Then Outlook shows a question the first time, and a run at
 > seven in the morning waits for an answer nobody gives. Ask IT
 > whether that warning is on before you schedule the recipe. On a
-> computer of your own with an up to date virus scanner, Outlook
+> computer of your own with an up-to-date virus scanner, Outlook
 > usually asks nothing: the test send for this book went through
 > without a question, attachment, umlauts and euro sign included.
 

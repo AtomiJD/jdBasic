@@ -151,7 +151,7 @@ refused it. The text after the colon is Windows' own and comes in the
 language of your Windows; this one is from a German system and says
 that the start time is not valid. The usual cause is a time that does not exist, such
 as `25:00`. Correct the schedule on the third page of the wizard and
-set up again. If the message speaks of missing rights, your company
+set up again. If the message speaks of missing permissions, your company
 does not let you add tasks; ask IT, or start the recipes under the
 job server of X01, which needs only one task at logon.
 
@@ -239,7 +239,7 @@ Error #99: Parse error at line 1: expected variable name, got 'STEP'
 `STEP` belongs to the FOR loop, and jdBasic does not accept it as the
 name of a variable. The same happens with other words of the
 language, such as `STOP`, `LINE`, `ON` or `CLS`. Choose another name:
-`step_size`, `stop_time`. The names of builtin functions such as
+`step_size`, `stop_time`. The names of built-in functions such as
 `COUNT` are allowed for variables, but not for a `FUNC` of your own
 (Appendix A, "Names you cannot use").
 
@@ -338,7 +338,7 @@ line 1
 
 `DATEADD` takes the unit first, then the number, then the date:
 `DATEADD("D", 1, day)`. With the date first, jdBasic reads the date as
-the unit. When a builtin answers with a message about a strange
+the unit. When a built-in answers with a message about a strange
 value, compare the order of its arguments with the reference.
 
 ### 24. Dates and numbers in other forms

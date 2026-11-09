@@ -24,7 +24,7 @@ repairs what it can:
 - amounts with a decimal comma or point, thousands separators, a
   currency sign or a minus behind become real numbers;
 - spaces are tidied, IBANs are written in groups of four, mail
-  addresses in small letters;
+  addresses in lower case;
 - rows that appear twice are dropped.
 
 What it cannot repair it lists: a date that does not exist, an IBAN

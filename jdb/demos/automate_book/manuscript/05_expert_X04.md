@@ -176,7 +176,7 @@ token_env = "TICKETS_TOKEN"
 ### When it goes wrong
 
 - **"answered 401" or "403"**: the token is wrong, expired, or lacks
-  the right to change tickets. Create a new one with write access and
+  permission to change tickets. Create a new one with write access and
   put it into the variable again.
 - **"transport failure"**: the address in `tracker` is wrong, or the
   tracker is only reachable inside the company network. Try the

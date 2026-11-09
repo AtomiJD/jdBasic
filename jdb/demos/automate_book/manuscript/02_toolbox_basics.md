@@ -104,7 +104,7 @@ Names may contain letters, digits and the underscore, and capital and
 small letters count as the same: `Total` and `total` are one variable.
 A few names belong to jdBasic itself. Words of the language such as
 `TEXT`, `LINE` or `STEP` cannot be names at all, and the name of a
-builtin such as `COUNT` or `SORT` cannot be the name of a function of
+built-in such as `COUNT` or `SORT` cannot be the name of a function of
 your own; a program that tries stops with an error. Appendix A lists
 them. The recipes use names such as `n_files` or `line_text$` instead.
 

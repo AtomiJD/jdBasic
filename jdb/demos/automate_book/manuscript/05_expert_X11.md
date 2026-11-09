@@ -90,8 +90,8 @@ The module holds the politeness and the reading:
    `Allow: /shop/prices`, the prices are allowed and the cart is not.
    `MATCHES` knows the two wildcards of `robots.txt`: `*` for any
    characters and a final `$` for the end of the address.
-4. `Pause` waits until the last request to the same site is long
-   enough ago: `delay_seconds`, or the `Crawl-delay` the site asks
+4. `Pause` waits until enough time has passed since the last request
+   to the same site: `delay_seconds`, or the `Crawl-delay` the site asks
    for in its `robots.txt` when that is longer. `TICK()` gives the
    time in milliseconds.
 5. `GetOnce` sends one request. A busy answer (429 or 5xx) or no

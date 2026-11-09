@@ -19,7 +19,7 @@ Three tools in one program:
 - **A safe place for secrets.** Passwords and keys go into the Windows
   Credential Manager, where Windows keeps them encrypted for your
   login. A recipe reads them from there; no file of yours holds them.
-- **A search for written down secrets.** One command reads every
+- **A search for secrets written into files.** One command reads every
   script and settings file under your work folder and lists each line
   that sets a password, a token or a key, with the value masked.
 - **An audit trail that shows changes.** The job server (X01) writes
@@ -51,7 +51,7 @@ The main program is a set of commands, one block each:
 
 <!-- include recipes/expert/X14_secrets_audit/secrets_audit.jdb -->
 
-The module names the secrets, searches for written down ones and sums
+The module names the secrets, searches for those written into files and sums
 up the trail:
 
 <!-- include recipes/expert/X14_secrets_audit/trail.jdb -->
@@ -95,8 +95,8 @@ only when both are empty:
    pointer to an entry. The module reads the size and the address of
    the secret out of it, copies the bytes and gives the memory back to
    Windows with `CredFree`.
-4. **The search.** `TRAIL.SCAN` walks through the folder and its sub
-   folders and reads every file that ends in `.jdb`, `.toml`, `.conf`,
+4. **The search.** `TRAIL.SCAN` walks through the folder and its
+   subfolders and reads every file that ends in `.jdb`, `.toml`, `.conf`,
    `.ini`, `.json`, `.txt`, `.bat`, `.cmd` or `.ps1`. A line counts when
    a word like *password*, *Passwort*, *pwd*, *secret*, *token* or
    *api_key* is followed by `=` or `:` and a value, in quotes or not:

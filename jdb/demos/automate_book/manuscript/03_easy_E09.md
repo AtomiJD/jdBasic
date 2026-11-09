@@ -44,7 +44,7 @@ writes the Word file with the DOCX library:
 ### How it works
 
 1. `ICAL.PARSEFILE` reads the calendar file. `ICAL.EXPAND` turns it into
-   the list of meetings in the next days, a weekly series included, in
+   the list of meetings in the coming days, a weekly series included, in
    the order they start.
 2. `NEXT_MEETING` takes the first one that has not started yet and leaves
    out all-day entries such as holidays, which are not meetings.
@@ -98,8 +98,8 @@ utc_offset = 2
   your team drive.
 - **Look further ahead**: `lookahead_days = 14` finds the next meeting
   even after a holiday.
-- **Your own clock**: `utc_offset` is the difference to UTC in hours. Leave
-  it out and the program takes the one of your computer.
+- **Your own clock**: `utc_offset` is the difference from UTC in hours. Leave
+  it out and the program uses the one of your computer.
 
 ### When it goes wrong
 

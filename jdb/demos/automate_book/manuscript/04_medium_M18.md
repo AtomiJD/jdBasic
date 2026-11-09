@@ -35,7 +35,7 @@ Chapter 2:
 > **Watch out**
 > The recipe needs Excel installed and licensed on this computer, the
 > desktop version of Microsoft Office. It runs under your own account,
-> so it reaches the data sources with your rights, and it runs from
+> so it reaches the data sources with your permissions, and it runs from
 > the Task Scheduler while you are logged in, not as a Windows
 > service. A connection that asks for a password each time stops the
 > refresh; store the password in the connection or ask IT for a
@@ -118,7 +118,7 @@ mail_to = "sales-team@example.com"
 ### When it goes wrong
 
 - **"No workbook at ..."**: the path in `workbook` is wrong, or the
-  drive is not connected at that hour. Check it in the Explorer.
+  drive is not connected at that hour. Check it in Explorer.
 - **"no sheet named Summery"**: a typing mistake in `sheets`. The
   other sheets are still made into PDFs.
 - **"Excel Refresh stopped: weekly sales.xlsx: it is open somewhere

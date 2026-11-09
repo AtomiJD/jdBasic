@@ -28,7 +28,7 @@ train;450880.00
 total;1802890.00
 ```
 
-A file that is no export does not stop the run. It is named in the
+A file that is not an export does not stop the run. It is named in the
 summary and in the log, and the other files are added up. The columns
 are found by their names, in any order, and an amount may be written
 `1234.50`, `1234,50`, `1.234,50` or `1,234.50`. A line that cannot be
@@ -113,7 +113,7 @@ on 8 workers, report into C:/Reports
 ```
 
 The real run prints the summary that also goes into the log. Here one
-file of the folder, `readme.csv`, is a note and no export:
+file of the folder, `readme.csv`, is a note and not an export:
 
 ```
 parallel_crunching.exe
@@ -128,7 +128,7 @@ server of X01 and the cockpit of X06 show it as failed, although the
 report was written.
 
 How much the workers gain depends on the work per file. For two
-thousand exports of 300 lines each, on a notebook with eight threads,
+thousand exports of 300 lines each, on a laptop with eight threads,
 the compiled program needed 4.2 seconds on one core and 1.5 seconds
 with eight workers. The interpreter needed about six seconds either
 way.

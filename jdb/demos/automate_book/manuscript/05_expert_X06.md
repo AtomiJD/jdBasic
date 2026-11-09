@@ -83,7 +83,7 @@ the log:
    the label. `CLEAN$` takes the colour codes out of the output, which
    jdBasic puts around its error messages for the console.
 
-6. **The self test.** With `--selftest` the cockpit creates a made-up
+6. **The self-test.** With `--selftest` the cockpit creates a made-up
    work folder with two automations, a Downloads Butler that answers a
    dry run and a backup that always fails, and drives its own window
    with a timer. It ticks the box, clicks both buttons by setting their
@@ -103,7 +103,7 @@ an automation would do. Untick it to run it for real; the cockpit asks
 once more before it starts. *Refresh* reads the log again, which shows
 runs of other cockpit windows too.
 
-The self test needs the jdbasic program, since it starts the made-up
+The self-test needs the jdbasic program, since it starts the made-up
 automations with it:
 
 ```

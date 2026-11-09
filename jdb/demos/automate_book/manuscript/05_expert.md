@@ -1,6 +1,6 @@
 # Chapter 5: Expert: Fifteen Programs That Run on Their Own
 
-Lena works in the controlling department of a company with four
+Lena works in the finance department of a company with four
 hundred people. Over two years she has written a dozen small programs
 for her team: one fetches the bookings every night, one builds the
 Monday report, one sorts the invoices that arrive by mail. They work.

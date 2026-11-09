@@ -5,7 +5,7 @@
 This appendix lists the part of jdBasic that the programs in this book
 use, and nothing else. Each entry gives the call with its arguments in
 the order jdBasic expects them, what it answers, and the trap that
-catches people most often. The full reference with every builtin is
+catches people most often. The full reference with every built-in is
 `doc/languages.md` in the jdBasic folder; `jdbasic --help` and the
 `HELP` command of the interactive mode show it too.
 
@@ -16,7 +16,7 @@ Three rules hold everywhere:
   is the one exception: it counts from 1 unless you ask otherwise.
 - **A name that ends in `$` holds text.** `name$` is always a string;
   functions whose name ends in `$` answer one.
-- **Names are not case sensitive.** `Total`, `TOTAL` and `total` are
+- **Names are not case-sensitive.** `Total`, `TOTAL` and `total` are
   the same variable.
 
 ## Programs and modules
@@ -354,7 +354,7 @@ fifteen came up while the book was written; `DIM stop = 1` stops with
 `CLS`, `END`, `FOR`, `INPUT`, `LINE`, `LOOP`, `NEXT`, `ON`, `PRINT`,
 `STEP`, `STOP`, `TEXT`, `THEN`, `TYPE`, `USE`
 
-The names of builtins are allowed for variables, but not for your own
+The names of built-ins are allowed for variables, but not for your own
 functions: `FUNC Count(x)` stops with "FUNC COUNT collides with the
 builtin function COUNT". Names that caught the recipes are `COUNT`,
 `DAY`, `JOIN`, `LEFT`, `LEN`, `MAX`, `MIN`, `MONTH`, `NOW`, `PLACE`,

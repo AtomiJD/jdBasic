@@ -88,7 +88,7 @@ state_file = "~/Documents/AutomateWork/logs/break_reminder.txt"
   release without Forms. Install the release of Chapter 2.
 - **A reminder during a presentation**: Windows' focus assist hides most
   messages; switch it on while you present.
-- **Reminders right after another**: two schedules start the program.
+- **Reminders one right after another**: two schedules start the program.
   Remove one in the wizard.
 
 > **Balance dividend**

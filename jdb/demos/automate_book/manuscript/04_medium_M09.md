@@ -168,7 +168,7 @@ The interesting changes are in the code:
 - **The file is in use**: some programs keep their log open. Reading it
   usually works anyway. If not, point the recipe at the rotated files of
   the days before (`app.log.1`, `app-2026-10-04.log`) with the pattern.
-- **Very large logs take long**: the recipe reads each file whole. For
+- **Very large logs take a long time**: the recipe reads each file whole. For
   logs of many megabytes, schedule it at night and keep only the files
   of the last days in the folder.
 

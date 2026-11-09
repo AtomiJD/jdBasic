@@ -202,7 +202,7 @@ Changes in the code:
 
 - **"The sheet has no column price"**: a column was renamed or the
   first row is not the header. The five names must appear in the first
-  row, in any case.
+  row, in upper or lower case.
 - **Numbers jumped**: the counter in `last_number.txt` is the only
   memory of the generator. Do not delete it; to start over, write the
   number you want to come before the next one into it.

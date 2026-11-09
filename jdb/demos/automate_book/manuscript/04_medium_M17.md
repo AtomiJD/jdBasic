@@ -38,7 +38,7 @@ An outline is a text file with a few kinds of lines:
 - `# Title` starts the title slide; the plain line below it is its
   subtitle.
 - `## Title` starts a new slide.
-- `- point` is a bullet point, and `  - point` with two blanks in front
+- `- point` is a bullet point, and `  - point` with two spaces in front
   one level further in.
 - `![text](chart.png)` puts a picture on the slide, from the folder of
   the outline.

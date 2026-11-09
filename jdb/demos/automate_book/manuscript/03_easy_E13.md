@@ -38,7 +38,7 @@ Clear out the shared drive
 ```
 
 A day before the colon puts the task on that day; `Mon`, `monday` and
-`Monday` all work. A `!` marks a task important. A line without a day
+`Monday` all work. A `!` marks a task as important. A line without a day
 belongs to the whole week and goes into the column "Any day".
 
 ### The program

@@ -12,7 +12,7 @@ after three months had one thing in common: they decided what the time
 was for before it arrived. Mia leaves on time on Wednesdays and
 Fridays. Jonas holds the one-to-one talks he used to cancel. Lena took
 back her Thursday mornings for the analysis work that brought her into
-controlling in the first place.
+finance in the first place.
 
 None of that is impressive, and none of it needs to be. The point of
 automating a chore is not to fill the hour with more work at a higher

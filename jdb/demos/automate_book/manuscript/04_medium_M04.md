@@ -56,7 +56,7 @@ report:
    `"fuel = Travel"`. `RULES` splits each one at the `=` into a word
    and a category and drops texts without one. `CATEGORY$` takes the
    first rule whose word stands in the file name as a word of its own,
-   in any case: `rail` fits `rail ticket` and `rail-pass`, not
+   in upper or lower case: `rail` fits `rail ticket` and `rail-pass`, not
    `trailer`. A name no rule fits goes to `Other`.
 2. **Date and amount.** `DATE$` and `AMOUNT` look for the patterns
    with `REGEX.FINDALL`, which answers the groups of each match. A date

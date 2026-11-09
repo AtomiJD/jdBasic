@@ -85,7 +85,7 @@ max_file_mb = 200
 - **"No such folder"**: a folder in the list was renamed or the drive is
   not plugged in. The archive is not written, so nothing half done is
   left behind.
-- **The program takes long or runs out of memory**: the archive is built
+- **The program takes a long time or runs out of memory**: the archive is built
   in memory. Back up the large folders in a second recipe run of their
   own, or lower `max_file_mb`.
 - **A second archive in one minute** is called `backup ... 1630_2.zip`,

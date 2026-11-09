@@ -67,7 +67,7 @@ The module plans the work first and then talks to Office:
    `USE(kind$)` hands the lambda the program it looks for.
    `CREATEOBJECT` starts the program, and `OFFICEKIT.PREPARE` hides
    its window and turns off its questions.
-4. `OFFICEKIT.SAVE_PDF` opens the document read only, so it is never
+4. `OFFICEKIT.SAVE_PDF` opens the document read-only, so it is never
    changed, saves it as PDF and closes it again. A document that
    Office cannot open is named in a `skipped` line and the others go
    on.

@@ -8,11 +8,11 @@ Jonas's team orders its supplies through an old order program. It has
 no import and no interface for other programs, so every order is typed
 in by hand: open a new order, enter the supplier, the article and the
 person who ordered it, save. Twenty orders a week, each one the same
-dozen clicks and key strokes in the same places.
+dozen clicks and keystrokes in the same places.
 
 ### What you get
 
-You write down the clicks and key strokes once, in a small text file
+You write down the clicks and keystrokes once, in a small text file
 called a macro. The Macro Player plays it: it brings the window to the
 front, types, presses keys and clicks where you said. It writes a log
 line per step and stops at the first step that goes wrong, so it never
@@ -57,8 +57,8 @@ line and answers the steps, or a list of mistakes with their lines:
 
 ### How it works
 
-1. `NAME_ARG$` takes the first word on the command line that is no
-   option, and `PATH$` turns it into a file of the macro folder. A
+1. `NAME_ARG$` takes the first word on the command line that is not
+   an option, and `PATH$` turns it into a file of the macro folder. A
    name with a folder in it is refused, so a macro always comes from
    your folder.
 2. `LOAD` reads the file and `INPUTKIT.PARSE` checks it. A command it

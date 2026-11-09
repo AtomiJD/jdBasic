@@ -58,7 +58,7 @@ a window:
    game. The test uses that to play a game twice and compare.
 4. The main loop asks `INKEY$` for the last key, turns an arrow into a
    direction with `ARCADE.KEY_DIR$`, and draws the board again. `TICK`
-   gives the milliseconds since the game began; the difference to the
+   gives the milliseconds since the game began; the difference from the
    length of the break is the clock at the top right.
 5. When no move can change the board any more, `ARCADE.CAN_MOVE` says
    so, and Enter starts a new game. When the clock reaches zero, the
@@ -117,7 +117,7 @@ best_file = "~/Documents/AutomateWork/arcade_best.txt"
 - **The arrow keys do nothing**: another window has the focus. Click
   into the game window once.
 - **The numbers look plain**: the game looks for the fonts Arial and
-  Arial Bold of Windows and falls back to the built in font when they
+  Arial Bold of Windows and falls back to the built-in font when they
   are missing. It still works the same.
 
 > **Balance dividend**

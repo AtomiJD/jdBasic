@@ -5,7 +5,7 @@
 ### The chore
 
 Every Monday at nine the head of Lena's department wants to know what
-the team spent last week, per cost center, against the budget. The
+the team spent last week, per cost centre, against the budget. The
 numbers are in the bookings database that the finance system fills
 every night. Lena opens it in Excel, filters the week, builds a pivot
 table, copies it into last week's Word file, draws the bars for the
@@ -19,11 +19,11 @@ nobody notices until the meeting.
 Every Monday at seven the pipeline reads last week's bookings from the
 database and writes three files:
 
-- a chart of spent and budget per cost center as SVG, the picture
+- a chart of spent and budget per cost centre as SVG, the picture
   format every browser and the intranet show,
-- a Word file with the table and a list of the cost centers over
+- a Word file with the table and a list of the cost centres over
   budget, for anyone who wants to add a comment,
-- a PDF page with the table and a bar per cost center that shows how
+- a PDF page with the table and a bar per cost centre that shows how
   much of its budget is used, red when it is over.
 
 It puts the mail with the PDF and the Word file attached into the
@@ -35,7 +35,7 @@ outbox, and every step leaves a line in a log.
 
 The recipe needs the forms release of Chapter 2, whose
 `jdbasic --version` lists *SQLite*. It reads a SQLite database, the
-kind of single file database many programs use to keep their data,
+kind of single-file database many programs use to keep their data,
 with two tables:
 
 | Table | Columns |
@@ -95,8 +95,8 @@ The module holds every step as a function of its own:
    `DB.WHERE` and question marks; the dates are filled in as values,
    so no text from outside ever becomes part of the SQL.
 4. **The data frame.** `REPORT` puts the rows into a frame with
-   `DF.FROMROWS` and adds them up per cost center with `DF.GROUPBY`.
-   A cost center with a budget and no bookings in the week still gets
+   `DF.FROMROWS` and adds them up per cost centre with `DF.GROUPBY`.
+   A cost centre with a budget and no bookings in the week still gets
    a row with 0, so the report always has the same lines.
 5. **Text for people.** `MONEY$` writes amounts with two decimals and a
    comma every three digits. `TABLE_ROWS` turns the frame into rows of
@@ -195,7 +195,7 @@ for a month, you can let the job server send them too.
   DB.CLOSE(h)
   ```
 
-- **A warning line of your own.** `OVER_BUDGET` lists cost centers
+- **A warning line of your own.** `OVER_BUDGET` lists cost centres
   above 100 percent. To hear about them a little earlier, compare with
   `90` instead and change the words in `OverLine$` to *close to its
   budget*.

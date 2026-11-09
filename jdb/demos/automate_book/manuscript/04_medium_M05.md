@@ -5,7 +5,7 @@
 ### The chore
 
 Jonas leads a team of nine. The plan of who works the early shift, who
-is on vacation and who is at a training lives in an Excel file on the
+is on vacation and who is at a training course lives in an Excel file on the
 team drive. Everyone has their own copy of the truth: Ann writes her
 vacation into Outlook, Ben looks at the sheet once a month, and Cem
 asks in the chat whether Dora is in on Friday.
@@ -136,8 +136,8 @@ Monday to 7 for Sunday; a team that works on Saturdays adds the 6.
 Three changes in the code that teams ask for:
 
 - **Early shifts count as away from the office.** Add the kind to
-  `away_kinds` in `work.conf`; no code needed. Kinds match in any
-  case, so `early shift` in the sheet counts too.
+  `away_kinds` in `work.conf`; no code needed. Kinds match in upper or
+  lower case, so `early shift` in the sheet counts too.
 - **A reminder the evening before a vacation.** In `CALENDAR`, after
   the line with `ICAL.ADDALLDAY`, add an alarm for the people who
   subscribe:

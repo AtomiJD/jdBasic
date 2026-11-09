@@ -7,7 +7,7 @@
 The team's open orders live in an Excel workbook on a shared drive.
 Five people update it, and twice a month someone's change is gone
 because two of them had the file open at the same time. Somebody
-types "Done" instead of "done", a date as 5.10. instead of a date,
+types "Done" instead of "done", or 5.10. as text instead of a date,
 and the filters in the sheet stop working. Lena has asked IT for a
 small tool for months; the request is still in the queue.
 

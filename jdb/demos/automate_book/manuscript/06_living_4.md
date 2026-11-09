@@ -28,7 +28,7 @@ than you might fear.
 - **Before a recipe sends company data to an outside service**, such
   as the language model of X02 and X17.
 - **Before a recipe types or clicks for you**, as E16, M16 and X16 do.
-  Some companies forbid programs that send key strokes.
+  Some companies forbid programs that send keystrokes.
 
 ### What to show
 
@@ -54,7 +54,7 @@ connection of its own; only a program that asks for one does.
 | Scheduled tasks | the folder *AutomateWork* of the Task Scheduler |
 
 The scheduled tasks run under your own account, only while you are
-logged in, with your rights and no more.
+logged in, with your permissions and no more.
 
 **What each recipe does.** Every recipe is a text file IT can read,
 with a `recipe.toml` that names its program, its modules, its settings
@@ -90,7 +90,7 @@ you already have instead of through files. E18 Office to PDF, M18
 Excel Refresh and X19 Outlook Bridge start Word, Excel or classic
 Outlook through COM, the interface Office offers other programs for
 this purpose. They do what you could do by hand, under your account
-and with your rights. E16 Form Filler, M16 Macro Player and X16 Desktop
+and with your permissions. E16 Form Filler, M16 Macro Player and X16 Desktop
 Robot type and click into windows through the same Windows input a
 keyboard uses. They stop as soon as the mouse is pushed into the
 top-left corner of the screen, and they belong on a screen that nobody

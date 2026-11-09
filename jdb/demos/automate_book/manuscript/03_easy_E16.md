@@ -27,7 +27,7 @@ field to field the way the Form Filler will type.
 
 > **Watch out**
 > While it types, the Form Filler takes over your keyboard. Whatever
-> window is in front gets the key strokes, so keep your hands off the
+> window is in front gets the keystrokes, so keep your hands off the
 > keyboard and the mouse until it is done. To stop it at once, hold
 > Esc, or push the mouse into the top-left corner of the screen. Never
 > start it on a screen that others can see or use, and ask your IT

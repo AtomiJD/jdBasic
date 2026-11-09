@@ -39,7 +39,7 @@ directory behind Microsoft 365). Ask for:
   in with a device code,
 - the *Application (client) ID* of that registration.
 
-The client id goes into `work.conf`. It is no secret; it only names
+The client id goes into `work.conf`. It is not a secret; it only names
 the app. Many companies let you register such an app yourself, and
 it costs nothing. If your IT registers it as a confidential app with
 a client secret, that secret goes into the environment variable
@@ -75,7 +75,7 @@ The module does the talking to Microsoft and the turning into blocks:
 
 1. `CLIENT` makes an OAuth client from `lib/oauth.jdb` with the three
    addresses of the sign-in service: one to ask for a device code,
-   one to trade the code for tokens, one to authorize in the browser.
+   one to trade the code for tokens, one to authorise in the browser.
 2. `KEEP` connects the client to the token file. `OAUTH.STORE` takes
    any tokens already in the file, and every new token the client
    gets is put into the same store; `SAVE` writes it back with

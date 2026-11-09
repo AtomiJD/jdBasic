@@ -134,7 +134,7 @@ workbook.
 
 The wizard plans the meter for Friday at 15:00, which leaves time to
 look at the numbers before the next week is planned. Remember to export
-a fresh calendar file before, or let Chapter 5 do that for you.
+a fresh calendar file beforehand, or let Chapter 5 do that for you.
 
 ### Make it yours
 
@@ -151,7 +151,7 @@ top = 5
 workbook = "~/Documents/AutomateWork/meeting_cost.xlsx"
 ```
 
-`hourly_rate` is the cost of an hour of work. Ask your controlling team
+`hourly_rate` is the cost of an hour of work. Ask your finance team
 for the rate they use. Without one, pick a round figure you can defend
 and say so when you show the numbers; the point is the comparison
 between weeks and series, not the exact amount.
@@ -196,4 +196,4 @@ Beyond the settings, three changes in the code are worth knowing:
 
 > **Balance dividend**
 > About 15 minutes a week of looking at the calendar, and the first
-> honest answer to the question where the team's time goes.
+> honest answer to the question of where the team's time goes.

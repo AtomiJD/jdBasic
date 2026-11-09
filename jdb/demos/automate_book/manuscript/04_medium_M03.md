@@ -5,7 +5,7 @@
 ### The chore
 
 Twice a year Jonas's team invites its customers: to the customer day
-in November, to a training in spring. The letter is always the same
+in November, to a training course in spring. The letter is always the same
 except for the name, the company and the salutation. Word has a mail
 merge, but it hides in a menu that nobody remembers between two
 uses, and it does not write one file per customer that can go out as
@@ -72,7 +72,7 @@ letters and mails:
    runs after an edit, and keeps all formatting of the template.
 4. **File names.** `FILE_NAME$` fills the `file_name` pattern with
    `FILL$`, which finds every `{{...}}` with `REGEX.FINDALL` and
-   replaces it with the column it names, in any case and with spaces
+   replaces it with the column it names, in upper or lower case and with spaces
    inside allowed, the way `DOCX.FILL` reads the template, and then
    replaces the characters Windows does not allow in file names. Two
    contacts with the same name get the row number added, so no letter
@@ -178,5 +178,5 @@ Changes in the code:
 > **Balance dividend**
 > Two invitations a year to forty customers, about two hours each
 > time by hand, and a few smaller letters in between: five minutes a
-> week on average, and no letter that still greets the customer
-> before.
+> week on average, and no letter that still greets the previous
+> customer.

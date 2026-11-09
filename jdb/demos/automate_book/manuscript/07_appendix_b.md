@@ -129,7 +129,7 @@ Dates come out of `XLSX.READ` as the serial number Excel stores.
 
 ### PDFGEN: PDF files
 
-Positions and sizes are millimetres from the top left corner of the
+Positions and sizes are millimetres from the top-left corner of the
 page.
 
 | Function | What it does |

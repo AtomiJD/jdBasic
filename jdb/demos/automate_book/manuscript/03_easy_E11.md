@@ -99,10 +99,10 @@ report = "~/Documents/AutomateWork/disk_space.txt"
   file in it once. That is why the recipe runs on Monday morning on its
   own.
 - **A folder is missing from the list**: it is hidden, or you have no
-  right to read it.
+  permission to read it.
 - **The sizes differ from Explorer**: Explorer counts the space a file
   takes on the disk, the report counts its length. Small files take a
-  little more room than they are long.
+  little more space on the disk than their size.
 
 > **Balance dividend**
 > About 5 minutes a week, and no full disk on the morning it matters.

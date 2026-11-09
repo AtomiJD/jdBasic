@@ -77,7 +77,7 @@ The module holds the rules, the lock and the work on each file:
    `rename`, a name pattern; and `target`, the folder the file goes to.
    `MATCHES` turns the file pattern into a regular expression:
    `*` becomes `.*`, `?` becomes `.`, and every other character that
-   is no letter or digit is put in brackets, so a dot in `*.csv`
+   is not a letter or digit is put in brackets, so a dot in `*.csv`
    stands for a dot and not for any character. `RULE_FOR` answers the
    first rule that fits, which is why the catch-all rule `*` comes
    last.
@@ -190,7 +190,7 @@ the old name without its extension. An empty `rename` keeps the names.
 ### When it goes wrong
 
 - **"Another run is working on the folder", every time**: a lock is
-  left over and the stale time has not passed yet. Wait 30 minutes or
+  left over and the 30 minutes have not passed yet. Wait 30 minutes or
   delete `.hot_folder.lock` in the watched folder.
 - **A file stays in the folder**: no rule fits it, or it is still
   changing. Run with `--dry-run`, which lists every file the recipe

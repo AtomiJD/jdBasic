@@ -49,12 +49,12 @@ IMG.WRITEPNG(button, "new_button.png")
 > While a job runs, the robot takes over your keyboard and your mouse.
 > To stop it at once, hold Esc, or push the mouse into the top-left
 > corner of the screen; it checks both before every single action.
-> Windows delivers key strokes and clicks only to an unlocked screen
+> Windows delivers keystrokes and clicks only to an unlocked screen
 > with you logged in, so a job needs a computer that is on, unlocked
 > and nobody else's to use. Do not leave a screen unlocked for a robot
 > to run. Ask your IT department first: some companies forbid programs
-> that type and click for you, and some will rather give you a computer
-> of its own for this.
+> that type and click for you, and some would rather give you a
+> dedicated computer for this.
 
 ### The program
 
@@ -89,7 +89,7 @@ position of the mouse:
    long as `timeout_s` says, and brings it to the front.
 3. Every check, click, text and key first finds the window again and
    brings it to the front, so a dialog that popped up in between
-   cannot catch the robot's key strokes.
+   cannot catch the robot's keystrokes.
 4. `check` takes a picture of the window's inside with `OS.SCREENSHOT`
    and compares the region with the reference picture. `REGION_DIFF`
    counts the pixels whose colour differs by more than `PIXEL_GAP` and

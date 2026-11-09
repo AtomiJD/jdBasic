@@ -63,7 +63,7 @@ The module reads the paragraphs, pairs them up and writes the report:
 3. **Pairing the leftovers.** A paragraph with one word changed shows up
    twice in that list, once as gone and once as came. `COMPARE` pairs
    them up again. For every gone paragraph it looks for the came
-   paragraph that is most alike. `LIKENESS` measures that with
+   paragraph that is most similar. `LIKENESS` measures that with
    `TEXTDIFF.RATIO` over the words: 1 means the same words in the same
    order, 0 means nothing in common. If the best match is the same
    text, the paragraph moved. If it reaches the `similar` threshold
@@ -114,7 +114,7 @@ Report: C:\Users\jonas\Documents\AutomateWork\reports\
 
 The price clause swapped places with the term and got a new price at
 the same time. The recipe reports it once, as changed, under its
-number in the new version. The term itself is reported as nothing: its
+number in the new version. The term itself is not reported: its
 text is the same, and the price moving past it is enough. With
 `--dry-run` the recipe prints the report and writes no file. When the
 two versions are the same, it says `0 changed, 0 added, 0 removed,
