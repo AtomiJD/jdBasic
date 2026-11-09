@@ -27,6 +27,10 @@ TESTKIT.EQ(LETTERS.FILL$("Dear {{salutation}},", people[0]), _
     "Dear Ms Berg,", "a text filled")
 TESTKIT.EQ(LETTERS.FILL$("{{nobody}}", people[0]), "{{nobody}}", _
     "an unknown placeholder stays")
+TESTKIT.EQ(LETTERS.FILL$("Invitation, {{Name}} and {{ salutation }}", people[0]), _
+    "Invitation, Anna Berg and Ms Berg", "in any case and with spaces, as in the template")
+TESTKIT.EQARRAY(LETTERS.UNFILLED_TEXT("Hello {{Name}}, see you {{when}}", people), _
+    ["when"], "a placeholder of the subject no column fills")
 TESTKIT.EQ(LETTERS.FILE_NAME$("{{name}}", people[0]), _
     "Anna Berg.docx", "a file name from the pattern")
 TESTKIT.EQ(LETTERS.FILE_NAME$("{{company}} {{name}}", people[1]), _

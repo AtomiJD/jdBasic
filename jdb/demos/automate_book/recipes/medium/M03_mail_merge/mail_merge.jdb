@@ -44,6 +44,11 @@ IF WORKCONF.FLAG("send") THEN
     END
 ENDIF
 
+DIM dry_run = WORKCONF.FLAG("dry-run")
+IF NOT FILE.EXISTS(template$) ANDALSO dry_run THEN
+    PRINT "No template yet; would write a sample to "; template$
+    END
+ENDIF
 IF NOT FILE.EXISTS(template$) THEN
     DIM home$ = PATH.DIRNAME$(template$)
     IF home$ <> "" THEN MKDIR home$
@@ -57,12 +62,22 @@ DIM book = XLSX.READ(list$, TRUE)
 IF tab$ = "" THEN tab$ = XLSX.SHEETS(list$)[0]
 IF NOT MAP.EXISTS(book, tab$) THEN THROW "No sheet " + tab$
 DIM people = LETTERS.CONTACTS(book{tab$})
+' {{today}} is the date of the run, unless a column has that name.
+DIM today$ = FORMAT_DATE$(NOW(), "%d %B %Y")
+IF LEFT$(today$, 1) = "0" THEN today$ = MID$(today$, 1)
+DIM c = 0
+FOR c = 0 TO LEN(people) - 1
+    DIM one = people[c]
+    IF NOT MAP.EXISTS(one, "today") THEN one{"today"} = today$
+NEXT c
 DIM unfilled = LETTERS.UNFILLED(template$, people)
+DIM texts$ = pattern$ + " " + subject$ + " " + body$
+unfilled = UNIQUE(APPEND(unfilled, _
+    LETTERS.UNFILLED_TEXT(texts$, people)))
 IF LEN(unfilled) > 0 THEN
     PRINT "No column for: "; JOIN(unfilled, ", ")
 ENDIF
 
-DIM dry_run = WORKCONF.FLAG("dry-run")
 IF NOT dry_run THEN MKDIR folder$
 DIM used AS MAP
 DIM mails = 0

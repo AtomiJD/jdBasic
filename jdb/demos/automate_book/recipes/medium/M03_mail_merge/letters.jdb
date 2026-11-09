@@ -58,11 +58,37 @@ EXPORT FUNC UNFILLED(template$, contacts)
         DOCX.PLACEHOLDERS(template$))
 ENDFUNC
 
-' A text with its {{name}} placeholders filled from the contact.
+' The placeholders of a text as pairs of the placeholder as written,
+' such as "{{ Name }}", and the column it names in lower case.
+FUNC Marks(text$)
+    DIM found = REGEX.FINDALL("(\{\{([^{}]*)\}\})", text$)
+    RETURN SELECT(LAMBDA f -> [f[0], LCASE$(TRIM$(f[1]))], found)
+ENDFUNC
+
+' A text with its placeholders filled from the contact. As in the
+' template, {{Name}} and {{ name }} both name the column name.
 EXPORT FUNC FILL$(text$, person)
-    RETURN REDUCE(LAMBDA USE(person) acc$, key$ -> _
-        REPLACE$(acc$, "{{" + key$ + "}}", person{key$}), _
-        MAP.KEYS(person), text$)
+    DIM out$ = text$
+    DIM marks = Marks(text$)
+    DIM k = 0
+    FOR k = 0 TO LEN(marks) - 1
+        DIM mark = marks[k]
+        DIM key$ = mark[1]
+        IF MAP.EXISTS(person, key$) THEN
+            out$ = REPLACE$(out$, mark[0], person{key$})
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' The placeholders of a text, such as the subject of the mail, that no
+' column of the contacts fills.
+EXPORT FUNC UNFILLED_TEXT(text$, contacts)
+    IF LEN(contacts) = 0 THEN RETURN []
+    DIM first = contacts[0]
+    DIM names = SELECT(LAMBDA mk -> mk[1], Marks(text$))
+    RETURN FILTER(LAMBDA USE(first) nm$ -> _
+        NOT MAP.EXISTS(first, nm$), names)
 ENDFUNC
 
 ' A file name from the pattern, without characters Windows forbids.

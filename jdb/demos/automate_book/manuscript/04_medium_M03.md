@@ -30,9 +30,14 @@ placeholder:
 |---|---|---|---|---|---|
 | Anna Berg | Ms Berg | Stone and Co | Leeds | anna@stone.example | 14 November |
 | Ben Cole | Mr Cole | Cole and Sons | York | | 14 November |
+| Cleo Dunn | Ms Dunn | Miller Ltd | Bath | cleo@miller.example | 14 November |
 
 No template yet? Run the program once. It writes a sample letter to
-the template path and stops, so you can change that one in Word.
+the template path and stops, so you can change that one in Word. A
+dry run only says that it would.
+
+Besides the columns, every letter knows `{{today}}`, the date of the
+run such as *9 November 2026*.
 
 ### The program
 
@@ -57,7 +62,8 @@ letters and mails:
    and the letter writes it as *14 November 2026*.
 2. **Checking the template.** `UNFILLED` asks `DOCX.PLACEHOLDERS` for
    the placeholders in the template and keeps with `FILTER` the ones
-   no column fills. The letters are written all the same; the
+   no column fills; `UNFILLED_TEXT` does the same for `file_name`,
+   `subject` and `body`. The letters are written all the same; the
    placeholder stays in them as it is, which you will notice when you
    open one.
 3. **Filling.** `WRITE` builds the values for `DOCX.FILL` from the
@@ -65,8 +71,9 @@ letters and mails:
    headers and the footers, also where Word has split it into several
    runs after an edit, and keeps all formatting of the template.
 4. **File names.** `FILE_NAME$` fills the `file_name` pattern with
-   `FILL$`, which goes through the columns of the contact with
-   `REDUCE` and replaces one placeholder after the other, and then
+   `FILL$`, which finds every `{{...}}` with `REGEX.FINDALL` and
+   replaces it with the column it names, in any case and with spaces
+   inside allowed, the way `DOCX.FILL` reads the template, and then
    replaces the characters Windows does not allow in file names. Two
    contacts with the same name get the row number added, so no letter
    overwrites another.
@@ -96,7 +103,9 @@ wrote Cleo Dunn.docx  to cleo@miller.example
 Send them with --send.
 ```
 
-Open two or three of the letters before you send:
+The names are those of the default `file_name = "{{name}}"`; with the
+pattern of *Make it yours* the first letter is `Stone and Co Anna
+Berg.docx`. Open two or three of the letters before you send:
 
 ```
 jdbasic mail_merge.jdb --send
@@ -135,11 +144,10 @@ Changes in the code:
   ```
   people = FILTER(LAMBDA p -> LCASE$(p{"invite"}) = "yes", people)
   ```
-- **A placeholder that is not a column,** such as today's date: in the
-  program, before the loop, add
-  `DIM today$ = FORMAT_DATE(NOW(), "%d %B %Y")`, and at the top of the
-  loop `person{"today"} = today$`. The template can then use
-  `{{today}}`.
+- **Another value that is not a column,** such as the deadline for an
+  answer: in the program, next to the line that sets `today`, add
+  `one{"reply_by"} = "1 December"`. The template can then use
+  `{{reply_by}}`.
 - **A different letter per group:** add a column `Template` with a file
   name, and in the loop pass
   `PATH.JOIN$(PATH.DIRNAME$(template$), person{"template"})` to
@@ -152,9 +160,12 @@ Changes in the code:
 
 - **"No column for: date"**: the template has a placeholder that the
   sheet does not fill. Add the column, or remove the placeholder.
-- **A placeholder was not replaced** although the column exists: in
-  the template it is written with a space or another bracket, such as
-  `{{ name }}` or `{name}`. Write it exactly as `{{name}}`.
+- **"No column for: when"**: the same for a placeholder in
+  `subject`, `body` or `file_name`; it stays in the mail as it is.
+- **A placeholder was not replaced** although the column exists: it
+  is written with another bracket, such as `{name}`. Case and spaces
+  do not matter, `{{Name}}` and `{{ name }}` both work; the braces
+  have to be two on each side.
 - **"No sheet ..."**: `tab` names a sheet the contact list does not
   have. Leave `tab` empty to use the first sheet.
 - **A postcode lost its leading 0**: Excel turned `01067` into the
