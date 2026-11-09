@@ -47,7 +47,9 @@ FUNC NumberField(s, name$, fallback, where$, errors)
     DIM kind$ = TYPEOF(v)
     IF kind$ = "INT64" ORELSE kind$ = "FLOAT64" ORELSE _
         kind$ = "INTEGER" THEN RETURN v
-    PUSH(errors, where$ + name$ + " needs a number, not '" + v + "'")
+    DIM shown$ = "a " + LCASE$(kind$)
+    IF kind$ = "STRING" THEN shown$ = "'" + v + "'"
+    PUSH(errors, where$ + name$ + " needs a number, not " + shown$)
     RETURN fallback
 ENDFUNC
 
