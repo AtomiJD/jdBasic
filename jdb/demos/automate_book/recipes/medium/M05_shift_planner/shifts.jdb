@@ -3,9 +3,12 @@
 ' people are away.
 '
 '   IMPORT SHIFTS
-'   DIM plan = SHIFTS.ENTRIES(XLSX.READ("plan.xlsx"){"Plan"})
+'   DIM problems = []
+'   DIM rows = XLSX.READ("plan.xlsx"){"Plan"}
+'   DIM plan = SHIFTS.ENTRIES(rows, problems)
 '   ICAL.WRITEFILE(SHIFTS.CALENDAR(plan, "Team"), "team.ics")
-'   PRINT SHIFTS.CLASHES(plan, ["Vacation", "Sick"], 2)
+'   DIM week = [1, 2, 3, 4, 5]
+'   PRINT SHIFTS.CLASHES(plan, ["Vacation", "Sick"], 2, week)
 
 EXPORT MODULE SHIFTS
 
