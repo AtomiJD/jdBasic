@@ -47,12 +47,39 @@ EXPORT FUNC DAY$(parsed, offset)
     RETURN DT.FMT$(t, "%Y-%m-%d", offset)
 ENDFUNC
 
+' The offset of this computer on the day the mail was sent, so a mail
+' from the summer gets its summer day also in winter; 0 without a
+' readable date.
+EXPORT FUNC OFFSET_OF(parsed)
+    DIM t = DT.PARSE(parsed{"date"})
+    IF TYPEOF(t) = "NONE" THEN RETURN 0
+    RETURN DT.OFFSET_AT(t)
+ENDFUNC
+
 ' The folder for one mail: sender, then day and subject.
 EXPORT FUNC FOLDER$(parsed, target$, offset)
     DIM subject$ = parsed{"subject"}
     IF TRIM$(subject$) = "" THEN subject$ = "no subject"
     DIM inner$ = DAY$(parsed, offset) + " " + SAFE$(subject$, 60)
     RETURN PATH.JOIN$(target$, SENDER$(parsed), inner$)
+ENDFUNC
+
+' A file name for an attachment: the name and its ending made safe
+' apart, so "a/b:c?.pdf" becomes "a b c.pdf", and an ending from the
+' type when the name has none, such as "unnamed.pdf".
+EXPORT FUNC FILE_NAME$(name$, mime$)
+    DIM ext$ = LCASE$(PATH.EXT$(TRIM$(name$)))
+    IF NOT REGEX.MATCH("^\.[a-z0-9]{1,8}$", ext$) THEN ext$ = ""
+    DIM stem$ = LEFT$(TRIM$(name$), LEN(TRIM$(name$)) - LEN(ext$))
+    DIM endings = {"application/pdf": ".pdf", "image/jpeg": ".jpg", _
+        "image/png": ".png", "text/plain": ".txt", _
+        "text/calendar": ".ics", "application/zip": ".zip", _
+        "message/rfc822": ".eml"}
+    DIM kind$ = LCASE$(mime$)
+    IF ext$ = "" ANDALSO MAP.EXISTS(endings, kind$) THEN
+        ext$ = endings{kind$}
+    ENDIF
+    RETURN SAFE$(stem$, 80) + ext$
 ENDFUNC
 
 FUNC FreeName$(folder$, file$, taken)
@@ -70,39 +97,64 @@ FUNC FreeName$(folder$, file$, taken)
     RETURN candidate$
 ENDFUNC
 
+' TRUE for an attachment that is a mail itself, as Outlook on the web
+' attaches one when you forward a mail as an attachment.
+FUNC IsMail(parsed, j)
+    DIM kind$ = LCASE$(parsed{"att_mimes"}[j])
+    DIM ext$ = LCASE$(PATH.EXT$(parsed{"att_names"}[j]))
+    RETURN kind$ = "message/rfc822" ORELSE ext$ = ".eml"
+ENDFUNC
+
+' Adds the attachments of one mail to files: pictures shown inside its
+' text are left out unless keep_inline is TRUE. inner is the position
+' of the attached mail they come from, -1 for the saved mail itself,
+' whose attached mails are filed on their own.
+SUB AddFiles(files, taken, parsed, eml$, inner, target$, keep_inline)
+    DIM folder$ = FOLDER$(parsed, target$, OFFSET_OF(parsed))
+    DIM att = parsed{"att_names"}
+    DIM mimes = parsed{"att_mimes"}
+    DIM cids = parsed{"att_cids"}
+    DIM html$ = LCASE$(parsed{"html"})
+    DIM j = 0
+    FOR j = 0 TO LEN(att) - 1
+        DIM cid$ = cids[j]
+        IF INSTR(html$, "cid:" + LCASE$(cid$)) < 0 THEN cid$ = ""
+        DIM wanted = keep_inline ORELSE cid$ = ""
+        IF inner < 0 ANDALSO IsMail(parsed, j) THEN wanted = FALSE
+        IF wanted THEN
+            DIM file$ = FILE_NAME$(att[j], mimes[j])
+            DIM to$ = FreeName$(folder$, file$, taken)
+            PUSH(taken, to$)
+            DIM short$ = MID$(to$, LEN(target$) + 1, LEN(to$))
+            PUSH(files, {"eml": eml$, "inner": inner, "index": j, _
+                "to": to$, "short": short$})
+        ENDIF
+    NEXT j
+ENDSUB
+
 ' What to do with the .eml files of the inbox folder: a map with
-' "files" (one map per attachment with "eml", "index", "to" and
-' "short", the path below the target folder) and "mails" (every mail
-' looked at). Pictures shown inside the text of a mail (a Content-ID
-' the HTML refers to as cid:) are left out unless keep_inline is TRUE.
+' "files" (one map per attachment with "eml", "inner", "index", "to"
+' and "short", the path below the target folder) and "mails" (every
+' mail looked at). A mail attached to a saved mail is filed like a
+' saved mail of its own: its sender, its day, its attachments.
 EXPORT FUNC PLAN(inbox$, target$, keep_inline)
     DIM files = []
     DIM mails = []
     DIM taken = []
-    DIM offset = DT.LOCAL_OFFSET()
     DIM names = SORT(FILE.LIST(PATH.JOIN$(inbox$, "*.eml")))
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(names) - 1
-        DIM base$ = names[k]
-        DIM eml$ = PATH.JOIN$(inbox$, base$)
+        DIM eml$ = PATH.JOIN$(inbox$, names[k])
         DIM parsed = MAIL.PARSEFILE(eml$)
         PUSH(mails, eml$)
-        DIM folder$ = FOLDER$(parsed, target$, offset)
-        DIM att = parsed{"att_names"}
-        DIM cids = parsed{"att_cids"}
-        DIM html$ = LCASE$(parsed{"html"})
-        FOR j = 0 TO LEN(att) - 1
-            DIM cid$ = cids[j]
-            IF INSTR(html$, "cid:" + LCASE$(cid$)) < 0 THEN cid$ = ""
-            IF keep_inline ORELSE cid$ = "" THEN
-                DIM att$ = att[j]
-                DIM file$ = SAFE$(att$, 80)
-                DIM to$ = FreeName$(folder$, file$, taken)
-                PUSH(taken, to$)
-                DIM short$ = MID$(to$, LEN(target$) + 1, LEN(to$))
-                PUSH(files, {"eml": eml$, "index": j, "to": to$, _
-                    "short": short$})
+        AddFiles(files, taken, parsed, eml$, -1, target$, keep_inline)
+        DIM n_att = LEN(parsed{"att_names"})
+        FOR j = 0 TO n_att - 1
+            IF IsMail(parsed, j) THEN
+                DIM raw$ = MAIL.ATTACHMENTDATA$(parsed, j)
+                AddFiles(files, taken, MAIL.PARSE(raw$), eml$, j, _
+                    target$, keep_inline)
             ENDIF
         NEXT j
     NEXT k
@@ -127,8 +179,13 @@ EXPORT FUNC APPLY(plan, dry_run, done_folder$)
                 parsed = MAIL.PARSEFILE(f{"eml"})
                 last$ = f{"eml"}
             ENDIF
+            DIM source = parsed
+            IF f{"inner"} >= 0 THEN
+                DIM raw$ = MAIL.ATTACHMENTDATA$(parsed, f{"inner"})
+                source = MAIL.PARSE(raw$)
+            ENDIF
             MKDIR PATH.DIRNAME$(to$)
-            MAIL.SAVEATTACHMENT(parsed, f{"index"}, to$)
+            MAIL.SAVEATTACHMENT(source, f{"index"}, to$)
             PRINT "saved "; f{"short"}
         ENDIF
     NEXT k

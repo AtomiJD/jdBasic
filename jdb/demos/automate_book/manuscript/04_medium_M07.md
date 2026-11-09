@@ -33,8 +33,10 @@ save these: in Thunderbird, choose *Save As* on a mail; in Outlook
 on the web and the new Outlook, choose *Download* or *Save as*; in
 Apple Mail, drag the mail into a Finder folder. The classic Outlook
 for Windows saves `.msg` files instead, which this recipe cannot
-read. There, forward the mail to yourself as an attachment and save
-that, or use Outlook on the web.
+read; open the mailbox in Outlook on the web instead. A mail that
+you forward to yourself as an attachment from Outlook on the web or
+Thunderbird carries the original as an `.eml` inside: the unpacker
+files that one under its own sender and day, with its attachments.
 
 Make one folder for the saved mails and one for the attachments. The
 wizard suggests `saved mail` and `attachments` in your
@@ -62,6 +64,9 @@ The module does the work:
    `bob@supplier.example` has no name, so the address is used.
 3. `DAY$` reads the `Date` line with `DT.PARSE`, which understands
    the format mails use, and writes the day in your own time zone.
+   `DT.OFFSET_AT` gives the offset of your computer on the day of the
+   mail, so a mail from July is filed with summer time even when the
+   program runs in winter.
    A mail without a readable date goes into an `undated` folder.
 4. `SAFE$` makes any text usable as a file name. Windows does not
    allow `\ / : * ? " < > |` in names, and a subject such as
@@ -69,7 +74,9 @@ The module does the work:
    `REDUCE` hands the text from one `REPLACE$` to the next, once for
    each forbidden character. `-t$` splits the text into characters,
    so the cut to 60 characters never breaks a letter such as *ü* in
-   half.
+   half. `FILE_NAME$` does the same for an attachment, with its name
+   and its ending apart, and takes the ending from the type when the
+   name has none: an unnamed PDF becomes `unnamed.pdf`.
 5. A picture inside the text of a mail carries a Content-ID, which
    `att_cids` lists, and the HTML of the mail shows it with `cid:`
    and that ID. Such pictures are left out unless `keep_inline` is
@@ -78,7 +85,10 @@ The module does the work:
 6. `FreeName$` makes sure no file is overwritten. When the folder
    already has an `invoice.pdf`, or the same plan already uses the
    name, the new file becomes `invoice (2).pdf`.
-7. `APPLY` writes each attachment with `MAIL.SAVEATTACHMENT`, which
+7. An attachment that is a mail itself, with the type
+   `message/rfc822`, is read with `MAIL.PARSE` and filed like a saved
+   mail: under its sender and day, with its attachments.
+8. `APPLY` writes each attachment with `MAIL.SAVEATTACHMENT`, which
    decodes it byte for byte, and then moves every mail it looked at
    into the done folder with `FILE.MOVE`.
 
@@ -152,8 +162,8 @@ Changes in the code:
   folder that does not exist. Check the spelling in `work.conf`.
 - **"No .eml files"**: the mails were saved as `.msg`, or into a
   different folder. See *Before you start*.
-- **A file named `unnamed`**: the attachment had no name, or only
-  characters Windows does not allow.
+- **A file named `unnamed.pdf`**: the attachment had no name, or only
+  characters Windows does not allow; the ending comes from its type.
 - **The day is one off**: the folder uses the day in your time zone,
   so a mail sent late at night from another continent can land on
   the next or the previous day.

@@ -1,6 +1,7 @@
 ' Inbox Unpacker: safe names, the folder of a mail, the plan for three
-' saved mails with an inline picture and a doubled file name, and the
-' attachments saved byte for byte. Nothing is sent.
+' saved mails with an inline picture and a doubled file name, the
+' attachments saved byte for byte, and a mail forwarded as an attachment
+' filed under its own sender. Nothing is sent.
 
 IMPORT TESTKIT, UNPACKER, MAIL
 
@@ -44,6 +45,14 @@ TESTKIT.EQ(UNPACKER.SAFE$("Müllerstraße", 5), "Mülle", _
     "cut by characters")
 TESTKIT.EQ(UNPACKER.SAFE$("notes...", 60), "notes", "no dot at the end")
 TESTKIT.EQ(UNPACKER.SAFE$("***", 60), "unnamed", "never empty")
+TESTKIT.EQ(UNPACKER.FILE_NAME$("a/b:c?.pdf", "application/pdf"), "a b c.pdf", _
+    "the name and its ending made safe apart")
+TESTKIT.EQ(UNPACKER.FILE_NAME$("", "application/pdf"), "unnamed.pdf", _
+    "a name without an ending gets one from the type")
+TESTKIT.EQ(UNPACKER.FILE_NAME$("Bericht.", "application/pdf"), "Bericht.pdf", _
+    "also after a dot at the end")
+TESTKIT.EQ(UNPACKER.FILE_NAME$("notes", "application/x-unknown"), "notes", _
+    "an unknown type adds nothing")
 DIM pa = MAIL.PARSEFILE(PATH.JOIN$(inbox$, "1.eml"))
 DIM pb = MAIL.PARSEFILE(PATH.JOIN$(inbox$, "2.eml"))
 DIM pc = MAIL.PARSEFILE(PATH.JOIN$(inbox$, "3.eml"))
@@ -91,6 +100,37 @@ TESTKIT.EQ(LEN(signed), 1, "an attachment with a Content-ID the text does not sh
 TESTKIT.EQ(PATH.BASENAME$(signed[0]{"to"}), "contract signed.pdf", "is saved")
 KILL PATH.JOIN$(inbox2$, "c.eml")
 RMDIR inbox2$
+
+TESTKIT.SUITE("a mail forwarded as an attachment")
+DIM inbox3$ = PATH.JOIN$(folder$, "inbox3")
+DIM target3$ = PATH.JOIN$(folder$, "files3")
+MKDIR inbox3$
+DIM order = MAIL.MESSAGE("Frank Kunde <frank@kunde.example>", _
+    "jonas@example.com", "Order 4711")
+MAIL.PLAIN(order, "Our order.")
+MAIL.SETDATE(order, "Wed, 28 Oct 2026 09:00:00 +0000")
+MAIL.ATTACHDATA(order, "order 4711.pdf", pdf$)
+DIM fw = MAIL.MESSAGE("Jonas Example <jonas@example.com>", _
+    "jonas@example.com", "FW: Order 4711")
+MAIL.PLAIN(fw, "See the attached mail.")
+MAIL.SETDATE(fw, "Thu, 29 Oct 2026 10:00:00 +0000")
+MAIL.ATTACHDATA(fw, "Order 4711.eml", MAIL.BUILD$(order), "message/rfc822")
+MAIL.WRITEEML(fw, PATH.JOIN$(inbox3$, "fw.eml"))
+DIM fw_plan = UNPACKER.PLAN(inbox3$, target3$, FALSE)
+DIM fw_files = fw_plan{"files"}
+TESTKIT.EQ(LEN(fw_files), 1, "the attachment of the forwarded mail, not the mail as a file")
+TESTKIT.EQ(fw_files[0]{"short"}, PATH.JOIN$("Frank Kunde", "2026-10-28 Order 4711", _
+    "order 4711.pdf"), "filed under its own sender and day")
+DIM done3$ = PATH.JOIN$(inbox3$, "done")
+TESTKIT.EQ(UNPACKER.APPLY(fw_plan, FALSE, done3$), 1, "and saved")
+TESTKIT.EQ(BINREADER$(fw_files[0]{"to"}), pdf$, "byte for byte")
+KILL fw_files[0]{"to"}
+RMDIR PATH.DIRNAME$(fw_files[0]{"to"})
+RMDIR PATH.JOIN$(target3$, "Frank Kunde")
+RMDIR target3$
+KILL PATH.JOIN$(done3$, "fw.eml")
+RMDIR done3$
+RMDIR inbox3$
 
 TESTKIT.SUITE("saving")
 TESTKIT.EQ(UNPACKER.APPLY(plan, TRUE, done$), 3, "a dry run counts")
