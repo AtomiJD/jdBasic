@@ -1,0 +1,454 @@
+' check_wrong.jdb: the "When it goes wrong" lists of the book as a
+' checklist that runs. tools/wrong_cases.txt holds one block per case of
+' the book; this program reproduces each case in a temporary home with
+' only that recipe installed and checks that the program says what the
+' book quotes. A case the program cannot reproduce on its own (Office,
+' the screen, a server, the scheduler) is listed with the reason it is
+' checked by hand. Bullets of the book without a block and blocks
+' without a bullet are reported, so the book and the checklist stay in
+' step.
+'
+'   set JDBASIC_PATH=wizard;recipes/lib
+'   jdbasic tools/check_wrong.jdb [--only E01,M05] [--timeout 60] [--list]
+'       [--cases tools/wrong_cases.txt]
+'
+' wrong_cases.txt: a block starts with the recipe id and the bold words
+' of the bullet, exactly as the chapter has them; the indented lines
+' below it say how to reproduce it. In paths, ~ is the home, @work the
+' work folder, @recipe the installed recipe folder, @conf work.conf,
+' @book the book folder, @files the workbooks and documents
+' FIXTURES.FILES makes for the cases, @today the date of today (as
+' 2026-10-01) and @year its year. In a text "\n" is a line break and
+' "\t" a tab.
+'
+'   E04 "No such folder"
+'       set backup.folders = ["~/Documents/Gone"]
+'       expect No such folder
+'
+'   set sect.key = value      a line of work.conf (TOML); added when missing
+'   drop sect.key             the line removed from work.conf
+'   write path = text         a file with that text
+'   copy path = from          a copy of a file (from in @book)
+'   remove path               a file or folder removed
+'   mkdir path                a folder made
+'   env NAME = value          an environment variable for the run
+'   args a b c                more arguments; words split at spaces
+'   config path               --config names this file instead
+'   program file              another program of the recipe folder
+'   real                      run without --dry-run
+'   prepare                   the input files check_mains gives the recipe
+'   expect text               the output holds this text (case matters)
+'   absent text               the output does not hold this text
+'   exit n                    the exit code
+'   manual reason             not run; checked by hand, for this reason
+
+IMPORT WIZARD, FIXTURES
+
+DIM gLF$ = CHR$(10)
+DIM gSep$ = ";"
+IF OS.GETOS$() <> "WINDOWS" THEN gSep$ = ":"
+
+FUNC ArgAfter$(name$, fallback$)
+    DIM argv = OS.ARGS()
+    DIM k = 1
+    FOR k = 1 TO LEN(argv) - 2
+        IF argv[k] = "--" + name$ THEN RETURN argv[k + 1]
+    NEXT k
+    RETURN fallback$
+ENDFUNC
+
+FUNC Listed(id$, list$)
+    IF list$ = "" THEN RETURN TRUE
+    DIM ids = SPLIT(UCASE$(list$), ",")
+    RETURN UCASE$(id$) IN SELECT(LAMBDA s$ -> TRIM$(s$), ids)
+ENDFUNC
+
+FUNC Lines(path$)
+    RETURN SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), gLF$)
+ENDFUNC
+
+' The bullets of every "When it goes wrong" section: maps with "id" and
+' "head", the bold words at the start of the bullet.
+FUNC BookBullets(book$)
+    DIM out = []
+    DIM files = FILE.LIST(PATH.JOIN$(book$, "manuscript", "0*_*.md"))
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM found = REGEX.FINDALL("_[EMX][0-9]{2}\.md$", files[k])
+        IF LEN(found) = 0 THEN CONTINUEFOR
+        DIM id$ = MID$(found[0], 1, 3)
+        DIM lines = Lines(PATH.JOIN$(book$, "manuscript", files[k]))
+        DIM inside = FALSE
+        DIM j = 0
+        FOR j = 0 TO LEN(lines) - 1
+            DIM s$ = lines[j]
+            IF STARTSWITH(s$, "### When it goes wrong") THEN
+                inside = TRUE
+            ELSEIF STARTSWITH(s$, "#") ORELSE STARTSWITH(s$, ">") THEN
+                inside = FALSE
+            ELSEIF inside ANDALSO STARTSWITH(s$, "- **") THEN
+                DIM rest$ = MID$(s$, 4, LEN(s$))
+                IF INSTR(rest$, "**") < 0 ANDALSO j + 1 < LEN(lines) THEN rest$ = rest$ + " " + TRIM$(lines[j + 1])
+                DIM close_at = INSTR(rest$, "**")
+                IF close_at > 0 THEN PUSH(out, {"id": id$, "head": LEFT$(rest$, close_at)})
+            ENDIF
+        NEXT j
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The blocks of wrong_cases.txt: maps with "id", "head" and "steps", a
+' list of [verb, rest].
+FUNC Cases(path$)
+    DIM out = []
+    DIM cur AS MAP
+    DIM have = FALSE
+    DIM lines = Lines(path$)
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM s$ = lines[k]
+        IF TRIM$(s$) = "" ORELSE STARTSWITH(TRIM$(s$), "#") THEN CONTINUEFOR
+        IF NOT STARTSWITH(s$, " ") THEN
+            IF have THEN PUSH(out, cur)
+            DIM fresh AS MAP
+            fresh{"id"} = LEFT$(s$, 3)
+            fresh{"head"} = TRIM$(MID$(s$, 3, LEN(s$)))
+            fresh{"steps"} = []
+            fresh{"line"} = k + 1
+            cur = fresh
+            have = TRUE
+        ELSE
+            DIM t$ = TRIM$(s$)
+            DIM gap = INSTR(t$, " ")
+            DIM verb$ = t$
+            DIM rest$ = ""
+            IF gap > 0 THEN
+                verb$ = LEFT$(t$, gap)
+                rest$ = TRIM$(MID$(t$, gap + 1, LEN(t$)))
+            ENDIF
+            PUSH(cur{"steps"}, [verb$, rest$])
+        ENDIF
+    NEXT k
+    IF have THEN PUSH(out, cur)
+    RETURN out
+ENDFUNC
+
+FUNC Run(program$, args, cwd$, limit_s)
+    DIM log$ = MKTEMP$("wrong") + ".txt"
+    DIM opts = {"output": log$, "hidden": TRUE, "cwd": cwd$}
+    DIM pid = OS.SPAWN(program$, args, opts)
+    DIM code = OS.WAIT(pid, limit_s * 1000)
+    IF TYPEOF(code) = "NONE" THEN
+        DIM ended = OS.KILL(pid)
+        DIM gone = OS.WAIT(pid, 5000)
+        code = -1
+    ENDIF
+    DIM text$ = ""
+    IF FILE.EXISTS(log$) THEN
+        text$ = REPLACE$(TXTREADER$(log$), CHR$(13), "")
+        TRY
+            KILL log$
+        CATCH
+            text$ = text$ + gLF$ + "not ended: " + ERRMSG$
+        ENDTRY
+    ENDIF
+    text$ = REGEX.REPLACE$(CHR$(27) + "\[[0-9;]*m", text$, "")
+    RETURN {"exit": code, "text": text$}
+ENDFUNC
+
+SUB Remove(target$)
+    IF FILE.ISDIR(target$) THEN
+        IF OS.GETOS$() = "WINDOWS" THEN
+            DIM back$ = REPLACE$(target$, "/", "\")
+            DIM gone = OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", back$])
+        ELSE
+            DIM gone = OS.EXEC("rm", ["-rf", target$])
+        ENDIF
+    ELSEIF FILE.EXISTS(target$) THEN
+        KILL target$
+    ENDIF
+ENDSUB
+
+FUNC Dated$(text$)
+    DIM t$ = REPLACE$(text$, "@today", FORMAT_DATE$(NOW(), "%Y-%m-%d"))
+    RETURN REPLACE$(t$, "@year", FORMAT_DATE$(NOW(), "%Y"))
+ENDFUNC
+
+' A path of the case file with its marks replaced.
+FUNC Where$(path$, setup)
+    DIM p$ = Dated$(path$)
+    IF STARTSWITH(p$, "@files") THEN p$ = setup{"files"} + MID$(p$, 6, LEN(p$))
+    IF STARTSWITH(p$, "@recipe") THEN p$ = setup{"folder"} + MID$(p$, 7, LEN(p$))
+    IF STARTSWITH(p$, "@work") THEN p$ = setup{"work"} + MID$(p$, 5, LEN(p$))
+    IF STARTSWITH(p$, "@conf") THEN p$ = setup{"conf"} + MID$(p$, 5, LEN(p$))
+    IF STARTSWITH(p$, "@book") THEN p$ = setup{"book"} + MID$(p$, 5, LEN(p$))
+    IF p$ = "~" THEN p$ = setup{"home"}
+    IF STARTSWITH(p$, "~/") ORELSE STARTSWITH(p$, "~\") THEN p$ = setup{"home"} + MID$(p$, 1, LEN(p$))
+    RETURN p$
+ENDFUNC
+
+' Text of the case file: marks replaced, "\n" a line break, "\t" a tab.
+FUNC Said$(text$, setup)
+    DIM t$ = REPLACE$(text$, "\n", gLF$)
+    t$ = REPLACE$(t$, "\t", CHR$(9))
+    t$ = Dated$(t$)
+    t$ = REPLACE$(t$, "@files", setup{"files"})
+    t$ = REPLACE$(t$, "@recipe", setup{"folder"})
+    t$ = REPLACE$(t$, "@work", setup{"work"})
+    t$ = REPLACE$(t$, "@conf", setup{"conf"})
+    t$ = REPLACE$(t$, "@book", setup{"book"})
+    t$ = REPLACE$(t$, "~/", REPLACE$(setup{"home"}, "\", "/") + "/")
+    RETURN t$
+ENDFUNC
+
+' work.conf with key in [sect] set to the TOML value$, added when it
+' is missing; with removing, the line is taken out.
+SUB ConfLine(conf$, dotted$, value$, removing)
+    DIM dot_at = INSTR(dotted$, ".")
+    DIM sect$ = "[" + LEFT$(dotted$, dot_at) + "]"
+    DIM key$ = MID$(dotted$, dot_at + 1, LEN(dotted$))
+    DIM lines = Lines(conf$)
+    DIM out = []
+    DIM inside = FALSE
+    DIM done = FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM s$ = lines[k]
+        DIM t$ = TRIM$(s$)
+        IF STARTSWITH(t$, "[") THEN
+            IF inside ANDALSO NOT done ANDALSO NOT removing THEN
+                PUSH(out, key$ + " = " + value$)
+                done = TRUE
+            ENDIF
+            inside = t$ = sect$
+        ELSEIF inside ANDALSO REGEX.MATCH(key$ + "\s*=.*", t$) THEN
+            IF NOT removing THEN PUSH(out, key$ + " = " + value$)
+            done = TRUE
+            CONTINUEFOR
+        ENDIF
+        PUSH(out, s$)
+    NEXT k
+    IF NOT done ANDALSO NOT removing THEN
+        IF NOT inside THEN
+            PUSH(out, "")
+            PUSH(out, sect$)
+        ENDIF
+        PUSH(out, key$ + " = " + value$)
+    ENDIF
+    TXTWRITER conf$, JOIN(out, gLF$) + gLF$
+ENDSUB
+
+' A new home with one recipe installed: "root", "home", "work", "conf",
+' "lib", "folder" (the installed recipe) and "book".
+FUNC Install(recipes, r, jdbasic$, book$)
+    DIM root$ = MKTEMP$("wrong_home")
+    MKDIR root$
+    DIM home$ = root$
+    DIM own = ["Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos"]
+    DIM k = 0
+    FOR k = 0 TO LEN(own) - 1
+        MKDIR PATH.JOIN$(home$, own[k])
+    NEXT k
+    DIM a = WIZARD.DEFAULTS(recipes, home$)
+    a{"jdbasic"} = jdbasic$
+    a{"name"} = "Mia Example"
+    a{"email"} = "mia@example.com"
+    a{"picked"} = [r{"id"}]
+    FIXTURES.SETTINGS(a{"values"}, home$)
+    DIM steps = WIZARD.INSTALL_PLAN(a, recipes, PATH.JOIN$(book$, "recipes", "lib"))
+    DIM done = WIZARD.APPLY(steps, FALSE)
+    DIM folder$ = PATH.JOIN$(a{"work"}, "recipes", r{"folder"})
+    RETURN {"root": root$, "home": home$, "work": a{"work"}, _
+        "conf": WIZARD.CONF_PATH$(a), "lib": a{"user_lib"}, _
+        "folder": folder$, "book": book$}
+ENDFUNC
+
+' Splits "left = right" at the first " = ".
+FUNC Pair(text$)
+    DIM at = INSTR(text$, " = ")
+    IF at < 0 THEN RETURN [TRIM$(text$), ""]
+    RETURN [TRIM$(LEFT$(text$, at)), MID$(text$, at + 3, LEN(text$))]
+ENDFUNC
+
+' Runs one case and answers "mark" (ok, FAIL, manual) and "note".
+FUNC Check(c, recipes, jdbasic$, std_lib$, book$, files$, limit_s)
+    DIM steps = c{"steps"}
+    DIM k = 0
+    FOR k = 0 TO LEN(steps) - 1
+        IF steps[k][0] = "manual" THEN RETURN {"mark": "manual", "note": steps[k][1]}
+    NEXT k
+    DIM r = NONE
+    FOR k = 0 TO LEN(recipes) - 1
+        IF recipes[k]{"id"} = c{"id"} THEN r = recipes[k]
+    NEXT k
+    IF TYPEOF(r) = "NONE" THEN RETURN {"mark": "FAIL", "note": "no recipe " + c{"id"}}
+    DIM setup = Install(recipes, r, jdbasic$, book$)
+    setup{"files"} = files$
+    DIM home$ = setup{"home"}
+    DIM program$ = r{"program"}
+    DIM conf$ = setup{"conf"}
+    DIM dry = TRUE
+    DIM extra = []
+    DIM envs = []
+    DIM expects = []
+    DIM absents = []
+    DIM want_exit$ = ""
+    FOR k = 0 TO LEN(steps) - 1
+        DIM verb$ = steps[k][0]
+        DIM rest$ = steps[k][1]
+        DIM p = Pair(rest$)
+        IF verb$ = "set" THEN
+            ConfLine(setup{"conf"}, p[0], Said$(p[1], setup), FALSE)
+        ELSEIF verb$ = "drop" THEN
+            ConfLine(setup{"conf"}, rest$, "", TRUE)
+        ELSEIF verb$ = "write" THEN
+            DIM target$ = Where$(p[0], setup)
+            IF NOT FILE.ISDIR(PATH.DIRNAME$(target$)) THEN MKDIR PATH.DIRNAME$(target$)
+            TXTWRITER target$, Said$(p[1], setup)
+        ELSEIF verb$ = "copy" THEN
+            DIM dest$ = Where$(p[0], setup)
+            IF NOT FILE.ISDIR(PATH.DIRNAME$(dest$)) THEN MKDIR PATH.DIRNAME$(dest$)
+            FILE.COPY(Where$(p[1], setup), dest$, TRUE)
+        ELSEIF verb$ = "remove" THEN
+            Remove(Where$(rest$, setup))
+        ELSEIF verb$ = "mkdir" THEN
+            DIM made$ = Where$(rest$, setup)
+            IF NOT FILE.ISDIR(made$) THEN MKDIR made$
+        ELSEIF verb$ = "env" THEN
+            PUSH(envs, [p[0], Said$(p[1], setup)])
+        ELSEIF verb$ = "args" THEN
+            DIM words = SPLIT(rest$, " ")
+            DIM j = 0
+            FOR j = 0 TO LEN(words) - 1
+                IF words[j] <> "" THEN PUSH(extra, Said$(Where$(words[j], setup), setup))
+            NEXT j
+        ELSEIF verb$ = "config" THEN
+            conf$ = Where$(rest$, setup)
+        ELSEIF verb$ = "program" THEN
+            program$ = rest$
+        ELSEIF verb$ = "real" THEN
+            dry = FALSE
+        ELSEIF verb$ = "prepare" THEN
+            extra = APPEND(extra, FIXTURES.PREPARE(c{"id"}, home$, book$, setup{"folder"}, jdbasic$, ""))
+        ELSEIF verb$ = "expect" THEN
+            PUSH(expects, Said$(rest$, setup))
+        ELSEIF verb$ = "absent" THEN
+            PUSH(absents, Said$(rest$, setup))
+        ELSEIF verb$ = "exit" THEN
+            want_exit$ = rest$
+        ELSE
+            Remove(setup{"root"})
+            RETURN {"mark": "FAIL", "note": "unknown step " + verb$}
+        ENDIF
+    NEXT k
+    SETENV "JDBASIC_PATH", std_lib$ + gSep$ + setup{"lib"}
+    SETENV "USERPROFILE", home$
+    SETENV "HOME", home$
+    FOR k = 0 TO LEN(envs) - 1
+        SETENV envs[k][0], envs[k][1]
+    NEXT k
+    DIM args = APPEND([program$], extra)
+    IF dry THEN PUSH(args, "--dry-run")
+    args = APPEND(args, ["--config", conf$])
+    DIM res = Run(jdbasic$, args, setup{"folder"}, limit_s)
+    FOR k = 0 TO LEN(envs) - 1
+        SETENV envs[k][0], ""
+    NEXT k
+    Remove(setup{"root"})
+    DIM text$ = res{"text"}
+    DIM misses = []
+    FOR k = 0 TO LEN(expects) - 1
+        IF INSTR(text$, expects[k]) < 0 THEN PUSH(misses, "no " + CHR$(34) + expects[k] + CHR$(34))
+    NEXT k
+    FOR k = 0 TO LEN(absents) - 1
+        IF INSTR(text$, absents[k]) >= 0 THEN PUSH(misses, "has " + CHR$(34) + absents[k] + CHR$(34))
+    NEXT k
+    IF want_exit$ <> "" ANDALSO STR$(res{"exit"}) <> want_exit$ THEN
+        PUSH(misses, "exit " + STR$(res{"exit"}))
+    ENDIF
+    IF res{"exit"} = -1 THEN PUSH(misses, "timed out")
+    IF LEN(misses) = 0 THEN RETURN {"mark": "ok", "note": ""}
+    DIM shown$ = REPLACE$(TRIM$(text$), home$, "~")
+    shown$ = REPLACE$(shown$, REPLACE$(home$, "\", "/"), "~")
+    shown$ = REPLACE$(shown$, gLF$, " / ")
+    RETURN {"mark": "FAIL", "note": JOIN(misses, ", ") + "; said: " + LEFT$(shown$, 200)}
+ENDFUNC
+
+DIM book$ = PATH.ABS$(".")
+DIM jdbasic$ = PATH.ABS$(ArgAfter$("jdbasic", OS.SELF$()))
+DIM only$ = ArgAfter$("only", "")
+DIM limit_s = VAL(ArgAfter$("timeout", "60"))
+DIM listing = "--list" IN OS.ARGS()
+DIM std_lib$ = PATH.JOIN$(PATH.DIRNAME$(jdbasic$), "lib")
+DIM case_file$ = ArgAfter$("cases", PATH.JOIN$(book$, "tools", "wrong_cases.txt"))
+
+DIM recipes = WIZARD.RECIPES("recipes")
+DIM files$ = MKTEMP$("wrong_files")
+IF NOT listing THEN
+    MKDIR files$
+    FIXTURES.FILES(files$)
+ENDIF
+DIM bullets = BookBullets(book$)
+DIM cases = Cases(case_file$)
+
+DIM have AS MAP
+DIM k = 0
+FOR k = 0 TO LEN(cases) - 1
+    have{cases[k]{"id"} + " " + cases[k]{"head"}} = TRUE
+NEXT k
+DIM in_book AS MAP
+DIM missing = []
+FOR k = 0 TO LEN(bullets) - 1
+    DIM key$ = bullets[k]{"id"} + " " + bullets[k]{"head"}
+    in_book{key$} = TRUE
+    IF NOT Listed(bullets[k]{"id"}, only$) THEN CONTINUEFOR
+    IF NOT MAP.EXISTS(have, key$) THEN PUSH(missing, key$)
+NEXT k
+DIM stale = []
+FOR k = 0 TO LEN(cases) - 1
+    DIM key$ = cases[k]{"id"} + " " + cases[k]{"head"}
+    IF Listed(cases[k]{"id"}, only$) ANDALSO NOT MAP.EXISTS(in_book, key$) THEN PUSH(stale, key$ + " (line " + STR$(cases[k]{"line"}) + ")")
+NEXT k
+
+DIM old_path$ = GETENV$("JDBASIC_PATH")
+DIM old_profile$ = GETENV$("USERPROFILE")
+DIM old_home$ = GETENV$("HOME")
+
+DIM counts = {"ok": 0, "FAIL": 0, "manual": 0}
+FOR k = 0 TO LEN(cases) - 1
+    DIM c = cases[k]
+    IF NOT Listed(c{"id"}, only$) THEN CONTINUEFOR
+    DIM got = {"mark": "listed", "note": ""}
+    IF listing THEN
+        DIM j = 0
+        FOR j = 0 TO LEN(c{"steps"}) - 1
+            IF c{"steps"}[j][0] = "manual" THEN got = {"mark": "manual", "note": c{"steps"}[j][1]}
+        NEXT j
+        IF got{"mark"} = "listed" THEN got{"mark"} = "runs"
+    ELSE
+        got = Check(c, recipes, jdbasic$, std_lib$, book$, files$, limit_s)
+        counts{got{"mark"}} = counts{got{"mark"}} + 1
+    ENDIF
+    DIM row$ = FORMAT$("{:<6} {} {}", got{"mark"}, c{"id"}, c{"head"})
+    IF got{"note"} <> "" THEN row$ = row$ + gLF$ + "         " + got{"note"}
+    PRINT row$
+NEXT k
+
+SETENV "JDBASIC_PATH", old_path$
+SETENV "USERPROFILE", old_profile$
+SETENV "HOME", old_home$
+IF NOT listing THEN Remove(files$)
+
+PRINT
+FOR k = 0 TO LEN(missing) - 1
+    PRINT "not in the checklist: "; missing[k]
+NEXT k
+FOR k = 0 TO LEN(stale) - 1
+    PRINT "not in the book: "; stale[k]
+NEXT k
+IF NOT listing THEN
+    PRINT STR$(counts{"ok"}); " ok, "; STR$(counts{"manual"}); " by hand, "; _
+        STR$(counts{"FAIL"}); " failed, "; STR$(LEN(missing)); " not in the checklist, "; _
+        STR$(LEN(stale)); " not in the book"
+    IF counts{"FAIL"} > 0 ORELSE LEN(missing) > 0 ORELSE LEN(stale) > 0 THEN END 1
+ENDIF

@@ -7,10 +7,11 @@
 '   IMPORT FIXTURES
 '   FIXTURES.SETTINGS(values, home$)        before the wizard installs
 '   DIM extra = FIXTURES.PREPARE(id$, home$, book$, folder$, jdbasic$, "")
+'   FIXTURES.FILES(dir$)                    the files check_wrong copies
 
 EXPORT MODULE FIXTURES
 
-IMPORT XLSX, MAIL
+IMPORT XLSX, MAIL, DOCX
 
 DIM gLF$ = CHR$(10)
 ' The encoding of the text files PREPARE writes: "" for plain UTF-8,
@@ -174,3 +175,85 @@ EXPORT FUNC PREPARE(id$, home$, book$, folder$, jdbasic$, encoding$)
     ENDIF
     RETURN extra
 ENDFUNC
+
+SUB Doc(path$, paras, table)
+    DIM d = DOCX.NEW()
+    DIM k = 0
+    FOR k = 0 TO LEN(paras) - 1
+        DOCX.PARAGRAPH(d, paras[k])
+    NEXT k
+    IF LEN(table) > 0 THEN DOCX.TABLE(d, table)
+    DIM written = DOCX.WRITE(d, path$)
+ENDSUB
+
+' The workbooks and documents the cases of check_wrong copy into their
+' home: a sheet without a price column, a price with a decimal comma,
+' reports that disagree, a plan with broken rows, letters and contract
+' versions for the comparison.
+EXPORT SUB FILES(dir$)
+    DIM head = ["Customer", "Email", "Item", "Quantity", "Price"]
+    Sheet(PATH.JOIN$(dir$, "m01_noprice.xlsx"), "Orders", _
+        [["Customer", "Email", "Item", "Quantity", "Cost"], _
+        ["Miller Ltd", "buy@miller.example", "Copy paper", 10, 4.5]])
+    Sheet(PATH.JOIN$(dir$, "m01_twonames.xlsx"), "Orders", [head, _
+        ["Miller Ltd", "buy@miller.example", "Copy paper", 10, 4.5], _
+        ["Miller Ltd.", "buy@miller.example", "Toner", 1, 61.9]])
+    DIM comma = [head]
+    DIM k = 0
+    FOR k = 1 TO 7
+        PUSH(comma, ["Miller Ltd", "buy@miller.example", "Copy paper", 1, 4.5])
+    NEXT k
+    PUSH(comma, ["Miller Ltd", "buy@miller.example", "Pens", 2, "4,50"])
+    Sheet(PATH.JOIN$(dir$, "m01_comma.xlsx"), "Orders", comma)
+    Sheet(PATH.JOIN$(dir$, "m01_october.xlsx"), "October", _
+        [head, ["Miller Ltd", "buy@miller.example", "Copy paper", 10, 4.5]])
+
+    DIM rhead = ["Project", "Hours", "Costs", "Note"]
+    Sheet(PATH.JOIN$(dir$, "m02_anna.xlsx"), "Report", _
+        [rhead, ["Alpha", 10, 250.5, "on track"]])
+    Sheet(PATH.JOIN$(dir$, "m02_alpha_a.xlsx"), "Report", [rhead, ["Alpha", 10, 250.5, ""]])
+    Sheet(PATH.JOIN$(dir$, "m02_alpha_b.xlsx"), "Report", [rhead, ["Alpha ", 4, 80, ""]])
+    Sheet(PATH.JOIN$(dir$, "m02_alpha_c.xlsx"), "Report", [rhead, ["Alpha.", 2, 40, ""]])
+    Sheet(PATH.JOIN$(dir$, "m02_empty.xlsx"), "Report", [])
+    Sheet(PATH.JOIN$(dir$, "m02_cleo.xlsx"), "Report", _
+        [["Project", "Hours", "Costs", "Note", "Travel"], ["Alpha", 3, 60, "", 20]])
+
+    Doc(PATH.JOIN$(dir$, "m03_letter.docx"), ["{{name}}", "{{company}}", _
+        "{{city}}", "Dear {{salutation}},", "Our customer day is on {{date}}."], [])
+    DIM chead = ["Name", "Company", "City", "Salutation", "Email", "Postcode"]
+    DIM anna = ["Anna Berg", "Berg Ltd", "Dresden", "Ms Berg", "anna@berg.example", 1067]
+    Sheet(PATH.JOIN$(dir$, "m03_contacts_nodate.xlsx"), "Contacts", [chead, anna])
+    Sheet(PATH.JOIN$(dir$, "m03_contacts.xlsx"), "Contacts", _
+        [APPEND(chead, ["Date"]), APPEND(anna, ["2026-11-20"])])
+
+    DIM phead = ["Name", "Kind", "From", "To", "Note"]
+    Sheet(PATH.JOIN$(dir$, "m05_othersheet.xlsx"), "Sheet1", _
+        [phead, ["Ann", "Vacation", "2026-10-19", "2026-10-23", ""]])
+    DIM plan = [phead]
+    FOR k = 2 TO 11
+        PUSH(plan, ["P" + STR$(k), "Shift", "2026-10-" + STR$(k + 10), "", ""])
+    NEXT k
+    PUSH(plan, ["Jan", "Vacation", "Oct 19", "", ""])
+    PUSH(plan, ["Kai", "Vacation", "2026-10-30", "2026-10-28", ""])
+    PUSH(plan, ["", "Vacation", "2026-10-26", "2026-10-27", ""])
+    Sheet(PATH.JOIN$(dir$, "m05_plan.xlsx"), "Plan", plan)
+
+    DIM terms = ["The supplier delivers the goods within ten days.", _
+        "Payment is due thirty days after the invoice.", _
+        "The contract runs for two years."]
+    Doc(PATH.JOIN$(dir$, "m14_v1.docx"), terms, [])
+    Doc(PATH.JOIN$(dir$, "m14_pasted.docx"), [JOIN(terms, " ")], [])
+    Doc(PATH.JOIN$(dir$, "m14_table1.docx"), terms, [["Item", "Price"], ["Service", "100"]])
+    Doc(PATH.JOIN$(dir$, "m14_table2.docx"), terms, [["Item", "Price"], ["Service", "120"]])
+    Doc(PATH.JOIN$(dir$, "m14_long1.docx"), ["The supplier delivers the goods " + _
+        "within ten days of the order to the address of the buyer, and the " + _
+        "buyer checks them within three days and reports any damage in " + _
+        "writing to the supplier."], [])
+    Doc(PATH.JOIN$(dir$, "m14_long2.docx"), ["The seller delivers the goods " + _
+        "within fourteen days of the order to the warehouse of the buyer, and " + _
+        "the buyer checks them within five days and reports any defect by " + _
+        "mail to the seller."], [])
+
+    Sheet(PATH.JOIN$(dir$, "m17_notitle.xlsx"), "Slides", _
+        [["Heading", "Points"], ["Review", "one; two"]])
+ENDSUB

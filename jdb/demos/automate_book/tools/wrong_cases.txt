@@ -1,0 +1,825 @@
+# The "When it goes wrong" cases of the book, one block per bullet.
+# tools/check_wrong.jdb runs them; its head says what each step does.
+
+E01 "No settings found"
+    config ~/Documents/AutomateWork/config/gone.conf
+    expect No settings found at
+    exit 1
+E01 "Folder not found"
+    set downloads_butler.source = "~/Downloads/Gone"
+    expect Folder not found:
+    expect Check source in [downloads_butler] of work.conf.
+    exit 1
+E01 A file stays where it is
+    set downloads_butler.min_age_hours = 24
+    write ~/Downloads/fresh.pdf = new
+    write ~/Downloads/report.pdf.crdownload = loading
+    write ~/Downloads/movie.part = loading
+    expect Nothing to sort in
+E01 "target exists"
+    manual a file that arrives between the plan and the move; a race no single run makes
+
+E02 Nothing opens
+    expect Nothing
+E02 A program does not start
+    manual starts a program on the desktop
+E02 Everything opens twice
+    manual the scheduler and the login both start the launcher
+
+E03 A file gets the wrong date
+    manual the date a copy from an old disk carries
+E03 A name ends in (2)
+    mkdir ~/Documents/Scans
+    write ~/Documents/Scans/@today scan.pdf = older
+    write ~/Documents/Scans/scan.pdf = new
+    expect (2)
+E03 Nothing happens
+    mkdir ~/Documents/Scans
+    write ~/Documents/Scans/2026-10-01 scan.pdf = dated
+    write ~/Documents/Scans/notes.txt = other kind
+    expect Nothing to rename in
+
+E04 "No such folder"
+    set one_click_backup.folders = ["~/Documents/Gone"]
+    expect No such folder:
+    exit 1
+E04 The program takes a long time or runs out of memory
+    manual needs folders of several gigabytes
+E04 A second archive in one minute
+    manual the name is tested in one_click_backup_test.jdb; a dry run writes no archive
+
+E05 No reminder at all
+    set break_reminder.start = "00:00"
+    set break_reminder.end = "23:59"
+    set break_reminder.workdays_only = false
+    write ~/Documents/AutomateWork/logs/break_reminder.txt = @today 23:59:59
+    expect No break due.
+E05 "this jdbasic has no MSGBOX"
+    manual needs a jdbasic built without Forms; with Forms a real run opens a message box
+E05 A reminder during a presentation
+    manual focus assist of Windows and a message box on the screen
+E05 Reminders one right after another
+    manual two schedules in the Task Scheduler start the program
+
+E06 "is a Windows path in double quotes"
+    set shutdown_ritual.journal = "C:\Users\mia\journal.md"
+    expect is a Windows path in double quotes
+    absent What did you get done today?
+E06 No summary on Friday
+    manual needs the three answers typed in and a journal with entries of two weeks on the summary day
+E06 The window closes too fast
+    manual a console window started from the scheduler
+
+E07 A block that lasted all night
+    write ~/Documents/AutomateWork/time/log.csv = time,event,project\n@today 00:00:00,start,Alpha\n@today 08:00:00,start,Beta\n@today 08:30:00,stop,\n
+    args week
+    expect Alpha: 8.00 h
+    expect Beta: 0.50 h
+E07 A block over midnight
+    write ~/Documents/AutomateWork/time/log.csv = time,event,project\n2026-01-04 23:00:00,start,Alpha\n@today 01:00:00,stop,\n@today 09:00:00,start,Beta\n@today 10:00:00,stop,\n
+    args week
+    expect Beta: 1.00 h
+    absent Alpha
+
+E08 "No value for: back, deputy"
+    set mail_templates.folder = '@recipe/templates'
+    args out_of_office
+    expect No value for: back, deputy
+    expect Nothing is on the clipboard.
+    exit 1
+E08 "No template invoice"
+    set mail_templates.folder = '@recipe/templates'
+    args invoice
+    expect No template invoice
+    expect follow_up, out_of_office, thanks
+E08 The clipboard is empty
+    manual a remote desktop session that blocks the clipboard
+
+E09 "No meeting in the next 7 days"
+    write ~/Documents/AutomateWork/calendar.ics = BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Example//EN\nBEGIN:VEVENT\nUID:old@example\nDTSTAMP:20250101T080000Z\nDTSTART:20250105T080000Z\nDTEND:20250105T090000Z\nSUMMARY:Old meeting\nEND:VEVENT\nEND:VCALENDAR\n
+    expect No meeting in the next 7 days
+E09 The times are one hour off
+    manual the times show only inside the Word file of the notes
+E09 Attendees appear as mail addresses only
+    manual the attendees show only inside the Word file of the notes
+
+E10 It takes a long time
+    manual needs a full disk with many files
+E10 "No file is stored twice"
+    set duplicate_finder.folders = ["~/Documents/Gone"]
+    expect 0 files looked at
+    expect No file is stored twice
+E10 Files with the same name are missing
+    set duplicate_finder.folders = ["~/Documents", "~/Downloads"]
+    set duplicate_finder.min_size_kb = 0
+    write ~/Documents/Budget/budget.xlsx = version one
+    write ~/Downloads/budget.xlsx = version two
+    expect No file is stored twice
+
+E11 It takes a while
+    manual needs a large folder
+E11 A folder is missing from the list
+    manual needs the hidden attribute or a folder without read permission
+E11 The sizes differ from Explorer
+    set disk_space.root = "~/Documents/Small"
+    write ~/Documents/Small/seven.txt = 1234567
+    expect 7 bytes  ~/Documents/Small
+
+E12 "Ann Miller: 03.10.1985 is not a date (write 1985-10-03)"
+    write ~/Documents/AutomateWork/contacts.csv = name,birthday,anniversary\nAnn Miller,03.10.1985,\n
+    expect Ann Miller: 03.10.1985 is not a date (write 1985-10-03)
+    absent Ann Miller turns
+E12 The age is odd
+    write ~/Documents/AutomateWork/contacts.csv = name,birthday,anniversary\nAnn Miller,@today,\n
+    expect Ann Miller turns 0 (today)
+E12 The calendar shows every date twice
+    manual the calendar file imported twice in a calendar program
+
+E13 "No to-do list"
+    remove ~/Documents/AutomateWork/todo.txt
+    expect No to-do list
+E13 A task is on the wrong day
+    write ~/Documents/AutomateWork/todo.txt = Mo: Call Miller\n
+    expect Any day: 1 task
+E13 "tasks did not fit"
+    write ~/Documents/AutomateWork/todo.txt = Mon: task 1\nMon: task 2\nMon: task 3\nMon: task 4\nMon: task 5\nMon: task 6\nMon: task 7\nMon: task 8\nMon: task 9\nMon: task 10\nMon: task 11\nMon: task 12\nMon: task 13\nMon: task 14\nMon: task 15\nMon: task 16\nMon: task 17\nMon: task 18\nMon: task 19\nMon: task 20\nMon: task 21\nMon: task 22\nMon: task 23\nMon: task 24\nMon: task 25\nMon: task 26\nMon: task 27\nMon: task 28\nMon: task 29\nMon: task 30\nMon: task 31\nMon: task 32\nMon: task 33\nMon: task 34\nMon: task 35\nMon: task 36\nMon: task 37\nMon: task 38\nMon: task 39\nMon: task 40\n
+    real
+    expect tasks did not fit
+
+E14 `missing`
+    manual needs a web page served whose start marker is gone
+E14 `error` with "cannot reach"
+    set page_watcher.page = [{name = "Desk lamp", url = "http://127.0.0.1:1/", start = "id=price>", end = "</span>"}]
+    expect Desk lamp: error
+    expect cannot reach http://127.0.0.1:1/
+E14 `changed` every day
+    manual needs a web page served that changes between two runs
+E14 A shop shows a page that asks you to log in
+    manual a shop page behind a browser login
+
+E15 "Set guest_wifi.ssid"
+    set guest_wifi.ssid = ""
+    expect Set guest_wifi.ssid
+E15 The phone does not offer to join
+    set guest_wifi.security = "WEP"
+    expect T:WEP;
+    expect S:Guests;
+E15 A character shows as `?` on the card
+    manual the character shows only on the printed card of the PDF
+
+E16 A value lands in the wrong field
+    manual types into a form on the screen
+E16 The text goes into another window
+    manual types into the window in front on the screen
+E16 Nothing arrives, and there is no message
+    manual needs a form of a program that runs as administrator
+E16 "Esc is held: stopped."
+    manual needs the Esc key held during a real fill
+
+E17 The window opens and closes at once
+    manual needs a jdbasic without GFX; the game opens a window
+E17 The arrow keys do nothing
+    manual the focus of the game window and the keyboard
+E17 The numbers look plain
+    manual needs Windows without Arial; shows only in the game window
+
+E18 "Every PDF in ... is up to date" although you changed a document
+    write ~/Documents/AutomateWork/to_pdf/Offer.docx = old text
+    write ~/Documents/AutomateWork/to_pdf/Offer.pdf = made later
+    expect Every PDF in
+    expect is up to date.
+    absent would make
+E18 "Folder not found"
+    set office_to_pdf.source = "~/Documents/Gone"
+    expect Folder not found:
+    expect Check source in [office_to_pdf] of work.conf.
+    exit 1
+E18 "skipped Offer.docx: ..."
+    manual needs Word through COM
+E18 "COM: Cannot find ProgID 'Word.Application'"
+    manual needs a computer without the Office desktop programs; a real run starts Word
+E18 A WINWORD.EXE stays in the Task Manager
+    manual needs Word through COM stopped in the middle with Ctrl+C
+
+
+M01 "The sheet has no column price"
+    copy @work/invoices.xlsx = @files/m01_noprice.xlsx
+    expect The sheet has no column price
+M01 Numbers jumped
+    prepare
+    write @work/invoices/last_number.txt = 41
+    expect -0042  Miller Ltd
+M01 A customer got two invoices
+    copy @work/invoices.xlsx = @files/m01_twonames.xlsx
+    expect -0001  Miller Ltd  53.55 EUR
+    expect -0002  Miller Ltd.  73.66 EUR
+M01 "Row 9: price '4,50' is not a number (write 4.50)"
+    copy @work/invoices.xlsx = @files/m01_comma.xlsx
+    expect Row 9: price '4,50' is not a number (write 4.50)
+M01 "October was invoiced on ..."
+    copy @work/invoices.xlsx = @files/m01_october.xlsx
+    write @work/invoices/invoiced.txt = October	2026-11-02	RE-@year-0001	RE-@year-0001\n
+    expect October was invoiced on 2026-11-02 as RE-@year-0001
+    expect Use --again to invoice it once more.
+M01 "RE-2026-0007.pdf is already there"
+    prepare
+    write @work/invoices/last_number.txt = 6
+    write @work/invoices/RE-@year-0007.pdf = old
+    expect RE-@year-0007.pdf is already there.
+    expect Nothing was written.
+    exit 1
+M01 No tax number on the invoice
+    prepare
+    expect No tax_id in work.conf: the invoices show no tax number.
+M01 The mail is missing
+    manual the run names no mail; only the outbox shows the missing one
+
+M02 "No folder ...\2026-09"
+    args --month 2026-09
+    expect No folder
+    expect 2026-09
+M02 "Anna.xlsx has no sheet October"
+    set report_merger.tab = "October"
+    copy @work/reports/2026-09/Anna.xlsx = @files/m02_anna.xlsx
+    args --month 2026-09
+    expect Anna.xlsx has no sheet October
+M02 A person is missing although the file is there
+    set report_merger.team = ["Anna"]
+    copy @work/reports/2026-09/anna_mueller.xlsx = @files/m02_anna.xlsx
+    args --month 2026-09
+    expect Missing: Anna
+M02 A project appears twice in the totals
+    copy @work/reports/2026-09/a.xlsx = @files/m02_alpha_a.xlsx
+    copy @work/reports/2026-09/b.xlsx = @files/m02_alpha_b.xlsx
+    copy @work/reports/2026-09/c.xlsx = @files/m02_alpha_c.xlsx
+    args --month 2026-09
+    expect with 2 rows
+M02 "Empty, left out: Leer.xlsx"
+    copy @work/reports/2026-09/Anna.xlsx = @files/m02_anna.xlsx
+    copy @work/reports/2026-09/Leer.xlsx = @files/m02_empty.xlsx
+    args --month 2026-09
+    expect Empty, left out: Leer.xlsx
+M02 "Other columns than the first report: Cleo"
+    copy @work/reports/2026-09/Anna.xlsx = @files/m02_anna.xlsx
+    copy @work/reports/2026-09/Cleo.xlsx = @files/m02_cleo.xlsx
+    args --month 2026-09
+    expect Other columns than the first report: Cleo
+M02 Writing fails
+    manual needs Excel holding the workbook open
+
+M03 "No column for: date"
+    copy @work/templates/letter.docx = @files/m03_letter.docx
+    copy @work/contacts.xlsx = @files/m03_contacts_nodate.xlsx
+    expect No column for: date
+M03 "No column for: when"
+    copy @work/templates/letter.docx = @files/m03_letter.docx
+    copy @work/contacts.xlsx = @files/m03_contacts.xlsx
+    set mail_merge.subject = "Meeting {{when}}"
+    expect No column for: when
+M03 A placeholder was not replaced
+    copy @work/templates/letter.docx = @files/m03_letter.docx
+    copy @work/contacts.xlsx = @files/m03_contacts.xlsx
+    set mail_merge.file_name = "{name}"
+    expect would write {name}.docx
+M03 "No sheet ..."
+    copy @work/templates/letter.docx = @files/m03_letter.docx
+    copy @work/contacts.xlsx = @files/m03_contacts.xlsx
+    set mail_merge.tab = "People"
+    expect No sheet People
+M03 A postcode lost its leading 0
+    copy @work/templates/letter.docx = @files/m03_letter.docx
+    copy @work/contacts.xlsx = @files/m03_contacts.xlsx
+    set mail_merge.file_name = "{{postcode}}"
+    expect would write 1067.docx
+M03 The letters look odd in Word
+    manual the formatting of the template shows only in Word
+
+M04 A receipt is in the wrong month
+    manual needs a file saved in another month than it was paid; a new file carries today
+M04 "no amount"
+    mkdir @work/receipts
+    write @work/receipts/inbox/2026-10-02 fuel 45.pdf = x
+    expect 2026-10-02 fuel 45.pdf  -> 2026-10/Travel  no amount
+M04 A receipt counts twice in the report
+    mkdir @work/receipts
+    mkdir @work/receipts/2026-10
+    write @work/receipts/2026-10/Travel/2026-10-02 fuel 45.00.pdf = x
+    write @work/receipts/2026-10/Travel/2026-10-02 fuel 45.00 (2).pdf = x
+    args --month 2026-10
+    expect 2026-10: 2 receipts, 90.00
+M04 A receipt went to `Other`
+    mkdir @work/receipts
+    write @work/receipts/inbox/2026-10-02 railway 30.00.pdf = x
+    expect 2026-10-02 railway 30.00.pdf  -> 2026-10/Other  30.00
+M04 "No receipts filed for 2026-01"
+    args --month 2026-01
+    expect No receipts filed for 2026-01
+    exit 1
+
+M05 "The plan has no sheet called Plan"
+    copy ~/Documents/Team/plan.xlsx = @files/m05_othersheet.xlsx
+    expect The plan has no sheet called Plan
+M05 "row 12 (Jan): 'Oct 19' is not a date, left out"
+    copy ~/Documents/Team/plan.xlsx = @files/m05_plan.xlsx
+    expect row 12 (Jan): 'Oct 19' is not a date, left out
+M05 "row 13 (Kai): ends 2026-10-28 before it starts 2026-10-30"
+    copy ~/Documents/Team/plan.xlsx = @files/m05_plan.xlsx
+    expect row 13 (Kai): ends 2026-10-28 before it starts 2026-10-30
+M05 An entry is missing from the calendar
+    copy ~/Documents/Team/plan.xlsx = @files/m05_plan.xlsx
+    expect 10 entries in plan.xlsx
+    absent row 14
+M05 Subscribers see old data
+    manual calendar programs fetch a subscribed file on their own timetable
+
+M06 "Set to in [friday_status]"
+    prepare
+    set friday_status.to = []
+    expect Set to in [friday_status].
+M06 A person is missing
+    prepare
+    write ~/Documents/Team/status/Cleo.md = - [x] Slides done\n
+    write ~/Documents/Team/status/old/Dan.txt = - [x] Old notes\n
+    expect Ann
+    absent Cleo
+    absent Dan
+M06 An item is missing
+    prepare
+    write ~/Documents/Team/status/Cleo.txt = - [ x ] Report sent\n- [x] Slides done\n
+    expect Slides done
+    absent Report sent
+M06 "No mail template at"
+    prepare
+    remove @recipe\templates
+    expect No mail template at
+
+M07 "No mail folder at"
+    set inbox_unpacker.inbox_folder = "~/Documents/Gone"
+    expect No mail folder at
+M07 "No .eml files"
+    write @work/saved mail/1.msg = x
+    expect No .eml files in
+M07 A file named `unnamed.pdf`
+    write @work/saved mail/1.eml = From: Anna Miller <anna@miller.example>\nTo: mia@example.com\nSubject: Scan\nDate: Fri, 23 Oct 2026 12:00:00 +0000\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="b1"\n\n--b1\nContent-Type: text/plain\n\nHello\n--b1\nContent-Type: application/pdf; name="***"\nContent-Disposition: attachment; filename="***"\nContent-Transfer-Encoding: base64\n\nJVBERi0xLjQ=\n--b1--\n
+    expect unnamed.pdf
+M07 The day is one off
+    write @work/saved mail/1.eml = From: Anna Miller <anna@miller.example>\nTo: mia@example.com\nSubject: Late\nDate: Fri, 23 Oct 2026 23:30:00 -1000\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="b1"\n\n--b1\nContent-Type: text/plain\n\nHello\n--b1\nContent-Type: application/pdf; name="plan.pdf"\nContent-Disposition: attachment; filename="plan.pdf"\nContent-Transfer-Encoding: base64\n\nJVBERi0xLjQ=\n--b1--\n
+    expect 2026-10-24 Late
+    absent 2026-10-23 Late
+
+M08 The browser says it cannot connect
+    manual needs a browser and a dashboard that is not running
+M08 "Port 8765 is taken"
+    manual needs another program holding the port
+M08 The numbers do not change
+    manual needs two copies of the dashboard running at once
+M08 Zero hours although you tracked time
+    write @work/time/log.csv = time,event,project\n@today 09:00:00,start,Offer\n@today 10:00:00,stop,\n
+    set time_tracker.folder = "~/Documents/Elsewhere"
+    expect total_hours: 0
+M08 "No page template at"
+    remove @recipe\templates
+    expect No page template at
+
+M09 "0 errors" although you see errors
+    write ~/logs/app.log = [05/Oct/2026 09:14:03] ERROR a\n[05/Oct/2026 09:15:03] ERROR b\n[05/Oct/2026 09:16:03] WARN c\n[05/Oct/2026 09:17:03] INFO d\n[05/Oct/2026 09:18:03] ERROR e\n[05/Oct/2026 09:19:03] ERROR f\n[05/Oct/2026 09:20:03] INFO g\n[05/Oct/2026 09:21:03] ERROR h\n[05/Oct/2026 09:22:03] WARN i\n[05/Oct/2026 09:23:03] ERROR j\n[05/Oct/2026 09:24:03] INFO k\n
+    expect 11 lines, 0 errors, 0 warnings, 11 without a time stamp
+M09 The file is in use
+    manual needs another program holding the log open
+M09 Very large logs take a long time
+    manual needs logs of many megabytes
+
+M10 "Another run is working on the folder", every time
+    write @work/hot/.hot_folder.lock = @today 23:59:59
+    real
+    expect Another run is working on the folder.
+M10 A file stays in the folder
+    write @work/hot/fresh.pdf = still copying
+    expect Nothing to do.
+    absent fresh.pdf
+M10 A *failed* line in the log
+    write ~/blocked = a file where the target folder should be
+    set hot_folder.settle_seconds = 0
+    set hot_folder.rule = [{match = "*", convert = "", rename = "{name}", target = "~/blocked/sub"}]
+    write @work/hot/a.txt = x
+    real
+    expect a.txt  failed:
+M10 Every row is one long field in the workbook
+    manual shows only in the workbook; the run counts rows, not columns
+M10 Prices are text in the workbook
+    manual shows only in the workbook; the run names no cell kinds
+
+M11 Every row is one long field
+    manual shows only in the clean workbook; the run counts rows and cells
+M11 Dates are off by months
+    write @work/export.csv = Date;Customer\n05/10/2026;Ann\n13/10/2026;Ben\n
+    set data_cleaner.day_first = false
+    expect row 3, Date: not a date (13/10/2026)
+M11 Too many similar names
+    write @work/export.csv = Date;Customer\n2026-10-05;Weber AG\n2026-10-06;Weber KG\n
+    expect Weber AG / Weber KG
+M11 A column is cleaned as the wrong kind
+    write @work/export.csv = Customer;Price group\nAnn;1.10\nBen;2.20\n
+    expect Cells changed: 2
+M11 Leading zeros are gone
+    write @work/export.csv = Customer;Total no\nAnn;007\nBen;012\n
+    expect Cells changed: 2
+
+M12 "Set meeting_cost.calendar first"
+    set meeting_cost.calendar = ""
+    expect Set meeting_cost.calendar first.
+M12 No meetings at all
+    write @work/calendar.ics = BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Check//EN\nBEGIN:VEVENT\nUID:a@check\nDTSTAMP:20251001T080000Z\nDTSTART:20251006T080000Z\nDTEND:20251006T090000Z\nSUMMARY:Team call\nEND:VEVENT\nEND:VCALENDAR\n
+    set meeting_cost.weeks = 4
+    expect Meetings: 0.0 hours
+M12 A series is counted under two titles
+    write @work/calendar.ics = BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Check//EN\nBEGIN:VEVENT\nUID:a@check\nDTSTAMP:20261001T080000Z\nDTSTART:20261005T080000Z\nDTEND:20261005T090000Z\nSUMMARY:Team call\nEND:VEVENT\nBEGIN:VEVENT\nUID:b@check\nDTSTAMP:20261001T080000Z\nDTSTART:20261012T080000Z\nDTEND:20261012T090000Z\nSUMMARY:Weekly team call\nEND:VEVENT\nEND:VCALENDAR\n
+    set meeting_cost.weeks = 520
+    expect Team call (once)
+    expect Weekly team call (once)
+M12 A declined meeting still counts
+    write @work/calendar.ics = BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Check//EN\nBEGIN:VEVENT\nUID:a@check\nDTSTAMP:20261001T080000Z\nDTSTART:20261020T130000Z\nDTEND:20261020T150000Z\nSUMMARY:Budget review\nATTENDEE;PARTSTAT=DECLINED:mailto:jonas@example.com\nATTENDEE:mailto:anna@example.com\nEND:VEVENT\nEND:VCALENDAR\n
+    set mail.from = "Mia Example <mia@example.com>"
+    set meeting_cost.weeks = 520
+    expect Budget review (once)
+M12 Times are an hour off
+    manual the report shows hours per week, not the time of day
+
+M13 "No snippet called late"
+    args show late
+    expect No snippet called late
+M13 "Not a snippet name"
+    args show late.reply
+    expect Not a snippet name: late.reply
+M13 "Left out (rename them): late reply.txt"
+    write @work/snippets/late reply.txt = Sorry for the late reply.
+    write @work/snippets/thanks.txt = Thank you, {{name}}.
+    args list
+    expect thanks  name
+    expect Left out (rename them): late reply.txt
+M13 "A snippet called late exists; use --force"
+    write @work/snippets/late.txt = Sorry for the late reply.
+    args add late --text Hello
+    real
+    expect A snippet called late exists; use --force
+M13 "Use name=value"
+    write @work/snippets/late.txt = Sorry, {{name}}.
+    args show late --set due
+    expect Use name=value
+M13 A placeholder stays open although you gave it
+    write @work/snippets/late.txt = Due on {{due_date}}.
+    args show late --set due=1.12.
+    expect Still open: due_date
+
+M14 "No such document"
+    copy ~/Documents/offer v1.docx = @files/m14_v1.docx
+    copy ~/Documents/offer v2.docx = @files/m14_v1.docx
+    args ~/Documents/offer v1.docx
+    expect No such document
+M14 Everything is removed and added
+    copy ~/Documents/v1.docx = @files/m14_v1.docx
+    copy ~/Documents/v2.docx = @files/m14_pasted.docx
+    args ~/Documents/v1.docx ~/Documents/v2.docx
+    expect 0 changed, 1 added, 3 removed, 0 moved
+M14 A table cell change is missing
+    copy ~/Documents/v1.docx = @files/m14_table1.docx
+    copy ~/Documents/v2.docx = @files/m14_table2.docx
+    args ~/Documents/v1.docx ~/Documents/v2.docx
+    expect 0 changed, 0 added, 0 removed, 0 moved
+M14 Many small changes in one long paragraph
+    copy ~/Documents/v1.docx = @files/m14_long1.docx
+    copy ~/Documents/v2.docx = @files/m14_long2.docx
+    args ~/Documents/v1.docx ~/Documents/v2.docx
+    expect 1 changed, 0 added, 0 removed, 0 moved
+    expect [-supplier-]
+
+M15 "No time log at"
+    expect No time log at
+M15 "No work logged in 2026-09"
+    prepare
+    args --month 2026-09
+    expect No work logged in 2026-09
+M15 A day with 15 hours
+    write @work/time/log.csv = time,event,project\n2026-10-01 08:00:00,start,Admin\n2026-10-01 23:00:00,start,Offer\n2026-10-02 09:00:00,stop,\n
+    args --month 2026-10
+    expect Admin: 15.00 hours
+M15 "No [timesheet] boss in work.conf, so no mail."
+    prepare
+    args --month 2026-10
+    real
+    expect No [timesheet] boss in work.conf, so no mail.
+M15 The mail does not go out
+    manual a send reads the mail password from the Credential Manager or the keyboard
+
+M16 "no window 'Orders - Main Menu'"
+    manual looks for the window only when it plays, on the screen
+M16 The macro has mistakes
+    write @work/macros/broken.txt = clik 100 200\nkey q+n\n
+    args broken
+    expect The macro has mistakes:
+    expect line 1: unknown command 'clik'
+    expect line 2: 'q' is not ctrl, shift, alt or win
+    exit 1
+M16 Clicks land in the wrong place
+    manual needs the screen and a window that moved
+M16 "Esc is held: stopped."
+    manual needs the keyboard while a macro plays
+
+M17 "line 5: no picture chart.png"
+    write @work/slides/talk.md = # Talk\nMia Example\n\n## One\n![Chart](chart.png)\n
+    args talk.md
+    expect line 5: no picture chart.png
+M17 "text before the first title"
+    write @work/slides/talk.md = A short intro\n# Talk\n
+    args talk.md
+    expect line 1: text before the first title
+M17 "the sheet has no column Title"
+    copy @work/slides/plan.xlsx = @files/m17_notitle.xlsx
+    args plan.xlsx
+    expect the sheet has no column Title
+M17 "14 points, shown at 70 % to fit"
+    write @work/slides/talk.md = # Talk\n## Many\n- one\n- two\n- three\n- four\n- five\n- six\n- seven\n- eight\n- nine\n- ten\n- eleven\n- twelve\n- thirteen\n- fourteen\n
+    args talk.md
+    expect 14 points, shown at 70 % to fit
+M17 PowerPoint says the file needs repair
+    manual needs PowerPoint to open the deck
+
+M18 "No workbook at ..."
+    expect No workbook at '
+    exit 1
+M18 "no sheet named Summery"
+    manual needs Excel through COM
+M18 "Excel Refresh stopped: weekly sales.xlsx: it is open somewhere else"
+    manual needs Excel through COM and a workbook open elsewhere
+M18 "Excel Refresh stopped: weekly sales.xlsx: ..."
+    manual needs Excel through COM and a data source that does not answer
+M18 The PDF shows the old numbers
+    manual a setting of the connection in Excel
+
+
+X01 "A job server is running already", with none running
+    copy ~/Documents/AutomateWork/config/jobs.toml = @recipe/jobs.toml
+    write ~/Documents/AutomateWork/logs/job_server.lock = 9999999999
+    real
+    expect A job server is running already.
+X01 "The jobs file has mistakes"
+    write ~/Documents/AutomateWork/config/jobs.toml = [[job]]\nname = "nightly"\nprogram = "E01_downloads_butler/downloads_butler.jdb"\n\n[[job]]\nname = "nightly"\nwhen = "daily 25:00"\n
+    expect The jobs file has mistakes:
+    expect job nightly: no when
+    expect job nightly: the name is used twice
+X01 A job fails with "exit 1"
+    write ~/Documents/AutomateWork/config/jobs.toml = [[job]]\nname = "broken"\nwhen = "daily 18:30"\nprogram = "broken.jdb"\n
+    write ~/Documents/AutomateWork/recipes/broken.jdb = PRINT "starting"\nPRINT "disk full"\nEND 1\n
+    args --run broken
+    expect exit 1: disk full
+X01 A job runs twice
+    manual a second entry in the Task Scheduler
+
+X02 "answered 401"
+    manual needs a model service that refuses the key
+X02 "transport failure"
+    set inbox_assistant.base_url = "http://127.0.0.1:9/v1"
+    write ~/Documents/AutomateWork/saved mail/1.eml = From: Anna Miller <anna@miller.example>\nTo: mia@example.com\nSubject: Offer\nDate: Fri, 23 Oct 2026 12:00:00 +0000\nMessage-ID: <1@miller.example>\n\nCan you send me the offer?\n
+    real
+    expect 1.eml: not read,
+    expect transport failure
+X02 "did not answer with JSON"
+    manual needs a model that answers without JSON
+X02 "mueller.txt waits: it still holds [CHECK]"
+    write ~/Documents/AutomateWork/drafts/mueller.txt = Approve: yes\nTo: anna@miller.example\nSubject: Re: Offer\n---\nDear Anna, the offer comes on [CHECK].\n
+    args --approve
+    expect mueller.txt waits: it still holds [CHECK]
+
+X03 "not a folder"
+    set find_anything.folders = ["~/Documents/Gone", "~/Documents"]
+    write ~/Documents/budget.txt = The budget for 2027.
+    expect not a folder:
+    expect Documents/Gone
+    expect would read
+X03 "not readable"
+    manual the warning is written to find.log, not to the screen
+X03 "Port 8766 is taken"
+    manual needs another program that holds the port
+X03 A file you just saved is not found
+    write ~/Documents/budget.txt = The budget for 2027.
+    args --search budget
+    expect Nothing found for budget
+
+X04 "answered 401" or "403"
+    manual needs a tracker that refuses the token
+X04 "transport failure"
+    set ticket_sync.tracker = "http://127.0.0.1:9"
+    set ticket_sync.user = "mia"
+    env TICKETS_TOKEN = x
+    write ~/Documents/AutomateWork/todo.txt = - [ ] Call Anna\n
+    expect Ticket Sync stopped:
+    expect transport failure
+    exit 1
+X04 A task was ticked that you had not finished
+    manual needs a tracker where someone closes the ticket
+X04 The file lost your last change
+    manual a save while the recipe runs; a race no single run makes
+
+X05 "Set client_id in [calendar_bridge]"
+    set calendar_bridge.client_id = ""
+    expect Set client_id in [calendar_bridge]
+X05 "Not signed in yet"
+    set calendar_bridge.client_id = "11111111-2222-3333-4444-555555555555"
+    expect Not signed in yet
+X05 "OAUTH: invalid_grant"
+    manual needs a Microsoft 365 sign-in that has run out
+X05 "The calendar answered 403"
+    manual needs Microsoft 365 and an app without the permission
+X05 The personal calendar shows old blocks
+    manual the calendar app decides when it reads the subscribed file again
+
+X06 No buttons, "Nothing installed."
+    manual the message shows in the window of the cockpit
+X06 Every run fails at once with exit 1
+    manual a click on a button in the window of the cockpit
+X06 The window freezes for a while
+    manual the window of the cockpit while a run is in progress
+
+X07 "The test fails"
+    write ~/Documents/Tools/week_sheet.jdb = PRINT "week sheet"\n
+    write ~/Documents/Tools/week_sheet_test.jdb = PRINT "FAIL: the sum"\nEND 1\n
+    args build ~/Documents/Tools/week_sheet.jdb --version 1.0.0
+    real
+    expect The test fails.
+X07 "Compiling failed"
+    write ~/Documents/Tools/week_sheet.jdb = total = 5\nPRINT total\n
+    args build ~/Documents/Tools/week_sheet.jdb --version 1.0.0
+    real
+    expect Compiling failed
+    expect line
+X07 "the checksum does not match"
+    write ~/Documents/AutomateWork/releases/latest.toml = name = "tool"\nversion = "1.1.0"\nfolder = "tool-1.1.0"\nsha256 = "805d58dffe6344b4ec09103bd2e06fc03a8839d86df43145c8366f30e5a3cbb9"\n
+    write ~/Documents/AutomateWork/releases/tool-1.1.0/files.txt = 0000000000000000000000000000000000000000000000000000000000000000  tool.exe\n
+    write ~/Documents/AutomateWork/releases/tool-1.1.0/tool.exe = changed after the release
+    write ~/Tools/tool/version.toml = name = "tool"\nversion = "1.0.0"\n
+    args update ~/Tools/tool
+    real
+    expect tool.exe: the checksum does not match
+X07 The program does not start on a colleague's computer
+    manual Windows or the virus scanner on another computer
+
+X08 "No CSV files in"
+    write ~/Documents/AutomateWork/exports/march.txt = date;category;amount\n2026-03-01;travel;10,00\n
+    expect No CSV files in
+X08 "not an expense export (no column amount)"
+    write ~/Documents/AutomateWork/exports/march.csv = date;category;betrag\n2026-03-01;travel;10,00\n
+    real
+    expect not read: march.csv: not an expense export (no column amount)
+X08 "not read: march.csv: 12 of 40 lines could not be read"
+    write ~/Documents/AutomateWork/exports/march.csv = date;category;amount\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-01;travel;10,00\n2026-03-02;travel;ten\n2026-03-02;travel;ten\n2026-03-02;travel;ten\n2026-03-02;travel;ten\n2026-03-02;travel;ten\n2026-03-02;travel;ten\n2026-03-02;travel;ten\n2026-03-02;travel;ten\n2026-03-02;travel;ten\n2026-03-02;travel;ten\n2026-03-02;travel;ten\n2026-03-02;travel;ten
+
+    real
+    expect not read: march.csv: 12 of 40 lines could not be read
+X08 A file timed out
+    manual a file large or slow enough to pass the time limit; how long depends on the computer
+
+X09 "No database at"
+    expect No database at
+X09 "database is locked"
+    manual an export that still writes the database; a race no single run makes
+X09 All amounts are 0
+    manual needs a bookings database whose dates have another form
+X09 The report starts on a Sunday
+    manual a change to LAST_WEEK in the program; the tests of X12 show it
+
+X10 A tool fails although `--check` lists it
+    write ~/Documents/AutomateWork/ai-tools/list_recipes.json = {"name": "list_recipes", "description": "The person's automations.", "module": "~/Documents/AutomateWork/recipes/X10_ai_drive/gone.jdb", "handler": "TOOL_LIST", "inputSchema": {"type": "object", "properties": {}}}
+    args --check
+    expect The server offers: list_recipes
+X10 "The server did not answer"
+    set paths.jdbasic = "C:/nowhere/jdbasic.exe"
+    args --check
+    expect The server did not answer.
+    exit 1
+X10 "No recipe X"
+    manual the answer to a tool call of an agent through the MCP server
+X10 A dry run that changes something
+    manual advice for a recipe of your own without a dry run
+
+X11 "nothing on the page matches"
+    write ~/Documents/AutomateWork/harvest/targets.toml = [[target]]\nname = "Paper"\nurl = "http://127.0.0.1:9/paper"\nselect = "span.price"\n
+    write ~/Documents/AutomateWork/harvest/cache.json = {"max": 0, "ttl": 43200, "entries": [{"key": "http://127.0.0.1:9/paper", "value": "<html><body><h1>Copy paper A4</h1><span class='cost'>4,99 EUR</span></body></html>", "left": 40000}]}
+    expect nothing on the page matches span.price
+X11 "robots.txt asks to stay out of"
+    manual needs a web site whose robots.txt keeps the harvester out
+X11 "transient: the server answered 503"
+    manual needs a web site that answers 503
+X11 "the element is empty; JavaScript may fill it"
+    write ~/Documents/AutomateWork/harvest/targets.toml = [[target]]\nname = "Paper"\nurl = "http://127.0.0.1:9/paper"\nselect = "span.price"\n
+    write ~/Documents/AutomateWork/harvest/cache.json = {"max": 0, "ttl": 43200, "entries": [{"key": "http://127.0.0.1:9/paper", "value": "<html><body><h1>Copy paper A4</h1><span class='price' data-price='4.99'></span></body></html>", "left": 40000}]}
+    expect the element is empty; JavaScript may fill it
+X11 "Paper: 2 elements match, the first is used"
+    write ~/Documents/AutomateWork/harvest/targets.toml = [[target]]\nname = "Paper"\nurl = "http://127.0.0.1:9/paper"\nselect = "span.price"\n
+    write ~/Documents/AutomateWork/harvest/cache.json = {"max": 0, "ttl": 43200, "entries": [{"key": "http://127.0.0.1:9/paper", "value": "<html><body><div class='main'><span class='price'>4,99 EUR</span></div><div class='extra'><span class='price'>1,99 EUR</span></div></body></html>", "left": 40000}]}
+    expect Paper: 2 elements match, the first is used
+    expect Paper: 4,99 EUR  (4.99)
+X11 "the page answered 404"
+    manual needs a web site that answers 404
+X11 The euro sign looks wrong in Excel
+    manual needs Excel and a file of an older version
+
+X12 "No recipes folder at"
+    set tested_automations.recipes = "~/Documents/Gone"
+    expect No recipes folder at
+X12 Every test fails with "cannot load module"
+    set tested_automations.recipes = "~/Documents/MyTests"
+    write ~/Documents/MyTests/A01_demo/demo_test.jdb = IMPORT NOSUCHMODULE\nPRINT "1 passed, 0 failed"\n
+    real
+    expect FAILED
+    expect cannot load module
+X12 A test passes alone and fails in the runner
+    manual advice on how a test of your own finds its files and ports
+X12 TIMEOUT in the report
+    set tested_automations.recipes = "~/Documents/MyTests"
+    set tested_automations.timeout_seconds = 3
+    write ~/Documents/MyTests/A01_demo/demo_test.jdb = SLEEP 30000\nPRINT "1 passed, 0 failed"\n
+    real
+    expect TIMEOUT
+    expect ended after 3 seconds
+
+X13 "The job server is not running" right after logon
+    copy ~/Documents/AutomateWork/config/jobs.toml = @book/recipes/expert/X01_job_server/jobs.toml
+    expect The job server is not running.
+    expect would alert
+X13 The same alert again and again
+    manual a problem that comes and goes over many runs
+X13 "No mail password in the Credential Manager"
+    manual reads the Windows Credential Manager
+X13 "Not sent: curl 7"
+    manual needs the mail password from the Credential Manager and a mail server
+
+X14 "The two did not match; nothing was stored"
+    manual typed at the keyboard twice
+X14 "VAULT: Windows did not store"
+    manual the Windows Credential Manager refuses an entry
+X14 "The audit trail was changed" with no one to blame
+    manual needs the signing key from the Windows Credential Manager
+X14 The search finds a line that is fine
+    write ~/Documents/Scripts/mailer.jdb = ' For example: password = "mysecret"\nDIM password$ = VAULT.FIND$("AutomateWork/mail", "", "")\n
+    args --scan --folder ~/Documents/Scripts
+    expect 1 line looks like a written down secret
+    expect mailer.jdb line 1
+    absent mailer.jdb line 2
+
+X15 The score is 100 every week
+    remove ~/Documents/AutomateWork/time
+    expect 100  0.0 hours
+X15 No meetings
+    manual the meetings show on the page, not in the dry run
+X15 Hours shifted by one
+    manual needs log lines from before a change of the clocks
+X15 "Port 8767 is taken"
+    manual needs another program that holds the port
+
+X16 "41.3 % of the region differs"
+    manual the robot compares the screen with a picture; it drives keyboard and mouse
+X16 "the window did not come"
+    manual the robot waits for a window on the screen; it drives keyboard and mouse
+X16 "it stayed behind"
+    manual Windows keeps another window in front; the robot drives keyboard and mouse
+X16 The job stopped halfway
+    manual a robot run on the screen that stops at a step
+
+X17 "No calendar file at"
+    remove ~/Documents/AutomateWork/calendar.ics
+    expect No calendar file at
+X17 "No meetings on 2026-10-05"
+    write ~/Documents/AutomateWork/calendar.ics = BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Example//EN\nBEGIN:VEVENT\nUID:b1@example\nDTSTAMP:20260901T080000Z\nDTSTART:20260928T080000Z\nDTEND:20260928T090000Z\nSUMMARY:Miller project status\nEND:VEVENT\nEND:VCALENDAR\n
+    args --day 2026-10-05
+    expect No meetings on 2026-10-05
+X17 The times are an hour off
+    manual depends on the zone the calendar program meant and the zone of this computer
+X17 "no summary, ..."
+    prepare
+    set meeting_briefing.use_model = true
+    set meeting_briefing.base_url = "http://127.0.0.1:9/v1"
+    args --day 2026-10-05
+    real
+    expect Miller project status: no summary,
+    expect No summary came from the model; see the log.
+    exit 1
+X17 The briefing is late
+    manual needs a model server that does not answer at all; minutes per meeting
+
+X18 "Port 8770 is taken"
+    manual needs another program that holds the port
+X18 "Changed by someone else in the meantime; reopen it"
+    manual two browser tabs that save the same row
+X18 "The workbook changed on disk; restart the app"
+    manual a save in Excel while the app runs
+X18 A column is a text field although it holds numbers
+    manual needs a workbook with a text cell in a column of numbers; the checklist writes text files only
+
+X19 "COM: Cannot find ProgID 'Outlook.Application'"
+    manual needs Outlook through COM
+X19 The run hangs
+    manual a dialog of Outlook that waits for an answer
+X19 "0 appointment(s)" although your day is full
+    manual needs Outlook through COM and a shared calendar
+X19 "not sent: invoice.eml: ..."
+    manual needs Outlook through COM to refuse a mail

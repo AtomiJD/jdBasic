@@ -45,6 +45,7 @@ jdbasic tools/build_book.jdb             # out/: docx, html/, print and screen P
 jdbasic tools/check_recipes.jdb          # every recipe: lint, test, -c, test as .exe, main -c
 jdbasic tools/check_mains.jdb            # every main program --dry-run, interpreter vs .exe
 jdbasic tools/check_edges.jdb            # the same dry runs: umlaut path, BOM, ANSI, quoted numbers
+jdbasic tools/check_wrong.jdb            # every "When it goes wrong" case: reproduced, or why by hand
 jdbasic tools/api_check.jdb              # every jdBasic name the manuscript mentions exists, calls fit
 jdbasic tools/mdbook_test.jdb            # the Markdown reader (also prose_, layout_, cover_, epub_test)
 jdbasic tools/pdf_preview.jdb out/book_print.pdf 1-4   # pages as PNG, needs Chrome
