@@ -94,8 +94,13 @@ cockpit read the same files.
    run that is more than five minutes late is skipped and logged as
    skipped. That suits the status mail, which nobody wants on Saturday.
 5. **Retries.** `RUN` hands the job to `RETRY.ATTEMPT`. The function
-   `Execute$` runs the program with `OS.EXEC` and turns an exit code
-   other than 0 into an error with the last line the program printed.
+   `Execute$` starts the program with `OS.SPAWN` and waits for it with
+   `OS.WAIT`, at most `timeout_minutes` (60 unless the job says
+   otherwise). A program that takes longer, because it waits for a
+   server that never answers or for a password nobody types, is ended
+   with `OS.KILL` and logged as *timeout*, so the other jobs go on. An
+   exit code other than 0 becomes an error with the last line the
+   program printed.
    RETRY catches it, waits `retry_seconds`, doubles the wait for the
    next attempt and gives up after `attempts`.
 6. **The record.** `RUN_NOW` writes start, end, result, exit code and

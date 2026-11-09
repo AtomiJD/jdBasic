@@ -35,6 +35,10 @@ ENDFUNC
 ' program with jdbasic and the settings file of the caller.
 EXPORT FUNC COMMAND(job, paths)
     DIM out AS MAP
+    out{"minutes"} = 60
+    IF MAP.EXISTS(job, "timeout_minutes") THEN
+        out{"minutes"} = job{"timeout_minutes"}
+    ENDIF
     IF job{"command"} <> "" THEN
         out{"exe"} = job{"command"}
         out{"args"} = job{"args"}
@@ -64,10 +68,27 @@ FUNC LastLine$(output$)
 ENDFUNC
 
 ' Runs a command once; an exit code other than 0 is an error.
+' A run that takes longer than its minutes is ended, so one job that
+' hangs (a server that never answers, a password prompt) does not hold
+' up the others.
 FUNC Execute$(cmd)
-    DIM r = OS.EXEC(cmd{"exe"}, cmd{"args"})
-    DIM code = r{"exit_code"}
-    DIM output$ = r{"output"}
+    DIM args = cmd{"args"}
+    IF TYPEOF(args) = "STRING" THEN args = SPLIT(args, " ")
+    DIM log$ = MKTEMP$("job") + ".txt"
+    DIM opts = {"output": log$, "hidden": TRUE}
+    DIM pid = OS.SPAWN(cmd{"exe"}, args, opts)
+    DIM code = OS.WAIT(pid, cmd{"minutes"} * 60000)
+    IF TYPEOF(code) = "NONE" THEN
+        DIM ended = OS.KILL(pid)
+        DIM gone = OS.WAIT(pid, 5000)
+        IF FILE.EXISTS(log$) THEN KILL log$
+        THROW "timeout after " + STR$(cmd{"minutes"}) + " minutes"
+    ENDIF
+    DIM output$ = ""
+    IF FILE.EXISTS(log$) THEN
+        output$ = TXTREADER$(log$)
+        KILL log$
+    ENDIF
     IF code = 0 THEN RETURN output$
     DIM last$ = LastLine$(output$)
     IF last$ = "" THEN THROW "exit " + STR$(code)
@@ -239,21 +260,21 @@ EXPORT FUNC LIST_LINES(jobs, state, now, offset)
         DIM job = jobs[k]
         DIM name$ = job{"name"}
         PUSH(out, name$ + " (" + job{"when"} + ")")
-        DIM line$ = "  switched off"
+        DIM info$ = "  switched off"
         IF job{"enabled"} THEN
             DIM next_t = SCHED.NEXTRUN(job{"when"}, now, offset)
-            line$ = "  next " + CLOCK$(next_t, offset)
+            info$ = "  next " + CLOCK$(next_t, offset)
             IF MAP.EXISTS(state, name$) THEN
                 DIM rec = state{name$}
                 IF MAP.EXISTS(rec, "last_ok") THEN
                     DIM result$ = "ok"
                     IF NOT rec{"last_ok"} THEN result$ = "FAILED"
                     DIM ended$ = rec{"last_end"}
-                    line$ = line$ + ", last " + ended$ + " " + result$
+                    info$ = info$ + ", last " + ended$ + " " + result$
                 ENDIF
             ENDIF
         ENDIF
-        PUSH(out, line$)
+        PUSH(out, info$)
     NEXT k
     RETURN out
 ENDFUNC

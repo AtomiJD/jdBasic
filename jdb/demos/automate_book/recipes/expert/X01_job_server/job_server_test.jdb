@@ -131,6 +131,18 @@ TESTKIT.EQ(state{"broken"}{"fails"}, 1, "the state counts it")
 DIM skip = mixed[2]
 TESTKIT.ISTRUE(MAP.EXISTS(skip, "skipped"), "a late job without catch_up is skipped")
 TESTKIT.ISTRUE(INSTR(TXTREADER$(log_path$), "job failed") >= 0, "the log has the failure")
+DIM hang AS MAP
+hang{"name"} = "hang"
+hang{"command"} = "ping"
+hang{"args"} = ["-n", "30", "127.0.0.1"]
+hang{"attempts"} = 1
+hang{"retry_seconds"} = 0
+hang{"timeout_minutes"} = 0.03
+DIM hang_start = TICK()
+DIM hung = JOBSERVER.RUN(hang, paths)
+TESTKIT.ISFALSE(hung{"ok"}, "a run past its time limit fails")
+TESTKIT.ISTRUE(INSTR(hung{"error"}, "timeout") >= 0, "as a timeout")
+TESTKIT.ISTRUE(TICK() - hang_start < 15000, "and is ended, not waited for")
 
 TESTKIT.SUITE("state, lock and audit trail")
 DIM state_path$ = PATH.JOIN$(folder$, "job_state.json")

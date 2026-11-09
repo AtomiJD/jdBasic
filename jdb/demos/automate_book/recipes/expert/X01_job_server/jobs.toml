@@ -10,6 +10,7 @@
 #   args          what goes after the program
 #   attempts      how often to try before it counts as failed (1)
 #   retry_seconds the wait before the second try; it doubles (60)
+#   timeout_minutes  how long a run may take before it is ended (60)
 #   catch_up      run once if the computer was off at run time (true)
 #   enabled       false switches a job off without deleting it
 
