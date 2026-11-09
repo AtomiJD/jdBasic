@@ -5,6 +5,12 @@
 
 IMPORT TESTKIT, PIPELINE, OUTBOX, MAIL, DOCX, CONF, DB, DF
 
+IF NOT OS.FEATURE("SQLITE") THEN
+    TESTKIT.SKIP("the pipeline needs a jdbasic with SQLite, the release with Forms")
+    TESTKIT.REPORT()
+    END
+ENDIF
+
 DIM LF$ = CHR$(10)
 DIM Q$ = CHR$(34)
 DIM folder$ = MKTEMP$("pipeline")

@@ -107,7 +107,8 @@ The module holds every step as a function of its own:
    `report_pipeline.log` in the reports folder, and keeps three old
    files when it grows past a megabyte. When the database cannot be
    read, the error goes into the log before the program stops, so the
-   log says why there was no report.
+   log says why there was no report. A dry run writes nothing, so it
+   keeps no log and makes no folder either.
 
 ### Run it
 

@@ -12,6 +12,11 @@
 IMPORT WORKCONF, PIPELINE, OUTBOX, LOGGER, SVG
 
 DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+IF NOT OS.FEATURE("SQLITE") THEN
+    PRINT "This jdbasic has no SQLite to read the bookings with."
+    PRINT "Install the release of Chapter 2, the one with Forms."
+    END 1
+ENDIF
 IF WORKCONF.FLAG("send") THEN
     DIM result = OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
     PRINT result{"sent"}; " sent"
@@ -28,22 +33,27 @@ DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", home$)
 DIM db_home$ = PATH.JOIN$(folder$, "bookings.db")
 DIM db$ = WORKCONF.FOLDER$(cfg, key$ + "database", db_home$)
 DIM to$ = WORKCONF.VALUE(cfg, key$ + "to", "")
-DIM day$ = WORKCONF.ARG$("day")
-IF day$ = "" THEN day$ = FORMAT_DATE$(NOW(), "%Y-%m-%d")
+DIM today$ = WORKCONF.ARG$("day")
+IF today$ = "" THEN today$ = FORMAT_DATE$(NOW(), "%Y-%m-%d")
 
-MKDIR folder$
+' A dry run writes nothing, not even the log.
+DIM dry_run = WORKCONF.FLAG("dry-run")
 DIM lg = LOGGER.NEW("report_pipeline")
-LOGGER.TO_FILE(lg, PATH.JOIN$(folder$, "report_pipeline.log"), _
-    1000000, 3)
+IF NOT dry_run THEN
+    MKDIR folder$
+    LOGGER.TO_FILE(lg, PATH.JOIN$(folder$, "report_pipeline.log"), _
+        1000000, 3)
+ENDIF
 
 IF WORKCONF.FLAG("sample") THEN
     IF FILE.EXISTS(db$) THEN THROW "There is a database at " + db$
-    PIPELINE.SAMPLE(db$, day$)
+    MKDIR PATH.DIRNAME$(db$)
+    PIPELINE.SAMPLE(db$, today$)
     LOGGER.INFO(lg, "sample database written", {"path": db$})
     END
 ENDIF
 
-DIM week = PIPELINE.LAST_WEEK(day$)
+DIM week = PIPELINE.LAST_WEEK(today$)
 LOGGER.INFO(lg, "report started", {"from": week{"from"}})
 DIM rows = []
 DIM budgets AS MAP
@@ -61,7 +71,7 @@ DIM table = PIPELINE.TABLE_ROWS(report)
 DIM over = PIPELINE.OVER_BUDGET(report)
 DIM base$ = PATH.JOIN$(folder$, "costs " + week{"from"})
 
-IF WORKCONF.FLAG("dry-run") THEN
+IF dry_run THEN
     PRINT week{"label"}; ": "; LEN(rows); " bookings"
     DIM r = 0
     FOR r = 1 TO LEN(table) - 1
