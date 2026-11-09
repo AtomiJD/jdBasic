@@ -16,8 +16,9 @@ DIM target$ = PATH.JOIN$(root$, "colleague", "week_sheet")
 MKDIR src$
 DIM program$ = PATH.JOIN$(src$, "week_sheet.jdb")
 
-DIM jdbasic$ = PATH.NORMALIZE$("../../../build/jdBasic.exe")
-IF NOT FILE.EXISTS(jdbasic$) THEN jdbasic$ = ""
+' The jdBasic that runs this test; a compiled test has none to build with.
+DIM jdbasic$ = OS.SELF$()
+IF NOT STARTSWITH(LCASE$(PATH.BASENAME$(jdbasic$)), "jdbasic") THEN jdbasic$ = ""
 
 FUNC Release(version$)
     TXTWRITER program$, "PRINT " + Q$ + "week sheet " + version$ + Q$ + LF$
@@ -47,7 +48,7 @@ TESTKIT.ISTRUE(SHIP.NEWER("1.9.0", "1.10.0"), "1.10 is newer than 1.9")
 TESTKIT.ISFALSE(SHIP.NEWER("1.1.0", "1.1.0"), "the same is not newer")
 
 IF jdbasic$ = "" THEN
-    TESTKIT.SKIP("no jdbasic next to the book, nothing compiled")
+    TESTKIT.SKIP("a compiled test has no jdbasic to build with")
 ELSE
     TESTKIT.SUITE("build and release")
     DIM r1 = Release("1.0.0")
