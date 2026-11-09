@@ -63,6 +63,10 @@ DIM back = CONF.TOML_TEXT(text$)
 TESTKIT.EQ(CONF.GET(back, "user.name", ""), "Mia Example", "the user reads back")
 TESTKIT.EQ(CONF.GET(back, "downloads_butler.source", ""), "~/Downloads", "and every picked recipe's settings")
 TESTKIT.EQ(CONF.GET(back, "downloads_butler.min_age_hours", 0), 24, "with their types")
+TESTKIT.EQ(CONF.GET(back, "downloads_butler.target", ""), "~/Downloads/Sorted", "a default may name another setting")
+DIM moved AS MAP
+moved{"source"} = "D:/Downloads"
+TESTKIT.EQ(WIZARD.FILLED("{source}/Sorted", moved), "D:/Downloads/Sorted", "and follows it when it changes")
 TESTKIT.ISTRUE(NOT MAP.EXISTS(back, "mail"), "no [mail] part without a server")
 a{"mail_server"} = "smtps://mail.example.com:465"
 a{"mail_user"} = "mia"

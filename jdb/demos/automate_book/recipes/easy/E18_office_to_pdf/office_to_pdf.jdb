@@ -16,6 +16,11 @@ DIM target$ = WORKCONF.FOLDER$(cfg, key$ + "target", "")
 DIM wanted = ["word", "powerpoint"]
 DIM programs = WORKCONF.VALUE(cfg, key$ + "programs", wanted)
 DIM dry_run = WORKCONF.FLAG("dry-run")
+IF NOT FILE.ISDIR(source$) THEN
+    PRINT "Folder not found: "; source$
+    PRINT "Check source in [office_to_pdf] of work.conf."
+    END 1
+ENDIF
 
 DIM plan = TOPDF.PLAN(source$, target$, programs)
 DIM n_new = TOPDF.TO_MAKE(plan)

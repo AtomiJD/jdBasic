@@ -16,6 +16,11 @@ DIM min_age = WORKCONF.VALUE(cfg, key$ + "min_age_hours", 24)
 DIM defaults = BUTLER.DEFAULT_RULES()
 DIM rules = WORKCONF.VALUE(cfg, key$ + "rules", defaults)
 DIM dry_run = WORKCONF.FLAG("dry-run")
+IF NOT FILE.ISDIR(source$) THEN
+    PRINT "Folder not found: "; source$
+    PRINT "Check source in [downloads_butler] of work.conf."
+    END 1
+ENDIF
 
 DIM moves = BUTLER.PLAN(source$, target$, rules, min_age, NOW())
 DIM n_sorted = BUTLER.APPLY(moves, dry_run)

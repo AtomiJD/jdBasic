@@ -130,7 +130,8 @@ SUB ShowRecipe(i)
         FORM.SET(set_boxes[j], "VISIBLE", shown)
         IF shown THEN
             FORM.SET(set_labels[j], "TEXT", settings[j]{"label"})
-            FORM.SET(set_boxes[j], "TEXT", WIZARD.SHOW$(sect{settings[j]{"key"}}))
+            DIM v = WIZARD.FILLED(sect{settings[j]{"key"}}, sect)
+            FORM.SET(set_boxes[j], "TEXT", WIZARD.SHOW$(v))
         ENDIF
     NEXT j
     FORM.SET(txtWhen, "TEXT", gA{"schedule"}{r{"id"}})

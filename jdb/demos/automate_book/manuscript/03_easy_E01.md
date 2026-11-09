@@ -95,12 +95,20 @@ target = "~/Downloads/Sorted"
 min_age_hours = 24
 
 [downloads_butler.rules]
-Documents = ["pdf", "docx", "xlsx", "pptx", "txt", "csv"]
-Images = ["jpg", "jpeg", "png", "heic"]
-"Audio and Video" = ["mp3", "mp4", "mov"]
-Archives = ["zip", "7z"]
-Installers = ["exe", "msi"]
+Documents = ["pdf", "doc", "docx", "odt", "rtf", "txt", "md", "xls",
+    "xlsx", "ods", "csv", "ppt", "pptx", "odp"]
+Images = ["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg",
+    "tif", "tiff"]
+"Audio and Video" = ["mp3", "wav", "m4a", "flac", "mp4", "mov", "mkv",
+    "avi", "webm"]
+Archives = ["zip", "7z", "rar", "tar", "gz", "tgz"]
+Installers = ["exe", "msi", "msix", "dmg", "pkg", "deb", "rpm"]
 ```
+
+The `rules` block replaces the built-in rules as a whole; the one
+above is the complete list the program uses without it. Keep every
+line when you add one of your own, or the extensions you leave out go
+to `Other`.
 
 - **Sort into your Documents folder** instead of a folder inside
   Downloads: set `target = "~/Documents/From Downloads"`.
@@ -114,6 +122,9 @@ Installers = ["exe", "msi"]
 
 - **"No settings found"**: the program did not find `work.conf`. Run the
   wizard, or give the file with `--config path\to\work.conf`.
+- **"Folder not found"**: `source` names a folder that does not
+  exist, often a typing mistake. The run ends with exit code 1, so the
+  Task Scheduler shows it as failed instead of a quiet "nothing to do".
 - **A file stays where it is**: it is younger than `min_age_hours`, it is
   hidden, or its name ends in `.crdownload` or `.part`, which browsers use
   while a download is running.

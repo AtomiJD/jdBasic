@@ -122,6 +122,10 @@ programs = ["word", "powerpoint"]
 
 - **"Every PDF is up to date" although you changed a document**: the
   document was not saved yet. Save it and run again.
+- **"Folder not found"**: `source` names a folder that does not
+  exist yet. Create it, or point `source` at the folder of your
+  documents. The run ends with exit code 1, so the Task Scheduler
+  shows it as failed.
 - **"skipped Offer.docx: ..."**: Word could not open the file, most
   often because it is damaged or protected by a password. Open it by
   hand to see what Word says.

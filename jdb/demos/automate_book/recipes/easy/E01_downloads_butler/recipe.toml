@@ -19,7 +19,7 @@ default = "~/Downloads"
 key = "target"
 label = "Folder to sort into"
 kind = "folder"
-default = "~/Downloads/Sorted"
+default = "{source}/Sorted"
 
 [[setting]]
 key = "min_age_hours"

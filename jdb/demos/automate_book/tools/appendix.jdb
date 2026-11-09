@@ -411,10 +411,26 @@ EXPORT FUNC RECIPE_ROWS(r)
     DIM k = 0
     IF MAP.EXISTS(r, "setting") THEN
         DIM sets = r{"setting"}
+        ' A default such as "{source}/Sorted" shows with the other
+        ' setting's default filled in, as the wizard offers it.
+        DIM given AS MAP
+        FOR k = 0 TO LEN(sets) - 1
+            given{sets[k]{"key"}} = sets[k]{"default"}
+        NEXT k
         FOR k = 0 TO LEN(sets) - 1
             DIM s = sets[k]
             declared{s{"key"}} = TRUE
-            PUSH(rows, {"key": s{"key"}, "label": s{"label"}, "kind": s{"kind"}, "default": CELL$(s{"default"}), "declared": TRUE, "part": section$})
+            DIM fallback = s{"default"}
+            IF TYPEOF(fallback) = "STRING" THEN
+                DIM names = MAP.KEYS(given)
+                DIM n = 0
+                FOR n = 0 TO LEN(names) - 1
+                    IF TYPEOF(given{names[n]}) = "STRING" THEN
+                        fallback = REPLACE$(fallback, "{" + names[n] + "}", given{names[n]})
+                    ENDIF
+                NEXT n
+            ENDIF
+            PUSH(rows, {"key": s{"key"}, "label": s{"label"}, "kind": s{"kind"}, "default": CELL$(fallback), "declared": TRUE, "part": section$})
         NEXT k
     ENDIF
     DIM src$ = JOINED$(RecipeSource$(r))

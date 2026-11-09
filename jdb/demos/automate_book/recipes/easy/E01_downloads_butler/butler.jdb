@@ -30,6 +30,7 @@ ENDFUNC
 EXPORT FUNC KIND$(file_name$, rules)
     DIM ext$ = LCASE$(PATH.EXT$(file_name$))
     IF ext$ = "" THEN RETURN "Other"
+    ' MID$ counts from 0, so from 1 it leaves out the dot.
     ext$ = MID$(ext$, 1, LEN(ext$))
     DIM kinds = MAP.KEYS(rules)
     DIM k = 0
@@ -75,7 +76,7 @@ ENDFUNC
 ' The moves that sort the source folder: a map per file with "from",
 ' "to" and "short" ("to" inside the target). Files younger than
 ' min_age_hours stay.
-EXPORT FUNC PLAN(source$, target$, rules, min_age_hours, now)
+EXPORT FUNC PLAN(source$, target$, rules, min_age_hours, at_time)
     DIM moves = []
     DIM taken = []
     DIM entries = FILE.LIST(PATH.JOIN$(source$, "*"))
@@ -86,7 +87,7 @@ EXPORT FUNC PLAN(source$, target$, rules, min_age_hours, now)
         DIM info = FILE.STAT(from$)
         IF NOT LeaveAlone(file_name$, info) THEN
             DIM changed$ = info{"mtime"}
-            DIM age = DATEDIFF("H", CDATE(changed$), now)
+            DIM age = DATEDIFF("H", CDATE(changed$), at_time)
             IF age >= min_age_hours THEN
                 DIM kind$ = KIND$(file_name$, rules)
                 DIM month$ = LEFT$(changed$, 7)

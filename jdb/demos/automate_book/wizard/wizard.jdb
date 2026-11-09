@@ -122,6 +122,22 @@ EXPORT FUNC TOML_VALUE$(v)
     RETURN STR$(v)
 ENDFUNC
 
+' A text setting with {key} filled from the other settings of its
+' section, so the default "{source}/Sorted" follows a changed source.
+EXPORT FUNC FILLED(v, sect)
+    IF TYPEOF(v) <> "STRING" ORELSE INSTR(v, "{") < 0 THEN RETURN v
+    DIM out$ = v
+    DIM keys = MAP.KEYS(sect)
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM other = sect{keys[k]}
+        IF TYPEOF(other) = "STRING" ANDALSO INSTR(other, "{") < 0 THEN
+            out$ = REPLACE$(out$, "{" + keys[k] + "}", other)
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
 ' A setting as the text a person edits: a list with commas between its
 ' items, anything else as it prints.
 EXPORT FUNC SHOW$(v)
@@ -182,7 +198,8 @@ EXPORT FUNC CONF_TEXT$(answers, recipes)
         DIM sect = values{section$}
         DIM keys = MAP.KEYS(sect)
         FOR j = 0 TO LEN(keys) - 1
-            PUSH(out, keys[j] + " = " + TOML_VALUE$(sect{keys[j]}))
+            DIM v = FILLED(sect{keys[j]}, sect)
+            PUSH(out, keys[j] + " = " + TOML_VALUE$(v))
         NEXT j
     NEXT k
     RETURN JOIN(out, gLF$) + gLF$
@@ -313,10 +330,10 @@ EXPORT FUNC SCHEDULE_ARGS(r, when$, jdbasic$, program$, config$)
     DIM task_cmd$ = gQ$ + jdbasic$ + gQ$ + " " + gQ$ + program$ + gQ$
     IF MAP.EXISTS(r, "schedule_args") THEN
         DIM extra = r{"schedule_args"}
-        DIM e = 0
-        FOR e = 0 TO LEN(extra) - 1
-            task_cmd$ = task_cmd$ + " " + gQ$ + extra[e] + gQ$
-        NEXT e
+        DIM ex = 0
+        FOR ex = 0 TO LEN(extra) - 1
+            task_cmd$ = task_cmd$ + " " + gQ$ + extra[ex] + gQ$
+        NEXT ex
     ENDIF
     task_cmd$ = task_cmd$ + " --config " + gQ$ + config$ + gQ$
     DIM head = ["/Create", "/F", "/TN", TASK_NAME$(r), "/TR", task_cmd$]
