@@ -70,6 +70,8 @@ IF use_model ANDALSO NOT dry_run THEN
 ENDIF
 
 DIM pages = []
+DIM summaries = 0
+DIM wanted_model = use_model
 DIM k = 0
 FOR k = 0 TO LEN(meetings) - 1
     DIM m = meetings[k]
@@ -83,8 +85,14 @@ FOR k = 0 TO LEN(meetings) - 1
             TRY
                 DIM prompt$ = BRIEFING.PROMPT$(m, mails, items)
                 summary$ = BRIEFING.SUMMARY$(ai, prompt$)
+                summaries = summaries + 1
             CATCH
                 PRINT m{"title"}; ": no summary, "; ERRMSG$
+                ' A key refused once is refused for every meeting.
+                IF REGEX.MATCH(".*\b(401|403)\b.*", ERRMSG$) THEN
+                    PRINT "The key was refused; no more summaries."
+                    use_model = FALSE
+                ENDIF
                 DIM fail AS MAP
                 fail{"meeting"} = m{"title"}
                 fail{"error"} = ERRMSG$
@@ -120,4 +128,10 @@ IF to_self THEN
     MAIL.ATTACH(msg, pdf$)
     DIM eml$ = "briefing " + the_day$ + ".eml"
     PRINT "outbox  "; OUTBOX.PUT$(msg, cfg, eml$)
+ENDIF
+' The briefing is there, but a model that answered for no meeting is
+' an error the job server and the health checks should see.
+IF wanted_model ANDALSO summaries = 0 THEN
+    PRINT "No summary came from the model; see the log."
+    END 1
 ENDIF

@@ -11,7 +11,7 @@
 
 EXPORT MODULE BRIEFING
 
-IMPORT ICAL, DF, MAIL, LLMAPI, RETRY, PDFGEN
+IMPORT ICAL, DF, MAIL, LLMAPI, RETRY, PDFGEN, DT
 
 DIM gLF$ = CHR$(10)
 DIM gMonths$ = "JanFebMarAprMayJunJulAugSepOctNovDec"
@@ -58,24 +58,43 @@ FUNC Day$(t_in)
     RETURN FORMAT_DATE$(CDBL(t_in), "%Y-%m-%d")
 ENDFUNC
 
-' The people of an event as maps with name and mail.
+' A name as people say it: "Berg, Anna", as Outlook and Exchange
+' write it, becomes "Anna Berg".
+EXPORT FUNC NAME$(cn$)
+    DIM comma = INSTR(cn$, ",")
+    IF comma < 0 THEN RETURN TRIM$(cn$)
+    DIM last$ = TRIM$(LEFT$(cn$, comma))
+    RETURN TRIM$(MID$(cn$, comma + 1)) + " " + last$
+ENDFUNC
+
+' The people of an event as maps with name and mail. The name comes
+' from the CN of the event's own ATTENDEE line, else from names.
 FUNC People(cal, ev, names)
     DIM who = ICAL.VALUES(cal, ev, "ATTENDEE")
-    RETURN SELECT(LAMBDA USE(names) w$ -> Person(w$, names), who)
+    DIM cns = ICAL.PARAMS(cal, ev, "ATTENDEE", "CN")
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(who) - 1
+        DIM cn$ = REPLACE$(cns[k], CHR$(34), "")
+        PUSH(out, Person(who[k], cn$, names))
+    NEXT k
+    RETURN out
 ENDFUNC
 
 ' One ATTENDEE value as a map with name and mail.
-FUNC Person(w$, names)
+FUNC Person(w$, cn$, names)
     DIM addr$ = LCASE$(w$)
     IF STARTSWITH(addr$, "mailto:") THEN addr$ = MID$(addr$, 7)
     DIM shown$ = addr$
-    IF MAP.EXISTS(names, addr$) THEN shown$ = names{addr$}
+    IF MAP.EXISTS(names, addr$) THEN shown$ = NAME$(names{addr$})
+    IF TRIM$(cn$) <> "" THEN shown$ = NAME$(cn$)
     RETURN {"name": shown$, "mail": addr$}
 ENDFUNC
 
 ' The meetings of a day (YYYY-MM-DD) in a calendar file, in order of
 ' their start: maps with title, start, end, location and people, a
-' list of maps with name and mail. Days blocked whole are left out.
+' list of maps with name and mail. Days blocked whole and cancelled
+' meetings are left out.
 EXPORT FUNC MEETINGS(ics_path$, day$)
     IF NOT FILE.EXISTS(ics_path$) THEN
         THROW "No calendar file at " + ics_path$
@@ -94,7 +113,9 @@ EXPORT FUNC MEETINGS(ics_path$, day$)
         DIM r = DF.ROW(frame, k)
         DIM ev = r{"event"}
         DIM today = Day$(r{"start"}) = day$
-        IF today ANDALSO NOT ICAL.ALLDAY(cal, ev) THEN
+        DIM state$ = UCASE$(ICAL.PROP$(cal, ev, "STATUS", ""))
+        DIM held = state$ <> "CANCELLED"
+        IF today ANDALSO held ANDALSO NOT ICAL.ALLDAY(cal, ev) THEN
             DIM m AS MAP
             m{"title"} = r{"summary"}
             m{"start"} = Clock$(r{"start"})
@@ -143,20 +164,13 @@ FUNC Addresses(meeting)
     RETURN SELECT(LAMBDA p -> p{"mail"}, meeting{"people"})
 ENDFUNC
 
-' The date header of a mail as YYYY-MM-DD HH:MM, so mails sort by it.
+' The date header of a mail as YYYY-MM-DD HH:MM on this computer's
+' clock, so mails sort by the moment they were sent whatever zone
+' they were written in; "" for a header that is no date.
 EXPORT FUNC SORTDATE$(date$)
-    DIM parts = SPLIT(TRIM$(date$), " ")
-    DIM first = 0
-    IF LEN(parts) > 0 ANDALSO ENDSWITH(parts[0], ",") THEN first = 1
-    IF LEN(parts) < first + 4 THEN RETURN ""
-    DIM d$ = RIGHT$("0" + parts[first], 2)
-    DIM mon$ = parts[first + 1]
-    DIM y$ = parts[first + 2]
-    DIM clock$ = LEFT$(parts[first + 3], 5)
-    DIM m = INSTR(gMonths$, LEFT$(mon$, 3))
-    IF m < 0 THEN RETURN ""
-    DIM mm$ = RIGHT$("0" + STR$(m / 3 + 1), 2)
-    RETURN y$ + "-" + mm$ + "-" + d$ + " " + clock$
+    DIM t = DT.PARSE(TRIM$(date$))
+    IF TYPEOF(t) = "NONE" THEN RETURN ""
+    RETURN DT.FMT$(t, "%Y-%m-%d %H:%M", DT.OFFSET_AT(t))
 ENDFUNC
 
 ' Whether a parsed mail is from or to one of the addresses.
@@ -246,11 +260,20 @@ FUNC FirstName$(name$)
     RETURN LCASE$(SPLIT(name$, " ")[0])
 ENDFUNC
 
-' Whether an item names one of the words.
+' A text as its words in lower case, each with a space on both
+' sides, so a name is found as a word and not inside one.
+FUNC Spaced$(text$)
+    DIM letters$ = "((?:[a-z0-9]|ä|ö|ü|ß)+)"
+    DIM found = REGEX.FINDALL(letters$, LCASE$(text$))
+    RETURN " " + JOIN(SELECT(LAMBDA f -> f[0], found), " ") + " "
+ENDFUNC
+
+' Whether an item names one of the words, as whole words: Jan is
+' not found in January, nor Tom in Tomaten.
 FUNC Mentions(item$, words)
-    DIM low$ = LCASE$(item$)
+    DIM low$ = Spaced$(item$)
     DIM hits = FILTER(LAMBDA USE(low$) w$ -> _
-        INSTR(low$, w$) >= 0, words)
+        INSTR(low$, Spaced$(w$)) >= 0, words)
     RETURN LEN(hits) > 0
 ENDFUNC
 

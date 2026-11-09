@@ -89,6 +89,12 @@ cal$ = cal$ + "BEGIN:VEVENT" + LF$ + "UID:m3@example.com" + LF$
 cal$ = cal$ + "DTSTAMP:20261001T080000Z" + LF$
 cal$ = cal$ + "DTSTART:20261006T090000" + LF$ + "DTEND:20261006T100000" + LF$
 cal$ = cal$ + "SUMMARY:Next day" + LF$ + "END:VEVENT" + LF$
+cal$ = cal$ + "BEGIN:VEVENT" + LF$ + "UID:lunch@example.com" + LF$
+cal$ = cal$ + "DTSTAMP:20261001T080000Z" + LF$
+cal$ = cal$ + "DTSTART:20261005T120000" + LF$ + "DTEND:20261005T130000" + LF$
+cal$ = cal$ + "SUMMARY:Cancelled: Lunch" + LF$ + "STATUS:CANCELLED" + LF$
+cal$ = cal$ + "ATTENDEE;CN=" + CHR$(34) + "Berg, Anna" + CHR$(34) + ":mailto:anna@example.com" + LF$
+cal$ = cal$ + "END:VEVENT" + LF$
 cal$ = cal$ + "END:VCALENDAR" + LF$
 TXTWRITER ics$, cal$
 
@@ -103,10 +109,10 @@ TXTWRITER notes$, "- [ ] Send Anna the Q3 sheet" + LF$ + "- [x] Ask Tom about pr
 
 TESTKIT.SUITE("the day's meetings")
 DIM names = BRIEFING.NAMES(cal$)
-TESTKIT.EQ(names{"anna@example.com"}, "Anna Berg", "a name from the CN of an attendee")
+TESTKIT.EQ(BRIEFING.NAME$(names{"anna@example.com"}), "Anna Berg", "a name from the CN of an attendee")
 TESTKIT.EQ(names{"tom@example.com"}, "Tom Weber", "also with other parameters and quotes")
 DIM meetings = BRIEFING.MEETINGS(ics$, "2026-10-05")
-TESTKIT.EQ(LEN(meetings), 2, "two meetings; the whole-day block and the next day are left out")
+TESTKIT.EQ(LEN(meetings), 2, "two meetings; the whole-day block, the cancelled lunch and the next day are left out")
 DIM first = meetings[0]
 TESTKIT.EQ(first{"title"}, "Budget review", "in order of their start")
 TESTKIT.EQ(first{"start"}, "09:00", "the start as the file writes it")
@@ -125,7 +131,10 @@ DIM fresh = BRIEFING.MEETINGS(ics$, "2026-10-05")
 TESTKIT.EQ(LEN(BRIEFING.WITHOUT(fresh, "")[0]{"people"}), 2, "no address of your own changes nothing")
 
 TESTKIT.SUITE("mails and open items")
-TESTKIT.EQ(BRIEFING.SORTDATE$("Thu, 01 Oct 2026 09:15:00 +0200"), "2026-10-01 09:15", "a mail date that sorts")
+TESTKIT.EQ(LEN(BRIEFING.SORTDATE$("Thu, 01 Oct 2026 09:15:00 +0200")), 16, "a mail date that sorts")
+DIM west$ = BRIEFING.SORTDATE$("Wed, 30 Sep 2026 23:30:00 -0700")
+DIM east$ = BRIEFING.SORTDATE$("Thu, 01 Oct 2026 09:05:00 +0200")
+TESTKIT.ISTRUE(west$ < east$, "by the moment it was sent, whatever its zone")
 DIM mails = BRIEFING.MAILS([mail_dir$, PATH.JOIN$(folder$, "missing")], first, 2)
 TESTKIT.EQ(LEN(mails), 2, "at most two mails, from a missing folder none")
 DIM newest = mails[0]
@@ -137,6 +146,11 @@ TESTKIT.EQ(LEN(other), 0, "no mail with Tom, the newsletter is not his")
 DIM items = BRIEFING.ITEMS(notes$, first)
 TESTKIT.EQ(LEN(items), 2, "open items that name Anna or the meeting; done ones and others not")
 TESTKIT.EQ(items[0], "Send Anna the Q3 sheet", "the text of the item")
+TESTKIT.EQ(BRIEFING.NAME$("Berg, Anna"), "Anna Berg", "a name as Exchange writes it, turned round")
+DIM jan_notes$ = PATH.JOIN$(folder$, "jan.txt")
+TXTWRITER jan_notes$, "- [ ] Report for January close" + LF$ + "- [ ] Ask Jan about the plan" + LF$ + "- [ ] Tomaten kaufen" + LF$
+DIM standup = {"title": "Weekly standup", "people": [{"name": "Jan Kowalski", "mail": "jan@example.com"}, {"name": "Tom Miller", "mail": "tom@example.com"}]}
+TESTKIT.EQARRAY(BRIEFING.ITEMS(jan_notes$, standup), ["Ask Jan about the plan"], "names count as whole words, not in January or Tomaten")
 DIM prompt$ = BRIEFING.PROMPT$(first, mails, items)
 TESTKIT.ISTRUE(INSTR(prompt$, "Budget review") >= 0, "the prompt names the meeting")
 TESTKIT.ISTRUE(INSTR(prompt$, "Send Anna the Q3 sheet") >= 0, "and the open items")

@@ -27,8 +27,9 @@ The recipe reads three things you probably have already:
 
 - **Your calendar as an `.ics` file.** Outlook exports one under
   *File, Save Calendar*; many calendar services offer a private
-  address of the calendar in this format. The Calendar Bridge of X05
-  writes one as well.
+  address of the calendar in this format. The file of the Calendar
+  Bridge of X05 does not serve here: it holds busy blocks without
+  titles or people.
 - **Your saved mails** as `.eml` files, the folder the Inbox Assistant
   (X02) reads, and the `outbox/sent` folder of Chapter 4.
 - **Your notes file** with open items as `- [ ]` lines, the one the
@@ -71,20 +72,26 @@ The module does the work, from the calendar to the PDF:
    without one names a wall clock, which the ICAL library reads in your
    zone, so `Clock$` gives back the digits the file writes, which is
    what Outlook means by such a time.
-3. `NAMES` reads the names of the people from the `CN` part of the
-   `ATTENDEE` lines, so the page says "Anna Berg" and not her address.
+3. `People` reads the names from the `CN` part of each meeting's own
+   `ATTENDEE` lines, so the page says "Anna Berg" and not her address,
+   and `NAME$` turns "Berg, Anna", as Exchange writes names, round.
+   Cancelled meetings are left out.
    You are an attendee of every invitation you get, so `WITHOUT` takes
    your own address, the `from` of `[mail]`, out of the people;
    otherwise every mail you sent or got would belong to every meeting.
 4. `MAILS` reads every saved mail and keeps those from or to one of
    the people, newest first. `SORTDATE$` turns the date line of a mail
-   into a text that sorts.
+   into a text that sorts, on your own clock, so a mail from another
+   zone sorts by the moment it was sent.
 5. `ITEMS` keeps the open items of your notes that name the meeting or
-   the first name of one of its people.
+   the first name of one of its people, as whole words: *Jan* does not
+   find *January*.
 6. `PROMPT$` writes all of it into one text, and `SUMMARY$` sends it to
    the language model with the rules of `RULES$`: four sentences at
    most, nothing that is not in the text. A busy server is asked again
-   up to three times; a refused key stops at once.
+   up to three times; a refused key stops at once and is not tried for
+   the other meetings. When no meeting got a summary, the program ends
+   with exit code 1, so the job server and the health checks see it.
 7. `WRITE_PDF` sets one page per meeting with PDFGEN. A meeting whose
    summary failed gets its page anyway, and the log says why.
 
@@ -164,6 +171,9 @@ mail_to_self = false
 - **"no summary, ..."** in the output: the model did not answer. The
   log in `logs/meeting_briefing.log` has the message; the page of that
   meeting has no summary but everything else.
+- **The briefing is late**: a server that does not answer at all is
+  asked three times per meeting, which takes about two minutes each.
+  On such a morning, run it with `--no-model`.
 
 > **Balance dividend**
 > About 45 minutes a week: five minutes of searching before each of
