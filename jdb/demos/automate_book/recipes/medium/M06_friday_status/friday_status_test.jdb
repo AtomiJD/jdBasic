@@ -54,6 +54,14 @@ DIM rest$ = STATUS.WITHOUT_DONE$(ann$)
 TESTKIT.EQ(LEN(STATUS.READ_NOTES(rest$){"done"}), 0, "done notes go")
 TESTKIT.EQ(LEN(STATUS.READ_NOTES(rest$){"todo"}), 1, "the rest stays")
 TESTKIT.ISTRUE(INSTR(rest$, "plain line") >= 0, "other lines stay")
+DIM only$ = STATUS.ONLY_DONE$(ann$)
+TESTKIT.EQ(LEN(STATUS.READ_NOTES(only$){"done"}), 2, "the done lines are kept apart")
+DIM kept$ = STATUS.DONE_FOLDER$(notes$, "2026-W44")
+MKDIR kept$
+TXTWRITER PATH.JOIN$(kept$, "Ben.txt"), "- [x] Server moved" + LF$
+DIM same_week = STATUS.NOTES(notes$, "2026-W44")
+TESTKIT.EQ(STATUS.TOTAL(same_week, "done"), 3, "a second run that week counts them again")
+TESTKIT.EQ(STATUS.TOTAL(STATUS.NOTES(notes$, "2026-W45"), "done"), 2, "the next week does not")
 
 TESTKIT.SUITE("the outbox")
 DIM box$ = REPLACE$(PATH.JOIN$(folder$, "outbox"), "\", "/")
@@ -80,6 +88,9 @@ KILL path$
 RMDIR box$
 KILL PATH.JOIN$(notes$, "Ann.txt")
 KILL PATH.JOIN$(notes$, "Ben.txt")
+KILL PATH.JOIN$(kept$, "Ben.txt")
+RMDIR kept$
+RMDIR PATH.JOIN$(notes$, "done")
 RMDIR notes$
 RMDIR folder$
 TESTKIT.REPORT()

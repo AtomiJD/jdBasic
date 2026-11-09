@@ -36,13 +36,19 @@ ENDFUNC
 
 ' Every person of the notes folder, one per .txt file and named after
 ' it, sorted by name: maps with "person", "done", "todo", "blocked".
-EXPORT FUNC NOTES(folder$)
+' With a week, the done notes cleared earlier that week count too.
+EXPORT FUNC NOTES(folder$, week$ = "")
     DIM out = []
     DIM files = SORT(FILE.LIST(PATH.JOIN$(folder$, "*.txt")))
     DIM k = 0
     FOR k = 0 TO LEN(files) - 1
         DIM file$ = files[k]
-        DIM n = READ_NOTES(TXTREADER$(PATH.JOIN$(folder$, file$)))
+        DIM text$ = TXTREADER$(PATH.JOIN$(folder$, file$))
+        DIM kept$ = PATH.JOIN$(DONE_FOLDER$(folder$, week$), file$)
+        IF week$ <> "" ANDALSO FILE.EXISTS(kept$) THEN
+            text$ = text$ + gLF$ + TXTREADER$(kept$)
+        ENDIF
+        DIM n = READ_NOTES(text$)
         DIM ext$ = PATH.EXT$(file$)
         n{"person"} = LEFT$(file$, LEN(file$) - LEN(ext$))
         PUSH(out, n)
@@ -74,9 +80,9 @@ ENDSUB
 ' blocked notes first, the open ones next and the done ones last.
 EXPORT FUNC PLAIN$(people, week$)
     DIM out = ["Status " + week$, ""]
-    DIM sum$ = STR$(TOTAL(people, "done")) + " done, "
-    sum$ = sum$ + STR$(TOTAL(people, "todo")) + " open, "
-    PUSH(out, sum$ + STR$(TOTAL(people, "blocked")) + " blocked.")
+    DIM info$ = STR$(TOTAL(people, "done")) + " done, "
+    info$ = info$ + STR$(TOTAL(people, "todo")) + " open, "
+    PUSH(out, info$ + STR$(TOTAL(people, "blocked")) + " blocked.")
     DIM k = 0
     FOR k = 0 TO LEN(people) - 1
         DIM p = people[k]
@@ -99,6 +105,19 @@ EXPORT FUNC HTML$(people, week$, template$)
     m{"todo"} = TOTAL(people, "todo")
     m{"blocked"} = TOTAL(people, "blocked")
     RETURN TMPL.RENDER$(template$, m)
+ENDFUNC
+
+' Where the done notes of a week are kept once they are cleared.
+EXPORT FUNC DONE_FOLDER$(folder$, week$)
+    RETURN PATH.JOIN$(folder$, "done", week$)
+ENDFUNC
+
+' Only the done lines of the notes.
+EXPORT FUNC ONLY_DONE$(text$)
+    DIM rows = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM done = FILTER(LAMBDA r$ -> _
+        LCASE$(LEFT$(TRIM$(r$), 5)) = "- [x]", rows)
+    RETURN JOIN(done, gLF$)
 ENDFUNC
 
 ' The notes with the done ones taken out, for the next week.

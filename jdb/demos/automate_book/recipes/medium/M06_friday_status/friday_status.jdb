@@ -33,8 +33,8 @@ IF notes$ = "" THEN THROW "Set notes_folder in [friday_status]."
 IF LEN(team) = 0 THEN THROW "Set to in [friday_status]."
 IF NOT FILE.EXISTS(tpl$) THEN THROW "No mail template at " + tpl$
 
-DIM people = STATUS.NOTES(notes$)
 DIM week$ = STATUS.WEEK$(NOW())
+DIM people = STATUS.NOTES(notes$, week$)
 DIM title$ = REPLACE$(subject$, "{week}", week$)
 DIM msg = MAIL.MESSAGE(OUTBOX.FROM$(cfg), team, title$)
 MAIL.PLAIN(msg, STATUS.PLAIN$(people, week$))
@@ -50,13 +50,21 @@ ELSE
     DIM put$ = OUTBOX.PUT$(msg, cfg, "status-" + week$ + ".eml")
     PRINT "The status mail is in the outbox: "; put$
     IF clear_done THEN
+        DIM kept$ = STATUS.DONE_FOLDER$(notes$, week$)
+        MKDIR kept$
         DIM k = 0
         FOR k = 0 TO LEN(people) - 1
-            DIM who$ = people[k]{"person"}
-            DIM file$ = PATH.JOIN$(notes$, who$ + ".txt")
-            TXTWRITER file$, STATUS.WITHOUT_DONE$(TXTREADER$(file$))
+            DIM who$ = people[k]{"person"} + ".txt"
+            DIM file$ = PATH.JOIN$(notes$, who$)
+            DIM text$ = TXTREADER$(file$)
+            DIM done$ = STATUS.ONLY_DONE$(text$)
+            IF done$ <> "" THEN
+                DIM into$ = PATH.JOIN$(kept$, who$)
+                TXTWRITER into$, done$ + CHR$(10), TRUE
+            ENDIF
+            TXTWRITER file$, STATUS.WITHOUT_DONE$(text$)
         NEXT k
-        PRINT "Done notes removed for next week."
+        PRINT "Done notes moved to "; kept$
     ENDIF
     PRINT "Run with --send to send it."
 ENDIF

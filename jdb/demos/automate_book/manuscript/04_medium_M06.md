@@ -89,7 +89,10 @@ library: `{{ week }}` is replaced by the week, and
 7. With `clear_done = true`, the program then rewrites every notes file
    without its done lines, ready for the next week. `WITHOUT_DONE$`
    keeps every other line as it was, with a `FILTER` on the first five
-   characters.
+   characters. The done lines are not lost: `ONLY_DONE$` writes them
+   into `done/2026-W43` in the notes folder, and `NOTES` reads them from
+   there again, so a second run in the same week still lists the work
+   of the week.
 
 ### Run it
 
