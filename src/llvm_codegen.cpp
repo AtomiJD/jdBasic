@@ -13293,6 +13293,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         // owns its buffer if it came straight out of a string builtin.
         bool own_l = lhs.owned || (expr.left && expr_yields_fresh_string(*expr.left));
         bool own_r = rhs.owned || (expr.right && expr_yields_fresh_string(*expr.right));
+        // Converted runtime operands: the text, whether this program's heap
+        // holds it, and whether the bridge library allocated it (a VM value).
+        struct RuntimeText { LLVMValueRef text, local, bridge; };
+        std::vector<RuntimeText> runtime_drops;
         auto to_str = [&](TypedValue tv, bool& owns) -> LLVMValueRef {
             if (tv.tag == JD_TAG_STR) return tv.val;
             if (tv.tag == JD_TAG_BOOL) {
@@ -13325,9 +13329,54 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ftostr");
             }
             // A runtime-tagged value that is already a string comes back as
-            // the very pointer its slot holds, so this one is borrowed.
+            // the very pointer its slot holds, so this one is borrowed. Any
+            // other kind is written out into a new buffer, which the concat
+            // releases: an array as [a, b], a map as its entries.
             owns = false;
-            return to_string_ptr(tv);
+            if (tv.tag != JD_TAG_RUNTIME || !tv.runtime_tag) return to_string_ptr(tv);
+            auto* arr_text = get_runtime_func("__arr_text");
+            auto* map_text = get_runtime_func("__map_str");
+            if (!arr_text || !map_text) return to_string_ptr(tv);
+            LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_ARR, 0), "cat_isarr");
+            LLVMValueRef is_map = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_NATIVE_MAP, 0), "cat_ismap");
+            LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_STR, 0), "cat_isstr");
+            LLVMBasicBlockRef bb_arr = LLVMAppendBasicBlock(current_fn, "cat.arr");
+            LLVMBasicBlockRef bb_chk = LLVMAppendBasicBlock(current_fn, "cat.chkmap");
+            LLVMBasicBlockRef bb_map = LLVMAppendBasicBlock(current_fn, "cat.map");
+            LLVMBasicBlockRef bb_rest = LLVMAppendBasicBlock(current_fn, "cat.rest");
+            LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "cat.join");
+            LLVMBuildCondBr(builder, is_arr, bb_arr, bb_chk);
+            LLVMPositionBuilderAtEnd(builder, bb_arr);
+            LLVMValueRef aptr = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "cat_aptr");
+            LLVMValueRef s_arr = LLVMBuildCall2(builder, arr_text->fn_type, arr_text->fn,
+                                                &aptr, 1, "cat_arr_s");
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_arr_end = LLVMGetInsertBlock(builder);
+            LLVMPositionBuilderAtEnd(builder, bb_chk);
+            LLVMBuildCondBr(builder, is_map, bb_map, bb_rest);
+            LLVMPositionBuilderAtEnd(builder, bb_map);
+            LLVMValueRef mptr = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "cat_mptr");
+            LLVMValueRef s_map = LLVMBuildCall2(builder, map_text->fn_type, map_text->fn,
+                                                &mptr, 1, "cat_map_s");
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_map_end = LLVMGetInsertBlock(builder);
+            LLVMPositionBuilderAtEnd(builder, bb_rest);
+            LLVMValueRef s_rest = to_string_ptr(tv);
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_rest_end = LLVMGetInsertBlock(builder);
+            LLVMPositionBuilderAtEnd(builder, bb_join);
+            LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "cat_rt_s");
+            LLVMValueRef vals[] = { s_arr, s_map, s_rest };
+            LLVMBasicBlockRef bbs[] = { bb_arr_end, bb_map_end, bb_rest_end };
+            LLVMAddIncoming(phi, vals, bbs, 3);
+            LLVMValueRef is_vmh = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "cat_isvmh");
+            LLVMValueRef kept = LLVMBuildOr(builder, is_str, is_vmh, "cat_kept");
+            runtime_drops.push_back({ phi, LLVMBuildNot(builder, kept, "cat_local"), is_vmh });
+            return phi;
         };
         auto& concat = runtime_funcs["__str_concat"];
         LLVMValueRef args[] = { to_str(lhs, own_l), to_str(rhs, own_r) };
@@ -13339,6 +13388,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         if (std::getenv("JDB_NO_STROWN")) { own_l = false; own_r = false; }
         if (own_l) { LLVMValueRef d[] = { args[0] }; LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, ""); }
         if (own_r) { LLVMValueRef d[] = { args[1] }; LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, ""); }
+        if (!std::getenv("JDB_NO_STROWN"))
+            for (auto& rd : runtime_drops) {
+                LLVMValueRef null_p = LLVMConstNull(i8_ptr_type);
+                LLVMValueRef d[] = { LLVMBuildSelect(builder, rd.local, rd.text, null_p, "cat_drop") };
+                LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+                auto& bridge_free = runtime_funcs["__jdrt_str_free"];
+                LLVMValueRef b[] = { LLVMBuildSelect(builder, rd.bridge, rd.text, null_p, "cat_bfree") };
+                LLVMBuildCall2(builder, bridge_free.fn_type, bridge_free.fn, b, 1, "");
+            }
         drop_read_temp(lhs);
         drop_read_temp(rhs);
         TypedValue out{ result, JD_TAG_STR };
