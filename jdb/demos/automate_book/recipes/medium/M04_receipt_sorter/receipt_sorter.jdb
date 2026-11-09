@@ -60,10 +60,10 @@ FOR k = 0 TO LEN(names) - 1
         DIM info = FILE.STAT(from$)
         DIM r = RECEIPTS.PARSE(file$, rules, info{"mtime"})
         DIM folder$ = PATH.JOIN$(root$, r{"month"}, r{"category"})
-        DIM to$ = RECEIPTS.FREE_NAME$(folder$, file$)
         DIM amount$ = "no amount"
         IF r{"amount"} >= 0 THEN _
             amount$ = FORMAT$("{:.2f}", r{"amount"})
+        DIM to$ = RECEIPTS.FREE_NAME$(folder$, file$)
         DIM shown$ = file$ + "  -> " + r{"month"} + "/" + _
             r{"category"} + "  " + amount$
         IF dry_run THEN
