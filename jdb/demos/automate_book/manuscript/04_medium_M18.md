@@ -119,10 +119,14 @@ mail_to = "sales-team@example.com"
   drive is not connected at that hour. Check it in the Explorer.
 - **"no sheet named Summery"**: a typing mistake in `sheets`. The
   other sheets are still made into PDFs.
-- **"Excel Refresh stopped: weekly sales.xlsx: ..."**: Excel could not
-  open, refresh or save the workbook. Most often it is open on another
-  computer and locked, or a data source did not answer. Open it by
-  hand and click *Refresh All* to see Excel's own message.
+- **"Excel Refresh stopped: weekly sales.xlsx: it is open somewhere
+  else"**: the workbook is open in Excel, on this computer or another
+  one, so it could only be opened read-only and nothing would be
+  saved. Close it there and run again; no PDF and no mail are made.
+- **"Excel Refresh stopped: weekly sales.xlsx: ..."** with another
+  reason: Excel could not refresh or save the workbook, most often
+  because a data source did not answer. Open it by hand and click
+  *Refresh All* to see Excel's own message.
 - **The PDF shows the old numbers**: the connection is set to refresh
   in the background only when the file opens. In Excel, under *Data,
   Queries and Connections, Properties*, tick *Refresh data when

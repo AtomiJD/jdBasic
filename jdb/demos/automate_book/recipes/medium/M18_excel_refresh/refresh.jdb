@@ -57,6 +57,11 @@ EXPORT FUNC RUN(workbook$, listed, out_dir$, day$)
     DIM pdfs = []
     DIM unknown = []
     TRY
+        ' Excel opens a workbook that someone else has open read-only,
+        ' and then saves nothing without a word.
+        IF wb.ReadOnly THEN
+            THROW "it is open somewhere else; close it and run again"
+        ENDIF
         wb.RefreshAll()
         xl.CalculateUntilAsyncQueriesDone()
         xl.CalculateFull()
