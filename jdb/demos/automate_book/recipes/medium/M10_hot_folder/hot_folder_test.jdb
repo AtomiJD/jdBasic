@@ -57,8 +57,10 @@ DIM t0 = CDATE("2026-10-05 09:00:00")
 TESTKIT.EQ(HOTFOLDER.LOCK(lock$, t0, 30), TRUE, "the first run gets the lock")
 TESTKIT.EQ(HOTFOLDER.LOCK(lock$, CDATE("2026-10-05 09:05:00"), 30), FALSE, "a second run five minutes later waits")
 TESTKIT.EQ(HOTFOLDER.LOCK(lock$, CDATE("2026-10-05 09:40:00"), 30), TRUE, "a lock older than 30 minutes is taken over")
-TXTWRITER lock$, "broken"
+TXTWRITER lock$, "2026-10-05 09:00:"
 TESTKIT.EQ(HOTFOLDER.LOCK(lock$, t0, 30), TRUE, "a lock without a readable time is taken over")
+TXTWRITER lock$, "broken"
+TESTKIT.EQ(HOTFOLDER.LOCK(lock$, t0, 30), TRUE, "also one with no time at all")
 HOTFOLDER.RELEASE(lock$)
 HOTFOLDER.RELEASE(lock$)
 TESTKIT.EQ(FILE.EXISTS(lock$), FALSE, "unlock removes the file")

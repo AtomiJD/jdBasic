@@ -86,11 +86,13 @@ EXPORT FUNC LOCK(path$, now, stale_minutes)
         DIM since$ = TRIM$(TXTREADER$(path$))
         ' A lock without a readable time, left by a crash while it was
         ' written, counts as stale.
-        DIM stamp$ = "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}.*"
-        IF REGEX.MATCH(stamp$, since$) THEN
-            DIM age = DATEDIFF("N", CDATE(since$), now)
-            IF age < stale_minutes THEN RETURN FALSE
-        ENDIF
+        DIM age = stale_minutes
+        TRY
+            age = DATEDIFF("N", CDATE(since$), now)
+        CATCH
+            age = stale_minutes
+        ENDTRY
+        IF age < stale_minutes THEN RETURN FALSE
     ENDIF
     TXTWRITER path$, FORMAT_DATE$(now, "%Y-%m-%d %H:%M:%S")
     RETURN TRUE
