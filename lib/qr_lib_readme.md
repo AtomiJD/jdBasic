@@ -50,6 +50,7 @@ in byte mode; `UCASE$` a URL first when its case does not matter.
 | Call | What it does |
 |------|--------------|
 | `TEXT$(code, [quiet], [on_light])` | Lines of text, two characters per module, `quiet` (2) light modules around the code. Light modules are full blocks and dark ones spaces, which scans on a dark terminal; `on_light` (FALSE) swaps them for a light background. |
+| `HALF$(code, [quiet], [on_light])` | The same at half the height: one character per module and two module rows per line, drawn with the half blocks ▀ ▄ █. A version 4 code with its quiet zone is 19 lines, so it fits a standard terminal window. Colours and arguments as in `TEXT$`. |
 | `SVG$(code, [module_px], [quiet])` | A standalone SVG: `module_px` (4) pixels per module, `quiet` (4) white modules around, all dark modules in one path, `shape-rendering="crispEdges"`. |
 | `SVGPATH$(code, [quiet])` | Only the path data in module units, one rectangle per run of dark modules, for `SVG.ADDPATH` or an own `<path>`. |
 | `TOPDF(doc, code, x, y, size, [quiet])` | The code on the current PDFGEN page: top left at `x`, `y` mm, `size` mm wide including `quiet` (0) modules, the dark runs as the rectangles of one filled path, so no seam shows where two modules meet. The fill colour stays black afterwards. |

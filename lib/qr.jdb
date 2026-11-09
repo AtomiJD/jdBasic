@@ -2,15 +2,16 @@
 ' error correction levels L, M, Q and H, versions 1 to 40 with the smallest
 ' chosen by default, Reed-Solomon over GF(256), the eight data masks scored
 ' as ISO/IEC 18004 describes, and the EPC payment code (GiroCode). The
-' matrix goes out as text for a terminal, as SVG, or onto a PDFGEN page.
+' matrix goes out as text for a terminal (full or half height), as SVG,
+' or onto a PDFGEN page.
 '
 '   IMPORT QR
 '   DIM code = QR.MATRIX("https://jdbasic.org", {"ecc": "Q"})
-'   PRINT QR.TEXT$(code)
+'   PRINT QR.HALF$(code)
 '   TXTWRITER "code.svg", QR.SVG$(code)
 '
 '   DIM giro = QR.EPCMATRIX("Papier & Toner GmbH", "DE89370400440532013000", "168.80", "COBADEFFXXX", "RE-2026-0413")
-' version: 1.0.0
+' version: 1.1.0
 EXPORT MODULE QR
 
 IMPORT VALID, MONEY, PDFGEN
@@ -745,6 +746,47 @@ EXPORT FUNC TEXT$(m, quiet = 2, on_light = FALSE)
             ELSE
                 row$ = row$ + light$
             ENDIF
+        NEXT c
+        out$ = out$ + row$
+    NEXT r
+    RETURN out$
+ENDFUNC
+
+' The code as text at half the height of TEXT$: one character per module
+' and two rows of modules per line, drawn with half blocks, so a version 4
+' code fits a terminal of 25 lines. Colours as in TEXT$.
+EXPORT FUNC HALF$(m, quiet = 2, on_light = FALSE)
+    DIM n = LEN(m)
+    DIM blocks = ["", "", "", ""]
+    blocks[0] = " "
+    blocks[1] = CHR$(226) + CHR$(150) + CHR$(132)
+    blocks[2] = CHR$(226) + CHR$(150) + CHR$(128)
+    blocks[3] = CHR$(226) + CHR$(150) + CHR$(136)
+    DIM edge = CLNG(quiet)
+    DIM out$ = ""
+    DIM r = 0
+    DIM c = 0
+    FOR r = -edge TO n - 1 + edge STEP 2
+        IF r > -edge THEN out$ = out$ + CHR$(10)
+        DIM row$ = ""
+        FOR c = -edge TO n - 1 + edge
+            DIM top_lit = 1
+            DIM low_lit = 1
+            IF c >= 0 ANDALSO c < n THEN
+                IF r >= 0 ANDALSO r < n THEN
+                    IF m[r, c] = 1 THEN top_lit = 0
+                ENDIF
+                IF r + 1 >= 0 ANDALSO r + 1 < n THEN
+                    IF m[r + 1, c] = 1 THEN low_lit = 0
+                ENDIF
+            ENDIF
+            IF r + 1 > n - 1 + edge THEN low_lit = 0
+            IF on_light THEN
+                top_lit = 1 - top_lit
+                low_lit = 1 - low_lit
+                IF r + 1 > n - 1 + edge THEN low_lit = 0
+            ENDIF
+            row$ = row$ + blocks[top_lit * 2 + low_lit]
         NEXT c
         out$ = out$ + row$
     NEXT r
