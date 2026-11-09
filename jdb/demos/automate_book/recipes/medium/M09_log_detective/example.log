@@ -1,0 +1,11 @@
+2026-10-05 08:58:12 INFO started
+2026-10-05 09:14:03 ERROR Timeout after 30 s on job 4711
+    at Mailer.send (line 88)
+2026-10-05 09:21:47 WARN low memory
+2026-10-05 09:33:10 ERROR Timeout after 45 s on job 4712
+2026-10-05 09:49:55 ERROR Timeout after 30 s on job 4713
+2026-10-05 09:52:01 WARN low memory
+2026-10-05 10:05:12 ERROR Cannot open file report_17.xlsx
+2026-10-05 10:41:38 FATAL: database connection lost
+2026-10-05 11:03:09 WARNING retrying in 5 s
+2026-10-05 11:15:44 INFO finished, no error

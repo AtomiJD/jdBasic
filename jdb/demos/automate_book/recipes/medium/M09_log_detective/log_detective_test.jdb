@@ -6,19 +6,12 @@ IMPORT TESTKIT, LOGSCAN
 
 DIM work$ = MKTEMP$("logscan")
 MKDIR work$
-DIM log_path$ = PATH.JOIN$(work$, "app.log")
-DIM fixture = ["2026-10-05 08:58:12 INFO started"]
-PUSH(fixture, "2026-10-05 09:14:03 ERROR Timeout after 30 s on job 4711")
-PUSH(fixture, "    at Mailer.send (line 88)")
-PUSH(fixture, "2026-10-05 09:21:47 WARN low memory")
-PUSH(fixture, "2026-10-05 09:33:10 ERROR Timeout after 45 s on job 4712")
-PUSH(fixture, "2026-10-05 09:49:55 ERROR Timeout after 30 s on job 4713")
-PUSH(fixture, "2026-10-05 09:52:01 WARN low memory")
-PUSH(fixture, "2026-10-05 10:05:12 ERROR Connection refused by 10.0.0.7")
-PUSH(fixture, "2026-10-05 10:41:38 FATAL: lost the queue")
-PUSH(fixture, "2026-10-05 11:03:09 WARNING retrying in 5 s")
-PUSH(fixture, "2026-10-05 11:15:44 INFO finished")
-TXTWRITER log_path$, JOIN(fixture, CHR$(10)) + CHR$(10)
+' The example log of the recipe folder, from the recipe or the book
+' folder.
+DIM log_path$ = "example.log"
+IF NOT FILE.EXISTS(log_path$) THEN
+    log_path$ = "recipes/medium/M09_log_detective/example.log"
+ENDIF
 
 TESTKIT.SUITE("lines")
 DIM p = LOGSCAN.PARSE("2026-10-05 09:14:03 ERROR Timeout after 30 s")
@@ -31,9 +24,13 @@ TESTKIT.EQ(w{"message"}, "low memory", "brackets and colons are not part of the 
 TESTKIT.EQ(LOGSCAN.PARSE("2026-10-05 10:12:30 FATAL: lost"){"level"}, "ERROR", "FATAL counts as an error")
 TESTKIT.EQ(LOGSCAN.PARSE("2026-10-05 08:58:12 INFO started"){"level"}, "", "INFO is neither")
 TESTKIT.EQ(LEN(MAP.KEYS(LOGSCAN.PARSE("    at Mailer.send (line 88)"))), 0, "a line without a time stamp")
+TESTKIT.EQ(LOGSCAN.PARSE("2026-10-27 23:59:58 INFO Job finished without error"){"level"}, "", "an INFO line that names an error is no error")
+TESTKIT.EQ(LOGSCAN.PARSE("2026-10-27 23:59:59 info warning threshold set"){"level"}, "", "nor a warning")
+TESTKIT.EQ(LOGSCAN.PARSE("2026-10-27 23:59:59,123 [ERROR] disk full"){"message"}, "disk full", "a fraction of a second and brackets")
+TESTKIT.EQ(LOGSCAN.ISO_DAY$("05.10.2026"), "2026-10-05", "a German day is kept as YYYY-MM-DD")
 TESTKIT.EQ(LOGSCAN.SIGNATURE$("Timeout after 30 s on job 4711"), "Timeout after # s on job #", "numbers do not split a message")
 
-TESTKIT.SUITE("the fixture log")
+TESTKIT.SUITE("the example log")
 DIM stats = LOGSCAN.NEW()
 LOGSCAN.SCAN_TEXT(stats, TXTREADER$(log_path$))
 TESTKIT.EQ(stats{"lines"}, 11, "eleven lines")
@@ -49,7 +46,8 @@ TESTKIT.EQ(stats{"messages"}{top0$}, 3, "three times")
 
 TESTKIT.SUITE("report and chart")
 DIM rep$ = LOGSCAN.REPORT$(stats, 2)
-TESTKIT.ISTRUE(STARTSWITH(rep$, "11 lines, 5 errors, 3 warnings"), "the totals first")
+TESTKIT.ISTRUE(STARTSWITH(rep$, "11 lines, 5 errors, 3 warnings, 1 without a time stamp"), "the totals first")
+TESTKIT.ISTRUE(INSTR(LOGSCAN.REPORT$(stats, 5), "    1  database connection lost") >= 0, "the message after FATAL:")
 TESTKIT.ISTRUE(INSTR(rep$, "    3  Timeout after # s on job #") >= 0, "the top error with its count")
 TESTKIT.ISTRUE(INSTR(rep$, "2026-10-05 10:00      2         0") >= 0, "a row per hour")
 DIM svg$ = PATH.JOIN$(work$, "hours.svg")
@@ -58,6 +56,5 @@ DIM markup$ = TXTREADER$(svg$)
 TESTKIT.ISTRUE(STARTSWITH(TRIM$(markup$), "<svg") ORELSE INSTR(markup$, "<svg") >= 0, "an SVG file")
 TESTKIT.ISTRUE(INSTR(markup$, "10-05 09h") >= 0, "with the hours as labels")
 KILL svg$
-KILL log_path$
 RMDIR work$
 TESTKIT.REPORT()

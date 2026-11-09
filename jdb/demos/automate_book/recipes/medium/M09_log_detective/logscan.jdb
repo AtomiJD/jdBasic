@@ -13,7 +13,7 @@ EXPORT MODULE LOGSCAN
 IMPORT SVG, WORKCONF
 
 DIM gStamp$ = "^([0-9]{4}-[0-9]{2}-[0-9]{2})[ T]([0-9]{2}):[0-9]{2}"
-DIM gLevel$ = "\b(FATAL|ERROR|WARNING|WARN)\b"
+DIM gLevel$ = "^(\[?)(FATAL|ERROR|WARNING|WARN)\b"
 
 ' Empty counters: "hours" (a map per hour of "ERROR" and "WARN"),
 ' "messages" (how often each error message came), "lines" and
@@ -33,29 +33,41 @@ EXPORT FUNC SIGNATURE$(message$)
     RETURN t$
 ENDFUNC
 
+' A day as YYYY-MM-DD, also when the log writes it 05.10.2026, so the
+' hours sort by time whatever the time stamp looks like.
+EXPORT FUNC ISO_DAY$(day$)
+    DIM dots$ = "^([0-9]{2})\.([0-9]{2})\.([0-9]{4})$"
+    DIM dmy = REGEX.FINDALL(dots$, day$)
+    IF LEN(dmy) = 0 THEN RETURN day$
+    RETURN dmy[0][2] + "-" + dmy[0][1] + "-" + dmy[0][0]
+ENDFUNC
+
 ' One line as a map with "hour" ("2026-10-05 09"), "level" ("ERROR",
 ' "WARN" or "") and "message"; an empty map for a line without a time
-' stamp at its start.
+' stamp at its start. The level is the first word after the time
+' stamp, so "INFO job finished without error" is no error.
 EXPORT FUNC PARSE(line$)
     DIM found AS MAP
     DIM stamp = REGEX.FINDALL(gStamp$, line$)
     IF LEN(stamp) = 0 THEN RETURN found
-    DIM day$ = stamp[0][0]
     DIM hour$ = stamp[0][1]
-    found{"hour"} = day$ + " " + hour$
+    found{"hour"} = ISO_DAY$(stamp[0][0]) + " " + hour$
     found{"level"} = ""
     found{"message"} = ""
-    DIM upper$ = UCASE$(line$)
-    DIM lv = REGEX.FINDALL(gLevel$, upper$)
+    ' Seconds, fraction and zone belong to the stamp too.
+    DIM rest$ = REGEX.REPLACE$(gStamp$, line$, "")
+    DIM clock$ = "^[0-9:.,]*(Z|[+-][0-9:]{4,5})?\s*"
+    rest$ = REGEX.REPLACE$(clock$, rest$, "")
+    DIM lv = REGEX.FINDALL(gLevel$, UCASE$(rest$))
     IF LEN(lv) > 0 THEN
-        DIM word$ = lv[0][0]
+        DIM word$ = lv[0][1]
+        DIM text$ = MID$(rest$, LEN(lv[0][0]) + LEN(lv[0][1]), _
+            LEN(rest$))
         IF word$ = "FATAL" THEN word$ = "ERROR"
         IF word$ = "WARNING" THEN word$ = "WARN"
         found{"level"} = word$
-        DIM at = INSTR(upper$, lv[0][0])
-        DIM rest$ = MID$(line$, at + LEN(lv[0][0]), LEN(line$))
-        DIM clean$ = REGEX.REPLACE$("^[\]:\s-]+", rest$, "")
-        found{"message"} = TRIM$(clean$)
+        text$ = REGEX.REPLACE$("^[\]:\s-]+", text$, "")
+        found{"message"} = TRIM$(text$)
     ENDIF
     RETURN found
 ENDFUNC
@@ -128,7 +140,12 @@ EXPORT FUNC REPORT$(stats, top_n)
     DIM warnings = TOTAL(stats, "WARN")
     DIM counts$ = WORKCONF.PLURAL$(stats{"lines"}, "line") + ", "
     counts$ = counts$ + WORKCONF.PLURAL$(errors, "error") + ", "
-    PUSH(out, counts$ + WORKCONF.PLURAL$(warnings, "warning"))
+    counts$ = counts$ + WORKCONF.PLURAL$(warnings, "warning")
+    IF stats{"skipped"} > 0 THEN
+        counts$ = counts$ + ", " + STR$(stats{"skipped"}) + _
+            " without a time stamp"
+    ENDIF
+    PUSH(out, counts$)
     DIM worst$ = WORST_HOUR$(stats)
     IF worst$ <> "" THEN PUSH(out, "Most errors: " + worst$ + ":00")
     PUSH(out, "")

@@ -55,10 +55,14 @@ The module knows how to read a log line and keeps the counters:
    and keeps the date and the hour in two groups. `REGEX.FINDALL`
    answers a list of matches, each a list of its groups, which is why the
    code reads `stamp[0][0]` for the date and `stamp[0][1]` for the hour.
-   The second expression looks for a level word. Programs write levels
-   in many ways (`WARN`, `WARNING`, `[warning]`, `FATAL:`), so the line is
-   turned into capitals first, and `FATAL` and `WARNING` are mapped to
-   the two levels the report knows.
+   The second expression looks for a level word, and only as the first
+   word after the time stamp, so `INFO Job finished without error` is
+   no error. Programs write levels in many ways (`WARN`, `WARNING`,
+   `[warning]`, `FATAL:`), so the rest of the line is turned into
+   capitals first, and `FATAL` and `WARNING` are mapped to the two
+   levels the report knows. `ISO_DAY$` keeps the day as
+   `YYYY-MM-DD`, also when the log writes `05.10.2026`, so the hours
+   sort by time.
 
 3. **Lines that belong to the line before.** A stack trace or a long
    message continues on lines without a time stamp. `PARSE` answers an
@@ -86,12 +90,13 @@ it, or put it on a page next to the report.
 
 ### Run it
 
-With the example log of the recipe's folder:
+The recipe folder holds `example.log`; point `folder` at the recipe
+folder to try it:
 
 ```
 jdbasic log_detective.jdb
 1 file in C:/Logs/import
-11 lines, 5 errors, 3 warnings
+11 lines, 5 errors, 3 warnings, 1 without a time stamp
 Most errors: 2026-10-05 09:00
 
 Most frequent errors
@@ -136,11 +141,11 @@ The interesting changes are in the code:
   DIM gStamp$ = "^([0-9]{2}\.[0-9]{2}\.[0-9]{4}) ([0-9]{2}):"
   ```
 
-  The two groups still hold the day and the hour, so nothing else has to
-  change.
+  The two groups still hold the day and the hour, and `ISO_DAY$`
+  turns the day into `2026-10-05`, so nothing else has to change.
 
 - **More levels.** To count `CRITICAL` as an error, add it to `gLevel$`
-  (`"\b(FATAL|CRITICAL|ERROR|WARNING|WARN)\b"`) and map it in `PARSE`
+  (`"^(\[?)(FATAL|CRITICAL|ERROR|WARNING|WARN)\b"`) and map it in `PARSE`
   with one more line: `IF word$ = "CRITICAL" THEN word$ = "ERROR"`.
 
 - **Ignore a known message.** If a harmless error fills the report, skip
@@ -157,9 +162,9 @@ The interesting changes are in the code:
 ### When it goes wrong
 
 - **"0 errors" although you see errors**: the time stamp has a form
-  `gStamp$` does not know, so every line is skipped. The report shows
-  the number of lines; compare it with what you expect, and adapt the
-  expression as shown above.
+  `gStamp$` does not know, so every line is skipped. The first line
+  of the report says so: `11 lines, 0 errors, 0 warnings, 11 without
+  a time stamp`. Adapt the expression as shown above.
 - **The file is in use**: some programs keep their log open. Reading it
   usually works anyway. If not, point the recipe at the rotated files of
   the days before (`app.log.1`, `app-2026-10-04.log`) with the pattern.
