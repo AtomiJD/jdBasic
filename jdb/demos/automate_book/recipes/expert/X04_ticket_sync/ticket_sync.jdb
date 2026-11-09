@@ -36,7 +36,9 @@ IF FILE.EXISTS(todo$) THEN text$ = TXTREADER$(todo$)
 DIM api = TICKETSYNC.SESSION(tracker$, token$)
 TRY
     DIM tickets = TICKETSYNC.OPEN_TICKETS(api, user$)
-    DIM plan = TICKETSYNC.PLAN(TICKETSYNC.PARSE(text$), tickets)
+    DIM items = TICKETSYNC.PARSE(text$)
+    DIM closed = TICKETSYNC.CLOSED(api, items, tickets)
+    DIM plan = TICKETSYNC.PLAN(items, tickets, closed)
     DIM said = TICKETSYNC.APPLY(plan, api, user$, dry_run)
     DIM k = 0
     FOR k = 0 TO LEN(said) - 1

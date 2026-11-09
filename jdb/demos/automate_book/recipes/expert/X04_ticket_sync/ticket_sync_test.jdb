@@ -18,9 +18,31 @@ gTitles{"103"} = "Archive 2025 budgets"
 gStates{"103"} = "closed"
 gTitles{"104"} = "Check travel costs of Q3"
 gStates{"104"} = "open"
+DIM gOwners AS MAP
+gOwners{"101"} = "lena"
+gOwners{"102"} = "lena"
+gOwners{"103"} = "lena"
+gOwners{"104"} = "lena"
+
+' One ticket by its number, whoever has it now.
+FUNC GetTicket(request)
+    DIM id$ = JDWEB.PARAM$(request, "id")
+    IF NOT MAP.EXISTS(gTitles, id$) THEN RETURN JDWEB.REPLY("no", 404, "text/plain")
+    DIM t AS MAP
+    t{"id"} = VAL(id$)
+    t{"title"} = gTitles{id$}
+    t{"state"} = gStates{id$}
+    t{"assignee"} = gOwners{id$}
+    RETURN JDWEB.REPLY_JSON(t)
+ENDFUNC
 
 FUNC ListTickets(request)
-    PUSH(gCalls, "GET " + JDWEB.PARAM$(request, "assignee"))
+    DIM who$ = JDWEB.PARAM$(request, "assignee")
+    DIM page = 1
+    DIM per = 100
+    IF JDWEB.PARAM$(request, "page") <> "" THEN page = CINT(VAL(JDWEB.PARAM$(request, "page")))
+    IF JDWEB.PARAM$(request, "per_page") <> "" THEN per = CINT(VAL(JDWEB.PARAM$(request, "per_page")))
+    PUSH(gCalls, "GET " + who$)
     DIM hs = request{"headers"}
     DIM names = MAP.KEYS(hs)
     DIM h = 0
@@ -32,17 +54,23 @@ FUNC ListTickets(request)
         gBusy = gBusy - 1
         RETURN JDWEB.REPLY("busy", 503, "text/plain")
     ENDIF
-    DIM out = []
+    DIM all = []
     DIM ids = SORT(MAP.KEYS(gTitles))
     DIM k = 0
     FOR k = 0 TO LEN(ids) - 1
         DIM id$ = ids[k]
-        IF gStates{id$} = "open" THEN
+        DIM mine = TRUE
+        IF MAP.EXISTS(gOwners, id$) THEN mine = gOwners{id$} = who$
+        IF gStates{id$} = "open" ANDALSO mine THEN
             DIM t AS MAP
             t{"id"} = VAL(id$)
             t{"title"} = gTitles{id$}
-            PUSH(out, t)
+            PUSH(all, t)
         ENDIF
+    NEXT k
+    DIM out = []
+    FOR k = (page - 1) * per TO page * per - 1
+        IF k < LEN(all) THEN PUSH(out, all[k])
     NEXT k
     RETURN JDWEB.REPLY_JSON(out)
 ENDFUNC
@@ -105,6 +133,7 @@ TESTKIT.EQ(items[5]{"id"}, "", "a task without a ticket")
 TESTKIT.EQ(TICKETSYNC.RENDER$(items), todo$, "the file comes back as read")
 
 JDWEB.GET("/api/tickets", ListTickets@)
+JDWEB.GET("/api/tickets/:id", GetTicket@)
 JDWEB.PATCH("/api/tickets/:id", ChangeTicket@)
 JDWEB.POST("/api/tickets", NewTicket@)
 DIM folder$ = MKTEMP$("ticketsync")
@@ -120,7 +149,10 @@ TESTKIT.EQ(gAuth$, "Bearer tk-1", "with the token")
 TESTKIT.EQ(open[0]{"id"}, "101", "ids as text")
 
 TESTKIT.SUITE("the plan")
-DIM plan = TICKETSYNC.PLAN(TICKETSYNC.PARSE(todo$), open)
+DIM parsed = TICKETSYNC.PARSE(todo$)
+DIM closed = TICKETSYNC.CLOSED(api, parsed, open)
+TESTKIT.EQARRAY(MAP.KEYS(closed), ["103"], "a ticket missing from the list is asked for: closed")
+DIM plan = TICKETSYNC.PLAN(parsed, open, closed)
 DIM remote = plan{"remote"}
 TESTKIT.EQ(LEN(remote), 2, "two calls for the tracker")
 TESTKIT.EQ(remote[0]{"do"}, "close", "the ticked task closes its ticket")
@@ -135,7 +167,8 @@ TESTKIT.EQ(after[8]{"id"}, "104", "that one")
 
 TESTKIT.SUITE("carrying it out")
 DIM said = TICKETSYNC.APPLY(plan, api, "lena", TRUE)
-TESTKIT.EQ(LEN(said), 2, "a dry run says what it would do")
+TESTKIT.EQ(LEN(said), 3, "a dry run says what it would do")
+TESTKIT.EQ(said[2], "would tick #103: closed in the tracker", "the tick too")
 TESTKIT.ISTRUE(STARTSWITH(said[0], "would close #102"), "the close")
 TESTKIT.EQ(LEN(gCalls), 2, "and calls nothing")
 said = TICKETSYNC.APPLY(plan, api, "lena", FALSE)
@@ -151,9 +184,29 @@ TESTKIT.ISTRUE(INSTR(written$, "- [ ] Check travel costs of Q3 (#104)") _
     >= 0, "lists the ticket that was missing")
 TESTKIT.ISTRUE(INSTR(written$, "Notes stay as they are.") >= 0, _
     "and keeps the other lines")
-DIM again = TICKETSYNC.PLAN(TICKETSYNC.PARSE(written$), _
-    TICKETSYNC.OPEN_TICKETS(api, "lena"))
+DIM again_items = TICKETSYNC.PARSE(written$)
+DIM again_open = TICKETSYNC.OPEN_TICKETS(api, "lena")
+DIM again = TICKETSYNC.PLAN(again_items, again_open, _
+    TICKETSYNC.CLOSED(api, again_items, again_open))
 TESTKIT.EQ(LEN(again{"remote"}), 0, "a second run has nothing to do")
+
+TESTKIT.SUITE("handed over and in pages")
+gTitles{"106"} = "Check the travel policy"
+gStates{"106"} = "open"
+gOwners{"106"} = "ben"
+DIM handed$ = "- [ ] Check the travel policy (#106)" + LF$
+DIM h_items = TICKETSYNC.PARSE(handed$)
+DIM h_open = TICKETSYNC.OPEN_TICKETS(api, "lena")
+DIM h_plan = TICKETSYNC.PLAN(h_items, h_open, TICKETSYNC.CLOSED(api, h_items, h_open))
+TESTKIT.ISFALSE(h_plan{"items"}[0]{"done"}, "a ticket handed to someone else stays unticked")
+gTitles{"107"} = "Fourth open ticket"
+gStates{"107"} = "open"
+gOwners{"107"} = "lena"
+DIM paged = TICKETSYNC.OPEN_TICKETS(api, "lena", 2)
+TESTKIT.EQ(LEN(paged), LEN(TICKETSYNC.OPEN_TICKETS(api, "lena")), "pages of two bring every open ticket")
+DIM page_items = TICKETSYNC.PARSE("- [ ] Fourth open ticket (#107)" + LF$)
+DIM page_plan = TICKETSYNC.PLAN(page_items, paged, TICKETSYNC.CLOSED(api, page_items, paged))
+TESTKIT.ISFALSE(page_plan{"items"}[0]{"done"}, "a ticket on a later page stays unticked")
 
 HTTP.SERVER.STOP()
 OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])

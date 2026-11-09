@@ -69,7 +69,8 @@ carries it out:
 2. **The open tickets.** `OPEN_TICKETS` asks for the tickets of one
    person in the state *open* and keeps the number and the title of
    each. A number is kept as text, so `204` from the tracker and
-   `(#204)` from the file compare as equal.
+   `(#204)` from the file compare as equal. Trackers answer in pages,
+   so it asks for page after page until one comes back short.
 3. **The file as items.** `PARSE` turns every line into an item. A
    line that starts with `- [ ] ` or `- [x] ` is a task, with its title
    and, at the end, its ticket number. Any other line is text and is
@@ -78,7 +79,10 @@ carries it out:
 4. **The plan.** `PLAN` walks through the tasks and decides, with the
    open tickets at hand. A ticked task whose ticket is still open
    needs a *close* call. A task marked `(#new)` needs a *create* call.
-   An open task whose ticket is no longer open is ticked. Then every
+   An open task whose ticket is no longer in the list may be closed, or
+   it may only have gone to a colleague, so `CLOSED` asks the tracker
+   for each such ticket on its own, and only a closed one is ticked.
+   Every tick is printed, so you see what changed in the file. Then every
    open ticket that no task names is added at the end of the file. The
    plan changes nothing yet; the calls for the tracker wait in
    `remote`.
@@ -153,7 +157,8 @@ token_env = "TICKETS_TOKEN"
 ```
 
 - **Another tracker.** The paths and fields of the tracker are in
-  three places of the module: the `GET` in `OPEN_TICKETS`, the `PATCH`
+  four places of the module: the `GET` in `OPEN_TICKETS` and in
+  `CLOSED`, the `PATCH`
   and the `POST` in `APPLY`. For GitLab, for example, the list is
   `/api/v4/issues` with `assignee_username` and `state = "opened"`,
   and closing is a `PUT` on the issue with `state_event = "close"`. Change those

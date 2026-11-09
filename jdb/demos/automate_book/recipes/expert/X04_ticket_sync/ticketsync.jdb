@@ -8,7 +8,8 @@
 '   DIM api = TICKETSYNC.SESSION("https://tracker.example", token$)
 '   DIM items = TICKETSYNC.PARSE(TXTREADER$("todo.md"))
 '   DIM open = TICKETSYNC.OPEN_TICKETS(api, "lena")
-'   DIM plan = TICKETSYNC.PLAN(items, open)
+'   DIM closed = TICKETSYNC.CLOSED(api, items, open)
+'   DIM plan = TICKETSYNC.PLAN(items, open, closed)
 
 EXPORT MODULE TICKETSYNC
 
@@ -27,21 +28,65 @@ EXPORT FUNC SESSION(base$, token$)
 ENDFUNC
 
 ' The open tickets of a person as maps with id (text) and title.
-EXPORT FUNC OPEN_TICKETS(api, user$)
+' A tracker answers in pages (GitLab 20, Jira 50 at a time); the pages
+' are read until one is short or brings nothing new.
+EXPORT FUNC OPEN_TICKETS(api, user$, per_page = 100)
     DIM query AS MAP
     query{"assignee"} = user$
     query{"state"} = "open"
-    DIM r = REQ.GET(api, "/api/tickets", query)
-    REQ.RAISE_FOR_STATUS(r)
-    DIM rows = REQ.JSON(r)
+    query{"per_page"} = per_page
     DIM out = []
+    DIM seen AS MAP
+    DIM page = 1
+    DO
+        query{"page"} = page
+        DIM r = REQ.GET(api, "/api/tickets", query)
+        REQ.RAISE_FOR_STATUS(r)
+        DIM rows = REQ.JSON(r)
+        DIM fresh = 0
+        DIM k = 0
+        FOR k = 0 TO LEN(rows) - 1
+            DIM t = rows[k]
+            DIM id$ = IdText$(t{"id"})
+            IF NOT MAP.EXISTS(seen, id$) THEN
+                seen{id$} = TRUE
+                fresh = fresh + 1
+                DIM one AS MAP
+                one{"id"} = id$
+                one{"title"} = t{"title"}
+                PUSH(out, one)
+            ENDIF
+        NEXT k
+        IF fresh = 0 ORELSE LEN(rows) < per_page THEN EXITDO
+        page = page + 1
+    LOOP
+    RETURN out
+ENDFUNC
+
+' The tasks of the file whose ticket is not in the open list, asked
+' one by one: a map of the ids that are really closed. A ticket handed
+' to someone else is still open and its task stays as it is.
+EXPORT FUNC CLOSED(api, items, tickets)
+    DIM open AS MAP
     DIM k = 0
-    FOR k = 0 TO LEN(rows) - 1
-        DIM t = rows[k]
-        DIM one AS MAP
-        one{"id"} = IdText$(t{"id"})
-        one{"title"} = t{"title"}
-        PUSH(out, one)
+    FOR k = 0 TO LEN(tickets) - 1
+        open{tickets[k]{"id"}} = TRUE
+    NEXT k
+    DIM out AS MAP
+    FOR k = 0 TO LEN(items) - 1
+        DIM item = items[k]
+        DIM id$ = ""
+        IF item{"kind"} = "task" THEN id$ = item{"id"}
+        DIM ask = id$ <> "" ANDALSO id$ <> "new"
+        IF ask THEN ask = NOT item{"done"}
+        IF ask THEN ask = NOT MAP.EXISTS(open, id$)
+        IF ask THEN
+            DIM r = REQ.GET(api, "/api/tickets/" + id$)
+            IF r{"status"} = 200 THEN
+                DIM state$ = LCASE$("" + REQ.JSON(r){"state"})
+                IF state$ = "closed" THEN out{id$} = TRUE
+            ENDIF
+        ENDIF
     NEXT k
     RETURN out
 ENDFUNC
@@ -99,9 +144,11 @@ ENDFUNC
 
 ' The changes that bring the file and the tracker together, as a map
 ' with "remote" (close and create calls for the tracker) and "items"
-' (the file after the local changes). Nothing is changed yet.
-EXPORT FUNC PLAN(items, tickets)
+' (the file after the local changes) and "ticked" (tasks ticked
+' because CLOSED found their ticket closed). Nothing is changed yet.
+EXPORT FUNC PLAN(items, tickets, closed)
     DIM remote = []
+    DIM ticked = []
     DIM out = []
     DIM known AS MAP
     DIM k = 0
@@ -120,11 +167,13 @@ EXPORT FUNC PLAN(items, tickets)
             DIM id$ = item{"id"}
             listed{id$} = TRUE
             DIM is_open = MAP.EXISTS(known, id$)
+            DIM is_closed = MAP.EXISTS(closed, id$)
             IF item{"done"} ANDALSO is_open THEN
                 DIM done$ = item{"title"}
                 PUSH(remote, Change("close", id$, done$, LEN(out)))
-            ELSEIF NOT item{"done"} ANDALSO NOT is_open THEN
+            ELSEIF NOT item{"done"} ANDALSO is_closed THEN
                 item{"done"} = TRUE
+                PUSH(ticked, id$)
             ELSEIF is_open THEN
                 item{"title"} = known{id$}
             ENDIF
@@ -147,6 +196,7 @@ EXPORT FUNC PLAN(items, tickets)
     DIM plan AS MAP
     plan{"remote"} = remote
     plan{"items"} = out
+    plan{"ticked"} = ticked
     RETURN plan
 ENDFUNC
 
@@ -190,6 +240,12 @@ EXPORT FUNC APPLY(plan, api, user$, dry_run)
             task{"id"} = IdText$(made{"id"})
             PUSH(said, note$ + " as #" + task{"id"})
         ENDIF
+    NEXT k
+    DIM ticked = plan{"ticked"}
+    FOR k = 0 TO LEN(ticked) - 1
+        DIM mark$ = "tick #" + ticked[k] + ": closed in the tracker"
+        IF dry_run THEN mark$ = "would " + mark$
+        PUSH(said, mark$)
     NEXT k
     RETURN said
 ENDFUNC
