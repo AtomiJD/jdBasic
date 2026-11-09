@@ -14,6 +14,7 @@ EXPORT MODULE ROBOT
 
 IMPORT CONF, IMG, INPUTKIT, LOGGER
 
+CONST PIXEL_GAP = 48
 DIM gKinds$ = "|wait_window|check|click|doubleclick|type|key|pause|"
 
 ' A list of n numbers from a job field, or 0 when it is not one.
@@ -76,7 +77,7 @@ EXPORT FUNC PARSE_JOB(toml$, base_dir$)
             ELSE
                 s{"region"} = region
                 s{"image"} = path$
-                s{"tolerance"} = Field(r, "tolerance", 10)
+                s{"tolerance"} = Field(r, "tolerance", 2)
                 PUSH(steps, s)
             ENDIF
         ELSEIF do$ = "click" ORELSE do$ = "doubleclick" THEN
@@ -160,8 +161,10 @@ EXPORT FUNC SCREEN_POINT(origin, at)
 ENDFUNC
 
 ' How far a region of a screenshot is from a reference picture: the
-' mean difference of the red, green and blue values, 0 to 255. A
-' region that does not fit, or a picture of another size, counts 255.
+' share of its pixels, in percent, where a colour differs by more than
+' PIXEL_GAP. A blinking cursor is a few pixels, another label on the
+' button many. A region that does not fit, or a picture of another
+' size, counts 255.
 EXPORT FUNC REGION_DIFF(shot, ref, region)
     DIM rx = region[0]
     DIM ry = region[1]
@@ -174,7 +177,7 @@ EXPORT FUNC REGION_DIFF(shot, ref, region)
     DIM cr = ref{"channels"}
     DIM ps = shot{"pixels"}
     DIM pr = ref{"pixels"}
-    DIM total = 0.0
+    DIM differ = 0
     DIM x = 0
     DIM y = 0
     DIM ch = 0
@@ -182,18 +185,19 @@ EXPORT FUNC REGION_DIFF(shot, ref, region)
         FOR x = 0 TO w - 1
             DIM at_s = ((ry + y) * sw + rx + x) * cs
             DIM at_r = (y * w + x) * cr
+            DIM worst = 0
             FOR ch = 0 TO 2
                 DIM s_ch = ch
                 IF cs < 3 THEN s_ch = 0
                 DIM r_ch = ch
                 IF cr < 3 THEN r_ch = 0
-                DIM vs = ps[at_s + s_ch]
-                DIM vr = pr[at_r + r_ch]
-                total = total + ABS(vs - vr)
+                DIM gap = ABS(ps[at_s + s_ch] - pr[at_r + r_ch])
+                IF gap > worst THEN worst = gap
             NEXT ch
+            IF worst > PIXEL_GAP THEN differ = differ + 1
         NEXT x
     NEXT y
-    RETURN total / (w * h * 3)
+    RETURN ROUND(differ * 100 / (w * h), 1)
 ENDFUNC
 
 ' Whether the region looks like the picture, within the tolerance.
@@ -226,7 +230,7 @@ FUNC Attempt(s, window$, shot$)
         DIM ref = IMG.READPNG(s{"image"})
         DIM d = REGION_DIFF(shot, ref, s{"region"})
         IF d > s{"tolerance"} THEN
-            RETURN "the region differs by " + FORMAT$("{:.1f}", d)
+            RETURN FORMAT$("{:.1f}", d) + " % of the region differs"
         ENDIF
     ELSEIF do$ = "click" ORELSE do$ = "doubleclick" THEN
         DIM p = SCREEN_POINT(INPUTKIT.CLIENT_ORIGIN(win), s{"at"})

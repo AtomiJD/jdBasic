@@ -92,10 +92,12 @@ position of the mouse:
    cannot catch the robot's key strokes.
 4. `check` takes a picture of the window's inside with `OS.SCREENSHOT`
    and compares the region with the reference picture. `REGION_DIFF`
-   answers the mean difference of the red, green and blue values, from
-   0 for the same picture to 255; a check passes up to its
-   `tolerance`. A region outside the window or a picture of another
-   size never passes.
+   counts the pixels whose colour differs by more than `PIXEL_GAP` and
+   answers their share in percent, 0 for the same picture; a check
+   passes up to its `tolerance`. A mean over the whole region would not
+   do: the background of a button is the same whatever its label says,
+   and it would hide the letters that differ. A region outside the
+   window or a picture of another size never passes.
 5. `click` adds the window's position on the screen to the point of
    the job, so the click lands in the same place of the program
    wherever the window is.
@@ -164,17 +166,22 @@ countdown = 5
 - **Check before every click that matters.** A `check` step costs a
   second and saves you from a click on the wrong button. Put one
   before every click that changes data.
-- **Tolerance.** A tolerance of 10 to 15 allows for a blinking cursor
-  or a different colour of the window frame. If a check fails with a
-  difference of 2 or 3, raise it; if it passes on the wrong screen,
-  lower it and pick a region with more detail.
+- **Tolerance.** The default of 2 percent allows for a blinking cursor
+  or a few pixels of a focus frame. Try the check once against a wrong
+  screen, another button or another dialog: `--dry-run` cannot, but a
+  real run prints the share that differs, and it should be far above
+  your tolerance. Pick a region tight around the label, where a wrong
+  button differs most.
+- **Scaling.** Points, regions and reference pictures count physical
+  pixels. At 200 % a button of 96 × 24 is 192 × 48; measure them on
+  the computer the robot runs on, with its scaling.
 - **Rows from a sheet.** For many rows, build the job's text from the
   rows of a sheet and hand it to `ROBOT.PARSE_JOB`, one job per row,
   with a `check` at the start of each.
 
 ### When it goes wrong
 
-- **"the region differs by 41.3"**: the program looks different from
+- **"41.3 % of the region differs"**: the program looks different from
   the reference picture. The display scaling, the Windows theme or a
   new version of the program changes every pixel; take the reference
   picture again.

@@ -33,7 +33,7 @@ TESTKIT.EQ(LEN(steps), 5, "five steps")
 DIM s0 = steps[0]
 TESTKIT.EQ(s0{"timeout_s"}, 30, "a wait has 30 seconds unless told")
 DIM s1 = steps[1]
-TESTKIT.EQ(s1{"tolerance"}, 10, "a check has a tolerance of 10")
+TESTKIT.EQ(s1{"tolerance"}, 2, "a check has a tolerance of 2 percent")
 TESTKIT.EQ(s1{"tries"}, 3, "and the tries it was given")
 
 TESTKIT.SUITE("mistakes")
@@ -70,6 +70,17 @@ DIM moved = ROBOT.REGION_DIFF(shot, pic, [8, 7, 10, 6])
 TESTKIT.ISTRUE(moved > 10, "three pixels to the side it does not")
 TESTKIT.EQ(ROBOT.REGION_DIFF(shot, pic, [45, 7, 10, 6]), 255, "a region past the edge")
 TESTKIT.EQ(ROBOT.REGION_DIFF(shot, pic, [5, 7, 12, 6]), 255, "a picture of another size")
+
+' A button with another label: the background is the same, only the
+' letters differ. The share of differing pixels catches it, where the
+' mean over the whole button stayed under the tolerance.
+DIM button_a = IMG.PASTE(IMG.BLANK(192, 48, 4, 220), IMG.BLANK(60, 12, 4, 30), 40, 18)
+DIM button_b = IMG.BLANK(192, 48, 4, 220)
+button_b = IMG.PASTE(button_b, IMG.BLANK(40, 12, 4, 30), 40, 18)
+button_b = IMG.PASTE(button_b, IMG.BLANK(20, 12, 4, 30), 90, 18)
+TESTKIT.ISFALSE(ROBOT.MATCHES(button_b, button_a, [0, 0, 192, 48], 2), "another label fails the check")
+DIM blink = IMG.PASTE(button_a, IMG.BLANK(1, 16, 4, 0), 120, 16)
+TESTKIT.ISTRUE(ROBOT.MATCHES(blink, button_a, [0, 0, 192, 48], 2), "a blinking cursor passes")
 
 TESTKIT.SUITE("the sample job")
 DIM here$ = "recipes/expert/X16_desktop_robot/order_entry.toml"

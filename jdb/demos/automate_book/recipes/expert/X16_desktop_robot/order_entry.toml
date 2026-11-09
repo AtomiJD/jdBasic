@@ -5,7 +5,8 @@
 #   do = "wait_window"   wait for the window, timeout_s (30)
 #   do = "check"         region [x, y, width, height] must look like
 #                        image (a PNG next to this file),
-#                        tolerance (10)
+#                        tolerance, the percent of pixels that may
+#                        differ (2)
 #   do = "click"         at [x, y]; also "doubleclick"
 #   do = "type"          text
 #   do = "key"           keys, such as "tab" or "ctrl+s"
@@ -23,7 +24,7 @@ timeout_s = 60
 do = "check"
 region = [12, 44, 96, 24]
 image = "new_button.png"
-tolerance = 12
+tolerance = 3
 tries = 5
 
 [[step]]
