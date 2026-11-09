@@ -4,7 +4,7 @@
 ' requests, a busy server tried again, a private path left alone, a
 ' missing page reported), pages kept in a cache file, and CSV lines.
 
-IMPORT TESTKIT, HARVEST, JDWEB
+IMPORT TESTKIT, HARVEST, JDWEB, XLSX
 
 DIM LF$ = CHR$(10)
 DIM folder$ = MKTEMP$("harvest")
@@ -83,6 +83,10 @@ TESTKIT.ISTRUE(HARVEST.ALLOWED(shop, "/shop/prices/a"), _
     "the longer rule wins")
 TESTKIT.ISFALSE(HARVEST.ALLOWED(shop, "/shop/cart"), "the shorter")
 
+FUNC EmptyValue(x)
+    RETURN HARVEST.VALUE$("<span class=price></span>", "span.price", "")
+ENDFUNC
+
 TESTKIT.SUITE("values")
 TESTKIT.EQ(HARVEST.NUMBER$("4,99 EUR"), "4.99", "a German price")
 TESTKIT.EQ(HARVEST.NUMBER$("1.234,50 EUR"), "1234.50", _
@@ -100,6 +104,20 @@ TESTKIT.EQ(HARVEST.VALUE$(html$, "a", "href"), "/x.pdf", _
 TESTKIT.EQ(HARVEST.CSVLINE$(["a", "b,c", "say " + CHR$(34) + "hi"]), _
     "a," + CHR$(34) + "b,c" + CHR$(34) + "," + CHR$(34) + "say " + _
     CHR$(34) + CHR$(34) + "hi" + CHR$(34), "CSV quoting")
+TESTKIT.THROWS(EmptyValue@, 0, "an empty element is an error")
+TESTKIT.EQ(HARVEST.MATCH_COUNT("<p><span class=price>1</span><span class=price>2</span></p>", "span.price"), 2, _
+    "two elements that match are counted")
+DIM csv_dir$ = PATH.JOIN$(folder$, "book")
+MKDIR csv_dir$
+DIM csv$ = PATH.JOIN$(csv_dir$, "harvest.csv")
+TXTWRITER csv$, "time,name,value,number,url,status" + CHR$(10) + _
+    "2026-10-05 07:00:00,Paper," + CHR$(34) + "4,99 €" + CHR$(34) + ",4.99,http://x/,ok" + CHR$(10) + _
+    "2026-10-05 07:00:00,Sheet,/x.pdf,,http://x/,ok" + CHR$(10)
+DIM xlsx$ = PATH.JOIN$(csv_dir$, "harvest.xlsx")
+TESTKIT.EQ(HARVEST.WORKBOOK(csv$, xlsx$), 2, "the harvest as a workbook")
+DIM sheet_back = XLSX.READ(xlsx$){"Harvest"}
+TESTKIT.EQ(sheet_back[1][3], 4.99, "with the number as a number")
+TESTKIT.EQ(sheet_back[1][2], "4,99 €", "and the value as shown")
 
 TESTKIT.SUITE("a polite run")
 JDWEB.GET("/robots.txt", Robots@)
@@ -142,6 +160,7 @@ DIM r4 = rows[4]
 TESTKIT.EQ(r0[2], "4,99 €", "the price as shown")
 TESTKIT.EQ(r0[3], "4.99", "and as a number")
 TESTKIT.EQ(r1[2], "/sheets/paper.pdf", "an attribute")
+TESTKIT.EQ(r1[3], "", "an attribute gives no number")
 TESTKIT.EQ(r2[3], "1234.50", "a busy server is tried again")
 TESTKIT.ISTRUE(INSTR(r3[5], "robots.txt") >= 0, _
     "a private path is left alone")

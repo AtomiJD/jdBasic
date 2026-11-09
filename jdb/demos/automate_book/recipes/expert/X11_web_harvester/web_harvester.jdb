@@ -57,15 +57,25 @@ FOR k = 0 TO LEN(rows) - 1
     ENDIF
     PUSH(lines, HARVEST.CSVLINE$(row))
 NEXT k
+DIM notes = h{"notes"}
+FOR k = 0 TO LEN(notes) - 1
+    IF dry_run THEN PRINT notes[k]
+    LOGGER.WARN(lg, notes[k])
+NEXT k
 IF dry_run THEN
     PRINT LEN(rows) - failed; " values read; nothing written"
     END
 ENDIF
 
+' The mark in front lets Excel read the umlauts; reading the file back
+' leaves it out, so it goes in front again.
 DIM bom$ = CHR$(239) + CHR$(187) + CHR$(191)
 DIM text$ = bom$ + "time,name,value,number,url,status" + CHR$(10)
-IF FILE.EXISTS(output$) THEN text$ = TXTREADER$(output$)
+IF FILE.EXISTS(output$) THEN text$ = bom$ + TXTREADER$(output$)
 TXTWRITER output$, text$ + JOIN(lines, CHR$(10)) + CHR$(10)
+DIM book$ = PATH.JOIN$(folder$, "harvest.xlsx")
+DIM n_rows = HARVEST.WORKBOOK(output$, book$)
+PRINT "harvest.csv and harvest.xlsx: "; n_rows; " rows"
 HARVEST.SAVE(h, opts{"cache"})
 LOGGER.INFO(lg, "harvest written", {"values": LEN(rows) - failed, _
     "failed": failed, "requests": h{"requests"}})

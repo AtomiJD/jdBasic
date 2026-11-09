@@ -11,7 +11,7 @@
 
 EXPORT MODULE HARVEST
 
-IMPORT REQ, CACHE, RETRY, HTMLDOM
+IMPORT REQ, CACHE, RETRY, HTMLDOM, XLSX
 
 DIM gH AS MAP
 
@@ -33,13 +33,13 @@ EXPORT FUNC ROBOTS(text$, agent$)
     DIM lines = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
     DIM k = 0
     FOR k = 0 TO LEN(lines) - 1
-        DIM line$ = lines[k]
-        DIM hash = INSTR(line$, "#")
-        IF hash >= 0 THEN line$ = LEFT$(line$, hash)
-        DIM colon = INSTR(line$, ":")
+        DIM row$ = lines[k]
+        DIM hash = INSTR(row$, "#")
+        IF hash >= 0 THEN row$ = LEFT$(row$, hash)
+        DIM colon = INSTR(row$, ":")
         IF colon > 0 THEN
-            DIM field$ = LCASE$(TRIM$(LEFT$(line$, colon)))
-            DIM value$ = TRIM$(MID$(line$, colon + 1, LEN(line$)))
+            DIM field$ = LCASE$(TRIM$(LEFT$(row$, colon)))
+            DIM value$ = TRIM$(MID$(row$, colon + 1, LEN(row$)))
             IF field$ = "user-agent" THEN
                 IF in_rules THEN
                     for_me = FALSE
@@ -257,13 +257,30 @@ ENDSUB
 ' ── reading values ─────────────────────────────────────────────
 
 ' The text of the first element selector$ finds in html$, or its
-' attribute attr$ when that is not "".
+' attribute attr$ when that is not "". An element without text is an
+' error: the page most likely fills it with JavaScript, which a
+' harvester does not run.
 EXPORT FUNC VALUE$(html$, selector$, attr$)
     DIM doc = HTMLDOM.PARSE(html$)
     DIM at = HTMLDOM.FIND(doc, selector$)
     IF at < 0 THEN THROW "nothing on the page matches " + selector$
-    IF attr$ <> "" THEN RETURN TRIM$(HTMLDOM.ATTR$(doc, at, attr$))
-    RETURN TRIM$(REGEX.REPLACE$("\s+", HTMLDOM.FLAT$(doc, at), " "))
+    DIM found$ = ""
+    IF attr$ <> "" THEN
+        found$ = TRIM$(HTMLDOM.ATTR$(doc, at, attr$))
+    ELSE
+        DIM flat$ = HTMLDOM.FLAT$(doc, at)
+        found$ = TRIM$(REGEX.REPLACE$("\s+", flat$, " "))
+    ENDIF
+    IF found$ = "" THEN
+        THROW "the element is empty; JavaScript may fill it"
+    ENDIF
+    RETURN found$
+ENDFUNC
+
+' How many elements selector$ finds in html$: more than one means the
+' value comes from the first, which may not be the one meant.
+EXPORT FUNC MATCH_COUNT(html$, selector$)
+    RETURN LEN(HTMLDOM.FINDALL(HTMLDOM.PARSE(html$), selector$))
 ENDFUNC
 
 ' The first number in a text as plain digits with a point, so
@@ -311,9 +328,13 @@ ENDFUNC
 
 ' One row per target, a map with name, url, select and optionally
 ' attr: time, name, value, number, url and "ok" or what went wrong.
-' A target that fails does not stop the others.
+' The number is left empty for an attribute, such as a link, whose
+' digits are no amount. A target that fails does not stop the others;
+' a selector that finds more than one element adds a line to
+' h{"notes"}.
 EXPORT FUNC RUN(h, targets, now$)
     DIM rows = []
+    h{"notes"} = []
     DIM k = 0
     FOR k = 0 TO LEN(targets) - 1
         DIM t = targets[k]
@@ -323,11 +344,20 @@ EXPORT FUNC RUN(h, targets, now$)
         DIM value$ = ""
         DIM status$ = "ok"
         TRY
-            value$ = VALUE$(PAGE$(h, url$), t{"select"}, attr$)
+            DIM html$ = PAGE$(h, url$)
+            value$ = VALUE$(html$, t{"select"}, attr$)
+            DIM n = MATCH_COUNT(html$, t{"select"})
+            IF n > 1 THEN
+                DIM notes = h{"notes"}
+                PUSH(notes, t{"name"} + ": " + STR$(n) + _
+                    " elements match, the first is used")
+            ENDIF
         CATCH
             status$ = ERRMSG$
         ENDTRY
-        DIM row = [now$, t{"name"}, value$, NUMBER$(value$)]
+        DIM number$ = ""
+        IF attr$ = "" THEN number$ = NUMBER$(value$)
+        DIM row = [now$, t{"name"}, value$, number$]
         PUSH(row, url$)
         PUSH(row, status$)
         PUSH(rows, row)
@@ -346,4 +376,30 @@ FUNC CsvCell$(s$)
     DIM quote = INSTR(s$, ",") >= 0 ORELSE INSTR(s$, q$) >= 0
     IF quote THEN RETURN q$ + REPLACE$(s$, q$, q$ + q$) + q$
     RETURN s$
+ENDFUNC
+
+' The harvest file as a workbook: one sheet with the same columns, the
+' numbers as numbers, so Excel draws a chart from it in any country
+' setting. Answers the number of rows below the header.
+EXPORT FUNC WORKBOOK(csv$, xlsx$)
+    DIM kinds = ["STRING", "STRING", "STRING", "STRING", "STRING", _
+        "STRING"]
+    DIM rows = CSVREADER(csv$, ",", TRUE, kinds)
+    DIM out = [["time", "name", "value", "number", "url", "status"]]
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r = rows[k]
+        DIM n$ = "" + r[3]
+        IF n$ = "" THEN
+            PUSH(out, [r[0], r[1], r[2], "", r[4], r[5]])
+        ELSE
+            PUSH(out, [r[0], r[1], r[2], VAL(n$), r[4], r[5]])
+        ENDIF
+    NEXT k
+    DIM wb = XLSX.NEW()
+    DIM sheet = XLSX.SHEET(wb, "Harvest", out)
+    XLSX.FREEZE(sheet, 1)
+    XLSX.COLUMN(sheet, "A", {"width": 20})
+    XLSX.WRITE(xlsx$, wb)
+    RETURN LEN(out) - 1
 ENDFUNC

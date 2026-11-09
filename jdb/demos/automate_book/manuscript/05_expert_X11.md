@@ -15,8 +15,10 @@ Excel and checks that the comma ended up in the right place.
 
 A CSV file with one line per value and run: the time, the name you
 gave the value, the value as the page shows it, the same value as a
-plain number, the address, and *ok* or what went wrong. Excel opens
-the file, and a chart over the weeks shows when a price moved.
+plain number, the address, and *ok* or what went wrong. Next to it
+the same lines go into a workbook, `harvest.xlsx`, with the numbers
+as numbers, so Excel draws a chart over the weeks that shows when a
+price moved, whatever list separator your Windows uses.
 
 The harvester reads the pages the way a considerate visitor does. It
 asks each site's `robots.txt` which pages it may read, waits between
@@ -51,7 +53,8 @@ attr = "href"
 ```
 
 `attr` reads an attribute of the element instead of its text, here
-the address of a data sheet.
+the address of a data sheet; its number column stays empty, since
+the 200 of `x200.pdf` is no amount.
 
 > **Watch out**
 > Being polite to a server is not the same as being allowed to read
@@ -125,7 +128,10 @@ values look right, run it for real; the CSV file is
 `harvest.csv` in the harvester's folder and the log `harvest.log`
 next to it. The CSV file starts with the three bytes of a UTF-8 byte
 order mark, the sign Excel looks for to read the euro sign and other
-letters right when you open the file with a double click.
+letters right when you open the file with a double click. German
+Excel expects semicolons in a CSV file and shows this one in a
+single column; open `harvest.xlsx` instead, which `WORKBOOK` writes
+from the CSV file after every run.
 
 ### Schedule it
 
@@ -176,6 +182,14 @@ Changes in the code:
   page read by programs. Leave it, or ask the site for another way.
 - **"transient: the server answered 503"** after three tries: the
   site is down or limits requests. The next run tries again.
+- **"the element is empty; JavaScript may fill it"**: the page
+  sends the element without the value and a script puts it in later,
+  which a harvester does not run. Look for the value elsewhere in the
+  page, often in an attribute such as `data-price`, and read that
+  with `attr`.
+- **"Paper: 2 elements match, the first is used"**: the selector also
+  fits another element, such as the price of an accessory. Make it
+  narrower, for example `div.main span.price`.
 - **"the page answered 404"**: the address is wrong or the product is
   gone.
 - **The euro sign looks wrong in Excel**: the file was started by an
