@@ -9,10 +9,12 @@
 
 EXPORT MODULE SNIPPETS
 
-' TRUE for a name that can be a snippet: letters, digits, _ and -.
+' TRUE for a name that can be a snippet: letters, German ones
+' included, digits, _ and -; no spaces.
 EXPORT FUNC VALID_NAME(snip$)
     IF snip$ = "" ORELSE LEN(snip$) > 40 THEN RETURN FALSE
-    RETURN LEN(REGEX.FINDALL("^[A-Za-z0-9_-]+$", snip$)) > 0
+    DIM letter$ = "[A-Za-z0-9_-]|ä|ö|ü|Ä|Ö|Ü|ß"
+    RETURN LEN(REGEX.FINDALL("^(?:" + letter$ + ")+$", snip$)) > 0
 ENDFUNC
 
 FUNC FileOf$(folder$, snip$)
@@ -20,11 +22,23 @@ FUNC FileOf$(folder$, snip$)
     RETURN PATH.JOIN$(folder$, LCASE$(snip$) + ".txt")
 ENDFUNC
 
-' The names of all snippets in the folder, sorted.
-EXPORT FUNC LIST(folder$)
+' The names of the .txt files in the folder, sorted.
+FUNC Stems(folder$)
     IF NOT FILE.ISDIR(folder$) THEN RETURN []
     DIM files = FILE.LIST(PATH.JOIN$(folder$, "*.txt"))
     RETURN SORT(SELECT(LAMBDA f$ -> LEFT$(f$, LEN(f$) - 4), files))
+ENDFUNC
+
+' The names of all snippets in the folder, sorted.
+EXPORT FUNC LIST(folder$)
+    RETURN FILTER(LAMBDA s$ -> VALID_NAME(s$), Stems(folder$))
+ENDFUNC
+
+' The .txt files of the folder whose names cannot be a snippet name,
+' such as one with a space: they are left out until renamed.
+EXPORT FUNC LEFT_OUT(folder$)
+    DIM odd = FILTER(LAMBDA s$ -> NOT VALID_NAME(s$), Stems(folder$))
+    RETURN SELECT(LAMBDA s$ -> s$ + ".txt", odd)
 ENDFUNC
 
 ' The text of a snippet, line ends as LF.

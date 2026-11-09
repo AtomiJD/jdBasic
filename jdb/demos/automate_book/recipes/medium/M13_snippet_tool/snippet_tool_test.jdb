@@ -43,6 +43,14 @@ TESTKIT.THROWS(SaveTwice@, 0, "saving over a snippet needs replace")
 SNIPPETS.WRITE(folder$, "thanks", thanks$ + "!", TRUE)
 TESTKIT.EQ(RIGHT$(SNIPPETS.READ$(folder$, "thanks"), 1), "!", "and replaces it with replace")
 TESTKIT.THROWS(Unknown@, 0, "an unknown snippet is an error")
+TXTWRITER PATH.JOIN$(folder$, "late reply.txt"), "late"
+SNIPPETS.WRITE(folder$, "grüße", "Viele Grüße", FALSE)
+TESTKIT.EQARRAY(SNIPPETS.LIST(folder$), ["agenda", "grüße", "thanks"], _
+    "a German name is a snippet, a file with a space is not")
+TESTKIT.EQARRAY(SNIPPETS.LEFT_OUT(folder$), ["late reply.txt"], _
+    "the file with a space is named to be renamed")
+KILL PATH.JOIN$(folder$, "late reply.txt")
+KILL PATH.JOIN$(folder$, "grüße.txt")
 
 TESTKIT.SUITE("placeholders")
 TESTKIT.EQARRAY(SNIPPETS.PLACEHOLDERS(thanks$), ["name", "what", "me"], "each once, in small letters")

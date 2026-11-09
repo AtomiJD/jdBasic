@@ -54,8 +54,8 @@ The module knows the folder and the placeholders:
 
 2. **One file per snippet.** `FileOf$` turns a name into a file name in
    the folder, always in small letters, so `Late` and `late` are the
-   same snippet. `VALID_NAME` allows letters, digits, `_` and `-`
-   only. That keeps a name from reaching outside the folder: `..\boot`
+   same snippet. `VALID_NAME` allows letters, German ones included,
+   digits, `_` and `-` only. That keeps a name from reaching outside the folder: `..\boot`
    is no snippet name. `WRITE` refuses to overwrite a snippet unless
    you pass `--force`, so a typo in `add` does not cost you a text you
    spent care on.
@@ -195,6 +195,9 @@ Three changes in the code are worth knowing:
   tool sees.
 - **"Not a snippet name"**: the name holds a space, a dot or a slash.
   Use `late_reply` or `late-reply` instead.
+- **"Left out (rename them): late reply.txt"**: a file in the folder has
+  a name no snippet can have, often saved by a colleague. `list` shows
+  the others all the same; rename that file to `late_reply.txt`.
 - **"A snippet called late exists; use --force"**: `add` keeps the old
   text. Add `--force` if you really want to replace it.
 - **"Use name=value"**: a `--set` without `=`. Quote values that hold

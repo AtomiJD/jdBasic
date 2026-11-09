@@ -51,6 +51,10 @@ IF cmd$ = "list" THEN
         DIM places = SNIPPETS.PLACEHOLDERS(t$)
         PRINT names[k]; "  "; JOIN(places, ", ")
     NEXT k
+    DIM odd = SNIPPETS.LEFT_OUT(folder$)
+    IF LEN(odd) > 0 THEN
+        PRINT "Left out (rename them): "; JOIN(odd, ", ")
+    ENDIF
 ELSEIF cmd$ = "show" ORELSE cmd$ = "copy" THEN
     DIM snip$ = got{"args"}[0]
     DIM given = SNIPPETS.VALUES(got{"set"})
@@ -60,7 +64,12 @@ ELSEIF cmd$ = "show" ORELSE cmd$ = "copy" THEN
         CLIPBOARD.SET filled{"text"}
         PRINT "On the clipboard: "; snip$
     ELSE
-        PRINT filled{"text"}
+        ' The file's own last line end is the one PRINT adds.
+        DIM shown$ = filled{"text"}
+        IF RIGHT$(shown$, 1) = CHR$(10) THEN
+            shown$ = LEFT$(shown$, LEN(shown$) - 1)
+        ENDIF
+        PRINT shown$
     ENDIF
     IF LEN(filled{"missing"}) > 0 THEN
         PRINT "Still open: "; JOIN(filled{"missing"}, ", ")
