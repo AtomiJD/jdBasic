@@ -46,11 +46,13 @@ One of the templates that come with the book:
    list.
 2. `VALUES` collects what a template can use: `me` and `signature`
    from `work.conf`, `to` from the command line, and the date written
-   out, such as `2 October 2026`, with its weekday.
+   out, such as `2 October 2026`, with its weekday and the next
+   working day, which `thanks.txt` promises the delivery date by.
 3. Your own values from `work.conf` join them, so a template can use
    any name you define there.
-4. `MISSING` warns about placeholders that have no value, before the
-   mail goes out with a gap in it.
+4. `MISSING` names the placeholders that have no value, and the program
+   stops there: nothing goes on the clipboard, so no mail with a gap in
+   it is pasted by mistake.
 5. `FILL$` lets the TMPL library fill the template. TMPL was written
    for web pages and writes `&` as `&amp;`; `PLAIN$` turns those back,
    since a mail is plain text.
@@ -104,7 +106,8 @@ deputy = "Jonas Becker"
 
 - **"No value for: back, deputy"**: the template uses placeholders
   that `work.conf` does not define. Add them under
-  `[mail_templates.values]`.
+  `[mail_templates.values]`. The program stops without touching the
+  clipboard.
 - **"No template invoice"**: the message lists the templates there
   are; check the spelling and that the file ends in `.txt`.
 - **The clipboard is empty**: some remote desktop sessions block it.

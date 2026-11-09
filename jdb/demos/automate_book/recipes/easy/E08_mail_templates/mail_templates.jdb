@@ -49,7 +49,11 @@ ELSE
     NEXT k
     DIM template$ = MAILTPL.TEMPLATE$(folder$, words[0])
     DIM gaps = MAILTPL.MISSING(template$, values)
-    IF LEN(gaps) > 0 THEN PRINT "No value for: "; JOIN(gaps, ", ")
+    IF LEN(gaps) > 0 THEN
+        PRINT "No value for: "; JOIN(gaps, ", ")
+        PRINT "Nothing is on the clipboard. Add them to work.conf."
+        END 1
+    ENDIF
     DIM mail$ = MAILTPL.FILL$(template$, values)
     PRINT mail$
     IF NOT WORKCONF.FLAG("dry-run") THEN

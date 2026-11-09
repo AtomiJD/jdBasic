@@ -29,16 +29,23 @@ EXPORT FUNC TEMPLATE$(folder$, name$)
     RETURN REPLACE$(TXTREADER$(path$), CHR$(13), "")
 ENDFUNC
 
-' The values a template can use: me, signature, to, date and weekday.
+' The values a template can use: me, signature, to, date, weekday and
+' next_workday.
 EXPORT FUNC VALUES(me$, signature$, to$, today)
     DIM v AS MAP
     v{"me"} = me$
     v{"signature"} = signature$
     v{"to"} = to$
-    DIM day$ = FORMAT_DATE$(today, "%d")
-    IF LEFT$(day$, 1) = "0" THEN day$ = MID$(day$, 1, 1)
-    v{"date"} = day$ + FORMAT_DATE$(today, " %B %Y")
+    DIM num$ = FORMAT_DATE$(today, "%d")
+    IF LEFT$(num$, 1) = "0" THEN num$ = MID$(num$, 1, 1)
+    v{"date"} = num$ + FORMAT_DATE$(today, " %B %Y")
     v{"weekday"} = FORMAT_DATE$(today, "%A")
+    ' The next working day, for a promise such as "by Monday".
+    DIM later = DATEADD("D", 1, today)
+    DO WHILE VAL(FORMAT_DATE$(later, "%u")) >= 6
+        later = DATEADD("D", 1, later)
+    LOOP
+    v{"next_workday"} = FORMAT_DATE$(later, "%A")
     RETURN v
 ENDFUNC
 
