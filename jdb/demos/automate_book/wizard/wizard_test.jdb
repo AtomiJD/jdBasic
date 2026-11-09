@@ -10,7 +10,15 @@ DIM tmp$ = MKTEMP$("wizardtest")
 MKDIR tmp$
 DIM recipes = WIZARD.RECIPES("recipes")
 DIM a = WIZARD.DEFAULTS(recipes, tmp$)
-a{"jdbasic"} = PATH.NORMALIZE$("../../../build/jdBasic.exe")
+' The jdBasic that runs this test, or the one on the PATH when the
+' test is a compiled program; its lib folder holds the libraries.
+DIM self$ = OS.SELF$()
+IF STARTSWITH(LCASE$(PATH.BASENAME$(self$)), "jdbasic") THEN
+    a{"jdbasic"} = self$
+ELSE
+    a{"jdbasic"} = WIZARD.FIND_JDBASIC$()
+ENDIF
+DIM std_lib$ = PATH.JOIN$(PATH.DIRNAME$(a{"jdbasic"}), "lib")
 a{"name"} = "Mia Example"
 a{"email"} = "mia@example.com"
 
@@ -141,7 +149,7 @@ TESTKIT.ISTRUE(NOT FILE.EXISTS(PATH.JOIN$(a{"user_lib"}, "outbox_test.jdb")), "b
 TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(a{"work"}, "recipes", "E08_mail_templates", "templates", "thanks.txt")), "and a recipe's extra files with their folders")
 TESTKIT.EQ(LEN(WIZARD.DOCTOR(a, recipes, FALSE)), 0, "the doctor is content")
 DIM old_path$ = GETENV$("JDBASIC_PATH")
-SETENV "JDBASIC_PATH", PATH.NORMALIZE$("../../../lib") + ";" + a{"user_lib"}
+SETENV "JDBASIC_PATH", std_lib$ + ";" + a{"user_lib"}
 DIM r = OS.EXEC(a{"jdbasic"}, [prog$, "--dry-run", "--config", conf$])
 SETENV "JDBASIC_PATH", old_path$
 TESTKIT.EQ(r{"exit_code"}, 0, "the installed recipe runs with the written settings")

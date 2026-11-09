@@ -108,11 +108,8 @@ schedule the wizard does not know. The comment above `SCHEDULE_ARGS`
 gains `"monthly DAY HH:MM"` in its list.
 
 Run the test again. Every check passes, the old ones included, which
-shows that the new block did not disturb the others:
-
-```
-57 passed, 0 failed, 0 skipped
-```
+shows that the new block did not disturb the others. The last line
+counts them and ends with `0 failed, 0 skipped`.
 
 ### 5. Run it dry
 
