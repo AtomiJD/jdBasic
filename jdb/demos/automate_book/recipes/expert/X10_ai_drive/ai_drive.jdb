@@ -53,8 +53,8 @@ DIM allowed = WORKCONF.VALUE(cfg, "ai_drive.allow", [])
 PRINT "Real runs allowed for: "; LEN(allowed); " recipe(s)"
 PRINT "Tell Claude Code about the server once, in a command prompt:"
 DIM line1$ = "claude mcp add automate-work -e AUTOMATEWORK_CONF="
-line1$ = line1$ + q$ + WORKCONF.CONFIG_PATH$() + q$
+line1$ = line1$ + q$ + PATH.ABS$(WORKCONF.CONFIG_PATH$()) + q$
 DIM line2$ = "-- " + q$ + jdbasic$ + q$ + " --mcp --tools-only "
-line2$ = line2$ + q$ + tools$ + q$
+line2$ = line2$ + q$ + PATH.ABS$(tools$) + q$
 PRINT "  "; line1$
 PRINT "    "; line2$
