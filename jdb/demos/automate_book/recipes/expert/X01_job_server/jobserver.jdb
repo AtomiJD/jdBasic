@@ -103,6 +103,12 @@ FUNC ExitOf(error$)
     RETURN VAL(MID$(error$, 5, colon - 5))
 ENDFUNC
 
+' A message without the colour codes a program writes into its
+' console, which are no text for the log, the state file or a mail.
+EXPORT FUNC PLAIN$(text$)
+    RETURN REGEX.REPLACE$(CHR$(27) + "\[[0-9;]*m", text$, "")
+ENDFUNC
+
 ' Runs a job with its retries and answers {"name", "ok", "exit",
 ' "error", "attempts", "output"}.
 EXPORT FUNC RUN(job, paths)
@@ -120,7 +126,7 @@ EXPORT FUNC RUN(job, paths)
         out{"error"} = ""
         out{"output"} = LastLine$(rep{"value"})
     ELSE
-        DIM reason$ = rep{"error"}
+        DIM reason$ = PLAIN$(rep{"error"})
         out{"exit"} = ExitOf(reason$)
         out{"error"} = reason$
         out{"output"} = ""
@@ -191,11 +197,15 @@ FUNC TickOne(job, state, now, ctx)
     DIM seen = MAP.EXISTS(rec, "last_due")
     IF seen THEN
         IF due_at <= rec{"last_due"} THEN RETURN nothing
+        DIM late = now - due_at > LATE_SECONDS
         IF ctx{"dry_run"} THEN
-            item{"would_run"} = CLOCK$(due_at, offset)
+            IF late ANDALSO NOT job{"catch_up"} THEN
+                item{"would_skip"} = CLOCK$(due_at, offset)
+            ELSE
+                item{"would_run"} = CLOCK$(due_at, offset)
+            ENDIF
             RETURN item
         ENDIF
-        DIM late = now - due_at > LATE_SECONDS
         IF job{"catch_up"} ORELSE NOT late THEN
             RETURN RUN_NOW(job, state, now, due_at, ctx)
         ENDIF

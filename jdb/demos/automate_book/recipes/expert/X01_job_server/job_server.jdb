@@ -50,7 +50,10 @@ ENDIF
 MKDIR folder$
 DIM lg = LOGGER.NEW("jobs")
 LOGGER.TO_CONSOLE(lg, FALSE)
-LOGGER.TO_FILE(lg, JOBSTATE.LOG_PATH$(cfg), 1000000, 3)
+' A dry run shows on the screen and writes nothing.
+IF NOT WORKCONF.FLAG("dry-run") THEN
+    LOGGER.TO_FILE(lg, JOBSTATE.LOG_PATH$(cfg), 1000000, 3)
+ENDIF
 DIM paths AS MAP
 paths{"jdbasic"} = WORKCONF.VALUE(cfg, "paths.jdbasic", "jdbasic")
 paths{"recipes"} = PATH.JOIN$(work$, "recipes")
@@ -104,6 +107,11 @@ DO
             IF MAP.EXISTS(item, "would_run") THEN
                 DIM at$ = item{"would_run"}
                 PRINT "would run "; item{"name"}; " for "; at$
+            ENDIF
+            IF MAP.EXISTS(item, "would_skip") THEN
+                DIM missed$ = item{"would_skip"}
+                PRINT "would skip "; item{"name"}; " for "; missed$; _
+                    " (missed, catch_up = false)"
             ENDIF
         NEXT r
     ELSE

@@ -203,7 +203,7 @@ folder = "~/Documents/AutomateWork/logs"
   instead, `mirror.bat`, that turns every code below 8 into 0:
 
   ```bat
-  robocopy C:Reports R:Reports /MIR
+  robocopy C:\Reports R:\Reports /MIR
   if %ERRORLEVEL% LSS 8 exit /b 0
   exit /b %ERRORLEVEL%
   ```

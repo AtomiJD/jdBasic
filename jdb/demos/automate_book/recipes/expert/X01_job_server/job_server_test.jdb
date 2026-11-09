@@ -121,6 +121,12 @@ DIM r_rec = state{"report"}
 r_rec{"last_due"} = t0 - 86400
 state{"report"} = r_rec
 DIM next_day = t0 + 3600
+ctx{"dry_run"} = TRUE
+DIM preview = JOBSERVER.TICK(jobs, state, next_day, ctx)
+DIM skips = FILTER(LAMBDA it -> MAP.EXISTS(it, "would_skip"), preview)
+TESTKIT.EQ(LEN(skips), 1, "a dry run says it would skip the missed job without catch_up")
+TESTKIT.EQ(skips[0]{"name"}, "report", "the report job")
+ctx{"dry_run"} = FALSE
 DIM mixed = JOBSERVER.TICK(jobs, state, next_day, ctx)
 TESTKIT.EQ(LEN(mixed), 3, "the next run, the failed job and the missed one")
 DIM fail_run = mixed[1]
@@ -131,6 +137,8 @@ TESTKIT.EQ(state{"broken"}{"fails"}, 1, "the state counts it")
 DIM skip = mixed[2]
 TESTKIT.ISTRUE(MAP.EXISTS(skip, "skipped"), "a late job without catch_up is skipped")
 TESTKIT.ISTRUE(INSTR(TXTREADER$(log_path$), "job failed") >= 0, "the log has the failure")
+DIM esc$ = CHR$(27)
+TESTKIT.EQ(JOBSERVER.PLAIN$("exit 1: " + esc$ + "[91mError #99:" + esc$ + "[0m disk full"), "exit 1: Error #99: disk full", "colour codes are taken out of a message")
 DIM hang AS MAP
 hang{"name"} = "hang"
 hang{"command"} = "ping"
