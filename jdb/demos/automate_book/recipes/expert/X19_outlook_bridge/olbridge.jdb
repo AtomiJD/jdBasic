@@ -20,6 +20,9 @@ CONST OL_RESOURCE = 3
 CONST MOST_ITEMS = 100000
 ' The MAPI property of an entry's SMTP address.
 DIM gSmtp$ = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
+' The first two bytes of U+2000-U+203F and of U+2040-U+207F.
+DIM gMarks1$ = LEFT$(CHR$(8192), 2)
+DIM gMarks2$ = LEFT$(CHR$(8256), 2)
 
 ' The SMTP address of an Outlook address entry that carries an
 ' internal Exchange one (/o=exchangelabs/...): from the user, else
@@ -58,6 +61,23 @@ FUNC SmtpOf$(entry)
     RETURN ""
 ENDFUNC
 
+' The SMTP address of a recipient, or of a mail's sender when
+' sender is TRUE; "" when Outlook cannot give its address entry.
+FUNC EntrySmtp$(holder, sender)
+    DIM addr$ = ""
+    TRY
+        DIM entry = NONE
+        IF sender THEN entry = holder.Sender ELSE entry = holder.AddressEntry
+        IF TYPEOF(entry) <> "NONE" THEN
+            addr$ = SmtpOf$(entry)
+            RELEASEOBJECT(entry)
+        ENDIF
+    CATCH
+        addr$ = ""
+    ENDTRY
+    RETURN addr$
+ENDFUNC
+
 ' The appointments of the default calendar that overlap the time
 ' from t_from to t_to, repeating ones included, in order of start:
 ' maps with title, start, end, location, all_day and people (maps
@@ -91,9 +111,7 @@ EXPORT FUNC EVENTS(ol, t_from, t_to)
             DIM r = rcpts.Item(k)
             DIM addr$ = "" + r.Address
             IF INSTR(addr$, "@") < 0 THEN
-                DIM entry = r.AddressEntry
-                addr$ = SmtpOf$(entry)
-                RELEASEOBJECT(entry)
+                addr$ = EntrySmtp$(r, FALSE)
             ENDIF
             DIM who$ = "" + r.Name
             DIM kind = r.Type
@@ -135,9 +153,7 @@ EXPORT FUNC MAILS(ol, most)
             DIM m AS MAP
             DIM from$ = "" + it.SenderEmailAddress
             IF INSTR(from$, "@") < 0 THEN
-                DIM sender = it.Sender
-                from$ = SmtpOf$(sender)
-                RELEASEOBJECT(sender)
+                from$ = EntrySmtp$(it, TRUE)
             ENDIF
             m{"from"} = PERSON$("" + it.SenderName, from$)
             DIM to_list = []
@@ -148,9 +164,7 @@ EXPORT FUNC MAILS(ol, most)
                 DIM r = rcpts.Item(k)
                 DIM addr$ = "" + r.Address
                 IF INSTR(addr$, "@") < 0 THEN
-                    DIM entry = r.AddressEntry
-                    addr$ = SmtpOf$(entry)
-                    RELEASEOBJECT(entry)
+                    addr$ = EntrySmtp$(r, FALSE)
                 ENDIF
                 DIM one$ = PERSON$("" + r.Name, addr$)
                 IF INSTR(addr$, "@") > 0 ANDALSO r.Type = 1 THEN
@@ -277,8 +291,14 @@ EXPORT FUNC FILE_NAME$(mail)
         IF c$ >= "A" ANDALSO c$ <= "Z" THEN ok = TRUE
         IF c$ >= "0" ANDALSO c$ <= "9" THEN ok = TRUE
         IF c$ = "." ORELSE c$ = "-" THEN ok = TRUE
-        ' A letter beyond ASCII, such as "ü", is several bytes.
+        ' A letter beyond ASCII, such as "ü", is several bytes. The
+        ' punctuation block U+2000-U+207F holds the invisible marks that
+        ' turn text round or hide in it, so it becomes a space, as
+        ' does a byte order mark.
         IF LEN(c$) > 1 THEN ok = TRUE
+        DIM lead$ = LEFT$(c$, 2)
+        IF lead$ = gMarks1$ ORELSE lead$ = gMarks2$ THEN ok = FALSE
+        IF c$ = CHR$(65279) THEN ok = FALSE
         IF ok THEN keep$ = keep$ + c$ ELSE keep$ = keep$ + " "
     NEXT k
     DO WHILE INSTR(keep$, "  ") >= 0

@@ -55,5 +55,7 @@ DIM german = {"subject": "Ärger über Öl", "received": t0, "from": "a", "text"
 TESTKIT.ISTRUE(STARTSWITH(OLBRIDGE.FILE_NAME$(german), "2026-10-05 093000 Ärger über Öl "), "umlauts stay")
 DIM twin = {"subject": "Ärger über Öl", "received": t0, "from": "b", "text": "y"}
 TESTKIT.NE(OLBRIDGE.FILE_NAME$(twin), OLBRIDGE.FILE_NAME$(german), "two mails with one subject in one minute keep two names")
+DIM turned = {"subject": "invoice" + CHR$(8238) + "fdp.exe", "received": t0}
+TESTKIT.ISTRUE(STARTSWITH(OLBRIDGE.FILE_NAME$(turned), "2026-10-05 093000 invoice fdp.exe "), "a mark that turns text round becomes a space")
 
 TESTKIT.REPORT()
