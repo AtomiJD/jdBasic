@@ -39,6 +39,11 @@ FOR f = 0 TO n_files - 1
     TXTWRITER PATH.JOIN$(folder$, name$), body$
 NEXT f
 
+
+FUNC Summary(path$)
+    RETURN CRUNCH.SUMMARY$(path$, ";")
+ENDFUNC
+
 TESTKIT.SUITE("one export")
 DIM one$ = PATH.JOIN$(folder$, "export 0000.csv")
 DIM s$ = CRUNCH.SUMMARY$(one$, ";")
@@ -46,6 +51,31 @@ TESTKIT.ISTRUE(STARTSWITH(s$, "10;"), "ten rows")
 TESTKIT.ISTRUE(INSTR(s$, ";1;") >= 0, "and the unreadable line")
 TESTKIT.EQ(CRUNCH.MONEY$(1234), "12.34", "cents as money")
 TESTKIT.EQ(CRUNCH.MONEY$(-5), "-0.05", "and below zero")
+
+TESTKIT.SUITE("exports as other programs write them")
+TESTKIT.EQ(CRUNCH.AMOUNT$("1.234,50"), "1234.50", "a German amount")
+TESTKIT.EQ(CRUNCH.AMOUNT$("12,30"), "12.30", "a decimal comma")
+TESTKIT.EQ(CRUNCH.AMOUNT$("1,234.50"), "1234.50", "an English one")
+TESTKIT.EQ(CRUNCH.AMOUNT$("twelve"), "", "a word is none")
+DIM odd_dir$ = PATH.JOIN$(folder$, "odd")
+MKDIR odd_dir$
+DIM german$ = PATH.JOIN$(odd_dir$, "german.csv")
+TXTWRITER german$, "date;category;amount" + LF$ + "2026-10-01;hotel;1.234,50" + LF$ + "2026-10-02;Hotel ;12,30" + LF$
+TESTKIT.EQ(CRUNCH.SUMMARY$(german$, ";"), "2;124680;0;hotel=124680", "decimal commas, and Hotel with a space is hotel")
+DIM order$ = PATH.JOIN$(odd_dir$, "order.csv")
+TXTWRITER order$, "amount;note;category;date" + LF$ + "5.00;x;taxi;2026-10-03" + LF$
+TESTKIT.EQ(CRUNCH.SUMMARY$(order$, ";"), "1;500;0;taxi=500", "columns in another order, with one more")
+DIM bom$ = PATH.JOIN$(odd_dir$, "bom.csv")
+BINWRITER bom$, CHR$(239) + CHR$(187) + CHR$(191) + "date;category;amount" + LF$ + "2026-10-04;meals;8.00" + LF$
+TESTKIT.EQ(CRUNCH.SUMMARY$(bom$, ";"), "1;800;0;meals=800", "a file with a byte order mark")
+DIM words$ = PATH.JOIN$(odd_dir$, "words.csv")
+TXTWRITER words$, "date;category;amount" + LF$ + "2026-10-05;taxi;twelve" + LF$ + "2026-10-06;taxi;nine" + LF$ + "2026-10-07;taxi;7.00" + LF$
+TESTKIT.THROWS(Summary@, words$, "a file with many unreadable lines is not read")
+KILL german$
+KILL order$
+KILL bom$
+KILL words$
+RMDIR odd_dir$
 
 TESTKIT.SUITE("one core and many")
 DIM files = CRUNCH.FILES(folder$)

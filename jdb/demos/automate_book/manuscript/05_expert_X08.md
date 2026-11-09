@@ -29,9 +29,12 @@ total;1802890.00
 ```
 
 A file that is no export does not stop the run. It is named in the
-summary and in the log, and the other files are added up. Lines in an
-export that cannot be read, such as an amount written as a word, are
-counted and skipped.
+summary and in the log, and the other files are added up. The columns
+are found by their names, in any order, and an amount may be written
+`1234.50`, `1234,50`, `1.234,50` or `1,234.50`. A line that cannot be
+read, such as an amount written as a word, is counted and skipped;
+when that is more than a tenth of a file, the whole file is named as
+not read, so a wrong total does not go unnoticed.
 
 ### Before you start
 
@@ -161,14 +164,15 @@ timeout_seconds = 30
 `workers = 0` means one worker per core. On a computer that has other
 work to do while the recipe runs, give it fewer.
 
-- **Other columns.** If your exports have the amount in the fifth
-  column and the category in the third, change the two indexes in
-  `SUMMARY$` and the check `LEN(parts) = 3` to the number of columns.
+- **Other column names.** If your exports call the amount `Betrag`
+  and the category `Kostenart`, change the two names that `SUMMARY$`
+  hands to `ColumnOf`; where the columns stand does not matter.
 - **Totals per cost centre.** Put the file name in front of the
   category in `SUMMARY$`, so a key reads `cc0412.csv/hotel`:
 
   ```basic
-  DIM cat$ = PATH.BASENAME$(path$) + "/" + TRIM$(parts[1])
+  DIM cc$ = PATH.BASENAME$(path$)
+  DIM cat$ = cc$ + "/" + LCASE$(TRIM$(parts[at_cat]))
   ```
 
   `REPORT_CSV$` sorts the keys, so the report groups by cost centre.
@@ -181,12 +185,13 @@ work to do while the recipe runs, give it fewer.
 
 - **"No CSV files in"**: the folder is wrong, or the exports end in
   `.txt`. Change the pattern in `FILES`.
-- **"not an expense export"** for every file: the header uses another
-  separator or other names. Look at the first line of one file and set
-  `separator`, or change the header check in `SUMMARY$`.
-- **Many skipped lines**: the amounts use a decimal comma, such as
-  `12,50`. Replace the comma with `REPLACE$(parts[2], ",", ".")`
-  before the check.
+- **"not an expense export (no column amount)"** for every file: the
+  header uses another separator or another name. Look at the first
+  line of one file and set `separator`, or change the names in
+  `SUMMARY$`.
+- **"not read: march.csv: 12 of 40 lines could not be read"**: the
+  lines have another number of fields than the header, or amounts
+  that are words. Open the file and look at one of them.
 - **A file timed out**: it is very large or lies on a slow network
   drive. Raise `timeout_seconds`, or copy the folder to the local disk
   first.

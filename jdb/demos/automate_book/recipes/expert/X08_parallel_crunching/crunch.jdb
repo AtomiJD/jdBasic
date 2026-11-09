@@ -22,31 +22,58 @@ EXPORT FUNC FILES(folder$)
     RETURN FILTER(LAMBDA p$ -> NOT FILE.ISDIR(p$), paths)
 ENDFUNC
 
-' One export as text: "rows;cents;bad;cat=cents,cat=cents". The file
-' starts with the header date, category, amount; another file is an
-' error.
+' An amount as plain text with a point, "1234.50", from the ways
+' exports write it: 1234.50, 1234,50, 1.234,50 or 1,234.50; "" for a
+' text that is no amount.
+EXPORT FUNC AMOUNT$(text$)
+    DIM t$ = TRIM$(text$)
+    DIM comma$ = "^-?(?:[0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+),[0-9]+$"
+    IF REGEX.MATCH(comma$, t$) THEN
+        RETURN REPLACE$(REPLACE$(t$, ".", ""), ",", ".")
+    ENDIF
+    DIM whole$ = "^-?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)"
+    DIM point$ = whole$ + "(?:\.[0-9]+)?$"
+    IF REGEX.MATCH(point$, t$) THEN RETURN REPLACE$(t$, ",", "")
+    RETURN ""
+ENDFUNC
+
+FUNC ColumnOf(names, want$)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        IF names[k] = want$ THEN RETURN k
+    NEXT k
+    THROW "not an expense export (no column " + want$ + ")"
+ENDFUNC
+
+' One export as text: "rows;cents;bad;cat=cents,cat=cents". The header
+' names the columns date, category and amount, in any order and with
+' others beside them; a file without them is an error, and so is one
+' in which more than a tenth of the lines cannot be read. Categories
+' count in small letters, so "Hotel " and "hotel" are one.
 EXPORT FUNC SUMMARY$(path$, sep$)
     DIM text$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
     DIM lines = SPLIT(text$, CHR$(10))
-    DIM head$ = LCASE$(REPLACE$(lines[0], " ", ""))
-    IF head$ <> "date" + sep$ + "category" + sep$ + "amount" THEN
-        THROW "not an expense export"
-    ENDIF
+    DIM names = SELECT(LAMBDA h$ -> LCASE$(TRIM$(h$)), _
+        SPLIT(lines[0], sep$))
+    DIM at_cat = ColumnOf(names, "category")
+    DIM at_amount = ColumnOf(names, "amount")
+    DIM at_date = ColumnOf(names, "date")
     DIM by AS MAP
     DIM rows = 0
     DIM cents = 0
     DIM bad = 0
     DIM k = 0
     FOR k = 1 TO LEN(lines) - 1
-        DIM line$ = TRIM$(lines[k])
-        IF line$ <> "" THEN
-            DIM parts = SPLIT(line$, sep$)
-            DIM ok = LEN(parts) = 3
-            DIM num_rx$ = "^-?[0-9]+(\.[0-9]+)?$"
-            IF ok THEN ok = LEN(REGEX.FINDALL(num_rx$, parts[2])) = 1
-            IF ok THEN
-                DIM cat$ = TRIM$(parts[1])
-                DIM c = CINT(ROUND(VAL(parts[2]) * 100))
+        DIM row$ = TRIM$(lines[k])
+        IF row$ <> "" THEN
+            DIM parts = SPLIT(row$, sep$)
+            DIM amount$ = ""
+            IF LEN(parts) = LEN(names) THEN
+                amount$ = AMOUNT$(parts[at_amount])
+            ENDIF
+            IF amount$ <> "" THEN
+                DIM cat$ = LCASE$(TRIM$(parts[at_cat]))
+                DIM c = CINT(ROUND(VAL(amount$) * 100))
                 rows = rows + 1
                 cents = cents + c
                 IF MAP.EXISTS(by, cat$) THEN
@@ -59,6 +86,10 @@ EXPORT FUNC SUMMARY$(path$, sep$)
             ENDIF
         ENDIF
     NEXT k
+    IF bad * 10 > rows + bad THEN
+        THROW STR$(bad) + " of " + STR$(rows + bad) + _
+            " lines could not be read"
+    ENDIF
     DIM cats = SORT(MAP.KEYS(by))
     DIM pairs = []
     FOR k = 0 TO LEN(cats) - 1
