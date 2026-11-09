@@ -106,11 +106,12 @@ SUB QuoteNumbers(conf$)
     TXTWRITER conf$, JOIN(lines, gLF$)
 ENDSUB
 
-' Installs every recipe into a new home and answers the setup: "home",
-' "work", "conf", "lib" and "recipes".
+' Installs every recipe into a new home and answers the setup: "root"
+' (the temporary folder), "home", "work", "conf" and "lib".
 FUNC Install(recipes, jdbasic$, case$)
-    DIM home$ = MKTEMP$("edge_home")
-    MKDIR home$
+    DIM root$ = MKTEMP$("edge_home")
+    MKDIR root$
+    DIM home$ = root$
     IF case$ = "path" THEN
         home$ = PATH.JOIN$(home$, "Mia Müller")
         MKDIR home$
@@ -132,7 +133,7 @@ FUNC Install(recipes, jdbasic$, case$)
     DIM done = WIZARD.APPLY(steps, FALSE)
     DIM conf$ = WIZARD.CONF_PATH$(a)
     IF case$ = "quoted" THEN QuoteNumbers(conf$)
-    RETURN {"home": home$, "work": a{"work"}, "conf": conf$, "lib": a{"user_lib"}}
+    RETURN {"root": root$, "home": home$, "work": a{"work"}, "conf": conf$, "lib": a{"user_lib"}}
 ENDFUNC
 
 SUB Remove(folder$)
@@ -195,12 +196,12 @@ DIM old_home$ = GETENV$("HOME")
 
 DIM plain_setup = Install(recipes, jdbasic$, "plain")
 DIM plain = RunAll(chosen, plain_setup, jdbasic$, std_lib$, "plain", limit_s)
-Remove(plain_setup{"home"})
+Remove(plain_setup{"root"})
 DIM results AS MAP
 FOR k = 0 TO LEN(cases) - 1
     DIM setup = Install(recipes, jdbasic$, cases[k])
     results{cases[k]} = RunAll(chosen, setup, jdbasic$, std_lib$, cases[k], limit_s)
-    Remove(setup{"home"})
+    Remove(setup{"root"})
 NEXT k
 
 SETENV "JDBASIC_PATH", old_path$
