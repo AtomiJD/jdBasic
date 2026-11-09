@@ -33,7 +33,9 @@ so that the name holds the date and the amount:
 
 The date can be written as `2026-10-03`, `20261003` or `03.10.2026`.
 The amount is the last number with two decimals, with a point or a
-comma. A receipt without a date in its name goes into the month of the
+comma, and it may have a thousands separator: `hotel 1.234,56` and
+`hotel 1,234.56` are both 1234.56. The date is never read as an
+amount. A receipt without a date in its name goes into the month of the
 file's time, which for a photo is the day you took it.
 
 ### The program
@@ -53,12 +55,16 @@ report:
 1. **Rules.** The `rules` setting is a list of texts such as
    `"fuel = Travel"`. `RULES` splits each one at the `=` into a word
    and a category and drops texts without one. `CATEGORY$` takes the
-   first rule whose word appears anywhere in the file name, in any
-   case; a name no rule fits goes to `Other`.
+   first rule whose word stands in the file name as a word of its own,
+   in any case: `rail` fits `rail ticket` and `rail-pass`, not
+   `trailer`. A name no rule fits goes to `Other`.
 2. **Date and amount.** `DATE$` and `AMOUNT` look for the patterns
-   with `REGEX.FINDALL`, which answers the groups of each match. The
-   amount takes the last match, because a date such as `03.10` looks
-   like an amount too, and the amount usually comes last in a name.
+   with `REGEX.FINDALL`, which answers the groups of each match. A date
+   counts only without digits right next to it, so the receipt number
+   `2024123456` is none, and only when it is on the calendar.
+   `AMOUNT` first takes the date out of the name, because `07.10` of
+   `07.10.2026` looks like an amount, then takes the last match, where
+   the amount usually stands, and drops its thousands separators.
 3. **Choosing the files.** Only files with an extension from `kinds`
    are moved. Everything else, such as a text file with notes, stays
    in the inbox and is named at the end of the run.
@@ -68,8 +74,10 @@ report:
 5. **The report.** `MONTH_ROWS` reads the month folder again, all
    category folders, and makes one row per file. The report thus
    always shows what is in the folder, including files you moved
-   there by hand. `SUMS` adds up per category and counts the receipts;
-   `WRITE_REPORT` writes both tables into `2026-10 expenses.xlsx`.
+   there by hand; a file without a date in its name shows the day of
+   its file time, the day it was filed by. `SUMS` adds up per category and counts the receipts;
+   `WRITE_REPORT` writes both tables into `2026-10 expenses.xlsx`,
+   the amounts in the money format `#,##0.00`.
 
 ### Run it
 
@@ -77,7 +85,7 @@ report:
 jdbasic receipt_sorter.jdb --dry-run
 would move 07.10.2026 lunch team 64.50.jpg  -> 2026-10/Meals  64.50
 would move 2026-10-03 fuel 45.20.pdf  -> 2026-10/Travel  45.20
-would move 20261005 Rail ticket 89,90.pdf  -> 2026-10/Travel  89.90
+would move 20261005 rail ticket 89,90.pdf  -> 2026-10/Travel  89.90
 would move office paper 12.99.png  -> 2026-10/Office  12.99
 Left in the inbox: notes.txt
 ```
@@ -119,7 +127,8 @@ rules = ["fuel = Travel", "rail = Travel", "hotel = Travel",
          "parking = Travel"]
 ```
 
-A new rule is a new line in `rules`. The first rule that fits wins,
+`heic` is the format of iPhone photos, and `parking` a rule added to
+the ones the program brings. A new rule is a new line in `rules`. The first rule that fits wins,
 so put the narrow ones first: `"hotel bar = Meals"` before
 `"hotel = Travel"`.
 
@@ -127,7 +136,7 @@ Changes in the code:
 
 - **The report in another folder,** such as a shared drive of the
   accounting department: in `Report`, change `path$` to
-  `PATH.JOIN$("S:/Accounting", month$ + " Jonas.xlsx")`.
+  `PATH.JOIN$("S:/Accounting", ym$ + " Jonas.xlsx")`.
 - **A column for the VAT** in the report: in `MONTH_ROWS`, add
   `ROUND(amount * 19 / 119 * 100) / 100` as a fifth cell to the row
   with an amount and `""` to the row without, and add `"VAT"` to the
@@ -151,8 +160,12 @@ Changes in the code:
 - **A receipt counts twice in the report**: the same file was dropped
   twice and filed as `... (2).pdf`. Delete the copy and run with
   `--month`.
-- **A receipt went to `Other`**: no rule word is in its name. Add a
-  rule, move the file back into the inbox, and run again.
+- **A receipt went to `Other`**: no rule word is in its name as a word
+  of its own; `rail` does not fit `railway`. Add a rule such as
+  `"railway = Travel"`, move the file back into the inbox, and run
+  again.
+- **"No receipts filed for 2026-01"**: `--month` names a month that has
+  no folder yet.
 
 > **Balance dividend**
 > An evening a month of searching, renaming and adding up, about

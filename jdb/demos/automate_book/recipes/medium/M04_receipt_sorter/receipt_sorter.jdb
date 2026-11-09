@@ -23,14 +23,15 @@ DIM rules = RECEIPTS.RULES(WORKCONF.VALUE(cfg, key$ + "rules", _
 DIM dry_run = WORKCONF.FLAG("dry-run")
 
 ' Writes the report of one month, or shows where it would go.
-SUB Report(root$, month$, dry_run)
-    DIM folder$ = PATH.JOIN$(root$, month$)
+SUB Report(root$, ym$, dry_run)
+    DIM folder$ = PATH.JOIN$(root$, ym$)
     DIM rows = RECEIPTS.MONTH_ROWS(folder$)
-    DIM path$ = PATH.JOIN$(folder$, month$ + " expenses.xlsx")
+    DIM path$ = PATH.JOIN$(folder$, ym$ + " expenses.xlsx")
     DIM sums = RECEIPTS.SUMS(rows)
     DIM total = sums[LEN(sums) - 1][1]
-    DIM shown$ = month$ + ": " + STR$(LEN(rows) - 1) + _
-        " receipts, " + FORMAT$("{:.2f}", total)
+    DIM n_receipts$ = WORKCONF.PLURAL$(LEN(rows) - 1, "receipt")
+    DIM shown$ = ym$ + ": " + n_receipts$ + ", " + _
+        FORMAT$("{:.2f}", total)
     IF dry_run THEN
         PRINT "would write the report "; shown$
     ELSE
@@ -41,6 +42,10 @@ ENDSUB
 
 DIM only$ = WORKCONF.ARG$("month")
 IF only$ <> "" THEN
+    IF NOT FILE.ISDIR(PATH.JOIN$(root$, only$)) THEN
+        PRINT "No receipts filed for "; only$
+        END 1
+    ENDIF
     Report(root$, only$, dry_run)
     END
 ENDIF

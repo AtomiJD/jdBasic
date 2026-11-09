@@ -40,6 +40,17 @@ DIM r = RECEIPTS.PARSE("lunch 12.50.jpg", rules, _
 TESTKIT.EQ(r{"month"}, "2026-09", "the file's time without a date")
 TESTKIT.EQ(r{"category"}, "Meals", "and the category")
 
+
+TESTKIT.SUITE("names that look like something else")
+TESTKIT.EQ(RECEIPTS.AMOUNT("07.10.2026 lunch.jpg"), -1, "the date is no amount")
+TESTKIT.NEAR(RECEIPTS.AMOUNT("2026-10-12 hotel 1.234,56.pdf"), 1234.56, 0.0001, "a German thousands point")
+TESTKIT.NEAR(RECEIPTS.AMOUNT("hotel 1,234.56.pdf"), 1234.56, 0.0001, "and an English thousands comma")
+TESTKIT.EQ(RECEIPTS.CATEGORY$("2026-10-14 trailer rental 30.00.pdf", rules), "Other", "rail is not found in trailer")
+TESTKIT.EQ(RECEIPTS.CATEGORY$("rail-ticket 12.00.pdf", rules), "Travel", "but next to a dash")
+TESTKIT.EQ(RECEIPTS.DATE$("Invoice 2024123456 taxi 18.00.pdf"), "", "a receipt number is no date")
+TESTKIT.EQ(RECEIPTS.DATE$("2026-02-30 office.pdf"), "", "nor a day that is not on the calendar")
+TESTKIT.EQ(RECEIPTS.DATE$("2028-02-29 office.pdf"), "2028-02-29", "29 February of a leap year is")
+
 TESTKIT.SUITE("free names")
 DIM taken$ = PATH.JOIN$(folder$, "a.pdf")
 TESTKIT.EQ(RECEIPTS.FREE_NAME$(folder$, "a.pdf"), taken$, _

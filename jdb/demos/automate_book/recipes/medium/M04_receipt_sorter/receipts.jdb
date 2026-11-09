@@ -31,48 +31,107 @@ EXPORT FUNC RULES(texts)
     RETURN out
 ENDFUNC
 
-' The category of the first rule whose word is in the name, else
-' "Other".
+' TRUE when the character before position at and the one after the
+' word are no letters, so "rail" is found in "rail ticket" and not in
+' "trailer".
+FUNC WholeWord(low$, at, word$)
+    DIM before$ = ""
+    IF at > 0 THEN before$ = MID$(low$, at - 1, 1)
+    DIM after$ = MID$(low$, at + LEN(word$), 1)
+    DIM letter$ = "^[a-z]$"
+    RETURN NOT REGEX.MATCH(letter$, before$) ANDALSO _
+        NOT REGEX.MATCH(letter$, after$)
+ENDFUNC
+
+' The category of the first rule whose word stands in the name as a
+' word of its own, else "Other".
 EXPORT FUNC CATEGORY$(name$, rules)
     DIM low$ = LCASE$(name$)
     DIM k = 0
     FOR k = 0 TO LEN(rules) - 1
         DIM r = rules[k]
-        IF INSTR(low$, r{"word"}) >= 0 THEN RETURN r{"category"}
+        DIM word$ = r{"word"}
+        DIM at = CINT(INSTR(low$, word$))
+        DO WHILE at >= 0
+            IF WholeWord(low$, at, word$) THEN RETURN r{"category"}
+            at = CINT(INSTR(at + 1, low$, word$))
+        LOOP
     NEXT k
     RETURN "Other"
+ENDFUNC
+
+' TRUE for a year, month and day that are on the calendar.
+FUNC OnCalendar(y$, m$, d$)
+    DIM yy = VAL(y$)
+    DIM mm = VAL(m$)
+    DIM dd = VAL(d$)
+    IF mm < 1 ORELSE mm > 12 ORELSE dd < 1 THEN RETURN FALSE
+    DIM days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    DIM most = days[mm - 1]
+    DIM leap = (yy MOD 4 = 0 ANDALSO yy MOD 100 <> 0) ORELSE _
+        yy MOD 400 = 0
+    IF mm = 2 ANDALSO leap THEN most = 29
+    RETURN dd <= most
+ENDFUNC
+
+' The date in a file name as found, such as "2026-10-03", "20261003"
+' or "03.10.2026", and as YYYY-MM-DD: a list of the two, empty when
+' there is none. Digits next to it, as in a receipt number, and a day
+' that is not on the calendar do not count.
+FUNC FindDate(name$)
+    DIM iso$ = "(?:^|[^0-9])((20[0-9]{2})-?([01][0-9])-?([0-3][0-9]))"
+    DIM g = REGEX.FINDALL(iso$ + "(?![0-9])", name$)
+    DIM k = 0
+    FOR k = 0 TO LEN(g) - 1
+        DIM a = g[k]
+        IF OnCalendar(a[1], a[2], a[3]) THEN
+            RETURN [a[0], a[1] + "-" + a[2] + "-" + a[3]]
+        ENDIF
+    NEXT k
+    DIM dots$ = "(?:^|[^0-9])"
+    dots$ = dots$ + "(([0-3][0-9])\.([01][0-9])\.(20[0-9]{2}))"
+    g = REGEX.FINDALL(dots$ + "(?![0-9])", name$)
+    FOR k = 0 TO LEN(g) - 1
+        DIM b = g[k]
+        IF OnCalendar(b[3], b[2], b[1]) THEN
+            RETURN [b[0], b[3] + "-" + b[2] + "-" + b[1]]
+        ENDIF
+    NEXT k
+    RETURN []
 ENDFUNC
 
 ' The date in a file name as YYYY-MM-DD: 2026-10-03, 20261003 or
 ' 03.10.2026; "" when there is none.
 EXPORT FUNC DATE$(name$)
-    DIM g = REGEX.FINDALL("(20[0-9]{2})-?([01][0-9])-?([0-3][0-9])", _
-        name$)
-    IF LEN(g) > 0 THEN RETURN g[0][0] + "-" + g[0][1] + "-" + g[0][2]
-    g = REGEX.FINDALL("([0-3][0-9])\.([01][0-9])\.(20[0-9]{2})", _
-        name$)
-    IF LEN(g) > 0 THEN RETURN g[0][2] + "-" + g[0][1] + "-" + g[0][0]
-    RETURN ""
+    DIM found = FindDate(name$)
+    IF LEN(found) = 0 THEN RETURN ""
+    RETURN found[1]
 ENDFUNC
 
-' The amount in a file name: the last number with two decimals, with a
-' point or a comma, such as 45.20 or 45,20; -1 when there is none.
+' The amount in a file name: the last number with two decimals after
+' a point or a comma, such as 45.20, 45,20, 1,234.56 or 1.234,56; -1
+' when there is none. The date of the name is no amount.
 EXPORT FUNC AMOUNT(name$)
     DIM stem$ = LEFT$(name$, LEN(name$) - LEN(PATH.EXT$(name$)))
-    DIM g = REGEX.FINDALL("([0-9]+)[.,]([0-9]{2})(?![0-9])", stem$)
+    DIM found = FindDate(stem$)
+    IF LEN(found) > 0 THEN stem$ = REPLACE$(stem$, found[0], " ")
+    DIM whole$ = "([0-9]{1,3}(?:[.,'][0-9]{3})+|[0-9]+)"
+    DIM pat$ = "(?:^|[^0-9.,])" + whole$ + "[.,]([0-9]{2})(?![0-9])"
+    DIM g = REGEX.FINDALL(pat$, stem$)
     IF LEN(g) = 0 THEN RETURN -1
     DIM last = g[LEN(g) - 1]
-    RETURN VAL(last[0] + "." + last[1])
+    DIM units$ = REGEX.REPLACE$("[.,']", last[0], "")
+    RETURN VAL(units$ + "." + last[1])
 ENDFUNC
 
 ' Date, month, category and amount of a receipt; changed$ is the
 ' file's time, used when the name has no date.
 EXPORT FUNC PARSE(name$, rules, changed$ = "")
-    DIM day$ = DATE$(name$)
-    IF day$ = "" THEN day$ = LEFT$(changed$, 10)
+    DIM stamp$ = DATE$(name$)
+    IF stamp$ = "" THEN stamp$ = LEFT$(changed$, 10)
     DIM out AS MAP
-    out{"date"} = day$
-    out{"month"} = LEFT$(day$, 7)
+    out{"date"} = stamp$
+    out{"month"} = LEFT$(stamp$, 7)
     out{"category"} = CATEGORY$(name$, rules)
     out{"amount"} = AMOUNT(name$)
     RETURN out
@@ -96,6 +155,8 @@ ENDFUNC
 
 ' The rows of the expense report of a month folder: the header, then
 ' one row per file in its category folders, by category and name.
+' A file without a date in its name has the day of its file time, the
+' day it was filed by.
 EXPORT FUNC MONTH_ROWS(month_folder$)
     DIM rows = [["Date", "Category", "File", "Amount"]]
     IF NOT FILE.ISDIR(month_folder$) THEN RETURN rows
@@ -110,11 +171,15 @@ EXPORT FUNC MONTH_ROWS(month_folder$)
             FOR j = 0 TO LEN(files) - 1
                 DIM f$ = files[j]
                 DIM amount = AMOUNT(f$)
-                DIM day$ = DATE$(f$)
+                DIM stamp$ = DATE$(f$)
+                IF stamp$ = "" THEN
+                    DIM info = FILE.STAT(PATH.JOIN$(cat_dir$, f$))
+                    stamp$ = LEFT$(info{"mtime"}, 10)
+                ENDIF
                 IF amount >= 0 THEN
-                    PUSH(rows, [day$, cat$, f$, amount])
+                    PUSH(rows, [stamp$, cat$, f$, amount])
                 ELSE
-                    PUSH(rows, [day$, cat$, f$, ""])
+                    PUSH(rows, [stamp$, cat$, f$, ""])
                 ENDIF
             NEXT j
         ENDIF
@@ -151,8 +216,10 @@ EXPORT SUB WRITE_REPORT(path$, rows)
     DIM wb = XLSX.NEW()
     DIM s = XLSX.SHEET(wb, "Sums", SUMS(rows))
     XLSX.COLUMN(s, "A", {"width": 20})
+    XLSX.COLUMN(s, "B", {"format": "#,##0.00"})
     DIM r = XLSX.SHEET(wb, "Receipts", rows)
     XLSX.COLUMN(r, "C", {"width": 40})
+    XLSX.COLUMN(r, "D", {"format": "#,##0.00"})
     XLSX.FREEZE(r, 1)
     XLSX.WRITE(path$, wb)
 ENDSUB
