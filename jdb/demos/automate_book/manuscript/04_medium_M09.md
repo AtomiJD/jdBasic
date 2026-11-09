@@ -77,7 +77,7 @@ The module knows how to read a log line and keeps the counters:
 
 5. **Putting it together.** `TOTAL` adds up one level over all hours
    with `SUM` over a `SELECT`. `TOP_MESSAGES` sorts the error messages
-   by their count with `GRADE`, as M12 does with meeting hours: the
+   by their count with `GRADE`, as E10 does with wasted space: the
    counts are negated so the most frequent comes first. `WORST_HOUR$`
    takes the `MAX` of the errors per hour and keeps the first hour
    with that many with a `FILTER`. `REPORT$` writes the text, `TAKE`

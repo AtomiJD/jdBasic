@@ -325,7 +325,7 @@ reach them.
   customer list or a stock count, a script on one computer is the wrong
   place for it. That data belongs in a system everyone uses.
 - **Rules you must follow.** Some work is governed by rules about
-  records, retention, approvals or audit trails. A home made script
+  records, retention, approvals or audit trails. A home-made script
   rarely meets them, and it should not try. Ask before you automate
   anything in that area.
 - **Many users.** A recipe that helps you can help your team, and

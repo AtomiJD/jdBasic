@@ -106,15 +106,13 @@ jdbasic --lint downloads_butler.jdb
 
 When everything is fine, it says `LINT: Parsed OK.` and lists what it
 found. When a block is not closed, for example an `IF` without its
-`ENDIF`, it reports the line where it reached the end of the file still
-waiting, and words it as an `END` it expected:
+`ENDIF`, it names the line where the block was opened and the end it
+is missing:
 
 ```
-LINT error: Parse error at line 4: expected 'END', got ''
+LINT error: Parse error at line 2: the block opened here is never
+closed - expected 'ENDIF'
 ```
-
-The line number points to the end of the program, not to the `IF`. Look
-upwards for the block that is missing its end.
 
 ### Dry runs
 

@@ -238,8 +238,10 @@ Error #99: Parse error at line 1: expected variable name, got 'STEP'
 
 `STEP` belongs to the FOR loop, and jdBasic does not accept it as the
 name of a variable. The same happens with other words of the
-language, such as `STOP`, `LINE`, `ON` or `CLS`, and with the names of
-builtin functions. Choose another name: `step_size`, `stop_time`.
+language, such as `STOP`, `LINE`, `ON` or `CLS`. Choose another name:
+`step_size`, `stop_time`. The names of builtin functions such as
+`COUNT` are allowed for variables, but not for a `FUNC` of your own
+(Appendix A, "Names you cannot use").
 
 ### 16. A misspelt function
 
@@ -277,25 +279,29 @@ check `LEN(items) > 0` before reading `items[0]`.
 ### 19. A block without its end
 
 ```text
-Error #99: Parse error at line 4: expected 'END', got ''
+Error #99: Parse error at line 2: the block opened here is never
+closed - expected 'ENDIF'
 ```
 
 An `IF` has no `ENDIF`, a `FUNC` no `ENDFUNC`, or a loop no `NEXT` or
 `LOOP`; for a FOR loop the message says `expected 'NEXT'`. The line
-number is the end of the file, not the start of the block, which
-makes this the least helpful message of the list. Indent each block
-as the recipes do, and the block whose end is missing shows itself.
+number is where the block opens. Add its end where the block should
+stop; indenting each block as the recipes do shows where that is.
 
 ### 20. A program named like a library
 
 ```text
+warning at line 1: IMPORT MAIL read C:\Work\MAIL.jdb and not the
+library C:\jdbasic\lib/MAIL.jdb, so nothing the library defines
+exists under this name.
 Error #22: Undefined function: MAIL.MESSAGE at line 7
 ```
 
-The function exists, but jdBasic loaded another file as the module.
-A program saved as `mail.jdb` next to your script is found before the
-library MAIL, because the program's own folder comes first. Give your
-own files names that no library uses, such as `my_mail.jdb`.
+The function exists, but jdBasic loaded another file as the module,
+and the warning before the error names it. A program saved as
+`mail.jdb` next to your script is found before the library MAIL,
+because the program's own folder comes first. Give your own files
+names that no library uses, such as `my_mail.jdb`.
 
 ### 21. A wrong answer without a message
 

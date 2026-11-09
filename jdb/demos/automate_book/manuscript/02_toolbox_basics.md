@@ -714,6 +714,29 @@ PRINT REDUCE(LAMBDA total, h -> total + h * 60, [1.5, 2], 0)
 210
 ```
 
+Inside a function, a `LAMBDA` does not see the function's own
+variables and parameters by itself. Name the ones it needs in
+`USE(...)` before its parameter:
+
+```basic
+FUNC Busy(team, limit)
+    RETURN FILTER(LAMBDA USE(limit) p -> p{"hours"} > limit, team)
+ENDFUNC
+DIM team = [{"name": "Mia", "hours": 6.5}, _
+    {"name": "Jonas", "hours": 9}]
+PRINT SELECT(LAMBDA p -> p{"name"}, Busy(team, 7))
+```
+
+```text
+[Jonas]
+```
+
+Without `USE(limit)`, the interpreter reads `limit` as empty and keeps
+both names without a word, and `jdbasic -c` refuses the program with
+"a LAMBDA reads the enclosing function's local 'LIMIT' without naming
+it". The recipes write `USE` wherever a lambda needs a value of its
+function.
+
 A loop is still the right tool when each step does something outside
 the list: it reads or writes a file, prints a line, starts a program,
 or stops early once it found what it looked for. The recipes use both:
@@ -1195,9 +1218,8 @@ settings found at ... Run the setup wizard first".
 
 When the problem is in the shape of the program itself, for example an
 `IF` without its `ENDIF`, jdBasic notices before it starts and reports a
-parse error. The line it names is where it stopped understanding the
-program, which may be some lines below the actual mistake: look upward
-from there for the block that was never closed.
+parse error. For a block that was never closed, it names the line where
+the block was opened and the end it is missing.
 
 ### Messages you are likely to see
 
@@ -1225,8 +1247,8 @@ and change the recipes, with what each one means and what to do.
   not have. Remember that the first entry is at 0 and the last one at
   `LEN(list) - 1`.
 - **Parse error**: the program itself is not complete, for example an
-  `IF`, `FOR` or `FUNC` without its closing line. Look upward from the
-  line in the message.
+  `IF`, `FOR` or `FUNC` without its closing line. The message names
+  the line where the block opens and the end it expects.
 
 If a message is not in this list and the recipe's own section "When it
 goes wrong" does not mention it either, run the recipe with `--dry-run`

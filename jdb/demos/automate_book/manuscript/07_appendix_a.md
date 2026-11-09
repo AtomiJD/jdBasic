@@ -33,6 +33,7 @@ Three rules hold everywhere:
 | `CONST LIMIT = 3` | A name whose value cannot change |
 | `Name@` | The function itself as a value, to hand to `SELECT` or `RETRY.RUN` |
 | `LAMBDA x -> x + 1` | A small function written in place |
+| `LAMBDA USE(limit) x -> x > limit` | A lambda inside a function that reads the function's `limit` |
 | `ASYNC FUNC Worker(...)` | A function a worker pool runs in parallel (X08) |
 | `ON handler$ CALL Name` | Connects a window event to a function (X06) |
 | `DECLARE FUNC ... LIB "x.dll"` | Calls a function of a Windows DLL (VAULT in X14) |
@@ -111,14 +112,14 @@ loop gives the variable a new value on every pass.
 
 | Call | Answers |
 |---|---|
-| `LEN(s$)` | The number of characters |
-| `MID$(s$, start, n)` | `n` characters from position `start`, counted from 0; without `n` to the end |
-| `LEFT$(s$, n)`, `RIGHT$(s$, n)` | The first or last `n` characters |
+| `LEN(s$)` | The length in bytes; `ü` counts 2 |
+| `MID$(s$, start, n)` | `n` bytes from position `start`, counted from 0; without `n` to the end |
+| `LEFT$(s$, n)`, `RIGHT$(s$, n)` | The first or last `n` bytes |
 | `INSTR(s$, find$)` | The position of `find$`, from 0, or -1 when it is not there |
 | `INSTR(start, s$, find$)` | The same, searching from `start` |
 | `REPLACE$(s$, old$, new$)` | Every `old$` replaced |
 | `TRIM$(s$)` | Without spaces at both ends |
-| `LCASE$(s$)`, `UCASE$(s$)` | In small or capital letters |
+| `LCASE$(s$)`, `UCASE$(s$)` | In small or capital letters, umlauts too |
 | `SPLIT(s$, sep$)` | An array of the parts |
 | `JOIN(items, sep$)` | The parts joined into one text |
 | `STARTSWITH(s$, p$)`, `ENDSWITH(s$, p$)` | Whether the text begins or ends so |
@@ -126,16 +127,17 @@ loop gives the variable a new value on every pass.
 | `CINT(x)` | A whole number; text that is not a number is an error |
 | `CHR$(n)`, `ASC(c$)` | A character from its code, a code from its character |
 | `REPEAT$(s$, n)` | The text `n` times |
-| `FORMAT$(spec$, v, ...)` | Values put into `{}` holes: `{:.2f}`, `{:>8}` |
+| `FORMAT$(spec$, v, ...)` | Values put into `{}` holes: `{:.2f}`, `{:>8}`, `{:05d}` |
 | `REGEX.MATCH(pattern$, s$)` | Whether the whole text matches |
 | `REGEX.FINDALL(pattern$, s$)` | Every match |
 | `REGEX.REPLACE(pattern$, s$, new$)` | Every match replaced; `$1` in `new$` is the first group |
-| `-s$` | The characters as an array |
+| `-s$` | The characters as an array; `LEN(-s$)` counts them |
 
-Two traps: `INSTR` answers -1, not 0, when it finds nothing, so test
-`INSTR(...) >= 0`; and the start position of `INSTR` comes first. In
-`FORMAT$` a width pads with spaces only, so `{:05d}` does not give
-leading zeros.
+Three traps: `INSTR` answers -1, not 0, when it finds nothing, so test
+`INSTR(...) >= 0`; the start position of `INSTR` comes first; and
+`LEN`, `MID$`, `LEFT$` and `RIGHT$` count bytes, so a name with an
+umlaut is longer than it looks and `LEFT$` may cut a letter in half.
+For letters, take the text apart with `-s$` first.
 
 ```basic
 DIM s$ = "Invoice 0413.pdf"
@@ -143,6 +145,9 @@ PRINT MID$(s$, 0, 7)
 PRINT INSTR(s$, "0413")
 PRINT INSTR(s$, "x")
 PRINT FORMAT$("{:.2f} EUR", 209.8)
+PRINT FORMAT$("{:05d}", 42)
+PRINT LEN("Müller")
+PRINT LEN(-"Müller")
 PRINT JOIN(SPLIT("a;b;c", ";"), " + ")
 ```
 
@@ -151,6 +156,9 @@ Invoice
 8
 -1
 209.80 EUR
+00042
+7
+6
 a + b + c
 ```
 
@@ -251,7 +259,7 @@ Monday, 05 October 2026
 
 | Call | Answers |
 |---|---|
-| `PATH.JOIN$(a$, b$, ...)` | A path from its parts, with the right separator |
+| `PATH.JOIN$(a$, b$, ...)` | A path from its parts, joined with `\` on Windows and `/` elsewhere |
 | `PATH.DIRNAME$(p$)`, `PATH.BASENAME$(p$)` | The folder, the file name |
 | `PATH.EXT$(p$)` | The extension with its dot: `".pdf"` |
 | `PATH.NORMALIZE$(p$)` | The path tidied up |
