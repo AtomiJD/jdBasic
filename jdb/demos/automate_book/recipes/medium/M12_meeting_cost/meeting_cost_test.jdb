@@ -9,27 +9,27 @@ IF NOT FILE.EXISTS(base$ + "calendar.ics") THEN base$ = ""
 DIM cal = ICAL.PARSEFILE(base$ + "calendar.ics")
 DIM from = DT.PARSE("2026-10-01T00:00:00Z")
 DIM upto = DT.PARSE("2026-11-01T00:00:00Z")
-DIM list = MEETCOST.MEETINGS(cal, from, upto)
-DIM sum = MEETCOST.SUMMARY(list, 0)
+DIM list = MEETCOST.MEETINGS(cal, from, upto, "")
+DIM totals = MEETCOST.SUMMARY(list, 0)
 
 TESTKIT.SUITE("meetings")
 TESTKIT.EQ(LEN(list), 6, "four calls and two meetings, the offsite left out")
 TESTKIT.EQ(list[0]{"people"}, 3, "the attendees of a meeting")
-TESTKIT.NEAR(sum{"hours"}, 7.5, 0.0001, "7.5 hours in all")
-TESTKIT.NEAR(sum{"person_hours"}, 23, 0.0001, "23 hours of everyone's time")
+TESTKIT.NEAR(totals{"hours"}, 7.5, 0.0001, "7.5 hours in all")
+TESTKIT.NEAR(totals{"person_hours"}, 23, 0.0001, "23 hours of everyone's time")
 
 TESTKIT.SUITE("weeks and months")
 TESTKIT.EQ(MEETCOST.WEEK$(DT.PARSE("2026-10-05T08:00:00Z"), 0), "2026-W41", "the ISO week")
 TESTKIT.EQ(MEETCOST.WEEK$(DT.PARSE("2027-01-01T08:00:00Z"), 0), "2026-W53", "a new year that starts in the last week")
-TESTKIT.NEAR(sum{"weeks"}{"2026-W41"}, 2.5, 0.0001, "a call and the project status")
-TESTKIT.NEAR(sum{"weeks"}{"2026-W43"}, 3, 0.0001, "a call and the budget review")
-TESTKIT.NEAR(sum{"months"}{"2026-10"}, 7.5, 0.0001, "the month")
-DIM top = MEETCOST.TOP_SERIES(sum)
+TESTKIT.NEAR(totals{"weeks"}{"2026-W41"}, 2.5, 0.0001, "a call and the project status")
+TESTKIT.NEAR(totals{"weeks"}{"2026-W43"}, 3, 0.0001, "a call and the budget review")
+TESTKIT.NEAR(totals{"months"}{"2026-10"}, 7.5, 0.0001, "the month")
+DIM top = MEETCOST.TOP_SERIES(totals)
 TESTKIT.EQ(top[0], "Weekly team call", "the series with the most hours")
-TESTKIT.EQ(sum{"series"}{"Weekly team call"}{"times"}, 4, "and how often it met")
+TESTKIT.EQ(totals{"series"}{"Weekly team call"}{"times"}, 4, "and how often it met")
 
 TESTKIT.SUITE("report and workbook")
-DIM rep$ = MEETCOST.REPORT$(sum, 60, "EUR", 2)
+DIM rep$ = MEETCOST.REPORT$(totals, 60, "EUR", 2)
 TESTKIT.ISTRUE(INSTR(rep$, "7.5 hours, 450 EUR of your time") >= 0, "the cost of your own time")
 TESTKIT.ISTRUE(INSTR(rep$, "23.0 hours, 1380 EUR") >= 0, "and of everyone in the meetings")
 TESTKIT.ISTRUE(INSTR(rep$, "4.0 h  Weekly team call (4 times)") >= 0, "the largest series")
@@ -37,12 +37,37 @@ TESTKIT.ISTRUE(INSTR(rep$, "Miller project status") < 0, "only the top two serie
 DIM tmp$ = MKTEMP$("meetcost")
 MKDIR tmp$
 DIM xlsx$ = PATH.JOIN$(tmp$, "cost.xlsx")
-MEETCOST.WRITE_XLSX(sum, 60, xlsx$)
+MEETCOST.WRITE_XLSX(totals, 60, xlsx$)
 DIM book = XLSX.READ(xlsx$)
 TESTKIT.EQARRAY(XLSX.SHEETS(xlsx$), ["Weeks", "Months", "Series"], "three sheets")
 TESTKIT.EQ(book{"Series"}[1][0], "Weekly team call", "the series sheet, largest first")
 TESTKIT.EQ(book{"Series"}[1][4], 720, "with its cost for everyone")
 TESTKIT.EQ(book{"Months"}[1][2], 450, "the month's cost")
+TESTKIT.EQ(book{"Series"}[0][4], "Cost (everyone)", "a column name that says whose time it is")
+TESTKIT.EQ(book{"Months"}[0][2], "Cost (you)", "on the months as well")
+
+TESTKIT.SUITE("meetings that took none of your time")
+DIM CRLF$ = CHR$(13) + CHR$(10)
+DIM ics$ = "BEGIN:VCALENDAR" + CRLF$ + "VERSION:2.0" + CRLF$
+ics$ = ics$ + "BEGIN:VEVENT" + CRLF$ + "UID:a" + CRLF$ + "SUMMARY:Vendor pitch" + CRLF$
+ics$ = ics$ + "DTSTART:20261012T080000Z" + CRLF$ + "DTEND:20261012T100000Z" + CRLF$ + "STATUS:CANCELLED" + CRLF$ + "END:VEVENT" + CRLF$
+ics$ = ics$ + "BEGIN:VEVENT" + CRLF$ + "UID:b" + CRLF$ + "SUMMARY:All hands" + CRLF$
+ics$ = ics$ + "DTSTART:20261013T080000Z" + CRLF$ + "DTEND:20261013T100000Z" + CRLF$
+ics$ = ics$ + "ATTENDEE;PARTSTAT=DECLINED:mailto:Jonas@Example.com" + CRLF$
+ics$ = ics$ + "ATTENDEE;PARTSTAT=ACCEPTED:mailto:mia@example.com" + CRLF$ + "END:VEVENT" + CRLF$
+ics$ = ics$ + "BEGIN:VEVENT" + CRLF$ + "UID:c" + CRLF$ + "SUMMARY:Focus time" + CRLF$
+ics$ = ics$ + "DTSTART:20261014T080000Z" + CRLF$ + "DTEND:20261014T100000Z" + CRLF$ + "TRANSP:TRANSPARENT" + CRLF$ + "END:VEVENT" + CRLF$
+ics$ = ics$ + "BEGIN:VEVENT" + CRLF$ + "UID:d" + CRLF$ + "SUMMARY:Review" + CRLF$
+ics$ = ics$ + "DTSTART:20261015T080000Z" + CRLF$ + "DTEND:20261015T090000Z" + CRLF$ + "END:VEVENT" + CRLF$
+ics$ = ics$ + "END:VCALENDAR" + CRLF$
+DIM ics_path$ = PATH.JOIN$(tmp$, "skip.ics")
+TXTWRITER ics_path$, ics$
+DIM skip_cal = ICAL.PARSEFILE(ics_path$)
+DIM mine = MEETCOST.MEETINGS(skip_cal, from, upto, "jonas@example.com")
+TESTKIT.EQ(LEN(mine), 1, "cancelled, declined and free time are left out")
+TESTKIT.EQ(mine[0]{"summary"}, "Review", "the one that took place")
+TESTKIT.EQ(LEN(MEETCOST.MEETINGS(skip_cal, from, upto, "")), 2, "without your address only the declined one counts again")
+KILL ics_path$
 KILL xlsx$
 RMDIR tmp$
 TESTKIT.REPORT()

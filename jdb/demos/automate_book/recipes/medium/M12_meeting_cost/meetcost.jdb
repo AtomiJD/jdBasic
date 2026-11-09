@@ -3,25 +3,57 @@
 '
 '   IMPORT MEETCOST, ICAL, DT
 '   DIM cal = ICAL.PARSEFILE("calendar.ics")
-'   DIM list = MEETCOST.MEETINGS(cal, from, upto)
-'   DIM sum = MEETCOST.SUMMARY(list, 2)
-'   PRINT MEETCOST.REPORT$(sum, 60, "EUR", 5)
+'   DIM list = MEETCOST.MEETINGS(cal, from, upto, "me@example.com")
+'   DIM totals = MEETCOST.SUMMARY(list, 2)
+'   PRINT MEETCOST.REPORT$(totals, 60, "EUR", 5)
 
 EXPORT MODULE MEETCOST
 
 IMPORT ICAL, DT, DF, XLSX
 
+' A mail address without "mailto:" and in small letters.
+FUNC Address$(value$)
+    DIM a$ = LCASE$(TRIM$(value$))
+    IF LEFT$(a$, 7) = "mailto:" THEN a$ = MID$(a$, 7, LEN(a$))
+    RETURN a$
+ENDFUNC
+
+' TRUE when the event took no time of yours: cancelled, entered as
+' free time, or declined by the attendee whose address is me$.
+EXPORT FUNC SKIPPED(cal, ev, me$)
+    IF UCASE$(ICAL.PROP$(cal, ev, "STATUS", "")) = "CANCELLED" THEN
+        RETURN TRUE
+    ENDIF
+    IF UCASE$(ICAL.PROP$(cal, ev, "TRANSP", "")) = "TRANSPARENT" THEN
+        RETURN TRUE
+    ENDIF
+    IF me$ = "" THEN RETURN FALSE
+    DIM who = ICAL.VALUES(cal, ev, "ATTENDEE")
+    DIM answers = ICAL.PARAMS(cal, ev, "ATTENDEE", "PARTSTAT")
+    DIM p = 0
+    FOR p = 0 TO LEN(who) - 1
+        DIM addr$ = Address$(who[p])
+        DIM said$ = UCASE$(answers[p])
+        IF addr$ = Address$(me$) ANDALSO said$ = "DECLINED" THEN
+            RETURN TRUE
+        ENDIF
+    NEXT p
+    RETURN FALSE
+ENDFUNC
+
 ' Every meeting in [from, upto) as a map with "summary", "start",
 ' "hours" and "people" (the attendees, at least 1). All-day events are
-' left out: they block a day, not a meeting room.
-EXPORT FUNC MEETINGS(cal, from, upto)
+' left out: they block a day, not a meeting room; so are the ones
+' SKIPPED names, with me$ your own mail address.
+EXPORT FUNC MEETINGS(cal, from, upto, me$)
     DIM out = []
     DIM frame = ICAL.EXPAND(cal, from, upto)
     DIM k = 0
     FOR k = 0 TO DF.NROWS(frame) - 1
         DIM r = DF.ROW(frame, k)
         DIM ev = r{"event"}
-        IF NOT ICAL.ALLDAY(cal, ev) THEN
+        DIM counts = NOT ICAL.ALLDAY(cal, ev)
+        IF counts ANDALSO NOT SKIPPED(cal, ev, me$) THEN
             DIM people = LEN(ICAL.VALUES(cal, ev, "ATTENDEE"))
             IF people < 1 THEN people = 1
             DIM hours = (r{"end"} - r{"start"}) / 3600
@@ -132,7 +164,7 @@ ENDFUNC
 ' The summary as a workbook with the sheets Weeks, Months and Series.
 EXPORT FUNC WRITE_XLSX(summary, rate, path$)
     DIM wb = XLSX.NEW()
-    DIM rows = [["Week", "Hours", "Cost"]]
+    DIM rows = [["Week", "Hours", "Cost (you)"]]
     DIM weeks = summary{"weeks"}
     DIM keys = SORT(MAP.KEYS(weeks))
     DIM k = 0
@@ -141,7 +173,7 @@ EXPORT FUNC WRITE_XLSX(summary, rate, path$)
         PUSH(rows, [keys[k], wh, wh * rate])
     NEXT k
     XLSX.SHEET(wb, "Weeks", rows)
-    rows = [["Month", "Hours", "Cost"]]
+    rows = [["Month", "Hours", "Cost (you)"]]
     DIM months = summary{"months"}
     keys = SORT(MAP.KEYS(months))
     FOR k = 0 TO LEN(keys) - 1
@@ -149,7 +181,8 @@ EXPORT FUNC WRITE_XLSX(summary, rate, path$)
         PUSH(rows, [keys[k], mh, mh * rate])
     NEXT k
     XLSX.SHEET(wb, "Months", rows)
-    rows = [["Series", "Times", "Hours", "Person hours", "Cost"]]
+    rows = [["Series", "Times", "Hours", "Person hours", _
+        "Cost (everyone)"]]
     DIM top = TOP_SERIES(summary)
     FOR k = 0 TO LEN(top) - 1
         DIM t$ = top[k]

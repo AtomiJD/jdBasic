@@ -65,7 +65,10 @@ put together.
    what it needs from each row: the title, the start, the length in
    hours, and the number of people invited. All-day entries, such as a
    public holiday or an offsite, are left out, since they are not
-   meetings in the sense of this recipe.
+   meetings in the sense of this recipe. `SKIPPED` leaves out what took
+   none of your time: a meeting with `STATUS:CANCELLED`, an entry
+   marked free (`TRANSP:TRANSPARENT`, as Outlook writes focus time),
+   and one you declined, found by the address in `from` of `[mail]`.
 
 2. **From meetings to totals.** `SUMMARY` walks the list once and adds
    every meeting to three maps at the same time: one keyed by week, one
@@ -184,6 +187,9 @@ Beyond the settings, three changes in the code are worth knowing:
 - **A series is counted under two titles**: someone renamed it. The
   recipe groups by title, so "Team call" and "Weekly team call" are two
   series. Rename them in the calendar or in the workbook.
+- **A declined meeting still counts**: the address in `from` of
+  `[mail]` is not the one the invitation was sent to. Put the
+  address of your calendar there.
 - **Times are an hour off**: the export uses a time zone the recipe
   reads as UTC. Export again with the time zone included (Outlook does
   this with *Full details*).

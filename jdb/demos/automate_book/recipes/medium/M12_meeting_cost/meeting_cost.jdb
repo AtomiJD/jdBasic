@@ -23,14 +23,17 @@ DIM now = DT.NOW()
 DIM back$ = "-" + STR$(weeks_back) + " weeks"
 DIM from = DT.STARTOF(DT.ADD(now, back$, offset), "week", offset)
 DIM cal = ICAL.PARSEFILE(cal_file$)
-DIM meetings = MEETCOST.MEETINGS(cal, from, now)
-DIM sum = MEETCOST.SUMMARY(meetings, offset)
+DIM me$ = WORKCONF.VALUE(cfg, "mail.from", "")
+DIM bare = REGEX.FINDALL("<([^>]+)>", me$)
+IF LEN(bare) > 0 THEN me$ = bare[0][0]
+DIM meetings = MEETCOST.MEETINGS(cal, from, now, me$)
+DIM totals = MEETCOST.SUMMARY(meetings, offset)
 
 PRINT "Since "; DT.FMT$(from, "%Y-%m-%d", offset)
-PRINT MEETCOST.REPORT$(sum, rate, currency$, top_n)
+PRINT MEETCOST.REPORT$(totals, rate, currency$, top_n)
 IF NOT WORKCONF.FLAG("dry-run") THEN
     MKDIR PATH.DIRNAME$(out$)
-    MEETCOST.WRITE_XLSX(sum, rate, out$)
+    MEETCOST.WRITE_XLSX(totals, rate, out$)
     PRINT
     PRINT "Workbook: "; out$
 ENDIF
