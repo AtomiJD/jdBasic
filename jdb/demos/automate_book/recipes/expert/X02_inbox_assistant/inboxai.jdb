@@ -171,6 +171,25 @@ EXPORT FUNC APPROVED(drafts$)
     RETURN out
 ENDFUNC
 
+' The drafts set to yes that still wait, each with the reason, such as
+' "mueller.txt waits: it still holds [CHECK]".
+EXPORT FUNC WAITING(drafts$)
+    DIM names = SORT(FILE.LIST(PATH.JOIN$(drafts$, "*.txt")))
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM name$ = names[k]
+        IF name$ <> "seen.txt" THEN
+            DIM d = READ_DRAFT(PATH.JOIN$(drafts$, name$))
+            DIM open_spot = INSTR(d{"body"}, "[CHECK]") >= 0
+            IF d{"approve"} ANDALSO open_spot THEN
+                PUSH(out, name$ + " waits: it still holds [CHECK]")
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
 ' An approved draft as a mail, answering the mail it came from.
 EXPORT FUNC TO_MESSAGE(d, from$)
     DIM msg = MAIL.MESSAGE(from$, d{"to"}, d{"subject"})

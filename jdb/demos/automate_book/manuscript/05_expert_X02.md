@@ -194,8 +194,9 @@ max_mails = 20
 - **"did not answer with JSON"**: a small local model could not keep
   to the shape. Try a larger model, or set the temperature lower in
   `CLIENT`.
-- **An approved draft stays in the folder**: it still holds `[CHECK]`
-  somewhere. Search for it, fill it in, and approve again.
+- **"mueller.txt waits: it still holds [CHECK]"**: the draft says
+  `yes` but has a spot left to fill. Search for `[CHECK]`, fill it in,
+  and run `--approve` again.
 
 > **Balance dividend**
 > About 60 minutes a week: the morning hour shrinks to reading the

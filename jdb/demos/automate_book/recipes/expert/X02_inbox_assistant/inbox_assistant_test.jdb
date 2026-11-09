@@ -139,6 +139,9 @@ TESTKIT.EQ(LEN(INBOXAI.APPROVED(drafts$)), 0, "nothing approved yet")
 TXTWRITER draft$, REPLACE$(text$, "Approve: no", "Approve: yes")
 TESTKIT.EQ(LEN(INBOXAI.APPROVED(drafts$)), 0, _
     "an approved draft with [CHECK] waits")
+TESTKIT.EQARRAY(INBOXAI.WAITING(drafts$), _
+    [PATH.BASENAME$(draft$) + " waits: it still holds [CHECK]"], _
+    "and is named with the reason")
 TXTWRITER draft$, text$
 DIM back = INBOXAI.READ_DRAFT(draft$)
 TESTKIT.EQ(back{"subject"}, "Re: Budget figures", "the subject")
@@ -149,6 +152,11 @@ edited$ = REPLACE$(edited$, "[CHECK]", "Thursday")
 TXTWRITER draft$, edited$
 DIM ok = INBOXAI.APPROVED(drafts$)
 TESTKIT.EQ(LEN(ok), 1, "the approved draft")
+DIM bom$ = CHR$(239) + CHR$(187) + CHR$(191)
+BINWRITER draft$, bom$ + edited$
+TESTKIT.EQ(LEN(INBOXAI.APPROVED(drafts$)), 1, _
+    "also when an editor saved it with a byte order mark")
+TXTWRITER draft$, edited$
 DIM final = INBOXAI.READ_DRAFT(draft$)
 TESTKIT.ISTRUE(INSTR(final{"body"}, "Thursday") >= 0, _
     "with the person's change")

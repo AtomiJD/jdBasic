@@ -48,6 +48,11 @@ IF WORKCONF.FLAG("approve") THEN
         LOGGER.INFO(lg, "approved " + name$)
     NEXT a
     PRINT LEN(ready); " approved draft(s) in the outbox"
+    DIM waits = INBOXAI.WAITING(drafts$)
+    DIM w = 0
+    FOR w = 0 TO LEN(waits) - 1
+        PRINT waits[w]
+    NEXT w
     END
 ENDIF
 
