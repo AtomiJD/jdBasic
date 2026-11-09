@@ -24,6 +24,7 @@ DIM root$ = WORKCONF.FOLDER$(cfg, key$ + "recipes", _
 DIM reports$ = WORKCONF.FOLDER$(cfg, key$ + "reports", _
     work$ + "/test reports")
 DIM to$ = WORKCONF.VALUE(cfg, key$ + "to", "")
+DIM limit_s = WORKCONF.VALUE(cfg, key$ + "timeout_seconds", 120)
 IF to$ = "" THEN to$ = OUTBOX.FROM$(cfg)
 DIM jdbasic$ = WORKCONF.VALUE(cfg, "paths.jdbasic", "jdbasic")
 DIM user_lib$ = PATH.JOIN$(WORKCONF.HOME$(), ".jdbasic", "lib")
@@ -61,7 +62,7 @@ DIM given$ = GETENV$("JDBASIC_PATH")
 IF given$ <> "" THEN first = SPLIT(given$, ";")
 PUSH(first, user_lib$)
 DIM search$ = TESTRUN.SEARCH_PATH$(root$, first)
-DIM results = TESTRUN.RUN_ALL(jdbasic$, tests, search$)
+DIM results = TESTRUN.RUN_ALL(jdbasic$, tests, search$, limit_s)
 SETENV "JDBASIC_PATH", given$
 
 DIM now$ = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M")

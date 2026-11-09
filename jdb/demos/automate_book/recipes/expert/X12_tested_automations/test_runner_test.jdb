@@ -87,7 +87,7 @@ IF jdbasic$ = "" THEN
     TESTKIT.SKIP("no jdBasic.exe to run the tests with")
 ELSE
     DIM path$ = TESTRUN.SEARCH_PATH$(root$, first)
-    DIM results = TESTRUN.RUN_ALL(jdbasic$, tests, path$)
+    DIM results = TESTRUN.RUN_ALL(jdbasic$, tests, path$, 60)
     SETENV "JDBASIC_PATH", given$
     DIM r0 = results[0]
     DIM r1 = results[1]
@@ -108,6 +108,19 @@ ELSE
         "the summary line")
     DIM third$ = lines[2]
     TESTKIT.ISTRUE(STARTSWITH(third$, "FAILED"), "the failed first")
+    DIM hang_dir$ = root$ + "_hang"
+    MKDIR hang_dir$
+    DIM hang$ = hang_dir$ + "/hang_test.jdb"
+    TXTWRITER hang$, "DO" + LF$ + "    SLEEP 1000" + LF$ + "LOOP" + LF$
+    DIM hang_t0 = TICK()
+    DIM hung = TESTRUN.RUN_ONE(jdbasic$, hang$, path$, 2)
+    TESTKIT.EQ(hung{"status"}, "failed", "a test that hangs fails")
+    TESTKIT.ISTRUE(hung{"timeout"}, "as a timeout")
+    TESTKIT.ISTRUE(TICK() - hang_t0 < 15000, "and is ended, not tried again")
+    DIM hang_report$ = TESTRUN.REPORT$([hung], "2026-10-04 20:00")
+    TESTKIT.ISTRUE(INSTR(hang_report$, "TIMEOUT  ") >= 0, "the report says TIMEOUT")
+    KILL hang$
+    RMDIR hang_dir$
 
     TESTKIT.SUITE("the properties of Monday's reports")
     DIM props$ = FindUp$("recipes/expert/X12_tested_automations/" + _
@@ -126,7 +139,7 @@ ELSE
         NEXT f
         PUSH(own, recipes$ + "/expert/X09_report_pipeline")
         PUSH(own, recipes$ + "/medium/M15_timesheet")
-        DIM p = TESTRUN.RUN_ONE(jdbasic$, props$, JOIN(own, ";"))
+        DIM p = TESTRUN.RUN_ONE(jdbasic$, props$, JOIN(own, ";"), 120)
         SETENV "JDBASIC_PATH", given$
         TESTKIT.EQ(p{"status"}, "ok", "every property holds")
         TESTKIT.EQ(p{"passed"}, 5, "all five of them")

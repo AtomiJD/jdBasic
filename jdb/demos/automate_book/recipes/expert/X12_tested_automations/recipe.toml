@@ -27,3 +27,9 @@ key = "to"
 label = "Who gets the mail when a test fails (empty: you)"
 kind = "text"
 default = ""
+
+[[setting]]
+key = "timeout_seconds"
+label = "Seconds a test may run before it is ended"
+kind = "number"
+default = 120

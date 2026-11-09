@@ -137,32 +137,52 @@ FUNC LastLine$(output$)
     RETURN lines[LEN(lines) - 1]
 ENDFUNC
 
-FUNC RunOnce(jdbasic$, file$)
+' Runs one test in its folder, ended after limit_s seconds: a test
+' that waits for the network or for a key must not hold up the rest.
+FUNC RunOnce(jdbasic$, file$, limit_s)
     DIM t0 = TICK()
     DIM program$ = jdbasic$
     IF INSTR(program$, "/") >= 0 ORELSE INSTR(program$, "\") >= 0 THEN
         program$ = ABSOLUTE$(program$)
     ENDIF
     DIM full$ = ABSOLUTE$(file$)
+    DIM log$ = MKTEMP$("testrun") + ".txt"
     DIM back$ = CD()
     DIM moved$ = CD(PATH.DIRNAME$(full$))
-    DIM r = OS.EXEC(program$, [PATH.BASENAME$(full$)])
+    DIM opts = {"output": log$, "hidden": TRUE}
+    DIM pid = OS.SPAWN(program$, [PATH.BASENAME$(full$)], opts)
     moved$ = CD(back$)
-    DIM output$ = r{"output"}
+    DIM code = OS.WAIT(pid, limit_s * 1000)
+    DIM timed_out = TYPEOF(code) = "NONE"
+    IF timed_out THEN
+        DIM ended = OS.KILL(pid)
+        DIM gone = OS.WAIT(pid, 5000)
+        code = -1
+    ENDIF
+    DIM output$ = ""
+    IF FILE.EXISTS(log$) THEN
+        output$ = TXTREADER$(log$)
+        KILL log$
+    ENDIF
     DIM c = COUNTS(output$)
-    DIM out = {"file": file$, "exit": r{"exit_code"}}
-    out{"ok"} = r{"exit_code"} = 0 ANDALSO c{"failed"} <= 0
+    DIM out = {"file": file$, "exit": code}
+    out{"ok"} = code = 0 ANDALSO c{"failed"} <= 0
+    out{"timeout"} = timed_out
     out{"passed"} = c{"passed"}
     out{"failed"} = c{"failed"}
     out{"ms"} = TICK() - t0
     out{"last"} = LastLine$(output$)
+    IF timed_out THEN
+        out{"last"} = "ended after " + STR$(limit_s) + " seconds"
+    ENDIF
     RETURN out
 ENDFUNC
 
 ' Runs one test in its own folder with the module search path
-' search$. A test that fails is run a second time: "status" is "ok",
-' "flaky" when only the second run passed, or "failed".
-EXPORT FUNC RUN_ONE(jdbasic$, file$, search$)
+' search$, ended after limit_s seconds. A test that fails is run a
+' second time: "status" is "ok", "flaky" when only the second run
+' passed, or "failed"; one that ran out of time is not tried again.
+EXPORT FUNC RUN_ONE(jdbasic$, file$, search$, limit_s)
     DIM parts = SPLIT(search$, ";")
     DIM full = []
     DIM k = 0
@@ -171,12 +191,16 @@ EXPORT FUNC RUN_ONE(jdbasic$, file$, search$)
         IF part$ <> "" THEN PUSH(full, ABSOLUTE$(part$))
     NEXT k
     SETENV "JDBASIC_PATH", JOIN(full, ";")
-    DIM first = RunOnce(jdbasic$, file$)
+    DIM first = RunOnce(jdbasic$, file$, limit_s)
     IF first{"ok"} THEN
         first{"status"} = "ok"
         RETURN first
     ENDIF
-    DIM again = RunOnce(jdbasic$, file$)
+    IF first{"timeout"} THEN
+        first{"status"} = "failed"
+        RETURN first
+    ENDIF
+    DIM again = RunOnce(jdbasic$, file$, limit_s)
     IF again{"ok"} THEN
         again{"status"} = "flaky"
         RETURN again
@@ -186,12 +210,12 @@ EXPORT FUNC RUN_ONE(jdbasic$, file$, search$)
 ENDFUNC
 
 ' Runs every test of the list and answers one result map per test.
-EXPORT FUNC RUN_ALL(jdbasic$, files, search$)
+EXPORT FUNC RUN_ALL(jdbasic$, files, search$, limit_s)
     DIM out = []
     DIM k = 0
     FOR k = 0 TO LEN(files) - 1
         DIM file$ = files[k]
-        PUSH(out, RUN_ONE(jdbasic$, file$, search$))
+        PUSH(out, RUN_ONE(jdbasic$, file$, search$, limit_s))
     NEXT k
     RETURN out
 ENDFUNC
@@ -223,12 +247,16 @@ EXPORT FUNC REPORT$(results, when$)
         FOR k = 0 TO LEN(results) - 1
             DIM r = results[k]
             IF r{"status"} = order[s] THEN
-                DIM line$ = UCASE$(order[s]) + "  " + r{"file"}
+                DIM word$ = UCASE$(order[s])
+                IF MAP.EXISTS(r, "timeout") THEN
+                    IF r{"timeout"} THEN word$ = "TIMEOUT"
+                ENDIF
+                DIM entry$ = word$ + "  " + r{"file"}
                 IF r{"passed"} >= 0 THEN
                     DIM n$ = STR$(r{"passed"})
-                    line$ = line$ + "  (" + n$ + " checks)"
+                    entry$ = entry$ + "  (" + n$ + " checks)"
                 ENDIF
-                out$ = out$ + line$ + LF$
+                out$ = out$ + entry$ + LF$
                 IF order[s] <> "ok" THEN
                     out$ = out$ + "        " + r{"last"} + LF$
                 ENDIF

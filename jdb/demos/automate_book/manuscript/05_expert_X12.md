@@ -23,12 +23,12 @@ work folder, runs every test it finds, each in a process and a folder
 of its own, and writes a report:
 
 ```
-Test report 2026-10-04 20:00: 48 tests, 1 failed, 0 flaky
+Test report 2026-10-04 20:00: 61 tests, 1 failed, 0 flaky
 
-FAILED  expert/X09_report_pipeline/report_pipeline_test.jdb
+FAILED  X09_report_pipeline/report_pipeline_test.jdb
         Error #99: TESTKIT: 2 of 30 assertions failed at line 306
-OK  easy/E01_downloads_butler/downloads_butler_test.jdb  (22 checks)
-OK  easy/E02_morning_launcher/morning_launcher_test.jdb  (16 checks)
+OK  E01_downloads_butler/downloads_butler_test.jdb  (22 checks)
+OK  E02_morning_launcher/morning_launcher_test.jdb  (16 checks)
 ```
 
 When a test fails, the report goes to you as a mail in the outbox, so
@@ -53,9 +53,11 @@ the one in the `[paths]` part of `work.conf`. Its own part is short:
 recipes = "~/Documents/AutomateWork/recipes"
 reports = "~/Documents/AutomateWork/test reports"
 to = ""
+timeout_seconds = 120
 ```
 
 An empty `to` sends the mail to you, the sender of the `[mail]` part.
+`timeout_seconds` is how long one test may run before it is ended.
 
 ### The program
 
@@ -83,8 +85,11 @@ And these are the properties of Monday's reports, in the folder
    on the module search path, after the folders that were there
    already, and `RUN_ONE` sets it as `JDBASIC_PATH` for the test.
 3. **A process and a folder of its own.** `RunOnce` changes into the
-   folder of the test with `CD`, starts `jdbasic` on it with `OS.EXEC`
-   and changes back. A test that crashes takes only its own process
+   folder of the test with `CD`, starts `jdbasic` on it with
+   `OS.SPAWN` and changes back. `OS.WAIT` gives the test
+   `timeout_seconds` (120 unless you set it); a test that is still
+   running then is ended with `OS.KILL` and reported as *TIMEOUT*,
+   so one test that waits for the network never holds up the run. A test that crashes takes only its own process
    down, and a test that reads a sample file next to itself finds it.
    Every path is made absolute with `ABSOLUTE$` first, because after
    the change of folder a relative path points somewhere else.
@@ -138,21 +143,22 @@ With the long lines wrapped:
 
 ```
 jdbasic test_runner.jdb --dry-run
-48 tests below C:/Users/lena/Documents/AutomateWork/recipes
-  C:/Users/lena/Documents/AutomateWork/recipes/easy/
+61 tests below C:/Users/lena/Documents/AutomateWork/recipes
+  C:/Users/lena/Documents/AutomateWork/recipes/
       E01_downloads_butler/downloads_butler_test.jdb
   ...
 
 jdbasic test_runner.jdb --only M15
 Test report 2026-10-02 06:44: 1 tests, 0 failed, 0 flaky
 
-OK  C:/Users/lena/Documents/AutomateWork/recipes/medium/
+OK  C:/Users/lena/Documents/AutomateWork/recipes/
     M15_timesheet/timesheet_test.jdb  (31 checks)
 ```
 
-All 48 tests of this book take about half a minute. `--only` takes any
-part of a path, so `--only expert` runs the tests of one level and
-`--only X09` those of one recipe.
+The tests of all recipes of this book, the library tests among them,
+take about a minute. `--only` takes any part of a path, so
+`--only X09` runs the tests of one recipe and `--only _props` the
+property files.
 
 ### Schedule it
 
@@ -172,8 +178,9 @@ shared module. That is the moment it pays most.
 
 ### Make it yours
 
-- **A property of your own.** Add a function to `monday_props.jdb` and
-  one `FORALL` line. This one checks that every month of the timesheet
+- **A property of your own.** Add a function to `monday_props.jdb`
+  next to the others, and one `FORALL` line above the last line,
+  `TESTKIT.REPORT()`; a check below it ends the run with an error. This one checks that every month of the timesheet
   has four to six weeks:
 
   ```basic
@@ -209,9 +216,9 @@ shared module. That is the moment it pays most.
   another test also uses. The runner starts every test in its own
   folder; a test should find its samples there and make its own
   temporary folders with `MKTEMP$`.
-- **The runner does not finish**: a test waits for input or for a
-  server that does not answer. The runner has no time limit; find the
-  test with `--only` and the levels, and give it one.
+- **TIMEOUT in the report**: the test ran longer than
+  `timeout_seconds` and was ended. It waits for input or for a server
+  that does not answer; run it alone with `--only` to see where.
 
 > **Balance dividend**
 > About 30 minutes a week: the reports that would have gone out wrong,
