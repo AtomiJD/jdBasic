@@ -39,7 +39,7 @@ assertion and exits with status 1.
 | `THROWS(fn@, arg, message$)` | Calling `fn(arg)` raises an error. |
 | `SKIP(message$)` | Records a skipped case. |
 | `MODE(name$)` | Output format: `"human"` (default, coloured), `"tap"` (TAP 13), `"junit"` (JUnit XML). |
-| `REPORT()` | Prints the summary in the chosen format, returns the failure count, throws when anything failed. |
+| `REPORT()` | Prints the summary in the chosen format, returns the failure count, throws when anything failed. A check that fails after `REPORT()` throws too, so a check added below the report cannot leave a run green. |
 | `RESET()` | Drops every recorded result, for a program that runs several reports. |
 
 ## Notes

@@ -21,7 +21,7 @@
 '
 ' Arrays use EQARRAY and NEARRAY. EQ and NE refuse them, because a compiled
 ' parameter that also carries scalars arrives empty when handed an array.
-' version: 1.0.0
+' version: 1.1.0
 
 EXPORT MODULE TESTKIT
 
@@ -41,6 +41,7 @@ DIM gSkips = 0
 DIM gMark = 0            ' TICK() at the end of the previous assertion
 DIM gRunStart = 0
 DIM gStarted = 0
+DIM gReported = 0        ' 1 once REPORT has run
 DIM gSuiteNames$ = []
 DIM gMessages$ = []
 DIM gStatus = []
@@ -139,6 +140,10 @@ SUB Record(status, message$, detail$)
     IF status = ST_SKIP THEN gSkips = gSkips + 1
     IF gMode = MODE_HUMAN THEN EmitHuman(status, message$, detail$, elapsed)
     IF gMode = MODE_TAP THEN EmitTap(status, message$, detail$)
+    ' A check that fails after the report would leave the run green.
+    IF gReported = 1 ANDALSO status = ST_FAIL THEN
+        THROW "TESTKIT: a check after REPORT() failed: " + message$ + " (put it above TESTKIT.REPORT())"
+    ENDIF
 ENDSUB
 
 SUB EmitHuman(status, message$, detail$, ms)
@@ -317,12 +322,14 @@ EXPORT FUNC REPORT()
             PRINT Paint$("1;32", summary$)
         ENDIF
     ENDIF
+    gReported = 1
     IF gFails > 0 THEN THROW "TESTKIT: " + STR$(gFails) + " of " + STR$(gCases) + " assertions failed"
     RETURN gFails
 ENDFUNC
 
 ' Drops every recorded result. Useful when one program runs several reports.
 EXPORT SUB RESET()
+    gReported = 0
     gCases = 0
     gFails = 0
     gSkips = 0

@@ -26,6 +26,24 @@ TESTKIT.EQ(empty{"nope"}, empty{"also nope"}, "two absent keys are the same")
 TESTKIT.NE(empty{"nope"}, 0, "an absent key is not zero")
 TESTKIT.NE(empty{"nope"}, "", "an absent key is not an empty string")
 
+
+TESTKIT.SUITE("a check after the report")
+IF OS.FEATURE("INTERPRETER") THEN
+    DIM late_dir$ = MKTEMP$("testkit")
+    MKDIR late_dir$
+    DIM late$ = PATH.JOIN$(late_dir$, "late.jdb")
+    DIM lf$ = CHR$(10)
+    TXTWRITER late$, "IMPORT TESTKIT" + lf$ + "TESTKIT.EQ(1, 1, " + CHR$(34) + "fine" + CHR$(34) + ")" + lf$ + _
+        "DIM r = TESTKIT.REPORT()" + lf$ + "TESTKIT.EQ(1, 2, " + CHR$(34) + "late" + CHR$(34) + ")" + lf$
+    DIM late_run = OS.EXEC(OS.SELF$(), [late$])
+    TESTKIT.NE(late_run{"exit_code"}, 0, "a check that fails after REPORT() fails the run")
+    TESTKIT.ISTRUE(INSTR(late_run{"output"}, "after REPORT()") >= 0, "and says where it belongs")
+    KILL late$
+    RMDIR late_dir$
+ELSE
+    TESTKIT.SKIP("needs jdbasic to start a second program")
+ENDIF
+
 TESTKIT.SUITE("skipping")
 TESTKIT.SKIP("a case that needs a network")
 
