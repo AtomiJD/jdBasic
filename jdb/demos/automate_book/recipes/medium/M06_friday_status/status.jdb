@@ -34,6 +34,13 @@ EXPORT FUNC READ_NOTES(text$)
     RETURN out
 ENDFUNC
 
+' The text of a notes file in the encoding it was saved in: UTF-8
+' with or without a byte order mark, UTF-16, or the Windows ANSI
+' code page an older editor writes.
+EXPORT FUNC READ$(path$)
+    RETURN TXTREADER$(path$, TXTENCODING$(path$))
+ENDFUNC
+
 ' Every person of the notes folder, one per .txt file and named after
 ' it, sorted by name: maps with "person", "done", "todo", "blocked".
 ' With a week, the done notes cleared earlier that week count too.
@@ -43,10 +50,10 @@ EXPORT FUNC NOTES(folder$, week$ = "")
     DIM k = 0
     FOR k = 0 TO LEN(files) - 1
         DIM file$ = files[k]
-        DIM text$ = TXTREADER$(PATH.JOIN$(folder$, file$))
+        DIM text$ = READ$(PATH.JOIN$(folder$, file$))
         DIM kept$ = PATH.JOIN$(DONE_FOLDER$(folder$, week$), file$)
         IF week$ <> "" ANDALSO FILE.EXISTS(kept$) THEN
-            text$ = text$ + gLF$ + TXTREADER$(kept$)
+            text$ = text$ + gLF$ + READ$(kept$)
         ENDIF
         DIM n = READ_NOTES(text$)
         DIM ext$ = PATH.EXT$(file$)

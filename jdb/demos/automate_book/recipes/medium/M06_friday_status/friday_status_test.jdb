@@ -86,6 +86,20 @@ TESTKIT.ISTRUE(INSTR(back{"html"}, "<table") >= 0, "and the HTML")
 
 KILL path$
 RMDIR box$
+
+TESTKIT.SUITE("files from other editors")
+DIM odd_dir$ = PATH.JOIN$(folder$, "odd")
+MKDIR odd_dir$
+DIM bom$ = CHR$(239) + CHR$(187) + CHR$(191)
+BINWRITER PATH.JOIN$(odd_dir$, "Cem.txt"), bom$ + "- [!] Key is missing" + CHR$(10) + "- [x] Backup tested" + CHR$(10)
+BINWRITER PATH.JOIN$(odd_dir$, "Dora.txt"), "- [ ] Gr" + CHR$(252) + CHR$(223) + "e an M" + CHR$(252) + "ller" + CHR$(10)
+DIM odd_notes = STATUS.NOTES(odd_dir$)
+TESTKIT.EQARRAY(odd_notes[0]{"blocked"}, ["Key is missing"], "the first line after a byte order mark counts")
+TESTKIT.EQARRAY(odd_notes[1]{"todo"}, ["Grüße an Müller"], "an ANSI file is read as ANSI")
+KILL PATH.JOIN$(odd_dir$, "Cem.txt")
+KILL PATH.JOIN$(odd_dir$, "Dora.txt")
+RMDIR odd_dir$
+
 KILL PATH.JOIN$(notes$, "Ann.txt")
 KILL PATH.JOIN$(notes$, "Ben.txt")
 KILL PATH.JOIN$(kept$, "Ben.txt")

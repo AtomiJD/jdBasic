@@ -56,7 +56,7 @@ ELSE
         FOR k = 0 TO LEN(people) - 1
             DIM who$ = people[k]{"person"} + ".txt"
             DIM file$ = PATH.JOIN$(notes$, who$)
-            DIM text$ = TXTREADER$(file$)
+            DIM text$ = STATUS.READ$(file$)
             DIM done$ = STATUS.ONLY_DONE$(text$)
             IF done$ <> "" THEN
                 DIM into$ = PATH.JOIN$(kept$, who$)

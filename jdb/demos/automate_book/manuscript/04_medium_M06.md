@@ -38,7 +38,10 @@ heading or a comment does no harm:
 
 `[x]` means done, `[ ]` still to do, `[!]` blocked. The `x` may be a
 capital letter too. Markdown editors and many note apps show these
-lines as real check boxes.
+lines as real check boxes. Any editor will do: `STATUS.READ$` reads a
+file in UTF-8, with or without the mark some editors put in front,
+in UTF-16 and in the ANSI code page of an older Windows editor, so
+umlauts arrive as they were typed.
 
 The mail server goes into the `[mail]` part of `work.conf` once, as the
 introduction of this chapter describes; the status mail follows the
