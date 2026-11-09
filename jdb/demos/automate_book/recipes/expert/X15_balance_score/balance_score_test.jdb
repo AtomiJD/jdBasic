@@ -78,6 +78,15 @@ BALANCE.ADD_MAILS(mail_weeks, PATH.JOIN$(box$, "sent"), local)
 DIM this$ = BALANCE.WEEK$(DT.NOW(), local{"offset"})
 DIM mw = BALANCE.WEEK_OF(mail_weeks, this$)
 TESTKIT.EQ(mw{"mails"}, 2, "the outbox and the sent folder")
+DIM dated$ = PATH.JOIN$(folder$, "dated")
+MKDIR dated$
+TXTWRITER PATH.JOIN$(dated$, "late.eml"), "Date: Wed, 14 Oct 2026 23:15:00 +0200" + LF$ + "Subject: late" + LF$ + LF$ + "x" + LF$
+TXTWRITER PATH.JOIN$(dated$, "alert.eml"), "Date: Thu, 15 Oct 2026 03:00:00 +0200" + LF$ + "X-AutomateWork: alert" + LF$ + "Subject: alert" + LF$ + LF$ + "x" + LF$
+DIM dated_weeks AS MAP
+BALANCE.ADD_MAILS(dated_weeks, dated$, Rules(2))
+DIM w42 = BALANCE.WEEK_OF(dated_weeks, "2026-W42")
+TESTKIT.EQ(w42{"mails"}, 1, "a mail counts in the week of its Date line, an alert not at all")
+TESTKIT.EQ(w42{"late_mails"}, 1, "late by the time it was written")
 
 TESTKIT.SUITE("the score")
 DIM s = BALANCE.SCORE(w41, rules)

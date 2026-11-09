@@ -76,6 +76,7 @@ LOGGER.INFO(lg, "run done", {"failed": bad, "report": report_file$})
 IF bad > 0 ANDALSO to$ <> "" THEN
     DIM subject$ = STR$(bad) + " recipe tests failed"
     DIM msg = MAIL.MESSAGE(OUTBOX.FROM$(cfg), to$, subject$)
+    MAIL.HEADER(msg, "X-AutomateWork", "alert")
     MAIL.PLAIN(msg, report$)
     DIM eml$ = OUTBOX.PUT$(msg, cfg, "tests " + today$ + ".eml")
     LOGGER.WARN(lg, "mail in the outbox", {"path": eml$})

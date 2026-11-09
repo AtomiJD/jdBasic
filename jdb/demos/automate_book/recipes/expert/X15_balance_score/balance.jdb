@@ -11,7 +11,7 @@
 
 EXPORT MODULE BALANCE
 
-IMPORT DT, ICAL, DF, SVG, TMPL, JDWEB
+IMPORT DT, ICAL, DF, SVG, TMPL, JDWEB, MAIL
 
 DIM gSources AS MAP
 DIM gRules AS MAP
@@ -116,15 +116,24 @@ EXPORT SUB ADD_MEETINGS(totals, ics_path$, rules, t_from, t_to)
 ENDSUB
 
 ' Adds the mails of the .eml files in a folder, each counted at the
-' time of its file.
+' time in its Date line, or of its file when it has none. A mail a
+' recipe sent on its own, marked X-AutomateWork: alert, is left out:
+' an alert at three in the morning is no late work of yours.
 EXPORT SUB ADD_MAILS(totals, folder$, rules)
     IF NOT FILE.ISDIR(folder$) THEN RETURN
     DIM names = FILE.LIST(PATH.JOIN$(folder$, "*.eml"))
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
-        DIM file$ = names[k]
-        DIM info = FILE.STAT(PATH.JOIN$(folder$, file$))
-        DIM t = DT.PARSE(info{"mtime"}, rules{"offset"})
+        DIM path$ = PATH.JOIN$(folder$, names[k])
+        DIM mail = MAIL.PARSEFILE(path$)
+        IF MAIL.HEADERVALUE$(mail, "X-AutomateWork") = "alert" THEN
+            CONTINUEFOR
+        ENDIF
+        DIM t = DT.PARSE(mail{"date"})
+        IF TYPEOF(t) = "NONE" THEN
+            DIM info = FILE.STAT(path$)
+            t = DT.PARSE(info{"mtime"}, rules{"offset"})
+        ENDIF
         DIM key$ = WEEK$(t, rules{"offset"})
         Add(totals, key$, "mails", 1)
         IF OUTSIDE(t, rules) THEN Add(totals, key$, "late_mails", 1)

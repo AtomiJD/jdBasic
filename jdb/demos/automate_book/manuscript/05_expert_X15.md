@@ -96,7 +96,10 @@ the score; `TMPL.RENDER$` fills in the parts in double braces:
 6. **Meetings and mails.** `ADD_MEETINGS` expands the calendar with
    `ICAL.EXPAND`, so a weekly meeting counts every week, and leaves out
    all-day events such as holidays. `ADD_MAILS` counts the `.eml` files
-   of the outbox and of `sent` at the time of their file.
+   of the outbox and of `sent` at the time in their `Date` line, which
+   a copy of the folder does not change. A mail a recipe sent on its
+   own, such as an alert of the Health Checks, carries the line
+   `X-AutomateWork: alert` and is left out.
 7. **The score.** `SCORE` starts at 100 and takes away the points of
    each rule that applies, and it keeps the reasons, so the page can
    show them. The score never goes below 0.
@@ -119,7 +122,7 @@ jdbasic balance_score.jdb --print
 2026-W40   92  42.5 hours
 
 jdbasic balance_score.jdb
-Your balance score: http://localhost:8766/
+Your balance score: http://localhost:8767/
 Only this computer can open it. Stop it with Ctrl+C.
 ```
 
@@ -167,8 +170,10 @@ stop it.
   clocks is read one hour off. Up to an hour of such a week can move
   across the edge of your working hours. The weeks before the change
   look a little better or worse than they were.
-- **"Port 8766 is taken"**: another program uses the port. Set `port`
-  in `[balance_score]` to another number above 1024.
+- **"Port 8767 is taken"**: another program uses the port. Set `port`
+  in `[balance_score]` to another number above 1024. The pages of
+  this book use 8765 (M08), 8766 (X03), 8767 (X15) and 8770 (X18);
+  give a page of your own another one.
 
 > **Balance dividend**
 > About 15 minutes a week, for the look at the numbers you would

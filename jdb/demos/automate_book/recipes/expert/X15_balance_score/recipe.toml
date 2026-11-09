@@ -56,7 +56,7 @@ default = 1
 key = "port"
 label = "Port of the page on this computer"
 kind = "number"
-default = 8766
+default = 8767
 
 [[setting]]
 key = "weeks"

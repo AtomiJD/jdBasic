@@ -56,7 +56,7 @@ The minutes (*Min.*) are the time each recipe gives back in a normal week, as it
 | X12 Tested Automations | 30 | weekly sun 20:00 | OUTBOX, MAIL, LOGGER | {{page:X12 Tested Automations}} |
 | X13 Health Checks and Alerts | 20 | every 15 minutes | JOBSTATE, OUTBOX, VAULT, DT, SCHED, METRICS, MAIL, RETRY | {{page:X13 Health Checks and Alerts}} |
 | X14 Secrets and Audit Trail | 10 | by hand | JOBSTATE, VAULT, AUDIT, SECRET | {{page:X14 Secrets and Audit Trail}} |
-| X15 Balance Score | 15 | at logon | OUTBOX, JDWEB, DT, ICAL, DF, SVG, TMPL | {{page:X15 Balance Score}} |
+| X15 Balance Score | 15 | at logon | OUTBOX, JDWEB, DT, ICAL, DF, SVG, TMPL, MAIL | {{page:X15 Balance Score}} |
 | X16 Desktop Robot | 60 | by hand | LOGGER, INPUTKIT, CONF, IMG | {{page:Bonus: X16 Desktop Robot}} |
 | X17 Meeting Briefing | 45 | weekdays 07:30 | OUTBOX, MAIL, LOGGER, ICAL, DF, LLMAPI, RETRY, PDFGEN | {{page:Bonus: X17 Meeting Briefing}} |
 | X18 Spreadsheet to Web App | 40 | by hand | JDWEB, XLSX, LOGGER | {{page:Bonus: X18 Spreadsheet to Web App}} |

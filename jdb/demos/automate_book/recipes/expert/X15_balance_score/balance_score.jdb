@@ -65,7 +65,7 @@ IF save$ <> "" THEN
     END
 ENDIF
 
-DIM port = WORKCONF.VALUE(cfg, key$ + "port", 8766)
+DIM port = WORKCONF.VALUE(cfg, key$ + "port", 8767)
 BALANCE.MOUNT(sources, rules, tpl$)
 IF NOT JDWEB.LISTEN(port) THEN
     THROW "Port " + STR$(port) + " is taken. Change it in work.conf."

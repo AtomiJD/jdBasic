@@ -162,6 +162,7 @@ ENDFUNC
 EXPORT FUNC MESSAGE(from$, to$, change)
     DIM subject$ = SUBJECT$(change)
     DIM msg = MAIL.MESSAGE(from$, to$, subject$)
+    MAIL.HEADER(msg, "X-AutomateWork", "alert")
     MAIL.PLAIN(msg, TEXT$(change))
     RETURN msg
 ENDFUNC

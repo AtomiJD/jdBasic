@@ -548,7 +548,7 @@ For a key marked *see below*, add it to `[secrets_audit]` yourself to change it;
 | `weight_meetings` | Points lost per percent of meetings above that | number | `1` |
 | `weight_late` | Points lost per hour worked outside your working hours | number | `3` |
 | `weight_mail` | Points lost per mail written outside your working hours | number | `1` |
-| `port` | Port of the page on this computer | number | `8766` |
+| `port` | Port of the page on this computer | number | `8767` |
 | `weeks` | Weeks in the trend | number | `8` |
 | `folder` | set in `[time_tracker]`, read here too |  | `"~/Documents/AutomateWork/time"` |
 | `template` | read by the program, not asked by the wizard (see below) |  | *worked out by the program* |
