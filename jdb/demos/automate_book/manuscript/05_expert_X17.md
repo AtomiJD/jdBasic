@@ -73,6 +73,9 @@ The module does the work, from the calendar to the PDF:
    what Outlook means by such a time.
 3. `NAMES` reads the names of the people from the `CN` part of the
    `ATTENDEE` lines, so the page says "Anna Berg" and not her address.
+   You are an attendee of every invitation you get, so `WITHOUT` takes
+   your own address, the `from` of `[mail]`, out of the people;
+   otherwise every mail you sent or got would belong to every meeting.
 4. `MAILS` reads every saved mail and keeps those from or to one of
    the people, newest first. `SORTDATE$` turns the date line of a mail
    into a text that sorts.

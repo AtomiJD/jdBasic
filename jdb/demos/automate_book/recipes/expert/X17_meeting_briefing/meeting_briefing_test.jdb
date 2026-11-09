@@ -117,6 +117,12 @@ TESTKIT.EQ(LEN(people), 2, "both people")
 DIM anna = people[0]
 TESTKIT.EQ(anna{"name"}, "Anna Berg", "by name")
 TESTKIT.EQ(anna{"mail"}, "anna@example.com", "and address")
+DIM again = BRIEFING.MEETINGS(ics$, "2026-10-05")
+DIM without_anna = BRIEFING.WITHOUT(again, "Anna@Example.com")
+TESTKIT.EQ(LEN(without_anna[0]{"people"}), 1, "your own address is taken out of the people")
+TESTKIT.EQ(without_anna[0]{"people"}[0]{"mail"}, "tom@example.com", "the others stay")
+DIM fresh = BRIEFING.MEETINGS(ics$, "2026-10-05")
+TESTKIT.EQ(LEN(BRIEFING.WITHOUT(fresh, "")[0]{"people"}), 2, "no address of your own changes nothing")
 
 TESTKIT.SUITE("mails and open items")
 TESTKIT.EQ(BRIEFING.SORTDATE$("Thu, 01 Oct 2026 09:15:00 +0200"), "2026-10-01 09:15", "a mail date that sorts")

@@ -108,6 +108,21 @@ EXPORT FUNC MEETINGS(ics_path$, day$)
     RETURN InOrder(found, keys, FALSE, LEN(found))
 ENDFUNC
 
+' The meetings without one address among their people: you are an
+' attendee of every invitation you get, and every mail you sent or got
+' would count as a mail with the people of every meeting.
+EXPORT FUNC WITHOUT(meetings, mail$)
+    DIM me$ = LCASE$(TRIM$(mail$))
+    IF me$ = "" THEN RETURN meetings
+    DIM k = 0
+    FOR k = 0 TO LEN(meetings) - 1
+        DIM m = meetings[k]
+        m{"people"} = FILTER(LAMBDA USE(me$) p -> p{"mail"} <> me$, _
+            m{"people"})
+    NEXT k
+    RETURN meetings
+ENDFUNC
+
 ' The items in the order of their keys (each ending in CHR$(1) and
 ' the item's number), newest first when backwards, at most most.
 FUNC InOrder(items, keys, backwards, most)
