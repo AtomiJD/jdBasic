@@ -10,7 +10,8 @@ DIM sheet_rows = [["Customer", "Email", "Item", "Quantity", "Price"], _
     ["Miller Ltd", "buy@miller.example", "Copy paper", 10, 4.5], _
     ["Miller Ltd", "", "Delivery", 1, 12]]
 DIM company = {"name": "Example Supplies", _
-    "address": "1 Main Street, Exampletown", "date": "2026-10-05"}
+    "address": "1 Main Street, Exampletown", "date": "2026-10-05", _
+    "tax_id": "DE123456789", "period": "October 2026"}
 DIM inv = INVOICES.TOTALS(INVOICES.GROUP(sheet_rows)[0], 19)
 
 TESTKIT.SUITE("the Word file")
@@ -22,6 +23,10 @@ TESTKIT.ISTRUE("Invoice RE-2026-0042" IN back{"paragraphs"}, _
 TESTKIT.ISTRUE("Miller Ltd" IN back{"paragraphs"}, "the customer")
 TESTKIT.EQ(back{"tables"}[0][1][0], "Copy paper", "the lines")
 TESTKIT.EQ(back{"tables"}[1][2][1], "67.83 EUR", "and the totals")
+TESTKIT.ISTRUE("Tax number: DE123456789" IN back{"paragraphs"}, _
+    "the tax number")
+TESTKIT.ISTRUE("Delivery period: October 2026" IN back{"paragraphs"}, _
+    "the delivery period")
 
 OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
 TESTKIT.REPORT()

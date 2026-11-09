@@ -35,7 +35,11 @@ not matter, their names do:
 | Miller Ltd | | Delivery | 1 | 12.00 |
 
 A customer can have as many rows as there are items. The mail address
-is taken from the customer's first row.
+is taken from the customer's first row. A sixth column `Address` is
+optional: the customer's postal address in the first row, with commas
+or line breaks between its lines, printed under the name. Quantity
+and price must be numbers; a price typed as text with a comma, such
+as `4,50`, stops the run with the row it is in.
 
 ### The program
 
@@ -81,17 +85,25 @@ folder:
 6. **Numbers.** `NEXT_NUMBERS` reads the last number used from
    `last_number.txt` in the invoice folder and hands out the next ones:
    `last + IOTA(n)` is the list of the next n numbers, and a `SELECT`
-   turns each into a text such as `RE-2026-0007`. The program writes
-   the new last number back only after all invoices are written, so a
-   run that stops halfway does not burn numbers.
-7. **Files.** `INVOICE_PDF.WRITE` places the parts on an A4 page with
-   PDFGEN: your company at the top, the customer, the number and the
-   date, the table of lines and the three totals. `INVOICE_WORD.WRITE`
+   turns each into a text such as `RE-2026-0007`, with four digits at
+   least and a fifth after 9999. The program writes the new last number
+   back only after all invoices are written, so a run that stops halfway
+   does not burn numbers, and it writes nothing at all when a file of
+   one of the new numbers is already in the folder.
+7. **Once per sheet.** After a run, `NOTE_INVOICED` adds a line to
+   `invoiced.txt` in the invoice folder: the tab, the day and the first
+   and last number. `INVOICED$` finds that line on the next run, and the
+   program says when the tab was invoiced instead of invoicing it a
+   second time. `--again` invoices it once more on purpose.
+8. **Files.** `INVOICE_PDF.WRITE` places the parts on an A4 page with
+   PDFGEN: your company and its tax number at the top, the customer and
+   its address, the number, the date and the delivery period, the table
+   of lines and the three totals. `INVOICE_WORD.WRITE`
    writes the same content as a Word file, for customers who want to
    edit it. Both take their rows from `TABLE_ROWS`, which makes one row
    per line with a `SELECT`, and from `TOTAL_LINES`, so the two files
    always agree.
-8. **Mail.** `MAIL_FOR` builds the message with the invoice attached,
+9. **Mail.** `MAIL_FOR` builds the message with the invoice attached,
    and `OUTBOX.PUT$` writes it into the outbox under the invoice's
    number.
 
@@ -114,6 +126,14 @@ wrote RE-2026-0002  Stone and Co  147.32 EUR
 The mails wait in the outbox. Send them with --send.
 ```
 
+A second run on the same tab writes nothing:
+
+```
+jdbasic invoice_generator.jdb
+October was invoiced on 2026-11-02 as RE-2026-0001 to RE-2026-0002.
+Use --again to invoice it once more.
+```
+
 Open one of the `.eml` files in the outbox to check it, then send all
 of them:
 
@@ -127,6 +147,8 @@ Invoices are something you start yourself when the month's sheet is
 complete, so the wizard plans no task for this recipe. If your sheet
 is always complete on the first of the month, give it a schedule such
 as `daily 07:00` and let it run only on the first (see *Make it yours*).
+A run on a tab that is already invoiced only says so, so a daily
+schedule never invoices the same month twice.
 
 ### Make it yours
 
@@ -142,11 +164,22 @@ format = "pdf"
 vat_percent = 19
 company = "Example Supplies"
 address = "1 Main Street, Exampletown"
+tax_id = "DE123456789"
+period = "October 2026"
 ```
 
 `format = "docx"` writes Word files instead of PDF. One sheet per
 month, with `tab` set to the month, keeps last month's rows from being
-invoiced twice.
+invoiced twice. `tax_id` is your tax number or VAT id, printed under
+your address; `period` is the delivery period on every invoice, the
+tab name when you leave it out.
+
+> **What an invoice must show**
+> In the EU an invoice with VAT names the full address of the
+> customer, your tax number or VAT id and the date or period of
+> delivery, among other things. The recipe prints all three when you
+> fill them in. What else your country asks for, such as your bank
+> details or a note on reverse charge, ask your accountant.
 
 Changes in the code:
 
@@ -155,7 +188,7 @@ Changes in the code:
   `PDFGEN.TEXTAT(pdf, 20, PDFGEN.POSY(pdf) + 10, "IBAN ...")`.
 - **Run only on the first of the month:** at the top of the program,
   after the settings, add
-  `IF FORMAT_DATE(NOW(), "%d") <> "01" THEN END`, and schedule it daily.
+  `IF FORMAT_DATE$(NOW(), "%d") <> "01" THEN END`, and schedule it daily.
 - **Numbers that start again every year:** in `NEXT_NUMBERS`, keep one
   counter file per year by naming it `"last_" + year$ + ".txt"` in the
   program, where `counter$` is set.
@@ -175,6 +208,16 @@ Changes in the code:
   number you want to come before the next one into it.
 - **A customer got two invoices**: the name was written two ways, such
   as `Miller Ltd` and `Miller Ltd.`. Grouping compares names exactly.
+- **"Row 9: price '4,50' is not a number (write 4.50)"**: the cell
+  holds text, often after a CSV import with a decimal comma. Type the
+  number again, or format the column as a number.
+- **"October was invoiced on ..."**: the tab has been invoiced
+  before. Use a new tab for the new month, or `--again` when the first
+  run was a mistake and its invoices were not sent.
+- **"RE-2026-0007.pdf is already there"**: `last_number.txt` was set
+  back. Write the number of the newest invoice into it again.
+- **No tax number on the invoice**: `tax_id` is missing in
+  `[invoice_generator]`; the program says so on every run.
 - **The mail is missing**: the customer's first row has no address.
   The invoice file is written all the same.
 

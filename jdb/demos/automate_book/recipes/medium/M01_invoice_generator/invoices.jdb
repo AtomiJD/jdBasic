@@ -11,10 +11,12 @@ EXPORT MODULE INVOICES
 
 IMPORT MAIL
 
-' The position of each wanted column in the header row, by its name
-' in any case; a missing column is an error that names it.
+' The position of each column in the header row, by its name in any
+' case. A missing column is an error that names it; the column
+' address may be left out and is then -1.
 EXPORT FUNC COLUMNS(header)
-    DIM wanted = ["customer", "email", "item", "quantity", "price"]
+    DIM wanted = ["customer", "email", "item", "quantity", "price", _
+        "address"]
     DIM out AS MAP
     DIM k = 0
     DIM j = 0
@@ -24,14 +26,37 @@ EXPORT FUNC COLUMNS(header)
             DIM h$ = LCASE$(TRIM$("" + header[j]))
             IF h$ = wanted[k] THEN out{wanted[k]} = j
         NEXT j
-        IF out{wanted[k]} < 0 THEN _
+        IF out{wanted[k]} < 0 ANDALSO wanted[k] <> "address" THEN _
             THROW "The sheet has no column " + wanted[k]
     NEXT k
     RETURN out
 ENDFUNC
 
+' The number in a cell of a quantity or price column. Text is taken
+' only when it is a plain number such as 4.50; anything else stops
+' with the row of the sheet, so no invoice is written with a guess.
+EXPORT FUNC AMOUNT(cell, what$, row)
+    DIM where$ = "Row " + STR$(row) + ": " + what$
+    DIM kind$ = TYPEOF(cell)
+    IF kind$ = "FLOAT64" ORELSE kind$ = "INT64" THEN RETURN cell
+    DIM text$ = TRIM$("" + cell)
+    IF kind$ = "NONE" ORELSE text$ = "" THEN
+        THROW where$ + " is empty"
+    ENDIF
+    IF REGEX.MATCH("^-?[0-9]+(?:\.[0-9]+)?$", text$) THEN
+        RETURN VAL(text$)
+    ENDIF
+    DIM hint$ = ""
+    IF REGEX.MATCH("^-?[0-9]+,[0-9]+$", text$) THEN
+        hint$ = " (write " + REPLACE$(text$, ",", ".") + ")"
+    ENDIF
+    THROW where$ + " '" + text$ + "' is not a number" + hint$
+ENDFUNC
+
 ' One invoice per customer, in the order they first appear: maps with
-' "customer", "email" and "lines" (maps with item, quantity, price).
+' "customer", "email", "address" and "lines" (maps with item,
+' quantity, price). The address is a list of lines, empty when the
+' sheet has no column for it.
 EXPORT FUNC GROUP(rows)
     DIM col = COLUMNS(rows[0])
     DIM out = []
@@ -45,18 +70,30 @@ EXPORT FUNC GROUP(rows)
                 where{who$} = LEN(out)
                 DIM mail$ = TRIM$("" + r[col{"email"}])
                 PUSH(out, {"customer": who$, "email": mail$, _
-                    "lines": []})
+                    "address": AddressOf(r, col), "lines": []})
             ENDIF
             DIM inv = out[where{who$}]
             DIM item$ = "" + r[col{"item"}]
-            DIM qty = VAL("" + r[col{"quantity"}])
-            DIM price = VAL("" + r[col{"price"}])
+            DIM qty = AMOUNT(r[col{"quantity"}], "quantity", k + 1)
+            DIM price = AMOUNT(r[col{"price"}], "price", k + 1)
             DIM inv_lines = inv{"lines"}
             PUSH(inv_lines, {"item": item$, "quantity": qty, _
                 "price": price})
         ENDIF
     NEXT k
     RETURN out
+ENDFUNC
+
+' The lines of the address cell of a row: one per line of the cell,
+' or one per part between commas when it is a single line.
+FUNC AddressOf(r, col)
+    IF col{"address"} < 0 THEN RETURN []
+    DIM text$ = REPLACE$(TRIM$("" + r[col{"address"}]), CHR$(13), "")
+    IF text$ = "" THEN RETURN []
+    DIM sep$ = CHR$(10)
+    IF INSTR(text$, sep$) < 0 THEN sep$ = ","
+    DIM parts = SELECT(LAMBDA s$ -> TRIM$(s$), SPLIT(text$, sep$))
+    RETURN FILTER(LAMBDA s$ -> s$ <> "", parts)
 ENDFUNC
 
 ' The invoice with "net", "vat" and "gross" added, each rounded to
@@ -71,16 +108,50 @@ EXPORT FUNC TOTALS(inv, vat_percent)
     RETURN inv
 ENDFUNC
 
-' The next n invoice numbers after the one stored in the counter file,
-' such as RE-2026-0007; the file is not changed.
-EXPORT FUNC NEXT_NUMBERS(counter$, prefix$, year$, n)
-    DIM last = 0
-    IF FILE.EXISTS(counter$) THEN _
-        last = VAL(TRIM$(TXTREADER$(counter$)))
-    RETURN SELECT(LAMBDA USE(prefix$, year$) v -> _
-        prefix$ + year$ + "-" + RIGHT$("000" + STR$(v), 4), _
-        last + IOTA(n))
+' The last number stored in the counter file, 0 when there is none.
+EXPORT FUNC LAST_NUMBER(counter$)
+    IF NOT FILE.EXISTS(counter$) THEN RETURN 0
+    RETURN VAL(TRIM$(TXTREADER$(counter$)))
 ENDFUNC
+
+' The next n invoice numbers after the one stored in the counter file,
+' such as RE-2026-0007, with four digits at least and more after 9999;
+' the file is not changed.
+EXPORT FUNC NEXT_NUMBERS(counter$, prefix$, year$, n)
+    RETURN SELECT(LAMBDA USE(prefix$, year$) v -> _
+        prefix$ + year$ + "-" + FORMAT$("{:04d}", v), _
+        LAST_NUMBER(counter$) + IOTA(n))
+ENDFUNC
+
+' The line of invoiced.txt in the folder for a sheet tab, such as
+' "October  2026-11-02  RE-2026-0001  RE-2026-0002" with tabs between
+' the parts, or "" when the tab was never invoiced. The latest line
+' counts when it was invoiced more than once.
+EXPORT FUNC INVOICED$(folder$, tab$)
+    DIM log$ = PATH.JOIN$(folder$, "invoiced.txt")
+    IF NOT FILE.EXISTS(log$) THEN RETURN ""
+    DIM text$ = REPLACE$(TXTREADER$(log$), CHR$(13), "")
+    DIM rows = SPLIT(text$, CHR$(10))
+    DIM found$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM parts = SPLIT(rows[k], CHR$(9))
+        IF LEN(parts) = 4 ANDALSO parts[0] = tab$ THEN
+            found$ = rows[k]
+        ENDIF
+    NEXT k
+    RETURN found$
+ENDFUNC
+
+' Adds the line for a tab to invoiced.txt in the folder.
+EXPORT SUB NOTE_INVOICED(folder$, tab$, date$, first$, last$)
+    DIM log$ = PATH.JOIN$(folder$, "invoiced.txt")
+    DIM old$ = ""
+    IF FILE.EXISTS(log$) THEN old$ = TXTREADER$(log$)
+    DIM t$ = CHR$(9)
+    TXTWRITER log$, old$ + tab$ + t$ + date$ + t$ + first$ + t$ + _
+        last$ + CHR$(10)
+ENDSUB
 
 EXPORT FUNC MONEY$(v)
     RETURN FORMAT$("{:.2f}", v) + " EUR"
@@ -111,4 +182,10 @@ EXPORT FUNC MAIL_FOR(inv, number$, sender$, attachment$)
     MAIL.PLAIN(m, body$ + MAIL.ADDRESSNAME$(sender$))
     MAIL.ATTACH(m, attachment$)
     RETURN m
+ENDFUNC
+
+' A text field of a map such as company, "" when it is not there.
+EXPORT FUNC FIELD$(m, key$)
+    IF NOT MAP.EXISTS(m, key$) THEN RETURN ""
+    RETURN "" + m{key$}
 ENDFUNC

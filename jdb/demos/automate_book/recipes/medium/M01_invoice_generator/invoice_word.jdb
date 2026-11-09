@@ -14,9 +14,20 @@ EXPORT SUB WRITE(inv, number$, company, path$)
     DOCX.TITLE(doc, "Invoice " + number$)
     DOCX.PARAGRAPH(doc, "**" + company{"name"} + "**")
     DOCX.PARAGRAPH(doc, company{"address"})
+    IF INVOICES.FIELD$(company, "tax_id") <> "" THEN
+        DOCX.PARAGRAPH(doc, "Tax number: " + company{"tax_id"})
+    ENDIF
     DOCX.PARAGRAPH(doc, inv{"customer"})
+    DIM lines = inv{"address"}
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DOCX.PARAGRAPH(doc, lines[k])
+    NEXT k
     DOCX.HEADING(doc, "Invoice " + number$)
     DOCX.PARAGRAPH(doc, "Date: " + company{"date"})
+    IF INVOICES.FIELD$(company, "period") <> "" THEN
+        DOCX.PARAGRAPH(doc, "Delivery period: " + company{"period"})
+    ENDIF
     DOCX.TABLE(doc, INVOICES.TABLE_ROWS(inv))
     DOCX.TABLE(doc, INVOICES.TOTAL_LINES(inv), FALSE)
     DOCX.WRITE(doc, path$)

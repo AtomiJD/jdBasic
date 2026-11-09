@@ -5,6 +5,7 @@
 '
 '   jdbasic invoice_generator.jdb            write invoices and mails
 '   jdbasic invoice_generator.jdb --dry-run  show the invoices only
+'   jdbasic invoice_generator.jdb --again    invoice a tab once more
 '   jdbasic invoice_generator.jdb --send     send what waits in outbox
 
 IMPORT WORKCONF, XLSX, INVOICES, INVOICE_PDF, INVOICE_WORD, OUTBOX
@@ -24,6 +25,7 @@ DIM sender$ = OUTBOX.FROM$(cfg)
 DIM company AS MAP
 company{"name"} = WORKCONF.VALUE(cfg, key$ + "company", "")
 company{"address"} = WORKCONF.VALUE(cfg, key$ + "address", "")
+company{"tax_id"} = WORKCONF.VALUE(cfg, key$ + "tax_id", "")
 company{"date"} = FORMAT_DATE$(NOW(), "%Y-%m-%d")
 
 IF WORKCONF.FLAG("send") THEN
@@ -43,13 +45,37 @@ ENDIF
 DIM book = XLSX.READ(sheet$)
 IF tab$ = "" THEN tab$ = XLSX.SHEETS(sheet$)[0]
 IF NOT MAP.EXISTS(book, tab$) THEN THROW "No sheet " + tab$
+' The delivery period on every invoice; the tab name by default.
+company{"period"} = WORKCONF.VALUE(cfg, key$ + "period", tab$)
+DIM done$ = INVOICES.INVOICED$(folder$, tab$)
+IF done$ <> "" ANDALSO NOT WORKCONF.FLAG("again") THEN
+    DIM was = SPLIT(done$, CHR$(9))
+    PRINT tab$; " was invoiced on "; was[1]; " as "; was[2]; _
+        " to "; was[3]; "."
+    PRINT "Use --again to invoice it once more."
+    END
+ENDIF
 DIM list = INVOICES.GROUP(book{tab$})
 DIM year$ = FORMAT_DATE$(NOW(), "%Y")
 DIM counter$ = PATH.JOIN$(folder$, "last_number.txt")
+DIM last_no = INVOICES.LAST_NUMBER(counter$)
 DIM numbers = INVOICES.NEXT_NUMBERS(counter$, prefix$, year$, _
     LEN(list))
 DIM dry_run = WORKCONF.FLAG("dry-run")
 IF NOT dry_run THEN MKDIR folder$
+IF company{"tax_id"} = "" THEN
+    PRINT "No tax_id in work.conf: the invoices show no tax number."
+ENDIF
+
+DIM files = SELECT(LAMBDA USE(folder$, kind$) n$ -> _
+    PATH.JOIN$(folder$, n$ + "." + kind$), numbers)
+DIM there = FILTER(LAMBDA f$ -> FILE.EXISTS(f$), files)
+IF LEN(there) > 0 THEN
+    PRINT PATH.NORMALIZE$(there[0]); " is already there."
+    PRINT "Check the number in "; PATH.NORMALIZE$(counter$)
+    PRINT "Nothing was written."
+    END 1
+ENDIF
 
 DIM k = 0
 FOR k = 0 TO LEN(list) - 1
@@ -60,7 +86,7 @@ FOR k = 0 TO LEN(list) - 1
     IF dry_run THEN
         PRINT "would write "; shown$
     ELSE
-        DIM file$ = PATH.JOIN$(folder$, number$ + "." + kind$)
+        DIM file$ = files[k]
         IF kind$ = "docx" THEN
             INVOICE_WORD.WRITE(inv, number$, company, file$)
         ELSE
@@ -75,8 +101,9 @@ FOR k = 0 TO LEN(list) - 1
 NEXT k
 
 IF NOT dry_run ANDALSO LEN(list) > 0 THEN
-    DIM last$ = numbers[LEN(numbers) - 1]
-    TXTWRITER counter$, STR$(VAL(RIGHT$(last$, 4)))
+    TXTWRITER counter$, STR$(last_no + LEN(list))
+    INVOICES.NOTE_INVOICED(folder$, tab$, company{"date"}, _
+        numbers[0], numbers[LEN(numbers) - 1])
     PRINT "The mails wait in the outbox. Send them with --send."
 ENDIF
 IF LEN(list) = 0 THEN PRINT "No rows in "; tab$

@@ -8,8 +8,10 @@ EXPORT MODULE INVOICE_PDF
 
 IMPORT PDFGEN, INVOICES
 
-' The invoice as a PDF page: company, customer, number and date, the
-' table and the totals. company holds "name", "address" and "date".
+' The invoice as a PDF page: company and its tax number, the customer
+' and its address, number, date and delivery period, the table and
+' the totals. company holds "name", "address", "tax_id", "date" and
+' "period"; an empty tax_id or period is left out.
 EXPORT SUB WRITE(inv, number$, company, path$)
     DIM pdf = PDFGEN.DOC()
     PDFGEN.SETINFO(pdf, "Invoice " + number$, company{"name"})
@@ -18,13 +20,30 @@ EXPORT SUB WRITE(inv, number$, company, path$)
     PDFGEN.TEXTAT(pdf, 20, 25, company{"name"})
     PDFGEN.USEFONT(pdf, "helvetica", "", 9)
     PDFGEN.TEXTAT(pdf, 20, 31, company{"address"})
+    IF INVOICES.FIELD$(company, "tax_id") <> "" THEN
+        PDFGEN.TEXTAT(pdf, 20, 36, "Tax number: " + company{"tax_id"})
+    ENDIF
     PDFGEN.USEFONT(pdf, "helvetica", "", 11)
     PDFGEN.TEXTAT(pdf, 20, 52, inv{"customer"})
+    DIM lines = inv{"address"}
+    DIM y = 52
+    DIM a = 0
+    FOR a = 0 TO LEN(lines) - 1
+        y = y + 5
+        PDFGEN.TEXTAT(pdf, 20, y, lines[a])
+    NEXT a
+    ' The title keeps its place unless the address reaches down to it.
+    IF y < 62 THEN y = 62
     PDFGEN.USEFONT(pdf, "helvetica", "B", 16)
-    PDFGEN.TEXTAT(pdf, 20, 72, "Invoice " + number$)
+    PDFGEN.TEXTAT(pdf, 20, y + 10, "Invoice " + number$)
     PDFGEN.USEFONT(pdf, "helvetica", "", 10)
-    PDFGEN.TEXTAT(pdf, 20, 79, "Date: " + company{"date"})
-    PDFGEN.SETXY(pdf, 20, 88)
+    PDFGEN.TEXTAT(pdf, 20, y + 17, "Date: " + company{"date"})
+    IF INVOICES.FIELD$(company, "period") <> "" THEN
+        y = y + 5
+        PDFGEN.TEXTAT(pdf, 20, y + 17, _
+            "Delivery period: " + company{"period"})
+    ENDIF
+    PDFGEN.SETXY(pdf, 20, y + 26)
     DIM rows = INVOICES.TABLE_ROWS(inv)
     DIM opts = {"headers": rows[0], "widths": [0, 22, 32, 32], _
         "align": ["L", "R", "R", "R"]}
