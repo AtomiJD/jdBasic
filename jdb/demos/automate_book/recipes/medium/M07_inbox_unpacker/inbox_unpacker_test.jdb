@@ -16,6 +16,8 @@ BINWRITER logo$, "PNGDATA"
 DIM a = MAIL.MESSAGE("Anna Miller <anna@miller.example>", _
     "jonas@example.com", "Invoice: October/2026 *final*")
 MAIL.PLAIN(a, "Please find the invoice attached.")
+MAIL.HTMLBODY(a, "<p>Please find the invoice attached.</p><img src=" + _
+    CHR$(34) + "cid:logo" + CHR$(34) + ">")
 MAIL.SETDATE(a, "Fri, 23 Oct 2026 12:00:00 +0000")
 MAIL.ATTACHDATA(a, "invoice.pdf", pdf$)
 MAIL.INLINE(a, logo$, "logo")
@@ -66,6 +68,29 @@ TESTKIT.EQ(PATH.BASENAME$(files[2]{"to"}), "list (2).csv", _
     "a doubled name gets a number")
 DIM all = UNPACKER.PLAN(inbox$, target$, TRUE)
 TESTKIT.EQ(LEN(all{"files"}), 4, "keep_inline keeps it")
+
+' Outlook and Apple Mail give an ordinary attachment a Content-ID too;
+' the text does not show it, so it is saved.
+DIM inbox2$ = PATH.JOIN$(folder$, "inbox2")
+MKDIR inbox2$
+DIM CRLF$ = CHR$(13) + CHR$(10)
+DIM raw$ = "From: weiss@weiss.example" + CRLF$ + "To: jonas@example.com" + CRLF$
+raw$ = raw$ + "Subject: Contract" + CRLF$ + "Date: Mon, 26 Oct 2026 12:00:00 +0000" + CRLF$
+raw$ = raw$ + "MIME-Version: 1.0" + CRLF$
+raw$ = raw$ + "Content-Type: multipart/mixed; boundary=" + CHR$(34) + "XX" + CHR$(34) + CRLF$ + CRLF$
+raw$ = raw$ + "--XX" + CRLF$ + "Content-Type: text/html" + CRLF$ + CRLF$
+raw$ = raw$ + "<p>Signed contract attached.</p>" + CRLF$
+raw$ = raw$ + "--XX" + CRLF$ + "Content-Type: application/pdf" + CRLF$
+raw$ = raw$ + "Content-Disposition: attachment; filename=" + CHR$(34) + "contract signed.pdf" + CHR$(34) + CRLF$
+raw$ = raw$ + "Content-ID: <part1.ABCD@weiss.example>" + CRLF$
+raw$ = raw$ + "Content-Transfer-Encoding: base64" + CRLF$ + CRLF$
+raw$ = raw$ + CODEC.BASE64_ENCODE$("%PDF-1.4 signed") + CRLF$ + "--XX--" + CRLF$
+TXTWRITER PATH.JOIN$(inbox2$, "c.eml"), raw$
+DIM signed = UNPACKER.PLAN(inbox2$, target$, FALSE){"files"}
+TESTKIT.EQ(LEN(signed), 1, "an attachment with a Content-ID the text does not show")
+TESTKIT.EQ(PATH.BASENAME$(signed[0]{"to"}), "contract signed.pdf", "is saved")
+KILL PATH.JOIN$(inbox2$, "c.eml")
+RMDIR inbox2$
 
 TESTKIT.SUITE("saving")
 TESTKIT.EQ(UNPACKER.APPLY(plan, TRUE, done$), 3, "a dry run counts")

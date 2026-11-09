@@ -73,8 +73,8 @@ ENDFUNC
 ' What to do with the .eml files of the inbox folder: a map with
 ' "files" (one map per attachment with "eml", "index", "to" and
 ' "short", the path below the target folder) and "mails" (every mail
-' looked at). Pictures shown inside the text of a mail (with a
-' Content-ID) are left out unless keep_inline is TRUE.
+' looked at). Pictures shown inside the text of a mail (a Content-ID
+' the HTML refers to as cid:) are left out unless keep_inline is TRUE.
 EXPORT FUNC PLAN(inbox$, target$, keep_inline)
     DIM files = []
     DIM mails = []
@@ -91,8 +91,10 @@ EXPORT FUNC PLAN(inbox$, target$, keep_inline)
         DIM folder$ = FOLDER$(parsed, target$, offset)
         DIM att = parsed{"att_names"}
         DIM cids = parsed{"att_cids"}
+        DIM html$ = LCASE$(parsed{"html"})
         FOR j = 0 TO LEN(att) - 1
             DIM cid$ = cids[j]
+            IF INSTR(html$, "cid:" + LCASE$(cid$)) < 0 THEN cid$ = ""
             IF keep_inline ORELSE cid$ = "" THEN
                 DIM att$ = att[j]
                 DIM file$ = SAFE$(att$, 80)

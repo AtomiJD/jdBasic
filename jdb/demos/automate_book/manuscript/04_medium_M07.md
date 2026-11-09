@@ -71,8 +71,10 @@ The module does the work:
    so the cut to 60 characters never breaks a letter such as *ü* in
    half.
 5. A picture inside the text of a mail carries a Content-ID, which
-   `att_cids` lists. Attachments with a Content-ID are left out
-   unless `keep_inline` is on.
+   `att_cids` lists, and the HTML of the mail shows it with `cid:`
+   and that ID. Such pictures are left out unless `keep_inline` is
+   on. Outlook and Apple Mail give ordinary attachments a Content-ID
+   as well; as long as the text does not show them, they are saved.
 6. `FreeName$` makes sure no file is overwritten. When the folder
    already has an `invoice.pdf`, or the same plan already uses the
    name, the new file becomes `invoice (2).pdf`.
