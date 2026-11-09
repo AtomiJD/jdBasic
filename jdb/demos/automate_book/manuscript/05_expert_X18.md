@@ -32,11 +32,14 @@ The app guesses what each column holds:
 |---|---|
 | numbers | a number field |
 | dates, or day numbers under a head with "date" or "due" | a date field |
-| a few values that repeat, such as open, done, waiting | a list and a filter |
+| a few values that repeat under a head such as Status, State, Type, Kind or Priority | a list and a filter |
 | anything else | a text field |
 
 Columns the app must not change, such as an order number, go into the
 `read_only` setting; the form shows them but keeps them as they are.
+A new row is the exception: its form lets you type the order number
+once. A column of customers stays a text field even when the same
+few names repeat, so an order for a new customer can be typed.
 
 > **Watch out**
 > The app writes the whole workbook back with its values. Formulas,
@@ -48,7 +51,9 @@ Columns the app must not change, such as an order number, go into the
 > If Excel has the workbook open, the app refuses to save and says so;
 > close it there and save again. The app listens
 > only on this computer, so a colleague cannot open it from theirs;
-> X07 shows how to give them a copy of their own.
+> X07 shows how to give them a copy of their own. A save that a page
+> of another web site sends through your browser is refused, so a
+> site you visit while the app runs cannot change the workbook.
 
 ### The program
 

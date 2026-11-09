@@ -11,7 +11,7 @@
 
 EXPORT MODULE SHEETAPP
 
-IMPORT XLSX, JDWEB, LOGGER
+IMPORT XLSX, JDWEB, LOGGER, URL
 
 DIM gQ$ = CHR$(34)
 DIM gHeaders = []
@@ -68,7 +68,9 @@ ENDFUNC
 
 ' What a column holds: "number", "date", "choice" or "text", from its
 ' header and its values. Day numbers under a header that says date or
-' due are dates; a text column whose few values repeat is a choice.
+' due are dates. A text column whose few values repeat is a choice
+' when its header names a state or a kind, such as Status or Type; a
+' column of customers stays text, so a new customer can be typed.
 EXPORT FUNC KIND$(header$, values)
     DIM n = 0
     DIM numbers = 0
@@ -96,6 +98,18 @@ EXPORT FUNC KIND$(header$, values)
     IF numbers = n THEN RETURN "number"
     DIM distinct = LEN(MAP.KEYS(seen))
     IF n < 4 ORELSE distinct > 6 THEN RETURN "text"
+    DIM words$ = " status state stage type kind priority category "
+    DIM named = FALSE
+    DIM parts = SPLIT(REGEX.REPLACE$("[^a-z]+", low$, " "), " ")
+    DIM w = 0
+    FOR w = 0 TO LEN(parts) - 1
+        DIM part$ = parts[w]
+        DIM spot = INSTR(words$, " " + part$ + " ")
+        IF part$ <> "" ANDALSO spot >= 0 THEN
+            named = TRUE
+        ENDIF
+    NEXT w
+    IF NOT named THEN RETURN "text"
     IF distinct * 2 <= n + 1 THEN RETURN "choice"
     RETURN "text"
 ENDFUNC
@@ -259,6 +273,21 @@ FUNC Page$(title$, body$)
     RETURN h$ + ESC$(title$) + "</h1>" + body$ + "</body></html>"
 ENDFUNC
 
+' The filters of a list as the part of a link that keeps them.
+FUNC Kept$(filters)
+    DIM out$ = ""
+    DIM keys = MAP.KEYS(filters)
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM key$ = keys[k]
+        DIM v$ = filters{key$}
+        IF v$ <> "" THEN
+            out$ = out$ + "&f" + key$ + "=" + URL.ENCODE$(v$)
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
 ' The list page: search box, a filter per choice column, the table
 ' with sortable headers, an edit link per row and a link to add one.
 EXPORT FUNC LIST_HTML$(q$, filters, sort_col, descending, message$)
@@ -293,7 +322,8 @@ EXPORT FUNC LIST_HTML$(q$, filters, sort_col, descending, message$)
     FOR c = 0 TO LEN(gHeaders) - 1
         DIM dir$ = "asc"
         IF c = sort_col ANDALSO NOT descending THEN dir$ = "desc"
-        DIM link$ = "/?sort=" + STR$(c) + "&dir=" + dir$ + "&q=" + q$
+        DIM link$ = "/?sort=" + STR$(c) + "&dir=" + dir$
+        link$ = link$ + "&q=" + URL.ENCODE$(q$) + Kept$(filters)
         b$ = b$ + "<th><a" + Attr$("href", link$) + ">"
         b$ = b$ + ESC$(gHeaders[c]) + "</a></th>"
     NEXT c
@@ -322,10 +352,11 @@ EXPORT FUNC READ_ONLY(c)
     RETURN FALSE
 ENDFUNC
 
-' The field of column c in the form, holding the text v$.
-FUNC Field$(c, v$)
+' The field of column c in the form, holding the text v$. A new row
+' gets every column, the read-only ones too, such as its number.
+FUNC Field$(c, v$, new_row)
     DIM nm$ = Attr$("name", "c" + STR$(c))
-    IF READ_ONLY(c) THEN
+    IF READ_ONLY(c) ANDALSO NOT new_row THEN
         RETURN "<input" + nm$ + Attr$("value", v$) + " readonly>"
     ENDIF
     IF gKinds[c] = "choice" THEN
@@ -367,7 +398,7 @@ EXPORT FUNC FORM_HTML$(r, given, message$)
             v$ = SHOWN$(r, c)
         ENDIF
         b$ = b$ + "<label>" + ESC$(gHeaders[c]) + "</label>"
-        b$ = b$ + Field$(c, v$)
+        b$ = b$ + Field$(c, v$, r < 0)
     NEXT c
     b$ = b$ + "<p><button>Save</button> <a href=/>Back</a></p></form>"
     RETURN Page$(title$, b$)
@@ -385,6 +416,9 @@ EXPORT FUNC CHECK$(c, t$)
     IF kind$ = "date" ANDALSO NOT IsIso(t$) THEN
         RETURN gHeaders[c] + " needs a date as YYYY-MM-DD"
     ENDIF
+    IF kind$ = "date" ANDALSO NOT RealDay(t$) THEN
+        RETURN t$ + " is not a day of the calendar"
+    ENDIF
     IF kind$ = "choice" THEN
         DIM opts = gChoices[c]
         DIM k = 0
@@ -395,6 +429,18 @@ EXPORT FUNC CHECK$(c, t$)
         RETURN gHeaders[c] + " is one of " + JOIN(opts, ", ")
     ENDIF
     RETURN ""
+ENDFUNC
+
+' TRUE for a YYYY-MM-DD that is on the calendar, not 2026-02-30.
+FUNC RealDay(t$)
+    DIM ok = TRUE
+    TRY
+        DIM d = CDATE(t$)
+        ok = FORMAT_DATE$(d, "%Y-%m-%d") = t$
+    CATCH
+        ok = FALSE
+    ENDTRY
+    RETURN ok
 ENDFUNC
 
 ' A text as the cell the workbook stores for its column.
@@ -429,7 +475,8 @@ EXPORT FUNC APPLY$(r, version, given)
         DIM old$ = ""
         IF r >= 0 THEN old$ = SHOWN$(r, c)
         DIM new$ = old$
-        IF MAP.EXISTS(given, STR$(c)) ANDALSO NOT READ_ONLY(c) THEN
+        DIM fixed = READ_ONLY(c) ANDALSO r >= 0
+        IF MAP.EXISTS(given, STR$(c)) ANDALSO NOT fixed THEN
             new$ = given{STR$(c)}
         ENDIF
         IF new$ <> old$ THEN
@@ -535,7 +582,29 @@ FUNC OnNew(request)
     RETURN JDWEB.REPLY(FORM_HTML$(-1, blank, ""))
 ENDFUNC
 
+' TRUE when a request comes from a page of another site. A browser
+' names the page a form was sent from in Origin (or Referer); a web
+' page elsewhere could otherwise post into the workbook through the
+' browser on this computer. A request without either, as a script
+' sends it, is taken as local.
+EXPORT FUNC FOREIGN(request)
+    DIM hs = request{"headers"}
+    IF TYPEOF(hs) <> "OBJECT" THEN RETURN FALSE
+    DIM from$ = ""
+    IF MAP.EXISTS(hs, "referer") THEN from$ = "" + hs{"referer"}
+    IF MAP.EXISTS(hs, "origin") THEN from$ = "" + hs{"origin"}
+    from$ = LCASE$(TRIM$(from$))
+    IF from$ = "" ORELSE from$ = "null" THEN RETURN from$ = "null"
+    DIM host$ = "(?:localhost|127\.0\.0\.1)"
+    DIM local$ = "^https?://" + host$ + "(?::[0-9]+)?(?:/.*)?$"
+    RETURN NOT REGEX.MATCH(local$, from$)
+ENDFUNC
+
 FUNC OnSave(request)
+    IF FOREIGN(request) THEN
+        DIM refused$ = "Saving works only from this app's own page"
+        RETURN JDWEB.REPLY(refused$, 403)
+    ENDIF
     DIM r = CINT(VAL(JDWEB.PARAM$(request, "row")))
     DIM version = CINT(VAL(JDWEB.PARAM$(request, "version")))
     DIM given AS MAP
