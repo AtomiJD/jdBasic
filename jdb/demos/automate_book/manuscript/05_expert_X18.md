@@ -39,11 +39,14 @@ Columns the app must not change, such as an order number, go into the
 `read_only` setting; the form shows them but keeps them as they are.
 
 > **Watch out**
-> The app writes the sheet back with its values. Formulas, colours and
-> column widths of that sheet are not kept, and a formula arrives as
-> the value it last showed. Other sheets of the workbook are written
-> back as values too. Use the app for a workbook that is a table of
-> data, and keep the one with the formulas as it is. The app listens
+> The app writes the whole workbook back with its values. Formulas,
+> colours, column widths and date formats are lost on every sheet of
+> it: a summary sheet with `=SUMIF(...)` holds fixed
+> numbers afterwards and never adds up again, and every date column
+> shows day numbers. Use the app only for a workbook that is a plain
+> table of data, never for one with formulas or a layout you need.
+> If Excel has the workbook open, the app refuses to save and says so;
+> close it there and save again. The app listens
 > only on this computer, so a colleague cannot open it from theirs;
 > X07 shows how to give them a copy of their own.
 
@@ -64,8 +67,9 @@ The module holds the table, builds the pages and saves the changes:
    decides what the column holds.
 2. Excel stores a date as a day number, counted from the last day of
    1899. `SERIAL_DATE$` turns it into a date for the page and
-   `DATE_SERIAL` back into a day number for the workbook, so Excel
-   still shows a date after the app saved it.
+   `DATE_SERIAL` back into a day number for the workbook. The number
+   is right, but the cell loses its date format: after the app saved,
+   Excel shows *46356* until you format the column as a date again.
 3. `VIEW` answers the row numbers to show. `FILTER` keeps those that
    hold the search text and pass the filters, and `SORT` orders them
    by the key `SortKey$` builds from the column you clicked. Numbers

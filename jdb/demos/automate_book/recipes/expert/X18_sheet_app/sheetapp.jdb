@@ -26,6 +26,7 @@ DIM gSheet$ = ""
 DIM gBackups$ = ""
 DIM gStamp$ = ""
 DIM gLog$ = ""
+DIM gPending$ = ""
 
 ' ── reading the sheet ─────────────────────────────────────────
 
@@ -46,8 +47,8 @@ ENDFUNC
 ' An Excel day number as YYYY-MM-DD.
 EXPORT FUNC SERIAL_DATE$(serial)
     DIM base = CDATE("1899-12-30 12:00:00")
-    DIM day = DATEADD("D", INT(serial), base)
-    RETURN FORMAT_DATE$(day, "%Y-%m-%d")
+    DIM on_day = DATEADD("D", INT(serial), base)
+    RETURN FORMAT_DATE$(on_day, "%Y-%m-%d")
 ENDFUNC
 
 ' A YYYY-MM-DD date as an Excel day number.
@@ -440,11 +441,13 @@ EXPORT FUNC APPLY$(r, version, given)
     IF r < 0 THEN
         PUSH(gRows, row)
         PUSH(gVersions, 1)
-        Note("added row " + STR$(LEN(gRows) + 1) + ": " + what$)
+        gPending$ = "added row " + STR$(LEN(gRows) + 1) + ": " + what$
     ELSE
         gRows[r] = row
         gVersions[r] = gVersions[r] + 1
-        IF what$ <> "" THEN Note("row " + STR$(r + 2) + ": " + what$)
+        gPending$ = ""
+        DIM where$ = "row " + STR$(r + 2) + ": "
+        IF what$ <> "" THEN gPending$ = where$ + what$
     ENDIF
     RETURN ""
 ENDFUNC
@@ -541,12 +544,40 @@ FUNC OnSave(request)
         DIM v$ = TRIM$(JDWEB.PARAM$(request, "c" + STR$(c)))
         given{STR$(c)} = v$
     NEXT c
+    ' What the row was, so a save that fails takes the change back:
+    ' the list and the log show only what is in the workbook.
+    DIM rows_before = LEN(gRows)
+    DIM old_row = []
+    DIM old_version = 0
+    IF r >= 0 ANDALSO r < LEN(gRows) THEN
+        old_row = gRows[r]
+        old_version = gVersions[r]
+    ENDIF
     DIM why$ = APPLY$(r, version, given)
-    IF why$ = "" THEN why$ = SAVE$()
+    IF why$ = "" THEN
+        TRY
+            why$ = SAVE$()
+        CATCH
+            why$ = "The workbook is open in another program; "
+            why$ = why$ + "close it and save again"
+        ENDTRY
+        IF why$ = "" THEN
+            IF gPending$ <> "" THEN Note(gPending$)
+        ELSEIF r < 0 THEN
+            IF LEN(gRows) > rows_before THEN
+                gRows = TAKE(rows_before, gRows)
+                gVersions = TAKE(rows_before, gVersions)
+            ENDIF
+        ELSE
+            gRows[r] = old_row
+            gVersions[r] = old_version
+        ENDIF
+    ENDIF
     IF why$ <> "" THEN
         DIM status = 400
         IF INSTR(why$, "meantime") >= 0 THEN status = 409
         IF INSTR(why$, "on disk") >= 0 THEN status = 409
+        IF INSTR(why$, "another program") >= 0 THEN status = 409
         RETURN JDWEB.REPLY(FORM_HTML$(r, given, why$), status)
     ENDIF
     DIM back = JDWEB.REPLY("", 303)

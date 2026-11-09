@@ -134,6 +134,12 @@ SLEEP 1100
 XLSX.WRITE(book$, wb2)
 r = JDWEB.FETCH(port, "POST", "/save", "row=0&version=1&c2=done", FORM)
 TESTKIT.EQ(r{"status"}, 409, "is not overwritten")
+TESTKIT.ISTRUE(SHEETAPP.SHOWN$(0, 2) <> "done", "and the list keeps the row as the workbook has it")
+DIM app_log$ = TXTREADER$(PATH.JOIN$(folder$, "sheet_app.log"))
+TESTKIT.ISTRUE(INSTR(app_log$, "row 2: Status") < 0, "the log has no change that was not saved")
+DIM tries = SHEETAPP.ROW_COUNT()
+r = JDWEB.FETCH(port, "POST", "/save", "row=-1&version=0&c0=A-107&c1=Late&c2=open&c3=1&c4=2026-11-03", FORM)
+TESTKIT.EQ(SHEETAPP.ROW_COUNT(), tries, "a new row that could not be saved is not kept either")
 HTTP.SERVER.STOP()
 
 OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(folder$, "/", "\")])
