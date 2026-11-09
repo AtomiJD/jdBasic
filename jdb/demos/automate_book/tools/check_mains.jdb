@@ -4,6 +4,7 @@
 ' temporary folder, so "~" in a setting never reaches your own files.
 ' A program passes when both runs end with the same exit code and print
 ' the same lines, once times, durations and temporary names are masked.
+' FIXTURES (fixtures.jdb) gives the programs their input files.
 '
 '   jdbasic tools/check_mains.jdb [--jdbasic path] [--only E01]
 '       [--skip E05,X15] [--com] [--timeout 60] [--keep]
@@ -14,7 +15,7 @@
 '
 '   set JDBASIC_PATH=wizard;recipes/lib
 
-IMPORT WIZARD
+IMPORT WIZARD, FIXTURES
 
 DIM gLF$ = CHR$(10)
 DIM gSep$ = ";"
@@ -132,6 +133,7 @@ a{"name"} = "Mia Example"
 a{"email"} = "mia@example.com"
 a{"picked"} = SELECT(LAMBDA r -> r{"id"}, recipes)
 a{"values"}{"downloads_butler"}{"min_age_hours"} = 0
+FIXTURES.SETTINGS(a{"values"}, home$)
 DIM steps = WIZARD.INSTALL_PLAN(a, recipes, "recipes/lib")
 DIM done = WIZARD.APPLY(steps, FALSE)
 DIM conf$ = WIZARD.CONF_PATH$(a)
@@ -170,12 +172,14 @@ FOR k = 0 TO LEN(recipes) - 1
     ' runs see the same folder.
     DIM exe$ = LEFT$(src$, LEN(src$) - 4) + ".exe"
     DIM c = OS.EXEC(jdbasic$, ["-c", "-o", exe$, src$])
-    DIM args = [r{"program"}, "--dry-run", "--config", conf$]
+    DIM extra = FIXTURES.PREPARE(id$, home$, PATH.ABS$("."), folder$, jdbasic$)
+    DIM tail = APPEND(extra, ["--dry-run", "--config", conf$])
+    DIM args = APPEND([r{"program"}], tail)
     DIM i = Run(jdbasic$, args, folder$, limit_s)
     DIM note$ = ""
     DIM x = {"exit": -2, "text": ""}
     IF FILE.EXISTS(exe$) THEN
-        x = Run(exe$, ["--dry-run", "--config", conf$], folder$, limit_s)
+        x = Run(exe$, tail, folder$, limit_s)
     ELSE
         note$ = "-c: " + LastLine$(c{"output"})
     ENDIF

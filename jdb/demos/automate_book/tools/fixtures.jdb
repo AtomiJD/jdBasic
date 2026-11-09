@@ -1,0 +1,164 @@
+' fixtures.jdb: what check_mains puts into its temporary home so
+' that a main program's dry run gets past its first missing file: the
+' settings a recipe has no default for, and per recipe the input files
+' its chapter asks for under "Before you start". The data follow the
+' recipe tests and the sample files of the recipe folders.
+'
+'   IMPORT FIXTURES
+'   FIXTURES.SETTINGS(values, home$)        before the wizard installs
+'   DIM extra = FIXTURES.PREPARE(id$, home$, book$, folder$, jdbasic$)
+
+EXPORT MODULE FIXTURES
+
+IMPORT XLSX, MAIL
+
+DIM gLF$ = CHR$(10)
+
+FUNC Work$(home$)
+    RETURN PATH.JOIN$(home$, "Documents", "AutomateWork")
+ENDFUNC
+
+SUB Folder(path$)
+    IF NOT FILE.ISDIR(path$) THEN MKDIR path$
+ENDSUB
+
+SUB Copy(from$, to$)
+    Folder(PATH.DIRNAME$(to$))
+    BINWRITER to$, BINREADER$(from$)
+ENDSUB
+
+SUB Sheet(path$, name$, rows)
+    Folder(PATH.DIRNAME$(path$))
+    DIM wb = XLSX.NEW()
+    XLSX.SHEET(wb, name$, rows)
+    XLSX.WRITE(path$, wb)
+ENDSUB
+
+' The settings the wizard leaves empty and a dry run needs.
+EXPORT SUB SETTINGS(values, home$)
+    values{"guest_wifi"}{"ssid"} = "Guests"
+    values{"guest_wifi"}{"password"} = "guest-wifi-2026"
+    values{"invoice_generator"}{"company"} = "Example Ltd"
+    values{"invoice_generator"}{"address"} = "1 Example Road, 12345 Example"
+    values{"friday_status"}{"to"} = ["team@example.com"]
+    values{"log_detective"}{"folder"} = PATH.JOIN$(home$, "logs")
+    values{"meeting_briefing"}{"use_model"} = FALSE
+ENDSUB
+
+' The months whose report folders M02 may look for: this one and the
+' one before.
+FUNC Months(t)
+    DIM this$ = FORMAT_DATE$(t, "%Y-%m")
+    DIM before$ = FORMAT_DATE$(t - 32 * 86400, "%Y-%m")
+    RETURN [this$, before$]
+ENDFUNC
+
+SUB Reports(work$)
+    DIM head = ["Project", "Hours", "Costs", "Note"]
+    DIM months = Months(NOW())
+    DIM k = 0
+    FOR k = 0 TO LEN(months) - 1
+        DIM dir$ = PATH.JOIN$(work$, "reports", months[k])
+        Sheet(PATH.JOIN$(dir$, "anna.xlsx"), "Report", _
+            [head, ["Alpha", 10, 250.5, "on track"], ["Beta", 4, 80, ""]])
+        Sheet(PATH.JOIN$(dir$, "ben.xlsx"), "Report", _
+            [head, ["Beta", 6, 120, "late"], ["Gamma", 2.5, 40, ""]])
+    NEXT k
+ENDSUB
+
+SUB SavedMail(work$)
+    DIM inbox$ = PATH.JOIN$(work$, "saved mail")
+    Folder(inbox$)
+    DIM a = MAIL.MESSAGE("Anna Miller <anna@miller.example>", _
+        "mia@example.com", "Invoice October")
+    MAIL.PLAIN(a, "Please find the invoice attached.")
+    MAIL.SETDATE(a, "Fri, 23 Oct 2026 12:00:00 +0000")
+    MAIL.ATTACHDATA(a, "invoice.pdf", "%PDF-1.4 example")
+    MAIL.WRITEEML(a, PATH.JOIN$(inbox$, "1.eml"))
+ENDSUB
+
+' Creates the input files of one recipe and answers the arguments its
+' program needs beyond --dry-run and --config.
+EXPORT FUNC PREPARE(id$, home$, book$, folder$, jdbasic$)
+    DIM work$ = Work$(home$)
+    DIM extra = []
+    IF id$ = "E09" ORELSE id$ = "M12" ORELSE id$ = "X17" THEN
+        DIM ics$ = PATH.JOIN$(book$, "recipes", "easy", _
+            "E09_meeting_notes", "calendar.ics")
+        Copy(ics$, PATH.JOIN$(work$, "calendar.ics"))
+    ENDIF
+    IF id$ = "E12" THEN
+        DIM csv$ = PATH.JOIN$(book$, "recipes", "easy", _
+            "E12_birthday_reminder", "contacts.csv")
+        Copy(csv$, PATH.JOIN$(work$, "contacts.csv"))
+    ENDIF
+    IF id$ = "E13" ORELSE id$ = "X17" THEN
+        DIM todo = ["Mon: Call Miller about the offer", _
+            "Tue: ! Send invoice RE-0413", "Plan the team day"]
+        TXTWRITER PATH.JOIN$(work$, "todo.txt"), JOIN(todo, gLF$) + gLF$
+    ENDIF
+    IF id$ = "M01" THEN
+        Sheet(PATH.JOIN$(work$, "invoices.xlsx"), "Orders", _
+            [["Customer", "Email", "Item", "Quantity", "Price"], _
+            ["Miller Ltd", "buy@miller.example", "Copy paper", 10, 4.5], _
+            ["Stone & Co", "office@stone.example", "Toner", 2, 61.9]])
+    ENDIF
+    IF id$ = "M02" THEN Reports(work$)
+    IF id$ = "M04" THEN
+        DIM inbox$ = PATH.JOIN$(work$, "receipts", "inbox")
+        Folder(PATH.JOIN$(work$, "receipts"))
+        Folder(inbox$)
+        TXTWRITER PATH.JOIN$(inbox$, "fuel 2026-10-02.pdf"), "x"
+        TXTWRITER PATH.JOIN$(inbox$, "lunch 2026-10-05.pdf"), "x"
+    ENDIF
+    IF id$ = "M05" THEN
+        Folder(PATH.JOIN$(home$, "Documents", "Team"))
+        Sheet(PATH.JOIN$(home$, "Documents", "Team", "plan.xlsx"), "Plan", _
+            [["Name", "Kind", "From", "To", "Note"], _
+            ["Ann", "Vacation", "2026-10-19", "2026-10-23", "Lisbon"], _
+            ["Cem", "Sick", "21.10.2026", "", ""]])
+    ENDIF
+    IF id$ = "M06" THEN
+        DIM notes$ = PATH.JOIN$(home$, "Documents", "Team", "status")
+        Folder(PATH.JOIN$(home$, "Documents", "Team"))
+        Folder(notes$)
+        TXTWRITER PATH.JOIN$(notes$, "Ann.txt"), "- [x] Offer sent" + gLF$
+        TXTWRITER PATH.JOIN$(notes$, "Ben.txt"), "- [ ] Budget 2027" + gLF$
+    ENDIF
+    IF id$ = "M07" ORELSE id$ = "X17" THEN SavedMail(work$)
+    IF id$ = "M09" THEN
+        DIM log$ = PATH.JOIN$(book$, "recipes", "medium", _
+            "M09_log_detective", "example.log")
+        Copy(log$, PATH.JOIN$(home$, "logs", "app.log"))
+    ENDIF
+    IF id$ = "M11" THEN
+        DIM orders$ = PATH.JOIN$(book$, "recipes", "medium", _
+            "M11_data_cleaner", "orders.csv")
+        Copy(orders$, PATH.JOIN$(work$, "export.csv"))
+    ENDIF
+    IF id$ = "M15" THEN
+        DIM lines = ["time,event,project", _
+            "2026-10-01 09:00:00,start,Miller offer", _
+            "2026-10-01 12:30:00,start,Admin", _
+            "2026-10-01 13:00:00,stop,"]
+        Folder(PATH.JOIN$(work$, "time"))
+        TXTWRITER PATH.JOIN$(work$, "time", "log.csv"), JOIN(lines, gLF$) + gLF$
+    ENDIF
+    IF id$ = "X09" THEN
+        DIM db$ = PATH.JOIN$(work$, "reports", "bookings.db")
+        Folder(PATH.JOIN$(work$, "reports"))
+        DIM maker$ = PATH.JOIN$(folder$, "make_sample.jdb")
+        DIM last_day$ = FORMAT_DATE$(NOW(), "%Y-%m-%d")
+        DIM q$ = CHR$(34)
+        TXTWRITER maker$, "IMPORT PIPELINE" + gLF$ + "PIPELINE.SAMPLE(" + _
+            q$ + db$ + q$ + ", " + q$ + last_day$ + q$ + ")" + gLF$
+        DIM made = OS.EXEC(jdbasic$, [maker$])
+        KILL maker$
+    ENDIF
+    IF id$ = "M17" THEN
+        DIM md$ = PATH.JOIN$(work$, "review.md")
+        TXTWRITER md$, "# Review" + gLF$ + gLF$ + "- one" + gLF$ + "- two" + gLF$
+        PUSH(extra, md$)
+    ENDIF
+    RETURN extra
+ENDFUNC
