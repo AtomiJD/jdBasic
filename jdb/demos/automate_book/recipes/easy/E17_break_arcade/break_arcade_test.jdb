@@ -83,16 +83,20 @@ TESTKIT.EQ(ARCADE.KEY_DIR$("Left"), "left", "the arrow keys")
 TESTKIT.EQ(ARCADE.KEY_DIR$("w"), "up", "and W, A, S, D")
 TESTKIT.EQ(ARCADE.KEY_DIR$("Space"), "", "other keys do nothing")
 
-DIM jdbasic$ = PATH.NORMALIZE$("../../../build/jdBasic.exe")
-DIM here$ = "recipes/easy/E17_break_arcade/break_arcade.jdb"
-IF FILE.EXISTS(jdbasic$) ANDALSO FILE.EXISTS(here$) THEN
+' The game runs on the jdbasic that runs this test, from the recipe
+' folder or the book folder.
+DIM here$ = "break_arcade.jdb"
+IF NOT FILE.EXISTS(here$) THEN
+    here$ = "recipes/easy/E17_break_arcade/break_arcade.jdb"
+ENDIF
+IF OS.FEATURE("INTERPRETER") ANDALSO FILE.EXISTS(here$) THEN
     TESTKIT.SUITE("the window")
-    DIM w = OS.EXEC(jdbasic$, [here$, "--selftest"])
+    DIM w = OS.EXEC(OS.SELF$(), [here$, "--selftest"])
     TESTKIT.EQ(w{"exit_code"}, 0, "the game plays itself")
     TESTKIT.ISTRUE(INSTR(w{"output"}, "ALL ARCADE WINDOW TESTS PASSED") >= 0, _
         "and every check of it passes")
 ELSE
-    TESTKIT.SKIP("the window test needs the book folder and jdbasic")
+    TESTKIT.SKIP("the window test runs under jdbasic, not as a compiled test")
 ENDIF
 
 TESTKIT.REPORT()
