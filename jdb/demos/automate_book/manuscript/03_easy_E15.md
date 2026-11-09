@@ -56,8 +56,8 @@ QR module on a PDFGEN page:
 ### Run it
 
 Try `--dry-run` first: it prints the code's text and the code itself in
-the terminal. Scan the screen with your phone to check it before you
-print:
+the terminal, at half height, so it fits a standard window of 25
+lines. Scan the screen with your phone to check it before you print:
 
 ```
 jdbasic guest_wifi.jdb --dry-run
@@ -90,7 +90,8 @@ cards = 8
 out_file = "~/Documents/AutomateWork/print/guest_wifi.pdf"
 ```
 
-- **One large card for the reception desk**: `cards = 1`.
+- **One card for the reception desk**: `cards = 1` prints a single
+  card of the usual size; cut it out and stand it in a frame.
 - **An open network**: `security = "nopass"`; the card then shows
   `(none)` as the password.
 - **A hidden network**: add `hidden = true`, and phones look for it even

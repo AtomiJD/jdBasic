@@ -21,7 +21,7 @@ IF ssid$ = "" THEN THROW "Set guest_wifi.ssid in work.conf first."
 DIM payload$ = WIFICARD.PAYLOAD$(ssid$, password$, security$, hidden)
 IF WORKCONF.FLAG("dry-run") THEN
     PRINT payload$
-    PRINT QR.TEXT$(QR.MATRIX(payload$, {"ecc": "M"}))
+    PRINT QR.HALF$(QR.MATRIX(payload$, {"ecc": "M"}))
 ELSE
     MKDIR PATH.DIRNAME$(out$)
     DIM r = WIFICARD.SHEET(ssid$, password$, payload$, out$, n_cards)
