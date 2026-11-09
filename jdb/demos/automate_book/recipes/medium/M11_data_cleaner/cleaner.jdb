@@ -35,11 +35,11 @@ ENDFUNC
 
 ' "YYYY-MM-DD" for parts that make a real date, else "".
 FUNC Ymd$(y, m, d)
-    DIM year = y
-    IF year < 100 THEN year = year + 2000
+    DIM full_y = y
+    IF full_y < 100 THEN full_y = full_y + 2000
     IF m < 1 ORELSE m > 12 ORELSE d < 1 THEN RETURN ""
-    IF d > DT.DAYS_IN(year, m) THEN RETURN ""
-    RETURN STR$(year) + "-" + Two$(m) + "-" + Two$(d)
+    IF d > DT.DAYS_IN(full_y, m) THEN RETURN ""
+    RETURN STR$(full_y) + "-" + Two$(m) + "-" + Two$(d)
 ENDFUNC
 
 ' A date as YYYY-MM-DD from any of the forms exports use: an Excel
@@ -132,6 +132,37 @@ FUNC Answer(v, why$)
     RETURN {"value": v, "problem": why$}
 ENDFUNC
 
+' Whether a number reads two ways: one point, no comma, three digits
+' after it, such as 1.234 (a thousand and more in Germany, one and a
+' bit in England).
+EXPORT FUNC AMBIGUOUS(raw)
+    IF TYPEOF(raw) <> "STRING" THEN RETURN FALSE
+    DIM s$ = REGEX.REPLACE$("\s|€|\$|£|EUR|USD|CHF", TRIM$(raw), "")
+    RETURN REGEX.MATCH("^[+-]?[0-9]{1,3}\.[0-9]{3}-?$", s$)
+ENDFUNC
+
+' The decimal sign of a number column read from its cells: a comma
+' after the last point anywhere means comma, a point that cannot be a
+' thousands point means point; "auto" when every cell reads two ways.
+EXPORT FUNC COLUMN_DECIMAL$(rows, c)
+    DIM r = 0
+    DIM seen_point = FALSE
+    FOR r = 1 TO LEN(rows) - 1
+        IF c < LEN(rows[r]) THEN
+            DIM cell = rows[r][c]
+            DIM plain = TYPEOF(cell) = "STRING"
+            IF plain ANDALSO NOT AMBIGUOUS(cell) THEN
+                DIM comma = INSTR(cell, ",")
+                DIM point = INSTR(cell, ".")
+                IF comma >= 0 ANDALSO comma > point THEN RETURN ","
+                IF point >= 0 THEN seen_point = TRUE
+            ENDIF
+        ENDIF
+    NEXT r
+    IF seen_point THEN RETURN "."
+    RETURN "auto"
+ENDFUNC
+
 ' One cell cleaned for its kind: a map with "value" and "problem", ""
 ' when the cell is fine. Empty cells stay empty, and the kind "keep"
 ' leaves the cell as it is.
@@ -145,6 +176,9 @@ EXPORT FUNC CELL(raw, kind$, opts)
         RETURN Answer(d$, "")
     ENDIF
     IF kind$ = "number" THEN
+        IF opts{"decimal"} = "auto" ANDALSO AMBIGUOUS(raw) THEN
+            RETURN Answer(raw, "thousands or decimals? set decimal")
+        ENDIF
         DIM v = NUMBER(raw, opts{"decimal"})
         IF TYPEOF(v) = "NONE" THEN RETURN Answer(raw, "not a number")
         RETURN Answer(v, "")
@@ -199,6 +233,17 @@ EXPORT FUNC CLEAN(rows, spec, opts)
     DIM dups = 0
     DIM r = 0
     DIM c = 0
+    ' With decimal = "auto" each number column finds its sign once.
+    DIM col_opts = []
+    FOR c = 0 TO LEN(header) - 1
+        DIM one AS MAP
+        one{"day_first"} = opts{"day_first"}
+        one{"decimal"} = opts{"decimal"}
+        IF opts{"decimal"} = "auto" THEN
+            one{"decimal"} = COLUMN_DECIMAL$(rows, c)
+        ENDIF
+        PUSH(col_opts, one)
+    NEXT c
     FOR r = 1 TO LEN(rows) - 1
         DIM src = rows[r]
         DO WHILE LEN(src) < LEN(header)
@@ -210,7 +255,7 @@ EXPORT FUNC CLEAN(rows, spec, opts)
             DIM col$ = header[c]
             DIM kind$ = "keep"
             IF MAP.EXISTS(spec, col$) THEN kind$ = spec{col$}
-            DIM res = CELL(src[c], kind$, opts)
+            DIM res = CELL(src[c], kind$, col_opts[c])
             DIM was$ = "" + src[c]
             DIM now$ = "" + res{"value"}
             IF res{"problem"} <> "" THEN

@@ -29,6 +29,18 @@ TESTKIT.EQ(CLEANER.NUMBER("12.50-", "auto"), -12.5, "a minus behind")
 TESTKIT.EQ(CLEANER.NUMBER("1.234", ","), 1234, "a fixed decimal comma reads the point as thousands")
 TESTKIT.EQ(TYPEOF(CLEANER.NUMBER("12abc", "auto")), "NONE", "a text that is no number")
 TESTKIT.EQ(CLEANER.NUMBER(7, "auto"), 7, "a number stays a number")
+TESTKIT.ISTRUE(CLEANER.AMBIGUOUS("1.234"), "1.234 reads two ways")
+TESTKIT.ISTRUE(NOT CLEANER.AMBIGUOUS("1.23"), "1.23 does not")
+DIM de = [["Datum", "Betrag"], ["05.10.2026", "1.234"], ["06.10.2026", "2.500"], ["07.10.2026", "12,30"]]
+DIM de_spec = {"Datum": "date", "Betrag": "number"}
+DIM de_clean = CLEANER.CLEAN(de, de_spec, {"day_first": TRUE, "decimal": "auto"})
+TESTKIT.EQ(de_clean{"rows"}[1][1], 1234, "a comma elsewhere in the column makes 1.234 a thousand")
+TESTKIT.EQ(de_clean{"rows"}[2][1], 2500, "and 2.500 two thousand five hundred")
+TESTKIT.EQ(de_clean{"rows"}[3][1], 12.3, "the comma is the decimal sign")
+DIM only = [["Betrag"], ["1.234"], ["2.500"]]
+DIM only_clean = CLEANER.CLEAN(only, {"Betrag": "number"}, {"day_first": TRUE, "decimal": "auto"})
+TESTKIT.EQ(LEN(only_clean{"problems"}), 2, "a column that reads two ways is a problem, not a guess")
+TESTKIT.ISTRUE(INSTR(only_clean{"problems"}[0][3], "set decimal") >= 0, "that says what to set")
 
 TESTKIT.SUITE("text, IBAN and mail")
 TESTKIT.EQ(CLEANER.TIDY$("  Mueller   GmbH "), "Mueller GmbH", "spaces tidied")

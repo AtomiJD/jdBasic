@@ -91,7 +91,11 @@ workbook:
    brackets and a minus behind into a minus, and then decides which
    separator is the decimal one. With `decimal = "auto"` the last
    separator wins: in *1.234,50* the comma comes last, so it is the
-   decimal comma and the point separates thousands. Before and after
+   decimal comma and the point separates thousands. *1.234* alone
+   reads two ways, a thousand or one and a bit, so `CLEAN` looks at the
+   whole column once with `COLUMN_DECIMAL$`: a comma as decimal sign
+   anywhere decides for the column. A column of nothing but such
+   numbers goes to *Problems* with *set decimal*. Before and after
    that step a regular expression checks the shape of the text. This
    check matters, since `VAL("12abc")` answers 12 without a complaint,
    and a cleaner that turns *12abc* into 12 hides the problem it
@@ -170,7 +174,9 @@ Net = "number"
 
 The `columns` table names the kind of a column when the guess from its
 name is wrong. `keep` leaves a column exactly as it is, which is right
-for article numbers with leading zeros.
+for article numbers with leading zeros. `decimal = ","` in
+`[data_cleaner]` fixes the decimal sign for every number; the default
+`"auto"` finds it per column.
 
 The interesting changes are in the code:
 
