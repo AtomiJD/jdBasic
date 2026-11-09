@@ -354,13 +354,13 @@ FUNC Check(c, recipes, jdbasic$, std_lib$, book$, files$, limit_s)
         args = APPEND(args, ["--config", conf$])
         res = Run(jdbasic$, args, setup{"folder"}, limit_s)
     CATCH
-        res = {"exit": -2, "text": "step failed: " + ERRMSG$}
+        res = {"exit": -2, "text": "step failed: " + ERRMSG$, "failed": TRUE}
     ENDTRY
     FOR k = 0 TO LEN(envs) - 1
         SETENV envs[k][0], envs[k][2]
     NEXT k
     Remove(setup{"root"})
-    IF res{"exit"} = -2 THEN RETURN {"mark": "FAIL", "note": res{"text"}}
+    IF MAP.EXISTS(res, "failed") THEN RETURN {"mark": "FAIL", "note": res{"text"}}
     DIM text$ = res{"text"}
     DIM misses = []
     FOR k = 0 TO LEN(expects) - 1
