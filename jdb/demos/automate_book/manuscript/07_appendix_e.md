@@ -43,9 +43,9 @@ The minutes (*Min.*) are the time each recipe gives back in a normal week, as it
 | M17 Slide Builder | 30 | by hand | XLSX, PPTX | {{page:Bonus: M17 Slide Builder}} |
 | M18 Excel Refresh | 30 | weekly mon 07:00 | OUTBOX, MAIL | {{page:Bonus: M18 Excel Refresh}} |
 | X01 Personal Job Server | 30 | at logon | JOBSTATE, LOGGER, VAULT, DT, SCHED, RETRY, AUDIT | {{page:X01 Personal Job Server}} |
-| X02 Inbox Assistant | 60 | by hand | MAIL, OUTBOX, LOGGER, LLMAPI, RETRY | {{page:X02 Inbox Assistant}} |
+| X02 Inbox Assistant | 60 | by hand | MAIL, OUTBOX, LOGGER, VAULT, LLMAPI, RETRY | {{page:X02 Inbox Assistant}} |
 | X03 Find Anything | 40 | daily 12:30; at logon | JDWEB, LOGGER, SEARCH, DOCX, HTMLDOM | {{page:X03 Find Anything}} |
-| X04 Ticket Sync | 30 | by hand | LOGGER, REQ | {{page:X04 Ticket Sync}} |
+| X04 Ticket Sync | 30 | by hand | LOGGER, VAULT, REQ | {{page:X04 Ticket Sync}} |
 | X05 Calendar Bridge | 25 | every 2 hours | DT, LOGGER, OAUTH, CACHE, RETRY, REQ, ICAL | {{page:X05 Calendar Bridge}} |
 | X06 Work Cockpit | 20 | by hand | CONF | {{page:X06 Work Cockpit}} |
 | X07 Tools for Colleagues | 45 | by hand | CONF, PKG, RETRY | {{page:X07 Tools for Colleagues}} |
