@@ -122,8 +122,8 @@ programs = ["word", "powerpoint"]
 
 ### When it goes wrong
 
-- **"Every PDF is up to date" although you changed a document**: the
-  document was not saved yet. Save it and run again.
+- **"Every PDF in ... is up to date" although you changed a document**:
+  the document was not saved yet. Save it and run again.
 - **"Folder not found"**: `source` names a folder that does not
   exist yet. Create it, or point `source` at the folder of your
   documents. The run ends with exit code 1, so the Task Scheduler

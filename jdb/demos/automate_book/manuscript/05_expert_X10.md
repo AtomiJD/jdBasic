@@ -173,11 +173,13 @@ allow = ["E10", "E11"]
 
 ### When it goes wrong
 
-- **`--check` lists only the jdb tools**: the server could not load
-  `aitools.jdb`. Run the server by hand with the variable
-  `JDBASIC_MCP_LOG=1` set; it then reports on the error output which
-  module it tried and why it failed. A missing module such as WORKCONF
-  means the wizard's library folder `.jdbasic\lib` is missing.
+- **A tool fails although `--check` lists it**: the server lists every
+  tool of the ai-tools folder, also one whose module it could not load;
+  the error shows only when the tool is called. Run the server by hand
+  with the variable `JDBASIC_MCP_LOG=1` set; it then reports on the
+  error output which module it tried and why it failed. A missing
+  module such as WORKCONF means the wizard's library folder
+  `.jdbasic\lib` is missing.
 - **"The server did not answer"**: `jdbasic` in `[paths]` of
   `work.conf` does not point to a jdBasic with the MCP server. Run
   `jdbasic --version` and look for *MCP* among the features.
