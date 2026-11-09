@@ -43,6 +43,7 @@ Run from this folder; the tools import modules from `lib/` and
 set JDBASIC_PATH=C:\path\to\jdBasic\lib;C:\path\to\jdBasic\jdb\demos\automate_book\recipes\lib
 jdbasic tools/build_book.jdb             # out/: docx, html/, print and screen PDF, covers, epub
 jdbasic tools/check_recipes.jdb          # every recipe: lint, test, -c, test as .exe, main -c
+jdbasic tools/check_mains.jdb            # every main program --dry-run, interpreter vs .exe
 jdbasic tools/api_check.jdb              # every jdBasic name the manuscript mentions exists, calls fit
 jdbasic tools/mdbook_test.jdb            # the Markdown reader (also prose_, layout_, cover_, epub_test)
 jdbasic tools/pdf_preview.jdb out/book_print.pdf 1-4   # pages as PNG, needs Chrome
@@ -55,6 +56,14 @@ jdbasic wizard/setup_wizard.jdb --selftest   # the window wizard clicks through 
 the compiler at `../../../build/jdBasic.exe`; `--jdbasic path` names another.
 `--only E01` checks one recipe, `--skip E18,M18,X19` leaves out the three
 that drive Word, Excel and Outlook through COM.
+
+`check_mains` needs `wizard` on the module path as well
+(`set JDBASIC_PATH=wizard;recipes/lib`). The wizard installs every recipe
+into a temporary home, and each main program runs with `--dry-run` in the
+interpreter and as an `.exe` compiled next to it. Exit codes and output must
+match once times, durations and the wording of a stopping error are masked.
+The Office recipes run only with `--com`. A program that stops the same way
+in both, often for a missing input file, still counts as matching.
 
 ## Writing rules
 

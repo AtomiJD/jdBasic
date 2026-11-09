@@ -1,0 +1,206 @@
+' check_mains.jdb: every main program of the book with --dry-run, once
+' in the interpreter and once compiled with -c, against one work folder
+' the setup wizard installs with every recipe picked. Home is a
+' temporary folder, so "~" in a setting never reaches your own files.
+' A program passes when both runs end with the same exit code and print
+' the same lines, once times, durations and temporary names are masked.
+'
+'   jdbasic tools/check_mains.jdb [--jdbasic path] [--only E01]
+'       [--skip E05,X15] [--com] [--timeout 60] [--keep]
+'
+' Programs that drive Office (E18, M18, X19) run only with --com, since
+' they would steer the Office programs open on this computer. Run from
+' the book folder with the wizard on the module path:
+'
+'   set JDBASIC_PATH=wizard;recipes/lib
+
+IMPORT WIZARD
+
+DIM gLF$ = CHR$(10)
+DIM gSep$ = ";"
+IF OS.GETOS$() <> "WINDOWS" THEN gSep$ = ":"
+
+FUNC ArgAfter$(name$, fallback$)
+    DIM argv = OS.ARGS()
+    DIM k = 1
+    FOR k = 1 TO LEN(argv) - 2
+        IF argv[k] = "--" + name$ THEN RETURN argv[k + 1]
+    NEXT k
+    RETURN fallback$
+ENDFUNC
+
+FUNC HasArg(name$)
+    DIM argv = OS.ARGS()
+    DIM k = 1
+    FOR k = 1 TO LEN(argv) - 1
+        IF argv[k] = "--" + name$ THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+' TRUE when id$ is one of the comma-separated ids in list$.
+FUNC Listed(id$, list$)
+    IF list$ = "" THEN RETURN FALSE
+    DIM ids = SPLIT(UCASE$(list$), ",")
+    RETURN UCASE$(id$) IN SELECT(LAMBDA s$ -> TRIM$(s$), ids)
+ENDFUNC
+
+' Runs a program in a folder and answers its exit code (-1 when it ran
+' out of time) and its output.
+FUNC Run(program$, args, cwd$, limit_s)
+    DIM log$ = MKTEMP$("checkmains") + ".txt"
+    DIM opts = {"output": log$, "hidden": TRUE, "cwd": cwd$}
+    DIM pid = OS.SPAWN(program$, args, opts)
+    DIM code = OS.WAIT(pid, limit_s * 1000)
+    IF TYPEOF(code) = "NONE" THEN
+        DIM ended = OS.KILL(pid)
+        DIM gone = OS.WAIT(pid, 5000)
+        code = -1
+    ENDIF
+    DIM text$ = ""
+    IF FILE.EXISTS(log$) THEN
+        text$ = REPLACE$(TXTREADER$(log$), CHR$(13), "")
+        TRY
+            KILL log$
+        CATCH
+            text$ = text$ + gLF$ + "not ended: " + ERRMSG$
+        ENDTRY
+    ENDIF
+    RETURN {"exit": code, "text": text$}
+ENDFUNC
+
+' The output with what differs from run to run masked: colour codes,
+' times of day, dates with a time, durations and temporary names. An
+' error that ends the program is worded by each backend in its own
+' way, so both become "stopped: " and the message.
+FUNC Masked$(text$, home$)
+    DIM t$ = REGEX.REPLACE$(CHR$(27) + "\[[0-9;]*m", text$, "")
+    t$ = REPLACE$(t$, home$, "<home>")
+    t$ = REPLACE$(t$, REPLACE$(home$, "\", "/"), "<home>")
+    t$ = REGEX.REPLACE$("\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?", t$, "<time>")
+    t$ = REGEX.REPLACE$("\b\d{1,2}:\d{2}(?::\d{2})?\b", t$, "<clock>")
+    t$ = REGEX.REPLACE$("\d+(?:\.\d+)? ?(?:ms|s)\b", t$, "<took>")
+    t$ = REGEX.REPLACE$("\b\w{3}[0-9A-F]{1,4}\.tmp\b", t$, "<tmp>")
+    DIM lines = SPLIT(t$, gLF$)
+    lines = SELECT(LAMBDA s$ -> REGEX.REPLACE$("^Error #\d+: (.*?)(?: at line \d+(?: of \S+)?)?$", s$, "stopped: $1"), lines)
+    lines = SELECT(LAMBDA s$ -> REGEX.REPLACE$("^Unhandled exception: (.*)$", s$, "stopped: $1"), lines)
+    t$ = JOIN(lines, gLF$)
+    RETURN TRIM$(t$)
+ENDFUNC
+
+' The first line where two outputs differ, as "interp | exe".
+FUNC FirstDiff$(a$, b$)
+    DIM la = SPLIT(a$, gLF$)
+    DIM lb = SPLIT(b$, gLF$)
+    DIM n = MAX([LEN(la), LEN(lb)])
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM x$ = ""
+        DIM y$ = ""
+        IF k < LEN(la) THEN x$ = la[k]
+        IF k < LEN(lb) THEN y$ = lb[k]
+        IF x$ <> y$ THEN RETURN "line " + STR$(k + 1) + ": " + x$ + " | " + y$
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+FUNC LastLine$(text$)
+    DIM lines = SPLIT(TRIM$(text$), gLF$)
+    IF LEN(lines) = 0 THEN RETURN ""
+    RETURN LEFT$(TRIM$(lines[LEN(lines) - 1]), 70)
+ENDFUNC
+
+DIM jdbasic$ = PATH.ABS$(ArgAfter$("jdbasic", OS.SELF$()))
+DIM only$ = ArgAfter$("only", "")
+DIM skip$ = ArgAfter$("skip", "")
+DIM limit_s = VAL(ArgAfter$("timeout", "60"))
+DIM office = HasArg("com")
+DIM std_lib$ = PATH.JOIN$(PATH.DIRNAME$(jdbasic$), "lib")
+
+DIM home$ = MKTEMP$("checkmains_home")
+MKDIR home$
+DIM own = ["Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos"]
+DIM n_own = 0
+FOR n_own = 0 TO LEN(own) - 1
+    MKDIR PATH.JOIN$(home$, own[n_own])
+NEXT n_own
+TXTWRITER PATH.JOIN$(home$, "Downloads", "report.pdf"), "pdf"
+DIM recipes = WIZARD.RECIPES("recipes")
+DIM a = WIZARD.DEFAULTS(recipes, home$)
+a{"jdbasic"} = jdbasic$
+a{"name"} = "Mia Example"
+a{"email"} = "mia@example.com"
+a{"picked"} = SELECT(LAMBDA r -> r{"id"}, recipes)
+a{"values"}{"downloads_butler"}{"min_age_hours"} = 0
+DIM steps = WIZARD.INSTALL_PLAN(a, recipes, "recipes/lib")
+DIM done = WIZARD.APPLY(steps, FALSE)
+DIM conf$ = WIZARD.CONF_PATH$(a)
+
+DIM old_path$ = GETENV$("JDBASIC_PATH")
+DIM old_profile$ = GETENV$("USERPROFILE")
+DIM old_home$ = GETENV$("HOME")
+SETENV "JDBASIC_PATH", std_lib$ + gSep$ + a{"user_lib"}
+SETENV "USERPROFILE", home$
+SETENV "HOME", home$
+
+PRINT "Work folder: "; a{"work"}
+PRINT FORMAT$("{:<28} {:>6} {:>6} {:>6}  {}", "program", "interp", "exe", "same", "note")
+DIM failed = 0
+DIM stopped = 0
+DIM checked = 0
+DIM k = 0
+FOR k = 0 TO LEN(recipes) - 1
+    DIM r = recipes[k]
+    DIM id$ = r{"id"}
+    IF only$ <> "" ANDALSO NOT Listed(id$, only$) THEN CONTINUEFOR
+    IF Listed(id$, skip$) THEN CONTINUEFOR
+    DIM folder$ = PATH.JOIN$(a{"work"}, "recipes", r{"folder"})
+    DIM src$ = PATH.JOIN$(folder$, r{"program"})
+    DIM label$ = id$ + " " + r{"program"}
+    IF Listed(id$, "E18,M18,X19") ANDALSO NOT office THEN
+        PRINT FORMAT$("{:<28} {:>6} {:>6} {:>6}  {}", label$, "-", "-", "-", "drives Office; run with --com")
+        CONTINUEFOR
+    ENDIF
+    IF INSTR(TXTREADER$(src$), "--dry-run") < 0 THEN
+        PRINT FORMAT$("{:<28} {:>6} {:>6} {:>6}  {}", label$, "-", "-", "-", "has no --dry-run")
+        CONTINUEFOR
+    ENDIF
+    checked = checked + 1
+    ' Compiled first and next to the program, as a reader does, so both
+    ' runs see the same folder.
+    DIM exe$ = LEFT$(src$, LEN(src$) - 4) + ".exe"
+    DIM c = OS.EXEC(jdbasic$, ["-c", "-o", exe$, src$])
+    DIM args = [r{"program"}, "--dry-run", "--config", conf$]
+    DIM i = Run(jdbasic$, args, folder$, limit_s)
+    DIM note$ = ""
+    DIM x = {"exit": -2, "text": ""}
+    IF FILE.EXISTS(exe$) THEN
+        x = Run(exe$, ["--dry-run", "--config", conf$], folder$, limit_s)
+    ELSE
+        note$ = "-c: " + LastLine$(c{"output"})
+    ENDIF
+    DIM mi$ = Masked$(i{"text"}, home$)
+    DIM mx$ = Masked$(x{"text"}, home$)
+    DIM same = i{"exit"} = x{"exit"} ANDALSO mi$ = mx$
+    IF note$ = "" ANDALSO NOT same THEN note$ = FirstDiff$(mi$, mx$)
+    IF note$ = "" ANDALSO i{"exit"} <> 0 THEN note$ = "both: " + LastLine$(mi$)
+    IF i{"exit"} = -1 ANDALSO note$ = "" THEN note$ = "both ran out of time"
+    IF NOT same THEN failed = failed + 1
+    IF same ANDALSO i{"exit"} <> 0 THEN stopped = stopped + 1
+    DIM mark$ = "ok"
+    IF NOT same THEN mark$ = "FAIL"
+    PRINT FORMAT$("{:<28} {:>6} {:>6} {:>6}  {}", label$, STR$(i{"exit"}), STR$(x{"exit"}), mark$, note$)
+NEXT k
+
+SETENV "JDBASIC_PATH", old_path$
+SETENV "USERPROFILE", old_profile$
+SETENV "HOME", old_home$
+IF NOT HasArg("keep") THEN
+    IF OS.GETOS$() = "WINDOWS" THEN
+        DIM gone = OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", home$])
+    ELSE
+        DIM gone = OS.EXEC("rm", ["-rf", home$])
+    ENDIF
+ENDIF
+PRINT STR$(checked); " programs checked, "; STR$(failed); " differ, "; STR$(stopped); " stopped the same way in both"
+IF failed > 0 THEN END 1
