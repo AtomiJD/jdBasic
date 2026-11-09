@@ -147,11 +147,9 @@ FUNC RunOnce(jdbasic$, file$, limit_s)
     ENDIF
     DIM full$ = ABSOLUTE$(file$)
     DIM log$ = MKTEMP$("testrun") + ".txt"
-    DIM back$ = CD()
-    DIM moved$ = CD(PATH.DIRNAME$(full$))
     DIM opts = {"output": log$, "hidden": TRUE}
+    opts{"cwd"} = PATH.DIRNAME$(full$)
     DIM pid = OS.SPAWN(program$, [PATH.BASENAME$(full$)], opts)
-    moved$ = CD(back$)
     DIM code = OS.WAIT(pid, limit_s * 1000)
     DIM timed_out = TYPEOF(code) = "NONE"
     IF timed_out THEN
@@ -162,7 +160,12 @@ FUNC RunOnce(jdbasic$, file$, limit_s)
     DIM output$ = ""
     IF FILE.EXISTS(log$) THEN
         output$ = TXTREADER$(log$)
-        KILL log$
+        ' A test that could not be ended still holds its log open.
+        TRY
+            KILL log$
+        CATCH
+            output$ = output$ + CHR$(10) + "not ended: " + ERRMSG$
+        ENDTRY
     ENDIF
     DIM c = COUNTS(output$)
     DIM out = {"file": file$, "exit": code}

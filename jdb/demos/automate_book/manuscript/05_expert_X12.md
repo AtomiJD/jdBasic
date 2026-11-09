@@ -84,15 +84,14 @@ And these are the properties of Monday's reports, in the folder
    as well. `SEARCH_PATH$` puts every folder that holds a `.jdb` file
    on the module search path, after the folders that were there
    already, and `RUN_ONE` sets it as `JDBASIC_PATH` for the test.
-3. **A process and a folder of its own.** `RunOnce` changes into the
-   folder of the test with `CD`, starts `jdbasic` on it with
-   `OS.SPAWN` and changes back. `OS.WAIT` gives the test
-   `timeout_seconds` (120 unless you set it); a test that is still
-   running then is ended with `OS.KILL` and reported as *TIMEOUT*,
-   so one test that waits for the network never holds up the run. A test that crashes takes only its own process
-   down, and a test that reads a sample file next to itself finds it.
-   Every path is made absolute with `ABSOLUTE$` first, because after
-   the change of folder a relative path points somewhere else.
+3. **A process and a folder of its own.** `RunOnce` starts `jdbasic`
+   on the test with `OS.SPAWN`, in the folder of the test (the option
+   `cwd`). A test that crashes takes only its own process down, and a
+   test that reads a sample file next to itself finds it. `OS.WAIT`
+   gives the test `timeout_seconds` (120 unless you set it); a test
+   that is still running then is ended with `OS.KILL` and reported as
+   *TIMEOUT*, so one test that waits for the network never holds up
+   the run. Every path is made absolute with `ABSOLUTE$` first.
 4. **Reading the result.** TESTKIT ends with a line like *22 passed, 0
    failed*. `PLAIN$` takes out the colour codes of the console, and
    `COUNTS` reads the two numbers. A test is fine when its process
