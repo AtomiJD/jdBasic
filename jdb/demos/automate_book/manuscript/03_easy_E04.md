@@ -47,7 +47,9 @@ old archives:
    compresses what gets smaller and stores the rest.
 4. `OLD` lists the archives that start with `backup` and end with
    `.zip`, sorted by name, which is sorted by date. Everything before
-   the newest `keep` archives goes, through `PRUNE` and `KILL`.
+   the newest `keep` archives goes, through `PRUNE` and `KILL`. A dry
+   run counts the archive it would write, so it names the same ones
+   the real run deletes.
 
 ### Run it
 

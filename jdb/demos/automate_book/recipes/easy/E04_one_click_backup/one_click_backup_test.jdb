@@ -42,6 +42,8 @@ TESTKIT.EQ(back{"Work/Offers/2026/Müller.txt"}, "offer", "and read back")
 TESTKIT.EQ(back{"Photos/small.jpg"}, "jpg", "from the second folder too")
 
 TESTKIT.SUITE("cleaning up")
+DIM planned = BACKUP.OLD(target$, "backup", 3, 1)
+TESTKIT.EQ(LEN(planned), 3, "a dry run counts the archive it would write")
 DIM old = BACKUP.OLD(target$, "backup", 3)
 TESTKIT.EQ(LEN(old), 2, "five archives, keep three, two to go")
 TESTKIT.ISTRUE(ENDSWITH(old[0], "backup 2026-09-01 1800.zip"), "the oldest first")

@@ -34,7 +34,10 @@ ELSE
     DIM n_written$ = WORKCONF.PLURAL$(n_files, "file")
     PRINT "wrote "; zip_path$; " with "; n_written$
 ENDIF
-DIM n_old = BACKUP.PRUNE(BACKUP.OLD(target$, "backup", keep), dry_run)
+DIM coming = 0
+IF dry_run THEN coming = 1
+DIM stale = BACKUP.OLD(target$, "backup", keep, coming)
+DIM n_old = BACKUP.PRUNE(stale, dry_run)
 DIM old$ = WORKCONF.PLURAL$(n_old, "older archive")
 IF n_old > 0 ANDALSO dry_run THEN PRINT old$; " would be cleaned up."
 IF n_old > 0 ANDALSO NOT dry_run THEN PRINT old$; " cleaned up."

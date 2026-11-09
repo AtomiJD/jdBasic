@@ -84,8 +84,9 @@ EXPORT FUNC WRITE(entries, zip_path$)
 ENDFUNC
 
 ' The archives of a prefix in the target folder beyond the newest
-' keep ones, oldest first.
-EXPORT FUNC OLD(target$, prefix$, keep)
+' keep ones, oldest first. coming counts archives about to be written
+' that are not on disk yet: a dry run passes 1 for the one it plans.
+EXPORT FUNC OLD(target$, prefix$, keep, coming = 0)
     DIM ours = []
     DIM entries = SORT(FILE.LIST(PATH.JOIN$(target$, "*")))
     DIM k = 0
@@ -96,8 +97,10 @@ EXPORT FUNC OLD(target$, prefix$, keep)
             PUSH(ours, PATH.JOIN$(target$, file_name$))
         ENDIF
     NEXT k
-    IF LEN(ours) <= keep THEN RETURN []
-    RETURN TAKE(LEN(ours) - keep, ours)
+    DIM room = keep - coming
+    IF room < 0 THEN room = 0
+    IF LEN(ours) <= room THEN RETURN []
+    RETURN TAKE(LEN(ours) - room, ours)
 ENDFUNC
 
 ' Deletes the archives and prints a line for each; with dry_run it
