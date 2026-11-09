@@ -46,7 +46,9 @@ opens a target on your system:
 4. Every target is opened by the program that opens things on your
    system: Explorer on Windows. Explorer starts a program, shows a
    folder, opens a file with the program it belongs to and a web
-   address in your browser.
+   address in your browser. It only understands the backslashes of
+   Windows, so `PLAN` turns `C:/Work` into `C:\Work` for it; with
+   slashes, Explorer would quietly open *Documents* instead.
 5. `START` calls `OS.EXEC` with the opener and the target as an
    argument list. A target is never joined into a command line, so a
    folder called `R&D` opens as a folder and runs nothing else.

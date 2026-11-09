@@ -65,7 +65,13 @@ EXPORT FUNC PLAN(settings, weekday, os$)
             launch{"target"} = target$
             launch{"kind"} = KIND$(target$)
             launch{"program"} = OPENER$(os$)
-            launch{"args"} = [target$]
+            ' Explorer reads C:/Work as nothing it knows and opens
+            ' Documents instead; it needs the backslashes of Windows.
+            DIM arg$ = target$
+            IF os$ = "WINDOWS" ANDALSO launch{"kind"} <> "web" THEN
+                arg$ = REPLACE$(target$, "/", "\")
+            ENDIF
+            launch{"args"} = [arg$]
             PUSH(plan, launch)
         ENDIF
     NEXT k

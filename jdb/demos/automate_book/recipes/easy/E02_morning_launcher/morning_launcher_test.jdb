@@ -38,6 +38,9 @@ TESTKIT.EQ(TargetsOf$(monday), "https://mail.example.com|C:/Work/Projects|C:/Too
 DIM first = monday[0]
 TESTKIT.EQ(first{"program"}, "explorer", "Explorer opens it")
 TESTKIT.EQARRAY(first{"args"}, ["https://mail.example.com"], "with the target as its one argument")
+TESTKIT.EQARRAY(monday[1]{"args"}, ["C:\Work\Projects"], "a folder with the backslashes Explorer needs")
+TESTKIT.EQ(monday[1]{"target"}, "C:/Work/Projects", "while the plan shows it as written")
+TESTKIT.EQARRAY(LAUNCHER.PLAN(settings, 1, "LINUX")[1]{"args"}, ["C:/Work/Projects"], "other systems keep the slashes")
 DIM friday = LAUNCHER.PLAN(settings, 5, "WINDOWS")
 TESTKIT.EQ(LEN(friday), 3, "Friday adds the week report")
 DIM sunday = LAUNCHER.PLAN(settings, 0, "WINDOWS")
