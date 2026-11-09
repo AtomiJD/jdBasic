@@ -58,8 +58,8 @@ The minutes (*Min.*) are the time each recipe gives back in a normal week, as it
 | X14 Secrets and Audit Trail | 10 | by hand | JOBSTATE, VAULT, AUDIT, SECRET | {{page:X14 Secrets and Audit Trail}} |
 | X15 Balance Score | 15 | at logon | OUTBOX, JDWEB, DT, ICAL, DF, SVG, TMPL, MAIL | {{page:X15 Balance Score}} |
 | X16 Desktop Robot | 60 | by hand | LOGGER, INPUTKIT, CONF, IMG | {{page:Bonus: X16 Desktop Robot}} |
-| X17 Meeting Briefing | 45 | weekdays 07:30 | OUTBOX, MAIL, LOGGER, ICAL, DF, LLMAPI, RETRY, PDFGEN | {{page:Bonus: X17 Meeting Briefing}} |
-| X18 Spreadsheet to Web App | 40 | by hand | JDWEB, XLSX, LOGGER | {{page:Bonus: X18 Spreadsheet to Web App}} |
+| X17 Meeting Briefing | 45 | weekdays 07:30 | OUTBOX, MAIL, LOGGER, ICAL, DF, LLMAPI, RETRY, PDFGEN, DT | {{page:Bonus: X17 Meeting Briefing}} |
+| X18 Spreadsheet to Web App | 40 | by hand | JDWEB, XLSX, LOGGER, URL | {{page:Bonus: X18 Spreadsheet to Web App}} |
 | X19 Outlook Bridge | 20 | weekdays 07:00 | OUTBOX, ICAL, MAIL, OFFICEKIT | {{page:Bonus: X19 Outlook Bridge}} |
 
 | Level | Recipes | Minutes a week |
