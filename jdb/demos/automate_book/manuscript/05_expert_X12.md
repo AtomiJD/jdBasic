@@ -13,8 +13,8 @@ three recipes stopped with an error that had nothing to do with what
 she had changed.
 
 Each recipe of this book comes with a test. The tests only help when
-somebody runs them, and after a change, nobody remembers to run all
-forty of them.
+somebody runs them, and after a change, nobody remembers to run every
+one of them.
 
 ### What you get
 

@@ -174,10 +174,10 @@ perhaps a lost order.
 
 The recipes in this book reduce risk in a few fixed ways. They plan
 first and act second, so you can see what they would do before they do
-it. They never overwrite a file; they choose a free name instead. They
-write a log. And the ones that send something to other people prepare
-the message for you to check rather than sending it on their own,
-unless you deliberately change that.
+it. They never overwrite a file you did not ask them to change; they
+choose a free name instead. They write a log. And the ones that send
+something to other people prepare the message for you to check rather
+than sending it on their own, unless you deliberately change that.
 
 Still, the question stays with you. If a mistake would hurt someone, or
 cost money, or cannot be undone, keep a person in the loop.
@@ -434,9 +434,10 @@ Some recipes need a password: the mail server for sending, a web page
 behind a login, a guest network. The rule is simple: a password does
 not belong in a program and not in a settings file that others can
 read. The recipes in this book ask for passwords when they need them
-and keep them in memory only. Chapter 5 shows the job server that asks
-once in the morning, and recipe X14 discusses safer ways to store
-secrets when a program must run unattended.
+and keep them in memory only, unless you stored one in the Windows
+Credential Manager, where Windows keeps it encrypted for your account
+(Chapter 4). Recipe X14 in Chapter 5 discusses the safer ways to
+store secrets when a program must run unattended.
 
 If you ever find a password written into one of your own programs,
 take it out and change the password. It may already have been seen by
@@ -464,7 +465,7 @@ the programs and plans when they run. You can read the programs and
 change their settings, but you do not have to touch the code. These
 recipes are for anyone who uses a computer at work.
 
-**Medium** recipes, in Chapter 4, are programs of one or two hundred
+**Medium** recipes, in Chapter 4, are programs of two or three hundred
 lines that you set up yourself. They work with documents, mail,
 calendars and data: invoices from a spreadsheet, letters from a
 template, a weekly status mail, a cleaned up export. They expect you to

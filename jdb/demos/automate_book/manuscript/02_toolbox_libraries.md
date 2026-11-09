@@ -234,7 +234,8 @@ run.
 the Task Scheduler keeps their output for you. The systems of
 Chapter 5 run for weeks, and there LOGGER is everywhere: the personal
 job server of X01 writes a log line for each run, retry and
-failure, and the health checks of X13 read those lines back.
+failure. The health checks of X13 read the job state that X01 keeps
+beside it, not the log.
 
 ### DT: dates as numbers you can count with
 
@@ -379,9 +380,9 @@ Ben Ortiz was born on 1975-11-02
 > field, and a field in quotes may even span several lines, as a
 > spreadsheet writes a cell with a line break.
 
-**Where the recipes use it.** E07 Time Tracker keeps its log with
-`CSVWRITER` and reads it back with `CSVREADER`. E12 Birthday Reminder
-reads the contact list the same way. E09 Meeting Notes Starter gets its
+**Where the recipes use it.** E07 Time Tracker adds each line of its
+log with `TXTWRITER` and reads the log back with `CSVREADER`. E12
+Birthday Reminder reads the contact list with `CSVREADER` too. E09 Meeting Notes Starter gets its
 meetings from ICAL as a data frame and reads it with `DF.ROW`. The
 report pipeline of X09 in Chapter 5 is built on DF from end to end.
 
@@ -735,7 +736,8 @@ Windows Task Scheduler, which the setup wizard fills in for you. Their
 `recipe.toml` files use the same words SCHED understands, so a schedule
 reads the same in both places. In Chapter 5 the personal job server of
 X01 replaces the scattered scheduled tasks with one program built on
-`SCHED.JOB` and `SCHED.SERVE`.
+`SCHED.NEXTRUN` and `SCHED.PREVRUN`, with a loop of its own that
+keeps the state of every job.
 
 ### TMPL: text with holes
 
@@ -833,16 +835,19 @@ uses one explains the calls it needs.
 | REQ | HTTP requests with sessions, cookies and headers | X04, X11 |
 | JDWEB | small web applications and local web pages | M08, X03 |
 | SVG | charts and drawings as SVG pictures | M08, M09 |
-| VALID, SCHEMA | checking that data has the right form | M11 |
+| VALID | checking that data has the right form | M11 |
+| SCHEMA | checking a JSON document against a schema | no recipe; its readme shows how |
 | FUZZY | names that are almost the same | M11 |
 | CLI | the arguments of a command line tool | M13 |
 | RETRY | trying again after a failure, with growing pauses | X01, X11 |
 | SEARCH | full-text search over many documents | X03 |
-| JWT, OAUTH | signed tokens and logging in to web services | X04, X05 |
+| OAUTH | logging in to web services | X05 |
+| JWT | signed tokens | X14, through AUDIT |
 | POOL | spreading work over all the cores of a computer | X08 |
 | DB | SQLite databases without hand-written SQL | X09 |
 | LLMAPI | one way to talk to a language model, local or online | X02 |
-| HTMLDOM, CACHE | reading web pages and keeping what was fetched | X11 |
+| HTMLDOM | reading web pages | X03, X11 |
+| CACHE | keeping what was fetched | X05, X11 |
 | TESTKIT, PROPTEST | tests for your own programs | every recipe, X12 |
 | METRICS | counters and timings for programs that run alone | X13 |
 | SECRET | password hashes and random tokens | X14 |

@@ -10,7 +10,7 @@ checking that nothing went missing on the way.
 The recipes of this chapter take over that kind of work. They read and
 write the files an office runs on: Excel workbooks, Word documents, PDF,
 calendars, mail. Each one does a job that is worth an hour or two a
-week, and each one is a program of 80 to 200 lines that you will read
+week, and each one is a program of 200 to 350 lines that you will read
 and change.
 
 ## What changes at the medium level

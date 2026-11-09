@@ -11,8 +11,8 @@ annoys you most and start there.
 The recipes come in three levels. The fifteen **easy** recipes in Chapter 3
 run as soon as the wizard has switched them on; you change their settings
 in one file and never have to touch the code. The **medium** recipes in
-Chapter 4 expect you to read a program of a hundred lines and change a few
-of them. The **expert** recipes in Chapter 5 are small systems that run on
+Chapter 4 expect you to read a program of two or three hundred lines
+and change a few of them. The **expert** recipes in Chapter 5 are small systems that run on
 their own, with logs, retries and tests.
 
 Every program in this book is printed from the file that was tested. Each

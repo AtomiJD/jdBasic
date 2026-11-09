@@ -170,9 +170,9 @@ matters for the large jobs of Chapter 5.
 Compiling needs the Microsoft C++ build tools on the computer that
 compiles, not on the one that runs the result. The forms release this
 book starts with brings the compiler with it; `jdbasic --version`
-lists *NativeC* among its features. Every recipe in this book was
-compiled and tested as an `.exe` as well, so nothing changes when
-you compile one.
+lists *NativeC* among its features. The tests of every recipe in
+this book pass as an `.exe` as well. Still, run a compiled program
+once with `--dry-run` before you hand it out.
 
 > **Watch out**
 > A program you hand to a colleague runs with that colleague's rights

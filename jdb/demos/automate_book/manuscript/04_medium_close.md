@@ -12,7 +12,7 @@ works and change it step by step.
 
 The folder `recipes/template/T00_my_recipe` holds a complete recipe:
 it moves files that nobody changed for a number of days into an
-archive folder. It has the same five files every recipe in this book
+archive folder. It has the same four files every recipe in this book
 has:
 
 | File | What it holds |
@@ -21,7 +21,10 @@ has:
 | `mine.jdb` | The module with the work itself, in functions a test can call |
 | `my_recipe_test.jdb` | The test that proves the module does what it says |
 | `recipe.toml` | What the wizard needs to know: name, schedule, settings |
-| a page of text | How it works, for you in half a year |
+
+The recipes of this book have their chapter besides. Give a recipe of
+your own a page of text as well, a `README.md` that says how it works,
+for you in half a year.
 
 The program is short, because it only connects things:
 
@@ -78,7 +81,8 @@ your disk. Every recipe you met in Chapters 3 and 4 works like this.
 Run through this list before you schedule a recipe of your own:
 
 - It has a dry run, and the dry run changes nothing.
-- It never overwrites a file; a name that is taken gets a number.
+- It never overwrites a file it was not asked to change; a name that
+  is taken gets a number.
 - It reads every setting from `work.conf` and has a default for each.
 - It needs no password in a file; mail goes through the outbox.
 - Its test passes, and the test uses folders of its own.
@@ -87,5 +91,6 @@ Run through this list before you schedule a recipe of your own:
 - Somebody else could read the first comment and know what it is for.
 
 A recipe that passes the list is ready for the Task Scheduler. A
-recipe that also runs as a compiled program, as every recipe of this
-book does, is ready to be handed to a colleague; Chapter 5 shows how.
+recipe that also runs as a compiled program, tried once with
+`--dry-run`, is ready to be handed to a colleague; Chapter 5 shows
+how.

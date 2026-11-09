@@ -4,7 +4,7 @@
 
 ### The chore
 
-Lena has four to six meetings a day. Before each one she opens the
+Lena has about two meetings a day. Before each one she opens the
 invitation to see who comes, searches her mail for what these people
 wrote last, scrolls through her notes for what she promised them, and
 tries to remember what the meeting was for. Five minutes per meeting

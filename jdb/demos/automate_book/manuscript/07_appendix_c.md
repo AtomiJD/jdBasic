@@ -134,10 +134,10 @@ WIZARD: cannot schedule "daily 8:30" for E01
 ```
 
 The wizard understands `daily HH:MM`, `weekdays HH:MM`,
-`weekly DAY HH:MM`, `every N minutes`, `every N hours`, `hourly`,
-`at logon` and `manual`. The time needs two digits for the hour, so
+`weekly DAY HH:MM`, `monthly DAY HH:MM`, `every N minutes`,
+`every N hours`, `hourly`, `at logon` and `manual`. The time needs two digits for the hour, so
 write `daily 08:30`. The day of `weekly` is a weekday name such as
-`fri` or `friday`.
+`fri` or `friday`; the day of `monthly` is a number from 1 to 31.
 
 ### 9. The Task Scheduler refuses a task
 

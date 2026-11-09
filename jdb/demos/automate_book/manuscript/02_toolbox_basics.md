@@ -1265,7 +1265,7 @@ named here is the place to look it up.
 |---|---|
 | Lists and `IN` | E01 decides the kind of a file from its extension |
 | Maps | E07 adds up hours per project |
-| `SPLIT` and `JOIN` | E12 reads the contact list line by line |
+| `SPLIT` and `JOIN` | E06 takes its journal apart line by line and joins the done items |
 | `FOR EACH` | every recipe that walks through a folder |
 | Dates | E05, E06 and E07 work out the time of day and the weekday |
 | `TRY` and `CATCH` | E14 survives a web page that does not answer |
