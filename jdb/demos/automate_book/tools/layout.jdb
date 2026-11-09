@@ -482,6 +482,8 @@ ENDSUB
 
 ' A paragraph of marked text at the left edge plus indent, wrapped to the
 ' width; widows and orphans are avoided. Answers the lines it set.
+' ctx{"mark"}, when set, is a list item's marker: it goes on the first
+' line, on whichever page that line lands, and is used up.
 FUNC Paragraph(ctx, txt$, indent, pt, lead, justified, base_sty$)
     DIM wd = TextWidth(ctx) - indent
     DIM lines_set = BreakText(ctx, Words(txt$), wd, pt, base_sty$, justified ANDALSO ctx{"s"}{"hyph"})
@@ -514,6 +516,10 @@ FUNC Paragraph(ctx, txt$, indent, pt, lead, justified, base_sty$)
         IF k > 0 ANDALSO k = n - 1 THEN gWidows = gWidows + 1
         DO WHILE k < upto
             DIM last_line = (k = n - 1)
+            IF k = 0 ANDALSO ctx{"mark"} <> "" THEN
+                Put(ctx, "book", "", pt, XLeft(ctx) + 1.5, ctx{"y"} + lead * 0.74, ctx{"mark"}, 30, 30, 30)
+                ctx{"mark"} = ""
+            ENDIF
             SetLine(ctx, lines_set[k], XLeft(ctx) + indent, ctx{"y"}, wd, pt, lead, justified ANDALSO NOT last_line, base_sty$, 30, 30, 30)
             ctx{"y"} = ctx{"y"} + lead
             k = k + 1
@@ -594,8 +600,9 @@ SUB ListBlock(ctx, b, numbered)
         Need(ctx, s{"lead"} * 2)
         DIM mark$ = CHR$(226) + CHR$(128) + CHR$(162)
         IF numbered THEN mark$ = STR$(k + 1) + "."
-        Put(ctx, "book", "", s{"body_pt"}, XLeft(ctx) + 1.5, ctx{"y"} + s{"lead"} * 0.74, mark$, 30, 30, 30)
+        ctx{"mark"} = mark$
         Paragraph(ctx, items[k], 6.5, s{"body_pt"}, s{"lead"}, TRUE, "")
+        ctx{"mark"} = ""
         ctx{"y"} = ctx{"y"} + 1.2
     NEXT k
     ctx{"y"} = ctx{"y"} + 1.8
@@ -1357,6 +1364,7 @@ FUNC Typeset(cfg, chapters, base$, out_mode$, toc, terms, ix_in, ix_main_in)
     ctx{"chapter"} = ""
     ctx{"numbered"} = FALSE
     ctx{"heading_no"} = 0
+    ctx{"mark"} = ""
     ctx{"found"} = []
     ctx{"toc"} = toc
     DIM refs AS MAP
