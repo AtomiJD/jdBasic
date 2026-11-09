@@ -70,6 +70,20 @@ EXPORT FUNC ARCHIVE_NAME$(prefix$, when)
     RETURN prefix$ + " " + stamp$ + ".zip"
 ENDFUNC
 
+' The name of a new archive in the target folder: a second backup in
+' the same minute gets _2, _3 ... so it replaces nothing, and sorts
+' after the first one.
+EXPORT FUNC FREE_NAME$(target$, prefix$, when)
+    DIM name$ = ARCHIVE_NAME$(prefix$, when)
+    DIM base$ = LEFT$(name$, LEN(name$) - 4)
+    DIM n = 2
+    DO WHILE FILE.EXISTS(PATH.JOIN$(target$, name$))
+        name$ = base$ + "_" + STR$(n) + ".zip"
+        n = n + 1
+    LOOP
+    RETURN name$
+ENDFUNC
+
 ' Writes the archive; answers the number of files in it.
 EXPORT FUNC WRITE(entries, zip_path$)
     DIM content AS MAP

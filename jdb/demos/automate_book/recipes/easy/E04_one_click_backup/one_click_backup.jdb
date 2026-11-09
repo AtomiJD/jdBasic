@@ -20,11 +20,11 @@ DIM dry_run = WORKCONF.FLAG("dry-run")
 DIM picked = BACKUP.ENTRIES(folders, max_mb)
 DIM entries = picked{"entries"}
 DIM skipped = picked{"skipped"}
-DIM zip_name$ = BACKUP.ARCHIVE_NAME$("backup", NOW())
+DIM zip_name$ = BACKUP.FREE_NAME$(target$, "backup", NOW())
 DIM zip_path$ = PATH.JOIN$(target$, zip_name$)
 DIM k = 0
 FOR k = 0 TO LEN(skipped) - 1
-    PRINT "too large, left out: "; skipped[k]
+    PRINT "too large, left out: "; PATH.NORMALIZE$(skipped[k])
 NEXT k
 IF dry_run THEN
     DIM n_entries$ = WORKCONF.PLURAL$(LEN(entries), "file")
@@ -32,7 +32,7 @@ IF dry_run THEN
 ELSE
     DIM n_files = BACKUP.WRITE(entries, zip_path$)
     DIM n_written$ = WORKCONF.PLURAL$(n_files, "file")
-    PRINT "wrote "; zip_path$; " with "; n_written$
+    PRINT "wrote "; PATH.NORMALIZE$(zip_path$); " with "; n_written$
 ENDIF
 DIM coming = 0
 IF dry_run THEN coming = 1

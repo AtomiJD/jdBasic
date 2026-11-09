@@ -88,8 +88,8 @@ max_file_mb = 200
 - **The program takes long or runs out of memory**: the archive is built
   in memory. Back up the large folders in a second recipe run of their
   own, or lower `max_file_mb`.
-- **Two archives in one minute**: the second replaces the first, since
-  they get the same name.
+- **A second archive in one minute** is called `backup ... 1630_2.zip`,
+  so the first one stays; `keep` counts both.
 
 > **Balance dividend**
 > About 15 minutes a week of copying, and the quiet knowledge that last
