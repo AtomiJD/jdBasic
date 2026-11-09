@@ -25,6 +25,10 @@ EXPORT FUNC AGENDA(description$)
     DIM rows = SPLIT(REPLACE$(description$, CHR$(13), ""), CHR$(10))
     DIM trimmed = SELECT(LAMBDA s$ -> TRIM$(s$), rows)
     DIM points = FILTER(LAMBDA s$ -> s$ <> "", trimmed)
+    ' Word numbers the list itself, so "1. Budget" loses its "1. ".
+    DIM marker$ = "^([0-9]+[.)]|[-*])\s*"
+    points = SELECT(LAMBDA USE(marker$) s$ -> _
+        REGEX.REPLACE$(marker$, s$, ""), points)
     IF LEN(points) = 0 THEN
         points = ["Updates", "Decisions", "Next steps"]
     ENDIF
@@ -47,7 +51,17 @@ EXPORT FUNC NEXT_MEETING(cal, now, days)
             found{"end"} = r{"end"}
             found{"location"} = ICAL.PROP$(cal, ev, "LOCATION", "")
             DIM who = ICAL.VALUES(cal, ev, "ATTENDEE")
-            found{"attendees"} = SELECT(Address$@, who)
+            DIM names = ICAL.PARAMS(cal, ev, "ATTENDEE", "CN")
+            DIM people = []
+            DIM p = 0
+            FOR p = 0 TO LEN(who) - 1
+                DIM addr$ = Address$(who[p])
+                IF names[p] <> "" THEN
+                    addr$ = names[p] + " <" + addr$ + ">"
+                ENDIF
+                PUSH(people, addr$)
+            NEXT p
+            found{"attendees"} = people
             DIM desc$ = ICAL.PROP$(cal, ev, "DESCRIPTION", "")
             found{"agenda"} = AGENDA(desc$)
             RETURN found
@@ -69,8 +83,8 @@ ENDFUNC
 
 ' "2026-10-05 Miller project status.docx" for a meeting.
 EXPORT FUNC FILE_NAME$(meeting, offset)
-    DIM day$ = DT.FMT$(meeting{"start"}, "%Y-%m-%d", offset)
-    RETURN day$ + " " + SAFE$(meeting{"summary"}) + ".docx"
+    DIM stamp$ = DT.FMT$(meeting{"start"}, "%Y-%m-%d", offset)
+    RETURN stamp$ + " " + SAFE$(meeting{"summary"}) + ".docx"
 ENDFUNC
 
 ' The Word file for a meeting; offset is the wall clock in hours east

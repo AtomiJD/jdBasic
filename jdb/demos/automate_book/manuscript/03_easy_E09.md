@@ -49,9 +49,12 @@ writes the Word file with the DOCX library:
 2. `NEXT_MEETING` takes the first one that has not started yet and leaves
    out all-day entries such as holidays, which are not meetings.
 3. The attendees come from the `ATTENDEE` lines of the invitation:
-   `SELECT(Address$@, who)` turns every line into an address. The
-   agenda comes from the description, one point per line: `SELECT`
-   trims the lines and `FILTER` drops the empty ones. An invitation
+   `Address$` turns every line into an address, and `ICAL.PARAMS` adds
+   the name Outlook writes into `CN`, so the list says *Mia Lehmann
+   <mia@example.com>*. The agenda comes from the description, one point
+   per line: `SELECT` trims the lines, `FILTER` drops the empty ones,
+   and a number or dash in front of a point goes, since Word numbers
+   the list itself. An invitation
    without a description gets three headings: Updates, Decisions, Next
    steps.
 4. `FILE_NAME$` builds the name from the date and the title and leaves out
@@ -104,8 +107,8 @@ utc_offset = 2
   it again, or let your calendar program write it on its own.
 - **The times are one hour off**: set `utc_offset` to the offset of your
   summer or winter time.
-- **Attendees appear as mail addresses**: the recipe shows the address of
-  each attendee, since that is what every invitation carries.
+- **Attendees appear as mail addresses only**: the invitation carries
+  no names (`CN`); the recipe shows what it has.
 
 > **Balance dividend**
 > About 20 minutes a week, and every meeting starts with your notes
