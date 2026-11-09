@@ -16,7 +16,7 @@
 ' pictures and tables, so a deck does not depend on a template. The
 ' parts are written as XML text and packed with ZIP.WRITE, the way
 ' DOCX writes its documents.
-' version: 1.0.0
+' version: 1.1.0
 
 EXPORT MODULE PPTX
 
@@ -237,6 +237,55 @@ FUNC BulletParas$(bullets)
     RETURN out$
 ENDFUNC
 
+' The height in points a list of bullets takes in a box w EMU wide at
+' scale (1 for the full size): a character is about half the font
+' size wide, a line 1.2 times its height, 6 points before each point.
+FUNC ListHeight(bullets, w, scale)
+    DIM total = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(bullets) - 1
+        DIM b$ = bullets[k]
+        DIM lvl = 0
+        IF LEFT$(b$, 2) = "  " THEN lvl = 1
+        DIM size = 24
+        IF lvl = 1 THEN size = 20
+        size = size * scale
+        DIM room = (w - 2 * 91440 - 342900 - lvl * 457200) / 12700
+        DIM per_line = FLOOR(room / (size * 0.5))
+        IF per_line < 1 THEN per_line = 1
+        DIM n_lines = CEIL(LEN(-TRIM$(b$)) / per_line)
+        IF n_lines < 1 THEN n_lines = 1
+        total = total + n_lines * size * 1.2 + 6
+    NEXT k
+    RETURN total
+ENDFUNC
+
+' The font scale in percent at which a list of bullets fits a box of w
+' by h EMU: 100 when it fits as it is, down to 40. PowerPoint applies
+' the scale on opening, and shrinks a list again when it is edited.
+EXPORT FUNC FIT_SCALE(bullets, w, h)
+    DIM room = (h - 2 * 45720) / 12700
+    DIM pct = 100
+    DO WHILE pct > 40 ANDALSO ListHeight(bullets, w, pct / 100) > room
+        pct = pct - 5
+    LOOP
+    RETURN pct
+ENDFUNC
+
+' The scale of the bullets of a slide that has nothing else on it.
+EXPORT FUNC BULLET_SCALE(bullets)
+    DIM top = 1463040
+    RETURN FIT_SCALE(bullets, SLIDE_W - 2 * MARGIN, SLIDE_H - top - MARGIN)
+ENDFUNC
+
+' A text box whose text is shown at pct percent of its size.
+FUNC Scaled$(box$, pct)
+    IF pct >= 100 THEN RETURN box$
+    DIM fit$ = "<a:normAutofit fontScale='" + STR$(pct * 1000) + _
+        "' lnSpcReduction='10000'/>"
+    RETURN REPLACE$(box$, "<a:normAutofit/>", fit$)
+ENDFUNC
+
 ' A picture shape fitted into the box x, y, w, h, keeping its shape.
 FUNC Picture$(id, rel$, img, x, y, w, h)
     DIM pw = img{"w"}
@@ -314,7 +363,8 @@ FUNC SlideXml$(deck, s)
         IF LEN(bullets) > 0 THEN
             DIM list_h = body_h
             IF has_table THEN list_h = body_h / 2
-            shapes$ = shapes$ + TextBox$(3, "Content", MARGIN, top, body_w, list_h, BulletParas$(bullets), "t")
+            DIM box$ = TextBox$(3, "Content", MARGIN, top, body_w, list_h, BulletParas$(bullets), "t")
+            shapes$ = shapes$ + Scaled$(box$, FIT_SCALE(bullets, body_w, list_h))
         ENDIF
         IF has_pic THEN
             DIM media = deck{"media"}
@@ -458,38 +508,38 @@ EXPORT FUNC WRITE(deck, path$)
         DIM s = slides[k]
         IF s{"notes"} <> "" THEN has_notes = TRUE
     NEXT k
-    DIM e AS MAP
-    e{"[Content_Types].xml"} = ContentTypes$(deck, has_notes)
-    e{"_rels/.rels"} = Rels$(Rel$("rId1", "officeDocument", "ppt/presentation.xml") + "<Relationship Id='rId2' Type='http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties' Target='docProps/core.xml'/>")
-    e{"docProps/core.xml"} = CoreXml$(deck{"title"})
-    e{"ppt/presentation.xml"} = PresentationXml$(deck, has_notes)
-    e{"ppt/_rels/presentation.xml.rels"} = PresentationRels$(deck, has_notes)
-    e{"ppt/theme/theme1.xml"} = ThemeXml$()
-    e{"ppt/slideMasters/slideMaster1.xml"} = MasterXml$()
-    e{"ppt/slideMasters/_rels/slideMaster1.xml.rels"} = Rels$(Rel$("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml") + Rel$("rId2", "theme", "../theme/theme1.xml"))
-    e{"ppt/slideLayouts/slideLayout1.xml"} = LayoutXml$()
-    e{"ppt/slideLayouts/_rels/slideLayout1.xml.rels"} = Rels$(Rel$("rId1", "slideMaster", "../slideMasters/slideMaster1.xml"))
+    DIM entries AS MAP
+    entries{"[Content_Types].xml"} = ContentTypes$(deck, has_notes)
+    entries{"_rels/.rels"} = Rels$(Rel$("rId1", "officeDocument", "ppt/presentation.xml") + "<Relationship Id='rId2' Type='http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties' Target='docProps/core.xml'/>")
+    entries{"docProps/core.xml"} = CoreXml$(deck{"title"})
+    entries{"ppt/presentation.xml"} = PresentationXml$(deck, has_notes)
+    entries{"ppt/_rels/presentation.xml.rels"} = PresentationRels$(deck, has_notes)
+    entries{"ppt/theme/theme1.xml"} = ThemeXml$()
+    entries{"ppt/slideMasters/slideMaster1.xml"} = MasterXml$()
+    entries{"ppt/slideMasters/_rels/slideMaster1.xml.rels"} = Rels$(Rel$("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml") + Rel$("rId2", "theme", "../theme/theme1.xml"))
+    entries{"ppt/slideLayouts/slideLayout1.xml"} = LayoutXml$()
+    entries{"ppt/slideLayouts/_rels/slideLayout1.xml.rels"} = Rels$(Rel$("rId1", "slideMaster", "../slideMasters/slideMaster1.xml"))
     IF has_notes THEN
-        e{"ppt/theme/theme2.xml"} = ThemeXml$()
-        e{"ppt/notesMasters/notesMaster1.xml"} = NotesMasterXml$()
-        e{"ppt/notesMasters/_rels/notesMaster1.xml.rels"} = Rels$(Rel$("rId1", "theme", "../theme/theme2.xml"))
+        entries{"ppt/theme/theme2.xml"} = ThemeXml$()
+        entries{"ppt/notesMasters/notesMaster1.xml"} = NotesMasterXml$()
+        entries{"ppt/notesMasters/_rels/notesMaster1.xml.rels"} = Rels$(Rel$("rId1", "theme", "../theme/theme2.xml"))
     ENDIF
     FOR k = 0 TO LEN(slides) - 1
         DIM sl = slides[k]
         DIM no$ = STR$(k + 1)
-        e{"ppt/slides/slide" + no$ + ".xml"} = SlideXml$(deck, sl)
-        e{"ppt/slides/_rels/slide" + no$ + ".xml.rels"} = SlideRels$(deck, sl, k + 1)
+        entries{"ppt/slides/slide" + no$ + ".xml"} = SlideXml$(deck, sl)
+        entries{"ppt/slides/_rels/slide" + no$ + ".xml.rels"} = SlideRels$(deck, sl, k + 1)
         IF sl{"notes"} <> "" THEN
-            e{"ppt/notesSlides/notesSlide" + no$ + ".xml"} = NotesXml$(sl{"notes"})
-            e{"ppt/notesSlides/_rels/notesSlide" + no$ + ".xml.rels"} = Rels$(Rel$("rId1", "notesMaster", "../notesMasters/notesMaster1.xml") + Rel$("rId2", "slide", "../slides/slide" + no$ + ".xml"))
+            entries{"ppt/notesSlides/notesSlide" + no$ + ".xml"} = NotesXml$(sl{"notes"})
+            entries{"ppt/notesSlides/_rels/notesSlide" + no$ + ".xml.rels"} = Rels$(Rel$("rId1", "notesMaster", "../notesMasters/notesMaster1.xml") + Rel$("rId2", "slide", "../slides/slide" + no$ + ".xml"))
         ENDIF
     NEXT k
     DIM media = deck{"media"}
     FOR k = 0 TO LEN(media) - 1
         DIM m = media[k]
-        e{"ppt/media/" + m{"name"}} = m{"data"}
+        entries{"ppt/media/" + m{"name"}} = m{"data"}
     NEXT k
-    ZIP.WRITE(path$, e)
+    ZIP.WRITE(path$, entries)
     RETURN LEN(slides)
 ENDFUNC
 

@@ -41,6 +41,7 @@ PRINT back[1]{"title"}; ": "; JOIN(back[1]{"bullets"}, ", ")
 | `TABLE(deck, rows, [header])` | A table on the last slide from rows of texts; with `header` (TRUE) the first row is white on dark blue. Below the bullet points when the slide has some. |
 | `NOTES(deck, text$)` | Speaker notes for the last slide; line breaks start new paragraphs. |
 | `COUNT_SLIDES(deck)` | The number of slides so far. |
+| `FIT_SCALE(bullets, w, h)` / `BULLET_SCALE(bullets)` | The font scale in percent (100 down to 40) at which a list of points fits a box of `w` by `h` EMU, or the content box of a slide with nothing else on it. `WRITE` stores that scale on every list, so PowerPoint shows a long list smaller instead of past the bottom of the slide. |
 | `WRITE(deck, path$)` | Writes the file; answers the number of slides. A deck without slides is an error. |
 | `READ(path$)` | The slides of a file written by this module, as maps of `title`, `subtitle`, `bullets`, `table` (rows of texts), `pictures` (a count) and `notes`. |
 

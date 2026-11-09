@@ -115,6 +115,23 @@ DIM n_plain = PPTX.WRITE(plain, plain$)
 TESTKIT.ISFALSE(MAP.EXISTS(ZIP.READ(plain$), "ppt/notesMasters/notesMaster1.xml"), "no notes master without notes")
 TESTKIT.EQARRAY(TablesInLoop(folder$ + "/loop.pptx"), [2, 0, 3], "tables added in a loop keep their rows")
 
+TESTKIT.SUITE("a long list")
+DIM long_list = []
+DIM li = 0
+FOR li = 1 TO 14
+    PUSH(long_list, "A point of about one hundred characters that a speaker wrote into the outline for slide two")
+NEXT li
+TESTKIT.EQ(PPTX.BULLET_SCALE(["One", "Two", "Three"]), 100, "a short list keeps its size")
+DIM long_scale = PPTX.BULLET_SCALE(long_list)
+TESTKIT.ISTRUE(long_scale < 100 ANDALSO long_scale >= 40, "fourteen long points are shown smaller")
+DIM long_deck = PPTX.NEW("Long")
+DIM ls = PPTX.SLIDE(long_deck, "Many points", long_list)
+DIM long$ = folder$ + "/long.pptx"
+DIM lw = PPTX.WRITE(long_deck, long$)
+DIM slide_xml$ = ZIP.READ(long$){"ppt/slides/slide1.xml"}
+TESTKIT.ISTRUE(INSTR(slide_xml$, "fontScale='" + STR$(long_scale * 1000) + "'") >= 0, "and the slide says so to PowerPoint")
+KILL long$
+
 TESTKIT.SUITE("mistakes")
 TESTKIT.THROWS(NoSlideYet@, 0, "notes before the first slide")
 TESTKIT.THROWS(EmptyTable@, 0, "a table without rows")
