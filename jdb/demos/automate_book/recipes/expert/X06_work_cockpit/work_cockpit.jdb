@@ -60,6 +60,8 @@ FOR k = 0 TO gShown - 1
 NEXT k
 DIM chkDry = FORM.CHECKBOX(frm, "chkDry", "Dry run only", _
     20, top + 8, 200, 24)
+' A colleague's first click only shows what would happen.
+FORM.SET(chkDry, "CHECKED", TRUE)
 DIM btnRefresh = FORM.BUTTON(frm, "btnRefresh", "Refresh", _
     470, top + 4, 90, 30)
 DIM btnClose = FORM.BUTTON(frm, "btnClose", "Close", _
@@ -74,19 +76,23 @@ SUB ShowStates()
     DIM rows = COCKPIT.READ_LOG(gLog$)
     DIM i = 0
     FOR i = 0 TO gShown - 1
-        DIM e = gList[i]
-        DIM last = COCKPIT.LAST(rows, e{"id"})
+        DIM entry = gList[i]
+        DIM last = COCKPIT.LAST(rows, entry{"id"})
         FORM.SET(state_labels[i], "TEXT", COCKPIT.STATUS$(last))
     NEXT i
 ENDSUB
 
 SUB RunSlot(slot)
-    DIM e = gList[slot]
+    DIM entry = gList[slot]
     DIM dry = FORM.GET(chkDry, "CHECKED")
-    FORM.SET(txtOut, "TEXT", "Running " + e{"name"})
-    DIM r = COCKPIT.RUN(gJdbasic$, e, gConf$, dry, gTries)
-    COCKPIT.APPEND_LOG(gLog$, COCKPIT.LOG_LINE$(NOW(), e, dry, r))
-    DIM top$ = e{"name"} + ": exit " + STR$(r{"exit"})
+    IF NOT dry ANDALSO NOT gSelfTest THEN
+        DIM ask$ = "Run " + entry{"name"} + " for real?"
+        IF MSGBOX(ask$, 4 + 32, gTitle$) <> 6 THEN RETURN
+    ENDIF
+    FORM.SET(txtOut, "TEXT", "Running " + entry{"name"})
+    DIM r = COCKPIT.RUN(gJdbasic$, entry, gConf$, dry, gTries)
+    COCKPIT.APPEND_LOG(gLog$, COCKPIT.LOG_LINE$(NOW(), entry, dry, r))
+    DIM top$ = entry{"name"} + ": exit " + STR$(r{"exit"})
     IF r{"tries"} > 1 THEN
         top$ = top$ + " after " + STR$(r{"tries"}) + " starts"
     ENDIF
@@ -97,8 +103,8 @@ ENDSUB
 
 ' ── events ────────────────────────────────────────────────────
 
-SUB RunClick(e)
-    DIM ev = e[0]
+SUB RunClick(args)
+    DIM ev = args[0]
     DIM name$ = ev{"name"}
     RunSlot(CINT(VAL(MID$(name$, 6, LEN(name$)))))
 ENDSUB
@@ -107,17 +113,17 @@ FOR k = 0 TO gShown - 1
     ON handler$ CALL RunClick@
 NEXT k
 
-SUB CKP_LOAD(e)
+SUB CKP_LOAD(args)
     ShowStates()
     IF gShown = 0 THEN FORM.SET(txtOut, "TEXT", "Nothing installed.")
     IF gSelfTest THEN FORM.SET(tmrSelf, "INTERVAL", 200)
 ENDSUB
 
-SUB BTNREFRESH_CLICK(e)
+SUB BTNREFRESH_CLICK(args)
     ShowStates()
 ENDSUB
 
-SUB BTNCLOSE_CLICK(e)
+SUB BTNCLOSE_CLICK(args)
     FORM.CLOSE(frm)
 ENDSUB
 
@@ -130,13 +136,13 @@ SUB Expect(ok, what$)
     ENDIF
 ENDSUB
 
-SUB TMRSELF_TICK(e)
+SUB TMRSELF_TICK(args)
     gTicks = gTicks + 1
     IF gTicks = 1 THEN
         Expect(gShown = 2, "two automations, the cockpit left out")
         DIM first$ = FORM.GET(state_labels[0], "TEXT")
         Expect(first$ = "not run yet", "nothing ran yet")
-        FORM.SET(chkDry, "CHECKED", TRUE)
+        Expect(FORM.GET(chkDry, "CHECKED"), "dry run is ticked")
         FORM.SET(run_buttons[0], "VALUE", TRUE)
     ELSEIF gTicks = 2 THEN
         DIM said$ = FORM.GET(txtOut, "TEXT")

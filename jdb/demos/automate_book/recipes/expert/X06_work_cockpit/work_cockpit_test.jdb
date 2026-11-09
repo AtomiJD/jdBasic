@@ -82,16 +82,21 @@ TESTKIT.EQ(COCKPIT.STATUS$(COCKPIT.LAST(rows, "M10")), "not run yet", _
     "an automation that never ran")
 TESTKIT.EQ(COCKPIT.STATUS$(rows[0]), "dry run ok, 10-05 08:30", "a dry run")
 
-DIM jdbasic$ = PATH.NORMALIZE$("../../../build/jdBasic.exe")
-DIM here$ = "recipes/expert/X06_work_cockpit/work_cockpit.jdb"
-IF FILE.EXISTS(jdbasic$) ANDALSO FILE.EXISTS(here$) THEN
+' The window runs on the jdbasic that runs this test, from the recipe
+' folder or the book folder.
+DIM jdbasic$ = OS.SELF$()
+DIM here$ = "work_cockpit.jdb"
+IF NOT FILE.EXISTS(here$) THEN
+    here$ = "recipes/expert/X06_work_cockpit/work_cockpit.jdb"
+ENDIF
+IF OS.FEATURE("INTERPRETER") ANDALSO FILE.EXISTS(here$) THEN
     TESTKIT.SUITE("the window")
     DIM w = OS.EXEC(jdbasic$, [here$, "--selftest", "--jdbasic", jdbasic$])
     TESTKIT.EQ(w{"exit_code"}, 0, "the window test passes")
     TESTKIT.ISTRUE(INSTR(w{"output"}, "ALL COCKPIT WINDOW TESTS PASSED") >= 0, _
         "every check of it")
 ELSE
-    TESTKIT.SKIP("the window test needs the book folder and jdbasic")
+    TESTKIT.SKIP("the window test runs under jdbasic, not as a compiled test")
 ENDIF
 
 OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", work$])

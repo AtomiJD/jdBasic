@@ -98,9 +98,10 @@ Start the cockpit:
 jdbasic work_cockpit.jdb
 ```
 
-Tick *Dry run only* and click a button to see what an automation
-would do. Untick it to run it for real. *Refresh* reads the log again,
-which shows runs of other cockpit windows too.
+*Dry run only* is ticked when the window opens, so a click shows what
+an automation would do. Untick it to run it for real; the cockpit asks
+once more before it starts. *Refresh* reads the log again, which shows
+runs of other cockpit windows too.
 
 The self test needs the jdbasic program, since it starts the made-up
 automations with it:
@@ -142,7 +143,7 @@ tries = 1
   log into the output box:
 
   ```basic
-  SUB BTNLOG_CLICK(e)
+  SUB BTNLOG_CLICK(args)
       IF NOT FILE.EXISTS(gLog$) THEN RETURN
       DIM t$ = TRIM$(REPLACE$(TXTREADER$(gLog$), CHR$(13), ""))
       DIM tail = TAKE(-20, SPLIT(t$, LF$))
