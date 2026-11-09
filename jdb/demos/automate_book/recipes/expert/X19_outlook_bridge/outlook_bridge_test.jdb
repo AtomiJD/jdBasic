@@ -47,8 +47,13 @@ TESTKIT.ISTRUE(INSTR(parsed{"text"}, "Here they are.") >= 0, "the text")
 DIM date$ = parsed{"date"}
 TESTKIT.ISTRUE(INSTR(date$, "05 Oct 2026 09:30:00") >= 0, "the Date line in local time")
 DIM name$ = OLBRIDGE.FILE_NAME$(mail)
-TESTKIT.EQ(name$, "2026-10-05 0930 Budget 2027 the numbers.eml", "a safe file name")
+TESTKIT.ISTRUE(STARTSWITH(name$, "2026-10-05 093000 Budget 2027 the numbers "), "a safe file name to the second")
+TESTKIT.EQ(LEN(name$), LEN("2026-10-05 093000 Budget 2027 the numbers ") + 8, "with a short fingerprint")
 DIM blank = {"subject": "???", "received": t0}
-TESTKIT.EQ(OLBRIDGE.FILE_NAME$(blank), "2026-10-05 0930 mail.eml", "a subject of only signs")
+TESTKIT.ISTRUE(STARTSWITH(OLBRIDGE.FILE_NAME$(blank), "2026-10-05 093000 mail "), "a subject of only signs")
+DIM german = {"subject": "Ärger über Öl", "received": t0, "from": "a", "text": "x"}
+TESTKIT.ISTRUE(STARTSWITH(OLBRIDGE.FILE_NAME$(german), "2026-10-05 093000 Ärger über Öl "), "umlauts stay")
+DIM twin = {"subject": "Ärger über Öl", "received": t0, "from": "b", "text": "y"}
+TESTKIT.NE(OLBRIDGE.FILE_NAME$(twin), OLBRIDGE.FILE_NAME$(german), "two mails with one subject in one minute keep two names")
 
 TESTKIT.REPORT()

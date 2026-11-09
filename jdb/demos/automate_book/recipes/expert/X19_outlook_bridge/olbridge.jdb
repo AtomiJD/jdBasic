@@ -18,6 +18,45 @@ CONST OL_INBOX = 6
 CONST OL_MAIL = 43
 CONST OL_RESOURCE = 3
 CONST MOST_ITEMS = 100000
+' The MAPI property of an entry's SMTP address.
+DIM gSmtp$ = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
+
+' The SMTP address of an Outlook address entry that carries an
+' internal Exchange one (/o=exchangelabs/...): from the user, else
+' from the group or list, else from its SMTP property; "" when
+' none of them has one, so no internal address reaches a mail.
+FUNC SmtpOf$(entry)
+    DIM addr$ = ""
+    TRY
+        DIM user = entry.GetExchangeUser()
+        IF TYPEOF(user) <> "NONE" THEN
+            addr$ = "" + user.PrimarySmtpAddress
+            RELEASEOBJECT(user)
+        ENDIF
+    CATCH
+        addr$ = ""
+    ENDTRY
+    IF INSTR(addr$, "@") > 0 THEN RETURN addr$
+    TRY
+        DIM group = entry.GetExchangeDistributionList()
+        IF TYPEOF(group) <> "NONE" THEN
+            addr$ = "" + group.PrimarySmtpAddress
+            RELEASEOBJECT(group)
+        ENDIF
+    CATCH
+        addr$ = ""
+    ENDTRY
+    IF INSTR(addr$, "@") > 0 THEN RETURN addr$
+    TRY
+        DIM props = entry.PropertyAccessor
+        addr$ = "" + props.GetProperty(gSmtp$)
+        RELEASEOBJECT(props)
+    CATCH
+        addr$ = ""
+    ENDTRY
+    IF INSTR(addr$, "@") > 0 THEN RETURN addr$
+    RETURN ""
+ENDFUNC
 
 ' The appointments of the default calendar that overlap the time
 ' from t_from to t_to, repeating ones included, in order of start:
@@ -52,17 +91,9 @@ EXPORT FUNC EVENTS(ol, t_from, t_to)
             DIM r = rcpts.Item(k)
             DIM addr$ = "" + r.Address
             IF INSTR(addr$, "@") < 0 THEN
-                TRY
-                    DIM entry = r.AddressEntry
-                    DIM user = entry.GetExchangeUser()
-                    IF TYPEOF(user) <> "NONE" THEN
-                        addr$ = "" + user.PrimarySmtpAddress
-                        RELEASEOBJECT(user)
-                    ENDIF
-                    RELEASEOBJECT(entry)
-                CATCH
-                    addr$ = ""
-                ENDTRY
+                DIM entry = r.AddressEntry
+                addr$ = SmtpOf$(entry)
+                RELEASEOBJECT(entry)
             ENDIF
             DIM who$ = "" + r.Name
             DIM kind = r.Type
@@ -104,17 +135,9 @@ EXPORT FUNC MAILS(ol, most)
             DIM m AS MAP
             DIM from$ = "" + it.SenderEmailAddress
             IF INSTR(from$, "@") < 0 THEN
-                TRY
-                    DIM sender = it.Sender
-                    DIM boss = sender.GetExchangeUser()
-                    IF TYPEOF(boss) <> "NONE" THEN
-                        from$ = "" + boss.PrimarySmtpAddress
-                        RELEASEOBJECT(boss)
-                    ENDIF
-                    RELEASEOBJECT(sender)
-                CATCH
-                    from$ = ""
-                ENDTRY
+                DIM sender = it.Sender
+                from$ = SmtpOf$(sender)
+                RELEASEOBJECT(sender)
             ENDIF
             m{"from"} = PERSON$("" + it.SenderName, from$)
             DIM to_list = []
@@ -125,17 +148,9 @@ EXPORT FUNC MAILS(ol, most)
                 DIM r = rcpts.Item(k)
                 DIM addr$ = "" + r.Address
                 IF INSTR(addr$, "@") < 0 THEN
-                    TRY
-                        DIM entry = r.AddressEntry
-                        DIM user = entry.GetExchangeUser()
-                        IF TYPEOF(user) <> "NONE" THEN
-                            addr$ = "" + user.PrimarySmtpAddress
-                            RELEASEOBJECT(user)
-                        ENDIF
-                        RELEASEOBJECT(entry)
-                    CATCH
-                        addr$ = ""
-                    ENDTRY
+                    DIM entry = r.AddressEntry
+                    addr$ = SmtpOf$(entry)
+                    RELEASEOBJECT(entry)
                 ENDIF
                 DIM one$ = PERSON$("" + r.Name, addr$)
                 IF INSTR(addr$, "@") > 0 ANDALSO r.Type = 1 THEN
@@ -244,27 +259,36 @@ EXPORT FUNC EML$(mail)
     RETURN MAIL.BUILD$(msg)
 ENDFUNC
 
-' The file name of a mail: when it came and its subject, with only
-' letters, digits, spaces, dots and dashes, such as
-' "2026-10-05 0930 Budget 2027.eml".
+' The file name of a mail: when it came to the second, its subject
+' with the characters Windows forbids in names left out, umlauts
+' kept, and a short fingerprint of sender, subject and text, so two
+' mails with the same subject in the same minute keep two files:
+' "2026-10-05 093012 Budget 2027 3fa2.eml".
 EXPORT FUNC FILE_NAME$(mail)
     DIM t = CDBL(mail{"received"})
-    DIM day$ = FORMAT_DATE$(t, "%Y-%m-%d %H%M")
+    DIM stamp$ = FORMAT_DATE$(t, "%Y-%m-%d %H%M%S")
     DIM subject$ = mail{"subject"}
+    DIM chars = -subject$
     DIM keep$ = ""
     DIM k = 0
-    FOR k = 0 TO LEN(subject$) - 1
-        DIM c$ = MID$(subject$, k, 1)
+    FOR k = 0 TO LEN(chars) - 1
+        DIM c$ = chars[k]
         DIM ok = (c$ >= "a" ANDALSO c$ <= "z") ORELSE c$ = " "
         IF c$ >= "A" ANDALSO c$ <= "Z" THEN ok = TRUE
         IF c$ >= "0" ANDALSO c$ <= "9" THEN ok = TRUE
         IF c$ = "." ORELSE c$ = "-" THEN ok = TRUE
+        ' A letter beyond ASCII, such as "ü", is several bytes.
+        IF LEN(c$) > 1 THEN ok = TRUE
         IF ok THEN keep$ = keep$ + c$ ELSE keep$ = keep$ + " "
     NEXT k
     DO WHILE INSTR(keep$, "  ") >= 0
         keep$ = REPLACE$(keep$, "  ", " ")
     LOOP
-    keep$ = TRIM$(LEFT$(TRIM$(keep$), 60))
+    keep$ = TRIM$(JOIN(TAKE(60, -TRIM$(keep$)), ""))
     IF keep$ = "" THEN keep$ = "mail"
-    RETURN day$ + " " + keep$ + ".eml"
+    DIM who$ = subject$
+    IF MAP.EXISTS(mail, "from") THEN who$ = who$ + mail{"from"}
+    IF MAP.EXISTS(mail, "text") THEN who$ = who$ + mail{"text"}
+    DIM mark$ = LEFT$(CODEC.SHA256$(who$), 4)
+    RETURN stamp$ + " " + keep$ + " " + mark$ + ".eml"
 ENDFUNC

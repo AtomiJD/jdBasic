@@ -81,7 +81,9 @@ The module reads Outlook and writes the open formats:
    the people with their names and addresses. A colleague in the
    company address book has an internal Exchange address; the recipe
    asks for the normal mail address instead, the one X17 looks for in
-   your mails.
+   your mails. `SmtpOf$` asks the user entry, then the group or list
+   (a Microsoft 365 group sends mail too), then the SMTP property;
+   without any of them the address stays empty rather than internal.
 4. `OLBRIDGE.ICS$` writes the appointments with the library ICAL,
    one `ATTENDEE` line per person with the name in `CN`, as Outlook's
    own export does.
@@ -89,8 +91,10 @@ The module reads Outlook and writes the open formats:
    keeps sender, recipients, subject, text and the time it arrived.
    Meeting requests and read receipts are left out. `OLBRIDGE.EML$`
    builds an `.eml` file of each with the library MAIL, and
-   `OLBRIDGE.FILE_NAME$` names it after its time and subject. A mail
-   that is already in the folder is not written again.
+   `OLBRIDGE.FILE_NAME$` names it after its time to the second, its
+   subject with its umlauts and a short fingerprint of sender, subject
+   and text, so two answers in one thread in the same minute stay two
+   files. A mail that is already in the folder is not written again.
 6. With `--send`, `OUTBOX.SEND_OUTLOOK` reads each `.eml` file of the
    outbox and lets `OFFICEKIT.OUTLOOK_SEND` create a new Outlook mail
    with the same recipients, subject, text and attachments, and send
