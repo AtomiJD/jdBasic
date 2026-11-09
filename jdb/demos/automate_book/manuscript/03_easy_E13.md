@@ -31,13 +31,15 @@ folder, with one task per line:
 Mon: Call Miller about the offer
 Tue: ! Send invoice RE-0413
 Wed: Order toner
+Thu: Book the room for the team day
 Plan the team day
+Clear out the shared drive
 # a line starting with # is a note to yourself
 ```
 
 A day before the colon puts the task on that day; `Mon`, `monday` and
 `Monday` all work. A `!` marks a task important. A line without a day
-belongs to the whole week.
+belongs to the whole week and goes into the column "Any day".
 
 ### The program
 
@@ -78,7 +80,7 @@ Week 41: 5 to 9 October 2026
   Wed 7: 1 task
   Thu 8: 1 task
   Fri 9: 0 tasks
-  This week: 2 tasks
+  Any day: 2 tasks
 ```
 
 Without the switch it also writes `Week 41.pdf` into the folder for

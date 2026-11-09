@@ -71,7 +71,7 @@ EXPORT FUNC PLAN(tasks, monday, n_days)
         DIM label$ = gDays[k] + " " + STR$(DAY(d))
         PUSH(columns, {"label": label$, "tasks": []})
     NEXT k
-    PUSH(columns, {"label": "This week", "tasks": []})
+    PUSH(columns, {"label": "Any day", "tasks": []})
     FOR j = 0 TO LEN(tasks) - 1
         DIM t = tasks[j]
         DIM at = n_days
