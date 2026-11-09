@@ -112,7 +112,7 @@ MKDIR csv_dir$
 DIM csv$ = PATH.JOIN$(csv_dir$, "harvest.csv")
 TXTWRITER csv$, "time,name,value,number,url,status" + CHR$(10) + _
     "2026-10-05 07:00:00,Paper," + CHR$(34) + "4,99 €" + CHR$(34) + ",4.99,http://x/,ok" + CHR$(10) + _
-    "2026-10-05 07:00:00,Sheet,/x.pdf,,http://x/,ok" + CHR$(10)
+    "2026-10-05 07:00:00,Sheet,/x.pdf,,http://x/,ok" + CHR$(10) + "a short line" + CHR$(10)
 DIM xlsx$ = PATH.JOIN$(csv_dir$, "harvest.xlsx")
 TESTKIT.EQ(HARVEST.WORKBOOK(csv$, xlsx$), 2, "the harvest as a workbook")
 DIM sheet_back = XLSX.READ(xlsx$){"Harvest"}

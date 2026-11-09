@@ -389,6 +389,8 @@ EXPORT FUNC WORKBOOK(csv$, xlsx$)
     DIM k = 0
     FOR k = 0 TO LEN(rows) - 1
         DIM r = rows[k]
+        ' A line edited by hand may lack cells; it stays out.
+        IF LEN(r) < 6 THEN CONTINUEFOR
         DIM n$ = "" + r[3]
         IF n$ = "" THEN
             PUSH(out, [r[0], r[1], r[2], "", r[4], r[5]])
