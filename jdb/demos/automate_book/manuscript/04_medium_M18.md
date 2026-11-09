@@ -28,7 +28,9 @@ colours, because Excel itself does the work.
 The setup wizard has run, and you have a report workbook that gets
 its data by itself when you click *Refresh All*: from a database,
 another workbook, a CSV file or a web page. Write down the names of
-the sheets that belong in the PDF.
+the sheets that belong in the PDF. It needs the forms release of
+Chapter 2:
+`jdbasic --version` lists *COM*.
 
 > **Watch out**
 > The recipe needs Excel installed and licensed on this computer, the

@@ -26,7 +26,9 @@ recipe is done.
 
 The setup wizard has run, and you have a folder for the documents, by
 default `to_pdf` in your work folder. Any folder works; many people
-point the recipe at the folder where their offers already live.
+point the recipe at the folder where their offers already live. It
+needs the forms release of Chapter 2:
+`jdbasic --version` lists *COM*.
 
 > **Watch out**
 > The recipe needs Word and PowerPoint installed and licensed on this

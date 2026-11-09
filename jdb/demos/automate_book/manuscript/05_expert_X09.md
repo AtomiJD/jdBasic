@@ -33,8 +33,10 @@ outbox, and every step leaves a line in a log.
 
 ### Before you start
 
-The recipe reads a SQLite database, the kind of single file database
-many programs use to keep their data, with two tables:
+The recipe needs the forms release of Chapter 2, whose
+`jdbasic --version` lists *SQLite*. It reads a SQLite database, the
+kind of single file database many programs use to keep their data,
+with two tables:
 
 | Table | Columns |
 |---|---|

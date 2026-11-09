@@ -457,7 +457,8 @@ around.
 
 ### Three levels
 
-The recipes come in three levels, fifteen each.
+The recipes come in three levels, fifteen each, and a few bonus recipes
+after each level.
 
 **Easy** recipes, in Chapter 3, are switched on by the setup wizard.
 You answer a few questions, the wizard writes a settings file, copies

@@ -36,7 +36,20 @@ jdbasic --version
 ```
 
 The answer names the version and the parts the release was built with.
-*Forms* must be among them for the setup wizard.
+*Forms* must be among them for the setup wizard. The book needs
+version 1.2 or later.
+
+The releases page offers several archives; the forms release is the
+one whose name ends in `vb6-windows-x64`. Besides *Forms* it has
+*NativeC*, the compiler; *COM*, the bridge to the Office programs; and
+*SQLite*. A smaller release such as `mcp-native` runs most recipes
+too, but not the parts that need what it lacks:
+
+| Part | Needed by |
+|---|---|
+| *Forms* | the wizard's window, the reminder window of E05, X06, the window alert of X13 |
+| *COM* | E18, M18, X19, and the outbox when it hands mail to Outlook |
+| *SQLite* | X09 |
 
 > **Watch out**
 > Some offices do not allow programs outside the folders IT installs. If

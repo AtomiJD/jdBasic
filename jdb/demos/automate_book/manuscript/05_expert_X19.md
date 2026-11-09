@@ -25,7 +25,8 @@ account, with the copy in your *Sent Items*.
 ### Before you start
 
 You need classic Outlook for Windows, the program that comes with
-Microsoft Office, set up with your account. The recipe only reads
+Microsoft Office, set up with your account, and the forms release of
+Chapter 2, whose `jdbasic --version` lists *COM*. The recipe only reads
 from Outlook; it never changes, moves or deletes an appointment or a
 mail. To send through Outlook, add one line to the `[mail]` part of
 `work.conf`:
