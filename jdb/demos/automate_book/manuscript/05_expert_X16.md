@@ -190,7 +190,11 @@ countdown = 5
   letter.
 - **"it stayed behind"**: Windows kept another window in front, which
   it does when the screen is locked or another program demands
-  attention. Look at the screen and run the job again.
+  attention. It also does so for a program started in the background,
+  by the job server or a scheduled task, while someone works at the
+  computer: Windows lets such a program bring a window to the front
+  only after the keyboard and mouse have rested for a while. Schedule
+  the robot for a time nobody uses the computer, or start it by hand.
 - **The job stopped halfway**: the log names the last step that
   worked. Finish that entry by hand before you start the robot again;
   the robot has no undo.

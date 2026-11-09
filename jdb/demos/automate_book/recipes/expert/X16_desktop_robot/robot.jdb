@@ -38,6 +38,19 @@ FUNC Field(s, name$, fallback)
     RETURN fallback
 ENDFUNC
 
+' A number field of a step, or the fallback when the step leaves it
+' out. A field that holds text, such as ms = "long", adds an error and
+' answers the fallback.
+FUNC NumberField(s, name$, fallback, where$, errors)
+    IF NOT MAP.EXISTS(s, name$) THEN RETURN fallback
+    DIM v = s{name$}
+    DIM kind$ = TYPEOF(v)
+    IF kind$ = "INT64" ORELSE kind$ = "FLOAT64" ORELSE _
+        kind$ = "INTEGER" THEN RETURN v
+    PUSH(errors, where$ + name$ + " needs a number, not '" + v + "'")
+    RETURN fallback
+ENDFUNC
+
 ' The job in a TOML text as {"window", "steps", "errors"}; pictures
 ' are looked up in base_dir$. Each step gets "do", "line" (its number
 ' from 1), "tries" and the fields its kind needs.
@@ -59,11 +72,13 @@ EXPORT FUNC PARSE_JOB(toml$, base_dir$)
         DIM s AS MAP
         s{"do"} = do$
         s{"line"} = k + 1
-        s{"tries"} = Field(r, "tries", 1)
+        s{"tries"} = NumberField(r, "tries", 1, where$, errors)
         IF INSTR(gKinds$, "|" + do$ + "|") < 0 THEN
             PUSH(errors, where$ + "unknown do = '" + do$ + "'")
         ELSEIF do$ = "wait_window" THEN
-            s{"timeout_s"} = Field(r, "timeout_s", 30)
+            DIM wait_s = NumberField(r, "timeout_s", 30, _
+                where$, errors)
+            s{"timeout_s"} = wait_s
             PUSH(steps, s)
         ELSEIF do$ = "check" THEN
             DIM region = Numbers(Field(r, "region", 0), 4)
@@ -77,7 +92,9 @@ EXPORT FUNC PARSE_JOB(toml$, base_dir$)
             ELSE
                 s{"region"} = region
                 s{"image"} = path$
-                s{"tolerance"} = Field(r, "tolerance", 2)
+                DIM tol = NumberField(r, "tolerance", 2, _
+                    where$, errors)
+                s{"tolerance"} = tol
                 PUSH(steps, s)
             ENDIF
         ELSEIF do$ = "click" ORELSE do$ = "doubleclick" THEN
@@ -106,7 +123,7 @@ EXPORT FUNC PARSE_JOB(toml$, base_dir$)
                 PUSH(steps, s)
             ENDIF
         ELSEIF do$ = "pause" THEN
-            s{"ms"} = Field(r, "ms", 500)
+            s{"ms"} = NumberField(r, "ms", 500, where$, errors)
             PUSH(steps, s)
         ENDIF
     NEXT k
@@ -115,7 +132,10 @@ ENDFUNC
 
 ' The job in a file; pictures sit next to it.
 EXPORT FUNC LOAD(path$)
-    IF NOT FILE.EXISTS(path$) THEN THROW "ROBOT: no job file " + path$
+    IF NOT FILE.EXISTS(path$) THEN
+        DIM missing$ = "no job file " + PATH.NORMALIZE$(path$)
+        RETURN {"window": "", "steps": [], "errors": [missing$]}
+    ENDIF
     RETURN PARSE_JOB(TXTREADER$(path$), PATH.DIRNAME$(path$))
 ENDFUNC
 
