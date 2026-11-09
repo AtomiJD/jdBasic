@@ -40,22 +40,35 @@ ENDFUNC
 
 ' The rows of the sheet below its header (Name, Kind, From, To,
 ' Note) as maps with "name", "kind", "from", "to", "note" and "row"
-' (the line in the sheet). Rows without a name or a start are left
-' out; a row without an end lasts one day.
-EXPORT FUNC ENTRIES(rows)
+' (the line in the sheet). Rows without a name are left out, and a
+' row without an end lasts one day. A row with a name whose start or
+' end is not a date, or that ends before it starts, is left out too,
+' and what is wrong with it goes into the list problems.
+EXPORT FUNC ENTRIES(rows, problems)
     DIM out = []
     DIM k = 0
     FOR k = 1 TO LEN(rows) - 1
         DIM r = rows[k]
         DIM who$ = Cell$(r, 0)
+        DIM where$ = "row " + STR$(k + 1) + " (" + who$ + "): "
+        DIM start$ = Cell$(r, 2)
+        DIM finish$ = Cell$(r, 3)
         DIM first$ = ""
         IF LEN(r) > 2 THEN first$ = DAY$(r[2])
-        IF who$ <> "" ANDALSO first$ <> "" THEN
-            DIM last$ = first$
-            IF LEN(r) > 3 THEN
-                DIM d$ = DAY$(r[3])
-                IF d$ <> "" THEN last$ = d$
-            ENDIF
+        DIM last$ = first$
+        IF LEN(r) > 3 ANDALSO finish$ <> "" THEN last$ = DAY$(r[3])
+        IF who$ = "" THEN
+            CONTINUEFOR
+        ELSEIF first$ = "" THEN
+            PUSH(problems, where$ + "'" + start$ + _
+                "' is not a date, left out")
+        ELSEIF last$ = "" THEN
+            PUSH(problems, where$ + "'" + finish$ + _
+                "' is not a date, left out")
+        ELSEIF last$ < first$ THEN
+            PUSH(problems, where$ + "ends " + last$ + _
+                " before it starts " + first$ + ", left out")
+        ELSE
             PUSH(out, {"name": who$, "kind": Cell$(r, 1), _
                 "from": first$, "to": last$, _
                 "note": Cell$(r, 4), "row": k + 1})
@@ -65,16 +78,16 @@ EXPORT FUNC ENTRIES(rows)
 ENDFUNC
 
 ' The number of days from the first to the last day, both counted.
-EXPORT FUNC DAYS(e)
-    DIM a = DT.PARSE(e{"from"})
-    DIM b = DT.PARSE(e{"to"})
+EXPORT FUNC DAYS(ent)
+    DIM a = DT.PARSE(ent{"from"})
+    DIM b = DT.PARSE(ent{"to"})
     RETURN DT.DIFF(a, b, "days") + 1
 ENDFUNC
 
 ' A UID that stays the same for the same entry on every build, so a
 ' subscribed calendar updates instead of doubling its events.
-FUNC Uid$(e)
-    DIM key$ = e{"name"} + "|" + e{"kind"} + "|" + e{"from"}
+FUNC Uid$(ent)
+    DIM key$ = ent{"name"} + "|" + ent{"kind"} + "|" + ent{"from"}
     RETURN LEFT$(CODEC.SHA256$(key$), 20) + "@team-plan"
 ENDFUNC
 
@@ -85,13 +98,13 @@ EXPORT FUNC CALENDAR(entries, title$)
     ICAL.SETPROP(cal, cal, "X-WR-CALNAME", title$)
     DIM k = 0
     FOR k = 0 TO LEN(entries) - 1
-        DIM e = entries[k]
-        DIM summary$ = e{"name"} + ": " + e{"kind"}
-        DIM first = DT.PARSE(e{"from"})
-        DIM ev = ICAL.ADDALLDAY(cal, summary$, first, DAYS(e))
-        ICAL.SETPROP(cal, ev, "UID", Uid$(e))
-        IF e{"note"} <> "" THEN
-            ICAL.SETTEXT(cal, ev, "DESCRIPTION", e{"note"})
+        DIM ent = entries[k]
+        DIM summary$ = ent{"name"} + ": " + ent{"kind"}
+        DIM first = DT.PARSE(ent{"from"})
+        DIM ev = ICAL.ADDALLDAY(cal, summary$, first, DAYS(ent))
+        ICAL.SETPROP(cal, ev, "UID", Uid$(ent))
+        IF ent{"note"} <> "" THEN
+            ICAL.SETTEXT(cal, ev, "DESCRIPTION", ent{"note"})
         ENDIF
     NEXT k
     RETURN cal
@@ -99,23 +112,30 @@ ENDFUNC
 
 ' The days on which more than max_away people are away, an entry of
 ' one of the kinds in away_kinds meaning away: maps with "day" and
-' "names", sorted by day.
-EXPORT FUNC CLASHES(entries, away_kinds, max_away)
+' "names", sorted by day. Only the weekdays in work_days count, 1 for
+' Monday to 7 for Sunday, so a vacation over a weekend is no clash.
+EXPORT FUNC CLASHES(entries, away_kinds, max_away, work_days)
     DIM away AS MAP
     DIM low = SELECT(LAMBDA a$ -> LCASE$(a$), away_kinds)
-    DIM gone = FILTER(LAMBDA USE(low) e -> LCASE$(e{"kind"}) IN low, _
-        entries)
+    DIM gone = FILTER(LAMBDA USE(low) ent -> _
+        LCASE$(ent{"kind"}) IN low, entries)
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(gone) - 1
-        DIM e = gone[k]
-        DIM t = DT.PARSE(e{"from"})
-        FOR j = 1 TO DAYS(e)
-            DIM day$ = DT.FMT$(t, "%Y-%m-%d", 0)
-            DIM who = []
-            IF MAP.EXISTS(away, day$) THEN who = away{day$}
-            IF NOT (e{"name"} IN who) THEN PUSH(who, e{"name"})
-            away{day$} = who
+        DIM ent = gone[k]
+        DIM t = DT.PARSE(ent{"from"})
+        FOR j = 1 TO DAYS(ent)
+            DIM stamp$ = DT.FMT$(t, "%Y-%m-%d", 0)
+            DIM day_of_week = DT.PARTS(t){"weekday"}
+            IF day_of_week = 0 THEN day_of_week = 7
+            IF day_of_week IN work_days THEN
+                DIM who = []
+                IF MAP.EXISTS(away, stamp$) THEN who = away{stamp$}
+                IF NOT (ent{"name"} IN who) THEN
+                    PUSH(who, ent{"name"})
+                ENDIF
+                away{stamp$} = who
+            ENDIF
             t = t + 86400
         NEXT j
     NEXT k

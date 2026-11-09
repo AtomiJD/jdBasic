@@ -15,6 +15,7 @@ PUSH(rows, ["Cem", "Sick", "21.10.2026", "", ""])
 PUSH(rows, ["Dora", "Early shift", "2026-10-21", "2026-10-21", ""])
 PUSH(rows, ["", "Vacation", "2026-10-01", "", "no name"])
 PUSH(rows, ["Eve", "Vacation", "soon", "", "no date"])
+PUSH(rows, ["Kai", "Vacation", "2026-10-30", "2026-10-28", "turned"])
 DIM wb = XLSX.NEW()
 DIM s = XLSX.SHEET(wb, "Plan", rows)
 XLSX.WRITE(plan$, wb)
@@ -26,12 +27,16 @@ TESTKIT.EQ(SHIFTS.DAY$(46315), "2026-10-20", "an Excel date number")
 TESTKIT.EQ(SHIFTS.DAY$("next week"), "", "text that is no date")
 
 TESTKIT.SUITE("entries")
-DIM entries = SHIFTS.ENTRIES(XLSX.READ(plan$){"Plan"})
+DIM problems = []
+DIM entries = SHIFTS.ENTRIES(XLSX.READ(plan$){"Plan"}, problems)
 TESTKIT.EQ(LEN(entries), 4, "rows without a name or a date are left out")
 TESTKIT.EQ(entries[1]{"from"}, "2026-10-20", "Ben's start from a number")
 TESTKIT.EQ(entries[2]{"to"}, "2026-10-21", "a row without an end lasts a day")
 TESTKIT.EQ(SHIFTS.DAYS(entries[0]), 5, "Ann is away five days")
 TESTKIT.EQ(entries[0]{"row"}, 2, "with the line in the sheet")
+TESTKIT.EQ(LEN(problems), 2, "a start that is no date and an end before the start are named")
+TESTKIT.EQ(problems[0], "row 7 (Eve): 'soon' is not a date, left out", "with the row and the name")
+TESTKIT.EQ(problems[1], "row 8 (Kai): ends 2026-10-28 before it starts 2026-10-30, left out", "and what is wrong")
 
 TESTKIT.SUITE("the calendar")
 DIM cal = SHIFTS.CALENDAR(entries, "Team")
@@ -53,13 +58,21 @@ TESTKIT.EQ(uid1$, uid2$, "the same entry keeps its UID")
 
 TESTKIT.SUITE("too many away")
 DIM kinds = ["Vacation", "Sick"]
-DIM clash = SHIFTS.CLASHES(entries, kinds, 2)
+DIM week = [1, 2, 3, 4, 5]
+DIM clash = SHIFTS.CLASHES(entries, kinds, 2, week)
 TESTKIT.EQ(LEN(clash), 1, "one day with three away")
 TESTKIT.EQ(clash[0]{"day"}, "2026-10-21", "the Wednesday")
 TESTKIT.EQARRAY(clash[0]{"names"}, ["Ann", "Ben", "Cem"], "who")
-TESTKIT.EQ(LEN(SHIFTS.CLASHES(entries, kinds, 3)), 0, "three is allowed")
-DIM shifts_only = SHIFTS.CLASHES(entries, ["early shift"], 0)
+TESTKIT.EQ(LEN(SHIFTS.CLASHES(entries, kinds, 3, week)), 0, "three is allowed")
+DIM shifts_only = SHIFTS.CLASHES(entries, ["early shift"], 0, week)
 TESTKIT.EQ(LEN(shifts_only), 1, "kinds match in any case")
+DIM weekend = [{"name": "Finn", "kind": "Vacation", "from": "2026-10-23", "to": "2026-10-27"}, _
+    {"name": "Gina", "kind": "Vacation", "from": "2026-10-24", "to": "2026-10-26"}, _
+    {"name": "Lea", "kind": "Vacation", "from": "2026-10-24", "to": "2026-10-25"}]
+TESTKIT.EQ(LEN(SHIFTS.CLASHES(weekend, kinds, 2, week)), 0, "Saturday and Sunday are no clash in a Monday to Friday week")
+DIM all_week = SHIFTS.CLASHES(weekend, kinds, 2, [1, 2, 3, 4, 5, 6, 7])
+TESTKIT.EQ(LEN(all_week), 2, "they are when the team works every day")
+TESTKIT.EQ(all_week[0]{"day"}, "2026-10-24", "the Saturday first")
 
 KILL ics$
 KILL plan$

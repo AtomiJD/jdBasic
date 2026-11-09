@@ -17,6 +17,8 @@ DIM title$ = WORKCONF.VALUE(cfg, key$ + "title", "Team plan")
 DIM away_kinds = WORKCONF.VALUE(cfg, key$ + "away_kinds", _
     ["Vacation", "Sick", "Training"])
 DIM max_away = WORKCONF.VALUE(cfg, key$ + "max_away", 2)
+DIM work_days = WORKCONF.VALUE(cfg, key$ + "work_days", _
+    [1, 2, 3, 4, 5])
 DIM dry_run = WORKCONF.FLAG("dry-run")
 IF plan$ = "" ORELSE ics$ = "" THEN
     THROW "Set plan_file and calendar_file in [shift_planner]."
@@ -26,12 +28,16 @@ DIM book = XLSX.READ(plan$)
 IF NOT MAP.EXISTS(book, sheet$) THEN
     THROW "The plan has no sheet called " + sheet$
 ENDIF
-DIM entries = SHIFTS.ENTRIES(book{sheet$})
+DIM problems = []
+DIM entries = SHIFTS.ENTRIES(book{sheet$}, problems)
 DIM cal = SHIFTS.CALENDAR(entries, title$)
 PRINT LEN(entries); " entries in "; PATH.BASENAME$(plan$)
-
-DIM clashes = SHIFTS.CLASHES(entries, away_kinds, max_away)
 DIM k = 0
+FOR k = 0 TO LEN(problems) - 1
+    PRINT problems[k]
+NEXT k
+
+DIM clashes = SHIFTS.CLASHES(entries, away_kinds, max_away, work_days)
 FOR k = 0 TO LEN(clashes) - 1
     DIM c = clashes[k]
     DIM names$ = JOIN(c{"names"}, ", ")
@@ -40,9 +46,9 @@ NEXT k
 
 IF dry_run THEN
     FOR k = 0 TO LEN(entries) - 1
-        DIM e = entries[k]
-        PRINT "  "; e{"from"}; " to "; e{"to"}; "  "; e{"name"};
-        PRINT ": "; e{"kind"}
+        DIM ent = entries[k]
+        PRINT "  "; ent{"from"}; " to "; ent{"to"}; "  "; ent{"name"};
+        PRINT ": "; ent{"kind"}
     NEXT k
     PRINT "Nothing written. Run without --dry-run to write "; ics$
 ELSE

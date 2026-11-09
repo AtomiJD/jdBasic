@@ -39,7 +39,9 @@ first row holds the column names, the rest holds the entries:
 
 *From* and *To* can be real Excel dates or text such as `2026-10-19`
 or `19.10.2026`. An entry without *To* lasts one day. Rows without a
-name or a start date are left out, so notes below the table do no harm.
+name are left out, so notes below the table do no harm. A row with a
+name whose date cannot be read, or that ends before it starts, is
+left out too, and the planner names it with its row.
 
 The calendar file has to go to a place everyone can reach: a shared
 folder that is published on the intranet, a SharePoint library or a
@@ -84,7 +86,9 @@ entries into calendar events, and counts who is away on which day:
    `SELECT` and keeps the absences among the entries with a `FILTER`.
    A loop walks through every day of every absence and collects the
    names per day in a map. A second `FILTER` keeps the days with more
-   names than `max_away`, a `SELECT` turns each into a map with "day"
+   names than `max_away`; only the days in `work_days` count, Monday
+   to Friday unless you set it, so a vacation over a weekend is no
+   clash. A `SELECT` turns each into a map with "day"
    and "names", and the program prints them.
 
 ### Run it
@@ -123,7 +127,11 @@ sheet = "Plan"
 title = "Sales team"
 away_kinds = ["Vacation", "Sick", "Training"]
 max_away = 2
+work_days = [1, 2, 3, 4, 5]
 ```
+
+`work_days` are the days of the week that count for `max_away`, 1 for
+Monday to 7 for Sunday; a team that works on Saturdays adds the 6.
 
 Three changes in the code that teams ask for:
 
@@ -135,7 +143,7 @@ Three changes in the code that teams ask for:
   subscribe:
 
   ```
-  IF LCASE$(e{"kind"}) = "vacation" THEN
+  IF LCASE$(ent{"kind"}) = "vacation" THEN
       DIM alarm = ICAL.ADDALARM(cal, ev, 12 * 60)
   ENDIF
   ```
@@ -147,7 +155,7 @@ Three changes in the code that teams ask for:
   file:
 
   ```
-  DIM mine = FILTER(LAMBDA e -> e{"name"} = "Ann", entries)
+  DIM mine = FILTER(LAMBDA ent -> ent{"name"} = "Ann", entries)
   ICAL.WRITEFILE(SHIFTS.CALENDAR(mine, "Ann"), "ann.ics")
   ```
 
@@ -155,10 +163,14 @@ Three changes in the code that teams ask for:
 
 - **"The plan has no sheet called Plan"**: the sheet in your workbook
   has another name. Set `sheet` in `work.conf` to the name on its tab.
-- **An entry is missing from the calendar**: its row has no name, or a
-  start that is neither an Excel date nor written like `2026-10-19` or
-  `19.10.2026`. A date such as `Oct 19` is text Excel did not
-  recognise; type it again as a date.
+- **"row 12 (Jan): 'Oct 19' is not a date, left out"**: the date is
+  neither an Excel date nor written like `2026-10-19` or `19.10.2026`.
+  `Oct 19` is text Excel did not recognise; type it again as a date.
+- **"row 13 (Kai): ends 2026-10-28 before it starts 2026-10-30"**: *From*
+  and *To* are swapped. The entry stays out of the calendar until
+  they are right.
+- **An entry is missing from the calendar** without a message: its
+  row has no name.
 - **Subscribers see old data**: calendar programs fetch a subscribed
   file on their own timetable, Outlook every few hours, Google up to
   once a day. The file itself is current after each run.
