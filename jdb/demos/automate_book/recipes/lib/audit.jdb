@@ -2,7 +2,8 @@
 ' entry is one line, a JSON Web Token signed with a key only the owner
 ' has, and it carries the SHA-256 of the line before it. A changed
 ' line fails its signature; a removed or reordered line breaks the
-' chain.
+' chain, and lines cut off at the end no longer fit the signed head
+' file next to the trail.
 '
 '   IMPORT AUDIT
 '   AUDIT.APPEND("audit.log", key$, {"job": "backup", "ok": TRUE})
@@ -48,8 +49,20 @@ EXPORT FUNC APPEND(path$, key$, fields)
     claims{"at"} = FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M:%S")
     claims{"prev"} = prev$
     MKDIR PATH.DIRNAME$(path$)
-    TXTWRITER path$, JWT.SIGN$(claims, key$) + CHR$(10), TRUE
+    DIM token$ = JWT.SIGN$(claims, key$)
+    TXTWRITER path$, token$ + CHR$(10), TRUE
+    ' The head names the last entry, so lines cut off at the end show.
+    DIM head AS MAP
+    head{"seq"} = seq
+    head{"last"} = CODEC.SHA256$(token$)
+    TXTWRITER HEAD_PATH$(path$), JWT.SIGN$(head, key$) + CHR$(10)
     RETURN seq
+ENDFUNC
+
+' The file next to the trail that holds its signed head: the number
+' and the hash of the last entry.
+EXPORT FUNC HEAD_PATH$(path$)
+    RETURN path$ + ".head"
 ENDFUNC
 
 ' The entries as maps, read without checking them.
@@ -64,22 +77,30 @@ EXPORT FUNC ENTRIES(path$)
     RETURN out
 ENDFUNC
 
-' Checks every signature and the chain. Answers {"ok", "entries",
-' "problems"}, one problem per line that does not fit.
+' Checks every signature, the chain and the end against the head.
+' Answers {"ok", "entries", "problems", "claims"}: one problem per
+' line that does not fit, and the entries whose signature holds.
 EXPORT FUNC VERIFY(path$, key$)
     DIM lines = LINES(path$)
     DIM problems = []
+    DIM good = []
     DIM prev$ = ""
     DIM k = 0
     FOR k = 0 TO LEN(lines) - 1
         DIM where$ = "line " + STR$(k + 1)
-        DIM check = JWT.VERIFY(lines[k], key$)
+        DIM check = {"ok": FALSE, "error": "not a signed entry"}
+        TRY
+            check = JWT.VERIFY(lines[k], key$)
+        CATCH
+            check{"error"} = ERRMSG$
+        ENDTRY
         IF NOT check{"ok"} THEN
             DIM why$ = " (" + check{"error"} + ")"
             DIM bad$ = ": the signature does not match"
             PUSH(problems, where$ + bad$ + why$)
         ELSE
             DIM claims = check{"claims"}
+            PUSH(good, claims)
             IF claims{"seq"} <> k + 1 THEN
                 DIM got$ = ": entry " + STR$(claims{"seq"})
                 DIM want$ = " where " + STR$(k + 1) + " belongs"
@@ -92,9 +113,40 @@ EXPORT FUNC VERIFY(path$, key$)
         ENDIF
         prev$ = CODEC.SHA256$(lines[k])
     NEXT k
+    DIM end$ = HeadProblem$(path$, key$, lines)
+    IF end$ <> "" THEN PUSH(problems, end$)
     DIM out AS MAP
     out{"ok"} = LEN(problems) = 0
     out{"entries"} = LEN(lines)
     out{"problems"} = problems
+    out{"claims"} = good
     RETURN out
+ENDFUNC
+
+' What is wrong with the end of the trail, "" when the head file names
+' its last line. A trail without a head file is fine only while it is
+' empty.
+FUNC HeadProblem$(path$, key$, lines)
+    DIM head$ = HEAD_PATH$(path$)
+    IF NOT FILE.EXISTS(head$) THEN
+        IF LEN(lines) = 0 THEN RETURN ""
+        RETURN "the head file is missing; the end is unchecked"
+    ENDIF
+    DIM check = {"ok": FALSE}
+    TRY
+        check = JWT.VERIFY(TRIM$(TXTREADER$(head$)), key$)
+    CATCH
+        check{"ok"} = FALSE
+    ENDTRY
+    IF NOT check{"ok"} THEN RETURN "the head file was changed"
+    DIM head = check{"claims"}
+    DIM n = LEN(lines)
+    DIM last$ = ""
+    IF n > 0 THEN last$ = CODEC.SHA256$(lines[n - 1])
+    IF head{"seq"} <> n ORELSE head{"last"} <> last$ THEN
+        DIM want$ = STR$(head{"seq"})
+        RETURN "the trail ends at entry " + STR$(n) + _
+            " but was last written as entry " + want$
+    ENDIF
+    RETURN ""
 ENDFUNC

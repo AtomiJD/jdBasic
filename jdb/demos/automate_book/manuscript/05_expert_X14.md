@@ -109,12 +109,14 @@ only when both are empty:
    stores it as `AutomateWork/audit-key`. From then on the job server
    finds it and calls `AUDIT.APPEND` after each run. Every line is a
    JSON Web Token signed with that key, and it carries a number and the
-   SHA-256 of the line before it.
+   SHA-256 of the line before it. Next to the trail, `audit.log.head`
+   holds the number and the hash of the last line, signed as well.
 6. **Checking.** `AUDIT.VERIFY` checks each signature with the key. A
    changed line fails its signature. A removed line leaves a gap in the
-   numbers and a hash that points to the wrong line before it.
+   numbers and a hash that points to the wrong line before it, and
+   lines cut off at the end no longer fit the head file.
    `TRAIL.SUMMARY` then counts runs and failures per job for the last
-   `summary_days` days.
+   `summary_days` days, from the entries whose signature holds.
 
 Be clear about what this protects. The Credential Manager keeps your
 secrets out of files, backups and shared folders, and away from other
@@ -215,9 +217,10 @@ names = ["vpn", "ticket-token"]
   in your own session at the keyboard. The error number in the message
   tells IT what Windows objected to.
 - **"The audit trail was changed" with no one to blame**: the file was
-  opened in an editor and saved. Some editors add marks at the start of
-  a file or change characters, and every changed line fails its
-  signature. Restore `audit.log` from the backup, and from then on only
+  opened in an editor and saved. The mark some editors put at the
+  start does no harm, but an editor that changes characters makes
+  every changed line fail its signature. Restore `audit.log` and
+  `audit.log.head` from the backup, and from then on only
   read it.
 - **The search finds a line that is fine**: an example in a comment,
   for instance. Change the example to an empty value or to a call of
