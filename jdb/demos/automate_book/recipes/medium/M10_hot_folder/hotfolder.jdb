@@ -167,7 +167,8 @@ ENDFUNC
 ' A CSV file written as a workbook with one sheet "Data" and a frozen
 ' header row. Answers the number of rows below the header.
 EXPORT FUNC CSV_TO_XLSX(src$, dest$, sep$)
-    DIM text$ = REPLACE$(TXTREADER$(src$), CHR$(13), "")
+    DIM enc$ = TXTENCODING$(src$)
+    DIM text$ = REPLACE$(TXTREADER$(src$, enc$), CHR$(13), "")
     DIM lines = SPLIT(text$, CHR$(10))
     DIM filled = FILTER(LAMBDA l$ -> TRIM$(l$) <> "", lines)
     DIM rows = SELECT(LAMBDA USE(sep$) l$ -> CSV_FIELDS(l$, sep$), _
@@ -209,13 +210,22 @@ EXPORT FUNC APPLY(jobs, sep$, log$, now)
         TRY
             MKDIR PATH.DIRNAME$(to$)
             IF job{"convert"} = "xlsx" THEN
-                DIM n = CSV_TO_XLSX(from$, to$, sep$)
+                ' The CSV moves first: a file still open elsewhere
+                ' stays where it is and no workbook is made.
                 DIM there$ = PATH.DIRNAME$(to$)
                 DIM keep$ = PATH.JOIN$(there$, "originals")
                 MKDIR keep$
                 DIM old$ = PATH.JOIN$(keep$, PATH.BASENAME$(from$))
-                FILE.MOVE(from$, FreePath$(old$))
-                what$ = "made " + new$ + " (" + STR$(n) + " rows)"
+                old$ = FreePath$(old$)
+                FILE.MOVE(from$, old$)
+                TRY
+                    DIM n = CSV_TO_XLSX(old$, to$, sep$)
+                    what$ = "made " + new$ + " (" + STR$(n) + " rows)"
+                CATCH
+                    DIM why$ = ERRMSG$
+                    FILE.MOVE(old$, from$)
+                    THROW why$
+                ENDTRY
             ELSE
                 FILE.MOVE(from$, to$)
                 what$ = "moved to " + new$

@@ -84,16 +84,20 @@ The module holds the rules, the lock and the work on each file:
    character, so a quoted field like `"Weber; Sohn & Co"` keeps its
    semicolon, and two quotes in a row stand for one. A field made of
    digits with an optional decimal point becomes a number, which lets
-   Excel add up the column. `CSV_TO_XLSX` drops the empty lines with a
-   `FILTER`, splits the others with a `SELECT` over `CSV_FIELDS` and
-   writes the rows as a sheet.
+   Excel add up the column. `CSV_TO_XLSX` reads the file in the
+   encoding `TXTENCODING$` finds, so a CSV that German Excel saved in
+   ANSI keeps its umlauts. It drops the empty lines with a `FILTER`,
+   splits the others with a `SELECT` over `CSV_FIELDS` and writes the
+   rows as a sheet.
 
 6. **Never lose a file.** `FreePath$` adds ` (2)` to a name that is
    already taken in the target folder, so a second `orders.csv` on the
    same day does not overwrite the first. `APPLY` wraps the work on
    each file in `TRY` and `CATCH`: a file that cannot be moved, maybe
    because it is open in Excel, gets a *failed* line in the log and
-   stays where it is, and the other files are handled.
+   stays where it is, and the other files are handled. A CSV moves into
+   `originals` before it is converted, so a file that is still open
+   leaves no half-made workbook behind.
 
 ### Run it
 

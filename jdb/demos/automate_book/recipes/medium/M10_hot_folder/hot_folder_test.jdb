@@ -74,6 +74,16 @@ TESTKIT.EQ(LEN(FILE.LIST(PATH.JOIN$(inbox$, "*"))), 0, "the inbox is empty")
 DIM logged = SPLIT(TRIM$(TXTREADER$(log$)), CHR$(10))
 TESTKIT.EQ(LEN(logged), 2, "the log file has both lines")
 
+' German Excel saves "CSV (separated by semicolons)" in ANSI: the
+' umlaut is one byte there, and the workbook still holds the word.
+DIM ansi$ = PATH.JOIN$(tmp$, "ansi.csv")
+BINWRITER ansi$, "Kunde;PLZ" + CHR$(10) + "M" + CHR$(252) + "ller;Leipzig" + CHR$(10)
+DIM ansi_xlsx$ = PATH.JOIN$(tmp$, "ansi.xlsx")
+TESTKIT.EQ(HOTFOLDER.CSV_TO_XLSX(ansi$, ansi_xlsx$, ";"), 1, "an ANSI file converts")
+TESTKIT.EQ(XLSX.READ(ansi_xlsx$){"Data"}[1][0], "Müller", "with its umlaut")
+KILL ansi$
+KILL ansi_xlsx$
+
 KILL PATH.JOIN$(done$, "originals", "orders.csv")
 RMDIR PATH.JOIN$(done$, "originals")
 KILL PATH.JOIN$(done$, "orders.xlsx")
