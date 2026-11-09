@@ -13155,8 +13155,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                       expr.op == TokenType::NE || expr.op == TokenType::LT ||
                       expr.op == TokenType::LE || expr.op == TokenType::GT ||
                       expr.op == TokenType::GE;
-    auto cell_hint = [&](const Expr& e) -> int {
-        if (!is_compare || e.kind != ExprKind::INDEX || !e.left ||
+    // A cell added to a string is read the same way, so a string cell
+    // concatenates instead of reading as its bits.
+    auto concat_with_string = [&](const Expr& other) {
+        return expr.op == TokenType::PLUS &&
+               infer_expr_type(other).kind == StaticType::Kind::STRING;
+    };
+    auto cell_hint = [&](const Expr& e, const Expr& other) -> int {
+        if (!(is_compare || concat_with_string(other)) ||
+            e.kind != ExprKind::INDEX || !e.left ||
             e.left->kind != ExprKind::VARIABLE) return -1;
         // An array whose cells are tracked (string, mixed, nested) answers
         // typed before the hint is consulted; every other one is read
@@ -13165,11 +13172,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     };
     TypedValue lhs, rhs;
     {
-        ScopedLeafTag _ll(this, cell_hint(*expr.left));
+        ScopedLeafTag _ll(this, cell_hint(*expr.left, *expr.right));
         lhs = codegen_expr(*expr.left);
     }
     {
-        ScopedLeafTag _lr(this, cell_hint(*expr.right));
+        ScopedLeafTag _lr(this, cell_hint(*expr.right, *expr.left));
         rhs = codegen_expr(*expr.right);
     }
     // An array on either side compares element-wise, so it belongs to the

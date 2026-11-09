@@ -1,7 +1,8 @@
 ' Programs that print the same compiled and interpreted: an array element
 ' as a map literal value, an element of SORT over DIR$ inside an
 ' expression, a map function that answers a field of a JSON tree or a new
-' map, and an untaken IF that assigns a module result.
+' map, an untaken IF that assigns a module result, and a cell of an array a
+' function built, added to a string.
 
 IMPORT NATIVE_BOOK_EXE_MOD
 
@@ -105,6 +106,33 @@ DIM own = NATIVE_BOOK_EXE_MOD.VALUE(cfg, "rule", [])
 IF LEN(own) > 0 THEN rules = own
 Check("rules kept", STR$(LEN(rules)), "2")
 Check("the first rule", rules[0]{"match"}, "*.csv")
+
+
+' A cell of an array a function built, added to a string
+FUNC Pushed()
+    DIM o = []
+    PUSH(o, "w")
+    PUSH(o, 7)
+    RETURN o
+ENDFUNC
+
+FUNC Labelled$(cells)
+    DIM out$ = ""
+    DIM p = 0
+    FOR p = 0 TO LEN(cells) - 1
+        out$ = out$ + "[" + cells[p] + "]"
+    NEXT p
+    RETURN out$
+ENDFUNC
+
+DIM cells = Pushed()
+Check("a string cell before a string", cells[0] + " <a>", "w <a>")
+Check("a string cell after a string", "<a> " + cells[0], "<a> w")
+Check("a number cell before a string", cells[1] + "x", "7x")
+Check("cells of a parameter", Labelled$(cells), "[w][7]")
+DIM words = NATIVE_BOOK_EXE_MOD.WORDS(2)
+Check("a cell of a module result", words[1] + " <b>", "w2 <b>")
+Check("number cells still add", STR$(cells[1] + 1), "8")
 
 PRINT ""
 PRINT "NATIVE BOOK EXE TEST RESULTS"

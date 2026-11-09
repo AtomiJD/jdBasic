@@ -20,3 +20,16 @@ EXPORT FUNC VALUE(cfg, key$, fallback)
     IF MAP.EXISTS(cfg, key$) THEN RETURN cfg{key$}
     RETURN fallback
 ENDFUNC
+
+FUNC Pushed(n)
+    DIM out = []
+    DIM k = 0
+    FOR k = 1 TO n
+        PUSH(out, "w" + STR$(k))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+EXPORT FUNC WORDS(n)
+    RETURN Pushed(CINT(n))
+ENDFUNC
