@@ -8,7 +8,11 @@ DIM LF$ = CHR$(10)
 DIM folder$ = MKTEMP$("slidetest")
 MKDIR folder$
 DIM pic$ = PATH.JOIN$(folder$, "chart.png")
-FILE.COPY("recipes/medium/M17_slide_builder/chart.png", pic$)
+DIM chart$ = "chart.png"
+IF NOT FILE.EXISTS(chart$) THEN
+    chart$ = "recipes/medium/M17_slide_builder/chart.png"
+ENDIF
+FILE.COPY(chart$, pic$)
 
 DIM md$ = "# Team Review" + LF$ + "Sales team" + LF$ + LF$
 md$ = md$ + "## Highlights" + LF$ + "- Revenue up" + LF$ + "  - in the north" + LF$
@@ -68,6 +72,13 @@ TESTKIT.SUITE("the dry run")
 DIM plan = SLIDES.PLAN_LINES(slides)
 TESTKIT.EQ(plan[0], "1 Team Review (title slide)", "the title slide")
 TESTKIT.EQ(plan[1], "2 Highlights: 2 points, picture chart.png, notes", "what a slide holds")
+DIM crowded = []
+DIM ci = 0
+FOR ci = 1 TO 14
+    PUSH(crowded, "A point of about one hundred characters that a speaker wrote into the outline for slide two")
+NEXT ci
+DIM crowded_plan = SLIDES.PLAN_LINES([{"title": "Many", "kind": "content", "bullets": crowded, "image": "", "table": [], "notes": ""}])
+TESTKIT.ISTRUE(INSTR(crowded_plan[0], "% to fit") >= 0, "a slide with too much text says it is shown smaller")
 TESTKIT.EQ(plan[2], "3 By region: 2 table rows", "a table")
 
 TESTKIT.SUITE("the file")

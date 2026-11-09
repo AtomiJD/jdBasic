@@ -180,11 +180,15 @@ EXPORT FUNC PLAN_LINES(slides)
     DIM k = 0
     FOR k = 0 TO LEN(slides) - 1
         DIM s = slides[k]
-        DIM line$ = STR$(k + 1) + " " + s{"title"}
-        IF s{"kind"} = "title" THEN line$ = line$ + " (title slide)"
+        DIM text$ = STR$(k + 1) + " " + s{"title"}
+        IF s{"kind"} = "title" THEN text$ = text$ + " (title slide)"
         DIM parts = []
         DIM n_points = LEN(s{"bullets"})
         IF n_points > 0 THEN PUSH(parts, STR$(n_points) + " points")
+        DIM pct = PPTX.BULLET_SCALE(s{"bullets"})
+        IF n_points > 0 ANDALSO pct < 100 THEN
+            PUSH(parts, "shown at " + STR$(pct) + " % to fit")
+        ENDIF
         DIM pic$ = s{"image"}
         DIM pic_name$ = PATH.BASENAME$(pic$)
         IF pic$ <> "" THEN PUSH(parts, "picture " + pic_name$)
@@ -192,9 +196,9 @@ EXPORT FUNC PLAN_LINES(slides)
         IF n_rows > 0 THEN PUSH(parts, STR$(n_rows) + " table rows")
         IF s{"notes"} <> "" THEN PUSH(parts, "notes")
         IF LEN(parts) > 0 THEN
-            line$ = line$ + ": " + JOIN(parts, ", ")
+            text$ = text$ + ": " + JOIN(parts, ", ")
         ENDIF
-        PUSH(out, line$)
+        PUSH(out, text$)
     NEXT k
     RETURN out
 ENDFUNC

@@ -139,6 +139,9 @@ tab = ""
   or a sentence. Put a `#` or `##` title in front.
 - **"the sheet has no column Title"**: the first row of the sheet must
   hold the column names. Add a header row.
+- **"14 points, shown at 70 % to fit"**: the points of the slide do not
+  fit at their size. The slide shows them smaller so nothing runs past
+  its bottom edge; two slides with seven points each read better.
 - **PowerPoint says the file needs repair**: tell the authors, and
   send the outline that caused it. Every deck built while this recipe
   was written opened in PowerPoint without one.
