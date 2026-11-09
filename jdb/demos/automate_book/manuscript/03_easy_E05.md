@@ -70,17 +70,22 @@ end = "17:30"
 every_minutes = 50
 workdays_only = true
 message = "Time for a break: stand up, stretch, drink some water."
+state_file = "~/Documents/AutomateWork/logs/break_reminder.txt"
 ```
 
 - **Longer stretches**: `every_minutes = 90`.
 - **Your own words**: change `message`; the reminder that makes you
   smile is the one you follow.
 - **Shift work**: set `workdays_only = false` and your hours.
+- **Another place for the time of the last break**: `state_file` is
+  the small file the reminder writes it into.
 
 ### When it goes wrong
 
 - **No reminder at all**: run it with `--dry-run` during your working
   hours. "No break due" before 50 minutes have passed is right.
+- **"this jdbasic has no MSGBOX"**: the jdbasic on this computer is a
+  release without Forms. Install the release of Chapter 2.
 - **A reminder during a presentation**: Windows' focus assist hides most
   messages; switch it on while you present.
 - **Reminders right after another**: two schedules start the program.

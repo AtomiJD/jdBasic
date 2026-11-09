@@ -28,6 +28,10 @@ IF NOT due THEN
     PRINT "No break due."
 ELSEIF dry_run THEN
     PRINT "A break is due. Run without --dry-run to be reminded."
+ELSEIF NOT OS.FEATURE("FORMS") THEN
+    PRINT "A break is due, but this jdbasic has no MSGBOX."
+    PRINT "Install the release of Chapter 2, the one with Forms."
+    END 1
 ELSE
     MKDIR PATH.DIRNAME$(state$)
     TXTWRITER state$, BREAKS.STAMP$(moment)
