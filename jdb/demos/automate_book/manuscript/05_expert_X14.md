@@ -123,10 +123,11 @@ secrets out of files, backups and shared folders, and away from other
 people who log on to the computer. A program that runs under your own
 login can read them, as the recipes do. The trail shows any change made
 by someone without the key. The key is in your Credential Manager, so
-the trail cannot prove anything against you yourself, and lines cut
-off at the end leave no gap. Compare the number of entries with what
-you expect, for example with the runs in the state file of the job
-server.
+the trail cannot prove anything against you yourself. Lines cut off
+at the end are found through the head file, unless someone also puts
+back an older copy of it. Compare the number of entries with what you
+expect now and then, for example with the runs in the state file of
+the job server.
 
 ### Run it
 

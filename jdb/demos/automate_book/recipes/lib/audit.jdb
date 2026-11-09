@@ -53,6 +53,7 @@ EXPORT FUNC APPEND(path$, key$, fields)
     TXTWRITER path$, token$ + CHR$(10), TRUE
     ' The head names the last entry, so lines cut off at the end show.
     DIM head AS MAP
+    head{"kind"} = "head"
     head{"seq"} = seq
     head{"last"} = CODEC.SHA256$(token$)
     TXTWRITER HEAD_PATH$(path$), JWT.SIGN$(head, key$) + CHR$(10)
@@ -140,6 +141,9 @@ FUNC HeadProblem$(path$, key$, lines)
     ENDTRY
     IF NOT check{"ok"} THEN RETURN "the head file was changed"
     DIM head = check{"claims"}
+    DIM kind$ = ""
+    IF MAP.EXISTS(head, "kind") THEN kind$ = head{"kind"}
+    IF kind$ <> "head" THEN RETURN "the head file was changed"
     DIM n = LEN(lines)
     DIM last$ = ""
     IF n > 0 THEN last$ = CODEC.SHA256$(lines[n - 1])
