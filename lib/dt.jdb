@@ -16,7 +16,7 @@
 ' DT.LOCAL_OFFSET() answers the machine's current offset and nothing
 ' more. DT.TODATE and DT.FROMDATE convert to and from the core DateTime
 ' when a builtin wants one.
-' version: 1.0.0
+' version: 1.1.0
 
 EXPORT MODULE DT
 
@@ -144,8 +144,14 @@ ENDFUNC
 
 ' The machine's current offset from UTC in hours.
 EXPORT FUNC LOCAL_OFFSET()
-    DIM here = DATE.PARTS(NOW_EPOCH())
-    DIM utc = DATE.PARTS(NOW_EPOCH(), 0)
+    RETURN OFFSET_AT(NOW_EPOCH())
+ENDFUNC
+
+' The machine's offset from UTC in hours at the instant t, with the
+' summer time of that day: +2 for a July day in Berlin, +1 in winter.
+EXPORT FUNC OFFSET_AT(t)
+    DIM here = DATE.PARTS(t)
+    DIM utc = DATE.PARTS(t, 0)
     DIM a = MAKE(here{"year"}, here{"month"}, here{"day"}, here{"hour"}, here{"minute"}, 0)
     DIM b = MAKE(utc{"year"}, utc{"month"}, utc{"day"}, utc{"hour"}, utc{"minute"}, 0)
     RETURN (a - b) / 3600

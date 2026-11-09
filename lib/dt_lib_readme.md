@@ -45,6 +45,7 @@ offset. There is no time zone database.
 | `HUMANIZE$(t, [ref], [lang$])` | `just now`, `3 hours ago`, `in 2 days`; German with `"de"`: `vor 3 Stunden`, `in 2 Tagen`. `ref` defaults to now. |
 | `IS_LEAP(yy)` / `DAYS_IN(yy, mm)` | The calendar facts. |
 | `NOW()` / `LOCAL_OFFSET()` | The current instant and the machine's offset in hours. |
+| `OFFSET_AT(t)` | The machine's offset in hours at the instant `t`, with the summer time of that day: a July mail in Berlin is +2 even when the program runs in winter. |
 | `TODATE(t)` / `FROMDATE(d)` | To and from the core `DateTime` (from 1970 on) for builtins such as `FORMAT_DATE` or `DATERANGE`. |
 
 ## Notes
