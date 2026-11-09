@@ -6,13 +6,24 @@
 '
 '   IMPORT FIXTURES
 '   FIXTURES.SETTINGS(values, home$)        before the wizard installs
-'   DIM extra = FIXTURES.PREPARE(id$, home$, book$, folder$, jdbasic$)
+'   DIM extra = FIXTURES.PREPARE(id$, home$, book$, folder$, jdbasic$, "")
 
 EXPORT MODULE FIXTURES
 
 IMPORT XLSX, MAIL
 
 DIM gLF$ = CHR$(10)
+' The encoding of the text files PREPARE writes: "" for plain UTF-8,
+' "utf-8-bom" or "cp1252" for the edge cases of check_edges.
+DIM gEnc$ = ""
+
+SUB WriteText(path$, text$)
+    IF gEnc$ = "" THEN
+        TXTWRITER path$, text$
+    ELSE
+        TXTWRITER path$, text$, FALSE, gEnc$
+    ENDIF
+ENDSUB
 
 FUNC Work$(home$)
     RETURN PATH.JOIN$(home$, "Documents", "AutomateWork")
@@ -24,7 +35,7 @@ ENDSUB
 
 SUB Copy(from$, to$)
     Folder(PATH.DIRNAME$(to$))
-    BINWRITER to$, BINREADER$(from$)
+    WriteText(to$, TXTREADER$(from$))
 ENDSUB
 
 SUB Sheet(path$, name$, rows)
@@ -79,7 +90,8 @@ ENDSUB
 
 ' Creates the input files of one recipe and answers the arguments its
 ' program needs beyond --dry-run and --config.
-EXPORT FUNC PREPARE(id$, home$, book$, folder$, jdbasic$)
+EXPORT FUNC PREPARE(id$, home$, book$, folder$, jdbasic$, encoding$)
+    gEnc$ = encoding$
     DIM work$ = Work$(home$)
     DIM extra = []
     IF id$ = "E09" ORELSE id$ = "M12" ORELSE id$ = "X17" THEN
@@ -93,9 +105,9 @@ EXPORT FUNC PREPARE(id$, home$, book$, folder$, jdbasic$)
         Copy(csv$, PATH.JOIN$(work$, "contacts.csv"))
     ENDIF
     IF id$ = "E13" ORELSE id$ = "X17" THEN
-        DIM todo = ["Mon: Call Miller about the offer", _
+        DIM todo = ["Mon: Call Müller about the offer", _
             "Tue: ! Send invoice RE-0413", "Plan the team day"]
-        TXTWRITER PATH.JOIN$(work$, "todo.txt"), JOIN(todo, gLF$) + gLF$
+        WriteText(PATH.JOIN$(work$, "todo.txt"), JOIN(todo, gLF$) + gLF$)
     ENDIF
     IF id$ = "M01" THEN
         Sheet(PATH.JOIN$(work$, "invoices.xlsx"), "Orders", _
@@ -122,8 +134,8 @@ EXPORT FUNC PREPARE(id$, home$, book$, folder$, jdbasic$)
         DIM notes$ = PATH.JOIN$(home$, "Documents", "Team", "status")
         Folder(PATH.JOIN$(home$, "Documents", "Team"))
         Folder(notes$)
-        TXTWRITER PATH.JOIN$(notes$, "Ann.txt"), "- [x] Offer sent" + gLF$
-        TXTWRITER PATH.JOIN$(notes$, "Ben.txt"), "- [ ] Budget 2027" + gLF$
+        WriteText(PATH.JOIN$(notes$, "Ann.txt"), "- [x] Offer sent to Müller" + gLF$)
+        WriteText(PATH.JOIN$(notes$, "Ben.txt"), "- [ ] Budget 2027" + gLF$)
     ENDIF
     IF id$ = "M07" ORELSE id$ = "X17" THEN SavedMail(work$)
     IF id$ = "M09" THEN
@@ -138,11 +150,11 @@ EXPORT FUNC PREPARE(id$, home$, book$, folder$, jdbasic$)
     ENDIF
     IF id$ = "M15" THEN
         DIM lines = ["time,event,project", _
-            "2026-10-01 09:00:00,start,Miller offer", _
+            "2026-10-01 09:00:00,start,Müller offer", _
             "2026-10-01 12:30:00,start,Admin", _
             "2026-10-01 13:00:00,stop,"]
         Folder(PATH.JOIN$(work$, "time"))
-        TXTWRITER PATH.JOIN$(work$, "time", "log.csv"), JOIN(lines, gLF$) + gLF$
+        WriteText(PATH.JOIN$(work$, "time", "log.csv"), JOIN(lines, gLF$) + gLF$)
     ENDIF
     IF id$ = "X09" THEN
         DIM db$ = PATH.JOIN$(work$, "reports", "bookings.db")
@@ -157,7 +169,7 @@ EXPORT FUNC PREPARE(id$, home$, book$, folder$, jdbasic$)
     ENDIF
     IF id$ = "M17" THEN
         DIM md$ = PATH.JOIN$(work$, "review.md")
-        TXTWRITER md$, "# Review" + gLF$ + gLF$ + "- one" + gLF$ + "- two" + gLF$
+        WriteText(md$, "# Review" + gLF$ + gLF$ + "- Größe" + gLF$ + "- two" + gLF$)
         PUSH(extra, md$)
     ENDIF
     RETURN extra

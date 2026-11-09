@@ -1,0 +1,249 @@
+' check_edges.jdb: every main program with --dry-run under the edge cases
+' readers meet, each compared with a plain run. A plain run installs
+' every recipe into a temporary home and gives the programs their input
+' files (FIXTURES); each case changes one thing:
+'
+'   path     the home folder is "Mia Müller", with an umlaut and a space
+'   bom      the input text files start with a UTF-8 byte order mark
+'   ansi     the input text files are ANSI (Windows-1252), as old
+'            programs and Excel's "CSV" export write them
+'   quoted   every number in work.conf is written in quotes
+'
+' A case passes when the program ends as in the plain run and prints the
+' same lines; "quoted" passes too when the program stops with a message
+' that names the setting. The interpreter runs every case; check_mains
+' compares the interpreter with the compiled programs.
+'
+'   set JDBASIC_PATH=wizard;recipes/lib
+'   jdbasic tools/check_edges.jdb [--only E01] [--skip X15] [--case bom]
+'       [--timeout 60]
+
+IMPORT WIZARD, FIXTURES
+
+DIM gLF$ = CHR$(10)
+DIM gSep$ = ";"
+IF OS.GETOS$() <> "WINDOWS" THEN gSep$ = ":"
+
+FUNC ArgAfter$(name$, fallback$)
+    DIM argv = OS.ARGS()
+    DIM k = 1
+    FOR k = 1 TO LEN(argv) - 2
+        IF argv[k] = "--" + name$ THEN RETURN argv[k + 1]
+    NEXT k
+    RETURN fallback$
+ENDFUNC
+
+FUNC Listed(id$, list$)
+    IF list$ = "" THEN RETURN FALSE
+    DIM ids = SPLIT(UCASE$(list$), ",")
+    RETURN UCASE$(id$) IN SELECT(LAMBDA s$ -> TRIM$(s$), ids)
+ENDFUNC
+
+FUNC Run(program$, args, cwd$, limit_s)
+    DIM log$ = MKTEMP$("edge") + ".txt"
+    DIM opts = {"output": log$, "hidden": TRUE, "cwd": cwd$}
+    DIM pid = OS.SPAWN(program$, args, opts)
+    DIM code = OS.WAIT(pid, limit_s * 1000)
+    IF TYPEOF(code) = "NONE" THEN
+        DIM ended = OS.KILL(pid)
+        DIM gone = OS.WAIT(pid, 5000)
+        code = -1
+    ENDIF
+    DIM text$ = ""
+    IF FILE.EXISTS(log$) THEN
+        text$ = REPLACE$(TXTREADER$(log$), CHR$(13), "")
+        TRY
+            KILL log$
+        CATCH
+            text$ = text$ + gLF$ + "not ended: " + ERRMSG$
+        ENDTRY
+    ENDIF
+    RETURN {"exit": code, "text": text$}
+ENDFUNC
+
+' The output with what differs from run to run or from home to home
+' masked.
+FUNC Masked$(text$, home$)
+    DIM t$ = REGEX.REPLACE$(CHR$(27) + "\[[0-9;]*m", text$, "")
+    t$ = REPLACE$(t$, home$, "<home>")
+    t$ = REPLACE$(t$, REPLACE$(home$, "\", "/"), "<home>")
+    t$ = REGEX.REPLACE$("\d{4}-\d{2}-\d{2}[ T]\d{2}:?\d{2}(?::?\d{2})?", t$, "<time>")
+    t$ = REGEX.REPLACE$("\b\d{1,2}:\d{2}(?::\d{2})?\b", t$, "<clock>")
+    t$ = REGEX.REPLACE$("\d+(?:\.\d+)? ?(?:ms|s)\b", t$, "<took>")
+    t$ = REGEX.REPLACE$("\d+(?:\.\d+)? ?(?:bytes|KB|MB|GB)\b", t$, "<size>")
+    t$ = REGEX.REPLACE$("\b\w{3}[0-9A-F]{1,4}\.tmp\b", t$, "<tmp>")
+    RETURN TRIM$(t$)
+ENDFUNC
+
+FUNC FirstDiff$(a$, b$)
+    DIM la = SPLIT(a$, gLF$)
+    DIM lb = SPLIT(b$, gLF$)
+    DIM n = MAX([LEN(la), LEN(lb)])
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM x$ = ""
+        DIM y$ = ""
+        IF k < LEN(la) THEN x$ = la[k]
+        IF k < LEN(lb) THEN y$ = lb[k]
+        IF x$ <> y$ THEN RETURN "line " + STR$(k + 1) + ": " + x$ + " | " + y$
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+FUNC LastLine$(text$)
+    DIM lines = SPLIT(TRIM$(text$), gLF$)
+    IF LEN(lines) = 0 THEN RETURN ""
+    RETURN TRIM$(lines[LEN(lines) - 1])
+ENDFUNC
+
+' work.conf with every bare number put in quotes.
+SUB QuoteNumbers(conf$)
+    DIM lines = SPLIT(REPLACE$(TXTREADER$(conf$), CHR$(13), ""), gLF$)
+    DIM pattern$ = "^(\s*[A-Za-z_][A-Za-z0-9_]*\s*=\s*)(-?\d+(?:\.\d+)?)\s*$"
+    DIM q$ = CHR$(34)
+    lines = SELECT(LAMBDA USE(pattern$, q$) s$ -> _
+        REGEX.REPLACE$(pattern$, s$, "$1" + q$ + "$2" + q$), lines)
+    TXTWRITER conf$, JOIN(lines, gLF$)
+ENDSUB
+
+' Installs every recipe into a new home and answers the setup: "home",
+' "work", "conf", "lib" and "recipes".
+FUNC Install(recipes, jdbasic$, case$)
+    DIM home$ = MKTEMP$("edge_home")
+    MKDIR home$
+    IF case$ = "path" THEN
+        home$ = PATH.JOIN$(home$, "Mia Müller")
+        MKDIR home$
+    ENDIF
+    DIM own = ["Downloads", "Desktop", "Documents", "Pictures", "Music", "Videos"]
+    DIM k = 0
+    FOR k = 0 TO LEN(own) - 1
+        MKDIR PATH.JOIN$(home$, own[k])
+    NEXT k
+    TXTWRITER PATH.JOIN$(home$, "Downloads", "report.pdf"), "pdf"
+    DIM a = WIZARD.DEFAULTS(recipes, home$)
+    a{"jdbasic"} = jdbasic$
+    a{"name"} = "Mia Example"
+    a{"email"} = "mia@example.com"
+    a{"picked"} = SELECT(LAMBDA r -> r{"id"}, recipes)
+    a{"values"}{"downloads_butler"}{"min_age_hours"} = 0
+    FIXTURES.SETTINGS(a{"values"}, home$)
+    DIM steps = WIZARD.INSTALL_PLAN(a, recipes, "recipes/lib")
+    DIM done = WIZARD.APPLY(steps, FALSE)
+    DIM conf$ = WIZARD.CONF_PATH$(a)
+    IF case$ = "quoted" THEN QuoteNumbers(conf$)
+    RETURN {"home": home$, "work": a{"work"}, "conf": conf$, "lib": a{"user_lib"}}
+ENDFUNC
+
+SUB Remove(folder$)
+    IF OS.GETOS$() = "WINDOWS" THEN
+        DIM gone = OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+    ELSE
+        DIM gone = OS.EXEC("rm", ["-rf", folder$])
+    ENDIF
+ENDSUB
+
+' Runs the dry run of every chosen program in one setup and answers a
+' map from recipe id to its exit code and masked output.
+FUNC RunAll(chosen, setup, jdbasic$, std_lib$, case$, limit_s)
+    DIM out AS MAP
+    DIM enc$ = ""
+    IF case$ = "bom" THEN enc$ = "utf-8-bom"
+    IF case$ = "ansi" THEN enc$ = "cp1252"
+    DIM home$ = setup{"home"}
+    SETENV "JDBASIC_PATH", std_lib$ + gSep$ + setup{"lib"}
+    SETENV "USERPROFILE", home$
+    SETENV "HOME", home$
+    DIM k = 0
+    FOR k = 0 TO LEN(chosen) - 1
+        DIM r = chosen[k]
+        DIM folder$ = PATH.JOIN$(setup{"work"}, "recipes", r{"folder"})
+        DIM extra = FIXTURES.PREPARE(r{"id"}, home$, PATH.ABS$("."), folder$, jdbasic$, enc$)
+        DIM args = APPEND(APPEND([r{"program"}], extra), ["--dry-run", "--config", setup{"conf"}])
+        DIM res = Run(jdbasic$, args, folder$, limit_s)
+        out{r{"id"}} = {"exit": res{"exit"}, "text": Masked$(res{"text"}, home$)}
+    NEXT k
+    RETURN out
+ENDFUNC
+
+DIM jdbasic$ = PATH.ABS$(ArgAfter$("jdbasic", OS.SELF$()))
+DIM only$ = ArgAfter$("only", "")
+DIM skip$ = ArgAfter$("skip", "")
+DIM one_case$ = ArgAfter$("case", "")
+DIM limit_s = VAL(ArgAfter$("timeout", "60"))
+DIM std_lib$ = PATH.JOIN$(PATH.DIRNAME$(jdbasic$), "lib")
+
+DIM recipes = WIZARD.RECIPES("recipes")
+DIM chosen = []
+DIM k = 0
+FOR k = 0 TO LEN(recipes) - 1
+    DIM r = recipes[k]
+    DIM id$ = r{"id"}
+    IF only$ <> "" ANDALSO NOT Listed(id$, only$) THEN CONTINUEFOR
+    IF Listed(id$, skip$) ORELSE Listed(id$, "E18,M18,X19") THEN CONTINUEFOR
+    DIM src$ = PATH.JOIN$(r{"dir"}, r{"program"})
+    IF INSTR(TXTREADER$(src$), "--dry-run") < 0 THEN CONTINUEFOR
+    PUSH(chosen, r)
+NEXT k
+
+DIM cases = ["path", "bom", "ansi", "quoted"]
+IF one_case$ <> "" THEN cases = [one_case$]
+
+DIM old_path$ = GETENV$("JDBASIC_PATH")
+DIM old_profile$ = GETENV$("USERPROFILE")
+DIM old_home$ = GETENV$("HOME")
+
+DIM plain_setup = Install(recipes, jdbasic$, "plain")
+DIM plain = RunAll(chosen, plain_setup, jdbasic$, std_lib$, "plain", limit_s)
+Remove(plain_setup{"home"})
+DIM results AS MAP
+FOR k = 0 TO LEN(cases) - 1
+    DIM setup = Install(recipes, jdbasic$, cases[k])
+    results{cases[k]} = RunAll(chosen, setup, jdbasic$, std_lib$, cases[k], limit_s)
+    Remove(setup{"home"})
+NEXT k
+
+SETENV "JDBASIC_PATH", old_path$
+SETENV "USERPROFILE", old_profile$
+SETENV "HOME", old_home$
+
+DIM head$ = FORMAT$("{:<5} {:>5}", "id", "plain")
+FOR k = 0 TO LEN(cases) - 1
+    head$ = head$ + FORMAT$(" {:>6}", cases[k])
+NEXT k
+PRINT head$
+DIM notes = []
+DIM failed = 0
+DIM j = 0
+FOR j = 0 TO LEN(chosen) - 1
+    DIM id$ = chosen[j]{"id"}
+    DIM base = plain{id$}
+    DIM row$ = FORMAT$("{:<5} {:>5}", id$, STR$(base{"exit"}))
+    FOR k = 0 TO LEN(cases) - 1
+        DIM got = results{cases[k]}{id$}
+        DIM same = got{"exit"} = base{"exit"} ANDALSO got{"text"} = base{"text"}
+        DIM mark$ = "ok"
+        IF NOT same THEN
+            DIM last$ = LastLine$(got{"text"})
+            DIM named = cases[k] = "quoted" ANDALSO got{"exit"} <> 0 ANDALSO _
+                (INSTR(last$, "work.conf") >= 0 ORELSE INSTR(last$, "[") >= 0)
+            IF named THEN
+                mark$ = "msg"
+            ELSE
+                mark$ = "FAIL"
+                failed = failed + 1
+            ENDIF
+            DIM why$ = FirstDiff$(base{"text"}, got{"text"})
+            IF got{"exit"} <> base{"exit"} THEN why$ = "exit " + STR$(got{"exit"}) + ": " + last$
+            PUSH(notes, id$ + " " + cases[k] + ": " + LEFT$(why$, 160))
+        ENDIF
+        row$ = row$ + FORMAT$(" {:>6}", mark$)
+    NEXT k
+    PRINT row$
+NEXT j
+PRINT
+FOR j = 0 TO LEN(notes) - 1
+    PRINT notes[j]
+NEXT j
+PRINT STR$(LEN(chosen)); " programs, "; STR$(LEN(cases)); " cases, "; STR$(failed); " failed"
+IF failed > 0 THEN END 1

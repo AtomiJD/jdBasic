@@ -78,7 +78,7 @@ FUNC Masked$(text$, home$)
     DIM t$ = REGEX.REPLACE$(CHR$(27) + "\[[0-9;]*m", text$, "")
     t$ = REPLACE$(t$, home$, "<home>")
     t$ = REPLACE$(t$, REPLACE$(home$, "\", "/"), "<home>")
-    t$ = REGEX.REPLACE$("\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?", t$, "<time>")
+    t$ = REGEX.REPLACE$("\d{4}-\d{2}-\d{2}[ T]\d{2}:?\d{2}(?::?\d{2})?", t$, "<time>")
     t$ = REGEX.REPLACE$("\b\d{1,2}:\d{2}(?::\d{2})?\b", t$, "<clock>")
     t$ = REGEX.REPLACE$("\d+(?:\.\d+)? ?(?:ms|s)\b", t$, "<took>")
     t$ = REGEX.REPLACE$("\b\w{3}[0-9A-F]{1,4}\.tmp\b", t$, "<tmp>")
@@ -172,7 +172,7 @@ FOR k = 0 TO LEN(recipes) - 1
     ' runs see the same folder.
     DIM exe$ = LEFT$(src$, LEN(src$) - 4) + ".exe"
     DIM c = OS.EXEC(jdbasic$, ["-c", "-o", exe$, src$])
-    DIM extra = FIXTURES.PREPARE(id$, home$, PATH.ABS$("."), folder$, jdbasic$)
+    DIM extra = FIXTURES.PREPARE(id$, home$, PATH.ABS$("."), folder$, jdbasic$, "")
     DIM tail = APPEND(extra, ["--dry-run", "--config", conf$])
     DIM args = APPEND([r{"program"}], tail)
     DIM i = Run(jdbasic$, args, folder$, limit_s)
