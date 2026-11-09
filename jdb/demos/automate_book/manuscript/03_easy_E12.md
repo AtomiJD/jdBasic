@@ -51,6 +51,9 @@ anniversary, and builds the calendar with the ICAL library:
 
 1. `CONTACTS` reads the CSV file with `CSVREADER`. All three columns are
    read as text, so a date such as `1985-10-03` stays exactly as written.
+   `IS_DATE` checks every date; one that is not, such as `31.10.1990`
+   or `2026-02-30`, is left empty and named in the list `problems`, which
+   the program prints first.
 2. `NEXT_DATE` puts the day and month of a date into this year. If that
    day has passed, it takes next year. A birthday on 29 February falls on
    the 28th in years that have no 29th.
@@ -99,8 +102,9 @@ days = 14
 
 ### When it goes wrong
 
-- **A person is missing**: check the date in the CSV file. It has to be
-  written as `1985-10-03`; `03.10.1985` is not read as a date.
+- **"Ann Miller: 03.10.1985 is not a date (write 1985-10-03)"**: the
+  date in the CSV file has to be written as `1985-10-03`. Until it is,
+  the person is left out of the list and the calendar.
 - **The age is odd**: the year of birth is unknown and was entered as the
   current year. Leave the year as it is and ignore the age, or enter the
   real one.

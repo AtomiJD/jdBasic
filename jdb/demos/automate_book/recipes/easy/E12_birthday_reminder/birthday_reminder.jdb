@@ -18,7 +18,12 @@ DIM ics$ = WORKCONF.FOLDER$(cfg, key$ + "calendar", ics_default$)
 DIM horizon = WORKCONF.VALUE(cfg, key$ + "days", 14)
 
 DIM today$ = DT.FMT$(DT.NOW(), "%Y-%m-%d", DT.LOCAL_OFFSET())
-DIM people = BIRTHDAYS.CONTACTS(csv$)
+DIM problems = []
+DIM people = BIRTHDAYS.CONTACTS(csv$, problems)
+DIM p = 0
+FOR p = 0 TO LEN(problems) - 1
+    PRINT problems[p]
+NEXT p
 DIM soon = BIRTHDAYS.UPCOMING(people, today$, horizon)
 IF LEN(soon) = 0 THEN
     PRINT "No birthday in the next "; horizon; " days."

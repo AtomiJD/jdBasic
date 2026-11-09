@@ -1,13 +1,15 @@
 ' Birthday Reminder: the contacts of the fixture CSV, the next dates
 ' around the year end and for 29 February in common and leap years, the
 ' list in order with ages, the line format, and the calendar file read
-' back with its yearly rules.
+' back with its yearly rules; a cell that is not a date is named and kept
+' out of the list and the calendar.
 
 IMPORT TESTKIT, BIRTHDAYS, ICAL, DT
 
 DIM base$ = "recipes/easy/E12_birthday_reminder/"
 IF NOT FILE.EXISTS(base$ + "contacts.csv") THEN base$ = ""
-DIM people = BIRTHDAYS.CONTACTS(base$ + "contacts.csv")
+DIM problems = []
+DIM people = BIRTHDAYS.CONTACTS(base$ + "contacts.csv", problems)
 
 FUNC Iso$(t)
     RETURN DT.FMT$(t, "%Y-%m-%d")
@@ -18,6 +20,29 @@ TESTKIT.EQ(LEN(people), 3, "three contacts")
 TESTKIT.EQ(people[0]{"name"}, "Ann Miller", "a name")
 TESTKIT.EQ(people[0]{"anniversary"}, "2012-06-15", "an anniversary")
 TESTKIT.EQ(people[1]{"anniversary"}, "", "an empty cell")
+TESTKIT.EQ(LEN(problems), 0, "no problems in the sample")
+
+TESTKIT.SUITE("cells that are not dates")
+TESTKIT.ISTRUE(BIRTHDAYS.IS_DATE("1992-02-29"), "29 February of a leap year")
+TESTKIT.ISFALSE(BIRTHDAYS.IS_DATE("1990-02-29"), "but not of a common year")
+TESTKIT.ISFALSE(BIRTHDAYS.IS_DATE("1990-13-01"), "no month 13")
+TESTKIT.ISFALSE(BIRTHDAYS.IS_DATE("31.10.1990"), "a German date")
+TESTKIT.EQ(BIRTHDAYS.NOT_A_DATE$("3.5.1990"), "3.5.1990 is not a date (write 1990-05-03)", "the way to write it")
+TESTKIT.EQ(BIRTHDAYS.NOT_A_DATE$("Oct 31"), "Oct 31 is not a date (write it as YYYY-MM-DD)", "or the format")
+DIM bad_dir$ = MKTEMP$("bday")
+MKDIR bad_dir$
+DIM bad_csv$ = PATH.JOIN$(bad_dir$, "contacts.csv")
+TXTWRITER bad_csv$, "name,birthday,anniversary" + CHR$(10) + "Wrong Format,31.10.1990,2012-06-31" + CHR$(10)
+DIM bad_problems = []
+DIM bad = BIRTHDAYS.CONTACTS(bad_csv$, bad_problems)
+TESTKIT.EQ(bad[0]{"birthday"}, "", "the cell is left empty")
+TESTKIT.EQ(LEN(bad_problems), 2, "both cells are named")
+TESTKIT.EQ(bad_problems[0], "Wrong Format: 31.10.1990 is not a date (write 1990-10-31)", "with the person and the way to write it")
+DIM bad_ics$ = PATH.JOIN$(bad_dir$, "birthdays.ics")
+TESTKIT.EQ(BIRTHDAYS.CALENDAR(bad, "2026-10-01", bad_ics$), 0, "and no event goes into the calendar")
+KILL bad_ics$
+KILL bad_csv$
+RMDIR bad_dir$
 
 TESTKIT.SUITE("next dates")
 TESTKIT.EQ(Iso$(BIRTHDAYS.NEXT_DATE("1985-10-03", "2026-10-01")), "2026-10-03", "later this year")

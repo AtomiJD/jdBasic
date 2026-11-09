@@ -12,9 +12,47 @@ EXPORT MODULE BIRTHDAYS
 
 IMPORT DT, ICAL
 
+FUNC Part(date$, from, n)
+    RETURN CINT(MID$(date$, from, n))
+ENDFUNC
+
+' TRUE for a date written as YYYY-MM-DD that is on the calendar.
+EXPORT FUNC IS_DATE(date$)
+    IF NOT REGEX.MATCH("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", date$) THEN
+        RETURN FALSE
+    ENDIF
+    DIM mo = Part(date$, 5, 2)
+    DIM dd = Part(date$, 8, 2)
+    IF mo < 1 ORELSE mo > 12 THEN RETURN FALSE
+    RETURN dd >= 1 ANDALSO dd <= DT.DAYS_IN(Part(date$, 0, 4), mo)
+ENDFUNC
+
+' What to say about a date cell that is not a date, such as
+' "31.10.1990 is not a date (write 1990-10-31)".
+EXPORT FUNC NOT_A_DATE$(date$)
+    DIM german$ = "^([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{4})$"
+    DIM dotted = REGEX.FINDALL(german$, date$)
+    DIM hint$ = "write it as YYYY-MM-DD"
+    IF LEN(dotted) = 1 THEN
+        DIM d = dotted[0]
+        DIM mo$ = RIGHT$("0" + d[1], 2)
+        DIM dd$ = RIGHT$("0" + d[0], 2)
+        hint$ = "write " + d[2] + "-" + mo$ + "-" + dd$
+    ENDIF
+    RETURN date$ + " is not a date (" + hint$ + ")"
+ENDFUNC
+
+FUNC DateCell$(cell$, who$, problems)
+    IF cell$ = "" ORELSE IS_DATE(cell$) THEN RETURN cell$
+    PUSH(problems, who$ + ": " + NOT_A_DATE$(cell$))
+    RETURN ""
+ENDFUNC
+
 ' The contacts of a CSV file with the columns name, birthday and
-' anniversary (dates as YYYY-MM-DD, an empty cell for none).
-EXPORT FUNC CONTACTS(path$)
+' anniversary (dates as YYYY-MM-DD, an empty cell for none). A cell
+' that is not a date is left empty, and what is wrong with it goes
+' into the list problems.
+EXPORT FUNC CONTACTS(path$, problems)
     DIM kinds = ["STRING", "STRING", "STRING"]
     DIM rows = CSVREADER(path$, ",", TRUE, kinds)
     DIM out = []
@@ -24,15 +62,12 @@ EXPORT FUNC CONTACTS(path$)
         DIM anniv$ = ""
         IF LEN(r) > 2 THEN anniv$ = TRIM$(r[2])
         DIM who$ = TRIM$(r[0])
-        DIM born$ = TRIM$(r[1])
+        DIM born$ = DateCell$(TRIM$(r[1]), who$, problems)
+        anniv$ = DateCell$(anniv$, who$, problems)
         PUSH(out, {"name": who$, "birthday": born$, _
             "anniversary": anniv$})
     NEXT k
     RETURN out
-ENDFUNC
-
-FUNC Part(date$, from, n)
-    RETURN CINT(MID$(date$, from, n))
 ENDFUNC
 
 ' The day of a yearly date in a given year; 29 February moves to the
