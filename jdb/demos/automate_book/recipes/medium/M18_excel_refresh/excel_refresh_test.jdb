@@ -33,8 +33,14 @@ TESTKIT.EQ(LEN(parsed{"att_names"}), 1, "the PDF is attached")
 
 TESTKIT.SUITE("with Excel")
 DIM ask$ = "if ([type]::GetTypeFromProgID('Excel.Application')) { 'yes' }"
-DIM probe = OS.EXEC("powershell", ["-NoProfile", "-Command", ask$])
-IF INSTR(probe{"output"}, "yes") < 0 THEN
+DIM office$ = ""
+IF OS.FEATURE("COM") THEN
+    DIM probe = OS.EXEC("powershell", ["-NoProfile", "-Command", ask$])
+    office$ = probe{"output"}
+ENDIF
+IF NOT OS.FEATURE("COM") THEN
+    TESTKIT.SKIP("Office needs a jdbasic with COM, the release with Forms")
+ELSEIF INSTR(office$, "yes") < 0 THEN
     TESTKIT.SKIP("Excel is not installed")
 ELSE
     DIM book$ = PATH.JOIN$(folder$, "report.xlsx")

@@ -27,7 +27,7 @@ DIM listed = WORKCONF.VALUE(cfg, key$ + "sheets", [])
 DIM pdf_home$ = "~/Documents/AutomateWork/reports"
 DIM pdf_dir$ = WORKCONF.FOLDER$(cfg, key$ + "pdf_folder", pdf_home$)
 DIM mail_to$ = WORKCONF.VALUE(cfg, key$ + "mail_to", "")
-DIM day$ = FORMAT_DATE$(NOW(), "%Y-%m-%d")
+DIM stamp$ = FORMAT_DATE$(NOW(), "%Y-%m-%d")
 
 IF book$ = "" ORELSE NOT FILE.EXISTS(book$) THEN
     PRINT "No workbook at '"; book$; "'."
@@ -46,9 +46,14 @@ IF WORKCONF.FLAG("dry-run") THEN
     END
 ENDIF
 
+IF NOT OS.FEATURE("COM") THEN
+    PRINT "This jdbasic has no COM to start Excel with."
+    PRINT "Install the release of Chapter 2, the one with Forms."
+    END 1
+ENDIF
 DIM done = {"pdfs": [], "unknown": []}
 TRY
-    done = REFRESH.RUN(book$, listed, pdf_dir$, day$)
+    done = REFRESH.RUN(book$, listed, pdf_dir$, stamp$)
 CATCH
     PRINT "Excel Refresh stopped: "; ERRMSG$
     END 1
@@ -66,7 +71,7 @@ FOR k = 0 TO LEN(pdfs) - 1
 NEXT k
 IF mail_to$ <> "" ANDALSO LEN(pdfs) > 0 THEN
     DIM from$ = OUTBOX.FROM$(cfg)
-    DIM msg = REFRESH.MESSAGE(from$, mail_to$, book$, day$, pdfs)
-    DIM eml$ = PATH.BASENAME$(book$) + " " + day$ + ".eml"
+    DIM msg = REFRESH.MESSAGE(from$, mail_to$, book$, stamp$, pdfs)
+    DIM eml$ = PATH.BASENAME$(book$) + " " + stamp$ + ".eml"
     PRINT "In the outbox: "; OUTBOX.PUT$(msg, cfg, eml$)
 ENDIF

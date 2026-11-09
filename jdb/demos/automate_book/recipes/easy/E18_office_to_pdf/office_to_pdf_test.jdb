@@ -58,8 +58,14 @@ TESTKIT.ISFALSE(FILE.EXISTS(PATH.JOIN$(folder$, "offer.pdf")), "and no PDF appea
 
 TESTKIT.SUITE("with Office")
 DIM ask$ = "if (([type]::GetTypeFromProgID('Word.Application')) -and ([type]::GetTypeFromProgID('PowerPoint.Application'))) { 'yes' }"
-DIM probe = OS.EXEC("powershell", ["-NoProfile", "-Command", ask$])
-IF INSTR(probe{"output"}, "yes") < 0 THEN
+DIM office$ = ""
+IF OS.FEATURE("COM") THEN
+    DIM probe = OS.EXEC("powershell", ["-NoProfile", "-Command", ask$])
+    office$ = probe{"output"}
+ENDIF
+IF NOT OS.FEATURE("COM") THEN
+    TESTKIT.SKIP("Office needs a jdbasic with COM, the release with Forms")
+ELSEIF INSTR(office$, "yes") < 0 THEN
     TESTKIT.SKIP("Word or PowerPoint is not installed")
 ELSE
     OUTPUT.CAPTURE_BEGIN

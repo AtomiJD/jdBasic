@@ -28,6 +28,11 @@ IF n_new = 0 THEN
     PRINT "Every PDF in "; source$; " is up to date."
     END
 ENDIF
+IF NOT dry_run ANDALSO NOT OS.FEATURE("COM") THEN
+    PRINT "This jdbasic has no COM to start Word or PowerPoint with."
+    PRINT "Install the release of Chapter 2, the one with Forms."
+    END 1
+ENDIF
 DIM done = TOPDF.APPLY(plan, dry_run)
 IF dry_run THEN
     PRINT n_new; " PDFs would be made. Run without --dry-run."
