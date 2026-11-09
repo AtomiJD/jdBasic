@@ -205,6 +205,7 @@ ENDFUNC
 ' is missing; with removing, the line is taken out.
 SUB ConfLine(conf$, dotted$, value$, removing)
     DIM dot_at = INSTR(dotted$, ".")
+    IF dot_at <= 0 THEN THROW "a setting is section.key, not " + dotted$
     DIM sect$ = "[" + LEFT$(dotted$, dot_at) + "]"
     DIM key$ = MID$(dotted$, dot_at + 1, LEN(dotted$))
     DIM lines = Lines(conf$)
@@ -293,68 +294,73 @@ FUNC Check(c, recipes, jdbasic$, std_lib$, book$, files$, limit_s)
     DIM expects = []
     DIM absents = []
     DIM want_exit$ = ""
-    FOR k = 0 TO LEN(steps) - 1
-        DIM verb$ = steps[k][0]
-        DIM rest$ = steps[k][1]
-        DIM p = Pair(rest$)
-        IF verb$ = "set" THEN
-            ConfLine(setup{"conf"}, p[0], Said$(p[1], setup), FALSE)
-        ELSEIF verb$ = "drop" THEN
-            ConfLine(setup{"conf"}, rest$, "", TRUE)
-        ELSEIF verb$ = "write" THEN
-            DIM target$ = Where$(p[0], setup)
-            IF NOT FILE.ISDIR(PATH.DIRNAME$(target$)) THEN MKDIR PATH.DIRNAME$(target$)
-            TXTWRITER target$, Said$(p[1], setup)
-        ELSEIF verb$ = "copy" THEN
-            DIM dest$ = Where$(p[0], setup)
-            IF NOT FILE.ISDIR(PATH.DIRNAME$(dest$)) THEN MKDIR PATH.DIRNAME$(dest$)
-            FILE.COPY(Where$(p[1], setup), dest$, TRUE)
-        ELSEIF verb$ = "remove" THEN
-            Remove(Where$(rest$, setup))
-        ELSEIF verb$ = "mkdir" THEN
-            DIM made$ = Where$(rest$, setup)
-            IF NOT FILE.ISDIR(made$) THEN MKDIR made$
-        ELSEIF verb$ = "env" THEN
-            PUSH(envs, [p[0], Said$(p[1], setup)])
-        ELSEIF verb$ = "args" THEN
-            DIM words = SPLIT(rest$, " ")
-            DIM j = 0
-            FOR j = 0 TO LEN(words) - 1
-                IF words[j] <> "" THEN PUSH(extra, Said$(Where$(words[j], setup), setup))
-            NEXT j
-        ELSEIF verb$ = "config" THEN
-            conf$ = Where$(rest$, setup)
-        ELSEIF verb$ = "program" THEN
-            program$ = rest$
-        ELSEIF verb$ = "real" THEN
-            dry = FALSE
-        ELSEIF verb$ = "prepare" THEN
-            extra = APPEND(extra, FIXTURES.PREPARE(c{"id"}, home$, book$, setup{"folder"}, jdbasic$, ""))
-        ELSEIF verb$ = "expect" THEN
-            PUSH(expects, Said$(rest$, setup))
-        ELSEIF verb$ = "absent" THEN
-            PUSH(absents, Said$(rest$, setup))
-        ELSEIF verb$ = "exit" THEN
-            want_exit$ = rest$
-        ELSE
-            Remove(setup{"root"})
-            RETURN {"mark": "FAIL", "note": "unknown step " + verb$}
-        ENDIF
-    NEXT k
-    SETENV "JDBASIC_PATH", std_lib$ + gSep$ + setup{"lib"}
-    SETENV "USERPROFILE", home$
-    SETENV "HOME", home$
+    DIM res AS MAP
+    TRY
+        FOR k = 0 TO LEN(steps) - 1
+            DIM verb$ = steps[k][0]
+            DIM rest$ = steps[k][1]
+            DIM p = Pair(rest$)
+            IF verb$ = "set" THEN
+                ConfLine(setup{"conf"}, p[0], Said$(p[1], setup), FALSE)
+            ELSEIF verb$ = "drop" THEN
+                ConfLine(setup{"conf"}, rest$, "", TRUE)
+            ELSEIF verb$ = "write" THEN
+                DIM target$ = Where$(p[0], setup)
+                IF NOT FILE.ISDIR(PATH.DIRNAME$(target$)) THEN MKDIR PATH.DIRNAME$(target$)
+                TXTWRITER target$, Said$(p[1], setup)
+            ELSEIF verb$ = "copy" THEN
+                DIM dest$ = Where$(p[0], setup)
+                IF NOT FILE.ISDIR(PATH.DIRNAME$(dest$)) THEN MKDIR PATH.DIRNAME$(dest$)
+                FILE.COPY(Where$(p[1], setup), dest$, TRUE)
+            ELSEIF verb$ = "remove" THEN
+                Remove(Where$(rest$, setup))
+            ELSEIF verb$ = "mkdir" THEN
+                DIM made$ = Where$(rest$, setup)
+                IF NOT FILE.ISDIR(made$) THEN MKDIR made$
+            ELSEIF verb$ = "env" THEN
+                PUSH(envs, [p[0], Said$(p[1], setup), GETENV$(p[0])])
+            ELSEIF verb$ = "args" THEN
+                DIM words = SPLIT(rest$, " ")
+                DIM j = 0
+                FOR j = 0 TO LEN(words) - 1
+                    IF words[j] <> "" THEN PUSH(extra, Said$(Where$(words[j], setup), setup))
+                NEXT j
+            ELSEIF verb$ = "config" THEN
+                conf$ = Where$(rest$, setup)
+            ELSEIF verb$ = "program" THEN
+                program$ = rest$
+            ELSEIF verb$ = "real" THEN
+                dry = FALSE
+            ELSEIF verb$ = "prepare" THEN
+                extra = APPEND(extra, FIXTURES.PREPARE(c{"id"}, home$, book$, setup{"folder"}, jdbasic$, ""))
+            ELSEIF verb$ = "expect" THEN
+                PUSH(expects, Said$(rest$, setup))
+            ELSEIF verb$ = "absent" THEN
+                PUSH(absents, Said$(rest$, setup))
+            ELSEIF verb$ = "exit" THEN
+                want_exit$ = rest$
+            ELSE
+                THROW "unknown step " + verb$
+            ENDIF
+        NEXT k
+        SETENV "JDBASIC_PATH", std_lib$ + gSep$ + setup{"lib"}
+        SETENV "USERPROFILE", home$
+        SETENV "HOME", home$
+        FOR k = 0 TO LEN(envs) - 1
+            SETENV envs[k][0], envs[k][1]
+        NEXT k
+        DIM args = APPEND([program$], extra)
+        IF dry THEN PUSH(args, "--dry-run")
+        args = APPEND(args, ["--config", conf$])
+        res = Run(jdbasic$, args, setup{"folder"}, limit_s)
+    CATCH
+        res = {"exit": -2, "text": "step failed: " + ERRMSG$}
+    ENDTRY
     FOR k = 0 TO LEN(envs) - 1
-        SETENV envs[k][0], envs[k][1]
-    NEXT k
-    DIM args = APPEND([program$], extra)
-    IF dry THEN PUSH(args, "--dry-run")
-    args = APPEND(args, ["--config", conf$])
-    DIM res = Run(jdbasic$, args, setup{"folder"}, limit_s)
-    FOR k = 0 TO LEN(envs) - 1
-        SETENV envs[k][0], ""
+        SETENV envs[k][0], envs[k][2]
     NEXT k
     Remove(setup{"root"})
+    IF res{"exit"} = -2 THEN RETURN {"mark": "FAIL", "note": res{"text"}}
     DIM text$ = res{"text"}
     DIM misses = []
     FOR k = 0 TO LEN(expects) - 1
