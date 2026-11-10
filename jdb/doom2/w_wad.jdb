@@ -27,11 +27,6 @@ DIM lump_name$[W_MAX_LUMPS] AS STRING
 DIM lump_cache[W_MAX_LUMPS] AS INTEGER
 DIM lump_by_name AS MAP = {}
 
-' Reading single bytes out of the WAD string is quick compiled and slow
-' interpreted; a builtin that takes the whole string is the other way round.
-' The two readers below pick the quick one for the backend they run on.
-DIM interpreted AS INTEGER = 0
-
 FUNC CleanName$(raw$ AS STRING) AS STRING
     DIM p_nul AS INTEGER = INSTR(raw$, CHR$(0))
     IF p_nul >= 0 THEN RETURN UCASE$(LEFT$(raw$, p_nul))
@@ -40,7 +35,6 @@ ENDFUNC
 
 EXPORT SUB W_Init(path$ AS STRING)
     wad_buf$ = BINREADER$(path$)
-    IF OS.FEATURE("INTERPRETER") THEN interpreted = 1 ELSE interpreted = 0
     DIM magic$ AS STRING = LEFT$(wad_buf$, 4)
     IF magic$ <> "IWAD" AND magic$ <> "PWAD" THEN I_SYSTEM.I_Error("W_Init: " + path$ + " is not a WAD")
 
@@ -131,16 +125,9 @@ EXPORT FUNC W_CacheLumpNum(lump AS INTEGER) AS INTEGER
     DIM start AS INTEGER = W_Alloc(n_bytes)
     DIM i AS INTEGER
     DIM file_pos AS INTEGER = CLNG(lump_pos[lump])
-    IF n_bytes > 0 AND interpreted <> 0 THEN
-        DIM bytes AS ARRAY = UNPACK("<" + STR$(n_bytes) + "b", wad_buf$, file_pos)
-        FOR i = 0 TO n_bytes - 1
-            pool[start + i] = bytes[i]
-        NEXT i
-    ELSE
-        FOR i = 0 TO n_bytes - 1
-            pool[start + i] = BYTEAT(wad_buf$, file_pos + i)
-        NEXT i
-    ENDIF
+    FOR i = 0 TO n_bytes - 1
+        pool[start + i] = BYTEAT(wad_buf$, file_pos + i)
+    NEXT i
     lump_cache[lump] = start
     RETURN start
 ENDFUNC
@@ -166,7 +153,6 @@ ENDFUNC
 EXPORT FUNC W_ReadShortsAt(lump AS INTEGER, byte_ofs AS INTEGER, n_shorts AS INTEGER) AS ARRAY
     IF byte_ofs + n_shorts * 2 > W_LumpLength(lump) THEN I_SYSTEM.I_Error("W_ReadShortsAt: past the end of lump " + STR$(lump))
     DIM file_pos AS INTEGER = CLNG(lump_pos[lump]) + byte_ofs
-    IF interpreted <> 0 THEN RETURN UNPACK("<" + STR$(n_shorts) + "h", wad_buf$, file_pos)
     DIM shorts[n_shorts] AS INTEGER
     DIM i AS INTEGER
     DIM v AS INTEGER

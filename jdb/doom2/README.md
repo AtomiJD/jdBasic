@@ -26,20 +26,24 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 ## Rules the compiler asks for
 
 - Every module carries `OPTION "EXPLICIT"` and `OPTION "STRICT"`.
-- **A scalar that takes its value from an array cell takes it through
-  `CLNG()`**: `DIM w AS INTEGER = CLNG(tex_width[t])`. Compiled, an array cell
-  is a FLOAT64, and an `INTEGER` variable given one without `CLNG` computes
-  as a FLOAT64 from then on. Products above 2^53 (every `FixedMul` of large
-  values) then lose their low bits. STRICT reports the assignments, not the
-  `DIM` initialisers. Cell to cell (`a[i] = b[j]`), cells as indexes and cells
-  as arguments of a `FUNC` with `AS INTEGER` parameters need nothing.
+- **An array cell is a FLOAT64 in a compiled program.** Arithmetic written
+  directly on cells is double arithmetic, and a product above 2^53 (every
+  `FixedMul` of large values) loses its low bits there. A cell that takes
+  part in such arithmetic is read into an `INTEGER` first: by a declaration
+  (`DIM w AS INTEGER = tex_width[t]`), or through `CLNG()` in an assignment
+  or inside an expression. STRICT reports an assignment that lacks the
+  conversion. Cell to cell (`a[i] = b[j]`), cells as indexes and cells as
+  arguments of a `FUNC` with `AS INTEGER` parameters need nothing. The
+  declaration form needs a jdBasic with the fix of trakr jdbasic #979
+  (commit d7f4304b or later).
 - A cross-module `FUNC` call costs about 20 ns compiled, the same arithmetic
   inline about 5 ns. Inner loops over pixels write `FixedMul` out; everything
   else calls it.
-- Single bytes of the WAD string (`BYTEAT`) are quick compiled and slow
-  interpreted; a builtin that takes the whole string (`UNPACK` with an offset)
-  is the other way round. `w_wad.jdb` holds both readers and picks by backend;
-  no other module touches the WAD string.
+- Compiled, a builtin of the runtime library copies its string arguments, so
+  `UNPACK` with an offset into the 13 MB WAD string costs about 4 ms a call.
+  `w_wad.jdb` caches a lump byte by byte with `BYTEAT`, which is quick in
+  both backends, and uses `UNPACK` only for the eleven lumps of a level. No
+  other module touches the WAD string.
 
 ## What is needed
 
