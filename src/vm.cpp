@@ -779,7 +779,18 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
         check_native_arity(name, *ne, args.size());
         bool no_vec = jdb_no_vectorize(name)
             || extra_no_vectorize.find(name) != extra_no_vectorize.end();
-        return invoke_native(ne->fn, args, no_vec);
+        // The failing builtin is named, as the interpreter's own dispatch
+        // does, so a compiled program reports the same text.
+        try {
+            return invoke_native(ne->fn, args, no_vec);
+        } catch (const jdError&) {
+            throw;
+        } catch (const std::exception& e) {
+            std::string msg = e.what();
+            std::string prefix = name + ": ";
+            if (msg.compare(0, prefix.size(), prefix) == 0) throw;
+            throw std::runtime_error(prefix + msg);
+        }
     }
 
     // User-defined?

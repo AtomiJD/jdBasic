@@ -6545,6 +6545,54 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
         for (auto& b : stmt.body) if (b) forget_dims(*b);
     }
     {
+        // An array of this function that PUSH hands both texts and numbers
+        // answers each cell with its own tag; the first text PUSH alone
+        // would make every cell read as a text.
+        std::unordered_set<std::string> got_str, got_num;
+        std::function<void(const Expr&)> scan = [&](const Expr& e) {
+            if (e.kind == ExprKind::CALL && e.args.size() >= 2 && e.args[0] && e.args[1] &&
+                e.args[0]->kind == ExprKind::VARIABLE) {
+                std::string u = e.func_name;
+                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                if (u == "PUSH") {
+                    const Expr& v = *e.args[1];
+                    bool is_str = v.kind == ExprKind::LITERAL_STRING ||
+                        (v.kind == ExprKind::VARIABLE && !v.str_val.empty() && v.str_val.back() == '$') ||
+                        (v.kind == ExprKind::CALL && !v.func_name.empty() && v.func_name.back() == '$');
+                    bool is_num = v.kind == ExprKind::LITERAL_INT || v.kind == ExprKind::LITERAL_FLOAT ||
+                        v.kind == ExprKind::LITERAL_BOOL;
+                    if (!is_str && v.kind == ExprKind::CALL && !user_functions.count(v.func_name)) {
+                        std::string fu = v.func_name;
+                        std::transform(fu.begin(), fu.end(), fu.begin(), ::toupper);
+                        auto rf = runtime_funcs.find(fu);
+                        is_num = rf != runtime_funcs.end() &&
+                                 (rf->second.return_tag == JD_TAG_I64 || jd_is_f64_tag(rf->second.return_tag) ||
+                                  rf->second.return_tag == JD_TAG_BOOL);
+                    }
+                    if (is_str) got_str.insert(e.args[0]->str_val);
+                    else if (is_num) got_num.insert(e.args[0]->str_val);
+                }
+            }
+            for (auto& a : e.args) if (a) scan(*a);
+            if (e.left) scan(*e.left);
+            if (e.right) scan(*e.right);
+        };
+        std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) return;
+            if (s.expr) scan(*s.expr);
+            for (auto& b : s.body)         if (b) walk(*b);
+            for (auto& b : s.catch_body())   if (b) walk(*b);
+            for (auto& b : s.finally_body()) if (b) walk(*b);
+            for (auto& br : s.branches) {
+                if (br.condition) scan(*br.condition);
+                for (auto& b : br.body) if (b) walk(*b);
+            }
+        };
+        for (auto& b : stmt.body) if (b) walk(*b);
+        for (auto& n : got_str)
+            if (got_num.count(n)) mixed_array_vars.insert(n);
+    }
+    {
         std::unordered_set<std::string> dyn_dims;
         std::unordered_set<std::string> map_dims;
         // Parameters that arrive runtime-typed feed the same rule.
@@ -15814,7 +15862,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // pointer, the way a pointer-typed local is passed into it.
             // A runtime-tagged value keeps that shape instead of the
             // arithmetic reading coerce_to gives a string or an array.
-            if (pt == f64_type && av.tag == JD_TAG_RUNTIME && av.runtime_tag)
+            // A cell handed to a parameter that stayed f64 is one the callee
+            // only reads as a number (the pre-pass makes it RUNTIME when the
+            // callee keeps, indexes or reads it as an array), so a text cell
+            // becomes its number, as the same call at the top level does.
+            if (pt == f64_type && av.tag == JD_TAG_RUNTIME && av.runtime_tag &&
+                call_args[i] && call_args[i]->kind == ExprKind::INDEX)
+                args.push_back(coerce_to(av, f64_type));
+            else if (pt == f64_type && av.tag == JD_TAG_RUNTIME && av.runtime_tag)
                 args.push_back(runtime_to_untyped_param(av));
             else if ((expected_tag == JD_TAG_NATIVE_MAP || expected_tag == JD_TAG_ARR) &&
                      ((av.tag == JD_TAG_RUNTIME && av.runtime_tag) || av.tag == JD_TAG_VM_HANDLE))
@@ -19335,16 +19390,16 @@ LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
     if (jd_is_f64_tag(tv.tag))
         return LLVMBuildFCmp(builder, LLVMRealONE, tv.val,
                              LLVMConstReal(f64_type, 0.0), "tobool");
-    if (tv.tag == JD_TAG_ARR) {
-        // Array → ALL semantics: true iff every element is non-zero.
-        auto it = runtime_funcs.find("ALL");
-        if (it != runtime_funcs.end()) {
-            LLVMValueRef args[] = { tv.val };
-            LLVMValueRef all = LLVMBuildCall2(builder, it->second.fn_type,
-                                               it->second.fn, args, 1, "all");
-            return LLVMBuildICmp(builder, LLVMIntNE, all,
-                                  LLVMConstInt(i64_type, 0, 0), "tobool");
-        }
+    if (tv.tag == JD_TAG_ARR || tv.tag == JD_TAG_VM_HANDLE) {
+        // An array is true when it has cells and every cell is; a VM value
+        // answers by the interpreter's own rule.
+        auto& fn = runtime_funcs["__dyn_truth"];
+        LLVMValueRef bits = tv.tag == JD_TAG_ARR
+            ? LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi")
+            : LLVMBuildIntCast2(builder, tv.val, i64_type, 1, "vmh_bits");
+        LLVMValueRef a[] = { bits, LLVMConstInt(i32_type, tv.tag, 0) };
+        LLVMValueRef t = LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "arr_truth");
+        return LLVMBuildICmp(builder, LLVMIntNE, t, LLVMConstInt(i64_type, 0, 0), "tobool");
     }
     if (tv.tag == JD_TAG_STR) {
         // A string is true when it is not empty.
@@ -19353,14 +19408,6 @@ LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
                              LLVMConstInt(i32_type, JD_TAG_STR, 0) };
         LLVMValueRef t = LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "str_truth");
         return LLVMBuildICmp(builder, LLVMIntNE, t, LLVMConstInt(i64_type, 0, 0), "tobool");
-    }
-    if (tv.tag == JD_TAG_VM_HANDLE) {
-        // The handle is a key into the value store, and every key is a
-        // number that is not zero. The truth of a handle is the truth of
-        // the value it stands for.
-        LLVMValueRef f = coerce_to(tv, f64_type);
-        return LLVMBuildFCmp(builder, LLVMRealONE, f,
-                             LLVMConstReal(f64_type, 0.0), "vmh_tobool");
     }
     return LLVMBuildICmp(builder, LLVMIntNE, tv.val,
                          LLVMConstInt(i64_type, 0, 0), "tobool");

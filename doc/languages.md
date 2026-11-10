@@ -2289,6 +2289,7 @@ Integer-to-string formatting helpers live under **[String Functions](#string-fun
 * **`REGEX.MATCH(pattern$, text$) -> Boolean or Array`**: Checks if the entire `text$` string matches the `pattern$`.
   * Returns `TRUE` or `FALSE` if the pattern has no capture groups.
   * If the pattern contains capture groups `(...)`, it returns a 1D array of the captured substrings upon a successful match, otherwise `FALSE`.
+  * In `IF` an array is true when it has cells and every cell is true, so `IF REGEX.MATCH(...)` takes the match unless a group captured an empty text; write the group as `(?:...)` when only the yes or no matters. Both backends read it the same way.
 * **`REGEX.FINDALL(pattern$, text$) -> Array`**: Finds all non-overlapping occurrences of `pattern$` in `text$`.
   * Returns a 1D array of all matches found.
   * If the pattern contains capture groups, it returns a 2D array where each row contains the groups for a single match.

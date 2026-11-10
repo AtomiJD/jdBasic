@@ -67,6 +67,7 @@ static void* g_jdrt_handle = nullptr;
 extern "C" int64_t jdrt_promote_handle(void* rt, int64_t h);
 extern "C" int32_t jdrt_val_kind(void* rt, int64_t h);
 extern "C" double jdrt_val_to_f64(void* rt, int64_t handle);
+extern "C" int64_t jdrt_val_truth(void* rt, int64_t handle);
 static inline double keep_vm_handle(double val, int32_t tag) {
     if (tag != JD_TAG_VM_HANDLE || !g_jdrt_handle) return val;
     union { double d; int64_t i; } u; u.d = val;
@@ -5691,6 +5692,8 @@ int64_t jdb_dyn_truth(int64_t bits, int32_t tag) {
         JdbArray* a = (JdbArray*)(intptr_t)bits;
         return a && a->length > 0 && jdb_array_all(a);
     }
+    if (tag == JD_TAG_VM_HANDLE)
+        return g_jdrt_handle ? jdrt_val_truth(g_jdrt_handle, bits) : 0;
     if (tag == JD_TAG_NATIVE_MAP || tag == JD_TAG_NONE) return 0;
     return dyn_num(bits, tag) != 0.0;
 }

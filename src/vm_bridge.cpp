@@ -1413,6 +1413,16 @@ JDRT_API double jdrt_val_to_f64(JdRT handle, int64_t h) {
     }, [] { return 0.0; });
 }
 
+// The truth of a stored Value, by the interpreter's own rule (an array is
+// true when it has cells and every cell is, a map never).
+JDRT_API int64_t jdrt_val_truth(JdRT handle, int64_t h) {
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        return (it != rt->value_store.end() && it->second.to_bool()) ? 1 : 0;
+    }, [] { return (int64_t)0; });
+}
+
 JDRT_API const char* jdrt_val_to_str(JdRT handle, int64_t h) {
     return bridge_guard(handle, [&]() -> const char* {
         auto* rt = resolve_rt(handle);

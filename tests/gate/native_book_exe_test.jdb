@@ -148,6 +148,80 @@ ENDFUNC
 
 Check("cells of a parsed JSON array", JoinedCells$(), "a|2|{" + CHR$(34) + "k" + CHR$(34) + ": 1}")
 
+' A text cell handed to a parameter the callee only reads as a number.
+FUNC AsWhole(n)
+    RETURN CINT(n)
+ENDFUNC
+
+FUNC CellsToNumbers$(date$)
+    DIM dotted = REGEX.FINDALL("^([0-9]+)\.([0-9]+)$", date$)
+    DIM d = dotted[0]
+    DIM nest = [["3", "5"]]
+    DIM g = nest[0]
+    DIM k = 1
+    RETURN STR$(AsWhole(d[1])) + " " + STR$(AsWhole(g[1])) + " " + STR$(AsWhole(g[k]) * 2) + " " + STR$(AsWhole(nest[0][0]) + 1)
+ENDFUNC
+
+Check("a text cell into a number parameter", CellsToNumbers$("3.5"), "5 5 10 4")
+
+' An array a function fills with PUSH from texts and numbers alike.
+FUNC MixedRow(cells)
+    DIM row = []
+    DIM k = 0
+    FOR k = 0 TO LEN(cells) - 1
+        DIM cur$ = cells[k]
+        IF cur$ = "1.5" THEN
+            PUSH(row, VAL(cur$))
+        ELSE
+            PUSH(row, cur$)
+        ENDIF
+    NEXT k
+    RETURN row
+ENDFUNC
+
+FUNC MixedText$(cells)
+    DIM row = []
+    DIM k = 0
+    FOR k = 0 TO LEN(cells) - 1
+        DIM cur$ = cells[k]
+        IF cur$ = "1.5" THEN
+            PUSH(row, VAL(cur$))
+        ELSE
+            PUSH(row, cur$)
+        ENDIF
+    NEXT k
+    DIM first$ = row[0]
+    RETURN first$ + "|" + STR$(row[0]) + "|" + row[1] + "|" + ("" + row[0])
+ENDFUNC
+
+Check("a number cell of a mixed local array read as text", MixedText$(["1.5", "b"]), "1.5|1.5|b|1.5")
+Check("the text cell first", MixedText$(["b", "1.5"]), "b|b|1.5|b")
+DIM mixed = MixedRow(["1.5", "b"])
+Check("a mixed row handed back", STR$(mixed[0] + 1) + mixed[1], "2.5b")
+
+' The truth of an array and of a match with a group.
+DIM truths$ = ""
+DIM probes = [[1], [0], [1, 0], ["a"], [""], [], ["15"]]
+DIM p = 0
+FOR p = 0 TO LEN(probes) - 1
+    DIM probe = probes[p]
+    IF probe THEN truths$ = truths$ + "T" ELSE truths$ = truths$ + "F"
+NEXT p
+Check("arrays in IF: every cell true, an empty one false", truths$, "TFFTFFT")
+DIM matched$ = ""
+IF REGEX.MATCH("^-?(0|[1-9][0-9]*)$", "15") THEN matched$ = "yes" ELSE matched$ = "no"
+IF REGEX.MATCH("^-?(0|[1-9][0-9]*)$", "x") THEN matched$ = matched$ + " yes" ELSE matched$ = matched$ + " no"
+Check("REGEX.MATCH with a group in IF, a hit and a miss", matched$, "yes no")
+
+' A builtin that fails is named in the error text.
+DIM csv_error$ = ""
+TRY
+    DIM nothing = CSVREADER("does_not_exist_book_test.csv", ",", TRUE)
+CATCH
+    csv_error$ = ERRMSG$
+ENDTRY
+Check("the failing builtin is named", csv_error$, "CSVREADER: Cannot open file: does_not_exist_book_test.csv")
+
 PRINT ""
 PRINT "NATIVE BOOK EXE TEST RESULTS"
 PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
