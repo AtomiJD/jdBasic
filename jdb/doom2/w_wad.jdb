@@ -62,6 +62,7 @@ EXPORT SUB W_Init(path$ AS STRING)
         entry = UNPACK("<2n", directory$, i * 16)
         lump_pos[i] = entry[0]
         lump_size[i] = entry[1]
+        IF entry[0] < 0 OR entry[1] < 0 OR entry[0] + entry[1] > LEN(wad_buf$) THEN I_SYSTEM.I_Error("W_Init: lump " + STR$(i) + " lies outside the file")
         lump_name$[i] = CleanName$(MID$(directory$, i * 16 + 8, 8))
         lump_by_name{lump_name$[i]} = i
     NEXT i
@@ -115,6 +116,7 @@ ENDFUNC
 
 ' Reserves n_cells of the pool and answers the place of the first one.
 EXPORT FUNC W_Alloc(n_cells AS INTEGER) AS INTEGER
+    IF n_cells < 0 THEN I_SYSTEM.I_Error("W_Alloc: negative size")
     IF pool_used + n_cells > POOL_SIZE THEN I_SYSTEM.I_Error("W_Alloc: pool of " + STR$(POOL_SIZE) + " cells is full")
     DIM start AS INTEGER = pool_used
     pool_used = pool_used + n_cells

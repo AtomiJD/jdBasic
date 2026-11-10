@@ -207,7 +207,7 @@ SUB LoadTextureLump(lump_name$ AS STRING, patchlookup AS ARRAY)
     ENDIF
     FOR i = 0 TO n_here - 1
         offset = CLNG(directory[i])
-        IF offset > maxoff THEN I_SYSTEM.I_Error("R_InitTextures: bad texture directory")
+        IF offset < 0 OR offset > maxoff THEN I_SYSTEM.I_Error("R_InitTextures: bad texture directory")
         t = numtextures
         IF t >= MAXTEXTURES THEN I_SYSTEM.I_Error("R_InitTextures: more than " + STR$(MAXTEXTURES) + " textures")
         tex_name$[t] = CleanName$(MID$(maptex$, offset, 8))
@@ -225,6 +225,7 @@ SUB LoadTextureLump(lump_name$ AS STRING, patchlookup AS ARRAY)
             tp = next_patch + j
             tp_originx[tp] = mpatch[0]
             tp_originy[tp] = mpatch[1]
+            IF mpatch[2] < 0 OR mpatch[2] >= LEN(patchlookup) THEN I_SYSTEM.I_Error("R_InitTextures: bad patch number in texture " + tex_name$[t])
             tp_patch[tp] = patchlookup[mpatch[2]]
             IF tp_patch[tp] = -1 THEN I_SYSTEM.I_Error("R_InitTextures: Missing patch in texture " + tex_name$[t])
         NEXT j
