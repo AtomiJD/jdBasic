@@ -1,15 +1,534 @@
-' Weapon sprites: raising, lowering, firing (p_pspr.c). Not ported yet; the
-' functions the player code calls are here and do nothing.
+' Weapon sprite animation and the weapon actions: raising, lowering,
+' firing (p_pspr.c).
+'
+' A player sprite is entry player * 2 + position of the D_PLAYER.player_psprite_
+' arrays; state 0 means there is none.
 
 EXPORT MODULE P_PSPR
 
 OPTION "EXPLICIT"
 OPTION "STRICT"
 
-' Called at the start of a level for each player.
-EXPORT SUB P_SetupPsprites(player AS INTEGER)
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT D_ITEMS
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT TABLES
+IMPORT INFO
+IMPORT R_MAIN
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_MAP
+IMPORT P_INTER
+IMPORT P_ENEMY
+IMPORT S_SOUND
+
+CONST LOWERSPEED = 393216
+CONST RAISESPEED = 393216
+CONST WEAPONBOTTOM = 8388608
+CONST WEAPONTOP = 2097152
+' Plasma cells for a BFG attack.
+CONST BFGCELLS = 40
+
+EXPORT SUB P_SetPsprite(player AS INTEGER, position AS INTEGER, stnum_in AS INTEGER)
+    DIM psp AS INTEGER = player * DOOMDEF.NUMPSPRITES + position
+    DIM stnum AS INTEGER = stnum_in
+    DIM action AS INTEGER
+
+    DO
+        IF stnum = 0 THEN
+            ' Object removed itself.
+            D_PLAYER.player_psprite_state[psp] = 0
+            EXITDO
+        ENDIF
+
+        D_PLAYER.player_psprite_state[psp] = stnum
+        ' Could be 0.
+        D_PLAYER.player_psprite_tics[psp] = INFO.st_tics[stnum]
+
+        IF CLNG(INFO.st_misc1[stnum]) <> 0 THEN
+            ' Coordinate set.
+            D_PLAYER.player_psprite_sx[psp] = CLNG(INFO.st_misc1[stnum]) * M_FIXED.FRACUNIT
+            D_PLAYER.player_psprite_sy[psp] = CLNG(INFO.st_misc2[stnum]) * M_FIXED.FRACUNIT
+        ENDIF
+
+        ' Call the action routine. Modified handling.
+        action = CLNG(INFO.st_action[stnum])
+        IF action <> 0 THEN
+            WeaponAction(action, player, psp)
+            IF CLNG(D_PLAYER.player_psprite_state[psp]) = 0 THEN EXITDO
+        ENDIF
+
+        stnum = CLNG(INFO.st_next[CLNG(D_PLAYER.player_psprite_state[psp])])
+    ' An initial state of 0 could cycle through.
+    LOOP WHILE CLNG(D_PLAYER.player_psprite_tics[psp]) = 0
 ENDSUB
 
-' Called every tic by the player's think.
+' Starts bringing the pending weapon up from the bottom of the screen.
+SUB P_BringUpWeapon(player AS INTEGER)
+    IF CLNG(D_PLAYER.player_pendingweapon[player]) = DOOMDEF.WP_NOCHANGE THEN D_PLAYER.player_pendingweapon[player] = D_PLAYER.player_readyweapon[player]
+
+    DIM pending AS INTEGER = D_PLAYER.player_pendingweapon[player]
+    IF pending = DOOMDEF.WP_CHAINSAW THEN S_SOUND.S_StartSound(CLNG(D_PLAYER.player_mo[player]), INFO.SFX_SAWUP)
+
+    DIM newstate AS INTEGER = D_ITEMS.weaponinfo_upstate[pending]
+    D_PLAYER.player_pendingweapon[player] = DOOMDEF.WP_NOCHANGE
+    D_PLAYER.player_psprite_sy[player * DOOMDEF.NUMPSPRITES + DOOMDEF.PS_WEAPON] = WEAPONBOTTOM
+    P_SetPsprite(player, DOOMDEF.PS_WEAPON, newstate)
+ENDSUB
+
+FUNC Owns(player AS INTEGER, weapon AS INTEGER) AS INTEGER
+    RETURN CLNG(D_PLAYER.player_weaponowned[player * DOOMDEF.NUMWEAPONS + weapon])
+ENDFUNC
+
+FUNC AmmoOf(player AS INTEGER, ammo AS INTEGER) AS INTEGER
+    RETURN CLNG(D_PLAYER.player_ammo[player * DOOMDEF.NUMAMMO + ammo])
+ENDFUNC
+
+' The ammunition of the weapon in hand goes down by count.
+SUB UseAmmo(player AS INTEGER, shots AS INTEGER)
+    DIM slot AS INTEGER = player * DOOMDEF.NUMAMMO + CLNG(D_ITEMS.weaponinfo_ammo[CLNG(D_PLAYER.player_readyweapon[player])])
+    D_PLAYER.player_ammo[slot] = CLNG(D_PLAYER.player_ammo[slot]) - shots
+ENDSUB
+
+' TRUE if there is enough ammo to shoot. If not, selects the next weapon
+' to use.
+FUNC P_CheckAmmo(player AS INTEGER) AS INTEGER
+    DIM ready AS INTEGER = D_PLAYER.player_readyweapon[player]
+    DIM ammo AS INTEGER = D_ITEMS.weaponinfo_ammo[ready]
+
+    ' Minimal amount for one shot varies.
+    DIM needed AS INTEGER = 1
+    IF ready = DOOMDEF.WP_BFG THEN
+        needed = BFGCELLS
+    ELSEIF ready = DOOMDEF.WP_SUPERSHOTGUN THEN
+        needed = 2
+    ENDIF
+
+    ' Some do not need ammunition anyway. Return if current ammunition
+    ' sufficient.
+    IF ammo = DOOMDEF.AM_NOAMMO ORELSE AmmoOf(player, ammo) >= needed THEN RETURN 1
+
+    ' Out of ammo, pick a weapon to change to. Preferences are set here.
+    DIM pending AS INTEGER
+    IF Owns(player, DOOMDEF.WP_PLASMA) <> 0 AND AmmoOf(player, DOOMDEF.AM_CELL) <> 0 AND DOOMSTAT.shareware = 0 THEN
+        pending = DOOMDEF.WP_PLASMA
+    ELSEIF Owns(player, DOOMDEF.WP_SUPERSHOTGUN) <> 0 AND AmmoOf(player, DOOMDEF.AM_SHELL) > 2 AND DOOMSTAT.commercial <> 0 THEN
+        pending = DOOMDEF.WP_SUPERSHOTGUN
+    ELSEIF Owns(player, DOOMDEF.WP_CHAINGUN) <> 0 AND AmmoOf(player, DOOMDEF.AM_CLIP) <> 0 THEN
+        pending = DOOMDEF.WP_CHAINGUN
+    ELSEIF Owns(player, DOOMDEF.WP_SHOTGUN) <> 0 AND AmmoOf(player, DOOMDEF.AM_SHELL) <> 0 THEN
+        pending = DOOMDEF.WP_SHOTGUN
+    ELSEIF AmmoOf(player, DOOMDEF.AM_CLIP) <> 0 THEN
+        pending = DOOMDEF.WP_PISTOL
+    ELSEIF Owns(player, DOOMDEF.WP_CHAINSAW) <> 0 THEN
+        pending = DOOMDEF.WP_CHAINSAW
+    ELSEIF Owns(player, DOOMDEF.WP_MISSILE) <> 0 AND AmmoOf(player, DOOMDEF.AM_MISL) <> 0 THEN
+        pending = DOOMDEF.WP_MISSILE
+    ELSEIF Owns(player, DOOMDEF.WP_BFG) <> 0 AND AmmoOf(player, DOOMDEF.AM_CELL) > 40 AND DOOMSTAT.shareware = 0 THEN
+        pending = DOOMDEF.WP_BFG
+    ELSE
+        ' If everything fails.
+        pending = DOOMDEF.WP_FIST
+    ENDIF
+    D_PLAYER.player_pendingweapon[player] = pending
+
+    ' Now set the appropriate weapon overlay.
+    P_SetPsprite(player, DOOMDEF.PS_WEAPON, CLNG(D_ITEMS.weaponinfo_downstate[ready]))
+    RETURN 0
+ENDFUNC
+
+SUB P_FireWeapon(player AS INTEGER)
+    IF P_CheckAmmo(player) = 0 THEN RETURN
+
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+    P_MOBJ.P_SetMobjState(mo, INFO.S_PLAY_ATK1)
+    P_SetPsprite(player, DOOMDEF.PS_WEAPON, CLNG(D_ITEMS.weaponinfo_atkstate[CLNG(D_PLAYER.player_readyweapon[player])]))
+    P_ENEMY.P_NoiseAlert(mo, mo)
+ENDSUB
+
+' The player died, so put the weapon away.
+EXPORT SUB P_DropWeapon(player AS INTEGER)
+    P_SetPsprite(player, DOOMDEF.PS_WEAPON, CLNG(D_ITEMS.weaponinfo_downstate[CLNG(D_PLAYER.player_readyweapon[player])]))
+ENDSUB
+
+' The player can fire the weapon or change to another weapon at this time.
+' Follows after getting the weapon up, or after previous attack/fire
+' sequence.
+SUB A_WeaponReady(player AS INTEGER, psp AS INTEGER)
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+    DIM ready AS INTEGER = D_PLAYER.player_readyweapon[player]
+
+    ' Get out of attack state.
+    IF CLNG(P_MOBJ.mobj_state[mo]) = INFO.S_PLAY_ATK1 OR CLNG(P_MOBJ.mobj_state[mo]) = INFO.S_PLAY_ATK2 THEN P_MOBJ.P_SetMobjState(mo, INFO.S_PLAY)
+
+    IF ready = DOOMDEF.WP_CHAINSAW AND CLNG(D_PLAYER.player_psprite_state[psp]) = INFO.S_SAW THEN S_SOUND.S_StartSound(mo, INFO.SFX_SAWIDL)
+
+    ' Check for change. If the player is dead, put the weapon away.
+    IF CLNG(D_PLAYER.player_pendingweapon[player]) <> DOOMDEF.WP_NOCHANGE OR CLNG(D_PLAYER.player_health[player]) = 0 THEN
+        ' Change weapon (pending weapon should already be validated).
+        P_SetPsprite(player, DOOMDEF.PS_WEAPON, CLNG(D_ITEMS.weaponinfo_downstate[ready]))
+        RETURN
+    ENDIF
+
+    ' Check for fire. The missile launcher and bfg do not auto fire.
+    IF (CLNG(D_PLAYER.player_cmd_buttons[player]) BAND DOOMDEF.BT_ATTACK) <> 0 THEN
+        IF CLNG(D_PLAYER.player_attackdown[player]) = 0 OR (ready <> DOOMDEF.WP_MISSILE AND ready <> DOOMDEF.WP_BFG) THEN
+            D_PLAYER.player_attackdown[player] = 1
+            P_FireWeapon(player)
+            RETURN
+        ENDIF
+    ELSE
+        D_PLAYER.player_attackdown[player] = 0
+    ENDIF
+
+    ' Bob the weapon based on movement speed.
+    DIM bob AS INTEGER = D_PLAYER.player_bob[player]
+    DIM angle AS INTEGER = (128 * P_TICK.leveltime) BAND TABLES.FINEMASK
+    D_PLAYER.player_psprite_sx[psp] = M_FIXED.FRACUNIT + M_FIXED.FixedMul(bob, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + angle]))
+    angle = angle BAND (TABLES.FINEANGLES \ 2 - 1)
+    D_PLAYER.player_psprite_sy[psp] = WEAPONTOP + M_FIXED.FixedMul(bob, CLNG(TABLES.finesine[angle]))
+ENDSUB
+
+' The player can re-fire the weapon without lowering it entirely.
+SUB A_ReFire(player AS INTEGER, psp AS INTEGER)
+    ' Check for fire (if a weapon change is pending, let it go through
+    ' instead).
+    IF (CLNG(D_PLAYER.player_cmd_buttons[player]) BAND DOOMDEF.BT_ATTACK) <> 0 AND CLNG(D_PLAYER.player_pendingweapon[player]) = DOOMDEF.WP_NOCHANGE AND CLNG(D_PLAYER.player_health[player]) <> 0 THEN
+        D_PLAYER.player_refire[player] = CLNG(D_PLAYER.player_refire[player]) + 1
+        P_FireWeapon(player)
+    ELSE
+        D_PLAYER.player_refire[player] = 0
+        P_CheckAmmo(player)
+    ENDIF
+ENDSUB
+
+' Lowers the current weapon, and changes weapon at the bottom.
+SUB A_Lower(player AS INTEGER, psp AS INTEGER)
+    DIM sy AS INTEGER = CLNG(D_PLAYER.player_psprite_sy[psp]) + LOWERSPEED
+    D_PLAYER.player_psprite_sy[psp] = sy
+
+    ' Is already down.
+    IF sy < WEAPONBOTTOM THEN RETURN
+
+    ' Player is dead.
+    IF CLNG(D_PLAYER.player_playerstate[player]) = DOOMDEF.PST_DEAD THEN
+        D_PLAYER.player_psprite_sy[psp] = WEAPONBOTTOM
+        ' Don't bring the weapon back up.
+        RETURN
+    ENDIF
+
+    ' The old weapon has been lowered off the screen, so change the weapon
+    ' and start raising it.
+    IF CLNG(D_PLAYER.player_health[player]) = 0 THEN
+        ' Player is dead, so keep the weapon off screen.
+        P_SetPsprite(player, DOOMDEF.PS_WEAPON, INFO.S_NULL)
+        RETURN
+    ENDIF
+
+    D_PLAYER.player_readyweapon[player] = D_PLAYER.player_pendingweapon[player]
+    P_BringUpWeapon(player)
+ENDSUB
+
+SUB A_Raise(player AS INTEGER, psp AS INTEGER)
+    DIM sy AS INTEGER = CLNG(D_PLAYER.player_psprite_sy[psp]) - RAISESPEED
+    D_PLAYER.player_psprite_sy[psp] = sy
+    IF sy > WEAPONTOP THEN RETURN
+
+    D_PLAYER.player_psprite_sy[psp] = WEAPONTOP
+
+    ' The weapon has been raised all the way, so change to the ready state.
+    P_SetPsprite(player, DOOMDEF.PS_WEAPON, CLNG(D_ITEMS.weaponinfo_readystate[CLNG(D_PLAYER.player_readyweapon[player])]))
+ENDSUB
+
+SUB A_GunFlash(player AS INTEGER, psp AS INTEGER)
+    P_MOBJ.P_SetMobjState(CLNG(D_PLAYER.player_mo[player]), INFO.S_PLAY_ATK2)
+    P_SetPsprite(player, DOOMDEF.PS_FLASH, CLNG(D_ITEMS.weaponinfo_flashstate[CLNG(D_PLAYER.player_readyweapon[player])]))
+ENDSUB
+
+' The angle a little to the left or right at random.
+FUNC Spread(angle AS INTEGER, bits AS INTEGER) AS INTEGER
+    DIM first AS INTEGER = M_RANDOM.P_Random()
+    RETURN (angle + (first - M_RANDOM.P_Random()) * (1 SHL bits)) BAND M_FIXED.ANGLE_MASK
+ENDFUNC
+
+SUB A_Punch(player AS INTEGER, psp AS INTEGER)
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+    DIM damage AS INTEGER = ((M_RANDOM.P_Random() MOD 10) + 1) * 2
+    IF CLNG(D_PLAYER.player_powers[player * DOOMDEF.NUMPOWERS + DOOMDEF.PW_STRENGTH]) <> 0 THEN damage = damage * 10
+
+    DIM angle AS INTEGER = Spread(CLNG(P_MOBJ.mobj_angle[mo]), 18)
+    DIM slope AS INTEGER = P_MAP.P_AimLineAttack(mo, angle, DOOMDEF.MELEERANGE)
+    P_MAP.P_LineAttack(mo, angle, DOOMDEF.MELEERANGE, slope, damage)
+
+    ' Turn to face target.
+    DIM hit AS INTEGER = P_MAP.linetarget
+    IF hit >= 0 THEN
+        S_SOUND.S_StartSound(mo, INFO.SFX_PUNCH)
+        P_MOBJ.mobj_angle[mo] = R_MAIN.R_PointToAngle2(CLNG(P_MOBJ.mobj_x[mo]), CLNG(P_MOBJ.mobj_y[mo]), CLNG(P_MOBJ.mobj_x[hit]), CLNG(P_MOBJ.mobj_y[hit]))
+    ENDIF
+ENDSUB
+
+SUB A_Saw(player AS INTEGER, psp AS INTEGER)
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+    DIM damage AS INTEGER = 2 * ((M_RANDOM.P_Random() MOD 10) + 1)
+    DIM angle AS INTEGER = Spread(CLNG(P_MOBJ.mobj_angle[mo]), 18)
+
+    ' Use meleerange + 1 so the puff doesn't skip the flash.
+    DIM slope AS INTEGER = P_MAP.P_AimLineAttack(mo, angle, DOOMDEF.MELEERANGE + 1)
+    P_MAP.P_LineAttack(mo, angle, DOOMDEF.MELEERANGE + 1, slope, damage)
+
+    DIM hit AS INTEGER = P_MAP.linetarget
+    IF hit < 0 THEN
+        S_SOUND.S_StartSound(mo, INFO.SFX_SAWFUL)
+        RETURN
+    ENDIF
+    S_SOUND.S_StartSound(mo, INFO.SFX_SAWHIT)
+
+    ' Turn to face target.
+    angle = R_MAIN.R_PointToAngle2(CLNG(P_MOBJ.mobj_x[mo]), CLNG(P_MOBJ.mobj_y[mo]), CLNG(P_MOBJ.mobj_x[hit]), CLNG(P_MOBJ.mobj_y[hit]))
+    DIM facing AS INTEGER = P_MOBJ.mobj_angle[mo]
+    DIM delta AS INTEGER = (angle - facing) BAND M_FIXED.ANGLE_MASK
+    DIM small AS INTEGER = M_FIXED.ANG90 \ 20
+    IF delta > M_FIXED.ANG180 THEN
+        IF delta < ((-small) BAND M_FIXED.ANGLE_MASK) THEN
+            facing = angle + M_FIXED.ANG90 \ 21
+        ELSE
+            facing = facing - small
+        ENDIF
+    ELSE
+        IF delta > small THEN
+            facing = angle - M_FIXED.ANG90 \ 21
+        ELSE
+            facing = facing + small
+        ENDIF
+    ENDIF
+    P_MOBJ.mobj_angle[mo] = facing BAND M_FIXED.ANGLE_MASK
+    P_MOBJ.mobj_flags[mo] = CLNG(P_MOBJ.mobj_flags[mo]) BOR INFO.MF_JUSTATTACKED
+ENDSUB
+
+SUB A_FireMissile(player AS INTEGER, psp AS INTEGER)
+    UseAmmo(player, 1)
+    P_MOBJ.P_SpawnPlayerMissile(CLNG(D_PLAYER.player_mo[player]), INFO.MT_ROCKET)
+ENDSUB
+
+SUB A_FireBFG(player AS INTEGER, psp AS INTEGER)
+    UseAmmo(player, BFGCELLS)
+    P_MOBJ.P_SpawnPlayerMissile(CLNG(D_PLAYER.player_mo[player]), INFO.MT_BFG)
+ENDSUB
+
+SUB A_FirePlasma(player AS INTEGER, psp AS INTEGER)
+    UseAmmo(player, 1)
+    P_SetPsprite(player, DOOMDEF.PS_FLASH, CLNG(D_ITEMS.weaponinfo_flashstate[CLNG(D_PLAYER.player_readyweapon[player])]) + (M_RANDOM.P_Random() BAND 1))
+    P_MOBJ.P_SpawnPlayerMissile(CLNG(D_PLAYER.player_mo[player]), INFO.MT_PLASMA)
+ENDSUB
+
+DIM bulletslope AS INTEGER = 0
+
+' Sets a slope so a near miss is at approximately the height of the
+' intended target.
+SUB P_BulletSlope(mo AS INTEGER)
+    ' See which target is to be aimed at.
+    DIM an AS INTEGER = P_MOBJ.mobj_angle[mo]
+    bulletslope = P_MAP.P_AimLineAttack(mo, an, 16 * 64 * M_FIXED.FRACUNIT)
+
+    IF P_MAP.linetarget < 0 THEN
+        an = (an + (1 SHL 26)) BAND M_FIXED.ANGLE_MASK
+        bulletslope = P_MAP.P_AimLineAttack(mo, an, 16 * 64 * M_FIXED.FRACUNIT)
+        IF P_MAP.linetarget < 0 THEN
+            an = (an - (2 SHL 26)) BAND M_FIXED.ANGLE_MASK
+            bulletslope = P_MAP.P_AimLineAttack(mo, an, 16 * 64 * M_FIXED.FRACUNIT)
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB P_GunShot(mo AS INTEGER, accurate AS INTEGER)
+    DIM damage AS INTEGER = 5 * ((M_RANDOM.P_Random() MOD 3) + 1)
+    DIM angle AS INTEGER = P_MOBJ.mobj_angle[mo]
+    IF accurate = 0 THEN angle = Spread(angle, 18)
+    P_MAP.P_LineAttack(mo, angle, DOOMDEF.MISSILERANGE, bulletslope, damage)
+ENDSUB
+
+' TRUE on the first shot of a burst, which goes straight.
+FUNC FirstShot(player AS INTEGER) AS INTEGER
+    IF CLNG(D_PLAYER.player_refire[player]) = 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+SUB A_FirePistol(player AS INTEGER, psp AS INTEGER)
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+    S_SOUND.S_StartSound(mo, INFO.SFX_PISTOL)
+    P_MOBJ.P_SetMobjState(mo, INFO.S_PLAY_ATK2)
+    UseAmmo(player, 1)
+    P_SetPsprite(player, DOOMDEF.PS_FLASH, CLNG(D_ITEMS.weaponinfo_flashstate[CLNG(D_PLAYER.player_readyweapon[player])]))
+    P_BulletSlope(mo)
+    P_GunShot(mo, FirstShot(player))
+ENDSUB
+
+SUB A_FireShotgun(player AS INTEGER, psp AS INTEGER)
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+    DIM i AS INTEGER
+    S_SOUND.S_StartSound(mo, INFO.SFX_SHOTGN)
+    P_MOBJ.P_SetMobjState(mo, INFO.S_PLAY_ATK2)
+    UseAmmo(player, 1)
+    P_SetPsprite(player, DOOMDEF.PS_FLASH, CLNG(D_ITEMS.weaponinfo_flashstate[CLNG(D_PLAYER.player_readyweapon[player])]))
+    P_BulletSlope(mo)
+    FOR i = 0 TO 6
+        P_GunShot(mo, 0)
+    NEXT i
+ENDSUB
+
+SUB A_FireShotgun2(player AS INTEGER, psp AS INTEGER)
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+    DIM i AS INTEGER
+    DIM damage AS INTEGER
+    DIM angle AS INTEGER
+    DIM first AS INTEGER
+    S_SOUND.S_StartSound(mo, INFO.SFX_DSHTGN)
+    P_MOBJ.P_SetMobjState(mo, INFO.S_PLAY_ATK2)
+    UseAmmo(player, 2)
+    P_SetPsprite(player, DOOMDEF.PS_FLASH, CLNG(D_ITEMS.weaponinfo_flashstate[CLNG(D_PLAYER.player_readyweapon[player])]))
+    P_BulletSlope(mo)
+    FOR i = 0 TO 19
+        damage = 5 * ((M_RANDOM.P_Random() MOD 3) + 1)
+        angle = Spread(CLNG(P_MOBJ.mobj_angle[mo]), 19)
+        first = M_RANDOM.P_Random()
+        P_MAP.P_LineAttack(mo, angle, DOOMDEF.MISSILERANGE, bulletslope + (first - M_RANDOM.P_Random()) * 32, damage)
+    NEXT i
+ENDSUB
+
+SUB A_FireCGun(player AS INTEGER, psp AS INTEGER)
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+    DIM ready AS INTEGER = D_PLAYER.player_readyweapon[player]
+    S_SOUND.S_StartSound(mo, INFO.SFX_PISTOL)
+
+    IF AmmoOf(player, CLNG(D_ITEMS.weaponinfo_ammo[ready])) = 0 THEN RETURN
+
+    P_MOBJ.P_SetMobjState(mo, INFO.S_PLAY_ATK2)
+    UseAmmo(player, 1)
+    P_SetPsprite(player, DOOMDEF.PS_FLASH, CLNG(D_ITEMS.weaponinfo_flashstate[ready]) + CLNG(D_PLAYER.player_psprite_state[psp]) - INFO.S_CHAIN1)
+    P_BulletSlope(mo)
+    P_GunShot(mo, FirstShot(player))
+ENDSUB
+
+' Spawn a BFG explosion on every monster in view of the one who fired.
+EXPORT SUB A_BFGSpray(mo AS INTEGER)
+    DIM shooter AS INTEGER = P_MOBJ.mobj_target[mo]
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM damage AS INTEGER
+    DIM an AS INTEGER
+    DIM hit AS INTEGER
+
+    ' Offset angles from its attack angle.
+    FOR i = 0 TO 39
+        an = (CLNG(P_MOBJ.mobj_angle[mo]) - M_FIXED.ANG90 \ 2 + (M_FIXED.ANG90 \ 40) * i) BAND M_FIXED.ANGLE_MASK
+
+        ' mo's target is the originator (player) of the missile.
+        P_MAP.P_AimLineAttack(shooter, an, 16 * 64 * M_FIXED.FRACUNIT)
+        hit = P_MAP.linetarget
+        IF hit < 0 THEN CONTINUEFOR
+
+        P_MOBJ.P_SpawnMobj(CLNG(P_MOBJ.mobj_x[hit]), CLNG(P_MOBJ.mobj_y[hit]), CLNG(P_MOBJ.mobj_z[hit]) + (CLNG(P_MOBJ.mobj_height[hit]) SHR 2), INFO.MT_EXTRABFG)
+
+        damage = 0
+        FOR j = 0 TO 14
+            damage = damage + (M_RANDOM.P_Random() BAND 7) + 1
+        NEXT j
+        P_INTER.P_DamageMobj(hit, shooter, shooter, damage)
+    NEXT i
+ENDSUB
+
+' Carries out the action of a weapon state for the player's sprite psp.
+SUB WeaponAction(action AS INTEGER, player AS INTEGER, psp AS INTEGER)
+    SWITCH action
+        CASE INFO.A_LIGHT0
+            D_PLAYER.player_extralight[player] = 0
+        CASE INFO.A_LIGHT1
+            D_PLAYER.player_extralight[player] = 1
+        CASE INFO.A_LIGHT2
+            D_PLAYER.player_extralight[player] = 2
+        CASE INFO.A_WEAPONREADY
+            A_WeaponReady(player, psp)
+        CASE INFO.A_LOWER
+            A_Lower(player, psp)
+        CASE INFO.A_RAISE
+            A_Raise(player, psp)
+        CASE INFO.A_PUNCH
+            A_Punch(player, psp)
+        CASE INFO.A_REFIRE
+            A_ReFire(player, psp)
+        CASE INFO.A_FIREPISTOL
+            A_FirePistol(player, psp)
+        CASE INFO.A_FIRESHOTGUN
+            A_FireShotgun(player, psp)
+        CASE INFO.A_FIRESHOTGUN2
+            A_FireShotgun2(player, psp)
+        CASE INFO.A_CHECKRELOAD
+            P_CheckAmmo(player)
+        CASE INFO.A_OPENSHOTGUN2
+            S_SOUND.S_StartSound(CLNG(D_PLAYER.player_mo[player]), INFO.SFX_DBOPN)
+        CASE INFO.A_LOADSHOTGUN2
+            S_SOUND.S_StartSound(CLNG(D_PLAYER.player_mo[player]), INFO.SFX_DBLOAD)
+        CASE INFO.A_CLOSESHOTGUN2
+            S_SOUND.S_StartSound(CLNG(D_PLAYER.player_mo[player]), INFO.SFX_DBCLS)
+            A_ReFire(player, psp)
+        CASE INFO.A_FIRECGUN
+            A_FireCGun(player, psp)
+        CASE INFO.A_GUNFLASH
+            A_GunFlash(player, psp)
+        CASE INFO.A_FIREMISSILE
+            A_FireMissile(player, psp)
+        CASE INFO.A_SAW
+            A_Saw(player, psp)
+        CASE INFO.A_FIREPLASMA
+            A_FirePlasma(player, psp)
+        CASE INFO.A_BFGSOUND
+            S_SOUND.S_StartSound(CLNG(D_PLAYER.player_mo[player]), INFO.SFX_BFG)
+        CASE INFO.A_FIREBFG
+            A_FireBFG(player, psp)
+        DEFAULT
+            I_SYSTEM.I_Error("P_SetPsprite: action " + STR$(action) + " is not a weapon action")
+    ENDSWITCH
+ENDSUB
+
+' Called at start of level for each player.
+EXPORT SUB P_SetupPsprites(player AS INTEGER)
+    DIM i AS INTEGER
+    ' Remove all psprites.
+    FOR i = 0 TO DOOMDEF.NUMPSPRITES - 1
+        D_PLAYER.player_psprite_state[player * DOOMDEF.NUMPSPRITES + i] = 0
+    NEXT i
+
+    ' Spawn the gun.
+    D_PLAYER.player_pendingweapon[player] = D_PLAYER.player_readyweapon[player]
+    P_BringUpWeapon(player)
+ENDSUB
+
+' Called every tic by the player thinking routine.
 EXPORT SUB P_MovePsprites(player AS INTEGER)
+    DIM i AS INTEGER
+    DIM psp AS INTEGER
+    DIM tics AS INTEGER
+    FOR i = 0 TO DOOMDEF.NUMPSPRITES - 1
+        psp = player * DOOMDEF.NUMPSPRITES + i
+        ' A null state means not active.
+        IF CLNG(D_PLAYER.player_psprite_state[psp]) <> 0 THEN
+            ' Drop the tic count and possibly change state; a -1 tic count
+            ' never changes.
+            tics = CLNG(D_PLAYER.player_psprite_tics[psp])
+            IF tics <> -1 THEN
+                tics = tics - 1
+                D_PLAYER.player_psprite_tics[psp] = tics
+                IF tics = 0 THEN P_SetPsprite(player, i, CLNG(INFO.st_next[CLNG(D_PLAYER.player_psprite_state[psp])]))
+            ENDIF
+        ENDIF
+    NEXT i
+
+    DIM first_psp AS INTEGER = player * DOOMDEF.NUMPSPRITES
+    D_PLAYER.player_psprite_sx[first_psp + DOOMDEF.PS_FLASH] = D_PLAYER.player_psprite_sx[first_psp + DOOMDEF.PS_WEAPON]
+    D_PLAYER.player_psprite_sy[first_psp + DOOMDEF.PS_FLASH] = D_PLAYER.player_psprite_sy[first_psp + DOOMDEF.PS_WEAPON]
 ENDSUB

@@ -1,16 +1,576 @@
-' Handling interactions: damage, pickups, kills (p_inter.c). Not ported yet;
-' the functions the movement code calls are here and do nothing.
+' Handling interactions: things picked up, damage, death (p_inter.c).
 
 EXPORT MODULE P_INTER
 
 OPTION "EXPLICIT"
 OPTION "STRICT"
 
-' Damages target by inflictor (the missile or -1) on behalf of source (the
-' attacker or -1).
-EXPORT SUB P_DamageMobj(target AS INTEGER, inflictor AS INTEGER, source AS INTEGER, damage AS INTEGER)
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT D_ITEMS
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT TABLES
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT R_MAIN
+IMPORT P_MOBJ
+IMPORT P_PSPR
+IMPORT S_SOUND
+
+CONST BONUSADD = 6
+
+' A weapon picked up gives ammunition for it; the amount of a clip, and
+' the most a player carries without a backpack.
+EXPORT DIM maxammo AS ARRAY = [200, 50, 300, 50]
+EXPORT DIM clipammo AS ARRAY = [10, 4, 20, 1]
+
+' num is the number of clip loads, not the individual count (0 = 1/2
+' clip). FALSE if the ammo can't be picked up at all.
+EXPORT FUNC P_GiveAmmo(player AS INTEGER, ammo AS INTEGER, num_in AS INTEGER) AS INTEGER
+    IF ammo = DOOMDEF.AM_NOAMMO THEN RETURN 0
+    IF ammo < 0 OR ammo >= DOOMDEF.NUMAMMO THEN I_SYSTEM.I_Error("P_GiveAmmo: bad type " + STR$(ammo))
+
+    DIM slot AS INTEGER = player * DOOMDEF.NUMAMMO + ammo
+    DIM oldammo AS INTEGER = D_PLAYER.player_ammo[slot]
+    DIM most AS INTEGER = D_PLAYER.player_maxammo[slot]
+    IF oldammo = most THEN RETURN 0
+
+    DIM num AS INTEGER = num_in
+    IF num <> 0 THEN
+        num = num * CLNG(clipammo[ammo])
+    ELSE
+        num = CLNG(clipammo[ammo]) \ 2
+    ENDIF
+
+    ' Give double ammo in trainer mode, you'll need it in nightmare.
+    IF DOOMSTAT.gameskill = DOOMDEF.SK_BABY OR DOOMSTAT.gameskill = DOOMDEF.SK_NIGHTMARE THEN num = num * 2
+
+    DIM now AS INTEGER = oldammo + num
+    IF now > most THEN now = most
+    D_PLAYER.player_ammo[slot] = now
+
+    ' If non zero ammo, don't change up weapons, the player was lower on
+    ' purpose.
+    IF oldammo <> 0 THEN RETURN 1
+
+    ' We were down to zero, so select a new weapon. Preferences are not
+    ' user selectable.
+    DIM ready AS INTEGER = D_PLAYER.player_readyweapon[player]
+    DIM owned AS INTEGER = player * DOOMDEF.NUMWEAPONS
+    IF ammo = DOOMDEF.AM_CLIP THEN
+        IF ready = DOOMDEF.WP_FIST THEN
+            IF CLNG(D_PLAYER.player_weaponowned[owned + DOOMDEF.WP_CHAINGUN]) <> 0 THEN
+                D_PLAYER.player_pendingweapon[player] = DOOMDEF.WP_CHAINGUN
+            ELSE
+                D_PLAYER.player_pendingweapon[player] = DOOMDEF.WP_PISTOL
+            ENDIF
+        ENDIF
+    ELSEIF ammo = DOOMDEF.AM_SHELL THEN
+        IF ready = DOOMDEF.WP_FIST OR ready = DOOMDEF.WP_PISTOL THEN
+            IF CLNG(D_PLAYER.player_weaponowned[owned + DOOMDEF.WP_SHOTGUN]) <> 0 THEN D_PLAYER.player_pendingweapon[player] = DOOMDEF.WP_SHOTGUN
+        ENDIF
+    ELSEIF ammo = DOOMDEF.AM_CELL THEN
+        IF ready = DOOMDEF.WP_FIST OR ready = DOOMDEF.WP_PISTOL THEN
+            IF CLNG(D_PLAYER.player_weaponowned[owned + DOOMDEF.WP_PLASMA]) <> 0 THEN D_PLAYER.player_pendingweapon[player] = DOOMDEF.WP_PLASMA
+        ENDIF
+    ELSEIF ammo = DOOMDEF.AM_MISL THEN
+        IF ready = DOOMDEF.WP_FIST THEN
+            IF CLNG(D_PLAYER.player_weaponowned[owned + DOOMDEF.WP_MISSILE]) <> 0 THEN D_PLAYER.player_pendingweapon[player] = DOOMDEF.WP_MISSILE
+        ENDIF
+    ENDIF
+    RETURN 1
+ENDFUNC
+
+' The weapon name may have a MF_DROPPED flag ored in.
+EXPORT FUNC P_GiveWeapon(player AS INTEGER, weapon AS INTEGER, dropped AS INTEGER) AS INTEGER
+    DIM owned AS INTEGER = player * DOOMDEF.NUMWEAPONS + weapon
+    DIM ammo AS INTEGER = D_ITEMS.weaponinfo_ammo[weapon]
+
+    IF DOOMSTAT.netgame <> 0 AND DOOMSTAT.deathmatch <> 2 AND dropped = 0 THEN
+        ' Leave placed weapons forever on net games.
+        IF CLNG(D_PLAYER.player_weaponowned[owned]) <> 0 THEN RETURN 0
+
+        D_PLAYER.player_bonuscount[player] = CLNG(D_PLAYER.player_bonuscount[player]) + BONUSADD
+        D_PLAYER.player_weaponowned[owned] = 1
+
+        IF DOOMSTAT.deathmatch <> 0 THEN
+            P_GiveAmmo(player, ammo, 5)
+        ELSE
+            P_GiveAmmo(player, ammo, 2)
+        ENDIF
+        D_PLAYER.player_pendingweapon[player] = weapon
+
+        IF player = DOOMSTAT.consoleplayer THEN S_SOUND.S_StartSound(-1, INFO.SFX_WPNUP)
+        RETURN 0
+    ENDIF
+
+    DIM gaveammo AS INTEGER = 0
+    IF ammo <> DOOMDEF.AM_NOAMMO THEN
+        ' Give one clip with a dropped weapon, two clips with a found
+        ' weapon.
+        IF dropped <> 0 THEN
+            gaveammo = P_GiveAmmo(player, ammo, 1)
+        ELSE
+            gaveammo = P_GiveAmmo(player, ammo, 2)
+        ENDIF
+    ENDIF
+
+    DIM gaveweapon AS INTEGER = 0
+    IF CLNG(D_PLAYER.player_weaponowned[owned]) = 0 THEN
+        gaveweapon = 1
+        D_PLAYER.player_weaponowned[owned] = 1
+        D_PLAYER.player_pendingweapon[player] = weapon
+    ENDIF
+
+    IF gaveweapon <> 0 OR gaveammo <> 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' FALSE if the body isn't needed at all.
+EXPORT FUNC P_GiveBody(player AS INTEGER, num AS INTEGER) AS INTEGER
+    DIM health AS INTEGER = D_PLAYER.player_health[player]
+    IF health >= DOOMDEF.MAXHEALTH THEN RETURN 0
+
+    health = health + num
+    IF health > DOOMDEF.MAXHEALTH THEN health = DOOMDEF.MAXHEALTH
+    D_PLAYER.player_health[player] = health
+    P_MOBJ.mobj_health[CLNG(D_PLAYER.player_mo[player])] = health
+    RETURN 1
+ENDFUNC
+
+' FALSE if the armor is worse than the current armor.
+EXPORT FUNC P_GiveArmor(player AS INTEGER, armortype AS INTEGER) AS INTEGER
+    DIM hits AS INTEGER = armortype * 100
+    ' Don't pick up.
+    IF CLNG(D_PLAYER.player_armorpoints[player]) >= hits THEN RETURN 0
+
+    D_PLAYER.player_armortype[player] = armortype
+    D_PLAYER.player_armorpoints[player] = hits
+    RETURN 1
+ENDFUNC
+
+EXPORT SUB P_GiveCard(player AS INTEGER, card AS INTEGER)
+    IF CLNG(D_PLAYER.player_cards[player * DOOMDEF.NUMCARDS + card]) <> 0 THEN RETURN
+    D_PLAYER.player_bonuscount[player] = BONUSADD
+    D_PLAYER.player_cards[player * DOOMDEF.NUMCARDS + card] = 1
+ENDSUB
+
+EXPORT FUNC P_GivePower(player AS INTEGER, power AS INTEGER) AS INTEGER
+    DIM slot AS INTEGER = player * DOOMDEF.NUMPOWERS + power
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+
+    IF power = DOOMDEF.PW_INVULNERABILITY THEN
+        D_PLAYER.player_powers[slot] = DOOMDEF.INVULNTICS
+        RETURN 1
+    ENDIF
+    IF power = DOOMDEF.PW_INVISIBILITY THEN
+        D_PLAYER.player_powers[slot] = DOOMDEF.INVISTICS
+        P_MOBJ.mobj_flags[mo] = CLNG(P_MOBJ.mobj_flags[mo]) BOR INFO.MF_SHADOW
+        RETURN 1
+    ENDIF
+    IF power = DOOMDEF.PW_INFRARED THEN
+        D_PLAYER.player_powers[slot] = DOOMDEF.INFRATICS
+        RETURN 1
+    ENDIF
+    IF power = DOOMDEF.PW_IRONFEET THEN
+        D_PLAYER.player_powers[slot] = DOOMDEF.IRONTICS
+        RETURN 1
+    ENDIF
+    IF power = DOOMDEF.PW_STRENGTH THEN
+        P_GiveBody(player, 100)
+        D_PLAYER.player_powers[slot] = 1
+        RETURN 1
+    ENDIF
+
+    ' Already got it.
+    IF CLNG(D_PLAYER.player_powers[slot]) <> 0 THEN RETURN 0
+    D_PLAYER.player_powers[slot] = 1
+    RETURN 1
+ENDFUNC
+
+' Gives a key; the message only when the player has not got it yet.
+SUB TouchCard(player AS INTEGER, card AS INTEGER, message$ AS STRING)
+    IF CLNG(D_PLAYER.player_cards[player * DOOMDEF.NUMCARDS + card]) = 0 THEN D_PLAYER.player_message$[player] = message$
+    P_GiveCard(player, card)
 ENDSUB
 
 ' The toucher walks over a thing that can be picked up.
 EXPORT SUB P_TouchSpecialThing(special AS INTEGER, toucher AS INTEGER)
+    DIM delta AS INTEGER = CLNG(P_MOBJ.mobj_z[special]) - CLNG(P_MOBJ.mobj_z[toucher])
+    ' Out of reach.
+    IF delta > CLNG(P_MOBJ.mobj_height[toucher]) OR delta < -8 * M_FIXED.FRACUNIT THEN RETURN
+
+    DIM sfx_id AS INTEGER = INFO.SFX_ITEMUP
+    DIM player AS INTEGER = P_MOBJ.mobj_player[toucher]
+
+    ' Dead thing touching. Can happen with a sliding player corpse.
+    IF CLNG(P_MOBJ.mobj_health[toucher]) <= 0 THEN RETURN
+
+    DIM dropped AS INTEGER = CLNG(P_MOBJ.mobj_flags[special]) BAND INFO.MF_DROPPED
+    DIM health AS INTEGER
+    DIM armor AS INTEGER
+    DIM message$ AS STRING = ""
+    DIM i AS INTEGER
+
+    ' Identify by sprite.
+    SWITCH CLNG(P_MOBJ.mobj_sprite[special])
+        ' Armor.
+        CASE INFO.SPR_ARM1
+            IF P_GiveArmor(player, 1) = 0 THEN RETURN
+            message$ = "Picked up the armor."
+        CASE INFO.SPR_ARM2
+            IF P_GiveArmor(player, 2) = 0 THEN RETURN
+            message$ = "Picked up the MegaArmor!"
+
+        ' Bonus items.
+        CASE INFO.SPR_BON1
+            ' Can go over 100%.
+            health = CLNG(D_PLAYER.player_health[player]) + 1
+            IF health > 200 THEN health = 200
+            D_PLAYER.player_health[player] = health
+            P_MOBJ.mobj_health[toucher] = health
+            message$ = "Picked up a health bonus."
+        CASE INFO.SPR_BON2
+            ' Can go over 100%.
+            armor = CLNG(D_PLAYER.player_armorpoints[player]) + 1
+            IF armor > 200 THEN armor = 200
+            D_PLAYER.player_armorpoints[player] = armor
+            IF CLNG(D_PLAYER.player_armortype[player]) = 0 THEN D_PLAYER.player_armortype[player] = 1
+            message$ = "Picked up an armor bonus."
+        CASE INFO.SPR_SOUL
+            health = CLNG(D_PLAYER.player_health[player]) + 100
+            IF health > 200 THEN health = 200
+            D_PLAYER.player_health[player] = health
+            P_MOBJ.mobj_health[toucher] = health
+            message$ = "Supercharge!"
+            sfx_id = INFO.SFX_GETPOW
+        CASE INFO.SPR_MEGA
+            IF DOOMSTAT.commercial = 0 THEN RETURN
+            D_PLAYER.player_health[player] = 200
+            P_MOBJ.mobj_health[toucher] = 200
+            P_GiveArmor(player, 2)
+            message$ = "MegaSphere!"
+            sfx_id = INFO.SFX_GETPOW
+
+        ' Cards. Leave cards for everyone.
+        CASE INFO.SPR_BKEY
+            TouchCard(player, DOOMDEF.IT_BLUECARD, "Picked up a blue keycard.")
+            IF DOOMSTAT.netgame <> 0 THEN RETURN
+        CASE INFO.SPR_YKEY
+            TouchCard(player, DOOMDEF.IT_YELLOWCARD, "Picked up a yellow keycard.")
+            IF DOOMSTAT.netgame <> 0 THEN RETURN
+        CASE INFO.SPR_RKEY
+            TouchCard(player, DOOMDEF.IT_REDCARD, "Picked up a red keycard.")
+            IF DOOMSTAT.netgame <> 0 THEN RETURN
+        CASE INFO.SPR_BSKU
+            TouchCard(player, DOOMDEF.IT_BLUESKULL, "Picked up a blue skull key.")
+            IF DOOMSTAT.netgame <> 0 THEN RETURN
+        CASE INFO.SPR_YSKU
+            TouchCard(player, DOOMDEF.IT_YELLOWSKULL, "Picked up a yellow skull key.")
+            IF DOOMSTAT.netgame <> 0 THEN RETURN
+        CASE INFO.SPR_RSKU
+            TouchCard(player, DOOMDEF.IT_REDSKULL, "Picked up a red skull key.")
+            IF DOOMSTAT.netgame <> 0 THEN RETURN
+
+        ' Medikits, heals.
+        CASE INFO.SPR_STIM
+            IF P_GiveBody(player, 10) = 0 THEN RETURN
+            message$ = "Picked up a stimpack."
+        CASE INFO.SPR_MEDI
+            IF P_GiveBody(player, 25) = 0 THEN RETURN
+            ' The health was raised before it is looked at, as in the
+            ' original.
+            IF CLNG(D_PLAYER.player_health[player]) < 25 THEN
+                message$ = "Picked up a medikit that you REALLY need!"
+            ELSE
+                message$ = "Picked up a medikit."
+            ENDIF
+
+        ' Power ups.
+        CASE INFO.SPR_PINV
+            IF P_GivePower(player, DOOMDEF.PW_INVULNERABILITY) = 0 THEN RETURN
+            message$ = "Invulnerability!"
+            sfx_id = INFO.SFX_GETPOW
+        CASE INFO.SPR_PSTR
+            IF P_GivePower(player, DOOMDEF.PW_STRENGTH) = 0 THEN RETURN
+            message$ = "Berserk!"
+            IF CLNG(D_PLAYER.player_readyweapon[player]) <> DOOMDEF.WP_FIST THEN D_PLAYER.player_pendingweapon[player] = DOOMDEF.WP_FIST
+            sfx_id = INFO.SFX_GETPOW
+        CASE INFO.SPR_PINS
+            IF P_GivePower(player, DOOMDEF.PW_INVISIBILITY) = 0 THEN RETURN
+            message$ = "Partial Invisibility"
+            sfx_id = INFO.SFX_GETPOW
+        CASE INFO.SPR_SUIT
+            IF P_GivePower(player, DOOMDEF.PW_IRONFEET) = 0 THEN RETURN
+            message$ = "Radiation Shielding Suit"
+            sfx_id = INFO.SFX_GETPOW
+        CASE INFO.SPR_PMAP
+            IF P_GivePower(player, DOOMDEF.PW_ALLMAP) = 0 THEN RETURN
+            message$ = "Computer Area Map"
+            sfx_id = INFO.SFX_GETPOW
+        CASE INFO.SPR_PVIS
+            IF P_GivePower(player, DOOMDEF.PW_INFRARED) = 0 THEN RETURN
+            message$ = "Light Amplification Visor"
+            sfx_id = INFO.SFX_GETPOW
+
+        ' Ammo.
+        CASE INFO.SPR_CLIP
+            IF dropped <> 0 THEN
+                IF P_GiveAmmo(player, DOOMDEF.AM_CLIP, 0) = 0 THEN RETURN
+            ELSE
+                IF P_GiveAmmo(player, DOOMDEF.AM_CLIP, 1) = 0 THEN RETURN
+            ENDIF
+            message$ = "Picked up a clip."
+        CASE INFO.SPR_AMMO
+            IF P_GiveAmmo(player, DOOMDEF.AM_CLIP, 5) = 0 THEN RETURN
+            message$ = "Picked up a box of bullets."
+        CASE INFO.SPR_ROCK
+            IF P_GiveAmmo(player, DOOMDEF.AM_MISL, 1) = 0 THEN RETURN
+            message$ = "Picked up a rocket."
+        CASE INFO.SPR_BROK
+            IF P_GiveAmmo(player, DOOMDEF.AM_MISL, 5) = 0 THEN RETURN
+            message$ = "Picked up a box of rockets."
+        CASE INFO.SPR_CELL
+            IF P_GiveAmmo(player, DOOMDEF.AM_CELL, 1) = 0 THEN RETURN
+            message$ = "Picked up an energy cell."
+        CASE INFO.SPR_CELP
+            IF P_GiveAmmo(player, DOOMDEF.AM_CELL, 5) = 0 THEN RETURN
+            message$ = "Picked up an energy cell pack."
+        CASE INFO.SPR_SHEL
+            IF P_GiveAmmo(player, DOOMDEF.AM_SHELL, 1) = 0 THEN RETURN
+            message$ = "Picked up 4 shotgun shells."
+        CASE INFO.SPR_SBOX
+            IF P_GiveAmmo(player, DOOMDEF.AM_SHELL, 5) = 0 THEN RETURN
+            message$ = "Picked up a box of shotgun shells."
+        CASE INFO.SPR_BPAK
+            IF CLNG(D_PLAYER.player_backpack[player]) = 0 THEN
+                FOR i = 0 TO DOOMDEF.NUMAMMO - 1
+                    D_PLAYER.player_maxammo[player * DOOMDEF.NUMAMMO + i] = CLNG(D_PLAYER.player_maxammo[player * DOOMDEF.NUMAMMO + i]) * 2
+                NEXT i
+                D_PLAYER.player_backpack[player] = 1
+            ENDIF
+            FOR i = 0 TO DOOMDEF.NUMAMMO - 1
+                P_GiveAmmo(player, i, 1)
+            NEXT i
+            message$ = "Picked up a backpack full of ammo!"
+
+        ' Weapons.
+        CASE INFO.SPR_BFUG
+            IF P_GiveWeapon(player, DOOMDEF.WP_BFG, 0) = 0 THEN RETURN
+            message$ = "You got the BFG9000!  Oh, yes."
+            sfx_id = INFO.SFX_WPNUP
+        CASE INFO.SPR_MGUN
+            IF P_GiveWeapon(player, DOOMDEF.WP_CHAINGUN, dropped) = 0 THEN RETURN
+            message$ = "You got the chaingun!"
+            sfx_id = INFO.SFX_WPNUP
+        CASE INFO.SPR_CSAW
+            IF P_GiveWeapon(player, DOOMDEF.WP_CHAINSAW, 0) = 0 THEN RETURN
+            message$ = "A chainsaw!  Find some meat!"
+            sfx_id = INFO.SFX_WPNUP
+        CASE INFO.SPR_LAUN
+            IF P_GiveWeapon(player, DOOMDEF.WP_MISSILE, 0) = 0 THEN RETURN
+            message$ = "You got the rocket launcher!"
+            sfx_id = INFO.SFX_WPNUP
+        CASE INFO.SPR_PLAS
+            IF P_GiveWeapon(player, DOOMDEF.WP_PLASMA, 0) = 0 THEN RETURN
+            message$ = "You got the plasma gun!"
+            sfx_id = INFO.SFX_WPNUP
+        CASE INFO.SPR_SHOT
+            IF P_GiveWeapon(player, DOOMDEF.WP_SHOTGUN, dropped) = 0 THEN RETURN
+            message$ = "You got the shotgun!"
+            sfx_id = INFO.SFX_WPNUP
+        CASE INFO.SPR_SGN2
+            IF P_GiveWeapon(player, DOOMDEF.WP_SUPERSHOTGUN, dropped) = 0 THEN RETURN
+            message$ = "You got the super shotgun!"
+            sfx_id = INFO.SFX_WPNUP
+
+        DEFAULT
+            I_SYSTEM.I_Error("P_SpecialThing: Unknown gettable thing")
+    ENDSWITCH
+
+    IF LEN(message$) > 0 THEN D_PLAYER.player_message$[player] = message$
+    IF (CLNG(P_MOBJ.mobj_flags[special]) BAND INFO.MF_COUNTITEM) <> 0 THEN D_PLAYER.player_itemcount[player] = CLNG(D_PLAYER.player_itemcount[player]) + 1
+    P_MOBJ.P_RemoveMobj(special)
+    D_PLAYER.player_bonuscount[player] = CLNG(D_PLAYER.player_bonuscount[player]) + BONUSADD
+    IF player = DOOMSTAT.consoleplayer THEN S_SOUND.S_StartSound(-1, sfx_id)
+ENDSUB
+
+SUB P_KillMobj(source AS INTEGER, target AS INTEGER)
+    DIM flags AS INTEGER = CLNG(P_MOBJ.mobj_flags[target]) BAND (BNOT (INFO.MF_SHOOTABLE BOR INFO.MF_FLOAT BOR INFO.MF_SKULLFLY))
+    DIM mtype AS INTEGER = P_MOBJ.mobj_type[target]
+    IF mtype <> INFO.MT_SKULL THEN flags = flags BAND (BNOT INFO.MF_NOGRAVITY)
+    flags = flags BOR INFO.MF_CORPSE BOR INFO.MF_DROPOFF
+    P_MOBJ.mobj_flags[target] = flags
+    P_MOBJ.mobj_height[target] = CLNG(P_MOBJ.mobj_height[target]) SHR 2
+
+    DIM target_player AS INTEGER = P_MOBJ.mobj_player[target]
+    DIM source_player AS INTEGER = -1
+    IF source >= 0 THEN source_player = CLNG(P_MOBJ.mobj_player[source])
+
+    IF source_player >= 0 THEN
+        ' Count for the intermission.
+        IF (flags BAND INFO.MF_COUNTKILL) <> 0 THEN D_PLAYER.player_killcount[source_player] = CLNG(D_PLAYER.player_killcount[source_player]) + 1
+        IF target_player >= 0 THEN D_PLAYER.player_frags[source_player * DOOMDEF.MAXPLAYERS + target_player] = CLNG(D_PLAYER.player_frags[source_player * DOOMDEF.MAXPLAYERS + target_player]) + 1
+    ELSEIF DOOMSTAT.netgame = 0 AND (flags BAND INFO.MF_COUNTKILL) <> 0 THEN
+        ' Count all monster deaths, even those caused by other monsters.
+        D_PLAYER.player_killcount[0] = CLNG(D_PLAYER.player_killcount[0]) + 1
+    ENDIF
+
+    IF target_player >= 0 THEN
+        ' Count environment kills against you.
+        IF source < 0 THEN D_PLAYER.player_frags[target_player * DOOMDEF.MAXPLAYERS + target_player] = CLNG(D_PLAYER.player_frags[target_player * DOOMDEF.MAXPLAYERS + target_player]) + 1
+
+        P_MOBJ.mobj_flags[target] = CLNG(P_MOBJ.mobj_flags[target]) BAND (BNOT INFO.MF_SOLID)
+        D_PLAYER.player_playerstate[target_player] = DOOMDEF.PST_DEAD
+        P_PSPR.P_DropWeapon(target_player)
+    ENDIF
+
+    IF CLNG(P_MOBJ.mobj_health[target]) < -CLNG(INFO.mi_spawnhealth[mtype]) AND CLNG(INFO.mi_xdeathstate[mtype]) <> 0 THEN
+        P_MOBJ.P_SetMobjState(target, CLNG(INFO.mi_xdeathstate[mtype]))
+    ELSE
+        P_MOBJ.P_SetMobjState(target, CLNG(INFO.mi_deathstate[mtype]))
+    ENDIF
+    DIM tics AS INTEGER = CLNG(P_MOBJ.mobj_tics[target]) - (M_RANDOM.P_Random() BAND 3)
+    IF tics < 1 THEN tics = 1
+    P_MOBJ.mobj_tics[target] = tics
+
+    ' Drop stuff. This determines the kind of object spawned during the
+    ' death frame of a thing.
+    DIM item AS INTEGER
+    IF mtype = INFO.MT_WOLFSS OR mtype = INFO.MT_POSSESSED THEN
+        item = INFO.MT_CLIP
+    ELSEIF mtype = INFO.MT_SHOTGUY THEN
+        item = INFO.MT_SHOTGUN
+    ELSEIF mtype = INFO.MT_CHAINGUY THEN
+        item = INFO.MT_CHAINGUN
+    ELSE
+        RETURN
+    ENDIF
+
+    DIM mo AS INTEGER = P_MOBJ.P_SpawnMobj(CLNG(P_MOBJ.mobj_x[target]), CLNG(P_MOBJ.mobj_y[target]), DOOMDEF.ONFLOORZ, item)
+    ' Special versions of items.
+    P_MOBJ.mobj_flags[mo] = CLNG(P_MOBJ.mobj_flags[mo]) BOR INFO.MF_DROPPED
+ENDSUB
+
+' Damages both enemies and players. inflictor is the thing that caused the
+' damage: a creature or a missile, or -1 for slime and the like. source is
+' the thing to target after taking damage: a creature, or -1. They differ
+' for missiles and for barrel explosions.
+EXPORT SUB P_DamageMobj(target AS INTEGER, inflictor AS INTEGER, source AS INTEGER, damage_in AS INTEGER)
+    DIM damage AS INTEGER = damage_in
+    DIM flags AS INTEGER = P_MOBJ.mobj_flags[target]
+
+    ' Shouldn't happen...
+    IF (flags BAND INFO.MF_SHOOTABLE) = 0 THEN RETURN
+    IF CLNG(P_MOBJ.mobj_health[target]) <= 0 THEN RETURN
+
+    IF (flags BAND INFO.MF_SKULLFLY) <> 0 THEN
+        P_MOBJ.mobj_momx[target] = 0
+        P_MOBJ.mobj_momy[target] = 0
+        P_MOBJ.mobj_momz[target] = 0
+    ENDIF
+
+    DIM player AS INTEGER = P_MOBJ.mobj_player[target]
+    ' Take half damage in trainer mode.
+    IF player >= 0 AND DOOMSTAT.gameskill = DOOMDEF.SK_BABY THEN damage = damage SHR 1
+
+    DIM mtype AS INTEGER = P_MOBJ.mobj_type[target]
+    DIM source_player AS INTEGER = -1
+    IF source >= 0 THEN source_player = CLNG(P_MOBJ.mobj_player[source])
+
+    ' Some close combat weapons should not inflict thrust and push the
+    ' victim out of reach, thus kick away unless using the chainsaw.
+    DIM kick AS INTEGER = 0
+    IF inflictor >= 0 AND (flags BAND INFO.MF_NOCLIP) = 0 THEN
+        kick = 1
+        IF source_player >= 0 ANDALSO CLNG(D_PLAYER.player_readyweapon[source_player]) = DOOMDEF.WP_CHAINSAW THEN kick = 0
+    ENDIF
+
+    DIM ang AS INTEGER
+    DIM thrust AS INTEGER
+    IF kick <> 0 THEN
+        ang = R_MAIN.R_PointToAngle2(CLNG(P_MOBJ.mobj_x[inflictor]), CLNG(P_MOBJ.mobj_y[inflictor]), CLNG(P_MOBJ.mobj_x[target]), CLNG(P_MOBJ.mobj_y[target]))
+        thrust = M_FIXED.ToS32(damage * (M_FIXED.FRACUNIT SHR 3) * 100) \ CLNG(INFO.mi_mass[mtype])
+
+        ' Make fall forwards sometimes.
+        IF damage < 40 AND damage > CLNG(P_MOBJ.mobj_health[target]) AND CLNG(P_MOBJ.mobj_z[target]) - CLNG(P_MOBJ.mobj_z[inflictor]) > 64 * M_FIXED.FRACUNIT THEN
+            IF (M_RANDOM.P_Random() BAND 1) <> 0 THEN
+                ang = (ang + M_FIXED.ANG180) BAND M_FIXED.ANGLE_MASK
+                thrust = thrust * 4
+            ENDIF
+        ENDIF
+
+        ang = ang SHR TABLES.ANGLETOFINESHIFT
+        P_MOBJ.mobj_momx[target] = M_FIXED.ToS32(CLNG(P_MOBJ.mobj_momx[target]) + M_FIXED.FixedMul(thrust, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + ang])))
+        P_MOBJ.mobj_momy[target] = M_FIXED.ToS32(CLNG(P_MOBJ.mobj_momy[target]) + M_FIXED.FixedMul(thrust, CLNG(TABLES.finesine[ang])))
+    ENDIF
+
+    ' Player specific.
+    DIM saved AS INTEGER
+    DIM health AS INTEGER
+    IF player >= 0 THEN
+        ' End of game hell hack.
+        IF CLNG(P_SETUP.sector_special[CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[target])])]) = 11 AND damage >= CLNG(P_MOBJ.mobj_health[target]) THEN damage = CLNG(P_MOBJ.mobj_health[target]) - 1
+
+        ' Below certain threshold, ignore damage in GOD mode, or with INVUL
+        ' power.
+        IF damage < 1000 THEN
+            IF (CLNG(D_PLAYER.player_cheats[player]) BAND DOOMDEF.CF_GODMODE) <> 0 OR CLNG(D_PLAYER.player_powers[player * DOOMDEF.NUMPOWERS + DOOMDEF.PW_INVULNERABILITY]) <> 0 THEN RETURN
+        ENDIF
+
+        IF CLNG(D_PLAYER.player_armortype[player]) <> 0 THEN
+            IF CLNG(D_PLAYER.player_armortype[player]) = 1 THEN
+                saved = damage \ 3
+            ELSE
+                saved = damage \ 2
+            ENDIF
+
+            IF CLNG(D_PLAYER.player_armorpoints[player]) <= saved THEN
+                ' Armor is used up.
+                saved = CLNG(D_PLAYER.player_armorpoints[player])
+                D_PLAYER.player_armortype[player] = 0
+            ENDIF
+            D_PLAYER.player_armorpoints[player] = CLNG(D_PLAYER.player_armorpoints[player]) - saved
+            damage = damage - saved
+        ENDIF
+
+        ' Mirror mobj health here.
+        health = CLNG(D_PLAYER.player_health[player]) - damage
+        IF health < 0 THEN health = 0
+        D_PLAYER.player_health[player] = health
+
+        D_PLAYER.player_attacker[player] = source
+        ' Add damage after armor / invuln. Teleport stomp does 10k points.
+        D_PLAYER.player_damagecount[player] = CLNG(D_PLAYER.player_damagecount[player]) + damage
+        IF CLNG(D_PLAYER.player_damagecount[player]) > 100 THEN D_PLAYER.player_damagecount[player] = 100
+    ENDIF
+
+    ' Do the damage.
+    health = CLNG(P_MOBJ.mobj_health[target]) - damage
+    P_MOBJ.mobj_health[target] = health
+    IF health <= 0 THEN
+        P_KillMobj(source, target)
+        RETURN
+    ENDIF
+
+    IF M_RANDOM.P_Random() < CLNG(INFO.mi_painchance[mtype]) AND (CLNG(P_MOBJ.mobj_flags[target]) BAND INFO.MF_SKULLFLY) = 0 THEN
+        ' Fight back!
+        P_MOBJ.mobj_flags[target] = CLNG(P_MOBJ.mobj_flags[target]) BOR INFO.MF_JUSTHIT
+        P_MOBJ.P_SetMobjState(target, CLNG(INFO.mi_painstate[mtype]))
+    ENDIF
+
+    ' We're awake now...
+    P_MOBJ.mobj_reactiontime[target] = 0
+
+    IF (CLNG(P_MOBJ.mobj_threshold[target]) = 0 OR mtype = INFO.MT_VILE) AND source >= 0 AND source <> target THEN
+        IF CLNG(P_MOBJ.mobj_type[source]) <> INFO.MT_VILE THEN
+            ' If not intent on another player, chase after this one.
+            P_MOBJ.mobj_target[target] = source
+            P_MOBJ.mobj_threshold[target] = DOOMDEF.BASETHRESHOLD
+            IF CLNG(P_MOBJ.mobj_state[target]) = CLNG(INFO.mi_spawnstate[mtype]) AND CLNG(INFO.mi_seestate[mtype]) <> INFO.S_NULL THEN P_MOBJ.P_SetMobjState(target, CLNG(INFO.mi_seestate[mtype]))
+        ENDIF
+    ENDIF
 ENDSUB

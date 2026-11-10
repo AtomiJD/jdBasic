@@ -706,3 +706,69 @@ EXPORT SUB P_CheckMissileSpawn(th AS INTEGER)
     mobj_z[th] = CLNG(mobj_z[th]) + (CLNG(mobj_momz[th]) SHR 1)
     IF P_MAP.P_TryMove(th, CLNG(mobj_x[th]), CLNG(mobj_y[th])) = 0 THEN P_ExplodeMissile(th)
 ENDSUB
+
+' A missile of the given type from source towards dest.
+EXPORT FUNC P_SpawnMissile(source AS INTEGER, dest AS INTEGER, mtype AS INTEGER) AS INTEGER
+    DIM th AS INTEGER = P_SpawnMobj(CLNG(mobj_x[source]), CLNG(mobj_y[source]), CLNG(mobj_z[source]) + 4 * 8 * M_FIXED.FRACUNIT, mtype)
+    IF CLNG(INFO.mi_seesound[mtype]) <> 0 THEN S_SOUND.S_StartSound(th, CLNG(INFO.mi_seesound[mtype]))
+
+    ' Where it came from.
+    mobj_target[th] = source
+    DIM an AS INTEGER = R_MAIN.R_PointToAngle2(CLNG(mobj_x[source]), CLNG(mobj_y[source]), CLNG(mobj_x[dest]), CLNG(mobj_y[dest]))
+
+    ' Fuzzy player.
+    DIM first AS INTEGER
+    IF (CLNG(mobj_flags[dest]) BAND INFO.MF_SHADOW) <> 0 THEN
+        first = M_RANDOM.P_Random()
+        an = (an + (first - M_RANDOM.P_Random()) * 1048576) BAND M_FIXED.ANGLE_MASK
+    ENDIF
+
+    mobj_angle[th] = an
+    an = an SHR TABLES.ANGLETOFINESHIFT
+    DIM rate AS INTEGER = INFO.mi_speed[mtype]
+    mobj_momx[th] = M_FIXED.FixedMul(rate, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + an]))
+    mobj_momy[th] = M_FIXED.FixedMul(rate, CLNG(TABLES.finesine[an]))
+
+    DIM dist AS INTEGER = P_MAPUTL.P_AproxDistance(CLNG(mobj_x[dest]) - CLNG(mobj_x[source]), CLNG(mobj_y[dest]) - CLNG(mobj_y[source]))
+    dist = dist \ rate
+    IF dist < 1 THEN dist = 1
+    mobj_momz[th] = (CLNG(mobj_z[dest]) - CLNG(mobj_z[source])) \ dist
+
+    P_CheckMissileSpawn(th)
+    RETURN th
+ENDFUNC
+
+' A missile from a player, who tries to aim at a nearby monster.
+EXPORT SUB P_SpawnPlayerMissile(source AS INTEGER, mtype AS INTEGER)
+    ' See which target is to be aimed at.
+    DIM an AS INTEGER = mobj_angle[source]
+    DIM slope AS INTEGER = P_MAP.P_AimLineAttack(source, an, 16 * 64 * M_FIXED.FRACUNIT)
+
+    IF P_MAP.linetarget < 0 THEN
+        an = (an + (1 SHL 26)) BAND M_FIXED.ANGLE_MASK
+        slope = P_MAP.P_AimLineAttack(source, an, 16 * 64 * M_FIXED.FRACUNIT)
+
+        IF P_MAP.linetarget < 0 THEN
+            an = (an - (2 SHL 26)) BAND M_FIXED.ANGLE_MASK
+            slope = P_MAP.P_AimLineAttack(source, an, 16 * 64 * M_FIXED.FRACUNIT)
+        ENDIF
+
+        IF P_MAP.linetarget < 0 THEN
+            an = CLNG(mobj_angle[source])
+            slope = 0
+        ENDIF
+    ENDIF
+
+    DIM th AS INTEGER = P_SpawnMobj(CLNG(mobj_x[source]), CLNG(mobj_y[source]), CLNG(mobj_z[source]) + 4 * 8 * M_FIXED.FRACUNIT, mtype)
+    IF CLNG(INFO.mi_seesound[mtype]) <> 0 THEN S_SOUND.S_StartSound(th, CLNG(INFO.mi_seesound[mtype]))
+
+    mobj_target[th] = source
+    mobj_angle[th] = an
+    DIM rate AS INTEGER = INFO.mi_speed[mtype]
+    DIM fine AS INTEGER = an SHR TABLES.ANGLETOFINESHIFT
+    mobj_momx[th] = M_FIXED.FixedMul(rate, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + fine]))
+    mobj_momy[th] = M_FIXED.FixedMul(rate, CLNG(TABLES.finesine[fine]))
+    mobj_momz[th] = M_FIXED.FixedMul(rate, slope)
+
+    P_CheckMissileSpawn(th)
+ENDSUB

@@ -1,13 +1,15 @@
 ' Walks player 1 through a level with the game's own controls: the keys make
 ' a ticcmd, the play simulation moves the player, the renderer shows his
-' view. Doors, lifts and switches work; an exit leads to the next map. The
-' monsters stand still and nothing can be picked up yet.
+' view. Monsters fight, things are picked up, doors, lifts and switches
+' work; an exit leads to the next map. There is no status bar yet: pickup
+' messages and the health after each hit are printed.
 '
 '   build/jdBasic.exe -c jdb/doom2/view_p4.jdb
 '   jdb/doom2/view_p4.exe [episode] [map]
 '
 ' Arrow keys turn and move, comma and full stop step sideways, Alt with left
-' or right steps too, Shift runs, Space uses, Escape quits.
+' or right steps too, Shift runs, Ctrl fires, 1 to 7 pick a weapon, Space
+' uses and brings a dead player back, Escape quits.
 
 OPTION "EXPLICIT"
 OPTION "NOPAUSE"
@@ -62,6 +64,10 @@ SUB ReadKeys()
     KeyTo "Space", 32
     KeyTo ",", 44
     KeyTo ".", 46
+    DIM digit AS INTEGER
+    FOR digit = 1 TO 7
+        KeyTo STR$(digit), 48 + digit
+    NEXT digit
 ENDSUB
 
 W_WAD.W_Init(D_MAIN.IdentifyVersion$())
@@ -79,12 +85,22 @@ ON "KEYDOWN" CALL HandleKey@
 DIM tic_start AS DOUBLE
 DIM n_frames AS INTEGER = 0
 DIM work_ms AS DOUBLE = 0.0
+DIM health_shown AS INTEGER = 100
 
 DO WHILE running = 1
     tic_start = TICK()
     ReadKeys()
     G_GAME.G_BuildTiccmd()
     G_GAME.G_Ticker()
+
+    IF LEN(D_PLAYER.player_message$[0]) > 0 THEN
+        PRINT D_PLAYER.player_message$[0]
+        D_PLAYER.player_message$[0] = ""
+    ENDIF
+    IF CLNG(D_PLAYER.player_health[0]) <> health_shown THEN
+        health_shown = CLNG(D_PLAYER.player_health[0])
+        PRINT "health " + STR$(health_shown) + ", armor " + STR$(CLNG(D_PLAYER.player_armorpoints[0]))
+    ENDIF
 
     IF G_GAME.gameaction = G_GAME.GA_COMPLETED THEN
         PRINT "E" + STR$(episode) + "M" + STR$(map_num) + " completed after " + STR$(P_TICK.leveltime \ 35) + " seconds, " + STR$(CLNG(D_PLAYER.player_secretcount[0])) + " of " + STR$(DOOMSTAT.totalsecret) + " secrets"

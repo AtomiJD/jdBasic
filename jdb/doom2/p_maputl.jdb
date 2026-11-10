@@ -28,9 +28,12 @@ EXPORT CONST PIT_ADDTHINGINTERCEPTS = 1
 EXPORT CONST PIT_STOMPTHING = 2
 EXPORT CONST PIT_CHECKTHING = 3
 EXPORT CONST PIT_CHANGESECTOR = 4
+EXPORT CONST PIT_RADIUSATTACK = 5
 ' Functions P_PathTraverse can call for each intercept.
 EXPORT CONST PTR_SLIDETRAVERSE = 1
 EXPORT CONST PTR_USETRAVERSE = 2
+EXPORT CONST PTR_AIMTRAVERSE = 3
+EXPORT CONST PTR_SHOOTTRAVERSE = 4
 
 ' The opening of the line last given to P_LineOpening.
 EXPORT DIM opentop AS INTEGER = 0
@@ -381,6 +384,8 @@ EXPORT FUNC P_BlockThingsIterator(x AS INTEGER, y AS INTEGER, callee AS INTEGER)
             go_on = P_MAP.PIT_CheckThing(mobj)
         ELSEIF callee = PIT_CHANGESECTOR THEN
             go_on = P_MAP.PIT_ChangeSector(mobj)
+        ELSEIF callee = PIT_RADIUSATTACK THEN
+            go_on = P_MAP.PIT_RadiusAttack(mobj)
         ELSE
             I_SYSTEM.I_Error("P_BlockThingsIterator: unknown function " + STR$(callee))
         ENDIF
@@ -414,6 +419,10 @@ FUNC P_TraverseIntercepts(callee AS INTEGER, maxfrac AS INTEGER) AS INTEGER
             go_on = P_MAP.PTR_SlideTraverse(nearest)
         ELSEIF callee = PTR_USETRAVERSE THEN
             go_on = P_MAP.PTR_UseTraverse(nearest)
+        ELSEIF callee = PTR_AIMTRAVERSE THEN
+            go_on = P_MAP.PTR_AimTraverse(nearest)
+        ELSEIF callee = PTR_SHOOTTRAVERSE THEN
+            go_on = P_MAP.PTR_ShootTraverse(nearest)
         ELSE
             I_SYSTEM.I_Error("P_TraverseIntercepts: unknown function " + STR$(callee))
         ENDIF

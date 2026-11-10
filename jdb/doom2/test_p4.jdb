@@ -238,6 +238,11 @@ Eq("end of the way: z", CLNG(P_MOBJ.mobj_z[mo]), -8 * FU)
 Eq("end of the way: angle", CLNG(P_MOBJ.mobj_angle[mo]), 402653184)
 Eq("end of the way: random index", M_RANDOM.prndindex, 166)
 
+' The way leads over two armor bonuses.
+Eq("picked up on the way: armor", CLNG(D_PLAYER.player_armorpoints[0]), 2)
+Eq("picked up on the way: items", CLNG(D_PLAYER.player_itemcount[0]), 2)
+expected_things = expected_things - 2
+
 ' The lists are whole after all that moving.
 Eq("things after the way", CountMobjThinkers(), expected_things)
 Eq("sector lists after the way", CountSectorLinks(), expected_things)

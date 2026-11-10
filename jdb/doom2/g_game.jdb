@@ -1,12 +1,13 @@
 ' Game flow (g_game.c): the keys that are down become a ticcmd once a tic, a
-' new game is set up, a level is loaded, the tic is run. Demos, level
-' completion and savegames follow in later phases.
+' new game is set up, a level is loaded, the tic is run, a demo is played.
+' Level completion, savegames and recording are not here.
 
 EXPORT MODULE G_GAME
 
 OPTION "EXPLICIT"
 OPTION "STRICT"
 
+IMPORT I_SYSTEM
 IMPORT DOOMDEF
 IMPORT DOOMSTAT
 IMPORT D_PLAYER
@@ -428,7 +429,115 @@ ENDSUB
 
 ' Runs one tic of the game: the ticcmd built for this tic goes to the
 ' console player, then the play simulation runs.
+' ---- demos ------------------------------------------------------------------------
+
+CONST DEMOMARKER = $80
+' Demos of DOOM 1.9 carry this number.
+CONST DEMO_VERSION = 109
+
+' Where the next ticcmd of the demo is read, an offset into W_WAD.pool.
+DIM demo_p AS INTEGER = 0
+' The demo that is playing reached its end mark.
+EXPORT DIM demoended AS INTEGER = 0
+DIM defdemoname$ AS STRING = ""
+
+' Called when a demo reaches its end; clears what the demo set.
+EXPORT SUB G_CheckDemoStatus()
+    IF DOOMSTAT.demoplayback <> 0 THEN
+        DOOMSTAT.demoplayback = 0
+        DOOMSTAT.netgame = 0
+        DOOMSTAT.deathmatch = 0
+        DOOMSTAT.playeringame[1] = 0
+        DOOMSTAT.playeringame[2] = 0
+        DOOMSTAT.playeringame[3] = 0
+        DOOMSTAT.respawnparm = 0
+        DOOMSTAT.fastparm = 0
+        DOOMSTAT.nomonsters = 0
+        DOOMSTAT.consoleplayer = 0
+        demoended = 1
+    ENDIF
+ENDSUB
+
+' The next ticcmd of the demo becomes the player's.
+SUB G_ReadDemoTiccmd(player AS INTEGER)
+    IF CLNG(W_WAD.pool[demo_p]) = DEMOMARKER THEN
+        ' End of demo data stream.
+        G_CheckDemoStatus()
+        RETURN
+    ENDIF
+    DIM forward AS INTEGER = W_WAD.pool[demo_p]
+    DIM sideways AS INTEGER = W_WAD.pool[demo_p + 1]
+    IF forward > 127 THEN forward = forward - 256
+    IF sideways > 127 THEN sideways = sideways - 256
+    D_PLAYER.player_cmd_forwardmove[player] = forward
+    D_PLAYER.player_cmd_sidemove[player] = sideways
+    D_PLAYER.player_cmd_angleturn[player] = CLNG(W_WAD.pool[demo_p + 2]) * 256
+    D_PLAYER.player_cmd_buttons[player] = W_WAD.pool[demo_p + 3]
+    demo_p = demo_p + 4
+ENDSUB
+
+' The demo lump of that name starts to play at the next tic.
+EXPORT SUB G_DeferedPlayDemo(name$ AS STRING)
+    defdemoname$ = name$
+    gameaction = GA_PLAYDEMO
+ENDSUB
+
+SUB G_DoPlayDemo()
+    gameaction = GA_NOTHING
+    demo_p = W_WAD.W_CacheLumpName(defdemoname$)
+    IF CLNG(W_WAD.pool[demo_p]) <> DEMO_VERSION THEN
+        PRINT "Demo is from a different game version!"
+        RETURN
+    ENDIF
+
+    DIM skill AS INTEGER = W_WAD.pool[demo_p + 1]
+    DIM episode AS INTEGER = W_WAD.pool[demo_p + 2]
+    DIM map_num AS INTEGER = W_WAD.pool[demo_p + 3]
+    DOOMSTAT.deathmatch = CLNG(W_WAD.pool[demo_p + 4])
+    DOOMSTAT.respawnparm = CLNG(W_WAD.pool[demo_p + 5])
+    DOOMSTAT.fastparm = CLNG(W_WAD.pool[demo_p + 6])
+    DOOMSTAT.nomonsters = CLNG(W_WAD.pool[demo_p + 7])
+    DOOMSTAT.consoleplayer = CLNG(W_WAD.pool[demo_p + 8])
+    DIM i AS INTEGER
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        DOOMSTAT.playeringame[i] = W_WAD.pool[demo_p + 9 + i]
+    NEXT i
+    demo_p = demo_p + 9 + DOOMDEF.MAXPLAYERS
+    IF CLNG(DOOMSTAT.playeringame[1]) <> 0 THEN DOOMSTAT.netgame = 1
+
+    G_InitNew(skill, episode, map_num)
+    demoended = 0
+    DOOMSTAT.demoplayback = 1
+ENDSUB
+
+' A player who died starts the level again; in a net game he would come
+' back at a start spot, which is not ported.
+SUB G_DoReborn(player AS INTEGER)
+    IF DOOMSTAT.netgame <> 0 THEN I_SYSTEM.I_Error("G_DoReborn: net games are not ported")
+    ' Reload the level from scratch.
+    gameaction = GA_LOADLEVEL
+ENDSUB
+
+' Runs one tic of the game. Of the game actions, loading a level and
+' starting a demo are carried out here; a completed level is left for
+' the caller to see in gameaction.
 EXPORT SUB G_Ticker()
+    DIM i AS INTEGER
+
+    ' Do player reborns if needed.
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        IF CLNG(DOOMSTAT.playeringame[i]) <> 0 AND CLNG(D_PLAYER.player_playerstate[i]) = DOOMDEF.PST_REBORN THEN G_DoReborn(i)
+    NEXT i
+
+    ' Do things to change the game state.
+    DO WHILE gameaction = GA_LOADLEVEL OR gameaction = GA_PLAYDEMO
+        IF gameaction = GA_LOADLEVEL THEN
+            G_DoLoadLevel()
+        ELSE
+            G_DoPlayDemo()
+        ENDIF
+    LOOP
+
     DIM p AS INTEGER = DOOMSTAT.consoleplayer
     IF CLNG(DOOMSTAT.playeringame[p]) <> 0 THEN
         D_PLAYER.player_cmd_forwardmove[p] = cmd_forwardmove
@@ -438,6 +547,18 @@ EXPORT SUB G_Ticker()
         D_PLAYER.player_cmd_chatchar[p] = cmd_chatchar
         D_PLAYER.player_cmd_buttons[p] = cmd_buttons
     ENDIF
+
+    DIM buttons AS INTEGER
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        IF CLNG(DOOMSTAT.playeringame[i]) <> 0 THEN
+            IF DOOMSTAT.demoplayback <> 0 THEN G_ReadDemoTiccmd(i)
+
+            ' Check for special buttons; saving a game is not ported.
+            buttons = CLNG(D_PLAYER.player_cmd_buttons[i])
+            IF (buttons BAND DOOMDEF.BT_SPECIAL) <> 0 AND (buttons BAND DOOMDEF.BT_SPECIALMASK) = 1 THEN DOOMSTAT.paused = DOOMSTAT.paused BXOR 1
+        ENDIF
+    NEXT i
+
     P_TICK.P_Ticker()
     DOOMSTAT.gametic = DOOMSTAT.gametic + 1
 ENDSUB

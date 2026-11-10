@@ -1,0 +1,227 @@
+' Line of sight between two things, by a walk through the BSP tree and
+' the REJECT table (p_sight.c).
+
+EXPORT MODULE P_SIGHT
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT P_SETUP
+IMPORT P_MOBJ
+IMPORT R_MAIN
+
+' Eye z of the looker.
+DIM sightzstart AS INTEGER = 0
+' Slopes to the top and bottom of the target; the aiming code of p_map
+' uses the two as well.
+EXPORT DIM topslope AS INTEGER = 0
+EXPORT DIM bottomslope AS INTEGER = 0
+
+' The line of sight, from t1 to t2.
+DIM strace_x AS INTEGER = 0
+DIM strace_y AS INTEGER = 0
+DIM strace_dx AS INTEGER = 0
+DIM strace_dy AS INTEGER = 0
+DIM t2x AS INTEGER = 0
+DIM t2y AS INTEGER = 0
+
+EXPORT DIM sightcounts[2] AS INTEGER
+
+' 0 front, 1 back, 2 on the line. The test of a horizontal line compares x
+' with the line's y, as the original does.
+FUNC P_DivlineSide(x AS INTEGER, y AS INTEGER, node_x AS INTEGER, node_y AS INTEGER, node_dx AS INTEGER, node_dy AS INTEGER) AS INTEGER
+    IF node_dx = 0 THEN
+        IF x = node_x THEN RETURN 2
+        IF x <= node_x THEN
+            IF node_dy > 0 THEN RETURN 1
+            RETURN 0
+        ENDIF
+        IF node_dy < 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+
+    IF node_dy = 0 THEN
+        IF x = node_y THEN RETURN 2
+        IF y <= node_y THEN
+            IF node_dx < 0 THEN RETURN 1
+            RETURN 0
+        ENDIF
+        IF node_dx > 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+
+    DIM dx AS INTEGER = M_FIXED.ToS32(x - node_x)
+    DIM dy AS INTEGER = M_FIXED.ToS32(y - node_y)
+    DIM left AS INTEGER = (node_dy SHR 16) * (dx SHR 16)
+    DIM right AS INTEGER = (dy SHR 16) * (node_dx SHR 16)
+
+    IF right < left THEN RETURN 0
+    IF left = right THEN RETURN 2
+    RETURN 1
+ENDFUNC
+
+' The fractional intercept point along the first divline; only used by
+' the sight check.
+FUNC P_InterceptVector2(v2x AS INTEGER, v2y AS INTEGER, v2dx AS INTEGER, v2dy AS INTEGER, v1x AS INTEGER, v1y AS INTEGER, v1dx AS INTEGER, v1dy AS INTEGER) AS INTEGER
+    DIM den AS INTEGER = M_FIXED.ToS32(M_FIXED.FixedMul(v1dy SHR 8, v2dx) - M_FIXED.FixedMul(v1dx SHR 8, v2dy))
+    IF den = 0 THEN RETURN 0
+    DIM num AS INTEGER = M_FIXED.ToS32(M_FIXED.FixedMul(M_FIXED.ToS32(v1x - v2x) SHR 8, v1dy) + M_FIXED.FixedMul(M_FIXED.ToS32(v2y - v1y) SHR 8, v1dx))
+    RETURN M_FIXED.FixedDiv(num, den)
+ENDFUNC
+
+' TRUE if strace crosses the given subsector successfully.
+FUNC P_CrossSubsector(num AS INTEGER) AS INTEGER
+    IF num >= P_SETUP.numsubsectors THEN I_SYSTEM.I_Error("P_CrossSubsector: ss " + STR$(num) + " with numss = " + STR$(P_SETUP.numsubsectors))
+
+    DIM seg AS INTEGER = P_SETUP.subsector_firstline[num]
+    DIM n_left AS INTEGER = P_SETUP.subsector_numlines[num]
+    DIM ld AS INTEGER
+    DIM v1x AS INTEGER
+    DIM v1y AS INTEGER
+    DIM v2x AS INTEGER
+    DIM v2y AS INTEGER
+    DIM s1 AS INTEGER
+    DIM s2 AS INTEGER
+    DIM front AS INTEGER
+    DIM back AS INTEGER
+    DIM front_floor AS INTEGER
+    DIM front_ceiling AS INTEGER
+    DIM back_floor AS INTEGER
+    DIM back_ceiling AS INTEGER
+    DIM open_top AS INTEGER
+    DIM open_bottom AS INTEGER
+    DIM frac AS INTEGER
+    DIM slope AS INTEGER
+
+    DO WHILE n_left > 0
+        ld = CLNG(P_SETUP.seg_linedef[seg])
+        front = CLNG(P_SETUP.seg_frontsector[seg])
+        back = CLNG(P_SETUP.seg_backsector[seg])
+        seg = seg + 1
+        n_left = n_left - 1
+
+        ' Already checked the other side?
+        IF CLNG(P_SETUP.line_validcount[ld]) = R_MAIN.validcount THEN CONTINUEDO
+        P_SETUP.line_validcount[ld] = R_MAIN.validcount
+
+        v1x = CLNG(P_SETUP.vertex_x[CLNG(P_SETUP.line_v1[ld])])
+        v1y = CLNG(P_SETUP.vertex_y[CLNG(P_SETUP.line_v1[ld])])
+        v2x = CLNG(P_SETUP.vertex_x[CLNG(P_SETUP.line_v2[ld])])
+        v2y = CLNG(P_SETUP.vertex_y[CLNG(P_SETUP.line_v2[ld])])
+        s1 = P_DivlineSide(v1x, v1y, strace_x, strace_y, strace_dx, strace_dy)
+        s2 = P_DivlineSide(v2x, v2y, strace_x, strace_y, strace_dx, strace_dy)
+
+        ' The line isn't crossed?
+        IF s1 = s2 THEN CONTINUEDO
+
+        s1 = P_DivlineSide(strace_x, strace_y, v1x, v1y, v2x - v1x, v2y - v1y)
+        s2 = P_DivlineSide(t2x, t2y, v1x, v1y, v2x - v1x, v2y - v1y)
+
+        ' The line isn't crossed?
+        IF s1 = s2 THEN CONTINUEDO
+
+        ' Stop because it is not two sided anyway.
+        IF (CLNG(P_SETUP.line_flags[ld]) BAND DOOMDEF.ML_TWOSIDED) = 0 THEN RETURN 0
+
+        ' Crosses a two sided line.
+        front_floor = CLNG(P_SETUP.sector_floorheight[front])
+        front_ceiling = CLNG(P_SETUP.sector_ceilingheight[front])
+        back_floor = CLNG(P_SETUP.sector_floorheight[back])
+        back_ceiling = CLNG(P_SETUP.sector_ceilingheight[back])
+
+        ' No wall to block sight with?
+        IF front_floor = back_floor AND front_ceiling = back_ceiling THEN CONTINUEDO
+
+        ' Possible occluder, because of the ceiling height differences.
+        open_top = back_ceiling
+        IF front_ceiling < back_ceiling THEN open_top = front_ceiling
+        ' Because of the floor height differences.
+        open_bottom = back_floor
+        IF front_floor > back_floor THEN open_bottom = front_floor
+
+        ' Quick test for totally closed doors.
+        IF open_bottom >= open_top THEN RETURN 0
+
+        frac = P_InterceptVector2(strace_x, strace_y, strace_dx, strace_dy, v1x, v1y, v2x - v1x, v2y - v1y)
+
+        IF front_floor <> back_floor THEN
+            slope = M_FIXED.FixedDiv(open_bottom - sightzstart, frac)
+            IF slope > bottomslope THEN bottomslope = slope
+        ENDIF
+
+        IF front_ceiling <> back_ceiling THEN
+            slope = M_FIXED.FixedDiv(open_top - sightzstart, frac)
+            IF slope < topslope THEN topslope = slope
+        ENDIF
+
+        IF topslope <= bottomslope THEN RETURN 0
+    LOOP
+    ' Passed the subsector ok.
+    RETURN 1
+ENDFUNC
+
+' TRUE if strace crosses the given node successfully.
+FUNC P_CrossBSPNode(bspnum AS INTEGER) AS INTEGER
+    IF (bspnum BAND DOOMDEF.NF_SUBSECTOR) <> 0 THEN
+        IF bspnum = -1 THEN RETURN P_CrossSubsector(0)
+        RETURN P_CrossSubsector(bspnum BAND (BNOT DOOMDEF.NF_SUBSECTOR))
+    ENDIF
+
+    DIM node_x AS INTEGER = P_SETUP.node_x[bspnum]
+    DIM node_y AS INTEGER = P_SETUP.node_y[bspnum]
+    DIM node_dx AS INTEGER = P_SETUP.node_dx[bspnum]
+    DIM node_dy AS INTEGER = P_SETUP.node_dy[bspnum]
+
+    ' Decide which side the start point is on; an "on" should cross both
+    ' sides.
+    DIM side AS INTEGER = P_DivlineSide(strace_x, strace_y, node_x, node_y, node_dx, node_dy)
+    IF side = 2 THEN side = 0
+
+    ' Cross the starting side.
+    IF P_CrossBSPNode(CLNG(P_SETUP.node_children[bspnum * 2 + side])) = 0 THEN RETURN 0
+
+    ' The partition plane is crossed here.
+    IF side = P_DivlineSide(t2x, t2y, node_x, node_y, node_dx, node_dy) THEN RETURN 1
+
+    ' Cross the ending side.
+    RETURN P_CrossBSPNode(CLNG(P_SETUP.node_children[bspnum * 2 + (side BXOR 1)]))
+ENDFUNC
+
+' TRUE if a straight line between t1 and t2 is unobstructed.
+EXPORT FUNC P_CheckSight(t1 AS INTEGER, t2 AS INTEGER) AS INTEGER
+    ' First check for trivial rejection.
+    DIM s1 AS INTEGER = P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[t1])]
+    DIM s2 AS INTEGER = P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[t2])]
+    DIM pnum AS INTEGER = s1 * P_SETUP.numsectors + s2
+    DIM bytenum AS INTEGER = pnum SHR 3
+    DIM bitnum AS INTEGER = 1 SHL (pnum BAND 7)
+
+    IF bytenum < P_SETUP.rejectmatrix_size ANDALSO (CLNG(P_SETUP.rejectmatrix[bytenum]) BAND bitnum) <> 0 THEN
+        ' Can't possibly be connected.
+        sightcounts[0] = CLNG(sightcounts[0]) + 1
+        RETURN 0
+    ENDIF
+
+    ' An unobstructed line of sight is possible; now look from the eyes of
+    ' t1 to any part of t2.
+    sightcounts[1] = CLNG(sightcounts[1]) + 1
+    R_MAIN.validcount = R_MAIN.validcount + 1
+
+    DIM t1_height AS INTEGER = P_MOBJ.mobj_height[t1]
+    sightzstart = CLNG(P_MOBJ.mobj_z[t1]) + t1_height - (t1_height SHR 2)
+    topslope = CLNG(P_MOBJ.mobj_z[t2]) + CLNG(P_MOBJ.mobj_height[t2]) - sightzstart
+    bottomslope = CLNG(P_MOBJ.mobj_z[t2]) - sightzstart
+
+    strace_x = CLNG(P_MOBJ.mobj_x[t1])
+    strace_y = CLNG(P_MOBJ.mobj_y[t1])
+    t2x = CLNG(P_MOBJ.mobj_x[t2])
+    t2y = CLNG(P_MOBJ.mobj_y[t2])
+    strace_dx = M_FIXED.ToS32(t2x - strace_x)
+    strace_dy = M_FIXED.ToS32(t2y - strace_y)
+
+    ' The head node is the last node output.
+    RETURN P_CrossBSPNode(P_SETUP.numnodes - 1)
+ENDFUNC

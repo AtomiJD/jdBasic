@@ -85,11 +85,11 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 | `r_things.jdb` | r_things.c | sprite frames and rotations, vissprites, the masked pass (`R_DrawMasked`), the weapon sprites |
 | `doomstat.jdb` | doomstat.h, g_game.c | game state: skill, episode, map, players in game, starts |
 | `d_player.jdb` | d_player.h, d_ticcmd.h | the players, one array per field of player_t |
-| `g_game.jdb` | g_game.c | `G_BuildTiccmd`, `G_InitNew`, `G_DoLoadLevel`, `G_PlayerReborn`, `G_Ticker` (the tic only), `G_ExitLevel` and `G_SecretExitLevel` (they set `gameaction`) |
+| `g_game.jdb` | g_game.c | `G_BuildTiccmd`, `G_InitNew`, `G_DoLoadLevel`, `G_PlayerReborn`, `G_Ticker`, demo playback (`G_DeferedPlayDemo`), `G_ExitLevel` and `G_SecretExitLevel` (they set `gameaction`) |
 | `p_tick.jdb` | p_tick.c | thinkers and the functions they run by number (`TF_`), `P_Ticker` |
-| `p_mobj.jdb` | p_mobj.c, p_mobj.h | things: spawn, remove, states, movement in x, y and z |
+| `p_mobj.jdb` | p_mobj.c, p_mobj.h | things: spawn, remove, states, movement in x, y and z, missiles |
 | `p_maputl.jdb` | p_maputl.c | sides and distances, line openings, thing links, blockmap iterators, `P_PathTraverse` |
-| `p_map.jdb` | p_map.c | `P_CheckPosition`, `P_TryMove`, `P_SlideMove`, `P_UseLines`, `P_ChangeSector` (movement half) |
+| `p_map.jdb` | p_map.c | `P_CheckPosition`, `P_TryMove`, `P_SlideMove`, `P_UseLines`, `P_ChangeSector`, `P_AimLineAttack`, `P_LineAttack`, `P_RadiusAttack` |
 | `p_user.jdb` | p_user.c | `P_PlayerThink`, movement by ticcmd, view height and bob |
 | `p_spec.jdb` | p_spec.c | animated flats and textures, the sector utilities, `P_CrossSpecialLine`, `P_ShootSpecialLine`, `P_PlayerInSpecialSector`, `P_UpdateSpecials`, `EV_DoDonut`, `P_SpawnSpecials` |
 | `p_doors.jdb` | p_doors.c | doors: `T_VerticalDoor`, `EV_DoDoor`, `EV_DoLockedDoor`, `EV_VerticalDoor` |
@@ -99,19 +99,29 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 | `p_lights.jdb` | p_lights.c | fire flicker, light flash, strobe, glow, lights switched by lines |
 | `p_switch.jdb` | p_switch.c | the switch textures, buttons, `P_UseSpecialLine` |
 | `p_telept.jdb` | p_telept.c | `EV_Teleport` |
+| `p_sight.jdb` | p_sight.c | `P_CheckSight`: the REJECT table and a walk through the BSP tree |
+| `p_inter.jdb` | p_inter.c | pickups, `P_DamageMobj`, death and what a monster drops |
+| `p_enemy.jdb` | p_enemy.c | `P_NoiseAlert`, looking, chasing, the attacks of the monsters of DOOM, `A_Call` (the action of a state by its number) |
+| `p_pspr.jdb` | p_pspr.c | the weapon sprites and the weapon actions |
+| `d_items.jdb` | d_items.c | the weapons: ammunition and sprite states |
 
 Not ported yet. These modules exist with the functions other modules call,
 and the functions do nothing:
 
 | Module | C file | Functions | Phase |
 |---|---|---|---|
-| `p_inter.jdb` | p_inter.c | `P_DamageMobj`, `P_TouchSpecialThing` | P6 |
-| `p_enemy.jdb` | p_enemy.c | `A_Call` (the action of a state) | P6 |
-| `p_pspr.jdb` | p_pspr.c | `P_SetupPsprites`, `P_MovePsprites` | P6 |
 | `s_sound.jdb` | s_sound.c | `S_StartSound`, `S_StartSectorSound`, `S_StopSound` | P8 |
 
-Left out of ported files until their callees exist: the shooting half of
-p_map.c with `P_RadiusAttack`, and `P_SpawnMissile`, `P_SpawnPlayerMissile` of p_mobj.c (P6).
+Not ported in files that are otherwise there:
+
+- The actions of the monsters only DOOM II has (`A_VileChase`, `A_Tracer`,
+  `A_FatAttack1`, `A_PainAttack`, `A_BrainSpit` and the like): a state that
+  asks for one stops the program.
+- Of the game actions `G_Ticker` carries out loading a level and
+  starting a demo. A completed level stays in `gameaction` for the caller
+  (intermission, P7); savegames and recording a demo come later.
+- Net games: a second player in a demo, coming back at a start spot,
+  deathmatch.
 
 Where the port leaves the original on purpose:
 
@@ -141,6 +151,8 @@ build/jdBasic.exe jdb/doom2/test_p4.jdb
 build/jdBasic.exe -c jdb/doom2/test_p4.jdb && jdb/doom2/test_p4.exe
 build/jdBasic.exe jdb/doom2/test_p5.jdb
 build/jdBasic.exe -c jdb/doom2/test_p5.jdb && jdb/doom2/test_p5.exe
+build/jdBasic.exe jdb/doom2/test_p6.jdb
+build/jdBasic.exe -c jdb/doom2/test_p6.jdb && jdb/doom2/test_p6.exe
 ```
 
 `test_p0` covers fixed point, random numbers and the generated tables.
@@ -161,6 +173,13 @@ scrolling wall, the animated flats, a glowing light, a teleport, the secret
 and the exit switch. The tics each mover takes are worked out by hand from
 the heights in the map. Then every special line of E1M1 to E1M3 is
 triggered and the state of the sectors compared with what was recorded.
+`test_p6` checks ammunition, armor, damage, pickups, sight through a door,
+a barrel and a trooper against the rules of p_inter.c, and plays DEMO1,
+DEMO2 and DEMO3 to their end mark (20 seconds interpreted). In each the
+player dies two to seven seconds before the recording stops, as a
+recording of a death does; where he lies, his kills and the random index
+are compared with what was recorded. The demos were not compared with a
+run of the original program.
 
 Looking at the data (title picture, wall textures, flats, sprites, the lines
 of E1M1); with a folder argument each page is saved as a PNG:
@@ -180,7 +199,8 @@ jdb/doom2/view_p2.exe [episode] [map] [folder for screenshots]
 
 Playing a level with the game's own controls: collision, steps, sliding
 along walls, the bobbing view, doors, lifts, switches, teleporters; an exit
-leads to the next map. Monsters stand still and nothing hurts:
+leads to the next map. Ctrl fires, 1 to 7 pick a weapon, Space brings a
+dead player back. Messages and health are printed, there is no status bar:
 
 ```
 build/jdBasic.exe -c jdb/doom2/view_p4.jdb
@@ -194,4 +214,5 @@ build/jdBasic.exe jdb/doom2/tools/gen_data.jdb     regenerate tables.jdb and inf
 build/jdBasic.exe jdb/doom2/tools/ref_p1.jdb       print the reference numbers of test_p1
 build/jdBasic.exe jdb/doom2/walk.jdb "f70 l32 F80"  walk player 1 by a script and print where he is
 build/jdBasic.exe -c jdb/doom2/sweep.jdb           then sweep.exe: trigger every special line of every level
+build/jdBasic.exe -c jdb/doom2/playdemo.jdb        then playdemo.exe DEMO1 [show | folder]: play a demo of the WAD
 ```

@@ -347,7 +347,7 @@ Eq("exit: not the secret exit", G_GAME.secretexit, 0)
 Eq("exit: switch thrown", CLNG(P_SETUP.side_midtexture[exit_side]), R_DATA.R_TextureNumForName("SW2STRTN"))
 Eq("exit: line spent", CLNG(P_SETUP.line_special[326]), 0)
 
-Eq("E1M1: random index after all that", M_RANDOM.prndindex, 197)
+Eq("E1M1: random index after all that", M_RANDOM.prndindex, 216)
 
 ' ---- every special line of a level -------------------------------------------
 ' Uses, crosses and shoots every special line as player 1, who has all the
@@ -409,13 +409,13 @@ ENDFUNC
 
 Sweep(1, 1)
 Eq("sweep E1M1: sectors", SectorSum(), 76593)
-Eq("sweep E1M1: random index", M_RANDOM.prndindex, 162)
+Eq("sweep E1M1: random index", M_RANDOM.prndindex, 21)
 Sweep(1, 2)
 Eq("sweep E1M2: sectors", SectorSum(), 295593)
 Eq("sweep E1M2: random index", M_RANDOM.prndindex, 147)
 Sweep(1, 3)
 Eq("sweep E1M3: sectors", SectorSum(), 323671)
-Eq("sweep E1M3: random index", M_RANDOM.prndindex, 216)
+Eq("sweep E1M3: random index", M_RANDOM.prndindex, 89)
 Eq("sweep: special lines", sweep_lines, 116)
 
 PRINT ""

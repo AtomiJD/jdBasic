@@ -1,11 +1,766 @@
-' Enemy thinking and the action functions of the states (p_enemy.c). Not
-' ported yet: a state's action is not carried out.
+' Enemy thinking, AI, and the action functions of the states (p_enemy.c).
+'
+' The actions of the monsters that only DOOM II has are not ported; a
+' state that asks for one stops the program.
 
 EXPORT MODULE P_ENEMY
 
 OPTION "EXPLICIT"
 OPTION "STRICT"
 
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT TABLES
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT R_MAIN
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_MAPUTL
+IMPORT P_MAP
+IMPORT P_SIGHT
+IMPORT P_INTER
+IMPORT P_PSPR
+IMPORT P_SWITCH
+IMPORT P_DOORS
+IMPORT P_FLOOR
+IMPORT G_GAME
+IMPORT S_SOUND
+
+' dirtype_t
+CONST DI_EAST = 0
+CONST DI_NORTHEAST = 1
+CONST DI_NORTH = 2
+CONST DI_NORTHWEST = 3
+CONST DI_WEST = 4
+CONST DI_SOUTHWEST = 5
+CONST DI_SOUTH = 6
+CONST DI_SOUTHEAST = 7
+CONST DI_NODIR = 8
+
+DIM opposite AS ARRAY = [4, 5, 6, 7, 0, 1, 2, 3, 8]
+DIM diags AS ARRAY = [3, 1, 5, 7]
+DIM xspeed AS ARRAY = [65536, 47000, 0, -47000, -65536, -47000, 0, 47000]
+DIM yspeed AS ARRAY = [0, 47000, 65536, 47000, 0, -47000, -65536, -47000]
+
+CONST SKULLSPEED = 1310720
+
+' ---- enemy thinking ------------------------------------------------------------
+' Enemies are always spawned with targetplayer = -1, threshold = 0. Most
+' monsters are spawned unaware of all players, but some can be made
+' preaware.
+
+DIM soundtarget AS INTEGER = -1
+
+' Called by P_NoiseAlert. Recursively traverse adjacent sectors; sound
+' blocking lines cut off traversal.
+SUB P_RecursiveSound(sector AS INTEGER, soundblocks AS INTEGER)
+    ' Wake up all monsters in this sector.
+    IF CLNG(P_SETUP.sector_validcount[sector]) = R_MAIN.validcount AND CLNG(P_SETUP.sector_soundtraversed[sector]) <= soundblocks + 1 THEN RETURN
+
+    P_SETUP.sector_validcount[sector] = R_MAIN.validcount
+    P_SETUP.sector_soundtraversed[sector] = soundblocks + 1
+    P_SETUP.sector_soundtarget[sector] = soundtarget
+
+    DIM i AS INTEGER
+    DIM check AS INTEGER
+    DIM other AS INTEGER
+    FOR i = 0 TO CLNG(P_SETUP.sector_linecount[sector]) - 1
+        check = CLNG(P_SETUP.sector_lines[CLNG(P_SETUP.sector_firstline[sector]) + i])
+        IF (CLNG(P_SETUP.line_flags[check]) BAND DOOMDEF.ML_TWOSIDED) = 0 THEN CONTINUEFOR
+
+        P_MAPUTL.P_LineOpening(check)
+        ' Closed door.
+        IF P_MAPUTL.openrange <= 0 THEN CONTINUEFOR
+
+        IF CLNG(P_SETUP.side_sector[CLNG(P_SETUP.line_sidenum0[check])]) = sector THEN
+            other = CLNG(P_SETUP.side_sector[CLNG(P_SETUP.line_sidenum1[check])])
+        ELSE
+            other = CLNG(P_SETUP.side_sector[CLNG(P_SETUP.line_sidenum0[check])])
+        ENDIF
+
+        IF (CLNG(P_SETUP.line_flags[check]) BAND DOOMDEF.ML_SOUNDBLOCK) <> 0 THEN
+            IF soundblocks = 0 THEN P_RecursiveSound(other, 1)
+        ELSE
+            P_RecursiveSound(other, soundblocks)
+        ENDIF
+    NEXT i
+ENDSUB
+
+' If a monster yells at a player, it will alert other monsters to the
+' player.
+EXPORT SUB P_NoiseAlert(target AS INTEGER, emitter AS INTEGER)
+    soundtarget = target
+    R_MAIN.validcount = R_MAIN.validcount + 1
+    P_RecursiveSound(CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[emitter])]), 0)
+ENDSUB
+
+FUNC P_CheckMeleeRange(actor AS INTEGER) AS INTEGER
+    DIM pl AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF pl < 0 THEN RETURN 0
+
+    DIM dist AS INTEGER = P_MAPUTL.P_AproxDistance(CLNG(P_MOBJ.mobj_x[pl]) - CLNG(P_MOBJ.mobj_x[actor]), CLNG(P_MOBJ.mobj_y[pl]) - CLNG(P_MOBJ.mobj_y[actor]))
+    IF dist >= DOOMDEF.MELEERANGE - 20 * M_FIXED.FRACUNIT + CLNG(INFO.mi_radius[CLNG(P_MOBJ.mobj_type[pl])]) THEN RETURN 0
+    IF P_SIGHT.P_CheckSight(actor, pl) = 0 THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+FUNC P_CheckMissileRange(actor AS INTEGER) AS INTEGER
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF P_SIGHT.P_CheckSight(actor, target) = 0 THEN RETURN 0
+
+    IF (CLNG(P_MOBJ.mobj_flags[actor]) BAND INFO.MF_JUSTHIT) <> 0 THEN
+        ' The target just hit the enemy, so fight back!
+        P_MOBJ.mobj_flags[actor] = CLNG(P_MOBJ.mobj_flags[actor]) BAND (BNOT INFO.MF_JUSTHIT)
+        RETURN 1
+    ENDIF
+
+    ' Do not attack yet.
+    IF CLNG(P_MOBJ.mobj_reactiontime[actor]) <> 0 THEN RETURN 0
+
+    DIM mtype AS INTEGER = P_MOBJ.mobj_type[actor]
+    DIM dist AS INTEGER = P_MAPUTL.P_AproxDistance(CLNG(P_MOBJ.mobj_x[actor]) - CLNG(P_MOBJ.mobj_x[target]), CLNG(P_MOBJ.mobj_y[actor]) - CLNG(P_MOBJ.mobj_y[target])) - 64 * M_FIXED.FRACUNIT
+
+    ' No melee attack, so fire more.
+    IF CLNG(INFO.mi_meleestate[mtype]) = 0 THEN dist = dist - 128 * M_FIXED.FRACUNIT
+
+    dist = dist SHR 16
+
+    IF mtype = INFO.MT_VILE THEN
+        ' Too far away.
+        IF dist > 14 * 64 THEN RETURN 0
+    ENDIF
+
+    IF mtype = INFO.MT_UNDEAD THEN
+        ' Close for fist attack.
+        IF dist < 196 THEN RETURN 0
+        dist = dist SHR 1
+    ENDIF
+
+    IF mtype = INFO.MT_CYBORG OR mtype = INFO.MT_SPIDER OR mtype = INFO.MT_SKULL THEN dist = dist SHR 1
+
+    IF dist > 200 THEN dist = 200
+    IF mtype = INFO.MT_CYBORG AND dist > 160 THEN dist = 160
+
+    IF M_RANDOM.P_Random() < dist THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+' Move in the current direction; FALSE if the move is blocked.
+FUNC P_Move(actor AS INTEGER) AS INTEGER
+    DIM movedir AS INTEGER = P_MOBJ.mobj_movedir[actor]
+    IF movedir = DI_NODIR THEN RETURN 0
+    IF movedir < 0 OR movedir >= 8 THEN I_SYSTEM.I_Error("Weird actor->movedir!")
+
+    DIM rate AS INTEGER = INFO.mi_speed[CLNG(P_MOBJ.mobj_type[actor])]
+    DIM tryx AS INTEGER = CLNG(P_MOBJ.mobj_x[actor]) + rate * CLNG(xspeed[movedir])
+    DIM tryy AS INTEGER = CLNG(P_MOBJ.mobj_y[actor]) + rate * CLNG(yspeed[movedir])
+    DIM good AS INTEGER
+    DIM ld AS INTEGER
+
+    IF P_MAP.P_TryMove(actor, tryx, tryy) = 0 THEN
+        ' Open any specials.
+        IF (CLNG(P_MOBJ.mobj_flags[actor]) BAND INFO.MF_FLOAT) <> 0 AND P_MAP.floatok <> 0 THEN
+            ' Must adjust height.
+            IF CLNG(P_MOBJ.mobj_z[actor]) < P_MAP.tmfloorz THEN
+                P_MOBJ.mobj_z[actor] = CLNG(P_MOBJ.mobj_z[actor]) + DOOMDEF.FLOATSPEED
+            ELSE
+                P_MOBJ.mobj_z[actor] = CLNG(P_MOBJ.mobj_z[actor]) - DOOMDEF.FLOATSPEED
+            ENDIF
+            P_MOBJ.mobj_flags[actor] = CLNG(P_MOBJ.mobj_flags[actor]) BOR INFO.MF_INFLOAT
+            RETURN 1
+        ENDIF
+
+        IF P_MAP.numspechit = 0 THEN RETURN 0
+
+        P_MOBJ.mobj_movedir[actor] = DI_NODIR
+        good = 0
+        DO WHILE P_MAP.numspechit > 0
+            P_MAP.numspechit = P_MAP.numspechit - 1
+            ld = CLNG(P_MAP.spechit[P_MAP.numspechit])
+            ' If the special is not a door that can be opened, return
+            ' false.
+            IF P_SWITCH.P_UseSpecialLine(actor, ld, 0) <> 0 THEN good = 1
+        LOOP
+        ' The original leaves the count one below zero here.
+        P_MAP.numspechit = -1
+        RETURN good
+    ENDIF
+
+    P_MOBJ.mobj_flags[actor] = CLNG(P_MOBJ.mobj_flags[actor]) BAND (BNOT INFO.MF_INFLOAT)
+    IF (CLNG(P_MOBJ.mobj_flags[actor]) BAND INFO.MF_FLOAT) = 0 THEN P_MOBJ.mobj_z[actor] = P_MOBJ.mobj_floorz[actor]
+    RETURN 1
+ENDFUNC
+
+' Attempts to move the actor in its current direction. If blocked by
+' either a wall or an actor, FALSE. If the move is either clear or blocked
+' only by a door, TRUE and the movecount is set, so that a door has time to
+' open before another direction is tried.
+FUNC P_TryWalk(actor AS INTEGER) AS INTEGER
+    IF P_Move(actor) = 0 THEN RETURN 0
+    P_MOBJ.mobj_movecount[actor] = M_RANDOM.P_Random() BAND 15
+    RETURN 1
+ENDFUNC
+
+SUB P_NewChaseDir(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN I_SYSTEM.I_Error("P_NewChaseDir: called with no target")
+
+    DIM olddir AS INTEGER = P_MOBJ.mobj_movedir[actor]
+    DIM turnaround AS INTEGER = opposite[olddir]
+
+    DIM deltax AS INTEGER = CLNG(P_MOBJ.mobj_x[target]) - CLNG(P_MOBJ.mobj_x[actor])
+    DIM deltay AS INTEGER = CLNG(P_MOBJ.mobj_y[target]) - CLNG(P_MOBJ.mobj_y[actor])
+
+    DIM d1 AS INTEGER = DI_NODIR
+    IF deltax > 10 * M_FIXED.FRACUNIT THEN
+        d1 = DI_EAST
+    ELSEIF deltax < -10 * M_FIXED.FRACUNIT THEN
+        d1 = DI_WEST
+    ENDIF
+
+    DIM d2 AS INTEGER = DI_NODIR
+    IF deltay < -10 * M_FIXED.FRACUNIT THEN
+        d2 = DI_SOUTH
+    ELSEIF deltay > 10 * M_FIXED.FRACUNIT THEN
+        d2 = DI_NORTH
+    ENDIF
+
+    ' Try direct route.
+    DIM diag AS INTEGER = 0
+    IF d1 <> DI_NODIR AND d2 <> DI_NODIR THEN
+        IF deltay < 0 THEN diag = 2
+        IF deltax > 0 THEN diag = diag + 1
+        P_MOBJ.mobj_movedir[actor] = diags[diag]
+        IF CLNG(P_MOBJ.mobj_movedir[actor]) <> turnaround ANDALSO P_TryWalk(actor) <> 0 THEN RETURN
+    ENDIF
+
+    ' Try other directions.
+    DIM tdir AS INTEGER
+    IF M_RANDOM.P_Random() > 200 OR CLNG(ABS(deltay)) > CLNG(ABS(deltax)) THEN
+        tdir = d1
+        d1 = d2
+        d2 = tdir
+    ENDIF
+
+    IF d1 = turnaround THEN d1 = DI_NODIR
+    IF d2 = turnaround THEN d2 = DI_NODIR
+
+    IF d1 <> DI_NODIR THEN
+        P_MOBJ.mobj_movedir[actor] = d1
+        ' Either moved forward or attacked.
+        IF P_TryWalk(actor) <> 0 THEN RETURN
+    ENDIF
+
+    IF d2 <> DI_NODIR THEN
+        P_MOBJ.mobj_movedir[actor] = d2
+        IF P_TryWalk(actor) <> 0 THEN RETURN
+    ENDIF
+
+    ' There is no direct path to the player, so pick another direction.
+    IF olddir <> DI_NODIR THEN
+        P_MOBJ.mobj_movedir[actor] = olddir
+        IF P_TryWalk(actor) <> 0 THEN RETURN
+    ENDIF
+
+    ' Randomly determine direction of search.
+    IF (M_RANDOM.P_Random() BAND 1) <> 0 THEN
+        FOR tdir = DI_EAST TO DI_SOUTHEAST
+            IF tdir <> turnaround THEN
+                P_MOBJ.mobj_movedir[actor] = tdir
+                IF P_TryWalk(actor) <> 0 THEN RETURN
+            ENDIF
+        NEXT tdir
+    ELSE
+        FOR tdir = DI_SOUTHEAST TO DI_EAST STEP -1
+            IF tdir <> turnaround THEN
+                P_MOBJ.mobj_movedir[actor] = tdir
+                IF P_TryWalk(actor) <> 0 THEN RETURN
+            ENDIF
+        NEXT tdir
+    ENDIF
+
+    IF turnaround <> DI_NODIR THEN
+        P_MOBJ.mobj_movedir[actor] = turnaround
+        IF P_TryWalk(actor) <> 0 THEN RETURN
+    ENDIF
+
+    ' Can not move.
+    P_MOBJ.mobj_movedir[actor] = DI_NODIR
+ENDSUB
+
+' If allaround is false, only look 180 degrees in front. TRUE if a player
+' is targeted.
+FUNC P_LookForPlayers(actor AS INTEGER, allaround AS INTEGER) AS INTEGER
+    DIM c AS INTEGER = 0
+    DIM lastlook AS INTEGER = P_MOBJ.mobj_lastlook[actor]
+    DIM stop_at AS INTEGER = (lastlook - 1) BAND 3
+    DIM player_thing AS INTEGER
+    DIM an AS INTEGER
+    DIM dist AS INTEGER
+    DIM skip AS INTEGER
+
+    DO
+        IF CLNG(DOOMSTAT.playeringame[lastlook]) <> 0 THEN
+            c = c + 1
+            IF c = 3 OR lastlook = stop_at THEN
+                ' Done looking.
+                P_MOBJ.mobj_lastlook[actor] = lastlook
+                RETURN 0
+            ENDIF
+
+            skip = 0
+            player_thing = CLNG(D_PLAYER.player_mo[lastlook])
+            IF CLNG(D_PLAYER.player_health[lastlook]) <= 0 THEN
+                ' Dead.
+                skip = 1
+            ELSEIF P_SIGHT.P_CheckSight(actor, player_thing) = 0 THEN
+                ' Out of sight.
+                skip = 1
+            ELSEIF allaround = 0 THEN
+                an = (R_MAIN.R_PointToAngle2(CLNG(P_MOBJ.mobj_x[actor]), CLNG(P_MOBJ.mobj_y[actor]), CLNG(P_MOBJ.mobj_x[player_thing]), CLNG(P_MOBJ.mobj_y[player_thing])) - CLNG(P_MOBJ.mobj_angle[actor])) BAND M_FIXED.ANGLE_MASK
+                IF an > M_FIXED.ANG90 AND an < M_FIXED.ANG270 THEN
+                    dist = P_MAPUTL.P_AproxDistance(CLNG(P_MOBJ.mobj_x[player_thing]) - CLNG(P_MOBJ.mobj_x[actor]), CLNG(P_MOBJ.mobj_y[player_thing]) - CLNG(P_MOBJ.mobj_y[actor]))
+                    ' If real close, react anyway. Behind back.
+                    IF dist > DOOMDEF.MELEERANGE THEN skip = 1
+                ENDIF
+            ENDIF
+
+            IF skip = 0 THEN
+                P_MOBJ.mobj_lastlook[actor] = lastlook
+                P_MOBJ.mobj_target[actor] = player_thing
+                RETURN 1
+            ENDIF
+        ENDIF
+        lastlook = (lastlook + 1) BAND 3
+    LOOP
+ENDFUNC
+
+' ---- action routines -----------------------------------------------------------
+
+' TRUE if another thing of the same type is still alive.
+FUNC OthersAlive(mo AS INTEGER) AS INTEGER
+    DIM mtype AS INTEGER = P_MOBJ.mobj_type[mo]
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DIM mo2 AS INTEGER
+    DO WHILE th <> 0
+        IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ THEN
+            mo2 = CLNG(P_TICK.th_object[th])
+            IF mo2 <> mo AND CLNG(P_MOBJ.mobj_type[mo2]) = mtype AND CLNG(P_MOBJ.mobj_health[mo2]) > 0 THEN RETURN 1
+        ENDIF
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+    RETURN 0
+ENDFUNC
+
+' The see or death sound of a thing; the troopers and the imps pick one of
+' theirs at random.
+FUNC PickSound(sfx_id AS INTEGER, first_trooper AS INTEGER, first_imp AS INTEGER) AS INTEGER
+    IF sfx_id >= first_trooper AND sfx_id <= first_trooper + 2 THEN RETURN first_trooper + (M_RANDOM.P_Random() MOD 3)
+    IF sfx_id >= first_imp AND sfx_id <= first_imp + 1 THEN RETURN first_imp + (M_RANDOM.P_Random() MOD 2)
+    RETURN sfx_id
+ENDFUNC
+
+' The bosses are heard everywhere.
+SUB BossSound(actor AS INTEGER, sfx_id AS INTEGER)
+    DIM mtype AS INTEGER = P_MOBJ.mobj_type[actor]
+    IF mtype = INFO.MT_SPIDER OR mtype = INFO.MT_CYBORG THEN
+        S_SOUND.S_StartSound(-1, sfx_id)
+    ELSE
+        S_SOUND.S_StartSound(actor, sfx_id)
+    ENDIF
+ENDSUB
+
+' Stay in state until a player is sighted.
+SUB A_Look(actor AS INTEGER)
+    ' Any shot will wake up.
+    P_MOBJ.mobj_threshold[actor] = 0
+    DIM targ AS INTEGER = P_SETUP.sector_soundtarget[CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[actor])])]
+    DIM seen AS INTEGER = 0
+
+    IF targ >= 0 ANDALSO (CLNG(P_MOBJ.mobj_flags[targ]) BAND INFO.MF_SHOOTABLE) <> 0 THEN
+        P_MOBJ.mobj_target[actor] = targ
+        IF (CLNG(P_MOBJ.mobj_flags[actor]) BAND INFO.MF_AMBUSH) <> 0 THEN
+            IF P_SIGHT.P_CheckSight(actor, targ) <> 0 THEN seen = 1
+        ELSE
+            seen = 1
+        ENDIF
+    ENDIF
+
+    IF seen = 0 THEN
+        IF P_LookForPlayers(actor, 0) = 0 THEN RETURN
+    ENDIF
+
+    ' Go into chase state.
+    DIM mtype AS INTEGER = P_MOBJ.mobj_type[actor]
+    DIM seesound AS INTEGER = INFO.mi_seesound[mtype]
+    IF seesound <> 0 THEN BossSound(actor, PickSound(seesound, INFO.SFX_POSIT1, INFO.SFX_BGSIT1))
+
+    P_MOBJ.P_SetMobjState(actor, CLNG(INFO.mi_seestate[mtype]))
+ENDSUB
+
+SUB A_FaceTarget(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    P_MOBJ.mobj_flags[actor] = CLNG(P_MOBJ.mobj_flags[actor]) BAND (BNOT INFO.MF_AMBUSH)
+    DIM angle AS INTEGER = R_MAIN.R_PointToAngle2(CLNG(P_MOBJ.mobj_x[actor]), CLNG(P_MOBJ.mobj_y[actor]), CLNG(P_MOBJ.mobj_x[target]), CLNG(P_MOBJ.mobj_y[target]))
+
+    DIM first AS INTEGER
+    IF (CLNG(P_MOBJ.mobj_flags[target]) BAND INFO.MF_SHADOW) <> 0 THEN
+        first = M_RANDOM.P_Random()
+        angle = (angle + (first - M_RANDOM.P_Random()) * 2097152) BAND M_FIXED.ANGLE_MASK
+    ENDIF
+    P_MOBJ.mobj_angle[actor] = angle
+ENDSUB
+
+' Actor has a melee attack, so it tries to close as fast as possible.
+SUB A_Chase(actor AS INTEGER)
+    DIM mtype AS INTEGER = P_MOBJ.mobj_type[actor]
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+
+    IF CLNG(P_MOBJ.mobj_reactiontime[actor]) <> 0 THEN P_MOBJ.mobj_reactiontime[actor] = CLNG(P_MOBJ.mobj_reactiontime[actor]) - 1
+
+    ' Modify target threshold.
+    IF CLNG(P_MOBJ.mobj_threshold[actor]) <> 0 THEN
+        IF target < 0 ORELSE CLNG(P_MOBJ.mobj_health[target]) <= 0 THEN
+            P_MOBJ.mobj_threshold[actor] = 0
+        ELSE
+            P_MOBJ.mobj_threshold[actor] = CLNG(P_MOBJ.mobj_threshold[actor]) - 1
+        ENDIF
+    ENDIF
+
+    ' Turn towards movement direction if not there yet.
+    DIM movedir AS INTEGER = P_MOBJ.mobj_movedir[actor]
+    DIM angle AS INTEGER
+    DIM delta AS INTEGER
+    IF movedir < 8 THEN
+        angle = CLNG(P_MOBJ.mobj_angle[actor]) BAND (7 SHL 29)
+        delta = M_FIXED.ToS32(angle - (movedir SHL 29))
+        IF delta > 0 THEN
+            angle = angle - M_FIXED.ANG90 \ 2
+        ELSEIF delta < 0 THEN
+            angle = angle + M_FIXED.ANG90 \ 2
+        ENDIF
+        P_MOBJ.mobj_angle[actor] = angle BAND M_FIXED.ANGLE_MASK
+    ENDIF
+
+    IF target < 0 ORELSE (CLNG(P_MOBJ.mobj_flags[target]) BAND INFO.MF_SHOOTABLE) = 0 THEN
+        ' Look for a new target.
+        IF P_LookForPlayers(actor, 1) <> 0 THEN RETURN
+        P_MOBJ.P_SetMobjState(actor, CLNG(INFO.mi_spawnstate[mtype]))
+        RETURN
+    ENDIF
+
+    ' Do not attack twice in a row.
+    IF (CLNG(P_MOBJ.mobj_flags[actor]) BAND INFO.MF_JUSTATTACKED) <> 0 THEN
+        P_MOBJ.mobj_flags[actor] = CLNG(P_MOBJ.mobj_flags[actor]) BAND (BNOT INFO.MF_JUSTATTACKED)
+        IF DOOMSTAT.gameskill <> DOOMDEF.SK_NIGHTMARE AND DOOMSTAT.fastparm = 0 THEN P_NewChaseDir(actor)
+        RETURN
+    ENDIF
+
+    ' Check for melee attack.
+    IF CLNG(INFO.mi_meleestate[mtype]) <> 0 ANDALSO P_CheckMeleeRange(actor) <> 0 THEN
+        IF CLNG(INFO.mi_attacksound[mtype]) <> 0 THEN S_SOUND.S_StartSound(actor, CLNG(INFO.mi_attacksound[mtype]))
+        P_MOBJ.P_SetMobjState(actor, CLNG(INFO.mi_meleestate[mtype]))
+        RETURN
+    ENDIF
+
+    ' Check for missile attack.
+    DIM may_fire AS INTEGER = 0
+    IF CLNG(INFO.mi_missilestate[mtype]) <> 0 THEN
+        may_fire = 1
+        IF DOOMSTAT.gameskill < DOOMDEF.SK_NIGHTMARE AND DOOMSTAT.fastparm = 0 AND CLNG(P_MOBJ.mobj_movecount[actor]) <> 0 THEN may_fire = 0
+        IF may_fire <> 0 ANDALSO P_CheckMissileRange(actor) <> 0 THEN
+            P_MOBJ.P_SetMobjState(actor, CLNG(INFO.mi_missilestate[mtype]))
+            P_MOBJ.mobj_flags[actor] = CLNG(P_MOBJ.mobj_flags[actor]) BOR INFO.MF_JUSTATTACKED
+            RETURN
+        ENDIF
+    ENDIF
+
+    ' Possibly choose another target.
+    IF DOOMSTAT.netgame <> 0 AND CLNG(P_MOBJ.mobj_threshold[actor]) = 0 THEN
+        IF P_SIGHT.P_CheckSight(actor, target) = 0 THEN
+            ' Got a new target.
+            IF P_LookForPlayers(actor, 1) <> 0 THEN RETURN
+        ENDIF
+    ENDIF
+
+    ' Chase towards player.
+    DIM movecount AS INTEGER = CLNG(P_MOBJ.mobj_movecount[actor]) - 1
+    P_MOBJ.mobj_movecount[actor] = movecount
+    IF movecount < 0 ORELSE P_Move(actor) = 0 THEN P_NewChaseDir(actor)
+
+    ' Make active sound.
+    IF CLNG(INFO.mi_activesound[mtype]) <> 0 ANDALSO M_RANDOM.P_Random() < 3 THEN S_SOUND.S_StartSound(actor, CLNG(INFO.mi_activesound[mtype]))
+ENDSUB
+
+' The angle a little to the left or right at random, as bullets go.
+FUNC Scatter(angle AS INTEGER) AS INTEGER
+    DIM first AS INTEGER = M_RANDOM.P_Random()
+    RETURN (angle + (first - M_RANDOM.P_Random()) * 1048576) BAND M_FIXED.ANGLE_MASK
+ENDFUNC
+
+SUB A_PosAttack(actor AS INTEGER)
+    IF CLNG(P_MOBJ.mobj_target[actor]) < 0 THEN RETURN
+
+    A_FaceTarget(actor)
+    DIM angle AS INTEGER = P_MOBJ.mobj_angle[actor]
+    DIM slope AS INTEGER = P_MAP.P_AimLineAttack(actor, angle, DOOMDEF.MISSILERANGE)
+
+    S_SOUND.S_StartSound(actor, INFO.SFX_PISTOL)
+    angle = Scatter(angle)
+    DIM damage AS INTEGER = ((M_RANDOM.P_Random() MOD 5) + 1) * 3
+    P_MAP.P_LineAttack(actor, angle, DOOMDEF.MISSILERANGE, slope, damage)
+ENDSUB
+
+' A shotgun blast of n pellets.
+SUB PelletAttack(actor AS INTEGER, n_pellets AS INTEGER)
+    IF CLNG(P_MOBJ.mobj_target[actor]) < 0 THEN RETURN
+
+    S_SOUND.S_StartSound(actor, INFO.SFX_SHOTGN)
+    A_FaceTarget(actor)
+    DIM bangle AS INTEGER = P_MOBJ.mobj_angle[actor]
+    DIM slope AS INTEGER = P_MAP.P_AimLineAttack(actor, bangle, DOOMDEF.MISSILERANGE)
+    DIM i AS INTEGER
+    DIM angle AS INTEGER
+    DIM damage AS INTEGER
+    FOR i = 1 TO n_pellets
+        angle = Scatter(bangle)
+        damage = ((M_RANDOM.P_Random() MOD 5) + 1) * 3
+        P_MAP.P_LineAttack(actor, angle, DOOMDEF.MISSILERANGE, slope, damage)
+    NEXT i
+ENDSUB
+
+' Keeps firing unless the target got out of sight; chance is how often it
+' goes on without looking.
+SUB Refire(actor AS INTEGER, chance AS INTEGER)
+    A_FaceTarget(actor)
+    IF M_RANDOM.P_Random() < chance THEN RETURN
+
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 ORELSE CLNG(P_MOBJ.mobj_health[target]) <= 0 ORELSE P_SIGHT.P_CheckSight(actor, target) = 0 THEN P_MOBJ.P_SetMobjState(actor, CLNG(INFO.mi_seestate[CLNG(P_MOBJ.mobj_type[actor])]))
+ENDSUB
+
+SUB A_TroopAttack(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    A_FaceTarget(actor)
+    IF P_CheckMeleeRange(actor) <> 0 THEN
+        S_SOUND.S_StartSound(actor, INFO.SFX_CLAW)
+        P_INTER.P_DamageMobj(target, actor, actor, ((M_RANDOM.P_Random() MOD 8) + 1) * 3)
+        RETURN
+    ENDIF
+
+    ' Launch a missile.
+    P_MOBJ.P_SpawnMissile(actor, target, INFO.MT_TROOPSHOT)
+ENDSUB
+
+SUB A_SargAttack(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    A_FaceTarget(actor)
+    IF P_CheckMeleeRange(actor) <> 0 THEN P_INTER.P_DamageMobj(target, actor, actor, ((M_RANDOM.P_Random() MOD 10) + 1) * 4)
+ENDSUB
+
+SUB A_HeadAttack(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    A_FaceTarget(actor)
+    IF P_CheckMeleeRange(actor) <> 0 THEN
+        P_INTER.P_DamageMobj(target, actor, actor, ((M_RANDOM.P_Random() MOD 6) + 1) * 10)
+        RETURN
+    ENDIF
+
+    ' Launch a missile.
+    P_MOBJ.P_SpawnMissile(actor, target, INFO.MT_HEADSHOT)
+ENDSUB
+
+SUB A_CyberAttack(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    A_FaceTarget(actor)
+    P_MOBJ.P_SpawnMissile(actor, target, INFO.MT_ROCKET)
+ENDSUB
+
+SUB A_BruisAttack(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    IF P_CheckMeleeRange(actor) <> 0 THEN
+        S_SOUND.S_StartSound(actor, INFO.SFX_CLAW)
+        P_INTER.P_DamageMobj(target, actor, actor, ((M_RANDOM.P_Random() MOD 8) + 1) * 10)
+        RETURN
+    ENDIF
+
+    ' Launch a missile.
+    P_MOBJ.P_SpawnMissile(actor, target, INFO.MT_BRUISERSHOT)
+ENDSUB
+
+' Fly at the player like a missile.
+SUB A_SkullAttack(actor AS INTEGER)
+    DIM dest AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF dest < 0 THEN RETURN
+
+    P_MOBJ.mobj_flags[actor] = CLNG(P_MOBJ.mobj_flags[actor]) BOR INFO.MF_SKULLFLY
+
+    S_SOUND.S_StartSound(actor, CLNG(INFO.mi_attacksound[CLNG(P_MOBJ.mobj_type[actor])]))
+    A_FaceTarget(actor)
+    DIM an AS INTEGER = CLNG(P_MOBJ.mobj_angle[actor]) SHR TABLES.ANGLETOFINESHIFT
+    P_MOBJ.mobj_momx[actor] = M_FIXED.FixedMul(SKULLSPEED, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + an]))
+    P_MOBJ.mobj_momy[actor] = M_FIXED.FixedMul(SKULLSPEED, CLNG(TABLES.finesine[an]))
+    DIM dist AS INTEGER = P_MAPUTL.P_AproxDistance(CLNG(P_MOBJ.mobj_x[dest]) - CLNG(P_MOBJ.mobj_x[actor]), CLNG(P_MOBJ.mobj_y[dest]) - CLNG(P_MOBJ.mobj_y[actor]))
+    dist = dist \ SKULLSPEED
+    IF dist < 1 THEN dist = 1
+    P_MOBJ.mobj_momz[actor] = (CLNG(P_MOBJ.mobj_z[dest]) + (CLNG(P_MOBJ.mobj_height[dest]) SHR 1) - CLNG(P_MOBJ.mobj_z[actor])) \ dist
+ENDSUB
+
+SUB A_Scream(actor AS INTEGER)
+    DIM deathsound AS INTEGER = INFO.mi_deathsound[CLNG(P_MOBJ.mobj_type[actor])]
+    IF deathsound = 0 THEN RETURN
+    BossSound(actor, PickSound(deathsound, INFO.SFX_PODTH1, INFO.SFX_BGDTH1))
+ENDSUB
+
+' A line that stands for the tag 666 of a boss's death.
+FUNC JunkLine(tag_in AS INTEGER) AS INTEGER
+    DIM junk AS INTEGER = P_SETUP.MAXLINES - 1
+    P_SETUP.line_tag[junk] = tag_in
+    RETURN junk
+ENDFUNC
+
+' Possibly trigger special effects if on the first boss level.
+SUB A_BossDeath(mo AS INTEGER)
+    DIM mtype AS INTEGER = P_MOBJ.mobj_type[mo]
+    DIM gamemap AS INTEGER = DOOMSTAT.gamemap
+    DIM episode AS INTEGER = DOOMSTAT.gameepisode
+
+    IF DOOMSTAT.commercial <> 0 THEN
+        IF gamemap <> 7 THEN RETURN
+        IF mtype <> INFO.MT_FATSO AND mtype <> INFO.MT_BABY THEN RETURN
+    ELSEIF episode = 1 THEN
+        IF gamemap <> 8 OR mtype <> INFO.MT_BRUISER THEN RETURN
+    ELSEIF episode = 2 THEN
+        IF gamemap <> 8 OR mtype <> INFO.MT_CYBORG THEN RETURN
+    ELSEIF episode = 3 THEN
+        IF gamemap <> 8 OR mtype <> INFO.MT_SPIDER THEN RETURN
+    ELSEIF episode = 4 THEN
+        IF gamemap = 6 THEN
+            IF mtype <> INFO.MT_CYBORG THEN RETURN
+        ELSEIF gamemap = 8 THEN
+            IF mtype <> INFO.MT_SPIDER THEN RETURN
+        ELSE
+            RETURN
+        ENDIF
+    ELSE
+        IF gamemap <> 8 THEN RETURN
+    ENDIF
+
+    ' Make sure there is a player alive for victory.
+    DIM i AS INTEGER
+    DIM alive AS INTEGER = 0
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        IF CLNG(DOOMSTAT.playeringame[i]) <> 0 AND CLNG(D_PLAYER.player_health[i]) > 0 THEN alive = 1
+    NEXT i
+    ' No one left alive, so do not end game.
+    IF alive = 0 THEN RETURN
+
+    ' Scan the remaining thinkers to see if all bosses are dead.
+    IF OthersAlive(mo) <> 0 THEN RETURN
+
+    ' Victory!
+    IF DOOMSTAT.commercial <> 0 THEN
+        IF mtype = INFO.MT_FATSO THEN
+            P_FLOOR.EV_DoFloor(JunkLine(666), P_FLOOR.FLOOR_LOWERTOLOWEST)
+            RETURN
+        ENDIF
+        IF mtype = INFO.MT_BABY THEN
+            P_FLOOR.EV_DoFloor(JunkLine(667), P_FLOOR.FLOOR_RAISETOTEXTURE)
+            RETURN
+        ENDIF
+    ELSEIF episode = 1 THEN
+        P_FLOOR.EV_DoFloor(JunkLine(666), P_FLOOR.FLOOR_LOWERTOLOWEST)
+        RETURN
+    ELSEIF episode = 4 THEN
+        IF gamemap = 6 THEN
+            P_DOORS.EV_DoDoor(JunkLine(666), P_DOORS.DOOR_BLAZEOPEN)
+            RETURN
+        ELSEIF gamemap = 8 THEN
+            P_FLOOR.EV_DoFloor(JunkLine(666), P_FLOOR.FLOOR_LOWERTOLOWEST)
+            RETURN
+        ENDIF
+    ENDIF
+
+    G_GAME.G_ExitLevel()
+ENDSUB
+
 ' Carries out action (an INFO.A_ number) of a state for a thing.
 EXPORT SUB A_Call(action AS INTEGER, mobj AS INTEGER)
+    SWITCH action
+        CASE INFO.A_LOOK
+            A_Look(mobj)
+        CASE INFO.A_CHASE
+            A_Chase(mobj)
+        CASE INFO.A_FACETARGET
+            A_FaceTarget(mobj)
+        CASE INFO.A_POSATTACK
+            A_PosAttack(mobj)
+        CASE INFO.A_SPOSATTACK
+            PelletAttack(mobj, 3)
+        CASE INFO.A_CPOSATTACK
+            PelletAttack(mobj, 1)
+        CASE INFO.A_CPOSREFIRE
+            Refire(mobj, 40)
+        CASE INFO.A_SPIDREFIRE
+            Refire(mobj, 10)
+        CASE INFO.A_TROOPATTACK
+            A_TroopAttack(mobj)
+        CASE INFO.A_SARGATTACK
+            A_SargAttack(mobj)
+        CASE INFO.A_HEADATTACK
+            A_HeadAttack(mobj)
+        CASE INFO.A_CYBERATTACK
+            A_CyberAttack(mobj)
+        CASE INFO.A_BRUISATTACK
+            A_BruisAttack(mobj)
+        CASE INFO.A_SKULLATTACK
+            A_SkullAttack(mobj)
+        CASE INFO.A_SCREAM
+            A_Scream(mobj)
+        CASE INFO.A_XSCREAM
+            S_SOUND.S_StartSound(mobj, INFO.SFX_SLOP)
+        CASE INFO.A_PAIN
+            IF CLNG(INFO.mi_painsound[CLNG(P_MOBJ.mobj_type[mobj])]) <> 0 THEN S_SOUND.S_StartSound(mobj, CLNG(INFO.mi_painsound[CLNG(P_MOBJ.mobj_type[mobj])]))
+        CASE INFO.A_FALL
+            ' The actor is on the ground, it can be walked over.
+            P_MOBJ.mobj_flags[mobj] = CLNG(P_MOBJ.mobj_flags[mobj]) BAND (BNOT INFO.MF_SOLID)
+        CASE INFO.A_EXPLODE
+            P_MAP.P_RadiusAttack(mobj, CLNG(P_MOBJ.mobj_target[mobj]), 128)
+        CASE INFO.A_BOSSDEATH
+            A_BossDeath(mobj)
+        CASE INFO.A_HOOF
+            S_SOUND.S_StartSound(mobj, INFO.SFX_HOOF)
+            A_Chase(mobj)
+        CASE INFO.A_METAL
+            S_SOUND.S_StartSound(mobj, INFO.SFX_METAL)
+            A_Chase(mobj)
+        CASE INFO.A_PLAYERSCREAM
+            IF DOOMSTAT.commercial <> 0 AND CLNG(P_MOBJ.mobj_health[mobj]) < -50 THEN
+                ' If the player dies less than -50% without gibbing.
+                S_SOUND.S_StartSound(mobj, INFO.SFX_PDIEHI)
+            ELSE
+                S_SOUND.S_StartSound(mobj, INFO.SFX_PLDETH)
+            ENDIF
+        CASE INFO.A_BFGSPRAY
+            P_PSPR.A_BFGSpray(mobj)
+        DEFAULT
+            I_SYSTEM.I_Error("A_Call: action " + STR$(action) + " of a DOOM II monster is not ported")
+    ENDSWITCH
 ENDSUB

@@ -1,5 +1,5 @@
-' Movement, collision handling and using lines (p_map.c). The shooting and
-' radius attack half of the file follows with the enemies.
+' Movement, collision handling, using lines, shooting and radius attacks
+' (p_map.c).
 
 EXPORT MODULE P_MAP
 
@@ -19,6 +19,8 @@ IMPORT R_MAIN
 IMPORT P_MOBJ
 IMPORT P_MAPUTL
 IMPORT P_TICK
+IMPORT P_SIGHT
+IMPORT R_SKY
 IMPORT P_INTER
 IMPORT P_SPEC
 IMPORT P_SWITCH
@@ -639,3 +641,258 @@ EXPORT FUNC P_ChangeSector(sector AS INTEGER, crunch AS INTEGER) AS INTEGER
     NEXT x
     RETURN nofit
 ENDFUNC
+
+' ---- line attacks ----------------------------------------------------------------
+
+' Who got hit, or -1.
+EXPORT DIM linetarget AS INTEGER = -1
+DIM shootthing AS INTEGER = -1
+' Height if not aiming up or down.
+DIM shootz AS INTEGER = 0
+DIM la_damage AS INTEGER = 0
+DIM aimslope AS INTEGER = 0
+
+' Sets linetarget and aimslope when a target is aimed at.
+EXPORT FUNC PTR_AimTraverse(icept AS INTEGER) AS INTEGER
+    DIM dist AS INTEGER
+    DIM slope AS INTEGER
+
+    IF CLNG(P_MAPUTL.intercept_isaline[icept]) <> 0 THEN
+        DIM li AS INTEGER = CLNG(P_MAPUTL.intercept_d[icept])
+        IF (CLNG(P_SETUP.line_flags[li]) BAND DOOMDEF.ML_TWOSIDED) = 0 THEN RETURN 0
+
+        ' Crosses a two sided line. A two sided line will restrict the
+        ' possible target ranges.
+        P_MAPUTL.P_LineOpening(li)
+        IF P_MAPUTL.openbottom >= P_MAPUTL.opentop THEN RETURN 0
+
+        dist = M_FIXED.FixedMul(attackrange, CLNG(P_MAPUTL.intercept_frac[icept]))
+        DIM front AS INTEGER = CLNG(P_SETUP.line_frontsector[li])
+        DIM back AS INTEGER = CLNG(P_SETUP.line_backsector[li])
+
+        IF CLNG(P_SETUP.sector_floorheight[front]) <> CLNG(P_SETUP.sector_floorheight[back]) THEN
+            slope = M_FIXED.FixedDiv(P_MAPUTL.openbottom - shootz, dist)
+            IF slope > P_SIGHT.bottomslope THEN P_SIGHT.bottomslope = slope
+        ENDIF
+
+        IF CLNG(P_SETUP.sector_ceilingheight[front]) <> CLNG(P_SETUP.sector_ceilingheight[back]) THEN
+            slope = M_FIXED.FixedDiv(P_MAPUTL.opentop - shootz, dist)
+            IF slope < P_SIGHT.topslope THEN P_SIGHT.topslope = slope
+        ENDIF
+
+        IF P_SIGHT.topslope <= P_SIGHT.bottomslope THEN RETURN 0
+        ' The shot continues.
+        RETURN 1
+    ENDIF
+
+    ' Shoot a thing.
+    DIM th AS INTEGER = CLNG(P_MAPUTL.intercept_d[icept])
+    ' Can not shoot self.
+    IF th = shootthing THEN RETURN 1
+    ' Corpse or something.
+    IF (CLNG(P_MOBJ.mobj_flags[th]) BAND INFO.MF_SHOOTABLE) = 0 THEN RETURN 1
+
+    ' Check angles to see if the thing can be aimed at.
+    dist = M_FIXED.FixedMul(attackrange, CLNG(P_MAPUTL.intercept_frac[icept]))
+    DIM thingtopslope AS INTEGER = M_FIXED.FixedDiv(CLNG(P_MOBJ.mobj_z[th]) + CLNG(P_MOBJ.mobj_height[th]) - shootz, dist)
+    ' Shot over the thing.
+    IF thingtopslope < P_SIGHT.bottomslope THEN RETURN 1
+
+    DIM thingbottomslope AS INTEGER = M_FIXED.FixedDiv(CLNG(P_MOBJ.mobj_z[th]) - shootz, dist)
+    ' Shot under the thing.
+    IF thingbottomslope > P_SIGHT.topslope THEN RETURN 1
+
+    ' This thing can be hit!
+    IF thingtopslope > P_SIGHT.topslope THEN thingtopslope = P_SIGHT.topslope
+    IF thingbottomslope < P_SIGHT.bottomslope THEN thingbottomslope = P_SIGHT.bottomslope
+
+    aimslope = (thingtopslope + thingbottomslope) \ 2
+    linetarget = th
+    ' Stop here.
+    RETURN 0
+ENDFUNC
+
+EXPORT FUNC PTR_ShootTraverse(icept AS INTEGER) AS INTEGER
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    DIM z AS INTEGER
+    DIM frac AS INTEGER
+    DIM dist AS INTEGER
+    DIM slope AS INTEGER
+    DIM icept_frac AS INTEGER = P_MAPUTL.intercept_frac[icept]
+
+    IF CLNG(P_MAPUTL.intercept_isaline[icept]) <> 0 THEN
+        DIM li AS INTEGER = CLNG(P_MAPUTL.intercept_d[icept])
+        DIM hit AS INTEGER = 0
+        DIM front AS INTEGER = CLNG(P_SETUP.line_frontsector[li])
+        DIM back AS INTEGER = CLNG(P_SETUP.line_backsector[li])
+
+        IF CLNG(P_SETUP.line_special[li]) <> 0 THEN P_SPEC.P_ShootSpecialLine(shootthing, li)
+
+        IF (CLNG(P_SETUP.line_flags[li]) BAND DOOMDEF.ML_TWOSIDED) = 0 THEN
+            hit = 1
+        ELSE
+            ' Crosses a two sided line.
+            P_MAPUTL.P_LineOpening(li)
+            dist = M_FIXED.FixedMul(attackrange, icept_frac)
+
+            IF CLNG(P_SETUP.sector_floorheight[front]) <> CLNG(P_SETUP.sector_floorheight[back]) THEN
+                slope = M_FIXED.FixedDiv(P_MAPUTL.openbottom - shootz, dist)
+                IF slope > aimslope THEN hit = 1
+            ENDIF
+
+            IF hit = 0 AND CLNG(P_SETUP.sector_ceilingheight[front]) <> CLNG(P_SETUP.sector_ceilingheight[back]) THEN
+                slope = M_FIXED.FixedDiv(P_MAPUTL.opentop - shootz, dist)
+                IF slope < aimslope THEN hit = 1
+            ENDIF
+
+            ' The shot continues.
+            IF hit = 0 THEN RETURN 1
+        ENDIF
+
+        ' Hit the line. Position a bit closer.
+        frac = icept_frac - M_FIXED.FixedDiv(4 * M_FIXED.FRACUNIT, attackrange)
+        x = P_MAPUTL.trace_x + M_FIXED.FixedMul(P_MAPUTL.trace_dx, frac)
+        y = P_MAPUTL.trace_y + M_FIXED.FixedMul(P_MAPUTL.trace_dy, frac)
+        z = shootz + M_FIXED.FixedMul(aimslope, M_FIXED.FixedMul(frac, attackrange))
+
+        IF CLNG(P_SETUP.sector_ceilingpic[front]) = R_SKY.skyflatnum THEN
+            ' The sky is not shot at.
+            IF z > CLNG(P_SETUP.sector_ceilingheight[front]) THEN RETURN 0
+            ' It is a sky hack wall.
+            IF back >= 0 ANDALSO CLNG(P_SETUP.sector_ceilingpic[back]) = R_SKY.skyflatnum THEN RETURN 0
+        ENDIF
+
+        ' Spawn bullet puffs.
+        P_MOBJ.P_SpawnPuff(x, y, z)
+        ' Stop here.
+        RETURN 0
+    ENDIF
+
+    ' Shoot a thing.
+    DIM th AS INTEGER = CLNG(P_MAPUTL.intercept_d[icept])
+    ' Can not shoot self.
+    IF th = shootthing THEN RETURN 1
+    ' Corpse or something.
+    IF (CLNG(P_MOBJ.mobj_flags[th]) BAND INFO.MF_SHOOTABLE) = 0 THEN RETURN 1
+
+    ' Check angles to see if the thing can be aimed at.
+    dist = M_FIXED.FixedMul(attackrange, icept_frac)
+    DIM thingtopslope AS INTEGER = M_FIXED.FixedDiv(CLNG(P_MOBJ.mobj_z[th]) + CLNG(P_MOBJ.mobj_height[th]) - shootz, dist)
+    ' Shot over the thing.
+    IF thingtopslope < aimslope THEN RETURN 1
+
+    DIM thingbottomslope AS INTEGER = M_FIXED.FixedDiv(CLNG(P_MOBJ.mobj_z[th]) - shootz, dist)
+    ' Shot under the thing.
+    IF thingbottomslope > aimslope THEN RETURN 1
+
+    ' Hit the thing. Position a bit closer.
+    frac = icept_frac - M_FIXED.FixedDiv(10 * M_FIXED.FRACUNIT, attackrange)
+    x = P_MAPUTL.trace_x + M_FIXED.FixedMul(P_MAPUTL.trace_dx, frac)
+    y = P_MAPUTL.trace_y + M_FIXED.FixedMul(P_MAPUTL.trace_dy, frac)
+    z = shootz + M_FIXED.FixedMul(aimslope, M_FIXED.FixedMul(frac, attackrange))
+
+    ' Spawn bullet puffs or blood spots, depending on the target type.
+    IF (CLNG(P_MOBJ.mobj_flags[th]) BAND INFO.MF_NOBLOOD) <> 0 THEN
+        P_MOBJ.P_SpawnPuff(x, y, z)
+    ELSE
+        P_MOBJ.P_SpawnBlood(x, y, z, la_damage)
+    ENDIF
+
+    IF la_damage <> 0 THEN P_INTER.P_DamageMobj(th, shootthing, shootthing, la_damage)
+
+    ' Stop here.
+    RETURN 0
+ENDFUNC
+
+' Looks along the angle for something to hit and answers the slope to it,
+' 0 if there is nothing; linetarget is the thing found.
+EXPORT FUNC P_AimLineAttack(t1 AS INTEGER, angle_in AS INTEGER, distance AS INTEGER) AS INTEGER
+    DIM angle AS INTEGER = (angle_in BAND M_FIXED.ANGLE_MASK) SHR TABLES.ANGLETOFINESHIFT
+    shootthing = t1
+
+    DIM x1 AS INTEGER = CLNG(P_MOBJ.mobj_x[t1])
+    DIM y1 AS INTEGER = CLNG(P_MOBJ.mobj_y[t1])
+    DIM x2 AS INTEGER = M_FIXED.ToS32(x1 + (distance SHR 16) * CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + angle]))
+    DIM y2 AS INTEGER = M_FIXED.ToS32(y1 + (distance SHR 16) * CLNG(TABLES.finesine[angle]))
+    shootz = CLNG(P_MOBJ.mobj_z[t1]) + (CLNG(P_MOBJ.mobj_height[t1]) SHR 1) + 8 * M_FIXED.FRACUNIT
+
+    ' Nothing outside the view angles can be shot.
+    P_SIGHT.topslope = 100 * M_FIXED.FRACUNIT \ 160
+    P_SIGHT.bottomslope = -100 * M_FIXED.FRACUNIT \ 160
+
+    attackrange = distance
+    linetarget = -1
+
+    P_MAPUTL.P_PathTraverse(x1, y1, x2, y2, DOOMDEF.PT_ADDLINES BOR DOOMDEF.PT_ADDTHINGS, P_MAPUTL.PTR_AIMTRAVERSE)
+
+    IF linetarget >= 0 THEN RETURN aimslope
+    RETURN 0
+ENDFUNC
+
+' Shoots along the angle and slope. With damage 0 it is just a test trace
+' that will leave linetarget set.
+EXPORT SUB P_LineAttack(t1 AS INTEGER, angle_in AS INTEGER, distance AS INTEGER, slope AS INTEGER, damage AS INTEGER)
+    DIM angle AS INTEGER = (angle_in BAND M_FIXED.ANGLE_MASK) SHR TABLES.ANGLETOFINESHIFT
+    shootthing = t1
+    la_damage = damage
+
+    DIM x1 AS INTEGER = CLNG(P_MOBJ.mobj_x[t1])
+    DIM y1 AS INTEGER = CLNG(P_MOBJ.mobj_y[t1])
+    DIM x2 AS INTEGER = M_FIXED.ToS32(x1 + (distance SHR 16) * CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + angle]))
+    DIM y2 AS INTEGER = M_FIXED.ToS32(y1 + (distance SHR 16) * CLNG(TABLES.finesine[angle]))
+    shootz = CLNG(P_MOBJ.mobj_z[t1]) + (CLNG(P_MOBJ.mobj_height[t1]) SHR 1) + 8 * M_FIXED.FRACUNIT
+    attackrange = distance
+    aimslope = slope
+
+    P_MAPUTL.P_PathTraverse(x1, y1, x2, y2, DOOMDEF.PT_ADDLINES BOR DOOMDEF.PT_ADDTHINGS, P_MAPUTL.PTR_SHOOTTRAVERSE)
+ENDSUB
+
+' ---- radius attack -----------------------------------------------------------------
+
+DIM bombsource AS INTEGER = -1
+DIM bombspot AS INTEGER = -1
+DIM bombdamage AS INTEGER = 0
+
+' bombsource is the creature that caused the explosion at bombspot.
+EXPORT FUNC PIT_RadiusAttack(thing AS INTEGER) AS INTEGER
+    IF (CLNG(P_MOBJ.mobj_flags[thing]) BAND INFO.MF_SHOOTABLE) = 0 THEN RETURN 1
+
+    ' Boss spider and cyborg take no damage from concussion.
+    DIM mtype AS INTEGER = CLNG(P_MOBJ.mobj_type[thing])
+    IF mtype = INFO.MT_CYBORG OR mtype = INFO.MT_SPIDER THEN RETURN 1
+
+    DIM dx AS INTEGER = CLNG(ABS(CLNG(P_MOBJ.mobj_x[thing]) - CLNG(P_MOBJ.mobj_x[bombspot])))
+    DIM dy AS INTEGER = CLNG(ABS(CLNG(P_MOBJ.mobj_y[thing]) - CLNG(P_MOBJ.mobj_y[bombspot])))
+    DIM dist AS INTEGER = dy
+    IF dx > dy THEN dist = dx
+    dist = (dist - CLNG(P_MOBJ.mobj_radius[thing])) SHR 16
+    IF dist < 0 THEN dist = 0
+
+    ' Out of range.
+    IF dist >= bombdamage THEN RETURN 1
+
+    ' Must be in direct path.
+    IF P_SIGHT.P_CheckSight(thing, bombspot) <> 0 THEN P_INTER.P_DamageMobj(thing, bombspot, bombsource, bombdamage - dist)
+    RETURN 1
+ENDFUNC
+
+' Source is the creature that caused the explosion at spot.
+EXPORT SUB P_RadiusAttack(spot AS INTEGER, source AS INTEGER, damage AS INTEGER)
+    DIM dist AS INTEGER = (damage + (DOOMDEF.MAXRADIUS SHR 16)) * M_FIXED.FRACUNIT
+    DIM yh AS INTEGER = (CLNG(P_MOBJ.mobj_y[spot]) + dist - P_SETUP.bmaporgy) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM yl AS INTEGER = (CLNG(P_MOBJ.mobj_y[spot]) - dist - P_SETUP.bmaporgy) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM xh AS INTEGER = (CLNG(P_MOBJ.mobj_x[spot]) + dist - P_SETUP.bmaporgx) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM xl AS INTEGER = (CLNG(P_MOBJ.mobj_x[spot]) - dist - P_SETUP.bmaporgx) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    bombspot = spot
+    bombsource = source
+    bombdamage = damage
+
+    FOR y = yl TO yh
+        FOR x = xl TO xh
+            P_MAPUTL.P_BlockThingsIterator(x, y, P_MAPUTL.PIT_RADIUSATTACK)
+        NEXT x
+    NEXT y
+ENDSUB

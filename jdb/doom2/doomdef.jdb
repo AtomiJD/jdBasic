@@ -143,3 +143,17 @@ EXPORT CONST PT_EARLYOUT = 4
 
 ' The most thinkers a level can have at one time.
 EXPORT CONST MAXTHINKERS = 8192
+
+' Tics a monster keeps after the thing that hurt it (p_local.h).
+EXPORT CONST BASETHRESHOLD = 100
+
+' psprnum_t (p_pspr.h)
+EXPORT CONST PS_WEAPON = 0
+EXPORT CONST PS_FLASH = 1
+EXPORT CONST NUMPSPRITES = 2
+
+' How long the powers last, in tics.
+EXPORT CONST INVULNTICS = 1050
+EXPORT CONST INVISTICS = 2100
+EXPORT CONST INFRATICS = 4200
+EXPORT CONST IRONTICS = 2100

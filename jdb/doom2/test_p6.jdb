@@ -1,0 +1,271 @@
+' Checks on combat and on the demos of the WAD. Damage, armor, ammunition
+' and pickups are worked out by hand from the rules of p_inter.c; sight is
+' checked against the map. The demos DEMO1 to DEMO3 run to their end mark:
+' in each the player dies a few seconds before the recording stops, which
+' is where a recording of a death ends. The numbers at the end are what the
+' interpreter gave, and the compiled program has to give the same.
+'
+' Run from the repository root, interpreted or compiled with -c.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT INFO
+IMPORT W_WAD
+IMPORT R_MAIN
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_MAP
+IMPORT P_SIGHT
+IMPORT P_INTER
+IMPORT G_GAME
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+DIM wad_path$ AS STRING = D_MAIN.IdentifyVersion$()
+IF NOT FILE.EXISTS(wad_path$) THEN
+    PRINT "SKIP: " + wad_path$ + " not found"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+DIM FU AS INTEGER = M_FIXED.FRACUNIT
+
+SUB Tics(n_tics AS INTEGER, buttons AS INTEGER)
+    DIM t AS INTEGER
+    FOR t = 1 TO n_tics
+        G_GAME.cmd_forwardmove = 0
+        G_GAME.cmd_sidemove = 0
+        G_GAME.cmd_angleturn = 0
+        G_GAME.cmd_buttons = buttons
+        G_GAME.G_Ticker()
+    NEXT t
+ENDSUB
+
+FUNC CountType(mtype AS INTEGER) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM t AS INTEGER = CLNG(P_TICK.th_next[0])
+    DO WHILE t <> 0
+        IF CLNG(P_TICK.th_function[t]) = P_TICK.TF_MOBJ ANDALSO CLNG(P_MOBJ.mobj_type[CLNG(P_TICK.th_object[t])]) = mtype THEN n = n + 1
+        t = CLNG(P_TICK.th_next[t])
+    LOOP
+    RETURN n
+ENDFUNC
+
+W_WAD.W_Init(wad_path$)
+R_MAIN.R_Init(10, 0)
+P_SETUP.P_Init()
+DOOMSTAT.playeringame[0] = 1
+
+' ---- a level without monsters ------------------------------------------------
+DOOMSTAT.nomonsters = 1
+G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, 1, 1)
+DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+Tics(1, 0)
+
+' The player starts with 100 health, a pistol and 50 bullets, the pistol
+' coming up.
+Eq("start: health", CLNG(D_PLAYER.player_health[0]), 100)
+Eq("start: bullets", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_CLIP]), 50)
+Eq("start: weapon", CLNG(D_PLAYER.player_readyweapon[0]), DOOMDEF.WP_PISTOL)
+Eq("start: weapon sprite", CLNG(D_PLAYER.player_psprite_state[DOOMDEF.PS_WEAPON]), INFO.S_PISTOLUP)
+' It rises 6 a tic from 128 to 32: 16 tics, the first at the spawn.
+Tics(13, 0)
+Eq("raise: almost up", CLNG(D_PLAYER.player_psprite_sy[DOOMDEF.PS_WEAPON]), 38 * FU)
+Tics(1, 0)
+Eq("raise: ready", CLNG(D_PLAYER.player_psprite_state[DOOMDEF.PS_WEAPON]), INFO.S_PISTOL)
+
+' ---- ammunition ---------------------------------------------------------------
+' A clip is 10 bullets, a dropped one half; on medium skill nothing doubles.
+Eq("ammo: a clip is taken", P_INTER.P_GiveAmmo(0, DOOMDEF.AM_CLIP, 1), 1)
+Eq("ammo: 10 more", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_CLIP]), 60)
+P_INTER.P_GiveAmmo(0, DOOMDEF.AM_CLIP, 0)
+Eq("ammo: 5 more", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_CLIP]), 65)
+P_INTER.P_GiveAmmo(0, DOOMDEF.AM_CLIP, 20)
+Eq("ammo: no more than 200", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_CLIP]), 200)
+Eq("ammo: full, so left lying", P_INTER.P_GiveAmmo(0, DOOMDEF.AM_CLIP, 1), 0)
+' Shells without a shotgun change nothing; the shotgun brings 8 and is
+' the weapon to change to.
+P_INTER.P_GiveAmmo(0, DOOMDEF.AM_SHELL, 1)
+Eq("ammo: 4 shells", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_SHELL]), 4)
+Eq("ammo: no weapon for them", CLNG(D_PLAYER.player_pendingweapon[0]), DOOMDEF.WP_NOCHANGE)
+Eq("weapon: shotgun is new", P_INTER.P_GiveWeapon(0, DOOMDEF.WP_SHOTGUN, 0), 1)
+Eq("weapon: 8 shells with it", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_SHELL]), 12)
+Eq("weapon: change to it", CLNG(D_PLAYER.player_pendingweapon[0]), DOOMDEF.WP_SHOTGUN)
+' The pistol goes down 16 tics and the shotgun comes up 16.
+Tics(40, 0)
+Eq("weapon: shotgun in hand", CLNG(D_PLAYER.player_readyweapon[0]), DOOMDEF.WP_SHOTGUN)
+Eq("weapon: shotgun ready", CLNG(D_PLAYER.player_psprite_state[DOOMDEF.PS_WEAPON]), INFO.S_SGUN)
+
+' ---- damage and armor ---------------------------------------------------------
+' Green armor takes a third of the damage, blue armor half, until it is
+' used up.
+P_INTER.P_GiveArmor(0, 1)
+Eq("armor: green", CLNG(D_PLAYER.player_armorpoints[0]), 100)
+Eq("armor: no worse one", P_INTER.P_GiveArmor(0, 1), 0)
+P_INTER.P_DamageMobj(mo, -1, -1, 30)
+Eq("damage 30: health", CLNG(D_PLAYER.player_health[0]), 80)
+Eq("damage 30: armor", CLNG(D_PLAYER.player_armorpoints[0]), 90)
+Eq("damage 30: thing health", CLNG(P_MOBJ.mobj_health[mo]), 80)
+Eq("damage 30: red screen", CLNG(D_PLAYER.player_damagecount[0]), 20)
+P_INTER.P_GiveArmor(0, 2)
+P_INTER.P_DamageMobj(mo, -1, -1, 21)
+Eq("damage 21 blue: health", CLNG(D_PLAYER.player_health[0]), 69)
+Eq("damage 21 blue: armor", CLNG(D_PLAYER.player_armorpoints[0]), 190)
+D_PLAYER.player_armorpoints[0] = 4
+P_INTER.P_DamageMobj(mo, -1, -1, 20)
+Eq("armor used up: health", CLNG(D_PLAYER.player_health[0]), 53)
+Eq("armor used up: none left", CLNG(D_PLAYER.player_armorpoints[0]), 0)
+Eq("armor used up: type", CLNG(D_PLAYER.player_armortype[0]), 0)
+' A medikit heals 25 up to 100, a bonus one more up to 200.
+Eq("body: heals", P_INTER.P_GiveBody(0, 25), 1)
+Eq("body: 78", CLNG(D_PLAYER.player_health[0]), 78)
+P_INTER.P_GiveBody(0, 25)
+Eq("body: not over 100", CLNG(D_PLAYER.player_health[0]), 100)
+Eq("body: not needed", P_INTER.P_GiveBody(0, 25), 0)
+' Invulnerability stops damage below 1000.
+P_INTER.P_GivePower(0, DOOMDEF.PW_INVULNERABILITY)
+P_INTER.P_DamageMobj(mo, -1, -1, 999)
+Eq("invulnerable: unhurt", CLNG(D_PLAYER.player_health[0]), 100)
+D_PLAYER.player_powers[DOOMDEF.PW_INVULNERABILITY] = 0
+
+' ---- pickups -------------------------------------------------------------------
+' A thing dropped where the player stands is picked up when he moves.
+DIM px AS INTEGER = CLNG(P_MOBJ.mobj_x[mo])
+DIM py AS INTEGER = CLNG(P_MOBJ.mobj_y[mo])
+D_PLAYER.player_ammo[DOOMDEF.AM_CLIP] = 20
+D_PLAYER.player_health[0] = 50
+P_MOBJ.mobj_health[mo] = 50
+DIM things_then AS INTEGER = CountType(INFO.MT_CLIP) + CountType(INFO.MT_MISC10) + CountType(INFO.MT_MISC0)
+P_MOBJ.P_SpawnMobj(px, py, DOOMDEF.ONFLOORZ, INFO.MT_CLIP)
+P_MOBJ.P_SpawnMobj(px, py, DOOMDEF.ONFLOORZ, INFO.MT_MISC10)
+P_MOBJ.P_SpawnMobj(px, py, DOOMDEF.ONFLOORZ, INFO.MT_MISC0)
+DIM items_then AS INTEGER = CLNG(D_PLAYER.player_itemcount[0])
+G_GAME.cmd_forwardmove = 25
+G_GAME.cmd_sidemove = 0
+G_GAME.cmd_angleturn = 0
+G_GAME.cmd_buttons = 0
+G_GAME.G_Ticker()
+Tics(2, 0)
+Eq("pickup: clip", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_CLIP]), 30)
+Eq("pickup: stimpack", CLNG(D_PLAYER.player_health[0]), 60)
+Eq("pickup: green armor", CLNG(D_PLAYER.player_armorpoints[0]), 100)
+Eq("pickup: the things are gone", CountType(INFO.MT_CLIP) + CountType(INFO.MT_MISC10) + CountType(INFO.MT_MISC0), things_then)
+Eq("pickup: message", IIF(D_PLAYER.player_message$[0] = "Picked up the armor." OR D_PLAYER.player_message$[0] = "Picked up a stimpack." OR D_PLAYER.player_message$[0] = "Picked up a clip.", 1, 0), 1)
+
+' ---- sight ---------------------------------------------------------------------
+' From the start of E1M1 the room is open to the west window; the door of
+' sector 26 at x 1536 is shut, and nothing behind it is seen.
+DIM near_thing AS INTEGER = P_MOBJ.P_SpawnMobj(px + 64 * FU, py, DOOMDEF.ONFLOORZ, INFO.MT_BARREL)
+Eq("sight: a barrel next to the player", P_SIGHT.P_CheckSight(mo, near_thing), 1)
+Eq("sight: and back", P_SIGHT.P_CheckSight(near_thing, mo), 1)
+DIM front_thing AS INTEGER = P_MOBJ.P_SpawnMobj(1500 * FU, -2496 * FU, DOOMDEF.ONFLOORZ, INFO.MT_BARREL)
+DIM behind_thing AS INTEGER = P_MOBJ.P_SpawnMobj(1600 * FU, -2496 * FU, DOOMDEF.ONFLOORZ, INFO.MT_BARREL)
+Eq("sight: not through the shut door", P_SIGHT.P_CheckSight(front_thing, behind_thing), 0)
+P_SETUP.sector_ceilingheight[26] = 68 * FU
+Eq("sight: through the open door", P_SIGHT.P_CheckSight(front_thing, behind_thing), 1)
+P_SETUP.sector_ceilingheight[26] = 0
+
+' ---- a barrel -------------------------------------------------------------------
+' A barrel has 20 health. Its explosion does 128 damage less the distance
+' to everything in sight; the second barrel 64 away from it goes up too.
+DIM barrel_a AS INTEGER = P_MOBJ.P_SpawnMobj(px + 256 * FU, py, DOOMDEF.ONFLOORZ, INFO.MT_BARREL)
+DIM barrels_then AS INTEGER = CountType(INFO.MT_BARREL)
+P_INTER.P_DamageMobj(near_thing, -1, mo, 19)
+Eq("barrel: 1 health left", CLNG(P_MOBJ.mobj_health[near_thing]), 1)
+P_INTER.P_DamageMobj(near_thing, -1, mo, 1)
+Eq("barrel: exploding", IIF((CLNG(P_MOBJ.mobj_flags[near_thing]) BAND INFO.MF_SHOOTABLE) = 0, 1, 0), 1)
+D_PLAYER.player_health[0] = 100
+P_MOBJ.mobj_health[mo] = 100
+D_PLAYER.player_armorpoints[0] = 0
+D_PLAYER.player_armortype[0] = 0
+Tics(40, 0)
+Eq("barrel: gone", CountType(INFO.MT_BARREL), barrels_then - 1)
+Eq("barrel: the far one stands", CLNG(P_MOBJ.mobj_health[barrel_a]), 20)
+Eq("barrel: the player was hurt", IIF(CLNG(D_PLAYER.player_health[0]) < 100 AND CLNG(D_PLAYER.player_health[0]) > 0, 1, 0), 1)
+
+' ---- a monster -------------------------------------------------------------------
+' A trooper put in front of the player sees him, and dies of 20 damage:
+' the kill counts and he drops a clip.
+DOOMSTAT.nomonsters = 0
+G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, 1, 1)
+mo = CLNG(D_PLAYER.player_mo[0])
+px = CLNG(P_MOBJ.mobj_x[mo])
+py = CLNG(P_MOBJ.mobj_y[mo])
+Tics(1, 0)
+DIM look_x AS INTEGER = px + 128 * FU
+DIM trooper AS INTEGER = P_MOBJ.P_SpawnMobj(look_x, py, DOOMDEF.ONFLOORZ, INFO.MT_POSSESSED)
+P_MOBJ.mobj_angle[trooper] = M_FIXED.ANG180
+Eq("trooper: standing", CLNG(P_MOBJ.mobj_state[trooper]), INFO.S_POSS_STND)
+Eq("trooper: no target", CLNG(P_MOBJ.mobj_target[trooper]), -1)
+Tics(12, 0)
+Eq("trooper: sees the player", CLNG(P_MOBJ.mobj_target[trooper]), mo)
+DIM kills_then AS INTEGER = CLNG(D_PLAYER.player_killcount[0])
+DIM clips_then AS INTEGER = CountType(INFO.MT_CLIP)
+P_INTER.P_DamageMobj(trooper, mo, mo, 20)
+Eq("trooper: dead", IIF(CLNG(P_MOBJ.mobj_health[trooper]) <= 0, 1, 0), 1)
+Eq("trooper: a corpse", IIF((CLNG(P_MOBJ.mobj_flags[trooper]) BAND INFO.MF_CORPSE) <> 0, 1, 0), 1)
+Eq("trooper: the kill counts", CLNG(D_PLAYER.player_killcount[0]), kills_then + 1)
+Eq("trooper: drops a clip", CountType(INFO.MT_CLIP), clips_then + 1)
+Eq("trooper: a quarter as high", CLNG(P_MOBJ.mobj_height[trooper]), 14 * FU)
+
+' ---- the demos ---------------------------------------------------------------------
+DIM died_at AS INTEGER = 0
+
+' Plays the demo lump to its end mark and answers the number of tics.
+FUNC PlayDemo(lump$ AS STRING) AS INTEGER
+    DIM n_tics AS INTEGER = 0
+    died_at = 0
+    G_GAME.G_DeferedPlayDemo(lump$)
+    DO
+        G_GAME.G_Ticker()
+        IF G_GAME.demoended <> 0 THEN EXITDO
+        n_tics = n_tics + 1
+        IF died_at = 0 AND CLNG(D_PLAYER.player_playerstate[0]) = DOOMDEF.PST_DEAD THEN died_at = n_tics
+        IF G_GAME.gameaction = G_GAME.GA_COMPLETED THEN EXITDO
+    LOOP
+    RETURN n_tics
+ENDFUNC
+
+SUB CheckDemo(lump$ AS STRING, episode AS INTEGER, map_num AS INTEGER, n_tics AS INTEGER, death_tic AS INTEGER, kills AS INTEGER, items AS INTEGER, secrets AS INTEGER, x AS INTEGER, y AS INTEGER, random_index AS INTEGER)
+    DIM played AS INTEGER = PlayDemo(lump$)
+    DIM thing AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+    Eq(lump$ + ": episode", DOOMSTAT.gameepisode, episode)
+    Eq(lump$ + ": map", DOOMSTAT.gamemap, map_num)
+    ' The lump holds a header of 13 bytes, four bytes a tic and the end mark.
+    Eq(lump$ + ": tics", played, (W_WAD.W_LumpLength(W_WAD.W_GetNumForName(lump$)) - 14) \ 4)
+    Eq(lump$ + ": tics recorded", played, n_tics)
+    Eq(lump$ + ": the player dies at tic", died_at, death_tic)
+    Eq(lump$ + ": kills", CLNG(D_PLAYER.player_killcount[0]), kills)
+    Eq(lump$ + ": items", CLNG(D_PLAYER.player_itemcount[0]), items)
+    Eq(lump$ + ": secrets", CLNG(D_PLAYER.player_secretcount[0]), secrets)
+    Eq(lump$ + ": x", CLNG(P_MOBJ.mobj_x[thing]), x)
+    Eq(lump$ + ": y", CLNG(P_MOBJ.mobj_y[thing]), y)
+    Eq(lump$ + ": random index", M_RANDOM.prndindex, random_index)
+ENDSUB
+
+CheckDemo("DEMO1", 1, 5, 1710, 1632, 18, 5, 1, -2061659, 5450445, 148)
+CheckDemo("DEMO2", 2, 2, 2347, 2270, 18, 2, 1, 70814046, 133290953, 146)
+CheckDemo("DEMO3", 3, 5, 3863, 3633, 7, 3, 1, 62548762, 21122819, 124)
+
+PRINT ""
+PRINT "DOOM P6 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
