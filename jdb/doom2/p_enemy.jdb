@@ -629,9 +629,11 @@ SUB A_Scream(actor AS INTEGER)
     BossSound(actor, PickSound(deathsound, INFO.SFX_PODTH1, INFO.SFX_BGDTH1))
 ENDSUB
 
-' A line that stands for the tag 666 of a boss's death.
+' A line that stands for the tag 666 of a boss's death: the first slot
+' behind the lines of the level.
 FUNC JunkLine(tag_in AS INTEGER) AS INTEGER
-    DIM junk AS INTEGER = P_SETUP.MAXLINES - 1
+    DIM junk AS INTEGER = P_SETUP.numlines
+    IF junk >= P_SETUP.MAXLINES THEN I_SYSTEM.I_Error("A_BossDeath: no line slot left")
     P_SETUP.line_tag[junk] = tag_in
     RETURN junk
 ENDFUNC

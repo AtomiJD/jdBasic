@@ -437,6 +437,8 @@ CONST DEMO_VERSION = 109
 
 ' Where the next ticcmd of the demo is read, an offset into W_WAD.pool.
 DIM demo_p AS INTEGER = 0
+' The first offset behind the demo lump.
+DIM demoend AS INTEGER = 0
 ' The demo that is playing reached its end mark.
 EXPORT DIM demoended AS INTEGER = 0
 DIM defdemoname$ AS STRING = ""
@@ -460,7 +462,7 @@ ENDSUB
 
 ' The next ticcmd of the demo becomes the player's.
 SUB G_ReadDemoTiccmd(player AS INTEGER)
-    IF CLNG(W_WAD.pool[demo_p]) = DEMOMARKER THEN
+    IF demo_p + 4 > demoend ORELSE CLNG(W_WAD.pool[demo_p]) = DEMOMARKER THEN
         ' End of demo data stream.
         G_CheckDemoStatus()
         RETURN
@@ -484,11 +486,15 @@ ENDSUB
 
 SUB G_DoPlayDemo()
     gameaction = GA_NOTHING
-    demo_p = W_WAD.W_CacheLumpName(defdemoname$)
-    IF CLNG(W_WAD.pool[demo_p]) <> DEMO_VERSION THEN
+    DIM lump AS INTEGER = W_WAD.W_GetNumForName(defdemoname$)
+    demo_p = W_WAD.W_CacheLumpNum(lump)
+    demoend = demo_p + W_WAD.W_LumpLength(lump)
+    IF demoend - demo_p < 13 ORELSE CLNG(W_WAD.pool[demo_p]) <> DEMO_VERSION THEN
         PRINT "Demo is from a different game version!"
+        demoended = 1
         RETURN
     ENDIF
+    IF CLNG(W_WAD.pool[demo_p + 8]) >= DOOMDEF.MAXPLAYERS THEN I_SYSTEM.I_Error("G_DoPlayDemo: console player " + STR$(CLNG(W_WAD.pool[demo_p + 8])))
 
     DIM skill AS INTEGER = W_WAD.pool[demo_p + 1]
     DIM episode AS INTEGER = W_WAD.pool[demo_p + 2]
