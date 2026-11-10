@@ -1,0 +1,15 @@
+' Sound (s_sound.c). Not ported yet: nothing is played.
+
+EXPORT MODULE S_SOUND
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' Starts sound sfx_id (an INFO.SFX_ number) at the thing origin, or
+' everywhere if origin is -1.
+EXPORT SUB S_StartSound(origin AS INTEGER, sfx_id AS INTEGER)
+ENDSUB
+
+' Stops the sound the thing is making.
+EXPORT SUB S_StopSound(origin AS INTEGER)
+ENDSUB

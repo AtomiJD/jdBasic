@@ -1,0 +1,76 @@
+' Walks player 1 through a level by a script and prints where he is.
+'
+'   build/jdBasic.exe jdb/doom2/walk.jdb "<script>" [episode] [map] [every]
+'
+' The script is a list of steps separated by blanks, each a letter and a
+' number of tics: f forward, b back, l turn left, r turn right, a step left,
+' d step right, u use, w wait. A capital letter runs or turns fast. A line
+' is printed every `every` tics (default 10) and at the end.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT W_WAD
+IMPORT R_MAIN
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT G_GAME
+
+DIM cmd_args AS ARRAY = OS.ARGS()
+DIM script$ AS STRING = "f35"
+DIM episode AS INTEGER = 1
+DIM map_num AS INTEGER = 1
+DIM every AS INTEGER = 10
+IF LEN(cmd_args) > 1 THEN script$ = cmd_args[1]
+IF LEN(cmd_args) > 2 THEN episode = CLNG(VAL(cmd_args[2]))
+IF LEN(cmd_args) > 3 THEN map_num = CLNG(VAL(cmd_args[3]))
+IF LEN(cmd_args) > 4 THEN every = CLNG(VAL(cmd_args[4]))
+
+SUB Report(label$ AS STRING)
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[mo])])
+    PRINT label$ + " tic " + STR$(P_TICK.leveltime) + "  x " + STR$(CLNG(P_MOBJ.mobj_x[mo]) / 65536) + "  y " + STR$(CLNG(P_MOBJ.mobj_y[mo]) / 65536) + "  z " + STR$(CLNG(P_MOBJ.mobj_z[mo]) / 65536) + "  viewz " + STR$(CLNG(D_PLAYER.player_viewz[0]) / 65536) + "  angle " + STR$(CLNG(P_MOBJ.mobj_angle[mo]) / 11930464.7) + "  sector " + STR$(sector) + "  state " + STR$(CLNG(P_MOBJ.mobj_state[mo]))
+ENDSUB
+
+W_WAD.W_Init(D_MAIN.IdentifyVersion$())
+R_MAIN.R_Init(10, 0)
+DOOMSTAT.playeringame[0] = 1
+G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, episode, map_num)
+Report("start")
+
+DIM move$ AS STRING
+DIM letter$ AS STRING
+DIM n_tics AS INTEGER
+DIM t AS INTEGER
+DIM fast AS INTEGER
+FOR EACH move$ IN SPLIT(script$, " ")
+    IF LEN(move$) > 0 THEN
+        letter$ = LEFT$(move$, 1)
+        n_tics = 1
+        IF LEN(move$) > 1 THEN n_tics = CLNG(VAL(MID$(move$, 1)))
+        fast = 0
+        IF letter$ = UCASE$(letter$) THEN fast = 1
+        letter$ = LCASE$(letter$)
+        FOR t = 1 TO n_tics
+            G_GAME.cmd_forwardmove = 0
+            G_GAME.cmd_sidemove = 0
+            G_GAME.cmd_angleturn = 0
+            G_GAME.cmd_buttons = 0
+            IF letter$ = "f" THEN G_GAME.cmd_forwardmove = 25 + 25 * fast
+            IF letter$ = "b" THEN G_GAME.cmd_forwardmove = -25 - 25 * fast
+            IF letter$ = "d" THEN G_GAME.cmd_sidemove = 24 + 16 * fast
+            IF letter$ = "a" THEN G_GAME.cmd_sidemove = -24 - 16 * fast
+            IF letter$ = "l" THEN G_GAME.cmd_angleturn = 640 + 640 * fast
+            IF letter$ = "r" THEN G_GAME.cmd_angleturn = -640 - 640 * fast
+            IF letter$ = "u" THEN G_GAME.cmd_buttons = DOOMDEF.BT_USE
+            G_GAME.G_Ticker()
+            IF P_TICK.leveltime MOD every = 0 THEN Report(move$)
+        NEXT t
+    ENDIF
+NEXT
+Report("end")

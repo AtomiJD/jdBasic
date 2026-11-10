@@ -1,0 +1,24 @@
+' Special lines and sectors: triggers, animated walls, damaging floors
+' (p_spec.c). Not ported yet; the functions the movement code and the level
+' loader call are here and do nothing.
+
+EXPORT MODULE P_SPEC
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' A thing walked over the special line from the given side.
+EXPORT SUB P_CrossSpecialLine(linenum AS INTEGER, side AS INTEGER, thing AS INTEGER)
+ENDSUB
+
+' Called every tic a player stands in a sector with a special.
+EXPORT SUB P_PlayerInSpecialSector(player AS INTEGER)
+ENDSUB
+
+' Animates textures, scrolls walls, counts down buttons.
+EXPORT SUB P_UpdateSpecials()
+ENDSUB
+
+' After the map is loaded: starts the thinkers of special sectors and lines.
+EXPORT SUB P_SpawnSpecials()
+ENDSUB

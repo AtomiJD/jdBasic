@@ -1,0 +1,252 @@
+' Player related: bobbing, movement by the ticcmd, the per-tic think of a
+' player (p_user.c).
+
+EXPORT MODULE P_USER
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT TABLES
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT R_MAIN
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_MAP
+IMPORT P_SPEC
+IMPORT P_PSPR
+
+' Index of the special effects (INVUL inverse) colormap.
+CONST INVERSECOLORMAP = 32
+' 16 pixels of bob.
+CONST MAXBOB = $100000
+CONST ANG5 = $40000000 \ 18
+
+DIM onground AS INTEGER = 0
+
+' Moves the given origin along a given angle.
+SUB P_Thrust(player AS INTEGER, angle_in AS INTEGER, move AS INTEGER)
+    DIM angle AS INTEGER = (angle_in BAND M_FIXED.ANGLE_MASK) SHR TABLES.ANGLETOFINESHIFT
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[player])
+    P_MOBJ.mobj_momx[mo] = CLNG(P_MOBJ.mobj_momx[mo]) + M_FIXED.FixedMul(move, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + angle]))
+    P_MOBJ.mobj_momy[mo] = CLNG(P_MOBJ.mobj_momy[mo]) + M_FIXED.FixedMul(move, CLNG(TABLES.finesine[angle]))
+ENDSUB
+
+' Calculates the walking and running height adjustment.
+SUB P_CalcHeight(player AS INTEGER)
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[player])
+    DIM momx AS INTEGER = CLNG(P_MOBJ.mobj_momx[mo])
+    DIM momy AS INTEGER = CLNG(P_MOBJ.mobj_momy[mo])
+    DIM mo_z AS INTEGER = CLNG(P_MOBJ.mobj_z[mo])
+    DIM ceiling_limit AS INTEGER = CLNG(P_MOBJ.mobj_ceilingz[mo]) - 4 * 65536
+
+    ' Regular movement bobbing; it is calculated for the gun swing even if
+    ' not on the ground.
+    DIM bob AS INTEGER = M_FIXED.ToS32(M_FIXED.FixedMul(momx, momx) + M_FIXED.FixedMul(momy, momy))
+    bob = bob SHR 2
+    IF bob > MAXBOB THEN bob = MAXBOB
+    D_PLAYER.player_bob[player] = bob
+
+    DIM viewz AS INTEGER
+    IF (CLNG(D_PLAYER.player_cheats[player]) BAND DOOMDEF.CF_NOMOMENTUM) <> 0 OR onground = 0 THEN
+        D_PLAYER.player_viewz[player] = mo_z + CLNG(D_PLAYER.player_viewheight[player])
+        RETURN
+    ENDIF
+
+    DIM angle AS INTEGER = (TABLES.FINEANGLES \ 20 * P_TICK.leveltime) BAND TABLES.FINEMASK
+    DIM swing AS INTEGER = M_FIXED.FixedMul(bob \ 2, CLNG(TABLES.finesine[angle]))
+
+    ' Move the view height.
+    DIM viewheight AS INTEGER = CLNG(D_PLAYER.player_viewheight[player])
+    DIM delta AS INTEGER = CLNG(D_PLAYER.player_deltaviewheight[player])
+    IF CLNG(D_PLAYER.player_playerstate[player]) = DOOMDEF.PST_LIVE THEN
+        viewheight = viewheight + delta
+        IF viewheight > DOOMDEF.VIEWHEIGHT THEN
+            viewheight = DOOMDEF.VIEWHEIGHT
+            delta = 0
+        ENDIF
+        IF viewheight < DOOMDEF.VIEWHEIGHT \ 2 THEN
+            viewheight = DOOMDEF.VIEWHEIGHT \ 2
+            IF delta <= 0 THEN delta = 1
+        ENDIF
+        IF delta <> 0 THEN
+            delta = delta + 65536 \ 4
+            IF delta = 0 THEN delta = 1
+        ENDIF
+        D_PLAYER.player_viewheight[player] = viewheight
+        D_PLAYER.player_deltaviewheight[player] = delta
+    ENDIF
+
+    viewz = mo_z + viewheight + swing
+    IF viewz > ceiling_limit THEN viewz = ceiling_limit
+    D_PLAYER.player_viewz[player] = viewz
+ENDSUB
+
+SUB P_MovePlayer(player AS INTEGER)
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[player])
+    DIM forwardmove AS INTEGER = CLNG(D_PLAYER.player_cmd_forwardmove[player])
+    DIM sidemove AS INTEGER = CLNG(D_PLAYER.player_cmd_sidemove[player])
+
+    P_MOBJ.mobj_angle[mo] = (CLNG(P_MOBJ.mobj_angle[mo]) + CLNG(D_PLAYER.player_cmd_angleturn[player]) * 65536) BAND M_FIXED.ANGLE_MASK
+
+    ' Do not let the player control movement if not on the ground.
+    IF CLNG(P_MOBJ.mobj_z[mo]) <= CLNG(P_MOBJ.mobj_floorz[mo]) THEN onground = 1 ELSE onground = 0
+
+    IF forwardmove <> 0 AND onground <> 0 THEN P_Thrust(player, CLNG(P_MOBJ.mobj_angle[mo]), forwardmove * 2048)
+    IF sidemove <> 0 AND onground <> 0 THEN P_Thrust(player, CLNG(P_MOBJ.mobj_angle[mo]) - M_FIXED.ANG90, sidemove * 2048)
+
+    IF (forwardmove <> 0 OR sidemove <> 0) AND CLNG(P_MOBJ.mobj_state[mo]) = INFO.S_PLAY THEN P_MOBJ.P_SetMobjState(mo, INFO.S_PLAY_RUN1)
+ENDSUB
+
+' Falls down and turns towards the killer.
+SUB P_DeathThink(player AS INTEGER)
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[player])
+    DIM attacker AS INTEGER = CLNG(D_PLAYER.player_attacker[player])
+    DIM angle AS INTEGER
+    DIM delta AS INTEGER
+    DIM viewheight AS INTEGER
+
+    P_PSPR.P_MovePsprites(player)
+
+    ' Fall to the ground.
+    viewheight = CLNG(D_PLAYER.player_viewheight[player])
+    IF viewheight > 6 * 65536 THEN viewheight = viewheight - 65536
+    IF viewheight < 6 * 65536 THEN viewheight = 6 * 65536
+    D_PLAYER.player_viewheight[player] = viewheight
+    D_PLAYER.player_deltaviewheight[player] = 0
+    IF CLNG(P_MOBJ.mobj_z[mo]) <= CLNG(P_MOBJ.mobj_floorz[mo]) THEN onground = 1 ELSE onground = 0
+    P_CalcHeight(player)
+
+    IF attacker >= 0 AND attacker <> mo THEN
+        angle = R_MAIN.R_PointToAngle2(CLNG(P_MOBJ.mobj_x[mo]), CLNG(P_MOBJ.mobj_y[mo]), CLNG(P_MOBJ.mobj_x[attacker]), CLNG(P_MOBJ.mobj_y[attacker]))
+        delta = (angle - CLNG(P_MOBJ.mobj_angle[mo])) BAND M_FIXED.ANGLE_MASK
+        IF delta < ANG5 OR delta > ((-ANG5) BAND M_FIXED.ANGLE_MASK) THEN
+            ' Looking at the killer, so fade the damage flash down.
+            P_MOBJ.mobj_angle[mo] = angle
+            IF CLNG(D_PLAYER.player_damagecount[player]) <> 0 THEN D_PLAYER.player_damagecount[player] = CLNG(D_PLAYER.player_damagecount[player]) - 1
+        ELSEIF delta < M_FIXED.ANG180 THEN
+            P_MOBJ.mobj_angle[mo] = (CLNG(P_MOBJ.mobj_angle[mo]) + ANG5) BAND M_FIXED.ANGLE_MASK
+        ELSE
+            P_MOBJ.mobj_angle[mo] = (CLNG(P_MOBJ.mobj_angle[mo]) - ANG5) BAND M_FIXED.ANGLE_MASK
+        ENDIF
+    ELSEIF CLNG(D_PLAYER.player_damagecount[player]) <> 0 THEN
+        D_PLAYER.player_damagecount[player] = CLNG(D_PLAYER.player_damagecount[player]) - 1
+    ENDIF
+
+    IF (CLNG(D_PLAYER.player_cmd_buttons[player]) BAND DOOMDEF.BT_USE) <> 0 THEN D_PLAYER.player_playerstate[player] = DOOMDEF.PST_REBORN
+ENDSUB
+
+EXPORT SUB P_PlayerThink(player AS INTEGER)
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[player])
+    DIM buttons AS INTEGER
+    DIM newweapon AS INTEGER
+    DIM powers AS INTEGER = player * DOOMDEF.NUMPOWERS
+    DIM owned AS INTEGER = player * DOOMDEF.NUMWEAPONS
+    DIM counter AS INTEGER
+
+    IF (CLNG(D_PLAYER.player_cheats[player]) BAND DOOMDEF.CF_NOCLIP) <> 0 THEN
+        P_MOBJ.mobj_flags[mo] = CLNG(P_MOBJ.mobj_flags[mo]) BOR INFO.MF_NOCLIP
+    ELSE
+        P_MOBJ.mobj_flags[mo] = CLNG(P_MOBJ.mobj_flags[mo]) BAND (BNOT INFO.MF_NOCLIP)
+    ENDIF
+
+    ' Chain saw run forward.
+    IF (CLNG(P_MOBJ.mobj_flags[mo]) BAND INFO.MF_JUSTATTACKED) <> 0 THEN
+        D_PLAYER.player_cmd_angleturn[player] = 0
+        D_PLAYER.player_cmd_forwardmove[player] = $C800 \ 512
+        D_PLAYER.player_cmd_sidemove[player] = 0
+        P_MOBJ.mobj_flags[mo] = CLNG(P_MOBJ.mobj_flags[mo]) BAND (BNOT INFO.MF_JUSTATTACKED)
+    ENDIF
+
+    IF CLNG(D_PLAYER.player_playerstate[player]) = DOOMDEF.PST_DEAD THEN
+        P_DeathThink(player)
+        RETURN
+    ENDIF
+
+    ' Move around. The reaction time is used to prevent movement for a bit
+    ' after a teleport.
+    IF CLNG(P_MOBJ.mobj_reactiontime[mo]) <> 0 THEN
+        P_MOBJ.mobj_reactiontime[mo] = CLNG(P_MOBJ.mobj_reactiontime[mo]) - 1
+    ELSE
+        P_MovePlayer(player)
+    ENDIF
+
+    P_CalcHeight(player)
+
+    IF CLNG(P_SETUP.sector_special[CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[mo])])]) <> 0 THEN P_SPEC.P_PlayerInSpecialSector(player)
+
+    ' Check for weapon change. A special event has no normal effects.
+    buttons = CLNG(D_PLAYER.player_cmd_buttons[player])
+    IF (buttons BAND DOOMDEF.BT_SPECIAL) <> 0 THEN
+        buttons = 0
+        D_PLAYER.player_cmd_buttons[player] = 0
+    ENDIF
+
+    IF (buttons BAND DOOMDEF.BT_CHANGE) <> 0 THEN
+        ' The actual changing of the weapon is done when the weapon sprite
+        ' can do it (the pending weapon).
+        newweapon = (buttons BAND DOOMDEF.BT_WEAPONMASK) SHR DOOMDEF.BT_WEAPONSHIFT
+        IF newweapon = DOOMDEF.WP_FIST AND CLNG(D_PLAYER.player_weaponowned[owned + DOOMDEF.WP_CHAINSAW]) <> 0 AND NOT (CLNG(D_PLAYER.player_readyweapon[player]) = DOOMDEF.WP_CHAINSAW AND CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_STRENGTH]) <> 0) THEN
+            newweapon = DOOMDEF.WP_CHAINSAW
+        ENDIF
+        IF DOOMSTAT.commercial <> 0 AND newweapon = DOOMDEF.WP_SHOTGUN AND CLNG(D_PLAYER.player_weaponowned[owned + DOOMDEF.WP_SUPERSHOTGUN]) <> 0 AND CLNG(D_PLAYER.player_readyweapon[player]) <> DOOMDEF.WP_SUPERSHOTGUN THEN
+            newweapon = DOOMDEF.WP_SUPERSHOTGUN
+        ENDIF
+        IF CLNG(D_PLAYER.player_weaponowned[owned + newweapon]) <> 0 AND newweapon <> CLNG(D_PLAYER.player_readyweapon[player]) THEN
+            ' Do not go to plasma or BFG in shareware, even if cheated.
+            IF (newweapon <> DOOMDEF.WP_PLASMA AND newweapon <> DOOMDEF.WP_BFG) OR DOOMSTAT.shareware = 0 THEN D_PLAYER.player_pendingweapon[player] = newweapon
+        ENDIF
+    ENDIF
+
+    ' Check for use.
+    IF (buttons BAND DOOMDEF.BT_USE) <> 0 THEN
+        IF CLNG(D_PLAYER.player_usedown[player]) = 0 THEN
+            P_MAP.P_UseLines(player)
+            D_PLAYER.player_usedown[player] = 1
+        ENDIF
+    ELSE
+        D_PLAYER.player_usedown[player] = 0
+    ENDIF
+
+    ' Cycle the weapon sprites.
+    P_PSPR.P_MovePsprites(player)
+
+    ' Counters, time dependent power ups. Strength counts up to diminish
+    ' the fade.
+    IF CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_STRENGTH]) <> 0 THEN D_PLAYER.player_powers[powers + DOOMDEF.PW_STRENGTH] = CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_STRENGTH]) + 1
+    IF CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_INVULNERABILITY]) <> 0 THEN D_PLAYER.player_powers[powers + DOOMDEF.PW_INVULNERABILITY] = CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_INVULNERABILITY]) - 1
+    counter = CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_INVISIBILITY])
+    IF counter <> 0 THEN
+        counter = counter - 1
+        D_PLAYER.player_powers[powers + DOOMDEF.PW_INVISIBILITY] = counter
+        IF counter = 0 THEN P_MOBJ.mobj_flags[mo] = CLNG(P_MOBJ.mobj_flags[mo]) BAND (BNOT INFO.MF_SHADOW)
+    ENDIF
+    IF CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_INFRARED]) <> 0 THEN D_PLAYER.player_powers[powers + DOOMDEF.PW_INFRARED] = CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_INFRARED]) - 1
+    IF CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_IRONFEET]) <> 0 THEN D_PLAYER.player_powers[powers + DOOMDEF.PW_IRONFEET] = CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_IRONFEET]) - 1
+    IF CLNG(D_PLAYER.player_damagecount[player]) <> 0 THEN D_PLAYER.player_damagecount[player] = CLNG(D_PLAYER.player_damagecount[player]) - 1
+    IF CLNG(D_PLAYER.player_bonuscount[player]) <> 0 THEN D_PLAYER.player_bonuscount[player] = CLNG(D_PLAYER.player_bonuscount[player]) - 1
+
+    ' Handling colormaps.
+    counter = CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_INVULNERABILITY])
+    IF counter <> 0 THEN
+        IF counter > 4 * 32 OR (counter BAND 8) <> 0 THEN
+            D_PLAYER.player_fixedcolormap[player] = INVERSECOLORMAP
+        ELSE
+            D_PLAYER.player_fixedcolormap[player] = 0
+        ENDIF
+    ELSEIF CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_INFRARED]) <> 0 THEN
+        counter = CLNG(D_PLAYER.player_powers[powers + DOOMDEF.PW_INFRARED])
+        IF counter > 4 * 32 OR (counter BAND 8) <> 0 THEN
+            ' Almost full bright.
+            D_PLAYER.player_fixedcolormap[player] = 1
+        ELSE
+            D_PLAYER.player_fixedcolormap[player] = 0
+        ENDIF
+    ELSE
+        D_PLAYER.player_fixedcolormap[player] = 0
+    ENDIF
+ENDSUB

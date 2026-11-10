@@ -1,0 +1,11 @@
+' Switches, buttons and lines used by hand (p_switch.c). Not ported yet;
+' the function P_UseLines calls is here and does nothing.
+
+EXPORT MODULE P_SWITCH
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' The thing uses the special line from the given side.
+EXPORT SUB P_UseSpecialLine(thing AS INTEGER, ld AS INTEGER, side AS INTEGER)
+ENDSUB

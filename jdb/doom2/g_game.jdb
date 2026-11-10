@@ -1,0 +1,414 @@
+' Game flow (g_game.c): the keys that are down become a ticcmd once a tic, a
+' new game is set up, a level is loaded, the tic is run. Demos, level
+' completion and savegames follow in later phases.
+
+EXPORT MODULE G_GAME
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_RANDOM
+IMPORT INFO
+IMPORT R_DATA
+IMPORT R_SKY
+IMPORT P_SETUP
+IMPORT P_TICK
+
+' Key codes of doomdef.h; letters and digits are their ASCII codes.
+EXPORT CONST KEY_RIGHTARROW = $AE
+EXPORT CONST KEY_LEFTARROW = $AC
+EXPORT CONST KEY_UPARROW = $AD
+EXPORT CONST KEY_DOWNARROW = $AF
+EXPORT CONST KEY_ESCAPE = 27
+EXPORT CONST KEY_ENTER = 13
+EXPORT CONST KEY_TAB = 9
+EXPORT CONST KEY_RSHIFT = $B6
+EXPORT CONST KEY_RCTRL = $9D
+EXPORT CONST KEY_RALT = $B8
+
+' The controls, as the defaults of m_misc.c set them.
+EXPORT DIM key_right AS INTEGER = KEY_RIGHTARROW
+EXPORT DIM key_left AS INTEGER = KEY_LEFTARROW
+EXPORT DIM key_up AS INTEGER = KEY_UPARROW
+EXPORT DIM key_down AS INTEGER = KEY_DOWNARROW
+EXPORT DIM key_strafeleft AS INTEGER = 44
+EXPORT DIM key_straferight AS INTEGER = 46
+EXPORT DIM key_fire AS INTEGER = KEY_RCTRL
+EXPORT DIM key_use AS INTEGER = 32
+EXPORT DIM key_strafe AS INTEGER = KEY_RALT
+EXPORT DIM key_speed AS INTEGER = KEY_RSHIFT
+
+EXPORT DIM mousebfire AS INTEGER = 0
+EXPORT DIM mousebstrafe AS INTEGER = 1
+EXPORT DIM mousebforward AS INTEGER = 2
+EXPORT DIM joybfire AS INTEGER = 0
+EXPORT DIM joybstrafe AS INTEGER = 1
+EXPORT DIM joybuse AS INTEGER = 3
+EXPORT DIM joybspeed AS INTEGER = 2
+
+' Input state, written by the event handling.
+EXPORT CONST NUMKEYS = 256
+EXPORT DIM gamekeydown[NUMKEYS] AS INTEGER
+EXPORT DIM mousebuttons[3] AS INTEGER
+EXPORT DIM joybuttons[4] AS INTEGER
+' Mouse movement since the last tic, joystick position.
+EXPORT DIM mousex AS INTEGER = 0
+EXPORT DIM mousey AS INTEGER = 0
+EXPORT DIM joyxmove AS INTEGER = 0
+EXPORT DIM joyymove AS INTEGER = 0
+
+' Walking and running speed of the three moves; the third turn speed is
+' the slow turn of the first tics a turn key is held.
+DIM forwardmove AS ARRAY = [$19, $32]
+DIM sidemove AS ARRAY = [$18, $28]
+DIM angleturn AS ARRAY = [640, 1280, 320]
+CONST SLOWTURNTICS = 6
+CONST MAXPLMOVE = $32
+
+' For accelerative turning.
+DIM turnheld AS INTEGER = 0
+' Double clicks of the forward and the strafe button count as use.
+DIM dclicktime AS INTEGER = 0
+DIM dclickstate AS INTEGER = 0
+DIM dclicks AS INTEGER = 0
+DIM dclicktime2 AS INTEGER = 0
+DIM dclickstate2 AS INTEGER = 0
+DIM dclicks2 AS INTEGER = 0
+
+' The ticcmd G_BuildTiccmd makes.
+EXPORT DIM cmd_forwardmove AS INTEGER = 0
+EXPORT DIM cmd_sidemove AS INTEGER = 0
+EXPORT DIM cmd_angleturn AS INTEGER = 0
+EXPORT DIM cmd_consistancy AS INTEGER = 0
+EXPORT DIM cmd_chatchar AS INTEGER = 0
+EXPORT DIM cmd_buttons AS INTEGER = 0
+
+EXPORT DIM levelstarttic AS INTEGER = 0
+
+DIM maxammo AS ARRAY = [200, 50, 300, 50]
+
+' Builds a ticcmd from all of the available inputs.
+EXPORT SUB G_BuildTiccmd()
+    DIM i AS INTEGER
+    DIM strafe AS INTEGER = 0
+    DIM bstrafe AS INTEGER = 0
+    DIM speed AS INTEGER = 0
+    DIM tspeed AS INTEGER
+    DIM forward AS INTEGER = 0
+    DIM side AS INTEGER = 0
+    DIM right_down AS INTEGER = CLNG(gamekeydown[key_right])
+    DIM left_down AS INTEGER = CLNG(gamekeydown[key_left])
+    DIM forward_button AS INTEGER = CLNG(mousebuttons[mousebforward])
+
+    cmd_forwardmove = 0
+    cmd_sidemove = 0
+    cmd_angleturn = 0
+    cmd_consistancy = 0
+    cmd_chatchar = 0
+    cmd_buttons = 0
+
+    IF CLNG(gamekeydown[key_strafe]) <> 0 OR CLNG(mousebuttons[mousebstrafe]) <> 0 OR CLNG(joybuttons[joybstrafe]) <> 0 THEN strafe = 1
+    IF CLNG(gamekeydown[key_speed]) <> 0 OR CLNG(joybuttons[joybspeed]) <> 0 THEN speed = 1
+
+    ' Two stage accelerative turning on the keyboard and joystick.
+    IF joyxmove < 0 OR joyxmove > 0 OR right_down <> 0 OR left_down <> 0 THEN
+        turnheld = turnheld + 1
+    ELSE
+        turnheld = 0
+    ENDIF
+    IF turnheld < SLOWTURNTICS THEN tspeed = 2 ELSE tspeed = speed
+
+    ' Let movement keys cancel each other out.
+    IF strafe <> 0 THEN
+        IF right_down <> 0 THEN side = side + CLNG(sidemove[speed])
+        IF left_down <> 0 THEN side = side - CLNG(sidemove[speed])
+        IF joyxmove > 0 THEN side = side + CLNG(sidemove[speed])
+        IF joyxmove < 0 THEN side = side - CLNG(sidemove[speed])
+    ELSE
+        IF right_down <> 0 THEN cmd_angleturn = cmd_angleturn - CLNG(angleturn[tspeed])
+        IF left_down <> 0 THEN cmd_angleturn = cmd_angleturn + CLNG(angleturn[tspeed])
+        IF joyxmove > 0 THEN cmd_angleturn = cmd_angleturn - CLNG(angleturn[tspeed])
+        IF joyxmove < 0 THEN cmd_angleturn = cmd_angleturn + CLNG(angleturn[tspeed])
+    ENDIF
+
+    IF CLNG(gamekeydown[key_up]) <> 0 THEN forward = forward + CLNG(forwardmove[speed])
+    IF CLNG(gamekeydown[key_down]) <> 0 THEN forward = forward - CLNG(forwardmove[speed])
+    IF joyymove < 0 THEN forward = forward + CLNG(forwardmove[speed])
+    IF joyymove > 0 THEN forward = forward - CLNG(forwardmove[speed])
+    IF CLNG(gamekeydown[key_straferight]) <> 0 THEN side = side + CLNG(sidemove[speed])
+    IF CLNG(gamekeydown[key_strafeleft]) <> 0 THEN side = side - CLNG(sidemove[speed])
+
+    ' Buttons.
+    IF CLNG(gamekeydown[key_fire]) <> 0 OR CLNG(mousebuttons[mousebfire]) <> 0 OR CLNG(joybuttons[joybfire]) <> 0 THEN cmd_buttons = cmd_buttons BOR DOOMDEF.BT_ATTACK
+    IF CLNG(gamekeydown[key_use]) <> 0 OR CLNG(joybuttons[joybuse]) <> 0 THEN
+        cmd_buttons = cmd_buttons BOR DOOMDEF.BT_USE
+        ' Clear double clicks if hit use button.
+        dclicks = 0
+    ENDIF
+
+    ' The number keys pick a weapon; the chainsaw has no key of its own.
+    FOR i = 0 TO DOOMDEF.NUMWEAPONS - 2
+        IF CLNG(gamekeydown[49 + i]) <> 0 THEN
+            cmd_buttons = cmd_buttons BOR DOOMDEF.BT_CHANGE
+            cmd_buttons = cmd_buttons BOR (i SHL DOOMDEF.BT_WEAPONSHIFT)
+            EXITFOR
+        ENDIF
+    NEXT i
+
+    ' Mouse.
+    IF forward_button <> 0 THEN forward = forward + CLNG(forwardmove[speed])
+
+    ' Forward double click.
+    IF forward_button <> dclickstate AND dclicktime > 1 THEN
+        dclickstate = forward_button
+        IF dclickstate <> 0 THEN dclicks = dclicks + 1
+        IF dclicks = 2 THEN
+            cmd_buttons = cmd_buttons BOR DOOMDEF.BT_USE
+            dclicks = 0
+        ELSE
+            dclicktime = 0
+        ENDIF
+    ELSE
+        dclicktime = dclicktime + 1
+        IF dclicktime > 20 THEN
+            dclicks = 0
+            dclickstate = 0
+        ENDIF
+    ENDIF
+
+    ' Strafe double click.
+    IF CLNG(mousebuttons[mousebstrafe]) <> 0 OR CLNG(joybuttons[joybstrafe]) <> 0 THEN bstrafe = 1
+    IF bstrafe <> dclickstate2 AND dclicktime2 > 1 THEN
+        dclickstate2 = bstrafe
+        IF dclickstate2 <> 0 THEN dclicks2 = dclicks2 + 1
+        IF dclicks2 = 2 THEN
+            cmd_buttons = cmd_buttons BOR DOOMDEF.BT_USE
+            dclicks2 = 0
+        ELSE
+            dclicktime2 = 0
+        ENDIF
+    ELSE
+        dclicktime2 = dclicktime2 + 1
+        IF dclicktime2 > 20 THEN
+            dclicks2 = 0
+            dclickstate2 = 0
+        ENDIF
+    ENDIF
+
+    forward = forward + mousey
+    IF strafe <> 0 THEN
+        side = side + mousex * 2
+    ELSE
+        cmd_angleturn = cmd_angleturn - mousex * 8
+    ENDIF
+    mousex = 0
+    mousey = 0
+
+    IF forward > MAXPLMOVE THEN
+        forward = MAXPLMOVE
+    ELSEIF forward < -MAXPLMOVE THEN
+        forward = -MAXPLMOVE
+    ENDIF
+    IF side > MAXPLMOVE THEN
+        side = MAXPLMOVE
+    ELSEIF side < -MAXPLMOVE THEN
+        side = -MAXPLMOVE
+    ENDIF
+
+    cmd_forwardmove = cmd_forwardmove + forward
+    cmd_sidemove = cmd_sidemove + side
+ENDSUB
+
+' Called at the start of a game and after a death: everything except the
+' frags and the counts of the intermission is reset.
+EXPORT SUB G_PlayerReborn(player AS INTEGER)
+    DIM i AS INTEGER
+    D_PLAYER.player_mo[player] = -1
+    D_PLAYER.player_cmd_forwardmove[player] = 0
+    D_PLAYER.player_cmd_sidemove[player] = 0
+    D_PLAYER.player_cmd_angleturn[player] = 0
+    D_PLAYER.player_cmd_consistancy[player] = 0
+    D_PLAYER.player_cmd_chatchar[player] = 0
+    D_PLAYER.player_cmd_buttons[player] = 0
+    D_PLAYER.player_viewz[player] = 0
+    D_PLAYER.player_viewheight[player] = 0
+    D_PLAYER.player_deltaviewheight[player] = 0
+    D_PLAYER.player_bob[player] = 0
+    D_PLAYER.player_armorpoints[player] = 0
+    D_PLAYER.player_armortype[player] = 0
+    FOR i = 0 TO DOOMDEF.NUMPOWERS - 1
+        D_PLAYER.player_powers[player * DOOMDEF.NUMPOWERS + i] = 0
+    NEXT i
+    FOR i = 0 TO DOOMDEF.NUMCARDS - 1
+        D_PLAYER.player_cards[player * DOOMDEF.NUMCARDS + i] = 0
+    NEXT i
+    D_PLAYER.player_backpack[player] = 0
+    FOR i = 0 TO DOOMDEF.NUMWEAPONS - 1
+        D_PLAYER.player_weaponowned[player * DOOMDEF.NUMWEAPONS + i] = 0
+    NEXT i
+    FOR i = 0 TO DOOMDEF.NUMAMMO - 1
+        D_PLAYER.player_ammo[player * DOOMDEF.NUMAMMO + i] = 0
+        D_PLAYER.player_maxammo[player * DOOMDEF.NUMAMMO + i] = maxammo[i]
+    NEXT i
+    D_PLAYER.player_cheats[player] = 0
+    D_PLAYER.player_refire[player] = 0
+    D_PLAYER.player_message$[player] = ""
+    D_PLAYER.player_damagecount[player] = 0
+    D_PLAYER.player_bonuscount[player] = 0
+    D_PLAYER.player_attacker[player] = -1
+    D_PLAYER.player_extralight[player] = 0
+    D_PLAYER.player_fixedcolormap[player] = 0
+    D_PLAYER.player_colormap[player] = 0
+    FOR i = 0 TO 1
+        D_PLAYER.player_psprite_state[player * 2 + i] = 0
+        D_PLAYER.player_psprite_tics[player * 2 + i] = 0
+        D_PLAYER.player_psprite_sx[player * 2 + i] = 0
+        D_PLAYER.player_psprite_sy[player * 2 + i] = 0
+    NEXT i
+    D_PLAYER.player_didsecret[player] = 0
+
+    ' Don't do anything immediately.
+    D_PLAYER.player_usedown[player] = 1
+    D_PLAYER.player_attackdown[player] = 1
+    D_PLAYER.player_playerstate[player] = DOOMDEF.PST_LIVE
+    D_PLAYER.player_health[player] = DOOMDEF.MAXHEALTH
+    D_PLAYER.player_readyweapon[player] = DOOMDEF.WP_PISTOL
+    D_PLAYER.player_pendingweapon[player] = DOOMDEF.WP_PISTOL
+    D_PLAYER.player_weaponowned[player * DOOMDEF.NUMWEAPONS + DOOMDEF.WP_FIST] = 1
+    D_PLAYER.player_weaponowned[player * DOOMDEF.NUMWEAPONS + DOOMDEF.WP_PISTOL] = 1
+    D_PLAYER.player_ammo[player * DOOMDEF.NUMAMMO + DOOMDEF.AM_CLIP] = 50
+ENDSUB
+
+EXPORT SUB G_DoLoadLevel()
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+
+    ' Set the sky map. The episode's sky was picked in G_InitNew.
+    R_SKY.skyflatnum = R_DATA.R_FlatNumForName("F_SKY1")
+    IF DOOMSTAT.commercial <> 0 THEN
+        R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY3")
+        IF DOOMSTAT.gamemap < 12 THEN
+            R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY1")
+        ELSEIF DOOMSTAT.gamemap < 21 THEN
+            R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY2")
+        ENDIF
+    ENDIF
+
+    ' For time calculation.
+    levelstarttic = DOOMSTAT.gametic
+
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        IF CLNG(DOOMSTAT.playeringame[i]) <> 0 AND CLNG(D_PLAYER.player_playerstate[i]) = DOOMDEF.PST_DEAD THEN D_PLAYER.player_playerstate[i] = DOOMDEF.PST_REBORN
+        FOR j = 0 TO DOOMDEF.MAXPLAYERS - 1
+            D_PLAYER.player_frags[i * DOOMDEF.MAXPLAYERS + j] = 0
+        NEXT j
+    NEXT i
+
+    P_SETUP.P_SetupLevel(DOOMSTAT.gameepisode, DOOMSTAT.gamemap, 0, DOOMSTAT.gameskill)
+    ' View the guy you are playing.
+    DOOMSTAT.displayplayer = DOOMSTAT.consoleplayer
+
+    ' Clear the command building state.
+    FILLV gamekeydown, 0
+    FILLV mousebuttons, 0
+    FILLV joybuttons, 0
+    joyxmove = 0
+    joyymove = 0
+    mousex = 0
+    mousey = 0
+    DOOMSTAT.paused = 0
+ENDSUB
+
+' Starts a new game on the given skill, episode and map. The players in
+' the game are the ones DOOMSTAT.playeringame names.
+EXPORT SUB G_InitNew(skill_in AS INTEGER, episode_in AS INTEGER, map_in AS INTEGER)
+    DIM skill AS INTEGER = skill_in
+    DIM episode AS INTEGER = episode_in
+    DIM map_num AS INTEGER = map_in
+    DIM i AS INTEGER
+
+    DOOMSTAT.paused = 0
+
+    IF skill > DOOMDEF.SK_NIGHTMARE THEN skill = DOOMDEF.SK_NIGHTMARE
+    ' This port plays the retail game: four episodes.
+    IF episode < 1 THEN episode = 1
+    IF episode > 4 THEN episode = 4
+    IF map_num < 1 THEN map_num = 1
+    IF map_num > 9 AND DOOMSTAT.commercial = 0 THEN map_num = 9
+
+    M_RANDOM.M_ClearRandom()
+
+    IF skill = DOOMDEF.SK_NIGHTMARE OR DOOMSTAT.respawnparm <> 0 THEN
+        DOOMSTAT.respawnmonsters = 1
+    ELSE
+        DOOMSTAT.respawnmonsters = 0
+    ENDIF
+
+    ' Fast monsters: the demon's states run at double rate and three
+    ' missiles fly faster. Going back from nightmare undoes it.
+    IF DOOMSTAT.fastparm <> 0 OR (skill = DOOMDEF.SK_NIGHTMARE AND DOOMSTAT.gameskill <> DOOMDEF.SK_NIGHTMARE) THEN
+        FOR i = INFO.S_SARG_RUN1 TO INFO.S_SARG_PAIN2
+            INFO.st_tics[i] = CLNG(INFO.st_tics[i]) SHR 1
+        NEXT i
+        INFO.mi_speed[INFO.MT_BRUISERSHOT] = 20 * 65536
+        INFO.mi_speed[INFO.MT_HEADSHOT] = 20 * 65536
+        INFO.mi_speed[INFO.MT_TROOPSHOT] = 20 * 65536
+    ELSEIF skill <> DOOMDEF.SK_NIGHTMARE AND DOOMSTAT.gameskill = DOOMDEF.SK_NIGHTMARE THEN
+        FOR i = INFO.S_SARG_RUN1 TO INFO.S_SARG_PAIN2
+            INFO.st_tics[i] = CLNG(INFO.st_tics[i]) SHL 1
+        NEXT i
+        INFO.mi_speed[INFO.MT_BRUISERSHOT] = 15 * 65536
+        INFO.mi_speed[INFO.MT_HEADSHOT] = 10 * 65536
+        INFO.mi_speed[INFO.MT_TROOPSHOT] = 10 * 65536
+    ENDIF
+
+    ' Force players to be initialized upon first level load.
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        D_PLAYER.player_playerstate[i] = DOOMDEF.PST_REBORN
+    NEXT i
+
+    DOOMSTAT.paused = 0
+    DOOMSTAT.demoplayback = 0
+    DOOMSTAT.gameepisode = episode
+    DOOMSTAT.gamemap = map_num
+    DOOMSTAT.gameskill = skill
+
+    ' Set the sky map for the episode.
+    IF DOOMSTAT.commercial <> 0 THEN
+        R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY3")
+        IF DOOMSTAT.gamemap < 12 THEN
+            R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY1")
+        ELSEIF DOOMSTAT.gamemap < 21 THEN
+            R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY2")
+        ENDIF
+    ELSEIF episode = 1 THEN
+        R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY1")
+    ELSEIF episode = 2 THEN
+        R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY2")
+    ELSEIF episode = 3 THEN
+        R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY3")
+    ELSE
+        R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY4")
+    ENDIF
+
+    G_DoLoadLevel()
+ENDSUB
+
+' Runs one tic of the game: the ticcmd built for this tic goes to the
+' console player, then the play simulation runs.
+EXPORT SUB G_Ticker()
+    DIM p AS INTEGER = DOOMSTAT.consoleplayer
+    IF CLNG(DOOMSTAT.playeringame[p]) <> 0 THEN
+        D_PLAYER.player_cmd_forwardmove[p] = cmd_forwardmove
+        D_PLAYER.player_cmd_sidemove[p] = cmd_sidemove
+        D_PLAYER.player_cmd_angleturn[p] = cmd_angleturn
+        D_PLAYER.player_cmd_consistancy[p] = cmd_consistancy
+        D_PLAYER.player_cmd_chatchar[p] = cmd_chatchar
+        D_PLAYER.player_cmd_buttons[p] = cmd_buttons
+    ENDIF
+    P_TICK.P_Ticker()
+    DOOMSTAT.gametic = DOOMSTAT.gametic + 1
+ENDSUB

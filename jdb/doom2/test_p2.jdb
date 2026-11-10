@@ -76,7 +76,7 @@ ENDSUB
 
 W_WAD.W_Init(wad_path$)
 R_MAIN.R_Init(11, 0)
-P_SETUP.P_SetupLevel("E1M1")
+P_SETUP.P_SetupLevel(1, 1, 0, DOOMDEF.SK_MEDIUM)
 R_SKY.skyflatnum = R_DATA.R_FlatNumForName("F_SKY1")
 R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY1")
 R_MAIN.R_ExecuteSetViewSize()

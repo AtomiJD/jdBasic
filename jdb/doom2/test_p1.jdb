@@ -61,7 +61,7 @@ DIM bad AS INTEGER
 
 W_WAD.W_Init(wad_path$)
 R_DATA.R_InitData()
-P_SETUP.P_SetupLevel("E1M1")
+P_SETUP.P_SetupLevel(1, 1, 0, DOOMDEF.SK_MEDIUM)
 
 ' ---- p_setup: the lumps as read ---------------------------------------------
 

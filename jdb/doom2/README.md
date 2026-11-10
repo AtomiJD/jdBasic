@@ -10,6 +10,9 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 
 - Same algorithms as the C source, one module per C file, same function names.
   Modules import each other in circles where the C files call each other.
+- Where C hands a function to an iterator (blockmap lines and things, path
+  intercepts, thinkers), the caller names it by a number and the iterator
+  calls the function of that number.
 - `fixed_t` is 16.16 fixed point in an `INTEGER`, kept in the signed 32-bit
   range. `angle_t` is a 32-bit binary angle, masked with `M_FIXED.ANGLE_MASK`
   after every addition and subtraction.
@@ -80,6 +83,30 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 | `r_draw.jdb` | r_draw.c | `R_DrawColumn`, `R_DrawSpan`, the view window |
 | `r_sky.jdb` | r_sky.c | sky flat and texture |
 | `r_things.jdb` | r_things.c | weapon sprite scales so far |
+| `doomstat.jdb` | doomstat.h, g_game.c | game state: skill, episode, map, players in game, starts |
+| `d_player.jdb` | d_player.h, d_ticcmd.h | the players, one array per field of player_t |
+| `g_game.jdb` | g_game.c | `G_BuildTiccmd`, `G_InitNew`, `G_DoLoadLevel`, `G_PlayerReborn`, `G_Ticker` (the tic only) |
+| `p_tick.jdb` | p_tick.c | thinkers, `P_Ticker` |
+| `p_mobj.jdb` | p_mobj.c, p_mobj.h | things: spawn, remove, states, movement in x, y and z |
+| `p_maputl.jdb` | p_maputl.c | sides and distances, line openings, thing links, blockmap iterators, `P_PathTraverse` |
+| `p_map.jdb` | p_map.c | `P_CheckPosition`, `P_TryMove`, `P_SlideMove`, `P_UseLines` (movement half) |
+| `p_user.jdb` | p_user.c | `P_PlayerThink`, movement by ticcmd, view height and bob |
+
+Not ported yet. These modules exist with the functions other modules call,
+and the functions do nothing:
+
+| Module | C file | Functions | Phase |
+|---|---|---|---|
+| `p_spec.jdb` | p_spec.c | `P_CrossSpecialLine`, `P_PlayerInSpecialSector`, `P_UpdateSpecials`, `P_SpawnSpecials` | P5 |
+| `p_switch.jdb` | p_switch.c | `P_UseSpecialLine` | P5 |
+| `p_inter.jdb` | p_inter.c | `P_DamageMobj`, `P_TouchSpecialThing` | P6 |
+| `p_enemy.jdb` | p_enemy.c | `A_Call` (the action of a state) | P6 |
+| `p_pspr.jdb` | p_pspr.c | `P_SetupPsprites`, `P_MovePsprites` | P6 |
+| `s_sound.jdb` | s_sound.c | `S_StartSound`, `S_StopSound` | P8 |
+
+Left out of ported files until their callees exist: the shooting half of
+p_map.c and `P_SpawnMissile`, `P_SpawnPlayerMissile` of p_mobj.c (P6),
+`R_RenderMaskedSegRange` of r_segs.c and the sprites of r_things.c (P3).
 
 ## Running the checks
 
@@ -92,6 +119,8 @@ build/jdBasic.exe jdb/doom2/test_p1.jdb
 build/jdBasic.exe -c jdb/doom2/test_p1.jdb && jdb/doom2/test_p1.exe
 build/jdBasic.exe jdb/doom2/test_p2.jdb
 build/jdBasic.exe -c jdb/doom2/test_p2.jdb && jdb/doom2/test_p2.exe
+build/jdBasic.exe jdb/doom2/test_p4.jdb
+build/jdBasic.exe -c jdb/doom2/test_p4.jdb && jdb/doom2/test_p4.exe
 ```
 
 `test_p0` covers fixed point, random numbers and the generated tables.
@@ -100,6 +129,9 @@ build/jdBasic.exe -c jdb/doom2/test_p2.jdb && jdb/doom2/test_p2.exe
 `test_p2` checks the view tables and the angle arithmetic and renders frames
 of E1M1: each has to cover every pixel of the view and to match the hash
 recorded for it, interpreted and compiled alike.
+`test_p4` spawns the things of E1M1, checks their links into sectors and
+blockmap, and walks player 1 by a fixed list of ticcmds: speed, steps, the
+stop at a wall, coming to rest, and the place he ends up at.
 
 Looking at the data (title picture, wall textures, flats, sprites, the lines
 of E1M1); with a folder argument each page is saved as a PNG:
@@ -117,9 +149,18 @@ build/jdBasic.exe -c jdb/doom2/view_p2.jdb
 jdb/doom2/view_p2.exe [level] [folder for screenshots]
 ```
 
+Playing a level with the game's own controls: collision, steps, sliding
+along walls, the bobbing view. Things are not drawn yet and doors stay shut:
+
+```
+build/jdBasic.exe -c jdb/doom2/view_p4.jdb
+jdb/doom2/view_p4.exe [episode] [map]
+```
+
 ## Tools
 
 ```
 build/jdBasic.exe jdb/doom2/tools/gen_data.jdb     regenerate tables.jdb and info.jdb
 build/jdBasic.exe jdb/doom2/tools/ref_p1.jdb       print the reference numbers of test_p1
+build/jdBasic.exe jdb/doom2/walk.jdb "f70 l32 F80"  walk player 1 by a script and print where he is
 ```

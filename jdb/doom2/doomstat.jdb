@@ -1,0 +1,57 @@
+' Game state that every part of the program reads (doomstat.h, g_game.c).
+
+EXPORT MODULE DOOMSTAT
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' Selected by the user, kept for the whole game.
+EXPORT DIM gameskill AS INTEGER = 2
+EXPORT DIM gameepisode AS INTEGER = 1
+EXPORT DIM gamemap AS INTEGER = 1
+' TRUE for Doom 2, its lumps and its rules.
+EXPORT DIM commercial AS INTEGER = 0
+EXPORT DIM shareware AS INTEGER = 0
+
+EXPORT DIM netgame AS INTEGER = 0
+' 0 = cooperative, 1 = deathmatch, 2 = deathmatch with respawning items.
+EXPORT DIM deathmatch AS INTEGER = 0
+EXPORT DIM nomonsters AS INTEGER = 0
+EXPORT DIM respawnparm AS INTEGER = 0
+EXPORT DIM fastparm AS INTEGER = 0
+EXPORT DIM respawnmonsters AS INTEGER = 0
+
+EXPORT DIM paused AS INTEGER = 0
+EXPORT DIM menuactive AS INTEGER = 0
+EXPORT DIM demoplayback AS INTEGER = 0
+EXPORT DIM demorecording AS INTEGER = 0
+
+' The player at this machine, and the one whose view is shown.
+EXPORT DIM consoleplayer AS INTEGER = 0
+EXPORT DIM displayplayer AS INTEGER = 0
+EXPORT DIM playeringame[4] AS INTEGER
+
+' For the intermission.
+EXPORT DIM totalkills AS INTEGER = 0
+EXPORT DIM totalitems AS INTEGER = 0
+EXPORT DIM totalsecret AS INTEGER = 0
+
+EXPORT DIM gametic AS INTEGER = 0
+
+' mapthing_t of the four player starts and of up to ten deathmatch starts:
+' one array per field.
+EXPORT CONST MAX_DEATHMATCH_STARTS = 10
+EXPORT DIM playerstart_x[4] AS INTEGER
+EXPORT DIM playerstart_y[4] AS INTEGER
+EXPORT DIM playerstart_angle[4] AS INTEGER
+EXPORT DIM playerstart_type[4] AS INTEGER
+EXPORT DIM playerstart_options[4] AS INTEGER
+EXPORT DIM deathmatchstart_x[MAX_DEATHMATCH_STARTS] AS INTEGER
+EXPORT DIM deathmatchstart_y[MAX_DEATHMATCH_STARTS] AS INTEGER
+EXPORT DIM deathmatchstart_angle[MAX_DEATHMATCH_STARTS] AS INTEGER
+EXPORT DIM deathmatchstart_type[MAX_DEATHMATCH_STARTS] AS INTEGER
+EXPORT DIM deathmatchstart_options[MAX_DEATHMATCH_STARTS] AS INTEGER
+' Number of deathmatch starts found.
+EXPORT DIM deathmatch_p AS INTEGER = 0
+
+EXPORT DIM bodyqueslot AS INTEGER = 0

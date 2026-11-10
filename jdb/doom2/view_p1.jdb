@@ -63,7 +63,7 @@ ON "QUIT" CALL HandleQuit@
 
 W_WAD.W_Init(D_MAIN.IdentifyVersion$())
 R_DATA.R_InitData()
-P_SETUP.P_SetupLevel("E1M1")
+P_SETUP.P_SetupLevel(1, 1, 0, DOOMDEF.SK_MEDIUM)
 V_VIDEO.V_Init()
 I_VIDEO.I_InitGraphics(3)
 I_VIDEO.I_SetPalette(W_WAD.W_CacheLumpName("PLAYPAL"))

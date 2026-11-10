@@ -14,6 +14,11 @@ IMPORT DOOMDEF
 IMPORT M_FIXED
 IMPORT W_WAD
 IMPORT R_DATA
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_SPEC
 
 EXPORT CONST MAXVERTEXES = 32768
 EXPORT CONST MAXSECTORS = 8192
@@ -256,13 +261,15 @@ SUB P_LoadNodes(lump AS INTEGER)
     NEXT i
 ENDSUB
 
-' Keeps the THINGS lump for P_SpawnMapThing.
+' Reads the THINGS lump and spawns the things of the level.
 SUB P_LoadThings(lump AS INTEGER)
     DIM raw AS ARRAY = W_WAD.W_ReadShorts(lump)
     nummapthings = W_WAD.W_LumpLength(lump) \ 10
     CheckCount "things", nummapthings, MAXMAPTHINGS
     DIM i AS INTEGER
     DIM o AS INTEGER
+    DIM spawn AS INTEGER
+    DIM mt_type AS INTEGER
     FOR i = 0 TO nummapthings - 1
         o = i * 5
         mapthing_x[i] = raw[o]
@@ -270,6 +277,19 @@ SUB P_LoadThings(lump AS INTEGER)
         mapthing_angle[i] = raw[o + 2]
         mapthing_type[i] = raw[o + 3]
         mapthing_options[i] = raw[o + 4]
+    NEXT i
+
+    FOR i = 0 TO nummapthings - 1
+        spawn = 1
+        mt_type = CLNG(mapthing_type[i])
+        ' The monsters of Doom 2 are not spawned in the other games. The
+        ' first one met ends the spawning of the whole lump, as in the
+        ' original.
+        IF DOOMSTAT.commercial = 0 THEN
+            IF mt_type = 68 OR mt_type = 64 OR mt_type = 88 OR mt_type = 89 OR mt_type = 69 OR mt_type = 67 OR mt_type = 71 OR mt_type = 65 OR mt_type = 66 OR mt_type = 84 THEN spawn = 0
+        ENDIF
+        IF spawn = 0 THEN EXITFOR
+        P_MOBJ.P_SpawnMapThing(i)
     NEXT i
 ENDSUB
 
@@ -459,9 +479,35 @@ SUB P_GroupLines()
     NEXT i
 ENDSUB
 
-' Loads the level behind the marker lump lumpname$ (E1M1, MAP01, ...).
-EXPORT SUB P_SetupLevel(lumpname$ AS STRING)
+' Loads level map of the episode (or MAPxx of Doom 2) and spawns its things
+' for the given skill.
+EXPORT SUB P_SetupLevel(episode AS INTEGER, map_num AS INTEGER, playermask AS INTEGER, skill AS INTEGER)
+    DIM i AS INTEGER
+    DOOMSTAT.totalkills = 0
+    DOOMSTAT.totalitems = 0
+    DOOMSTAT.totalsecret = 0
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        D_PLAYER.player_killcount[i] = 0
+        D_PLAYER.player_secretcount[i] = 0
+        D_PLAYER.player_itemcount[i] = 0
+    NEXT i
+
+    ' The initial height of the point of view will be set by the player's
+    ' think.
+    D_PLAYER.player_viewz[DOOMSTAT.consoleplayer] = 1
+
+    P_TICK.P_InitThinkers()
+
+    ' Find the map name.
+    DIM lumpname$ AS STRING
+    IF DOOMSTAT.commercial <> 0 THEN
+        IF map_num < 10 THEN lumpname$ = "MAP0" + STR$(map_num) ELSE lumpname$ = "MAP" + STR$(map_num)
+    ELSE
+        lumpname$ = "E" + STR$(episode) + "M" + STR$(map_num)
+    ENDIF
     DIM lumpnum AS INTEGER = W_WAD.W_GetNumForName(lumpname$)
+
+    P_TICK.leveltime = 0
 
     ' The order matters: each loader uses what the ones before it read.
     P_LoadBlockMap(lumpnum + DOOMDEF.ML_BLOCKMAP)
@@ -474,5 +520,15 @@ EXPORT SUB P_SetupLevel(lumpname$ AS STRING)
     P_LoadSegs(lumpnum + DOOMDEF.ML_SEGS)
     P_LoadReject(lumpnum + DOOMDEF.ML_REJECT)
     P_GroupLines()
+
+    DOOMSTAT.bodyqueslot = 0
+    DOOMSTAT.deathmatch_p = 0
     P_LoadThings(lumpnum + DOOMDEF.ML_THINGS)
+
+    ' Clear the special respawning queue.
+    P_MOBJ.iquehead = 0
+    P_MOBJ.iquetail = 0
+
+    ' Set up the world state.
+    P_SPEC.P_SpawnSpecials()
 ENDSUB

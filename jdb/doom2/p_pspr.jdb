@@ -1,0 +1,15 @@
+' Weapon sprites: raising, lowering, firing (p_pspr.c). Not ported yet; the
+' functions the player code calls are here and do nothing.
+
+EXPORT MODULE P_PSPR
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' Called at the start of a level for each player.
+EXPORT SUB P_SetupPsprites(player AS INTEGER)
+ENDSUB
+
+' Called every tic by the player's think.
+EXPORT SUB P_MovePsprites(player AS INTEGER)
+ENDSUB

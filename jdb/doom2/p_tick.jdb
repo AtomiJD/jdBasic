@@ -1,0 +1,114 @@
+' Thinkers and the tic of the play simulation (p_tick.c).
+'
+' A thinker is anything that acts once a tic: a thing, a moving door, a
+' flickering light. They run in the order they were added, which a demo
+' depends on. In C the thinker is the head of each such structure; here it
+' is an entry of its own that names the kind of object and its index.
+
+EXPORT MODULE P_TICK
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT P_MOBJ
+IMPORT P_USER
+IMPORT P_SPEC
+
+EXPORT CONST MAXTHINKERS = 8192
+
+' th_function: what runs each tic.
+EXPORT CONST TF_REMOVED = -1
+EXPORT CONST TF_NONE = 0
+EXPORT CONST TF_MOBJ = 1
+
+' Thinker 0 is the head of the ring (thinkercap).
+EXPORT DIM th_prev[MAXTHINKERS] AS INTEGER
+EXPORT DIM th_next[MAXTHINKERS] AS INTEGER
+EXPORT DIM th_function[MAXTHINKERS] AS INTEGER
+' The kind of object behind the thinker (a TF_ value that stays when the
+' function is set to TF_REMOVED or TF_NONE) and its index.
+EXPORT DIM th_kind[MAXTHINKERS] AS INTEGER
+EXPORT DIM th_object[MAXTHINKERS] AS INTEGER
+
+DIM free_thinkers[MAXTHINKERS] AS INTEGER
+DIM n_free AS INTEGER = 0
+
+EXPORT DIM leveltime AS INTEGER = 0
+
+EXPORT SUB P_InitThinkers()
+    th_prev[0] = 0
+    th_next[0] = 0
+    th_function[0] = TF_NONE
+    ' The lowest free number is handed out first.
+    DIM i AS INTEGER
+    n_free = 0
+    FOR i = MAXTHINKERS - 1 TO 1 STEP -1
+        free_thinkers[n_free] = i
+        n_free = n_free + 1
+    NEXT i
+    P_MOBJ.P_InitMobjs()
+ENDSUB
+
+' Adds a thinker for object obj at the end of the list and answers its number.
+EXPORT FUNC P_AddThinker(callee AS INTEGER, obj AS INTEGER) AS INTEGER
+    IF n_free = 0 THEN I_SYSTEM.I_Error("P_AddThinker: more than " + STR$(MAXTHINKERS) + " thinkers")
+    n_free = n_free - 1
+    DIM thinker AS INTEGER = CLNG(free_thinkers[n_free])
+    DIM last AS INTEGER = CLNG(th_prev[0])
+    th_function[thinker] = callee
+    th_kind[thinker] = callee
+    th_object[thinker] = obj
+    th_next[last] = thinker
+    th_next[thinker] = 0
+    th_prev[thinker] = last
+    th_prev[0] = thinker
+    RETURN thinker
+ENDFUNC
+
+' The thinker stays in the list until P_RunThinkers comes by and frees it.
+EXPORT SUB P_RemoveThinker(thinker AS INTEGER)
+    th_function[thinker] = TF_REMOVED
+ENDSUB
+
+SUB P_RunThinkers()
+    DIM current AS INTEGER = CLNG(th_next[0])
+    DIM following AS INTEGER
+    DIM callee AS INTEGER
+    DO WHILE current <> 0
+        callee = CLNG(th_function[current])
+        IF callee = TF_REMOVED THEN
+            following = CLNG(th_next[current])
+            th_prev[following] = th_prev[current]
+            th_next[CLNG(th_prev[current])] = following
+            IF CLNG(th_kind[current]) = TF_MOBJ THEN P_MOBJ.P_FreeMobj(CLNG(th_object[current]))
+            free_thinkers[n_free] = current
+            n_free = n_free + 1
+            current = following
+        ELSE
+            IF callee = TF_MOBJ THEN P_MOBJ.P_MobjThinker(CLNG(th_object[current]))
+            current = CLNG(th_next[current])
+        ENDIF
+    LOOP
+ENDSUB
+
+EXPORT SUB P_Ticker()
+    IF DOOMSTAT.paused <> 0 THEN RETURN
+    ' Pause if in menu and at least one tic has been run.
+    IF DOOMSTAT.netgame = 0 AND DOOMSTAT.menuactive <> 0 AND DOOMSTAT.demoplayback = 0 AND CLNG(D_PLAYER.player_viewz[DOOMSTAT.consoleplayer]) <> 1 THEN RETURN
+
+    DIM i AS INTEGER
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        IF CLNG(DOOMSTAT.playeringame[i]) <> 0 THEN P_USER.P_PlayerThink(i)
+    NEXT i
+
+    P_RunThinkers()
+    P_SPEC.P_UpdateSpecials()
+    P_MOBJ.P_RespawnSpecials()
+
+    ' For par times.
+    leveltime = leveltime + 1
+ENDSUB

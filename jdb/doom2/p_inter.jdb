@@ -1,0 +1,16 @@
+' Handling interactions: damage, pickups, kills (p_inter.c). Not ported yet;
+' the functions the movement code calls are here and do nothing.
+
+EXPORT MODULE P_INTER
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' Damages target by inflictor (the missile or -1) on behalf of source (the
+' attacker or -1).
+EXPORT SUB P_DamageMobj(target AS INTEGER, inflictor AS INTEGER, source AS INTEGER, damage AS INTEGER)
+ENDSUB
+
+' The toucher walks over a thing that can be picked up.
+EXPORT SUB P_TouchSpecialThing(special AS INTEGER, toucher AS INTEGER)
+ENDSUB

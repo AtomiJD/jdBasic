@@ -1,0 +1,518 @@
+' Movement and collision utilities (p_maputl.c): distances and sides, the
+' opening of a two sided line, the links of a thing into sector and
+' blockmap, the blockmap iterators and the tracing of a path.
+'
+' Where C hands a function to an iterator, the caller here names it by a
+' number (PIT_ for lines and things of a blockmap cell, PTR_ for the
+' intercepts of a path) and the iterator calls the function of that number.
+
+EXPORT MODULE P_MAPUTL
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT R_MAIN
+IMPORT P_MOBJ
+IMPORT P_MAP
+
+' Functions P_BlockLinesIterator can call for each line.
+EXPORT CONST PIT_ADDLINEINTERCEPTS = 1
+EXPORT CONST PIT_CHECKLINE = 2
+' Functions P_BlockThingsIterator can call for each thing.
+EXPORT CONST PIT_ADDTHINGINTERCEPTS = 1
+EXPORT CONST PIT_STOMPTHING = 2
+EXPORT CONST PIT_CHECKTHING = 3
+' Functions P_PathTraverse can call for each intercept.
+EXPORT CONST PTR_SLIDETRAVERSE = 1
+EXPORT CONST PTR_USETRAVERSE = 2
+
+' The opening of the line last given to P_LineOpening.
+EXPORT DIM opentop AS INTEGER = 0
+EXPORT DIM openbottom AS INTEGER = 0
+EXPORT DIM openrange AS INTEGER = 0
+EXPORT DIM lowfloor AS INTEGER = 0
+
+' intercept_t: where a traced path crosses a line or a thing. frac is the
+' place along the path, 0 at its start and FRACUNIT at its end.
+EXPORT CONST MAXINTERCEPTS = 128
+EXPORT DIM intercept_frac[MAXINTERCEPTS] AS INTEGER
+EXPORT DIM intercept_isaline[MAXINTERCEPTS] AS INTEGER
+' The line or the thing.
+EXPORT DIM intercept_d[MAXINTERCEPTS] AS INTEGER
+DIM intercept_p AS INTEGER = 0
+
+' The path being traced, as a start point and a direction (divline_t).
+EXPORT DIM trace_x AS INTEGER = 0
+EXPORT DIM trace_y AS INTEGER = 0
+EXPORT DIM trace_dx AS INTEGER = 0
+EXPORT DIM trace_dy AS INTEGER = 0
+
+DIM earlyout AS INTEGER = 0
+
+' Gives an estimation of distance (not exact).
+EXPORT FUNC P_AproxDistance(dx_in AS INTEGER, dy_in AS INTEGER) AS INTEGER
+    DIM dx AS INTEGER = CLNG(ABS(dx_in))
+    DIM dy AS INTEGER = CLNG(ABS(dy_in))
+    IF dx < dy THEN RETURN dx + dy - (dx SHR 1)
+    RETURN dx + dy - (dy SHR 1)
+ENDFUNC
+
+' Which side of a line a point is on: 0 front, 1 back.
+EXPORT FUNC P_PointOnLineSide(x AS INTEGER, y AS INTEGER, ld AS INTEGER) AS INTEGER
+    DIM ldx AS INTEGER = CLNG(P_SETUP.line_dx[ld])
+    DIM ldy AS INTEGER = CLNG(P_SETUP.line_dy[ld])
+    DIM v1 AS INTEGER = CLNG(P_SETUP.line_v1[ld])
+    DIM v1x AS INTEGER = CLNG(P_SETUP.vertex_x[v1])
+    DIM v1y AS INTEGER = CLNG(P_SETUP.vertex_y[v1])
+    IF ldx = 0 THEN
+        IF x <= v1x THEN
+            IF ldy > 0 THEN RETURN 1
+            RETURN 0
+        ENDIF
+        IF ldy < 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    IF ldy = 0 THEN
+        IF y <= v1y THEN
+            IF ldx < 0 THEN RETURN 1
+            RETURN 0
+        ENDIF
+        IF ldx > 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    DIM left AS INTEGER = M_FIXED.FixedMul(ldy SHR 16, x - v1x)
+    DIM right AS INTEGER = M_FIXED.FixedMul(y - v1y, ldx SHR 16)
+    IF right < left THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+' Which side of a line a box is on: 0 or 1, or -1 if the line crosses it.
+EXPORT FUNC P_BoxOnLineSide(box_top AS INTEGER, box_bottom AS INTEGER, box_left AS INTEGER, box_right AS INTEGER, ld AS INTEGER) AS INTEGER
+    DIM p1 AS INTEGER = 0
+    DIM p2 AS INTEGER = 0
+    DIM v1 AS INTEGER = CLNG(P_SETUP.line_v1[ld])
+    DIM slopetype AS INTEGER = CLNG(P_SETUP.line_slopetype[ld])
+    IF slopetype = DOOMDEF.ST_HORIZONTAL THEN
+        IF box_top > CLNG(P_SETUP.vertex_y[v1]) THEN p1 = 1
+        IF box_bottom > CLNG(P_SETUP.vertex_y[v1]) THEN p2 = 1
+        IF CLNG(P_SETUP.line_dx[ld]) < 0 THEN
+            p1 = p1 BXOR 1
+            p2 = p2 BXOR 1
+        ENDIF
+    ELSEIF slopetype = DOOMDEF.ST_VERTICAL THEN
+        IF box_right < CLNG(P_SETUP.vertex_x[v1]) THEN p1 = 1
+        IF box_left < CLNG(P_SETUP.vertex_x[v1]) THEN p2 = 1
+        IF CLNG(P_SETUP.line_dy[ld]) < 0 THEN
+            p1 = p1 BXOR 1
+            p2 = p2 BXOR 1
+        ENDIF
+    ELSEIF slopetype = DOOMDEF.ST_POSITIVE THEN
+        p1 = P_PointOnLineSide(box_left, box_top, ld)
+        p2 = P_PointOnLineSide(box_right, box_bottom, ld)
+    ELSE
+        p1 = P_PointOnLineSide(box_right, box_top, ld)
+        p2 = P_PointOnLineSide(box_left, box_bottom, ld)
+    ENDIF
+    IF p1 = p2 THEN RETURN p1
+    RETURN -1
+ENDFUNC
+
+' Which side of the divline (lx, ly) + t * (ldx, ldy) a point is on.
+EXPORT FUNC P_PointOnDivlineSide(x AS INTEGER, y AS INTEGER, lx AS INTEGER, ly AS INTEGER, ldx AS INTEGER, ldy AS INTEGER) AS INTEGER
+    IF ldx = 0 THEN
+        IF x <= lx THEN
+            IF ldy > 0 THEN RETURN 1
+            RETURN 0
+        ENDIF
+        IF ldy < 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    IF ldy = 0 THEN
+        IF y <= ly THEN
+            IF ldx < 0 THEN RETURN 1
+            RETURN 0
+        ENDIF
+        IF ldx > 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    DIM dx AS INTEGER = x - lx
+    DIM dy AS INTEGER = y - ly
+    ' Try to quickly decide by looking at sign bits.
+    IF (ldy BXOR ldx BXOR dx BXOR dy) < 0 THEN
+        IF (ldy BXOR dx) < 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    DIM left AS INTEGER = M_FIXED.FixedMul(ldy SHR 8, dx SHR 8)
+    DIM right AS INTEGER = M_FIXED.FixedMul(dy SHR 8, ldx SHR 8)
+    IF right < left THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+' The fraction along divline v2 at which divline v1 crosses it. Good only
+' for the first, short part of v2.
+EXPORT FUNC P_InterceptVector(v2x AS INTEGER, v2y AS INTEGER, v2dx AS INTEGER, v2dy AS INTEGER, v1x AS INTEGER, v1y AS INTEGER, v1dx AS INTEGER, v1dy AS INTEGER) AS INTEGER
+    DIM den AS INTEGER = M_FIXED.ToS32(M_FIXED.FixedMul(v1dy SHR 8, v2dx) - M_FIXED.FixedMul(v1dx SHR 8, v2dy))
+    IF den = 0 THEN RETURN 0
+    DIM num AS INTEGER = M_FIXED.ToS32(M_FIXED.FixedMul((v1x - v2x) SHR 8, v1dy) + M_FIXED.FixedMul((v2y - v1y) SHR 8, v1dx))
+    RETURN M_FIXED.FixedDiv(num, den)
+ENDFUNC
+
+' Sets opentop and openbottom to the window through a two sided line.
+EXPORT SUB P_LineOpening(ld AS INTEGER)
+    IF CLNG(P_SETUP.line_sidenum1[ld]) = -1 THEN
+        ' Single sided line.
+        openrange = 0
+        RETURN
+    ENDIF
+    DIM front AS INTEGER = CLNG(P_SETUP.line_frontsector[ld])
+    DIM back AS INTEGER = CLNG(P_SETUP.line_backsector[ld])
+    DIM front_ceiling AS INTEGER = CLNG(P_SETUP.sector_ceilingheight[front])
+    DIM back_ceiling AS INTEGER = CLNG(P_SETUP.sector_ceilingheight[back])
+    DIM front_floor AS INTEGER = CLNG(P_SETUP.sector_floorheight[front])
+    DIM back_floor AS INTEGER = CLNG(P_SETUP.sector_floorheight[back])
+    IF front_ceiling < back_ceiling THEN opentop = front_ceiling ELSE opentop = back_ceiling
+    IF front_floor > back_floor THEN
+        openbottom = front_floor
+        lowfloor = back_floor
+    ELSE
+        openbottom = back_floor
+        lowfloor = front_floor
+    ENDIF
+    openrange = opentop - openbottom
+ENDSUB
+
+' Unlinks a thing from the blockmap cell and the sector it is in. To be
+' called before the thing's x or y changes.
+EXPORT SUB P_UnsetThingPosition(thing AS INTEGER)
+    DIM flags AS INTEGER = CLNG(P_MOBJ.mobj_flags[thing])
+    DIM snext AS INTEGER
+    DIM sprev AS INTEGER
+    DIM bnext AS INTEGER
+    DIM bprev AS INTEGER
+    DIM blockx AS INTEGER
+    DIM blocky AS INTEGER
+
+    IF (flags BAND INFO.MF_NOSECTOR) = 0 THEN
+        ' Invisible things don't need to be in the sector list.
+        snext = CLNG(P_MOBJ.mobj_snext[thing])
+        sprev = CLNG(P_MOBJ.mobj_sprev[thing])
+        IF snext >= 0 THEN P_MOBJ.mobj_sprev[snext] = sprev
+        IF sprev >= 0 THEN
+            P_MOBJ.mobj_snext[sprev] = snext
+        ELSE
+            P_SETUP.sector_thinglist[CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[thing])])] = snext
+        ENDIF
+    ENDIF
+
+    IF (flags BAND INFO.MF_NOBLOCKMAP) = 0 THEN
+        ' Inert things don't need to be in the blockmap.
+        bnext = CLNG(P_MOBJ.mobj_bnext[thing])
+        bprev = CLNG(P_MOBJ.mobj_bprev[thing])
+        IF bnext >= 0 THEN P_MOBJ.mobj_bprev[bnext] = bprev
+        IF bprev >= 0 THEN
+            P_MOBJ.mobj_bnext[bprev] = bnext
+        ELSE
+            blockx = (CLNG(P_MOBJ.mobj_x[thing]) - P_SETUP.bmaporgx) SHR DOOMDEF.MAPBLOCKSHIFT
+            blocky = (CLNG(P_MOBJ.mobj_y[thing]) - P_SETUP.bmaporgy) SHR DOOMDEF.MAPBLOCKSHIFT
+            IF blockx >= 0 AND blockx < P_SETUP.bmapwidth AND blocky >= 0 AND blocky < P_SETUP.bmapheight THEN
+                P_SETUP.blocklinks[blocky * P_SETUP.bmapwidth + blockx] = bnext
+            ENDIF
+        ENDIF
+    ENDIF
+ENDSUB
+
+' Links a thing into the blockmap cell and the sector of its x and y, and
+' sets its subsector.
+EXPORT SUB P_SetThingPosition(thing AS INTEGER)
+    DIM flags AS INTEGER = CLNG(P_MOBJ.mobj_flags[thing])
+    DIM ss AS INTEGER = R_MAIN.R_PointInSubsector(CLNG(P_MOBJ.mobj_x[thing]), CLNG(P_MOBJ.mobj_y[thing]))
+    P_MOBJ.mobj_subsector[thing] = ss
+    DIM sec AS INTEGER
+    DIM list_head AS INTEGER
+    DIM blockx AS INTEGER
+    DIM blocky AS INTEGER
+    DIM cell AS INTEGER
+
+    IF (flags BAND INFO.MF_NOSECTOR) = 0 THEN
+        sec = CLNG(P_SETUP.subsector_sector[ss])
+        list_head = CLNG(P_SETUP.sector_thinglist[sec])
+        P_MOBJ.mobj_sprev[thing] = -1
+        P_MOBJ.mobj_snext[thing] = list_head
+        IF list_head >= 0 THEN P_MOBJ.mobj_sprev[list_head] = thing
+        P_SETUP.sector_thinglist[sec] = thing
+    ENDIF
+
+    IF (flags BAND INFO.MF_NOBLOCKMAP) = 0 THEN
+        blockx = (CLNG(P_MOBJ.mobj_x[thing]) - P_SETUP.bmaporgx) SHR DOOMDEF.MAPBLOCKSHIFT
+        blocky = (CLNG(P_MOBJ.mobj_y[thing]) - P_SETUP.bmaporgy) SHR DOOMDEF.MAPBLOCKSHIFT
+        IF blockx >= 0 AND blockx < P_SETUP.bmapwidth AND blocky >= 0 AND blocky < P_SETUP.bmapheight THEN
+            cell = blocky * P_SETUP.bmapwidth + blockx
+            list_head = CLNG(P_SETUP.blocklinks[cell])
+            P_MOBJ.mobj_bprev[thing] = -1
+            P_MOBJ.mobj_bnext[thing] = list_head
+            IF list_head >= 0 THEN P_MOBJ.mobj_bprev[list_head] = thing
+            P_SETUP.blocklinks[cell] = thing
+        ELSE
+            ' Thing is off the map.
+            P_MOBJ.mobj_bnext[thing] = -1
+            P_MOBJ.mobj_bprev[thing] = -1
+        ENDIF
+    ENDIF
+ENDSUB
+
+' Looks for lines in the given cell that cross the path being traced. A
+' line is crossed if its endpoints are on opposite sides of the path.
+' FALSE stops the search (earlyout).
+FUNC PIT_AddLineIntercepts(ld AS INTEGER) AS INTEGER
+    DIM s1 AS INTEGER
+    DIM s2 AS INTEGER
+    DIM v1 AS INTEGER = CLNG(P_SETUP.line_v1[ld])
+    DIM v2 AS INTEGER = CLNG(P_SETUP.line_v2[ld])
+    ' Avoid precision problems with two routines.
+    IF trace_dx > 65536 * 16 OR trace_dy > 65536 * 16 OR trace_dx < -65536 * 16 OR trace_dy < -65536 * 16 THEN
+        s1 = P_PointOnDivlineSide(CLNG(P_SETUP.vertex_x[v1]), CLNG(P_SETUP.vertex_y[v1]), trace_x, trace_y, trace_dx, trace_dy)
+        s2 = P_PointOnDivlineSide(CLNG(P_SETUP.vertex_x[v2]), CLNG(P_SETUP.vertex_y[v2]), trace_x, trace_y, trace_dx, trace_dy)
+    ELSE
+        s1 = P_PointOnLineSide(trace_x, trace_y, ld)
+        s2 = P_PointOnLineSide(trace_x + trace_dx, trace_y + trace_dy, ld)
+    ENDIF
+    ' Line isn't crossed?
+    IF s1 = s2 THEN RETURN 1
+
+    ' Hit the line.
+    DIM frac AS INTEGER = P_InterceptVector(trace_x, trace_y, trace_dx, trace_dy, CLNG(P_SETUP.vertex_x[v1]), CLNG(P_SETUP.vertex_y[v1]), CLNG(P_SETUP.line_dx[ld]), CLNG(P_SETUP.line_dy[ld]))
+    ' Behind source?
+    IF frac < 0 THEN RETURN 1
+
+    ' Try to early out the check.
+    IF earlyout <> 0 AND frac < 65536 AND CLNG(P_SETUP.line_backsector[ld]) < 0 THEN RETURN 0
+
+    IF intercept_p >= MAXINTERCEPTS THEN I_SYSTEM.I_Error("PIT_AddLineIntercepts: more than " + STR$(MAXINTERCEPTS) + " intercepts")
+    intercept_frac[intercept_p] = frac
+    intercept_isaline[intercept_p] = 1
+    intercept_d[intercept_p] = ld
+    intercept_p = intercept_p + 1
+    RETURN 1
+ENDFUNC
+
+' A thing is crossed if the path crosses the diagonal of its box that lies
+' across the path's direction.
+FUNC PIT_AddThingIntercepts(thing AS INTEGER) AS INTEGER
+    DIM x AS INTEGER = CLNG(P_MOBJ.mobj_x[thing])
+    DIM y AS INTEGER = CLNG(P_MOBJ.mobj_y[thing])
+    DIM radius AS INTEGER = CLNG(P_MOBJ.mobj_radius[thing])
+    DIM x1 AS INTEGER = x - radius
+    DIM x2 AS INTEGER = x + radius
+    DIM y1 AS INTEGER
+    DIM y2 AS INTEGER
+    ' Check a corner to corner crossection for hit.
+    IF (trace_dx BXOR trace_dy) > 0 THEN
+        y1 = y + radius
+        y2 = y - radius
+    ELSE
+        y1 = y - radius
+        y2 = y + radius
+    ENDIF
+
+    DIM s1 AS INTEGER = P_PointOnDivlineSide(x1, y1, trace_x, trace_y, trace_dx, trace_dy)
+    DIM s2 AS INTEGER = P_PointOnDivlineSide(x2, y2, trace_x, trace_y, trace_dx, trace_dy)
+    ' Line isn't crossed?
+    IF s1 = s2 THEN RETURN 1
+
+    DIM frac AS INTEGER = P_InterceptVector(trace_x, trace_y, trace_dx, trace_dy, x1, y1, x2 - x1, y2 - y1)
+    ' Behind source?
+    IF frac < 0 THEN RETURN 1
+
+    IF intercept_p >= MAXINTERCEPTS THEN I_SYSTEM.I_Error("PIT_AddThingIntercepts: more than " + STR$(MAXINTERCEPTS) + " intercepts")
+    intercept_frac[intercept_p] = frac
+    intercept_isaline[intercept_p] = 0
+    intercept_d[intercept_p] = thing
+    intercept_p = intercept_p + 1
+    RETURN 1
+ENDFUNC
+
+' Calls function func (a PIT_ number for lines) for every line of blockmap
+' cell (x, y) not yet checked in this pass, as validcount tells. FALSE as
+' soon as the function answers FALSE.
+EXPORT FUNC P_BlockLinesIterator(x AS INTEGER, y AS INTEGER, callee AS INTEGER) AS INTEGER
+    IF x < 0 OR y < 0 OR x >= P_SETUP.bmapwidth OR y >= P_SETUP.bmapheight THEN RETURN 1
+    DIM list AS INTEGER = CLNG(P_SETUP.blockmaplump[4 + y * P_SETUP.bmapwidth + x])
+    DIM ld AS INTEGER = CLNG(P_SETUP.blockmaplump[list])
+    DIM go_on AS INTEGER
+    DO WHILE ld <> -1
+        ' A line that was already checked is skipped.
+        IF CLNG(P_SETUP.line_validcount[ld]) <> R_MAIN.validcount THEN
+            P_SETUP.line_validcount[ld] = R_MAIN.validcount
+            IF callee = PIT_ADDLINEINTERCEPTS THEN
+                go_on = PIT_AddLineIntercepts(ld)
+            ELSEIF callee = PIT_CHECKLINE THEN
+                go_on = P_MAP.PIT_CheckLine(ld)
+            ELSE
+                I_SYSTEM.I_Error("P_BlockLinesIterator: unknown function " + STR$(callee))
+            ENDIF
+            IF go_on = 0 THEN RETURN 0
+        ENDIF
+        list = list + 1
+        ld = CLNG(P_SETUP.blockmaplump[list])
+    LOOP
+    ' Everything was checked.
+    RETURN 1
+ENDFUNC
+
+' Calls function func (a PIT_ number for things) for every thing of
+' blockmap cell (x, y). FALSE as soon as the function answers FALSE.
+EXPORT FUNC P_BlockThingsIterator(x AS INTEGER, y AS INTEGER, callee AS INTEGER) AS INTEGER
+    IF x < 0 OR y < 0 OR x >= P_SETUP.bmapwidth OR y >= P_SETUP.bmapheight THEN RETURN 1
+    DIM mobj AS INTEGER = CLNG(P_SETUP.blocklinks[y * P_SETUP.bmapwidth + x])
+    DIM following AS INTEGER
+    DIM go_on AS INTEGER
+    DO WHILE mobj >= 0
+        IF callee = PIT_ADDTHINGINTERCEPTS THEN
+            go_on = PIT_AddThingIntercepts(mobj)
+        ELSEIF callee = PIT_STOMPTHING THEN
+            go_on = P_MAP.PIT_StompThing(mobj)
+        ELSEIF callee = PIT_CHECKTHING THEN
+            go_on = P_MAP.PIT_CheckThing(mobj)
+        ELSE
+            I_SYSTEM.I_Error("P_BlockThingsIterator: unknown function " + STR$(callee))
+        ENDIF
+        IF go_on = 0 THEN RETURN 0
+        mobj = CLNG(P_MOBJ.mobj_bnext[mobj])
+    LOOP
+    RETURN 1
+ENDFUNC
+
+' Calls traverser func (a PTR_ number) for the intercepts in order of their
+' distance, up to maxfrac. FALSE if the traverser stopped the walk.
+FUNC P_TraverseIntercepts(callee AS INTEGER, maxfrac AS INTEGER) AS INTEGER
+    DIM n_left AS INTEGER = intercept_p
+    DIM dist AS INTEGER
+    DIM scan AS INTEGER
+    DIM nearest AS INTEGER = 0
+    DIM go_on AS INTEGER
+    DO WHILE n_left > 0
+        n_left = n_left - 1
+        dist = M_FIXED.MAXINT
+        FOR scan = 0 TO intercept_p - 1
+            IF CLNG(intercept_frac[scan]) < dist THEN
+                dist = CLNG(intercept_frac[scan])
+                nearest = scan
+            ENDIF
+        NEXT scan
+        ' Checked everything in range?
+        IF dist > maxfrac THEN RETURN 1
+
+        IF callee = PTR_SLIDETRAVERSE THEN
+            go_on = P_MAP.PTR_SlideTraverse(nearest)
+        ELSEIF callee = PTR_USETRAVERSE THEN
+            go_on = P_MAP.PTR_UseTraverse(nearest)
+        ELSE
+            I_SYSTEM.I_Error("P_TraverseIntercepts: unknown function " + STR$(callee))
+        ENDIF
+        ' Don't bother going farther?
+        IF go_on = 0 THEN RETURN 0
+        intercept_frac[nearest] = M_FIXED.MAXINT
+    LOOP
+    ' Everything was traversed.
+    RETURN 1
+ENDFUNC
+
+' Traces a line from (x1, y1) to (x2, y2), calling the traverser trav (a
+' PTR_ number) for each line or thing crossed, nearest first. flags picks
+' lines, things or both (PT_ADDLINES, PT_ADDTHINGS). FALSE if the traverser
+' stopped the walk.
+EXPORT FUNC P_PathTraverse(x1_in AS INTEGER, y1_in AS INTEGER, x2_in AS INTEGER, y2_in AS INTEGER, flags AS INTEGER, trav AS INTEGER) AS INTEGER
+    DIM x1 AS INTEGER = x1_in
+    DIM y1 AS INTEGER = y1_in
+    DIM x2 AS INTEGER = x2_in
+    DIM y2 AS INTEGER = y2_in
+
+    earlyout = flags BAND DOOMDEF.PT_EARLYOUT
+    R_MAIN.validcount = R_MAIN.validcount + 1
+    intercept_p = 0
+
+    ' Don't side exactly on a line.
+    IF ((x1 - P_SETUP.bmaporgx) BAND (DOOMDEF.MAPBLOCKSIZE - 1)) = 0 THEN x1 = x1 + 65536
+    IF ((y1 - P_SETUP.bmaporgy) BAND (DOOMDEF.MAPBLOCKSIZE - 1)) = 0 THEN y1 = y1 + 65536
+
+    trace_x = x1
+    trace_y = y1
+    trace_dx = x2 - x1
+    trace_dy = y2 - y1
+
+    x1 = x1 - P_SETUP.bmaporgx
+    y1 = y1 - P_SETUP.bmaporgy
+    DIM xt1 AS INTEGER = x1 SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM yt1 AS INTEGER = y1 SHR DOOMDEF.MAPBLOCKSHIFT
+
+    x2 = x2 - P_SETUP.bmaporgx
+    y2 = y2 - P_SETUP.bmaporgy
+    DIM xt2 AS INTEGER = x2 SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM yt2 AS INTEGER = y2 SHR DOOMDEF.MAPBLOCKSHIFT
+
+    DIM mapxstep AS INTEGER
+    DIM mapystep AS INTEGER
+    DIM partial AS INTEGER
+    DIM xstep AS INTEGER
+    DIM ystep AS INTEGER
+
+    IF xt2 > xt1 THEN
+        mapxstep = 1
+        partial = 65536 - ((x1 SHR DOOMDEF.MAPBTOFRAC) BAND 65535)
+        ystep = M_FIXED.FixedDiv(y2 - y1, CLNG(ABS(x2 - x1)))
+    ELSEIF xt2 < xt1 THEN
+        mapxstep = -1
+        partial = (x1 SHR DOOMDEF.MAPBTOFRAC) BAND 65535
+        ystep = M_FIXED.FixedDiv(y2 - y1, CLNG(ABS(x2 - x1)))
+    ELSE
+        mapxstep = 0
+        partial = 65536
+        ystep = 256 * 65536
+    ENDIF
+    DIM yintercept AS INTEGER = (y1 SHR DOOMDEF.MAPBTOFRAC) + M_FIXED.FixedMul(partial, ystep)
+
+    IF yt2 > yt1 THEN
+        mapystep = 1
+        partial = 65536 - ((y1 SHR DOOMDEF.MAPBTOFRAC) BAND 65535)
+        xstep = M_FIXED.FixedDiv(x2 - x1, CLNG(ABS(y2 - y1)))
+    ELSEIF yt2 < yt1 THEN
+        mapystep = -1
+        partial = (y1 SHR DOOMDEF.MAPBTOFRAC) BAND 65535
+        xstep = M_FIXED.FixedDiv(x2 - x1, CLNG(ABS(y2 - y1)))
+    ELSE
+        mapystep = 0
+        partial = 65536
+        xstep = 256 * 65536
+    ENDIF
+    DIM xintercept AS INTEGER = (x1 SHR DOOMDEF.MAPBTOFRAC) + M_FIXED.FixedMul(partial, xstep)
+
+    ' Step through map blocks. The count is a safety against going off the
+    ' map.
+    DIM mapx AS INTEGER = xt1
+    DIM mapy AS INTEGER = yt1
+    DIM n_steps AS INTEGER
+    FOR n_steps = 0 TO 63
+        IF (flags BAND DOOMDEF.PT_ADDLINES) <> 0 THEN
+            IF P_BlockLinesIterator(mapx, mapy, PIT_ADDLINEINTERCEPTS) = 0 THEN RETURN 0
+        ENDIF
+        IF (flags BAND DOOMDEF.PT_ADDTHINGS) <> 0 THEN
+            IF P_BlockThingsIterator(mapx, mapy, PIT_ADDTHINGINTERCEPTS) = 0 THEN RETURN 0
+        ENDIF
+        IF mapx = xt2 AND mapy = yt2 THEN EXITFOR
+        IF (yintercept SHR 16) = mapy THEN
+            yintercept = yintercept + ystep
+            mapx = mapx + mapxstep
+        ELSEIF (xintercept SHR 16) = mapx THEN
+            xintercept = xintercept + xstep
+            mapy = mapy + mapystep
+        ENDIF
+    NEXT n_steps
+
+    ' Go through the sorted list.
+    RETURN P_TraverseIntercepts(trav, 65536)
+ENDFUNC

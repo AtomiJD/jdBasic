@@ -1,0 +1,577 @@
+' Movement, collision handling and using lines (p_map.c). The shooting and
+' radius attack half of the file follows with the enemies.
+
+EXPORT MODULE P_MAP
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT TABLES
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT R_MAIN
+IMPORT P_MOBJ
+IMPORT P_MAPUTL
+IMPORT P_INTER
+IMPORT P_SPEC
+IMPORT P_SWITCH
+IMPORT S_SOUND
+
+' The thing being moved, its box at the place tried, and what
+' P_CheckPosition found there.
+DIM tmbbox_top AS INTEGER = 0
+DIM tmbbox_bottom AS INTEGER = 0
+DIM tmbbox_left AS INTEGER = 0
+DIM tmbbox_right AS INTEGER = 0
+DIM tmthing AS INTEGER = -1
+DIM tmflags AS INTEGER = 0
+DIM tmx AS INTEGER = 0
+DIM tmy AS INTEGER = 0
+
+' If floatok is true, the move would be ok if the thing were at the right
+' height.
+EXPORT DIM floatok AS INTEGER = 0
+EXPORT DIM tmfloorz AS INTEGER = 0
+EXPORT DIM tmceilingz AS INTEGER = 0
+EXPORT DIM tmdropoffz AS INTEGER = 0
+
+' The line that lowers the ceiling at the place tried (-1 = none), so that
+' missiles don't explode against sky hack walls.
+EXPORT DIM ceilingline AS INTEGER = -1
+
+' Special lines crossed by the move. The original keeps eight.
+CONST MAXSPECIALCROSS = 64
+EXPORT DIM spechit[MAXSPECIALCROSS] AS INTEGER
+EXPORT DIM numspechit AS INTEGER = 0
+
+' Range of the attack being made; P_SpawnPuff tells a punch by it.
+EXPORT DIM attackrange AS INTEGER = 0
+
+' ---- teleport move ------------------------------------------------------------
+
+EXPORT FUNC PIT_StompThing(thing AS INTEGER) AS INTEGER
+    IF (CLNG(P_MOBJ.mobj_flags[thing]) BAND INFO.MF_SHOOTABLE) = 0 THEN RETURN 1
+    DIM blockdist AS INTEGER = CLNG(P_MOBJ.mobj_radius[thing]) + CLNG(P_MOBJ.mobj_radius[tmthing])
+    ' Didn't hit it?
+    IF ABS(CLNG(P_MOBJ.mobj_x[thing]) - tmx) >= blockdist OR ABS(CLNG(P_MOBJ.mobj_y[thing]) - tmy) >= blockdist THEN RETURN 1
+    ' Don't clip against self.
+    IF thing = tmthing THEN RETURN 1
+    ' Monsters don't stomp things except on the boss level.
+    IF CLNG(P_MOBJ.mobj_player[tmthing]) < 0 AND DOOMSTAT.gamemap <> 30 THEN RETURN 0
+    P_INTER.P_DamageMobj(thing, tmthing, tmthing, 10000)
+    RETURN 1
+ENDFUNC
+
+' Moves a thing to (x, y) whatever is in between, killing what stands
+' there.
+EXPORT FUNC P_TeleportMove(thing AS INTEGER, x AS INTEGER, y AS INTEGER) AS INTEGER
+    tmthing = thing
+    tmflags = CLNG(P_MOBJ.mobj_flags[thing])
+    tmx = x
+    tmy = y
+    DIM radius AS INTEGER = CLNG(P_MOBJ.mobj_radius[thing])
+    tmbbox_top = y + radius
+    tmbbox_bottom = y - radius
+    tmbbox_right = x + radius
+    tmbbox_left = x - radius
+
+    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[R_MAIN.R_PointInSubsector(x, y)])
+    ceilingline = -1
+
+    ' The base floor and ceiling are from the subsector that contains the
+    ' point. Any contacted lines the step closer together will adjust them.
+    tmfloorz = CLNG(P_SETUP.sector_floorheight[sector])
+    tmdropoffz = tmfloorz
+    tmceilingz = CLNG(P_SETUP.sector_ceilingheight[sector])
+
+    R_MAIN.validcount = R_MAIN.validcount + 1
+    numspechit = 0
+
+    ' Stomp on any things contacted.
+    DIM xl AS INTEGER = (tmbbox_left - P_SETUP.bmaporgx - DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM xh AS INTEGER = (tmbbox_right - P_SETUP.bmaporgx + DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM yl AS INTEGER = (tmbbox_bottom - P_SETUP.bmaporgy - DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM yh AS INTEGER = (tmbbox_top - P_SETUP.bmaporgy + DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM bx AS INTEGER
+    DIM by AS INTEGER
+    FOR bx = xl TO xh
+        FOR by = yl TO yh
+            IF P_MAPUTL.P_BlockThingsIterator(bx, by, P_MAPUTL.PIT_STOMPTHING) = 0 THEN RETURN 0
+        NEXT by
+    NEXT bx
+
+    ' The move is ok, so link the thing into its new position.
+    P_MAPUTL.P_UnsetThingPosition(thing)
+    P_MOBJ.mobj_floorz[thing] = tmfloorz
+    P_MOBJ.mobj_ceilingz[thing] = tmceilingz
+    P_MOBJ.mobj_x[thing] = x
+    P_MOBJ.mobj_y[thing] = y
+    P_MAPUTL.P_SetThingPosition(thing)
+    RETURN 1
+ENDFUNC
+
+' ---- movement iterator functions ------------------------------------------------
+
+' Adjusts tmfloorz and tmceilingz as lines are contacted.
+EXPORT FUNC PIT_CheckLine(ld AS INTEGER) AS INTEGER
+    IF tmbbox_right <= CLNG(P_SETUP.line_bbox[ld * 4 + DOOMDEF.BOXLEFT]) OR tmbbox_left >= CLNG(P_SETUP.line_bbox[ld * 4 + DOOMDEF.BOXRIGHT]) OR tmbbox_top <= CLNG(P_SETUP.line_bbox[ld * 4 + DOOMDEF.BOXBOTTOM]) OR tmbbox_bottom >= CLNG(P_SETUP.line_bbox[ld * 4 + DOOMDEF.BOXTOP]) THEN RETURN 1
+
+    IF P_MAPUTL.P_BoxOnLineSide(tmbbox_top, tmbbox_bottom, tmbbox_left, tmbbox_right, ld) <> -1 THEN RETURN 1
+
+    ' A line has been hit. The moving thing's destination position will
+    ' cross the given line. If this should not be allowed, return false.
+    ' If the line is special, keep track of it to process later if the
+    ' move is proven ok. Specials are not processed if the move ends up
+    ' failing because of something else.
+    IF CLNG(P_SETUP.line_backsector[ld]) < 0 THEN RETURN 0
+
+    DIM line_flags AS INTEGER = CLNG(P_SETUP.line_flags[ld])
+    IF (CLNG(P_MOBJ.mobj_flags[tmthing]) BAND INFO.MF_MISSILE) = 0 THEN
+        ' Explicitly blocking everything.
+        IF (line_flags BAND DOOMDEF.ML_BLOCKING) <> 0 THEN RETURN 0
+        ' Block monsters only.
+        IF CLNG(P_MOBJ.mobj_player[tmthing]) < 0 AND (line_flags BAND DOOMDEF.ML_BLOCKMONSTERS) <> 0 THEN RETURN 0
+    ENDIF
+
+    ' Set openrange, opentop, openbottom.
+    P_MAPUTL.P_LineOpening(ld)
+
+    ' Adjust floor and ceiling heights.
+    IF P_MAPUTL.opentop < tmceilingz THEN
+        tmceilingz = P_MAPUTL.opentop
+        ceilingline = ld
+    ENDIF
+    IF P_MAPUTL.openbottom > tmfloorz THEN tmfloorz = P_MAPUTL.openbottom
+    IF P_MAPUTL.lowfloor < tmdropoffz THEN tmdropoffz = P_MAPUTL.lowfloor
+
+    ' If contacted a special line, add it to the list.
+    IF CLNG(P_SETUP.line_special[ld]) <> 0 THEN
+        IF numspechit >= MAXSPECIALCROSS THEN I_SYSTEM.I_Error("PIT_CheckLine: more than " + STR$(MAXSPECIALCROSS) + " special lines crossed")
+        spechit[numspechit] = ld
+        numspechit = numspechit + 1
+    ENDIF
+    RETURN 1
+ENDFUNC
+
+EXPORT FUNC PIT_CheckThing(thing AS INTEGER) AS INTEGER
+    DIM flags AS INTEGER = CLNG(P_MOBJ.mobj_flags[thing])
+    IF (flags BAND (INFO.MF_SOLID BOR INFO.MF_SPECIAL BOR INFO.MF_SHOOTABLE)) = 0 THEN RETURN 1
+
+    DIM blockdist AS INTEGER = CLNG(P_MOBJ.mobj_radius[thing]) + CLNG(P_MOBJ.mobj_radius[tmthing])
+    ' Didn't hit it?
+    IF ABS(CLNG(P_MOBJ.mobj_x[thing]) - tmx) >= blockdist OR ABS(CLNG(P_MOBJ.mobj_y[thing]) - tmy) >= blockdist THEN RETURN 1
+    ' Don't clip against self.
+    IF thing = tmthing THEN RETURN 1
+
+    DIM tm_flags AS INTEGER = CLNG(P_MOBJ.mobj_flags[tmthing])
+    DIM tm_type AS INTEGER = CLNG(P_MOBJ.mobj_type[tmthing])
+    DIM damage AS INTEGER
+    DIM target AS INTEGER
+    DIM target_type AS INTEGER
+    DIM thing_type AS INTEGER = CLNG(P_MOBJ.mobj_type[thing])
+
+    ' Check for skulls slamming into things.
+    IF (tm_flags BAND INFO.MF_SKULLFLY) <> 0 THEN
+        damage = ((M_RANDOM.P_Random() MOD 8) + 1) * CLNG(INFO.mi_damage[tm_type])
+        P_INTER.P_DamageMobj(thing, tmthing, tmthing, damage)
+        P_MOBJ.mobj_flags[tmthing] = CLNG(P_MOBJ.mobj_flags[tmthing]) BAND (BNOT INFO.MF_SKULLFLY)
+        P_MOBJ.mobj_momx[tmthing] = 0
+        P_MOBJ.mobj_momy[tmthing] = 0
+        P_MOBJ.mobj_momz[tmthing] = 0
+        P_MOBJ.P_SetMobjState(tmthing, CLNG(INFO.mi_spawnstate[tm_type]))
+        ' Stop moving.
+        RETURN 0
+    ENDIF
+
+    ' Missiles can hit other things.
+    IF (tm_flags BAND INFO.MF_MISSILE) <> 0 THEN
+        ' See if it went over or under.
+        IF CLNG(P_MOBJ.mobj_z[tmthing]) > CLNG(P_MOBJ.mobj_z[thing]) + CLNG(P_MOBJ.mobj_height[thing]) THEN RETURN 1
+        IF CLNG(P_MOBJ.mobj_z[tmthing]) + CLNG(P_MOBJ.mobj_height[tmthing]) < CLNG(P_MOBJ.mobj_z[thing]) THEN RETURN 1
+
+        target = CLNG(P_MOBJ.mobj_target[tmthing])
+        IF target >= 0 THEN
+            target_type = CLNG(P_MOBJ.mobj_type[target])
+            IF target_type = thing_type OR (target_type = INFO.MT_KNIGHT AND thing_type = INFO.MT_BRUISER) OR (target_type = INFO.MT_BRUISER AND thing_type = INFO.MT_KNIGHT) THEN
+                ' Don't hit the originator.
+                IF thing = target THEN RETURN 1
+                ' Explode, but do no damage: monsters of one species don't
+                ' hurt each other. Players can.
+                IF thing_type <> INFO.MT_PLAYER THEN RETURN 0
+            ENDIF
+        ENDIF
+
+        IF (flags BAND INFO.MF_SHOOTABLE) = 0 THEN
+            ' Didn't do any damage.
+            IF (flags BAND INFO.MF_SOLID) <> 0 THEN RETURN 0
+            RETURN 1
+        ENDIF
+
+        ' Damage and explode.
+        damage = ((M_RANDOM.P_Random() MOD 8) + 1) * CLNG(INFO.mi_damage[tm_type])
+        P_INTER.P_DamageMobj(thing, tmthing, target, damage)
+        ' Don't traverse any more.
+        RETURN 0
+    ENDIF
+
+    ' Check for special pickup.
+    IF (flags BAND INFO.MF_SPECIAL) <> 0 THEN
+        ' Can remove thing.
+        IF (tmflags BAND INFO.MF_PICKUP) <> 0 THEN P_INTER.P_TouchSpecialThing(thing, tmthing)
+        IF (flags BAND INFO.MF_SOLID) <> 0 THEN RETURN 0
+        RETURN 1
+    ENDIF
+
+    IF (flags BAND INFO.MF_SOLID) <> 0 THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+' ---- movement clipping -----------------------------------------------------------
+
+' Checks whether the thing could be at (x, y), without moving it. Sets
+' tmfloorz, tmceilingz, tmdropoffz (the lowest point contacted; monsters
+' won't move to a dropoff), ceilingline and the special lines hit.
+EXPORT FUNC P_CheckPosition(thing AS INTEGER, x AS INTEGER, y AS INTEGER) AS INTEGER
+    tmthing = thing
+    tmflags = CLNG(P_MOBJ.mobj_flags[thing])
+    tmx = x
+    tmy = y
+    DIM radius AS INTEGER = CLNG(P_MOBJ.mobj_radius[thing])
+    tmbbox_top = y + radius
+    tmbbox_bottom = y - radius
+    tmbbox_right = x + radius
+    tmbbox_left = x - radius
+
+    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[R_MAIN.R_PointInSubsector(x, y)])
+    ceilingline = -1
+
+    ' The base floor and ceiling are from the subsector that contains the
+    ' point. Any contacted lines the step closer together will adjust them.
+    tmfloorz = CLNG(P_SETUP.sector_floorheight[sector])
+    tmdropoffz = tmfloorz
+    tmceilingz = CLNG(P_SETUP.sector_ceilingheight[sector])
+
+    R_MAIN.validcount = R_MAIN.validcount + 1
+    numspechit = 0
+
+    IF (tmflags BAND INFO.MF_NOCLIP) <> 0 THEN RETURN 1
+
+    ' Check things first, possibly picking things up. The bounding box is
+    ' extended by MAXRADIUS because things are grouped into cells by their
+    ' origin, so they may overlap into adjacent cells.
+    DIM xl AS INTEGER = (tmbbox_left - P_SETUP.bmaporgx - DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM xh AS INTEGER = (tmbbox_right - P_SETUP.bmaporgx + DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM yl AS INTEGER = (tmbbox_bottom - P_SETUP.bmaporgy - DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM yh AS INTEGER = (tmbbox_top - P_SETUP.bmaporgy + DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+    DIM bx AS INTEGER
+    DIM by AS INTEGER
+    FOR bx = xl TO xh
+        FOR by = yl TO yh
+            IF P_MAPUTL.P_BlockThingsIterator(bx, by, P_MAPUTL.PIT_CHECKTHING) = 0 THEN RETURN 0
+        NEXT by
+    NEXT bx
+
+    ' Check lines.
+    xl = (tmbbox_left - P_SETUP.bmaporgx) SHR DOOMDEF.MAPBLOCKSHIFT
+    xh = (tmbbox_right - P_SETUP.bmaporgx) SHR DOOMDEF.MAPBLOCKSHIFT
+    yl = (tmbbox_bottom - P_SETUP.bmaporgy) SHR DOOMDEF.MAPBLOCKSHIFT
+    yh = (tmbbox_top - P_SETUP.bmaporgy) SHR DOOMDEF.MAPBLOCKSHIFT
+    FOR bx = xl TO xh
+        FOR by = yl TO yh
+            IF P_MAPUTL.P_BlockLinesIterator(bx, by, P_MAPUTL.PIT_CHECKLINE) = 0 THEN RETURN 0
+        NEXT by
+    NEXT bx
+    RETURN 1
+ENDFUNC
+
+' Attempts to move a thing to (x, y), crossing special lines unless
+' MF_TELEPORT is set.
+EXPORT FUNC P_TryMove(thing AS INTEGER, x AS INTEGER, y AS INTEGER) AS INTEGER
+    floatok = 0
+    ' Solid wall or thing?
+    IF P_CheckPosition(thing, x, y) = 0 THEN RETURN 0
+
+    DIM flags AS INTEGER = CLNG(P_MOBJ.mobj_flags[thing])
+    DIM height AS INTEGER = CLNG(P_MOBJ.mobj_height[thing])
+    DIM z AS INTEGER = CLNG(P_MOBJ.mobj_z[thing])
+    IF (flags BAND INFO.MF_NOCLIP) = 0 THEN
+        ' Doesn't fit.
+        IF tmceilingz - tmfloorz < height THEN RETURN 0
+        floatok = 1
+        ' The thing must lower itself to fit.
+        IF (flags BAND INFO.MF_TELEPORT) = 0 AND tmceilingz - z < height THEN RETURN 0
+        ' Too big a step up.
+        IF (flags BAND INFO.MF_TELEPORT) = 0 AND tmfloorz - z > 24 * 65536 THEN RETURN 0
+        ' Don't stand over a dropoff.
+        IF (flags BAND (INFO.MF_DROPOFF BOR INFO.MF_FLOAT)) = 0 AND tmfloorz - tmdropoffz > 24 * 65536 THEN RETURN 0
+    ENDIF
+
+    ' The move is ok, so link the thing into its new position.
+    P_MAPUTL.P_UnsetThingPosition(thing)
+    DIM oldx AS INTEGER = CLNG(P_MOBJ.mobj_x[thing])
+    DIM oldy AS INTEGER = CLNG(P_MOBJ.mobj_y[thing])
+    P_MOBJ.mobj_floorz[thing] = tmfloorz
+    P_MOBJ.mobj_ceilingz[thing] = tmceilingz
+    P_MOBJ.mobj_x[thing] = x
+    P_MOBJ.mobj_y[thing] = y
+    P_MAPUTL.P_SetThingPosition(thing)
+
+    ' If any special lines were hit, do the effect.
+    DIM ld AS INTEGER
+    DIM side AS INTEGER
+    DIM oldside AS INTEGER
+    IF (flags BAND (INFO.MF_TELEPORT BOR INFO.MF_NOCLIP)) = 0 THEN
+        DO WHILE numspechit > 0
+            numspechit = numspechit - 1
+            ' See if the line was crossed.
+            ld = CLNG(spechit[numspechit])
+            side = P_MAPUTL.P_PointOnLineSide(CLNG(P_MOBJ.mobj_x[thing]), CLNG(P_MOBJ.mobj_y[thing]), ld)
+            oldside = P_MAPUTL.P_PointOnLineSide(oldx, oldy, ld)
+            IF side <> oldside THEN
+                IF CLNG(P_SETUP.line_special[ld]) <> 0 THEN P_SPEC.P_CrossSpecialLine(ld, oldside, thing)
+            ENDIF
+        LOOP
+        ' The original leaves the count one below zero here.
+        numspechit = -1
+    ENDIF
+    RETURN 1
+ENDFUNC
+
+' Takes a valid thing and adjusts its floorz, ceilingz and possibly z. Called
+' for all nearby things whenever a sector changes height. FALSE if the thing
+' no longer fits.
+EXPORT FUNC P_ThingHeightClip(thing AS INTEGER) AS INTEGER
+    DIM onfloor AS INTEGER = 0
+    IF CLNG(P_MOBJ.mobj_z[thing]) = CLNG(P_MOBJ.mobj_floorz[thing]) THEN onfloor = 1
+
+    P_CheckPosition(thing, CLNG(P_MOBJ.mobj_x[thing]), CLNG(P_MOBJ.mobj_y[thing]))
+    ' What about stranding a monster partially off an edge?
+    P_MOBJ.mobj_floorz[thing] = tmfloorz
+    P_MOBJ.mobj_ceilingz[thing] = tmceilingz
+
+    IF onfloor <> 0 THEN
+        ' Walking monsters rise and fall with the floor.
+        P_MOBJ.mobj_z[thing] = tmfloorz
+    ELSE
+        ' Don't adjust a floating monster unless forced to.
+        IF CLNG(P_MOBJ.mobj_z[thing]) + CLNG(P_MOBJ.mobj_height[thing]) > tmceilingz THEN P_MOBJ.mobj_z[thing] = tmceilingz - CLNG(P_MOBJ.mobj_height[thing])
+    ENDIF
+
+    IF tmceilingz - tmfloorz < CLNG(P_MOBJ.mobj_height[thing]) THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+' ---- slide move ------------------------------------------------------------------
+' Allows the player to slide along any angled walls.
+
+DIM bestslidefrac AS INTEGER = 0
+DIM secondslidefrac AS INTEGER = 0
+DIM bestslideline AS INTEGER = -1
+DIM secondslideline AS INTEGER = -1
+DIM slidemo AS INTEGER = -1
+DIM tmxmove AS INTEGER = 0
+DIM tmymove AS INTEGER = 0
+
+' Adjusts the move so that it follows the line: the part of it along the
+' line is kept.
+SUB P_HitSlideLine(ld AS INTEGER)
+    DIM slopetype AS INTEGER = CLNG(P_SETUP.line_slopetype[ld])
+    IF slopetype = DOOMDEF.ST_HORIZONTAL THEN
+        tmymove = 0
+        RETURN
+    ENDIF
+    IF slopetype = DOOMDEF.ST_VERTICAL THEN
+        tmxmove = 0
+        RETURN
+    ENDIF
+
+    DIM side AS INTEGER = P_MAPUTL.P_PointOnLineSide(CLNG(P_MOBJ.mobj_x[slidemo]), CLNG(P_MOBJ.mobj_y[slidemo]), ld)
+    DIM lineangle AS INTEGER = R_MAIN.R_PointToAngle2(0, 0, CLNG(P_SETUP.line_dx[ld]), CLNG(P_SETUP.line_dy[ld]))
+    IF side = 1 THEN lineangle = (lineangle + M_FIXED.ANG180) BAND M_FIXED.ANGLE_MASK
+    DIM moveangle AS INTEGER = R_MAIN.R_PointToAngle2(0, 0, tmxmove, tmymove)
+    DIM deltaangle AS INTEGER = (moveangle - lineangle) BAND M_FIXED.ANGLE_MASK
+    IF deltaangle > M_FIXED.ANG180 THEN deltaangle = (deltaangle + M_FIXED.ANG180) BAND M_FIXED.ANGLE_MASK
+
+    lineangle = lineangle SHR TABLES.ANGLETOFINESHIFT
+    deltaangle = deltaangle SHR TABLES.ANGLETOFINESHIFT
+
+    DIM movelen AS INTEGER = P_MAPUTL.P_AproxDistance(tmxmove, tmymove)
+    DIM newlen AS INTEGER = M_FIXED.FixedMul(movelen, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + deltaangle]))
+    tmxmove = M_FIXED.FixedMul(newlen, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + lineangle]))
+    tmymove = M_FIXED.FixedMul(newlen, CLNG(TABLES.finesine[lineangle]))
+ENDSUB
+
+EXPORT FUNC PTR_SlideTraverse(icept AS INTEGER) AS INTEGER
+    IF CLNG(P_MAPUTL.intercept_isaline[icept]) = 0 THEN I_SYSTEM.I_Error("PTR_SlideTraverse: not a line?")
+    DIM li AS INTEGER = CLNG(P_MAPUTL.intercept_d[icept])
+    DIM blocking AS INTEGER = 0
+    DIM slide_z AS INTEGER = CLNG(P_MOBJ.mobj_z[slidemo])
+    DIM slide_height AS INTEGER = CLNG(P_MOBJ.mobj_height[slidemo])
+
+    IF (CLNG(P_SETUP.line_flags[li]) BAND DOOMDEF.ML_TWOSIDED) = 0 THEN
+        ' Don't hit the back side.
+        IF P_MAPUTL.P_PointOnLineSide(CLNG(P_MOBJ.mobj_x[slidemo]), CLNG(P_MOBJ.mobj_y[slidemo]), li) <> 0 THEN RETURN 1
+        blocking = 1
+    ELSE
+        ' Set openrange, opentop, openbottom.
+        P_MAPUTL.P_LineOpening(li)
+        IF P_MAPUTL.openrange < slide_height THEN
+            ' Doesn't fit.
+            blocking = 1
+        ELSEIF P_MAPUTL.opentop - slide_z < slide_height THEN
+            ' The thing is too high.
+            blocking = 1
+        ELSEIF P_MAPUTL.openbottom - slide_z > 24 * 65536 THEN
+            ' Too big a step up.
+            blocking = 1
+        ENDIF
+    ENDIF
+
+    ' This line doesn't block movement.
+    IF blocking = 0 THEN RETURN 1
+
+    ' The line does block movement: see if it is closer than the best so far.
+    IF CLNG(P_MAPUTL.intercept_frac[icept]) < bestslidefrac THEN
+        secondslidefrac = bestslidefrac
+        secondslideline = bestslideline
+        bestslidefrac = CLNG(P_MAPUTL.intercept_frac[icept])
+        bestslideline = li
+    ENDIF
+    ' Stop.
+    RETURN 0
+ENDFUNC
+
+' The momx and momy of the thing bring it against a wall: finds the first
+' line hit, moves flush to it and slides along it.
+EXPORT SUB P_SlideMove(mo AS INTEGER)
+    slidemo = mo
+    DIM hitcount AS INTEGER = 0
+    DIM stairstep AS INTEGER = 0
+    DIM leadx AS INTEGER
+    DIM leady AS INTEGER
+    DIM trailx AS INTEGER
+    DIM traily AS INTEGER
+    DIM newx AS INTEGER
+    DIM newy AS INTEGER
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    DIM radius AS INTEGER = CLNG(P_MOBJ.mobj_radius[mo])
+    DIM momx AS INTEGER
+    DIM momy AS INTEGER
+
+    DO
+        hitcount = hitcount + 1
+        ' Don't loop forever.
+        IF hitcount = 3 THEN
+            stairstep = 1
+            EXITDO
+        ENDIF
+
+        x = CLNG(P_MOBJ.mobj_x[mo])
+        y = CLNG(P_MOBJ.mobj_y[mo])
+        momx = CLNG(P_MOBJ.mobj_momx[mo])
+        momy = CLNG(P_MOBJ.mobj_momy[mo])
+
+        ' Trace along the three leading corners.
+        IF momx > 0 THEN
+            leadx = x + radius
+            trailx = x - radius
+        ELSE
+            leadx = x - radius
+            trailx = x + radius
+        ENDIF
+        IF momy > 0 THEN
+            leady = y + radius
+            traily = y - radius
+        ELSE
+            leady = y - radius
+            traily = y + radius
+        ENDIF
+
+        bestslidefrac = 65536 + 1
+        P_MAPUTL.P_PathTraverse(leadx, leady, leadx + momx, leady + momy, DOOMDEF.PT_ADDLINES, P_MAPUTL.PTR_SLIDETRAVERSE)
+        P_MAPUTL.P_PathTraverse(trailx, leady, trailx + momx, leady + momy, DOOMDEF.PT_ADDLINES, P_MAPUTL.PTR_SLIDETRAVERSE)
+        P_MAPUTL.P_PathTraverse(leadx, traily, leadx + momx, traily + momy, DOOMDEF.PT_ADDLINES, P_MAPUTL.PTR_SLIDETRAVERSE)
+
+        ' Move up to the wall.
+        IF bestslidefrac = 65536 + 1 THEN
+            ' The move must have hit the middle, so stairstep.
+            stairstep = 1
+            EXITDO
+        ENDIF
+
+        ' Fudge a bit to make sure it doesn't hit.
+        bestslidefrac = bestslidefrac - $800
+        IF bestslidefrac > 0 THEN
+            newx = M_FIXED.FixedMul(momx, bestslidefrac)
+            newy = M_FIXED.FixedMul(momy, bestslidefrac)
+            IF P_TryMove(mo, x + newx, y + newy) = 0 THEN
+                stairstep = 1
+                EXITDO
+            ENDIF
+        ENDIF
+
+        ' Now continue along the wall. First calculate the remainder.
+        bestslidefrac = 65536 - (bestslidefrac + $800)
+        IF bestslidefrac > 65536 THEN bestslidefrac = 65536
+        IF bestslidefrac <= 0 THEN RETURN
+
+        tmxmove = M_FIXED.FixedMul(momx, bestslidefrac)
+        tmymove = M_FIXED.FixedMul(momy, bestslidefrac)
+
+        ' Clip the moves.
+        P_HitSlideLine(bestslideline)
+
+        P_MOBJ.mobj_momx[mo] = tmxmove
+        P_MOBJ.mobj_momy[mo] = tmymove
+
+        IF P_TryMove(mo, CLNG(P_MOBJ.mobj_x[mo]) + tmxmove, CLNG(P_MOBJ.mobj_y[mo]) + tmymove) <> 0 THEN RETURN
+    LOOP
+
+    IF stairstep <> 0 THEN
+        IF P_TryMove(mo, CLNG(P_MOBJ.mobj_x[mo]), CLNG(P_MOBJ.mobj_y[mo]) + CLNG(P_MOBJ.mobj_momy[mo])) = 0 THEN
+            P_TryMove(mo, CLNG(P_MOBJ.mobj_x[mo]) + CLNG(P_MOBJ.mobj_momx[mo]), CLNG(P_MOBJ.mobj_y[mo]))
+        ENDIF
+    ENDIF
+ENDSUB
+
+' ---- use lines -------------------------------------------------------------------
+
+DIM usething AS INTEGER = -1
+
+EXPORT FUNC PTR_UseTraverse(icept AS INTEGER) AS INTEGER
+    DIM ld AS INTEGER = CLNG(P_MAPUTL.intercept_d[icept])
+    IF CLNG(P_SETUP.line_special[ld]) = 0 THEN
+        P_MAPUTL.P_LineOpening(ld)
+        IF P_MAPUTL.openrange <= 0 THEN
+            S_SOUND.S_StartSound(usething, INFO.SFX_NOWAY)
+            ' Can't use through a wall.
+            RETURN 0
+        ENDIF
+        ' Not a special line, but keep checking.
+        RETURN 1
+    ENDIF
+
+    DIM side AS INTEGER = 0
+    IF P_MAPUTL.P_PointOnLineSide(CLNG(P_MOBJ.mobj_x[usething]), CLNG(P_MOBJ.mobj_y[usething]), ld) = 1 THEN side = 1
+    P_SWITCH.P_UseSpecialLine(usething, ld, side)
+    ' Can't use more than one special line in a row.
+    RETURN 0
+ENDFUNC
+
+' Looks for special lines in front of the player to activate.
+EXPORT SUB P_UseLines(player AS INTEGER)
+    usething = CLNG(D_PLAYER.player_mo[player])
+    DIM angle AS INTEGER = CLNG(P_MOBJ.mobj_angle[usething]) SHR TABLES.ANGLETOFINESHIFT
+    DIM x1 AS INTEGER = CLNG(P_MOBJ.mobj_x[usething])
+    DIM y1 AS INTEGER = CLNG(P_MOBJ.mobj_y[usething])
+    DIM x2 AS INTEGER = x1 + (DOOMDEF.USERANGE SHR 16) * CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + angle])
+    DIM y2 AS INTEGER = y1 + (DOOMDEF.USERANGE SHR 16) * CLNG(TABLES.finesine[angle])
+    P_MAPUTL.P_PathTraverse(x1, y1, x2, y2, DOOMDEF.PT_ADDLINES, P_MAPUTL.PTR_USETRAVERSE)
+ENDSUB

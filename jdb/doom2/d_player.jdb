@@ -1,0 +1,74 @@
+' The players (d_player.h, d_ticcmd.h): player_t as one array per field,
+' indexed by player number 0..3. A field that is an array in C is a row of
+' its array here: powers[pw] of player p is player_powers[p * NUMPOWERS + pw].
+
+EXPORT MODULE D_PLAYER
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' The thing that is the player in the level (mobj index, -1 = none).
+EXPORT DIM player_mo[4] AS INTEGER
+EXPORT DIM player_playerstate[4] AS INTEGER
+
+' ticcmd_t: what the player wants to do this tic.
+EXPORT DIM player_cmd_forwardmove[4] AS INTEGER
+EXPORT DIM player_cmd_sidemove[4] AS INTEGER
+EXPORT DIM player_cmd_angleturn[4] AS INTEGER
+EXPORT DIM player_cmd_consistancy[4] AS INTEGER
+EXPORT DIM player_cmd_chatchar[4] AS INTEGER
+EXPORT DIM player_cmd_buttons[4] AS INTEGER
+
+' Eye height in the world, and above the feet; the latter bobs and is
+' pushed down on landing.
+EXPORT DIM player_viewz[4] AS INTEGER
+EXPORT DIM player_viewheight[4] AS INTEGER
+EXPORT DIM player_deltaviewheight[4] AS INTEGER
+EXPORT DIM player_bob[4] AS INTEGER
+
+EXPORT DIM player_health[4] AS INTEGER
+EXPORT DIM player_armorpoints[4] AS INTEGER
+' 0 = none, 1 = green, 2 = blue.
+EXPORT DIM player_armortype[4] AS INTEGER
+
+EXPORT DIM player_powers[4 * 6] AS INTEGER
+EXPORT DIM player_cards[4 * 6] AS INTEGER
+EXPORT DIM player_backpack[4] AS INTEGER
+EXPORT DIM player_frags[4 * 4] AS INTEGER
+
+EXPORT DIM player_readyweapon[4] AS INTEGER
+EXPORT DIM player_pendingweapon[4] AS INTEGER
+EXPORT DIM player_weaponowned[4 * 9] AS INTEGER
+EXPORT DIM player_ammo[4 * 4] AS INTEGER
+EXPORT DIM player_maxammo[4 * 4] AS INTEGER
+
+' True while the button was down at the last tic.
+EXPORT DIM player_attackdown[4] AS INTEGER
+EXPORT DIM player_usedown[4] AS INTEGER
+
+EXPORT DIM player_cheats[4] AS INTEGER
+EXPORT DIM player_refire[4] AS INTEGER
+
+EXPORT DIM player_killcount[4] AS INTEGER
+EXPORT DIM player_itemcount[4] AS INTEGER
+EXPORT DIM player_secretcount[4] AS INTEGER
+
+EXPORT DIM player_message$[4] AS STRING
+
+' Red and gold flashes of the screen.
+EXPORT DIM player_damagecount[4] AS INTEGER
+EXPORT DIM player_bonuscount[4] AS INTEGER
+' Who did the damage (mobj index, -1 = floor or crusher).
+EXPORT DIM player_attacker[4] AS INTEGER
+EXPORT DIM player_extralight[4] AS INTEGER
+EXPORT DIM player_fixedcolormap[4] AS INTEGER
+EXPORT DIM player_colormap[4] AS INTEGER
+
+' pspdef_t of the weapon and the flash sprite: psprite ps of player p is at
+' p * 2 + ps. state 0 = not shown.
+EXPORT DIM player_psprite_state[4 * 2] AS INTEGER
+EXPORT DIM player_psprite_tics[4 * 2] AS INTEGER
+EXPORT DIM player_psprite_sx[4 * 2] AS INTEGER
+EXPORT DIM player_psprite_sy[4 * 2] AS INTEGER
+
+EXPORT DIM player_didsecret[4] AS INTEGER

@@ -1,0 +1,706 @@
+' Things: spawning, removing, state changes and movement (p_mobj.c, p_mobj.h).
+'
+' mobj_t is one array per field, indexed by the thing's number; -1 stands
+' for a NULL thing. The info pointer of C is the type, the state pointer the
+' state number, the player pointer the player number or -1.
+
+EXPORT MODULE P_MOBJ
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT TABLES
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT R_MAIN
+IMPORT R_SKY
+IMPORT P_TICK
+IMPORT P_MAPUTL
+IMPORT P_MAP
+IMPORT P_ENEMY
+IMPORT P_PSPR
+IMPORT S_SOUND
+IMPORT G_GAME
+
+EXPORT CONST MAXMOBJS = 8192
+
+CONST STOPSPEED = $1000
+CONST FRICTION = $E800
+
+EXPORT DIM mobj_thinker[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_x[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_y[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_z[MAXMOBJS] AS INTEGER
+' Links in the sector's thing list.
+EXPORT DIM mobj_snext[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_sprev[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_angle[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_sprite[MAXMOBJS] AS INTEGER
+' May be ORed with FF_FULLBRIGHT.
+EXPORT DIM mobj_frame[MAXMOBJS] AS INTEGER
+' Links in the blockmap cell's thing list.
+EXPORT DIM mobj_bnext[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_bprev[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_subsector[MAXMOBJS] AS INTEGER
+' The closest interval over all sectors the thing touches.
+EXPORT DIM mobj_floorz[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_ceilingz[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_radius[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_height[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_momx[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_momy[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_momz[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_validcount[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_type[MAXMOBJS] AS INTEGER
+' State tic counter; -1 = the state never ends.
+EXPORT DIM mobj_tics[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_state[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_flags[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_health[MAXMOBJS] AS INTEGER
+' Movement direction 0-7 and the steps left before a new one is picked.
+EXPORT DIM mobj_movedir[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_movecount[MAXMOBJS] AS INTEGER
+' The thing being chased or attacked, or for a missile its originator.
+EXPORT DIM mobj_target[MAXMOBJS] AS INTEGER
+' Tics before a monster attacks again; freezes a player after teleporting.
+EXPORT DIM mobj_reactiontime[MAXMOBJS] AS INTEGER
+' While above 0 the target is kept, whoever attacks.
+EXPORT DIM mobj_threshold[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_player[MAXMOBJS] AS INTEGER
+' Player number last looked for.
+EXPORT DIM mobj_lastlook[MAXMOBJS] AS INTEGER
+' The map thing it was spawned from, for nightmare and item respawn.
+EXPORT DIM mobj_spawnpoint_x[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_spawnpoint_y[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_spawnpoint_angle[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_spawnpoint_type[MAXMOBJS] AS INTEGER
+EXPORT DIM mobj_spawnpoint_options[MAXMOBJS] AS INTEGER
+' The thing a homing missile follows.
+EXPORT DIM mobj_tracer[MAXMOBJS] AS INTEGER
+
+DIM free_mobjs[MAXMOBJS] AS INTEGER
+DIM n_free AS INTEGER = 0
+
+' Items picked up in deathmatch wait here for their respawn.
+DIM itemrespawnque_x[DOOMDEF.ITEMQUESIZE] AS INTEGER
+DIM itemrespawnque_y[DOOMDEF.ITEMQUESIZE] AS INTEGER
+DIM itemrespawnque_angle[DOOMDEF.ITEMQUESIZE] AS INTEGER
+DIM itemrespawnque_type[DOOMDEF.ITEMQUESIZE] AS INTEGER
+DIM itemrespawnque_options[DOOMDEF.ITEMQUESIZE] AS INTEGER
+DIM itemrespawntime[DOOMDEF.ITEMQUESIZE] AS INTEGER
+EXPORT DIM iquehead AS INTEGER = 0
+EXPORT DIM iquetail AS INTEGER = 0
+
+' Empties the pool of things. Called with the thinkers, at level start.
+EXPORT SUB P_InitMobjs()
+    DIM i AS INTEGER
+    n_free = 0
+    FOR i = MAXMOBJS - 1 TO 0 STEP -1
+        free_mobjs[n_free] = i
+        n_free = n_free + 1
+    NEXT i
+ENDSUB
+
+' Gives the number of a removed thing back to the pool, once its thinker
+' has left the list.
+EXPORT SUB P_FreeMobj(mobj AS INTEGER)
+    free_mobjs[n_free] = mobj
+    n_free = n_free + 1
+ENDSUB
+
+' True once P_RemoveMobj has been called for the thing.
+FUNC Removed(mobj AS INTEGER) AS INTEGER
+    IF CLNG(P_TICK.th_function[CLNG(mobj_thinker[mobj])]) = P_TICK.TF_REMOVED THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' Puts the thing into a state and runs the state's action; states of zero
+' tics are passed through at once. FALSE if the thing removed itself.
+EXPORT FUNC P_SetMobjState(mobj AS INTEGER, state_in AS INTEGER) AS INTEGER
+    DIM state AS INTEGER = state_in
+    DIM action AS INTEGER
+    DO
+        IF state = INFO.S_NULL THEN
+            mobj_state[mobj] = INFO.S_NULL
+            P_RemoveMobj(mobj)
+            RETURN 0
+        ENDIF
+        mobj_state[mobj] = state
+        mobj_tics[mobj] = INFO.st_tics[state]
+        mobj_sprite[mobj] = INFO.st_sprite[state]
+        mobj_frame[mobj] = INFO.st_frame[state]
+        action = CLNG(INFO.st_action[state])
+        IF action <> 0 THEN P_ENEMY.A_Call(action, mobj)
+        state = CLNG(INFO.st_next[state])
+    LOOP WHILE CLNG(mobj_tics[mobj]) = 0
+    RETURN 1
+ENDFUNC
+
+EXPORT SUB P_ExplodeMissile(mo AS INTEGER)
+    mobj_momx[mo] = 0
+    mobj_momy[mo] = 0
+    mobj_momz[mo] = 0
+    DIM mtype AS INTEGER = CLNG(mobj_type[mo])
+    P_SetMobjState(mo, CLNG(INFO.mi_deathstate[mtype]))
+    DIM tics AS INTEGER = CLNG(mobj_tics[mo]) - (M_RANDOM.P_Random() BAND 3)
+    IF tics < 1 THEN tics = 1
+    mobj_tics[mo] = tics
+    mobj_flags[mo] = CLNG(mobj_flags[mo]) BAND (BNOT INFO.MF_MISSILE)
+    IF CLNG(INFO.mi_deathsound[mtype]) <> 0 THEN S_SOUND.S_StartSound(mo, CLNG(INFO.mi_deathsound[mtype]))
+ENDSUB
+
+SUB P_XYMovement(mo AS INTEGER)
+    DIM momx AS INTEGER = CLNG(mobj_momx[mo])
+    DIM momy AS INTEGER = CLNG(mobj_momy[mo])
+    DIM flags AS INTEGER = CLNG(mobj_flags[mo])
+    IF momx = 0 AND momy = 0 THEN
+        IF (flags BAND INFO.MF_SKULLFLY) <> 0 THEN
+            ' The skull slammed into something.
+            mobj_flags[mo] = flags BAND (BNOT INFO.MF_SKULLFLY)
+            mobj_momx[mo] = 0
+            mobj_momy[mo] = 0
+            mobj_momz[mo] = 0
+            P_SetMobjState(mo, CLNG(INFO.mi_spawnstate[CLNG(mobj_type[mo])]))
+        ENDIF
+        RETURN
+    ENDIF
+
+    DIM player AS INTEGER = CLNG(mobj_player[mo])
+
+    IF momx > DOOMDEF.MAXMOVE THEN
+        momx = DOOMDEF.MAXMOVE
+    ELSEIF momx < -DOOMDEF.MAXMOVE THEN
+        momx = -DOOMDEF.MAXMOVE
+    ENDIF
+    IF momy > DOOMDEF.MAXMOVE THEN
+        momy = DOOMDEF.MAXMOVE
+    ELSEIF momy < -DOOMDEF.MAXMOVE THEN
+        momy = -DOOMDEF.MAXMOVE
+    ENDIF
+    mobj_momx[mo] = momx
+    mobj_momy[mo] = momy
+
+    DIM xmove AS INTEGER = momx
+    DIM ymove AS INTEGER = momy
+    DIM ptryx AS INTEGER
+    DIM ptryy AS INTEGER
+    DIM backsector AS INTEGER
+    DO
+        ' A long move is made in two steps. Only moves in the positive
+        ' directions are tested, as in the original.
+        IF xmove > DOOMDEF.MAXMOVE \ 2 OR ymove > DOOMDEF.MAXMOVE \ 2 THEN
+            ptryx = CLNG(mobj_x[mo]) + xmove \ 2
+            ptryy = CLNG(mobj_y[mo]) + ymove \ 2
+            xmove = xmove SHR 1
+            ymove = ymove SHR 1
+        ELSE
+            ptryx = CLNG(mobj_x[mo]) + xmove
+            ptryy = CLNG(mobj_y[mo]) + ymove
+            xmove = 0
+            ymove = 0
+        ENDIF
+
+        IF P_MAP.P_TryMove(mo, ptryx, ptryy) = 0 THEN
+            ' Blocked move.
+            IF CLNG(mobj_player[mo]) >= 0 THEN
+                ' Try to slide along it.
+                P_MAP.P_SlideMove(mo)
+            ELSEIF (CLNG(mobj_flags[mo]) BAND INFO.MF_MISSILE) <> 0 THEN
+                ' A missile that hits the sky disappears instead of exploding.
+                IF P_MAP.ceilingline >= 0 THEN
+                    backsector = CLNG(P_SETUP.line_backsector[P_MAP.ceilingline])
+                    IF backsector >= 0 ANDALSO CLNG(P_SETUP.sector_ceilingpic[backsector]) = R_SKY.skyflatnum THEN
+                        P_RemoveMobj(mo)
+                        RETURN
+                    ENDIF
+                ENDIF
+                P_ExplodeMissile(mo)
+            ELSE
+                mobj_momx[mo] = 0
+                mobj_momy[mo] = 0
+            ENDIF
+        ENDIF
+    LOOP WHILE xmove <> 0 OR ymove <> 0
+
+    ' Slow down.
+    IF player >= 0 ANDALSO (CLNG(D_PLAYER.player_cheats[player]) BAND DOOMDEF.CF_NOMOMENTUM) <> 0 THEN
+        ' Debug option for no sliding at all.
+        mobj_momx[mo] = 0
+        mobj_momy[mo] = 0
+        RETURN
+    ENDIF
+
+    flags = CLNG(mobj_flags[mo])
+    ' No friction for missiles, ever, and none when airborne.
+    IF (flags BAND (INFO.MF_MISSILE BOR INFO.MF_SKULLFLY)) <> 0 THEN RETURN
+    IF CLNG(mobj_z[mo]) > CLNG(mobj_floorz[mo]) THEN RETURN
+
+    momx = CLNG(mobj_momx[mo])
+    momy = CLNG(mobj_momy[mo])
+    IF (flags BAND INFO.MF_CORPSE) <> 0 THEN
+        ' Do not stop sliding if halfway off a step with some momentum.
+        IF momx > 65536 \ 4 OR momx < -65536 \ 4 OR momy > 65536 \ 4 OR momy < -65536 \ 4 THEN
+            IF CLNG(mobj_floorz[mo]) <> CLNG(P_SETUP.sector_floorheight[CLNG(P_SETUP.subsector_sector[CLNG(mobj_subsector[mo])])]) THEN RETURN
+        ENDIF
+    ENDIF
+
+    DIM idle AS INTEGER = 1
+    IF player >= 0 THEN
+        IF CLNG(D_PLAYER.player_cmd_forwardmove[player]) <> 0 OR CLNG(D_PLAYER.player_cmd_sidemove[player]) <> 0 THEN idle = 0
+    ENDIF
+    DIM pstate AS INTEGER
+    IF momx > -STOPSPEED AND momx < STOPSPEED AND momy > -STOPSPEED AND momy < STOPSPEED AND idle <> 0 THEN
+        ' If in a walking frame, stop moving.
+        IF player >= 0 THEN
+            pstate = CLNG(mobj_state[CLNG(D_PLAYER.player_mo[player])])
+            IF pstate >= INFO.S_PLAY_RUN1 AND pstate < INFO.S_PLAY_RUN1 + 4 THEN P_SetMobjState(CLNG(D_PLAYER.player_mo[player]), INFO.S_PLAY)
+        ENDIF
+        mobj_momx[mo] = 0
+        mobj_momy[mo] = 0
+    ELSE
+        mobj_momx[mo] = M_FIXED.FixedMul(momx, FRICTION)
+        mobj_momy[mo] = M_FIXED.FixedMul(momy, FRICTION)
+    ENDIF
+ENDSUB
+
+SUB P_ZMovement(mo AS INTEGER)
+    DIM player AS INTEGER = CLNG(mobj_player[mo])
+    DIM z AS INTEGER = CLNG(mobj_z[mo])
+    DIM floorz AS INTEGER = CLNG(mobj_floorz[mo])
+    DIM flags AS INTEGER = CLNG(mobj_flags[mo])
+    DIM momz AS INTEGER = CLNG(mobj_momz[mo])
+    DIM target AS INTEGER = CLNG(mobj_target[mo])
+    DIM dist AS INTEGER
+    DIM delta AS INTEGER
+
+    ' Smooth the view when stepping up.
+    IF player >= 0 AND z < floorz THEN
+        D_PLAYER.player_viewheight[player] = CLNG(D_PLAYER.player_viewheight[player]) - (floorz - z)
+        D_PLAYER.player_deltaviewheight[player] = (DOOMDEF.VIEWHEIGHT - CLNG(D_PLAYER.player_viewheight[player])) SHR 3
+    ENDIF
+
+    z = z + momz
+
+    IF (flags BAND INFO.MF_FLOAT) <> 0 AND target >= 0 THEN
+        ' Float down towards the target if too close.
+        IF (flags BAND INFO.MF_SKULLFLY) = 0 AND (flags BAND INFO.MF_INFLOAT) = 0 THEN
+            dist = P_MAPUTL.P_AproxDistance(CLNG(mobj_x[mo]) - CLNG(mobj_x[target]), CLNG(mobj_y[mo]) - CLNG(mobj_y[target]))
+            delta = (CLNG(mobj_z[target]) + (CLNG(mobj_height[mo]) SHR 1)) - z
+            IF delta < 0 AND dist < -(delta * 3) THEN
+                z = z - DOOMDEF.FLOATSPEED
+            ELSEIF delta > 0 AND dist < delta * 3 THEN
+                z = z + DOOMDEF.FLOATSPEED
+            ENDIF
+        ENDIF
+    ENDIF
+
+    IF z <= floorz THEN
+        ' Hit the floor.
+        IF (flags BAND INFO.MF_SKULLFLY) <> 0 THEN momz = -momz
+        IF momz < 0 THEN
+            IF player >= 0 AND momz < -DOOMDEF.GRAVITY * 8 THEN
+                ' Squat down after a fall: the view height drops and comes
+                ' back at a rate that grows.
+                D_PLAYER.player_deltaviewheight[player] = momz SHR 3
+                S_SOUND.S_StartSound(mo, INFO.SFX_OOF)
+            ENDIF
+            momz = 0
+        ENDIF
+        z = floorz
+        mobj_z[mo] = z
+        mobj_momz[mo] = momz
+        IF (flags BAND INFO.MF_MISSILE) <> 0 AND (flags BAND INFO.MF_NOCLIP) = 0 THEN
+            P_ExplodeMissile(mo)
+            RETURN
+        ENDIF
+    ELSEIF (flags BAND INFO.MF_NOGRAVITY) = 0 THEN
+        IF momz = 0 THEN
+            momz = -DOOMDEF.GRAVITY * 2
+        ELSE
+            momz = momz - DOOMDEF.GRAVITY
+        ENDIF
+    ENDIF
+
+    IF z + CLNG(mobj_height[mo]) > CLNG(mobj_ceilingz[mo]) THEN
+        ' Hit the ceiling.
+        IF momz > 0 THEN momz = 0
+        z = CLNG(mobj_ceilingz[mo]) - CLNG(mobj_height[mo])
+        IF (flags BAND INFO.MF_SKULLFLY) <> 0 THEN momz = -momz
+        mobj_z[mo] = z
+        mobj_momz[mo] = momz
+        IF (flags BAND INFO.MF_MISSILE) <> 0 AND (flags BAND INFO.MF_NOCLIP) = 0 THEN
+            P_ExplodeMissile(mo)
+            RETURN
+        ENDIF
+    ENDIF
+
+    mobj_z[mo] = z
+    mobj_momz[mo] = momz
+ENDSUB
+
+' A dead monster comes back at its spawn point (nightmare skill).
+SUB P_NightmareRespawn(mobj AS INTEGER)
+    DIM x AS INTEGER = CLNG(mobj_spawnpoint_x[mobj]) * 65536
+    DIM y AS INTEGER = CLNG(mobj_spawnpoint_y[mobj]) * 65536
+
+    ' Something is occupying its position?
+    IF P_MAP.P_CheckPosition(mobj, x, y) = 0 THEN RETURN
+
+    ' A teleport fog at the old spot, because of the removal of the body,
+    ' and one at the new spot.
+    DIM old_sector AS INTEGER = CLNG(P_SETUP.subsector_sector[CLNG(mobj_subsector[mobj])])
+    DIM mo AS INTEGER = P_SpawnMobj(CLNG(mobj_x[mobj]), CLNG(mobj_y[mobj]), CLNG(P_SETUP.sector_floorheight[old_sector]), INFO.MT_TFOG)
+    S_SOUND.S_StartSound(mo, INFO.SFX_TELEPT)
+
+    DIM new_sector AS INTEGER = CLNG(P_SETUP.subsector_sector[R_MAIN.R_PointInSubsector(x, y)])
+    mo = P_SpawnMobj(x, y, CLNG(P_SETUP.sector_floorheight[new_sector]), INFO.MT_TFOG)
+    S_SOUND.S_StartSound(mo, INFO.SFX_TELEPT)
+
+    DIM mtype AS INTEGER = CLNG(mobj_type[mobj])
+    DIM z AS INTEGER
+    IF (CLNG(INFO.mi_flags[mtype]) BAND INFO.MF_SPAWNCEILING) <> 0 THEN z = DOOMDEF.ONCEILINGZ ELSE z = DOOMDEF.ONFLOORZ
+
+    ' Inherit attributes from the deceased one.
+    mo = P_SpawnMobj(x, y, z, mtype)
+    mobj_spawnpoint_x[mo] = mobj_spawnpoint_x[mobj]
+    mobj_spawnpoint_y[mo] = mobj_spawnpoint_y[mobj]
+    mobj_spawnpoint_angle[mo] = mobj_spawnpoint_angle[mobj]
+    mobj_spawnpoint_type[mo] = mobj_spawnpoint_type[mobj]
+    mobj_spawnpoint_options[mo] = mobj_spawnpoint_options[mobj]
+    mobj_angle[mo] = (M_FIXED.ANG45 * (CLNG(mobj_spawnpoint_angle[mobj]) \ 45)) BAND M_FIXED.ANGLE_MASK
+    IF (CLNG(mobj_spawnpoint_options[mobj]) BAND DOOMDEF.MTF_AMBUSH) <> 0 THEN mobj_flags[mo] = CLNG(mobj_flags[mo]) BOR INFO.MF_AMBUSH
+    mobj_reactiontime[mo] = 18
+
+    ' Remove the old monster.
+    P_RemoveMobj(mobj)
+ENDSUB
+
+' Runs a thing for one tic: momentum, then the state counter.
+EXPORT SUB P_MobjThinker(mobj AS INTEGER)
+    IF CLNG(mobj_momx[mobj]) <> 0 OR CLNG(mobj_momy[mobj]) <> 0 OR (CLNG(mobj_flags[mobj]) BAND INFO.MF_SKULLFLY) <> 0 THEN
+        P_XYMovement(mobj)
+        IF Removed(mobj) <> 0 THEN RETURN
+    ENDIF
+    IF CLNG(mobj_z[mobj]) <> CLNG(mobj_floorz[mobj]) OR CLNG(mobj_momz[mobj]) <> 0 THEN
+        P_ZMovement(mobj)
+        IF Removed(mobj) <> 0 THEN RETURN
+    ENDIF
+
+    ' Cycle through states, calling action functions at transitions.
+    DIM tics AS INTEGER = CLNG(mobj_tics[mobj])
+    IF tics <> -1 THEN
+        tics = tics - 1
+        mobj_tics[mobj] = tics
+        ' A state of zero tics is passed through.
+        IF tics = 0 THEN P_SetMobjState(mobj, CLNG(INFO.st_next[CLNG(mobj_state[mobj])]))
+    ELSE
+        ' Check for nightmare respawn.
+        IF (CLNG(mobj_flags[mobj]) BAND INFO.MF_COUNTKILL) = 0 THEN RETURN
+        IF DOOMSTAT.respawnmonsters = 0 THEN RETURN
+        mobj_movecount[mobj] = CLNG(mobj_movecount[mobj]) + 1
+        IF CLNG(mobj_movecount[mobj]) < 12 * 35 THEN RETURN
+        IF (P_TICK.leveltime BAND 31) <> 0 THEN RETURN
+        IF M_RANDOM.P_Random() > 4 THEN RETURN
+        P_NightmareRespawn(mobj)
+    ENDIF
+ENDSUB
+
+' Makes a thing of the given type at (x, y, z); z may be ONFLOORZ or
+' ONCEILINGZ. Answers its number.
+EXPORT FUNC P_SpawnMobj(x AS INTEGER, y AS INTEGER, z AS INTEGER, mtype AS INTEGER) AS INTEGER
+    IF n_free = 0 THEN I_SYSTEM.I_Error("P_SpawnMobj: more than " + STR$(MAXMOBJS) + " things")
+    n_free = n_free - 1
+    DIM mobj AS INTEGER = CLNG(free_mobjs[n_free])
+
+    mobj_snext[mobj] = -1
+    mobj_sprev[mobj] = -1
+    mobj_bnext[mobj] = -1
+    mobj_bprev[mobj] = -1
+    mobj_angle[mobj] = 0
+    mobj_momx[mobj] = 0
+    mobj_momy[mobj] = 0
+    mobj_momz[mobj] = 0
+    mobj_validcount[mobj] = 0
+    mobj_movedir[mobj] = 0
+    mobj_movecount[mobj] = 0
+    mobj_target[mobj] = -1
+    mobj_reactiontime[mobj] = 0
+    mobj_threshold[mobj] = 0
+    mobj_player[mobj] = -1
+    mobj_spawnpoint_x[mobj] = 0
+    mobj_spawnpoint_y[mobj] = 0
+    mobj_spawnpoint_angle[mobj] = 0
+    mobj_spawnpoint_type[mobj] = 0
+    mobj_spawnpoint_options[mobj] = 0
+    mobj_tracer[mobj] = -1
+
+    mobj_type[mobj] = mtype
+    mobj_x[mobj] = x
+    mobj_y[mobj] = y
+    mobj_radius[mobj] = INFO.mi_radius[mtype]
+    mobj_height[mobj] = INFO.mi_height[mtype]
+    mobj_flags[mobj] = INFO.mi_flags[mtype]
+    mobj_health[mobj] = INFO.mi_spawnhealth[mtype]
+
+    IF DOOMSTAT.gameskill <> DOOMDEF.SK_NIGHTMARE THEN mobj_reactiontime[mobj] = INFO.mi_reactiontime[mtype]
+
+    mobj_lastlook[mobj] = M_RANDOM.P_Random() MOD DOOMDEF.MAXPLAYERS
+    ' The action of the spawn state is not called here.
+    DIM st AS INTEGER = CLNG(INFO.mi_spawnstate[mtype])
+    mobj_state[mobj] = st
+    mobj_tics[mobj] = INFO.st_tics[st]
+    mobj_sprite[mobj] = INFO.st_sprite[st]
+    mobj_frame[mobj] = INFO.st_frame[st]
+
+    ' Set subsector and the sector and blockmap links.
+    P_MAPUTL.P_SetThingPosition(mobj)
+
+    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[CLNG(mobj_subsector[mobj])])
+    mobj_floorz[mobj] = P_SETUP.sector_floorheight[sector]
+    mobj_ceilingz[mobj] = P_SETUP.sector_ceilingheight[sector]
+
+    IF z = DOOMDEF.ONFLOORZ THEN
+        mobj_z[mobj] = mobj_floorz[mobj]
+    ELSEIF z = DOOMDEF.ONCEILINGZ THEN
+        mobj_z[mobj] = CLNG(mobj_ceilingz[mobj]) - CLNG(INFO.mi_height[mtype])
+    ELSE
+        mobj_z[mobj] = z
+    ENDIF
+
+    mobj_thinker[mobj] = P_TICK.P_AddThinker(P_TICK.TF_MOBJ, mobj)
+    RETURN mobj
+ENDFUNC
+
+EXPORT SUB P_RemoveMobj(mobj AS INTEGER)
+    DIM flags AS INTEGER = CLNG(mobj_flags[mobj])
+    DIM mtype AS INTEGER = CLNG(mobj_type[mobj])
+    IF (flags BAND INFO.MF_SPECIAL) <> 0 AND (flags BAND INFO.MF_DROPPED) = 0 AND mtype <> INFO.MT_INV AND mtype <> INFO.MT_INS THEN
+        itemrespawnque_x[iquehead] = mobj_spawnpoint_x[mobj]
+        itemrespawnque_y[iquehead] = mobj_spawnpoint_y[mobj]
+        itemrespawnque_angle[iquehead] = mobj_spawnpoint_angle[mobj]
+        itemrespawnque_type[iquehead] = mobj_spawnpoint_type[mobj]
+        itemrespawnque_options[iquehead] = mobj_spawnpoint_options[mobj]
+        itemrespawntime[iquehead] = P_TICK.leveltime
+        iquehead = (iquehead + 1) BAND (DOOMDEF.ITEMQUESIZE - 1)
+        ' Lose one off the end?
+        IF iquehead = iquetail THEN iquetail = (iquetail + 1) BAND (DOOMDEF.ITEMQUESIZE - 1)
+    ENDIF
+
+    ' Unlink from sector and block lists.
+    P_MAPUTL.P_UnsetThingPosition(mobj)
+    ' Stop any playing sound.
+    S_SOUND.S_StopSound(mobj)
+    P_TICK.P_RemoveThinker(CLNG(mobj_thinker[mobj]))
+ENDSUB
+
+' In deathmatch 2, an item picked up comes back after 30 seconds.
+EXPORT SUB P_RespawnSpecials()
+    IF DOOMSTAT.deathmatch <> 2 THEN RETURN
+    ' Nothing left to respawn?
+    IF iquehead = iquetail THEN RETURN
+    ' Wait at least 30 seconds.
+    IF P_TICK.leveltime - CLNG(itemrespawntime[iquetail]) < 30 * 35 THEN RETURN
+
+    DIM x AS INTEGER = CLNG(itemrespawnque_x[iquetail]) * 65536
+    DIM y AS INTEGER = CLNG(itemrespawnque_y[iquetail]) * 65536
+
+    ' Spawn a teleport fog at the new spot.
+    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[R_MAIN.R_PointInSubsector(x, y)])
+    DIM mo AS INTEGER = P_SpawnMobj(x, y, CLNG(P_SETUP.sector_floorheight[sector]), INFO.MT_IFOG)
+    S_SOUND.S_StartSound(mo, INFO.SFX_ITMBK)
+
+    ' Find which type to spawn.
+    DIM i AS INTEGER = 0
+    DO WHILE i < INFO.NUMMOBJTYPES
+        IF CLNG(itemrespawnque_type[iquetail]) = CLNG(INFO.mi_doomednum[i]) THEN EXITDO
+        i = i + 1
+    LOOP
+    IF i = INFO.NUMMOBJTYPES THEN I_SYSTEM.I_Error("P_RespawnSpecials: unknown type " + STR$(CLNG(itemrespawnque_type[iquetail])))
+
+    DIM z AS INTEGER
+    IF (CLNG(INFO.mi_flags[i]) BAND INFO.MF_SPAWNCEILING) <> 0 THEN z = DOOMDEF.ONCEILINGZ ELSE z = DOOMDEF.ONFLOORZ
+
+    mo = P_SpawnMobj(x, y, z, i)
+    mobj_spawnpoint_x[mo] = itemrespawnque_x[iquetail]
+    mobj_spawnpoint_y[mo] = itemrespawnque_y[iquetail]
+    mobj_spawnpoint_angle[mo] = itemrespawnque_angle[iquetail]
+    mobj_spawnpoint_type[mo] = itemrespawnque_type[iquetail]
+    mobj_spawnpoint_options[mo] = itemrespawnque_options[iquetail]
+    mobj_angle[mo] = (M_FIXED.ANG45 * (CLNG(itemrespawnque_angle[iquetail]) \ 45)) BAND M_FIXED.ANGLE_MASK
+
+    ' Pull it from the queue.
+    iquetail = (iquetail + 1) BAND (DOOMDEF.ITEMQUESIZE - 1)
+ENDSUB
+
+' Called when a player is spawned on the level. Most of the player
+' structure stays unchanged between levels. mthing is the number of the
+' start in DOOMSTAT.playerstart_*.
+EXPORT SUB P_SpawnPlayer(mthing AS INTEGER)
+    DIM p AS INTEGER = CLNG(DOOMSTAT.playerstart_type[mthing]) - 1
+    ' Not playing?
+    IF CLNG(DOOMSTAT.playeringame[p]) = 0 THEN RETURN
+
+    IF CLNG(D_PLAYER.player_playerstate[p]) = DOOMDEF.PST_REBORN THEN G_GAME.G_PlayerReborn(p)
+
+    DIM x AS INTEGER = CLNG(DOOMSTAT.playerstart_x[mthing]) * 65536
+    DIM y AS INTEGER = CLNG(DOOMSTAT.playerstart_y[mthing]) * 65536
+    DIM mobj AS INTEGER = P_SpawnMobj(x, y, DOOMDEF.ONFLOORZ, INFO.MT_PLAYER)
+
+    ' Set the colour translation of players 2 to 4.
+    IF p > 0 THEN mobj_flags[mobj] = CLNG(mobj_flags[mobj]) BOR (p SHL INFO.MF_TRANSSHIFT)
+
+    mobj_angle[mobj] = (M_FIXED.ANG45 * (CLNG(DOOMSTAT.playerstart_angle[mthing]) \ 45)) BAND M_FIXED.ANGLE_MASK
+    mobj_player[mobj] = p
+    mobj_health[mobj] = D_PLAYER.player_health[p]
+
+    D_PLAYER.player_mo[p] = mobj
+    D_PLAYER.player_playerstate[p] = DOOMDEF.PST_LIVE
+    D_PLAYER.player_refire[p] = 0
+    D_PLAYER.player_message$[p] = ""
+    D_PLAYER.player_damagecount[p] = 0
+    D_PLAYER.player_bonuscount[p] = 0
+    D_PLAYER.player_extralight[p] = 0
+    D_PLAYER.player_fixedcolormap[p] = 0
+    D_PLAYER.player_viewheight[p] = DOOMDEF.VIEWHEIGHT
+
+    ' Set up the gun sprite.
+    P_PSPR.P_SetupPsprites(p)
+
+    ' Give all cards in deathmatch.
+    DIM i AS INTEGER
+    IF DOOMSTAT.deathmatch <> 0 THEN
+        FOR i = 0 TO DOOMDEF.NUMCARDS - 1
+            D_PLAYER.player_cards[p * DOOMDEF.NUMCARDS + i] = 1
+        NEXT i
+    ENDIF
+ENDSUB
+
+' Spawns the thing of map thing n of the level (P_SETUP.mapthing_*): a
+' player or deathmatch start is recorded, anything else becomes a thing if
+' the skill and the game mode ask for it.
+EXPORT SUB P_SpawnMapThing(n AS INTEGER)
+    DIM mt_type AS INTEGER = CLNG(P_SETUP.mapthing_type[n])
+    DIM mt_options AS INTEGER = CLNG(P_SETUP.mapthing_options[n])
+    DIM slot AS INTEGER
+
+    ' Count deathmatch start positions.
+    IF mt_type = 11 THEN
+        IF DOOMSTAT.deathmatch_p < DOOMSTAT.MAX_DEATHMATCH_STARTS THEN
+            slot = DOOMSTAT.deathmatch_p
+            DOOMSTAT.deathmatchstart_x[slot] = P_SETUP.mapthing_x[n]
+            DOOMSTAT.deathmatchstart_y[slot] = P_SETUP.mapthing_y[n]
+            DOOMSTAT.deathmatchstart_angle[slot] = P_SETUP.mapthing_angle[n]
+            DOOMSTAT.deathmatchstart_type[slot] = mt_type
+            DOOMSTAT.deathmatchstart_options[slot] = mt_options
+            DOOMSTAT.deathmatch_p = slot + 1
+        ENDIF
+        RETURN
+    ENDIF
+
+    ' Check for players specially.
+    IF mt_type <= 4 THEN
+        ' Save spots for respawning in network games.
+        slot = mt_type - 1
+        DOOMSTAT.playerstart_x[slot] = P_SETUP.mapthing_x[n]
+        DOOMSTAT.playerstart_y[slot] = P_SETUP.mapthing_y[n]
+        DOOMSTAT.playerstart_angle[slot] = P_SETUP.mapthing_angle[n]
+        DOOMSTAT.playerstart_type[slot] = mt_type
+        DOOMSTAT.playerstart_options[slot] = mt_options
+        IF DOOMSTAT.deathmatch = 0 THEN P_SpawnPlayer(slot)
+        RETURN
+    ENDIF
+
+    ' Check for the appropriate skill level.
+    IF DOOMSTAT.netgame = 0 AND (mt_options BAND 16) <> 0 THEN RETURN
+
+    DIM skill_bit AS INTEGER
+    IF DOOMSTAT.gameskill = DOOMDEF.SK_BABY THEN
+        skill_bit = 1
+    ELSEIF DOOMSTAT.gameskill = DOOMDEF.SK_NIGHTMARE THEN
+        skill_bit = 4
+    ELSE
+        skill_bit = 1 SHL (DOOMSTAT.gameskill - 1)
+    ENDIF
+    IF (mt_options BAND skill_bit) = 0 THEN RETURN
+
+    ' Find which type to spawn.
+    DIM i AS INTEGER = 0
+    DO WHILE i < INFO.NUMMOBJTYPES
+        IF mt_type = CLNG(INFO.mi_doomednum[i]) THEN EXITDO
+        i = i + 1
+    LOOP
+    IF i = INFO.NUMMOBJTYPES THEN I_SYSTEM.I_Error("P_SpawnMapThing: Unknown type " + STR$(mt_type) + " at (" + STR$(CLNG(P_SETUP.mapthing_x[n])) + ", " + STR$(CLNG(P_SETUP.mapthing_y[n])) + ")")
+
+    DIM info_flags AS INTEGER = CLNG(INFO.mi_flags[i])
+    ' Do not spawn keycards and players in deathmatch.
+    IF DOOMSTAT.deathmatch <> 0 AND (info_flags BAND INFO.MF_NOTDMATCH) <> 0 THEN RETURN
+    ' Do not spawn any monsters if -nomonsters.
+    IF DOOMSTAT.nomonsters <> 0 AND (i = INFO.MT_SKULL OR (info_flags BAND INFO.MF_COUNTKILL) <> 0) THEN RETURN
+
+    DIM x AS INTEGER = CLNG(P_SETUP.mapthing_x[n]) * 65536
+    DIM y AS INTEGER = CLNG(P_SETUP.mapthing_y[n]) * 65536
+    DIM z AS INTEGER
+    IF (info_flags BAND INFO.MF_SPAWNCEILING) <> 0 THEN z = DOOMDEF.ONCEILINGZ ELSE z = DOOMDEF.ONFLOORZ
+
+    DIM mobj AS INTEGER = P_SpawnMobj(x, y, z, i)
+    mobj_spawnpoint_x[mobj] = P_SETUP.mapthing_x[n]
+    mobj_spawnpoint_y[mobj] = P_SETUP.mapthing_y[n]
+    mobj_spawnpoint_angle[mobj] = P_SETUP.mapthing_angle[n]
+    mobj_spawnpoint_type[mobj] = mt_type
+    mobj_spawnpoint_options[mobj] = mt_options
+
+    DIM tics AS INTEGER = CLNG(mobj_tics[mobj])
+    IF tics > 0 THEN mobj_tics[mobj] = 1 + (M_RANDOM.P_Random() MOD tics)
+    IF (CLNG(mobj_flags[mobj]) BAND INFO.MF_COUNTKILL) <> 0 THEN DOOMSTAT.totalkills = DOOMSTAT.totalkills + 1
+    IF (CLNG(mobj_flags[mobj]) BAND INFO.MF_COUNTITEM) <> 0 THEN DOOMSTAT.totalitems = DOOMSTAT.totalitems + 1
+
+    mobj_angle[mobj] = (M_FIXED.ANG45 * (CLNG(P_SETUP.mapthing_angle[n]) \ 45)) BAND M_FIXED.ANGLE_MASK
+    IF (mt_options BAND DOOMDEF.MTF_AMBUSH) <> 0 THEN mobj_flags[mobj] = CLNG(mobj_flags[mobj]) BOR INFO.MF_AMBUSH
+ENDSUB
+
+' A puff of smoke where a bullet hit a wall.
+EXPORT SUB P_SpawnPuff(x AS INTEGER, y AS INTEGER, z_in AS INTEGER)
+    DIM first AS INTEGER = M_RANDOM.P_Random()
+    DIM z AS INTEGER = z_in + ((first - M_RANDOM.P_Random()) SHL 10)
+    DIM th AS INTEGER = P_SpawnMobj(x, y, z, INFO.MT_PUFF)
+    mobj_momz[th] = 65536
+    DIM tics AS INTEGER = CLNG(mobj_tics[th]) - (M_RANDOM.P_Random() BAND 3)
+    IF tics < 1 THEN tics = 1
+    mobj_tics[th] = tics
+    ' Don't make punches spark on the wall.
+    IF P_MAP.attackrange = DOOMDEF.MELEERANGE THEN P_SetMobjState(th, INFO.S_PUFF3)
+ENDSUB
+
+EXPORT SUB P_SpawnBlood(x AS INTEGER, y AS INTEGER, z_in AS INTEGER, damage AS INTEGER)
+    DIM first AS INTEGER = M_RANDOM.P_Random()
+    DIM z AS INTEGER = z_in + ((first - M_RANDOM.P_Random()) SHL 10)
+    DIM th AS INTEGER = P_SpawnMobj(x, y, z, INFO.MT_BLOOD)
+    mobj_momz[th] = 65536 * 2
+    DIM tics AS INTEGER = CLNG(mobj_tics[th]) - (M_RANDOM.P_Random() BAND 3)
+    IF tics < 1 THEN tics = 1
+    mobj_tics[th] = tics
+    IF damage <= 12 AND damage >= 9 THEN
+        P_SetMobjState(th, INFO.S_BLOOD2)
+    ELSEIF damage < 9 THEN
+        P_SetMobjState(th, INFO.S_BLOOD3)
+    ENDIF
+ENDSUB
+
+' Moves the missile forward a bit and possibly explodes it right there.
+EXPORT SUB P_CheckMissileSpawn(th AS INTEGER)
+    DIM tics AS INTEGER = CLNG(mobj_tics[th]) - (M_RANDOM.P_Random() BAND 3)
+    IF tics < 1 THEN tics = 1
+    mobj_tics[th] = tics
+    ' Move a little forward so an angle can be computed if it immediately
+    ' explodes.
+    mobj_x[th] = CLNG(mobj_x[th]) + (CLNG(mobj_momx[th]) SHR 1)
+    mobj_y[th] = CLNG(mobj_y[th]) + (CLNG(mobj_momy[th]) SHR 1)
+    mobj_z[th] = CLNG(mobj_z[th]) + (CLNG(mobj_momz[th]) SHR 1)
+    IF P_MAP.P_TryMove(th, CLNG(mobj_x[th]), CLNG(mobj_y[th])) = 0 THEN P_ExplodeMissile(th)
+ENDSUB

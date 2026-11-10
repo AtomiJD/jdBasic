@@ -1,0 +1,11 @@
+' Enemy thinking and the action functions of the states (p_enemy.c). Not
+' ported yet: a state's action is not carried out.
+
+EXPORT MODULE P_ENEMY
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' Carries out action (an INFO.A_ number) of a state for a thing.
+EXPORT SUB A_Call(action AS INTEGER, mobj AS INTEGER)
+ENDSUB

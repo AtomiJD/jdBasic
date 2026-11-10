@@ -1,0 +1,275 @@
+' Play simulation checks on E1M1: the things of the level are spawned and
+' linked, and player 1 is walked by a fixed list of ticcmds. Where he ends
+' up was looked at with walk.jdb before it was recorded here; the interpreter
+' and the compiled program have to agree on it to the last bit.
+'
+' Run from the repository root, interpreted or compiled with -c.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT INFO
+IMPORT W_WAD
+IMPORT R_MAIN
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_MAPUTL
+IMPORT P_MAP
+IMPORT G_GAME
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+DIM wad_path$ AS STRING = D_MAIN.IdentifyVersion$()
+IF NOT FILE.EXISTS(wad_path$) THEN
+    PRINT "SKIP: " + wad_path$ + " not found"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+DIM FU AS INTEGER = M_FIXED.FRACUNIT
+DIM i AS INTEGER
+DIM bad AS INTEGER
+
+' Runs the moves of a script: a letter and a number of tics each, f forward,
+' b back, l and r turn, a and d step sideways, w wait; a capital letter runs.
+SUB Walk(script$ AS STRING)
+    DIM move$ AS STRING
+    DIM letter$ AS STRING
+    DIM n_tics AS INTEGER
+    DIM t AS INTEGER
+    DIM fast AS INTEGER
+    FOR EACH move$ IN SPLIT(script$, " ")
+        letter$ = LEFT$(move$, 1)
+        n_tics = CLNG(VAL(MID$(move$, 1)))
+        fast = 0
+        IF letter$ = UCASE$(letter$) THEN fast = 1
+        letter$ = LCASE$(letter$)
+        FOR t = 1 TO n_tics
+            G_GAME.cmd_forwardmove = 0
+            G_GAME.cmd_sidemove = 0
+            G_GAME.cmd_angleturn = 0
+            G_GAME.cmd_buttons = 0
+            IF letter$ = "f" THEN G_GAME.cmd_forwardmove = 25 + 25 * fast
+            IF letter$ = "b" THEN G_GAME.cmd_forwardmove = -25 - 25 * fast
+            IF letter$ = "d" THEN G_GAME.cmd_sidemove = 24 + 16 * fast
+            IF letter$ = "a" THEN G_GAME.cmd_sidemove = -24 - 16 * fast
+            IF letter$ = "l" THEN G_GAME.cmd_angleturn = 640 + 640 * fast
+            IF letter$ = "r" THEN G_GAME.cmd_angleturn = -640 - 640 * fast
+            G_GAME.G_Ticker()
+        NEXT t
+    NEXT
+ENDSUB
+
+' Number of thinkers in the ring that run a thing.
+FUNC CountMobjThinkers() AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DO WHILE th <> 0
+        IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ THEN n = n + 1
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+    RETURN n
+ENDFUNC
+
+' Number of things in the thing lists of all sectors; -1 if a link is wrong.
+FUNC CountSectorLinks() AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM s AS INTEGER
+    DIM mo AS INTEGER
+    DIM before AS INTEGER
+    FOR s = 0 TO P_SETUP.numsectors - 1
+        before = -1
+        mo = CLNG(P_SETUP.sector_thinglist[s])
+        DO WHILE mo >= 0
+            IF CLNG(P_MOBJ.mobj_sprev[mo]) <> before THEN RETURN -1
+            IF CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[mo])]) <> s THEN RETURN -1
+            n = n + 1
+            before = mo
+            mo = CLNG(P_MOBJ.mobj_snext[mo])
+        LOOP
+    NEXT s
+    RETURN n
+ENDFUNC
+
+' Number of things in the thing lists of all blockmap cells; -1 if a link is
+' wrong or a thing sits in the wrong cell.
+FUNC CountBlockLinks() AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM cell AS INTEGER
+    DIM mo AS INTEGER
+    DIM before AS INTEGER
+    DIM bx AS INTEGER
+    DIM by AS INTEGER
+    FOR cell = 0 TO P_SETUP.bmapwidth * P_SETUP.bmapheight - 1
+        before = -1
+        mo = CLNG(P_SETUP.blocklinks[cell])
+        DO WHILE mo >= 0
+            IF CLNG(P_MOBJ.mobj_bprev[mo]) <> before THEN RETURN -1
+            bx = (CLNG(P_MOBJ.mobj_x[mo]) - P_SETUP.bmaporgx) SHR DOOMDEF.MAPBLOCKSHIFT
+            by = (CLNG(P_MOBJ.mobj_y[mo]) - P_SETUP.bmaporgy) SHR DOOMDEF.MAPBLOCKSHIFT
+            IF by * P_SETUP.bmapwidth + bx <> cell THEN RETURN -1
+            n = n + 1
+            before = mo
+            mo = CLNG(P_MOBJ.mobj_bnext[mo])
+        LOOP
+    NEXT cell
+    RETURN n
+ENDFUNC
+
+W_WAD.W_Init(wad_path$)
+R_MAIN.R_Init(10, 0)
+DOOMSTAT.playeringame[0] = 1
+G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, 1, 1)
+DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+
+' ---- after loading -------------------------------------------------------------
+
+' What the THINGS lump asks for on this skill, counted here from the lump:
+' everything that is not a start, not for multiplayer only and has the bit
+' of the skill, plus the player.
+DIM expected_things AS INTEGER = 1
+DIM expected_noblockmap AS INTEGER = 0
+DIM mt_type AS INTEGER
+DIM mt_options AS INTEGER
+DIM j AS INTEGER
+FOR i = 0 TO P_SETUP.nummapthings - 1
+    mt_type = CLNG(P_SETUP.mapthing_type[i])
+    mt_options = CLNG(P_SETUP.mapthing_options[i])
+    IF mt_type > 4 AND mt_type <> 11 AND (mt_options BAND 16) = 0 AND (mt_options BAND 2) <> 0 THEN
+        expected_things = expected_things + 1
+        FOR j = 0 TO INFO.NUMMOBJTYPES - 1
+            IF CLNG(INFO.mi_doomednum[j]) = mt_type THEN
+                IF (CLNG(INFO.mi_flags[j]) BAND INFO.MF_NOBLOCKMAP) <> 0 THEN expected_noblockmap = expected_noblockmap + 1
+            ENDIF
+        NEXT j
+    ENDIF
+NEXT i
+Eq("things spawned", CountMobjThinkers(), expected_things)
+Eq("things in sector lists", CountSectorLinks(), expected_things)
+Eq("things in blockmap lists", CountBlockLinks(), expected_things - expected_noblockmap)
+Eq("deathmatch starts recorded", DOOMSTAT.deathmatch_p, 5)
+Eq("monsters counted for the intermission", DOOMSTAT.totalkills > 0, TRUE)
+
+Eq("player 1 is in the game", mo >= 0, TRUE)
+Eq("player thing type", CLNG(P_MOBJ.mobj_type[mo]), INFO.MT_PLAYER)
+Eq("player thing knows its player", CLNG(P_MOBJ.mobj_player[mo]), 0)
+Eq("player start x", CLNG(P_MOBJ.mobj_x[mo]), 1056 * FU)
+Eq("player start y", CLNG(P_MOBJ.mobj_y[mo]), -3616 * FU)
+Eq("player stands on the floor", CLNG(P_MOBJ.mobj_z[mo]), CLNG(P_MOBJ.mobj_floorz[mo]))
+Eq("player faces north", CLNG(P_MOBJ.mobj_angle[mo]), M_FIXED.ANG90)
+Eq("player health", CLNG(D_PLAYER.player_health[0]), 100)
+Eq("player has the pistol", CLNG(D_PLAYER.player_readyweapon[0]), DOOMDEF.WP_PISTOL)
+Eq("player has 50 bullets", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_CLIP]), 50)
+Eq("player state", CLNG(P_MOBJ.mobj_state[mo]), INFO.S_PLAY)
+Eq("player is alive", CLNG(D_PLAYER.player_playerstate[0]), DOOMDEF.PST_LIVE)
+
+' ---- standing still --------------------------------------------------------------
+
+Walk("w1")
+Eq("eye height after the first tic", CLNG(D_PLAYER.player_viewz[0]), 41 * FU)
+Eq("level time counts tics", P_TICK.leveltime, 1)
+Walk("w34")
+Eq("standing still keeps the place", CLNG(P_MOBJ.mobj_x[mo]) = 1056 * FU AND CLNG(P_MOBJ.mobj_y[mo]) = -3616 * FU, TRUE)
+
+' ---- walking ---------------------------------------------------------------------
+
+' One tic of walking forward: thrust 25 * 2048 times the sine of 90 degrees
+' in the table (65535), then friction.
+Walk("f1")
+Eq("momentum after one tic of walking", CLNG(P_MOBJ.mobj_momy[mo]), M_FIXED.FixedMul(M_FIXED.FixedMul(25 * 2048, 65535), $E800))
+Eq("walking starts the run frames", CLNG(P_MOBJ.mobj_state[mo]), INFO.S_PLAY_RUN1)
+
+' Walking speed settles where thrust and friction balance: 25 * 2048 /
+' (1 - 0xE800 / 65536) per tic before friction, 8.33 units a tic.
+Walk("f40")
+DIM y_before AS INTEGER = CLNG(P_MOBJ.mobj_y[mo])
+Walk("f1")
+DIM per_tic AS INTEGER = CLNG(P_MOBJ.mobj_y[mo]) - y_before
+Eq("walking speed is about 8.3 units a tic", per_tic > 8 * FU AND per_tic < 9 * FU, TRUE)
+
+' Down into the pit in front of the start and up its far side: the feet
+' follow the floor.
+Walk("f20")
+Eq("in the pit the floor is 16 below", CLNG(P_MOBJ.mobj_floorz[mo]), -16 * FU)
+Walk("f25")
+Eq("back up on the far side", CLNG(P_MOBJ.mobj_z[mo]), 0)
+
+' Running into the north wall: stops flush, 16 units (the radius) before
+' the wall at y = -2880, less the fudge of the slide.
+Walk("F60")
+DIM wall_y AS INTEGER = CLNG(P_MOBJ.mobj_y[mo])
+Eq("stops at the wall", wall_y > -2897 * FU AND wall_y <= -2896 * FU, TRUE)
+Walk("F20")
+Eq("pushing on does not go through", CLNG(P_MOBJ.mobj_y[mo]), wall_y)
+
+' Letting go: friction brings the player to rest and to the standing frame.
+Walk("w60")
+Eq("comes to rest", CLNG(P_MOBJ.mobj_momx[mo]) = 0 AND CLNG(P_MOBJ.mobj_momy[mo]) = 0, TRUE)
+Eq("standing frame at rest", CLNG(P_MOBJ.mobj_state[mo]), INFO.S_PLAY)
+Eq("eye height at rest", CLNG(D_PLAYER.player_viewz[0]), CLNG(P_MOBJ.mobj_z[mo]) + 41 * FU)
+
+' Turning: 640 units a tic, 32 tics are 112.5 degrees.
+Walk("l32")
+Eq("angle after turning left", CLNG(P_MOBJ.mobj_angle[mo]), (M_FIXED.ANG90 + 32 * 640 * 65536) BAND M_FIXED.ANGLE_MASK)
+
+' ---- a longer way ----------------------------------------------------------------
+
+Walk("F80 r48 f60 a40 w60")
+Eq("end of the way: x", CLNG(P_MOBJ.mobj_x[mo]), 37146308)
+Eq("end of the way: y", CLNG(P_MOBJ.mobj_y[mo]), -206086536)
+Eq("end of the way: z", CLNG(P_MOBJ.mobj_z[mo]), -8 * FU)
+Eq("end of the way: angle", CLNG(P_MOBJ.mobj_angle[mo]), 402653184)
+Eq("end of the way: random index", M_RANDOM.prndindex, 143)
+
+' The lists are whole after all that moving.
+Eq("things after the way", CountMobjThinkers(), expected_things)
+Eq("sector lists after the way", CountSectorLinks(), expected_things)
+Eq("blockmap lists after the way", CountBlockLinks(), expected_things - expected_noblockmap)
+Eq("player is in the sector the BSP says", CLNG(P_MOBJ.mobj_subsector[mo]), R_MAIN.R_PointInSubsector(CLNG(P_MOBJ.mobj_x[mo]), CLNG(P_MOBJ.mobj_y[mo])))
+
+' ---- the same game again ---------------------------------------------------------
+
+DIM end_x AS INTEGER = CLNG(P_MOBJ.mobj_x[mo])
+DIM end_y AS INTEGER = CLNG(P_MOBJ.mobj_y[mo])
+DIM end_rnd AS INTEGER = M_RANDOM.prndindex
+G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, 1, 1)
+mo = CLNG(D_PLAYER.player_mo[0])
+Eq("a new game starts at the start", CLNG(P_MOBJ.mobj_x[mo]) = 1056 * FU AND P_TICK.leveltime = 0, TRUE)
+Walk("w35 f1 f40 f1 f20 f25 F60 F20 w60 l32 F80 r48 f60 a40 w60")
+Eq("the same moves end at the same x", CLNG(P_MOBJ.mobj_x[mo]), end_x)
+Eq("the same moves end at the same y", CLNG(P_MOBJ.mobj_y[mo]), end_y)
+Eq("the same moves use the same random numbers", M_RANDOM.prndindex, end_rnd)
+
+' ---- geometry helpers ------------------------------------------------------------
+
+Eq("P_AproxDistance, longer side plus half the shorter", P_MAPUTL.P_AproxDistance(30 * FU, -40 * FU), 55 * FU)
+Eq("P_AproxDistance along an axis", P_MAPUTL.P_AproxDistance(0, 7 * FU), 7 * FU)
+
+' Skill: easy has fewer or as many things as hard.
+G_GAME.G_InitNew(DOOMDEF.SK_HARD, 1, 1)
+DIM hard_things AS INTEGER = CountMobjThinkers()
+G_GAME.G_InitNew(DOOMDEF.SK_EASY, 1, 1)
+Eq("fewer things on easy than on hard", CountMobjThinkers() < hard_things, TRUE)
+Eq("lists whole after two more loads", CountSectorLinks(), CountMobjThinkers())
+
+PRINT ""
+PRINT "DOOM P4 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
