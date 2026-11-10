@@ -387,6 +387,8 @@ SUB Sweep(episode AS INTEGER, map_num AS INTEGER)
             P_SWITCH.P_UseSpecialLine(player_thing, ld, 0)
             P_SPEC.P_CrossSpecialLine(ld, 0, player_thing)
             P_SPEC.P_ShootSpecialLine(player_thing, ld)
+            ' An exit is not taken.
+            G_GAME.gameaction = G_GAME.GA_NOTHING
             Tics(2, 0)
             waited = 0
             DO WHILE (BusyButtons() > 10 OR BusyPlats() > 20) AND waited < 500

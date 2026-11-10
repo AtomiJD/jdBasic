@@ -27,6 +27,8 @@ IMPORT P_ENEMY
 IMPORT P_PSPR
 IMPORT S_SOUND
 IMPORT G_GAME
+IMPORT ST_STUFF
+IMPORT HU_STUFF
 
 EXPORT CONST MAXMOBJS = 8192
 
@@ -571,6 +573,12 @@ EXPORT SUB P_SpawnPlayer(mthing AS INTEGER)
 
     ' Set up the gun sprite.
     P_PSPR.P_SetupPsprites(p)
+
+    IF p = DOOMSTAT.consoleplayer THEN
+        ' Wake up the status bar and the heads up text.
+        ST_STUFF.ST_Start()
+        HU_STUFF.HU_Start()
+    ENDIF
 
     ' Give all cards in deathmatch.
     DIM i AS INTEGER

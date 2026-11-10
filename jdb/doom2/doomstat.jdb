@@ -55,3 +55,21 @@ EXPORT DIM deathmatchstart_options[MAX_DEATHMATCH_STARTS] AS INTEGER
 EXPORT DIM deathmatch_p AS INTEGER = 0
 
 EXPORT DIM bodyqueslot AS INTEGER = 0
+
+' gamestate_t: what the game is showing.
+EXPORT CONST GS_LEVEL = 0
+EXPORT CONST GS_INTERMISSION = 1
+EXPORT CONST GS_FINALE = 2
+EXPORT CONST GS_DEMOSCREEN = 3
+EXPORT DIM gamestate AS INTEGER = GS_DEMOSCREEN
+' The state the last frame was drawn in; a difference starts a wipe.
+EXPORT DIM wipegamestate AS INTEGER = GS_DEMOSCREEN
+
+EXPORT DIM automapactive AS INTEGER = 0
+EXPORT DIM viewactive AS INTEGER = 0
+' The Ultimate DOOM, with its fourth episode.
+EXPORT DIM retail AS INTEGER = 0
+' A game the player started, not a demo.
+EXPORT DIM usergame AS INTEGER = 0
+' The title loop goes on to its next page or demo.
+EXPORT DIM advancedemo AS INTEGER = 0

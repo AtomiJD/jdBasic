@@ -1,0 +1,158 @@
+' Heads-up display: the message line at the top of the screen and the
+' name of the level on the automap (hu_stuff.c, hu_lib.c). The chat of net
+' games is not ported.
+
+EXPORT MODULE HU_STUFF
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT W_WAD
+IMPORT V_VIDEO
+IMPORT R_DRAW
+
+' The font has the characters from "!" to "_".
+EXPORT CONST HU_FONTSTART = 33
+EXPORT CONST HU_FONTEND = 95
+EXPORT CONST HU_FONTSIZE = 63
+EXPORT DIM hu_font[HU_FONTSIZE] AS INTEGER
+
+CONST HU_MSGX = 0
+CONST HU_MSGY = 0
+CONST HU_TITLEX = 0
+' Tics a message stays.
+CONST HU_MSGTIMEOUT = 140
+
+DIM mapnames$ AS ARRAY = ["E1M1: Hangar", "E1M2: Nuclear Plant", "E1M3: Toxin Refinery", "E1M4: Command Control", "E1M5: Phobos Lab", "E1M6: Central Processing", "E1M7: Computer Station", "E1M8: Phobos Anomaly", "E1M9: Military Base", "E2M1: Deimos Anomaly", "E2M2: Containment Area", "E2M3: Refinery", "E2M4: Deimos Lab", "E2M5: Command Center", "E2M6: Halls of the Damned", "E2M7: Spawning Vats", "E2M8: Tower of Babel", "E2M9: Fortress of Mystery", "E3M1: Hell Keep", "E3M2: Slough of Despair", "E3M3: Pandemonium", "E3M4: House of Pain", "E3M5: Unholy Cathedral", "E3M6: Mt. Erebus", "E3M7: Limbo", "E3M8: Dis", "E3M9: Warrens", "E4M1: Hell Beneath", "E4M2: Perfect Hatred", "E4M3: Sever The Wicked", "E4M4: Unruly Evil", "E4M5: They Will Repent", "E4M6: Against Thee Wickedly", "E4M7: And Hell Followed", "E4M8: Unto The Cruel", "E4M9: Fear"]
+
+' Whether messages are shown at all; the menu turns them off.
+EXPORT DIM showMessages AS INTEGER = 1
+
+DIM plr AS INTEGER = 0
+' The message shown last.
+EXPORT DIM w_message$ AS STRING = ""
+DIM w_title$ AS STRING = ""
+DIM message_on AS INTEGER = 0
+' A message that is shown even when messages are off, and one that is
+' not replaced while it shows.
+EXPORT DIM message_dontfuckwithme AS INTEGER = 0
+DIM message_nottobefuckedwith AS INTEGER = 0
+DIM message_counter AS INTEGER = 0
+' Frames the lines of the message and of the title still have to be
+' erased from the border.
+DIM message_needsupdate AS INTEGER = 0
+DIM title_needsupdate AS INTEGER = 0
+DIM message_laston AS INTEGER = 1
+
+EXPORT SUB HU_Init()
+    DIM i AS INTEGER
+    ' Load the heads-up font.
+    FOR i = 0 TO HU_FONTSIZE - 1
+        hu_font[i] = W_WAD.W_CacheLumpName("STCFN" + RIGHT$("00" + STR$(HU_FONTSTART + i), 3))
+    NEXT i
+ENDSUB
+
+' The height of a patch.
+FUNC PatchHeight(patch AS INTEGER) AS INTEGER
+    RETURN W_WAD.PoolShort(patch + 2)
+ENDFUNC
+
+EXPORT SUB HU_Start()
+    plr = DOOMSTAT.consoleplayer
+    message_on = 0
+    message_dontfuckwithme = 0
+    message_nottobefuckedwith = 0
+    w_message$ = ""
+    w_title$ = ""
+    DIM n AS INTEGER = (DOOMSTAT.gameepisode - 1) * 9 + DOOMSTAT.gamemap - 1
+    IF DOOMSTAT.commercial = 0 AND n >= 0 AND n < LEN(mapnames$) THEN w_title$ = mapnames$[n]
+ENDSUB
+
+' Draws a line of text in the font; characters the font has not got leave
+' a gap of four pixels.
+EXPORT SUB HU_DrawText(x_in AS INTEGER, y AS INTEGER, text$ AS STRING)
+    DIM x AS INTEGER = x_in
+    DIM i AS INTEGER
+    DIM c AS INTEGER
+    DIM w AS INTEGER
+    DIM upper$ AS STRING = UCASE$(text$)
+    FOR i = 0 TO LEN(upper$) - 1
+        c = ASC(MID$(upper$, i, 1))
+        IF c <> 32 AND c >= HU_FONTSTART AND c <= HU_FONTEND THEN
+            w = W_WAD.PoolShort(CLNG(hu_font[c - HU_FONTSTART]))
+            IF x + w > DOOMDEF.SCREENWIDTH THEN EXITFOR
+            V_VIDEO.V_DrawPatch(x, y, 0, CLNG(hu_font[c - HU_FONTSTART]))
+            x = x + w
+        ELSE
+            x = x + 4
+            IF x >= DOOMDEF.SCREENWIDTH THEN EXITFOR
+        ENDIF
+    NEXT i
+ENDSUB
+
+FUNC TitleY() AS INTEGER
+    RETURN 167 - PatchHeight(CLNG(hu_font[0]))
+ENDFUNC
+
+EXPORT SUB HU_Drawer()
+    IF message_on <> 0 THEN HU_DrawText(HU_MSGX, HU_MSGY, w_message$)
+    IF DOOMSTAT.automapactive <> 0 THEN HU_DrawText(HU_TITLEX, TitleY(), w_title$)
+ENDSUB
+
+' Puts the border back where a line of text was drawn over it; only needed
+' when the view does not fill the screen.
+FUNC EraseTextLine(y_top AS INTEGER, needsupdate AS INTEGER) AS INTEGER
+    DIM lh AS INTEGER
+    DIM y AS INTEGER
+    DIM yoffset AS INTEGER
+    IF DOOMSTAT.automapactive = 0 AND R_DRAW.viewwindowx <> 0 AND needsupdate <> 0 THEN
+        lh = PatchHeight(CLNG(hu_font[0])) + 1
+        FOR y = y_top TO y_top + lh - 1
+            yoffset = y * DOOMDEF.SCREENWIDTH
+            IF y < R_DRAW.viewwindowy OR y >= R_DRAW.viewwindowy + R_DRAW.viewheight THEN
+                ' Erase entire line.
+                R_DRAW.R_VideoErase(yoffset, DOOMDEF.SCREENWIDTH)
+            ELSE
+                ' Erase left and right border.
+                R_DRAW.R_VideoErase(yoffset, R_DRAW.viewwindowx)
+                R_DRAW.R_VideoErase(yoffset + R_DRAW.viewwindowx + R_DRAW.viewwidth, R_DRAW.viewwindowx)
+            ENDIF
+        NEXT y
+    ENDIF
+    IF needsupdate <> 0 THEN RETURN needsupdate - 1
+    RETURN 0
+ENDFUNC
+
+EXPORT SUB HU_Erase()
+    IF message_laston <> 0 AND message_on = 0 THEN message_needsupdate = 4
+    message_needsupdate = EraseTextLine(HU_MSGY, message_needsupdate)
+    message_laston = message_on
+    title_needsupdate = EraseTextLine(TitleY(), title_needsupdate)
+ENDSUB
+
+EXPORT SUB HU_Ticker()
+    ' Tick down message counter if message is up.
+    IF message_counter <> 0 THEN
+        message_counter = message_counter - 1
+        IF message_counter = 0 THEN
+            message_on = 0
+            message_nottobefuckedwith = 0
+        ENDIF
+    ENDIF
+
+    IF showMessages <> 0 OR message_dontfuckwithme <> 0 THEN
+        ' Display message if necessary.
+        IF LEN(D_PLAYER.player_message$[plr]) > 0 AND (message_nottobefuckedwith = 0 OR message_dontfuckwithme <> 0) THEN
+            w_message$ = D_PLAYER.player_message$[plr]
+            message_needsupdate = 4
+            D_PLAYER.player_message$[plr] = ""
+            message_on = 1
+            message_counter = HU_MSGTIMEOUT
+            message_nottobefuckedwith = message_dontfuckwithme
+            message_dontfuckwithme = 0
+        ENDIF
+    ENDIF
+ENDSUB

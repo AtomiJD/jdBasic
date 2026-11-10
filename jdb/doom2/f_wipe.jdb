@@ -1,0 +1,129 @@
+' The melting screen between two states of the game (f_wipe.c). Only the
+' melt is ported; the colour blend the file also has is never used.
+'
+' The original turns the two pictures on their side to melt them column
+' by column in pairs of pixels; here the columns are read where they are.
+
+EXPORT MODULE F_WIPE
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT M_RANDOM
+IMPORT V_VIDEO
+
+' Screen 2 keeps the picture the wipe starts from, screen 3 the one it
+' ends with.
+CONST SCR_START = 2
+CONST SCR_END = 3
+
+' How far each pair of pixel columns has slid down; below zero it waits.
+DIM col_y[DOOMDEF.SCREENWIDTH \ 2] AS INTEGER
+' Is the wipe running?
+DIM go AS INTEGER = 0
+
+SUB CopyScreen(from_scrn AS INTEGER, to_scrn AS INTEGER)
+    DIM i AS INTEGER
+    DIM from_ofs AS INTEGER = from_scrn * V_VIDEO.SCREENSIZE
+    DIM to_ofs AS INTEGER = to_scrn * V_VIDEO.SCREENSIZE
+    FOR i = 0 TO V_VIDEO.SCREENSIZE - 1
+        V_VIDEO.screens[to_ofs + i] = V_VIDEO.screens[from_ofs + i]
+    NEXT i
+ENDSUB
+
+' Keeps the screen as the picture the wipe starts from.
+EXPORT SUB wipe_StartScreen()
+    CopyScreen(0, SCR_START)
+ENDSUB
+
+' Keeps the screen as the picture the wipe ends with and puts the start
+' back.
+EXPORT SUB wipe_EndScreen()
+    CopyScreen(0, SCR_END)
+    CopyScreen(SCR_START, 0)
+ENDSUB
+
+SUB wipe_initMelt()
+    DIM i AS INTEGER
+    DIM r AS INTEGER
+    DIM prev AS INTEGER
+    ' Setup initial column positions (y < 0 => not ready to scroll yet).
+    prev = -(M_RANDOM.M_Random() MOD 16)
+    col_y[0] = prev
+    FOR i = 1 TO DOOMDEF.SCREENWIDTH \ 2 - 1
+        r = (M_RANDOM.M_Random() MOD 3) - 1
+        prev = prev + r
+        IF prev > 0 THEN
+            prev = 0
+        ELSEIF prev = -16 THEN
+            prev = -15
+        ENDIF
+        col_y[i] = prev
+    NEXT i
+ENDSUB
+
+FUNC wipe_doMelt(ticks_in AS INTEGER) AS INTEGER
+    DIM ticks AS INTEGER = ticks_in
+    DIM done AS INTEGER = 1
+    DIM height AS INTEGER = DOOMDEF.SCREENHEIGHT
+    DIM start_ofs AS INTEGER = SCR_START * V_VIDEO.SCREENSIZE
+    DIM end_ofs AS INTEGER = SCR_END * V_VIDEO.SCREENSIZE
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM y AS INTEGER
+    DIM dy AS INTEGER
+    DIM x AS INTEGER
+    DIM dest AS INTEGER
+
+    DO WHILE ticks > 0
+        ticks = ticks - 1
+        FOR i = 0 TO DOOMDEF.SCREENWIDTH \ 2 - 1
+            y = CLNG(col_y[i])
+            IF y < 0 THEN
+                col_y[i] = y + 1
+                done = 0
+            ELSEIF y < height THEN
+                dy = 8
+                IF y < 16 THEN dy = y + 1
+                IF y + dy >= height THEN dy = height - y
+                x = i * 2
+
+                ' The new picture shows where the old one has left.
+                dest = y * DOOMDEF.SCREENWIDTH + x
+                FOR j = 1 TO dy
+                    V_VIDEO.screens[dest] = V_VIDEO.screens[end_ofs + dest]
+                    V_VIDEO.screens[dest + 1] = V_VIDEO.screens[end_ofs + dest + 1]
+                    dest = dest + DOOMDEF.SCREENWIDTH
+                NEXT j
+                y = y + dy
+                col_y[i] = y
+
+                ' The old picture below it, slid down.
+                FOR j = 0 TO height - y - 1
+                    V_VIDEO.screens[dest] = V_VIDEO.screens[start_ofs + j * DOOMDEF.SCREENWIDTH + x]
+                    V_VIDEO.screens[dest + 1] = V_VIDEO.screens[start_ofs + j * DOOMDEF.SCREENWIDTH + x + 1]
+                    dest = dest + DOOMDEF.SCREENWIDTH
+                NEXT j
+                done = 0
+            ENDIF
+        NEXT i
+    LOOP
+    RETURN done
+ENDFUNC
+
+' Melts on by the given number of tics; TRUE when the wipe is over.
+EXPORT FUNC wipe_ScreenWipe(ticks AS INTEGER) AS INTEGER
+    ' Initial stuff.
+    IF go = 0 THEN
+        go = 1
+        wipe_initMelt()
+    ENDIF
+
+    ' Do a piece of the wipe.
+    IF wipe_doMelt(ticks) <> 0 THEN
+        go = 0
+        RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC

@@ -1,0 +1,571 @@
+' The intermission between two levels: the counts of kills, items and
+' secrets, the time, and the map of the episode with the next level
+' (wi_stuff.c). The screens of net games and deathmatch are not ported.
+
+EXPORT MODULE WI_STUFF
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_RANDOM
+IMPORT INFO
+IMPORT W_WAD
+IMPORT V_VIDEO
+IMPORT G_GAME
+IMPORT S_SOUND
+
+CONST FB = 0
+CONST NUMMAPS = 9
+CONST WI_TITLEY = 2
+CONST SP_STATSX = 50
+CONST SP_STATSY = 50
+CONST SP_TIMEX = 16
+CONST SP_TIMEY = 168
+' Seconds the map of the episode is shown.
+CONST SHOWNEXTLOCDELAY = 4
+
+' States of the intermission.
+CONST NOSTATE = -1
+CONST STATCOUNT = 0
+CONST SHOWNEXTLOC = 1
+
+CONST ANIM_ALWAYS = 0
+CONST ANIM_RANDOM = 1
+CONST ANIM_LEVEL = 2
+
+' What the game tells about the level that was finished (wbstartstruct_t).
+EXPORT DIM wm_epsd AS INTEGER = 0
+EXPORT DIM wm_didsecret AS INTEGER = 0
+EXPORT DIM wm_last AS INTEGER = 0
+EXPORT DIM wm_next AS INTEGER = 0
+EXPORT DIM wm_maxkills AS INTEGER = 0
+EXPORT DIM wm_maxitems AS INTEGER = 0
+EXPORT DIM wm_maxsecret AS INTEGER = 0
+EXPORT DIM wm_partime AS INTEGER = 0
+EXPORT DIM wm_pnum AS INTEGER = 0
+EXPORT DIM wm_skills AS INTEGER = 0
+EXPORT DIM wm_sitems AS INTEGER = 0
+EXPORT DIM wm_ssecret AS INTEGER = 0
+EXPORT DIM wm_stime AS INTEGER = 0
+
+' Where the levels are on the maps of the three episodes, x and y.
+DIM lnodes AS ARRAY = [185, 164, 148, 143, 69, 122, 209, 102, 116, 89, 166, 55, 71, 56, 135, 29, 71, 24, 254, 25, 97, 50, 188, 64, 128, 78, 214, 92, 133, 130, 208, 136, 148, 140, 235, 158, 156, 168, 48, 154, 174, 95, 265, 75, 130, 48, 279, 23, 198, 48, 140, 25, 281, 136]
+
+' The animations on the maps: for each episode a list of type, period,
+' number of pictures, x, y and the level it belongs to.
+CONST MAXANIMS = 10
+DIM NUMANIMS AS ARRAY = [10, 9, 6]
+DIM anim_def AS ARRAY = [0, 11, 3, 224, 104, 0, 0, 11, 3, 184, 160, 0, 0, 11, 3, 112, 136, 0, 0, 11, 3, 72, 112, 0, 0, 11, 3, 88, 96, 0, 0, 11, 3, 64, 48, 0, 0, 11, 3, 192, 40, 0, 0, 11, 3, 136, 16, 0, 0, 11, 3, 80, 16, 0, 0, 11, 3, 64, 24, 0, 2, 11, 1, 128, 136, 1, 2, 11, 1, 128, 136, 2, 2, 11, 1, 128, 136, 3, 2, 11, 1, 128, 136, 4, 2, 11, 1, 128, 136, 5, 2, 11, 1, 128, 136, 6, 2, 11, 1, 128, 136, 7, 2, 11, 3, 192, 144, 8, 2, 11, 1, 128, 136, 8, 0, 0, 0, 0, 0, 0, 0, 11, 3, 104, 168, 0, 0, 11, 3, 40, 136, 0, 0, 11, 3, 160, 96, 0, 0, 11, 3, 104, 80, 0, 0, 11, 3, 120, 32, 0, 0, 8, 3, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+' The animations of the episode shown: next tic to change, the picture
+' shown (-1 none) and the patches.
+DIM anim_nexttic[MAXANIMS] AS INTEGER
+DIM anim_ctr[MAXANIMS] AS INTEGER
+DIM anim_p[MAXANIMS * 3] AS INTEGER
+
+DIM acceleratestage AS INTEGER = 0
+DIM state AS INTEGER = NOSTATE
+' Used for general timing, and for timing of background animation.
+DIM cnt AS INTEGER = 0
+DIM bcnt AS INTEGER = 0
+DIM sp_state AS INTEGER = 0
+DIM cnt_kills AS INTEGER = 0
+DIM cnt_items AS INTEGER = 0
+DIM cnt_secret AS INTEGER = 0
+DIM cnt_time AS INTEGER = 0
+DIM cnt_par AS INTEGER = 0
+DIM cnt_pause AS INTEGER = 0
+DIM snl_pointeron AS INTEGER = 0
+
+' The patches.
+DIM lnames[NUMMAPS] AS INTEGER
+DIM yah0 AS INTEGER = 0
+DIM yah1 AS INTEGER = 0
+DIM splat AS INTEGER = 0
+DIM num[10] AS INTEGER
+DIM wiminus AS INTEGER = 0
+DIM percent AS INTEGER = 0
+DIM finished AS INTEGER = 0
+DIM entering AS INTEGER = 0
+DIM kills AS INTEGER = 0
+DIM sp_secret AS INTEGER = 0
+DIM items AS INTEGER = 0
+DIM colon AS INTEGER = 0
+DIM time_patch AS INTEGER = 0
+DIM sucks AS INTEGER = 0
+DIM par AS INTEGER = 0
+
+FUNC PWidth(patch AS INTEGER) AS INTEGER
+    RETURN W_WAD.PoolShort(patch)
+ENDFUNC
+
+FUNC PHeight(patch AS INTEGER) AS INTEGER
+    RETURN W_WAD.PoolShort(patch + 2)
+ENDFUNC
+
+' A field of animation i of the episode: 0 type, 1 period, 2 pictures,
+' 3 x, 4 y, 5 level.
+FUNC AnimField(i AS INTEGER, field AS INTEGER) AS INTEGER
+    RETURN CLNG(anim_def[(wm_epsd * MAXANIMS + i) * 6 + field])
+ENDFUNC
+
+SUB WI_slamBackground()
+    DIM i AS INTEGER
+    FOR i = 0 TO V_VIDEO.SCREENSIZE - 1
+        V_VIDEO.screens[i] = V_VIDEO.screens[V_VIDEO.SCREENSIZE + i]
+    NEXT i
+ENDSUB
+
+' Draws "<Levelname> Finished!"
+SUB WI_drawLF()
+    DIM y AS INTEGER = WI_TITLEY
+    DIM lname AS INTEGER = lnames[wm_last]
+    ' Draw <LevelName>, then "Finished!"
+    V_VIDEO.V_DrawPatch((DOOMDEF.SCREENWIDTH - PWidth(lname)) \ 2, y, FB, lname)
+    y = y + (5 * PHeight(lname)) \ 4
+    V_VIDEO.V_DrawPatch((DOOMDEF.SCREENWIDTH - PWidth(finished)) \ 2, y, FB, finished)
+ENDSUB
+
+' Draws "Entering <LevelName>"
+SUB WI_drawEL()
+    DIM y AS INTEGER = WI_TITLEY
+    DIM lname AS INTEGER = lnames[wm_next]
+    V_VIDEO.V_DrawPatch((DOOMDEF.SCREENWIDTH - PWidth(entering)) \ 2, y, FB, entering)
+    y = y + (5 * PHeight(lname)) \ 4
+    V_VIDEO.V_DrawPatch((DOOMDEF.SCREENWIDTH - PWidth(lname)) \ 2, y, FB, lname)
+ENDSUB
+
+' Draws the first of the two patches that fits on the screen at the place
+' of level n.
+SUB WI_drawOnLnode(n AS INTEGER, c0 AS INTEGER, c1 AS INTEGER)
+    DIM x AS INTEGER = CLNG(lnodes[(wm_epsd * NUMMAPS + n) * 2])
+    DIM y AS INTEGER = CLNG(lnodes[(wm_epsd * NUMMAPS + n) * 2 + 1])
+    DIM i AS INTEGER
+    DIM c AS INTEGER
+    DIM left AS INTEGER
+    DIM top AS INTEGER
+    FOR i = 0 TO 1
+        c = c0
+        IF i = 1 THEN c = c1
+        left = x - W_WAD.PoolShort(c + 4)
+        top = y - W_WAD.PoolShort(c + 6)
+        IF left >= 0 AND left + PWidth(c) < DOOMDEF.SCREENWIDTH AND top >= 0 AND top + PHeight(c) < DOOMDEF.SCREENHEIGHT THEN
+            V_VIDEO.V_DrawPatch(x, y, FB, c)
+            RETURN
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB WI_initAnimatedBack()
+    IF DOOMSTAT.commercial <> 0 OR wm_epsd > 2 THEN RETURN
+    DIM i AS INTEGER
+    DIM kind AS INTEGER
+    FOR i = 0 TO CLNG(NUMANIMS[wm_epsd]) - 1
+        ' Init variables.
+        anim_ctr[i] = -1
+        ' Specify the next time to draw it.
+        kind = AnimField(i, 0)
+        IF kind = ANIM_ALWAYS THEN
+            anim_nexttic[i] = bcnt + 1 + (M_RANDOM.M_Random() MOD AnimField(i, 1))
+        ELSE
+            anim_nexttic[i] = bcnt + 1
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB WI_updateAnimatedBack()
+    IF DOOMSTAT.commercial <> 0 OR wm_epsd > 2 THEN RETURN
+    DIM i AS INTEGER
+    DIM ctr AS INTEGER
+    FOR i = 0 TO CLNG(NUMANIMS[wm_epsd]) - 1
+        IF bcnt = CLNG(anim_nexttic[i]) THEN
+            ctr = CLNG(anim_ctr[i])
+            IF AnimField(i, 0) = ANIM_ALWAYS THEN
+                ctr = ctr + 1
+                IF ctr >= AnimField(i, 2) THEN ctr = 0
+                anim_ctr[i] = ctr
+                anim_nexttic[i] = bcnt + AnimField(i, 1)
+            ELSE
+                ' Gawd-awful hack for level anims.
+                IF NOT (state = STATCOUNT AND i = 7) AND wm_next = AnimField(i, 5) THEN
+                    ctr = ctr + 1
+                    IF ctr = AnimField(i, 2) THEN ctr = ctr - 1
+                    anim_ctr[i] = ctr
+                    anim_nexttic[i] = bcnt + AnimField(i, 1)
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB WI_drawAnimatedBack()
+    IF DOOMSTAT.commercial <> 0 OR wm_epsd > 2 THEN RETURN
+    DIM i AS INTEGER
+    FOR i = 0 TO CLNG(NUMANIMS[wm_epsd]) - 1
+        IF CLNG(anim_ctr[i]) >= 0 THEN V_VIDEO.V_DrawPatch(AnimField(i, 3), AnimField(i, 4), FB, CLNG(anim_p[i * 3 + CLNG(anim_ctr[i])]))
+    NEXT i
+ENDSUB
+
+' Draws a number, right-justified at x. With digits below zero it takes
+' the digits the number needs. Answers the new x position.
+FUNC WI_drawNum(x_in AS INTEGER, y AS INTEGER, n_in AS INTEGER, digits_in AS INTEGER) AS INTEGER
+    DIM fontwidth AS INTEGER = PWidth(CLNG(num[0]))
+    DIM x AS INTEGER = x_in
+    DIM n AS INTEGER = n_in
+    DIM digits AS INTEGER = digits_in
+    DIM temp AS INTEGER
+
+    IF digits < 0 THEN
+        IF n = 0 THEN
+            ' Make variable-length zeros 1 digit long.
+            digits = 1
+        ELSE
+            ' Figure out the number of digits.
+            digits = 0
+            temp = n
+            DO WHILE temp <> 0
+                temp = temp \ 10
+                digits = digits + 1
+            LOOP
+        ENDIF
+    ENDIF
+
+    DIM neg AS INTEGER = 0
+    IF n < 0 THEN
+        neg = 1
+        n = -n
+    ENDIF
+
+    ' If non-number, do not draw it.
+    IF n = 1994 THEN RETURN 0
+
+    ' Draw the new number.
+    DO WHILE digits > 0
+        digits = digits - 1
+        x = x - fontwidth
+        V_VIDEO.V_DrawPatch(x, y, FB, CLNG(num[n MOD 10]))
+        n = n \ 10
+    LOOP
+
+    ' Draw a minus sign if necessary.
+    IF neg <> 0 THEN
+        x = x - 8
+        V_VIDEO.V_DrawPatch(x, y, FB, wiminus)
+    ENDIF
+    RETURN x
+ENDFUNC
+
+SUB WI_drawPercent(x AS INTEGER, y AS INTEGER, p AS INTEGER)
+    IF p < 0 THEN RETURN
+    V_VIDEO.V_DrawPatch(x, y, FB, percent)
+    WI_drawNum(x, y, p, -1)
+ENDSUB
+
+' Display level completion time and par, or "sucks" message if overflow.
+SUB WI_drawTime(x_in AS INTEGER, y AS INTEGER, t AS INTEGER)
+    IF t < 0 THEN RETURN
+    DIM x AS INTEGER = x_in
+    DIM unit AS INTEGER = 1
+    DIM n AS INTEGER
+
+    IF t <= 61 * 59 THEN
+        DO
+            n = (t \ unit) MOD 60
+            x = WI_drawNum(x, y, n, 2) - PWidth(colon)
+            unit = unit * 60
+            ' Draw.
+            IF unit = 60 OR t \ unit <> 0 THEN V_VIDEO.V_DrawPatch(x, y, FB, colon)
+        LOOP WHILE t \ unit <> 0
+    ELSE
+        ' "sucks"
+        V_VIDEO.V_DrawPatch(x - PWidth(sucks), y, FB, sucks)
+    ENDIF
+ENDSUB
+
+SUB WI_initNoState()
+    state = NOSTATE
+    acceleratestage = 0
+    cnt = 10
+ENDSUB
+
+SUB WI_initShowNextLoc()
+    state = SHOWNEXTLOC
+    acceleratestage = 0
+    cnt = SHOWNEXTLOCDELAY * DOOMDEF.TICRATE
+    WI_initAnimatedBack()
+ENDSUB
+
+SUB WI_drawShowNextLoc()
+    DIM i AS INTEGER
+    DIM last AS INTEGER
+    WI_slamBackground()
+
+    ' Draw animated background.
+    WI_drawAnimatedBack()
+
+    IF DOOMSTAT.commercial = 0 THEN
+        IF wm_epsd > 2 THEN
+            WI_drawEL()
+            RETURN
+        ENDIF
+
+        last = wm_last
+        IF wm_last = 8 THEN last = wm_next - 1
+
+        ' Draw a splat on taken cities.
+        FOR i = 0 TO last
+            WI_drawOnLnode(i, splat, splat)
+        NEXT i
+
+        ' Splat the secret level?
+        IF wm_didsecret <> 0 THEN WI_drawOnLnode(8, splat, splat)
+
+        ' Draw flashing ptr.
+        IF snl_pointeron <> 0 THEN WI_drawOnLnode(wm_next, yah0, yah1)
+    ENDIF
+
+    ' Draws which level you are entering.
+    IF DOOMSTAT.commercial = 0 OR wm_next <> 30 THEN WI_drawEL()
+ENDSUB
+
+SUB WI_initStats()
+    state = STATCOUNT
+    acceleratestage = 0
+    sp_state = 1
+    cnt_kills = -1
+    cnt_items = -1
+    cnt_secret = -1
+    cnt_time = -1
+    cnt_par = -1
+    cnt_pause = DOOMDEF.TICRATE
+    WI_initAnimatedBack()
+ENDSUB
+
+SUB WI_updateStats()
+    DIM kills_pct AS INTEGER = (wm_skills * 100) \ wm_maxkills
+    DIM items_pct AS INTEGER = (wm_sitems * 100) \ wm_maxitems
+    DIM secret_pct AS INTEGER = (wm_ssecret * 100) \ wm_maxsecret
+    DIM seconds AS INTEGER = wm_stime \ DOOMDEF.TICRATE
+    DIM par_seconds AS INTEGER = wm_partime \ DOOMDEF.TICRATE
+
+    WI_updateAnimatedBack()
+
+    IF acceleratestage <> 0 AND sp_state <> 10 THEN
+        acceleratestage = 0
+        cnt_kills = kills_pct
+        cnt_items = items_pct
+        cnt_secret = secret_pct
+        cnt_time = seconds
+        cnt_par = par_seconds
+        S_SOUND.S_StartSound(-1, INFO.SFX_BAREXP)
+        sp_state = 10
+    ENDIF
+
+    IF sp_state = 2 THEN
+        cnt_kills = cnt_kills + 2
+        IF (bcnt BAND 3) = 0 THEN S_SOUND.S_StartSound(-1, INFO.SFX_PISTOL)
+        IF cnt_kills >= kills_pct THEN
+            cnt_kills = kills_pct
+            S_SOUND.S_StartSound(-1, INFO.SFX_BAREXP)
+            sp_state = sp_state + 1
+        ENDIF
+    ELSEIF sp_state = 4 THEN
+        cnt_items = cnt_items + 2
+        IF (bcnt BAND 3) = 0 THEN S_SOUND.S_StartSound(-1, INFO.SFX_PISTOL)
+        IF cnt_items >= items_pct THEN
+            cnt_items = items_pct
+            S_SOUND.S_StartSound(-1, INFO.SFX_BAREXP)
+            sp_state = sp_state + 1
+        ENDIF
+    ELSEIF sp_state = 6 THEN
+        cnt_secret = cnt_secret + 2
+        IF (bcnt BAND 3) = 0 THEN S_SOUND.S_StartSound(-1, INFO.SFX_PISTOL)
+        IF cnt_secret >= secret_pct THEN
+            cnt_secret = secret_pct
+            S_SOUND.S_StartSound(-1, INFO.SFX_BAREXP)
+            sp_state = sp_state + 1
+        ENDIF
+    ELSEIF sp_state = 8 THEN
+        IF (bcnt BAND 3) = 0 THEN S_SOUND.S_StartSound(-1, INFO.SFX_PISTOL)
+        cnt_time = cnt_time + 3
+        IF cnt_time >= seconds THEN cnt_time = seconds
+        cnt_par = cnt_par + 3
+        IF cnt_par >= par_seconds THEN
+            cnt_par = par_seconds
+            IF cnt_time >= seconds THEN
+                S_SOUND.S_StartSound(-1, INFO.SFX_BAREXP)
+                sp_state = sp_state + 1
+            ENDIF
+        ENDIF
+    ELSEIF sp_state = 10 THEN
+        IF acceleratestage <> 0 THEN
+            S_SOUND.S_StartSound(-1, INFO.SFX_SGCOCK)
+            IF DOOMSTAT.commercial <> 0 THEN
+                WI_initNoState()
+            ELSE
+                WI_initShowNextLoc()
+            ENDIF
+        ENDIF
+    ELSEIF (sp_state BAND 1) <> 0 THEN
+        cnt_pause = cnt_pause - 1
+        IF cnt_pause = 0 THEN
+            sp_state = sp_state + 1
+            cnt_pause = DOOMDEF.TICRATE
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB WI_drawStats()
+    ' Line height.
+    DIM lh AS INTEGER = (3 * PHeight(CLNG(num[0]))) \ 2
+
+    WI_slamBackground()
+    ' Draw animated background.
+    WI_drawAnimatedBack()
+    WI_drawLF()
+
+    V_VIDEO.V_DrawPatch(SP_STATSX, SP_STATSY, FB, kills)
+    WI_drawPercent(DOOMDEF.SCREENWIDTH - SP_STATSX, SP_STATSY, cnt_kills)
+
+    V_VIDEO.V_DrawPatch(SP_STATSX, SP_STATSY + lh, FB, items)
+    WI_drawPercent(DOOMDEF.SCREENWIDTH - SP_STATSX, SP_STATSY + lh, cnt_items)
+
+    V_VIDEO.V_DrawPatch(SP_STATSX, SP_STATSY + 2 * lh, FB, sp_secret)
+    WI_drawPercent(DOOMDEF.SCREENWIDTH - SP_STATSX, SP_STATSY + 2 * lh, cnt_secret)
+
+    V_VIDEO.V_DrawPatch(SP_TIMEX, SP_TIMEY, FB, time_patch)
+    WI_drawTime(DOOMDEF.SCREENWIDTH \ 2 - SP_TIMEX, SP_TIMEY, cnt_time)
+
+    IF wm_epsd < 3 THEN
+        V_VIDEO.V_DrawPatch(DOOMDEF.SCREENWIDTH \ 2 + SP_TIMEX, SP_TIMEY, FB, par)
+        WI_drawTime(DOOMDEF.SCREENWIDTH - SP_TIMEX, SP_TIMEY, cnt_par)
+    ENDIF
+ENDSUB
+
+' A press of fire or use hurries the screen on.
+SUB WI_checkForAccelerate()
+    DIM i AS INTEGER
+    DIM buttons AS INTEGER
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        IF CLNG(DOOMSTAT.playeringame[i]) <> 0 THEN
+            buttons = CLNG(D_PLAYER.player_cmd_buttons[i])
+            IF (buttons BAND DOOMDEF.BT_ATTACK) <> 0 THEN
+                IF CLNG(D_PLAYER.player_attackdown[i]) = 0 THEN acceleratestage = 1
+                D_PLAYER.player_attackdown[i] = 1
+            ELSE
+                D_PLAYER.player_attackdown[i] = 0
+            ENDIF
+            IF (buttons BAND DOOMDEF.BT_USE) <> 0 THEN
+                IF CLNG(D_PLAYER.player_usedown[i]) = 0 THEN acceleratestage = 1
+                D_PLAYER.player_usedown[i] = 1
+            ELSE
+                D_PLAYER.player_usedown[i] = 0
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+' Updates stuff each tick.
+EXPORT SUB WI_Ticker()
+    ' Counter for general background animation.
+    bcnt = bcnt + 1
+
+    WI_checkForAccelerate()
+
+    IF state = STATCOUNT THEN
+        WI_updateStats()
+    ELSEIF state = SHOWNEXTLOC THEN
+        WI_updateAnimatedBack()
+        cnt = cnt - 1
+        IF cnt = 0 OR acceleratestage <> 0 THEN
+            WI_initNoState()
+        ELSE
+            snl_pointeron = 0
+            IF (cnt BAND 31) < 20 THEN snl_pointeron = 1
+        ENDIF
+    ELSE
+        WI_updateAnimatedBack()
+        cnt = cnt - 1
+        IF cnt = 0 THEN G_GAME.G_WorldDone()
+    ENDIF
+ENDSUB
+
+SUB WI_loadData()
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+
+    ' The background of the episode goes to screen 1.
+    DIM name$ AS STRING = "WIMAP" + STR$(wm_epsd)
+    IF DOOMSTAT.commercial <> 0 OR wm_epsd = 3 THEN name$ = "INTERPIC"
+    V_VIDEO.V_DrawPatch(0, 0, 1, W_WAD.W_CacheLumpName(name$))
+
+    FOR i = 0 TO NUMMAPS - 1
+        lnames[i] = W_WAD.W_CacheLumpName("WILV" + STR$(wm_epsd) + STR$(i))
+    NEXT i
+
+    ' You are here, and the splat.
+    yah0 = W_WAD.W_CacheLumpName("WIURH0")
+    yah1 = W_WAD.W_CacheLumpName("WIURH1")
+    splat = W_WAD.W_CacheLumpName("WISPLAT")
+
+    IF wm_epsd < 3 THEN
+        FOR j = 0 TO CLNG(NUMANIMS[wm_epsd]) - 1
+            FOR i = 0 TO AnimField(j, 2) - 1
+                ' The last animation of the second episode shares the
+                ' pictures of its fifth.
+                IF wm_epsd <> 1 OR j <> 8 THEN
+                    anim_p[j * 3 + i] = W_WAD.W_CacheLumpName("WIA" + STR$(wm_epsd) + RIGHT$("0" + STR$(j), 2) + RIGHT$("0" + STR$(i), 2))
+                ELSE
+                    anim_p[j * 3 + i] = anim_p[4 * 3 + i]
+                ENDIF
+            NEXT i
+        NEXT j
+    ENDIF
+
+    wiminus = W_WAD.W_CacheLumpName("WIMINUS")
+    FOR i = 0 TO 9
+        num[i] = W_WAD.W_CacheLumpName("WINUM" + STR$(i))
+    NEXT i
+    percent = W_WAD.W_CacheLumpName("WIPCNT")
+    finished = W_WAD.W_CacheLumpName("WIF")
+    entering = W_WAD.W_CacheLumpName("WIENTER")
+    kills = W_WAD.W_CacheLumpName("WIOSTK")
+    sp_secret = W_WAD.W_CacheLumpName("WISCRT2")
+    items = W_WAD.W_CacheLumpName("WIOSTI")
+    colon = W_WAD.W_CacheLumpName("WICOLON")
+    time_patch = W_WAD.W_CacheLumpName("WITIME")
+    sucks = W_WAD.W_CacheLumpName("WISUCKS")
+    par = W_WAD.W_CacheLumpName("WIPAR")
+ENDSUB
+
+EXPORT SUB WI_Drawer()
+    IF state = STATCOUNT THEN
+        WI_drawStats()
+    ELSEIF state = SHOWNEXTLOC THEN
+        WI_drawShowNextLoc()
+    ELSE
+        snl_pointeron = 1
+        WI_drawShowNextLoc()
+    ENDIF
+ENDSUB
+
+' Starts the intermission from the wm_ variables the game has set.
+EXPORT SUB WI_Start()
+    IF DOOMSTAT.deathmatch <> 0 OR DOOMSTAT.netgame <> 0 THEN I_SYSTEM.I_Error("WI_Start: net games are not ported")
+    IF DOOMSTAT.commercial <> 0 THEN I_SYSTEM.I_Error("WI_Start: DOOM II is not ported")
+
+    acceleratestage = 0
+    cnt = 0
+    bcnt = 0
+    IF wm_maxkills = 0 THEN wm_maxkills = 1
+    IF wm_maxitems = 0 THEN wm_maxitems = 1
+    IF wm_maxsecret = 0 THEN wm_maxsecret = 1
+    IF DOOMSTAT.retail = 0 AND wm_epsd > 2 THEN wm_epsd = wm_epsd - 3
+
+    WI_loadData()
+    WI_initStats()
+ENDSUB

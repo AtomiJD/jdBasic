@@ -11,6 +11,7 @@ OPTION "STRICT"
 
 IMPORT I_SYSTEM
 IMPORT DOOMDEF
+IMPORT DOOMSTAT
 IMPORT W_WAD
 IMPORT V_VIDEO
 IMPORT R_MAIN
@@ -211,5 +212,87 @@ EXPORT SUB R_InitTranslationTables()
             W_WAD.pool[translationtables + i + 256] = i
             W_WAD.pool[translationtables + i + 512] = i
         ENDIF
+    NEXT i
+ENDSUB
+
+' ---- the border around a view that is smaller than the screen ---------------
+
+' Fills the back screen with a pattern for variable screen sizes, and
+' draws the beveled edge around the view.
+EXPORT SUB R_FillBackScreen()
+    IF scaledviewwidth = 320 THEN RETURN
+
+    DIM src AS INTEGER
+    IF DOOMSTAT.commercial <> 0 THEN
+        src = W_WAD.W_CacheLumpName("GRNROCK")
+    ELSE
+        src = W_WAD.W_CacheLumpName("FLOOR7_2")
+    ENDIF
+
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    DIM dest AS INTEGER = V_VIDEO.SCREENSIZE
+    DIM row AS INTEGER
+    FOR y = 0 TO DOOMDEF.SCREENHEIGHT - 32 - 1
+        row = src + (y BAND 63) * 64
+        FOR x = 0 TO DOOMDEF.SCREENWIDTH - 1
+            V_VIDEO.screens[dest] = W_WAD.pool[row + (x BAND 63)]
+            dest = dest + 1
+        NEXT x
+    NEXT y
+
+    DIM patch AS INTEGER = W_WAD.W_CacheLumpName("BRDR_T")
+    FOR x = 0 TO scaledviewwidth - 1 STEP 8
+        V_VIDEO.V_DrawPatch(viewwindowx + x, viewwindowy - 8, 1, patch)
+    NEXT x
+    patch = W_WAD.W_CacheLumpName("BRDR_B")
+    FOR x = 0 TO scaledviewwidth - 1 STEP 8
+        V_VIDEO.V_DrawPatch(viewwindowx + x, viewwindowy + viewheight, 1, patch)
+    NEXT x
+    patch = W_WAD.W_CacheLumpName("BRDR_L")
+    FOR y = 0 TO viewheight - 1 STEP 8
+        V_VIDEO.V_DrawPatch(viewwindowx - 8, viewwindowy + y, 1, patch)
+    NEXT y
+    patch = W_WAD.W_CacheLumpName("BRDR_R")
+    FOR y = 0 TO viewheight - 1 STEP 8
+        V_VIDEO.V_DrawPatch(viewwindowx + scaledviewwidth, viewwindowy + y, 1, patch)
+    NEXT y
+
+    ' Draw beveled edge.
+    V_VIDEO.V_DrawPatch(viewwindowx - 8, viewwindowy - 8, 1, W_WAD.W_CacheLumpName("BRDR_TL"))
+    V_VIDEO.V_DrawPatch(viewwindowx + scaledviewwidth, viewwindowy - 8, 1, W_WAD.W_CacheLumpName("BRDR_TR"))
+    V_VIDEO.V_DrawPatch(viewwindowx - 8, viewwindowy + viewheight, 1, W_WAD.W_CacheLumpName("BRDR_BL"))
+    V_VIDEO.V_DrawPatch(viewwindowx + scaledviewwidth, viewwindowy + viewheight, 1, W_WAD.W_CacheLumpName("BRDR_BR"))
+ENDSUB
+
+' Copy a screen buffer.
+EXPORT SUB R_VideoErase(ofs AS INTEGER, n_pixels AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = ofs TO ofs + n_pixels - 1
+        V_VIDEO.screens[i] = V_VIDEO.screens[V_VIDEO.SCREENSIZE + i]
+    NEXT i
+ENDSUB
+
+' Draws the border around the view for different size windows.
+EXPORT SUB R_DrawViewBorder()
+    IF scaledviewwidth = DOOMDEF.SCREENWIDTH THEN RETURN
+
+    DIM top AS INTEGER = ((DOOMDEF.SCREENHEIGHT - 32) - viewheight) \ 2
+    DIM side AS INTEGER = (DOOMDEF.SCREENWIDTH - scaledviewwidth) \ 2
+    DIM i AS INTEGER
+
+    ' Copy top and one line of left side.
+    R_VideoErase(0, top * DOOMDEF.SCREENWIDTH + side)
+
+    ' Copy one line of right side and bottom.
+    DIM ofs AS INTEGER = (viewheight + top) * DOOMDEF.SCREENWIDTH - side
+    R_VideoErase(ofs, top * DOOMDEF.SCREENWIDTH + side)
+
+    ' Copy sides using wraparound.
+    ofs = top * DOOMDEF.SCREENWIDTH + DOOMDEF.SCREENWIDTH - side
+    side = side * 2
+    FOR i = 1 TO viewheight - 1
+        R_VideoErase(ofs, side)
+        ofs = ofs + DOOMDEF.SCREENWIDTH
     NEXT i
 ENDSUB

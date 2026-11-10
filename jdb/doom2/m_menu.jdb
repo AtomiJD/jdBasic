@@ -1,0 +1,589 @@
+' The menus: new game, options, the help pages, quitting, and the function
+' keys (m_menu.c). Loading and saving a game are listed but not ported; the
+' sound volumes are kept but nothing plays yet.
+
+EXPORT MODULE M_MENU
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT INFO
+IMPORT W_WAD
+IMPORT V_VIDEO
+IMPORT I_VIDEO
+IMPORT R_MAIN
+IMPORT HU_STUFF
+IMPORT G_GAME
+IMPORT D_MAIN
+IMPORT S_SOUND
+
+CONST SKULLXOFF = -32
+CONST LINEHEIGHT = 16
+
+' Key codes of the function keys (doomdef.h).
+EXPORT CONST KEY_F1 = $BB
+EXPORT CONST KEY_F5 = $BF
+EXPORT CONST KEY_F8 = $C2
+EXPORT CONST KEY_F10 = $C4
+EXPORT CONST KEY_F11 = $D7
+EXPORT CONST KEY_BACKSPACE = 127
+EXPORT CONST KEY_MINUS = $2D
+EXPORT CONST KEY_EQUALS = $3D
+
+' The menus.
+CONST MENU_MAIN = 0
+CONST MENU_EPISODE = 1
+CONST MENU_NEWGAME = 2
+CONST MENU_OPTIONS = 3
+CONST MENU_READ1 = 4
+CONST MENU_READ2 = 5
+CONST MENU_SOUND = 6
+
+' For each menu: the menu before it, where it is drawn, its first item
+' and the number of its items.
+DIM menu_prev AS ARRAY = [-1, 0, 1, 0, 0, 4, 3]
+DIM menu_x AS ARRAY = [97, 48, 48, 60, 280, 330, 80]
+DIM menu_y AS ARRAY = [64, 63, 63, 37, 185, 175, 64]
+DIM menu_first AS ARRAY = [0, 6, 10, 15, 23, 24, 25]
+DIM menu_count AS ARRAY = [6, 4, 5, 8, 1, 1, 4]
+DIM menu_laston AS ARRAY = [0, 0, 2, 0, 0, 0, 0]
+
+' The items: 1 a choice, 2 a slider moved with the arrow keys, -1 a gap;
+' the patch with its name; the key that jumps to it.
+DIM item_status AS ARRAY = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, -1, 2, -1, 1, 1, 1, 2, -1, 2, -1]
+DIM item_name$ AS ARRAY = ["M_NGAME", "M_OPTION", "M_LOADG", "M_SAVEG", "M_RDTHIS", "M_QUITG", "M_EPI1", "M_EPI2", "M_EPI3", "M_EPI4", "M_JKILL", "M_ROUGH", "M_HURT", "M_ULTRA", "M_NMARE", "M_ENDGAM", "M_MESSG", "M_DETAIL", "M_SCRNSZ", "", "M_MSENS", "", "M_SVOL", "", "", "M_SFXVOL", "", "M_MUSVOL", ""]
+DIM item_key$ AS ARRAY = ["n", "o", "l", "s", "r", "q", "k", "t", "i", "t", "i", "h", "h", "u", "n", "e", "m", "g", "s", "", "m", "", "s", "", "", "s", "", "m", ""]
+
+' What a message asks to be done when it is answered with y.
+CONST ANSWER_NONE = 0
+CONST ANSWER_NIGHTMARE = 1
+CONST ANSWER_ENDGAME = 2
+CONST ANSWER_QUIT = 3
+
+' The game was asked to end.
+EXPORT DIM quit_requested AS INTEGER = 0
+' A help page is showing.
+EXPORT DIM inhelpscreens AS INTEGER = 0
+
+DIM currentMenu AS INTEGER = 0
+' Menu item the skull is on.
+DIM itemOn AS INTEGER = 0
+' Skull animation counter, and which skull to draw.
+DIM skullAnimCounter AS INTEGER = 10
+DIM whichSkull AS INTEGER = 0
+
+' 1 = message to be printed.
+DIM messageToPrint AS INTEGER = 0
+DIM messageString$ AS STRING = ""
+DIM messageLastMenuActive AS INTEGER = 0
+' Timed message = no input from user.
+DIM messageNeedsInput AS INTEGER = 0
+DIM messageAnswer AS INTEGER = ANSWER_NONE
+
+' The episode picked in the episode menu.
+DIM epi AS INTEGER = 0
+' 0 high detail, 1 low; the size of the view from 0 to 8.
+EXPORT DIM detailLevel AS INTEGER = 0
+EXPORT DIM screenSize AS INTEGER = 7
+EXPORT DIM screenblocks AS INTEGER = 10
+EXPORT DIM snd_SfxVolume AS INTEGER = 8
+EXPORT DIM snd_MusicVolume AS INTEGER = 8
+
+' ---- text -----------------------------------------------------------------------
+
+FUNC FontChar(c AS INTEGER) AS INTEGER
+    DIM n AS INTEGER = c - HU_STUFF.HU_FONTSTART
+    IF n < 0 OR n >= HU_STUFF.HU_FONTSIZE THEN RETURN -1
+    RETURN CLNG(HU_STUFF.hu_font[n])
+ENDFUNC
+
+' Find string width from hu_font chars.
+FUNC M_StringWidth(text$ AS STRING) AS INTEGER
+    DIM upper$ AS STRING = UCASE$(text$)
+    DIM i AS INTEGER
+    DIM w AS INTEGER = 0
+    DIM patch AS INTEGER
+    FOR i = 0 TO LEN(upper$) - 1
+        patch = FontChar(ASC(MID$(upper$, i, 1)))
+        IF patch < 0 THEN
+            w = w + 4
+        ELSE
+            w = w + W_WAD.PoolShort(patch)
+        ENDIF
+    NEXT i
+    RETURN w
+ENDFUNC
+
+' Write a string using the hu_font.
+SUB M_WriteText(x AS INTEGER, y AS INTEGER, text$ AS STRING)
+    DIM upper$ AS STRING = UCASE$(text$)
+    DIM i AS INTEGER
+    DIM cx AS INTEGER = x
+    DIM patch AS INTEGER
+    DIM w AS INTEGER
+    FOR i = 0 TO LEN(upper$) - 1
+        patch = FontChar(ASC(MID$(upper$, i, 1)))
+        IF patch < 0 THEN
+            cx = cx + 4
+        ELSE
+            w = W_WAD.PoolShort(patch)
+            IF cx + w > DOOMDEF.SCREENWIDTH THEN EXITFOR
+            V_VIDEO.V_DrawPatch(cx, y, 0, patch)
+            cx = cx + w
+        ENDIF
+    NEXT i
+ENDSUB
+
+' ---- messages -------------------------------------------------------------------
+
+SUB M_StartMessage(text$ AS STRING, answer AS INTEGER, needs_input AS INTEGER)
+    messageLastMenuActive = DOOMSTAT.menuactive
+    messageToPrint = 1
+    messageString$ = text$
+    messageAnswer = answer
+    messageNeedsInput = needs_input
+    DOOMSTAT.menuactive = 1
+ENDSUB
+
+SUB M_ClearMenus()
+    DOOMSTAT.menuactive = 0
+ENDSUB
+
+SUB M_SetupNextMenu(menu AS INTEGER)
+    currentMenu = menu
+    itemOn = CLNG(menu_laston[menu])
+ENDSUB
+
+' ---- what the items do ----------------------------------------------------------
+
+SUB M_SizeDisplay(choice AS INTEGER)
+    IF choice = 0 THEN
+        IF screenSize > 0 THEN
+            screenblocks = screenblocks - 1
+            screenSize = screenSize - 1
+        ENDIF
+    ELSE
+        IF screenSize < 8 THEN
+            screenblocks = screenblocks + 1
+            screenSize = screenSize + 1
+        ENDIF
+    ENDIF
+    R_MAIN.R_SetViewSize(screenblocks, detailLevel)
+ENDSUB
+
+SUB M_ChangeDetail()
+    detailLevel = 1 - detailLevel
+    R_MAIN.R_SetViewSize(screenblocks, detailLevel)
+    IF detailLevel = 0 THEN
+        D_PLAYER.player_message$[DOOMSTAT.consoleplayer] = "High detail"
+    ELSE
+        D_PLAYER.player_message$[DOOMSTAT.consoleplayer] = "Low detail"
+    ENDIF
+ENDSUB
+
+SUB M_ChangeMessages()
+    HU_STUFF.showMessages = 1 - HU_STUFF.showMessages
+    IF HU_STUFF.showMessages = 0 THEN
+        D_PLAYER.player_message$[DOOMSTAT.consoleplayer] = "Messages OFF"
+    ELSE
+        D_PLAYER.player_message$[DOOMSTAT.consoleplayer] = "Messages ON"
+    ENDIF
+    HU_STUFF.message_dontfuckwithme = 1
+ENDSUB
+
+SUB M_EndGame()
+    IF DOOMSTAT.usergame = 0 THEN
+        S_SOUND.S_StartSound(-1, INFO.SFX_OOF)
+        RETURN
+    ENDIF
+    M_StartMessage("are you sure you want to end the game?" + CHR$(10) + CHR$(10) + "press y or n.", ANSWER_ENDGAME, 1)
+ENDSUB
+
+SUB M_QuitDOOM()
+    M_StartMessage("are you sure you want to" + CHR$(10) + "quit this great game?" + CHR$(10) + CHR$(10) + "(press y to quit)", ANSWER_QUIT, 1)
+ENDSUB
+
+' The item of the current menu was chosen, or its slider moved (0 down,
+' 1 up).
+SUB M_Choose(choice AS INTEGER)
+    DIM item AS INTEGER = CLNG(menu_first[currentMenu]) + itemOn
+
+    IF currentMenu = MENU_MAIN THEN
+        IF itemOn = 0 THEN
+            IF DOOMSTAT.commercial <> 0 THEN M_SetupNextMenu(MENU_NEWGAME) ELSE M_SetupNextMenu(MENU_EPISODE)
+        ELSEIF itemOn = 1 THEN
+            M_SetupNextMenu(MENU_OPTIONS)
+        ELSEIF itemOn = 2 OR itemOn = 3 THEN
+            M_StartMessage("loading and saving a game" + CHR$(10) + "are not ported yet." + CHR$(10) + CHR$(10) + "press a key.", ANSWER_NONE, 0)
+        ELSEIF itemOn = 4 THEN
+            M_SetupNextMenu(MENU_READ1)
+        ELSE
+            M_QuitDOOM()
+        ENDIF
+    ELSEIF currentMenu = MENU_EPISODE THEN
+        IF DOOMSTAT.shareware <> 0 AND itemOn <> 0 THEN
+            M_StartMessage("this is the shareware version of doom." + CHR$(10) + CHR$(10) + "you need to order the entire trilogy." + CHR$(10) + CHR$(10) + "press a key.", ANSWER_NONE, 0)
+            M_SetupNextMenu(MENU_READ1)
+            RETURN
+        ENDIF
+        epi = itemOn
+        M_SetupNextMenu(MENU_NEWGAME)
+    ELSEIF currentMenu = MENU_NEWGAME THEN
+        IF itemOn = DOOMDEF.SK_NIGHTMARE THEN
+            M_StartMessage("are you sure? this skill level" + CHR$(10) + "isn't even remotely fair." + CHR$(10) + CHR$(10) + "press y or n.", ANSWER_NIGHTMARE, 1)
+            RETURN
+        ENDIF
+        G_GAME.G_DeferedInitNew(itemOn, epi + 1, 1)
+        M_ClearMenus()
+    ELSEIF currentMenu = MENU_OPTIONS THEN
+        IF itemOn = 0 THEN
+            M_EndGame()
+        ELSEIF itemOn = 1 THEN
+            M_ChangeMessages()
+        ELSEIF itemOn = 2 THEN
+            M_ChangeDetail()
+        ELSEIF itemOn = 3 THEN
+            M_SizeDisplay(choice)
+        ELSEIF itemOn = 5 THEN
+            IF choice = 0 AND G_GAME.mouseSensitivity > 0 THEN G_GAME.mouseSensitivity = G_GAME.mouseSensitivity - 1
+            IF choice = 1 AND G_GAME.mouseSensitivity < 9 THEN G_GAME.mouseSensitivity = G_GAME.mouseSensitivity + 1
+        ELSEIF itemOn = 7 THEN
+            M_SetupNextMenu(MENU_SOUND)
+        ENDIF
+    ELSEIF currentMenu = MENU_READ1 THEN
+        M_SetupNextMenu(MENU_READ2)
+    ELSEIF currentMenu = MENU_READ2 THEN
+        M_SetupNextMenu(MENU_MAIN)
+    ELSEIF currentMenu = MENU_SOUND THEN
+        IF itemOn = 0 THEN
+            IF choice = 0 AND snd_SfxVolume > 0 THEN snd_SfxVolume = snd_SfxVolume - 1
+            IF choice = 1 AND snd_SfxVolume < 15 THEN snd_SfxVolume = snd_SfxVolume + 1
+        ELSEIF itemOn = 2 THEN
+            IF choice = 0 AND snd_MusicVolume > 0 THEN snd_MusicVolume = snd_MusicVolume - 1
+            IF choice = 1 AND snd_MusicVolume < 15 THEN snd_MusicVolume = snd_MusicVolume + 1
+        ENDIF
+    ENDIF
+ENDSUB
+
+' A message was answered with y.
+SUB M_Answer(answer AS INTEGER)
+    IF answer = ANSWER_NIGHTMARE THEN
+        G_GAME.G_DeferedInitNew(DOOMDEF.SK_NIGHTMARE, epi + 1, 1)
+        M_ClearMenus()
+    ELSEIF answer = ANSWER_ENDGAME THEN
+        menu_laston[currentMenu] = itemOn
+        M_ClearMenus()
+        D_MAIN.D_StartTitle()
+    ELSEIF answer = ANSWER_QUIT THEN
+        quit_requested = 1
+    ENDIF
+ENDSUB
+
+' ---- control --------------------------------------------------------------------
+
+EXPORT SUB M_StartControlPanel()
+    ' Intro might call this repeatedly.
+    IF DOOMSTAT.menuactive <> 0 THEN RETURN
+    DOOMSTAT.menuactive = 1
+    currentMenu = MENU_MAIN
+    itemOn = CLNG(menu_laston[MENU_MAIN])
+ENDSUB
+
+' The number of items of the current menu; the fourth episode is only in
+' The Ultimate DOOM.
+FUNC ItemCount() AS INTEGER
+    IF currentMenu = MENU_EPISODE AND DOOMSTAT.retail = 0 THEN RETURN 3
+    RETURN CLNG(menu_count[currentMenu])
+ENDFUNC
+
+' Gets a key that went down; TRUE if the menu used it.
+EXPORT FUNC M_Responder(ev_type AS INTEGER, key AS INTEGER) AS INTEGER
+    IF ev_type <> G_GAME.EV_KEYDOWN THEN RETURN 0
+    DIM ch AS INTEGER = key
+    DIM answer AS INTEGER
+    DIM first AS INTEGER
+    DIM n_items AS INTEGER
+    DIM i AS INTEGER
+    DIM status AS INTEGER
+
+    ' Take care of any messages that need input.
+    IF messageToPrint <> 0 THEN
+        IF messageNeedsInput <> 0 AND NOT (ch = 32 OR ch = 110 OR ch = 121 OR ch = G_GAME.KEY_ESCAPE) THEN RETURN 0
+
+        DOOMSTAT.menuactive = messageLastMenuActive
+        messageToPrint = 0
+        answer = messageAnswer
+        messageAnswer = ANSWER_NONE
+        IF ch = 121 THEN M_Answer(answer)
+        DOOMSTAT.menuactive = 0
+        S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHX)
+        RETURN 1
+    ENDIF
+
+    ' F-keys.
+    IF DOOMSTAT.menuactive = 0 THEN
+        IF ch = KEY_MINUS THEN
+            ' Screen size down.
+            IF DOOMSTAT.automapactive <> 0 THEN RETURN 0
+            M_SizeDisplay(0)
+            S_SOUND.S_StartSound(-1, INFO.SFX_STNMOV)
+            RETURN 1
+        ELSEIF ch = KEY_EQUALS THEN
+            ' Screen size up.
+            IF DOOMSTAT.automapactive <> 0 THEN RETURN 0
+            M_SizeDisplay(1)
+            S_SOUND.S_StartSound(-1, INFO.SFX_STNMOV)
+            RETURN 1
+        ELSEIF ch = KEY_F1 THEN
+            ' Help key.
+            M_StartControlPanel()
+            currentMenu = MENU_READ1
+            itemOn = 0
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            RETURN 1
+        ELSEIF ch = KEY_F5 THEN
+            ' Detail toggle.
+            M_ChangeDetail()
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            RETURN 1
+        ELSEIF ch = KEY_F8 THEN
+            ' Toggle messages.
+            M_ChangeMessages()
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            RETURN 1
+        ELSEIF ch = KEY_F10 THEN
+            ' Quit DOOM.
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            M_QuitDOOM()
+            RETURN 1
+        ELSEIF ch = KEY_F11 THEN
+            ' Gamma toggle.
+            V_VIDEO.usegamma = V_VIDEO.usegamma + 1
+            IF V_VIDEO.usegamma > 4 THEN V_VIDEO.usegamma = 0
+            IF V_VIDEO.usegamma = 0 THEN
+                D_PLAYER.player_message$[DOOMSTAT.consoleplayer] = "Gamma correction OFF"
+            ELSE
+                D_PLAYER.player_message$[DOOMSTAT.consoleplayer] = "Gamma correction level " + STR$(V_VIDEO.usegamma)
+            ENDIF
+            I_VIDEO.I_SetPalette(W_WAD.W_CacheLumpName("PLAYPAL"))
+            RETURN 1
+        ENDIF
+
+        ' Pop-up menu?
+        IF ch = G_GAME.KEY_ESCAPE THEN
+            M_StartControlPanel()
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            RETURN 1
+        ENDIF
+        RETURN 0
+    ENDIF
+
+    ' Keys usable within menu.
+    first = CLNG(menu_first[currentMenu])
+    n_items = ItemCount()
+    status = CLNG(item_status[first + itemOn])
+
+    IF ch = G_GAME.KEY_DOWNARROW THEN
+        DO
+            itemOn = itemOn + 1
+            IF itemOn > n_items - 1 THEN itemOn = 0
+            S_SOUND.S_StartSound(-1, INFO.SFX_PSTOP)
+        LOOP WHILE CLNG(item_status[first + itemOn]) = -1
+        RETURN 1
+    ELSEIF ch = G_GAME.KEY_UPARROW THEN
+        DO
+            itemOn = itemOn - 1
+            IF itemOn < 0 THEN itemOn = n_items - 1
+            S_SOUND.S_StartSound(-1, INFO.SFX_PSTOP)
+        LOOP WHILE CLNG(item_status[first + itemOn]) = -1
+        RETURN 1
+    ELSEIF ch = G_GAME.KEY_LEFTARROW THEN
+        IF status = 2 THEN
+            S_SOUND.S_StartSound(-1, INFO.SFX_STNMOV)
+            M_Choose(0)
+        ENDIF
+        RETURN 1
+    ELSEIF ch = G_GAME.KEY_RIGHTARROW THEN
+        IF status = 2 THEN
+            S_SOUND.S_StartSound(-1, INFO.SFX_STNMOV)
+            M_Choose(1)
+        ENDIF
+        RETURN 1
+    ELSEIF ch = G_GAME.KEY_ENTER THEN
+        IF status <> 0 THEN
+            menu_laston[currentMenu] = itemOn
+            IF status = 2 THEN
+                ' Right arrow.
+                M_Choose(1)
+                S_SOUND.S_StartSound(-1, INFO.SFX_STNMOV)
+            ELSE
+                M_Choose(itemOn)
+                S_SOUND.S_StartSound(-1, INFO.SFX_PISTOL)
+            ENDIF
+        ENDIF
+        RETURN 1
+    ELSEIF ch = G_GAME.KEY_ESCAPE THEN
+        menu_laston[currentMenu] = itemOn
+        M_ClearMenus()
+        S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHX)
+        RETURN 1
+    ELSEIF ch = KEY_BACKSPACE THEN
+        menu_laston[currentMenu] = itemOn
+        IF CLNG(menu_prev[currentMenu]) >= 0 THEN
+            currentMenu = CLNG(menu_prev[currentMenu])
+            itemOn = CLNG(menu_laston[currentMenu])
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+        ENDIF
+        RETURN 1
+    ELSEIF ch >= 32 AND ch < 127 THEN
+        ' The key of an item jumps to it, looking from the next item on.
+        FOR i = itemOn + 1 TO n_items - 1
+            IF item_key$[first + i] = LCASE$(CHR$(ch)) THEN
+                itemOn = i
+                S_SOUND.S_StartSound(-1, INFO.SFX_PSTOP)
+                RETURN 1
+            ENDIF
+        NEXT i
+        FOR i = 0 TO itemOn
+            IF item_key$[first + i] = LCASE$(CHR$(ch)) THEN
+                itemOn = i
+                S_SOUND.S_StartSound(-1, INFO.SFX_PSTOP)
+                RETURN 1
+            ENDIF
+        NEXT i
+    ENDIF
+    RETURN 0
+ENDFUNC
+
+' ---- drawing --------------------------------------------------------------------
+
+' A slider of the given width with its knob at position dot.
+SUB M_DrawThermo(x AS INTEGER, y AS INTEGER, therm_width AS INTEGER, therm_dot AS INTEGER)
+    DIM xx AS INTEGER = x
+    DIM i AS INTEGER
+    V_VIDEO.V_DrawPatch(xx, y, 0, W_WAD.W_CacheLumpName("M_THERML"))
+    xx = xx + 8
+    FOR i = 1 TO therm_width
+        V_VIDEO.V_DrawPatch(xx, y, 0, W_WAD.W_CacheLumpName("M_THERMM"))
+        xx = xx + 8
+    NEXT i
+    V_VIDEO.V_DrawPatch(xx, y, 0, W_WAD.W_CacheLumpName("M_THERMR"))
+    V_VIDEO.V_DrawPatch((x + 8) + therm_dot * 8, y, 0, W_WAD.W_CacheLumpName("M_THERMO"))
+ENDSUB
+
+' What a menu draws besides its items.
+SUB M_DrawMenuHead()
+    DIM x AS INTEGER = CLNG(menu_x[currentMenu])
+    DIM y AS INTEGER = CLNG(menu_y[currentMenu])
+    inhelpscreens = 0
+
+    IF currentMenu = MENU_MAIN THEN
+        V_VIDEO.V_DrawPatch(94, 2, 0, W_WAD.W_CacheLumpName("M_DOOM"))
+    ELSEIF currentMenu = MENU_EPISODE THEN
+        V_VIDEO.V_DrawPatch(54, 38, 0, W_WAD.W_CacheLumpName("M_EPISOD"))
+    ELSEIF currentMenu = MENU_NEWGAME THEN
+        V_VIDEO.V_DrawPatch(96, 14, 0, W_WAD.W_CacheLumpName("M_NEWG"))
+        V_VIDEO.V_DrawPatch(54, 38, 0, W_WAD.W_CacheLumpName("M_SKILL"))
+    ELSEIF currentMenu = MENU_OPTIONS THEN
+        V_VIDEO.V_DrawPatch(108, 15, 0, W_WAD.W_CacheLumpName("M_OPTTTL"))
+        IF detailLevel = 0 THEN
+            V_VIDEO.V_DrawPatch(x + 175, y + LINEHEIGHT * 2, 0, W_WAD.W_CacheLumpName("M_GDHIGH"))
+        ELSE
+            V_VIDEO.V_DrawPatch(x + 175, y + LINEHEIGHT * 2, 0, W_WAD.W_CacheLumpName("M_GDLOW"))
+        ENDIF
+        IF HU_STUFF.showMessages = 0 THEN
+            V_VIDEO.V_DrawPatch(x + 120, y + LINEHEIGHT, 0, W_WAD.W_CacheLumpName("M_MSGOFF"))
+        ELSE
+            V_VIDEO.V_DrawPatch(x + 120, y + LINEHEIGHT, 0, W_WAD.W_CacheLumpName("M_MSGON"))
+        ENDIF
+        M_DrawThermo(x, y + LINEHEIGHT * 6, 10, G_GAME.mouseSensitivity)
+        M_DrawThermo(x, y + LINEHEIGHT * 4, 9, screenSize)
+    ELSEIF currentMenu = MENU_READ1 THEN
+        inhelpscreens = 1
+        IF DOOMSTAT.commercial <> 0 THEN
+            V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("HELP"))
+        ELSE
+            V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("HELP1"))
+        ENDIF
+    ELSEIF currentMenu = MENU_READ2 THEN
+        inhelpscreens = 1
+        IF DOOMSTAT.retail <> 0 OR DOOMSTAT.commercial <> 0 THEN
+            V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("CREDIT"))
+        ELSE
+            V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("HELP2"))
+        ENDIF
+    ELSEIF currentMenu = MENU_SOUND THEN
+        V_VIDEO.V_DrawPatch(60, 38, 0, W_WAD.W_CacheLumpName("M_SVOL"))
+        M_DrawThermo(x, y + LINEHEIGHT, 16, snd_SfxVolume)
+        M_DrawThermo(x, y + LINEHEIGHT * 3, 16, snd_MusicVolume)
+    ENDIF
+ENDSUB
+
+' Called after the view has been rendered, but before it has been
+' blitted.
+EXPORT SUB M_Drawer()
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    DIM i AS INTEGER
+    DIM font_height AS INTEGER = W_WAD.PoolShort(CLNG(HU_STUFF.hu_font[0]) + 2)
+    DIM text_lines AS ARRAY
+    DIM first AS INTEGER
+
+    inhelpscreens = 0
+
+    ' Horiz. & vertically center string and print it.
+    IF messageToPrint <> 0 THEN
+        text_lines = SPLIT(messageString$, CHR$(10))
+        y = 100 - (font_height * LEN(text_lines)) \ 2
+        FOR i = 0 TO LEN(text_lines) - 1
+            x = 160 - M_StringWidth(text_lines[i]) \ 2
+            M_WriteText(x, y, text_lines[i])
+            y = y + font_height
+        NEXT i
+        RETURN
+    ENDIF
+
+    IF DOOMSTAT.menuactive = 0 THEN RETURN
+
+    ' Call the draw routine of the menu.
+    M_DrawMenuHead()
+
+    ' Draw the menu.
+    x = CLNG(menu_x[currentMenu])
+    y = CLNG(menu_y[currentMenu])
+    first = CLNG(menu_first[currentMenu])
+    FOR i = 0 TO ItemCount() - 1
+        IF LEN(item_name$[first + i]) > 0 THEN V_VIDEO.V_DrawPatch(x, y, 0, W_WAD.W_CacheLumpName(item_name$[first + i]))
+        y = y + LINEHEIGHT
+    NEXT i
+
+    ' Draw the skull.
+    IF whichSkull = 0 THEN
+        V_VIDEO.V_DrawPatch(x + SKULLXOFF, CLNG(menu_y[currentMenu]) - 5 + itemOn * LINEHEIGHT, 0, W_WAD.W_CacheLumpName("M_SKULL1"))
+    ELSE
+        V_VIDEO.V_DrawPatch(x + SKULLXOFF, CLNG(menu_y[currentMenu]) - 5 + itemOn * LINEHEIGHT, 0, W_WAD.W_CacheLumpName("M_SKULL2"))
+    ENDIF
+ENDSUB
+
+EXPORT SUB M_Ticker()
+    skullAnimCounter = skullAnimCounter - 1
+    IF skullAnimCounter <= 0 THEN
+        whichSkull = whichSkull BXOR 1
+        skullAnimCounter = 8
+    ENDIF
+ENDSUB
+
+EXPORT SUB M_Init()
+    currentMenu = MENU_MAIN
+    DOOMSTAT.menuactive = 0
+    itemOn = CLNG(menu_laston[MENU_MAIN])
+    whichSkull = 0
+    skullAnimCounter = 10
+    screenSize = screenblocks - 3
+    messageToPrint = 0
+    messageString$ = ""
+    messageLastMenuActive = DOOMSTAT.menuactive
+ENDSUB

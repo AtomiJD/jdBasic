@@ -1,0 +1,617 @@
+' The status bar: ammunition, health, the arms, the face, armor, keys, and
+' the palette flashes of pain and pickups (st_stuff.c, st_lib.c).
+'
+' The original redraws only the widgets whose value changed and keeps the
+' background in a screen of its own for that. Here the whole bar is drawn
+' anew every frame, which puts the same pixels on the screen.
+
+EXPORT MODULE ST_STUFF
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT D_ITEMS
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT W_WAD
+IMPORT V_VIDEO
+IMPORT I_VIDEO
+IMPORT R_MAIN
+IMPORT P_MOBJ
+IMPORT P_INTER
+IMPORT AM_MAP
+IMPORT G_GAME
+
+CONST BG = 4
+CONST FG = 0
+
+EXPORT CONST ST_HEIGHT = 32
+EXPORT CONST ST_WIDTH = 320
+EXPORT CONST ST_Y = 168
+
+' Palette indices. For damage and bonus red-/gold-shifts, and the
+' radiation suit, a green shift.
+CONST STARTREDPALS = 1
+CONST STARTBONUSPALS = 9
+CONST NUMREDPALS = 8
+CONST NUMBONUSPALS = 4
+CONST RADIATIONPAL = 13
+
+' The faces: five grades of pain with eight faces each (three looking
+' straight, left and right turn, ouch, evil grin, rampage), then god and
+' dead.
+CONST ST_NUMPAINFACES = 5
+CONST ST_NUMSTRAIGHTFACES = 3
+CONST ST_FACESTRIDE = 8
+CONST ST_NUMFACES = 42
+CONST ST_TURNOFFSET = 3
+CONST ST_OUCHOFFSET = 5
+CONST ST_EVILGRINOFFSET = 6
+CONST ST_RAMPAGEOFFSET = 7
+CONST ST_GODFACE = 40
+CONST ST_DEADFACE = 41
+
+CONST ST_EVILGRINCOUNT = 70
+CONST ST_STRAIGHTFACECOUNT = 17
+CONST ST_TURNCOUNT = 35
+CONST ST_RAMPAGEDELAY = 70
+CONST ST_MUCHPAIN = 20
+
+' Where the widgets are.
+CONST ST_FX = 143
+CONST ST_AMMOX = 44
+CONST ST_AMMOY = 171
+CONST ST_HEALTHX = 90
+CONST ST_HEALTHY = 171
+CONST ST_ARMSX = 111
+CONST ST_ARMSY = 172
+CONST ST_ARMSBGX = 104
+CONST ST_ARMSBGY = 168
+CONST ST_ARMSXSPACE = 12
+CONST ST_ARMSYSPACE = 10
+CONST ST_FACESX = 143
+CONST ST_FACESY = 168
+CONST ST_ARMORX = 221
+CONST ST_ARMORY = 171
+CONST ST_KEYX = 239
+CONST ST_SMALLAMMOX = 288
+CONST ST_MAXAMMOX = 314
+
+DIM key_y AS ARRAY = [171, 181, 191]
+' The rows of bullets, shells, cells and rockets.
+DIM ammo_y AS ARRAY = [173, 179, 191, 185]
+
+' The patches, as offsets into the lump pool.
+DIM sbar AS INTEGER = 0
+DIM tallnum[10] AS INTEGER
+DIM shortnum[10] AS INTEGER
+DIM tallpercent AS INTEGER = 0
+DIM keys[6] AS INTEGER
+DIM faces[ST_NUMFACES] AS INTEGER
+DIM faceback AS INTEGER = 0
+DIM armsbg AS INTEGER = 0
+' The grey numbers of the weapons the player has not got.
+DIM arms_grey[6] AS INTEGER
+
+DIM lu_palette AS INTEGER = 0
+
+' The player the bar is for.
+DIM plyr AS INTEGER = 0
+DIM st_statusbaron AS INTEGER = 1
+DIM st_palette AS INTEGER = 0
+DIM st_oldhealth AS INTEGER = -1
+DIM oldweaponsowned[9] AS INTEGER
+' Count until the face changes, and the face shown.
+DIM st_facecount AS INTEGER = 0
+DIM st_faceindex AS INTEGER = 0
+' Holds the key of each of the three colours, -1 for none.
+DIM keyboxes[3] AS INTEGER
+' A random number per tic.
+DIM st_randomnumber AS INTEGER = 0
+DIM st_clock AS INTEGER = 0
+DIM st_stopped AS INTEGER = 1
+
+' State kept from call to call by the face code.
+DIM pain_lastcalc AS INTEGER = 0
+DIM pain_oldhealth AS INTEGER = -1
+DIM face_lastattackdown AS INTEGER = -1
+DIM face_priority AS INTEGER = 0
+
+FUNC ST_calcPainOffset() AS INTEGER
+    DIM health AS INTEGER = D_PLAYER.player_health[plyr]
+    IF health > 100 THEN health = 100
+
+    IF health <> pain_oldhealth THEN
+        pain_lastcalc = ST_FACESTRIDE * (((100 - health) * ST_NUMPAINFACES) \ 101)
+        pain_oldhealth = health
+    ENDIF
+    RETURN pain_lastcalc
+ENDFUNC
+
+' This is a not-very-pretty routine which handles the face states and
+' their timing. The precedence of expressions is: dead > evil grin >
+' turned head > straight ahead.
+SUB ST_updateFaceWidget()
+    DIM i AS INTEGER
+    DIM doevilgrin AS INTEGER
+    DIM mo AS INTEGER = D_PLAYER.player_mo[plyr]
+    DIM health AS INTEGER = D_PLAYER.player_health[plyr]
+    DIM attacker AS INTEGER = D_PLAYER.player_attacker[plyr]
+    DIM badguyangle AS INTEGER
+    DIM diffang AS INTEGER
+    DIM facing AS INTEGER
+    DIM to_the_right AS INTEGER
+
+    IF face_priority < 10 THEN
+        ' Dead.
+        IF health = 0 THEN
+            face_priority = 9
+            st_faceindex = ST_DEADFACE
+            st_facecount = 1
+        ENDIF
+    ENDIF
+
+    IF face_priority < 9 THEN
+        IF CLNG(D_PLAYER.player_bonuscount[plyr]) <> 0 THEN
+            ' Picking up a bonus: an evil grin if it was a new weapon.
+            doevilgrin = 0
+            FOR i = 0 TO DOOMDEF.NUMWEAPONS - 1
+                IF CLNG(oldweaponsowned[i]) <> CLNG(D_PLAYER.player_weaponowned[plyr * DOOMDEF.NUMWEAPONS + i]) THEN
+                    doevilgrin = 1
+                    oldweaponsowned[i] = D_PLAYER.player_weaponowned[plyr * DOOMDEF.NUMWEAPONS + i]
+                ENDIF
+            NEXT i
+            IF doevilgrin <> 0 THEN
+                face_priority = 8
+                st_facecount = ST_EVILGRINCOUNT
+                st_faceindex = ST_calcPainOffset() + ST_EVILGRINOFFSET
+            ENDIF
+        ENDIF
+    ENDIF
+
+    IF face_priority < 8 THEN
+        IF CLNG(D_PLAYER.player_damagecount[plyr]) <> 0 AND attacker >= 0 AND attacker <> mo THEN
+            ' Being attacked.
+            face_priority = 7
+            IF health - st_oldhealth > ST_MUCHPAIN THEN
+                st_facecount = ST_TURNCOUNT
+                st_faceindex = ST_calcPainOffset() + ST_OUCHOFFSET
+            ELSE
+                badguyangle = R_MAIN.R_PointToAngle2(CLNG(P_MOBJ.mobj_x[mo]), CLNG(P_MOBJ.mobj_y[mo]), CLNG(P_MOBJ.mobj_x[attacker]), CLNG(P_MOBJ.mobj_y[attacker]))
+                facing = CLNG(P_MOBJ.mobj_angle[mo])
+                to_the_right = 0
+                IF badguyangle > facing THEN
+                    ' Whether right or left.
+                    diffang = badguyangle - facing
+                    IF diffang > M_FIXED.ANG180 THEN to_the_right = 1
+                ELSE
+                    diffang = facing - badguyangle
+                    IF diffang <= M_FIXED.ANG180 THEN to_the_right = 1
+                ENDIF
+
+                st_facecount = ST_TURNCOUNT
+                st_faceindex = ST_calcPainOffset()
+
+                IF diffang < M_FIXED.ANG45 THEN
+                    ' Head-on.
+                    st_faceindex = st_faceindex + ST_RAMPAGEOFFSET
+                ELSEIF to_the_right <> 0 THEN
+                    st_faceindex = st_faceindex + ST_TURNOFFSET
+                ELSE
+                    st_faceindex = st_faceindex + ST_TURNOFFSET + 1
+                ENDIF
+            ENDIF
+        ENDIF
+    ENDIF
+
+    IF face_priority < 7 THEN
+        ' Getting hurt because of your own damn stupidity.
+        IF CLNG(D_PLAYER.player_damagecount[plyr]) <> 0 THEN
+            IF health - st_oldhealth > ST_MUCHPAIN THEN
+                face_priority = 7
+                st_facecount = ST_TURNCOUNT
+                st_faceindex = ST_calcPainOffset() + ST_OUCHOFFSET
+            ELSE
+                face_priority = 6
+                st_facecount = ST_TURNCOUNT
+                st_faceindex = ST_calcPainOffset() + ST_RAMPAGEOFFSET
+            ENDIF
+        ENDIF
+    ENDIF
+
+    IF face_priority < 6 THEN
+        ' Rapid firing.
+        IF CLNG(D_PLAYER.player_attackdown[plyr]) <> 0 THEN
+            IF face_lastattackdown = -1 THEN
+                face_lastattackdown = ST_RAMPAGEDELAY
+            ELSE
+                face_lastattackdown = face_lastattackdown - 1
+                IF face_lastattackdown = 0 THEN
+                    face_priority = 5
+                    st_faceindex = ST_calcPainOffset() + ST_RAMPAGEOFFSET
+                    st_facecount = 1
+                    face_lastattackdown = 1
+                ENDIF
+            ENDIF
+        ELSE
+            face_lastattackdown = -1
+        ENDIF
+    ENDIF
+
+    IF face_priority < 5 THEN
+        ' Invulnerability.
+        IF (CLNG(D_PLAYER.player_cheats[plyr]) BAND DOOMDEF.CF_GODMODE) <> 0 OR CLNG(D_PLAYER.player_powers[plyr * DOOMDEF.NUMPOWERS + DOOMDEF.PW_INVULNERABILITY]) <> 0 THEN
+            face_priority = 4
+            st_faceindex = ST_GODFACE
+            st_facecount = 1
+        ENDIF
+    ENDIF
+
+    ' Look left or look right if the facecount has timed out.
+    IF st_facecount = 0 THEN
+        st_faceindex = ST_calcPainOffset() + (st_randomnumber MOD 3)
+        st_facecount = ST_STRAIGHTFACECOUNT
+        face_priority = 0
+    ENDIF
+
+    st_facecount = st_facecount - 1
+ENDSUB
+
+SUB ST_updateWidgets()
+    DIM i AS INTEGER
+    ' Update keycard multiple widgets: a skull key covers the card.
+    FOR i = 0 TO 2
+        keyboxes[i] = -1
+        IF CLNG(D_PLAYER.player_cards[plyr * DOOMDEF.NUMCARDS + i]) <> 0 THEN keyboxes[i] = i
+        IF CLNG(D_PLAYER.player_cards[plyr * DOOMDEF.NUMCARDS + i + 3]) <> 0 THEN keyboxes[i] = i + 3
+    NEXT i
+
+    ' Refresh everything if this is him coming back to life.
+    ST_updateFaceWidget()
+ENDSUB
+
+EXPORT SUB ST_Ticker()
+    st_clock = st_clock + 1
+    st_randomnumber = M_RANDOM.M_Random()
+    ST_updateWidgets()
+    st_oldhealth = CLNG(D_PLAYER.player_health[plyr])
+ENDSUB
+
+SUB ST_doPaletteStuff()
+    DIM palette AS INTEGER
+    DIM cnt AS INTEGER = D_PLAYER.player_damagecount[plyr]
+    DIM strength AS INTEGER = D_PLAYER.player_powers[plyr * DOOMDEF.NUMPOWERS + DOOMDEF.PW_STRENGTH]
+    DIM ironfeet AS INTEGER = D_PLAYER.player_powers[plyr * DOOMDEF.NUMPOWERS + DOOMDEF.PW_IRONFEET]
+    DIM bonuscount AS INTEGER = D_PLAYER.player_bonuscount[plyr]
+    DIM bzc AS INTEGER
+
+    IF strength <> 0 THEN
+        ' Slowly fade the berzerk out.
+        bzc = 12 - (strength SHR 6)
+        IF bzc > cnt THEN cnt = bzc
+    ENDIF
+
+    IF cnt <> 0 THEN
+        palette = (cnt + 7) SHR 3
+        IF palette >= NUMREDPALS THEN palette = NUMREDPALS - 1
+        palette = palette + STARTREDPALS
+    ELSEIF bonuscount <> 0 THEN
+        palette = (bonuscount + 7) SHR 3
+        IF palette >= NUMBONUSPALS THEN palette = NUMBONUSPALS - 1
+        palette = palette + STARTBONUSPALS
+    ELSEIF ironfeet > 4 * 32 OR (ironfeet BAND 8) <> 0 THEN
+        palette = RADIATIONPAL
+    ELSE
+        palette = 0
+    ENDIF
+
+    IF palette <> st_palette THEN
+        st_palette = palette
+        I_VIDEO.I_SetPalette(W_WAD.W_CacheLumpNum(lu_palette) + palette * 768)
+    ENDIF
+ENDSUB
+
+' The width of a patch.
+FUNC PatchWidth(patch AS INTEGER) AS INTEGER
+    RETURN W_WAD.PoolShort(patch)
+ENDFUNC
+
+' The patch of a digit, tall or short.
+FUNC Digit(tall AS INTEGER, d AS INTEGER) AS INTEGER
+    IF tall <> 0 THEN RETURN CLNG(tallnum[d])
+    RETURN CLNG(shortnum[d])
+ENDFUNC
+
+' A number, right-justified at x, of at most width digits in tall or
+' short digits; 1994 means "not applicable" and draws nothing.
+SUB DrawNum(x_in AS INTEGER, y AS INTEGER, tall AS INTEGER, width AS INTEGER, num_in AS INTEGER)
+    DIM num AS INTEGER = num_in
+    DIM numdigits AS INTEGER = width
+    DIM w AS INTEGER = PatchWidth(Digit(tall, 0))
+    DIM x AS INTEGER = x_in
+    DIM neg AS INTEGER = 0
+
+    IF num < 0 THEN
+        neg = 1
+        IF numdigits = 2 AND num < -9 THEN
+            num = -9
+        ELSEIF numdigits = 3 AND num < -99 THEN
+            num = -99
+        ENDIF
+        num = -num
+    ENDIF
+
+    IF num = 1994 THEN RETURN
+
+    ' In the special case of 0, a 0 is drawn.
+    IF num = 0 THEN V_VIDEO.V_DrawPatch(x - w, y, FG, Digit(tall, 0))
+
+    ' Draw the new number.
+    DO WHILE num <> 0 AND numdigits > 0
+        numdigits = numdigits - 1
+        x = x - w
+        V_VIDEO.V_DrawPatch(x, y, FG, Digit(tall, num MOD 10))
+        num = num \ 10
+    LOOP
+
+    ' Draw a minus sign if necessary.
+    IF neg <> 0 THEN V_VIDEO.V_DrawPatch(x - 8, y, FG, W_WAD.W_CacheLumpName("STTMINUS"))
+ENDSUB
+
+SUB ST_drawWidgets()
+    DIM i AS INTEGER
+    DIM ready AS INTEGER = D_PLAYER.player_readyweapon[plyr]
+    DIM ammo AS INTEGER = D_ITEMS.weaponinfo_ammo[ready]
+
+    ' The ammunition of the weapon in hand.
+    IF ammo <> DOOMDEF.AM_NOAMMO THEN DrawNum(ST_AMMOX, ST_AMMOY, 1, 3, CLNG(D_PLAYER.player_ammo[plyr * DOOMDEF.NUMAMMO + ammo]))
+
+    FOR i = 0 TO 3
+        DrawNum(ST_SMALLAMMOX, CLNG(ammo_y[i]), 0, 3, CLNG(D_PLAYER.player_ammo[plyr * DOOMDEF.NUMAMMO + i]))
+        DrawNum(ST_MAXAMMOX, CLNG(ammo_y[i]), 0, 3, CLNG(D_PLAYER.player_maxammo[plyr * DOOMDEF.NUMAMMO + i]))
+    NEXT i
+
+    V_VIDEO.V_DrawPatch(ST_HEALTHX, ST_HEALTHY, FG, tallpercent)
+    DrawNum(ST_HEALTHX, ST_HEALTHY, 1, 3, CLNG(D_PLAYER.player_health[plyr]))
+    V_VIDEO.V_DrawPatch(ST_ARMORX, ST_ARMORY, FG, tallpercent)
+    DrawNum(ST_ARMORX, ST_ARMORY, 1, 3, CLNG(D_PLAYER.player_armorpoints[plyr]))
+
+    ' The arms: grey for a weapon not owned, yellow for one owned.
+    IF DOOMSTAT.deathmatch = 0 THEN
+        V_VIDEO.V_DrawPatch(ST_ARMSBGX, ST_ARMSBGY, FG, armsbg)
+        FOR i = 0 TO 5
+            IF CLNG(D_PLAYER.player_weaponowned[plyr * DOOMDEF.NUMWEAPONS + i + 1]) <> 0 THEN
+                V_VIDEO.V_DrawPatch(ST_ARMSX + (i MOD 3) * ST_ARMSXSPACE, ST_ARMSY + (i \ 3) * ST_ARMSYSPACE, FG, CLNG(shortnum[i + 2]))
+            ELSE
+                V_VIDEO.V_DrawPatch(ST_ARMSX + (i MOD 3) * ST_ARMSXSPACE, ST_ARMSY + (i \ 3) * ST_ARMSYSPACE, FG, CLNG(arms_grey[i]))
+            ENDIF
+        NEXT i
+    ENDIF
+
+    V_VIDEO.V_DrawPatch(ST_FACESX, ST_FACESY, FG, CLNG(faces[st_faceindex]))
+
+    FOR i = 0 TO 2
+        IF CLNG(keyboxes[i]) >= 0 THEN V_VIDEO.V_DrawPatch(ST_KEYX, CLNG(key_y[i]), FG, CLNG(keys[CLNG(keyboxes[i])]))
+    NEXT i
+ENDSUB
+
+' Draws the status bar; with fullscreen and no automap there is none.
+EXPORT SUB ST_Drawer(fullscreen AS INTEGER)
+    st_statusbaron = 1
+    IF fullscreen <> 0 AND DOOMSTAT.automapactive = 0 THEN st_statusbaron = 0
+
+    ' Do red-/gold-shifts from damage/items.
+    ST_doPaletteStuff()
+
+    IF st_statusbaron = 0 THEN RETURN
+
+    V_VIDEO.V_DrawPatch(0, ST_Y, FG, sbar)
+    IF DOOMSTAT.netgame <> 0 THEN V_VIDEO.V_DrawPatch(ST_FX, ST_Y, FG, faceback)
+    ST_drawWidgets()
+ENDSUB
+
+SUB ST_loadGraphics()
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM facenum AS INTEGER = 0
+
+    ' Load the numbers, tall and short.
+    FOR i = 0 TO 9
+        tallnum[i] = W_WAD.W_CacheLumpName("STTNUM" + STR$(i))
+        shortnum[i] = W_WAD.W_CacheLumpName("STYSNUM" + STR$(i))
+    NEXT i
+
+    ' Load percent key.
+    tallpercent = W_WAD.W_CacheLumpName("STTPRCNT")
+
+    ' Key cards.
+    FOR i = 0 TO DOOMDEF.NUMCARDS - 1
+        keys[i] = W_WAD.W_CacheLumpName("STKEYS" + STR$(i))
+    NEXT i
+
+    ' Arms background, and the grey arms ownership numbers.
+    armsbg = W_WAD.W_CacheLumpName("STARMS")
+    FOR i = 0 TO 5
+        arms_grey[i] = W_WAD.W_CacheLumpName("STGNUM" + STR$(i + 2))
+    NEXT i
+
+    ' Face backgrounds for different color players.
+    faceback = W_WAD.W_CacheLumpName("STFB" + STR$(DOOMSTAT.consoleplayer))
+
+    ' Status bar background bits.
+    sbar = W_WAD.W_CacheLumpName("STBAR")
+
+    ' Face states.
+    FOR i = 0 TO ST_NUMPAINFACES - 1
+        FOR j = 0 TO ST_NUMSTRAIGHTFACES - 1
+            faces[facenum] = W_WAD.W_CacheLumpName("STFST" + STR$(i) + STR$(j))
+            facenum = facenum + 1
+        NEXT j
+        ' Turn right, turn left, ouch, evil grin, pissed off.
+        faces[facenum] = W_WAD.W_CacheLumpName("STFTR" + STR$(i) + "0")
+        faces[facenum + 1] = W_WAD.W_CacheLumpName("STFTL" + STR$(i) + "0")
+        faces[facenum + 2] = W_WAD.W_CacheLumpName("STFOUCH" + STR$(i))
+        faces[facenum + 3] = W_WAD.W_CacheLumpName("STFEVL" + STR$(i))
+        faces[facenum + 4] = W_WAD.W_CacheLumpName("STFKILL" + STR$(i))
+        facenum = facenum + 5
+    NEXT i
+    faces[facenum] = W_WAD.W_CacheLumpName("STFGOD0")
+    faces[facenum + 1] = W_WAD.W_CacheLumpName("STFDEAD0")
+ENDSUB
+
+SUB ST_initData()
+    DIM i AS INTEGER
+    plyr = DOOMSTAT.consoleplayer
+    st_clock = 0
+    st_statusbaron = 1
+    st_faceindex = 0
+    st_palette = -1
+    st_oldhealth = -1
+
+    FOR i = 0 TO DOOMDEF.NUMWEAPONS - 1
+        oldweaponsowned[i] = D_PLAYER.player_weaponowned[plyr * DOOMDEF.NUMWEAPONS + i]
+    NEXT i
+    FOR i = 0 TO 2
+        keyboxes[i] = -1
+    NEXT i
+ENDSUB
+
+' Called at the start of a level.
+EXPORT SUB ST_Start()
+    IF st_stopped = 0 THEN ST_Stop()
+    ST_initData()
+    st_stopped = 0
+ENDSUB
+
+' Puts the normal palette back.
+EXPORT SUB ST_Stop()
+    IF st_stopped <> 0 THEN RETURN
+    I_VIDEO.I_SetPalette(W_WAD.W_CacheLumpNum(lu_palette))
+    st_stopped = 1
+ENDSUB
+
+' Called once at program start.
+EXPORT SUB ST_Init()
+    lu_palette = W_WAD.W_GetNumForName("PLAYPAL")
+    ST_loadGraphics()
+ENDSUB
+
+' ---- cheats ------------------------------------------------------------------
+' The original follows each cheat with a little state machine over
+' scrambled key codes (m_cheat.c); here the last keys typed are kept and
+' compared with the words.
+
+DIM typed$ AS STRING = ""
+
+FUNC Typed(word$ AS STRING) AS INTEGER
+    IF LEN(typed$) >= LEN(word$) ANDALSO RIGHT$(typed$, LEN(word$)) = word$ THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' All weapons, full ammunition and blue armor.
+SUB GiveArms()
+    DIM i AS INTEGER
+    D_PLAYER.player_armorpoints[plyr] = 200
+    D_PLAYER.player_armortype[plyr] = 2
+    FOR i = 0 TO DOOMDEF.NUMWEAPONS - 1
+        ' The plasma gun, the BFG and the super shotgun are not in every game.
+        IF (i <> DOOMDEF.WP_SUPERSHOTGUN OR DOOMSTAT.commercial <> 0) AND ((i <> DOOMDEF.WP_PLASMA AND i <> DOOMDEF.WP_BFG) OR DOOMSTAT.shareware = 0) THEN D_PLAYER.player_weaponowned[plyr * DOOMDEF.NUMWEAPONS + i] = 1
+    NEXT i
+    FOR i = 0 TO DOOMDEF.NUMAMMO - 1
+        D_PLAYER.player_ammo[plyr * DOOMDEF.NUMAMMO + i] = D_PLAYER.player_maxammo[plyr * DOOMDEF.NUMAMMO + i]
+    NEXT i
+ENDSUB
+
+' Respond to keyboard input events, intercept cheats. Never eats a key.
+EXPORT FUNC ST_Responder(ev_type AS INTEGER, key AS INTEGER) AS INTEGER
+    ' 0 is a key going down.
+    IF ev_type <> 0 THEN RETURN 0
+    IF key < 32 OR key > 126 THEN RETURN 0
+
+    typed$ = typed$ + LCASE$(CHR$(key))
+    IF LEN(typed$) > 16 THEN typed$ = RIGHT$(typed$, 16)
+
+    IF DOOMSTAT.netgame <> 0 OR DOOMSTAT.gameskill = DOOMDEF.SK_NIGHTMARE THEN RETURN 0
+
+    DIM mo AS INTEGER = D_PLAYER.player_mo[plyr]
+    DIM cheats AS INTEGER = D_PLAYER.player_cheats[plyr]
+    DIM i AS INTEGER
+    DIM power AS INTEGER
+    DIM episode AS INTEGER
+    DIM map_num AS INTEGER
+
+    IF Typed("iddqd") <> 0 THEN
+        ' God mode.
+        cheats = cheats BXOR DOOMDEF.CF_GODMODE
+        D_PLAYER.player_cheats[plyr] = cheats
+        IF (cheats BAND DOOMDEF.CF_GODMODE) <> 0 THEN
+            IF mo >= 0 THEN P_MOBJ.mobj_health[mo] = 100
+            D_PLAYER.player_health[plyr] = 100
+            D_PLAYER.player_message$[plyr] = "Degreelessness Mode On"
+        ELSE
+            D_PLAYER.player_message$[plyr] = "Degreelessness Mode Off"
+        ENDIF
+        typed$ = ""
+    ELSEIF Typed("idfa") <> 0 THEN
+        GiveArms()
+        D_PLAYER.player_message$[plyr] = "Ammo (no keys) Added"
+        typed$ = ""
+    ELSEIF Typed("idkfa") <> 0 THEN
+        GiveArms()
+        FOR i = 0 TO DOOMDEF.NUMCARDS - 1
+            D_PLAYER.player_cards[plyr * DOOMDEF.NUMCARDS + i] = 1
+        NEXT i
+        D_PLAYER.player_message$[plyr] = "Very Happy Ammo Added"
+        typed$ = ""
+    ELSEIF (DOOMSTAT.commercial = 0 AND Typed("idspispopd") <> 0) OR (DOOMSTAT.commercial <> 0 AND Typed("idclip") <> 0) THEN
+        cheats = cheats BXOR DOOMDEF.CF_NOCLIP
+        D_PLAYER.player_cheats[plyr] = cheats
+        IF (cheats BAND DOOMDEF.CF_NOCLIP) <> 0 THEN
+            D_PLAYER.player_message$[plyr] = "No Clipping Mode ON"
+        ELSE
+            D_PLAYER.player_message$[plyr] = "No Clipping Mode OFF"
+        ENDIF
+        typed$ = ""
+    ELSEIF Typed("idchoppers") <> 0 THEN
+        D_PLAYER.player_weaponowned[plyr * DOOMDEF.NUMWEAPONS + DOOMDEF.WP_CHAINSAW] = 1
+        D_PLAYER.player_powers[plyr * DOOMDEF.NUMPOWERS + DOOMDEF.PW_INVULNERABILITY] = 1
+        D_PLAYER.player_message$[plyr] = "... doesn't suck - GM"
+        typed$ = ""
+    ELSEIF Typed("iddt") <> 0 THEN
+        ' The automap shows everything, then the things too.
+        IF DOOMSTAT.automapactive <> 0 THEN AM_MAP.cheating = (AM_MAP.cheating + 1) MOD 3
+        typed$ = ""
+    ELSEIF LEN(typed$) >= 9 ANDALSO LEFT$(RIGHT$(typed$, 9), 8) = "idbehold" THEN
+        ' The letters of the powers: invulnerability, strength,
+        ' invisibility, radiation suit, area map, light visor.
+        power = INSTR("vsiral", RIGHT$(typed$, 1))
+        IF power >= 0 THEN
+            IF CLNG(D_PLAYER.player_powers[plyr * DOOMDEF.NUMPOWERS + power]) = 0 THEN
+                P_INTER.P_GivePower(plyr, power)
+            ELSEIF power <> DOOMDEF.PW_STRENGTH THEN
+                D_PLAYER.player_powers[plyr * DOOMDEF.NUMPOWERS + power] = 1
+            ELSE
+                D_PLAYER.player_powers[plyr * DOOMDEF.NUMPOWERS + power] = 0
+            ENDIF
+            D_PLAYER.player_message$[plyr] = "Power-up Toggled"
+        ENDIF
+        typed$ = ""
+    ELSEIF LEN(typed$) >= 8 ANDALSO LEFT$(RIGHT$(typed$, 8), 6) = "idclev" THEN
+        episode = ASC(MID$(RIGHT$(typed$, 2), 0, 1)) - 48
+        map_num = ASC(RIGHT$(typed$, 1)) - 48
+        typed$ = ""
+        ' Catch invalid maps.
+        IF episode < 1 OR map_num < 1 OR map_num > 9 THEN RETURN 0
+        IF DOOMSTAT.retail <> 0 AND episode > 4 THEN RETURN 0
+        IF DOOMSTAT.retail = 0 AND DOOMSTAT.shareware = 0 AND episode > 3 THEN RETURN 0
+        IF DOOMSTAT.shareware <> 0 AND episode > 1 THEN RETURN 0
+
+        ' So be it.
+        D_PLAYER.player_message$[plyr] = "Changing Level..."
+        G_GAME.G_DeferedInitNew(DOOMSTAT.gameskill, episode, map_num)
+    ENDIF
+    RETURN 0
+ENDFUNC

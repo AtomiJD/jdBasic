@@ -26,6 +26,7 @@ IMPORT P_MAP
 IMPORT P_SIGHT
 IMPORT P_INTER
 IMPORT G_GAME
+IMPORT HU_STUFF
 
 DIM passed AS INTEGER = 0
 DIM failed AS INTEGER = 0
@@ -168,7 +169,7 @@ Eq("pickup: clip", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_CLIP]), 30)
 Eq("pickup: stimpack", CLNG(D_PLAYER.player_health[0]), 60)
 Eq("pickup: green armor", CLNG(D_PLAYER.player_armorpoints[0]), 100)
 Eq("pickup: the things are gone", CountType(INFO.MT_CLIP) + CountType(INFO.MT_MISC10) + CountType(INFO.MT_MISC0), things_then)
-Eq("pickup: message", IIF(D_PLAYER.player_message$[0] = "Picked up the armor." OR D_PLAYER.player_message$[0] = "Picked up a stimpack." OR D_PLAYER.player_message$[0] = "Picked up a clip.", 1, 0), 1)
+Eq("pickup: message", IIF(HU_STUFF.w_message$ = "Picked up the armor." OR HU_STUFF.w_message$ = "Picked up a stimpack." OR HU_STUFF.w_message$ = "Picked up a clip.", 1, 0), 1)
 
 ' ---- sight ---------------------------------------------------------------------
 ' From the start of E1M1 the room is open to the west window; the door of

@@ -1,0 +1,207 @@
+' The end of an episode: a text typed onto the screen, then a picture
+' (f_finale.c). The texts are those of d_englsh.h. The endings of DOOM II
+' with their cast of monsters are not ported.
+
+EXPORT MODULE F_FINALE
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT INFO
+IMPORT W_WAD
+IMPORT V_VIDEO
+IMPORT HU_STUFF
+IMPORT G_GAME
+IMPORT S_SOUND
+
+DIM e1text AS ARRAY = ["Once you beat the big badasses and", "clean out the moon base you're supposed", "to win, aren't you? Aren't you? Where's", "your fat reward and ticket home? What", "the hell is this? It's not supposed to", "end this way!", "", "It stinks like rotten meat, but looks", "like the lost Deimos base.  Looks like", "you're stuck on The Shores of Hell.", "The only way out is through.", "", "To continue the DOOM experience, play", "The Shores of Hell and its amazing", "sequel, Inferno!"]
+DIM e2text AS ARRAY = ["You've done it! The hideous cyber-", "demon lord that ruled the lost Deimos", "moon base has been slain and you", "are triumphant! But ... where are", "you? You clamber to the edge of the", "moon and look down to see the awful", "truth.", "", "Deimos floats above Hell itself!", "You've never heard of anyone escaping", "from Hell, but you'll make the bastards", "sorry they ever heard of you! Quickly,", "you rappel down to  the surface of", "Hell.", "", "Now, it's on to the final chapter of", "DOOM! -- Inferno."]
+DIM e3text AS ARRAY = ["The loathsome spiderdemon that", "masterminded the invasion of the moon", "bases and caused so much death has had", "its ass kicked for all time.", "", "A hidden doorway opens and you enter.", "You've proven too tough for Hell to", "contain, and now Hell at last plays", "fair -- for you emerge from the door", "to see the green fields of Earth!", "Home at last.", "", "You wonder what's been happening on", "Earth while you were battling evil", "unleashed. It's good that no Hell-", "spawn could have come through that", "door with you ..."]
+DIM e4text AS ARRAY = ["the spider mastermind must have sent forth", "its legions of hellspawn before your", "final confrontation with that terrible", "beast from hell.  but you stepped forward", "and brought forth eternal damnation and", "suffering upon the horde as a true hero", "would in the face of something so evil.", "", "besides, someone was gonna pay for what", "happened to daisy, your pet rabbit.", "", "but now, you see spread before you more", "potential pain and gibbitude as a nation", "of demons run amok among our cities.", "", "next stop, hell on earth!"]
+
+CONST TEXTSPEED = 3
+CONST TEXTWAIT = 250
+
+' Stage of animation: 0 = text, 1 = art screen.
+DIM finalestage AS INTEGER = 0
+DIM finalecount AS INTEGER = 0
+DIM finaletext$ AS STRING = ""
+DIM finaleflat$ AS STRING = ""
+DIM bunny_laststage AS INTEGER = 0
+
+FUNC JoinLines$(text_lines AS ARRAY) AS STRING
+    DIM i AS INTEGER
+    DIM joined$ AS STRING = ""
+    FOR i = 0 TO LEN(text_lines) - 1
+        joined$ = joined$ + text_lines[i] + CHR$(10)
+    NEXT i
+    RETURN joined$
+ENDFUNC
+
+EXPORT SUB F_StartFinale()
+    G_GAME.gameaction = G_GAME.GA_NOTHING
+    DOOMSTAT.gamestate = DOOMSTAT.GS_FINALE
+    DOOMSTAT.viewactive = 0
+    DOOMSTAT.automapactive = 0
+
+    IF DOOMSTAT.commercial <> 0 THEN I_SYSTEM.I_Error("F_StartFinale: DOOM II is not ported")
+
+    IF DOOMSTAT.gameepisode = 1 THEN
+        finaleflat$ = "FLOOR4_8"
+        finaletext$ = JoinLines$(e1text)
+    ELSEIF DOOMSTAT.gameepisode = 2 THEN
+        finaleflat$ = "SFLR6_1"
+        finaletext$ = JoinLines$(e2text)
+    ELSEIF DOOMSTAT.gameepisode = 3 THEN
+        finaleflat$ = "MFLR8_4"
+        finaletext$ = JoinLines$(e3text)
+    ELSE
+        finaleflat$ = "MFLR8_3"
+        finaletext$ = JoinLines$(e4text)
+    ENDIF
+
+    finalestage = 0
+    finalecount = 0
+ENDSUB
+
+' The finale takes no events; the cast of DOOM II would.
+EXPORT FUNC F_Responder(ev_type AS INTEGER, key AS INTEGER) AS INTEGER
+    RETURN 0
+ENDFUNC
+
+EXPORT SUB F_Ticker()
+    ' Advance animation.
+    finalecount = finalecount + 1
+
+    IF finalestage = 0 AND finalecount > LEN(finaletext$) * TEXTSPEED + TEXTWAIT THEN
+        finalecount = 0
+        finalestage = 1
+        ' Force a wipe.
+        DOOMSTAT.wipegamestate = -1
+    ENDIF
+ENDSUB
+
+SUB F_TextWrite()
+    ' Erase the entire screen to a tiled background.
+    DIM src AS INTEGER = W_WAD.W_CacheLumpName(finaleflat$)
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    DIM dest AS INTEGER = 0
+    DIM row AS INTEGER
+    FOR y = 0 TO DOOMDEF.SCREENHEIGHT - 1
+        row = src + (y BAND 63) * 64
+        FOR x = 0 TO DOOMDEF.SCREENWIDTH - 1
+            V_VIDEO.screens[dest] = W_WAD.pool[row + (x BAND 63)]
+            dest = dest + 1
+        NEXT x
+    NEXT y
+
+    ' Draw some of the text onto the screen.
+    DIM cx AS INTEGER = 10
+    DIM cy AS INTEGER = 10
+    DIM n_chars AS INTEGER = (finalecount - 10) \ TEXTSPEED
+    IF n_chars < 0 THEN n_chars = 0
+    IF n_chars > LEN(finaletext$) THEN n_chars = LEN(finaletext$)
+    DIM upper$ AS STRING = UCASE$(finaletext$)
+    DIM i AS INTEGER
+    DIM c AS INTEGER
+    DIM w AS INTEGER
+
+    FOR i = 0 TO n_chars - 1
+        c = ASC(MID$(upper$, i, 1))
+        IF c = 10 THEN
+            cx = 10
+            cy = cy + 11
+            CONTINUEFOR
+        ENDIF
+
+        c = c - HU_STUFF.HU_FONTSTART
+        IF c < 0 OR c >= HU_STUFF.HU_FONTSIZE THEN
+            cx = cx + 4
+            CONTINUEFOR
+        ENDIF
+
+        w = W_WAD.PoolShort(CLNG(HU_STUFF.hu_font[c]))
+        IF cx + w > DOOMDEF.SCREENWIDTH THEN EXITFOR
+        V_VIDEO.V_DrawPatch(cx, cy, 0, CLNG(HU_STUFF.hu_font[c]))
+        cx = cx + w
+    NEXT i
+ENDSUB
+
+' Draws column col of the patch at screen column x, from the top.
+SUB F_DrawPatchCol(x AS INTEGER, patch AS INTEGER, col AS INTEGER)
+    DIM column AS INTEGER = patch + W_WAD.PoolLong(patch + 8 + col * 4)
+    DIM topdelta AS INTEGER
+    DIM length AS INTEGER
+    DIM dest AS INTEGER
+    DIM i AS INTEGER
+
+    ' Step through the posts in a column.
+    DO
+        topdelta = CLNG(W_WAD.pool[column])
+        IF topdelta = 255 THEN EXITDO
+        length = CLNG(W_WAD.pool[column + 1])
+        dest = x + topdelta * DOOMDEF.SCREENWIDTH
+        FOR i = 0 TO length - 1
+            IF dest < V_VIDEO.SCREENSIZE THEN V_VIDEO.screens[dest] = W_WAD.pool[column + 3 + i]
+            dest = dest + DOOMDEF.SCREENWIDTH
+        NEXT i
+        column = column + length + 4
+    LOOP
+ENDSUB
+
+' The end of the third episode: two pictures scroll past, then "THE END"
+' is shot onto the screen letter by letter.
+SUB F_BunnyScroll()
+    DIM p1 AS INTEGER = W_WAD.W_CacheLumpName("PFUB2")
+    DIM p2 AS INTEGER = W_WAD.W_CacheLumpName("PFUB1")
+    DIM x AS INTEGER
+
+    DIM scrolled AS INTEGER = 320 - (finalecount - 230) \ 2
+    IF scrolled > 320 THEN scrolled = 320
+    IF scrolled < 0 THEN scrolled = 0
+
+    FOR x = 0 TO DOOMDEF.SCREENWIDTH - 1
+        IF x + scrolled < 320 THEN
+            F_DrawPatchCol(x, p1, x + scrolled)
+        ELSE
+            F_DrawPatchCol(x, p2, x + scrolled - 320)
+        ENDIF
+    NEXT x
+
+    IF finalecount < 1130 THEN RETURN
+    IF finalecount < 1180 THEN
+        V_VIDEO.V_DrawPatch((DOOMDEF.SCREENWIDTH - 13 * 8) \ 2, (DOOMDEF.SCREENHEIGHT - 8 * 8) \ 2, 0, W_WAD.W_CacheLumpName("END0"))
+        bunny_laststage = 0
+        RETURN
+    ENDIF
+
+    DIM stage AS INTEGER = (finalecount - 1180) \ 5
+    IF stage > 6 THEN stage = 6
+    IF stage > bunny_laststage THEN
+        S_SOUND.S_StartSound(-1, INFO.SFX_PISTOL)
+        bunny_laststage = stage
+    ENDIF
+    V_VIDEO.V_DrawPatch((DOOMDEF.SCREENWIDTH - 13 * 8) \ 2, (DOOMDEF.SCREENHEIGHT - 8 * 8) \ 2, 0, W_WAD.W_CacheLumpName("END" + STR$(stage)))
+ENDSUB
+
+EXPORT SUB F_Drawer()
+    IF finalestage = 0 THEN
+        F_TextWrite()
+    ELSEIF DOOMSTAT.gameepisode = 1 THEN
+        IF DOOMSTAT.retail <> 0 THEN
+            V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("CREDIT"))
+        ELSE
+            V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("HELP2"))
+        ENDIF
+    ELSEIF DOOMSTAT.gameepisode = 2 THEN
+        V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("VICTORY2"))
+    ELSEIF DOOMSTAT.gameepisode = 3 THEN
+        F_BunnyScroll()
+    ELSE
+        V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("ENDPIC"))
+    ENDIF
+ENDSUB

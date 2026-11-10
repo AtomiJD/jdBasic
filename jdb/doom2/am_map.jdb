@@ -1,0 +1,830 @@
+' The automap (am_map.c). Only the arrow of the one player is drawn; the
+' coloured arrows of a net game are not ported.
+
+EXPORT MODULE AM_MAP
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT TABLES
+IMPORT W_WAD
+IMPORT V_VIDEO
+IMPORT P_SETUP
+IMPORT P_MOBJ
+IMPORT G_GAME
+
+' Colours of the palette.
+CONST REDS = 176
+CONST GREENS = 112
+CONST GRAYS = 96
+CONST BROWNS = 64
+CONST YELLOWS = 231
+CONST WHITE = 209
+CONST BACKGROUND = 0
+CONST WALLCOLORS = REDS
+CONST WALLRANGE = 16
+CONST TSWALLCOLORS = GRAYS
+CONST FDWALLCOLORS = BROWNS
+CONST CDWALLCOLORS = YELLOWS
+CONST THINGCOLORS = GREENS
+CONST GRIDCOLORS = 104
+CONST XHAIRCOLORS = GRAYS
+
+' The keys of the map.
+EXPORT CONST AM_STARTKEY = 9
+CONST AM_ZOOMINKEY = 61
+CONST AM_ZOOMOUTKEY = 45
+CONST AM_GOBIGKEY = 48
+CONST AM_FOLLOWKEY = 102
+CONST AM_GRIDKEY = 103
+CONST AM_MARKKEY = 109
+CONST AM_CLEARMARKKEY = 99
+
+CONST AM_NUMMARKPOINTS = 10
+' How much the automap moves the window position at each tic, in
+' frame-buffer coordinates.
+CONST F_PANINC = 4
+' How much zoom-in and zoom-out per tic: 1.02 and 1 / 1.02.
+CONST M_ZOOMIN = 66846
+CONST M_ZOOMOUT = 64251
+CONST PLAYERRADIUS = 1048576
+
+' The shapes: four coordinates a line.
+DIM player_arrow[7 * 4] AS INTEGER
+DIM cheat_player_arrow[16 * 4] AS INTEGER
+DIM thintriangle_guy AS ARRAY = [-32768, -45875, 65536, 0, 65536, 0, -32768, 45875, -32768, 45875, -32768, -45875]
+DIM shapes_made AS INTEGER = 0
+
+' 0 no cheat, 1 the whole map, 2 the things too.
+EXPORT DIM cheating AS INTEGER = 0
+DIM grid AS INTEGER = 0
+
+' Size and place of the map on the screen.
+DIM f_x AS INTEGER = 0
+DIM f_y AS INTEGER = 0
+DIM f_w AS INTEGER = 320
+DIM f_h AS INTEGER = 168
+
+' How far the window pans each tic (map coords), and how far it zooms.
+DIM m_paninc_x AS INTEGER = 0
+DIM m_paninc_y AS INTEGER = 0
+DIM mtof_zoommul AS INTEGER = 65536
+DIM ftom_zoommul AS INTEGER = 65536
+
+' Lower left and upper right of the window (map coords), its size.
+DIM m_x AS INTEGER = 0
+DIM m_y AS INTEGER = 0
+DIM m_x2 AS INTEGER = 0
+DIM m_y2 AS INTEGER = 0
+DIM m_w AS INTEGER = 0
+DIM m_h AS INTEGER = 0
+
+' Based on the level size.
+DIM min_x AS INTEGER = 0
+DIM min_y AS INTEGER = 0
+DIM max_x AS INTEGER = 0
+DIM max_y AS INTEGER = 0
+DIM min_scale_mtof AS INTEGER = 0
+DIM max_scale_mtof AS INTEGER = 0
+
+' Old stuff for recovery later.
+DIM old_m_w AS INTEGER = 0
+DIM old_m_h AS INTEGER = 0
+DIM old_m_x AS INTEGER = 0
+DIM old_m_y AS INTEGER = 0
+
+' Used by MTOF to scale from map-to-frame-buffer coords, and back.
+DIM scale_mtof AS INTEGER = 13107
+DIM scale_ftom AS INTEGER = 0
+
+DIM plr AS INTEGER = 0
+DIM marknums[10] AS INTEGER
+DIM markpoint_x[AM_NUMMARKPOINTS] AS INTEGER
+DIM markpoint_y[AM_NUMMARKPOINTS] AS INTEGER
+DIM markpointnum AS INTEGER = 0
+DIM followplayer AS INTEGER = 1
+DIM f_oldloc_x AS INTEGER = 0
+DIM f_oldloc_y AS INTEGER = 0
+DIM stopped AS INTEGER = 1
+DIM bigstate AS INTEGER = 0
+DIM lastlevel AS INTEGER = -1
+DIM lastepisode AS INTEGER = -1
+DIM lightlev AS INTEGER = 0
+
+FUNC FTOM(x AS INTEGER) AS INTEGER
+    RETURN M_FIXED.FixedMul(x * 65536, scale_ftom)
+ENDFUNC
+
+FUNC MTOF(x AS INTEGER) AS INTEGER
+    RETURN M_FIXED.FixedMul(x, scale_mtof) SHR 16
+ENDFUNC
+
+FUNC CXMTOF(x AS INTEGER) AS INTEGER
+    RETURN f_x + MTOF(x - m_x)
+ENDFUNC
+
+FUNC CYMTOF(y AS INTEGER) AS INTEGER
+    RETURN f_y + (f_h - MTOF(y - m_y))
+ENDFUNC
+
+CONST SHAPE_PLAYER = 0
+CONST SHAPE_CHEAT = 1
+CONST SHAPE_THING = 2
+
+SUB SetLine(shape AS INTEGER, n AS INTEGER, ax AS INTEGER, ay AS INTEGER, bx AS INTEGER, by AS INTEGER)
+    IF shape = SHAPE_PLAYER THEN
+        player_arrow[n * 4] = ax
+        player_arrow[n * 4 + 1] = ay
+        player_arrow[n * 4 + 2] = bx
+        player_arrow[n * 4 + 3] = by
+    ELSE
+        cheat_player_arrow[n * 4] = ax
+        cheat_player_arrow[n * 4 + 1] = ay
+        cheat_player_arrow[n * 4 + 2] = bx
+        cheat_player_arrow[n * 4 + 3] = by
+    ENDIF
+ENDSUB
+
+' Coordinate k of a shape.
+FUNC ShapeAt(shape AS INTEGER, k AS INTEGER) AS INTEGER
+    IF shape = SHAPE_PLAYER THEN RETURN CLNG(player_arrow[k])
+    IF shape = SHAPE_CHEAT THEN RETURN CLNG(cheat_player_arrow[k])
+    RETURN CLNG(thintriangle_guy[k])
+ENDFUNC
+
+' The arrows, in units of a little more than the player's radius.
+SUB MakeShapes()
+    DIM R AS INTEGER = (8 * PLAYERRADIUS) \ 7
+    SetLine(SHAPE_PLAYER, 0, -R + R \ 8, 0, R, 0)
+    SetLine(SHAPE_PLAYER, 1, R, 0, R - R \ 2, R \ 4)
+    SetLine(SHAPE_PLAYER, 2, R, 0, R - R \ 2, -R \ 4)
+    SetLine(SHAPE_PLAYER, 3, -R + R \ 8, 0, -R - R \ 8, R \ 4)
+    SetLine(SHAPE_PLAYER, 4, -R + R \ 8, 0, -R - R \ 8, -R \ 4)
+    SetLine(SHAPE_PLAYER, 5, -R + 3 * R \ 8, 0, -R + R \ 8, R \ 4)
+    SetLine(SHAPE_PLAYER, 6, -R + 3 * R \ 8, 0, -R + R \ 8, -R \ 4)
+
+    SetLine(SHAPE_CHEAT, 0, -R + R \ 8, 0, R, 0)
+    SetLine(SHAPE_CHEAT, 1, R, 0, R - R \ 2, R \ 6)
+    SetLine(SHAPE_CHEAT, 2, R, 0, R - R \ 2, -R \ 6)
+    SetLine(SHAPE_CHEAT, 3, -R + R \ 8, 0, -R - R \ 8, R \ 6)
+    SetLine(SHAPE_CHEAT, 4, -R + R \ 8, 0, -R - R \ 8, -R \ 6)
+    SetLine(SHAPE_CHEAT, 5, -R + 3 * R \ 8, 0, -R + R \ 8, R \ 6)
+    SetLine(SHAPE_CHEAT, 6, -R + 3 * R \ 8, 0, -R + R \ 8, -R \ 6)
+    SetLine(SHAPE_CHEAT, 7, -R \ 2, 0, -R \ 2, -R \ 6)
+    SetLine(SHAPE_CHEAT, 8, -R \ 2, -R \ 6, -R \ 2 + R \ 6, -R \ 6)
+    SetLine(SHAPE_CHEAT, 9, -R \ 2 + R \ 6, -R \ 6, -R \ 2 + R \ 6, R \ 4)
+    SetLine(SHAPE_CHEAT, 10, -R \ 6, 0, -R \ 6, -R \ 6)
+    SetLine(SHAPE_CHEAT, 11, -R \ 6, -R \ 6, 0, -R \ 6)
+    SetLine(SHAPE_CHEAT, 12, 0, -R \ 6, 0, R \ 4)
+    SetLine(SHAPE_CHEAT, 13, R \ 6, R \ 4, R \ 6, -R \ 7)
+    SetLine(SHAPE_CHEAT, 14, R \ 6, -R \ 7, R \ 6 + R \ 32, -R \ 7 - R \ 32)
+    SetLine(SHAPE_CHEAT, 15, R \ 6 + R \ 32, -R \ 7 - R \ 32, R \ 6 + R \ 10, -R \ 7)
+    shapes_made = 1
+ENDSUB
+
+SUB AM_activateNewScale()
+    m_x = m_x + m_w \ 2
+    m_y = m_y + m_h \ 2
+    m_w = FTOM(f_w)
+    m_h = FTOM(f_h)
+    m_x = m_x - m_w \ 2
+    m_y = m_y - m_h \ 2
+    m_x2 = m_x + m_w
+    m_y2 = m_y + m_h
+ENDSUB
+
+SUB AM_saveScaleAndLoc()
+    old_m_x = m_x
+    old_m_y = m_y
+    old_m_w = m_w
+    old_m_h = m_h
+ENDSUB
+
+SUB AM_restoreScaleAndLoc()
+    DIM mo AS INTEGER = D_PLAYER.player_mo[plr]
+    m_w = old_m_w
+    m_h = old_m_h
+    IF followplayer = 0 THEN
+        m_x = old_m_x
+        m_y = old_m_y
+    ELSE
+        m_x = CLNG(P_MOBJ.mobj_x[mo]) - m_w \ 2
+        m_y = CLNG(P_MOBJ.mobj_y[mo]) - m_h \ 2
+    ENDIF
+    m_x2 = m_x + m_w
+    m_y2 = m_y + m_h
+
+    ' Change the scaling multipliers.
+    scale_mtof = M_FIXED.FixedDiv(f_w * 65536, m_w)
+    scale_ftom = M_FIXED.FixedDiv(M_FIXED.FRACUNIT, scale_mtof)
+ENDSUB
+
+' Adds a marker at the current location.
+SUB AM_addMark()
+    markpoint_x[markpointnum] = m_x + m_w \ 2
+    markpoint_y[markpointnum] = m_y + m_h \ 2
+    markpointnum = (markpointnum + 1) MOD AM_NUMMARKPOINTS
+ENDSUB
+
+' Determines the bounding box of all vertices, and from it the scales
+' between which the map can be zoomed.
+SUB AM_findMinMaxBoundaries()
+    DIM i AS INTEGER
+    DIM vx AS INTEGER
+    DIM vy AS INTEGER
+    min_x = M_FIXED.MAXINT
+    min_y = M_FIXED.MAXINT
+    max_x = -M_FIXED.MAXINT
+    max_y = -M_FIXED.MAXINT
+
+    FOR i = 0 TO P_SETUP.numvertexes - 1
+        vx = CLNG(P_SETUP.vertex_x[i])
+        vy = CLNG(P_SETUP.vertex_y[i])
+        IF vx < min_x THEN
+            min_x = vx
+        ELSEIF vx > max_x THEN
+            max_x = vx
+        ENDIF
+        IF vy < min_y THEN
+            min_y = vy
+        ELSEIF vy > max_y THEN
+            max_y = vy
+        ENDIF
+    NEXT i
+
+    DIM a AS INTEGER = M_FIXED.FixedDiv(f_w * 65536, max_x - min_x)
+    DIM b AS INTEGER = M_FIXED.FixedDiv(f_h * 65536, max_y - min_y)
+    min_scale_mtof = b
+    IF a < b THEN min_scale_mtof = a
+    max_scale_mtof = M_FIXED.FixedDiv(f_h * 65536, 2 * PLAYERRADIUS)
+ENDSUB
+
+SUB AM_changeWindowLoc()
+    IF m_paninc_x <> 0 OR m_paninc_y <> 0 THEN
+        followplayer = 0
+        f_oldloc_x = M_FIXED.MAXINT
+    ENDIF
+
+    m_x = m_x + m_paninc_x
+    m_y = m_y + m_paninc_y
+
+    IF m_x + m_w \ 2 > max_x THEN
+        m_x = max_x - m_w \ 2
+    ELSEIF m_x + m_w \ 2 < min_x THEN
+        m_x = min_x - m_w \ 2
+    ENDIF
+
+    IF m_y + m_h \ 2 > max_y THEN
+        m_y = max_y - m_h \ 2
+    ELSEIF m_y + m_h \ 2 < min_y THEN
+        m_y = min_y - m_h \ 2
+    ENDIF
+
+    m_x2 = m_x + m_w
+    m_y2 = m_y + m_h
+ENDSUB
+
+SUB AM_initVariables()
+    DOOMSTAT.automapactive = 1
+    f_oldloc_x = M_FIXED.MAXINT
+    lightlev = 0
+    m_paninc_x = 0
+    m_paninc_y = 0
+    ftom_zoommul = M_FIXED.FRACUNIT
+    mtof_zoommul = M_FIXED.FRACUNIT
+
+    m_w = FTOM(f_w)
+    m_h = FTOM(f_h)
+
+    plr = DOOMSTAT.consoleplayer
+    DIM mo AS INTEGER = D_PLAYER.player_mo[plr]
+    m_x = CLNG(P_MOBJ.mobj_x[mo]) - m_w \ 2
+    m_y = CLNG(P_MOBJ.mobj_y[mo]) - m_h \ 2
+    AM_changeWindowLoc()
+
+    ' For saving and restoring.
+    AM_saveScaleAndLoc()
+ENDSUB
+
+SUB AM_clearMarks()
+    DIM i AS INTEGER
+    ' -1 means empty.
+    FOR i = 0 TO AM_NUMMARKPOINTS - 1
+        markpoint_x[i] = -1
+    NEXT i
+    markpointnum = 0
+ENDSUB
+
+' Should be called at the start of every level; right now, I figure it
+' out myself.
+SUB AM_LevelInit()
+    f_x = 0
+    f_y = 0
+    f_w = DOOMDEF.SCREENWIDTH
+    f_h = DOOMDEF.SCREENHEIGHT - 32
+
+    AM_clearMarks()
+    AM_findMinMaxBoundaries()
+    scale_mtof = M_FIXED.FixedDiv(min_scale_mtof, 45875)
+    IF scale_mtof > max_scale_mtof THEN scale_mtof = min_scale_mtof
+    scale_ftom = M_FIXED.FixedDiv(M_FIXED.FRACUNIT, scale_mtof)
+ENDSUB
+
+EXPORT SUB AM_Stop()
+    DOOMSTAT.automapactive = 0
+    stopped = 1
+ENDSUB
+
+EXPORT SUB AM_Start()
+    DIM i AS INTEGER
+    IF shapes_made = 0 THEN MakeShapes()
+    IF stopped = 0 THEN AM_Stop()
+    stopped = 0
+    IF lastlevel <> DOOMSTAT.gamemap OR lastepisode <> DOOMSTAT.gameepisode THEN
+        AM_LevelInit()
+        lastlevel = DOOMSTAT.gamemap
+        lastepisode = DOOMSTAT.gameepisode
+    ENDIF
+    AM_initVariables()
+    FOR i = 0 TO 9
+        marknums[i] = W_WAD.W_CacheLumpName("AMMNUM" + STR$(i))
+    NEXT i
+ENDSUB
+
+' Set the window scale to the minimum size.
+SUB AM_minOutWindowScale()
+    scale_mtof = min_scale_mtof
+    scale_ftom = M_FIXED.FixedDiv(M_FIXED.FRACUNIT, scale_mtof)
+    AM_activateNewScale()
+ENDSUB
+
+' Handle events (user inputs) in automap mode.
+EXPORT FUNC AM_Responder(ev_type AS INTEGER, key AS INTEGER) AS INTEGER
+    DIM rc AS INTEGER = 0
+
+    IF DOOMSTAT.automapactive = 0 THEN
+        IF ev_type = G_GAME.EV_KEYDOWN AND key = AM_STARTKEY THEN
+            AM_Start()
+            DOOMSTAT.viewactive = 0
+            rc = 1
+        ENDIF
+    ELSEIF ev_type = G_GAME.EV_KEYDOWN THEN
+        rc = 1
+        IF key = G_GAME.KEY_RIGHTARROW THEN
+            IF followplayer = 0 THEN
+                m_paninc_x = FTOM(F_PANINC)
+            ELSE
+                rc = 0
+            ENDIF
+        ELSEIF key = G_GAME.KEY_LEFTARROW THEN
+            IF followplayer = 0 THEN
+                m_paninc_x = -FTOM(F_PANINC)
+            ELSE
+                rc = 0
+            ENDIF
+        ELSEIF key = G_GAME.KEY_UPARROW THEN
+            IF followplayer = 0 THEN
+                m_paninc_y = FTOM(F_PANINC)
+            ELSE
+                rc = 0
+            ENDIF
+        ELSEIF key = G_GAME.KEY_DOWNARROW THEN
+            IF followplayer = 0 THEN
+                m_paninc_y = -FTOM(F_PANINC)
+            ELSE
+                rc = 0
+            ENDIF
+        ELSEIF key = AM_ZOOMOUTKEY THEN
+            mtof_zoommul = M_ZOOMOUT
+            ftom_zoommul = M_ZOOMIN
+        ELSEIF key = AM_ZOOMINKEY THEN
+            mtof_zoommul = M_ZOOMIN
+            ftom_zoommul = M_ZOOMOUT
+        ELSEIF key = AM_STARTKEY THEN
+            bigstate = 0
+            DOOMSTAT.viewactive = 1
+            AM_Stop()
+        ELSEIF key = AM_GOBIGKEY THEN
+            bigstate = 1 - bigstate
+            IF bigstate <> 0 THEN
+                AM_saveScaleAndLoc()
+                AM_minOutWindowScale()
+            ELSE
+                AM_restoreScaleAndLoc()
+            ENDIF
+        ELSEIF key = AM_FOLLOWKEY THEN
+            followplayer = 1 - followplayer
+            f_oldloc_x = M_FIXED.MAXINT
+            IF followplayer <> 0 THEN
+                D_PLAYER.player_message$[plr] = "Follow Mode ON"
+            ELSE
+                D_PLAYER.player_message$[plr] = "Follow Mode OFF"
+            ENDIF
+        ELSEIF key = AM_GRIDKEY THEN
+            grid = 1 - grid
+            IF grid <> 0 THEN
+                D_PLAYER.player_message$[plr] = "Grid ON"
+            ELSE
+                D_PLAYER.player_message$[plr] = "Grid OFF"
+            ENDIF
+        ELSEIF key = AM_MARKKEY THEN
+            D_PLAYER.player_message$[plr] = "Marked Spot " + STR$(markpointnum)
+            AM_addMark()
+        ELSEIF key = AM_CLEARMARKKEY THEN
+            AM_clearMarks()
+            D_PLAYER.player_message$[plr] = "All Marks Cleared"
+        ELSE
+            rc = 0
+        ENDIF
+    ELSEIF ev_type = G_GAME.EV_KEYUP THEN
+        IF key = G_GAME.KEY_RIGHTARROW OR key = G_GAME.KEY_LEFTARROW THEN
+            IF followplayer = 0 THEN m_paninc_x = 0
+        ELSEIF key = G_GAME.KEY_UPARROW OR key = G_GAME.KEY_DOWNARROW THEN
+            IF followplayer = 0 THEN m_paninc_y = 0
+        ELSEIF key = AM_ZOOMOUTKEY OR key = AM_ZOOMINKEY THEN
+            mtof_zoommul = M_FIXED.FRACUNIT
+            ftom_zoommul = M_FIXED.FRACUNIT
+        ENDIF
+    ENDIF
+    RETURN rc
+ENDFUNC
+
+' Zooming.
+SUB AM_changeWindowScale()
+    ' Change the scaling multipliers.
+    scale_mtof = M_FIXED.FixedMul(scale_mtof, mtof_zoommul)
+    scale_ftom = M_FIXED.FixedDiv(M_FIXED.FRACUNIT, scale_mtof)
+
+    IF scale_mtof < min_scale_mtof THEN
+        AM_minOutWindowScale()
+    ELSEIF scale_mtof > max_scale_mtof THEN
+        scale_mtof = max_scale_mtof
+        scale_ftom = M_FIXED.FixedDiv(M_FIXED.FRACUNIT, scale_mtof)
+        AM_activateNewScale()
+    ELSE
+        AM_activateNewScale()
+    ENDIF
+ENDSUB
+
+SUB AM_doFollowPlayer()
+    DIM mo AS INTEGER = D_PLAYER.player_mo[plr]
+    DIM px AS INTEGER = P_MOBJ.mobj_x[mo]
+    DIM py AS INTEGER = P_MOBJ.mobj_y[mo]
+    IF f_oldloc_x <> px OR f_oldloc_y <> py THEN
+        m_x = FTOM(MTOF(px)) - m_w \ 2
+        m_y = FTOM(MTOF(py)) - m_h \ 2
+        m_x2 = m_x + m_w
+        m_y2 = m_y + m_h
+        f_oldloc_x = px
+        f_oldloc_y = py
+    ENDIF
+ENDSUB
+
+' Updates on game tick.
+EXPORT SUB AM_Ticker()
+    IF DOOMSTAT.automapactive = 0 THEN RETURN
+
+    IF followplayer <> 0 THEN AM_doFollowPlayer()
+
+    ' Change the zoom if necessary.
+    IF ftom_zoommul <> M_FIXED.FRACUNIT THEN AM_changeWindowScale()
+
+    ' Change x,y location.
+    IF m_paninc_x <> 0 OR m_paninc_y <> 0 THEN AM_changeWindowLoc()
+ENDSUB
+
+' The clipped line, in frame-buffer coordinates.
+DIM fl_ax AS INTEGER = 0
+DIM fl_ay AS INTEGER = 0
+DIM fl_bx AS INTEGER = 0
+DIM fl_by AS INTEGER = 0
+
+CONST OC_LEFT = 1
+CONST OC_RIGHT = 2
+CONST OC_BOTTOM = 4
+CONST OC_TOP = 8
+
+FUNC OutCode(mx AS INTEGER, my AS INTEGER) AS INTEGER
+    DIM oc AS INTEGER = 0
+    IF my < 0 THEN
+        oc = OC_TOP
+    ELSEIF my >= f_h THEN
+        oc = OC_BOTTOM
+    ENDIF
+    IF mx < 0 THEN
+        oc = oc BOR OC_LEFT
+    ELSEIF mx >= f_w THEN
+        oc = oc BOR OC_RIGHT
+    ENDIF
+    RETURN oc
+ENDFUNC
+
+' Automap clipping of lines. Based on Cohen-Sutherland clipping algorithm
+' but with a slightly faster reject and precalculated slopes. If the speed
+' is needed, use a hash algorithm to handle the common cases.
+FUNC AM_clipMline(ax AS INTEGER, ay AS INTEGER, bx AS INTEGER, by AS INTEGER) AS INTEGER
+    DIM outcode1 AS INTEGER = 0
+    DIM outcode2 AS INTEGER = 0
+    DIM outside AS INTEGER
+    DIM tmp_x AS INTEGER = 0
+    DIM tmp_y AS INTEGER = 0
+    DIM dx AS INTEGER
+    DIM dy AS INTEGER
+
+    ' Do trivial rejects and outcodes.
+    IF ay > m_y2 THEN
+        outcode1 = OC_TOP
+    ELSEIF ay < m_y THEN
+        outcode1 = OC_BOTTOM
+    ENDIF
+    IF by > m_y2 THEN
+        outcode2 = OC_TOP
+    ELSEIF by < m_y THEN
+        outcode2 = OC_BOTTOM
+    ENDIF
+    ' Trivially outside.
+    IF (outcode1 BAND outcode2) <> 0 THEN RETURN 0
+
+    IF ax < m_x THEN
+        outcode1 = outcode1 BOR OC_LEFT
+    ELSEIF ax > m_x2 THEN
+        outcode1 = outcode1 BOR OC_RIGHT
+    ENDIF
+    IF bx < m_x THEN
+        outcode2 = outcode2 BOR OC_LEFT
+    ELSEIF bx > m_x2 THEN
+        outcode2 = outcode2 BOR OC_RIGHT
+    ENDIF
+    IF (outcode1 BAND outcode2) <> 0 THEN RETURN 0
+
+    ' Transform to frame-buffer coordinates.
+    fl_ax = CXMTOF(ax)
+    fl_ay = CYMTOF(ay)
+    fl_bx = CXMTOF(bx)
+    fl_by = CYMTOF(by)
+
+    outcode1 = OutCode(fl_ax, fl_ay)
+    outcode2 = OutCode(fl_bx, fl_by)
+    IF (outcode1 BAND outcode2) <> 0 THEN RETURN 0
+
+    DO WHILE (outcode1 BOR outcode2) <> 0
+        ' May be partially inside box; find an outside point.
+        outside = outcode2
+        IF outcode1 <> 0 THEN outside = outcode1
+
+        ' Clip to each side.
+        IF (outside BAND OC_TOP) <> 0 THEN
+            dy = fl_ay - fl_by
+            dx = fl_bx - fl_ax
+            tmp_x = fl_ax + (dx * fl_ay) \ dy
+            tmp_y = 0
+        ELSEIF (outside BAND OC_BOTTOM) <> 0 THEN
+            dy = fl_ay - fl_by
+            dx = fl_bx - fl_ax
+            tmp_x = fl_ax + (dx * (fl_ay - f_h)) \ dy
+            tmp_y = f_h - 1
+        ELSEIF (outside BAND OC_RIGHT) <> 0 THEN
+            dy = fl_by - fl_ay
+            dx = fl_bx - fl_ax
+            tmp_y = fl_ay + (dy * (f_w - 1 - fl_ax)) \ dx
+            tmp_x = f_w - 1
+        ELSEIF (outside BAND OC_LEFT) <> 0 THEN
+            dy = fl_by - fl_ay
+            dx = fl_bx - fl_ax
+            tmp_y = fl_ay + (dy * (-fl_ax)) \ dx
+            tmp_x = 0
+        ENDIF
+
+        IF outside = outcode1 THEN
+            fl_ax = tmp_x
+            fl_ay = tmp_y
+            outcode1 = OutCode(fl_ax, fl_ay)
+        ELSE
+            fl_bx = tmp_x
+            fl_by = tmp_y
+            outcode2 = OutCode(fl_bx, fl_by)
+        ENDIF
+
+        ' Trivially outside.
+        IF (outcode1 BAND outcode2) <> 0 THEN RETURN 0
+    LOOP
+    RETURN 1
+ENDFUNC
+
+' Classic Bresenham with whatever optimizations needed for speed.
+SUB AM_drawFline(colour AS INTEGER)
+    ' For debugging only: a line outside the map is left out.
+    IF fl_ax < 0 OR fl_ax >= f_w OR fl_ay < 0 OR fl_ay >= f_h OR fl_bx < 0 OR fl_bx >= f_w OR fl_by < 0 OR fl_by >= f_h THEN RETURN
+
+    DIM dx AS INTEGER = fl_bx - fl_ax
+    DIM dy AS INTEGER = fl_by - fl_ay
+    DIM sx AS INTEGER = 1
+    DIM sy AS INTEGER = 1
+    IF dx < 0 THEN
+        sx = -1
+        dx = -dx
+    ENDIF
+    IF dy < 0 THEN
+        sy = -1
+        dy = -dy
+    ENDIF
+    DIM ax AS INTEGER = 2 * dx
+    DIM ay AS INTEGER = 2 * dy
+    DIM x AS INTEGER = fl_ax
+    DIM y AS INTEGER = fl_ay
+    DIM d AS INTEGER
+
+    IF ax > ay THEN
+        d = ay - ax \ 2
+        DO
+            V_VIDEO.screens[y * f_w + x] = colour
+            IF x = fl_bx THEN RETURN
+            IF d >= 0 THEN
+                y = y + sy
+                d = d - ax
+            ENDIF
+            x = x + sx
+            d = d + ay
+        LOOP
+    ELSE
+        d = ax - ay \ 2
+        DO
+            V_VIDEO.screens[y * f_w + x] = colour
+            IF y = fl_by THEN RETURN
+            IF d >= 0 THEN
+                x = x + sx
+                d = d - ay
+            ENDIF
+            y = y + sy
+            d = d + ax
+        LOOP
+    ENDIF
+ENDSUB
+
+' Clip lines, draw visible parts of lines.
+SUB AM_drawMline(ax AS INTEGER, ay AS INTEGER, bx AS INTEGER, by AS INTEGER, colour AS INTEGER)
+    IF AM_clipMline(ax, ay, bx, by) <> 0 THEN AM_drawFline(colour)
+ENDSUB
+
+' Draws flat (floor/ceiling tile) aligned grid lines.
+SUB AM_drawGrid(colour AS INTEGER)
+    DIM unit AS INTEGER = DOOMDEF.MAPBLOCKUNITS * 65536
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+
+    ' Figure out start of vertical gridlines.
+    DIM start AS INTEGER = m_x
+    IF (start - P_SETUP.bmaporgx) MOD unit <> 0 THEN start = start + unit - ((start - P_SETUP.bmaporgx) MOD unit)
+    x = start
+    DO WHILE x < m_x + m_w
+        AM_drawMline(x, m_y, x, m_y + m_h, colour)
+        x = x + unit
+    LOOP
+
+    ' Figure out start of horizontal gridlines.
+    start = m_y
+    IF (start - P_SETUP.bmaporgy) MOD unit <> 0 THEN start = start + unit - ((start - P_SETUP.bmaporgy) MOD unit)
+    y = start
+    DO WHILE y < m_y + m_h
+        AM_drawMline(m_x, y, m_x + m_w, y, colour)
+        y = y + unit
+    LOOP
+ENDSUB
+
+' Determines visible lines, draws them. This is LineDef based, not
+' LineSeg based.
+SUB AM_drawWalls()
+    DIM i AS INTEGER
+    DIM flags AS INTEGER
+    DIM ax AS INTEGER
+    DIM ay AS INTEGER
+    DIM bx AS INTEGER
+    DIM by AS INTEGER
+    DIM back AS INTEGER
+    DIM front AS INTEGER
+    DIM allmap AS INTEGER = D_PLAYER.player_powers[plr * DOOMDEF.NUMPOWERS + DOOMDEF.PW_ALLMAP]
+
+    FOR i = 0 TO P_SETUP.numlines - 1
+        flags = CLNG(P_SETUP.line_flags[i])
+        ax = CLNG(P_SETUP.vertex_x[CLNG(P_SETUP.line_v1[i])])
+        ay = CLNG(P_SETUP.vertex_y[CLNG(P_SETUP.line_v1[i])])
+        bx = CLNG(P_SETUP.vertex_x[CLNG(P_SETUP.line_v2[i])])
+        by = CLNG(P_SETUP.vertex_y[CLNG(P_SETUP.line_v2[i])])
+
+        IF cheating <> 0 OR (flags BAND DOOMDEF.ML_MAPPED) <> 0 THEN
+            IF (flags BAND DOOMDEF.ML_DONTDRAW) <> 0 AND cheating = 0 THEN CONTINUEFOR
+            back = CLNG(P_SETUP.line_backsector[i])
+            front = CLNG(P_SETUP.line_frontsector[i])
+            IF back < 0 THEN
+                AM_drawMline(ax, ay, bx, by, WALLCOLORS + lightlev)
+            ELSEIF CLNG(P_SETUP.line_special[i]) = 39 THEN
+                ' Teleporters.
+                AM_drawMline(ax, ay, bx, by, WALLCOLORS + WALLRANGE \ 2)
+            ELSEIF (flags BAND DOOMDEF.ML_SECRET) <> 0 THEN
+                ' Secret door.
+                AM_drawMline(ax, ay, bx, by, WALLCOLORS + lightlev)
+            ELSEIF CLNG(P_SETUP.sector_floorheight[back]) <> CLNG(P_SETUP.sector_floorheight[front]) THEN
+                ' Floor level change.
+                AM_drawMline(ax, ay, bx, by, FDWALLCOLORS + lightlev)
+            ELSEIF CLNG(P_SETUP.sector_ceilingheight[back]) <> CLNG(P_SETUP.sector_ceilingheight[front]) THEN
+                ' Ceiling level change.
+                AM_drawMline(ax, ay, bx, by, CDWALLCOLORS + lightlev)
+            ELSEIF cheating <> 0 THEN
+                AM_drawMline(ax, ay, bx, by, TSWALLCOLORS + lightlev)
+            ENDIF
+        ELSEIF allmap <> 0 THEN
+            IF (flags BAND DOOMDEF.ML_DONTDRAW) = 0 THEN AM_drawMline(ax, ay, bx, by, GRAYS + 3)
+        ENDIF
+    NEXT i
+ENDSUB
+
+' Draws a shape of n lines, scaled, turned by the angle, at (x, y).
+SUB AM_drawLineCharacter(shape AS INTEGER, n_lines AS INTEGER, scale AS INTEGER, angle AS INTEGER, colour AS INTEGER, x AS INTEGER, y AS INTEGER)
+    DIM i AS INTEGER
+    DIM k AS INTEGER
+    DIM px AS INTEGER
+    DIM py AS INTEGER
+    DIM tmpx AS INTEGER
+    DIM fine AS INTEGER = (angle BAND M_FIXED.ANGLE_MASK) SHR TABLES.ANGLETOFINESHIFT
+    DIM cosine AS INTEGER = TABLES.finesine[TABLES.FINEANGLES \ 4 + fine]
+    DIM sine AS INTEGER = TABLES.finesine[fine]
+    DIM ends[4] AS INTEGER
+
+    FOR i = 0 TO n_lines - 1
+        FOR k = 0 TO 1
+            px = ShapeAt(shape, i * 4 + k * 2)
+            py = ShapeAt(shape, i * 4 + k * 2 + 1)
+            IF scale <> 0 THEN
+                px = M_FIXED.FixedMul(scale, px)
+                py = M_FIXED.FixedMul(scale, py)
+            ENDIF
+            IF angle <> 0 THEN
+                tmpx = M_FIXED.FixedMul(px, cosine) - M_FIXED.FixedMul(py, sine)
+                py = M_FIXED.FixedMul(px, sine) + M_FIXED.FixedMul(py, cosine)
+                px = tmpx
+            ENDIF
+            ends[k * 2] = px + x
+            ends[k * 2 + 1] = py + y
+        NEXT k
+        AM_drawMline(CLNG(ends[0]), CLNG(ends[1]), CLNG(ends[2]), CLNG(ends[3]), colour)
+    NEXT i
+ENDSUB
+
+SUB AM_drawPlayers()
+    DIM mo AS INTEGER = D_PLAYER.player_mo[plr]
+    IF cheating <> 0 THEN
+        AM_drawLineCharacter(SHAPE_CHEAT, 16, 0, CLNG(P_MOBJ.mobj_angle[mo]), WHITE, CLNG(P_MOBJ.mobj_x[mo]), CLNG(P_MOBJ.mobj_y[mo]))
+    ELSE
+        AM_drawLineCharacter(SHAPE_PLAYER, 7, 0, CLNG(P_MOBJ.mobj_angle[mo]), WHITE, CLNG(P_MOBJ.mobj_x[mo]), CLNG(P_MOBJ.mobj_y[mo]))
+    ENDIF
+ENDSUB
+
+SUB AM_drawThings(colour AS INTEGER)
+    DIM i AS INTEGER
+    DIM t AS INTEGER
+    FOR i = 0 TO P_SETUP.numsectors - 1
+        t = CLNG(P_SETUP.sector_thinglist[i])
+        DO WHILE t >= 0
+            AM_drawLineCharacter(SHAPE_THING, 3, 16 * 65536, CLNG(P_MOBJ.mobj_angle[t]), colour + lightlev, CLNG(P_MOBJ.mobj_x[t]), CLNG(P_MOBJ.mobj_y[t]))
+            t = CLNG(P_MOBJ.mobj_snext[t])
+        LOOP
+    NEXT i
+ENDSUB
+
+SUB AM_drawMarks()
+    DIM i AS INTEGER
+    DIM fx AS INTEGER
+    DIM fy AS INTEGER
+    FOR i = 0 TO AM_NUMMARKPOINTS - 1
+        IF CLNG(markpoint_x[i]) <> -1 THEN
+            fx = CXMTOF(CLNG(markpoint_x[i]))
+            fy = CYMTOF(CLNG(markpoint_y[i]))
+            ' The numbers are taken as 5 wide and 6 high.
+            IF fx >= f_x AND fx <= f_w - 5 AND fy >= f_y AND fy <= f_h - 6 THEN V_VIDEO.V_DrawPatch(fx, fy, 0, CLNG(marknums[i]))
+        ENDIF
+    NEXT i
+ENDSUB
+
+EXPORT SUB AM_Drawer()
+    IF DOOMSTAT.automapactive = 0 THEN RETURN
+    DIM i AS INTEGER
+
+    ' Clear the automap frame buffer.
+    FOR i = 0 TO f_w * f_h - 1
+        V_VIDEO.screens[i] = BACKGROUND
+    NEXT i
+
+    IF grid <> 0 THEN AM_drawGrid(GRIDCOLORS)
+    AM_drawWalls()
+    AM_drawPlayers()
+    IF cheating = 2 THEN AM_drawThings(THINGCOLORS)
+
+    ' The crosshair is a single point.
+    V_VIDEO.screens[(f_w * (f_h + 1)) \ 2] = XHAIRCOLORS
+
+    AM_drawMarks()
+ENDSUB

@@ -1,0 +1,144 @@
+' DOOM. The title loop with its demos, the menu, the game.
+'
+'   build/jdBasic.exe -c jdb/doom2/doom.jdb
+'   jdb/doom2/doom.exe [episode map [skill]]
+'
+' Without arguments the title loop starts; any key opens the menu. With an
+' episode and a map the game starts there, on skill 0 to 4 (2 if left out).
+'
+' Arrow keys turn and move, Shift runs, Ctrl fires, Space uses, 1 to 7 pick
+' a weapon, Alt with left or right steps sideways and so do comma and full
+' stop. W, A, S and D move and step as well. Tab shows the map, Escape the
+' menu, F1 help, F5 detail, F8 messages, F10 quits, F11 gamma, minus and
+' equals change the view size, Pause pauses.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT I_VIDEO
+IMPORT G_GAME
+IMPORT D_MAIN
+IMPORT M_MENU
+
+DIM running AS INTEGER = 1
+
+SUB HandleQuit(quit_data)
+    running = 0
+ENDSUB
+
+' The key code DOOM knows a key by, -1 for a key it has no use for.
+FUNC DoomKey(key_name$ AS STRING, keycode AS INTEGER) AS INTEGER
+    SWITCH key_name$
+        CASE "Left"
+            RETURN G_GAME.KEY_LEFTARROW
+        CASE "Right"
+            RETURN G_GAME.KEY_RIGHTARROW
+        CASE "Up"
+            RETURN G_GAME.KEY_UPARROW
+        CASE "Down"
+            RETURN G_GAME.KEY_DOWNARROW
+        CASE "Left Shift", "Right Shift"
+            RETURN G_GAME.KEY_RSHIFT
+        CASE "Left Ctrl", "Right Ctrl"
+            RETURN G_GAME.KEY_RCTRL
+        CASE "Left Alt", "Right Alt"
+            RETURN G_GAME.KEY_RALT
+        CASE "Escape"
+            RETURN G_GAME.KEY_ESCAPE
+        CASE "Return", "Keypad Enter"
+            RETURN G_GAME.KEY_ENTER
+        CASE "Tab"
+            RETURN G_GAME.KEY_TAB
+        CASE "Backspace"
+            RETURN M_MENU.KEY_BACKSPACE
+        CASE "Space"
+            RETURN 32
+        CASE "Pause"
+            RETURN G_GAME.KEY_PAUSE
+        CASE "F1"
+            RETURN M_MENU.KEY_F1
+        CASE "F5"
+            RETURN M_MENU.KEY_F5
+        CASE "F8"
+            RETURN M_MENU.KEY_F8
+        CASE "F10"
+            RETURN M_MENU.KEY_F10
+        CASE "F11"
+            RETURN M_MENU.KEY_F11
+    ENDSWITCH
+    ' Letters, digits and signs are their character codes.
+    IF keycode >= 32 AND keycode < 127 THEN RETURN keycode
+    RETURN -1
+ENDFUNC
+
+' W, A, S and D stand in for the arrow and the step keys while a level is
+' played; the letters themselves still reach the game, for the cheats.
+SUB MoveKey(key AS INTEGER, down AS INTEGER)
+    IF DOOMSTAT.menuactive <> 0 OR DOOMSTAT.gamestate <> DOOMSTAT.GS_LEVEL THEN RETURN
+    IF key = 119 THEN G_GAME.gamekeydown[G_GAME.KEY_UPARROW] = down
+    IF key = 115 THEN G_GAME.gamekeydown[G_GAME.KEY_DOWNARROW] = down
+    IF key = 97 THEN G_GAME.gamekeydown[44] = down
+    IF key = 100 THEN G_GAME.gamekeydown[46] = down
+ENDSUB
+
+SUB HandleKeyDown(key_data)
+    IF key_data[0]{"repeat"} THEN RETURN
+    DIM key AS INTEGER = DoomKey(key_data[0]{"key"}, CLNG(key_data[0]{"keycode"}))
+    IF key < 0 THEN RETURN
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, key, 0, 0)
+    MoveKey(key, 1)
+ENDSUB
+
+SUB HandleKeyUp(key_data)
+    DIM key AS INTEGER = DoomKey(key_data[0]{"key"}, CLNG(key_data[0]{"keycode"}))
+    IF key < 0 THEN RETURN
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYUP, key, 0, 0)
+    MoveKey(key, 0)
+ENDSUB
+
+DIM cmd_args AS ARRAY = OS.ARGS()
+DIM start_episode AS INTEGER = 0
+DIM start_map AS INTEGER = 1
+DIM start_skill AS INTEGER = DOOMDEF.SK_MEDIUM
+IF LEN(cmd_args) > 2 THEN
+    start_episode = CLNG(VAL(cmd_args[1]))
+    start_map = CLNG(VAL(cmd_args[2]))
+ENDIF
+IF LEN(cmd_args) > 3 THEN start_skill = CLNG(VAL(cmd_args[3]))
+
+I_VIDEO.I_InitGraphics(3)
+D_MAIN.D_DoomMain()
+ON "QUIT" CALL HandleQuit@
+ON "KEYDOWN" CALL HandleKeyDown@
+ON "KEYUP" CALL HandleKeyUp@
+
+IF start_episode > 0 THEN
+    G_GAME.G_DeferedInitNew(start_skill, start_episode, start_map)
+ELSE
+    D_MAIN.D_StartTitle()
+ENDIF
+
+DIM tic_start AS DOUBLE
+
+DO WHILE running = 1 AND M_MENU.quit_requested = 0
+    tic_start = TICK()
+
+    ' Process one tic.
+    D_MAIN.D_ProcessEvents()
+    G_GAME.G_BuildTiccmd()
+    IF DOOMSTAT.advancedemo <> 0 THEN D_MAIN.D_DoAdvanceDemo()
+    M_MENU.M_Ticker()
+    G_GAME.G_Ticker()
+
+    ' Update display, next frame, with current state.
+    D_MAIN.D_Display()
+
+    ' One tic lasts a 35th of a second.
+    DO WHILE TICK() - tic_start < 1000.0 / 35.0
+        SLEEP 1
+    LOOP
+LOOP
+
+I_VIDEO.I_ShutdownGraphics()

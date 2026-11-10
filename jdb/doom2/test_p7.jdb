@@ -1,0 +1,352 @@
+' Checks on the shell of the game: the title loop, the menu, the cheats,
+' the status bar, the automap, the way from a level over the intermission
+' to the next, the finale and the wipe. The pictures of the status bar and
+' of the automap were looked at before their hashes were recorded; the
+' interpreter and the compiled program have to agree on them.
+'
+' Run from the repository root, interpreted or compiled with -c. No window
+' is opened: the parts of a frame are drawn into the screen buffer one by
+' one.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_RANDOM
+IMPORT W_WAD
+IMPORT V_VIDEO
+IMPORT R_MAIN
+IMPORT P_MOBJ
+IMPORT G_GAME
+IMPORT ST_STUFF
+IMPORT HU_STUFF
+IMPORT AM_MAP
+IMPORT WI_STUFF
+IMPORT F_WIPE
+IMPORT M_MENU
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+IF NOT FILE.EXISTS(D_MAIN.IdentifyVersion$()) THEN
+    PRINT "SKIP: " + D_MAIN.IdentifyVersion$() + " not found"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+' One tic of the main loop without the display.
+SUB Tics(n AS INTEGER)
+    DIM t AS INTEGER
+    FOR t = 1 TO n
+        D_MAIN.D_ProcessEvents()
+        G_GAME.G_BuildTiccmd()
+        IF DOOMSTAT.advancedemo <> 0 THEN D_MAIN.D_DoAdvanceDemo()
+        M_MENU.M_Ticker()
+        G_GAME.G_Ticker()
+    NEXT t
+ENDSUB
+
+' A key goes down and up again.
+SUB Key(k AS INTEGER)
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, k, 0, 0)
+    Tics(1)
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYUP, k, 0, 0)
+    Tics(1)
+ENDSUB
+
+SUB TypeWord(word$ AS STRING)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(word$) - 1
+        Key(ASC(MID$(word$, i, 1)))
+    NEXT i
+ENDSUB
+
+' A hash over the rows y1 to y2 of the screen.
+FUNC RowsHash(y1 AS INTEGER, y2 AS INTEGER) AS INTEGER
+    DIM h AS INTEGER = 0
+    DIM p AS INTEGER
+    FOR p = y1 * 320 TO y2 * 320 + 319
+        h = (h * 31 + CLNG(V_VIDEO.screens[p])) MOD 1000000007
+    NEXT p
+    RETURN h
+ENDFUNC
+
+SUB FillScreen(scrn AS INTEGER, pixel AS INTEGER)
+    DIM p AS INTEGER
+    FOR p = scrn * V_VIDEO.SCREENSIZE TO (scrn + 1) * V_VIDEO.SCREENSIZE - 1
+        V_VIDEO.screens[p] = pixel
+    NEXT p
+ENDSUB
+
+D_MAIN.D_DoomMain()
+Eq("the WAD is The Ultimate DOOM", DOOMSTAT.retail, 1)
+Eq("not the shareware", DOOMSTAT.shareware, 0)
+
+' ---- the wipe ------------------------------------------------------------------
+' A screen of colour 1 melts into one of colour 2. A column waits at most
+' 15 tics, then falls 1, 2, ... 16 and then 8 a tic: 200 rows are down
+' after 16 + 8 tics more, so the wipe is over within 40 tics, and not
+' before 24.
+M_RANDOM.M_ClearRandom()
+FillScreen(0, 1)
+F_WIPE.wipe_StartScreen()
+FillScreen(0, 2)
+F_WIPE.wipe_EndScreen()
+Eq("wipe: starts from the old screen", CLNG(V_VIDEO.screens[32000]), 1)
+DIM wipe_tics AS INTEGER = 0
+DO
+    wipe_tics = wipe_tics + 1
+LOOP WHILE F_WIPE.wipe_ScreenWipe(1) = 0 AND wipe_tics < 100
+Eq("wipe: over in time", IIF(wipe_tics >= 24 AND wipe_tics <= 41, 1, 0), 1)
+DIM not_new AS INTEGER = 0
+DIM px AS INTEGER
+FOR px = 0 TO V_VIDEO.SCREENSIZE - 1
+    IF CLNG(V_VIDEO.screens[px]) <> 2 THEN not_new = not_new + 1
+NEXT px
+Eq("wipe: ends on the new screen", not_new, 0)
+
+' ---- the menu ------------------------------------------------------------------
+D_MAIN.D_StartTitle()
+Tics(5)
+Eq("title: a page is showing", DOOMSTAT.gamestate, DOOMSTAT.GS_DEMOSCREEN)
+Eq("menu: closed", DOOMSTAT.menuactive, 0)
+Key(G_GAME.KEY_ESCAPE)
+Eq("menu: any key on the title opens it", DOOMSTAT.menuactive, 1)
+
+' Options is the second item; messages the second of its items.
+Key(G_GAME.KEY_DOWNARROW)
+Key(G_GAME.KEY_ENTER)
+Key(G_GAME.KEY_DOWNARROW)
+Eq("options: messages are on", HU_STUFF.showMessages, 1)
+Key(G_GAME.KEY_ENTER)
+Eq("options: messages turned off", HU_STUFF.showMessages, 0)
+Key(G_GAME.KEY_ENTER)
+Eq("options: and on again", HU_STUFF.showMessages, 1)
+' Two more down is the screen size, a slider: left makes the view smaller.
+Key(G_GAME.KEY_DOWNARROW)
+Key(G_GAME.KEY_DOWNARROW)
+Eq("options: view size", M_MENU.screenblocks, 10)
+Key(G_GAME.KEY_LEFTARROW)
+Eq("options: view smaller", M_MENU.screenblocks, 9)
+Key(G_GAME.KEY_RIGHTARROW)
+Key(G_GAME.KEY_RIGHTARROW)
+Eq("options: view full screen", M_MENU.screenblocks, 11)
+Key(G_GAME.KEY_LEFTARROW)
+' The next item down skips the gap below the slider.
+Key(G_GAME.KEY_DOWNARROW)
+Eq("options: mouse sensitivity", G_GAME.mouseSensitivity, 5)
+Key(G_GAME.KEY_RIGHTARROW)
+Eq("options: mouse faster", G_GAME.mouseSensitivity, 6)
+Key(G_GAME.KEY_LEFTARROW)
+
+' Back to the main menu, new game, first episode, the skill offered.
+Key(M_MENU.KEY_BACKSPACE)
+Key(G_GAME.KEY_UPARROW)
+Key(G_GAME.KEY_ENTER)
+Key(G_GAME.KEY_ENTER)
+Key(G_GAME.KEY_ENTER)
+Tics(2)
+Eq("new game: menu closed", DOOMSTAT.menuactive, 0)
+Eq("new game: in a level", DOOMSTAT.gamestate, DOOMSTAT.GS_LEVEL)
+Eq("new game: episode", DOOMSTAT.gameepisode, 1)
+Eq("new game: map", DOOMSTAT.gamemap, 1)
+Eq("new game: hurt me plenty", DOOMSTAT.gameskill, DOOMDEF.SK_MEDIUM)
+Eq("new game: the player's own", DOOMSTAT.usergame, 1)
+
+' Escape opens the menu in a game, and closes it; the game stands still
+' meanwhile.
+Tics(5)
+Key(G_GAME.KEY_ESCAPE)
+Eq("menu: open in the game", DOOMSTAT.menuactive, 1)
+Key(G_GAME.KEY_ESCAPE)
+Eq("menu: closed again", DOOMSTAT.menuactive, 0)
+
+' ---- the status bar ----------------------------------------------------------------
+DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+Tics(20)
+FillScreen(0, 0)
+ST_STUFF.ST_Drawer(0)
+Eq("status bar: nothing above it", RowsHash(0, 167), 0)
+DIM bar_start AS INTEGER = RowsHash(168, 199)
+Eq("status bar: at the start of E1M1", bar_start, 358363540)
+' Fewer bullets and health change the picture, and the same values give
+' the same picture again.
+D_PLAYER.player_ammo[DOOMDEF.AM_CLIP] = 7
+D_PLAYER.player_health[0] = 35
+ST_STUFF.ST_Drawer(0)
+Eq("status bar: 7 bullets, 35 health", RowsHash(168, 199), 75972482)
+D_PLAYER.player_ammo[DOOMDEF.AM_CLIP] = 50
+D_PLAYER.player_health[0] = 100
+Tics(40)
+ST_STUFF.ST_Drawer(0)
+' The face looks left, ahead or right at random, so only the rest of the
+' bar is compared: the rows are hashed with the face painted over.
+DIM y AS INTEGER
+DIM x AS INTEGER
+SUB BlankFace()
+    FOR y = 168 TO 199
+        FOR x = 143 TO 177
+            V_VIDEO.screens[y * 320 + x] = 0
+        NEXT x
+    NEXT y
+ENDSUB
+BlankFace()
+DIM bar_noface AS INTEGER = RowsHash(168, 199)
+D_PLAYER.player_ammo[DOOMDEF.AM_CLIP] = 49
+ST_STUFF.ST_Drawer(0)
+BlankFace()
+Eq("status bar: one bullet less is another picture", IIF(RowsHash(168, 199) <> bar_noface, 1, 0), 1)
+D_PLAYER.player_ammo[DOOMDEF.AM_CLIP] = 50
+ST_STUFF.ST_Drawer(0)
+BlankFace()
+Eq("status bar: the same values, the same picture", RowsHash(168, 199), bar_noface)
+ST_STUFF.ST_Drawer(1)
+FillScreen(0, 0)
+ST_STUFF.ST_Drawer(1)
+Eq("status bar: none on a full screen view", RowsHash(168, 199), 0)
+
+' ---- cheats -------------------------------------------------------------------------
+D_PLAYER.player_health[0] = 40
+P_MOBJ.mobj_health[mo] = 40
+TypeWord("iddqd")
+Eq("iddqd: god mode", CLNG(D_PLAYER.player_cheats[0]) BAND DOOMDEF.CF_GODMODE, DOOMDEF.CF_GODMODE)
+Eq("iddqd: health", CLNG(D_PLAYER.player_health[0]), 100)
+TypeWord("iddqd")
+Eq("iddqd: off again", CLNG(D_PLAYER.player_cheats[0]) BAND DOOMDEF.CF_GODMODE, 0)
+TypeWord("idkfa")
+Eq("idkfa: the BFG", CLNG(D_PLAYER.player_weaponowned[DOOMDEF.WP_BFG]), 1)
+Eq("idkfa: no super shotgun in DOOM", CLNG(D_PLAYER.player_weaponowned[DOOMDEF.WP_SUPERSHOTGUN]), 0)
+Eq("idkfa: cells", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_CELL]), 300)
+Eq("idkfa: armor", CLNG(D_PLAYER.player_armorpoints[0]), 200)
+Eq("idkfa: the red skull key", CLNG(D_PLAYER.player_cards[DOOMDEF.IT_REDSKULL]), 1)
+TypeWord("idspispopd")
+Eq("idspispopd: no clipping", CLNG(D_PLAYER.player_cheats[0]) BAND DOOMDEF.CF_NOCLIP, DOOMDEF.CF_NOCLIP)
+TypeWord("idspispopd")
+
+' ---- the automap -------------------------------------------------------------------
+' The lines the player has seen are those a rendered frame has drawn.
+IF R_MAIN.setsizeneeded <> 0 THEN R_MAIN.R_ExecuteSetViewSize()
+R_MAIN.R_RenderPlayerView(0)
+Eq("automap: off", DOOMSTAT.automapactive, 0)
+Key(AM_MAP.AM_STARTKEY)
+Eq("automap: tab turns it on", DOOMSTAT.automapactive, 1)
+Tics(3)
+FillScreen(0, 99)
+AM_MAP.AM_Drawer()
+Eq("automap: leaves the status bar alone", CLNG(V_VIDEO.screens[168 * 320]), 99)
+DIM map_seen AS INTEGER = RowsHash(0, 167)
+Eq("automap: what the player has seen of E1M1", map_seen, 159648119)
+TypeWord("iddt")
+AM_MAP.AM_Drawer()
+DIM map_all AS INTEGER = RowsHash(0, 167)
+Eq("automap: the whole map with iddt", map_all, 18264590)
+TypeWord("iddt")
+AM_MAP.AM_Drawer()
+Eq("automap: the things too", RowsHash(0, 167), 615346984)
+TypeWord("iddt")
+AM_MAP.AM_Drawer()
+Eq("automap: the third time turns the cheat off", RowsHash(0, 167), map_seen)
+' Zooming out for ten tics shows more, and the picture changes.
+D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, 45, 0, 0)
+Tics(10)
+D_MAIN.D_PostEvent(G_GAME.EV_KEYUP, 45, 0, 0)
+Tics(1)
+AM_MAP.AM_Drawer()
+Eq("automap: zoomed out", IIF(RowsHash(0, 167) <> map_seen, 1, 0), 1)
+Key(AM_MAP.AM_STARTKEY)
+Eq("automap: tab turns it off", DOOMSTAT.automapactive, 0)
+
+' ---- from a level to the next ---------------------------------------------------------
+' idclev goes to another level of the game.
+TypeWord("idclev13")
+Tics(2)
+Eq("idclev13: map", DOOMSTAT.gamemap, 3)
+Eq("idclev13: skill kept", DOOMSTAT.gameskill, DOOMDEF.SK_MEDIUM)
+
+' The secret exit of E1M3 leads over the intermission to E1M9, its exit
+' back to E1M4.
+D_PLAYER.player_killcount[0] = 7
+G_GAME.G_SecretExitLevel()
+Tics(2)
+Eq("exit: the intermission", DOOMSTAT.gamestate, DOOMSTAT.GS_INTERMISSION)
+Eq("intermission: the level left", WI_STUFF.wm_last, 2)
+Eq("intermission: the level to come", WI_STUFF.wm_next, 8)
+Eq("intermission: kills", WI_STUFF.wm_skills, 7)
+Eq("intermission: par time of E1M3", WI_STUFF.wm_partime, 120 * 35)
+Tics(500)
+Eq("intermission: waits for the player", DOOMSTAT.gamestate, DOOMSTAT.GS_INTERMISSION)
+' Use hurries the counting, use again leaves the counts, and the map of
+' the episode shows for four seconds.
+Key(32)
+Tics(5)
+Key(32)
+Tics(4 * 35 + 20)
+Eq("intermission: over", DOOMSTAT.gamestate, DOOMSTAT.GS_LEVEL)
+Eq("secret exit: E1M9", DOOMSTAT.gamemap, 9)
+G_GAME.G_ExitLevel()
+Tics(2)
+Eq("from the secret level: next is E1M4", WI_STUFF.wm_next, 3)
+Eq("from the secret level: the secret was found", WI_STUFF.wm_didsecret, 1)
+Key(32)
+Tics(5)
+Key(32)
+Tics(4 * 35 + 20)
+Eq("from the secret level: E1M4", DOOMSTAT.gamemap, 4)
+
+' The exit of the eighth level is the end of the episode.
+TypeWord("idclev18")
+Tics(2)
+G_GAME.G_ExitLevel()
+Tics(2)
+Eq("E1M8: the finale", DOOMSTAT.gamestate, DOOMSTAT.GS_FINALE)
+
+' ---- the title loop ------------------------------------------------------------------
+' The title, DEMO1, the credits, DEMO2, the credits again, DEMO3, DEMO4,
+' and the title once more. A page with a count of 170 shows for 171 tics,
+' as its count has to fall below zero; a demo takes one tic more than it
+' has, the one that finds its end mark.
+DIM seq$ AS STRING = ""
+DIM last_state AS INTEGER = -1
+DIM last_map AS INTEGER = -1
+DIM phase_tics AS INTEGER = 0
+DIM here AS INTEGER
+DIM t AS INTEGER
+D_MAIN.D_StartTitle()
+FOR t = 1 TO 9330
+    Tics(1)
+    here = DOOMSTAT.gameepisode * 10 + DOOMSTAT.gamemap
+    IF DOOMSTAT.gamestate = DOOMSTAT.GS_DEMOSCREEN THEN here = 0
+    IF DOOMSTAT.gamestate <> last_state OR here <> last_map THEN
+        IF last_state >= 0 THEN seq$ = seq$ + STR$(phase_tics) + " "
+        IF here = 0 THEN seq$ = seq$ + "page:" ELSE seq$ = seq$ + "E" + STR$(DOOMSTAT.gameepisode) + "M" + STR$(DOOMSTAT.gamemap) + ":"
+        last_state = DOOMSTAT.gamestate
+        last_map = here
+        phase_tics = 0
+    ENDIF
+    phase_tics = phase_tics + 1
+NEXT t
+DIM want$ AS STRING = "page:171 E1M5:1711 page:201 E2M2:2348 page:201 E3M5:3864 E4M2:819 page:"
+IF seq$ = want$ THEN
+    passed = passed + 1
+ELSE
+    failed = failed + 1
+    PRINT "FAIL title loop: expected " + want$ + ", got " + seq$
+ENDIF
+Eq("title loop: no game of the player's", DOOMSTAT.usergame, 0)
+
+PRINT ""
+PRINT "DOOM P7 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

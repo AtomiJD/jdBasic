@@ -18,6 +18,14 @@ IMPORT R_DATA
 IMPORT R_SKY
 IMPORT P_SETUP
 IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT ST_STUFF
+IMPORT HU_STUFF
+IMPORT AM_MAP
+IMPORT WI_STUFF
+IMPORT F_FINALE
+IMPORT M_MENU
+IMPORT D_MAIN
 
 ' Key codes of doomdef.h; letters and digits are their ASCII codes.
 EXPORT CONST KEY_RIGHTARROW = $AE
@@ -89,6 +97,11 @@ EXPORT DIM cmd_chatchar AS INTEGER = 0
 EXPORT DIM cmd_buttons AS INTEGER = 0
 
 EXPORT DIM levelstarttic AS INTEGER = 0
+' Send a pause event next tic.
+DIM sendpause AS INTEGER = 0
+
+' 0 to 9, set in the options menu.
+EXPORT DIM mouseSensitivity AS INTEGER = 5
 
 DIM maxammo AS ARRAY = [200, 50, 300, 50]
 
@@ -222,6 +235,12 @@ EXPORT SUB G_BuildTiccmd()
 
     cmd_forwardmove = cmd_forwardmove + forward
     cmd_sidemove = cmd_sidemove + side
+
+    ' Special buttons.
+    IF sendpause <> 0 THEN
+        sendpause = 0
+        cmd_buttons = DOOMDEF.BT_SPECIAL BOR 1
+    ENDIF
 ENDSUB
 
 ' Called at the start of a game and after a death: everything except the
@@ -315,6 +334,10 @@ EXPORT SUB G_DoLoadLevel()
     DIM i AS INTEGER
     DIM j AS INTEGER
 
+    ' Force a wipe.
+    IF DOOMSTAT.wipegamestate = DOOMSTAT.GS_LEVEL THEN DOOMSTAT.wipegamestate = -1
+    DOOMSTAT.gamestate = DOOMSTAT.GS_LEVEL
+
     ' Set the sky map. The episode's sky was picked in G_InitNew.
     R_SKY.skyflatnum = R_DATA.R_FlatNumForName("F_SKY1")
     IF DOOMSTAT.commercial <> 0 THEN
@@ -402,6 +425,10 @@ EXPORT SUB G_InitNew(skill_in AS INTEGER, episode_in AS INTEGER, map_in AS INTEG
 
     DOOMSTAT.paused = 0
     DOOMSTAT.demoplayback = 0
+    DOOMSTAT.automapactive = 0
+    DOOMSTAT.viewactive = 1
+    ' Will be set false if a demo.
+    DOOMSTAT.usergame = 1
     DOOMSTAT.gameepisode = episode
     DOOMSTAT.gamemap = map_num
     DOOMSTAT.gameskill = skill
@@ -429,6 +456,166 @@ ENDSUB
 
 ' Runs one tic of the game: the ticcmd built for this tic goes to the
 ' console player, then the play simulation runs.
+' ---- level completion ----------------------------------------------------------
+
+' Par times of the levels of the first three episodes, in seconds.
+DIM pars AS ARRAY = [30, 75, 120, 90, 165, 180, 180, 30, 165, 90, 90, 90, 120, 90, 360, 240, 30, 170, 90, 45, 90, 150, 90, 90, 165, 30, 135]
+
+' Called when a player completes a level: take away cards and stuff.
+SUB G_PlayerFinishLevel(player AS INTEGER)
+    DIM i AS INTEGER
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+    FOR i = 0 TO DOOMDEF.NUMPOWERS - 1
+        D_PLAYER.player_powers[player * DOOMDEF.NUMPOWERS + i] = 0
+    NEXT i
+    FOR i = 0 TO DOOMDEF.NUMCARDS - 1
+        D_PLAYER.player_cards[player * DOOMDEF.NUMCARDS + i] = 0
+    NEXT i
+    ' Cancel invisibility, gun flashes, ir goggles and palette changes.
+    P_MOBJ.mobj_flags[mo] = CLNG(P_MOBJ.mobj_flags[mo]) BAND (BNOT INFO.MF_SHADOW)
+    D_PLAYER.player_extralight[player] = 0
+    D_PLAYER.player_fixedcolormap[player] = 0
+    D_PLAYER.player_damagecount[player] = 0
+    D_PLAYER.player_bonuscount[player] = 0
+ENDSUB
+
+SUB G_DoCompleted()
+    DIM i AS INTEGER
+    DIM p AS INTEGER = DOOMSTAT.consoleplayer
+    gameaction = GA_NOTHING
+
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        IF CLNG(DOOMSTAT.playeringame[i]) <> 0 THEN G_PlayerFinishLevel(i)
+    NEXT i
+
+    IF DOOMSTAT.automapactive <> 0 THEN AM_MAP.AM_Stop()
+
+    IF DOOMSTAT.commercial = 0 THEN
+        IF DOOMSTAT.gamemap = 8 THEN
+            gameaction = GA_VICTORY
+            RETURN
+        ENDIF
+        IF DOOMSTAT.gamemap = 9 THEN
+            FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+                D_PLAYER.player_didsecret[i] = 1
+            NEXT i
+        ENDIF
+    ENDIF
+
+    WI_STUFF.wm_didsecret = CLNG(D_PLAYER.player_didsecret[p])
+    WI_STUFF.wm_epsd = DOOMSTAT.gameepisode - 1
+    WI_STUFF.wm_last = DOOMSTAT.gamemap - 1
+
+    ' wm_next is 0 biased, unlike gamemap.
+    IF DOOMSTAT.commercial <> 0 THEN
+        I_SYSTEM.I_Error("G_DoCompleted: DOOM II is not ported")
+    ELSEIF secretexit <> 0 THEN
+        ' Go to secret level.
+        WI_STUFF.wm_next = 8
+    ELSEIF DOOMSTAT.gamemap = 9 THEN
+        ' Returning from secret level.
+        IF DOOMSTAT.gameepisode = 1 THEN
+            WI_STUFF.wm_next = 3
+        ELSEIF DOOMSTAT.gameepisode = 2 THEN
+            WI_STUFF.wm_next = 5
+        ELSEIF DOOMSTAT.gameepisode = 3 THEN
+            WI_STUFF.wm_next = 6
+        ELSE
+            WI_STUFF.wm_next = 2
+        ENDIF
+    ELSE
+        ' Go to next level.
+        WI_STUFF.wm_next = DOOMSTAT.gamemap
+    ENDIF
+
+    WI_STUFF.wm_maxkills = DOOMSTAT.totalkills
+    WI_STUFF.wm_maxitems = DOOMSTAT.totalitems
+    WI_STUFF.wm_maxsecret = DOOMSTAT.totalsecret
+    ' The fourth episode has no par times.
+    WI_STUFF.wm_partime = 0
+    IF DOOMSTAT.gameepisode <= 3 THEN WI_STUFF.wm_partime = 35 * CLNG(pars[(DOOMSTAT.gameepisode - 1) * 9 + DOOMSTAT.gamemap - 1])
+    WI_STUFF.wm_pnum = p
+    WI_STUFF.wm_skills = CLNG(D_PLAYER.player_killcount[p])
+    WI_STUFF.wm_sitems = CLNG(D_PLAYER.player_itemcount[p])
+    WI_STUFF.wm_ssecret = CLNG(D_PLAYER.player_secretcount[p])
+    WI_STUFF.wm_stime = P_TICK.leveltime
+
+    DOOMSTAT.gamestate = DOOMSTAT.GS_INTERMISSION
+    DOOMSTAT.viewactive = 0
+    DOOMSTAT.automapactive = 0
+
+    WI_STUFF.WI_Start()
+ENDSUB
+
+' The intermission is over.
+EXPORT SUB G_WorldDone()
+    gameaction = GA_WORLDDONE
+    IF secretexit <> 0 THEN D_PLAYER.player_didsecret[DOOMSTAT.consoleplayer] = 1
+ENDSUB
+
+SUB G_DoWorldDone()
+    DOOMSTAT.gamestate = DOOMSTAT.GS_LEVEL
+    DOOMSTAT.gamemap = WI_STUFF.wm_next + 1
+    G_DoLoadLevel()
+    gameaction = GA_NOTHING
+    DOOMSTAT.viewactive = 1
+ENDSUB
+
+' ---- events ---------------------------------------------------------------------
+
+' evtype_t
+EXPORT CONST EV_KEYDOWN = 0
+EXPORT CONST EV_KEYUP = 1
+EXPORT CONST EV_MOUSE = 2
+EXPORT CONST EV_JOYSTICK = 3
+
+EXPORT CONST KEY_PAUSE = $FF
+
+' Gets an event of the keyboard or the mouse; TRUE if the game used it.
+EXPORT FUNC G_Responder(ev_type AS INTEGER, data1 AS INTEGER, data2 AS INTEGER, data3 AS INTEGER) AS INTEGER
+    ' Any other key pops up the menu if in demos.
+    IF gameaction = GA_NOTHING AND (DOOMSTAT.demoplayback <> 0 OR DOOMSTAT.gamestate = DOOMSTAT.GS_DEMOSCREEN) THEN
+        IF ev_type = EV_KEYDOWN OR (ev_type = EV_MOUSE AND data1 <> 0) THEN
+            M_MENU.M_StartControlPanel()
+            RETURN 1
+        ENDIF
+        RETURN 0
+    ENDIF
+
+    IF DOOMSTAT.gamestate = DOOMSTAT.GS_LEVEL THEN
+        ' The status bar and the automap may eat the event.
+        IF ST_STUFF.ST_Responder(ev_type, data1) <> 0 THEN RETURN 1
+        IF AM_MAP.AM_Responder(ev_type, data1) <> 0 THEN RETURN 1
+    ENDIF
+
+    IF DOOMSTAT.gamestate = DOOMSTAT.GS_FINALE THEN
+        IF F_FINALE.F_Responder(ev_type, data1) <> 0 THEN RETURN 1
+    ENDIF
+
+    IF ev_type = EV_KEYDOWN THEN
+        IF data1 = KEY_PAUSE THEN
+            sendpause = 1
+            RETURN 1
+        ENDIF
+        IF data1 >= 0 AND data1 < NUMKEYS THEN gamekeydown[data1] = 1
+        ' Eat key down events.
+        RETURN 1
+    ELSEIF ev_type = EV_KEYUP THEN
+        IF data1 >= 0 AND data1 < NUMKEYS THEN gamekeydown[data1] = 0
+        ' Always let key up events filter down.
+        RETURN 0
+    ELSEIF ev_type = EV_MOUSE THEN
+        mousebuttons[0] = data1 BAND 1
+        mousebuttons[1] = data1 BAND 2
+        mousebuttons[2] = data1 BAND 4
+        mousex = data2 * (mouseSensitivity + 5) \ 10
+        mousey = data3 * (mouseSensitivity + 5) \ 10
+        ' Eat events.
+        RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
 ' ---- demos ------------------------------------------------------------------------
 
 CONST DEMOMARKER = $80
@@ -457,6 +644,7 @@ EXPORT SUB G_CheckDemoStatus()
         DOOMSTAT.nomonsters = 0
         DOOMSTAT.consoleplayer = 0
         demoended = 1
+        D_MAIN.D_AdvanceDemo()
     ENDIF
 ENDSUB
 
@@ -513,7 +701,38 @@ SUB G_DoPlayDemo()
 
     G_InitNew(skill, episode, map_num)
     demoended = 0
+    DOOMSTAT.usergame = 0
     DOOMSTAT.demoplayback = 1
+ENDSUB
+
+' The game the menu asked for: skill, episode and map.
+DIM d_skill AS INTEGER = 0
+DIM d_episode AS INTEGER = 0
+DIM d_map AS INTEGER = 0
+
+' Can be called by the startup code or the menu task; the game starts
+' at the next tic.
+EXPORT SUB G_DeferedInitNew(skill AS INTEGER, episode AS INTEGER, map_num AS INTEGER)
+    d_skill = skill
+    d_episode = episode
+    d_map = map_num
+    gameaction = GA_NEWGAME
+ENDSUB
+
+SUB G_DoNewGame()
+    DOOMSTAT.demoplayback = 0
+    DOOMSTAT.netgame = 0
+    DOOMSTAT.deathmatch = 0
+    DOOMSTAT.playeringame[0] = 1
+    DOOMSTAT.playeringame[1] = 0
+    DOOMSTAT.playeringame[2] = 0
+    DOOMSTAT.playeringame[3] = 0
+    DOOMSTAT.respawnparm = 0
+    DOOMSTAT.fastparm = 0
+    DOOMSTAT.nomonsters = 0
+    DOOMSTAT.consoleplayer = 0
+    G_InitNew(d_skill, d_episode, d_map)
+    gameaction = GA_NOTHING
 ENDSUB
 
 ' A player who died starts the level again; in a net game he would come
@@ -524,9 +743,9 @@ SUB G_DoReborn(player AS INTEGER)
     gameaction = GA_LOADLEVEL
 ENDSUB
 
-' Runs one tic of the game. Of the game actions, loading a level and
-' starting a demo are carried out here; a completed level is left for
-' the caller to see in gameaction.
+' Runs one tic of the game. A level that was completed in this tic is
+' still in gameaction when the tic is over; the next tic starts the
+' intermission or the finale.
 EXPORT SUB G_Ticker()
     DIM i AS INTEGER
 
@@ -536,11 +755,21 @@ EXPORT SUB G_Ticker()
     NEXT i
 
     ' Do things to change the game state.
-    DO WHILE gameaction = GA_LOADLEVEL OR gameaction = GA_PLAYDEMO
+    DO WHILE gameaction <> GA_NOTHING
         IF gameaction = GA_LOADLEVEL THEN
             G_DoLoadLevel()
-        ELSE
+        ELSEIF gameaction = GA_NEWGAME THEN
+            G_DoNewGame()
+        ELSEIF gameaction = GA_PLAYDEMO THEN
             G_DoPlayDemo()
+        ELSEIF gameaction = GA_COMPLETED THEN
+            G_DoCompleted()
+        ELSEIF gameaction = GA_VICTORY THEN
+            F_FINALE.F_StartFinale()
+        ELSEIF gameaction = GA_WORLDDONE THEN
+            G_DoWorldDone()
+        ELSE
+            I_SYSTEM.I_Error("G_Ticker: game action " + STR$(gameaction) + " is not ported")
         ENDIF
     LOOP
 
@@ -565,6 +794,18 @@ EXPORT SUB G_Ticker()
         ENDIF
     NEXT i
 
-    P_TICK.P_Ticker()
+    ' Do main actions.
+    IF DOOMSTAT.gamestate = DOOMSTAT.GS_LEVEL THEN
+        P_TICK.P_Ticker()
+        ST_STUFF.ST_Ticker()
+        AM_MAP.AM_Ticker()
+        HU_STUFF.HU_Ticker()
+    ELSEIF DOOMSTAT.gamestate = DOOMSTAT.GS_INTERMISSION THEN
+        WI_STUFF.WI_Ticker()
+    ELSEIF DOOMSTAT.gamestate = DOOMSTAT.GS_FINALE THEN
+        F_FINALE.F_Ticker()
+    ELSEIF DOOMSTAT.gamestate = DOOMSTAT.GS_DEMOSCREEN THEN
+        D_MAIN.D_PageTicker()
+    ENDIF
     DOOMSTAT.gametic = DOOMSTAT.gametic + 1
 ENDSUB

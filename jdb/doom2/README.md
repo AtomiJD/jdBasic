@@ -64,7 +64,8 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 
 | Module | C file | Content |
 |---|---|---|
-| `d_main.jdb` | d_main.c | where the IWAD is found (`IdentifyVersion$`) |
+| `d_main.jdb` | d_main.c | where the IWAD is found, the event queue, `D_Display` with the wipe, the title loop of pages and demos, `D_DoomMain` |
+| `doom.jdb` | d_main.c, i_video.c | the program: keyboard events, the main loop |
 | `doomdef.jdb` | doomdef.h, doomdata.h, m_bbox.h, p_local.h | screen size, lump order, line flags, box sides, blockmap units |
 | `m_fixed.jdb` | m_fixed.c, tables.h | `FixedMul`, `FixedDiv`, `ToS32`, angle constants |
 | `m_random.jdb` | m_random.c | `P_Random`, `M_Random` |
@@ -104,6 +105,13 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 | `p_enemy.jdb` | p_enemy.c | `P_NoiseAlert`, looking, chasing, the attacks of the monsters of DOOM, `A_Call` (the action of a state by its number) |
 | `p_pspr.jdb` | p_pspr.c | the weapon sprites and the weapon actions |
 | `d_items.jdb` | d_items.c | the weapons: ammunition and sprite states |
+| `st_stuff.jdb` | st_stuff.c, st_lib.c | the status bar, the face, the palette flashes, the cheats |
+| `hu_stuff.jdb` | hu_stuff.c, hu_lib.c | the message line, the level name on the automap, the font |
+| `am_map.jdb` | am_map.c | the automap |
+| `wi_stuff.jdb` | wi_stuff.c | the intermission of a single player |
+| `f_finale.jdb` | f_finale.c | the text and the picture at the end of an episode |
+| `f_wipe.jdb` | f_wipe.c | the melting screen |
+| `m_menu.jdb` | m_menu.c | the menus and the function keys |
 
 Not ported yet. These modules exist with the functions other modules call,
 and the functions do nothing:
@@ -117,9 +125,11 @@ Not ported in files that are otherwise there:
 - The actions of the monsters only DOOM II has (`A_VileChase`, `A_Tracer`,
   `A_FatAttack1`, `A_PainAttack`, `A_BrainSpit` and the like): a state that
   asks for one stops the program.
-- Of the game actions `G_Ticker` carries out loading a level and
-  starting a demo. A completed level stays in `gameaction` for the caller
-  (intermission, P7); savegames and recording a demo come later.
+- Savegames (the menu lists them and says so), recording a demo, the
+  sound volumes of the menu (kept, nothing plays yet).
+- The chat, the intermission and the automap arrows of net games, and
+  everything of DOOM II in the intermission and the finale.
+- The quit messages: the menu always asks the plain question.
 - Net games: a second player in a demo, coming back at a start spot,
   deathmatch.
 
@@ -133,6 +143,13 @@ Where the port leaves the original on purpose:
 - The switch list takes the registered set when the WAD has its textures,
   as DOOM 1.9 does for The Ultimate Doom; the released source asks for
   `gamemode == registered` only.
+- The status bar is drawn whole every frame; the original redraws only
+  the parts whose value changed, over a background kept in a screen of
+  its own. The pixels on the screen are the same.
+- A cheat is found by comparing the last keys typed with its word; the
+  original walks a state machine over scrambled key codes (m_cheat.c).
+- The wipe reads the columns of the two pictures where they are instead
+  of turning the pictures on their side first.
 
 ## Running the checks
 
@@ -153,6 +170,8 @@ build/jdBasic.exe jdb/doom2/test_p5.jdb
 build/jdBasic.exe -c jdb/doom2/test_p5.jdb && jdb/doom2/test_p5.exe
 build/jdBasic.exe jdb/doom2/test_p6.jdb
 build/jdBasic.exe -c jdb/doom2/test_p6.jdb && jdb/doom2/test_p6.exe
+build/jdBasic.exe jdb/doom2/test_p7.jdb
+build/jdBasic.exe -c jdb/doom2/test_p7.jdb && jdb/doom2/test_p7.exe
 ```
 
 `test_p0` covers fixed point, random numbers and the generated tables.
@@ -180,6 +199,11 @@ player dies two to seven seconds before the recording stops, as a
 recording of a death does; where he lies, his kills and the random index
 are compared with what was recorded. The demos were not compared with a
 run of the original program.
+`test_p7` runs the shell without a window: the wipe, the menu by its
+keys, the cheats, the status bar and the automap against hashes of
+pictures that were looked at, the way over the intermission to the next
+and the secret level, the finale, and one round of the title loop with
+its four demos (25 seconds interpreted).
 
 Looking at the data (title picture, wall textures, flats, sprites, the lines
 of E1M1); with a folder argument each page is saved as a PNG:
@@ -197,14 +221,15 @@ build/jdBasic.exe -c jdb/doom2/view_p2.jdb
 jdb/doom2/view_p2.exe [episode] [map] [folder for screenshots]
 ```
 
-Playing a level with the game's own controls: collision, steps, sliding
-along walls, the bobbing view, doors, lifts, switches, teleporters; an exit
-leads to the next map. Ctrl fires, 1 to 7 pick a weapon, Space brings a
-dead player back. Messages and health are printed, there is no status bar:
+The game: the title loop with its demos, the menu, the levels with status
+bar, messages and automap, intermission and finale. Any key opens the menu.
+With an episode and a map it starts there. Arrow keys or W and S move, A
+and D or comma and full stop step sideways, Shift runs, Ctrl fires, Space
+uses, 1 to 7 pick a weapon, Tab shows the map, Escape the menu:
 
 ```
-build/jdBasic.exe -c jdb/doom2/view_p4.jdb
-jdb/doom2/view_p4.exe [episode] [map]
+build/jdBasic.exe -c jdb/doom2/doom.jdb
+jdb/doom2/doom.exe [episode map [skill]]
 ```
 
 ## Tools

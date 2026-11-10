@@ -1,9 +1,28 @@
-' Program start (d_main.c). So far only where the IWAD is found.
+' Program start, the event queue, the display of a frame and the title
+' loop of pages and demos (d_main.c). The main loop itself is in doom.jdb.
 
 EXPORT MODULE D_MAIN
 
 OPTION "EXPLICIT"
 OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT W_WAD
+IMPORT V_VIDEO
+IMPORT I_VIDEO
+IMPORT R_MAIN
+IMPORT R_DRAW
+IMPORT P_SETUP
+IMPORT G_GAME
+IMPORT ST_STUFF
+IMPORT HU_STUFF
+IMPORT AM_MAP
+IMPORT WI_STUFF
+IMPORT F_FINALE
+IMPORT F_WIPE
+IMPORT M_MENU
 
 ' The path of doom.wad: in the folder the environment variable DOOMWADDIR
 ' names, else in jdb/doom/wad/classic below the working directory.
@@ -12,3 +31,253 @@ EXPORT FUNC IdentifyVersion$() AS STRING
     IF LEN(doomwaddir$) = 0 THEN doomwaddir$ = "jdb/doom/wad/classic"
     RETURN doomwaddir$ + "/doom.wad"
 ENDFUNC
+
+' ---- events ---------------------------------------------------------------------
+
+CONST MAXEVENTS = 64
+DIM event_type[MAXEVENTS] AS INTEGER
+DIM event_data1[MAXEVENTS] AS INTEGER
+DIM event_data2[MAXEVENTS] AS INTEGER
+DIM event_data3[MAXEVENTS] AS INTEGER
+DIM eventhead AS INTEGER = 0
+DIM eventtail AS INTEGER = 0
+
+' Called by the I/O functions when input is detected.
+EXPORT SUB D_PostEvent(ev_type AS INTEGER, data1 AS INTEGER, data2 AS INTEGER, data3 AS INTEGER)
+    event_type[eventhead] = ev_type
+    event_data1[eventhead] = data1
+    event_data2[eventhead] = data2
+    event_data3[eventhead] = data3
+    eventhead = (eventhead + 1) BAND (MAXEVENTS - 1)
+ENDSUB
+
+' Send all the events of the given timestamp down the responder chain.
+EXPORT SUB D_ProcessEvents()
+    DIM ev_type AS INTEGER
+    DIM data1 AS INTEGER
+    DO WHILE eventtail <> eventhead
+        ev_type = CLNG(event_type[eventtail])
+        data1 = CLNG(event_data1[eventtail])
+        ' The menu may eat the event.
+        IF M_MENU.M_Responder(ev_type, data1) = 0 THEN G_GAME.G_Responder(ev_type, data1, CLNG(event_data2[eventtail]), CLNG(event_data3[eventtail]))
+        eventtail = (eventtail + 1) BAND (MAXEVENTS - 1)
+    LOOP
+ENDSUB
+
+' ---- the title loop -------------------------------------------------------------
+
+DIM demosequence AS INTEGER = -1
+DIM pagetic AS INTEGER = 0
+DIM pagename$ AS STRING = "TITLEPIC"
+
+' Handles timing for warped projection.
+EXPORT SUB D_PageTicker()
+    pagetic = pagetic - 1
+    IF pagetic < 0 THEN D_AdvanceDemo()
+ENDSUB
+
+SUB D_PageDrawer()
+    V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName(pagename$))
+ENDSUB
+
+' Called after each demo or intro demosequence finishes.
+EXPORT SUB D_AdvanceDemo()
+    DOOMSTAT.advancedemo = 1
+ENDSUB
+
+' This cycles through the demo sequences.
+EXPORT SUB D_DoAdvanceDemo()
+    ' Not reborn.
+    D_PLAYER.player_playerstate[DOOMSTAT.consoleplayer] = DOOMDEF.PST_LIVE
+    DOOMSTAT.advancedemo = 0
+    ' No save / end game here.
+    DOOMSTAT.usergame = 0
+    DOOMSTAT.paused = 0
+    G_GAME.gameaction = G_GAME.GA_NOTHING
+
+    IF DOOMSTAT.retail <> 0 THEN
+        demosequence = (demosequence + 1) MOD 7
+    ELSE
+        demosequence = (demosequence + 1) MOD 6
+    ENDIF
+
+    IF demosequence = 0 THEN
+        pagetic = 170
+        IF DOOMSTAT.commercial <> 0 THEN pagetic = 35 * 11
+        DOOMSTAT.gamestate = DOOMSTAT.GS_DEMOSCREEN
+        pagename$ = "TITLEPIC"
+    ELSEIF demosequence = 1 THEN
+        G_GAME.G_DeferedPlayDemo("DEMO1")
+    ELSEIF demosequence = 2 THEN
+        pagetic = 200
+        DOOMSTAT.gamestate = DOOMSTAT.GS_DEMOSCREEN
+        pagename$ = "CREDIT"
+    ELSEIF demosequence = 3 THEN
+        G_GAME.G_DeferedPlayDemo("DEMO2")
+    ELSEIF demosequence = 4 THEN
+        DOOMSTAT.gamestate = DOOMSTAT.GS_DEMOSCREEN
+        IF DOOMSTAT.commercial <> 0 THEN
+            pagetic = 35 * 11
+            pagename$ = "TITLEPIC"
+        ELSE
+            pagetic = 200
+            IF DOOMSTAT.retail <> 0 THEN pagename$ = "CREDIT" ELSE pagename$ = "HELP2"
+        ENDIF
+    ELSEIF demosequence = 5 THEN
+        G_GAME.G_DeferedPlayDemo("DEMO3")
+    ELSE
+        ' The Ultimate DOOM Special Edition demo.
+        G_GAME.G_DeferedPlayDemo("DEMO4")
+    ENDIF
+ENDSUB
+
+EXPORT SUB D_StartTitle()
+    G_GAME.gameaction = G_GAME.GA_NOTHING
+    demosequence = -1
+    D_AdvanceDemo()
+ENDSUB
+
+' ---- the display ----------------------------------------------------------------
+
+' What the last frame was drawn with.
+DIM viewactivestate AS INTEGER = 0
+DIM menuactivestate AS INTEGER = 0
+DIM oldgamestate AS INTEGER = -1
+DIM borderdrawcount AS INTEGER = 0
+
+' Draws the current display, possibly wiping it from the previous. The
+' wipe runs in here and takes about a second.
+EXPORT SUB D_Display()
+    DIM wipe AS INTEGER = 0
+    DIM y AS INTEGER
+    DIM gamestate AS INTEGER = DOOMSTAT.gamestate
+    DIM in_level AS INTEGER = 0
+    IF gamestate = DOOMSTAT.GS_LEVEL AND DOOMSTAT.gametic <> 0 THEN in_level = 1
+
+    ' Change the view size if needed.
+    IF R_MAIN.setsizeneeded <> 0 THEN
+        R_MAIN.R_ExecuteSetViewSize()
+        ' Force background redraw.
+        oldgamestate = -1
+        borderdrawcount = 3
+    ENDIF
+
+    ' Save the current screen if about to wipe.
+    IF gamestate <> DOOMSTAT.wipegamestate THEN
+        wipe = 1
+        F_WIPE.wipe_StartScreen()
+    ENDIF
+
+    IF in_level <> 0 THEN HU_STUFF.HU_Erase()
+
+    ' Do buffered drawing.
+    IF gamestate = DOOMSTAT.GS_LEVEL THEN
+        IF in_level <> 0 THEN
+            IF DOOMSTAT.automapactive <> 0 THEN AM_MAP.AM_Drawer()
+            ST_STUFF.ST_Drawer(IIF(R_DRAW.viewheight = 200, 1, 0))
+        ENDIF
+    ELSEIF gamestate = DOOMSTAT.GS_INTERMISSION THEN
+        WI_STUFF.WI_Drawer()
+    ELSEIF gamestate = DOOMSTAT.GS_FINALE THEN
+        F_FINALE.F_Drawer()
+    ELSE
+        D_PageDrawer()
+    ENDIF
+
+    ' Draw the view directly.
+    IF in_level <> 0 AND DOOMSTAT.automapactive = 0 THEN R_MAIN.R_RenderPlayerView(DOOMSTAT.displayplayer)
+
+    IF in_level <> 0 THEN HU_STUFF.HU_Drawer()
+
+    ' Clean up border stuff.
+    IF gamestate <> oldgamestate AND gamestate <> DOOMSTAT.GS_LEVEL THEN I_VIDEO.I_SetPalette(W_WAD.W_CacheLumpName("PLAYPAL"))
+
+    ' See if the border needs to be initially drawn.
+    IF gamestate = DOOMSTAT.GS_LEVEL AND oldgamestate <> DOOMSTAT.GS_LEVEL THEN
+        ' View was not active.
+        viewactivestate = 0
+        ' Draw the pattern into the back screen.
+        R_DRAW.R_FillBackScreen()
+    ENDIF
+
+    ' See if the border needs to be updated to the screen.
+    IF gamestate = DOOMSTAT.GS_LEVEL AND DOOMSTAT.automapactive = 0 AND R_DRAW.scaledviewwidth <> 320 THEN
+        IF DOOMSTAT.menuactive <> 0 OR menuactivestate <> 0 OR viewactivestate = 0 THEN borderdrawcount = 3
+        IF borderdrawcount <> 0 THEN
+            ' Erase old menu stuff.
+            R_DRAW.R_DrawViewBorder()
+            borderdrawcount = borderdrawcount - 1
+        ENDIF
+    ENDIF
+
+    menuactivestate = DOOMSTAT.menuactive
+    viewactivestate = DOOMSTAT.viewactive
+    oldgamestate = gamestate
+    DOOMSTAT.wipegamestate = gamestate
+
+    ' Draw pause pic.
+    IF DOOMSTAT.paused <> 0 THEN
+        y = R_DRAW.viewwindowy + 4
+        IF DOOMSTAT.automapactive <> 0 THEN y = 4
+        V_VIDEO.V_DrawPatch(R_DRAW.viewwindowx + (R_DRAW.scaledviewwidth - 68) \ 2, y, 0, W_WAD.W_CacheLumpName("M_PAUSE"))
+    ENDIF
+
+    ' Menus go directly to the screen: the menu is drawn even on top of
+    ' everything.
+    M_MENU.M_Drawer()
+
+    ' Normal update.
+    IF wipe = 0 THEN
+        I_VIDEO.I_FinishUpdate()
+        RETURN
+    ENDIF
+
+    ' Wipe update.
+    F_WIPE.wipe_EndScreen()
+    DIM wipestart AS DOUBLE = TICK()
+    DIM tics AS INTEGER
+    DIM done AS INTEGER = 0
+    DO
+        DO
+            SLEEP 1
+            tics = CLNG(INT((TICK() - wipestart) * 35.0 / 1000.0))
+        LOOP WHILE tics = 0
+        wipestart = wipestart + tics * 1000.0 / 35.0
+        done = F_WIPE.wipe_ScreenWipe(tics)
+        ' The menu is drawn even on top of wipes.
+        M_MENU.M_Drawer()
+        I_VIDEO.I_FinishUpdate()
+    LOOP WHILE done = 0
+ENDSUB
+
+' ---- start ----------------------------------------------------------------------
+
+' Loads the WAD and sets every part of the game up. The window has to be
+' open already.
+EXPORT SUB D_DoomMain()
+    W_WAD.W_Init(IdentifyVersion$())
+
+    ' Which game it is tells the WAD by the levels it has.
+    DOOMSTAT.commercial = 0
+    DOOMSTAT.shareware = 0
+    DOOMSTAT.retail = 0
+    IF W_WAD.W_CheckNumForName("MAP01") >= 0 THEN
+        DOOMSTAT.commercial = 1
+    ELSEIF W_WAD.W_CheckNumForName("E4M1") >= 0 THEN
+        DOOMSTAT.retail = 1
+    ELSEIF W_WAD.W_CheckNumForName("E2M1") < 0 THEN
+        DOOMSTAT.shareware = 1
+    ENDIF
+
+    V_VIDEO.V_Init()
+    M_MENU.M_Init()
+    R_MAIN.R_Init(M_MENU.screenblocks, M_MENU.detailLevel)
+    P_SETUP.P_Init()
+    HU_STUFF.HU_Init()
+    ST_STUFF.ST_Init()
+    I_VIDEO.I_SetPalette(W_WAD.W_CacheLumpName("PLAYPAL"))
+
+    DOOMSTAT.playeringame[0] = 1
+    DOOMSTAT.gamestate = DOOMSTAT.GS_DEMOSCREEN
+    DOOMSTAT.wipegamestate = DOOMSTAT.GS_DEMOSCREEN
+ENDSUB

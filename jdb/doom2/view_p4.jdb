@@ -7,8 +7,9 @@
 '   build/jdBasic.exe -c jdb/doom2/view_p4.jdb
 '   jdb/doom2/view_p4.exe [episode] [map]
 '
-' Arrow keys turn and move, comma and full stop step sideways, Alt with left
-' or right steps too, Shift runs, Ctrl fires, 1 to 7 pick a weapon, Space
+' Arrow keys turn and move (W and S move too), A and D or comma and full stop
+' step sideways, Alt with left or right steps too, Shift runs, Ctrl fires,
+' 1 to 7 pick a weapon, Space
 ' uses and brings a dead player back, Escape quits.
 
 OPTION "EXPLICIT"
@@ -64,6 +65,10 @@ SUB ReadKeys()
     KeyTo "Space", 32
     KeyTo ",", 44
     KeyTo ".", 46
+    KeyTo "A", 44
+    KeyTo "D", 46
+    KeyTo "W", G_GAME.KEY_UPARROW
+    KeyTo "S", G_GAME.KEY_DOWNARROW
     DIM digit AS INTEGER
     FOR digit = 1 TO 7
         KeyTo STR$(digit), 48 + digit
