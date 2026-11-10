@@ -2191,12 +2191,17 @@ void register_graphics_builtins(VM& vm) {
         SDL_FRect shown;
         if (rect_ptr && !SDL_GetRenderTarget(g_renderer) && g_screen_w > 0 && g_screen_h > 0 &&
             SDL_GetRenderLogicalPresentationRect(g_renderer, &shown) && shown.w > 0 && shown.h > 0) {
-            float sx = shown.w / (float)g_screen_w;
-            float sy = shown.h / (float)g_screen_h;
-            int x0 = (int)std::lround(shown.x + region_rect.x * sx);
-            int y0 = (int)std::lround(shown.y + region_rect.y * sy);
-            int x1 = (int)std::lround(shown.x + (region_rect.x + region_rect.w) * sx);
-            int y1 = (int)std::lround(shown.y + (region_rect.y + region_rect.h) * sy);
+            double sx = (double)shown.w / g_screen_w;
+            double sy = (double)shown.h / g_screen_h;
+            // Far outside any display is all the same to the renderer, which
+            // clips the rectangle; the bound keeps the sums inside an int.
+            auto px = [](double v) {
+                return (int)std::lround(std::clamp(v, -1.0e6, 1.0e6));
+            };
+            int x0 = px(shown.x + (double)region_rect.x * sx);
+            int y0 = px(shown.y + (double)region_rect.y * sy);
+            int x1 = px(shown.x + ((double)region_rect.x + (double)region_rect.w) * sx);
+            int y1 = px(shown.y + ((double)region_rect.y + (double)region_rect.h) * sy);
             region_rect = { x0, y0, x1 - x0, y1 - y0 };
         }
 
