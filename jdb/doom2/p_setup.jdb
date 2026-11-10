@@ -19,6 +19,7 @@ IMPORT D_PLAYER
 IMPORT P_TICK
 IMPORT P_MOBJ
 IMPORT P_SPEC
+IMPORT R_THINGS
 
 EXPORT CONST MAXVERTEXES = 32768
 EXPORT CONST MAXSECTORS = 8192
@@ -540,4 +541,9 @@ EXPORT SUB P_SetupLevel(episode AS INTEGER, map_num AS INTEGER, playermask AS IN
 
     ' Set up the world state.
     P_SPEC.P_SpawnSpecials()
+ENDSUB
+
+' Called once at program start, after R_Init.
+EXPORT SUB P_Init()
+    R_THINGS.R_InitSprites()
 ENDSUB

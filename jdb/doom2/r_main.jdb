@@ -17,6 +17,8 @@ IMPORT R_PLANE
 IMPORT R_SEGS
 IMPORT R_BSP
 IMPORT R_THINGS
+IMPORT D_PLAYER
+IMPORT P_MOBJ
 
 EXPORT CONST FIELDOFVIEW = 2048
 
@@ -72,6 +74,9 @@ EXPORT CONST SCALELIGHTFIXED = LIGHTLEVELS * MAXLIGHTSCALE
 
 ' Bumped light from gun blasts.
 EXPORT DIM extralight AS INTEGER = 0
+
+' The player whose view is drawn.
+EXPORT DIM viewplayer AS INTEGER = 0
 
 EXPORT DIM setsizeneeded AS INTEGER = 0
 DIM setblocks AS INTEGER = 0
@@ -391,6 +396,7 @@ EXPORT SUB R_Init(screenblocks AS INTEGER, detail_level AS INTEGER)
     R_SetViewSize(screenblocks, detail_level)
     R_InitLightTables()
     R_SKY.R_InitSkyMap()
+    R_DRAW.R_InitTranslationTables()
     framecount = 0
 ENDSUB
 
@@ -406,16 +412,17 @@ EXPORT FUNC R_PointInSubsector(x AS INTEGER, y AS INTEGER) AS INTEGER
     RETURN nodenum BAND (BNOT DOOMDEF.NF_SUBSECTOR)
 ENDFUNC
 
-' Sets the view for a frame: the eye at (x, y, z) looking along angle.
-' light_bump is the player's extralight, fixed_map the number of the colormap
-' that replaces all lighting, or 0.
-EXPORT SUB R_SetupFrame(x AS INTEGER, y AS INTEGER, z AS INTEGER, angle AS INTEGER, light_bump AS INTEGER, fixed_map AS INTEGER)
+' Sets the view for a frame to the eye of the player.
+EXPORT SUB R_SetupFrame(player AS INTEGER)
     DIM i AS INTEGER
-    viewx = x
-    viewy = y
-    viewangle = (angle + viewangleoffset) BAND M_FIXED.ANGLE_MASK
-    extralight = light_bump
-    viewz = z
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[player])
+    DIM fixed_map AS INTEGER = CLNG(D_PLAYER.player_fixedcolormap[player])
+    viewplayer = player
+    viewx = CLNG(P_MOBJ.mobj_x[mo])
+    viewy = CLNG(P_MOBJ.mobj_y[mo])
+    viewangle = (CLNG(P_MOBJ.mobj_angle[mo]) + viewangleoffset) BAND M_FIXED.ANGLE_MASK
+    extralight = CLNG(D_PLAYER.player_extralight[player])
+    viewz = CLNG(D_PLAYER.player_viewz[player])
     viewsin = CLNG(TABLES.finesine[viewangle SHR TABLES.ANGLETOFINESHIFT])
     viewcos = CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + (viewangle SHR TABLES.ANGLETOFINESHIFT)])
     sscount = 0
@@ -432,13 +439,18 @@ EXPORT SUB R_SetupFrame(x AS INTEGER, y AS INTEGER, z AS INTEGER, angle AS INTEG
     validcount = validcount + 1
 ENDSUB
 
-' Draws the view of R_SetupFrame's arguments into the view window.
-EXPORT SUB R_RenderPlayerView(x AS INTEGER, y AS INTEGER, z AS INTEGER, angle AS INTEGER, light_bump AS INTEGER, fixed_map AS INTEGER)
-    R_SetupFrame(x, y, z, angle, light_bump, fixed_map)
+' Draws the view of the player into the view window.
+EXPORT SUB R_RenderPlayerView(player AS INTEGER)
+    R_SetupFrame(player)
+
+    ' Clear buffers.
     R_BSP.R_ClearClipSegs()
     R_BSP.R_ClearDrawSegs()
     R_PLANE.R_ClearPlanes()
+    R_THINGS.R_ClearSprites()
+
     ' The head node is the last node output.
     R_BSP.R_RenderBSPNode(P_SETUP.numnodes - 1)
     R_PLANE.R_DrawPlanes()
+    R_THINGS.R_DrawMasked()
 ENDSUB

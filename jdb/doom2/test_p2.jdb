@@ -1,4 +1,4 @@
-' Renderer checks for walls and planes on E1M1 of doom.wad: the tables of the
+' Renderer checks on E1M1 of doom.wad: the tables of the
 ' view, the angle arithmetic, and whole frames. A frame has to cover every
 ' pixel of the view, and its pixels have to be the ones recorded here, in
 ' the interpreter and compiled alike. The recorded frames were looked at
@@ -23,6 +23,11 @@ IMPORT R_MAIN
 IMPORT R_SKY
 IMPORT R_PLANE
 IMPORT R_BSP
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT P_MOBJ
+IMPORT P_MAPUTL
+IMPORT G_GAME
 
 DIM passed AS INTEGER = 0
 DIM failed AS INTEGER = 0
@@ -64,21 +69,35 @@ SUB FillScreen(pixel AS INTEGER)
     NEXT p
 ENDSUB
 
+' Moves the thing of player 1 to (x, y) looking along angle, his eye 41
+' units above the floor there. The tests use him as a camera.
+SUB PlaceCamera(x AS INTEGER, y AS INTEGER, angle AS INTEGER)
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+    P_MAPUTL.P_UnsetThingPosition(mo)
+    P_MOBJ.mobj_x[mo] = x
+    P_MOBJ.mobj_y[mo] = y
+    P_MOBJ.mobj_angle[mo] = angle
+    P_MAPUTL.P_SetThingPosition(mo)
+    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[mo])])
+    P_MOBJ.mobj_z[mo] = P_SETUP.sector_floorheight[sector]
+    D_PLAYER.player_viewz[0] = CLNG(P_SETUP.sector_floorheight[sector]) + 41 * 65536
+ENDSUB
+
 ' The view from map thing n, eye 41 units above the floor there.
 SUB RenderFromThing(n AS INTEGER)
     DIM x AS INTEGER = CLNG(P_SETUP.mapthing_x[n]) * FU
     DIM y AS INTEGER = CLNG(P_SETUP.mapthing_y[n]) * FU
     DIM angle AS INTEGER = (M_FIXED.ANG45 * (CLNG(P_SETUP.mapthing_angle[n]) \ 45)) BAND M_FIXED.ANGLE_MASK
-    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[R_MAIN.R_PointInSubsector(x, y)])
     IF R_MAIN.setsizeneeded <> 0 THEN R_MAIN.R_ExecuteSetViewSize()
-    R_MAIN.R_RenderPlayerView(x, y, CLNG(P_SETUP.sector_floorheight[sector]) + 41 * FU, angle, 0, 0)
+    PlaceCamera(x, y, angle)
+    R_MAIN.R_RenderPlayerView(0)
 ENDSUB
 
 W_WAD.W_Init(wad_path$)
 R_MAIN.R_Init(11, 0)
-P_SETUP.P_SetupLevel(1, 1, 0, DOOMDEF.SK_MEDIUM)
-R_SKY.skyflatnum = R_DATA.R_FlatNumForName("F_SKY1")
-R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY1")
+P_SETUP.P_Init()
+DOOMSTAT.playeringame[0] = 1
+G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, 1, 1)
 R_MAIN.R_ExecuteSetViewSize()
 
 ' ---- view tables, full screen ------------------------------------------------
@@ -149,24 +168,24 @@ DIM hash_a AS INTEGER = ScreenHash()
 FillScreen(251)
 RenderFromThing(0)
 Eq("a frame covers every pixel of the view", ScreenHash(), hash_a)
-Eq("frame at the player 1 start", hash_a, 727280514)
+Eq("frame at the player 1 start", hash_a, 938281085)
 Eq("visplanes in use", R_PLANE.lastvisplane > 2 AND R_PLANE.lastvisplane <= R_PLANE.MAXVISPLANES, TRUE)
 Eq("drawsegs in use", R_BSP.ds_p > 10 AND R_BSP.ds_p <= R_BSP.MAXDRAWSEGS, TRUE)
 
 ' The courtyard with sky, and the room with the slime.
 FillScreen(0)
 RenderFromThing(71)
-Eq("frame in the courtyard", ScreenHash(), 835993493)
+Eq("frame in the courtyard", ScreenHash(), 866380148)
 FillScreen(0)
 RenderFromThing(72)
-Eq("frame in the slime room", ScreenHash(), 232592603)
+Eq("frame in the slime room", ScreenHash(), 76620840)
 
 ' The view above the status bar: 320 x 168, the 32 rows below it untouched.
 R_MAIN.R_SetViewSize(10, 0)
 FillScreen(7)
 RenderFromThing(0)
 Eq("view height above the status bar", R_DRAW.viewheight, 168)
-Eq("frame above the status bar", ScreenHash(), 718209776)
+Eq("frame above the status bar", ScreenHash(), 132295849)
 bad = 0
 FOR i = 168 * 320 TO V_VIDEO.SCREENSIZE - 1
     IF CLNG(V_VIDEO.screens[i]) <> 7 THEN bad = bad + 1

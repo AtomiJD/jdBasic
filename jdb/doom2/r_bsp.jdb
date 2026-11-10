@@ -19,6 +19,7 @@ IMPORT R_MAIN
 IMPORT R_SKY
 IMPORT R_PLANE
 IMPORT R_SEGS
+IMPORT R_THINGS
 
 ' The seg being drawn and the sectors on its two sides (-1 = none).
 EXPORT DIM curline AS INTEGER = 0
@@ -350,6 +351,8 @@ SUB R_Subsector(num AS INTEGER)
     ELSE
         R_PLANE.ceilingplane = -1
     ENDIF
+
+    R_THINGS.R_AddSprites(frontsector)
 
     DIM i AS INTEGER
     FOR i = 0 TO n_segs - 1

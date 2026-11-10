@@ -1,0 +1,251 @@
+' Checks of the masked part of the renderer on E1M1: the sprite tables
+' against the names of the sprite lumps, the translation tables, the shadow
+' column, and frames with sprites, a masked middle texture, the weapon and
+' shadows. The recorded frames were looked at (view_p2.jdb) before their
+' hashes went in; interpreter and compiled program have to agree on them.
+'
+' Run from the repository root, interpreted or compiled with -c. Without a
+' window.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT INFO
+IMPORT W_WAD
+IMPORT R_DATA
+IMPORT P_SETUP
+IMPORT P_MOBJ
+IMPORT P_MAPUTL
+IMPORT V_VIDEO
+IMPORT R_DRAW
+IMPORT R_MAIN
+IMPORT R_THINGS
+IMPORT G_GAME
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+DIM wad_path$ AS STRING = D_MAIN.IdentifyVersion$()
+IF NOT FILE.EXISTS(wad_path$) THEN
+    PRINT "SKIP: " + wad_path$ + " not found"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+DIM FU AS INTEGER = M_FIXED.FRACUNIT
+DIM i AS INTEGER
+DIM bad AS INTEGER
+
+FUNC ScreenHash() AS INTEGER
+    DIM h AS INTEGER = 0
+    DIM p AS INTEGER
+    FOR p = 0 TO V_VIDEO.SCREENSIZE - 1
+        h = (h * 31 + CLNG(V_VIDEO.screens[p])) MOD 1000000007
+    NEXT p
+    RETURN h
+ENDFUNC
+
+SUB FillScreen(pixel AS INTEGER)
+    DIM p AS INTEGER
+    FOR p = 0 TO V_VIDEO.SCREENSIZE - 1
+        V_VIDEO.screens[p] = pixel
+    NEXT p
+ENDSUB
+
+' Moves the thing of player 1, the camera, to map thing n.
+SUB RenderFromThing(n AS INTEGER)
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+    P_MAPUTL.P_UnsetThingPosition(mo)
+    P_MOBJ.mobj_x[mo] = CLNG(P_SETUP.mapthing_x[n]) * FU
+    P_MOBJ.mobj_y[mo] = CLNG(P_SETUP.mapthing_y[n]) * FU
+    P_MOBJ.mobj_angle[mo] = (M_FIXED.ANG45 * (CLNG(P_SETUP.mapthing_angle[n]) \ 45)) BAND M_FIXED.ANGLE_MASK
+    P_MAPUTL.P_SetThingPosition(mo)
+    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[mo])])
+    P_MOBJ.mobj_z[mo] = P_SETUP.sector_floorheight[sector]
+    D_PLAYER.player_viewz[0] = CLNG(P_SETUP.sector_floorheight[sector]) + 41 * FU
+    IF R_MAIN.setsizeneeded <> 0 THEN R_MAIN.R_ExecuteSetViewSize()
+    R_MAIN.R_RenderPlayerView(0)
+ENDSUB
+
+W_WAD.W_Init(wad_path$)
+R_MAIN.R_Init(10, 0)
+P_SETUP.P_Init()
+DOOMSTAT.playeringame[0] = 1
+G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, 1, 1)
+
+' ---- sprite tables ----------------------------------------------------------------
+
+Eq("sprites", R_THINGS.numsprites, 138)
+
+' The number of frames of a sprite is one more than the highest frame
+' letter in the names of its lumps.
+DIM s AS INTEGER
+DIM l AS INTEGER
+DIM lump_name$ AS STRING
+DIM want$ AS STRING
+DIM highest AS INTEGER
+DIM sprites_with_lumps AS INTEGER = 0
+bad = 0
+FOR s = 0 TO INFO.NUMSPRITES - 1
+    want$ = INFO.spr_names[s]
+    highest = -1
+    FOR l = R_DATA.firstspritelump TO R_DATA.lastspritelump
+        lump_name$ = W_WAD.W_LumpName$(l)
+        IF LEFT$(lump_name$, 4) = want$ THEN
+            IF ASC(MID$(lump_name$, 4, 1)) - 65 > highest THEN highest = ASC(MID$(lump_name$, 4, 1)) - 65
+            IF LEN(lump_name$) > 6 ANDALSO ASC(MID$(lump_name$, 6, 1)) - 65 > highest THEN highest = ASC(MID$(lump_name$, 6, 1)) - 65
+        ENDIF
+    NEXT l
+    IF CLNG(R_THINGS.spr_numframes[s]) <> highest + 1 THEN bad = bad + 1
+    IF highest >= 0 THEN sprites_with_lumps = sprites_with_lumps + 1
+NEXT s
+Eq("frames of every sprite", bad, 0)
+Eq("sprites that have lumps in this WAD", sprites_with_lumps > 100 AND sprites_with_lumps < 138, TRUE)
+
+' Every rotation of every frame names a lump that carries this frame letter
+' and rotation digit: in its first pair if drawn as it is, in its second if
+' drawn flipped. A frame without rotations carries the digit 0.
+DIM frame AS INTEGER
+DIM rot AS INTEGER
+DIM sprframe AS INTEGER
+DIM digit AS INTEGER
+DIM pair$ AS STRING
+DIM n_rotations AS INTEGER = 0
+bad = 0
+FOR s = 0 TO INFO.NUMSPRITES - 1
+    want$ = INFO.spr_names[s]
+    FOR frame = 0 TO CLNG(R_THINGS.spr_numframes[s]) - 1
+        sprframe = CLNG(R_THINGS.spr_firstframe[s]) + frame
+        FOR rot = 0 TO 7
+            lump_name$ = W_WAD.W_LumpName$(R_DATA.firstspritelump + CLNG(R_THINGS.sprframe_lump[sprframe * 8 + rot]))
+            IF CLNG(R_THINGS.sprframe_rotate[sprframe]) <> 0 THEN digit = rot + 1 ELSE digit = 0
+            pair$ = CHR$(65 + frame) + CHR$(48 + digit)
+            IF LEFT$(lump_name$, 4) <> want$ THEN
+                bad = bad + 1
+            ELSEIF CLNG(R_THINGS.sprframe_flip[sprframe * 8 + rot]) = 0 THEN
+                IF MID$(lump_name$, 4, 2) <> pair$ THEN bad = bad + 1
+            ELSE
+                IF MID$(lump_name$, 6, 2) <> pair$ THEN bad = bad + 1
+            ENDIF
+            n_rotations = n_rotations + 1
+        NEXT rot
+    NEXT frame
+NEXT s
+Eq("lump and flip of every rotation", bad, 0)
+Eq("rotations checked", n_rotations > 3000, TRUE)
+
+' The imp: frame A has eight rotations; rotation 2 is the lump TROOA2A8,
+' which also serves rotation 8 flipped.
+DIM imp_a AS INTEGER = CLNG(R_THINGS.spr_firstframe[INFO.SPR_TROO])
+Eq("imp frame A rotates", CLNG(R_THINGS.sprframe_rotate[imp_a]), 1)
+Eq("imp rotations 2 and 8 share a lump", CLNG(R_THINGS.sprframe_lump[imp_a * 8 + 1]), CLNG(R_THINGS.sprframe_lump[imp_a * 8 + 7]))
+Eq("imp rotation 2 is drawn as it is", CLNG(R_THINGS.sprframe_flip[imp_a * 8 + 1]), 0)
+Eq("imp rotation 8 is drawn flipped", CLNG(R_THINGS.sprframe_flip[imp_a * 8 + 7]), 1)
+' The barrel looks the same from all sides.
+Eq("barrel frame A does not rotate", CLNG(R_THINGS.sprframe_rotate[CLNG(R_THINGS.spr_firstframe[INFO.SPR_BAR1])]), 0)
+
+' ---- translation tables -------------------------------------------------------------
+
+DIM tt AS INTEGER = R_DRAW.translationtables
+bad = 0
+FOR i = 0 TO 255
+    IF i >= $70 AND i <= $7F THEN
+        IF CLNG(W_WAD.pool[tt + i]) <> $60 + (i BAND 15) THEN bad = bad + 1
+        IF CLNG(W_WAD.pool[tt + 256 + i]) <> $40 + (i BAND 15) THEN bad = bad + 1
+        IF CLNG(W_WAD.pool[tt + 512 + i]) <> $20 + (i BAND 15) THEN bad = bad + 1
+    ELSE
+        IF CLNG(W_WAD.pool[tt + i]) <> i OR CLNG(W_WAD.pool[tt + 256 + i]) <> i OR CLNG(W_WAD.pool[tt + 512 + i]) <> i THEN bad = bad + 1
+    ENDIF
+NEXT i
+Eq("translation tables", bad, 0)
+
+' ---- the shadow column ---------------------------------------------------------------
+
+' Over a screen where every pixel holds its row number, a shadow column
+' turns each pixel into colormap 6 of the row above or below.
+R_MAIN.R_ExecuteSetViewSize()
+DIM row AS INTEGER
+DIM col AS INTEGER
+FOR row = 0 TO 199
+    FOR col = 0 TO 319
+        V_VIDEO.screens[row * 320 + col] = row
+    NEXT col
+NEXT row
+R_DRAW.dc_x = 100
+R_DRAW.dc_yl = 0
+R_DRAW.dc_yh = R_DRAW.viewheight - 1
+R_DRAW.R_DrawFuzzColumn()
+Eq("the shadow column leaves the first row", CLNG(V_VIDEO.screens[100]), 0)
+Eq("the shadow column leaves the last row of the view", CLNG(V_VIDEO.screens[(R_DRAW.viewheight - 1) * 320 + 100]), R_DRAW.viewheight - 1)
+bad = 0
+DIM above AS INTEGER
+DIM below AS INTEGER
+DIM got AS INTEGER
+FOR row = 1 TO R_DRAW.viewheight - 2
+    got = CLNG(V_VIDEO.screens[row * 320 + 100])
+    below = CLNG(W_WAD.pool[R_DATA.colormaps + 6 * 256 + row + 1])
+    ' The row above was drawn before this one, unless it is the first row.
+    IF got <> below THEN
+        above = CLNG(W_WAD.pool[R_DATA.colormaps + 6 * 256 + CLNG(V_VIDEO.screens[(row - 1) * 320 + 100])])
+        IF got <> above THEN bad = bad + 1
+    ENDIF
+NEXT row
+Eq("shadow pixels come from the row above or below", bad, 0)
+Eq("the shadow column touches no other column", CLNG(V_VIDEO.screens[50 * 320 + 99]) = 50 AND CLNG(V_VIDEO.screens[50 * 320 + 101]) = 50, TRUE)
+
+' ---- frames ----------------------------------------------------------------------------
+
+' The start: gibs on the carpet and a barrel.
+FillScreen(0)
+RenderFromThing(0)
+Eq("sprites in view at the start", R_THINGS.vissprite_p > 0 AND R_THINGS.vissprite_p <= R_THINGS.MAXVISSPRITES, TRUE)
+Eq("frame at the start", ScreenHash(), 754133263)
+
+' The armour on its pedestal, gibs half hidden behind the pedestal's edge.
+FillScreen(0)
+RenderFromThing(69)
+Eq("frame at the armour", ScreenHash(), 726837515)
+
+' A barrel in front of a wall with a masked texture, imps behind it.
+FillScreen(0)
+RenderFromThing(73)
+DIM plain_hash AS INTEGER = ScreenHash()
+Eq("frame at the masked wall", plain_hash, 188158300)
+
+' The same with the pistol raised.
+D_PLAYER.player_psprite_state[0] = INFO.S_PISTOL
+D_PLAYER.player_psprite_sx[0] = FU
+D_PLAYER.player_psprite_sy[0] = 32 * FU
+FillScreen(0)
+RenderFromThing(73)
+DIM pistol_hash AS INTEGER = ScreenHash()
+Eq("the pistol changes the frame", pistol_hash <> plain_hash, TRUE)
+Eq("frame with the pistol", pistol_hash, 497566058)
+
+' The same with every thing a shadow.
+FOR i = 0 TO P_MOBJ.MAXMOBJS - 1
+    P_MOBJ.mobj_flags[i] = CLNG(P_MOBJ.mobj_flags[i]) BOR INFO.MF_SHADOW
+NEXT i
+FillScreen(0)
+RenderFromThing(73)
+Eq("shadows change the frame", ScreenHash() <> pistol_hash, TRUE)
+Eq("frame with shadows", ScreenHash(), 174779764)
+
+PRINT ""
+PRINT "DOOM P3 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

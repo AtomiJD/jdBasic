@@ -20,6 +20,7 @@ IMPORT V_VIDEO
 IMPORT I_VIDEO
 IMPORT R_MAIN
 IMPORT P_MOBJ
+IMPORT P_SETUP
 IMPORT G_GAME
 
 DIM episode AS INTEGER = 1
@@ -63,6 +64,7 @@ ENDSUB
 
 W_WAD.W_Init(D_MAIN.IdentifyVersion$())
 R_MAIN.R_Init(10, 0)
+P_SETUP.P_Init()
 DOOMSTAT.playeringame[0] = 1
 G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, episode, map_num)
 
@@ -72,7 +74,6 @@ I_VIDEO.I_SetPalette(W_WAD.W_CacheLumpName("PLAYPAL"))
 ON "QUIT" CALL HandleQuit@
 ON "KEYDOWN" CALL HandleKey@
 
-DIM mo AS INTEGER
 DIM tic_start AS DOUBLE
 DIM n_frames AS INTEGER = 0
 DIM work_ms AS DOUBLE = 0.0
@@ -84,8 +85,7 @@ DO WHILE running = 1
     G_GAME.G_Ticker()
 
     IF R_MAIN.setsizeneeded <> 0 THEN R_MAIN.R_ExecuteSetViewSize()
-    mo = CLNG(D_PLAYER.player_mo[DOOMSTAT.displayplayer])
-    R_MAIN.R_RenderPlayerView(CLNG(P_MOBJ.mobj_x[mo]), CLNG(P_MOBJ.mobj_y[mo]), CLNG(D_PLAYER.player_viewz[DOOMSTAT.displayplayer]), CLNG(P_MOBJ.mobj_angle[mo]), CLNG(D_PLAYER.player_extralight[DOOMSTAT.displayplayer]), CLNG(D_PLAYER.player_fixedcolormap[DOOMSTAT.displayplayer]))
+    R_MAIN.R_RenderPlayerView(DOOMSTAT.displayplayer)
     work_ms = work_ms + (TICK() - tic_start)
     I_VIDEO.I_FinishUpdate()
 

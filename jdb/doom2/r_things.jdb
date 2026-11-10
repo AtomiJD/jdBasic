@@ -1,11 +1,676 @@
-' Sprites (r_things.c). So far only the scales of the player's weapon
-' sprites, which the sky is drawn with as well.
+' Sprites (r_things.c): which lumps make the frames and rotations of each
+' sprite, the projection of things into vissprites during the BSP walk, and
+' the masked pass after walls and planes, which draws sprites and masked
+' middle textures back to front, clipped by the drawsegs in front of them,
+' and then the weapon of the player.
 
 EXPORT MODULE R_THINGS
 
 OPTION "EXPLICIT"
 OPTION "STRICT"
 
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT INFO
+IMPORT W_WAD
+IMPORT R_DATA
+IMPORT P_SETUP
+IMPORT P_MOBJ
+IMPORT R_DRAW
+IMPORT R_MAIN
+IMPORT R_PLANE
+IMPORT R_SEGS
+IMPORT R_BSP
+
+CONST MINZ = 65536 * 4
+CONST BASEYCENTER = 100
+
 ' Scale of a weapon sprite on the view, and its inverse.
 EXPORT DIM pspritescale AS INTEGER = 0
 EXPORT DIM pspriteiscale AS INTEGER = 0
+
+' Row of R_MAIN.scalelight the sprites of the current sector are lit from.
+DIM spritelights AS INTEGER = 0
+
+' ---- sprite definitions -----------------------------------------------------------
+' spritedef_t: sprite s has spr_numframes[s] frames, the first at
+' spr_firstframe[s]. spriteframe_t: a frame either has one lump for all view
+' angles (rotate 0) or eight; lump and flip of rotation r of frame f are at
+' f * 8 + r. A lump number counts from firstspritelump.
+
+EXPORT CONST MAXSPRITEFRAMES = 4096
+EXPORT DIM numsprites AS INTEGER = 0
+EXPORT DIM spr_numframes[INFO.NUMSPRITES] AS INTEGER
+EXPORT DIM spr_firstframe[INFO.NUMSPRITES] AS INTEGER
+EXPORT DIM sprframe_rotate[MAXSPRITEFRAMES] AS INTEGER
+EXPORT DIM sprframe_lump[MAXSPRITEFRAMES * 8] AS INTEGER
+EXPORT DIM sprframe_flip[MAXSPRITEFRAMES * 8] AS INTEGER
+DIM n_sprframes AS INTEGER = 0
+
+' The frames of the sprite being collected; rotate -1 = no lump seen yet.
+DIM sprtemp_rotate[29] AS INTEGER
+DIM sprtemp_lump[29 * 8] AS INTEGER
+DIM sprtemp_flip[29 * 8] AS INTEGER
+DIM maxframe AS INTEGER = -1
+DIM spritename$ AS STRING = ""
+
+' ---- vissprites -------------------------------------------------------------------
+' vissprite_t: a thing that will be drawn during the masked pass. Entry
+' MAXVISSPRITES takes the things past the limit; the two after it are the
+' heads of the sorted and of the unsorted ring.
+
+EXPORT CONST MAXVISSPRITES = 128
+CONST OVERFLOWSPRITE = 128
+CONST SORTEDHEAD = 129
+CONST UNSORTEDHEAD = 130
+DIM vis_prev[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_next[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_x1[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_x2[MAXVISSPRITES + 3] AS INTEGER
+' For line side calculation, and the bottom and top for silhouette clipping.
+DIM vis_gx[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_gy[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_gz[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_gzt[MAXVISSPRITES + 3] AS INTEGER
+' Horizontal position of x1 in the sprite, and the step per screen column;
+' negative if flipped.
+DIM vis_startfrac[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_scale[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_xiscale[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_texturemid[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_patch[MAXVISSPRITES + 3] AS INTEGER
+' -1 = shadow draw (the fuzz effect).
+DIM vis_colormap[MAXVISSPRITES + 3] AS INTEGER
+DIM vis_mobjflags[MAXVISSPRITES + 3] AS INTEGER
+' Number of vissprites in use.
+EXPORT DIM vissprite_p AS INTEGER = 0
+
+' ---- masked column drawing ----------------------------------------------------------
+' Clip arrays of the column being drawn (places in R_PLANE.openings, indexed
+' by screen column), its scale and the screen row of its top.
+EXPORT DIM mfloorclip AS INTEGER = 0
+EXPORT DIM mceilingclip AS INTEGER = 0
+EXPORT DIM spryscale AS INTEGER = 0
+EXPORT DIM sprtopscreen AS INTEGER = 0
+
+' Records lump as rotation `rotation` (0 = all rotations) of frame `frame`
+' of the sprite being collected.
+SUB R_InstallSpriteLump(lump AS INTEGER, frame AS INTEGER, rotation_in AS INTEGER, flipped AS INTEGER)
+    DIM rotation AS INTEGER = rotation_in
+    DIM r AS INTEGER
+    IF frame < 0 OR frame >= 29 OR rotation < 0 OR rotation > 8 THEN I_SYSTEM.I_Error("R_InstallSpriteLump: Bad frame characters in lump " + STR$(lump))
+    IF frame > maxframe THEN maxframe = frame
+
+    IF rotation = 0 THEN
+        ' The lump should be used for all rotations.
+        IF CLNG(sprtemp_rotate[frame]) = 0 THEN I_SYSTEM.I_Error("R_InitSprites: Sprite " + spritename$ + " frame " + CHR$(65 + frame) + " has multip rot=0 lump")
+        IF CLNG(sprtemp_rotate[frame]) = 1 THEN I_SYSTEM.I_Error("R_InitSprites: Sprite " + spritename$ + " frame " + CHR$(65 + frame) + " has rotations and a rot=0 lump")
+        sprtemp_rotate[frame] = 0
+        FOR r = 0 TO 7
+            sprtemp_lump[frame * 8 + r] = lump - R_DATA.firstspritelump
+            sprtemp_flip[frame * 8 + r] = flipped
+        NEXT r
+        RETURN
+    ENDIF
+
+    ' The lump is only used for one rotation.
+    IF CLNG(sprtemp_rotate[frame]) = 0 THEN I_SYSTEM.I_Error("R_InitSprites: Sprite " + spritename$ + " frame " + CHR$(65 + frame) + " has rotations and a rot=0 lump")
+    sprtemp_rotate[frame] = 1
+
+    ' Make it 0 based.
+    rotation = rotation - 1
+    IF CLNG(sprtemp_lump[frame * 8 + rotation]) <> -1 THEN I_SYSTEM.I_Error("R_InitSprites: Sprite " + spritename$ + " : " + CHR$(65 + frame) + " : " + CHR$(49 + rotation) + " has two lumps mapped to it")
+    sprtemp_lump[frame * 8 + rotation] = lump - R_DATA.firstspritelump
+    sprtemp_flip[frame * 8 + rotation] = flipped
+ENDSUB
+
+' Builds the sprite rotation tables from the lumps between S_START and
+' S_END. A lump is named by sprite, frame letter and rotation digit, and may
+' name a second frame and rotation it serves flipped: TROOA2A8.
+SUB R_InitSpriteDefs()
+    DIM i AS INTEGER
+    DIM l AS INTEGER
+    DIM frame AS INTEGER
+    DIM rotation AS INTEGER
+    DIM lump_name$ AS STRING
+    DIM want$ AS STRING
+
+    numsprites = INFO.NUMSPRITES
+    n_sprframes = 0
+
+    FOR i = 0 TO numsprites - 1
+        want$ = INFO.spr_names[i]
+        spritename$ = want$
+        FILLV sprtemp_rotate, -1
+        FILLV sprtemp_lump, -1
+        FILLV sprtemp_flip, -1
+        maxframe = -1
+
+        ' Scan the lumps, filling in the frames for whatever is found.
+        FOR l = R_DATA.firstspritelump TO R_DATA.lastspritelump
+            lump_name$ = W_WAD.W_LumpName$(l)
+            IF LEFT$(lump_name$, 4) = want$ THEN
+                frame = ASC(MID$(lump_name$, 4, 1)) - 65
+                rotation = ASC(MID$(lump_name$, 5, 1)) - 48
+                R_InstallSpriteLump(l, frame, rotation, 0)
+                IF LEN(lump_name$) > 6 THEN
+                    frame = ASC(MID$(lump_name$, 6, 1)) - 65
+                    rotation = ASC(MID$(lump_name$, 7, 1)) - 48
+                    R_InstallSpriteLump(l, frame, rotation, 1)
+                ENDIF
+            ENDIF
+        NEXT l
+
+        ' Check the frames that were found for completeness.
+        IF maxframe = -1 THEN
+            spr_numframes[i] = 0
+            spr_firstframe[i] = 0
+        ELSE
+            maxframe = maxframe + 1
+            FOR frame = 0 TO maxframe - 1
+                IF CLNG(sprtemp_rotate[frame]) = -1 THEN
+                    ' No rotations were found for that frame at all.
+                    I_SYSTEM.I_Error("R_InitSprites: No patches found for " + want$ + " frame " + CHR$(65 + frame))
+                ELSEIF CLNG(sprtemp_rotate[frame]) = 1 THEN
+                    ' Must have all 8 frames.
+                    FOR rotation = 0 TO 7
+                        IF CLNG(sprtemp_lump[frame * 8 + rotation]) = -1 THEN I_SYSTEM.I_Error("R_InitSprites: Sprite " + want$ + " frame " + CHR$(65 + frame) + " is missing rotations")
+                    NEXT rotation
+                ENDIF
+            NEXT frame
+
+            ' Keep this sprite's frames.
+            IF n_sprframes + maxframe > MAXSPRITEFRAMES THEN I_SYSTEM.I_Error("R_InitSprites: more than " + STR$(MAXSPRITEFRAMES) + " sprite frames")
+            spr_numframes[i] = maxframe
+            spr_firstframe[i] = n_sprframes
+            FOR frame = 0 TO maxframe - 1
+                sprframe_rotate[n_sprframes + frame] = sprtemp_rotate[frame]
+                FOR rotation = 0 TO 7
+                    sprframe_lump[(n_sprframes + frame) * 8 + rotation] = sprtemp_lump[frame * 8 + rotation]
+                    sprframe_flip[(n_sprframes + frame) * 8 + rotation] = sprtemp_flip[frame * 8 + rotation]
+                NEXT rotation
+            NEXT frame
+            n_sprframes = n_sprframes + maxframe
+        ENDIF
+    NEXT i
+ENDSUB
+
+' Called at program start.
+EXPORT SUB R_InitSprites()
+    R_InitSpriteDefs()
+ENDSUB
+
+' Called at frame start.
+EXPORT SUB R_ClearSprites()
+    vissprite_p = 0
+ENDSUB
+
+FUNC R_NewVisSprite() AS INTEGER
+    IF vissprite_p = MAXVISSPRITES THEN RETURN OVERFLOWSPRITE
+    vissprite_p = vissprite_p + 1
+    RETURN vissprite_p - 1
+ENDFUNC
+
+' Draws the posts of a masked column, for sprites and for masked middle
+' textures. column is the place in the pool of its first post; the posts
+' are clipped to mfloorclip and mceilingclip of the screen column dc_x.
+EXPORT SUB R_DrawMaskedColumn(column_in AS INTEGER)
+    DIM column AS INTEGER = column_in
+    DIM topscreen AS INTEGER
+    DIM bottomscreen AS INTEGER
+    DIM topdelta AS INTEGER
+    DIM post_len AS INTEGER
+    DIM yl AS INTEGER
+    DIM yh AS INTEGER
+    DIM basetexturemid AS INTEGER = R_DRAW.dc_texturemid
+    DIM floor_clip AS INTEGER = CLNG(R_PLANE.openings[mfloorclip + R_DRAW.dc_x])
+    DIM ceiling_clip AS INTEGER = CLNG(R_PLANE.openings[mceilingclip + R_DRAW.dc_x])
+
+    topdelta = CLNG(W_WAD.pool[column])
+    DO WHILE topdelta <> 255
+        post_len = CLNG(W_WAD.pool[column + 1])
+        ' Calculate the unclipped screen coordinates of the post.
+        topscreen = sprtopscreen + spryscale * topdelta
+        bottomscreen = topscreen + spryscale * post_len
+
+        yl = (topscreen + 65536 - 1) SHR 16
+        yh = (bottomscreen - 1) SHR 16
+        IF yh >= floor_clip THEN yh = floor_clip - 1
+        IF yl <= ceiling_clip THEN yl = ceiling_clip + 1
+
+        IF yl <= yh THEN
+            R_DRAW.dc_yl = yl
+            R_DRAW.dc_yh = yh
+            R_DRAW.dc_source = column + 3
+            R_DRAW.dc_texturemid = basetexturemid - topdelta * 65536
+            ' Drawn by the column function in use: plain, fuzz or translated.
+            R_DRAW.R_ColFunc()
+        ENDIF
+        column = column + post_len + 4
+        topdelta = CLNG(W_WAD.pool[column])
+    LOOP
+    R_DRAW.dc_texturemid = basetexturemid
+ENDSUB
+
+' Draws a vissprite; mfloorclip and mceilingclip have to be set.
+SUB R_DrawVisSprite(vis AS INTEGER)
+    DIM patch AS INTEGER = W_WAD.W_CacheLumpNum(CLNG(vis_patch[vis]) + R_DATA.firstspritelump)
+    DIM patch_width AS INTEGER = W_WAD.PoolShort(patch)
+    DIM colormap AS INTEGER = CLNG(vis_colormap[vis])
+    DIM mobjflags AS INTEGER = CLNG(vis_mobjflags[vis])
+    DIM xiscale AS INTEGER = CLNG(vis_xiscale[vis])
+    DIM frac AS INTEGER = CLNG(vis_startfrac[vis])
+    DIM texturecolumn AS INTEGER
+    DIM x AS INTEGER
+
+    R_DRAW.dc_colormap = colormap
+    IF colormap < 0 THEN
+        ' No colormap means shadow draw.
+        R_DRAW.colfunc = R_DRAW.COLFUNC_FUZZ
+    ELSEIF (mobjflags BAND INFO.MF_TRANSLATION) <> 0 THEN
+        R_DRAW.colfunc = R_DRAW.COLFUNC_TRANSLATED
+        R_DRAW.dc_translation = R_DRAW.translationtables - 256 + ((mobjflags BAND INFO.MF_TRANSLATION) SHR (INFO.MF_TRANSSHIFT - 8))
+    ENDIF
+
+    R_DRAW.dc_iscale = CLNG(ABS(xiscale)) SHR R_MAIN.detailshift
+    R_DRAW.dc_texturemid = CLNG(vis_texturemid[vis])
+    spryscale = CLNG(vis_scale[vis])
+    sprtopscreen = R_MAIN.centeryfrac - M_FIXED.FixedMul(R_DRAW.dc_texturemid, spryscale)
+
+    FOR x = CLNG(vis_x1[vis]) TO CLNG(vis_x2[vis])
+        texturecolumn = frac SHR 16
+        IF texturecolumn < 0 OR texturecolumn >= patch_width THEN I_SYSTEM.I_Error("R_DrawSpriteRange: bad texturecolumn")
+        R_DRAW.dc_x = x
+        R_DrawMaskedColumn(patch + W_WAD.PoolLong(patch + 8 + texturecolumn * 4))
+        frac = frac + xiscale
+    NEXT x
+
+    R_DRAW.colfunc = R_DRAW.COLFUNC_BASE
+ENDSUB
+
+' Makes a vissprite of a thing if it might be visible.
+SUB R_ProjectSprite(thing AS INTEGER)
+    DIM thing_x AS INTEGER = CLNG(P_MOBJ.mobj_x[thing])
+    DIM thing_y AS INTEGER = CLNG(P_MOBJ.mobj_y[thing])
+    DIM thing_z AS INTEGER = CLNG(P_MOBJ.mobj_z[thing])
+    DIM thing_flags AS INTEGER = CLNG(P_MOBJ.mobj_flags[thing])
+    DIM thing_frame AS INTEGER = CLNG(P_MOBJ.mobj_frame[thing])
+    DIM thing_sprite AS INTEGER = CLNG(P_MOBJ.mobj_sprite[thing])
+
+    ' Transform the origin point.
+    DIM tr_x AS INTEGER = thing_x - R_MAIN.viewx
+    DIM tr_y AS INTEGER = thing_y - R_MAIN.viewy
+    DIM gxt AS INTEGER = M_FIXED.FixedMul(tr_x, R_MAIN.viewcos)
+    DIM gyt AS INTEGER = -M_FIXED.FixedMul(tr_y, R_MAIN.viewsin)
+    DIM tz AS INTEGER = gxt - gyt
+
+    ' Thing is behind the view plane?
+    IF tz < MINZ THEN RETURN
+
+    DIM xscale AS INTEGER = M_FIXED.FixedDiv(R_MAIN.projection, tz)
+
+    gxt = -M_FIXED.FixedMul(tr_x, R_MAIN.viewsin)
+    gyt = M_FIXED.FixedMul(tr_y, R_MAIN.viewcos)
+    DIM tx AS INTEGER = -(gyt + gxt)
+
+    ' Too far off the side?
+    IF ABS(tx) > (tz SHL 2) THEN RETURN
+
+    ' Decide which patch to use for the sprite relative to the player.
+    IF thing_sprite < 0 OR thing_sprite >= numsprites THEN I_SYSTEM.I_Error("R_ProjectSprite: invalid sprite number " + STR$(thing_sprite))
+    IF (thing_frame BAND DOOMDEF.FF_FRAMEMASK) >= CLNG(spr_numframes[thing_sprite]) THEN I_SYSTEM.I_Error("R_ProjectSprite: invalid sprite frame " + STR$(thing_sprite) + " : " + STR$(thing_frame))
+    DIM sprframe AS INTEGER = CLNG(spr_firstframe[thing_sprite]) + (thing_frame BAND DOOMDEF.FF_FRAMEMASK)
+
+    DIM ang AS INTEGER
+    DIM rot AS INTEGER = 0
+    IF CLNG(sprframe_rotate[sprframe]) <> 0 THEN
+        ' Choose a different rotation based on the player's view.
+        ang = R_MAIN.R_PointToAngle(thing_x, thing_y)
+        rot = ((ang - CLNG(P_MOBJ.mobj_angle[thing]) + (M_FIXED.ANG45 \ 2) * 9) BAND M_FIXED.ANGLE_MASK) SHR 29
+    ENDIF
+    DIM lump AS INTEGER = CLNG(sprframe_lump[sprframe * 8 + rot])
+    DIM flip AS INTEGER = CLNG(sprframe_flip[sprframe * 8 + rot])
+
+    ' Calculate the edges of the shape.
+    tx = tx - CLNG(R_DATA.spriteoffset[lump])
+    DIM x1 AS INTEGER = (R_MAIN.centerxfrac + M_FIXED.FixedMul(tx, xscale)) SHR 16
+    ' Off the right side?
+    IF x1 > R_DRAW.viewwidth THEN RETURN
+
+    tx = tx + CLNG(R_DATA.spritewidth[lump])
+    DIM x2 AS INTEGER = ((R_MAIN.centerxfrac + M_FIXED.FixedMul(tx, xscale)) SHR 16) - 1
+    ' Off the left side?
+    IF x2 < 0 THEN RETURN
+
+    ' Store the information in a vissprite.
+    DIM vis AS INTEGER = R_NewVisSprite()
+    DIM gzt AS INTEGER = thing_z + CLNG(R_DATA.spritetopoffset[lump])
+    DIM clipped_x1 AS INTEGER = x1
+    DIM clipped_x2 AS INTEGER = x2
+    IF clipped_x1 < 0 THEN clipped_x1 = 0
+    IF clipped_x2 >= R_DRAW.viewwidth THEN clipped_x2 = R_DRAW.viewwidth - 1
+    vis_mobjflags[vis] = thing_flags
+    vis_scale[vis] = xscale SHL R_MAIN.detailshift
+    vis_gx[vis] = thing_x
+    vis_gy[vis] = thing_y
+    vis_gz[vis] = thing_z
+    vis_gzt[vis] = gzt
+    vis_texturemid[vis] = gzt - R_MAIN.viewz
+    vis_x1[vis] = clipped_x1
+    vis_x2[vis] = clipped_x2
+
+    DIM iscale AS INTEGER = M_FIXED.FixedDiv(65536, xscale)
+    DIM startfrac AS INTEGER
+    DIM xiscale AS INTEGER
+    IF flip <> 0 THEN
+        startfrac = CLNG(R_DATA.spritewidth[lump]) - 1
+        xiscale = -iscale
+    ELSE
+        startfrac = 0
+        xiscale = iscale
+    ENDIF
+    IF clipped_x1 > x1 THEN startfrac = startfrac + xiscale * (clipped_x1 - x1)
+    vis_startfrac[vis] = startfrac
+    vis_xiscale[vis] = xiscale
+    vis_patch[vis] = lump
+
+    ' Get the light level.
+    DIM index AS INTEGER
+    IF (thing_flags BAND INFO.MF_SHADOW) <> 0 THEN
+        ' Shadow draw.
+        vis_colormap[vis] = -1
+    ELSEIF R_MAIN.fixedcolormap <> 0 THEN
+        ' Fixed map.
+        vis_colormap[vis] = R_MAIN.fixedcolormap
+    ELSEIF (thing_frame BAND DOOMDEF.FF_FULLBRIGHT) <> 0 THEN
+        ' Full bright.
+        vis_colormap[vis] = R_DATA.colormaps
+    ELSE
+        ' Diminished light.
+        index = xscale SHR (R_MAIN.LIGHTSCALESHIFT - R_MAIN.detailshift)
+        IF index >= R_MAIN.MAXLIGHTSCALE THEN index = R_MAIN.MAXLIGHTSCALE - 1
+        vis_colormap[vis] = R_MAIN.scalelight[spritelights + index]
+    ENDIF
+ENDSUB
+
+' During the BSP walk, makes vissprites of the things of a sector.
+EXPORT SUB R_AddSprites(sec AS INTEGER)
+    ' A sector might have been split into several subsectors during BSP
+    ' building: its sprites are added only once.
+    IF CLNG(P_SETUP.sector_validcount[sec]) = R_MAIN.validcount THEN RETURN
+    P_SETUP.sector_validcount[sec] = R_MAIN.validcount
+
+    DIM lightnum AS INTEGER = (CLNG(P_SETUP.sector_lightlevel[sec]) SHR R_MAIN.LIGHTSEGSHIFT) + R_MAIN.extralight
+    IF lightnum < 0 THEN
+        spritelights = 0
+    ELSEIF lightnum >= R_MAIN.LIGHTLEVELS THEN
+        spritelights = (R_MAIN.LIGHTLEVELS - 1) * R_MAIN.MAXLIGHTSCALE
+    ELSE
+        spritelights = lightnum * R_MAIN.MAXLIGHTSCALE
+    ENDIF
+
+    ' Handle all things in the sector.
+    DIM thing AS INTEGER = CLNG(P_SETUP.sector_thinglist[sec])
+    DO WHILE thing >= 0
+        R_ProjectSprite(thing)
+        thing = CLNG(P_MOBJ.mobj_snext[thing])
+    LOOP
+ENDSUB
+
+' Draws weapon sprite psp (0 the weapon, 1 its flash) of the view player.
+SUB R_DrawPSprite(psp AS INTEGER)
+    DIM player AS INTEGER = R_MAIN.viewplayer
+    DIM state AS INTEGER = CLNG(D_PLAYER.player_psprite_state[player * 2 + psp])
+    DIM sprite AS INTEGER = CLNG(INFO.st_sprite[state])
+    DIM frame AS INTEGER = CLNG(INFO.st_frame[state])
+
+    ' Decide which patch to use.
+    IF sprite < 0 OR sprite >= numsprites THEN I_SYSTEM.I_Error("R_ProjectSprite: invalid sprite number " + STR$(sprite))
+    IF (frame BAND DOOMDEF.FF_FRAMEMASK) >= CLNG(spr_numframes[sprite]) THEN I_SYSTEM.I_Error("R_ProjectSprite: invalid sprite frame " + STR$(sprite) + " : " + STR$(frame))
+    DIM sprframe AS INTEGER = CLNG(spr_firstframe[sprite]) + (frame BAND DOOMDEF.FF_FRAMEMASK)
+    DIM lump AS INTEGER = CLNG(sprframe_lump[sprframe * 8])
+    DIM flip AS INTEGER = CLNG(sprframe_flip[sprframe * 8])
+
+    ' Calculate the edges of the shape.
+    DIM tx AS INTEGER = CLNG(D_PLAYER.player_psprite_sx[player * 2 + psp]) - 160 * 65536
+    tx = tx - CLNG(R_DATA.spriteoffset[lump])
+    DIM x1 AS INTEGER = (R_MAIN.centerxfrac + M_FIXED.FixedMul(tx, pspritescale)) SHR 16
+    ' Off the right side.
+    IF x1 > R_DRAW.viewwidth THEN RETURN
+    tx = tx + CLNG(R_DATA.spritewidth[lump])
+    DIM x2 AS INTEGER = ((R_MAIN.centerxfrac + M_FIXED.FixedMul(tx, pspritescale)) SHR 16) - 1
+    ' Off the left side.
+    IF x2 < 0 THEN RETURN
+
+    ' Store the information in a vissprite of its own.
+    DIM vis AS INTEGER = OVERFLOWSPRITE
+    DIM clipped_x1 AS INTEGER = x1
+    DIM clipped_x2 AS INTEGER = x2
+    IF clipped_x1 < 0 THEN clipped_x1 = 0
+    IF clipped_x2 >= R_DRAW.viewwidth THEN clipped_x2 = R_DRAW.viewwidth - 1
+    vis_mobjflags[vis] = 0
+    vis_texturemid[vis] = BASEYCENTER * 65536 + 65536 \ 2 - (CLNG(D_PLAYER.player_psprite_sy[player * 2 + psp]) - CLNG(R_DATA.spritetopoffset[lump]))
+    vis_x1[vis] = clipped_x1
+    vis_x2[vis] = clipped_x2
+    vis_scale[vis] = pspritescale SHL R_MAIN.detailshift
+
+    DIM startfrac AS INTEGER
+    DIM xiscale AS INTEGER
+    IF flip <> 0 THEN
+        xiscale = -pspriteiscale
+        startfrac = CLNG(R_DATA.spritewidth[lump]) - 1
+    ELSE
+        xiscale = pspriteiscale
+        startfrac = 0
+    ENDIF
+    IF clipped_x1 > x1 THEN startfrac = startfrac + xiscale * (clipped_x1 - x1)
+    vis_startfrac[vis] = startfrac
+    vis_xiscale[vis] = xiscale
+    vis_patch[vis] = lump
+
+    DIM invisibility AS INTEGER = CLNG(D_PLAYER.player_powers[player * DOOMDEF.NUMPOWERS + DOOMDEF.PW_INVISIBILITY])
+    IF invisibility > 4 * 32 OR (invisibility BAND 8) <> 0 THEN
+        ' Shadow draw.
+        vis_colormap[vis] = -1
+    ELSEIF R_MAIN.fixedcolormap <> 0 THEN
+        ' Fixed colour.
+        vis_colormap[vis] = R_MAIN.fixedcolormap
+    ELSEIF (frame BAND DOOMDEF.FF_FULLBRIGHT) <> 0 THEN
+        ' Full bright.
+        vis_colormap[vis] = R_DATA.colormaps
+    ELSE
+        ' Local light.
+        vis_colormap[vis] = R_MAIN.scalelight[spritelights + R_MAIN.MAXLIGHTSCALE - 1]
+    ENDIF
+
+    R_DrawVisSprite(vis)
+ENDSUB
+
+SUB R_DrawPlayerSprites()
+    DIM player AS INTEGER = R_MAIN.viewplayer
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[player])
+
+    ' Get the light level.
+    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[mo])])
+    DIM lightnum AS INTEGER = (CLNG(P_SETUP.sector_lightlevel[sector]) SHR R_MAIN.LIGHTSEGSHIFT) + R_MAIN.extralight
+    IF lightnum < 0 THEN
+        spritelights = 0
+    ELSEIF lightnum >= R_MAIN.LIGHTLEVELS THEN
+        spritelights = (R_MAIN.LIGHTLEVELS - 1) * R_MAIN.MAXLIGHTSCALE
+    ELSE
+        spritelights = lightnum * R_MAIN.MAXLIGHTSCALE
+    ENDIF
+
+    ' Clip to the screen bounds.
+    mfloorclip = R_PLANE.SCREENHEIGHTARRAY
+    mceilingclip = R_PLANE.NEGONEARRAY
+
+    ' Add all active psprites.
+    DIM i AS INTEGER
+    FOR i = 0 TO 1
+        IF CLNG(D_PLAYER.player_psprite_state[player * 2 + i]) <> 0 THEN R_DrawPSprite(i)
+    NEXT i
+ENDSUB
+
+' Links the vissprites into a ring from the smallest scale (farthest) to
+' the largest, starting at SORTEDHEAD.
+SUB R_SortVisSprites()
+    DIM n_sprites AS INTEGER = vissprite_p
+    DIM i AS INTEGER
+    DIM ds AS INTEGER
+    DIM best AS INTEGER = 0
+    DIM bestscale AS INTEGER
+    DIM last AS INTEGER
+
+    vis_next[UNSORTEDHEAD] = UNSORTEDHEAD
+    vis_prev[UNSORTEDHEAD] = UNSORTEDHEAD
+    IF n_sprites = 0 THEN RETURN
+
+    FOR ds = 0 TO n_sprites - 1
+        vis_next[ds] = ds + 1
+        vis_prev[ds] = ds - 1
+    NEXT ds
+    vis_prev[0] = UNSORTEDHEAD
+    vis_next[UNSORTEDHEAD] = 0
+    vis_next[n_sprites - 1] = UNSORTEDHEAD
+    vis_prev[UNSORTEDHEAD] = n_sprites - 1
+
+    ' Pull the vissprites out by scale.
+    vis_next[SORTEDHEAD] = SORTEDHEAD
+    vis_prev[SORTEDHEAD] = SORTEDHEAD
+    FOR i = 1 TO n_sprites
+        bestscale = M_FIXED.MAXINT
+        ds = CLNG(vis_next[UNSORTEDHEAD])
+        DO WHILE ds <> UNSORTEDHEAD
+            IF CLNG(vis_scale[ds]) < bestscale THEN
+                bestscale = CLNG(vis_scale[ds])
+                best = ds
+            ENDIF
+            ds = CLNG(vis_next[ds])
+        LOOP
+        vis_prev[CLNG(vis_next[best])] = vis_prev[best]
+        vis_next[CLNG(vis_prev[best])] = vis_next[best]
+        last = CLNG(vis_prev[SORTEDHEAD])
+        vis_next[best] = SORTEDHEAD
+        vis_prev[best] = last
+        vis_next[last] = best
+        vis_prev[SORTEDHEAD] = best
+    NEXT i
+ENDSUB
+
+' Draws a sprite clipped by the drawsegs in front of it. A masked middle
+' texture behind the sprite is drawn first, where the sprite covers it.
+SUB R_DrawSprite(spr AS INTEGER)
+    DIM spr_x1 AS INTEGER = CLNG(vis_x1[spr])
+    DIM spr_x2 AS INTEGER = CLNG(vis_x2[spr])
+    DIM spr_scale AS INTEGER = CLNG(vis_scale[spr])
+    DIM clipbot AS INTEGER = R_PLANE.CLIPBOT
+    DIM cliptop AS INTEGER = R_PLANE.CLIPTOP
+    DIM x AS INTEGER
+    DIM ds AS INTEGER
+    DIM r1 AS INTEGER
+    DIM r2 AS INTEGER
+    DIM scale AS INTEGER
+    DIM lowscale AS INTEGER
+    DIM silhouette AS INTEGER
+    DIM masked AS INTEGER
+    DIM bottom_base AS INTEGER
+    DIM top_base AS INTEGER
+
+    FOR x = spr_x1 TO spr_x2
+        R_PLANE.openings[clipbot + x] = -2
+        R_PLANE.openings[cliptop + x] = -2
+    NEXT x
+
+    ' Scan the drawsegs from end to start for obscuring segs. The first one
+    ' found for a column is the clip of that column.
+    FOR ds = R_BSP.ds_p - 1 TO 0 STEP -1
+        masked = CLNG(R_BSP.drawseg_maskedtexturecol[ds])
+        silhouette = CLNG(R_BSP.drawseg_silhouette[ds])
+        ' Does it cover the sprite?
+        IF CLNG(R_BSP.drawseg_x1[ds]) > spr_x2 OR CLNG(R_BSP.drawseg_x2[ds]) < spr_x1 OR (silhouette = 0 AND masked < 0) THEN CONTINUEFOR
+
+        r1 = CLNG(R_BSP.drawseg_x1[ds])
+        IF r1 < spr_x1 THEN r1 = spr_x1
+        r2 = CLNG(R_BSP.drawseg_x2[ds])
+        IF r2 > spr_x2 THEN r2 = spr_x2
+
+        IF CLNG(R_BSP.drawseg_scale1[ds]) > CLNG(R_BSP.drawseg_scale2[ds]) THEN
+            lowscale = CLNG(R_BSP.drawseg_scale2[ds])
+            scale = CLNG(R_BSP.drawseg_scale1[ds])
+        ELSE
+            lowscale = CLNG(R_BSP.drawseg_scale1[ds])
+            scale = CLNG(R_BSP.drawseg_scale2[ds])
+        ENDIF
+
+        IF scale < spr_scale ORELSE (lowscale < spr_scale ANDALSO R_MAIN.R_PointOnSegSide(CLNG(vis_gx[spr]), CLNG(vis_gy[spr]), CLNG(R_BSP.drawseg_curline[ds])) = 0) THEN
+            ' The seg is behind the sprite: a masked middle texture is drawn
+            ' now, so that the sprite goes over it.
+            IF masked >= 0 THEN R_SEGS.R_RenderMaskedSegRange(ds, r1, r2)
+            CONTINUEFOR
+        ENDIF
+
+        ' Clip this piece of the sprite.
+        IF CLNG(vis_gz[spr]) >= CLNG(R_BSP.drawseg_bsilheight[ds]) THEN silhouette = silhouette BAND (BNOT R_SEGS.SIL_BOTTOM)
+        IF CLNG(vis_gzt[spr]) <= CLNG(R_BSP.drawseg_tsilheight[ds]) THEN silhouette = silhouette BAND (BNOT R_SEGS.SIL_TOP)
+
+        bottom_base = CLNG(R_BSP.drawseg_sprbottomclip[ds])
+        top_base = CLNG(R_BSP.drawseg_sprtopclip[ds])
+        IF silhouette = 1 THEN
+            ' Bottom silhouette.
+            FOR x = r1 TO r2
+                IF CLNG(R_PLANE.openings[clipbot + x]) = -2 THEN R_PLANE.openings[clipbot + x] = R_PLANE.openings[bottom_base + x]
+            NEXT x
+        ELSEIF silhouette = 2 THEN
+            ' Top silhouette.
+            FOR x = r1 TO r2
+                IF CLNG(R_PLANE.openings[cliptop + x]) = -2 THEN R_PLANE.openings[cliptop + x] = R_PLANE.openings[top_base + x]
+            NEXT x
+        ELSEIF silhouette = 3 THEN
+            ' Both.
+            FOR x = r1 TO r2
+                IF CLNG(R_PLANE.openings[clipbot + x]) = -2 THEN R_PLANE.openings[clipbot + x] = R_PLANE.openings[bottom_base + x]
+                IF CLNG(R_PLANE.openings[cliptop + x]) = -2 THEN R_PLANE.openings[cliptop + x] = R_PLANE.openings[top_base + x]
+            NEXT x
+        ENDIF
+    NEXT ds
+
+    ' All clipping has been performed, so draw the sprite. Columns no seg
+    ' clipped are clipped to the view.
+    FOR x = spr_x1 TO spr_x2
+        IF CLNG(R_PLANE.openings[clipbot + x]) = -2 THEN R_PLANE.openings[clipbot + x] = R_DRAW.viewheight
+        IF CLNG(R_PLANE.openings[cliptop + x]) = -2 THEN R_PLANE.openings[cliptop + x] = -1
+    NEXT x
+
+    mfloorclip = clipbot
+    mceilingclip = cliptop
+    R_DrawVisSprite(spr)
+ENDSUB
+
+' The masked pass: sprites back to front, then what is left of the masked
+' middle textures, then the player's weapon.
+EXPORT SUB R_DrawMasked()
+    DIM spr AS INTEGER
+    DIM ds AS INTEGER
+
+    R_SortVisSprites()
+    IF vissprite_p > 0 THEN
+        spr = CLNG(vis_next[SORTEDHEAD])
+        DO WHILE spr <> SORTEDHEAD
+            R_DrawSprite(spr)
+            spr = CLNG(vis_next[spr])
+        LOOP
+    ENDIF
+
+    ' Render any remaining masked mid textures.
+    FOR ds = R_BSP.ds_p - 1 TO 0 STEP -1
+        IF CLNG(R_BSP.drawseg_maskedtexturecol[ds]) >= 0 THEN R_SEGS.R_RenderMaskedSegRange(ds, CLNG(R_BSP.drawseg_x1[ds]), CLNG(R_BSP.drawseg_x2[ds]))
+    NEXT ds
+
+    ' Draw the psprites on top of everything, but not when looking left or
+    ' right.
+    IF R_MAIN.viewangleoffset = 0 THEN R_DrawPlayerSprites()
+ENDSUB

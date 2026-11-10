@@ -78,11 +78,11 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 | `i_video.jdb` | i_video.c | window, palette, `I_FinishUpdate` |
 | `r_main.jdb` | r_main.c | view setup, view and light tables, `R_PointToAngle`, `R_PointOnSide`, `R_RenderPlayerView` |
 | `r_bsp.jdb` | r_bsp.c | BSP walk, clipping against solid walls, drawsegs |
-| `r_segs.jdb` | r_segs.c | `R_StoreWallRange`, `R_RenderSegLoop` |
+| `r_segs.jdb` | r_segs.c | `R_StoreWallRange`, `R_RenderSegLoop`, `R_RenderMaskedSegRange` |
 | `r_plane.jdb` | r_plane.c | visplanes, spans, sky, the clip arrays |
-| `r_draw.jdb` | r_draw.c | `R_DrawColumn`, `R_DrawSpan`, the view window |
+| `r_draw.jdb` | r_draw.c | `R_DrawColumn`, `R_DrawSpan`, shadow and translated columns, the view window |
 | `r_sky.jdb` | r_sky.c | sky flat and texture |
-| `r_things.jdb` | r_things.c | weapon sprite scales so far |
+| `r_things.jdb` | r_things.c | sprite frames and rotations, vissprites, the masked pass (`R_DrawMasked`), the weapon sprites |
 | `doomstat.jdb` | doomstat.h, g_game.c | game state: skill, episode, map, players in game, starts |
 | `d_player.jdb` | d_player.h, d_ticcmd.h | the players, one array per field of player_t |
 | `g_game.jdb` | g_game.c | `G_BuildTiccmd`, `G_InitNew`, `G_DoLoadLevel`, `G_PlayerReborn`, `G_Ticker` (the tic only) |
@@ -105,8 +105,7 @@ and the functions do nothing:
 | `s_sound.jdb` | s_sound.c | `S_StartSound`, `S_StopSound` | P8 |
 
 Left out of ported files until their callees exist: the shooting half of
-p_map.c and `P_SpawnMissile`, `P_SpawnPlayerMissile` of p_mobj.c (P6),
-`R_RenderMaskedSegRange` of r_segs.c and the sprites of r_things.c (P3).
+p_map.c and `P_SpawnMissile`, `P_SpawnPlayerMissile` of p_mobj.c (P6).
 
 ## Running the checks
 
@@ -119,6 +118,8 @@ build/jdBasic.exe jdb/doom2/test_p1.jdb
 build/jdBasic.exe -c jdb/doom2/test_p1.jdb && jdb/doom2/test_p1.exe
 build/jdBasic.exe jdb/doom2/test_p2.jdb
 build/jdBasic.exe -c jdb/doom2/test_p2.jdb && jdb/doom2/test_p2.exe
+build/jdBasic.exe jdb/doom2/test_p3.jdb
+build/jdBasic.exe -c jdb/doom2/test_p3.jdb && jdb/doom2/test_p3.exe
 build/jdBasic.exe jdb/doom2/test_p4.jdb
 build/jdBasic.exe -c jdb/doom2/test_p4.jdb && jdb/doom2/test_p4.exe
 ```
@@ -129,6 +130,9 @@ build/jdBasic.exe -c jdb/doom2/test_p4.jdb && jdb/doom2/test_p4.exe
 `test_p2` checks the view tables and the angle arithmetic and renders frames
 of E1M1: each has to cover every pixel of the view and to match the hash
 recorded for it, interpreted and compiled alike.
+`test_p3` checks the sprite tables against the names of the sprite lumps,
+the translation tables and the shadow column, and frames with sprites, a
+masked middle texture, the weapon and shadows.
 `test_p4` spawns the things of E1M1, checks their links into sectors and
 blockmap, and walks player 1 by a fixed list of ticcmds: speed, steps, the
 stop at a wall, coming to rest, and the place he ends up at.
@@ -140,17 +144,17 @@ of E1M1); with a folder argument each page is saved as a PNG:
 build/jdBasic.exe jdb/doom2/view_p1.jdb [folder]
 ```
 
-Walking the view through a level (walls, floors, ceilings, sky; no things,
-no collision). Arrow keys turn and move, A and D step sideways, Shift runs,
+Flying a camera through a level, through walls and all, the things standing
+where they were spawned. Arrow keys turn and move, A and D step sideways, Shift runs,
 PageUp and PageDown change the view size, Escape quits:
 
 ```
 build/jdBasic.exe -c jdb/doom2/view_p2.jdb
-jdb/doom2/view_p2.exe [level] [folder for screenshots]
+jdb/doom2/view_p2.exe [episode] [map] [folder for screenshots]
 ```
 
 Playing a level with the game's own controls: collision, steps, sliding
-along walls, the bobbing view. Things are not drawn yet and doors stay shut:
+along walls, the bobbing view. Monsters stand still and doors stay shut:
 
 ```
 build/jdBasic.exe -c jdb/doom2/view_p4.jdb

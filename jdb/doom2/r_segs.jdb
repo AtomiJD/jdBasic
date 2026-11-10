@@ -21,6 +21,7 @@ IMPORT R_MAIN
 IMPORT R_SKY
 IMPORT R_PLANE
 IMPORT R_BSP
+IMPORT R_THINGS
 
 CONST HEIGHTBITS = 12
 CONST HEIGHTUNIT = 4096
@@ -187,7 +188,8 @@ SUB R_RenderSegLoop()
 
             IF maskedtexture <> 0 THEN
                 ' Kept for drawing the masked middle texture later.
-                R_PLANE.openings[maskedtexturecol + rw_x] = texturecolumn
+                ' The table holds 16-bit values, as in the original.
+                R_PLANE.openings[maskedtexturecol + rw_x] = ((texturecolumn + 32768) BAND 65535) - 32768
             ENDIF
         ENDIF
 
@@ -196,6 +198,84 @@ SUB R_RenderSegLoop()
         bottomfrac = bottomfrac + bottomstep
         rw_x = rw_x + 1
     LOOP
+ENDSUB
+
+' Draws the masked middle texture of drawseg ds between the screen columns
+' x1 and x2: a grate, a fence, the bars of a window. Called from the masked
+' pass, where a sprite needs the texture behind it or all sprites are done.
+EXPORT SUB R_RenderMaskedSegRange(ds AS INTEGER, x1 AS INTEGER, x2 AS INTEGER)
+    DIM curline AS INTEGER = CLNG(R_BSP.drawseg_curline[ds])
+    DIM frontsector AS INTEGER = CLNG(P_SETUP.seg_frontsector[curline])
+    DIM backsector AS INTEGER = CLNG(P_SETUP.seg_backsector[curline])
+    DIM sidedef AS INTEGER = CLNG(P_SETUP.seg_sidedef[curline])
+    DIM v1 AS INTEGER = CLNG(P_SETUP.seg_v1[curline])
+    DIM v2 AS INTEGER = CLNG(P_SETUP.seg_v2[curline])
+    R_BSP.curline = curline
+    R_BSP.frontsector = frontsector
+    R_BSP.backsector = backsector
+    DIM texnum AS INTEGER = CLNG(R_DATA.texturetranslation[CLNG(P_SETUP.side_midtexture[sidedef])])
+
+    ' Light table: one level darker for walls along x, one brighter for
+    ' walls along y.
+    DIM lightnum AS INTEGER = (CLNG(P_SETUP.sector_lightlevel[frontsector]) SHR R_MAIN.LIGHTSEGSHIFT) + R_MAIN.extralight
+    IF CLNG(P_SETUP.vertex_y[v1]) = CLNG(P_SETUP.vertex_y[v2]) THEN
+        lightnum = lightnum - 1
+    ELSEIF CLNG(P_SETUP.vertex_x[v1]) = CLNG(P_SETUP.vertex_x[v2]) THEN
+        lightnum = lightnum + 1
+    ENDIF
+    IF lightnum < 0 THEN
+        walllights = 0
+    ELSEIF lightnum >= R_MAIN.LIGHTLEVELS THEN
+        walllights = (R_MAIN.LIGHTLEVELS - 1) * R_MAIN.MAXLIGHTSCALE
+    ELSE
+        walllights = lightnum * R_MAIN.MAXLIGHTSCALE
+    ENDIF
+
+    maskedtexturecol = CLNG(R_BSP.drawseg_maskedtexturecol[ds])
+    rw_scalestep = CLNG(R_BSP.drawseg_scalestep[ds])
+    R_THINGS.spryscale = CLNG(R_BSP.drawseg_scale1[ds]) + (x1 - CLNG(R_BSP.drawseg_x1[ds])) * rw_scalestep
+    R_THINGS.mfloorclip = CLNG(R_BSP.drawseg_sprbottomclip[ds])
+    R_THINGS.mceilingclip = CLNG(R_BSP.drawseg_sprtopclip[ds])
+
+    ' Find the positioning.
+    DIM front_floor AS INTEGER = CLNG(P_SETUP.sector_floorheight[frontsector])
+    DIM back_floor AS INTEGER = CLNG(P_SETUP.sector_floorheight[backsector])
+    DIM front_ceiling AS INTEGER = CLNG(P_SETUP.sector_ceilingheight[frontsector])
+    DIM back_ceiling AS INTEGER = CLNG(P_SETUP.sector_ceilingheight[backsector])
+    DIM texturemid AS INTEGER
+    IF (CLNG(P_SETUP.line_flags[CLNG(P_SETUP.seg_linedef[curline])]) BAND DOOMDEF.ML_DONTPEGBOTTOM) <> 0 THEN
+        IF front_floor > back_floor THEN texturemid = front_floor ELSE texturemid = back_floor
+        texturemid = texturemid + CLNG(R_DATA.textureheight[texnum]) - R_MAIN.viewz
+    ELSE
+        IF front_ceiling < back_ceiling THEN texturemid = front_ceiling ELSE texturemid = back_ceiling
+        texturemid = texturemid - R_MAIN.viewz
+    ENDIF
+    R_DRAW.dc_texturemid = texturemid + CLNG(P_SETUP.side_rowoffset[sidedef])
+
+    IF R_MAIN.fixedcolormap <> 0 THEN R_DRAW.dc_colormap = R_MAIN.fixedcolormap
+
+    ' Draw the columns. A column that was drawn is marked, so that it is
+    ' not drawn again when the rest of the seg comes up.
+    DIM x AS INTEGER
+    DIM index AS INTEGER
+    DIM texturecolumn AS INTEGER
+    FOR x = x1 TO x2
+        texturecolumn = CLNG(R_PLANE.openings[maskedtexturecol + x])
+        IF texturecolumn <> 32767 THEN
+            IF R_MAIN.fixedcolormap = 0 THEN
+                index = R_THINGS.spryscale SHR R_MAIN.LIGHTSCALESHIFT
+                IF index >= R_MAIN.MAXLIGHTSCALE THEN index = R_MAIN.MAXLIGHTSCALE - 1
+                R_DRAW.dc_colormap = CLNG(R_MAIN.scalelight[walllights + index])
+            ENDIF
+            R_THINGS.sprtopscreen = R_MAIN.centeryfrac - M_FIXED.FixedMul(R_DRAW.dc_texturemid, R_THINGS.spryscale)
+            R_DRAW.dc_iscale = $FFFFFFFF \ R_THINGS.spryscale
+            R_DRAW.dc_x = x
+            ' The column's posts start three bytes before its first pixel.
+            R_THINGS.R_DrawMaskedColumn(R_DATA.R_GetColumn(texnum, texturecolumn) - 3)
+            R_PLANE.openings[maskedtexturecol + x] = 32767
+        ENDIF
+        R_THINGS.spryscale = R_THINGS.spryscale + rw_scalestep
+    NEXT x
 ENDSUB
 
 ' Stops with an error when n_cells more do not fit into R_PLANE.openings.

@@ -14,6 +14,7 @@ IMPORT DOOMDEF
 IMPORT W_WAD
 IMPORT V_VIDEO
 IMPORT R_MAIN
+IMPORT R_DATA
 
 EXPORT CONST SBARHEIGHT = 32
 
@@ -105,5 +106,110 @@ EXPORT SUB R_InitBuffer(width AS INTEGER, height AS INTEGER)
     ENDIF
     FOR i = 0 TO height - 1
         ylookup[i] = (i + viewwindowy) * DOOMDEF.SCREENWIDTH
+    NEXT i
+ENDSUB
+
+' ---- column functions of the masked pass -----------------------------------------
+
+' Which function R_ColFunc calls: sprites are drawn plain, as a shadow
+' (fuzz) or with their colours translated.
+EXPORT CONST COLFUNC_BASE = 0
+EXPORT CONST COLFUNC_FUZZ = 1
+EXPORT CONST COLFUNC_TRANSLATED = 2
+EXPORT DIM colfunc AS INTEGER = 0
+
+' Offsets to the pixel above or below, in an order that looks random.
+CONST FUZZTABLE = 50
+DIM fuzzoffset AS ARRAY = [ _
+    320, -320, 320, -320, 320, 320, -320, _
+    320, 320, -320, 320, 320, 320, -320, _
+    320, 320, 320, -320, -320, -320, -320, _
+    320, -320, -320, 320, 320, 320, 320, -320, _
+    320, -320, 320, 320, -320, -320, 320, _
+    320, -320, -320, -320, -320, 320, 320, _
+    320, 320, -320, 320, 320, -320, 320 _
+]
+DIM fuzzpos AS INTEGER = 0
+
+' Three tables of 256 palette indices in the pool: the green of the
+' player's suit turned to gray, brown and red, for players 2 to 4.
+EXPORT DIM translationtables AS INTEGER = 0
+' The table R_DrawTranslatedColumn draws through.
+EXPORT DIM dc_translation AS INTEGER = 0
+
+' Draws a column of a shadow: each pixel becomes a darkened copy of the
+' pixel above or below it, so the shape shimmers.
+EXPORT SUB R_DrawFuzzColumn()
+    ' Adjust the borders: the neighbours of the first and of the last row
+    ' lie outside the view.
+    IF dc_yl = 0 THEN dc_yl = 1
+    IF dc_yh = viewheight - 1 THEN dc_yh = viewheight - 2
+
+    DIM n_more AS INTEGER = dc_yh - dc_yl
+    IF n_more < 0 THEN RETURN
+    IF dc_x < 0 OR dc_x >= DOOMDEF.SCREENWIDTH OR dc_yl < 0 OR dc_yh >= DOOMDEF.SCREENHEIGHT THEN
+        I_SYSTEM.I_Error("R_DrawFuzzColumn: " + STR$(dc_yl) + " to " + STR$(dc_yh) + " at " + STR$(dc_x))
+    ENDIF
+    DIM dest AS INTEGER = CLNG(ylookup[dc_yl]) + CLNG(columnofs[dc_x])
+    ' Colormap 6 of the light tables, a little darker than full bright.
+    DIM dark AS INTEGER = R_DATA.colormaps + 6 * 256
+    DIM i AS INTEGER
+    FOR i = 0 TO n_more
+        V_VIDEO.screens[dest] = W_WAD.pool[dark + V_VIDEO.screens[dest + CLNG(fuzzoffset[fuzzpos])]]
+        fuzzpos = fuzzpos + 1
+        IF fuzzpos = FUZZTABLE THEN fuzzpos = 0
+        dest = dest + DOOMDEF.SCREENWIDTH
+    NEXT i
+ENDSUB
+
+' Draws a column through dc_translation and then the colormap. Used for the
+' other players, so one set of sprites serves four suit colours.
+EXPORT SUB R_DrawTranslatedColumn()
+    DIM n_more AS INTEGER = dc_yh - dc_yl
+    IF n_more < 0 THEN RETURN
+    IF dc_x < 0 OR dc_x >= DOOMDEF.SCREENWIDTH OR dc_yl < 0 OR dc_yh >= DOOMDEF.SCREENHEIGHT THEN
+        I_SYSTEM.I_Error("R_DrawColumn: " + STR$(dc_yl) + " to " + STR$(dc_yh) + " at " + STR$(dc_x))
+    ENDIF
+    DIM dest AS INTEGER = CLNG(ylookup[dc_yl]) + CLNG(columnofs[dc_x])
+    DIM fracstep AS INTEGER = dc_iscale
+    DIM frac AS INTEGER = dc_texturemid + (dc_yl - R_MAIN.centery) * fracstep
+    DIM source AS INTEGER = dc_source
+    DIM colormap AS INTEGER = dc_colormap
+    DIM translation AS INTEGER = dc_translation
+    DIM i AS INTEGER
+    FOR i = 0 TO n_more
+        V_VIDEO.screens[dest] = W_WAD.pool[colormap + W_WAD.pool[translation + W_WAD.pool[source + (frac SHR 16)]]]
+        dest = dest + DOOMDEF.SCREENWIDTH
+        frac = frac + fracstep
+    NEXT i
+ENDSUB
+
+' Draws the column with the function colfunc names.
+EXPORT SUB R_ColFunc()
+    IF colfunc = COLFUNC_BASE THEN
+        R_DrawColumn()
+    ELSEIF colfunc = COLFUNC_FUZZ THEN
+        R_DrawFuzzColumn()
+    ELSE
+        R_DrawTranslatedColumn()
+    ENDIF
+ENDSUB
+
+' Makes the three translation tables: the 16 greens $70 to $7F become the
+' grays from $60, the browns from $40 and the reds from $20.
+EXPORT SUB R_InitTranslationTables()
+    translationtables = W_WAD.W_Alloc(256 * 3)
+    DIM i AS INTEGER
+    FOR i = 0 TO 255
+        IF i >= $70 AND i <= $7F THEN
+            W_WAD.pool[translationtables + i] = $60 + (i BAND 15)
+            W_WAD.pool[translationtables + i + 256] = $40 + (i BAND 15)
+            W_WAD.pool[translationtables + i + 512] = $20 + (i BAND 15)
+        ELSE
+            ' Keep all other colours as they are.
+            W_WAD.pool[translationtables + i] = i
+            W_WAD.pool[translationtables + i + 256] = i
+            W_WAD.pool[translationtables + i + 512] = i
+        ENDIF
     NEXT i
 ENDSUB
