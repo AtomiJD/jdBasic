@@ -1,0 +1,323 @@
+' The sound device: eight channels of 8 bit samples are mixed by hand into
+' a stereo buffer and handed to the audio queue, as i_sound.c of the Linux
+' release does it. Without I_InitSound nothing is mixed, but a sound still
+' lasts as long as it would, so that the game runs the same with and
+' without a device.
+
+EXPORT MODULE I_SOUND
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMSTAT
+IMPORT INFO
+IMPORT SOUNDS
+IMPORT W_WAD
+
+' Samples a second the mixer puts out.
+CONST SAMPLERATE = 11025
+EXPORT CONST NUM_CHANNELS = 8
+' The mixer keeps this much sound queued ahead, and never adds more than
+' MAXFRAMES at a time.
+CONST TARGETFRAMES = 1260
+CONST MAXFRAMES = 1575
+' A float sample of the queue takes four bytes, a stereo frame eight.
+CONST BYTESPERFRAME = 8
+
+EXPORT DIM sound_on AS INTEGER = 0
+
+' The sounds: where the samples are in the lump pool (0 = not loaded
+' yet), how many there are and how fast they were recorded.
+DIM sfx_data[INFO.NUMSFX] AS INTEGER
+DIM sfx_length[INFO.NUMSFX] AS INTEGER
+DIM sfx_rate[INFO.NUMSFX] AS INTEGER
+
+' The channels: the sample played next (0 = channel free), the end of the
+' data, the step in 16.16 samples per output sample and its remainder,
+' the tic the sound started and the tic it is over, its handle, its sound
+' and the rows of the volume table for the left and the right side.
+EXPORT DIM ch_pos[NUM_CHANNELS] AS INTEGER
+DIM ch_end[NUM_CHANNELS] AS INTEGER
+DIM ch_step[NUM_CHANNELS] AS INTEGER
+DIM ch_remainder[NUM_CHANNELS] AS INTEGER
+DIM ch_start[NUM_CHANNELS] AS INTEGER
+DIM ch_endtic[NUM_CHANNELS] AS INTEGER
+DIM ch_handle[NUM_CHANNELS] AS INTEGER
+EXPORT DIM ch_id[NUM_CHANNELS] AS INTEGER
+EXPORT DIM ch_left[NUM_CHANNELS] AS INTEGER
+EXPORT DIM ch_right[NUM_CHANNELS] AS INTEGER
+DIM handlenums AS INTEGER = 0
+
+' Pitch to stepping lookup, and the volume table: a sample at each of
+' 128 volumes.
+DIM steptable[256] AS INTEGER
+DIM vol_lookup[128 * 256] AS INTEGER
+DIM tables_made AS INTEGER = 0
+
+' What the mixer made last, before it is clamped to 16 bits.
+EXPORT DIM mix_left[MAXFRAMES] AS INTEGER
+EXPORT DIM mix_right[MAXFRAMES] AS INTEGER
+
+' Sets up the step table and the volume table.
+SUB I_SetChannels()
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    ' This table provides step widths for pitch parameters.
+    FOR i = -128 TO 127
+        steptable[i + 128] = CLNG(INT(2.0 ^ (i / 64.0) * 65536.0))
+    NEXT i
+
+    ' Generates volume lookup tables which also turn the unsigned samples
+    ' into signed samples.
+    FOR i = 0 TO 127
+        FOR j = 0 TO 255
+            vol_lookup[i * 256 + j] = (i * (j - 128) * 256) \ 127
+        NEXT j
+    NEXT i
+    tables_made = 1
+ENDSUB
+
+' Loads the samples of a sound; a sound the WAD has not got plays the
+' pistol.
+SUB LoadSfx(id AS INTEGER)
+    DIM lump AS INTEGER = W_WAD.W_CheckNumForName("DS" + SOUNDS.sfx_name$[id])
+    IF lump < 0 THEN lump = W_WAD.W_GetNumForName("DSPISTOL")
+    DIM size AS INTEGER = W_WAD.W_LumpLength(lump)
+    DIM start AS INTEGER = W_WAD.W_CacheLumpNum(lump)
+    DIM n_samples AS INTEGER = 0
+    DIM rate AS INTEGER = SAMPLERATE
+    IF size > 8 THEN
+        ' The header: a 3, the sample rate, the number of samples.
+        rate = CLNG(W_WAD.pool[start + 2]) + CLNG(W_WAD.pool[start + 3]) * 256
+        n_samples = W_WAD.PoolLong(start + 4)
+        IF n_samples > size - 8 OR n_samples < 0 THEN n_samples = size - 8
+        IF rate <= 0 THEN rate = SAMPLERATE
+    ENDIF
+    sfx_data[id] = start + 8
+    sfx_length[id] = n_samples
+    sfx_rate[id] = rate
+ENDSUB
+
+' The volumes of the two sides for a volume of 0 to 127 and a separation
+' of 0 (left) to 255 (right).
+SUB SetVolume(slot AS INTEGER, volume AS INTEGER, sep_in AS INTEGER)
+    ' Separation, that is, orientation/stereo. Range is: 1 - 256.
+    DIM sep AS INTEGER = sep_in + 1
+
+    ' Per left/right channel. x^2 separation, adjust volume properly.
+    DIM leftvol AS INTEGER = volume - ((volume * sep * sep) SHR 16)
+    sep = sep - 257
+    DIM rightvol AS INTEGER = volume - ((volume * sep * sep) SHR 16)
+
+    ' Sanity check, clamp volume.
+    IF rightvol < 0 OR rightvol > 127 THEN I_SYSTEM.I_Error("rightvol out of bounds")
+    IF leftvol < 0 OR leftvol > 127 THEN I_SYSTEM.I_Error("leftvol out of bounds")
+
+    ' Get the proper lookup table piece for this volume level.
+    ch_left[slot] = leftvol * 256
+    ch_right[slot] = rightvol * 256
+ENDSUB
+
+' Starts a sound on a free channel, or on the one that has played
+' longest. volume is 0 to 15, sep 0 to 255, pitch 0 to 255 with 128 for the
+' pitch it was recorded at. Answers a handle for the sound.
+EXPORT FUNC I_StartSound(id AS INTEGER, volume AS INTEGER, sep AS INTEGER, pitch AS INTEGER, priority AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    DIM oldest AS INTEGER = DOOMSTAT.gametic
+    DIM oldestnum AS INTEGER = 0
+    DIM slot AS INTEGER = -1
+    DIM data_id AS INTEGER = id
+
+    IF tables_made = 0 THEN I_SetChannels()
+
+    ' A sound that plays the data of another one.
+    IF CLNG(SOUNDS.sfx_link[id]) >= 0 THEN data_id = CLNG(SOUNDS.sfx_link[id])
+    IF CLNG(sfx_data[data_id]) = 0 THEN LoadSfx(data_id)
+
+    ' Chainsaw troubles. Play these sound effects only one at a time.
+    IF id = INFO.SFX_SAWUP OR id = INFO.SFX_SAWIDL OR id = INFO.SFX_SAWFUL OR id = INFO.SFX_SAWHIT OR id = INFO.SFX_STNMOV OR id = INFO.SFX_PISTOL THEN
+        ' Loop all channels, check. Reset the first one that plays it.
+        FOR i = 0 TO NUM_CHANNELS - 1
+            IF CLNG(ch_pos[i]) <> 0 AND CLNG(ch_id[i]) = id THEN
+                ch_pos[i] = 0
+                EXITFOR
+            ENDIF
+        NEXT i
+    ENDIF
+
+    ' Loop all channels to find the oldest SFX.
+    FOR i = 0 TO NUM_CHANNELS - 1
+        IF CLNG(ch_pos[i]) = 0 THEN
+            slot = i
+            EXITFOR
+        ENDIF
+        IF CLNG(ch_start[i]) < oldest THEN
+            oldestnum = i
+            oldest = CLNG(ch_start[i])
+        ENDIF
+    NEXT i
+
+    ' If we found a channel, fine. If not, we simply overwrite the oldest.
+    IF slot < 0 THEN slot = oldestnum
+
+    DIM length AS INTEGER = sfx_length[data_id]
+    ' The step takes the recording rate of the sound into account.
+    DIM pitch_step AS INTEGER = (CLNG(steptable[pitch]) * CLNG(sfx_rate[data_id])) \ SAMPLERATE
+    IF pitch_step < 1 THEN pitch_step = 1
+
+    ' Okay, in the less recent channel, we will handle the new SFX. A
+    ' sound without samples is over at once.
+    ch_pos[slot] = CLNG(sfx_data[data_id])
+    IF length = 0 THEN ch_pos[slot] = 0
+    ch_end[slot] = CLNG(sfx_data[data_id]) + length
+
+    ' Reset current handle number, limited to 0..100.
+    IF handlenums = 0 THEN handlenums = 100
+    DIM handle AS INTEGER = handlenums
+    handlenums = handlenums + 1
+    ch_handle[slot] = handle
+
+    ch_step[slot] = pitch_step
+    ch_remainder[slot] = 0
+    ' Should be gametic, I presume.
+    ch_start[slot] = DOOMSTAT.gametic
+    ' The tic the sound is over: its samples at the step, in 35ths of a
+    ' second.
+    ch_endtic[slot] = DOOMSTAT.gametic + ((length * 65536) \ pitch_step) * 35 \ SAMPLERATE + 1
+
+    SetVolume(slot, volume * 8, sep)
+
+    ' Preserve sound SFX id, e.g. for avoiding duplicates of chainsaw.
+    ch_id[slot] = id
+    RETURN handle
+ENDFUNC
+
+' The channel a handle is on, -1 if its sound is over.
+FUNC SlotOf(handle AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO NUM_CHANNELS - 1
+        IF CLNG(ch_handle[i]) = handle AND CLNG(ch_pos[i]) <> 0 THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+EXPORT SUB I_StopSound(handle AS INTEGER)
+    DIM slot AS INTEGER = SlotOf(handle)
+    IF slot >= 0 THEN ch_pos[slot] = 0
+ENDSUB
+
+EXPORT FUNC I_SoundIsPlaying(handle AS INTEGER) AS INTEGER
+    DIM slot AS INTEGER = SlotOf(handle)
+    IF slot < 0 THEN RETURN 0
+    IF DOOMSTAT.gametic >= CLNG(ch_endtic[slot]) THEN
+        ch_pos[slot] = 0
+        RETURN 0
+    ENDIF
+    RETURN 1
+ENDFUNC
+
+' A sound that plays moves with its source: new volume and separation.
+EXPORT SUB I_UpdateSoundParams(handle AS INTEGER, volume AS INTEGER, sep AS INTEGER, pitch AS INTEGER)
+    DIM slot AS INTEGER = SlotOf(handle)
+    IF slot >= 0 THEN SetVolume(slot, volume * 8, sep)
+ENDSUB
+
+' Mixes n frames of all the channels into mix_left and mix_right.
+EXPORT SUB I_Mix(n_frames AS INTEGER)
+    DIM chan AS INTEGER
+    DIM i AS INTEGER
+    DIM p AS INTEGER
+    DIM last AS INTEGER
+    DIM pace AS INTEGER
+    DIM remainder AS INTEGER
+    DIM left_row AS INTEGER
+    DIM right_row AS INTEGER
+    DIM sample AS INTEGER
+
+    FOR i = 0 TO n_frames - 1
+        mix_left[i] = 0
+        mix_right[i] = 0
+    NEXT i
+
+    ' Mix sounds into the mixing buffer. For each channel: get the raw
+    ' data from the channel, add left and right part for this channel
+    ' (sound) to the current data, adjust volume accordingly, and
+    ' increment the index.
+    FOR chan = 0 TO NUM_CHANNELS - 1
+        p = CLNG(ch_pos[chan])
+        ' Check channel, if active.
+        IF p <> 0 THEN
+            last = CLNG(ch_end[chan])
+            pace = CLNG(ch_step[chan])
+            remainder = CLNG(ch_remainder[chan])
+            left_row = CLNG(ch_left[chan])
+            right_row = CLNG(ch_right[chan])
+            FOR i = 0 TO n_frames - 1
+                sample = CLNG(W_WAD.pool[p])
+                mix_left[i] = CLNG(mix_left[i]) + CLNG(vol_lookup[left_row + sample])
+                mix_right[i] = CLNG(mix_right[i]) + CLNG(vol_lookup[right_row + sample])
+                remainder = remainder + pace
+                p = p + (remainder SHR 16)
+                remainder = remainder BAND 65535
+                ' Check whether we are done.
+                IF p >= last THEN
+                    p = 0
+                    EXITFOR
+                ENDIF
+            NEXT i
+            ch_pos[chan] = p
+            ch_remainder[chan] = remainder
+        ENDIF
+    NEXT chan
+
+ENDSUB
+
+' Mixes n frames and hands them to the queue of the device.
+SUB MixFrames(n_frames AS INTEGER)
+    DIM i AS INTEGER
+    DIM d AS INTEGER
+    I_Mix(n_frames)
+
+    ' Clamp to range and hand over, left and right in turn.
+    DIM frames AS ARRAY = RESHAPE([0.0], [n_frames * 2])
+    FOR i = 0 TO n_frames - 1
+        d = CLNG(mix_left[i])
+        IF d > 32767 THEN d = 32767
+        IF d < -32768 THEN d = -32768
+        frames[i * 2] = d / 32768.0
+        d = CLNG(mix_right[i])
+        IF d > 32767 THEN d = 32767
+        IF d < -32768 THEN d = -32768
+        frames[i * 2 + 1] = d / 32768.0
+    NEXT i
+    SOUND.PLAYBUFFER frames, SAMPLERATE, 2
+ENDSUB
+
+' Called once a tic: tops the queue of the device up.
+EXPORT SUB I_UpdateSound()
+    IF sound_on = 0 THEN RETURN
+    DIM queued AS INTEGER = CLNG(SOUND.QUEUED()) \ BYTESPERFRAME
+    DIM n_frames AS INTEGER = TARGETFRAMES - queued
+    IF n_frames > MAXFRAMES THEN n_frames = MAXFRAMES
+    IF n_frames > 0 THEN MixFrames(n_frames)
+ENDSUB
+
+' Opens the device.
+EXPORT SUB I_InitSound()
+    IF tables_made = 0 THEN I_SetChannels()
+    SOUND.INIT
+    sound_on = 1
+ENDSUB
+
+' Forgets what was loaded from the WAD and stops all channels; a new WAD
+' puts its lumps elsewhere.
+EXPORT SUB I_ResetSound()
+    DIM i AS INTEGER
+    FOR i = 0 TO INFO.NUMSFX - 1
+        sfx_data[i] = 0
+    NEXT i
+    FOR i = 0 TO NUM_CHANNELS - 1
+        ch_pos[i] = 0
+    NEXT i
+ENDSUB

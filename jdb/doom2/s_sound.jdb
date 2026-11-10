@@ -1,19 +1,380 @@
-' Sound (s_sound.c). Not ported yet: nothing is played.
+' Sound: which sounds play on the eight channels, how loud and from
+' which side (s_sound.c).
+'
+' The origin of a sound is a thing (its index), nothing (-1), or the
+' middle of a sector, which S_StartSectorSound passes on as -2 - sector.
 
 EXPORT MODULE S_SOUND
 
 OPTION "EXPLICIT"
 OPTION "STRICT"
 
+IMPORT I_SYSTEM
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT TABLES
+IMPORT INFO
+IMPORT SOUNDS
+IMPORT R_MAIN
+IMPORT P_SETUP
+IMPORT P_MOBJ
+IMPORT I_SOUND
+IMPORT I_MUSIC
+
+' When to clip out sounds: does not fit the large outdoor areas.
+CONST S_CLIPPING_DIST = 78643200
+' Distance to origin when sounds should be maxed out. This should relate
+' to movement clipping resolution.
+CONST S_CLOSE_DIST = 10485760
+CONST S_ATTENUATOR = 1040
+CONST NORM_PITCH = 128
+CONST NORM_PRIORITY = 64
+CONST NORM_SEP = 128
+CONST S_STEREO_SWING = 6291456
+
+CONST NUMCHANNELS = 8
+
+' The channels: the sound playing (0 = none), its origin and the handle
+' the device gave.
+DIM c_sfx[NUMCHANNELS] AS INTEGER
+DIM c_origin[NUMCHANNELS] AS INTEGER
+DIM c_handle[NUMCHANNELS] AS INTEGER
+
+' 0 to 15; the menu sets them.
+EXPORT DIM snd_SfxVolume AS INTEGER = 8
+EXPORT DIM snd_MusicVolume AS INTEGER = 8
+
+' Whether songs are mus_paused, and the music currently being played.
+DIM mus_paused AS INTEGER = 0
+EXPORT DIM mus_playing AS INTEGER = 0
+
+' What S_AdjustSoundParams worked out.
+DIM adj_vol AS INTEGER = 0
+DIM adj_sep AS INTEGER = 0
+
+FUNC OriginX(origin AS INTEGER) AS INTEGER
+    IF origin >= 0 THEN RETURN CLNG(P_MOBJ.mobj_x[origin])
+    RETURN CLNG(P_SETUP.sector_soundorg_x[-2 - origin])
+ENDFUNC
+
+FUNC OriginY(origin AS INTEGER) AS INTEGER
+    IF origin >= 0 THEN RETURN CLNG(P_MOBJ.mobj_y[origin])
+    RETURN CLNG(P_SETUP.sector_soundorg_y[-2 - origin])
+ENDFUNC
+
+SUB S_StopChannel(cnum AS INTEGER)
+    IF CLNG(c_sfx[cnum]) <> 0 THEN
+        ' Stop the sound playing.
+        IF I_SOUND.I_SoundIsPlaying(CLNG(c_handle[cnum])) <> 0 THEN I_SOUND.I_StopSound(CLNG(c_handle[cnum]))
+        c_sfx[cnum] = 0
+    ENDIF
+ENDSUB
+
+' Changes volume and stereo-separation of a sound effect to be played
+' from the origin as the listener hears it. FALSE if it is too far away
+' to be heard.
+FUNC S_AdjustSoundParams(listener AS INTEGER, source AS INTEGER) AS INTEGER
+    DIM lx AS INTEGER = P_MOBJ.mobj_x[listener]
+    DIM ly AS INTEGER = P_MOBJ.mobj_y[listener]
+    DIM sx AS INTEGER = OriginX(source)
+    DIM sy AS INTEGER = OriginY(source)
+
+    ' Calculate the distance to sound origin and clip it if necessary.
+    DIM adx AS INTEGER = CLNG(ABS(lx - sx))
+    DIM ady AS INTEGER = CLNG(ABS(ly - sy))
+    DIM smaller AS INTEGER = ady
+    IF adx < ady THEN smaller = adx
+    ' From _GG1_ p.428. Appox. eucledian distance fast.
+    DIM approx_dist AS INTEGER = adx + ady - (smaller SHR 1)
+
+    IF DOOMSTAT.gamemap <> 8 AND approx_dist > S_CLIPPING_DIST THEN RETURN 0
+
+    ' Angle of source to listener.
+    DIM angle AS INTEGER = R_MAIN.R_PointToAngle2(lx, ly, sx, sy)
+    DIM facing AS INTEGER = P_MOBJ.mobj_angle[listener]
+    IF angle > facing THEN
+        angle = angle - facing
+    ELSE
+        angle = angle + ($ffffffff - facing)
+    ENDIF
+    angle = (angle BAND M_FIXED.ANGLE_MASK) SHR TABLES.ANGLETOFINESHIFT
+
+    ' Stereo separation.
+    adj_sep = 128 - (M_FIXED.FixedMul(S_STEREO_SWING, CLNG(TABLES.finesine[angle])) SHR 16)
+
+    ' Volume calculation.
+    IF approx_dist < S_CLOSE_DIST THEN
+        adj_vol = snd_SfxVolume
+    ELSEIF DOOMSTAT.gamemap = 8 THEN
+        ' The boss levels are heard from afar.
+        IF approx_dist > S_CLIPPING_DIST THEN approx_dist = S_CLIPPING_DIST
+        adj_vol = 15 + ((snd_SfxVolume - 15) * ((S_CLIPPING_DIST - approx_dist) SHR 16)) \ S_ATTENUATOR
+    ELSE
+        ' Distance effect.
+        adj_vol = (snd_SfxVolume * ((S_CLIPPING_DIST - approx_dist) SHR 16)) \ S_ATTENUATOR
+    ENDIF
+
+    IF adj_vol > 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' If none available, return -1. Otherwise channel #.
+FUNC S_getChannel(origin AS INTEGER, sfx_id AS INTEGER) AS INTEGER
+    DIM cnum AS INTEGER
+    DIM found AS INTEGER = -1
+
+    ' Find an open channel.
+    FOR cnum = 0 TO NUMCHANNELS - 1
+        IF CLNG(c_sfx[cnum]) = 0 THEN
+            found = cnum
+            EXITFOR
+        ELSEIF origin <> -1 AND CLNG(c_origin[cnum]) = origin THEN
+            S_StopChannel(cnum)
+            found = cnum
+            EXITFOR
+        ENDIF
+    NEXT cnum
+
+    ' None available.
+    IF found < 0 THEN
+        ' Look for lower priority.
+        FOR cnum = 0 TO NUMCHANNELS - 1
+            IF CLNG(SOUNDS.sfx_priority[CLNG(c_sfx[cnum])]) >= CLNG(SOUNDS.sfx_priority[sfx_id]) THEN
+                found = cnum
+                EXITFOR
+            ENDIF
+        NEXT cnum
+
+        ' FUCK! No lower priority. Sorry, Charlie.
+        IF found < 0 THEN RETURN -1
+
+        ' Otherwise, kick out lower priority.
+        S_StopChannel(found)
+    ENDIF
+
+    ' Channel is decided to be found.
+    c_sfx[found] = sfx_id
+    c_origin[found] = origin
+    RETURN found
+ENDFUNC
+
+EXPORT SUB S_StopSound(origin AS INTEGER)
+    DIM cnum AS INTEGER
+    FOR cnum = 0 TO NUMCHANNELS - 1
+        IF CLNG(c_sfx[cnum]) <> 0 AND CLNG(c_origin[cnum]) = origin THEN
+            S_StopChannel(cnum)
+            EXITFOR
+        ENDIF
+    NEXT cnum
+ENDSUB
+
+SUB S_StartSoundAtVolume(origin AS INTEGER, sfx_id AS INTEGER, volume_in AS INTEGER)
+    DIM volume AS INTEGER = volume_in
+    DIM pitch AS INTEGER = NORM_PITCH
+    DIM priority AS INTEGER = NORM_PRIORITY
+    DIM sep AS INTEGER = NORM_SEP
+    DIM listener AS INTEGER = D_PLAYER.player_mo[DOOMSTAT.consoleplayer]
+
+    ' Check for bogus sound #.
+    IF sfx_id < 1 OR sfx_id >= INFO.NUMSFX THEN I_SYSTEM.I_Error("Bad sfx #: " + STR$(sfx_id))
+
+    ' Initialize sound parameters.
+    IF CLNG(SOUNDS.sfx_link[sfx_id]) >= 0 THEN
+        pitch = CLNG(SOUNDS.sfx_pitch[sfx_id])
+        priority = CLNG(SOUNDS.sfx_priority[sfx_id])
+        volume = volume + CLNG(SOUNDS.sfx_volume[sfx_id])
+        IF volume < 1 THEN RETURN
+        IF volume > snd_SfxVolume THEN volume = snd_SfxVolume
+    ENDIF
+
+    ' Check to see if it is audible, and if not, modify the params.
+    IF origin <> -1 AND origin <> listener AND listener >= 0 THEN
+        IF S_AdjustSoundParams(listener, origin) = 0 THEN
+            ' The original works the separation out before it leaves.
+            RETURN
+        ENDIF
+        volume = adj_vol
+        sep = adj_sep
+        IF OriginX(origin) = CLNG(P_MOBJ.mobj_x[listener]) AND OriginY(origin) = CLNG(P_MOBJ.mobj_y[listener]) THEN sep = NORM_SEP
+    ENDIF
+
+    ' Hacks to vary the sfx pitches.
+    IF sfx_id >= INFO.SFX_SAWUP AND sfx_id <= INFO.SFX_SAWHIT THEN
+        pitch = pitch + 8 - (M_RANDOM.M_Random() BAND 15)
+    ELSEIF sfx_id <> INFO.SFX_ITEMUP AND sfx_id <> INFO.SFX_TINK THEN
+        pitch = pitch + 16 - (M_RANDOM.M_Random() BAND 31)
+    ENDIF
+    IF pitch < 0 THEN pitch = 0
+    IF pitch > 255 THEN pitch = 255
+
+    ' Kill old sound.
+    S_StopSound(origin)
+
+    ' Try to find a channel.
+    DIM cnum AS INTEGER = S_getChannel(origin, sfx_id)
+    IF cnum < 0 THEN RETURN
+
+    ' Assigns the handle to one of the channels in the mix/output buffer.
+    c_handle[cnum] = I_SOUND.I_StartSound(sfx_id, volume, sep, pitch, priority)
+ENDSUB
+
 ' Starts sound sfx_id (an INFO.SFX_ number) at the thing origin, or
 ' everywhere if origin is -1.
 EXPORT SUB S_StartSound(origin AS INTEGER, sfx_id AS INTEGER)
+    S_StartSoundAtVolume(origin, sfx_id, snd_SfxVolume)
 ENDSUB
 
 ' Starts the sound at the middle of the sector.
 EXPORT SUB S_StartSectorSound(sector AS INTEGER, sfx_id AS INTEGER)
+    IF sector < 0 THEN
+        S_StartSoundAtVolume(-1, sfx_id, snd_SfxVolume)
+    ELSE
+        S_StartSoundAtVolume(-2 - sector, sfx_id, snd_SfxVolume)
+    ENDIF
 ENDSUB
 
-' Stops the sound the thing is making.
-EXPORT SUB S_StopSound(origin AS INTEGER)
+' Updates music & sounds: the sounds that play follow their origins, as
+' the listener (a thing) hears them.
+EXPORT SUB S_UpdateSounds(listener AS INTEGER)
+    DIM cnum AS INTEGER
+    DIM sfx_id AS INTEGER
+    DIM origin AS INTEGER
+    DIM volume AS INTEGER
+
+    FOR cnum = 0 TO NUMCHANNELS - 1
+        sfx_id = CLNG(c_sfx[cnum])
+        IF sfx_id <> 0 THEN
+            IF I_SOUND.I_SoundIsPlaying(CLNG(c_handle[cnum])) <> 0 THEN
+                ' Initialize parameters.
+                volume = snd_SfxVolume
+                IF CLNG(SOUNDS.sfx_link[sfx_id]) >= 0 THEN
+                    volume = volume + CLNG(SOUNDS.sfx_volume[sfx_id])
+                    IF volume < 1 THEN
+                        S_StopChannel(cnum)
+                        CONTINUEFOR
+                    ENDIF
+                    IF volume > snd_SfxVolume THEN volume = snd_SfxVolume
+                ENDIF
+
+                ' Check non-local sounds for distance clipping or
+                ' modify their params.
+                origin = CLNG(c_origin[cnum])
+                IF origin <> -1 AND origin <> listener AND listener >= 0 THEN
+                    IF S_AdjustSoundParams(listener, origin) = 0 THEN
+                        S_StopChannel(cnum)
+                    ELSE
+                        I_SOUND.I_UpdateSoundParams(CLNG(c_handle[cnum]), adj_vol, adj_sep, NORM_PITCH)
+                    ENDIF
+                ENDIF
+            ELSE
+                ' If the channel is allocated but the sound has stopped,
+                ' free it.
+                S_StopChannel(cnum)
+            ENDIF
+        ENDIF
+    NEXT cnum
+
+    I_SOUND.I_UpdateSound()
+    I_MUSIC.I_UpdateMusic()
+ENDSUB
+
+EXPORT SUB S_SetSfxVolume(volume AS INTEGER)
+    IF volume < 0 OR volume > 15 THEN I_SYSTEM.I_Error("Attempt to set sfx volume at " + STR$(volume))
+    snd_SfxVolume = volume
+ENDSUB
+
+' ---- music ----------------------------------------------------------------------
+
+EXPORT SUB S_SetMusicVolume(volume AS INTEGER)
+    IF volume < 0 OR volume > 15 THEN I_SYSTEM.I_Error("Attempt to set music volume at " + STR$(volume))
+    snd_MusicVolume = volume
+    I_MUSIC.I_SetMusicVolume(volume)
+ENDSUB
+
+EXPORT SUB S_StopMusic()
+    IF mus_playing <> 0 THEN
+        IF mus_paused <> 0 THEN I_MUSIC.I_ResumeSong()
+        I_MUSIC.I_StopSong()
+        mus_playing = 0
+    ENDIF
+ENDSUB
+
+' Starts the piece of music with that number (an INFO.MUS_ number).
+EXPORT SUB S_ChangeMusic(musicnum AS INTEGER, looping AS INTEGER)
+    IF musicnum <= 0 OR musicnum >= INFO.NUMMUSIC THEN I_SYSTEM.I_Error("Bad music number " + STR$(musicnum))
+    IF mus_playing = musicnum THEN RETURN
+
+    ' Shutdown old music.
+    S_StopMusic()
+
+    ' Load and play it.
+    I_MUSIC.I_PlaySong("D_" + SOUNDS.mus_name$[musicnum], looping)
+    mus_playing = musicnum
+ENDSUB
+
+' Starts some music with the music id found in sounds.h.
+EXPORT SUB S_StartMusic(m_id AS INTEGER)
+    S_ChangeMusic(m_id, 0)
+ENDSUB
+
+' Stop and resume music, during game PAUSE.
+EXPORT SUB S_PauseSound()
+    IF mus_playing <> 0 AND mus_paused = 0 THEN
+        I_MUSIC.I_PauseSong()
+        mus_paused = 1
+    ENDIF
+ENDSUB
+
+EXPORT SUB S_ResumeSound()
+    IF mus_playing <> 0 AND mus_paused <> 0 THEN
+        I_MUSIC.I_ResumeSong()
+        mus_paused = 0
+    ENDIF
+ENDSUB
+
+' The music of the fourth episode is borrowed from the other three.
+DIM spmus AS ARRAY = [INFO.MUS_E3M4, INFO.MUS_E3M2, INFO.MUS_E3M3, INFO.MUS_E1M5, INFO.MUS_E2M7, INFO.MUS_E2M4, INFO.MUS_E2M6, INFO.MUS_E2M5, INFO.MUS_E1M9]
+
+' Per level startup code. Kills playing sounds at start of level,
+' determines music if any, changes music.
+EXPORT SUB S_Start()
+    DIM cnum AS INTEGER
+    DIM mnum AS INTEGER
+
+    ' Kill all playing sounds at start of level (trust me - a good idea).
+    FOR cnum = 0 TO NUMCHANNELS - 1
+        IF CLNG(c_sfx[cnum]) <> 0 THEN S_StopChannel(cnum)
+    NEXT cnum
+
+    ' Start new music for the level.
+    mus_paused = 0
+
+    IF DOOMSTAT.commercial <> 0 THEN
+        mnum = INFO.MUS_RUNNIN + DOOMSTAT.gamemap - 1
+    ELSEIF DOOMSTAT.gameepisode < 4 THEN
+        mnum = INFO.MUS_E1M1 + (DOOMSTAT.gameepisode - 1) * 9 + DOOMSTAT.gamemap - 1
+    ELSE
+        mnum = CLNG(spmus[DOOMSTAT.gamemap - 1])
+    ENDIF
+
+    S_ChangeMusic(mnum, 1)
+ENDSUB
+
+' Initializes sound stuff, including volume, and opens the device.
+EXPORT SUB S_Init(sfx_volume AS INTEGER, music_volume AS INTEGER)
+    DIM i AS INTEGER
+    I_SOUND.I_InitSound()
+    I_MUSIC.I_InitMusic()
+    S_SetSfxVolume(sfx_volume)
+    S_SetMusicVolume(music_volume)
+
+    ' Free all channels for use.
+    FOR i = 0 TO NUMCHANNELS - 1
+        c_sfx[i] = 0
+    NEXT i
+
+    ' No sounds are playing, and they are not mus_paused.
+    mus_paused = 0
 ENDSUB

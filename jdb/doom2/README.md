@@ -112,21 +112,17 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 | `f_finale.jdb` | f_finale.c | the text and the picture at the end of an episode |
 | `f_wipe.jdb` | f_wipe.c | the melting screen |
 | `m_menu.jdb` | m_menu.c | the menus and the function keys |
-
-Not ported yet. These modules exist with the functions other modules call,
-and the functions do nothing:
-
-| Module | C file | Functions | Phase |
-|---|---|---|---|
-| `s_sound.jdb` | s_sound.c | `S_StartSound`, `S_StartSectorSound`, `S_StopSound` | P8 |
+| `s_sound.jdb` | s_sound.c | the eight channels: volume by distance, stereo by the side, priorities; which music plays |
+| `i_sound.jdb` | i_sound.c | the mixer: 8 bit samples of the sound lumps at 11025 Hz into a stereo queue |
+| `i_music.jdb` | (DMX) | plays the MUS scores of the WAD on the synthesizer of the language |
+| `sounds.jdb` | sounds.c | generated: the names, priorities and links of the sounds, the names of the music |
 
 Not ported in files that are otherwise there:
 
 - The actions of the monsters only DOOM II has (`A_VileChase`, `A_Tracer`,
   `A_FatAttack1`, `A_PainAttack`, `A_BrainSpit` and the like): a state that
   asks for one stops the program.
-- Savegames (the menu lists them and says so), recording a demo, the
-  sound volumes of the menu (kept, nothing plays yet).
+- Savegames (the menu lists them and says so), recording a demo.
 - The chat, the intermission and the automap arrows of net games, and
   everything of DOOM II in the intermission and the finale.
 - The quit messages: the menu always asks the plain question.
@@ -150,6 +146,17 @@ Where the port leaves the original on purpose:
   original walks a state machine over scrambled key codes (m_cheat.c).
 - The wipe reads the columns of the two pictures where they are instead
   of turning the pictures on their side first.
+- Music is not General MIDI: each MIDI channel is a track of the
+  synthesizer of the language with a waveform and an envelope picked by
+  the family of the instrument, the percussion its built-in drum kit.
+  The events of a score are played once a tic, four 140ths of a second
+  at a time.
+- The mixer follows i_sound.c of the Linux release, with three changes:
+  a sound that plays follows its source in volume and side (the Linux
+  release leaves that out, DOS did it); the rate a sound was recorded
+  at is honoured; the volume of 0 to 15 is taken times 8 into the
+  volume table of 128 steps. A sound is over when its time is, whether
+  a device plays it or not.
 
 ## Running the checks
 
@@ -172,6 +179,8 @@ build/jdBasic.exe jdb/doom2/test_p6.jdb
 build/jdBasic.exe -c jdb/doom2/test_p6.jdb && jdb/doom2/test_p6.exe
 build/jdBasic.exe jdb/doom2/test_p7.jdb
 build/jdBasic.exe -c jdb/doom2/test_p7.jdb && jdb/doom2/test_p7.exe
+build/jdBasic.exe jdb/doom2/test_p8.jdb
+build/jdBasic.exe -c jdb/doom2/test_p8.jdb && jdb/doom2/test_p8.exe
 ```
 
 `test_p0` covers fixed point, random numbers and the generated tables.
@@ -204,6 +213,11 @@ keys, the cheats, the status bar and the automap against hashes of
 pictures that were looked at, the way over the intermission to the next
 and the secret level, the finale, and one round of the title loop with
 its four demos (25 seconds interpreted).
+`test_p8` checks sound and music without a device: the samples the mixer
+makes against the bytes of the lump and volumes worked out by hand, volume
+and side by the place of the source, the channels, and every score of the
+music read to its end mark. What it sounds like is for the ear:
+`soundtest.exe` plays every sound and a piece of music.
 
 Looking at the data (title picture, wall textures, flats, sprites, the lines
 of E1M1); with a folder argument each page is saved as a PNG:
@@ -236,8 +250,10 @@ jdb/doom2/doom.exe [episode map [skill]]
 
 ```
 build/jdBasic.exe jdb/doom2/tools/gen_data.jdb     regenerate tables.jdb and info.jdb
+build/jdBasic.exe jdb/doom2/tools/gen_sounds.jdb   regenerate sounds.jdb
 build/jdBasic.exe jdb/doom2/tools/ref_p1.jdb       print the reference numbers of test_p1
 build/jdBasic.exe jdb/doom2/walk.jdb "f70 l32 F80"  walk player 1 by a script and print where he is
 build/jdBasic.exe -c jdb/doom2/sweep.jdb           then sweep.exe: trigger every special line of every level
 build/jdBasic.exe -c jdb/doom2/playdemo.jdb        then playdemo.exe DEMO1 [show | folder]: play a demo of the WAD
+build/jdBasic.exe -c jdb/doom2/soundtest.jdb       then soundtest.exe [seconds] [music] [volume]: play every sound, then music
 ```

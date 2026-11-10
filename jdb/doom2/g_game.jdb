@@ -26,6 +26,7 @@ IMPORT WI_STUFF
 IMPORT F_FINALE
 IMPORT M_MENU
 IMPORT D_MAIN
+IMPORT S_SOUND
 
 ' Key codes of doomdef.h; letters and digits are their ASCII codes.
 EXPORT CONST KEY_RIGHTARROW = $AE
@@ -790,7 +791,14 @@ EXPORT SUB G_Ticker()
 
             ' Check for special buttons; saving a game is not ported.
             buttons = CLNG(D_PLAYER.player_cmd_buttons[i])
-            IF (buttons BAND DOOMDEF.BT_SPECIAL) <> 0 AND (buttons BAND DOOMDEF.BT_SPECIALMASK) = 1 THEN DOOMSTAT.paused = DOOMSTAT.paused BXOR 1
+            IF (buttons BAND DOOMDEF.BT_SPECIAL) <> 0 AND (buttons BAND DOOMDEF.BT_SPECIALMASK) = 1 THEN
+                DOOMSTAT.paused = DOOMSTAT.paused BXOR 1
+                IF DOOMSTAT.paused <> 0 THEN
+                    S_SOUND.S_PauseSound()
+                ELSE
+                    S_SOUND.S_ResumeSound()
+                ENDIF
+            ENDIF
         ENDIF
     NEXT i
 

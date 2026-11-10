@@ -21,6 +21,8 @@ IMPORT I_VIDEO
 IMPORT G_GAME
 IMPORT D_MAIN
 IMPORT M_MENU
+IMPORT D_PLAYER
+IMPORT S_SOUND
 
 DIM running AS INTEGER = 1
 
@@ -110,6 +112,7 @@ IF LEN(cmd_args) > 3 THEN start_skill = CLNG(VAL(cmd_args[3]))
 
 I_VIDEO.I_InitGraphics(3)
 D_MAIN.D_DoomMain()
+S_SOUND.S_Init(S_SOUND.snd_SfxVolume, S_SOUND.snd_MusicVolume)
 ON "QUIT" CALL HandleQuit@
 ON "KEYDOWN" CALL HandleKeyDown@
 ON "KEYUP" CALL HandleKeyUp@
@@ -131,6 +134,9 @@ DO WHILE running = 1 AND M_MENU.quit_requested = 0
     IF DOOMSTAT.advancedemo <> 0 THEN D_MAIN.D_DoAdvanceDemo()
     M_MENU.M_Ticker()
     G_GAME.G_Ticker()
+
+    ' Move positional sounds.
+    S_SOUND.S_UpdateSounds(CLNG(D_PLAYER.player_mo[DOOMSTAT.consoleplayer]))
 
     ' Update display, next frame, with current state.
     D_MAIN.D_Display()

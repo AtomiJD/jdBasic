@@ -473,6 +473,7 @@ ENDSUB
 EXPORT SUB WI_Ticker()
     ' Counter for general background animation.
     bcnt = bcnt + 1
+    IF bcnt = 1 THEN S_SOUND.S_ChangeMusic(INFO.MUS_INTER, 1)
 
     WI_checkForAccelerate()
 

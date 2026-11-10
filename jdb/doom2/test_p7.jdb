@@ -176,21 +176,6 @@ Eq("menu: closed again", DOOMSTAT.menuactive, 0)
 ' ---- the status bar ----------------------------------------------------------------
 DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
 Tics(20)
-FillScreen(0, 0)
-ST_STUFF.ST_Drawer(0)
-Eq("status bar: nothing above it", RowsHash(0, 167), 0)
-DIM bar_start AS INTEGER = RowsHash(168, 199)
-Eq("status bar: at the start of E1M1", bar_start, 358363540)
-' Fewer bullets and health change the picture, and the same values give
-' the same picture again.
-D_PLAYER.player_ammo[DOOMDEF.AM_CLIP] = 7
-D_PLAYER.player_health[0] = 35
-ST_STUFF.ST_Drawer(0)
-Eq("status bar: 7 bullets, 35 health", RowsHash(168, 199), 75972482)
-D_PLAYER.player_ammo[DOOMDEF.AM_CLIP] = 50
-D_PLAYER.player_health[0] = 100
-Tics(40)
-ST_STUFF.ST_Drawer(0)
 ' The face looks left, ahead or right at random, so only the rest of the
 ' bar is compared: the rows are hashed with the face painted over.
 DIM y AS INTEGER
@@ -202,6 +187,23 @@ SUB BlankFace()
         NEXT x
     NEXT y
 ENDSUB
+FillScreen(0, 0)
+ST_STUFF.ST_Drawer(0)
+Eq("status bar: nothing above it", RowsHash(0, 167), 0)
+BlankFace()
+DIM bar_start AS INTEGER = RowsHash(168, 199)
+Eq("status bar: at the start of E1M1", bar_start, 500074426)
+' Fewer bullets and health change the picture, and the same values give
+' the same picture again.
+D_PLAYER.player_ammo[DOOMDEF.AM_CLIP] = 7
+D_PLAYER.player_health[0] = 35
+ST_STUFF.ST_Drawer(0)
+BlankFace()
+Eq("status bar: 7 bullets, 35 health", RowsHash(168, 199), 217683368)
+D_PLAYER.player_ammo[DOOMDEF.AM_CLIP] = 50
+D_PLAYER.player_health[0] = 100
+Tics(40)
+ST_STUFF.ST_Drawer(0)
 BlankFace()
 DIM bar_noface AS INTEGER = RowsHash(168, 199)
 D_PLAYER.player_ammo[DOOMDEF.AM_CLIP] = 49

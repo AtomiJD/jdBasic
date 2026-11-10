@@ -1,6 +1,6 @@
-' The menus: new game, options, the help pages, quitting, and the function
-' keys (m_menu.c). Loading and saving a game are listed but not ported; the
-' sound volumes are kept but nothing plays yet.
+' The menus: new game, options, the sound volumes, the help pages,
+' quitting, and the function keys (m_menu.c). Loading and saving a game
+' are listed but not ported.
 
 EXPORT MODULE M_MENU
 
@@ -89,8 +89,6 @@ DIM epi AS INTEGER = 0
 EXPORT DIM detailLevel AS INTEGER = 0
 EXPORT DIM screenSize AS INTEGER = 7
 EXPORT DIM screenblocks AS INTEGER = 10
-EXPORT DIM snd_SfxVolume AS INTEGER = 8
-EXPORT DIM snd_MusicVolume AS INTEGER = 8
 
 ' ---- text -----------------------------------------------------------------------
 
@@ -259,11 +257,11 @@ SUB M_Choose(choice AS INTEGER)
         M_SetupNextMenu(MENU_MAIN)
     ELSEIF currentMenu = MENU_SOUND THEN
         IF itemOn = 0 THEN
-            IF choice = 0 AND snd_SfxVolume > 0 THEN snd_SfxVolume = snd_SfxVolume - 1
-            IF choice = 1 AND snd_SfxVolume < 15 THEN snd_SfxVolume = snd_SfxVolume + 1
+            IF choice = 0 AND S_SOUND.snd_SfxVolume > 0 THEN S_SOUND.S_SetSfxVolume(S_SOUND.snd_SfxVolume - 1)
+            IF choice = 1 AND S_SOUND.snd_SfxVolume < 15 THEN S_SOUND.S_SetSfxVolume(S_SOUND.snd_SfxVolume + 1)
         ELSEIF itemOn = 2 THEN
-            IF choice = 0 AND snd_MusicVolume > 0 THEN snd_MusicVolume = snd_MusicVolume - 1
-            IF choice = 1 AND snd_MusicVolume < 15 THEN snd_MusicVolume = snd_MusicVolume + 1
+            IF choice = 0 AND S_SOUND.snd_MusicVolume > 0 THEN S_SOUND.S_SetMusicVolume(S_SOUND.snd_MusicVolume - 1)
+            IF choice = 1 AND S_SOUND.snd_MusicVolume < 15 THEN S_SOUND.S_SetMusicVolume(S_SOUND.snd_MusicVolume + 1)
         ENDIF
     ENDIF
 ENDSUB
@@ -517,8 +515,8 @@ SUB M_DrawMenuHead()
         ENDIF
     ELSEIF currentMenu = MENU_SOUND THEN
         V_VIDEO.V_DrawPatch(60, 38, 0, W_WAD.W_CacheLumpName("M_SVOL"))
-        M_DrawThermo(x, y + LINEHEIGHT, 16, snd_SfxVolume)
-        M_DrawThermo(x, y + LINEHEIGHT * 3, 16, snd_MusicVolume)
+        M_DrawThermo(x, y + LINEHEIGHT, 16, S_SOUND.snd_SfxVolume)
+        M_DrawThermo(x, y + LINEHEIGHT * 3, 16, S_SOUND.snd_MusicVolume)
     ENDIF
 ENDSUB
 

@@ -1,0 +1,66 @@
+' Plays every sound of the WAD in turn, then a piece of music: the check
+' of sound and music is made by ear.
+'
+'   build/jdBasic.exe -c jdb/doom2/soundtest.jdb
+'   jdb/doom2/soundtest.exe [seconds of music] [music lump] [volume 0 to 15]
+'
+' The music lump is E1M1 if left out, the volume 8.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMSTAT
+IMPORT INFO
+IMPORT SOUNDS
+IMPORT W_WAD
+IMPORT I_SOUND
+IMPORT I_MUSIC
+IMPORT S_SOUND
+
+DIM music_seconds AS INTEGER = 20
+DIM music$ AS STRING = "E1M1"
+DIM volume AS INTEGER = 8
+DIM cmd_args AS ARRAY = OS.ARGS()
+IF LEN(cmd_args) > 1 THEN music_seconds = CLNG(VAL(cmd_args[1]))
+IF LEN(cmd_args) > 2 THEN music$ = UCASE$(cmd_args[2])
+IF LEN(cmd_args) > 3 THEN volume = CLNG(VAL(cmd_args[3]))
+
+' One tic of sound, in its time.
+SUB SoundTic()
+    DIM tic_start AS DOUBLE = TICK()
+    DOOMSTAT.gametic = DOOMSTAT.gametic + 1
+    S_SOUND.S_UpdateSounds(-1)
+    DO WHILE TICK() - tic_start < 1000.0 / 35.0
+        SLEEP 1
+    LOOP
+ENDSUB
+
+D_MAIN.D_DoomMain()
+S_SOUND.S_Init(volume, volume)
+
+DIM id AS INTEGER
+DIM handle AS INTEGER
+DIM n_played AS INTEGER = 0
+DIM tics AS INTEGER
+FOR id = 1 TO INFO.NUMSFX - 1
+    IF W_WAD.W_CheckNumForName("DS" + SOUNDS.sfx_name$[id]) >= 0 THEN
+        handle = I_SOUND.I_StartSound(id, volume, 128, 128, 64)
+        tics = 0
+        DO WHILE I_SOUND.I_SoundIsPlaying(handle) <> 0
+            SoundTic()
+            tics = tics + 1
+        LOOP
+        PRINT SOUNDS.sfx_name$[id] + ": " + STR$(tics) + " tics"
+        n_played = n_played + 1
+    ENDIF
+NEXT id
+PRINT STR$(n_played) + " sounds played"
+
+I_MUSIC.I_PlaySong("D_" + music$, 1)
+DIM t AS INTEGER
+FOR t = 1 TO music_seconds * 35
+    SoundTic()
+NEXT t
+PRINT "music " + music$ + ": " + STR$(I_MUSIC.notes_played) + " notes in " + STR$(music_seconds) + " seconds"
+I_MUSIC.I_StopSong()

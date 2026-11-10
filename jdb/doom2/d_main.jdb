@@ -23,6 +23,8 @@ IMPORT WI_STUFF
 IMPORT F_FINALE
 IMPORT F_WIPE
 IMPORT M_MENU
+IMPORT INFO
+IMPORT S_SOUND
 
 ' The path of doom.wad: in the folder the environment variable DOOMWADDIR
 ' names, else in jdb/doom/wad/classic below the working directory.
@@ -106,6 +108,11 @@ EXPORT SUB D_DoAdvanceDemo()
         IF DOOMSTAT.commercial <> 0 THEN pagetic = 35 * 11
         DOOMSTAT.gamestate = DOOMSTAT.GS_DEMOSCREEN
         pagename$ = "TITLEPIC"
+        IF DOOMSTAT.commercial <> 0 THEN
+            S_SOUND.S_StartMusic(INFO.MUS_DM2TTL)
+        ELSE
+            S_SOUND.S_StartMusic(INFO.MUS_INTRO)
+        ENDIF
     ELSEIF demosequence = 1 THEN
         G_GAME.G_DeferedPlayDemo("DEMO1")
     ELSEIF demosequence = 2 THEN

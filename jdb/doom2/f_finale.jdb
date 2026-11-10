@@ -63,6 +63,7 @@ EXPORT SUB F_StartFinale()
         finaletext$ = JoinLines$(e4text)
     ENDIF
 
+    S_SOUND.S_ChangeMusic(INFO.MUS_VICTOR, 1)
     finalestage = 0
     finalecount = 0
 ENDSUB
@@ -81,6 +82,7 @@ EXPORT SUB F_Ticker()
         finalestage = 1
         ' Force a wipe.
         DOOMSTAT.wipegamestate = -1
+        IF DOOMSTAT.gameepisode = 3 THEN S_SOUND.S_StartMusic(INFO.MUS_BUNNY)
     ENDIF
 ENDSUB
 

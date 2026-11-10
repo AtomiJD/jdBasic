@@ -1,0 +1,294 @@
+' Music: the MUS lumps of the WAD are played event by event on the
+' synthesizer of the language, one track for each of the sixteen MIDI
+' channels. DOOM gave the events to the sound card through the DMX
+' library; the Linux release left music out (i_sound.c).
+'
+' A MUS score counts time in 140ths of a second. I_UpdateMusic is called
+' once a tic and plays the four of them that pass in it.
+
+EXPORT MODULE I_MUSIC
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT W_WAD
+
+EXPORT DIM music_on AS INTEGER = 0
+
+' The score: where it starts and ends in the lump pool, the event read
+' next (0 = no song), 140ths still to wait, whether it starts over at
+' its end.
+DIM score_start AS INTEGER = 0
+DIM score_end AS INTEGER = 0
+DIM score_p AS INTEGER = 0
+DIM delay_ticks AS INTEGER = 0
+DIM song_looping AS INTEGER = 0
+DIM song_paused AS INTEGER = 0
+' Events played since the song started.
+EXPORT DIM events_played AS INTEGER = 0
+EXPORT DIM notes_played AS INTEGER = 0
+' Times a score ran to the end of its lump without its end mark.
+EXPORT DIM overruns AS INTEGER = 0
+
+' Per MUS channel: the velocity of the last note, the channel volume.
+DIM chan_velocity[16] AS INTEGER
+DIM chan_volume[16] AS INTEGER
+' 0 to 15.
+DIM music_volume AS INTEGER = 8
+
+' The MIDI controllers the MUS controllers 0 to 14 stand for; 0 is the
+' instrument.
+DIM controller_map AS ARRAY = [0, 0, 1, 7, 10, 11, 91, 93, 64, 67, 120, 123, 126, 127, 121]
+
+' MUS channel 15 is percussion, MIDI channel 9; the channels from 9 on
+' move up by one.
+FUNC MidiChannel(mus_channel AS INTEGER) AS INTEGER
+    IF mus_channel = 15 THEN RETURN 9
+    IF mus_channel >= 9 THEN RETURN mus_channel + 1
+    RETURN mus_channel
+ENDFUNC
+
+' A voice for a General MIDI instrument: the synthesizer has waveforms,
+' not sampled instruments, so each family gets a waveform and an
+' envelope that comes near it.
+SUB SetInstrument(track AS INTEGER, program AS INTEGER)
+    IF track = 9 THEN RETURN
+    IF program < 8 THEN
+        ' Pianos.
+        SOUND.VOICE track, "TRIANGLE", 0.005, 0.4, 0.3, 0.2
+    ELSEIF program < 16 THEN
+        ' Bells and mallets.
+        SOUND.VOICE track, "SINE", 0.005, 0.5, 0.1, 0.3
+    ELSEIF program < 24 THEN
+        ' Organs.
+        SOUND.VOICE track, "SQUARE", 0.01, 0.05, 0.8, 0.1
+    ELSEIF program < 32 THEN
+        ' Guitars.
+        SOUND.VOICE track, "SAW", 0.005, 0.3, 0.5, 0.15
+    ELSEIF program < 40 THEN
+        ' Basses.
+        SOUND.VOICE track, "TRIANGLE", 0.005, 0.2, 0.7, 0.1
+    ELSEIF program < 56 THEN
+        ' Strings, ensembles, choirs.
+        SOUND.VOICE track, "SAW", 0.06, 0.2, 0.7, 0.3
+    ELSEIF program < 80 THEN
+        ' Brass, reeds, pipes.
+        SOUND.VOICE track, "SQUARE", 0.03, 0.1, 0.7, 0.15
+    ELSE
+        ' Synth leads, pads and the rest.
+        SOUND.VOICE track, "SAW", 0.02, 0.2, 0.6, 0.25
+    ENDIF
+ENDSUB
+
+SUB SetTrackGains()
+    DIM t AS INTEGER
+    FOR t = 0 TO 15
+        SOUND.GAIN t, 0.25 * music_volume / 15.0
+    NEXT t
+ENDSUB
+
+' Silences every channel.
+SUB AllNotesOff()
+    DIM c AS INTEGER
+    IF music_on = 0 THEN RETURN
+    FOR c = 0 TO 15
+        SOUND.MIDIIN 176 + c, 120, 0
+    NEXT c
+ENDSUB
+
+' Sets the sixteen tracks up; the sound device has to be open.
+EXPORT SUB I_InitMusic()
+    DIM t AS INTEGER
+    SOUND.ZONE(-1)
+    FOR t = 0 TO 15
+        IF t = 9 THEN
+            SOUND.KIT t, "SYNTH"
+        ELSE
+            SetInstrument(t, 0)
+        ENDIF
+        SOUND.ZONE(t, 0, 127, t + 1)
+    NEXT t
+    music_on = 1
+    SetTrackGains()
+ENDSUB
+
+EXPORT SUB I_SetMusicVolume(volume AS INTEGER)
+    music_volume = volume
+    IF music_on <> 0 THEN SetTrackGains()
+ENDSUB
+
+SUB RewindSong()
+    DIM c AS INTEGER
+    score_p = score_start
+    delay_ticks = 0
+    FOR c = 0 TO 15
+        chan_velocity[c] = 127
+        chan_volume[c] = 100
+    NEXT c
+ENDSUB
+
+' Starts the MUS lump of that name; a lump that is no MUS score plays
+' nothing.
+EXPORT SUB I_PlaySong(lump_name$ AS STRING, looping AS INTEGER)
+    AllNotesOff()
+    score_p = 0
+    events_played = 0
+    notes_played = 0
+    song_paused = 0
+    DIM lump AS INTEGER = W_WAD.W_CheckNumForName(lump_name$)
+    IF lump < 0 THEN RETURN
+    DIM size AS INTEGER = W_WAD.W_LumpLength(lump)
+    DIM start AS INTEGER = W_WAD.W_CacheLumpNum(lump)
+    ' The header: "MUS" and 26, the length of the score and where it
+    ' starts.
+    IF size < 16 THEN RETURN
+    IF CLNG(W_WAD.pool[start]) <> 77 OR CLNG(W_WAD.pool[start + 1]) <> 85 OR CLNG(W_WAD.pool[start + 2]) <> 83 OR CLNG(W_WAD.pool[start + 3]) <> 26 THEN RETURN
+    DIM score_len AS INTEGER = CLNG(W_WAD.pool[start + 4]) + CLNG(W_WAD.pool[start + 5]) * 256
+    DIM score_ofs AS INTEGER = CLNG(W_WAD.pool[start + 6]) + CLNG(W_WAD.pool[start + 7]) * 256
+    IF score_ofs >= size THEN RETURN
+    IF score_ofs + score_len > size THEN score_len = size - score_ofs
+    score_start = start + score_ofs
+    score_end = score_start + score_len
+    song_looping = looping
+    RewindSong()
+ENDSUB
+
+EXPORT SUB I_StopSong()
+    AllNotesOff()
+    score_p = 0
+ENDSUB
+
+EXPORT SUB I_PauseSong()
+    song_paused = 1
+    AllNotesOff()
+ENDSUB
+
+EXPORT SUB I_ResumeSong()
+    song_paused = 0
+ENDSUB
+
+EXPORT FUNC I_SongIsPlaying() AS INTEGER
+    IF score_p <> 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' A MIDI message for the synthesizer.
+SUB Send(status AS INTEGER, data1 AS INTEGER, data2 AS INTEGER)
+    IF music_on <> 0 THEN SOUND.MIDIIN status, data1, data2
+ENDSUB
+
+' Plays the events up to the next wait. FALSE when the score is over.
+FUNC PlayEvents() AS INTEGER
+    DIM descriptor AS INTEGER
+    DIM kind AS INTEGER
+    DIM mus_channel AS INTEGER
+    DIM channel AS INTEGER
+    DIM key AS INTEGER
+    DIM value AS INTEGER
+    DIM velocity AS INTEGER
+    DIM b AS INTEGER
+
+    DO
+        IF score_p >= score_end THEN
+            overruns = overruns + 1
+            RETURN 0
+        ENDIF
+        descriptor = CLNG(W_WAD.pool[score_p])
+        score_p = score_p + 1
+        kind = (descriptor SHR 4) BAND 7
+        mus_channel = descriptor BAND 15
+        channel = MidiChannel(mus_channel)
+        events_played = events_played + 1
+
+        IF kind = 0 THEN
+            ' Release note.
+            key = CLNG(W_WAD.pool[score_p]) BAND 127
+            score_p = score_p + 1
+            Send(128 + channel, key, 0)
+        ELSEIF kind = 1 THEN
+            ' Play note, with a new velocity for the channel if the high
+            ' bit is set.
+            key = CLNG(W_WAD.pool[score_p])
+            score_p = score_p + 1
+            IF (key BAND 128) <> 0 THEN
+                chan_velocity[mus_channel] = CLNG(W_WAD.pool[score_p]) BAND 127
+                score_p = score_p + 1
+            ENDIF
+            velocity = (CLNG(chan_velocity[mus_channel]) * CLNG(chan_volume[mus_channel])) \ 127
+            IF velocity < 1 THEN velocity = 1
+            Send(144 + channel, key BAND 127, velocity)
+            notes_played = notes_played + 1
+        ELSEIF kind = 2 THEN
+            ' Pitch wheel: 0 to 255 with 128 in the middle becomes the 14
+            ' bits of MIDI.
+            value = CLNG(W_WAD.pool[score_p])
+            score_p = score_p + 1
+            Send(224 + channel, (value BAND 1) * 64, value SHR 1)
+        ELSEIF kind = 3 THEN
+            ' System event: a controller without a value.
+            value = CLNG(W_WAD.pool[score_p]) BAND 127
+            score_p = score_p + 1
+            IF value >= 10 AND value <= 14 THEN Send(176 + channel, CLNG(controller_map[value]), 0)
+        ELSEIF kind = 4 THEN
+            ' Change controller.
+            key = CLNG(W_WAD.pool[score_p]) BAND 127
+            value = CLNG(W_WAD.pool[score_p + 1]) BAND 127
+            score_p = score_p + 2
+            IF key = 0 THEN
+                ' The instrument.
+                IF music_on <> 0 THEN SetInstrument(channel, value)
+            ELSEIF key = 3 THEN
+                ' The volume of the channel scales its notes.
+                chan_volume[mus_channel] = value
+            ELSEIF key < 10 THEN
+                Send(176 + channel, CLNG(controller_map[key]), value)
+            ENDIF
+        ELSEIF kind = 6 THEN
+            ' Score end.
+            RETURN 0
+        ELSE
+            ' Kinds 5 and 7 are not used; 7 carries one byte.
+            IF kind = 7 THEN score_p = score_p + 1
+        ENDIF
+
+        ' The last event of a group is followed by the time to wait, seven
+        ' bits a byte.
+        IF (descriptor BAND 128) <> 0 THEN
+            delay_ticks = 0
+            DO
+                IF score_p >= score_end THEN RETURN 0
+                b = CLNG(W_WAD.pool[score_p])
+                score_p = score_p + 1
+                delay_ticks = delay_ticks * 128 + (b BAND 127)
+            LOOP WHILE (b BAND 128) <> 0
+            RETURN 1
+        ENDIF
+    LOOP
+ENDFUNC
+
+' Called once a tic: plays the 140ths of a second that pass in it.
+EXPORT SUB I_UpdateMusic()
+    DIM k AS INTEGER
+    DIM rewinds AS INTEGER = 0
+    IF score_p = 0 OR song_paused <> 0 THEN RETURN
+    FOR k = 1 TO 4
+        IF delay_ticks > 0 THEN
+            delay_ticks = delay_ticks - 1
+        ELSE
+            DO WHILE delay_ticks = 0
+                IF PlayEvents() = 0 THEN
+                    ' The score is over.
+                    rewinds = rewinds + 1
+                    IF song_looping <> 0 AND rewinds < 2 THEN
+                        RewindSong()
+                    ELSE
+                        score_p = 0
+                        AllNotesOff()
+                        RETURN
+                    ENDIF
+                ENDIF
+            LOOP
+            delay_ticks = delay_ticks - 1
+        ENDIF
+    NEXT k
+ENDSUB

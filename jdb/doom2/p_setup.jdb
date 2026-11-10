@@ -20,6 +20,7 @@ IMPORT P_TICK
 IMPORT P_MOBJ
 IMPORT P_SPEC
 IMPORT P_SWITCH
+IMPORT S_SOUND
 IMPORT R_THINGS
 
 EXPORT CONST MAXVERTEXES = 32768
@@ -488,6 +489,9 @@ EXPORT SUB P_SetupLevel(episode AS INTEGER, map_num AS INTEGER, playermask AS IN
     DOOMSTAT.totalkills = 0
     DOOMSTAT.totalitems = 0
     DOOMSTAT.totalsecret = 0
+
+    ' Make sure all sounds are stopped before the level's data goes.
+    S_SOUND.S_Start()
     FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
         D_PLAYER.player_killcount[i] = 0
         D_PLAYER.player_secretcount[i] = 0

@@ -1,0 +1,299 @@
+' Checks on sound and music without a sound device: the samples the mixer
+' makes are compared with the bytes of the lump and the volume table
+' worked out by hand; volume and stereo separation with the distance and
+' the side of the source; the channels; the scores of the music are read
+' to their end mark. What comes out of the loudspeakers is not checked
+' here.
+'
+' Run from the repository root, interpreted or compiled with -c.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT INFO
+IMPORT SOUNDS
+IMPORT W_WAD
+IMPORT P_MOBJ
+IMPORT P_SETUP
+IMPORT G_GAME
+IMPORT I_SOUND
+IMPORT I_MUSIC
+IMPORT S_SOUND
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+IF NOT FILE.EXISTS(D_MAIN.IdentifyVersion$()) THEN
+    PRINT "SKIP: " + D_MAIN.IdentifyVersion$() + " not found"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+DIM FU AS INTEGER = M_FIXED.FRACUNIT
+DIM i AS INTEGER
+
+SUB Tics(n AS INTEGER)
+    DIM t AS INTEGER
+    FOR t = 1 TO n
+        G_GAME.cmd_forwardmove = 0
+        G_GAME.cmd_sidemove = 0
+        G_GAME.cmd_angleturn = 0
+        G_GAME.cmd_buttons = 0
+        G_GAME.G_Ticker()
+        S_SOUND.S_UpdateSounds(CLNG(D_PLAYER.player_mo[0]))
+    NEXT t
+ENDSUB
+
+' The channel of the mixer that plays the sound, -1 for none.
+FUNC ChannelOf(sfx_id AS INTEGER) AS INTEGER
+    DIM c AS INTEGER
+    FOR c = 0 TO I_SOUND.NUM_CHANNELS - 1
+        IF CLNG(I_SOUND.ch_pos[c]) <> 0 AND CLNG(I_SOUND.ch_id[c]) = sfx_id THEN RETURN c
+    NEXT c
+    RETURN -1
+ENDFUNC
+
+FUNC BusyChannels() AS INTEGER
+    DIM c AS INTEGER
+    DIM n AS INTEGER = 0
+    FOR c = 0 TO I_SOUND.NUM_CHANNELS - 1
+        IF CLNG(I_SOUND.ch_pos[c]) <> 0 THEN n = n + 1
+    NEXT c
+    RETURN n
+ENDFUNC
+
+D_MAIN.D_DoomMain()
+
+' ---- the tables -----------------------------------------------------------------
+Eq("sounds in the table", LEN(SOUNDS.sfx_name$), INFO.NUMSFX)
+Eq("pieces of music in the table", LEN(SOUNDS.mus_name$), INFO.NUMMUSIC)
+Eq("the pistol is sound 1", IIF(SOUNDS.sfx_name$[INFO.SFX_PISTOL] = "PISTOL", 1, 0), 1)
+Eq("the chaingun plays the pistol", CLNG(SOUNDS.sfx_link[INFO.SFX_CHGUN]), INFO.SFX_PISTOL)
+Eq("at a higher pitch", CLNG(SOUNDS.sfx_pitch[INFO.SFX_CHGUN]), 150)
+Eq("music of E1M1", IIF(SOUNDS.mus_name$[INFO.MUS_E1M1] = "E1M1", 1, 0), 1)
+
+' Every sound a thing of DOOM makes, and every sound the code names up to
+' the last one of DOOM, has its lump in the WAD.
+DIM missing AS INTEGER = 0
+DIM mtype AS INTEGER
+DIM snd AS INTEGER
+FUNC SoundOf(thing_type AS INTEGER, which AS INTEGER) AS INTEGER
+    IF which = 0 THEN RETURN CLNG(INFO.mi_seesound[thing_type])
+    IF which = 1 THEN RETURN CLNG(INFO.mi_attacksound[thing_type])
+    IF which = 2 THEN RETURN CLNG(INFO.mi_painsound[thing_type])
+    IF which = 3 THEN RETURN CLNG(INFO.mi_deathsound[thing_type])
+    RETURN CLNG(INFO.mi_activesound[thing_type])
+ENDFUNC
+DIM f AS INTEGER
+DIM doom_things AS ARRAY = [INFO.MT_SHOTGUY, INFO.MT_TROOP, INFO.MT_SERGEANT, INFO.MT_SHADOWS, INFO.MT_HEAD, INFO.MT_BRUISER, INFO.MT_SKULL, INFO.MT_SPIDER, INFO.MT_CYBORG, INFO.MT_POSSESSED, INFO.MT_PLAYER, INFO.MT_BARREL, INFO.MT_TROOPSHOT, INFO.MT_HEADSHOT, INFO.MT_ROCKET, INFO.MT_PLASMA, INFO.MT_BFG, INFO.MT_BRUISERSHOT, INFO.MT_TFOG, INFO.MT_IFOG]
+FOR EACH mtype IN doom_things
+    FOR f = 0 TO 4
+        snd = SoundOf(mtype, f)
+        IF snd <> 0 ANDALSO W_WAD.W_CheckNumForName("DS" + SOUNDS.sfx_name$[snd]) < 0 THEN
+            missing = missing + 1
+            PRINT "no lump for " + SOUNDS.sfx_name$[snd]
+        ENDIF
+    NEXT f
+NEXT mtype
+Eq("sounds of the things of DOOM without a lump", missing, 0)
+DIM with_lump AS INTEGER = 0
+FOR i = 1 TO INFO.NUMSFX - 1
+    IF W_WAD.W_CheckNumForName("DS" + SOUNDS.sfx_name$[i]) >= 0 THEN with_lump = with_lump + 1
+NEXT i
+' The table has 108 sounds; the 41 without a lump belong to DOOM II.
+Eq("sounds with a lump in the WAD", with_lump, 67)
+
+' ---- the mixer ------------------------------------------------------------------
+' The pistol at full volume in the middle. Volume 15 is 120 of 127 for
+' the mixer; a separation of 128 takes (120 * 129 * 129) >> 16 = 30 from
+' it on either side. A sample b then gives 90 * (b - 128) * 256 / 127.
+DOOMSTAT.playeringame[0] = 1
+DOOMSTAT.nomonsters = 1
+G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, 1, 1)
+DIM lump AS INTEGER = W_WAD.W_GetNumForName("DSPISTOL")
+DIM raw AS INTEGER = W_WAD.W_CacheLumpNum(lump)
+DIM n_samples AS INTEGER = W_WAD.PoolLong(raw + 4)
+Eq("pistol: recorded at 11025 Hz", CLNG(W_WAD.pool[raw + 2]) + CLNG(W_WAD.pool[raw + 3]) * 256, 11025)
+Eq("pistol: the lump holds its samples", IIF(n_samples > 1000 AND n_samples <= W_WAD.W_LumpLength(lump) - 8, 1, 0), 1)
+
+DIM handle AS INTEGER = I_SOUND.I_StartSound(INFO.SFX_PISTOL, 15, 128, 128, 64)
+Eq("mixer: playing", I_SOUND.I_SoundIsPlaying(handle), 1)
+I_SOUND.I_Mix(200)
+DIM wrong AS INTEGER = 0
+DIM loudest AS INTEGER = 0
+DIM b AS INTEGER
+DIM want AS INTEGER
+FOR i = 0 TO 199
+    b = CLNG(W_WAD.pool[raw + 8 + i])
+    want = (90 * (b - 128) * 256) \ 127
+    IF CLNG(I_SOUND.mix_left[i]) <> want OR CLNG(I_SOUND.mix_right[i]) <> want THEN wrong = wrong + 1
+    IF CLNG(ABS(want)) > loudest THEN loudest = CLNG(ABS(want))
+NEXT i
+Eq("mixer: 200 samples as worked out", wrong, 0)
+Eq("mixer: the pistol is not silence", IIF(loudest > 2000, 1, 0), 1)
+' The next samples go on where the first 200 ended.
+I_SOUND.I_Mix(1)
+Eq("mixer: goes on", CLNG(I_SOUND.mix_left[0]), (90 * (CLNG(W_WAD.pool[raw + 8 + 200]) - 128) * 256) \ 127)
+
+' Two sounds add up.
+DIM handle2 AS INTEGER = I_SOUND.I_StartSound(INFO.SFX_SHOTGN, 15, 128, 128, 64)
+DIM raw2 AS INTEGER = W_WAD.W_CacheLumpNum(W_WAD.W_GetNumForName("DSSHOTGN"))
+I_SOUND.I_Mix(1)
+want = (90 * (CLNG(W_WAD.pool[raw + 8 + 201]) - 128) * 256) \ 127 + (90 * (CLNG(W_WAD.pool[raw2 + 8]) - 128) * 256) \ 127
+Eq("mixer: two sounds add up", CLNG(I_SOUND.mix_left[0]), want)
+I_SOUND.I_StopSound(handle)
+I_SOUND.I_StopSound(handle2)
+Eq("mixer: stopped", I_SOUND.I_SoundIsPlaying(handle), 0)
+I_SOUND.I_Mix(1)
+Eq("mixer: silence", CLNG(I_SOUND.mix_left[0]), 0)
+
+' All the way to the left: the left side keeps its 120, the right loses
+' (120 * 256 * 256) >> 16 = 120.
+handle = I_SOUND.I_StartSound(INFO.SFX_PISTOL, 15, 0, 128, 64)
+DIM slot AS INTEGER = ChannelOf(INFO.SFX_PISTOL)
+Eq("separation: left", CLNG(I_SOUND.ch_left[slot]), 120 * 256)
+Eq("separation: right", CLNG(I_SOUND.ch_right[slot]), 0)
+' Half volume.
+I_SOUND.I_UpdateSoundParams(handle, 8, 128, 128)
+Eq("volume 8: 64 less 16", CLNG(I_SOUND.ch_left[slot]), 48 * 256)
+
+' The sound is over when its samples are played: at 11025 Hz a tic has
+' 315 of them.
+DIM last_tic AS INTEGER = 0
+FOR i = 1 TO 200
+    Tics(1)
+    IF last_tic = 0 AND I_SOUND.I_SoundIsPlaying(handle) = 0 THEN last_tic = i
+NEXT i
+Eq("pistol: over after its length in tics", last_tic, (n_samples * 35) \ 11025 + 1)
+
+' An octave up takes half the time.
+handle = I_SOUND.I_StartSound(INFO.SFX_PISTOL, 15, 128, 192, 64)
+last_tic = 0
+FOR i = 1 TO 200
+    Tics(1)
+    IF last_tic = 0 AND I_SOUND.I_SoundIsPlaying(handle) = 0 THEN last_tic = i
+NEXT i
+Eq("pistol an octave up: half as long", last_tic, ((n_samples \ 2) * 35) \ 11025 + 1)
+
+' ---- distance and side ---------------------------------------------------------
+' The player of E1M1 looks north. A barrel 100 units in front is close:
+' full volume, and a hair to the right of the middle, as the angle to
+' something straight ahead comes out one step short of a full turn:
+' separation 129. 100 units to his left it is as loud and on the left:
+' the sine of a quarter turn is one short of 1, the separation 33.
+DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+DIM px AS INTEGER = CLNG(P_MOBJ.mobj_x[mo])
+DIM py AS INTEGER = CLNG(P_MOBJ.mobj_y[mo])
+Eq("the player looks north", CLNG(P_MOBJ.mobj_angle[mo]), M_FIXED.ANG90)
+Tics(40)
+DIM ahead AS INTEGER = P_MOBJ.P_SpawnMobj(px, py + 100 * FU, DOOMDEF.ONFLOORZ, INFO.MT_BARREL)
+S_SOUND.S_StartSound(ahead, INFO.SFX_BAREXP)
+slot = ChannelOf(INFO.SFX_BAREXP)
+Eq("ahead: a channel", IIF(slot >= 0, 1, 0), 1)
+' Volume 8 is 64 for the mixer; the left loses (64 * 130 * 130) >> 16 = 16,
+' the right (64 * 127 * 127) >> 16 = 15.
+Eq("ahead: left", CLNG(I_SOUND.ch_left[slot]), 48 * 256)
+Eq("ahead: right", CLNG(I_SOUND.ch_right[slot]), 49 * 256)
+S_SOUND.S_StopSound(ahead)
+Eq("ahead: stopped", ChannelOf(INFO.SFX_BAREXP), -1)
+
+DIM to_the_left AS INTEGER = P_MOBJ.P_SpawnMobj(px - 100 * FU, py, DOOMDEF.ONFLOORZ, INFO.MT_BARREL)
+S_SOUND.S_StartSound(to_the_left, INFO.SFX_BAREXP)
+slot = ChannelOf(INFO.SFX_BAREXP)
+' Separation 33: left 64 - (64 * 34 * 34 >> 16) = 63, right
+' 64 - (64 * 223 * 223 >> 16) = 16.
+Eq("to the left: left", CLNG(I_SOUND.ch_left[slot]), 63 * 256)
+Eq("to the left: right", CLNG(I_SOUND.ch_right[slot]), 16 * 256)
+S_SOUND.S_StopSound(to_the_left)
+
+' 680 units away the volume is 8 * (1200 - 680) / 1040 = 4; beyond 1200
+' nothing is heard.
+DIM far AS INTEGER = P_MOBJ.P_SpawnMobj(px, py + 680 * FU, DOOMDEF.ONFLOORZ, INFO.MT_BARREL)
+S_SOUND.S_StartSound(far, INFO.SFX_BAREXP)
+slot = ChannelOf(INFO.SFX_BAREXP)
+Eq("far: volume 4 is 32 less 8", CLNG(I_SOUND.ch_left[slot]), 24 * 256)
+S_SOUND.S_StopSound(far)
+DIM too_far AS INTEGER = P_MOBJ.P_SpawnMobj(px, py + 1300 * FU, DOOMDEF.ONFLOORZ, INFO.MT_BARREL)
+S_SOUND.S_StartSound(too_far, INFO.SFX_BAREXP)
+Eq("too far: not played", ChannelOf(INFO.SFX_BAREXP), -1)
+
+' A thing has one sound at a time, and takes it with it when it is removed.
+S_SOUND.S_StartSound(ahead, INFO.SFX_BAREXP)
+S_SOUND.S_StartSound(ahead, INFO.SFX_SLOP)
+Eq("one sound a thing: the first is cut", ChannelOf(INFO.SFX_BAREXP), -1)
+Eq("one sound a thing: the second plays", IIF(ChannelOf(INFO.SFX_SLOP) >= 0, 1, 0), 1)
+P_MOBJ.P_RemoveMobj(ahead)
+Eq("removed thing: silent", ChannelOf(INFO.SFX_SLOP), -1)
+
+' Eight channels: the ninth sound finds none unless one may be taken.
+DIM things[9] AS INTEGER
+FOR i = 0 TO 8
+    things[i] = P_MOBJ.P_SpawnMobj(px + (i - 4) * 8 * FU, py + 64 * FU, DOOMDEF.ONFLOORZ, INFO.MT_BARREL)
+NEXT i
+FOR i = 0 TO 7
+    S_SOUND.S_StartSound(CLNG(things[i]), INFO.SFX_BAREXP)
+NEXT i
+Eq("channels: eight are busy", BusyChannels(), 8)
+S_SOUND.S_StartSound(CLNG(things[8]), INFO.SFX_SLOP)
+Eq("channels: still eight", BusyChannels(), 8)
+Tics(120)
+Eq("channels: all free in the end", BusyChannels(), 0)
+
+' ---- music ----------------------------------------------------------------------
+Eq("music: E1M1 has its own", S_SOUND.mus_playing, INFO.MUS_E1M1)
+Eq("music: the score plays", I_MUSIC.I_SongIsPlaying(), 1)
+Eq("music: notes were played", IIF(I_MUSIC.notes_played > 100, 1, 0), 1)
+G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, 4, 1)
+Eq("music: E4M1 borrows E3M4", S_SOUND.mus_playing, INFO.MUS_E3M4)
+
+' Every score of DOOM is read to its end mark, none past the end of its
+' lump, and each has notes.
+DIM m AS INTEGER
+DIM silent AS INTEGER = 0
+DIM endless AS INTEGER = 0
+DIM total_notes AS INTEGER = 0
+DIM t AS INTEGER
+FOR m = INFO.MUS_E1M1 TO INFO.MUS_VICTOR
+    I_MUSIC.I_PlaySong("D_" + SOUNDS.mus_name$[m], 0)
+    t = 0
+    DO WHILE I_MUSIC.I_SongIsPlaying() <> 0 AND t < 35 * 60 * 20
+        I_MUSIC.I_UpdateMusic()
+        t = t + 1
+    LOOP
+    IF I_MUSIC.I_SongIsPlaying() <> 0 THEN endless = endless + 1
+    IF I_MUSIC.notes_played < 50 THEN silent = silent + 1
+    total_notes = total_notes + I_MUSIC.notes_played
+NEXT m
+Eq("music: scores read", INFO.MUS_VICTOR - INFO.MUS_E1M1 + 1, 31)
+Eq("music: scores that never end", endless, 0)
+Eq("music: scores with hardly a note", silent, 0)
+Eq("music: scores cut off before their end mark", I_MUSIC.overruns, 0)
+Eq("music: notes in all the scores", total_notes, 71623)
+
+' A looping score starts over.
+I_MUSIC.I_PlaySong("D_INTRO", 1)
+FOR t = 1 TO 35 * 60
+    I_MUSIC.I_UpdateMusic()
+NEXT t
+Eq("music: a looping score goes on", I_MUSIC.I_SongIsPlaying(), 1)
+I_MUSIC.I_StopSong()
+Eq("music: stopped", I_MUSIC.I_SongIsPlaying(), 0)
+
+PRINT ""
+PRINT "DOOM P8 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
