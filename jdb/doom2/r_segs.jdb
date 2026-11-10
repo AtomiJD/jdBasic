@@ -198,6 +198,11 @@ SUB R_RenderSegLoop()
     LOOP
 ENDSUB
 
+' Stops with an error when n_cells more do not fit into R_PLANE.openings.
+SUB CheckOpenings(n_cells AS INTEGER)
+    IF R_PLANE.lastopening + n_cells > R_PLANE.OPENINGS_START + R_PLANE.MAXOPENINGS THEN I_SYSTEM.I_Error("R_StoreWallRange: opening overflow")
+ENDSUB
+
 ' A wall segment will be drawn between the screen columns start and stopx
 ' (inclusive).
 EXPORT SUB R_StoreWallRange(start AS INTEGER, stopx AS INTEGER)
@@ -386,6 +391,7 @@ EXPORT SUB R_StoreWallRange(start AS INTEGER, stopx AS INTEGER)
         ' Room for the texture columns of a masked middle texture.
         IF side_mid <> 0 THEN
             maskedtexture = 1
+            CheckOpenings(rw_stopx - rw_x)
             maskedtexturecol = R_PLANE.lastopening - rw_x
             R_BSP.drawseg_maskedtexturecol[ds] = maskedtexturecol
             R_PLANE.lastopening = R_PLANE.lastopening + rw_stopx - rw_x
@@ -461,6 +467,7 @@ EXPORT SUB R_StoreWallRange(start AS INTEGER, stopx AS INTEGER)
     ' Save the clip rows the sprites behind this seg need.
     DIM i AS INTEGER
     IF ((silhouette BAND SIL_TOP) <> 0 OR maskedtexture <> 0) AND sprtopclip < 0 THEN
+        CheckOpenings(rw_stopx - start)
         FOR i = 0 TO rw_stopx - start - 1
             R_PLANE.openings[R_PLANE.lastopening + i] = R_PLANE.ceilingclip[start + i]
         NEXT i
@@ -468,6 +475,7 @@ EXPORT SUB R_StoreWallRange(start AS INTEGER, stopx AS INTEGER)
         R_PLANE.lastopening = R_PLANE.lastopening + rw_stopx - start
     ENDIF
     IF ((silhouette BAND SIL_BOTTOM) <> 0 OR maskedtexture <> 0) AND sprbottomclip < 0 THEN
+        CheckOpenings(rw_stopx - start)
         FOR i = 0 TO rw_stopx - start - 1
             R_PLANE.openings[R_PLANE.lastopening + i] = R_PLANE.floorclip[start + i]
         NEXT i

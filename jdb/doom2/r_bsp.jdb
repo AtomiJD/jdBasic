@@ -90,6 +90,7 @@ SUB R_ClipSolidWallSegment(first AS INTEGER, last AS INTEGER)
         IF last < CLNG(solidsegs_first[start]) - 1 THEN
             ' Entirely visible: insert a new range.
             R_SEGS.R_StoreWallRange(first, last)
+            IF newend > MAXSEGS THEN I_SYSTEM.I_Error("R_ClipSolidWallSegment: more than " + STR$(MAXSEGS) + " solid segs")
             nxt = newend
             newend = newend + 1
             DO WHILE nxt <> start

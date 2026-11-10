@@ -72,7 +72,7 @@ DIM cachedystep[200] AS INTEGER
 
 ' Draws row y of the current plane from x1 to x2.
 SUB R_MapPlane(y AS INTEGER, x1 AS INTEGER, x2 AS INTEGER)
-    IF x2 < x1 OR x1 < 0 OR x2 >= R_DRAW.viewwidth OR y < 0 OR y > R_DRAW.viewheight THEN
+    IF x2 < x1 OR x1 < 0 OR x2 >= R_DRAW.viewwidth OR y < 0 OR y >= R_DRAW.viewheight THEN
         I_SYSTEM.I_Error("R_MapPlane: " + STR$(x1) + ", " + STR$(x2) + " at " + STR$(y))
     ENDIF
     DIM distance AS INTEGER

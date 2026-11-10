@@ -72,7 +72,7 @@ ENDSUB
 
 ' Draws a horizontal run of a floor or ceiling through a colormap.
 EXPORT SUB R_DrawSpan()
-    IF ds_x2 < ds_x1 OR ds_x1 < 0 OR ds_x2 >= DOOMDEF.SCREENWIDTH OR ds_y < 0 OR ds_y > DOOMDEF.SCREENHEIGHT THEN
+    IF ds_x2 < ds_x1 OR ds_x1 < 0 OR ds_x2 >= DOOMDEF.SCREENWIDTH OR ds_y < 0 OR ds_y >= DOOMDEF.SCREENHEIGHT THEN
         I_SYSTEM.I_Error("R_DrawSpan: " + STR$(ds_x1) + " to " + STR$(ds_x2) + " at " + STR$(ds_y))
     ENDIF
     DIM xfrac AS INTEGER = ds_xfrac
