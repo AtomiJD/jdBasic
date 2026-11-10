@@ -32,6 +32,8 @@ tools/             build_book, check_recipes, api_check, appendix, mdbook, prose
                    preview (most with a test), figures/, preview/render.html
 fonts/             Source Serif 4 and Source Code Pro (SIL Open Font License)
 out/               build output, not in git
+release/           the screen PDF as handed out, and the retest list of
+                   the review's major findings (German, for the tester)
 ```
 
 ## Building
