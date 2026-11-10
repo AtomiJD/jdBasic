@@ -9,7 +9,7 @@
 // was the source of the C4005 warning seen in every TU that included
 // version.h.
 #ifndef JDBASIC_VERSION
-#define JDBASIC_VERSION    "1.2"
+#define JDBASIC_VERSION    "1.3"
 #endif
 #ifndef JDBASIC_BUILD_NUM
 #define JDBASIC_BUILD_NUM  "0"
