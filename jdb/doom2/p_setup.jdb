@@ -523,11 +523,20 @@ EXPORT SUB P_SetupLevel(episode AS INTEGER, map_num AS INTEGER, playermask AS IN
 
     DOOMSTAT.bodyqueslot = 0
     DOOMSTAT.deathmatch_p = 0
+    IF DOOMSTAT.deathmatch <> 0 THEN I_SYSTEM.I_Error("P_SetupLevel: deathmatch is not ported yet")
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        D_PLAYER.player_mo[i] = -1
+    NEXT i
     P_LoadThings(lumpnum + DOOMDEF.ML_THINGS)
 
     ' Clear the special respawning queue.
     P_MOBJ.iquehead = 0
     P_MOBJ.iquetail = 0
+
+    ' A player in the game has to have found his start.
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        IF CLNG(DOOMSTAT.playeringame[i]) <> 0 AND CLNG(D_PLAYER.player_mo[i]) < 0 THEN I_SYSTEM.I_Error("P_SetupLevel: no start for player " + STR$(i + 1) + " in " + lumpname$)
+    NEXT i
 
     ' Set up the world state.
     P_SPEC.P_SpawnSpecials()

@@ -603,6 +603,8 @@ EXPORT SUB P_SpawnMapThing(n AS INTEGER)
         RETURN
     ENDIF
 
+    IF mt_type <= 0 THEN I_SYSTEM.I_Error("P_SpawnMapThing: Unknown type " + STR$(mt_type) + " at (" + STR$(CLNG(P_SETUP.mapthing_x[n])) + ", " + STR$(CLNG(P_SETUP.mapthing_y[n])) + ")")
+
     ' Check for players specially.
     IF mt_type <= 4 THEN
         ' Save spots for respawning in network games.

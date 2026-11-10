@@ -30,6 +30,7 @@ IF LEN(cmd_args) > 1 THEN script$ = cmd_args[1]
 IF LEN(cmd_args) > 2 THEN episode = CLNG(VAL(cmd_args[2]))
 IF LEN(cmd_args) > 3 THEN map_num = CLNG(VAL(cmd_args[3]))
 IF LEN(cmd_args) > 4 THEN every = CLNG(VAL(cmd_args[4]))
+IF every < 1 THEN every = 1
 
 SUB Report(label$ AS STRING)
     DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
