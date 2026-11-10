@@ -8,6 +8,7 @@
 OPTION "EXPLICIT"
 OPTION "NOPAUSE"
 
+IMPORT D_MAIN
 IMPORT DOOMDEF
 IMPORT W_WAD
 IMPORT R_DATA
@@ -60,7 +61,7 @@ ENDSUB
 
 ON "QUIT" CALL HandleQuit@
 
-W_WAD.W_Init("jdb/doom/wad/doom.wad")
+W_WAD.W_Init(D_MAIN.IdentifyVersion$())
 R_DATA.R_InitData()
 P_SETUP.P_SetupLevel("E1M1")
 V_VIDEO.V_Init()

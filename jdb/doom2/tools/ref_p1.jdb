@@ -8,7 +8,7 @@
 
 OPTION "NOPAUSE"
 
-DIM wad_path$ = "jdb/doom/wad/doom.wad"
+DIM wad_path$ = "jdb/doom/wad/classic/doom.wad"
 DIM level$ = "E1M1"
 DIM cmd_args = OS.ARGS()
 IF LEN(cmd_args) > 1 THEN wad_path$ = cmd_args[1]

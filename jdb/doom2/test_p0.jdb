@@ -2,11 +2,12 @@
 ' tables of tables.c and info.c, and the WAD directory.
 '
 ' Run from the repository root, interpreted or compiled with -c. The WAD part
-' is skipped when jdb/doom/wad/doom.wad is not there.
+' is skipped when doom.wad is not there.
 
 OPTION "EXPLICIT"
 OPTION "NOPAUSE"
 
+IMPORT D_MAIN
 IMPORT M_FIXED
 IMPORT M_RANDOM
 IMPORT TABLES
@@ -149,7 +150,7 @@ Eq("mi_seesound in range", CountOutside(INFO.mi_seesound, 0, INFO.NUMSFX - 1), 0
 
 ' ---- w_wad ------------------------------------------------------------------
 
-DIM wad_path$ AS STRING = "jdb/doom/wad/doom.wad"
+DIM wad_path$ AS STRING = D_MAIN.IdentifyVersion$()
 IF FILE.EXISTS(wad_path$) THEN
     W_WAD.W_Init(wad_path$)
     Eq("WAD has lumps", W_WAD.W_NumLumps() > 1000, TRUE)

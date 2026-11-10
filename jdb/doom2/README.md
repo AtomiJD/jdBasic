@@ -48,10 +48,12 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 
 ## What is needed
 
-- `jdb/doom/wad/doom.wad` (not in the repository). The numbers in the tests
-  belong to the re-release IWAD (12,996,515 bytes), whose E1M1 has 143 things
-  and whose full-screen pictures are 560 pixels wide; `V_DrawPatch` shows the
-  middle 320 columns of such a patch.
+- `doom.wad` of The Ultimate Doom 1.9, the DOS release (12,408,292 bytes,
+  not in the repository). It is looked for in the folder the environment
+  variable `DOOMWADDIR` names, else in `jdb/doom/wad/classic/`. The numbers
+  in the tests belong to this file. The re-release IWAD (12,996,515 bytes)
+  has the same Episode 1 and the same demos but full-screen pictures 560
+  pixels wide; `V_DrawPatch` shows the middle 320 columns of such a patch.
 - `jdb/doom/linuxdoom-1.10/` (the C source, not in the repository) only to run
   the generator again.
 
@@ -59,6 +61,7 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 
 | Module | C file | Content |
 |---|---|---|
+| `d_main.jdb` | d_main.c | where the IWAD is found (`IdentifyVersion$`) |
 | `doomdef.jdb` | doomdef.h, doomdata.h, m_bbox.h, p_local.h | screen size, lump order, line flags, box sides, blockmap units |
 | `m_fixed.jdb` | m_fixed.c, tables.h | `FixedMul`, `FixedDiv`, `ToS32`, angle constants |
 | `m_random.jdb` | m_random.c | `P_Random`, `M_Random` |

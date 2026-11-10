@@ -7,6 +7,7 @@
 OPTION "EXPLICIT"
 OPTION "NOPAUSE"
 
+IMPORT D_MAIN
 IMPORT DOOMDEF
 IMPORT M_FIXED
 IMPORT W_WAD
@@ -45,7 +46,7 @@ FUNC PoolSum(start AS INTEGER, n_cells AS INTEGER) AS INTEGER
     RETURN total
 ENDFUNC
 
-DIM wad_path$ AS STRING = "jdb/doom/wad/doom.wad"
+DIM wad_path$ AS STRING = D_MAIN.IdentifyVersion$()
 IF NOT FILE.EXISTS(wad_path$) THEN
     PRINT "SKIP: " + wad_path$ + " not found"
     PRINT "RESULTS: 0 passed, 0 failed"
@@ -321,7 +322,7 @@ Eq("every flat is 4096 bytes", W_WAD.W_LumpLength(R_DATA.firstflat + CLNG(P_SETU
 Eq("sprite lumps", R_DATA.numspritelumps, 764)
 Eq("sprite width sum", SumOf(R_DATA.spritewidth, R_DATA.numspritelumps, FU), 45944)
 Eq("sprite leftoffset sum", SumOf(R_DATA.spriteoffset, R_DATA.numspritelumps, FU), 16773)
-Eq("sprite topoffset sum", SumOf(R_DATA.spritetopoffset, R_DATA.numspritelumps, FU), 35533)
+Eq("sprite topoffset sum", SumOf(R_DATA.spritetopoffset, R_DATA.numspritelumps, FU), 35529)
 
 Eq("colormap sum", PoolSum(R_DATA.colormaps, 34 * 256), 760320)
 
@@ -347,15 +348,15 @@ FOR i = 0 TO V_VIDEO.SCREENSIZE - 1
     pic_sum = pic_sum + CLNG(V_VIDEO.screens[i])
     pic_hash = (pic_hash * 31 + CLNG(V_VIDEO.screens[i])) MOD 1000000007
 NEXT i
-Eq("TITLEPIC sum", pic_sum, 8838460)
-Eq("TITLEPIC pixels", pic_hash, 777206742)
+Eq("TITLEPIC sum", pic_sum, 9033859)
+Eq("TITLEPIC pixels", pic_hash, 433794413)
 
 V_VIDEO.V_CopyRect(0, 0, 0, 320, 200, 0, 0, 1)
 DIM copy_sum AS INTEGER = 0
 FOR i = V_VIDEO.SCREENSIZE TO V_VIDEO.SCREENSIZE * 2 - 1
     copy_sum = copy_sum + CLNG(V_VIDEO.screens[i])
 NEXT i
-Eq("V_CopyRect to screen 1", copy_sum, 8838460)
+Eq("V_CopyRect to screen 1", copy_sum, 9033859)
 
 ' A flipped patch has the same pixels, each row reversed.
 V_VIDEO.V_DrawPatchFlipped(0, 0, 2, W_WAD.W_CacheLumpName("TITLEPIC"))

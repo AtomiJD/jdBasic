@@ -1,0 +1,14 @@
+' Program start (d_main.c). So far only where the IWAD is found.
+
+EXPORT MODULE D_MAIN
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' The path of doom.wad: in the folder the environment variable DOOMWADDIR
+' names, else in jdb/doom/wad/classic below the working directory.
+EXPORT FUNC IdentifyVersion$() AS STRING
+    DIM doomwaddir$ AS STRING = GETENV$("DOOMWADDIR")
+    IF LEN(doomwaddir$) = 0 THEN doomwaddir$ = "jdb/doom/wad/classic"
+    RETURN doomwaddir$ + "/doom.wad"
+ENDFUNC

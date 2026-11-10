@@ -11,6 +11,7 @@
 OPTION "EXPLICIT"
 OPTION "NOPAUSE"
 
+IMPORT D_MAIN
 IMPORT DOOMDEF
 IMPORT M_FIXED
 IMPORT TABLES
@@ -58,7 +59,7 @@ SUB DrawFrame()
     R_MAIN.R_RenderPlayerView(view_x, view_y, ViewZ(), view_angle, 0, 0)
 ENDSUB
 
-W_WAD.W_Init("jdb/doom/wad/doom.wad")
+W_WAD.W_Init(D_MAIN.IdentifyVersion$())
 R_MAIN.R_Init(screenblocks, 0)
 P_SETUP.P_SetupLevel(level$)
 R_SKY.skyflatnum = R_DATA.R_FlatNumForName("F_SKY1")

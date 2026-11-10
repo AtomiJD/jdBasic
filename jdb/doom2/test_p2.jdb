@@ -10,6 +10,7 @@
 OPTION "EXPLICIT"
 OPTION "NOPAUSE"
 
+IMPORT D_MAIN
 IMPORT DOOMDEF
 IMPORT M_FIXED
 IMPORT TABLES
@@ -35,7 +36,7 @@ SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
     ENDIF
 ENDSUB
 
-DIM wad_path$ AS STRING = "jdb/doom/wad/doom.wad"
+DIM wad_path$ AS STRING = D_MAIN.IdentifyVersion$()
 IF NOT FILE.EXISTS(wad_path$) THEN
     PRINT "SKIP: " + wad_path$ + " not found"
     PRINT "RESULTS: 0 passed, 0 failed"
