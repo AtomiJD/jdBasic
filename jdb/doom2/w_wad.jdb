@@ -1,0 +1,109 @@
+' jdb/doom/w_wad.jdb - WAD-file reader (porting w_wad.c).
+'
+' Original DOOM's W_Init() reads one or more WAD files into memory and
+' builds a linked directory of lumps. Here we collapse that into a
+' single string buffer plus parallel arrays + a name->index MAP for
+' O(1) lookups.
+'
+' Public surface (mirrors w_wad.h shape):
+'   W_INIT(path$)               Open an IWAD/PWAD, build the directory.
+'   W_NUMLUMPS() -> n           Total lump count.
+'   W_FIND(name$) -> idx        First-occurrence index, -1 if missing.
+'   W_FIND_AFTER(name$, start)  Next occurrence at-or-after `start`. -1 if none.
+'   W_LUMP_BYTES$(idx)          Raw bytes (binary-safe slice).
+'   W_LUMP_SIZE(idx)            Byte count.
+'   W_LUMP_NAME$(idx)           Uppercase name (sanity checks).
+'   W_DATA$(name$)              Shortcut for W_LUMP_BYTES$(W_FIND(name$)).
+'
+' Native-clean: typed scalars + ZEROS-initialised arrays. The lump
+' directory is capped at W_MAX_LUMPS so the module can pre-DIM its
+' parallel arrays at top-level (SUB-local DIM doesn't grow module
+' globals).
+
+EXPORT MODULE W_WAD
+
+OPTION "NOPAUSE"
+
+EXPORT CONST W_MAX_LUMPS = 8192
+
+DIM wad_buf$ AS STRING = ""
+DIM wad_n AS INTEGER = 0
+DIM wad_infotab AS INTEGER = 0
+
+DIM wad_pos[W_MAX_LUMPS] AS INTEGER
+DIM wad_size[W_MAX_LUMPS] AS INTEGER
+DIM wad_name$[W_MAX_LUMPS] AS STRING
+DIM wad_idx AS MAP = {}
+
+' Load the WAD at `path$` and parse its directory in one shot.
+EXPORT SUB W_INIT(path$ AS STRING)
+    wad_buf$ = BINREADER$(path$)
+    DIM magic$ AS STRING = LEFT$(wad_buf$, 4)
+    IF magic$ <> "IWAD" AND magic$ <> "PWAD" THEN
+        PRINT "W_WAD: not a WAD file - magic='" + magic$ + "'"
+        END
+    ENDIF
+
+    wad_n       = BYTEAT(wad_buf$, 4) BOR (BYTEAT(wad_buf$, 5) SHL 8) BOR (BYTEAT(wad_buf$, 6) SHL 16) BOR (BYTEAT(wad_buf$, 7) SHL 24)
+    wad_infotab = BYTEAT(wad_buf$, 8) BOR (BYTEAT(wad_buf$, 9) SHL 8) BOR (BYTEAT(wad_buf$, 10) SHL 16) BOR (BYTEAT(wad_buf$, 11) SHL 24)
+
+    IF wad_n > W_MAX_LUMPS THEN
+        PRINT "W_WAD: " + STR$(wad_n) + " lumps exceeds W_MAX_LUMPS=" + STR$(W_MAX_LUMPS)
+        END
+    ENDIF
+
+    wad_idx = {}
+
+    DIM i AS INTEGER
+    DIM ent AS INTEGER
+    DIM nm$ AS STRING
+    DIM nulpos AS INTEGER
+    FOR i = 0 TO wad_n - 1
+        ent = wad_infotab + i * 16
+        wad_pos[i]  = BYTEAT(wad_buf$, ent)   BOR (BYTEAT(wad_buf$, ent+1) SHL 8) BOR (BYTEAT(wad_buf$, ent+2) SHL 16) BOR (BYTEAT(wad_buf$, ent+3) SHL 24)
+        wad_size[i] = BYTEAT(wad_buf$, ent+4) BOR (BYTEAT(wad_buf$, ent+5) SHL 8) BOR (BYTEAT(wad_buf$, ent+6) SHL 16) BOR (BYTEAT(wad_buf$, ent+7) SHL 24)
+        nm$ = MID$(wad_buf$, ent + 8, 8)
+        nulpos = INSTR(nm$, CHR$(0))
+        IF nulpos >= 0 THEN nm$ = LEFT$(nm$, nulpos)
+        wad_name$[i] = nm$
+        IF NOT MAP.EXISTS(wad_idx, nm$) THEN wad_idx{nm$} = i
+    NEXT i
+ENDSUB
+
+EXPORT FUNC W_NUMLUMPS() AS INTEGER
+    RETURN wad_n
+ENDFUNC
+
+EXPORT FUNC W_FIND(name$ AS STRING) AS INTEGER
+    IF MAP.EXISTS(wad_idx, name$) THEN RETURN wad_idx{name$}
+    RETURN -1
+ENDFUNC
+
+' Linear scan for the next lump named `name$` at or after `start`.
+' Used for level-marker walks (E1M1 -> THINGS, LINEDEFS, ...).
+EXPORT FUNC W_FIND_AFTER(name$ AS STRING, start AS INTEGER) AS INTEGER
+    DIM j AS INTEGER
+    FOR j = start TO wad_n - 1
+        IF wad_name$[j] = name$ THEN RETURN j
+    NEXT j
+    RETURN -1
+ENDFUNC
+
+EXPORT FUNC W_LUMP_BYTES$(idx AS INTEGER) AS STRING
+    IF idx < 0 OR idx >= wad_n THEN RETURN ""
+    RETURN MID$(wad_buf$, wad_pos[idx], wad_size[idx])
+ENDFUNC
+
+EXPORT FUNC W_LUMP_SIZE(idx AS INTEGER) AS INTEGER
+    IF idx < 0 OR idx >= wad_n THEN RETURN 0
+    RETURN wad_size[idx]
+ENDFUNC
+
+EXPORT FUNC W_LUMP_NAME$(idx AS INTEGER) AS STRING
+    IF idx < 0 OR idx >= wad_n THEN RETURN ""
+    RETURN wad_name$[idx]
+ENDFUNC
+
+EXPORT FUNC W_DATA$(name$ AS STRING) AS STRING
+    RETURN W_LUMP_BYTES$(W_FIND(name$))
+ENDFUNC

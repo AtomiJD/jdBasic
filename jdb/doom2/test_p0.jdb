@@ -1,0 +1,166 @@
+' Foundation checks: fixed point, angle units, random table, the converted
+' tables of tables.c and info.c, and the WAD directory.
+'
+' Run from the repository root, interpreted or compiled with -c. The WAD part
+' is skipped when jdb/doom/wad/doom.wad is not there.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT TABLES
+IMPORT INFO
+IMPORT W_WAD
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+FUNC TableSum(t AS ARRAY) AS INTEGER
+    DIM total AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(t) - 1
+        total = total + CLNG(t[i])
+    NEXT i
+    RETURN total
+ENDFUNC
+
+' Order-sensitive checksum; the expected values were computed from the C
+' source text with awk.
+FUNC TableHash(t AS ARRAY) AS INTEGER
+    DIM h AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(t) - 1
+        h = (h * 31 + CLNG(t[i])) MOD 1000000007
+        IF h < 0 THEN h = h + 1000000007
+    NEXT i
+    RETURN h
+ENDFUNC
+
+FUNC CountOutside(t AS ARRAY, lo AS INTEGER, hi AS INTEGER) AS INTEGER
+    DIM n_out AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(t) - 1
+        IF CLNG(t[i]) < lo OR CLNG(t[i]) > hi THEN n_out = n_out + 1
+    NEXT i
+    RETURN n_out
+ENDFUNC
+
+' ---- m_fixed ----------------------------------------------------------------
+
+DIM unit AS INTEGER = M_FIXED.FRACUNIT
+Eq("FixedMul 3 * 0.5", M_FIXED.FixedMul(3 * unit, unit \ 2), 98304)
+Eq("FixedMul -5 * 3", M_FIXED.FixedMul(-5 * unit, 3 * unit), -983040)
+Eq("FixedMul rounds toward minus infinity", M_FIXED.FixedMul(-1, 1), -1)
+Eq("FixedMul wraps to 32 bit", M_FIXED.FixedMul(M_FIXED.MAXINT, M_FIXED.MAXINT), -65536)
+Eq("FixedMul wraps to 32 bit, negative", M_FIXED.FixedMul(M_FIXED.MININT, M_FIXED.MAXINT), 32768)
+Eq("FixedDiv 1 / 2", M_FIXED.FixedDiv(unit, 2 * unit), 32768)
+Eq("FixedDiv -7 / 2", M_FIXED.FixedDiv(-7 * unit, 2 * unit), -229376)
+Eq("FixedDiv truncates toward zero", M_FIXED.FixedDiv(1, 3), 21845)
+Eq("FixedDiv truncates toward zero, negative", M_FIXED.FixedDiv(-1, 3), -21845)
+Eq("FixedDiv overflow", M_FIXED.FixedDiv(100 * unit, 1), M_FIXED.MAXINT)
+Eq("FixedDiv overflow, negative", M_FIXED.FixedDiv(-100 * unit, 1), M_FIXED.MININT)
+Eq("FixedDiv overflow, both negative", M_FIXED.FixedDiv(-100 * unit, -1), M_FIXED.MAXINT)
+Eq("FixedDiv of the most negative value", M_FIXED.FixedDiv(M_FIXED.MININT, unit), M_FIXED.MININT)
+Eq("ToS32 of all bits", M_FIXED.ToS32($FFFFFFFF), -1)
+Eq("ToS32 of the sign bit", M_FIXED.ToS32($80000000), M_FIXED.MININT)
+Eq("ToS32 keeps a small value", M_FIXED.ToS32(-12345), -12345)
+Eq("angle sum wraps", (M_FIXED.ANG270 + M_FIXED.ANG180) BAND M_FIXED.ANGLE_MASK, M_FIXED.ANG90)
+Eq("angle difference wraps", (M_FIXED.ANG45 - M_FIXED.ANG90) BAND M_FIXED.ANGLE_MASK, $E0000000)
+
+' ---- m_random ---------------------------------------------------------------
+
+M_RANDOM.M_ClearRandom()
+Eq("P_Random first", M_RANDOM.P_Random(), 8)
+Eq("P_Random second", M_RANDOM.P_Random(), 109)
+Eq("M_Random has its own index", M_RANDOM.M_Random(), 8)
+DIM rnd_total AS INTEGER = 0
+DIM k AS INTEGER
+M_RANDOM.M_ClearRandom()
+FOR k = 1 TO 256
+    rnd_total = rnd_total + M_RANDOM.P_Random()
+NEXT k
+Eq("P_Random cycle sum", rnd_total, 32986)
+Eq("P_Random index after a cycle", M_RANDOM.prndindex, 0)
+
+' ---- tables -----------------------------------------------------------------
+
+Eq("finetangent length", LEN(TABLES.finetangent), 4096)
+Eq("finetangent sum", TableSum(TABLES.finetangent), 0)
+Eq("finetangent hash", TableHash(TABLES.finetangent), 564940741)
+Eq("finesine length", LEN(TABLES.finesine), 10240)
+Eq("finesine sum", TableSum(TABLES.finesine), 85444615)
+Eq("finesine hash", TableHash(TABLES.finesine), 84589169)
+Eq("tantoangle length", LEN(TABLES.tantoangle), 2049)
+Eq("tantoangle sum", TableSum(TABLES.tantoangle), 614597232870)
+Eq("tantoangle hash", TableHash(TABLES.tantoangle), 152147327)
+Eq("finesine[0]", CLNG(TABLES.finesine[0]), 25)
+Eq("tantoangle ends at 45 degrees", CLNG(TABLES.tantoangle[TABLES.SLOPERANGE]), M_FIXED.ANG45)
+Eq("cosine of 0 is the largest sine", CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4]), 65535)
+
+' ---- info -------------------------------------------------------------------
+
+Eq("NUMSPRITES", INFO.NUMSPRITES, 138)
+Eq("NUMSTATES", INFO.NUMSTATES, 967)
+Eq("NUMMOBJTYPES", INFO.NUMMOBJTYPES, 137)
+Eq("NUMSFX", INFO.NUMSFX, 109)
+Eq("spr_names length", LEN(INFO.spr_names), 138)
+DIM spr_first$ AS STRING = INFO.spr_names[0]
+DIM spr_play$ AS STRING = INFO.spr_names[INFO.SPR_PLAY]
+Eq("spr_names[0] is TROO", spr_first$ = "TROO", TRUE)
+Eq("spr_names[SPR_PLAY] is PLAY", spr_play$ = "PLAY", TRUE)
+
+Eq("st_sprite length", LEN(INFO.st_sprite), 967)
+Eq("S_LIGHTDONE action", CLNG(INFO.st_action[INFO.S_LIGHTDONE]), INFO.A_LIGHT0)
+Eq("S_PLAY_ATK2 sprite", CLNG(INFO.st_sprite[INFO.S_PLAY_ATK2]), INFO.SPR_PLAY)
+Eq("S_PLAY_ATK2 frame", CLNG(INFO.st_frame[INFO.S_PLAY_ATK2]), 32773)
+Eq("S_PLAY_ATK2 tics", CLNG(INFO.st_tics[INFO.S_PLAY_ATK2]), 6)
+Eq("S_PLAY_ATK2 action", CLNG(INFO.st_action[INFO.S_PLAY_ATK2]), 0)
+Eq("S_PLAY_ATK2 next", CLNG(INFO.st_next[INFO.S_PLAY_ATK2]), INFO.S_PLAY_ATK1)
+Eq("S_NULL tics", CLNG(INFO.st_tics[INFO.S_NULL]), -1)
+Eq("st_sprite in range", CountOutside(INFO.st_sprite, 0, INFO.NUMSPRITES - 1), 0)
+Eq("st_next in range", CountOutside(INFO.st_next, 0, INFO.NUMSTATES - 1), 0)
+Eq("st_action in range", CountOutside(INFO.st_action, 0, INFO.A_BRAINEXPLODE), 0)
+
+Eq("mi_doomednum length", LEN(INFO.mi_doomednum), 137)
+Eq("mi_raisestate length", LEN(INFO.mi_raisestate), 137)
+Eq("MT_PLAYER doomednum", CLNG(INFO.mi_doomednum[INFO.MT_PLAYER]), -1)
+Eq("MT_PLAYER height", CLNG(INFO.mi_height[INFO.MT_PLAYER]), 56 * unit)
+Eq("MT_TROOP doomednum", CLNG(INFO.mi_doomednum[INFO.MT_TROOP]), 3001)
+Eq("MT_TROOP spawnhealth", CLNG(INFO.mi_spawnhealth[INFO.MT_TROOP]), 60)
+Eq("MT_TROOP seesound", CLNG(INFO.mi_seesound[INFO.MT_TROOP]), INFO.SFX_BGSIT1)
+Eq("MT_TROOP radius", CLNG(INFO.mi_radius[INFO.MT_TROOP]), 20 * unit)
+Eq("MT_TROOP flags", CLNG(INFO.mi_flags[INFO.MT_TROOP]), INFO.MF_SOLID BOR INFO.MF_SHOOTABLE BOR INFO.MF_COUNTKILL)
+Eq("MT_TROOP raisestate", CLNG(INFO.mi_raisestate[INFO.MT_TROOP]), INFO.S_TROO_RAISE1)
+Eq("mi_spawnstate in range", CountOutside(INFO.mi_spawnstate, 0, INFO.NUMSTATES - 1), 0)
+Eq("mi_deathstate in range", CountOutside(INFO.mi_deathstate, 0, INFO.NUMSTATES - 1), 0)
+Eq("mi_seesound in range", CountOutside(INFO.mi_seesound, 0, INFO.NUMSFX - 1), 0)
+
+' ---- w_wad ------------------------------------------------------------------
+
+DIM wad_path$ AS STRING = "jdb/doom/wad/doom.wad"
+IF FILE.EXISTS(wad_path$) THEN
+    W_WAD.W_INIT(wad_path$)
+    Eq("WAD has lumps", W_WAD.W_NUMLUMPS() > 1000, TRUE)
+    Eq("PLAYPAL is 14 palettes", W_WAD.W_LUMP_SIZE(W_WAD.W_FIND("PLAYPAL")), 14 * 768)
+    Eq("COLORMAP is 34 maps", W_WAD.W_LUMP_SIZE(W_WAD.W_FIND("COLORMAP")), 34 * 256)
+    Eq("E1M1 is followed by THINGS", W_WAD.W_LUMP_NAME$(W_WAD.W_FIND("E1M1") + 1) = "THINGS", TRUE)
+    Eq("DEMO1 is there", W_WAD.W_FIND("DEMO1") >= 0, TRUE)
+    Eq("a missing lump answers -1", W_WAD.W_FIND("NOSUCHLP"), -1)
+ELSE
+    PRINT "SKIP w_wad: " + wad_path$ + " not found"
+ENDIF
+
+PRINT ""
+PRINT "DOOM P0 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

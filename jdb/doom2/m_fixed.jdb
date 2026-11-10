@@ -1,0 +1,44 @@
+' Fixed-point arithmetic and angle units (m_fixed.c, tables.h).
+'
+' fixed_t is a signed 32-bit value with 16 fraction bits, angle_t an unsigned
+' 32-bit binary angle (a full turn is 2^32). Both live in 64-bit INTEGERs here:
+' a fixed_t is kept in the signed 32-bit range, an angle is masked with
+' ANGLE_MASK after every addition and subtraction.
+
+EXPORT MODULE M_FIXED
+
+OPTION "EXPLICIT"
+
+EXPORT CONST FRACBITS = 16
+EXPORT CONST FRACUNIT = 65536
+EXPORT CONST MAXINT = 2147483647
+EXPORT CONST MININT = -2147483648
+
+EXPORT CONST ANGLE_MASK = $FFFFFFFF
+EXPORT CONST ANG45  = $20000000
+EXPORT CONST ANG90  = $40000000
+EXPORT CONST ANG180 = $80000000
+EXPORT CONST ANG270 = $C0000000
+
+' Reads the low 32 bits of x as a signed number, as a C cast to int does.
+EXPORT FUNC ToS32(x AS INTEGER) AS INTEGER
+    RETURN ((x + $80000000) BAND $FFFFFFFF) - $80000000
+ENDFUNC
+
+EXPORT FUNC FixedMul(a AS INTEGER, b AS INTEGER) AS INTEGER
+    RETURN ((((a * b) SHR 16) + $80000000) BAND $FFFFFFFF) - $80000000
+ENDFUNC
+
+' abs() of a 32-bit int: the most negative value stays negative.
+FUNC Abs32(x AS INTEGER) AS INTEGER
+    IF x < 0 AND x > MININT THEN RETURN -x
+    RETURN x
+ENDFUNC
+
+EXPORT FUNC FixedDiv(a AS INTEGER, b AS INTEGER) AS INTEGER
+    IF (Abs32(a) SHR 14) >= Abs32(b) THEN
+        IF (a BXOR b) < 0 THEN RETURN MININT
+        RETURN MAXINT
+    ENDIF
+    RETURN ((((a * 65536) \ b) + $80000000) BAND $FFFFFFFF) - $80000000
+ENDFUNC
