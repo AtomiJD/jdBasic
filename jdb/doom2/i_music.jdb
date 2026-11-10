@@ -187,6 +187,7 @@ FUNC PlayEvents() AS INTEGER
     DIM value AS INTEGER
     DIM velocity AS INTEGER
     DIM b AS INTEGER
+    DIM needed AS INTEGER
 
     DO
         IF score_p >= score_end THEN
@@ -199,6 +200,17 @@ FUNC PlayEvents() AS INTEGER
         mus_channel = descriptor BAND 15
         channel = MidiChannel(mus_channel)
         events_played = events_played + 1
+
+        ' A score that is cut off in the middle of an event ends there:
+        ' a note may take two bytes, a controller takes two, the rest
+        ' but the end mark one.
+        needed = 1
+        IF kind = 1 OR kind = 4 THEN needed = 2
+        IF kind = 5 OR kind = 6 THEN needed = 0
+        IF score_p + needed > score_end THEN
+            overruns = overruns + 1
+            RETURN 0
+        ENDIF
 
         IF kind = 0 THEN
             ' Release note.
