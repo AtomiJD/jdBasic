@@ -1,0 +1,178 @@
+' Renderer checks for walls and planes on E1M1 of doom.wad: the tables of the
+' view, the angle arithmetic, and whole frames. A frame has to cover every
+' pixel of the view, and its pixels have to be the ones recorded here, in
+' the interpreter and compiled alike. The recorded frames were looked at
+' (view_p2.jdb) before their hashes went in.
+'
+' Run from the repository root, interpreted or compiled with -c. Without a
+' window.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT TABLES
+IMPORT W_WAD
+IMPORT R_DATA
+IMPORT P_SETUP
+IMPORT V_VIDEO
+IMPORT R_DRAW
+IMPORT R_MAIN
+IMPORT R_SKY
+IMPORT R_PLANE
+IMPORT R_BSP
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+DIM wad_path$ AS STRING = "jdb/doom/wad/doom.wad"
+IF NOT FILE.EXISTS(wad_path$) THEN
+    PRINT "SKIP: " + wad_path$ + " not found"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+DIM FU AS INTEGER = M_FIXED.FRACUNIT
+DIM i AS INTEGER
+DIM bad AS INTEGER
+
+' Hash of the 64000 pixels of screen 0.
+FUNC ScreenHash() AS INTEGER
+    DIM h AS INTEGER = 0
+    DIM p AS INTEGER
+    FOR p = 0 TO V_VIDEO.SCREENSIZE - 1
+        h = (h * 31 + CLNG(V_VIDEO.screens[p])) MOD 1000000007
+    NEXT p
+    RETURN h
+ENDFUNC
+
+SUB FillScreen(pixel AS INTEGER)
+    DIM p AS INTEGER
+    FOR p = 0 TO V_VIDEO.SCREENSIZE - 1
+        V_VIDEO.screens[p] = pixel
+    NEXT p
+ENDSUB
+
+' The view from map thing n, eye 41 units above the floor there.
+SUB RenderFromThing(n AS INTEGER)
+    DIM x AS INTEGER = CLNG(P_SETUP.mapthing_x[n]) * FU
+    DIM y AS INTEGER = CLNG(P_SETUP.mapthing_y[n]) * FU
+    DIM angle AS INTEGER = (M_FIXED.ANG45 * (CLNG(P_SETUP.mapthing_angle[n]) \ 45)) BAND M_FIXED.ANGLE_MASK
+    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[R_MAIN.R_PointInSubsector(x, y)])
+    IF R_MAIN.setsizeneeded <> 0 THEN R_MAIN.R_ExecuteSetViewSize()
+    R_MAIN.R_RenderPlayerView(x, y, CLNG(P_SETUP.sector_floorheight[sector]) + 41 * FU, angle, 0, 0)
+ENDSUB
+
+W_WAD.W_Init(wad_path$)
+R_MAIN.R_Init(11, 0)
+P_SETUP.P_SetupLevel("E1M1")
+R_SKY.skyflatnum = R_DATA.R_FlatNumForName("F_SKY1")
+R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY1")
+R_MAIN.R_ExecuteSetViewSize()
+
+' ---- view tables, full screen ------------------------------------------------
+
+Eq("viewwidth", R_DRAW.viewwidth, 320)
+Eq("viewheight", R_DRAW.viewheight, 200)
+Eq("centerx", R_MAIN.centerx, 160)
+Eq("centery", R_MAIN.centery, 100)
+Eq("projection", R_MAIN.projection, 160 * FU)
+Eq("the view is 90 degrees wide", R_MAIN.clipangle, CLNG(R_MAIN.xtoviewangle[0]))
+Eq("xtoviewangle of the middle column", CLNG(R_MAIN.xtoviewangle[160]), 0)
+Eq("xtoviewangle of the last column mirrors the first", CLNG(R_MAIN.xtoviewangle[320]), (-R_MAIN.clipangle) BAND M_FIXED.ANGLE_MASK)
+
+bad = 0
+FOR i = 1 TO TABLES.FINEANGLES \ 2 - 1
+    IF CLNG(R_MAIN.viewangletox[i]) > CLNG(R_MAIN.viewangletox[i - 1]) THEN bad = bad + 1
+    IF CLNG(R_MAIN.viewangletox[i]) < 0 OR CLNG(R_MAIN.viewangletox[i]) > 320 THEN bad = bad + 1
+NEXT i
+Eq("viewangletox falls from 320 to 0", bad, 0)
+Eq("viewangletox of the first angle", CLNG(R_MAIN.viewangletox[0]), 320)
+Eq("viewangletox of the last angle", CLNG(R_MAIN.viewangletox[TABLES.FINEANGLES \ 2 - 1]), 0)
+
+' Row 0 lies 99.5 rows above the middle: 160 / 99.5 as fixed point.
+Eq("yslope of the top row", CLNG(R_PLANE.yslope[0]), 105384)
+Eq("yslope of the bottom row", CLNG(R_PLANE.yslope[199]), 105384)
+Eq("yslope next to the middle", CLNG(R_PLANE.yslope[100]), 320 * FU)
+Eq("distscale of the middle column", CLNG(R_PLANE.distscale[160]) \ 16, FU \ 16)
+
+bad = 0
+FOR i = 0 TO R_MAIN.LIGHTLEVELS * R_MAIN.MAXLIGHTSCALE - 1
+    IF CLNG(R_MAIN.scalelight[i]) < R_DATA.colormaps OR CLNG(R_MAIN.scalelight[i]) > R_DATA.colormaps + 31 * 256 THEN bad = bad + 1
+    IF (CLNG(R_MAIN.scalelight[i]) - R_DATA.colormaps) MOD 256 <> 0 THEN bad = bad + 1
+NEXT i
+FOR i = 0 TO R_MAIN.LIGHTLEVELS * R_MAIN.MAXLIGHTZ - 1
+    IF CLNG(R_MAIN.zlight[i]) < R_DATA.colormaps OR CLNG(R_MAIN.zlight[i]) > R_DATA.colormaps + 31 * 256 THEN bad = bad + 1
+NEXT i
+Eq("light tables hold colormaps", bad, 0)
+Eq("brightest level, largest scale is colormap 0", CLNG(R_MAIN.scalelight[15 * R_MAIN.MAXLIGHTSCALE + 47]), R_DATA.colormaps)
+Eq("darkest level, smallest scale is colormap 31", CLNG(R_MAIN.scalelight[0]), R_DATA.colormaps + 31 * 256)
+
+' ---- angles from the view point -----------------------------------------------
+
+R_MAIN.viewx = 0
+R_MAIN.viewy = 0
+Eq("angle to the east", R_MAIN.R_PointToAngle(FU, 0), 0)
+Eq("angle to the north east", R_MAIN.R_PointToAngle(FU, FU), M_FIXED.ANG45 - 1)
+Eq("angle to the north", R_MAIN.R_PointToAngle(0, FU), M_FIXED.ANG90 - 1)
+Eq("angle to the west", R_MAIN.R_PointToAngle(-FU, 0), M_FIXED.ANG180 - 1)
+Eq("angle to the south", R_MAIN.R_PointToAngle(0, -FU), M_FIXED.ANG270)
+Eq("angle to the south east", R_MAIN.R_PointToAngle(FU, -FU), M_FIXED.ANG270 + M_FIXED.ANG45)
+Eq("angle to the view point itself", R_MAIN.R_PointToAngle(0, 0), 0)
+Eq("distance along an axis", R_MAIN.R_PointToDist(100 * FU, 0) \ FU, 100)
+Eq("distance of a 3-4-5 triangle", (R_MAIN.R_PointToDist(300 * FU, 400 * FU) + FU \ 2) \ FU, 500)
+
+' The BSP places every vertex of a seg in or next to that seg's sector, and
+' the start of player 1 in a sector with a floor.
+DIM start_sub AS INTEGER = R_MAIN.R_PointInSubsector(1056 * FU, -3616 * FU)
+Eq("the player start lies in a subsector", start_sub >= 0 AND start_sub < P_SETUP.numsubsectors, TRUE)
+Eq("floor at the player start", CLNG(P_SETUP.sector_floorheight[CLNG(P_SETUP.subsector_sector[start_sub])]), 0)
+
+' ---- frames -------------------------------------------------------------------
+
+' A frame overwrites the whole view: two renders over different fillings
+' leave the same pixels.
+FillScreen(250)
+RenderFromThing(0)
+DIM hash_a AS INTEGER = ScreenHash()
+FillScreen(251)
+RenderFromThing(0)
+Eq("a frame covers every pixel of the view", ScreenHash(), hash_a)
+Eq("frame at the player 1 start", hash_a, 727280514)
+Eq("visplanes in use", R_PLANE.lastvisplane > 2 AND R_PLANE.lastvisplane <= R_PLANE.MAXVISPLANES, TRUE)
+Eq("drawsegs in use", R_BSP.ds_p > 10 AND R_BSP.ds_p <= R_BSP.MAXDRAWSEGS, TRUE)
+
+' The courtyard with sky, and the room with the slime.
+FillScreen(0)
+RenderFromThing(71)
+Eq("frame in the courtyard", ScreenHash(), 835993493)
+FillScreen(0)
+RenderFromThing(72)
+Eq("frame in the slime room", ScreenHash(), 232592603)
+
+' The view above the status bar: 320 x 168, the 32 rows below it untouched.
+R_MAIN.R_SetViewSize(10, 0)
+FillScreen(7)
+RenderFromThing(0)
+Eq("view height above the status bar", R_DRAW.viewheight, 168)
+Eq("frame above the status bar", ScreenHash(), 718209776)
+bad = 0
+FOR i = 168 * 320 TO V_VIDEO.SCREENSIZE - 1
+    IF CLNG(V_VIDEO.screens[i]) <> 7 THEN bad = bad + 1
+NEXT i
+Eq("rows below the view are untouched", bad, 0)
+
+PRINT ""
+PRINT "DOOM P2 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

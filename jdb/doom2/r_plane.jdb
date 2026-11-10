@@ -1,0 +1,284 @@
+' Floors and ceilings (r_plane.c).
+'
+' While the walls are drawn, each screen column records the rows of floor and
+' ceiling it leaves open in a visplane: one per height, flat and light level.
+' After the walls, R_DrawPlanes turns each visplane into horizontal spans.
+
+EXPORT MODULE R_PLANE
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT TABLES
+IMPORT W_WAD
+IMPORT R_DATA
+IMPORT R_DRAW
+IMPORT R_MAIN
+IMPORT R_SKY
+IMPORT R_BSP
+IMPORT R_THINGS
+
+EXPORT CONST MAXVISPLANES = 128
+' A visplane's top and bottom rows have one spare cell before column 0 and
+' one after the last column.
+CONST PLANEROW = 322
+
+EXPORT DIM visplane_height[MAXVISPLANES] AS INTEGER
+EXPORT DIM visplane_picnum[MAXVISPLANES] AS INTEGER
+EXPORT DIM visplane_lightlevel[MAXVISPLANES] AS INTEGER
+EXPORT DIM visplane_minx[MAXVISPLANES] AS INTEGER
+EXPORT DIM visplane_maxx[MAXVISPLANES] AS INTEGER
+' top[x] of plane pl is visplane_top[pl * PLANEROW + 1 + x]; 255 = no rows.
+EXPORT DIM visplane_top[MAXVISPLANES * PLANEROW] AS INTEGER
+EXPORT DIM visplane_bottom[MAXVISPLANES * PLANEROW] AS INTEGER
+' Number of visplanes in use, and the two of the subsector being drawn
+' (-1 = none).
+EXPORT DIM lastvisplane AS INTEGER = 0
+EXPORT DIM floorplane AS INTEGER = -1
+EXPORT DIM ceilingplane AS INTEGER = -1
+
+' Clip rows saved per drawseg for the sprites. The first two rows of the
+' array are the constant clip arrays of r_things.c: all -1, and all
+' viewheight.
+EXPORT CONST NEGONEARRAY = 0
+EXPORT CONST SCREENHEIGHTARRAY = 320
+EXPORT CONST OPENINGS_START = 640
+EXPORT CONST MAXOPENINGS = 20480
+EXPORT DIM openings[OPENINGS_START + MAXOPENINGS] AS INTEGER
+EXPORT DIM lastopening AS INTEGER = OPENINGS_START
+
+' The solid pixel bounding the open rows of each column: floorclip starts
+' out at viewheight, ceilingclip at -1.
+EXPORT DIM floorclip[320] AS INTEGER
+EXPORT DIM ceilingclip[320] AS INTEGER
+
+DIM spanstart[200] AS INTEGER
+
+DIM planezlight AS INTEGER = 0
+DIM planeheight AS INTEGER = 0
+
+EXPORT DIM yslope[200] AS INTEGER
+EXPORT DIM distscale[320] AS INTEGER
+DIM basexscale AS INTEGER = 0
+DIM baseyscale AS INTEGER = 0
+
+DIM cachedheight[200] AS INTEGER
+DIM cacheddistance[200] AS INTEGER
+DIM cachedxstep[200] AS INTEGER
+DIM cachedystep[200] AS INTEGER
+
+' Draws row y of the current plane from x1 to x2.
+SUB R_MapPlane(y AS INTEGER, x1 AS INTEGER, x2 AS INTEGER)
+    IF x2 < x1 OR x1 < 0 OR x2 >= R_DRAW.viewwidth OR y < 0 OR y > R_DRAW.viewheight THEN
+        I_SYSTEM.I_Error("R_MapPlane: " + STR$(x1) + ", " + STR$(x2) + " at " + STR$(y))
+    ENDIF
+    DIM distance AS INTEGER
+    IF planeheight <> CLNG(cachedheight[y]) THEN
+        cachedheight[y] = planeheight
+        distance = M_FIXED.FixedMul(planeheight, CLNG(yslope[y]))
+        cacheddistance[y] = distance
+        R_DRAW.ds_xstep = M_FIXED.FixedMul(distance, basexscale)
+        R_DRAW.ds_ystep = M_FIXED.FixedMul(distance, baseyscale)
+        cachedxstep[y] = R_DRAW.ds_xstep
+        cachedystep[y] = R_DRAW.ds_ystep
+    ELSE
+        distance = CLNG(cacheddistance[y])
+        R_DRAW.ds_xstep = CLNG(cachedxstep[y])
+        R_DRAW.ds_ystep = CLNG(cachedystep[y])
+    ENDIF
+    DIM length AS INTEGER = M_FIXED.FixedMul(distance, CLNG(distscale[x1]))
+    DIM angle AS INTEGER = ((R_MAIN.viewangle + CLNG(R_MAIN.xtoviewangle[x1])) BAND M_FIXED.ANGLE_MASK) SHR TABLES.ANGLETOFINESHIFT
+    R_DRAW.ds_xfrac = R_MAIN.viewx + M_FIXED.FixedMul(CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + angle]), length)
+    R_DRAW.ds_yfrac = -R_MAIN.viewy - M_FIXED.FixedMul(CLNG(TABLES.finesine[angle]), length)
+
+    DIM index AS INTEGER
+    IF R_MAIN.fixedcolormap <> 0 THEN
+        R_DRAW.ds_colormap = R_MAIN.fixedcolormap
+    ELSE
+        index = distance SHR R_MAIN.LIGHTZSHIFT
+        IF index >= R_MAIN.MAXLIGHTZ THEN index = R_MAIN.MAXLIGHTZ - 1
+        R_DRAW.ds_colormap = CLNG(R_MAIN.zlight[planezlight + index])
+    ENDIF
+
+    R_DRAW.ds_y = y
+    R_DRAW.ds_x1 = x1
+    R_DRAW.ds_x2 = x2
+    R_DRAW.R_DrawSpan()
+ENDSUB
+
+' At the beginning of a frame.
+EXPORT SUB R_ClearPlanes()
+    DIM i AS INTEGER
+    FOR i = 0 TO R_DRAW.viewwidth - 1
+        floorclip[i] = R_DRAW.viewheight
+        ceilingclip[i] = -1
+    NEXT i
+    lastvisplane = 0
+    lastopening = OPENINGS_START
+    FILLV cachedheight, 0
+
+    ' Left to right mapping; the scale is one at a distance of half the
+    ' screen width.
+    DIM angle AS INTEGER = ((R_MAIN.viewangle - M_FIXED.ANG90) BAND M_FIXED.ANGLE_MASK) SHR TABLES.ANGLETOFINESHIFT
+    basexscale = M_FIXED.FixedDiv(CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + angle]), R_MAIN.centerxfrac)
+    baseyscale = -M_FIXED.FixedDiv(CLNG(TABLES.finesine[angle]), R_MAIN.centerxfrac)
+ENDSUB
+
+SUB ClearTop(pl AS INTEGER)
+    DIM base AS INTEGER = pl * PLANEROW
+    DIM x AS INTEGER
+    FOR x = 1 TO DOOMDEF.SCREENWIDTH
+        visplane_top[base + x] = 255
+    NEXT x
+ENDSUB
+
+' The visplane for a height, flat and light level; a new one if none matches.
+EXPORT FUNC R_FindPlane(height_in AS INTEGER, picnum AS INTEGER, lightlevel_in AS INTEGER) AS INTEGER
+    DIM height AS INTEGER = height_in
+    DIM lightlevel AS INTEGER = lightlevel_in
+    IF picnum = R_SKY.skyflatnum THEN
+        ' All skies map together.
+        height = 0
+        lightlevel = 0
+    ENDIF
+    DIM check AS INTEGER
+    FOR check = 0 TO lastvisplane - 1
+        IF height = CLNG(visplane_height[check]) AND picnum = CLNG(visplane_picnum[check]) AND lightlevel = CLNG(visplane_lightlevel[check]) THEN RETURN check
+    NEXT check
+    IF lastvisplane = MAXVISPLANES THEN I_SYSTEM.I_Error("R_FindPlane: no more visplanes")
+    check = lastvisplane
+    lastvisplane = lastvisplane + 1
+    visplane_height[check] = height
+    visplane_picnum[check] = picnum
+    visplane_lightlevel[check] = lightlevel
+    visplane_minx[check] = DOOMDEF.SCREENWIDTH
+    visplane_maxx[check] = -1
+    ClearTop(check)
+    RETURN check
+ENDFUNC
+
+' The visplane to mark columns start..stop in: pl itself when none of them
+' is marked yet, else a new one with the same height, flat and light.
+EXPORT FUNC R_CheckPlane(pl AS INTEGER, start AS INTEGER, stopx AS INTEGER) AS INTEGER
+    DIM intrl AS INTEGER
+    DIM intrh AS INTEGER
+    DIM unionl AS INTEGER
+    DIM unionh AS INTEGER
+    DIM minx AS INTEGER = CLNG(visplane_minx[pl])
+    DIM maxx AS INTEGER = CLNG(visplane_maxx[pl])
+    IF start < minx THEN
+        intrl = minx
+        unionl = start
+    ELSE
+        unionl = minx
+        intrl = start
+    ENDIF
+    IF stopx > maxx THEN
+        intrh = maxx
+        unionh = stopx
+    ELSE
+        unionh = maxx
+        intrh = stopx
+    ENDIF
+
+    DIM x AS INTEGER = intrl
+    DO WHILE x <= intrh
+        IF CLNG(visplane_top[pl * PLANEROW + 1 + x]) <> 255 THEN EXITDO
+        x = x + 1
+    LOOP
+    IF x > intrh THEN
+        visplane_minx[pl] = unionl
+        visplane_maxx[pl] = unionh
+        RETURN pl
+    ENDIF
+
+    IF lastvisplane = MAXVISPLANES THEN I_SYSTEM.I_Error("R_CheckPlane: no more visplanes")
+    DIM fresh AS INTEGER = lastvisplane
+    lastvisplane = lastvisplane + 1
+    visplane_height[fresh] = visplane_height[pl]
+    visplane_picnum[fresh] = visplane_picnum[pl]
+    visplane_lightlevel[fresh] = visplane_lightlevel[pl]
+    visplane_minx[fresh] = start
+    visplane_maxx[fresh] = stopx
+    ClearTop(fresh)
+    RETURN fresh
+ENDFUNC
+
+' Column x - 1 had rows t1..b1 open, column x has t2..b2: draws the spans
+' that end before x and starts the ones that begin at x.
+SUB R_MakeSpans(x AS INTEGER, t1_in AS INTEGER, b1_in AS INTEGER, t2_in AS INTEGER, b2_in AS INTEGER)
+    DIM t1 AS INTEGER = t1_in
+    DIM b1 AS INTEGER = b1_in
+    DIM t2 AS INTEGER = t2_in
+    DIM b2 AS INTEGER = b2_in
+    DO WHILE t1 < t2 AND t1 <= b1
+        R_MapPlane(t1, CLNG(spanstart[t1]), x - 1)
+        t1 = t1 + 1
+    LOOP
+    DO WHILE b1 > b2 AND b1 >= t1
+        R_MapPlane(b1, CLNG(spanstart[b1]), x - 1)
+        b1 = b1 - 1
+    LOOP
+    DO WHILE t2 < t1 AND t2 <= b2
+        spanstart[t2] = x
+        t2 = t2 + 1
+    LOOP
+    DO WHILE b2 > b1 AND b2 >= t2
+        spanstart[b2] = x
+        b2 = b2 - 1
+    LOOP
+ENDSUB
+
+' At the end of a frame, after the walls.
+EXPORT SUB R_DrawPlanes()
+    IF R_BSP.ds_p > R_BSP.MAXDRAWSEGS THEN I_SYSTEM.I_Error("R_DrawPlanes: drawsegs overflow (" + STR$(R_BSP.ds_p) + ")")
+    IF lastvisplane > MAXVISPLANES THEN I_SYSTEM.I_Error("R_DrawPlanes: visplane overflow (" + STR$(lastvisplane) + ")")
+    IF lastopening - OPENINGS_START > MAXOPENINGS THEN I_SYSTEM.I_Error("R_DrawPlanes: opening overflow (" + STR$(lastopening - OPENINGS_START) + ")")
+
+    DIM pl AS INTEGER
+    DIM base AS INTEGER
+    DIM minx AS INTEGER
+    DIM maxx AS INTEGER
+    DIM x AS INTEGER
+    DIM light AS INTEGER
+    DIM angle AS INTEGER
+    FOR pl = 0 TO lastvisplane - 1
+        minx = CLNG(visplane_minx[pl])
+        maxx = CLNG(visplane_maxx[pl])
+        base = pl * PLANEROW + 1
+        IF minx <= maxx THEN
+            IF CLNG(visplane_picnum[pl]) = R_SKY.skyflatnum THEN
+                ' The sky is always drawn full bright.
+                R_DRAW.dc_iscale = R_THINGS.pspriteiscale SHR R_MAIN.detailshift
+                R_DRAW.dc_colormap = R_DATA.colormaps
+                R_DRAW.dc_texturemid = R_SKY.skytexturemid
+                FOR x = minx TO maxx
+                    R_DRAW.dc_yl = CLNG(visplane_top[base + x])
+                    R_DRAW.dc_yh = CLNG(visplane_bottom[base + x])
+                    IF R_DRAW.dc_yl <= R_DRAW.dc_yh THEN
+                        angle = ((R_MAIN.viewangle + CLNG(R_MAIN.xtoviewangle[x])) BAND M_FIXED.ANGLE_MASK) SHR R_SKY.ANGLETOSKYSHIFT
+                        R_DRAW.dc_x = x
+                        R_DRAW.dc_source = R_DATA.R_GetColumn(R_SKY.skytexture, angle)
+                        R_DRAW.R_DrawColumn()
+                    ENDIF
+                NEXT x
+            ELSE
+                R_DRAW.ds_source = W_WAD.W_CacheLumpNum(R_DATA.firstflat + CLNG(R_DATA.flattranslation[CLNG(visplane_picnum[pl])]))
+                planeheight = CLNG(ABS(CLNG(visplane_height[pl]) - R_MAIN.viewz))
+                light = (CLNG(visplane_lightlevel[pl]) SHR R_MAIN.LIGHTSEGSHIFT) + R_MAIN.extralight
+                IF light >= R_MAIN.LIGHTLEVELS THEN light = R_MAIN.LIGHTLEVELS - 1
+                IF light < 0 THEN light = 0
+                planezlight = light * R_MAIN.MAXLIGHTZ
+
+                visplane_top[base + maxx + 1] = 255
+                visplane_top[base + minx - 1] = 255
+                FOR x = minx TO maxx + 1
+                    R_MakeSpans(x, CLNG(visplane_top[base + x - 1]), CLNG(visplane_bottom[base + x - 1]), CLNG(visplane_top[base + x]), CLNG(visplane_bottom[base + x]))
+                NEXT x
+            ENDIF
+        ENDIF
+    NEXT pl
+ENDSUB

@@ -1,0 +1,377 @@
+' BSP traversal and wall clipping (r_bsp.c).
+'
+' The tree is walked front to back. Each seg of a subsector is clipped
+' against the screen columns that solid walls already cover, and what is
+' left goes to R_SEGS.R_StoreWallRange.
+
+EXPORT MODULE R_BSP
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT TABLES
+IMPORT P_SETUP
+IMPORT R_DRAW
+IMPORT R_MAIN
+IMPORT R_SKY
+IMPORT R_PLANE
+IMPORT R_SEGS
+
+' The seg being drawn and the sectors on its two sides (-1 = none).
+EXPORT DIM curline AS INTEGER = 0
+EXPORT DIM frontsector AS INTEGER = 0
+EXPORT DIM backsector AS INTEGER = -1
+
+' drawseg_t: one per visible run of a seg, kept for clipping the sprites.
+EXPORT CONST MAXDRAWSEGS = 256
+EXPORT DIM drawseg_curline[MAXDRAWSEGS] AS INTEGER
+EXPORT DIM drawseg_x1[MAXDRAWSEGS] AS INTEGER
+EXPORT DIM drawseg_x2[MAXDRAWSEGS] AS INTEGER
+EXPORT DIM drawseg_scale1[MAXDRAWSEGS] AS INTEGER
+EXPORT DIM drawseg_scale2[MAXDRAWSEGS] AS INTEGER
+EXPORT DIM drawseg_scalestep[MAXDRAWSEGS] AS INTEGER
+' SIL_NONE, SIL_BOTTOM, SIL_TOP or SIL_BOTH.
+EXPORT DIM drawseg_silhouette[MAXDRAWSEGS] AS INTEGER
+' Sprites below bsilheight are clipped by the bottom silhouette, sprites
+' above tsilheight by the top one.
+EXPORT DIM drawseg_bsilheight[MAXDRAWSEGS] AS INTEGER
+EXPORT DIM drawseg_tsilheight[MAXDRAWSEGS] AS INTEGER
+' Places in R_PLANE.openings, to be indexed by screen column; -1 = none.
+EXPORT DIM drawseg_sprtopclip[MAXDRAWSEGS] AS INTEGER
+EXPORT DIM drawseg_sprbottomclip[MAXDRAWSEGS] AS INTEGER
+EXPORT DIM drawseg_maskedtexturecol[MAXDRAWSEGS] AS INTEGER
+' Number of drawsegs in use.
+EXPORT DIM ds_p AS INTEGER = 0
+
+' Runs of screen columns that solid walls cover, in order. newend is one
+' past the last run in use.
+CONST MAXSEGS = 32
+DIM solidsegs_first[MAXSEGS + 2] AS INTEGER
+DIM solidsegs_last[MAXSEGS + 2] AS INTEGER
+DIM newend AS INTEGER = 0
+
+' For each of the nine places the view point can have relative to a
+' bounding box, the two corners of the box that bound it as seen from there.
+DIM checkcoord AS ARRAY = [ _
+    3, 0, 2, 1, _
+    3, 0, 2, 0, _
+    3, 1, 2, 0, _
+    0, 0, 0, 0, _
+    2, 0, 2, 1, _
+    0, 0, 0, 0, _
+    3, 1, 3, 0, _
+    0, 0, 0, 0, _
+    2, 0, 3, 1, _
+    2, 1, 3, 1, _
+    2, 1, 3, 0, _
+    0, 0, 0, 0 _
+]
+
+EXPORT SUB R_ClearDrawSegs()
+    ds_p = 0
+ENDSUB
+
+' Draws the parts of columns first..last that no solid wall covers yet, and
+' adds the range to the covered ones. For walls that block the view fully.
+SUB R_ClipSolidWallSegment(first AS INTEGER, last AS INTEGER)
+    DIM start AS INTEGER = 0
+    DIM nxt AS INTEGER
+    DIM crunch AS INTEGER = 0
+
+    ' The first range that touches the new one (adjacent pixels touch).
+    DO WHILE CLNG(solidsegs_last[start]) < first - 1
+        start = start + 1
+    LOOP
+
+    IF first < CLNG(solidsegs_first[start]) THEN
+        IF last < CLNG(solidsegs_first[start]) - 1 THEN
+            ' Entirely visible: insert a new range.
+            R_SEGS.R_StoreWallRange(first, last)
+            nxt = newend
+            newend = newend + 1
+            DO WHILE nxt <> start
+                solidsegs_first[nxt] = solidsegs_first[nxt - 1]
+                solidsegs_last[nxt] = solidsegs_last[nxt - 1]
+                nxt = nxt - 1
+            LOOP
+            solidsegs_first[nxt] = first
+            solidsegs_last[nxt] = last
+            RETURN
+        ENDIF
+        ' There is a fragment before start.
+        R_SEGS.R_StoreWallRange(first, CLNG(solidsegs_first[start]) - 1)
+        solidsegs_first[start] = first
+    ENDIF
+
+    ' Contained in start?
+    IF last <= CLNG(solidsegs_last[start]) THEN RETURN
+
+    nxt = start
+    DO WHILE last >= CLNG(solidsegs_first[nxt + 1]) - 1
+        ' There is a fragment between two ranges.
+        R_SEGS.R_StoreWallRange(CLNG(solidsegs_last[nxt]) + 1, CLNG(solidsegs_first[nxt + 1]) - 1)
+        nxt = nxt + 1
+        IF last <= CLNG(solidsegs_last[nxt]) THEN
+            ' The end is contained in nxt.
+            solidsegs_last[start] = solidsegs_last[nxt]
+            crunch = 1
+            EXITDO
+        ENDIF
+    LOOP
+
+    IF crunch = 0 THEN
+        ' There is a fragment after nxt.
+        R_SEGS.R_StoreWallRange(CLNG(solidsegs_last[nxt]) + 1, last)
+        solidsegs_last[start] = last
+    ENDIF
+
+    ' start now covers the ranges start + 1 .. nxt: remove them.
+    IF nxt = start THEN RETURN
+    DO
+        IF nxt = newend THEN EXITDO
+        nxt = nxt + 1
+        start = start + 1
+        solidsegs_first[start] = solidsegs_first[nxt]
+        solidsegs_last[start] = solidsegs_last[nxt]
+    LOOP
+    newend = start + 1
+ENDSUB
+
+' Draws the parts of columns first..last that no solid wall covers yet,
+' without adding the range. For walls one can see past: windows, steps.
+SUB R_ClipPassWallSegment(first AS INTEGER, last AS INTEGER)
+    DIM start AS INTEGER = 0
+    DO WHILE CLNG(solidsegs_last[start]) < first - 1
+        start = start + 1
+    LOOP
+
+    IF first < CLNG(solidsegs_first[start]) THEN
+        IF last < CLNG(solidsegs_first[start]) - 1 THEN
+            ' Entirely visible.
+            R_SEGS.R_StoreWallRange(first, last)
+            RETURN
+        ENDIF
+        R_SEGS.R_StoreWallRange(first, CLNG(solidsegs_first[start]) - 1)
+    ENDIF
+
+    IF last <= CLNG(solidsegs_last[start]) THEN RETURN
+
+    DO WHILE last >= CLNG(solidsegs_first[start + 1]) - 1
+        R_SEGS.R_StoreWallRange(CLNG(solidsegs_last[start]) + 1, CLNG(solidsegs_first[start + 1]) - 1)
+        start = start + 1
+        IF last <= CLNG(solidsegs_last[start]) THEN RETURN
+    LOOP
+
+    R_SEGS.R_StoreWallRange(CLNG(solidsegs_last[start]) + 1, last)
+ENDSUB
+
+EXPORT SUB R_ClearClipSegs()
+    solidsegs_first[0] = -M_FIXED.MAXINT
+    solidsegs_last[0] = -1
+    solidsegs_first[1] = R_DRAW.viewwidth
+    solidsegs_last[1] = M_FIXED.MAXINT
+    newend = 2
+ENDSUB
+
+' Clips a seg to the view and to the solid walls, and draws what is visible.
+SUB R_AddLine(seg AS INTEGER)
+    curline = seg
+    DIM v1 AS INTEGER = CLNG(P_SETUP.seg_v1[seg])
+    DIM v2 AS INTEGER = CLNG(P_SETUP.seg_v2[seg])
+    DIM angle1 AS INTEGER = R_MAIN.R_PointToAngle(CLNG(P_SETUP.vertex_x[v1]), CLNG(P_SETUP.vertex_y[v1]))
+    DIM angle2 AS INTEGER = R_MAIN.R_PointToAngle(CLNG(P_SETUP.vertex_x[v2]), CLNG(P_SETUP.vertex_y[v2]))
+    DIM clipangle AS INTEGER = R_MAIN.clipangle
+    DIM mask AS INTEGER = M_FIXED.ANGLE_MASK
+
+    ' Facing away from the view?
+    DIM span AS INTEGER = (angle1 - angle2) BAND mask
+    IF span >= M_FIXED.ANG180 THEN RETURN
+
+    ' The global angle is needed by R_StoreWallRange.
+    R_SEGS.rw_angle1 = angle1
+    angle1 = (angle1 - R_MAIN.viewangle) BAND mask
+    angle2 = (angle2 - R_MAIN.viewangle) BAND mask
+
+    ' Clip to the view edges.
+    DIM tspan AS INTEGER = (angle1 + clipangle) BAND mask
+    IF tspan > 2 * clipangle THEN
+        tspan = (tspan - 2 * clipangle) BAND mask
+        ' Totally off the left edge?
+        IF tspan >= span THEN RETURN
+        angle1 = clipangle
+    ENDIF
+    tspan = (clipangle - angle2) BAND mask
+    IF tspan > 2 * clipangle THEN
+        tspan = (tspan - 2 * clipangle) BAND mask
+        ' Totally off the right edge?
+        IF tspan >= span THEN RETURN
+        angle2 = (-clipangle) BAND mask
+    ENDIF
+
+    ' The seg is in the view range, but not necessarily visible.
+    angle1 = ((angle1 + M_FIXED.ANG90) BAND mask) SHR TABLES.ANGLETOFINESHIFT
+    angle2 = ((angle2 + M_FIXED.ANG90) BAND mask) SHR TABLES.ANGLETOFINESHIFT
+    DIM x1 AS INTEGER = CLNG(R_MAIN.viewangletox[angle1])
+    DIM x2 AS INTEGER = CLNG(R_MAIN.viewangletox[angle2])
+
+    ' Does not cross a pixel?
+    IF x1 = x2 THEN RETURN
+
+    backsector = CLNG(P_SETUP.seg_backsector[seg])
+    DIM solid AS INTEGER = 0
+    DIM front_ceiling AS INTEGER
+    DIM front_floor AS INTEGER
+    DIM back_ceiling AS INTEGER
+    DIM back_floor AS INTEGER
+    IF backsector < 0 THEN
+        ' Single sided line.
+        solid = 1
+    ELSE
+        front_ceiling = CLNG(P_SETUP.sector_ceilingheight[frontsector])
+        front_floor = CLNG(P_SETUP.sector_floorheight[frontsector])
+        back_ceiling = CLNG(P_SETUP.sector_ceilingheight[backsector])
+        back_floor = CLNG(P_SETUP.sector_floorheight[backsector])
+        IF back_ceiling <= front_floor OR back_floor >= front_ceiling THEN
+            ' Closed door.
+            solid = 1
+        ELSEIF back_ceiling <> front_ceiling OR back_floor <> front_floor THEN
+            ' Window.
+            solid = 0
+        ELSE
+            ' A line used only as a trigger: the same floor, ceiling and
+            ' light on both sides and no middle texture. Nothing to draw.
+            IF CLNG(P_SETUP.sector_ceilingpic[backsector]) = CLNG(P_SETUP.sector_ceilingpic[frontsector]) AND CLNG(P_SETUP.sector_floorpic[backsector]) = CLNG(P_SETUP.sector_floorpic[frontsector]) AND CLNG(P_SETUP.sector_lightlevel[backsector]) = CLNG(P_SETUP.sector_lightlevel[frontsector]) AND CLNG(P_SETUP.side_midtexture[CLNG(P_SETUP.seg_sidedef[seg])]) = 0 THEN RETURN
+        ENDIF
+    ENDIF
+
+    IF solid <> 0 THEN
+        R_ClipSolidWallSegment(x1, x2 - 1)
+    ELSE
+        R_ClipPassWallSegment(x1, x2 - 1)
+    ENDIF
+ENDSUB
+
+' True if some part of the bounding box, four cells from bbox in
+' P_SETUP.node_bbox, might be visible.
+FUNC R_CheckBBox(bbox AS INTEGER) AS INTEGER
+    DIM boxx AS INTEGER
+    DIM boxy AS INTEGER
+    DIM viewx AS INTEGER = R_MAIN.viewx
+    DIM viewy AS INTEGER = R_MAIN.viewy
+
+    ' The corners of the box that define its edges as seen from here.
+    IF viewx <= CLNG(P_SETUP.node_bbox[bbox + DOOMDEF.BOXLEFT]) THEN
+        boxx = 0
+    ELSEIF viewx < CLNG(P_SETUP.node_bbox[bbox + DOOMDEF.BOXRIGHT]) THEN
+        boxx = 1
+    ELSE
+        boxx = 2
+    ENDIF
+    IF viewy >= CLNG(P_SETUP.node_bbox[bbox + DOOMDEF.BOXTOP]) THEN
+        boxy = 0
+    ELSEIF viewy > CLNG(P_SETUP.node_bbox[bbox + DOOMDEF.BOXBOTTOM]) THEN
+        boxy = 1
+    ELSE
+        boxy = 2
+    ENDIF
+
+    DIM boxpos AS INTEGER = (boxy SHL 2) + boxx
+    IF boxpos = 5 THEN RETURN 1
+
+    DIM x1 AS INTEGER = CLNG(P_SETUP.node_bbox[bbox + CLNG(checkcoord[boxpos * 4])])
+    DIM y1 AS INTEGER = CLNG(P_SETUP.node_bbox[bbox + CLNG(checkcoord[boxpos * 4 + 1])])
+    DIM x2 AS INTEGER = CLNG(P_SETUP.node_bbox[bbox + CLNG(checkcoord[boxpos * 4 + 2])])
+    DIM y2 AS INTEGER = CLNG(P_SETUP.node_bbox[bbox + CLNG(checkcoord[boxpos * 4 + 3])])
+
+    DIM mask AS INTEGER = M_FIXED.ANGLE_MASK
+    DIM clipangle AS INTEGER = R_MAIN.clipangle
+    DIM angle1 AS INTEGER = (R_MAIN.R_PointToAngle(x1, y1) - R_MAIN.viewangle) BAND mask
+    DIM angle2 AS INTEGER = (R_MAIN.R_PointToAngle(x2, y2) - R_MAIN.viewangle) BAND mask
+
+    DIM span AS INTEGER = (angle1 - angle2) BAND mask
+    ' Sitting on a line?
+    IF span >= M_FIXED.ANG180 THEN RETURN 1
+
+    DIM tspan AS INTEGER = (angle1 + clipangle) BAND mask
+    IF tspan > 2 * clipangle THEN
+        tspan = (tspan - 2 * clipangle) BAND mask
+        IF tspan >= span THEN RETURN 0
+        angle1 = clipangle
+    ENDIF
+    tspan = (clipangle - angle2) BAND mask
+    IF tspan > 2 * clipangle THEN
+        tspan = (tspan - 2 * clipangle) BAND mask
+        IF tspan >= span THEN RETURN 0
+        angle2 = (-clipangle) BAND mask
+    ENDIF
+
+    ' The first covered range that touches the box's columns.
+    angle1 = ((angle1 + M_FIXED.ANG90) BAND mask) SHR TABLES.ANGLETOFINESHIFT
+    angle2 = ((angle2 + M_FIXED.ANG90) BAND mask) SHR TABLES.ANGLETOFINESHIFT
+    DIM sx1 AS INTEGER = CLNG(R_MAIN.viewangletox[angle1])
+    DIM sx2 AS INTEGER = CLNG(R_MAIN.viewangletox[angle2])
+
+    ' Does not cross a pixel.
+    IF sx1 = sx2 THEN RETURN 0
+    sx2 = sx2 - 1
+
+    DIM start AS INTEGER = 0
+    DO WHILE CLNG(solidsegs_last[start]) < sx2
+        start = start + 1
+    LOOP
+    ' Covered when one range contains the whole span.
+    IF sx1 >= CLNG(solidsegs_first[start]) AND sx2 <= CLNG(solidsegs_last[start]) THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+' Finds the floor and ceiling planes of a subsector and draws its segs.
+SUB R_Subsector(num AS INTEGER)
+    IF num >= P_SETUP.numsubsectors THEN I_SYSTEM.I_Error("R_Subsector: ss " + STR$(num) + " with numss = " + STR$(P_SETUP.numsubsectors))
+    R_MAIN.sscount = R_MAIN.sscount + 1
+    frontsector = CLNG(P_SETUP.subsector_sector[num])
+    DIM n_segs AS INTEGER = CLNG(P_SETUP.subsector_numlines[num])
+    DIM first_seg AS INTEGER = CLNG(P_SETUP.subsector_firstline[num])
+    DIM floorheight AS INTEGER = CLNG(P_SETUP.sector_floorheight[frontsector])
+    DIM ceilingheight AS INTEGER = CLNG(P_SETUP.sector_ceilingheight[frontsector])
+    DIM ceilingpic AS INTEGER = CLNG(P_SETUP.sector_ceilingpic[frontsector])
+    DIM lightlevel AS INTEGER = CLNG(P_SETUP.sector_lightlevel[frontsector])
+
+    IF floorheight < R_MAIN.viewz THEN
+        R_PLANE.floorplane = R_PLANE.R_FindPlane(floorheight, CLNG(P_SETUP.sector_floorpic[frontsector]), lightlevel)
+    ELSE
+        R_PLANE.floorplane = -1
+    ENDIF
+    IF ceilingheight > R_MAIN.viewz OR ceilingpic = R_SKY.skyflatnum THEN
+        R_PLANE.ceilingplane = R_PLANE.R_FindPlane(ceilingheight, ceilingpic, lightlevel)
+    ELSE
+        R_PLANE.ceilingplane = -1
+    ENDIF
+
+    DIM i AS INTEGER
+    FOR i = 0 TO n_segs - 1
+        R_AddLine(first_seg + i)
+    NEXT i
+ENDSUB
+
+' Draws all subsectors below a node, front to back. Called with the root.
+EXPORT SUB R_RenderBSPNode(bspnum AS INTEGER)
+    IF (bspnum BAND DOOMDEF.NF_SUBSECTOR) <> 0 THEN
+        IF bspnum = -1 THEN
+            R_Subsector(0)
+        ELSE
+            R_Subsector(bspnum BAND (BNOT DOOMDEF.NF_SUBSECTOR))
+        ENDIF
+        RETURN
+    ENDIF
+
+    ' The side the view point is on is drawn first.
+    DIM side AS INTEGER = R_MAIN.R_PointOnSide(R_MAIN.viewx, R_MAIN.viewy, bspnum)
+    R_RenderBSPNode(CLNG(P_SETUP.node_children[bspnum * 2 + side]))
+
+    ' The other side only if its bounding box may be visible.
+    DIM far_side AS INTEGER = side BXOR 1
+    IF R_CheckBBox(bspnum * 8 + far_side * 4) <> 0 THEN R_RenderBSPNode(CLNG(P_SETUP.node_children[bspnum * 2 + far_side]))
+ENDSUB

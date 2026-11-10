@@ -1,0 +1,109 @@
+' Column and span drawing into the view window of screen 0 (r_draw.c).
+'
+' The caller fills the dc_ variables and calls R_DrawColumn, or the ds_
+' variables and calls R_DrawSpan. Sources and colormaps are places in
+' W_WAD.pool. Only high detail is drawn (detailshift 0).
+
+EXPORT MODULE R_DRAW
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT W_WAD
+IMPORT V_VIDEO
+IMPORT R_MAIN
+
+EXPORT CONST SBARHEIGHT = 32
+
+' The view window on the screen.
+EXPORT DIM viewwidth AS INTEGER = 0
+EXPORT DIM scaledviewwidth AS INTEGER = 0
+EXPORT DIM viewheight AS INTEGER = 0
+EXPORT DIM viewwindowx AS INTEGER = 0
+EXPORT DIM viewwindowy AS INTEGER = 0
+' Place in V_VIDEO.screens of the first pixel of each view row, and the
+' screen column of each view column.
+EXPORT DIM ylookup[DOOMDEF.SCREENHEIGHT] AS INTEGER
+EXPORT DIM columnofs[DOOMDEF.SCREENWIDTH] AS INTEGER
+
+' ---- R_DrawColumn -----------------------------------------------------------
+EXPORT DIM dc_colormap AS INTEGER = 0
+EXPORT DIM dc_x AS INTEGER = 0
+EXPORT DIM dc_yl AS INTEGER = 0
+EXPORT DIM dc_yh AS INTEGER = 0
+EXPORT DIM dc_iscale AS INTEGER = 0
+EXPORT DIM dc_texturemid AS INTEGER = 0
+' First pixel of the column to draw, 128 pixels high.
+EXPORT DIM dc_source AS INTEGER = 0
+
+' ---- R_DrawSpan -------------------------------------------------------------
+EXPORT DIM ds_y AS INTEGER = 0
+EXPORT DIM ds_x1 AS INTEGER = 0
+EXPORT DIM ds_x2 AS INTEGER = 0
+EXPORT DIM ds_colormap AS INTEGER = 0
+EXPORT DIM ds_xfrac AS INTEGER = 0
+EXPORT DIM ds_yfrac AS INTEGER = 0
+EXPORT DIM ds_xstep AS INTEGER = 0
+EXPORT DIM ds_ystep AS INTEGER = 0
+' First pixel of the 64 x 64 flat to draw.
+EXPORT DIM ds_source AS INTEGER = 0
+
+' Draws a vertical run of a wall or sprite column, scaled, through a colormap.
+EXPORT SUB R_DrawColumn()
+    DIM n_more AS INTEGER = dc_yh - dc_yl
+    IF n_more < 0 THEN RETURN
+    IF dc_x < 0 OR dc_x >= DOOMDEF.SCREENWIDTH OR dc_yl < 0 OR dc_yh >= DOOMDEF.SCREENHEIGHT THEN
+        I_SYSTEM.I_Error("R_DrawColumn: " + STR$(dc_yl) + " to " + STR$(dc_yh) + " at " + STR$(dc_x))
+    ENDIF
+    DIM dest AS INTEGER = CLNG(ylookup[dc_yl]) + CLNG(columnofs[dc_x])
+    DIM fracstep AS INTEGER = dc_iscale
+    DIM frac AS INTEGER = dc_texturemid + (dc_yl - R_MAIN.centery) * fracstep
+    DIM source AS INTEGER = dc_source
+    DIM colormap AS INTEGER = dc_colormap
+    DIM i AS INTEGER
+    FOR i = 0 TO n_more
+        V_VIDEO.screens[dest] = W_WAD.pool[colormap + W_WAD.pool[source + ((frac SHR 16) BAND 127)]]
+        dest = dest + DOOMDEF.SCREENWIDTH
+        frac = frac + fracstep
+    NEXT i
+ENDSUB
+
+' Draws a horizontal run of a floor or ceiling through a colormap.
+EXPORT SUB R_DrawSpan()
+    IF ds_x2 < ds_x1 OR ds_x1 < 0 OR ds_x2 >= DOOMDEF.SCREENWIDTH OR ds_y < 0 OR ds_y > DOOMDEF.SCREENHEIGHT THEN
+        I_SYSTEM.I_Error("R_DrawSpan: " + STR$(ds_x1) + " to " + STR$(ds_x2) + " at " + STR$(ds_y))
+    ENDIF
+    DIM xfrac AS INTEGER = ds_xfrac
+    DIM yfrac AS INTEGER = ds_yfrac
+    DIM xstep AS INTEGER = ds_xstep
+    DIM ystep AS INTEGER = ds_ystep
+    DIM dest AS INTEGER = CLNG(ylookup[ds_y]) + CLNG(columnofs[ds_x1])
+    DIM source AS INTEGER = ds_source
+    DIM colormap AS INTEGER = ds_colormap
+    DIM i AS INTEGER
+    FOR i = 0 TO ds_x2 - ds_x1
+        V_VIDEO.screens[dest] = W_WAD.pool[colormap + W_WAD.pool[source + ((yfrac SHR 10) BAND 4032) + ((xfrac SHR 16) BAND 63)]]
+        dest = dest + 1
+        xfrac = xfrac + xstep
+        yfrac = yfrac + ystep
+    NEXT i
+ENDSUB
+
+' Places the view window of width x height on the screen.
+EXPORT SUB R_InitBuffer(width AS INTEGER, height AS INTEGER)
+    DIM i AS INTEGER
+    viewwindowx = (DOOMDEF.SCREENWIDTH - width) SHR 1
+    FOR i = 0 TO width - 1
+        columnofs[i] = viewwindowx + i
+    NEXT i
+    IF width = DOOMDEF.SCREENWIDTH THEN
+        viewwindowy = 0
+    ELSE
+        viewwindowy = (DOOMDEF.SCREENHEIGHT - SBARHEIGHT - height) SHR 1
+    ENDIF
+    FOR i = 0 TO height - 1
+        ylookup[i] = (i + viewwindowy) * DOOMDEF.SCREENWIDTH
+    NEXT i
+ENDSUB

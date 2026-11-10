@@ -1,0 +1,444 @@
+' View setup, the tables that depend on the view size, and the point and
+' angle arithmetic of the renderer (r_main.c).
+
+EXPORT MODULE R_MAIN
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT TABLES
+IMPORT P_SETUP
+IMPORT R_DATA
+IMPORT R_DRAW
+IMPORT R_SKY
+IMPORT R_PLANE
+IMPORT R_SEGS
+IMPORT R_BSP
+IMPORT R_THINGS
+
+EXPORT CONST FIELDOFVIEW = 2048
+
+' Lighting: 16 light levels, each a row of colormaps picked by scale (walls)
+' or by distance (planes).
+EXPORT CONST LIGHTLEVELS = 16
+EXPORT CONST LIGHTSEGSHIFT = 4
+EXPORT CONST MAXLIGHTSCALE = 48
+EXPORT CONST LIGHTSCALESHIFT = 12
+EXPORT CONST MAXLIGHTZ = 128
+EXPORT CONST LIGHTZSHIFT = 20
+EXPORT CONST NUMCOLORMAPS = 32
+CONST DISTMAP = 2
+
+EXPORT DIM viewangleoffset AS INTEGER = 0
+' Incremented every time a check is made.
+EXPORT DIM validcount AS INTEGER = 1
+' Colormap that replaces all lighting (invulnerability, light goggles), or 0.
+EXPORT DIM fixedcolormap AS INTEGER = 0
+
+EXPORT DIM centerx AS INTEGER = 0
+EXPORT DIM centery AS INTEGER = 0
+EXPORT DIM centerxfrac AS INTEGER = 0
+EXPORT DIM centeryfrac AS INTEGER = 0
+EXPORT DIM projection AS INTEGER = 0
+
+EXPORT DIM framecount AS INTEGER = 0
+EXPORT DIM sscount AS INTEGER = 0
+
+EXPORT DIM viewx AS INTEGER = 0
+EXPORT DIM viewy AS INTEGER = 0
+EXPORT DIM viewz AS INTEGER = 0
+EXPORT DIM viewangle AS INTEGER = 0
+EXPORT DIM viewcos AS INTEGER = 0
+EXPORT DIM viewsin AS INTEGER = 0
+
+' 0 = high detail, the only one drawn.
+EXPORT DIM detailshift AS INTEGER = 0
+
+' Half the field of view as an angle.
+EXPORT DIM clipangle AS INTEGER = 0
+' viewangletox[viewangle + FINEANGLES / 4] maps a view angle to a screen x.
+EXPORT DIM viewangletox[TABLES.FINEANGLES \ 2] AS INTEGER
+' The lowest view angle that maps to each screen x.
+EXPORT DIM xtoviewangle[DOOMDEF.SCREENWIDTH + 1] AS INTEGER
+
+' scalelight[level * MAXLIGHTSCALE + scale] and zlight[level * MAXLIGHTZ + z]
+' are colormaps (places in the pool). Row LIGHTLEVELS of scalelight is
+' scalelightfixed, filled with fixedcolormap while that is set.
+EXPORT DIM scalelight[(LIGHTLEVELS + 1) * MAXLIGHTSCALE] AS INTEGER
+EXPORT DIM zlight[LIGHTLEVELS * MAXLIGHTZ] AS INTEGER
+EXPORT CONST SCALELIGHTFIXED = LIGHTLEVELS * MAXLIGHTSCALE
+
+' Bumped light from gun blasts.
+EXPORT DIM extralight AS INTEGER = 0
+
+EXPORT DIM setsizeneeded AS INTEGER = 0
+DIM setblocks AS INTEGER = 0
+DIM setdetail AS INTEGER = 0
+
+' Which side of a BSP node's partition line a point is on: 0 front, 1 back.
+EXPORT FUNC R_PointOnSide(x AS INTEGER, y AS INTEGER, node AS INTEGER) AS INTEGER
+    DIM ndx AS INTEGER = CLNG(P_SETUP.node_dx[node])
+    DIM ndy AS INTEGER = CLNG(P_SETUP.node_dy[node])
+    DIM nx AS INTEGER = CLNG(P_SETUP.node_x[node])
+    DIM ny AS INTEGER = CLNG(P_SETUP.node_y[node])
+    IF ndx = 0 THEN
+        IF x <= nx THEN
+            IF ndy > 0 THEN RETURN 1
+            RETURN 0
+        ENDIF
+        IF ndy < 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    IF ndy = 0 THEN
+        IF y <= ny THEN
+            IF ndx < 0 THEN RETURN 1
+            RETURN 0
+        ENDIF
+        IF ndx > 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    DIM dx AS INTEGER = x - nx
+    DIM dy AS INTEGER = y - ny
+    ' Decided by the sign bits alone where they differ.
+    IF (ndy BXOR ndx BXOR dx BXOR dy) < 0 THEN
+        IF (ndy BXOR dx) < 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    DIM left AS INTEGER = M_FIXED.FixedMul(ndy SHR 16, dx)
+    DIM right AS INTEGER = M_FIXED.FixedMul(dy, ndx SHR 16)
+    IF right < left THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+' Which side of a seg a point is on: 0 front, 1 back.
+EXPORT FUNC R_PointOnSegSide(x AS INTEGER, y AS INTEGER, seg AS INTEGER) AS INTEGER
+    DIM v1 AS INTEGER = CLNG(P_SETUP.seg_v1[seg])
+    DIM v2 AS INTEGER = CLNG(P_SETUP.seg_v2[seg])
+    DIM lx AS INTEGER = CLNG(P_SETUP.vertex_x[v1])
+    DIM ly AS INTEGER = CLNG(P_SETUP.vertex_y[v1])
+    DIM ldx AS INTEGER = CLNG(P_SETUP.vertex_x[v2]) - lx
+    DIM ldy AS INTEGER = CLNG(P_SETUP.vertex_y[v2]) - ly
+    IF ldx = 0 THEN
+        IF x <= lx THEN
+            IF ldy > 0 THEN RETURN 1
+            RETURN 0
+        ENDIF
+        IF ldy < 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    IF ldy = 0 THEN
+        IF y <= ly THEN
+            IF ldx < 0 THEN RETURN 1
+            RETURN 0
+        ENDIF
+        IF ldx > 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    DIM dx AS INTEGER = x - lx
+    DIM dy AS INTEGER = y - ly
+    IF (ldy BXOR ldx BXOR dx BXOR dy) < 0 THEN
+        IF (ldy BXOR dx) < 0 THEN RETURN 1
+        RETURN 0
+    ENDIF
+    DIM left AS INTEGER = M_FIXED.FixedMul(ldy SHR 16, dx)
+    DIM right AS INTEGER = M_FIXED.FixedMul(dy, ldx SHR 16)
+    IF right < left THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+' Index into tantoangle for the slope num / den, both unsigned.
+FUNC SlopeDiv(num AS INTEGER, den AS INTEGER) AS INTEGER
+    IF den < 512 THEN RETURN TABLES.SLOPERANGE
+    DIM ans AS INTEGER = (num SHL 3) \ (den SHR 8)
+    IF ans <= TABLES.SLOPERANGE THEN RETURN ans
+    RETURN TABLES.SLOPERANGE
+ENDFUNC
+
+' The angle from the view point to (x, y): the point is flipped into the
+' first octant, where the slope y / x is looked up in tantoangle.
+EXPORT FUNC R_PointToAngle(x_in AS INTEGER, y_in AS INTEGER) AS INTEGER
+    DIM x AS INTEGER = x_in - viewx
+    DIM y AS INTEGER = y_in - viewy
+    IF x = 0 AND y = 0 THEN RETURN 0
+    DIM a AS INTEGER
+    IF x >= 0 THEN
+        IF y >= 0 THEN
+            IF x > y THEN
+                a = CLNG(TABLES.tantoangle[SlopeDiv(y, x)])
+            ELSE
+                a = M_FIXED.ANG90 - 1 - CLNG(TABLES.tantoangle[SlopeDiv(x, y)])
+            ENDIF
+        ELSE
+            y = -y
+            IF x > y THEN
+                a = -CLNG(TABLES.tantoangle[SlopeDiv(y, x)])
+            ELSE
+                a = M_FIXED.ANG270 + CLNG(TABLES.tantoangle[SlopeDiv(x, y)])
+            ENDIF
+        ENDIF
+    ELSE
+        x = -x
+        IF y >= 0 THEN
+            IF x > y THEN
+                a = M_FIXED.ANG180 - 1 - CLNG(TABLES.tantoangle[SlopeDiv(y, x)])
+            ELSE
+                a = M_FIXED.ANG90 + CLNG(TABLES.tantoangle[SlopeDiv(x, y)])
+            ENDIF
+        ELSE
+            y = -y
+            IF x > y THEN
+                a = M_FIXED.ANG180 + CLNG(TABLES.tantoangle[SlopeDiv(y, x)])
+            ELSE
+                a = M_FIXED.ANG270 - 1 - CLNG(TABLES.tantoangle[SlopeDiv(x, y)])
+            ENDIF
+        ENDIF
+    ENDIF
+    RETURN a BAND M_FIXED.ANGLE_MASK
+ENDFUNC
+
+' The angle from (x1, y1) to (x2, y2). Moves the view point there, as the
+' original does.
+EXPORT FUNC R_PointToAngle2(x1 AS INTEGER, y1 AS INTEGER, x2 AS INTEGER, y2 AS INTEGER) AS INTEGER
+    viewx = x1
+    viewy = y1
+    RETURN R_PointToAngle(x2, y2)
+ENDFUNC
+
+' The distance from the view point to (x, y).
+EXPORT FUNC R_PointToDist(x AS INTEGER, y AS INTEGER) AS INTEGER
+    DIM dx AS INTEGER = ABS(x - viewx)
+    DIM dy AS INTEGER = ABS(y - viewy)
+    DIM swap AS INTEGER
+    IF dy > dx THEN
+        swap = dx
+        dx = dy
+        dy = swap
+    ENDIF
+    ' A point at the view point has no direction; the original reads past
+    ' the end of tantoangle there.
+    IF dx = 0 THEN RETURN 0
+    DIM angle AS INTEGER = (CLNG(TABLES.tantoangle[M_FIXED.FixedDiv(dy, dx) SHR TABLES.DBITS]) + M_FIXED.ANG90) SHR TABLES.ANGLETOFINESHIFT
+    RETURN M_FIXED.FixedDiv(dx, CLNG(TABLES.finesine[angle]))
+ENDFUNC
+
+' The scale of the wall being drawn at the view angle visangle. Needs
+' R_SEGS.rw_distance and R_SEGS.rw_normalangle.
+EXPORT FUNC R_ScaleFromGlobalAngle(visangle AS INTEGER) AS INTEGER
+    DIM anglea AS INTEGER = (M_FIXED.ANG90 + visangle - viewangle) BAND M_FIXED.ANGLE_MASK
+    DIM angleb AS INTEGER = (M_FIXED.ANG90 + visangle - R_SEGS.rw_normalangle) BAND M_FIXED.ANGLE_MASK
+    DIM sinea AS INTEGER = CLNG(TABLES.finesine[anglea SHR TABLES.ANGLETOFINESHIFT])
+    DIM sineb AS INTEGER = CLNG(TABLES.finesine[angleb SHR TABLES.ANGLETOFINESHIFT])
+    DIM num AS INTEGER = M_FIXED.ToS32(M_FIXED.FixedMul(projection, sineb) SHL detailshift)
+    DIM den AS INTEGER = M_FIXED.FixedMul(R_SEGS.rw_distance, sinea)
+    DIM scale AS INTEGER
+    IF den > (num SHR 16) THEN
+        scale = M_FIXED.FixedDiv(num, den)
+        IF scale > 64 * 65536 THEN
+            scale = 64 * 65536
+        ELSEIF scale < 256 THEN
+            scale = 256
+        ENDIF
+    ELSE
+        scale = 64 * 65536
+    ENDIF
+    RETURN scale
+ENDFUNC
+
+SUB R_InitTextureMapping()
+    DIM i AS INTEGER
+    DIM x AS INTEGER
+    DIM t AS INTEGER
+    DIM tangent AS INTEGER
+    DIM vw AS INTEGER = R_DRAW.viewwidth
+    ' The focal length that makes FIELDOFVIEW cover the view width.
+    DIM focallength AS INTEGER = M_FIXED.FixedDiv(centerxfrac, CLNG(TABLES.finetangent[TABLES.FINEANGLES \ 4 + FIELDOFVIEW \ 2]))
+
+    FOR i = 0 TO TABLES.FINEANGLES \ 2 - 1
+        tangent = CLNG(TABLES.finetangent[i])
+        IF tangent > 65536 * 2 THEN
+            t = -1
+        ELSEIF tangent < -65536 * 2 THEN
+            t = vw + 1
+        ELSE
+            t = M_FIXED.FixedMul(tangent, focallength)
+            t = (centerxfrac - t + 65536 - 1) SHR 16
+            IF t < -1 THEN
+                t = -1
+            ELSEIF t > vw + 1 THEN
+                t = vw + 1
+            ENDIF
+        ENDIF
+        viewangletox[i] = t
+    NEXT i
+
+    ' xtoviewangle is the smallest view angle that maps to x.
+    FOR x = 0 TO vw
+        i = 0
+        DO WHILE CLNG(viewangletox[i]) > x
+            i = i + 1
+        LOOP
+        xtoviewangle[x] = ((i SHL TABLES.ANGLETOFINESHIFT) - M_FIXED.ANG90) BAND M_FIXED.ANGLE_MASK
+    NEXT x
+
+    ' Take out the fencepost cases.
+    FOR i = 0 TO TABLES.FINEANGLES \ 2 - 1
+        IF CLNG(viewangletox[i]) = -1 THEN
+            viewangletox[i] = 0
+        ELSEIF CLNG(viewangletox[i]) = vw + 1 THEN
+            viewangletox[i] = vw
+        ENDIF
+    NEXT i
+
+    clipangle = CLNG(xtoviewangle[0])
+ENDSUB
+
+' The colormap for each light level and distance. The table by scale
+' depends on the view size and is made in R_ExecuteSetViewSize.
+SUB R_InitLightTables()
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM level AS INTEGER
+    DIM startmap AS INTEGER
+    DIM scale AS INTEGER
+    FOR i = 0 TO LIGHTLEVELS - 1
+        startmap = ((LIGHTLEVELS - 1 - i) * 2) * NUMCOLORMAPS \ LIGHTLEVELS
+        FOR j = 0 TO MAXLIGHTZ - 1
+            scale = M_FIXED.FixedDiv((DOOMDEF.SCREENWIDTH \ 2) * 65536, (j + 1) SHL LIGHTZSHIFT)
+            scale = scale SHR LIGHTSCALESHIFT
+            level = startmap - scale \ DISTMAP
+            IF level < 0 THEN level = 0
+            IF level >= NUMCOLORMAPS THEN level = NUMCOLORMAPS - 1
+            zlight[i * MAXLIGHTZ + j] = R_DATA.colormaps + level * 256
+        NEXT j
+    NEXT i
+ENDSUB
+
+' Asks for a view size; it takes effect at the next refresh. blocks 11 is
+' the whole screen, 10 the screen above the status bar, 3 the smallest.
+EXPORT SUB R_SetViewSize(blocks AS INTEGER, detail AS INTEGER)
+    setsizeneeded = 1
+    setblocks = blocks
+    setdetail = detail
+ENDSUB
+
+EXPORT SUB R_ExecuteSetViewSize()
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM level AS INTEGER
+    DIM startmap AS INTEGER
+    DIM dy AS INTEGER
+    DIM cosadj AS INTEGER
+
+    setsizeneeded = 0
+    IF setblocks = 11 THEN
+        R_DRAW.scaledviewwidth = DOOMDEF.SCREENWIDTH
+        R_DRAW.viewheight = DOOMDEF.SCREENHEIGHT
+    ELSE
+        R_DRAW.scaledviewwidth = setblocks * 32
+        R_DRAW.viewheight = (setblocks * 168 \ 10) BAND (BNOT 7)
+    ENDIF
+
+    detailshift = setdetail
+    R_DRAW.viewwidth = R_DRAW.scaledviewwidth SHR detailshift
+    DIM vw AS INTEGER = R_DRAW.viewwidth
+    DIM vh AS INTEGER = R_DRAW.viewheight
+
+    centery = vh \ 2
+    centerx = vw \ 2
+    centerxfrac = centerx * 65536
+    centeryfrac = centery * 65536
+    projection = centerxfrac
+
+    R_DRAW.R_InitBuffer(R_DRAW.scaledviewwidth, vh)
+    R_InitTextureMapping()
+
+    R_THINGS.pspritescale = 65536 * vw \ DOOMDEF.SCREENWIDTH
+    R_THINGS.pspriteiscale = 65536 * DOOMDEF.SCREENWIDTH \ vw
+
+    ' Thing clipping.
+    FOR i = 0 TO vw - 1
+        R_PLANE.openings[R_PLANE.SCREENHEIGHTARRAY + i] = vh
+        R_PLANE.openings[R_PLANE.NEGONEARRAY + i] = -1
+    NEXT i
+
+    ' Planes.
+    FOR i = 0 TO vh - 1
+        dy = CLNG(ABS((i - vh \ 2) * 65536 + 65536 \ 2))
+        R_PLANE.yslope[i] = M_FIXED.FixedDiv((vw SHL detailshift) \ 2 * 65536, dy)
+    NEXT i
+    FOR i = 0 TO vw - 1
+        cosadj = CLNG(ABS(CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + (CLNG(xtoviewangle[i]) SHR TABLES.ANGLETOFINESHIFT)])))
+        R_PLANE.distscale[i] = M_FIXED.FixedDiv(65536, cosadj)
+    NEXT i
+
+    ' The colormap for each light level and scale.
+    FOR i = 0 TO LIGHTLEVELS - 1
+        startmap = ((LIGHTLEVELS - 1 - i) * 2) * NUMCOLORMAPS \ LIGHTLEVELS
+        FOR j = 0 TO MAXLIGHTSCALE - 1
+            level = startmap - j * DOOMDEF.SCREENWIDTH \ (vw SHL detailshift) \ DISTMAP
+            IF level < 0 THEN level = 0
+            IF level >= NUMCOLORMAPS THEN level = NUMCOLORMAPS - 1
+            scalelight[i * MAXLIGHTSCALE + j] = R_DATA.colormaps + level * 256
+        NEXT j
+    NEXT i
+ENDSUB
+
+' screenblocks and detail_level are the settings of the options menu.
+EXPORT SUB R_Init(screenblocks AS INTEGER, detail_level AS INTEGER)
+    R_DATA.R_InitData()
+    R_SetViewSize(screenblocks, detail_level)
+    R_InitLightTables()
+    R_SKY.R_InitSkyMap()
+    framecount = 0
+ENDSUB
+
+' The subsector that contains the point.
+EXPORT FUNC R_PointInSubsector(x AS INTEGER, y AS INTEGER) AS INTEGER
+    IF P_SETUP.numnodes = 0 THEN RETURN 0
+    DIM nodenum AS INTEGER = P_SETUP.numnodes - 1
+    DIM side AS INTEGER
+    DO WHILE (nodenum BAND DOOMDEF.NF_SUBSECTOR) = 0
+        side = R_PointOnSide(x, y, nodenum)
+        nodenum = CLNG(P_SETUP.node_children[nodenum * 2 + side])
+    LOOP
+    RETURN nodenum BAND (BNOT DOOMDEF.NF_SUBSECTOR)
+ENDFUNC
+
+' Sets the view for a frame: the eye at (x, y, z) looking along angle.
+' light_bump is the player's extralight, fixed_map the number of the colormap
+' that replaces all lighting, or 0.
+EXPORT SUB R_SetupFrame(x AS INTEGER, y AS INTEGER, z AS INTEGER, angle AS INTEGER, light_bump AS INTEGER, fixed_map AS INTEGER)
+    DIM i AS INTEGER
+    viewx = x
+    viewy = y
+    viewangle = (angle + viewangleoffset) BAND M_FIXED.ANGLE_MASK
+    extralight = light_bump
+    viewz = z
+    viewsin = CLNG(TABLES.finesine[viewangle SHR TABLES.ANGLETOFINESHIFT])
+    viewcos = CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + (viewangle SHR TABLES.ANGLETOFINESHIFT)])
+    sscount = 0
+    IF fixed_map <> 0 THEN
+        fixedcolormap = R_DATA.colormaps + fixed_map * 256
+        R_SEGS.walllights = SCALELIGHTFIXED
+        FOR i = 0 TO MAXLIGHTSCALE - 1
+            scalelight[SCALELIGHTFIXED + i] = fixedcolormap
+        NEXT i
+    ELSE
+        fixedcolormap = 0
+    ENDIF
+    framecount = framecount + 1
+    validcount = validcount + 1
+ENDSUB
+
+' Draws the view of R_SetupFrame's arguments into the view window.
+EXPORT SUB R_RenderPlayerView(x AS INTEGER, y AS INTEGER, z AS INTEGER, angle AS INTEGER, light_bump AS INTEGER, fixed_map AS INTEGER)
+    R_SetupFrame(x, y, z, angle, light_bump, fixed_map)
+    R_BSP.R_ClearClipSegs()
+    R_BSP.R_ClearDrawSegs()
+    R_PLANE.R_ClearPlanes()
+    ' The head node is the last node output.
+    R_BSP.R_RenderBSPNode(P_SETUP.numnodes - 1)
+    R_PLANE.R_DrawPlanes()
+ENDSUB

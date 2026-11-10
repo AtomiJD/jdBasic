@@ -1,0 +1,491 @@
+' Wall drawing (r_segs.c).
+'
+' R_StoreWallRange gets a run of screen columns of the current seg that is
+' visible. It works out scale and texture placement at both ends, records a
+' drawseg for the sprites, and lets R_RenderSegLoop draw the columns and mark
+' the floor and ceiling rows they leave open.
+
+EXPORT MODULE R_SEGS
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT TABLES
+IMPORT P_SETUP
+IMPORT R_DATA
+IMPORT R_DRAW
+IMPORT R_MAIN
+IMPORT R_SKY
+IMPORT R_PLANE
+IMPORT R_BSP
+
+CONST HEIGHTBITS = 12
+CONST HEIGHTUNIT = 4096
+
+' Silhouette of a drawseg: which of its edges clip sprites behind it.
+EXPORT CONST SIL_NONE = 0
+EXPORT CONST SIL_BOTTOM = 1
+EXPORT CONST SIL_TOP = 2
+EXPORT CONST SIL_BOTH = 3
+
+' True if any of the seg's textures might be visible.
+DIM segtextured AS INTEGER = 0
+' False if the back side is the same plane.
+DIM markfloor AS INTEGER = 0
+DIM markceiling AS INTEGER = 0
+DIM maskedtexture AS INTEGER = 0
+DIM toptexture AS INTEGER = 0
+DIM bottomtexture AS INTEGER = 0
+DIM midtexture AS INTEGER = 0
+
+EXPORT DIM rw_normalangle AS INTEGER = 0
+' Angle to the seg's first vertex.
+EXPORT DIM rw_angle1 AS INTEGER = 0
+
+DIM rw_x AS INTEGER = 0
+DIM rw_stopx AS INTEGER = 0
+DIM rw_centerangle AS INTEGER = 0
+DIM rw_offset AS INTEGER = 0
+EXPORT DIM rw_distance AS INTEGER = 0
+DIM rw_scale AS INTEGER = 0
+DIM rw_scalestep AS INTEGER = 0
+DIM rw_midtexturemid AS INTEGER = 0
+DIM rw_toptexturemid AS INTEGER = 0
+DIM rw_bottomtexturemid AS INTEGER = 0
+
+DIM worldtop AS INTEGER = 0
+DIM worldbottom AS INTEGER = 0
+DIM worldhigh AS INTEGER = 0
+DIM worldlow AS INTEGER = 0
+
+DIM pixhigh AS INTEGER = 0
+DIM pixlow AS INTEGER = 0
+DIM pixhighstep AS INTEGER = 0
+DIM pixlowstep AS INTEGER = 0
+
+DIM topfrac AS INTEGER = 0
+DIM topstep AS INTEGER = 0
+DIM bottomfrac AS INTEGER = 0
+DIM bottomstep AS INTEGER = 0
+
+' Row of R_MAIN.scalelight the wall's colormaps are taken from.
+EXPORT DIM walllights AS INTEGER = 0
+' Where in R_PLANE.openings the texture column of each screen column of a
+' masked middle texture is kept: openings[maskedtexturecol + x].
+DIM maskedtexturecol AS INTEGER = 0
+
+' Draws the columns rw_x .. rw_stopx - 1 of the current seg: zero, one or two
+' textures per column, and the floor and ceiling rows around them.
+SUB R_RenderSegLoop()
+    DIM angle AS INTEGER
+    DIM index AS INTEGER
+    DIM yl AS INTEGER
+    DIM yh AS INTEGER
+    DIM mid AS INTEGER
+    DIM texturecolumn AS INTEGER = 0
+    DIM top AS INTEGER
+    DIM bottom AS INTEGER
+    DIM cclip AS INTEGER
+    DIM fclip AS INTEGER
+    DIM ceil_base AS INTEGER = R_PLANE.ceilingplane * 322 + 1
+    DIM floor_base AS INTEGER = R_PLANE.floorplane * 322 + 1
+
+    DO WHILE rw_x < rw_stopx
+        cclip = CLNG(R_PLANE.ceilingclip[rw_x])
+        fclip = CLNG(R_PLANE.floorclip[rw_x])
+
+        ' Mark floor and ceiling areas.
+        yl = (topfrac + HEIGHTUNIT - 1) SHR HEIGHTBITS
+        IF yl < cclip + 1 THEN yl = cclip + 1
+
+        IF markceiling <> 0 THEN
+            top = cclip + 1
+            bottom = yl - 1
+            IF bottom >= fclip THEN bottom = fclip - 1
+            IF top <= bottom THEN
+                R_PLANE.visplane_top[ceil_base + rw_x] = top
+                R_PLANE.visplane_bottom[ceil_base + rw_x] = bottom
+            ENDIF
+        ENDIF
+
+        yh = bottomfrac SHR HEIGHTBITS
+        IF yh >= fclip THEN yh = fclip - 1
+
+        IF markfloor <> 0 THEN
+            top = yh + 1
+            bottom = fclip - 1
+            IF top <= cclip THEN top = cclip + 1
+            IF top <= bottom THEN
+                R_PLANE.visplane_top[floor_base + rw_x] = top
+                R_PLANE.visplane_bottom[floor_base + rw_x] = bottom
+            ENDIF
+        ENDIF
+
+        ' Texture column and lighting are the same for all tiers of the wall.
+        IF segtextured <> 0 THEN
+            angle = ((rw_centerangle + CLNG(R_MAIN.xtoviewangle[rw_x])) BAND M_FIXED.ANGLE_MASK) SHR TABLES.ANGLETOFINESHIFT
+            texturecolumn = rw_offset - M_FIXED.FixedMul(CLNG(TABLES.finetangent[angle]), rw_distance)
+            texturecolumn = texturecolumn SHR 16
+            index = rw_scale SHR R_MAIN.LIGHTSCALESHIFT
+            IF index >= R_MAIN.MAXLIGHTSCALE THEN index = R_MAIN.MAXLIGHTSCALE - 1
+            R_DRAW.dc_colormap = CLNG(R_MAIN.scalelight[walllights + index])
+            R_DRAW.dc_x = rw_x
+            R_DRAW.dc_iscale = $FFFFFFFF \ rw_scale
+        ENDIF
+
+        IF midtexture <> 0 THEN
+            ' Single sided line.
+            R_DRAW.dc_yl = yl
+            R_DRAW.dc_yh = yh
+            R_DRAW.dc_texturemid = rw_midtexturemid
+            R_DRAW.dc_source = R_DATA.R_GetColumn(midtexture, texturecolumn)
+            R_DRAW.R_DrawColumn()
+            R_PLANE.ceilingclip[rw_x] = R_DRAW.viewheight
+            R_PLANE.floorclip[rw_x] = -1
+        ELSE
+            ' Two sided line.
+            IF toptexture <> 0 THEN
+                mid = pixhigh SHR HEIGHTBITS
+                pixhigh = pixhigh + pixhighstep
+                IF mid >= fclip THEN mid = fclip - 1
+                IF mid >= yl THEN
+                    R_DRAW.dc_yl = yl
+                    R_DRAW.dc_yh = mid
+                    R_DRAW.dc_texturemid = rw_toptexturemid
+                    R_DRAW.dc_source = R_DATA.R_GetColumn(toptexture, texturecolumn)
+                    R_DRAW.R_DrawColumn()
+                    R_PLANE.ceilingclip[rw_x] = mid
+                ELSE
+                    R_PLANE.ceilingclip[rw_x] = yl - 1
+                ENDIF
+            ELSE
+                IF markceiling <> 0 THEN R_PLANE.ceilingclip[rw_x] = yl - 1
+            ENDIF
+
+            IF bottomtexture <> 0 THEN
+                mid = (pixlow + HEIGHTUNIT - 1) SHR HEIGHTBITS
+                pixlow = pixlow + pixlowstep
+                ' The top tier may have moved the ceiling clip of this column.
+                cclip = CLNG(R_PLANE.ceilingclip[rw_x])
+                IF mid <= cclip THEN mid = cclip + 1
+                IF mid <= yh THEN
+                    R_DRAW.dc_yl = mid
+                    R_DRAW.dc_yh = yh
+                    R_DRAW.dc_texturemid = rw_bottomtexturemid
+                    R_DRAW.dc_source = R_DATA.R_GetColumn(bottomtexture, texturecolumn)
+                    R_DRAW.R_DrawColumn()
+                    R_PLANE.floorclip[rw_x] = mid
+                ELSE
+                    R_PLANE.floorclip[rw_x] = yh + 1
+                ENDIF
+            ELSE
+                IF markfloor <> 0 THEN R_PLANE.floorclip[rw_x] = yh + 1
+            ENDIF
+
+            IF maskedtexture <> 0 THEN
+                ' Kept for drawing the masked middle texture later.
+                R_PLANE.openings[maskedtexturecol + rw_x] = texturecolumn
+            ENDIF
+        ENDIF
+
+        rw_scale = rw_scale + rw_scalestep
+        topfrac = topfrac + topstep
+        bottomfrac = bottomfrac + bottomstep
+        rw_x = rw_x + 1
+    LOOP
+ENDSUB
+
+' A wall segment will be drawn between the screen columns start and stopx
+' (inclusive).
+EXPORT SUB R_StoreWallRange(start AS INTEGER, stopx AS INTEGER)
+    ' Past the last drawseg nothing more is drawn, as in the original.
+    IF R_BSP.ds_p = R_BSP.MAXDRAWSEGS THEN RETURN
+    IF start >= R_DRAW.viewwidth OR start > stopx THEN I_SYSTEM.I_Error("Bad R_RenderWallRange: " + STR$(start) + " to " + STR$(stopx))
+
+    DIM ds AS INTEGER = R_BSP.ds_p
+    DIM curline AS INTEGER = R_BSP.curline
+    DIM frontsector AS INTEGER = R_BSP.frontsector
+    DIM backsector AS INTEGER = R_BSP.backsector
+    DIM sidedef AS INTEGER = CLNG(P_SETUP.seg_sidedef[curline])
+    DIM linedef AS INTEGER = CLNG(P_SETUP.seg_linedef[curline])
+    DIM line_flags AS INTEGER = CLNG(P_SETUP.line_flags[linedef])
+    DIM v1 AS INTEGER = CLNG(P_SETUP.seg_v1[curline])
+    DIM v2 AS INTEGER = CLNG(P_SETUP.seg_v2[curline])
+    DIM viewz AS INTEGER = R_MAIN.viewz
+
+    DIM front_floor AS INTEGER = CLNG(P_SETUP.sector_floorheight[frontsector])
+    DIM front_ceiling AS INTEGER = CLNG(P_SETUP.sector_ceilingheight[frontsector])
+    DIM front_floorpic AS INTEGER = CLNG(P_SETUP.sector_floorpic[frontsector])
+    DIM front_ceilingpic AS INTEGER = CLNG(P_SETUP.sector_ceilingpic[frontsector])
+    DIM front_light AS INTEGER = CLNG(P_SETUP.sector_lightlevel[frontsector])
+    DIM back_floor AS INTEGER = 0
+    DIM back_ceiling AS INTEGER = 0
+    DIM back_floorpic AS INTEGER = 0
+    DIM back_ceilingpic AS INTEGER = 0
+    DIM back_light AS INTEGER = 0
+    IF backsector >= 0 THEN
+        back_floor = CLNG(P_SETUP.sector_floorheight[backsector])
+        back_ceiling = CLNG(P_SETUP.sector_ceilingheight[backsector])
+        back_floorpic = CLNG(P_SETUP.sector_floorpic[backsector])
+        back_ceilingpic = CLNG(P_SETUP.sector_ceilingpic[backsector])
+        back_light = CLNG(P_SETUP.sector_lightlevel[backsector])
+    ENDIF
+    DIM side_top AS INTEGER = CLNG(P_SETUP.side_toptexture[sidedef])
+    DIM side_bottom AS INTEGER = CLNG(P_SETUP.side_bottomtexture[sidedef])
+    DIM side_mid AS INTEGER = CLNG(P_SETUP.side_midtexture[sidedef])
+    DIM rowoffset AS INTEGER = CLNG(P_SETUP.side_rowoffset[sidedef])
+
+    ' Mark the line as seen for the automap.
+    P_SETUP.line_flags[linedef] = line_flags BOR DOOMDEF.ML_MAPPED
+
+    ' rw_distance for the scale calculation.
+    rw_normalangle = (CLNG(P_SETUP.seg_angle[curline]) + M_FIXED.ANG90) BAND M_FIXED.ANGLE_MASK
+    DIM offsetangle AS INTEGER = ABS(M_FIXED.ToS32(rw_normalangle - rw_angle1))
+    IF offsetangle > M_FIXED.ANG90 THEN offsetangle = M_FIXED.ANG90
+    DIM distangle AS INTEGER = M_FIXED.ANG90 - offsetangle
+    DIM hyp AS INTEGER = R_MAIN.R_PointToDist(CLNG(P_SETUP.vertex_x[v1]), CLNG(P_SETUP.vertex_y[v1]))
+    DIM sineval AS INTEGER = CLNG(TABLES.finesine[distangle SHR TABLES.ANGLETOFINESHIFT])
+    rw_distance = M_FIXED.FixedMul(hyp, sineval)
+
+    rw_x = start
+    R_BSP.drawseg_x1[ds] = start
+    R_BSP.drawseg_x2[ds] = stopx
+    R_BSP.drawseg_curline[ds] = curline
+    rw_stopx = stopx + 1
+
+    ' Scale at both ends, and the step between.
+    rw_scale = R_MAIN.R_ScaleFromGlobalAngle((R_MAIN.viewangle + CLNG(R_MAIN.xtoviewangle[start])) BAND M_FIXED.ANGLE_MASK)
+    R_BSP.drawseg_scale1[ds] = rw_scale
+    DIM scale2 AS INTEGER
+    IF stopx > start THEN
+        scale2 = R_MAIN.R_ScaleFromGlobalAngle((R_MAIN.viewangle + CLNG(R_MAIN.xtoviewangle[stopx])) BAND M_FIXED.ANGLE_MASK)
+        rw_scalestep = (scale2 - rw_scale) \ (stopx - start)
+        R_BSP.drawseg_scale2[ds] = scale2
+        R_BSP.drawseg_scalestep[ds] = rw_scalestep
+    ELSE
+        R_BSP.drawseg_scale2[ds] = rw_scale
+    ENDIF
+
+    ' Texture boundaries, and whether floor and ceiling marks are needed.
+    worldtop = front_ceiling - viewz
+    worldbottom = front_floor - viewz
+
+    midtexture = 0
+    toptexture = 0
+    bottomtexture = 0
+    maskedtexture = 0
+    R_BSP.drawseg_maskedtexturecol[ds] = -1
+
+    DIM vtop AS INTEGER
+    DIM silhouette AS INTEGER = 0
+    DIM sprtopclip AS INTEGER = -1
+    DIM sprbottomclip AS INTEGER = -1
+
+    IF backsector < 0 THEN
+        ' Single sided line.
+        midtexture = CLNG(R_DATA.texturetranslation[side_mid])
+        ' A single sided line is terminal, so it must mark ends.
+        markfloor = 1
+        markceiling = 1
+        IF (line_flags BAND DOOMDEF.ML_DONTPEGBOTTOM) <> 0 THEN
+            ' Bottom of texture at bottom.
+            vtop = front_floor + CLNG(R_DATA.textureheight[side_mid])
+            rw_midtexturemid = vtop - viewz
+        ELSE
+            ' Top of texture at top.
+            rw_midtexturemid = worldtop
+        ENDIF
+        rw_midtexturemid = rw_midtexturemid + rowoffset
+
+        silhouette = SIL_BOTH
+        sprtopclip = R_PLANE.SCREENHEIGHTARRAY
+        sprbottomclip = R_PLANE.NEGONEARRAY
+        R_BSP.drawseg_bsilheight[ds] = M_FIXED.MAXINT
+        R_BSP.drawseg_tsilheight[ds] = M_FIXED.MININT
+    ELSE
+        ' Two sided line.
+        IF front_floor > back_floor THEN
+            silhouette = SIL_BOTTOM
+            R_BSP.drawseg_bsilheight[ds] = front_floor
+        ELSEIF back_floor > viewz THEN
+            silhouette = SIL_BOTTOM
+            R_BSP.drawseg_bsilheight[ds] = M_FIXED.MAXINT
+        ENDIF
+
+        IF front_ceiling < back_ceiling THEN
+            silhouette = silhouette BOR SIL_TOP
+            R_BSP.drawseg_tsilheight[ds] = front_ceiling
+        ELSEIF back_ceiling < viewz THEN
+            silhouette = silhouette BOR SIL_TOP
+            R_BSP.drawseg_tsilheight[ds] = M_FIXED.MININT
+        ENDIF
+
+        IF back_ceiling <= front_floor THEN
+            sprbottomclip = R_PLANE.NEGONEARRAY
+            R_BSP.drawseg_bsilheight[ds] = M_FIXED.MAXINT
+            silhouette = silhouette BOR SIL_BOTTOM
+        ENDIF
+        IF back_floor >= front_ceiling THEN
+            sprtopclip = R_PLANE.SCREENHEIGHTARRAY
+            R_BSP.drawseg_tsilheight[ds] = M_FIXED.MININT
+            silhouette = silhouette BOR SIL_TOP
+        ENDIF
+
+        worldhigh = back_ceiling - viewz
+        worldlow = back_floor - viewz
+
+        ' Lets the sky run on over height changes in outdoor areas.
+        IF front_ceilingpic = R_SKY.skyflatnum AND back_ceilingpic = R_SKY.skyflatnum THEN worldtop = worldhigh
+
+        IF worldlow <> worldbottom OR back_floorpic <> front_floorpic OR back_light <> front_light THEN
+            markfloor = 1
+        ELSE
+            ' Same plane on both sides.
+            markfloor = 0
+        ENDIF
+        IF worldhigh <> worldtop OR back_ceilingpic <> front_ceilingpic OR back_light <> front_light THEN
+            markceiling = 1
+        ELSE
+            markceiling = 0
+        ENDIF
+        IF back_ceiling <= front_floor OR back_floor >= front_ceiling THEN
+            ' Closed door.
+            markceiling = 1
+            markfloor = 1
+        ENDIF
+
+        IF worldhigh < worldtop THEN
+            ' Top texture.
+            toptexture = CLNG(R_DATA.texturetranslation[side_top])
+            IF (line_flags BAND DOOMDEF.ML_DONTPEGTOP) <> 0 THEN
+                ' Top of texture at top.
+                rw_toptexturemid = worldtop
+            ELSE
+                ' Bottom of texture at the back ceiling.
+                vtop = back_ceiling + CLNG(R_DATA.textureheight[side_top])
+                rw_toptexturemid = vtop - viewz
+            ENDIF
+        ENDIF
+        IF worldlow > worldbottom THEN
+            ' Bottom texture.
+            bottomtexture = CLNG(R_DATA.texturetranslation[side_bottom])
+            IF (line_flags BAND DOOMDEF.ML_DONTPEGBOTTOM) <> 0 THEN
+                ' The texture runs down from the top of the wall.
+                rw_bottomtexturemid = worldtop
+            ELSE
+                ' Top of texture at the back floor.
+                rw_bottomtexturemid = worldlow
+            ENDIF
+        ENDIF
+        rw_toptexturemid = rw_toptexturemid + rowoffset
+        rw_bottomtexturemid = rw_bottomtexturemid + rowoffset
+
+        ' Room for the texture columns of a masked middle texture.
+        IF side_mid <> 0 THEN
+            maskedtexture = 1
+            maskedtexturecol = R_PLANE.lastopening - rw_x
+            R_BSP.drawseg_maskedtexturecol[ds] = maskedtexturecol
+            R_PLANE.lastopening = R_PLANE.lastopening + rw_stopx - rw_x
+        ENDIF
+    ENDIF
+
+    ' rw_offset is only needed for textured lines.
+    segtextured = midtexture BOR toptexture BOR bottomtexture BOR maskedtexture
+    DIM lightnum AS INTEGER
+    IF segtextured <> 0 THEN
+        offsetangle = (rw_normalangle - rw_angle1) BAND M_FIXED.ANGLE_MASK
+        IF offsetangle > M_FIXED.ANG180 THEN offsetangle = (-offsetangle) BAND M_FIXED.ANGLE_MASK
+        IF offsetangle > M_FIXED.ANG90 THEN offsetangle = M_FIXED.ANG90
+        sineval = CLNG(TABLES.finesine[offsetangle SHR TABLES.ANGLETOFINESHIFT])
+        rw_offset = M_FIXED.FixedMul(hyp, sineval)
+        IF ((rw_normalangle - rw_angle1) BAND M_FIXED.ANGLE_MASK) < M_FIXED.ANG180 THEN rw_offset = -rw_offset
+        rw_offset = rw_offset + CLNG(P_SETUP.side_textureoffset[sidedef]) + CLNG(P_SETUP.seg_offset[curline])
+        rw_centerangle = (M_FIXED.ANG90 + R_MAIN.viewangle - rw_normalangle) BAND M_FIXED.ANGLE_MASK
+
+        ' Light table: one level darker for walls along x, one brighter for
+        ' walls along y.
+        IF R_MAIN.fixedcolormap = 0 THEN
+            lightnum = (front_light SHR R_MAIN.LIGHTSEGSHIFT) + R_MAIN.extralight
+            IF CLNG(P_SETUP.vertex_y[v1]) = CLNG(P_SETUP.vertex_y[v2]) THEN
+                lightnum = lightnum - 1
+            ELSEIF CLNG(P_SETUP.vertex_x[v1]) = CLNG(P_SETUP.vertex_x[v2]) THEN
+                lightnum = lightnum + 1
+            ENDIF
+            IF lightnum < 0 THEN
+                walllights = 0
+            ELSEIF lightnum >= R_MAIN.LIGHTLEVELS THEN
+                walllights = (R_MAIN.LIGHTLEVELS - 1) * R_MAIN.MAXLIGHTSCALE
+            ELSE
+                walllights = lightnum * R_MAIN.MAXLIGHTSCALE
+            ENDIF
+        ENDIF
+    ENDIF
+
+    ' A plane on the wrong side of the view plane is invisible and need not
+    ' be marked.
+    IF front_floor >= viewz THEN markfloor = 0
+    IF front_ceiling <= viewz AND front_ceilingpic <> R_SKY.skyflatnum THEN markceiling = 0
+
+    ' Stepping values for the texture edges.
+    worldtop = worldtop SHR 4
+    worldbottom = worldbottom SHR 4
+    DIM centery4 AS INTEGER = R_MAIN.centeryfrac SHR 4
+
+    topstep = -M_FIXED.FixedMul(rw_scalestep, worldtop)
+    topfrac = centery4 - M_FIXED.FixedMul(worldtop, rw_scale)
+    bottomstep = -M_FIXED.FixedMul(rw_scalestep, worldbottom)
+    bottomfrac = centery4 - M_FIXED.FixedMul(worldbottom, rw_scale)
+
+    IF backsector >= 0 THEN
+        worldhigh = worldhigh SHR 4
+        worldlow = worldlow SHR 4
+        IF worldhigh < worldtop THEN
+            pixhigh = centery4 - M_FIXED.FixedMul(worldhigh, rw_scale)
+            pixhighstep = -M_FIXED.FixedMul(rw_scalestep, worldhigh)
+        ENDIF
+        IF worldlow > worldbottom THEN
+            pixlow = centery4 - M_FIXED.FixedMul(worldlow, rw_scale)
+            pixlowstep = -M_FIXED.FixedMul(rw_scalestep, worldlow)
+        ENDIF
+    ENDIF
+
+    ' Render it.
+    IF markceiling <> 0 THEN R_PLANE.ceilingplane = R_PLANE.R_CheckPlane(R_PLANE.ceilingplane, rw_x, rw_stopx - 1)
+    IF markfloor <> 0 THEN R_PLANE.floorplane = R_PLANE.R_CheckPlane(R_PLANE.floorplane, rw_x, rw_stopx - 1)
+
+    R_RenderSegLoop()
+
+    ' Save the clip rows the sprites behind this seg need.
+    DIM i AS INTEGER
+    IF ((silhouette BAND SIL_TOP) <> 0 OR maskedtexture <> 0) AND sprtopclip < 0 THEN
+        FOR i = 0 TO rw_stopx - start - 1
+            R_PLANE.openings[R_PLANE.lastopening + i] = R_PLANE.ceilingclip[start + i]
+        NEXT i
+        sprtopclip = R_PLANE.lastopening - start
+        R_PLANE.lastopening = R_PLANE.lastopening + rw_stopx - start
+    ENDIF
+    IF ((silhouette BAND SIL_BOTTOM) <> 0 OR maskedtexture <> 0) AND sprbottomclip < 0 THEN
+        FOR i = 0 TO rw_stopx - start - 1
+            R_PLANE.openings[R_PLANE.lastopening + i] = R_PLANE.floorclip[start + i]
+        NEXT i
+        sprbottomclip = R_PLANE.lastopening - start
+        R_PLANE.lastopening = R_PLANE.lastopening + rw_stopx - start
+    ENDIF
+
+    IF maskedtexture <> 0 AND (silhouette BAND SIL_TOP) = 0 THEN
+        silhouette = silhouette BOR SIL_TOP
+        R_BSP.drawseg_tsilheight[ds] = M_FIXED.MININT
+    ENDIF
+    IF maskedtexture <> 0 AND (silhouette BAND SIL_BOTTOM) = 0 THEN
+        silhouette = silhouette BOR SIL_BOTTOM
+        R_BSP.drawseg_bsilheight[ds] = M_FIXED.MAXINT
+    ENDIF
+
+    R_BSP.drawseg_silhouette[ds] = silhouette
+    R_BSP.drawseg_sprtopclip[ds] = sprtopclip
+    R_BSP.drawseg_sprbottomclip[ds] = sprbottomclip
+    R_BSP.ds_p = ds + 1
+ENDSUB

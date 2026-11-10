@@ -1,0 +1,11 @@
+' Sprites (r_things.c). So far only the scales of the player's weapon
+' sprites, which the sky is drawn with as well.
+
+EXPORT MODULE R_THINGS
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' Scale of a weapon sprite on the view, and its inverse.
+EXPORT DIM pspritescale AS INTEGER = 0
+EXPORT DIM pspriteiscale AS INTEGER = 0

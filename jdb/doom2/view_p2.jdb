@@ -1,0 +1,169 @@
+' Walks the view through a level: walls, floors, ceilings and sky, without
+' things and without collision.
+'
+'   build/jdBasic.exe -c jdb/doom2/view_p2.jdb
+'   jdb/doom2/view_p2.exe [level] [folder for screenshots]
+'
+' Arrow keys turn and move, A and D step sideways, Shift runs, PageUp and
+' PageDown change the view size, Escape quits. With a folder, the view from
+' the player start is saved there in two view sizes and the program ends.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT TABLES
+IMPORT W_WAD
+IMPORT R_DATA
+IMPORT P_SETUP
+IMPORT V_VIDEO
+IMPORT I_VIDEO
+IMPORT R_MAIN
+IMPORT R_SKY
+
+DIM level$ AS STRING = "E1M1"
+DIM shot_dir$ AS STRING = ""
+DIM cmd_args AS ARRAY = OS.ARGS()
+IF LEN(cmd_args) > 1 THEN level$ = cmd_args[1]
+IF LEN(cmd_args) > 2 THEN shot_dir$ = cmd_args[2]
+
+DIM running AS INTEGER = 1
+DIM view_x AS INTEGER = 0
+DIM view_y AS INTEGER = 0
+DIM view_angle AS INTEGER = 0
+DIM screenblocks AS INTEGER = 10
+
+SUB HandleQuit(quit_data)
+    running = 0
+ENDSUB
+
+SUB HandleKey(key_data)
+    DIM code AS INTEGER = CLNG(key_data[0]{"keycode"})
+    IF code = 27 THEN running = 0
+ENDSUB
+
+' Eye height above the floor of the sector the view point is in.
+FUNC ViewZ() AS INTEGER
+    DIM subsector AS INTEGER = R_MAIN.R_PointInSubsector(view_x, view_y)
+    DIM sector AS INTEGER = CLNG(P_SETUP.subsector_sector[subsector])
+    RETURN CLNG(P_SETUP.sector_floorheight[sector]) + 41 * M_FIXED.FRACUNIT
+ENDFUNC
+
+SUB DrawFrame()
+    IF R_MAIN.setsizeneeded <> 0 THEN
+        R_MAIN.R_ExecuteSetViewSize()
+        V_VIDEO.V_Init()
+    ENDIF
+    R_MAIN.R_RenderPlayerView(view_x, view_y, ViewZ(), view_angle, 0, 0)
+ENDSUB
+
+W_WAD.W_Init("jdb/doom/wad/doom.wad")
+R_MAIN.R_Init(screenblocks, 0)
+P_SETUP.P_SetupLevel(level$)
+R_SKY.skyflatnum = R_DATA.R_FlatNumForName("F_SKY1")
+R_SKY.skytexture = R_DATA.R_TextureNumForName("SKY1")
+
+' The view starts at the player 1 start.
+DIM i AS INTEGER
+FOR i = 0 TO P_SETUP.nummapthings - 1
+    IF CLNG(P_SETUP.mapthing_type[i]) = 1 THEN
+        view_x = CLNG(P_SETUP.mapthing_x[i]) * M_FIXED.FRACUNIT
+        view_y = CLNG(P_SETUP.mapthing_y[i]) * M_FIXED.FRACUNIT
+        view_angle = (M_FIXED.ANG45 * (CLNG(P_SETUP.mapthing_angle[i]) \ 45)) BAND M_FIXED.ANGLE_MASK
+    ENDIF
+NEXT i
+
+V_VIDEO.V_Init()
+I_VIDEO.I_InitGraphics(3)
+I_VIDEO.I_SetPalette(W_WAD.W_CacheLumpName("PLAYPAL"))
+ON "QUIT" CALL HandleQuit@
+ON "KEYDOWN" CALL HandleKey@
+
+IF LEN(shot_dir$) > 0 THEN
+    DrawFrame()
+    I_VIDEO.I_Screenshot(shot_dir$ + "/" + level$ + "_blocks10.png")
+    R_MAIN.R_SetViewSize(11, 0)
+    DrawFrame()
+    I_VIDEO.I_Screenshot(shot_dir$ + "/" + level$ + "_blocks11.png")
+
+    ' The view from every player and deathmatch start, and the time a frame
+    ' takes there.
+    DIM shot_t0 AS DOUBLE
+    DIM k AS INTEGER
+    DIM start_type AS INTEGER
+    FOR i = 0 TO P_SETUP.nummapthings - 1
+        start_type = CLNG(P_SETUP.mapthing_type[i])
+        IF (start_type >= 1 AND start_type <= 4) OR start_type = 11 THEN
+            view_x = CLNG(P_SETUP.mapthing_x[i]) * M_FIXED.FRACUNIT
+            view_y = CLNG(P_SETUP.mapthing_y[i]) * M_FIXED.FRACUNIT
+            view_angle = (M_FIXED.ANG45 * (CLNG(P_SETUP.mapthing_angle[i]) \ 45)) BAND M_FIXED.ANGLE_MASK
+            shot_t0 = TICK()
+            FOR k = 1 TO 20
+                DrawFrame()
+            NEXT k
+            PRINT "thing " + STR$(i) + " type " + STR$(start_type) + " at " + STR$(view_x \ 65536) + "," + STR$(view_y \ 65536) + ": " + STR$((TICK() - shot_t0) / 20) + " ms per frame"
+            I_VIDEO.I_Screenshot(shot_dir$ + "/" + level$ + "_thing" + STR$(i) + ".png")
+        ENDIF
+    NEXT i
+    I_VIDEO.I_ShutdownGraphics()
+    END
+ENDIF
+
+DIM turn AS INTEGER = M_FIXED.ANG90 \ 40
+DIM speed AS INTEGER
+DIM fine AS INTEGER
+DIM forward AS INTEGER
+DIM sideways AS INTEGER
+DIM n_frames AS INTEGER = 0
+DIM render_ms AS DOUBLE = 0.0
+DIM t0 AS DOUBLE
+DIM frame_start AS DOUBLE
+DIM size_key_down AS INTEGER = 0
+
+DO WHILE running = 1
+    frame_start = TICK()
+    speed = 8 * M_FIXED.FRACUNIT
+    IF GFX.KEYSTATE("Left Shift") THEN speed = 20 * M_FIXED.FRACUNIT
+    IF GFX.KEYSTATE("Left") THEN view_angle = (view_angle + turn) BAND M_FIXED.ANGLE_MASK
+    IF GFX.KEYSTATE("Right") THEN view_angle = (view_angle - turn) BAND M_FIXED.ANGLE_MASK
+    forward = 0
+    sideways = 0
+    IF GFX.KEYSTATE("Up") THEN forward = speed
+    IF GFX.KEYSTATE("Down") THEN forward = -speed
+    IF GFX.KEYSTATE("D") THEN sideways = speed
+    IF GFX.KEYSTATE("A") THEN sideways = -speed
+    fine = view_angle SHR TABLES.ANGLETOFINESHIFT
+    view_x = view_x + M_FIXED.FixedMul(forward, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + fine])) + M_FIXED.FixedMul(sideways, CLNG(TABLES.finesine[fine]))
+    view_y = view_y + M_FIXED.FixedMul(forward, CLNG(TABLES.finesine[fine])) - M_FIXED.FixedMul(sideways, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + fine]))
+
+    IF GFX.KEYSTATE("PageUp") OR GFX.KEYSTATE("PageDown") THEN
+        IF size_key_down = 0 THEN
+            IF GFX.KEYSTATE("PageUp") AND screenblocks < 11 THEN screenblocks = screenblocks + 1
+            IF GFX.KEYSTATE("PageDown") AND screenblocks > 3 THEN screenblocks = screenblocks - 1
+            R_MAIN.R_SetViewSize(screenblocks, 0)
+        ENDIF
+        size_key_down = 1
+    ELSE
+        size_key_down = 0
+    ENDIF
+
+    t0 = TICK()
+    DrawFrame()
+    render_ms = render_ms + (TICK() - t0)
+    I_VIDEO.I_FinishUpdate()
+
+    n_frames = n_frames + 1
+    IF n_frames = 70 THEN
+        PRINT "render " + STR$(render_ms / n_frames) + " ms per frame"
+        n_frames = 0
+        render_ms = 0.0
+    ENDIF
+
+    ' 35 frames a second.
+    DO WHILE TICK() - frame_start < 28.0
+        SLEEP 1
+    LOOP
+LOOP
+
+I_VIDEO.I_ShutdownGraphics()

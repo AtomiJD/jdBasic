@@ -1,0 +1,18 @@
+' Sky (r_sky.c). A ceiling with the sky flat is drawn as the sky texture.
+
+EXPORT MODULE R_SKY
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+EXPORT CONST ANGLETOSKYSHIFT = 22
+
+' Flat number that marks a sky ceiling, texture drawn there, and the
+' texture row at the middle of the view.
+EXPORT DIM skyflatnum AS INTEGER = 0
+EXPORT DIM skytexture AS INTEGER = 0
+EXPORT DIM skytexturemid AS INTEGER = 0
+
+EXPORT SUB R_InitSkyMap()
+    skytexturemid = 100 * 65536
+ENDSUB
