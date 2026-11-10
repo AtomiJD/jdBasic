@@ -9,7 +9,7 @@ Use when **Atomi** wants to cut or refresh a public Windows release. This is the
 release ceremony; for a plain dev build use `jdbbuild`, for the test matrix use `jdbgate`.
 
 Working dir: `/d/usr/dev/cc`. **The current release is the only upload target.** Since
-1.2 (2026-10-26) that is **`v1.2.0`**, marked Latest; `v1.1.0`, `v1.0.0` and the `jdbasic-mcp`
+1.3 (2026-11-10) that is **`v1.3.0`**, marked Latest; `v1.2.0`, `v1.1.0`, `v1.0.0` and the `jdbasic-mcp`
 pre-release are frozen history and carry a "Superseded by" line at the top of their
 body. `README.md` and `doc/MCP.md` link `/releases/latest`, so a new Latest needs no
 doc edit. Find the target with `"$GH" release list -R AtomiJD/jdBasic` rather than
@@ -157,7 +157,7 @@ release, clobbering the old assets:
 
 ```bash
 GH="/c/Program Files/GitHub CLI/gh.exe"
-"$GH" release upload v1.2.0 -R AtomiJD/jdBasic --clobber \
+"$GH" release upload v1.3.0 -R AtomiJD/jdBasic --clobber \
   release/jdbasic-vb6-windows-x64.zip release/jdbasic-vb6-windows-x64.zip.sha256
 ```
 
@@ -166,9 +166,9 @@ the step that's easy to forget; Atomi has caught a stale hash in the notes befor
 refresh, replace the old hash strings with `sed` rather than editing by line number:
 
 ```bash
-"$GH" release view v1.2.0 -R AtomiJD/jdBasic --json body -q .body > /tmp/body.md
+"$GH" release view v1.3.0 -R AtomiJD/jdBasic --json body -q .body > /tmp/body.md
 sed -i "s/OLDHASH/NEWHASH/g; s/Build 99/Build 101/g" /tmp/body.md
-"$GH" release edit v1.2.0 -R AtomiJD/jdBasic --notes-file /tmp/body.md
+"$GH" release edit v1.3.0 -R AtomiJD/jdBasic --notes-file /tmp/body.md
 ```
 
 Verify: `"$GH" release view <tag> -R AtomiJD/jdBasic --json assets -q '.assets[].name'`
