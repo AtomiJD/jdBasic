@@ -1,0 +1,321 @@
+' Doors: ceilings that open and close (p_doors.c).
+'
+' A door is a thinker; its fields are arrays indexed by the number of the
+' thinker.
+
+EXPORT MODULE P_DOORS
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_FLOOR
+IMPORT P_SPEC
+IMPORT S_SOUND
+
+' vldoor_e
+EXPORT CONST DOOR_NORMAL = 0
+EXPORT CONST DOOR_CLOSE30THENOPEN = 1
+EXPORT CONST DOOR_CLOSE = 2
+EXPORT CONST DOOR_OPEN = 3
+EXPORT CONST DOOR_RAISEIN5MINS = 4
+EXPORT CONST DOOR_BLAZERAISE = 5
+EXPORT CONST DOOR_BLAZEOPEN = 6
+EXPORT CONST DOOR_BLAZECLOSE = 7
+
+EXPORT CONST VDOORSPEED = 131072
+EXPORT CONST VDOORWAIT = 150
+
+EXPORT CONST PD_BLUEO$ = "You need a blue key to activate this object"
+EXPORT CONST PD_REDO$ = "You need a red key to activate this object"
+EXPORT CONST PD_YELLOWO$ = "You need a yellow key to activate this object"
+EXPORT CONST PD_BLUEK$ = "You need a blue key to open this door"
+EXPORT CONST PD_REDK$ = "You need a red key to open this door"
+EXPORT CONST PD_YELLOWK$ = "You need a yellow key to open this door"
+
+EXPORT DIM door_type[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM door_sector[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM door_topheight[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM door_speed[DOOMDEF.MAXTHINKERS] AS INTEGER
+' 1 = up, 0 = waiting at top, -1 = down, 2 = waiting to go up the first time
+EXPORT DIM door_direction[DOOMDEF.MAXTHINKERS] AS INTEGER
+' Tics to wait at the top.
+EXPORT DIM door_topwait[DOOMDEF.MAXTHINKERS] AS INTEGER
+' When it reaches 0, start going down.
+EXPORT DIM door_topcountdown[DOOMDEF.MAXTHINKERS] AS INTEGER
+
+EXPORT SUB T_VerticalDoor(door AS INTEGER)
+    DIM sector AS INTEGER = door_sector[door]
+    DIM direction AS INTEGER = door_direction[door]
+    DIM kind AS INTEGER = door_type[door]
+    DIM res AS INTEGER
+    DIM remaining AS INTEGER
+
+    IF direction = 0 THEN
+        ' Waiting.
+        remaining = CLNG(door_topcountdown[door]) - 1
+        door_topcountdown[door] = remaining
+        IF remaining = 0 THEN
+            IF kind = DOOR_BLAZERAISE THEN
+                door_direction[door] = -1
+                S_SOUND.S_StartSectorSound(sector, INFO.SFX_BDCLS)
+            ELSEIF kind = DOOR_NORMAL THEN
+                door_direction[door] = -1
+                S_SOUND.S_StartSectorSound(sector, INFO.SFX_DORCLS)
+            ELSEIF kind = DOOR_CLOSE30THENOPEN THEN
+                door_direction[door] = 1
+                S_SOUND.S_StartSectorSound(sector, INFO.SFX_DOROPN)
+            ENDIF
+        ENDIF
+    ELSEIF direction = 2 THEN
+        ' Initial wait.
+        remaining = CLNG(door_topcountdown[door]) - 1
+        door_topcountdown[door] = remaining
+        IF remaining = 0 THEN
+            IF kind = DOOR_RAISEIN5MINS THEN
+                door_direction[door] = 1
+                door_type[door] = DOOR_NORMAL
+                S_SOUND.S_StartSectorSound(sector, INFO.SFX_DOROPN)
+            ENDIF
+        ENDIF
+    ELSEIF direction = -1 THEN
+        ' Down.
+        res = P_FLOOR.T_MovePlane(sector, CLNG(door_speed[door]), CLNG(P_SETUP.sector_floorheight[sector]), 0, 1, direction)
+        IF res = P_FLOOR.RES_PASTDEST THEN
+            IF kind = DOOR_BLAZERAISE OR kind = DOOR_BLAZECLOSE THEN
+                P_SETUP.sector_specialdata[sector] = -1
+                P_TICK.P_RemoveThinker(door)
+                S_SOUND.S_StartSectorSound(sector, INFO.SFX_BDCLS)
+            ELSEIF kind = DOOR_NORMAL OR kind = DOOR_CLOSE THEN
+                P_SETUP.sector_specialdata[sector] = -1
+                P_TICK.P_RemoveThinker(door)
+            ELSEIF kind = DOOR_CLOSE30THENOPEN THEN
+                door_direction[door] = 0
+                door_topcountdown[door] = 35 * 30
+            ENDIF
+        ELSEIF res = P_FLOOR.RES_CRUSHED THEN
+            ' A door that only closes does not go back up.
+            IF kind <> DOOR_BLAZECLOSE AND kind <> DOOR_CLOSE THEN
+                door_direction[door] = 1
+                S_SOUND.S_StartSectorSound(sector, INFO.SFX_DOROPN)
+            ENDIF
+        ENDIF
+    ELSEIF direction = 1 THEN
+        ' Up.
+        res = P_FLOOR.T_MovePlane(sector, CLNG(door_speed[door]), CLNG(door_topheight[door]), 0, 1, direction)
+        IF res = P_FLOOR.RES_PASTDEST THEN
+            IF kind = DOOR_BLAZERAISE OR kind = DOOR_NORMAL THEN
+                ' Wait at top.
+                door_direction[door] = 0
+                door_topcountdown[door] = door_topwait[door]
+            ELSEIF kind = DOOR_CLOSE30THENOPEN OR kind = DOOR_BLAZEOPEN OR kind = DOOR_OPEN THEN
+                P_SETUP.sector_specialdata[sector] = -1
+                P_TICK.P_RemoveThinker(door)
+            ENDIF
+        ENDIF
+    ENDIF
+ENDSUB
+
+' A new door thinker for the sector.
+FUNC NewDoor(sector AS INTEGER) AS INTEGER
+    DIM door AS INTEGER = P_TICK.P_AddThinker(P_TICK.TF_DOOR, -1)
+    P_SETUP.sector_specialdata[sector] = door
+    door_sector[door] = sector
+    door_type[door] = DOOR_NORMAL
+    door_topheight[door] = 0
+    door_speed[door] = VDOORSPEED
+    door_direction[door] = 0
+    door_topwait[door] = VDOORWAIT
+    door_topcountdown[door] = 0
+    RETURN door
+ENDFUNC
+
+' TRUE if the player holds the card or the skull key.
+FUNC HasKey(player AS INTEGER, card AS INTEGER, skull AS INTEGER) AS INTEGER
+    IF CLNG(D_PLAYER.player_cards[player * 6 + card]) <> 0 THEN RETURN 1
+    IF CLNG(D_PLAYER.player_cards[player * 6 + skull]) <> 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' Tells the player which key is missing.
+SUB Locked(player AS INTEGER, message$ AS STRING)
+    D_PLAYER.player_message$[player] = message$
+    S_SOUND.S_StartSound(-1, INFO.SFX_OOF)
+ENDSUB
+
+' Moves the doors of every sector with the tag of the line.
+EXPORT FUNC EV_DoDoor(ld AS INTEGER, doortype AS INTEGER) AS INTEGER
+    DIM secnum AS INTEGER = -1
+    DIM rtn AS INTEGER = 0
+    DIM sector AS INTEGER
+    DIM door AS INTEGER
+    DIM top AS INTEGER
+
+    DO
+        secnum = P_SPEC.P_FindSectorFromLineTag(ld, secnum)
+        IF secnum < 0 THEN EXITDO
+        sector = secnum
+        IF CLNG(P_SETUP.sector_specialdata[sector]) >= 0 THEN CONTINUEDO
+
+        rtn = 1
+        door = NewDoor(sector)
+        door_type[door] = doortype
+
+        IF doortype = DOOR_BLAZECLOSE OR doortype = DOOR_CLOSE THEN
+            door_topheight[door] = M_FIXED.ToS32(P_SPEC.P_FindLowestCeilingSurrounding(sector) - 4 * M_FIXED.FRACUNIT)
+            door_direction[door] = -1
+            IF doortype = DOOR_BLAZECLOSE THEN
+                door_speed[door] = VDOORSPEED * 4
+                S_SOUND.S_StartSectorSound(sector, INFO.SFX_BDCLS)
+            ELSE
+                S_SOUND.S_StartSectorSound(sector, INFO.SFX_DORCLS)
+            ENDIF
+        ELSEIF doortype = DOOR_CLOSE30THENOPEN THEN
+            door_topheight[door] = P_SETUP.sector_ceilingheight[sector]
+            door_direction[door] = -1
+            S_SOUND.S_StartSectorSound(sector, INFO.SFX_DORCLS)
+        ELSEIF doortype = DOOR_BLAZERAISE OR doortype = DOOR_BLAZEOPEN OR doortype = DOOR_NORMAL OR doortype = DOOR_OPEN THEN
+            door_direction[door] = 1
+            top = M_FIXED.ToS32(P_SPEC.P_FindLowestCeilingSurrounding(sector) - 4 * M_FIXED.FRACUNIT)
+            door_topheight[door] = top
+            IF doortype = DOOR_BLAZERAISE OR doortype = DOOR_BLAZEOPEN THEN
+                door_speed[door] = VDOORSPEED * 4
+                IF top <> CLNG(P_SETUP.sector_ceilingheight[sector]) THEN S_SOUND.S_StartSectorSound(sector, INFO.SFX_BDOPN)
+            ELSE
+                IF top <> CLNG(P_SETUP.sector_ceilingheight[sector]) THEN S_SOUND.S_StartSectorSound(sector, INFO.SFX_DOROPN)
+            ENDIF
+        ENDIF
+    LOOP
+    RETURN rtn
+ENDFUNC
+
+' Moves the tagged doors if the player has the key the line asks for.
+EXPORT FUNC EV_DoLockedDoor(ld AS INTEGER, doortype AS INTEGER, thing AS INTEGER) AS INTEGER
+    DIM player AS INTEGER = P_MOBJ.mobj_player[thing]
+    IF player < 0 THEN RETURN 0
+
+    DIM special AS INTEGER = P_SETUP.line_special[ld]
+    IF special = 99 OR special = 133 THEN
+        IF HasKey(player, DOOMDEF.IT_BLUECARD, DOOMDEF.IT_BLUESKULL) = 0 THEN
+            Locked(player, PD_BLUEO$)
+            RETURN 0
+        ENDIF
+    ELSEIF special = 134 OR special = 135 THEN
+        IF HasKey(player, DOOMDEF.IT_REDCARD, DOOMDEF.IT_REDSKULL) = 0 THEN
+            Locked(player, PD_REDO$)
+            RETURN 0
+        ENDIF
+    ELSEIF special = 136 OR special = 137 THEN
+        IF HasKey(player, DOOMDEF.IT_YELLOWCARD, DOOMDEF.IT_YELLOWSKULL) = 0 THEN
+            Locked(player, PD_YELLOWO$)
+            RETURN 0
+        ENDIF
+    ENDIF
+    RETURN EV_DoDoor(ld, doortype)
+ENDFUNC
+
+' Opens the door behind a line that was used by hand, or turns a door that
+' is moving already.
+EXPORT SUB EV_VerticalDoor(ld AS INTEGER, thing AS INTEGER)
+    DIM player AS INTEGER = P_MOBJ.mobj_player[thing]
+    DIM special AS INTEGER = P_SETUP.line_special[ld]
+
+    ' Check for locks.
+    IF special = 26 OR special = 32 THEN
+        IF player < 0 THEN RETURN
+        IF HasKey(player, DOOMDEF.IT_BLUECARD, DOOMDEF.IT_BLUESKULL) = 0 THEN
+            Locked(player, PD_BLUEK$)
+            RETURN
+        ENDIF
+    ELSEIF special = 27 OR special = 34 THEN
+        IF player < 0 THEN RETURN
+        IF HasKey(player, DOOMDEF.IT_YELLOWCARD, DOOMDEF.IT_YELLOWSKULL) = 0 THEN
+            Locked(player, PD_YELLOWK$)
+            RETURN
+        ENDIF
+    ELSEIF special = 28 OR special = 33 THEN
+        IF player < 0 THEN RETURN
+        IF HasKey(player, DOOMDEF.IT_REDCARD, DOOMDEF.IT_REDSKULL) = 0 THEN
+            Locked(player, PD_REDK$)
+            RETURN
+        ENDIF
+    ENDIF
+
+    ' The door is the sector on the back side of the line.
+    DIM back_side AS INTEGER = P_SETUP.line_sidenum1[ld]
+    IF back_side < 0 THEN RETURN
+    DIM sector AS INTEGER = P_SETUP.side_sector[back_side]
+    DIM door AS INTEGER = P_SETUP.sector_specialdata[sector]
+
+    ' If the sector has an active thinker, use it.
+    IF door >= 0 THEN
+        IF special = 1 OR special = 26 OR special = 27 OR special = 28 OR special = 117 THEN
+            ' Only for "raise" doors, not "open"s. A sector that is busy
+            ' as a platform or a floor is left alone.
+            IF CLNG(P_TICK.th_kind[door]) <> P_TICK.TF_DOOR THEN RETURN
+            IF CLNG(door_direction[door]) = -1 THEN
+                ' Go back up.
+                door_direction[door] = 1
+            ELSE
+                ' Bad guys never close doors.
+                IF player < 0 THEN RETURN
+                ' Start going down immediately.
+                door_direction[door] = -1
+            ENDIF
+            RETURN
+        ENDIF
+    ENDIF
+
+    ' For proper sound.
+    IF special = 117 OR special = 118 THEN
+        S_SOUND.S_StartSectorSound(sector, INFO.SFX_BDOPN)
+    ELSE
+        S_SOUND.S_StartSectorSound(sector, INFO.SFX_DOROPN)
+    ENDIF
+
+    ' New door thinker.
+    door = NewDoor(sector)
+    door_direction[door] = 1
+
+    IF special = 1 OR special = 26 OR special = 27 OR special = 28 THEN
+        door_type[door] = DOOR_NORMAL
+    ELSEIF special = 31 OR special = 32 OR special = 33 OR special = 34 THEN
+        door_type[door] = DOOR_OPEN
+        P_SETUP.line_special[ld] = 0
+    ELSEIF special = 117 THEN
+        door_type[door] = DOOR_BLAZERAISE
+        door_speed[door] = VDOORSPEED * 4
+    ELSEIF special = 118 THEN
+        door_type[door] = DOOR_BLAZEOPEN
+        P_SETUP.line_special[ld] = 0
+        door_speed[door] = VDOORSPEED * 4
+    ENDIF
+
+    ' Find the top and bottom of the movement range.
+    door_topheight[door] = M_FIXED.ToS32(P_SPEC.P_FindLowestCeilingSurrounding(sector) - 4 * M_FIXED.FRACUNIT)
+ENDSUB
+
+' Spawn a door that closes after 30 seconds.
+EXPORT SUB P_SpawnDoorCloseIn30(sector AS INTEGER)
+    DIM door AS INTEGER = NewDoor(sector)
+    P_SETUP.sector_special[sector] = 0
+    door_direction[door] = 0
+    door_type[door] = DOOR_NORMAL
+    door_topcountdown[door] = 30 * 35
+ENDSUB
+
+' Spawn a door that opens after 5 minutes.
+EXPORT SUB P_SpawnDoorRaiseIn5Mins(sector AS INTEGER)
+    DIM door AS INTEGER = NewDoor(sector)
+    P_SETUP.sector_special[sector] = 0
+    door_direction[door] = 2
+    door_type[door] = DOOR_RAISEIN5MINS
+    door_topheight[door] = M_FIXED.ToS32(P_SPEC.P_FindLowestCeilingSurrounding(sector) - 4 * M_FIXED.FRACUNIT)
+    door_topcountdown[door] = 5 * 60 * 35
+ENDSUB

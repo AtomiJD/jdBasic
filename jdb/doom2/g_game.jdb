@@ -12,6 +12,7 @@ IMPORT DOOMSTAT
 IMPORT D_PLAYER
 IMPORT M_RANDOM
 IMPORT INFO
+IMPORT W_WAD
 IMPORT R_DATA
 IMPORT R_SKY
 IMPORT P_SETUP
@@ -282,6 +283,33 @@ EXPORT SUB G_PlayerReborn(player AS INTEGER)
     D_PLAYER.player_ammo[player * DOOMDEF.NUMAMMO + DOOMDEF.AM_CLIP] = 50
 ENDSUB
 
+' gameaction_t: what the game loop is asked to do after the tic.
+EXPORT CONST GA_NOTHING = 0
+EXPORT CONST GA_LOADLEVEL = 1
+EXPORT CONST GA_NEWGAME = 2
+EXPORT CONST GA_LOADGAME = 3
+EXPORT CONST GA_SAVEGAME = 4
+EXPORT CONST GA_PLAYDEMO = 5
+EXPORT CONST GA_COMPLETED = 6
+EXPORT CONST GA_VICTORY = 7
+EXPORT CONST GA_WORLDDONE = 8
+EXPORT CONST GA_SCREENSHOT = 9
+EXPORT DIM gameaction AS INTEGER = GA_NOTHING
+' The level was left through its secret exit.
+EXPORT DIM secretexit AS INTEGER = 0
+
+EXPORT SUB G_ExitLevel()
+    secretexit = 0
+    gameaction = GA_COMPLETED
+ENDSUB
+
+EXPORT SUB G_SecretExitLevel()
+    ' Doom 2 without the secret levels has none to go to.
+    secretexit = 1
+    IF DOOMSTAT.commercial <> 0 AND W_WAD.W_CheckNumForName("map31") < 0 THEN secretexit = 0
+    gameaction = GA_COMPLETED
+ENDSUB
+
 EXPORT SUB G_DoLoadLevel()
     DIM i AS INTEGER
     DIM j AS INTEGER
@@ -320,6 +348,7 @@ EXPORT SUB G_DoLoadLevel()
     mousex = 0
     mousey = 0
     DOOMSTAT.paused = 0
+    gameaction = GA_NOTHING
 ENDSUB
 
 ' Starts a new game on the given skill, episode and map. The players in

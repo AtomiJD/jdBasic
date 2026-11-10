@@ -18,6 +18,7 @@ IMPORT P_SETUP
 IMPORT R_MAIN
 IMPORT P_MOBJ
 IMPORT P_MAPUTL
+IMPORT P_TICK
 IMPORT P_INTER
 IMPORT P_SPEC
 IMPORT P_SWITCH
@@ -575,3 +576,66 @@ EXPORT SUB P_UseLines(player AS INTEGER)
     DIM y2 AS INTEGER = y1 + (DOOMDEF.USERANGE SHR 16) * CLNG(TABLES.finesine[angle])
     P_MAPUTL.P_PathTraverse(x1, y1, x2, y2, DOOMDEF.PT_ADDLINES, P_MAPUTL.PTR_USETRAVERSE)
 ENDSUB
+
+' ---- sector height changing ------------------------------------------------------
+' After modifying a sector's floor or ceiling height, call this routine to
+' adjust the positions of all things that touch the sector. If anything
+' doesn't fit anymore, TRUE is answered. With crunch, things that don't fit
+' take damage as well.
+
+DIM crushchange AS INTEGER = 0
+DIM nofit AS INTEGER = 0
+
+EXPORT FUNC PIT_ChangeSector(thing AS INTEGER) AS INTEGER
+    ' Keep checking if the thing still fits.
+    IF P_ThingHeightClip(thing) <> 0 THEN RETURN 1
+
+    ' Crunch bodies to giblets.
+    IF CLNG(P_MOBJ.mobj_health[thing]) <= 0 THEN
+        P_MOBJ.P_SetMobjState(thing, INFO.S_GIBS)
+        P_MOBJ.mobj_flags[thing] = CLNG(P_MOBJ.mobj_flags[thing]) BAND (INFO.MF_SOLID BXOR $ffffffff)
+        P_MOBJ.mobj_height[thing] = 0
+        P_MOBJ.mobj_radius[thing] = 0
+        RETURN 1
+    ENDIF
+
+    ' Crunch dropped items.
+    IF (CLNG(P_MOBJ.mobj_flags[thing]) BAND INFO.MF_DROPPED) <> 0 THEN
+        P_MOBJ.P_RemoveMobj(thing)
+        RETURN 1
+    ENDIF
+
+    ' Assume it is bloody gibs or something.
+    IF (CLNG(P_MOBJ.mobj_flags[thing]) BAND INFO.MF_SHOOTABLE) = 0 THEN RETURN 1
+
+    nofit = 1
+
+    IF crushchange <> 0 AND (P_TICK.leveltime BAND 3) = 0 THEN
+        P_INTER.P_DamageMobj(thing, -1, -1, 10)
+
+        ' Spray blood in a random direction.
+        DIM mo AS INTEGER = P_MOBJ.P_SpawnMobj(CLNG(P_MOBJ.mobj_x[thing]), CLNG(P_MOBJ.mobj_y[thing]), CLNG(P_MOBJ.mobj_z[thing]) + CLNG(P_MOBJ.mobj_height[thing]) \ 2, INFO.MT_BLOOD)
+        DIM first AS INTEGER = M_RANDOM.P_Random()
+        P_MOBJ.mobj_momx[mo] = (first - M_RANDOM.P_Random()) * 4096
+        first = M_RANDOM.P_Random()
+        P_MOBJ.mobj_momy[mo] = (first - M_RANDOM.P_Random()) * 4096
+    ENDIF
+
+    ' Keep checking (crush other things).
+    RETURN 1
+ENDFUNC
+
+EXPORT FUNC P_ChangeSector(sector AS INTEGER, crunch AS INTEGER) AS INTEGER
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    nofit = 0
+    crushchange = crunch
+
+    ' Re-check heights for all things near the moving sector.
+    FOR x = CLNG(P_SETUP.sector_blockbox[sector * 4 + DOOMDEF.BOXLEFT]) TO CLNG(P_SETUP.sector_blockbox[sector * 4 + DOOMDEF.BOXRIGHT])
+        FOR y = CLNG(P_SETUP.sector_blockbox[sector * 4 + DOOMDEF.BOXBOTTOM]) TO CLNG(P_SETUP.sector_blockbox[sector * 4 + DOOMDEF.BOXTOP])
+            P_MAPUTL.P_BlockThingsIterator(x, y, P_MAPUTL.PIT_CHANGESECTOR)
+        NEXT y
+    NEXT x
+    RETURN nofit
+ENDFUNC

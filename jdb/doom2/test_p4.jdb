@@ -236,7 +236,7 @@ Eq("end of the way: x", CLNG(P_MOBJ.mobj_x[mo]), 37146308)
 Eq("end of the way: y", CLNG(P_MOBJ.mobj_y[mo]), -206086536)
 Eq("end of the way: z", CLNG(P_MOBJ.mobj_z[mo]), -8 * FU)
 Eq("end of the way: angle", CLNG(P_MOBJ.mobj_angle[mo]), 402653184)
-Eq("end of the way: random index", M_RANDOM.prndindex, 143)
+Eq("end of the way: random index", M_RANDOM.prndindex, 166)
 
 ' The lists are whole after all that moving.
 Eq("things after the way", CountMobjThinkers(), expected_things)

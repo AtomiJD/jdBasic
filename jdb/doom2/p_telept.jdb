@@ -1,0 +1,77 @@
+' Teleportation (p_telept.c).
+
+EXPORT MODULE P_TELEPT
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT TABLES
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_MAP
+IMPORT S_SOUND
+
+' Moves the thing to the teleport destination in a sector with the tag of
+' the line. TRUE if it went.
+EXPORT FUNC EV_Teleport(ld AS INTEGER, side AS INTEGER, thing AS INTEGER) AS INTEGER
+    ' Don't teleport missiles.
+    IF (CLNG(P_MOBJ.mobj_flags[thing]) BAND INFO.MF_MISSILE) <> 0 THEN RETURN 0
+
+    ' Don't teleport if hit back of line, so you can get out of teleporter.
+    IF side = 1 THEN RETURN 0
+
+    DIM tag_in AS INTEGER = P_SETUP.line_tag[ld]
+    DIM i AS INTEGER
+    DIM thinker AS INTEGER
+    DIM m AS INTEGER
+    DIM oldx AS INTEGER
+    DIM oldy AS INTEGER
+    DIM oldz AS INTEGER
+    DIM fog AS INTEGER
+    DIM an AS INTEGER
+    DIM player AS INTEGER
+
+    FOR i = 0 TO P_SETUP.numsectors - 1
+        IF CLNG(P_SETUP.sector_tag[i]) <> tag_in THEN CONTINUEFOR
+
+        thinker = CLNG(P_TICK.th_next[0])
+        DO WHILE thinker <> 0
+            IF CLNG(P_TICK.th_function[thinker]) = P_TICK.TF_MOBJ THEN
+                m = CLNG(P_TICK.th_object[thinker])
+                IF CLNG(P_MOBJ.mobj_type[m]) = INFO.MT_TELEPORTMAN ANDALSO CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[m])]) = i THEN
+                    oldx = CLNG(P_MOBJ.mobj_x[thing])
+                    oldy = CLNG(P_MOBJ.mobj_y[thing])
+                    oldz = CLNG(P_MOBJ.mobj_z[thing])
+
+                    IF P_MAP.P_TeleportMove(thing, CLNG(P_MOBJ.mobj_x[m]), CLNG(P_MOBJ.mobj_y[m])) = 0 THEN RETURN 0
+
+                    P_MOBJ.mobj_z[thing] = P_MOBJ.mobj_floorz[thing]
+                    player = CLNG(P_MOBJ.mobj_player[thing])
+                    IF player >= 0 THEN D_PLAYER.player_viewz[player] = CLNG(P_MOBJ.mobj_z[thing]) + CLNG(D_PLAYER.player_viewheight[player])
+
+                    ' Spawn teleport fog at source and destination.
+                    fog = P_MOBJ.P_SpawnMobj(oldx, oldy, oldz, INFO.MT_TFOG)
+                    S_SOUND.S_StartSound(fog, INFO.SFX_TELEPT)
+                    an = CLNG(P_MOBJ.mobj_angle[m]) SHR TABLES.ANGLETOFINESHIFT
+                    fog = P_MOBJ.P_SpawnMobj(CLNG(P_MOBJ.mobj_x[m]) + 20 * CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + an]), CLNG(P_MOBJ.mobj_y[m]) + 20 * CLNG(TABLES.finesine[an]), CLNG(P_MOBJ.mobj_z[thing]), INFO.MT_TFOG)
+                    S_SOUND.S_StartSound(fog, INFO.SFX_TELEPT)
+
+                    ' Don't move for a bit.
+                    IF player >= 0 THEN P_MOBJ.mobj_reactiontime[thing] = 18
+
+                    P_MOBJ.mobj_angle[thing] = P_MOBJ.mobj_angle[m]
+                    P_MOBJ.mobj_momx[thing] = 0
+                    P_MOBJ.mobj_momy[thing] = 0
+                    P_MOBJ.mobj_momz[thing] = 0
+                    RETURN 1
+                ENDIF
+            ENDIF
+            thinker = CLNG(P_TICK.th_next[thinker])
+        LOOP
+    NEXT i
+    RETURN 0
+ENDFUNC

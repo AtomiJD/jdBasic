@@ -125,6 +125,14 @@ Say "sectors_floorheight", FieldSum(sectors, 13, 0)
 Say "sectors_ceilingheight", FieldSum(sectors, 13, 1)
 Say "sectors_lightlevel", FieldSum(sectors, 13, 10)
 Say "sectors_special", FieldSum(sectors, 13, 11)
+' The specials that start a light or a door at level start are cleared then.
+DIM kept_specials = 0
+DIM si = 11
+DO WHILE si < LEN(sectors)
+    IF INSTR(",1,2,3,8,10,12,13,14,17,", "," + STR$(sectors[si]) + ",") < 0 THEN kept_specials = kept_specials + sectors[si]
+    si = si + 13
+LOOP
+Say "sectors_special_after_spawn", kept_specials
 Say "sectors_tag", FieldSum(sectors, 13, 12)
 Say "reject_size", LEN(reject)
 Say "reject_sum", Total(reject)

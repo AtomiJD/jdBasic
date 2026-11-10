@@ -19,6 +19,7 @@ IMPORT D_PLAYER
 IMPORT P_TICK
 IMPORT P_MOBJ
 IMPORT P_SPEC
+IMPORT P_SWITCH
 IMPORT R_THINGS
 
 EXPORT CONST MAXVERTEXES = 32768
@@ -545,5 +546,7 @@ ENDSUB
 
 ' Called once at program start, after R_Init.
 EXPORT SUB P_Init()
+    P_SWITCH.P_InitSwitchList()
+    P_SPEC.P_InitPicAnims()
     R_THINGS.R_InitSprites()
 ENDSUB

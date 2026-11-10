@@ -1,6 +1,7 @@
 ' Walks player 1 through a level with the game's own controls: the keys make
 ' a ticcmd, the play simulation moves the player, the renderer shows his
-' view. Things are in the level but not drawn yet, and doors do not open.
+' view. Doors, lifts and switches work; an exit leads to the next map. The
+' monsters stand still and nothing can be picked up yet.
 '
 '   build/jdBasic.exe -c jdb/doom2/view_p4.jdb
 '   jdb/doom2/view_p4.exe [episode] [map]
@@ -21,6 +22,7 @@ IMPORT I_VIDEO
 IMPORT R_MAIN
 IMPORT P_MOBJ
 IMPORT P_SETUP
+IMPORT P_TICK
 IMPORT G_GAME
 
 DIM episode AS INTEGER = 1
@@ -83,6 +85,14 @@ DO WHILE running = 1
     ReadKeys()
     G_GAME.G_BuildTiccmd()
     G_GAME.G_Ticker()
+
+    IF G_GAME.gameaction = G_GAME.GA_COMPLETED THEN
+        PRINT "E" + STR$(episode) + "M" + STR$(map_num) + " completed after " + STR$(P_TICK.leveltime \ 35) + " seconds, " + STR$(CLNG(D_PLAYER.player_secretcount[0])) + " of " + STR$(DOOMSTAT.totalsecret) + " secrets"
+        map_num = map_num + 1
+        IF G_GAME.secretexit <> 0 THEN map_num = 9
+        IF map_num > 9 THEN map_num = 1
+        G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, episode, map_num)
+    ENDIF
 
     IF R_MAIN.setsizeneeded <> 0 THEN R_MAIN.R_ExecuteSetViewSize()
     R_MAIN.R_RenderPlayerView(DOOMSTAT.displayplayer)

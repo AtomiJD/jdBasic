@@ -1,24 +1,535 @@
-' Special lines and sectors: triggers, animated walls, damaging floors
-' (p_spec.c). Not ported yet; the functions the movement code and the level
-' loader call are here and do nothing.
+' Special lines and sectors: animated textures, the utilities the movers
+' share, lines that trigger when crossed or shot, damaging floors, and the
+' specials spawned at level start (p_spec.c).
 
 EXPORT MODULE P_SPEC
 
 OPTION "EXPLICIT"
 OPTION "STRICT"
 
-' A thing walked over the special line from the given side.
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT INFO
+IMPORT W_WAD
+IMPORT R_DATA
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_INTER
+IMPORT P_DOORS
+IMPORT P_PLATS
+IMPORT P_FLOOR
+IMPORT P_CEILNG
+IMPORT P_LIGHTS
+IMPORT P_SWITCH
+IMPORT P_TELEPT
+IMPORT G_GAME
+
+' ---- animating textures and flats ------------------------------------------
+
+CONST MAXANIMS = 32
+' Tics a picture of a cycle stays.
+CONST ANIMSPEED = 8
+
+' Last and first picture of each cycle; the pictures between are those the
+' WAD has between the two.
+DIM flat_anims$ AS ARRAY = ["NUKAGE3", "NUKAGE1", "FWATER4", "FWATER1", "SWATER4", "SWATER1", "LAVA4", "LAVA1", "BLOOD3", "BLOOD1", "RROCK08", "RROCK05", "SLIME04", "SLIME01", "SLIME08", "SLIME05", "SLIME12", "SLIME09"]
+DIM texture_anims$ AS ARRAY = ["BLODGR4", "BLODGR1", "SLADRIP3", "SLADRIP1", "BLODRIP4", "BLODRIP1", "FIREWALL", "FIREWALA", "GSTFONT3", "GSTFONT1", "FIRELAVA", "FIRELAV3", "FIREMAG3", "FIREMAG1", "FIREBLU2", "FIREBLU1", "ROCKRED3", "ROCKRED1", "BFALL4", "BFALL1", "SFALL4", "SFALL1", "WFALL4", "WFALL1", "DBRAIN4", "DBRAIN1"]
+
+EXPORT DIM numanims AS INTEGER = 0
+EXPORT DIM anim_istexture[MAXANIMS] AS INTEGER
+EXPORT DIM anim_picnum[MAXANIMS] AS INTEGER
+EXPORT DIM anim_basepic[MAXANIMS] AS INTEGER
+EXPORT DIM anim_numpics[MAXANIMS] AS INTEGER
+EXPORT DIM anim_speed[MAXANIMS] AS INTEGER
+
+SUB AddAnim(istexture AS INTEGER, endname$ AS STRING, startname$ AS STRING)
+    DIM picnum AS INTEGER
+    DIM basepic AS INTEGER
+    IF istexture <> 0 THEN
+        ' Different episode?
+        IF R_DATA.R_CheckTextureNumForName(startname$) = -1 THEN RETURN
+        picnum = R_DATA.R_TextureNumForName(endname$)
+        basepic = R_DATA.R_TextureNumForName(startname$)
+    ELSE
+        IF W_WAD.W_CheckNumForName(startname$) = -1 THEN RETURN
+        picnum = R_DATA.R_FlatNumForName(endname$)
+        basepic = R_DATA.R_FlatNumForName(startname$)
+    ENDIF
+    IF picnum - basepic + 1 < 2 THEN I_SYSTEM.I_Error("P_InitPicAnims: bad cycle from " + startname$ + " to " + endname$)
+    IF numanims >= MAXANIMS THEN I_SYSTEM.I_Error("P_InitPicAnims: more than " + STR$(MAXANIMS) + " cycles")
+    anim_istexture[numanims] = istexture
+    anim_picnum[numanims] = picnum
+    anim_basepic[numanims] = basepic
+    anim_numpics[numanims] = picnum - basepic + 1
+    anim_speed[numanims] = ANIMSPEED
+    numanims = numanims + 1
+ENDSUB
+
+EXPORT SUB P_InitPicAnims()
+    DIM i AS INTEGER
+    numanims = 0
+    FOR i = 0 TO LEN(flat_anims$) - 2 STEP 2
+        AddAnim(0, flat_anims$[i], flat_anims$[i + 1])
+    NEXT i
+    FOR i = 0 TO LEN(texture_anims$) - 2 STEP 2
+        AddAnim(1, texture_anims$[i], texture_anims$[i + 1])
+    NEXT i
+ENDSUB
+
+' ---- utilities --------------------------------------------------------------
+
+' The sector on the other side of the line, -1 if the line has one side.
+EXPORT FUNC getNextSector(ld AS INTEGER, sector AS INTEGER) AS INTEGER
+    IF (CLNG(P_SETUP.line_flags[ld]) BAND DOOMDEF.ML_TWOSIDED) = 0 THEN RETURN -1
+    IF CLNG(P_SETUP.line_frontsector[ld]) = sector THEN RETURN CLNG(P_SETUP.line_backsector[ld])
+    RETURN CLNG(P_SETUP.line_frontsector[ld])
+ENDFUNC
+
+' The sector next to this one over its line number i, -1 for none.
+FUNC Neighbour(sector AS INTEGER, i AS INTEGER) AS INTEGER
+    RETURN getNextSector(CLNG(P_SETUP.sector_lines[CLNG(P_SETUP.sector_firstline[sector]) + i]), sector)
+ENDFUNC
+
+' The lowest floor height in the surrounding sectors and this one.
+EXPORT FUNC P_FindLowestFloorSurrounding(sector AS INTEGER) AS INTEGER
+    DIM lowest AS INTEGER = P_SETUP.sector_floorheight[sector]
+    DIM i AS INTEGER
+    DIM other AS INTEGER
+    FOR i = 0 TO CLNG(P_SETUP.sector_linecount[sector]) - 1
+        other = Neighbour(sector, i)
+        IF other >= 0 THEN
+            IF CLNG(P_SETUP.sector_floorheight[other]) < lowest THEN lowest = CLNG(P_SETUP.sector_floorheight[other])
+        ENDIF
+    NEXT i
+    RETURN lowest
+ENDFUNC
+
+' The highest floor height in the surrounding sectors, not below -500.
+EXPORT FUNC P_FindHighestFloorSurrounding(sector AS INTEGER) AS INTEGER
+    DIM highest AS INTEGER = -500 * M_FIXED.FRACUNIT
+    DIM i AS INTEGER
+    DIM other AS INTEGER
+    FOR i = 0 TO CLNG(P_SETUP.sector_linecount[sector]) - 1
+        other = Neighbour(sector, i)
+        IF other >= 0 THEN
+            IF CLNG(P_SETUP.sector_floorheight[other]) > highest THEN highest = CLNG(P_SETUP.sector_floorheight[other])
+        ENDIF
+    NEXT i
+    RETURN highest
+ENDFUNC
+
+' The lowest floor of the surrounding sectors that is above currentheight;
+' only the first 20 higher neighbours are looked at.
+EXPORT FUNC P_FindNextHighestFloor(sector AS INTEGER, currentheight AS INTEGER) AS INTEGER
+    DIM n_higher AS INTEGER = 0
+    DIM lowest AS INTEGER = 0
+    DIM i AS INTEGER
+    DIM other AS INTEGER
+    DIM height AS INTEGER
+    FOR i = 0 TO CLNG(P_SETUP.sector_linecount[sector]) - 1
+        other = Neighbour(sector, i)
+        IF other >= 0 THEN
+            height = CLNG(P_SETUP.sector_floorheight[other])
+            IF height > currentheight THEN
+                IF n_higher = 0 OR height < lowest THEN lowest = height
+                n_higher = n_higher + 1
+            ENDIF
+            IF n_higher >= 20 THEN EXITFOR
+        ENDIF
+    NEXT i
+    IF n_higher = 0 THEN RETURN currentheight
+    RETURN lowest
+ENDFUNC
+
+' The lowest ceiling in the surrounding sectors.
+EXPORT FUNC P_FindLowestCeilingSurrounding(sector AS INTEGER) AS INTEGER
+    DIM height AS INTEGER = M_FIXED.MAXINT
+    DIM i AS INTEGER
+    DIM other AS INTEGER
+    FOR i = 0 TO CLNG(P_SETUP.sector_linecount[sector]) - 1
+        other = Neighbour(sector, i)
+        IF other >= 0 THEN
+            IF CLNG(P_SETUP.sector_ceilingheight[other]) < height THEN height = CLNG(P_SETUP.sector_ceilingheight[other])
+        ENDIF
+    NEXT i
+    RETURN height
+ENDFUNC
+
+' The highest ceiling in the surrounding sectors, not below 0.
+EXPORT FUNC P_FindHighestCeilingSurrounding(sector AS INTEGER) AS INTEGER
+    DIM height AS INTEGER = 0
+    DIM i AS INTEGER
+    DIM other AS INTEGER
+    FOR i = 0 TO CLNG(P_SETUP.sector_linecount[sector]) - 1
+        other = Neighbour(sector, i)
+        IF other >= 0 THEN
+            IF CLNG(P_SETUP.sector_ceilingheight[other]) > height THEN height = CLNG(P_SETUP.sector_ceilingheight[other])
+        ENDIF
+    NEXT i
+    RETURN height
+ENDFUNC
+
+' The next sector after start with the tag of the line, -1 for none.
+EXPORT FUNC P_FindSectorFromLineTag(ld AS INTEGER, start AS INTEGER) AS INTEGER
+    DIM tag_in AS INTEGER = P_SETUP.line_tag[ld]
+    DIM i AS INTEGER
+    FOR i = start + 1 TO P_SETUP.numsectors - 1
+        IF CLNG(P_SETUP.sector_tag[i]) = tag_in THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' The darkest light level of the surrounding sectors, at most max_light.
+EXPORT FUNC P_FindMinSurroundingLight(sector AS INTEGER, max_light AS INTEGER) AS INTEGER
+    DIM darkest AS INTEGER = max_light
+    DIM i AS INTEGER
+    DIM other AS INTEGER
+    FOR i = 0 TO CLNG(P_SETUP.sector_linecount[sector]) - 1
+        other = Neighbour(sector, i)
+        IF other >= 0 THEN
+            IF CLNG(P_SETUP.sector_lightlevel[other]) < darkest THEN darkest = CLNG(P_SETUP.sector_lightlevel[other])
+        ENDIF
+    NEXT i
+    RETURN darkest
+ENDFUNC
+
+' ---- events -----------------------------------------------------------------
+
+' Called every time a thing origin is about to cross a line with a non 0
+' special.
 EXPORT SUB P_CrossSpecialLine(linenum AS INTEGER, side AS INTEGER, thing AS INTEGER)
+    DIM ld AS INTEGER = linenum
+    DIM special AS INTEGER = P_SETUP.line_special[ld]
+    DIM is_player AS INTEGER = 0
+    IF CLNG(P_MOBJ.mobj_player[thing]) >= 0 THEN is_player = 1
+
+    ' Triggers that other things can activate.
+    IF is_player = 0 THEN
+        ' Things that should NOT trigger specials...
+        DIM mtype AS INTEGER = P_MOBJ.mobj_type[thing]
+        IF mtype = INFO.MT_ROCKET OR mtype = INFO.MT_PLASMA OR mtype = INFO.MT_BFG OR mtype = INFO.MT_TROOPSHOT OR mtype = INFO.MT_HEADSHOT OR mtype = INFO.MT_BRUISERSHOT THEN RETURN
+
+        ' Teleporters, a door and the lifts are for monsters too.
+        IF special <> 39 AND special <> 97 AND special <> 125 AND special <> 126 AND special <> 4 AND special <> 10 AND special <> 88 THEN RETURN
+    ENDIF
+
+    ' Each action has a number that triggers once and one that triggers
+    ' every time.
+    SWITCH special
+        CASE 2, 86
+            P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_OPEN)
+        CASE 3, 75
+            P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_CLOSE)
+        CASE 4, 90
+            P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_NORMAL)
+        CASE 5, 91
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISE)
+        CASE 6, 77
+            P_CEILNG.EV_DoCeiling(ld, P_CEILNG.CEIL_FASTCRUSHANDRAISE)
+        CASE 8
+            P_FLOOR.EV_BuildStairs(ld, P_FLOOR.STAIR_BUILD8)
+        CASE 10, 88
+            P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_DOWNWAITUPSTAY, 0)
+        CASE 12, 80
+            P_LIGHTS.EV_LightTurnOn(ld, 0)
+        CASE 13, 81
+            P_LIGHTS.EV_LightTurnOn(ld, 255)
+        CASE 16, 76
+            P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_CLOSE30THENOPEN)
+        CASE 17
+            P_LIGHTS.EV_StartLightStrobing(ld)
+        CASE 19, 83
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_LOWER)
+        CASE 22, 95
+            P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_RAISETONEARESTANDCHANGE, 0)
+        CASE 25, 73
+            P_CEILNG.EV_DoCeiling(ld, P_CEILNG.CEIL_CRUSHANDRAISE)
+        CASE 30, 96
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISETOTEXTURE)
+        CASE 35, 79
+            P_LIGHTS.EV_LightTurnOn(ld, 35)
+        CASE 36, 98
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_TURBOLOWER)
+        CASE 37, 84
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_LOWERANDCHANGE)
+        CASE 38, 82
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_LOWERTOLOWEST)
+        CASE 39, 97
+            P_TELEPT.EV_Teleport(ld, side, thing)
+        CASE 40
+            P_CEILNG.EV_DoCeiling(ld, P_CEILNG.CEIL_RAISETOHIGHEST)
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_LOWERTOLOWEST)
+        CASE 44, 72
+            P_CEILNG.EV_DoCeiling(ld, P_CEILNG.CEIL_LOWERANDCRUSH)
+        CASE 52
+            G_GAME.G_ExitLevel()
+        CASE 53, 87
+            P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_PERPETUALRAISE, 0)
+        CASE 54, 89
+            P_PLATS.EV_StopPlat(ld)
+        CASE 56, 94
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISECRUSH)
+        CASE 57, 74
+            P_CEILNG.EV_CeilingCrushStop(ld)
+        CASE 58, 92
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISE24)
+        CASE 59, 93
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISE24ANDCHANGE)
+        CASE 100
+            P_FLOOR.EV_BuildStairs(ld, P_FLOOR.STAIR_TURBO16)
+        CASE 104
+            P_LIGHTS.EV_TurnTagLightsOff(ld)
+        CASE 108, 105
+            P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_BLAZERAISE)
+        CASE 109, 106
+            P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_BLAZEOPEN)
+        CASE 110, 107
+            P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_BLAZECLOSE)
+        CASE 119, 128
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISETONEAREST)
+        CASE 121, 120
+            P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_BLAZEDWUS, 0)
+        CASE 124
+            G_GAME.G_SecretExitLevel()
+        CASE 125, 126
+            ' Monsters only.
+            IF is_player = 0 THEN
+                P_TELEPT.EV_Teleport(ld, side, thing)
+                IF special = 125 THEN P_SETUP.line_special[ld] = 0
+            ENDIF
+        CASE 130, 129
+            P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISETURBO)
+        CASE 141
+            P_CEILNG.EV_DoCeiling(ld, P_CEILNG.CEIL_SILENTCRUSHANDRAISE)
+    ENDSWITCH
+
+    ' The numbers that trigger once are spent.
+    SWITCH special
+        CASE 2, 3, 4, 5, 6, 8, 10, 12, 13, 16, 17, 19, 22, 25, 30, 35, 36, 37, 38, 39, 40, 44, 53, 54, 56, 57, 58, 59, 100, 104, 108, 109, 110, 119, 121, 130, 141
+            P_SETUP.line_special[ld] = 0
+    ENDSWITCH
 ENDSUB
 
-' Called every tic a player stands in a sector with a special.
+' Called when a thing shoots a special line.
+EXPORT SUB P_ShootSpecialLine(thing AS INTEGER, ld AS INTEGER)
+    DIM special AS INTEGER = P_SETUP.line_special[ld]
+
+    ' Impacts that other things can activate.
+    IF CLNG(P_MOBJ.mobj_player[thing]) < 0 AND special <> 46 THEN RETURN
+
+    IF special = 24 THEN
+        P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISE)
+        P_SWITCH.P_ChangeSwitchTexture(ld, 0)
+    ELSEIF special = 46 THEN
+        P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_OPEN)
+        P_SWITCH.P_ChangeSwitchTexture(ld, 1)
+    ELSEIF special = 47 THEN
+        P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_RAISETONEARESTANDCHANGE, 0)
+        P_SWITCH.P_ChangeSwitchTexture(ld, 0)
+    ENDIF
+ENDSUB
+
+' Called every tic that the player origin is in a special sector.
 EXPORT SUB P_PlayerInSpecialSector(player AS INTEGER)
+    DIM mo AS INTEGER = D_PLAYER.player_mo[player]
+    DIM sector AS INTEGER = P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[mo])]
+
+    ' Falling, not all the way down yet?
+    IF CLNG(P_MOBJ.mobj_z[mo]) <> CLNG(P_SETUP.sector_floorheight[sector]) THEN RETURN
+
+    DIM special AS INTEGER = P_SETUP.sector_special[sector]
+    DIM ironfeet AS INTEGER = D_PLAYER.player_powers[player * 6 + DOOMDEF.PW_IRONFEET]
+    DIM hurt_tic AS INTEGER = 0
+    IF (P_TICK.leveltime BAND $1f) = 0 THEN hurt_tic = 1
+
+    SWITCH special
+        CASE 5
+            ' Hellslime damage.
+            IF ironfeet = 0 AND hurt_tic <> 0 THEN P_INTER.P_DamageMobj(mo, -1, -1, 10)
+        CASE 7
+            ' Nukage damage.
+            IF ironfeet = 0 AND hurt_tic <> 0 THEN P_INTER.P_DamageMobj(mo, -1, -1, 5)
+        CASE 16, 4
+            ' Super hellslime damage, strobe hurt: the suit leaks.
+            IF ironfeet = 0 ORELSE M_RANDOM.P_Random() < 5 THEN
+                IF hurt_tic <> 0 THEN P_INTER.P_DamageMobj(mo, -1, -1, 20)
+            ENDIF
+        CASE 9
+            ' Secret sector.
+            D_PLAYER.player_secretcount[player] = CLNG(D_PLAYER.player_secretcount[player]) + 1
+            P_SETUP.sector_special[sector] = 0
+        CASE 11
+            ' Exit super damage (for E1M8 finale).
+            D_PLAYER.player_cheats[player] = CLNG(D_PLAYER.player_cheats[player]) BAND (DOOMDEF.CF_GODMODE BXOR $ffffffff)
+            IF hurt_tic <> 0 THEN P_INTER.P_DamageMobj(mo, -1, -1, 20)
+            IF CLNG(D_PLAYER.player_health[player]) <= 10 THEN G_GAME.G_ExitLevel()
+        DEFAULT
+            I_SYSTEM.I_Error("P_PlayerInSpecialSector: unknown special " + STR$(special))
+    ENDSWITCH
 ENDSUB
 
-' Animates textures, scrolls walls, counts down buttons.
+' ---- per tic ----------------------------------------------------------------
+
+EXPORT DIM levelTimer AS INTEGER = 0
+EXPORT DIM levelTimeCount AS INTEGER = 0
+
+CONST MAXLINEANIMS = 64
+DIM numlinespecials AS INTEGER = 0
+DIM linespeciallist[MAXLINEANIMS] AS INTEGER
+
+' Animates planes, scrolls walls, counts the buttons down.
 EXPORT SUB P_UpdateSpecials()
+    DIM i AS INTEGER
+    DIM a AS INTEGER
+    DIM pic AS INTEGER
+    DIM basepic AS INTEGER
+    DIM numpics AS INTEGER
+    DIM phase AS INTEGER
+    DIM front AS INTEGER
+
+    ' Level timer.
+    IF levelTimer <> 0 THEN
+        levelTimeCount = levelTimeCount - 1
+        IF levelTimeCount = 0 THEN G_GAME.G_ExitLevel()
+    ENDIF
+
+    ' Animate flats and textures globally.
+    FOR a = 0 TO numanims - 1
+        basepic = CLNG(anim_basepic[a])
+        numpics = CLNG(anim_numpics[a])
+        phase = P_TICK.leveltime \ CLNG(anim_speed[a])
+        FOR i = basepic TO basepic + numpics - 1
+            pic = basepic + ((phase + i) MOD numpics)
+            IF CLNG(anim_istexture[a]) <> 0 THEN
+                R_DATA.texturetranslation[i] = pic
+            ELSE
+                R_DATA.flattranslation[i] = pic
+            ENDIF
+        NEXT i
+    NEXT a
+
+    ' Animate line specials: 48 scrolls its texture to the left.
+    FOR i = 0 TO numlinespecials - 1
+        front = CLNG(P_SETUP.line_sidenum0[CLNG(linespeciallist[i])])
+        P_SETUP.side_textureoffset[front] = M_FIXED.ToS32(CLNG(P_SETUP.side_textureoffset[front]) + M_FIXED.FRACUNIT)
+    NEXT i
+
+    P_SWITCH.P_UpdateButtons()
 ENDSUB
 
-' After the map is loaded: starts the thinkers of special sectors and lines.
+' The ring around a pillar rises to the floor outside it and takes its
+' flat; the pillar sinks to the same height.
+EXPORT FUNC EV_DoDonut(ld AS INTEGER) AS INTEGER
+    DIM secnum AS INTEGER = -1
+    DIM rtn AS INTEGER = 0
+    DIM s1 AS INTEGER
+    DIM s2 AS INTEGER
+    DIM s3 AS INTEGER
+    DIM i AS INTEGER
+    DIM ring_line AS INTEGER
+    DIM mover AS INTEGER
+
+    DO
+        secnum = P_FindSectorFromLineTag(ld, secnum)
+        IF secnum < 0 THEN EXITDO
+        s1 = secnum
+
+        ' Already moving? If so, keep going.
+        IF CLNG(P_SETUP.sector_specialdata[s1]) >= 0 THEN CONTINUEDO
+
+        rtn = 1
+        s2 = Neighbour(s1, 0)
+        IF s2 < 0 THEN CONTINUEDO
+        FOR i = 0 TO CLNG(P_SETUP.sector_linecount[s2]) - 1
+            ring_line = CLNG(P_SETUP.sector_lines[CLNG(P_SETUP.sector_firstline[s2]) + i])
+            s3 = CLNG(P_SETUP.line_backsector[ring_line])
+            IF s3 = s1 OR s3 < 0 THEN CONTINUEFOR
+
+            ' Spawn rising slime.
+            mover = P_FLOOR.NewFloor(s2)
+            P_FLOOR.floor_type[mover] = P_FLOOR.FLOOR_DONUTRAISE
+            P_FLOOR.floor_direction[mover] = 1
+            P_FLOOR.floor_speed[mover] = P_FLOOR.FLOORSPEED \ 2
+            P_FLOOR.floor_texture[mover] = P_SETUP.sector_floorpic[s3]
+            P_FLOOR.floor_newspecial[mover] = 0
+            P_FLOOR.floor_floordestheight[mover] = P_SETUP.sector_floorheight[s3]
+
+            ' Spawn lowering donut-hole.
+            mover = P_FLOOR.NewFloor(s1)
+            P_FLOOR.floor_type[mover] = P_FLOOR.FLOOR_LOWER
+            P_FLOOR.floor_direction[mover] = -1
+            P_FLOOR.floor_speed[mover] = P_FLOOR.FLOORSPEED \ 2
+            P_FLOOR.floor_floordestheight[mover] = P_SETUP.sector_floorheight[s3]
+            EXITFOR
+        NEXT i
+    LOOP
+    RETURN rtn
+ENDFUNC
+
+' After the map has been loaded, scan for specials that spawn thinkers.
 EXPORT SUB P_SpawnSpecials()
+    DIM i AS INTEGER
+    DIM special AS INTEGER
+
+    levelTimer = 0
+
+    ' Init special sectors.
+    FOR i = 0 TO P_SETUP.numsectors - 1
+        special = CLNG(P_SETUP.sector_special[i])
+        SWITCH special
+            CASE 1
+                ' Flickering lights.
+                P_LIGHTS.P_SpawnLightFlash(i)
+            CASE 2
+                ' Strobe fast.
+                P_LIGHTS.P_SpawnStrobeFlash(i, P_LIGHTS.FASTDARK, 0)
+            CASE 3
+                ' Strobe slow.
+                P_LIGHTS.P_SpawnStrobeFlash(i, P_LIGHTS.SLOWDARK, 0)
+            CASE 4
+                ' Strobe fast, death slime.
+                P_LIGHTS.P_SpawnStrobeFlash(i, P_LIGHTS.FASTDARK, 0)
+                P_SETUP.sector_special[i] = 4
+            CASE 8
+                ' Glowing light.
+                P_LIGHTS.P_SpawnGlowingLight(i)
+            CASE 9
+                ' Secret sector.
+                DOOMSTAT.totalsecret = DOOMSTAT.totalsecret + 1
+            CASE 10
+                ' Door close in 30 seconds.
+                P_DOORS.P_SpawnDoorCloseIn30(i)
+            CASE 12
+                ' Sync strobe slow.
+                P_LIGHTS.P_SpawnStrobeFlash(i, P_LIGHTS.SLOWDARK, 1)
+            CASE 13
+                ' Sync strobe fast.
+                P_LIGHTS.P_SpawnStrobeFlash(i, P_LIGHTS.FASTDARK, 1)
+            CASE 14
+                ' Door raise in 5 minutes.
+                P_DOORS.P_SpawnDoorRaiseIn5Mins(i)
+            CASE 17
+                P_LIGHTS.P_SpawnFireFlicker(i)
+        ENDSWITCH
+    NEXT i
+
+    ' Init line effects.
+    numlinespecials = 0
+    FOR i = 0 TO P_SETUP.numlines - 1
+        IF CLNG(P_SETUP.line_special[i]) = 48 THEN
+            IF numlinespecials >= MAXLINEANIMS THEN I_SYSTEM.I_Error("P_SpawnSpecials: more than " + STR$(MAXLINEANIMS) + " scrolling lines")
+            linespeciallist[numlinespecials] = i
+            numlinespecials = numlinespecials + 1
+        ENDIF
+    NEXT i
+
+    ' Init other misc stuff.
+    P_CEILNG.P_ClearActiveCeilings()
+    P_PLATS.P_ClearActivePlats()
+    P_SWITCH.P_ClearButtons()
 ENDSUB

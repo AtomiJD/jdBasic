@@ -27,6 +27,7 @@ EXPORT CONST PIT_CHECKLINE = 2
 EXPORT CONST PIT_ADDTHINGINTERCEPTS = 1
 EXPORT CONST PIT_STOMPTHING = 2
 EXPORT CONST PIT_CHECKTHING = 3
+EXPORT CONST PIT_CHANGESECTOR = 4
 ' Functions P_PathTraverse can call for each intercept.
 EXPORT CONST PTR_SLIDETRAVERSE = 1
 EXPORT CONST PTR_USETRAVERSE = 2
@@ -378,6 +379,8 @@ EXPORT FUNC P_BlockThingsIterator(x AS INTEGER, y AS INTEGER, callee AS INTEGER)
             go_on = P_MAP.PIT_StompThing(mobj)
         ELSEIF callee = PIT_CHECKTHING THEN
             go_on = P_MAP.PIT_CheckThing(mobj)
+        ELSEIF callee = PIT_CHANGESECTOR THEN
+            go_on = P_MAP.PIT_ChangeSector(mobj)
         ELSE
             I_SYSTEM.I_Error("P_BlockThingsIterator: unknown function " + STR$(callee))
         ENDIF

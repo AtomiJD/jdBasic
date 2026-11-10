@@ -1,0 +1,199 @@
+' Sector lighting effects: flicker, flashes, strobes, glow (p_lights.c).
+'
+' Each effect is a thinker; its fields are arrays indexed by the number of
+' the thinker. The four kinds share the arrays.
+
+EXPORT MODULE P_LIGHTS
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT M_RANDOM
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_SPEC
+
+EXPORT CONST GLOWSPEED = 8
+EXPORT CONST STROBEBRIGHT = 5
+EXPORT CONST FASTDARK = 15
+EXPORT CONST SLOWDARK = 35
+
+EXPORT DIM light_sector[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM light_count[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM light_maxlight[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM light_minlight[DOOMDEF.MAXTHINKERS] AS INTEGER
+' Flash: the longest bright and dark time. Strobe: brighttime and darktime.
+EXPORT DIM light_maxtime[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM light_mintime[DOOMDEF.MAXTHINKERS] AS INTEGER
+' Glow only.
+EXPORT DIM light_direction[DOOMDEF.MAXTHINKERS] AS INTEGER
+
+' Counts the thinker down; TRUE when the count reached zero.
+FUNC CountDown(thinker AS INTEGER) AS INTEGER
+    DIM remaining AS INTEGER = CLNG(light_count[thinker]) - 1
+    light_count[thinker] = remaining
+    IF remaining = 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+EXPORT SUB T_FireFlicker(flick AS INTEGER)
+    IF CountDown(flick) = 0 THEN RETURN
+    DIM sector AS INTEGER = light_sector[flick]
+    DIM amount AS INTEGER = (M_RANDOM.P_Random() BAND 3) * 16
+    IF CLNG(P_SETUP.sector_lightlevel[sector]) - amount < CLNG(light_minlight[flick]) THEN
+        P_SETUP.sector_lightlevel[sector] = light_minlight[flick]
+    ELSE
+        P_SETUP.sector_lightlevel[sector] = CLNG(light_maxlight[flick]) - amount
+    ENDIF
+    light_count[flick] = 4
+ENDSUB
+
+EXPORT SUB P_SpawnFireFlicker(sector AS INTEGER)
+    ' Nothing special about it during gameplay.
+    P_SETUP.sector_special[sector] = 0
+    DIM flick AS INTEGER = P_TICK.P_AddThinker(P_TICK.TF_FIREFLICKER, -1)
+    DIM level AS INTEGER = P_SETUP.sector_lightlevel[sector]
+    light_sector[flick] = sector
+    light_maxlight[flick] = level
+    light_minlight[flick] = P_SPEC.P_FindMinSurroundingLight(sector, level) + 16
+    light_count[flick] = 4
+ENDSUB
+
+' Broken light flashing.
+EXPORT SUB T_LightFlash(flash AS INTEGER)
+    IF CountDown(flash) = 0 THEN RETURN
+    DIM sector AS INTEGER = light_sector[flash]
+    IF CLNG(P_SETUP.sector_lightlevel[sector]) = CLNG(light_maxlight[flash]) THEN
+        P_SETUP.sector_lightlevel[sector] = light_minlight[flash]
+        light_count[flash] = (M_RANDOM.P_Random() BAND CLNG(light_mintime[flash])) + 1
+    ELSE
+        P_SETUP.sector_lightlevel[sector] = light_maxlight[flash]
+        light_count[flash] = (M_RANDOM.P_Random() BAND CLNG(light_maxtime[flash])) + 1
+    ENDIF
+ENDSUB
+
+EXPORT SUB P_SpawnLightFlash(sector AS INTEGER)
+    ' Nothing special about it during gameplay.
+    P_SETUP.sector_special[sector] = 0
+    DIM flash AS INTEGER = P_TICK.P_AddThinker(P_TICK.TF_LIGHTFLASH, -1)
+    DIM level AS INTEGER = P_SETUP.sector_lightlevel[sector]
+    light_sector[flash] = sector
+    light_maxlight[flash] = level
+    light_minlight[flash] = P_SPEC.P_FindMinSurroundingLight(sector, level)
+    light_maxtime[flash] = 64
+    light_mintime[flash] = 7
+    light_count[flash] = (M_RANDOM.P_Random() BAND 64) + 1
+ENDSUB
+
+EXPORT SUB T_StrobeFlash(flash AS INTEGER)
+    IF CountDown(flash) = 0 THEN RETURN
+    DIM sector AS INTEGER = light_sector[flash]
+    IF CLNG(P_SETUP.sector_lightlevel[sector]) = CLNG(light_minlight[flash]) THEN
+        P_SETUP.sector_lightlevel[sector] = light_maxlight[flash]
+        light_count[flash] = light_maxtime[flash]
+    ELSE
+        P_SETUP.sector_lightlevel[sector] = light_minlight[flash]
+        light_count[flash] = light_mintime[flash]
+    ENDIF
+ENDSUB
+
+' A strobe that is dark for dark_tics; out of sync it starts at a random
+' time.
+EXPORT SUB P_SpawnStrobeFlash(sector AS INTEGER, dark_tics AS INTEGER, in_sync AS INTEGER)
+    DIM flash AS INTEGER = P_TICK.P_AddThinker(P_TICK.TF_STROBE, -1)
+    DIM level AS INTEGER = P_SETUP.sector_lightlevel[sector]
+    DIM darkest AS INTEGER = P_SPEC.P_FindMinSurroundingLight(sector, level)
+    IF darkest = level THEN darkest = 0
+    light_sector[flash] = sector
+    light_mintime[flash] = dark_tics
+    light_maxtime[flash] = STROBEBRIGHT
+    light_maxlight[flash] = level
+    light_minlight[flash] = darkest
+
+    ' Nothing special about it during gameplay.
+    P_SETUP.sector_special[sector] = 0
+
+    IF in_sync = 0 THEN
+        light_count[flash] = (M_RANDOM.P_Random() BAND 7) + 1
+    ELSE
+        light_count[flash] = 1
+    ENDIF
+ENDSUB
+
+' Start strobing lights (usually from a trigger).
+EXPORT SUB EV_StartLightStrobing(ld AS INTEGER)
+    DIM secnum AS INTEGER = -1
+    DO
+        secnum = P_SPEC.P_FindSectorFromLineTag(ld, secnum)
+        IF secnum < 0 THEN EXITDO
+        IF CLNG(P_SETUP.sector_specialdata[secnum]) >= 0 THEN CONTINUEDO
+        P_SpawnStrobeFlash(secnum, SLOWDARK, 0)
+    LOOP
+ENDSUB
+
+' Turns the tagged sectors down to the darkest light of their neighbours.
+EXPORT SUB EV_TurnTagLightsOff(ld AS INTEGER)
+    DIM tag_in AS INTEGER = P_SETUP.line_tag[ld]
+    DIM j AS INTEGER
+    FOR j = 0 TO P_SETUP.numsectors - 1
+        IF CLNG(P_SETUP.sector_tag[j]) = tag_in THEN
+            P_SETUP.sector_lightlevel[j] = P_SPEC.P_FindMinSurroundingLight(j, CLNG(P_SETUP.sector_lightlevel[j]))
+        ENDIF
+    NEXT j
+ENDSUB
+
+' Turns the tagged sectors to the given light; 0 means the brightest light
+' of the neighbours, which then holds for the sectors that follow too.
+EXPORT SUB EV_LightTurnOn(ld AS INTEGER, bright_in AS INTEGER)
+    DIM tag_in AS INTEGER = P_SETUP.line_tag[ld]
+    DIM bright AS INTEGER = bright_in
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM other AS INTEGER
+    FOR i = 0 TO P_SETUP.numsectors - 1
+        IF CLNG(P_SETUP.sector_tag[i]) = tag_in THEN
+            IF bright = 0 THEN
+                FOR j = 0 TO CLNG(P_SETUP.sector_linecount[i]) - 1
+                    other = P_SPEC.getNextSector(CLNG(P_SETUP.sector_lines[CLNG(P_SETUP.sector_firstline[i]) + j]), i)
+                    IF other >= 0 THEN
+                        IF CLNG(P_SETUP.sector_lightlevel[other]) > bright THEN bright = CLNG(P_SETUP.sector_lightlevel[other])
+                    ENDIF
+                NEXT j
+            ENDIF
+            P_SETUP.sector_lightlevel[i] = bright
+        ENDIF
+    NEXT i
+ENDSUB
+
+EXPORT SUB T_Glow(glow AS INTEGER)
+    DIM sector AS INTEGER = light_sector[glow]
+    DIM level AS INTEGER = P_SETUP.sector_lightlevel[sector]
+    DIM direction AS INTEGER = light_direction[glow]
+    IF direction = -1 THEN
+        ' Down.
+        level = level - GLOWSPEED
+        IF level <= CLNG(light_minlight[glow]) THEN
+            level = level + GLOWSPEED
+            light_direction[glow] = 1
+        ENDIF
+    ELSEIF direction = 1 THEN
+        ' Up.
+        level = level + GLOWSPEED
+        IF level >= CLNG(light_maxlight[glow]) THEN
+            level = level - GLOWSPEED
+            light_direction[glow] = -1
+        ENDIF
+    ENDIF
+    P_SETUP.sector_lightlevel[sector] = level
+ENDSUB
+
+EXPORT SUB P_SpawnGlowingLight(sector AS INTEGER)
+    DIM glow AS INTEGER = P_TICK.P_AddThinker(P_TICK.TF_GLOW, -1)
+    DIM level AS INTEGER = P_SETUP.sector_lightlevel[sector]
+    light_sector[glow] = sector
+    light_minlight[glow] = P_SPEC.P_FindMinSurroundingLight(sector, level)
+    light_maxlight[glow] = level
+    light_direction[glow] = -1
+    P_SETUP.sector_special[sector] = 0
+ENDSUB

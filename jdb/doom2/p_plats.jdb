@@ -1,0 +1,238 @@
+' Platforms: floors that go down, wait and come up again (p_plats.c).
+'
+' A platform is a thinker; its fields are arrays indexed by the number of
+' the thinker.
+
+EXPORT MODULE P_PLATS
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT I_SYSTEM
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_FLOOR
+IMPORT P_SPEC
+IMPORT S_SOUND
+
+' plat_e
+EXPORT CONST PLAT_UP = 0
+EXPORT CONST PLAT_DOWN = 1
+EXPORT CONST PLAT_WAITING = 2
+EXPORT CONST PLAT_IN_STASIS = 3
+
+' plattype_e
+EXPORT CONST PLAT_PERPETUALRAISE = 0
+EXPORT CONST PLAT_DOWNWAITUPSTAY = 1
+EXPORT CONST PLAT_RAISEANDCHANGE = 2
+EXPORT CONST PLAT_RAISETONEARESTANDCHANGE = 3
+EXPORT CONST PLAT_BLAZEDWUS = 4
+
+EXPORT CONST PLATWAIT = 3
+EXPORT CONST PLATSPEED = 65536
+EXPORT CONST MAXPLATS = 30
+
+EXPORT DIM plat_sector[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM plat_speed[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM plat_low[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM plat_high[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM plat_wait[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM plat_count[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM plat_status[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM plat_oldstatus[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM plat_crush[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM plat_tag[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM plat_type[DOOMDEF.MAXTHINKERS] AS INTEGER
+
+' Thinker numbers of the platforms in use, -1 for a free slot.
+EXPORT DIM activeplats[MAXPLATS] AS INTEGER
+
+EXPORT SUB P_ClearActivePlats()
+    FILLV activeplats, -1
+ENDSUB
+
+EXPORT SUB P_AddActivePlat(plat AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO MAXPLATS - 1
+        IF CLNG(activeplats[i]) < 0 THEN
+            activeplats[i] = plat
+            RETURN
+        ENDIF
+    NEXT i
+    I_SYSTEM.I_Error("P_AddActivePlat: no more plats!")
+ENDSUB
+
+EXPORT SUB P_RemoveActivePlat(plat AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO MAXPLATS - 1
+        IF CLNG(activeplats[i]) = plat THEN
+            P_SETUP.sector_specialdata[CLNG(plat_sector[plat])] = -1
+            P_TICK.P_RemoveThinker(plat)
+            activeplats[i] = -1
+            RETURN
+        ENDIF
+    NEXT i
+    I_SYSTEM.I_Error("P_RemoveActivePlat: can't find plat!")
+ENDSUB
+
+' Moves a platform up and down.
+EXPORT SUB T_PlatRaise(plat AS INTEGER)
+    DIM sector AS INTEGER = plat_sector[plat]
+    DIM status AS INTEGER = plat_status[plat]
+    DIM kind AS INTEGER = plat_type[plat]
+    DIM res AS INTEGER
+    DIM remaining AS INTEGER
+
+    IF status = PLAT_UP THEN
+        res = P_FLOOR.T_MovePlane(sector, CLNG(plat_speed[plat]), CLNG(plat_high[plat]), CLNG(plat_crush[plat]), 0, 1)
+
+        IF kind = PLAT_RAISEANDCHANGE OR kind = PLAT_RAISETONEARESTANDCHANGE THEN
+            IF (P_TICK.leveltime BAND 7) = 0 THEN S_SOUND.S_StartSectorSound(sector, INFO.SFX_STNMOV)
+        ENDIF
+
+        IF res = P_FLOOR.RES_CRUSHED AND CLNG(plat_crush[plat]) = 0 THEN
+            plat_count[plat] = plat_wait[plat]
+            plat_status[plat] = PLAT_DOWN
+            S_SOUND.S_StartSectorSound(sector, INFO.SFX_PSTART)
+        ELSEIF res = P_FLOOR.RES_PASTDEST THEN
+            plat_count[plat] = plat_wait[plat]
+            plat_status[plat] = PLAT_WAITING
+            S_SOUND.S_StartSectorSound(sector, INFO.SFX_PSTOP)
+            IF kind = PLAT_BLAZEDWUS OR kind = PLAT_DOWNWAITUPSTAY OR kind = PLAT_RAISEANDCHANGE OR kind = PLAT_RAISETONEARESTANDCHANGE THEN P_RemoveActivePlat(plat)
+        ENDIF
+    ELSEIF status = PLAT_DOWN THEN
+        res = P_FLOOR.T_MovePlane(sector, CLNG(plat_speed[plat]), CLNG(plat_low[plat]), 0, 0, -1)
+        IF res = P_FLOOR.RES_PASTDEST THEN
+            plat_count[plat] = plat_wait[plat]
+            plat_status[plat] = PLAT_WAITING
+            S_SOUND.S_StartSectorSound(sector, INFO.SFX_PSTOP)
+        ENDIF
+    ELSEIF status = PLAT_WAITING THEN
+        remaining = CLNG(plat_count[plat]) - 1
+        plat_count[plat] = remaining
+        IF remaining = 0 THEN
+            IF CLNG(P_SETUP.sector_floorheight[sector]) = CLNG(plat_low[plat]) THEN
+                plat_status[plat] = PLAT_UP
+            ELSE
+                plat_status[plat] = PLAT_DOWN
+            ENDIF
+            S_SOUND.S_StartSectorSound(sector, INFO.SFX_PSTART)
+        ENDIF
+    ENDIF
+ENDSUB
+
+' Sets the stopped platforms with the tag going again.
+EXPORT SUB P_ActivateInStasis(tag_in AS INTEGER)
+    DIM i AS INTEGER
+    DIM plat AS INTEGER
+    FOR i = 0 TO MAXPLATS - 1
+        plat = CLNG(activeplats[i])
+        IF plat >= 0 THEN
+            IF CLNG(plat_tag[plat]) = tag_in AND CLNG(plat_status[plat]) = PLAT_IN_STASIS THEN
+                plat_status[plat] = plat_oldstatus[plat]
+                P_TICK.th_function[plat] = P_TICK.TF_PLAT
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+' Stops the platforms with the tag of the line.
+EXPORT SUB EV_StopPlat(ld AS INTEGER)
+    DIM tag_in AS INTEGER = P_SETUP.line_tag[ld]
+    DIM j AS INTEGER
+    DIM plat AS INTEGER
+    FOR j = 0 TO MAXPLATS - 1
+        plat = CLNG(activeplats[j])
+        IF plat >= 0 THEN
+            IF CLNG(plat_status[plat]) <> PLAT_IN_STASIS AND CLNG(plat_tag[plat]) = tag_in THEN
+                plat_oldstatus[plat] = plat_status[plat]
+                plat_status[plat] = PLAT_IN_STASIS
+                P_TICK.th_function[plat] = P_TICK.TF_NONE
+            ENDIF
+        ENDIF
+    NEXT j
+ENDSUB
+
+' Starts a platform in every sector with the tag of the line; amount is
+' only used for the types that raise by a fixed height.
+EXPORT FUNC EV_DoPlat(ld AS INTEGER, plattype AS INTEGER, amount AS INTEGER) AS INTEGER
+    DIM secnum AS INTEGER = -1
+    DIM rtn AS INTEGER = 0
+    DIM sector AS INTEGER
+    DIM plat AS INTEGER
+    DIM floorheight AS INTEGER
+    DIM lowest AS INTEGER
+    DIM highest AS INTEGER
+    DIM front AS INTEGER
+
+    ' Activate all plats that are in stasis.
+    IF plattype = PLAT_PERPETUALRAISE THEN P_ActivateInStasis(CLNG(P_SETUP.line_tag[ld]))
+
+    DO
+        secnum = P_SPEC.P_FindSectorFromLineTag(ld, secnum)
+        IF secnum < 0 THEN EXITDO
+        sector = secnum
+
+        IF CLNG(P_SETUP.sector_specialdata[sector]) >= 0 THEN CONTINUEDO
+
+        rtn = 1
+        plat = P_TICK.P_AddThinker(P_TICK.TF_PLAT, -1)
+        plat_type[plat] = plattype
+        plat_sector[plat] = sector
+        P_SETUP.sector_specialdata[sector] = plat
+        plat_crush[plat] = 0
+        plat_tag[plat] = P_SETUP.line_tag[ld]
+        plat_low[plat] = 0
+        plat_high[plat] = 0
+        plat_count[plat] = 0
+        plat_oldstatus[plat] = 0
+
+        floorheight = CLNG(P_SETUP.sector_floorheight[sector])
+        front = CLNG(P_SETUP.side_sector[CLNG(P_SETUP.line_sidenum0[ld])])
+
+        IF plattype = PLAT_RAISETONEARESTANDCHANGE THEN
+            plat_speed[plat] = PLATSPEED \ 2
+            P_SETUP.sector_floorpic[sector] = P_SETUP.sector_floorpic[front]
+            plat_high[plat] = P_SPEC.P_FindNextHighestFloor(sector, floorheight)
+            plat_wait[plat] = 0
+            plat_status[plat] = PLAT_UP
+            ' No more damage, if applicable.
+            P_SETUP.sector_special[sector] = 0
+            S_SOUND.S_StartSectorSound(sector, INFO.SFX_STNMOV)
+        ELSEIF plattype = PLAT_RAISEANDCHANGE THEN
+            plat_speed[plat] = PLATSPEED \ 2
+            P_SETUP.sector_floorpic[sector] = P_SETUP.sector_floorpic[front]
+            plat_high[plat] = floorheight + amount * M_FIXED.FRACUNIT
+            plat_wait[plat] = 0
+            plat_status[plat] = PLAT_UP
+            S_SOUND.S_StartSectorSound(sector, INFO.SFX_STNMOV)
+        ELSEIF plattype = PLAT_DOWNWAITUPSTAY OR plattype = PLAT_BLAZEDWUS THEN
+            plat_speed[plat] = PLATSPEED * 4
+            IF plattype = PLAT_BLAZEDWUS THEN plat_speed[plat] = PLATSPEED * 8
+            lowest = P_SPEC.P_FindLowestFloorSurrounding(sector)
+            IF lowest > floorheight THEN lowest = floorheight
+            plat_low[plat] = lowest
+            plat_high[plat] = floorheight
+            plat_wait[plat] = 35 * PLATWAIT
+            plat_status[plat] = PLAT_DOWN
+            S_SOUND.S_StartSectorSound(sector, INFO.SFX_PSTART)
+        ELSEIF plattype = PLAT_PERPETUALRAISE THEN
+            plat_speed[plat] = PLATSPEED
+            lowest = P_SPEC.P_FindLowestFloorSurrounding(sector)
+            IF lowest > floorheight THEN lowest = floorheight
+            plat_low[plat] = lowest
+            highest = P_SPEC.P_FindHighestFloorSurrounding(sector)
+            IF highest < floorheight THEN highest = floorheight
+            plat_high[plat] = highest
+            plat_wait[plat] = 35 * PLATWAIT
+            plat_status[plat] = M_RANDOM.P_Random() BAND 1
+            S_SOUND.S_StartSectorSound(sector, INFO.SFX_PSTART)
+        ENDIF
+        P_AddActivePlat(plat)
+    LOOP
+    RETURN rtn
+ENDFUNC

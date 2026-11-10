@@ -10,6 +10,10 @@ OPTION "STRICT"
 EXPORT SUB S_StartSound(origin AS INTEGER, sfx_id AS INTEGER)
 ENDSUB
 
+' Starts the sound at the middle of the sector.
+EXPORT SUB S_StartSectorSound(sector AS INTEGER, sfx_id AS INTEGER)
+ENDSUB
+
 ' Stops the sound the thing is making.
 EXPORT SUB S_StopSound(origin AS INTEGER)
 ENDSUB

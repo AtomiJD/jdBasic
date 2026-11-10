@@ -1,0 +1,424 @@
+' Checks on the specials of E1M1: doors, a lift, lowering floors, switches,
+' the scrolling wall, the animated flats and the lights. The numbers of tics
+' a mover takes are worked out by hand from the heights in the map and the
+' speeds of p_spec.h. At the end every special line of the first three maps
+' is triggered; the sums over the sectors after that are what the
+' interpreter gave, and the compiled program has to give the same.
+'
+' Run from the repository root, interpreted or compiled with -c.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_FIXED
+IMPORT M_RANDOM
+IMPORT INFO
+IMPORT W_WAD
+IMPORT R_DATA
+IMPORT R_MAIN
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_MAP
+IMPORT P_SPEC
+IMPORT P_SWITCH
+IMPORT P_DOORS
+IMPORT P_PLATS
+IMPORT P_LIGHTS
+IMPORT G_GAME
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+DIM wad_path$ AS STRING = D_MAIN.IdentifyVersion$()
+IF NOT FILE.EXISTS(wad_path$) THEN
+    PRINT "SKIP: " + wad_path$ + " not found"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+DIM FU AS INTEGER = M_FIXED.FRACUNIT
+
+' Runs tics with the given buttons held and no movement.
+SUB Tics(n_tics AS INTEGER, buttons AS INTEGER)
+    DIM t AS INTEGER
+    FOR t = 1 TO n_tics
+        G_GAME.cmd_forwardmove = 0
+        G_GAME.cmd_sidemove = 0
+        G_GAME.cmd_angleturn = 0
+        G_GAME.cmd_buttons = buttons
+        G_GAME.G_Ticker()
+    NEXT t
+ENDSUB
+
+' Puts player 1 forty units in front of the middle of the line, facing it,
+' and presses use for one tic.
+SUB UseLine(ld AS INTEGER)
+    DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+    DIM x1 AS INTEGER = CLNG(P_SETUP.vertex_x[CLNG(P_SETUP.line_v1[ld])])
+    DIM y1 AS INTEGER = CLNG(P_SETUP.vertex_y[CLNG(P_SETUP.line_v1[ld])])
+    DIM dx AS INTEGER = CLNG(P_SETUP.line_dx[ld])
+    DIM dy AS INTEGER = CLNG(P_SETUP.line_dy[ld])
+    DIM mid_x AS INTEGER = x1 + dx \ 2
+    DIM mid_y AS INTEGER = y1 + dy \ 2
+    DIM length AS DOUBLE = SQR(CDBL(dx) * CDBL(dx) + CDBL(dy) * CDBL(dy))
+    ' The front of a line is on its right.
+    DIM x AS INTEGER = mid_x + CLNG(40.0 * FU * CDBL(dy) / length)
+    DIM y AS INTEGER = mid_y - CLNG(40.0 * FU * CDBL(dx) / length)
+    IF P_MAP.P_TeleportMove(mo, x, y) = 0 THEN PRINT "FAIL no room in front of line " + STR$(ld)
+    P_MOBJ.mobj_z[mo] = P_MOBJ.mobj_floorz[mo]
+    P_MOBJ.mobj_momx[mo] = 0
+    P_MOBJ.mobj_momy[mo] = 0
+    P_MOBJ.mobj_angle[mo] = R_MAIN.R_PointToAngle2(x, y, mid_x, mid_y)
+    Tics(1, DOOMDEF.BT_USE)
+ENDSUB
+
+FUNC CountThinkers(kind AS INTEGER) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM t AS INTEGER = CLNG(P_TICK.th_next[0])
+    DO WHILE t <> 0
+        IF CLNG(P_TICK.th_function[t]) = kind THEN n = n + 1
+        t = CLNG(P_TICK.th_next[t])
+    LOOP
+    RETURN n
+ENDFUNC
+
+W_WAD.W_Init(wad_path$)
+R_MAIN.R_Init(10, 0)
+P_SETUP.P_Init()
+DOOMSTAT.playeringame[0] = 1
+
+' ---- tables ------------------------------------------------------------------
+' The registered game has the 19 switches of the shareware and 10 more.
+Eq("switches", P_SWITCH.numswitches, 29)
+Eq("first switch off", CLNG(P_SWITCH.switchlist[0]), R_DATA.R_TextureNumForName("SW1BRCOM"))
+Eq("first switch on", CLNG(P_SWITCH.switchlist[1]), R_DATA.R_TextureNumForName("SW2BRCOM"))
+Eq("last switch on", CLNG(P_SWITCH.switchlist[57]), R_DATA.R_TextureNumForName("SW2WOOD"))
+
+' Of the 22 cycles, DOOM has the first five of flats and eight of textures.
+Eq("animations", P_SPEC.numanims, 13)
+DIM nukage AS INTEGER = R_DATA.R_FlatNumForName("NUKAGE1")
+Eq("nukage cycle: first", CLNG(P_SPEC.anim_basepic[0]), nukage)
+Eq("nukage cycle: pictures", CLNG(P_SPEC.anim_numpics[0]), 3)
+Eq("nukage cycle: last", CLNG(P_SPEC.anim_picnum[0]), R_DATA.R_FlatNumForName("NUKAGE3"))
+
+G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, 1, 1)
+DIM mo AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+' A player who has just been born counts as holding use down.
+Tics(1, 0)
+
+' ---- what the level starts with ---------------------------------------------
+' E1M1 has one flashing sector, one strobe and two glowing ones.
+Eq("light flash thinkers", CountThinkers(P_TICK.TF_LIGHTFLASH), 1)
+Eq("strobe thinkers", CountThinkers(P_TICK.TF_STROBE), 1)
+Eq("glow thinkers", CountThinkers(P_TICK.TF_GLOW), 2)
+Eq("fire flicker thinkers", CountThinkers(P_TICK.TF_FIREFLICKER), 0)
+Eq("no movers yet", CountThinkers(P_TICK.TF_DOOR) + CountThinkers(P_TICK.TF_PLAT) + CountThinkers(P_TICK.TF_FLOOR) + CountThinkers(P_TICK.TF_CEILING), 0)
+Eq("secret sectors", DOOMSTAT.totalsecret, 3)
+
+' ---- a door opened by hand ---------------------------------------------------
+' Line 148 is the door of sector 26: floor 0, the lowest ceiling next to it
+' 72, so it opens to 68. At 2 a tic that is 34 moves and one more to notice
+' the end, 150 tics of waiting, and 35 again to close: 220 tics.
+Eq("door: closed", CLNG(P_SETUP.sector_ceilingheight[26]), 0)
+UseLine(148)
+DIM door AS INTEGER = CLNG(P_SETUP.sector_specialdata[26])
+Eq("door: a thinker", CountThinkers(P_TICK.TF_DOOR), 1)
+Eq("door: type", CLNG(P_DOORS.door_type[door]), P_DOORS.DOOR_NORMAL)
+Eq("door: top", CLNG(P_DOORS.door_topheight[door]), 68 * FU)
+Eq("door: after one tic", CLNG(P_SETUP.sector_ceilingheight[26]), 2 * FU)
+Eq("door: line keeps its special", CLNG(P_SETUP.line_special[148]), 1)
+Tics(33, 0)
+Eq("door: open", CLNG(P_SETUP.sector_ceilingheight[26]), 68 * FU)
+Eq("door: still rising", CLNG(P_DOORS.door_direction[door]), 1)
+Tics(1, 0)
+Eq("door: waiting", CLNG(P_DOORS.door_direction[door]), 0)
+Tics(150, 0)
+Eq("door: closing", CLNG(P_DOORS.door_direction[door]), -1)
+Eq("door: still open", CLNG(P_SETUP.sector_ceilingheight[26]), 68 * FU)
+Tics(34, 0)
+Eq("door: shut", CLNG(P_SETUP.sector_ceilingheight[26]), 0)
+Eq("door: thinker still there", CLNG(P_SETUP.sector_specialdata[26]), door)
+Tics(1, 0)
+Eq("door: thinker gone", CLNG(P_SETUP.sector_specialdata[26]), -1)
+Tics(1, 0)
+Eq("door: no thinker left", CountThinkers(P_TICK.TF_DOOR), 0)
+
+' Used again while it closes, the door turns back up.
+UseLine(148)
+Tics(34 + 150 + 10, 0)
+door = CLNG(P_SETUP.sector_specialdata[26])
+Eq("door: closing again", CLNG(P_DOORS.door_direction[door]), -1)
+DIM height_then AS INTEGER = CLNG(P_SETUP.sector_ceilingheight[26])
+Eq("door: ten tics down", height_then, 48 * FU)
+UseLine(148)
+Eq("door: turned", CLNG(P_DOORS.door_direction[door]), 1)
+Eq("door: up again", CLNG(P_SETUP.sector_ceilingheight[26]), 50 * FU)
+Eq("door: one thinker", CountThinkers(P_TICK.TF_DOOR), 1)
+
+' ---- a button ----------------------------------------------------------------
+' Line 136 is a button on the lower wall of a pillar that opens the door
+' of sector 4 (tag 3) to 68. Its texture comes back after 35 tics.
+DIM button_side AS INTEGER = CLNG(P_SETUP.line_sidenum0[136])
+DIM tex_off AS INTEGER = CLNG(P_SETUP.side_bottomtexture[button_side])
+DIM slot AS INTEGER
+DIM tex_on AS INTEGER = -1
+FOR slot = 0 TO P_SWITCH.numswitches * 2 - 1
+    IF CLNG(P_SWITCH.switchlist[slot]) = tex_off THEN tex_on = CLNG(P_SWITCH.switchlist[slot BXOR 1])
+NEXT slot
+Eq("button: its texture is a switch", IIF(tex_on >= 0, 1, 0), 1)
+Tics(1, 0)
+UseLine(136)
+Eq("button: pressed", CLNG(P_SETUP.side_bottomtexture[button_side]), tex_on)
+Eq("button: door of sector 4 moves", CLNG(P_SETUP.sector_ceilingheight[4]), 2 * FU)
+Eq("button: keeps its special", CLNG(P_SETUP.line_special[136]), 63)
+Tics(33, 0)
+Eq("button: still pressed", CLNG(P_SETUP.side_bottomtexture[button_side]), tex_on)
+Tics(1, 0)
+Eq("button: released", CLNG(P_SETUP.side_bottomtexture[button_side]), tex_off)
+Eq("button: door open", CLNG(P_SETUP.sector_ceilingheight[4]), 68 * FU)
+
+' ---- a lift ------------------------------------------------------------------
+' Line 191 lowers sector 87 (tag 2) from 104 to the lowest floor next to
+' it, -48: 152 units at 4 a tic are 38 moves and one more, then 105 tics
+' of waiting and 39 tics back up. The line works every time.
+P_SPEC.P_CrossSpecialLine(191, 0, mo)
+DIM plat AS INTEGER = CLNG(P_SETUP.sector_specialdata[87])
+Eq("lift: a thinker", CountThinkers(P_TICK.TF_PLAT), 1)
+Eq("lift: low", CLNG(P_PLATS.plat_low[plat]), -48 * FU)
+Eq("lift: high", CLNG(P_PLATS.plat_high[plat]), 104 * FU)
+Eq("lift: line keeps its special", CLNG(P_SETUP.line_special[191]), 88)
+Tics(38, 0)
+Eq("lift: down", CLNG(P_SETUP.sector_floorheight[87]), -48 * FU)
+Eq("lift: status down", CLNG(P_PLATS.plat_status[plat]), P_PLATS.PLAT_DOWN)
+Tics(1, 0)
+Eq("lift: status waiting", CLNG(P_PLATS.plat_status[plat]), P_PLATS.PLAT_WAITING)
+Tics(105, 0)
+Eq("lift: status up", CLNG(P_PLATS.plat_status[plat]), P_PLATS.PLAT_UP)
+Eq("lift: still down", CLNG(P_SETUP.sector_floorheight[87]), -48 * FU)
+Tics(38, 0)
+Eq("lift: up", CLNG(P_SETUP.sector_floorheight[87]), 104 * FU)
+Eq("lift: thinker still there", CLNG(P_SETUP.sector_specialdata[87]), plat)
+Tics(1, 0)
+Eq("lift: thinker gone", CLNG(P_SETUP.sector_specialdata[87]), -1)
+Eq("lift: slot free", CLNG(P_PLATS.activeplats[0]), -1)
+
+' ---- floors and a fast door, triggered once ----------------------------------
+' Line 304 lowers sector 55 (tag 1) fast from 96 to 8 above the highest
+' floor next to it, -48: 136 units at 4 a tic, 35 tics.
+' Line 471 lowers sector 14 (tag 5) from 32 to the lowest floor next to
+' it, 0, at 1 a tic: 33 tics.
+' Line 476 opens the door of sector 2 (tag 4) to 4 below the lowest ceiling
+' next to it, 88, at 8 a tic: 11 tics.
+P_SPEC.P_CrossSpecialLine(304, 0, mo)
+P_SPEC.P_CrossSpecialLine(471, 0, mo)
+P_SPEC.P_CrossSpecialLine(476, 0, mo)
+Eq("once: floor thinkers", CountThinkers(P_TICK.TF_FLOOR), 2)
+Eq("once: line 304 spent", CLNG(P_SETUP.line_special[304]), 0)
+Eq("once: line 471 spent", CLNG(P_SETUP.line_special[471]), 0)
+Eq("once: line 476 spent", CLNG(P_SETUP.line_special[476]), 0)
+Tics(10, 0)
+Eq("fast door: almost open", CLNG(P_SETUP.sector_ceilingheight[2]), 80 * FU)
+Tics(1, 0)
+Eq("fast door: open", CLNG(P_SETUP.sector_ceilingheight[2]), 84 * FU)
+Eq("fast door: thinker gone", CLNG(P_SETUP.sector_specialdata[2]), -1)
+Tics(21, 0)
+Eq("slow floor: almost down", CLNG(P_SETUP.sector_floorheight[14]), 0)
+Eq("slow floor: thinker still there", IIF(CLNG(P_SETUP.sector_specialdata[14]) >= 0, 1, 0), 1)
+Tics(1, 0)
+Eq("slow floor: thinker gone", CLNG(P_SETUP.sector_specialdata[14]), -1)
+Tics(1, 0)
+Eq("fast floor: almost down", CLNG(P_SETUP.sector_floorheight[55]), -40 * FU)
+Eq("fast floor: thinker still there", IIF(CLNG(P_SETUP.sector_specialdata[55]) >= 0, 1, 0), 1)
+Tics(1, 0)
+Eq("fast floor: down", CLNG(P_SETUP.sector_floorheight[55]), -40 * FU)
+Eq("fast floor: thinker gone", CLNG(P_SETUP.sector_specialdata[55]), -1)
+' A spent line does nothing.
+P_SPEC.P_CrossSpecialLine(304, 0, mo)
+Eq("once: nothing the second time", CLNG(P_SETUP.sector_specialdata[55]), -1)
+
+' ---- the scrolling wall and the animated flats -------------------------------
+' Line 348 scrolls one unit a tic from the start of the level.
+DIM scroll_side AS INTEGER = CLNG(P_SETUP.line_sidenum0[348])
+DIM offset_then AS INTEGER = CLNG(P_SETUP.side_textureoffset[scroll_side])
+DIM time_then AS INTEGER = P_TICK.leveltime
+DIM flat_then AS INTEGER = CLNG(R_DATA.flattranslation[nukage])
+Tics(8, 0)
+Eq("scroll: eight tics", CLNG(P_SETUP.side_textureoffset[scroll_side]) - offset_then, 8 * FU)
+' A picture of a cycle stays eight tics; the cycle of nukage has three.
+Eq("flats: next picture", CLNG(R_DATA.flattranslation[nukage]), nukage + ((flat_then - nukage + 1) MOD 3))
+Tics(16, 0)
+Eq("flats: round the cycle", CLNG(R_DATA.flattranslation[nukage]), flat_then)
+
+' ---- lights ------------------------------------------------------------------
+' A glowing sector moves 8 a tic between the darkest light next to it and
+' its own, and turns before it would reach either.
+DIM glow AS INTEGER = -1
+DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+DO WHILE th <> 0
+    IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_GLOW AND glow < 0 THEN glow = th
+    th = CLNG(P_TICK.th_next[th])
+LOOP
+DIM glow_sector AS INTEGER = CLNG(P_LIGHTS.light_sector[glow])
+DIM glow_min AS INTEGER = CLNG(P_LIGHTS.light_minlight[glow])
+DIM glow_max AS INTEGER = CLNG(P_LIGHTS.light_maxlight[glow])
+DIM seen_low AS INTEGER = 1000
+DIM seen_high AS INTEGER = -1
+DIM out_of_range AS INTEGER = 0
+DIM wrong_step AS INTEGER = 0
+DIM level_before AS INTEGER = CLNG(P_SETUP.sector_lightlevel[glow_sector])
+DIM level_now AS INTEGER
+DIM t AS INTEGER
+FOR t = 1 TO 200
+    Tics(1, 0)
+    level_now = CLNG(P_SETUP.sector_lightlevel[glow_sector])
+    IF level_now <= glow_min OR level_now >= glow_max THEN out_of_range = out_of_range + 1
+    IF level_now <> level_before + 8 AND level_now <> level_before - 8 AND level_now <> level_before THEN wrong_step = wrong_step + 1
+    IF level_now < seen_low THEN seen_low = level_now
+    IF level_now > seen_high THEN seen_high = level_now
+    level_before = level_now
+NEXT t
+Eq("glow: a range to move in", IIF(glow_max - glow_min > 16, 1, 0), 1)
+Eq("glow: stays inside", out_of_range, 0)
+Eq("glow: steps of 8", wrong_step, 0)
+Eq("glow: comes near the dark end", IIF(seen_low - glow_min <= 8, 1, 0), 1)
+Eq("glow: comes near the bright end", IIF(glow_max - seen_high <= 8, 1, 0), 1)
+
+' ---- the secret and the exit --------------------------------------------------
+' Sector 87, where the lift is, is a secret.
+Eq("secret: none found yet", CLNG(D_PLAYER.player_secretcount[0]), 0)
+' A teleport destination in the middle of one of its subsectors.
+DIM spot AS INTEGER = 0
+DO WHILE CLNG(P_SETUP.subsector_sector[spot]) <> 87
+    spot = spot + 1
+LOOP
+DIM spot_x AS INTEGER = 0
+DIM spot_y AS INTEGER = 0
+DIM spot_segs AS INTEGER = CLNG(P_SETUP.subsector_numlines[spot])
+DIM sg AS INTEGER
+FOR sg = CLNG(P_SETUP.subsector_firstline[spot]) TO CLNG(P_SETUP.subsector_firstline[spot]) + spot_segs - 1
+    spot_x = spot_x + (CLNG(P_SETUP.vertex_x[CLNG(P_SETUP.seg_v1[sg])]) + CLNG(P_SETUP.vertex_x[CLNG(P_SETUP.seg_v2[sg])])) \ (2 * spot_segs)
+    spot_y = spot_y + (CLNG(P_SETUP.vertex_y[CLNG(P_SETUP.seg_v1[sg])]) + CLNG(P_SETUP.vertex_y[CLNG(P_SETUP.seg_v2[sg])])) \ (2 * spot_segs)
+NEXT sg
+DIM secret_thing AS INTEGER = P_MOBJ.P_SpawnMobj(spot_x, spot_y, DOOMDEF.ONFLOORZ, INFO.MT_TELEPORTMAN)
+DIM far_line AS INTEGER = 191
+P_SETUP.sector_tag[87] = 99
+P_SETUP.line_tag[far_line] = 99
+Eq("teleport: the spot is in sector 87", CLNG(P_SETUP.subsector_sector[CLNG(P_MOBJ.mobj_subsector[secret_thing])]), 87)
+' Line 191, given the work of a teleporter for the test, takes the player
+' to the spot: he stands still for 18 tics, two fogs appear, and the secret
+' counts.
+P_SETUP.line_special[far_line] = 97
+DIM things_then AS INTEGER = CountThinkers(P_TICK.TF_MOBJ)
+P_SPEC.P_CrossSpecialLine(far_line, 1, mo)
+Eq("teleport: not from the back", IIF(CLNG(P_MOBJ.mobj_x[mo]) = CLNG(P_MOBJ.mobj_x[secret_thing]), 1, 0), 0)
+P_SPEC.P_CrossSpecialLine(far_line, 0, mo)
+Eq("teleport: x", CLNG(P_MOBJ.mobj_x[mo]), CLNG(P_MOBJ.mobj_x[secret_thing]))
+Eq("teleport: y", CLNG(P_MOBJ.mobj_y[mo]), CLNG(P_MOBJ.mobj_y[secret_thing]))
+Eq("teleport: z", CLNG(P_MOBJ.mobj_z[mo]), 104 * FU)
+Eq("teleport: frozen", CLNG(P_MOBJ.mobj_reactiontime[mo]), 18)
+Eq("teleport: two fogs", CountThinkers(P_TICK.TF_MOBJ) - things_then, 2)
+Eq("teleport: line keeps its special", CLNG(P_SETUP.line_special[far_line]), 97)
+Tics(1, 0)
+Eq("secret: found", CLNG(D_PLAYER.player_secretcount[0]), 1)
+Eq("secret: sector spent", CLNG(P_SETUP.sector_special[87]), 0)
+
+' Line 326 is the exit switch.
+DIM exit_side AS INTEGER = CLNG(P_SETUP.line_sidenum0[326])
+DIM exit_off AS INTEGER = CLNG(P_SETUP.side_midtexture[exit_side])
+Eq("exit: game goes on", G_GAME.gameaction, G_GAME.GA_NOTHING)
+Eq("exit: switch texture", exit_off, R_DATA.R_TextureNumForName("SW1STRTN"))
+UseLine(326)
+Eq("exit: level completed", G_GAME.gameaction, G_GAME.GA_COMPLETED)
+Eq("exit: not the secret exit", G_GAME.secretexit, 0)
+Eq("exit: switch thrown", CLNG(P_SETUP.side_midtexture[exit_side]), R_DATA.R_TextureNumForName("SW2STRTN"))
+Eq("exit: line spent", CLNG(P_SETUP.line_special[326]), 0)
+
+Eq("E1M1: random index after all that", M_RANDOM.prndindex, 197)
+
+' ---- every special line of a level -------------------------------------------
+' Uses, crosses and shoots every special line as player 1, who has all the
+' keys, a few tics apart, and lets the movers come to rest.
+FUNC BusyButtons() AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM b AS INTEGER
+    FOR b = 0 TO P_SWITCH.MAXBUTTONS - 1
+        IF CLNG(P_SWITCH.button_btimer[b]) <> 0 THEN n = n + 1
+    NEXT b
+    RETURN n
+ENDFUNC
+
+FUNC BusyPlats() AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM b AS INTEGER
+    FOR b = 0 TO P_PLATS.MAXPLATS - 1
+        IF CLNG(P_PLATS.activeplats[b]) >= 0 THEN n = n + 1
+    NEXT b
+    RETURN n
+ENDFUNC
+
+DIM sweep_lines AS INTEGER = 0
+
+SUB Sweep(episode AS INTEGER, map_num AS INTEGER)
+    G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, episode, map_num)
+    DIM player_thing AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+    DIM card AS INTEGER
+    FOR card = 0 TO 5
+        D_PLAYER.player_cards[card] = 1
+    NEXT card
+    DIM ld AS INTEGER
+    DIM waited AS INTEGER
+    FOR ld = 0 TO P_SETUP.numlines - 1
+        IF CLNG(P_SETUP.line_special[ld]) <> 0 THEN
+            sweep_lines = sweep_lines + 1
+            P_SWITCH.P_UseSpecialLine(player_thing, ld, 0)
+            P_SPEC.P_CrossSpecialLine(ld, 0, player_thing)
+            P_SPEC.P_ShootSpecialLine(player_thing, ld)
+            Tics(2, 0)
+            waited = 0
+            DO WHILE (BusyButtons() > 10 OR BusyPlats() > 20) AND waited < 500
+                Tics(1, 0)
+                waited = waited + 1
+            LOOP
+        ENDIF
+    NEXT ld
+    Tics(400, 0)
+ENDSUB
+
+FUNC SectorSum() AS INTEGER
+    DIM acc AS INTEGER = 0
+    DIM s AS INTEGER
+    FOR s = 0 TO P_SETUP.numsectors - 1
+        acc = acc + (CLNG(P_SETUP.sector_floorheight[s]) \ FU) * 3 + (CLNG(P_SETUP.sector_ceilingheight[s]) \ FU) * 5 + CLNG(P_SETUP.sector_lightlevel[s]) + CLNG(P_SETUP.sector_floorpic[s]) * 7 + CLNG(P_SETUP.sector_special[s]) * 11
+    NEXT s
+    RETURN acc
+ENDFUNC
+
+Sweep(1, 1)
+Eq("sweep E1M1: sectors", SectorSum(), 76593)
+Eq("sweep E1M1: random index", M_RANDOM.prndindex, 162)
+Sweep(1, 2)
+Eq("sweep E1M2: sectors", SectorSum(), 295593)
+Eq("sweep E1M2: random index", M_RANDOM.prndindex, 147)
+Sweep(1, 3)
+Eq("sweep E1M3: sectors", SectorSum(), 323671)
+Eq("sweep E1M3: random index", M_RANDOM.prndindex, 216)
+Eq("sweep: special lines", sweep_lines, 116)
+
+PRINT ""
+PRINT "DOOM P5 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

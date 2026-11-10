@@ -1,11 +1,324 @@
-' Switches, buttons and lines used by hand (p_switch.c). Not ported yet;
-' the function P_UseLines calls is here and does nothing.
+' Switches, buttons and lines used by hand (p_switch.c).
 
 EXPORT MODULE P_SWITCH
 
 OPTION "EXPLICIT"
 OPTION "STRICT"
 
-' The thing uses the special line from the given side.
-EXPORT SUB P_UseSpecialLine(thing AS INTEGER, ld AS INTEGER, side AS INTEGER)
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT INFO
+IMPORT R_DATA
+IMPORT P_SETUP
+IMPORT P_MOBJ
+IMPORT P_SPEC
+IMPORT P_DOORS
+IMPORT P_PLATS
+IMPORT P_FLOOR
+IMPORT P_CEILNG
+IMPORT P_LIGHTS
+IMPORT G_GAME
+IMPORT S_SOUND
+
+EXPORT CONST MAXSWITCHES = 50
+EXPORT CONST MAXBUTTONS = 16
+' One second, in tics.
+EXPORT CONST BUTTONTIME = 35
+
+' bwhere_e
+EXPORT CONST BWHERE_TOP = 0
+EXPORT CONST BWHERE_MIDDLE = 1
+EXPORT CONST BWHERE_BOTTOM = 2
+
+' The off and on texture of each switch, and the first version of the game
+' that has it: 1 shareware, 2 registered, 3 commercial.
+DIM switch_names$ AS ARRAY = ["BRCOM", "BRN1", "BRN2", "BRNGN", "BROWN", "COMM", "COMP", "DIRT", "EXIT", "GRAY", "GRAY1", "METAL", "PIPE", "SLAD", "STARG", "STON1", "STON2", "STONE", "STRTN", "BLUE", "CMT", "GARG", "GSTON", "HOT", "LION", "SATYR", "SKIN", "VINE", "WOOD", "PANEL", "ROCK", "MET2", "WDMET", "BRIK", "MOD1", "ZIM", "STON6", "TEK", "MARB", "SKULL"]
+CONST SWITCHES_SHAREWARE = 19
+CONST SWITCHES_REGISTERED = 29
+
+' Texture numbers in pairs: off, on.
+EXPORT DIM switchlist[MAXSWITCHES * 2] AS INTEGER
+EXPORT DIM numswitches AS INTEGER = 0
+
+' A button is a switch that turns itself off again; btimer 0 = slot free.
+EXPORT DIM button_line[MAXBUTTONS] AS INTEGER
+EXPORT DIM button_where[MAXBUTTONS] AS INTEGER
+EXPORT DIM button_btexture[MAXBUTTONS] AS INTEGER
+EXPORT DIM button_btimer[MAXBUTTONS] AS INTEGER
+' The sector whose middle the sound comes from, -1 for none.
+EXPORT DIM button_soundorg[MAXBUTTONS] AS INTEGER
+
+' Only called at game initialization.
+EXPORT SUB P_InitSwitchList()
+    DIM game_version AS INTEGER = 1
+    IF HasTexture("SW1BLUE") <> 0 THEN game_version = 2
+    IF DOOMSTAT.commercial <> 0 THEN game_version = 3
+
+    DIM i AS INTEGER
+    DIM first_version AS INTEGER
+    numswitches = 0
+    FOR i = 0 TO LEN(switch_names$) - 1
+        first_version = 3
+        IF i < SWITCHES_REGISTERED THEN first_version = 2
+        IF i < SWITCHES_SHAREWARE THEN first_version = 1
+        IF first_version <= game_version THEN
+            switchlist[numswitches * 2] = R_DATA.R_TextureNumForName("SW1" + switch_names$[i])
+            switchlist[numswitches * 2 + 1] = R_DATA.R_TextureNumForName("SW2" + switch_names$[i])
+            numswitches = numswitches + 1
+        ENDIF
+    NEXT i
 ENDSUB
+
+FUNC HasTexture(name$ AS STRING) AS INTEGER
+    IF R_DATA.R_CheckTextureNumForName(name$) >= 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+EXPORT SUB P_ClearButtons()
+    FILLV button_line, -1
+    FILLV button_where, 0
+    FILLV button_btexture, 0
+    FILLV button_btimer, 0
+    FILLV button_soundorg, -1
+ENDSUB
+
+' Start a button counting down till it turns off.
+SUB P_StartButton(ld AS INTEGER, w AS INTEGER, tex AS INTEGER, tics AS INTEGER)
+    DIM i AS INTEGER
+
+    ' See if the button is already pressed.
+    FOR i = 0 TO MAXBUTTONS - 1
+        IF CLNG(button_btimer[i]) <> 0 AND CLNG(button_line[i]) = ld THEN RETURN
+    NEXT i
+
+    FOR i = 0 TO MAXBUTTONS - 1
+        IF CLNG(button_btimer[i]) = 0 THEN
+            button_line[i] = ld
+            button_where[i] = w
+            button_btexture[i] = tex
+            button_btimer[i] = tics
+            button_soundorg[i] = P_SETUP.line_frontsector[ld]
+            RETURN
+        ENDIF
+    NEXT i
+    I_SYSTEM.I_Error("P_StartButton: no button slots left!")
+ENDSUB
+
+' The sound of a switch comes from where the first button slot was last
+' pressed, as in the original.
+SUB SwitchSound(sfx_id AS INTEGER)
+    IF CLNG(button_soundorg[0]) >= 0 THEN
+        S_SOUND.S_StartSectorSound(CLNG(button_soundorg[0]), sfx_id)
+    ELSE
+        S_SOUND.S_StartSound(-1, sfx_id)
+    ENDIF
+ENDSUB
+
+' Tell it if switch is ok to use again (1 = yes, it's a button).
+EXPORT SUB P_ChangeSwitchTexture(ld AS INTEGER, use_again AS INTEGER)
+    IF use_again = 0 THEN P_SETUP.line_special[ld] = 0
+
+    DIM front AS INTEGER = P_SETUP.line_sidenum0[ld]
+    DIM tex_top AS INTEGER = P_SETUP.side_toptexture[front]
+    DIM tex_mid AS INTEGER = P_SETUP.side_midtexture[front]
+    DIM tex_bot AS INTEGER = P_SETUP.side_bottomtexture[front]
+
+    DIM sfx_id AS INTEGER = INFO.SFX_SWTCHN
+    ' Exit switch?
+    IF CLNG(P_SETUP.line_special[ld]) = 11 THEN sfx_id = INFO.SFX_SWTCHX
+
+    DIM i AS INTEGER
+    DIM this_tex AS INTEGER
+    DIM other_tex AS INTEGER
+    FOR i = 0 TO numswitches * 2 - 1
+        this_tex = CLNG(switchlist[i])
+        other_tex = CLNG(switchlist[i BXOR 1])
+        IF this_tex = tex_top THEN
+            SwitchSound(sfx_id)
+            P_SETUP.side_toptexture[front] = other_tex
+            IF use_again <> 0 THEN P_StartButton(ld, BWHERE_TOP, this_tex, BUTTONTIME)
+            RETURN
+        ELSEIF this_tex = tex_mid THEN
+            SwitchSound(sfx_id)
+            P_SETUP.side_midtexture[front] = other_tex
+            IF use_again <> 0 THEN P_StartButton(ld, BWHERE_MIDDLE, this_tex, BUTTONTIME)
+            RETURN
+        ELSEIF this_tex = tex_bot THEN
+            SwitchSound(sfx_id)
+            P_SETUP.side_bottomtexture[front] = other_tex
+            IF use_again <> 0 THEN P_StartButton(ld, BWHERE_BOTTOM, this_tex, BUTTONTIME)
+            RETURN
+        ENDIF
+    NEXT i
+ENDSUB
+
+' Counts the pressed buttons down and turns them off at zero.
+EXPORT SUB P_UpdateButtons()
+    DIM i AS INTEGER
+    DIM remaining AS INTEGER
+    DIM front AS INTEGER
+    DIM w AS INTEGER
+    FOR i = 0 TO MAXBUTTONS - 1
+        remaining = CLNG(button_btimer[i])
+        IF remaining <> 0 THEN
+            remaining = remaining - 1
+            button_btimer[i] = remaining
+            IF remaining = 0 THEN
+                front = CLNG(P_SETUP.line_sidenum0[CLNG(button_line[i])])
+                w = CLNG(button_where[i])
+                IF w = BWHERE_TOP THEN
+                    P_SETUP.side_toptexture[front] = button_btexture[i]
+                ELSEIF w = BWHERE_MIDDLE THEN
+                    P_SETUP.side_midtexture[front] = button_btexture[i]
+                ELSE
+                    P_SETUP.side_bottomtexture[front] = button_btexture[i]
+                ENDIF
+                S_SOUND.S_StartSectorSound(CLNG(button_soundorg[i]), INFO.SFX_SWTCHN)
+                button_line[i] = -1
+                button_where[i] = 0
+                button_btexture[i] = 0
+                button_soundorg[i] = -1
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+' Called when a thing uses a special line. Only the front sides of lines
+' are usable.
+EXPORT FUNC P_UseSpecialLine(thing AS INTEGER, ld AS INTEGER, side AS INTEGER) AS INTEGER
+    DIM special AS INTEGER = P_SETUP.line_special[ld]
+
+    ' Err... Use the back sides of VERY SPECIAL lines...
+    IF side <> 0 THEN
+        ' Sliding door open&close, unused.
+        IF special <> 124 THEN RETURN 0
+    ENDIF
+
+    ' Switches that other things can activate.
+    IF CLNG(P_MOBJ.mobj_player[thing]) < 0 THEN
+        ' Never open secret doors.
+        IF (CLNG(P_SETUP.line_flags[ld]) BAND DOOMDEF.ML_SECRET) <> 0 THEN RETURN 0
+        IF special <> 1 AND special <> 32 AND special <> 33 AND special <> 34 THEN RETURN 0
+    ENDIF
+
+    ' 0: no switch, 1: switch, 2: button
+    DIM done AS INTEGER = 0
+    DIM again AS INTEGER = 0
+
+    SWITCH special
+        ' Manual doors.
+        CASE 1, 26, 27, 28, 31, 32, 33, 34, 117, 118
+            P_DOORS.EV_VerticalDoor(ld, thing)
+
+        ' Switches.
+        CASE 7
+            done = P_FLOOR.EV_BuildStairs(ld, P_FLOOR.STAIR_BUILD8)
+        CASE 9
+            done = P_SPEC.EV_DoDonut(ld)
+        CASE 11
+            P_ChangeSwitchTexture(ld, 0)
+            G_GAME.G_ExitLevel()
+        CASE 14
+            done = P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_RAISEANDCHANGE, 32)
+        CASE 15
+            done = P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_RAISEANDCHANGE, 24)
+        CASE 18
+            done = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISETONEAREST)
+        CASE 20
+            done = P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_RAISETONEARESTANDCHANGE, 0)
+        CASE 21
+            done = P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_DOWNWAITUPSTAY, 0)
+        CASE 23
+            done = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_LOWERTOLOWEST)
+        CASE 29
+            done = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_NORMAL)
+        CASE 41
+            done = P_CEILNG.EV_DoCeiling(ld, P_CEILNG.CEIL_LOWERTOFLOOR)
+        CASE 71
+            done = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_TURBOLOWER)
+        CASE 49
+            done = P_CEILNG.EV_DoCeiling(ld, P_CEILNG.CEIL_CRUSHANDRAISE)
+        CASE 50
+            done = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_CLOSE)
+        CASE 51
+            P_ChangeSwitchTexture(ld, 0)
+            G_GAME.G_SecretExitLevel()
+        CASE 55
+            done = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISECRUSH)
+        CASE 101
+            done = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISE)
+        CASE 102
+            done = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_LOWER)
+        CASE 103
+            done = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_OPEN)
+        CASE 111
+            done = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_BLAZERAISE)
+        CASE 112
+            done = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_BLAZEOPEN)
+        CASE 113
+            done = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_BLAZECLOSE)
+        CASE 122
+            done = P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_BLAZEDWUS, 0)
+        CASE 127
+            done = P_FLOOR.EV_BuildStairs(ld, P_FLOOR.STAIR_TURBO16)
+        CASE 131
+            done = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISETURBO)
+        CASE 133, 135, 137
+            done = P_DOORS.EV_DoLockedDoor(ld, P_DOORS.DOOR_BLAZEOPEN, thing)
+        CASE 140
+            done = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISE512)
+
+        ' Buttons.
+        CASE 42
+            again = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_CLOSE)
+        CASE 43
+            again = P_CEILNG.EV_DoCeiling(ld, P_CEILNG.CEIL_LOWERTOFLOOR)
+        CASE 45
+            again = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_LOWER)
+        CASE 60
+            again = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_LOWERTOLOWEST)
+        CASE 61
+            again = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_OPEN)
+        CASE 62
+            again = P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_DOWNWAITUPSTAY, 1)
+        CASE 63
+            again = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_NORMAL)
+        CASE 64
+            again = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISE)
+        CASE 66
+            again = P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_RAISEANDCHANGE, 24)
+        CASE 67
+            again = P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_RAISEANDCHANGE, 32)
+        CASE 65
+            again = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISECRUSH)
+        CASE 68
+            again = P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_RAISETONEARESTANDCHANGE, 0)
+        CASE 69
+            again = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISETONEAREST)
+        CASE 70
+            again = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_TURBOLOWER)
+        CASE 114
+            again = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_BLAZERAISE)
+        CASE 115
+            again = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_BLAZEOPEN)
+        CASE 116
+            again = P_DOORS.EV_DoDoor(ld, P_DOORS.DOOR_BLAZECLOSE)
+        CASE 123
+            again = P_PLATS.EV_DoPlat(ld, P_PLATS.PLAT_BLAZEDWUS, 0)
+        CASE 132
+            again = P_FLOOR.EV_DoFloor(ld, P_FLOOR.FLOOR_RAISETURBO)
+        CASE 99, 134, 136
+            again = P_DOORS.EV_DoLockedDoor(ld, P_DOORS.DOOR_BLAZEOPEN, thing)
+        CASE 138
+            P_LIGHTS.EV_LightTurnOn(ld, 255)
+            again = 1
+        CASE 139
+            P_LIGHTS.EV_LightTurnOn(ld, 35)
+            again = 1
+    ENDSWITCH
+
+    IF done <> 0 THEN P_ChangeSwitchTexture(ld, 0)
+    IF again <> 0 THEN P_ChangeSwitchTexture(ld, 1)
+    RETURN 1
+ENDFUNC

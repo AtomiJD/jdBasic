@@ -3,7 +3,9 @@
 ' A thinker is anything that acts once a tic: a thing, a moving door, a
 ' flickering light. They run in the order they were added, which a demo
 ' depends on. In C the thinker is the head of each such structure; here it
-' is an entry of its own that names the kind of object and its index.
+' is an entry of its own that names the kind of object and its index; the
+' fields of a door, a platform, a floor, a ceiling or a light are arrays of
+' their module, indexed by the number of the thinker.
 
 EXPORT MODULE P_TICK
 
@@ -17,13 +19,26 @@ IMPORT D_PLAYER
 IMPORT P_MOBJ
 IMPORT P_USER
 IMPORT P_SPEC
+IMPORT P_DOORS
+IMPORT P_PLATS
+IMPORT P_FLOOR
+IMPORT P_CEILNG
+IMPORT P_LIGHTS
 
-EXPORT CONST MAXTHINKERS = 8192
+EXPORT CONST MAXTHINKERS = DOOMDEF.MAXTHINKERS
 
 ' th_function: what runs each tic.
 EXPORT CONST TF_REMOVED = -1
 EXPORT CONST TF_NONE = 0
 EXPORT CONST TF_MOBJ = 1
+EXPORT CONST TF_DOOR = 2
+EXPORT CONST TF_PLAT = 3
+EXPORT CONST TF_FLOOR = 4
+EXPORT CONST TF_CEILING = 5
+EXPORT CONST TF_FIREFLICKER = 6
+EXPORT CONST TF_LIGHTFLASH = 7
+EXPORT CONST TF_STROBE = 8
+EXPORT CONST TF_GLOW = 9
 
 ' Thinker 0 is the head of the ring (thinkercap).
 EXPORT DIM th_prev[MAXTHINKERS] AS INTEGER
@@ -89,7 +104,26 @@ SUB P_RunThinkers()
             n_free = n_free + 1
             current = following
         ELSE
-            IF callee = TF_MOBJ THEN P_MOBJ.P_MobjThinker(CLNG(th_object[current]))
+            SWITCH callee
+                CASE TF_MOBJ
+                    P_MOBJ.P_MobjThinker(CLNG(th_object[current]))
+                CASE TF_DOOR
+                    P_DOORS.T_VerticalDoor(current)
+                CASE TF_PLAT
+                    P_PLATS.T_PlatRaise(current)
+                CASE TF_FLOOR
+                    P_FLOOR.T_MoveFloor(current)
+                CASE TF_CEILING
+                    P_CEILNG.T_MoveCeiling(current)
+                CASE TF_FIREFLICKER
+                    P_LIGHTS.T_FireFlicker(current)
+                CASE TF_LIGHTFLASH
+                    P_LIGHTS.T_LightFlash(current)
+                CASE TF_STROBE
+                    P_LIGHTS.T_StrobeFlash(current)
+                CASE TF_GLOW
+                    P_LIGHTS.T_Glow(current)
+            ENDSWITCH
             current = CLNG(th_next[current])
         ENDIF
     LOOP

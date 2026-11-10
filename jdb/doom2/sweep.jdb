@@ -1,0 +1,132 @@
+' Triggers every special line of every level, as player 1 with all the keys:
+' each line is used, crossed and shot, a few tics apart, and the movers are
+' left to come to rest. Prints for each level how many sectors moved or
+' changed their light, and stops at the first error of the simulation.
+'
+'   build/jdBasic.exe -c jdb/doom2/sweep.jdb
+'   jdb/doom2/sweep.exe [first episode] [last episode]
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_RANDOM
+IMPORT W_WAD
+IMPORT R_MAIN
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_SPEC
+IMPORT P_SWITCH
+IMPORT P_PLATS
+IMPORT G_GAME
+
+DIM first_episode AS INTEGER = 1
+DIM last_episode AS INTEGER = 4
+DIM cmd_args AS ARRAY = OS.ARGS()
+IF LEN(cmd_args) > 1 THEN first_episode = CLNG(VAL(cmd_args[1]))
+IF LEN(cmd_args) > 2 THEN last_episode = CLNG(VAL(cmd_args[2]))
+
+SUB Tics(n_tics AS INTEGER)
+    DIM t AS INTEGER
+    FOR t = 1 TO n_tics
+        G_GAME.cmd_forwardmove = 0
+        G_GAME.cmd_sidemove = 0
+        G_GAME.cmd_angleturn = 0
+        G_GAME.cmd_buttons = 0
+        G_GAME.G_Ticker()
+    NEXT t
+ENDSUB
+
+FUNC BusyButtons() AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM b AS INTEGER
+    FOR b = 0 TO P_SWITCH.MAXBUTTONS - 1
+        IF CLNG(P_SWITCH.button_btimer[b]) <> 0 THEN n = n + 1
+    NEXT b
+    RETURN n
+ENDFUNC
+
+FUNC BusyPlats() AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM b AS INTEGER
+    FOR b = 0 TO P_PLATS.MAXPLATS - 1
+        IF CLNG(P_PLATS.activeplats[b]) >= 0 THEN n = n + 1
+    NEXT b
+    RETURN n
+ENDFUNC
+
+DIM floor_then[P_SETUP.MAXSECTORS] AS INTEGER
+DIM ceiling_then[P_SETUP.MAXSECTORS] AS INTEGER
+DIM light_then[P_SETUP.MAXSECTORS] AS INTEGER
+
+SUB Sweep(episode AS INTEGER, map_num AS INTEGER)
+    G_GAME.G_InitNew(DOOMDEF.SK_MEDIUM, episode, map_num)
+    DIM player_thing AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+    DIM start_x AS INTEGER = CLNG(P_MOBJ.mobj_x[player_thing])
+    DIM start_y AS INTEGER = CLNG(P_MOBJ.mobj_y[player_thing])
+    DIM card AS INTEGER
+    FOR card = 0 TO 5
+        D_PLAYER.player_cards[card] = 1
+    NEXT card
+    DIM s AS INTEGER
+    FOR s = 0 TO P_SETUP.numsectors - 1
+        floor_then[s] = P_SETUP.sector_floorheight[s]
+        ceiling_then[s] = P_SETUP.sector_ceilingheight[s]
+        light_then[s] = P_SETUP.sector_lightlevel[s]
+    NEXT s
+
+    DIM ld AS INTEGER
+    DIM waited AS INTEGER
+    DIM n_lines AS INTEGER = 0
+    DIM n_exits AS INTEGER = 0
+    DIM n_teleports AS INTEGER = 0
+    DIM x_then AS INTEGER
+    FOR ld = 0 TO P_SETUP.numlines - 1
+        IF CLNG(P_SETUP.line_special[ld]) <> 0 THEN
+            n_lines = n_lines + 1
+            x_then = CLNG(P_MOBJ.mobj_x[player_thing])
+            P_SWITCH.P_UseSpecialLine(player_thing, ld, 0)
+            P_SPEC.P_CrossSpecialLine(ld, 0, player_thing)
+            P_SPEC.P_ShootSpecialLine(player_thing, ld)
+            IF CLNG(P_MOBJ.mobj_x[player_thing]) <> x_then THEN n_teleports = n_teleports + 1
+            IF G_GAME.gameaction = G_GAME.GA_COMPLETED THEN
+                n_exits = n_exits + 1
+                G_GAME.gameaction = G_GAME.GA_NOTHING
+            ENDIF
+            Tics(2)
+            waited = 0
+            DO WHILE (BusyButtons() > 10 OR BusyPlats() > 20) AND waited < 500
+                Tics(1)
+                waited = waited + 1
+            LOOP
+        ENDIF
+    NEXT ld
+    Tics(400)
+
+    DIM n_floors AS INTEGER = 0
+    DIM n_ceilings AS INTEGER = 0
+    DIM n_lights AS INTEGER = 0
+    FOR s = 0 TO P_SETUP.numsectors - 1
+        IF CLNG(floor_then[s]) <> CLNG(P_SETUP.sector_floorheight[s]) THEN n_floors = n_floors + 1
+        IF CLNG(ceiling_then[s]) <> CLNG(P_SETUP.sector_ceilingheight[s]) THEN n_ceilings = n_ceilings + 1
+        IF CLNG(light_then[s]) <> CLNG(P_SETUP.sector_lightlevel[s]) THEN n_lights = n_lights + 1
+    NEXT s
+    PRINT "E" + STR$(episode) + "M" + STR$(map_num) + ": " + STR$(n_lines) + " special lines, " + STR$(n_floors) + " floors, " + STR$(n_ceilings) + " ceilings and " + STR$(n_lights) + " lights changed, " + STR$(n_teleports) + " teleports, " + STR$(n_exits) + " exits, " + STR$(P_TICK.leveltime) + " tics, random index " + STR$(M_RANDOM.prndindex)
+ENDSUB
+
+W_WAD.W_Init(D_MAIN.IdentifyVersion$())
+R_MAIN.R_Init(10, 0)
+P_SETUP.P_Init()
+DOOMSTAT.playeringame[0] = 1
+
+DIM episode AS INTEGER
+DIM map_num AS INTEGER
+FOR episode = first_episode TO last_episode
+    FOR map_num = 1 TO 9
+        Sweep(episode, map_num)
+    NEXT map_num
+NEXT episode

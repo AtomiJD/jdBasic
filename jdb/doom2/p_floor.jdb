@@ -1,0 +1,360 @@
+' Moving floors and stairs, and the plane mover that doors, platforms and
+' ceilings share (p_floor.c).
+'
+' A moving floor is a thinker; its fields are arrays indexed by the number
+' of the thinker.
+
+EXPORT MODULE P_FLOOR
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT INFO
+IMPORT R_DATA
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MAP
+IMPORT P_SPEC
+IMPORT S_SOUND
+
+' floor_e
+EXPORT CONST FLOOR_LOWER = 0
+EXPORT CONST FLOOR_LOWERTOLOWEST = 1
+EXPORT CONST FLOOR_TURBOLOWER = 2
+EXPORT CONST FLOOR_RAISE = 3
+EXPORT CONST FLOOR_RAISETONEAREST = 4
+EXPORT CONST FLOOR_RAISETOTEXTURE = 5
+EXPORT CONST FLOOR_LOWERANDCHANGE = 6
+EXPORT CONST FLOOR_RAISE24 = 7
+EXPORT CONST FLOOR_RAISE24ANDCHANGE = 8
+EXPORT CONST FLOOR_RAISECRUSH = 9
+EXPORT CONST FLOOR_RAISETURBO = 10
+EXPORT CONST FLOOR_DONUTRAISE = 11
+EXPORT CONST FLOOR_RAISE512 = 12
+
+' stair_e
+EXPORT CONST STAIR_BUILD8 = 0
+EXPORT CONST STAIR_TURBO16 = 1
+
+' result_e
+EXPORT CONST RES_OK = 0
+EXPORT CONST RES_CRUSHED = 1
+EXPORT CONST RES_PASTDEST = 2
+
+EXPORT CONST FLOORSPEED = 65536
+
+EXPORT DIM floor_type[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM floor_crush[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM floor_sector[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM floor_direction[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM floor_newspecial[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM floor_texture[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM floor_floordestheight[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM floor_speed[DOOMDEF.MAXTHINKERS] AS INTEGER
+
+' Moves a floor (0) or a ceiling (1) of the sector by rate towards dest and
+' answers a RES_ value. A move that leaves a thing no room is taken back,
+' except by a crusher.
+EXPORT FUNC T_MovePlane(sector AS INTEGER, rate AS INTEGER, dest AS INTEGER, crush AS INTEGER, floor_or_ceiling AS INTEGER, direction AS INTEGER) AS INTEGER
+    DIM lastpos AS INTEGER
+
+    IF floor_or_ceiling = 0 THEN
+        lastpos = CLNG(P_SETUP.sector_floorheight[sector])
+        IF direction = -1 THEN
+            IF lastpos - rate < dest THEN
+                P_SETUP.sector_floorheight[sector] = dest
+                IF P_MAP.P_ChangeSector(sector, crush) <> 0 THEN
+                    P_SETUP.sector_floorheight[sector] = lastpos
+                    P_MAP.P_ChangeSector(sector, crush)
+                ENDIF
+                RETURN RES_PASTDEST
+            ENDIF
+            P_SETUP.sector_floorheight[sector] = lastpos - rate
+            IF P_MAP.P_ChangeSector(sector, crush) <> 0 THEN
+                P_SETUP.sector_floorheight[sector] = lastpos
+                P_MAP.P_ChangeSector(sector, crush)
+                RETURN RES_CRUSHED
+            ENDIF
+        ELSEIF direction = 1 THEN
+            IF lastpos + rate > dest THEN
+                P_SETUP.sector_floorheight[sector] = dest
+                IF P_MAP.P_ChangeSector(sector, crush) <> 0 THEN
+                    P_SETUP.sector_floorheight[sector] = lastpos
+                    P_MAP.P_ChangeSector(sector, crush)
+                ENDIF
+                RETURN RES_PASTDEST
+            ENDIF
+            ' Could get crushed.
+            P_SETUP.sector_floorheight[sector] = lastpos + rate
+            IF P_MAP.P_ChangeSector(sector, crush) <> 0 THEN
+                IF crush <> 0 THEN RETURN RES_CRUSHED
+                P_SETUP.sector_floorheight[sector] = lastpos
+                P_MAP.P_ChangeSector(sector, crush)
+                RETURN RES_CRUSHED
+            ENDIF
+        ENDIF
+    ELSEIF floor_or_ceiling = 1 THEN
+        lastpos = CLNG(P_SETUP.sector_ceilingheight[sector])
+        IF direction = -1 THEN
+            IF lastpos - rate < dest THEN
+                P_SETUP.sector_ceilingheight[sector] = dest
+                IF P_MAP.P_ChangeSector(sector, crush) <> 0 THEN
+                    P_SETUP.sector_ceilingheight[sector] = lastpos
+                    P_MAP.P_ChangeSector(sector, crush)
+                ENDIF
+                RETURN RES_PASTDEST
+            ENDIF
+            ' Could get crushed.
+            P_SETUP.sector_ceilingheight[sector] = lastpos - rate
+            IF P_MAP.P_ChangeSector(sector, crush) <> 0 THEN
+                IF crush <> 0 THEN RETURN RES_CRUSHED
+                P_SETUP.sector_ceilingheight[sector] = lastpos
+                P_MAP.P_ChangeSector(sector, crush)
+                RETURN RES_CRUSHED
+            ENDIF
+        ELSEIF direction = 1 THEN
+            IF lastpos + rate > dest THEN
+                P_SETUP.sector_ceilingheight[sector] = dest
+                IF P_MAP.P_ChangeSector(sector, crush) <> 0 THEN
+                    P_SETUP.sector_ceilingheight[sector] = lastpos
+                    P_MAP.P_ChangeSector(sector, crush)
+                ENDIF
+                RETURN RES_PASTDEST
+            ENDIF
+            P_SETUP.sector_ceilingheight[sector] = lastpos + rate
+            P_MAP.P_ChangeSector(sector, crush)
+        ENDIF
+    ENDIF
+    RETURN RES_OK
+ENDFUNC
+
+' Moves a floor to its destination (up or down).
+EXPORT SUB T_MoveFloor(mover AS INTEGER)
+    DIM sector AS INTEGER = floor_sector[mover]
+    DIM direction AS INTEGER = floor_direction[mover]
+    DIM res AS INTEGER = T_MovePlane(sector, CLNG(floor_speed[mover]), CLNG(floor_floordestheight[mover]), CLNG(floor_crush[mover]), 0, direction)
+
+    IF (P_TICK.leveltime BAND 7) = 0 THEN S_SOUND.S_StartSectorSound(sector, INFO.SFX_STNMOV)
+
+    IF res = RES_PASTDEST THEN
+        P_SETUP.sector_specialdata[sector] = -1
+        DIM kind AS INTEGER = floor_type[mover]
+        IF (direction = 1 AND kind = FLOOR_DONUTRAISE) OR (direction = -1 AND kind = FLOOR_LOWERANDCHANGE) THEN
+            P_SETUP.sector_special[sector] = floor_newspecial[mover]
+            P_SETUP.sector_floorpic[sector] = floor_texture[mover]
+        ENDIF
+        P_TICK.P_RemoveThinker(mover)
+        S_SOUND.S_StartSectorSound(sector, INFO.SFX_PSTOP)
+    ENDIF
+ENDSUB
+
+' A new floor thinker for the sector, with every field at rest.
+EXPORT FUNC NewFloor(sector AS INTEGER) AS INTEGER
+    DIM mover AS INTEGER = P_TICK.P_AddThinker(P_TICK.TF_FLOOR, -1)
+    P_SETUP.sector_specialdata[sector] = mover
+    floor_type[mover] = 0
+    floor_crush[mover] = 0
+    floor_sector[mover] = sector
+    floor_direction[mover] = 0
+    floor_newspecial[mover] = 0
+    floor_texture[mover] = 0
+    floor_floordestheight[mover] = 0
+    floor_speed[mover] = 0
+    RETURN mover
+ENDFUNC
+
+' The height of the lower texture of the side, if it is below minsize.
+FUNC LowerTextureBelow(side AS INTEGER, minsize AS INTEGER) AS INTEGER
+    DIM tex AS INTEGER = P_SETUP.side_bottomtexture[side]
+    IF tex >= 0 THEN
+        IF CLNG(R_DATA.textureheight[tex]) < minsize THEN RETURN CLNG(R_DATA.textureheight[tex])
+    ENDIF
+    RETURN minsize
+ENDFUNC
+
+' Handles floor types for every sector with the tag of the line.
+EXPORT FUNC EV_DoFloor(ld AS INTEGER, floortype AS INTEGER) AS INTEGER
+    DIM secnum AS INTEGER = -1
+    DIM rtn AS INTEGER = 0
+    DIM sector AS INTEGER
+    DIM mover AS INTEGER
+    DIM dest AS INTEGER
+    DIM i AS INTEGER
+    DIM sector_line AS INTEGER
+    DIM minsize AS INTEGER
+    DIM front AS INTEGER
+    DIM n_lines AS INTEGER
+    DIM other AS INTEGER
+
+    DO
+        secnum = P_SPEC.P_FindSectorFromLineTag(ld, secnum)
+        IF secnum < 0 THEN EXITDO
+        sector = secnum
+
+        ' Already moving? If so, keep going.
+        IF CLNG(P_SETUP.sector_specialdata[sector]) >= 0 THEN CONTINUEDO
+
+        rtn = 1
+        mover = NewFloor(sector)
+        floor_type[mover] = floortype
+
+        IF floortype = FLOOR_LOWER THEN
+            floor_direction[mover] = -1
+            floor_speed[mover] = FLOORSPEED
+            floor_floordestheight[mover] = P_SPEC.P_FindHighestFloorSurrounding(sector)
+        ELSEIF floortype = FLOOR_LOWERTOLOWEST THEN
+            floor_direction[mover] = -1
+            floor_speed[mover] = FLOORSPEED
+            floor_floordestheight[mover] = P_SPEC.P_FindLowestFloorSurrounding(sector)
+        ELSEIF floortype = FLOOR_TURBOLOWER THEN
+            floor_direction[mover] = -1
+            floor_speed[mover] = FLOORSPEED * 4
+            dest = P_SPEC.P_FindHighestFloorSurrounding(sector)
+            IF dest <> CLNG(P_SETUP.sector_floorheight[sector]) THEN dest = dest + 8 * M_FIXED.FRACUNIT
+            floor_floordestheight[mover] = dest
+        ELSEIF floortype = FLOOR_RAISECRUSH OR floortype = FLOOR_RAISE THEN
+            IF floortype = FLOOR_RAISECRUSH THEN floor_crush[mover] = 1
+            floor_direction[mover] = 1
+            floor_speed[mover] = FLOORSPEED
+            dest = P_SPEC.P_FindLowestCeilingSurrounding(sector)
+            IF dest > CLNG(P_SETUP.sector_ceilingheight[sector]) THEN dest = CLNG(P_SETUP.sector_ceilingheight[sector])
+            IF floortype = FLOOR_RAISECRUSH THEN dest = dest - 8 * M_FIXED.FRACUNIT
+            floor_floordestheight[mover] = dest
+        ELSEIF floortype = FLOOR_RAISETURBO THEN
+            floor_direction[mover] = 1
+            floor_speed[mover] = FLOORSPEED * 4
+            floor_floordestheight[mover] = P_SPEC.P_FindNextHighestFloor(sector, CLNG(P_SETUP.sector_floorheight[sector]))
+        ELSEIF floortype = FLOOR_RAISETONEAREST THEN
+            floor_direction[mover] = 1
+            floor_speed[mover] = FLOORSPEED
+            floor_floordestheight[mover] = P_SPEC.P_FindNextHighestFloor(sector, CLNG(P_SETUP.sector_floorheight[sector]))
+        ELSEIF floortype = FLOOR_RAISE24 THEN
+            floor_direction[mover] = 1
+            floor_speed[mover] = FLOORSPEED
+            floor_floordestheight[mover] = CLNG(P_SETUP.sector_floorheight[sector]) + 24 * M_FIXED.FRACUNIT
+        ELSEIF floortype = FLOOR_RAISE512 THEN
+            floor_direction[mover] = 1
+            floor_speed[mover] = FLOORSPEED
+            floor_floordestheight[mover] = CLNG(P_SETUP.sector_floorheight[sector]) + 512 * M_FIXED.FRACUNIT
+        ELSEIF floortype = FLOOR_RAISE24ANDCHANGE THEN
+            floor_direction[mover] = 1
+            floor_speed[mover] = FLOORSPEED
+            floor_floordestheight[mover] = CLNG(P_SETUP.sector_floorheight[sector]) + 24 * M_FIXED.FRACUNIT
+            front = CLNG(P_SETUP.line_frontsector[ld])
+            P_SETUP.sector_floorpic[sector] = P_SETUP.sector_floorpic[front]
+            P_SETUP.sector_special[sector] = P_SETUP.sector_special[front]
+        ELSEIF floortype = FLOOR_RAISETOTEXTURE THEN
+            minsize = M_FIXED.MAXINT
+            floor_direction[mover] = 1
+            floor_speed[mover] = FLOORSPEED
+            FOR i = 0 TO CLNG(P_SETUP.sector_linecount[sector]) - 1
+                sector_line = CLNG(P_SETUP.sector_lines[CLNG(P_SETUP.sector_firstline[secnum]) + i])
+                IF (CLNG(P_SETUP.line_flags[sector_line]) BAND DOOMDEF.ML_TWOSIDED) <> 0 THEN
+                    minsize = LowerTextureBelow(CLNG(P_SETUP.line_sidenum0[sector_line]), minsize)
+                    minsize = LowerTextureBelow(CLNG(P_SETUP.line_sidenum1[sector_line]), minsize)
+                ENDIF
+            NEXT i
+            floor_floordestheight[mover] = M_FIXED.ToS32(CLNG(P_SETUP.sector_floorheight[sector]) + minsize)
+        ELSEIF floortype = FLOOR_LOWERANDCHANGE THEN
+            floor_direction[mover] = -1
+            floor_speed[mover] = FLOORSPEED
+            dest = P_SPEC.P_FindLowestFloorSurrounding(sector)
+            floor_floordestheight[mover] = dest
+            floor_texture[mover] = P_SETUP.sector_floorpic[sector]
+
+            ' The sector on the other side of a line whose floor is at the
+            ' destination gives its flat and its special. The line count is
+            ' that of the last sector looked at, as in the original.
+            n_lines = CLNG(P_SETUP.sector_linecount[sector])
+            i = 0
+            DO WHILE i < n_lines
+                sector_line = CLNG(P_SETUP.sector_lines[CLNG(P_SETUP.sector_firstline[secnum]) + i])
+                IF (CLNG(P_SETUP.line_flags[sector_line]) BAND DOOMDEF.ML_TWOSIDED) <> 0 THEN
+                    IF CLNG(P_SETUP.side_sector[CLNG(P_SETUP.line_sidenum0[sector_line])]) = secnum THEN
+                        other = CLNG(P_SETUP.side_sector[CLNG(P_SETUP.line_sidenum1[sector_line])])
+                    ELSE
+                        other = CLNG(P_SETUP.side_sector[CLNG(P_SETUP.line_sidenum0[sector_line])])
+                    ENDIF
+                    n_lines = CLNG(P_SETUP.sector_linecount[other])
+                    IF CLNG(P_SETUP.sector_floorheight[other]) = dest THEN
+                        floor_texture[mover] = P_SETUP.sector_floorpic[other]
+                        floor_newspecial[mover] = P_SETUP.sector_special[other]
+                        EXITDO
+                    ENDIF
+                ENDIF
+                i = i + 1
+            LOOP
+        ENDIF
+    LOOP
+    RETURN rtn
+ENDFUNC
+
+' Builds a staircase: the tagged sector rises one step, and each sector
+' behind it with the same flat one step more.
+EXPORT FUNC EV_BuildStairs(ld AS INTEGER, stairtype AS INTEGER) AS INTEGER
+    DIM secnum AS INTEGER = -1
+    DIM rtn AS INTEGER = 0
+    DIM sector AS INTEGER
+    DIM mover AS INTEGER
+    DIM height AS INTEGER
+    DIM stairsize AS INTEGER
+    DIM rate AS INTEGER
+    DIM pic AS INTEGER
+    DIM found AS INTEGER
+    DIM i AS INTEGER
+    DIM sector_line AS INTEGER
+    DIM tsec AS INTEGER
+
+    DO
+        secnum = P_SPEC.P_FindSectorFromLineTag(ld, secnum)
+        IF secnum < 0 THEN EXITDO
+        sector = secnum
+
+        ' Already moving? If so, keep going.
+        IF CLNG(P_SETUP.sector_specialdata[sector]) >= 0 THEN CONTINUEDO
+
+        rtn = 1
+        mover = NewFloor(sector)
+        floor_direction[mover] = 1
+        IF stairtype = STAIR_BUILD8 THEN
+            rate = FLOORSPEED \ 4
+            stairsize = 8 * M_FIXED.FRACUNIT
+        ELSE
+            rate = FLOORSPEED * 4
+            stairsize = 16 * M_FIXED.FRACUNIT
+        ENDIF
+        floor_speed[mover] = rate
+        height = CLNG(P_SETUP.sector_floorheight[sector]) + stairsize
+        floor_floordestheight[mover] = height
+
+        pic = CLNG(P_SETUP.sector_floorpic[sector])
+
+        ' Find the next sector to raise: a two-sided line whose front is
+        ' this sector and whose back has the same flat.
+        DO
+            found = 0
+            FOR i = 0 TO CLNG(P_SETUP.sector_linecount[sector]) - 1
+                sector_line = CLNG(P_SETUP.sector_lines[CLNG(P_SETUP.sector_firstline[sector]) + i])
+                IF (CLNG(P_SETUP.line_flags[sector_line]) BAND DOOMDEF.ML_TWOSIDED) = 0 THEN CONTINUEFOR
+                IF CLNG(P_SETUP.line_frontsector[sector_line]) <> secnum THEN CONTINUEFOR
+                tsec = CLNG(P_SETUP.line_backsector[sector_line])
+                IF CLNG(P_SETUP.sector_floorpic[tsec]) <> pic THEN CONTINUEFOR
+
+                height = height + stairsize
+                IF CLNG(P_SETUP.sector_specialdata[tsec]) >= 0 THEN CONTINUEFOR
+
+                sector = tsec
+                secnum = tsec
+                mover = NewFloor(sector)
+                floor_direction[mover] = 1
+                floor_speed[mover] = rate
+                floor_floordestheight[mover] = height
+                found = 1
+                EXITFOR
+            NEXT i
+        LOOP WHILE found <> 0
+    LOOP
+    RETURN rtn
+ENDFUNC

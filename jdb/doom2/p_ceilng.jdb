@@ -1,0 +1,200 @@
+' Moving ceilings and crushers (p_ceilng.c).
+'
+' A moving ceiling is a thinker; its fields are arrays indexed by the
+' number of the thinker.
+
+EXPORT MODULE P_CEILNG
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_FLOOR
+IMPORT P_SPEC
+IMPORT S_SOUND
+
+' ceiling_e
+EXPORT CONST CEIL_LOWERTOFLOOR = 0
+EXPORT CONST CEIL_RAISETOHIGHEST = 1
+EXPORT CONST CEIL_LOWERANDCRUSH = 2
+EXPORT CONST CEIL_CRUSHANDRAISE = 3
+EXPORT CONST CEIL_FASTCRUSHANDRAISE = 4
+EXPORT CONST CEIL_SILENTCRUSHANDRAISE = 5
+
+EXPORT CONST CEILSPEED = 65536
+EXPORT CONST CEILWAIT = 150
+EXPORT CONST MAXCEILINGS = 30
+
+EXPORT DIM ceiling_type[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM ceiling_sector[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM ceiling_bottomheight[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM ceiling_topheight[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM ceiling_speed[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM ceiling_crush[DOOMDEF.MAXTHINKERS] AS INTEGER
+' 1 = up, 0 = waiting, -1 = down
+EXPORT DIM ceiling_direction[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM ceiling_tag[DOOMDEF.MAXTHINKERS] AS INTEGER
+EXPORT DIM ceiling_olddirection[DOOMDEF.MAXTHINKERS] AS INTEGER
+
+' Thinker numbers of the ceilings in use, -1 for a free slot.
+EXPORT DIM activeceilings[MAXCEILINGS] AS INTEGER
+
+EXPORT SUB P_ClearActiveCeilings()
+    FILLV activeceilings, -1
+ENDSUB
+
+EXPORT SUB P_AddActiveCeiling(mover AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO MAXCEILINGS - 1
+        IF CLNG(activeceilings[i]) < 0 THEN
+            activeceilings[i] = mover
+            RETURN
+        ENDIF
+    NEXT i
+ENDSUB
+
+EXPORT SUB P_RemoveActiveCeiling(mover AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO MAXCEILINGS - 1
+        IF CLNG(activeceilings[i]) = mover THEN
+            P_SETUP.sector_specialdata[CLNG(ceiling_sector[mover])] = -1
+            P_TICK.P_RemoveThinker(mover)
+            activeceilings[i] = -1
+            RETURN
+        ENDIF
+    NEXT i
+ENDSUB
+
+EXPORT SUB T_MoveCeiling(mover AS INTEGER)
+    DIM sector AS INTEGER = ceiling_sector[mover]
+    DIM direction AS INTEGER = ceiling_direction[mover]
+    DIM kind AS INTEGER = ceiling_type[mover]
+    DIM res AS INTEGER
+
+    IF direction = 1 THEN
+        res = P_FLOOR.T_MovePlane(sector, CLNG(ceiling_speed[mover]), CLNG(ceiling_topheight[mover]), 0, 1, direction)
+
+        IF (P_TICK.leveltime BAND 7) = 0 AND kind <> CEIL_SILENTCRUSHANDRAISE THEN S_SOUND.S_StartSectorSound(sector, INFO.SFX_STNMOV)
+
+        IF res = P_FLOOR.RES_PASTDEST THEN
+            IF kind = CEIL_RAISETOHIGHEST THEN
+                P_RemoveActiveCeiling(mover)
+            ELSEIF kind = CEIL_SILENTCRUSHANDRAISE OR kind = CEIL_FASTCRUSHANDRAISE OR kind = CEIL_CRUSHANDRAISE THEN
+                IF kind = CEIL_SILENTCRUSHANDRAISE THEN S_SOUND.S_StartSectorSound(sector, INFO.SFX_PSTOP)
+                ceiling_direction[mover] = -1
+            ENDIF
+        ENDIF
+    ELSEIF direction = -1 THEN
+        res = P_FLOOR.T_MovePlane(sector, CLNG(ceiling_speed[mover]), CLNG(ceiling_bottomheight[mover]), CLNG(ceiling_crush[mover]), 1, direction)
+
+        IF (P_TICK.leveltime BAND 7) = 0 AND kind <> CEIL_SILENTCRUSHANDRAISE THEN S_SOUND.S_StartSectorSound(sector, INFO.SFX_STNMOV)
+
+        IF res = P_FLOOR.RES_PASTDEST THEN
+            IF kind = CEIL_SILENTCRUSHANDRAISE OR kind = CEIL_CRUSHANDRAISE OR kind = CEIL_FASTCRUSHANDRAISE THEN
+                IF kind = CEIL_SILENTCRUSHANDRAISE THEN S_SOUND.S_StartSectorSound(sector, INFO.SFX_PSTOP)
+                IF kind <> CEIL_FASTCRUSHANDRAISE THEN ceiling_speed[mover] = CEILSPEED
+                ceiling_direction[mover] = 1
+            ELSEIF kind = CEIL_LOWERANDCRUSH OR kind = CEIL_LOWERTOFLOOR THEN
+                P_RemoveActiveCeiling(mover)
+            ENDIF
+        ELSEIF res = P_FLOOR.RES_CRUSHED THEN
+            IF kind = CEIL_SILENTCRUSHANDRAISE OR kind = CEIL_CRUSHANDRAISE OR kind = CEIL_LOWERANDCRUSH THEN ceiling_speed[mover] = CEILSPEED \ 8
+        ENDIF
+    ENDIF
+ENDSUB
+
+' Sets the stopped crushers with the tag of the line going again.
+EXPORT SUB P_ActivateInStasisCeiling(ld AS INTEGER)
+    DIM tag_in AS INTEGER = P_SETUP.line_tag[ld]
+    DIM i AS INTEGER
+    DIM mover AS INTEGER
+    FOR i = 0 TO MAXCEILINGS - 1
+        mover = CLNG(activeceilings[i])
+        IF mover >= 0 THEN
+            IF CLNG(ceiling_tag[mover]) = tag_in AND CLNG(ceiling_direction[mover]) = 0 THEN
+                ceiling_direction[mover] = ceiling_olddirection[mover]
+                P_TICK.th_function[mover] = P_TICK.TF_CEILING
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+' Stops the crushers with the tag of the line.
+EXPORT FUNC EV_CeilingCrushStop(ld AS INTEGER) AS INTEGER
+    DIM tag_in AS INTEGER = P_SETUP.line_tag[ld]
+    DIM rtn AS INTEGER = 0
+    DIM i AS INTEGER
+    DIM mover AS INTEGER
+    FOR i = 0 TO MAXCEILINGS - 1
+        mover = CLNG(activeceilings[i])
+        IF mover >= 0 THEN
+            IF CLNG(ceiling_tag[mover]) = tag_in AND CLNG(ceiling_direction[mover]) <> 0 THEN
+                ceiling_olddirection[mover] = ceiling_direction[mover]
+                P_TICK.th_function[mover] = P_TICK.TF_NONE
+                ceiling_direction[mover] = 0
+                rtn = 1
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN rtn
+ENDFUNC
+
+' Moves the ceiling of every sector with the tag of the line.
+EXPORT FUNC EV_DoCeiling(ld AS INTEGER, ceiltype AS INTEGER) AS INTEGER
+    DIM secnum AS INTEGER = -1
+    DIM rtn AS INTEGER = 0
+    DIM sector AS INTEGER
+    DIM mover AS INTEGER
+    DIM bottom AS INTEGER
+
+    ' Reactivate in-stasis ceilings, for certain types.
+    IF ceiltype = CEIL_FASTCRUSHANDRAISE OR ceiltype = CEIL_SILENTCRUSHANDRAISE OR ceiltype = CEIL_CRUSHANDRAISE THEN P_ActivateInStasisCeiling(ld)
+
+    DO
+        secnum = P_SPEC.P_FindSectorFromLineTag(ld, secnum)
+        IF secnum < 0 THEN EXITDO
+        sector = secnum
+
+        IF CLNG(P_SETUP.sector_specialdata[sector]) >= 0 THEN CONTINUEDO
+
+        rtn = 1
+        mover = P_TICK.P_AddThinker(P_TICK.TF_CEILING, -1)
+        P_SETUP.sector_specialdata[sector] = mover
+        ceiling_sector[mover] = sector
+        ceiling_crush[mover] = 0
+        ceiling_bottomheight[mover] = 0
+        ceiling_topheight[mover] = 0
+        ceiling_olddirection[mover] = 0
+
+        IF ceiltype = CEIL_FASTCRUSHANDRAISE THEN
+            ceiling_crush[mover] = 1
+            ceiling_topheight[mover] = P_SETUP.sector_ceilingheight[sector]
+            ceiling_bottomheight[mover] = CLNG(P_SETUP.sector_floorheight[sector]) + 8 * M_FIXED.FRACUNIT
+            ceiling_direction[mover] = -1
+            ceiling_speed[mover] = CEILSPEED * 2
+        ELSEIF ceiltype = CEIL_RAISETOHIGHEST THEN
+            ceiling_topheight[mover] = P_SPEC.P_FindHighestCeilingSurrounding(sector)
+            ceiling_direction[mover] = 1
+            ceiling_speed[mover] = CEILSPEED
+        ELSE
+            IF ceiltype = CEIL_SILENTCRUSHANDRAISE OR ceiltype = CEIL_CRUSHANDRAISE THEN
+                ceiling_crush[mover] = 1
+                ceiling_topheight[mover] = P_SETUP.sector_ceilingheight[sector]
+            ENDIF
+            bottom = CLNG(P_SETUP.sector_floorheight[sector])
+            IF ceiltype <> CEIL_LOWERTOFLOOR THEN bottom = bottom + 8 * M_FIXED.FRACUNIT
+            ceiling_bottomheight[mover] = bottom
+            ceiling_direction[mover] = -1
+            ceiling_speed[mover] = CEILSPEED
+        ENDIF
+
+        ceiling_tag[mover] = P_SETUP.sector_tag[sector]
+        ceiling_type[mover] = ceiltype
+        P_AddActiveCeiling(mover)
+    LOOP
+    RETURN rtn
+ENDFUNC
