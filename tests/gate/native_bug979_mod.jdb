@@ -1,0 +1,23 @@
+EXPORT MODULE NATIVE_BUG979_MOD
+
+OPTION "EXPLICIT"
+
+DIM cells[8] AS INTEGER
+EXPORT DIM width_global AS INTEGER = 0
+EXPORT DIM scaled_global AS INTEGER = 0
+EXPORT DIM ratio_global AS DOUBLE = 0.0
+
+EXPORT SUB Load()
+    DIM raw AS ARRAY = UNPACK("<4h", PACK$("<4h", 5, -7, 36, 23), 0)
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        cells[i] = raw[i]
+    NEXT i
+    width_global = cells[2]
+    scaled_global = cells[3] * 65536
+    ratio_global = cells[0]
+ENDSUB
+
+EXPORT FUNC WidthInside() AS INTEGER
+    RETURN width_global + 1
+ENDFUNC

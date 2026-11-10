@@ -1325,7 +1325,7 @@ Description: Saves a loaded (and possibly modified) image to a PNG file, preserv
 
 [GFX.SAVE_SCREENSHOT]
 Syntax: GFX.SAVE_SCREENSHOT(file$, [x], [y], [w], [h])
-Description: Saves the current screen, or a given rectangular region, to a PNG file, or a JPEG when the name ends in .jpg or .jpeg.
+Description: Saves the current screen, or a given rectangular region, to a PNG file, or a JPEG when the name ends in .jpg or .jpeg. The region is in drawing coordinates; on a SCREEN shown scaled the image has the size the screen has on the display.
 
 [GFX.STROKE]
 Syntax: GFX.STROKE x1, y1, x2, y2, width, [r, g, b], [round]

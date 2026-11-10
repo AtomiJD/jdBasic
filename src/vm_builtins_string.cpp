@@ -9,6 +9,20 @@
 #endif
 using jdb_text::View;
 
+// The text of an argument: a string value is read where it lies, anything
+// else is converted once and kept for the call.
+namespace {
+struct TextArg {
+    std::string own;
+    const std::string* text;
+    explicit TextArg(const Value& v) {
+        if (v.type == ValueType::STRING) text = &v.as_string()->data;
+        else { own = v.to_string(); text = &own; }
+    }
+    const std::string& get() const { return *text; }
+};
+}
+
 void VM::register_string_builtins() {
     // String functions
     register_native("LEN", 1, 1, [](const std::vector<Value>& args) -> Value {
@@ -91,14 +105,14 @@ void VM::register_string_builtins() {
     // callers can pass e.g. a DATE-tagged FLOAT64 or a number directly,
     // matching classic BASIC's loose typing.
     register_native("LEFT$", 2, 2, [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::left(args[0].to_string(), args[1].to_int()));
+        return Value::make_string(jdb_text::left(TextArg(args[0]).get(), args[1].to_int()));
     });
     register_native("RIGHT$", 2, 2, [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::right(args[0].to_string(), args[1].to_int()));
+        return Value::make_string(jdb_text::right(TextArg(args[0]).get(), args[1].to_int()));
     });
     register_native("MID$", [](const std::vector<Value>& args) -> Value {
         int64_t len = args.size() > 2 ? args[2].to_int() : -1;
-        return Value::make_string(jdb_text::mid(args[0].to_string(), args[1].to_int(), len));
+        return Value::make_string(jdb_text::mid(TextArg(args[0]).get(), args[1].to_int(), len));
     });
     register_native("UCASE$", [](const std::vector<Value>& args) -> Value {
         return Value::make_string(jdb_text::upper(args[0].as_string()->data));
@@ -122,7 +136,8 @@ void VM::register_string_builtins() {
     register_native("INSTR$", [](const std::vector<Value>& args) -> Value {
         // Same as INSTR
         int64_t start = 0;
-        std::string haystack, needle;
+        const std::string* haystack;
+        const std::string* needle;
         if (args.size() >= 3) {
             // The position comes first. The other dialect's order puts the
             // text first and the position last, and reading a string as a
@@ -131,13 +146,13 @@ void VM::register_string_builtins() {
                 throw jdError(ErrCode::WRONG_ARG_TYPE,
                     "INSTR$: the position comes first - INSTR$(start, haystack, needle)");
             start = args[0].to_int();
-            haystack = args[1].as_string()->data;
-            needle = args[2].as_string()->data;
+            haystack = &args[1].as_string()->data;
+            needle = &args[2].as_string()->data;
         } else {
-            haystack = args[0].as_string()->data;
-            needle = args[1].as_string()->data;
+            haystack = &args[0].as_string()->data;
+            needle = &args[1].as_string()->data;
         }
-        return Value::make_i64(jdb_text::find(haystack, needle, start));
+        return Value::make_i64(jdb_text::find(*haystack, *needle, start));
     });
 
     register_native("TRIM$", [](const std::vector<Value>& args) -> Value {
@@ -150,7 +165,8 @@ void VM::register_string_builtins() {
     // INSTR
     register_native("INSTR", [](const std::vector<Value>& args) -> Value {
         int64_t start = 0;
-        std::string haystack, needle;
+        const std::string* haystack;
+        const std::string* needle;
         if (args.size() >= 3) {
             // The position comes first. The other dialect's order puts the
             // text first and the position last, and reading a string as a
@@ -159,13 +175,13 @@ void VM::register_string_builtins() {
                 throw jdError(ErrCode::WRONG_ARG_TYPE,
                     "INSTR: the position comes first - INSTR(start, haystack, needle)");
             start = args[0].to_int();
-            haystack = args[1].as_string()->data;
-            needle = args[2].as_string()->data;
+            haystack = &args[1].as_string()->data;
+            needle = &args[2].as_string()->data;
         } else {
-            haystack = args[0].as_string()->data;
-            needle = args[1].as_string()->data;
+            haystack = &args[0].as_string()->data;
+            needle = &args[1].as_string()->data;
         }
-        return Value::make_i64(jdb_text::find(haystack, needle, start));
+        return Value::make_i64(jdb_text::find(*haystack, *needle, start));
     });
 
     // The twins that count UTF-8 characters instead of bytes.
@@ -260,7 +276,7 @@ void VM::register_string_builtins() {
 
     // BYTEAT: raw byte value at index
     register_native("BYTEAT", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string s = args[0].as_string()->data;
+        const std::string& s = args[0].as_string()->data;
         int64_t idx = args[1].to_int();
         if (idx < 0 || idx >= (int64_t)s.size()) return Value::make_i64(0);
         return Value::make_i64((uint8_t)s[idx]);

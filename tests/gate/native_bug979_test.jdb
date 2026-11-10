@@ -1,0 +1,66 @@
+' A variable declared AS INTEGER is an integer whatever it is given: a cell
+' of an array (a double), a cell of an UNPACK answer (a tagged value) or a
+' fraction, as a local, at the top level and as the global of a module that
+' a SUB of the module sets from a cell.
+
+OPTION "EXPLICIT"
+IMPORT NATIVE_BUG979_MOD
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$ AS STRING, cond AS BOOLEAN)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+DIM arr[4] AS INTEGER
+arr[0] = 94906267
+arr[1] = 351
+' 94906267 squared is above 2^53 and odd, so a double cannot hold it.
+DIM big AS INTEGER = 94906267 * 94906267
+
+SUB LocalCases()
+    DIM a AS INTEGER = arr[0]
+    Ok("local: DIM AS INTEGER = cell is an INT64", TYPEOF(a) = "INT64")
+    Ok("local: its product is an integer product", (a * a) MOD 1000 = big MOD 1000)
+    DIM n AS INTEGER = arr[1]
+    DIM look[n] AS INTEGER
+    Ok("local: DIM size from a cell", LEN(look) = 351)
+    DIM header AS ARRAY = UNPACK("<n", PACK$("<n", 351), 0)
+    DIM m AS INTEGER = header[0]
+    Ok("local: DIM AS INTEGER = UNPACK cell is an INT64", TYPEOF(m) = "INT64")
+    DIM look2[m] AS INTEGER
+    Ok("local: DIM size from an UNPACK cell", LEN(look2) = 351)
+    DIM d AS INTEGER = 2.7
+    Ok("local: DIM AS INTEGER = 2.7 is 2", d = 2)
+    DIM e AS INTEGER = -2.7
+    Ok("local: DIM AS INTEGER = -2.7 is -2", e = -2)
+    DIM s AS SHORT = arr[1]
+    Ok("local: DIM AS SHORT = cell", s = 351)
+    DIM f AS DOUBLE = arr[1]
+    Ok("local: DIM AS DOUBLE = cell stays a FLOAT64", TYPEOF(f) = "FLOAT64")
+    Ok("local: DIM AS DOUBLE = cell", f / 2 = 175.5)
+ENDSUB
+
+DIM top_a AS INTEGER = arr[0]
+Ok("top level: DIM AS INTEGER = cell is an INT64", TYPEOF(top_a) = "INT64")
+Ok("top level: integer product", (top_a * top_a) MOD 1000 = big MOD 1000)
+DIM top_d AS INTEGER = 7.9
+Ok("top level: DIM AS INTEGER = 7.9 is 7", top_d = 7)
+LocalCases()
+
+NATIVE_BUG979_MOD.Load()
+Ok("module: integer global set from a cell", NATIVE_BUG979_MOD.width_global = 36)
+Ok("module: integer global set from a cell times a number", NATIVE_BUG979_MOD.scaled_global = 23 * 65536)
+Ok("module: double global set from a cell", NATIVE_BUG979_MOD.ratio_global = 5.0)
+Ok("module: the global read inside the module", NATIVE_BUG979_MOD.WidthInside() = 37)
+
+PRINT ""
+PRINT "NATIVE BUG 979 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

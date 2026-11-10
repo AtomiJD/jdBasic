@@ -2183,6 +2183,22 @@ void register_graphics_builtins(VM& vm) {
                 rect_ptr = &region_rect;
             }
         }
+        // The rectangle is in the coordinates drawing uses; the renderer
+        // reads in output pixels. A SCREEN shown scaled (its scale argument,
+        // fullscreen) covers more pixels than its logical size, so the
+        // rectangle is mapped to the pixels it is presented on. An image
+        // target has no presentation and is read as it is.
+        SDL_FRect shown;
+        if (rect_ptr && !SDL_GetRenderTarget(g_renderer) && g_screen_w > 0 && g_screen_h > 0 &&
+            SDL_GetRenderLogicalPresentationRect(g_renderer, &shown) && shown.w > 0 && shown.h > 0) {
+            float sx = shown.w / (float)g_screen_w;
+            float sy = shown.h / (float)g_screen_h;
+            int x0 = (int)std::lround(shown.x + region_rect.x * sx);
+            int y0 = (int)std::lround(shown.y + region_rect.y * sy);
+            int x1 = (int)std::lround(shown.x + (region_rect.x + region_rect.w) * sx);
+            int y1 = (int)std::lround(shown.y + (region_rect.y + region_rect.h) * sy);
+            region_rect = { x0, y0, x1 - x0, y1 - y0 };
+        }
 
         SDL_Surface* surface = SDL_RenderReadPixels(g_renderer, rect_ptr);
         if (!surface)

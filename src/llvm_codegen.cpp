@@ -4746,7 +4746,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             }
     }
     for (auto& stmt : program) {
-        if (stmt && stmt->kind == StmtKind::DIM && stmt->label.empty() &&
+        if (stmt && stmt->kind == StmtKind::DIM && (stmt->label.empty() || stmt->label == "__EXPORT__") &&
             (stmt->var_type == VarType::BYTE || stmt->var_type == VarType::INT16 ||
              stmt->var_type == VarType::INT32 || stmt->var_type == VarType::INT64 ||
              stmt->var_type == VarType::FLOAT16 || stmt->var_type == VarType::FLOAT32 ||
@@ -5327,8 +5327,14 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 if (tit != type_env.end() &&
                     tit->second.kind == StaticType::Kind::STRING)
                     declared_string = true;
+                // A global declared AS a number keeps that type as well. The
+                // top-level DIM types the slot as that number for every
+                // reader, so a SUB that stored a cell into it with a tag left
+                // the bits of a double where an integer is read. The
+                // assignment path reads the number out of the cell instead.
+                bool declared_number = declared_number_globals.count(s->var_name) != 0;
 
-                if (g && !declared_string && g->tag != JD_TAG_RUNTIME &&
+                if (g && !declared_string && !declared_number && g->tag != JD_TAG_RUNTIME &&
                     may_be_rtag(s->expr.get())) {
                     g->tag = JD_TAG_RUNTIME;
                     if (!g->runtime_tag_alloca) {
@@ -8978,6 +8984,25 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         ((vi && vi->tag == JD_TAG_STR && (stmt.var_type != VarType::NONE || str_name)) ||
          (!vi && str_name)))
         rhs = runtime_into_str_slot(rhs);
+    // `DIM n AS INTEGER = <double>`: the AS clause wins, as it does for
+    // AS DOUBLE below. An array cell is a double, and a slot typed by it
+    // made the declared integer compute as a double from then on. A
+    // runtime-tagged value (a cell of an UNPACK answer) is read out as its
+    // number first, so the slot holds a plain integer and not a tagged one.
+    const bool declared_int =
+        stmt.var_type == VarType::INT64 || stmt.var_type == VarType::INT32 ||
+        stmt.var_type == VarType::INT16 || stmt.var_type == VarType::BYTE;
+    if (declared_int && (stmt.label.empty() || stmt.label == "__EXPORT__")) {
+        if (rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
+            rhs.val = coerce_to(rhs, f64_type);
+            rhs.tag = JD_TAG_F64;
+            rhs.runtime_tag = nullptr;
+        }
+        if (rhs.tag == JD_TAG_F64) {
+            rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "dim_as_int");
+            rhs.tag = JD_TAG_I64;
+        }
+    }
     // Tag 7 (runtime-tagged): mirror codegen_let_or_assign - store
     // the value AND a companion runtime-tag alloca so later reads can
     // dispatch on the runtime tag. Without this, `DIM c = game{"k"}`

@@ -1,0 +1,63 @@
+' GFX.SAVE_SCREENSHOT saves the whole SCREEN, also one shown scaled: the PNG
+' has the size the screen has on the display, and a region given in drawing
+' coordinates covers the pixels that region is shown on.
+'
+' Opens two windows for a moment; needs GFX. Run from the repository root.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+DIM out_dir$ AS STRING = "tmp/screenshot_scaled/"
+MKDIR out_dir$
+DIM prefix$ AS STRING = "native_"
+IF OS.FEATURE("INTERPRETER") THEN prefix$ = "interp_"
+
+' A grey ramp across the width and a red diagonal: a capture that shows only
+' a corner of the screen is easy to tell from a whole one.
+DIM ramp AS ARRAY = RESHAPE(IOTA(64000, 0) MOD 320 * 65793 MOD 16777216, [200, 320])
+DIM shot AS INTEGER
+
+SCREEN 320, 200, "scaled", 3
+PLOTRAW 0, 0, ramp
+LINE 0, 199, 319, 0, 255, 0, 0
+GFX.SAVE_SCREENSHOT out_dir$ + prefix$ + "scaled.png"
+GFX.SAVE_SCREENSHOT out_dir$ + prefix$ + "scaled_region.png", 10, 20, 100, 50
+SCREENFLIP
+shot = CLNG(SPRITE.LOAD(out_dir$ + prefix$ + "scaled.png"))
+Eq("scaled screen: width", CLNG(SPRITE.WIDTH(shot)), 960)
+Eq("scaled screen: height", CLNG(SPRITE.HEIGHT(shot)), 600)
+shot = CLNG(SPRITE.LOAD(out_dir$ + prefix$ + "scaled_region.png"))
+Eq("scaled screen: region width", CLNG(SPRITE.WIDTH(shot)), 300)
+Eq("scaled screen: region height", CLNG(SPRITE.HEIGHT(shot)), 150)
+GFX.CLOSE
+
+SCREEN 320, 200, "plain"
+PLOTRAW 0, 0, ramp
+LINE 0, 199, 319, 0, 255, 0, 0
+GFX.SAVE_SCREENSHOT out_dir$ + prefix$ + "plain.png"
+GFX.SAVE_SCREENSHOT out_dir$ + prefix$ + "plain_region.png", 10, 20, 100, 50
+SCREENFLIP
+shot = CLNG(SPRITE.LOAD(out_dir$ + prefix$ + "plain.png"))
+Eq("plain screen: width", CLNG(SPRITE.WIDTH(shot)), 320)
+Eq("plain screen: height", CLNG(SPRITE.HEIGHT(shot)), 200)
+shot = CLNG(SPRITE.LOAD(out_dir$ + prefix$ + "plain_region.png"))
+Eq("plain screen: region width", CLNG(SPRITE.WIDTH(shot)), 100)
+Eq("plain screen: region height", CLNG(SPRITE.HEIGHT(shot)), 50)
+GFX.CLOSE
+
+PRINT ""
+PRINT "SCREENSHOT SCALED SMOKE RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

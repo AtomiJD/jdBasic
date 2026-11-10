@@ -1,0 +1,76 @@
+' The builtins that read a text without changing it: LEFT$, RIGHT$, MID$,
+' INSTR and BYTEAT answer the same for a short text, a long one and, where
+' they take one, a number in place of the text.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$ AS STRING, actual$ AS STRING, expected$ AS STRING)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+DIM short$ AS STRING = "hello world"
+Check("LEFT$", LEFT$(short$, 5), "hello")
+Check("RIGHT$", RIGHT$(short$, 5), "world")
+Check("MID$ with a length", MID$(short$, 6, 3), "wor")
+Check("MID$ to the end", MID$(short$, 6), "world")
+Check("INSTR", STR$(INSTR(short$, "world")), "6")
+Check("INSTR from a position", STR$(INSTR(7, short$, "o")), "7")
+Check("INSTR of a missing text", STR$(INSTR(short$, "xyz")), "-1")
+Check("BYTEAT", STR$(BYTEAT(short$, 4)), "111")
+Check("BYTEAT past the end", STR$(BYTEAT(short$, 99)), "0")
+
+' A number in place of the text is read as its digits. The compiled program
+' has no such rule yet (trakr jdbasic #981), so these run interpreted only.
+DIM number_value AS INTEGER = 12345
+IF OS.FEATURE("INTERPRETER") THEN
+    Check("LEFT$ of a number", LEFT$(number_value, 2), "12")
+    Check("RIGHT$ of a number", RIGHT$(number_value, 2), "45")
+    Check("MID$ of a number", MID$(number_value, 1, 3), "234")
+ENDIF
+
+' Four megabytes of text with a marker near its end.
+DIM chunk$ AS STRING = "0123456789abcdef"
+DIM long$ AS STRING = chunk$
+DIM k AS INTEGER
+FOR k = 1 TO 18
+    long$ = long$ + long$
+NEXT k
+long$ = long$ + "MARK" + chunk$
+DIM long_len AS INTEGER = LEN(long$)
+Check("length of the long text", STR$(long_len), STR$(16 * 262144 + 20))
+Check("LEFT$ of the long text", LEFT$(long$, 16), chunk$)
+Check("RIGHT$ of the long text", RIGHT$(long$, 20), "MARK" + chunk$)
+Check("MID$ of the long text", MID$(long$, long_len - 20, 4), "MARK")
+Check("INSTR in the long text", STR$(INSTR(long$, "MARK")), STR$(long_len - 20))
+Check("BYTEAT in the long text", STR$(BYTEAT(long$, long_len - 20)), "77")
+Check("the long text is unchanged", STR$(LEN(long$)) + MID$(long$, 10, 6), STR$(long_len) + "abcdef")
+
+' Interpreted, a read looks at the text where it lies, so many reads of the
+' long text stay far below the time one copy of it takes (about 0.3 ms).
+DIM t0 AS DOUBLE = TICK()
+DIM total AS INTEGER = 0
+FOR k = 0 TO 19999
+    total = total + BYTEAT(long$, k) + LEN(MID$(long$, k, 1))
+NEXT k
+DIM per_read_ms AS DOUBLE = (TICK() - t0) / 20000
+IF per_read_ms < 0.1 OR NOT OS.FEATURE("INTERPRETER") THEN
+    passed = passed + 1
+ELSE
+    failed = failed + 1
+    PRINT "FAIL a read of the long text took " + STR$(per_read_ms) + " ms"
+ENDIF
+
+PRINT ""
+PRINT "STRING ARGUMENT TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
