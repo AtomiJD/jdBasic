@@ -1,0 +1,11 @@
+' System layer (i_system.c).
+
+EXPORT MODULE I_SYSTEM
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+EXPORT SUB I_Error(msg$ AS STRING)
+    PRINT "Error: " + msg$
+    END
+ENDSUB

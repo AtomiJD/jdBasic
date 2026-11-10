@@ -1,6 +1,6 @@
 ' Converts the data tables of linuxdoom-1.10 into jdBasic modules.
 '
-'   tables.c           -> ../tables.jdb  (finetangent, finesine, tantoangle)
+'   tables.c, v_video.c -> ../tables.jdb (finetangent, finesine, tantoangle, gammatable)
 '   info.c, info.h,
 '   sounds.h, p_mobj.h -> ../info.jdb    (states, mobjinfo, sprite names, enums)
 '
@@ -136,7 +136,7 @@ ENDFUNC
 ' ---- tables.c ---------------------------------------------------------------
 
 DIM tab_src$ = ReadSource$("tables.c")
-DIM tab_out$ = Header$("TABLES", "tables.c")
+DIM tab_out$ = Header$("TABLES", "tables.c, v_video.c")
 tab_out$ = tab_out$ + "EXPORT CONST FINEANGLES = 8192" + NL$
 tab_out$ = tab_out$ + "EXPORT CONST FINEMASK = 8191" + NL$
 tab_out$ = tab_out$ + "EXPORT CONST ANGLETOFINESHIFT = 19" + NL$
@@ -146,7 +146,9 @@ tab_out$ = tab_out$ + "EXPORT CONST DBITS = 5" + NL$ + NL$
 tab_out$ = tab_out$ + "' finecosine[i] is finesine[i + FINEANGLES / 4]." + NL$
 tab_out$ = tab_out$ + ArrayLiteral$("finetangent", NumberTable(tab_src$, "finetangent[4096]", 4096), 8) + NL$
 tab_out$ = tab_out$ + ArrayLiteral$("finesine", NumberTable(tab_src$, "finesine[10240]", 10240), 8) + NL$
-tab_out$ = tab_out$ + ArrayLiteral$("tantoangle", NumberTable(tab_src$, "tantoangle[2049]", 2049), 8)
+tab_out$ = tab_out$ + ArrayLiteral$("tantoangle", NumberTable(tab_src$, "tantoangle[2049]", 2049), 8) + NL$
+tab_out$ = tab_out$ + "' Five gamma curves of 256 entries; gammatable[usegamma * 256 + level]." + NL$
+tab_out$ = tab_out$ + ArrayLiteral$("gammatable", NumberTable(ReadSource$("v_video.c"), "gammatable[5][256]", 1280), 16)
 TXTWRITER out_dir$ + "tables.jdb", tab_out$
 PRINT "tables.jdb written"
 

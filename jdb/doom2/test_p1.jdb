@@ -1,0 +1,384 @@
+' Level and graphics data checks for E1M1 of doom.wad: what p_setup, r_data
+' and v_video hold against numbers tools/ref_p1.jdb computed from the WAD
+' file on its own path, plus the rules the derived fields have to keep.
+'
+' Run from the repository root, interpreted or compiled with -c.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT W_WAD
+IMPORT R_DATA
+IMPORT P_SETUP
+IMPORT V_VIDEO
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+' Sum of the first n_cells cells, each divided by unit.
+FUNC SumOf(cells AS ARRAY, n_cells AS INTEGER, unit AS INTEGER) AS INTEGER
+    DIM total AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO n_cells - 1
+        total = total + CLNG(cells[i]) \ unit
+    NEXT i
+    RETURN total
+ENDFUNC
+
+FUNC PoolSum(start AS INTEGER, n_cells AS INTEGER) AS INTEGER
+    DIM total AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO n_cells - 1
+        total = total + CLNG(W_WAD.pool[start + i])
+    NEXT i
+    RETURN total
+ENDFUNC
+
+DIM wad_path$ AS STRING = "jdb/doom/wad/doom.wad"
+IF NOT FILE.EXISTS(wad_path$) THEN
+    PRINT "SKIP: " + wad_path$ + " not found"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+DIM FU AS INTEGER = M_FIXED.FRACUNIT
+DIM i AS INTEGER
+DIM j AS INTEGER
+DIM k AS INTEGER
+DIM bad AS INTEGER
+
+W_WAD.W_Init(wad_path$)
+R_DATA.R_InitData()
+P_SETUP.P_SetupLevel("E1M1")
+
+' ---- p_setup: the lumps as read ---------------------------------------------
+
+Eq("things", P_SETUP.nummapthings, 143)
+Eq("things x", SumOf(P_SETUP.mapthing_x, P_SETUP.nummapthings, 1), 308864)
+Eq("things y", SumOf(P_SETUP.mapthing_y, P_SETUP.nummapthings, 1), -501744)
+Eq("things angle", SumOf(P_SETUP.mapthing_angle, P_SETUP.nummapthings, 1), 20205)
+Eq("things type", SumOf(P_SETUP.mapthing_type, P_SETUP.nummapthings, 1), 213655)
+Eq("things options", SumOf(P_SETUP.mapthing_options, P_SETUP.nummapthings, 1), 1611)
+
+Eq("lines", P_SETUP.numlines, 486)
+Eq("lines flags", SumOf(P_SETUP.line_flags, P_SETUP.numlines, 1), 4641)
+Eq("lines special", SumOf(P_SETUP.line_special, P_SETUP.numlines, 1), 737)
+Eq("lines tag", SumOf(P_SETUP.line_tag, P_SETUP.numlines, 1), 15)
+
+Eq("sides", P_SETUP.numsides, 666)
+Eq("sides textureoffset", SumOf(P_SETUP.side_textureoffset, P_SETUP.numsides, FU), 748)
+Eq("sides rowoffset", SumOf(P_SETUP.side_rowoffset, P_SETUP.numsides, FU), 2088)
+Eq("sides sector", SumOf(P_SETUP.side_sector, P_SETUP.numsides, 1), 27122)
+Eq("sides toptexture", SumOf(P_SETUP.side_toptexture, P_SETUP.numsides, 1), 8253)
+Eq("sides bottomtexture", SumOf(P_SETUP.side_bottomtexture, P_SETUP.numsides, 1), 8777)
+Eq("sides midtexture", SumOf(P_SETUP.side_midtexture, P_SETUP.numsides, 1), 12264)
+
+Eq("vertexes", P_SETUP.numvertexes, 470)
+Eq("vertexes x", SumOf(P_SETUP.vertex_x, P_SETUP.numvertexes, FU), 908029)
+Eq("vertexes y", SumOf(P_SETUP.vertex_y, P_SETUP.numvertexes, FU), -1582613)
+
+Eq("segs", P_SETUP.numsegs, 747)
+Eq("segs v1", SumOf(P_SETUP.seg_v1, P_SETUP.numsegs, 1), 159924)
+Eq("segs v2", SumOf(P_SETUP.seg_v2, P_SETUP.numsegs, 1), 159924)
+Eq("segs linedef", SumOf(P_SETUP.seg_linedef, P_SETUP.numsegs, 1), 184180)
+Eq("segs offset", SumOf(P_SETUP.seg_offset, P_SETUP.numsegs, FU), 13165)
+
+Eq("subsectors", P_SETUP.numsubsectors, 239)
+Eq("subsectors numlines", SumOf(P_SETUP.subsector_numlines, P_SETUP.numsubsectors, 1), 747)
+Eq("subsectors firstline", SumOf(P_SETUP.subsector_firstline, P_SETUP.numsubsectors, 1), 87754)
+
+Eq("nodes", P_SETUP.numnodes, 238)
+Eq("nodes x", SumOf(P_SETUP.node_x, P_SETUP.numnodes, FU), 437750)
+Eq("nodes dy", SumOf(P_SETUP.node_dy, P_SETUP.numnodes, FU), -538)
+Eq("nodes bbox", SumOf(P_SETUP.node_bbox, P_SETUP.numnodes * 8, FU), -1430405)
+
+Eq("sectors", P_SETUP.numsectors, 88)
+Eq("sectors floorheight", SumOf(P_SETUP.sector_floorheight, P_SETUP.numsectors, FU), -768)
+Eq("sectors ceilingheight", SumOf(P_SETUP.sector_ceilingheight, P_SETUP.numsectors, FU), 10056)
+Eq("sectors lightlevel", SumOf(P_SETUP.sector_lightlevel, P_SETUP.numsectors, 1), 16988)
+Eq("sectors special", SumOf(P_SETUP.sector_special, P_SETUP.numsectors, 1), 84)
+Eq("sectors tag", SumOf(P_SETUP.sector_tag, P_SETUP.numsectors, 1), 15)
+Eq("sectors floorpic", SumOf(P_SETUP.sector_floorpic, P_SETUP.numsectors, 1), 1621)
+Eq("sectors ceilingpic", SumOf(P_SETUP.sector_ceilingpic, P_SETUP.numsectors, 1), 2940)
+
+Eq("reject size", P_SETUP.rejectmatrix_size, 968)
+Eq("reject sum", SumOf(P_SETUP.rejectmatrix, P_SETUP.rejectmatrix_size, 1), 28018)
+Eq("blockmap size", P_SETUP.blockmaplump_size, 3474)
+Eq("blockmap sum", SumOf(P_SETUP.blockmaplump, P_SETUP.blockmaplump_size, 1), 1986450)
+Eq("blockmap width", P_SETUP.bmapwidth, CLNG(P_SETUP.blockmaplump[2]))
+Eq("blockmap height", P_SETUP.bmapheight, CLNG(P_SETUP.blockmaplump[3]))
+Eq("sector line lists", SumOf(P_SETUP.sector_linecount, P_SETUP.numsectors, 1), 660)
+
+' ---- p_setup: derived fields -------------------------------------------------
+
+DIM v1 AS INTEGER
+DIM v2 AS INTEGER
+DIM lo AS INTEGER
+DIM hi AS INTEGER
+
+bad = 0
+FOR i = 0 TO P_SETUP.numlines - 1
+    v1 = CLNG(P_SETUP.line_v1[i])
+    v2 = CLNG(P_SETUP.line_v2[i])
+    IF CLNG(P_SETUP.line_dx[i]) <> CLNG(P_SETUP.vertex_x[v2]) - CLNG(P_SETUP.vertex_x[v1]) THEN bad = bad + 1
+    IF CLNG(P_SETUP.line_dy[i]) <> CLNG(P_SETUP.vertex_y[v2]) - CLNG(P_SETUP.vertex_y[v1]) THEN bad = bad + 1
+NEXT i
+Eq("line dx, dy are v2 - v1", bad, 0)
+
+bad = 0
+FOR i = 0 TO P_SETUP.numlines - 1
+    lo = CLNG(P_SETUP.line_bbox[i * 4 + DOOMDEF.BOXLEFT])
+    hi = CLNG(P_SETUP.line_bbox[i * 4 + DOOMDEF.BOXRIGHT])
+    IF hi - lo <> ABS(CLNG(P_SETUP.line_dx[i])) THEN bad = bad + 1
+    lo = CLNG(P_SETUP.line_bbox[i * 4 + DOOMDEF.BOXBOTTOM])
+    hi = CLNG(P_SETUP.line_bbox[i * 4 + DOOMDEF.BOXTOP])
+    IF hi - lo <> ABS(CLNG(P_SETUP.line_dy[i])) THEN bad = bad + 1
+NEXT i
+Eq("line bbox spans dx, dy", bad, 0)
+
+DIM slope AS INTEGER
+DIM ldx AS INTEGER
+DIM ldy AS INTEGER
+bad = 0
+FOR i = 0 TO P_SETUP.numlines - 1
+    ldx = CLNG(P_SETUP.line_dx[i])
+    ldy = CLNG(P_SETUP.line_dy[i])
+    slope = CLNG(P_SETUP.line_slopetype[i])
+    IF ldx = 0 THEN
+        IF slope <> DOOMDEF.ST_VERTICAL THEN bad = bad + 1
+    ELSEIF ldy = 0 THEN
+        IF slope <> DOOMDEF.ST_HORIZONTAL THEN bad = bad + 1
+    ELSEIF (ldx > 0) = (ldy > 0) THEN
+        IF slope <> DOOMDEF.ST_POSITIVE THEN bad = bad + 1
+    ELSE
+        IF slope <> DOOMDEF.ST_NEGATIVE THEN bad = bad + 1
+    ENDIF
+NEXT i
+Eq("line slopetype", bad, 0)
+
+DIM two_sided AS INTEGER
+bad = 0
+FOR i = 0 TO P_SETUP.numlines - 1
+    IF CLNG(P_SETUP.line_frontsector[i]) <> CLNG(P_SETUP.side_sector[P_SETUP.line_sidenum0[i]]) THEN bad = bad + 1
+    two_sided = CLNG(P_SETUP.line_flags[i]) BAND DOOMDEF.ML_TWOSIDED
+    IF two_sided <> 0 AND CLNG(P_SETUP.line_backsector[i]) < 0 THEN bad = bad + 1
+    IF two_sided = 0 AND CLNG(P_SETUP.line_sidenum1[i]) <> -1 THEN bad = bad + 1
+NEXT i
+Eq("line sectors follow the sides", bad, 0)
+
+DIM ldef AS INTEGER
+bad = 0
+FOR i = 0 TO P_SETUP.numsegs - 1
+    ldef = CLNG(P_SETUP.seg_linedef[i])
+    IF CLNG(P_SETUP.seg_frontsector[i]) <> CLNG(P_SETUP.side_sector[P_SETUP.seg_sidedef[i]]) THEN bad = bad + 1
+    two_sided = CLNG(P_SETUP.line_flags[ldef]) BAND DOOMDEF.ML_TWOSIDED
+    IF (two_sided <> 0) <> (CLNG(P_SETUP.seg_backsector[i]) >= 0) THEN bad = bad + 1
+    IF CLNG(P_SETUP.seg_frontsector[i]) <> CLNG(P_SETUP.line_frontsector[ldef]) AND CLNG(P_SETUP.seg_frontsector[i]) <> CLNG(P_SETUP.line_backsector[ldef]) THEN bad = bad + 1
+    IF CLNG(P_SETUP.seg_angle[i]) < 0 OR CLNG(P_SETUP.seg_angle[i]) > M_FIXED.ANGLE_MASK THEN bad = bad + 1
+NEXT i
+Eq("seg sectors and angles", bad, 0)
+
+' The segs of a subsector all face the subsector's sector, and together the
+' subsectors use every seg once.
+DIM seg_uses AS INTEGER = 0
+bad = 0
+FOR i = 0 TO P_SETUP.numsubsectors - 1
+    FOR j = 0 TO CLNG(P_SETUP.subsector_numlines[i]) - 1
+        k = CLNG(P_SETUP.subsector_firstline[i]) + j
+        seg_uses = seg_uses + 1
+        IF CLNG(P_SETUP.seg_frontsector[k]) <> CLNG(P_SETUP.subsector_sector[i]) THEN bad = bad + 1
+    NEXT j
+NEXT i
+Eq("subsector sector", bad, 0)
+Eq("subsectors use every seg", seg_uses, P_SETUP.numsegs)
+
+DIM sec_line AS INTEGER
+bad = 0
+FOR i = 0 TO P_SETUP.numsectors - 1
+    FOR j = 0 TO CLNG(P_SETUP.sector_linecount[i]) - 1
+        sec_line = CLNG(P_SETUP.sector_lines[CLNG(P_SETUP.sector_firstline[i]) + j])
+        IF CLNG(P_SETUP.line_frontsector[sec_line]) <> i AND CLNG(P_SETUP.line_backsector[sec_line]) <> i THEN bad = bad + 1
+    NEXT j
+    IF CLNG(P_SETUP.sector_blockbox[i * 4 + DOOMDEF.BOXLEFT]) < 0 OR CLNG(P_SETUP.sector_blockbox[i * 4 + DOOMDEF.BOXRIGHT]) >= P_SETUP.bmapwidth THEN bad = bad + 1
+    IF CLNG(P_SETUP.sector_blockbox[i * 4 + DOOMDEF.BOXBOTTOM]) < 0 OR CLNG(P_SETUP.sector_blockbox[i * 4 + DOOMDEF.BOXTOP]) >= P_SETUP.bmapheight THEN bad = bad + 1
+    IF CLNG(P_SETUP.sector_blockbox[i * 4 + DOOMDEF.BOXLEFT]) > CLNG(P_SETUP.sector_blockbox[i * 4 + DOOMDEF.BOXRIGHT]) THEN bad = bad + 1
+    IF CLNG(P_SETUP.sector_blockbox[i * 4 + DOOMDEF.BOXBOTTOM]) > CLNG(P_SETUP.sector_blockbox[i * 4 + DOOMDEF.BOXTOP]) THEN bad = bad + 1
+NEXT i
+Eq("sector line lists and block boxes", bad, 0)
+
+' The BSP tree reaches every subsector once.
+DIM stack[512] AS INTEGER
+DIM sp AS INTEGER = 1
+DIM child AS INTEGER
+DIM leaves AS INTEGER = 0
+DIM leaf_sum AS INTEGER = 0
+stack[0] = P_SETUP.numnodes - 1
+DO WHILE sp > 0
+    sp = sp - 1
+    child = CLNG(stack[sp])
+    IF (child BAND DOOMDEF.NF_SUBSECTOR) <> 0 THEN
+        leaves = leaves + 1
+        leaf_sum = leaf_sum + (child BAND 32767)
+    ELSE
+        stack[sp] = P_SETUP.node_children[child * 2]
+        stack[sp + 1] = P_SETUP.node_children[child * 2 + 1]
+        sp = sp + 2
+    ENDIF
+LOOP
+Eq("BSP leaves", leaves, P_SETUP.numsubsectors)
+Eq("BSP leaves are 0..n-1", leaf_sum, P_SETUP.numsubsectors * (P_SETUP.numsubsectors - 1) \ 2)
+
+' Every blockmap cell lists valid lines and ends with -1.
+DIM cell AS INTEGER
+DIM list_pos AS INTEGER
+DIM listed AS INTEGER
+bad = 0
+FOR cell = 0 TO P_SETUP.bmapwidth * P_SETUP.bmapheight - 1
+    list_pos = CLNG(P_SETUP.blockmaplump[4 + cell])
+    IF list_pos < 0 OR list_pos >= P_SETUP.blockmaplump_size THEN
+        bad = bad + 1
+    ELSE
+        listed = CLNG(P_SETUP.blockmaplump[list_pos])
+        DO WHILE listed <> -1
+            IF listed < 0 OR listed >= P_SETUP.numlines THEN bad = bad + 1
+            list_pos = list_pos + 1
+            IF list_pos >= P_SETUP.blockmaplump_size THEN
+                bad = bad + 1
+                EXITDO
+            ENDIF
+            listed = CLNG(P_SETUP.blockmaplump[list_pos])
+        LOOP
+    ENDIF
+NEXT cell
+Eq("blockmap cell lists", bad, 0)
+
+' ---- r_data -----------------------------------------------------------------
+
+Eq("textures", R_DATA.numtextures, 287)
+DIM first_name$ AS STRING = R_DATA.tex_name$[0]
+Eq("first texture is AASTINKY", first_name$ = "AASTINKY", TRUE)
+Eq("texture width sum", SumOf(R_DATA.tex_width, R_DATA.numtextures, 1), 29912)
+Eq("texture height sum", SumOf(R_DATA.tex_height, R_DATA.numtextures, 1), 34096)
+Eq("texture patch sum", SumOf(R_DATA.tex_patchcount, R_DATA.numtextures, 1), 980)
+Eq("textureheight is fixed", SumOf(R_DATA.textureheight, R_DATA.numtextures, FU), 34096)
+Eq("no texture name is texture 0", R_DATA.R_CheckTextureNumForName("-"), 0)
+Eq("unknown texture name", R_DATA.R_CheckTextureNumForName("NOSUCHTX"), -1)
+Eq("texture name, lower case", R_DATA.R_TextureNumForName("aastinky"), 0)
+
+DIM n_cols AS INTEGER = 29912
+DIM composite_cols AS INTEGER = 0
+FOR i = 0 TO n_cols - 1
+    IF CLNG(R_DATA.texturecolumnlump[i]) = -1 THEN composite_cols = composite_cols + 1
+NEXT i
+Eq("composite columns", composite_cols, 9987)
+
+bad = 0
+FOR i = 0 TO R_DATA.numtextures - 1
+    k = CLNG(R_DATA.texturewidthmask[i]) + 1
+    IF k > CLNG(R_DATA.tex_width[i]) OR k * 2 <= CLNG(R_DATA.tex_width[i]) THEN bad = bad + 1
+    IF (k BAND (k - 1)) <> 0 THEN bad = bad + 1
+NEXT i
+Eq("texturewidthmask", bad, 0)
+
+' Every column R_GetColumn can reach, of every texture: the first post of a
+' column one patch covers, the full height of a composite column.
+DIM tex_hash AS INTEGER = 0
+DIM col_start AS INTEGER
+DIM col_len AS INTEGER
+DIM x AS INTEGER
+DIM y AS INTEGER
+FOR i = 0 TO R_DATA.numtextures - 1
+    FOR x = 0 TO CLNG(R_DATA.texturewidthmask[i])
+        col_start = R_DATA.R_GetColumn(i, x)
+        IF CLNG(R_DATA.texturecolumnlump[CLNG(R_DATA.tex_firstcol[i]) + x]) > 0 THEN
+            col_len = CLNG(W_WAD.pool[col_start - 2])
+        ELSE
+            col_len = CLNG(R_DATA.tex_height[i])
+        ENDIF
+        FOR y = 0 TO col_len - 1
+            tex_hash = (tex_hash * 31 + CLNG(W_WAD.pool[col_start + y])) MOD 1000000007
+        NEXT y
+    NEXT x
+NEXT i
+Eq("texture pixels", tex_hash, 705225431)
+Eq("R_GetColumn wraps the column", R_DATA.R_GetColumn(0, CLNG(R_DATA.texturewidthmask[0]) + 1), R_DATA.R_GetColumn(0, 0))
+
+Eq("flats", R_DATA.numflats, 111)
+Eq("flat number of the first flat", R_DATA.R_FlatNumForName(W_WAD.W_LumpName$(R_DATA.firstflat)), 0)
+Eq("every flat is 4096 bytes", W_WAD.W_LumpLength(R_DATA.firstflat + CLNG(P_SETUP.sector_floorpic[0])), 4096)
+
+Eq("sprite lumps", R_DATA.numspritelumps, 764)
+Eq("sprite width sum", SumOf(R_DATA.spritewidth, R_DATA.numspritelumps, FU), 45944)
+Eq("sprite leftoffset sum", SumOf(R_DATA.spriteoffset, R_DATA.numspritelumps, FU), 16773)
+Eq("sprite topoffset sum", SumOf(R_DATA.spritetopoffset, R_DATA.numspritelumps, FU), 35533)
+
+Eq("colormap sum", PoolSum(R_DATA.colormaps, 34 * 256), 760320)
+
+' ---- w_wad ------------------------------------------------------------------
+
+DIM playpal AS INTEGER = W_WAD.W_CacheLumpName("PLAYPAL")
+Eq("PLAYPAL sum", PoolSum(playpal, 14 * 768), 1142169)
+Eq("a cached lump stays where it is", W_WAD.W_CacheLumpName("PLAYPAL"), playpal)
+DIM used_before AS INTEGER = W_WAD.pool_used
+DIM block AS INTEGER = W_WAD.W_Alloc(100)
+Eq("W_Alloc answers the old end", block, used_before)
+Eq("W_Alloc moves the end", W_WAD.pool_used, used_before + 100)
+DIM head AS ARRAY = W_WAD.W_ReadShortsAt(W_WAD.W_GetNumForName("TITLEPIC"), 0, 4)
+Eq("patch header read without caching", CLNG(head[1]), 200)
+
+' ---- v_video ----------------------------------------------------------------
+
+V_VIDEO.V_Init()
+V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("TITLEPIC"))
+DIM pic_sum AS INTEGER = 0
+DIM pic_hash AS INTEGER = 0
+FOR i = 0 TO V_VIDEO.SCREENSIZE - 1
+    pic_sum = pic_sum + CLNG(V_VIDEO.screens[i])
+    pic_hash = (pic_hash * 31 + CLNG(V_VIDEO.screens[i])) MOD 1000000007
+NEXT i
+Eq("TITLEPIC sum", pic_sum, 8838460)
+Eq("TITLEPIC pixels", pic_hash, 777206742)
+
+V_VIDEO.V_CopyRect(0, 0, 0, 320, 200, 0, 0, 1)
+DIM copy_sum AS INTEGER = 0
+FOR i = V_VIDEO.SCREENSIZE TO V_VIDEO.SCREENSIZE * 2 - 1
+    copy_sum = copy_sum + CLNG(V_VIDEO.screens[i])
+NEXT i
+Eq("V_CopyRect to screen 1", copy_sum, 8838460)
+
+' A flipped patch has the same pixels, each row reversed.
+V_VIDEO.V_DrawPatchFlipped(0, 0, 2, W_WAD.W_CacheLumpName("TITLEPIC"))
+bad = 0
+FOR y = 0 TO 199
+    FOR x = 0 TO 319
+        IF CLNG(V_VIDEO.screens[2 * V_VIDEO.SCREENSIZE + y * 320 + x]) <> CLNG(V_VIDEO.screens[y * 320 + 319 - x]) THEN bad = bad + 1
+    NEXT x
+NEXT y
+Eq("V_DrawPatchFlipped mirrors", bad, 0)
+
+DIM saved AS INTEGER = W_WAD.W_Alloc(16 * 8)
+V_VIDEO.V_GetBlock(100, 50, 0, 16, 8, saved)
+V_VIDEO.V_DrawBlock(0, 0, 3, 16, 8, saved)
+bad = 0
+FOR y = 0 TO 7
+    FOR x = 0 TO 15
+        IF CLNG(V_VIDEO.screens[3 * V_VIDEO.SCREENSIZE + y * 320 + x]) <> CLNG(V_VIDEO.screens[(50 + y) * 320 + 100 + x]) THEN bad = bad + 1
+    NEXT x
+NEXT y
+Eq("V_GetBlock and V_DrawBlock", bad, 0)
+
+PRINT ""
+PRINT "DOOM P1 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

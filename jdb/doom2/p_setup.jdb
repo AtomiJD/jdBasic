@@ -1,0 +1,478 @@
+' Level loader (p_setup.c) and the level's map data (r_state.h, p_local.h).
+'
+' Each C struct is one array per field, named after struct and field. Where C
+' holds a pointer, the array holds the index, and -1 stands for NULL.
+' Coordinates and heights are fixed_t.
+
+EXPORT MODULE P_SETUP
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT M_FIXED
+IMPORT W_WAD
+IMPORT R_DATA
+
+EXPORT CONST MAXVERTEXES = 32768
+EXPORT CONST MAXSECTORS = 8192
+EXPORT CONST MAXSIDES = 65536
+EXPORT CONST MAXLINES = 32768
+EXPORT CONST MAXSEGS = 65536
+EXPORT CONST MAXSUBSECTORS = 32768
+EXPORT CONST MAXNODES = 32768
+EXPORT CONST MAXMAPTHINGS = 8192
+EXPORT CONST MAXBLOCKMAP = 524288
+EXPORT CONST MAXBLOCKS = 131072
+EXPORT CONST MAXREJECT = 1048576
+
+' ---- vertex_t ---------------------------------------------------------------
+EXPORT DIM numvertexes AS INTEGER = 0
+EXPORT DIM vertex_x[MAXVERTEXES] AS INTEGER
+EXPORT DIM vertex_y[MAXVERTEXES] AS INTEGER
+
+' ---- sector_t ---------------------------------------------------------------
+EXPORT DIM numsectors AS INTEGER = 0
+EXPORT DIM sector_floorheight[MAXSECTORS] AS INTEGER
+EXPORT DIM sector_ceilingheight[MAXSECTORS] AS INTEGER
+EXPORT DIM sector_floorpic[MAXSECTORS] AS INTEGER
+EXPORT DIM sector_ceilingpic[MAXSECTORS] AS INTEGER
+EXPORT DIM sector_lightlevel[MAXSECTORS] AS INTEGER
+EXPORT DIM sector_special[MAXSECTORS] AS INTEGER
+EXPORT DIM sector_tag[MAXSECTORS] AS INTEGER
+' 0 = untraversed, 1, 2 = sound blocking lines crossed + 1
+EXPORT DIM sector_soundtraversed[MAXSECTORS] AS INTEGER
+' The thing that made a sound here (mobj index).
+EXPORT DIM sector_soundtarget[MAXSECTORS] AS INTEGER
+' Bounding box in blockmap cells, four per sector in BOX order.
+EXPORT DIM sector_blockbox[MAXSECTORS * 4] AS INTEGER
+' Middle of the bounding box, where the sector's sounds come from.
+EXPORT DIM sector_soundorg_x[MAXSECTORS] AS INTEGER
+EXPORT DIM sector_soundorg_y[MAXSECTORS] AS INTEGER
+EXPORT DIM sector_validcount[MAXSECTORS] AS INTEGER
+' First thing in the sector (mobj index).
+EXPORT DIM sector_thinglist[MAXSECTORS] AS INTEGER
+' The thinker that moves floor, ceiling or light of the sector.
+EXPORT DIM sector_specialdata[MAXSECTORS] AS INTEGER
+EXPORT DIM sector_linecount[MAXSECTORS] AS INTEGER
+' The sector's lines are sector_lines[sector_firstline .. + sector_linecount - 1].
+EXPORT DIM sector_firstline[MAXSECTORS] AS INTEGER
+EXPORT DIM sector_lines[MAXLINES * 2] AS INTEGER
+
+' ---- side_t -----------------------------------------------------------------
+EXPORT DIM numsides AS INTEGER = 0
+EXPORT DIM side_textureoffset[MAXSIDES] AS INTEGER
+EXPORT DIM side_rowoffset[MAXSIDES] AS INTEGER
+EXPORT DIM side_toptexture[MAXSIDES] AS INTEGER
+EXPORT DIM side_bottomtexture[MAXSIDES] AS INTEGER
+EXPORT DIM side_midtexture[MAXSIDES] AS INTEGER
+EXPORT DIM side_sector[MAXSIDES] AS INTEGER
+
+' ---- line_t -----------------------------------------------------------------
+EXPORT DIM numlines AS INTEGER = 0
+EXPORT DIM line_v1[MAXLINES] AS INTEGER
+EXPORT DIM line_v2[MAXLINES] AS INTEGER
+EXPORT DIM line_dx[MAXLINES] AS INTEGER
+EXPORT DIM line_dy[MAXLINES] AS INTEGER
+EXPORT DIM line_flags[MAXLINES] AS INTEGER
+EXPORT DIM line_special[MAXLINES] AS INTEGER
+EXPORT DIM line_tag[MAXLINES] AS INTEGER
+' sidenum[0] is the right side, sidenum[1] the left one or -1.
+EXPORT DIM line_sidenum0[MAXLINES] AS INTEGER
+EXPORT DIM line_sidenum1[MAXLINES] AS INTEGER
+' Four per line in BOX order.
+EXPORT DIM line_bbox[MAXLINES * 4] AS INTEGER
+EXPORT DIM line_slopetype[MAXLINES] AS INTEGER
+EXPORT DIM line_frontsector[MAXLINES] AS INTEGER
+EXPORT DIM line_backsector[MAXLINES] AS INTEGER
+EXPORT DIM line_validcount[MAXLINES] AS INTEGER
+EXPORT DIM line_specialdata[MAXLINES] AS INTEGER
+
+' ---- subsector_t ------------------------------------------------------------
+EXPORT DIM numsubsectors AS INTEGER = 0
+EXPORT DIM subsector_sector[MAXSUBSECTORS] AS INTEGER
+EXPORT DIM subsector_numlines[MAXSUBSECTORS] AS INTEGER
+EXPORT DIM subsector_firstline[MAXSUBSECTORS] AS INTEGER
+
+' ---- seg_t ------------------------------------------------------------------
+EXPORT DIM numsegs AS INTEGER = 0
+EXPORT DIM seg_v1[MAXSEGS] AS INTEGER
+EXPORT DIM seg_v2[MAXSEGS] AS INTEGER
+EXPORT DIM seg_offset[MAXSEGS] AS INTEGER
+EXPORT DIM seg_angle[MAXSEGS] AS INTEGER
+EXPORT DIM seg_sidedef[MAXSEGS] AS INTEGER
+EXPORT DIM seg_linedef[MAXSEGS] AS INTEGER
+EXPORT DIM seg_frontsector[MAXSEGS] AS INTEGER
+EXPORT DIM seg_backsector[MAXSEGS] AS INTEGER
+
+' ---- node_t -----------------------------------------------------------------
+EXPORT DIM numnodes AS INTEGER = 0
+EXPORT DIM node_x[MAXNODES] AS INTEGER
+EXPORT DIM node_y[MAXNODES] AS INTEGER
+EXPORT DIM node_dx[MAXNODES] AS INTEGER
+EXPORT DIM node_dy[MAXNODES] AS INTEGER
+' bbox[child][side] is node_bbox[node * 8 + child * 4 + side].
+EXPORT DIM node_bbox[MAXNODES * 8] AS INTEGER
+' children[child] is node_children[node * 2 + child]; NF_SUBSECTOR marks a leaf.
+EXPORT DIM node_children[MAXNODES * 2] AS INTEGER
+
+' ---- mapthing_t, as the THINGS lump has them ----------------------------------
+EXPORT DIM nummapthings AS INTEGER = 0
+EXPORT DIM mapthing_x[MAXMAPTHINGS] AS INTEGER
+EXPORT DIM mapthing_y[MAXMAPTHINGS] AS INTEGER
+EXPORT DIM mapthing_angle[MAXMAPTHINGS] AS INTEGER
+EXPORT DIM mapthing_type[MAXMAPTHINGS] AS INTEGER
+EXPORT DIM mapthing_options[MAXMAPTHINGS] AS INTEGER
+
+' ---- blockmap ---------------------------------------------------------------
+' The BLOCKMAP lump as signed shorts. Cell (x, y) starts its line list at
+' blockmaplump[blockmaplump[4 + y * bmapwidth + x]]; a list ends with -1.
+EXPORT DIM blockmaplump[MAXBLOCKMAP] AS INTEGER
+EXPORT DIM blockmaplump_size AS INTEGER = 0
+EXPORT DIM bmapwidth AS INTEGER = 0
+EXPORT DIM bmapheight AS INTEGER = 0
+EXPORT DIM bmaporgx AS INTEGER = 0
+EXPORT DIM bmaporgy AS INTEGER = 0
+' First thing in each cell (mobj index).
+EXPORT DIM blocklinks[MAXBLOCKS] AS INTEGER
+
+' ---- reject -----------------------------------------------------------------
+' One bit per pair of sectors; a set bit means no line of sight is possible.
+EXPORT DIM rejectmatrix[MAXREJECT] AS INTEGER
+EXPORT DIM rejectmatrix_size AS INTEGER = 0
+
+FUNC CleanName$(raw$ AS STRING) AS STRING
+    DIM p_nul AS INTEGER = INSTR(raw$, CHR$(0))
+    IF p_nul >= 0 THEN RETURN UCASE$(LEFT$(raw$, p_nul))
+    RETURN UCASE$(raw$)
+ENDFUNC
+
+' A 16-bit index of the lump read as unsigned; 65535 is "none".
+FUNC Unsigned16(v AS INTEGER) AS INTEGER
+    IF v < 0 THEN RETURN v + 65536
+    RETURN v
+ENDFUNC
+
+SUB CheckCount(what$ AS STRING, n_items AS INTEGER, limit AS INTEGER)
+    IF n_items > limit THEN I_SYSTEM.I_Error("P_SetupLevel: " + STR$(n_items) + " " + what$ + ", limit is " + STR$(limit))
+ENDSUB
+
+SUB P_LoadVertexes(lump AS INTEGER)
+    DIM raw AS ARRAY = W_WAD.W_ReadShorts(lump)
+    numvertexes = W_WAD.W_LumpLength(lump) \ 4
+    CheckCount "vertexes", numvertexes, MAXVERTEXES
+    DIM i AS INTEGER
+    FOR i = 0 TO numvertexes - 1
+        vertex_x[i] = raw[i * 2] * 65536
+        vertex_y[i] = raw[i * 2 + 1] * 65536
+    NEXT i
+ENDSUB
+
+SUB P_LoadSegs(lump AS INTEGER)
+    DIM raw AS ARRAY = W_WAD.W_ReadShorts(lump)
+    numsegs = W_WAD.W_LumpLength(lump) \ 12
+    CheckCount "segs", numsegs, MAXSEGS
+    DIM i AS INTEGER
+    DIM o AS INTEGER
+    DIM ldef AS INTEGER
+    DIM side AS INTEGER
+    DIM sidedef AS INTEGER
+    FOR i = 0 TO numsegs - 1
+        o = i * 6
+        seg_v1[i] = Unsigned16(raw[o])
+        seg_v2[i] = Unsigned16(raw[o + 1])
+        seg_angle[i] = (raw[o + 2] * 65536) BAND M_FIXED.ANGLE_MASK
+        ldef = Unsigned16(raw[o + 3])
+        side = CLNG(raw[o + 4])
+        seg_offset[i] = raw[o + 5] * 65536
+        seg_linedef[i] = ldef
+        IF side = 0 THEN sidedef = CLNG(line_sidenum0[ldef]) ELSE sidedef = CLNG(line_sidenum1[ldef])
+        seg_sidedef[i] = sidedef
+        seg_frontsector[i] = side_sector[sidedef]
+        seg_backsector[i] = -1
+        IF (line_flags[ldef] BAND DOOMDEF.ML_TWOSIDED) <> 0 THEN
+            IF side = 0 THEN sidedef = CLNG(line_sidenum1[ldef]) ELSE sidedef = CLNG(line_sidenum0[ldef])
+            seg_backsector[i] = side_sector[sidedef]
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB P_LoadSubsectors(lump AS INTEGER)
+    DIM raw AS ARRAY = W_WAD.W_ReadShorts(lump)
+    numsubsectors = W_WAD.W_LumpLength(lump) \ 4
+    CheckCount "subsectors", numsubsectors, MAXSUBSECTORS
+    DIM i AS INTEGER
+    FOR i = 0 TO numsubsectors - 1
+        subsector_numlines[i] = Unsigned16(raw[i * 2])
+        subsector_firstline[i] = Unsigned16(raw[i * 2 + 1])
+        subsector_sector[i] = -1
+    NEXT i
+ENDSUB
+
+SUB P_LoadSectors(lump AS INTEGER)
+    DIM raw AS ARRAY = W_WAD.W_ReadShorts(lump)
+    DIM names$ AS STRING = W_WAD.W_LumpString$(lump)
+    numsectors = W_WAD.W_LumpLength(lump) \ 26
+    CheckCount "sectors", numsectors, MAXSECTORS
+    DIM i AS INTEGER
+    DIM o AS INTEGER
+    FOR i = 0 TO numsectors - 1
+        o = i * 13
+        sector_floorheight[i] = raw[o] * 65536
+        sector_ceilingheight[i] = raw[o + 1] * 65536
+        sector_floorpic[i] = R_DATA.R_FlatNumForName(CleanName$(MID$(names$, i * 26 + 4, 8)))
+        sector_ceilingpic[i] = R_DATA.R_FlatNumForName(CleanName$(MID$(names$, i * 26 + 12, 8)))
+        sector_lightlevel[i] = raw[o + 10]
+        sector_special[i] = raw[o + 11]
+        sector_tag[i] = raw[o + 12]
+        sector_soundtraversed[i] = 0
+        sector_soundtarget[i] = -1
+        sector_validcount[i] = 0
+        sector_thinglist[i] = -1
+        sector_specialdata[i] = -1
+        sector_linecount[i] = 0
+    NEXT i
+ENDSUB
+
+SUB P_LoadNodes(lump AS INTEGER)
+    DIM raw AS ARRAY = W_WAD.W_ReadShorts(lump)
+    numnodes = W_WAD.W_LumpLength(lump) \ 28
+    CheckCount "nodes", numnodes, MAXNODES
+    DIM i AS INTEGER
+    DIM o AS INTEGER
+    DIM k AS INTEGER
+    FOR i = 0 TO numnodes - 1
+        o = i * 14
+        node_x[i] = raw[o] * 65536
+        node_y[i] = raw[o + 1] * 65536
+        node_dx[i] = raw[o + 2] * 65536
+        node_dy[i] = raw[o + 3] * 65536
+        FOR k = 0 TO 7
+            node_bbox[i * 8 + k] = raw[o + 4 + k] * 65536
+        NEXT k
+        node_children[i * 2] = Unsigned16(raw[o + 12])
+        node_children[i * 2 + 1] = Unsigned16(raw[o + 13])
+    NEXT i
+ENDSUB
+
+' Keeps the THINGS lump for P_SpawnMapThing.
+SUB P_LoadThings(lump AS INTEGER)
+    DIM raw AS ARRAY = W_WAD.W_ReadShorts(lump)
+    nummapthings = W_WAD.W_LumpLength(lump) \ 10
+    CheckCount "things", nummapthings, MAXMAPTHINGS
+    DIM i AS INTEGER
+    DIM o AS INTEGER
+    FOR i = 0 TO nummapthings - 1
+        o = i * 5
+        mapthing_x[i] = raw[o]
+        mapthing_y[i] = raw[o + 1]
+        mapthing_angle[i] = raw[o + 2]
+        mapthing_type[i] = raw[o + 3]
+        mapthing_options[i] = raw[o + 4]
+    NEXT i
+ENDSUB
+
+SUB P_LoadLineDefs(lump AS INTEGER)
+    DIM raw AS ARRAY = W_WAD.W_ReadShorts(lump)
+    numlines = W_WAD.W_LumpLength(lump) \ 14
+    CheckCount "lines", numlines, MAXLINES
+    DIM i AS INTEGER
+    DIM o AS INTEGER
+    DIM v1 AS INTEGER
+    DIM v2 AS INTEGER
+    DIM side0 AS INTEGER
+    DIM side1 AS INTEGER
+    FOR i = 0 TO numlines - 1
+        o = i * 7
+        v1 = Unsigned16(raw[o])
+        v2 = Unsigned16(raw[o + 1])
+        line_v1[i] = v1
+        line_v2[i] = v2
+        line_flags[i] = raw[o + 2]
+        line_special[i] = raw[o + 3]
+        line_tag[i] = raw[o + 4]
+        line_dx[i] = vertex_x[v2] - vertex_x[v1]
+        line_dy[i] = vertex_y[v2] - vertex_y[v1]
+
+        IF line_dx[i] = 0 THEN
+            line_slopetype[i] = DOOMDEF.ST_VERTICAL
+        ELSEIF line_dy[i] = 0 THEN
+            line_slopetype[i] = DOOMDEF.ST_HORIZONTAL
+        ELSEIF M_FIXED.FixedDiv(line_dy[i], line_dx[i]) > 0 THEN
+            line_slopetype[i] = DOOMDEF.ST_POSITIVE
+        ELSE
+            line_slopetype[i] = DOOMDEF.ST_NEGATIVE
+        ENDIF
+
+        IF vertex_x[v1] < vertex_x[v2] THEN
+            line_bbox[i * 4 + DOOMDEF.BOXLEFT] = vertex_x[v1]
+            line_bbox[i * 4 + DOOMDEF.BOXRIGHT] = vertex_x[v2]
+        ELSE
+            line_bbox[i * 4 + DOOMDEF.BOXLEFT] = vertex_x[v2]
+            line_bbox[i * 4 + DOOMDEF.BOXRIGHT] = vertex_x[v1]
+        ENDIF
+        IF vertex_y[v1] < vertex_y[v2] THEN
+            line_bbox[i * 4 + DOOMDEF.BOXBOTTOM] = vertex_y[v1]
+            line_bbox[i * 4 + DOOMDEF.BOXTOP] = vertex_y[v2]
+        ELSE
+            line_bbox[i * 4 + DOOMDEF.BOXBOTTOM] = vertex_y[v2]
+            line_bbox[i * 4 + DOOMDEF.BOXTOP] = vertex_y[v1]
+        ENDIF
+
+        side0 = CLNG(raw[o + 5])
+        side1 = CLNG(raw[o + 6])
+        IF side0 <> -1 THEN side0 = Unsigned16(side0)
+        IF side1 <> -1 THEN side1 = Unsigned16(side1)
+        line_sidenum0[i] = side0
+        line_sidenum1[i] = side1
+        IF side0 <> -1 THEN line_frontsector[i] = side_sector[side0] ELSE line_frontsector[i] = -1
+        IF side1 <> -1 THEN line_backsector[i] = side_sector[side1] ELSE line_backsector[i] = -1
+        line_validcount[i] = 0
+        line_specialdata[i] = -1
+    NEXT i
+ENDSUB
+
+SUB P_LoadSideDefs(lump AS INTEGER)
+    DIM raw AS ARRAY = W_WAD.W_ReadShorts(lump)
+    DIM names$ AS STRING = W_WAD.W_LumpString$(lump)
+    numsides = W_WAD.W_LumpLength(lump) \ 30
+    CheckCount "sides", numsides, MAXSIDES
+    DIM i AS INTEGER
+    DIM o AS INTEGER
+    FOR i = 0 TO numsides - 1
+        o = i * 15
+        side_textureoffset[i] = raw[o] * 65536
+        side_rowoffset[i] = raw[o + 1] * 65536
+        side_toptexture[i] = R_DATA.R_TextureNumForName(CleanName$(MID$(names$, i * 30 + 4, 8)))
+        side_bottomtexture[i] = R_DATA.R_TextureNumForName(CleanName$(MID$(names$, i * 30 + 12, 8)))
+        side_midtexture[i] = R_DATA.R_TextureNumForName(CleanName$(MID$(names$, i * 30 + 20, 8)))
+        side_sector[i] = Unsigned16(raw[o + 14])
+    NEXT i
+ENDSUB
+
+SUB P_LoadBlockMap(lump AS INTEGER)
+    DIM raw AS ARRAY = W_WAD.W_ReadShorts(lump)
+    blockmaplump_size = W_WAD.W_LumpLength(lump) \ 2
+    CheckCount "blockmap cells", blockmaplump_size, MAXBLOCKMAP
+    DIM i AS INTEGER
+    FOR i = 0 TO blockmaplump_size - 1
+        blockmaplump[i] = raw[i]
+    NEXT i
+    bmaporgx = CLNG(blockmaplump[0]) * 65536
+    bmaporgy = CLNG(blockmaplump[1]) * 65536
+    bmapwidth = CLNG(blockmaplump[2])
+    bmapheight = CLNG(blockmaplump[3])
+    CheckCount "blocks", bmapwidth * bmapheight, MAXBLOCKS
+    FOR i = 0 TO bmapwidth * bmapheight - 1
+        blocklinks[i] = -1
+    NEXT i
+ENDSUB
+
+SUB P_LoadReject(lump AS INTEGER)
+    DIM raw AS ARRAY = W_WAD.W_ReadBytes(lump)
+    rejectmatrix_size = W_WAD.W_LumpLength(lump)
+    CheckCount "reject bytes", rejectmatrix_size, MAXREJECT
+    DIM i AS INTEGER
+    FOR i = 0 TO rejectmatrix_size - 1
+        rejectmatrix[i] = raw[i]
+    NEXT i
+ENDSUB
+
+' Builds sector line lists and subsector sector numbers, and finds the
+' blockmap bounding box of each sector.
+SUB P_GroupLines()
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    FOR i = 0 TO numsubsectors - 1
+        subsector_sector[i] = side_sector[seg_sidedef[subsector_firstline[i]]]
+    NEXT i
+
+    FOR i = 0 TO numlines - 1
+        sector_linecount[line_frontsector[i]] = sector_linecount[line_frontsector[i]] + 1
+        IF line_backsector[i] <> -1 AND line_backsector[i] <> line_frontsector[i] THEN
+            sector_linecount[line_backsector[i]] = sector_linecount[line_backsector[i]] + 1
+        ENDIF
+    NEXT i
+
+    DIM next_slot AS INTEGER = 0
+    DIM box_top AS INTEGER
+    DIM box_bottom AS INTEGER
+    DIM box_left AS INTEGER
+    DIM box_right AS INTEGER
+    DIM vx AS INTEGER
+    DIM vy AS INTEGER
+    DIM k AS INTEGER
+    DIM block AS INTEGER
+    FOR i = 0 TO numsectors - 1
+        box_top = M_FIXED.MININT
+        box_right = M_FIXED.MININT
+        box_bottom = M_FIXED.MAXINT
+        box_left = M_FIXED.MAXINT
+        sector_firstline[i] = next_slot
+        FOR j = 0 TO numlines - 1
+            IF line_frontsector[j] = i OR line_backsector[j] = i THEN
+                sector_lines[next_slot] = j
+                next_slot = next_slot + 1
+                FOR k = 0 TO 1
+                    IF k = 0 THEN
+                        vx = CLNG(vertex_x[line_v1[j]])
+                        vy = CLNG(vertex_y[line_v1[j]])
+                    ELSE
+                        vx = CLNG(vertex_x[line_v2[j]])
+                        vy = CLNG(vertex_y[line_v2[j]])
+                    ENDIF
+                    ' M_AddToBox
+                    IF vx < box_left THEN
+                        box_left = vx
+                    ELSEIF vx > box_right THEN
+                        box_right = vx
+                    ENDIF
+                    IF vy < box_bottom THEN
+                        box_bottom = vy
+                    ELSEIF vy > box_top THEN
+                        box_top = vy
+                    ENDIF
+                NEXT k
+            ENDIF
+        NEXT j
+        IF next_slot - sector_firstline[i] <> sector_linecount[i] THEN I_SYSTEM.I_Error("P_GroupLines: miscounted")
+
+        sector_soundorg_x[i] = (box_right + box_left) \ 2
+        sector_soundorg_y[i] = (box_top + box_bottom) \ 2
+
+        block = (box_top - bmaporgy + DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+        IF block >= bmapheight THEN block = bmapheight - 1
+        sector_blockbox[i * 4 + DOOMDEF.BOXTOP] = block
+
+        block = (box_bottom - bmaporgy - DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+        IF block < 0 THEN block = 0
+        sector_blockbox[i * 4 + DOOMDEF.BOXBOTTOM] = block
+
+        block = (box_right - bmaporgx + DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+        IF block >= bmapwidth THEN block = bmapwidth - 1
+        sector_blockbox[i * 4 + DOOMDEF.BOXRIGHT] = block
+
+        block = (box_left - bmaporgx - DOOMDEF.MAXRADIUS) SHR DOOMDEF.MAPBLOCKSHIFT
+        IF block < 0 THEN block = 0
+        sector_blockbox[i * 4 + DOOMDEF.BOXLEFT] = block
+    NEXT i
+ENDSUB
+
+' Loads the level behind the marker lump lumpname$ (E1M1, MAP01, ...).
+EXPORT SUB P_SetupLevel(lumpname$ AS STRING)
+    DIM lumpnum AS INTEGER = W_WAD.W_GetNumForName(lumpname$)
+
+    ' The order matters: each loader uses what the ones before it read.
+    P_LoadBlockMap(lumpnum + DOOMDEF.ML_BLOCKMAP)
+    P_LoadVertexes(lumpnum + DOOMDEF.ML_VERTEXES)
+    P_LoadSectors(lumpnum + DOOMDEF.ML_SECTORS)
+    P_LoadSideDefs(lumpnum + DOOMDEF.ML_SIDEDEFS)
+    P_LoadLineDefs(lumpnum + DOOMDEF.ML_LINEDEFS)
+    P_LoadSubsectors(lumpnum + DOOMDEF.ML_SSECTORS)
+    P_LoadNodes(lumpnum + DOOMDEF.ML_NODES)
+    P_LoadSegs(lumpnum + DOOMDEF.ML_SEGS)
+    P_LoadReject(lumpnum + DOOMDEF.ML_REJECT)
+    P_GroupLines()
+    P_LoadThings(lumpnum + DOOMDEF.ML_THINGS)
+ENDSUB

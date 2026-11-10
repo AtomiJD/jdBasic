@@ -1,109 +1,177 @@
-' jdb/doom/w_wad.jdb - WAD-file reader (porting w_wad.c).
+' WAD directory and lump cache (w_wad.c, z_zone.c).
 '
-' Original DOOM's W_Init() reads one or more WAD files into memory and
-' builds a linked directory of lumps. Here we collapse that into a
-' single string buffer plus parallel arrays + a name->index MAP for
-' O(1) lookups.
-'
-' Public surface (mirrors w_wad.h shape):
-'   W_INIT(path$)               Open an IWAD/PWAD, build the directory.
-'   W_NUMLUMPS() -> n           Total lump count.
-'   W_FIND(name$) -> idx        First-occurrence index, -1 if missing.
-'   W_FIND_AFTER(name$, start)  Next occurrence at-or-after `start`. -1 if none.
-'   W_LUMP_BYTES$(idx)          Raw bytes (binary-safe slice).
-'   W_LUMP_SIZE(idx)            Byte count.
-'   W_LUMP_NAME$(idx)           Uppercase name (sanity checks).
-'   W_DATA$(name$)              Shortcut for W_LUMP_BYTES$(W_FIND(name$)).
-'
-' Native-clean: typed scalars + ZEROS-initialised arrays. The lump
-' directory is capped at W_MAX_LUMPS so the module can pre-DIM its
-' parallel arrays at top-level (SUB-local DIM doesn't grow module
-' globals).
+' A cached lump lives in `pool`, one byte per cell, and the place of its first
+' byte is what the C source calls the lump pointer. Everything that reads
+' graphics (patches, flats, colormaps, composite textures) reads the pool.
+' Level lumps are read once through W_ReadShorts / W_ReadBytes and not cached.
 
 EXPORT MODULE W_WAD
 
+OPTION "EXPLICIT"
+OPTION "STRICT"
 OPTION "NOPAUSE"
 
+IMPORT I_SYSTEM
+
 EXPORT CONST W_MAX_LUMPS = 8192
+EXPORT CONST POOL_SIZE = 8000000
+
+EXPORT DIM pool[POOL_SIZE] AS INTEGER
+EXPORT DIM pool_used AS INTEGER = 0
 
 DIM wad_buf$ AS STRING = ""
-DIM wad_n AS INTEGER = 0
-DIM wad_infotab AS INTEGER = 0
+DIM numlumps AS INTEGER = 0
+DIM lump_pos[W_MAX_LUMPS] AS INTEGER
+DIM lump_size[W_MAX_LUMPS] AS INTEGER
+DIM lump_name$[W_MAX_LUMPS] AS STRING
+DIM lump_cache[W_MAX_LUMPS] AS INTEGER
+DIM lump_by_name AS MAP = {}
 
-DIM wad_pos[W_MAX_LUMPS] AS INTEGER
-DIM wad_size[W_MAX_LUMPS] AS INTEGER
-DIM wad_name$[W_MAX_LUMPS] AS STRING
-DIM wad_idx AS MAP = {}
+' Reading single bytes out of the WAD string is quick compiled and slow
+' interpreted; a builtin that takes the whole string is the other way round.
+' The two readers below pick the quick one for the backend they run on.
+DIM interpreted AS INTEGER = 0
 
-' Load the WAD at `path$` and parse its directory in one shot.
-EXPORT SUB W_INIT(path$ AS STRING)
+FUNC CleanName$(raw$ AS STRING) AS STRING
+    DIM p_nul AS INTEGER = INSTR(raw$, CHR$(0))
+    IF p_nul >= 0 THEN RETURN UCASE$(LEFT$(raw$, p_nul))
+    RETURN UCASE$(raw$)
+ENDFUNC
+
+EXPORT SUB W_Init(path$ AS STRING)
     wad_buf$ = BINREADER$(path$)
+    IF OS.FEATURE("INTERPRETER") THEN interpreted = 1 ELSE interpreted = 0
     DIM magic$ AS STRING = LEFT$(wad_buf$, 4)
-    IF magic$ <> "IWAD" AND magic$ <> "PWAD" THEN
-        PRINT "W_WAD: not a WAD file - magic='" + magic$ + "'"
-        END
-    ENDIF
+    IF magic$ <> "IWAD" AND magic$ <> "PWAD" THEN I_SYSTEM.I_Error("W_Init: " + path$ + " is not a WAD")
 
-    wad_n       = BYTEAT(wad_buf$, 4) BOR (BYTEAT(wad_buf$, 5) SHL 8) BOR (BYTEAT(wad_buf$, 6) SHL 16) BOR (BYTEAT(wad_buf$, 7) SHL 24)
-    wad_infotab = BYTEAT(wad_buf$, 8) BOR (BYTEAT(wad_buf$, 9) SHL 8) BOR (BYTEAT(wad_buf$, 10) SHL 16) BOR (BYTEAT(wad_buf$, 11) SHL 24)
+    DIM header AS ARRAY = UNPACK("<2n", wad_buf$, 4)
+    numlumps = CLNG(header[0])
+    DIM infotable AS INTEGER = CLNG(header[1])
+    IF numlumps > W_MAX_LUMPS THEN I_SYSTEM.I_Error("W_Init: " + STR$(numlumps) + " lumps, limit is " + STR$(W_MAX_LUMPS))
 
-    IF wad_n > W_MAX_LUMPS THEN
-        PRINT "W_WAD: " + STR$(wad_n) + " lumps exceeds W_MAX_LUMPS=" + STR$(W_MAX_LUMPS)
-        END
-    ENDIF
+    lump_by_name = {}
+    pool_used = 0
+    FILLV lump_cache, -1
 
-    wad_idx = {}
-
+    ' A later lump of the same name replaces an earlier one, as the backward
+    ' scan of W_CheckNumForName does.
+    DIM directory$ AS STRING = MID$(wad_buf$, infotable, numlumps * 16)
     DIM i AS INTEGER
-    DIM ent AS INTEGER
-    DIM nm$ AS STRING
-    DIM nulpos AS INTEGER
-    FOR i = 0 TO wad_n - 1
-        ent = wad_infotab + i * 16
-        wad_pos[i]  = BYTEAT(wad_buf$, ent)   BOR (BYTEAT(wad_buf$, ent+1) SHL 8) BOR (BYTEAT(wad_buf$, ent+2) SHL 16) BOR (BYTEAT(wad_buf$, ent+3) SHL 24)
-        wad_size[i] = BYTEAT(wad_buf$, ent+4) BOR (BYTEAT(wad_buf$, ent+5) SHL 8) BOR (BYTEAT(wad_buf$, ent+6) SHL 16) BOR (BYTEAT(wad_buf$, ent+7) SHL 24)
-        nm$ = MID$(wad_buf$, ent + 8, 8)
-        nulpos = INSTR(nm$, CHR$(0))
-        IF nulpos >= 0 THEN nm$ = LEFT$(nm$, nulpos)
-        wad_name$[i] = nm$
-        IF NOT MAP.EXISTS(wad_idx, nm$) THEN wad_idx{nm$} = i
+    DIM entry AS ARRAY = []
+    FOR i = 0 TO numlumps - 1
+        entry = UNPACK("<2n", directory$, i * 16)
+        lump_pos[i] = entry[0]
+        lump_size[i] = entry[1]
+        lump_name$[i] = CleanName$(MID$(directory$, i * 16 + 8, 8))
+        lump_by_name{lump_name$[i]} = i
     NEXT i
 ENDSUB
 
-EXPORT FUNC W_NUMLUMPS() AS INTEGER
-    RETURN wad_n
+EXPORT FUNC W_NumLumps() AS INTEGER
+    RETURN numlumps
 ENDFUNC
 
-EXPORT FUNC W_FIND(name$ AS STRING) AS INTEGER
-    IF MAP.EXISTS(wad_idx, name$) THEN RETURN wad_idx{name$}
+EXPORT FUNC W_CheckNumForName(name$ AS STRING) AS INTEGER
+    DIM key$ AS STRING = UCASE$(name$)
+    IF MAP.EXISTS(lump_by_name, key$) THEN RETURN lump_by_name{key$}
     RETURN -1
 ENDFUNC
 
-' Linear scan for the next lump named `name$` at or after `start`.
-' Used for level-marker walks (E1M1 -> THINGS, LINEDEFS, ...).
-EXPORT FUNC W_FIND_AFTER(name$ AS STRING, start AS INTEGER) AS INTEGER
-    DIM j AS INTEGER
-    FOR j = start TO wad_n - 1
-        IF wad_name$[j] = name$ THEN RETURN j
-    NEXT j
-    RETURN -1
+EXPORT FUNC W_GetNumForName(name$ AS STRING) AS INTEGER
+    DIM lump AS INTEGER = W_CheckNumForName(name$)
+    IF lump < 0 THEN I_SYSTEM.I_Error("W_GetNumForName: " + name$ + " not found!")
+    RETURN lump
 ENDFUNC
 
-EXPORT FUNC W_LUMP_BYTES$(idx AS INTEGER) AS STRING
-    IF idx < 0 OR idx >= wad_n THEN RETURN ""
-    RETURN MID$(wad_buf$, wad_pos[idx], wad_size[idx])
+EXPORT FUNC W_LumpLength(lump AS INTEGER) AS INTEGER
+    IF lump < 0 OR lump >= numlumps THEN I_SYSTEM.I_Error("W_LumpLength: " + STR$(lump) + " >= numlumps")
+    RETURN lump_size[lump]
 ENDFUNC
 
-EXPORT FUNC W_LUMP_SIZE(idx AS INTEGER) AS INTEGER
-    IF idx < 0 OR idx >= wad_n THEN RETURN 0
-    RETURN wad_size[idx]
+EXPORT FUNC W_LumpName$(lump AS INTEGER) AS STRING
+    IF lump < 0 OR lump >= numlumps THEN RETURN ""
+    RETURN lump_name$[lump]
 ENDFUNC
 
-EXPORT FUNC W_LUMP_NAME$(idx AS INTEGER) AS STRING
-    IF idx < 0 OR idx >= wad_n THEN RETURN ""
-    RETURN wad_name$[idx]
+' The raw bytes of a lump as a string, for the 8-character names in it.
+EXPORT FUNC W_LumpString$(lump AS INTEGER) AS STRING
+    IF lump < 0 OR lump >= numlumps THEN I_SYSTEM.I_Error("W_LumpString$: " + STR$(lump) + " >= numlumps")
+    RETURN MID$(wad_buf$, lump_pos[lump], lump_size[lump])
 ENDFUNC
 
-EXPORT FUNC W_DATA$(name$ AS STRING) AS STRING
-    RETURN W_LUMP_BYTES$(W_FIND(name$))
+' The lump as an array of its bytes (0..255).
+EXPORT FUNC W_ReadBytes(lump AS INTEGER) AS ARRAY
+    DIM n_bytes AS INTEGER = W_LumpLength(lump)
+    IF n_bytes = 0 THEN RETURN []
+    RETURN UNPACK("<" + STR$(n_bytes) + "b", wad_buf$, lump_pos[lump])
+ENDFUNC
+
+' The lump as an array of signed 16-bit values.
+EXPORT FUNC W_ReadShorts(lump AS INTEGER) AS ARRAY
+    DIM n_shorts AS INTEGER = W_LumpLength(lump) \ 2
+    IF n_shorts = 0 THEN RETURN []
+    RETURN UNPACK("<" + STR$(n_shorts) + "h", wad_buf$, lump_pos[lump])
+ENDFUNC
+
+' Reserves n_cells of the pool and answers the place of the first one.
+EXPORT FUNC W_Alloc(n_cells AS INTEGER) AS INTEGER
+    IF pool_used + n_cells > POOL_SIZE THEN I_SYSTEM.I_Error("W_Alloc: pool of " + STR$(POOL_SIZE) + " cells is full")
+    DIM start AS INTEGER = pool_used
+    pool_used = pool_used + n_cells
+    RETURN start
+ENDFUNC
+
+' The place of the lump's bytes in the pool; the first call copies them there.
+EXPORT FUNC W_CacheLumpNum(lump AS INTEGER) AS INTEGER
+    IF lump < 0 OR lump >= numlumps THEN I_SYSTEM.I_Error("W_CacheLumpNum: " + STR$(lump) + " >= numlumps")
+    IF lump_cache[lump] >= 0 THEN RETURN lump_cache[lump]
+    DIM n_bytes AS INTEGER = CLNG(lump_size[lump])
+    DIM start AS INTEGER = W_Alloc(n_bytes)
+    DIM i AS INTEGER
+    DIM file_pos AS INTEGER = CLNG(lump_pos[lump])
+    IF n_bytes > 0 AND interpreted <> 0 THEN
+        DIM bytes AS ARRAY = UNPACK("<" + STR$(n_bytes) + "b", wad_buf$, file_pos)
+        FOR i = 0 TO n_bytes - 1
+            pool[start + i] = bytes[i]
+        NEXT i
+    ELSE
+        FOR i = 0 TO n_bytes - 1
+            pool[start + i] = BYTEAT(wad_buf$, file_pos + i)
+        NEXT i
+    ENDIF
+    lump_cache[lump] = start
+    RETURN start
+ENDFUNC
+
+EXPORT FUNC W_CacheLumpName(name$ AS STRING) AS INTEGER
+    RETURN W_CacheLumpNum(W_GetNumForName(name$))
+ENDFUNC
+
+' Little-endian values out of the pool, as SHORT() and LONG() read a lump.
+EXPORT FUNC PoolShort(ofs AS INTEGER) AS INTEGER
+    DIM v AS INTEGER = pool[ofs] BOR (pool[ofs + 1] SHL 8)
+    IF v >= 32768 THEN RETURN v - 65536
+    RETURN v
+ENDFUNC
+
+EXPORT FUNC PoolLong(ofs AS INTEGER) AS INTEGER
+    DIM v AS INTEGER = pool[ofs] BOR (pool[ofs + 1] SHL 8) BOR (pool[ofs + 2] SHL 16) BOR (pool[ofs + 3] SHL 24)
+    IF v >= $80000000 THEN RETURN v - $100000000
+    RETURN v
+ENDFUNC
+
+' n_shorts signed 16-bit values from byte_ofs of the lump, without caching it.
+EXPORT FUNC W_ReadShortsAt(lump AS INTEGER, byte_ofs AS INTEGER, n_shorts AS INTEGER) AS ARRAY
+    IF byte_ofs + n_shorts * 2 > W_LumpLength(lump) THEN I_SYSTEM.I_Error("W_ReadShortsAt: past the end of lump " + STR$(lump))
+    DIM file_pos AS INTEGER = CLNG(lump_pos[lump]) + byte_ofs
+    IF interpreted <> 0 THEN RETURN UNPACK("<" + STR$(n_shorts) + "h", wad_buf$, file_pos)
+    DIM shorts[n_shorts] AS INTEGER
+    DIM i AS INTEGER
+    DIM v AS INTEGER
+    FOR i = 0 TO n_shorts - 1
+        v = BYTEAT(wad_buf$, file_pos + i * 2) BOR (BYTEAT(wad_buf$, file_pos + i * 2 + 1) SHL 8)
+        IF v >= 32768 THEN v = v - 65536
+        shorts[i] = v
+    NEXT i
+    RETURN shorts
 ENDFUNC

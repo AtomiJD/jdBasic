@@ -1,0 +1,172 @@
+' Shows what the data modules loaded: the title picture, wall textures,
+' flats, sprites and the level's lines, one page after the other.
+'
+'   build/jdBasic.exe jdb/doom2/view_p1.jdb [folder for screenshots]
+'
+' With a folder, each page is saved there as page_<n>.png.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT DOOMDEF
+IMPORT W_WAD
+IMPORT R_DATA
+IMPORT P_SETUP
+IMPORT V_VIDEO
+IMPORT I_VIDEO
+
+DIM shot_dir$ AS STRING = ""
+DIM cmd_args AS ARRAY = OS.ARGS()
+IF LEN(cmd_args) > 1 THEN shot_dir$ = cmd_args[1]
+
+DIM running AS INTEGER = 1
+DIM page_no AS INTEGER = 0
+
+SUB HandleQuit(quit_data)
+    running = 0
+ENDSUB
+
+SUB ShowPage(hold_ms AS INTEGER)
+    page_no = page_no + 1
+    IF LEN(shot_dir$) > 0 THEN
+        I_VIDEO.I_Screenshot(shot_dir$ + "/page_" + STR$(page_no) + ".png")
+    ELSE
+        I_VIDEO.I_FinishUpdate()
+    ENDIF
+    DIM waited AS INTEGER = 0
+    DO WHILE waited < hold_ms AND running = 1
+        SLEEP 50
+        waited = waited + 50
+        I_VIDEO.I_FinishUpdate()
+    LOOP
+ENDSUB
+
+' Texture tex with its top left corner at (x0, y0), cut to cell_w x cell_h.
+SUB DrawTexture(tex AS INTEGER, x0 AS INTEGER, y0 AS INTEGER, cell_w AS INTEGER, cell_h AS INTEGER)
+    DIM w AS INTEGER = CLNG(R_DATA.tex_width[tex])
+    DIM h AS INTEGER = CLNG(R_DATA.tex_height[tex])
+    IF w > cell_w THEN w = cell_w
+    IF h > cell_h THEN h = cell_h
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    DIM col AS INTEGER
+    FOR x = 0 TO w - 1
+        col = R_DATA.R_GetColumn(tex, x)
+        FOR y = 0 TO h - 1
+            V_VIDEO.screens[(y0 + y) * DOOMDEF.SCREENWIDTH + x0 + x] = W_WAD.pool[col + y]
+        NEXT y
+    NEXT x
+ENDSUB
+
+ON "QUIT" CALL HandleQuit@
+
+W_WAD.W_Init("jdb/doom/wad/doom.wad")
+R_DATA.R_InitData()
+P_SETUP.P_SetupLevel("E1M1")
+V_VIDEO.V_Init()
+I_VIDEO.I_InitGraphics(3)
+I_VIDEO.I_SetPalette(W_WAD.W_CacheLumpName("PLAYPAL"))
+
+DIM i AS INTEGER
+DIM hold AS INTEGER = 2500
+
+' Page 1: title picture.
+V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("TITLEPIC"))
+ShowPage(hold)
+
+' Pages 2 and 3: wall textures used by the level's first sides, 5 x 2 a page.
+DIM shown AS MAP = {}
+DIM picked[20] AS INTEGER
+DIM n_picked AS INTEGER = 0
+DIM tex AS INTEGER
+i = 0
+DO WHILE n_picked < 20 AND i < P_SETUP.numsides
+    tex = CLNG(P_SETUP.side_midtexture[i])
+    IF tex = 0 THEN tex = CLNG(P_SETUP.side_toptexture[i])
+    IF tex = 0 THEN tex = CLNG(P_SETUP.side_bottomtexture[i])
+    IF tex > 0 ANDALSO NOT MAP.EXISTS(shown, STR$(tex)) THEN
+        shown{STR$(tex)} = 1
+        picked[n_picked] = tex
+        n_picked = n_picked + 1
+    ENDIF
+    i = i + 1
+LOOP
+DIM first AS INTEGER
+DIM name$ AS STRING
+FOR first = 0 TO n_picked - 1 STEP 10
+    IF running = 1 THEN
+        V_VIDEO.V_Init()
+        FOR i = first TO first + 9
+            IF i < n_picked THEN
+                DrawTexture CLNG(picked[i]), ((i - first) MOD 5) * 64, ((i - first) \ 5) * 100, 62, 98
+                name$ = R_DATA.tex_name$[CLNG(picked[i])]
+                PRINT "page " + STR$(page_no + 1) + " cell " + STR$(i - first) + ": " + name$
+            ENDIF
+        NEXT i
+        ShowPage(hold)
+    ENDIF
+NEXT first
+
+' Page 4: the first 15 flats.
+IF running = 1 THEN
+    V_VIDEO.V_Init()
+    FOR i = 0 TO 14
+        V_VIDEO.V_DrawBlock((i MOD 5) * 64, (i \ 5) * 66, 0, 64, 64, W_WAD.W_CacheLumpNum(R_DATA.firstflat + i))
+    NEXT i
+    ShowPage(hold)
+ENDIF
+
+' Page 5: sprites, each standing on its origin.
+IF running = 1 THEN
+    V_VIDEO.V_Init()
+    DIM sprite_names AS ARRAY = ["TROOA1", "POSSA1", "SARGA1", "BAR1A0", "PLAYA1", "SHOTA0", "MEDIA0", "BOSSA1"]
+    FOR i = 0 TO LEN(sprite_names) - 1
+        name$ = sprite_names[i]
+        V_VIDEO.V_DrawPatch(40 + (i MOD 4) * 80, 95 + (i \ 4) * 100, 0, W_WAD.W_CacheLumpName(name$))
+    NEXT i
+    ShowPage(hold)
+ENDIF
+
+' Page 6: the lines of the level, two-sided ones darker.
+IF running = 1 THEN
+    DIM min_x AS INTEGER = CLNG(P_SETUP.vertex_x[0])
+    DIM max_x AS INTEGER = min_x
+    DIM min_y AS INTEGER = CLNG(P_SETUP.vertex_y[0])
+    DIM max_y AS INTEGER = min_y
+    FOR i = 1 TO P_SETUP.numvertexes - 1
+        IF CLNG(P_SETUP.vertex_x[i]) < min_x THEN min_x = CLNG(P_SETUP.vertex_x[i])
+        IF CLNG(P_SETUP.vertex_x[i]) > max_x THEN max_x = CLNG(P_SETUP.vertex_x[i])
+        IF CLNG(P_SETUP.vertex_y[i]) < min_y THEN min_y = CLNG(P_SETUP.vertex_y[i])
+        IF CLNG(P_SETUP.vertex_y[i]) > max_y THEN max_y = CLNG(P_SETUP.vertex_y[i])
+    NEXT i
+    DIM zoom AS DOUBLE = 300.0 / (max_x - min_x)
+    IF 180.0 / (max_y - min_y) < zoom THEN zoom = 180.0 / (max_y - min_y)
+    DIM a AS INTEGER
+    DIM b AS INTEGER
+    DIM shade AS INTEGER
+    DIM x1 AS DOUBLE
+    DIM y1 AS DOUBLE
+    DIM x2 AS DOUBLE
+    DIM y2 AS DOUBLE
+    DIM waited AS INTEGER = 0
+    page_no = page_no + 1
+    DO WHILE waited < hold AND running = 1
+        CLS 0, 0, 0
+        FOR i = 0 TO P_SETUP.numlines - 1
+            a = CLNG(P_SETUP.line_v1[i])
+            b = CLNG(P_SETUP.line_v2[i])
+            IF (CLNG(P_SETUP.line_flags[i]) BAND DOOMDEF.ML_TWOSIDED) <> 0 THEN shade = 90 ELSE shade = 230
+            x1 = (10 + (CLNG(P_SETUP.vertex_x[a]) - min_x) * zoom) * I_VIDEO.window_scale
+            y1 = (190 - (CLNG(P_SETUP.vertex_y[a]) - min_y) * zoom) * I_VIDEO.window_scale
+            x2 = (10 + (CLNG(P_SETUP.vertex_x[b]) - min_x) * zoom) * I_VIDEO.window_scale
+            y2 = (190 - (CLNG(P_SETUP.vertex_y[b]) - min_y) * zoom) * I_VIDEO.window_scale
+            LINE x1, y1, x2, y2, shade, shade, shade
+        NEXT i
+        IF waited = 0 AND LEN(shot_dir$) > 0 THEN GFX.SAVE_SCREENSHOT shot_dir$ + "/page_" + STR$(page_no) + ".png"
+        SCREENFLIP
+        SLEEP 50
+        waited = waited + 50
+    LOOP
+ENDIF
+
+I_VIDEO.I_ShutdownGraphics()

@@ -1,0 +1,127 @@
+' Screen buffers and patch drawing (v_video.c).
+'
+' Five screens of SCREENWIDTH x SCREENHEIGHT palette indices in one array;
+' screen n starts at n * SCREENSIZE. Screen 0 is the one that is shown.
+' A patch is a place in W_WAD.pool, as W_CacheLumpNum answers it.
+
+EXPORT MODULE V_VIDEO
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT DOOMDEF
+IMPORT W_WAD
+
+EXPORT CONST SCREENSIZE = 64000
+EXPORT CONST NUMSCREENS = 5
+
+EXPORT DIM screens[SCREENSIZE * NUMSCREENS] AS INTEGER
+' Which of the five gamma curves I_SetPalette applies (0 = darkest).
+EXPORT DIM usegamma AS INTEGER = 0
+
+EXPORT SUB V_Init()
+    FILLV screens, 0
+ENDSUB
+
+EXPORT SUB V_CopyRect(srcx AS INTEGER, srcy AS INTEGER, srcscrn AS INTEGER, width AS INTEGER, height AS INTEGER, destx AS INTEGER, desty AS INTEGER, destscrn AS INTEGER)
+    IF srcx < 0 OR srcx + width > DOOMDEF.SCREENWIDTH OR srcy < 0 OR srcy + height > DOOMDEF.SCREENHEIGHT OR destx < 0 OR destx + width > DOOMDEF.SCREENWIDTH OR desty < 0 OR desty + height > DOOMDEF.SCREENHEIGHT OR srcscrn < 0 OR srcscrn >= NUMSCREENS OR destscrn < 0 OR destscrn >= NUMSCREENS THEN
+        I_SYSTEM.I_Error("Bad V_CopyRect")
+    ENDIF
+    DIM src AS INTEGER = srcscrn * SCREENSIZE + DOOMDEF.SCREENWIDTH * srcy + srcx
+    DIM dest AS INTEGER = destscrn * SCREENSIZE + DOOMDEF.SCREENWIDTH * desty + destx
+    DIM row AS INTEGER
+    DIM i AS INTEGER
+    FOR row = 1 TO height
+        FOR i = 0 TO width - 1
+            screens[dest + i] = screens[src + i]
+        NEXT i
+        src = src + DOOMDEF.SCREENWIDTH
+        dest = dest + DOOMDEF.SCREENWIDTH
+    NEXT row
+ENDSUB
+
+' Draws a patch, its offsets applied, without scaling; pixels outside its
+' posts stay as they are. flipped mirrors it left to right.
+SUB DrawPatchColumns(x AS INTEGER, y AS INTEGER, scrn AS INTEGER, patch AS INTEGER, flipped AS INTEGER)
+    DIM patch_w AS INTEGER = W_WAD.PoolShort(patch)
+    DIM w AS INTEGER = patch_w
+    DIM first_col AS INTEGER = 0
+    y = y - W_WAD.PoolShort(patch + 6)
+    x = x - W_WAD.PoolShort(patch + 4)
+    ' The full-screen pictures of the re-release WADs are wider than the
+    ' screen; the middle of such a patch is shown.
+    IF patch_w > DOOMDEF.SCREENWIDTH THEN
+        first_col = (patch_w - DOOMDEF.SCREENWIDTH) \ 2
+        w = DOOMDEF.SCREENWIDTH
+    ENDIF
+    IF x < 0 OR x + w > DOOMDEF.SCREENWIDTH OR y < 0 OR y + W_WAD.PoolShort(patch + 2) > DOOMDEF.SCREENHEIGHT OR scrn < 0 OR scrn >= NUMSCREENS THEN
+        PRINT "V_DrawPatch: bad patch at " + STR$(x) + "," + STR$(y) + " (ignored)"
+        RETURN
+    ENDIF
+    DIM desttop AS INTEGER = scrn * SCREENSIZE + y * DOOMDEF.SCREENWIDTH + x
+    DIM col AS INTEGER
+    DIM src_col AS INTEGER
+    DIM column AS INTEGER
+    DIM source AS INTEGER
+    DIM dest AS INTEGER
+    DIM n_pixels AS INTEGER
+    DIM i AS INTEGER
+    FOR col = 0 TO w - 1
+        IF flipped <> 0 THEN src_col = patch_w - 1 - first_col - col ELSE src_col = first_col + col
+        column = patch + W_WAD.PoolLong(patch + 8 + src_col * 4)
+        DO WHILE W_WAD.pool[column] <> 255
+            source = column + 3
+            dest = desttop + CLNG(W_WAD.pool[column]) * DOOMDEF.SCREENWIDTH
+            n_pixels = CLNG(W_WAD.pool[column + 1])
+            FOR i = 0 TO n_pixels - 1
+                screens[dest] = W_WAD.pool[source + i]
+                dest = dest + DOOMDEF.SCREENWIDTH
+            NEXT i
+            column = column + n_pixels + 4
+        LOOP
+        desttop = desttop + 1
+    NEXT col
+ENDSUB
+
+EXPORT SUB V_DrawPatch(x AS INTEGER, y AS INTEGER, scrn AS INTEGER, patch AS INTEGER)
+    DrawPatchColumns x, y, scrn, patch, 0
+ENDSUB
+
+EXPORT SUB V_DrawPatchFlipped(x AS INTEGER, y AS INTEGER, scrn AS INTEGER, patch AS INTEGER)
+    DrawPatchColumns x, y, scrn, patch, 1
+ENDSUB
+
+' Copies a block of width x height pixels from the pool to a screen.
+EXPORT SUB V_DrawBlock(x AS INTEGER, y AS INTEGER, scrn AS INTEGER, width AS INTEGER, height AS INTEGER, src AS INTEGER)
+    IF x < 0 OR x + width > DOOMDEF.SCREENWIDTH OR y < 0 OR y + height > DOOMDEF.SCREENHEIGHT OR scrn < 0 OR scrn >= NUMSCREENS THEN
+        I_SYSTEM.I_Error("Bad V_DrawBlock")
+    ENDIF
+    DIM dest AS INTEGER = scrn * SCREENSIZE + y * DOOMDEF.SCREENWIDTH + x
+    DIM row AS INTEGER
+    DIM i AS INTEGER
+    FOR row = 1 TO height
+        FOR i = 0 TO width - 1
+            screens[dest + i] = W_WAD.pool[src + i]
+        NEXT i
+        src = src + width
+        dest = dest + DOOMDEF.SCREENWIDTH
+    NEXT row
+ENDSUB
+
+' Copies a block of width x height pixels from a screen to the pool.
+EXPORT SUB V_GetBlock(x AS INTEGER, y AS INTEGER, scrn AS INTEGER, width AS INTEGER, height AS INTEGER, dest AS INTEGER)
+    IF x < 0 OR x + width > DOOMDEF.SCREENWIDTH OR y < 0 OR y + height > DOOMDEF.SCREENHEIGHT OR scrn < 0 OR scrn >= NUMSCREENS THEN
+        I_SYSTEM.I_Error("Bad V_GetBlock")
+    ENDIF
+    DIM src AS INTEGER = scrn * SCREENSIZE + y * DOOMDEF.SCREENWIDTH + x
+    DIM row AS INTEGER
+    DIM i AS INTEGER
+    FOR row = 1 TO height
+        FOR i = 0 TO width - 1
+            W_WAD.pool[dest + i] = screens[src + i]
+        NEXT i
+        src = src + DOOMDEF.SCREENWIDTH
+        dest = dest + width
+    NEXT row
+ENDSUB

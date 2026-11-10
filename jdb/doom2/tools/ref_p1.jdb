@@ -1,0 +1,355 @@
+' Reference numbers for test_p1.jdb, computed from the WAD file alone.
+'
+' Reads the WAD with its own few lines of code and none of the port's
+' modules, so a number that matches in test_p1 was reached twice on
+' different paths. Prints one "name value" line per number.
+'
+'   build/jdBasic.exe jdb/doom2/tools/ref_p1.jdb [wad] [level]
+
+OPTION "NOPAUSE"
+
+DIM wad_path$ = "jdb/doom/wad/doom.wad"
+DIM level$ = "E1M1"
+DIM cmd_args = OS.ARGS()
+IF LEN(cmd_args) > 1 THEN wad_path$ = cmd_args[1]
+IF LEN(cmd_args) > 2 THEN level$ = cmd_args[2]
+
+DIM wad$ = BINREADER$(wad_path$)
+DIM wad_head = UNPACK("<2n", wad$, 4)
+DIM n_lumps = wad_head[0]
+DIM dir_pos = wad_head[1]
+DIM l_pos = []
+DIM l_size = []
+DIM l_name = []
+DIM by_name = {}
+
+FUNC Trimmed$(raw$)
+    DIM p_nul = INSTR(raw$, CHR$(0))
+    IF p_nul >= 0 THEN RETURN UCASE$(LEFT$(raw$, p_nul))
+    RETURN UCASE$(raw$)
+ENDFUNC
+
+DIM li
+DIM dir_entry
+DIM dir_text$ = MID$(wad$, dir_pos, n_lumps * 16)
+FOR li = 0 TO n_lumps - 1
+    dir_entry = UNPACK("<2n", dir_text$, li * 16)
+    l_pos = APPEND(l_pos, dir_entry[0])
+    l_size = APPEND(l_size, dir_entry[1])
+    l_name = APPEND(l_name, Trimmed$(MID$(dir_text$, li * 16 + 8, 8)))
+    by_name{l_name[li]} = li
+NEXT li
+
+FUNC SignedShorts(lump)
+    RETURN UNPACK("<" + STR$(l_size[lump] \ 2) + "h", wad$, l_pos[lump])
+ENDFUNC
+
+FUNC Bytes(lump)
+    RETURN UNPACK("<" + STR$(l_size[lump]) + "b", wad$, l_pos[lump])
+ENDFUNC
+
+FUNC Total(cells)
+    DIM acc = 0
+    DIM c
+    FOR EACH c IN cells
+        acc = acc + c
+    NEXT
+    RETURN acc
+ENDFUNC
+
+' Sum of field `field` over records of `per_record` shorts.
+FUNC FieldSum(cells, per_record, field)
+    DIM acc = 0
+    DIM i = field
+    DO WHILE i < LEN(cells)
+        acc = acc + cells[i]
+        i = i + per_record
+    LOOP
+    RETURN acc
+ENDFUNC
+
+SUB Say(label$, value)
+    PRINT label$ + " " + STR$(value)
+ENDSUB
+
+' ---- level ------------------------------------------------------------------
+
+DIM marker = by_name{level$}
+DIM things = SignedShorts(marker + 1)
+DIM linedefs = SignedShorts(marker + 2)
+DIM sidedefs = SignedShorts(marker + 3)
+DIM vertexes = SignedShorts(marker + 4)
+DIM segs = SignedShorts(marker + 5)
+DIM ssectors = SignedShorts(marker + 6)
+DIM nodes = SignedShorts(marker + 7)
+DIM sectors = SignedShorts(marker + 8)
+DIM reject = Bytes(marker + 9)
+DIM blockmap = SignedShorts(marker + 10)
+
+Say "things", LEN(things) \ 5
+Say "things_x", FieldSum(things, 5, 0)
+Say "things_y", FieldSum(things, 5, 1)
+Say "things_angle", FieldSum(things, 5, 2)
+Say "things_type", FieldSum(things, 5, 3)
+Say "things_options", FieldSum(things, 5, 4)
+Say "lines", LEN(linedefs) \ 7
+Say "lines_flags", FieldSum(linedefs, 7, 2)
+Say "lines_special", FieldSum(linedefs, 7, 3)
+Say "lines_tag", FieldSum(linedefs, 7, 4)
+Say "sides", LEN(sidedefs) \ 15
+Say "sides_textureoffset", FieldSum(sidedefs, 15, 0)
+Say "sides_rowoffset", FieldSum(sidedefs, 15, 1)
+Say "sides_sector", FieldSum(sidedefs, 15, 14)
+Say "vertexes", LEN(vertexes) \ 2
+Say "vertexes_x", FieldSum(vertexes, 2, 0)
+Say "vertexes_y", FieldSum(vertexes, 2, 1)
+Say "segs", LEN(segs) \ 6
+Say "segs_v1", FieldSum(segs, 6, 0)
+Say "segs_v2", FieldSum(segs, 6, 1)
+Say "segs_linedef", FieldSum(segs, 6, 3)
+Say "segs_offset", FieldSum(segs, 6, 5)
+Say "subsectors", LEN(ssectors) \ 2
+Say "subsectors_numlines", FieldSum(ssectors, 2, 0)
+Say "subsectors_firstline", FieldSum(ssectors, 2, 1)
+Say "nodes", LEN(nodes) \ 14
+Say "nodes_x", FieldSum(nodes, 14, 0)
+Say "nodes_dy", FieldSum(nodes, 14, 3)
+DIM bbox_total = 0
+DIM bi
+FOR bi = 4 TO 11
+    bbox_total = bbox_total + FieldSum(nodes, 14, bi)
+NEXT bi
+Say "nodes_bbox", bbox_total
+Say "sectors", LEN(sectors) \ 13
+Say "sectors_floorheight", FieldSum(sectors, 13, 0)
+Say "sectors_ceilingheight", FieldSum(sectors, 13, 1)
+Say "sectors_lightlevel", FieldSum(sectors, 13, 10)
+Say "sectors_special", FieldSum(sectors, 13, 11)
+Say "sectors_tag", FieldSum(sectors, 13, 12)
+Say "reject_size", LEN(reject)
+Say "reject_sum", Total(reject)
+Say "blockmap_size", LEN(blockmap)
+Say "blockmap_sum", Total(blockmap)
+
+' Two-sided lines counted once per sector they touch, as P_GroupLines does.
+DIM touch_total = 0
+DIM front_sec
+DIM back_sec
+FOR li = 0 TO LEN(linedefs) \ 7 - 1
+    front_sec = sidedefs[linedefs[li * 7 + 5] * 15 + 14]
+    touch_total = touch_total + 1
+    IF linedefs[li * 7 + 6] <> -1 THEN
+        back_sec = sidedefs[linedefs[li * 7 + 6] * 15 + 14]
+        IF back_sec <> front_sec THEN touch_total = touch_total + 1
+    ENDIF
+NEXT li
+Say "sector_lines_total", touch_total
+
+' ---- graphics ---------------------------------------------------------------
+
+Say "playpal_sum", Total(Bytes(by_name{"PLAYPAL"}))
+Say "colormap_sum", Total(Bytes(by_name{"COLORMAP"}))
+Say "flats", by_name{"F_END"} - by_name{"F_START"} - 1
+
+DIM first_sprite = by_name{"S_START"} + 1
+DIM n_sprites = by_name{"S_END"} - first_sprite
+DIM spr_w = 0
+DIM spr_left = 0
+DIM spr_top = 0
+DIM spr_head
+FOR li = 0 TO n_sprites - 1
+    spr_head = UNPACK("<4h", wad$, l_pos[first_sprite + li])
+    spr_w = spr_w + spr_head[0]
+    spr_left = spr_left + spr_head[2]
+    spr_top = spr_top + spr_head[3]
+NEXT li
+Say "spritelumps", n_sprites
+Say "sprite_width_sum", spr_w
+Say "sprite_leftoffset_sum", spr_left
+Say "sprite_topoffset_sum", spr_top
+
+' TITLEPIC on an empty 320x200 screen. The re-release WADs carry a wider
+' picture; of that the middle 320 columns are shown.
+DIM title_crop = 0
+DIM title = Bytes(by_name{"TITLEPIC"})
+DIM title_head = UNPACK("<4h", wad$, l_pos[by_name{"TITLEPIC"}])
+DIM canvas = ZEROS(64000)
+DIM tx
+DIM post
+DIM col_ofs
+DIM py
+IF title_head[0] > 320 THEN title_crop = (title_head[0] - 320) \ 2
+FOR tx = 0 TO 319
+    col_ofs = UNPACK("<n", wad$, l_pos[by_name{"TITLEPIC"}] + 8 + (tx + title_crop) * 4)
+    post = col_ofs[0]
+    DO WHILE title[post] <> 255
+        FOR py = 0 TO title[post + 1] - 1
+            canvas[(title[post] + py) * 320 + tx] = title[post + 3 + py]
+        NEXT py
+        post = post + title[post + 1] + 4
+    LOOP
+NEXT tx
+DIM title_hash = 0
+FOR EACH py IN canvas
+    title_hash = (title_hash * 31 + py) MOD 1000000007
+NEXT
+Say "titlepic_sum", Total(canvas)
+Say "titlepic_hash", title_hash
+
+' ---- textures ---------------------------------------------------------------
+' Every column of every texture, top to bottom. A column that one patch
+' covers alone counts the pixels of that patch column's first post; a column
+' several patches cover counts the full texture height of the patches drawn
+' over each other in order. Only the columns below the largest power of two
+' that fits the width count, since the renderer wraps columns there.
+
+DIM pnames$ = MID$(wad$, l_pos[by_name{"PNAMES"}], l_size[by_name{"PNAMES"}])
+DIM n_pnames = UNPACK("<n", pnames$, 0)
+DIM patch_lump = []
+FOR li = 0 TO n_pnames[0] - 1
+    patch_lump = APPEND(patch_lump, by_name{Trimmed$(MID$(pnames$, 4 + li * 8, 8))})
+NEXT li
+
+DIM patch_bytes = {}
+FUNC PatchBytes(lump)
+    DIM key$ = STR$(lump)
+    IF NOT MAP.EXISTS(patch_bytes, key$) THEN patch_bytes{key$} = Bytes(lump)
+    RETURN patch_bytes{key$}
+ENDFUNC
+
+DIM n_textures = 0
+DIM tex_width_sum = 0
+DIM tex_height_sum = 0
+DIM tex_patch_sum = 0
+DIM tex_hash = 0
+DIM tex_first$ = ""
+DIM composite_columns = 0
+DIM tex_index = {}
+
+SUB HashTextureLump(lump_name$)
+    DIM tl = by_name{lump_name$}
+    DIM tex$ = MID$(wad$, l_pos[tl], l_size[tl])
+    DIM count_here = UNPACK("<n", tex$, 0)
+    DIM offsets = UNPACK("<" + STR$(count_here[0]) + "n", tex$, 4)
+    DIM ti
+    DIM off
+    DIM dims
+    DIM n_patches
+    DIM patch_i
+    DIM mp
+    DIM pb
+    DIM pw
+    DIM x
+    DIM y
+    DIM px
+    DIM cover
+    DIM single_lump
+    DIM single_ofs
+    DIM column
+    DIM pcol
+    DIM top
+    DIM n_run
+    DIM dst
+    DIM k
+    DIM reach
+    FOR ti = 0 TO count_here[0] - 1
+        off = offsets[ti]
+        IF n_textures = 0 THEN tex_first$ = Trimmed$(MID$(tex$, off, 8))
+        IF NOT MAP.EXISTS(tex_index, Trimmed$(MID$(tex$, off, 8))) THEN tex_index{Trimmed$(MID$(tex$, off, 8))} = n_textures
+        dims = UNPACK("<2h", tex$, off + 12)
+        n_patches = UNPACK("<h", tex$, off + 20)
+        n_textures = n_textures + 1
+        tex_width_sum = tex_width_sum + dims[0]
+        tex_height_sum = tex_height_sum + dims[1]
+        tex_patch_sum = tex_patch_sum + n_patches[0]
+        FOR x = 0 TO dims[0] - 1
+            cover = 0
+            column = ZEROS(dims[1])
+            FOR patch_i = 0 TO n_patches[0] - 1
+                mp = UNPACK("<3h", tex$, off + 22 + patch_i * 10)
+                pb = PatchBytes(patch_lump[mp[2]])
+                pw = pb[0] + pb[1] * 256
+                px = x - mp[0]
+                IF px >= 0 AND px < pw THEN
+                    cover = cover + 1
+                    single_lump = patch_lump[mp[2]]
+                    pcol = pb[8 + px * 4] + pb[9 + px * 4] * 256 + pb[10 + px * 4] * 65536
+                    single_ofs = pcol
+                    DO WHILE pb[pcol] <> 255
+                        top = mp[1] + pb[pcol]
+                        n_run = pb[pcol + 1]
+                        dst = top
+                        IF dst < 0 THEN
+                            n_run = n_run + dst
+                            dst = 0
+                        ENDIF
+                        IF dst + n_run > dims[1] THEN n_run = dims[1] - dst
+                        FOR k = 0 TO n_run - 1
+                            column[dst + k] = pb[pcol + 3 + k]
+                        NEXT k
+                        pcol = pcol + pb[pcol + 1] + 4
+                    LOOP
+                ENDIF
+            NEXT patch_i
+            reach = 1
+            DO WHILE reach * 2 <= dims[0]
+                reach = reach * 2
+            LOOP
+            IF x >= reach THEN
+                IF cover > 1 THEN composite_columns = composite_columns + 1
+            ELSEIF cover = 1 THEN
+                pb = PatchBytes(single_lump)
+                FOR y = 0 TO pb[single_ofs + 1] - 1
+                    tex_hash = (tex_hash * 31 + pb[single_ofs + 3 + y]) MOD 1000000007
+                NEXT y
+            ELSEIF cover > 1 THEN
+                composite_columns = composite_columns + 1
+                FOR y = 0 TO dims[1] - 1
+                    tex_hash = (tex_hash * 31 + column[y]) MOD 1000000007
+                NEXT y
+            ENDIF
+        NEXT x
+    NEXT ti
+ENDSUB
+
+HashTextureLump "TEXTURE1"
+IF MAP.EXISTS(by_name, "TEXTURE2") THEN HashTextureLump "TEXTURE2"
+Say "textures", n_textures
+PRINT "texture_first " + tex_first$
+Say "texture_width_sum", tex_width_sum
+Say "texture_height_sum", tex_height_sum
+Say "texture_patch_sum", tex_patch_sum
+Say "texture_composite_columns", composite_columns
+Say "texture_hash", tex_hash
+
+' ---- names of the level resolved to numbers -----------------------------------
+
+FUNC TextureNumber(raw$)
+    DIM nm$ = Trimmed$(raw$)
+    IF LEFT$(nm$, 1) = "-" THEN RETURN 0
+    RETURN tex_index{nm$}
+ENDFUNC
+
+DIM side_text$ = MID$(wad$, l_pos[marker + 3], l_size[marker + 3])
+DIM top_sum = 0
+DIM bottom_sum = 0
+DIM mid_sum = 0
+FOR li = 0 TO LEN(sidedefs) \ 15 - 1
+    top_sum = top_sum + TextureNumber(MID$(side_text$, li * 30 + 4, 8))
+    bottom_sum = bottom_sum + TextureNumber(MID$(side_text$, li * 30 + 12, 8))
+    mid_sum = mid_sum + TextureNumber(MID$(side_text$, li * 30 + 20, 8))
+NEXT li
+Say "sides_toptexture", top_sum
+Say "sides_bottomtexture", bottom_sum
+Say "sides_midtexture", mid_sum
+
+DIM sector_text$ = MID$(wad$, l_pos[marker + 8], l_size[marker + 8])
+DIM first_flat = by_name{"F_START"} + 1
+DIM floorpic_sum = 0
+DIM ceilingpic_sum = 0
+FOR li = 0 TO LEN(sectors) \ 13 - 1
+    floorpic_sum = floorpic_sum + by_name{Trimmed$(MID$(sector_text$, li * 26 + 4, 8))} - first_flat
+    ceilingpic_sum = ceilingpic_sum + by_name{Trimmed$(MID$(sector_text$, li * 26 + 12, 8))} - first_flat
+NEXT li
+Say "sectors_floorpic", floorpic_sum
+Say "sectors_ceilingpic", ceilingpic_sum

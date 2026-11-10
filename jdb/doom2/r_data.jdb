@@ -1,0 +1,323 @@
+' Wall textures, flats, sprite lump sizes and colormaps (r_data.c).
+'
+' A texture is a list of patches. A column that one patch covers alone is read
+' straight from that patch lump; a column several patches cover is drawn once
+' into a composite block. Both are places in W_WAD.pool, and R_GetColumn
+' answers the place of a column's first pixel.
+
+EXPORT MODULE R_DATA
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT I_SYSTEM
+IMPORT W_WAD
+
+EXPORT CONST MAXTEXTURES = 1024
+EXPORT CONST MAXTEXPATCHES = 8192
+EXPORT CONST MAXTEXCOLUMNS = 262144
+EXPORT CONST MAXFLATS = 1024
+EXPORT CONST MAXSPRITELUMPS = 4096
+
+' ---- textures ---------------------------------------------------------------
+
+EXPORT DIM numtextures AS INTEGER = 0
+EXPORT DIM tex_name$[MAXTEXTURES] AS STRING
+EXPORT DIM tex_width[MAXTEXTURES] AS INTEGER
+EXPORT DIM tex_height[MAXTEXTURES] AS INTEGER
+EXPORT DIM tex_patchcount[MAXTEXTURES] AS INTEGER
+EXPORT DIM tex_firstpatch[MAXTEXTURES] AS INTEGER
+
+' texpatch_t, all textures in one run; a texture's patches start at
+' tex_firstpatch.
+EXPORT DIM tp_originx[MAXTEXPATCHES] AS INTEGER
+EXPORT DIM tp_originy[MAXTEXPATCHES] AS INTEGER
+EXPORT DIM tp_patch[MAXTEXPATCHES] AS INTEGER
+
+' Per texture column, all textures in one run from tex_firstcol: the patch
+' lump and the offset in it, or -1 and the offset in the composite block.
+EXPORT DIM tex_firstcol[MAXTEXTURES] AS INTEGER
+EXPORT DIM texturecolumnlump[MAXTEXCOLUMNS] AS INTEGER
+EXPORT DIM texturecolumnofs[MAXTEXCOLUMNS] AS INTEGER
+
+' Place of the composite block in the pool, -1 until it is built.
+EXPORT DIM texturecomposite[MAXTEXTURES] AS INTEGER
+EXPORT DIM texturecompositesize[MAXTEXTURES] AS INTEGER
+EXPORT DIM texturewidthmask[MAXTEXTURES] AS INTEGER
+' Height as fixed_t, for texture pegging.
+EXPORT DIM textureheight[MAXTEXTURES] AS INTEGER
+' Which texture is shown for a texture number (wall animation).
+EXPORT DIM texturetranslation[MAXTEXTURES + 1] AS INTEGER
+
+DIM tex_by_name AS MAP = {}
+
+' ---- flats ------------------------------------------------------------------
+
+EXPORT DIM firstflat AS INTEGER = 0
+EXPORT DIM lastflat AS INTEGER = 0
+EXPORT DIM numflats AS INTEGER = 0
+EXPORT DIM flattranslation[MAXFLATS + 1] AS INTEGER
+
+' ---- sprite lumps -----------------------------------------------------------
+
+EXPORT DIM firstspritelump AS INTEGER = 0
+EXPORT DIM lastspritelump AS INTEGER = 0
+EXPORT DIM numspritelumps AS INTEGER = 0
+' fixed_t, indexed by lump number minus firstspritelump.
+EXPORT DIM spritewidth[MAXSPRITELUMPS] AS INTEGER
+EXPORT DIM spriteoffset[MAXSPRITELUMPS] AS INTEGER
+EXPORT DIM spritetopoffset[MAXSPRITELUMPS] AS INTEGER
+
+' ---- colormaps --------------------------------------------------------------
+
+' Place of the COLORMAP lump in the pool: 34 tables of 256 palette indices.
+EXPORT DIM colormaps AS INTEGER = 0
+
+FUNC CleanName$(raw$ AS STRING) AS STRING
+    DIM p_nul AS INTEGER = INSTR(raw$, CHR$(0))
+    IF p_nul >= 0 THEN RETURN UCASE$(LEFT$(raw$, p_nul))
+    RETURN UCASE$(raw$)
+ENDFUNC
+
+' Copies the posts of one patch column into a composite column, clipped to
+' the texture height.
+SUB R_DrawColumnInCache(patchcol AS INTEGER, cache AS INTEGER, originy AS INTEGER, cacheheight AS INTEGER)
+    DIM post AS INTEGER = patchcol
+    DIM n_pixels AS INTEGER
+    DIM position AS INTEGER
+    DIM source AS INTEGER
+    DIM i AS INTEGER
+    DO WHILE W_WAD.pool[post] <> 255
+        source = post + 3
+        n_pixels = CLNG(W_WAD.pool[post + 1])
+        position = originy + CLNG(W_WAD.pool[post])
+        IF position < 0 THEN
+            n_pixels = n_pixels + position
+            position = 0
+        ENDIF
+        IF position + n_pixels > cacheheight THEN n_pixels = cacheheight - position
+        FOR i = 0 TO n_pixels - 1
+            W_WAD.pool[cache + position + i] = W_WAD.pool[source + i]
+        NEXT i
+        post = post + CLNG(W_WAD.pool[post + 1]) + 4
+    LOOP
+ENDSUB
+
+SUB R_GenerateComposite(texnum AS INTEGER)
+    DIM block AS INTEGER = W_WAD.W_Alloc(texturecompositesize[texnum])
+    texturecomposite[texnum] = block
+    DIM firstcol AS INTEGER = CLNG(tex_firstcol[texnum])
+    DIM width AS INTEGER = CLNG(tex_width[texnum])
+    DIM i AS INTEGER
+    DIM tp AS INTEGER
+    DIM realpatch AS INTEGER
+    DIM x AS INTEGER
+    DIM x1 AS INTEGER
+    DIM x2 AS INTEGER
+    DIM x_start AS INTEGER
+    FOR i = 0 TO tex_patchcount[texnum] - 1
+        tp = CLNG(tex_firstpatch[texnum]) + i
+        realpatch = W_WAD.W_CacheLumpNum(tp_patch[tp])
+        x1 = CLNG(tp_originx[tp])
+        x2 = x1 + W_WAD.PoolShort(realpatch)
+        x_start = x1
+        IF x_start < 0 THEN x_start = 0
+        IF x2 > width THEN x2 = width
+        FOR x = x_start TO x2 - 1
+            IF texturecolumnlump[firstcol + x] < 0 THEN
+                R_DrawColumnInCache realpatch + W_WAD.PoolLong(realpatch + 8 + (x - x1) * 4), block + texturecolumnofs[firstcol + x], tp_originy[tp], tex_height[texnum]
+            ENDIF
+        NEXT x
+    NEXT i
+ENDSUB
+
+SUB R_GenerateLookup(texnum AS INTEGER)
+    texturecomposite[texnum] = -1
+    texturecompositesize[texnum] = 0
+    DIM firstcol AS INTEGER = CLNG(tex_firstcol[texnum])
+    DIM width AS INTEGER = CLNG(tex_width[texnum])
+    DIM patchcount[width] AS INTEGER
+    DIM i AS INTEGER
+    DIM tp AS INTEGER
+    DIM realpatch AS INTEGER
+    DIM x AS INTEGER
+    DIM x1 AS INTEGER
+    DIM x2 AS INTEGER
+    DIM x_start AS INTEGER
+    FOR i = 0 TO tex_patchcount[texnum] - 1
+        tp = CLNG(tex_firstpatch[texnum]) + i
+        realpatch = W_WAD.W_CacheLumpNum(tp_patch[tp])
+        x1 = CLNG(tp_originx[tp])
+        x2 = x1 + W_WAD.PoolShort(realpatch)
+        x_start = x1
+        IF x_start < 0 THEN x_start = 0
+        IF x2 > width THEN x2 = width
+        FOR x = x_start TO x2 - 1
+            patchcount[x] = patchcount[x] + 1
+            texturecolumnlump[firstcol + x] = tp_patch[tp]
+            texturecolumnofs[firstcol + x] = W_WAD.PoolLong(realpatch + 8 + (x - x1) * 4) + 3
+        NEXT x
+    NEXT i
+
+    FOR x = 0 TO width - 1
+        IF patchcount[x] = 0 THEN
+            PRINT "R_GenerateLookup: column without a patch (" + tex_name$[texnum] + ")"
+            RETURN
+        ENDIF
+        IF patchcount[x] > 1 THEN
+            texturecolumnlump[firstcol + x] = -1
+            texturecolumnofs[firstcol + x] = texturecompositesize[texnum]
+            IF texturecompositesize[texnum] > 65536 - tex_height[texnum] THEN I_SYSTEM.I_Error("R_GenerateLookup: texture " + STR$(texnum) + " is >64k")
+            texturecompositesize[texnum] = texturecompositesize[texnum] + tex_height[texnum]
+        ENDIF
+    NEXT x
+ENDSUB
+
+' Place in the pool of the first pixel of a texture column.
+EXPORT FUNC R_GetColumn(tex AS INTEGER, col AS INTEGER) AS INTEGER
+    DIM c AS INTEGER = CLNG(tex_firstcol[tex]) + (col BAND CLNG(texturewidthmask[tex]))
+    DIM lump AS INTEGER = CLNG(texturecolumnlump[c])
+    IF lump > 0 THEN RETURN W_WAD.W_CacheLumpNum(lump) + texturecolumnofs[c]
+    IF texturecomposite[tex] < 0 THEN R_GenerateComposite(tex)
+    RETURN texturecomposite[tex] + texturecolumnofs[c]
+ENDFUNC
+
+' Reads the texture definitions of one TEXTUREx lump, appending to the list.
+SUB LoadTextureLump(lump_name$ AS STRING, patchlookup AS ARRAY)
+    DIM lump AS INTEGER = W_WAD.W_GetNumForName(lump_name$)
+    DIM maptex$ AS STRING = W_WAD.W_LumpString$(lump)
+    DIM maxoff AS INTEGER = LEN(maptex$)
+    DIM header AS ARRAY = UNPACK("<n", maptex$, 0)
+    DIM n_here AS INTEGER = CLNG(header[0])
+    DIM directory AS ARRAY = UNPACK("<" + STR$(n_here) + "n", maptex$, 4)
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM offset AS INTEGER
+    DIM t AS INTEGER
+    DIM tp AS INTEGER
+    DIM mask AS INTEGER
+    DIM size AS ARRAY = []
+    DIM pcount AS ARRAY = []
+    DIM mpatch AS ARRAY = []
+    DIM next_patch AS INTEGER = 0
+    DIM next_col AS INTEGER = 0
+    IF numtextures > 0 THEN
+        next_patch = CLNG(tex_firstpatch[numtextures - 1] + tex_patchcount[numtextures - 1])
+        next_col = CLNG(tex_firstcol[numtextures - 1] + tex_width[numtextures - 1])
+    ENDIF
+    FOR i = 0 TO n_here - 1
+        offset = CLNG(directory[i])
+        IF offset > maxoff THEN I_SYSTEM.I_Error("R_InitTextures: bad texture directory")
+        t = numtextures
+        IF t >= MAXTEXTURES THEN I_SYSTEM.I_Error("R_InitTextures: more than " + STR$(MAXTEXTURES) + " textures")
+        tex_name$[t] = CleanName$(MID$(maptex$, offset, 8))
+        size = UNPACK("<2h", maptex$, offset + 12)
+        pcount = UNPACK("<h", maptex$, offset + 20)
+        tex_width[t] = size[0]
+        tex_height[t] = size[1]
+        tex_patchcount[t] = pcount[0]
+        tex_firstpatch[t] = next_patch
+        tex_firstcol[t] = next_col
+        IF next_patch + tex_patchcount[t] > MAXTEXPATCHES THEN I_SYSTEM.I_Error("R_InitTextures: too many texture patches")
+        IF next_col + tex_width[t] > MAXTEXCOLUMNS THEN I_SYSTEM.I_Error("R_InitTextures: too many texture columns")
+        FOR j = 0 TO tex_patchcount[t] - 1
+            mpatch = UNPACK("<3h", maptex$, offset + 22 + j * 10)
+            tp = next_patch + j
+            tp_originx[tp] = mpatch[0]
+            tp_originy[tp] = mpatch[1]
+            tp_patch[tp] = patchlookup[mpatch[2]]
+            IF tp_patch[tp] = -1 THEN I_SYSTEM.I_Error("R_InitTextures: Missing patch in texture " + tex_name$[t])
+        NEXT j
+        next_patch = next_patch + CLNG(tex_patchcount[t])
+        next_col = next_col + CLNG(tex_width[t])
+
+        mask = 1
+        DO WHILE mask * 2 <= tex_width[t]
+            mask = mask * 2
+        LOOP
+        texturewidthmask[t] = mask - 1
+        textureheight[t] = tex_height[t] * 65536
+        IF NOT MAP.EXISTS(tex_by_name, tex_name$[t]) THEN tex_by_name{tex_name$[t]} = t
+        numtextures = numtextures + 1
+    NEXT i
+ENDSUB
+
+SUB R_InitTextures()
+    DIM names$ AS STRING = W_WAD.W_LumpString$(W_WAD.W_GetNumForName("PNAMES"))
+    DIM header AS ARRAY = UNPACK("<n", names$, 0)
+    DIM nummappatches AS INTEGER = CLNG(header[0])
+    DIM patchlookup[nummappatches] AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO nummappatches - 1
+        patchlookup[i] = W_WAD.W_CheckNumForName(CleanName$(MID$(names$, 4 + i * 8, 8)))
+    NEXT i
+
+    numtextures = 0
+    tex_by_name = {}
+    LoadTextureLump "TEXTURE1", patchlookup
+    IF W_WAD.W_CheckNumForName("TEXTURE2") <> -1 THEN LoadTextureLump "TEXTURE2", patchlookup
+
+    FOR i = 0 TO numtextures - 1
+        R_GenerateLookup(i)
+    NEXT i
+    FOR i = 0 TO numtextures - 1
+        texturetranslation[i] = i
+    NEXT i
+ENDSUB
+
+SUB R_InitFlats()
+    firstflat = W_WAD.W_GetNumForName("F_START") + 1
+    lastflat = W_WAD.W_GetNumForName("F_END") - 1
+    numflats = lastflat - firstflat + 1
+    IF numflats > MAXFLATS THEN I_SYSTEM.I_Error("R_InitFlats: more than " + STR$(MAXFLATS) + " flats")
+    DIM i AS INTEGER
+    FOR i = 0 TO numflats - 1
+        flattranslation[i] = i
+    NEXT i
+ENDSUB
+
+SUB R_InitSpriteLumps()
+    firstspritelump = W_WAD.W_GetNumForName("S_START") + 1
+    lastspritelump = W_WAD.W_GetNumForName("S_END") - 1
+    numspritelumps = lastspritelump - firstspritelump + 1
+    IF numspritelumps > MAXSPRITELUMPS THEN I_SYSTEM.I_Error("R_InitSpriteLumps: more than " + STR$(MAXSPRITELUMPS) + " sprite lumps")
+    DIM i AS INTEGER
+    DIM header AS ARRAY = []
+    FOR i = 0 TO numspritelumps - 1
+        header = W_WAD.W_ReadShortsAt(firstspritelump + i, 0, 4)
+        spritewidth[i] = header[0] * 65536
+        spriteoffset[i] = header[2] * 65536
+        spritetopoffset[i] = header[3] * 65536
+    NEXT i
+ENDSUB
+
+SUB R_InitColormaps()
+    colormaps = W_WAD.W_CacheLumpName("COLORMAP")
+ENDSUB
+
+EXPORT SUB R_InitData()
+    R_InitTextures()
+    R_InitFlats()
+    R_InitSpriteLumps()
+    R_InitColormaps()
+ENDSUB
+
+EXPORT FUNC R_FlatNumForName(name$ AS STRING) AS INTEGER
+    DIM lump AS INTEGER = W_WAD.W_CheckNumForName(name$)
+    IF lump = -1 THEN I_SYSTEM.I_Error("R_FlatNumForName: " + name$ + " not found")
+    RETURN lump - firstflat
+ENDFUNC
+
+' 0 for the "no texture" name, -1 for a name that is not a texture.
+EXPORT FUNC R_CheckTextureNumForName(name$ AS STRING) AS INTEGER
+    IF LEFT$(name$, 1) = "-" THEN RETURN 0
+    DIM key$ AS STRING = UCASE$(name$)
+    IF MAP.EXISTS(tex_by_name, key$) THEN RETURN tex_by_name{key$}
+    RETURN -1
+ENDFUNC
+
+EXPORT FUNC R_TextureNumForName(name$ AS STRING) AS INTEGER
+    DIM i AS INTEGER = R_CheckTextureNumForName(name$)
+    IF i = -1 THEN I_SYSTEM.I_Error("R_TextureNumForName: " + name$ + " not found")
+    RETURN i
+ENDFUNC

@@ -1,0 +1,60 @@
+' Window and frame output (i_video.c).
+
+EXPORT MODULE I_VIDEO
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT DOOMDEF
+IMPORT TABLES
+IMPORT W_WAD
+IMPORT V_VIDEO
+
+' Window pixels per screen pixel.
+EXPORT DIM window_scale AS INTEGER = 1
+
+' Packed RGB of each palette index, after gamma.
+DIM pal_rgb[256] AS INTEGER
+
+' Opens the window; one screen pixel is scale x scale window pixels.
+EXPORT SUB I_InitGraphics(scale AS INTEGER)
+    window_scale = scale
+    SCREEN DOOMDEF.SCREENWIDTH * scale, DOOMDEF.SCREENHEIGHT * scale, "DOOM"
+ENDSUB
+
+EXPORT SUB I_ShutdownGraphics()
+    GFX.CLOSE
+ENDSUB
+
+' palette is the place in the pool of 256 RGB triples (one of the 14 palettes
+' of the PLAYPAL lump).
+EXPORT SUB I_SetPalette(palette AS INTEGER)
+    DIM gamma_row AS INTEGER = V_VIDEO.usegamma * 256
+    DIM i AS INTEGER
+    DIM r AS INTEGER
+    DIM g AS INTEGER
+    DIM b AS INTEGER
+    FOR i = 0 TO 255
+        r = CLNG(TABLES.gammatable[gamma_row + W_WAD.pool[palette + i * 3]])
+        g = CLNG(TABLES.gammatable[gamma_row + W_WAD.pool[palette + i * 3 + 1]])
+        b = CLNG(TABLES.gammatable[gamma_row + W_WAD.pool[palette + i * 3 + 2]])
+        pal_rgb[i] = (r SHL 16) BOR (g SHL 8) BOR b
+    NEXT i
+ENDSUB
+
+SUB BlitScreen()
+    PLOTRAW 0, 0, RESHAPE(pal_rgb[TAKE(V_VIDEO.SCREENSIZE, V_VIDEO.screens)], [DOOMDEF.SCREENHEIGHT, DOOMDEF.SCREENWIDTH]), window_scale, window_scale
+ENDSUB
+
+' Shows screen 0.
+EXPORT SUB I_FinishUpdate()
+    BlitScreen()
+    SCREENFLIP
+ENDSUB
+
+' Shows screen 0 and saves the window to a PNG.
+EXPORT SUB I_Screenshot(path$ AS STRING)
+    BlitScreen()
+    GFX.SAVE_SCREENSHOT path$
+    SCREENFLIP
+ENDSUB

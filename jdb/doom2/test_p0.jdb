@@ -103,6 +103,8 @@ Eq("finesine hash", TableHash(TABLES.finesine), 84589169)
 Eq("tantoangle length", LEN(TABLES.tantoangle), 2049)
 Eq("tantoangle sum", TableSum(TABLES.tantoangle), 614597232870)
 Eq("tantoangle hash", TableHash(TABLES.tantoangle), 152147327)
+Eq("gammatable length", LEN(TABLES.gammatable), 1280)
+Eq("gammatable sum", TableSum(TABLES.gammatable), 189079)
 Eq("finesine[0]", CLNG(TABLES.finesine[0]), 25)
 Eq("tantoangle ends at 45 degrees", CLNG(TABLES.tantoangle[TABLES.SLOPERANGE]), M_FIXED.ANG45)
 Eq("cosine of 0 is the largest sine", CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4]), 65535)
@@ -149,13 +151,13 @@ Eq("mi_seesound in range", CountOutside(INFO.mi_seesound, 0, INFO.NUMSFX - 1), 0
 
 DIM wad_path$ AS STRING = "jdb/doom/wad/doom.wad"
 IF FILE.EXISTS(wad_path$) THEN
-    W_WAD.W_INIT(wad_path$)
-    Eq("WAD has lumps", W_WAD.W_NUMLUMPS() > 1000, TRUE)
-    Eq("PLAYPAL is 14 palettes", W_WAD.W_LUMP_SIZE(W_WAD.W_FIND("PLAYPAL")), 14 * 768)
-    Eq("COLORMAP is 34 maps", W_WAD.W_LUMP_SIZE(W_WAD.W_FIND("COLORMAP")), 34 * 256)
-    Eq("E1M1 is followed by THINGS", W_WAD.W_LUMP_NAME$(W_WAD.W_FIND("E1M1") + 1) = "THINGS", TRUE)
-    Eq("DEMO1 is there", W_WAD.W_FIND("DEMO1") >= 0, TRUE)
-    Eq("a missing lump answers -1", W_WAD.W_FIND("NOSUCHLP"), -1)
+    W_WAD.W_Init(wad_path$)
+    Eq("WAD has lumps", W_WAD.W_NumLumps() > 1000, TRUE)
+    Eq("PLAYPAL is 14 palettes", W_WAD.W_LumpLength(W_WAD.W_CheckNumForName("PLAYPAL")), 14 * 768)
+    Eq("COLORMAP is 34 maps", W_WAD.W_LumpLength(W_WAD.W_CheckNumForName("COLORMAP")), 34 * 256)
+    Eq("E1M1 is followed by THINGS", W_WAD.W_LumpName$(W_WAD.W_CheckNumForName("E1M1") + 1) = "THINGS", TRUE)
+    Eq("DEMO1 is there", W_WAD.W_CheckNumForName("DEMO1") >= 0, TRUE)
+    Eq("a missing lump answers -1", W_WAD.W_CheckNumForName("NOSUCHLP"), -1)
 ELSE
     PRINT "SKIP w_wad: " + wad_path$ + " not found"
 ENDIF
