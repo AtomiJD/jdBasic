@@ -1,0 +1,87 @@
+' Plays one short round against a world server and says whether its rules
+' ran without an error. deploy.sh runs it on the box, with the box's own
+' jdBasic and the files about to go live, before anything is published.
+'
+'   jdbasic preflight.jdb <server> <mode>
+'
+' mode "reply":  the server has no model; the NPC must give its fixed answer
+'                and the rules must raise no error.
+' mode "failed": the server's model cannot be reached; the NPC must say that
+'                it did not understand, and that failure is the only error.
+' Prints one line per check that fails and ends with exit code 1 then.
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM srv$ AS STRING = cli[1]
+DIM mode$ AS STRING = cli[2]
+DIM bad AS INTEGER = 0
+
+SUB Check(ok AS BOOLEAN, what$ AS STRING)
+    IF NOT ok THEN
+        PRINT "preflight ("; mode$; "): "; what$
+        bad = bad + 1
+    ENDIF
+ENDSUB
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+
+HTTP.SETTIMEOUT(5)
+DIM code = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=0"))
+Check(code{"version"} >= 1 ANDALSO LEN(code{"patches"}) >= 1, "the server hands out no client code")
+
+DIM joined = Post("/join", {"name": "Preflight"})
+Check(joined{"ok"}, "join was refused")
+DIM token$ AS STRING = "" + (joined{"token"} ?? "")
+
+DIM first = Post("/sync", {"token": token$, "mapv": 0, "since": -1})
+Check(first{"ok"} ANDALSO MAP.EXISTS(first, "map"), "the first sync brings no map")
+DIM start_y AS INTEGER = first{"y"}
+DIM since AS INTEGER = first{"seq"}
+
+' three steps towards the tavern, then a line with characters of two and three bytes
+DIM i AS INTEGER
+DIM r = first
+FOR i = 1 TO 3
+    SLEEP 200
+    r = Post("/sync", {"token": token$, "dy": -1, "mapv": 1, "since": since})
+NEXT i
+Check(r{"ok"} ANDALSO r{"y"} = start_y - 3, "walking three tiles up did not work")
+
+DIM spoken$ AS STRING = "Gr" + CHR$(195) + CHR$(188) + CHR$(195) + CHR$(159) + " dich, 3 " + CHR$(226) + CHR$(130) + CHR$(172) + "?"
+r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": spoken$})
+Check(r{"ok"}, "speaking raised an error in the rules")
+
+DIM own AS BOOLEAN = FALSE
+DIM answer$ AS STRING = ""
+DIM tries AS INTEGER
+FOR tries = 1 TO 30
+    IF r{"ok"} THEN
+        DIM events = r{"events"}
+        FOR i = 0 TO LEN(events) - 1
+            IF events[i]{"type"} = "say" ANDALSO events[i]{"who"} = "Preflight" ANDALSO events[i]{"text"} = spoken$ THEN own = TRUE
+            IF events[i]{"type"} = "say" ANDALSO "" + (events[i]{"to"} ?? "") = "Preflight" THEN answer$ = events[i]{"text"}
+        NEXT i
+        since = r{"seq"}
+    ENDIF
+    IF answer$ <> "" THEN EXITFOR
+    SLEEP 200
+    r = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+NEXT tries
+Check(own, "the spoken line did not come back unchanged")
+Check(answer$ <> "", "the NPC gave no answer")
+
+' two seconds of ticks, so what the NPCs do on their own has run as well
+SLEEP 2000
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+IF mode$ = "failed" THEN
+    Check(INSTR(answer$, "nicht verstanden") >= 0, "a failing model does not make the NPC say so: " + answer$)
+    Check(stats{"errors"} = 1 ANDALSO STARTSWITH(stats{"last_error"}, "model"), "errors beyond the failing model: " + STR$(stats{"errors"}) + " " + stats{"last_error"})
+ELSE
+    Check(stats{"errors"} = 0, "the rules raised " + STR$(stats{"errors"}) + " error(s): " + stats{"last_error"})
+ENDIF
+
+IF bad > 0 THEN END 1
+PRINT "preflight ("; mode$; "): ok"

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Push Wunschwelt to the Hostinger box, as a sub-path of vvss.jdbasic.tech.
 #   ./deploy.sh            kernels, game, page; restart the world server
-#   ./deploy.sh --page     page and client only; the world keeps running
+#   ./deploy.sh --check    stage the files and run the preflight; publish nothing
+#   ./deploy.sh --page    page and client only; the world keeps running
 #   ./deploy.sh --wasm     also ship the browser runtime from wasm/ (this game's copy only)
 #   ./deploy.sh --setup    once: user, systemd unit "wunschwelt", nginx routes
 #   ./deploy.sh --patch <file> <title>   send one patch to the running world
@@ -28,8 +29,31 @@ push_files() {
     $SSH 'rm -rf ~/ww_stage && mkdir -p ~/ww_stage/game ~/ww_stage/tools ~/ww_stage/web'
     $SCP server.jdb client.jdb "$HOST:~/ww_stage/"
     $SCP game/*.jdb "$HOST:~/ww_stage/game/"
-    $SCP tools/patch.jdb tools/nginx_route.jdb "$HOST:~/ww_stage/tools/"
+    $SCP tools/patch.jdb tools/nginx_route.jdb tools/preflight.jdb "$HOST:~/ww_stage/tools/"
     $SCP web/index.html "$HOST:~/ww_stage/web/"
+}
+
+# Runs the staged server twice on spare ports with the box's own jdBasic and
+# plays a round against each: once without a model, once with a model that
+# cannot be reached. Nothing is published when a rule fails there.
+preflight() {
+    echo "== preflight on the box =="
+    $SSH 'bash -s' <<'EOF'
+JDB=/opt/wunschwelt/jdBasic
+[ -x "$JDB" ] || JDB=$HOME/jdbasic-1.2/build/jdbasic
+S=$HOME/ww_stage
+run() {  # mode, port, model address
+    WW_GAME_DIR=$S/game WW_PATCH_KEY= WW_LLM_URL=$3 "$JDB" $S/server.jdb $2 40 > $S/preflight_$1.log 2>&1 &
+    local pid=$!
+    sleep 2
+    "$JDB" $S/tools/preflight.jdb http://127.0.0.1:$2 $1
+    local rc=$?
+    kill $pid 2>/dev/null
+    [ $rc -eq 0 ] || { echo "server log:"; tail -5 $S/preflight_$1.log; }
+    return $rc
+}
+run reply 8121 "" && run failed 8122 http://127.0.0.1:9/none
+EOF
 }
 
 publish_page() {
@@ -73,6 +97,7 @@ case "$1" in
 --setup)
     echo "== files =="
     push_files
+    preflight
     echo "== user, runtime, key =="
     $SSH "id wunschwelt >/dev/null 2>&1 || sudo -n useradd --system --no-create-home --shell /usr/sbin/nologin wunschwelt
 sudo -n mkdir -p /opt/wunschwelt
@@ -122,12 +147,19 @@ fi"
     publish_page
     $SSH 'sudo -n cp -r /var/www/vvss/tower/play/jdbasic.js /var/www/vvss/tower/play/jdbasic.wasm /var/www/vvss/tower/play/vendor /var/www/vvss/wunschwelt/play/ && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
     ;;
+--check)
+    push_files
+    preflight
+    exit 0
+    ;;
 --page)
     push_files
+    preflight
     publish_page
     ;;
 *)
     push_files
+    preflight
     publish_server
     publish_page
     if [ "$1" = "--wasm" ]; then

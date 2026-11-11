@@ -91,6 +91,15 @@ file system; nginx hands on `join`, `sync` and `code` and nothing else, so a
 patch can only be sent from the box itself. `tools/nginx_route.jdb` writes
 those routes into the site file.
 
+Before anything is published, `deploy.sh` runs a preflight on the box: the
+staged server starts twice on spare ports with the box's own jdBasic, and
+`tools/preflight.jdb` plays a round against each (join, walk, a spoken line
+with umlauts, the NPC's answer, two seconds of ticks), once without a model
+and once with a model that cannot be reached. A rule that fails there stops
+the deploy; `--check` runs only this. The box's jdBasic is older than the
+one in `build/`, so a builtin that works locally can be missing there. A
+patch sent with `--patch` does not go through the preflight yet.
+
 ## Machines
 
 - **cortex**: the chat model (Qwen2.5-7B-Instruct) on port 8082, started by
