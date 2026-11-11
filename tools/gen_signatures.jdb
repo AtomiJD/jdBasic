@@ -6,9 +6,11 @@
 ' and exits 1 if not. With --core it writes nothing and prints the sections
 ' every program draws on, read from the reference as it stands, and names
 ' the sections it left out; a session start hook hands that to an agent.
-' Run from the repository root.
+' A hook's output has a size limit, so --core N prints the Nth piece of at
+' most PIECE_CHARS characters, cut between sections, and nothing when there
+' is no such piece. Run from the repository root.
 '
-'   jdbasic tools/gen_signatures.jdb [--check | --core]
+'   jdbasic tools/gen_signatures.jdb [--check | --core [N]]
 
 DIM doc_path$ = "doc/languages.md"
 DIM out_path$ = "doc/signatures.md"
@@ -24,12 +26,19 @@ DIM SUBSYSTEMS = ["Graphics and Multimedia Functions", "ImGui Functions", "Nativ
     "Bare metal: the kernel target", "Nodes and messages", "Calls", "Topics", "The prompt and the flash store", _
     "The radio on the ESP32-S3", "COM Automation Functions", "Building a Web Server & API", "TCP and UDP Sockets (NET)"]
 
+DIM PIECE_CHARS = 3500
+
 DIM check_only = FALSE
 DIM core_only = FALSE
-FOR EACH arg IN OS.ARGS()
-    IF arg = "--check" THEN check_only = TRUE
-    IF arg = "--core" THEN core_only = TRUE
-NEXT
+DIM piece_wanted = 0
+DIM cli = OS.ARGS()
+FOR a = 0 TO LEN(cli) - 1
+    IF cli[a] = "--check" THEN check_only = TRUE
+    IF cli[a] = "--core" THEN
+        core_only = TRUE
+        IF a + 1 < LEN(cli) THEN piece_wanted = VAL(cli[a + 1])
+    ENDIF
+NEXT a
 
 ' The signature a reference bullet opens with, or "" for a bullet that
 ' describes something else (a parameter, a field, a key).
@@ -93,9 +102,27 @@ NEXT
 DIM result$ = JOIN(out_rows, nl$) + nl$
 
 IF core_only THEN
-    PRINT JOIN(core_rows, nl$)
-    PRINT "Not listed, in " + out_path$ + " under these headings: " + JOIN(left_out, "; ")
-    PRINT "What a builtin does: jdb_doc <NAME>, or its section in " + doc_path$ + ". A name in neither list does not exist."
+    core_rows = APPEND(core_rows, "Not listed, in " + out_path$ + " under these headings: " + JOIN(left_out, "; "))
+    core_rows = APPEND(core_rows, "What a builtin does: jdb_doc <NAME>, or its section in " + doc_path$ + ". A name in neither list does not exist.")
+    IF piece_wanted < 1 THEN
+        PRINT JOIN(core_rows, nl$)
+    ELSE
+        DIM pieces = []
+        DIM piece$ = ""
+        FOR EACH core_row$ IN core_rows
+            IF LEN(piece$) > 0 ANDALSO LEN(piece$) + LEN(core_row$) + 1 > PIECE_CHARS THEN
+                pieces = APPEND(pieces, piece$)
+                piece$ = ""
+            ENDIF
+            IF LEN(piece$) > 0 THEN piece$ = piece$ + nl$
+            piece$ = piece$ + core_row$
+        NEXT
+        pieces = APPEND(pieces, piece$)
+        IF piece_wanted <= LEN(pieces) THEN
+            PRINT "jdBasic signatures, part " + STR$(piece_wanted) + " of " + STR$(LEN(pieces)) + ":"
+            PRINT pieces[piece_wanted - 1]
+        ENDIF
+    ENDIF
 ELSEIF check_only THEN
     DIM have$ = ""
     IF FILE.EXISTS(out_path$) THEN have$ = REPLACE$(TXTREADER$(out_path$), CHR$(13), "")
