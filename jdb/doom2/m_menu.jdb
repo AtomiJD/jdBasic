@@ -328,7 +328,7 @@ SUB M_Choose(choice AS INTEGER)
             M_LoadGame()
         ELSEIF itemOn = 3 THEN
             M_SaveGame()
-        ELSEIF itemOn = 4 THEN
+        ELSEIF itemOn = 4 AND DOOMSTAT.commercial = 0 THEN
             M_SetupNextMenu(MENU_READ1)
         ELSE
             M_QuitDOOM()
@@ -364,7 +364,8 @@ SUB M_Choose(choice AS INTEGER)
             M_SetupNextMenu(MENU_SOUND)
         ENDIF
     ELSEIF currentMenu = MENU_READ1 THEN
-        M_SetupNextMenu(MENU_READ2)
+        ' DOOM II has one help page.
+        IF DOOMSTAT.commercial <> 0 THEN M_SetupNextMenu(MENU_MAIN) ELSE M_SetupNextMenu(MENU_READ2)
     ELSEIF currentMenu = MENU_READ2 THEN
         M_SetupNextMenu(MENU_MAIN)
     ELSEIF currentMenu = MENU_LOAD THEN
@@ -773,6 +774,16 @@ EXPORT SUB M_Ticker()
 ENDSUB
 
 EXPORT SUB M_Init()
+    ' DOOM II has no episodes, and Quit Game where Read This! is.
+    IF DOOMSTAT.commercial <> 0 THEN
+        item_name$[4] = "M_QUITG"
+        item_key$[4] = "q"
+        menu_count[MENU_MAIN] = 5
+        menu_y[MENU_MAIN] = 72
+        menu_prev[MENU_NEWGAME] = MENU_MAIN
+        menu_x[MENU_READ1] = 330
+        menu_y[MENU_READ1] = 165
+    ENDIF
     currentMenu = MENU_MAIN
     DOOMSTAT.menuactive = 0
     itemOn = CLNG(menu_laston[MENU_MAIN])

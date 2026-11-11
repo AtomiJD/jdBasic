@@ -5,6 +5,9 @@
 '   build/jdBasic.exe -c jdb/doom2/playdemo.jdb
 '   jdb/doom2/playdemo.exe [lump] [show | folder for screenshots] [trace every n tics]
 '
+' The WAD is the one D_MAIN.IdentifyVersion$ finds: set DOOMWADDIR to a
+' folder with doom2.wad for the demos of DOOM II.
+'
 ' Without a second argument nothing is drawn. With "show" the demo plays in
 ' a window at 35 tics a second, Escape quits. With a folder a picture is
 ' saved there every 175 tics and at the end.
@@ -55,6 +58,7 @@ FUNC State$() AS STRING
 ENDFUNC
 
 W_WAD.W_Init(D_MAIN.IdentifyVersion$())
+D_MAIN.D_IdentifyGame()
 R_MAIN.R_Init(10, 0)
 P_SETUP.P_Init()
 
@@ -80,7 +84,7 @@ DO WHILE running = 1
     IF G_GAME.demoended <> 0 THEN EXITDO
     n_tics = n_tics + 1
 
-    IF n_tics = 1 THEN PRINT lump$ + ": E" + STR$(DOOMSTAT.gameepisode) + "M" + STR$(DOOMSTAT.gamemap) + ", skill " + STR$(DOOMSTAT.gameskill)
+    IF n_tics = 1 THEN PRINT lump$ + ": episode " + STR$(DOOMSTAT.gameepisode) + " map " + STR$(DOOMSTAT.gamemap) + ", skill " + STR$(DOOMSTAT.gameskill)
 
     IF CLNG(D_PLAYER.player_playerstate[0]) = DOOMDEF.PST_DEAD THEN
         IF was_dead = 0 THEN

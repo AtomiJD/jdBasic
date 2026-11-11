@@ -27,6 +27,8 @@ CONST HU_TITLEX = 0
 CONST HU_MSGTIMEOUT = 140
 
 DIM mapnames$ AS ARRAY = ["E1M1: Hangar", "E1M2: Nuclear Plant", "E1M3: Toxin Refinery", "E1M4: Command Control", "E1M5: Phobos Lab", "E1M6: Central Processing", "E1M7: Computer Station", "E1M8: Phobos Anomaly", "E1M9: Military Base", "E2M1: Deimos Anomaly", "E2M2: Containment Area", "E2M3: Refinery", "E2M4: Deimos Lab", "E2M5: Command Center", "E2M6: Halls of the Damned", "E2M7: Spawning Vats", "E2M8: Tower of Babel", "E2M9: Fortress of Mystery", "E3M1: Hell Keep", "E3M2: Slough of Despair", "E3M3: Pandemonium", "E3M4: House of Pain", "E3M5: Unholy Cathedral", "E3M6: Mt. Erebus", "E3M7: Limbo", "E3M8: Dis", "E3M9: Warrens", "E4M1: Hell Beneath", "E4M2: Perfect Hatred", "E4M3: Sever The Wicked", "E4M4: Unruly Evil", "E4M5: They Will Repent", "E4M6: Against Thee Wickedly", "E4M7: And Hell Followed", "E4M8: Unto The Cruel", "E4M9: Fear"]
+' The levels of DOOM II.
+DIM mapnames2$ AS ARRAY = ["level 1: entryway", "level 2: underhalls", "level 3: the gantlet", "level 4: the focus", "level 5: the waste tunnels", "level 6: the crusher", "level 7: dead simple", "level 8: tricks and traps", "level 9: the pit", "level 10: refueling base", "level 11: 'o' of destruction!", "level 12: the factory", "level 13: downtown", "level 14: the inmost dens", "level 15: industrial zone", "level 16: suburbs", "level 17: tenements", "level 18: the courtyard", "level 19: the citadel", "level 20: gotcha!", "level 21: nirvana", "level 22: the catacombs", "level 23: barrels o' fun", "level 24: the chasm", "level 25: bloodfalls", "level 26: the abandoned mines", "level 27: monster condo", "level 28: the spirit world", "level 29: the living end", "level 30: icon of sin", "level 31: wolfenstein", "level 32: grosse"]
 
 ' Whether messages are shown at all; the menu turns them off.
 EXPORT DIM showMessages AS INTEGER = 1
@@ -34,7 +36,7 @@ EXPORT DIM showMessages AS INTEGER = 1
 DIM plr AS INTEGER = 0
 ' The message shown last.
 EXPORT DIM w_message$ AS STRING = ""
-DIM w_title$ AS STRING = ""
+EXPORT DIM w_title$ AS STRING = ""
 DIM message_on AS INTEGER = 0
 ' A message that is shown even when messages are off, and one that is
 ' not replaced while it shows.
@@ -68,7 +70,11 @@ EXPORT SUB HU_Start()
     w_message$ = ""
     w_title$ = ""
     DIM n AS INTEGER = (DOOMSTAT.gameepisode - 1) * 9 + DOOMSTAT.gamemap - 1
-    IF DOOMSTAT.commercial = 0 AND n >= 0 AND n < LEN(mapnames$) THEN w_title$ = mapnames$[n]
+    IF DOOMSTAT.commercial <> 0 THEN
+        IF DOOMSTAT.gamemap >= 1 AND DOOMSTAT.gamemap <= LEN(mapnames2$) THEN w_title$ = mapnames2$[DOOMSTAT.gamemap - 1]
+    ELSEIF n >= 0 AND n < LEN(mapnames$) THEN
+        w_title$ = mapnames$[n]
+    ENDIF
 ENDSUB
 
 ' Draws a line of text in the font; characters the font has not got leave

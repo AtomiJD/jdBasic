@@ -542,6 +542,7 @@ EXPORT FUNC ST_Responder(ev_type AS INTEGER, key AS INTEGER) AS INTEGER
     DIM power AS INTEGER
     DIM episode AS INTEGER
     DIM map_num AS INTEGER
+    DIM musnum AS INTEGER
 
     IF Typed("iddqd") <> 0 THEN
         ' God mode.
@@ -599,10 +600,36 @@ EXPORT FUNC ST_Responder(ev_type AS INTEGER, key AS INTEGER) AS INTEGER
             D_PLAYER.player_message$[plyr] = "Power-up Toggled"
         ENDIF
         typed$ = ""
+    ELSEIF LEN(typed$) >= 7 ANDALSO LEFT$(RIGHT$(typed$, 7), 5) = "idmus" THEN
+        ' The two digits name the level whose music plays.
+        episode = ASC(MID$(RIGHT$(typed$, 2), 0, 1)) - 48
+        map_num = ASC(RIGHT$(typed$, 1)) - 48
+        typed$ = ""
+        D_PLAYER.player_message$[plyr] = "Music Change"
+        IF DOOMSTAT.commercial <> 0 THEN
+            musnum = INFO.MUS_RUNNIN + episode * 10 + map_num - 1
+            IF episode * 10 + map_num > 35 THEN musnum = 0
+        ELSE
+            musnum = INFO.MUS_E1M1 + (episode - 1) * 9 + (map_num - 1)
+            IF (episode - 1) * 9 + map_num - 1 > 31 THEN musnum = 0
+        ENDIF
+        IF musnum <= 0 OR musnum >= INFO.NUMMUSIC THEN
+            D_PLAYER.player_message$[plyr] = "IMPOSSIBLE SELECTION"
+        ELSE
+            S_SOUND.S_ChangeMusic(musnum, 1)
+        ENDIF
     ELSEIF LEN(typed$) >= 8 ANDALSO LEFT$(RIGHT$(typed$, 8), 6) = "idclev" THEN
         episode = ASC(MID$(RIGHT$(typed$, 2), 0, 1)) - 48
         map_num = ASC(RIGHT$(typed$, 1)) - 48
         typed$ = ""
+        ' DOOM II takes the two digits as the level.
+        IF DOOMSTAT.commercial <> 0 THEN
+            map_num = episode * 10 + map_num
+            IF map_num < 1 OR map_num > 32 THEN RETURN 0
+            D_PLAYER.player_message$[plyr] = "Changing Level..."
+            G_GAME.G_DeferedInitNew(DOOMSTAT.gameskill, 1, map_num)
+            RETURN 0
+        ENDIF
         ' Catch invalid maps.
         IF episode < 1 OR map_num < 1 OR map_num > 9 THEN RETURN 0
         IF DOOMSTAT.retail <> 0 AND episode > 4 THEN RETURN 0

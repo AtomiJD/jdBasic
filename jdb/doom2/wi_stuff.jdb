@@ -20,6 +20,8 @@ IMPORT S_SOUND
 
 CONST FB = 0
 CONST NUMMAPS = 9
+' The levels of DOOM II.
+CONST NUMCMAPS = 32
 CONST WI_TITLEY = 2
 CONST SP_STATSX = 50
 CONST SP_STATSY = 50
@@ -82,7 +84,7 @@ DIM cnt_pause AS INTEGER = 0
 DIM snl_pointeron AS INTEGER = 0
 
 ' The patches.
-DIM lnames[NUMMAPS] AS INTEGER
+DIM lnames[NUMCMAPS] AS INTEGER
 DIM yah0 AS INTEGER = 0
 DIM yah1 AS INTEGER = 0
 DIM splat AS INTEGER = 0
@@ -473,7 +475,14 @@ ENDSUB
 EXPORT SUB WI_Ticker()
     ' Counter for general background animation.
     bcnt = bcnt + 1
-    IF bcnt = 1 THEN S_SOUND.S_ChangeMusic(INFO.MUS_INTER, 1)
+    IF bcnt = 1 THEN
+        ' Intermission music.
+        IF DOOMSTAT.commercial <> 0 THEN
+            S_SOUND.S_ChangeMusic(INFO.MUS_DM2INT, 1)
+        ELSE
+            S_SOUND.S_ChangeMusic(INFO.MUS_INTER, 1)
+        ENDIF
+    ENDIF
 
     WI_checkForAccelerate()
 
@@ -504,16 +513,22 @@ SUB WI_loadData()
     IF DOOMSTAT.commercial <> 0 OR wm_epsd = 3 THEN name$ = "INTERPIC"
     V_VIDEO.V_DrawPatch(0, 0, 1, W_WAD.W_CacheLumpName(name$))
 
-    FOR i = 0 TO NUMMAPS - 1
-        lnames[i] = W_WAD.W_CacheLumpName("WILV" + STR$(wm_epsd) + STR$(i))
-    NEXT i
+    IF DOOMSTAT.commercial <> 0 THEN
+        FOR i = 0 TO NUMCMAPS - 1
+            lnames[i] = W_WAD.W_CacheLumpName("CWILV" + RIGHT$("0" + STR$(i), 2))
+        NEXT i
+    ELSE
+        FOR i = 0 TO NUMMAPS - 1
+            lnames[i] = W_WAD.W_CacheLumpName("WILV" + STR$(wm_epsd) + STR$(i))
+        NEXT i
 
-    ' You are here, and the splat.
-    yah0 = W_WAD.W_CacheLumpName("WIURH0")
-    yah1 = W_WAD.W_CacheLumpName("WIURH1")
-    splat = W_WAD.W_CacheLumpName("WISPLAT")
+        ' You are here, and the splat.
+        yah0 = W_WAD.W_CacheLumpName("WIURH0")
+        yah1 = W_WAD.W_CacheLumpName("WIURH1")
+        splat = W_WAD.W_CacheLumpName("WISPLAT")
+    ENDIF
 
-    IF wm_epsd < 3 THEN
+    IF DOOMSTAT.commercial = 0 AND wm_epsd < 3 THEN
         FOR j = 0 TO CLNG(NUMANIMS[wm_epsd]) - 1
             FOR i = 0 TO AnimField(j, 2) - 1
                 ' The last animation of the second episode shares the
@@ -557,7 +572,6 @@ ENDSUB
 ' Starts the intermission from the wm_ variables the game has set.
 EXPORT SUB WI_Start()
     IF DOOMSTAT.deathmatch <> 0 OR DOOMSTAT.netgame <> 0 THEN I_SYSTEM.I_Error("WI_Start: net games are not ported")
-    IF DOOMSTAT.commercial <> 0 THEN I_SYSTEM.I_Error("WI_Start: DOOM II is not ported")
 
     acceleratestage = 0
     cnt = 0

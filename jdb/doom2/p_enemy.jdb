@@ -1,7 +1,4 @@
 ' Enemy thinking, AI, and the action functions of the states (p_enemy.c).
-'
-' The actions of the monsters that only DOOM II has are not ported; a
-' state that asks for one stops the program.
 
 EXPORT MODULE P_ENEMY
 
@@ -703,6 +700,472 @@ SUB A_BossDeath(mo AS INTEGER)
     G_GAME.G_ExitLevel()
 ENDSUB
 
+' ---- the monsters of DOOM II ----------------------------------------------------
+
+' DOOM II special, map 32: the door with tag 666 opens when the last
+' Keen dies.
+SUB A_KeenDie(mo AS INTEGER)
+    P_MOBJ.mobj_flags[mo] = CLNG(P_MOBJ.mobj_flags[mo]) BAND (BNOT INFO.MF_SOLID)
+    ' Scan the remaining thinkers to see if all Keens are dead.
+    IF OthersAlive(mo) <> 0 THEN RETURN
+    P_DOORS.EV_DoDoor(JunkLine(666), P_DOORS.DOOR_OPEN)
+ENDSUB
+
+SUB A_BspiAttack(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    A_FaceTarget(actor)
+    ' Launch a missile.
+    P_MOBJ.P_SpawnMissile(actor, target, INFO.MT_ARACHPLAZ)
+ENDSUB
+
+SUB A_SkelMissile(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    A_FaceTarget(actor)
+    ' So missile spawns higher.
+    P_MOBJ.mobj_z[actor] = CLNG(P_MOBJ.mobj_z[actor]) + 16 * M_FIXED.FRACUNIT
+    DIM mo AS INTEGER = P_MOBJ.P_SpawnMissile(actor, target, INFO.MT_TRACER)
+    ' Back to normal.
+    P_MOBJ.mobj_z[actor] = CLNG(P_MOBJ.mobj_z[actor]) - 16 * M_FIXED.FRACUNIT
+
+    P_MOBJ.mobj_x[mo] = CLNG(P_MOBJ.mobj_x[mo]) + CLNG(P_MOBJ.mobj_momx[mo])
+    P_MOBJ.mobj_y[mo] = CLNG(P_MOBJ.mobj_y[mo]) + CLNG(P_MOBJ.mobj_momy[mo])
+    P_MOBJ.mobj_tracer[mo] = target
+ENDSUB
+
+CONST TRACEANGLE = $C000000
+
+' The missile of the revenant leaves smoke behind and turns towards the
+' one it is after.
+SUB A_Tracer(actor AS INTEGER)
+    IF (DOOMSTAT.gametic BAND 3) <> 0 THEN RETURN
+
+    ' Spawn a puff of smoke behind the rocket.
+    P_MOBJ.P_SpawnPuff(CLNG(P_MOBJ.mobj_x[actor]), CLNG(P_MOBJ.mobj_y[actor]), CLNG(P_MOBJ.mobj_z[actor]))
+    DIM th AS INTEGER = P_MOBJ.P_SpawnMobj(CLNG(P_MOBJ.mobj_x[actor]) - CLNG(P_MOBJ.mobj_momx[actor]), CLNG(P_MOBJ.mobj_y[actor]) - CLNG(P_MOBJ.mobj_momy[actor]), CLNG(P_MOBJ.mobj_z[actor]), INFO.MT_SMOKE)
+    P_MOBJ.mobj_momz[th] = M_FIXED.FRACUNIT
+    DIM tics AS INTEGER = CLNG(P_MOBJ.mobj_tics[th]) - (M_RANDOM.P_Random() BAND 3)
+    IF tics < 1 THEN tics = 1
+    P_MOBJ.mobj_tics[th] = tics
+
+    ' Adjust direction.
+    DIM dest AS INTEGER = P_MOBJ.mobj_tracer[actor]
+    IF dest < 0 ORELSE CLNG(P_MOBJ.mobj_health[dest]) <= 0 THEN RETURN
+
+    ' Change angle.
+    DIM exact AS INTEGER = R_MAIN.R_PointToAngle2(CLNG(P_MOBJ.mobj_x[actor]), CLNG(P_MOBJ.mobj_y[actor]), CLNG(P_MOBJ.mobj_x[dest]), CLNG(P_MOBJ.mobj_y[dest]))
+    DIM angle AS INTEGER = P_MOBJ.mobj_angle[actor]
+    IF exact <> angle THEN
+        IF ((exact - angle) BAND M_FIXED.ANGLE_MASK) > M_FIXED.ANG180 THEN
+            angle = (angle - TRACEANGLE) BAND M_FIXED.ANGLE_MASK
+            IF ((exact - angle) BAND M_FIXED.ANGLE_MASK) < M_FIXED.ANG180 THEN angle = exact
+        ELSE
+            angle = (angle + TRACEANGLE) BAND M_FIXED.ANGLE_MASK
+            IF ((exact - angle) BAND M_FIXED.ANGLE_MASK) > M_FIXED.ANG180 THEN angle = exact
+        ENDIF
+        P_MOBJ.mobj_angle[actor] = angle
+    ENDIF
+
+    DIM rate AS INTEGER = INFO.mi_speed[CLNG(P_MOBJ.mobj_type[actor])]
+    DIM an AS INTEGER = angle SHR TABLES.ANGLETOFINESHIFT
+    P_MOBJ.mobj_momx[actor] = M_FIXED.FixedMul(rate, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + an]))
+    P_MOBJ.mobj_momy[actor] = M_FIXED.FixedMul(rate, CLNG(TABLES.finesine[an]))
+
+    ' Change slope.
+    DIM dist AS INTEGER = P_MAPUTL.P_AproxDistance(CLNG(P_MOBJ.mobj_x[dest]) - CLNG(P_MOBJ.mobj_x[actor]), CLNG(P_MOBJ.mobj_y[dest]) - CLNG(P_MOBJ.mobj_y[actor]))
+    dist = dist \ rate
+    IF dist < 1 THEN dist = 1
+    DIM slope AS INTEGER = (CLNG(P_MOBJ.mobj_z[dest]) + 40 * M_FIXED.FRACUNIT - CLNG(P_MOBJ.mobj_z[actor])) \ dist
+    IF slope < CLNG(P_MOBJ.mobj_momz[actor]) THEN
+        P_MOBJ.mobj_momz[actor] = CLNG(P_MOBJ.mobj_momz[actor]) - M_FIXED.FRACUNIT \ 8
+    ELSE
+        P_MOBJ.mobj_momz[actor] = CLNG(P_MOBJ.mobj_momz[actor]) + M_FIXED.FRACUNIT \ 8
+    ENDIF
+ENDSUB
+
+SUB A_SkelWhoosh(actor AS INTEGER)
+    IF CLNG(P_MOBJ.mobj_target[actor]) < 0 THEN RETURN
+    A_FaceTarget(actor)
+    S_SOUND.S_StartSound(actor, INFO.SFX_SKESWG)
+ENDSUB
+
+SUB A_SkelFist(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    A_FaceTarget(actor)
+    DIM damage AS INTEGER
+    IF P_CheckMeleeRange(actor) <> 0 THEN
+        damage = ((M_RANDOM.P_Random() MOD 10) + 1) * 6
+        S_SOUND.S_StartSound(actor, INFO.SFX_SKEPCH)
+        P_INTER.P_DamageMobj(target, actor, actor, damage)
+    ENDIF
+ENDSUB
+
+' The corpse the arch-vile found, and the place it looks at.
+DIM corpsehit AS INTEGER = -1
+DIM viletryx AS INTEGER = 0
+DIM viletryy AS INTEGER = 0
+
+' Detect a corpse that could be raised.
+EXPORT FUNC PIT_VileCheck(thing AS INTEGER) AS INTEGER
+    ' Not a monster.
+    IF (CLNG(P_MOBJ.mobj_flags[thing]) BAND INFO.MF_CORPSE) = 0 THEN RETURN 1
+    ' Not lying still yet.
+    IF CLNG(P_MOBJ.mobj_tics[thing]) <> -1 THEN RETURN 1
+    ' Monster doesn't have a raise state.
+    IF CLNG(INFO.mi_raisestate[CLNG(P_MOBJ.mobj_type[thing])]) = INFO.S_NULL THEN RETURN 1
+
+    DIM maxdist AS INTEGER = CLNG(INFO.mi_radius[CLNG(P_MOBJ.mobj_type[thing])]) + CLNG(INFO.mi_radius[INFO.MT_VILE])
+    DIM dx AS INTEGER = CLNG(P_MOBJ.mobj_x[thing]) - viletryx
+    DIM dy AS INTEGER = CLNG(P_MOBJ.mobj_y[thing]) - viletryy
+    IF dx < 0 THEN dx = -dx
+    IF dy < 0 THEN dy = -dy
+    ' Not actually touching.
+    IF dx > maxdist OR dy > maxdist THEN RETURN 1
+
+    corpsehit = thing
+    P_MOBJ.mobj_momx[thing] = 0
+    P_MOBJ.mobj_momy[thing] = 0
+    P_MOBJ.mobj_height[thing] = CLNG(P_MOBJ.mobj_height[thing]) SHL 2
+    DIM check AS INTEGER = P_MAP.P_CheckPosition(thing, CLNG(P_MOBJ.mobj_x[thing]), CLNG(P_MOBJ.mobj_y[thing]))
+    P_MOBJ.mobj_height[thing] = CLNG(P_MOBJ.mobj_height[thing]) SHR 2
+
+    ' Doesn't fit here.
+    IF check = 0 THEN RETURN 1
+    ' Got one, so stop checking.
+    RETURN 0
+ENDFUNC
+
+' Check for ressurecting a body.
+SUB A_VileChase(actor AS INTEGER)
+    DIM xl AS INTEGER
+    DIM xh AS INTEGER
+    DIM yl AS INTEGER
+    DIM yh AS INTEGER
+    DIM bx AS INTEGER
+    DIM by AS INTEGER
+    DIM movedir AS INTEGER = P_MOBJ.mobj_movedir[actor]
+    DIM rate AS INTEGER = INFO.mi_speed[CLNG(P_MOBJ.mobj_type[actor])]
+    DIM temp AS INTEGER
+    DIM corpse_type AS INTEGER
+
+    IF movedir <> DI_NODIR THEN
+        ' Check for corpses to raise.
+        viletryx = CLNG(P_MOBJ.mobj_x[actor]) + rate * CLNG(xspeed[movedir])
+        viletryy = CLNG(P_MOBJ.mobj_y[actor]) + rate * CLNG(yspeed[movedir])
+
+        xl = (viletryx - P_SETUP.bmaporgx - DOOMDEF.MAXRADIUS * 2) SHR DOOMDEF.MAPBLOCKSHIFT
+        xh = (viletryx - P_SETUP.bmaporgx + DOOMDEF.MAXRADIUS * 2) SHR DOOMDEF.MAPBLOCKSHIFT
+        yl = (viletryy - P_SETUP.bmaporgy - DOOMDEF.MAXRADIUS * 2) SHR DOOMDEF.MAPBLOCKSHIFT
+        yh = (viletryy - P_SETUP.bmaporgy + DOOMDEF.MAXRADIUS * 2) SHR DOOMDEF.MAPBLOCKSHIFT
+
+        FOR bx = xl TO xh
+            FOR by = yl TO yh
+                ' Call PIT_VileCheck to check whether object is a corpse
+                ' that can be raised.
+                IF P_MAPUTL.P_BlockThingsIterator(bx, by, P_MAPUTL.PIT_VILECHECK) = 0 THEN
+                    ' Got one!
+                    temp = CLNG(P_MOBJ.mobj_target[actor])
+                    P_MOBJ.mobj_target[actor] = corpsehit
+                    A_FaceTarget(actor)
+                    P_MOBJ.mobj_target[actor] = temp
+
+                    P_MOBJ.P_SetMobjState(actor, INFO.S_VILE_HEAL1)
+                    S_SOUND.S_StartSound(corpsehit, INFO.SFX_SLOP)
+                    corpse_type = CLNG(P_MOBJ.mobj_type[corpsehit])
+
+                    P_MOBJ.P_SetMobjState(corpsehit, CLNG(INFO.mi_raisestate[corpse_type]))
+                    P_MOBJ.mobj_height[corpsehit] = CLNG(P_MOBJ.mobj_height[corpsehit]) SHL 2
+                    P_MOBJ.mobj_flags[corpsehit] = INFO.mi_flags[corpse_type]
+                    P_MOBJ.mobj_health[corpsehit] = INFO.mi_spawnhealth[corpse_type]
+                    P_MOBJ.mobj_target[corpsehit] = -1
+                    RETURN
+                ENDIF
+            NEXT by
+        NEXT bx
+    ENDIF
+
+    ' Return to normal attack.
+    A_Chase(actor)
+ENDSUB
+
+' Keep fire in front of player unless out of sight.
+SUB A_Fire(actor AS INTEGER)
+    DIM dest AS INTEGER = P_MOBJ.mobj_tracer[actor]
+    IF dest < 0 THEN RETURN
+    DIM vile AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF vile < 0 THEN RETURN
+
+    ' Don't move it if the vile lost sight.
+    IF P_SIGHT.P_CheckSight(vile, dest) = 0 THEN RETURN
+
+    DIM an AS INTEGER = CLNG(P_MOBJ.mobj_angle[dest]) SHR TABLES.ANGLETOFINESHIFT
+
+    P_MAPUTL.P_UnsetThingPosition(actor)
+    P_MOBJ.mobj_x[actor] = CLNG(P_MOBJ.mobj_x[dest]) + M_FIXED.FixedMul(24 * M_FIXED.FRACUNIT, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + an]))
+    P_MOBJ.mobj_y[actor] = CLNG(P_MOBJ.mobj_y[dest]) + M_FIXED.FixedMul(24 * M_FIXED.FRACUNIT, CLNG(TABLES.finesine[an]))
+    P_MOBJ.mobj_z[actor] = P_MOBJ.mobj_z[dest]
+    P_MAPUTL.P_SetThingPosition(actor)
+ENDSUB
+
+' Spawn the hellfire. The fire appears at the target's x for both of its
+' coordinates before A_Fire moves it.
+SUB A_VileTarget(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    A_FaceTarget(actor)
+
+    DIM fog AS INTEGER = P_MOBJ.P_SpawnMobj(CLNG(P_MOBJ.mobj_x[target]), CLNG(P_MOBJ.mobj_x[target]), CLNG(P_MOBJ.mobj_z[target]), INFO.MT_FIRE)
+
+    P_MOBJ.mobj_tracer[actor] = fog
+    P_MOBJ.mobj_target[fog] = actor
+    P_MOBJ.mobj_tracer[fog] = target
+    A_Fire(fog)
+ENDSUB
+
+SUB A_VileAttack(actor AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+
+    A_FaceTarget(actor)
+
+    IF P_SIGHT.P_CheckSight(actor, target) = 0 THEN RETURN
+
+    S_SOUND.S_StartSound(actor, INFO.SFX_BAREXP)
+    P_INTER.P_DamageMobj(target, actor, actor, 20)
+    P_MOBJ.mobj_momz[target] = (1000 * M_FIXED.FRACUNIT) \ CLNG(INFO.mi_mass[CLNG(P_MOBJ.mobj_type[target])])
+
+    DIM an AS INTEGER = CLNG(P_MOBJ.mobj_angle[actor]) SHR TABLES.ANGLETOFINESHIFT
+
+    DIM fire AS INTEGER = P_MOBJ.mobj_tracer[actor]
+    IF fire < 0 THEN RETURN
+
+    ' Move the fire between the vile and the player.
+    P_MOBJ.mobj_x[fire] = CLNG(P_MOBJ.mobj_x[target]) - M_FIXED.FixedMul(24 * M_FIXED.FRACUNIT, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + an]))
+    P_MOBJ.mobj_y[fire] = CLNG(P_MOBJ.mobj_y[target]) - M_FIXED.FixedMul(24 * M_FIXED.FRACUNIT, CLNG(TABLES.finesine[an]))
+    P_MAP.P_RadiusAttack(fire, actor, 70)
+ENDSUB
+
+' Mancubus attack: the angle between its fireballs.
+CONST FATSPREAD = $8000000
+
+' A fireball of the mancubus at the target; turn is added to its angle.
+SUB FatShot(actor AS INTEGER, turn AS INTEGER, turned AS INTEGER)
+    DIM target AS INTEGER = P_MOBJ.mobj_target[actor]
+    IF target < 0 THEN RETURN
+    DIM mo AS INTEGER = P_MOBJ.P_SpawnMissile(actor, target, INFO.MT_FATSHOT)
+    IF turned = 0 THEN RETURN
+    DIM angle AS INTEGER = (CLNG(P_MOBJ.mobj_angle[mo]) + turn) BAND M_FIXED.ANGLE_MASK
+    P_MOBJ.mobj_angle[mo] = angle
+    DIM an AS INTEGER = angle SHR TABLES.ANGLETOFINESHIFT
+    DIM rate AS INTEGER = INFO.mi_speed[INFO.MT_FATSHOT]
+    P_MOBJ.mobj_momx[mo] = M_FIXED.FixedMul(rate, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + an]))
+    P_MOBJ.mobj_momy[mo] = M_FIXED.FixedMul(rate, CLNG(TABLES.finesine[an]))
+ENDSUB
+
+SUB A_FatAttack1(actor AS INTEGER)
+    A_FaceTarget(actor)
+    ' Change direction to ...
+    P_MOBJ.mobj_angle[actor] = (CLNG(P_MOBJ.mobj_angle[actor]) + FATSPREAD) BAND M_FIXED.ANGLE_MASK
+    FatShot(actor, 0, 0)
+    FatShot(actor, FATSPREAD, 1)
+ENDSUB
+
+SUB A_FatAttack2(actor AS INTEGER)
+    A_FaceTarget(actor)
+    ' Now here choose opposite deviation.
+    P_MOBJ.mobj_angle[actor] = (CLNG(P_MOBJ.mobj_angle[actor]) - FATSPREAD) BAND M_FIXED.ANGLE_MASK
+    FatShot(actor, 0, 0)
+    FatShot(actor, -FATSPREAD * 2, 1)
+ENDSUB
+
+SUB A_FatAttack3(actor AS INTEGER)
+    A_FaceTarget(actor)
+    FatShot(actor, -(FATSPREAD \ 2), 1)
+    FatShot(actor, FATSPREAD \ 2, 1)
+ENDSUB
+
+' Spawn a lost soul and launch it at the target.
+SUB A_PainShootSkull(actor AS INTEGER, angle AS INTEGER)
+    ' Count total number of skull currently on the level.
+    DIM n_skulls AS INTEGER = 0
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DO WHILE th <> 0
+        IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ ANDALSO CLNG(P_MOBJ.mobj_type[CLNG(P_TICK.th_object[th])]) = INFO.MT_SKULL THEN n_skulls = n_skulls + 1
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+
+    ' If there are already 20 skulls on the level, don't spit another one.
+    IF n_skulls > 20 THEN RETURN
+
+    ' Okay, there's place for another one.
+    DIM an AS INTEGER = (angle BAND M_FIXED.ANGLE_MASK) SHR TABLES.ANGLETOFINESHIFT
+    DIM prestep AS INTEGER = 4 * M_FIXED.FRACUNIT + 3 * (CLNG(INFO.mi_radius[CLNG(P_MOBJ.mobj_type[actor])]) + CLNG(INFO.mi_radius[INFO.MT_SKULL])) \ 2
+    DIM x AS INTEGER = CLNG(P_MOBJ.mobj_x[actor]) + M_FIXED.FixedMul(prestep, CLNG(TABLES.finesine[TABLES.FINEANGLES \ 4 + an]))
+    DIM y AS INTEGER = CLNG(P_MOBJ.mobj_y[actor]) + M_FIXED.FixedMul(prestep, CLNG(TABLES.finesine[an]))
+    DIM z AS INTEGER = CLNG(P_MOBJ.mobj_z[actor]) + 8 * M_FIXED.FRACUNIT
+
+    DIM newmobj AS INTEGER = P_MOBJ.P_SpawnMobj(x, y, z, INFO.MT_SKULL)
+
+    ' Check for movements.
+    IF P_MAP.P_TryMove(newmobj, CLNG(P_MOBJ.mobj_x[newmobj]), CLNG(P_MOBJ.mobj_y[newmobj])) = 0 THEN
+        ' Kill it immediately.
+        P_INTER.P_DamageMobj(newmobj, actor, actor, 10000)
+        RETURN
+    ENDIF
+
+    P_MOBJ.mobj_target[newmobj] = P_MOBJ.mobj_target[actor]
+    A_SkullAttack(newmobj)
+ENDSUB
+
+SUB A_PainAttack(actor AS INTEGER)
+    IF CLNG(P_MOBJ.mobj_target[actor]) < 0 THEN RETURN
+    A_FaceTarget(actor)
+    A_PainShootSkull(actor, CLNG(P_MOBJ.mobj_angle[actor]))
+ENDSUB
+
+SUB A_PainDie(actor AS INTEGER)
+    P_MOBJ.mobj_flags[actor] = CLNG(P_MOBJ.mobj_flags[actor]) BAND (BNOT INFO.MF_SOLID)
+    A_PainShootSkull(actor, CLNG(P_MOBJ.mobj_angle[actor]) + M_FIXED.ANG90)
+    A_PainShootSkull(actor, CLNG(P_MOBJ.mobj_angle[actor]) + M_FIXED.ANG180)
+    A_PainShootSkull(actor, CLNG(P_MOBJ.mobj_angle[actor]) + M_FIXED.ANG270)
+ENDSUB
+
+' The spots the brain of the last level shoots its cubes at, and the one
+' that is next.
+CONST MAXBRAINTARGETS = 32
+DIM braintargets[MAXBRAINTARGETS] AS INTEGER
+DIM numbraintargets AS INTEGER = 0
+DIM braintargeton AS INTEGER = 0
+' On the two easy skills every other cube is left out.
+DIM brain_easy AS INTEGER = 0
+
+SUB A_BrainAwake(mo AS INTEGER)
+    ' Find all the target spots.
+    numbraintargets = 0
+    braintargeton = 0
+
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DIM m AS INTEGER
+    DO WHILE th <> 0
+        IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ THEN
+            m = CLNG(P_TICK.th_object[th])
+            IF CLNG(P_MOBJ.mobj_type[m]) = INFO.MT_BOSSTARGET AND numbraintargets < MAXBRAINTARGETS THEN
+                braintargets[numbraintargets] = m
+                numbraintargets = numbraintargets + 1
+            ENDIF
+        ENDIF
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+
+    S_SOUND.S_StartSound(-1, INFO.SFX_BOSSIT)
+ENDSUB
+
+' A rocket that explodes at once, somewhere in front of the brain.
+SUB BrainExplosion(x AS INTEGER, y AS INTEGER)
+    DIM z AS INTEGER = 128 + M_RANDOM.P_Random() * 2 * M_FIXED.FRACUNIT
+    DIM th AS INTEGER = P_MOBJ.P_SpawnMobj(x, y, z, INFO.MT_ROCKET)
+    P_MOBJ.mobj_momz[th] = M_RANDOM.P_Random() * 512
+
+    P_MOBJ.P_SetMobjState(th, INFO.S_BRAINEXPLODE1)
+
+    DIM tics AS INTEGER = CLNG(P_MOBJ.mobj_tics[th]) - (M_RANDOM.P_Random() BAND 7)
+    IF tics < 1 THEN tics = 1
+    P_MOBJ.mobj_tics[th] = tics
+ENDSUB
+
+SUB A_BrainScream(mo AS INTEGER)
+    DIM x AS INTEGER = CLNG(P_MOBJ.mobj_x[mo]) - 196 * M_FIXED.FRACUNIT
+    DO WHILE x < CLNG(P_MOBJ.mobj_x[mo]) + 320 * M_FIXED.FRACUNIT
+        BrainExplosion(x, CLNG(P_MOBJ.mobj_y[mo]) - 320 * M_FIXED.FRACUNIT)
+        x = x + M_FIXED.FRACUNIT * 8
+    LOOP
+
+    S_SOUND.S_StartSound(-1, INFO.SFX_BOSDTH)
+ENDSUB
+
+SUB A_BrainExplode(mo AS INTEGER)
+    DIM first AS INTEGER = M_RANDOM.P_Random()
+    BrainExplosion(CLNG(P_MOBJ.mobj_x[mo]) + (first - M_RANDOM.P_Random()) * 2048, CLNG(P_MOBJ.mobj_y[mo]))
+ENDSUB
+
+SUB A_BrainSpit(mo AS INTEGER)
+    brain_easy = brain_easy BXOR 1
+    IF DOOMSTAT.gameskill <= DOOMDEF.SK_EASY AND brain_easy = 0 THEN RETURN
+    ' A level without target spots has nothing to shoot at.
+    IF numbraintargets = 0 THEN RETURN
+
+    ' Shoot a cube at current target.
+    DIM targ AS INTEGER = braintargets[braintargeton]
+    braintargeton = (braintargeton + 1) MOD numbraintargets
+
+    ' Spawn brain missile.
+    DIM newmobj AS INTEGER = P_MOBJ.P_SpawnMissile(mo, targ, INFO.MT_SPAWNSHOT)
+    P_MOBJ.mobj_target[newmobj] = targ
+    DIM momy AS INTEGER = P_MOBJ.mobj_momy[newmobj]
+    DIM tics AS INTEGER = INFO.st_tics[CLNG(P_MOBJ.mobj_state[newmobj])]
+    IF momy <> 0 AND tics <> 0 THEN P_MOBJ.mobj_reactiontime[newmobj] = ((CLNG(P_MOBJ.mobj_y[targ]) - CLNG(P_MOBJ.mobj_y[mo])) \ momy) \ tics
+
+    S_SOUND.S_StartSound(-1, INFO.SFX_BOSPIT)
+ENDSUB
+
+' The cube arrives: a monster appears in a fire, whatever stands there
+' dies.
+SUB A_SpawnFly(mo AS INTEGER)
+    P_MOBJ.mobj_reactiontime[mo] = CLNG(P_MOBJ.mobj_reactiontime[mo]) - 1
+    ' Still flying.
+    IF CLNG(P_MOBJ.mobj_reactiontime[mo]) <> 0 THEN RETURN
+
+    DIM targ AS INTEGER = P_MOBJ.mobj_target[mo]
+    IF targ < 0 THEN RETURN
+
+    ' First spawn teleport fog.
+    DIM fog AS INTEGER = P_MOBJ.P_SpawnMobj(CLNG(P_MOBJ.mobj_x[targ]), CLNG(P_MOBJ.mobj_y[targ]), CLNG(P_MOBJ.mobj_z[targ]), INFO.MT_SPAWNFIRE)
+    S_SOUND.S_StartSound(fog, INFO.SFX_TELEPT)
+
+    ' Randomly select monster to spawn; probability distribution (kind
+    ' of), decreasing likelihood.
+    DIM r AS INTEGER = M_RANDOM.P_Random()
+    DIM mtype AS INTEGER
+    IF r < 50 THEN
+        mtype = INFO.MT_TROOP
+    ELSEIF r < 90 THEN
+        mtype = INFO.MT_SERGEANT
+    ELSEIF r < 120 THEN
+        mtype = INFO.MT_SHADOWS
+    ELSEIF r < 130 THEN
+        mtype = INFO.MT_PAIN
+    ELSEIF r < 160 THEN
+        mtype = INFO.MT_HEAD
+    ELSEIF r < 162 THEN
+        mtype = INFO.MT_VILE
+    ELSEIF r < 172 THEN
+        mtype = INFO.MT_UNDEAD
+    ELSEIF r < 192 THEN
+        mtype = INFO.MT_BABY
+    ELSEIF r < 222 THEN
+        mtype = INFO.MT_FATSO
+    ELSEIF r < 246 THEN
+        mtype = INFO.MT_KNIGHT
+    ELSE
+        mtype = INFO.MT_BRUISER
+    ENDIF
+
+    DIM newmobj AS INTEGER = P_MOBJ.P_SpawnMobj(CLNG(P_MOBJ.mobj_x[targ]), CLNG(P_MOBJ.mobj_y[targ]), CLNG(P_MOBJ.mobj_z[targ]), mtype)
+    IF P_LookForPlayers(newmobj, 1) <> 0 THEN P_MOBJ.P_SetMobjState(newmobj, CLNG(INFO.mi_seestate[mtype]))
+
+    ' Telefrag anything in this spot.
+    P_MAP.P_TeleportMove(newmobj, CLNG(P_MOBJ.mobj_x[newmobj]), CLNG(P_MOBJ.mobj_y[newmobj]))
+
+    ' Remove self (i.e., cube).
+    P_MOBJ.P_RemoveMobj(mo)
+ENDSUB
+
 ' Carries out action (an INFO.A_ number) of a state for a thing.
 EXPORT SUB A_Call(action AS INTEGER, mobj AS INTEGER)
     SWITCH action
@@ -762,7 +1225,68 @@ EXPORT SUB A_Call(action AS INTEGER, mobj AS INTEGER)
             ENDIF
         CASE INFO.A_BFGSPRAY
             P_PSPR.A_BFGSpray(mobj)
+        CASE INFO.A_KEENDIE
+            A_KeenDie(mobj)
+        CASE INFO.A_BSPIATTACK
+            A_BspiAttack(mobj)
+        CASE INFO.A_BABYMETAL
+            S_SOUND.S_StartSound(mobj, INFO.SFX_BSPWLK)
+            A_Chase(mobj)
+        CASE INFO.A_SKELMISSILE
+            A_SkelMissile(mobj)
+        CASE INFO.A_TRACER
+            A_Tracer(mobj)
+        CASE INFO.A_SKELWHOOSH
+            A_SkelWhoosh(mobj)
+        CASE INFO.A_SKELFIST
+            A_SkelFist(mobj)
+        CASE INFO.A_VILECHASE
+            A_VileChase(mobj)
+        CASE INFO.A_VILESTART
+            S_SOUND.S_StartSound(mobj, INFO.SFX_VILATK)
+        CASE INFO.A_STARTFIRE
+            S_SOUND.S_StartSound(mobj, INFO.SFX_FLAMST)
+            A_Fire(mobj)
+        CASE INFO.A_FIRECRACKLE
+            S_SOUND.S_StartSound(mobj, INFO.SFX_FLAME)
+            A_Fire(mobj)
+        CASE INFO.A_FIRE
+            A_Fire(mobj)
+        CASE INFO.A_VILETARGET
+            A_VileTarget(mobj)
+        CASE INFO.A_VILEATTACK
+            A_VileAttack(mobj)
+        CASE INFO.A_FATRAISE
+            A_FaceTarget(mobj)
+            S_SOUND.S_StartSound(mobj, INFO.SFX_MANATK)
+        CASE INFO.A_FATATTACK1
+            A_FatAttack1(mobj)
+        CASE INFO.A_FATATTACK2
+            A_FatAttack2(mobj)
+        CASE INFO.A_FATATTACK3
+            A_FatAttack3(mobj)
+        CASE INFO.A_PAINATTACK
+            A_PainAttack(mobj)
+        CASE INFO.A_PAINDIE
+            A_PainDie(mobj)
+        CASE INFO.A_BRAINAWAKE
+            A_BrainAwake(mobj)
+        CASE INFO.A_BRAINPAIN
+            S_SOUND.S_StartSound(-1, INFO.SFX_BOSPN)
+        CASE INFO.A_BRAINSCREAM
+            A_BrainScream(mobj)
+        CASE INFO.A_BRAINEXPLODE
+            A_BrainExplode(mobj)
+        CASE INFO.A_BRAINDIE
+            G_GAME.G_ExitLevel()
+        CASE INFO.A_BRAINSPIT
+            A_BrainSpit(mobj)
+        CASE INFO.A_SPAWNSOUND
+            S_SOUND.S_StartSound(mobj, INFO.SFX_BOSCUB)
+            A_SpawnFly(mobj)
+        CASE INFO.A_SPAWNFLY
+            A_SpawnFly(mobj)
         DEFAULT
-            I_SYSTEM.I_Error("A_Call: action " + STR$(action) + " of a DOOM II monster is not ported")
+            I_SYSTEM.I_Error("A_Call: action " + STR$(action) + " is not an action of a thing")
     ENDSWITCH
 ENDSUB

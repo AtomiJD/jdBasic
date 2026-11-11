@@ -350,7 +350,8 @@ EXPORT SUB P_UnArchiveThinkers()
         P_MOBJ.mobj_x[m] = CLNG(f[0])
         P_MOBJ.mobj_y[m] = CLNG(f[1])
         P_MOBJ.mobj_z[m] = CLNG(f[2])
-        P_MOBJ.mobj_angle[m] = CLNG(f[3])
+        ' The numbers of the file are signed, an angle is not.
+        P_MOBJ.mobj_angle[m] = CLNG(f[3]) BAND $FFFFFFFF
         P_MOBJ.mobj_sprite[m] = CLNG(f[4])
         P_MOBJ.mobj_frame[m] = CLNG(f[5])
         P_MOBJ.mobj_radius[m] = CLNG(f[6])

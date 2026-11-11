@@ -1,10 +1,12 @@
 ' DOOM. The title loop with its demos, the menu, the game.
 '
 '   build/jdBasic.exe -c jdb/doom2/doom.jdb
-'   jdb/doom2/doom.exe [episode map [skill]]
+'   jdb/doom2/doom.exe [-iwad file] [episode map [skill]]
 '
 ' Without arguments the title loop starts; any key opens the menu. With an
-' episode and a map the game starts there, on skill 0 to 4 (2 if left out).
+' episode and a map the game starts there, on skill 0 to 4 (2 if left out);
+' the levels of DOOM II are in episode 1. -iwad names the WAD to play;
+' without it D_MAIN.IdentifyVersion$ looks for one.
 '
 ' Arrow keys turn and move, Shift runs, Ctrl fires, Space uses, 1 to 7 pick
 ' a weapon, Alt with left or right steps sideways and so do comma and full
@@ -114,6 +116,10 @@ SUB HandleKeyUp(key_data)
 ENDSUB
 
 DIM cmd_args AS ARRAY = OS.ARGS()
+IF LEN(cmd_args) > 2 ANDALSO LCASE$(cmd_args[1]) = "-iwad" THEN
+    D_MAIN.wadfile$ = cmd_args[2]
+    cmd_args = APPEND(TAKE(1, cmd_args), DROP(3, cmd_args))
+ENDIF
 DIM start_episode AS INTEGER = 0
 DIM start_map AS INTEGER = 1
 DIM start_skill AS INTEGER = DOOMDEF.SK_MEDIUM

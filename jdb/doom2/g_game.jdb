@@ -478,6 +478,9 @@ ENDSUB
 ' Par times of the levels of the first three episodes, in seconds.
 DIM pars AS ARRAY = [30, 75, 120, 90, 165, 180, 180, 30, 165, 90, 90, 90, 120, 90, 360, 240, 30, 170, 90, 45, 90, 150, 90, 90, 165, 30, 135]
 
+' Par times of the levels of DOOM II.
+DIM cpars AS ARRAY = [30, 90, 120, 120, 90, 150, 120, 120, 270, 90, 210, 150, 150, 150, 210, 150, 420, 150, 210, 150, 240, 150, 180, 150, 150, 300, 330, 420, 300, 180, 120, 30]
+
 ' Called when a player completes a level: take away cards and stuff.
 SUB G_PlayerFinishLevel(player AS INTEGER)
     DIM i AS INTEGER
@@ -525,7 +528,14 @@ SUB G_DoCompleted()
 
     ' wm_next is 0 biased, unlike gamemap.
     IF DOOMSTAT.commercial <> 0 THEN
-        I_SYSTEM.I_Error("G_DoCompleted: DOOM II is not ported")
+        IF secretexit <> 0 THEN
+            IF DOOMSTAT.gamemap = 15 THEN WI_STUFF.wm_next = 30
+            IF DOOMSTAT.gamemap = 31 THEN WI_STUFF.wm_next = 31
+        ELSEIF DOOMSTAT.gamemap = 31 OR DOOMSTAT.gamemap = 32 THEN
+            WI_STUFF.wm_next = 15
+        ELSE
+            WI_STUFF.wm_next = DOOMSTAT.gamemap
+        ENDIF
     ELSEIF secretexit <> 0 THEN
         ' Go to secret level.
         WI_STUFF.wm_next = 8
@@ -550,7 +560,11 @@ SUB G_DoCompleted()
     WI_STUFF.wm_maxsecret = DOOMSTAT.totalsecret
     ' The fourth episode has no par times.
     WI_STUFF.wm_partime = 0
-    IF DOOMSTAT.gameepisode <= 3 THEN WI_STUFF.wm_partime = 35 * CLNG(pars[(DOOMSTAT.gameepisode - 1) * 9 + DOOMSTAT.gamemap - 1])
+    IF DOOMSTAT.commercial <> 0 THEN
+        IF DOOMSTAT.gamemap >= 1 AND DOOMSTAT.gamemap <= 32 THEN WI_STUFF.wm_partime = 35 * CLNG(cpars[DOOMSTAT.gamemap - 1])
+    ELSEIF DOOMSTAT.gameepisode <= 3 THEN
+        WI_STUFF.wm_partime = 35 * CLNG(pars[(DOOMSTAT.gameepisode - 1) * 9 + DOOMSTAT.gamemap - 1])
+    ENDIF
     WI_STUFF.wm_pnum = p
     WI_STUFF.wm_skills = CLNG(D_PLAYER.player_killcount[p])
     WI_STUFF.wm_sitems = CLNG(D_PLAYER.player_itemcount[p])
@@ -568,6 +582,13 @@ ENDSUB
 EXPORT SUB G_WorldDone()
     gameaction = GA_WORLDDONE
     IF secretexit <> 0 THEN D_PLAYER.player_didsecret[DOOMSTAT.consoleplayer] = 1
+
+    ' DOOM II tells its story after some of its levels; after the two
+    ' with a secret exit only if it was taken.
+    DIM map_num AS INTEGER = DOOMSTAT.gamemap
+    IF DOOMSTAT.commercial <> 0 THEN
+        IF map_num = 6 OR map_num = 11 OR map_num = 20 OR map_num = 30 OR ((map_num = 15 OR map_num = 31) AND secretexit <> 0) THEN F_FINALE.F_StartFinale()
+    ENDIF
 ENDSUB
 
 SUB G_DoWorldDone()

@@ -1,6 +1,7 @@
 ' The end of an episode: a text typed onto the screen, then a picture
-' (f_finale.c). The texts are those of d_englsh.h. The endings of DOOM II
-' with their cast of monsters are not ported.
+' (f_finale.c); in DOOM II a text between two levels and, at the end, the
+' cast of monsters. The texts are those of d_englsh.h, written here by
+' tools/gen_texts.jdb.
 
 EXPORT MODULE F_FINALE
 
@@ -10,23 +11,32 @@ OPTION "STRICT"
 IMPORT I_SYSTEM
 IMPORT DOOMDEF
 IMPORT DOOMSTAT
+IMPORT D_PLAYER
 IMPORT INFO
+IMPORT R_DATA
+IMPORT R_THINGS
 IMPORT W_WAD
 IMPORT V_VIDEO
 IMPORT HU_STUFF
 IMPORT G_GAME
 IMPORT S_SOUND
 
-DIM e1text AS ARRAY = ["Once you beat the big badasses and", "clean out the moon base you're supposed", "to win, aren't you? Aren't you? Where's", "your fat reward and ticket home? What", "the hell is this? It's not supposed to", "end this way!", "", "It stinks like rotten meat, but looks", "like the lost Deimos base.  Looks like", "you're stuck on The Shores of Hell.", "The only way out is through.", "", "To continue the DOOM experience, play", "The Shores of Hell and its amazing", "sequel, Inferno!"]
+DIM e1text AS ARRAY = ["Once you beat the big badasses and", "clean out the moon base you're supposed", "to win, aren't you? Aren't you? Where's", "your fat reward and ticket home? What", "the hell is this? It's not supposed to", "end this way!", "", "It stinks like rotten meat, but looks", "like the lost Deimos base.  Looks like", "you're stuck on The Shores of Hell.", "The only way out is through.", "", "To continue the DOOM experience, play", "The Shores of Hell and its amazing", "sequel, Inferno!", ""]
 DIM e2text AS ARRAY = ["You've done it! The hideous cyber-", "demon lord that ruled the lost Deimos", "moon base has been slain and you", "are triumphant! But ... where are", "you? You clamber to the edge of the", "moon and look down to see the awful", "truth.", "", "Deimos floats above Hell itself!", "You've never heard of anyone escaping", "from Hell, but you'll make the bastards", "sorry they ever heard of you! Quickly,", "you rappel down to  the surface of", "Hell.", "", "Now, it's on to the final chapter of", "DOOM! -- Inferno."]
 DIM e3text AS ARRAY = ["The loathsome spiderdemon that", "masterminded the invasion of the moon", "bases and caused so much death has had", "its ass kicked for all time.", "", "A hidden doorway opens and you enter.", "You've proven too tough for Hell to", "contain, and now Hell at last plays", "fair -- for you emerge from the door", "to see the green fields of Earth!", "Home at last.", "", "You wonder what's been happening on", "Earth while you were battling evil", "unleashed. It's good that no Hell-", "spawn could have come through that", "door with you ..."]
 DIM e4text AS ARRAY = ["the spider mastermind must have sent forth", "its legions of hellspawn before your", "final confrontation with that terrible", "beast from hell.  but you stepped forward", "and brought forth eternal damnation and", "suffering upon the horde as a true hero", "would in the face of something so evil.", "", "besides, someone was gonna pay for what", "happened to daisy, your pet rabbit.", "", "but now, you see spread before you more", "potential pain and gibbitude as a nation", "of demons run amok among our cities.", "", "next stop, hell on earth!"]
+DIM c1text AS ARRAY = ["YOU HAVE ENTERED DEEPLY INTO THE INFESTED", "STARPORT. BUT SOMETHING IS WRONG. THE", "MONSTERS HAVE BROUGHT THEIR OWN REALITY", "WITH THEM, AND THE STARPORT'S TECHNOLOGY", "IS BEING SUBVERTED BY THEIR PRESENCE.", "", "AHEAD, YOU SEE AN OUTPOST OF HELL, A", "FORTIFIED ZONE. IF YOU CAN GET PAST IT,", "YOU CAN PENETRATE INTO THE HAUNTED HEART", "OF THE STARBASE AND FIND THE CONTROLLING", "SWITCH WHICH HOLDS EARTH'S POPULATION", "HOSTAGE."]
+DIM c2text AS ARRAY = ["YOU HAVE WON! YOUR VICTORY HAS ENABLED", "HUMANKIND TO EVACUATE EARTH AND ESCAPE", "THE NIGHTMARE.  NOW YOU ARE THE ONLY", "HUMAN LEFT ON THE FACE OF THE PLANET.", "CANNIBAL MUTATIONS, CARNIVOROUS ALIENS,", "AND EVIL SPIRITS ARE YOUR ONLY NEIGHBORS.", "YOU SIT BACK AND WAIT FOR DEATH, CONTENT", "THAT YOU HAVE SAVED YOUR SPECIES.", "", "BUT THEN, EARTH CONTROL BEAMS DOWN A", "MESSAGE FROM SPACE: " + CHR$(34) + "SENSORS HAVE LOCATED", "THE SOURCE OF THE ALIEN INVASION. IF YOU", "GO THERE, YOU MAY BE ABLE TO BLOCK THEIR", "ENTRY.  THE ALIEN BASE IS IN THE HEART OF", "YOUR OWN HOME CITY, NOT FAR FROM THE", "STARPORT." + CHR$(34) + " SLOWLY AND PAINFULLY YOU GET", "UP AND RETURN TO THE FRAY."]
+DIM c3text AS ARRAY = ["YOU ARE AT THE CORRUPT HEART OF THE CITY,", "SURROUNDED BY THE CORPSES OF YOUR ENEMIES.", "YOU SEE NO WAY TO DESTROY THE CREATURES'", "ENTRYWAY ON THIS SIDE, SO YOU CLENCH YOUR", "TEETH AND PLUNGE THROUGH IT.", "", "THERE MUST BE A WAY TO CLOSE IT ON THE", "OTHER SIDE. WHAT DO YOU CARE IF YOU'VE", "GOT TO GO THROUGH HELL TO GET TO IT?"]
+DIM c4text AS ARRAY = ["THE HORRENDOUS VISAGE OF THE BIGGEST", "DEMON YOU'VE EVER SEEN CRUMBLES BEFORE", "YOU, AFTER YOU PUMP YOUR ROCKETS INTO", "HIS EXPOSED BRAIN. THE MONSTER SHRIVELS", "UP AND DIES, ITS THRASHING LIMBS", "DEVASTATING UNTOLD MILES OF HELL'S", "SURFACE.", "", "YOU'VE DONE IT. THE INVASION IS OVER.", "EARTH IS SAVED. HELL IS A WRECK. YOU", "WONDER WHERE BAD FOLKS WILL GO WHEN THEY", "DIE, NOW. WIPING THE SWEAT FROM YOUR", "FOREHEAD YOU BEGIN THE LONG TREK BACK", "HOME. REBUILDING EARTH OUGHT TO BE A", "LOT MORE FUN THAN RUINING IT WAS.", ""]
+DIM c5text AS ARRAY = ["CONGRATULATIONS, YOU'VE FOUND THE SECRET", "LEVEL! LOOKS LIKE IT'S BEEN BUILT BY", "HUMANS, RATHER THAN DEMONS. YOU WONDER", "WHO THE INMATES OF THIS CORNER OF HELL", "WILL BE."]
+DIM c6text AS ARRAY = ["CONGRATULATIONS, YOU'VE FOUND THE", "SUPER SECRET LEVEL!  YOU'D BETTER", "BLAZE THROUGH THIS ONE!", ""]
 
 CONST TEXTSPEED = 3
 CONST TEXTWAIT = 250
 
-' Stage of animation: 0 = text, 1 = art screen.
-DIM finalestage AS INTEGER = 0
+' Stage of animation: 0 = text, 1 = art screen, 2 = character cast.
+EXPORT DIM finalestage AS INTEGER = 0
 DIM finalecount AS INTEGER = 0
 DIM finaletext$ AS STRING = ""
 DIM finaleflat$ AS STRING = ""
@@ -36,7 +46,8 @@ FUNC JoinLines$(text_lines AS ARRAY) AS STRING
     DIM i AS INTEGER
     DIM joined$ AS STRING = ""
     FOR i = 0 TO LEN(text_lines) - 1
-        joined$ = joined$ + text_lines[i] + CHR$(10)
+        IF i > 0 THEN joined$ = joined$ + CHR$(10)
+        joined$ = joined$ + text_lines[i]
     NEXT i
     RETURN joined$
 ENDFUNC
@@ -47,7 +58,33 @@ EXPORT SUB F_StartFinale()
     DOOMSTAT.viewactive = 0
     DOOMSTAT.automapactive = 0
 
-    IF DOOMSTAT.commercial <> 0 THEN I_SYSTEM.I_Error("F_StartFinale: DOOM II is not ported")
+    finalestage = 0
+    finalecount = 0
+
+    ' DOOM II and missions packs with E1, M34.
+    IF DOOMSTAT.commercial <> 0 THEN
+        S_SOUND.S_ChangeMusic(INFO.MUS_READ_M, 1)
+        IF DOOMSTAT.gamemap = 6 THEN
+            finaleflat$ = "SLIME16"
+            finaletext$ = JoinLines$(c1text)
+        ELSEIF DOOMSTAT.gamemap = 11 THEN
+            finaleflat$ = "RROCK14"
+            finaletext$ = JoinLines$(c2text)
+        ELSEIF DOOMSTAT.gamemap = 20 THEN
+            finaleflat$ = "RROCK07"
+            finaletext$ = JoinLines$(c3text)
+        ELSEIF DOOMSTAT.gamemap = 30 THEN
+            finaleflat$ = "RROCK17"
+            finaletext$ = JoinLines$(c4text)
+        ELSEIF DOOMSTAT.gamemap = 15 THEN
+            finaleflat$ = "RROCK13"
+            finaletext$ = JoinLines$(c5text)
+        ELSEIF DOOMSTAT.gamemap = 31 THEN
+            finaleflat$ = "RROCK19"
+            finaletext$ = JoinLines$(c6text)
+        ENDIF
+        RETURN
+    ENDIF
 
     IF DOOMSTAT.gameepisode = 1 THEN
         finaleflat$ = "FLOOR4_8"
@@ -64,18 +101,240 @@ EXPORT SUB F_StartFinale()
     ENDIF
 
     S_SOUND.S_ChangeMusic(INFO.MUS_VICTOR, 1)
-    finalestage = 0
-    finalecount = 0
 ENDSUB
 
-' The finale takes no events; the cast of DOOM II would.
+' ---- the cast of DOOM II ---------------------------------------------------------
+
+' Final DOOM II animation: the monsters in the order they come on, casting
+' by id Software.
+DIM cast_name$ AS ARRAY = ["ZOMBIEMAN", "SHOTGUN GUY", "HEAVY WEAPON DUDE", "IMP", "DEMON", "LOST SOUL", "CACODEMON", "HELL KNIGHT", "BARON OF HELL", "ARACHNOTRON", "PAIN ELEMENTAL", "REVENANT", "MANCUBUS", "ARCH-VILE", "THE SPIDER MASTERMIND", "THE CYBERDEMON", "OUR HERO"]
+DIM cast_type AS ARRAY = [INFO.MT_POSSESSED, INFO.MT_SHOTGUY, INFO.MT_CHAINGUY, INFO.MT_TROOP, INFO.MT_SERGEANT, INFO.MT_SKULL, INFO.MT_HEAD, INFO.MT_KNIGHT, INFO.MT_BRUISER, INFO.MT_BABY, INFO.MT_PAIN, INFO.MT_UNDEAD, INFO.MT_FATSO, INFO.MT_VILE, INFO.MT_SPIDER, INFO.MT_CYBORG, INFO.MT_PLAYER]
+
+EXPORT DIM castnum AS INTEGER = 0
+DIM casttics AS INTEGER = 0
+DIM caststate AS INTEGER = 0
+DIM castdeath AS INTEGER = 0
+DIM castframes AS INTEGER = 0
+DIM castonmelee AS INTEGER = 0
+DIM castattacking AS INTEGER = 0
+
+SUB F_StartCast()
+    ' Force a screen wipe.
+    DOOMSTAT.wipegamestate = -1
+    castnum = 0
+    caststate = CLNG(INFO.mi_seestate[CLNG(cast_type[castnum])])
+    casttics = CLNG(INFO.st_tics[caststate])
+    castdeath = 0
+    finalestage = 2
+    castframes = 0
+    castonmelee = 0
+    castattacking = 0
+    S_SOUND.S_ChangeMusic(INFO.MUS_EVIL, 1)
+ENDSUB
+
+' The sound that goes with a state of an attack.
+FUNC CastSound(st AS INTEGER) AS INTEGER
+    SWITCH st
+        CASE INFO.S_PLAY_ATK1
+            RETURN INFO.SFX_DSHTGN
+        CASE INFO.S_POSS_ATK2
+            RETURN INFO.SFX_PISTOL
+        CASE INFO.S_SPOS_ATK2
+            RETURN INFO.SFX_SHOTGN
+        CASE INFO.S_VILE_ATK2
+            RETURN INFO.SFX_VILATK
+        CASE INFO.S_SKEL_FIST2
+            RETURN INFO.SFX_SKESWG
+        CASE INFO.S_SKEL_FIST4
+            RETURN INFO.SFX_SKEPCH
+        CASE INFO.S_SKEL_MISS2
+            RETURN INFO.SFX_SKEATK
+        CASE INFO.S_FATT_ATK8, INFO.S_FATT_ATK5, INFO.S_FATT_ATK2
+            RETURN INFO.SFX_FIRSHT
+        CASE INFO.S_CPOS_ATK2, INFO.S_CPOS_ATK3, INFO.S_CPOS_ATK4
+            RETURN INFO.SFX_SHOTGN
+        CASE INFO.S_TROO_ATK3
+            RETURN INFO.SFX_CLAW
+        CASE INFO.S_SARG_ATK2
+            RETURN INFO.SFX_SGTATK
+        CASE INFO.S_BOSS_ATK2, INFO.S_BOS2_ATK2, INFO.S_HEAD_ATK2
+            RETURN INFO.SFX_FIRSHT
+        CASE INFO.S_SKULL_ATK2
+            RETURN INFO.SFX_SKLATK
+        CASE INFO.S_SPID_ATK2, INFO.S_SPID_ATK3
+            RETURN INFO.SFX_SHOTGN
+        CASE INFO.S_BSPI_ATK2
+            RETURN INFO.SFX_PLASMA
+        CASE INFO.S_CYBER_ATK2, INFO.S_CYBER_ATK4, INFO.S_CYBER_ATK6
+            RETURN INFO.SFX_RLAUNC
+        CASE INFO.S_PAIN_ATK3
+            RETURN INFO.SFX_SKLATK
+    ENDSWITCH
+    RETURN 0
+ENDFUNC
+
+SUB F_CastTicker()
+    DIM mtype AS INTEGER = CLNG(cast_type[castnum])
+    DIM st AS INTEGER
+    DIM sfx AS INTEGER
+    DIM stopattack AS INTEGER = 0
+
+    casttics = casttics - 1
+    ' Not time to change state yet.
+    IF casttics > 0 THEN RETURN
+
+    IF CLNG(INFO.st_tics[caststate]) = -1 OR CLNG(INFO.st_next[caststate]) = INFO.S_NULL THEN
+        ' Switch from deathstate to next monster.
+        castnum = castnum + 1
+        castdeath = 0
+        IF castnum >= LEN(cast_type) THEN castnum = 0
+        mtype = CLNG(cast_type[castnum])
+        IF CLNG(INFO.mi_seesound[mtype]) <> 0 THEN S_SOUND.S_StartSound(-1, CLNG(INFO.mi_seesound[mtype]))
+        caststate = CLNG(INFO.mi_seestate[mtype])
+        castframes = 0
+    ELSEIF caststate = INFO.S_PLAY_ATK1 THEN
+        ' The hero stops attacking after his one shot.
+        stopattack = 1
+    ELSE
+        ' Just advance to next state in animation.
+        st = CLNG(INFO.st_next[caststate])
+        caststate = st
+        castframes = castframes + 1
+        sfx = CastSound(st)
+        IF sfx <> 0 THEN S_SOUND.S_StartSound(-1, sfx)
+    ENDIF
+
+    IF stopattack = 0 AND castframes = 12 THEN
+        ' Go into attack frame.
+        castattacking = 1
+        IF castonmelee <> 0 THEN
+            caststate = CLNG(INFO.mi_meleestate[mtype])
+        ELSE
+            caststate = CLNG(INFO.mi_missilestate[mtype])
+        ENDIF
+        castonmelee = castonmelee BXOR 1
+        IF caststate = INFO.S_NULL THEN
+            IF castonmelee <> 0 THEN
+                caststate = CLNG(INFO.mi_meleestate[mtype])
+            ELSE
+                caststate = CLNG(INFO.mi_missilestate[mtype])
+            ENDIF
+        ENDIF
+    ENDIF
+
+    IF stopattack = 0 AND castattacking <> 0 THEN
+        IF castframes = 24 OR caststate = CLNG(INFO.mi_seestate[mtype]) THEN stopattack = 1
+    ENDIF
+    IF stopattack <> 0 THEN
+        castattacking = 0
+        castframes = 0
+        caststate = CLNG(INFO.mi_seestate[mtype])
+    ENDIF
+
+    casttics = CLNG(INFO.st_tics[caststate])
+    IF casttics = -1 THEN casttics = 15
+ENDSUB
+
+' A key kills the one on the stage.
+FUNC F_CastResponder(ev_type AS INTEGER) AS INTEGER
+    IF ev_type <> G_GAME.EV_KEYDOWN THEN RETURN 0
+    ' Already in dying frames.
+    IF castdeath <> 0 THEN RETURN 1
+
+    ' Go into death frame.
+    DIM mtype AS INTEGER = CLNG(cast_type[castnum])
+    castdeath = 1
+    caststate = CLNG(INFO.mi_deathstate[mtype])
+    casttics = CLNG(INFO.st_tics[caststate])
+    castframes = 0
+    castattacking = 0
+    IF CLNG(INFO.mi_deathsound[mtype]) <> 0 THEN S_SOUND.S_StartSound(-1, CLNG(INFO.mi_deathsound[mtype]))
+    RETURN 1
+ENDFUNC
+
+' The name of the one on the stage, centred below it.
+SUB F_CastPrint(text$ AS STRING)
+    DIM upper$ AS STRING = UCASE$(text$)
+    DIM i AS INTEGER
+    DIM c AS INTEGER
+    DIM width AS INTEGER = 0
+    DIM cx AS INTEGER
+
+    ' Find width.
+    FOR i = 0 TO LEN(upper$) - 1
+        c = ASC(MID$(upper$, i, 1)) - HU_STUFF.HU_FONTSTART
+        IF c < 0 OR c >= HU_STUFF.HU_FONTSIZE THEN
+            width = width + 4
+        ELSE
+            width = width + W_WAD.PoolShort(CLNG(HU_STUFF.hu_font[c]))
+        ENDIF
+    NEXT i
+
+    ' Draw it.
+    cx = 160 - width \ 2
+    FOR i = 0 TO LEN(upper$) - 1
+        c = ASC(MID$(upper$, i, 1)) - HU_STUFF.HU_FONTSTART
+        IF c < 0 OR c >= HU_STUFF.HU_FONTSIZE THEN
+            cx = cx + 4
+        ELSE
+            V_VIDEO.V_DrawPatch(cx, 180, 0, CLNG(HU_STUFF.hu_font[c]))
+            cx = cx + W_WAD.PoolShort(CLNG(HU_STUFF.hu_font[c]))
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB F_CastDrawer()
+    ' Erase the entire screen to a background.
+    V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("BOSSBACK"))
+
+    F_CastPrint(cast_name$[castnum])
+
+    ' Draw the current frame in the middle of the screen.
+    DIM sprite AS INTEGER = CLNG(INFO.st_sprite[caststate])
+    DIM frame AS INTEGER = CLNG(R_THINGS.spr_firstframe[sprite]) + (CLNG(INFO.st_frame[caststate]) BAND DOOMDEF.FF_FRAMEMASK)
+    DIM lump AS INTEGER = CLNG(R_THINGS.sprframe_lump[frame * 8])
+    DIM patch AS INTEGER = W_WAD.W_CacheLumpNum(lump + R_DATA.firstspritelump)
+    IF CLNG(R_THINGS.sprframe_flip[frame * 8]) <> 0 THEN
+        V_VIDEO.V_DrawPatchFlipped(160, 170, 0, patch)
+    ELSE
+        V_VIDEO.V_DrawPatch(160, 170, 0, patch)
+    ENDIF
+ENDSUB
+
+' Only the cast takes events.
 EXPORT FUNC F_Responder(ev_type AS INTEGER, key AS INTEGER) AS INTEGER
+    IF finalestage = 2 THEN RETURN F_CastResponder(ev_type)
     RETURN 0
 ENDFUNC
 
 EXPORT SUB F_Ticker()
+    DIM i AS INTEGER
+    DIM pressed AS INTEGER = 0
+
+    ' Check for skipping: in DOOM II a button goes on to the next level,
+    ' or to the cast after the last one.
+    IF DOOMSTAT.commercial <> 0 AND finalecount > 50 THEN
+        FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+            IF CLNG(D_PLAYER.player_cmd_buttons[i]) <> 0 THEN pressed = 1
+        NEXT i
+        IF pressed <> 0 THEN
+            IF DOOMSTAT.gamemap = 30 THEN
+                F_StartCast()
+            ELSE
+                G_GAME.gameaction = G_GAME.GA_WORLDDONE
+            ENDIF
+        ENDIF
+    ENDIF
+
     ' Advance animation.
     finalecount = finalecount + 1
+
+    IF finalestage = 2 THEN
+        F_CastTicker()
+        RETURN
+    ENDIF
+
+    IF DOOMSTAT.commercial <> 0 THEN RETURN
 
     IF finalestage = 0 AND finalecount > LEN(finaletext$) * TEXTSPEED + TEXTWAIT THEN
         finalecount = 0
@@ -191,7 +450,9 @@ SUB F_BunnyScroll()
 ENDSUB
 
 EXPORT SUB F_Drawer()
-    IF finalestage = 0 THEN
+    IF finalestage = 2 THEN
+        F_CastDrawer()
+    ELSEIF finalestage = 0 THEN
         F_TextWrite()
     ELSEIF DOOMSTAT.gameepisode = 1 THEN
         IF DOOMSTAT.retail <> 0 THEN

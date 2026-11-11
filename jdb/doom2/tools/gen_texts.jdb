@@ -1,0 +1,107 @@
+' Takes the texts of the finales and the names of the DOOM II levels from
+' d_englsh.h and writes them into f_finale.jdb and hu_stuff.jdb, in the
+' place of the lines that hold them now.
+'
+'   build/jdBasic.exe jdb/doom2/tools/gen_texts.jdb
+'
+' A text becomes an array of its lines; a text that ends with a line feed
+' has an empty last line.
+
+OPTION "EXPLICIT"
+
+DIM header$ AS STRING = REPLACE$(TXTREADER$("jdb/doom/linuxdoom-1.10/d_englsh.h"), CHR$(13), "")
+DIM header_lines AS ARRAY = SPLIT(header$, CHR$(10))
+DIM q$ AS STRING = CHR$(34)
+
+' What stands between the first and the last quote of a line.
+FUNC Quoted$(l$ AS STRING) AS STRING
+    DIM first AS INTEGER = INSTR(l$, q$)
+    IF first < 0 THEN RETURN ""
+    DIM last AS INTEGER = first
+    DIM at AS INTEGER = INSTR(first + 1, l$, q$)
+    DO WHILE at >= 0
+        last = at
+        at = INSTR(at + 1, l$, q$)
+    LOOP
+    RETURN MID$(l$, first + 1, last - first - 1)
+ENDFUNC
+
+' The text of a #define that runs over several lines, as the source of an
+' array of its lines.
+FUNC TextArray$(name$ AS STRING) AS STRING
+    DIM i AS INTEGER
+    DIM start AS INTEGER = -1
+    FOR i = 0 TO LEN(header_lines) - 1
+        IF INSTR(header_lines[i], "#define " + name$) = 0 THEN
+            start = i
+            EXITFOR
+        ENDIF
+    NEXT i
+    IF start < 0 THEN
+        PRINT "not found: " + name$
+        END
+    ENDIF
+
+    DIM text$ AS STRING = ""
+    i = start + 1
+    DO
+        text$ = text$ + Quoted$(header_lines[i])
+        IF RIGHT$(TRIM$(header_lines[i]), 1) <> "\" THEN EXITDO
+        i = i + 1
+    LOOP
+    DIM parts AS ARRAY = SPLIT(text$, "\n")
+    DIM out$ AS STRING = "["
+    FOR i = 0 TO LEN(parts) - 1
+        IF i > 0 THEN out$ = out$ + ", "
+        ' A quote inside a text is written as CHR$(34).
+        out$ = out$ + q$ + REPLACE$(parts[i], "\" + q$, q$ + " + CHR$(34) + " + q$) + q$
+    NEXT i
+    RETURN out$ + "]"
+ENDFUNC
+
+' Replaces the line of the file that starts with head$.
+FUNC Replaced$(file$ AS STRING, head$ AS STRING, new_line$ AS STRING) AS STRING
+    DIM file_lines AS ARRAY = SPLIT(file$, CHR$(10))
+    DIM i AS INTEGER
+    DIM found AS INTEGER = 0
+    FOR i = 0 TO LEN(file_lines) - 1
+        IF INSTR(file_lines[i], head$) = 0 THEN
+            file_lines[i] = new_line$
+            found = 1
+        ENDIF
+    NEXT i
+    IF found = 0 THEN
+        PRINT "no line starts with: " + head$
+        END
+    ENDIF
+    RETURN JOIN(file_lines, CHR$(10))
+ENDFUNC
+
+DIM finale$ AS STRING = REPLACE$(TXTREADER$("jdb/doom2/f_finale.jdb"), CHR$(13), "")
+DIM names AS ARRAY = ["E1TEXT", "E2TEXT", "E3TEXT", "E4TEXT", "C1TEXT", "C2TEXT", "C3TEXT", "C4TEXT", "C5TEXT", "C6TEXT"]
+DIM n AS INTEGER
+DIM var$ AS STRING
+FOR n = 0 TO LEN(names) - 1
+    var$ = LCASE$(names[n])
+    finale$ = Replaced$(finale$, "DIM " + var$ + " AS ARRAY", "DIM " + var$ + " AS ARRAY = " + TextArray$(names[n]))
+NEXT n
+TXTWRITER "jdb/doom2/f_finale.jdb", finale$
+
+DIM level_names$ AS STRING = "["
+DIM k AS INTEGER
+DIM want$ AS STRING
+FOR n = 1 TO 32
+    want$ = "#define HUSTR_" + STR$(n) + CHR$(9)
+    FOR k = 0 TO LEN(header_lines) - 1
+        IF INSTR(header_lines[k], want$) = 0 THEN
+            IF n > 1 THEN level_names$ = level_names$ + ", "
+            level_names$ = level_names$ + q$ + Quoted$(header_lines[k]) + q$
+            EXITFOR
+        ENDIF
+    NEXT k
+NEXT n
+level_names$ = level_names$ + "]"
+DIM hud$ AS STRING = REPLACE$(TXTREADER$("jdb/doom2/hu_stuff.jdb"), CHR$(13), "")
+hud$ = Replaced$(hud$, "DIM mapnames2$ AS ARRAY", "DIM mapnames2$ AS ARRAY = " + level_names$)
+TXTWRITER "jdb/doom2/hu_stuff.jdb", hud$
+PRINT "texts written"

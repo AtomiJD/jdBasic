@@ -1,0 +1,620 @@
+' Checks on DOOM II: its three demos, the title loop, the way through the
+' levels with the secret ones, the texts between them and the cast, the
+' monsters and what their deaths set off, the super shotgun.
+'
+' Needs doom2.wad, in jdb/doom/wad or where DOOM2WAD names it; without
+' the file the test is skipped. Run from the repository root, interpreted
+' or compiled with -c. No window is opened.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT M_RANDOM
+IMPORT INFO
+IMPORT W_WAD
+IMPORT R_MAIN
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_MAP
+IMPORT P_SIGHT
+IMPORT P_INTER
+IMPORT G_GAME
+IMPORT HU_STUFF
+IMPORT WI_STUFF
+IMPORT F_FINALE
+IMPORT M_MENU
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+SUB Yes(label$ AS STRING, condition AS INTEGER)
+    IF condition <> 0 THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+DIM wad$ AS STRING = GETENV$("DOOM2WAD")
+IF LEN(wad$) = 0 THEN wad$ = "jdb/doom/wad/doom2.wad"
+IF NOT FILE.EXISTS(wad$) THEN
+    PRINT "SKIP: " + wad$ + " not found"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+' One tic of the main loop without the display.
+SUB Tics(n AS INTEGER)
+    DIM t AS INTEGER
+    FOR t = 1 TO n
+        D_MAIN.D_ProcessEvents()
+        G_GAME.G_BuildTiccmd()
+        IF DOOMSTAT.advancedemo <> 0 THEN D_MAIN.D_DoAdvanceDemo()
+        M_MENU.M_Ticker()
+        G_GAME.G_Ticker()
+    NEXT t
+ENDSUB
+
+' A key goes down and up again.
+SUB Key(k AS INTEGER)
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, k, 0, 0)
+    Tics(1)
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYUP, k, 0, 0)
+    Tics(1)
+ENDSUB
+
+D_MAIN.wadfile$ = wad$
+D_MAIN.D_DoomMain()
+R_MAIN.R_ExecuteSetViewSize()
+Eq("the game is DOOM II", DOOMSTAT.commercial, 1)
+
+' ---- the demos --------------------------------------------------------------------
+DIM died_at AS INTEGER = 0
+
+' Plays the demo lump to its end mark and answers the number of tics. The
+' missile of the revenant turns every fourth tic of the game, not of the
+' level: the demo starts at tic 0, as it does with -playdemo.
+FUNC PlayDemo(lump$ AS STRING) AS INTEGER
+    DIM n_tics AS INTEGER = 0
+    died_at = 0
+    DOOMSTAT.gametic = 0
+    G_GAME.G_DeferedPlayDemo(lump$)
+    DO
+        G_GAME.G_Ticker()
+        IF G_GAME.demoended <> 0 THEN EXITDO
+        n_tics = n_tics + 1
+        IF died_at = 0 AND CLNG(D_PLAYER.player_playerstate[0]) = DOOMDEF.PST_DEAD THEN died_at = n_tics
+        IF G_GAME.gameaction = G_GAME.GA_COMPLETED THEN EXITDO
+    LOOP
+    RETURN n_tics
+ENDFUNC
+
+SUB CheckDemo(lump$ AS STRING, map_num AS INTEGER, n_tics AS INTEGER, death_tic AS INTEGER, kills AS INTEGER, items AS INTEGER, x AS INTEGER, y AS INTEGER, random_index AS INTEGER)
+    DIM played AS INTEGER = PlayDemo(lump$)
+    DIM thing AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+    Eq(lump$ + ": map", DOOMSTAT.gamemap, map_num)
+    ' The lump holds a header of 13 bytes, four bytes a tic and the end mark.
+    Eq(lump$ + ": tics", played, (W_WAD.W_LumpLength(W_WAD.W_GetNumForName(lump$)) - 14) \ 4)
+    Eq(lump$ + ": tics recorded", played, n_tics)
+    Eq(lump$ + ": the player dies at tic", died_at, death_tic)
+    Eq(lump$ + ": kills", CLNG(D_PLAYER.player_killcount[0]), kills)
+    Eq(lump$ + ": items", CLNG(D_PLAYER.player_itemcount[0]), items)
+    Eq(lump$ + ": x", CLNG(P_MOBJ.mobj_x[thing]), x)
+    Eq(lump$ + ": y", CLNG(P_MOBJ.mobj_y[thing]), y)
+    Eq(lump$ + ": random index", M_RANDOM.prndindex, random_index)
+ENDSUB
+
+CheckDemo("DEMO1", 11, 1205, 1063, 8, 0, 63752097, 66879015, 232)
+CheckDemo("DEMO2", 5, 2001, 1949, 19, 1, 42580418, -20036778, 237)
+CheckDemo("DEMO3", 26, 4471, 4359, 35, 24, -43365476, -8655350, 180)
+' The end of a demo asks for the next part of the title loop.
+DOOMSTAT.advancedemo = 0
+
+' ---- the way through the levels ---------------------------------------------------
+
+' Use is pressed until the intermission is over.
+SUB SkipIntermission()
+    DIM n AS INTEGER = 0
+    DO WHILE DOOMSTAT.gamestate = DOOMSTAT.GS_INTERMISSION AND n < 400
+        Key(32)
+        Tics(3)
+        n = n + 1
+    LOOP
+ENDSUB
+
+SUB StartMap(map_num AS INTEGER)
+    G_GAME.G_DeferedInitNew(DOOMDEF.SK_MEDIUM, 1, map_num)
+    Tics(5)
+ENDSUB
+
+StartMap(1)
+Yes("MAP01: its name", HU_STUFF.w_title$ = "level 1: entryway")
+G_GAME.G_ExitLevel()
+Tics(2)
+Eq("MAP01 left: the intermission", DOOMSTAT.gamestate, DOOMSTAT.GS_INTERMISSION)
+Eq("MAP01 left: par time", WI_STUFF.wm_partime, 30 * 35)
+Eq("MAP01 left: next", WI_STUFF.wm_next, 1)
+SkipIntermission()
+Eq("MAP01 left: a level", DOOMSTAT.gamestate, DOOMSTAT.GS_LEVEL)
+Eq("MAP01 left: MAP02", DOOMSTAT.gamemap, 2)
+
+' After level 6 comes a text; a button goes on.
+StartMap(6)
+G_GAME.G_ExitLevel()
+Tics(2)
+SkipIntermission()
+Eq("MAP06 left: the text", DOOMSTAT.gamestate, DOOMSTAT.GS_FINALE)
+Tics(40)
+Key(G_GAME.KEY_RCTRL)
+Eq("MAP06 left: the text stays for 50 tics", DOOMSTAT.gamestate, DOOMSTAT.GS_FINALE)
+Tics(20)
+Key(G_GAME.KEY_RCTRL)
+Tics(2)
+Eq("MAP06 left: a level", DOOMSTAT.gamestate, DOOMSTAT.GS_LEVEL)
+Eq("MAP06 left: MAP07", DOOMSTAT.gamemap, 7)
+
+' The secret exits: 15 to 31, 31 to 32, each with a text; the usual exits
+' of both lead to 16.
+StartMap(15)
+G_GAME.G_SecretExitLevel()
+Tics(2)
+Eq("MAP15 secret: next", WI_STUFF.wm_next, 30)
+SkipIntermission()
+Eq("MAP15 secret: the text", DOOMSTAT.gamestate, DOOMSTAT.GS_FINALE)
+Tics(60)
+Key(G_GAME.KEY_RCTRL)
+Tics(2)
+Eq("MAP15 secret: MAP31", DOOMSTAT.gamemap, 31)
+G_GAME.G_SecretExitLevel()
+Tics(2)
+SkipIntermission()
+Eq("MAP31 secret: the text", DOOMSTAT.gamestate, DOOMSTAT.GS_FINALE)
+Tics(60)
+Key(G_GAME.KEY_RCTRL)
+Tics(2)
+Eq("MAP31 secret: MAP32", DOOMSTAT.gamemap, 32)
+G_GAME.G_ExitLevel()
+Tics(2)
+SkipIntermission()
+Eq("MAP32 left: a level, no text", DOOMSTAT.gamestate, DOOMSTAT.GS_LEVEL)
+Eq("MAP32 left: MAP16", DOOMSTAT.gamemap, 16)
+StartMap(15)
+G_GAME.G_ExitLevel()
+Tics(2)
+SkipIntermission()
+Eq("MAP15 left: a level, no text", DOOMSTAT.gamestate, DOOMSTAT.GS_LEVEL)
+Eq("MAP15 left: MAP16", DOOMSTAT.gamemap, 16)
+
+' ---- the monsters -----------------------------------------------------------------
+
+' How many things of the type there are.
+FUNC CountType(mtype AS INTEGER) AS INTEGER
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DIM n AS INTEGER = 0
+    DO WHILE th <> 0
+        IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ ANDALSO CLNG(P_MOBJ.mobj_type[CLNG(P_TICK.th_object[th])]) = mtype THEN n = n + 1
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+    RETURN n
+ENDFUNC
+
+' Every living thing of the type dies; answers how many there were.
+FUNC KillType(mtype AS INTEGER) AS INTEGER
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DIM m AS INTEGER
+    DIM n AS INTEGER = 0
+    DO WHILE th <> 0
+        IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ THEN
+            m = CLNG(P_TICK.th_object[th])
+            IF CLNG(P_MOBJ.mobj_type[m]) = mtype AND CLNG(P_MOBJ.mobj_health[m]) > 0 THEN
+                P_INTER.P_DamageMobj(m, -1, -1, 10000)
+                n = n + 1
+            ENDIF
+        ENDIF
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+    RETURN n
+ENDFUNC
+
+' The first thing of the type, -1 if there is none.
+FUNC FindType(mtype AS INTEGER) AS INTEGER
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DO WHILE th <> 0
+        IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ ANDALSO CLNG(P_MOBJ.mobj_type[CLNG(P_TICK.th_object[th])]) = mtype THEN RETURN CLNG(P_TICK.th_object[th])
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+    RETURN -1
+ENDFUNC
+
+' A thing of the type at a free spot the player sees, at least nearest
+' units off; -1 if no spot is found. The spots lie on squares around the
+' player that grow by 64 units.
+FUNC SpawnInSight(mtype AS INTEGER, nearest AS INTEGER) AS INTEGER
+    DIM player_thing AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+    DIM ring AS INTEGER
+    DIM k AS INTEGER
+    DIM side AS INTEGER
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    DIM m AS INTEGER
+    FOR ring = nearest TO nearest + 1024 STEP 64
+        FOR k = -ring TO ring STEP 64
+            FOR side = 0 TO 3
+                x = CLNG(P_MOBJ.mobj_x[player_thing])
+                y = CLNG(P_MOBJ.mobj_y[player_thing])
+                IF side = 0 THEN
+                    x = x + ring * 65536
+                    y = y + k * 65536
+                ELSEIF side = 1 THEN
+                    x = x - ring * 65536
+                    y = y + k * 65536
+                ELSEIF side = 2 THEN
+                    x = x + k * 65536
+                    y = y + ring * 65536
+                ELSE
+                    x = x + k * 65536
+                    y = y - ring * 65536
+                ENDIF
+                m = P_MOBJ.P_SpawnMobj(x, y, DOOMDEF.ONFLOORZ, mtype)
+                IF P_MAP.P_CheckPosition(m, x, y) <> 0 ANDALSO P_SIGHT.P_CheckSight(player_thing, m) <> 0 THEN RETURN m
+                P_MOBJ.P_RemoveMobj(m)
+            NEXT side
+        NEXT k
+    NEXT ring
+    RETURN -1
+ENDFUNC
+
+' What was seen while a monster was at work.
+DIM most_seen AS INTEGER = 0
+DIM most_seen2 AS INTEGER = 0
+DIM hurt_tics AS INTEGER = 0
+DIM lifted AS INTEGER = 0
+
+' Takes every monster out of the level.
+SUB RemoveMonsters()
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DIM m AS INTEGER
+    DO WHILE th <> 0
+        IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ THEN
+            m = CLNG(P_TICK.th_object[th])
+            IF (CLNG(P_MOBJ.mobj_flags[m]) BAND INFO.MF_COUNTKILL) <> 0 OR CLNG(P_MOBJ.mobj_type[m]) = INFO.MT_SKULL THEN P_MOBJ.P_RemoveMobj(m)
+        ENDIF
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+ENDSUB
+
+' Tics to wait before a fight starts; they shift the fight against the
+' tics of the game.
+DIM fight_delay AS INTEGER = 0
+' How far off the monster starts, at least.
+DIM fight_range AS INTEGER = 192
+
+' The player stands in the open of MAP15, alone with a monster of the
+' type in sight that is after him; he is kept alive for n tics. watch
+' and watch2 are types of things to count.
+FUNC Fight(mtype AS INTEGER, n AS INTEGER, watch AS INTEGER, watch2 AS INTEGER) AS INTEGER
+    DIM t AS INTEGER
+    DIM c AS INTEGER
+    StartMap(15)
+    Tics(fight_delay)
+    RemoveMonsters()
+    DIM player_thing AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+    DIM m AS INTEGER = SpawnInSight(mtype, fight_range)
+    most_seen = 0
+    most_seen2 = 0
+    hurt_tics = 0
+    lifted = 0
+    IF m < 0 THEN RETURN -1
+    P_MOBJ.mobj_target[m] = player_thing
+    P_MOBJ.P_SetMobjState(m, CLNG(INFO.mi_seestate[mtype]))
+    FOR t = 1 TO n
+        P_MOBJ.mobj_health[player_thing] = 1000
+        D_PLAYER.player_health[0] = 1000
+        Tics(1)
+        c = CountType(watch)
+        IF c > most_seen THEN most_seen = c
+        IF watch2 >= 0 THEN
+            c = CountType(watch2)
+            IF c > most_seen2 THEN most_seen2 = c
+        ENDIF
+        IF CLNG(D_PLAYER.player_damagecount[0]) > 0 THEN hurt_tics = hurt_tics + 1
+        IF CLNG(P_MOBJ.mobj_momz[player_thing]) > 0 THEN lifted = 1
+    NEXT t
+    RETURN m
+ENDFUNC
+
+DIM monster AS INTEGER
+
+' A revenant that is near comes to punch.
+fight_range = 448
+monster = Fight(INFO.MT_UNDEAD, 500, INFO.MT_TRACER, INFO.MT_SMOKE)
+Yes("revenant: a spot was found", monster >= 0)
+Yes("revenant: it shoots its missile", most_seen > 0)
+' The missile turns and smokes every fourth tic of the game and acts
+' every second tic: one that starts on an odd tic never does. The fight
+' is fought again one tic later.
+DIM smoke AS INTEGER = most_seen2
+fight_delay = 1
+monster = Fight(INFO.MT_UNDEAD, 500, INFO.MT_TRACER, INFO.MT_SMOKE)
+fight_delay = 0
+fight_range = 192
+Yes("revenant: a missile leaves smoke", smoke > 0 OR most_seen2 > 0)
+
+monster = Fight(INFO.MT_FATSO, 500, INFO.MT_FATSHOT, -1)
+Yes("mancubus: a spot was found", monster >= 0)
+Yes("mancubus: two fireballs at a time", most_seen >= 2)
+
+' An arachnotron of MAP07 is put into its attack.
+StartMap(7)
+monster = FindType(INFO.MT_BABY)
+Yes("arachnotron: one on MAP07", monster >= 0)
+DIM plasma AS INTEGER = 0
+DIM wait_tic AS INTEGER
+IF monster >= 0 THEN
+    P_MOBJ.mobj_target[monster] = CLNG(D_PLAYER.player_mo[0])
+    P_MOBJ.P_SetMobjState(monster, CLNG(INFO.mi_missilestate[INFO.MT_BABY]))
+    FOR wait_tic = 1 TO 60
+        Tics(1)
+        IF CountType(INFO.MT_ARACHPLAZ) > plasma THEN plasma = CountType(INFO.MT_ARACHPLAZ)
+    NEXT wait_tic
+ENDIF
+Yes("arachnotron: plasma", plasma > 0)
+
+monster = Fight(INFO.MT_KNIGHT, 500, INFO.MT_BRUISERSHOT, -1)
+Yes("hell knight: a fireball or its claws", most_seen > 0 OR hurt_tics > 0)
+
+monster = Fight(INFO.MT_CHAINGUY, 500, INFO.MT_PUFF, -1)
+Yes("heavy weapon dude: the player is hit", hurt_tics > 0)
+
+monster = Fight(INFO.MT_WOLFSS, 500, INFO.MT_PUFF, -1)
+Yes("SS guard: the player is hit", hurt_tics > 0)
+
+DIM skulls_before AS INTEGER
+monster = Fight(INFO.MT_PAIN, 600, INFO.MT_SKULL, -1)
+Yes("pain elemental: it spits lost souls", most_seen > 0)
+IF monster >= 0 THEN
+    skulls_before = CountType(INFO.MT_SKULL)
+    P_INTER.P_DamageMobj(monster, -1, -1, 10000)
+    Tics(60)
+    Yes("pain elemental: more lost souls as it dies", CountType(INFO.MT_SKULL) > skulls_before)
+ENDIF
+
+monster = Fight(INFO.MT_VILE, 600, INFO.MT_FIRE, -1)
+Yes("arch-vile: the fire", most_seen > 0)
+Yes("arch-vile: the player is thrown up", lifted <> 0)
+
+' An arch-vile that walks towards a corpse raises it. A zombie dies 48
+' units east of the spot the arch-vile then appears at; a thing starts
+' out facing east.
+StartMap(15)
+RemoveMonsters()
+DIM hero AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+DIM vile AS INTEGER = SpawnInSight(INFO.MT_VILE, 256)
+DIM corpse AS INTEGER = -1
+DIM tic AS INTEGER
+DIM spot_x AS INTEGER
+DIM spot_y AS INTEGER
+Yes("arch-vile: a spot was found", vile >= 0)
+IF vile >= 0 THEN
+    spot_x = CLNG(P_MOBJ.mobj_x[vile])
+    spot_y = CLNG(P_MOBJ.mobj_y[vile])
+    P_MOBJ.P_RemoveMobj(vile)
+    corpse = P_MOBJ.P_SpawnMobj(spot_x + 48 * 65536, spot_y, DOOMDEF.ONFLOORZ, INFO.MT_POSSESSED)
+    P_INTER.P_DamageMobj(corpse, -1, -1, 1000)
+    Tics(60)
+    Yes("arch-vile: the zombie is a corpse", (CLNG(P_MOBJ.mobj_flags[corpse]) BAND INFO.MF_CORPSE) <> 0 AND CLNG(P_MOBJ.mobj_health[corpse]) <= 0)
+    Eq("arch-vile: the corpse is a quarter as high", CLNG(P_MOBJ.mobj_height[corpse]), CLNG(INFO.mi_height[INFO.MT_POSSESSED]) \ 4)
+    vile = P_MOBJ.P_SpawnMobj(spot_x, spot_y, DOOMDEF.ONFLOORZ, INFO.MT_VILE)
+    P_MOBJ.mobj_target[vile] = hero
+    P_MOBJ.P_SetMobjState(vile, CLNG(INFO.mi_seestate[INFO.MT_VILE]))
+    Eq("arch-vile: it heals", CLNG(P_MOBJ.mobj_state[vile]), INFO.S_VILE_HEAL1)
+    Eq("arch-vile: the raised one has its health", CLNG(P_MOBJ.mobj_health[corpse]), CLNG(INFO.mi_spawnhealth[INFO.MT_POSSESSED]))
+    Eq("arch-vile: and its flags", CLNG(P_MOBJ.mobj_flags[corpse]), CLNG(INFO.mi_flags[INFO.MT_POSSESSED]))
+    Eq("arch-vile: and its height", CLNG(P_MOBJ.mobj_height[corpse]), CLNG(INFO.mi_height[INFO.MT_POSSESSED]))
+    Eq("arch-vile: it gets up", CLNG(P_MOBJ.mobj_state[corpse]), CLNG(INFO.mi_raisestate[INFO.MT_POSSESSED]))
+    Tics(100)
+    Yes("arch-vile: the raised one lives on", CLNG(P_MOBJ.mobj_health[corpse]) > 0)
+ENDIF
+
+' ---- what deaths set off ----------------------------------------------------------
+
+' The sum of the floor heights and the highest ceiling among the sectors
+' of a tag.
+DIM tag_floor AS INTEGER = 0
+DIM tag_ceiling AS INTEGER = 0
+SUB TagHeights(tag_wanted AS INTEGER)
+    DIM s AS INTEGER
+    tag_floor = 0
+    tag_ceiling = -2147483647
+    FOR s = 0 TO P_SETUP.numsectors - 1
+        IF CLNG(P_SETUP.sector_tag[s]) = tag_wanted THEN
+            tag_floor = tag_floor + CLNG(P_SETUP.sector_floorheight[s]) \ 65536
+            IF CLNG(P_SETUP.sector_ceilingheight[s]) > tag_ceiling THEN tag_ceiling = CLNG(P_SETUP.sector_ceilingheight[s])
+        ENDIF
+    NEXT s
+ENDSUB
+
+' MAP07: the last mancubus lowers the floors of tag 666, the last
+' arachnotron raises those of tag 667.
+StartMap(7)
+TagHeights(666)
+DIM floor_666 AS INTEGER = tag_floor
+TagHeights(667)
+DIM floor_667 AS INTEGER = tag_floor
+Yes("MAP07: mancubi to kill", KillType(INFO.MT_FATSO) > 0)
+Tics(400)
+TagHeights(666)
+Yes("MAP07: the floors of tag 666 went down", tag_floor < floor_666)
+TagHeights(667)
+Eq("MAP07: those of tag 667 did not move yet", tag_floor, floor_667)
+Yes("MAP07: arachnotrons to kill", KillType(INFO.MT_BABY) > 0)
+Tics(400)
+TagHeights(667)
+Yes("MAP07: the floors of tag 667 went up", tag_floor > floor_667)
+Eq("MAP07: the level goes on", G_GAME.gameaction, G_GAME.GA_NOTHING)
+
+' MAP32: the last Keen opens the door of tag 666.
+StartMap(32)
+TagHeights(666)
+DIM ceiling_666 AS INTEGER = tag_ceiling
+Yes("MAP32: Keens to kill", KillType(INFO.MT_KEEN) > 0)
+Tics(400)
+TagHeights(666)
+Yes("MAP32: the door of tag 666 opened", tag_ceiling > ceiling_666)
+
+' MAP30: the eye of the brain wakes up, cubes fly to the target spots and
+' monsters come out of them; the death of the brain ends the level.
+StartMap(30)
+hero = CLNG(D_PLAYER.player_mo[0])
+DIM eye AS INTEGER = FindType(INFO.MT_BOSSSPIT)
+DIM brain AS INTEGER = FindType(INFO.MT_BOSSBRAIN)
+Yes("MAP30: the brain and its eye", eye >= 0 AND brain >= 0)
+Yes("MAP30: target spots", CountType(INFO.MT_BOSSTARGET) > 0)
+DIM things_before AS INTEGER = 0
+DIM cubes AS INTEGER = 0
+DIM fires AS INTEGER = 0
+DIM th_count AS INTEGER
+IF eye >= 0 AND brain >= 0 THEN
+    things_before = CountType(INFO.MT_TROOP) + CountType(INFO.MT_SERGEANT) + CountType(INFO.MT_SHADOWS) + CountType(INFO.MT_HEAD) + CountType(INFO.MT_KNIGHT) + CountType(INFO.MT_BRUISER) + CountType(INFO.MT_BABY) + CountType(INFO.MT_FATSO) + CountType(INFO.MT_UNDEAD) + CountType(INFO.MT_PAIN) + CountType(INFO.MT_VILE)
+    P_MOBJ.mobj_target[eye] = hero
+    P_MOBJ.P_SetMobjState(eye, CLNG(INFO.mi_seestate[INFO.MT_BOSSSPIT]))
+    FOR tic = 1 TO 1200
+        P_MOBJ.mobj_health[hero] = 1000
+        D_PLAYER.player_health[0] = 1000
+        Tics(1)
+        th_count = CountType(INFO.MT_SPAWNSHOT)
+        IF th_count > cubes THEN cubes = th_count
+        th_count = CountType(INFO.MT_SPAWNFIRE)
+        IF th_count > fires THEN fires = th_count
+    NEXT tic
+    Yes("MAP30: cubes fly", cubes > 0)
+    Yes("MAP30: fires where they land", fires > 0)
+    Yes("MAP30: monsters came out", CountType(INFO.MT_TROOP) + CountType(INFO.MT_SERGEANT) + CountType(INFO.MT_SHADOWS) + CountType(INFO.MT_HEAD) + CountType(INFO.MT_KNIGHT) + CountType(INFO.MT_BRUISER) + CountType(INFO.MT_BABY) + CountType(INFO.MT_FATSO) + CountType(INFO.MT_UNDEAD) + CountType(INFO.MT_PAIN) + CountType(INFO.MT_VILE) > things_before)
+
+    P_INTER.P_DamageMobj(brain, -1, -1, 10000)
+    DIM rockets AS INTEGER = 0
+    DIM done_at AS INTEGER = 0
+    FOR tic = 1 TO 600
+        P_MOBJ.mobj_health[hero] = 1000
+        D_PLAYER.player_health[0] = 1000
+        Tics(1)
+        th_count = CountType(INFO.MT_ROCKET)
+        IF th_count > rockets THEN rockets = th_count
+        IF DOOMSTAT.gamestate = DOOMSTAT.GS_INTERMISSION THEN
+            done_at = tic
+            EXITFOR
+        ENDIF
+    NEXT tic
+    Yes("MAP30: the brain explodes", rockets > 10)
+    Yes("MAP30: its death ends the level", done_at > 0)
+
+    ' The last text, then the cast: a key kills the one on the stage, the
+    ' next one comes on, and after the seventeenth the first again.
+    SkipIntermission()
+    Eq("MAP30 left: the text", DOOMSTAT.gamestate, DOOMSTAT.GS_FINALE)
+    Eq("MAP30 left: stage", F_FINALE.finalestage, 0)
+    Tics(60)
+    Key(G_GAME.KEY_RCTRL)
+    Tics(2)
+    Eq("MAP30 left: the cast", F_FINALE.finalestage, 2)
+    Eq("cast: the first one", F_FINALE.castnum, 0)
+    DIM member AS INTEGER
+    DIM waited AS INTEGER
+    DIM in_order AS INTEGER = 1
+    FOR member = 1 TO 17
+        ' Let it walk and attack for a while, then kill it.
+        Tics(100)
+        Key(120)
+        waited = 0
+        DO WHILE F_FINALE.castnum <> member MOD 17 AND waited < 600
+            Tics(1)
+            waited = waited + 1
+        LOOP
+        IF F_FINALE.castnum <> member MOD 17 THEN in_order = 0
+    NEXT member
+    Yes("cast: all seventeen in order, then the first again", in_order)
+    Eq("cast: the game stays in the finale", DOOMSTAT.gamestate, DOOMSTAT.GS_FINALE)
+ENDIF
+
+' ---- the super shotgun ------------------------------------------------------------
+
+StartMap(1)
+P_INTER.P_GiveWeapon(0, DOOMDEF.WP_SHOTGUN, 0)
+P_INTER.P_GiveWeapon(0, DOOMDEF.WP_SUPERSHOTGUN, 0)
+Tics(60)
+D_PLAYER.player_ammo[DOOMDEF.AM_SHELL] = 20
+Eq("the weapon picked up last is in hand", CLNG(D_PLAYER.player_readyweapon[0]), DOOMDEF.WP_SUPERSHOTGUN)
+D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, G_GAME.KEY_RCTRL, 0, 0)
+Tics(10)
+D_MAIN.D_PostEvent(G_GAME.EV_KEYUP, G_GAME.KEY_RCTRL, 0, 0)
+Tics(70)
+Eq("super shotgun: a shot takes two shells", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_SHELL]), 18)
+Key(51)
+Tics(60)
+' Key 3 picks the super shotgun unless it is the weapon in hand.
+Eq("key 3: the shotgun", CLNG(D_PLAYER.player_readyweapon[0]), DOOMDEF.WP_SHOTGUN)
+Key(51)
+Tics(60)
+Eq("key 3 again: the super shotgun", CLNG(D_PLAYER.player_readyweapon[0]), DOOMDEF.WP_SUPERSHOTGUN)
+
+' ---- the title loop ---------------------------------------------------------------
+
+' The title, DEMO1, the credits, DEMO2, the title, DEMO3 and the title
+' once more. A page with a count of 385 shows for 386 tics, as its count
+' has to fall below zero; a demo takes one tic more than it has, the one
+' that finds its end mark.
+DIM seq$ AS STRING = ""
+DIM last_state AS INTEGER = -1
+DIM last_map AS INTEGER = -1
+DIM phase_tics AS INTEGER = 0
+DIM here AS INTEGER
+DIM deaths$ AS STRING = ""
+DIM was_dead AS INTEGER = 0
+D_MAIN.D_StartTitle()
+FOR tic = 1 TO 8860
+    Tics(1)
+    here = DOOMSTAT.gamemap
+    IF DOOMSTAT.gamestate = DOOMSTAT.GS_DEMOSCREEN THEN here = 0
+    IF DOOMSTAT.gamestate <> last_state OR here <> last_map THEN
+        IF last_state >= 0 THEN seq$ = seq$ + STR$(phase_tics) + " "
+        IF here = 0 THEN seq$ = seq$ + "page:" ELSE seq$ = seq$ + "MAP" + STR$(DOOMSTAT.gamemap) + ":"
+        last_state = DOOMSTAT.gamestate
+        last_map = here
+        phase_tics = 0
+        was_dead = 0
+    ENDIF
+    phase_tics = phase_tics + 1
+    IF here <> 0 AND was_dead = 0 AND CLNG(D_PLAYER.player_playerstate[0]) = DOOMDEF.PST_DEAD THEN
+        was_dead = 1
+        deaths$ = deaths$ + STR$(phase_tics) + " "
+    ENDIF
+NEXT tic
+DIM want$ AS STRING = "page:386 MAP11:1206 page:201 MAP5:2002 page:386 MAP26:4472 page:"
+IF seq$ = want$ THEN
+    passed = passed + 1
+ELSE
+    failed = failed + 1
+    PRINT "FAIL title loop: expected " + want$ + ", got " + seq$
+ENDIF
+' The demos go in the loop as they do alone.
+Yes("title loop: the player dies at tics 1063, 1949 and 4359 of the demos, got " + deaths$, deaths$ = "1063 1949 4359 ")
+
+PRINT ""
+PRINT "DOOM II TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

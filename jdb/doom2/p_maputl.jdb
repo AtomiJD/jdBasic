@@ -19,6 +19,7 @@ IMPORT P_SETUP
 IMPORT R_MAIN
 IMPORT P_MOBJ
 IMPORT P_MAP
+IMPORT P_ENEMY
 
 ' Functions P_BlockLinesIterator can call for each line.
 EXPORT CONST PIT_ADDLINEINTERCEPTS = 1
@@ -29,6 +30,7 @@ EXPORT CONST PIT_STOMPTHING = 2
 EXPORT CONST PIT_CHECKTHING = 3
 EXPORT CONST PIT_CHANGESECTOR = 4
 EXPORT CONST PIT_RADIUSATTACK = 5
+EXPORT CONST PIT_VILECHECK = 6
 ' Functions P_PathTraverse can call for each intercept.
 EXPORT CONST PTR_SLIDETRAVERSE = 1
 EXPORT CONST PTR_USETRAVERSE = 2
@@ -386,6 +388,8 @@ EXPORT FUNC P_BlockThingsIterator(x AS INTEGER, y AS INTEGER, callee AS INTEGER)
             go_on = P_MAP.PIT_ChangeSector(mobj)
         ELSEIF callee = PIT_RADIUSATTACK THEN
             go_on = P_MAP.PIT_RadiusAttack(mobj)
+        ELSEIF callee = PIT_VILECHECK THEN
+            go_on = P_ENEMY.PIT_VileCheck(mobj)
         ELSE
             I_SYSTEM.I_Error("P_BlockThingsIterator: unknown function " + STR$(callee))
         ENDIF

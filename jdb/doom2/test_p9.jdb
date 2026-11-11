@@ -4,7 +4,8 @@
 ' the menu saves and loads, and so do the quick keys.
 '
 ' Run from the repository root, interpreted or compiled with -c. No window
-' is opened. The savegames are written to tmp/doom_p9.
+' is opened. The savegames are written to tmp/doom_p9. With DOOMWADDIR set
+' to a folder that holds doom2.wad the levels are those of DOOM II.
 
 OPTION "EXPLICIT"
 OPTION "NOPAUSE"
@@ -83,12 +84,15 @@ ENDSUB
 ' The things in the order of their thinkers.
 DIM n_things AS INTEGER = 0
 DIM n_targets AS INTEGER = 0
+' Things whose angle is not one of the 2^32.
+DIM n_bad_angles AS INTEGER = 0
 FUNC ThingsHash() AS INTEGER
     DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
     DIM m AS INTEGER
     hash = 0
     n_things = 0
     n_targets = 0
+    n_bad_angles = 0
     DO WHILE th <> 0
         IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ THEN
             m = CLNG(P_TICK.th_object[th])
@@ -99,6 +103,7 @@ FUNC ThingsHash() AS INTEGER
             Mix(CLNG(P_MOBJ.mobj_y[m]))
             Mix(CLNG(P_MOBJ.mobj_z[m]))
             Mix(CLNG(P_MOBJ.mobj_angle[m]))
+            IF CLNG(P_MOBJ.mobj_angle[m]) < 0 OR CLNG(P_MOBJ.mobj_angle[m]) > $FFFFFFFF THEN n_bad_angles = n_bad_angles + 1
             Mix(CLNG(P_MOBJ.mobj_sprite[m]))
             Mix(CLNG(P_MOBJ.mobj_frame[m]))
             Mix(CLNG(P_MOBJ.mobj_radius[m]))
@@ -339,6 +344,7 @@ DIM seen_targets AS INTEGER = 0
 ' a while, saves, plays on, loads, and compares.
 SUB RoundTrip(episode AS INTEGER, map_num AS INTEGER)
     DIM label$ AS STRING = "E" + STR$(episode) + "M" + STR$(map_num) + ": "
+    IF DOOMSTAT.commercial <> 0 THEN label$ = "MAP" + STR$(map_num) + ": "
     DIM ld AS INTEGER
     DIM k AS INTEGER
     DIM mo AS INTEGER
@@ -400,6 +406,7 @@ SUB RoundTrip(episode AS INTEGER, map_num AS INTEGER)
     Eq(label$ + "level time", P_TICK.leveltime, time_then)
     Eq(label$ + "things", ThingsHash(), things_then)
     Eq(label$ + "number of things", n_things, n_things_then)
+    Eq(label$ + "every angle is an angle", n_bad_angles, 0)
     Eq(label$ + "nobody is after anybody", n_targets, 0)
     Eq(label$ + "world", WorldHash(), world_then)
     Eq(label$ + "movers and lights", MoversHash(), movers_then)
@@ -421,19 +428,26 @@ SUB RoundTrip(episode AS INTEGER, map_num AS INTEGER)
     PRINT label$ + STR$(n_things_then) + " things, " + STR$(n_targets_then) + " with a target, " + STR$(fire_then) + " fire lights, " + STR$(stasis_plats_then) + " platforms in stasis"
 ENDSUB
 
-RoundTrip(1, 3)
-RoundTrip(2, 4)
-RoundTrip(3, 6)
-RoundTrip(4, 2)
+IF DOOMSTAT.commercial <> 0 THEN
+    RoundTrip(1, 5)
+    RoundTrip(1, 11)
+    RoundTrip(1, 16)
+    RoundTrip(1, 28)
+ELSE
+    RoundTrip(1, 3)
+    RoundTrip(2, 4)
+    RoundTrip(3, 6)
+    RoundTrip(4, 2)
+ENDIF
 
-Yes("doors were saved", CLNG(at_work[P_TICK.TF_DOOR]) > 0)
-Yes("platforms were saved", CLNG(at_work[P_TICK.TF_PLAT]) > 0)
-Yes("floors were saved", CLNG(at_work[P_TICK.TF_FLOOR]) > 0)
-Yes("ceilings were saved", CLNG(at_work[P_TICK.TF_CEILING]) > 0)
-Yes("flashing lights were saved", CLNG(at_work[P_TICK.TF_LIGHTFLASH]) > 0)
-Yes("strobe lights were saved", CLNG(at_work[P_TICK.TF_STROBE]) > 0)
-Yes("glowing lights were saved", CLNG(at_work[P_TICK.TF_GLOW]) > 0)
-Yes("there were fire lights to lose", CLNG(at_work[P_TICK.TF_FIREFLICKER]) > 0)
+IF DOOMSTAT.commercial = 0 THEN Yes("doors were saved", CLNG(at_work[P_TICK.TF_DOOR]) > 0)
+IF DOOMSTAT.commercial = 0 THEN Yes("platforms were saved", CLNG(at_work[P_TICK.TF_PLAT]) > 0)
+IF DOOMSTAT.commercial = 0 THEN Yes("floors were saved", CLNG(at_work[P_TICK.TF_FLOOR]) > 0)
+IF DOOMSTAT.commercial = 0 THEN Yes("ceilings were saved", CLNG(at_work[P_TICK.TF_CEILING]) > 0)
+IF DOOMSTAT.commercial = 0 THEN Yes("flashing lights were saved", CLNG(at_work[P_TICK.TF_LIGHTFLASH]) > 0)
+IF DOOMSTAT.commercial = 0 THEN Yes("strobe lights were saved", CLNG(at_work[P_TICK.TF_STROBE]) > 0)
+IF DOOMSTAT.commercial = 0 THEN Yes("glowing lights were saved", CLNG(at_work[P_TICK.TF_GLOW]) > 0)
+IF DOOMSTAT.commercial = 0 THEN Yes("there were fire lights to lose", CLNG(at_work[P_TICK.TF_FIREFLICKER]) > 0)
 Yes("there were targets to lose", seen_targets > 0)
 PRINT "at work when saved: " + STR$(CLNG(at_work[2])) + " doors, " + STR$(CLNG(at_work[3])) + " platforms, " + STR$(CLNG(at_work[4])) + " floors, " + STR$(CLNG(at_work[5])) + " ceilings, " + STR$(seen_stasis_ceilings) + " ceilings in stasis, " + STR$(seen_stasis_plats) + " platforms in stasis"
 

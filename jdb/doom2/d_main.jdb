@@ -26,11 +26,22 @@ IMPORT M_MENU
 IMPORT INFO
 IMPORT S_SOUND
 
-' The path of doom.wad: in the folder the environment variable DOOMWADDIR
-' names, else in jdb/doom/wad/classic below the working directory.
+' The WAD to play, if the caller names one.
+EXPORT DIM wadfile$ AS STRING = ""
+
+' The path of the WAD: the one that was named, else the first of
+' doom2.wad, doomu.wad, doom.wad and doom1.wad in the folder the
+' environment variable DOOMWADDIR names, or in jdb/doom/wad/classic below
+' the working directory.
 EXPORT FUNC IdentifyVersion$() AS STRING
+    IF LEN(wadfile$) > 0 THEN RETURN wadfile$
     DIM doomwaddir$ AS STRING = GETENV$("DOOMWADDIR")
     IF LEN(doomwaddir$) = 0 THEN doomwaddir$ = "jdb/doom/wad/classic"
+    DIM names AS ARRAY = ["doom2.wad", "doomu.wad", "doom.wad", "doom1.wad"]
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(names) - 1
+        IF FILE.EXISTS(doomwaddir$ + "/" + names[i]) THEN RETURN doomwaddir$ + "/" + names[i]
+    NEXT i
     RETURN doomwaddir$ + "/doom.wad"
 ENDFUNC
 
@@ -126,6 +137,7 @@ EXPORT SUB D_DoAdvanceDemo()
         IF DOOMSTAT.commercial <> 0 THEN
             pagetic = 35 * 11
             pagename$ = "TITLEPIC"
+            S_SOUND.S_StartMusic(INFO.MUS_DM2TTL)
         ELSE
             pagetic = 200
             IF DOOMSTAT.retail <> 0 THEN pagename$ = "CREDIT" ELSE pagename$ = "HELP2"
@@ -261,10 +273,8 @@ ENDSUB
 
 ' Loads the WAD and sets every part of the game up. The window has to be
 ' open already.
-EXPORT SUB D_DoomMain()
-    W_WAD.W_Init(IdentifyVersion$())
-
-    ' Which game it is tells the WAD by the levels it has.
+' Which game it is tells the WAD by the levels it has.
+EXPORT SUB D_IdentifyGame()
     DOOMSTAT.commercial = 0
     DOOMSTAT.shareware = 0
     DOOMSTAT.retail = 0
@@ -275,6 +285,11 @@ EXPORT SUB D_DoomMain()
     ELSEIF W_WAD.W_CheckNumForName("E2M1") < 0 THEN
         DOOMSTAT.shareware = 1
     ENDIF
+ENDSUB
+
+EXPORT SUB D_DoomMain()
+    W_WAD.W_Init(IdentifyVersion$())
+    D_IdentifyGame()
 
     V_VIDEO.V_Init()
     M_MENU.M_Init()
