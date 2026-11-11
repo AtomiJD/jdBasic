@@ -334,3 +334,7 @@ jdb/xor_model.jmd
 jdb/demos/audio/oxygen_patches_user.json
 jdb/demos/audio/oxygen_live.jdb
 jdb/demos/audio/oxygen_take.wav
+
+# DOOM port: savegames and settings written into the working directory
+/doomsav*.dsg
+/default.cfg

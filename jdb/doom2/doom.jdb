@@ -14,6 +14,11 @@
 ' menu, F1 help, F2 saves, F3 loads, F4 sound volume, F5 detail, F6 quick
 ' save, F7 ends the game, F8 messages, F9 quick load, F10 quits, F11 gamma,
 ' minus and equals change the view size, Pause pauses.
+'
+' The mouse turns and, moved up and down, walks; its left button fires,
+' the right one makes it step sideways, the middle one walks. The pointer
+' is not held in the window. The settings are kept in default.cfg in the
+' working directory; use_mouse 0 there turns the mouse off.
 
 OPTION "EXPLICIT"
 OPTION "NOPAUSE"
@@ -26,6 +31,7 @@ IMPORT D_MAIN
 IMPORT M_MENU
 IMPORT D_PLAYER
 IMPORT S_SOUND
+IMPORT M_MISC
 
 DIM running AS INTEGER = 1
 
@@ -115,6 +121,59 @@ SUB HandleKeyUp(key_data)
     MoveKey(key, 0)
 ENDSUB
 
+' Where the pointer is and which buttons are down (1 left, 2 right,
+' 4 middle), and what the game was told last.
+DIM mouse_x AS INTEGER = 0
+DIM mouse_y AS INTEGER = 0
+DIM mouse_buttons AS INTEGER = 0
+DIM mouse_seen AS INTEGER = 0
+DIM mouse_lastx AS INTEGER = 0
+DIM mouse_lasty AS INTEGER = 0
+DIM mouse_lastbuttons AS INTEGER = 0
+
+SUB MouseAt(x AS INTEGER, y AS INTEGER)
+    mouse_x = x
+    mouse_y = y
+    IF mouse_seen = 0 THEN
+        mouse_lastx = x
+        mouse_lasty = y
+        mouse_seen = 1
+    ENDIF
+ENDSUB
+
+' The bit of DOOM for a button of the window: left, middle, right.
+FUNC ButtonBit(button AS INTEGER) AS INTEGER
+    IF button = 1 THEN RETURN 1
+    IF button = 3 THEN RETURN 2
+    IF button = 2 THEN RETURN 4
+    RETURN 0
+ENDFUNC
+
+SUB HandleMouseMove(mouse_data)
+    MouseAt(CLNG(mouse_data[0]{"x"}), CLNG(mouse_data[0]{"y"}))
+ENDSUB
+
+SUB HandleMouseDown(mouse_data)
+    MouseAt(CLNG(mouse_data[0]{"x"}), CLNG(mouse_data[0]{"y"}))
+    mouse_buttons = mouse_buttons BOR ButtonBit(CLNG(mouse_data[0]{"button"}))
+ENDSUB
+
+SUB HandleMouseUp(mouse_data)
+    MouseAt(CLNG(mouse_data[0]{"x"}), CLNG(mouse_data[0]{"y"}))
+    mouse_buttons = mouse_buttons BAND (BNOT ButtonBit(CLNG(mouse_data[0]{"button"})))
+ENDSUB
+
+' Tells the game how the mouse moved since the last tic and which of its
+' buttons are down; up the screen is forward.
+SUB PostMouse()
+    IF M_MISC.usemouse = 0 OR mouse_seen = 0 THEN RETURN
+    IF mouse_x = mouse_lastx AND mouse_y = mouse_lasty AND mouse_buttons = mouse_lastbuttons THEN RETURN
+    D_MAIN.D_PostEvent(G_GAME.EV_MOUSE, mouse_buttons, (mouse_x - mouse_lastx) * 4, (mouse_lasty - mouse_y) * 4)
+    mouse_lastx = mouse_x
+    mouse_lasty = mouse_y
+    mouse_lastbuttons = mouse_buttons
+ENDSUB
+
 DIM cmd_args AS ARRAY = OS.ARGS()
 IF LEN(cmd_args) > 2 ANDALSO LCASE$(cmd_args[1]) = "-iwad" THEN
     D_MAIN.wadfile$ = cmd_args[2]
@@ -129,12 +188,16 @@ IF LEN(cmd_args) > 2 THEN
 ENDIF
 IF LEN(cmd_args) > 3 THEN start_skill = CLNG(VAL(cmd_args[3]))
 
+M_MISC.M_LoadDefaults()
 I_VIDEO.I_InitGraphics(3)
 D_MAIN.D_DoomMain()
 S_SOUND.S_Init(S_SOUND.snd_SfxVolume, S_SOUND.snd_MusicVolume)
 ON "QUIT" CALL HandleQuit@
 ON "KEYDOWN" CALL HandleKeyDown@
 ON "KEYUP" CALL HandleKeyUp@
+ON "MOUSEMOVE" CALL HandleMouseMove@
+ON "MOUSEDOWN" CALL HandleMouseDown@
+ON "MOUSEUP" CALL HandleMouseUp@
 
 IF start_episode > 0 THEN
     G_GAME.G_DeferedInitNew(start_skill, start_episode, start_map)
@@ -148,6 +211,7 @@ DO WHILE running = 1 AND M_MENU.quit_requested = 0
     tic_start = TICK()
 
     ' Process one tic.
+    PostMouse()
     D_MAIN.D_ProcessEvents()
     G_GAME.G_BuildTiccmd()
     IF DOOMSTAT.advancedemo <> 0 THEN D_MAIN.D_DoAdvanceDemo()
@@ -166,4 +230,5 @@ DO WHILE running = 1 AND M_MENU.quit_requested = 0
     LOOP
 LOOP
 
+M_MISC.M_SaveDefaults()
 I_VIDEO.I_ShutdownGraphics()

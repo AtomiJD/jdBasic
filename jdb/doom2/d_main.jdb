@@ -31,18 +31,21 @@ EXPORT DIM wadfile$ AS STRING = ""
 
 ' The path of the WAD: the one that was named, else the first of
 ' doom2.wad, doomu.wad, doom.wad and doom1.wad in the folder the
-' environment variable DOOMWADDIR names, or in jdb/doom/wad/classic below
-' the working directory.
+' environment variable DOOMWADDIR names; without the variable in the
+' working directory, then in jdb/doom/wad/classic below it.
 EXPORT FUNC IdentifyVersion$() AS STRING
     IF LEN(wadfile$) > 0 THEN RETURN wadfile$
-    DIM doomwaddir$ AS STRING = GETENV$("DOOMWADDIR")
-    IF LEN(doomwaddir$) = 0 THEN doomwaddir$ = "jdb/doom/wad/classic"
+    DIM folders AS ARRAY = [".", "jdb/doom/wad/classic"]
+    IF LEN(GETENV$("DOOMWADDIR")) > 0 THEN folders = [GETENV$("DOOMWADDIR")]
     DIM names AS ARRAY = ["doom2.wad", "doomu.wad", "doom.wad", "doom1.wad"]
+    DIM f AS INTEGER
     DIM i AS INTEGER
-    FOR i = 0 TO LEN(names) - 1
-        IF FILE.EXISTS(doomwaddir$ + "/" + names[i]) THEN RETURN doomwaddir$ + "/" + names[i]
-    NEXT i
-    RETURN doomwaddir$ + "/doom.wad"
+    FOR f = 0 TO LEN(folders) - 1
+        FOR i = 0 TO LEN(names) - 1
+            IF FILE.EXISTS(folders[f] + "/" + names[i]) THEN RETURN folders[f] + "/" + names[i]
+        NEXT i
+    NEXT f
+    RETURN folders[LEN(folders) - 1] + "/doom.wad"
 ENDFUNC
 
 ' ---- events ---------------------------------------------------------------------
@@ -72,7 +75,7 @@ EXPORT SUB D_ProcessEvents()
         ev_type = CLNG(event_type[eventtail])
         data1 = CLNG(event_data1[eventtail])
         ' The menu may eat the event.
-        IF M_MENU.M_Responder(ev_type, data1) = 0 THEN G_GAME.G_Responder(ev_type, data1, CLNG(event_data2[eventtail]), CLNG(event_data3[eventtail]))
+        IF M_MENU.M_Responder(ev_type, data1, CLNG(event_data2[eventtail]), CLNG(event_data3[eventtail])) = 0 THEN G_GAME.G_Responder(ev_type, data1, CLNG(event_data2[eventtail]), CLNG(event_data3[eventtail]))
         eventtail = (eventtail + 1) BAND (MAXEVENTS - 1)
     LOOP
 ENDSUB

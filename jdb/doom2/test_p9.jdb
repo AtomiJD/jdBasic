@@ -1,7 +1,8 @@
 ' Checks on the savegames: a game saved in the middle of a level, with
 ' doors, floors, platforms, ceilings and lights at work and monsters
 ' awake, comes back as it was; what the original does not save is gone;
-' the menu saves and loads, and so do the quick keys.
+' the menu saves and loads, and so do the quick keys. Then the mouse and
+' the settings file.
 '
 ' Run from the repository root, interpreted or compiled with -c. No window
 ' is opened. The savegames are written to tmp/doom_p9. With DOOMWADDIR set
@@ -28,6 +29,8 @@ IMPORT P_LIGHTS
 IMPORT R_MAIN
 IMPORT G_GAME
 IMPORT M_MENU
+IMPORT M_MISC
+IMPORT S_SOUND
 
 DIM passed AS INTEGER = 0
 DIM failed AS INTEGER = 0
@@ -539,6 +542,108 @@ G_GAME.G_LoadGame(G_GAME.G_SaveGameName$(5))
 Tics(1)
 Eq("other version: nothing is loaded", P_TICK.leveltime, time_now + 1)
 Eq("other version: the action is over", G_GAME.gameaction, G_GAME.GA_NOTHING)
+
+' ---- the mouse ------------------------------------------------------------------
+
+G_GAME.G_DeferedInitNew(DOOMDEF.SK_MEDIUM, 1, 1)
+Tics(40)
+DIM body AS INTEGER = CLNG(D_PLAYER.player_mo[0])
+DIM angle_then AS INTEGER = CLNG(P_MOBJ.mobj_angle[body])
+' 40 to the right at sensitivity 5 are 40 * 8 angle units of a ticcmd.
+G_GAME.mouseSensitivity = 5
+D_MAIN.D_PostEvent(G_GAME.EV_MOUSE, 0, 40, 0)
+Tics(1)
+Eq("mouse: 40 to the right turns right by 320 * 65536", CLNG(P_MOBJ.mobj_angle[body]), (angle_then - 320 * 65536) BAND $FFFFFFFF)
+Tics(1)
+Eq("mouse: a mouse at rest turns no further", CLNG(P_MOBJ.mobj_angle[body]), (angle_then - 320 * 65536) BAND $FFFFFFFF)
+' At sensitivity 9 the same way counts 40 * 14 \ 10 = 56.
+G_GAME.mouseSensitivity = 9
+D_MAIN.D_PostEvent(G_GAME.EV_MOUSE, 0, -40, 0)
+Tics(1)
+Eq("mouse: 40 to the left at sensitivity 9 turns left by 448 * 65536", CLNG(P_MOBJ.mobj_angle[body]), (angle_then - 320 * 65536 + 448 * 65536) BAND $FFFFFFFF)
+G_GAME.mouseSensitivity = 5
+
+Tics(20)
+Eq("mouse: the player stands", CLNG(P_MOBJ.mobj_momx[body]) + CLNG(P_MOBJ.mobj_momy[body]), 0)
+D_MAIN.D_PostEvent(G_GAME.EV_MOUSE, 0, 0, 20)
+Tics(1)
+Yes("mouse: moved up, the player walks", CLNG(P_MOBJ.mobj_momx[body]) <> 0 OR CLNG(P_MOBJ.mobj_momy[body]) <> 0)
+
+DIM clip_then AS INTEGER = CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_CLIP])
+D_MAIN.D_PostEvent(G_GAME.EV_MOUSE, 1, 0, 0)
+Tics(12)
+D_MAIN.D_PostEvent(G_GAME.EV_MOUSE, 0, 0, 0)
+Tics(30)
+Yes("mouse: the left button fires", CLNG(D_PLAYER.player_ammo[DOOMDEF.AM_CLIP]) < clip_then)
+
+' In the menu the mouse is the arrow keys: down to Quit Game, a click, y.
+' The menu counts the way of the mouse while it is closed as well: the 20
+' up from above are taken back first.
+D_MAIN.D_PostEvent(G_GAME.EV_MOUSE, 0, 0, -20)
+Tics(1)
+DIM steps AS INTEGER = 5
+IF DOOMSTAT.commercial <> 0 THEN steps = 4
+DIM stp AS INTEGER
+Key(G_GAME.KEY_ESCAPE)
+' The menu opens where it was left; n jumps to New Game, the first item.
+Key(110)
+FOR stp = 1 TO steps
+    D_MAIN.D_PostEvent(G_GAME.EV_MOUSE, 0, 0, -40)
+    Tics(7)
+NEXT stp
+D_MAIN.D_PostEvent(G_GAME.EV_MOUSE, 1, 0, 0)
+Tics(1)
+D_MAIN.D_PostEvent(G_GAME.EV_MOUSE, 0, 0, 0)
+Tics(1)
+Eq("menu mouse: nothing is quit before the answer", M_MENU.quit_requested, 0)
+Key(121)
+Eq("menu mouse: down to Quit Game, a click and y quit", M_MENU.quit_requested, 1)
+M_MENU.quit_requested = 0
+DOOMSTAT.menuactive = 0
+
+' ---- the settings ---------------------------------------------------------------
+
+IF FILE.EXISTS(M_MISC.M_DefaultFile$()) THEN KILL M_MISC.M_DefaultFile$()
+DIM blocks_then AS INTEGER = M_MENU.screenblocks
+G_GAME.mouseSensitivity = 7
+S_SOUND.snd_SfxVolume = 11
+S_SOUND.snd_MusicVolume = 3
+G_GAME.key_fire = 102
+M_MISC.usemouse = 0
+M_MENU.screenblocks = 9
+M_MISC.M_SaveDefaults()
+Yes("settings: the file is there", FILE.EXISTS(M_MISC.M_DefaultFile$()))
+DIM cfg$ AS STRING = TXTREADER$(M_MISC.M_DefaultFile$())
+Yes("settings: a line of the file", INSTR(cfg$, "sfx_volume" + CHR$(9) + CHR$(9) + "11" + CHR$(10)) >= 0)
+G_GAME.mouseSensitivity = 5
+S_SOUND.snd_SfxVolume = 8
+S_SOUND.snd_MusicVolume = 8
+G_GAME.key_fire = G_GAME.KEY_RCTRL
+M_MISC.usemouse = 1
+M_MENU.screenblocks = 10
+M_MISC.M_LoadDefaults()
+Eq("settings: mouse sensitivity", G_GAME.mouseSensitivity, 7)
+Eq("settings: sound volume", S_SOUND.snd_SfxVolume, 11)
+Eq("settings: music volume", S_SOUND.snd_MusicVolume, 3)
+Eq("settings: fire key", G_GAME.key_fire, 102)
+Eq("settings: use of the mouse", M_MISC.usemouse, 0)
+Eq("settings: view size", M_MENU.screenblocks, 9)
+
+' A file written by hand: a hexadecimal value counts, a value out of range,
+' one that is no number and a name that is not known are passed over.
+TXTWRITER M_MISC.M_DefaultFile$(), "key_fire 0x20" + CHR$(10) + "sfx_volume 99" + CHR$(10) + "music_volume abc" + CHR$(10) + "bogus 1" + CHR$(10) + "use_mouse" + CHR$(9) + CHR$(9) + "1" + CHR$(10) + "screenblocks 12" + CHR$(10)
+M_MISC.M_LoadDefaults()
+Eq("settings by hand: hexadecimal", G_GAME.key_fire, 32)
+Eq("settings by hand: a volume of 99 is passed over", S_SOUND.snd_SfxVolume, 11)
+Eq("settings by hand: a word is passed over", S_SOUND.snd_MusicVolume, 3)
+Eq("settings by hand: tabs between name and value", M_MISC.usemouse, 1)
+Eq("settings by hand: a view size of 12 is passed over", M_MENU.screenblocks, 9)
+KILL M_MISC.M_DefaultFile$()
+G_GAME.mouseSensitivity = 5
+S_SOUND.snd_SfxVolume = 8
+S_SOUND.snd_MusicVolume = 8
+G_GAME.key_fire = G_GAME.KEY_RCTRL
+M_MENU.screenblocks = blocks_then
 
 ' No game is saved from a demo.
 G_GAME.G_DeferedPlayDemo("DEMO1")

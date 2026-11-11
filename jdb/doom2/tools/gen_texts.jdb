@@ -45,6 +45,7 @@ FUNC TextArray$(name$ AS STRING) AS STRING
     DIM text$ AS STRING = ""
     i = start + 1
     DO
+        IF i >= LEN(header_lines) THEN EXITDO
         text$ = text$ + Quoted$(header_lines[i])
         IF RIGHT$(TRIM$(header_lines[i]), 1) <> "\" THEN EXITDO
         i = i + 1

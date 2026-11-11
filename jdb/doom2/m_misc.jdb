@@ -1,0 +1,194 @@
+' The settings that outlive the program (m_misc.c): default.cfg holds one
+' "name value" pair a line and is read at the start and written at the
+' end. The chat macros of a net game and the number of sound channels are
+' not among them.
+
+EXPORT MODULE M_MISC
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT V_VIDEO
+IMPORT HU_STUFF
+IMPORT G_GAME
+IMPORT M_MENU
+IMPORT S_SOUND
+
+EXPORT DIM usemouse AS INTEGER = 1
+EXPORT DIM usejoystick AS INTEGER = 0
+
+DIM names$ AS ARRAY = ["mouse_sensitivity", "sfx_volume", "music_volume", "show_messages", "key_right", "key_left", "key_up", "key_down", "key_strafeleft", "key_straferight", "key_fire", "key_use", "key_strafe", "key_speed", "use_mouse", "mouseb_fire", "mouseb_strafe", "mouseb_forward", "use_joystick", "joyb_fire", "joyb_strafe", "joyb_use", "joyb_speed", "screenblocks", "detaillevel", "usegamma"]
+
+' The file the settings are in; it lies with the savegames.
+EXPORT FUNC M_DefaultFile$() AS STRING
+    RETURN G_GAME.savedir$ + "default.cfg"
+ENDFUNC
+
+' The value of setting n of the list.
+FUNC GetDefault(n AS INTEGER) AS INTEGER
+    SWITCH n
+        CASE 0
+            RETURN G_GAME.mouseSensitivity
+        CASE 1
+            RETURN S_SOUND.snd_SfxVolume
+        CASE 2
+            RETURN S_SOUND.snd_MusicVolume
+        CASE 3
+            RETURN HU_STUFF.showMessages
+        CASE 4
+            RETURN G_GAME.key_right
+        CASE 5
+            RETURN G_GAME.key_left
+        CASE 6
+            RETURN G_GAME.key_up
+        CASE 7
+            RETURN G_GAME.key_down
+        CASE 8
+            RETURN G_GAME.key_strafeleft
+        CASE 9
+            RETURN G_GAME.key_straferight
+        CASE 10
+            RETURN G_GAME.key_fire
+        CASE 11
+            RETURN G_GAME.key_use
+        CASE 12
+            RETURN G_GAME.key_strafe
+        CASE 13
+            RETURN G_GAME.key_speed
+        CASE 14
+            RETURN usemouse
+        CASE 15
+            RETURN G_GAME.mousebfire
+        CASE 16
+            RETURN G_GAME.mousebstrafe
+        CASE 17
+            RETURN G_GAME.mousebforward
+        CASE 18
+            RETURN usejoystick
+        CASE 19
+            RETURN G_GAME.joybfire
+        CASE 20
+            RETURN G_GAME.joybstrafe
+        CASE 21
+            RETURN G_GAME.joybuse
+        CASE 22
+            RETURN G_GAME.joybspeed
+        CASE 23
+            RETURN M_MENU.screenblocks
+        CASE 24
+            RETURN M_MENU.detailLevel
+        CASE 25
+            RETURN V_VIDEO.usegamma
+    ENDSWITCH
+    RETURN 0
+ENDFUNC
+
+' TRUE if value lies between low and high.
+FUNC Within(value AS INTEGER, low AS INTEGER, high AS INTEGER) AS INTEGER
+    IF value >= low AND value <= high THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' Sets setting n of the list; a value the game cannot work with is left
+' out.
+SUB SetDefault(n AS INTEGER, value AS INTEGER)
+    SWITCH n
+        CASE 0
+            IF Within(value, 0, 9) <> 0 THEN G_GAME.mouseSensitivity = value
+        CASE 1
+            IF Within(value, 0, 15) <> 0 THEN S_SOUND.snd_SfxVolume = value
+        CASE 2
+            IF Within(value, 0, 15) <> 0 THEN S_SOUND.snd_MusicVolume = value
+        CASE 3
+            IF Within(value, 0, 1) <> 0 THEN HU_STUFF.showMessages = value
+        CASE 4
+            IF Within(value, 0, G_GAME.NUMKEYS - 1) <> 0 THEN G_GAME.key_right = value
+        CASE 5
+            IF Within(value, 0, G_GAME.NUMKEYS - 1) <> 0 THEN G_GAME.key_left = value
+        CASE 6
+            IF Within(value, 0, G_GAME.NUMKEYS - 1) <> 0 THEN G_GAME.key_up = value
+        CASE 7
+            IF Within(value, 0, G_GAME.NUMKEYS - 1) <> 0 THEN G_GAME.key_down = value
+        CASE 8
+            IF Within(value, 0, G_GAME.NUMKEYS - 1) <> 0 THEN G_GAME.key_strafeleft = value
+        CASE 9
+            IF Within(value, 0, G_GAME.NUMKEYS - 1) <> 0 THEN G_GAME.key_straferight = value
+        CASE 10
+            IF Within(value, 0, G_GAME.NUMKEYS - 1) <> 0 THEN G_GAME.key_fire = value
+        CASE 11
+            IF Within(value, 0, G_GAME.NUMKEYS - 1) <> 0 THEN G_GAME.key_use = value
+        CASE 12
+            IF Within(value, 0, G_GAME.NUMKEYS - 1) <> 0 THEN G_GAME.key_strafe = value
+        CASE 13
+            IF Within(value, 0, G_GAME.NUMKEYS - 1) <> 0 THEN G_GAME.key_speed = value
+        CASE 14
+            IF Within(value, 0, 1) <> 0 THEN usemouse = value
+        CASE 15
+            IF Within(value, 0, 2) <> 0 THEN G_GAME.mousebfire = value
+        CASE 16
+            IF Within(value, 0, 2) <> 0 THEN G_GAME.mousebstrafe = value
+        CASE 17
+            IF Within(value, 0, 2) <> 0 THEN G_GAME.mousebforward = value
+        CASE 18
+            IF Within(value, 0, 1) <> 0 THEN usejoystick = value
+        CASE 19
+            IF Within(value, 0, 3) <> 0 THEN G_GAME.joybfire = value
+        CASE 20
+            IF Within(value, 0, 3) <> 0 THEN G_GAME.joybstrafe = value
+        CASE 21
+            IF Within(value, 0, 3) <> 0 THEN G_GAME.joybuse = value
+        CASE 22
+            IF Within(value, 0, 3) <> 0 THEN G_GAME.joybspeed = value
+        CASE 23
+            IF Within(value, 3, 11) <> 0 THEN M_MENU.screenblocks = value
+        CASE 24
+            IF Within(value, 0, 1) <> 0 THEN M_MENU.detailLevel = value
+        CASE 25
+            IF Within(value, 0, 4) <> 0 THEN V_VIDEO.usegamma = value
+    ENDSWITCH
+ENDSUB
+
+EXPORT SUB M_SaveDefaults()
+    DIM text$ AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(names$) - 1
+        text$ = text$ + names$[i] + CHR$(9) + CHR$(9) + STR$(GetDefault(i)) + CHR$(10)
+    NEXT i
+    TXTWRITER M_DefaultFile$(), text$
+ENDSUB
+
+' Reads the settings from the file, if it is there; a name that is not
+' known and a value that is no number are passed over. A value may be
+' written as 0x and hexadecimal digits.
+EXPORT SUB M_LoadDefaults()
+    IF NOT FILE.EXISTS(M_DefaultFile$()) THEN RETURN
+    DIM file_lines AS ARRAY = SPLIT(REPLACE$(TXTREADER$(M_DefaultFile$()), CHR$(13), ""), CHR$(10))
+    DIM i AS INTEGER
+    DIM n AS INTEGER
+    DIM l$ AS STRING
+    DIM name$ AS STRING
+    DIM value$ AS STRING
+    DIM gap AS INTEGER
+    DIM value AS INTEGER
+    FOR i = 0 TO LEN(file_lines) - 1
+        l$ = TRIM$(REPLACE$(file_lines[i], CHR$(9), " "))
+        gap = INSTR(l$, " ")
+        IF gap < 0 THEN CONTINUEFOR
+        name$ = LEFT$(l$, gap)
+        value$ = LCASE$(TRIM$(MID$(l$, gap)))
+        IF LEN(value$) = 0 THEN CONTINUEFOR
+        IF LEFT$(value$, 2) = "0x" THEN
+            IF NOT REGEX.MATCH("^0x[0-9a-f]{1,8}$", value$) THEN CONTINUEFOR
+            value = CLNG(VAL(value$))
+        ELSE
+            IF NOT REGEX.MATCH("^-?[0-9]{1,9}$", value$) THEN CONTINUEFOR
+            value = CLNG(VAL(value$))
+        ENDIF
+        FOR n = 0 TO LEN(names$) - 1
+            IF names$[n] = name$ THEN
+                SetDefault(n, value)
+                EXITFOR
+            ENDIF
+        NEXT n
+    NEXT i
+ENDSUB

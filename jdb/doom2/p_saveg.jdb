@@ -98,39 +98,39 @@ ENDFUNC
 EXPORT SUB P_ArchivePlayers()
     DIM p AS INTEGER
     DIM j AS INTEGER
-    DIM f AS ARRAY = []
+    DIM rec AS ARRAY = []
     FOR p = 0 TO DOOMDEF.MAXPLAYERS - 1
         IF CLNG(DOOMSTAT.playeringame[p]) = 0 THEN CONTINUEFOR
-        f = [CLNG(D_PLAYER.player_playerstate[p]), CLNG(D_PLAYER.player_cmd_forwardmove[p]), CLNG(D_PLAYER.player_cmd_sidemove[p]), CLNG(D_PLAYER.player_cmd_angleturn[p]), CLNG(D_PLAYER.player_cmd_consistancy[p]), CLNG(D_PLAYER.player_cmd_chatchar[p]), CLNG(D_PLAYER.player_cmd_buttons[p])]
-        f = APPEND(f, [CLNG(D_PLAYER.player_viewz[p]), CLNG(D_PLAYER.player_viewheight[p]), CLNG(D_PLAYER.player_deltaviewheight[p]), CLNG(D_PLAYER.player_bob[p]), CLNG(D_PLAYER.player_health[p]), CLNG(D_PLAYER.player_armorpoints[p]), CLNG(D_PLAYER.player_armortype[p])])
+        rec = [CLNG(D_PLAYER.player_playerstate[p]), CLNG(D_PLAYER.player_cmd_forwardmove[p]), CLNG(D_PLAYER.player_cmd_sidemove[p]), CLNG(D_PLAYER.player_cmd_angleturn[p]), CLNG(D_PLAYER.player_cmd_consistancy[p]), CLNG(D_PLAYER.player_cmd_chatchar[p]), CLNG(D_PLAYER.player_cmd_buttons[p])]
+        rec = APPEND(rec, [CLNG(D_PLAYER.player_viewz[p]), CLNG(D_PLAYER.player_viewheight[p]), CLNG(D_PLAYER.player_deltaviewheight[p]), CLNG(D_PLAYER.player_bob[p]), CLNG(D_PLAYER.player_health[p]), CLNG(D_PLAYER.player_armorpoints[p]), CLNG(D_PLAYER.player_armortype[p])])
         FOR j = 0 TO DOOMDEF.NUMPOWERS - 1
-            f = APPEND(f, CLNG(D_PLAYER.player_powers[p * DOOMDEF.NUMPOWERS + j]))
+            rec = APPEND(rec, CLNG(D_PLAYER.player_powers[p * DOOMDEF.NUMPOWERS + j]))
         NEXT j
         FOR j = 0 TO DOOMDEF.NUMCARDS - 1
-            f = APPEND(f, CLNG(D_PLAYER.player_cards[p * DOOMDEF.NUMCARDS + j]))
+            rec = APPEND(rec, CLNG(D_PLAYER.player_cards[p * DOOMDEF.NUMCARDS + j]))
         NEXT j
-        f = APPEND(f, CLNG(D_PLAYER.player_backpack[p]))
+        rec = APPEND(rec, CLNG(D_PLAYER.player_backpack[p]))
         FOR j = 0 TO DOOMDEF.MAXPLAYERS - 1
-            f = APPEND(f, CLNG(D_PLAYER.player_frags[p * DOOMDEF.MAXPLAYERS + j]))
+            rec = APPEND(rec, CLNG(D_PLAYER.player_frags[p * DOOMDEF.MAXPLAYERS + j]))
         NEXT j
-        f = APPEND(f, [CLNG(D_PLAYER.player_readyweapon[p]), CLNG(D_PLAYER.player_pendingweapon[p])])
+        rec = APPEND(rec, [CLNG(D_PLAYER.player_readyweapon[p]), CLNG(D_PLAYER.player_pendingweapon[p])])
         FOR j = 0 TO DOOMDEF.NUMWEAPONS - 1
-            f = APPEND(f, CLNG(D_PLAYER.player_weaponowned[p * DOOMDEF.NUMWEAPONS + j]))
+            rec = APPEND(rec, CLNG(D_PLAYER.player_weaponowned[p * DOOMDEF.NUMWEAPONS + j]))
         NEXT j
         FOR j = 0 TO DOOMDEF.NUMAMMO - 1
-            f = APPEND(f, CLNG(D_PLAYER.player_ammo[p * DOOMDEF.NUMAMMO + j]))
+            rec = APPEND(rec, CLNG(D_PLAYER.player_ammo[p * DOOMDEF.NUMAMMO + j]))
         NEXT j
         FOR j = 0 TO DOOMDEF.NUMAMMO - 1
-            f = APPEND(f, CLNG(D_PLAYER.player_maxammo[p * DOOMDEF.NUMAMMO + j]))
+            rec = APPEND(rec, CLNG(D_PLAYER.player_maxammo[p * DOOMDEF.NUMAMMO + j]))
         NEXT j
-        f = APPEND(f, [CLNG(D_PLAYER.player_attackdown[p]), CLNG(D_PLAYER.player_usedown[p]), CLNG(D_PLAYER.player_cheats[p]), CLNG(D_PLAYER.player_refire[p]), CLNG(D_PLAYER.player_killcount[p]), CLNG(D_PLAYER.player_itemcount[p]), CLNG(D_PLAYER.player_secretcount[p])])
-        f = APPEND(f, [CLNG(D_PLAYER.player_damagecount[p]), CLNG(D_PLAYER.player_bonuscount[p]), CLNG(D_PLAYER.player_extralight[p]), CLNG(D_PLAYER.player_fixedcolormap[p]), CLNG(D_PLAYER.player_colormap[p])])
+        rec = APPEND(rec, [CLNG(D_PLAYER.player_attackdown[p]), CLNG(D_PLAYER.player_usedown[p]), CLNG(D_PLAYER.player_cheats[p]), CLNG(D_PLAYER.player_refire[p]), CLNG(D_PLAYER.player_killcount[p]), CLNG(D_PLAYER.player_itemcount[p]), CLNG(D_PLAYER.player_secretcount[p])])
+        rec = APPEND(rec, [CLNG(D_PLAYER.player_damagecount[p]), CLNG(D_PLAYER.player_bonuscount[p]), CLNG(D_PLAYER.player_extralight[p]), CLNG(D_PLAYER.player_fixedcolormap[p]), CLNG(D_PLAYER.player_colormap[p])])
         FOR j = 0 TO 1
-            f = APPEND(f, [CLNG(D_PLAYER.player_psprite_state[p * 2 + j]), CLNG(D_PLAYER.player_psprite_tics[p * 2 + j]), CLNG(D_PLAYER.player_psprite_sx[p * 2 + j]), CLNG(D_PLAYER.player_psprite_sy[p * 2 + j])])
+            rec = APPEND(rec, [CLNG(D_PLAYER.player_psprite_state[p * 2 + j]), CLNG(D_PLAYER.player_psprite_tics[p * 2 + j]), CLNG(D_PLAYER.player_psprite_sx[p * 2 + j]), CLNG(D_PLAYER.player_psprite_sy[p * 2 + j])])
         NEXT j
-        f = APPEND(f, CLNG(D_PLAYER.player_didsecret[p]))
-        IF LEN(f) <> PLAYER_FIELDS THEN I_SYSTEM.I_Error("P_ArchivePlayers: " + STR$(LEN(f)) + " fields")
-        save_buf$ = save_buf$ + Ints$(f)
+        rec = APPEND(rec, CLNG(D_PLAYER.player_didsecret[p]))
+        IF LEN(rec) <> PLAYER_FIELDS THEN I_SYSTEM.I_Error("P_ArchivePlayers: " + STR$(LEN(rec)) + " fields")
+        save_buf$ = save_buf$ + Ints$(rec)
     NEXT p
 ENDSUB
 
@@ -138,75 +138,75 @@ EXPORT SUB P_UnArchivePlayers()
     DIM p AS INTEGER
     DIM j AS INTEGER
     DIM n AS INTEGER
-    DIM f AS ARRAY = []
+    DIM rec AS ARRAY = []
     FOR p = 0 TO DOOMDEF.MAXPLAYERS - 1
         IF CLNG(DOOMSTAT.playeringame[p]) = 0 THEN CONTINUEFOR
-        f = GetInts(PLAYER_FIELDS)
-        D_PLAYER.player_playerstate[p] = CLNG(f[0])
-        D_PLAYER.player_cmd_forwardmove[p] = CLNG(f[1])
-        D_PLAYER.player_cmd_sidemove[p] = CLNG(f[2])
-        D_PLAYER.player_cmd_angleturn[p] = CLNG(f[3])
-        D_PLAYER.player_cmd_consistancy[p] = CLNG(f[4])
-        D_PLAYER.player_cmd_chatchar[p] = CLNG(f[5])
-        D_PLAYER.player_cmd_buttons[p] = CLNG(f[6])
-        D_PLAYER.player_viewz[p] = CLNG(f[7])
-        D_PLAYER.player_viewheight[p] = CLNG(f[8])
-        D_PLAYER.player_deltaviewheight[p] = CLNG(f[9])
-        D_PLAYER.player_bob[p] = CLNG(f[10])
-        D_PLAYER.player_health[p] = CLNG(f[11])
-        D_PLAYER.player_armorpoints[p] = CLNG(f[12])
-        D_PLAYER.player_armortype[p] = CLNG(f[13])
+        rec = GetInts(PLAYER_FIELDS)
+        D_PLAYER.player_playerstate[p] = CLNG(rec[0])
+        D_PLAYER.player_cmd_forwardmove[p] = CLNG(rec[1])
+        D_PLAYER.player_cmd_sidemove[p] = CLNG(rec[2])
+        D_PLAYER.player_cmd_angleturn[p] = CLNG(rec[3])
+        D_PLAYER.player_cmd_consistancy[p] = CLNG(rec[4])
+        D_PLAYER.player_cmd_chatchar[p] = CLNG(rec[5])
+        D_PLAYER.player_cmd_buttons[p] = CLNG(rec[6])
+        D_PLAYER.player_viewz[p] = CLNG(rec[7])
+        D_PLAYER.player_viewheight[p] = CLNG(rec[8])
+        D_PLAYER.player_deltaviewheight[p] = CLNG(rec[9])
+        D_PLAYER.player_bob[p] = CLNG(rec[10])
+        D_PLAYER.player_health[p] = CLNG(rec[11])
+        D_PLAYER.player_armorpoints[p] = CLNG(rec[12])
+        D_PLAYER.player_armortype[p] = CLNG(rec[13])
         n = 14
         FOR j = 0 TO DOOMDEF.NUMPOWERS - 1
-            D_PLAYER.player_powers[p * DOOMDEF.NUMPOWERS + j] = CLNG(f[n + j])
+            D_PLAYER.player_powers[p * DOOMDEF.NUMPOWERS + j] = CLNG(rec[n + j])
         NEXT j
         n = n + DOOMDEF.NUMPOWERS
         FOR j = 0 TO DOOMDEF.NUMCARDS - 1
-            D_PLAYER.player_cards[p * DOOMDEF.NUMCARDS + j] = CLNG(f[n + j])
+            D_PLAYER.player_cards[p * DOOMDEF.NUMCARDS + j] = CLNG(rec[n + j])
         NEXT j
         n = n + DOOMDEF.NUMCARDS
-        D_PLAYER.player_backpack[p] = CLNG(f[n])
+        D_PLAYER.player_backpack[p] = CLNG(rec[n])
         n = n + 1
         FOR j = 0 TO DOOMDEF.MAXPLAYERS - 1
-            D_PLAYER.player_frags[p * DOOMDEF.MAXPLAYERS + j] = CLNG(f[n + j])
+            D_PLAYER.player_frags[p * DOOMDEF.MAXPLAYERS + j] = CLNG(rec[n + j])
         NEXT j
         n = n + DOOMDEF.MAXPLAYERS
-        D_PLAYER.player_readyweapon[p] = CLNG(f[n])
-        D_PLAYER.player_pendingweapon[p] = CLNG(f[n + 1])
+        D_PLAYER.player_readyweapon[p] = CLNG(rec[n])
+        D_PLAYER.player_pendingweapon[p] = CLNG(rec[n + 1])
         n = n + 2
         FOR j = 0 TO DOOMDEF.NUMWEAPONS - 1
-            D_PLAYER.player_weaponowned[p * DOOMDEF.NUMWEAPONS + j] = CLNG(f[n + j])
+            D_PLAYER.player_weaponowned[p * DOOMDEF.NUMWEAPONS + j] = CLNG(rec[n + j])
         NEXT j
         n = n + DOOMDEF.NUMWEAPONS
         FOR j = 0 TO DOOMDEF.NUMAMMO - 1
-            D_PLAYER.player_ammo[p * DOOMDEF.NUMAMMO + j] = CLNG(f[n + j])
+            D_PLAYER.player_ammo[p * DOOMDEF.NUMAMMO + j] = CLNG(rec[n + j])
         NEXT j
         n = n + DOOMDEF.NUMAMMO
         FOR j = 0 TO DOOMDEF.NUMAMMO - 1
-            D_PLAYER.player_maxammo[p * DOOMDEF.NUMAMMO + j] = CLNG(f[n + j])
+            D_PLAYER.player_maxammo[p * DOOMDEF.NUMAMMO + j] = CLNG(rec[n + j])
         NEXT j
         n = n + DOOMDEF.NUMAMMO
-        D_PLAYER.player_attackdown[p] = CLNG(f[n])
-        D_PLAYER.player_usedown[p] = CLNG(f[n + 1])
-        D_PLAYER.player_cheats[p] = CLNG(f[n + 2])
-        D_PLAYER.player_refire[p] = CLNG(f[n + 3])
-        D_PLAYER.player_killcount[p] = CLNG(f[n + 4])
-        D_PLAYER.player_itemcount[p] = CLNG(f[n + 5])
-        D_PLAYER.player_secretcount[p] = CLNG(f[n + 6])
-        D_PLAYER.player_damagecount[p] = CLNG(f[n + 7])
-        D_PLAYER.player_bonuscount[p] = CLNG(f[n + 8])
-        D_PLAYER.player_extralight[p] = CLNG(f[n + 9])
-        D_PLAYER.player_fixedcolormap[p] = CLNG(f[n + 10])
-        D_PLAYER.player_colormap[p] = CLNG(f[n + 11])
+        D_PLAYER.player_attackdown[p] = CLNG(rec[n])
+        D_PLAYER.player_usedown[p] = CLNG(rec[n + 1])
+        D_PLAYER.player_cheats[p] = CLNG(rec[n + 2])
+        D_PLAYER.player_refire[p] = CLNG(rec[n + 3])
+        D_PLAYER.player_killcount[p] = CLNG(rec[n + 4])
+        D_PLAYER.player_itemcount[p] = CLNG(rec[n + 5])
+        D_PLAYER.player_secretcount[p] = CLNG(rec[n + 6])
+        D_PLAYER.player_damagecount[p] = CLNG(rec[n + 7])
+        D_PLAYER.player_bonuscount[p] = CLNG(rec[n + 8])
+        D_PLAYER.player_extralight[p] = CLNG(rec[n + 9])
+        D_PLAYER.player_fixedcolormap[p] = CLNG(rec[n + 10])
+        D_PLAYER.player_colormap[p] = CLNG(rec[n + 11])
         n = n + 12
         FOR j = 0 TO 1
-            D_PLAYER.player_psprite_state[p * 2 + j] = CLNG(f[n + j * 4])
-            D_PLAYER.player_psprite_tics[p * 2 + j] = CLNG(f[n + j * 4 + 1])
-            D_PLAYER.player_psprite_sx[p * 2 + j] = CLNG(f[n + j * 4 + 2])
-            D_PLAYER.player_psprite_sy[p * 2 + j] = CLNG(f[n + j * 4 + 3])
+            D_PLAYER.player_psprite_state[p * 2 + j] = CLNG(rec[n + j * 4])
+            D_PLAYER.player_psprite_tics[p * 2 + j] = CLNG(rec[n + j * 4 + 1])
+            D_PLAYER.player_psprite_sx[p * 2 + j] = CLNG(rec[n + j * 4 + 2])
+            D_PLAYER.player_psprite_sy[p * 2 + j] = CLNG(rec[n + j * 4 + 3])
         NEXT j
         n = n + 8
-        D_PLAYER.player_didsecret[p] = CLNG(f[n])
+        D_PLAYER.player_didsecret[p] = CLNG(rec[n])
 
         ' What the game uses as an index has to be one.
         IF CLNG(D_PLAYER.player_readyweapon[p]) < 0 OR CLNG(D_PLAYER.player_readyweapon[p]) >= DOOMDEF.NUMWEAPONS OR CLNG(D_PLAYER.player_pendingweapon[p]) < 0 OR CLNG(D_PLAYER.player_pendingweapon[p]) > DOOMDEF.WP_NOCHANGE THEN I_SYSTEM.I_Error("Bad savegame: the weapon of a player")
@@ -257,37 +257,37 @@ EXPORT SUB P_UnArchiveWorld()
     DIM i AS INTEGER
     DIM j AS INTEGER
     DIM si AS INTEGER
-    DIM f AS ARRAY = []
+    DIM rec AS ARRAY = []
 
     ' Do sectors.
     FOR i = 0 TO P_SETUP.numsectors - 1
-        f = GetShorts(7)
-        P_SETUP.sector_floorheight[i] = CLNG(f[0]) SHL 16
-        P_SETUP.sector_ceilingheight[i] = CLNG(f[1]) SHL 16
-        P_SETUP.sector_floorpic[i] = CLNG(f[2])
-        P_SETUP.sector_ceilingpic[i] = CLNG(f[3])
-        P_SETUP.sector_lightlevel[i] = CLNG(f[4])
-        P_SETUP.sector_special[i] = CLNG(f[5])
-        P_SETUP.sector_tag[i] = CLNG(f[6])
+        rec = GetShorts(7)
+        P_SETUP.sector_floorheight[i] = CLNG(rec[0]) SHL 16
+        P_SETUP.sector_ceilingheight[i] = CLNG(rec[1]) SHL 16
+        P_SETUP.sector_floorpic[i] = CLNG(rec[2])
+        P_SETUP.sector_ceilingpic[i] = CLNG(rec[3])
+        P_SETUP.sector_lightlevel[i] = CLNG(rec[4])
+        P_SETUP.sector_special[i] = CLNG(rec[5])
+        P_SETUP.sector_tag[i] = CLNG(rec[6])
         P_SETUP.sector_specialdata[i] = -1
         P_SETUP.sector_soundtarget[i] = -1
     NEXT i
 
     ' Do lines.
     FOR i = 0 TO P_SETUP.numlines - 1
-        f = GetShorts(3)
-        P_SETUP.line_flags[i] = CLNG(f[0])
-        P_SETUP.line_special[i] = CLNG(f[1])
-        P_SETUP.line_tag[i] = CLNG(f[2])
+        rec = GetShorts(3)
+        P_SETUP.line_flags[i] = CLNG(rec[0])
+        P_SETUP.line_special[i] = CLNG(rec[1])
+        P_SETUP.line_tag[i] = CLNG(rec[2])
         FOR j = 0 TO 1
             IF j = 0 THEN si = CLNG(P_SETUP.line_sidenum0[i]) ELSE si = CLNG(P_SETUP.line_sidenum1[i])
             IF si = -1 THEN CONTINUEFOR
-            f = GetShorts(5)
-            P_SETUP.side_textureoffset[si] = CLNG(f[0]) SHL 16
-            P_SETUP.side_rowoffset[si] = CLNG(f[1]) SHL 16
-            P_SETUP.side_toptexture[si] = CLNG(f[2])
-            P_SETUP.side_bottomtexture[si] = CLNG(f[3])
-            P_SETUP.side_midtexture[si] = CLNG(f[4])
+            rec = GetShorts(5)
+            P_SETUP.side_textureoffset[si] = CLNG(rec[0]) SHL 16
+            P_SETUP.side_rowoffset[si] = CLNG(rec[1]) SHL 16
+            P_SETUP.side_toptexture[si] = CLNG(rec[2])
+            P_SETUP.side_bottomtexture[si] = CLNG(rec[3])
+            P_SETUP.side_midtexture[si] = CLNG(rec[4])
         NEXT j
     NEXT i
 ENDSUB
@@ -297,18 +297,18 @@ ENDSUB
 EXPORT SUB P_ArchiveThinkers()
     DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
     DIM m AS INTEGER
-    DIM f AS ARRAY = []
+    DIM rec AS ARRAY = []
     DIM text$ AS STRING = ""
 
     ' Save off the current thinkers.
     DO WHILE th <> 0
         IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ THEN
             m = CLNG(P_TICK.th_object[th])
-            f = [CLNG(P_MOBJ.mobj_x[m]), CLNG(P_MOBJ.mobj_y[m]), CLNG(P_MOBJ.mobj_z[m]), CLNG(P_MOBJ.mobj_angle[m]), CLNG(P_MOBJ.mobj_sprite[m]), CLNG(P_MOBJ.mobj_frame[m]), CLNG(P_MOBJ.mobj_radius[m]), CLNG(P_MOBJ.mobj_height[m])]
-            f = APPEND(f, [CLNG(P_MOBJ.mobj_momx[m]), CLNG(P_MOBJ.mobj_momy[m]), CLNG(P_MOBJ.mobj_momz[m]), CLNG(P_MOBJ.mobj_validcount[m]), CLNG(P_MOBJ.mobj_type[m]), CLNG(P_MOBJ.mobj_tics[m]), CLNG(P_MOBJ.mobj_state[m]), CLNG(P_MOBJ.mobj_flags[m]), CLNG(P_MOBJ.mobj_health[m])])
-            f = APPEND(f, [CLNG(P_MOBJ.mobj_movedir[m]), CLNG(P_MOBJ.mobj_movecount[m]), CLNG(P_MOBJ.mobj_reactiontime[m]), CLNG(P_MOBJ.mobj_threshold[m]), CLNG(P_MOBJ.mobj_player[m]) + 1, CLNG(P_MOBJ.mobj_lastlook[m])])
-            f = APPEND(f, [CLNG(P_MOBJ.mobj_spawnpoint_x[m]), CLNG(P_MOBJ.mobj_spawnpoint_y[m]), CLNG(P_MOBJ.mobj_spawnpoint_angle[m]), CLNG(P_MOBJ.mobj_spawnpoint_type[m]), CLNG(P_MOBJ.mobj_spawnpoint_options[m]), 0])
-            text$ = text$ + CHR$(TC_MOBJ) + Ints$(f)
+            rec = [CLNG(P_MOBJ.mobj_x[m]), CLNG(P_MOBJ.mobj_y[m]), CLNG(P_MOBJ.mobj_z[m]), CLNG(P_MOBJ.mobj_angle[m]), CLNG(P_MOBJ.mobj_sprite[m]), CLNG(P_MOBJ.mobj_frame[m]), CLNG(P_MOBJ.mobj_radius[m]), CLNG(P_MOBJ.mobj_height[m])]
+            rec = APPEND(rec, [CLNG(P_MOBJ.mobj_momx[m]), CLNG(P_MOBJ.mobj_momy[m]), CLNG(P_MOBJ.mobj_momz[m]), CLNG(P_MOBJ.mobj_validcount[m]), CLNG(P_MOBJ.mobj_type[m]), CLNG(P_MOBJ.mobj_tics[m]), CLNG(P_MOBJ.mobj_state[m]), CLNG(P_MOBJ.mobj_flags[m]), CLNG(P_MOBJ.mobj_health[m])])
+            rec = APPEND(rec, [CLNG(P_MOBJ.mobj_movedir[m]), CLNG(P_MOBJ.mobj_movecount[m]), CLNG(P_MOBJ.mobj_reactiontime[m]), CLNG(P_MOBJ.mobj_threshold[m]), CLNG(P_MOBJ.mobj_player[m]) + 1, CLNG(P_MOBJ.mobj_lastlook[m])])
+            rec = APPEND(rec, [CLNG(P_MOBJ.mobj_spawnpoint_x[m]), CLNG(P_MOBJ.mobj_spawnpoint_y[m]), CLNG(P_MOBJ.mobj_spawnpoint_angle[m]), CLNG(P_MOBJ.mobj_spawnpoint_type[m]), CLNG(P_MOBJ.mobj_spawnpoint_options[m]), 0])
+            text$ = text$ + CHR$(TC_MOBJ) + Ints$(rec)
             IF LEN(text$) > 4096 THEN
                 save_buf$ = save_buf$ + text$
                 text$ = ""
@@ -328,7 +328,7 @@ EXPORT SUB P_UnArchiveThinkers()
     DIM m AS INTEGER
     DIM sector AS INTEGER
     DIM player AS INTEGER
-    DIM f AS ARRAY = []
+    DIM rec AS ARRAY = []
 
     ' Remove all the current thinkers.
     DO WHILE th <> 0
@@ -344,40 +344,40 @@ EXPORT SUB P_UnArchiveThinkers()
         IF tclass = TC_END THEN RETURN
         IF tclass <> TC_MOBJ THEN I_SYSTEM.I_Error("Unknown tclass " + STR$(tclass) + " in savegame")
 
-        f = GetInts(MOBJ_FIELDS)
-        IF CLNG(f[12]) < 0 OR CLNG(f[12]) >= INFO.NUMMOBJTYPES OR CLNG(f[14]) < 0 OR CLNG(f[14]) >= INFO.NUMSTATES OR CLNG(f[21]) < 0 OR CLNG(f[21]) > DOOMDEF.MAXPLAYERS OR CLNG(f[4]) < 0 OR CLNG(f[4]) >= INFO.NUMSPRITES THEN I_SYSTEM.I_Error("Bad savegame: a thing of type " + STR$(CLNG(f[12])) + " in state " + STR$(CLNG(f[14])))
+        rec = GetInts(MOBJ_FIELDS)
+        IF CLNG(rec[12]) < 0 OR CLNG(rec[12]) >= INFO.NUMMOBJTYPES OR CLNG(rec[14]) < 0 OR CLNG(rec[14]) >= INFO.NUMSTATES OR CLNG(rec[21]) < 0 OR CLNG(rec[21]) > DOOMDEF.MAXPLAYERS OR CLNG(rec[4]) < 0 OR CLNG(rec[4]) >= INFO.NUMSPRITES THEN I_SYSTEM.I_Error("Bad savegame: a thing of type " + STR$(CLNG(rec[12])) + " in state " + STR$(CLNG(rec[14])))
         m = P_MOBJ.P_AllocMobj()
-        P_MOBJ.mobj_x[m] = CLNG(f[0])
-        P_MOBJ.mobj_y[m] = CLNG(f[1])
-        P_MOBJ.mobj_z[m] = CLNG(f[2])
+        P_MOBJ.mobj_x[m] = CLNG(rec[0])
+        P_MOBJ.mobj_y[m] = CLNG(rec[1])
+        P_MOBJ.mobj_z[m] = CLNG(rec[2])
         ' The numbers of the file are signed, an angle is not.
-        P_MOBJ.mobj_angle[m] = CLNG(f[3]) BAND $FFFFFFFF
-        P_MOBJ.mobj_sprite[m] = CLNG(f[4])
-        P_MOBJ.mobj_frame[m] = CLNG(f[5])
-        P_MOBJ.mobj_radius[m] = CLNG(f[6])
-        P_MOBJ.mobj_height[m] = CLNG(f[7])
-        P_MOBJ.mobj_momx[m] = CLNG(f[8])
-        P_MOBJ.mobj_momy[m] = CLNG(f[9])
-        P_MOBJ.mobj_momz[m] = CLNG(f[10])
-        P_MOBJ.mobj_validcount[m] = CLNG(f[11])
-        P_MOBJ.mobj_type[m] = CLNG(f[12])
-        P_MOBJ.mobj_tics[m] = CLNG(f[13])
-        P_MOBJ.mobj_state[m] = CLNG(f[14])
-        P_MOBJ.mobj_flags[m] = CLNG(f[15])
-        P_MOBJ.mobj_health[m] = CLNG(f[16])
-        P_MOBJ.mobj_movedir[m] = CLNG(f[17])
-        P_MOBJ.mobj_movecount[m] = CLNG(f[18])
-        P_MOBJ.mobj_reactiontime[m] = CLNG(f[19])
-        P_MOBJ.mobj_threshold[m] = CLNG(f[20])
-        P_MOBJ.mobj_lastlook[m] = CLNG(f[22])
-        P_MOBJ.mobj_spawnpoint_x[m] = CLNG(f[23])
-        P_MOBJ.mobj_spawnpoint_y[m] = CLNG(f[24])
-        P_MOBJ.mobj_spawnpoint_angle[m] = CLNG(f[25])
-        P_MOBJ.mobj_spawnpoint_type[m] = CLNG(f[26])
-        P_MOBJ.mobj_spawnpoint_options[m] = CLNG(f[27])
+        P_MOBJ.mobj_angle[m] = CLNG(rec[3]) BAND $FFFFFFFF
+        P_MOBJ.mobj_sprite[m] = CLNG(rec[4])
+        P_MOBJ.mobj_frame[m] = CLNG(rec[5])
+        P_MOBJ.mobj_radius[m] = CLNG(rec[6])
+        P_MOBJ.mobj_height[m] = CLNG(rec[7])
+        P_MOBJ.mobj_momx[m] = CLNG(rec[8])
+        P_MOBJ.mobj_momy[m] = CLNG(rec[9])
+        P_MOBJ.mobj_momz[m] = CLNG(rec[10])
+        P_MOBJ.mobj_validcount[m] = CLNG(rec[11])
+        P_MOBJ.mobj_type[m] = CLNG(rec[12])
+        P_MOBJ.mobj_tics[m] = CLNG(rec[13])
+        P_MOBJ.mobj_state[m] = CLNG(rec[14])
+        P_MOBJ.mobj_flags[m] = CLNG(rec[15])
+        P_MOBJ.mobj_health[m] = CLNG(rec[16])
+        P_MOBJ.mobj_movedir[m] = CLNG(rec[17])
+        P_MOBJ.mobj_movecount[m] = CLNG(rec[18])
+        P_MOBJ.mobj_reactiontime[m] = CLNG(rec[19])
+        P_MOBJ.mobj_threshold[m] = CLNG(rec[20])
+        P_MOBJ.mobj_lastlook[m] = CLNG(rec[22])
+        P_MOBJ.mobj_spawnpoint_x[m] = CLNG(rec[23])
+        P_MOBJ.mobj_spawnpoint_y[m] = CLNG(rec[24])
+        P_MOBJ.mobj_spawnpoint_angle[m] = CLNG(rec[25])
+        P_MOBJ.mobj_spawnpoint_type[m] = CLNG(rec[26])
+        P_MOBJ.mobj_spawnpoint_options[m] = CLNG(rec[27])
         P_MOBJ.mobj_target[m] = -1
         P_MOBJ.mobj_tracer[m] = -1
-        player = CLNG(f[21]) - 1
+        player = CLNG(rec[21]) - 1
         P_MOBJ.mobj_player[m] = player
         IF player >= 0 THEN D_PLAYER.player_mo[player] = m
 
@@ -448,7 +448,7 @@ EXPORT SUB P_UnArchiveSpecials()
     DIM tclass AS INTEGER
     DIM th AS INTEGER
     DIM sector AS INTEGER
-    DIM f AS ARRAY = []
+    DIM rec AS ARRAY = []
 
     ' Read in saved thinkers.
     DO
@@ -456,88 +456,88 @@ EXPORT SUB P_UnArchiveSpecials()
         IF tclass = TC_ENDSPECIALS THEN RETURN
 
         IF tclass = TC_CEILING THEN
-            f = GetInts(10)
-            sector = SavedSector(CLNG(f[2]))
+            rec = GetInts(10)
+            sector = SavedSector(CLNG(rec[2]))
             th = P_TICK.P_AddThinker(P_TICK.TF_CEILING, -1)
-            IF CLNG(f[0]) = 0 THEN P_TICK.th_function[th] = P_TICK.TF_NONE
-            P_CEILNG.ceiling_type[th] = CLNG(f[1])
+            IF CLNG(rec[0]) = 0 THEN P_TICK.th_function[th] = P_TICK.TF_NONE
+            P_CEILNG.ceiling_type[th] = CLNG(rec[1])
             P_CEILNG.ceiling_sector[th] = sector
-            P_CEILNG.ceiling_bottomheight[th] = CLNG(f[3])
-            P_CEILNG.ceiling_topheight[th] = CLNG(f[4])
-            P_CEILNG.ceiling_speed[th] = CLNG(f[5])
-            P_CEILNG.ceiling_crush[th] = CLNG(f[6])
-            P_CEILNG.ceiling_direction[th] = CLNG(f[7])
-            P_CEILNG.ceiling_tag[th] = CLNG(f[8])
-            P_CEILNG.ceiling_olddirection[th] = CLNG(f[9])
+            P_CEILNG.ceiling_bottomheight[th] = CLNG(rec[3])
+            P_CEILNG.ceiling_topheight[th] = CLNG(rec[4])
+            P_CEILNG.ceiling_speed[th] = CLNG(rec[5])
+            P_CEILNG.ceiling_crush[th] = CLNG(rec[6])
+            P_CEILNG.ceiling_direction[th] = CLNG(rec[7])
+            P_CEILNG.ceiling_tag[th] = CLNG(rec[8])
+            P_CEILNG.ceiling_olddirection[th] = CLNG(rec[9])
             P_SETUP.sector_specialdata[sector] = th
             P_CEILNG.P_AddActiveCeiling(th)
         ELSEIF tclass = TC_DOOR THEN
-            f = GetInts(7)
-            sector = SavedSector(CLNG(f[1]))
+            rec = GetInts(7)
+            sector = SavedSector(CLNG(rec[1]))
             th = P_TICK.P_AddThinker(P_TICK.TF_DOOR, -1)
-            P_DOORS.door_type[th] = CLNG(f[0])
+            P_DOORS.door_type[th] = CLNG(rec[0])
             P_DOORS.door_sector[th] = sector
-            P_DOORS.door_topheight[th] = CLNG(f[2])
-            P_DOORS.door_speed[th] = CLNG(f[3])
-            P_DOORS.door_direction[th] = CLNG(f[4])
-            P_DOORS.door_topwait[th] = CLNG(f[5])
-            P_DOORS.door_topcountdown[th] = CLNG(f[6])
+            P_DOORS.door_topheight[th] = CLNG(rec[2])
+            P_DOORS.door_speed[th] = CLNG(rec[3])
+            P_DOORS.door_direction[th] = CLNG(rec[4])
+            P_DOORS.door_topwait[th] = CLNG(rec[5])
+            P_DOORS.door_topcountdown[th] = CLNG(rec[6])
             P_SETUP.sector_specialdata[sector] = th
         ELSEIF tclass = TC_FLOOR THEN
-            f = GetInts(8)
-            sector = SavedSector(CLNG(f[2]))
+            rec = GetInts(8)
+            sector = SavedSector(CLNG(rec[2]))
             th = P_TICK.P_AddThinker(P_TICK.TF_FLOOR, -1)
-            P_FLOOR.floor_type[th] = CLNG(f[0])
-            P_FLOOR.floor_crush[th] = CLNG(f[1])
+            P_FLOOR.floor_type[th] = CLNG(rec[0])
+            P_FLOOR.floor_crush[th] = CLNG(rec[1])
             P_FLOOR.floor_sector[th] = sector
-            P_FLOOR.floor_direction[th] = CLNG(f[3])
-            P_FLOOR.floor_newspecial[th] = CLNG(f[4])
-            P_FLOOR.floor_texture[th] = CLNG(f[5])
-            P_FLOOR.floor_floordestheight[th] = CLNG(f[6])
-            P_FLOOR.floor_speed[th] = CLNG(f[7])
+            P_FLOOR.floor_direction[th] = CLNG(rec[3])
+            P_FLOOR.floor_newspecial[th] = CLNG(rec[4])
+            P_FLOOR.floor_texture[th] = CLNG(rec[5])
+            P_FLOOR.floor_floordestheight[th] = CLNG(rec[6])
+            P_FLOOR.floor_speed[th] = CLNG(rec[7])
             P_SETUP.sector_specialdata[sector] = th
         ELSEIF tclass = TC_PLAT THEN
-            f = GetInts(11)
-            sector = SavedSector(CLNG(f[0]))
+            rec = GetInts(11)
+            sector = SavedSector(CLNG(rec[0]))
             th = P_TICK.P_AddThinker(P_TICK.TF_PLAT, -1)
             P_PLATS.plat_sector[th] = sector
-            P_PLATS.plat_speed[th] = CLNG(f[1])
-            P_PLATS.plat_low[th] = CLNG(f[2])
-            P_PLATS.plat_high[th] = CLNG(f[3])
-            P_PLATS.plat_wait[th] = CLNG(f[4])
-            P_PLATS.plat_count[th] = CLNG(f[5])
-            P_PLATS.plat_status[th] = CLNG(f[6])
-            P_PLATS.plat_oldstatus[th] = CLNG(f[7])
-            P_PLATS.plat_crush[th] = CLNG(f[8])
-            P_PLATS.plat_tag[th] = CLNG(f[9])
-            P_PLATS.plat_type[th] = CLNG(f[10])
+            P_PLATS.plat_speed[th] = CLNG(rec[1])
+            P_PLATS.plat_low[th] = CLNG(rec[2])
+            P_PLATS.plat_high[th] = CLNG(rec[3])
+            P_PLATS.plat_wait[th] = CLNG(rec[4])
+            P_PLATS.plat_count[th] = CLNG(rec[5])
+            P_PLATS.plat_status[th] = CLNG(rec[6])
+            P_PLATS.plat_oldstatus[th] = CLNG(rec[7])
+            P_PLATS.plat_crush[th] = CLNG(rec[8])
+            P_PLATS.plat_tag[th] = CLNG(rec[9])
+            P_PLATS.plat_type[th] = CLNG(rec[10])
             P_SETUP.sector_specialdata[sector] = th
             P_PLATS.P_AddActivePlat(th)
         ELSEIF tclass = TC_FLASH THEN
-            f = GetInts(6)
+            rec = GetInts(6)
             th = P_TICK.P_AddThinker(P_TICK.TF_LIGHTFLASH, -1)
-            P_LIGHTS.light_sector[th] = SavedSector(CLNG(f[0]))
-            P_LIGHTS.light_count[th] = CLNG(f[1])
-            P_LIGHTS.light_maxlight[th] = CLNG(f[2])
-            P_LIGHTS.light_minlight[th] = CLNG(f[3])
-            P_LIGHTS.light_maxtime[th] = CLNG(f[4])
-            P_LIGHTS.light_mintime[th] = CLNG(f[5])
+            P_LIGHTS.light_sector[th] = SavedSector(CLNG(rec[0]))
+            P_LIGHTS.light_count[th] = CLNG(rec[1])
+            P_LIGHTS.light_maxlight[th] = CLNG(rec[2])
+            P_LIGHTS.light_minlight[th] = CLNG(rec[3])
+            P_LIGHTS.light_maxtime[th] = CLNG(rec[4])
+            P_LIGHTS.light_mintime[th] = CLNG(rec[5])
         ELSEIF tclass = TC_STROBE THEN
-            f = GetInts(6)
+            rec = GetInts(6)
             th = P_TICK.P_AddThinker(P_TICK.TF_STROBE, -1)
-            P_LIGHTS.light_sector[th] = SavedSector(CLNG(f[0]))
-            P_LIGHTS.light_count[th] = CLNG(f[1])
-            P_LIGHTS.light_minlight[th] = CLNG(f[2])
-            P_LIGHTS.light_maxlight[th] = CLNG(f[3])
-            P_LIGHTS.light_mintime[th] = CLNG(f[4])
-            P_LIGHTS.light_maxtime[th] = CLNG(f[5])
+            P_LIGHTS.light_sector[th] = SavedSector(CLNG(rec[0]))
+            P_LIGHTS.light_count[th] = CLNG(rec[1])
+            P_LIGHTS.light_minlight[th] = CLNG(rec[2])
+            P_LIGHTS.light_maxlight[th] = CLNG(rec[3])
+            P_LIGHTS.light_mintime[th] = CLNG(rec[4])
+            P_LIGHTS.light_maxtime[th] = CLNG(rec[5])
         ELSEIF tclass = TC_GLOW THEN
-            f = GetInts(4)
+            rec = GetInts(4)
             th = P_TICK.P_AddThinker(P_TICK.TF_GLOW, -1)
-            P_LIGHTS.light_sector[th] = SavedSector(CLNG(f[0]))
-            P_LIGHTS.light_minlight[th] = CLNG(f[1])
-            P_LIGHTS.light_maxlight[th] = CLNG(f[2])
-            P_LIGHTS.light_direction[th] = CLNG(f[3])
+            P_LIGHTS.light_sector[th] = SavedSector(CLNG(rec[0]))
+            P_LIGHTS.light_minlight[th] = CLNG(rec[1])
+            P_LIGHTS.light_maxlight[th] = CLNG(rec[2])
+            P_LIGHTS.light_direction[th] = CLNG(rec[3])
         ELSE
             I_SYSTEM.I_Error("P_UnarchiveSpecials: Unknown tclass " + STR$(tclass) + " in savegame")
         ENDIF

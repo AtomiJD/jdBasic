@@ -420,10 +420,58 @@ FUNC ItemCount() AS INTEGER
     RETURN CLNG(menu_count[currentMenu])
 ENDFUNC
 
-' Gets a key that went down; TRUE if the menu used it.
-EXPORT FUNC M_Responder(ev_type AS INTEGER, key AS INTEGER) AS INTEGER
-    IF ev_type <> G_GAME.EV_KEYDOWN THEN RETURN 0
-    DIM ch AS INTEGER = key
+' The mouse in the menu: how far it has moved since it last counted as a
+' key, and the tic until which it is not listened to.
+DIM mousewait AS INTEGER = 0
+DIM menu_mousey AS INTEGER = 0
+DIM menu_lasty AS INTEGER = 0
+DIM menu_mousex AS INTEGER = 0
+DIM menu_lastx AS INTEGER = 0
+
+' Gets an event: a key that went down (data1), or the mouse with its
+' buttons (data1) and its way (data2, data3), which stands for the
+' arrow keys, Enter and Backspace. TRUE if the menu used it.
+EXPORT FUNC M_Responder(ev_type AS INTEGER, data1 AS INTEGER, data2 AS INTEGER, data3 AS INTEGER) AS INTEGER
+    DIM ch AS INTEGER = -1
+    IF ev_type = G_GAME.EV_MOUSE AND mousewait < DOOMSTAT.gametic THEN
+        menu_mousey = menu_mousey + data3
+        IF menu_mousey < menu_lasty - 30 THEN
+            ch = G_GAME.KEY_DOWNARROW
+            mousewait = DOOMSTAT.gametic + 5
+            menu_lasty = menu_lasty - 30
+            menu_mousey = menu_lasty
+        ELSEIF menu_mousey > menu_lasty + 30 THEN
+            ch = G_GAME.KEY_UPARROW
+            mousewait = DOOMSTAT.gametic + 5
+            menu_lasty = menu_lasty + 30
+            menu_mousey = menu_lasty
+        ENDIF
+
+        menu_mousex = menu_mousex + data2
+        IF menu_mousex < menu_lastx - 30 THEN
+            ch = G_GAME.KEY_LEFTARROW
+            mousewait = DOOMSTAT.gametic + 5
+            menu_lastx = menu_lastx - 30
+            menu_mousex = menu_lastx
+        ELSEIF menu_mousex > menu_lastx + 30 THEN
+            ch = G_GAME.KEY_RIGHTARROW
+            mousewait = DOOMSTAT.gametic + 5
+            menu_lastx = menu_lastx + 30
+            menu_mousex = menu_lastx
+        ENDIF
+
+        IF (data1 BAND 1) <> 0 THEN
+            ch = G_GAME.KEY_ENTER
+            mousewait = DOOMSTAT.gametic + 15
+        ENDIF
+        IF (data1 BAND 2) <> 0 THEN
+            ch = KEY_BACKSPACE
+            mousewait = DOOMSTAT.gametic + 15
+        ENDIF
+    ELSEIF ev_type = G_GAME.EV_KEYDOWN THEN
+        ch = data1
+    ENDIF
+    IF ch = -1 THEN RETURN 0
     DIM answer AS INTEGER
     DIM first AS INTEGER
     DIM n_items AS INTEGER

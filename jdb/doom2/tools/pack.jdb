@@ -1,0 +1,59 @@
+' Puts the game into a folder to hand on: compiles doom.jdb and copies
+' doom.exe, the libraries the compiler laid beside it and a note on how to
+' start it. No WAD goes in; the game looks for one beside the program.
+'
+'   build/jdBasic.exe jdb/doom2/tools/pack.jdb [folder]
+'
+' Run from the repository root. The folder is tmp/doom_dist if none is
+' named.
+
+OPTION "EXPLICIT"
+
+DIM cmd_args AS ARRAY = OS.ARGS()
+DIM out$ AS STRING = "tmp/doom_dist"
+IF LEN(cmd_args) > 1 THEN out$ = cmd_args[1]
+DIM src$ AS STRING = "jdb/doom2/"
+
+IF FILE.EXISTS(src$ + "doom.exe") THEN KILL src$ + "doom.exe"
+DIM built AS MAP = OS.EXEC(PATH.NORMALIZE$("build/jdBasic.exe"), ["-c", src$ + "doom.jdb"])
+IF NOT FILE.EXISTS(src$ + "doom.exe") THEN
+    PRINT "doom.jdb did not compile:"
+    PRINT built{"output"}
+    END 1
+ENDIF
+
+MKDIR out$
+DIM n_files AS INTEGER = 1
+FILE.COPY(src$ + "doom.exe", out$ + "/doom.exe", TRUE)
+DIM libraries AS ARRAY = FILE.LIST(src$ + "*.dll")
+DIM i AS INTEGER
+DIM name$ AS STRING
+FOR i = 0 TO LEN(libraries) - 1
+    name$ = PATH.BASENAME$(libraries[i])
+    FILE.COPY(src$ + name$, out$ + "/" + name$, TRUE)
+    n_files = n_files + 1
+NEXT i
+IF FILE.EXISTS(src$ + "jdbasic_default.ttf") THEN
+    FILE.COPY(src$ + "jdbasic_default.ttf", out$ + "/jdbasic_default.ttf", TRUE)
+    n_files = n_files + 1
+ENDIF
+
+DIM nl$ AS STRING = CHR$(13) + CHR$(10)
+DIM note$ AS STRING = "DOOM in jdBasic" + nl$ + nl$
+note$ = note$ + "A port of the DOOM source release (linuxdoom-1.10) to jdBasic. The game" + nl$
+note$ = note$ + "data is not part of it: copy doom.wad, doomu.wad, doom1.wad (the shareware" + nl$
+note$ = note$ + "episode) or doom2.wad into this folder and start doom.exe from here." + nl$ + nl$
+note$ = note$ + "  doom.exe                        the title loop; any key opens the menu" + nl$
+note$ = note$ + "  doom.exe 1 3                    episode 1, map 3" + nl$
+note$ = note$ + "  doom.exe 2 5 4                  episode 2, map 5, skill 4 (0 to 4)" + nl$
+note$ = note$ + "  doom.exe -iwad c:\games\doom2.wad 1 7    a WAD somewhere else; the levels" + nl$
+note$ = note$ + "                                  of DOOM II are in episode 1" + nl$ + nl$
+note$ = note$ + "Arrow keys or W, A, S, D move, Shift runs, Ctrl fires, Space uses, 1 to 7" + nl$
+note$ = note$ + "pick a weapon, Tab shows the map, Escape the menu. F2 saves, F3 loads," + nl$
+note$ = note$ + "F6 and F9 save and load quickly, F10 quits. The mouse turns and fires." + nl$ + nl$
+note$ = note$ + "Savegames (doomsav0.dsg to doomsav5.dsg) and the settings (default.cfg)" + nl$
+note$ = note$ + "are written into the folder the game is started from." + nl$
+TXTWRITER out$ + "/README.txt", note$
+n_files = n_files + 1
+
+PRINT STR$(n_files) + " files in " + out$
