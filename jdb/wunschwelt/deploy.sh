@@ -58,14 +58,16 @@ check() {
 case "$1" in
 --patch)
     [ -f "$2" ] && [ -n "$3" ] || { echo "usage: ./deploy.sh --patch <file> <title>"; exit 1; }
-    $SCP "$2" "$HOST:~/ww_patch.jdb"
-    # the title travels as a file, so no shell on the way reads it as code
+    # each run has its own pair of files on the box; the title travels as a
+    # file, so no shell on the way reads it as code
+    RUN=ww_patch_$$_$(date +%s)
     TITLE_FILE=$(mktemp)
+    trap 'rm -f "$TITLE_FILE"' EXIT
     printf '%s' "$3" > "$TITLE_FILE"
-    $SCP "$TITLE_FILE" "$HOST:~/ww_patch.title"
-    rm -f "$TITLE_FILE"
+    $SCP "$2" "$HOST:~/$RUN.jdb"
+    $SCP "$TITLE_FILE" "$HOST:~/$RUN.title"
     # the key is read on the box by root and never leaves it
-    $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; exec /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/patch.jdb /home/deploy/ww_patch.jdb \"\$(cat /home/deploy/ww_patch.title)\" http://127.0.0.1:$PORT'"
+    $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/patch.jdb /home/deploy/$RUN.jdb \"\$(cat /home/deploy/$RUN.title)\" http://127.0.0.1:$PORT'; rm -f ~/$RUN.jdb ~/$RUN.title"
     exit 0
     ;;
 --setup)
@@ -75,7 +77,7 @@ case "$1" in
     $SSH "id wunschwelt >/dev/null 2>&1 || sudo -n useradd --system --no-create-home --shell /usr/sbin/nologin wunschwelt
 sudo -n mkdir -p /opt/wunschwelt
 sudo -n cp /home/deploy/jdbasic-1.2/build/jdbasic /opt/wunschwelt/jdBasic
-if ! sudo -n test -f /opt/wunschwelt/env; then
+if ! sudo -n test -s /opt/wunschwelt/env; then
   sudo -n install -m 600 -o root -g root /dev/null /opt/wunschwelt/env
   printf 'WW_PATCH_KEY=%s\nWW_LLM_URL=http://127.0.0.1:18082/v1/chat/completions\n' \"\$(openssl rand -hex 24)\" | sudo -n tee /opt/wunschwelt/env > /dev/null
 fi
