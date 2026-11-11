@@ -208,6 +208,12 @@ EXPORT SUB P_UnArchivePlayers()
         n = n + 8
         D_PLAYER.player_didsecret[p] = CLNG(f[n])
 
+        ' What the game uses as an index has to be one.
+        IF CLNG(D_PLAYER.player_readyweapon[p]) < 0 OR CLNG(D_PLAYER.player_readyweapon[p]) >= DOOMDEF.NUMWEAPONS OR CLNG(D_PLAYER.player_pendingweapon[p]) < 0 OR CLNG(D_PLAYER.player_pendingweapon[p]) > DOOMDEF.WP_NOCHANGE THEN I_SYSTEM.I_Error("Bad savegame: the weapon of a player")
+        FOR j = 0 TO 1
+            IF CLNG(D_PLAYER.player_psprite_state[p * 2 + j]) < 0 OR CLNG(D_PLAYER.player_psprite_state[p * 2 + j]) >= INFO.NUMSTATES THEN I_SYSTEM.I_Error("Bad savegame: the weapon sprite of a player")
+        NEXT j
+
         ' Will be set when the things are read.
         D_PLAYER.player_mo[p] = -1
         D_PLAYER.player_message$[p] = ""
@@ -339,7 +345,7 @@ EXPORT SUB P_UnArchiveThinkers()
         IF tclass <> TC_MOBJ THEN I_SYSTEM.I_Error("Unknown tclass " + STR$(tclass) + " in savegame")
 
         f = GetInts(MOBJ_FIELDS)
-        IF CLNG(f[12]) < 0 OR CLNG(f[12]) >= INFO.NUMMOBJTYPES OR CLNG(f[14]) < 0 OR CLNG(f[14]) >= INFO.NUMSTATES OR CLNG(f[21]) < 0 OR CLNG(f[21]) > DOOMDEF.MAXPLAYERS THEN I_SYSTEM.I_Error("Bad savegame: a thing of type " + STR$(CLNG(f[12])) + " in state " + STR$(CLNG(f[14])))
+        IF CLNG(f[12]) < 0 OR CLNG(f[12]) >= INFO.NUMMOBJTYPES OR CLNG(f[14]) < 0 OR CLNG(f[14]) >= INFO.NUMSTATES OR CLNG(f[21]) < 0 OR CLNG(f[21]) > DOOMDEF.MAXPLAYERS OR CLNG(f[4]) < 0 OR CLNG(f[4]) >= INFO.NUMSPRITES THEN I_SYSTEM.I_Error("Bad savegame: a thing of type " + STR$(CLNG(f[12])) + " in state " + STR$(CLNG(f[14])))
         m = P_MOBJ.P_AllocMobj()
         P_MOBJ.mobj_x[m] = CLNG(f[0])
         P_MOBJ.mobj_y[m] = CLNG(f[1])
