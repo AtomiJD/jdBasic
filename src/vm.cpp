@@ -4082,6 +4082,11 @@ void VM::event_poll() {
 #else
     bool any_window = gfx_is_active();
 #endif
+    // The window sends text events from the moment a handler wants them.
+    if (any_window && event_handlers.count("TEXTINPUT")) {
+        extern void gfx_want_text_input();
+        gfx_want_text_input();
+    }
     // A window that SCREENFLIP shut on a quit event leaves that event queued.
     if (any_window || gfx_has_pending_events()) {
         // Drain the shared event queue that SCREENFLIP and gfx_pump_events
@@ -4127,6 +4132,15 @@ void VM::event_poll() {
                         const char* name = SDL_GetKeyName(ev.key.key);
                         info.as_object()->set("key", Value::make_string(name ? name : ""));
                         event_raise("KEYUP", {info});
+                    }
+                    break;
+                }
+                case SDL_EVENT_TEXT_INPUT: {
+                    auto it = event_handlers.find("TEXTINPUT");
+                    if (it != event_handlers.end()) {
+                        Value info = Value::make_object();
+                        info.as_object()->set("text", Value::make_string(ev.text.text ? ev.text.text : ""));
+                        event_raise("TEXTINPUT", {info});
                     }
                     break;
                 }

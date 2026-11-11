@@ -1282,6 +1282,7 @@ NEXT
   * The handler takes one parameter, an array. For the window events of a `SCREEN` window its first element is a map:
     * `ON "KEYDOWN"`: `info[0]{"key"}` (SDL key name such as `"A"`, `"Left"`, `"Escape"`), `{"scancode"}` (number, usable with `GFX.KEYSTATE`), `{"keycode"}` (SDL keycode, the character code for printable keys: Escape 27, Enter 13, `a` 97), `{"repeat"}` (`TRUE` for an auto-repeat).
     * `ON "KEYUP"`: `key`, `scancode`, `keycode`.
+    * `ON "TEXTINPUT"`: `info[0]{"text"}`, the text a key press produced, as UTF-8: the keyboard layout, Shift, AltGr and dead keys are already applied, so `"G"`, `"ö"`, `"?"` or `"€"` arrive as typed. Use it for an entry line; keys without text (Enter, Backspace, the arrows) come through `ON "KEYDOWN"` alone, and a key with text raises both events. The window delivers text from the moment a handler is registered.
     * `ON "MOUSEDOWN"` / `ON "MOUSEUP"`: `button` (1 left, 2 middle, 3 right), `x`, `y` in the same logical coordinates as `GFX.MOUSEX` and `GFX.MOUSEY`.
     * `ON "MOUSEMOVE"`: `x`, `y`, also logical coordinates.
     * `ON "QUIT"`: the array is empty. When `SCREENFLIP` sees the close it shuts the window, and the handler runs before the statement after `SCREENFLIP`, so a loop that checks a flag set there stops before it draws into the closed window. `SOUND` keeps playing.

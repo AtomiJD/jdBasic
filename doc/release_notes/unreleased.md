@@ -21,6 +21,11 @@ Range: `v1.3.0..HEAD`.
 - **`tools/gate_run.jdb`** also checks what is generated from the reference:
   the builtin table against the help text, the contents and index of
   `languages.md`, and `signatures.md`.
+- **`ON "TEXTINPUT"`** (#998): a `SCREEN` window hands a handler the text a
+  key press produced, `info[0]{"text"}` as UTF-8, with the keyboard layout,
+  Shift, AltGr and dead keys applied. Before, a program had only key codes
+  and could not read an umlaut or a shifted character. The window sends text
+  from the moment a handler is registered.
 
 ## Changed
 

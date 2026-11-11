@@ -19,6 +19,7 @@
 #include <map>
 #include <unordered_map>
 #include <string>
+#include <deque>
 #include <algorithm>
 #include <filesystem>
 
@@ -150,6 +151,10 @@ static bool g_key_available = false;
 // event_poll() in vm.cpp drains it to dispatch to ON handlers, avoiding the
 // race where SCREENFLIP's SDL_PollEvent eats events before event_poll sees them.
 static std::vector<SDL_Event> g_pending_sdl_events;
+// Texts of the queued text events, and those of the batch handed out last:
+// SDL owns the text of an event only until its next pump.
+static std::deque<std::string> g_pending_text;
+static std::deque<std::string> g_drained_text;
 
 // Mouse coordinates are converted to the renderer's logical space here, at
 // the single queue entry, so ON MOUSEDOWN/... handlers see the same
@@ -163,6 +168,10 @@ void gfx_push_event(const SDL_Event& ev) {
          copy.type == SDL_EVENT_MOUSE_WHEEL)) {
         SDL_ConvertEventToRenderCoordinates(g_renderer, &copy);
     }
+    if (copy.type == SDL_EVENT_TEXT_INPUT) {
+        g_pending_text.emplace_back(copy.text.text ? copy.text.text : "");
+        copy.text.text = g_pending_text.back().c_str();
+    }
     g_pending_sdl_events.push_back(copy);
 }
 bool gfx_has_pending_events() { return !g_pending_sdl_events.empty(); }
@@ -172,6 +181,8 @@ bool g_gfx_closed_by_quit = false;
 std::vector<SDL_Event> gfx_drain_pending_events() {
     std::vector<SDL_Event> out;
     out.swap(g_pending_sdl_events);
+    g_drained_text.clear();
+    g_drained_text.swap(g_pending_text);
     return out;
 }
 
@@ -549,6 +560,11 @@ static void get_color_at(const Value& colors, size_t i, Uint8& r, Uint8& g, Uint
 // ── Public accessors for CLS integration ────────────────────────
 
 bool gfx_is_active() { return g_renderer != nullptr; }
+
+// Turns on text events for the SCREEN window; SDL sends none before that.
+void gfx_want_text_input() {
+    if (g_window && !SDL_TextInputActive(g_window)) SDL_StartTextInput(g_window);
+}
 
 void gfx_clear(uint8_t r, uint8_t g, uint8_t b) {
     if (!g_renderer) return;

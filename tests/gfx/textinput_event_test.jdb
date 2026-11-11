@@ -1,0 +1,74 @@
+' ON "TEXTINPUT" hands the handler the text a key press produced, as UTF-8,
+' and a window without such a handler sends no text. The test posts WM_CHAR
+' messages to its own window, so it needs Windows, a GFX build and a
+' display; it lives beside the other window smokes rather than in the sweep.
+DIM bad AS INTEGER = 0
+DIM typed$ AS STRING = ""
+DIM pieces AS INTEGER = 0
+DIM downs AS INTEGER = 0
+
+SUB Check(ok AS INTEGER, what$ AS STRING)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        bad = bad + 1
+    ENDIF
+ENDSUB
+
+IF OS.GETOS$() <> "WINDOWS" ORELSE NOT OS.FEATURE("GFX") THEN
+    PRINT "skipped: needs Windows and a GFX build"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END 0
+ENDIF
+
+DECLARE FUNC FindWindowA LIB "user32.dll" ALIAS "FindWindowA" (clsptr AS INTEGER, title AS STRING) AS INTEGER
+DECLARE FUNC PostMessageW LIB "user32.dll" ALIAS "PostMessageW" (hwnd AS INTEGER, msg AS INTEGER, wparam AS INTEGER, lparam AS INTEGER) AS INTEGER
+
+SUB OnText(info)
+    typed$ = typed$ + info[0]{"text"}
+    pieces = pieces + 1
+ENDSUB
+
+SUB OnDown(info)
+    downs = downs + 1
+ENDSUB
+
+SUB Frames(n AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        CLS 20, 20, 40
+        SCREENFLIP
+        SLEEP 10
+    NEXT i
+ENDSUB
+
+DIM title$ AS STRING = "textinput event test " + STR$(OS.PID())
+SCREEN 320, 120, title$
+DIM hwnd AS INTEGER = FindWindowA(0, title$)
+Check(hwnd <> 0, "the test finds its own window")
+
+' G, o with diaeresis, question mark, euro sign
+DIM codes = [71, 246, 63, 8364]
+DIM WM_CHAR AS INTEGER = 258
+
+' no handler yet: the characters go nowhere
+ON "KEYDOWN" CALL OnDown@
+Frames(5)
+FOR EACH code IN codes
+    PostMessageW(hwnd, WM_CHAR, code, 0)
+NEXT
+Frames(10)
+Check(typed$ = "", "no text arrives before a handler is registered")
+
+ON "TEXTINPUT" CALL OnText@
+Frames(5)
+FOR EACH code IN codes
+    PostMessageW(hwnd, WM_CHAR, code, 0)
+NEXT
+Frames(15)
+Check(typed$ = "G" + CHR$(195) + CHR$(182) + "?" + CHR$(226) + CHR$(130) + CHR$(172), "the four characters arrive as UTF-8, in order: got " + typed$)
+Check(pieces = 4, "each character is one event: got " + STR$(pieces))
+Check(downs = 0, "text alone raises no KEYDOWN")
+GFX.CLOSE
+
+PRINT "RESULTS: " + STR$(5 - bad) + " passed, " + STR$(bad) + " failed"
+IF bad > 0 THEN END 1
