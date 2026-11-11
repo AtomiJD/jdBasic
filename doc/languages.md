@@ -1463,6 +1463,15 @@ The interactive REPL hosts up to four parallel workspaces, each with its own VM.
 
 The Ctrl+F1 to F4 hook is only active when jdBasic was launched as the REPL. Standalone runs (`jdbasic foo.jdb`) install no hook, so the chord has zero overhead and `F1` to `F4` reach the program normally.
 
+### The REPL without a terminal
+
+`jdbasic --repl-script <file>` feeds the lines of a file to the REPL and exits; `-` in place of the file reads them from standard input. Each line is trimmed, echoed behind the prompt `WS1> ` and executed as if typed, so `LOAD`, `RUN`, `CD`, `? expr` and statements behave as they do at the prompt, and variables live on from line to line. Empty lines are passed over; `EXIT` or `QUIT` ends the run. There is one workspace, no history and no `RECUR`. The exit code is 0, or 1 when the file cannot be read. A test or a tool reproduces a REPL session this way:
+
+```
+jdbasic --repl-script session.txt
+echo "? 6 * 7" | jdbasic --repl-script -
+```
+
 ### Filesystem
 
 * **`DIR [path]`**: Lists files and directories. Supports wildcards like `*` and `?`.

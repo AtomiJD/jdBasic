@@ -4,6 +4,17 @@ Range: `v1.3.0..HEAD`.
 
 ## New
 
+- **`jdbasic --repl-script <file>`**: the REPL fed from a file, or from
+  standard input with `-`. Each line is echoed behind the prompt and
+  executed as if typed, then the program exits; a REPL session can be
+  repeated by a test or a tool without a terminal.
+- **`tools/verify.sh`**: one command after a change. It rebuilds the
+  interpreter and the runtime library when a source under `src/` is newer
+  than them and runs `tools/gate_run.jdb --smokes`.
+- **`tools/gate_run.jdb --smokes`** compiles and starts the two GUI programs
+  of the gate; a first step `binary` reports `STALE` when a source is newer
+  than the binaries the gate is about to test.
+
 ## Changed
 
 ## Fixed

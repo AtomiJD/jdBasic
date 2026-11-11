@@ -1898,6 +1898,7 @@ int main(int argc, char* argv[]) {
     bool pretty_vb   = false;
     bool mcp_mode = false;
     bool ftxui_mode = false;
+    std::string repl_script;
     std::string mcp_tools_dir;
     bool mcp_tools_only = false;
     std::string compile_output;
@@ -1914,6 +1915,7 @@ int main(int argc, char* argv[]) {
               "  jdbasic -c <file.jdb>          Compile to a native .exe (LLVM)\n"
               "  jdbasic --lint <file.jdb>      Static analysis only (no execution)\n"
               "  jdbasic --mcp                  Run as MCP server over stdio (requires MCPSERVER build)\n"
+              "  jdbasic --repl-script <file>   Feed the lines of <file> (- for stdin) to the REPL and exit\n"
               "  jdbasic --ftxui                Start the FTXUI REPL (4 workspaces, side-panel, palette,\n"
               "                                 `edit [file]` invokes the legacy editor in place)\n"
               "  jdbasic -d [port] <file.jdb>   Run under the DAP debugger (default 4711)\n"
@@ -1935,6 +1937,9 @@ int main(int argc, char* argv[]) {
               "      --tools <dir>        With --mcp: also offer the tool files in <dir>\n"
               "      --tools-only <dir>   With --mcp: offer only the tool files in <dir>,\n"
               "                            none of the built-in jdb_* tools\n"
+              "      --repl-script <file> Run the REPL on the lines of <file>, or of stdin for -:\n"
+              "                            each line is echoed behind the prompt and executed\n"
+              "                            as if typed (LOAD, RUN, CD, statements); no terminal needed\n"
               "      --ftxui              Start the modern terminal REPL (F1-F4 workspaces,\n"
               "                            Ctrl+B side-panel, Ctrl+P command palette)\n"
               "      --emit-ir            Emit LLVM IR to stdout instead of an .exe\n"
@@ -2027,6 +2032,7 @@ int main(int argc, char* argv[]) {
         if (a == "--pretty-vb") { pretty_mode = true; pretty_vb = true; continue; }
         if (a == "--mcp") { mcp_mode = true; continue; }
         if (a == "--ftxui") { ftxui_mode = true; continue; }
+        if (a == "--repl-script" && i + 1 < argc) { repl_script = argv[++i]; continue; }
         if (a == "--tools" && i + 1 < argc) {
             mcp_tools_dir = argv[++i];
             continue;
@@ -2062,6 +2068,41 @@ int main(int argc, char* argv[]) {
         std::cerr << "MCP server mode not available (build with MCPSERVER=1)." << std::endl;
         return 1;
 #endif
+    }
+
+    // The REPL without a terminal: every line of a file, or of stdin for "-",
+    // goes through the console executor as if typed, echoed behind the prompt.
+    // EXIT or QUIT ends it; the exit code is 1 if the file cannot be read.
+    if (!repl_script.empty()) {
+        std::ifstream script_file;
+        if (repl_script != "-") {
+            script_file.open(repl_script);
+            if (!script_file.is_open()) {
+                std::cerr << "Cannot open file: " << repl_script << std::endl;
+                return 1;
+            }
+        }
+        std::istream& typed = (repl_script == "-") ? std::cin : script_file;
+        VM vm;
+        setup_dynamic_code(vm);
+        register_console_builtins(vm, /*ansi_color=*/false);
+        set_os_args(vm, 1, argv);
+        std::string program_buffer;
+        std::string line;
+        while (std::getline(typed, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t first = line.find_first_not_of(" \t");
+            if (first == std::string::npos) continue;
+            line = line.substr(first, line.find_last_not_of(" \t") - first + 1);
+            std::cout << "WS1> " << line << std::endl;
+            std::string upper = line;
+            std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+            if (upper == "EXIT" || upper == "QUIT") break;
+            console_execute(line, vm, program_buffer);
+            std::cout.flush();
+            std::cerr.flush();
+        }
+        return 0;
     }
 
     // ── FTXUI REPL - coexists with the legacy console; opt-in via --ftxui ──

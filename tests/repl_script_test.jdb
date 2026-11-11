@@ -1,0 +1,66 @@
+' --repl-script: the REPL fed from a file. Lines are echoed behind the
+' prompt and executed as typed; RUN and LOAD with a path find the IMPORTs
+' beside the file; EXIT ends the run; a missing file is exit code 1.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+IF NOT OS.FEATURE("INTERPRETER") THEN
+    PRINT "interpreter-only: a compiled program has no REPL to start"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END 0
+ENDIF
+
+DIM nl$ AS STRING = CHR$(10)
+DIM q$ AS STRING = CHR$(34)
+DIM folder$ AS STRING = "tmp/repl_script_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR folder$
+MKDIR folder$ + "/sub"
+TXTWRITER folder$ + "/sub/replmod.jdb", "EXPORT MODULE REPLMOD" + nl$ + "EXPORT FUNC TWICE(n)" + nl$ + "    RETURN n * 2" + nl$ + "ENDFUNC" + nl$
+TXTWRITER folder$ + "/sub/main.jdb", "IMPORT REPLMOD" + nl$ + "PRINT " + q$ + "main says " + q$ + "; REPLMOD.TWICE(21)" + nl$
+
+DIM typed$ AS STRING = "? 1 + 2" + nl$
+typed$ = typed$ + "run " + folder$ + "/sub/main.jdb" + nl$
+typed$ = typed$ + "load " + folder$ + "/sub/main" + nl$
+typed$ = typed$ + "run" + nl$
+typed$ = typed$ + nl$
+typed$ = typed$ + "  kept = 5" + nl$
+typed$ = typed$ + "? kept * 11" + nl$
+typed$ = typed$ + "exit" + nl$
+typed$ = typed$ + "? 99" + nl$
+TXTWRITER folder$ + "/typed.txt", typed$
+
+DIM r AS MAP = OS.EXEC(OS.SELF$(), ["--repl-script", folder$ + "/typed.txt"])
+DIM seen$ AS STRING = REPLACE$(r{"output"}, CHR$(13), "")
+Check("exit code 0", r{"exit_code"} = 0)
+Check("a line is echoed behind the prompt", INSTR(seen$, "WS1> ? 1 + 2" + nl$ + "3" + nl$) >= 0)
+Check("RUN with a path finds the IMPORT beside the file", INSTR(seen$, "/sub/main.jdb" + nl$ + "main says 42" + nl$) >= 0)
+Check("LOAD with a path, then RUN", INSTR(seen$, "WS1> run" + nl$ + "main says 42" + nl$) >= 0)
+Check("a variable lives on to the next line", INSTR(seen$, "WS1> ? kept * 11" + nl$ + "55" + nl$) >= 0)
+Check("a line is trimmed before it is echoed", INSTR(seen$, "WS1> kept = 5" + nl$) >= 0)
+Check("EXIT is echoed", INSTR(seen$, "WS1> exit") >= 0)
+Check("nothing runs after EXIT", INSTR(seen$, "99") < 0)
+Check("no error on the way", INSTR(seen$, "Error") < 0)
+
+DIM missing AS MAP = OS.EXEC(OS.SELF$(), ["--repl-script", folder$ + "/not_there.txt"])
+Check("a missing file is exit code 1", missing{"exit_code"} = 1)
+Check("a missing file is named", INSTR(missing{"output"}, "not_there.txt") >= 0)
+
+KILL folder$ + "/typed.txt"
+KILL folder$ + "/sub/main.jdb"
+KILL folder$ + "/sub/replmod.jdb"
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1
