@@ -44,9 +44,11 @@ DIM since AS INTEGER = first{"seq"}
 ' three steps towards the tavern, then a line with characters of two and three bytes
 DIM i AS INTEGER
 DIM r = first
-FOR i = 1 TO 3
+' (a strolling NPC may stand in the way for a moment, so a step is asked for again)
+FOR i = 1 TO 12
     SLEEP 200
     r = Post("/sync", {"token": token$, "dy": -1, "mapv": 1, "since": since})
+    IF r{"ok"} ANDALSO r{"y"} <= start_y - 3 THEN EXITFOR
 NEXT i
 Check(r{"ok"} ANDALSO r{"y"} = start_y - 3, "walking three tiles up did not work")
 

@@ -6,6 +6,7 @@
 #   ./deploy.sh --wasm     also ship the browser runtime from wasm/ (this game's copy only)
 #   ./deploy.sh --setup    once: user, systemd unit "wunschwelt", nginx routes
 #   ./deploy.sh --patch <file> <title>   send one patch to the running world
+#   ./deploy.sh --reset-world   forget the saved world and its patches, start fresh
 #
 # Layout there: /opt/wunschwelt holds the server, the game and its own copy
 # of jdBasic; the unit runs as the user "wunschwelt", who owns nothing and
@@ -29,7 +30,7 @@ push_files() {
     $SSH 'rm -rf ~/ww_stage && mkdir -p ~/ww_stage/game ~/ww_stage/tools ~/ww_stage/web'
     $SCP server.jdb client.jdb "$HOST:~/ww_stage/"
     $SCP game/*.jdb "$HOST:~/ww_stage/game/"
-    $SCP tools/patch.jdb tools/nginx_route.jdb tools/preflight.jdb "$HOST:~/ww_stage/tools/"
+    $SCP tools/patch.jdb tools/nginx_route.jdb tools/preflight.jdb tools/box_preflight.sh "$HOST:~/ww_stage/tools/"
     $SCP web/index.html "$HOST:~/ww_stage/web/"
 }
 
@@ -38,22 +39,7 @@ push_files() {
 # cannot be reached. Nothing is published when a rule fails there.
 preflight() {
     echo "== preflight on the box =="
-    $SSH 'bash -s' <<'EOF'
-JDB=/opt/wunschwelt/jdBasic
-[ -x "$JDB" ] || JDB=$HOME/jdbasic-1.2/build/jdbasic
-S=$HOME/ww_stage
-run() {  # mode, port, model address
-    WW_GAME_DIR=$S/game WW_PATCH_KEY= WW_LLM_URL=$3 "$JDB" $S/server.jdb $2 40 > $S/preflight_$1.log 2>&1 &
-    local pid=$!
-    sleep 2
-    "$JDB" $S/tools/preflight.jdb http://127.0.0.1:$2 $1
-    local rc=$?
-    kill $pid 2>/dev/null
-    [ $rc -eq 0 ] || { echo "server log:"; tail -5 $S/preflight_$1.log; }
-    return $rc
-}
-run reply 8121 "" && run failed 8122 http://127.0.0.1:9/none
-EOF
+    $SSH 'bash ~/ww_stage/tools/box_preflight.sh ~/ww_stage'
 }
 
 publish_page() {
@@ -68,7 +54,7 @@ publish_server() {
       && sudo -n cp ~/ww_stage/server.jdb /opt/wunschwelt/ \
       && sudo -n rm -f /opt/wunschwelt/game/*.jdb \
       && sudo -n cp ~/ww_stage/game/*.jdb /opt/wunschwelt/game/ \
-      && sudo -n cp ~/ww_stage/tools/*.jdb /opt/wunschwelt/tools/ \
+      && sudo -n cp ~/ww_stage/tools/*.jdb ~/ww_stage/tools/*.sh /opt/wunschwelt/tools/ \
       && sudo -n chown -R root:root /opt/wunschwelt/server.jdb /opt/wunschwelt/game /opt/wunschwelt/tools'
 }
 
@@ -90,6 +76,8 @@ case "$1" in
     printf '%s' "$3" > "$TITLE_FILE"
     $SCP "$2" "$HOST:~/$RUN.jdb"
     $SCP "$TITLE_FILE" "$HOST:~/$RUN.title"
+    echo "== preflight on the box, on a copy of the live world =="
+    $SSH "bash /opt/wunschwelt/tools/box_preflight.sh /opt/wunschwelt ~/$RUN.jdb ~/$RUN.title" || { $SSH "rm -f ~/$RUN.jdb ~/$RUN.title"; echo "the patch stays out of the live world"; exit 1; }
     # the key is read on the box by root and never leaves it
     $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/patch.jdb /home/deploy/$RUN.jdb \"\$(cat /home/deploy/$RUN.title)\" http://127.0.0.1:$PORT'; rc=\$?; rm -f ~/$RUN.jdb ~/$RUN.title; exit \$rc"
     exit 0
@@ -101,7 +89,7 @@ case "$1" in
     echo "== user, runtime, key =="
     $SSH "id wunschwelt >/dev/null 2>&1 || sudo -n useradd --system --no-create-home --shell /usr/sbin/nologin wunschwelt
 sudo -n mkdir -p /opt/wunschwelt
-sudo -n cp /home/deploy/jdbasic-1.2/build/jdbasic /opt/wunschwelt/jdBasic
+sudo -n test -x /opt/wunschwelt/jdBasic || sudo -n cp /home/deploy/jdbasic-1.2/build/jdbasic /opt/wunschwelt/jdBasic
 if ! sudo -n test -s /opt/wunschwelt/env; then
   sudo -n install -m 600 -o root -g root /dev/null /opt/wunschwelt/env
   printf 'WW_PATCH_KEY=%s\nWW_LLM_URL=http://127.0.0.1:18082/v1/chat/completions\n' \"\$(openssl rand -hex 24)\" | sudo -n tee /opt/wunschwelt/env > /dev/null
@@ -120,6 +108,10 @@ User=wunschwelt
 Group=wunschwelt
 WorkingDirectory=/opt/wunschwelt
 EnvironmentFile=/opt/wunschwelt/env
+Environment=WW_STATE_DIR=/var/lib/wunschwelt
+StateDirectory=wunschwelt
+StateDirectoryMode=0700
+UMask=0077
 ExecStart=/opt/wunschwelt/jdBasic /opt/wunschwelt/server.jdb $PORT
 Restart=always
 RestartSec=3
@@ -133,7 +125,7 @@ MemoryMax=1G
 [Install]
 WantedBy=multi-user.target
 EOF
-    $SSH 'sudo -n systemctl daemon-reload && sudo -n systemctl enable --now wunschwelt && sleep 2 && systemctl is-active wunschwelt'
+    $SSH 'sudo -n systemctl daemon-reload && sudo -n systemctl enable wunschwelt && sudo -n systemctl restart wunschwelt && sleep 2 && systemctl is-active wunschwelt'
     echo "== nginx routes =="
     $SSH "F=/etc/nginx/sites-available/vvss
 R=\$(/opt/wunschwelt/jdBasic /opt/wunschwelt/tools/nginx_route.jdb \$F /home/deploy/ww_stage/vvss.new $PORT | tail -1)
@@ -146,6 +138,9 @@ fi"
     echo "== page =="
     publish_page
     $SSH 'sudo -n cp -r /var/www/vvss/tower/play/jdbasic.js /var/www/vvss/tower/play/jdbasic.wasm /var/www/vvss/tower/play/vendor /var/www/vvss/wunschwelt/play/ && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
+    ;;
+--reset-world)
+    $SSH 'sudo -n systemctl stop wunschwelt && sudo -n find /var/lib/wunschwelt -mindepth 1 -delete && sudo -n systemctl start wunschwelt && sleep 2 && systemctl is-active wunschwelt'
     ;;
 --check)
     push_files

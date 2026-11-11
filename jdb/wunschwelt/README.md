@@ -97,8 +97,31 @@ staged server starts twice on spare ports with the box's own jdBasic, and
 with umlauts, the NPC's answer, two seconds of ticks), once without a model
 and once with a model that cannot be reached. A rule that fails there stops
 the deploy; `--check` runs only this. The box's jdBasic is older than the
-one in `build/`, so a builtin that works locally can be missing there. A
-patch sent with `--patch` does not go through the preflight yet.
+one in `build/`, so a builtin that works locally can be missing there. Each
+test server runs on its own copy of the live state, so the stored patches
+and the saved world are tried with the new files. A patch sent with
+`--patch` goes through the same preflight first, on top of the patches the
+live world already has, and stays out when a step fails.
+
+## What survives a restart
+
+With `WW_STATE_DIR` set (on the box: `/var/lib/wunschwelt`, readable by the
+service alone) the server keeps two files there:
+
+- `patches.json`: every patch that came over HTTP, written when it is taken.
+  On a start the files under `game/` run first, then these in their order.
+- `world.json`: the world, written every three seconds and at a clean end.
+  After the patches have run, the saved world takes the place of the fresh
+  one, players and their tokens included, and the world's clock goes on.
+
+A client notices nothing but a moment without an answer; the head line counts
+the restarts. Every answer carries `code_id`, the server's name for the
+client code of all versions so far. When the game under `game/` changed
+with the restart, that name differs from what the client ran, and the
+client fetches everything anew and starts its code over. A file that
+cannot be read is put aside (`*.unreadable.json`) and the server starts
+without it. `deploy.sh --reset-world` forgets both files.
+`test_persist.jdb` checks this with 18 checks.
 
 ## Machines
 
@@ -125,5 +148,5 @@ reaches a returning visitor that late.
 
 Not done: typing on a real keyboard in the browser was not tried (the check
 sent key events from a script). Phone (Twilio) and the wish board, the content lane of the local model,
-canary bots on the farm, rollback, keeping the world across a server
-restart, rehearsals.
+canary bots on the farm, rollback (taking a stored patch out again),
+rehearsals. The preflight does not run the client code.

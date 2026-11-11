@@ -355,7 +355,17 @@ SUB ClientSync(c)
         c{"say"} = ""
     ENDIF
     DIM t0 = TICK()
-    DIM r = JSON.PARSE(HTTP.POST$(c{"srv"} + "/sync", JSON.STRINGIFY$(msg), "text/plain"))
+    DIM r = {}
+    TRY
+        r = JSON.PARSE(HTTP.POST$(c{"srv"} + "/sync", JSON.STRINGIFY$(msg), "text/plain"))
+    CATCH
+        ' the world is away for a moment: keep what was to be said and ask again in a second
+        IF MAP.EXISTS(msg, "say") THEN c{"say"} = msg{"say"}
+        c{"last_sync"} = TICK() + 900
+        c{"banner"} = "Die Welt antwortet gerade nicht ..."
+        c{"banner_until"} = TICK() + 1500
+        RETURN
+    ENDTRY
     c{"ping"} = INT(TICK() - t0)
     c{"last_sync"} = TICK()
     IF NOT r{"ok"} THEN
@@ -388,7 +398,8 @@ SUB ClientSync(c)
             c{"banner_until"} = TICK() + 3000
         ENDIF
     NEXT i
-    IF r{"version"} > c{"version"} THEN c{"need_code"} = TRUE
+    c{"restarts"} = r{"restarts"} ?? 0
+    IF r{"version"} <> c{"version"} ORELSE "" + (r{"code_id"} ?? c{"code_id"}) <> c{"code_id"} THEN c{"need_code"} = TRUE
 ENDSUB
 
 ' Breaks a text into rows of at most width characters at its spaces.
@@ -534,7 +545,7 @@ SUB ClientDraw(c)
     DIM secs = c{"uptime"}
     DIM clock$ = RIGHT$("0" + STR$(secs \ 3600), 2) + ":" + RIGHT$("0" + STR$((secs \ 60) MOD 60), 2) + ":" + RIGHT$("0" + STR$(secs MOD 60), 2)
     RECT 0, 0, 640, 19, TRUE, 16, 18, 22
-    TEXT 4, 1, "Welt " + clock$ + "  Patches " + STR$(c{"version"}) + "  Neustarts 0  Frame " + STR$(c{"frames"}) + "  " + STR$(LEN(players)) + " im Dorf  " + STR$(c{"ping"}) + "ms", 190, 220, 190
+    TEXT 4, 1, "Welt " + clock$ + "  Patches " + STR$(c{"version"}) + "  Neustarts " + STR$(c{"restarts"} ?? 0) + "  Frame " + STR$(c{"frames"}) + "  " + STR$(LEN(players)) + " im Dorf  " + STR$(c{"ping"}) + "ms", 190, 220, 190
 
     IF TICK() < c{"banner_until"} THEN
         DIM bsize = GFX.TEXTSIZE(c{"banner"})

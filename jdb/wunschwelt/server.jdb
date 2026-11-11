@@ -33,6 +33,8 @@
 '   WW_PATCH_KEY   key a POST /patch must carry; empty = no patches over HTTP
 '   WW_LLM_URL     chat completions URL; empty = NPCs answer a fixed line
 '   WW_GAME_DIR    folder of the first patches (default: game/ beside this file)
+'   WW_STATE_DIR   folder that keeps the world and the patches that came over
+'                  HTTP across a restart; empty = every start is a fresh world
 '
 ' HTTP (bodies are JSON sent as text/plain, so a browser needs no preflight):
 '   POST /join  {"name"}                    -> {"ok", "token", "version"}
@@ -61,12 +63,20 @@ DIM llm_url$ AS STRING = GETENV$("WW_LLM_URL")
 DIM game_dir$ AS STRING = GETENV$("WW_GAME_DIR")
 IF game_dir$ = "" THEN game_dir$ = PATH.DIRNAME$(cli[0]) + "/game"
 
+DIM state_dir$ AS STRING = GETENV$("WW_STATE_DIR")
+DIM SAVE_MS AS INTEGER = 3000
+
 DIM nl$ AS STRING = CHR$(10)
 DIM started_ms AS DOUBLE = TICK()
 
 ' The world. Everything a rule reads or writes is in here.
-DIM W = {"players": {}, "tokens": {}, "npcs": {}, "map": {}, "events": [], "seq": 0, "version": 0, "patch_titles": [], "errors": 0, "last_error": "", "served": 0}
+DIM W = {"players": {}, "tokens": {}, "npcs": {}, "map": {}, "events": [], "seq": 0, "version": 0, "patch_titles": [], "errors": 0, "last_error": "", "served": 0, "restarts": 0}
 DIM client_patches = []
+' code_ids[v] names the client code of the versions 1 to v, so a client can
+' tell whether what it runs is what the server would hand out
+DIM code_ids = [""]
+' the patches that came over HTTP, as kept in the state folder: {"title", "server", "client"}
+DIM stored = []
 ' Questions on their way to the model: {"task", "npc", "player", "asked"}
 DIM pending = []
 ' when each player last asked the model
@@ -139,8 +149,79 @@ FUNC ApplyPatch$(title$ AS STRING, server_code$ AS STRING, client_code$ AS STRIN
     client_patches = APPEND(client_patches, client_code$)
     W{"version"} = W{"version"} + 1
     W{"patch_titles"} = APPEND(W{"patch_titles"}, title$)
+    code_ids = APPEND(code_ids, LEFT$(CODEC.SHA256$(code_ids[LEN(code_ids) - 1] + client_code$), 16))
     RETURN ""
 ENDFUNC
+
+' ---- the state folder ----
+
+SUB WriteState(name$ AS STRING, text$ AS STRING)
+    TXTWRITER state_dir$ + "/" + name$ + ".tmp", text$
+    DIM moved = FILE.MOVE(state_dir$ + "/" + name$ + ".tmp", state_dir$ + "/" + name$, TRUE)
+ENDSUB
+
+SUB SaveWorld()
+    IF state_dir$ = "" THEN RETURN
+    TRY
+        WriteState("world.json", JSON.STRINGIFY$({"clock": KNow(), "world": W}))
+    CATCH
+        KFail("save", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+SUB SavePatches()
+    IF state_dir$ = "" THEN RETURN
+    TRY
+        WriteState("patches.json", JSON.STRINGIFY$({"patches": stored}))
+    CATCH
+        KFail("save", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' Brings back what an earlier run left: its patches run again in their order,
+' then the saved world takes the place of the fresh one and its clock goes on.
+SUB LoadState()
+    IF state_dir$ = "" THEN RETURN
+    IF FILE.EXISTS(state_dir$ + "/patches.json") THEN
+        DIM kept = []
+        TRY
+            DIM list = JSON.PARSE(TXTREADER$(state_dir$ + "/patches.json"))
+            IF NOT ISMAP(list) ORELSE NOT MAP.EXISTS(list, "patches") THEN THROW "not a patch list"
+            kept = list{"patches"}
+        CATCH
+            PRINT "the stored patches could not be read: "; ERRMSG$
+            DIM put_aside = FILE.MOVE(state_dir$ + "/patches.json", state_dir$ + "/patches.unreadable.json", TRUE)
+        ENDTRY
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(kept) - 1
+            DIM failed$ AS STRING = ApplyPatch$(kept[i]{"title"}, kept[i]{"server"}, kept[i]{"client"})
+            IF failed$ = "" THEN
+                stored = APPEND(stored, kept[i])
+            ELSE
+                PRINT "stored patch "; kept[i]{"title"}; " refused: "; failed$
+            ENDIF
+        NEXT i
+    ENDIF
+    IF NOT FILE.EXISTS(state_dir$ + "/world.json") THEN RETURN
+    TRY
+        DIM snap = JSON.PARSE(TXTREADER$(state_dir$ + "/world.json"))
+        IF NOT ISMAP(snap) ORELSE NOT MAP.EXISTS(snap, "world") ORELSE NOT MAP.EXISTS(snap, "clock") THEN THROW "not a saved world"
+        DIM old = snap{"world"}
+        IF NOT ISMAP(old) ORELSE NOT MAP.EXISTS(old, "map") THEN THROW "not a saved world"
+        FOR EACH part$ IN MAP.KEYS(old)
+            IF part$ <> "version" ANDALSO part$ <> "patch_titles" ANDALSO part$ <> "errors" ANDALSO part$ <> "last_error" THEN W{part$} = old{part$}
+        NEXT
+        started_ms = TICK() - snap{"clock"}
+        W{"restarts"} = W{"restarts"} + 1
+        ' whoever was playing gets the time of a fresh arrival to come back
+        FOR EACH name$ IN MAP.KEYS(W{"players"})
+            W{"players"}{name$}{"last_seen"} = KNow()
+        NEXT
+    CATCH
+        PRINT "the saved world could not be read: "; ERRMSG$
+        DIM aside = FILE.MOVE(state_dir$ + "/world.json", state_dir$ + "/world.unreadable.json", TRUE)
+    ENDTRY
+ENDSUB
 
 ' ---- HTTP ----
 
@@ -198,6 +279,8 @@ FUNC HANDLESYNC(request)
         answer = RuleSync(W, players{name$}, b)
         answer{"ok"} = TRUE
         answer{"version"} = W{"version"}
+        answer{"code_id"} = code_ids[W{"version"}]
+        answer{"restarts"} = W{"restarts"}
     CATCH
         KFail("RuleSync", ERRMSG$)
         answer = {"ok": FALSE, "error": "rule", "version": W{"version"}}
@@ -213,7 +296,8 @@ FUNC HANDLECODE(request)
     FOR i = MAX([since, 0]) TO LEN(client_patches) - 1
         fresh = APPEND(fresh, client_patches[i])
     NEXT i
-    RETURN {"version": W{"version"}, "patches": fresh}
+    since = CLAMP(since, 0, LEN(code_ids) - 1)
+    RETURN {"version": W{"version"}, "patches": fresh, "code_id": code_ids[W{"version"}], "since_id": code_ids[since]}
 ENDFUNC
 
 FUNC HANDLEPATCH(request)
@@ -222,12 +306,14 @@ FUNC HANDLEPATCH(request)
     DIM title$ AS STRING = "" + (b{"title"} ?? "patch")
     DIM failed$ AS STRING = ApplyPatch$(title$, "" + (b{"server"} ?? ""), "" + (b{"client"} ?? ""))
     IF failed$ <> "" THEN RETURN {"ok": FALSE, "error": failed$, "version": W{"version"}}
+    stored = APPEND(stored, {"title": title$, "server": "" + (b{"server"} ?? ""), "client": "" + (b{"client"} ?? "")})
+    SavePatches()
     KEmit(W, {"type": "patch", "title": title$, "version": W{"version"}})
     RETURN {"ok": TRUE, "version": W{"version"}}
 ENDFUNC
 
 FUNC HANDLESTATS(request)
-    RETURN {"version": W{"version"}, "players": MAP.SIZE(W{"players"}), "served": W{"served"}, "errors": W{"errors"}, "last_error": W{"last_error"}, "uptime_s": KNow() \ 1000, "pending": LEN(pending), "patches": W{"patch_titles"}}
+    RETURN {"version": W{"version"}, "players": MAP.SIZE(W{"players"}), "served": W{"served"}, "errors": W{"errors"}, "last_error": W{"last_error"}, "uptime_s": KNow() \ 1000, "pending": LEN(pending), "patches": W{"patch_titles"}, "restarts": W{"restarts"}, "stored": LEN(stored)}
 ENDFUNC
 
 ' ---- start ----
@@ -248,6 +334,7 @@ IF LEN(files) = 0 THEN
     END 1
 ENDIF
 RuleMakeWorld(W)
+LoadState()
 
 HTTP.SERVER.ON_POST "/join", HANDLEJOIN@
 HTTP.SERVER.ON_POST "/sync", HANDLESYNC@
@@ -261,7 +348,13 @@ ENDIF
 PRINT "Wunschwelt on 127.0.0.1:"; port; ", "; W{"version"}; " patches, model: "; IIF(llm_url$ = "", "none", llm_url$); ", patches over HTTP: "; IIF(patch_key$ = "", "closed", "with key")
 
 DIM next_tick AS DOUBLE = TICK()
-DO WHILE run_seconds = 0 ORELSE KNow() < run_seconds * 1000
+DIM next_save AS DOUBLE = TICK() + SAVE_MS
+DIM process_start AS DOUBLE = TICK()
+DO WHILE run_seconds = 0 ORELSE TICK() - process_start < run_seconds * 1000
+    IF TICK() >= next_save THEN
+        next_save = TICK() + SAVE_MS
+        SaveWorld()
+    ENDIF
     IF TICK() >= next_tick THEN
         next_tick = next_tick + TICK_MS
         TRY
@@ -294,5 +387,6 @@ DO WHILE run_seconds = 0 ORELSE KNow() < run_seconds * 1000
         SLEEP 5
     ENDIF
 LOOP
+SaveWorld()
 HTTP.SERVER.STOP
 PRINT "served "; W{"served"}; ", version "; W{"version"}; ", errors "; W{"errors"}; " "; W{"last_error"}

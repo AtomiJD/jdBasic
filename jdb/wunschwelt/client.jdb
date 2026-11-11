@@ -12,6 +12,7 @@
 ' c is the client's whole state. The kernel keeps in it:
 '   name, srv, token   who we are and where the world is
 '   version            the last patch that was run here
+'   code_id            the server's name for the code of the versions 1 to version
 '   frames             frames drawn since the start
 '   keyq               key presses since the last frame, each {"key", "keycode"}
 '   textq              text typed since the last frame, as the keyboard layout gives it
@@ -24,7 +25,7 @@
 OPTION "EXPLICIT"
 
 DIM cli = OS.ARGS()
-DIM C = {"name": "Gast", "srv": "http://127.0.0.1:8100", "token": "", "version": 0, "frames": 0, "keyq": [], "textq": "", "has_text": FALSE,"need_code": FALSE, "need_join": FALSE, "errors": 0, "last_error": "", "quit": FALSE}
+DIM C = {"name": "Gast", "srv": "http://127.0.0.1:8100", "token": "", "version": 0, "code_id": "", "error_at": 0,"frames": 0, "keyq": [], "textq": "", "has_text": FALSE,"need_code": FALSE, "need_join": FALSE, "errors": 0, "last_error": "", "quit": FALSE}
 DIM run_seconds AS INTEGER = 0
 IF LEN(cli) > 1 THEN C{"name"} = cli[1]
 IF LEN(cli) > 2 THEN C{"srv"} = cli[2]
@@ -55,6 +56,14 @@ ENDSUB
 ' Fetches and runs the client code after the version we have.
 SUB PullCode()
     DIM code = JSON.PARSE(HTTP.GET$(C{"srv"} + "/code?since=" + STR$(C{"version"})))
+    ' The server names the code it expects us to have. When that is not what
+    ' ran here (the game changed under a restart), everything is fetched anew
+    ' and the client code starts over.
+    IF C{"version"} > 0 ANDALSO "" + (code{"since_id"} ?? "") <> C{"code_id"} THEN
+        C{"version"} = 0
+        C{"ready"} = FALSE
+        code = JSON.PARSE(HTTP.GET$(C{"srv"} + "/code?since=0"))
+    ENDIF
     DIM patches = code{"patches"}
     DIM i AS INTEGER
     FOR i = 0 TO LEN(patches) - 1
@@ -64,10 +73,12 @@ SUB PullCode()
             CATCH
                 C{"errors"} = C{"errors"} + 1
                 C{"last_error"} = "patch " + STR$(C{"version"} + i + 1) + ": " + ERRMSG$
+                C{"error_at"} = TICK()
             ENDTRY
         ENDIF
     NEXT i
     C{"version"} = code{"version"}
+    C{"code_id"} = "" + (code{"code_id"} ?? "")
     C{"need_code"} = FALSE
 ENDSUB
 
@@ -112,8 +123,9 @@ DO WHILE NOT C{"quit"}
     CATCH
         C{"errors"} = C{"errors"} + 1
         C{"last_error"} = ERRMSG$
+        C{"error_at"} = TICK()
     ENDTRY
-    IF C{"last_error"} <> "" THEN TEXT 4, 16, LEFT$(C{"last_error"}, 100), 255, 120, 120
+    IF C{"last_error"} <> "" ANDALSO TICK() - C{"error_at"} < 5000 THEN TEXT 4, 16, LEFT$(C{"last_error"}, 100), 255, 120, 120
     SCREENFLIP
     IF run_seconds > 0 ANDALSO TICK() - started > run_seconds * 1000 THEN C{"quit"} = TRUE
     SLEEP 4

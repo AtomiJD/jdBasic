@@ -1,0 +1,113 @@
+' Test of the state folder: a world with a patch and a player is killed and
+' started again; the patch, the cat it brought, the player's place and token
+' and the world's clock are all still there. A world file that cannot be
+' read is put aside and the patches still come back.
+'
+'   jdBasic jdb/wunschwelt/test_persist.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8140 + OS.PID() MOD 20
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_persist_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+MKDIR out$ + "/state"
+SETENV "WW_PATCH_KEY", key$
+HTTP.SETTIMEOUT(5)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+
+FUNC Stats()
+    RETURN JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+ENDFUNC
+
+FUNC StartServer(run AS INTEGER)
+    DIM pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "60"], {"output": out$ + "/server" + STR$(run) + ".txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "", "WW_STATE_DIR": out$ + "/state"}})
+    SLEEP 1500
+    RETURN pid
+ENDFUNC
+
+SUB StopServer(pid)
+    DIM gone = OS.KILL(pid)
+    DIM code = OS.WAIT(pid, 5000)
+    SLEEP 300
+ENDSUB
+
+FUNC HasNpc(answer, id$ AS STRING)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(answer{"npcs"}) - 1
+        IF answer{"npcs"}[i][0] = id$ THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+' ---- first life ----
+DIM server_pid = StartServer(1)
+DIM joined = Post("/join", {"name": "Anna"})
+DIM token$ AS STRING = joined{"token"}
+DIM r = Post("/sync", {"token": token$, "mapv": 1})
+DIM i AS INTEGER
+FOR i = 1 TO 2
+    SLEEP 200
+    r = Post("/sync", {"token": token$, "dy": -1, "mapv": 1})
+NEXT i
+DIM at_x AS INTEGER = r{"x"}
+DIM at_y AS INTEGER = r{"y"}
+Check("a fresh world counts no restart", r{"restarts"} = 0)
+
+DIM sent = OS.EXEC(OS.SELF$(), [here$ + "tools/patch.jdb", here$ + "patches/010_cat.jdb", "Mimi", srv$])
+Check("the patch is taken", sent{"exit_code"} = 0)
+DIM before = Stats()
+Check("the patch is kept in the state folder", before{"version"} = 2 ANDALSO before{"stored"} = 1 ANDALSO FILE.EXISTS(out$ + "/state/patches.json"))
+DIM code1 = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=0"))
+SLEEP 4000
+Check("the world is written while it runs", FILE.EXISTS(out$ + "/state/world.json"))
+DIM clock1 AS INTEGER = Stats(){"uptime_s"}
+StopServer(server_pid)
+
+' ---- second life ----
+server_pid = StartServer(2)
+DIM after = Stats()
+Check("the patch is back after the restart", after{"version"} = 2 ANDALSO after{"stored"} = 1)
+Check("the restart is counted", after{"restarts"} = 1)
+Check("the world's clock went on", after{"uptime_s"} >= clock1)
+Check("the player is still in the world", after{"players"} = 1)
+r = Post("/sync", {"token": token$, "mapv": 1})
+Check("the old token still counts", r{"ok"})
+Check("the player stands where she stood", r{"ok"} ANDALSO r{"x"} = at_x ANDALSO r{"y"} = at_y)
+Check("the cat the patch brought is there", r{"ok"} ANDALSO HasNpc(r, "mimi"))
+Check("the sync names the restart", r{"ok"} ANDALSO r{"restarts"} = 1)
+DIM code2 = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=2"))
+Check("the client code has the same name as before", code2{"code_id"} = code1{"code_id"} ANDALSO code2{"since_id"} = code1{"code_id"} ANDALSO LEN(code2{"patches"}) = 0)
+DIM stale = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=1"))
+Check("the name of an earlier version differs", stale{"since_id"} <> stale{"code_id"} ANDALSO LEN(stale{"patches"}) = 1)
+Check("the rules raised no error", Stats(){"errors"} = 0)
+StopServer(server_pid)
+
+' ---- a world file that cannot be read ----
+TXTWRITER out$ + "/state/world.json", "{ this is not a world"
+server_pid = StartServer(3)
+DIM third = Stats()
+Check("an unreadable world gives a fresh one", third{"restarts"} = 0 ANDALSO third{"players"} = 0)
+Check("its patches still come back", third{"version"} = 2 ANDALSO third{"stored"} = 1)
+Check("the unreadable file is put aside", FILE.EXISTS(out$ + "/state/world.unreadable.json"))
+StopServer(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1
