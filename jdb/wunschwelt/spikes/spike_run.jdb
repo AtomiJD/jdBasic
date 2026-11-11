@@ -1,0 +1,86 @@
+' Spike driver: starts the server and N bots, sends a rule patch and a broken
+' patch in mid-run, and reports what the bots saw.
+'
+'   jdBasic jdb/wunschwelt/spikes/spike_run.jdb [bots] [seconds] [moves_per_second] [port]
+'
+' Run from the repository root.
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM n_bots AS INTEGER = 8
+DIM seconds AS INTEGER = 12
+DIM rate AS INTEGER = 10
+DIM port AS INTEGER = 8090
+IF LEN(cli) > 1 THEN n_bots = VAL(cli[1])
+IF LEN(cli) > 2 THEN seconds = VAL(cli[2])
+IF LEN(cli) > 3 THEN rate = VAL(cli[3])
+IF LEN(cli) > 4 THEN port = VAL(cli[4])
+
+DIM nl$ AS STRING = CHR$(10)
+DIM q$ AS STRING = CHR$(34)
+DIM here$ AS STRING = "jdb/wunschwelt/spikes/"
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/spike_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+DIM base$ AS STRING = "http://127.0.0.1:" + STR$(port)
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "spike_server.jdb", STR$(port), STR$(seconds + 8)], {"output": out$ + "/server.txt", "hidden": TRUE})
+SLEEP 1200
+
+DIM bots = []
+DIM i AS INTEGER
+FOR i = 1 TO n_bots
+    bots = APPEND(bots, OS.SPAWN(OS.SELF$(), [here$ + "spike_bot.jdb", "bot" + STR$(i), STR$(port), STR$(seconds), STR$(rate)], {"output": out$ + "/bot" + STR$(i) + ".txt", "hidden": TRUE}))
+NEXT i
+
+HTTP.SETTIMEOUT(5)
+SLEEP (seconds * 1000) \ 3
+
+' a rule patch: a move counts tenfold on the server, the client names itself v1
+DIM server_code$ AS STRING = "SUB RuleMove(w, p, dx, dy)" + nl$ + "    p{" + q$ + "x" + q$ + "} = p{" + q$ + "x" + q$ + "} + dx * 10" + nl$ + "    p{" + q$ + "y" + q$ + "} = p{" + q$ + "y" + q$ + "} + dy * 10" + nl$ + "ENDSUB"
+DIM client_code$ AS STRING = "FUNC ClientLabel$(state)" + nl$ + "    RETURN " + q$ + "v1 after " + q$ + " + STR$(state{" + q$ + "frames" + q$ + "}) + " + q$ + " frames" + q$ + nl$ + "ENDFUNC"
+DIM t0 AS DOUBLE = TICK()
+DIM good$ AS STRING = HTTP.POST$(base$ + "/patch", JSON.STRINGIFY$({"key": "spike", "server": server_code$, "client": client_code$}), "application/json")
+PRINT "patch: "; good$; " in "; ROUND(TICK() - t0, 1); " ms"
+
+SLEEP 500
+DIM bad$ AS STRING = HTTP.POST$(base$ + "/patch", JSON.STRINGIFY$({"key": "spike", "server": "SUB RuleMove(w, p, dx, dy)" + nl$ + "    p{ = = 3" + nl$ + "ENDSUB", "client": ""}), "application/json")
+PRINT "broken patch: "; LEFT$(bad$, 120)
+DIM nokey$ AS STRING = HTTP.POST$(base$ + "/patch", JSON.STRINGIFY$({"key": "wrong", "server": "", "client": ""}), "application/json")
+PRINT "patch with a wrong key: status "; HTTP.STATUSCODE()
+
+FOR i = 0 TO n_bots - 1
+    DIM code = OS.WAIT(bots[i], (seconds + 20) * 1000)
+NEXT i
+PRINT "stats: "; HTTP.GET$(base$ + "/stats")
+
+DIM moves AS INTEGER = 0
+DIM errors AS INTEGER = 0
+DIM switched AS INTEGER = 0
+DIM p50s = []
+DIM p95s = []
+DIM worst AS DOUBLE = 0
+DIM sample$ AS STRING = ""
+FOR i = 1 TO n_bots
+    DIM text$ AS STRING = REPLACE$(TXTREADER$(out$ + "/bot" + STR$(i) + ".txt"), CHR$(13), "")
+    DIM at AS INTEGER = INSTR(text$, "BOT ")
+    IF at < 0 THEN
+        PRINT "bot"; i; " left no result: "; LEFT$(text$, 200)
+        errors = errors + 1
+        CONTINUEFOR
+    ENDIF
+    DIM r = JSON.PARSE(TRIM$(MID$(text$, at + 4, LEN(text$))))
+    moves = moves + r{"moves"}
+    errors = errors + r{"errors"}
+    IF LEN(r{"versions_seen"}) = 2 ANDALSO STARTSWITH(r{"label"}, "v1 after") THEN switched = switched + 1
+    p50s = APPEND(p50s, r{"p50_ms"})
+    p95s = APPEND(p95s, r{"p95_ms"})
+    IF r{"max_ms"} > worst THEN worst = r{"max_ms"}
+    IF i = 1 THEN sample$ = JSON.STRINGIFY$(r)
+NEXT i
+PRINT "bot1: "; sample$
+PRINT "RESULT bots="; n_bots; " rate="; rate; "/s moves="; moves; " (" ; ROUND(moves / seconds, 0); "/s) errors="; errors; " switched_in_flight="; switched; "/"; n_bots; " p50="; ROUND(MEDIAN(p50s), 1); "ms p95="; ROUND(MAX(p95s), 1); "ms max="; worst; "ms"
+
+DIM gone = OS.WAIT(server_pid, 15000)
+PRINT TRIM$(TXTREADER$(out$ + "/server.txt"))

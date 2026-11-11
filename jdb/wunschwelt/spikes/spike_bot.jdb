@@ -1,0 +1,80 @@
+' Spike: a headless player. It moves at a fixed rate, and when the server
+' reports a newer code version it fetches the client patches and runs them
+' without stopping. Its frame counter and its own state live on.
+'
+'   jdBasic spike_bot.jdb name [port] [seconds] [moves_per_second]
+'
+' Last line: BOT {"name", "frames", "moves", "errors", "versions_seen", "p50_ms", "p95_ms", "max_ms", "label"}
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM name$ AS STRING = "bot"
+DIM port AS INTEGER = 8090
+DIM run_seconds AS INTEGER = 20
+DIM rate AS INTEGER = 10
+IF LEN(cli) > 1 THEN name$ = cli[1]
+IF LEN(cli) > 2 THEN port = VAL(cli[2])
+IF LEN(cli) > 3 THEN run_seconds = VAL(cli[3])
+IF LEN(cli) > 4 THEN rate = VAL(cli[4])
+
+DIM base$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM me = {"frames": 0, "moves": 0, "errors": 0, "version": 0, "versions_seen": [0], "label": "v0"}
+
+' ---- client rules: patchable ----
+
+FUNC ClientLabel$(state)
+    RETURN "v0"
+ENDFUNC
+
+FUNC Post(path$ AS STRING, payload)
+    DIM answer$ AS STRING = HTTP.POST$(base$ + path$, JSON.STRINGIFY$(payload), "application/json")
+    RETURN JSON.PARSE(answer$)
+ENDFUNC
+
+HTTP.SETTIMEOUT(5)
+DIM joined = Post("/join", {"name": name$})
+DIM lat = []
+DIM started AS DOUBLE = TICK()
+DIM next_at AS DOUBLE = started
+DIM gap AS DOUBLE = 1000 / rate
+
+DO WHILE TICK() - started < run_seconds * 1000
+    me{"frames"} = me{"frames"} + 1
+    IF TICK() >= next_at THEN
+        next_at = next_at + gap
+        DIM t0 AS DOUBLE = TICK()
+        TRY
+            DIM seen = Post("/move", {"name": name$, "dx": 1, "dy": 0})
+            lat = APPEND(lat, TICK() - t0)
+            me{"moves"} = me{"moves"} + 1
+            IF seen{"version"} > me{"version"} THEN
+                DIM code = JSON.PARSE(HTTP.GET$(base$ + "/code?since=" + STR$(me{"version"})))
+                DIM patches = code{"patches"}
+                DIM k AS INTEGER
+                FOR k = 0 TO LEN(patches) - 1
+                    IF patches[k] <> "" THEN EXECUTE patches[k]
+                NEXT k
+                me{"version"} = code{"version"}
+                me{"versions_seen"} = APPEND(me{"versions_seen"}, code{"version"})
+            ENDIF
+            me{"label"} = ClientLabel$(me)
+        CATCH
+            me{"errors"} = me{"errors"} + 1
+        ENDTRY
+    ELSE
+        SLEEP 2
+    ENDIF
+LOOP
+
+DIM ordered = SORT(lat)
+DIM n AS INTEGER = LEN(ordered)
+DIM p50 AS DOUBLE = 0
+DIM p95 AS DOUBLE = 0
+DIM worst AS DOUBLE = 0
+IF n > 0 THEN
+    p50 = ordered[n \ 2]
+    p95 = ordered[MIN([n - 1, (n * 95) \ 100])]
+    worst = ordered[n - 1]
+ENDIF
+PRINT "BOT "; JSON.STRINGIFY$({"name": name$, "frames": me{"frames"}, "moves": me{"moves"}, "errors": me{"errors"}, "versions_seen": me{"versions_seen"}, "p50_ms": ROUND(p50, 1), "p95_ms": ROUND(p95, 1), "max_ms": ROUND(worst, 1), "label": me{"label"}})

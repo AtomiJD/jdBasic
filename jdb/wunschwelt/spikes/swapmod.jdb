@@ -1,0 +1,4 @@
+EXPORT MODULE SWAPMOD
+EXPORT FUNC Greet$(name$)
+    RETURN "hello " + name$
+ENDFUNC

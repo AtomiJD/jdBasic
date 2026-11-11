@@ -1,0 +1,94 @@
+' Spike: what a patched SUB can reach, and a swap while the SUB is running.
+IMPORT SWAPMOD
+DIM nl$ = CHR$(10)
+DIM q$ = CHR$(34)
+DIM world = {"x": 0, "said": ""}
+DIM handlers = {}
+
+FUNC Helper(n)
+    RETURN n * 2
+ENDFUNC
+
+SUB Advance(w)
+    w{"x"} = w{"x"} + 1
+ENDSUB
+
+SUB Report(label$)
+    TRY
+        Advance(world)
+        PRINT label$; ": x="; world{"x"}; " said="; world{"said"}
+    CATCH
+        PRINT label$; ": ERROR "; ERRMSG$
+    ENDTRY
+ENDSUB
+
+Report("start")
+
+' 1: the patch calls a FUNC of the main program
+EXECUTE "SUB Advance(w)" + nl$ + "    w{" + q$ + "x" + q$ + "} = w{" + q$ + "x" + q$ + "} + Helper(50)" + nl$ + "ENDSUB"
+Report("calls main FUNC")
+
+' 2: the patch calls a module the main program imported
+EXECUTE "SUB Advance(w)" + nl$ + "    w{" + q$ + "said" + q$ + "} = SWAPMOD.Greet$(" + q$ + "world" + q$ + ")" + nl$ + "ENDSUB"
+Report("calls module")
+
+' 3: a first patch brings a new FUNC, a second patch calls it
+EXECUTE "FUNC Fresh(n)" + nl$ + "    RETURN n + 7" + nl$ + "ENDFUNC"
+EXECUTE "SUB Advance(w)" + nl$ + "    w{" + q$ + "x" + q$ + "} = Fresh(w{" + q$ + "x" + q$ + "})" + nl$ + "ENDSUB"
+Report("calls FUNC of an earlier patch")
+
+' 4: a patch replaces a FUNC of the module
+TRY
+    EXECUTE "EXPORT MODULE SWAPMOD" + nl$ + "EXPORT FUNC Greet$(name$)" + nl$ + "    RETURN " + q$ + "servus " + q$ + " + name$" + nl$ + "ENDFUNC"
+    PRINT "module patched: "; SWAPMOD.Greet$("x")
+CATCH
+    PRINT "module patch: ERROR "; ERRMSG$
+ENDTRY
+
+' 5: a function reference from a patch, kept in a map of the main program
+TRY
+    EXECUTE "FUNC OnHit(w)" + nl$ + "    RETURN w{" + q$ + "x" + q$ + "} + 1" + nl$ + "ENDFUNC" + nl$ + "DIM h = JDB.GLOBAL_GET(" + q$ + "handlers" + q$ + ")" + nl$ + "h{" + q$ + "hit" + q$ + "} = OnHit@"
+    DIM fn = handlers{"hit"}
+    PRINT "funcref from a patch: "; fn(world)
+CATCH
+    PRINT "funcref: ERROR "; ERRMSG$
+ENDTRY
+
+' 6: the SUB replaces itself while it runs; the running call finishes with the old body
+SUB SelfSwap(w)
+    w{"said"} = "old body, before"
+    EXECUTE "SUB SelfSwap(w)" + nl$ + "    w{" + q$ + "said" + q$ + "} = " + q$ + "new body" + q$ + nl$ + "ENDSUB"
+    w{"said"} = w{"said"} + " and after"
+ENDSUB
+TRY
+    SelfSwap(world)
+    PRINT "during the swap: "; world{"said"}
+    SelfSwap(world)
+    PRINT "next call: "; world{"said"}
+CATCH
+    PRINT "self swap: ERROR "; ERRMSG$
+ENDTRY
+
+' 7: a broken patch leaves the old body in place
+TRY
+    EXECUTE "SUB Advance(w)" + nl$ + "    w{" + q$ + "x" + q$ + "} = = 3" + nl$ + "ENDSUB"
+    PRINT "broken patch: accepted"
+CATCH
+    PRINT "broken patch refused: "; LEFT$(ERRMSG$, 60)
+ENDTRY
+Report("after the broken patch")
+
+' 8: cost of a call before and after 200 swaps
+DIM t0 = TICK()
+FOR i = 1 TO 200000
+    Advance(world)
+NEXT i
+DIM before_ms = TICK() - t0
+FOR i = 1 TO 200
+    EXECUTE "SUB Advance(w)" + nl$ + "    w{" + q$ + "x" + q$ + "} = w{" + q$ + "x" + q$ + "} + 1" + nl$ + "ENDSUB"
+NEXT i
+t0 = TICK()
+FOR i = 1 TO 200000
+    Advance(world)
+NEXT i
+PRINT "200000 calls: "; before_ms; " ms before, "; TICK() - t0; " ms after 200 swaps; memory "; SYS.MEMORY()

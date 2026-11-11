@@ -1,0 +1,125 @@
+' Spike: a world server that takes rule patches while players are connected.
+'
+'   jdBasic spike_server.jdb [port] [seconds]
+'
+'   POST /join   {"name"}            -> {"ok", "version"}
+'   POST /move   {"name","dx","dy"}  -> the player's place, world tick, code version
+'   GET  /code?since=N               -> {"version", "patches": [client code after N]}
+'   POST /patch  {"key","server","client"}  both parts are jdBasic source
+'   GET  /stats                      -> requests served, players, version, uptime
+'
+' The rules are top-level SUBs that take the world as a parameter, so a
+' patch can define them again while the server runs.
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM port AS INTEGER = 8090
+DIM run_seconds AS INTEGER = 60
+IF LEN(cli) > 1 THEN port = VAL(cli[1])
+IF LEN(cli) > 2 THEN run_seconds = VAL(cli[2])
+
+DIM PATCH_KEY$ AS STRING = "spike"
+DIM world = {"players": {}, "tick": 0, "version": 0, "client_patches": [], "served": 0, "refused": 0}
+DIM started AS DOUBLE = TICK()
+
+' ---- rules: patchable ----
+
+SUB RuleMove(w, p, dx, dy)
+    p{"x"} = p{"x"} + dx
+    p{"y"} = p{"y"} + dy
+ENDSUB
+
+FUNC RuleView(w, p)
+    RETURN {"x": p{"x"}, "y": p{"y"}}
+ENDFUNC
+
+' ---- handlers ----
+
+FUNC BodyOf(request)
+    DIM parsed = {}
+    TRY
+        parsed = JSON.PARSE(request{"body"})
+    CATCH
+        parsed = {}
+    ENDTRY
+    RETURN parsed
+ENDFUNC
+
+FUNC HANDLEJOIN(request)
+    DIM b = BodyOf(request)
+    world{"served"} = world{"served"} + 1
+    DIM name$ AS STRING = "" + (b{"name"} ?? "")
+    IF name$ = "" THEN RETURN {"ok": FALSE}
+    DIM players = world{"players"}
+    IF NOT MAP.EXISTS(players, name$) THEN players{name$} = {"x": 0, "y": 0, "moves": 0}
+    RETURN {"ok": TRUE, "version": world{"version"}}
+ENDFUNC
+
+FUNC HANDLEMOVE(request)
+    DIM b = BodyOf(request)
+    world{"served"} = world{"served"} + 1
+    DIM players = world{"players"}
+    DIM name$ AS STRING = "" + (b{"name"} ?? "")
+    IF NOT MAP.EXISTS(players, name$) THEN RETURN {"ok": FALSE}
+    DIM p = players{name$}
+    RuleMove(world, p, b{"dx"} ?? 0, b{"dy"} ?? 0)
+    p{"moves"} = p{"moves"} + 1
+    world{"tick"} = world{"tick"} + 1
+    DIM view = RuleView(world, p)
+    view{"ok"} = TRUE
+    view{"moves"} = p{"moves"}
+    view{"tick"} = world{"tick"}
+    view{"version"} = world{"version"}
+    RETURN view
+ENDFUNC
+
+FUNC HANDLECODE(request)
+    world{"served"} = world{"served"} + 1
+    DIM since AS INTEGER = VAL("" + (request{"params"}{"since"} ?? "0"))
+    DIM all_patches = world{"client_patches"}
+    DIM fresh = []
+    DIM i AS INTEGER
+    FOR i = since TO LEN(all_patches) - 1
+        fresh = APPEND(fresh, all_patches[i])
+    NEXT i
+    RETURN {"version": world{"version"}, "patches": fresh}
+ENDFUNC
+
+FUNC HANDLEPATCH(request)
+    DIM b = BodyOf(request)
+    IF "" + (b{"key"} ?? "") <> PATCH_KEY$ THEN RETURN {"__http_status": 403}
+    DIM server_code$ AS STRING = "" + (b{"server"} ?? "")
+    IF server_code$ <> "" THEN
+        TRY
+            EXECUTE server_code$
+        CATCH
+            world{"refused"} = world{"refused"} + 1
+            RETURN {"ok": FALSE, "error": ERRMSG$, "version": world{"version"}}
+        ENDTRY
+    ENDIF
+    world{"client_patches"} = APPEND(world{"client_patches"}, "" + (b{"client"} ?? ""))
+    world{"version"} = world{"version"} + 1
+    RETURN {"ok": TRUE, "version": world{"version"}}
+ENDFUNC
+
+FUNC HANDLESTATS(request)
+    RETURN {"served": world{"served"}, "players": MAP.SIZE(world{"players"}), "version": world{"version"}, "refused": world{"refused"}, "tick": world{"tick"}, "uptime_ms": INT(TICK() - started)}
+ENDFUNC
+
+HTTP.SERVER.ON_POST "/join", HANDLEJOIN@
+HTTP.SERVER.ON_POST "/move", HANDLEMOVE@
+HTTP.SERVER.ON_GET "/code", HANDLECODE@
+HTTP.SERVER.ON_POST "/patch", HANDLEPATCH@
+HTTP.SERVER.ON_GET "/stats", HANDLESTATS@
+
+IF NOT HTTP.SERVER.START(port, "127.0.0.1") THEN
+    PRINT "server did not start on "; port
+    END 1
+ENDIF
+PRINT "spike server on 127.0.0.1:"; port; " for "; run_seconds; " s"
+DO WHILE TICK() - started < run_seconds * 1000
+    SLEEP 50
+LOOP
+HTTP.SERVER.STOP
+PRINT "served "; world{"served"}; " requests, version "; world{"version"}; ", players "; MAP.SIZE(world{"players"})

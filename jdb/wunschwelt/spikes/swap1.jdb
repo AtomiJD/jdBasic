@@ -1,0 +1,45 @@
+' Spike: does a SUB defined again through EXECUTE replace the one the
+' running program calls, and what does the new body see?
+DIM nl$ = CHR$(10)
+DIM q$ = CHR$(34)
+DIM world = {"x": 0, "log": ""}
+DIM frame = 0
+
+SUB Advance(w)
+    w{"x"} = w{"x"} + 1
+ENDSUB
+
+FUNC Version$()
+    RETURN "v1"
+ENDFUNC
+
+SUB AdvanceGlobal()
+    world{"x"} = world{"x"} + 1
+ENDSUB
+
+FOR frame = 1 TO 6
+    Advance(world)
+    PRINT "frame "; frame; " "; Version$(); " x="; world{"x"}
+    IF frame = 2 THEN
+        ' a: new body, state through the parameter
+        EXECUTE "SUB Advance(w)" + nl$ + "    w{" + q$ + "x" + q$ + "} = w{" + q$ + "x" + q$ + "} + 100" + nl$ + "ENDSUB" + nl$ + "FUNC Version$()" + nl$ + "    RETURN " + q$ + "v2" + q$ + nl$ + "ENDFUNC"
+    ENDIF
+    IF frame = 4 THEN
+        ' b: new body that reads a global of the main program
+        TRY
+            EXECUTE "SUB AdvanceGlobal()" + nl$ + "    world{" + q$ + "x" + q$ + "} = world{" + q$ + "x" + q$ + "} + 1000" + nl$ + "ENDSUB"
+            AdvanceGlobal()
+            PRINT "  global seen from a patched SUB: x="; world{"x"}
+        CATCH
+            PRINT "  patched SUB reading a global: "; ERRMSG$
+        ENDTRY
+        ' c: the same through JDB.GLOBAL_GET
+        TRY
+            EXECUTE "SUB AdvanceGlobal()" + nl$ + "    DIM w = JDB.GLOBAL_GET(" + q$ + "world" + q$ + ")" + nl$ + "    w{" + q$ + "x" + q$ + "} = w{" + q$ + "x" + q$ + "} + 5000" + nl$ + "ENDSUB"
+            AdvanceGlobal()
+            PRINT "  through JDB.GLOBAL_GET: x="; world{"x"}
+        CATCH
+            PRINT "  JDB.GLOBAL_GET: "; ERRMSG$
+        ENDTRY
+    ENDIF
+NEXT frame
