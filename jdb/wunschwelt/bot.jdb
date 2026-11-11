@@ -1,0 +1,64 @@
+' Wunschwelt bot: a player without a window, for tests and as a canary.
+'
+'   jdBasic jdb/wunschwelt/bot.jdb name server seconds script
+'
+' script is a list of steps separated by commas, played in a loop, one per
+' sync: l r u d (a step left, right, up, down), . (stand), or say:TEXT
+' (spaces as _). The bot speaks the protocol of the first patch.
+' Last line: BOT {"name","syncs","errors","x","y","version","heard":[...]}
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM name$ AS STRING = cli[1]
+DIM srv$ AS STRING = cli[2]
+DIM seconds AS INTEGER = VAL(cli[3])
+DIM steps = SPLIT(cli[4], ",")
+
+HTTP.SETTIMEOUT(5)
+DIM joined = JSON.PARSE(HTTP.POST$(srv$ + "/join", JSON.STRINGIFY$({"name": name$}), "text/plain"))
+DIM token$ AS STRING = "" + (joined{"token"} ?? "")
+DIM since AS INTEGER = -1
+DIM syncs AS INTEGER = 0
+DIM errors AS INTEGER = 0
+DIM heard = []
+DIM at_x AS INTEGER = 0
+DIM at_y AS INTEGER = 0
+DIM version AS INTEGER = 0
+DIM started AS DOUBLE = TICK()
+DIM k AS INTEGER = 0
+DIM once_done AS INTEGER = FALSE
+
+DO WHILE TICK() - started < seconds * 1000
+    DIM act$ AS STRING = "."
+    IF k < LEN(steps) THEN act$ = steps[k]
+    k = k + 1
+    DIM msg = {"token": token$, "dx": 0, "dy": 0, "since": since, "mapv": 1}
+    IF act$ = "l" THEN msg{"dx"} = -1
+    IF act$ = "r" THEN msg{"dx"} = 1
+    IF act$ = "u" THEN msg{"dy"} = -1
+    IF act$ = "d" THEN msg{"dy"} = 1
+    IF STARTSWITH(act$, "say:") THEN msg{"say"} = REPLACE$(MID$(act$, 4, LEN(act$)), "_", " ")
+    TRY
+        DIM r = JSON.PARSE(HTTP.POST$(srv$ + "/sync", JSON.STRINGIFY$(msg), "text/plain"))
+        syncs = syncs + 1
+        IF r{"ok"} THEN
+            at_x = r{"x"}
+            at_y = r{"y"}
+            since = r{"seq"}
+            version = r{"version"}
+            DIM events = r{"events"}
+            DIM i AS INTEGER
+            FOR i = 0 TO LEN(events) - 1
+                IF events[i]{"type"} = "say" ANDALSO events[i]{"who"} <> name$ THEN heard = APPEND(heard, events[i]{"who"} + ": " + events[i]{"text"})
+                IF events[i]{"type"} = "patch" THEN heard = APPEND(heard, "PATCH: " + events[i]{"title"})
+            NEXT i
+        ELSE
+            errors = errors + 1
+        ENDIF
+    CATCH
+        errors = errors + 1
+    ENDTRY
+    SLEEP 170
+LOOP
+PRINT "BOT "; JSON.STRINGIFY$({"name": name$, "syncs": syncs, "errors": errors, "x": at_x, "y": at_y, "version": version, "heard": heard})

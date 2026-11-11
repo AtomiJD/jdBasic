@@ -1,0 +1,99 @@
+' Test of the vertical slice: a server without a model, two bots that walk
+' and talk, a patch and a broken patch in mid-run.
+'
+'   jdBasic jdb/wunschwelt/test_slice.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8170 + OS.PID() MOD 20
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_test_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+
+FUNC BotResult(file$ AS STRING)
+    DIM text$ AS STRING = REPLACE$(TXTREADER$(file$), CHR$(13), "")
+    DIM at AS INTEGER = INSTR(text$, "BOT ")
+    IF at < 0 THEN RETURN {"syncs": 0, "errors": 1, "x": -1, "y": -1, "version": 0, "heard": [text$]}
+    RETURN JSON.PARSE(TRIM$(MID$(text$, at + 4, LEN(text$))))
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "16"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
+SLEEP 1500
+HTTP.SETTIMEOUT(5)
+
+DIM anna = OS.SPAWN(OS.SELF$(), [here$ + "bot.jdb", "Anna", srv$, "9", "u,u,u,u,say:Hallo_Marta"], {"output": out$ + "/anna.txt", "hidden": TRUE})
+SLEEP 300
+DIM ben = OS.SPAWN(OS.SELF$(), [here$ + "bot.jdb", "Ben", srv$, "9", "l,l,l"], {"output": out$ + "/ben.txt", "hidden": TRUE})
+SLEEP 3500
+
+DIM before = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("two players are in the world", before{"players"} = 2)
+Check("the world starts with one patch", before{"version"} = 1)
+
+' the patch tool sends the cat
+DIM sent = OS.EXEC(OS.SELF$(), [here$ + "tools/patch.jdb", here$ + "patches/010_cat.jdb", "Mimi", srv$])
+Check("without the key the patch tool is refused", sent{"exit_code"} = 1)
+DIM nl$ AS STRING = CHR$(10)
+DIM cat$ AS STRING = REPLACE$(TXTREADER$(here$ + "patches/010_cat.jdb"), CHR$(13), "")
+DIM cut AS INTEGER = INSTR(cat$, "'@client")
+DIM cat_server$ AS STRING = MID$(cat$, INSTR(cat$, "'@server") + 8, cut - INSTR(cat$, "'@server") - 8)
+DIM cat_client$ AS STRING = MID$(cat$, cut + 8, LEN(cat$))
+DIM took = Post("/patch", {"key": key$, "title": "Mimi", "server": cat_server$, "client": cat_client$})
+Check("the cat patch is taken", took{"ok"} ANDALSO took{"version"} = 2)
+
+DIM broken = Post("/patch", {"key": key$, "title": "broken", "server": "SUB RuleTick(w, now)" + nl$ + "    w{ = = 1" + nl$ + "ENDSUB", "client": ""})
+Check("a patch that does not parse is refused", NOT broken{"ok"})
+Check("and leaves the version alone", broken{"version"} = 2)
+
+DIM probe = Post("/join", {"name": "Probe"})
+DIM seen = Post("/sync", {"token": probe{"token"}, "since": -1, "mapv": 0})
+Check("a new client gets the map", MAP.EXISTS(seen, "map") ANDALSO LEN(seen{"map"}{"tiles"}) = 1200)
+DIM has_cat AS INTEGER = FALSE
+DIM i AS INTEGER
+FOR i = 0 TO LEN(seen{"npcs"}) - 1
+    IF seen{"npcs"}[i][0] = "mimi" ANDALSO seen{"npcs"}[i][4] = "cat" THEN has_cat = TRUE
+NEXT i
+Check("the cat is in the world", has_cat)
+Check("three players are listed", LEN(seen{"players"}) = 3)
+DIM code = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=1"))
+Check("the client code after version 1 is one patch", LEN(code{"patches"}) = 1 ANDALSO INSTR(code{"patches"}[0], "ClientCat") >= 0)
+DIM none = Post("/sync", {"token": "nobody"})
+Check("an unknown token is told to join", NOT none{"ok"} ANDALSO none{"error"} = "join")
+
+DIM w1 = OS.WAIT(anna, 20000)
+DIM w2 = OS.WAIT(ben, 20000)
+DIM a = BotResult(out$ + "/anna.txt")
+DIM b = BotResult(out$ + "/ben.txt")
+Check("Anna walked four tiles up to the tavern", a{"x"} = 19 ANDALSO a{"y"} = 14)
+Check("Ben walked three tiles left", b{"x"} = 17 ANDALSO b{"y"} = 18)
+Check("no bot saw an error", a{"errors"} = 0 ANDALSO b{"errors"} = 0)
+Check("both bots saw version 2 arrive while playing", a{"version"} = 2 ANDALSO b{"version"} = 2)
+Check("Marta answered Anna", INSTR(JOIN(a{"heard"}, "|"), "Marta: ") >= 0)
+Check("Ben heard Anna speak", INSTR(JOIN(b{"heard"}, "|"), "Anna: Hallo Marta") >= 0)
+Check("both heard of the patch", INSTR(JOIN(a{"heard"}, "|"), "PATCH: Mimi") >= 0 ANDALSO INSTR(JOIN(b{"heard"}, "|"), "PATCH: Mimi") >= 0)
+
+DIM after = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", after{"errors"} = 0)
+IF after{"errors"} > 0 THEN PRINT "  "; after{"last_error"}
+DIM w3 = OS.WAIT(server_pid, 20000)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

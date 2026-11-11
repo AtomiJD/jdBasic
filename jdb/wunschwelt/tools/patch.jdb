@@ -1,0 +1,45 @@
+' Sends one patch file to a running Wunschwelt server.
+'
+'   jdBasic jdb/wunschwelt/tools/patch.jdb file.jdb "title" [server]
+'
+' The key comes from the environment variable WW_PATCH_KEY. The file has the
+' parts '@server and '@client, as the files under game/ do. Exit 0 when the
+' server took the patch, 1 when it refused it (the error is printed).
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+IF LEN(cli) < 3 THEN
+    PRINT "usage: patch.jdb file.jdb title [server]"
+    END 1
+ENDIF
+DIM srv$ AS STRING = "http://127.0.0.1:8100"
+IF LEN(cli) > 3 THEN srv$ = cli[3]
+DIM nl$ AS STRING = CHR$(10)
+DIM parts = {"server": "", "client": ""}
+DIM part$ AS STRING = ""
+DIM rows = SPLIT(REPLACE$(TXTREADER$(cli[1]), CHR$(13), ""), nl$)
+DIM i AS INTEGER
+FOR i = 0 TO LEN(rows) - 1
+    DIM mark$ AS STRING = TRIM$(rows[i])
+    IF mark$ = "'@server" THEN
+        part$ = "server"
+    ELSEIF mark$ = "'@client" THEN
+        part$ = "client"
+    ELSEIF part$ <> "" THEN
+        parts{part$} = parts{part$} + rows[i] + nl$
+    ENDIF
+NEXT i
+DIM t0 AS DOUBLE = TICK()
+DIM answer$ AS STRING = HTTP.POST$(srv$ + "/patch", JSON.STRINGIFY$({"key": GETENV$("WW_PATCH_KEY"), "title": cli[2], "server": parts{"server"}, "client": parts{"client"}}), "text/plain")
+IF HTTP.STATUSCODE() <> 200 THEN
+    PRINT "refused: HTTP "; HTTP.STATUSCODE()
+    END 1
+ENDIF
+DIM r = JSON.PARSE(answer$)
+IF r{"ok"} THEN
+    PRINT "in the world as version "; r{"version"}; " after "; INT(TICK() - t0); " ms"
+ELSE
+    PRINT "refused: "; r{"error"}
+    END 1
+ENDIF

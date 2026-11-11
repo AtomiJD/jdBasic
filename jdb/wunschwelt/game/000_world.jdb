@@ -1,0 +1,524 @@
+' The first patch: a village green with a tavern, a pond and Marta the
+' innkeeper; players walk on a grid and talk.
+'
+' Tile ids (1-based, as the tilemap wants them):
+'   1 grass  2 path  3 tree  4 water  5 wall  6 floor  7 door  8 flowers
+
+'@server
+
+FUNC RuleBlocked(w, x, y)
+    DIM m = w{"map"}
+    IF x < 0 ORELSE y < 0 ORELSE x >= m{"w"} ORELSE y >= m{"h"} THEN RETURN TRUE
+    DIM id = m{"tiles"}[y * m{"w"} + x]
+    IF id = 3 ORELSE id = 4 ORELSE id = 5 THEN RETURN TRUE
+    DIM npcs = w{"npcs"}
+    FOR EACH npc_id$ IN MAP.KEYS(npcs)
+        IF npcs{npc_id$}{"x"} = x ANDALSO npcs{npc_id$}{"y"} = y THEN RETURN TRUE
+    NEXT
+    RETURN FALSE
+ENDFUNC
+
+SUB RuleMakeWorld(w)
+    IF MAP.EXISTS(w{"map"}, "w") THEN RETURN
+    DIM mw = 40
+    DIM mh = 30
+    DIM tiles = ZEROS([mw * mh]) + 1
+    DIM x = 0
+    DIM y = 0
+    ' a fixed scatter of trees and flowers, the same on every start
+    DIM seed = 12345
+    FOR y = 0 TO mh - 1
+        FOR x = 0 TO mw - 1
+            seed = (seed * 1103515245 + 12345) MOD 2147483648
+            DIM roll = (seed \ 65536) MOD 100
+            IF x = 0 ORELSE y = 0 ORELSE x = mw - 1 ORELSE y = mh - 1 THEN
+                tiles[y * mw + x] = 3
+            ELSEIF roll < 6 THEN
+                tiles[y * mw + x] = 3
+            ELSEIF roll < 14 THEN
+                tiles[y * mw + x] = 8
+            ENDIF
+        NEXT x
+    NEXT y
+    ' the pond
+    FOR y = 6 TO 10
+        FOR x = 28 TO 34
+            tiles[y * mw + x] = 4
+        NEXT x
+    NEXT y
+    ' the tavern: walls, floor, a door in the south wall
+    FOR y = 5 TO 11
+        FOR x = 14 TO 24
+            IF x = 14 ORELSE x = 24 ORELSE y = 5 ORELSE y = 11 THEN
+                tiles[y * mw + x] = 5
+            ELSE
+                tiles[y * mw + x] = 6
+            ENDIF
+        NEXT x
+    NEXT y
+    tiles[11 * mw + 19] = 7
+    ' the road through the village and the way up to the door
+    FOR x = 2 TO mw - 3
+        tiles[16 * mw + x] = 2
+    NEXT x
+    FOR y = 12 TO 16
+        tiles[y * mw + 19] = 2
+    NEXT y
+    ' open ground around the door and the place where players arrive
+    FOR y = 12 TO 20
+        FOR x = 16 TO 23
+            IF tiles[y * mw + x] = 3 THEN tiles[y * mw + x] = 1
+        NEXT x
+    NEXT y
+    w{"map"} = {"w": mw, "h": mh, "v": 1, "tiles": tiles}
+    DIM persona$ = "Du bist Marta, die Wirtin der Taverne Zum Goldenen Kessel in einem kleinen Dorf. Du stehst vor deiner Tuer. Du bist herzlich, neugierig und kennst jedes Geruecht. Antworte auf Deutsch in ein bis zwei kurzen Saetzen und bleib in der Rolle. Wenn sich jemand etwas fuer das Dorf wuenscht, sag, dass du es dem Baumeister weitergibst."
+    w{"npcs"}{"marta"} = {"id": "marta", "kind": "person", "name": "Marta", "x": 21, "y": 13, "persona": persona$, "mem": {}}
+ENDSUB
+
+FUNC RuleJoin(w, name$)
+    DIM players = w{"players"}
+    IF NOT MAP.EXISTS(players, name$) THEN
+        DIM tint = 0
+        FOR EACH ch IN -name$
+            tint = (tint * 31 + ASC(ch)) MOD 9973
+        NEXT
+        players{name$} = {"name": name$, "x": 19 + MAP.SIZE(players) MOD 3, "y": 18, "dir": 0, "tint": tint MOD 8, "last_step": 0, "last_seen": KNow()}
+        KEmit(w, {"type": "join", "who": name$})
+    ENDIF
+    players{name$}{"last_seen"} = KNow()
+    RETURN players{name$}
+ENDFUNC
+
+FUNC RuleSync(w, p, msg)
+    DIM now = KNow()
+    p{"last_seen"} = now
+    DIM dx = CLAMP(INT(msg{"dx"} ?? 0), -1, 1)
+    DIM dy = CLAMP(INT(msg{"dy"} ?? 0), -1, 1)
+    IF dx <> 0 THEN dy = 0
+    IF dx <> 0 ORELSE dy <> 0 THEN
+        IF dy > 0 THEN p{"dir"} = 0
+        IF dx < 0 THEN p{"dir"} = 1
+        IF dx > 0 THEN p{"dir"} = 2
+        IF dy < 0 THEN p{"dir"} = 3
+        IF now - p{"last_step"} >= 150 ANDALSO NOT RuleBlocked(w, p{"x"} + dx, p{"y"} + dy) THEN
+            p{"x"} = p{"x"} + dx
+            p{"y"} = p{"y"} + dy
+            p{"last_step"} = now
+        ENDIF
+    ENDIF
+
+    DIM said$ = TRIM$("" + (msg{"say"} ?? ""))
+    IF said$ <> "" THEN
+        said$ = LEFT$(said$, 160)
+        KEmit(w, {"type": "say", "who": p{"name"}, "text": said$})
+        DIM npcs = w{"npcs"}
+        FOR EACH npc_id$ IN MAP.KEYS(npcs)
+            IF ABS(npcs{npc_id$}{"x"} - p{"x"}) <= 3 ANDALSO ABS(npcs{npc_id$}{"y"} - p{"y"}) <= 3 THEN
+                KAskNpc(w, npc_id$, p{"name"}, said$)
+                EXITFOR
+            ENDIF
+        NEXT
+    ENDIF
+
+    DIM players = w{"players"}
+    DIM shown = []
+    FOR EACH other$ IN MAP.KEYS(players)
+        DIM o = players{other$}
+        shown = APPEND(shown, [[o{"name"}, o{"x"}, o{"y"}, o{"dir"}, o{"tint"}]])
+    NEXT
+    DIM folk = []
+    FOR EACH folk_id$ IN MAP.KEYS(w{"npcs"})
+        DIM n = w{"npcs"}{folk_id$}
+        folk = APPEND(folk, [[n{"id"}, n{"name"}, n{"x"}, n{"y"}, n{"kind"}]])
+    NEXT
+
+    ' a client that just arrived hears nothing of what was said before
+    DIM since = INT(msg{"since"} ?? -1)
+    IF since < 0 THEN since = w{"seq"}
+    DIM events = w{"events"}
+    DIM news = []
+    DIM i = 0
+    FOR i = 0 TO LEN(events) - 1
+        IF events[i]{"seq"} > since THEN news = APPEND(news, events[i])
+    NEXT i
+
+    DIM answer = {"x": p{"x"}, "y": p{"y"}, "players": shown, "npcs": folk, "events": news, "seq": w{"seq"}, "uptime": now \ 1000}
+    IF INT(msg{"mapv"} ?? 0) <> w{"map"}{"v"} THEN answer{"map"} = w{"map"}
+    RETURN answer
+ENDFUNC
+
+' What one NPC does in a tick. Nothing here; a patch gives a kind its life.
+SUB RuleNpcTick(w, npc, now)
+ENDSUB
+
+SUB RuleTick(w, now)
+    DIM players = w{"players"}
+    FOR EACH name$ IN MAP.KEYS(players)
+        IF now - players{name$}{"last_seen"} > 15000 THEN
+            MAP.DELETE(players, name$)
+            KEmit(w, {"type": "leave", "who": name$})
+        ENDIF
+    NEXT
+    DIM npcs = w{"npcs"}
+    FOR EACH npc_id$ IN MAP.KEYS(npcs)
+        RuleNpcTick(w, npcs{npc_id$}, now)
+    NEXT
+ENDSUB
+
+FUNC RuleNpcPrompt(w, npc, player$, text$)
+    DIM mem = npc{"mem"}{player$} ?? []
+    DIM messages = [{"role": "system", "content": npc{"persona"} + " Du sprichst gerade mit " + player$ + "."}]
+    DIM i = 0
+    FOR i = 0 TO LEN(mem) - 1
+        messages = APPEND(messages, mem[i])
+    NEXT i
+    messages = APPEND(messages, {"role": "user", "content": text$})
+    mem = APPEND(mem, {"role": "user", "content": text$})
+    IF LEN(mem) > 8 THEN mem = DROP(LEN(mem) - 8, mem)
+    npc{"mem"}{player$} = mem
+    RETURN messages
+ENDFUNC
+
+SUB RuleNpcReply(w, npc_id$, player$, text$)
+    DIM npc = w{"npcs"}{npc_id$}
+    DIM spoken$ = TRIM$(REPLACE$(REPLACE$(text$, CHR$(13), " "), CHR$(10), " "))
+    IF LEN(spoken$) > 220 THEN spoken$ = LEFT$(spoken$, 220)
+    IF spoken$ = "" THEN RETURN
+    DIM mem = npc{"mem"}{player$} ?? []
+    mem = APPEND(mem, {"role": "assistant", "content": spoken$})
+    IF LEN(mem) > 8 THEN mem = DROP(LEN(mem) - 8, mem)
+    npc{"mem"}{player$} = mem
+    KEmit(w, {"type": "say", "who": npc{"name"}, "npc": npc_id$, "to": player$, "text": spoken$})
+ENDSUB
+
+'@client
+
+' The eight tiles, drawn into one strip of 32 x 32 pictures.
+SUB ClientMakeTiles(c)
+    DIM img = GFX.NEWTARGET(8 * 32, 32, FALSE)
+    GFX.TARGET img, TRUE
+    DIM i = 0
+    DIM x0 = 0
+    ' grass under everything that grows
+    FOR i = 0 TO 7
+        x0 = i * 32
+        RECT x0, 0, 32, 32, TRUE, 78, 148, 74
+        RECT x0 + 5, 7, 2, 2, TRUE, 62, 126, 60
+        RECT x0 + 21, 4, 2, 2, TRUE, 62, 126, 60
+        RECT x0 + 13, 19, 2, 2, TRUE, 96, 166, 88
+        RECT x0 + 26, 25, 2, 2, TRUE, 62, 126, 60
+    NEXT i
+    ' 2 path
+    RECT 32, 0, 32, 32, TRUE, 198, 172, 122
+    RECT 38, 6, 3, 2, TRUE, 176, 150, 104
+    RECT 52, 20, 3, 2, TRUE, 176, 150, 104
+    RECT 44, 26, 2, 2, TRUE, 214, 190, 144
+    ' 3 tree
+    RECT 64 + 13, 18, 6, 12, TRUE, 104, 72, 44
+    CIRCLE 64 + 16, 13, 12, TRUE, 38, 104, 52
+    CIRCLE 64 + 12, 10, 5, TRUE, 58, 132, 66
+    ' 4 water
+    RECT 96, 0, 32, 32, TRUE, 62, 120, 190
+    LINE 100, 8, 110, 8, 120, 176, 228
+    LINE 112, 18, 124, 18, 120, 176, 228
+    LINE 99, 26, 106, 26, 120, 176, 228
+    ' 5 wall
+    RECT 128, 0, 32, 32, TRUE, 132, 128, 124
+    LINE 128, 10, 159, 10, 96, 92, 90
+    LINE 128, 21, 159, 21, 96, 92, 90
+    LINE 143, 0, 143, 10, 96, 92, 90
+    LINE 135, 10, 135, 21, 96, 92, 90
+    LINE 151, 10, 151, 21, 96, 92, 90
+    LINE 143, 21, 143, 31, 96, 92, 90
+    ' 6 floor
+    RECT 160, 0, 32, 32, TRUE, 158, 116, 74
+    LINE 160, 8, 191, 8, 128, 92, 58
+    LINE 160, 16, 191, 16, 128, 92, 58
+    LINE 160, 24, 191, 24, 128, 92, 58
+    ' 7 door
+    RECT 192, 0, 32, 32, TRUE, 132, 128, 124
+    RECT 198, 2, 20, 30, TRUE, 96, 62, 36
+    RECT 213, 16, 2, 3, TRUE, 222, 190, 80
+    ' 8 flowers
+    CIRCLE 224 + 8, 9, 2, TRUE, 236, 96, 110
+    CIRCLE 224 + 22, 14, 2, TRUE, 244, 220, 96
+    CIRCLE 224 + 13, 24, 2, TRUE, 236, 236, 240
+    GFX.TARGET
+    c{"tiles_img"} = img
+ENDSUB
+
+SUB ClientInit(c)
+    c{"players"} = []
+    c{"npcs"} = []
+    c{"shown"} = {}
+    c{"bubbles"} = []
+    c{"x"} = 0
+    c{"y"} = 0
+    c{"px"} = -1
+    c{"py"} = -1
+    c{"dx"} = 0
+    c{"dy"} = 0
+    c{"typing"} = FALSE
+    c{"entry"} = ""
+    c{"say"} = ""
+    c{"since"} = -1
+    c{"mapv"} = 0
+    c{"have_map"} = FALSE
+    c{"last_sync"} = 0
+    c{"uptime"} = 0
+    c{"ping"} = 0
+    c{"banner"} = ""
+    c{"banner_until"} = 0
+    ' a small font for a 640 x 384 view; the default one stays if the file is not there
+    TRY
+        SETFONT PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf", 8
+    CATCH
+    ENDTRY
+    ClientMakeTiles(c)
+    c{"ready"} = TRUE
+ENDSUB
+
+SUB ClientInput(c)
+    DIM keys = c{"keyq"}
+    c{"keyq"} = []
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM code = keys[i]{"keycode"}
+        IF c{"typing"} THEN
+            IF code = 13 THEN
+                c{"say"} = c{"entry"}
+                c{"entry"} = ""
+                c{"typing"} = FALSE
+            ELSEIF code = 27 THEN
+                c{"entry"} = ""
+                c{"typing"} = FALSE
+            ELSEIF code = 8 THEN
+                IF LEN(c{"entry"}) > 0 THEN c{"entry"} = LEFT$(c{"entry"}, LEN(c{"entry"}) - 1)
+            ELSEIF code >= 32 ANDALSO code < 127 ANDALSO LEN(c{"entry"}) < 120 THEN
+                DIM letter$ = CHR$(code)
+                IF GFX.KEYSTATE("Left Shift") ORELSE GFX.KEYSTATE("Right Shift") THEN letter$ = UCASE$(letter$)
+                c{"entry"} = c{"entry"} + letter$
+            ENDIF
+        ELSEIF code = 13 THEN
+            c{"typing"} = TRUE
+        ENDIF
+    NEXT i
+    c{"dx"} = 0
+    c{"dy"} = 0
+    IF NOT c{"typing"} THEN
+        IF GFX.KEYSTATE("Left") ORELSE GFX.KEYSTATE("A") THEN c{"dx"} = -1
+        IF GFX.KEYSTATE("Right") ORELSE GFX.KEYSTATE("D") THEN c{"dx"} = 1
+        IF GFX.KEYSTATE("Up") ORELSE GFX.KEYSTATE("W") THEN c{"dy"} = -1
+        IF GFX.KEYSTATE("Down") ORELSE GFX.KEYSTATE("S") THEN c{"dy"} = 1
+    ENDIF
+ENDSUB
+
+SUB ClientSync(c)
+    DIM msg = {"token": c{"token"}, "dx": c{"dx"}, "dy": c{"dy"}, "since": c{"since"}, "mapv": c{"mapv"}}
+    IF c{"say"} <> "" THEN
+        msg{"say"} = c{"say"}
+        c{"say"} = ""
+    ENDIF
+    DIM t0 = TICK()
+    DIM r = JSON.PARSE(HTTP.POST$(c{"srv"} + "/sync", JSON.STRINGIFY$(msg), "text/plain"))
+    c{"ping"} = INT(TICK() - t0)
+    c{"last_sync"} = TICK()
+    IF NOT r{"ok"} THEN
+        IF "" + (r{"error"} ?? "") = "join" THEN c{"need_join"} = TRUE
+        RETURN
+    ENDIF
+    c{"x"} = r{"x"}
+    c{"y"} = r{"y"}
+    c{"players"} = r{"players"}
+    c{"npcs"} = r{"npcs"}
+    c{"since"} = r{"seq"}
+    c{"uptime"} = r{"uptime"}
+    IF MAP.EXISTS(r, "map") THEN
+        DIM m = r{"map"}
+        TILEMAP.CREATE("world", c{"tiles_img"}, RESHAPE(m{"tiles"}, [m{"h"}, m{"w"}]), 32, 32)
+        c{"mapv"} = m{"v"}
+        c{"have_map"} = TRUE
+    ENDIF
+    DIM events = r{"events"}
+    DIM i = 0
+    FOR i = 0 TO LEN(events) - 1
+        DIM ev = events[i]
+        IF ev{"type"} = "say" THEN
+            c{"bubbles"} = APPEND(c{"bubbles"}, {"who": ev{"who"}, "text": ev{"text"}, "until": TICK() + 3500 + 60 * LEN(ev{"text"})})
+        ELSEIF ev{"type"} = "patch" THEN
+            c{"banner"} = "Neu in der Welt: " + ev{"title"}
+            c{"banner_until"} = TICK() + 6000
+        ELSEIF ev{"type"} = "join" THEN
+            c{"banner"} = ev{"who"} + " betritt das Dorf"
+            c{"banner_until"} = TICK() + 3000
+        ENDIF
+    NEXT i
+    IF r{"version"} > c{"version"} THEN c{"need_code"} = TRUE
+ENDSUB
+
+' Breaks a text into rows of at most width characters at its spaces.
+FUNC ClientWrap(text$, width)
+    DIM rows = []
+    DIM row$ = ""
+    FOR EACH word$ IN SPLIT(text$, " ")
+        IF LEN(row$) > 0 ANDALSO LEN(row$) + 1 + LEN(word$) > width THEN
+            rows = APPEND(rows, row$)
+            row$ = word$
+        ELSEIF LEN(row$) = 0 THEN
+            row$ = word$
+        ELSE
+            row$ = row$ + " " + word$
+        ENDIF
+    NEXT
+    IF LEN(row$) > 0 THEN rows = APPEND(rows, row$)
+    RETURN rows
+ENDFUNC
+
+' A figure on the tile whose top-left corner is (sx, sy) on the screen.
+SUB ClientFigure(sx, sy, dir, tint, name$, is_npc)
+    DIM coats = [[204, 72, 72], [72, 120, 204], [228, 176, 60], [120, 84, 180], [60, 164, 150], [220, 120, 170], [150, 150, 158], [232, 132, 60]]
+    DIM coat = coats[tint MOD 8]
+    IF is_npc THEN coat = [176, 54, 96]
+    RECT sx + 8, sy + 29, 16, 3, TRUE, 52, 104, 54
+    RECT sx + 9, sy + 13, 14, 13, TRUE, coat[0], coat[1], coat[2]
+    RECT sx + 10, sy + 25, 4, 5, TRUE, 70, 56, 48
+    RECT sx + 18, sy + 25, 4, 5, TRUE, 70, 56, 48
+    CIRCLE sx + 16, sy + 9, 6, TRUE, 238, 202, 170
+    IF dir = 3 THEN
+        RECT sx + 10, sy + 3, 12, 6, TRUE, 96, 64, 40
+    ELSE
+        RECT sx + 10, sy + 3, 12, 3, TRUE, 96, 64, 40
+        DIM look = 0
+        IF dir = 1 THEN look = -2
+        IF dir = 2 THEN look = 2
+        RECT sx + 13 + look, sy + 8, 2, 2, TRUE, 30, 30, 40
+        RECT sx + 18 + look, sy + 8, 2, 2, TRUE, 30, 30, 40
+    ENDIF
+    DIM size = GFX.TEXTSIZE(name$)
+    DIM tx = sx + 16 - size[0] \ 2
+    IF is_npc THEN
+        TEXT tx, sy - size[1] - 1, name$, 250, 214, 110
+    ELSE
+        TEXT tx, sy - size[1] - 1, name$, 240, 240, 240
+    ENDIF
+ENDSUB
+
+' Draws one NPC; row is [id, name, x, y, kind]. A patch that brings a new
+' kind defines this again.
+SUB ClientNpc(c, row, sx, sy)
+    ClientFigure(sx, sy, 0, 0, row[1], TRUE)
+ENDSUB
+
+SUB ClientBubble(sx, sy, text$)
+    DIM rows = ClientWrap(text$, 30)
+    DIM wide = 0
+    DIM high = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM size = GFX.TEXTSIZE(rows[i])
+        IF size[0] > wide THEN wide = size[0]
+        high = size[1]
+    NEXT i
+    DIM bw = wide + 10
+    DIM bh = LEN(rows) * (high + 1) + 8
+    DIM bx = sx + 16 - bw \ 2
+    DIM by = sy - bh - 14
+    IF bx < 2 THEN bx = 2
+    IF bx + bw > 638 THEN bx = 638 - bw
+    IF by < 22 THEN by = 22
+    ROUNDED_RECT bx, by, bw, bh, 4, TRUE, 250, 248, 240
+    ROUNDED_RECT bx, by, bw, bh, 4, FALSE, 60, 56, 52
+    FOR i = 0 TO LEN(rows) - 1
+        TEXT bx + 5, by + 4 + i * (high + 1), rows[i], 40, 36, 32
+    NEXT i
+ENDSUB
+
+SUB ClientDraw(c)
+    CLS 18, 22, 26
+    IF NOT c{"have_map"} THEN
+        TEXT 250, 180, "Die Welt wird geladen ...", 220, 220, 220
+        RETURN
+    ENDIF
+    ' the camera follows the player's tile smoothly
+    DIM goal_x = c{"x"} * 32
+    DIM goal_y = c{"y"} * 32
+    IF c{"px"} < 0 THEN
+        c{"px"} = goal_x
+        c{"py"} = goal_y
+    ENDIF
+    c{"px"} = c{"px"} + (goal_x - c{"px"}) * 0.3
+    c{"py"} = c{"py"} + (goal_y - c{"py"}) * 0.3
+    DIM cam_x = INT(c{"px"}) + 16 - 320
+    DIM cam_y = INT(c{"py"}) + 16 - 192
+    TILEMAP.DRAW "world", cam_x, cam_y
+
+    DIM where = {}
+    DIM npcs = c{"npcs"}
+    DIM i = 0
+    FOR i = 0 TO LEN(npcs) - 1
+        DIM nx = npcs[i][2] * 32 - cam_x
+        DIM ny = npcs[i][3] * 32 - cam_y
+        ClientNpc(c, npcs[i], nx, ny)
+        where{npcs[i][1]} = [nx, ny]
+    NEXT i
+
+    DIM shown = c{"shown"}
+    DIM players = c{"players"}
+    FOR i = 0 TO LEN(players) - 1
+        DIM p = players[i]
+        DIM who$ = p[0]
+        DIM wx = p[1] * 32
+        DIM wy = p[2] * 32
+        IF who$ = c{"name"} THEN
+            wx = c{"px"}
+            wy = c{"py"}
+        ELSE
+            DIM at = shown{who$} ?? [wx, wy]
+            wx = at[0] + (wx - at[0]) * 0.3
+            wy = at[1] + (wy - at[1]) * 0.3
+            shown{who$} = [wx, wy]
+        ENDIF
+        ClientFigure(INT(wx) - cam_x, INT(wy) - cam_y, p[3], p[4], who$, FALSE)
+        where{who$} = [INT(wx) - cam_x, INT(wy) - cam_y]
+    NEXT i
+
+    DIM alive = []
+    DIM bubbles = c{"bubbles"}
+    FOR i = 0 TO LEN(bubbles) - 1
+        IF TICK() < bubbles[i]{"until"} THEN
+            alive = APPEND(alive, bubbles[i])
+            IF MAP.EXISTS(where, bubbles[i]{"who"}) THEN
+                DIM spot = where{bubbles[i]{"who"}}
+                ClientBubble(spot[0], spot[1], bubbles[i]{"text"})
+            ENDIF
+        ENDIF
+    NEXT i
+    c{"bubbles"} = alive
+
+    ' the three counters of the show
+    DIM secs = c{"uptime"}
+    DIM clock$ = RIGHT$("0" + STR$(secs \ 3600), 2) + ":" + RIGHT$("0" + STR$((secs \ 60) MOD 60), 2) + ":" + RIGHT$("0" + STR$(secs MOD 60), 2)
+    RECT 0, 0, 640, 19, TRUE, 16, 18, 22
+    TEXT 4, 1, "Welt " + clock$ + "  Patches " + STR$(c{"version"}) + "  Neustarts 0  Frame " + STR$(c{"frames"}) + "  " + STR$(LEN(players)) + " im Dorf  " + STR$(c{"ping"}) + "ms", 190, 220, 190
+
+    IF TICK() < c{"banner_until"} THEN
+        DIM bsize = GFX.TEXTSIZE(c{"banner"})
+        ROUNDED_RECT 320 - bsize[0] \ 2 - 8, 22, bsize[0] + 16, bsize[1] + 8, 4, TRUE, 250, 214, 110
+        TEXT 320 - bsize[0] \ 2, 26, c{"banner"}, 40, 30, 10
+    ENDIF
+
+    IF c{"typing"} THEN
+        RECT 0, 364, 640, 20, TRUE, 16, 18, 22
+        TEXT 4, 365, "> " + c{"entry"} + "_", 240, 240, 240
+    ELSE
+        RECT 0, 364, 640, 20, TRUE, 16, 18, 22
+        TEXT 4, 365, "Pfeile oder WASD: laufen   Enter: sprechen", 150, 160, 150
+    ENDIF
+ENDSUB
+
+SUB ClientFrame(c)
+    IF NOT (c{"ready"} ?? FALSE) THEN ClientInit(c)
+    ClientInput(c)
+    IF TICK() - c{"last_sync"} >= 110 THEN ClientSync(c)
+    ClientDraw(c)
+ENDSUB

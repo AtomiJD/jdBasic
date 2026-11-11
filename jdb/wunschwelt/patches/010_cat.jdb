@@ -1,0 +1,46 @@
+' A cat called Mimi strolls through the village.
+
+'@server
+
+SUB RuleNpcTick(w, npc, now)
+    IF npc{"kind"} <> "cat" THEN RETURN
+    IF now - (npc{"moved"} ?? 0) < 700 THEN RETURN
+    npc{"moved"} = now
+    DIM turns = [[1, 0], [-1, 0], [0, 1], [0, -1], [0, 0], [0, 0]]
+    DIM turn = turns[INT(RND() * 6)]
+    DIM nx = npc{"x"} + turn[0]
+    DIM ny = npc{"y"} + turn[1]
+    ' a cat stays near the tavern door
+    IF ABS(nx - 19) > 6 ORELSE ABS(ny - 15) > 4 THEN RETURN
+    IF RuleBlocked(w, nx, ny) THEN RETURN
+    npc{"x"} = nx
+    npc{"y"} = ny
+ENDSUB
+
+DIM world = JDB.GLOBAL_GET("W")
+world{"npcs"}{"mimi"} = {"id": "mimi", "kind": "cat", "name": "Mimi", "x": 17, "y": 14, "mem": {}, "persona": "Du bist Mimi, die Katze der Wirtin Marta. Du kannst nicht sprechen. Antworte nur mit einem kurzen Katzenlaut und einer kleinen Handlung in Sternchen, zum Beispiel: Miau. *streicht um deine Beine*"}
+
+'@client
+
+SUB ClientCat(sx, sy, name$)
+    RECT sx + 9, sy + 29, 15, 2, TRUE, 52, 104, 54
+    RECT sx + 9, sy + 19, 13, 8, TRUE, 232, 150, 64
+    RECT sx + 10, sy + 26, 3, 4, TRUE, 232, 150, 64
+    RECT sx + 18, sy + 26, 3, 4, TRUE, 232, 150, 64
+    RECT sx + 18, sy + 13, 9, 8, TRUE, 240, 164, 78
+    RECT sx + 18, sy + 10, 3, 4, TRUE, 232, 150, 64
+    RECT sx + 24, sy + 10, 3, 4, TRUE, 232, 150, 64
+    RECT sx + 20, sy + 16, 2, 2, TRUE, 40, 60, 40
+    RECT sx + 24, sy + 16, 2, 2, TRUE, 40, 60, 40
+    RECT sx + 6, sy + 14, 3, 8, TRUE, 232, 150, 64
+    DIM size = GFX.TEXTSIZE(name$)
+    TEXT sx + 16 - size[0] \ 2, sy - size[1] + 8, name$, 250, 214, 110
+ENDSUB
+
+SUB ClientNpc(c, row, sx, sy)
+    IF row[4] = "cat" THEN
+        ClientCat(sx, sy, row[1])
+    ELSE
+        ClientFigure(sx, sy, 0, 0, row[1], TRUE)
+    ENDIF
+ENDSUB

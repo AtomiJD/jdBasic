@@ -1,0 +1,101 @@
+' Wunschwelt client: the kernel.
+'
+'   jdBasic jdb/wunschwelt/client.jdb [name] [server] [seconds]
+'
+' The kernel opens the window, joins the world, fetches the client code the
+' server hands out and calls ClientFrame(c) once per frame. It knows nothing
+' of the game: tiles, figures, keys and the talk with the server are all in
+' the fetched code. When the server reports a newer version the kernel
+' fetches what is new and runs it; the window, the frame counter and the
+' state in c live on.
+'
+' c is the client's whole state. The kernel keeps in it:
+'   name, srv, token   who we are and where the world is
+'   version            the last patch that was run here
+'   frames             frames drawn since the start
+'   keyq               key presses since the last frame, each {"key", "keycode"}
+'   need_code          set by the client code when the server is ahead
+'   need_join          set when the server no longer knows the token
+'   errors, last_error what went wrong in the client code
+'   quit               ends the program
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM C = {"name": "Gast", "srv": "http://127.0.0.1:8100", "token": "", "version": 0, "frames": 0, "keyq": [], "need_code": FALSE, "need_join": FALSE, "errors": 0, "last_error": "", "quit": FALSE}
+DIM run_seconds AS INTEGER = 0
+IF LEN(cli) > 1 THEN C{"name"} = cli[1]
+IF LEN(cli) > 2 THEN C{"srv"} = cli[2]
+IF LEN(cli) > 3 THEN run_seconds = VAL(cli[3])
+
+SUB OnKeyDown(info)
+    C{"keyq"} = APPEND(C{"keyq"}, {"key": info[0]{"key"}, "keycode": info[0]{"keycode"}})
+ENDSUB
+
+SUB OnQuit(info)
+    C{"quit"} = TRUE
+ENDSUB
+
+' Fetches and runs the client code after the version we have.
+SUB PullCode()
+    DIM code = JSON.PARSE(HTTP.GET$(C{"srv"} + "/code?since=" + STR$(C{"version"})))
+    DIM patches = code{"patches"}
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(patches) - 1
+        IF TRIM$(patches[i]) <> "" THEN
+            TRY
+                EXECUTE patches[i]
+            CATCH
+                C{"errors"} = C{"errors"} + 1
+                C{"last_error"} = "patch " + STR$(C{"version"} + i + 1) + ": " + ERRMSG$
+            ENDTRY
+        ENDIF
+    NEXT i
+    C{"version"} = code{"version"}
+    C{"need_code"} = FALSE
+ENDSUB
+
+SUB JoinWorld()
+    DIM r = JSON.PARSE(HTTP.POST$(C{"srv"} + "/join", JSON.STRINGIFY$({"name": C{"name"}}), "text/plain"))
+    IF r{"ok"} THEN C{"token"} = r{"token"}
+    C{"need_join"} = FALSE
+ENDSUB
+
+' The largest whole scale at which the 640 x 384 view fits the primary display.
+FUNC ViewScale() AS INTEGER
+    DIM fit AS INTEGER = 2
+    DIM displays AS ARRAY = GFX.DISPLAYS()
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(displays) - 1
+        IF displays[i]{"primary"} THEN fit = MIN([INT(displays[i]{"w"}) \ 700, INT(displays[i]{"h"}) \ 460])
+    NEXT i
+    IF fit < 1 THEN fit = 1
+    RETURN fit
+ENDFUNC
+
+HTTP.SETTIMEOUT(5)
+SCREEN 640, 384, "Wunschwelt - " + C{"name"}, ViewScale()
+ON "KEYDOWN" CALL OnKeyDown@
+ON "QUIT" CALL OnQuit@
+
+PullCode()
+JoinWorld()
+
+DIM started AS DOUBLE = TICK()
+DO WHILE NOT C{"quit"}
+    C{"frames"} = C{"frames"} + 1
+    TRY
+        IF C{"need_join"} THEN JoinWorld()
+        IF C{"need_code"} THEN PullCode()
+        ClientFrame(C)
+    CATCH
+        C{"errors"} = C{"errors"} + 1
+        C{"last_error"} = ERRMSG$
+    ENDTRY
+    IF C{"last_error"} <> "" THEN TEXT 4, 16, LEFT$(C{"last_error"}, 100), 255, 120, 120
+    SCREENFLIP
+    IF run_seconds > 0 ANDALSO TICK() - started > run_seconds * 1000 THEN C{"quit"} = TRUE
+    SLEEP 4
+LOOP
+GFX.CLOSE
+PRINT "frames "; C{"frames"}; ", version "; C{"version"}; ", errors "; C{"errors"}; " "; C{"last_error"}

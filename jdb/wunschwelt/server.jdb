@@ -1,0 +1,273 @@
+' Wunschwelt world server: the kernel.
+'
+'   jdBasic jdb/wunschwelt/server.jdb [port] [seconds]
+'
+' The kernel holds the world, speaks HTTP, keeps the list of patches and
+' carries questions to the language model. It knows no game rule. The game
+' arrives as patches: jdBasic source whose top-level SUBs and FUNCs take the
+' world as a parameter, so a later patch can define any of them again while
+' players are connected. The files under game/ are the first patches, taken
+' in the order of their names.
+'
+' A patch file has parts, each opened by a marker line:
+'   '@server   rules, run here
+'   '@client   code every client fetches and runs
+'
+' Entry points the kernel calls (a patch may redefine each):
+'   RuleMakeWorld(w)                 once after the first patches
+'   RuleJoin(w, name$) -> player     a new or returning player
+'   RuleSync(w, player, msg) -> map  one message of a client, the answer
+'   RuleTick(w, now_ms)              every TICK_MS
+'   RuleNpcPrompt(w, npc, player$, text$) -> messages for the model
+'   RuleNpcReply(w, npc_id$, player$, text$)
+'
+' What rules may call here: KNow(), KEmit(w, event), KAskNpc(w, npc_id$, player$, text$).
+'
+' The server listens on the loopback address only; a web server in front of
+' it is what the outside reaches. Patches are source code that runs here, so
+' the patch entry is closed unless a key is set, and it is meant to be
+' reached from the machine itself.
+'
+' Environment:
+'   WW_PATCH_KEY   key a POST /patch must carry; empty = no patches over HTTP
+'   WW_LLM_URL     chat completions URL; empty = NPCs answer a fixed line
+'   WW_GAME_DIR    folder of the first patches (default: game/ beside this file)
+'
+' HTTP (bodies are JSON sent as text/plain, so a browser needs no preflight):
+'   POST /join  {"name"}                    -> {"ok", "token", "version"}
+'   POST /sync  {"token", ...}              -> what RuleSync answers
+'   GET  /code?since=N                      -> {"version", "patches": [client code]}
+'   POST /patch {"key","title","server","client"} -> {"ok", "version"} or {"ok": false, "error"}
+'   GET  /stats
+
+OPTION "EXPLICIT"
+
+DIM TICK_MS AS INTEGER = 50
+DIM MAX_EVENTS AS INTEGER = 200
+
+DIM cli = OS.ARGS()
+DIM port AS INTEGER = 8100
+DIM run_seconds AS INTEGER = 0
+IF LEN(cli) > 1 THEN port = VAL(cli[1])
+IF LEN(cli) > 2 THEN run_seconds = VAL(cli[2])
+
+DIM patch_key$ AS STRING = GETENV$("WW_PATCH_KEY")
+DIM llm_url$ AS STRING = GETENV$("WW_LLM_URL")
+DIM game_dir$ AS STRING = GETENV$("WW_GAME_DIR")
+IF game_dir$ = "" THEN game_dir$ = PATH.DIRNAME$(cli[0]) + "/game"
+
+DIM nl$ AS STRING = CHR$(10)
+DIM started_ms AS DOUBLE = TICK()
+
+' The world. Everything a rule reads or writes is in here.
+DIM W = {"players": {}, "tokens": {}, "npcs": {}, "map": {}, "events": [], "seq": 0, "version": 0, "patch_titles": [], "errors": 0, "last_error": "", "served": 0}
+DIM client_patches = []
+' Questions on their way to the model: {"task", "npc", "player", "asked"}
+DIM pending = []
+
+' ---- services for rules ----
+
+FUNC KNow()
+    RETURN INT(TICK() - started_ms)
+ENDFUNC
+
+SUB KEmit(w, event)
+    w{"seq"} = w{"seq"} + 1
+    event{"seq"} = w{"seq"}
+    DIM events = APPEND(w{"events"}, event)
+    IF LEN(events) > MAX_EVENTS THEN events = DROP(LEN(events) - MAX_EVENTS, events)
+    w{"events"} = events
+ENDSUB
+
+SUB KAskNpc(w, npc_id$ AS STRING, player$ AS STRING, text$ AS STRING)
+    DIM npcs = w{"npcs"}
+    IF NOT MAP.EXISTS(npcs, npc_id$) THEN RETURN
+    DIM messages = RuleNpcPrompt(w, npcs{npc_id$}, player$, text$)
+    IF llm_url$ = "" THEN
+        RuleNpcReply(w, npc_id$, player$, "(" + npcs{npc_id$}{"name"} + " nickt dir freundlich zu.)")
+        RETURN
+    ENDIF
+    DIM body$ AS STRING = JSON.STRINGIFY$({"model": "npc", "max_tokens": 90, "temperature": 0.7, "messages": messages})
+    DIM task = HTTP.POST_ASYNC(llm_url$, body$, "application/json")
+    pending = APPEND(pending, {"task": task, "npc": npc_id$, "player": player$, "asked": KNow()})
+ENDSUB
+
+SUB KFail(what$ AS STRING, message$ AS STRING)
+    W{"errors"} = W{"errors"} + 1
+    W{"last_error"} = what$ + ": " + message$
+ENDSUB
+
+' ---- patches ----
+
+' The parts of a patch file by their marker lines: {"server", "client"}
+FUNC SplitPatch(source$ AS STRING)
+    DIM parts = {"server": "", "client": ""}
+    DIM part$ AS STRING = ""
+    DIM rows = SPLIT(REPLACE$(source$, CHR$(13), ""), nl$)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(rows) - 1
+        DIM mark$ AS STRING = TRIM$(rows[i])
+        IF mark$ = "'@server" THEN
+            part$ = "server"
+        ELSEIF mark$ = "'@client" THEN
+            part$ = "client"
+        ELSEIF part$ <> "" THEN
+            parts{part$} = parts{part$} + rows[i] + nl$
+        ENDIF
+    NEXT i
+    RETURN parts
+ENDFUNC
+
+' Runs the server part and hands the client part to the clients; "" or the error
+FUNC ApplyPatch$(title$ AS STRING, server_code$ AS STRING, client_code$ AS STRING)
+    IF TRIM$(server_code$) <> "" THEN
+        TRY
+            EXECUTE server_code$
+        CATCH
+            RETURN ERRMSG$
+        ENDTRY
+    ENDIF
+    client_patches = APPEND(client_patches, client_code$)
+    W{"version"} = W{"version"} + 1
+    W{"patch_titles"} = APPEND(W{"patch_titles"}, title$)
+    RETURN ""
+ENDFUNC
+
+' ---- HTTP ----
+
+FUNC BodyOf(request)
+    DIM parsed = {}
+    TRY
+        parsed = JSON.PARSE(request{"body"})
+    CATCH
+        parsed = {}
+    ENDTRY
+    IF NOT ISMAP(parsed) THEN parsed = {}
+    RETURN parsed
+ENDFUNC
+
+FUNC HANDLEJOIN(request)
+    DIM b = BodyOf(request)
+    W{"served"} = W{"served"} + 1
+    DIM name$ AS STRING = TRIM$("" + (b{"name"} ?? ""))
+    IF name$ = "" ORELSE LEN(name$) > 16 THEN RETURN {"ok": FALSE, "error": "a name of 1 to 16 characters"}
+    DIM answer = {"ok": FALSE}
+    TRY
+        DIM p = RuleJoin(W, name$)
+        DIM token$ AS STRING = CODEC.UUID$()
+        W{"tokens"}{token$} = name$
+        answer = {"ok": TRUE, "token": token$, "version": W{"version"}}
+    CATCH
+        KFail("RuleJoin", ERRMSG$)
+        answer = {"ok": FALSE, "error": "the world could not take you in"}
+    ENDTRY
+    RETURN answer
+ENDFUNC
+
+FUNC HANDLESYNC(request)
+    DIM b = BodyOf(request)
+    W{"served"} = W{"served"} + 1
+    DIM token$ AS STRING = "" + (b{"token"} ?? "")
+    DIM tokens = W{"tokens"}
+    IF NOT MAP.EXISTS(tokens, token$) THEN RETURN {"ok": FALSE, "error": "join"}
+    DIM players = W{"players"}
+    DIM name$ AS STRING = tokens{token$}
+    IF NOT MAP.EXISTS(players, name$) THEN RETURN {"ok": FALSE, "error": "join"}
+    DIM answer = {"ok": FALSE}
+    TRY
+        answer = RuleSync(W, players{name$}, b)
+        answer{"ok"} = TRUE
+        answer{"version"} = W{"version"}
+    CATCH
+        KFail("RuleSync", ERRMSG$)
+        answer = {"ok": FALSE, "error": "rule", "version": W{"version"}}
+    ENDTRY
+    RETURN answer
+ENDFUNC
+
+FUNC HANDLECODE(request)
+    W{"served"} = W{"served"} + 1
+    DIM since AS INTEGER = VAL("" + (request{"params"}{"since"} ?? "0"))
+    DIM fresh = []
+    DIM i AS INTEGER
+    FOR i = MAX([since, 0]) TO LEN(client_patches) - 1
+        fresh = APPEND(fresh, client_patches[i])
+    NEXT i
+    RETURN {"version": W{"version"}, "patches": fresh}
+ENDFUNC
+
+FUNC HANDLEPATCH(request)
+    DIM b = BodyOf(request)
+    IF patch_key$ = "" ORELSE "" + (b{"key"} ?? "") <> patch_key$ THEN RETURN {"__http_status": 403}
+    DIM title$ AS STRING = "" + (b{"title"} ?? "patch")
+    DIM failed$ AS STRING = ApplyPatch$(title$, "" + (b{"server"} ?? ""), "" + (b{"client"} ?? ""))
+    IF failed$ <> "" THEN RETURN {"ok": FALSE, "error": failed$, "version": W{"version"}}
+    KEmit(W, {"type": "patch", "title": title$, "version": W{"version"}})
+    RETURN {"ok": TRUE, "version": W{"version"}}
+ENDFUNC
+
+FUNC HANDLESTATS(request)
+    RETURN {"version": W{"version"}, "players": MAP.SIZE(W{"players"}), "served": W{"served"}, "errors": W{"errors"}, "last_error": W{"last_error"}, "uptime_s": KNow() \ 1000, "pending": LEN(pending), "patches": W{"patch_titles"}}
+ENDFUNC
+
+' ---- start ----
+
+DIM files = SORT(FILE.LIST(game_dir$ + "/*.jdb"))
+DIM f AS INTEGER
+FOR f = 0 TO LEN(files) - 1
+    DIM file$ AS STRING = game_dir$ + "/" + PATH.BASENAME$(files[f])
+    DIM parts = SplitPatch(TXTREADER$(file$))
+    DIM failed$ AS STRING = ApplyPatch$(PATH.BASENAME$(files[f]), parts{"server"}, parts{"client"})
+    IF failed$ <> "" THEN
+        PRINT "patch "; files[f]; " refused: "; failed$
+        END 1
+    ENDIF
+NEXT f
+IF LEN(files) = 0 THEN
+    PRINT "no game in "; game_dir$
+    END 1
+ENDIF
+RuleMakeWorld(W)
+
+HTTP.SERVER.ON_POST "/join", HANDLEJOIN@
+HTTP.SERVER.ON_POST "/sync", HANDLESYNC@
+HTTP.SERVER.ON_GET "/code", HANDLECODE@
+HTTP.SERVER.ON_POST "/patch", HANDLEPATCH@
+HTTP.SERVER.ON_GET "/stats", HANDLESTATS@
+IF NOT HTTP.SERVER.START(port, "127.0.0.1") THEN
+    PRINT "the server did not start on port "; port
+    END 1
+ENDIF
+PRINT "Wunschwelt on 127.0.0.1:"; port; ", "; W{"version"}; " patches, model: "; IIF(llm_url$ = "", "none", llm_url$); ", patches over HTTP: "; IIF(patch_key$ = "", "closed", "with key")
+
+DIM next_tick AS DOUBLE = TICK()
+DO WHILE run_seconds = 0 ORELSE KNow() < run_seconds * 1000
+    IF TICK() >= next_tick THEN
+        next_tick = next_tick + TICK_MS
+        TRY
+            RuleTick(W, KNow())
+        CATCH
+            KFail("RuleTick", ERRMSG$)
+        ENDTRY
+        DIM waiting = []
+        DIM q AS INTEGER
+        FOR q = 0 TO LEN(pending) - 1
+            DIM ask = pending[q]
+            IF NOT THREAD.ISDONE(ask{"task"}) THEN
+                IF KNow() - ask{"asked"} < 30000 THEN waiting = APPEND(waiting, ask)
+                CONTINUEFOR
+            ENDIF
+            TRY
+                DIM reply = JSON.PARSE(THREAD.GETRESULT(ask{"task"}))
+                RuleNpcReply(W, ask{"npc"}, ask{"player"}, TRIM$("" + reply{"choices"}[0]{"message"}{"content"}))
+            CATCH
+                KFail("model", ERRMSG$)
+            ENDTRY
+        NEXT q
+        pending = waiting
+    ELSE
+        SLEEP 5
+    ENDIF
+LOOP
+HTTP.SERVER.STOP
+PRINT "served "; W{"served"}; ", version "; W{"version"}; ", errors "; W{"errors"}; " "; W{"last_error"}
