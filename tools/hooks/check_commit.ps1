@@ -60,6 +60,33 @@ if ((Test-Path $termFile) -and $staged.Count -gt 0) {
   }
 }
 
+# Gate 1b: what judges the code is not changed in passing. A commit that
+# touches the hooks, the gate runner, a baseline or a workflow, or that
+# removes or rewrites lines of a gate suite, needs [gate-change] in its
+# message, so the change is a stated decision and shows in the log. Adding
+# lines to a gate suite (a new test) needs nothing.
+if ($staged.Count -gt 0 -and $cmd -notmatch '\[gate-change\]') {
+  $judgePattern = '^(tools/hooks/|tools/gate_run\.jdb$|tools/verify\.sh$|tools/farm_gate\.jdb$|tests/parity\.sh$|tests/parity_baseline[^/]*\.tsv$|tests/(sanitize_gate|memory_check|leak_check)\.sh$|tests/selfhost/coverage_baseline\.tsv$|\.github/workflows/)'
+  $touched = @()
+  foreach ($f in $staged) {
+    $p = $f -replace '\\', '/'
+    if ($p -match $judgePattern) { $touched += $p; continue }
+    if ($p -match '^tests/gate/') {
+      $removed = 0
+      foreach ($row in @(& git -C $proj diff HEAD --numstat -- $f 2>$null)) {
+        $cols = $row -split "`t"
+        if ($cols.Count -ge 2 -and $cols[1] -match '^\d+$') { $removed += [int]$cols[1] }
+        elseif ($cols.Count -ge 2) { $removed += 1 }   # binary file
+      }
+      if ($removed -gt 0) { $touched += "$p ($removed line(s) removed or rewritten)" }
+    }
+  }
+  if ($touched.Count -gt 0) {
+    [Console]::Error.WriteLine("Blocked: this commit changes what judges the code: " + ($touched -join ', ') + ". If that is the intent of the task, say so to the human and put [gate-change] in the commit message; do not change an expectation to make a red test green.")
+    exit 2
+  }
+}
+
 if ($cmd -match '\[no-test\]') { exit 0 }
 if ($staged.Count -eq 0) { exit 0 }
 

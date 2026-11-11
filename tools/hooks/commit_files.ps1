@@ -49,6 +49,22 @@ function Get-CommitFiles([string]$cmd, [string]$proj) {
     elseif ($paths.Count -gt 0) { $added += Get-StatusPaths $proj $paths $false }
   }
   $files += $added
+  # `git commit ... -- a b` takes exactly the named paths as they stand in
+  # the working tree, whatever else is staged.
+  foreach ($seg in ($cmd -split '&&|\|\||;')) {
+    if ($seg -notmatch '^\s*git\s+commit\b.*?\s--\s+(.+)$') { continue }
+    $named = @()
+    foreach ($m in [regex]::Matches($Matches[1], '"([^"]*)"|''([^'']*)''|(\S+)')) {
+      $t = if ($m.Groups[1].Success) { $m.Groups[1].Value }
+           elseif ($m.Groups[2].Success) { $m.Groups[2].Value }
+           else { $m.Groups[3].Value }
+      if ($t -and $t -notmatch '^\d*[<>|&]') { $named += $t }
+    }
+    if ($named.Count -gt 0) {
+      $files = @(Get-StatusPaths $proj $named $true)
+      $added = $files
+    }
+  }
   $script:CommitFromIndex = @()
   if (-not $all) {
     $script:CommitFromIndex = @($cached | Where-Object { $_ -and $added -notcontains $_ })
