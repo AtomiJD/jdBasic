@@ -20,6 +20,7 @@
 '   RuleTick(w, now_ms)              every TICK_MS
 '   RuleNpcPrompt(w, npc, player$, text$) -> messages for the model
 '   RuleNpcReply(w, npc_id$, player$, text$)
+'   RuleNpcFailed(w, npc_id$, player$)   the model gave no usable answer
 '
 ' What rules may call here: KNow(), KEmit(w, event), KAskNpc(w, npc_id$, player$, text$).
 '
@@ -281,6 +282,11 @@ DO WHILE run_seconds = 0 ORELSE KNow() < run_seconds * 1000
                 RuleNpcReply(W, ask{"npc"}, ask{"player"}, TRIM$("" + reply{"choices"}[0]{"message"}{"content"}))
             CATCH
                 KFail("model", ERRMSG$)
+                TRY
+                    RuleNpcFailed(W, ask{"npc"}, ask{"player"})
+                CATCH
+                    KFail("RuleNpcFailed", ERRMSG$)
+                ENDTRY
             ENDTRY
         NEXT q
         pending = waiting

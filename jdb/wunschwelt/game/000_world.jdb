@@ -6,6 +6,13 @@
 
 '@server
 
+' The first n characters of a text; a character of several bytes stays whole.
+FUNC RuleCut$(text$, n)
+    DIM chars = -text$
+    IF LEN(chars) <= n THEN RETURN text$
+    RETURN JOIN(TAKE(n, chars), "")
+ENDFUNC
+
 FUNC RuleBlocked(w, x, y)
     DIM m = w{"map"}
     IF x < 0 ORELSE y < 0 ORELSE x >= m{"w"} ORELSE y >= m{"h"} THEN RETURN TRUE
@@ -109,7 +116,7 @@ FUNC RuleSync(w, p, msg)
 
     DIM said$ = TRIM$("" + (msg{"say"} ?? ""))
     IF said$ <> "" THEN
-        said$ = LEFTW$(said$, 160)
+        said$ = RuleCut$(said$, 160)
         KEmit(w, {"type": "say", "who": p{"name"}, "text": said$})
         DIM npcs = w{"npcs"}
         FOR EACH npc_id$ IN MAP.KEYS(npcs)
@@ -182,13 +189,21 @@ ENDFUNC
 SUB RuleNpcReply(w, npc_id$, player$, text$)
     DIM npc = w{"npcs"}{npc_id$}
     DIM spoken$ = TRIM$(REPLACE$(REPLACE$(text$, CHR$(13), " "), CHR$(10), " "))
-    IF LENW(spoken$) > 220 THEN spoken$ = LEFTW$(spoken$, 220)
+    spoken$ = RuleCut$(spoken$, 220)
     IF spoken$ = "" THEN RETURN
     DIM mem = npc{"mem"}{player$} ?? []
     mem = APPEND(mem, {"role": "assistant", "content": spoken$})
     IF LEN(mem) > 8 THEN mem = DROP(LEN(mem) - 8, mem)
     npc{"mem"}{player$} = mem
     KEmit(w, {"type": "say", "who": npc{"name"}, "npc": npc_id$, "to": player$, "text": spoken$})
+ENDSUB
+
+' The talk with this player starts afresh, so one text the model cannot take
+' does not spoil every later question.
+SUB RuleNpcFailed(w, npc_id$, player$)
+    DIM npc = w{"npcs"}{npc_id$}
+    npc{"mem"}{player$} = []
+    KEmit(w, {"type": "say", "who": npc{"name"}, "npc": npc_id$, "to": player$, "text": "(" + npc{"name"} + " hat dich nicht verstanden.)"})
 ENDSUB
 
 '@client
