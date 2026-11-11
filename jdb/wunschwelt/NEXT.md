@@ -111,7 +111,8 @@ jdbasic #1001 (on Linux a second server starts on a port in use).
 
 ## Git
 
-Nothing of this session is pushed. The commits since `6682aa32` (origin)
-are local, the spikes first and the well and statue last; the build tree
-for the WASM runtime on cortex (`~/cc_wasm/cc`) was fast-forwarded to an
-earlier one of them by hand and is ahead of origin until the push.
+Everything of this session is pushed (2026-11-11, up to the commit that
+brought this file). The CI run for that push was not awaited: look at it
+first. The build tree for the WASM runtime on cortex (`~/cc_wasm/cc`) stands
+at an earlier commit of the session and carries a branch `ww-textinput` from
+a direct push; `git pull --ff-only` brings it level.
