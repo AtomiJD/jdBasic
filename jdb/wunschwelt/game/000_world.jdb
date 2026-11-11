@@ -522,8 +522,22 @@ ENDSUB
 SUB ClientExtra(c, r)
 ENDSUB
 
-' Draws an NPC of the kind "thing", something that stands in the world; row is [id, name, x, y, kind].
+' Draws an NPC of the kind "thing", something that stands in the world; row
+' is [id, name, x, y, kind]. Each thing has its own painter, a SUB taking
+' (c, row, sx, sy); the code that brings a thing enters it with
+' ClientPainter("its id", ItsPainter@), so things of different patches live
+' side by side.
 SUB ClientThing(c, row, sx, sy)
+    DIM painters = c{"painters"} ?? {}
+    IF NOT MAP.EXISTS(painters, row[0]) THEN RETURN
+    DIM paint = painters{row[0]}
+    paint(c, row, sx, sy)
+ENDSUB
+
+SUB ClientPainter(id$, painter)
+    DIM client = JDB.GLOBAL_GET("C")
+    IF NOT MAP.EXISTS(client, "painters") THEN client{"painters"} = {}
+    client{"painters"}{id$} = painter
 ENDSUB
 
 ' Draws over the world and under the head line.

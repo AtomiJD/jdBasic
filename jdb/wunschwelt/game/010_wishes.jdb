@@ -145,8 +145,7 @@ SUB ClientExtra(c, r)
 ENDSUB
 
 ' The board: two posts, a plank and a note for each wish, up to six.
-SUB ClientThing(c, row, sx, sy)
-    IF row[0] <> "brett" THEN RETURN
+SUB ClientBoardSign(c, row, sx, sy)
     RECT sx + 5, sy + 29, 22, 2, TRUE, 52, 104, 54
     RECT sx + 5, sy + 8, 3, 22, TRUE, 104, 72, 44
     RECT sx + 24, sy + 8, 3, 22, TRUE, 104, 72, 44
@@ -161,6 +160,8 @@ SUB ClientThing(c, row, sx, sy)
     DIM size = GFX.TEXTSIZE(row[1])
     TEXT sx + 16 - size[0] \ 2, sy - size[1] + 3, row[1], 250, 214, 110
 ENDSUB
+
+ClientPainter("brett", ClientBoardSign@)
 
 ' Whoever stands at the board reads it.
 SUB ClientOverlay(c, cam_x, cam_y)

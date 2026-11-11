@@ -1,0 +1,48 @@
+' A bronze statue beside the tavern, as wished for on the board. It shows
+' whoever wished for it: the name comes from the wish, not from this file.
+
+'@server
+
+SUB RuleAddStatue()
+    DIM world = JDB.GLOBAL_GET("W")
+    DIM npcs = world{"npcs"}
+    IF MAP.EXISTS(npcs, "statue") THEN RETURN
+    DIM of$ = ""
+    DIM wishes = world{"wishes"} ?? []
+    DIM i = 0
+    FOR i = 0 TO LEN(wishes) - 1
+        ' only a wish the keeper took into work counts, so nobody slips in at the last moment
+        IF INSTR(LCASE$(wishes[i]{"text"}), "statue") >= 0 ANDALSO (wishes[i]{"status"} = "building" ORELSE wishes[i]{"status"} = "done") THEN of$ = wishes[i]{"who"}
+    NEXT i
+    IF of$ = "" THEN RETURN
+    npcs{"statue"} = {"id": "statue", "kind": "thing", "name": of$, "x": 22, "y": 15}
+    DIM news$ = " Neben deiner Taverne steht eine Bronzestatue von " + of$ + ", die sich das Dorf gew" + CHR$(195) + CHR$(188) + "nscht hat."
+    IF MAP.EXISTS(npcs, "marta") ANDALSO INSTR(npcs{"marta"}{"persona"}, "Bronzestatue") < 0 THEN npcs{"marta"}{"persona"} = npcs{"marta"}{"persona"} + news$
+ENDSUB
+RuleAddStatue()
+
+'@client
+
+' A figure in bronze with one arm raised, on a stone pedestal with a plaque.
+SUB ClientStatue(c, row, sx, sy)
+    RECT sx + 4, sy + 29, 24, 3, TRUE, 52, 104, 54
+    RECT sx + 6, sy + 21, 20, 9, TRUE, 150, 146, 140
+    RECT sx + 4, sy + 19, 24, 3, TRUE, 176, 172, 166
+    RECT sx + 6, sy + 29, 20, 1, TRUE, 110, 106, 100
+    RECT sx + 11, sy + 23, 10, 4, TRUE, 214, 180, 90
+    RECT sx + 12, sy + 8, 8, 9, TRUE, 176, 132, 72
+    RECT sx + 12, sy + 16, 3, 4, TRUE, 140, 100, 52
+    RECT sx + 17, sy + 16, 3, 4, TRUE, 140, 100, 52
+    CIRCLE sx + 16, sy + 5, 4, TRUE, 196, 152, 88
+    RECT sx + 12, sy + 1, 8, 2, TRUE, 140, 100, 52
+    RECT sx + 20, sy + 2, 2, 8, TRUE, 176, 132, 72
+    RECT sx + 20, sy + 0, 4, 3, TRUE, 196, 152, 88
+    RECT sx + 10, sy + 9, 2, 6, TRUE, 140, 100, 52
+    ' a glint runs down the bronze now and then
+    DIM glint = (INT(TICK()) \ 120) MOD 40
+    IF glint < 9 THEN RECT sx + 13, sy + 8 + glint, 2, 1, TRUE, 246, 226, 170
+    DIM size = GFX.TEXTSIZE(row[1])
+    TEXT sx + 16 - size[0] \ 2, sy - size[1] - 3, row[1], 250, 214, 110
+ENDSUB
+
+ClientPainter("statue", ClientStatue@)

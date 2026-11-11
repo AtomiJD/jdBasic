@@ -1,0 +1,41 @@
+' A well on the square in front of the tavern, as wished for on the board.
+
+'@server
+
+SUB RuleAddWell()
+    DIM world = JDB.GLOBAL_GET("W")
+    DIM npcs = world{"npcs"}
+    IF NOT MAP.EXISTS(npcs, "brunnen") THEN npcs{"brunnen"} = {"id": "brunnen", "kind": "thing", "name": "Brunnen", "x": 17, "y": 15}
+    ' the innkeeper knows what stands in front of her door
+    DIM news$ = " Auf dem Platz vor deiner Taverne steht seit kurzem ein Brunnen mit frischem Wasser, den sich das Dorf gew" + CHR$(195) + CHR$(188) + "nscht hat."
+    IF MAP.EXISTS(npcs, "marta") ANDALSO INSTR(npcs{"marta"}{"persona"}, "ein Brunnen") < 0 THEN npcs{"marta"}{"persona"} = npcs{"marta"}{"persona"} + news$
+ENDSUB
+RuleAddWell()
+
+'@client
+
+' A round stone basin under a small roof; the light on the water wanders.
+SUB ClientWell(c, row, sx, sy)
+    RECT sx + 3, sy + 28, 26, 3, TRUE, 52, 104, 54
+    RECT sx + 4, sy + 16, 24, 13, TRUE, 132, 128, 124
+    LINE sx + 4, sy + 22, sx + 27, sy + 22, 96, 92, 90
+    LINE sx + 12, sy + 16, sx + 12, sy + 22, 96, 92, 90
+    LINE sx + 20, sy + 16, sx + 20, sy + 22, 96, 92, 90
+    LINE sx + 8, sy + 22, sx + 8, sy + 28, 96, 92, 90
+    LINE sx + 16, sy + 22, sx + 16, sy + 28, 96, 92, 90
+    LINE sx + 24, sy + 22, sx + 24, sy + 28, 96, 92, 90
+    RECT sx + 4, sy + 12, 24, 4, TRUE, 172, 168, 162
+    RECT sx + 7, sy + 13, 18, 3, TRUE, 62, 120, 190
+    DIM glint = (INT(TICK()) \ 180) MOD 13
+    LINE sx + 8 + glint, sy + 14, sx + 11 + glint, sy + 14, 150, 200, 240
+    RECT sx + 5, sy + 2, 2, 11, TRUE, 104, 72, 44
+    RECT sx + 25, sy + 2, 2, 11, TRUE, 104, 72, 44
+    RECT sx + 2, sy - 1, 28, 4, TRUE, 150, 70, 50
+    RECT sx + 2, sy + 2, 28, 1, TRUE, 110, 48, 36
+    LINE sx + 16, sy + 3, sx + 16, sy + 8, 214, 190, 144
+    RECT sx + 14, sy + 8, 5, 4, TRUE, 120, 84, 52
+    DIM size = GFX.TEXTSIZE(row[1])
+    TEXT sx + 16 - size[0] \ 2, sy - size[1] - 2, row[1], 250, 214, 110
+ENDSUB
+
+ClientPainter("brunnen", ClientWell@)
