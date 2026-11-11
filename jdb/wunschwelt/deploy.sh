@@ -34,6 +34,19 @@ push_files() {
     $SCP game/*.jdb "$HOST:~/ww_stage/game/"
     $SCP tools/patch.jdb tools/nginx_route.jdb tools/preflight.jdb tools/admin.jdb tools/box_preflight.sh "$HOST:~/ww_stage/tools/"
     $SCP web/index.html "$HOST:~/ww_stage/web/"
+    # The playground page belongs to the runtime in wasm/. A browser keeps
+    # jdbasic.js and jdbasic.wasm apart in its cache, and an old one beside a
+    # new one does not load; the page asks for both under the mark of this
+    # runtime, so they change together.
+    local mark page
+    mark=$(sha256sum ../../wasm/jdbasic.wasm ../../wasm/jdbasic.js | sha256sum | cut -c1-12)
+    page=$(mktemp)
+    sed -e "s|<script src=\"jdbasic.js\"></script>|<script src=\"jdbasic.js?v=$mark\"></script>|" \
+        -e "s|^    createJdBasic({\$|    createJdBasic({\n      locateFile: (file) => file + '?v=$mark',|" \
+        ../../wasm/index.html > "$page"
+    if [ "$(grep -c "v=$mark" "$page")" != 2 ]; then echo "the playground page did not take the runtime mark"; rm -f "$page"; exit 1; fi
+    $SCP "$page" "$HOST:~/ww_stage/playground.html"
+    rm -f "$page"
 }
 
 # Runs the staged server twice on spare ports with the box's own jdBasic and
@@ -47,7 +60,8 @@ preflight() {
 publish_page() {
     $SSH 'sudo -n mkdir -p /var/www/vvss/wunschwelt/play \
       && sudo -n cp ~/ww_stage/web/index.html /var/www/vvss/wunschwelt/ \
-      && sudo -n cp ~/ww_stage/client.jdb /var/www/vvss/tower/play/index.html /var/www/vvss/wunschwelt/play/ \
+      && sudo -n cp ~/ww_stage/client.jdb /var/www/vvss/wunschwelt/play/ \
+      && sudo -n cp ~/ww_stage/playground.html /var/www/vvss/wunschwelt/play/index.html \
       && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
 }
 
@@ -60,11 +74,22 @@ publish_server() {
       && sudo -n chown -R root:root /opt/wunschwelt/server.jdb /opt/wunschwelt/game /opt/wunschwelt/tools'
 }
 
+# The browser runtime of this game, from wasm/ in the repository.
+ship_runtime() {
+    $SCP ../../wasm/jdbasic.js ../../wasm/jdbasic.wasm "$HOST:~/ww_stage/"
+    $SSH 'sudo -n cp ~/ww_stage/jdbasic.js ~/ww_stage/jdbasic.wasm /var/www/vvss/wunschwelt/play/ && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
+}
+
 check() {
     curl -s -m 15 -o /dev/null -w "page %{http_code}  " $URL/
     curl -s -m 15 -o /dev/null -w "client %{http_code}  " $URL/play/client.jdb
     curl -s -m 15 -o /dev/null -w "patch entry from outside %{http_code}  " -X POST -d '{}' $URL/api/patch
     curl -s -m 15 "$URL/api/code?since=999" | head -c 60; echo
+    # the client code counts on the runtime in wasm/; another one on the page breaks it in the browser
+    local live want
+    live=$(curl -s -m 15 -I $URL/play/jdbasic.wasm | tr -d '\r' | awk 'tolower($1)=="content-length:"{print $2}')
+    want=$(wc -c < ../../wasm/jdbasic.wasm | tr -d ' ')
+    if [ "$live" = "$want" ]; then echo "runtime on the page: the one in wasm/"; else echo "RUNTIME ON THE PAGE DIFFERS from wasm/ ($live bytes there, $want here): run ./deploy.sh --wasm"; exit 1; fi
 }
 
 case "$1" in
@@ -139,7 +164,9 @@ if [ \"\$R\" = added ]; then
 fi"
     echo "== page =="
     publish_page
-    $SSH 'sudo -n cp -r /var/www/vvss/tower/play/jdbasic.js /var/www/vvss/tower/play/jdbasic.wasm /var/www/vvss/tower/play/vendor /var/www/vvss/wunschwelt/play/ && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
+    # the editor's bundle is taken from the neighbouring page once; the runtime is this game's own
+    $SSH 'sudo -n test -d /var/www/vvss/wunschwelt/play/vendor || sudo -n cp -r /var/www/vvss/tower/play/vendor /var/www/vvss/wunschwelt/play/'
+    ship_runtime
     ;;
 --wishes)
     # the board is text strangers typed: it is read as data
@@ -171,8 +198,7 @@ fi"
     publish_server
     publish_page
     if [ "$1" = "--wasm" ]; then
-        $SCP ../../wasm/jdbasic.js ../../wasm/jdbasic.wasm "$HOST:~/ww_stage/"
-        $SSH 'sudo -n cp ~/ww_stage/jdbasic.js ~/ww_stage/jdbasic.wasm /var/www/vvss/wunschwelt/play/ && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
+        ship_runtime
     fi
     $SSH 'sudo -n systemctl restart wunschwelt && sleep 2 && systemctl is-active wunschwelt'
     ;;

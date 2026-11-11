@@ -355,7 +355,7 @@ SUB ClientInput(c)
     ' typed text arrives ready made; the key that opened the entry line types nothing
     DIM fresh$ = c{"textq"} ?? ""
     c{"textq"} = ""
-    IF c{"typing"} ANDALSO LENW(c{"entry"}) < 120 THEN
+    IF c{"typing"} ANDALSO LEN(-c{"entry"}) < 120 THEN
         FOR EACH ch IN -fresh$
             IF ASC(ch) >= 32 THEN c{"entry"} = c{"entry"} + ch
         NEXT
@@ -372,7 +372,9 @@ SUB ClientInput(c)
                 c{"entry"} = ""
                 c{"typing"} = FALSE
             ELSEIF code = 8 THEN
-                IF LENW(c{"entry"}) > 0 THEN c{"entry"} = LEFTW$(c{"entry"}, LENW(c{"entry"}) - 1)
+                ' the last character goes, whole even when it has several bytes
+                DIM typed = -c{"entry"}
+                IF LEN(typed) > 0 THEN c{"entry"} = JOIN(TAKE(LEN(typed) - 1, typed), "")
             ELSEIF NOT (c{"has_text"} ?? FALSE) ANDALSO code >= 32 ANDALSO code < 127 ANDALSO LEN(c{"entry"}) < 120 THEN
                 DIM letter$ = CHR$(code)
                 IF GFX.KEYSTATE("Left Shift") ORELSE GFX.KEYSTATE("Right Shift") THEN letter$ = UCASE$(letter$)
