@@ -59,6 +59,17 @@ not upload the zips produced by the build step; the sign step rewrites them.
   `for f in tests/jdlibs/*_selftest.jdb` interpreted and again through `-c` - and sum the
   `N passed` lines; that number goes in the notes. Delete the `.exe` files afterwards.
 
+### Security pass (before the packs are built)
+
+Start the agent `security-reviewer` with the one word `release`. It reads
+its full list of files (memory, input parsing, paths, FFI and COM, network,
+MCP, debugger) against its threat model and reports findings with file and
+line. A HIGH finding is checked by hand and, if it holds, fixed and gated
+before the release goes on; MEDIUM and LOW become tickets. Show the report
+to **Atomi** either way, and say which files the agent did not get to.
+The proof that memory holds stays the sanitizer gate on the farm
+(`tests/sanitize_gate.sh`); run it for a release as well.
+
 ## 1 - Build the packs
 
 Each script wraps `build.bat … RELEASE`, then assembles `release\<bundle>\` + zips it +
