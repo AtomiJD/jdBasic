@@ -55,10 +55,11 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
   not in the repository), in `jdb/doom/wad/classic/`. The numbers in the
   tests `test_p1` to `test_p9` belong to this file.
 - For DOOM II a `doom2.wad`. `test_doom2` reads `jdb/doom/wad/doom2.wad`
-  or the file the environment variable `DOOM2WAD` names; its numbers
-  belong to the re-release IWAD of 14,951,361 bytes. That file has the
-  demos of version 1.9 and full-screen pictures 560 pixels wide;
-  `V_DrawPatch` shows the middle 320 columns of such a patch.
+  or the file the environment variable `DOOM2WAD` names. Its numbers are
+  the same for DOOM II 1.9, the DOS release (14,604,584 bytes), and for
+  the re-release IWAD (14,951,361 bytes), which has the same demos and
+  full-screen pictures 560 pixels wide; `V_DrawPatch` shows the middle
+  320 columns of such a patch.
 - The game looks for its WAD as `D_MAIN.IdentifyVersion$` says: the file
   named with `-iwad`, else the first of `doom2.wad`, `doomu.wad`,
   `doom.wad`, `doom1.wad` in the folder `DOOMWADDIR` names; without that
