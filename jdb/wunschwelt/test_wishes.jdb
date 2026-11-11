@@ -86,9 +86,9 @@ r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 1, "say"
 r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 1, "say": "Und ich w" + uml$ + "nsche mir ein Boot"})
 DIM board = Admin("wishes", {})
 Check("one player holds three open wishes at most", board{"ok"} ANDALSO LEN(board{"wishes"}) = 3)
-DIM esc_say = Post("/sync", {"token": other$, "mapv": 1, "since": ben_since, "say": "Hallo" + CHR$(27) + "[2J" + CHR$(7) + "Welt"})
+DIM esc_say = Post("/sync", {"token": other$, "mapv": 1, "since": ben_since, "say": "Hallo" + CHR$(27) + "[2J" + CHR$(7) + "Welt" + CHR$(194) + CHR$(155) + "x" + CHR$(226) + CHR$(128) + CHR$(174) + "y" + CHR$(195) + CHR$(188) + CHR$(226) + CHR$(130) + CHR$(172)})
 DIM esc_seen = Events(Post("/sync", {"token": token$, "mapv": 1, "since": since}), "say")
-Check("control characters in a spoken line become blanks", LEN(esc_seen) > 0 ANDALSO esc_seen[LEN(esc_seen) - 1]{"text"} = "Hallo [2J Welt")
+Check("control characters of one, two and three bytes become blanks, an umlaut and the euro sign stay", LEN(esc_seen) > 0 ANDALSO esc_seen[LEN(esc_seen) - 1]{"text"} = "Hallo [2J Welt x y" + CHR$(195) + CHR$(188) + CHR$(226) + CHR$(130) + CHR$(172))
 
 DIM far = Post("/sync", {"token": other$, "mapv": 1, "since": ben_since, "wishv": -1, "say": "Ich w" + uml$ + "nsche mir ein Pferd"})
 Check("a wish spoken far from Marta is not written", LEN(Admin("wishes", {}){"wishes"}) = 3)

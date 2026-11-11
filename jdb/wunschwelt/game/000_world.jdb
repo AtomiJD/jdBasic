@@ -6,6 +6,21 @@
 
 '@server
 
+' TRUE for one character that steers a screen instead of showing on it: the
+' control codes below 32 and 127, those from U+0080 to U+009F, and the marks
+' that turn the writing direction (U+200E, U+200F, U+202A to U+202E, U+2066
+' to U+2069).
+FUNC RuleIsControl(ch)
+    DIM b0 = BYTEAT(ch, 0)
+    IF LEN(ch) = 1 THEN RETURN b0 < 32 ORELSE b0 = 127
+    DIM b1 = BYTEAT(ch, 1)
+    IF LEN(ch) = 2 THEN RETURN b0 = 194 ANDALSO b1 < 160
+    IF LEN(ch) <> 3 ORELSE b0 <> 226 THEN RETURN FALSE
+    DIM b2 = BYTEAT(ch, 2)
+    IF b1 = 128 THEN RETURN b2 = 142 ORELSE b2 = 143 ORELSE (b2 >= 170 ANDALSO b2 <= 174)
+    RETURN b1 = 129 ANDALSO b2 >= 166 ANDALSO b2 <= 169
+ENDFUNC
+
 ' The first n characters of a text, free of control characters; a character
 ' of several bytes stays whole. Every text a player or the model wrote goes
 ' through here before it is kept.
@@ -15,7 +30,7 @@ FUNC RuleCut$(text$, n)
     FOR EACH ch IN -text$
         IF taken >= n THEN EXITFOR
         ' a control character becomes a blank: such text ends up on screens and consoles
-        IF ASC(ch) < 32 ORELSE ASC(ch) = 127 THEN
+        IF RuleIsControl(ch) THEN
             kept$ = kept$ + " "
         ELSE
             kept$ = kept$ + ch
