@@ -1,0 +1,254 @@
+' PATH.ABS$ names a place from the root, PATH.ISABS tells whether a path
+' names a place without a current directory. Every expectation is built
+' from the current directory as PATH.ABS$(".") answers it.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+SUB IsTrue(label$, answer)
+    IF answer = TRUE THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: " + label$ + " (expected TRUE)"
+    ENDIF
+ENDSUB
+
+SUB IsFalse(label$, answer)
+    IF answer = FALSE THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: " + label$ + " (expected FALSE)"
+    ENDIF
+ENDSUB
+
+' Position of the last separator in a path, -1 when it has none.
+FUNC LastSep(p$, s$)
+    DIM found AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(p$) - 1
+        IF MID$(p$, i, 1) = s$ THEN found = i
+    NEXT i
+    RETURN found
+ENDFUNC
+
+FUNC CountSep(p$, s$)
+    DIM n AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(p$) - 1
+        IF MID$(p$, i, 1) = s$ THEN n = n + 1
+    NEXT i
+    RETURN n
+ENDFUNC
+
+FUNC RelName$()
+    RETURN "zz_from_func.txt"
+ENDFUNC
+
+FUNC AbsInFunc$(p$)
+    DIM local$ = p$ + "_f"
+    RETURN PATH.ABS$(local$)
+ENDFUNC
+
+FUNC IsAbsInFunc(p$)
+    RETURN PATH.ISABS(p$)
+ENDFUNC
+
+FUNC IsAbsOfAbsInFunc(p$)
+    RETURN PATH.ISABS(PATH.ABS$(p$))
+ENDFUNC
+
+DIM cwd$ = PATH.ABS$(".")
+DIM is_win AS INTEGER = 0
+IF INSTR(cwd$, "\") >= 0 THEN is_win = 1
+DIM sep$ = "/"
+IF is_win = 1 THEN sep$ = "\"
+
+' base$ is the current directory without a closing separator, so that
+' base$ + sep$ + name is a place inside it.
+DIM base$ = cwd$
+IF LEN(base$) > 1 ANDALSO RIGHT$(base$, 1) = sep$ THEN base$ = LEFT$(base$, LEN(base$) - 1)
+
+' ---- PATH.ABS$(".") answers the current directory as a string ----
+IsTrue("PATH.ABS$(dot) answers a string that is not empty", LEN(cwd$) > 0)
+IsTrue("PATH.ABS$(dot) answers an existing directory", FILE.ISDIR(cwd$))
+IsTrue("the current directory names a place on its own", PATH.ISABS(cwd$))
+Check("PATH.ABS$(dot) answers the same twice", PATH.ABS$("."), cwd$)
+IsTrue("the current directory holds this test file", FILE.EXISTS(base$ + sep$ + "tests" + sep$ + "path_abs_spec_test.jdb"))
+
+' ---- a relative path is read against the current directory ----
+Check("a relative name is read against the current directory (literal)", PATH.ABS$("zz_abs_a.txt"), base$ + sep$ + "zz_abs_a.txt")
+
+DIM rel$ = "zz_abs_b.txt"
+Check("a relative name is read against the current directory (variable)", PATH.ABS$(rel$), base$ + sep$ + "zz_abs_b.txt")
+Check("a relative name is read against the current directory (expression)", PATH.ABS$("zz_abs" + "_c" + ".txt"), base$ + sep$ + "zz_abs_c.txt")
+Check("a relative name is read against the current directory (function answer)", PATH.ABS$(RelName$()), base$ + sep$ + "zz_from_func.txt")
+
+DIM names = ["zz_cell_0", "zz_cell_1", "zz_cell_2"]
+Check("a relative name is read against the current directory (array cell)", PATH.ABS$(names[1]), base$ + sep$ + "zz_cell_1")
+Check("a relative name is read against the current directory (last array cell)", PATH.ABS$(names[2]), base$ + sep$ + "zz_cell_2")
+
+DIM spots AS MAP
+spots{"rel"} = "zz_field"
+spots{"dot"} = "."
+Check("a relative name is read against the current directory (map field)", PATH.ABS$(spots{"rel"}), base$ + sep$ + "zz_field")
+Check("PATH.ABS$(dot) from a map field answers the current directory", PATH.ABS$(spots{"dot"}), cwd$)
+Check("a relative name is read against the current directory (inside a FUNC)", AbsInFunc$("zz_in"), base$ + sep$ + "zz_in_f")
+
+Check("a relative path of two segments is read against the current directory", PATH.ABS$("zz_dir" + sep$ + "zz_leaf"), base$ + sep$ + "zz_dir" + sep$ + "zz_leaf")
+
+' ---- the file does not have to exist ----
+DIM ghost$ = "tmp" + sep$ + "zz_no_such_dir_4711" + sep$ + "zz_no_such_file.bin"
+IsFalse("the ghost path does not exist", FILE.EXISTS(ghost$))
+Check("a path that does not exist is still named from the root", PATH.ABS$(ghost$), base$ + sep$ + ghost$)
+IsFalse("PATH.ABS$ did not create the path", FILE.EXISTS(ghost$))
+
+' ---- . and .. are resolved in a relative path ----
+Check("a leading dot segment is resolved", PATH.ABS$("." + sep$ + "zz_a"), base$ + sep$ + "zz_a")
+Check("a dot segment in the middle is resolved", PATH.ABS$("zz_a" + sep$ + "." + sep$ + "zz_b"), base$ + sep$ + "zz_a" + sep$ + "zz_b")
+Check("a dot-dot segment takes back the segment before it", PATH.ABS$("zz_a" + sep$ + ".." + sep$ + "zz_b"), base$ + sep$ + "zz_b")
+Check("a path that walks in and out again is the current directory", PATH.ABS$("zz_a" + sep$ + ".."), cwd$)
+Check("two dot-dot segments take back two segments", PATH.ABS$("zz_a" + sep$ + "zz_b" + sep$ + ".." + sep$ + ".." + sep$ + "zz_c"), base$ + sep$ + "zz_c")
+
+' The parent is only spelled out when it is not a root, whose closing
+' separator the specification leaves open.
+DIM cut AS INTEGER = LastSep(base$, sep$)
+IF CountSep(base$, sep$) >= 2 THEN
+    DIM parent$ = LEFT$(base$, cut)
+    DIM leaf$ = MID$(base$, cut + 1, LEN(base$) - cut - 1)
+    Check("dot-dot alone is the directory above the current one", PATH.ABS$(".."), parent$)
+    Check("dot-dot and a name is a place beside the current directory", PATH.ABS$(".." + sep$ + "zz_side"), parent$ + sep$ + "zz_side")
+    Check("up and down again by the own name is the current directory", PATH.ABS$(".." + sep$ + leaf$), base$)
+ELSE
+    PRINT "skipped: the current directory sits directly under a root"
+ENDIF
+
+' ---- . and .. are resolved in an absolute path as well ----
+Check("an absolute path stays what it is", PATH.ABS$(cwd$), cwd$)
+Check("an absolute path with a name stays what it is", PATH.ABS$(base$ + sep$ + "zz_a"), base$ + sep$ + "zz_a")
+Check("a dot-dot segment in an absolute path is resolved", PATH.ABS$(base$ + sep$ + "zz_a" + sep$ + ".." + sep$ + "zz_b"), base$ + sep$ + "zz_b")
+Check("a dot segment in an absolute path is resolved", PATH.ABS$(base$ + sep$ + "." + sep$ + "zz_b"), base$ + sep$ + "zz_b")
+Check("a closing dot segment in an absolute path is resolved", PATH.ABS$(base$ + sep$ + "."), cwd$)
+DIM again$ = PATH.ABS$("zz_a" + sep$ + ".." + sep$ + "zz_twice")
+Check("the answer of PATH.ABS$ given to PATH.ABS$ stays what it is", PATH.ABS$(again$), again$)
+Check("PATH.ABS$ of PATH.ABS$ in one expression", PATH.ABS$(PATH.ABS$("zz_nested")), base$ + sep$ + "zz_nested")
+
+' ---- what PATH.ABS$ answers is absolute ----
+IsTrue("the answer for a relative name is absolute", PATH.ISABS(PATH.ABS$("zz_abs_a.txt")))
+IsTrue("the answer for a path that does not exist is absolute", PATH.ISABS(PATH.ABS$(ghost$)))
+IsTrue("the answer for dot-dot is absolute", PATH.ISABS(PATH.ABS$("..")))
+IsTrue("the answer is absolute inside a FUNC", IsAbsOfAbsInFunc("zz_in"))
+
+' ---- PATH.ISABS: an empty string is not absolute ----
+IsFalse("an empty string is not absolute (literal)", PATH.ISABS(""))
+DIM empty$ = ""
+IsFalse("an empty string is not absolute (variable)", PATH.ISABS(empty$))
+IsFalse("an empty string is not absolute (expression)", PATH.ISABS(LEFT$("abc", 0)))
+IsFalse("an empty string is not absolute (inside a FUNC)", IsAbsInFunc(""))
+DIM blanks = ["", "x"]
+IsFalse("an empty string is not absolute (array cell)", PATH.ISABS(blanks[0]))
+spots{"none"} = ""
+IsFalse("an empty string is not absolute (map field)", PATH.ISABS(spots{"none"}))
+
+' ---- PATH.ISABS: a path that needs the current directory ----
+IsFalse("a bare name is not absolute", PATH.ISABS("zz_abs_a.txt"))
+IsFalse("a single dot is not absolute", PATH.ISABS("."))
+IsFalse("dot-dot is not absolute", PATH.ISABS(".."))
+IsFalse("a relative path of two segments is not absolute", PATH.ISABS("zz_dir" + sep$ + "zz_leaf"))
+IsFalse("a path that starts with a dot segment is not absolute", PATH.ISABS("." + sep$ + "zz_a"))
+IsFalse("a path that starts with dot-dot is not absolute", PATH.ISABS(".." + sep$ + "zz_a"))
+IsFalse("a relative name is not absolute (variable)", PATH.ISABS(rel$))
+IsFalse("a relative name is not absolute (function answer)", PATH.ISABS(RelName$()))
+IsFalse("a relative name is not absolute (array cell)", PATH.ISABS(names[0]))
+IsFalse("a relative name is not absolute (last array cell)", PATH.ISABS(names[2]))
+IsFalse("a relative name is not absolute (map field)", PATH.ISABS(spots{"rel"}))
+IsFalse("a relative name is not absolute (inside a FUNC)", IsAbsInFunc("zz_in"))
+
+' ---- PATH.ISABS answers a boolean ----
+DIM flag_yes = PATH.ISABS(cwd$)
+DIM flag_no = PATH.ISABS("zz_abs_a.txt")
+IsTrue("the answer for an absolute path kept in a variable is TRUE", flag_yes)
+IsFalse("the answer for a relative path kept in a variable is FALSE", flag_no)
+IsTrue("NOT of the answer for a relative path is true", NOT PATH.ISABS("zz_abs_a.txt"))
+DIM taken AS INTEGER = 0
+IF PATH.ISABS(cwd$) THEN taken = 1
+IsTrue("the answer for an absolute path drives an IF", taken = 1)
+taken = 0
+IF PATH.ISABS("") THEN taken = 1
+IsTrue("the answer for an empty string does not drive an IF", taken = 0)
+
+IF is_win = 1 THEN
+    ' ---- Windows: a drive ----
+    DIM drive$ = LEFT$(cwd$, 2)
+    Check("the current directory starts with a drive", MID$(cwd$, 1, 2), ":\")
+    IsTrue("a drive path is absolute (literal)", PATH.ISABS("D:\x"))
+    IsTrue("a drive path with a small letter is absolute", PATH.ISABS("c:\x"))
+    IsTrue("a drive path of several segments is absolute", PATH.ISABS("D:\x\y\z.txt"))
+    IsTrue("a drive path that does not exist is absolute", PATH.ISABS("Q:\zz_no_such\file.txt"))
+    DIM drive_path$ = "D:\x"
+    IsTrue("a drive path is absolute (variable)", PATH.ISABS(drive_path$))
+    IsTrue("a drive path is absolute (expression)", PATH.ISABS(drive$ + "\" + "x"))
+    IsTrue("a drive path is absolute (inside a FUNC)", IsAbsInFunc("D:\x"))
+    DIM roots = ["D:\x", "\\host\share", "\x"]
+    IsTrue("a drive path is absolute (array cell)", PATH.ISABS(roots[0]))
+    spots{"drive"} = "D:\x"
+    IsTrue("a drive path is absolute (map field)", PATH.ISABS(spots{"drive"}))
+
+    ' ---- Windows: a UNC share ----
+    IsTrue("a UNC share is absolute (literal)", PATH.ISABS("\\host\share"))
+    IsTrue("a UNC share with a path below it is absolute", PATH.ISABS("\\host\share\dir\file.txt"))
+    DIM unc$ = "\\host\share"
+    IsTrue("a UNC share is absolute (variable)", PATH.ISABS(unc$))
+    IsTrue("a UNC share is absolute (expression)", PATH.ISABS("\\" + "host" + "\" + "share"))
+    IsTrue("a UNC share is absolute (array cell)", PATH.ISABS(roots[1]))
+    spots{"unc"} = "\\host\share"
+    IsTrue("a UNC share is absolute (map field)", PATH.ISABS(spots{"unc"}))
+    IsTrue("a UNC share is absolute (inside a FUNC)", IsAbsInFunc("\\host\share"))
+
+    ' ---- Windows: a path rooted on the current drive ----
+    IsTrue("a path rooted on the current drive is absolute (literal)", PATH.ISABS("\x"))
+    IsTrue("a rooted path of several segments is absolute", PATH.ISABS("\x\y\z.txt"))
+    DIM rooted$ = "\x"
+    IsTrue("a path rooted on the current drive is absolute (variable)", PATH.ISABS(rooted$))
+    IsTrue("a path rooted on the current drive is absolute (expression)", PATH.ISABS("\" + "x"))
+    IsTrue("a path rooted on the current drive is absolute (last array cell)", PATH.ISABS(roots[2]))
+    spots{"rooted"} = "\x"
+    IsTrue("a path rooted on the current drive is absolute (map field)", PATH.ISABS(spots{"rooted"}))
+    IsTrue("a path rooted on the current drive is absolute (inside a FUNC)", IsAbsInFunc("\x"))
+
+    ' ---- Windows: PATH.ABS$ on a drive path away from the current directory ----
+    Check("a drive path outside the current directory stays what it is", PATH.ABS$(drive$ + "\zz_out\zz_leaf"), drive$ + "\zz_out\zz_leaf")
+    Check("dot-dot in a drive path outside the current directory is resolved", PATH.ABS$(drive$ + "\zz_out\..\zz_other"), drive$ + "\zz_other")
+    Check("a dot segment in a drive path outside the current directory is resolved", PATH.ABS$(drive$ + "\zz_out\.\zz_leaf"), drive$ + "\zz_out\zz_leaf")
+    Check("a drive path on a drive that need not exist stays what it is", PATH.ABS$("Q:\zz_a\zz_b"), "Q:\zz_a\zz_b")
+    Check("dot-dot on a drive that need not exist is resolved", PATH.ABS$("Q:\zz_a\..\zz_b"), "Q:\zz_b")
+ELSE
+    ' ---- elsewhere: a leading slash ----
+    IsTrue("a leading slash is absolute (literal)", PATH.ISABS("/x"))
+    IsTrue("a path of several segments with a leading slash is absolute", PATH.ISABS("/x/y/z.txt"))
+    DIM slashed$ = "/x"
+    IsTrue("a leading slash is absolute (variable)", PATH.ISABS(slashed$))
+    IsTrue("a leading slash is absolute (expression)", PATH.ISABS("/" + "x"))
+    IsTrue("a leading slash is absolute (inside a FUNC)", IsAbsInFunc("/x"))
+    Check("the current directory starts with a slash", LEFT$(cwd$, 1), "/")
+    Check("dot-dot in a rooted path is resolved", PATH.ABS$("/zz_out/../zz_other"), "/zz_other")
+ENDIF
+
+PRINT ""
+PRINT "PATH ABS SPEC TEST"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1
