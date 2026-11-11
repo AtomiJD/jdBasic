@@ -2,7 +2,7 @@
 # Push Wunschwelt to the Hostinger box, as a sub-path of vvss.jdbasic.tech.
 #   ./deploy.sh            kernels, game, page; restart the world server
 #   ./deploy.sh --page     page and client only; the world keeps running
-#   ./deploy.sh --wasm     also take the browser runtime from the jdTower page there
+#   ./deploy.sh --wasm     also ship the browser runtime from wasm/ (this game's copy only)
 #   ./deploy.sh --setup    once: user, systemd unit "wunschwelt", nginx routes
 #   ./deploy.sh --patch <file> <title>   send one patch to the running world
 #
@@ -131,7 +131,8 @@ fi"
     publish_server
     publish_page
     if [ "$1" = "--wasm" ]; then
-        $SSH 'sudo -n cp -r /var/www/vvss/tower/play/jdbasic.js /var/www/vvss/tower/play/jdbasic.wasm /var/www/vvss/tower/play/vendor /var/www/vvss/wunschwelt/play/ && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
+        $SCP ../../wasm/jdbasic.js ../../wasm/jdbasic.wasm "$HOST:~/ww_stage/"
+        $SSH 'sudo -n cp ~/ww_stage/jdbasic.js ~/ww_stage/jdbasic.wasm /var/www/vvss/wunschwelt/play/ && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
     fi
     $SSH 'sudo -n systemctl restart wunschwelt && sleep 2 && systemctl is-active wunschwelt'
     ;;

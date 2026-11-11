@@ -97,7 +97,7 @@ those routes into the site file.
   `~/wunschwelt/serve_npc.sh` in the screen session `npc_chat` (not restarted
   after a reboot). The user service `wunschwelt-tunnel` keeps a reverse
   forward to the Hostinger box, where the model answers on `127.0.0.1:18082`.
-- **Hostinger box**: nothing of the game runs there yet. The tunnel key in
+- **Hostinger box**: the unit `wunschwelt` and the page, see above. The tunnel key in
   `~deploy/.ssh/authorized_keys` may open that one forward and nothing else.
 
 ## State
@@ -108,9 +108,13 @@ client, bots, Marta through the model on cortex, a patch in mid-run);
 site (walking, talking to Marta through the model, the cat patch arriving
 in mid-run).
 
-Not done: `deploy.sh` has not run, so nothing of the game is on the box yet.
-Typed text comes from key codes: no capitals from Shift in the browser, no
-umlauts, and punctuation of the US layout (the runtime has no text input
-event). Phone (Twilio) and the wish board, the content lane of the local model,
+On the box since 2026-11-11: https://vvss.jdbasic.tech/wunschwelt/ (checked
+in Chrome: Marta through the tunnel to cortex, the cat patch sent with
+`deploy.sh --patch` arriving in mid-run, typed umlauts through `ON "TEXTINPUT"`).
+The site lets a browser keep the runtime for an hour, so a new runtime
+reaches a returning visitor that late.
+
+Not done: typing on a real keyboard in the browser was not tried (the check
+sent key events from a script). Phone (Twilio) and the wish board, the content lane of the local model,
 canary bots on the farm, rollback, keeping the world across a server
 restart, rehearsals.
