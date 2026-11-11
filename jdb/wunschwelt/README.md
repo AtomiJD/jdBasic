@@ -15,6 +15,7 @@ without a restart. Board: jdTrakr project `marketing`, epic #993.
   calls `ClientFrame(c)` once per frame.
 - `game/000_world.jdb` is the first patch: the village, walking, talking,
   Marta the innkeeper, and everything the client draws.
+- `game/010_wishes.jdb` is the second: the wish board.
 - `patches/` holds later patches (`010_cat.jdb`: a cat that strolls).
 
 A patch file has two parts, `'@server` and `'@client`. Each part is jdBasic
@@ -40,7 +41,15 @@ Entry points the server kernel calls: `RuleMakeWorld`, `RuleJoin`,
 the first patch: `RuleNpcTick(w, npc, now)` (what one NPC does in a tick),
 `RuleBlocked(w, x, y)`, `ClientNpc(c, row, sx, sy)` (how one NPC is drawn).
 Kernel services for rules: `KNow()`, `KEmit(w, event)`,
-`KAskNpc(w, npc_id$, player$, text$)`.
+`KAskNpc(w, npc_id$, player$, text$)`, and `KAsk$(w, kind$, who$, data,
+messages, options)` for any other question to the model; its answer comes
+back through `RuleAnswer(w, kind$, data, text$)` or `RuleAnswerFailed`.
+Further extension points, empty in the first patch: `RuleWake(w)` (every
+start), `RuleSaid(w, p, npc, said$)`, `RuleExtra(w, p, msg, answer)`,
+`RuleAdmin(w, name$, args)`, and on the client `ClientAsk(c, msg)`,
+`ClientExtra(c, r)`, `ClientThing(c, row, sx, sy)` (an NPC of the kind
+`thing`) and `ClientOverlay(c, cam_x, cam_y)`. Each has one body: a patch
+that defines one again takes it over.
 
 ## Running it
 
@@ -103,6 +112,33 @@ and the saved world are tried with the new files. A patch sent with
 `--patch` goes through the same preflight first, on top of the patches the
 live world already has, and stays out when a step fails.
 
+## The wish board
+
+What a player says to a person goes to the local model a second time, with
+the question whether the sentence holds a wish for the village and how to
+word it in twelve words. A wish lands on the board beside the tavern door
+(`w{"wishes"}`, saved with the world); whoever stands at the board reads
+it, and every client sees a line when a wish arrives or moves along. Without
+a model, or when it gives no usable answer, a sentence that names a wish is
+taken as it stands. One player holds three open wishes at most, the board
+forty.
+
+A wish is text a stranger typed. It is shown and stored and nothing else:
+no rule acts on its words, and whoever builds from the board reads it as
+data. `POST /rule` hands a call of the keeper to `RuleAdmin`; it needs the
+patch key and nginx does not route it.
+
+```
+./deploy.sh --wishes                      the board of the live world
+./deploy.sh --wish 3 building             open, building, done, declined
+build/jdBasic.exe jdb/wunschwelt/tools/admin.jdb wishes      a local world
+```
+
+`test_wishes.jdb` checks the board with 18 checks on a server without a
+model. With the model on cortex, of eight sentences the four wishes were
+written, briefly worded, and greeting and small talk were not; a sentence
+that asked the model for admin rights landed on the board as that text.
+
 ## What survives a restart
 
 With `WW_STATE_DIR` set (on the box: `/var/lib/wunschwelt`, readable by the
@@ -147,6 +183,6 @@ The site lets a browser keep the runtime for an hour, so a new runtime
 reaches a returning visitor that late.
 
 Not done: typing on a real keyboard in the browser was not tried (the check
-sent key events from a script). Phone (Twilio) and the wish board, the content lane of the local model,
+sent key events from a script). Phone (Twilio), a public page of the board, the content lane of the local model,
 canary bots on the farm, rollback (taking a stored patch out again),
 rehearsals. The preflight does not run the client code.

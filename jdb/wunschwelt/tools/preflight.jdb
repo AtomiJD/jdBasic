@@ -75,14 +75,34 @@ NEXT tries
 Check(own, "the spoken line did not come back unchanged")
 Check(answer$ <> "", "the NPC gave no answer")
 
+' a wish, after the pause a player keeps between two questions: it must be
+' announced, with or without a model that answers
+SLEEP 2700
+DIM wish$ AS STRING = "Ich w" + CHR$(195) + CHR$(188) + "nsche mir eine Probe " + STR$(INT(TICK()) MOD 100000)
+r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": wish$})
+Check(r{"ok"}, "speaking a wish raised an error in the rules")
+DIM announced AS BOOLEAN = FALSE
+FOR tries = 1 TO 30
+    IF r{"ok"} THEN
+        DIM heard = r{"events"}
+        FOR i = 0 TO LEN(heard) - 1
+            IF heard[i]{"type"} = "wish" ANDALSO heard[i]{"who"} = "Preflight" THEN announced = TRUE
+        NEXT i
+        since = r{"seq"}
+    ENDIF
+    IF announced THEN EXITFOR
+    SLEEP 200
+    r = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+NEXT tries
+Check(announced, "the wish did not reach the board")
+
 ' two seconds of ticks, so what the NPCs do on their own has run as well
 SLEEP 2000
 DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check(stats{"errors"} = 0, "the rules raised " + STR$(stats{"errors"}) + " error(s): " + stats{"last_error"})
 IF mode$ = "failed" THEN
     Check(INSTR(answer$, "nicht verstanden") >= 0, "a failing model does not make the NPC say so: " + answer$)
-    Check(stats{"errors"} = 1 ANDALSO STARTSWITH(stats{"last_error"}, "model"), "errors beyond the failing model: " + STR$(stats{"errors"}) + " " + stats{"last_error"})
-ELSE
-    Check(stats{"errors"} = 0, "the rules raised " + STR$(stats{"errors"}) + " error(s): " + stats{"last_error"})
+    Check((stats{"model_errors"} ?? 0) >= 1, "the unreachable model was not counted as a failure")
 ENDIF
 
 IF bad > 0 THEN END 1

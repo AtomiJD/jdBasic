@@ -1,0 +1,122 @@
+' Test of the wish board on a server without a model: a wish told to the
+' innkeeper lands on the board, small talk does not, the keeper reads the
+' board and moves a wish along, and every client hears of it.
+'
+'   jdBasic jdb/wunschwelt/test_wishes.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8160 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_wishes_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+SETENV "WW_PATCH_KEY", key$
+HTTP.SETTIMEOUT(5)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+' The events of one kind in an answer
+FUNC Events(answer, kind$ AS STRING)
+    DIM found = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(answer{"events"}) - 1
+        IF answer{"events"}[i]{"type"} = kind$ THEN found = APPEND(found, answer{"events"}[i])
+    NEXT i
+    RETURN found
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "40"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
+SLEEP 1500
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna"}){"token"}
+DIM other$ AS STRING = Post("/join", {"name": "Ben"}){"token"}
+DIM r = Post("/sync", {"token": token$, "mapv": 1, "wishv": -1})
+Check("an empty board travels with the first sync", MAP.EXISTS(r, "wishes") ANDALSO LEN(r{"wishes"}) = 0)
+DIM has_board AS BOOLEAN = FALSE
+DIM i AS INTEGER
+FOR i = 0 TO LEN(r{"npcs"}) - 1
+    IF r{"npcs"}[i][0] = "brett" ANDALSO r{"npcs"}[i][4] = "thing" THEN has_board = TRUE
+NEXT i
+Check("the board stands in the village", has_board)
+DIM since AS INTEGER = r{"seq"}
+DIM ben_since AS INTEGER = Post("/sync", {"token": other$, "mapv": 1}){"seq"}
+
+FOR i = 1 TO 3
+    SLEEP 200
+    r = Post("/sync", {"token": token$, "dy": -1, "mapv": 1, "since": since})
+NEXT i
+
+DIM uml$ AS STRING = CHR$(195) + CHR$(188)
+r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 0, "say": "Guten Morgen, Marta!"})
+Check("a greeting is no wish", LEN(Events(r, "wish")) = 0 ANDALSO NOT MAP.EXISTS(r, "wishes"))
+since = r{"seq"}
+
+r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 0, "say": "Ich w" + uml$ + "nsche mir einen Brunnen"})
+DIM heard = Events(r, "wish")
+Check("a wish told to Marta is announced", LEN(heard) = 1 ANDALSO heard[0]{"who"} = "Anna" ANDALSO INSTR(heard[0]{"text"}, "Brunnen") >= 0)
+Check("and travels as the changed board", MAP.EXISTS(r, "wishes") ANDALSO LEN(r{"wishes"}) = 1 ANDALSO r{"wishes"}[0][3] = "open" ANDALSO r{"wishv"} = 1)
+since = r{"seq"}
+
+r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 1, "say": "Ich w" + uml$ + "nsche mir einen Brunnen"})
+Check("the same wish is not written twice", LEN(Events(r, "wish")) = 0)
+since = r{"seq"}
+
+r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 1, "say": "Mein Wunsch: eine Bank am Teich"})
+r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 1, "say": "Ich wuensche mir Laternen"})
+r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 1, "say": "Und ich w" + uml$ + "nsche mir ein Boot"})
+DIM board = Admin("wishes", {})
+Check("one player holds three open wishes at most", board{"ok"} ANDALSO LEN(board{"wishes"}) = 3)
+
+DIM far = Post("/sync", {"token": other$, "mapv": 1, "since": ben_since, "wishv": -1, "say": "Ich w" + uml$ + "nsche mir ein Pferd"})
+Check("a wish spoken far from Marta is not written", LEN(Admin("wishes", {}){"wishes"}) = 3)
+Check("a player elsewhere hears of the three wishes and gets the board", LEN(Events(far, "wish")) = 3 ANDALSO LEN(far{"wishes"}) = 3)
+
+DIM wrong = HTTP.POST$(srv$ + "/rule", JSON.STRINGIFY$({"key": "wrong", "name": "wishes"}), "text/plain")
+Check("the board is closed to a wrong key", HTTP.STATUSCODE() = 403)
+
+DIM first_id AS INTEGER = board{"wishes"}[0]{"id"}
+DIM moved = Admin("wish_status", {"id": first_id, "status": "building", "note": "kommt gleich"})
+Check("the keeper takes a wish into work", moved{"ok"} ANDALSO moved{"wish"}{"status"} = "building")
+moved = Admin("wish_status", {"id": first_id, "status": "done"})
+r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 1})
+DIM states = Events(r, "wish_status")
+Check("every client hears both steps", LEN(states) = 2 ANDALSO states[0]{"status"} = "building" ANDALSO states[1]{"status"} = "done")
+DIM done_row AS BOOLEAN = FALSE
+FOR i = 0 TO LEN(r{"wishes"}) - 1
+    IF r{"wishes"}[i][0] = first_id ANDALSO r{"wishes"}[i][3] = "done" THEN done_row = TRUE
+NEXT i
+Check("the board shows the wish as done", done_row)
+Check("a status that is none is refused", NOT Admin("wish_status", {"id": first_id, "status": "maybe"}){"ok"})
+Check("a wish that is none is refused", NOT Admin("wish_status", {"id": 999, "status": "done"}){"ok"})
+Check("a call the rules do not know is refused", NOT Admin("burn_village", {}){"ok"})
+
+DIM listed = OS.EXEC(OS.SELF$(), [here$ + "tools/admin.jdb", "wishes", "", srv$])
+Check("the admin tool prints the board", listed{"exit_code"} = 0 ANDALSO INSTR(listed{"output"}, "[done]") >= 0 ANDALSO INSTR(listed{"output"}, "3 wish(es)") >= 0)
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+
+DIM gone = OS.KILL(server_pid)
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

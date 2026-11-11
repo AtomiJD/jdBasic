@@ -6,6 +6,8 @@
 #   ./deploy.sh --wasm     also ship the browser runtime from wasm/ (this game's copy only)
 #   ./deploy.sh --setup    once: user, systemd unit "wunschwelt", nginx routes
 #   ./deploy.sh --patch <file> <title>   send one patch to the running world
+#   ./deploy.sh --wishes   print the wish board of the live world
+#   ./deploy.sh --wish <id> <open|building|done|declined>   move a wish along
 #   ./deploy.sh --reset-world   forget the saved world and its patches, start fresh
 #
 # Layout there: /opt/wunschwelt holds the server, the game and its own copy
@@ -30,7 +32,7 @@ push_files() {
     $SSH 'rm -rf ~/ww_stage && mkdir -p ~/ww_stage/game ~/ww_stage/tools ~/ww_stage/web'
     $SCP server.jdb client.jdb "$HOST:~/ww_stage/"
     $SCP game/*.jdb "$HOST:~/ww_stage/game/"
-    $SCP tools/patch.jdb tools/nginx_route.jdb tools/preflight.jdb tools/box_preflight.sh "$HOST:~/ww_stage/tools/"
+    $SCP tools/patch.jdb tools/nginx_route.jdb tools/preflight.jdb tools/admin.jdb tools/box_preflight.sh "$HOST:~/ww_stage/tools/"
     $SCP web/index.html "$HOST:~/ww_stage/web/"
 }
 
@@ -138,6 +140,17 @@ fi"
     echo "== page =="
     publish_page
     $SSH 'sudo -n cp -r /var/www/vvss/tower/play/jdbasic.js /var/www/vvss/tower/play/jdbasic.wasm /var/www/vvss/tower/play/vendor /var/www/vvss/wunschwelt/play/ && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
+    ;;
+--wishes)
+    # the board is text strangers typed: it is read as data
+    $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/admin.jdb wishes \"\" http://127.0.0.1:$PORT'"
+    exit $?
+    ;;
+--wish)
+    case "$2" in ''|*[!0-9]*) echo "usage: ./deploy.sh --wish <id> <open|building|done|declined>"; exit 1;; esac
+    case "$3" in open|building|done|declined) ;; *) echo "usage: ./deploy.sh --wish <id> <open|building|done|declined>"; exit 1;; esac
+    $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/admin.jdb wish_status id=$2,status=$3 http://127.0.0.1:$PORT'"
+    exit $?
     ;;
 --reset-world)
     $SSH 'sudo -n systemctl stop wunschwelt && sudo -n find /var/lib/wunschwelt -mindepth 1 -delete && sudo -n systemctl start wunschwelt && sleep 2 && systemctl is-active wunschwelt'

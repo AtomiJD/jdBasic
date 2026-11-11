@@ -120,8 +120,9 @@ FUNC RuleSync(w, p, msg)
         KEmit(w, {"type": "say", "who": p{"name"}, "text": said$})
         DIM npcs = w{"npcs"}
         FOR EACH npc_id$ IN MAP.KEYS(npcs)
-            IF ABS(npcs{npc_id$}{"x"} - p{"x"}) <= 3 ANDALSO ABS(npcs{npc_id$}{"y"} - p{"y"}) <= 3 THEN
+            IF MAP.EXISTS(npcs{npc_id$}, "persona") ANDALSO ABS(npcs{npc_id$}{"x"} - p{"x"}) <= 3 ANDALSO ABS(npcs{npc_id$}{"y"} - p{"y"}) <= 3 THEN
                 KAskNpc(w, npc_id$, p{"name"}, said$)
+                RuleSaid(w, p, npcs{npc_id$}, said$)
                 EXITFOR
             ENDIF
         NEXT
@@ -151,8 +152,34 @@ FUNC RuleSync(w, p, msg)
 
     DIM answer = {"x": p{"x"}, "y": p{"y"}, "players": shown, "npcs": folk, "events": news, "seq": w{"seq"}, "uptime": now \ 1000}
     IF INT(msg{"mapv"} ?? 0) <> w{"map"}{"v"} THEN answer{"map"} = w{"map"}
+    RuleExtra(w, p, msg, answer)
     RETURN answer
 ENDFUNC
+
+' Extension points with nothing in them; a later file or a patch gives them a body.
+' What a player said to an NPC that can be talked to.
+SUB RuleSaid(w, p, npc, said$)
+ENDSUB
+
+' More fields for the answer to one sync; msg is what the client sent.
+SUB RuleExtra(w, p, msg, answer)
+ENDSUB
+
+' The model's answer to a question put with KAsk$, and the case that none came.
+SUB RuleAnswer(w, kind$, data, text$)
+ENDSUB
+
+SUB RuleAnswerFailed(w, kind$, data)
+ENDSUB
+
+' A call of the keeper of the world.
+FUNC RuleAdmin(w, name$, args)
+    RETURN {"ok": FALSE, "error": "no such call: " + name$}
+ENDFUNC
+
+' Runs on every start once the world is in place, fresh or brought back.
+SUB RuleWake(w)
+ENDSUB
 
 ' What one NPC does in a tick. Nothing here; a patch gives a kind its life.
 SUB RuleNpcTick(w, npc, now)
@@ -354,6 +381,7 @@ SUB ClientSync(c)
         msg{"say"} = c{"say"}
         c{"say"} = ""
     ENDIF
+    ClientAsk(c, msg)
     DIM t0 = TICK()
     DIM r = {}
     TRY
@@ -398,6 +426,7 @@ SUB ClientSync(c)
             c{"banner_until"} = TICK() + 3000
         ENDIF
     NEXT i
+    ClientExtra(c, r)
     c{"restarts"} = r{"restarts"} ?? 0
     IF r{"version"} <> c{"version"} ORELSE "" + (r{"code_id"} ?? c{"code_id"}) <> c{"code_id"} THEN c{"need_code"} = TRUE
 ENDSUB
@@ -455,6 +484,23 @@ SUB ClientNpc(c, row, sx, sy)
     ClientFigure(sx, sy, 0, 0, row[1], TRUE)
 ENDSUB
 
+' Extension points of the client with nothing in them.
+' More fields for the message of one sync.
+SUB ClientAsk(c, msg)
+ENDSUB
+
+' What else the answer r of one sync brought.
+SUB ClientExtra(c, r)
+ENDSUB
+
+' Draws an NPC of the kind "thing", something that stands in the world; row is [id, name, x, y, kind].
+SUB ClientThing(c, row, sx, sy)
+ENDSUB
+
+' Draws over the world and under the head line.
+SUB ClientOverlay(c, cam_x, cam_y)
+ENDSUB
+
 SUB ClientBubble(sx, sy, text$)
     DIM rows = ClientWrap(text$, 30)
     DIM wide = 0
@@ -504,7 +550,11 @@ SUB ClientDraw(c)
     FOR i = 0 TO LEN(npcs) - 1
         DIM nx = npcs[i][2] * 32 - cam_x
         DIM ny = npcs[i][3] * 32 - cam_y
-        ClientNpc(c, npcs[i], nx, ny)
+        IF npcs[i][4] = "thing" THEN
+            ClientThing(c, npcs[i], nx, ny)
+        ELSE
+            ClientNpc(c, npcs[i], nx, ny)
+        ENDIF
         where{npcs[i][1]} = [nx, ny]
     NEXT i
 
@@ -540,6 +590,7 @@ SUB ClientDraw(c)
         ENDIF
     NEXT i
     c{"bubbles"} = alive
+    ClientOverlay(c, cam_x, cam_y)
 
     ' the three counters of the show
     DIM secs = c{"uptime"}

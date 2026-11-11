@@ -17,6 +17,8 @@ SUB Check(label$ AS STRING, ok AS INTEGER)
 ENDSUB
 
 DIM here$ AS STRING = "jdb/wunschwelt/"
+' the version a world starts with: one for each file of the game
+DIM base AS INTEGER = LEN(FILE.LIST(here$ + "game/*.jdb"))
 DIM port AS INTEGER = 8170 + OS.PID() MOD 20
 DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
 DIM key$ AS STRING = CODEC.UUID$()
@@ -57,7 +59,7 @@ SLEEP 1500
 
 DIM before = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
 Check("two players are in the world", before{"players"} = 2)
-Check("the world starts with one patch", before{"version"} = 1)
+Check("the world starts with the files of the game", before{"version"} = base)
 
 ' the patch tool sends the cat
 DIM sent = OS.EXEC(OS.SELF$(), [here$ + "tools/patch.jdb", here$ + "patches/010_cat.jdb", "Mimi", srv$])
@@ -68,11 +70,11 @@ DIM cut AS INTEGER = INSTR(cat$, "'@client")
 DIM cat_server$ AS STRING = MID$(cat$, INSTR(cat$, "'@server") + 8, cut - INSTR(cat$, "'@server") - 8)
 DIM cat_client$ AS STRING = MID$(cat$, cut + 8, LEN(cat$))
 DIM took = Post("/patch", {"key": key$, "title": "Mimi", "server": cat_server$, "client": cat_client$})
-Check("the cat patch is taken", took{"ok"} ANDALSO took{"version"} = 2)
+Check("the cat patch is taken", took{"ok"} ANDALSO took{"version"} = base + 1)
 
 DIM broken = Post("/patch", {"key": key$, "title": "broken", "server": "SUB RuleTick(w, now)" + nl$ + "    w{ = = 1" + nl$ + "ENDSUB", "client": ""})
 Check("a patch that does not parse is refused", NOT broken{"ok"})
-Check("and leaves the version alone", broken{"version"} = 2)
+Check("and leaves the version alone", broken{"version"} = base + 1)
 
 DIM probe = Post("/join", {"name": "Probe"})
 DIM seen = Post("/sync", {"token": probe{"token"}, "since": -1, "mapv": 0})
@@ -84,8 +86,8 @@ FOR i = 0 TO LEN(seen{"npcs"}) - 1
 NEXT i
 Check("the cat is in the world", has_cat)
 Check("three players are listed", LEN(seen{"players"}) = 3)
-DIM code = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=1"))
-Check("the client code after version 1 is one patch", LEN(code{"patches"}) = 1 ANDALSO INSTR(code{"patches"}[0], "ClientCat") >= 0)
+DIM code = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=" + STR$(base)))
+Check("the client code after the game is one patch", LEN(code{"patches"}) = 1 ANDALSO INSTR(code{"patches"}[0], "ClientCat") >= 0)
 DIM none = Post("/sync", {"token": "nobody"})
 Check("an unknown token is told to join", NOT none{"ok"} ANDALSO none{"error"} = "join")
 
@@ -96,7 +98,7 @@ DIM b = BotResult(out$ + "/ben.txt")
 Check("Anna walked four tiles up to the tavern", a{"x"} = 19 ANDALSO a{"y"} = 14)
 Check("Ben walked three tiles left", b{"x"} = 17 ANDALSO b{"y"} = 18)
 Check("no bot saw an error", a{"errors"} = 0 ANDALSO b{"errors"} = 0)
-Check("both bots saw version 2 arrive while playing", a{"version"} = 2 ANDALSO b{"version"} = 2)
+Check("both bots saw the new version arrive while playing", a{"version"} = base + 1 ANDALSO b{"version"} = base + 1)
 Check("Marta answered Anna", INSTR(JOIN(a{"heard"}, "|"), "Marta: ") >= 0)
 Check("Ben heard Anna speak", INSTR(JOIN(b{"heard"}, "|"), "Anna: Hallo Marta") >= 0)
 IF INSTR(JOIN(b{"heard"}, "|"), "Anna: Hallo Marta") < 0 THEN PRINT "  Ben after "; b{"syncs"}; " syncs heard: "; JOIN(b{"heard"}, " | "); "; Anna after "; a{"syncs"}; " syncs heard: "; JOIN(a{"heard"}, " | ")

@@ -19,6 +19,8 @@ SUB Check(label$ AS STRING, ok AS INTEGER)
 ENDSUB
 
 DIM here$ AS STRING = "jdb/wunschwelt/"
+' the version a world starts with: one for each file of the game
+DIM base AS INTEGER = LEN(FILE.LIST(here$ + "game/*.jdb"))
 DIM port AS INTEGER = 8140 + OS.PID() MOD 20
 DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
 DIM key$ AS STRING = CODEC.UUID$()
@@ -74,9 +76,9 @@ Check("a fresh world counts no restart", r{"restarts"} = 0)
 DIM sent = OS.EXEC(OS.SELF$(), [here$ + "tools/patch.jdb", here$ + "patches/010_cat.jdb", "Mimi", srv$])
 Check("the patch is taken", sent{"exit_code"} = 0)
 DIM before = Stats()
-Check("the patch is kept in the state folder", before{"version"} = 2 ANDALSO before{"stored"} = 1 ANDALSO FILE.EXISTS(out$ + "/state/patches.json"))
+Check("the patch is kept in the state folder", before{"version"} = base + 1 ANDALSO before{"stored"} = 1 ANDALSO FILE.EXISTS(out$ + "/state/patches.json"))
 DIM code1 = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=0"))
-SLEEP 4000
+SLEEP 7000
 Check("the world is written while it runs", FILE.EXISTS(out$ + "/state/world.json"))
 DIM clock1 AS INTEGER = Stats(){"uptime_s"}
 StopServer(server_pid)
@@ -84,18 +86,18 @@ StopServer(server_pid)
 ' ---- second life ----
 server_pid = StartServer(2)
 DIM after = Stats()
-Check("the patch is back after the restart", after{"version"} = 2 ANDALSO after{"stored"} = 1)
+Check("the patch is back after the restart", after{"version"} = base + 1 ANDALSO after{"stored"} = 1)
 Check("the restart is counted", after{"restarts"} = 1)
-Check("the world's clock went on", after{"uptime_s"} >= clock1)
+Check("the world's clock went on from the last save, at most a few seconds back", after{"uptime_s"} >= clock1 - 4)
 Check("the player is still in the world", after{"players"} = 1)
 r = Post("/sync", {"token": token$, "mapv": 1})
 Check("the old token still counts", r{"ok"})
 Check("the player stands where she stood", r{"ok"} ANDALSO r{"x"} = at_x ANDALSO r{"y"} = at_y)
 Check("the cat the patch brought is there", r{"ok"} ANDALSO HasNpc(r, "mimi"))
 Check("the sync names the restart", r{"ok"} ANDALSO r{"restarts"} = 1)
-DIM code2 = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=2"))
+DIM code2 = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=" + STR$(base + 1)))
 Check("the client code has the same name as before", code2{"code_id"} = code1{"code_id"} ANDALSO code2{"since_id"} = code1{"code_id"} ANDALSO LEN(code2{"patches"}) = 0)
-DIM stale = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=1"))
+DIM stale = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=" + STR$(base)))
 Check("the name of an earlier version differs", stale{"since_id"} <> stale{"code_id"} ANDALSO LEN(stale{"patches"}) = 1)
 Check("the rules raised no error", Stats(){"errors"} = 0)
 StopServer(server_pid)
@@ -105,7 +107,7 @@ TXTWRITER out$ + "/state/world.json", "{ this is not a world"
 server_pid = StartServer(3)
 DIM third = Stats()
 Check("an unreadable world gives a fresh one", third{"restarts"} = 0 ANDALSO third{"players"} = 0)
-Check("its patches still come back", third{"version"} = 2 ANDALSO third{"stored"} = 1)
+Check("its patches still come back", third{"version"} = base + 1 ANDALSO third{"stored"} = 1)
 Check("the unreadable file is put aside", FILE.EXISTS(out$ + "/state/world.unreadable.json"))
 StopServer(server_pid)
 

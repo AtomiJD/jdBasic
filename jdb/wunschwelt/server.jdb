@@ -15,14 +15,19 @@
 '
 ' Entry points the kernel calls (a patch may redefine each):
 '   RuleMakeWorld(w)                 once after the first patches
+'   RuleWake(w)                      on every start, once the world is in place
 '   RuleJoin(w, name$) -> player     a new or returning player
 '   RuleSync(w, player, msg) -> map  one message of a client, the answer
 '   RuleTick(w, now_ms)              every TICK_MS
 '   RuleNpcPrompt(w, npc, player$, text$) -> messages for the model
 '   RuleNpcReply(w, npc_id$, player$, text$)
 '   RuleNpcFailed(w, npc_id$, player$)   the model gave no usable answer
+'   RuleAnswer(w, kind$, data, text$)    the answer to a question a rule put with KAsk$
+'   RuleAnswerFailed(w, kind$, data)     that question got no usable answer
+'   RuleAdmin(w, name$, args) -> map     a call of the keeper of the world
 '
-' What rules may call here: KNow(), KEmit(w, event), KAskNpc(w, npc_id$, player$, text$).
+' What rules may call here: KNow(), KEmit(w, event), KAskNpc(w, npc_id$, player$, text$),
+' KAsk$(w, kind$, who$, data, messages, options).
 '
 ' The server listens on the loopback address only; a web server in front of
 ' it is what the outside reaches. Patches are source code that runs here, so
@@ -41,6 +46,7 @@
 '   POST /sync  {"token", ...}              -> what RuleSync answers
 '   GET  /code?since=N                      -> {"version", "patches": [client code]}
 '   POST /patch {"key","title","server","client"} -> {"ok", "version"} or {"ok": false, "error"}
+'   POST /rule  {"key","name","args"}           -> what RuleAdmin answers (needs the patch key)
 '   GET  /stats
 
 OPTION "EXPLICIT"
@@ -49,7 +55,7 @@ DIM TICK_MS AS INTEGER = 50
 DIM MAX_EVENTS AS INTEGER = 200
 DIM MAX_PLAYERS AS INTEGER = 40
 ' questions the model may hold at once, and the pause one player keeps between two
-DIM MAX_PENDING AS INTEGER = 4
+DIM MAX_PENDING AS INTEGER = 6
 DIM ASK_PAUSE_MS AS INTEGER = 2500
 
 DIM cli = OS.ARGS()
@@ -77,7 +83,7 @@ DIM client_patches = []
 DIM code_ids = [""]
 ' the patches that came over HTTP, as kept in the state folder: {"title", "server", "client"}
 DIM stored = []
-' Questions on their way to the model: {"task", "npc", "player", "asked"}
+' Questions on their way to the model: {"task", "kind", "data", "asked"}
 DIM pending = []
 ' when each player last asked the model
 DIM last_ask = {}
@@ -99,20 +105,47 @@ ENDSUB
 SUB KAskNpc(w, npc_id$ AS STRING, player$ AS STRING, text$ AS STRING)
     DIM npcs = w{"npcs"}
     IF NOT MAP.EXISTS(npcs, npc_id$) THEN RETURN
-    IF LEN(pending) >= MAX_PENDING ORELSE KNow() - (last_ask{player$} ?? -ASK_PAUSE_MS) < ASK_PAUSE_MS THEN RETURN
-    last_ask{player$} = KNow()
+    IF KBusy("npc", player$) THEN RETURN
     DIM messages = RuleNpcPrompt(w, npcs{npc_id$}, player$, text$)
     IF llm_url$ = "" THEN
+        last_ask{"npc " + player$} = KNow()
         RuleNpcReply(w, npc_id$, player$, "(" + npcs{npc_id$}{"name"} + " nickt dir freundlich zu.)")
         RETURN
     ENDIF
-    DIM body$ AS STRING = JSON.STRINGIFY$({"model": "npc", "max_tokens": 90, "temperature": 0.7, "messages": messages})
-    DIM task = HTTP.POST_ASYNC(llm_url$, body$, "application/json")
-    pending = APPEND(pending, {"task": task, "npc": npc_id$, "player": player$, "asked": KNow()})
+    DIM sent$ AS STRING = KAsk$(w, "npc", player$, {"npc": npc_id$, "player": player$}, messages, {"max_tokens": 90, "temperature": 0.7})
 ENDSUB
 
+' TRUE while the model has enough to do or this player asked a question of this kind a moment ago
+FUNC KBusy(kind$ AS STRING, who$ AS STRING)
+    RETURN LEN(pending) >= MAX_PENDING ORELSE KNow() - (last_ask{kind$ + " " + who$} ?? -ASK_PAUSE_MS) < ASK_PAUSE_MS
+ENDFUNC
+
+' Puts a question of the rules to the model. The answer comes back later
+' through RuleAnswer(w, kind$, data, text$), a failure through
+' RuleAnswerFailed(w, kind$, data); data is handed back as it was given.
+' options are fields of the request such as max_tokens or temperature.
+' Answers "sent", "busy" (asked too soon or the model is busy) or "none"
+' (the server has no model).
+FUNC KAsk$(w, kind$ AS STRING, who$ AS STRING, data, messages, options)
+    IF llm_url$ = "" THEN RETURN "none"
+    IF KBusy(kind$, who$) THEN RETURN "busy"
+    last_ask{kind$ + " " + who$} = KNow()
+    DIM request = {"model": "npc", "max_tokens": 90, "temperature": 0.7, "messages": messages}
+    FOR EACH field$ IN MAP.KEYS(options)
+        request{field$} = options{field$}
+    NEXT
+    DIM task = HTTP.POST_ASYNC(llm_url$, JSON.STRINGIFY$(request), "application/json")
+    pending = APPEND(pending, {"task": task, "kind": kind$, "data": data, "asked": KNow()})
+    RETURN "sent"
+ENDFUNC
+
+' A failure of a rule; a model that gives no usable answer is counted apart.
 SUB KFail(what$ AS STRING, message$ AS STRING)
-    W{"errors"} = W{"errors"} + 1
+    IF what$ = "model" THEN
+        W{"model_errors"} = (W{"model_errors"} ?? 0) + 1
+    ELSE
+        W{"errors"} = W{"errors"} + 1
+    ENDIF
     W{"last_error"} = what$ + ": " + message$
 ENDSUB
 
@@ -185,9 +218,9 @@ SUB LoadState()
     IF FILE.EXISTS(state_dir$ + "/patches.json") THEN
         DIM kept = []
         TRY
-            DIM list = JSON.PARSE(TXTREADER$(state_dir$ + "/patches.json"))
-            IF NOT ISMAP(list) ORELSE NOT MAP.EXISTS(list, "patches") THEN THROW "not a patch list"
-            kept = list{"patches"}
+            DIM kept_file = JSON.PARSE(TXTREADER$(state_dir$ + "/patches.json"))
+            IF NOT ISMAP(kept_file) ORELSE NOT MAP.EXISTS(kept_file, "patches") THEN THROW "not a patch list"
+            kept = kept_file{"patches"}
         CATCH
             PRINT "the stored patches could not be read: "; ERRMSG$
             DIM put_aside = FILE.MOVE(state_dir$ + "/patches.json", state_dir$ + "/patches.unreadable.json", TRUE)
@@ -312,8 +345,22 @@ FUNC HANDLEPATCH(request)
     RETURN {"ok": TRUE, "version": W{"version"}}
 ENDFUNC
 
+' A call of the keeper of the world, handed to the rules; it needs the patch key.
+FUNC HANDLERULE(request)
+    DIM b = BodyOf(request)
+    IF patch_key$ = "" ORELSE "" + (b{"key"} ?? "") <> patch_key$ THEN RETURN {"__http_status": 403}
+    DIM answer = {"ok": FALSE}
+    TRY
+        answer = RuleAdmin(W, "" + (b{"name"} ?? ""), b{"args"} ?? {})
+    CATCH
+        KFail("RuleAdmin", ERRMSG$)
+        answer = {"ok": FALSE, "error": ERRMSG$}
+    ENDTRY
+    RETURN answer
+ENDFUNC
+
 FUNC HANDLESTATS(request)
-    RETURN {"version": W{"version"}, "players": MAP.SIZE(W{"players"}), "served": W{"served"}, "errors": W{"errors"}, "last_error": W{"last_error"}, "uptime_s": KNow() \ 1000, "pending": LEN(pending), "patches": W{"patch_titles"}, "restarts": W{"restarts"}, "stored": LEN(stored)}
+    RETURN {"version": W{"version"}, "players": MAP.SIZE(W{"players"}), "served": W{"served"}, "errors": W{"errors"}, "last_error": W{"last_error"}, "uptime_s": KNow() \ 1000, "pending": LEN(pending), "model_errors": W{"model_errors"} ?? 0, "patches": W{"patch_titles"}, "restarts": W{"restarts"}, "stored": LEN(stored)}
 ENDFUNC
 
 ' ---- start ----
@@ -335,11 +382,17 @@ IF LEN(files) = 0 THEN
 ENDIF
 RuleMakeWorld(W)
 LoadState()
+TRY
+    RuleWake(W)
+CATCH
+    KFail("RuleWake", ERRMSG$)
+ENDTRY
 
 HTTP.SERVER.ON_POST "/join", HANDLEJOIN@
 HTTP.SERVER.ON_POST "/sync", HANDLESYNC@
 HTTP.SERVER.ON_GET "/code", HANDLECODE@
 HTTP.SERVER.ON_POST "/patch", HANDLEPATCH@
+HTTP.SERVER.ON_POST "/rule", HANDLERULE@
 HTTP.SERVER.ON_GET "/stats", HANDLESTATS@
 IF NOT HTTP.SERVER.START(port, "127.0.0.1") THEN
     PRINT "the server did not start on port "; port
@@ -370,16 +423,27 @@ DO WHILE run_seconds = 0 ORELSE TICK() - process_start < run_seconds * 1000
                 IF KNow() - ask{"asked"} < 30000 THEN waiting = APPEND(waiting, ask)
                 CONTINUEFOR
             ENDIF
+            DIM said$ AS STRING = ""
+            DIM usable AS BOOLEAN = FALSE
             TRY
                 DIM reply = JSON.PARSE(THREAD.GETRESULT(ask{"task"}))
-                RuleNpcReply(W, ask{"npc"}, ask{"player"}, TRIM$("" + reply{"choices"}[0]{"message"}{"content"}))
+                said$ = TRIM$("" + reply{"choices"}[0]{"message"}{"content"})
+                usable = TRUE
             CATCH
                 KFail("model", ERRMSG$)
-                TRY
-                    RuleNpcFailed(W, ask{"npc"}, ask{"player"})
-                CATCH
-                    KFail("RuleNpcFailed", ERRMSG$)
-                ENDTRY
+            ENDTRY
+            TRY
+                IF ask{"kind"} = "npc" ANDALSO usable THEN
+                    RuleNpcReply(W, ask{"data"}{"npc"}, ask{"data"}{"player"}, said$)
+                ELSEIF ask{"kind"} = "npc" THEN
+                    RuleNpcFailed(W, ask{"data"}{"npc"}, ask{"data"}{"player"})
+                ELSEIF usable THEN
+                    RuleAnswer(W, ask{"kind"}, ask{"data"}, said$)
+                ELSE
+                    RuleAnswerFailed(W, ask{"kind"}, ask{"data"})
+                ENDIF
+            CATCH
+                KFail("answer of kind " + ask{"kind"}, ERRMSG$)
             ENDTRY
         NEXT q
         pending = waiting

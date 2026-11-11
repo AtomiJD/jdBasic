@@ -1,0 +1,216 @@
+' The wish board: what a player wishes for the village while talking to a
+' person is written on a board beside the tavern door. The local model
+' decides whether a sentence holds a wish and words it briefly; without a
+' model a sentence that names a wish is taken as it stands.
+'
+' A wish is text a stranger typed. It is shown and stored, nothing more.
+'
+' w{"wishes"} holds maps {"id", "who", "text", "status", "at", "note"};
+' status is open, building, done or declined. w{"wishv"} counts changes.
+
+'@server
+
+' Runs on every start once the world is in place, fresh or brought back.
+SUB RuleWake(w)
+    IF NOT MAP.EXISTS(w, "wishes") THEN
+        w{"wishes"} = []
+        w{"wish_seq"} = 0
+        w{"wishv"} = 0
+    ENDIF
+    IF NOT MAP.EXISTS(w{"npcs"}, "brett") THEN w{"npcs"}{"brett"} = {"id": "brett", "kind": "thing", "name": "Wunschbrett", "x": 16, "y": 13}
+ENDSUB
+
+FUNC RuleWishCount(w, who$, status$)
+    DIM n = 0
+    DIM wishes = w{"wishes"}
+    DIM i = 0
+    FOR i = 0 TO LEN(wishes) - 1
+        IF wishes[i]{"status"} = status$ ANDALSO (who$ = "" ORELSE wishes[i]{"who"} = who$) THEN n = n + 1
+    NEXT i
+    RETURN n
+ENDFUNC
+
+SUB RuleWishAdd(w, who$, text$)
+    DIM wish$ = TRIM$(REPLACE$(REPLACE$(text$, CHR$(13), " "), CHR$(10), " "))
+    wish$ = RuleCut$(wish$, 100)
+    IF wish$ = "" THEN RETURN
+    DIM wishes = w{"wishes"}
+    DIM i = 0
+    FOR i = 0 TO LEN(wishes) - 1
+        IF LCASE$(wishes[i]{"text"}) = LCASE$(wish$) ANDALSO wishes[i]{"status"} <> "declined" THEN RETURN
+    NEXT i
+    w{"wish_seq"} = w{"wish_seq"} + 1
+    w{"wishes"} = APPEND(wishes, {"id": w{"wish_seq"}, "who": who$, "text": wish$, "status": "open", "at": KNow(), "note": ""})
+    w{"wishv"} = w{"wishv"} + 1
+    KEmit(w, {"type": "wish", "id": w{"wish_seq"}, "who": who$, "text": wish$})
+ENDSUB
+
+' Without the model's judgement: a sentence that speaks of a wish is one.
+SUB RuleWishGuess(w, who$, said$)
+    DIM low$ = LCASE$(said$)
+    IF INSTR(low$, "wunsch") >= 0 ORELSE INSTR(low$, "wuensch") >= 0 ORELSE INSTR(low$, "w" + CHR$(195) + CHR$(188) + "nsch") >= 0 THEN RuleWishAdd(w, who$, said$)
+ENDSUB
+
+SUB RuleSaid(w, p, npc, said$)
+    IF npc{"kind"} <> "person" THEN RETURN
+    IF RuleWishCount(w, p{"name"}, "open") >= 3 ORELSE RuleWishCount(w, "", "open") >= 40 THEN RETURN
+    DIM q$ = CHR$(34)
+    DIM task$ = "Du sortierst S" + CHR$(195) + CHR$(164) + "tze, die Dorfbewohner zur Wirtin sagen. Nennt der Satz etwas, das es im Dorf geben soll oder das sich im Dorf " + CHR$(195) + CHR$(164) + "ndern soll, antworte mit JSON {" + q$ + "wish" + q$ + ": true, " + q$ + "text" + q$ + ": " + q$ + "der Wunsch in h" + CHR$(195) + CHR$(182) + "chstens zw" + CHR$(195) + CHR$(182) + "lf W" + CHR$(195) + CHR$(182) + "rtern" + q$ + "}. Ein Gru" + CHR$(195) + CHR$(159) + ", eine Frage oder Geplauder ist kein Wunsch: antworte dann mit {" + q$ + "wish" + q$ + ": false}. Antworte nur mit JSON."
+    DIM messages = [{"role": "system", "content": task$}, {"role": "user", "content": said$}]
+    DIM sent$ = KAsk$(w, "wish", p{"name"}, {"who": p{"name"}, "said": said$}, messages, {"max_tokens": 60, "temperature": 0, "response_format": {"type": "json_object"}})
+    IF sent$ = "none" THEN RuleWishGuess(w, p{"name"}, said$)
+ENDSUB
+
+SUB RuleAnswer(w, kind$, data, text$)
+    IF kind$ <> "wish" THEN RETURN
+    DIM verdict = {}
+    TRY
+        verdict = JSON.PARSE(text$)
+    CATCH
+        verdict = {}
+    ENDTRY
+    IF NOT ISMAP(verdict) ORELSE NOT MAP.EXISTS(verdict, "wish") THEN
+        RuleWishGuess(w, data{"who"}, data{"said"})
+        RETURN
+    ENDIF
+    IF verdict{"wish"} = TRUE ANDALSO TRIM$("" + (verdict{"text"} ?? "")) <> "" THEN RuleWishAdd(w, data{"who"}, "" + verdict{"text"})
+ENDSUB
+
+SUB RuleAnswerFailed(w, kind$, data)
+    IF kind$ = "wish" THEN RuleWishGuess(w, data{"who"}, data{"said"})
+ENDSUB
+
+' The board travels with a sync when it changed: the newest wishes as rows [id, who, text, status].
+SUB RuleExtra(w, p, msg, answer)
+    IF INT(msg{"wishv"} ?? -1) = w{"wishv"} THEN RETURN
+    DIM wishes = w{"wishes"}
+    DIM rows = []
+    DIM i = 0
+    FOR i = MAX([0, LEN(wishes) - 12]) TO LEN(wishes) - 1
+        rows = APPEND(rows, [[wishes[i]{"id"}, wishes[i]{"who"}, wishes[i]{"text"}, wishes[i]{"status"}]])
+    NEXT i
+    answer{"wishes"} = rows
+    answer{"wishv"} = w{"wishv"}
+ENDSUB
+
+' The keeper reads the board ("wishes") and sets the state of a wish
+' ("wish_status" with {"id", "status", "note"}).
+FUNC RuleAdmin(w, name$, args)
+    IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
+    IF name$ = "wish_status" THEN
+        DIM status$ = "" + (args{"status"} ?? "")
+        IF status$ <> "open" ANDALSO status$ <> "building" ANDALSO status$ <> "done" ANDALSO status$ <> "declined" THEN RETURN {"ok": FALSE, "error": "status is open, building, done or declined"}
+        DIM wishes = w{"wishes"}
+        DIM i = 0
+        FOR i = 0 TO LEN(wishes) - 1
+            IF wishes[i]{"id"} = INT(args{"id"} ?? 0) THEN
+                wishes[i]{"status"} = status$
+                wishes[i]{"note"} = RuleCut$("" + (args{"note"} ?? ""), 100)
+                w{"wishes"} = wishes
+                w{"wishv"} = w{"wishv"} + 1
+                KEmit(w, {"type": "wish_status", "id": wishes[i]{"id"}, "who": wishes[i]{"who"}, "text": wishes[i]{"text"}, "status": status$})
+                RETURN {"ok": TRUE, "wish": wishes[i]}
+            ENDIF
+        NEXT i
+        RETURN {"ok": FALSE, "error": "no wish with that id"}
+    ENDIF
+    RETURN {"ok": FALSE, "error": "no such call: " + name$}
+ENDFUNC
+
+'@client
+
+SUB ClientAsk(c, msg)
+    msg{"wishv"} = c{"wishv"} ?? -1
+ENDSUB
+
+SUB ClientExtra(c, r)
+    IF MAP.EXISTS(r, "wishes") THEN
+        c{"wishes"} = r{"wishes"}
+        c{"wishv"} = r{"wishv"}
+    ENDIF
+    DIM events = r{"events"}
+    DIM i = 0
+    FOR i = 0 TO LEN(events) - 1
+        DIM ev = events[i]
+        DIM news$ = ""
+        IF ev{"type"} = "wish" THEN news$ = "Neuer Wunsch am Brett: " + ev{"text"}
+        IF ev{"type"} = "wish_status" ANDALSO ev{"status"} = "building" THEN news$ = "Der Baumeister baut: " + ev{"text"}
+        IF ev{"type"} = "wish_status" ANDALSO ev{"status"} = "done" THEN news$ = "Wunsch erf" + CHR$(195) + CHR$(188) + "llt: " + ev{"text"}
+        IF news$ <> "" THEN
+            c{"banner"} = news$
+            c{"banner_until"} = TICK() + 6000
+        ENDIF
+    NEXT i
+ENDSUB
+
+' The board: two posts, a plank and a note for each wish, up to six.
+SUB ClientThing(c, row, sx, sy)
+    IF row[0] <> "brett" THEN RETURN
+    RECT sx + 5, sy + 29, 22, 2, TRUE, 52, 104, 54
+    RECT sx + 5, sy + 8, 3, 22, TRUE, 104, 72, 44
+    RECT sx + 24, sy + 8, 3, 22, TRUE, 104, 72, 44
+    RECT sx + 2, sy + 4, 28, 18, TRUE, 150, 108, 66
+    RECT sx + 2, sy + 4, 28, 18, FALSE, 96, 64, 40
+    DIM notes = LEN(c{"wishes"} ?? [])
+    IF notes > 6 THEN notes = 6
+    DIM i = 0
+    FOR i = 0 TO notes - 1
+        RECT sx + 5 + (i MOD 3) * 8, sy + 7 + (i \ 3) * 7, 6, 5, TRUE, 250, 244, 214
+    NEXT i
+    DIM size = GFX.TEXTSIZE(row[1])
+    TEXT sx + 16 - size[0] \ 2, sy - size[1] + 3, row[1], 250, 214, 110
+ENDSUB
+
+' Whoever stands at the board reads it.
+SUB ClientOverlay(c, cam_x, cam_y)
+    DIM near = FALSE
+    DIM npcs = c{"npcs"}
+    DIM i = 0
+    FOR i = 0 TO LEN(npcs) - 1
+        IF npcs[i][0] = "brett" ANDALSO ABS(npcs[i][2] - c{"x"}) <= 2 ANDALSO ABS(npcs[i][3] - c{"y"}) <= 2 THEN near = TRUE
+    NEXT i
+    IF NOT near THEN RETURN
+    DIM wishes = c{"wishes"} ?? []
+    DIM high = GFX.TEXTSIZE("Ag")[1] + 2
+    DIM rows = []
+    DIM tints = []
+    FOR i = LEN(wishes) - 1 TO 0 STEP -1
+        IF LEN(rows) >= 14 THEN EXITFOR
+        DIM mark$ = "( ) "
+        DIM tint = [40, 36, 32]
+        IF wishes[i][3] = "building" THEN
+            mark$ = "(~) "
+            tint = [150, 90, 10]
+        ELSEIF wishes[i][3] = "done" THEN
+            mark$ = "(x) "
+            tint = [30, 110, 50]
+        ELSEIF wishes[i][3] = "declined" THEN
+            mark$ = "(-) "
+            tint = [140, 130, 120]
+        ENDIF
+        DIM parts = ClientWrap(mark$ + wishes[i][2] + " - " + wishes[i][1], 40)
+        DIM k = 0
+        FOR k = 0 TO LEN(parts) - 1
+            IF k = 0 THEN
+                rows = APPEND(rows, parts[k])
+            ELSE
+                rows = APPEND(rows, "    " + parts[k])
+            ENDIF
+            tints = APPEND(tints, [tint])
+        NEXT k
+    NEXT i
+    IF LEN(rows) = 0 THEN
+        rows = ["Noch kein Wunsch. Sag Marta,", "was dem Dorf fehlt."]
+        tints = [[110, 100, 90], [110, 100, 90]]
+    ENDIF
+    DIM bw = 252
+    DIM bh = (LEN(rows) + 2) * high + 10
+    DIM bx = 6
+    DIM by = 26
+    ROUNDED_RECT bx, by, bw, bh, 4, TRUE, 250, 244, 214
+    ROUNDED_RECT bx, by, bw, bh, 4, FALSE, 96, 64, 40
+    TEXT bx + 8, by + 5, "Wunschbrett   ( ) offen  (~) im Bau  (x) da", 96, 64, 40
+    FOR i = 0 TO LEN(rows) - 1
+        TEXT bx + 8, by + 5 + (i + 2) * high - high \ 2, rows[i], tints[i][0], tints[i][1], tints[i][2]
+    NEXT i
+ENDSUB
