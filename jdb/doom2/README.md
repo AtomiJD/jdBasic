@@ -63,7 +63,9 @@ Tracker: jdTrakr project `doom` (epic #967, one ticket per phase).
 - The game looks for its WAD as `D_MAIN.IdentifyVersion$` says: the file
   named with `-iwad`, else the first of `doom2.wad`, `doomu.wad`,
   `doom.wad`, `doom1.wad` in the folder `DOOMWADDIR` names; without that
-  variable in the working directory, then in `jdb/doom/wad/classic/`.
+  variable in the working directory, then in `jdb/doom/wad/classic/` below
+  it and in `../doom/wad/classic/` beside it, so that the game starts from
+  the repository root and from its own folder.
 - `jdb/doom/linuxdoom-1.10/` (the C source, not in the repository) only to run
   the generator again.
 

@@ -32,10 +32,12 @@ EXPORT DIM wadfile$ AS STRING = ""
 ' The path of the WAD: the one that was named, else the first of
 ' doom2.wad, doomu.wad, doom.wad and doom1.wad in the folder the
 ' environment variable DOOMWADDIR names; without the variable in the
-' working directory, then in jdb/doom/wad/classic below it.
+' working directory, then in jdb/doom/wad/classic below it (the program
+' started in the repository root) or ../doom/wad/classic beside it (started
+' in its own folder).
 EXPORT FUNC IdentifyVersion$() AS STRING
     IF LEN(wadfile$) > 0 THEN RETURN wadfile$
-    DIM folders AS ARRAY = [".", "jdb/doom/wad/classic"]
+    DIM folders AS ARRAY = [".", "jdb/doom/wad/classic", "../doom/wad/classic"]
     IF LEN(GETENV$("DOOMWADDIR")) > 0 THEN folders = [GETENV$("DOOMWADDIR")]
     DIM names AS ARRAY = ["doom2.wad", "doomu.wad", "doom.wad", "doom1.wad"]
     DIM f AS INTEGER
@@ -45,7 +47,7 @@ EXPORT FUNC IdentifyVersion$() AS STRING
             IF FILE.EXISTS(folders[f] + "/" + names[i]) THEN RETURN folders[f] + "/" + names[i]
         NEXT i
     NEXT f
-    RETURN folders[LEN(folders) - 1] + "/doom.wad"
+    RETURN folders[0] + "/doom.wad"
 ENDFUNC
 
 ' ---- events ---------------------------------------------------------------------
