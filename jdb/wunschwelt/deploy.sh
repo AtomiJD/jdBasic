@@ -67,7 +67,7 @@ case "$1" in
     $SCP "$2" "$HOST:~/$RUN.jdb"
     $SCP "$TITLE_FILE" "$HOST:~/$RUN.title"
     # the key is read on the box by root and never leaves it
-    $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/patch.jdb /home/deploy/$RUN.jdb \"\$(cat /home/deploy/$RUN.title)\" http://127.0.0.1:$PORT'; rm -f ~/$RUN.jdb ~/$RUN.title"
+    $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/patch.jdb /home/deploy/$RUN.jdb \"\$(cat /home/deploy/$RUN.title)\" http://127.0.0.1:$PORT'; rc=\$?; rm -f ~/$RUN.jdb ~/$RUN.title; exit \$rc"
     exit 0
     ;;
 --setup)
