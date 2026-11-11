@@ -1,0 +1,64 @@
+' A local stand-in for the web server in front of the world: serves the page
+' and the browser runtime and hands the three API calls to the world server,
+' so the browser client runs against one origin as it does when deployed.
+'
+'   jdBasic jdb/wunschwelt/tools/devsite.jdb [port] [world]
+'
+' Run from the repository root; the runtime is taken from wasm/.
+'   http://127.0.0.1:8180/wunschwelt/
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM port AS INTEGER = 8180
+DIM world$ AS STRING = "http://127.0.0.1:8100"
+IF LEN(cli) > 1 THEN port = VAL(cli[1])
+IF LEN(cli) > 2 THEN world$ = cli[2]
+DIM here$ AS STRING = PATH.DIRNAME$(PATH.DIRNAME$(PATH.ABS$(cli[0])))
+DIM runtime$ AS STRING = PATH.ABS$("wasm")
+DIM kinds = {".html": "text/html", ".js": "application/javascript", ".wasm": "application/wasm", ".css": "text/css", ".jdb": "text/plain", ".json": "application/json", ".woff2": "font/woff2", ".ttf": "font/ttf", ".png": "image/png"}
+
+FUNC Reply(status AS INTEGER, body$ AS STRING, kind$ AS STRING)
+    RETURN {"__http_status": status, "__http_body": body$, "__http_content_type": kind$, "__http_headers": {"Cache-Control": "no-store"}}
+ENDFUNC
+
+FUNC HANDLEFILE(request)
+    DIM path$ AS STRING = request{"path"}
+    IF INSTR(path$, "..") >= 0 ORELSE NOT STARTSWITH(path$, "/wunschwelt/") THEN RETURN Reply(404, "not here", "text/plain")
+    DIM rest$ AS STRING = MID$(path$, LEN("/wunschwelt/"), LEN(path$))
+    DIM file$ AS STRING = ""
+    IF rest$ = "" THEN
+        file$ = here$ + "/web/index.html"
+    ELSEIF rest$ = "play/" THEN
+        file$ = runtime$ + "/index.html"
+    ELSEIF rest$ = "play/client.jdb" THEN
+        file$ = here$ + "/client.jdb"
+    ELSEIF STARTSWITH(rest$, "play/") THEN
+        file$ = runtime$ + "/" + MID$(rest$, 5, LEN(rest$))
+    ENDIF
+    IF file$ = "" ORELSE NOT FILE.EXISTS(file$) ORELSE FILE.ISDIR(file$) THEN RETURN Reply(404, "not here", "text/plain")
+    RETURN Reply(200, BINREADER$(file$), kinds{LCASE$(PATH.EXT$(file$))} ?? "application/octet-stream")
+ENDFUNC
+
+FUNC HANDLEJOIN(request)
+    RETURN Reply(200, HTTP.POST$(world$ + "/join", request{"body"}, "text/plain"), "application/json")
+ENDFUNC
+
+FUNC HANDLESYNC(request)
+    RETURN Reply(200, HTTP.POST$(world$ + "/sync", request{"body"}, "text/plain"), "application/json")
+ENDFUNC
+
+FUNC HANDLECODE(request)
+    RETURN Reply(200, HTTP.GET$(world$ + "/code?since=" + ("" + (request{"params"}{"since"} ?? "0"))), "application/json")
+ENDFUNC
+
+HTTP.SERVER.ON_POST "/wunschwelt/api/join", HANDLEJOIN@
+HTTP.SERVER.ON_POST "/wunschwelt/api/sync", HANDLESYNC@
+HTTP.SERVER.ON_GET "/wunschwelt/api/code", HANDLECODE@
+HTTP.SERVER.ON_NOTFOUND HANDLEFILE@
+IF NOT HTTP.SERVER.START(port, "127.0.0.1") THEN
+    PRINT "the site did not start on port "; port
+    END 1
+ENDIF
+PRINT "http://127.0.0.1:"; port; "/wunschwelt/  ->  "; world$
+HTTP.SERVER.WAIT

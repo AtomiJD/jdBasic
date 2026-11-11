@@ -28,6 +28,15 @@ IF LEN(cli) > 1 THEN C{"name"} = cli[1]
 IF LEN(cli) > 2 THEN C{"srv"} = cli[2]
 IF LEN(cli) > 3 THEN run_seconds = VAL(cli[3])
 
+' In the browser the page hands over its query parameters and its own origin:
+' the name comes from ?name=, the world sits behind <origin>/wunschwelt/api.
+TRY
+    DIM page = JSON.PARSE(TXTREADER$("/url_params.json"))
+    IF MAP.EXISTS(page, "name") THEN C{"name"} = page{"name"}
+    IF MAP.EXISTS(page, "__origin") THEN C{"srv"} = page{"__origin"} + "/wunschwelt/api"
+CATCH
+ENDTRY
+
 SUB OnKeyDown(info)
     C{"keyq"} = APPEND(C{"keyq"}, {"key": info[0]{"key"}, "keycode": info[0]{"keycode"}})
 ENDSUB
@@ -63,17 +72,21 @@ ENDSUB
 
 ' The largest whole scale at which the 640 x 384 view fits the primary display.
 FUNC ViewScale() AS INTEGER
-    DIM fit AS INTEGER = 2
-    DIM displays AS ARRAY = GFX.DISPLAYS()
-    DIM i AS INTEGER
-    FOR i = 0 TO LEN(displays) - 1
-        IF displays[i]{"primary"} THEN fit = MIN([INT(displays[i]{"w"}) \ 700, INT(displays[i]{"h"}) \ 460])
-    NEXT i
+    DIM fit AS INTEGER = 1
+    TRY
+        DIM displays AS ARRAY = GFX.DISPLAYS()
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(displays) - 1
+            IF displays[i]{"primary"} THEN fit = MIN([INT(displays[i]{"w"}) \ 700, INT(displays[i]{"h"}) \ 460])
+        NEXT i
+    CATCH
+        fit = 1
+    ENDTRY
     IF fit < 1 THEN fit = 1
     RETURN fit
 ENDFUNC
 
-HTTP.SETTIMEOUT(5)
+IF OS.FEATURE("HTTP") THEN HTTP.SETTIMEOUT(5)
 SCREEN 640, 384, "Wunschwelt - " + C{"name"}, ViewScale()
 ON "KEYDOWN" CALL OnKeyDown@
 ON "QUIT" CALL OnQuit@

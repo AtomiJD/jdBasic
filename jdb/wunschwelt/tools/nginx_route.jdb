@@ -1,0 +1,48 @@
+' Writes the Wunschwelt routes into a copy of an nginx site file.
+'
+'   jdbasic nginx_route.jdb <site file> <result file> <port>
+'
+' The routes go in front of the first "location /" block that proxies an API,
+' marked by the anchor line below. Only join, sync and code are reachable
+' from outside; the patch entry and the statistics stay on the machine.
+' Prints "added", "present" or "no anchor".
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM nl$ AS STRING = CHR$(10)
+DIM site$ AS STRING = REPLACE$(TXTREADER$(cli[1]), CHR$(13), "")
+DIM port$ AS STRING = cli[3]
+DIM anchor$ AS STRING = "    location /tower/api/ {"
+
+IF INSTR(site$, "location = /wunschwelt/api/sync") >= 0 THEN
+    PRINT "present"
+    END 0
+ENDIF
+IF INSTR(site$, anchor$) < 0 THEN
+    PRINT "no anchor"
+    END 1
+ENDIF
+
+FUNC Route$(name$ AS STRING, throttle AS BOOLEAN)
+    DIM r$ AS STRING = "    location = /wunschwelt/api/" + name$ + " {" + nl$
+    IF throttle THEN
+        r$ = r$ + "        limit_req zone=vvss_id burst=6 nodelay;" + nl$
+        r$ = r$ + "        limit_req_status 429;" + nl$
+    ENDIF
+    r$ = r$ + "        proxy_pass http://127.0.0.1:" + port$ + "/" + name$ + ";" + nl$
+    r$ = r$ + "        proxy_http_version 1.1;" + nl$
+    r$ = r$ + "        proxy_set_header Connection " + CHR$(34) + CHR$(34) + ";" + nl$
+    r$ = r$ + "        proxy_set_header Host $host;" + nl$
+    r$ = r$ + "        proxy_set_header X-Real-IP $remote_addr;" + nl$
+    r$ = r$ + "        proxy_read_timeout 15s;" + nl$
+    r$ = r$ + "        client_max_body_size 4k;" + nl$
+    r$ = r$ + "    }" + nl$ + nl$
+    RETURN r$
+ENDFUNC
+
+DIM block$ AS STRING = "    # Wunschwelt: the three calls a player's client makes" + nl$
+block$ = block$ + Route$("join", TRUE) + Route$("sync", FALSE) + Route$("code", FALSE)
+DIM at AS INTEGER = INSTR(site$, anchor$)
+TXTWRITER cli[2], LEFT$(site$, at) + block$ + MID$(site$, at, LEN(site$))
+PRINT "added"

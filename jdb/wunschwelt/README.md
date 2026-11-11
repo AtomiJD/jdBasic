@@ -57,7 +57,39 @@ build/jdBasic.exe jdb/wunschwelt/test_slice.jdb
 ```
 
 The server listens on 127.0.0.1 only. Without `WW_PATCH_KEY` it takes no
-patch over HTTP; without `WW_LLM_URL` an NPC answers a fixed line.
+patch over HTTP; without `WW_LLM_URL` an NPC answers a fixed line. In
+PowerShell set the two with `$env:WW_PATCH_KEY = "..."`.
+
+Limits of the kernel: 40 players, names of 1 to 16 letters, digits or `_`,
+four questions at the model at once, and 2.5 s between two questions of one
+player.
+
+## In the browser
+
+`client.jdb` is the same file in the window and in the browser. In the
+playground it reads `?name=` and the page's origin from `/url_params.json`
+and reaches the world under `<origin>/wunschwelt/api`. The browser runtime
+has `HTTP.GET$`, `HTTP.POST$` and `HTTP.STATUSCODE` only.
+
+Locally, with the world server running:
+
+```
+build/jdBasic.exe jdb/wunschwelt/tools/devsite.jdb
+```
+
+serves the page, the runtime from `wasm/` and the three API calls on
+`http://127.0.0.1:8180/wunschwelt/`, one origin as on the box.
+
+## On the box
+
+`deploy.sh` (needs `WW_HOST=user@address`) puts the game on the Hostinger
+box as a sub-path of the site that already carries the other two games:
+`--setup` once, then plain for a new version, `--page` for the page and the
+client alone, `--patch <file> <title>` for a patch into the running world.
+The unit `wunschwelt` runs as its own user without sudo and with a read-only
+file system; nginx hands on `join`, `sync` and `code` and nothing else, so a
+patch can only be sent from the box itself. `tools/nginx_route.jdb` writes
+those routes into the site file.
 
 ## Machines
 
@@ -72,9 +104,13 @@ patch over HTTP; without `WW_LLM_URL` an NPC answers a fixed line.
 
 Done and checked: the three spikes; the slice on one machine (server, window
 client, bots, Marta through the model on cortex, a patch in mid-run);
-`test_slice.jdb` with 19 checks.
+`test_slice.jdb` with 19 checks; the client in the browser against the local
+site (walking, talking to Marta through the model, the cat patch arriving
+in mid-run).
 
-Not done: the client in the browser, the server on the box behind nginx,
-phone (Twilio) and the wish board, the content lane of the local model,
+Not done: `deploy.sh` has not run, so nothing of the game is on the box yet.
+Typed text comes from key codes: no capitals from Shift in the browser, no
+umlauts, and punctuation of the US layout (the runtime has no text input
+event). Phone (Twilio) and the wish board, the content lane of the local model,
 canary bots on the farm, rollback, keeping the world across a server
 restart, rehearsals.

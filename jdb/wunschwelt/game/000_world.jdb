@@ -271,7 +271,9 @@ SUB ClientInit(c)
     c{"banner_until"} = 0
     ' a small font for a 640 x 384 view; the default one stays if the file is not there
     TRY
-        SETFONT PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf", 8
+        DIM font$ = "/jdbasic_default.ttf"
+        IF NOT FILE.EXISTS(font$) THEN font$ = PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf"
+        SETFONT font$, 8
     CATCH
     ENDTRY
     ClientMakeTiles(c)
@@ -301,6 +303,13 @@ SUB ClientInput(c)
             ENDIF
         ELSEIF code = 13 THEN
             c{"typing"} = TRUE
+        ELSE
+            ' a key tapped between two syncs still makes its one step
+            DIM tapped$ = UCASE$("" + keys[i]{"key"})
+            IF tapped$ = "LEFT" ORELSE tapped$ = "A" THEN c{"tap"} = [-1, 0]
+            IF tapped$ = "RIGHT" ORELSE tapped$ = "D" THEN c{"tap"} = [1, 0]
+            IF tapped$ = "UP" ORELSE tapped$ = "W" THEN c{"tap"} = [0, -1]
+            IF tapped$ = "DOWN" ORELSE tapped$ = "S" THEN c{"tap"} = [0, 1]
         ENDIF
     NEXT i
     c{"dx"} = 0
@@ -314,7 +323,10 @@ SUB ClientInput(c)
 ENDSUB
 
 SUB ClientSync(c)
-    DIM msg = {"token": c{"token"}, "dx": c{"dx"}, "dy": c{"dy"}, "since": c{"since"}, "mapv": c{"mapv"}}
+    DIM tap = c{"tap"} ?? [0, 0]
+    c{"tap"} = [0, 0]
+    IF c{"dx"} <> 0 ORELSE c{"dy"} <> 0 THEN tap = [c{"dx"}, c{"dy"}]
+    DIM msg = {"token": c{"token"}, "dx": tap[0], "dy": tap[1], "since": c{"since"}, "mapv": c{"mapv"}}
     IF c{"say"} <> "" THEN
         msg{"say"} = c{"say"}
         c{"say"} = ""

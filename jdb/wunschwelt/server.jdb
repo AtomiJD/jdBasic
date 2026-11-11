@@ -44,6 +44,10 @@ OPTION "EXPLICIT"
 
 DIM TICK_MS AS INTEGER = 50
 DIM MAX_EVENTS AS INTEGER = 200
+DIM MAX_PLAYERS AS INTEGER = 40
+' questions the model may hold at once, and the pause one player keeps between two
+DIM MAX_PENDING AS INTEGER = 4
+DIM ASK_PAUSE_MS AS INTEGER = 2500
 
 DIM cli = OS.ARGS()
 DIM port AS INTEGER = 8100
@@ -64,6 +68,8 @@ DIM W = {"players": {}, "tokens": {}, "npcs": {}, "map": {}, "events": [], "seq"
 DIM client_patches = []
 ' Questions on their way to the model: {"task", "npc", "player", "asked"}
 DIM pending = []
+' when each player last asked the model
+DIM last_ask = {}
 
 ' ---- services for rules ----
 
@@ -82,6 +88,8 @@ ENDSUB
 SUB KAskNpc(w, npc_id$ AS STRING, player$ AS STRING, text$ AS STRING)
     DIM npcs = w{"npcs"}
     IF NOT MAP.EXISTS(npcs, npc_id$) THEN RETURN
+    IF LEN(pending) >= MAX_PENDING ORELSE KNow() - (last_ask{player$} ?? -ASK_PAUSE_MS) < ASK_PAUSE_MS THEN RETURN
+    last_ask{player$} = KNow()
     DIM messages = RuleNpcPrompt(w, npcs{npc_id$}, player$, text$)
     IF llm_url$ = "" THEN
         RuleNpcReply(w, npc_id$, player$, "(" + npcs{npc_id$}{"name"} + " nickt dir freundlich zu.)")
@@ -146,15 +154,26 @@ FUNC BodyOf(request)
     RETURN parsed
 ENDFUNC
 
+' Forgets the tokens of one player, and those of players who left once the list grows long.
+SUB DropTokens(name$ AS STRING)
+    DIM tokens = W{"tokens"}
+    DIM sweep AS BOOLEAN = MAP.SIZE(tokens) > 4 * MAX_PLAYERS
+    FOR EACH held$ IN MAP.KEYS(tokens)
+        IF tokens{held$} = name$ ORELSE (sweep ANDALSO NOT MAP.EXISTS(W{"players"}, tokens{held$})) THEN MAP.DELETE(tokens, held$)
+    NEXT
+ENDSUB
+
 FUNC HANDLEJOIN(request)
     DIM b = BodyOf(request)
     W{"served"} = W{"served"} + 1
     DIM name$ AS STRING = TRIM$("" + (b{"name"} ?? ""))
-    IF name$ = "" ORELSE LEN(name$) > 16 THEN RETURN {"ok": FALSE, "error": "a name of 1 to 16 characters"}
+    IF NOT REGEX.MATCH("^[A-Za-z0-9_]{1,16}$", name$) THEN RETURN {"ok": FALSE, "error": "a name of 1 to 16 letters or digits"}
+    IF NOT MAP.EXISTS(W{"players"}, name$) ANDALSO MAP.SIZE(W{"players"}) >= MAX_PLAYERS THEN RETURN {"ok": FALSE, "error": "the village is full"}
     DIM answer = {"ok": FALSE}
     TRY
         DIM p = RuleJoin(W, name$)
         DIM token$ AS STRING = CODEC.UUID$()
+        DropTokens(name$)
         W{"tokens"}{token$} = name$
         answer = {"ok": TRUE, "token": token$, "version": W{"version"}}
     CATCH

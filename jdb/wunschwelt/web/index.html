@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wunschwelt</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+         background: #12161a; color: #e8e6df; font-family: Georgia, serif; }
+  main { width: min(30rem, 100% - 2rem); text-align: center; }
+  h1 { font-size: 2.6rem; margin: 0 0 .4rem; color: #fad66e; letter-spacing: .02em; }
+  p { line-height: 1.5; color: #b9c2b4; }
+  form { margin-top: 1.6rem; display: flex; gap: .5rem; }
+  input { flex: 1; min-width: 0; padding: .7rem .8rem; font: inherit; color: inherit;
+          background: #1c2228; border: 1px solid #3a4650; border-radius: 6px; }
+  button { padding: .7rem 1.1rem; font: inherit; font-weight: bold; cursor: pointer;
+           color: #281e0a; background: #fad66e; border: 0; border-radius: 6px; }
+  small { display: block; margin-top: 1rem; color: #7d8a7c; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Wunschwelt</h1>
+  <p>Ein kleines Dorf, das sich verändert, während du darin stehst.
+     Lauf herum, sprich mit Marta vor der Taverne und sag ihr, was dem Dorf fehlt.</p>
+  <form id="enter">
+    <input id="name" maxlength="16" pattern="[A-Za-z0-9_]{1,16}" placeholder="Dein Name" required autofocus>
+    <button>Ins Dorf</button>
+  </form>
+  <small>Buchstaben, Ziffern und _ · Pfeile oder WASD: laufen · Enter: sprechen</small>
+</main>
+<script>
+  const field = document.getElementById('name');
+  try { field.value = localStorage.getItem('ww_name') || ''; } catch (err) {}
+  document.getElementById('enter').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const name = field.value.trim();
+    try { localStorage.setItem('ww_name', name); } catch (err) {}
+    location.href = 'play/?prog=client&fs=1&name=' + encodeURIComponent(name);
+  });
+</script>
+</body>
+</html>
