@@ -9,8 +9,9 @@
 ' Arrow keys turn and move, Shift runs, Ctrl fires, Space uses, 1 to 7 pick
 ' a weapon, Alt with left or right steps sideways and so do comma and full
 ' stop. W, A, S and D move and step as well. Tab shows the map, Escape the
-' menu, F1 help, F5 detail, F8 messages, F10 quits, F11 gamma, minus and
-' equals change the view size, Pause pauses.
+' menu, F1 help, F2 saves, F3 loads, F4 sound volume, F5 detail, F6 quick
+' save, F7 ends the game, F8 messages, F9 quick load, F10 quits, F11 gamma,
+' minus and equals change the view size, Pause pauses.
 
 OPTION "EXPLICIT"
 OPTION "NOPAUSE"
@@ -61,6 +62,18 @@ FUNC DoomKey(key_name$ AS STRING, keycode AS INTEGER) AS INTEGER
             RETURN G_GAME.KEY_PAUSE
         CASE "F1"
             RETURN M_MENU.KEY_F1
+        CASE "F2"
+            RETURN M_MENU.KEY_F2
+        CASE "F3"
+            RETURN M_MENU.KEY_F3
+        CASE "F4"
+            RETURN M_MENU.KEY_F4
+        CASE "F6"
+            RETURN M_MENU.KEY_F6
+        CASE "F7"
+            RETURN M_MENU.KEY_F7
+        CASE "F9"
+            RETURN M_MENU.KEY_F9
         CASE "F5"
             RETURN M_MENU.KEY_F5
         CASE "F8"

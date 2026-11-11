@@ -1,0 +1,541 @@
+' Checks on the savegames: a game saved in the middle of a level, with
+' doors, floors, platforms, ceilings and lights at work and monsters
+' awake, comes back as it was; what the original does not save is gone;
+' the menu saves and loads, and so do the quick keys.
+'
+' Run from the repository root, interpreted or compiled with -c. No window
+' is opened. The savegames are written to tmp/doom_p9.
+
+OPTION "EXPLICIT"
+OPTION "NOPAUSE"
+
+IMPORT D_MAIN
+IMPORT DOOMDEF
+IMPORT DOOMSTAT
+IMPORT D_PLAYER
+IMPORT INFO
+IMPORT P_SETUP
+IMPORT P_TICK
+IMPORT P_MOBJ
+IMPORT P_SPEC
+IMPORT P_SWITCH
+IMPORT P_DOORS
+IMPORT P_PLATS
+IMPORT P_FLOOR
+IMPORT P_CEILNG
+IMPORT P_LIGHTS
+IMPORT R_MAIN
+IMPORT G_GAME
+IMPORT M_MENU
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Eq(label$ AS STRING, actual AS INTEGER, expected AS INTEGER)
+    IF actual = expected THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$ + ": expected " + STR$(expected) + ", got " + STR$(actual)
+    ENDIF
+ENDSUB
+
+SUB Yes(label$ AS STRING, condition AS INTEGER)
+    IF condition <> 0 THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+IF NOT FILE.EXISTS(D_MAIN.IdentifyVersion$()) THEN
+    PRINT "SKIP: " + D_MAIN.IdentifyVersion$() + " not found"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    END
+ENDIF
+
+' One tic of the main loop without the display.
+SUB Tics(n AS INTEGER)
+    DIM t AS INTEGER
+    FOR t = 1 TO n
+        D_MAIN.D_ProcessEvents()
+        G_GAME.G_BuildTiccmd()
+        M_MENU.M_Ticker()
+        G_GAME.G_Ticker()
+    NEXT t
+ENDSUB
+
+' A key goes down and up again.
+SUB Key(k AS INTEGER)
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, k, 0, 0)
+    Tics(1)
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYUP, k, 0, 0)
+    Tics(1)
+ENDSUB
+
+DIM hash AS INTEGER = 0
+
+SUB Mix(value AS INTEGER)
+    hash = ((hash * 33) BXOR (value BAND $FFFFFF) BXOR ((value SHR 24) BAND 255)) BAND $FFFFFFFFFFF
+ENDSUB
+
+' The things in the order of their thinkers.
+DIM n_things AS INTEGER = 0
+DIM n_targets AS INTEGER = 0
+FUNC ThingsHash() AS INTEGER
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DIM m AS INTEGER
+    hash = 0
+    n_things = 0
+    n_targets = 0
+    DO WHILE th <> 0
+        IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ THEN
+            m = CLNG(P_TICK.th_object[th])
+            n_things = n_things + 1
+            IF CLNG(P_MOBJ.mobj_target[m]) >= 0 OR CLNG(P_MOBJ.mobj_tracer[m]) >= 0 THEN n_targets = n_targets + 1
+            Mix(CLNG(P_MOBJ.mobj_type[m]))
+            Mix(CLNG(P_MOBJ.mobj_x[m]))
+            Mix(CLNG(P_MOBJ.mobj_y[m]))
+            Mix(CLNG(P_MOBJ.mobj_z[m]))
+            Mix(CLNG(P_MOBJ.mobj_angle[m]))
+            Mix(CLNG(P_MOBJ.mobj_sprite[m]))
+            Mix(CLNG(P_MOBJ.mobj_frame[m]))
+            Mix(CLNG(P_MOBJ.mobj_radius[m]))
+            Mix(CLNG(P_MOBJ.mobj_height[m]))
+            Mix(CLNG(P_MOBJ.mobj_momx[m]))
+            Mix(CLNG(P_MOBJ.mobj_momy[m]))
+            Mix(CLNG(P_MOBJ.mobj_momz[m]))
+            Mix(CLNG(P_MOBJ.mobj_tics[m]))
+            Mix(CLNG(P_MOBJ.mobj_state[m]))
+            Mix(CLNG(P_MOBJ.mobj_flags[m]))
+            Mix(CLNG(P_MOBJ.mobj_health[m]))
+            Mix(CLNG(P_MOBJ.mobj_movedir[m]))
+            Mix(CLNG(P_MOBJ.mobj_movecount[m]))
+            Mix(CLNG(P_MOBJ.mobj_reactiontime[m]))
+            Mix(CLNG(P_MOBJ.mobj_threshold[m]))
+            Mix(CLNG(P_MOBJ.mobj_player[m]))
+            Mix(CLNG(P_MOBJ.mobj_lastlook[m]))
+            Mix(CLNG(P_MOBJ.mobj_spawnpoint_x[m]))
+            Mix(CLNG(P_MOBJ.mobj_spawnpoint_type[m]))
+            Mix(CLNG(P_MOBJ.mobj_subsector[m]))
+        ENDIF
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+    RETURN hash
+ENDFUNC
+
+' Sectors, lines and sides, heights and offsets in whole units.
+FUNC WorldHash() AS INTEGER
+    DIM i AS INTEGER
+    hash = 0
+    FOR i = 0 TO P_SETUP.numsectors - 1
+        Mix(CLNG(P_SETUP.sector_floorheight[i]) SHR 16)
+        Mix(CLNG(P_SETUP.sector_ceilingheight[i]) SHR 16)
+        Mix(CLNG(P_SETUP.sector_floorpic[i]))
+        Mix(CLNG(P_SETUP.sector_ceilingpic[i]))
+        Mix(CLNG(P_SETUP.sector_lightlevel[i]))
+        Mix(CLNG(P_SETUP.sector_special[i]))
+        Mix(CLNG(P_SETUP.sector_tag[i]))
+    NEXT i
+    FOR i = 0 TO P_SETUP.numlines - 1
+        Mix(CLNG(P_SETUP.line_flags[i]))
+        Mix(CLNG(P_SETUP.line_special[i]))
+        Mix(CLNG(P_SETUP.line_tag[i]))
+    NEXT i
+    FOR i = 0 TO P_SETUP.numsides - 1
+        Mix(CLNG(P_SETUP.side_textureoffset[i]) SHR 16)
+        Mix(CLNG(P_SETUP.side_rowoffset[i]) SHR 16)
+        Mix(CLNG(P_SETUP.side_toptexture[i]))
+        Mix(CLNG(P_SETUP.side_bottomtexture[i]))
+        Mix(CLNG(P_SETUP.side_midtexture[i]))
+    NEXT i
+    RETURN hash
+ENDFUNC
+
+FUNC IsActiveCeiling(th AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO P_CEILNG.MAXCEILINGS - 1
+        IF CLNG(P_CEILNG.activeceilings[i]) = th THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+' The movers and lights a savegame keeps, in the order of their thinkers;
+' counted by kind, with the fire lights and the platforms in stasis apart.
+DIM n_kind[10] AS INTEGER
+DIM n_stasis_ceilings AS INTEGER = 0
+DIM n_stasis_plats AS INTEGER = 0
+DIM n_bad_links AS INTEGER = 0
+FUNC MoversHash() AS INTEGER
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DIM callee AS INTEGER
+    DIM kind AS INTEGER
+    hash = 0
+    FILLV n_kind, 0
+    n_stasis_ceilings = 0
+    n_stasis_plats = 0
+    n_bad_links = 0
+    DO WHILE th <> 0
+        callee = CLNG(P_TICK.th_function[th])
+        kind = CLNG(P_TICK.th_kind[th])
+        IF callee > P_TICK.TF_MOBJ THEN n_kind[callee] = CLNG(n_kind[callee]) + 1
+        IF callee = P_TICK.TF_NONE AND kind = P_TICK.TF_PLAT THEN n_stasis_plats = n_stasis_plats + 1
+        IF callee = P_TICK.TF_CEILING OR (callee = P_TICK.TF_NONE AND IsActiveCeiling(th) <> 0) THEN
+            IF callee = P_TICK.TF_NONE THEN n_stasis_ceilings = n_stasis_ceilings + 1
+            Mix(100 + callee)
+            Mix(CLNG(P_CEILNG.ceiling_type[th]))
+            Mix(CLNG(P_CEILNG.ceiling_sector[th]))
+            Mix(CLNG(P_CEILNG.ceiling_bottomheight[th]))
+            Mix(CLNG(P_CEILNG.ceiling_topheight[th]))
+            Mix(CLNG(P_CEILNG.ceiling_speed[th]))
+            Mix(CLNG(P_CEILNG.ceiling_crush[th]))
+            Mix(CLNG(P_CEILNG.ceiling_direction[th]))
+            Mix(CLNG(P_CEILNG.ceiling_tag[th]))
+            Mix(CLNG(P_CEILNG.ceiling_olddirection[th]))
+            IF CLNG(P_SETUP.sector_specialdata[CLNG(P_CEILNG.ceiling_sector[th])]) < 0 THEN n_bad_links = n_bad_links + 1
+        ELSEIF callee = P_TICK.TF_DOOR THEN
+            Mix(200)
+            Mix(CLNG(P_DOORS.door_type[th]))
+            Mix(CLNG(P_DOORS.door_sector[th]))
+            Mix(CLNG(P_DOORS.door_topheight[th]))
+            Mix(CLNG(P_DOORS.door_speed[th]))
+            Mix(CLNG(P_DOORS.door_direction[th]))
+            Mix(CLNG(P_DOORS.door_topwait[th]))
+            Mix(CLNG(P_DOORS.door_topcountdown[th]))
+            IF CLNG(P_SETUP.sector_specialdata[CLNG(P_DOORS.door_sector[th])]) < 0 THEN n_bad_links = n_bad_links + 1
+        ELSEIF callee = P_TICK.TF_FLOOR THEN
+            Mix(300)
+            Mix(CLNG(P_FLOOR.floor_type[th]))
+            Mix(CLNG(P_FLOOR.floor_crush[th]))
+            Mix(CLNG(P_FLOOR.floor_sector[th]))
+            Mix(CLNG(P_FLOOR.floor_direction[th]))
+            Mix(CLNG(P_FLOOR.floor_newspecial[th]))
+            Mix(CLNG(P_FLOOR.floor_texture[th]))
+            Mix(CLNG(P_FLOOR.floor_floordestheight[th]))
+            Mix(CLNG(P_FLOOR.floor_speed[th]))
+            IF CLNG(P_SETUP.sector_specialdata[CLNG(P_FLOOR.floor_sector[th])]) < 0 THEN n_bad_links = n_bad_links + 1
+        ELSEIF callee = P_TICK.TF_PLAT THEN
+            Mix(400)
+            Mix(CLNG(P_PLATS.plat_sector[th]))
+            Mix(CLNG(P_PLATS.plat_speed[th]))
+            Mix(CLNG(P_PLATS.plat_low[th]))
+            Mix(CLNG(P_PLATS.plat_high[th]))
+            Mix(CLNG(P_PLATS.plat_wait[th]))
+            Mix(CLNG(P_PLATS.plat_count[th]))
+            Mix(CLNG(P_PLATS.plat_status[th]))
+            Mix(CLNG(P_PLATS.plat_oldstatus[th]))
+            Mix(CLNG(P_PLATS.plat_crush[th]))
+            Mix(CLNG(P_PLATS.plat_tag[th]))
+            Mix(CLNG(P_PLATS.plat_type[th]))
+            IF CLNG(P_SETUP.sector_specialdata[CLNG(P_PLATS.plat_sector[th])]) < 0 THEN n_bad_links = n_bad_links + 1
+        ELSEIF callee = P_TICK.TF_LIGHTFLASH OR callee = P_TICK.TF_STROBE OR callee = P_TICK.TF_GLOW THEN
+            Mix(500 + callee)
+            Mix(CLNG(P_LIGHTS.light_sector[th]))
+            Mix(CLNG(P_LIGHTS.light_minlight[th]))
+            Mix(CLNG(P_LIGHTS.light_maxlight[th]))
+            IF callee <> P_TICK.TF_GLOW THEN
+                Mix(CLNG(P_LIGHTS.light_count[th]))
+                Mix(CLNG(P_LIGHTS.light_maxtime[th]))
+                Mix(CLNG(P_LIGHTS.light_mintime[th]))
+            ELSE
+                Mix(CLNG(P_LIGHTS.light_direction[th]))
+            ENDIF
+        ENDIF
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+    RETURN hash
+ENDFUNC
+
+' What a player has and is doing; not the command of the tic.
+FUNC PlayerHash() AS INTEGER
+    DIM j AS INTEGER
+    hash = 0
+    Mix(CLNG(D_PLAYER.player_playerstate[0]))
+    Mix(CLNG(D_PLAYER.player_viewz[0]))
+    Mix(CLNG(D_PLAYER.player_viewheight[0]))
+    Mix(CLNG(D_PLAYER.player_deltaviewheight[0]))
+    Mix(CLNG(D_PLAYER.player_bob[0]))
+    Mix(CLNG(D_PLAYER.player_health[0]))
+    Mix(CLNG(D_PLAYER.player_armorpoints[0]))
+    Mix(CLNG(D_PLAYER.player_armortype[0]))
+    FOR j = 0 TO 5
+        Mix(CLNG(D_PLAYER.player_powers[j]))
+        Mix(CLNG(D_PLAYER.player_cards[j]))
+    NEXT j
+    Mix(CLNG(D_PLAYER.player_backpack[0]))
+    Mix(CLNG(D_PLAYER.player_readyweapon[0]))
+    Mix(CLNG(D_PLAYER.player_pendingweapon[0]))
+    FOR j = 0 TO 8
+        Mix(CLNG(D_PLAYER.player_weaponowned[j]))
+    NEXT j
+    FOR j = 0 TO 3
+        Mix(CLNG(D_PLAYER.player_ammo[j]))
+        Mix(CLNG(D_PLAYER.player_maxammo[j]))
+    NEXT j
+    Mix(CLNG(D_PLAYER.player_attackdown[0]))
+    Mix(CLNG(D_PLAYER.player_usedown[0]))
+    Mix(CLNG(D_PLAYER.player_cheats[0]))
+    Mix(CLNG(D_PLAYER.player_refire[0]))
+    Mix(CLNG(D_PLAYER.player_killcount[0]))
+    Mix(CLNG(D_PLAYER.player_itemcount[0]))
+    Mix(CLNG(D_PLAYER.player_secretcount[0]))
+    Mix(CLNG(D_PLAYER.player_damagecount[0]))
+    Mix(CLNG(D_PLAYER.player_bonuscount[0]))
+    Mix(CLNG(D_PLAYER.player_extralight[0]))
+    Mix(CLNG(D_PLAYER.player_fixedcolormap[0]))
+    FOR j = 0 TO 1
+        Mix(CLNG(D_PLAYER.player_psprite_state[j]))
+        Mix(CLNG(D_PLAYER.player_psprite_tics[j]))
+        Mix(CLNG(D_PLAYER.player_psprite_sx[j]))
+        Mix(CLNG(D_PLAYER.player_psprite_sy[j]))
+    NEXT j
+    Mix(CLNG(D_PLAYER.player_didsecret[0]))
+    RETURN hash
+ENDFUNC
+
+' Things that hang in the lists of the sectors.
+FUNC LinkedThings() AS INTEGER
+    DIM s AS INTEGER
+    DIM m AS INTEGER
+    DIM n AS INTEGER = 0
+    FOR s = 0 TO P_SETUP.numsectors - 1
+        m = CLNG(P_SETUP.sector_thinglist[s])
+        DO WHILE m >= 0 AND n < 100000
+            n = n + 1
+            m = CLNG(P_MOBJ.mobj_snext[m])
+        LOOP
+    NEXT s
+    RETURN n
+ENDFUNC
+
+' Things that belong into those lists.
+FUNC SectorThings() AS INTEGER
+    DIM th AS INTEGER = CLNG(P_TICK.th_next[0])
+    DIM n AS INTEGER = 0
+    DO WHILE th <> 0
+        IF CLNG(P_TICK.th_function[th]) = P_TICK.TF_MOBJ ANDALSO (CLNG(P_MOBJ.mobj_flags[CLNG(P_TICK.th_object[th])]) BAND INFO.MF_NOSECTOR) = 0 THEN n = n + 1
+        th = CLNG(P_TICK.th_next[th])
+    LOOP
+    RETURN n
+ENDFUNC
+
+D_MAIN.D_DoomMain()
+R_MAIN.R_ExecuteSetViewSize()
+MKDIR "tmp/doom_p9"
+G_GAME.savedir$ = "tmp/doom_p9/"
+DIM slot AS INTEGER
+FOR slot = 0 TO 5
+    IF FILE.EXISTS(G_GAME.G_SaveGameName$(slot)) THEN KILL G_GAME.G_SaveGameName$(slot)
+NEXT slot
+
+' Totals over the levels: what was at work when the games were saved.
+DIM at_work[10] AS INTEGER
+DIM seen_stasis_ceilings AS INTEGER = 0
+DIM seen_stasis_plats AS INTEGER = 0
+DIM seen_targets AS INTEGER = 0
+
+' Starts the level, sets off every special line but the exits, fights for
+' a while, saves, plays on, loads, and compares.
+SUB RoundTrip(episode AS INTEGER, map_num AS INTEGER)
+    DIM label$ AS STRING = "E" + STR$(episode) + "M" + STR$(map_num) + ": "
+    DIM ld AS INTEGER
+    DIM k AS INTEGER
+    DIM mo AS INTEGER
+
+    G_GAME.G_DeferedInitNew(DOOMDEF.SK_MEDIUM, episode, map_num)
+    Tics(10)
+    mo = CLNG(D_PLAYER.player_mo[0])
+    FOR k = 0 TO 5
+        D_PLAYER.player_cards[k] = 1
+    NEXT k
+    FOR ld = 0 TO P_SETUP.numlines - 1
+        IF CLNG(P_SETUP.line_special[ld]) <> 0 THEN
+            P_SWITCH.P_UseSpecialLine(mo, ld, 0)
+            P_SPEC.P_CrossSpecialLine(ld, 0, mo)
+            P_SPEC.P_ShootSpecialLine(mo, ld)
+            IF G_GAME.gameaction = G_GAME.GA_COMPLETED THEN G_GAME.gameaction = G_GAME.GA_NOTHING
+        ENDIF
+    NEXT ld
+    ' The player fires and walks; the noise wakes the monsters.
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, G_GAME.KEY_RCTRL, 0, 0)
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, G_GAME.KEY_UPARROW, 0, 0)
+    Tics(45)
+
+    ' The world stands still while the game is saved.
+    DOOMSTAT.paused = 1
+    G_GAME.G_SaveGame(0, "P9 " + label$)
+    Tics(2)
+    Yes(label$ + "the file is there", FILE.EXISTS(G_GAME.G_SaveGameName$(0)))
+    Eq(label$ + "the save is done", G_GAME.gameaction, G_GAME.GA_NOTHING)
+    DIM things_then AS INTEGER = ThingsHash()
+    DIM n_things_then AS INTEGER = n_things
+    DIM n_targets_then AS INTEGER = n_targets
+    DIM world_then AS INTEGER = WorldHash()
+    DIM movers_then AS INTEGER = MoversHash()
+    DIM player_then AS INTEGER = PlayerHash()
+    DIM time_then AS INTEGER = P_TICK.leveltime
+    DIM fire_then AS INTEGER = CLNG(n_kind[P_TICK.TF_FIREFLICKER])
+    DIM stasis_plats_then AS INTEGER = n_stasis_plats
+    FOR k = 2 TO 9
+        at_work[k] = CLNG(at_work[k]) + CLNG(n_kind[k])
+    NEXT k
+    seen_stasis_ceilings = seen_stasis_ceilings + n_stasis_ceilings
+    seen_stasis_plats = seen_stasis_plats + n_stasis_plats
+    seen_targets = seen_targets + n_targets
+
+    ' Play on: the world is another one.
+    DOOMSTAT.paused = 0
+    Tics(120)
+    Yes(label$ + "the things moved on", ThingsHash() <> things_then)
+    Yes(label$ + "the time moved on", P_TICK.leveltime <> time_then)
+
+    ' The menu holds the world still in the tic that loads the game.
+    DOOMSTAT.menuactive = 1
+    G_GAME.G_LoadGame(G_GAME.G_SaveGameName$(0))
+    Tics(1)
+    DOOMSTAT.menuactive = 0
+    Eq(label$ + "episode", DOOMSTAT.gameepisode, episode)
+    Eq(label$ + "map", DOOMSTAT.gamemap, map_num)
+    Eq(label$ + "level time", P_TICK.leveltime, time_then)
+    Eq(label$ + "things", ThingsHash(), things_then)
+    Eq(label$ + "number of things", n_things, n_things_then)
+    Eq(label$ + "nobody is after anybody", n_targets, 0)
+    Eq(label$ + "world", WorldHash(), world_then)
+    Eq(label$ + "movers and lights", MoversHash(), movers_then)
+    Eq(label$ + "the sectors of the movers know of them", n_bad_links, 0)
+    Eq(label$ + "no fire light comes back", CLNG(n_kind[P_TICK.TF_FIREFLICKER]), 0)
+    Eq(label$ + "no platform in stasis comes back", n_stasis_plats, 0)
+    Eq(label$ + "player", PlayerHash(), player_then)
+    mo = CLNG(D_PLAYER.player_mo[0])
+    Yes(label$ + "the player has a body", mo >= 0)
+    IF mo >= 0 THEN Eq(label$ + "the body is the player's", CLNG(P_MOBJ.mobj_player[mo]), 0)
+    Eq(label$ + "things in the sector lists", LinkedThings(), SectorThings())
+
+    ' The game goes on from there.
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, G_GAME.KEY_RCTRL, 0, 0)
+    D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, G_GAME.KEY_UPARROW, 0, 0)
+    Tics(200)
+    Eq(label$ + "the time runs on", P_TICK.leveltime, time_then + 200)
+    Eq(label$ + "things in the sector lists later", LinkedThings(), SectorThings())
+    PRINT label$ + STR$(n_things_then) + " things, " + STR$(n_targets_then) + " with a target, " + STR$(fire_then) + " fire lights, " + STR$(stasis_plats_then) + " platforms in stasis"
+ENDSUB
+
+RoundTrip(1, 3)
+RoundTrip(2, 4)
+RoundTrip(3, 6)
+RoundTrip(4, 2)
+
+Yes("doors were saved", CLNG(at_work[P_TICK.TF_DOOR]) > 0)
+Yes("platforms were saved", CLNG(at_work[P_TICK.TF_PLAT]) > 0)
+Yes("floors were saved", CLNG(at_work[P_TICK.TF_FLOOR]) > 0)
+Yes("ceilings were saved", CLNG(at_work[P_TICK.TF_CEILING]) > 0)
+Yes("flashing lights were saved", CLNG(at_work[P_TICK.TF_LIGHTFLASH]) > 0)
+Yes("strobe lights were saved", CLNG(at_work[P_TICK.TF_STROBE]) > 0)
+Yes("glowing lights were saved", CLNG(at_work[P_TICK.TF_GLOW]) > 0)
+Yes("there were fire lights to lose", CLNG(at_work[P_TICK.TF_FIREFLICKER]) > 0)
+Yes("there were targets to lose", seen_targets > 0)
+PRINT "at work when saved: " + STR$(CLNG(at_work[2])) + " doors, " + STR$(CLNG(at_work[3])) + " platforms, " + STR$(CLNG(at_work[4])) + " floors, " + STR$(CLNG(at_work[5])) + " ceilings, " + STR$(seen_stasis_ceilings) + " ceilings in stasis, " + STR$(seen_stasis_plats) + " platforms in stasis"
+
+' ---- the menu -------------------------------------------------------------------
+
+G_GAME.G_DeferedInitNew(DOOMDEF.SK_MEDIUM, 1, 1)
+Tics(30)
+DIM time_saved AS INTEGER = P_TICK.leveltime
+
+' Escape, s for Save Game, Enter, down to the second slot, Enter, the
+' description, Enter.
+Key(G_GAME.KEY_ESCAPE)
+Key(115)
+Key(G_GAME.KEY_ENTER)
+Key(G_GAME.KEY_DOWNARROW)
+Key(G_GAME.KEY_ENTER)
+Key(97)
+Key(98)
+Key(120)
+Key(M_MENU.KEY_BACKSPACE)
+Key(49)
+Key(G_GAME.KEY_ENTER)
+Tics(2)
+Eq("menu save: the menu is closed", DOOMSTAT.menuactive, 0)
+Yes("menu save: the file is there", FILE.EXISTS(G_GAME.G_SaveGameName$(1)))
+Yes("menu save: its description", G_GAME.G_SaveGameDescription$(G_GAME.G_SaveGameName$(1)) = "AB1")
+' The world stood still in the menu; the tic that closed it ran, the next
+' one saved, and three more followed.
+Eq("menu save: the time", P_TICK.leveltime, time_saved + 4)
+time_saved = time_saved + 1
+
+Tics(60)
+' Escape, l for Load Game, Enter; the first slot is taken as well, down
+' to the second, Enter.
+Key(G_GAME.KEY_ESCAPE)
+Key(108)
+Key(G_GAME.KEY_ENTER)
+Key(G_GAME.KEY_DOWNARROW)
+Key(G_GAME.KEY_ENTER)
+Eq("menu load: the menu is closed", DOOMSTAT.menuactive, 0)
+Eq("menu load: the map", DOOMSTAT.gamemap, 1)
+Eq("menu load: the time is that of the save and two tics", P_TICK.leveltime, time_saved + 2)
+
+' An empty slot cannot be loaded.
+DIM time_now AS INTEGER = P_TICK.leveltime
+Key(G_GAME.KEY_ESCAPE)
+Key(108)
+Key(G_GAME.KEY_ENTER)
+Key(54)
+Key(G_GAME.KEY_ENTER)
+Eq("empty slot: the menu stays", DOOMSTAT.menuactive, 1)
+Key(G_GAME.KEY_ESCAPE)
+Eq("empty slot: the game goes on", P_TICK.leveltime, time_now + 2)
+
+' F6 asks for a slot the first time, and to be confirmed from then on.
+' The save menu opens on the slot that was used last, the second.
+Key(M_MENU.KEY_F9)
+Eq("quick load without a slot: a message", DOOMSTAT.menuactive, 1)
+Key(32)
+Key(M_MENU.KEY_F6)
+Key(G_GAME.KEY_DOWNARROW)
+Key(G_GAME.KEY_DOWNARROW)
+Key(G_GAME.KEY_ENTER)
+Key(113)
+Key(G_GAME.KEY_ENTER)
+Tics(2)
+Yes("quick save: the file is there", FILE.EXISTS(G_GAME.G_SaveGameName$(3)))
+Yes("quick save: its description", G_GAME.G_SaveGameDescription$(G_GAME.G_SaveGameName$(3)) = "Q")
+KILL G_GAME.G_SaveGameName$(3)
+Tics(40)
+time_saved = P_TICK.leveltime
+Key(M_MENU.KEY_F6)
+Eq("quick save again: a question", DOOMSTAT.menuactive, 1)
+Key(121)
+Tics(2)
+Yes("quick save again: the file is there", FILE.EXISTS(G_GAME.G_SaveGameName$(3)))
+Tics(80)
+Key(M_MENU.KEY_F9)
+Key(121)
+Tics(1)
+' The tic that answered the question ran, the next one saved; the tic
+' that loaded ran and two more.
+Eq("quick load: the time is that of the save and three tics", P_TICK.leveltime, time_saved + 4)
+
+' A file of another version is left alone.
+BINWRITER G_GAME.G_SaveGameName$(5), PACK$("<24a16a", "OTHER", "version 109") + PACK$("<64x")
+time_now = P_TICK.leveltime
+G_GAME.G_LoadGame(G_GAME.G_SaveGameName$(5))
+Tics(1)
+Eq("other version: nothing is loaded", P_TICK.leveltime, time_now + 1)
+Eq("other version: the action is over", G_GAME.gameaction, G_GAME.GA_NOTHING)
+
+' No game is saved from a demo.
+G_GAME.G_DeferedPlayDemo("DEMO1")
+Tics(5)
+Key(G_GAME.KEY_ESCAPE)
+Key(115)
+Key(G_GAME.KEY_ENTER)
+Key(32)
+Eq("demo: no save menu", DOOMSTAT.usergame, 0)
+
+PRINT ""
+PRINT "DOOM P9 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

@@ -1,6 +1,5 @@
 ' The menus: new game, options, the sound volumes, the help pages,
-' quitting, and the function keys (m_menu.c). Loading and saving a game
-' are listed but not ported.
+' loading and saving a game, quitting, and the function keys (m_menu.c).
 
 EXPORT MODULE M_MENU
 
@@ -25,8 +24,14 @@ CONST LINEHEIGHT = 16
 
 ' Key codes of the function keys (doomdef.h).
 EXPORT CONST KEY_F1 = $BB
+EXPORT CONST KEY_F2 = $BC
+EXPORT CONST KEY_F3 = $BD
+EXPORT CONST KEY_F4 = $BE
 EXPORT CONST KEY_F5 = $BF
+EXPORT CONST KEY_F6 = $C0
+EXPORT CONST KEY_F7 = $C1
 EXPORT CONST KEY_F8 = $C2
+EXPORT CONST KEY_F9 = $C3
 EXPORT CONST KEY_F10 = $C4
 EXPORT CONST KEY_F11 = $D7
 EXPORT CONST KEY_BACKSPACE = 127
@@ -41,27 +46,43 @@ CONST MENU_OPTIONS = 3
 CONST MENU_READ1 = 4
 CONST MENU_READ2 = 5
 CONST MENU_SOUND = 6
+CONST MENU_LOAD = 7
+CONST MENU_SAVE = 8
 
 ' For each menu: the menu before it, where it is drawn, its first item
 ' and the number of its items.
-DIM menu_prev AS ARRAY = [-1, 0, 1, 0, 0, 4, 3]
-DIM menu_x AS ARRAY = [97, 48, 48, 60, 280, 330, 80]
-DIM menu_y AS ARRAY = [64, 63, 63, 37, 185, 175, 64]
-DIM menu_first AS ARRAY = [0, 6, 10, 15, 23, 24, 25]
-DIM menu_count AS ARRAY = [6, 4, 5, 8, 1, 1, 4]
-DIM menu_laston AS ARRAY = [0, 0, 2, 0, 0, 0, 0]
+DIM menu_prev AS ARRAY = [-1, 0, 1, 0, 0, 4, 3, 0, 0]
+DIM menu_x AS ARRAY = [97, 48, 48, 60, 280, 330, 80, 80, 80]
+DIM menu_y AS ARRAY = [64, 63, 63, 37, 185, 175, 64, 54, 54]
+DIM menu_first AS ARRAY = [0, 6, 10, 15, 23, 24, 25, 29, 35]
+DIM menu_count AS ARRAY = [6, 4, 5, 8, 1, 1, 4, 6, 6]
+DIM menu_laston AS ARRAY = [0, 0, 2, 0, 0, 0, 0, 0, 0]
 
-' The items: 1 a choice, 2 a slider moved with the arrow keys, -1 a gap;
-' the patch with its name; the key that jumps to it.
-DIM item_status AS ARRAY = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, -1, 2, -1, 1, 1, 1, 2, -1, 2, -1]
-DIM item_name$ AS ARRAY = ["M_NGAME", "M_OPTION", "M_LOADG", "M_SAVEG", "M_RDTHIS", "M_QUITG", "M_EPI1", "M_EPI2", "M_EPI3", "M_EPI4", "M_JKILL", "M_ROUGH", "M_HURT", "M_ULTRA", "M_NMARE", "M_ENDGAM", "M_MESSG", "M_DETAIL", "M_SCRNSZ", "", "M_MSENS", "", "M_SVOL", "", "", "M_SFXVOL", "", "M_MUSVOL", ""]
-DIM item_key$ AS ARRAY = ["n", "o", "l", "s", "r", "q", "k", "t", "i", "t", "i", "h", "h", "u", "n", "e", "m", "g", "s", "", "m", "", "s", "", "", "s", "", "m", ""]
+' The items: 1 a choice, 2 a slider moved with the arrow keys, -1 a gap,
+' 0 a choice that cannot be made; the patch with its name; the key that
+' jumps to it.
+DIM item_status AS ARRAY = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, -1, 2, -1, 1, 1, 1, 2, -1, 2, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+DIM item_name$ AS ARRAY = ["M_NGAME", "M_OPTION", "M_LOADG", "M_SAVEG", "M_RDTHIS", "M_QUITG", "M_EPI1", "M_EPI2", "M_EPI3", "M_EPI4", "M_JKILL", "M_ROUGH", "M_HURT", "M_ULTRA", "M_NMARE", "M_ENDGAM", "M_MESSG", "M_DETAIL", "M_SCRNSZ", "", "M_MSENS", "", "M_SVOL", "", "", "M_SFXVOL", "", "M_MUSVOL", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+DIM item_key$ AS ARRAY = ["n", "o", "l", "s", "r", "q", "k", "t", "i", "t", "i", "h", "h", "u", "n", "e", "m", "g", "s", "", "m", "", "s", "", "", "s", "", "m", "", "1", "2", "3", "4", "5", "6", "1", "2", "3", "4", "5", "6"]
 
 ' What a message asks to be done when it is answered with y.
 CONST ANSWER_NONE = 0
 CONST ANSWER_NIGHTMARE = 1
 CONST ANSWER_ENDGAME = 2
 CONST ANSWER_QUIT = 3
+CONST ANSWER_QUICKSAVE = 4
+CONST ANSWER_QUICKLOAD = 5
+
+' The descriptions of the six savegames.
+CONST SAVESTRINGSIZE = 24
+CONST EMPTYSTRING$ = "empty slot"
+DIM savegamestrings$[6] AS STRING
+' A description is being typed: for which slot, and what it was before.
+DIM saveStringEnter AS INTEGER = 0
+DIM saveSlot AS INTEGER = 0
+DIM saveOldString$ AS STRING = ""
+' -1 = no quicksave slot picked, -2 = the next save picks it.
+DIM quickSaveSlot AS INTEGER = -1
 
 ' The game was asked to end.
 EXPORT DIM quit_requested AS INTEGER = 0
@@ -204,6 +225,95 @@ SUB M_QuitDOOM()
     M_StartMessage("are you sure you want to" + CHR$(10) + "quit this great game?" + CHR$(10) + CHR$(10) + "(press y to quit)", ANSWER_QUIT, 1)
 ENDSUB
 
+' ---- loading and saving ---------------------------------------------------------
+
+' Read the strings from the savegame files.
+SUB M_ReadSaveStrings()
+    DIM i AS INTEGER
+    DIM first AS INTEGER = CLNG(menu_first[MENU_LOAD])
+    FOR i = 0 TO 5
+        IF FILE.EXISTS(G_GAME.G_SaveGameName$(i)) THEN
+            savegamestrings$[i] = G_GAME.G_SaveGameDescription$(G_GAME.G_SaveGameName$(i))
+            item_status[first + i] = 1
+        ELSE
+            savegamestrings$[i] = EMPTYSTRING$
+            item_status[first + i] = 0
+        ENDIF
+    NEXT i
+ENDSUB
+
+' User wants to load this game.
+SUB M_LoadSelect(choice AS INTEGER)
+    G_GAME.G_LoadGame(G_GAME.G_SaveGameName$(choice))
+    M_ClearMenus()
+ENDSUB
+
+' Selected from the main menu.
+SUB M_LoadGame()
+    IF DOOMSTAT.netgame <> 0 THEN
+        M_StartMessage("you can't do load while in a net game!" + CHR$(10) + CHR$(10) + "press a key.", ANSWER_NONE, 0)
+        RETURN
+    ENDIF
+    M_SetupNextMenu(MENU_LOAD)
+    M_ReadSaveStrings()
+ENDSUB
+
+' The description is complete: the game is saved.
+SUB M_DoSave(slot AS INTEGER)
+    G_GAME.G_SaveGame(slot, savegamestrings$[slot])
+    M_ClearMenus()
+    ' Pick quicksave slot yet?
+    IF quickSaveSlot = -2 THEN quickSaveSlot = slot
+ENDSUB
+
+' User wants to save: the keys go to the description from now on.
+SUB M_SaveSelect(choice AS INTEGER)
+    saveStringEnter = 1
+    saveSlot = choice
+    saveOldString$ = savegamestrings$[choice]
+    IF savegamestrings$[choice] = EMPTYSTRING$ THEN savegamestrings$[choice] = ""
+ENDSUB
+
+' Selected from the main menu.
+SUB M_SaveGame()
+    IF DOOMSTAT.usergame = 0 THEN
+        M_StartMessage("you can't save if you aren't playing!" + CHR$(10) + CHR$(10) + "press a key.", ANSWER_NONE, 0)
+        RETURN
+    ENDIF
+    IF DOOMSTAT.gamestate <> DOOMSTAT.GS_LEVEL THEN RETURN
+    M_SetupNextMenu(MENU_SAVE)
+    M_ReadSaveStrings()
+ENDSUB
+
+SUB M_QuickSave()
+    IF DOOMSTAT.usergame = 0 THEN
+        S_SOUND.S_StartSound(-1, INFO.SFX_OOF)
+        RETURN
+    ENDIF
+    IF DOOMSTAT.gamestate <> DOOMSTAT.GS_LEVEL THEN RETURN
+    IF quickSaveSlot < 0 THEN
+        M_StartControlPanel()
+        M_ReadSaveStrings()
+        M_SetupNextMenu(MENU_SAVE)
+        ' Means to pick a slot now.
+        quickSaveSlot = -2
+        RETURN
+    ENDIF
+    M_StartMessage("quicksave over your game named" + CHR$(10) + CHR$(10) + "'" + savegamestrings$[quickSaveSlot] + "'?" + CHR$(10) + CHR$(10) + "press y or n.", ANSWER_QUICKSAVE, 1)
+ENDSUB
+
+SUB M_QuickLoad()
+    IF DOOMSTAT.netgame <> 0 THEN
+        M_StartMessage("you can't quickload during a netgame!" + CHR$(10) + CHR$(10) + "press a key.", ANSWER_NONE, 0)
+        RETURN
+    ENDIF
+    IF quickSaveSlot < 0 THEN
+        M_StartMessage("you haven't picked a quicksave slot yet!" + CHR$(10) + CHR$(10) + "press a key.", ANSWER_NONE, 0)
+        RETURN
+    ENDIF
+    M_StartMessage("do you want to quickload the game named" + CHR$(10) + CHR$(10) + "'" + savegamestrings$[quickSaveSlot] + "'?" + CHR$(10) + CHR$(10) + "press y or n.", ANSWER_QUICKLOAD, 1)
+ENDSUB
+
 ' The item of the current menu was chosen, or its slider moved (0 down,
 ' 1 up).
 SUB M_Choose(choice AS INTEGER)
@@ -214,8 +324,10 @@ SUB M_Choose(choice AS INTEGER)
             IF DOOMSTAT.commercial <> 0 THEN M_SetupNextMenu(MENU_NEWGAME) ELSE M_SetupNextMenu(MENU_EPISODE)
         ELSEIF itemOn = 1 THEN
             M_SetupNextMenu(MENU_OPTIONS)
-        ELSEIF itemOn = 2 OR itemOn = 3 THEN
-            M_StartMessage("loading and saving a game" + CHR$(10) + "are not ported yet." + CHR$(10) + CHR$(10) + "press a key.", ANSWER_NONE, 0)
+        ELSEIF itemOn = 2 THEN
+            M_LoadGame()
+        ELSEIF itemOn = 3 THEN
+            M_SaveGame()
         ELSEIF itemOn = 4 THEN
             M_SetupNextMenu(MENU_READ1)
         ELSE
@@ -255,6 +367,10 @@ SUB M_Choose(choice AS INTEGER)
         M_SetupNextMenu(MENU_READ2)
     ELSEIF currentMenu = MENU_READ2 THEN
         M_SetupNextMenu(MENU_MAIN)
+    ELSEIF currentMenu = MENU_LOAD THEN
+        M_LoadSelect(itemOn)
+    ELSEIF currentMenu = MENU_SAVE THEN
+        M_SaveSelect(itemOn)
     ELSEIF currentMenu = MENU_SOUND THEN
         IF itemOn = 0 THEN
             IF choice = 0 AND S_SOUND.snd_SfxVolume > 0 THEN S_SOUND.S_SetSfxVolume(S_SOUND.snd_SfxVolume - 1)
@@ -277,6 +393,12 @@ SUB M_Answer(answer AS INTEGER)
         D_MAIN.D_StartTitle()
     ELSEIF answer = ANSWER_QUIT THEN
         quit_requested = 1
+    ELSEIF answer = ANSWER_QUICKSAVE THEN
+        M_DoSave(quickSaveSlot)
+        S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHX)
+    ELSEIF answer = ANSWER_QUICKLOAD THEN
+        M_LoadSelect(quickSaveSlot)
+        S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHX)
     ENDIF
 ENDSUB
 
@@ -306,6 +428,24 @@ EXPORT FUNC M_Responder(ev_type AS INTEGER, key AS INTEGER) AS INTEGER
     DIM n_items AS INTEGER
     DIM i AS INTEGER
     DIM status AS INTEGER
+
+    ' Save Game string input.
+    IF saveStringEnter <> 0 THEN
+        IF ch = KEY_BACKSPACE THEN
+            IF LEN(savegamestrings$[saveSlot]) > 0 THEN savegamestrings$[saveSlot] = LEFT$(savegamestrings$[saveSlot], LEN(savegamestrings$[saveSlot]) - 1)
+        ELSEIF ch = G_GAME.KEY_ESCAPE THEN
+            saveStringEnter = 0
+            savegamestrings$[saveSlot] = saveOldString$
+        ELSEIF ch = G_GAME.KEY_ENTER THEN
+            saveStringEnter = 0
+            IF LEN(savegamestrings$[saveSlot]) > 0 THEN M_DoSave(saveSlot)
+        ELSE
+            IF ch >= 97 AND ch <= 122 THEN ch = ch - 32
+            IF ch <> 32 AND (ch - HU_STUFF.HU_FONTSTART < 0 OR ch - HU_STUFF.HU_FONTSTART >= HU_STUFF.HU_FONTSIZE) THEN RETURN 1
+            IF ch >= 32 AND ch <= 127 AND LEN(savegamestrings$[saveSlot]) < SAVESTRINGSIZE - 1 AND M_StringWidth(savegamestrings$[saveSlot]) < (SAVESTRINGSIZE - 2) * 8 THEN savegamestrings$[saveSlot] = savegamestrings$[saveSlot] + CHR$(ch)
+        ENDIF
+        RETURN 1
+    ENDIF
 
     ' Take care of any messages that need input.
     IF messageToPrint <> 0 THEN
@@ -341,6 +481,40 @@ EXPORT FUNC M_Responder(ev_type AS INTEGER, key AS INTEGER) AS INTEGER
             currentMenu = MENU_READ1
             itemOn = 0
             S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            RETURN 1
+        ELSEIF ch = KEY_F2 THEN
+            ' Save.
+            M_StartControlPanel()
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            M_SaveGame()
+            RETURN 1
+        ELSEIF ch = KEY_F3 THEN
+            ' Load.
+            M_StartControlPanel()
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            M_LoadGame()
+            RETURN 1
+        ELSEIF ch = KEY_F4 THEN
+            ' Sound volume.
+            M_StartControlPanel()
+            currentMenu = MENU_SOUND
+            itemOn = 0
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            RETURN 1
+        ELSEIF ch = KEY_F6 THEN
+            ' Quicksave.
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            M_QuickSave()
+            RETURN 1
+        ELSEIF ch = KEY_F7 THEN
+            ' End game.
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            M_EndGame()
+            RETURN 1
+        ELSEIF ch = KEY_F9 THEN
+            ' Quickload.
+            S_SOUND.S_StartSound(-1, INFO.SFX_SWTCHN)
+            M_QuickLoad()
             RETURN 1
         ELSEIF ch = KEY_F5 THEN
             ' Detail toggle.
@@ -472,10 +646,23 @@ SUB M_DrawThermo(x AS INTEGER, y AS INTEGER, therm_width AS INTEGER, therm_dot A
     V_VIDEO.V_DrawPatch((x + 8) + therm_dot * 8, y, 0, W_WAD.W_CacheLumpName("M_THERMO"))
 ENDSUB
 
+' The frame a savegame description is written in.
+SUB M_DrawSaveLoadBorder(x AS INTEGER, y AS INTEGER)
+    DIM xx AS INTEGER = x
+    DIM i AS INTEGER
+    V_VIDEO.V_DrawPatch(x - 8, y + 7, 0, W_WAD.W_CacheLumpName("M_LSLEFT"))
+    FOR i = 0 TO 23
+        V_VIDEO.V_DrawPatch(xx, y + 7, 0, W_WAD.W_CacheLumpName("M_LSCNTR"))
+        xx = xx + 8
+    NEXT i
+    V_VIDEO.V_DrawPatch(xx, y + 7, 0, W_WAD.W_CacheLumpName("M_LSRGHT"))
+ENDSUB
+
 ' What a menu draws besides its items.
 SUB M_DrawMenuHead()
     DIM x AS INTEGER = CLNG(menu_x[currentMenu])
     DIM y AS INTEGER = CLNG(menu_y[currentMenu])
+    DIM i AS INTEGER
     inhelpscreens = 0
 
     IF currentMenu = MENU_MAIN THEN
@@ -513,6 +700,17 @@ SUB M_DrawMenuHead()
         ELSE
             V_VIDEO.V_DrawPatch(0, 0, 0, W_WAD.W_CacheLumpName("HELP2"))
         ENDIF
+    ELSEIF currentMenu = MENU_LOAD OR currentMenu = MENU_SAVE THEN
+        IF currentMenu = MENU_LOAD THEN
+            V_VIDEO.V_DrawPatch(72, 28, 0, W_WAD.W_CacheLumpName("M_LOADG"))
+        ELSE
+            V_VIDEO.V_DrawPatch(72, 28, 0, W_WAD.W_CacheLumpName("M_SAVEG"))
+        ENDIF
+        FOR i = 0 TO 5
+            M_DrawSaveLoadBorder(x, y + LINEHEIGHT * i)
+            M_WriteText(x, y + LINEHEIGHT * i, savegamestrings$[i])
+        NEXT i
+        IF currentMenu = MENU_SAVE AND saveStringEnter <> 0 THEN M_WriteText(x + M_StringWidth(savegamestrings$[saveSlot]), y + LINEHEIGHT * saveSlot, "_")
     ELSEIF currentMenu = MENU_SOUND THEN
         V_VIDEO.V_DrawPatch(60, 38, 0, W_WAD.W_CacheLumpName("M_SVOL"))
         M_DrawThermo(x, y + LINEHEIGHT, 16, S_SOUND.snd_SfxVolume)

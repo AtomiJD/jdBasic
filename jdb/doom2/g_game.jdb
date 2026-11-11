@@ -1,6 +1,6 @@
 ' Game flow (g_game.c): the keys that are down become a ticcmd once a tic, a
 ' new game is set up, a level is loaded, the tic is run, a demo is played.
-' Level completion, savegames and recording are not here.
+' A level is completed, a game is saved and loaded. Recording is not here.
 
 EXPORT MODULE G_GAME
 
@@ -27,6 +27,9 @@ IMPORT F_FINALE
 IMPORT M_MENU
 IMPORT D_MAIN
 IMPORT S_SOUND
+IMPORT P_SAVEG
+IMPORT R_MAIN
+IMPORT R_DRAW
 
 ' Key codes of doomdef.h; letters and digits are their ASCII codes.
 EXPORT CONST KEY_RIGHTARROW = $AE
@@ -100,6 +103,15 @@ EXPORT DIM cmd_buttons AS INTEGER = 0
 EXPORT DIM levelstarttic AS INTEGER = 0
 ' Send a pause event next tic.
 DIM sendpause AS INTEGER = 0
+' Send a save event next tic, for this slot and with this description.
+DIM sendsave AS INTEGER = 0
+DIM savegameslot AS INTEGER = 0
+DIM savedescription$ AS STRING = ""
+' The file a game is loaded from.
+DIM savename$ AS STRING = ""
+' The folder the savegames are in, with its slash; empty for the
+' working directory.
+EXPORT DIM savedir$ AS STRING = ""
 
 ' 0 to 9, set in the options menu.
 EXPORT DIM mouseSensitivity AS INTEGER = 5
@@ -241,6 +253,10 @@ EXPORT SUB G_BuildTiccmd()
     IF sendpause <> 0 THEN
         sendpause = 0
         cmd_buttons = DOOMDEF.BT_SPECIAL BOR 1
+    ENDIF
+    IF sendsave <> 0 THEN
+        sendsave = 0
+        cmd_buttons = DOOMDEF.BT_SPECIAL BOR DOOMDEF.BTS_SAVEGAME BOR (savegameslot SHL DOOMDEF.BTS_SAVESHIFT)
     ENDIF
 ENDSUB
 
@@ -744,6 +760,117 @@ SUB G_DoReborn(player AS INTEGER)
     gameaction = GA_LOADLEVEL
 ENDSUB
 
+' ---- savegames --------------------------------------------------------------------
+
+CONST SAVESTRINGSIZE = 24
+CONST VERSIONSIZE = 16
+' The records of a savegame are those of this port.
+CONST SAVE_VERSION$ = "jdBasic 109"
+
+EXPORT FUNC G_SaveGameName$(slot AS INTEGER) AS STRING
+    RETURN savedir$ + "doomsav" + STR$(slot) + ".dsg"
+ENDFUNC
+
+' The description of the savegame in the file, empty if there is none.
+EXPORT FUNC G_SaveGameDescription$(name$ AS STRING) AS STRING
+    IF NOT FILE.EXISTS(name$) THEN RETURN ""
+    DIM text$ AS STRING = BINREADER$(name$)
+    IF LEN(text$) < SAVESTRINGSIZE THEN RETURN ""
+    text$ = LEFT$(text$, SAVESTRINGSIZE)
+    DIM p_nul AS INTEGER = INSTR(text$, CHR$(0))
+    IF p_nul >= 0 THEN text$ = LEFT$(text$, p_nul)
+    RETURN text$
+ENDFUNC
+
+' Can be called by the startup code or the menu task; the game is loaded
+' at the next tic.
+EXPORT SUB G_LoadGame(name$ AS STRING)
+    savename$ = name$
+    gameaction = GA_LOADGAME
+ENDSUB
+
+SUB G_DoLoadGame()
+    DIM i AS INTEGER
+    gameaction = GA_NOTHING
+    IF NOT FILE.EXISTS(savename$) THEN RETURN
+    P_SAVEG.save_buf$ = BINREADER$(savename$)
+    IF LEN(P_SAVEG.save_buf$) < SAVESTRINGSIZE + VERSIONSIZE + 10 THEN RETURN
+
+    ' Skip the description field; a file of another version is left alone.
+    DIM vcheck$ AS STRING = MID$(P_SAVEG.save_buf$, SAVESTRINGSIZE, VERSIONSIZE)
+    DIM p_nul AS INTEGER = INSTR(vcheck$, CHR$(0))
+    IF p_nul >= 0 THEN vcheck$ = LEFT$(vcheck$, p_nul)
+    IF vcheck$ <> SAVE_VERSION$ THEN RETURN
+    P_SAVEG.save_p = SAVESTRINGSIZE + VERSIONSIZE
+
+    DIM skill AS INTEGER = P_SAVEG.GetByte()
+    DIM episode AS INTEGER = P_SAVEG.GetByte()
+    DIM map_num AS INTEGER = P_SAVEG.GetByte()
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        DOOMSTAT.playeringame[i] = P_SAVEG.GetByte()
+    NEXT i
+
+    ' Load a base level.
+    G_InitNew(skill, episode, map_num)
+
+    ' Get the times.
+    DIM a AS INTEGER = P_SAVEG.GetByte()
+    DIM b AS INTEGER = P_SAVEG.GetByte()
+    DIM c AS INTEGER = P_SAVEG.GetByte()
+    P_TICK.leveltime = (a SHL 16) + (b SHL 8) + c
+
+    ' Dearchive all the modifications.
+    P_SAVEG.P_UnArchivePlayers()
+    P_SAVEG.P_UnArchiveWorld()
+    P_SAVEG.P_UnArchiveThinkers()
+    P_SAVEG.P_UnArchiveSpecials()
+
+    IF P_SAVEG.GetByte() <> $1D THEN I_SYSTEM.I_Error("Bad savegame")
+    P_SAVEG.save_buf$ = ""
+
+    IF R_MAIN.setsizeneeded <> 0 THEN R_MAIN.R_ExecuteSetViewSize()
+    ' Draw the pattern into the back screen.
+    R_DRAW.R_FillBackScreen()
+ENDSUB
+
+' Called by the menu task. The description is a 24 byte text string.
+EXPORT SUB G_SaveGame(slot AS INTEGER, description$ AS STRING)
+    savegameslot = slot
+    savedescription$ = description$
+    sendsave = 1
+ENDSUB
+
+SUB G_DoSaveGame()
+    DIM i AS INTEGER
+    P_SAVEG.save_buf$ = PACK$("<24a16a", savedescription$, SAVE_VERSION$)
+    P_SAVEG.PutByte(DOOMSTAT.gameskill)
+    P_SAVEG.PutByte(DOOMSTAT.gameepisode)
+    P_SAVEG.PutByte(DOOMSTAT.gamemap)
+    FOR i = 0 TO DOOMDEF.MAXPLAYERS - 1
+        P_SAVEG.PutByte(CLNG(DOOMSTAT.playeringame[i]))
+    NEXT i
+    P_SAVEG.PutByte(P_TICK.leveltime SHR 16)
+    P_SAVEG.PutByte(P_TICK.leveltime SHR 8)
+    P_SAVEG.PutByte(P_TICK.leveltime)
+
+    P_SAVEG.P_ArchivePlayers()
+    P_SAVEG.P_ArchiveWorld()
+    P_SAVEG.P_ArchiveThinkers()
+    P_SAVEG.P_ArchiveSpecials()
+
+    ' Consistancy marker.
+    P_SAVEG.PutByte($1D)
+
+    BINWRITER G_SaveGameName$(savegameslot), P_SAVEG.save_buf$
+    P_SAVEG.save_buf$ = ""
+    gameaction = GA_NOTHING
+    savedescription$ = ""
+
+    D_PLAYER.player_message$[DOOMSTAT.consoleplayer] = "game saved."
+    ' Draw the pattern into the back screen.
+    R_DRAW.R_FillBackScreen()
+ENDSUB
+
 ' Runs one tic of the game. A level that was completed in this tic is
 ' still in gameaction when the tic is over; the next tic starts the
 ' intermission or the finale.
@@ -761,6 +888,10 @@ EXPORT SUB G_Ticker()
             G_DoLoadLevel()
         ELSEIF gameaction = GA_NEWGAME THEN
             G_DoNewGame()
+        ELSEIF gameaction = GA_LOADGAME THEN
+            G_DoLoadGame()
+        ELSEIF gameaction = GA_SAVEGAME THEN
+            G_DoSaveGame()
         ELSEIF gameaction = GA_PLAYDEMO THEN
             G_DoPlayDemo()
         ELSEIF gameaction = GA_COMPLETED THEN
@@ -789,14 +920,20 @@ EXPORT SUB G_Ticker()
         IF CLNG(DOOMSTAT.playeringame[i]) <> 0 THEN
             IF DOOMSTAT.demoplayback <> 0 THEN G_ReadDemoTiccmd(i)
 
-            ' Check for special buttons; saving a game is not ported.
+            ' Check for special buttons.
             buttons = CLNG(D_PLAYER.player_cmd_buttons[i])
-            IF (buttons BAND DOOMDEF.BT_SPECIAL) <> 0 AND (buttons BAND DOOMDEF.BT_SPECIALMASK) = 1 THEN
-                DOOMSTAT.paused = DOOMSTAT.paused BXOR 1
-                IF DOOMSTAT.paused <> 0 THEN
-                    S_SOUND.S_PauseSound()
-                ELSE
-                    S_SOUND.S_ResumeSound()
+            IF (buttons BAND DOOMDEF.BT_SPECIAL) <> 0 THEN
+                IF (buttons BAND DOOMDEF.BT_SPECIALMASK) = 1 THEN
+                    DOOMSTAT.paused = DOOMSTAT.paused BXOR 1
+                    IF DOOMSTAT.paused <> 0 THEN
+                        S_SOUND.S_PauseSound()
+                    ELSE
+                        S_SOUND.S_ResumeSound()
+                    ENDIF
+                ELSEIF (buttons BAND DOOMDEF.BT_SPECIALMASK) = DOOMDEF.BTS_SAVEGAME THEN
+                    IF LEN(savedescription$) = 0 THEN savedescription$ = "NET GAME"
+                    savegameslot = (buttons BAND DOOMDEF.BTS_SAVEMASK) SHR DOOMDEF.BTS_SAVESHIFT
+                    gameaction = GA_SAVEGAME
                 ENDIF
             ENDIF
         ENDIF

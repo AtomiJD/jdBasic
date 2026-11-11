@@ -109,6 +109,18 @@ EXPORT SUB P_InitMobjs()
     NEXT i
 ENDSUB
 
+' Takes a thing out of the pool; its fields are whatever they were.
+EXPORT FUNC P_AllocMobj() AS INTEGER
+    IF n_free = 0 THEN I_SYSTEM.I_Error("P_AllocMobj: more than " + STR$(MAXMOBJS) + " things")
+    n_free = n_free - 1
+    DIM mobj AS INTEGER = CLNG(free_mobjs[n_free])
+    mobj_snext[mobj] = -1
+    mobj_sprev[mobj] = -1
+    mobj_bnext[mobj] = -1
+    mobj_bprev[mobj] = -1
+    RETURN mobj
+ENDFUNC
+
 ' Gives the number of a removed thing back to the pool, once its thinker
 ' has left the list.
 EXPORT SUB P_FreeMobj(mobj AS INTEGER)
