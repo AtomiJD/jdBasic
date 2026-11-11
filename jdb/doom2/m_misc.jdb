@@ -14,7 +14,7 @@ IMPORT G_GAME
 IMPORT M_MENU
 IMPORT S_SOUND
 
-EXPORT DIM usemouse AS INTEGER = 1
+EXPORT DIM usemouse AS INTEGER = 0
 EXPORT DIM usejoystick AS INTEGER = 0
 
 DIM names$ AS ARRAY = ["mouse_sensitivity", "sfx_volume", "music_volume", "show_messages", "key_right", "key_left", "key_up", "key_down", "key_strafeleft", "key_straferight", "key_fire", "key_use", "key_strafe", "key_speed", "use_mouse", "mouseb_fire", "mouseb_strafe", "mouseb_forward", "use_joystick", "joyb_fire", "joyb_strafe", "joyb_use", "joyb_speed", "screenblocks", "detaillevel", "usegamma"]

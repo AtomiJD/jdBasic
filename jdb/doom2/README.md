@@ -168,6 +168,8 @@ Where the port leaves the original on purpose:
 - The mouse pointer is not held in the window; the X11 code of the
   original grabs it. Turning stops where the pointer leaves the window
   or meets the edge of the screen (trakr jdbasic #986).
+- The mouse is off until `default.cfg` says `use_mouse 1`; the original
+  has it on.
 - The settings are in `default.cfg` in the working directory, as in the
   DOS release; the Linux release keeps them in `~/.doomrc`.
 - Music is not General MIDI: each MIDI channel is a track of the
@@ -287,12 +289,14 @@ opens the menu. With an episode and a map it starts there; the levels of
 DOOM II are in episode 1. Arrow keys or W and S move, A and D or comma
 and full stop step sideways, Shift runs, Ctrl fires, Space uses, 1 to 7
 pick a weapon, Tab shows the map, Escape the menu, F2 and F3 save and
-load, F6 and F9 do so quickly. The mouse turns, walks and fires;
-`use_mouse 0` in `default.cfg` turns it off:
+load, F6 and F9 do so quickly. The game fills the primary display; Alt
+with Enter switches between that and a window, `-window` starts in a
+window. With `use_mouse 1` in `default.cfg` the mouse turns, walks and
+fires:
 
 ```
 build/jdBasic.exe -c jdb/doom2/doom.jdb
-jdb/doom2/doom.exe [-iwad file] [episode map [skill]]
+jdb/doom2/doom.exe [-window] [-iwad file] [episode map [skill]]
 ```
 
 A folder to hand on, with the program, its libraries and a note; the WAD

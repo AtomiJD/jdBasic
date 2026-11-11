@@ -1,12 +1,15 @@
 ' DOOM. The title loop with its demos, the menu, the game.
 '
 '   build/jdBasic.exe -c jdb/doom2/doom.jdb
-'   jdb/doom2/doom.exe [-iwad file] [episode map [skill]]
+'   jdb/doom2/doom.exe [-window] [-iwad file] [episode map [skill]]
 '
 ' Without arguments the title loop starts; any key opens the menu. With an
 ' episode and a map the game starts there, on skill 0 to 4 (2 if left out);
 ' the levels of DOOM II are in episode 1. -iwad names the WAD to play;
 ' without it D_MAIN.IdentifyVersion$ looks for one.
+'
+' The game fills the primary display; Alt with Enter switches between that
+' and a window, -window starts in a window.
 '
 ' Arrow keys turn and move, Shift runs, Ctrl fires, Space uses, 1 to 7 pick
 ' a weapon, Alt with left or right steps sideways and so do comma and full
@@ -15,10 +18,10 @@
 ' save, F7 ends the game, F8 messages, F9 quick load, F10 quits, F11 gamma,
 ' minus and equals change the view size, Pause pauses.
 '
-' The mouse turns and, moved up and down, walks; its left button fires,
-' the right one makes it step sideways, the middle one walks. The pointer
-' is not held in the window. The settings are kept in default.cfg in the
-' working directory; use_mouse 0 there turns the mouse off.
+' The settings are kept in default.cfg in the working directory. With
+' use_mouse 1 there the mouse turns and, moved up and down, walks; its
+' left button fires, the right one makes it step sideways, the middle one
+' walks. The pointer is not held in the window.
 
 OPTION "EXPLICIT"
 OPTION "NOPAUSE"
@@ -106,8 +109,22 @@ SUB MoveKey(key AS INTEGER, down AS INTEGER)
     IF key = 100 THEN G_GAME.gamekeydown[46] = down
 ENDSUB
 
+DIM alt_down AS INTEGER = 0
+
+' TRUE for one of the two Alt keys.
+FUNC IsAlt(key_name$ AS STRING) AS INTEGER
+    IF key_name$ = "Left Alt" OR key_name$ = "Right Alt" THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
 SUB HandleKeyDown(key_data)
     IF key_data[0]{"repeat"} THEN RETURN
+    DIM key_name$ AS STRING = key_data[0]{"key"}
+    IF IsAlt(key_name$) <> 0 THEN alt_down = 1
+    IF alt_down <> 0 AND (key_name$ = "Return" OR key_name$ = "Keypad Enter") THEN
+        I_VIDEO.I_ToggleFullscreen()
+        RETURN
+    ENDIF
     DIM key AS INTEGER = DoomKey(key_data[0]{"key"}, CLNG(key_data[0]{"keycode"}))
     IF key < 0 THEN RETURN
     D_MAIN.D_PostEvent(G_GAME.EV_KEYDOWN, key, 0, 0)
@@ -115,6 +132,7 @@ SUB HandleKeyDown(key_data)
 ENDSUB
 
 SUB HandleKeyUp(key_data)
+    IF IsAlt(key_data[0]{"key"}) <> 0 THEN alt_down = 0
     DIM key AS INTEGER = DoomKey(key_data[0]{"key"}, CLNG(key_data[0]{"keycode"}))
     IF key < 0 THEN RETURN
     D_MAIN.D_PostEvent(G_GAME.EV_KEYUP, key, 0, 0)
@@ -175,6 +193,11 @@ SUB PostMouse()
 ENDSUB
 
 DIM cmd_args AS ARRAY = OS.ARGS()
+DIM start_windowed AS INTEGER = 0
+IF LEN(cmd_args) > 1 ANDALSO LCASE$(cmd_args[1]) = "-window" THEN
+    start_windowed = 1
+    cmd_args = APPEND(TAKE(1, cmd_args), DROP(2, cmd_args))
+ENDIF
 IF LEN(cmd_args) > 2 ANDALSO LCASE$(cmd_args[1]) = "-iwad" THEN
     D_MAIN.wadfile$ = cmd_args[2]
     cmd_args = APPEND(TAKE(1, cmd_args), DROP(3, cmd_args))
@@ -189,7 +212,8 @@ ENDIF
 IF LEN(cmd_args) > 3 THEN start_skill = CLNG(VAL(cmd_args[3]))
 
 M_MISC.M_LoadDefaults()
-I_VIDEO.I_InitGraphics(3)
+I_VIDEO.I_InitGraphics(I_VIDEO.I_DisplayScale())
+IF start_windowed = 0 THEN I_VIDEO.I_ToggleFullscreen()
 D_MAIN.D_DoomMain()
 S_SOUND.S_Init(S_SOUND.snd_SfxVolume, S_SOUND.snd_MusicVolume)
 ON "QUIT" CALL HandleQuit@

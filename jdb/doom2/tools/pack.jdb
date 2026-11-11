@@ -50,9 +50,11 @@ note$ = note$ + "  doom.exe -iwad c:\games\doom2.wad 1 7    a WAD somewhere else
 note$ = note$ + "                                  of DOOM II are in episode 1" + nl$ + nl$
 note$ = note$ + "Arrow keys or W, A, S, D move, Shift runs, Ctrl fires, Space uses, 1 to 7" + nl$
 note$ = note$ + "pick a weapon, Tab shows the map, Escape the menu. F2 saves, F3 loads," + nl$
-note$ = note$ + "F6 and F9 save and load quickly, F10 quits. The mouse turns and fires." + nl$ + nl$
+note$ = note$ + "F6 and F9 save and load quickly, F10 quits. Alt with Enter switches" + nl$
+note$ = note$ + "between the whole display and a window; doom.exe -window starts in one." + nl$ + nl$
 note$ = note$ + "Savegames (doomsav0.dsg to doomsav5.dsg) and the settings (default.cfg)" + nl$
-note$ = note$ + "are written into the folder the game is started from." + nl$
+note$ = note$ + "are written into the folder the game is started from. The line" + nl$
+note$ = note$ + "use_mouse 1 there lets the mouse turn, walk and fire." + nl$
 TXTWRITER out$ + "/README.txt", note$
 n_files = n_files + 1
 

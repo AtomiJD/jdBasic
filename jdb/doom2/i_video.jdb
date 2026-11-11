@@ -13,13 +13,42 @@ IMPORT V_VIDEO
 ' Window pixels per screen pixel.
 EXPORT DIM window_scale AS INTEGER = 1
 
+' 1 while the window fills the display.
+EXPORT DIM fullscreen AS INTEGER = 0
+
 ' Packed RGB of each palette index, after gamma.
 DIM pal_rgb[256] AS INTEGER
+
+' The largest whole number of window pixels per screen pixel at which the
+' screen fits the primary display.
+EXPORT FUNC I_DisplayScale() AS INTEGER
+    DIM displays AS ARRAY = GFX.DISPLAYS()
+    DIM fit AS INTEGER = 3
+    DIM i AS INTEGER
+    DIM across AS INTEGER
+    DIM down AS INTEGER
+    FOR i = 0 TO LEN(displays) - 1
+        IF displays[i]{"primary"} THEN
+            across = CLNG(displays[i]{"w"}) \ DOOMDEF.SCREENWIDTH
+            down = CLNG(displays[i]{"h"}) \ DOOMDEF.SCREENHEIGHT
+            fit = across
+            IF down < fit THEN fit = down
+        ENDIF
+    NEXT i
+    IF fit < 1 THEN fit = 1
+    RETURN fit
+ENDFUNC
 
 ' Opens the window; one screen pixel is scale x scale window pixels.
 EXPORT SUB I_InitGraphics(scale AS INTEGER)
     window_scale = scale
     SCREEN DOOMDEF.SCREENWIDTH * scale, DOOMDEF.SCREENHEIGHT * scale, "DOOM"
+ENDSUB
+
+' Switches between a window and the whole display.
+EXPORT SUB I_ToggleFullscreen()
+    TOGGLE_FULLSCREEN
+    fullscreen = 1 - fullscreen
 ENDSUB
 
 EXPORT SUB I_ShutdownGraphics()
