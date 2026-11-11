@@ -1,0 +1,43 @@
+' GFX.DISPLAYS() answers an array of maps; each map is read by key, in a
+' variable typed AS ARRAY, in an untyped one and inside a FUNC.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$ AS STRING, cond AS BOOLEAN)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: " + label$
+    ENDIF
+ENDSUB
+
+FUNC PrimaryWidth() AS INTEGER
+    DIM shown AS ARRAY = GFX.DISPLAYS()
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(shown) - 1
+        IF shown[k]{"primary"} THEN RETURN CLNG(shown[k]{"w"})
+    NEXT k
+    RETURN 0
+ENDFUNC
+
+DIM typed AS ARRAY = GFX.DISPLAYS()
+Ok("at least one display", LEN(typed) >= 1)
+Ok("typed array: width by key", CLNG(typed[0]{"w"}) > 0)
+Ok("typed array: height by key", CLNG(typed[0]{"h"}) > 0)
+Ok("typed array: index counts from 1", CLNG(typed[0]{"index"}) = 1)
+Ok("typed array: the name is a string", TYPEOF(typed[0]{"name"}) = "STRING")
+
+DIM loose = GFX.DISPLAYS()
+Ok("untyped: width by key", CLNG(loose[0]{"w"}) = CLNG(typed[0]{"w"}))
+
+Ok("inside a FUNC: the primary display has a width", PrimaryWidth() > 0)
+Ok("as JSON: the keys are there", INSTR(JSON.STRINGIFY$(GFX.DISPLAYS()), "primary") >= 0)
+
+PRINT ""
+PRINT "DISPLAYS MAPS TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

@@ -1014,6 +1014,8 @@ struct JdbArray {
 // Inverse of jdbarray_to_value: walk a VM array, copy its numeric cells
 // verbatim and pun inner strings/arrays as pointers into the data[]
 // slots. flags records which punning the decoder should do.
+static JdbMapFwd* value_to_jdbmap(const Value& v);
+
 static JdbArray* value_to_jdbarray(const Value& v) {
     auto* r = (JdbArray*)malloc(sizeof(JdbArray));
     r->data = nullptr;
@@ -1028,6 +1030,7 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     r->data = (double*)calloc(r->length > 0 ? r->length : 1, sizeof(double));
     r->capacity = r->length > 0 ? r->length : 1;
     bool has_ptr = false, has_string = false, has_other = false, has_none = false;
+    bool has_map = false;
     // Dates are numbers the VM marks with a subtype. The native side has no
     // tag for one, so the array says it holds them and every cell must agree.
     // Truth values are the same: an array of nothing but them renders them.
@@ -1048,6 +1051,12 @@ static JdbArray* value_to_jdbarray(const Value& v) {
             const std::string& s = e.as_string()->data;
             char* copy = native_str_from_string(s);
             union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)copy;
+            r->data[i] = u.d;
+        } else if (e.type == ValueType::OBJECT) {
+            has_ptr = true; has_other = true; has_map = true;
+            cell_tags[(size_t)i] = (int8_t)jd_tag(JdTag::NATIVE_MAP);
+            JdbMapFwd* inner = value_to_jdbmap(e);
+            union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)inner;
             r->data[i] = u.d;
         } else if (e.type == ValueType::NONE) {
             has_other = true;
@@ -1080,7 +1089,8 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     // Uniform numeric arrays keep the plain flags encoding.
     // A date among cells that are not dates needs its tag too: the
     // array-wide date flag speaks only for an array whose every cell is one.
-    if ((has_string && has_other) || has_none ||
+    // A map cell is told from an inner array by its tag.
+    if ((has_string && has_other) || has_none || has_map ||
         (date_cells > 0 && date_cells != r->length)) {
         r->elem_tags = (int8_t*)malloc((size_t)(r->length > 0 ? r->length : 1));
         memcpy(r->elem_tags, cell_tags.data(), (size_t)(r->length > 0 ? r->length : 1));
