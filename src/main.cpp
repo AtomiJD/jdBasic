@@ -336,6 +336,12 @@ static bool g_buffer_from_workspace = false;
 // dir instead of CWD.
 std::string g_base_dir;
 
+// The folder of a program file, where its IMPORTs are looked for first.
+static std::string base_dir_of(const std::string& filename) {
+    size_t sep = filename.find_last_of("/\\");
+    return (sep != std::string::npos) ? filename.substr(0, sep) : ".";
+}
+
 static Parser::FileReader make_module_reader() {
     return [](const std::string& module_name) -> std::pair<std::string, std::string> {
         // Project-local first (script dir, then a `modules/` subdir of it, then
@@ -1025,6 +1031,7 @@ static void register_console_builtins(VM& vm, bool ansi_color) {
         std::ostringstream ss; ss << f.rdbuf();
         if (pbuf) *pbuf = ss.str();
         g_loaded_filename = filename;
+        g_base_dir = base_dir_of(filename);
         int lines = (int)std::count(pbuf->begin(), pbuf->end(), '\n') + 1;
         vm.emit("Loaded: " + filename + " (" + std::to_string(lines) + " lines)\n");
         return Value::make_none();
@@ -1163,6 +1170,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             program_buffer = ss.str();
             g_buffer_from_workspace = false;
             g_loaded_filename = filename;
+            g_base_dir = base_dir_of(filename);
             int lines = (int)std::count(program_buffer.begin(), program_buffer.end(), '\n') + 1;
             vm.emit("Loaded: " + filename + " (" + std::to_string(lines) + " lines)\n");
         } catch (const std::exception& e) { print_error(ErrCode::FILE_NOT_FOUND, e.what()); }
@@ -1214,6 +1222,9 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
     if (cmd_upper.substr(0, 4) == "RUN " && cmd_upper != "RUN") {
         std::string filename = cmd_arg(cmd);
         if (filename.find('.') == std::string::npos) filename += ".jdb";
+        // The file's IMPORTs are found beside it; the loaded program keeps its own folder.
+        const std::string loaded_base_dir = g_base_dir;
+        g_base_dir = base_dir_of(filename);
         try {
             if (pcode_is_file(filename)) {
                 std::string err;
@@ -1224,6 +1235,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             }
         }
         catch (const std::exception& e) { std::cerr << "Error: " << e.what() << std::endl; }
+        g_base_dir = loaded_base_dir;
         // The script may have called END - clear the halt flag so the
         // REPL accepts further commands.
         vm.is_halted = false;
