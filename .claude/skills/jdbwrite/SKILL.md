@@ -9,6 +9,11 @@ Read this top to bottom before authoring or editing jdBasic. It exists because t
 same handful of mistakes keep recurring. Six rules, then a trap table.
 
 ## 1. Verify, never guess - use the MCP
+`doc/signatures.md` lists every documented builtin as its signature, by
+section, generated from the reference (`tools/gen_signatures.jdb`); the
+session start prints its core sections. Look a name up there first: a name
+that is not in it does not exist.
+
 The jdBasic MCP (`jdbasic-stdio-win`) is a live VM. Ask it instead of assuming:
 - `jdb_doc <name>` - does this command exist, what are its parameters and their **order**? (Today's `DATEDIFF`/`DATEADD` arg-order bug came from guessing.)
 - `jdb_eval "PRINT ..."` - probe a one-liner to confirm a builtin's signature, arg order, 0/1-based indexing and return shape **before** building on it.

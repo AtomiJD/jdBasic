@@ -85,6 +85,8 @@ jobs:
         run: |
           & build/jdBasic.exe tools/gen_doc_index.jdb --check
           if ($LASTEXITCODE -ne 0) { throw "doc/languages.md contents or index out of date" }
+          & build/jdBasic.exe tools/gen_signatures.jdb --check
+          if ($LASTEXITCODE -ne 0) { throw "doc/signatures.md out of date" }
 
       - name: Documentation examples
         shell: pwsh
@@ -151,7 +153,7 @@ jobs:
         run: ./build/jdbasic tools/scan_builtin_arity.jdb --check
 
       - name: Language reference contents and index
-        run: ./build/jdbasic tools/gen_doc_index.jdb --check
+        run: ./build/jdbasic tools/gen_doc_index.jdb --check && ./build/jdbasic tools/gen_signatures.jdb --check
 
       - name: Documentation examples
         run: ./build/jdbasic tools/check_doc_examples.jdb doc/tour.md doc/llms-primer.md doc/guides/native.md doc/guides/data.md doc/guides/boards.md

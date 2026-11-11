@@ -14,6 +14,13 @@ Range: `v1.3.0..HEAD`.
 - **`tools/gate_run.jdb --smokes`** compiles and starts the two GUI programs
   of the gate; a first step `binary` reports `STALE` when a source is newer
   than the binaries the gate is about to test.
+- **`doc/signatures.md`**: every documented builtin as its signature alone,
+  grouped by the section of the reference that describes it, written by
+  `tools/gen_signatures.jdb` and checked by CI. `--core` prints the
+  sections every program draws on, for an agent's session start.
+- **`tools/gate_run.jdb`** also checks what is generated from the reference:
+  the builtin table against the help text, the contents and index of
+  `languages.md`, and `signatures.md`.
 
 ## Changed
 

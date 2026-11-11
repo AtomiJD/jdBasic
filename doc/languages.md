@@ -56,6 +56,7 @@ This document describes the syntax, commands, and functions for the jdBasic inte
   - [Dynamic Code Functions](#dynamic-code-functions)
   - [Development & Debugging](#development--debugging)
   - [REPL Keyboard Shortcuts](#repl-keyboard-shortcuts)
+  - [The REPL without a terminal](#the-repl-without-a-terminal)
   - [Filesystem](#filesystem)
   - [OS Functions](#os-functions)
   - [Memory in a compiled program](#memory-in-a-compiled-program)

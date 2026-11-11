@@ -4,7 +4,8 @@
 '
 ' Runs from the repo root: the four suites under tests/gate in the
 ' interpreter, then compiled with -c (native_test as its strict twin) when
-' the binary has NativeC, then with --smokes the two GUI programs compiled
+' the binary has NativeC, then the checks of what is generated from the
+' reference (BACKEND "docs"), then with --smokes the two GUI programs compiled
 ' and started, then tests/parity.sh with --parity. The first step compares
 ' the binary and the runtime library with the sources under src/. Every step
 ' prints one line
@@ -171,6 +172,21 @@ FOR i = 0 TO LEN(NATIVE_SUITES$) - 1
     DIM rn = RUN(IIF(os$ = "WINDOWS", REPLACE$(prog$, "/", "\"), "./" + prog$), [], native_env, SUITE_MS)
     IF NOT REPORT(JUDGE(name$, "native", rn, INT((TICK() - t0) / 1000))) THEN all_ok = FALSE
 NEXT i
+
+' What is generated from the reference and from the builtin table is current
+DIM DOC_CHECKS = [["tools/check_builtin_sigs.jdb"], ["tools/gen_doc_index.jdb", "--check"], ["tools/gen_signatures.jdb", "--check"]]
+DIM d AS INTEGER
+FOR d = 0 TO LEN(DOC_CHECKS) - 1
+    DIM tool$ AS STRING = DOC_CHECKS[d][0]
+    IF NOT FILE.EXISTS(tool$) THEN CONTINUEFOR
+    t0 = TICK()
+    DIM rd = RUN(jdb$, DOC_CHECKS[d], no_env, SUITE_MS)
+    DIM drows = SPLIT(TRIM$(rd{"OUTPUT"}), CHR$(10))
+    DIM dlast$ AS STRING = ""
+    IF LEN(drows) > 0 THEN dlast$ = LEFT$(drows[LEN(drows) - 1], 200)
+    DIM dstatus$ AS STRING = IIF(rd{"TIMEOUT"}, "TIMEOUT", IIF(rd{"EXIT"} = 0, "OK", "FAIL"))
+    IF NOT REPORT({"STEP": REPLACE$(PATH.BASENAME$(tool$), ".jdb", ""), "BACKEND": "docs", "STATUS": dstatus$, "SECONDS": INT((TICK() - t0) / 1000), "EXIT": rd{"EXIT"}, "SUMMARY": dlast$, "FAILS": IIF(dstatus$ = "OK", [], TAKE(-MIN([LEN(drows), 6]), drows))}) THEN all_ok = FALSE
+NEXT d
 
 ' A GUI program passes when it compiles and is still running after SMOKE_MS,
 ' or has ended on its own with 0 or 1
