@@ -10,7 +10,7 @@ machine that works on this repository behaves the same way.
 | `check_commit.ps1` | PreToolUse (Bash) | Blocks a `git commit` that carries a `Co-Authored-By` trailer or a personal name, that stages code without a test under `tests/`, or whose code files are newer than the last green gate run. `[no-test]` in the message skips the test gate. |
 | `check_dangerous.ps1` | PreToolUse (Bash) | Blocks the shell shapes that destroy work by accident, among them `rm` with an unbraced variable. |
 | `check_mcp.ps1` | SessionStart | Spawns the jdBasic MCP binary and sends an `initialize`, so a session learns at the start that `jdb_*` and the workshop are unavailable instead of finding out mid-task. |
-| `mark_tests_ok.ps1` | PostToolUse (Bash) | Writes `.claude/.tests_ok` when a gate run came back green. `check_commit.ps1` reads its timestamp. |
+| `mark_tests_ok.ps1` | PostToolUse (Bash) | Writes `.claude/.tests_ok` when a gate run came back green. `check_commit.ps1` reads its timestamp. `tools/gate_run.jdb` (and `tools/verify.sh`, which runs it) stamps the same marker itself after a run that is green on both backends. |
 | `lab_reflex.ps1` | SessionStart | Prints the workshop manifest so the persistent lab is restored rather than rebuilt. |
 | `check_co_reward.ps1` | PostToolUse | Logs co-processor use for the wins ledger. |
 | `session_end.jdb` | SessionEnd | jdBasic. Collects what the session leaves open: commits since the session started, unpushed commits, uncommitted files, and the Kaiku tickets in `doing`/`review` of one jdTrakr project. Writes `.claude/last_session.md` and appends a line to `.claude/sessions.jsonl`. Never fails the session end. |

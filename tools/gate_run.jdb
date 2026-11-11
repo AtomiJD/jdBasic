@@ -1,10 +1,12 @@
 ' gate_run.jdb - the pre-commit gate on this machine, one JSON line per step.
 '
-'   jdBasic tools/gate_run.jdb [--no-native] [--parity]
+'   jdBasic tools/gate_run.jdb [--no-native] [--smokes] [--parity]
 '
 ' Runs from the repo root: the four suites under tests/gate in the
 ' interpreter, then compiled with -c (native_test as its strict twin) when
-' the binary has NativeC, then tests/parity.sh with --parity. Every step
+' the binary has NativeC, then with --smokes the two GUI programs compiled
+' and started, then tests/parity.sh with --parity. The first step compares
+' the binary and the runtime library with the sources under src/. Every step
 ' prints one line
 '
 '   GATE {"STEP": "comprehensive_test", "BACKEND": "interp", "STATUS": "OK",
@@ -12,20 +14,25 @@
 '
 ' with STATUS OK, FAIL (the suite reported failures), CRASH (it ended
 ' without its RESULTS line), COMPILE (-c produced no program), TIMEOUT,
-' SKIP, or INFO for parity off Windows (the baseline is a Windows one);
+' STALE (a source under src/ is newer than what was built from it; INFO
+' off Windows), SKIP, or INFO for parity off Windows (the baseline is a
+' Windows one);
 ' the last line is {"STEP": "gate", "STATUS": "OK" or "FAIL"}. Exit 0
-' when every step that ran is OK, SKIP or INFO.
+' when every step that ran is OK, SKIP or INFO. A run that is green on
+' both backends stamps .claude/.tests_ok, the marker the commit hook reads.
 
 OPTION "EXPLICIT"
 
 DIM SUITE_MS AS INTEGER = 600000
+DIM SMOKE_MS AS INTEGER = 5000
+DIM SMOKES$ = ["fluppi/rpg_demo", "jdb/emu/emu_run"]
 DIM INTERP_SUITES$ = ["comprehensive_test", "native_test", "test_apl_complete", "test_apl_pipelines"]
 DIM NATIVE_SUITES$ = ["comprehensive_test", "native_test.strict", "test_apl_complete", "test_apl_pipelines"]
 
 DIM os$ AS STRING = OS.GETOS$()
 DIM exe_ext$ AS STRING = ".exe"
-DIM out_file$ AS STRING = "tmp/gate_run_" + STR$(OS.PID()) + ".out"
 MKDIR "tmp"
+DIM out_file$ AS STRING = PATH.ABS$("tmp") + "/gate_run_" + STR$(OS.PID()) + ".out"
 
 ' Runs a program with its output in out_file$; {"EXIT", "OUTPUT", "TIMEOUT"}
 FUNC RUN(prog$, args, env, ms)
@@ -73,13 +80,41 @@ FUNC JUDGE(step$, backend$, r, secs)
     RETURN {"STEP": step$, "BACKEND": backend$, "STATUS": status$, "SECONDS": secs, "EXIT": r{"EXIT"}, "SUMMARY": summary$, "FAILS": fails}
 ENDFUNC
 
+' The newest modification time among the sources the binaries are built from
+FUNC NEWEST_SOURCE$()
+    DIM newest$ AS STRING = ""
+    DIM kinds = ["src/*.cpp", "src/*.h"]
+    DIM k AS INTEGER
+    DIM n AS INTEGER
+    FOR k = 0 TO LEN(kinds) - 1
+        DIM names = FILE.LIST(kinds[k])
+        FOR n = 0 TO LEN(names) - 1
+            DIM stamp$ AS STRING = FILE.STAT("src/" + PATH.BASENAME$(names[n])){"mtime"}
+            IF stamp$ > newest$ THEN newest$ = stamp$
+        NEXT n
+    NEXT k
+    RETURN newest$
+ENDFUNC
+
+' The runtime library compiled programs load, or "" when build/ has none
+FUNC RUNTIME_LIB$()
+    DIM names = ["build/jdbrt.dll", "build/libjdbrt.so", "build/libjdbrt.dylib"]
+    DIM n AS INTEGER
+    FOR n = 0 TO LEN(names) - 1
+        IF FILE.EXISTS(names[n]) THEN RETURN names[n]
+    NEXT n
+    RETURN ""
+ENDFUNC
+
 DIM cli = OS.ARGS()
 DIM want_native AS INTEGER = TRUE
 DIM want_parity AS INTEGER = FALSE
+DIM want_smokes AS INTEGER = FALSE
 DIM a AS INTEGER
 FOR a = 1 TO LEN(cli) - 1
     IF cli[a] = "--no-native" THEN want_native = FALSE
     IF cli[a] = "--parity" THEN want_parity = TRUE
+    IF cli[a] = "--smokes" THEN want_smokes = TRUE
 NEXT a
 
 DIM jdb$ AS STRING = OS.SELF$()
@@ -88,6 +123,20 @@ DIM all_ok AS INTEGER = TRUE
 DIM no_env = {}
 DIM t0 AS DOUBLE
 DIM i AS INTEGER
+
+DIM src_stamp$ AS STRING = NEWEST_SOURCE$()
+DIM old_parts = []
+IF src_stamp$ <> "" THEN
+    IF FILE.STAT(jdb$){"mtime"} < src_stamp$ THEN old_parts = APPEND(old_parts, PATH.BASENAME$(jdb$) + " is older than src/")
+    DIM rt_lib$ AS STRING = RUNTIME_LIB$()
+    IF want_native ANDALSO has_native ANDALSO rt_lib$ <> "" THEN
+        IF FILE.STAT(rt_lib$){"mtime"} < src_stamp$ THEN old_parts = APPEND(old_parts, PATH.BASENAME$(rt_lib$) + " is older than src/")
+    ENDIF
+ENDIF
+DIM fresh AS INTEGER = LEN(old_parts) = 0
+' off Windows a source of another platform changes without a new link
+DIM stale$ AS STRING = IIF(os$ = "WINDOWS", "STALE", "INFO")
+IF NOT REPORT({"STEP": "binary", "BACKEND": "", "STATUS": IIF(fresh, "OK", stale$), "SECONDS": 0, "EXIT": 0, "SUMMARY": IIF(fresh, "built after the newest source", "rebuild before trusting this run"), "FAILS": old_parts}) THEN all_ok = FALSE
 
 FOR i = 0 TO LEN(INTERP_SUITES$) - 1
     t0 = TICK()
@@ -123,6 +172,57 @@ FOR i = 0 TO LEN(NATIVE_SUITES$) - 1
     IF NOT REPORT(JUDGE(name$, "native", rn, INT((TICK() - t0) / 1000))) THEN all_ok = FALSE
 NEXT i
 
+' A GUI program passes when it compiles and is still running after SMOKE_MS,
+' or has ended on its own with 0 or 1
+DIM s AS INTEGER
+FOR s = 0 TO LEN(SMOKES$) - 1
+    IF NOT want_smokes THEN EXITFOR
+    DIM smoke$ AS STRING = PATH.BASENAME$(SMOKES$[s])
+    DIM smoke_exe$ AS STRING = SMOKES$[s] + exe_ext$
+    IF NOT has_native ORELSE NOT FILE.EXISTS(SMOKES$[s] + ".jdb") THEN
+        DIM no_smoke = REPORT({"STEP": smoke$, "BACKEND": "native", "STATUS": "SKIP", "SECONDS": 0, "EXIT": 0, "SUMMARY": IIF(has_native, "source not in this checkout", "no NativeC in this build"), "FAILS": []})
+        CONTINUEFOR
+    ENDIF
+    t0 = TICK()
+    IF FILE.EXISTS(smoke_exe$) THEN KILL smoke_exe$
+    DIM sc = RUN(jdb$, ["-c", SMOKES$[s] + ".jdb"], no_env, SUITE_MS)
+    IF NOT FILE.EXISTS(smoke_exe$) THEN
+        DIM smsg = SPLIT(TRIM$(sc{"OUTPUT"}), CHR$(10))
+        DIM srows = []
+        IF LEN(smsg) > 0 THEN srows = [LEFT$(smsg[LEN(smsg) - 1], 200)]
+        DIM bad_smoke = REPORT({"STEP": smoke$, "BACKEND": "native", "STATUS": "COMPILE", "SECONDS": INT((TICK() - t0) / 1000), "EXIT": sc{"EXIT"}, "SUMMARY": "-c produced no program", "FAILS": srows})
+        all_ok = FALSE
+        CONTINUEFOR
+    ENDIF
+    DIM smoke_out$ AS STRING = out_file$ + "." + smoke$
+    DIM spid = OS.SPAWN(PATH.ABS$(smoke_exe$), [], {"CWD": PATH.DIRNAME$(SMOKES$[s]), "ENV": native_env, "OUTPUT": smoke_out$})
+    DIM scode = OS.WAIT(spid, SMOKE_MS)
+    DIM sstatus$ AS STRING = "OK"
+    DIM ssum$ AS STRING = ""
+    DIM slast = []
+    IF TYPEOF(scode) = "NONE" THEN
+        DIM sended = OS.KILL(spid)
+        DIM gone = OS.WAIT(spid, 5000)
+        scode = 0
+        ssum$ = "still running after " + STR$(SMOKE_MS \ 1000) + " s, ended by the gate"
+    ELSEIF scode = 0 ORELSE scode = 1 THEN
+        ssum$ = "ended on its own"
+    ELSE
+        sstatus$ = "CRASH"
+        ssum$ = "ended with " + STR$(scode)
+        IF FILE.EXISTS(smoke_out$) THEN
+            DIM sout = SPLIT(TRIM$(REPLACE$(TXTREADER$(smoke_out$), CHR$(13), "")), CHR$(10))
+            IF LEN(sout) > 0 THEN slast = [LEFT$(sout[LEN(sout) - 1], 200)]
+        ENDIF
+    ENDIF
+    ' a window that was ended may hold its output file a moment longer
+    TRY
+        IF FILE.EXISTS(smoke_out$) THEN KILL smoke_out$
+    CATCH
+    ENDTRY
+    IF NOT REPORT({"STEP": smoke$, "BACKEND": "native", "STATUS": sstatus$, "SECONDS": INT((TICK() - t0) / 1000), "EXIT": scode, "SUMMARY": ssum$, "FAILS": slast}) THEN all_ok = FALSE
+NEXT s
+
 ' parity.sh runs every test under GNU timeout, which macOS does not ship
 DIM parity_skip$ AS STRING = ""
 IF want_parity ANDALSO os$ <> "WINDOWS" THEN
@@ -150,6 +250,9 @@ ELSEIF want_parity THEN
 ENDIF
 
 IF FILE.EXISTS(out_file$) THEN KILL out_file$
+IF all_ok ANDALSO want_native ANDALSO has_native ANDALSO FILE.ISDIR(".claude") THEN
+    TXTWRITER ".claude/.tests_ok", STR$(NOW())
+ENDIF
 DIM verdict = REPORT({"STEP": "gate", "BACKEND": "", "STATUS": IIF(all_ok, "OK", "FAIL"), "SECONDS": 0, "EXIT": 0, "SUMMARY": "", "FAILS": []})
 IF all_ok THEN END 0
 END 1

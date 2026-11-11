@@ -9,6 +9,26 @@ Use this whenever **Atomi** is about to commit on the jdBasic repo, or asks "run
 
 Working dir: `D:\usr\dev\cc` (use forward slashes for Bash: `/d/usr/dev/cc`).
 
+## The short way - one command
+
+```bash
+./tools/verify.sh            # add --parity for Step 3b, --build to force a build
+```
+
+It does Steps 0 to 3 below: rebuilds `build/jdBasic.exe` and
+`build/jdbrt.dll` each when a source under `src/` is newer (flags from
+`JDB_BUILD_FLAGS`, default the base set with MCPSERVER), prints the
+`Features:` line, then runs `tools/gate_run.jdb --smokes`: a `binary` step
+(`STALE` = a source is newer than a binary), the four suites on both
+backends and the two GUI smokes, each ended by the gate after 5 s. One
+`GATE {...}` line per step; exit 0 = green, 1 = a step failed, 2 = the build
+failed. A green run stamps `.claude/.tests_ok`, so a commit right after it
+passes the hook. It does not kill a `jdBasic.exe` that locks the build; do
+that as Step 0 says and run it again. Still check the `VERIFY features:` line
+against Step 0b, and report the matrix of Step 4 from the GATE lines.
+
+The steps below are what it does, for running a part by hand.
+
 ## Step 0 - decide if we need to build
 
 Build only if `src/` is newer than `build/jdBasic.exe` or `build/jdbrt.dll`. Skip the build for `.jdb`-only changes (jdBasic interprets at runtime).
