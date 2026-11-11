@@ -109,7 +109,7 @@ FUNC RuleSync(w, p, msg)
 
     DIM said$ = TRIM$("" + (msg{"say"} ?? ""))
     IF said$ <> "" THEN
-        said$ = LEFT$(said$, 160)
+        said$ = LEFTW$(said$, 160)
         KEmit(w, {"type": "say", "who": p{"name"}, "text": said$})
         DIM npcs = w{"npcs"}
         FOR EACH npc_id$ IN MAP.KEYS(npcs)
@@ -182,7 +182,7 @@ ENDFUNC
 SUB RuleNpcReply(w, npc_id$, player$, text$)
     DIM npc = w{"npcs"}{npc_id$}
     DIM spoken$ = TRIM$(REPLACE$(REPLACE$(text$, CHR$(13), " "), CHR$(10), " "))
-    IF LEN(spoken$) > 220 THEN spoken$ = LEFT$(spoken$, 220)
+    IF LENW(spoken$) > 220 THEN spoken$ = LEFTW$(spoken$, 220)
     IF spoken$ = "" THEN RETURN
     DIM mem = npc{"mem"}{player$} ?? []
     mem = APPEND(mem, {"role": "assistant", "content": spoken$})
@@ -283,6 +283,14 @@ ENDSUB
 SUB ClientInput(c)
     DIM keys = c{"keyq"}
     c{"keyq"} = []
+    ' typed text arrives ready made; the key that opened the entry line types nothing
+    DIM fresh$ = c{"textq"} ?? ""
+    c{"textq"} = ""
+    IF c{"typing"} ANDALSO LENW(c{"entry"}) < 120 THEN
+        FOR EACH ch IN -fresh$
+            IF ASC(ch) >= 32 THEN c{"entry"} = c{"entry"} + ch
+        NEXT
+    ENDIF
     DIM i = 0
     FOR i = 0 TO LEN(keys) - 1
         DIM code = keys[i]{"keycode"}
@@ -295,8 +303,8 @@ SUB ClientInput(c)
                 c{"entry"} = ""
                 c{"typing"} = FALSE
             ELSEIF code = 8 THEN
-                IF LEN(c{"entry"}) > 0 THEN c{"entry"} = LEFT$(c{"entry"}, LEN(c{"entry"}) - 1)
-            ELSEIF code >= 32 ANDALSO code < 127 ANDALSO LEN(c{"entry"}) < 120 THEN
+                IF LENW(c{"entry"}) > 0 THEN c{"entry"} = LEFTW$(c{"entry"}, LENW(c{"entry"}) - 1)
+            ELSEIF NOT (c{"has_text"} ?? FALSE) ANDALSO code >= 32 ANDALSO code < 127 ANDALSO LEN(c{"entry"}) < 120 THEN
                 DIM letter$ = CHR$(code)
                 IF GFX.KEYSTATE("Left Shift") ORELSE GFX.KEYSTATE("Right Shift") THEN letter$ = UCASE$(letter$)
                 c{"entry"} = c{"entry"} + letter$

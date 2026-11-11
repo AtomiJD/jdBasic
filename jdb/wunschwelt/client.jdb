@@ -14,6 +14,8 @@
 '   version            the last patch that was run here
 '   frames             frames drawn since the start
 '   keyq               key presses since the last frame, each {"key", "keycode"}
+'   textq              text typed since the last frame, as the keyboard layout gives it
+'   has_text           TRUE once the runtime has sent typed text; an older one never does
 '   need_code          set by the client code when the server is ahead
 '   need_join          set when the server no longer knows the token
 '   errors, last_error what went wrong in the client code
@@ -22,7 +24,7 @@
 OPTION "EXPLICIT"
 
 DIM cli = OS.ARGS()
-DIM C = {"name": "Gast", "srv": "http://127.0.0.1:8100", "token": "", "version": 0, "frames": 0, "keyq": [], "need_code": FALSE, "need_join": FALSE, "errors": 0, "last_error": "", "quit": FALSE}
+DIM C = {"name": "Gast", "srv": "http://127.0.0.1:8100", "token": "", "version": 0, "frames": 0, "keyq": [], "textq": "", "has_text": FALSE,"need_code": FALSE, "need_join": FALSE, "errors": 0, "last_error": "", "quit": FALSE}
 DIM run_seconds AS INTEGER = 0
 IF LEN(cli) > 1 THEN C{"name"} = cli[1]
 IF LEN(cli) > 2 THEN C{"srv"} = cli[2]
@@ -39,6 +41,11 @@ ENDTRY
 
 SUB OnKeyDown(info)
     C{"keyq"} = APPEND(C{"keyq"}, {"key": info[0]{"key"}, "keycode": info[0]{"keycode"}})
+ENDSUB
+
+SUB OnText(info)
+    C{"textq"} = C{"textq"} + info[0]{"text"}
+    C{"has_text"} = TRUE
 ENDSUB
 
 SUB OnQuit(info)
@@ -89,6 +96,7 @@ ENDFUNC
 IF OS.FEATURE("HTTP") THEN HTTP.SETTIMEOUT(5)
 SCREEN 640, 384, "Wunschwelt - " + C{"name"}, ViewScale()
 ON "KEYDOWN" CALL OnKeyDown@
+ON "TEXTINPUT" CALL OnText@
 ON "QUIT" CALL OnQuit@
 
 PullCode()
