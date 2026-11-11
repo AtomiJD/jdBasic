@@ -71,7 +71,7 @@ count from 0. A builtin that is nowhere in this file does not exist.
 
 ## OS Functions
 
-`OS.GETOS$() -> string$` · `OS.ARGS() -> array` · `OS.EXEC(command$, [args_array$]) -> map` · `OS.SPAWN(command$, [args_array$], [options]) -> pid` · `OS.WAIT(pid, [timeout_ms]) -> number` · `OS.ALIVE(pid) -> boolean` · `OS.KILL(pid) -> boolean` · `OS.PID() -> number` · `OS.SELF$() -> string$` · `OS.HOSTNAME$() -> STRING"` · `OS.IP$() -> STRING` · `OS.LOAD() -> Number` · `SYS.MEMORY() -> map` · `OS.FEATURE(name$) -> BOOLEAN` · `OS.SCREENSHOT(path$, [mode$], [caption$]) -> INTEGER`
+`OS.GETOS$() -> string$` · `OS.ARGS() -> array` · `OS.EXEC(command$, [args_array$]) -> map` · `OS.SPAWN(command$, [args_array$], [options]) -> pid` · `OS.WAIT(pid, [timeout_ms]) -> number` · `OS.ALIVE(pid) -> boolean` · `OS.KILL(pid) -> boolean` · `OS.PID() -> number` · `OS.SELF$() -> string$` · `OS.HOSTNAME$() -> STRING` · `OS.IP$() -> STRING` · `OS.LOAD() -> Number` · `SYS.MEMORY() -> map` · `OS.FEATURE(name$) -> BOOLEAN` · `OS.SCREENSHOT(path$, [mode$], [caption$]) -> INTEGER`
 
 ## Foreign Function Interface (DECLARE FUNC)
 

@@ -1577,7 +1577,7 @@ File and directory names are UTF-8 like every other string. On Windows a program
 * **`OS.KILL(pid) -> boolean`**: Ends the process at once (TerminateProcess on Windows, SIGKILL elsewhere). `FALSE` when it was gone, may not be ended, or is the program itself.
 * **`OS.PID() -> number`**: The process id of the running program.
 * **`OS.SELF$() -> string$`**: The full path of the running executable: `jdBasic` itself for a script, the program for a compiled one. With `OS.SPAWN` it starts another script on the same jdBasic without guessing paths.
-* **`OS.HOSTNAME$() -> STRING"`**: Returns the network hostname of the local machine.
+* **`OS.HOSTNAME$() -> STRING`**: Returns the network hostname of the local machine.
 * **`OS.IP$() -> STRING`**: Returns the primary local IPv4 address of the machine.
 * **`OS.LOAD() -> Number`**: The CPU load of the whole machine in percent (0 to 100), measured between this call and the previous one; the first call of a program measures over a tenth of a second. A loop that asks every two seconds gets the load of those two seconds. Windows, Linux and macOS.
 * **`SYS.MEMORY() -> map`**: The physical memory of the machine in bytes: `"total"`, and `"free"` for what programs can still have without the system swapping (on Linux `MemAvailable`, on macOS free, inactive and purgeable pages). Windows, Linux and macOS.
