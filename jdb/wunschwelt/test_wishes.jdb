@@ -86,6 +86,9 @@ r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 1, "say"
 r = Post("/sync", {"token": token$, "mapv": 1, "since": since, "wishv": 1, "say": "Und ich w" + uml$ + "nsche mir ein Boot"})
 DIM board = Admin("wishes", {})
 Check("one player holds three open wishes at most", board{"ok"} ANDALSO LEN(board{"wishes"}) = 3)
+DIM esc_say = Post("/sync", {"token": other$, "mapv": 1, "since": ben_since, "say": "Hallo" + CHR$(27) + "[2J" + CHR$(7) + "Welt"})
+DIM esc_seen = Events(Post("/sync", {"token": token$, "mapv": 1, "since": since}), "say")
+Check("control characters in a spoken line become blanks", LEN(esc_seen) > 0 ANDALSO esc_seen[LEN(esc_seen) - 1]{"text"} = "Hallo [2J Welt")
 
 DIM far = Post("/sync", {"token": other$, "mapv": 1, "since": ben_since, "wishv": -1, "say": "Ich w" + uml$ + "nsche mir ein Pferd"})
 Check("a wish spoken far from Marta is not written", LEN(Admin("wishes", {}){"wishes"}) = 3)

@@ -31,9 +31,10 @@ FUNC RuleWishCount(w, who$, status$)
 ENDFUNC
 
 SUB RuleWishAdd(w, who$, text$)
-    DIM wish$ = TRIM$(REPLACE$(REPLACE$(text$, CHR$(13), " "), CHR$(10), " "))
-    wish$ = RuleCut$(wish$, 100)
+    DIM wish$ = TRIM$(RuleCut$(TRIM$(text$), 100))
     IF wish$ = "" THEN RETURN
+    ' asked again here: an answer of the model can arrive after the board filled up
+    IF RuleWishCount(w, who$, "open") >= 3 ORELSE RuleWishCount(w, "", "open") >= 40 THEN RETURN
     DIM wishes = w{"wishes"}
     DIM i = 0
     FOR i = 0 TO LEN(wishes) - 1

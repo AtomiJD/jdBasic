@@ -134,7 +134,7 @@ patch key and nginx does not route it.
 build/jdBasic.exe jdb/wunschwelt/tools/admin.jdb wishes      a local world
 ```
 
-`test_wishes.jdb` checks the board with 18 checks on a server without a
+`test_wishes.jdb` checks the board with 19 checks on a server without a
 model. With the model on cortex, of eight sentences the four wishes were
 written, briefly worded, and greeting and small talk were not; a sentence
 that asked the model for admin rights landed on the board as that text.

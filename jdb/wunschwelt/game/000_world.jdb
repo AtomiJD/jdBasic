@@ -6,11 +6,23 @@
 
 '@server
 
-' The first n characters of a text; a character of several bytes stays whole.
+' The first n characters of a text, free of control characters; a character
+' of several bytes stays whole. Every text a player or the model wrote goes
+' through here before it is kept.
 FUNC RuleCut$(text$, n)
-    DIM chars = -text$
-    IF LEN(chars) <= n THEN RETURN text$
-    RETURN JOIN(TAKE(n, chars), "")
+    DIM kept$ = ""
+    DIM taken = 0
+    FOR EACH ch IN -text$
+        IF taken >= n THEN EXITFOR
+        ' a control character becomes a blank: such text ends up on screens and consoles
+        IF ASC(ch) < 32 ORELSE ASC(ch) = 127 THEN
+            kept$ = kept$ + " "
+        ELSE
+            kept$ = kept$ + ch
+        ENDIF
+        taken = taken + 1
+    NEXT
+    RETURN kept$
 ENDFUNC
 
 FUNC RuleBlocked(w, x, y)
