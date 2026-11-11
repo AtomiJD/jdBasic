@@ -10,7 +10,8 @@
 # File tools are checked by path, with . and .. resolved. A shell command is
 # text: for test-author it has to consist of the few shapes listed below;
 # for the other agents the checks name what must not appear in it, which
-# stops a slip and not an agent that sets out to get around them.
+# stops a slip and not an agent that sets out to get around them. What a
+# jdBasic program does once it runs is outside this hook.
 # Exit 2 hands the reason back to the agent.
 $raw = [Console]::In.ReadToEnd()
 try { $inp = $raw | ConvertFrom-Json } catch {
@@ -36,7 +37,9 @@ function Canon([string]$p) {
   if ($n -match '^([a-zA-Z]:)/(.*)$') { $lead = $Matches[1] + '/'; $n = $Matches[2] }
   elseif ($n.StartsWith('/')) { $lead = '/'; $n = $n.TrimStart('/') }
   $kept = New-Object System.Collections.Generic.List[string]
-  foreach ($seg in ($n -split '/')) {
+  foreach ($part in ($n -split '/')) {
+    # Windows opens "hooks." and "hooks " as "hooks"
+    $seg = if ($part -match '^\.+$') { $part } else { $part.TrimEnd('.', ' ') }
     if ($seg -eq '' -or $seg -eq '.') { continue }
     if ($seg -eq '..') { if ($kept.Count -gt 0) { $kept.RemoveAt($kept.Count - 1) }; continue }
     $kept.Add($seg)
@@ -105,7 +108,7 @@ if ($agent -eq 'test-author') {
     $file = '(tests|tmp)/[\w./-]+'
     $shapes = @(
       "^(\./)?build/jdBasic(\.exe)?( (-c|--lint))? $file\.jdb( 2>&1)?$",
-      "^\./$file( 2>&1)?$",
+      "^\./$file\.exe( 2>&1)?$",
       "^rm -f $file\.exe$",
       "^(tail|head) -(n )?\d+$",
       "^echo [\w .:=-]*$"
