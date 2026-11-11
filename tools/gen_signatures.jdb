@@ -82,7 +82,7 @@ FUNC BulletSignatures(row$)
         DIM closeAt = INSTR(rest$, "`**")
         IF closeAt < 4 THEN EXITDO
         DIM sig$ = MID$(rest$, 3, closeAt - 3)
-        IF NOT NamesBuiltin(sig$) THEN EXITDO
+        IF INSTR(sig$, "`") >= 0 ORELSE NOT NamesBuiltin(sig$) THEN EXITDO
         found = APPEND(found, sig$)
         rest$ = MID$(rest$, closeAt + 3, LEN(rest$))
         FOR EACH joint$ IN joints
@@ -159,12 +159,13 @@ DIM n_sections = 0
 DIM listed = {}
 DIM in_section = {}
 
-' Adds signatures to the section, each name once.
+' Adds signatures to the section, each once. A name may come twice with
+' two forms (FOR ... NEXT and FOR EACH ... IN).
 SUB Keep(new_sigs)
     FOR EACH new_sig$ IN new_sigs
         DIM new_name$ = SigName$(new_sig$)
-        IF TYPEOF(in_section{new_name$}) = "NONE" THEN
-            in_section{new_name$} = TRUE
+        IF TYPEOF(in_section{new_sig$}) = "NONE" THEN
+            in_section{new_sig$} = TRUE
             listed{new_name$} = TRUE
             sigs = APPEND(sigs, new_sig$)
         ENDIF
