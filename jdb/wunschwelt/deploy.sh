@@ -59,8 +59,13 @@ case "$1" in
 --patch)
     [ -f "$2" ] && [ -n "$3" ] || { echo "usage: ./deploy.sh --patch <file> <title>"; exit 1; }
     $SCP "$2" "$HOST:~/ww_patch.jdb"
+    # the title travels as a file, so no shell on the way reads it as code
+    TITLE_FILE=$(mktemp)
+    printf '%s' "$3" > "$TITLE_FILE"
+    $SCP "$TITLE_FILE" "$HOST:~/ww_patch.title"
+    rm -f "$TITLE_FILE"
     # the key is read on the box by root and never leaves it
-    $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; exec /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/patch.jdb /home/deploy/ww_patch.jdb \"\$0\" http://127.0.0.1:$PORT' \"$3\""
+    $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; exec /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/patch.jdb /home/deploy/ww_patch.jdb \"\$(cat /home/deploy/ww_patch.title)\" http://127.0.0.1:$PORT'"
     exit 0
     ;;
 --setup)
@@ -71,6 +76,7 @@ case "$1" in
 sudo -n mkdir -p /opt/wunschwelt
 sudo -n cp /home/deploy/jdbasic-1.2/build/jdbasic /opt/wunschwelt/jdBasic
 if ! sudo -n test -f /opt/wunschwelt/env; then
+  sudo -n install -m 600 -o root -g root /dev/null /opt/wunschwelt/env
   printf 'WW_PATCH_KEY=%s\nWW_LLM_URL=http://127.0.0.1:18082/v1/chat/completions\n' \"\$(openssl rand -hex 24)\" | sudo -n tee /opt/wunschwelt/env > /dev/null
 fi
 sudo -n chown root:root /opt/wunschwelt/env && sudo -n chmod 600 /opt/wunschwelt/env"
