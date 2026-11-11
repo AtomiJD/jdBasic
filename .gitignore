@@ -224,6 +224,7 @@ jdb/jdbrt.dll
 
 # ── DOOM port (local-only, original WADs not redistributable) ─────
 jdb/doom/
+*.[wW][aA][dD]
 
 # ── Published website mirror (jdbasic.dev source lives elsewhere) ──
 # Local checkout / wasm build artefacts of the public site go here.
