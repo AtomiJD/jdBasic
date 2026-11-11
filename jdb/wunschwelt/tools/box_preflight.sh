@@ -20,6 +20,13 @@ trap '[ -n "$SERVER_PID" ] && kill $SERVER_PID 2>/dev/null; rm -rf "$WORK"' EXIT
 
 run() {  # mode, port, model address
     local mode=$1 port=$2 rc=0
+    # a port someone else holds would let the round run against a stranger,
+    # and on Linux a second server starts on such a port without complaint
+    command -v ss > /dev/null || { echo "preflight ($mode): no ss to look at the ports"; return 1; }
+    if ss -ltn | grep -q ":$port "; then
+        echo "preflight ($mode): port $port is in use"
+        return 1
+    fi
     mkdir "$WORK/$mode"
     if sudo -n test -d $LIVE_STATE; then
         sudo -n cp -r $LIVE_STATE/. "$WORK/$mode/"
@@ -29,6 +36,13 @@ run() {  # mode, port, model address
         "$JDB" "$SRC/server.jdb" "$port" 60 > "$WORK/$mode.log" 2>&1 &
     SERVER_PID=$!
     sleep 2
+    if ! kill -0 $SERVER_PID 2>/dev/null || ! grep -q "Wunschwelt on 127.0.0.1:$port," "$WORK/$mode.log"; then
+        echo "preflight ($mode): the test server did not start on port $port"
+        tail -3 "$WORK/$mode.log"
+        kill $SERVER_PID 2>/dev/null
+        SERVER_PID=
+        return 1
+    fi
     if grep -q "refused\|could not be read" "$WORK/$mode.log"; then
         echo "preflight ($mode): a stored patch or the saved world did not come back"
         rc=1
