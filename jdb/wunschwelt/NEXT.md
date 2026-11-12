@@ -53,7 +53,7 @@ build\jdBasic.exe jdb\wunschwelt\server.jdb
 build\jdBasic.exe jdb\wunschwelt\tools\devsite.jdb     http://127.0.0.1:8180/wunschwelt/
 ```
 
-## Done on 2026-11-12, not yet on the box
+## Done on 2026-11-12, live since that evening
 
 - marketing #1003: the ground from the biome generator (`game/005_terrain.jdb`),
   trees, stones, flowers and roofed houses (`game/006_scenery.jdb`),
@@ -63,12 +63,12 @@ build\jdBasic.exe jdb\wunschwelt\tools\devsite.jdb     http://127.0.0.1:8180/wun
   (`wasm/index.html`), deploy ships `assets/*.rgba` and `assets.txt`
 - marketing #1005: the wish catalog and the strict judge, `test_catalog.jdb`
 
-Checked: the four tests, the window client, and the browser through
-`tools/devsite.jdb` (ground, houses, the three sheets, walking). Not checked:
-a deploy (`./deploy.sh` without `--wasm`: the page changed, the runtime did
-not), the judge with the real model on cortex, the live patches of cat, well
-and statue on the new ground. The live world keeps its saved map; the new
-kinds (sand, deep water, bush, stone) come with the first patch that lays them.
+Deployed with `./deploy.sh` (live: version 7, rule errors 0; the cat, the
+well and the statue run on the new ground). Checked: the four tests, the
+window client, the browser through `tools/devsite.jdb` and the live page
+(ground, houses, the three sheets, walking). Not checked: the judge with the
+real model on cortex. The live world keeps its saved map; the new kinds
+(sand, deep water, bush, stone) come with the first patch that lays them.
 
 Traps: the browser runtime reads no PNG (`IMG_Load failed`); pictures go
 there as `.rgba`. `tools/devsite.jdb` and a running local server read their
