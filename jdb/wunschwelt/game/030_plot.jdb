@@ -71,7 +71,8 @@ SUB RulePlotTick(w, now)
 ENDSUB
 
 FUNC RulePlotClean$(text$, n)
-    RETURN TRIM$(RuleCut$(TRIM$(REPLACE$(REPLACE$("" + text$, CHR$(13), " "), CHR$(10), " ")), n))
+    IF NOT ISSTR(text$) THEN RETURN ""
+    RETURN TRIM$(RuleCut$(TRIM$(REPLACE$(REPLACE$(text$, CHR$(13), " "), CHR$(10), " ")), n))
 ENDFUNC
 
 SUB RulePlotAnswer(w, data, text$)
@@ -139,7 +140,15 @@ FUNC RulePlotAdmin(w, name$, args)
     IF name$ = "plot_set" THEN
         IF MAP.EXISTS(args, "title") THEN plot{"title"} = RulePlotClean$(args{"title"}, 60)
         IF MAP.EXISTS(args, "narrative") THEN plot{"narrative"} = RulePlotClean$(args{"narrative"}, 420)
-        IF MAP.EXISTS(args, "threads") ANDALSO ISARR(args{"threads"}) THEN plot{"threads"} = args{"threads"}
+        IF MAP.EXISTS(args, "threads") ANDALSO ISARR(args{"threads"}) THEN
+            DIM kept = []
+            DIM k = 0
+            FOR k = 0 TO MIN([LEN(args{"threads"}), 3]) - 1
+                DIM th$ = RulePlotClean$(args{"threads"}[k], 100)
+                IF th$ <> "" THEN kept = APPEND(kept, th$)
+            NEXT k
+            plot{"threads"} = kept
+        ENDIF
         IF MAP.EXISTS(args, "every_ms") THEN plot{"every_ms"} = CLAMP(INT(args{"every_ms"}), 1000, 3600000)
         IF MAP.EXISTS(args, "at") THEN plot{"at"} = INT(args{"at"})
         plot{"v"} = plot{"v"} + 1

@@ -96,6 +96,13 @@ FUNC RuleApplyLook(w, who$, verdict)
     ENDIF
     p{"look"} = look
     IF NOT MAP.EXISTS(w, "looks") THEN w{"looks"} = {}
+    IF MAP.SIZE(w{"looks"}) >= 500 ANDALSO NOT MAP.EXISTS(w{"looks"}, who$) THEN
+        DIM names = MAP.KEYS(w{"looks"})
+        DIM d = 0
+        FOR d = 0 TO 99
+            MAP.DELETE(w{"looks"}, names[d])
+        NEXT d
+    ENDIF
     w{"looks"}{who$} = look
     KEmit(w, {"type": "look", "who": who$, "text": said$})
     RETURN TRUE
