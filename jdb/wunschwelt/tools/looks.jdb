@@ -1,0 +1,89 @@
+' The parts of a character sheet that a look may recolour: which pixel is
+' clothes, hat, scarf or eyepatch. Writes assets/<skin>.parts, one byte per
+' pixel of the sheet (0 nothing, 1 clothes, 2 hat, 3 scarf, 4 eyepatch).
+'
+'   build/jdBasic.exe jdb/wunschwelt/tools/looks.jdb [debug.png]
+'
+' A part is found by hue, saturation, brightness and the height in the
+' frame (0 top, 1 bottom), by the rules of each skin below. With a path
+' given, the three sheets are drawn beside their part maps there.
+
+IMPORT IMG
+
+DIM args = OS.ARGS()
+DIM here$ = PATH.DIRNAME$(args[0])
+DIM debug$ = ""
+IF LEN(args) > 1 THEN debug$ = args[1]
+
+' [part, hue from, hue to, least saturation, least brightness, height from,
+' height to, most saturation]
+FUNC Rules(skin$)
+    IF skin$ = "vally" THEN RETURN [[1, 345, 15, 0.55, 0.3, 0.45, 1.0], [2, 10, 45, 0.55, 0.4, 0.0, 0.45], [4, 348, 357.5, 0.15, 0.7, 0.2, 0.55, 0.4]]
+    IF skin$ = "moehrchen" THEN RETURN [[1, 255, 300, 0.3, 0.2, 0.4, 1.0], [2, 315, 360, 0.3, 0.45, 0.0, 0.33], [3, 315, 360, 0.3, 0.45, 0.33, 0.6]]
+    IF skin$ = "hasi" THEN RETURN [[1, 300, 352, 0.35, 0.45, 0.42, 1.0], [2, 15, 55, 0.45, 0.4, 0.0, 0.36], [3, 15, 55, 0.45, 0.4, 0.36, 0.62]]
+    RETURN []
+ENDFUNC
+
+FUNC PartMap(img, rules)
+    DIM w = IMG.WIDTH(img)
+    DIM p = IMG.PIXELS(img)
+    DIM n = LEN(p) / 4
+    DIM q = RESHAPE(p, [n, 4])
+    DIM r = SLICE(q, 1, 0) / 255
+    DIM g = SLICE(q, 1, 1) / 255
+    DIM b = SLICE(q, 1, 2) / 255
+    DIM a = SLICE(q, 1, 3)
+    DIM mx = IIF(r > g, r, g)
+    mx = IIF(mx > b, mx, b)
+    DIM mn = IIF(r < g, r, g)
+    mn = IIF(mn < b, mn, b)
+    DIM d = mx - mn + (mx = mn) * 0.0001
+    DIM hue = IIF(mx = r, 60 * ((g - b) / d), IIF(mx = g, 60 * ((b - r) / d + 2), 60 * ((r - g) / d + 4)))
+    hue = hue + (hue < 0) * 360
+    DIM sat = (mx - mn) / (mx + (mx = 0))
+    DIM idx = IOTA(n, 0)
+    DIM fy = ((FLOOR(idx / w) MOD 48) + 0.5) / 48
+    DIM parts = ZEROS([n])
+    DIM k = 0
+    FOR k = 0 TO LEN(rules) - 1
+        DIM rl = rules[k]
+        DIM in_hue = IIF(rl[1] <= rl[2], (hue >= rl[1]) * (hue < rl[2]), (hue >= rl[1]) + (hue < rl[2]) > 0)
+        DIM top_sat = 1.01
+        IF LEN(rl) > 7 THEN top_sat = rl[7]
+        DIM hit = in_hue * (sat >= rl[3]) * (sat <= top_sat) * (mx >= rl[4]) * (fy >= rl[5]) * (fy < rl[6]) * (a > 100) * (parts = 0)
+        parts = parts + hit * rl[0]
+    NEXT k
+    RETURN parts
+ENDFUNC
+
+DIM skins = ["vally", "moehrchen", "hasi"]
+DIM tints = [[0, 0, 0, 0], [60, 120, 255, 255], [255, 220, 40, 255], [40, 220, 90, 255], [255, 60, 220, 255]]
+DIM board = IMG.BLANK(144 * 6 + 50, 192, 4, [30, 30, 36, 255])
+DIM s = 0
+FOR s = 0 TO LEN(skins) - 1
+    DIM img = IMG.READPNG(here$ + "/../assets/" + skins[s] + ".png")
+    DIM parts = PartMap(img, Rules(skins[s]))
+    BINWRITER here$ + "/../assets/" + skins[s] + ".parts", JOIN(SELECT(LAMBDA v -> CHR$(v), parts), "")
+    DIM tally$ = ""
+    DIM k = 0
+    FOR k = 1 TO 4
+        tally$ = tally$ + "  part " + STR$(k) + ": " + STR$(SUM(parts = k))
+    NEXT k
+    PRINT skins[s]; tally$
+    IF debug$ <> "" THEN
+        DIM px = IMG.PIXELS(img)
+        DIM n = LEN(parts)
+        DIM i = 0
+        FOR i = 0 TO n - 1
+            IF parts[i] > 0 THEN
+                DIM t = tints[parts[i]]
+                px[i * 4] = t[0]
+                px[i * 4 + 1] = t[1]
+                px[i * 4 + 2] = t[2]
+            ENDIF
+        NEXT i
+        board = IMG.COMPOSITE(board, img, s * 300, 0)
+        board = IMG.COMPOSITE(board, IMG.FROMPIXELS(144, 192, 4, px), s * 300 + 148, 0)
+    ENDIF
+NEXT s
+IF debug$ <> "" THEN IMG.WRITEPNG(IMG.RESIZE(board, IMG.WIDTH(board) * 2, IMG.HEIGHT(board) * 2, "nearest"), debug$)

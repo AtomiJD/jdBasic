@@ -1,0 +1,164 @@
+' Looks: a player chooses the figure (vally, moehrchen, hasi) and the colours
+' of its clothes, hat, scarf and eyepatch by a wish, and has it at once.
+' p{"look"} is {"skin": name, "clothes": [r, g, b], "hat": ..., "scarf":
+' ..., "patch": ...}; every key is optional. The client recolours the sheet
+' by its part map (assets/<skin>.parts, written by tools/looks.jdb) and
+' keeps the shading of the picture.
+
+'@server
+
+' Colours a wish may name, as the judge is told to write them.
+FUNC RuleLookColors()
+    RETURN {"rot": [206, 48, 48], "orange": [236, 128, 36], "gelb": [240, 206, 52], "gruen": [64, 168, 72], "tuerkis": [44, 184, 184], "blau": [56, 104, 220], "hellblau": [116, 178, 240], "dunkelblau": [36, 52, 140], "lila": [138, 74, 200], "rosa": [240, 150, 190], "pink": [232, 70, 166], "braun": [136, 86, 48], "schwarz": [44, 44, 54], "weiss": [236, 236, 232], "grau": [140, 140, 150], "gold": [228, 186, 64], "silber": [196, 202, 214]}
+ENDFUNC
+
+FUNC RuleLookSkins()
+    RETURN ["vally", "moehrchen", "hasi"]
+ENDFUNC
+
+' German words for the parts, for the announcement.
+FUNC RuleLookPartName$(part$)
+    IF part$ = "clothes" THEN RETURN "Kleidung"
+    IF part$ = "hat" THEN RETURN RuleDe$("M{u}tze")
+    IF part$ = "scarf" THEN RETURN "Schal"
+    IF part$ = "patch" THEN RETURN "Augenklappe"
+    RETURN part$
+ENDFUNC
+
+' A colour word of the judge as the table knows it: lower case, umlauts
+' spelled out.
+FUNC RuleLookColorKey$(word$)
+    DIM k$ = LCASE$(TRIM$(word$))
+    k$ = REPLACE$(k$, CHR$(195) + CHR$(188), "ue")
+    k$ = REPLACE$(k$, CHR$(195) + CHR$(182), "oe")
+    k$ = REPLACE$(k$, CHR$(195) + CHR$(164), "ae")
+    k$ = REPLACE$(k$, CHR$(195) + CHR$(159), "ss")
+    IF k$ = "violett" THEN k$ = "lila"
+    IF k$ = "grun" THEN k$ = "gruen"
+    RETURN k$
+ENDFUNC
+
+FUNC RuleLookGuessPart$(hay$)
+    DIM words = [["muetze", "hat"], ["hut", "hat"], ["kappe", "hat"], ["schal", "scarf"], ["augenklappe", "patch"], ["klappe", "patch"], ["pulli", "clothes"], ["pullover", "clothes"], ["jacke", "clothes"], ["kleid", "clothes"], ["shirt", "clothes"], ["vally", "skin"], ["moehrchen", "skin"], ["hasi", "skin"]]
+    DIM i = 0
+    FOR i = 0 TO LEN(words) - 1
+        IF INSTR(hay$, words[i][0]) >= 0 THEN RETURN words[i][1]
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+FUNC RuleLookGuessSkin$(hay$)
+    DIM skins = RuleLookSkins()
+    DIM i = 0
+    FOR i = 0 TO LEN(skins) - 1
+        IF INSTR(hay$, skins[i]) >= 0 THEN RETURN skins[i]
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+' The colour named in a text; longer names first, so hellblau is not blau.
+FUNC RuleLookGuessColor$(hay$)
+    DIM names = ["hellblau", "dunkelblau", "tuerkis", "orange", "schwarz", "silber", "gruen", "braun", "weiss", "gelb", "lila", "rosa", "pink", "grau", "gold", "blau", "rot"]
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        IF INSTR(hay$, names[i]) >= 0 THEN RETURN names[i]
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+' Applies a look wish of the judge ({"part", "color"} or {"part": "skin",
+' "skin"}); TRUE when something changed.
+FUNC RuleApplyLook(w, who$, verdict)
+    IF NOT MAP.EXISTS(w{"players"}, who$) THEN RETURN FALSE
+    DIM p = w{"players"}{who$}
+    DIM look = p{"look"} ?? {}
+    DIM part$ = LCASE$(TRIM$("" + (verdict{"part"} ?? "")))
+    ' what the judge left out is looked for in the sentence itself
+    DIM hay$ = RuleLookColorKey$(("" + (verdict{"text"} ?? "")) + " " + ("" + (verdict{"said"} ?? "")))
+    IF part$ = "" ORELSE INDEXOF(["skin", "clothes", "hat", "scarf", "patch"], part$) < 0 THEN part$ = RuleLookGuessPart$(hay$)
+    IF part$ = "skin" ANDALSO INDEXOF(RuleLookSkins(), LCASE$("" + (verdict{"skin"} ?? ""))) < 0 THEN verdict{"skin"} = RuleLookGuessSkin$(hay$)
+    IF part$ <> "skin" ANDALSO NOT MAP.EXISTS(RuleLookColors(), RuleLookColorKey$("" + (verdict{"color"} ?? ""))) THEN verdict{"color"} = RuleLookGuessColor$(hay$)
+    DIM said$ = ""
+    IF part$ = "skin" THEN
+        DIM skin$ = LCASE$(TRIM$("" + (verdict{"skin"} ?? "")))
+        skin$ = REPLACE$(skin$, CHR$(195) + CHR$(182), "oe")
+        IF INDEXOF(RuleLookSkins(), skin$) < 0 THEN RETURN FALSE
+        look{"skin"} = skin$
+        said$ = who$ + " sieht jetzt aus wie " + UCASE$(LEFT$(skin$, 1)) + MID$(skin$, 1)
+    ELSEIF part$ = "clothes" ORELSE part$ = "hat" ORELSE part$ = "scarf" ORELSE part$ = "patch" THEN
+        DIM colors = RuleLookColors()
+        DIM key$ = RuleLookColorKey$("" + (verdict{"color"} ?? ""))
+        IF NOT MAP.EXISTS(colors, key$) THEN RETURN FALSE
+        look{part$} = colors{key$}
+        said$ = who$ + RuleDe$(" tr{a}gt jetzt ") + RuleLookPartName$(part$) + " in " + key$
+    ELSE
+        RETURN FALSE
+    ENDIF
+    p{"look"} = look
+    KEmit(w, {"type": "look", "who": who$, "text": said$})
+    RETURN TRUE
+ENDFUNC
+
+'@client
+
+' The pixels and the part map of a sheet, kept for recolouring:
+' c{"sheet_raw"}{skin} = [width, height, pixels, parts].
+SUB ClientKeepRaw(c, skin$, folder$)
+    IF NOT MAP.EXISTS(c, "sheet_raw") THEN c{"sheet_raw"} = {}
+    TRY
+        DIM data$ = BINREADER$(folder$ + "/" + skin$ + ".rgba")
+        DIM size = UNPACK("<II", data$)
+        DIM n = size[0] * size[1]
+        DIM parts$ = BINREADER$(folder$ + "/" + skin$ + ".parts")
+        IF LEN(parts$) < n THEN RETURN
+        c{"sheet_raw"}{skin$} = [size[0], size[1], UNPACK(STR$(n * 4) + "b", data$, 8), UNPACK(STR$(n) + "b", parts$, 0)]
+    CATCH
+    ENDTRY
+ENDSUB
+
+' The sheet of a skin in a look; made once per look and kept.
+FUNC ClientLookSheet(c, skin$, look)
+    DIM sheets = c{"sheets"} ?? {}
+    IF NOT ISMAP(look) ORELSE MAP.SIZE(look) = 0 THEN RETURN sheets{skin$} ?? -1
+    DIM key$ = skin$ + JSON.STRINGIFY$(look)
+    IF NOT MAP.EXISTS(c, "look_imgs") THEN c{"look_imgs"} = {}
+    IF MAP.EXISTS(c{"look_imgs"}, key$) THEN RETURN c{"look_imgs"}{key$}
+    IF NOT MAP.EXISTS(c, "sheet_raw") ORELSE NOT MAP.EXISTS(c{"sheet_raw"}, skin$) THEN ClientKeepRaw(c, skin$, c{"assets"} ?? "assets")
+    IF NOT MAP.EXISTS(c{"sheet_raw"} ?? {}, skin$) THEN RETURN sheets{skin$} ?? -1
+    DIM raw = c{"sheet_raw"}{skin$}
+    DIM n = raw[0] * raw[1]
+    DIM q = RESHAPE(raw[2], [n, 4])
+    DIM r = SLICE(q, 1, 0)
+    DIM g = SLICE(q, 1, 1)
+    DIM b = SLICE(q, 1, 2)
+    DIM a = SLICE(q, 1, 3)
+    DIM parts = raw[3]
+    DIM lum = 0.299 * r + 0.587 * g + 0.114 * b
+    DIM names = ["clothes", "hat", "scarf", "patch"]
+    DIM k = 0
+    FOR k = 0 TO 3
+        IF MAP.EXISTS(look, names[k]) THEN
+            DIM mask = (parts = k + 1)
+            DIM n_part = SUM(mask)
+            IF n_part > 0 THEN
+                ' each pixel keeps its brightness relative to the part's mean
+                DIM part_lum = SUM(lum * mask) / n_part
+                DIM shade = lum / (part_lum + (part_lum = 0))
+                DIM col = look{names[k]}
+                r = r * (1 - mask) + CLAMP(col[0] * shade, 0, 255) * mask
+                g = g * (1 - mask) + CLAMP(col[1] * shade, 0, 255) * mask
+                b = b * (1 - mask) + CLAMP(col[2] * shade, 0, 255) * mask
+            ENDIF
+        ENDIF
+    NEXT k
+    DIM spr = SPRITE.CREATE(raw[0], raw[1])
+    SPRITE.SETBUFFER spr, FLATTEN(TRANSPOSE(STACK(0, r, g, b, a)))
+    DIM img = GFX.NEWTARGET(raw[0], raw[1], FALSE)
+    GFX.TARGET img, TRUE
+    SPRITE.POS spr, 0, 0
+    SPRITE.DRAW spr
+    GFX.TARGET
+    SPRITE.DELETE spr
+    c{"look_imgs"}{key$} = img
+    RETURN img
+ENDFUNC

@@ -162,7 +162,7 @@ FUNC RuleSync(w, p, msg)
     DIM shown = []
     FOR EACH other$ IN MAP.KEYS(players)
         DIM o = players{other$}
-        shown = APPEND(shown, [[o{"name"}, o{"x"}, o{"y"}, o{"dir"}, o{"tint"}]])
+        shown = APPEND(shown, [[o{"name"}, o{"x"}, o{"y"}, o{"dir"}, o{"tint"}, o{"look"} ?? {}]])
     NEXT
     DIM folk = []
     FOR EACH folk_id$ IN MAP.KEYS(w{"npcs"})
@@ -180,7 +180,7 @@ FUNC RuleSync(w, p, msg)
         IF events[i]{"seq"} > since THEN news = APPEND(news, events[i])
     NEXT i
 
-    DIM answer = {"x": p{"x"}, "y": p{"y"}, "players": shown, "npcs": folk, "events": news, "seq": w{"seq"}, "uptime": now \ 1000}
+    DIM answer = {"x": p{"x"}, "y": p{"y"}, "players": shown, "npcs": folk, "events": news, "seq": w{"seq"}, "uptime": now \ 1000, "music": RuleMusicNow$(w)}
     IF INT(msg{"mapv"} ?? 0) <> w{"map"}{"v"} THEN answer{"map"} = w{"map"}
     RuleExtra(w, p, msg, answer)
     RETURN answer
@@ -228,6 +228,11 @@ SUB RuleTick(w, now)
         RuleNpcTick(w, npcs{npc_id$}, now)
     NEXT
 ENDSUB
+
+' The style of music the world plays; game/020_music.jdb decides it.
+FUNC RuleMusicNow$(w)
+    RETURN "village"
+ENDFUNC
 
 ' What a person knows beyond its persona; a later patch fills it in.
 FUNC RuleNpcKnows$(w, npc)
@@ -470,6 +475,13 @@ SUB ClientLoadSheets(c)
             GFX.FREEIMAGE(c{"sheets"}{old$})
         NEXT
     ENDIF
+    IF MAP.EXISTS(c, "look_imgs") THEN
+        FOR EACH seen$ IN MAP.KEYS(c{"look_imgs"})
+            GFX.FREEIMAGE(c{"look_imgs"}{seen$})
+        NEXT
+    ENDIF
+    c{"look_imgs"} = {}
+    c{"sheet_raw"} = {}
     c{"sheets"} = {}
     c{"moving"} = {}
     DIM folder$ = c{"assets"} ?? "assets"
@@ -608,6 +620,7 @@ SUB ClientSync(c)
     c{"npcs"} = r{"npcs"}
     c{"since"} = r{"seq"}
     c{"uptime"} = r{"uptime"}
+    c{"music_want"} = r{"music"} ?? "village"
     IF MAP.EXISTS(r, "map") THEN
         DIM m = r{"map"}
         ClientLayMap(c, m)
@@ -623,6 +636,9 @@ SUB ClientSync(c)
         ELSEIF ev{"type"} = "patch" THEN
             c{"banner"} = "Neu in der Welt: " + ev{"title"}
             c{"banner_until"} = TICK() + 6000
+        ELSEIF ev{"type"} = "look" ORELSE ev{"type"} = "music" THEN
+            c{"banner"} = ev{"text"}
+            c{"banner_until"} = TICK() + 4000
         ELSEIF ev{"type"} = "join" THEN
             c{"banner"} = ev{"who"} + " betritt das Dorf"
             c{"banner_until"} = TICK() + 3000
@@ -657,14 +673,29 @@ SUB ClientFigure(sx, sy, dir, tint, name$, is_npc)
     DIM cs = JDB.GLOBAL_GET("C")
     DIM sheets = cs{"sheets"} ?? {}
     DIM key$ = LCASE$(name$)
+    DIM colors = {}
     IF NOT is_npc THEN
         DIM skins = ClientSkins()
         key$ = skins[tint MOD LEN(skins)]
+        ' a look a player wished for (game/015_looks.jdb) picks the figure and its colours
+        DIM look = {}
+        IF MAP.EXISTS(cs, "looks") THEN look = cs{"looks"}{name$} ?? {}
+        IF ISMAP(look) THEN
+            FOR EACH part$ IN MAP.KEYS(look)
+                IF part$ = "skin" THEN
+                    IF MAP.EXISTS(sheets, "" + look{"skin"}) THEN key$ = "" + look{"skin"}
+                ELSE
+                    colors{part$} = look{part$}
+                ENDIF
+            NEXT
+        ENDIF
     ENDIF
     IF MAP.EXISTS(sheets, key$) THEN
         DIM walking = FALSE
         IF MAP.EXISTS(cs, "moving") THEN walking = cs{"moving"}{name$} ?? FALSE
-        ClientSheet(sheets{key$}, sx, sy, dir, walking)
+        DIM img = sheets{key$}
+        IF MAP.SIZE(colors) > 0 THEN img = ClientLookSheet(cs, key$, colors)
+        ClientSheet(img, sx, sy, dir, walking)
         DIM tsize = GFX.TEXTSIZE(name$)
         IF is_npc THEN
             TEXT sx + 16 - tsize[0] \ 2, sy - tsize[1] - 15, name$, 250, 214, 110
@@ -761,6 +792,10 @@ SUB ClientBubble(sx, sy, text$)
     NEXT i
 ENDSUB
 
+' The music of the world; game/020_music.jdb plays it.
+SUB ClientMusicFrame(c)
+ENDSUB
+
 SUB ClientDraw(c)
     CLS 18, 22, 26
     IF NOT c{"have_map"} THEN
@@ -840,6 +875,8 @@ SUB ClientDraw(c)
             c{"moving"}{"@" + who$} = last
         ENDIF
         c{"moving"}{who$} = TICK() - last[1] < 280
+        IF NOT MAP.EXISTS(c, "looks") THEN c{"looks"} = {}
+        IF LEN(p) > 5 THEN c{"looks"}{who$} = p[5]
         foot = APPEND(foot, INT(wy) - cam_y + 32)
         kinds = APPEND(kinds, 2)
         refs = APPEND(refs, i)
@@ -907,6 +944,7 @@ ENDSUB
 
 SUB ClientFrame(c)
     IF NOT (c{"ready"} ?? FALSE) THEN ClientInit(c)
+    ClientMusicFrame(c)
     ClientInput(c)
     IF TICK() - c{"last_sync"} >= 110 THEN ClientSync(c)
     ClientDraw(c)

@@ -1,0 +1,170 @@
+' Music of the village. The world holds the style everyone hears; a wish
+' ("spiel ein bisschen Techno") changes it at once for four minutes, then
+' the village theme comes back. Every client plays the style with the
+' sequencer: village, tavern and fest in the chiptune manner of fluppi's
+' themes, evening calm, techno in the manner of jdb/demos/sound/trance_live.
+' M mutes and unmutes. A browser lets sound start only after a key press, so
+' the music starts with the first key.
+
+'@server
+
+FUNC RuleMusicStyles()
+    RETURN {"village": "Dorfmusik", "tavern": "Tavernenmusik", "evening": "Abendmusik", "fest": "Festmusik", "techno": "Techno"}
+ENDFUNC
+
+FUNC RuleApplyMusic(w, who$, verdict)
+    DIM style$ = LCASE$(TRIM$("" + (verdict{"music"} ?? "")))
+    DIM styles = RuleMusicStyles()
+    IF NOT MAP.EXISTS(styles, style$) THEN style$ = RuleMusicGuess$(style$ + " " + ("" + (verdict{"text"} ?? "")) + " " + ("" + (verdict{"said"} ?? "")))
+    IF NOT MAP.EXISTS(styles, style$) THEN RETURN FALSE
+    w{"music"} = {"style": style$, "by": who$, "until": KNow() + 240000}
+    KEmit(w, {"type": "music", "who": who$, "text": who$ + RuleDe$(" w{u}nscht sich ") + styles{style$}})
+    RETURN TRUE
+ENDFUNC
+
+' The style a sentence speaks of, when the judge did not name it.
+FUNC RuleMusicGuess$(text$)
+    DIM low$ = LCASE$(text$)
+    DIM words = [["techno", "techno"], ["elektro", "techno"], ["rave", "techno"], ["beat", "techno"], ["tavern", "tavern"], ["kneipe", "tavern"], ["wirtshaus", "tavern"], ["abend", "evening"], ["ruhig", "evening"], ["leise", "evening"], ["entspann", "evening"], ["fest", "fest"], ["party", "fest"], ["tanz", "fest"], ["feier", "fest"], ["dorf", "village"], ["village", "village"], ["evening", "evening"]]
+    DIM i = 0
+    FOR i = 0 TO LEN(words) - 1
+        IF INSTR(low$, words[i][0]) >= 0 THEN RETURN words[i][1]
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+FUNC RuleMusicNow$(w)
+    DIM m = w{"music"} ?? {}
+    IF NOT ISMAP(m) ORELSE NOT MAP.EXISTS(m, "style") THEN RETURN "village"
+    IF KNow() > (m{"until"} ?? 0) THEN RETURN "village"
+    RETURN m{"style"}
+ENDFUNC
+
+'@client
+
+' Tracks: 0 melody, 1 bass, 2 pad, 3 arp, 4 kick, 5 clap, 6 hats, 7 percussion.
+SUB ClientMusicPlay(style$)
+    SOUND.RESET
+    SOUND.MASTER "FIXED", 0.45
+    SOUND.REVERB 0.7, 0.4, 0.8, 0.3
+    DIM mel$ = ""
+    DIM bass$ = ""
+    DIM pad$ = ""
+    DIM arp$ = ""
+    DIM kick$ = ""
+    DIM clap$ = ""
+    DIM hats$ = ""
+    DIM perc$ = ""
+    IF style$ = "tavern" THEN
+        SOUND.BPM 120
+        SOUND.VOICE 0, "TRIANGLE", 0.01, 0.12, 0.5, 0.15
+        SOUND.VOICE 1, "SQUARE", 0.005, 0.1, 0.4, 0.08
+        SOUND.FILTER 1, 700
+        mel$ = "<[d5 f5 a5 d6 a5 f5] [c5 e5 g5 c6 g5 e5] [bb4 d5 f5 bb5 f5 d5] [a4 c#5 e5 a5 g5 e5]>"
+        bass$ = "<[d2 ~ ~ a2 ~ ~] [c2 ~ ~ g2 ~ ~] [bb1 ~ ~ f2 ~ ~] [a1 ~ ~ e2 ~ ~]>"
+        perc$ = "[rim ~ ~ rim ~ rim]"
+        hats$ = "[~ ~ hh ~ ~ hh]"
+    ELSEIF style$ = "evening" THEN
+        SOUND.BPM 76
+        SOUND.VOICE 0, "TRIANGLE", 0.05, 0.4, 0.4, 0.8
+        SOUND.VOICE 2, "SINE", 0.8, 0.5, 0.8, 1.6
+        SOUND.UNISON 2, 3, 0.2, 0.8
+        SOUND.REVERBSEND 0, 0.5
+        SOUND.REVERBSEND 2, 0.6
+        mel$ = "<[e5 ~ ~ c5] [a4 ~ ~ ~] [g4 ~ e5 ~] [d5 ~ ~ ~]>"
+        pad$ = "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>"
+        bass$ = "<a1 f1 c2 g1>"
+        SOUND.VOICE 1, "SINE", 0.05, 0.3, 0.7, 0.6
+    ELSEIF style$ = "fest" THEN
+        SOUND.BPM 128
+        SOUND.VOICE 0, "SQUARE", 0.01, 0.25, 0.4, 0.3
+        SOUND.FILTER 0, 2500
+        SOUND.VOICE 1, "SAW", 0.005, 0.1, 0.5, 0.1
+        SOUND.FILTER 1, 600
+        mel$ = "[[d5 [f5 a5] d6 ~] [c5 [e5 g5] c6 ~] [b4 [d5 g5] b5 [a5 g5]] [a4 ~ [d5 f5] ~] [g5 [f5 e5] d5 [e5 f5]] [a5 [g5 f5] e5 c5] [d5 [f5 a5] d6 [c6 b5]] [a5 ~ ~ ~]]/2"
+        bass$ = "<[d2 d3]*4 [c2 c3]*4 [g1 g2]*4 [a1 a2]*4>"
+        kick$ = "bd*4"
+        clap$ = "~ cp ~ cp"
+        hats$ = "[~ hh]*4"
+    ELSEIF style$ = "techno" THEN
+        SOUND.BPM 132
+        SOUND.VOICE 1, "SAW", 0.002, 0.1, 0.5, 0.04
+        SOUND.FILTER 1, 260, 0.45
+        SOUND.SIDECHAIN 1, 4, 0.75
+        SOUND.VOICE 3, "SAW", 0.002, 0.12, 0.25, 0.12
+        SOUND.UNISON 3, 3, 0.25, 0.7
+        SOUND.FILTER 3, 1400, 0.55
+        SOUND.SIDECHAIN 3, 4, 0.55
+        SOUND.REVERBSEND 3, 0.25
+        SOUND.VOICE 2, "SAW", 0.9, 0.5, 0.8, 1.6
+        SOUND.UNISON 2, 5, 0.3, 1.0
+        SOUND.FILTER 2, 1100, 0.2
+        SOUND.SIDECHAIN 2, 4, 0.8
+        SOUND.REVERBSEND 2, 0.5
+        bass$ = "legato(0.7, <[~ a1]*4 [~ f1]*4 [~ c2]*4 [~ g1]*4>)"
+        arp$ = "arp(up, <[a3,c4,e4,a4]*4 [f3,a3,c4,f4]*4 [c4,e4,g4,c5]*4 [g3,b3,d4,g4]*4>)"
+        pad$ = "<[a3,c4,e4] [f3,a3,c4] [c4,e4,g4] [g3,b3,d4]>"
+        kick$ = "bd*4"
+        clap$ = "~ cp ~ cp"
+        hats$ = "[~ oh]*4, gain([0.35 0.6 0.45 0.8]*4, hh*16)"
+    ELSE
+        SOUND.BPM 112
+        SOUND.VOICE 0, "SQUARE", 0.01, 0.15, 0.3, 0.25
+        SOUND.FILTER 0, 2000
+        SOUND.VOICE 1, "TRIANGLE", 0.005, 0.1, 0.6, 0.1
+        mel$ = "[[c5 e5 g5 e5] [a4 c5 e5 c5] [f4 a4 c5 [d5 c5]] [g4 b4 d5 ~] [e5 g5 [a5 g5] e5] [d5 f5 [e5 d5] c5] [c5 [b4 c5] d5 e5] [c5 ~ ~ ~]]/2"
+        bass$ = "<[c2 g2 c3 g2] [a1 e2 a2 e2] [f1 c2 f2 c2] [g1 d2 g2 d2]>"
+        hats$ = "~ hh ~ hh"
+    ENDIF
+    SOUND.KIT 4, "SYNTH"
+    SOUND.KIT 5, "SYNTH"
+    SOUND.KIT 6, "SYNTH"
+    SOUND.KIT 7, "SYNTH"
+    SOUND.GAIN 0, 0.3
+    SOUND.GAIN 1, 0.4
+    SOUND.GAIN 2, 0.18
+    SOUND.GAIN 3, 0.22
+    SOUND.GAIN 4, 0.55
+    SOUND.GAIN 5, 0.35
+    SOUND.GAIN 6, 0.25
+    SOUND.GAIN 7, 0.3
+    DIM pats = [mel$, bass$, pad$, arp$, kick$, clap$, hats$, perc$]
+    DIM t = 0
+    FOR t = 0 TO 7
+        IF pats[t] <> "" THEN SOUND.SEQ t, pats[t], "VOICE"
+    NEXT t
+ENDSUB
+
+' Called first in every frame: the first key opens the sound, M mutes, and
+' the style the world wants is played when it changed.
+SUB ClientMusicFrame(c)
+    DIM keys = c{"keyq"} ?? []
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        c{"music_armed"} = TRUE
+        IF NOT (c{"typing"} ?? FALSE) ANDALSO UCASE$("" + (keys[i]{"key"} ?? "")) = "M" THEN
+            c{"muted"} = NOT (c{"muted"} ?? FALSE)
+            c{"music_on"} = ""
+            c{"banner"} = IIF(c{"muted"}, "Musik aus (M)", "Musik an (M)")
+            c{"banner_until"} = TICK() + 1500
+        ENDIF
+    NEXT i
+    IF NOT (c{"music_armed"} ?? FALSE) THEN RETURN
+    DIM want$ = c{"music_want"} ?? "village"
+    IF c{"muted"} ?? FALSE THEN want$ = "off"
+    IF want$ = (c{"music_on"} ?? "") THEN RETURN
+    TRY
+        IF NOT (c{"sound_up"} ?? FALSE) THEN
+            SOUND.INIT
+            c{"sound_up"} = TRUE
+        ENDIF
+        IF want$ = "off" THEN
+            SOUND.RESET
+        ELSE
+            ClientMusicPlay(want$)
+        ENDIF
+    CATCH
+        c{"last_error"} = "music: " + ERRMSG$
+    ENDTRY
+    c{"music_on"} = want$
+ENDSUB

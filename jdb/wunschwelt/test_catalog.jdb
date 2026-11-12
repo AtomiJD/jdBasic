@@ -36,6 +36,10 @@ FUNC Verdict$(said$ AS STRING)
     IF INSTR(said$, "Land") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["land", "way", "house", "rocket"], "text": "Mehr Land im Westen mit Strasse, Wald und Huette"})
     IF INSTR(said$, "Schwert") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": FALSE, "reason": "Waffen baut der Baumeister nicht"})
     IF INSTR(said$, "Gold") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["treasure"], "text": "Ein Turm aus Gold"})
+    IF INSTR(said$, "Muetze") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["look"], "part": "hat", "color": "blau"})
+    IF INSTR(said$, "kariert") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["look"], "part": "clothes", "color": "kariert", "text": "Karierte Kleidung"})
+    IF INSTR(said$, "wie Hasi") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["look"], "part": "skin", "skin": "hasi", "text": "Aussehen wie Hasi"})
+    IF INSTR(said$, "Techno") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["music"], "music": "techno", "text": "Techno"})
     RETURN JSON.STRINGIFY$({"wish": FALSE})
 ENDFUNC
 
@@ -127,8 +131,33 @@ Check("and Marta refuses it too", MartaSaid(heard, "nicht bringen"))
 heard = Tell("Mach mir mehr Land im Westen mit Strasse, Wald und einer kleinen Huette fuer mich")
 Check("a wish of several kinds is written", LEN(heard{"wish"}) = 1)
 
+FUNC MyRow(answer)
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(answer{"players"}) - 1
+        IF answer{"players"}[k][0] = "Anna" THEN RETURN answer{"players"}[k]
+    NEXT k
+    RETURN []
+ENDFUNC
+
+FUNC Heard(heard, kind$ AS STRING) AS INTEGER
+    RETURN LEN(heard{kind$} ?? [])
+ENDFUNC
+
+heard = Tell("Ich moechte eine blaue Muetze")
+DIM row = MyRow(Post("/sync", {"token": token$, "mapv": 1, "since": since}))
+Check("a look wish changes the hat at once", LEN(row) > 5 ANDALSO JSON.STRINGIFY$(row[5]{"hat"} ?? []) = JSON.STRINGIFY$([56, 104, 220]))
+Check("and is not written on the board", LEN(heard{"wish"}) = 0)
+heard = Tell("Ich will aussehen wie Hasi")
+row = MyRow(Post("/sync", {"token": token$, "mapv": 1, "since": since}))
+Check("a look wish changes the figure", LEN(row) > 5 ANDALSO (row[5]{"skin"} ?? "") = "hasi" ANDALSO MAP.EXISTS(row[5], "hat"))
+heard = Tell("Ich will kariert angezogen sein")
+Check("a colour the table does not know is refused aloud", MartaSaid(heard, "nicht bringen"))
+heard = Tell("Spiel ein bisschen Techno")
+DIM music_now = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+Check("a music wish changes what the village hears", (music_now{"music"} ?? "") = "techno")
+
 DIM board = Admin("wishes", {})
-Check("two wishes on the board", board{"ok"} ANDALSO LEN(board{"wishes"}) = 2)
+Check("two wishes on the board, the look and the music not among them", board{"ok"} ANDALSO LEN(board{"wishes"}) = 2)
 IF board{"ok"} ANDALSO LEN(board{"wishes"}) = 2 THEN
     Check("the sea carries its kind", JSON.STRINGIFY$(board{"wishes"}[0]{"kinds"}) = JSON.STRINGIFY$(["land"]))
     Check("the land keeps the kinds of the catalog only", JSON.STRINGIFY$(board{"wishes"}[1]{"kinds"}) = JSON.STRINGIFY$(["land", "way", "house"]))

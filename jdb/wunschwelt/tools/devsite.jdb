@@ -34,7 +34,7 @@ FUNC HANDLEFILE(request)
     ELSEIF rest$ = "play/client.jdb" THEN
         file$ = here$ + "/client.jdb"
     ELSEIF rest$ = "play/assets.txt" THEN
-        DIM names = SORT(FILE.LIST(here$ + "/assets/*.rgba"))
+        DIM names = SORT(APPEND(FILE.LIST(here$ + "/assets/*.rgba"), FILE.LIST(here$ + "/assets/*.parts")))
         DIM listing$ AS STRING = ""
         DIM i AS INTEGER
         FOR i = 0 TO LEN(names) - 1
