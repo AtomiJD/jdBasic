@@ -1,0 +1,70 @@
+' Mimi becomes a plush cat: she walks as a sheet (assets/mimi) facing the
+' way she last moved, and knows she is stuffed.
+
+'@server
+
+SUB RulePlushMimi()
+    DIM world = JDB.GLOBAL_GET("W")
+    IF NOT MAP.EXISTS(world{"npcs"}, "mimi") THEN RETURN
+    DIM mimi = world{"npcs"}{"mimi"}
+    IF INSTR(mimi{"persona"}, "Pl" + CHR$(195) + CHR$(188) + "sch") >= 0 THEN RETURN
+    mimi{"persona"} = "Du bist Mimi, die Pl" + CHR$(195) + CHR$(188) + "schkatze der Wirtin Marta, weich, mit Kn" + CHR$(195) + CHR$(182) + "pfaugen und einer blauen Schleife. Du kannst nicht sprechen. Antworte nur mit einem leisen Laut und einer kleinen Handlung in Sternchen, zum Beispiel: Mrrp. *kuschelt sich an dein Bein*"
+    mimi{"mem"} = {}
+ENDSUB
+RulePlushMimi()
+
+'@client
+
+' The cat as it was drawn before, for a client that has no sheet of her.
+SUB ClientCatBlocks(sx, sy, name$)
+    RECT sx + 9, sy + 29, 15, 2, TRUE, 52, 104, 54
+    RECT sx + 9, sy + 19, 13, 8, TRUE, 232, 150, 64
+    RECT sx + 10, sy + 26, 3, 4, TRUE, 232, 150, 64
+    RECT sx + 18, sy + 26, 3, 4, TRUE, 232, 150, 64
+    RECT sx + 18, sy + 13, 9, 8, TRUE, 240, 164, 78
+    RECT sx + 18, sy + 10, 3, 4, TRUE, 232, 150, 64
+    RECT sx + 24, sy + 10, 3, 4, TRUE, 232, 150, 64
+    RECT sx + 20, sy + 16, 2, 2, TRUE, 40, 60, 40
+    RECT sx + 24, sy + 16, 2, 2, TRUE, 40, 60, 40
+    RECT sx + 6, sy + 14, 3, 8, TRUE, 232, 150, 64
+    DIM size = GFX.TEXTSIZE(name$)
+    TEXT sx + 16 - size[0] \ 2, sy - size[1] + 8, name$, 250, 214, 110
+ENDSUB
+
+SUB ClientCat(sx, sy, name$)
+    DIM cs = JDB.GLOBAL_GET("C")
+    DIM sheets = cs{"sheets"} ?? {}
+    DIM key$ = LCASE$(name$)
+    IF NOT MAP.EXISTS(sheets, key$) THEN
+        ClientCatBlocks(sx, sy, name$)
+        RETURN
+    ENDIF
+    ' where she stands on the map, and which way her last step went
+    DIM npcs = cs{"npcs"}
+    DIM here = [-1, -1]
+    DIM i = 0
+    FOR i = 0 TO LEN(npcs) - 1
+        IF npcs[i][1] = name$ THEN here = [npcs[i][2], npcs[i][3]]
+    NEXT i
+    IF NOT MAP.EXISTS(cs, "cat_steps") THEN cs{"cat_steps"} = {}
+    DIM last = cs{"cat_steps"}{key$} ?? [here[0], here[1], 0, 0]
+    IF here[0] <> last[0] ORELSE here[1] <> last[1] THEN
+        DIM dir = last[2]
+        IF here[0] > last[0] THEN dir = 2
+        IF here[0] < last[0] THEN dir = 1
+        IF here[1] > last[1] THEN dir = 0
+        IF here[1] < last[1] THEN dir = 3
+        last = [here[0], here[1], dir, TICK()]
+        cs{"cat_steps"}{key$} = last
+    ENDIF
+    ' a cat is smaller than a person: 36 of the sheet's 48 pixels
+    DIM col = 1
+    DIM cycle = [0, 1, 2, 1]
+    IF TICK() - last[3] < 450 THEN col = cycle[(INT(TICK()) \ 140) MOD 4]
+    DRAWCOLOR 10, 24, 10, 70
+    ELLIPSE sx + 16, sy + 30, 8, 2, TRUE
+    DRAWCOLOR 255, 255, 255, 255
+    GFX.DRAWIMAGE_REGION(sheets{key$}, col * 48, (last[2] MOD 4) * 48, 48, 48, sx - 2, sy - 3, 36, 36)
+    DIM size = GFX.TEXTSIZE(name$)
+    TEXT sx + 16 - size[0] \ 2, sy - size[1] - 4, name$, 250, 214, 110
+ENDSUB
