@@ -1,8 +1,10 @@
 ' Music of the village. The world holds the style everyone hears; a wish
 ' ("spiel ein bisschen Techno") changes it at once for four minutes, then
-' the village theme comes back. Every client plays the style with the
-' sequencer: village, tavern and fest in the chiptune manner of fluppi's
-' themes, evening calm, techno in the manner of jdb/demos/sound/trance_live.
+' the village theme comes back. A sentence that asks for music is granted
+' wherever it is said, without the model. Every client plays the style with
+' the sequencer: a soft village theme, tavern and fest in the chiptune
+' manner of fluppi's themes, evening calm, techno in the manner of
+' jdb/demos/sound/trance_live.
 ' M mutes and unmutes. A browser lets sound start only after a key press, so
 ' the music starts with the first key.
 
@@ -17,6 +19,8 @@ FUNC RuleApplyMusic(w, who$, verdict)
     DIM styles = RuleMusicStyles()
     IF NOT MAP.EXISTS(styles, style$) THEN style$ = RuleMusicGuess$(style$ + " " + ("" + (verdict{"text"} ?? "")) + " " + ("" + (verdict{"said"} ?? "")))
     IF NOT MAP.EXISTS(styles, style$) THEN RETURN FALSE
+    DIM now_m = w{"music"} ?? {}
+    IF ISMAP(now_m) ANDALSO (now_m{"style"} ?? "") = style$ ANDALSO (now_m{"until"} ?? 0) - KNow() > 230000 THEN RETURN TRUE
     w{"music"} = {"style": style$, "by": who$, "until": KNow() + 240000}
     KEmit(w, {"type": "music", "who": who$, "text": who$ + RuleDe$(" w{u}nscht sich ") + styles{style$}})
     RETURN TRUE
@@ -33,6 +37,28 @@ FUNC RuleMusicGuess$(text$)
     RETURN ""
 ENDFUNC
 
+' The style a sentence asks to be played, or "": it must speak of music
+' and ask for it, so a wish for a village fest stays a wish for the board.
+FUNC RuleMusicAsked$(said$)
+    DIM low$ = RuleLookColorKey$(said$)
+    DIM speaks = FALSE
+    DIM asks = FALSE
+    FOR EACH word$ IN ["musik", "lied", "song", "melodie", "techno", "beat", "sound"]
+        IF INSTR(low$, word$) >= 0 THEN speaks = TRUE
+    NEXT
+    FOR EACH word$ IN ["spiel", "mach", "leg ", "lass", "will", "moecht", "wuensch", "haett", "bitte", "gib", "dreh", "kannst", "lieber"]
+        IF INSTR(low$, word$) >= 0 THEN asks = TRUE
+    NEXT
+    IF NOT speaks ORELSE NOT asks THEN RETURN ""
+    RETURN RuleMusicGuess$(low$)
+ENDFUNC
+
+' A request for music is granted wherever it is said, without the model.
+SUB RuleHeard(w, p, said$)
+    DIM style$ = RuleMusicAsked$(said$)
+    IF style$ <> "" THEN RuleApplyMusic(w, p{"name"}, {"music": style$})
+ENDSUB
+
 FUNC RuleMusicNow$(w)
     DIM m = w{"music"} ?? {}
     IF NOT ISMAP(m) ORELSE NOT MAP.EXISTS(m, "style") THEN RETURN "village"
@@ -45,7 +71,7 @@ ENDFUNC
 ' Tracks: 0 melody, 1 bass, 2 pad, 3 arp, 4 kick, 5 clap, 6 hats, 7 percussion.
 SUB ClientMusicPlay(style$)
     SOUND.RESET
-    SOUND.MASTER "FIXED", 0.45
+    SOUND.MASTER "FIXED", 0.32
     SOUND.REVERB 0.7, 0.4, 0.8, 0.3
     DIM mel$ = ""
     DIM bass$ = ""
@@ -108,13 +134,16 @@ SUB ClientMusicPlay(style$)
         clap$ = "~ cp ~ cp"
         hats$ = "[~ oh]*4, gain([0.35 0.6 0.45 0.8]*4, hh*16)"
     ELSE
-        SOUND.BPM 112
-        SOUND.VOICE 0, "SQUARE", 0.01, 0.15, 0.3, 0.25
-        SOUND.FILTER 0, 2000
-        SOUND.VOICE 1, "TRIANGLE", 0.005, 0.1, 0.6, 0.1
-        mel$ = "[[c5 e5 g5 e5] [a4 c5 e5 c5] [f4 a4 c5 [d5 c5]] [g4 b4 d5 ~] [e5 g5 [a5 g5] e5] [d5 f5 [e5 d5] c5] [c5 [b4 c5] d5 e5] [c5 ~ ~ ~]]/2"
-        bass$ = "<[c2 g2 c3 g2] [a1 e2 a2 e2] [f1 c2 f2 c2] [g1 d2 g2 d2]>"
-        hats$ = "~ hh ~ hh"
+        SOUND.BPM 84
+        SOUND.VOICE 0, "TRIANGLE", 0.01, 0.35, 0.15, 0.7
+        SOUND.FILTER 0, 1600
+        SOUND.REVERBSEND 0, 0.45
+        SOUND.VOICE 1, "SINE", 0.02, 0.3, 0.6, 0.5
+        SOUND.VOICE 2, "SINE", 1.2, 0.5, 0.8, 2.0
+        SOUND.REVERBSEND 2, 0.6
+        mel$ = "[[e5 ~ g5 ~] [a5 ~ g5 e5] [d5 ~ ~ ~] [~ ~ ~ ~] [c5 ~ d5 ~] [e5 ~ d5 c5] [a4 ~ ~ ~] [~ ~ ~ ~] [g4 ~ c5 ~] [d5 ~ e5 ~] [g5 ~ e5 ~] [~ ~ ~ ~] [d5 ~ c5 ~] [a4 ~ g4 ~] [c5 ~ ~ ~] [~ ~ ~ ~]]/8"
+        bass$ = "<c2 a1 f1 g1>"
+        pad$ = "<[c4,e4,g4] [a3,c4,e4] [f3,a3,c4] [g3,b3,d4]>"
     ENDIF
     SOUND.KIT 4, "SYNTH"
     SOUND.KIT 5, "SYNTH"

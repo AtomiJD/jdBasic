@@ -39,6 +39,7 @@ FUNC Verdict$(said$ AS STRING)
     IF INSTR(said$, "Muetze") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["look"], "part": "hat", "color": "blau"})
     IF INSTR(said$, "kariert") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["look"], "part": "clothes", "color": "kariert", "text": "Karierte Kleidung"})
     IF INSTR(said$, "wie Hasi") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["look"], "part": "skin", "skin": "hasi", "text": "Aussehen wie Hasi"})
+    IF INSTR(said$, "hinter dem Wald") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["land"], "text": "Was hinter dem Wald liegt"})
     IF INSTR(said$, "Techno") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["music"], "music": "techno", "text": "Techno"})
     RETURN JSON.STRINGIFY$({"wish": FALSE})
 ENDFUNC
@@ -155,6 +156,12 @@ Check("a colour the table does not know is refused aloud", MartaSaid(heard, "nic
 heard = Tell("Spiel ein bisschen Techno")
 DIM music_now = Post("/sync", {"token": token$, "mapv": 1, "since": since})
 Check("a music wish changes what the village hears", (music_now{"music"} ?? "") = "techno")
+
+heard = Tell("Was ist hinter dem Wald?")
+Check("a question is not a wish, even when the judge thinks so", LEN(heard{"wish"}) = 0)
+heard = Tell("Kannst du Tavernenmusik spielen?")
+music_now = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+Check("music asked for plays without the judge", (music_now{"music"} ?? "") = "tavern")
 
 DIM board = Admin("wishes", {})
 Check("two wishes on the board, the look and the music not among them", board{"ok"} ANDALSO LEN(board{"wishes"}) = 2)

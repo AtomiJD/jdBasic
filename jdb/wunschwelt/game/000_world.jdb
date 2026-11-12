@@ -149,6 +149,7 @@ FUNC RuleSync(w, p, msg)
     IF said$ <> "" THEN
         said$ = RuleCut$(said$, 160)
         KEmit(w, {"type": "say", "who": p{"name"}, "text": said$})
+        RuleHeard(w, p, said$)
         DIM npcs = w{"npcs"}
         FOR EACH npc_id$ IN MAP.KEYS(npcs)
             IF MAP.EXISTS(npcs{npc_id$}, "persona") ANDALSO ABS(npcs{npc_id$}{"x"} - p{"x"}) <= 3 ANDALSO ABS(npcs{npc_id$}{"y"} - p{"y"}) <= 3 THEN
@@ -190,6 +191,10 @@ ENDFUNC
 ' Extension points with nothing in them; a later file or a patch gives them a body.
 ' What a player said to an NPC that can be talked to.
 SUB RuleSaid(w, p, npc, said$)
+ENDSUB
+
+' What a player said, wherever the player stands.
+SUB RuleHeard(w, p, said$)
 ENDSUB
 
 ' More fields for the answer to one sync; msg is what the client sent.
