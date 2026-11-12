@@ -273,6 +273,8 @@ ENDSUB
 ' The ground and what stands on it are drawn once at start, by the code of
 ' game/005_terrain.jdb and game/006_scenery.jdb.
 SUB ClientMakeTiles(c)
+    IF MAP.EXISTS(c, "ter_img") THEN GFX.FREEIMAGE(c{"ter_img"})
+    IF MAP.EXISTS(c, "obj_img") THEN GFX.FREEIMAGE(c{"obj_img"})
     c{"ter_params"} = TerrainParams()
     c{"ter_img"} = TerrainAtlas(c{"ter_params"})
     c{"obj_img"} = SceneryAtlas()
@@ -447,6 +449,11 @@ ENDFUNC
 ' facing down, left, right, up. A sheet that is not there is left out and
 ' the figure is drawn as before.
 SUB ClientLoadSheets(c)
+    IF MAP.EXISTS(c, "sheets") THEN
+        FOR EACH old$ IN MAP.KEYS(c{"sheets"})
+            GFX.FREEIMAGE(c{"sheets"}{old$})
+        NEXT
+    ENDIF
     c{"sheets"} = {}
     c{"moving"} = {}
     DIM folder$ = c{"assets"} ?? "assets"

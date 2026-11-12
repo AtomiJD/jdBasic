@@ -56,6 +56,10 @@ FOR y = 0 TO IMG.HEIGHT(sheet) - 1
         ENDIF
     NEXT x
 NEXT y
+IF x1 < 0 THEN
+    PRINT "no figure in the sheet: every pixel is transparent"
+    END 1
+ENDIF
 DIM box = MAX([x1 - x0 + 1, y1 - y0 + 1])
 DIM bx = (x0 + x1 + 1) \ 2 - box \ 2
 DIM by = y1 + 1 - box
