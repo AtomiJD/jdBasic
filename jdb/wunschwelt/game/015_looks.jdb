@@ -102,9 +102,11 @@ ENDFUNC
 '@client
 
 ' The pixels and the part map of a sheet, kept for recolouring:
-' c{"sheet_raw"}{skin} = [width, height, pixels, parts].
+' c{"sheet_raw"}{skin} = [width, height, pixels, parts], or [] when the
+' files are not there, so a missing sheet is not read again every frame.
 SUB ClientKeepRaw(c, skin$, folder$)
     IF NOT MAP.EXISTS(c, "sheet_raw") THEN c{"sheet_raw"} = {}
+    c{"sheet_raw"}{skin$} = []
     TRY
         DIM data$ = BINREADER$(folder$ + "/" + skin$ + ".rgba")
         DIM size = UNPACK("<II", data$)
@@ -116,15 +118,22 @@ SUB ClientKeepRaw(c, skin$, folder$)
     ENDTRY
 ENDSUB
 
-' The sheet of a skin in a look; made once per look and kept.
+' The sheet of a skin in a look; made once per look and kept. Past 48
+' looks the kept ones are let go, and those still worn are made again.
 FUNC ClientLookSheet(c, skin$, look)
     DIM sheets = c{"sheets"} ?? {}
     IF NOT ISMAP(look) ORELSE MAP.SIZE(look) = 0 THEN RETURN sheets{skin$} ?? -1
     DIM key$ = skin$ + JSON.STRINGIFY$(look)
     IF NOT MAP.EXISTS(c, "look_imgs") THEN c{"look_imgs"} = {}
     IF MAP.EXISTS(c{"look_imgs"}, key$) THEN RETURN c{"look_imgs"}{key$}
+    IF MAP.SIZE(c{"look_imgs"}) >= 48 THEN
+        FOR EACH old$ IN MAP.KEYS(c{"look_imgs"})
+            GFX.FREEIMAGE(c{"look_imgs"}{old$})
+        NEXT
+        c{"look_imgs"} = {}
+    ENDIF
     IF NOT MAP.EXISTS(c, "sheet_raw") ORELSE NOT MAP.EXISTS(c{"sheet_raw"}, skin$) THEN ClientKeepRaw(c, skin$, c{"assets"} ?? "assets")
-    IF NOT MAP.EXISTS(c{"sheet_raw"} ?? {}, skin$) THEN RETURN sheets{skin$} ?? -1
+    IF LEN(c{"sheet_raw"}{skin$}) = 0 THEN RETURN sheets{skin$} ?? -1
     DIM raw = c{"sheet_raw"}{skin$}
     DIM n = raw[0] * raw[1]
     DIM q = RESHAPE(raw[2], [n, 4])
