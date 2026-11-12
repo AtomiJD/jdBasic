@@ -29,7 +29,8 @@ done, rule errors 0.
 build/jdBasic.exe jdb/wunschwelt/test_slice.jdb      19 checks
 build/jdBasic.exe jdb/wunschwelt/test_persist.jdb    18 checks
 build/jdBasic.exe jdb/wunschwelt/test_wishes.jdb     19 checks
-build/jdBasic.exe jdb/wunschwelt/test_catalog.jdb    13 checks
+build/jdBasic.exe jdb/wunschwelt/test_catalog.jdb    18 checks
+build/jdBasic.exe jdb/wunschwelt/test_plot.jdb       12 checks
 
 cd jdb/wunschwelt            (WW_HOST=user@address of the box must be set)
 ./deploy.sh --check          stage and preflight, publish nothing

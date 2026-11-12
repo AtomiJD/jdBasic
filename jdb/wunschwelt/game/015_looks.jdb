@@ -95,6 +95,8 @@ FUNC RuleApplyLook(w, who$, verdict)
         RETURN FALSE
     ENDIF
     p{"look"} = look
+    IF NOT MAP.EXISTS(w, "looks") THEN w{"looks"} = {}
+    w{"looks"}{who$} = look
     KEmit(w, {"type": "look", "who": who$, "text": said$})
     RETURN TRUE
 ENDFUNC

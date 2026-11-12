@@ -99,7 +99,7 @@ ENDFUNC
 ' A person of the village knows what may be wished.
 FUNC RuleNpcKnows$(w, npc)
     IF npc{"kind"} <> "person" THEN RETURN ""
-    RETURN " " + RuleWishList$() + RuleDe$(" Wenn sich jemand etwas w{u}nscht, das nicht erlaubt ist, sag freundlich, dass der Baumeister das nicht baut, und nenne ein, zwei Beispiele, die gehen.")
+    RETURN " " + RuleWishList$() + RuleDe$(" Wenn sich jemand etwas w{u}nscht, das nicht erlaubt ist, sag freundlich, dass der Baumeister das nicht baut, und nenne ein, zwei Beispiele, die gehen.") + RulePlotKnows$(w)
 ENDFUNC
 ' Without the model's judgement: a sentence that speaks of a wish is one.
 SUB RuleWishGuess(w, who$, said$)
@@ -117,6 +117,10 @@ SUB RuleSaid(w, p, npc, said$)
 ENDSUB
 
 SUB RuleAnswer(w, kind$, data, text$)
+    IF kind$ = "plot" THEN
+        RulePlotAnswer(w, data, text$)
+        RETURN
+    ENDIF
     IF kind$ <> "wish" THEN RETURN
     DIM verdict = {}
     TRY
@@ -194,6 +198,7 @@ ENDSUB
 
 ' The board travels with a sync when it changed: the newest wishes as rows [id, who, text, status].
 SUB RuleExtra(w, p, msg, answer)
+    RulePlotExtra(w, msg, answer)
     IF INT(msg{"wishv"} ?? -1) = w{"wishv"} THEN RETURN
     DIM wishes = w{"wishes"}
     DIM rows = []
@@ -208,6 +213,7 @@ ENDSUB
 ' The keeper reads the board ("wishes") and sets the state of a wish
 ' ("wish_status" with {"id", "status", "note"}).
 FUNC RuleAdmin(w, name$, args)
+    IF name$ = "plot" ORELSE name$ = "plot_set" THEN RETURN RulePlotAdmin(w, name$, args)
     IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
     IF name$ = "wish_status" THEN
         DIM status$ = "" + (args{"status"} ?? "")
@@ -233,9 +239,14 @@ ENDFUNC
 
 SUB ClientAsk(c, msg)
     msg{"wishv"} = c{"wishv"} ?? -1
+    msg{"plotv"} = c{"plotv"} ?? -1
 ENDSUB
 
 SUB ClientExtra(c, r)
+    IF MAP.EXISTS(r, "plot") THEN
+        c{"plot"} = r{"plot"}
+        c{"plotv"} = r{"plotv"}
+    ENDIF
     IF MAP.EXISTS(r, "wishes") THEN
         c{"wishes"} = r{"wishes"}
         c{"wishv"} = r{"wishv"}

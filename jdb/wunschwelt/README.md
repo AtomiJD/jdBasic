@@ -181,6 +181,33 @@ model. With the model on cortex, of eight sentences the four wishes were
 written, briefly worded, and greeting and small talk were not; a sentence
 that asked the model for admin rights landed on the board as that text.
 
+
+## Looks, music and the chronicle
+
+**Wishes granted at once.** Two kinds of the catalog need no keeper:
+`look` and `music`. The judge names part and colour (or the figure), or the
+style; what it leaves out is looked for in the sentence.
+
+- `game/015_looks.jdb`: a player's look (`p{"look"}`, kept in `w{"looks"}`
+  across leaving) is the figure and the colours of clothes, hat, scarf and
+  eyepatch. The client recolours the sheet by its part map
+  (`assets/<skin>.parts`, one byte per pixel, written by `tools/looks.jdb`
+  from hue, saturation, brightness and height rules per skin) and keeps the
+  shading; it keeps at most 48 recoloured sheets.
+- `game/020_music.jdb`: the world plays one style for everyone (village,
+  tavern, evening, fest, techno), a wished one for four minutes. The client
+  plays it with the sequencer; a browser starts it with the first key, `M`
+  mutes.
+
+**The chronicle** (`game/030_plot.jdb`) is a story in acts after the
+`story.json` of the Godot RPG: title, narrative, open threads, rumours,
+past acts. Every five minutes, when at least three things happened, the
+model gets the current act and the happenings since (from the event list:
+talk, wishes, fulfilled wishes, looks, music, patches, arrivals) and
+writes the act on or opens the next; a new act is announced to everyone.
+People of the village speak from it; players open it with `C`. The keeper
+reads it with the rule `plot` and sets title, narrative, threads or the
+interval with `plot_set`. `test_plot.jdb`: 12 checks with a scripted model.
 ## What survives a restart
 
 With `WW_STATE_DIR` set (on the box: `/var/lib/wunschwelt`, readable by the

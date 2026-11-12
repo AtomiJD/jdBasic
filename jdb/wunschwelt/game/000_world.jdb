@@ -123,6 +123,7 @@ FUNC RuleJoin(w, name$)
         KEmit(w, {"type": "join", "who": name$})
     ENDIF
     players{name$}{"last_seen"} = KNow()
+    IF NOT MAP.EXISTS(players{name$}, "look") ANDALSO MAP.EXISTS(w, "looks") ANDALSO MAP.EXISTS(w{"looks"}, name$) THEN players{name$}{"look"} = w{"looks"}{name$}
     RETURN players{name$}
 ENDFUNC
 
@@ -227,6 +228,7 @@ SUB RuleTick(w, now)
     FOR EACH npc_id$ IN MAP.KEYS(npcs)
         RuleNpcTick(w, npcs{npc_id$}, now)
     NEXT
+    RulePlotTick(w, now)
 ENDSUB
 
 ' The style of music the world plays; game/020_music.jdb decides it.
@@ -636,7 +638,7 @@ SUB ClientSync(c)
         ELSEIF ev{"type"} = "patch" THEN
             c{"banner"} = "Neu in der Welt: " + ev{"title"}
             c{"banner_until"} = TICK() + 6000
-        ELSEIF ev{"type"} = "look" ORELSE ev{"type"} = "music" THEN
+        ELSEIF ev{"type"} = "look" ORELSE ev{"type"} = "music" ORELSE ev{"type"} = "chapter" THEN
             c{"banner"} = ev{"text"}
             c{"banner_until"} = TICK() + 4000
         ELSEIF ev{"type"} = "join" THEN
@@ -920,6 +922,7 @@ SUB ClientDraw(c)
     NEXT i
     c{"bubbles"} = alive
     ClientOverlay(c, cam_x, cam_y)
+    ClientPlotOverlay(c)
 
     ' the three counters of the show
     DIM secs = c{"uptime"}
@@ -945,6 +948,7 @@ ENDSUB
 SUB ClientFrame(c)
     IF NOT (c{"ready"} ?? FALSE) THEN ClientInit(c)
     ClientMusicFrame(c)
+    ClientPlotFrame(c)
     ClientInput(c)
     IF TICK() - c{"last_sync"} >= 110 THEN ClientSync(c)
     ClientDraw(c)
