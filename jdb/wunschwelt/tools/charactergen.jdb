@@ -1,0 +1,138 @@
+' A character sheet for the game from a description, drawn by an OpenAI
+' image model (WW_IMAGE_MODEL, gpt-image-2 by default).
+'
+'   OPENAI_API_KEY must be set
+'   build/jdBasic.exe jdb/wunschwelt/tools/charactergen.jdb <name> "<description>"
+'
+' The front view comes first; the side, the back and the steps are edits of
+' the front view, so all six show the same figure. The six pictures are cut
+' from their magenta backdrop and laid out as a sheet of 3 x 4 frames
+' (columns step, stand, step; rows down, left, right, up), then
+' tools/sheets.jdb brings it to the frame size of the game in assets/.
+' The pictures of every run stay in tools/charactergen/<name>/; a picture
+' that is already there is not asked for again.
+
+IMPORT IMG
+
+DIM args = OS.ARGS()
+IF LEN(args) < 3 THEN
+    PRINT "usage: charactergen.jdb <name> " + CHR$(34) + "<description>" + CHR$(34)
+    END 1
+ENDIF
+DIM who$ = args[1]
+DIM look$ = args[2]
+DIM here$ = PATH.DIRNAME$(args[0])
+DIM work$ = here$ + "/charactergen/" + who$
+TRY
+    MKDIR here$ + "/charactergen"
+CATCH
+ENDTRY
+TRY
+    MKDIR work$
+CATCH
+ENDTRY
+
+DIM key$ = GETENV$("OPENAI_API_KEY")
+IF key$ = "" THEN
+    PRINT "OPENAI_API_KEY is not set"
+    END 1
+ENDIF
+HTTP.SETTIMEOUT(240)
+DIM model$ = GETENV$("WW_IMAGE_MODEL")
+IF model$ = "" THEN model$ = "gpt-image-2"
+
+FUNC Prompt$(look$, view$)
+    RETURN "A single pixel art RPG character sprite: " + look$ + ". " + view$ + ". The character is centered and fills about 80% of the canvas height, feet near the bottom. The entire background is flat solid bright magenta (#FF00FF). No ground, no shadow, no scenery. Style: cute chibi 16-bit SNES RPG sprite, big head, soft shading, bold dark outlines, clean blocky pixels. Just ONE character, not a sprite sheet."
+ENDFUNC
+
+' The picture from an answer of the image API, written to path$; FALSE when there was none.
+FUNC Keep(answer$, path$)
+    TRY
+        DIM j = JSON.PARSE(answer$)
+        BINWRITER path$, CODEC.BASE64_DECODE$(j{"data"}[0]{"b64_json"})
+        RETURN TRUE
+    CATCH
+        PRINT "  no picture: "; LEFT$(answer$, 300)
+        RETURN FALSE
+    ENDTRY
+ENDFUNC
+
+FUNC Generate(key$, model$, prompt$, path$)
+    DIM body = {"model": model$, "prompt": prompt$, "n": 1, "size": "1024x1024", "background": "opaque", "output_format": "png", "quality": "medium"}
+    HTTP.CLEARHEADERS()
+    HTTP.SETHEADER("Authorization", "Bearer " + key$)
+    RETURN Keep(HTTP.POST$("https://api.openai.com/v1/images/generations", JSON.STRINGIFY$(body), "application/json"), path$)
+ENDFUNC
+
+' An edit of the reference picture, sent as multipart form data.
+FUNC Edit(key$, model$, prompt$, ref$, path$)
+    DIM b$ = "wwboundary" + STR$(INT(RND() * 1000000000))
+    DIM crlf$ = CHR$(13) + CHR$(10)
+    DIM body$ = ""
+    DIM fields = {"model": model$, "prompt": prompt$, "size": "1024x1024", "quality": "medium", "background": "opaque", "output_format": "png"}
+    FOR EACH f$ IN MAP.KEYS(fields)
+        body$ = body$ + "--" + b$ + crlf$ + "Content-Disposition: form-data; name=" + CHR$(34) + f$ + CHR$(34) + crlf$ + crlf$ + fields{f$} + crlf$
+    NEXT
+    body$ = body$ + "--" + b$ + crlf$ + "Content-Disposition: form-data; name=" + CHR$(34) + "image" + CHR$(34) + "; filename=" + CHR$(34) + "front.png" + CHR$(34) + crlf$ + "Content-Type: image/png" + crlf$ + crlf$ + BINREADER$(ref$) + crlf$
+    body$ = body$ + "--" + b$ + "--" + crlf$
+    HTTP.CLEARHEADERS()
+    HTTP.SETHEADER("Authorization", "Bearer " + key$)
+    RETURN Keep(HTTP.POST$("https://api.openai.com/v1/images/edits", body$, "multipart/form-data; boundary=" + b$), path$)
+ENDFUNC
+
+DIM same$ = "The very same character as in the picture, same colours, clothes, proportions and pixel style. "
+DIM views = [["front", "", "Standing still, facing the viewer, front view, arms at sides"], ["front_walk", "edit", "Walking toward the viewer, front view, LEFT foot stepping forward, arms swinging mid-stride"], ["side", "edit", "Side profile facing RIGHT, standing still, arms at sides"], ["side_walk", "edit", "Side profile facing RIGHT, mid-stride walking, front leg forward, back leg behind, arms swinging"], ["back", "edit", "Rear view facing AWAY from the viewer, standing still, we see the back of the head and the clothes from behind"], ["back_walk", "edit", "Rear view walking away from the viewer, LEFT foot stepping forward, arms swinging"]]
+DIM i = 0
+FOR i = 0 TO LEN(views) - 1
+    DIM path$ = work$ + "/" + views[i][0] + ".png"
+    IF FILE.EXISTS(path$) THEN
+        PRINT views[i][0]; ": there"
+    ELSE
+        PRINT views[i][0]; ": asking ..."
+        DIM got = FALSE
+        IF views[i][1] = "edit" THEN
+            got = Edit(key$, model$, same$ + Prompt$(look$, views[i][2]), work$ + "/front.png", path$)
+        ELSE
+            got = Generate(key$, model$, Prompt$(look$, views[i][2]), path$)
+        ENDIF
+        IF NOT got THEN END 1
+    ENDIF
+NEXT i
+
+' Each picture without its backdrop, 256 pixels square.
+FUNC Cutout(path$)
+    DIM img = IMG.TOCHANNELS(IMG.READPNG(path$), 4)
+    DIM p = IMG.PIXELS(img)
+    DIM q = RESHAPE(p, [LEN(p) / 4, 4])
+    DIM r = SLICE(q, 1, 0)
+    DIM g = SLICE(q, 1, 1)
+    DIM b = SLICE(q, 1, 2)
+    DIM backdrop = (r > 170) * (b > 170) * (g < 110)
+    DIM a = 255 * (1 - backdrop)
+    img = IMG.FROMPIXELS(IMG.WIDTH(img), IMG.HEIGHT(img), 4, FLATTEN(TRANSPOSE(STACK(0, r * (1 - backdrop), g * (1 - backdrop), b * (1 - backdrop), a))))
+    RETURN IMG.RESIZE(img, 256, 256, "bilinear")
+ENDFUNC
+
+PRINT "cutting out ..."
+DIM front = Cutout(work$ + "/front.png")
+DIM front_walk = Cutout(work$ + "/front_walk.png")
+DIM side = Cutout(work$ + "/side.png")
+DIM side_walk = Cutout(work$ + "/side_walk.png")
+DIM back = Cutout(work$ + "/back.png")
+DIM back_walk = Cutout(work$ + "/back_walk.png")
+
+' rows down, left, right, up; columns step, stand, step
+DIM frames = [front_walk, front, IMG.FLIPX(front_walk), IMG.FLIPX(side_walk), IMG.FLIPX(side), IMG.FLIPX(side_walk), side_walk, side, side_walk, back_walk, back, IMG.FLIPX(back_walk)]
+DIM sheet = IMG.BLANK(256 * 3, 256 * 4, 4, 0)
+DIM row = 0
+DIM col = 0
+FOR row = 0 TO 3
+    FOR col = 0 TO 2
+        sheet = IMG.PASTE(sheet, frames[row * 3 + col], col * 256, row * 256)
+    NEXT col
+NEXT row
+DIM big$ = work$ + "/sheet.png"
+IMG.WRITEPNG(sheet, big$, {"filter": "sub", "level": 1})
+PRINT "sheet: "; big$
+DIM done = OS.EXEC(OS.SELF$(), [here$ + "/sheets.jdb", big$, here$ + "/../assets/" + who$ + ".png"])
+PRINT done{"stdout"} ?? ""

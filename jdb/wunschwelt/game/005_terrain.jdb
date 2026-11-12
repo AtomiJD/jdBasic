@@ -18,7 +18,7 @@ FUNC TerrainParams()
     levels = APPEND(levels, {"name": "sand", "shades": [[184, 150, 96], [208, 178, 118], [224, 198, 140], [238, 218, 168]], "rim": 0, "halo": [236, 246, 244, 210], "detail": "pebble"})
     levels = APPEND(levels, {"name": "grass", "shades": [[52, 104, 56], [70, 132, 64], [88, 152, 72], [122, 180, 88]], "rim": 0, "halo": [20, 30, 10, 70], "detail": "blade"})
     levels = APPEND(levels, {"name": "dirt", "shades": [[124, 92, 62], [150, 116, 80], [170, 136, 96], [190, 158, 116]], "rim": 0, "halo": [40, 60, 30, 60], "detail": "pebble"})
-    RETURN {"seed": 4711, "edge_noise": 0.22, "rim_width": 0.07, "halo_width": 0.06, "contrast": 0.8, "dither": 0.55, "detail": 0.035, "variants": 4, "levels": levels}
+    RETURN {"seed": 4711, "edge_noise": 0.22, "rim_width": 0.07, "halo_width": 0.06, "contrast": 0.7, "dither": 0.4, "detail": 0.035, "variants": 4, "levels": levels}
 ENDFUNC
 
 ' A value noise of period 32 on the 32 x 32 pixels of a tile, in 0..1, so a

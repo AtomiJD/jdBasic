@@ -96,6 +96,30 @@ build/jdBasic.exe jdb/wunschwelt/tools/devsite.jdb
 serves the page, the runtime from `wasm/` and the three API calls on
 `http://127.0.0.1:8180/wunschwelt/`, one origin as on the box.
 
+
+## Figures
+
+Players and people of the village are drawn from sheets in `assets/`: 3 x 4
+frames of 48 pixels (columns step, stand, step; rows facing down, left,
+right, up). Players wear `vally` and `moehrchen` in turn, a person wears the
+sheet named like it (`marta`); a figure without a sheet is drawn as before.
+Each sheet is there twice: as PNG for the window, and as `.rgba` (width and
+height as two little-endian 32-bit numbers, then the pixels) for the
+browser, whose runtime reads no PNG. The page loads the `.rgba` files listed
+in `assets.txt` (`?assets=assets.txt`) into its file system under `/assets`,
+and the kernel hands the client code the folder as `c{"assets"}`.
+
+```
+build/jdBasic.exe jdb/wunschwelt/tools/sheets.jdb in.png assets/name.png
+OPENAI_API_KEY=... build/jdBasic.exe jdb/wunschwelt/tools/charactergen.jdb name "description"
+```
+
+`sheets.jdb` brings any 3 x 4 sheet to the game's size (Vally and Moehrchen
+come from `fluppi/generated_sprites`). `charactergen.jdb` draws a new one
+with an OpenAI image model (`WW_IMAGE_MODEL`, `gpt-image-2` by default): the
+front view first, the side, back and steps as edits of it, so all six show
+the same figure; its pictures stay in `tools/charactergen/<name>/`, which
+git ignores. Marta was drawn so, as a fox innkeeper beside the two rabbits.
 ## On the box
 
 `deploy.sh` (needs `WW_HOST=user@address`) puts the game on the Hostinger
@@ -141,6 +165,17 @@ patch key and nginx does not route it.
 build/jdBasic.exe jdb/wunschwelt/tools/admin.jdb wishes      a local world
 ```
 
+
+**What may be wished** is a catalog in `RuleWishKinds()` (land and water,
+ways and bridges, houses, things in the village, animals, villagers,
+events) with a list of what is never built (`RuleWishBarred()`). The judge
+gets both and answers with the keys of the kinds a wish fits; a wish lands
+on the board with them in `kinds`, a key the catalog does not know is
+dropped, and a wish with no known kind or one that is barred stays off the
+board: the person it was said to says why. People of the village know the
+catalog through `RuleNpcKnows$`. The start page shows the same list; a
+change to the catalog is made in both places. `test_catalog.jdb` checks
+this with a scripted model, 13 checks.
 `test_wishes.jdb` checks the board with 19 checks on a server without a
 model. With the model on cortex, of eight sentences the four wishes were
 written, briefly worded, and greeting and small talk were not; a sentence

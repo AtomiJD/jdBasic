@@ -17,6 +17,13 @@
   button { padding: .7rem 1.1rem; font: inherit; font-weight: bold; cursor: pointer;
            color: #281e0a; background: #fad66e; border: 0; border-radius: 6px; }
   small { display: block; margin-top: 1rem; color: #7d8a7c; }
+  details { margin-top: 1.6rem; text-align: left; }
+  summary { cursor: pointer; color: #fad66e; text-align: center; }
+  dl { margin: 1rem 0 0; }
+  dt { color: #e8e6df; font-weight: bold; margin-top: .6rem; }
+  dd { margin: .1rem 0 0; color: #b9c2b4; line-height: 1.4; }
+  details p { font-size: .95rem; }
+  .no { color: #c9a09a; }
 </style>
 </head>
 <body>
@@ -29,6 +36,20 @@
     <button>Ins Dorf</button>
   </form>
   <small>Buchstaben, Ziffern und _ · Pfeile oder WASD: laufen · Enter: sprechen</small>
+  <details>
+    <summary>Was du dir wünschen kannst</summary>
+    <dl>
+      <dt>Land und Wasser</dt><dd>ein Meer, ein See, ein Fluss, ein Strand, ein Wald, eine Blumenwiese, Felsen; neues Land am Rand des Dorfes, bis zu zehn Felder weit</dd>
+      <dt>Wege und Brücken</dt><dd>ein Weg, eine Straße, eine Brücke über Wasser, ein Steg, ein Zaun</dd>
+      <dt>Häuser</dt><dd>eine Hütte oder ein Haus, auch eines für dich mit deinem Namen am Schild (eines pro Spieler); ein Laden, eine Scheune, ein Turm</dd>
+      <dt>Dinge im Dorf</dt><dd>ein Brunnen, eine Bank, eine Laterne, ein Denkmal, ein Marktstand, ein Blumenbeet, ein Wegweiser</dd>
+      <dt>Tiere</dt><dd>eine Katze, ein Hund, Hühner, Enten, Fische im Teich, Schmetterlinge</dd>
+      <dt>Bewohner</dt><dd>eine neue Figur mit Beruf und Charakter, etwa ein Schmied oder eine Bäckerin</dd>
+      <dt>Ereignisse</dt><dd>ein Dorffest, Regen oder Schnee, Musik auf dem Platz, ein Feuerwerk</dd>
+    </dl>
+    <p class="no">Nicht gebaut werden Waffen und Kampf, Vorteile für einzelne Spieler, das Abreißen von Dingen anderer, echte Personen, Marken und Werbung, alles außerhalb des Spiels und Riesiges auf einmal.</p>
+    <p>Sag deinen Wunsch Marta vor der Taverne. Was auf die Liste passt, kommt ans Wunschbrett, und der Baumeister baut es ins laufende Dorf.</p>
+  </details>
 </main>
 <script>
   const field = document.getElementById('name');
@@ -37,7 +58,7 @@
     ev.preventDefault();
     const name = field.value.trim();
     try { localStorage.setItem('ww_name', name); } catch (err) {}
-    location.href = 'play/?prog=client&fs=1&name=' + encodeURIComponent(name);
+    location.href = 'play/?prog=client&fs=1&assets=assets.txt&name=' + encodeURIComponent(name);
   });
 </script>
 </body>

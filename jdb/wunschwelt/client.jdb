@@ -11,6 +11,7 @@
 '
 ' c is the client's whole state. The kernel keeps in it:
 '   name, srv, token   who we are and where the world is
+'   assets             the folder of the pictures
 '   version            the last patch that was run here
 '   code_id            the server's name for the code of the versions 1 to version
 '   frames             frames drawn since the start
@@ -30,6 +31,10 @@ DIM run_seconds AS INTEGER = 0
 IF LEN(cli) > 1 THEN C{"name"} = cli[1]
 IF LEN(cli) > 2 THEN C{"srv"} = cli[2]
 IF LEN(cli) > 3 THEN run_seconds = VAL(cli[3])
+' pictures beside this file; in the browser the page puts them under /assets
+C{"assets"} = "assets"
+IF LEN(cli) > 0 THEN C{"assets"} = PATH.JOIN$(PATH.DIRNAME$(cli[0]), "assets")
+IF FILE.ISDIR("/assets") THEN C{"assets"} = "/assets"
 
 ' In the browser the page hands over its query parameters and its own origin:
 ' the name comes from ?name=, the world sits behind <origin>/wunschwelt/api.

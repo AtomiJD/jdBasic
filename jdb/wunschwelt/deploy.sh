@@ -34,11 +34,19 @@ push_files() {
     $SCP game/*.jdb "$HOST:~/ww_stage/game/"
     $SCP tools/patch.jdb tools/nginx_route.jdb tools/preflight.jdb tools/admin.jdb tools/box_preflight.sh "$HOST:~/ww_stage/tools/"
     $SCP web/index.html "$HOST:~/ww_stage/web/"
+    # the pictures of the client as raw pixels (the browser runtime reads no
+    # PNG) and the list the page loads them by
+    $SSH 'mkdir -p ~/ww_stage/assets'
+    $SCP assets/*.rgba "$HOST:~/ww_stage/assets/"
+    local mark page listing
+    listing=$(mktemp)
+    (cd assets && ls *.rgba) | sed 's|^|assets/|' > "$listing"
+    $SCP "$listing" "$HOST:~/ww_stage/assets.txt"
+    rm -f "$listing"
     # The playground page belongs to the runtime in wasm/. A browser keeps
     # jdbasic.js and jdbasic.wasm apart in its cache, and an old one beside a
     # new one does not load; the page asks for both under the mark of this
     # runtime, so they change together.
-    local mark page
     mark=$(sha256sum ../../wasm/jdbasic.wasm ../../wasm/jdbasic.js | sha256sum | cut -c1-12)
     page=$(mktemp)
     sed -e "s|<script src=\"jdbasic.js\"></script>|<script src=\"jdbasic.js?v=$mark\"></script>|" \
@@ -58,9 +66,10 @@ preflight() {
 }
 
 publish_page() {
-    $SSH 'sudo -n mkdir -p /var/www/vvss/wunschwelt/play \
+    $SSH 'sudo -n mkdir -p /var/www/vvss/wunschwelt/play/assets \
       && sudo -n cp ~/ww_stage/web/index.html /var/www/vvss/wunschwelt/ \
-      && sudo -n cp ~/ww_stage/client.jdb /var/www/vvss/wunschwelt/play/ \
+      && sudo -n cp ~/ww_stage/client.jdb ~/ww_stage/assets.txt /var/www/vvss/wunschwelt/play/ \
+      && sudo -n cp ~/ww_stage/assets/*.rgba /var/www/vvss/wunschwelt/play/assets/ \
       && sudo -n cp ~/ww_stage/playground.html /var/www/vvss/wunschwelt/play/index.html \
       && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
 }

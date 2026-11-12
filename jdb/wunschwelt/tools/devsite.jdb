@@ -33,6 +33,16 @@ FUNC HANDLEFILE(request)
         file$ = runtime$ + "/index.html"
     ELSEIF rest$ = "play/client.jdb" THEN
         file$ = here$ + "/client.jdb"
+    ELSEIF rest$ = "play/assets.txt" THEN
+        DIM names = SORT(FILE.LIST(here$ + "/assets/*.rgba"))
+        DIM listing$ AS STRING = ""
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(names) - 1
+            listing$ = listing$ + "assets/" + names[i] + CHR$(10)
+        NEXT i
+        RETURN Reply(200, listing$, "text/plain")
+    ELSEIF STARTSWITH(rest$, "play/assets/") THEN
+        file$ = here$ + "/assets/" + MID$(rest$, 12, LEN(rest$))
     ELSEIF STARTSWITH(rest$, "play/") THEN
         file$ = runtime$ + "/" + MID$(rest$, 5, LEN(rest$))
     ENDIF

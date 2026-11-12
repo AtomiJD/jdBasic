@@ -1,0 +1,115 @@
+' A character sheet of 3 x 4 frames (columns: stand, step, step; rows:
+' down, left, right, up) brought to the frame size of the game.
+'
+'   build/jdBasic.exe jdb/wunschwelt/tools/sheets.jdb in.png out.png [size]
+'
+' Every frame is cut to one box around the figure, the same for all twelve,
+' so the figure does not jump between frames; the box is made square with
+' the feet on its lower edge and scaled to size x size (48 by default).
+' Beside the PNG it writes the raw pixels as .rgba.
+
+IMPORT IMG
+
+DIM args = OS.ARGS()
+IF LEN(args) < 3 THEN
+    PRINT "usage: sheets.jdb in.png out.png [size]"
+    END 1
+ENDIF
+DIM side = 48
+IF LEN(args) > 3 THEN side = VAL(args[3])
+
+DIM sheet = IMG.READPNG(args[1])
+IF IMG.CHANNELS(sheet) <> 4 THEN
+    PRINT "the sheet needs an alpha channel"
+    END 1
+ENDIF
+DIM fw = IMG.WIDTH(sheet) \ 3
+DIM fh = IMG.HEIGHT(sheet) \ 4
+
+' the box that holds the figure in every frame, in frame coordinates
+DIM px = IMG.PIXELS(sheet)
+DIM sw = IMG.WIDTH(sheet)
+' the magenta of the backdrop the figure was cut from goes, pink and purple stay
+DIM q4 = RESHAPE(px, [LEN(px) / 4, 4])
+DIM cr = SLICE(q4, 1, 0)
+DIM cg = SLICE(q4, 1, 1)
+DIM cb = SLICE(q4, 1, 2)
+DIM fringe = (cr > 150) * (cb > 150) * (cg < 0.55 * IIF(cr < cb, cr, cb))
+PRINT "magenta pixels removed: "; SUM(fringe * (SLICE(q4, 1, 3) > 0))
+px = FLATTEN(TRANSPOSE(STACK(0, cr, cg, cb, SLICE(q4, 1, 3) * (1 - fringe))))
+sheet = IMG.FROMPIXELS(sw, IMG.HEIGHT(sheet), 4, px)
+DIM x0 = fw
+DIM y0 = fh
+DIM x1 = -1
+DIM y1 = -1
+DIM y = 0
+DIM x = 0
+FOR y = 0 TO IMG.HEIGHT(sheet) - 1
+    FOR x = 0 TO sw - 1
+        IF px[(y * sw + x) * 4 + 3] > 40 THEN
+            DIM fx = x MOD fw
+            DIM fy = y MOD fh
+            IF fx < x0 THEN x0 = fx
+            IF fx > x1 THEN x1 = fx
+            IF fy < y0 THEN y0 = fy
+            IF fy > y1 THEN y1 = fy
+        ENDIF
+    NEXT x
+NEXT y
+DIM box = MAX([x1 - x0 + 1, y1 - y0 + 1])
+DIM bx = (x0 + x1 + 1) \ 2 - box \ 2
+DIM by = y1 + 1 - box
+PRINT "figure box "; x0; ","; y0; " - "; x1; ","; y1; ", square "; box
+
+' premultiplied alpha while scaling, so no colour of the empty space bleeds in
+FUNC Premul(img, back)
+    DIM p = IMG.PIXELS(img)
+    DIM n = LEN(p) \ 4
+    DIM q = RESHAPE(p, [n, 4])
+    DIM a = SLICE(q, 1, 3) / 255
+    DIM r = SLICE(q, 1, 0)
+    DIM g = SLICE(q, 1, 1)
+    DIM b = SLICE(q, 1, 2)
+    IF back THEN
+        DIM safe = a + (a = 0)
+        r = CLAMP(ROUND(r / safe), 0, 255)
+        g = CLAMP(ROUND(g / safe), 0, 255)
+        b = CLAMP(ROUND(b / safe), 0, 255)
+        a = (a * 255) * (a * 255 > 40)
+    ELSE
+        r = r * a
+        g = g * a
+        b = b * a
+        a = a * 255
+    ENDIF
+    RETURN IMG.FROMPIXELS(IMG.WIDTH(img), IMG.HEIGHT(img), 4, FLATTEN(TRANSPOSE(STACK(0, r, g, b, a))))
+ENDFUNC
+
+DIM out = IMG.BLANK(side * 3, side * 4, 4, 0)
+DIM col = 0
+DIM row = 0
+FOR row = 0 TO 3
+    FOR col = 0 TO 2
+        DIM cx = col * fw + bx
+        DIM cy = row * fh + by
+        ' a box reaching past the frame is padded with empty pixels
+        DIM pad = IMG.BLANK(box, box, 4, 0)
+        DIM sx0 = MAX([cx, col * fw])
+        DIM sy0 = MAX([cy, row * fh])
+        DIM sx1 = MIN([cx + box, (col + 1) * fw])
+        DIM sy1 = MIN([cy + box, (row + 1) * fh])
+        DIM part = IMG.CROP(sheet, sx0, sy0, sx1 - sx0, sy1 - sy0)
+        pad = IMG.PASTE(pad, part, sx0 - cx, sy0 - cy)
+        DIM small = Premul(IMG.RESIZE(Premul(pad, FALSE), side, side, "bilinear"), TRUE)
+        out = IMG.PASTE(out, small, col * side, row * side)
+    NEXT col
+NEXT row
+IMG.WRITEPNG(out, args[2])
+PRINT args[2]; ": "; side * 3; " x "; side * 4
+
+' The same pixels raw beside it, for a runtime that cannot read PNG (the
+' browser): two little-endian 32-bit numbers, width and height, then RGBA.
+DIM raw$ = PACK$("<II", side * 3, side * 4) + JOIN(SELECT(LAMBDA v -> CHR$(v), IMG.PIXELS(out)), "")
+DIM raw_path$ = LEFT$(args[2], LEN(args[2]) - LEN(PATH.EXT$(args[2]))) + ".rgba"
+BINWRITER raw_path$, raw$
+PRINT raw_path$; ": "; LEN(raw$); " bytes"

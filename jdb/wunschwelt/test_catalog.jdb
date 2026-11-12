@@ -1,0 +1,144 @@
+' Test of the wish catalog with a model that answers from a script: a wish
+' that fits the catalog lands on the board with its kinds, one that does not
+' is refused aloud by Marta and stays off the board, kinds the catalog does
+' not know are dropped, and Marta's prompt carries the catalog.
+'
+'   jdBasic jdb/wunschwelt/test_catalog.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8170 + OS.PID() MOD 10
+DIM model_port AS INTEGER = 8190 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_catalog_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+' The model: a judge's question gets a verdict by the words in the sentence,
+' any other question a short line.
+DIM knows_catalog AS BOOLEAN = FALSE
+FUNC Verdict$(said$ AS STRING)
+    IF INSTR(said$, "Meer") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["land"], "text": "Ein Meer im Osten"})
+    IF INSTR(said$, "Land") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["land", "way", "house", "rocket"], "text": "Mehr Land im Westen mit Strasse, Wald und Huette"})
+    IF INSTR(said$, "Schwert") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": FALSE, "reason": "Waffen baut der Baumeister nicht"})
+    IF INSTR(said$, "Gold") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["treasure"], "text": "Ein Turm aus Gold"})
+    RETURN JSON.STRINGIFY$({"wish": FALSE})
+ENDFUNC
+
+FUNC FakeModel(request)
+    DIM body = JSON.PARSE(request{"body"})
+    DIM messages = body{"messages"}
+    DIM system$ AS STRING = messages[0]{"content"}
+    DIM said$ AS STRING = messages[LEN(messages) - 1]{"content"}
+    DIM content$ AS STRING = "Gern, ich sag es dem Baumeister."
+    IF INSTR(system$, "Du sortierst") >= 0 THEN
+        content$ = Verdict$(said$)
+    ELSEIF INSTR(system$, "Erlaubt sind diese Arten") >= 0 THEN
+        knows_catalog = TRUE
+    ENDIF
+    RETURN JSON.STRINGIFY$({"choices": [{"message": {"role": "assistant", "content": content$}}]})
+ENDFUNC
+HTTP.SERVER.ON_POST "/v1/chat/completions", FakeModel@
+DIM model_up = HTTP.SERVER.START(model_port)
+Check("the scripted model listens", model_up)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+FUNC Events(answer, kind$ AS STRING)
+    DIM found = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(answer{"events"}) - 1
+        IF answer{"events"}[i]{"type"} = kind$ THEN found = APPEND(found, answer{"events"}[i])
+    NEXT i
+    RETURN found
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "60"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+SLEEP 1500
+DIM token$ AS STRING = Post("/join", {"name": "Anna"}){"token"}
+DIM r = Post("/sync", {"token": token$, "mapv": 1, "wishv": -1})
+DIM since AS INTEGER = r{"seq"}
+DIM i AS INTEGER
+FOR i = 1 TO 3
+    SLEEP 200
+    r = Post("/sync", {"token": token$, "dy": -1, "mapv": 1, "since": since})
+NEXT i
+
+' Says a sentence to Marta and collects what comes back over the next second.
+FUNC Tell(text$ AS STRING)
+    DIM got = {"wish": [], "say": []}
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": text$})
+    DIM k AS INTEGER
+    FOR k = 1 TO 6
+        got{"wish"} = APPEND(got{"wish"}, Events(t, "wish"))
+        got{"say"} = APPEND(got{"say"}, Events(t, "say"))
+        since = t{"seq"}
+        SLEEP 250
+        t = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+    NEXT k
+    got{"wish"} = APPEND(got{"wish"}, Events(t, "wish"))
+    got{"say"} = APPEND(got{"say"}, Events(t, "say"))
+    since = t{"seq"}
+    SLEEP 1300
+    RETURN got
+ENDFUNC
+
+FUNC MartaSaid(heard, part$ AS STRING) AS BOOLEAN
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(heard{"say"}) - 1
+        IF heard{"say"}[k]{"who"} = "Marta" ANDALSO INSTR(heard{"say"}[k]{"text"}, part$) >= 0 THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+DIM heard = Tell("Hallo Marta, wie geht es dir?")
+Check("small talk is no wish", LEN(heard{"wish"}) = 0)
+Check("Marta's prompt carries the catalog", knows_catalog)
+
+heard = Tell("Ich will ein Meer")
+Check("a wish of the catalog lands on the board", LEN(heard{"wish"}) = 1 ANDALSO heard{"wish"}[0]{"text"} = "Ein Meer im Osten")
+
+heard = Tell("Ich will ein Schwert")
+Check("a barred wish is not written", LEN(heard{"wish"}) = 0)
+Check("Marta says why", MartaSaid(heard, "nicht bringen: Waffen baut der Baumeister nicht"))
+
+heard = Tell("Ich will einen Turm aus Gold")
+Check("a wish of no known kind is not written", LEN(heard{"wish"}) = 0)
+Check("and Marta refuses it too", MartaSaid(heard, "nicht bringen"))
+
+heard = Tell("Mach mir mehr Land im Westen mit Strasse, Wald und einer kleinen Huette fuer mich")
+Check("a wish of several kinds is written", LEN(heard{"wish"}) = 1)
+
+DIM board = Admin("wishes", {})
+Check("two wishes on the board", board{"ok"} ANDALSO LEN(board{"wishes"}) = 2)
+IF board{"ok"} ANDALSO LEN(board{"wishes"}) = 2 THEN
+    Check("the sea carries its kind", JSON.STRINGIFY$(board{"wishes"}[0]{"kinds"}) = JSON.STRINGIFY$(["land"]))
+    Check("the land keeps the kinds of the catalog only", JSON.STRINGIFY$(board{"wishes"}[1]{"kinds"}) = JSON.STRINGIFY$(["land", "way", "house"]))
+ENDIF
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+
+DIM gone = OS.KILL(server_pid)
+HTTP.SERVER.STOP
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1
