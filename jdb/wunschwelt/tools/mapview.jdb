@@ -1,0 +1,76 @@
+' The whole map of a fresh world as one picture, drawn by the client code of
+' the game files and of any patch given after them.
+'
+'   build/jdBasic.exe jdb/wunschwelt/tools/mapview.jdb out.png [patch.jdb ...]
+'
+' A patch's server part runs on the fresh world first, so a patch that
+' changes the map can be looked at before it goes live.
+
+DIM args = OS.ARGS()
+IF LEN(args) < 2 THEN
+    PRINT "usage: mapview.jdb out.png [patch.jdb ...]"
+    END 1
+ENDIF
+DIM here$ = PATH.DIRNAME$(args[0])
+
+FUNC PartOf$(text$, mark$)
+    DIM a = INSTR(text$, mark$)
+    IF a < 0 THEN RETURN ""
+    DIM rest$ = MID$(text$, a + LEN(mark$))
+    DIM b = INSTR(rest$, "'@")
+    IF b < 0 THEN RETURN rest$
+    RETURN LEFT$(rest$, b)
+ENDFUNC
+
+DIM names = SORT(FILE.LIST(here$ + "/../game/*.jdb"))
+DIM files = []
+DIM i = 0
+FOR i = 0 TO LEN(names) - 1
+    files = APPEND(files, here$ + "/../game/" + names[i])
+NEXT i
+FOR i = 2 TO LEN(args) - 1
+    files = APPEND(files, args[i])
+NEXT i
+
+SCREEN 320, 200, "mapview", 1
+DIM W = {"npcs": {}, "map": {}}
+DIM C = {}
+DIM texts = []
+FOR i = 0 TO LEN(files) - 1
+    DIM f$ = files[i]
+    texts = APPEND(texts, TXTREADER$(f$))
+NEXT i
+FOR i = 0 TO LEN(texts) - 1
+    EXECUTE PartOf$(texts[i], "'@client")
+NEXT i
+
+' server parts after the client parts: a top-level statement of a patch
+' reaches the world with JDB.GLOBAL_GET("W")
+SUB MakeWorld()
+    RuleMakeWorld(JDB.GLOBAL_GET("W"))
+ENDSUB
+EXECUTE PartOf$(texts[0], "'@server")
+MakeWorld()
+FOR i = 1 TO LEN(texts) - 1
+    TRY
+        EXECUTE PartOf$(texts[i], "'@server")
+    CATCH
+        PRINT "server part of "; i; ": "; ERRMSG$
+    ENDTRY
+NEXT i
+
+ClientMakeTiles(C)
+DIM M = W{"map"}
+ClientLayMap(C, M)
+DIM view = GFX.NEWTARGET(M{"w"} * 32, M{"h"} * 32, FALSE)
+GFX.TARGET view, TRUE
+ClientGround(C, 0, 0)
+DIM stand = C{"stand"}
+DIM order = GRADE(stand[1])
+FOR i = 0 TO LEN(order) - 1
+    DIM q = order[i]
+    GFX.DRAWIMAGE_REGION(C{"obj_img"}, stand[2][q] * 32, 0, 32, 48, stand[0][q] * 32, stand[1][q] * 32 - 16)
+NEXT i
+GFX.TARGET
+GFX.SAVE_IMAGE(view, args[1])
+PRINT "map "; M{"w"}; " x "; M{"h"}; " -> "; args[1]

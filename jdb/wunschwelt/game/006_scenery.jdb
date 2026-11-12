@@ -1,0 +1,244 @@
+' What stands on the ground: trees, bushes, stones, flowers, and houses.
+' The pictures are drawn once at start into one image of 32 x 48 cells; a
+' thing stands on the lower 32 x 32 of its cell and may reach into the tile
+' above. A house is every block of wall, floor and door tiles on the map,
+' painted once with a roof over it and its door where the door tile is.
+
+'@server
+
+'@client
+
+' Cells of the scenery image, in order.
+FUNC SceneryNames()
+    RETURN ["oak", "oak2", "pine", "bush", "rock", "flowers_red", "flowers_white", "tuft"]
+ENDFUNC
+
+SUB SceneryShadow(cx, cy, rx, ry)
+    DRAWCOLOR 10, 24, 10, 70
+    ELLIPSE cx, cy, rx, ry, TRUE
+    DRAWCOLOR 255, 255, 255, 255
+ENDSUB
+
+' A round crown of leaves from blobs [x, y, r]: outline, body, light from the upper left.
+SUB SceneryCrown(ox, blobs, dark, mid, light, glint)
+    DIM i = 0
+    FOR i = 0 TO LEN(blobs) - 1
+        CIRCLE ox + blobs[i][0], blobs[i][1], blobs[i][2] + 1, TRUE, 22, 46, 26
+    NEXT i
+    FOR i = 0 TO LEN(blobs) - 1
+        CIRCLE ox + blobs[i][0], blobs[i][1], blobs[i][2], TRUE, dark[0], dark[1], dark[2]
+    NEXT i
+    FOR i = 0 TO LEN(blobs) - 1
+        CIRCLE ox + blobs[i][0] - 1, blobs[i][1] - 2, blobs[i][2] - 2, TRUE, mid[0], mid[1], mid[2]
+    NEXT i
+    FOR i = 0 TO LEN(blobs) - 1
+        IF blobs[i][2] >= 5 THEN CIRCLE ox + blobs[i][0] - 3, blobs[i][1] - 4, blobs[i][2] \ 3, TRUE, light[0], light[1], light[2]
+    NEXT i
+    FOR i = 0 TO LEN(glint) - 1
+        RECT ox + glint[i][0], glint[i][1], 1, 1, TRUE, light[0] + 30, light[1] + 30, light[2] + 20
+    NEXT i
+ENDSUB
+
+SUB SceneryTrunk(ox, top, h)
+    RECT ox + 12, top, 8, h, TRUE, 46, 30, 20
+    RECT ox + 13, top, 6, h - 1, TRUE, 104, 72, 44
+    RECT ox + 14, top, 1, h - 1, TRUE, 136, 98, 62
+    RECT ox + 17, top, 2, h - 1, TRUE, 82, 56, 34
+ENDSUB
+
+SUB SceneryOak(ox, alt)
+    SceneryShadow(ox + 16, 43, 13, 4)
+    SceneryTrunk(ox, 28, 16)
+    IF alt THEN
+        SceneryCrown(ox, [[16, 18, 11], [8, 24, 7], [23, 23, 7], [13, 10, 7], [21, 12, 6]], [40, 96, 44], [62, 130, 58], [108, 172, 80], [[10, 14], [19, 9], [23, 19], [7, 22]])
+    ELSE
+        SceneryCrown(ox, [[16, 20, 11], [9, 25, 7], [23, 25, 7], [16, 11, 8]], [36, 88, 48], [56, 120, 60], [98, 164, 82], [[12, 12], [20, 16], [9, 22], [24, 22]])
+    ENDIF
+ENDSUB
+
+SUB SceneryPine(ox)
+    SceneryShadow(ox + 16, 43, 10, 3)
+    SceneryTrunk(ox, 34, 10)
+    DIM y = 0
+    FOR y = 2 TO 38
+        ' three tiers, each wider toward its foot
+        DIM t = (y - 2) MOD 12
+        DIM half = 3 + (y - 2) \ 12 * 2 + t * 0.6
+        DIM x0 = ox + 16 - INT(half)
+        DIM x1 = ox + 16 + INT(half)
+        LINE x0 - 1, y, x1 + 1, y, 20, 44, 32
+        LINE x0, y, x1, y, 34, 86, 58
+        LINE x0 + 1, y, ox + 16, y, 50, 112, 72
+        IF t > 8 THEN LINE x0, y, x1, y, 28, 70, 48
+        IF t = 3 ORELSE t = 7 THEN PSET ox + 16 - INT(half) \ 2, y, 92, 152, 96
+    NEXT y
+ENDSUB
+
+SUB SceneryBush(ox)
+    SceneryShadow(ox + 16, 43, 12, 3)
+    SceneryCrown(ox, [[11, 36, 7], [21, 36, 7], [16, 31, 7]], [44, 100, 50], [66, 134, 62], [112, 176, 88], [[12, 31], [20, 29], [8, 36]])
+    PSET ox + 10, 35, 216, 70, 80
+    PSET ox + 21, 33, 216, 70, 80
+    PSET ox + 17, 38, 216, 70, 80
+ENDSUB
+
+SUB SceneryRock(ox)
+    SceneryShadow(ox + 16, 42, 11, 3)
+    ELLIPSE ox + 16, 37, 11, 7, TRUE, 50, 50, 56
+    ELLIPSE ox + 16, 36, 10, 6, TRUE, 120, 118, 122
+    ELLIPSE ox + 14, 34, 7, 3, TRUE, 150, 148, 150
+    LINE ox + 10, 33, ox + 14, 32, 184, 182, 182
+    LINE ox + 19, 38, ox + 23, 37, 88, 86, 92
+ENDSUB
+
+SUB SceneryFlowers(ox, petal, centre)
+    DIM spots = [[7, 26], [15, 22], [24, 27], [11, 36], [21, 38], [27, 34], [5, 41], [16, 43]]
+    DIM i = 0
+    FOR i = 0 TO LEN(spots) - 1
+        DIM x = ox + spots[i][0]
+        DIM y = spots[i][1]
+        LINE x, y + 1, x, y + 3, 40, 100, 44
+        RECT x - 1, y - 1, 3, 3, TRUE, petal[0], petal[1], petal[2]
+        PSET x, y, centre[0], centre[1], centre[2]
+    NEXT i
+ENDSUB
+
+SUB SceneryTuft(ox)
+    DIM spots = [[8, 30], [20, 26], [25, 40], [12, 42]]
+    DIM i = 0
+    FOR i = 0 TO LEN(spots) - 1
+        DIM x = ox + spots[i][0]
+        DIM y = spots[i][1]
+        LINE x, y, x - 2, y - 4, 46, 104, 50
+        LINE x + 1, y, x + 1, y - 5, 110, 172, 86
+        LINE x + 2, y, x + 4, y - 3, 70, 136, 62
+    NEXT i
+ENDSUB
+
+FUNC SceneryAtlas()
+    DIM names = SceneryNames()
+    DIM img = GFX.NEWTARGET(LEN(names) * 32, 48, FALSE)
+    GFX.TARGET img, TRUE
+    SceneryOak(0, FALSE)
+    SceneryOak(32, TRUE)
+    SceneryPine(64)
+    SceneryBush(96)
+    SceneryRock(128)
+    SceneryFlowers(160, [226, 76, 92], [250, 220, 110])
+    SceneryFlowers(192, [240, 240, 236], [236, 196, 70])
+    SceneryTuft(224)
+    GFX.TARGET
+    RETURN img
+ENDFUNC
+
+' One house of w x h tiles with its door in column door_dx of the bottom row.
+' The picture is as large as the block of tiles: the roof over the upper
+' part, the front wall over the lowest 44 pixels.
+FUNC SceneryHouse(w, h, door_dx, seed)
+    DIM pw = w * 32
+    DIM ph = h * 32
+    DIM img = GFX.NEWTARGET(pw, ph, FALSE)
+    GFX.TARGET img, TRUE
+    DIM wall_top = ph - 44
+    ' front wall: plaster between timber, stones at the foot
+    RECT 0, wall_top, pw, 44, TRUE, 60, 40, 28
+    RECT 2, wall_top + 2, pw - 4, 38, TRUE, 226, 210, 174
+    RECT 2, wall_top + 2, pw - 4, 3, TRUE, 104, 70, 44
+    RECT 2, ph - 6, pw - 4, 5, TRUE, 128, 124, 120
+    DIM x = 0
+    FOR x = 4 TO pw - 8 STEP 9
+        LINE x, ph - 4, x + 5, ph - 4, 104, 100, 98
+    NEXT x
+    DIM post = 0
+    FOR post = 0 TO w
+        DIM px = post * 32 - 2
+        IF post = 0 THEN px = 2
+        IF post = w THEN px = pw - 6
+        RECT px, wall_top + 2, 4, 37, TRUE, 104, 70, 44
+    NEXT post
+    ' windows in every column but the door's, warm light behind them
+    DIM col = 0
+    FOR col = 0 TO w - 1
+        DIM by_sign = w >= 8 ANDALSO col = door_dx + 1
+        IF col <> door_dx ANDALSO NOT by_sign ANDALSO col MOD 2 = (door_dx + 1) MOD 2 THEN
+            DIM wx = col * 32 + 9
+            RECT wx - 1, wall_top + 11, 16, 15, TRUE, 70, 46, 30
+            RECT wx + 1, wall_top + 13, 12, 11, TRUE, 246, 206, 110
+            RECT wx + 1, wall_top + 13, 6, 5, TRUE, 252, 232, 160
+            LINE wx + 7, wall_top + 13, wx + 7, wall_top + 23, 70, 46, 30
+            LINE wx + 1, wall_top + 18, wx + 12, wall_top + 18, 70, 46, 30
+            RECT wx - 2, wall_top + 26, 18, 2, TRUE, 104, 70, 44
+        ENDIF
+    NEXT col
+    ' the door
+    DIM dx = door_dx * 32 + 7
+    RECT dx - 1, wall_top + 9, 20, 31, TRUE, 50, 32, 20
+    CIRCLE dx + 9, wall_top + 13, 10, TRUE, 50, 32, 20
+    RECT dx + 1, wall_top + 11, 16, 29, TRUE, 128, 82, 48
+    CIRCLE dx + 9, wall_top + 14, 8, TRUE, 128, 82, 48
+    LINE dx + 6, wall_top + 8, dx + 6, ph - 2, 96, 60, 34
+    LINE dx + 12, wall_top + 8, dx + 12, ph - 2, 96, 60, 34
+    RECT dx + 13, wall_top + 25, 2, 3, TRUE, 236, 200, 90
+    ' the roof: rows of tiles, a ridge on top, a shadow under the eaves
+    DIM roof_h = wall_top + 4
+    RECT 0, 0, pw, roof_h, TRUE, 58, 22, 18
+    ' the far slope above the ridge lies in shade, the near one in light
+    DIM ridge = INT(roof_h * 0.32)
+    RECT 2, 2, pw - 4, ridge - 2, TRUE, 120, 52, 40
+    RECT 2, ridge, pw - 4, roof_h - ridge - 2, TRUE, 162, 72, 52
+    DIM y = 0
+    DIM row = 0
+    FOR y = 6 TO ridge - 3 STEP 6
+        LINE 2, y, pw - 3, y, 96, 40, 30
+    NEXT y
+    FOR y = ridge + 8 TO roof_h - 6 STEP 7
+        ' rows nearer the eaves are darker
+        DIM fade = (y - ridge) * 30 \ (roof_h - ridge)
+        LINE 2, y, pw - 3, y, 124 - fade, 52 - fade \ 2, 40 - fade \ 2
+        LINE 2, y + 1, pw - 3, y + 1, 186 - fade, 98 - fade \ 2, 72 - fade \ 2
+        FOR x = 4 + (row MOD 2) * 5 TO pw - 6 STEP 10
+            LINE x, y - 6, x, y - 1, 134 - fade, 60 - fade \ 2, 44 - fade \ 2
+        NEXT x
+        row = row + 1
+    NEXT y
+    RECT 2, ridge - 3, pw - 4, 5, TRUE, 76, 30, 24
+    RECT 2, ridge - 2, pw - 4, 2, TRUE, 204, 116, 84
+    RECT 2, 2, 4, roof_h - 4, TRUE, 96, 40, 30
+    RECT pw - 6, 2, 4, roof_h - 4, TRUE, 96, 40, 30
+    RECT 2, roof_h - 4, pw - 4, 3, TRUE, 92, 36, 28
+    ' dormers on the near slope of a large roof
+    IF w >= 6 ANDALSO roof_h >= 100 THEN
+        DIM dm = 0
+        FOR dm = 1 TO 2
+            DIM dxm = INT(pw * dm / 3) - 11
+            DIM dym = ridge + (roof_h - ridge) \ 3
+            RECT dxm - 1, dym, 24, 22, TRUE, 58, 22, 18
+            RECT dxm + 1, dym + 8, 20, 13, TRUE, 226, 210, 174
+            RECT dxm + 6, dym + 10, 10, 9, TRUE, 70, 46, 30
+            RECT dxm + 7, dym + 11, 8, 7, TRUE, 246, 206, 110
+            LINE dxm + 11, dym + 11, dxm + 11, dym + 17, 70, 46, 30
+            RECT dxm - 2, dym + 1, 26, 6, TRUE, 120, 50, 38
+            RECT dxm - 2, dym + 1, 26, 2, TRUE, 200, 112, 80
+        NEXT dm
+    ENDIF
+    ' a chimney toward one end, chosen by the seed
+    DIM cx = 20 + (seed MOD 3) * 10
+    IF seed MOD 2 = 1 THEN cx = pw - cx - 12
+    RECT cx - 1, 3, 14, 18, TRUE, 50, 40, 36
+    RECT cx, 4, 12, 16, TRUE, 140, 120, 108
+    RECT cx, 4, 12, 3, TRUE, 96, 84, 78
+    ' a sign beside the door of a long house
+    IF w >= 8 THEN
+        DIM sx = dx + 26
+        LINE sx, wall_top + 6, sx + 14, wall_top + 6, 60, 40, 28
+        LINE sx + 2, wall_top + 6, sx + 2, wall_top + 9, 60, 40, 28
+        LINE sx + 12, wall_top + 6, sx + 12, wall_top + 9, 60, 40, 28
+        RECT sx - 1, wall_top + 9, 17, 12, TRUE, 60, 40, 28
+        RECT sx, wall_top + 10, 15, 10, TRUE, 176, 126, 70
+        RECT sx + 4, wall_top + 12, 6, 7, TRUE, 236, 196, 80
+        RECT sx + 10, wall_top + 13, 2, 4, TRUE, 236, 196, 80
+        RECT sx + 4, wall_top + 12, 6, 2, TRUE, 252, 252, 240
+    ENDIF
+    GFX.TARGET
+    RETURN img
+ENDFUNC

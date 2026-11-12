@@ -15,7 +15,14 @@ without a restart. Board: jdTrakr project `marketing`, epic #993.
   calls `ClientFrame(c)` once per frame.
 - `game/000_world.jdb` is the first patch: the village, walking, talking,
   Marta the innkeeper, and everything the client draws.
-- `game/010_wishes.jdb` is the second: the wish board.
+- `game/005_terrain.jdb` draws the ground at the start of a client: five
+  levels from deep water to path, sixteen corner tiles each, laid on a grid
+  shifted by half a tile so every edge joins. `game/006_scenery.jdb` draws
+  trees, bushes, stones, flowers and a house for every block of wall, floor
+  and door tiles. `tools/tilegen.jdb` runs the terrain code with sliders;
+  `tools/mapview.jdb out.png [patch.jdb]` saves the whole map of a fresh
+  world, with a patch on top if one is given.
+- `game/010_wishes.jdb` is the wish board.
 - `patches/` holds later patches (`010_cat.jdb`: a cat that strolls).
 
 A patch file has two parts, `'@server` and `'@client`. Each part is jdBasic

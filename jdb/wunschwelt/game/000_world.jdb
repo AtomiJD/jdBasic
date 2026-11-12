@@ -1,8 +1,11 @@
 ' The first patch: a village green with a tavern, a pond and Marta the
 ' innkeeper; players walk on a grid and talk.
 '
-' Tile ids (1-based, as the tilemap wants them):
+' Kinds of map tile:
 '   1 grass  2 path  3 tree  4 water  5 wall  6 floor  7 door  8 flowers
+'   9 sand  10 deep water  11 bush  12 stone
+' Walls, floor and doors in a block make a house; the client paints it with
+' a roof. Trees, water, deep water, bushes, stones and a house are blocked.
 
 '@server
 
@@ -44,7 +47,7 @@ FUNC RuleBlocked(w, x, y)
     DIM m = w{"map"}
     IF x < 0 ORELSE y < 0 ORELSE x >= m{"w"} ORELSE y >= m{"h"} THEN RETURN TRUE
     DIM id = m{"tiles"}[y * m{"w"} + x]
-    IF id = 3 ORELSE id = 4 ORELSE id = 5 THEN RETURN TRUE
+    IF id = 3 ORELSE id = 4 ORELSE id = 5 ORELSE id = 6 ORELSE id >= 10 THEN RETURN TRUE
     DIM npcs = w{"npcs"}
     FOR EACH npc_id$ IN MAP.KEYS(npcs)
         IF npcs{npc_id$}{"x"} = x ANDALSO npcs{npc_id$}{"y"} = y THEN RETURN TRUE
@@ -262,58 +265,134 @@ ENDSUB
 
 '@client
 
-' The eight tiles, drawn into one strip of 32 x 32 pictures.
+' The ground and what stands on it are drawn once at start, by the code of
+' game/005_terrain.jdb and game/006_scenery.jdb.
 SUB ClientMakeTiles(c)
-    DIM img = GFX.NEWTARGET(8 * 32, 32, FALSE)
-    GFX.TARGET img, TRUE
+    c{"ter_params"} = TerrainParams()
+    c{"ter_img"} = TerrainAtlas(c{"ter_params"})
+    c{"obj_img"} = SceneryAtlas()
+    c{"houses"} = []
+ENDSUB
+
+' The terrain level of a map tile: 0 deep water, 1 water, 2 sand, 3 grass, 4 path.
+FUNC ClientLevel(kind)
+    IF kind = 10 THEN RETURN 0
+    IF kind = 4 THEN RETURN 1
+    IF kind = 9 THEN RETURN 2
+    IF kind = 2 THEN RETURN 4
+    RETURN 3
+ENDFUNC
+
+FUNC ClientHash(x, y, n)
+    RETURN ((x * 73856093) BXOR (y * 19349663)) MOD n
+ENDFUNC
+
+' Turns the tiles of the map into terrain, the things that stand on it, the
+' marks on the ground and the houses. Each house is a block of wall, floor
+' and door tiles; its door is the door tile in its lowest row.
+SUB ClientLayMap(c, m)
+    DIM mw = m{"w"}
+    DIM mh = m{"h"}
+    DIM tiles = m{"tiles"}
+    DIM lv = ZEROS([mw * mh])
+    DIM sx = []
+    DIM sy = []
+    DIM scell = []
+    DIM gx = []
+    DIM gy = []
+    DIM gcell = []
+    DIM x = 0
+    DIM y = 0
+    FOR y = 0 TO mh - 1
+        FOR x = 0 TO mw - 1
+            DIM kind = tiles[y * mw + x]
+            lv[y * mw + x] = ClientLevel(kind)
+            DIM roll = ClientHash(x, y, 20)
+            DIM cell = -1
+            IF kind = 3 THEN
+                cell = 0
+                IF roll >= 10 THEN cell = 1
+                IF roll >= 15 THEN cell = 2
+            ELSEIF kind = 11 THEN
+                cell = 3
+            ELSEIF kind = 12 THEN
+                cell = 4
+            ENDIF
+            IF cell >= 0 THEN
+                sx = APPEND(sx, x)
+                sy = APPEND(sy, y)
+                scell = APPEND(scell, cell)
+            ENDIF
+            DIM mark = -1
+            IF kind = 8 THEN
+                mark = 5 + roll MOD 2
+            ELSEIF kind = 1 ANDALSO ClientHash(x + 7, y + 3, 17) = 0 THEN
+                mark = 7
+            ENDIF
+            IF mark >= 0 THEN
+                gx = APPEND(gx, x)
+                gy = APPEND(gy, y)
+                gcell = APPEND(gcell, mark)
+            ENDIF
+        NEXT x
+    NEXT y
+    DIM p = c{"ter_params"}
+    TerrainBuild(c{"ter_img"}, lv, mw, mh, LEN(p{"levels"}), p{"variants"})
+    c{"stand"} = [sx, sy, scell]
+    c{"marks"} = [gx, gy, gcell]
+
+    DIM old = c{"houses"}
     DIM i = 0
-    DIM x0 = 0
-    ' grass under everything that grows
-    FOR i = 0 TO 7
-        x0 = i * 32
-        RECT x0, 0, 32, 32, TRUE, 78, 148, 74
-        RECT x0 + 5, 7, 2, 2, TRUE, 62, 126, 60
-        RECT x0 + 21, 4, 2, 2, TRUE, 62, 126, 60
-        RECT x0 + 13, 19, 2, 2, TRUE, 96, 166, 88
-        RECT x0 + 26, 25, 2, 2, TRUE, 62, 126, 60
+    FOR i = 0 TO LEN(old) - 1
+        GFX.FREEIMAGE(old[i]{"img"})
     NEXT i
-    ' 2 path
-    RECT 32, 0, 32, 32, TRUE, 198, 172, 122
-    RECT 38, 6, 3, 2, TRUE, 176, 150, 104
-    RECT 52, 20, 3, 2, TRUE, 176, 150, 104
-    RECT 44, 26, 2, 2, TRUE, 214, 190, 144
-    ' 3 tree
-    RECT 64 + 13, 18, 6, 12, TRUE, 104, 72, 44
-    CIRCLE 64 + 16, 13, 12, TRUE, 38, 104, 52
-    CIRCLE 64 + 12, 10, 5, TRUE, 58, 132, 66
-    ' 4 water
-    RECT 96, 0, 32, 32, TRUE, 62, 120, 190
-    LINE 100, 8, 110, 8, 120, 176, 228
-    LINE 112, 18, 124, 18, 120, 176, 228
-    LINE 99, 26, 106, 26, 120, 176, 228
-    ' 5 wall
-    RECT 128, 0, 32, 32, TRUE, 132, 128, 124
-    LINE 128, 10, 159, 10, 96, 92, 90
-    LINE 128, 21, 159, 21, 96, 92, 90
-    LINE 143, 0, 143, 10, 96, 92, 90
-    LINE 135, 10, 135, 21, 96, 92, 90
-    LINE 151, 10, 151, 21, 96, 92, 90
-    LINE 143, 21, 143, 31, 96, 92, 90
-    ' 6 floor
-    RECT 160, 0, 32, 32, TRUE, 158, 116, 74
-    LINE 160, 8, 191, 8, 128, 92, 58
-    LINE 160, 16, 191, 16, 128, 92, 58
-    LINE 160, 24, 191, 24, 128, 92, 58
-    ' 7 door
-    RECT 192, 0, 32, 32, TRUE, 132, 128, 124
-    RECT 198, 2, 20, 30, TRUE, 96, 62, 36
-    RECT 213, 16, 2, 3, TRUE, 222, 190, 80
-    ' 8 flowers
-    CIRCLE 224 + 8, 9, 2, TRUE, 236, 96, 110
-    CIRCLE 224 + 22, 14, 2, TRUE, 244, 220, 96
-    CIRCLE 224 + 13, 24, 2, TRUE, 236, 236, 240
-    GFX.TARGET
-    c{"tiles_img"} = img
+    DIM houses = []
+    DIM seen = ZEROS([mw * mh])
+    FOR y = 0 TO mh - 1
+        FOR x = 0 TO mw - 1
+            DIM k0 = tiles[y * mw + x]
+            IF (k0 = 5 ORELSE k0 = 6 ORELSE k0 = 7) ANDALSO seen[y * mw + x] = 0 THEN
+                ' the block grows right and down while the tiles belong to a house
+                DIM x1 = x
+                DIM y1 = y
+                DO WHILE x1 + 1 < mw ANDALSO (tiles[y * mw + x1 + 1] = 5 ORELSE tiles[y * mw + x1 + 1] = 7)
+                    x1 = x1 + 1
+                LOOP
+                DO WHILE y1 + 1 < mh ANDALSO (tiles[(y1 + 1) * mw + x] = 5 ORELSE tiles[(y1 + 1) * mw + x] = 7)
+                    y1 = y1 + 1
+                LOOP
+                DIM door = (x1 - x) \ 2
+                DIM xx = 0
+                DIM yy = 0
+                FOR yy = y TO y1
+                    FOR xx = x TO x1
+                        seen[yy * mw + xx] = 1
+                        IF yy = y1 ANDALSO tiles[yy * mw + xx] = 7 THEN door = xx - x
+                    NEXT xx
+                NEXT yy
+                houses = APPEND(houses, {"x": x, "y": y, "img": SceneryHouse(x1 - x + 1, y1 - y + 1, door, x * 31 + y)})
+            ENDIF
+        NEXT x
+    NEXT y
+    c{"houses"} = houses
+ENDSUB
+
+' The terrain, the marks on it and the houses.
+SUB ClientGround(c, cam_x, cam_y)
+    DIM p = c{"ter_params"}
+    TerrainDraw(LEN(p{"levels"}), cam_x, cam_y)
+    DIM img = c{"obj_img"}
+    DIM gm = c{"marks"}
+    DIM i = 0
+    FOR i = 0 TO LEN(gm[0]) - 1
+        DIM mx = gm[0][i] * 32 - cam_x
+        DIM my = gm[1][i] * 32 - cam_y
+        IF mx > -32 ANDALSO mx < 640 ANDALSO my > -32 ANDALSO my < 400 THEN GFX.DRAWIMAGE_REGION(img, gm[2][i] * 32, 16, 32, 32, mx, my)
+    NEXT i
+    DIM houses = c{"houses"}
+    FOR i = 0 TO LEN(houses) - 1
+        GFX.DRAWIMAGE(houses[i]{"img"}, houses[i]{"x"} * 32 - cam_x, houses[i]{"y"} * 32 - cam_y)
+    NEXT i
 ENDSUB
 
 SUB ClientInit(c)
@@ -437,7 +516,7 @@ SUB ClientSync(c)
     c{"uptime"} = r{"uptime"}
     IF MAP.EXISTS(r, "map") THEN
         DIM m = r{"map"}
-        TILEMAP.CREATE("world", c{"tiles_img"}, RESHAPE(m{"tiles"}, [m{"h"}, m{"w"}]), 32, 32)
+        ClientLayMap(c, m)
         c{"mapv"} = m{"v"}
         c{"have_map"} = TRUE
     ENDIF
@@ -585,19 +664,39 @@ SUB ClientDraw(c)
     c{"py"} = c{"py"} + (goal_y - c{"py"}) * 0.3
     DIM cam_x = INT(c{"px"}) + 16 - 320
     DIM cam_y = INT(c{"py"}) + 16 - 192
-    TILEMAP.DRAW "world", cam_x, cam_y
+    ClientGround(c, cam_x, cam_y)
+
+    ' what stands is drawn back to front by the line its foot is on:
+    ' kind 0 a tree, bush or stone, 1 an NPC, 2 a player
+    DIM foot = []
+    DIM kinds = []
+    DIM refs = []
+    DIM qx = []
+    DIM qy = []
+    DIM stand = c{"stand"}
+    DIM i = 0
+    FOR i = 0 TO LEN(stand[0]) - 1
+        DIM tx = stand[0][i] * 32 - cam_x
+        DIM ty = stand[1][i] * 32 - cam_y
+        IF tx > -32 ANDALSO tx < 640 ANDALSO ty > -32 ANDALSO ty < 420 THEN
+            foot = APPEND(foot, ty + 31.5)
+            kinds = APPEND(kinds, 0)
+            refs = APPEND(refs, stand[2][i])
+            qx = APPEND(qx, tx)
+            qy = APPEND(qy, ty)
+        ENDIF
+    NEXT i
 
     DIM where = {}
     DIM npcs = c{"npcs"}
-    DIM i = 0
     FOR i = 0 TO LEN(npcs) - 1
         DIM nx = npcs[i][2] * 32 - cam_x
         DIM ny = npcs[i][3] * 32 - cam_y
-        IF npcs[i][4] = "thing" THEN
-            ClientThing(c, npcs[i], nx, ny)
-        ELSE
-            ClientNpc(c, npcs[i], nx, ny)
-        ENDIF
+        foot = APPEND(foot, ny + 32)
+        kinds = APPEND(kinds, 1)
+        refs = APPEND(refs, i)
+        qx = APPEND(qx, nx)
+        qy = APPEND(qy, ny)
         where{npcs[i][1]} = [nx, ny]
     NEXT i
 
@@ -617,9 +716,35 @@ SUB ClientDraw(c)
             wy = at[1] + (wy - at[1]) * 0.3
             shown{who$} = [wx, wy]
         ENDIF
-        ClientFigure(INT(wx) - cam_x, INT(wy) - cam_y, p[3], p[4], who$, FALSE)
+        foot = APPEND(foot, INT(wy) - cam_y + 32)
+        kinds = APPEND(kinds, 2)
+        refs = APPEND(refs, i)
+        qx = APPEND(qx, INT(wx) - cam_x)
+        qy = APPEND(qy, INT(wy) - cam_y)
         where{who$} = [INT(wx) - cam_x, INT(wy) - cam_y]
     NEXT i
+
+    IF LEN(foot) > 0 THEN
+        DIM order = GRADE(foot)
+        DIM obj_img = c{"obj_img"}
+        DIM k = 0
+        FOR k = 0 TO LEN(order) - 1
+            DIM q = order[k]
+            IF kinds[q] = 0 THEN
+                GFX.DRAWIMAGE_REGION(obj_img, refs[q] * 32, 0, 32, 48, qx[q], qy[q] - 16)
+            ELSEIF kinds[q] = 1 THEN
+                DIM row = npcs[refs[q]]
+                IF row[4] = "thing" THEN
+                    ClientThing(c, row, qx[q], qy[q])
+                ELSE
+                    ClientNpc(c, row, qx[q], qy[q])
+                ENDIF
+            ELSE
+                DIM pl = players[refs[q]]
+                ClientFigure(qx[q], qy[q], pl[3], pl[4], pl[0], FALSE)
+            ENDIF
+        NEXT k
+    ENDIF
 
     DIM alive = []
     DIM bubbles = c{"bubbles"}

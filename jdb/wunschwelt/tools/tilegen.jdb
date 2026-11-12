@@ -1,0 +1,130 @@
+' The terrain tiles of the game with sliders: runs the client part of
+' game/005_terrain.jdb, shows the tileset and a small island built from it.
+'
+'   build/jdBasic.exe jdb/wunschwelt/tools/tilegen.jdb [--export out.png]
+'
+' With --export it draws one frame, saves the window and ends.
+
+DIM here$ = PATH.DIRNAME$(OS.ARGS()[0] ?? "jdb/wunschwelt/tools/tilegen.jdb")
+FUNC ClientPart$(path$)
+    DIM text$ = TXTREADER$(path$)
+    RETURN MID$(text$, INSTR(text$, "'@client") + 8)
+ENDFUNC
+EXECUTE ClientPart$(here$ + "/../game/005_terrain.jdb")
+EXECUTE ClientPart$(here$ + "/../game/006_scenery.jdb")
+
+DIM args = OS.ARGS()
+DIM export$ = ""
+DIM ai = 0
+FOR ai = 0 TO LEN(args) - 2
+    IF args[ai] = "--export" THEN export$ = args[ai + 1]
+NEXT ai
+
+SCREEN 1280, 720, "Wunschwelt - Gelaende", 1
+
+' a small island: deep sea, sea, a beach, grass, a path
+DIM DEMO_W = 24
+DIM DEMO_H = 12
+FUNC DemoLevels(mw, mh)
+    DIM lv = ZEROS([mw * mh])
+    DIM x = 0
+    DIM y = 0
+    FOR y = 0 TO mh - 1
+        FOR x = 0 TO mw - 1
+            DIM dx = (x - 12) / 9.0
+            DIM dy = (y - 6) / 4.6
+            DIM d = SQR(dx * dx + dy * dy) + 0.12 * SIN(x * 1.3) + 0.1 * COS(y * 1.7)
+            DIM level = 0
+            IF d < 1.45 THEN level = 1
+            IF d < 1.0 THEN level = 2
+            IF d < 0.8 THEN level = 3
+            lv[y * mw + x] = level
+        NEXT x
+    NEXT y
+    FOR x = 6 TO 18
+        IF lv[6 * mw + x] = 3 THEN lv[6 * mw + x] = 4
+    NEXT x
+    FOR y = 3 TO 6
+        IF lv[y * mw + 15] = 3 THEN lv[y * mw + 15] = 4
+    NEXT y
+    RETURN lv
+ENDFUNC
+
+DIM P = TerrainParams()
+DIM atlas = 0
+SUB Rebuild()
+    DIM p = JDB.GLOBAL_GET("P")
+    DIM old = JDB.GLOBAL_GET("ATLAS")
+    IF old > 0 THEN GFX.FREEIMAGE(old)
+    DIM img = TerrainAtlas(p)
+    JDB.GLOBAL_SET("ATLAS", img)
+    TerrainBuild(img, DemoLevels(24, 12), 24, 12, LEN(p{"levels"}), p{"variants"})
+ENDSUB
+Rebuild()
+DIM SCENERY = SceneryAtlas()
+DIM HOUSE = SceneryHouse(9, 4, 4, 1)
+DIM HUT = SceneryHouse(3, 3, 1, 2)
+DIM PROPS = [[1, 9, 3], [0, 11, 3], [2, 17, 3], [0, 6, 7], [3, 19, 6], [4, 9, 8], [5, 13, 9], [6, 8, 5], [7, 16, 9], [2, 7, 4]]
+
+DIM frames = 0
+DO
+    CLS 18, 22, 26
+    DIM cols = 16 + P{"variants"}
+    GFX.DRAWIMAGE(atlas, 400, 10, cols * 32 * 0.75, LEN(P{"levels"}) * 32 * 0.75)
+    GFX.DRAWIMAGE(SCENERY, 900, 10, 256 * 1.2, 48 * 1.2)
+    ' the island at twice its size, as the game window shows it
+    DIM view = GFX.NEWTARGET(DEMO_W * 32, DEMO_H * 32, FALSE)
+    GFX.TARGET view, TRUE
+    TerrainDraw(LEN(P{"levels"}), 0, 0)
+    GFX.DRAWIMAGE(HOUSE, 9 * 32, 2 * 32)
+    GFX.DRAWIMAGE(HUT, 17 * 32, 6 * 32)
+    DIM k_prop = 0
+    FOR k_prop = 0 TO LEN(PROPS) - 1
+        GFX.DRAWIMAGE_REGION(SCENERY, PROPS[k_prop][0] * 32, 0, 32, 48, PROPS[k_prop][1] * 32, PROPS[k_prop][2] * 32 - 16)
+    NEXT k_prop
+    GFX.TARGET
+    GFX.DRAWIMAGE_REGION(view, 160, 32, 440, 290, 400, 140, 880, 580)
+    GFX.FREEIMAGE(view)
+
+    DIM changed = FALSE
+    IF GUI.BEGIN("Gelaende", 10, 10, 370, 700) THEN
+        DIM before = [P{"edge_noise"}, P{"rim_width"}, P{"halo_width"}, P{"contrast"}, P{"dither"}, P{"detail"}, P{"seed"}]
+        P{"edge_noise"} = GUI.SLIDER("Kante unruhig", P{"edge_noise"}, 0.0, 0.45)
+        P{"rim_width"} = GUI.SLIDER("Randbreite", P{"rim_width"}, 0.0, 0.2)
+        P{"halo_width"} = GUI.SLIDER("Schaum/Schatten", P{"halo_width"}, 0.0, 0.2)
+        P{"contrast"} = GUI.SLIDER("Kontrast", P{"contrast"}, 0.2, 2.0)
+        P{"dither"} = GUI.SLIDER("Dither", P{"dither"}, 0.0, 1.5)
+        P{"detail"} = GUI.SLIDER("Details", P{"detail"}, 0.0, 0.1)
+        P{"seed"} = INT(GUI.SLIDER("Seed", P{"seed"}, 1, 9999))
+        DIM after = [P{"edge_noise"}, P{"rim_width"}, P{"halo_width"}, P{"contrast"}, P{"dither"}, P{"detail"}, P{"seed"}]
+        IF ANY(before <> after) THEN changed = TRUE
+        GUI.SEPARATOR()
+        DIM L = 0
+        FOR L = 0 TO LEN(P{"levels"}) - 1
+            DIM lv = P{"levels"}[L]
+            IF GUI.TREE_NODE(lv{"name"}) THEN
+                DIM k = 0
+                FOR k = 0 TO 3
+                    DIM col4 = [lv{"shades"}[k][0], lv{"shades"}[k][1], lv{"shades"}[k][2], 255]
+                    IF GUI.COLOR(lv{"name"} + " " + STR$(k), col4) THEN
+                        lv{"shades"}[k] = [col4[0], col4[1], col4[2]]
+                        changed = TRUE
+                    ENDIF
+                NEXT k
+                GUI.TREE_POP()
+            ENDIF
+        NEXT L
+        GUI.SEPARATOR()
+        IF GUI.BUTTON("Tileset als PNG", 340, 30) THEN GFX.SAVE_IMAGE(atlas, "terrain_tiles.png")
+    ENDIF
+    GUI.END()
+    IF changed THEN Rebuild()
+    SCREENFLIP
+    frames = frames + 1
+    IF export$ <> "" ANDALSO frames = 3 THEN
+        GFX.SAVE_SCREENSHOT(export$)
+        EXITDO
+    ENDIF
+    IF UCASE$(INKEY$()) = "Q" THEN EXITDO
+    SLEEP 16
+LOOP

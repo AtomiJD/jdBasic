@@ -1,0 +1,177 @@
+' The ground of the world. Five kinds of ground lie in levels, from the deep
+' sea up to the dirt of a path; every level above the lowest has sixteen
+' tiles, one for each way its four corners can be covered. The tiles sit on
+' a grid shifted by half a tile against the map, so a corner of a tile is the
+' middle of a map cell and every edge joins its neighbour.
+'
+' The client builds the tileset at start from the numbers in TerrainParams;
+' tools/tilegen.jdb runs the same code with sliders and saves a picture.
+
+'@server
+
+'@client
+
+FUNC TerrainParams()
+    DIM levels = []
+    levels = APPEND(levels, {"name": "deep", "shades": [[22, 52, 98], [28, 64, 116], [34, 76, 132], [52, 100, 156]], "rim": -1, "halo": [0, 0, 0, 0], "detail": "wave"})
+    levels = APPEND(levels, {"name": "sea", "shades": [[44, 98, 162], [52, 114, 182], [64, 132, 198], [128, 186, 226]], "rim": 3, "halo": [0, 0, 0, 0], "detail": "wave"})
+    levels = APPEND(levels, {"name": "sand", "shades": [[184, 150, 96], [208, 178, 118], [224, 198, 140], [238, 218, 168]], "rim": 0, "halo": [236, 246, 244, 210], "detail": "pebble"})
+    levels = APPEND(levels, {"name": "grass", "shades": [[52, 104, 56], [70, 132, 64], [88, 152, 72], [122, 180, 88]], "rim": 0, "halo": [20, 30, 10, 70], "detail": "blade"})
+    levels = APPEND(levels, {"name": "dirt", "shades": [[124, 92, 62], [150, 116, 80], [170, 136, 96], [190, 158, 116]], "rim": 0, "halo": [40, 60, 30, 60], "detail": "pebble"})
+    RETURN {"seed": 4711, "edge_noise": 0.22, "rim_width": 0.07, "halo_width": 0.06, "contrast": 0.8, "dither": 0.55, "detail": 0.035, "variants": 4, "levels": levels}
+ENDFUNC
+
+' A value noise of period 32 on the 32 x 32 pixels of a tile, in 0..1, so a
+' tile joins itself on every side.
+FUNC TerrainNoise(rng, cell)
+    DIM n = 32 \ cell
+    DIM g = RNG.FILL(rng, n * n)
+    DIM px = IOTA(1024, 0)
+    DIM xs = px MOD 32
+    DIM ys = FLOOR(px / 32)
+    DIM ix = FLOOR(xs / cell)
+    DIM iy = FLOOR(ys / cell)
+    DIM fx = (xs - ix * cell) / cell
+    DIM fy = (ys - iy * cell) / cell
+    fx = fx * fx * (3 - 2 * fx)
+    fy = fy * fy * (3 - 2 * fy)
+    DIM ix1 = (ix + 1) MOD n
+    DIM iy1 = (iy + 1) MOD n
+    DIM top = g[iy * n + ix] * (1 - fx) + g[iy * n + ix1] * fx
+    DIM bottom = g[iy1 * n + ix] * (1 - fx) + g[iy1 * n + ix1] * fx
+    RETURN top * (1 - fy) + bottom * fy
+ENDFUNC
+
+' The pixels of one tile as [r, g, b, a] rows of 1024 values each.
+' corners is [top-left, top-right, bottom-right, bottom-left], each 0 or 1.
+FUNC TerrainTile(p, lv, corners, base, edge, extra)
+    DIM px = IOTA(1024, 0)
+    DIM u = (px MOD 32 + 0.5) / 32
+    DIM v = (FLOOR(px / 32) + 0.5) / 32
+    u = u * u * (3 - 2 * u)
+    v = v * v * (3 - 2 * v)
+    DIM f = corners[0] * (1 - u) * (1 - v) + corners[1] * u * (1 - v) + corners[2] * u * v + corners[3] * (1 - u) * v
+    IF SUM(corners) < 4 THEN f = f + (edge - 0.5) * 2 * p{"edge_noise"}
+    DIM inside = f > 0.5
+    DIM shade = CLAMP(FLOOR((base - 0.5) * 3.2 * p{"contrast"} + 2.0 + extra), 0, 3)
+    IF lv{"rim"} >= 0 THEN
+        DIM rim = inside * (f < 0.5 + p{"rim_width"})
+        shade = shade * (1 - rim) + lv{"rim"} * rim
+    ENDIF
+    DIM sh = lv{"shades"}
+    DIM pr = [sh[0][0], sh[1][0], sh[2][0], sh[3][0]]
+    DIM pg = [sh[0][1], sh[1][1], sh[2][1], sh[3][1]]
+    DIM pb = [sh[0][2], sh[1][2], sh[2][2], sh[3][2]]
+    DIM halo = lv{"halo"}
+    DIM ring = (1 - inside) * (f > 0.5 - p{"halo_width"})
+    DIM out = 1 - inside
+    DIM r = pr[shade] * inside + halo[0] * out
+    DIM gc = pg[shade] * inside + halo[1] * out
+    DIM b = pb[shade] * inside + halo[2] * out
+    DIM a = 255 * inside + halo[3] * ring
+    RETURN [r, gc, b, a]
+ENDFUNC
+
+' The ordered 4 x 4 dither over a tile, in -0.5..0.5.
+FUNC TerrainBayer()
+    DIM m = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
+    DIM px = IOTA(1024, 0)
+    RETURN (m[(FLOOR(px / 32) MOD 4) * 4 + px MOD 4] + 0.5) / 16 - 0.5
+ENDFUNC
+
+' Small marks on a full tile: blades of grass, pebbles, glints on water.
+' They keep two pixels away from the edge, so the tile still joins.
+FUNC TerrainDetail(rng, kind$, amount)
+    DIM d = ZEROS([1024])
+    DIM n_marks = INT(amount * 1024)
+    DIM i = 0
+    FOR i = 1 TO n_marks
+        DIM x = RNG.INT(rng, 2, 28)
+        DIM y = RNG.INT(rng, 3, 28)
+        IF kind$ = "blade" THEN
+            d[y * 32 + x] = 2
+            d[(y - 1) * 32 + x] = 2
+            d[(y + 1) * 32 + x] = -2
+        ELSEIF kind$ = "pebble" THEN
+            d[y * 32 + x] = 2
+            d[y * 32 + x + 1] = 1
+            d[(y + 1) * 32 + x] = -2
+            d[(y + 1) * 32 + x + 1] = -2
+        ELSE
+            d[y * 32 + x] = 3
+            d[y * 32 + x + 1] = 3
+            d[y * 32 + x - 1] = 2
+        ENDIF
+    NEXT i
+    RETURN d
+ENDFUNC
+
+' Draws the tileset into a new image: one row per level, columns 0..15 the
+' corner masks (bit 1 top-left, 2 top-right, 4 bottom-right, 8 bottom-left,
+' column 15 the full tile), columns 16 and up more full tiles.
+FUNC TerrainAtlas(p)
+    DIM levels = p{"levels"}
+    DIM cols = 16 + p{"variants"}
+    DIM img = GFX.NEWTARGET(cols * 32, LEN(levels) * 32, FALSE)
+    DIM spr = SPRITE.CREATE(32, 32)
+    DIM rng = RNG.NEW(p{"seed"})
+    DIM bayer = TerrainBayer() * p{"dither"}
+    DIM L = 0
+    DIM col = 0
+    GFX.TARGET img, TRUE
+    FOR L = 0 TO LEN(levels) - 1
+        DIM lv = levels[L]
+        DIM base = TerrainNoise(rng, 8) * 0.35 + TerrainNoise(rng, 4) * 0.4 + TerrainNoise(rng, 2) * 0.25
+        DIM edge = TerrainNoise(rng, 16) * 0.55 + TerrainNoise(rng, 8) * 0.35 + TerrainNoise(rng, 4) * 0.1
+        FOR col = 0 TO cols - 1
+            DIM mask = MIN([col, 15])
+            DIM corners = [mask MOD 2, (mask \ 2) MOD 2, (mask \ 4) MOD 2, (mask \ 8) MOD 2]
+            DIM extra = bayer
+            IF col > 15 THEN extra = bayer + TerrainDetail(rng, lv{"detail"}, p{"detail"})
+            DIM rgba = TerrainTile(p, lv, corners, base, edge, extra)
+            SPRITE.SETBUFFER spr, FLATTEN(TRANSPOSE(STACK(0, rgba[0], rgba[1], rgba[2], rgba[3])))
+            SPRITE.POS spr, col * 32, L * 32
+            SPRITE.DRAW spr
+        NEXT col
+    NEXT L
+    GFX.TARGET
+    SPRITE.DELETE spr
+    RNG.FREE(rng)
+    RETURN img
+ENDFUNC
+
+' Lays one tilemap per level ("ter0", "ter1", ...) over a map of levels, one
+' number per cell, row by row. A cell outside the map counts as the nearest
+' one inside. The maps are drawn with TerrainDraw.
+SUB TerrainBuild(img, lvmap, mw, mh, n_levels, n_variants)
+    DIM cols = 16 + n_variants
+    DIM gw = mw + 1
+    DIM L = 0
+    DIM i = 0
+    DIM j = 0
+    FOR L = 0 TO n_levels - 1
+        DIM ids = ZEROS([(mh + 1) * gw])
+        FOR j = 0 TO mh
+            DIM ya = CLAMP(j - 1, 0, mh - 1)
+            DIM yb = CLAMP(j, 0, mh - 1)
+            FOR i = 0 TO mw
+                DIM xa = CLAMP(i - 1, 0, mw - 1)
+                DIM xb = CLAMP(i, 0, mw - 1)
+                DIM mask = (lvmap[ya * mw + xa] >= L) + 2 * (lvmap[ya * mw + xb] >= L) + 4 * (lvmap[yb * mw + xb] >= L) + 8 * (lvmap[yb * mw + xa] >= L)
+                IF mask = 15 THEN
+                    DIM pick = ((i * 73856093) BXOR (j * 19349663) BXOR (L * 83492791)) MOD (n_variants * 3 + 1)
+                    IF pick > 0 ANDALSO pick <= n_variants THEN mask = 15 + pick
+                ENDIF
+                IF mask > 0 THEN ids[j * gw + i] = L * cols + mask + 1
+            NEXT i
+        NEXT j
+        TILEMAP.CREATE("ter" + STR$(L), img, RESHAPE(ids, [mh + 1, gw]), 32, 32)
+    NEXT L
+ENDSUB
+
+SUB TerrainDraw(n_levels, cam_x, cam_y)
+    DIM L = 0
+    FOR L = 0 TO n_levels - 1
+        TILEMAP.DRAW "ter" + STR$(L), cam_x + 16, cam_y + 16
+    NEXT L
+ENDSUB
