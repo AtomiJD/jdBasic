@@ -48,9 +48,11 @@ FUNC RuleMusicAsked$(said$)
     DIM low$ = RuleLookColorKey$(said$)
     DIM speaks = FALSE
     DIM asks = FALSE
-    FOR EACH word$ IN ["musik", "lied", "song", "melodie", "techno", "beat", "sound", "hip", "rap", "pop", "rock", "disco", "trance", "house", "synthwave", "80er", "lofi", "lo-fi", "chill"]
+    FOR EACH word$ IN ["musik", "lied", "song", "melodie", "techno", "beat", "sound", "hip hop", "hip-hop", "hiphop", "disco", "trance", "synthwave", "80er", "lofi", "lo-fi"]
         IF INSTR(low$, word$) >= 0 THEN speaks = TRUE
     NEXT
+    ' words that also mean a skirt, a field or a house count only with play
+    IF LEN(REGEX.FINDALL("(^|[^a-z])(rock|rap|pop|house|chill)([^a-z]|$)", low$)) > 0 ANDALSO INSTR(low$, "spiel") >= 0 THEN speaks = TRUE
     FOR EACH word$ IN ["spiel", "mach", "leg ", "lass", "will", "moecht", "wuensch", "haett", "bitte", "gib", "dreh", "kannst", "lieber"]
         IF INSTR(low$, word$) >= 0 THEN asks = TRUE
     NEXT

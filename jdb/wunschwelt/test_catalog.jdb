@@ -166,9 +166,16 @@ SLEEP 600
 heard = Tell("Spiel mal Hip Hop")
 music_now = Post("/sync", {"token": token$, "mapv": 1, "since": since})
 Check("hip-hop is asked for and gets a seed", STARTSWITH(music_now{"music"} ?? "", "hiphop:") ANDALSO VAL(MID$(music_now{"music"}, 7)) >= 1)
+heard = Tell("Ich will einen roten Rock")
+music_now = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+Check("a skirt is no rock music", STARTSWITH(music_now{"music"} ?? "", "hiphop:"))
 heard = Tell("Bitte 80er Pop!")
 music_now = Post("/sync", {"token": token$, "mapv": 1, "since": since})
 Check("80s pop too", STARTSWITH(music_now{"music"} ?? "", "pop80:"))
+SLEEP 600
+heard = Tell("Spiel Rock")
+music_now = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+Check("rock when it is played", STARTSWITH(music_now{"music"} ?? "", "rock:"))
 
 DIM board = Admin("wishes", {})
 Check("two wishes on the board, the look and the music not among them", board{"ok"} ANDALSO LEN(board{"wishes"}) = 2)
