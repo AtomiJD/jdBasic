@@ -226,6 +226,10 @@ SLEEP 2600
 t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Wie heisst der Frosch?"})
 Wait(1500)
 Check("a question about a name changes nothing", Folk(World(), "b_frog_")[0][1] = "Hopser")
+SLEEP 2600
+t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Ich will einen heissen Brunnen beim Frosch"})
+Wait(1500)
+Check("a hot fountain is no name", Folk(World(), "b_frog_")[0][1] = "Hopser")
 
 DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
 Check("the rules raised no error", stats{"errors"} = 0)

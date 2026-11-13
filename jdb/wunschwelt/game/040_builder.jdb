@@ -53,7 +53,18 @@ FUNC RuleBuildName$(raw, n)
         DIM code = BYTEAT(raw, i)
         IF code >= 128 ORELSE (code >= 48 ANDALSO code <= 57) ORELSE (code >= 65 ANDALSO code <= 90) ORELSE (code >= 97 ANDALSO code <= 122) ORELSE code = 32 ORELSE code = 45 THEN kept$ = kept$ + CHR$(code)
     NEXT i
-    RETURN RulePlotClean$(kept$, n)
+    kept$ = RulePlotClean$(kept$, n)
+    ' a character the cut split in half is dropped
+    DIM j = LEN(kept$) - 1
+    WHILE j > 0 ANDALSO BYTEAT(kept$, j) >= 128 ANDALSO BYTEAT(kept$, j) < 192
+        j = j - 1
+    WEND
+    IF j >= 0 ANDALSO j < LEN(kept$) ANDALSO BYTEAT(kept$, j) >= 192 THEN
+        DIM lead = BYTEAT(kept$, j)
+        DIM need = IIF(lead >= 240, 4, IIF(lead >= 224, 3, 2))
+        IF LEN(kept$) - j < need THEN kept$ = LEFT$(kept$, j)
+    ENDIF
+    RETURN TRIM$(kept$)
 ENDFUNC
 
 ' The size of a block for a step: [width, height].
@@ -913,7 +924,15 @@ FUNC RuleBuildRename(w, p, said$)
         t$ = REPLACE$(t$, mark$, q$)
     NEXT
     DIM low$ = RuleLookColorKey$(t$)
-    IF INSTR(low$, "heiss") < 0 ANDALSO INSTR(low$, "nenn") < 0 ANDALSO INSTR(low$, "taufe") < 0 THEN RETURN FALSE
+    ' asks for a name: nenn- or tauf- as a word, heissen as the last word, heisst with jetzt or ab
+    DIM keys = SPLIT(TRIM$(REGEX.REPLACE$("[^a-z0-9]+", low$, " ")), " ")
+    DIM asks = FALSE
+    FOR EACH word$ IN keys
+        IF STARTSWITH(word$, "nenn") ORELSE STARTSWITH(word$, "tauf") THEN asks = TRUE
+        IF word$ = "heisst" ANDALSO (INDEXOF(keys, "jetzt") >= 0 ORELSE INDEXOF(keys, "ab") >= 0) THEN asks = TRUE
+    NEXT
+    IF LEN(keys) > 0 ANDALSO keys[LEN(keys) - 1] = "heissen" THEN asks = TRUE
+    IF NOT asks THEN RETURN FALSE
     IF ENDSWITH(low$, "?") ANDALSO INSTR(low$, "kannst") < 0 ANDALSO INSTR(low$, "koenntest") < 0 THEN RETURN FALSE
     DIM new$ = ""
     DIM parts = SPLIT(t$, q$)
@@ -954,7 +973,7 @@ FUNC RuleBuildRename(w, p, said$)
             DIM fits = (what$ <> "" ANDALSO (npc{"what"} ?? "") = what$)
             IF NOT fits ANDALSO LEN(old_key$) >= 3 ANDALSO old_key$ <> new_key$ THEN fits = INSTR(rest$, old_key$) >= 0
             DIM dist = MAX([ABS(npc{"x"} - p{"x"}), ABS(npc{"y"} - p{"y"})])
-            IF fits ANDALSO dist < best THEN
+            IF fits ANDALSO dist <= 15 ANDALSO dist < best THEN
                 best = dist
                 pick$ = id$
             ENDIF

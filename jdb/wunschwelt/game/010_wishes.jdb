@@ -150,7 +150,12 @@ SUB RuleWishTick(w, now)
         DIM item = queue[i]
         IF now - item{"at"} < 30000 ANDALSO MAP.EXISTS(w{"players"}, item{"who"}) ANDALSO MAP.EXISTS(w{"npcs"}, item{"npc"}) THEN
             DIM before = LEN(w{"wish_later"})
-            RuleSaid(w, w{"players"}{item{"who"}}, w{"npcs"}{item{"npc"}}, item{"said"})
+            ' a queued sentence gave no name, whatever the player said since
+            DIM speaker = w{"players"}{item{"who"}}
+            DIM renamed$ = speaker{"renamed"} ?? ""
+            speaker{"renamed"} = ""
+            RuleSaid(w, speaker, w{"npcs"}{item{"npc"}}, item{"said"})
+            speaker{"renamed"} = renamed$
             ' asked again too soon: it keeps its first time
             IF LEN(w{"wish_later"}) > before THEN w{"wish_later"}[before]{"at"} = item{"at"}
         ENDIF
