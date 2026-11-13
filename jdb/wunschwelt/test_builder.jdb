@@ -211,6 +211,22 @@ Check("a wish the builder cannot build goes back to the board", wish{"status"} =
 Wait(1500)
 Check("and is not taken up again", WishOf("Ein Drache"){"status"} = "open")
 
+' a built animal gets a new name at once, and no wish is written for it
+DIM oe$ = CHR$(195) + CHR$(182)
+DIM wishes_before = LEN(Admin("wishes", {}){"wishes"})
+SLEEP 2600
+t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Marta, der Frosch soll jetzt " + CHR$(226) + CHR$(128) + CHR$(158) + "Fr" + oe$ + "schi" + CHR$(226) + CHR$(128) + CHR$(156) + " heissen"})
+Wait(1500)
+Check("the frog is called Froeschi now", Folk(World(), "b_frog_")[0][1] = "Fr" + oe$ + "schi" ANDALSO LEN(Admin("wishes", {}){"wishes"}) = wishes_before)
+SLEEP 2600
+t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Nenne Fr" + oe$ + "schi bitte Hopser"})
+Wait(1500)
+Check("and can be named again by its name, without quotes", Folk(World(), "b_frog_")[0][1] = "Hopser")
+SLEEP 2600
+t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Wie heisst der Frosch?"})
+Wait(1500)
+Check("a question about a name changes nothing", Folk(World(), "b_frog_")[0][1] = "Hopser")
+
 DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
 Check("the rules raised no error", stats{"errors"} = 0)
 IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}

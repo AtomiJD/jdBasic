@@ -64,6 +64,7 @@ ENDFUNC
 SUB RuleHeard(w, p, said$)
     DIM style$ = RuleMusicAsked$(said$)
     IF style$ <> "" THEN RuleApplyMusic(w, p{"name"}, {"music": style$})
+    p{"renamed"} = IIF(RuleBuildRename(w, p, said$), said$, "")
 ENDSUB
 
 FUNC RuleMusicNow$(w)

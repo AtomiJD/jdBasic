@@ -901,6 +901,75 @@ SUB RuleBuildWander(w, now)
     NEXT
 ENDSUB
 
+' A sentence that gives something the builder brought a new name: the name
+' in quotes, else the word before the verb in its infinitive ("to be
+' called", "to name"), else the last word; the thing is
+' the nearest built one of the sort named, or the one called by its old
+' name. TRUE when a name was given.
+FUNC RuleBuildRename(w, p, said$)
+    DIM q$ = CHR$(34)
+    DIM t$ = said$
+    FOR EACH mark$ IN [CHR$(226) + CHR$(128) + CHR$(158), CHR$(226) + CHR$(128) + CHR$(156), CHR$(226) + CHR$(128) + CHR$(157)]
+        t$ = REPLACE$(t$, mark$, q$)
+    NEXT
+    DIM low$ = RuleLookColorKey$(t$)
+    IF INSTR(low$, "heiss") < 0 ANDALSO INSTR(low$, "nenn") < 0 ANDALSO INSTR(low$, "taufe") < 0 THEN RETURN FALSE
+    IF ENDSWITH(low$, "?") ANDALSO INSTR(low$, "kannst") < 0 ANDALSO INSTR(low$, "koenntest") < 0 THEN RETURN FALSE
+    DIM new$ = ""
+    DIM parts = SPLIT(t$, q$)
+    IF LEN(parts) >= 3 THEN new$ = parts[1]
+    IF TRIM$(new$) = "" THEN
+        DIM filler = ["jetzt", "nun", "ab", "doch", "bitte", "gerne", "gern", "mal", "soll", "sollte", "er", "sie", "es", "ihn", "auch", "ab jetzt", "heute"]
+        DIM words = SPLIT(REGEX.REPLACE$("[.,!?;:]", t$, " "), " ")
+        DIM last$ = ""
+        DIM i = 0
+        FOR i = 0 TO LEN(words) - 1
+            DIM k$ = RuleLookColorKey$(words[i])
+            IF k$ <> "" THEN
+                IF k$ = "heissen" ORELSE k$ = "nennen" THEN
+                    new$ = last$
+                    EXITFOR
+                ENDIF
+                IF INDEXOF(filler, k$) < 0 ANDALSO NOT STARTSWITH(k$, "heiss") ANDALSO NOT STARTSWITH(k$, "nenn") ANDALSO NOT STARTSWITH(k$, "taufe") THEN last$ = TRIM$(words[i])
+            ENDIF
+        NEXT i
+        IF new$ = "" THEN new$ = last$
+    ENDIF
+    new$ = RuleBuildName$(TRIM$(new$), 20)
+    DIM new_key$ = RuleLookColorKey$(new$)
+    IF new_key$ = "" THEN RETURN FALSE
+    DIM rest$ = REPLACE$(low$, new_key$, " ")
+    DIM what$ = ""
+    FOR EACH stem IN RuleBuildStems()
+        IF what$ = "" ANDALSO INSTR(rest$, stem[0]) >= 0 THEN what$ = stem[1]
+    NEXT
+    IF what$ = "" ANDALSO (INSTR(rest$, "bewohner") >= 0 ORELSE INSTR(rest$, "fischer") >= 0) THEN what$ = "villager"
+    DIM npcs = w{"npcs"}
+    DIM pick$ = ""
+    DIM best = 9999
+    FOR EACH id$ IN MAP.KEYS(npcs)
+        IF STARTSWITH(id$, "b_") THEN
+            DIM npc = npcs{id$}
+            DIM old_key$ = RuleLookColorKey$("" + (npc{"name"} ?? ""))
+            DIM fits = (what$ <> "" ANDALSO (npc{"what"} ?? "") = what$)
+            IF NOT fits ANDALSO LEN(old_key$) >= 3 ANDALSO old_key$ <> new_key$ THEN fits = INSTR(rest$, old_key$) >= 0
+            DIM dist = MAX([ABS(npc{"x"} - p{"x"}), ABS(npc{"y"} - p{"y"})])
+            IF fits ANDALSO dist < best THEN
+                best = dist
+                pick$ = id$
+            ENDIF
+        ENDIF
+    NEXT
+    IF pick$ = "" THEN RETURN FALSE
+    DIM named = npcs{pick$}
+    DIM old$ = "" + (named{"name"} ?? "")
+    IF old$ = new$ THEN RETURN TRUE
+    named{"name"} = new$
+    IF MAP.EXISTS(named, "persona") THEN named{"persona"} = REPLACE$(named{"persona"}, "Du bist " + old$ + ",", "Du bist " + new$ + ",")
+    KEmit(w, {"type": "build", "who": p{"name"}, "text": old$ + RuleDe$(" hei{s}t jetzt ") + new$})
+    RETURN TRUE
+ENDFUNC
+
 ' The keeper: builder (state), builder_set (mode auto, approve or off;
 ' step_ms between two steps, pause_ms between two wishes; skip=clear lets
 ' the builder try the wishes again it gave up on), build_ok (a waiting plan
