@@ -64,7 +64,11 @@ ENDFUNC
 SUB RuleHeard(w, p, said$)
     DIM style$ = RuleMusicAsked$(said$)
     IF style$ <> "" THEN RuleApplyMusic(w, p{"name"}, {"music": style$})
-    p{"renamed"} = IIF(RuleBuildRename(w, p, said$), said$, "")
+    ' a name, something to wear or a call for an animal is done at once and is no wish
+    DIM handled = RuleBuildRename(w, p, said$)
+    IF NOT handled THEN handled = RuleAnimalDress(w, p, said$)
+    IF NOT handled THEN handled = RuleAnimalCall(w, p, said$)
+    p{"renamed"} = IIF(handled, said$, "")
 ENDSUB
 
 FUNC RuleMusicNow$(w)

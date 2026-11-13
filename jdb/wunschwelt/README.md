@@ -256,14 +256,37 @@ can build goes back to the board with a note and is not taken up again.
   `b_<what>_<n>` and a `look`; the client draws it with the painter
   `@<what>`. Animals (dog, cat, fox, chicken, duck, frog, rabbit, sheep, cow,
   pig, hedgehog) are parts in one painter, with a fur colour, stripes or
-  spots and a hat; they walk, sit after a while and are cute now and then.
+  spots and what they wear; they walk, sit after a while and are cute now
+  and then.
   Animals and villagers stroll near their home and can be talked to; the
   nearest person in reach always hears first.
 - The keeper: rule `builder` (state and the last plan), `builder_set`
   (`mode` auto, approve or off; `step_ms`, `pause_ms`; `skip=clear`),
   `build_ok` (a plan that waits in approve mode).
 
-`test_builder.jdb`: 23 checks with a scripted model.
+## Animals: what they wear, affection, following
+
+`game/050_animals.jdb`.
+
+- An animal wears `look{"wear"}`: `{slot: [item, [r, g, b]]}`, slot head (hat, cap,
+  crown, flower), eyes (sunglasses, glasses) or neck (scarf, bow, collar).
+  Each sort has anchors for hat, eye and neck in `AnimalKinds`, so every
+  item is drawn once. The builder reads it from the plan (`wear`: a list of
+  words) or from the wish; a colour up to 14 letters before an item is the
+  item's.
+- A sentence near a built animal dresses it or takes something off at once
+  and for free, like a new name, and goes to no board.
+- Affection of a player for an animal, 0 to 100, in the profile:
+  petting (key E beside it, counted once in 20 s, +8), staying within two
+  fields (+1 every 30 s, up to 50); an hour away takes one point. The
+  player sees hearts, one for each 20 points, when close.
+- From 80 the animal follows, at most two per player, over the last
+  fields the player walked (a trail of 8); "bleib" lets it stay, "komm mit"
+  calls it again. It stays where it stands when its player leaves.
+- The keeper sets an affection with the rule `fond`
+  (`{"player", "npc", "v"}`).
+
+`test_builder.jdb`: 39 checks with a scripted model.
 
 ## What survives a restart
 

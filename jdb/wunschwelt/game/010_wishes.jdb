@@ -85,7 +85,7 @@ FUNC RuleWishKinds()
     kinds = APPEND(kinds, {"key": "way", "name": "Wege und Br{u}cken", "what": "ein Weg, eine Stra{s}e, eine Br{u}cke {u}ber Wasser, ein Steg, ein Zaun"})
     kinds = APPEND(kinds, {"key": "house", "name": "H{a}user", "what": "eine kleine H{u}tte oder ein Haus, auch eines f{u}r den W{u}nschenden mit seinem Namen am Schild (eines pro Spieler); ein Laden, eine Scheune, ein Turm"})
     kinds = APPEND(kinds, {"key": "thing", "name": "Dinge im Dorf", "what": "ein Brunnen, eine Bank, eine Laterne, ein Denkmal, ein Marktstand, ein Blumenbeet, ein Wegweiser"})
-    kinds = APPEND(kinds, {"key": "animal", "name": "Tiere", "what": "eine Katze, ein Hund, H{u}hner, Enten, Fische im Teich, Schmetterlinge; einem Tier, Ding oder Bewohner des Baumeisters einen neuen Namen geben, etwa: der Frosch soll Fr{o}schi hei{s}en, das geht sofort"})
+    kinds = APPEND(kinds, {"key": "animal", "name": "Tiere", "what": "eine Katze, ein Hund, H{u}hner, Enten, Fische im Teich, Schmetterlinge; einem Tier, Ding oder Bewohner des Baumeisters einen neuen Namen geben, etwa: der Frosch soll Fr{o}schi hei{s}en; einem Tier etwas anziehen (Hut, M{u}tze, Krone, Bl{u}te, Sonnenbrille, Brille, Schal, Schleife, Halsband), etwa: Fr{o}schi soll eine Sonnenbrille tragen; das geht sofort. Ein Tier, das man oft streichelt (Taste E), folgt einem"})
     kinds = APPEND(kinds, {"key": "villager", "name": "Bewohner", "what": "eine neue Figur mit Beruf und Charakter, etwa ein Schmied, eine B{a}ckerin, ein Fischer"})
     kinds = APPEND(kinds, {"key": "event", "name": "Ereignisse", "what": "ein Dorffest, Regen oder Schnee, ein Feuerwerk"})
     kinds = APPEND(kinds, {"key": "look", "name": "Dein Aussehen", "what": "die Farbe deiner Kleidung, deiner M{u}tze, deines Schals oder deiner Augenklappe, oder aussehen wie Vally, M{o}hrchen oder Hasi; das geht sofort", "now": TRUE})
@@ -262,6 +262,7 @@ ENDSUB
 ' The board travels with a sync when it changed: the newest wishes as rows [id, who, text, status].
 SUB RuleExtra(w, p, msg, answer)
     RulePlotExtra(w, msg, answer)
+    RuleAnimalSync(w, p, msg, answer)
     IF INT(msg{"wishv"} ?? -1) = w{"wishv"} THEN RETURN
     DIM wishes = w{"wishes"}
     DIM rows = []
@@ -278,6 +279,7 @@ ENDSUB
 FUNC RuleAdmin(w, name$, args)
     IF name$ = "plot" ORELSE name$ = "plot_set" THEN RETURN RulePlotAdmin(w, name$, args)
     IF name$ = "builder" ORELSE name$ = "builder_set" ORELSE name$ = "build_ok" THEN RETURN RuleBuildAdmin(w, name$, args)
+    IF name$ = "fond" THEN RETURN RuleAnimalAdmin(w, args)
     IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
     IF name$ = "wish_status" THEN
         DIM status$ = "" + (args{"status"} ?? "")
@@ -294,9 +296,11 @@ ENDFUNC
 SUB ClientAsk(c, msg)
     msg{"wishv"} = c{"wishv"} ?? -1
     msg{"plotv"} = c{"plotv"} ?? -1
+    ClientAnimalAsk(c, msg)
 ENDSUB
 
 SUB ClientExtra(c, r)
+    ClientAnimalExtra(c, r)
     IF MAP.EXISTS(r, "plot") THEN
         c{"plot"} = r{"plot"}
         c{"plotv"} = r{"plotv"}

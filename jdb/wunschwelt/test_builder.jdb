@@ -38,6 +38,8 @@ FUNC Verdict$(said$ AS STRING)
     IF INSTR(said$, "Westen") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["land", "way", "house"], "text": "Mehr Land im Westen mit Strasse, Wald und Huette fuer mich"})
     IF INSTR(said$, "Bruecke") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["way"], "text": "Eine Bruecke ueber den Teich"})
     IF INSTR(said$, "Bank") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["thing"], "text": "Eine Bank vor der Taverne"})
+    IF INSTR(said$, "Igel") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Ein Igel mit lila Muetze und roter Schleife"})
+    IF INSTR(said$, "Hund") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Ein Hund mit gelbem Hut"})
     IF INSTR(said$, "Drache") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Ein Drache"})
     RETURN JSON.STRINGIFY$({"wish": FALSE})
 ENDFUNC
@@ -52,6 +54,8 @@ FUNC Plan$(wish$ AS STRING)
     IF INSTR(wish$, "Westen") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "grow", "side": "west", "n": 8}, {"do": "forest", "where": "west", "size": "medium"}, {"do": "house", "where": "west", "size": "small", "owner": "Anna"}, {"do": "road", "where": "house"}]})
     IF INSTR(wish$, "Bruecke") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "bridge", "where": "pond"}]})
     IF INSTR(wish$, "Bank") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "thing", "what": "bench", "name": "Bank", "where": "tavern"}]})
+    IF INSTR(wish$, "Igel") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "hedgehog", "name": "Stachel", "wear": ["lila Muetze", "rote Schleife"], "where": "tavern"}]})
+    IF INSTR(wish$, "Hund") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "dog", "name": "Bello", "hat": "gelb", "where": "tavern"}]})
     RETURN JSON.STRINGIFY$({"steps": []})
 ENDFUNC
 
@@ -79,7 +83,7 @@ FUNC Admin(name$ AS STRING, args)
     RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
 ENDFUNC
 
-DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "90"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "180"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
 SLEEP 1500
 DIM set = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
 Check("the keeper sets the builder's pace", set{"ok"} ANDALSO set{"builder"}{"step_ms"} = 300)
@@ -230,6 +234,107 @@ SLEEP 2600
 t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Ich will einen heissen Brunnen beim Frosch"})
 Wait(1500)
 Check("a hot fountain is no name", Folk(World(), "b_frog_")[0][1] = "Hopser")
+
+' ---- what animals wear ----
+FUNC Wear(row, slot$ AS STRING)
+    IF LEN(row) < 6 ORELSE NOT ISMAP(row[5]) THEN RETURN ["", []]
+    RETURN (row[5]{"wear"} ?? {}){slot$} ?? ["", []]
+ENDFUNC
+DIM frog_id$ AS STRING = Folk(World(), "b_frog_")[0][0]
+DIM board_before = LEN(Admin("wishes", {}){"wishes"})
+SLEEP 2600
+t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Hopser soll eine Sonnenbrille und einen roten Schal tragen"})
+Wait(1200)
+DIM frog = Folk(World(), "b_frog_")[0]
+Check("an animal is dressed at once", Wear(frog, "eyes")[0] = "sunglasses" ANDALSO Wear(frog, "neck")[0] = "scarf" ANDALSO Wear(frog, "neck")[1][0] = 206)
+Check("everyone hears it, and no wish is written", LEN(builds) > 0 ANDALSO INSTR(builds[LEN(builds) - 1], "Hopser tr") >= 0 ANDALSO LEN(Admin("wishes", {}){"wishes"}) = board_before)
+SLEEP 2600
+t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Nimm Hopser bitte den Schal ab"})
+Wait(1200)
+frog = Folk(World(), "b_frog_")[0]
+Check("and takes a thing off again", Wear(frog, "neck")[0] = "" ANDALSO Wear(frog, "eyes")[0] = "sunglasses")
+
+wish = WishAndWait("Ich will einen Igel mit lila Muetze und roter Schleife", "Ein Igel mit lila Muetze und roter Schleife")
+DIM hog = Folk(World(), "b_hedgehog_")
+Check("the builder dresses an animal as the plan says", LEN(hog) = 1 ANDALSO Wear(hog[0], "head")[0] = "cap" ANDALSO Wear(hog[0], "head")[1][0] = 138 ANDALSO Wear(hog[0], "neck")[0] = "bow")
+SLEEP 2600
+wish = WishAndWait("Ich will einen Hund mit gelbem Hut", "Ein Hund mit gelbem Hut")
+DIM dog = Folk(World(), "b_dog_")
+Check("a plan that names only the colour of a hat still gives a hat", LEN(dog) = 1 ANDALSO Wear(dog[0], "head")[0] = "hat" ANDALSO Wear(dog[0], "head")[1][0] = 240)
+
+' ---- affection and following ----
+' Walks Anna until she stands beside the npc id$; TRUE when she does.
+FUNC WalkTo(id$ AS STRING) AS INTEGER
+    DIM k AS INTEGER
+    DIM flip AS INTEGER = 0
+    FOR k = 1 TO 120
+        DIM seen = World()
+        DIM target = Folk(seen, id$)[0]
+        DIM ddx = target[2] - seen{"x"}
+        DIM ddy = target[3] - seen{"y"}
+        IF MAX([ABS(ddx), ABS(ddy)]) <= 1 THEN RETURN TRUE
+        DIM sx AS INTEGER = SGN(ddx)
+        DIM sy AS INTEGER = SGN(ddy)
+        IF (flip MOD 2 = 0 ANDALSO sx <> 0) ORELSE sy = 0 THEN
+            sy = 0
+        ELSE
+            sx = 0
+        ENDIF
+        DIM moved = Post("/sync", {"token": token$, "dx": sx, "dy": sy, "mapv": 1, "since": since})
+        IF moved{"x"} = seen{"x"} ANDALSO moved{"y"} = seen{"y"} THEN flip = flip + 1
+        SLEEP 170
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+FUNC Fond(id$ AS STRING)
+    DIM seen = Post("/sync", {"token": token$, "mapv": 1, "since": since, "fondv": -1})
+    RETURN (seen{"fond"} ?? {}){id$} ?? [0, FALSE]
+ENDFUNC
+Check("the keeper sets an affection", Admin("fond", {"player": "Anna", "npc": frog_id$, "v": 75}){"ok"})
+' the frog may stroll off between the last step and the pet: try again
+DIM petted AS INTEGER = FALSE
+DIM reached AS INTEGER = FALSE
+DIM go AS INTEGER
+FOR go = 1 TO 6
+    IF NOT petted THEN
+        IF WalkTo(frog_id$) THEN reached = TRUE
+        DIM pet = Post("/sync", {"token": token$, "mapv": 1, "since": since, "pet": TRUE})
+        SLEEP 250
+        DIM heard = Post("/sync", {"token": token$, "mapv": 1, "since": pet{"seq"}})
+        FOR i = 0 TO LEN(heard{"events"}) - 1
+            IF heard{"events"}[i]{"type"} = "pet" ANDALSO heard{"events"}[i]{"npc"} = frog_id$ THEN petted = TRUE
+        NEXT i
+        since = heard{"seq"}
+    ENDIF
+NEXT go
+Check("Anna walks to the frog", reached)
+Check("petting is seen by everyone", petted)
+Check("petting raises the affection past 80 and the frog follows", Fond(frog_id$)[0] >= 80 ANDALSO Fond(frog_id$)[1])
+' Anna walks off in a free direction; the frog keeps right behind her
+DIM steps_done AS INTEGER = 0
+FOR EACH way IN [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    IF steps_done < 4 THEN
+        DIM k2 AS INTEGER
+        FOR k2 = 1 TO 4
+            DIM before_step = World()
+            DIM after_step = Post("/sync", {"token": token$, "dx": way[0], "dy": way[1], "mapv": 1, "since": since})
+            IF after_step{"x"} <> before_step{"x"} ORELSE after_step{"y"} <> before_step{"y"} THEN steps_done = steps_done + 1
+            SLEEP 200
+        NEXT k2
+    ENDIF
+NEXT
+SLEEP 400
+DIM here = World()
+DIM follower = Folk(here, frog_id$)[0]
+Check("the frog walks right behind Anna", steps_done >= 3 ANDALSO MAX([ABS(follower[2] - here{"x"}), ABS(follower[3] - here{"y"})]) <= 2 ANDALSO (follower[2] <> here{"x"} ORELSE follower[3] <> here{"y"}))
+SLEEP 2600
+t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Bleib hier"})
+Wait(600)
+Check("told to stay, it stays", NOT Fond(frog_id$)[1])
+SLEEP 2600
+t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Komm mit, Hopser"})
+Wait(600)
+Check("called, it follows again", Fond(frog_id$)[1])
 
 DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
 Check("the rules raised no error", stats{"errors"} = 0)

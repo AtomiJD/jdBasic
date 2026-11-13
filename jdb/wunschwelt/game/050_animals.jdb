@@ -1,0 +1,531 @@
+' The animals of the builder: what they wear, and how a player wins one over.
+'
+' What an animal wears is look{"wear"}: {slot: [item, [r, g, b]]} with the
+' slots head, eyes and neck. A sentence said near it dresses it or takes
+' something off at once and for free, as a new name does.
+'
+' The affection of a player for an animal, 0 to 100, stands in the player's
+' profile under affection{npc id} as {"v", "at"}. Petting (key E beside the
+' animal, counted once in 20 seconds) and staying close (up to 50) raise it;
+' an hour away takes one point. From 80 on the animal follows its player,
+' at most two at once, over the fields the player walked last; told to stay
+' it stays where it stands, called it comes again.
+
+'@server
+
+' What an animal can wear, longer words before the words inside them:
+' [item, slot, words, colour when none is named].
+FUNC RuleWearItems()
+    RETURN [["sunglasses", "eyes", ["sonnenbrille"], "schwarz"], ["glasses", "eyes", ["brille"], "braun"], ["crown", "head", ["krone"], "gold"], ["cap", "head", ["muetze", "mutze", "kappe", "bommel"], "rot"], ["hat", "head", ["zylinder", "hut"], "schwarz"], ["flower", "head", ["bluete", "blumenkranz", "blume im haar", "blume am ohr", "blume hinterm ohr"], "rosa"], ["scarf", "neck", ["schal"], "rot"], ["bow", "neck", ["schleife"], "rot"], ["collar", "neck", ["halsband", "gloeckchen", "glocke"], "rot"]]
+ENDFUNC
+
+' An item as it is named in a sentence: with its article.
+FUNC RuleWearSaid$(item$)
+    DIM said = {"sunglasses": "eine Sonnenbrille", "glasses": "eine Brille", "crown": "eine Krone", "cap": "eine M{u}tze", "hat": "einen Hut", "flower": "eine Bl{u}te", "scarf": "einen Schal", "bow": "eine Schleife", "collar": "ein Halsband"}
+    RETURN RuleDe$(said{item$} ?? item$)
+ENDFUNC
+
+' The first word of an item, "" when there is no such item.
+FUNC RuleWearWord$(item$)
+    FOR EACH entry IN RuleWearItems()
+        IF entry[0] = item$ THEN RETURN entry[2][0]
+    NEXT
+    RETURN ""
+ENDFUNC
+
+' Where things to wear are named in t$ (lower case, umlauts spelled out):
+' [[at, item, slot], ...]; a word inside a longer one counts once.
+FUNC RuleWearScan(t$)
+    DIM found = []
+    DIM taken = []
+    FOR EACH entry IN RuleWearItems()
+        FOR EACH word$ IN entry[2]
+            DIM at = INSTR(t$, word$)
+            WHILE at >= 0
+                DIM inside = FALSE
+                FOR EACH span IN taken
+                    IF at >= span[0] ANDALSO at < span[1] THEN inside = TRUE
+                NEXT
+                IF NOT inside THEN
+                    found = APPEND(found, [[at, entry[0], entry[1]]])
+                    taken = APPEND(taken, [[at, at + LEN(word$)]])
+                ENDIF
+                at = INSTR(at + 1, t$, word$)
+            WEND
+        NEXT
+    NEXT
+    RETURN found
+ENDFUNC
+
+' The fur colour, the pattern and what an animal wears from the words of a
+' wish: a colour up to 14 letters before a thing to wear is that thing's,
+' the first other one the fur's. Sets color, pattern and wear
+' ({slot: [item, colour name]}) in st.
+SUB RuleWearGuess(t$, st)
+    DIM items = RuleWearScan(t$)
+    DIM tinted = {}
+    DIM names = ["hellblau", "dunkelblau", "tuerkis", "orange", "schwarz", "silber", "gruen", "braun", "weiss", "gelb", "lila", "rosa", "pink", "grau", "gold", "blau", "rot"]
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO LEN(names) - 1
+        DIM at = INSTR(t$, names[i])
+        WHILE at >= 0
+            DIM inside = (at >= 4 ANDALSO MID$(t$, at - 4, 4) = "hell") ORELSE (at >= 6 ANDALSO MID$(t$, at - 6, 6) = "dunkel")
+            IF NOT inside THEN
+                DIM best = -1
+                FOR j = 0 TO LEN(items) - 1
+                    IF items[j][0] > at ANDALSO items[j][0] - at < 14 ANDALSO NOT MAP.EXISTS(tinted, STR$(j)) THEN
+                        IF best < 0 ORELSE items[j][0] < items[best][0] THEN best = j
+                    ENDIF
+                NEXT j
+                IF best >= 0 THEN
+                    tinted{STR$(best)} = names[i]
+                ELSEIF NOT MAP.EXISTS(st, "color") THEN
+                    st{"color"} = names[i]
+                ENDIF
+            ENDIF
+            at = INSTR(at + 1, t$, names[i])
+        WEND
+    NEXT i
+    DIM wear = {}
+    DIM defaults = {}
+    FOR EACH entry IN RuleWearItems()
+        defaults{entry[0]} = entry[3]
+    NEXT
+    FOR j = 0 TO LEN(items) - 1
+        IF NOT MAP.EXISTS(wear, items[j][2]) THEN wear{items[j][2]} = [items[j][1], tinted{STR$(j)} ?? defaults{items[j][1]}]
+    NEXT j
+    IF MAP.SIZE(wear) > 0 THEN st{"wear"} = wear
+    IF INSTR(t$, "tiger") >= 0 ORELSE INSTR(t$, "gestreift") >= 0 ORELSE INSTR(t$, "getigert") >= 0 THEN st{"pattern"} = "stripes"
+    IF INSTR(t$, "gefleckt") >= 0 ORELSE INSTR(t$, "gepunktet") >= 0 ORELSE INSTR(t$, "flecken") >= 0 THEN st{"pattern"} = "spots"
+    IF INSTR(t$, "tiger") >= 0 ANDALSO NOT MAP.EXISTS(st, "color") THEN st{"color"} = "orange"
+ENDSUB
+
+' {slot: [item, colour name]} as the client draws it, {slot: [item, [r, g, b]]};
+' items and colours that are not known are left out.
+FUNC RuleWearLook(wear)
+    DIM out = {}
+    IF NOT ISMAP(wear) THEN RETURN out
+    DIM colors = RuleLookColors()
+    FOR EACH entry IN RuleWearItems()
+        DIM given = wear{entry[1]} ?? NONE
+        IF ISARR(given) ANDALSO LEN(given) = 2 ANDALSO "" + given[0] = entry[0] ANDALSO MAP.EXISTS(colors, "" + given[1]) THEN out{entry[1]} = [entry[0], colors{"" + given[1]}]
+    NEXT
+    RETURN out
+ENDFUNC
+
+' The built animal a sentence speaks of: one called by its name before one
+' of the sort it names, the nearest within reach fields of the player; ""
+' when there is none.
+FUNC RuleAnimalNear$(w, p, low$, reach)
+    DIM whats = RuleBuildWhats()
+    DIM what$ = ""
+    FOR EACH stem IN RuleBuildStems()
+        IF what$ = "" ANDALSO INSTR(low$, stem[0]) >= 0 ANDALSO whats{stem[1]}[1] THEN what$ = stem[1]
+    NEXT
+    DIM npcs = w{"npcs"}
+    DIM pick$ = ""
+    DIM best = 99999
+    FOR EACH id$ IN MAP.KEYS(npcs)
+        DIM npc = npcs{id$}
+        IF STARTSWITH(id$, "b_") ANDALSO MAP.EXISTS(whats, npc{"what"} ?? "") THEN
+            IF whats{npc{"what"}}[1] THEN
+                DIM name_key$ = RuleLookColorKey$("" + (npc{"name"} ?? ""))
+                DIM by_name = LEN(name_key$) >= 3 ANDALSO INSTR(low$, name_key$) >= 0
+                DIM dist = MAX([ABS(npc{"x"} - p{"x"}), ABS(npc{"y"} - p{"y"})])
+                DIM rank = dist + IIF(by_name, 0, 1000)
+                IF (by_name ORELSE npc{"what"} = what$) ANDALSO dist <= reach ANDALSO rank < best THEN
+                    best = rank
+                    pick$ = id$
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN pick$
+ENDFUNC
+
+' A sentence that dresses an animal near the player or takes something off
+' it; TRUE when it did.
+FUNC RuleAnimalDress(w, p, said$)
+    DIM low$ = " " + RuleLookColorKey$(REGEX.REPLACE$("[.,!?;:]", said$, " ")) + " "
+    DIM items = RuleWearScan(low$)
+    IF LEN(items) = 0 THEN RETURN FALSE
+    ' a wish for a new animal goes to the board
+    FOR EACH word$ IN ["wuensch", " neue", " bau"]
+        IF INSTR(low$, word$) >= 0 THEN RETURN FALSE
+    NEXT
+    DIM off = INSTR(low$, " ohne ") >= 0 ORELSE INSTR(low$, "absetz") >= 0 ORELSE INSTR(low$, "auszieh") >= 0 ORELSE INSTR(low$, " weg ") >= 0
+    IF (INSTR(low$, "nimm") >= 0 ORELSE INSTR(low$, "setz") >= 0) ANDALSO INSTR(low$, " ab ") >= 0 THEN off = TRUE
+    IF INSTR(low$, "zieh") >= 0 ANDALSO INSTR(low$, " aus ") >= 0 THEN off = TRUE
+    DIM puts_on = FALSE
+    FOR EACH word$ IN ["trag", "setz", "zieh", "bind", "bekomm", "krieg", "gib", "soll", "steht", "anzieh"]
+        IF INSTR(low$, word$) >= 0 THEN puts_on = TRUE
+    NEXT
+    IF NOT off ANDALSO NOT puts_on THEN RETURN FALSE
+    DIM id$ = RuleAnimalNear$(w, p, low$, 15)
+    IF id$ = "" THEN RETURN FALSE
+    DIM npc = w{"npcs"}{id$}
+    DIM look = npc{"look"} ?? {}
+    IF NOT ISMAP(look) THEN look = {}
+    DIM wear = look{"wear"} ?? {}
+    IF NOT ISMAP(wear) THEN wear = {}
+    IF MAP.EXISTS(look, "hat") THEN
+        IF NOT MAP.EXISTS(wear, "head") ANDALSO ISARR(look{"hat"}) THEN wear{"head"} = ["hat", look{"hat"}]
+        MAP.DELETE(look, "hat")
+    ENDIF
+    DIM st = {}
+    RuleWearGuess(low$, st)
+    DIM given = RuleWearLook(st{"wear"} ?? {})
+    DIM named = []
+    FOR EACH slot$ IN MAP.KEYS(given)
+        IF off THEN
+            IF MAP.EXISTS(wear, slot$) THEN
+                named = APPEND(named, RuleWearSaid$(wear{slot$}[0]))
+                MAP.DELETE(wear, slot$)
+            ENDIF
+        ELSE
+            wear{slot$} = given{slot$}
+            named = APPEND(named, RuleWearSaid$(given{slot$}[0]))
+        ENDIF
+    NEXT
+    look{"wear"} = wear
+    npc{"look"} = look
+    IF LEN(named) = 0 THEN RETURN TRUE
+    DIM text$ = npc{"name"} + RuleDe$(" tr{a}gt jetzt ") + JOIN(named, " und ")
+    IF off THEN
+        DIM none$ = JOIN(named, " und ")
+        none$ = REGEX.REPLACE$("(^| )ein", none$, "$1kein")
+        text$ = npc{"name"} + RuleDe$(" tr{a}gt ") + none$ + " mehr"
+    ENDIF
+    KEmit(w, {"type": "build", "who": p{"name"}, "text": text$})
+    RETURN TRUE
+ENDFUNC
+
+' ---- affection ----
+
+' The affection of the player name$ for the animal id$ now, 0 to 100.
+FUNC RuleFond(w, name$, id$)
+    DIM prof = RuleProfile(w, name$)
+    DIM entry = prof{"affection"}{id$} ?? NONE
+    IF NOT ISMAP(entry) THEN RETURN 0
+    RETURN MAX([0, entry{"v"} - (KNow() - entry{"at"}) / 3600000])
+ENDFUNC
+
+' Changes the affection of p for id$ by amount; from 80 on the animal
+' starts to follow. The new value.
+FUNC RuleFondAdd(w, p, id$, amount)
+    DIM before = RuleFond(w, p{"name"}, id$)
+    DIM v = CLAMP(before + amount, 0, 100)
+    DIM loves = RuleProfile(w, p{"name"}){"affection"}
+    loves{id$} = {"v": v, "at": KNow()}
+    p{"fondv"} = (p{"fondv"} ?? 0) + 1
+    IF before < 80 ANDALSO v >= 80 THEN
+        DIM started = RuleFollowStart(w, p, id$)
+    ENDIF
+    RETURN v
+ENDFUNC
+
+' The animals that follow the player name$, in the order of their ids.
+FUNC RuleFollowers(w, name$)
+    DIM found = []
+    FOR EACH id$ IN SORT(MAP.KEYS(w{"npcs"}))
+        IF (w{"npcs"}{id$}{"follow"} ?? "") = name$ THEN found = APPEND(found, id$)
+    NEXT
+    RETURN found
+ENDFUNC
+
+FUNC RuleFollowStart(w, p, id$)
+    IF NOT MAP.EXISTS(w{"npcs"}, id$) THEN RETURN FALSE
+    DIM npc = w{"npcs"}{id$}
+    IF (npc{"follow"} ?? "") <> "" ORELSE LEN(RuleFollowers(w, p{"name"})) >= 2 THEN RETURN FALSE
+    npc{"follow"} = p{"name"}
+    p{"fondv"} = (p{"fondv"} ?? 0) + 1
+    KEmit(w, {"type": "build", "who": p{"name"}, "text": npc{"name"} + " hat " + p{"name"} + RuleDe$(" ins Herz geschlossen und folgt jetzt")})
+    RETURN TRUE
+ENDFUNC
+
+' The animal stays where it stands and strolls about there.
+SUB RuleFollowStop(w, npc)
+    npc{"follow"} = ""
+    npc{"home"} = [npc{"x"}, npc{"y"}]
+    npc{"range"} = 3
+ENDSUB
+
+' Told to stay, the followers of p stay; called, the animals close by that
+' love p follow; TRUE when one of them heard it.
+FUNC RuleAnimalCall(w, p, said$)
+    DIM low$ = " " + RuleLookColorKey$(REGEX.REPLACE$("[.,!?;:]", said$, " ")) + " "
+    DIM heard = FALSE
+    IF INSTR(low$, " bleib") >= 0 ORELSE INSTR(low$, " sitz ") >= 0 THEN
+        FOR EACH id$ IN RuleFollowers(w, p{"name"})
+            DIM npc = w{"npcs"}{id$}
+            IF MAX([ABS(npc{"x"} - p{"x"}), ABS(npc{"y"} - p{"y"})]) <= 8 THEN
+                RuleFollowStop(w, npc)
+                p{"fondv"} = (p{"fondv"} ?? 0) + 1
+                KEmit(w, {"type": "build", "who": p{"name"}, "text": npc{"name"} + " bleibt hier"})
+                heard = TRUE
+            ENDIF
+        NEXT
+        RETURN heard
+    ENDIF
+    DIM calls = INSTR(low$, " folg") >= 0 ORELSE (INSTR(low$, " komm") >= 0 ANDALSO (INSTR(low$, " mit ") >= 0 ORELSE INSTR(low$, " her ") >= 0 ORELSE INSTR(low$, " zu mir ") >= 0))
+    IF NOT calls THEN RETURN FALSE
+    FOR EACH id$ IN SORT(MAP.KEYS(w{"npcs"}))
+        IF STARTSWITH(id$, "b_") THEN
+            DIM near = w{"npcs"}{id$}
+            IF (near{"follow"} ?? "") = "" ANDALSO MAX([ABS(near{"x"} - p{"x"}), ABS(near{"y"} - p{"y"})]) <= 5 ANDALSO RuleFond(w, p{"name"}, id$) >= 80 THEN
+                IF RuleFollowStart(w, p, id$) THEN heard = TRUE
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN heard
+ENDFUNC
+
+' The built animal right beside p (at most one field away), "" when none.
+FUNC RuleAnimalBeside$(w, p)
+    DIM whats = RuleBuildWhats()
+    DIM pick$ = ""
+    DIM best = 99
+    FOR EACH id$ IN MAP.KEYS(w{"npcs"})
+        DIM npc = w{"npcs"}{id$}
+        IF STARTSWITH(id$, "b_") ANDALSO MAP.EXISTS(whats, npc{"what"} ?? "") THEN
+            DIM dist = ABS(npc{"x"} - p{"x"}) + ABS(npc{"y"} - p{"y"})
+            IF whats{npc{"what"}}[1] ANDALSO MAX([ABS(npc{"x"} - p{"x"}), ABS(npc{"y"} - p{"y"})]) <= 1 ANDALSO dist < best THEN
+                best = dist
+                pick$ = id$
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN pick$
+ENDFUNC
+
+' Each sync: the trail of the player, a pet, and the affection when it changed.
+SUB RuleAnimalSync(w, p, msg, answer)
+    DIM now = KNow()
+    DIM trail = p{"trail"} ?? []
+    DIM at = [p{"x"}, p{"y"}]
+    IF LEN(trail) = 0 THEN
+        trail = [at]
+    ELSE
+        DIM last = trail[LEN(trail) - 1]
+        IF last[0] <> at[0] ORELSE last[1] <> at[1] THEN
+            ' a jump (the land grew, a new arrival) starts the trail again
+            IF ABS(last[0] - at[0]) + ABS(last[1] - at[1]) > 1 THEN
+                trail = [at]
+            ELSE
+                trail = APPEND(trail, [at])
+                IF LEN(trail) > 8 THEN trail = DROP(LEN(trail) - 8, trail)
+            ENDIF
+        ENDIF
+    ENDIF
+    p{"trail"} = trail
+    IF (msg{"pet"} ?? FALSE) = TRUE ANDALSO now >= (p{"pet_at"} ?? 0) THEN
+        p{"pet_at"} = now + 400
+        DIM id$ = RuleAnimalBeside$(w, p)
+        IF id$ <> "" THEN
+            KEmit(w, {"type": "pet", "npc": id$, "who": p{"name"}})
+            IF NOT MAP.EXISTS(p, "petted") THEN p{"petted"} = {}
+            IF now - (p{"petted"}{id$} ?? -99999) >= 20000 THEN
+                p{"petted"}{id$} = now
+                DIM v = RuleFondAdd(w, p, id$, 8)
+            ENDIF
+        ENDIF
+    ENDIF
+    IF INT(msg{"fondv"} ?? -1) <> (p{"fondv"} ?? 0) THEN
+        DIM fond = {}
+        DIM loves = RuleProfile(w, p{"name"}){"affection"}
+        FOR EACH fond_id$ IN MAP.KEYS(loves)
+            IF MAP.EXISTS(w{"npcs"}, fond_id$) THEN
+                DIM level = RuleFond(w, p{"name"}, fond_id$)
+                IF level >= 1 THEN fond{fond_id$} = [INT(level), (w{"npcs"}{fond_id$}{"follow"} ?? "") = p{"name"}]
+            ENDIF
+        NEXT
+        answer{"fond"} = fond
+        answer{"fondv"} = p{"fondv"} ?? 0
+    ENDIF
+ENDSUB
+
+' The followers walk behind their players; staying close raises affection
+' up to 50 every half minute.
+SUB RuleAnimalTick(w, now)
+    IF now >= (w{"follow_at"} ?? 0) THEN
+        w{"follow_at"} = now + 160
+        DIM players = w{"players"}
+        DIM npcs = w{"npcs"}
+        DIM order = {}
+        FOR EACH id$ IN SORT(MAP.KEYS(npcs))
+            DIM npc = npcs{id$}
+            DIM owner$ = npc{"follow"} ?? ""
+            IF owner$ <> "" THEN
+                IF NOT MAP.EXISTS(players, owner$) THEN
+                    RuleFollowStop(w, npc)
+                ELSE
+                    DIM k = order{owner$} ?? 0
+                    order{owner$} = k + 1
+                    DIM trail = players{owner$}{"trail"} ?? []
+                    DIM spot = LEN(trail) - 2 - k
+                    IF spot >= 0 THEN
+                        npc{"x"} = trail[spot][0]
+                        npc{"y"} = trail[spot][1]
+                    ENDIF
+                ENDIF
+            ENDIF
+        NEXT
+    ENDIF
+    IF now >= (w{"visit_at"} ?? 0) THEN
+        w{"visit_at"} = now + 30000
+        DIM whats = RuleBuildWhats()
+        FOR EACH name$ IN MAP.KEYS(w{"players"})
+            DIM p = w{"players"}{name$}
+            FOR EACH near_id$ IN MAP.KEYS(w{"npcs"})
+                DIM near = w{"npcs"}{near_id$}
+                IF STARTSWITH(near_id$, "b_") ANDALSO MAP.EXISTS(whats, near{"what"} ?? "") THEN
+                    IF whats{near{"what"}}[1] ANDALSO MAX([ABS(near{"x"} - p{"x"}), ABS(near{"y"} - p{"y"})]) <= 2 ANDALSO RuleFond(w, name$, near_id$) < 50 THEN
+                        DIM raised = RuleFondAdd(w, p, near_id$, 1)
+                    ENDIF
+                ENDIF
+            NEXT
+        NEXT
+    ENDIF
+ENDSUB
+
+' The keeper sets the affection of a player for an animal: {"player", "npc", "v"}.
+FUNC RuleAnimalAdmin(w, args)
+    DIM name$ = "" + (args{"player"} ?? "")
+    DIM id$ = "" + (args{"npc"} ?? "")
+    IF NOT MAP.EXISTS(w{"npcs"}, id$) ORELSE NOT ISNUM(args{"v"} ?? "") THEN RETURN {"ok": FALSE, "error": "player, npc and v"}
+    DIM loves = RuleProfile(w, name$){"affection"}
+    loves{id$} = {"v": CLAMP(args{"v"}, 0, 100), "at": KNow()}
+    IF MAP.EXISTS(w{"players"}, name$) THEN w{"players"}{name$}{"fondv"} = (w{"players"}{name$}{"fondv"} ?? 0) + 1
+    RETURN {"ok": TRUE, "v": RuleFond(w, name$, id$)}
+ENDFUNC
+
+'@client
+
+' Draws what an animal wears and returns the top of it, where the name goes.
+FUNC AnimalWear(kind, look, sx, sy, faces_left, head_dy, hop)
+    DIM wear = look{"wear"} ?? {}
+    IF NOT ISMAP(wear) THEN wear = {}
+    DIM head = wear{"head"} ?? NONE
+    IF NOT ISARR(head) ANDALSO ISARR(look{"hat"} ?? 0) THEN head = ["hat", look{"hat"}]
+    DIM top = sy + 4 + hop
+    DIM neck = wear{"neck"} ?? NONE
+    IF ISARR(neck) ANDALSO MAP.EXISTS(kind, "neck") THEN
+        DIM nc = neck[1]
+        DIM nx = sx + IIF(faces_left, 31 - kind{"neck"}[0], kind{"neck"}[0])
+        DIM ny = sy + kind{"neck"}[1] + head_dy
+        DIM nd = [INT(nc[0] * 0.6), INT(nc[1] * 0.6), INT(nc[2] * 0.6)]
+        IF neck[0] = "scarf" THEN
+            RECT nx - 4, ny - 1, 9, 3, TRUE, nc[0], nc[1], nc[2]
+            RECT nx - 4, ny, 9, 1, TRUE, nd[0], nd[1], nd[2]
+            RECT nx + IIF(faces_left, 2, -4), ny + 2, 2, 4, TRUE, nc[0], nc[1], nc[2]
+        ELSEIF neck[0] = "bow" THEN
+            RECT nx - 4, ny - 1, 3, 3, TRUE, nc[0], nc[1], nc[2]
+            RECT nx + 2, ny - 1, 3, 3, TRUE, nc[0], nc[1], nc[2]
+            RECT nx - 1, ny, 3, 2, TRUE, nd[0], nd[1], nd[2]
+        ELSE
+            RECT nx - 4, ny, 9, 2, TRUE, nc[0], nc[1], nc[2]
+            CIRCLE nx, ny + 3, 2, TRUE, 240, 206, 52
+        ENDIF
+    ENDIF
+    DIM eyes = wear{"eyes"} ?? NONE
+    IF ISARR(eyes) ANDALSO MAP.EXISTS(kind, "eye") THEN
+        DIM ec = eyes[1]
+        DIM ey = sy + kind{"eye"}[1] + head_dy
+        DIM lens_shut = eyes[0] = "sunglasses"
+        IF kind{"front"} ?? FALSE THEN
+            DIM cx = sx + kind{"eye"}[0]
+            AnimalLens(cx - 4, ey, ec, lens_shut)
+            AnimalLens(cx + 4, ey, ec, lens_shut)
+            RECT cx - 2, ey - 1, 5, 1, TRUE, ec[0], ec[1], ec[2]
+        ELSE
+            DIM ex = sx + IIF(faces_left, 31 - kind{"eye"}[0], kind{"eye"}[0])
+            AnimalLens(ex, ey, ec, lens_shut)
+            RECT ex + IIF(faces_left, 3, -6), ey - 1, 4, 1, TRUE, ec[0], ec[1], ec[2]
+        ENDIF
+    ENDIF
+    IF ISARR(head) THEN
+        DIM hc = head[1]
+        DIM hx = sx + IIF(faces_left, 31 - kind{"hat"}[0], kind{"hat"}[0])
+        DIM hy = sy + kind{"hat"}[1] + head_dy
+        IF head[0] = "cap" THEN
+            RECT hx - 4, hy - 3, 9, 4, TRUE, hc[0], hc[1], hc[2]
+            RECT hx - 5, hy, 11, 2, TRUE, 246, 242, 232
+            CIRCLE hx, hy - 5, 2, TRUE, 246, 242, 232
+            top = hy - 8
+        ELSEIF head[0] = "crown" THEN
+            RECT hx - 4, hy - 2, 9, 3, TRUE, hc[0], hc[1], hc[2]
+            RECT hx - 4, hy - 5, 2, 3, TRUE, hc[0], hc[1], hc[2]
+            RECT hx - 1, hy - 6, 3, 4, TRUE, hc[0], hc[1], hc[2]
+            RECT hx + 3, hy - 5, 2, 3, TRUE, hc[0], hc[1], hc[2]
+            RECT hx, hy - 1, 1, 1, TRUE, 220, 52, 52
+            top = hy - 7
+        ELSEIF head[0] = "flower" THEN
+            DIM fx = hx + IIF(faces_left, 3, -3)
+            RECT fx - 3, hy - 1, 2, 2, TRUE, hc[0], hc[1], hc[2]
+            RECT fx + 2, hy - 1, 2, 2, TRUE, hc[0], hc[1], hc[2]
+            RECT fx - 1, hy - 3, 2, 2, TRUE, hc[0], hc[1], hc[2]
+            RECT fx - 1, hy + 1, 2, 2, TRUE, hc[0], hc[1], hc[2]
+            RECT fx - 1, hy - 1, 2, 2, TRUE, 240, 206, 52
+            top = hy - 5
+        ELSE
+            RECT hx - 5, hy, 11, 2, TRUE, hc[0], hc[1], hc[2]
+            RECT hx - 3, hy - 5, 7, 5, TRUE, hc[0], hc[1], hc[2]
+            RECT hx - 3, hy - 2, 7, 1, TRUE, 250, 246, 236
+            top = hy - 6
+        ENDIF
+    ENDIF
+    RETURN top
+ENDFUNC
+
+' One lens of a pair of glasses around the eye at x, y: dark and filled for
+' sunglasses, a frame for glasses.
+SUB AnimalLens(x, y, col, shut)
+    IF shut THEN
+        RECT x - 2, y - 1, 5, 3, TRUE, col[0], col[1], col[2]
+        RECT x - 1, y - 1, 1, 1, TRUE, 200, 210, 230
+    ELSE
+        RECT x - 2, y - 2, 5, 5, FALSE, col[0], col[1], col[2]
+    ENDIF
+ENDSUB
+
+' The hearts over an animal the player likes, one for each 20 points, when
+' the player stands close or it follows; returns the new top.
+FUNC AnimalFondMark(c, row, sx, top)
+    DIM fond = (c{"fond"} ?? {}){row[0]} ?? NONE
+    IF NOT ISARR(fond) THEN RETURN top
+    DIM near = ABS(row[2] - (c{"x"} ?? -99)) <= 3 ANDALSO ABS(row[3] - (c{"y"} ?? -99)) <= 3
+    IF NOT near ANDALSO NOT fond[1] THEN RETURN top
+    DIM n = CLAMP(CEIL(fond[0] / 20), 1, 5)
+    DIM x0 = sx + 16 - (n * 6 - 1) \ 2
+    DIM y = top - 7
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM hx = x0 + i * 6
+        RECT hx, y + 1, 5, 2, TRUE, 236, 70, 110
+        RECT hx + 1, y, 1, 1, TRUE, 236, 70, 110
+        RECT hx + 3, y, 1, 1, TRUE, 236, 70, 110
+        RECT hx + 1, y + 3, 3, 1, TRUE, 236, 70, 110
+        RECT hx + 2, y + 4, 1, 1, TRUE, 236, 70, 110
+    NEXT i
+    RETURN top - 7
+ENDFUNC
+
+SUB ClientAnimalAsk(c, msg)
+    msg{"fondv"} = c{"fondv"} ?? -1
+    IF c{"pet"} ?? FALSE THEN
+        msg{"pet"} = TRUE
+        c{"pet"} = FALSE
+    ENDIF
+ENDSUB
+
+SUB ClientAnimalExtra(c, r)
+    IF MAP.EXISTS(r, "fond") THEN
+        c{"fond"} = r{"fond"}
+        c{"fondv"} = r{"fondv"}
+    ENDIF
+    IF NOT MAP.EXISTS(c, "petted") THEN c{"petted"} = {}
+    FOR EACH ev IN r{"events"} ?? []
+        IF ev{"type"} = "pet" THEN c{"petted"}{ev{"npc"}} = TICK()
+    NEXT
+ENDSUB

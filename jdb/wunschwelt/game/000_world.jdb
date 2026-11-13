@@ -261,6 +261,7 @@ SUB RuleTick(w, now)
         RuleNpcTick(w, npcs{npc_id$}, now)
     NEXT
     RulePlotTick(w, now)
+    RuleAnimalTick(w, now)
     RuleBuildTick(w, now)
     RuleWishTick(w, now)
 ENDSUB
@@ -620,6 +621,7 @@ SUB ClientInput(c)
             IF tapped$ = "RIGHT" ORELSE tapped$ = "D" THEN c{"tap"} = [1, 0]
             IF tapped$ = "UP" ORELSE tapped$ = "W" THEN c{"tap"} = [0, -1]
             IF tapped$ = "DOWN" ORELSE tapped$ = "S" THEN c{"tap"} = [0, 1]
+            IF tapped$ = "E" THEN c{"pet"} = TRUE
         ENDIF
     NEXT i
     c{"dx"} = 0
@@ -1037,7 +1039,7 @@ SUB ClientDraw(c)
         TEXT 4, 365, "> " + c{"entry"} + "_", 240, 240, 240
     ELSE
         RECT 0, 364, 640, 20, TRUE, 16, 18, 22
-        TEXT 4, 365, "Pfeile oder WASD: laufen   Enter: sprechen", 150, 160, 150
+        TEXT 4, 365, "Pfeile oder WASD: laufen   Enter: sprechen   E: streicheln", 150, 160, 150
         DIM tune$ = c{"music_label"} ?? ""
         IF tune$ <> "" THEN TEXT 636 - GFX.TEXTSIZE("Musik: " + tune$)[0], 365, "Musik: " + tune$, 150, 180, 220
     ENDIF
