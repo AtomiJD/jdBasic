@@ -46,6 +46,23 @@ SUB RuleWishAdd(w, who$, text$)
     KEmit(w, {"type": "wish", "id": w{"wish_seq"}, "who": who$, "text": wish$})
 ENDSUB
 
+' Sets the status of a wish and tells everyone; the wish, or NONE when no wish has the id.
+FUNC RuleWishSetStatus(w, id, status$, note$)
+    DIM wishes = w{"wishes"}
+    DIM i = 0
+    FOR i = 0 TO LEN(wishes) - 1
+        IF wishes[i]{"id"} = id THEN
+            wishes[i]{"status"} = status$
+            wishes[i]{"note"} = RuleCut$(note$, 100)
+            w{"wishes"} = wishes
+            w{"wishv"} = w{"wishv"} + 1
+            KEmit(w, {"type": "wish_status", "id": id, "who": wishes[i]{"who"}, "text": wishes[i]{"text"}, "status": status$})
+            RETURN wishes[i]
+        ENDIF
+    NEXT i
+    RETURN NONE
+ENDFUNC
+
 ' German text with {a} {o} {u} {A} {O} {U} {s} for the umlauts and sharp s,
 ' so this file stays plain ASCII.
 FUNC RuleDe$(s$)
@@ -114,11 +131,38 @@ SUB RuleSaid(w, p, npc, said$)
     DIM messages = [{"role": "system", "content": task$}, {"role": "user", "content": said$}]
     DIM sent$ = KAsk$(w, "wish", p{"name"}, {"who": p{"name"}, "said": said$, "npc": npc{"id"}}, messages, {"max_tokens": 160, "temperature": 0, "response_format": {"type": "json_object"}})
     IF sent$ = "none" THEN RuleWishGuess(w, p{"name"}, said$)
+    IF sent$ = "busy" THEN
+        ' said too soon after the last sentence: judged when the pause is over
+        DIM queue = w{"wish_later"} ?? []
+        IF LEN(queue) < 20 THEN w{"wish_later"} = APPEND(queue, {"who": p{"name"}, "npc": npc{"id"}, "said": said$, "at": KNow()})
+    ENDIF
+ENDSUB
+
+' Sentences that came too soon are judged now, for half a minute at most.
+SUB RuleWishTick(w, now)
+    DIM queue = w{"wish_later"} ?? []
+    IF LEN(queue) = 0 ORELSE now < (w{"wish_later_at"} ?? 0) THEN RETURN
+    w{"wish_later_at"} = now + 500
+    w{"wish_later"} = []
+    DIM i = 0
+    FOR i = 0 TO LEN(queue) - 1
+        DIM item = queue[i]
+        IF now - item{"at"} < 30000 ANDALSO MAP.EXISTS(w{"players"}, item{"who"}) ANDALSO MAP.EXISTS(w{"npcs"}, item{"npc"}) THEN
+            DIM before = LEN(w{"wish_later"})
+            RuleSaid(w, w{"players"}{item{"who"}}, w{"npcs"}{item{"npc"}}, item{"said"})
+            ' asked again too soon: it keeps its first time
+            IF LEN(w{"wish_later"}) > before THEN w{"wish_later"}[before]{"at"} = item{"at"}
+        ENDIF
+    NEXT i
 ENDSUB
 
 SUB RuleAnswer(w, kind$, data, text$)
     IF kind$ = "plot" THEN
         RulePlotAnswer(w, data, text$)
+        RETURN
+    ENDIF
+    IF kind$ = "build" THEN
+        RuleBuildAnswer(w, data, text$)
         RETURN
     ENDIF
     IF kind$ <> "wish" THEN RETURN
@@ -206,6 +250,7 @@ ENDSUB
 
 SUB RuleAnswerFailed(w, kind$, data)
     IF kind$ = "wish" THEN RuleWishGuess(w, data{"who"}, data{"said"})
+    IF kind$ = "build" THEN RuleBuildAnswer(w, data, "")
 ENDSUB
 
 ' The board travels with a sync when it changed: the newest wishes as rows [id, who, text, status].
@@ -226,22 +271,13 @@ ENDSUB
 ' ("wish_status" with {"id", "status", "note"}).
 FUNC RuleAdmin(w, name$, args)
     IF name$ = "plot" ORELSE name$ = "plot_set" THEN RETURN RulePlotAdmin(w, name$, args)
+    IF name$ = "builder" ORELSE name$ = "builder_set" ORELSE name$ = "build_ok" THEN RETURN RuleBuildAdmin(w, name$, args)
     IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
     IF name$ = "wish_status" THEN
         DIM status$ = "" + (args{"status"} ?? "")
         IF status$ <> "open" ANDALSO status$ <> "building" ANDALSO status$ <> "done" ANDALSO status$ <> "declined" THEN RETURN {"ok": FALSE, "error": "status is open, building, done or declined"}
-        DIM wishes = w{"wishes"}
-        DIM i = 0
-        FOR i = 0 TO LEN(wishes) - 1
-            IF wishes[i]{"id"} = INT(args{"id"} ?? 0) THEN
-                wishes[i]{"status"} = status$
-                wishes[i]{"note"} = RuleCut$("" + (args{"note"} ?? ""), 100)
-                w{"wishes"} = wishes
-                w{"wishv"} = w{"wishv"} + 1
-                KEmit(w, {"type": "wish_status", "id": wishes[i]{"id"}, "who": wishes[i]{"who"}, "text": wishes[i]{"text"}, "status": status$})
-                RETURN {"ok": TRUE, "wish": wishes[i]}
-            ENDIF
-        NEXT i
+        DIM changed = RuleWishSetStatus(w, INT(args{"id"} ?? 0), status$, "" + (args{"note"} ?? ""))
+        IF ISMAP(changed) THEN RETURN {"ok": TRUE, "wish": changed}
         RETURN {"ok": FALSE, "error": "no wish with that id"}
     ENDIF
     RETURN {"ok": FALSE, "error": "no such call: " + name$}

@@ -39,7 +39,7 @@ FUNC RulePlotHappenings(w, since)
                 entry$ = who$ + RuleDe$(" w{u}nscht sich: ") + text$
             ELSEIF kind$ = "wish_status" ANDALSO (ev{"status"} ?? "") = "done" THEN
                 entry$ = RuleDe$("Der Wunsch von ") + who$ + RuleDe$(" ist erf{u}llt: ") + text$
-            ELSEIF kind$ = "look" ORELSE kind$ = "music" THEN
+            ELSEIF kind$ = "look" ORELSE kind$ = "music" ORELSE kind$ = "build" THEN
                 entry$ = text$
             ELSEIF kind$ = "patch" THEN
                 entry$ = "Neu im Dorf: " + RuleCut$("" + (ev{"title"} ?? ""), 80)

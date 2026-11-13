@@ -3,9 +3,10 @@
 '
 ' Kinds of map tile:
 '   1 grass  2 path  3 tree  4 water  5 wall  6 floor  7 door  8 flowers
-'   9 sand  10 deep water  11 bush  12 stone
+'   9 sand  10 deep water  11 bush  12 stone  13 bridge
 ' Walls, floor and doors in a block make a house; the client paints it with
-' a roof. Trees, water, deep water, bushes, stones and a house are blocked.
+' a roof. Trees, water, deep water, bushes, stones and a house are blocked;
+' a bridge lies over water and is walked on.
 
 '@server
 
@@ -47,7 +48,7 @@ FUNC RuleBlocked(w, x, y)
     DIM m = w{"map"}
     IF x < 0 ORELSE y < 0 ORELSE x >= m{"w"} ORELSE y >= m{"h"} THEN RETURN TRUE
     DIM id = m{"tiles"}[y * m{"w"} + x]
-    IF id = 3 ORELSE id = 4 ORELSE id = 5 ORELSE id = 6 ORELSE id >= 10 THEN RETURN TRUE
+    IF id = 3 ORELSE id = 4 ORELSE id = 5 ORELSE id = 6 ORELSE id = 10 ORELSE id = 11 ORELSE id = 12 THEN RETURN TRUE
     DIM npcs = w{"npcs"}
     FOR EACH npc_id$ IN MAP.KEYS(npcs)
         IF npcs{npc_id$}{"x"} = x ANDALSO npcs{npc_id$}{"y"} = y THEN RETURN TRUE
@@ -150,14 +151,24 @@ FUNC RuleSync(w, p, msg)
         said$ = RuleCut$(said$, 160)
         KEmit(w, {"type": "say", "who": p{"name"}, "text": said$})
         RuleHeard(w, p, said$)
+        ' the nearest one who can talk answers; a person in reach before any animal
         DIM npcs = w{"npcs"}
+        DIM heard_by$ = ""
+        DIM best = 99
         FOR EACH npc_id$ IN MAP.KEYS(npcs)
-            IF MAP.EXISTS(npcs{npc_id$}, "persona") ANDALSO ABS(npcs{npc_id$}{"x"} - p{"x"}) <= 3 ANDALSO ABS(npcs{npc_id$}{"y"} - p{"y"}) <= 3 THEN
-                KAskNpc(w, npc_id$, p{"name"}, said$)
-                RuleSaid(w, p, npcs{npc_id$}, said$)
-                EXITFOR
+            DIM o_npc = npcs{npc_id$}
+            DIM dist = MAX([ABS(o_npc{"x"} - p{"x"}), ABS(o_npc{"y"} - p{"y"})])
+            DIM rank = dist
+            IF o_npc{"kind"} <> "person" THEN rank = dist + 10
+            IF MAP.EXISTS(o_npc, "persona") ANDALSO dist <= 3 ANDALSO rank < best THEN
+                best = rank
+                heard_by$ = npc_id$
             ENDIF
         NEXT
+        IF heard_by$ <> "" THEN
+            KAskNpc(w, heard_by$, p{"name"}, said$)
+            RuleSaid(w, p, npcs{heard_by$}, said$)
+        ENDIF
     ENDIF
 
     DIM players = w{"players"}
@@ -234,6 +245,16 @@ SUB RuleTick(w, now)
         RuleNpcTick(w, npcs{npc_id$}, now)
     NEXT
     RulePlotTick(w, now)
+    RuleBuildTick(w, now)
+    RuleWishTick(w, now)
+ENDSUB
+
+' The wishes' turn in a tick; game/010_wishes.jdb gives it a body.
+SUB RuleWishTick(w, now)
+ENDSUB
+
+' The builder's turn in a tick; game/040_builder.jdb gives it a body.
+SUB RuleBuildTick(w, now)
 ENDSUB
 
 ' The style of music the world plays; game/020_music.jdb decides it.
@@ -312,7 +333,7 @@ ENDSUB
 ' The terrain level of a map tile: 0 deep water, 1 water, 2 sand, 3 grass, 4 path.
 FUNC ClientLevel(kind)
     IF kind = 10 THEN RETURN 0
-    IF kind = 4 THEN RETURN 1
+    IF kind = 4 ORELSE kind = 13 THEN RETURN 1
     IF kind = 9 THEN RETURN 2
     IF kind = 2 THEN RETURN 4
     RETURN 3
@@ -361,6 +382,8 @@ SUB ClientLayMap(c, m)
             DIM mark = -1
             IF kind = 8 THEN
                 mark = 5 + roll MOD 2
+            ELSEIF kind = 13 THEN
+                mark = 8
             ELSEIF kind = 1 ANDALSO ClientHash(x + 7, y + 3, 17) = 0 THEN
                 mark = 7
             ENDIF
@@ -643,7 +666,7 @@ SUB ClientSync(c)
         ELSEIF ev{"type"} = "patch" THEN
             c{"banner"} = "Neu in der Welt: " + ev{"title"}
             c{"banner_until"} = TICK() + 6000
-        ELSEIF ev{"type"} = "look" ORELSE ev{"type"} = "music" ORELSE ev{"type"} = "chapter" THEN
+        ELSEIF ev{"type"} = "look" ORELSE ev{"type"} = "music" ORELSE ev{"type"} = "chapter" ORELSE ev{"type"} = "build" THEN
             c{"banner"} = ev{"text"}
             c{"banner_until"} = TICK() + 4000
         ELSEIF ev{"type"} = "join" THEN
@@ -757,11 +780,14 @@ ENDSUB
 ' is [id, name, x, y, kind]. Each thing has its own painter, a SUB taking
 ' (c, row, sx, sy); the code that brings a thing enters it with
 ' ClientPainter("its id", ItsPainter@), so things of different patches live
-' side by side.
+' side by side. A thing whose id is b_<sort>_<n> without a painter of its
+' own is drawn by the painter of its sort, entered as "@<sort>".
 SUB ClientThing(c, row, sx, sy)
     DIM painters = c{"painters"} ?? {}
-    IF NOT MAP.EXISTS(painters, row[0]) THEN RETURN
-    DIM paint = painters{row[0]}
+    DIM key$ = row[0]
+    IF NOT MAP.EXISTS(painters, key$) ANDALSO STARTSWITH(key$, "b_") THEN key$ = "@" + SPLIT(key$, "_")[1]
+    IF NOT MAP.EXISTS(painters, key$) THEN RETURN
+    DIM paint = painters{key$}
     paint(c, row, sx, sy)
 ENDSUB
 

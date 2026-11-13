@@ -1,0 +1,219 @@
+' Test of the builder with a model that answers from a script: wishes on the
+' board are built by the rules from the model's plan, one step after the
+' other; steps the builder does not know are dropped, a plan the model
+' cannot give is made from the words of the wish, new land moves the village
+' along, a house gets a way to the road and its owner's sign, a bridge is
+' walked on, the keeper can make plans wait, and a wish nobody can build
+' goes back to the board.
+'
+'   jdBasic jdb/wunschwelt/test_builder.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8220 + OS.PID() MOD 10
+DIM model_port AS INTEGER = 8230 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_builder_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+' The judge sorts by words; the builder gets a plan by the words of the wish.
+FUNC Verdict$(said$ AS STRING)
+    IF INSTR(said$, "Frosch") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Ein Frosch am Teich"})
+    IF INSTR(said$, "Meer") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["land"], "text": "Ein Meer im Osten"})
+    IF INSTR(said$, "Westen") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["land", "way", "house"], "text": "Mehr Land im Westen mit Strasse, Wald und Huette fuer mich"})
+    IF INSTR(said$, "Bruecke") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["way"], "text": "Eine Bruecke ueber den Teich"})
+    IF INSTR(said$, "Bank") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["thing"], "text": "Eine Bank vor der Taverne"})
+    IF INSTR(said$, "Drache") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Ein Drache"})
+    RETURN JSON.STRINGIFY$({"wish": FALSE})
+ENDFUNC
+
+DIM builder_asked AS INTEGER = 0
+DIM builder_input$ AS STRING = ""
+FUNC Plan$(wish$ AS STRING)
+    builder_asked = builder_asked + 1
+    builder_input$ = wish$
+    IF INSTR(wish$, "Frosch") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "frog", "name": "Quaki", "where": "pond"}, {"do": "code", "run": "KILL everything"}, {"do": "animal", "what": "dragon", "name": "Fafnir"}]})
+    IF INSTR(wish$, "Meer") >= 0 THEN RETURN "das ist kein JSON"
+    IF INSTR(wish$, "Westen") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "grow", "side": "west", "n": 8}, {"do": "forest", "where": "west", "size": "medium"}, {"do": "house", "where": "west", "size": "small", "owner": "Anna"}, {"do": "road", "where": "house"}]})
+    IF INSTR(wish$, "Bruecke") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "bridge", "where": "pond"}]})
+    IF INSTR(wish$, "Bank") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "thing", "what": "bench", "name": "Bank", "where": "tavern"}]})
+    RETURN JSON.STRINGIFY$({"steps": []})
+ENDFUNC
+
+FUNC FakeModel(request)
+    DIM body = JSON.PARSE(request{"body"})
+    DIM messages = body{"messages"}
+    DIM system$ AS STRING = messages[0]{"content"}
+    DIM said$ AS STRING = messages[LEN(messages) - 1]{"content"}
+    DIM content$ AS STRING = "Gern."
+    IF INSTR(system$, "Du sortierst") >= 0 THEN
+        content$ = Verdict$(said$)
+    ELSEIF INSTR(system$, "Du bist der Baumeister") >= 0 THEN
+        content$ = Plan$(said$)
+    ENDIF
+    RETURN JSON.STRINGIFY$({"choices": [{"message": {"role": "assistant", "content": content$}}]})
+ENDFUNC
+HTTP.SERVER.ON_POST "/v1/chat/completions", FakeModel@
+DIM model_up = HTTP.SERVER.START(model_port)
+Check("the scripted model listens", model_up)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "90"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+SLEEP 1500
+DIM set = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
+Check("the keeper sets the builder's pace", set{"ok"} ANDALSO set{"builder"}{"step_ms"} = 300)
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna"}){"token"}
+DIM r = Post("/sync", {"token": token$, "mapv": 1})
+DIM since AS INTEGER = r{"seq"}
+DIM i AS INTEGER
+FOR i = 1 TO 3
+    SLEEP 200
+    r = Post("/sync", {"token": token$, "dy": -1, "mapv": 1, "since": since})
+NEXT i
+
+DIM builds = []
+' Keeps Anna in the world while the builder works; collects the build news.
+SUB Wait(ms AS INTEGER)
+    DIM t0 = TICK()
+    DO WHILE TICK() - t0 < ms
+        DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+        since = t{"seq"}
+        DIM k AS INTEGER
+        FOR k = 0 TO LEN(t{"events"}) - 1
+            IF t{"events"}[k]{"type"} = "build" THEN builds = APPEND(builds, t{"events"}[k]{"text"})
+        NEXT k
+        SLEEP 200
+    LOOP
+ENDSUB
+
+FUNC WishOf(text$ AS STRING)
+    DIM board = Admin("wishes", {}){"wishes"}
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(board) - 1
+        IF board[k]{"text"} = text$ THEN RETURN board[k]
+    NEXT k
+    RETURN {"status": "missing"}
+ENDFUNC
+
+' Says the wish to Marta and waits until the builder leaves it.
+FUNC WishAndWait(said$ AS STRING, text$ AS STRING)
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": said$})
+    DIM k AS INTEGER
+    FOR k = 1 TO 60
+        Wait(300)
+        DIM wish = WishOf(text$)
+        IF wish{"status"} = "done" ORELSE (wish{"status"} = "open" ANDALSO wish{"note"} <> "") THEN RETURN wish
+    NEXT k
+    SLEEP 2600
+    RETURN WishOf(text$)
+ENDFUNC
+
+FUNC World()
+    RETURN Post("/sync", {"token": token$, "mapv": -1, "since": since})
+ENDFUNC
+FUNC Folk(answer, prefix$ AS STRING)
+    DIM found = []
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(answer{"npcs"}) - 1
+        IF STARTSWITH(answer{"npcs"}[k][0], prefix$) THEN found = APPEND(found, [answer{"npcs"}[k]])
+    NEXT k
+    RETURN found
+ENDFUNC
+FUNC Tiles(answer, kind AS INTEGER) AS INTEGER
+    RETURN SUM(answer{"map"}{"tiles"} = kind)
+ENDFUNC
+FUNC Marta(answer)
+    RETURN Folk(answer, "marta")[0]
+ENDFUNC
+
+' a plan of the model; what it does not know is dropped
+DIM wish = WishAndWait("Ich wuensche mir einen Frosch am Teich", "Ein Frosch am Teich")
+Check("the builder takes the wish and builds it", wish{"status"} = "done")
+Wait(600)
+Check("the wish reaches the model as data", builder_asked >= 1 ANDALSO INSTR(builder_input$, "Wunsch von Anna: Ein Frosch am Teich") >= 0)
+DIM w0 = World()
+DIM frogs = Folk(w0, "b_frog_")
+Check("a frog called Quaki lives in the village", LEN(frogs) = 1 ANDALSO frogs[0][1] = "Quaki" ANDALSO frogs[0][4] = "thing")
+Check("no dragon and nothing else came", LEN(Folk(w0, "b_")) = 1)
+Check("everyone heard the builder", LEN(builds) >= 2 ANDALSO INSTR(builds[LEN(builds) - 1], "Fertig gebaut: Ein Frosch am Teich") >= 0)
+
+' no usable plan: the words of the wish make one
+DIM width0 = w0{"map"}{"w"}
+wish = WishAndWait("Ich will ein Meer", "Ein Meer im Osten")
+Check("a broken plan is made from the words", wish{"status"} = "done")
+DIM w1 = World()
+Check("the land grows east for the sea", w1{"map"}{"w"} = width0 + 10)
+Check("the sea has deep water, water and a beach", Tiles(w1, 10) > 0 ANDALSO Tiles(w1, 4) > Tiles(w0, 4) ANDALSO Tiles(w1, 9) > 0)
+
+' land in the west moves the village; a house with a way and a sign
+DIM marta_x = Marta(w1)[2]
+DIM doors0 = Tiles(w1, 7)
+wish = WishAndWait("Mach mir mehr Land im Westen mit Strasse, Wald und einer Huette fuer mich", "Mehr Land im Westen mit Strasse, Wald und Huette fuer mich")
+Check("the land in the west is built", wish{"status"} = "done")
+DIM w2 = World()
+Check("the map grows west and the village moves along", w2{"map"}{"w"} = w1{"map"}{"w"} + 8 ANDALSO Marta(w2)[2] = marta_x + 8)
+Check("a new house with a door stands", Tiles(w2, 7) = doors0 + 1)
+Check("with Anna's sign", LEN(Folk(w2, "b_sign_")) = 1 ANDALSO Folk(w2, "b_sign_")[0][1] = "Haus von Anna")
+' the tile below the new door is road
+DIM mw = w2{"map"}{"w"}
+DIM tiles = w2{"map"}{"tiles"}
+DIM door_ok = FALSE
+DIM at AS INTEGER
+FOR at = 0 TO LEN(tiles) - 1
+    IF tiles[at] = 7 ANDALSO at MOD mw < 12 ANDALSO tiles[at + mw] = 2 THEN door_ok = TRUE
+NEXT at
+Check("a way leads from its door", door_ok)
+
+' a bridge over the pond, walked on
+wish = WishAndWait("Ich brauche eine Bruecke", "Eine Bruecke ueber den Teich")
+DIM w3 = World()
+Check("a bridge lies over the pond", wish{"status"} = "done" ANDALSO Tiles(w3, 13) >= 2)
+
+' the keeper makes plans wait
+set = Admin("builder_set", {"mode": "approve"})
+DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Ich will eine Bank"})
+Wait(3000)
+Check("a wish said too soon is judged after the pause; in approve mode its plan waits", WishOf("Eine Bank vor der Taverne"){"status"} = "building" ANDALSO LEN(Folk(World(), "b_bench_")) = 0)
+DIM ok_plan = Admin("build_ok", {})
+Check("the keeper says yes", ok_plan{"ok"})
+Wait(2500)
+Check("and the bench stands", LEN(Folk(World(), "b_bench_")) = 1 ANDALSO WishOf("Eine Bank vor der Taverne"){"status"} = "done")
+set = Admin("builder_set", {"mode": "auto"})
+
+' nobody can build it: back to the board with a note
+SLEEP 2600
+wish = WishAndWait("Ich will einen Drachen", "Ein Drache")
+Check("a wish the builder cannot build goes back to the board", wish{"status"} = "open" ANDALSO wish{"note"} <> "")
+Wait(1500)
+Check("and is not taken up again", WishOf("Ein Drache"){"status"} = "open")
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+
+DIM gone = OS.KILL(server_pid)
+HTTP.SERVER.STOP
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1
