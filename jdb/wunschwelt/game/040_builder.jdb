@@ -981,9 +981,25 @@ ENDFUNC
 ' The keeper: builder (state), builder_set (mode auto, approve or off;
 ' step_ms between two steps, pause_ms between two wishes; skip=clear lets
 ' the builder try the wishes again it gave up on), build_ok (a waiting plan
-' is built).
+' is built), things (what the builder built), thing_remove (one of them by its
+' id goes).
 FUNC RuleBuildAdmin(w, name$, args)
     DIM b = RuleBuilder(w)
+    IF name$ = "things" THEN
+        DIM rows = []
+        FOR EACH id$ IN SORT(MAP.KEYS(w{"npcs"}))
+            DIM n = w{"npcs"}{id$}
+            IF STARTSWITH(id$, "b_") THEN rows = APPEND(rows, [[id$, n{"name"}, n{"x"}, n{"y"}, n{"look"} ?? {}]])
+        NEXT
+        RETURN {"ok": TRUE, "things": rows}
+    ENDIF
+    IF name$ = "thing_remove" THEN
+        DIM gone$ = "" + (args{"id"} ?? "")
+        IF NOT STARTSWITH(gone$, "b_") ORELSE NOT MAP.EXISTS(w{"npcs"}, gone$) THEN RETURN {"ok": FALSE, "error": "no built thing with that id"}
+        DIM was$ = w{"npcs"}{gone$}{"name"}
+        MAP.DELETE(w{"npcs"}, gone$)
+        RETURN {"ok": TRUE, "removed": gone$, "name": was$}
+    ENDIF
     IF name$ = "builder_set" THEN
         DIM mode$ = "" + (args{"mode"} ?? b{"mode"})
         IF INDEXOF(["auto", "approve", "off"], mode$) < 0 THEN RETURN {"ok": FALSE, "error": "mode is auto, approve or off"}

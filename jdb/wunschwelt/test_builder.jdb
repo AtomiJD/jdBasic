@@ -261,6 +261,10 @@ SLEEP 2600
 wish = WishAndWait("Ich will einen Hund mit gelbem Hut", "Ein Hund mit gelbem Hut")
 DIM dog = Folk(World(), "b_dog_")
 Check("a plan that names only the colour of a hat still gives a hat", LEN(dog) = 1 ANDALSO Wear(dog[0], "head")[0] = "hat" ANDALSO Wear(dog[0], "head")[1][0] = 240)
+DIM listed = Admin("things", {}){"things"}
+Check("the keeper lists what the builder built", LEN(listed) >= 4)
+DIM dropped = Admin("thing_remove", {"id": dog[0][0]})
+Check("and takes one away, only a built one", dropped{"ok"} ANDALSO LEN(Folk(World(), "b_dog_")) = 0 ANDALSO NOT Admin("thing_remove", {"id": "marta"}){"ok"})
 
 ' ---- affection and following ----
 ' Walks Anna until she stands beside the npc id$; TRUE when she does.

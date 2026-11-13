@@ -278,7 +278,7 @@ ENDSUB
 ' ("wish_status" with {"id", "status", "note"}).
 FUNC RuleAdmin(w, name$, args)
     IF name$ = "plot" ORELSE name$ = "plot_set" THEN RETURN RulePlotAdmin(w, name$, args)
-    IF name$ = "builder" ORELSE name$ = "builder_set" ORELSE name$ = "build_ok" THEN RETURN RuleBuildAdmin(w, name$, args)
+    IF name$ = "builder" ORELSE name$ = "builder_set" ORELSE name$ = "build_ok" ORELSE name$ = "things" ORELSE name$ = "thing_remove" THEN RETURN RuleBuildAdmin(w, name$, args)
     IF name$ = "fond" THEN RETURN RuleAnimalAdmin(w, args)
     IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
     IF name$ = "wish_status" THEN

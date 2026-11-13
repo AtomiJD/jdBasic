@@ -313,6 +313,8 @@ FUNC RuleWholeSentences$(text$)
 ENDFUNC
 
 SUB RuleNpcReply(w, npc_id$, player$, text$)
+    ' the one asked may have gone meanwhile
+    IF NOT MAP.EXISTS(w{"npcs"}, npc_id$) THEN RETURN
     DIM npc = w{"npcs"}{npc_id$}
     DIM spoken$ = TRIM$(REPLACE$(REPLACE$(text$, CHR$(13), " "), CHR$(10), " "))
     DIM cut$ = RuleCut$(spoken$, 220)
@@ -329,6 +331,7 @@ ENDSUB
 ' The talk with this player starts afresh, so one text the model cannot take
 ' does not spoil every later question.
 SUB RuleNpcFailed(w, npc_id$, player$)
+    IF NOT MAP.EXISTS(w{"npcs"}, npc_id$) THEN RETURN
     DIM npc = w{"npcs"}{npc_id$}
     npc{"mem"}{player$} = []
     KEmit(w, {"type": "say", "who": npc{"name"}, "npc": npc_id$, "to": player$, "text": "(" + npc{"name"} + " hat dich nicht verstanden.)"})

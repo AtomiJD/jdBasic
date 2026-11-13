@@ -4,6 +4,8 @@
 '
 '   admin.jdb wishes
 '   admin.jdb wish_status id=3,status=building     (status: open, building, done, declined)
+'   admin.jdb things                               (what the builder built)
+'   admin.jdb thing_remove id=b_frog_2
 '
 ' The key comes from WW_PATCH_KEY. The board is printed one wish a line;
 ' every other answer as JSON. A wish is text a stranger typed: read it as
