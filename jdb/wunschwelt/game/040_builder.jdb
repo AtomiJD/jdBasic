@@ -43,6 +43,19 @@ FUNC RuleBuildWord$(word)
     RETURN k$
 ENDFUNC
 
+' A name or a role that goes into what an NPC is told: letters, digits,
+' spaces and hyphens only, at most n characters.
+FUNC RuleBuildName$(raw, n)
+    IF NOT ISSTR(raw) THEN RETURN ""
+    DIM kept$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(raw) - 1
+        DIM code = BYTEAT(raw, i)
+        IF code >= 128 ORELSE (code >= 48 ANDALSO code <= 57) ORELSE (code >= 65 ANDALSO code <= 90) ORELSE (code >= 97 ANDALSO code <= 122) ORELSE code = 32 ORELSE code = 45 THEN kept$ = kept$ + CHR$(code)
+    NEXT i
+    RETURN RulePlotClean$(kept$, n)
+ENDFUNC
+
 ' The size of a block for a step: [width, height].
 FUNC RuleBuildSize(do$, size$)
     DIM sizes = {"sea": [[5, 5], [8, 6], [11, 8]], "lake": [[4, 4], [6, 5], [8, 6]], "forest": [[4, 4], [6, 5], [9, 7]], "field": [[3, 3], [5, 4], [7, 5]], "house": [[5, 4], [7, 5], [9, 6]]}
@@ -75,7 +88,7 @@ FUNC RuleBuildCheck(w, st)
         IF INDEXOF(["flowers", "sand", "stone", "bush", "grass"], kind$) < 0 THEN kind$ = "flowers"
         out{"kind"} = kind$
     ELSEIF do$ = "house" THEN
-        out{"owner"} = RulePlotClean$(st{"owner"} ?? "", 20)
+        out{"owner"} = RuleBuildName$(st{"owner"} ?? "", 20)
     ELSEIF do$ = "animal" ORELSE do$ = "thing" THEN
         DIM whats = RuleBuildWhats()
         DIM what$ = RuleBuildWord$(st{"what"} ?? "")
@@ -91,15 +104,15 @@ FUNC RuleBuildCheck(w, st)
         IF NOT MAP.EXISTS(whats, what$) THEN RETURN NONE
         IF whats{what$}[1] <> (do$ = "animal") THEN RETURN NONE
         out{"what"} = what$
-        out{"name"} = RulePlotClean$(st{"name"} ?? "", 20)
+        out{"name"} = RuleBuildName$(st{"name"} ?? "", 20)
         IF out{"name"} = "" THEN out{"name"} = whats{what$}[0]
     ELSEIF do$ = "villager" THEN
-        out{"name"} = RulePlotClean$(st{"name"} ?? "", 20)
+        out{"name"} = RuleBuildName$(st{"name"} ?? "", 20)
         IF out{"name"} = "" THEN
             DIM names = ["Ole", "Greta", "Hannes", "Lotte", "Jupp", "Frieda"]
             out{"name"} = names[MAP.SIZE(w{"npcs"}) MOD 6]
         ENDIF
-        out{"role"} = RulePlotClean$(st{"role"} ?? "", 40)
+        out{"role"} = RuleBuildName$(st{"role"} ?? "", 40)
         IF out{"role"} = "" THEN out{"role"} = "ein Nachbar"
     ENDIF
     RETURN out
@@ -205,6 +218,20 @@ FUNC RuleBuildCover(w, job, steps)
             NEXT k
         ENDIF
     NEXT i
+    ' new land comes before what stands on it
+    DIM first = []
+    DIM rest = []
+    FOR k = 0 TO LEN(out) - 1
+        IF out[k]{"do"} = "grow" THEN
+            first = APPEND(first, out[k])
+        ELSE
+            rest = APPEND(rest, out[k])
+        ENDIF
+    NEXT k
+    out = first
+    FOR k = 0 TO LEN(rest) - 1
+        out = APPEND(out, rest[k])
+    NEXT k
     ' a house the wish did not ask for goes when a villager came in its place
     IF INDEXOF(kinds, "house") < 0 ANDALSO INDEXOF(kinds, "way") < 0 ANDALSO INDEXOF(kinds, "villager") >= 0 THEN
         DIM kept = []
@@ -389,6 +416,15 @@ FUNC RuleBuildTaken(w)
     FOR EACH name$ IN MAP.KEYS(w{"players"})
         taken{STR$(w{"players"}{name$}{"x"}) + "," + STR$(w{"players"}{name$}{"y"})} = TRUE
     NEXT
+    ' where players arrive, and a tile around it
+    DIM spawn = w{"spawn"} ?? [19, 18]
+    DIM sx = 0
+    DIM sy = 0
+    FOR sy = spawn[1] - 1 TO spawn[1] + 1
+        FOR sx = spawn[0] - 1 TO spawn[0] + 3
+            taken{STR$(sx) + "," + STR$(sy)} = TRUE
+        NEXT sx
+    NEXT sy
     RETURN taken
 ENDFUNC
 
@@ -484,7 +520,12 @@ ENDSUB
 ' Does one step; TRUE when something was built.
 FUNC RuleBuildDo(w, b, job, st)
     DIM do$ = st{"do"}
-    IF do$ = "grow" THEN RETURN RuleBuildGrow(w, st{"side"}, st{"n"})
+    IF do$ = "grow" THEN
+        IF NOT RuleBuildGrow(w, st{"side"}, st{"n"}) THEN RETURN FALSE
+        DIM moved = IIF(st{"side"} = "west", [st{"n"}, 0], IIF(st{"side"} = "north", [0, st{"n"}], [0, 0]))
+        IF LEN(job{"house"}) = 2 THEN job{"house"} = [job{"house"}[0] + moved[0], job{"house"}[1] + moved[1]]
+        RETURN TRUE
+    ENDIF
     IF do$ = "road" THEN
         DIM from = RuleBuildTarget(w, job, st{"where"})
         RETURN RuleBuildRoad(w, from[0], from[1])
@@ -608,6 +649,8 @@ FUNC RuleBuildGrow(w, side$, n)
     NEXT y
     w{"map"} = {"w": nw, "h": nh, "v": m{"v"} + 1, "tiles": tiles}
     IF dx <> 0 ORELSE dy <> 0 THEN
+        DIM spawn = w{"spawn"} ?? [19, 18]
+        w{"spawn"} = [spawn[0] + dx, spawn[1] + dy]
         FOR EACH id$ IN MAP.KEYS(w{"npcs"})
             DIM npc = w{"npcs"}{id$}
             npc{"x"} = npc{"x"} + dx

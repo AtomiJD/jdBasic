@@ -120,7 +120,9 @@ FUNC RuleJoin(w, name$)
         FOR EACH ch IN -name$
             tint = (tint * 31 + ASC(ch)) MOD 9973
         NEXT
-        players{name$} = {"name": name$, "x": 19 + MAP.SIZE(players) MOD 3, "y": 18, "dir": 0, "tint": tint MOD 8, "last_step": 0, "last_seen": KNow()}
+        ' where players arrive; the builder moves it along when the land grows
+        DIM spawn = w{"spawn"} ?? [19, 18]
+        players{name$} = {"name": name$, "x": spawn[0] + MAP.SIZE(players) MOD 3, "y": spawn[1], "dir": 0, "tint": tint MOD 8, "last_step": 0, "last_seen": KNow()}
         KEmit(w, {"type": "join", "who": name$})
     ENDIF
     players{name$}{"last_seen"} = KNow()
