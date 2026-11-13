@@ -1,7 +1,9 @@
 ' Test of the state folder: a world with a patch and a player is killed and
 ' started again; the patch, the cat it brought, the player's place and token
 ' and the world's clock are all still there. A world file that cannot be
-' read is put aside and the patches still come back.
+' read is put aside and the patches still come back. A name is claimed with a PIN, refused with
+' another, locked after five wrong ones and freed by the keeper; the claim
+' and the player's profile outlive the restart.
 '
 '   jdBasic jdb/wunschwelt/test_persist.jdb      (from the repository root)
 
@@ -61,8 +63,24 @@ ENDFUNC
 
 ' ---- first life ----
 DIM server_pid = StartServer(1)
-DIM joined = Post("/join", {"name": "Anna"})
+DIM joined = Post("/join", {"name": "Anna", "pin": "1234"})
 DIM token$ AS STRING = joined{"token"}
+Check("the first join claims the name", joined{"ok"} ANDALSO joined{"name"} = "Anna")
+Check("another PIN does not get in", Post("/join", {"name": "Anna", "pin": "9999"}){"error"} = "wrong_pin")
+Check("nor does the name in other letters", Post("/join", {"name": "ANNA", "pin": "9999"}){"error"} = "wrong_pin")
+DIM again = Post("/join", {"name": "anna", "pin": "1234"})
+Check("the right PIN gets in under the name as first written", again{"ok"} ANDALSO again{"name"} = "Anna")
+token$ = again{"token"}
+Check("a PIN is 4 to 8 digits", Post("/join", {"name": "Cleo", "pin": "12a4"}){"error"} = "pin" ANDALSO Post("/join", {"name": "Cleo", "pin": "123"}){"error"} = "pin")
+DIM bert = Post("/join", {"name": "Bert", "pin": "4711"})
+DIM tries AS INTEGER
+FOR tries = 1 TO 5
+    DIM wrong = Post("/join", {"name": "Bert", "pin": "0000"})
+NEXT tries
+Check("five wrong PINs lock the name, the right one too", Post("/join", {"name": "Bert", "pin": "4711"}){"error"} = "locked")
+Check("the keeper frees a name", Post("/rule", {"key": key$, "name": "pin_reset", "args": {"name": "bert"}}){"ok"})
+Check("and it is claimed again with a new PIN", Post("/join", {"name": "Bert", "pin": "5555"}){"ok"})
+Check("the PINs are not kept as they were typed", INSTR(TXTREADER$(out$ + "/state/accounts.json"), CHR$(34) + "5555" + CHR$(34)) < 0 ANDALSO INSTR(TXTREADER$(out$ + "/state/accounts.json"), CHR$(34) + "1234" + CHR$(34)) < 0)
 DIM r = Post("/sync", {"token": token$, "mapv": 1})
 DIM i AS INTEGER
 FOR i = 1 TO 2
@@ -89,7 +107,10 @@ DIM after = Stats()
 Check("the patch is back after the restart", after{"version"} = base + 1 ANDALSO after{"stored"} = 1)
 Check("the restart is counted", after{"restarts"} = 1)
 Check("the world's clock went on from the last save, at most a few seconds back", after{"uptime_s"} >= clock1 - 4)
-Check("the player is still in the world", after{"players"} = 1)
+Check("the players are still in the world", after{"players"} = 2)
+Check("the claim outlives the restart", Post("/join", {"name": "Anna", "pin": "9999"}){"error"} = "wrong_pin")
+DIM saved = JSON.PARSE(TXTREADER$(out$ + "/state/world.json")){"world"}
+Check("the player's profile is kept with the world", MAP.EXISTS(saved, "profiles") ANDALSO MAP.EXISTS(saved{"profiles"}, "Anna") ANDALSO saved{"profiles"}{"Anna"}{"money"} = 0 ANDALSO NOT MAP.EXISTS(saved, "accounts"))
 r = Post("/sync", {"token": token$, "mapv": 1})
 Check("the old token still counts", r{"ok"})
 Check("the player stands where she stood", r{"ok"} ANDALSO r{"x"} = at_x ANDALSO r{"y"} = at_y)

@@ -65,7 +65,7 @@ From the repository root:
 ```
 WW_PATCH_KEY=<key> WW_LLM_URL=http://cortex:8082/v1/chat/completions \
   build/jdBasic.exe jdb/wunschwelt/server.jdb [port] [seconds]
-build/jdBasic.exe jdb/wunschwelt/client.jdb <name> [server] [seconds]
+WW_PIN=<pin> build/jdBasic.exe jdb/wunschwelt/client.jdb <name> [server] [seconds]
 build/jdBasic.exe jdb/wunschwelt/bot.jdb <name> <server> <seconds> "u,u,l,say:Hallo"
 WW_PATCH_KEY=<key> build/jdBasic.exe jdb/wunschwelt/tools/patch.jdb \
   jdb/wunschwelt/patches/010_cat.jdb "Mimi, die Katze" [server]
@@ -77,14 +77,26 @@ patch over HTTP; without `WW_LLM_URL` an NPC answers a fixed line. In
 PowerShell set the two with `$env:WW_PATCH_KEY = "..."`.
 
 Limits of the kernel: 40 players, names of 1 to 16 letters, digits or `_`,
+a PIN of 4 to 8 digits for each name,
 four questions at the model at once, and 2.5 s between two questions of one
 player.
+
+A name belongs to whoever first joins with it and a PIN; later joins must
+bring the same PIN, without regard to the case of the name. Five wrong PINs
+lock the name for a minute; the keeper frees a name with the rule call
+`pin_reset` (`{"name"}`). Only a salted PBKDF2 hash is kept, in `accounts.json` of
+the state folder, apart from the world, so no rule or patch can read it.
+What a player owns and has done is the profile `w{"profiles"}{name}` (money,
+potion, items, album, quests, achievements, affection, visited fields),
+kept with the world.
 
 ## In the browser
 
 `client.jdb` is the same file in the window and in the browser. In the
-playground it reads `?name=` and the page's origin from `/url_params.json`
-and reaches the world under `<origin>/wunschwelt/api`. The browser runtime
+playground it reads `?name=` and the page's origin from `/url_params.json`.
+The start page checks name and PIN at `api/join` first and hands the PIN to
+the game through `sessionStorage` (`jdb_params`, which the runtime page
+merges into `/url_params.json`), never in the address. The game reaches the world under `<origin>/wunschwelt/api`. The browser runtime
 has `HTTP.GET$`, `HTTP.POST$` and `HTTP.STATUSCODE` only.
 
 Locally, with the world server running:

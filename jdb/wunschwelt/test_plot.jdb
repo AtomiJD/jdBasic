@@ -73,7 +73,7 @@ SLEEP 1500
 DIM first = Admin("plot", {})
 Check("a fresh world starts in act one", first{"ok"} ANDALSO first{"plot"}{"act"} = 1 ANDALSO first{"plot"}{"title"} = "Das Dorf erwacht")
 
-DIM token$ AS STRING = Post("/join", {"name": "Anna"}){"token"}
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
 DIM r = Post("/sync", {"token": token$, "mapv": 1, "plotv": -1})
 Check("the chronicle travels with the first sync", MAP.EXISTS(r, "plot") ANDALSO r{"plot"}{"act"} = 1 ANDALSO LEN(r{"plot"}{"threads"}) = 2)
 DIM plotv AS INTEGER = r{"plotv"}
@@ -81,8 +81,8 @@ DIM since AS INTEGER = r{"seq"}
 r = Post("/sync", {"token": token$, "mapv": 1, "plotv": plotv, "since": since})
 Check("and not again while it is unchanged", NOT MAP.EXISTS(r, "plot"))
 
-DIM other$ AS STRING = Post("/join", {"name": "Ben"}){"token"}
-DIM third$ AS STRING = Post("/join", {"name": "Cleo"}){"token"}
+DIM other$ AS STRING = Post("/join", {"name": "Ben", "pin": "1234"}){"token"}
+DIM third$ AS STRING = Post("/join", {"name": "Cleo", "pin": "1234"}){"token"}
 DIM i AS INTEGER
 FOR i = 1 TO 3
     SLEEP 200

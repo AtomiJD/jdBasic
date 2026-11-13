@@ -32,7 +32,7 @@ HTTP.SETTIMEOUT(5)
 DIM code = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=0"))
 Check(code{"version"} >= 1 ANDALSO LEN(code{"patches"}) >= 1, "the server hands out no client code")
 
-DIM joined = Post("/join", {"name": "Preflight"})
+DIM joined = Post("/join", {"name": "Preflight", "pin": "1234"})
 Check(joined{"ok"}, "join was refused")
 DIM token$ AS STRING = "" + (joined{"token"} ?? "")
 

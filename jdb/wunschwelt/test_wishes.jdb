@@ -48,8 +48,8 @@ ENDFUNC
 DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "40"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
 SLEEP 1500
 
-DIM token$ AS STRING = Post("/join", {"name": "Anna"}){"token"}
-DIM other$ AS STRING = Post("/join", {"name": "Ben"}){"token"}
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM other$ AS STRING = Post("/join", {"name": "Ben", "pin": "1234"}){"token"}
 DIM r = Post("/sync", {"token": token$, "mapv": 1, "wishv": -1})
 Check("an empty board travels with the first sync", MAP.EXISTS(r, "wishes") ANDALSO LEN(r{"wishes"}) = 0)
 DIM has_board AS BOOLEAN = FALSE

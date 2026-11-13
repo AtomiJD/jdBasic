@@ -2,6 +2,9 @@
 '
 '   jdBasic jdb/wunschwelt/client.jdb [name] [server] [seconds]
 '
+' The PIN of the name comes from WW_PIN; in the browser the start page
+' hands it over with the page parameters, never in the address.
+'
 ' The kernel opens the window, joins the world, fetches the client code the
 ' server hands out and calls ClientFrame(c) once per frame. It knows nothing
 ' of the game: tiles, figures, keys and the talk with the server are all in
@@ -20,6 +23,7 @@
 '   has_text           TRUE once the runtime has sent typed text; an older one never does
 '   need_code          set by the client code when the server is ahead
 '   need_join          set when the server no longer knows the token
+'   join_error         why the server did not let us in; no join is tried again
 '   errors, last_error what went wrong in the client code
 '   quit               ends the program
 
@@ -28,6 +32,7 @@ OPTION "EXPLICIT"
 DIM cli = OS.ARGS()
 DIM C = {"name": "Gast", "srv": "http://127.0.0.1:8100", "token": "", "version": 0, "code_id": "", "error_at": 0,"frames": 0, "keyq": [], "textq": "", "has_text": FALSE,"need_code": FALSE, "need_join": FALSE, "errors": 0, "last_error": "", "quit": FALSE}
 DIM run_seconds AS INTEGER = 0
+DIM pin$ AS STRING = GETENV$("WW_PIN")
 IF LEN(cli) > 1 THEN C{"name"} = cli[1]
 IF LEN(cli) > 2 THEN C{"srv"} = cli[2]
 IF LEN(cli) > 3 THEN run_seconds = VAL(cli[3])
@@ -41,6 +46,7 @@ IF FILE.ISDIR("/assets") THEN C{"assets"} = "/assets"
 TRY
     DIM page = JSON.PARSE(TXTREADER$("/url_params.json"))
     IF MAP.EXISTS(page, "name") THEN C{"name"} = page{"name"}
+    IF MAP.EXISTS(page, "pin") THEN pin$ = "" + page{"pin"}
     IF MAP.EXISTS(page, "__origin") THEN C{"srv"} = page{"__origin"} + "/wunschwelt/api"
 CATCH
 ENDTRY
@@ -88,9 +94,15 @@ SUB PullCode()
 ENDSUB
 
 SUB JoinWorld()
-    DIM r = JSON.PARSE(HTTP.POST$(C{"srv"} + "/join", JSON.STRINGIFY$({"name": C{"name"}}), "text/plain"))
-    IF r{"ok"} THEN C{"token"} = r{"token"}
     C{"need_join"} = FALSE
+    IF (C{"join_error"} ?? "") <> "" THEN RETURN
+    DIM r = JSON.PARSE(HTTP.POST$(C{"srv"} + "/join", JSON.STRINGIFY$({"name": C{"name"}, "pin": pin$}), "text/plain"))
+    IF r{"ok"} THEN
+        C{"token"} = r{"token"}
+        C{"name"} = r{"name"} ?? C{"name"}
+    ELSEIF INDEXOF(["name", "pin", "wrong_pin", "locked"], "" + (r{"error"} ?? "")) >= 0 THEN
+        C{"join_error"} = r{"error"}
+    ENDIF
 ENDSUB
 
 ' The largest whole scale at which the 640 x 384 view fits the primary display.
@@ -130,6 +142,7 @@ DO WHILE NOT C{"quit"}
         C{"last_error"} = ERRMSG$
         C{"error_at"} = TICK()
     ENDTRY
+    IF (C{"join_error"} ?? "") <> "" THEN TEXT 4, 30, "Kein Einlass: " + IIF(C{"join_error"} = "locked", "der Name ist eine Minute gesperrt", "Name oder PIN passen nicht") + ". Bitte auf der Startseite neu anmelden.", 255, 200, 120
     IF C{"last_error"} <> "" ANDALSO TICK() - C{"error_at"} < 5000 THEN TEXT 4, 16, LEFT$(C{"last_error"}, 100), 255, 120, 120
     SCREENFLIP
     IF run_seconds > 0 ANDALSO TICK() - started > run_seconds * 1000 THEN C{"quit"} = TRUE

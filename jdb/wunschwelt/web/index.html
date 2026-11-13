@@ -24,6 +24,8 @@
   dd { margin: .1rem 0 0; color: #b9c2b4; line-height: 1.4; }
   details p { font-size: .95rem; }
   .no { color: #c9a09a; }
+  #pin { flex: 0 0 6.5rem; }
+  #why { min-height: 1.4em; margin: .6rem 0 0; color: #e8a090; }
 </style>
 </head>
 <body>
@@ -33,9 +35,11 @@
      Lauf herum, sprich mit Marta vor der Taverne und sag ihr, was dem Dorf fehlt.</p>
   <form id="enter">
     <input id="name" maxlength="16" pattern="[A-Za-z0-9_]{1,16}" placeholder="Dein Name" required autofocus>
+    <input id="pin" type="password" inputmode="numeric" maxlength="8" pattern="[0-9]{4,8}" placeholder="PIN" autocomplete="current-password" required>
     <button>Ins Dorf</button>
   </form>
-  <small>Buchstaben, Ziffern und _ · Pfeile oder WASD: laufen · Enter: sprechen · C: Chronik · M: Musik aus</small>
+  <p id="why" role="alert"></p>
+  <small>Name aus Buchstaben, Ziffern und _; die PIN (4 bis 8 Ziffern) sichert ihn beim ersten Mal für dich · Pfeile oder WASD: laufen · Enter: sprechen · C: Chronik · M: Musik aus</small>
   <details>
     <summary>Was du dir wünschen kannst</summary>
     <dl>
@@ -55,12 +59,37 @@
 </main>
 <script>
   const field = document.getElementById('name');
+  const pin = document.getElementById('pin');
+  const why = document.getElementById('why');
+  const reasons = {
+    name: 'Der Name darf nur Buchstaben, Ziffern und _ haben.',
+    pin: 'Die PIN hat 4 bis 8 Ziffern.',
+    wrong_pin: 'Die PIN passt nicht zu diesem Namen. Der Name gehört schon jemandem.',
+    locked: 'Zu viele falsche PINs: der Name ist eine Minute gesperrt.',
+    full: 'Das Dorf ist gerade voll. Versuch es gleich noch einmal.'
+  };
   try { field.value = localStorage.getItem('ww_name') || ''; } catch (err) {}
-  document.getElementById('enter').addEventListener('submit', (ev) => {
+  if (field.value) pin.focus();
+  document.getElementById('enter').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const name = field.value.trim();
-    try { localStorage.setItem('ww_name', name); } catch (err) {}
-    location.href = 'play/?prog=client&fs=1&assets=assets.txt&name=' + encodeURIComponent(name);
+    why.textContent = '';
+    let answer = null;
+    try {
+      const r = await fetch('api/join', { method: 'POST', headers: { 'Content-Type': 'text/plain' },
+                                          body: JSON.stringify({ name: name, pin: pin.value.trim() }) });
+      answer = await r.json();
+    } catch (err) {
+      why.textContent = 'Das Dorf ist gerade nicht erreichbar.';
+      return;
+    }
+    if (!answer.ok) {
+      why.textContent = reasons[answer.error] || 'Das Dorf lässt gerade niemanden herein.';
+      return;
+    }
+    try { localStorage.setItem('ww_name', answer.name); } catch (err) {}
+    try { sessionStorage.setItem('jdb_params', JSON.stringify({ name: answer.name, pin: pin.value.trim() })); } catch (err) {}
+    location.href = 'play/?prog=client&fs=1&assets=assets.txt&name=' + encodeURIComponent(answer.name);
   });
 </script>
 </body>

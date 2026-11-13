@@ -76,7 +76,7 @@ DIM broken = Post("/patch", {"key": key$, "title": "broken", "server": "SUB Rule
 Check("a patch that does not parse is refused", NOT broken{"ok"})
 Check("and leaves the version alone", broken{"version"} = base + 1)
 
-DIM probe = Post("/join", {"name": "Probe"})
+DIM probe = Post("/join", {"name": "Probe", "pin": "1234"})
 DIM seen = Post("/sync", {"token": probe{"token"}, "since": -1, "mapv": 0})
 Check("a new client gets the map", MAP.EXISTS(seen, "map") ANDALSO LEN(seen{"map"}{"tiles"}) = 1200)
 DIM has_cat AS INTEGER = FALSE

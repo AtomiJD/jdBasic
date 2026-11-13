@@ -84,7 +84,7 @@ SLEEP 1500
 DIM set = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
 Check("the keeper sets the builder's pace", set{"ok"} ANDALSO set{"builder"}{"step_ms"} = 300)
 
-DIM token$ AS STRING = Post("/join", {"name": "Anna"}){"token"}
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
 DIM r = Post("/sync", {"token": token$, "mapv": 1})
 DIM since AS INTEGER = r{"seq"}
 DIM i AS INTEGER
@@ -176,7 +176,7 @@ DIM w2 = World()
 Check("the map grows west and the village moves along", w2{"map"}{"w"} = w1{"map"}{"w"} + 8 ANDALSO Marta(w2)[2] = marta_x + 8)
 Check("a new house with a door stands", Tiles(w2, 7) = doors0 + 1)
 Check("with Anna's sign", LEN(Folk(w2, "b_sign_")) = 1 ANDALSO Folk(w2, "b_sign_")[0][1] = "Haus von Anna")
-DIM ben = Post("/sync", {"token": Post("/join", {"name": "Ben"}){"token"}, "mapv": 1})
+DIM ben = Post("/sync", {"token": Post("/join", {"name": "Ben", "pin": "1234"}){"token"}, "mapv": 1})
 Check("a newcomer arrives where the village moved", ben{"x"} >= 27 ANDALSO ben{"x"} <= 29 ANDALSO ben{"y"} = 18)
 ' the tile below the new door is road
 DIM mw = w2{"map"}{"w"}

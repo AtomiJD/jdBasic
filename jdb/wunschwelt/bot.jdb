@@ -16,7 +16,7 @@ DIM seconds AS INTEGER = VAL(cli[3])
 DIM steps = SPLIT(cli[4], ",")
 
 HTTP.SETTIMEOUT(5)
-DIM joined = JSON.PARSE(HTTP.POST$(srv$ + "/join", JSON.STRINGIFY$({"name": name$}), "text/plain"))
+DIM joined = JSON.PARSE(HTTP.POST$(srv$ + "/join", JSON.STRINGIFY$({"name": name$, "pin": "1234"}), "text/plain"))
 DIM token$ AS STRING = "" + (joined{"token"} ?? "")
 DIM since AS INTEGER = -1
 DIM syncs AS INTEGER = 0

@@ -42,7 +42,9 @@
 '                  HTTP across a restart; empty = every start is a fresh world
 '
 ' HTTP (bodies are JSON sent as text/plain, so a browser needs no preflight):
-'   POST /join  {"name"}                    -> {"ok", "token", "version"}
+'   POST /join  {"name", "pin"}             -> {"ok", "token", "version", "name"} or
+'                                              {"ok": false, "error": name|pin|full|wrong_pin|locked}
+'   POST /rule  {"key","name": "pin_reset","args": {"name"}}  frees a name
 '   POST /sync  {"token", ...}              -> what RuleSync answers
 '   GET  /code?since=N                      -> {"version", "patches": [client code]}
 '   POST /patch {"key","title","server","client"} -> {"ok", "version"} or {"ok": false, "error"}
@@ -87,6 +89,10 @@ DIM stored = []
 DIM pending = []
 ' when each player last asked the model
 DIM last_ask = {}
+' who owns a name: lower-case name -> {"name", "salt", "hash", "tries", "locked"}
+DIM accounts = {}
+DIM PIN_TRIES AS INTEGER = 5
+DIM PIN_LOCK_MS AS INTEGER = 60000
 
 ' ---- services for rules ----
 
@@ -278,19 +284,83 @@ SUB DropTokens(name$ AS STRING)
     NEXT
 ENDSUB
 
+' ---- accounts ----
+' A name belongs to whoever first joins with it and a PIN of 4 to 8 digits;
+' every later join has to bring the same PIN, and five wrong ones lock the
+' name for a minute. Names are claimed without regard to case. Only a salted
+' hash of the PIN is kept, in accounts.json of the state folder, apart from
+' the world, so no rule and no patch can read it.
+
+FUNC PinHash$(salt$ AS STRING, pin$ AS STRING) AS STRING
+    RETURN CODEC.PBKDF2$(pin$, salt$, 20000, 32)
+ENDFUNC
+
+SUB SaveAccounts()
+    IF state_dir$ = "" THEN RETURN
+    TRY
+        WriteState("accounts.json", JSON.STRINGIFY$({"accounts": accounts}))
+    CATCH
+        KFail("save", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+SUB LoadAccounts()
+    IF state_dir$ = "" ORELSE NOT FILE.EXISTS(state_dir$ + "/accounts.json") THEN RETURN
+    TRY
+        DIM kept = JSON.PARSE(TXTREADER$(state_dir$ + "/accounts.json"))
+        IF NOT ISMAP(kept) ORELSE NOT ISMAP(kept{"accounts"} ?? "") THEN THROW "not an account list"
+        accounts = kept{"accounts"}
+    CATCH
+        PRINT "the accounts could not be read: "; ERRMSG$
+        DIM aside = FILE.MOVE(state_dir$ + "/accounts.json", state_dir$ + "/accounts.unreadable.json", TRUE)
+    ENDTRY
+ENDSUB
+
+' {"ok", "name"} with the name as it was first claimed, or {"ok": false, "error"}.
+FUNC CheckPin(name$ AS STRING, pin$ AS STRING)
+    DIM key$ AS STRING = LCASE$(name$)
+    IF NOT MAP.EXISTS(accounts, key$) THEN
+        DIM salt$ AS STRING = CODEC.UUID$()
+        accounts{key$} = {"name": name$, "salt": salt$, "hash": PinHash$(salt$, pin$), "tries": 0, "locked": 0}
+        SaveAccounts()
+        RETURN {"ok": TRUE, "name": name$}
+    ENDIF
+    DIM a = accounts{key$}
+    IF a{"locked"} > KNow() THEN RETURN {"ok": FALSE, "error": "locked"}
+    IF PinHash$(a{"salt"}, pin$) <> a{"hash"} THEN
+        a{"tries"} = a{"tries"} + 1
+        IF a{"tries"} >= PIN_TRIES THEN
+            a{"locked"} = KNow() + PIN_LOCK_MS
+            a{"tries"} = 0
+        ENDIF
+        SaveAccounts()
+        RETURN {"ok": FALSE, "error": "wrong_pin"}
+    ENDIF
+    IF a{"tries"} > 0 THEN
+        a{"tries"} = 0
+        SaveAccounts()
+    ENDIF
+    RETURN {"ok": TRUE, "name": a{"name"}}
+ENDFUNC
+
 FUNC HANDLEJOIN(request)
     DIM b = BodyOf(request)
     W{"served"} = W{"served"} + 1
     DIM name$ AS STRING = TRIM$("" + (b{"name"} ?? ""))
-    IF NOT REGEX.MATCH("^[A-Za-z0-9_]{1,16}$", name$) THEN RETURN {"ok": FALSE, "error": "a name of 1 to 16 letters or digits"}
-    IF NOT MAP.EXISTS(W{"players"}, name$) ANDALSO MAP.SIZE(W{"players"}) >= MAX_PLAYERS THEN RETURN {"ok": FALSE, "error": "the village is full"}
+    DIM pin$ AS STRING = TRIM$("" + (b{"pin"} ?? ""))
+    IF NOT REGEX.MATCH("^[A-Za-z0-9_]{1,16}$", name$) THEN RETURN {"ok": FALSE, "error": "name"}
+    IF NOT REGEX.MATCH("^[0-9]{4,8}$", pin$) THEN RETURN {"ok": FALSE, "error": "pin"}
+    IF MAP.EXISTS(accounts, LCASE$(name$)) THEN name$ = accounts{LCASE$(name$)}{"name"}
+    IF NOT MAP.EXISTS(W{"players"}, name$) ANDALSO MAP.SIZE(W{"players"}) >= MAX_PLAYERS THEN RETURN {"ok": FALSE, "error": "full"}
+    DIM owner = CheckPin(name$, pin$)
+    IF NOT owner{"ok"} THEN RETURN owner
     DIM answer = {"ok": FALSE}
     TRY
         DIM p = RuleJoin(W, name$)
         DIM token$ AS STRING = CODEC.UUID$()
         DropTokens(name$)
         W{"tokens"}{token$} = name$
-        answer = {"ok": TRUE, "token": token$, "version": W{"version"}}
+        answer = {"ok": TRUE, "token": token$, "version": W{"version"}, "name": name$}
     CATCH
         KFail("RuleJoin", ERRMSG$)
         answer = {"ok": FALSE, "error": "the world could not take you in"}
@@ -349,6 +419,15 @@ ENDFUNC
 FUNC HANDLERULE(request)
     DIM b = BodyOf(request)
     IF patch_key$ = "" ORELSE "" + (b{"key"} ?? "") <> patch_key$ THEN RETURN {"__http_status": 403}
+    ' the keeper frees a name, so its owner can claim it again with a new PIN
+    IF "" + (b{"name"} ?? "") = "pin_reset" THEN
+        DIM freed$ AS STRING = LCASE$("" + ((b{"args"} ?? {}){"name"} ?? ""))
+        IF NOT MAP.EXISTS(accounts, freed$) THEN RETURN {"ok": FALSE, "error": "no such name"}
+        DropTokens(accounts{freed$}{"name"})
+        MAP.DELETE(accounts, freed$)
+        SaveAccounts()
+        RETURN {"ok": TRUE}
+    ENDIF
     DIM answer = {"ok": FALSE}
     TRY
         answer = RuleAdmin(W, "" + (b{"name"} ?? ""), b{"args"} ?? {})
@@ -382,6 +461,7 @@ IF LEN(files) = 0 THEN
 ENDIF
 RuleMakeWorld(W)
 LoadState()
+LoadAccounts()
 TRY
     RuleWake(W)
 CATCH

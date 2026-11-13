@@ -127,7 +127,21 @@ FUNC RuleJoin(w, name$)
     ENDIF
     players{name$}{"last_seen"} = KNow()
     IF NOT MAP.EXISTS(players{name$}, "look") ANDALSO MAP.EXISTS(w, "looks") ANDALSO MAP.EXISTS(w{"looks"}, name$) THEN players{name$}{"look"} = w{"looks"}{name$}
+    DIM kept = RuleProfile(w, name$)
     RETURN players{name$}
+ENDFUNC
+
+' What a player owns and has done, kept while the player is away. A field
+' a later stage needs is added here when the profile lacks it.
+FUNC RuleProfile(w, name$)
+    IF NOT MAP.EXISTS(w, "profiles") THEN w{"profiles"} = {}
+    IF NOT MAP.EXISTS(w{"profiles"}, name$) THEN w{"profiles"}{name$} = {"since": KNow()}
+    DIM prof = w{"profiles"}{name$}
+    DIM fresh = {"money": 0, "potion": 100, "potion_at": KNow(), "items": [], "album": {}, "quests": {}, "done": [], "affection": {}, "visited": 0}
+    FOR EACH field$ IN MAP.KEYS(fresh)
+        IF NOT MAP.EXISTS(prof, field$) THEN prof{field$} = fresh{field$}
+    NEXT
+    RETURN prof
 ENDFUNC
 
 FUNC RuleSync(w, p, msg)

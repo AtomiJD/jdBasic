@@ -78,7 +78,7 @@ ENDFUNC
 
 DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "60"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
 SLEEP 1500
-DIM token$ AS STRING = Post("/join", {"name": "Anna"}){"token"}
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
 DIM r = Post("/sync", {"token": token$, "mapv": 1, "wishv": -1})
 DIM since AS INTEGER = r{"seq"}
 DIM i AS INTEGER

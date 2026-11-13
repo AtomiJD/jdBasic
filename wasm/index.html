@@ -625,6 +625,9 @@
       // (e.g. ?name=... personalizes a shared game link).
       try {
         const params = Object.fromEntries(qp.entries());
+        // A page of the same site can hand over what must not stand in the
+        // address (a PIN) as JSON under sessionStorage 'jdb_params'.
+        try { Object.assign(params, JSON.parse(sessionStorage.getItem('jdb_params') || '{}')); } catch(e){}
         params.__origin = location.origin;   // lets a program talk back to its own host
         params.__lang = (navigator.language || 'de');
         Mod.FS.writeFile('/url_params.json', JSON.stringify(params));
