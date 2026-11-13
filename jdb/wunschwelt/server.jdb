@@ -92,7 +92,16 @@ DIM last_ask = {}
 ' who owns a name: lower-case name -> {"name", "salt", "hash", "tries", "locked"}
 DIM accounts = {}
 DIM PIN_TRIES AS INTEGER = 5
-DIM PIN_LOCK_MS AS INTEGER = 60000
+DIM PIN_LOCK_S AS INTEGER = 60
+' at most this many names; per sender this many new ones a minute and PIN
+' hashes a second, and for all together this many hashes a second, so a
+' stream of joins can neither fill the disk nor stall the world
+DIM MAX_ACCOUNTS AS INTEGER = 5000
+DIM NEW_PER_MIN AS INTEGER = 5
+DIM HASH_PER_S AS INTEGER = 5
+DIM HASH_ALL_PER_S AS INTEGER = 60
+DIM senders = {}
+DIM all_hashes = {"second": 0, "hashes": 0}
 
 ' ---- services for rules ----
 
@@ -316,31 +325,85 @@ SUB LoadAccounts()
     ENDTRY
 ENDSUB
 
-' {"ok", "name"} with the name as it was first claimed, or {"ok": false, "error"}.
-FUNC CheckPin(name$ AS STRING, pin$ AS STRING)
+' The bucket of one sender (the address the web server in front names): how
+' many new names it claimed this minute and how many PINs it had hashed this
+' second. A sender cannot use up what the others get. A request without the
+' header comes from this machine itself and is not counted.
+FUNC SenderOf(request)
+    DIM headers = request{"headers"} ?? {}
+    DIM who$ AS STRING = "" + (headers{"x-real-ip"} ?? "local")
+    IF MAP.SIZE(senders) > 5000 THEN senders = {}
+    IF NOT MAP.EXISTS(senders, who$) THEN senders{who$} = {"minute": 0, "new": 0, "second": 0, "hashes": 0, "free": who$ = "local"}
+    RETURN senders{who$}
+ENDFUNC
+
+' TRUE while the sender may have one more PIN hashed this second, and the
+' world as a whole too.
+FUNC HashAllowed(bucket) AS BOOLEAN
+    DIM sec AS INTEGER = INT(NOW_EPOCH())
+    IF bucket{"second"} <> sec THEN
+        bucket{"second"} = sec
+        bucket{"hashes"} = 0
+    ENDIF
+    IF all_hashes{"second"} <> sec THEN
+        all_hashes{"second"} = sec
+        all_hashes{"hashes"} = 0
+    ENDIF
+    bucket{"hashes"} = bucket{"hashes"} + 1
+    all_hashes{"hashes"} = all_hashes{"hashes"} + 1
+    RETURN (bucket{"free"} ORELSE bucket{"hashes"} <= HASH_PER_S) ANDALSO all_hashes{"hashes"} <= HASH_ALL_PER_S
+ENDFUNC
+
+' Names that were joined once and not seen for two weeks are freed with
+' their profile, so names claimed and left behind do not fill the list.
+SUB FreeForgotten()
+    DIM before AS DOUBLE = NOW_EPOCH() - 14 * 86400
+    FOR EACH key$ IN MAP.KEYS(accounts)
+        DIM a = accounts{key$}
+        IF (a{"joins"} ?? 1) <= 1 ANDALSO (a{"seen"} ?? 0) < before ANDALSO NOT MAP.EXISTS(W{"players"}, a{"name"}) THEN
+            IF MAP.EXISTS(W, "profiles") ANDALSO MAP.EXISTS(W{"profiles"}, a{"name"}) THEN MAP.DELETE(W{"profiles"}, a{"name"})
+            MAP.DELETE(accounts, key$)
+        ENDIF
+    NEXT
+    SaveAccounts()
+ENDSUB
+
+' {"ok", "name", "claimed"} with the name as it was first claimed, or {"ok": false, "error"}.
+FUNC CheckPin(name$ AS STRING, pin$ AS STRING, bucket)
     DIM key$ AS STRING = LCASE$(name$)
     IF NOT MAP.EXISTS(accounts, key$) THEN
+        DIM minute AS INTEGER = INT(NOW_EPOCH()) \ 60
+        IF bucket{"minute"} <> minute THEN
+            bucket{"minute"} = minute
+            bucket{"new"} = 0
+        ENDIF
+        IF NOT bucket{"free"} ANDALSO bucket{"new"} >= NEW_PER_MIN THEN RETURN {"ok": FALSE, "error": "full"}
+        IF MAP.SIZE(accounts) >= MAX_ACCOUNTS THEN FreeForgotten()
+        IF MAP.SIZE(accounts) >= MAX_ACCOUNTS THEN RETURN {"ok": FALSE, "error": "full"}
+        IF NOT HashAllowed(bucket) THEN RETURN {"ok": FALSE, "error": "full"}
+        bucket{"new"} = bucket{"new"} + 1
         DIM salt$ AS STRING = CODEC.UUID$()
-        accounts{key$} = {"name": name$, "salt": salt$, "hash": PinHash$(salt$, pin$), "tries": 0, "locked": 0}
+        accounts{key$} = {"name": name$, "salt": salt$, "hash": PinHash$(salt$, pin$), "tries": 0, "locked": 0, "joins": 1, "seen": NOW_EPOCH()}
         SaveAccounts()
-        RETURN {"ok": TRUE, "name": name$}
+        RETURN {"ok": TRUE, "name": name$, "claimed": TRUE}
     ENDIF
     DIM a = accounts{key$}
-    IF a{"locked"} > KNow() THEN RETURN {"ok": FALSE, "error": "locked"}
+    IF a{"locked"} > NOW_EPOCH() THEN RETURN {"ok": FALSE, "error": "locked"}
+    IF NOT HashAllowed(bucket) THEN RETURN {"ok": FALSE, "error": "full"}
     IF PinHash$(a{"salt"}, pin$) <> a{"hash"} THEN
         a{"tries"} = a{"tries"} + 1
         IF a{"tries"} >= PIN_TRIES THEN
-            a{"locked"} = KNow() + PIN_LOCK_MS
+            a{"locked"} = NOW_EPOCH() + PIN_LOCK_S
             a{"tries"} = 0
         ENDIF
         SaveAccounts()
         RETURN {"ok": FALSE, "error": "wrong_pin"}
     ENDIF
-    IF a{"tries"} > 0 THEN
-        a{"tries"} = 0
-        SaveAccounts()
-    ENDIF
-    RETURN {"ok": TRUE, "name": a{"name"}}
+    a{"tries"} = 0
+    a{"joins"} = (a{"joins"} ?? 1) + 1
+    a{"seen"} = NOW_EPOCH()
+    SaveAccounts()
+    RETURN {"ok": TRUE, "name": a{"name"}, "claimed": FALSE}
 ENDFUNC
 
 FUNC HANDLEJOIN(request)
@@ -352,7 +415,7 @@ FUNC HANDLEJOIN(request)
     IF NOT REGEX.MATCH("^[0-9]{4,8}$", pin$) THEN RETURN {"ok": FALSE, "error": "pin"}
     IF MAP.EXISTS(accounts, LCASE$(name$)) THEN name$ = accounts{LCASE$(name$)}{"name"}
     IF NOT MAP.EXISTS(W{"players"}, name$) ANDALSO MAP.SIZE(W{"players"}) >= MAX_PLAYERS THEN RETURN {"ok": FALSE, "error": "full"}
-    DIM owner = CheckPin(name$, pin$)
+    DIM owner = CheckPin(name$, pin$, SenderOf(request))
     IF NOT owner{"ok"} THEN RETURN owner
     DIM answer = {"ok": FALSE}
     TRY
@@ -363,6 +426,12 @@ FUNC HANDLEJOIN(request)
         answer = {"ok": TRUE, "token": token$, "version": W{"version"}, "name": name$}
     CATCH
         KFail("RuleJoin", ERRMSG$)
+        ' a name claimed by a join that failed stays free
+        IF owner{"claimed"} THEN
+            MAP.DELETE(accounts, LCASE$(name$))
+            IF MAP.EXISTS(W{"players"}, name$) THEN MAP.DELETE(W{"players"}, name$)
+            SaveAccounts()
+        ENDIF
         answer = {"ok": FALSE, "error": "the world could not take you in"}
     ENDTRY
     RETURN answer

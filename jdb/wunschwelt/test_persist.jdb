@@ -81,6 +81,15 @@ Check("five wrong PINs lock the name, the right one too", Post("/join", {"name":
 Check("the keeper frees a name", Post("/rule", {"key": key$, "name": "pin_reset", "args": {"name": "bert"}}){"ok"})
 Check("and it is claimed again with a new PIN", Post("/join", {"name": "Bert", "pin": "5555"}){"ok"})
 Check("the PINs are not kept as they were typed", INSTR(TXTREADER$(out$ + "/state/accounts.json"), CHR$(34) + "5555" + CHR$(34)) < 0 ANDALSO INSTR(TXTREADER$(out$ + "/state/accounts.json"), CHR$(34) + "1234" + CHR$(34)) < 0)
+HTTP.SETHEADER("X-Real-IP", "10.0.0.9")
+DIM claims AS INTEGER = 0
+FOR tries = 1 TO 6
+    IF Post("/join", {"name": "Many" + STR$(tries), "pin": "1234"}){"ok"} THEN claims = claims + 1
+NEXT tries
+Check("one sender claims at most five new names a minute", claims = 5)
+HTTP.SETHEADER("X-Real-IP", "10.0.0.10")
+Check("another sender still gets in", Post("/join", {"name": "Dora", "pin": "1234"}){"ok"})
+HTTP.CLEARHEADERS()
 DIM r = Post("/sync", {"token": token$, "mapv": 1})
 DIM i AS INTEGER
 FOR i = 1 TO 2
@@ -107,7 +116,7 @@ DIM after = Stats()
 Check("the patch is back after the restart", after{"version"} = base + 1 ANDALSO after{"stored"} = 1)
 Check("the restart is counted", after{"restarts"} = 1)
 Check("the world's clock went on from the last save, at most a few seconds back", after{"uptime_s"} >= clock1 - 4)
-Check("the players are still in the world", after{"players"} = 2)
+Check("the players are still in the world", after{"players"} = 8)
 Check("the claim outlives the restart", Post("/join", {"name": "Anna", "pin": "9999"}){"error"} = "wrong_pin")
 DIM saved = JSON.PARSE(TXTREADER$(out$ + "/state/world.json")){"world"}
 Check("the player's profile is kept with the world", MAP.EXISTS(saved, "profiles") ANDALSO MAP.EXISTS(saved{"profiles"}, "Anna") ANDALSO saved{"profiles"}{"Anna"}{"money"} = 0 ANDALSO NOT MAP.EXISTS(saved, "accounts"))
