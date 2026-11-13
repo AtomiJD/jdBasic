@@ -101,7 +101,7 @@ DIM NEW_PER_MIN AS INTEGER = 5
 DIM HASH_PER_S AS INTEGER = 5
 DIM HASH_ALL_PER_S AS INTEGER = 60
 DIM senders = {}
-DIM all_hashes = {"second": 0, "hashes": 0}
+DIM all_hashes = {"second": 0, "hashes": 0, "swept": 0}
 
 ' ---- services for rules ----
 
@@ -355,17 +355,22 @@ FUNC HashAllowed(bucket) AS BOOLEAN
 ENDFUNC
 
 ' Names that were joined once and not seen for two weeks are freed with
-' their profile, so names claimed and left behind do not fill the list.
+' their profile, so names claimed and left behind do not fill the list;
+' looked for at most once a minute.
 SUB FreeForgotten()
+    IF NOW_EPOCH() < all_hashes{"swept"} + 60 THEN RETURN
+    all_hashes{"swept"} = NOW_EPOCH()
+    DIM freed AS INTEGER = 0
     DIM before AS DOUBLE = NOW_EPOCH() - 14 * 86400
     FOR EACH key$ IN MAP.KEYS(accounts)
         DIM a = accounts{key$}
         IF (a{"joins"} ?? 1) <= 1 ANDALSO (a{"seen"} ?? 0) < before ANDALSO NOT MAP.EXISTS(W{"players"}, a{"name"}) THEN
             IF MAP.EXISTS(W, "profiles") ANDALSO MAP.EXISTS(W{"profiles"}, a{"name"}) THEN MAP.DELETE(W{"profiles"}, a{"name"})
             MAP.DELETE(accounts, key$)
+            freed = freed + 1
         ENDIF
     NEXT
-    SaveAccounts()
+    IF freed > 0 THEN SaveAccounts()
 ENDSUB
 
 ' {"ok", "name", "claimed"} with the name as it was first claimed, or {"ok": false, "error"}.
