@@ -1000,6 +1000,7 @@ SUB ClientDraw(c)
                     ClientThing(c, row, qx[q], qy[q])
                 ELSE
                     ClientNpc(c, row, qx[q], qy[q])
+                    ClientNpcWear(c, row, qx[q], qy[q])
                 ENDIF
             ELSE
                 DIM pl = players[refs[q]]

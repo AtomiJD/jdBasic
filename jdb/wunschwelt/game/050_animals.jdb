@@ -114,9 +114,10 @@ FUNC RuleWearLook(wear)
     RETURN out
 ENDFUNC
 
-' The built animal a sentence speaks of: one called by its name before one
-' of the sort it names, the nearest within reach fields of the player; ""
-' when there is none.
+' The animal a sentence speaks of: one called by its name, anywhere, before
+' the nearest one of the sort it names within reach fields of the player;
+' animals of the builder and those drawn from a sheet (an npc whose kind is
+' a sort of animal, such as the cat); "" when there is none.
 FUNC RuleAnimalNear$(w, p, low$, reach)
     DIM whats = RuleBuildWhats()
     DIM what$ = ""
@@ -128,13 +129,14 @@ FUNC RuleAnimalNear$(w, p, low$, reach)
     DIM best = 99999
     FOR EACH id$ IN MAP.KEYS(npcs)
         DIM npc = npcs{id$}
-        IF STARTSWITH(id$, "b_") ANDALSO MAP.EXISTS(whats, npc{"what"} ?? "") THEN
-            IF whats{npc{"what"}}[1] THEN
+        DIM kind_of$ = "" + (npc{"what"} ?? npc{"kind"})
+        IF MAP.EXISTS(whats, kind_of$) THEN
+            IF whats{kind_of$}[1] THEN
                 DIM name_key$ = RuleLookColorKey$("" + (npc{"name"} ?? ""))
                 DIM by_name = LEN(name_key$) >= 3 ANDALSO INSTR(low$, name_key$) >= 0
                 DIM dist = MAX([ABS(npc{"x"} - p{"x"}), ABS(npc{"y"} - p{"y"})])
-                DIM rank = dist + IIF(by_name, 0, 1000)
-                IF (by_name ORELSE npc{"what"} = what$) ANDALSO dist <= reach ANDALSO rank < best THEN
+                DIM rank = dist + IIF(by_name, 0, 100000)
+                IF (by_name ORELSE (kind_of$ = what$ ANDALSO dist <= reach)) ANDALSO rank < best THEN
                     best = rank
                     pick$ = id$
                 ENDIF
@@ -163,7 +165,11 @@ FUNC RuleAnimalDress(w, p, said$)
     NEXT
     IF NOT off ANDALSO NOT puts_on THEN RETURN FALSE
     DIM id$ = RuleAnimalNear$(w, p, low$, 15)
-    IF id$ = "" THEN RETURN FALSE
+    IF id$ = "" THEN
+        ' no new animal comes for a sentence that only dresses one
+        KEmit(w, {"type": "build", "who": p{"name"}, "text": RuleDe$("Hier ist kein Tier, dem man das anziehen k{o}nnte")})
+        RETURN TRUE
+    ENDIF
     DIM npc = w{"npcs"}{id$}
     DIM look = npc{"look"} ?? {}
     IF NOT ISMAP(look) THEN look = {}
@@ -510,6 +516,36 @@ FUNC AnimalFondMark(c, row, sx, top)
     NEXT i
     RETURN top - 7
 ENDFUNC
+
+' Where things sit on an animal drawn from a sheet, in the 32 x 32 cell of
+' the map as the animal faces right ("side") and from the front or back:
+' the cat's sheet is drawn at 36 of 48 pixels, 2 left and 3 up of the cell.
+FUNC SheetAnchors()
+    RETURN {"cat": {"side": {"hat": [18, 3], "eye": [21, 11], "neck": [18, 17]}, "front": {"front": TRUE, "hat": [16, 3], "eye": [16, 11], "neck": [16, 17]}}}
+ENDFUNC
+
+' What an animal drawn from a sheet wears, over the sheet: row is
+' [id, name, x, y, kind, look]; the way it faces is the one its painter
+' kept in c (cat_steps, rows down, left, right, up).
+SUB ClientNpcWear(c, row, sx, sy)
+    IF LEN(row) < 6 ORELSE NOT ISMAP(row[5]) THEN RETURN
+    IF NOT MAP.EXISTS(row[5], "wear") THEN RETURN
+    DIM anchors = SheetAnchors()
+    IF NOT MAP.EXISTS(anchors, row[4]) THEN RETURN
+    DIM steps = c{"cat_steps"} ?? {}
+    DIM dir = (steps{LCASE$(row[1])} ?? [0, 0, 0, 0])[2] MOD 4
+    DIM kind = anchors{row[4]}{IIF(dir = 1 ORELSE dir = 2, "side", "front")}
+    DIM look = row[5]
+    ' seen from the back the eyes are hidden
+    IF dir = 3 ANDALSO MAP.EXISTS(look{"wear"}, "eyes") THEN
+        DIM back = {}
+        FOR EACH slot$ IN MAP.KEYS(look{"wear"})
+            IF slot$ <> "eyes" THEN back{slot$} = look{"wear"}{slot$}
+        NEXT
+        look = {"wear": back}
+    ENDIF
+    DIM top = AnimalWear(kind, look, sx, sy, dir = 1, 0, 0)
+ENDSUB
 
 SUB ClientAnimalAsk(c, msg)
     msg{"fondv"} = c{"fondv"} ?? -1

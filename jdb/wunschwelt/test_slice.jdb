@@ -104,6 +104,18 @@ Check("Ben heard Anna speak", INSTR(JOIN(b{"heard"}, "|"), "Anna: Hallo Marta") 
 IF INSTR(JOIN(b{"heard"}, "|"), "Anna: Hallo Marta") < 0 THEN PRINT "  Ben after "; b{"syncs"}; " syncs heard: "; JOIN(b{"heard"}, " | "); "; Anna after "; a{"syncs"}; " syncs heard: "; JOIN(a{"heard"}, " | ")
 Check("both heard of the patch", INSTR(JOIN(a{"heard"}, "|"), "PATCH: Mimi") >= 0 ANDALSO INSTR(JOIN(b{"heard"}, "|"), "PATCH: Mimi") >= 0)
 
+' the cat of the patch is dressed as she is, wherever she walks; no second cat comes
+DIM dressed = Post("/sync", {"token": probe{"token"}, "mapv": 1, "say": "Mimi soll ein rotes Halsband tragen"})
+SLEEP 300
+DIM cats = []
+DIM mimi_wear = {}
+DIM looked = Post("/sync", {"token": probe{"token"}, "mapv": 1})
+FOR i = 0 TO LEN(looked{"npcs"}) - 1
+    IF looked{"npcs"}[i][4] = "cat" ORELSE STARTSWITH(looked{"npcs"}[i][0], "b_cat") THEN cats = APPEND(cats, [looked{"npcs"}[i]])
+    IF looked{"npcs"}[i][0] = "mimi" ANDALSO ISMAP(looked{"npcs"}[i][5]) THEN mimi_wear = looked{"npcs"}[i][5]{"wear"} ?? {}
+NEXT i
+Check("Mimi herself wears the collar", LEN(cats) = 1 ANDALSO (mimi_wear{"neck"} ?? [""])[0] = "collar")
+
 DIM after = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
 Check("the rules raised no error", after{"errors"} = 0)
 IF after{"errors"} > 0 THEN PRINT "  "; after{"last_error"}
