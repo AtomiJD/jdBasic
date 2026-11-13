@@ -29,8 +29,9 @@ done, rule errors 0.
 build/jdBasic.exe jdb/wunschwelt/test_slice.jdb      19 checks
 build/jdBasic.exe jdb/wunschwelt/test_persist.jdb    18 checks
 build/jdBasic.exe jdb/wunschwelt/test_wishes.jdb     19 checks
-build/jdBasic.exe jdb/wunschwelt/test_catalog.jdb    18 checks
+build/jdBasic.exe jdb/wunschwelt/test_catalog.jdb    24 checks
 build/jdBasic.exe jdb/wunschwelt/test_plot.jdb       12 checks
+build/jdBasic.exe jdb/wunschwelt/test_builder.jdb    23 checks
 
 cd jdb/wunschwelt            (WW_HOST=user@address of the box must be set)
 ./deploy.sh --check          stage and preflight, publish nothing
@@ -53,6 +54,37 @@ $env:WW_PATCH_KEY = "..."; $env:WW_LLM_URL = "http://cortex:8082/v1/chat/complet
 build\jdBasic.exe jdb\wunschwelt\server.jdb
 build\jdBasic.exe jdb\wunschwelt\tools\devsite.jdb     http://127.0.0.1:8180/wunschwelt/
 ```
+
+## Done on 2026-11-13, not deployed yet
+
+Live since 2026-11-12 evening: looks, music, chronicle (#1007-#1009), the
+calmer village theme, music asked for without the model, questions kept off
+the board (live version 11). Committed after that, not on the box:
+
+- the builder (`game/040_builder.jdb`, see README): open wishes are built
+  by the rules from the model's plan; checked with the real model on a
+  local world (sea, land in the west with road, forest and hut, bridge,
+  bench and lantern, a fisher, a dragon refused, animals in colours)
+- wishes said during the model's pause are judged after it; the nearest
+  person hears before any animal
+- animals with colours, patterns, hats and walk, sit and cute poses; the
+  head line shows `Ort x,y` and the builder builds at a point
+- a talk window instead of overlapping bubbles
+- music: eight genres made by MELODY from a seed, scenes for every piece;
+  the deploy now ships `melody.jdb` from `jdb/demos/sound`
+
+The live world will start building its open wishes right after the deploy
+(Loni's frog). `./deploy.sh` (no `--wasm`) is enough. Heard by no one
+yet: the generated music; it was rendered offline and seen running in the
+browser (style and scene in the bottom line).
+
+Looked at: True Pixel (sorceress.games) makes no art itself. It turns a
+still or a video (frames at 30 fps) into pixel art: background off
+(chroma key or CorridorKey), one palette for all frames (auto or presets),
+optional dither, temporal smoothing against flicker, downscale, export as a
+sheet. For us: animate first (a short video of a walking figure from an
+image or video model), then convert with a shared palette, instead of
+asking an image model for each frame on its own, which drifts.
 
 ## Done on 2026-11-12, live since that evening
 
@@ -125,7 +157,7 @@ chunk by name when it runs.
    - content from the local model: rumours, events, new villagers
    - a full rehearsal with a stopwatch, from the call to the wish fulfilled
 
-Small things on the side: speech bubbles of several speakers overlap; the
+Small things on the side: the
 other two games on the site still ship their page without the runtime mark;
 jdbasic #1001 (on Linux a second server starts on a port in use).
 

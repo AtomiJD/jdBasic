@@ -194,10 +194,20 @@ style; what it leaves out is looked for in the sentence.
   (`assets/<skin>.parts`, one byte per pixel, written by `tools/looks.jdb`
   from hue, saturation, brightness and height rules per skin) and keeps the
   shading; it keeps at most 48 recoloured sheets.
-- `game/020_music.jdb`: the world plays one style for everyone (village,
-  tavern, evening, fest, techno), a wished one for four minutes. The client
-  plays it with the sequencer; a browser starts it with the first key, `M`
-  mutes.
+- `game/020_music.jdb`: the world plays one style for everyone, a wished
+  one for four minutes, as `style:seed`. Village, tavern, evening, fest and
+  techno are written out; hip-hop, 80s pop, synthwave, house, trance, disco,
+  lo-fi and rock are made in the client from the seed by the module MELODY
+  (`jdb/demos/sound/melody.jdb`: key, chords, hook and its variation, bass,
+  arp or stabs), so each wish is a new piece. Every piece walks through
+  scenes over 32 bars (intro, rising, main, chill, main with the varied
+  hook, outro) by muting tracks; the bottom line shows style and scene.
+  `melody.jdb` reaches the browser beside `client.jdb` through the asset
+  list (deploy and devsite take it from `jdb/demos/sound`); a window client
+  without it plays the written style the genre falls back to. A sentence
+  that asks for music is granted wherever it is said, without the model;
+  rock, rap, pop, house and chill count only as whole words with play.
+  A browser starts the sound with the first key, `M` mutes.
 
 **The chronicle** (`game/030_plot.jdb`) is a story in acts after the
 `story.json` of the Godot RPG: title, narrative, open threads, rumours,
@@ -208,6 +218,41 @@ writes the act on or opens the next; a new act is announced to everyone.
 People of the village speak from it; players open it with `C`. The keeper
 reads it with the rule `plot` and sets title, narrative, threads or the
 interval with `plot_set`. `test_plot.jdb`: 12 checks with a scripted model.
+
+**Talk** stands in a window over the bottom line, the newest at the bottom,
+a small mark over whoever speaks; the head line shows the player's
+place as `Ort x,y`.
+## The builder
+
+`game/040_builder.jdb` builds the open wishes of the board whose kinds the
+village can build alone (land, way, house, thing, animal, villager), one
+at a time. The model gets the wish as data and answers with a plan of
+steps from a fixed set: grow, sea, lake, forest, field, house, road,
+bridge, animal, thing, villager, each with a place (a side, the tavern,
+the pond, the road, the house just built, a thing by its id, or a point
+`x,y` as the head line shows it) and a size. The rules check every step,
+find a free block nearest to the place and lay one step every few seconds.
+No code of the model runs. A broken plan is made from the words of the
+wish, a kind the plan leaves out is filled in from them, and a wish nobody
+can build goes back to the board with a note and is not taken up again.
+
+- New land on the west or north moves the whole village, the players and
+  the place where players arrive (`w{"spawn"}`), which is never built over.
+- A house gets a way to the nearest road, over water as a bridge (tile 13,
+  walked on), and a sign with its owner's name.
+- What it builds stands in `w{"npcs"}` as kind `thing` with the id
+  `b_<what>_<n>` and a `look`; the client draws it with the painter
+  `@<what>`. Animals (dog, cat, fox, chicken, duck, frog, rabbit, sheep, cow,
+  pig, hedgehog) are parts in one painter, with a fur colour, stripes or
+  spots and a hat; they walk, sit after a while and are cute now and then.
+  Animals and villagers stroll near their home and can be talked to; the
+  nearest person in reach always hears first.
+- The keeper: rule `builder` (state and the last plan), `builder_set`
+  (`mode` auto, approve or off; `step_ms`, `pause_ms`; `skip=clear`),
+  `build_ok` (a plan that waits in approve mode).
+
+`test_builder.jdb`: 23 checks with a scripted model.
+
 ## What survives a restart
 
 With `WW_STATE_DIR` set (on the box: `/var/lib/wunschwelt`, readable by the
