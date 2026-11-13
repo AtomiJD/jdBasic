@@ -634,6 +634,7 @@ FUNC AnimalSheet(c, what$, look, kind)
     ENDIF
     DIM raw = c{"animal_raw"}{what$}
     IF LEN(raw) = 0 THEN RETURN -1
+    IF raw[1] < 6 * 48 ORELSE raw[0] < 3 * 48 THEN RETURN -1
     IF MAP.SIZE(c{"animal_imgs"}) >= 32 THEN
         FOR EACH old$ IN MAP.KEYS(c{"animal_imgs"})
             GFX.FREEIMAGE(c{"animal_imgs"}{old$})

@@ -1090,7 +1090,9 @@ FUNC AnimalState(c, row)
     DIM cute = still > 600 ANDALSO beat < 1200
     ' just petted: happy at once
     IF TICK() - ((c{"petted"} ?? {}){row[0]} ?? -9999) < 1600 THEN cute = TRUE
-    RETURN [last[2], still < 450, still > 5000 ANDALSO NOT cute, cute, IIF(LEN(last) > 4, last[4], 0)]
+    DIM way_kept = 0
+    IF LEN(last) > 4 THEN way_kept = last[4]
+    RETURN [last[2], still < 450, still > 5000 ANDALSO NOT cute, cute, way_kept]
 ENDFUNC
 
 SUB AnimalHeart(x, y)
