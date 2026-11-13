@@ -182,7 +182,7 @@ FUNC RuleSync(w, p, msg)
     DIM folk = []
     FOR EACH folk_id$ IN MAP.KEYS(w{"npcs"})
         DIM n = w{"npcs"}{folk_id$}
-        folk = APPEND(folk, [[n{"id"}, n{"name"}, n{"x"}, n{"y"}, n{"kind"}]])
+        folk = APPEND(folk, [[n{"id"}, n{"name"}, n{"x"}, n{"y"}, n{"kind"}, n{"look"} ?? {}]])
     NEXT
 
     ' a client that just arrived hears nothing of what was said before
@@ -664,7 +664,7 @@ SUB ClientSync(c)
     FOR i = 0 TO LEN(events) - 1
         DIM ev = events[i]
         IF ev{"type"} = "say" THEN
-            c{"bubbles"} = APPEND(c{"bubbles"}, {"who": ev{"who"}, "text": ev{"text"}, "until": TICK() + 3500 + 60 * LEN(ev{"text"})})
+            c{"bubbles"} = APPEND(c{"bubbles"}, {"who": ev{"who"}, "text": ev{"text"}, "npc": MAP.EXISTS(ev, "npc"), "until": TICK() + 12000 + 60 * LEN(ev{"text"})})
         ELSEIF ev{"type"} = "patch" THEN
             c{"banner"} = "Neu in der Welt: " + ev{"title"}
             c{"banner_until"} = TICK() + 6000
@@ -763,7 +763,7 @@ SUB ClientFigure(sx, sy, dir, tint, name$, is_npc)
     ENDIF
 ENDSUB
 
-' Draws one NPC; row is [id, name, x, y, kind]. A patch that brings a new
+' Draws one NPC; row is [id, name, x, y, kind, look]. A patch that brings a new
 ' kind defines this again.
 SUB ClientNpc(c, row, sx, sy)
     ClientFigure(sx, sy, 0, 0, row[1], TRUE)
@@ -801,6 +801,53 @@ ENDSUB
 
 ' Draws over the world and under the head line.
 SUB ClientOverlay(c, cam_x, cam_y)
+ENDSUB
+
+' Three dots over someone who speaks.
+SUB ClientTalkMark(sx, sy)
+    ROUNDED_RECT sx + 8, sy - 26, 16, 9, 3, TRUE, 250, 248, 240
+    ROUNDED_RECT sx + 8, sy - 26, 16, 9, 3, FALSE, 60, 56, 52
+    DIM dot = (INT(TICK()) \ 250) MOD 3
+    DIM i = 0
+    FOR i = 0 TO 2
+        IF i <= dot THEN RECT sx + 11 + i * 4, sy - 22, 2, 2, TRUE, 60, 56, 52
+    NEXT i
+ENDSUB
+
+' The talk window over the bottom line: the newest lines of what was said,
+' the speaker's name in gold for the people of the village.
+SUB ClientTalkWindow(c, talk)
+    IF LEN(talk) = 0 THEN RETURN
+    DIM rows = []
+    DIM i = 0
+    DIM k = 0
+    FOR i = LEN(talk) - 1 TO 0 STEP -1
+        DIM parts = ClientWrap(talk[i]{"who"} + ": " + talk[i]{"text"}, 100)
+        FOR k = LEN(parts) - 1 TO 0 STEP -1
+            IF LEN(rows) < 5 THEN rows = APPEND(rows, [[parts[k], k = 0, talk[i]{"npc"} ?? FALSE, LEN(talk[i]{"who"})]])
+        NEXT k
+    NEXT i
+    DIM high = GFX.TEXTSIZE("Ag")[1] + 1
+    DIM top = 362 - LEN(rows) * high - 8
+    DRAWCOLOR 16, 18, 22, 210
+    RECT 4, top, 632, LEN(rows) * high + 6, TRUE
+    DRAWCOLOR 255, 255, 255, 255
+    ROUNDED_RECT 4, top, 632, LEN(rows) * high + 6, 4, FALSE, 120, 110, 90
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row = rows[LEN(rows) - 1 - i]
+        DIM ty = top + 3 + i * high
+        IF row[1] THEN
+            DIM name$ = LEFT$(row[0], row[3] + 1)
+            IF row[2] THEN
+                TEXT 10, ty, name$, 250, 214, 110
+            ELSE
+                TEXT 10, ty, name$, 150, 200, 240
+            ENDIF
+            TEXT 10 + GFX.TEXTSIZE(name$ + " ")[0], ty, MID$(row[0], row[3] + 2), 236, 236, 230
+        ELSE
+            TEXT 10, ty, row[0], 236, 236, 230
+        ENDIF
+    NEXT i
 ENDSUB
 
 SUB ClientBubble(sx, sy, text$)
@@ -942,18 +989,20 @@ SUB ClientDraw(c)
         NEXT k
     ENDIF
 
+    ' what was said stands in the talk window; over a speaker only a small mark
     DIM alive = []
     DIM bubbles = c{"bubbles"}
     FOR i = 0 TO LEN(bubbles) - 1
         IF TICK() < bubbles[i]{"until"} THEN
             alive = APPEND(alive, bubbles[i])
-            IF MAP.EXISTS(where, bubbles[i]{"who"}) THEN
+            IF MAP.EXISTS(where, bubbles[i]{"who"}) ANDALSO TICK() < bubbles[i]{"until"} - 6000 THEN
                 DIM spot = where{bubbles[i]{"who"}}
-                ClientBubble(spot[0], spot[1], bubbles[i]{"text"})
+                ClientTalkMark(spot[0], spot[1])
             ENDIF
         ENDIF
     NEXT i
     c{"bubbles"} = alive
+    ClientTalkWindow(c, alive)
     ClientOverlay(c, cam_x, cam_y)
     ClientPlotOverlay(c)
 
@@ -961,7 +1010,7 @@ SUB ClientDraw(c)
     DIM secs = c{"uptime"}
     DIM clock$ = RIGHT$("0" + STR$(secs \ 3600), 2) + ":" + RIGHT$("0" + STR$((secs \ 60) MOD 60), 2) + ":" + RIGHT$("0" + STR$(secs MOD 60), 2)
     RECT 0, 0, 640, 19, TRUE, 16, 18, 22
-    TEXT 4, 1, "Welt " + clock$ + "  Patches " + STR$(c{"version"}) + "  Neustarts " + STR$(c{"restarts"} ?? 0) + "  Frame " + STR$(c{"frames"}) + "  " + STR$(LEN(players)) + " im Dorf  " + STR$(c{"ping"}) + "ms", 190, 220, 190
+    TEXT 4, 1, "Ort " + STR$(c{"x"}) + "," + STR$(c{"y"}) + "   Welt " + clock$ + "  Patches " + STR$(c{"version"}) + "  Neustarts " + STR$(c{"restarts"} ?? 0) + "  Frame " + STR$(c{"frames"}) + "  " + STR$(LEN(players)) + " im Dorf  " + STR$(c{"ping"}) + "ms", 190, 220, 190
 
     IF TICK() < c{"banner_until"} THEN
         DIM bsize = GFX.TEXTSIZE(c{"banner"})

@@ -21,12 +21,12 @@ ENDFUNC
 
 ' Animals and things the builder knows: key -> [German name, is an animal].
 FUNC RuleBuildWhats()
-    RETURN {"frog": ["Frosch", TRUE], "duck": ["Ente", TRUE], "chicken": ["Huhn", TRUE], "sheep": ["Schaf", TRUE], "rabbit": ["Hase", TRUE], "dog": ["Hund", TRUE], "cow": ["Kuh", TRUE], "bench": ["Bank", FALSE], "lantern": ["Laterne", FALSE], "sign": ["Schild", FALSE], "barrel": ["Fass", FALSE], "campfire": ["Lagerfeuer", FALSE], "scarecrow": ["Vogelscheuche", FALSE], "flowerbox": ["Blumenkasten", FALSE]}
+    RETURN {"frog": ["Frosch", TRUE], "duck": ["Ente", TRUE], "chicken": ["Huhn", TRUE], "sheep": ["Schaf", TRUE], "rabbit": ["Hase", TRUE], "dog": ["Hund", TRUE], "cow": ["Kuh", TRUE], "cat": ["Katze", TRUE], "hedgehog": ["Igel", TRUE], "pig": ["Schwein", TRUE], "fox": ["Fuchs", TRUE], "bench": ["Bank", FALSE], "lantern": ["Laterne", FALSE], "sign": ["Schild", FALSE], "barrel": ["Fass", FALSE], "campfire": ["Lagerfeuer", FALSE], "scarecrow": ["Vogelscheuche", FALSE], "flowerbox": ["Blumenkasten", FALSE]}
 ENDFUNC
 
 ' Word stems of a wish (lower case, umlauts spelled out) and the key they name.
 FUNC RuleBuildStems()
-    RETURN [["frosch", "frog"], ["froesch", "frog"], ["ente", "duck"], ["huhn", "chicken"], ["huehn", "chicken"], ["henne", "chicken"], ["schaf", "sheep"], ["hase", "rabbit"], ["hasen", "rabbit"], ["kaninchen", "rabbit"], ["hund", "dog"], ["kuh", "cow"], ["kueh", "cow"], ["bank", "bench"], ["laterne", "lantern"], ["lampe", "lantern"], ["schild", "sign"], ["fass", "barrel"], ["faesser", "barrel"], ["lagerfeuer", "campfire"], ["feuerstelle", "campfire"], ["vogelscheuche", "scarecrow"], ["blumenkasten", "flowerbox"]]
+    RETURN [["frosch", "frog"], ["froesch", "frog"], ["ente", "duck"], ["huhn", "chicken"], ["huehn", "chicken"], ["henne", "chicken"], ["schaf", "sheep"], ["hase", "rabbit"], ["hasen", "rabbit"], ["kaninchen", "rabbit"], ["hund", "dog"], ["kuh", "cow"], ["kueh", "cow"], ["katze", "cat"], ["kater", "cat"], ["kaetzchen", "cat"], ["tiger", "cat"], ["igel", "hedgehog"], ["schwein", "pig"], ["ferkel", "pig"], ["fuchs", "fox"], ["fuechs", "fox"], ["welpe", "dog"], ["kueken", "chicken"], ["bank", "bench"], ["laterne", "lantern"], ["lampe", "lantern"], ["schild", "sign"], ["fass", "barrel"], ["faesser", "barrel"], ["lagerfeuer", "campfire"], ["feuerstelle", "campfire"], ["vogelscheuche", "scarecrow"], ["blumenkasten", "flowerbox"]]
 ENDFUNC
 
 FUNC RuleBuilder(w)
@@ -38,7 +38,7 @@ ENDFUNC
 FUNC RuleBuildWord$(word)
     IF NOT ISSTR(word) THEN RETURN ""
     DIM k$ = RuleLookColorKey$(word)
-    DIM words = {"norden": "north", "sueden": "south", "osten": "east", "westen": "west", "mitte": "center", "taverne": "tavern", "teich": "pond", "strasse": "road", "haus": "house", "klein": "small", "mittel": "medium", "gross": "large", "blumen": "flowers", "steine": "stone", "busch": "bush", "wiese": "grass"}
+    DIM words = {"norden": "north", "sueden": "south", "osten": "east", "westen": "west", "mitte": "center", "taverne": "tavern", "teich": "pond", "strasse": "road", "haus": "house", "klein": "small", "mittel": "medium", "gross": "large", "blumen": "flowers", "gestreift": "stripes", "getigert": "stripes", "streifen": "stripes", "gefleckt": "spots", "gepunktet": "spots", "flecken": "spots", "punkte": "spots", "steine": "stone", "busch": "bush", "wiese": "grass"}
     IF MAP.EXISTS(words, k$) THEN RETURN words{k$}
     RETURN k$
 ENDFUNC
@@ -70,7 +70,12 @@ FUNC RuleBuildCheck(w, st)
     DIM do$ = RuleBuildWord$(st{"do"} ?? "")
     IF INDEXOF(["grow", "sea", "lake", "forest", "field", "house", "road", "bridge", "animal", "thing", "villager"], do$) < 0 THEN RETURN NONE
     DIM out = {"do": do$}
-    DIM where$ = RuleBuildWord$(st{"where"} ?? "center")
+    DIM where$ = ""
+    IF ISARR(st{"where"} ?? "") ANDALSO LEN(st{"where"}) = 2 ANDALSO ISNUM(st{"where"}[0]) ANDALSO ISNUM(st{"where"}[1]) THEN
+        where$ = STR$(INT(st{"where"}[0])) + "," + STR$(INT(st{"where"}[1]))
+    ELSE
+        where$ = REPLACE$(RuleBuildWord$(st{"where"} ?? "center"), " ", "")
+    ENDIF
     IF where$ = "" THEN where$ = "center"
     out{"where"} = where$
     DIM size$ = RuleBuildWord$(st{"size"} ?? "medium")
@@ -106,6 +111,15 @@ FUNC RuleBuildCheck(w, st)
         out{"what"} = what$
         out{"name"} = RuleBuildName$(st{"name"} ?? "", 20)
         IF out{"name"} = "" THEN out{"name"} = whats{what$}[0]
+        IF do$ = "animal" THEN
+            DIM colors = RuleLookColors()
+            DIM body$ = RuleLookColorKey$("" + (st{"color"} ?? ""))
+            IF MAP.EXISTS(colors, body$) THEN out{"color"} = body$
+            DIM hat$ = RuleLookColorKey$("" + (st{"hat"} ?? ""))
+            IF MAP.EXISTS(colors, hat$) THEN out{"hat"} = hat$
+            DIM pattern$ = RuleBuildWord$(st{"pattern"} ?? "")
+            IF INDEXOF(["stripes", "spots"], pattern$) >= 0 THEN out{"pattern"} = pattern$
+        ENDIF
     ELSEIF do$ = "villager" THEN
         out{"name"} = RuleBuildName$(st{"name"} ?? "", 20)
         IF out{"name"} = "" THEN
@@ -142,6 +156,8 @@ FUNC RuleBuildGuess(w, job)
     FOR i = 0 TO 3
         IF INSTR(t$, sides[i][0]) >= 0 THEN where$ = sides[i][1]
     NEXT i
+    DIM points = REGEX.FINDALL("[0-9]+ *, *[0-9]+", t$)
+    IF LEN(points) > 0 THEN where$ = REPLACE$("" + points[0], " ", "")
     DIM wants_land = INSTR(t$, "land") >= 0 ORELSE INSTR(t$, "insel") >= 0
     IF wants_land ANDALSO where$ <> "center" THEN steps = APPEND(steps, {"do": "grow", "side": where$, "n": 8})
     IF INSTR(t$, "meer") >= 0 ORELSE INSTR(t$, "ozean") >= 0 THEN
@@ -180,9 +196,11 @@ FUNC RuleBuildGuess(w, job)
         IF INSTR(t$, " " + stems[i][0]) >= 0 ANDALSO NOT MAP.EXISTS(seen, what$) THEN
             seen{what$} = TRUE
             DIM near$ = where$
-            IF what$ = "frog" ORELSE what$ = "duck" THEN near$ = "pond"
-            IF INSTR(t$, "brunnen") >= 0 THEN near$ = "brunnen"
-            steps = APPEND(steps, {"do": IIF(whats{what$}[1], "animal", "thing"), "what": what$, "where": near$})
+            IF (what$ = "frog" ORELSE what$ = "duck") ANDALSO LEN(points) = 0 THEN near$ = "pond"
+            IF INSTR(t$, "brunnen") >= 0 ANDALSO LEN(points) = 0 THEN near$ = "brunnen"
+            DIM st = {"do": IIF(whats{what$}[1], "animal", "thing"), "what": what$, "where": near$}
+            IF whats{what$}[1] THEN RuleBuildGuessLook(t$, st)
+            steps = APPEND(steps, st)
         ENDIF
     NEXT i
     FOR EACH role$ IN ["fischer", "baecker", "schmied", "haendler", "bauer", "nachbar", "bewohner", "musiker"]
@@ -218,6 +236,11 @@ FUNC RuleBuildCover(w, job, steps)
             NEXT k
         ENDIF
     NEXT i
+    ' an animal the plan left plain takes the colours the wish names
+    DIM t$ = " " + RuleLookColorKey$("" + job{"text"}) + " "
+    FOR k = 0 TO LEN(out) - 1
+        IF out[k]{"do"} = "animal" ANDALSO NOT MAP.EXISTS(out[k], "color") ANDALSO NOT MAP.EXISTS(out[k], "hat") ANDALSO NOT MAP.EXISTS(out[k], "pattern") THEN RuleBuildGuessLook(t$, out[k])
+    NEXT k
     ' new land comes before what stands on it
     DIM first = []
     DIM rest = []
@@ -242,6 +265,34 @@ FUNC RuleBuildCover(w, job, steps)
     ENDIF
     RETURN out
 ENDFUNC
+
+' The colour, pattern and hat of an animal from the words of a wish: the
+' colour just before hat or cap is the hat's, the other one the fur's.
+SUB RuleBuildGuessLook(t$, st)
+    DIM hat_at = -1
+    FOR EACH word$ IN ["hut", "muetze", "kappe", "zylinder"]
+        IF hat_at < 0 THEN hat_at = INSTR(t$, word$)
+    NEXT
+    DIM names = ["hellblau", "dunkelblau", "tuerkis", "orange", "schwarz", "silber", "gruen", "braun", "weiss", "gelb", "lila", "rosa", "pink", "grau", "gold", "blau", "rot"]
+    DIM i = 0
+    DIM hat_pos = -1
+    FOR i = 0 TO LEN(names) - 1
+        DIM at = INSTR(t$, names[i])
+        DIM taken_by_longer = INSTR(t$, "hell" + names[i]) >= 0 ORELSE INSTR(t$, "dunkel" + names[i]) >= 0
+        IF at >= 0 ANDALSO NOT taken_by_longer THEN
+            IF hat_at >= 0 ANDALSO at < hat_at ANDALSO hat_at - at < 14 ANDALSO at > hat_pos THEN
+                IF MAP.EXISTS(st, "hat") ANDALSO NOT MAP.EXISTS(st, "color") THEN st{"color"} = st{"hat"}
+                st{"hat"} = names[i]
+                hat_pos = at
+            ELSEIF NOT MAP.EXISTS(st, "color") THEN
+                st{"color"} = names[i]
+            ENDIF
+        ENDIF
+    NEXT i
+    IF INSTR(t$, "tiger") >= 0 ORELSE INSTR(t$, "gestreift") >= 0 ORELSE INSTR(t$, "getigert") >= 0 THEN st{"pattern"} = "stripes"
+    IF INSTR(t$, "gefleckt") >= 0 ORELSE INSTR(t$, "gepunktet") >= 0 ORELSE INSTR(t$, "flecken") >= 0 THEN st{"pattern"} = "spots"
+    IF INSTR(t$, "tiger") >= 0 ANDALSO NOT MAP.EXISTS(st, "color") THEN st{"color"} = "orange"
+ENDSUB
 
 ' The oldest open wish the builder can build alone, or NONE.
 FUNC RuleBuildPick(w, b)
@@ -293,10 +344,10 @@ FUNC RuleBuildAsk(w, job)
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "house" + q$ + ", " + q$ + "where" + q$ + ": W, " + q$ + "size" + q$ + ": S, " + q$ + "owner" + q$ + RuleDe$(": Name oder leer} ein Haus, ein Weg zur Stra{s}e kommt von selbst;")
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "road" + q$ + ", " + q$ + "where" + q$ + RuleDe$(": W} ein Weg von dort zur Stra{s}e, where house f{u}r das eben gebaute Haus;")
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "bridge" + q$ + ", " + q$ + "where" + q$ + RuleDe$(": W} eine Br{u}cke {u}ber das Wasser dort;")
-    task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "animal" + q$ + ", " + q$ + "what" + q$ + ": frog|duck|chicken|sheep|rabbit|dog|cow, " + q$ + "name" + q$ + ": Name, " + q$ + "where" + q$ + ": W};"
+    task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "animal" + q$ + ", " + q$ + "what" + q$ + ": frog|duck|chicken|sheep|rabbit|dog|cow|cat|hedgehog|pig|fox, " + q$ + "name" + q$ + ": Name, " + q$ + "color" + q$ + ": Fellfarbe oder leer, " + q$ + "pattern" + q$ + ": stripes|spots|leer, " + q$ + "hat" + q$ + RuleDe$(": Farbe eines Huts oder leer, " + q$ + "where" + q$ + ": W}; Farben: rot, orange, gelb, gruen, tuerkis, blau, hellblau, dunkelblau, lila, rosa, pink, braun, schwarz, weiss, grau, gold, silber; eine Tigerkatze ist cat mit stripes;")
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "thing" + q$ + ", " + q$ + "what" + q$ + ": bench|lantern|sign|barrel|campfire|scarecrow|flowerbox, " + q$ + "name" + q$ + ": Name, " + q$ + "where" + q$ + ": W};"
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "villager" + q$ + ", " + q$ + "name" + q$ + ": Name, " + q$ + "role" + q$ + ": Beruf, " + q$ + "where" + q$ + ": W} ein neuer Dorfbewohner."
-    task$ = task$ + RuleDe$(" W ist north, south, east, west, center, tavern, pond, road, house") + places$ + RuleDe$(". S ist small, medium oder large. H{o}chstens sechs Schritte. Baue nur, was der Wunsch nennt; neues Land kommt zuerst, dann was darauf steht. Geht der Wunsch mit diesen Schritten nicht, antworte {" + q$ + "steps" + q$ + ": []}.")
+    task$ = task$ + RuleDe$(" W ist north, south, east, west, center, tavern, pond, road, house") + places$ + RuleDe$(" oder eine Stelle der Karte als x,y wie 12,7, wenn der Wunsch eine nennt. S ist small, medium oder large. H{o}chstens sechs Schritte. Baue nur, was der Wunsch nennt; neues Land kommt zuerst, dann was darauf steht. Geht der Wunsch mit diesen Schritten nicht, antworte {" + q$ + "steps" + q$ + ": []}.")
     DIM messages = [{"role": "system", "content": task$}, {"role": "user", "content": RuleDe$("Wunsch von ") + job{"who"} + ": " + job{"text"}}]
     RETURN KAsk$(w, "build", "builder", {"wish": job{"wish"}}, messages, {"max_tokens": 400, "temperature": 0.2, "response_format": {"type": "json_object"}})
 ENDFUNC
@@ -437,6 +488,10 @@ FUNC RuleBuildTarget(w, job, where$)
     IF where$ = "south" THEN RETURN [mw \ 2, mh - 4]
     IF where$ = "east" THEN RETURN [mw - 5, mh \ 2]
     IF where$ = "west" THEN RETURN [4, mh \ 2]
+    IF REGEX.MATCH("^[0-9]+,[0-9]+$", where$) THEN
+        DIM xy = SPLIT(where$, ",")
+        RETURN [CLAMP(VAL(xy[0]), 1, mw - 2), CLAMP(VAL(xy[1]), 1, mh - 2)]
+    ENDIF
     IF where$ = "house" ANDALSO LEN(job{"house"}) = 2 THEN RETURN job{"house"}
     DIM npcs = w{"npcs"}
     IF where$ = "tavern" ORELSE where$ = "house" THEN where$ = "marta"
@@ -798,7 +853,7 @@ FUNC RuleBuildFolk(w, b, job, st)
     DIM target = RuleBuildTarget(w, job, st{"where"})
     DIM ground = [1, 8, 9]
     IF st{"do"} = "thing" ANDALSO st{"what"} = "sign" THEN ground = [1, 2, 8, 9]
-    DIM spot = RuleBuildRect(w, target[0] + 1, target[1] + 1, 1, 1, ground, [], 0)
+    DIM spot = RuleBuildRect(w, target[0], target[1], 1, 1, ground, [], 0)
     IF LEN(spot) = 0 THEN RETURN FALSE
     b{"n"} = (b{"n"} ?? 0) + 1
     DIM what$ = IIF(st{"do"} = "villager", "villager", st{"what"})
@@ -808,6 +863,11 @@ FUNC RuleBuildFolk(w, b, job, st)
         DIM whats = RuleBuildWhats()
         npc{"home"} = [spot[0], spot[1]]
         npc{"range"} = 3
+        DIM look = {}
+        IF MAP.EXISTS(st, "color") THEN look{"color"} = RuleLookColors(){st{"color"}}
+        IF MAP.EXISTS(st, "hat") THEN look{"hat"} = RuleLookColors(){st{"hat"}}
+        IF MAP.EXISTS(st, "pattern") THEN look{"pattern"} = st{"pattern"}
+        npc{"look"} = look
         npc{"persona"} = "Du bist " + st{"name"} + ", ein Tier im Dorf: " + whats{what$}[0] + RuleDe$(". Der Baumeister hat dich auf Wunsch von ") + job{"who"} + RuleDe$(" ins Dorf gebracht. Du kannst nicht sprechen. Antworte nur mit einem kurzen Tierlaut und einer kleinen Handlung in Sternchen.")
     ELSEIF st{"do"} = "villager" THEN
         npc{"home"} = [spot[0], spot[1]]
@@ -881,111 +941,178 @@ FUNC BuildBob(row, period)
     RETURN IIF(((INT(TICK()) + n * 337) \ period) MOD 4 = 0, 1, 0)
 ENDFUNC
 
-SUB BuildFrog(c, row, sx, sy)
-    DIM hop = BuildBob(row, 380) * 3
-    BuildShadow(sx, sy, 8)
-    DIM y = sy - hop
-    CIRCLE sx + 16, y + 23, 8, TRUE, 40, 120, 52
-    CIRCLE sx + 16, y + 24, 7, TRUE, 76, 168, 72
-    RECT sx + 8, y + 27, 5, 3, TRUE, 60, 146, 60
-    RECT sx + 19, y + 27, 5, 3, TRUE, 60, 146, 60
-    CIRCLE sx + 12, y + 17, 3, TRUE, 76, 168, 72
-    CIRCLE sx + 20, y + 17, 3, TRUE, 76, 168, 72
-    CIRCLE sx + 12, y + 17, 1, TRUE, 20, 20, 20
-    CIRCLE sx + 20, y + 17, 1, TRUE, 20, 20, 20
-    LINE sx + 12, y + 25, sx + 20, y + 25, 30, 90, 40
-    CIRCLE sx + 16, y + 26, 4, TRUE, 190, 220, 140
-    BuildLabel(sx, y + 12, row[1])
+' An animal is a list of parts facing right in a 32 x 32 cell, standing on
+' y = 30: [group, shape, x, y, a, b, colour], shape r (a rectangle a x b) or
+' c (a circle of radius a). The groups move: body, head, legf and legb (the
+' front and back legs), tail; colour is body, dark, light or a fixed one.
+' "hat" is where a hat sits on the head, "base" the fur when no colour was
+' wished, "pattern" the one it has by nature.
+FUNC AnimalKinds()
+    DIM k = {}
+    k{"dog"} = {"base": [150, 98, 52], "hat": [24, 9], "parts": [["tail", "r", 3, 15, 5, 2, "dark"], ["legb", "r", 8, 24, 3, 6, "dark"], ["legf", "r", 19, 24, 3, 6, "dark"], ["body", "r", 7, 17, 16, 8, "body"], ["legb", "r", 11, 24, 3, 6, "body"], ["legf", "r", 22, 24, 3, 6, "body"], ["head", "c", 24, 15, 5, 0, "body"], ["head", "r", 27, 16, 4, 3, "light"], ["head", "r", 20, 11, 3, 7, "dark"], ["head", "c", 25, 14, 1, 0, "eye"], ["head", "c", 31, 16, 1, 0, "nose"]]}
+    k{"cat"} = {"base": [150, 150, 158], "hat": [23, 8], "parts": [["tail", "r", 4, 11, 2, 10, "body"], ["legb", "r", 9, 24, 2, 6, "dark"], ["legf", "r", 18, 24, 2, 6, "dark"], ["body", "r", 8, 18, 13, 7, "body"], ["legb", "r", 11, 24, 2, 6, "body"], ["legf", "r", 20, 24, 2, 6, "body"], ["head", "r", 19, 8, 3, 4, "body"], ["head", "r", 25, 8, 3, 4, "body"], ["head", "c", 23, 14, 5, 0, "body"], ["head", "r", 21, 16, 5, 3, "light"], ["head", "c", 21, 13, 1, 0, "green"], ["head", "c", 25, 13, 1, 0, "green"], ["head", "c", 23, 16, 1, 0, "pink"]]}
+    k{"fox"} = {"base": [226, 120, 44], "hat": [23, 8], "parts": [["tail", "r", 1, 16, 8, 4, "body"], ["tail", "r", 1, 16, 3, 4, "white"], ["legb", "r", 9, 24, 2, 6, "black"], ["legf", "r", 18, 24, 2, 6, "black"], ["body", "r", 8, 18, 13, 7, "body"], ["legb", "r", 11, 24, 2, 6, "black"], ["legf", "r", 20, 24, 2, 6, "black"], ["head", "r", 19, 8, 3, 5, "body"], ["head", "r", 25, 8, 3, 5, "body"], ["head", "c", 23, 14, 5, 0, "body"], ["head", "r", 25, 15, 6, 3, "white"], ["head", "c", 22, 13, 1, 0, "eye"], ["head", "c", 31, 16, 1, 0, "nose"]]}
+    k{"chicken"} = {"base": [246, 244, 236], "hat": [21, 9], "parts": [["tail", "r", 7, 14, 3, 6, "dark"], ["legb", "r", 13, 27, 1, 4, "orange"], ["legf", "r", 17, 27, 1, 4, "orange"], ["body", "c", 15, 21, 7, 0, "body"], ["body", "c", 13, 21, 4, 0, "dark"], ["head", "c", 21, 13, 4, 0, "body"], ["head", "r", 20, 7, 3, 3, "red"], ["head", "r", 25, 13, 3, 2, "orange"], ["head", "r", 21, 16, 2, 2, "red"], ["head", "c", 22, 12, 1, 0, "eye"]]}
+    k{"duck"} = {"base": [236, 232, 222], "hat": [21, 8], "parts": [["legb", "r", 12, 29, 3, 2, "orange"], ["legf", "r", 17, 29, 3, 2, "orange"], ["tail", "r", 6, 18, 3, 3, "body"], ["body", "c", 15, 23, 8, 0, "body"], ["body", "c", 13, 22, 4, 0, "dark"], ["head", "c", 21, 14, 5, 0, "body"], ["head", "r", 25, 14, 5, 3, "orange"], ["head", "c", 22, 13, 1, 0, "eye"]]}
+    k{"frog"} = {"base": [76, 168, 72], "hat": [16, 13], "parts": [["legb", "r", 6, 27, 6, 3, "dark"], ["legf", "r", 20, 27, 6, 3, "dark"], ["body", "c", 16, 23, 8, 0, "body"], ["body", "c", 16, 25, 5, 0, "light"], ["head", "c", 12, 16, 3, 0, "body"], ["head", "c", 20, 16, 3, 0, "body"], ["head", "c", 12, 16, 1, 0, "eye"], ["head", "c", 20, 16, 1, 0, "eye"]]}
+    k{"rabbit"} = {"base": [168, 140, 112], "hat": [20, 10], "parts": [["tail", "c", 8, 22, 2, 0, "white"], ["legb", "r", 9, 27, 5, 3, "dark"], ["legf", "r", 18, 27, 3, 3, "dark"], ["body", "c", 14, 23, 7, 0, "body"], ["head", "r", 16, 4, 3, 9, "body"], ["head", "r", 21, 5, 3, 8, "body"], ["head", "r", 17, 6, 1, 6, "pink"], ["head", "c", 20, 16, 5, 0, "body"], ["head", "c", 22, 15, 1, 0, "eye"], ["head", "c", 25, 17, 1, 0, "pink"]]}
+    k{"sheep"} = {"base": [236, 234, 226], "hat": [25, 11], "parts": [["legb", "r", 9, 25, 3, 6, "black"], ["legf", "r", 20, 25, 3, 6, "black"], ["body", "c", 11, 20, 6, 0, "body"], ["body", "c", 19, 20, 6, 0, "body"], ["body", "c", 15, 16, 6, 0, "light"], ["body", "c", 15, 23, 6, 0, "body"], ["head", "c", 25, 16, 4, 0, "black"], ["head", "c", 26, 15, 1, 0, "white"]]}
+    k{"cow"} = {"base": [240, 238, 232], "pattern": "spots", "hat": [27, 9], "parts": [["tail", "r", 2, 14, 2, 8, "dark"], ["legb", "r", 4, 24, 3, 7, "dark"], ["legf", "r", 20, 24, 3, 7, "dark"], ["body", "r", 3, 14, 22, 11, "body"], ["legb", "r", 8, 24, 3, 7, "body"], ["legf", "r", 16, 24, 3, 7, "body"], ["head", "r", 23, 10, 8, 9, "body"], ["head", "r", 25, 16, 6, 4, "pink"], ["head", "r", 23, 8, 2, 3, "light"], ["head", "r", 29, 8, 2, 3, "light"], ["head", "c", 26, 13, 1, 0, "eye"]]}
+    k{"pig"} = {"base": [240, 170, 176], "hat": [23, 11], "parts": [["tail", "c", 6, 18, 2, 0, "dark"], ["legb", "r", 9, 25, 3, 5, "dark"], ["legf", "r", 19, 25, 3, 5, "dark"], ["body", "c", 14, 21, 8, 0, "body"], ["head", "c", 23, 18, 5, 0, "body"], ["head", "r", 20, 12, 3, 3, "dark"], ["head", "r", 27, 17, 4, 4, "light"], ["head", "c", 24, 16, 1, 0, "eye"]]}
+    k{"hedgehog"} = {"base": [124, 92, 64], "hat": [17, 14], "parts": [["legb", "r", 9, 28, 3, 2, "skin"], ["legf", "r", 19, 28, 3, 2, "skin"], ["body", "c", 15, 23, 8, 0, "dark"], ["body", "c", 14, 22, 7, 0, "body"], ["body", "r", 8, 15, 2, 3, "dark"], ["body", "r", 12, 13, 2, 3, "dark"], ["body", "r", 16, 13, 2, 3, "dark"], ["body", "r", 20, 15, 2, 3, "dark"], ["body", "r", 6, 19, 2, 3, "dark"], ["head", "c", 23, 25, 4, 0, "skin"], ["head", "c", 27, 25, 1, 0, "black"], ["head", "c", 23, 23, 1, 0, "eye"]]}
+    RETURN k
+ENDFUNC
+
+FUNC AnimalColor(name$, body)
+    IF name$ = "body" THEN RETURN body
+    IF name$ = "dark" THEN RETURN [INT(body[0] * 0.66), INT(body[1] * 0.66), INT(body[2] * 0.66)]
+    IF name$ = "light" THEN RETURN [MIN([255, INT(body[0] * 0.6 + 100)]), MIN([255, INT(body[1] * 0.6 + 100)]), MIN([255, INT(body[2] * 0.6 + 100)])]
+    DIM fixed = {"eye": [24, 24, 28], "nose": [40, 30, 30], "black": [44, 42, 44], "white": [246, 244, 238], "pink": [236, 150, 160], "red": [220, 52, 52], "orange": [240, 160, 40], "green": [120, 200, 80], "skin": [232, 196, 160]}
+    RETURN fixed{name$} ?? body
+ENDFUNC
+
+' How the animal of row stands now: [facing left, moving, sitting, cute].
+' It sits after a while without a step and is cute now and then, more
+' often when the player stands close.
+FUNC AnimalState(c, row)
+    IF NOT MAP.EXISTS(c, "anim") THEN c{"anim"} = {}
+    DIM last = c{"anim"}{row[0]} ?? [row[2], row[3], FALSE, TICK() - 10000]
+    IF row[2] <> last[0] ORELSE row[3] <> last[1] THEN
+        DIM faces_left = last[2]
+        IF row[2] < last[0] THEN faces_left = TRUE
+        IF row[2] > last[0] THEN faces_left = FALSE
+        last = [row[2], row[3], faces_left, TICK()]
+        c{"anim"}{row[0]} = last
+    ENDIF
+    DIM n = VAL(SPLIT(row[0], "_")[2])
+    DIM still = TICK() - last[3]
+    DIM near = ABS(row[2] - (c{"x"} ?? -99)) <= 2 ANDALSO ABS(row[3] - (c{"y"} ?? -99)) <= 2
+    DIM beat = (INT(TICK()) + n * 977) MOD IIF(near, 3000, 9000)
+    DIM cute = still > 600 ANDALSO beat < 1200
+    RETURN [last[2], still < 450, still > 5000 ANDALSO NOT cute, cute]
+ENDFUNC
+
+SUB AnimalHeart(x, y)
+    CIRCLE x - 2, y, 2, TRUE, 236, 70, 110
+    CIRCLE x + 2, y, 2, TRUE, 236, 70, 110
+    RECT x - 3, y + 1, 7, 2, TRUE, 236, 70, 110
+    RECT x - 2, y + 3, 5, 1, TRUE, 236, 70, 110
+    RECT x - 1, y + 4, 3, 1, TRUE, 236, 70, 110
 ENDSUB
 
-SUB BuildDuck(c, row, sx, sy)
-    DIM bob = BuildBob(row, 300)
-    BuildShadow(sx, sy, 9)
-    DIM y = sy + bob
-    CIRCLE sx + 15, y + 23, 8, TRUE, 236, 232, 222
-    CIRCLE sx + 21, y + 14, 5, TRUE, 40, 120, 72
-    RECT sx + 25, y + 14, 5, 3, TRUE, 240, 160, 40
-    CIRCLE sx + 22, y + 13, 1, TRUE, 20, 20, 20
-    RECT sx + 18, y + 18, 5, 2, TRUE, 236, 236, 236
-    LINE sx + 9, y + 22, sx + 17, y + 25, 190, 186, 176
-    RECT sx + 12, y + 30, 2, 2, TRUE, 240, 160, 40
-    RECT sx + 17, y + 30, 2, 2, TRUE, 240, 160, 40
-    BuildLabel(sx, y + 8, row[1])
+' Draws an animal of the builder: row is [id, name, x, y, kind, look] and
+' look may hold color [r, g, b], pattern (stripes, spots) and hat [r, g, b].
+SUB BuildAnimal(c, row, sx, sy)
+    DIM what$ = SPLIT(row[0], "_")[1]
+    DIM kinds = AnimalKinds()
+    IF NOT MAP.EXISTS(kinds, what$) THEN RETURN
+    DIM kind = kinds{what$}
+    DIM look = {}
+    IF LEN(row) > 5 ANDALSO ISMAP(row[5]) THEN look = row[5]
+    DIM body = look{"color"} ?? kind{"base"}
+    DIM pattern$ = look{"pattern"} ?? (kind{"pattern"} ?? "")
+    DIM state = AnimalState(c, row)
+    DIM faces_left = state[0]
+    DIM tick_now = INT(TICK())
+    DIM phase = (tick_now \ 120) MOD 2
+    DIM bob = 0
+    IF state[1] THEN bob = -phase
+    DIM hop = 0
+    IF state[3] THEN hop = -INT(3 * ABS(SIN((tick_now MOD 600) / 600 * MATH.PI)))
+    DRAWCOLOR 10, 24, 10, 70
+    ELLIPSE sx + 16, sy + 30, 10, 3, TRUE
+    DRAWCOLOR 255, 255, 255, 255
+    DIM parts = kind{"parts"}
+    DIM i = 0
+    FOR i = 0 TO LEN(parts) - 1
+        DIM part = parts[i]
+        DIM group$ = part[0]
+        DIM dx = 0
+        DIM dy = hop
+        DIM tall = part[5]
+        IF group$ = "body" THEN dy = dy + bob
+        IF group$ = "head" THEN
+            dy = dy + bob
+            IF state[3] THEN dy = dy - 1
+        ENDIF
+        IF group$ = "legf" ORELSE group$ = "legb" THEN
+            IF state[1] THEN
+                DIM swing = IIF(group$ = "legf", phase, 1 - phase)
+                dx = IIF(swing = 1, 1, -1)
+                dy = dy - swing
+            ENDIF
+        ENDIF
+        IF group$ = "tail" ANDALSO (state[1] ORELSE state[3]) THEN dx = IIF((tick_now \ 90) MOD 2 = 0, 1, -1)
+        IF state[2] THEN
+            ' sitting: the body sinks onto the legs, the legs fold
+            IF group$ = "body" ORELSE group$ = "head" ORELSE group$ = "tail" THEN dy = dy + 3
+            IF (group$ = "legf" ORELSE group$ = "legb") ANDALSO part[1] = "r" THEN
+                dy = dy + tall - 2
+                tall = 2
+            ENDIF
+        ENDIF
+        DIM col = AnimalColor(part[6], body)
+        DIM px = part[2] + dx
+        IF part[1] = "r" THEN
+            IF faces_left THEN px = 31 - px - part[4]
+            RECT sx + px, sy + part[3] + dy, part[4], tall, TRUE, col[0], col[1], col[2]
+        ELSE
+            IF faces_left THEN px = 31 - px
+            IF part[4] <= 1 THEN
+                RECT sx + px - 1, sy + part[3] + dy - 1, 2, 2, TRUE, col[0], col[1], col[2]
+            ELSE
+                CIRCLE sx + px, sy + part[3] + dy, part[4], TRUE, col[0], col[1], col[2]
+            ENDIF
+        ENDIF
+        IF group$ = "body" ANDALSO part[6] = "body" ANDALSO pattern$ <> "" THEN
+            DIM dark = AnimalColor("dark", body)
+            IF pattern$ = "stripes" THEN dark = [INT(body[0] * 0.4), INT(body[1] * 0.4), INT(body[2] * 0.4)]
+            DIM bx = 0
+            DIM by = 0
+            DIM bw = 0
+            DIM bh = 0
+            IF part[1] = "r" THEN
+                bx = sx + px
+                by = sy + part[3] + dy
+                bw = part[4]
+                bh = tall
+            ELSE
+                bx = sx + px - part[4] \ 2
+                by = sy + part[3] + dy - part[4] \ 2
+                bw = part[4]
+                bh = part[4]
+            ENDIF
+            DIM m = 0
+            IF pattern$ = "stripes" THEN
+                FOR m = 2 TO bw - 2 STEP 4
+                    RECT bx + m, by, 2, bh, TRUE, dark[0], dark[1], dark[2]
+                NEXT m
+            ELSE
+                FOR m = 0 TO 2
+                    CIRCLE bx + (m * 7 + 3) MOD MAX([bw, 1]), by + (m * 5 + 2) MOD MAX([bh, 1]), 2, TRUE, dark[0], dark[1], dark[2]
+                NEXT m
+            ENDIF
+        ENDIF
+    NEXT i
+    DIM top = sy + 4 + hop
+    IF MAP.EXISTS(look, "hat") ANDALSO ISARR(look{"hat"}) THEN
+        DIM hc = look{"hat"}
+        DIM hx = kind{"hat"}[0]
+        IF faces_left THEN hx = 31 - hx
+        DIM hy = sy + kind{"hat"}[1] + hop + bob + IIF(state[2], 3, 0) - IIF(state[3], 1, 0)
+        RECT sx + hx - 5, hy, 11, 2, TRUE, hc[0], hc[1], hc[2]
+        RECT sx + hx - 3, hy - 5, 7, 5, TRUE, hc[0], hc[1], hc[2]
+        RECT sx + hx - 3, hy - 2, 7, 1, TRUE, 250, 246, 236
+        top = hy - 6
+    ENDIF
+    IF state[3] THEN AnimalHeart(sx + IIF(faces_left, 8, 24), top - 6 + hop)
+    BuildLabel(sx, top - IIF(state[3], 10, 0), row[1])
 ENDSUB
 
-SUB BuildChicken(c, row, sx, sy)
-    DIM peck = BuildBob(row, 260) * 2
-    BuildShadow(sx, sy, 7)
-    CIRCLE sx + 15, sy + 22, 7, TRUE, 246, 244, 236
-    CIRCLE sx + 20, sy + 14 + peck, 4, TRUE, 246, 244, 236
-    RECT sx + 19, sy + 9 + peck, 3, 3, TRUE, 220, 50, 50
-    RECT sx + 24, sy + 14 + peck, 3, 2, TRUE, 240, 170, 40
-    RECT sx + 21, sy + 17 + peck, 2, 2, TRUE, 220, 50, 50
-    CIRCLE sx + 21, sy + 13 + peck, 1, TRUE, 20, 20, 20
-    LINE sx + 8, sy + 18, sx + 10, sy + 22, 200, 196, 186
-    LINE sx + 13, sy + 28, sx + 13, sy + 31, 240, 170, 40
-    LINE sx + 17, sy + 28, sx + 17, sy + 31, 240, 170, 40
-    BuildLabel(sx, sy + 7, row[1])
-ENDSUB
-
-SUB BuildSheep(c, row, sx, sy)
-    DIM bob = BuildBob(row, 500)
-    BuildShadow(sx, sy, 11)
-    DIM y = sy + bob
-    RECT sx + 9, y + 25, 3, 6, TRUE, 50, 46, 44
-    RECT sx + 20, y + 25, 3, 6, TRUE, 50, 46, 44
-    CIRCLE sx + 11, y + 20, 6, TRUE, 222, 220, 212
-    CIRCLE sx + 19, y + 20, 6, TRUE, 222, 220, 212
-    CIRCLE sx + 15, y + 16, 6, TRUE, 240, 238, 232
-    CIRCLE sx + 15, y + 23, 6, TRUE, 236, 234, 226
-    CIRCLE sx + 25, y + 16, 4, TRUE, 60, 54, 50
-    CIRCLE sx + 26, y + 15, 1, TRUE, 230, 230, 230
-    BuildLabel(sx, y + 9, row[1])
-ENDSUB
-
-SUB BuildRabbit(c, row, sx, sy)
-    DIM hop = BuildBob(row, 340) * 3
-    BuildShadow(sx, sy, 7)
-    DIM y = sy - hop
-    CIRCLE sx + 15, y + 24, 7, TRUE, 168, 140, 112
-    CIRCLE sx + 19, y + 17, 5, TRUE, 180, 152, 122
-    RECT sx + 16, y + 5, 3, 9, TRUE, 180, 152, 122
-    RECT sx + 20, y + 6, 3, 8, TRUE, 180, 152, 122
-    RECT sx + 17, y + 7, 1, 6, TRUE, 230, 170, 170
-    CIRCLE sx + 21, y + 16, 1, TRUE, 20, 20, 20
-    CIRCLE sx + 8, y + 24, 2, TRUE, 246, 244, 236
-    BuildLabel(sx, y + 4, row[1])
-ENDSUB
-
-SUB BuildDog(c, row, sx, sy)
-    DIM wag = BuildBob(row, 160) * 2
-    BuildShadow(sx, sy, 10)
-    RECT sx + 8, sy + 18, 15, 8, TRUE, 150, 98, 52
-    RECT sx + 9, sy + 25, 3, 6, TRUE, 130, 84, 44
-    RECT sx + 19, sy + 25, 3, 6, TRUE, 130, 84, 44
-    CIRCLE sx + 24, sy + 15, 5, TRUE, 160, 106, 58
-    RECT sx + 27, sy + 16, 4, 3, TRUE, 160, 106, 58
-    RECT sx + 21, sy + 12, 3, 6, TRUE, 100, 64, 34
-    CIRCLE sx + 30, sy + 16, 1, TRUE, 20, 20, 20
-    CIRCLE sx + 25, sy + 14, 1, TRUE, 20, 20, 20
-    LINE sx + 8, sy + 19, sx + 4, sy + 14 + wag, 130, 84, 44
-    BuildLabel(sx, sy + 9, row[1])
-ENDSUB
-
-SUB BuildCow(c, row, sx, sy)
-    DIM bob = BuildBob(row, 700)
-    BuildShadow(sx, sy, 13)
-    RECT sx + 3, sy + 14, 22, 11, TRUE, 240, 238, 232
-    RECT sx + 7, sy + 15, 6, 5, TRUE, 40, 38, 36
-    RECT sx + 16, sy + 19, 5, 4, TRUE, 40, 38, 36
-    RECT sx + 4, sy + 24, 3, 7, TRUE, 220, 216, 210
-    RECT sx + 20, sy + 24, 3, 7, TRUE, 220, 216, 210
-    RECT sx + 23, sy + 10 + bob, 8, 9, TRUE, 240, 238, 232
-    RECT sx + 25, sy + 16 + bob, 6, 4, TRUE, 230, 170, 170
-    RECT sx + 23, sy + 8 + bob, 2, 3, TRUE, 210, 200, 170
-    RECT sx + 29, sy + 8 + bob, 2, 3, TRUE, 210, 200, 170
-    CIRCLE sx + 26, sy + 13 + bob, 1, TRUE, 20, 20, 20
-    BuildLabel(sx, sy + 6, row[1])
+SUB AnimalPainters()
+    FOR EACH what$ IN MAP.KEYS(AnimalKinds())
+        ClientPainter("@" + what$, BuildAnimal@)
+    NEXT
 ENDSUB
 
 SUB BuildBench(c, row, sx, sy)
@@ -1102,13 +1229,7 @@ SUB BuildVillager(c, row, sx, sy)
     BuildLabel(sx, sy - 15, row[1])
 ENDSUB
 
-ClientPainter("@frog", BuildFrog@)
-ClientPainter("@duck", BuildDuck@)
-ClientPainter("@chicken", BuildChicken@)
-ClientPainter("@sheep", BuildSheep@)
-ClientPainter("@rabbit", BuildRabbit@)
-ClientPainter("@dog", BuildDog@)
-ClientPainter("@cow", BuildCow@)
+AnimalPainters()
 ClientPainter("@bench", BuildBench@)
 ClientPainter("@lantern", BuildLantern@)
 ClientPainter("@sign", BuildSign@)
