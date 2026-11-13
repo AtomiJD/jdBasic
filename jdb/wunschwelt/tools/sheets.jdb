@@ -1,7 +1,10 @@
 ' A character sheet of 3 x 4 frames (columns: stand, step, step; rows:
 ' down, left, right, up) brought to the frame size of the game.
 '
-'   build/jdBasic.exe jdb/wunschwelt/tools/sheets.jdb in.png out.png [size]
+'   build/jdBasic.exe jdb/wunschwelt/tools/sheets.jdb in.png out.png [size] [rows]
+'
+' An animal's sheet has six rows: the four directions, then sitting (left,
+' front, right) and happy.
 '
 ' Every frame is cut to one box around the figure, the same for all twelve,
 ' so the figure does not jump between frames; the box is made square with
@@ -17,6 +20,8 @@ IF LEN(args) < 3 THEN
 ENDIF
 DIM side = 48
 IF LEN(args) > 3 THEN side = VAL(args[3])
+DIM rows = 4
+IF LEN(args) > 4 THEN rows = VAL(args[4])
 
 DIM sheet = IMG.READPNG(args[1])
 IF IMG.CHANNELS(sheet) <> 4 THEN
@@ -24,7 +29,7 @@ IF IMG.CHANNELS(sheet) <> 4 THEN
     END 1
 ENDIF
 DIM fw = IMG.WIDTH(sheet) \ 3
-DIM fh = IMG.HEIGHT(sheet) \ 4
+DIM fh = IMG.HEIGHT(sheet) \ rows
 
 ' the box that holds the figure in every frame, in frame coordinates
 DIM px = IMG.PIXELS(sheet)
@@ -89,10 +94,10 @@ FUNC Premul(img, back)
     RETURN IMG.FROMPIXELS(IMG.WIDTH(img), IMG.HEIGHT(img), 4, FLATTEN(TRANSPOSE(STACK(0, r, g, b, a))))
 ENDFUNC
 
-DIM out = IMG.BLANK(side * 3, side * 4, 4, 0)
+DIM out = IMG.BLANK(side * 3, side * rows, 4, 0)
 DIM col = 0
 DIM row = 0
-FOR row = 0 TO 3
+FOR row = 0 TO rows - 1
     FOR col = 0 TO 2
         DIM cx = col * fw + bx
         DIM cy = row * fh + by
@@ -109,11 +114,11 @@ FOR row = 0 TO 3
     NEXT col
 NEXT row
 IMG.WRITEPNG(out, args[2])
-PRINT args[2]; ": "; side * 3; " x "; side * 4
+PRINT args[2]; ": "; side * 3; " x "; side * rows
 
 ' The same pixels raw beside it, for a runtime that cannot read PNG (the
 ' browser): two little-endian 32-bit numbers, width and height, then RGBA.
-DIM raw$ = PACK$("<II", side * 3, side * 4) + JOIN(SELECT(LAMBDA v -> CHR$(v), IMG.PIXELS(out)), "")
+DIM raw$ = PACK$("<II", side * 3, side * rows) + JOIN(SELECT(LAMBDA v -> CHR$(v), IMG.PIXELS(out)), "")
 DIM raw_path$ = LEFT$(args[2], LEN(args[2]) - LEN(PATH.EXT$(args[2]))) + ".rgba"
 BINWRITER raw_path$, raw$
 PRINT raw_path$; ": "; LEN(raw$); " bytes"

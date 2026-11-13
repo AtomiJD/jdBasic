@@ -101,6 +101,35 @@ SUB RuleWearGuess(t$, st)
     IF INSTR(t$, "tiger") >= 0 ANDALSO NOT MAP.EXISTS(st, "color") THEN st{"color"} = "orange"
 ENDSUB
 
+' The words of a wish that speak of one animal of the sort what$: the part
+' (cut at commas and at the word for and) that names it, with the parts
+' after it that name no other animal. The whole text when it names only one.
+FUNC RuleWearPart$(t$, what$)
+    DIM stems = RuleBuildStems()
+    DIM whats = RuleBuildWhats()
+    DIM parts = SPLIT(REPLACE$(t$, ",", " und "), " und ")
+    DIM names_animal = []
+    DIM named = 0
+    FOR EACH part$ IN parts
+        DIM which$ = ""
+        FOR EACH stem IN stems
+            IF which$ = "" ANDALSO whats{stem[1]}[1] ANDALSO INSTR(part$, stem[0]) >= 0 THEN which$ = stem[1]
+        NEXT
+        names_animal = APPEND(names_animal, which$)
+        IF which$ <> "" THEN named = named + 1
+    NEXT
+    IF named <= 1 THEN RETURN t$
+    DIM out$ = ""
+    DIM taking = FALSE
+    DIM i = 0
+    FOR i = 0 TO LEN(parts) - 1
+        IF names_animal[i] <> "" THEN taking = names_animal[i] = what$ ANDALSO out$ = ""
+        IF taking THEN out$ = out$ + " " + parts[i] + " "
+    NEXT i
+    IF out$ = "" THEN RETURN t$
+    RETURN out$
+ENDFUNC
+
 ' {slot: [item, colour name]} as the client draws it, {slot: [item, [r, g, b]]};
 ' items and colours that are not known are left out.
 FUNC RuleWearLook(wear)
@@ -441,9 +470,10 @@ FUNC AnimalWear(kind, look, sx, sy, faces_left, head_dy, hop)
         DIM lens_shut = eyes[0] = "sunglasses"
         IF kind{"front"} ?? FALSE THEN
             DIM cx = sx + kind{"eye"}[0]
-            AnimalLens(cx - 4, ey, ec, lens_shut)
-            AnimalLens(cx + 4, ey, ec, lens_shut)
-            RECT cx - 2, ey - 1, 5, 1, TRUE, ec[0], ec[1], ec[2]
+            DIM gap = kind{"gap"} ?? 4
+            AnimalLens(cx - gap, ey, ec, lens_shut)
+            AnimalLens(cx + gap, ey, ec, lens_shut)
+            RECT cx - gap + 3, ey - 1, MAX([1, 2 * gap - 5]), 1, TRUE, ec[0], ec[1], ec[2]
         ELSE
             DIM ex = sx + IIF(faces_left, 31 - kind{"eye"}[0], kind{"eye"}[0])
             AnimalLens(ex, ey, ec, lens_shut)
@@ -546,6 +576,168 @@ SUB ClientNpcWear(c, row, sx, sy)
     ENDIF
     DIM top = AnimalWear(kind, look, sx, sy, dir = 1, 0, 0)
 ENDSUB
+
+' ---- animals drawn from sheets ----
+' assets/animal_<sort> is a sheet of 3 x 6 frames of 48 pixels: rows down,
+' left, right, up (columns step, stand, step), sitting (left, front, right)
+' and happy. The fur is white; the client paints it in the animal's colour.
+
+' How big a sort is drawn, of the 48 pixels of a frame.
+FUNC AnimalSheetSize(what$)
+    DIM sizes = {"chicken": 30, "duck": 30, "frog": 30, "hedgehog": 30, "rabbit": 32, "cat": 34, "dog": 36, "fox": 36, "pig": 36, "sheep": 40, "cow": 42}
+    RETURN sizes{what$} ?? 36
+ENDFUNC
+
+' Where things sit on a sort, in the 48 pixels of a frame, seen from the
+' front and from the side facing right.
+FUNC AnimalSheetAnchors(what$)
+    DIM all = SheetAnchorTable()
+    RETURN all{what$} ?? {"front": {"top": 4, "hat": [24, 8], "eye": [24, 18], "gap": 5, "neck": [24, 28]}, "side": {"top": 4, "hat": [26, 8], "eye": [32, 18], "neck": [26, 28]}}
+ENDFUNC
+
+' Measured on the sheets by tools/anchors.jdb; rabbit, hedgehog, fox and
+' frog set by eye where the measure took a nose or the feet.
+FUNC SheetAnchorTable()
+    DIM t = {}
+    t{"cat"} = {"front": {"top": 0, "hat": [22, 3], "eye": [22, 19], "gap": 6, "neck": [22, 30]}, "side": {"top": 0, "hat": [30, 3], "eye": [34, 18], "neck": [29, 29]}}
+    t{"chicken"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 17], "gap": 5, "neck": [23, 27]}, "side": {"top": 1, "hat": [26, 4], "eye": [30, 19], "neck": [25, 30]}}
+    t{"cow"} = {"front": {"top": 0, "hat": [24, 3], "eye": [24, 16], "gap": 7, "neck": [24, 26]}, "side": {"top": 3, "hat": [30, 6], "eye": [34, 15], "neck": [29, 23]}}
+    t{"dog"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 16], "gap": 5, "neck": [23, 26]}, "side": {"top": 2, "hat": [30, 5], "eye": [34, 18], "neck": [29, 28]}}
+    t{"duck"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 17], "gap": 6, "neck": [23, 27]}, "side": {"top": 2, "hat": [25, 5], "eye": [29, 17], "neck": [24, 26]}}
+    t{"fox"} = {"front": {"top": 0, "hat": [21, 3], "eye": [21, 19], "gap": 5, "neck": [21, 30]}, "side": {"top": 2, "hat": [33, 5], "eye": [37, 17], "neck": [32, 28]}}
+    t{"frog"} = {"front": {"top": 0, "hat": [24, 3], "eye": [24, 9], "gap": 9, "neck": [24, 25]}, "side": {"top": 3, "hat": [32, 6], "eye": [35, 12], "neck": [31, 26]}}
+    t{"hedgehog"} = {"front": {"top": 0, "hat": [22, 3], "eye": [22, 25], "gap": 6, "neck": [22, 33]}, "side": {"top": 2, "hat": [33, 6], "eye": [40, 25], "neck": [36, 33]}}
+    t{"pig"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 17], "gap": 7, "neck": [23, 27]}, "side": {"top": 3, "hat": [26, 6], "eye": [30, 19], "neck": [25, 29]}}
+    t{"rabbit"} = {"front": {"top": 14, "hat": [23, 17], "eye": [23, 25], "gap": 5, "neck": [23, 32]}, "side": {"top": 14, "hat": [27, 16], "eye": [30, 24], "neck": [26, 31]}}
+    t{"sheep"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 17], "gap": 10, "neck": [23, 27]}, "side": {"top": 2, "hat": [29, 5], "eye": [33, 18], "neck": [28, 28]}}
+    RETURN t
+ENDFUNC
+
+' The sheet of a sort in the colour and pattern of a look, made once and
+' kept; -1 when the sort has no sheet. Past 32 the kept ones are let go.
+FUNC AnimalSheet(c, what$, look, kind)
+    DIM col = look{"color"} ?? kind{"base"}
+    DIM pattern$ = look{"pattern"} ?? ""
+    DIM key$ = what$ + JSON.STRINGIFY$([col, pattern$])
+    IF NOT MAP.EXISTS(c, "animal_imgs") THEN c{"animal_imgs"} = {}
+    IF MAP.EXISTS(c{"animal_imgs"}, key$) THEN RETURN c{"animal_imgs"}{key$}
+    IF NOT MAP.EXISTS(c, "animal_raw") THEN c{"animal_raw"} = {}
+    IF NOT MAP.EXISTS(c{"animal_raw"}, what$) THEN
+        c{"animal_raw"}{what$} = []
+        TRY
+            DIM data$ = BINREADER$((c{"assets"} ?? "assets") + "/animal_" + what$ + ".rgba")
+            DIM size = UNPACK("<II", data$)
+            DIM n_px = size[0] * size[1]
+            IF LEN(data$) >= 8 + 4 * n_px THEN c{"animal_raw"}{what$} = [size[0], size[1], UNPACK(STR$(n_px * 4) + "b", data$, 8)]
+        CATCH
+        ENDTRY
+    ENDIF
+    DIM raw = c{"animal_raw"}{what$}
+    IF LEN(raw) = 0 THEN RETURN -1
+    IF MAP.SIZE(c{"animal_imgs"}) >= 32 THEN
+        FOR EACH old$ IN MAP.KEYS(c{"animal_imgs"})
+            GFX.FREEIMAGE(c{"animal_imgs"}{old$})
+        NEXT
+        c{"animal_imgs"} = {}
+    ENDIF
+    DIM n = raw[0] * raw[1]
+    DIM q = RESHAPE(raw[2], [n, 4])
+    DIM r = SLICE(q, 1, 0)
+    DIM g = SLICE(q, 1, 1)
+    DIM b = SLICE(q, 1, 2)
+    DIM a = SLICE(q, 1, 3)
+    DIM hi = IIF(r > g, r, g)
+    hi = IIF(hi > b, hi, b)
+    DIM lo = IIF(r < g, r, g)
+    lo = IIF(lo < b, lo, b)
+    ' the fur: bright and without colour
+    DIM fur = (a > 0) * (hi > 120) * ((hi - lo) < 0.18 * hi)
+    DIM shade = (0.299 * r + 0.587 * g + 0.114 * b) / 235
+    IF pattern$ <> "" THEN
+        DIM xs = IOTA(n, 0) MOD raw[0]
+        DIM ys = IOTA(n, 0) \ raw[0]
+        IF pattern$ = "stripes" THEN
+            shade = shade * (1 - 0.42 * (((xs + (ys \ 4) MOD 2) MOD 6) < 2))
+        ELSE
+            DIM cell_x = xs MOD 9
+            DIM cell_y = ys MOD 9
+            DIM spot = ((xs \ 9) * 7 + (ys \ 9) * 3) MOD 3 = 0
+            shade = shade * (1 - 0.45 * spot * (((cell_x - 4) * (cell_x - 4) + (cell_y - 4) * (cell_y - 4)) < 7))
+        ENDIF
+    ENDIF
+    r = r * (1 - fur) + CLAMP(col[0] * shade, 0, 255) * fur
+    g = g * (1 - fur) + CLAMP(col[1] * shade, 0, 255) * fur
+    b = b * (1 - fur) + CLAMP(col[2] * shade, 0, 255) * fur
+    DIM spr = SPRITE.CREATE(raw[0], raw[1])
+    SPRITE.SETBUFFER spr, FLATTEN(TRANSPOSE(STACK(0, r, g, b, a)))
+    DIM img = GFX.NEWTARGET(raw[0], raw[1], FALSE)
+    GFX.TARGET img, TRUE
+    SPRITE.POS spr, 0, 0
+    SPRITE.DRAW spr
+    GFX.TARGET
+    SPRITE.DELETE spr
+    c{"animal_imgs"}{key$} = img
+    RETURN img
+ENDFUNC
+
+' Draws an animal of the builder from the sheet of its sort, with what it
+' wears, its hearts and its name; FALSE when the sort has no sheet.
+FUNC AnimalSheetDraw(c, row, sx, sy, what$, kind)
+    DIM look = {}
+    IF LEN(row) > 5 ANDALSO ISMAP(row[5]) THEN look = row[5]
+    DIM img = AnimalSheet(c, what$, look, kind)
+    IF img <= 0 THEN RETURN FALSE
+    DIM state = AnimalState(c, row)
+    DIM way = state[4]
+    DIM frame_row = way
+    DIM frame_col = 1
+    DIM hop = 0
+    IF state[3] THEN
+        frame_row = 5
+        hop = -INT(4 * ABS(SIN((INT(TICK()) MOD 600) / 600 * MATH.PI)))
+    ELSEIF state[2] THEN
+        frame_row = 4
+        frame_col = IIF(way = 1, 0, IIF(way = 2, 2, 1))
+    ELSEIF state[1] THEN
+        DIM cycle = [0, 1, 2, 1]
+        frame_col = cycle[(INT(TICK()) \ 140) MOD 4]
+    ENDIF
+    DIM size = AnimalSheetSize(what$)
+    DIM ox = 16 - size \ 2
+    DIM oy = 31 - size
+    DRAWCOLOR 10, 24, 10, 70
+    ELLIPSE sx + 16, sy + 30, size \ 3, 3, TRUE
+    DRAWCOLOR 255, 255, 255, 255
+    GFX.DRAWIMAGE_REGION(img, frame_col * 48, frame_row * 48, 48, 48, sx + ox, sy + oy + hop, size, size)
+    ' what it wears, from the anchors of the view, in the cell's pixels
+    DIM side = frame_row = 1 ORELSE frame_row = 2 ORELSE (frame_row = 4 ANDALSO frame_col <> 1)
+    DIM faces_left = frame_row = 1 ORELSE (frame_row = 4 ANDALSO frame_col = 0)
+    DIM spots = AnimalSheetAnchors(what$){IIF(side, "side", "front")}
+    DIM sink = IIF(frame_row = 4, spots{"sit"} ?? 4, 0)
+    DIM at = {"front": NOT side, "gap": INT((spots{"gap"} ?? 5) * size / 48)}
+    FOR EACH part$ IN ["hat", "eye", "neck"]
+        DIM p = spots{part$}
+        at{part$} = [ox + INT(p[0] * size / 48), oy + INT((p[1] + sink) * size / 48)]
+    NEXT
+    DIM wear_look = look
+    IF frame_row = 3 ANDALSO MAP.EXISTS(look, "wear") THEN
+        ' seen from the back the eyes are hidden
+        DIM back = {}
+        FOR EACH slot$ IN MAP.KEYS(look{"wear"})
+            IF slot$ <> "eyes" THEN back{slot$} = look{"wear"}{slot$}
+        NEXT
+        wear_look = {"wear": back}
+    ENDIF
+    DIM top = AnimalWear(at, wear_look, sx, sy, faces_left, hop, 0)
+    top = MIN([top, sy + oy + hop + INT(spots{"top"} * size / 48)])
+    IF state[3] THEN
+        AnimalHeart(sx + 16, top - 6)
+        top = top - 10
+    ENDIF
+    top = AnimalFondMark(c, row, sx, top)
+    BuildLabel(sx, top, row[1])
+    RETURN TRUE
+ENDFUNC
 
 SUB ClientAnimalAsk(c, msg)
     msg{"fondv"} = c{"fondv"} ?? -1

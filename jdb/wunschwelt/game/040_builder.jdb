@@ -227,7 +227,7 @@ FUNC RuleBuildGuess(w, job)
             IF (what$ = "frog" ORELSE what$ = "duck") ANDALSO LEN(points) = 0 THEN near$ = "pond"
             IF INSTR(t$, "brunnen") >= 0 ANDALSO LEN(points) = 0 THEN near$ = "brunnen"
             DIM st = {"do": IIF(whats{what$}[1], "animal", "thing"), "what": what$, "where": near$}
-            IF whats{what$}[1] THEN RuleWearGuess(t$, st)
+            IF whats{what$}[1] THEN RuleWearGuess(RuleWearPart$(t$, what$), st)
             steps = APPEND(steps, st)
         ENDIF
     NEXT i
@@ -267,7 +267,7 @@ FUNC RuleBuildCover(w, job, steps)
     ' an animal the plan left plain takes the colours the wish names
     DIM t$ = " " + RuleLookColorKey$("" + job{"text"}) + " "
     FOR k = 0 TO LEN(out) - 1
-        IF out[k]{"do"} = "animal" ANDALSO NOT MAP.EXISTS(out[k], "color") ANDALSO NOT MAP.EXISTS(out[k], "wear") ANDALSO NOT MAP.EXISTS(out[k], "pattern") THEN RuleWearGuess(t$, out[k])
+        IF out[k]{"do"} = "animal" ANDALSO NOT MAP.EXISTS(out[k], "color") ANDALSO NOT MAP.EXISTS(out[k], "wear") ANDALSO NOT MAP.EXISTS(out[k], "pattern") THEN RuleWearGuess(RuleWearPart$(t$, out[k]{"what"}), out[k])
     NEXT k
     ' new land comes before what stands on it
     DIM first = []
@@ -1065,17 +1065,22 @@ FUNC AnimalColor(name$, body)
     RETURN fixed{name$} ?? body
 ENDFUNC
 
-' How the animal of row stands now: [facing left, moving, sitting, cute].
+' How the animal of row stands now: [facing left, moving, sitting, cute,
+' the way of its last step: 0 down, 1 left, 2 right, 3 up].
 ' It sits after a while without a step and is cute now and then, more
 ' often when the player stands close.
 FUNC AnimalState(c, row)
     IF NOT MAP.EXISTS(c, "anim") THEN c{"anim"} = {}
-    DIM last = c{"anim"}{row[0]} ?? [row[2], row[3], FALSE, TICK() - 10000]
+    DIM last = c{"anim"}{row[0]} ?? [row[2], row[3], FALSE, TICK() - 10000, 0]
     IF row[2] <> last[0] ORELSE row[3] <> last[1] THEN
         DIM faces_left = last[2]
         IF row[2] < last[0] THEN faces_left = TRUE
         IF row[2] > last[0] THEN faces_left = FALSE
-        last = [row[2], row[3], faces_left, TICK()]
+        DIM way = 0
+        IF row[3] < last[1] THEN way = 3
+        IF row[2] < last[0] THEN way = 1
+        IF row[2] > last[0] THEN way = 2
+        last = [row[2], row[3], faces_left, TICK(), way]
         c{"anim"}{row[0]} = last
     ENDIF
     DIM n = VAL(SPLIT(row[0], "_")[2])
@@ -1085,7 +1090,7 @@ FUNC AnimalState(c, row)
     DIM cute = still > 600 ANDALSO beat < 1200
     ' just petted: happy at once
     IF TICK() - ((c{"petted"} ?? {}){row[0]} ?? -9999) < 1600 THEN cute = TRUE
-    RETURN [last[2], still < 450, still > 5000 ANDALSO NOT cute, cute]
+    RETURN [last[2], still < 450, still > 5000 ANDALSO NOT cute, cute, IIF(LEN(last) > 4, last[4], 0)]
 ENDFUNC
 
 SUB AnimalHeart(x, y)
@@ -1103,6 +1108,8 @@ SUB BuildAnimal(c, row, sx, sy)
     DIM kinds = AnimalKinds()
     IF NOT MAP.EXISTS(kinds, what$) THEN RETURN
     DIM kind = kinds{what$}
+    ' a sheet of the sort, when there is one, before the drawing from parts
+    IF AnimalSheetDraw(c, row, sx, sy, what$, kind) THEN RETURN
     DIM look = {}
     IF LEN(row) > 5 ANDALSO ISMAP(row[5]) THEN look = row[5]
     DIM body = look{"color"} ?? kind{"base"}

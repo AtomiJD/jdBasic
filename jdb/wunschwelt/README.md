@@ -268,6 +268,14 @@ can build goes back to the board with a note and is not taken up again.
 
 `game/050_animals.jdb`.
 
+- Every sort is drawn from a sheet in the style of the people,
+  `assets/animal_<sort>` (3 x 6 frames of 48 pixels: down, left, right, up,
+  sitting left, front, right, happy), made by
+  `tools/charactergen.jdb animal_<sort> "..." animal` with white fur. The client
+  paints the fur (bright pixels without colour) in the animal's colour, with
+  stripes or spots, once per look. Where hat, glasses and scarf sit is
+  measured by `tools/anchors.jdb` (`SheetAnchorTable`). Without a sheet the
+  animal is drawn from parts as before.
 - An animal wears `look{"wear"}`: `{slot: [item, [r, g, b]]}`, slot head (hat, cap,
   crown, flower), eyes (sunglasses, glasses) or neck (scarf, bow, collar).
   Each sort has anchors for hat, eye and neck in `AnimalKinds`, so every

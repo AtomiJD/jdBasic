@@ -1,0 +1,93 @@
+' Where a hat, glasses and a scarf sit on the animals of assets/animal_*.png:
+' from the frame standing toward the viewer (row 0) and the one facing right
+' (row 2) it finds the top of the head and the eyes (dark pixels inside the
+' figure in its upper part) and prints the table SheetAnchorTable of
+' game/050_animals.jdb, in the 48 pixels of a frame.
+'
+'   build/jdBasic.exe jdb/wunschwelt/tools/anchors.jdb
+
+IMPORT IMG
+
+DIM folder$ = PATH.DIRNAME$(OS.ARGS()[0]) + "/../assets"
+DIM q$ = CHR$(34)
+
+' [top, eye x, eye y, gap, found] of one frame; gap is half the distance of two eyes.
+FUNC Measure(px, sw, fx0, fy0, front)
+    DIM top = -1
+    DIM bottom = -1
+    DIM y = 0
+    DIM x = 0
+    FOR y = 0 TO 47
+        FOR x = 0 TO 47
+            IF px[((fy0 + y) * sw + fx0 + x) * 4 + 3] > 60 THEN
+                IF top < 0 THEN top = y
+                bottom = y
+            ENDIF
+        NEXT x
+    NEXT y
+    IF top < 0 THEN RETURN [8, 24, 18, 5, FALSE]
+    DIM xs = []
+    DIM ys = []
+    FOR y = top + 1 TO top + INT((bottom - top) * 0.6)
+        FOR x = 1 TO 46
+            DIM at = ((fy0 + y) * sw + fx0 + x) * 4
+            DIM lum = 0.299 * px[at] + 0.587 * px[at + 1] + 0.114 * px[at + 2]
+            IF px[at + 3] > 200 ANDALSO lum < 70 THEN
+                DIM inside = TRUE
+                FOR EACH d IN [-4, 4, -4 * sw, 4 * sw]
+                    IF px[at + d + 3] < 200 THEN inside = FALSE
+                NEXT
+                IF inside THEN
+                    xs = APPEND(xs, x)
+                    ys = APPEND(ys, y)
+                ENDIF
+            ENDIF
+        NEXT x
+    NEXT y
+    IF LEN(xs) = 0 THEN RETURN [top, 24, top + 10, 5, FALSE]
+    IF front THEN
+        DIM mid = (MIN(xs) + MAX(xs)) / 2
+        DIM left = []
+        DIM right = []
+        FOR EACH v IN xs
+            IF v < mid THEN
+                left = APPEND(left, v)
+            ELSE
+                right = APPEND(right, v)
+            ENDIF
+        NEXT
+        DIM lx = IIF(LEN(left) > 0, MEAN(left), mid - 5)
+        DIM rx = IIF(LEN(right) > 0, MEAN(right), mid + 5)
+        RETURN [top, INT((lx + rx) / 2), INT(MEAN(ys)), MAX([3, INT((rx - lx) / 2)]), TRUE]
+    ENDIF
+    ' facing right: the eye is the dark spot furthest right in the head
+    DIM far = MAX(xs)
+    DIM ex = []
+    DIM ey = []
+    DIM i = 0
+    FOR i = 0 TO LEN(xs) - 1
+        IF xs[i] >= far - 4 THEN
+            ex = APPEND(ex, xs[i])
+            ey = APPEND(ey, ys[i])
+        ENDIF
+    NEXT i
+    RETURN [top, INT(MEAN(ex)), INT(MEAN(ey)), 0, TRUE]
+ENDFUNC
+
+DIM out$ = "FUNC SheetAnchorTable()" + CHR$(10) + "    DIM t = {}" + CHR$(10)
+FOR EACH file$ IN SORT(FILE.LIST(folder$ + "/animal_*.png"))
+    DIM what$ = MID$(PATH.BASENAME$(file$), 7, LEN(PATH.BASENAME$(file$)) - 11)
+    DIM img = IMG.TOCHANNELS(IMG.READPNG(folder$ + "/" + PATH.BASENAME$(file$)), 4)
+    DIM px = IMG.PIXELS(img)
+    DIM sw = IMG.WIDTH(img)
+    DIM f = Measure(px, sw, 48, 0, TRUE)
+    DIM s = Measure(px, sw, 48, 96, FALSE)
+    DIM f_up = f[2] - f[0]
+    DIM s_up = s[2] - s[0]
+    DIM front$ = "{" + q$ + "top" + q$ + ": " + STR$(f[0]) + ", " + q$ + "hat" + q$ + ": [" + STR$(f[1]) + ", " + STR$(f[0] + 3) + "], " + q$ + "eye" + q$ + ": [" + STR$(f[1]) + ", " + STR$(f[2]) + "], " + q$ + "gap" + q$ + ": " + STR$(f[3]) + ", " + q$ + "neck" + q$ + ": [" + STR$(f[1]) + ", " + STR$(f[2] + INT(f_up * 0.5) + 2) + "]}"
+    DIM side$ = "{" + q$ + "top" + q$ + ": " + STR$(s[0]) + ", " + q$ + "hat" + q$ + ": [" + STR$(s[1] - 4) + ", " + STR$(s[0] + 3) + "], " + q$ + "eye" + q$ + ": [" + STR$(s[1]) + ", " + STR$(s[2]) + "], " + q$ + "neck" + q$ + ": [" + STR$(s[1] - 5) + ", " + STR$(s[2] + INT(s_up * 0.5) + 2) + "]}"
+    out$ = out$ + "    t{" + q$ + what$ + q$ + "} = {" + q$ + "front" + q$ + ": " + front$ + ", " + q$ + "side" + q$ + ": " + side$ + "}" + CHR$(10)
+    IF NOT f[4] ORELSE NOT s[4] THEN PRINT "' no eyes found for "; what$; ", check by eye"
+NEXT
+out$ = out$ + "    RETURN t" + CHR$(10) + "ENDFUNC"
+PRINT out$

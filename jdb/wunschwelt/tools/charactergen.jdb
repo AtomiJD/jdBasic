@@ -2,7 +2,11 @@
 ' image model (WW_IMAGE_MODEL, gpt-image-2 by default).
 '
 '   OPENAI_API_KEY must be set
-'   build/jdBasic.exe jdb/wunschwelt/tools/charactergen.jdb <name> "<description>"
+'   build/jdBasic.exe jdb/wunschwelt/tools/charactergen.jdb <name> "<description>" [animal]
+'
+' With animal the figure stands on four feet and three more pictures come:
+' sitting from the front and the side, and jumping for joy; the sheet then
+' has six rows (the four directions, sitting left, front, right, happy).
 '
 ' The front view comes first; the side, the back and the steps are edits of
 ' the front view, so all six show the same figure. The six pictures are cut
@@ -82,6 +86,8 @@ ENDFUNC
 
 DIM same$ = "The very same character as in the picture, same colours, clothes, proportions and pixel style. "
 DIM views = [["front", "", "Standing still, facing the viewer, front view, arms at sides"], ["front_walk", "edit", "Walking toward the viewer, front view, LEFT foot stepping forward, arms swinging mid-stride"], ["side", "edit", "Side profile facing RIGHT, standing still, arms at sides"], ["side_walk", "edit", "Side profile facing RIGHT, mid-stride walking, front leg forward, back leg behind, arms swinging"], ["back", "edit", "Rear view facing AWAY from the viewer, standing still, we see the back of the head and the clothes from behind"], ["back_walk", "edit", "Rear view walking away from the viewer, LEFT foot stepping forward, arms swinging"]]
+DIM animal = LEN(args) > 3 ANDALSO args[3] = "animal"
+IF animal THEN views = [["front", "", "Standing on its feet, facing the viewer, front view"], ["front_walk", "edit", "Walking toward the viewer, front view, its LEFT front foot stepping forward"], ["side", "edit", "Side profile facing RIGHT, standing still on its feet"], ["side_walk", "edit", "Side profile facing RIGHT, mid-stride walking, legs apart"], ["back", "edit", "Rear view facing AWAY from the viewer, standing still, we see its back and its tail"], ["back_walk", "edit", "Rear view walking away from the viewer, its LEFT foot stepping forward"], ["sit_front", "edit", "Sitting down on its bottom, front view, facing the viewer, calm and content"], ["sit_side", "edit", "Sitting down on its bottom, side profile facing RIGHT, calm and content"], ["happy", "edit", "Jumping up for joy, front view, feet off the ground, very happy face with closed smiling eyes"]]
 DIM i = 0
 FOR i = 0 TO LEN(views) - 1
     DIM path$ = work$ + "/" + views[i][0] + ".png"
@@ -123,10 +129,18 @@ DIM back_walk = Cutout(work$ + "/back_walk.png")
 
 ' rows down, left, right, up; columns step, stand, step
 DIM frames = [front_walk, front, IMG.FLIPX(front_walk), IMG.FLIPX(side_walk), IMG.FLIPX(side), IMG.FLIPX(side_walk), side_walk, side, side_walk, back_walk, back, IMG.FLIPX(back_walk)]
-DIM sheet = IMG.BLANK(256 * 3, 256 * 4, 4, 0)
+DIM n_rows = 4
+IF animal THEN
+    DIM sit_front = Cutout(work$ + "/sit_front.png")
+    DIM sit_side = Cutout(work$ + "/sit_side.png")
+    DIM happy = Cutout(work$ + "/happy.png")
+    frames = APPEND(frames, [IMG.FLIPX(sit_side), sit_front, sit_side, happy, happy, happy])
+    n_rows = 6
+ENDIF
+DIM sheet = IMG.BLANK(256 * 3, 256 * n_rows, 4, 0)
 DIM row = 0
 DIM col = 0
-FOR row = 0 TO 3
+FOR row = 0 TO n_rows - 1
     FOR col = 0 TO 2
         sheet = IMG.PASTE(sheet, frames[row * 3 + col], col * 256, row * 256)
     NEXT col
@@ -134,5 +148,5 @@ NEXT row
 DIM big$ = work$ + "/sheet.png"
 IMG.WRITEPNG(sheet, big$, {"filter": "sub", "level": 1})
 PRINT "sheet: "; big$
-DIM done = OS.EXEC(OS.SELF$(), [here$ + "/sheets.jdb", big$, here$ + "/../assets/" + who$ + ".png"])
+DIM done = OS.EXEC(OS.SELF$(), [here$ + "/sheets.jdb", big$, here$ + "/../assets/" + who$ + ".png", "48", STR$(n_rows)])
 PRINT done{"stdout"} ?? ""
