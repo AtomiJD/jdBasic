@@ -41,6 +41,9 @@ push_files() {
     local mark page listing
     listing=$(mktemp)
     (cd assets && ls *.rgba *.parts) | sed 's|^|assets/|' > "$listing"
+    # the music module of the client, beside client.jdb
+    echo melody.jdb >> "$listing"
+    $SCP ../demos/sound/melody.jdb "$HOST:~/ww_stage/"
     $SCP "$listing" "$HOST:~/ww_stage/assets.txt"
     rm -f "$listing"
     # The playground page belongs to the runtime in wasm/. A browser keeps
@@ -68,7 +71,7 @@ preflight() {
 publish_page() {
     $SSH 'sudo -n mkdir -p /var/www/vvss/wunschwelt/play/assets \
       && sudo -n cp ~/ww_stage/web/index.html /var/www/vvss/wunschwelt/ \
-      && sudo -n cp ~/ww_stage/client.jdb ~/ww_stage/assets.txt /var/www/vvss/wunschwelt/play/ \
+      && sudo -n cp ~/ww_stage/client.jdb ~/ww_stage/melody.jdb ~/ww_stage/assets.txt /var/www/vvss/wunschwelt/play/ \
       && sudo -n cp ~/ww_stage/assets/*.rgba ~/ww_stage/assets/*.parts /var/www/vvss/wunschwelt/play/assets/ \
       && sudo -n cp ~/ww_stage/playground.html /var/www/vvss/wunschwelt/play/index.html \
       && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'

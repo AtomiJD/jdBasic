@@ -4,14 +4,18 @@
 ' wherever it is said, without the model. Every client plays the style with
 ' the sequencer: a soft village theme, tavern and fest in the chiptune
 ' manner of fluppi's themes, evening calm, techno in the manner of
-' jdb/demos/sound/trance_live.
+' jdb/demos/sound/trance_live. Hip-hop, 80s pop, synthwave, house, trance,
+' disco, lo-fi and rock are made from a seed by the module MELODY of
+' jdb/demos/sound (key, chords, hook, bass, arp), so every wish brings a new
+' piece. Every piece walks through scenes: intro, rising, main, chill, a
+' second main part with the hook varied, outro.
 ' M mutes and unmutes. A browser lets sound start only after a key press, so
 ' the music starts with the first key.
 
 '@server
 
 FUNC RuleMusicStyles()
-    RETURN {"village": "Dorfmusik", "tavern": "Tavernenmusik", "evening": "Abendmusik", "fest": "Festmusik", "techno": "Techno"}
+    RETURN {"village": "Dorfmusik", "tavern": "Tavernenmusik", "evening": "Abendmusik", "fest": "Festmusik", "techno": "Techno", "hiphop": "Hip-Hop", "pop80": "80er-Pop", "synthwave": "Synthwave", "house": "House", "trance": "Trance", "disco": "Disco", "lofi": "Lo-Fi", "rock": "Rock"}
 ENDFUNC
 
 FUNC RuleApplyMusic(w, who$, verdict)
@@ -21,7 +25,8 @@ FUNC RuleApplyMusic(w, who$, verdict)
     IF NOT MAP.EXISTS(styles, style$) THEN RETURN FALSE
     DIM now_m = w{"music"} ?? {}
     IF ISMAP(now_m) ANDALSO (now_m{"style"} ?? "") = style$ ANDALSO (now_m{"until"} ?? 0) - KNow() > 230000 THEN RETURN TRUE
-    w{"music"} = {"style": style$, "by": who$, "until": KNow() + 240000}
+    ' each wish a new piece: the seed picks key, chords, hook and bass
+    w{"music"} = {"style": style$, "seed": 1 + (KNow() \ 7) MOD 9973, "by": who$, "until": KNow() + 240000}
     KEmit(w, {"type": "music", "who": who$, "text": who$ + RuleDe$(" w{u}nscht sich ") + styles{style$}})
     RETURN TRUE
 ENDFUNC
@@ -29,7 +34,7 @@ ENDFUNC
 ' The style a sentence speaks of, when the judge did not name it.
 FUNC RuleMusicGuess$(text$)
     DIM low$ = LCASE$(text$)
-    DIM words = [["techno", "techno"], ["elektro", "techno"], ["rave", "techno"], ["beat", "techno"], ["tavern", "tavern"], ["kneipe", "tavern"], ["wirtshaus", "tavern"], ["abend", "evening"], ["ruhig", "evening"], ["leise", "evening"], ["entspann", "evening"], ["fest", "fest"], ["party", "fest"], ["tanz", "fest"], ["feier", "fest"], ["dorf", "village"], ["village", "village"], ["evening", "evening"]]
+    DIM words = [["hip hop", "hiphop"], ["hip-hop", "hiphop"], ["hiphop", "hiphop"], ["rap", "hiphop"], ["80er", "pop80"], ["achtziger", "pop80"], ["80s", "pop80"], ["synthwave", "synthwave"], ["retro", "synthwave"], ["house", "house"], ["trance", "trance"], ["disco", "disco"], ["lofi", "lofi"], ["lo-fi", "lofi"], ["chill", "lofi"], ["rock", "rock"], ["pop", "pop80"], ["techno", "techno"], ["elektro", "techno"], ["rave", "techno"], ["beat", "techno"], ["tavern", "tavern"], ["kneipe", "tavern"], ["wirtshaus", "tavern"], ["abend", "evening"], ["ruhig", "evening"], ["leise", "evening"], ["entspann", "evening"], ["fest", "fest"], ["party", "fest"], ["tanz", "fest"], ["feier", "fest"], ["dorf", "village"], ["village", "village"], ["evening", "evening"]]
     DIM i = 0
     FOR i = 0 TO LEN(words) - 1
         IF INSTR(low$, words[i][0]) >= 0 THEN RETURN words[i][1]
@@ -43,7 +48,7 @@ FUNC RuleMusicAsked$(said$)
     DIM low$ = RuleLookColorKey$(said$)
     DIM speaks = FALSE
     DIM asks = FALSE
-    FOR EACH word$ IN ["musik", "lied", "song", "melodie", "techno", "beat", "sound"]
+    FOR EACH word$ IN ["musik", "lied", "song", "melodie", "techno", "beat", "sound", "hip", "rap", "pop", "rock", "disco", "trance", "house", "synthwave", "80er", "lofi", "lo-fi", "chill"]
         IF INSTR(low$, word$) >= 0 THEN speaks = TRUE
     NEXT
     FOR EACH word$ IN ["spiel", "mach", "leg ", "lass", "will", "moecht", "wuensch", "haett", "bitte", "gib", "dreh", "kannst", "lieber"]
@@ -61,15 +66,145 @@ ENDSUB
 
 FUNC RuleMusicNow$(w)
     DIM m = w{"music"} ?? {}
-    IF NOT ISMAP(m) ORELSE NOT MAP.EXISTS(m, "style") THEN RETURN "village"
-    IF KNow() > (m{"until"} ?? 0) THEN RETURN "village"
-    RETURN m{"style"}
+    IF NOT ISMAP(m) ORELSE NOT MAP.EXISTS(m, "style") THEN RETURN "village:1"
+    IF KNow() > (m{"until"} ?? 0) THEN RETURN "village:1"
+    RETURN m{"style"} + ":" + STR$(m{"seed"} ?? 1)
 ENDFUNC
 
 '@client
 
-' Tracks: 0 melody, 1 bass, 2 pad, 3 arp, 4 kick, 5 clap, 6 hats, 7 percussion.
-SUB ClientMusicPlay(style$)
+' The music a style has when MELODY makes it: tempo, keys and progressions
+' to pick from, the bass figure, the arp shape ("" none, "stabs" chord
+' stabs), the octave of the hook, the drums as patterns of one bar, the
+' sounds of lead and pad [wave, attack, decay, sustain, release, cutoff],
+' and the style played instead when MELODY is not there.
+FUNC ClientGenre(style$)
+    DIM g = {}
+    g{"hiphop"} = {"bpm": 90, "keys": ["A minor", "D minor", "E minor"], "progs": ["dark", "deep"], "bass": "sub", "arp": "", "oct": 4, "kick": "bd ~ ~ ~ ~ ~ ~ bd ~ ~ bd ~ ~ ~ ~ ~", "snare": "~ ~ ~ ~ sd ~ ~ ~ ~ ~ ~ ~ sd ~ ~ ~", "hats": "swing(4, hh*8)", "lead": ["TRIANGLE", 0.005, 0.3, 0.3, 0.4, 1800], "pad": ["SINE", 0.6, 0.5, 0.7, 1.2, 1200], "fallback": "evening"}
+    g{"lofi"} = {"bpm": 78, "keys": ["D dorian", "A minor", "E dorian"], "progs": ["deep"], "bass": "sub", "arp": "", "oct": 4, "kick": "bd ~ ~ ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~ ~ ~", "snare": "~ ~ ~ ~ sd ~ ~ ~ ~ ~ ~ ~ sd ~ ~ ~", "hats": "swing(4, gain(0.5, hh*8))", "lead": ["TRIANGLE", 0.01, 0.4, 0.2, 0.6, 1400], "pad": ["SINE", 0.8, 0.5, 0.8, 1.6, 1000], "fallback": "evening"}
+    g{"pop80"} = {"bpm": 116, "keys": ["C major", "G major", "D major", "A major"], "progs": ["pop", "euphoric"], "bass": "drive", "arp": "up", "oct": 5, "kick": "bd ~ bd ~", "snare": "~ sd ~ sd", "hats": "hh*8", "lead": ["SQUARE", 0.01, 0.2, 0.5, 0.2, 3200], "pad": ["SAW", 0.3, 0.4, 0.7, 0.8, 1600], "fallback": "fest"}
+    g{"synthwave"} = {"bpm": 104, "keys": ["A minor", "F# minor", "E minor"], "progs": ["outrun", "epic"], "bass": "drive", "arp": "updown", "oct": 5, "kick": "bd ~ ~ ~ bd ~ ~ ~", "snare": "~ sd ~ sd", "hats": "[~ hh]*4", "lead": ["SAW", 0.02, 0.3, 0.6, 0.4, 2400], "pad": ["SAW", 0.6, 0.5, 0.8, 1.4, 1400], "fallback": "evening"}
+    g{"house"} = {"bpm": 124, "keys": ["A minor", "G minor", "C minor"], "progs": ["house", "deep"], "bass": "octave", "arp": "stabs", "oct": 5, "kick": "bd*4", "snare": "~ cp ~ cp", "hats": "[~ oh]*4", "lead": ["SQUARE", 0.01, 0.2, 0.4, 0.2, 2600], "pad": ["SAW", 0.4, 0.4, 0.7, 1.0, 1500], "fallback": "fest"}
+    g{"trance"} = {"bpm": 138, "keys": ["A minor", "F minor", "C# minor"], "progs": ["epic", "anthem"], "bass": "offbeat", "arp": "updown", "oct": 5, "kick": "bd*4", "snare": "~ cp ~ cp", "hats": "[~ oh]*4", "lead": ["SAW", 0.01, 0.3, 0.6, 0.3, 3800], "pad": ["SAW", 0.8, 0.5, 0.8, 1.6, 1800], "fallback": "techno"}
+    g{"disco"} = {"bpm": 118, "keys": ["A minor", "D minor", "E minor"], "progs": ["euphoric", "pop"], "bass": "octave", "arp": "octave", "oct": 5, "kick": "bd*4", "snare": "~ cp ~ cp", "hats": "[~ oh]*4", "lead": ["SQUARE", 0.01, 0.2, 0.5, 0.2, 3000], "pad": ["SAW", 0.3, 0.4, 0.8, 0.8, 2200], "fallback": "fest"}
+    g{"rock"} = {"bpm": 128, "keys": ["E minor", "A minor", "D minor"], "progs": ["anthem", "epic"], "bass": "drive", "arp": "", "oct": 5, "kick": "bd ~ ~ bd ~ ~ bd ~", "snare": "~ sd ~ sd", "hats": "hh*8", "lead": ["SAW", 0.005, 0.2, 0.7, 0.2, 3000], "pad": ["SQUARE", 0.01, 0.3, 0.7, 0.3, 1200], "fallback": "fest"}
+    RETURN g{style$} ?? {}
+ENDFUNC
+
+' TRUE once the module MELODY is loaded; it lies beside client.jdb.
+FUNC ClientMelodyReady()
+    DIM cs = JDB.GLOBAL_GET("C")
+    IF NOT MAP.EXISTS(cs, "melody_ok") THEN
+        cs{"melody_ok"} = FALSE
+        TRY
+            EXECUTE("IMPORT MELODY")
+            cs{"melody_ok"} = TRUE
+        CATCH
+            cs{"last_error"} = "music: no MELODY, " + ERRMSG$
+        ENDTRY
+    ENDIF
+    RETURN cs{"melody_ok"}
+ENDFUNC
+
+' A piece of a style from its seed: sets the sounds and returns the
+' patterns [lead, bass, pad, arp, kick, snare, hats, percussion] and the
+' varied hook for the second main part.
+FUNC ClientMusicMake(g, seed)
+    DIM keys = g{"keys"}
+    DIM progs = g{"progs"}
+    DIM key$ = keys[seed MOD LEN(keys)]
+    DIM prog$ = MELODY.PROG$(progs[(seed \ 7) MOD LEN(progs)], key$)
+    DIM hook$ = MELODY.HOOK$(seed, prog$, key$, MELODY.RHYTHM$(seed, FALSE), g{"oct"})
+    DIM vary$ = MELODY.VARY$(hook$, prog$, key$, IIF(seed MOD 2 = 0, "octave", "dense"))
+    DIM bass$ = "legato(0.7, " + MELODY.BASS$(prog$, g{"bass"}, seed) + ")"
+    IF g{"bass"} = "sub" THEN bass$ = "legato(1, " + MELODY.BASS$(prog$, "sub", seed) + ")"
+    DIM arp$ = ""
+    IF g{"arp"} = "stabs" THEN
+        arp$ = MELODY.STABS$(prog$, "x.x..x.x x.x.x...")
+    ELSEIF g{"arp"} <> "" THEN
+        arp$ = "legato(0.5, " + MELODY.ARP$(prog$, g{"arp"}, 16, 1) + ")"
+    ENDIF
+    DIM pad$ = "<" + prog$ + ">"
+    SOUND.BPM g{"bpm"} + (seed MOD 5) - 2
+    DIM lead = g{"lead"}
+    SOUND.VOICE 0, lead[0], lead[1], lead[2], lead[3], lead[4]
+    SOUND.FILTER 0, lead[5]
+    SOUND.REVERBSEND 0, 0.3
+    SOUND.VOICE 1, IIF(g{"bass"} = "sub", "SINE", "SAW"), 0.005, 0.15, 0.6, 0.1
+    SOUND.FILTER 1, IIF(g{"bass"} = "sub", 400, 700)
+    DIM pad = g{"pad"}
+    SOUND.VOICE 2, pad[0], pad[1], pad[2], pad[3], pad[4]
+    SOUND.FILTER 2, pad[5]
+    SOUND.UNISON 2, 3, 0.2, 0.8
+    SOUND.REVERBSEND 2, 0.5
+    SOUND.VOICE 3, IIF(g{"arp"} = "stabs", "SQUARE", "SAW"), 0.002, 0.12, 0.3, 0.1
+    SOUND.FILTER 3, 1800
+    SOUND.REVERBSEND 3, 0.25
+    SOUND.REVERBSEND 5, IIF(g{"snare"} = "~ sd ~ sd", 0.45, 0.15)
+    RETURN [hook$, bass$, pad$, arp$, g{"kick"}, g{"snare"}, g{"hats"}, "", vary$]
+ENDFUNC
+
+' The scenes every piece walks through, 32 bars around: the name, the bars
+' and the tracks that play (0 lead, 1 bass, 2 pad, 3 arp, 4 kick, 5 snare,
+' 6 hats, 7 percussion). The second main part plays the varied hook.
+FUNC ClientScenes()
+    RETURN [["intro", 4, [2, 6]], ["rising", 4, [1, 2, 3, 6]], ["main", 8, [0, 1, 2, 3, 4, 5, 6, 7]], ["chill", 4, [0, 1, 2]], ["main2", 8, [0, 1, 2, 3, 4, 5, 6, 7]], ["outro", 4, [1, 2, 4]]]
+ENDFUNC
+
+' Keeps the scene of the bar that plays: mutes the tracks it leaves out and
+' swaps the hook for the varied one in the second main part.
+SUB ClientMusicScene(c)
+    IF (c{"music_on"} ?? "off") = "off" ORELSE NOT (c{"sound_up"} ?? FALSE) THEN RETURN
+    DIM bar = INT(SOUND.CYCLE()) MOD 32
+    DIM scenes = ClientScenes()
+    DIM at = 0
+    DIM pick = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(scenes) - 1
+        IF bar >= at THEN pick = i
+        at = at + scenes[i][1]
+    NEXT i
+    IF pick = (c{"music_scene"} ?? -1) THEN RETURN
+    c{"music_scene"} = pick
+    DIM names = {"village": "Dorfmusik", "tavern": "Tavernenmusik", "evening": "Abendmusik", "fest": "Festmusik", "techno": "Techno", "hiphop": "Hip-Hop", "pop80": "80er-Pop", "synthwave": "Synthwave", "house": "House", "trance": "Trance", "disco": "Disco", "lofi": "Lo-Fi", "rock": "Rock"}
+    DIM parts_de = ["Intro", "Aufbau", "Refrain", "Chill", "Refrain 2", "Outro"]
+    c{"music_label"} = (names{c{"music_style"} ?? ""} ?? "") + " - " + parts_de[pick]
+    DIM plays = scenes[pick][2] + 0
+    ' a scene whose tones this piece does not have keeps the melody
+    DIM has = c{"music_has"} ?? []
+    DIM tones = FALSE
+    FOR i = 0 TO 3
+        IF INDEXOF(plays, i) >= 0 ANDALSO INDEXOF(has, i) >= 0 THEN tones = TRUE
+    NEXT i
+    IF NOT tones THEN plays = APPEND(plays, 0)
+    DIM t = 0
+    FOR t = 0 TO 7
+        SOUND.MUTE t, INDEXOF(plays, t) < 0
+    NEXT t
+    IF (c{"music_vary"} ?? "") <> "" THEN
+        IF scenes[pick][0] = "main2" THEN
+            SOUND.SEQ 0, c{"music_vary"}, "VOICE"
+        ELSEIF scenes[pick][0] = "main" THEN
+            SOUND.SEQ 0, c{"music_hook"}, "VOICE"
+        ENDIF
+    ENDIF
+ENDSUB
+
+' Plays want$, a style and its seed ("hiphop:42"). Tracks: 0 melody, 1 bass, 2 pad,
+' 3 arp, 4 kick, 5 clap, 6 hats, 7 percussion.
+SUB ClientMusicPlay(want$)
+    DIM cs = JDB.GLOBAL_GET("C")
+    DIM parts = SPLIT(want$ + ":1", ":")
+    DIM style$ = parts[0]
+    DIM seed = MAX([1, INT(VAL(parts[1]))])
+    DIM g = ClientGenre(style$)
+    DIM made = []
+    IF MAP.SIZE(g) > 0 THEN
+        IF NOT ClientMelodyReady() THEN style$ = g{"fallback"}
+    ENDIF
+    cs{"music_vary"} = ""
+    cs{"music_scene"} = -1
+    cs{"music_style"} = style$
     SOUND.RESET
     SOUND.MASTER "FIXED", 0.32
     SOUND.REVERB 0.7, 0.4, 0.8, 0.3
@@ -81,7 +216,18 @@ SUB ClientMusicPlay(style$)
     DIM clap$ = ""
     DIM hats$ = ""
     DIM perc$ = ""
-    IF style$ = "tavern" THEN
+    IF MAP.SIZE(g) > 0 ANDALSO (cs{"melody_ok"} ?? FALSE) THEN
+        made = ClientMusicMake(g, seed)
+        mel$ = made[0]
+        bass$ = made[1]
+        pad$ = made[2]
+        arp$ = made[3]
+        kick$ = made[4]
+        clap$ = made[5]
+        hats$ = made[6]
+        cs{"music_hook"} = made[0]
+        cs{"music_vary"} = made[8]
+    ELSEIF style$ = "tavern" THEN
         SOUND.BPM 120
         SOUND.VOICE 0, "TRIANGLE", 0.01, 0.12, 0.5, 0.15
         SOUND.VOICE 1, "SQUARE", 0.005, 0.1, 0.4, 0.08
@@ -157,7 +303,18 @@ SUB ClientMusicPlay(style$)
     SOUND.GAIN 5, 0.35
     SOUND.GAIN 6, 0.25
     SOUND.GAIN 7, 0.3
+    IF LEN(made) > 0 THEN
+        SOUND.GAIN 0, 0.26
+        SOUND.GAIN 2, 0.12
+        SOUND.GAIN 3, 0.16
+    ENDIF
     DIM pats = [mel$, bass$, pad$, arp$, kick$, clap$, hats$, perc$]
+    DIM has = []
+    DIM h = 0
+    FOR h = 0 TO 7
+        IF pats[h] <> "" THEN has = APPEND(has, h)
+    NEXT h
+    cs{"music_has"} = has
     DIM t = 0
     FOR t = 0 TO 7
         IF pats[t] <> "" THEN SOUND.SEQ t, pats[t], "VOICE"
@@ -179,9 +336,16 @@ SUB ClientMusicFrame(c)
         ENDIF
     NEXT i
     IF NOT (c{"music_armed"} ?? FALSE) THEN RETURN
-    DIM want$ = c{"music_want"} ?? "village"
+    DIM want$ = c{"music_want"} ?? "village:1"
     IF c{"muted"} ?? FALSE THEN want$ = "off"
-    IF want$ = (c{"music_on"} ?? "") THEN RETURN
+    IF want$ = (c{"music_on"} ?? "") THEN
+        TRY
+            ClientMusicScene(c)
+        CATCH
+            c{"last_error"} = "music: " + ERRMSG$
+        ENDTRY
+        RETURN
+    ENDIF
     TRY
         IF NOT (c{"sound_up"} ?? FALSE) THEN
             SOUND.INIT
@@ -189,6 +353,7 @@ SUB ClientMusicFrame(c)
         ENDIF
         IF want$ = "off" THEN
             SOUND.RESET
+            c{"music_label"} = ""
         ELSE
             ClientMusicPlay(want$)
         ENDIF
@@ -196,4 +361,9 @@ SUB ClientMusicFrame(c)
         c{"last_error"} = "music: " + ERRMSG$
     ENDTRY
     c{"music_on"} = want$
+    TRY
+        ClientMusicScene(c)
+    CATCH
+        c{"last_error"} = "music: " + ERRMSG$
+    ENDTRY
 ENDSUB

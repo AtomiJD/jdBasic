@@ -1024,6 +1024,8 @@ SUB ClientDraw(c)
     ELSE
         RECT 0, 364, 640, 20, TRUE, 16, 18, 22
         TEXT 4, 365, "Pfeile oder WASD: laufen   Enter: sprechen", 150, 160, 150
+        DIM tune$ = c{"music_label"} ?? ""
+        IF tune$ <> "" THEN TEXT 636 - GFX.TEXTSIZE("Musik: " + tune$)[0], 365, "Musik: " + tune$, 150, 180, 220
     ENDIF
 ENDSUB
 
