@@ -244,8 +244,14 @@ SUB RuleShopSync(w, p, msg, answer)
         DIM seller = w{"npcs"}{"fenja"}
         IF NOT MAP.EXISTS(w{"npcs"}, "f_counter_4") THEN RuleShopPut(w, "f_counter_4", seller{"x"} + 2, seller{"y"})
         IF p{"y"} = seller{"y"} ANDALSO ABS(p{"x"} - seller{"x"}) = 1 ANDALSO MAP.EXISTS(w{"npcs"}, "f_counter_4") THEN
-            p{"x"} = seller{"x"}
-            p{"y"} = seller{"y"} + 2
+            DIM placed = FALSE
+            FOR EACH spot IN [[0, 2], [-1, 2], [1, 2], [0, 3], [-1, 3], [1, 3]]
+                IF NOT placed ANDALSO NOT RuleBlocked(w, seller{"x"} + spot[0], seller{"y"} + spot[1]) THEN
+                    p{"x"} = seller{"x"} + spot[0]
+                    p{"y"} = seller{"y"} + spot[1]
+                    placed = TRUE
+                ENDIF
+            NEXT
         ENDIF
     ENDIF
     DIM want = msg{"shop"} ?? NONE
