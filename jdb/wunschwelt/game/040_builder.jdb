@@ -890,10 +890,16 @@ SUB RuleBuildWander(w, now)
                 DIM turn = turns[INT(RND() * 5)]
                 DIM nx = npc{"x"} + turn[0]
                 DIM ny = npc{"y"} + turn[1]
-                IF ABS(nx - npc{"home"}[0]) <= npc{"range"} ANDALSO ABS(ny - npc{"home"}[1]) <= npc{"range"} ANDALSO (turn[0] <> 0 ORELSE turn[1] <> 0) THEN
-                    ' a stroll stays out of houses; a follower may go in behind its player
+                ' within reach of home, or a step nearer to it for one that walked far off
+                DIM far_now = MAX([ABS(npc{"x"} - npc{"home"}[0]), ABS(npc{"y"} - npc{"home"}[1])])
+                DIM far_then = MAX([ABS(nx - npc{"home"}[0]), ABS(ny - npc{"home"}[1])])
+                IF (far_then <= npc{"range"} ORELSE far_then < far_now) ANDALSO (turn[0] <> 0 ORELSE turn[1] <> 0) THEN
+                    ' a stroll stays out of houses; a follower may go in behind its
+                    ' player, and one left inside strolls until it finds the door
                     DIM floor_tile = RuleTileAt(w, nx, ny)
-                    IF NOT RuleBlocked(w, nx, ny) ANDALSO floor_tile <> 6 ANDALSO floor_tile <> 7 THEN
+                    DIM stands_on = RuleTileAt(w, npc{"x"}, npc{"y"})
+                    DIM inside = stands_on = 6 ORELSE stands_on = 7
+                    IF NOT RuleBlocked(w, nx, ny) ANDALSO (inside ORELSE (floor_tile <> 6 ANDALSO floor_tile <> 7)) THEN
                         npc{"x"} = nx
                         npc{"y"} = ny
                     ENDIF
