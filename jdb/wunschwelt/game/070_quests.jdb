@@ -1,0 +1,601 @@
+' Daily tasks, achievements and small rewards.
+'
+' The rules count what a player does in the profile's counts: fields seen
+' (visited), steps on sand (beach), flowers picked, fish caught, animals
+' petted (pets; pet_kinds counts each animal once a day), chests and golden
+' chests opened, tasks done (quests), wishes built, animals won over
+' (followed) and the longest run of days in a row (streak_best).
+'
+' Each day of the calendar a player gets three tasks from the list below;
+' a task is done when its count grew by the goal since the day began, the
+' flowers when they are brought to Marta. A task gives Geld and potion, all
+' three a bonus, and seven days in a row a bigger one. An achievement
+' (RuleAchievements) is a count reaching its goal once; it gives Geld and a
+' title shown under the player's figure. Three wish chests lie in the
+' world each day, now and then a golden one.
+
+'@server
+
+' The day of the calendar, moved by the keeper's day_shift and by shift.
+FUNC RuleToday$(w, shift)
+    RETURN FORMAT_DATE$(DATEADD("d", (w{"day_shift"} ?? 0) + shift, NOW()), "%Y-%m-%d")
+ENDFUNC
+
+FUNC RuleCountOf(prof, key$)
+    RETURN prof{"counts"}{key$} ?? 0
+ENDFUNC
+
+' Counts n more of key$ for a player the world knows.
+SUB RuleCountAdd(w, who$, key$, n)
+    IF who$ = "" ORELSE NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN
+    DIM counts = RuleProfile(w, who$){"counts"}
+    counts{key$} = (counts{key$} ?? 0) + n
+    RuleQuestChanged(w, who$)
+ENDSUB
+
+SUB RuleQuestChanged(w, who$)
+    IF NOT MAP.EXISTS(w{"players"}, who$) THEN RETURN
+    DIM p = w{"players"}{who$}
+    p{"questv"} = (p{"questv"} ?? 0) + 1
+ENDSUB
+
+SUB RulePotionAdd(w, prof, n)
+    prof{"potion"} = RulePotion(w, prof) + n
+ENDSUB
+
+' The tasks a day can hold: what it says, who gives it, the count it
+' follows ("" for the flowers, which are brought) and the goal.
+FUNC RuleQuestKinds()
+    DIM t = {}
+    t{"flowers"} = {"text": "Pfl{u}ck 10 Blumen und bring sie Marta", "giver": "Marta", "key": "", "goal": 10}
+    t{"fish"} = {"text": "Fang einen Fisch (Taste F am Wasser)", "giver": "Marta", "key": "fish", "goal": 1}
+    t{"pets"} = {"text": "Streichle drei verschiedene Tiere", "giver": "Wunschbrett", "key": "pet_kinds", "goal": 3}
+    t{"beach"} = {"text": "Geh an den Strand", "giver": "Wunschbrett", "key": "beach", "goal": 1}
+    t{"explore"} = {"text": "Erkunde 30 neue Felder", "giver": "Wunschbrett", "key": "visited", "goal": 30}
+    t{"chest"} = {"text": "Finde eine Wunschkiste", "giver": "Wunschbrett", "key": "chests", "goal": 1}
+    RETURN t
+ENDFUNC
+
+FUNC RuleAchievements()
+    DIM a = []
+    a = APPEND(a, {"id": "explore200", "name": "200 Felder erkundet", "title": "Weitgereist", "key": "visited", "goal": 200})
+    a = APPEND(a, {"id": "first_wish", "name": "Ein Wunsch von Dir wurde gebaut", "title": "Wunschkind", "key": "wishes_built", "goal": 1})
+    a = APPEND(a, {"id": "follower", "name": "Ein Tier folgt Dir", "title": "Tierlieb", "key": "followed", "goal": 1})
+    a = APPEND(a, {"id": "fish10", "name": "10 Fische gefangen", "title": "Angelgl{u}ck", "key": "fish", "goal": 10})
+    a = APPEND(a, {"id": "flowers50", "name": "50 Blumen gepfl{u}ckt", "title": "Blumenhand", "key": "flowers", "goal": 50})
+    a = APPEND(a, {"id": "quests10", "name": "10 Aufgaben erledigt", "title": "Flei{s}ig", "key": "quests", "goal": 10})
+    a = APPEND(a, {"id": "golden", "name": "Eine goldene Kiste gefunden", "title": "Goldgl{u}ck", "key": "golden", "goal": 1})
+    a = APPEND(a, {"id": "streak7", "name": "7 Tage hintereinander im Dorf", "title": "Treu", "key": "streak_best", "goal": 7})
+    RETURN a
+ENDFUNC
+
+FUNC RuleTileAt(w, x, y)
+    DIM m = w{"map"}
+    IF x < 0 ORELSE y < 0 ORELSE x >= m{"w"} ORELSE y >= m{"h"} THEN RETURN -1
+    RETURN m{"tiles"}[y * m{"w"} + x]
+ENDFUNC
+
+FUNC RuleIsWater(tile)
+    RETURN tile = 4 ORELSE tile = 10 ORELSE tile = 13
+ENDFUNC
+
+' The animals of the world, for the task of petting.
+FUNC RuleAnimalCount(w)
+    DIM n = 0
+    FOR EACH id$ IN MAP.KEYS(w{"npcs"})
+        DIM kind$ = w{"npcs"}{id$}{"kind"}
+        IF kind$ <> "person" ANDALSO kind$ <> "thing" ANDALSO kind$ <> "folk" THEN n = n + 1
+    NEXT
+    RETURN n
+ENDFUNC
+
+' A task of kind$ for prof, its goal as asked or as the list says.
+FUNC RuleQuestMake(w, prof, kind$, goal)
+    DIM spec = RuleQuestKinds(){kind$}
+    IF goal <= 0 THEN goal = spec{"goal"}
+    DIM base = 0
+    IF spec{"key"} <> "" THEN base = RuleCountOf(prof, spec{"key"})
+    RETURN {"kind": kind$, "goal": goal, "base": base, "done": FALSE}
+ENDFUNC
+
+' Three tasks for the day, the same ones for a player all day long.
+FUNC RuleQuestPickDay(w, name$, prof, today$)
+    DIM has_sand = INDEXOF(w{"map"}{"tiles"}, 9) >= 0
+    DIM animals = RuleAnimalCount(w)
+    DIM kinds = []
+    DIM marks = []
+    FOR EACH kind$ IN MAP.KEYS(RuleQuestKinds())
+        IF (kind$ <> "beach" ORELSE has_sand) ANDALSO (kind$ <> "pets" ORELSE animals > 0) THEN
+            kinds = APPEND(kinds, kind$)
+            marks = APPEND(marks, CODEC.CRC32(name$ + "|" + today$ + "|" + kind$))
+        ENDIF
+    NEXT
+    DIM order = GRADE(marks)
+    DIM tasks = []
+    DIM i = 0
+    FOR i = 0 TO MIN([3, LEN(kinds)]) - 1
+        DIM goal = 0
+        IF kinds[order[i]] = "pets" THEN goal = MIN([3, animals])
+        tasks = APPEND(tasks, RuleQuestMake(w, prof, kinds[order[i]], goal))
+    NEXT i
+    RETURN tasks
+ENDFUNC
+
+' A new day for the player: the run of days, its bonus, and new tasks.
+SUB RuleQuestDay(w, p, prof)
+    DIM today$ = RuleToday$(w, 0)
+    DIM q = prof{"quests"}
+    IF (q{"day"} ?? "") = today$ THEN RETURN
+    IF prof{"last_day"} = RuleToday$(w, -1) THEN
+        prof{"streak"} = prof{"streak"} + 1
+    ELSEIF prof{"last_day"} <> today$ THEN
+        prof{"streak"} = 1
+    ENDIF
+    prof{"last_day"} = today$
+    DIM counts = prof{"counts"}
+    counts{"streak_best"} = MAX([counts{"streak_best"} ?? 0, prof{"streak"}])
+    IF prof{"streak"} MOD 7 = 0 THEN
+        prof{"money"} = prof{"money"} + 100
+        RulePotionAdd(w, prof, 50)
+        KEmit(w, {"type": "quest", "to": p{"name"}, "text": STR$(prof{"streak"}) + " Tage hintereinander im Dorf! +100 Geld, +50 Wunschtrank"})
+    ENDIF
+    prof{"pet_today"} = {}
+    prof{"quests"} = {"day": today$, "list": RuleQuestPickDay(w, p{"name"}, prof, today$), "bonus": FALSE}
+    RuleQuestChanged(w, p{"name"})
+ENDSUB
+
+' How far a task is.
+FUNC RuleQuestHave(prof, task)
+    DIM spec = RuleQuestKinds(){task{"kind"}}
+    IF spec{"key"} = "" THEN RETURN MIN([task{"goal"}, RuleItemCount(prof, "flower")])
+    RETURN CLAMP(RuleCountOf(prof, spec{"key"}) - task{"base"}, 0, task{"goal"})
+ENDFUNC
+
+SUB RuleQuestDone(w, p, prof, task)
+    task{"done"} = TRUE
+    prof{"money"} = prof{"money"} + 25
+    RulePotionAdd(w, prof, 30)
+    RuleCountAdd(w, p{"name"}, "quests", 1)
+    DIM spec = RuleQuestKinds(){task{"kind"}}
+    KEmit(w, {"type": "quest", "to": p{"name"}, "text": RuleDe$("Aufgabe erledigt: " + spec{"text"} + ". +25 Geld, +30 Wunschtrank")})
+    DIM all_done = TRUE
+    FOR EACH t IN prof{"quests"}{"list"}
+        IF NOT t{"done"} THEN all_done = FALSE
+    NEXT
+    IF all_done ANDALSO NOT (prof{"quests"}{"bonus"} ?? FALSE) THEN
+        prof{"quests"}{"bonus"} = TRUE
+        prof{"money"} = prof{"money"} + 25
+        KEmit(w, {"type": "quest", "to": p{"name"}, "text": "Alle Aufgaben von heute erledigt! +25 Geld"})
+    ENDIF
+ENDSUB
+
+' Done tasks are paid; the flowers only beside Marta.
+SUB RuleQuestCheck(w, p, prof)
+    FOR EACH task IN prof{"quests"}{"list"} ?? []
+        IF NOT task{"done"} ANDALSO RuleQuestHave(prof, task) >= task{"goal"} THEN
+            IF task{"kind"} <> "flowers" THEN
+                RuleQuestDone(w, p, prof, task)
+            ELSEIF MAP.EXISTS(w{"npcs"}, "marta") THEN
+                DIM marta = w{"npcs"}{"marta"}
+                IF MAX([ABS(marta{"x"} - p{"x"}), ABS(marta{"y"} - p{"y"})]) <= 2 THEN
+                    DIM given = RuleItemAdd(prof, "flower", -task{"goal"})
+                    RuleTellPlayer(w, "marta", p{"name"}, RuleDe$("Oh, wie sch{o}n! Die stelle ich in die Taverne. Danke Dir!"))
+                    RuleQuestDone(w, p, prof, task)
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+    DIM done = prof{"done"}
+    FOR EACH ach IN RuleAchievements()
+        IF INDEXOF(done, ach{"id"}) < 0 ANDALSO RuleCountOf(prof, ach{"key"}) >= ach{"goal"} THEN
+            done = APPEND(done, ach{"id"})
+            prof{"done"} = done
+            prof{"title"} = RuleDe$(ach{"title"})
+            prof{"money"} = prof{"money"} + 50
+            KEmit(w, {"type": "achievement", "to": p{"name"}, "text": RuleDe$("Erfolg: " + ach{"name"} + "! Dein Titel: " + ach{"title"} + ". +50 Geld")})
+            RuleQuestChanged(w, p{"name"})
+        ENDIF
+    NEXT
+ENDSUB
+
+' E with no animal beside: a flower from a field of flowers at the
+' player's feet or next to it; a picked field grows again in five minutes.
+SUB RuleQuestPick(w, p)
+    IF NOT MAP.EXISTS(w, "picked") THEN w{"picked"} = {}
+    DIM picked = w{"picked"}
+    DIM now = KNow()
+    DIM bare = FALSE
+    FOR EACH d IN [[0, 0], [0, 1], [-1, 0], [1, 0], [0, -1]]
+        DIM x = p{"x"} + d[0]
+        DIM y = p{"y"} + d[1]
+        IF RuleTileAt(w, x, y) = 8 THEN
+            DIM spot$ = STR$(x) + "," + STR$(y)
+            IF now - (picked{spot$} ?? -999999) >= 300000 THEN
+                DIM prof = RuleProfile(w, p{"name"})
+                IF NOT RuleItemAdd(prof, "flower", 1) THEN
+                    KEmit(w, {"type": "purse", "to": p{"name"}, "text": "Deine Tasche ist voll."})
+                    RETURN
+                ENDIF
+                picked{spot$} = now
+                RuleCountAdd(w, p{"name"}, "flowers", 1)
+                KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$("Du hast eine Blume gepfl{u}ckt."), "got": "flower"})
+                RETURN
+            ENDIF
+            bare = TRUE
+        ENDIF
+    NEXT
+    IF bare THEN KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$("Hier ist schon gepfl{u}ckt. Die Blumen wachsen nach.")})
+ENDSUB
+
+SUB RuleQuestPet(w, p, id$)
+    DIM prof = RuleProfile(w, p{"name"})
+    IF NOT MAP.EXISTS(prof, "pet_today") THEN prof{"pet_today"} = {}
+    DIM pets_seen = prof{"pet_today"}
+    RuleCountAdd(w, p{"name"}, "pets", 1)
+    IF MAP.EXISTS(pets_seen, id$) THEN RETURN
+    pets_seen{id$} = TRUE
+    RuleCountAdd(w, p{"name"}, "pet_kinds", 1)
+ENDSUB
+
+SUB RuleChestOpen(w, who$, kind$)
+    DIM prof = RuleProfile(w, who$)
+    RuleCountAdd(w, who$, "chests", 1)
+    IF kind$ = "golden" THEN
+        RuleCountAdd(w, who$, "golden", 1)
+        prof{"money"} = prof{"money"} + 60
+        RulePotionAdd(w, prof, 40)
+        DIM bottle = RuleItemAdd(prof, "bottle", 1)
+        KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$("Eine goldene Wunschkiste! +60 Geld, +40 Wunschtrank und ein Fl{a}schchen"), "got": "chest"})
+        RETURN
+    ENDIF
+    DIM amount = 10 + INT(RND() * 16)
+    prof{"money"} = prof{"money"} + amount
+    RulePotionAdd(w, prof, 20)
+    KEmit(w, {"type": "purse", "to": who$, "text": "Eine Wunschkiste! +" + STR$(amount) + " Geld, +20 Wunschtrank", "got": "chest"})
+ENDSUB
+
+' Key F: cast beside water, and pull when the float goes under. The rules
+' choose when a fish bites and judge the pull by their own clock.
+SUB RuleFish(w, p, act$)
+    DIM now = KNow()
+    IF act$ = "cast" THEN
+        DIM spot = NONE
+        FOR EACH d IN [[0, 1], [-1, 0], [1, 0], [0, -1]]
+            IF NOT ISARR(spot) ANDALSO RuleIsWater(RuleTileAt(w, p{"x"} + d[0], p{"y"} + d[1])) THEN spot = [p{"x"} + d[0], p{"y"} + d[1]]
+        NEXT
+        IF NOT ISARR(spot) THEN
+            KEmit(w, {"type": "purse", "to": p{"name"}, "text": "Zum Angeln stell Dich direkt ans Wasser."})
+            RETURN
+        ENDIF
+        p{"fish"} = {"bite": now + 1500 + INT(RND() * 3000), "x": spot[0], "y": spot[1], "told": FALSE}
+        RETURN
+    ENDIF
+    IF act$ <> "pull" ORELSE NOT ISMAP(p{"fish"} ?? NONE) THEN RETURN
+    DIM bite = p{"fish"}{"bite"}
+    p{"fish"} = NONE
+    IF now < bite - 150 THEN
+        KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$("Zu fr{u}h gezogen, der Fisch ist weg."), "fish_end": TRUE})
+    ELSEIF now > bite + 1400 THEN
+        KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$("Zu sp{a}t, der Fisch ist weg."), "fish_end": TRUE})
+    ELSE
+        DIM prof = RuleProfile(w, p{"name"})
+        IF NOT RuleItemAdd(prof, "fish", 1) THEN
+            KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$("Deine Tasche ist voll, der Fisch springt zur{u}ck."), "fish_end": TRUE})
+            RETURN
+        ENDIF
+        RuleCountAdd(w, p{"name"}, "fish", 1)
+        KEmit(w, {"type": "purse", "to": p{"name"}, "text": "Du hast einen Fisch gefangen!", "got": "fish", "fish_end": TRUE})
+    ENDIF
+ENDSUB
+
+SUB RuleQuestSync(w, p, msg, answer)
+    DIM prof = RuleProfile(w, p{"name"})
+    RuleQuestDay(w, p, prof)
+    DIM here$ = STR$(p{"x"}) + "," + STR$(p{"y"})
+    IF here$ <> (p{"last_field"} ?? "") THEN
+        p{"last_field"} = here$
+        DIM seen = prof{"seen"}
+        IF NOT MAP.EXISTS(seen, here$) THEN
+            seen{here$} = 1
+            RuleCountAdd(w, p{"name"}, "visited", 1)
+        ENDIF
+        IF RuleTileAt(w, p{"x"}, p{"y"}) = 9 THEN RuleCountAdd(w, p{"name"}, "beach", 1)
+        ' walking away pulls the line in
+        IF ISMAP(p{"fish"} ?? NONE) THEN p{"fish"} = NONE
+    ENDIF
+    DIM act$ = "" + (msg{"fish"} ?? "")
+    IF act$ <> "" THEN RuleFish(w, p, act$)
+    IF ISMAP(p{"fish"} ?? NONE) ANDALSO NOT p{"fish"}{"told"} THEN
+        p{"fish"}{"told"} = TRUE
+        answer{"fishing"} = {"bite_in": p{"fish"}{"bite"} - KNow(), "x": p{"fish"}{"x"}, "y": p{"fish"}{"y"}}
+    ENDIF
+    RuleQuestCheck(w, p, prof)
+    ' a thing of the bag, such as the flowers, moves a task without a count
+    DIM sig$ = JSON.STRINGIFY$([prof{"counts"}, RuleItemCount(prof, "flower"), prof{"quests"}, prof{"done"}, prof{"title"}, prof{"streak"}])
+    IF sig$ <> (p{"quest_sig"} ?? "") THEN
+        p{"quest_sig"} = sig$
+        p{"questv"} = (p{"questv"} ?? 0) + 1
+    ENDIF
+    IF INT(msg{"questv"} ?? -1) = p{"questv"} THEN RETURN
+    DIM kinds = RuleQuestKinds()
+    DIM rows = []
+    FOR EACH task IN prof{"quests"}{"list"} ?? []
+        DIM spec = kinds{task{"kind"}}
+        DIM text$ = spec{"text"}
+        IF task{"goal"} <> spec{"goal"} THEN text$ = REPLACE$(REPLACE$(text$, "drei", STR$(task{"goal"})), STR$(spec{"goal"}), STR$(task{"goal"}))
+        rows = APPEND(rows, [[RuleDe$(text$), spec{"giver"}, RuleQuestHave(prof, task), task{"goal"}, task{"done"}]])
+    NEXT
+    DIM achs = []
+    FOR EACH ach IN RuleAchievements()
+        achs = APPEND(achs, [[RuleDe$(ach{"name"}), RuleDe$(ach{"title"}), INDEXOF(prof{"done"}, ach{"id"}) >= 0, MIN([ach{"goal"}, RuleCountOf(prof, ach{"key"})]), ach{"goal"}]])
+    NEXT
+    answer{"quests"} = {"list": rows, "streak": prof{"streak"}, "title": prof{"title"}, "ach": achs}
+    answer{"questv"} = p{"questv"} ?? 0
+ENDSUB
+
+' Three wish chests each day at new places, one in eight golden; the ones
+' nobody found go with the day.
+SUB RuleQuestTick(w, now)
+    IF now < (w{"chest_look_at"} ?? 0) THEN RETURN
+    w{"chest_look_at"} = now + 5000
+    IF NOT MAP.EXISTS(w, "finds") THEN w{"finds"} = []
+    DIM today$ = RuleToday$(w, 0)
+    IF (w{"chest_day"} ?? "") = today$ THEN RETURN
+    w{"chest_day"} = today$
+    DIM kept = []
+    FOR EACH f IN w{"finds"}
+        IF f{"kind"} <> "chest" ANDALSO f{"kind"} <> "golden" THEN kept = APPEND(kept, f)
+    NEXT
+    w{"finds"} = kept
+    DIM i = 0
+    FOR i = 1 TO 3
+        RuleFindSpawnKind(w, IIF(RND() < 0.125, "golden", "chest"))
+    NEXT i
+    w{"findv"} = (w{"findv"} ?? 0) + 1
+ENDSUB
+
+' The keeper: quest_set gives a player tasks ({"player", "quests": [{"kind",
+' "goal"}]}), count_set sets a count or streak or last_day ({"player",
+' "key", "v"}), day_shift moves the calendar ({"days"}), player_put sets
+' where a player stands ({"player", "x", "y"}).
+FUNC RuleQuestAdmin(w, name$, args)
+    IF name$ = "day_shift" THEN
+        w{"day_shift"} = INT(args{"days"} ?? 0)
+        RETURN {"ok": TRUE, "today": RuleToday$(w, 0)}
+    ENDIF
+    DIM who$ = "" + (args{"player"} ?? "")
+    IF who$ = "" ORELSE NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN {"ok": FALSE, "error": "no such player"}
+    DIM prof = RuleProfile(w, who$)
+    IF name$ = "player_put" THEN
+        IF NOT MAP.EXISTS(w{"players"}, who$) THEN RETURN {"ok": FALSE, "error": "not in the world"}
+        DIM p = w{"players"}{who$}
+        p{"x"} = INT(args{"x"} ?? p{"x"})
+        p{"y"} = INT(args{"y"} ?? p{"y"})
+        RETURN {"ok": TRUE}
+    ENDIF
+    IF name$ = "count_set" THEN
+        DIM key$ = "" + (args{"key"} ?? "")
+        IF key$ = "streak" ORELSE key$ = "last_day" THEN
+            prof{key$} = args{"v"}
+        ELSE
+            DIM counts = prof{"counts"}
+            counts{key$} = args{"v"}
+        ENDIF
+        RuleQuestChanged(w, who$)
+        RETURN {"ok": TRUE, "counts": prof{"counts"}, "streak": prof{"streak"}}
+    ENDIF
+    DIM tasks = []
+    FOR EACH want IN args{"quests"} ?? []
+        DIM kind$ = "" + (want{"kind"} ?? "")
+        IF NOT MAP.EXISTS(RuleQuestKinds(), kind$) THEN RETURN {"ok": FALSE, "error": "no such task: " + kind$}
+        tasks = APPEND(tasks, RuleQuestMake(w, prof, kind$, INT(want{"goal"} ?? 0)))
+    NEXT
+    prof{"quests"} = {"day": RuleToday$(w, 0), "list": tasks, "bonus": FALSE}
+    RuleQuestChanged(w, who$)
+    RETURN {"ok": TRUE, "quests": tasks}
+ENDFUNC
+
+'@client
+
+SUB ClientQuestAsk(c, msg)
+    msg{"questv"} = c{"questv"} ?? -1
+    IF (c{"fish_act"} ?? "") <> "" THEN
+        msg{"fish"} = c{"fish_act"}
+        c{"fish_act"} = ""
+    ENDIF
+ENDSUB
+
+SUB ClientQuestExtra(c, r)
+    IF MAP.EXISTS(r, "quests") THEN
+        c{"quests"} = r{"quests"}
+        c{"questv"} = r{"questv"}
+    ENDIF
+    IF MAP.EXISTS(r, "fishing") THEN
+        DIM f = r{"fishing"}
+        c{"fishing"} = {"bite_at": TICK() + f{"bite_in"}, "x": f{"x"}, "y": f{"y"}}
+    ENDIF
+    FOR EACH ev IN r{"events"} ?? []
+        IF (ev{"to"} ?? "") = c{"name"} THEN
+            IF ev{"fish_end"} ?? FALSE THEN c{"fishing"} = NONE
+            IF ev{"type"} = "quest" ORELSE ev{"type"} = "achievement" THEN
+                c{"banner"} = ev{"text"}
+                c{"banner_until"} = TICK() + 6000
+                c{"sparkle"} = [TICK(), "coins"]
+                c{"chime"} = [TICK(), IIF(ev{"type"} = "achievement", [523, 659, 784, 1047, 1319], [659, 784, 1047])]
+            ELSEIF ev{"type"} = "purse" ANDALSO MAP.EXISTS(ev, "got") THEN
+                c{"chime"} = [TICK(), IIF(ev{"got"} = "chest" ORELSE ev{"got"} = "fish", [784, 988, 1175], [1047, 1319])]
+            ENDIF
+        ENDIF
+    NEXT
+ENDSUB
+
+' Q opens the tasks, F casts and pulls; TRUE when the key was taken.
+FUNC ClientQuestKey(c, tapped$)
+    IF tapped$ = "Q" THEN
+        c{"questlog"} = NOT (c{"questlog"} ?? FALSE)
+        IF c{"questlog"} THEN c{"bag"} = FALSE
+        RETURN TRUE
+    ENDIF
+    IF tapped$ = "ESCAPE" ANDALSO (c{"questlog"} ?? FALSE) THEN
+        c{"questlog"} = FALSE
+        RETURN TRUE
+    ENDIF
+    IF tapped$ = "F" THEN
+        IF ISMAP(c{"fishing"} ?? NONE) THEN
+            c{"fish_act"} = "pull"
+        ELSE
+            c{"fish_act"} = "cast"
+        ENDIF
+        RETURN TRUE
+    ENDIF
+    IF tapped$ = "I" THEN c{"questlog"} = FALSE
+    RETURN FALSE
+ENDFUNC
+
+SUB ClientChest(sx, sy, golden)
+    DIM body = IIF(golden, [236, 186, 60], [150, 96, 52])
+    DIM rim = IIF(golden, [255, 240, 170], [96, 60, 30])
+    RECT sx - 9, sy - 6, 18, 12, TRUE, body[0], body[1], body[2]
+    RECT sx - 9, sy - 9, 18, 5, TRUE, rim[0], rim[1], rim[2]
+    RECT sx - 9, sy - 9, 18, 15, FALSE, 60, 40, 20
+    RECT sx - 2, sy - 5, 4, 4, TRUE, 250, 230, 120
+    IF golden ANDALSO (INT(TICK()) \ 200) MOD 3 = 0 THEN RECT sx + 6, sy - 12, 2, 2, TRUE, 255, 255, 230
+ENDSUB
+
+SUB ClientTitle(sx, sy, title$)
+    IF title$ = "" THEN RETURN
+    DIM size = GFX.TEXTSIZE(title$)
+    DIM tx = sx + 16 - size[0] \ 2
+    DRAWCOLOR 16, 18, 22, 160
+    RECT tx - 3, sy + 33, size[0] + 6, size[1] + 1, TRUE
+    DRAWCOLOR 255, 255, 255, 255
+    TEXT tx, sy + 33, title$, 230, 200, 140
+ENDSUB
+
+' A few rising notes on a track of its own, when the sound is on.
+SUB ClientChime(c)
+    DIM chime = c{"chime"} ?? NONE
+    IF NOT ISARR(chime) THEN RETURN
+    IF NOT (c{"sound_up"} ?? FALSE) ORELSE (c{"muted"} ?? FALSE) THEN
+        c{"chime"} = NONE
+        RETURN
+    ENDIF
+    DIM notes = chime[1]
+    DIM k = INT((TICK() - chime[0]) / 110)
+    IF k >= LEN(notes) THEN
+        c{"chime"} = NONE
+        RETURN
+    ENDIF
+    IF k <> (c{"chime_k"} ?? -1) ORELSE chime[0] <> (c{"chime_t"} ?? -1) THEN
+        c{"chime_k"} = k
+        c{"chime_t"} = chime[0]
+        TRY
+            SOUND.VOICE 12, "TRIANGLE", 0.005, 0.25, 0, 0.15
+            SOUND.PLAY 12, notes[k]
+        CATCH
+            c{"chime"} = NONE
+        ENDTRY
+    ENDIF
+ENDSUB
+
+' The float on the water, and what to do now.
+SUB ClientFishing(c)
+    DIM f = c{"fishing"} ?? NONE
+    IF NOT ISMAP(f) THEN RETURN
+    DIM cam = c{"cam"} ?? [0, 0]
+    DIM sx = f{"x"} * 32 - cam[0] + 16
+    DIM sy = f{"y"} * 32 - cam[1] + 16
+    DIM t = TICK()
+    IF t > f{"bite_at"} + 1600 THEN
+        c{"fishing"} = NONE
+        c{"banner"} = "Der Fisch ist weg. F: noch einmal auswerfen"
+        c{"banner_until"} = t + 3000
+        RETURN
+    ENDIF
+    DIM bites = t >= f{"bite_at"}
+    DIM dip = INT(SIN(t / 250) * 1.5)
+    IF bites THEN dip = 4
+    CIRCLE sx, sy + dip, 4, TRUE, 230, 60, 50
+    RECT sx - 4, sy + dip - 1, 8, 2, TRUE, 250, 250, 250
+    DIM hint$ = IIF(bites, "F: ziehen!", "Warte, bis der Schwimmer zuckt ...")
+    DIM hsize = GFX.TEXTSIZE(hint$)
+    DRAWCOLOR 16, 18, 22, 190
+    RECT 320 - hsize[0] \ 2 - 6, 298, hsize[0] + 12, hsize[1] + 4, TRUE
+    DRAWCOLOR 255, 255, 255, 255
+    IF bites THEN
+        TEXT sx - 3, sy - 22, "!", 255, 240, 120
+        TEXT 320 - hsize[0] \ 2, 300, hint$, 255, 240, 120
+    ELSE
+        TEXT 320 - hsize[0] \ 2, 300, hint$, 220, 230, 240
+    ENDIF
+ENDSUB
+
+' The tasks of the day in a corner, or the whole log with Q.
+SUB ClientQuestHud(c)
+    ClientChime(c)
+    ClientFishing(c)
+    DIM q = c{"quests"} ?? NONE
+    IF NOT ISMAP(q) THEN RETURN
+    DIM high = GFX.TEXTSIZE("Ag")[1] + 1
+    DIM rows = q{"list"}
+    IF NOT (c{"questlog"} ?? FALSE) THEN
+        DIM n_open = 0
+        FOR EACH row IN rows
+            IF NOT row[4] THEN n_open = n_open + 1
+        NEXT
+        DIM bw = 0
+        FOR EACH row IN rows
+            bw = MAX([bw, GFX.TEXTSIZE(row[0] + "  " + STR$(row[2]) + "/" + STR$(row[3]))[0]])
+        NEXT
+        bw = bw + 24
+        DIM bx = 636 - bw
+        DRAWCOLOR 16, 18, 22, 190
+        RECT bx, 46, bw, (LEN(rows) + 1) * high + 6, TRUE
+        DRAWCOLOR 255, 255, 255, 255
+        TEXT bx + 6, 48, "Heute (Q)", 250, 214, 110
+        DIM i = 0
+        FOR i = 0 TO LEN(rows) - 1
+            DIM r = rows[i]
+            DIM y = 48 + (i + 1) * high
+            IF r[4] THEN
+                TEXT bx + 6, y, "x " + r[0], 120, 180, 120
+            ELSE
+                TEXT bx + 6, y, "- " + r[0] + "  " + STR$(r[2]) + "/" + STR$(r[3]), 230, 230, 220
+            ENDIF
+        NEXT i
+        RETURN
+    ENDIF
+    DIM achs = q{"ach"}
+    DIM lw = 420
+    DIM lh = (LEN(rows) + LEN(achs) + 6) * high + 12
+    DIM lx = 320 - lw \ 2
+    DIM ly = 40
+    ROUNDED_RECT lx, ly, lw, lh, 5, TRUE, 250, 244, 214
+    ROUNDED_RECT lx, ly, lw, lh, 5, FALSE, 96, 64, 40
+    DIM head$ = "Aufgaben von heute"
+    IF q{"streak"} > 1 THEN head$ = head$ + "   " + STR$(q{"streak"}) + " Tage hintereinander"
+    TEXT lx + 10, ly + 6, head$, 96, 64, 40
+    DIM yy = ly + 6 + high + 4
+    FOR EACH r IN rows
+        IF r[4] THEN
+            TEXT lx + 10, yy, "(x) " + r[0] + "  - " + r[1], 30, 110, 50
+        ELSE
+            TEXT lx + 10, yy, "( ) " + r[0] + "  " + STR$(r[2]) + "/" + STR$(r[3]) + "  - " + r[1], 40, 36, 32
+        ENDIF
+        yy = yy + high
+    NEXT
+    yy = yy + high \ 2
+    DIM title$ = "Erfolge"
+    IF q{"title"} <> "" THEN title$ = title$ + "   Dein Titel: " + q{"title"}
+    TEXT lx + 10, yy, title$, 96, 64, 40
+    yy = yy + high + 4
+    FOR EACH a IN achs
+        IF a[2] THEN
+            TEXT lx + 10, yy, "* " + a[0] + "  (" + a[1] + ")", 160, 110, 20
+        ELSE
+            TEXT lx + 10, yy, "  " + a[0] + "  " + STR$(a[3]) + "/" + STR$(a[4]), 130, 120, 110
+        ENDIF
+        yy = yy + high
+    NEXT
+    TEXT lx + 10, ly + lh - high - 4, "Q oder Esc: schliessen", 120, 110, 100
+ENDSUB

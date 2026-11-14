@@ -137,7 +137,7 @@ FUNC RuleProfile(w, name$)
     IF NOT MAP.EXISTS(w, "profiles") THEN w{"profiles"} = {}
     IF NOT MAP.EXISTS(w{"profiles"}, name$) THEN w{"profiles"}{name$} = {"since": KNow()}
     DIM prof = w{"profiles"}{name$}
-    DIM fresh = {"money": 0, "potion": 100, "potion_at": KNow(), "items": [], "album": {}, "quests": {}, "done": [], "affection": {}, "visited": 0}
+    DIM fresh = {"money": 0, "potion": 100, "potion_at": KNow(), "items": [], "album": {}, "quests": {}, "done": [], "affection": {}, "visited": 0, "seen": {}, "counts": {}, "title": "", "last_day": "", "streak": 0}
     FOR EACH field$ IN MAP.KEYS(fresh)
         IF NOT MAP.EXISTS(prof, field$) THEN prof{field$} = fresh{field$}
     NEXT
@@ -191,7 +191,7 @@ FUNC RuleSync(w, p, msg)
     DIM shown = []
     FOR EACH other$ IN MAP.KEYS(players)
         DIM o = players{other$}
-        shown = APPEND(shown, [[o{"name"}, o{"x"}, o{"y"}, o{"dir"}, o{"tint"}, o{"look"} ?? {}]])
+        shown = APPEND(shown, [[o{"name"}, o{"x"}, o{"y"}, o{"dir"}, o{"tint"}, o{"look"} ?? {}, ((w{"profiles"} ?? {}){o{"name"}} ?? {}){"title"} ?? ""]])
     NEXT
     DIM folk = []
     FOR EACH folk_id$ IN MAP.KEYS(w{"npcs"})
@@ -265,6 +265,7 @@ SUB RuleTick(w, now)
     RuleBuildTick(w, now)
     RuleWishTick(w, now)
     RulePurseTick(w, now)
+    RuleQuestTick(w, now)
 ENDSUB
 
 ' The wishes' turn in a tick; game/010_wishes.jdb gives it a body.
@@ -273,6 +274,10 @@ ENDSUB
 
 ' The purse's turn in a tick; game/060_purse.jdb gives it a body.
 SUB RulePurseTick(w, now)
+ENDSUB
+
+' The tasks' turn in a tick; game/070_quests.jdb gives it a body.
+SUB RuleQuestTick(w, now)
 ENDSUB
 
 ' The builder's turn in a tick; game/040_builder.jdb gives it a body.
@@ -836,6 +841,10 @@ ENDSUB
 SUB ClientHud(c)
 ENDSUB
 
+' The title a player has earned, under the figure; game/070_quests.jdb gives it a body.
+SUB ClientTitle(sx, sy, title$)
+ENDSUB
+
 SUB ClientKey(c, tapped$)
 ENDSUB
 
@@ -1030,6 +1039,7 @@ SUB ClientDraw(c)
             ELSE
                 DIM pl = players[refs[q]]
                 ClientFigure(qx[q], qy[q], pl[3], pl[4], pl[0], FALSE)
+                IF LEN(pl) > 6 THEN ClientTitle(qx[q], qy[q], "" + pl[6])
             ENDIF
         NEXT k
     ENDIF
@@ -1068,7 +1078,7 @@ SUB ClientDraw(c)
         TEXT 4, 365, "> " + c{"entry"} + "_", 240, 240, 240
     ELSE
         RECT 0, 364, 640, 20, TRUE, 16, 18, 22
-        TEXT 4, 365, "WASD: laufen  Enter: sprechen  E: streicheln  I: Tasche", 150, 160, 150
+        TEXT 4, 365, "Enter: sprechen  E: streicheln, pfl" + CHR$(195) + CHR$(188) + "cken  F: angeln  I: Tasche  Q: Aufgaben", 150, 160, 150
         DIM tune$ = c{"music_label"} ?? ""
         IF tune$ <> "" THEN TEXT 636 - GFX.TEXTSIZE("Musik: " + tune$)[0], 365, "Musik: " + tune$, 150, 180, 220
     ENDIF

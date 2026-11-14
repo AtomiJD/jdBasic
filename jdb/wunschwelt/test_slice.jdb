@@ -116,6 +116,19 @@ FOR i = 0 TO LEN(looked{"npcs"}) - 1
 NEXT i
 Check("Mimi herself wears the collar", LEN(cats) = 1 ANDALSO (mimi_wear{"neck"} ?? [""])[0] = "collar")
 
+' the server runs only the rules; the part every client runs is checked here
+DIM broken_client$ AS STRING = ""
+FOR EACH game_file$ IN FILE.LIST(here$ + "game/*.jdb")
+    DIM src$ AS STRING = REPLACE$(TXTREADER$(here$ + "game/" + PATH.BASENAME$(game_file$)), CHR$(13), "")
+    DIM at_client AS INTEGER = INSTR(src$, "'@client")
+    IF at_client >= 0 THEN
+        DIM verdict$ AS STRING = JDB.CHECK$(MID$(src$, at_client + 8, LEN(src$)))
+        IF TRIM$(verdict$) <> "" THEN broken_client$ = broken_client$ + PATH.BASENAME$(game_file$) + ": " + verdict$ + " "
+    ENDIF
+NEXT
+Check("the client part of every game file parses", broken_client$ = "")
+IF broken_client$ <> "" THEN PRINT "  "; broken_client$
+
 DIM after = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
 Check("the rules raised no error", after{"errors"} = 0)
 IF after{"errors"} > 0 THEN PRINT "  "; after{"last_error"}

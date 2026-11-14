@@ -100,7 +100,7 @@ ENDSUB
 
 ' The things of the bag: name, what it is, and what using it does.
 FUNC RuleItemTable()
-    RETURN {"flower": {"name": "Blume", "desc": "Von der Wiese gepfl{u}ckt.", "use": ""}, "bottle": {"name": "Wunschtrank-Fl{a}schchen", "desc": "Trinken gibt Wunschtrank.", "use": "potion"}}
+    RETURN {"flower": {"name": "Blume", "desc": "Von der Wiese gepfl{u}ckt.", "use": ""}, "bottle": {"name": "Wunschtrank-Fl{a}schchen", "desc": "Trinken gibt Wunschtrank.", "use": "potion"}, "fish": {"name": "Fisch", "desc": "Frisch gefangen.", "use": ""}}
 ENDFUNC
 
 FUNC RuleItemCount(prof, id$)
@@ -144,6 +144,14 @@ ENDSUB
 
 ' A new find on a free field of grass or flowers, away from the others.
 SUB RuleFindSpawn(w)
+    DIM roll = RND() * 100
+    DIM kind$ = "coins"
+    IF roll >= 50 THEN kind$ = "flower"
+    IF roll >= 85 THEN kind$ = "bottle"
+    RuleFindSpawnKind(w, kind$)
+ENDSUB
+
+SUB RuleFindSpawnKind(w, kind$)
     DIM m = w{"map"}
     DIM finds = w{"finds"}
     DIM tries = 0
@@ -160,10 +168,6 @@ SUB RuleFindSpawn(w)
                 IF w{"players"}{name$}{"x"} = x ANDALSO w{"players"}{name$}{"y"} = y THEN apart = FALSE
             NEXT
             IF apart THEN
-                DIM roll = RND() * 100
-                DIM kind$ = "coins"
-                IF roll >= 50 THEN kind$ = "flower"
-                IF roll >= 85 THEN kind$ = "bottle"
                 w{"find_seq"} = (w{"find_seq"} ?? 0) + 1
                 w{"finds"} = APPEND(finds, {"id": w{"find_seq"}, "kind": kind$, "x": x, "y": y})
                 w{"findv"} = (w{"findv"} ?? 0) + 1
@@ -197,8 +201,13 @@ FUNC RuleFindGive(w, who$, kind$)
         RuleMoneyAdd(w, who$, 5 + INT(RND() * 11))
         RETURN TRUE
     ENDIF
+    IF kind$ = "chest" ORELSE kind$ = "golden" THEN
+        RuleChestOpen(w, who$, kind$)
+        RETURN TRUE
+    ENDIF
     DIM prof = RuleProfile(w, who$)
     IF NOT RuleItemAdd(prof, kind$, 1) THEN RETURN FALSE
+    IF kind$ = "flower" THEN RuleCountAdd(w, who$, "flowers", 1)
     DIM said$ = "Du hast eine Blume gepfl{u}ckt."
     IF kind$ = "bottle" THEN said$ = "Du hast ein Fl{a}schchen Wunschtrank gefunden. Taste I, dann die Zahl: trinken."
     KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$(said$), "got": kind$})
@@ -265,7 +274,11 @@ SUB RulePurseTick(w, now)
     DIM eco = RuleEconomy(w)
     IF now >= (w{"find_at"} ?? 0) THEN
         w{"find_at"} = now + MAX([1, eco{"find_every_s"}]) * 1000
-        IF LEN(w{"finds"}) < eco{"finds"} THEN RuleFindSpawn(w)
+        DIM loose = 0
+        FOR EACH f IN w{"finds"}
+            IF f{"kind"} <> "chest" ANDALSO f{"kind"} <> "golden" THEN loose = loose + 1
+        NEXT
+        IF loose < eco{"finds"} THEN RuleFindSpawn(w)
     ENDIF
     IF now < (w{"potion_look_at"} ?? 0) THEN RETURN
     w{"potion_look_at"} = now + 2000
@@ -292,7 +305,7 @@ ENDSUB
 FUNC RulePurseAdmin(w, name$, args)
     IF name$ = "find_put" THEN
         DIM kind$ = "" + (args{"kind"} ?? "")
-        IF kind$ <> "coins" ANDALSO kind$ <> "flower" ANDALSO kind$ <> "bottle" THEN RETURN {"ok": FALSE, "error": "kind is coins, flower or bottle"}
+        IF INDEXOF(["coins", "flower", "bottle", "chest", "golden"], kind$) < 0 THEN RETURN {"ok": FALSE, "error": "kind is coins, flower, bottle, chest or golden"}
         IF NOT MAP.EXISTS(w, "finds") THEN w{"finds"} = []
         w{"find_seq"} = (w{"find_seq"} ?? 0) + 1
         w{"finds"} = APPEND(w{"finds"}, {"id": w{"find_seq"}, "kind": kind$, "x": INT(args{"x"} ?? 0), "y": INT(args{"y"} ?? 0)})
@@ -350,6 +363,7 @@ ENDSUB
 
 ' I opens and closes the bag, a number uses that thing, Escape closes it.
 SUB ClientKey(c, tapped$)
+    IF ClientQuestKey(c, tapped$) THEN RETURN
     IF tapped$ = "I" THEN
         c{"bag"} = NOT (c{"bag"} ?? FALSE)
         RETURN
@@ -392,6 +406,7 @@ ENDSUB
 
 ' The finds on the ground, bobbing and glinting so they are seen.
 SUB ClientFloor(c, cam_x, cam_y)
+    c{"cam"} = [cam_x, cam_y]
     DIM t = TICK()
     FOR EACH f IN c{"finds"} ?? []
         DIM sx = f[2] * 32 - cam_x + 16
@@ -404,6 +419,8 @@ SUB ClientFloor(c, cam_x, cam_y)
                 ClientCoin(sx + 3, sy + bob, 4)
             ELSEIF f[1] = "bottle" THEN
                 ClientFlask(sx, sy + bob, 10)
+            ELSEIF f[1] = "chest" ORELSE f[1] = "golden" THEN
+                ClientChest(sx, sy + 2, f[1] = "golden")
             ELSE
                 ClientFindFlower(sx, sy + bob)
             ENDIF
@@ -447,6 +464,7 @@ SUB ClientHud(c)
             CIRCLE gx + INT(COS(a) * (6 + age * 14)), 352 + INT(SIN(a) * (6 + age * 14)), 1, TRUE, 255, 240, 180
         NEXT k
     ENDIF
+    ClientQuestHud(c)
     IF c{"bag"} ?? FALSE THEN ClientBag(c, purse)
 ENDSUB
 

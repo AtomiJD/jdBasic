@@ -1,0 +1,220 @@
+' Test of the daily tasks, achievements and wish chests: three tasks a
+' day, flowers picked and brought to Marta, a fish caught at the right
+' moment, a chest found, a title earned, and a new day with a run of seven.
+' A server without a model.
+'
+'   jdBasic jdb/wunschwelt/test_quests.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8140 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_quests_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "40"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
+SLEEP 1500
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM since AS INTEGER = -1
+DIM findv AS INTEGER = -1
+DIM questv AS INTEGER = -1
+DIM told = []
+DIM quests_now = {}
+
+' One sync and one after it, which brings what the first set off. The
+' answer of the second, with what only the first carried.
+FUNC Sync(extra)
+    DIM msg = {"token": token$, "mapv": 1, "since": since, "findv": findv, "questv": questv, "wishv": -1}
+    FOR EACH field$ IN MAP.KEYS(extra)
+        msg{field$} = extra{field$}
+    NEXT
+    told = []
+    DIM r = {}
+    DIM first = {}
+    DIM k AS INTEGER
+    FOR k = 1 TO 2
+        IF k = 2 THEN msg = {"token": token$, "mapv": 1, "since": since, "findv": findv, "questv": questv, "wishv": -1}
+        r = Post("/sync", msg)
+        IF k = 1 THEN first = r
+        since = r{"seq"}
+        IF MAP.EXISTS(r, "findv") THEN findv = r{"findv"}
+        IF MAP.EXISTS(r, "questv") THEN questv = r{"questv"}
+        FOR EACH ev IN r{"events"}
+            IF (ev{"to"} ?? "") = "Anna" THEN told = APPEND(told, ev{"text"})
+        NEXT
+    NEXT k
+    FOR EACH part$ IN ["map", "finds", "quests", "fishing"]
+        IF MAP.EXISTS(first, part$) ANDALSO NOT MAP.EXISTS(r, part$) THEN r{part$} = first{part$}
+    NEXT
+    ' the tasks travel only when they changed
+    IF MAP.EXISTS(r, "quests") THEN
+        quests_now = r{"quests"}
+    ELSE
+        r{"quests"} = quests_now
+    ENDIF
+    RETURN r
+ENDFUNC
+
+FUNC ToldPart(part$ AS STRING) AS INTEGER
+    RETURN INSTR(JOIN(told, "|"), part$) >= 0
+ENDFUNC
+
+FUNC Put(x AS INTEGER, y AS INTEGER)
+    DIM moved = Admin("player_put", {"player": "Anna", "x": x, "y": y})
+    RETURN Sync({})
+ENDFUNC
+
+DIM r = Sync({"mapv": 0})
+DIM m = r{"map"}
+FUNC TileAt(x AS INTEGER, y AS INTEGER) AS INTEGER
+    IF x < 0 ORELSE y < 0 ORELSE x >= m{"w"} ORELSE y >= m{"h"} THEN RETURN -1
+    RETURN m{"tiles"}[y * m{"w"} + x]
+ENDFUNC
+
+Check("a player gets three tasks for the day", MAP.EXISTS(r, "quests") ANDALSO LEN(r{"quests"}{"list"}) = 3)
+Check("and sees the achievements, none earned", LEN(r{"quests"}{"ach"}) = 8 ANDALSO r{"quests"}{"title"} = "")
+Check("the first day starts a run of one", r{"quests"}{"streak"} = 1)
+Check("three wish chests lie in the world", LEN(FILTER(LAMBDA f -> f[1] = "chest" ORELSE f[1] = "golden", r{"finds"})) = 3)
+
+Check("the keeper sets the tasks", Admin("quest_set", {"player": "Anna", "quests": [{"kind": "explore", "goal": 2}, {"kind": "flowers", "goal": 3}, {"kind": "fish"}]}){"ok"})
+Check("a task the list does not know is refused", NOT Admin("quest_set", {"player": "Anna", "quests": [{"kind": "dragon"}]}){"ok"})
+
+' two fields never seen before
+DIM sx AS INTEGER = r{"x"}
+DIM sy AS INTEGER = r{"y"}
+r = Put(sx + 1, sy)
+Check("a new field counts for the task", r{"quests"}{"list"}[0][2] = 1 ANDALSO NOT r{"quests"}{"list"}[0][4])
+DIM money0 = r{"purse"}{"money"}
+r = Put(sx + 2, sy)
+Check("the task is done with the second field", r{"quests"}{"list"}[0][4] ANDALSO ToldPart("Aufgabe erledigt: Erkunde"))
+Check("and pays Geld", r{"purse"}{"money"} = money0 + 25)
+r = Put(sx + 1, sy)
+Check("a field seen before does not count again", r{"quests"}{"list"}[0][2] = 2)
+
+' a field of flowers with no other one beside it
+DIM fx AS INTEGER = -1
+DIM fy AS INTEGER = -1
+DIM x AS INTEGER
+DIM y AS INTEGER
+FOR y = 1 TO m{"h"} - 2
+    FOR x = 1 TO m{"w"} - 2
+        IF fx < 0 ANDALSO TileAt(x, y) = 8 ANDALSO TileAt(x + 1, y) <> 8 ANDALSO TileAt(x - 1, y) <> 8 ANDALSO TileAt(x, y + 1) <> 8 ANDALSO TileAt(x, y - 1) <> 8 THEN
+            fx = x
+            fy = y
+        ENDIF
+    NEXT x
+NEXT y
+r = Put(fx, fy)
+SLEEP 450
+r = Sync({"pet": TRUE})
+Check("E on flowers picks one", ToldPart("Blume gepfl") ANDALSO r{"purse"}{"items"}[0][0] = "flower" ANDALSO r{"quests"}{"list"}[1][2] = 1)
+SLEEP 450
+r = Sync({"pet": TRUE})
+Check("a picked field gives no second one", ToldPart("schon gepfl") ANDALSO r{"purse"}{"items"}[0][3] = 1)
+DIM gave = Admin("purse", {"player": "Anna", "give": "flower", "n": 2})
+r = Sync({})
+Check("three flowers are not done away from Marta", r{"quests"}{"list"}[1][2] = 3 ANDALSO NOT r{"quests"}{"list"}[1][4])
+r = Put(21, 15)
+Check("beside Marta the flowers are given", r{"quests"}{"list"}[1][4] ANDALSO LEN(r{"purse"}{"items"}) = 0)
+Check("and Marta thanks", ToldPart("Danke Dir"))
+
+' a field beside the pond
+DIM wx AS INTEGER = -1
+DIM wy AS INTEGER = -1
+FOR y = 1 TO m{"h"} - 2
+    FOR x = 1 TO m{"w"} - 2
+        IF wx < 0 ANDALSO (TileAt(x, y) = 1 ORELSE TileAt(x, y) = 8) ANDALSO TileAt(x + 1, y) = 4 THEN
+            wx = x
+            wy = y
+        ENDIF
+    NEXT x
+NEXT y
+r = Put(wx - 3, wy)
+r = Sync({"fish": "cast"})
+Check("no fishing away from the water", ToldPart("ans Wasser") ANDALSO NOT MAP.EXISTS(r, "fishing"))
+r = Put(wx, wy)
+r = Sync({"fish": "cast"})
+Check("a cast at the water tells when a fish bites", MAP.EXISTS(r, "fishing") ANDALSO r{"fishing"}{"bite_in"} >= 1000 ANDALSO r{"fishing"}{"x"} = wx + 1)
+r = Sync({"fish": "pull"})
+Check("pulled too soon the fish is gone", ToldPart("Zu fr"))
+r = Sync({"fish": "cast"})
+DIM wait_ms = r{"fishing"}{"bite_in"}
+SLEEP wait_ms + 200
+DIM paid_before = r{"purse"}{"money"}
+r = Sync({"fish": "pull"})
+Check("pulled when it bites the fish is caught", ToldPart("Fisch gefangen") ANDALSO r{"quests"}{"list"}[2][4])
+Check("the three tasks give a bonus", ToldPart("Alle Aufgaben von heute erledigt") ANDALSO r{"purse"}{"money"} = paid_before + 50)
+
+' a chest
+DIM chest = NONE
+r = Sync({"findv": -1})
+FOR EACH f IN r{"finds"}
+    IF f[1] = "chest" ORELSE f[1] = "golden" THEN chest = f
+NEXT
+r = Put(chest[2], chest[3])
+Check("a chest is opened by stepping on it", ToldPart("Wunschkiste"))
+
+' an achievement
+DIM set_count = Admin("count_set", {"player": "Anna", "key": "visited", "v": 199})
+r = Put(chest[2], chest[3] + 1)
+IF NOT ToldPart("Erfolg") THEN r = Put(chest[2] + 1, chest[3] + 1)
+Check("200 fields earn an achievement and a title", ToldPart("Erfolg: 200 Felder erkundet! Dein Titel: Weitgereist") ANDALSO r{"quests"}{"title"} = "Weitgereist")
+DIM shown_title$ = ""
+FOR EACH row IN r{"players"}
+    IF row[0] = "Anna" THEN shown_title$ = "" + row[6]
+NEXT
+Check("everyone sees the title", shown_title$ = "Weitgereist")
+
+' the next day, after six in a row
+DIM six = Admin("count_set", {"player": "Anna", "key": "streak", "v": 6})
+DIM shifted = Admin("day_shift", {"days": 1})
+r = Sync({})
+Check("a new day brings new tasks", LEN(r{"quests"}{"list"}) = 3 ANDALSO NOT r{"quests"}{"list"}[0][4])
+Check("seven days in a row give a bonus", r{"quests"}{"streak"} = 7 ANDALSO ToldPart("7 Tage hintereinander im Dorf! +100 Geld"))
+r = Sync({})
+Check("and the achievement of the run", r{"quests"}{"title"} = "Treu")
+DIM fresh_chests AS INTEGER = FALSE
+DIM i AS INTEGER
+FOR i = 1 TO 40
+    SLEEP 200
+    r = Sync({"findv": -1})
+    DIM n AS INTEGER = 0
+    FOR EACH f IN r{"finds"}
+        IF (f[1] = "chest" ORELSE f[1] = "golden") ANDALSO f[0] > chest[0] THEN n = n + 1
+    NEXT
+    IF n = 3 THEN fresh_chests = TRUE
+    IF fresh_chests THEN EXITFOR
+NEXT i
+Check("the new day lays three new chests", fresh_chests)
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM w3 = OS.WAIT(server_pid, 40000)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

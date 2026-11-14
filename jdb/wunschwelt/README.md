@@ -321,6 +321,40 @@ player has (`{"player", "money", "potion", "give", "n"}`), `find_put` lays a
 find (`{"kind", "x", "y"}`). The other suites set wishes free;
 `test_purse.jdb` (29 checks) tests the prices.
 
+## Tasks, achievements and wish chests (`game/070_quests.jdb`)
+
+The rules count what a player does in `profile{"counts"}`: `visited` (fields
+seen, kept in `profile{"seen"}`), `beach`, `flowers`, `fish`, `pets`,
+`pet_kinds` (each animal once a day), `chests`, `golden`, `quests`,
+`wishes_built`, `followed` and `streak_best`. Tasks and achievements are
+read from these counts only.
+
+- Each calendar day of the server a player gets three tasks out of six
+  (flowers to Marta, a fish, three animals petted, the beach, 30 new fields,
+  a wish chest), the same three all day; beach and petting only when the
+  world has sand or animals. A task is done when its count grew by the goal
+  since it was given; the flowers when the player stands beside Marta with
+  them in the bag. A task gives 25 Geld and 30 potion, all three 25 Geld
+  more, and every seventh day in a row 100 Geld and 50 potion.
+- E with no animal beside picks a flower from a field of flowers at the
+  feet or next to it; the field grows again in five minutes.
+- F beside water casts; the rules choose when a fish bites and judge the
+  pull (F again) by their own clock, from 150 ms before the bite to 1.4 s
+  after it.
+- Achievements (`RuleAchievements`): a count reaching its goal once gives
+  50 Geld and a title, shown under the player's figure to everyone.
+- Three wish chests lie in the world each day, one in eight golden; the
+  ones nobody found go with the day.
+- Q opens the tasks and achievements; the three tasks stand in the top
+  right corner. A done task or an achievement rings a few notes when the
+  sound is on.
+
+The keeper: `quest_set` (`{"player", "quests": [{"kind", "goal"}]}`),
+`count_set` (`{"player", "key", "v"}`, also `streak` and `last_day`),
+`day_shift` (`{"days"}`) and `player_put` (`{"player", "x", "y"}`).
+`test_quests.jdb`: 28 checks. `test_slice.jdb` also parses the client part
+of every game file, which no other suite runs.
+
 ## What survives a restart
 
 With `WW_STATE_DIR` set (on the box: `/var/lib/wunschwelt`, readable by the

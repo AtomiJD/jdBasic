@@ -68,6 +68,15 @@ FUNC Sync(extra)
     RETURN r
 ENDFUNC
 
+' The finds that are no wish chest; those come once a day (test_quests).
+FUNC Loose(finds) AS INTEGER
+    DIM n AS INTEGER = 0
+    FOR EACH f IN finds
+        IF f[1] <> "chest" ANDALSO f[1] <> "golden" THEN n = n + 1
+    NEXT
+    RETURN n
+ENDFUNC
+
 FUNC ToldPart(part$ AS STRING) AS INTEGER
     RETURN INSTR(JOIN(told, "|"), part$) >= 0
 ENDFUNC
@@ -175,13 +184,13 @@ DIM grown AS INTEGER = 0
 FOR i = 1 TO 30
     SLEEP 200
     r = Sync({})
-    IF MAP.EXISTS(r, "finds") THEN grown = LEN(r{"finds"})
+    IF MAP.EXISTS(r, "finds") THEN grown = Loose(r{"finds"})
     IF grown >= 3 THEN EXITFOR
 NEXT i
 Check("new finds lie in the world, no more than the economy says", grown = 3)
 SLEEP 2500
 r = Sync({"findv": -1})
-Check("and stay at that number", LEN(r{"finds"}) = 3)
+Check("and stay at that number", Loose(r{"finds"}) = 3)
 
 DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
 Check("the rules raised no error", stats{"errors"} = 0)

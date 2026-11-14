@@ -53,6 +53,7 @@ FUNC RuleWishSetStatus(w, id, status$, note$)
     FOR i = 0 TO LEN(wishes) - 1
         IF wishes[i]{"id"} = id THEN
             IF status$ = "declined" ANDALSO wishes[i]{"status"} <> "declined" THEN RuleWishRefund(w, wishes[i])
+            IF status$ = "done" ANDALSO wishes[i]{"status"} <> "done" THEN RuleCountAdd(w, wishes[i]{"who"}, "wishes_built", 1)
             wishes[i]{"status"} = status$
             wishes[i]{"note"} = RuleCut$(note$, 100)
             w{"wishes"} = wishes
@@ -274,6 +275,7 @@ SUB RuleExtra(w, p, msg, answer)
     RulePlotExtra(w, msg, answer)
     RuleAnimalSync(w, p, msg, answer)
     RulePurseSync(w, p, msg, answer)
+    RuleQuestSync(w, p, msg, answer)
     IF INT(msg{"wishv"} ?? -1) = w{"wishv"} THEN RETURN
     DIM wishes = w{"wishes"}
     DIM rows = []
@@ -292,6 +294,7 @@ FUNC RuleAdmin(w, name$, args)
     IF name$ = "builder" ORELSE name$ = "builder_set" ORELSE name$ = "build_ok" ORELSE name$ = "things" ORELSE name$ = "thing_remove" THEN RETURN RuleBuildAdmin(w, name$, args)
     IF name$ = "fond" THEN RETURN RuleAnimalAdmin(w, args)
     IF name$ = "economy" ORELSE name$ = "purse" ORELSE name$ = "find_put" THEN RETURN RulePurseAdmin(w, name$, args)
+    IF name$ = "quest_set" ORELSE name$ = "count_set" ORELSE name$ = "day_shift" ORELSE name$ = "player_put" THEN RETURN RuleQuestAdmin(w, name$, args)
     IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
     IF name$ = "wish_status" THEN
         DIM status$ = "" + (args{"status"} ?? "")
@@ -310,11 +313,13 @@ SUB ClientAsk(c, msg)
     msg{"plotv"} = c{"plotv"} ?? -1
     ClientAnimalAsk(c, msg)
     ClientPurseAsk(c, msg)
+    ClientQuestAsk(c, msg)
 ENDSUB
 
 SUB ClientExtra(c, r)
     ClientAnimalExtra(c, r)
     ClientPurseExtra(c, r)
+    ClientQuestExtra(c, r)
     IF MAP.EXISTS(r, "plot") THEN
         c{"plot"} = r{"plot"}
         c{"plotv"} = r{"plotv"}
