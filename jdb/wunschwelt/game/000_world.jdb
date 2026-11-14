@@ -957,9 +957,16 @@ SUB ClientDraw(c)
 
     DIM where = {}
     DIM npcs = c{"npcs"}
+    IF NOT MAP.EXISTS(c, "npc_shown") THEN c{"npc_shown"} = {}
     FOR i = 0 TO LEN(npcs) - 1
-        DIM nx = npcs[i][2] * 32 - cam_x
-        DIM ny = npcs[i][3] * 32 - cam_y
+        ' whoever walks glides from field to field as the players do; a long jump is made at once
+        DIM goal = [npcs[i][2] * 32, npcs[i][3] * 32]
+        DIM was = c{"npc_shown"}{npcs[i][0]} ?? goal
+        IF ABS(goal[0] - was[0]) + ABS(goal[1] - was[1]) > 96 THEN was = goal
+        was = [was[0] + (goal[0] - was[0]) * 0.3, was[1] + (goal[1] - was[1]) * 0.3]
+        c{"npc_shown"}{npcs[i][0]} = was
+        DIM nx = INT(was[0]) - cam_x
+        DIM ny = INT(was[1]) - cam_y
         foot = APPEND(foot, ny + 32)
         kinds = APPEND(kinds, 1)
         refs = APPEND(refs, i)
