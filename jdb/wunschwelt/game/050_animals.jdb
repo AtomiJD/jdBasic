@@ -298,6 +298,7 @@ FUNC RuleAnimalCall(w, p, said$)
             IF MAX([ABS(npc{"x"} - p{"x"}), ABS(npc{"y"} - p{"y"})]) <= 8 THEN
                 RuleFollowStop(w, npc)
                 p{"fondv"} = (p{"fondv"} ?? 0) + 1
+                npc{"stays_by"} = p{"name"}
                 KEmit(w, {"type": "build", "who": p{"name"}, "text": npc{"name"} + " bleibt hier"})
                 heard = TRUE
             ENDIF
@@ -310,6 +311,7 @@ FUNC RuleAnimalCall(w, p, said$)
         IF STARTSWITH(id$, "b_") THEN
             DIM near = w{"npcs"}{id$}
             IF (near{"follow"} ?? "") = "" ANDALSO MAX([ABS(near{"x"} - p{"x"}), ABS(near{"y"} - p{"y"})]) <= 5 ANDALSO RuleFond(w, p{"name"}, id$) >= 80 THEN
+                near{"stays_by"} = ""
                 IF RuleFollowStart(w, p, id$) THEN heard = TRUE
             ENDIF
         ENDIF
@@ -355,6 +357,20 @@ SUB RuleAnimalSync(w, p, msg, answer)
         ENDIF
     ENDIF
     p{"trail"} = trail
+    ' an animal that loves p and was not told to stay comes back when p
+    ' comes back: it stopped following when p left the world
+    IF now >= (p{"rejoin_at"} ?? 0) THEN
+        p{"rejoin_at"} = now + 2000
+        DIM loves_p = RuleProfile(w, p{"name"}){"affection"}
+        FOR EACH love_id$ IN SORT(MAP.KEYS(loves_p))
+            IF MAP.EXISTS(w{"npcs"}, love_id$) THEN
+                DIM pet_npc = w{"npcs"}{love_id$}
+                IF (pet_npc{"follow"} ?? "") = "" ANDALSO (pet_npc{"stays_by"} ?? "") <> p{"name"} ANDALSO RuleFond(w, p{"name"}, love_id$) >= 80 THEN
+                    DIM back = RuleFollowStart(w, p, love_id$)
+                ENDIF
+            ENDIF
+        NEXT
+    ENDIF
     IF (msg{"pet"} ?? FALSE) = TRUE ANDALSO now >= (p{"pet_at"} ?? 0) THEN
         p{"pet_at"} = now + 400
         DIM id$ = RuleAnimalBeside$(w, p)

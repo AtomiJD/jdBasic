@@ -1071,7 +1071,8 @@ ENDFUNC
 ' often when the player stands close.
 FUNC AnimalState(c, row)
     IF NOT MAP.EXISTS(c, "anim") THEN c{"anim"} = {}
-    DIM last = c{"anim"}{row[0]} ?? [row[2], row[3], FALSE, TICK() - 10000, 0]
+    IF NOT MAP.EXISTS(c{"anim"}, row[0]) THEN c{"anim"}{row[0]} = [row[2], row[3], FALSE, TICK() - 10000, 0]
+    DIM last = c{"anim"}{row[0]}
     IF row[2] <> last[0] ORELSE row[3] <> last[1] THEN
         DIM faces_left = last[2]
         IF row[2] < last[0] THEN faces_left = TRUE
