@@ -333,6 +333,15 @@ SLEEP 400
 DIM here = World()
 DIM follower = Folk(here, frog_id$)[0]
 Check("the frog walks right behind Anna", steps_done >= 3 ANDALSO MAX([ABS(follower[2] - here{"x"}), ABS(follower[3] - here{"y"})]) <= 2 ANDALSO (follower[2] <> here{"x"} ORELSE follower[3] <> here{"y"}))
+' turning back into the frog: it gives way and takes Anna's field
+DIM gave_way AS INTEGER = FALSE
+IF ABS(follower[2] - here{"x"}) + ABS(follower[3] - here{"y"}) = 1 THEN
+    SLEEP 200
+    DIM back_step = Post("/sync", {"token": token$, "dx": follower[2] - here{"x"}, "dy": follower[3] - here{"y"}, "mapv": 1, "since": since})
+    DIM swapped = Folk(World(), frog_id$)[0]
+    gave_way = back_step{"x"} = follower[2] ANDALSO back_step{"y"} = follower[3] ANDALSO swapped[2] = here{"x"} ANDALSO swapped[3] = here{"y"}
+ENDIF
+Check("a follower never blocks its player", gave_way)
 SLEEP 2600
 t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Bleib hier"})
 Wait(600)

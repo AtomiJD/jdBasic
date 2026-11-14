@@ -68,6 +68,7 @@ SUB RuleHeard(w, p, said$)
     DIM handled = RuleBuildRename(w, p, said$)
     IF NOT handled THEN handled = RuleAnimalDress(w, p, said$)
     IF NOT handled THEN handled = RuleAnimalCall(w, p, said$)
+    IF NOT handled THEN handled = RuleLookAsked(w, p, said$)
     p{"renamed"} = IIF(handled, said$, "")
 ENDSUB
 

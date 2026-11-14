@@ -176,6 +176,16 @@ FUNC RuleSync(w, p, msg)
         IF dx < 0 THEN p{"dir"} = 1
         IF dx > 0 THEN p{"dir"} = 2
         IF dy < 0 THEN p{"dir"} = 3
+        ' an animal that follows p gives way: it takes p's field
+        IF now - p{"last_step"} >= RuleStepMs(w, p) ANDALSO RuleBlocked(w, p{"x"} + dx, p{"y"} + dy) THEN
+            FOR EACH pet_id$ IN MAP.KEYS(w{"npcs"})
+                DIM pet = w{"npcs"}{pet_id$}
+                IF (pet{"follow"} ?? "") = p{"name"} ANDALSO pet{"x"} = p{"x"} + dx ANDALSO pet{"y"} = p{"y"} + dy THEN
+                    pet{"x"} = p{"x"}
+                    pet{"y"} = p{"y"}
+                ENDIF
+            NEXT
+        ENDIF
         IF now - p{"last_step"} >= RuleStepMs(w, p) ANDALSO NOT RuleBlocked(w, p{"x"} + dx, p{"y"} + dy) THEN
             p{"x"} = p{"x"} + dx
             p{"y"} = p{"y"} + dy

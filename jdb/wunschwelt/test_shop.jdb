@@ -122,10 +122,10 @@ ENDFUNC
 DIM fenja = Npc(r, "fenja")
 Check("Fenja stands in the tavern", ISARR(fenja) ANDALSO TileAt(fenja[2], fenja[3]) = 6)
 DIM pieces AS INTEGER = 0
-FOR EACH id$ IN ["f_counter_1", "f_counter_2", "f_counter_3", "f_shelf_1", "f_shelf_2", "f_shelf_3", "f_table_1", "f_table_2", "f_barrel_1", "f_barrel_2"]
+FOR EACH id$ IN ["f_counter_1", "f_counter_2", "f_counter_3", "f_counter_4", "f_shelf_1", "f_shelf_2", "f_shelf_3", "f_table_1", "f_table_2", "f_barrel_1", "f_barrel_2"]
     IF ISARR(Npc(r, id$)) THEN pieces = pieces + 1
 NEXT
-Check("with counter, shelves, tables and barrels", pieces = 10)
+Check("with counter, shelves, tables and barrels", pieces = 11)
 DIM fx AS INTEGER = fenja[2]
 DIM fy AS INTEGER = fenja[3]
 
@@ -153,6 +153,10 @@ r = Sync({"dy": -1})
 SLEEP 200
 r = Sync({"dy": -1})
 Check("a wall stops", r{"y"} = fy - 1 ANDALSO TileAt(r{"x"}, r{"y"} - 1) = 5)
+
+' nobody stays behind the counter
+r = Put(fx + 1, fy)
+Check("someone behind the counter is set before it", r{"x"} = fx ANDALSO r{"y"} = fy + 2)
 
 ' away from Fenja
 r = Put(door_x, door_y + 1)

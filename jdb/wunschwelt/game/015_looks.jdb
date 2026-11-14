@@ -66,6 +66,27 @@ FUNC RuleLookGuessColor$(hay$)
     RETURN ""
 ENDFUNC
 
+' A sentence that asks for a colour of the own clothes, cap, scarf or
+' eyepatch ("Ich moechte ein blaues Shirt") is granted at once, without the
+' judge; TRUE when it was.
+FUNC RuleLookAsked(w, p, said$)
+    DIM low$ = RuleLookColorKey$(said$)
+    DIM part$ = RuleLookGuessPart$(low$)
+    IF part$ = "" ORELSE part$ = "skin" THEN RETURN FALSE
+    DIM color$ = RuleLookGuessColor$(low$)
+    IF color$ = "" THEN RETURN FALSE
+    DIM asks = FALSE
+    FOR EACH word$ IN ["moecht", "will", "wuensch", "haett", "bitte", "gib", "mach", "trag", "anzieh", "soll", "lieber", "kann ich", "bekomm"]
+        IF INSTR(low$, word$) >= 0 THEN asks = TRUE
+    NEXT
+    IF NOT asks THEN RETURN FALSE
+    ' "a dog with a yellow hat" is a wish for the village, not a look
+    FOR EACH stem IN RuleBuildStems()
+        IF INSTR(low$, stem[0]) >= 0 THEN RETURN FALSE
+    NEXT
+    RETURN RuleApplyLook(w, p{"name"}, {"part": part$, "color": color$, "said": said$})
+ENDFUNC
+
 ' Applies a look wish of the judge ({"part", "color"} or {"part": "skin",
 ' "skin"}); TRUE when something changed.
 FUNC RuleApplyLook(w, who$, verdict)

@@ -82,8 +82,13 @@ SUB RuleShopPut(w, id$, x, y)
 ENDSUB
 
 ' Once: Fenja, her counter and shelves, tables and barrels in the tavern.
+' The counter closes at its side, so nobody gets behind it.
 SUB RuleShopWake(w)
-    IF MAP.EXISTS(w{"npcs"}, "fenja") THEN RETURN
+    IF MAP.EXISTS(w{"npcs"}, "fenja") THEN
+        DIM seller = w{"npcs"}{"fenja"}
+        IF NOT MAP.EXISTS(w{"npcs"}, "f_counter_4") THEN RuleShopPut(w, "f_counter_4", seller{"x"} + 2, seller{"y"})
+        RETURN
+    ENDIF
     DIM room = RuleShopRoom(w)
     IF LEN(room) = 0 THEN RETURN
     DIM x0 = room[0]
@@ -95,6 +100,7 @@ SUB RuleShopWake(w)
         RuleShopPut(w, "f_shelf_" + STR$(k), x0 + k, y0 + 1)
         RuleShopPut(w, "f_counter_" + STR$(k), x0 + k, y0 + 3)
     NEXT k
+    RuleShopPut(w, "f_counter_4", x0 + 4, y0 + 2)
     RuleShopPut(w, "f_table_1", x1 - 3, y0 + 2)
     RuleShopPut(w, "f_table_2", x1 - 3, y1 - 2)
     RuleShopPut(w, "f_barrel_1", x1 - 1, y0 + 1)
@@ -233,6 +239,15 @@ ENDSUB
 
 ' One sync: a buy or a sale beside Fenja, and the shop while its window is open.
 SUB RuleShopSync(w, p, msg, answer)
+    ' someone behind the counter (from before it was closed) is set before it
+    IF MAP.EXISTS(w{"npcs"}, "fenja") THEN
+        DIM seller = w{"npcs"}{"fenja"}
+        IF NOT MAP.EXISTS(w{"npcs"}, "f_counter_4") THEN RuleShopPut(w, "f_counter_4", seller{"x"} + 2, seller{"y"})
+        IF p{"y"} = seller{"y"} ANDALSO ABS(p{"x"} - seller{"x"}) = 1 ANDALSO MAP.EXISTS(w{"npcs"}, "f_counter_4") THEN
+            p{"x"} = seller{"x"}
+            p{"y"} = seller{"y"} + 2
+        ENDIF
+    ENDIF
     DIM want = msg{"shop"} ?? NONE
     IF ISMAP(want) ANDALSO KNow() >= (p{"shop_at"} ?? 0) THEN
         p{"shop_at"} = KNow() + 250

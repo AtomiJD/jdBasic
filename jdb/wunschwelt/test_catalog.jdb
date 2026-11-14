@@ -31,6 +31,7 @@ HTTP.SETTIMEOUT(5)
 ' The model: a judge's question gets a verdict by the words in the sentence,
 ' any other question a short line.
 DIM knows_catalog AS BOOLEAN = FALSE
+DIM knows_no_magic AS BOOLEAN = FALSE
 FUNC Verdict$(said$ AS STRING)
     IF INSTR(said$, "Meer") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["land"], "text": "Ein Meer im Osten"})
     IF INSTR(said$, "Land") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["land", "way", "house", "rocket"], "text": "Mehr Land im Westen mit Strasse, Wald und Huette"})
@@ -40,6 +41,8 @@ FUNC Verdict$(said$ AS STRING)
     IF INSTR(said$, "kariert") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["look"], "part": "clothes", "color": "kariert", "text": "Karierte Kleidung"})
     IF INSTR(said$, "wie Hasi") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["look"], "part": "skin", "skin": "hasi", "text": "Aussehen wie Hasi"})
     IF INSTR(said$, "hinter dem Wald") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["land"], "text": "Was hinter dem Wald liegt"})
+    IF INSTR(said$, "Katze") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Eine Katze"})
+    IF INSTR(said$, "mitzi") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["villager"], "text": "ihr namen zu mitzi"})
     IF INSTR(said$, "Techno") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["music"], "music": "techno", "text": "Techno"})
     RETURN JSON.STRINGIFY$({"wish": FALSE})
 ENDFUNC
@@ -54,6 +57,7 @@ FUNC FakeModel(request)
         content$ = Verdict$(said$)
     ELSEIF INSTR(system$, "Erlaubt sind diese Arten") >= 0 THEN
         knows_catalog = TRUE
+        IF INSTR(system$, "behaupte nie") >= 0 THEN knows_no_magic = TRUE
     ENDIF
     RETURN JSON.STRINGIFY$({"choices": [{"message": {"role": "assistant", "content": content$}}]})
 ENDFUNC
@@ -76,7 +80,7 @@ FUNC Events(answer, kind$ AS STRING)
     RETURN found
 ENDFUNC
 
-DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "60"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "90"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
 SLEEP 1500
 ' wishes are free here; test_purse.jdb tests what they cost
 DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
@@ -179,9 +183,26 @@ heard = Tell("Spiel Rock")
 music_now = Post("/sync", {"token": token$, "mapv": 1, "since": since})
 Check("rock when it is played", STARTSWITH(music_now{"music"} ?? "", "rock:"))
 
+SLEEP 600
+heard = Tell("bekomme ich eine Katze?")
+Check("a question that asks for something is a wish", LEN(heard{"wish"}) = 1)
+SLEEP 600
+heard = Tell("bitte aender ihren namen zu mitzi")
+Check("a name for no one is not built", LEN(heard{"wish"}) = 0 ANDALSO MartaSaid(heard, "Ich finde niemanden"))
+Check("Marta is told not to claim what did not happen", knows_no_magic)
+
+SLEEP 600
+heard = Tell("Ich m" + CHR$(195) + CHR$(182) + "chte ein blaues Shirt")
+row = MyRow(Post("/sync", {"token": token$, "mapv": 1, "since": since}))
+Check("a colour for the shirt is put on without the judge", LEN(row) > 5 ANDALSO JSON.STRINGIFY$(row[5]{"clothes"} ?? []) = JSON.STRINGIFY$([56, 104, 220]) ANDALSO LEN(heard{"wish"}) = 0)
+SLEEP 600
+heard = Tell("Ich m" + CHR$(195) + CHR$(182) + "chte eine gelbe M" + CHR$(195) + CHR$(188) + "tze")
+row = MyRow(Post("/sync", {"token": token$, "mapv": 1, "since": since}))
+Check("and a yellow cap", LEN(row) > 5 ANDALSO JSON.STRINGIFY$(row[5]{"hat"} ?? []) = JSON.STRINGIFY$([240, 206, 52]) ANDALSO NOT MartaSaid(heard, "nicht bringen"))
+
 DIM board = Admin("wishes", {})
-Check("two wishes on the board, the look and the music not among them", board{"ok"} ANDALSO LEN(board{"wishes"}) = 2)
-IF board{"ok"} ANDALSO LEN(board{"wishes"}) = 2 THEN
+Check("three wishes on the board, the look and the music not among them", board{"ok"} ANDALSO LEN(board{"wishes"}) = 3)
+IF board{"ok"} ANDALSO LEN(board{"wishes"}) = 3 THEN
     Check("the sea carries its kind", JSON.STRINGIFY$(board{"wishes"}[0]{"kinds"}) = JSON.STRINGIFY$(["land"]))
     Check("the land keeps the kinds of the catalog only", JSON.STRINGIFY$(board{"wishes"}[1]{"kinds"}) = JSON.STRINGIFY$(["land", "way", "house"]))
 ENDIF
