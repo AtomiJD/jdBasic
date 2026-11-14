@@ -369,17 +369,21 @@ FUNC RuleQuestAdmin(w, name$, args)
     IF name$ = "player_put" THEN
         IF NOT MAP.EXISTS(w{"players"}, who$) THEN RETURN {"ok": FALSE, "error": "not in the world"}
         DIM p = w{"players"}{who$}
-        p{"x"} = INT(args{"x"} ?? p{"x"})
-        p{"y"} = INT(args{"y"} ?? p{"y"})
+        p{"x"} = CLAMP(INT(args{"x"} ?? p{"x"}), 0, w{"map"}{"w"} - 1)
+        p{"y"} = CLAMP(INT(args{"y"} ?? p{"y"}), 0, w{"map"}{"h"} - 1)
         RETURN {"ok": TRUE}
     ENDIF
     IF name$ = "count_set" THEN
         DIM key$ = "" + (args{"key"} ?? "")
-        IF key$ = "streak" ORELSE key$ = "last_day" THEN
-            prof{key$} = args{"v"}
+        IF key$ = "last_day" THEN
+            prof{key$} = "" + (args{"v"} ?? "")
+        ELSEIF NOT ISNUM(args{"v"} ?? "") THEN
+            RETURN {"ok": FALSE, "error": "v is a number"}
+        ELSEIF key$ = "streak" THEN
+            prof{key$} = INT(args{"v"})
         ELSE
             DIM counts = prof{"counts"}
-            counts{key$} = args{"v"}
+            counts{key$} = INT(args{"v"})
         ENDIF
         RuleQuestChanged(w, who$)
         RETURN {"ok": TRUE, "counts": prof{"counts"}, "streak": prof{"streak"}}

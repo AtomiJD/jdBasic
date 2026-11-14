@@ -175,6 +175,7 @@ r = Sync({"findv": -1})
 FOR EACH f IN r{"finds"}
     IF f[1] = "chest" ORELSE f[1] = "golden" THEN chest = f
 NEXT
+IF NOT ISARR(chest) THEN chest = [0, "chest", r{"x"}, r{"y"}]
 r = Put(chest[2], chest[3])
 Check("a chest is opened by stepping on it", ToldPart("Wunschkiste"))
 
