@@ -264,10 +264,15 @@ SUB RuleTick(w, now)
     RuleAnimalTick(w, now)
     RuleBuildTick(w, now)
     RuleWishTick(w, now)
+    RulePurseTick(w, now)
 ENDSUB
 
 ' The wishes' turn in a tick; game/010_wishes.jdb gives it a body.
 SUB RuleWishTick(w, now)
+ENDSUB
+
+' The purse's turn in a tick; game/060_purse.jdb gives it a body.
+SUB RulePurseTick(w, now)
 ENDSUB
 
 ' The builder's turn in a tick; game/040_builder.jdb gives it a body.
@@ -625,6 +630,7 @@ SUB ClientInput(c)
             IF tapped$ = "UP" ORELSE tapped$ = "W" THEN c{"tap"} = [0, -1]
             IF tapped$ = "DOWN" ORELSE tapped$ = "S" THEN c{"tap"} = [0, 1]
             IF tapped$ = "E" THEN c{"pet"} = TRUE
+            ClientKey(c, tapped$)
         ENDIF
     NEXT i
     c{"dx"} = 0
@@ -822,6 +828,17 @@ ENDSUB
 SUB ClientOverlay(c, cam_x, cam_y)
 ENDSUB
 
+' What lies on the ground under everyone, what a player owns over the bottom
+' line, and a key tapped while walking; game/060_purse.jdb gives them a body.
+SUB ClientFloor(c, cam_x, cam_y)
+ENDSUB
+
+SUB ClientHud(c)
+ENDSUB
+
+SUB ClientKey(c, tapped$)
+ENDSUB
+
 ' Three dots over someone who speaks.
 SUB ClientTalkMark(sx, sy)
     ROUNDED_RECT sx + 8, sy - 26, 16, 9, 3, TRUE, 250, 248, 240
@@ -847,7 +864,7 @@ SUB ClientTalkWindow(c, talk)
         NEXT k
     NEXT i
     DIM high = GFX.TEXTSIZE("Ag")[1] + 1
-    DIM top = 362 - LEN(rows) * high - 8
+    DIM top = 340 - LEN(rows) * high - 8
     DRAWCOLOR 16, 18, 22, 210
     RECT 4, top, 632, LEN(rows) * high + 6, TRUE
     DRAWCOLOR 255, 255, 255, 255
@@ -915,6 +932,7 @@ SUB ClientDraw(c)
     DIM cam_x = INT(c{"px"}) + 16 - 320
     DIM cam_y = INT(c{"py"}) + 16 - 192
     ClientGround(c, cam_x, cam_y)
+    ClientFloor(c, cam_x, cam_y)
 
     ' what stands is drawn back to front by the line its foot is on:
     ' kind 0 a tree, bush or stone, 1 an NPC, 2 a player
@@ -1043,10 +1061,11 @@ SUB ClientDraw(c)
         TEXT 4, 365, "> " + c{"entry"} + "_", 240, 240, 240
     ELSE
         RECT 0, 364, 640, 20, TRUE, 16, 18, 22
-        TEXT 4, 365, "Pfeile oder WASD: laufen   Enter: sprechen   E: streicheln", 150, 160, 150
+        TEXT 4, 365, "WASD: laufen  Enter: sprechen  E: streicheln  I: Tasche", 150, 160, 150
         DIM tune$ = c{"music_label"} ?? ""
         IF tune$ <> "" THEN TEXT 636 - GFX.TEXTSIZE("Musik: " + tune$)[0], 365, "Musik: " + tune$, 150, 180, 220
     ENDIF
+    ClientHud(c)
 ENDSUB
 
 SUB ClientFrame(c)

@@ -1,0 +1,192 @@
+' Test of what a player owns: Geld from a find, the wish potion a wish
+' costs and gets back, a bottle drunk from the bag, and Marta saying when
+' the potion is too low and when it is enough again. A server without a model.
+'
+'   jdBasic jdb/wunschwelt/test_purse.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8190 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_purse_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "40"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
+SLEEP 1500
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM since AS INTEGER = -1
+DIM findv AS INTEGER = -1
+
+' One sync and one after it, which brings what the first one set off: the texts
+' of the purse and of what was said to Anna. The answer of the second, with
+' the finds of the first when only the first had them.
+DIM told = []
+FUNC Sync(extra)
+    DIM msg = {"token": token$, "mapv": 1, "since": since, "findv": findv, "wishv": -1}
+    FOR EACH field$ IN MAP.KEYS(extra)
+        msg{field$} = extra{field$}
+    NEXT
+    told = []
+    DIM r = {}
+    DIM first = {}
+    DIM k AS INTEGER
+    FOR k = 1 TO 2
+        IF k = 2 THEN msg = {"token": token$, "mapv": 1, "since": since, "findv": findv, "wishv": -1}
+        r = Post("/sync", msg)
+        IF k = 1 THEN first = r
+        since = r{"seq"}
+        IF MAP.EXISTS(r, "findv") THEN findv = r{"findv"}
+        FOR EACH ev IN r{"events"}
+            IF ev{"type"} = "purse" ORELSE (ev{"type"} = "say" ANDALSO (ev{"to"} ?? "") = "Anna") THEN told = APPEND(told, ev{"text"})
+        NEXT
+    NEXT k
+    IF MAP.EXISTS(first, "finds") ANDALSO NOT MAP.EXISTS(r, "finds") THEN r{"finds"} = first{"finds"}
+    RETURN r
+ENDFUNC
+
+FUNC ToldPart(part$ AS STRING) AS INTEGER
+    RETURN INSTR(JOIN(told, "|"), part$) >= 0
+ENDFUNC
+
+DIM r = Sync({})
+Check("a new player starts with no Geld and a full potion", MAP.EXISTS(r, "purse") ANDALSO r{"purse"}{"money"} = 0 ANDALSO r{"purse"}{"potion"} = 100 ANDALSO r{"purse"}{"cap"} = 100 ANDALSO LEN(r{"purse"}{"items"}) = 0)
+Check("the finds travel with the first sync", MAP.EXISTS(r, "finds") ANDALSO ISARR(r{"finds"}))
+r = Sync({})
+Check("and not again while they are unchanged", NOT MAP.EXISTS(r, "finds"))
+
+' up to Marta, as in test_wishes
+DIM i AS INTEGER
+FOR i = 1 TO 3
+    SLEEP 200
+    r = Sync({"dy": -1})
+NEXT i
+DIM ax AS INTEGER = r{"x"}
+DIM ay AS INTEGER = r{"y"}
+
+Check("the keeper lays a purse of Geld", Admin("find_put", {"kind": "coins", "x": ax, "y": ay}){"ok"})
+r = Sync({})
+Check("what lies on the player's field is taken", r{"purse"}{"money"} >= 5 ANDALSO r{"purse"}{"money"} <= 15)
+Check("and the player hears how much", ToldPart("Du hast " + STR$(r{"purse"}{"money"}) + " Geld erhalten."))
+DIM left_here AS INTEGER = FALSE
+FOR EACH f IN r{"finds"} ?? []
+    IF f[2] = ax ANDALSO f[3] = ay THEN left_here = TRUE
+NEXT
+Check("the purse is gone from the field", MAP.EXISTS(r, "finds") ANDALSO NOT left_here)
+
+DIM put = Admin("find_put", {"kind": "bottle", "x": ax, "y": ay})
+r = Sync({})
+Check("a bottle goes into the bag", LEN(r{"purse"}{"items"}) = 1 ANDALSO r{"purse"}{"items"}[0][0] = "bottle" ANDALSO r{"purse"}{"items"}[0][3] = 1 ANDALSO r{"purse"}{"items"}[0][4] = TRUE)
+SLEEP 350
+r = Sync({"use": "bottle"})
+Check("a full potion is not filled from a bottle", ToldPart("schon voll") ANDALSO r{"purse"}{"items"}[0][3] = 1)
+
+Check("a thing the rules do not know is refused", NOT Admin("find_put", {"kind": "gold bar", "x": ax, "y": ay}){"ok"})
+
+DIM uml$ AS STRING = CHR$(195) + CHR$(188)
+r = Sync({"say": "Ich w" + uml$ + "nsche mir einen Brunnen"})
+Check("a wish costs 80 of the potion", r{"purse"}{"potion"} = 20 ANDALSO ToldPart("Der Wunsch kostet 80 Wunschtrank."))
+DIM board = Admin("wishes", {})
+Check("and stands on the board with its price", LEN(board{"wishes"}) = 1 ANDALSO board{"wishes"}[0]{"cost"} = 80)
+
+SLEEP 2100
+r = Sync({"say": "Ich w" + uml$ + "nsche mir eine Bank"})
+Check("a wish with too little potion is not written", LEN(Admin("wishes", {}){"wishes"}) = 1 ANDALSO r{"purse"}{"potion"} = 20)
+Check("Marta says how much is missing", ToldPart("reicht noch nicht: Du hast 20, dieser Wunsch braucht 80"))
+
+SLEEP 350
+r = Sync({"use": "bottle"})
+Check("the bottle is drunk", r{"purse"}{"potion"} = 40 ANDALSO LEN(r{"purse"}{"items"}) = 0 ANDALSO ToldPart("20 Wunschtrank mehr"))
+SLEEP 350
+r = Sync({"use": "bottle"})
+Check("a bottle that is not there is not drunk", r{"purse"}{"potion"} = 40)
+
+DIM put2 = Admin("find_put", {"kind": "flower", "x": ax, "y": ay})
+r = Sync({})
+SLEEP 350
+r = Sync({"use": "flower"})
+Check("a flower is kept, not used", LEN(r{"purse"}{"items"}) = 1 ANDALSO r{"purse"}{"items"}[0][0] = "flower" ANDALSO ToldPart("besser auf"))
+
+DIM first_id = board{"wishes"}[0]{"id"}
+DIM moved = Admin("wish_status", {"id": first_id, "status": "declined"})
+r = Sync({})
+Check("a declined wish gives its potion back", r{"purse"}{"potion"} = 120 ANDALSO ToldPart("80 Wunschtrank zur" + uml$ + "ck"))
+DIM again = Admin("wish_status", {"id": first_id, "status": "declined"})
+r = Sync({})
+Check("only once", r{"purse"}{"potion"} = 120)
+
+' the potion grows with the time of the world; Marta says when it is enough
+DIM low = Admin("purse", {"player": "Anna", "potion": 70})
+DIM eco = Admin("economy", {"every_s": 1})
+Check("the keeper sets the economy", eco{"ok"} ANDALSO eco{"economy"}{"every_s"} = 1 ANDALSO eco{"economy"}{"wish"} = 80)
+SLEEP 2100
+r = Sync({"say": "Ich w" + uml$ + "nsche mir eine Laterne"})
+Check("the potion grows by itself", r{"purse"}{"potion"} >= 71 ANDALSO r{"purse"}{"potion"} <= 76 ANDALSO LEN(Admin("wishes", {}){"wishes"}) = 1)
+DIM heard_enough AS INTEGER = FALSE
+FOR i = 1 TO 80
+    SLEEP 200
+    r = Sync({})
+    IF ToldPart("reicht jetzt") THEN heard_enough = TRUE
+    IF heard_enough THEN EXITFOR
+NEXT i
+Check("Marta says when the potion is enough again", heard_enough)
+DIM heard_full AS INTEGER = FALSE
+DIM spend = Admin("purse", {"player": "Anna", "potion": 100})
+SLEEP 2100
+r = Sync({"say": "Ich w" + uml$ + "nsche mir eine Laterne"})
+Check("the next wish is paid", LEN(Admin("wishes", {}){"wishes"}) = 2 ANDALSO r{"purse"}{"potion"} <= 22)
+DIM topped = Admin("purse", {"player": "Anna", "potion": 97})
+FOR i = 1 TO 60
+    SLEEP 200
+    r = Sync({})
+    IF ToldPart("wieder voll") THEN heard_full = TRUE
+    IF heard_full THEN EXITFOR
+NEXT i
+Check("and when it is full again", heard_full ANDALSO r{"purse"}{"potion"} = 100)
+
+Check("the keeper sets Geld", Admin("purse", {"player": "Anna", "money": 50}){"money"} = 50)
+Check("but not for someone who never came", NOT Admin("purse", {"player": "Nobody", "money": 50}){"ok"})
+
+DIM eco2 = Admin("economy", {"find_every_s": 1, "finds": 3})
+DIM grown AS INTEGER = 0
+FOR i = 1 TO 30
+    SLEEP 200
+    r = Sync({})
+    IF MAP.EXISTS(r, "finds") THEN grown = LEN(r{"finds"})
+    IF grown >= 3 THEN EXITFOR
+NEXT i
+Check("new finds lie in the world, no more than the economy says", grown = 3)
+SLEEP 2500
+r = Sync({"findv": -1})
+Check("and stay at that number", LEN(r{"finds"}) = 3)
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM w3 = OS.WAIT(server_pid, 40000)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

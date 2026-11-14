@@ -52,6 +52,7 @@ FUNC RuleWishSetStatus(w, id, status$, note$)
     DIM i = 0
     FOR i = 0 TO LEN(wishes) - 1
         IF wishes[i]{"id"} = id THEN
+            IF status$ = "declined" ANDALSO wishes[i]{"status"} <> "declined" THEN RuleWishRefund(w, wishes[i])
             wishes[i]{"status"} = status$
             wishes[i]{"note"} = RuleCut$(note$, 100)
             w{"wishes"} = wishes
@@ -121,7 +122,13 @@ ENDFUNC
 ' Without the model's judgement: a sentence that speaks of a wish is one.
 SUB RuleWishGuess(w, who$, said$)
     DIM low$ = LCASE$(said$)
-    IF INSTR(low$, "wunsch") >= 0 ORELSE INSTR(low$, "wuensch") >= 0 ORELSE INSTR(low$, "w" + CHR$(195) + CHR$(188) + "nsch") >= 0 THEN RuleWishAdd(w, who$, said$)
+    IF INSTR(low$, "wunsch") >= 0 ORELSE INSTR(low$, "wuensch") >= 0 ORELSE INSTR(low$, "w" + CHR$(195) + CHR$(188) + "nsch") >= 0 THEN
+        DIM cost = RuleWishCost(w, [])
+        IF NOT RuleWishAfford(w, who$, cost, "marta") THEN RETURN
+        DIM before = w{"wish_seq"}
+        RuleWishAdd(w, who$, said$)
+        IF w{"wish_seq"} > before THEN RuleWishPay(w, who$, cost)
+    ENDIF
 ENDSUB
 
 SUB RuleSaid(w, p, npc, said$)
@@ -223,9 +230,12 @@ SUB RuleAnswer(w, kind$, data, text$)
     ENDIF
     IF TRIM$("" + (verdict{"text"} ?? "")) = "" THEN RETURN
     IF RuleOnlyAsks(data{"said"}) THEN RETURN
+    DIM cost = RuleWishCost(w, later)
+    IF NOT RuleWishAfford(w, data{"who"}, cost, "" + (data{"npc"} ?? "")) THEN RETURN
     DIM before = w{"wish_seq"}
     RuleWishAdd(w, data{"who"}, "" + verdict{"text"})
     IF w{"wish_seq"} > before THEN
+        RuleWishPay(w, data{"who"}, cost)
         DIM wishes = w{"wishes"}
         wishes[LEN(wishes) - 1]{"kinds"} = later
     ENDIF
@@ -263,6 +273,7 @@ ENDSUB
 SUB RuleExtra(w, p, msg, answer)
     RulePlotExtra(w, msg, answer)
     RuleAnimalSync(w, p, msg, answer)
+    RulePurseSync(w, p, msg, answer)
     IF INT(msg{"wishv"} ?? -1) = w{"wishv"} THEN RETURN
     DIM wishes = w{"wishes"}
     DIM rows = []
@@ -280,6 +291,7 @@ FUNC RuleAdmin(w, name$, args)
     IF name$ = "plot" ORELSE name$ = "plot_set" THEN RETURN RulePlotAdmin(w, name$, args)
     IF name$ = "builder" ORELSE name$ = "builder_set" ORELSE name$ = "build_ok" ORELSE name$ = "things" ORELSE name$ = "thing_remove" THEN RETURN RuleBuildAdmin(w, name$, args)
     IF name$ = "fond" THEN RETURN RuleAnimalAdmin(w, args)
+    IF name$ = "economy" ORELSE name$ = "purse" ORELSE name$ = "find_put" THEN RETURN RulePurseAdmin(w, name$, args)
     IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
     IF name$ = "wish_status" THEN
         DIM status$ = "" + (args{"status"} ?? "")
@@ -297,10 +309,12 @@ SUB ClientAsk(c, msg)
     msg{"wishv"} = c{"wishv"} ?? -1
     msg{"plotv"} = c{"plotv"} ?? -1
     ClientAnimalAsk(c, msg)
+    ClientPurseAsk(c, msg)
 ENDSUB
 
 SUB ClientExtra(c, r)
     ClientAnimalExtra(c, r)
+    ClientPurseExtra(c, r)
     IF MAP.EXISTS(r, "plot") THEN
         c{"plot"} = r{"plot"}
         c{"plotv"} = r{"plotv"}

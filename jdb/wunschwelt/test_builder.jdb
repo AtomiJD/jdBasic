@@ -85,6 +85,8 @@ ENDFUNC
 
 DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "180"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
 SLEEP 1500
+' wishes are free here; test_purse.jdb tests what they cost
+DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
 DIM set = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
 Check("the keeper sets the builder's pace", set{"ok"} ANDALSO set{"builder"}{"step_ms"} = 300)
 

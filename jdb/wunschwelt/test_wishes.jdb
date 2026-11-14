@@ -47,6 +47,8 @@ ENDFUNC
 
 DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "40"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
 SLEEP 1500
+' wishes are free here; test_purse.jdb tests what they cost
+DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
 
 DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
 DIM other$ AS STRING = Post("/join", {"name": "Ben", "pin": "1234"}){"token"}

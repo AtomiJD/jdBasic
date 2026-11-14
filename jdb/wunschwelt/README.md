@@ -294,7 +294,32 @@ can build goes back to the board with a note and is not taken up again.
 - The keeper sets an affection with the rule `fond`
   (`{"player", "npc", "v"}`).
 
-`test_builder.jdb`: 39 checks with a scripted model.
+`test_builder.jdb`: 41 checks with a scripted model.
+
+## Geld, the wish potion and the bag (`game/060_purse.jdb`)
+
+The profile keeps `money`, `potion`, `potion_at` and `items` (a list of
+`{"id", "n"}`, at most 20 kinds and 99 of one). The numbers live in
+`w{"economy"}`: the potion grows one point every `every_s` (30) seconds of
+world time up to `cap` (100); a wish for the board costs `wish` (80), land or
+a house `big` (100). It is checked when the wish is accepted, paid when it
+is written, and given back once when the keeper declines it. Looks, music,
+names and dressing an animal stay free. With too little potion the person
+the wish was said to says how much is missing and when it is there; Marta
+says when it is enough again and when it is full.
+
+Finds lie on grass and flowers, up to `finds` (8), a new one every
+`find_every_s` (45) seconds: a purse of 5 to 15 Geld, a flower or a bottle
+of the potion (`bottle`, 20). A player who steps on one takes it with the
+next sync. Key I opens the bag, a number uses that thing; the client only
+names it, the rules check it is there. The purse travels with every sync,
+the finds when `findv` changed. The bar over the bottom line shows Geld and
+the potion, with a mark at the price of a wish.
+
+The keeper: rule `economy` sets any of these numbers, `purse` sets what a
+player has (`{"player", "money", "potion", "give", "n"}`), `find_put` lays a
+find (`{"kind", "x", "y"}`). The other suites set wishes free;
+`test_purse.jdb` (29 checks) tests the prices.
 
 ## What survives a restart
 

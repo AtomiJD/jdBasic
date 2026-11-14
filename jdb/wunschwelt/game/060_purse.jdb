@@ -1,0 +1,485 @@
+' What a player owns: Geld, the purple wish potion and a bag of things.
+'
+' The profile (RuleProfile) keeps money, potion, potion_at and items, a list
+' of {"id", "n"}. The potion grows one point every every_s seconds of world
+' time up to the cap; a wish for the board costs w{"economy"}{"wish"}, land
+' or a house costs "big", and a wish that is declined gives it back. Looks,
+' music and names stay free.
+'
+' Finds lie on the grass: a purse of Geld, a flower or a small bottle of the
+' potion. A player who steps on one takes it. The client only says which
+' thing of the bag it wants to use; the rules check that it is there.
+'
+' w{"finds"} holds {"id", "kind", "x", "y"}; w{"findv"} counts changes.
+
+'@server
+
+' The numbers of the economy, which the keeper can set (rule economy).
+FUNC RuleEconomy(w)
+    IF NOT MAP.EXISTS(w, "economy") THEN w{"economy"} = {}
+    DIM eco = w{"economy"}
+    DIM fresh = {"cap": 100, "every_s": 30, "wish": 80, "big": 100, "bottle": 20, "finds": 8, "find_every_s": 45}
+    FOR EACH field$ IN MAP.KEYS(fresh)
+        IF NOT MAP.EXISTS(eco, field$) THEN eco{field$} = fresh{field$}
+    NEXT
+    RETURN eco
+ENDFUNC
+
+' The potion of a profile now, after what grew since it was last looked at.
+FUNC RulePotion(w, prof)
+    DIM eco = RuleEconomy(w)
+    DIM now = KNow()
+    DIM step_ms = MAX([1, eco{"every_s"}]) * 1000
+    IF prof{"potion"} >= eco{"cap"} ORELSE prof{"potion_at"} > now THEN
+        prof{"potion_at"} = now
+        RETURN prof{"potion"}
+    ENDIF
+    DIM gained = INT((now - prof{"potion_at"}) / step_ms)
+    IF gained > 0 THEN
+        prof{"potion"} = MIN([eco{"cap"}, prof{"potion"} + gained])
+        prof{"potion_at"} = prof{"potion_at"} + gained * step_ms
+        IF prof{"potion"} >= eco{"cap"} THEN prof{"potion_at"} = now
+    ENDIF
+    RETURN prof{"potion"}
+ENDFUNC
+
+' What a wish of these kinds costs.
+FUNC RuleWishCost(w, kinds)
+    DIM eco = RuleEconomy(w)
+    DIM cost = eco{"wish"}
+    FOR EACH k$ IN kinds
+        IF k$ = "land" ORELSE k$ = "house" THEN cost = MAX([cost, eco{"big"}])
+    NEXT
+    RETURN cost
+ENDFUNC
+
+' A line of a person of the village to one player.
+SUB RuleTellPlayer(w, npc_id$, who$, text$)
+    IF NOT MAP.EXISTS(w{"npcs"}, npc_id$) THEN npc_id$ = "marta"
+    IF NOT MAP.EXISTS(w{"npcs"}, npc_id$) THEN RETURN
+    KEmit(w, {"type": "say", "who": w{"npcs"}{npc_id$}{"name"}, "npc": npc_id$, "to": who$, "text": text$})
+ENDSUB
+
+' TRUE when who$ has the potion for a wish of this cost; otherwise the
+' person it was said to tells how much is missing.
+FUNC RuleWishAfford(w, who$, cost, npc_id$)
+    IF cost <= 0 THEN RETURN TRUE
+    DIM prof = RuleProfile(w, who$)
+    DIM have = RulePotion(w, prof)
+    IF have >= cost THEN RETURN TRUE
+    prof{"potion_wait"} = cost
+    DIM mins = MAX([1, CEIL((cost - have) * RuleEconomy(w){"every_s"} / 60)])
+    DIM when$ = "in etwa " + STR$(mins) + " Minuten"
+    IF mins = 1 THEN when$ = "in etwa einer Minute"
+    RuleTellPlayer(w, npc_id$, who$, RuleDe$("Dein Wunschtrank reicht noch nicht: Du hast " + STR$(INT(have)) + ", dieser Wunsch braucht " + STR$(cost) + ". " + UCASE$(LEFT$(when$, 1)) + MID$(when$, 1) + " ist genug da, oder Du findest ein Fl{a}schchen."))
+    RETURN FALSE
+ENDFUNC
+
+' The wish just written last on the board is paid by who$.
+SUB RuleWishPay(w, who$, cost)
+    IF cost <= 0 THEN RETURN
+    DIM prof = RuleProfile(w, who$)
+    DIM have = RulePotion(w, prof)
+    prof{"potion"} = MAX([0, have - cost])
+    prof{"potion_wait"} = RuleEconomy(w){"cap"}
+    DIM wishes = w{"wishes"}
+    wishes[LEN(wishes) - 1]{"cost"} = cost
+    w{"wishes"} = wishes
+    KEmit(w, {"type": "purse", "to": who$, "text": "Der Wunsch kostet " + STR$(cost) + " Wunschtrank."})
+ENDSUB
+
+' A wish that will not be built gives its potion back, once.
+SUB RuleWishRefund(w, wish)
+    DIM cost = wish{"cost"} ?? 0
+    IF cost <= 0 ORELSE (wish{"refunded"} ?? FALSE) THEN RETURN
+    wish{"refunded"} = TRUE
+    DIM prof = RuleProfile(w, wish{"who"})
+    prof{"potion"} = RulePotion(w, prof) + cost
+    KEmit(w, {"type": "purse", "to": wish{"who"}, "text": RuleDe$("Dein Wunsch wird nicht gebaut. Du bekommst " + STR$(cost) + " Wunschtrank zur{u}ck.")})
+ENDSUB
+
+' The things of the bag: name, what it is, and what using it does.
+FUNC RuleItemTable()
+    RETURN {"flower": {"name": "Blume", "desc": "Von der Wiese gepfl{u}ckt.", "use": ""}, "bottle": {"name": "Wunschtrank-Fl{a}schchen", "desc": "Trinken gibt Wunschtrank.", "use": "potion"}}
+ENDFUNC
+
+FUNC RuleItemCount(prof, id$)
+    FOR EACH entry IN prof{"items"}
+        IF entry{"id"} = id$ THEN RETURN entry{"n"}
+    NEXT
+    RETURN 0
+ENDFUNC
+
+' Adds n of id$ to the bag (n below zero takes away); FALSE when the bag
+' cannot: a new thing in a full bag, more than 99 of one, or too few left.
+FUNC RuleItemAdd(prof, id$, n)
+    DIM items = []
+    DIM found = FALSE
+    DIM ok = TRUE
+    FOR EACH entry IN prof{"items"}
+        IF entry{"id"} = id$ THEN
+            found = TRUE
+            DIM v = entry{"n"} + n
+            IF v < 0 ORELSE v > 99 THEN ok = FALSE
+            IF ok ANDALSO v > 0 THEN items = APPEND(items, {"id": id$, "n": v})
+            IF NOT ok THEN items = APPEND(items, entry)
+        ELSE
+            items = APPEND(items, entry)
+        ENDIF
+    NEXT
+    IF NOT found THEN
+        IF n <= 0 ORELSE LEN(items) >= 20 THEN RETURN FALSE
+        items = APPEND(items, {"id": id$, "n": MIN([99, n])})
+    ENDIF
+    IF NOT ok THEN RETURN FALSE
+    prof{"items"} = items
+    RETURN TRUE
+ENDFUNC
+
+SUB RuleMoneyAdd(w, who$, amount)
+    DIM prof = RuleProfile(w, who$)
+    prof{"money"} = MAX([0, prof{"money"} + amount])
+    IF amount > 0 THEN KEmit(w, {"type": "purse", "to": who$, "text": "Du hast " + STR$(amount) + " Geld erhalten.", "got": "coins"})
+ENDSUB
+
+' A new find on a free field of grass or flowers, away from the others.
+SUB RuleFindSpawn(w)
+    DIM m = w{"map"}
+    DIM finds = w{"finds"}
+    DIM tries = 0
+    FOR tries = 1 TO 40
+        DIM x = 1 + INT(RND() * (m{"w"} - 2))
+        DIM y = 1 + INT(RND() * (m{"h"} - 2))
+        DIM tile = m{"tiles"}[y * m{"w"} + x]
+        IF (tile = 1 ORELSE tile = 8) ANDALSO NOT RuleBlocked(w, x, y) THEN
+            DIM apart = TRUE
+            FOR EACH f IN finds
+                IF ABS(f{"x"} - x) + ABS(f{"y"} - y) < 4 THEN apart = FALSE
+            NEXT
+            FOR EACH name$ IN MAP.KEYS(w{"players"})
+                IF w{"players"}{name$}{"x"} = x ANDALSO w{"players"}{name$}{"y"} = y THEN apart = FALSE
+            NEXT
+            IF apart THEN
+                DIM roll = RND() * 100
+                DIM kind$ = "coins"
+                IF roll >= 50 THEN kind$ = "flower"
+                IF roll >= 85 THEN kind$ = "bottle"
+                w{"find_seq"} = (w{"find_seq"} ?? 0) + 1
+                w{"finds"} = APPEND(finds, {"id": w{"find_seq"}, "kind": kind$, "x": x, "y": y})
+                w{"findv"} = (w{"findv"} ?? 0) + 1
+                RETURN
+            ENDIF
+        ENDIF
+    NEXT tries
+ENDSUB
+
+' p takes what lies on its field, when the bag has room for it.
+SUB RuleFindTake(w, p)
+    DIM finds = w{"finds"} ?? []
+    DIM kept = []
+    DIM took = FALSE
+    FOR EACH f IN finds
+        IF NOT took ANDALSO f{"x"} = p{"x"} ANDALSO f{"y"} = p{"y"} ANDALSO RuleFindGive(w, p{"name"}, f{"kind"}) THEN
+            took = TRUE
+        ELSE
+            kept = APPEND(kept, f)
+        ENDIF
+    NEXT
+    IF took THEN
+        w{"finds"} = kept
+        w{"findv"} = (w{"findv"} ?? 0) + 1
+        w{"find_at"} = MAX([w{"find_at"} ?? 0, KNow() + 5000])
+    ENDIF
+ENDSUB
+
+FUNC RuleFindGive(w, who$, kind$)
+    IF kind$ = "coins" THEN
+        RuleMoneyAdd(w, who$, 5 + INT(RND() * 11))
+        RETURN TRUE
+    ENDIF
+    DIM prof = RuleProfile(w, who$)
+    IF NOT RuleItemAdd(prof, kind$, 1) THEN RETURN FALSE
+    DIM said$ = "Du hast eine Blume gepfl{u}ckt."
+    IF kind$ = "bottle" THEN said$ = "Du hast ein Fl{a}schchen Wunschtrank gefunden. Taste I, dann die Zahl: trinken."
+    KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$(said$), "got": kind$})
+    RETURN TRUE
+ENDFUNC
+
+' p uses one thing of the bag.
+SUB RuleItemUse(w, p, id$)
+    DIM prof = RuleProfile(w, p{"name"})
+    IF RuleItemCount(prof, id$) <= 0 THEN RETURN
+    DIM item = RuleItemTable(){id$} ?? NONE
+    IF NOT ISMAP(item) THEN RETURN
+    IF item{"use"} <> "potion" THEN
+        KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$(item{"name"} + ": das hebst Du besser auf.")})
+        RETURN
+    ENDIF
+    DIM eco = RuleEconomy(w)
+    DIM have = RulePotion(w, prof)
+    IF have >= eco{"cap"} THEN
+        KEmit(w, {"type": "purse", "to": p{"name"}, "text": "Dein Wunschtrank ist schon voll."})
+        RETURN
+    ENDIF
+    DIM spent = RuleItemAdd(prof, id$, -1)
+    DIM added = MIN([eco{"bottle"}, eco{"cap"} - have])
+    prof{"potion"} = have + added
+    KEmit(w, {"type": "purse", "to": p{"name"}, "text": "Du trinkst das Fl" + CHR$(195) + CHR$(164) + "schchen: " + STR$(INT(added)) + " Wunschtrank mehr.", "got": "potion"})
+ENDSUB
+
+' One sync: what lies on the field is taken, a thing is used, and the purse
+' travels back; the finds only when they changed.
+SUB RulePurseSync(w, p, msg, answer)
+    IF NOT MAP.EXISTS(w, "finds") THEN w{"finds"} = []
+    RuleFindTake(w, p)
+    DIM use$ = "" + (msg{"use"} ?? "")
+    IF use$ <> "" ANDALSO KNow() >= (p{"use_at"} ?? 0) THEN
+        p{"use_at"} = KNow() + 300
+        RuleItemUse(w, p, use$)
+    ENDIF
+    DIM prof = RuleProfile(w, p{"name"})
+    DIM eco = RuleEconomy(w)
+    DIM have = RulePotion(w, prof)
+    DIM next_s = 0
+    IF have < eco{"cap"} THEN next_s = MAX([0, INT((prof{"potion_at"} + eco{"every_s"} * 1000 - KNow()) / 1000)])
+    DIM table = RuleItemTable()
+    DIM rows = []
+    FOR EACH entry IN prof{"items"}
+        DIM item = table{entry{"id"}} ?? {"name": entry{"id"}, "desc": "", "use": ""}
+        rows = APPEND(rows, [[entry{"id"}, RuleDe$(item{"name"}), RuleDe$(item{"desc"}), entry{"n"}, item{"use"} <> ""]])
+    NEXT
+    answer{"purse"} = {"money": prof{"money"}, "potion": INT(have), "cap": eco{"cap"}, "wish": eco{"wish"}, "next_s": next_s, "items": rows}
+    IF INT(msg{"findv"} ?? -1) <> (w{"findv"} ?? 0) THEN
+        DIM spots = []
+        FOR EACH f IN w{"finds"}
+            spots = APPEND(spots, [[f{"id"}, f{"kind"}, f{"x"}, f{"y"}]])
+        NEXT
+        answer{"finds"} = spots
+        answer{"findv"} = w{"findv"} ?? 0
+    ENDIF
+ENDSUB
+
+' New finds now and then; a player told the potion was low hears when it is enough.
+SUB RulePurseTick(w, now)
+    IF NOT MAP.EXISTS(w, "finds") THEN w{"finds"} = []
+    DIM eco = RuleEconomy(w)
+    IF now >= (w{"find_at"} ?? 0) THEN
+        w{"find_at"} = now + MAX([1, eco{"find_every_s"}]) * 1000
+        IF LEN(w{"finds"}) < eco{"finds"} THEN RuleFindSpawn(w)
+    ENDIF
+    IF now < (w{"potion_look_at"} ?? 0) THEN RETURN
+    w{"potion_look_at"} = now + 2000
+    FOR EACH name$ IN MAP.KEYS(w{"players"})
+        DIM prof = RuleProfile(w, name$)
+        DIM wait = prof{"potion_wait"} ?? 0
+        IF wait > 0 THEN
+            DIM have = RulePotion(w, prof)
+            IF have >= MIN([wait, eco{"cap"}]) THEN
+                prof{"potion_wait"} = 0
+                IF have >= eco{"cap"} THEN
+                    RuleTellPlayer(w, "marta", name$, RuleDe$("Dein Wunschtrank ist wieder voll. Du kannst Dir etwas f{u}rs Dorf w{u}nschen."))
+                ELSE
+                    RuleTellPlayer(w, "marta", name$, RuleDe$("Dein Wunschtrank reicht jetzt f{u}r Deinen Wunsch. Sag ihn mir noch einmal."))
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+ENDSUB
+
+' The keeper: economy sets numbers of the economy, purse sets what a
+' player has ({"player", "money", "potion", "give", "n"}), find_put lays
+' a find on a field ({"kind", "x", "y"}).
+FUNC RulePurseAdmin(w, name$, args)
+    IF name$ = "find_put" THEN
+        DIM kind$ = "" + (args{"kind"} ?? "")
+        IF kind$ <> "coins" ANDALSO kind$ <> "flower" ANDALSO kind$ <> "bottle" THEN RETURN {"ok": FALSE, "error": "kind is coins, flower or bottle"}
+        IF NOT MAP.EXISTS(w, "finds") THEN w{"finds"} = []
+        w{"find_seq"} = (w{"find_seq"} ?? 0) + 1
+        w{"finds"} = APPEND(w{"finds"}, {"id": w{"find_seq"}, "kind": kind$, "x": INT(args{"x"} ?? 0), "y": INT(args{"y"} ?? 0)})
+        w{"findv"} = (w{"findv"} ?? 0) + 1
+        RETURN {"ok": TRUE, "id": w{"find_seq"}}
+    ENDIF
+    IF name$ = "economy" THEN
+        DIM eco = RuleEconomy(w)
+        FOR EACH field$ IN MAP.KEYS(args)
+            IF MAP.EXISTS(eco, field$) ANDALSO ISNUM(args{field$}) THEN eco{field$} = MAX([0, args{field$}])
+        NEXT
+        w{"find_at"} = 0
+        RETURN {"ok": TRUE, "economy": eco}
+    ENDIF
+    DIM who$ = "" + (args{"player"} ?? "")
+    IF who$ = "" ORELSE NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN {"ok": FALSE, "error": "no such player"}
+    DIM prof = RuleProfile(w, who$)
+    IF ISNUM(args{"money"} ?? "") THEN prof{"money"} = MAX([0, INT(args{"money"})])
+    IF ISNUM(args{"potion"} ?? "") THEN
+        prof{"potion"} = MAX([0, INT(args{"potion"})])
+        prof{"potion_at"} = KNow()
+    ENDIF
+    DIM give$ = "" + (args{"give"} ?? "")
+    IF give$ <> "" THEN
+        IF NOT MAP.EXISTS(RuleItemTable(), give$) THEN RETURN {"ok": FALSE, "error": "no such thing"}
+        DIM given = RuleItemAdd(prof, give$, INT(args{"n"} ?? 1))
+    ENDIF
+    RETURN {"ok": TRUE, "money": prof{"money"}, "potion": RulePotion(w, prof), "items": prof{"items"}}
+ENDFUNC
+
+'@client
+
+SUB ClientPurseAsk(c, msg)
+    msg{"findv"} = c{"findv"} ?? -1
+    IF (c{"use"} ?? "") <> "" THEN
+        msg{"use"} = c{"use"}
+        c{"use"} = ""
+    ENDIF
+ENDSUB
+
+SUB ClientPurseExtra(c, r)
+    IF MAP.EXISTS(r, "purse") THEN c{"purse"} = r{"purse"}
+    IF MAP.EXISTS(r, "finds") THEN
+        c{"finds"} = r{"finds"}
+        c{"findv"} = r{"findv"}
+    ENDIF
+    FOR EACH ev IN r{"events"} ?? []
+        IF ev{"type"} = "purse" ANDALSO ev{"to"} = c{"name"} THEN
+            c{"banner"} = ev{"text"}
+            c{"banner_until"} = TICK() + 4000
+            IF MAP.EXISTS(ev, "got") THEN c{"sparkle"} = [TICK(), ev{"got"}]
+        ENDIF
+    NEXT
+ENDSUB
+
+' I opens and closes the bag, a number uses that thing, Escape closes it.
+SUB ClientKey(c, tapped$)
+    IF tapped$ = "I" THEN
+        c{"bag"} = NOT (c{"bag"} ?? FALSE)
+        RETURN
+    ENDIF
+    IF NOT (c{"bag"} ?? FALSE) THEN RETURN
+    IF tapped$ = "ESCAPE" THEN
+        c{"bag"} = FALSE
+        RETURN
+    ENDIF
+    DIM digit$ = RIGHT$(tapped$, 1)
+    IF LEN(tapped$) <> 1 ANDALSO NOT STARTSWITH(tapped$, "KEYPAD ") THEN RETURN
+    IF digit$ < "1" ORELSE digit$ > "9" THEN RETURN
+    DIM rows = (c{"purse"} ?? {}){"items"} ?? []
+    DIM pick = VAL(digit$) - 1
+    IF pick < LEN(rows) THEN c{"use"} = rows[pick][0]
+ENDSUB
+
+SUB ClientCoin(x, y, r)
+    CIRCLE x, y, r, TRUE, 236, 186, 60
+    CIRCLE x, y, r, FALSE, 150, 104, 30
+    CIRCLE x - r \ 3, y - r \ 3, MAX([1, r \ 3]), TRUE, 255, 236, 160
+ENDSUB
+
+SUB ClientFlask(x, y, s)
+    RECT x - s \ 4, y - s, s \ 2, s \ 2, TRUE, 210, 200, 190
+    CIRCLE x, y, s \ 2 + 1, TRUE, 150, 70, 200
+    CIRCLE x, y, s \ 2 + 1, FALSE, 80, 30, 120
+    CIRCLE x - s \ 5, y - s \ 5, MAX([1, s \ 6]), TRUE, 230, 190, 255
+ENDSUB
+
+SUB ClientFindFlower(x, y)
+    RECT x - 1, y, 2, 8, TRUE, 60, 130, 60
+    DIM k = 0
+    FOR k = 0 TO 4
+        DIM a = k * 1.2566
+        CIRCLE x + INT(COS(a) * 4), y - 2 + INT(SIN(a) * 4), 3, TRUE, 240, 120, 180
+    NEXT k
+    CIRCLE x, y - 2, 2, TRUE, 250, 220, 90
+ENDSUB
+
+' The finds on the ground, bobbing and glinting so they are seen.
+SUB ClientFloor(c, cam_x, cam_y)
+    DIM t = TICK()
+    FOR EACH f IN c{"finds"} ?? []
+        DIM sx = f[2] * 32 - cam_x + 16
+        DIM sy = f[3] * 32 - cam_y + 18
+        IF sx > -16 ANDALSO sx < 656 ANDALSO sy > -16 ANDALSO sy < 400 THEN
+            DIM bob = INT(SIN(t / 300 + f[0]) * 2)
+            ELLIPSE sx, sy + 9, 6, 2, TRUE, 62, 112, 52
+            IF f[1] = "coins" THEN
+                ClientCoin(sx - 3, sy + 2 + bob, 4)
+                ClientCoin(sx + 3, sy + bob, 4)
+            ELSEIF f[1] = "bottle" THEN
+                ClientFlask(sx, sy + bob, 10)
+            ELSE
+                ClientFindFlower(sx, sy + bob)
+            ENDIF
+            IF ((INT(t) \ 120) + f[0] * 7) MOD 23 = 0 THEN
+                RECT sx + 5, sy - 8 + bob, 2, 2, TRUE, 255, 255, 230
+            ENDIF
+        ENDIF
+    NEXT
+ENDSUB
+
+' The purse above the bottom line, and the bag when it is open.
+SUB ClientHud(c)
+    DIM purse = c{"purse"} ?? NONE
+    IF NOT ISMAP(purse) THEN RETURN
+    DRAWCOLOR 16, 18, 22, 220
+    RECT 4, 342, 236, 20, TRUE
+    DRAWCOLOR 255, 255, 255, 255
+    ROUNDED_RECT 4, 342, 236, 20, 4, FALSE, 120, 110, 90
+    ClientCoin(16, 352, 6)
+    TEXT 26, 345, STR$(purse{"money"}) + " Geld", 250, 214, 110
+    ClientFlask(104, 354, 10)
+    DIM fill = 0
+    IF purse{"cap"} > 0 THEN fill = CLAMP(purse{"potion"} / purse{"cap"}, 0, 1)
+    RECT 116, 347, 80, 10, TRUE, 50, 30, 64
+    IF purse{"potion"} >= purse{"wish"} THEN
+        RECT 116, 347, INT(80 * fill), 10, TRUE, 176, 90, 230
+    ELSE
+        RECT 116, 347, INT(80 * fill), 10, TRUE, 120, 70, 160
+    ENDIF
+    IF purse{"cap"} > 0 THEN RECT 116 + INT(80 * CLAMP(purse{"wish"} / purse{"cap"}, 0, 1)), 346, 1, 12, TRUE, 250, 244, 214
+    RECT 116, 347, 80, 10, FALSE, 200, 160, 240
+    TEXT 202, 345, STR$(purse{"potion"}), 220, 190, 250
+    DIM sparkle = c{"sparkle"} ?? NONE
+    IF ISARR(sparkle) ANDALSO TICK() - sparkle[0] < 900 THEN
+        DIM age = (TICK() - sparkle[0]) / 900
+        DIM gx = 16
+        IF sparkle[1] = "potion" ORELSE sparkle[1] = "bottle" THEN gx = 104
+        DIM k = 0
+        FOR k = 0 TO 5
+            DIM a = k * 1.047 + age * 3
+            CIRCLE gx + INT(COS(a) * (6 + age * 14)), 352 + INT(SIN(a) * (6 + age * 14)), 1, TRUE, 255, 240, 180
+        NEXT k
+    ENDIF
+    IF c{"bag"} ?? FALSE THEN ClientBag(c, purse)
+ENDSUB
+
+SUB ClientBag(c, purse)
+    DIM rows = purse{"items"} ?? []
+    DIM high = GFX.TEXTSIZE("Ag")[1] + 2
+    DIM bw = 360
+    DIM bh = (MAX([1, LEN(rows)]) * 2 + 4) * high + 8
+    DIM bx = 320 - bw \ 2
+    DIM by = 60
+    ROUNDED_RECT bx, by, bw, bh, 5, TRUE, 250, 244, 214
+    ROUNDED_RECT bx, by, bw, bh, 5, FALSE, 96, 64, 40
+    TEXT bx + 10, by + 6, "Tasche", 96, 64, 40
+    DIM info$ = STR$(purse{"money"}) + " Geld   " + STR$(purse{"potion"}) + "/" + STR$(purse{"cap"}) + " Wunschtrank"
+    IF purse{"next_s"} > 0 THEN info$ = info$ + " (+1 in " + STR$(purse{"next_s"}) + " s)"
+    TEXT bx + 10, by + 6 + high, info$, 120, 70, 160
+    RECT bx + 8, by + 8 + 2 * high, bw - 16, 1, TRUE, 180, 150, 110
+    DIM y = by + 12 + 2 * high
+    IF LEN(rows) = 0 THEN
+        TEXT bx + 10, y, "(leer) Auf den Wiesen liegt manchmal etwas.", 140, 130, 120
+        y = y + 2 * high
+    ENDIF
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row = rows[i]
+        DIM label$ = STR$(i + 1) + "  " + row[1] + "  x" + STR$(row[3])
+        TEXT bx + 10, y, label$, 40, 36, 32
+        IF row[0] = "bottle" THEN ClientFlask(bx + bw - 20, y + 6, 8)
+        IF row[0] = "flower" THEN ClientFindFlower(bx + bw - 20, y + 6)
+        TEXT bx + 26, y + high, row[2], 120, 110, 100
+        y = y + 2 * high
+    NEXT i
+    DIM hint$ = "I oder Esc: schliessen"
+    IF LEN(rows) > 0 THEN hint$ = "Zahl: benutzen   " + hint$
+    TEXT bx + 10, by + bh - high - 4, hint$, 120, 110, 100
+ENDSUB
