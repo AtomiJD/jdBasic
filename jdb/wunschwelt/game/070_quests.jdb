@@ -267,15 +267,20 @@ SUB RuleFish(w, p, act$)
             KEmit(w, {"type": "purse", "to": p{"name"}, "text": "Zum Angeln stell Dich direkt ans Wasser."})
             RETURN
         ENDIF
-        p{"fish"} = {"bite": now + 1500 + INT(RND() * 3000), "x": spot[0], "y": spot[1], "told": FALSE}
+        ' a rod from the shop brings the bite sooner and gives longer to pull
+        DIM wait_ms = 1500 + INT(RND() * 3000)
+        IF RuleHasGear(RuleProfile(w, p{"name"}), "rod") THEN wait_ms = 800 + INT(RND() * 1800)
+        p{"fish"} = {"bite": now + wait_ms, "x": spot[0], "y": spot[1], "told": FALSE}
         RETURN
     ENDIF
     IF act$ <> "pull" ORELSE NOT ISMAP(p{"fish"} ?? NONE) THEN RETURN
     DIM bite = p{"fish"}{"bite"}
     p{"fish"} = NONE
+    DIM gear = RuleProfile(w, p{"name"})
+    DIM late_ms = IIF(RuleHasGear(gear, "rod"), 2000, 1400)
     IF now < bite - 150 THEN
         KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$("Zu fr{u}h gezogen, der Fisch ist weg."), "fish_end": TRUE})
-    ELSEIF now > bite + 1400 THEN
+    ELSEIF now > bite + late_ms THEN
         KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$("Zu sp{a}t, der Fisch ist weg."), "fish_end": TRUE})
     ELSE
         DIM prof = RuleProfile(w, p{"name"})
@@ -284,6 +289,12 @@ SUB RuleFish(w, p, act$)
             RETURN
         ENDIF
         RuleCountAdd(w, p{"name"}, "fish", 1)
+        ' the net holds a second fish now and then
+        IF RuleHasGear(prof, "net") ANDALSO RND() < 0.4 ANDALSO RuleItemAdd(prof, "fish", 1) THEN
+            RuleCountAdd(w, p{"name"}, "fish", 1)
+            KEmit(w, {"type": "purse", "to": p{"name"}, "text": "Zwei Fische auf einmal, dank Kescher!", "got": "fish", "fish_end": TRUE})
+            RETURN
+        ENDIF
         KEmit(w, {"type": "purse", "to": p{"name"}, "text": "Du hast einen Fisch gefangen!", "got": "fish", "fish_end": TRUE})
     ENDIF
 ENDSUB

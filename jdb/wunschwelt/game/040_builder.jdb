@@ -891,7 +891,9 @@ SUB RuleBuildWander(w, now)
                 DIM nx = npc{"x"} + turn[0]
                 DIM ny = npc{"y"} + turn[1]
                 IF ABS(nx - npc{"home"}[0]) <= npc{"range"} ANDALSO ABS(ny - npc{"home"}[1]) <= npc{"range"} ANDALSO (turn[0] <> 0 ORELSE turn[1] <> 0) THEN
-                    IF NOT RuleBlocked(w, nx, ny) THEN
+                    ' a stroll stays out of houses; a follower may go in behind its player
+                    DIM floor_tile = RuleTileAt(w, nx, ny)
+                    IF NOT RuleBlocked(w, nx, ny) ANDALSO floor_tile <> 6 ANDALSO floor_tile <> 7 THEN
                         npc{"x"} = nx
                         npc{"y"} = ny
                     ENDIF

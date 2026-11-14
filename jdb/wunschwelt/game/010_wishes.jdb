@@ -18,6 +18,7 @@ SUB RuleWake(w)
         w{"wishv"} = 0
     ENDIF
     IF NOT MAP.EXISTS(w{"npcs"}, "brett") THEN w{"npcs"}{"brett"} = {"id": "brett", "kind": "thing", "name": "Wunschbrett", "x": 16, "y": 13}
+    RuleShopWake(w)
 ENDSUB
 
 FUNC RuleWishCount(w, who$, status$)
@@ -276,6 +277,7 @@ SUB RuleExtra(w, p, msg, answer)
     RuleAnimalSync(w, p, msg, answer)
     RulePurseSync(w, p, msg, answer)
     RuleQuestSync(w, p, msg, answer)
+    RuleShopSync(w, p, msg, answer)
     IF INT(msg{"wishv"} ?? -1) = w{"wishv"} THEN RETURN
     DIM wishes = w{"wishes"}
     DIM rows = []
@@ -314,12 +316,14 @@ SUB ClientAsk(c, msg)
     ClientAnimalAsk(c, msg)
     ClientPurseAsk(c, msg)
     ClientQuestAsk(c, msg)
+    ClientShopAsk(c, msg)
 ENDSUB
 
 SUB ClientExtra(c, r)
     ClientAnimalExtra(c, r)
     ClientPurseExtra(c, r)
     ClientQuestExtra(c, r)
+    ClientShopExtra(c, r)
     IF MAP.EXISTS(r, "plot") THEN
         c{"plot"} = r{"plot"}
         c{"plotv"} = r{"plotv"}

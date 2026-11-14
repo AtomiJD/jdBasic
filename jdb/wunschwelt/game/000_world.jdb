@@ -5,8 +5,8 @@
 '   1 grass  2 path  3 tree  4 water  5 wall  6 floor  7 door  8 flowers
 '   9 sand  10 deep water  11 bush  12 stone  13 bridge
 ' Walls, floor and doors in a block make a house; the client paints it with
-' a roof. Trees, water, deep water, bushes, stones and a house are blocked;
-' a bridge lies over water and is walked on.
+' a roof. Trees, water, deep water, bushes, stones and walls are blocked;
+' the floor and the door of a house and a bridge over water are walked on.
 
 '@server
 
@@ -48,7 +48,7 @@ FUNC RuleBlocked(w, x, y)
     DIM m = w{"map"}
     IF x < 0 ORELSE y < 0 ORELSE x >= m{"w"} ORELSE y >= m{"h"} THEN RETURN TRUE
     DIM id = m{"tiles"}[y * m{"w"} + x]
-    IF id = 3 ORELSE id = 4 ORELSE id = 5 ORELSE id = 6 ORELSE id = 10 ORELSE id = 11 ORELSE id = 12 THEN RETURN TRUE
+    IF id = 3 ORELSE id = 4 ORELSE id = 5 ORELSE id = 10 ORELSE id = 11 ORELSE id = 12 THEN RETURN TRUE
     DIM npcs = w{"npcs"}
     FOR EACH npc_id$ IN MAP.KEYS(npcs)
         IF npcs{npc_id$}{"x"} = x ANDALSO npcs{npc_id$}{"y"} = y THEN RETURN TRUE
@@ -137,12 +137,33 @@ FUNC RuleProfile(w, name$)
     IF NOT MAP.EXISTS(w, "profiles") THEN w{"profiles"} = {}
     IF NOT MAP.EXISTS(w{"profiles"}, name$) THEN w{"profiles"}{name$} = {"since": KNow()}
     DIM prof = w{"profiles"}{name$}
-    DIM fresh = {"money": 0, "potion": 100, "potion_at": KNow(), "items": [], "album": {}, "quests": {}, "done": [], "affection": {}, "visited": 0, "seen": {}, "counts": {}, "title": "", "last_day": "", "streak": 0}
+    DIM fresh = {"money": 0, "potion": 100, "potion_at": KNow(), "items": [], "album": {}, "quests": {}, "done": [], "affection": {}, "visited": 0, "seen": {}, "counts": {}, "title": "", "last_day": "", "streak": 0, "gear": {}}
     FOR EACH field$ IN MAP.KEYS(fresh)
         IF NOT MAP.EXISTS(prof, field$) THEN prof{field$} = fresh{field$}
     NEXT
     RETURN prof
 ENDFUNC
+
+' Milliseconds between two steps of a player; game/080_shop.jdb makes shoes faster.
+FUNC RuleStepMs(w, p)
+    RETURN 150
+ENDFUNC
+
+' TRUE when the profile owns a piece of gear from the shop.
+FUNC RuleHasGear(prof, id$)
+    RETURN (prof{"gear"} ?? {}){id$} ?? FALSE
+ENDFUNC
+
+' The shop's part of a start and of a sync; game/080_shop.jdb gives them a body.
+SUB RuleShopWake(w)
+ENDSUB
+
+SUB RuleShopSync(w, p, msg, answer)
+ENDSUB
+
+' What a thing of the bag does beyond the potion; game/080_shop.jdb.
+SUB RuleShopUse(w, p, id$, item)
+ENDSUB
 
 FUNC RuleSync(w, p, msg)
     DIM now = KNow()
@@ -155,7 +176,7 @@ FUNC RuleSync(w, p, msg)
         IF dx < 0 THEN p{"dir"} = 1
         IF dx > 0 THEN p{"dir"} = 2
         IF dy < 0 THEN p{"dir"} = 3
-        IF now - p{"last_step"} >= 150 ANDALSO NOT RuleBlocked(w, p{"x"} + dx, p{"y"} + dy) THEN
+        IF now - p{"last_step"} >= RuleStepMs(w, p) ANDALSO NOT RuleBlocked(w, p{"x"} + dx, p{"y"} + dy) THEN
             p{"x"} = p{"x"} + dx
             p{"y"} = p{"y"} + dy
             p{"last_step"} = now
@@ -458,11 +479,46 @@ SUB ClientLayMap(c, m)
                         IF yy = y1 ANDALSO tiles[yy * mw + xx] = 7 THEN door = xx - x
                     NEXT xx
                 NEXT yy
-                houses = APPEND(houses, {"x": x, "y": y, "img": SceneryHouse(x1 - x + 1, y1 - y + 1, door, x * 31 + y)})
+                houses = APPEND(houses, {"x": x, "y": y, "w": x1 - x + 1, "h": y1 - y + 1, "door": door, "img": SceneryHouse(x1 - x + 1, y1 - y + 1, door, x * 31 + y)})
             ENDIF
         NEXT x
     NEXT y
     c{"houses"} = houses
+    ' the house over each field: its number plus one, 0 outside every house
+    DIM under = ZEROS([mw * mh])
+    FOR i = 0 TO LEN(houses) - 1
+        FOR yy = houses[i]{"y"} TO houses[i]{"y"} + houses[i]{"h"} - 1
+            FOR xx = houses[i]{"x"} TO houses[i]{"x"} + houses[i]{"w"} - 1
+                under[yy * mw + xx] = i + 1
+            NEXT xx
+        NEXT yy
+    NEXT i
+    c{"under"} = under
+    c{"map_w"} = mw
+    c{"inside"} = -1
+ENDSUB
+
+' The house (its number) over a field, -1 when none.
+FUNC ClientHouseAt(c, x, y)
+    DIM under = c{"under"} ?? []
+    DIM mw = c{"map_w"} ?? 0
+    IF mw = 0 ORELSE x < 0 ORELSE y < 0 ORELSE x >= mw ORELSE y * mw + x >= LEN(under) THEN RETURN -1
+    RETURN under[y * mw + x] - 1
+ENDFUNC
+
+' TRUE for a field under a roof that is drawn: in a house the player is not in,
+' above its front wall.
+FUNC ClientHidden(c, x, y)
+    DIM h = ClientHouseAt(c, x, y)
+    IF h < 0 ORELSE h = c{"inside"} THEN RETURN FALSE
+    DIM house = c{"houses"}[h]
+    RETURN y < house{"y"} + house{"h"} - 1
+ENDFUNC
+
+' The house the player is in, drawn without its roof; game/080_shop.jdb
+' paints the room. Here it keeps its roof.
+SUB ClientInterior(c, house, sx, sy)
+    GFX.DRAWIMAGE(house{"img"}, sx, sy)
 ENDSUB
 
 ' The terrain, the marks on it and the houses.
@@ -479,8 +535,31 @@ SUB ClientGround(c, cam_x, cam_y)
     NEXT i
     DIM houses = c{"houses"}
     FOR i = 0 TO LEN(houses) - 1
-        GFX.DRAWIMAGE(houses[i]{"img"}, houses[i]{"x"} * 32 - cam_x, houses[i]{"y"} * 32 - cam_y)
+        IF i = (c{"inside"} ?? -1) THEN
+            ClientInterior(c, houses[i], houses[i]{"x"} * 32 - cam_x, houses[i]{"y"} * 32 - cam_y)
+        ELSE
+            GFX.DRAWIMAGE(houses[i]{"img"}, houses[i]{"x"} * 32 - cam_x, houses[i]{"y"} * 32 - cam_y)
+        ENDIF
     NEXT i
+ENDSUB
+
+' Outside the house the player is in the world lies in shadow.
+SUB ClientDimOutside(c, cam_x, cam_y)
+    DIM h = c{"inside"} ?? -1
+    IF h < 0 THEN RETURN
+    DIM house = c{"houses"}[h]
+    DIM hx = house{"x"} * 32 - cam_x
+    DIM hy = house{"y"} * 32 - cam_y
+    DIM hw = house{"w"} * 32
+    DIM hh = house{"h"} * 32
+    DRAWCOLOR 8, 10, 16, 170
+    IF hy > 0 THEN RECT 0, 0, 640, hy, TRUE
+    IF hy + hh < 384 THEN RECT 0, hy + hh, 640, 384 - hy - hh, TRUE
+    DIM band_y = MAX([0, hy])
+    DIM band_h = MIN([384, hy + hh]) - band_y
+    IF hx > 0 ANDALSO band_h > 0 THEN RECT 0, band_y, hx, band_h, TRUE
+    IF hx + hw < 640 ANDALSO band_h > 0 THEN RECT hx + hw, band_y, 640 - hx - hw, band_h, TRUE
+    DRAWCOLOR 255, 255, 255, 255
 ENDSUB
 
 SUB ClientInit(c)
@@ -812,12 +891,13 @@ ENDSUB
 ' is [id, name, x, y, kind]. Each thing has its own painter, a SUB taking
 ' (c, row, sx, sy); the code that brings a thing enters it with
 ' ClientPainter("its id", ItsPainter@), so things of different patches live
-' side by side. A thing whose id is b_<sort>_<n> without a painter of its
-' own is drawn by the painter of its sort, entered as "@<sort>".
+' side by side. A thing whose id is b_<sort>_<n> (built) or f_<sort>_<n>
+' (furniture) without a painter of its own is drawn by the painter of its
+' sort, entered as "@<sort>".
 SUB ClientThing(c, row, sx, sy)
     DIM painters = c{"painters"} ?? {}
     DIM key$ = row[0]
-    IF NOT MAP.EXISTS(painters, key$) ANDALSO STARTSWITH(key$, "b_") THEN key$ = "@" + SPLIT(key$, "_")[1]
+    IF NOT MAP.EXISTS(painters, key$) ANDALSO (STARTSWITH(key$, "b_") ORELSE STARTSWITH(key$, "f_")) THEN key$ = "@" + SPLIT(key$, "_")[1]
     IF NOT MAP.EXISTS(painters, key$) THEN RETURN
     DIM paint = painters{key$}
     paint(c, row, sx, sy)
@@ -846,6 +926,20 @@ SUB ClientTitle(sx, sy, title$)
 ENDSUB
 
 SUB ClientKey(c, tapped$)
+ENDSUB
+
+' The shop's part of a sync, of the keys and of the screen; game/080_shop.jdb.
+SUB ClientShopAsk(c, msg)
+ENDSUB
+
+SUB ClientShopExtra(c, r)
+ENDSUB
+
+FUNC ClientShopKey(c, tapped$)
+    RETURN FALSE
+ENDFUNC
+
+SUB ClientShopHud(c)
 ENDSUB
 
 ' Three dots over someone who speaks.
@@ -940,6 +1034,7 @@ SUB ClientDraw(c)
     c{"py"} = c{"py"} + (goal_y - c{"py"}) * 0.3
     DIM cam_x = INT(c{"px"}) + 16 - 320
     DIM cam_y = INT(c{"py"}) + 16 - 192
+    c{"inside"} = ClientHouseAt(c, c{"x"}, c{"y"})
     ClientGround(c, cam_x, cam_y)
     ClientFloor(c, cam_x, cam_y)
 
@@ -974,14 +1069,16 @@ SUB ClientDraw(c)
         IF ABS(goal[0] - was[0]) + ABS(goal[1] - was[1]) > 96 THEN was = goal
         was = [was[0] + (goal[0] - was[0]) * 0.3, was[1] + (goal[1] - was[1]) * 0.3]
         c{"npc_shown"}{npcs[i][0]} = was
-        DIM nx = INT(was[0]) - cam_x
-        DIM ny = INT(was[1]) - cam_y
-        foot = APPEND(foot, ny + 32)
-        kinds = APPEND(kinds, 1)
-        refs = APPEND(refs, i)
-        qx = APPEND(qx, nx)
-        qy = APPEND(qy, ny)
-        where{npcs[i][1]} = [nx, ny]
+        IF NOT ClientHidden(c, npcs[i][2], npcs[i][3]) THEN
+            DIM nx = INT(was[0]) - cam_x
+            DIM ny = INT(was[1]) - cam_y
+            foot = APPEND(foot, ny + 32)
+            kinds = APPEND(kinds, 1)
+            refs = APPEND(refs, i)
+            qx = APPEND(qx, nx)
+            qy = APPEND(qy, ny)
+            where{npcs[i][1]} = [nx, ny]
+        ENDIF
     NEXT i
 
     DIM shown = c{"shown"}
@@ -1012,12 +1109,14 @@ SUB ClientDraw(c)
         c{"moving"}{who$} = TICK() - last[1] < 280
         IF NOT MAP.EXISTS(c, "looks") THEN c{"looks"} = {}
         IF LEN(p) > 5 THEN c{"looks"}{who$} = p[5]
-        foot = APPEND(foot, INT(wy) - cam_y + 32)
-        kinds = APPEND(kinds, 2)
-        refs = APPEND(refs, i)
-        qx = APPEND(qx, INT(wx) - cam_x)
-        qy = APPEND(qy, INT(wy) - cam_y)
-        where{who$} = [INT(wx) - cam_x, INT(wy) - cam_y]
+        IF NOT ClientHidden(c, p[1], p[2]) THEN
+            foot = APPEND(foot, INT(wy) - cam_y + 32)
+            kinds = APPEND(kinds, 2)
+            refs = APPEND(refs, i)
+            qx = APPEND(qx, INT(wx) - cam_x)
+            qy = APPEND(qy, INT(wy) - cam_y)
+            where{who$} = [INT(wx) - cam_x, INT(wy) - cam_y]
+        ENDIF
     NEXT i
 
     IF LEN(foot) > 0 THEN
@@ -1043,6 +1142,7 @@ SUB ClientDraw(c)
             ENDIF
         NEXT k
     ENDIF
+    ClientDimOutside(c, cam_x, cam_y)
 
     ' what was said stands in the talk window; over a speaker only a small mark
     DIM alive = []
@@ -1078,7 +1178,7 @@ SUB ClientDraw(c)
         TEXT 4, 365, "> " + c{"entry"} + "_", 240, 240, 240
     ELSE
         RECT 0, 364, 640, 20, TRUE, 16, 18, 22
-        TEXT 4, 365, "Enter: sprechen  E: streicheln, pfl" + CHR$(195) + CHR$(188) + "cken  F: angeln  I: Tasche  Q: Aufgaben", 150, 160, 150
+        TEXT 4, 365, "Enter: sprechen  E: streicheln, pfl" + CHR$(195) + CHR$(188) + "cken, Laden  F: angeln  I: Tasche  Q: Aufgaben", 150, 160, 150
         DIM tune$ = c{"music_label"} ?? ""
         IF tune$ <> "" THEN TEXT 636 - GFX.TEXTSIZE("Musik: " + tune$)[0], 365, "Musik: " + tune$, 150, 180, 220
     ENDIF

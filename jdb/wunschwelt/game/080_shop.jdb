@@ -1,0 +1,495 @@
+' The shop in the tavern, and houses one walks into.
+'
+' The floor and the door of a house are walked on; the client draws the
+' house a player stands in without its roof and lays a shadow over the
+' world outside. Furniture are things with ids f_<sort>_<n>.
+'
+' Fenja keeps the shop behind a counter in the tavern. E beside her opens
+' the shop window: a number buys, Tab turns to the page that sells. Gear
+' (shoes, rod, net) is owned once and kept in the profile's "gear"; food,
+' seeds and lanterns go into the bag; a cap, a scarf or an eyepatch is put
+' on at once as a look. Fish, flowers and bottles are bought back.
+
+'@server
+
+' What Fenja sells: id, name, price, what it does, and its kind (gear, item
+' or look; a look names the part and the colour).
+FUNC RuleShopGoods()
+    DIM goods = []
+    goods = APPEND(goods, {"id": "shoes", "name": "Flinke Schuhe", "price": 120, "desc": "Du l{a}ufst schneller.", "kind": "gear"})
+    goods = APPEND(goods, {"id": "rod", "name": "Angel", "price": 60, "desc": "Fische bei{s}en schneller an.", "kind": "gear"})
+    goods = APPEND(goods, {"id": "net", "name": "Kescher", "price": 80, "desc": "Manchmal zwei Fische auf einmal.", "kind": "gear"})
+    goods = APPEND(goods, {"id": "food", "name": "Tierfutter", "price": 5, "desc": "Ein Tier mag Dich mehr.", "kind": "item"})
+    goods = APPEND(goods, {"id": "seeds", "name": "Saatgut", "price": 4, "desc": "F{u}r den Garten, den es bald gibt.", "kind": "item"})
+    goods = APPEND(goods, {"id": "lantern", "name": "Laterne", "price": 40, "desc": "Stell sie im Dorf auf.", "kind": "item"})
+    goods = APPEND(goods, {"id": "hat_gold", "name": "Goldene M{u}tze", "price": 50, "desc": "Sofort auf dem Kopf.", "kind": "look", "part": "hat", "color": "gold"})
+    goods = APPEND(goods, {"id": "scarf_silver", "name": "Silberner Schal", "price": 50, "desc": "Sofort um den Hals.", "kind": "look", "part": "scarf", "color": "silber"})
+    goods = APPEND(goods, {"id": "patch_black", "name": "Piraten-Augenklappe", "price": 30, "desc": "Arrr.", "kind": "look", "part": "patch", "color": "schwarz"})
+    RETURN goods
+ENDFUNC
+
+' What Fenja pays for one thing of the bag.
+FUNC RuleShopBuysBack()
+    RETURN {"fish": 6, "flower": 2, "bottle": 12}
+ENDFUNC
+
+FUNC RuleStepMs(w, p)
+    IF RuleHasGear(RuleProfile(w, p{"name"}), "shoes") THEN RETURN 110
+    RETURN 150
+ENDFUNC
+
+' The tavern as [x0, y0, x1, y1] of its walls: the house whose door is
+' nearest to Marta; [] when there is none large enough for the shop.
+FUNC RuleShopRoom(w)
+    DIM m = w{"map"}
+    DIM mw = m{"w"}
+    DIM tiles = m{"tiles"}
+    DIM marta = w{"npcs"}{"marta"} ?? {"x": 0, "y": 0}
+    DIM best = []
+    DIM best_d = 9999
+    DIM x = 0
+    DIM y = 0
+    FOR y = 1 TO m{"h"} - 1
+        FOR x = 1 TO mw - 2
+            IF tiles[y * mw + x] = 7 THEN
+                DIM x0 = x
+                DIM x1 = x
+                DIM y0 = y
+                DO WHILE x0 > 0 ANDALSO (tiles[y * mw + x0 - 1] = 5 ORELSE tiles[y * mw + x0 - 1] = 7)
+                    x0 = x0 - 1
+                LOOP
+                DO WHILE x1 < mw - 1 ANDALSO (tiles[y * mw + x1 + 1] = 5 ORELSE tiles[y * mw + x1 + 1] = 7)
+                    x1 = x1 + 1
+                LOOP
+                DO WHILE y0 > 0 ANDALSO tiles[(y0 - 1) * mw + x0] = 5
+                    y0 = y0 - 1
+                LOOP
+                DIM d = ABS(x - marta{"x"}) + ABS(y - marta{"y"})
+                IF x1 - x0 >= 8 ANDALSO y - y0 >= 5 ANDALSO d < best_d THEN
+                    best_d = d
+                    best = [x0, y0, x1, y]
+                ENDIF
+            ENDIF
+        NEXT x
+    NEXT y
+    RETURN best
+ENDFUNC
+
+' One piece of furniture on a free field of floor.
+SUB RuleShopPut(w, id$, x, y)
+    IF RuleTileAt(w, x, y) <> 6 ORELSE RuleBlocked(w, x, y) THEN RETURN
+    w{"npcs"}{id$} = {"id": id$, "kind": "thing", "name": "", "x": x, "y": y}
+ENDSUB
+
+' Once: Fenja, her counter and shelves, tables and barrels in the tavern.
+SUB RuleShopWake(w)
+    IF MAP.EXISTS(w{"npcs"}, "fenja") THEN RETURN
+    DIM room = RuleShopRoom(w)
+    IF LEN(room) = 0 THEN RETURN
+    DIM x0 = room[0]
+    DIM y0 = room[1]
+    DIM x1 = room[2]
+    DIM y1 = room[3]
+    DIM k = 0
+    FOR k = 1 TO 3
+        RuleShopPut(w, "f_shelf_" + STR$(k), x0 + k, y0 + 1)
+        RuleShopPut(w, "f_counter_" + STR$(k), x0 + k, y0 + 3)
+    NEXT k
+    RuleShopPut(w, "f_table_1", x1 - 3, y0 + 2)
+    RuleShopPut(w, "f_table_2", x1 - 3, y1 - 2)
+    RuleShopPut(w, "f_barrel_1", x1 - 1, y0 + 1)
+    RuleShopPut(w, "f_barrel_2", x1 - 1, y1 - 1)
+    DIM persona$ = RuleDe$("Du bist Fenja, die Kr{a}merin im Laden der Taverne Zum Goldenen Kessel und Martas Nichte. Du verkaufst flinke Schuhe, Angeln, Kescher, Tierfutter, Saatgut, Laternen, M{u}tzen, Schals und Augenklappen und kaufst Fische, Blumen und Wunschtrank-Fl{a}schchen. Wer etwas kaufen will, dr{u}ckt neben dir die Taste E. Antworte auf Deutsch in ein bis zwei kurzen S{a}tzen und bleib in der Rolle.")
+    w{"npcs"}{"fenja"} = {"id": "fenja", "kind": "person", "name": "Fenja", "x": x0 + 2, "y": y0 + 2, "persona": persona$, "mem": {}}
+ENDSUB
+
+FUNC RuleShopNear(w, p)
+    IF NOT MAP.EXISTS(w{"npcs"}, "fenja") THEN RETURN FALSE
+    DIM f = w{"npcs"}{"fenja"}
+    RETURN MAX([ABS(f{"x"} - p{"x"}), ABS(f{"y"} - p{"y"})]) <= 2
+ENDFUNC
+
+FUNC RuleShopGood(id$)
+    FOR EACH g IN RuleShopGoods()
+        IF g{"id"} = id$ THEN RETURN g
+    NEXT
+    RETURN NONE
+ENDFUNC
+
+' TRUE when p already wears the look a good puts on.
+FUNC RuleShopWears(p, g)
+    DIM look = p{"look"} ?? {}
+    IF NOT ISMAP(look) ORELSE NOT MAP.EXISTS(look, g{"part"}) THEN RETURN FALSE
+    RETURN JSON.STRINGIFY$(look{g{"part"}}) = JSON.STRINGIFY$(RuleLookColors(){g{"color"}})
+ENDFUNC
+
+SUB RuleShopBuy(w, p, id$)
+    DIM g = RuleShopGood(id$)
+    IF NOT ISMAP(g) THEN RETURN
+    DIM who$ = p{"name"}
+    DIM prof = RuleProfile(w, who$)
+    DIM name$ = RuleDe$(g{"name"})
+    IF g{"kind"} = "gear" ANDALSO RuleHasGear(prof, id$) THEN
+        RuleTellPlayer(w, "fenja", who$, name$ + " hast Du schon.")
+        RETURN
+    ENDIF
+    IF g{"kind"} = "look" ANDALSO RuleShopWears(p, g) THEN
+        RuleTellPlayer(w, "fenja", who$, RuleDe$("Das tr{a}gst Du doch schon."))
+        RETURN
+    ENDIF
+    IF prof{"money"} < g{"price"} THEN
+        RuleTellPlayer(w, "fenja", who$, RuleDe$("F{u}r " + g{"name"} + " fehlen Dir noch " + STR$(g{"price"} - prof{"money"}) + " Geld."))
+        RETURN
+    ENDIF
+    IF g{"kind"} = "item" ANDALSO NOT RuleItemAdd(prof, id$, 1) THEN
+        RuleTellPlayer(w, "fenja", who$, "Deine Tasche ist voll.")
+        RETURN
+    ENDIF
+    IF g{"kind"} = "look" ANDALSO NOT RuleApplyLook(w, who$, {"part": g{"part"}, "color": g{"color"}}) THEN RETURN
+    IF g{"kind"} = "gear" THEN prof{"gear"}{id$} = TRUE
+    prof{"money"} = prof{"money"} - g{"price"}
+    RuleCountAdd(w, who$, "bought", 1)
+    KEmit(w, {"type": "purse", "to": who$, "text": "Gekauft: " + name$ + " " + STR$(g{"price"}) + " Geld.", "got": "coins"})
+ENDSUB
+
+SUB RuleShopSell(w, p, id$)
+    DIM prices = RuleShopBuysBack()
+    IF NOT MAP.EXISTS(prices, id$) THEN RETURN
+    DIM prof = RuleProfile(w, p{"name"})
+    IF RuleItemCount(prof, id$) <= 0 THEN RETURN
+    DIM sold = RuleItemAdd(prof, id$, -1)
+    prof{"money"} = prof{"money"} + prices{id$}
+    DIM item = RuleItemTable(){id$}
+    KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$("Verkauft: " + item{"name"} + " f{u}r " + STR$(prices{id$}) + " Geld."), "got": "coins"})
+ENDSUB
+
+' The goods as rows [id, name, price, what it does, owned or worn], and
+' what p can sell as rows [id, name, price, how many].
+FUNC RuleShopList(w, p)
+    DIM prof = RuleProfile(w, p{"name"})
+    DIM rows = []
+    FOR EACH g IN RuleShopGoods()
+        DIM have = FALSE
+        IF g{"kind"} = "gear" THEN have = RuleHasGear(prof, g{"id"})
+        IF g{"kind"} = "look" THEN have = RuleShopWears(p, g)
+        rows = APPEND(rows, [[g{"id"}, RuleDe$(g{"name"}), g{"price"}, RuleDe$(g{"desc"}), have]])
+    NEXT
+    DIM prices = RuleShopBuysBack()
+    DIM table = RuleItemTable()
+    DIM sell = []
+    FOR EACH entry IN prof{"items"}
+        IF MAP.EXISTS(prices, entry{"id"}) THEN sell = APPEND(sell, [[entry{"id"}, RuleDe$(table{entry{"id"}}{"name"}), prices{entry{"id"}}, entry{"n"}]])
+    NEXT
+    RETURN {"goods": rows, "sell": sell, "money": prof{"money"}, "near": RuleShopNear(w, p)}
+ENDFUNC
+
+' A thing from the shop used from the bag: food for an animal beside, a
+' lantern set up on the field in front.
+SUB RuleShopUse(w, p, id$, item)
+    DIM who$ = p{"name"}
+    DIM prof = RuleProfile(w, who$)
+    IF item{"use"} = "food" THEN
+        DIM pet$ = RuleAnimalBeside$(w, p)
+        IF pet$ = "" THEN
+            KEmit(w, {"type": "purse", "to": who$, "text": "Kein Tier neben Dir."})
+            RETURN
+        ENDIF
+        DIM eaten = RuleItemAdd(prof, id$, -1)
+        DIM fed = RuleFondAdd(w, p, pet$, 12)
+        KEmit(w, {"type": "pet", "npc": pet$, "who": who$})
+        KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$("Du f{u}tterst " + w{"npcs"}{pet$}{"name"} + ". Es mag Dich jetzt mehr."), "got": "food"})
+        RETURN
+    ENDIF
+    IF item{"use"} = "lantern" THEN
+        DIM steps = [[0, 1], [-1, 0], [1, 0], [0, -1]]
+        DIM ahead = steps[p{"dir"} MOD 4]
+        DIM x = p{"x"} + ahead[0]
+        DIM y = p{"y"} + ahead[1]
+        DIM tile = RuleTileAt(w, x, y)
+        DIM taken = FALSE
+        FOR EACH other$ IN MAP.KEYS(w{"players"})
+            IF w{"players"}{other$}{"x"} = x ANDALSO w{"players"}{other$}{"y"} = y THEN taken = TRUE
+        NEXT
+        IF INDEXOF([1, 2, 8, 9], tile) < 0 ORELSE taken ORELSE RuleBlocked(w, x, y) THEN
+            KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$("Hier ist kein Platz f{u}r die Laterne. Schau auf ein freies Feld.")})
+            RETURN
+        ENDIF
+        DIM built = 0
+        FOR EACH thing_id$ IN MAP.KEYS(w{"npcs"})
+            IF STARTSWITH(thing_id$, "b_") THEN built = built + 1
+        NEXT
+        IF built >= 40 THEN
+            KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$("Im Dorf steht schon so viel, die Laterne bleibt in der Tasche.")})
+            RETURN
+        ENDIF
+        DIM b = RuleBuilder(w)
+        b{"n"} = (b{"n"} ?? 0) + 1
+        DIM new_id$ = "b_lantern_" + STR$(b{"n"})
+        w{"npcs"}{new_id$} = {"id": new_id$, "kind": "thing", "name": "Laterne von " + who$, "x": x, "y": y, "what": "lantern", "mem": {}}
+        DIM used = RuleItemAdd(prof, id$, -1)
+        KEmit(w, {"type": "purse", "to": who$, "text": "Du stellst die Laterne auf.", "got": "lantern"})
+    ENDIF
+ENDSUB
+
+' One sync: a buy or a sale beside Fenja, and the shop while its window is open.
+SUB RuleShopSync(w, p, msg, answer)
+    DIM want = msg{"shop"} ?? NONE
+    IF ISMAP(want) ANDALSO KNow() >= (p{"shop_at"} ?? 0) THEN
+        p{"shop_at"} = KNow() + 250
+        IF NOT RuleShopNear(w, p) THEN
+            RuleTellPlayer(w, "fenja", p{"name"}, RuleDe$("Komm zu mir an die Theke in der Taverne, dann zeig ich Dir alles."))
+        ELSEIF MAP.EXISTS(want, "buy") THEN
+            RuleShopBuy(w, p, "" + want{"buy"})
+        ELSEIF MAP.EXISTS(want, "sell") THEN
+            RuleShopSell(w, p, "" + want{"sell"})
+        ENDIF
+    ENDIF
+    IF (msg{"shop_list"} ?? FALSE) = TRUE THEN answer{"shop"} = RuleShopList(w, p)
+ENDSUB
+
+'@client
+
+' E beside Fenja opens the shop; in it a number buys or sells, Tab turns
+' the page, E or Escape closes it. TRUE when the key was taken.
+FUNC ClientShopKey(c, tapped$)
+    IF c{"shop_open"} ?? FALSE THEN
+        IF tapped$ = "ESCAPE" ORELSE tapped$ = "E" THEN
+            c{"shop_open"} = FALSE
+            c{"pet"} = FALSE
+            RETURN TRUE
+        ENDIF
+        IF tapped$ = "TAB" ORELSE tapped$ = "V" THEN
+            c{"shop_page"} = IIF((c{"shop_page"} ?? "buy") = "buy", "sell", "buy")
+            RETURN TRUE
+        ENDIF
+        DIM digit$ = RIGHT$(tapped$, 1)
+        IF (LEN(tapped$) = 1 ORELSE STARTSWITH(tapped$, "KEYPAD ")) ANDALSO digit$ >= "1" ANDALSO digit$ <= "9" THEN
+            DIM shop = c{"shop"} ?? {}
+            DIM pick = VAL(digit$) - 1
+            IF (c{"shop_page"} ?? "buy") = "buy" THEN
+                DIM goods = shop{"goods"} ?? []
+                IF pick < LEN(goods) THEN c{"shop_do"} = {"buy": goods[pick][0]}
+            ELSE
+                DIM sell = shop{"sell"} ?? []
+                IF pick < LEN(sell) THEN c{"shop_do"} = {"sell": sell[pick][0]}
+            ENDIF
+            RETURN TRUE
+        ENDIF
+        RETURN FALSE
+    ENDIF
+    IF tapped$ = "E" ANDALSO ClientShopBeside(c) THEN
+        c{"shop_open"} = TRUE
+        c{"shop_page"} = "buy"
+        c{"pet"} = FALSE
+        c{"bag"} = FALSE
+        c{"questlog"} = FALSE
+        RETURN TRUE
+    ENDIF
+    RETURN FALSE
+ENDFUNC
+
+FUNC ClientShopBeside(c)
+    FOR EACH row IN c{"npcs"} ?? []
+        IF row[0] = "fenja" ANDALSO MAX([ABS(row[2] - c{"x"}), ABS(row[3] - c{"y"})]) <= 2 THEN RETURN TRUE
+    NEXT
+    RETURN FALSE
+ENDFUNC
+
+SUB ClientShopAsk(c, msg)
+    IF c{"shop_open"} ?? FALSE THEN msg{"shop_list"} = TRUE
+    IF ISMAP(c{"shop_do"} ?? NONE) THEN
+        msg{"shop"} = c{"shop_do"}
+        c{"shop_do"} = NONE
+    ENDIF
+ENDSUB
+
+SUB ClientShopExtra(c, r)
+    IF MAP.EXISTS(r, "shop") THEN c{"shop"} = r{"shop"}
+ENDSUB
+
+SUB ClientShopHud(c)
+    IF NOT (c{"shop_open"} ?? FALSE) THEN RETURN
+    IF NOT ClientShopBeside(c) THEN
+        c{"shop_open"} = FALSE
+        RETURN
+    ENDIF
+    DIM shop = c{"shop"} ?? {}
+    DIM buying = (c{"shop_page"} ?? "buy") = "buy"
+    DIM rows = IIF(buying, shop{"goods"} ?? [], shop{"sell"} ?? [])
+    DIM high = GFX.TEXTSIZE("Ag")[1] + 3
+    DIM bw = 440
+    DIM bh = (MAX([1, LEN(rows)]) + 4) * high + 12
+    DIM bx = 320 - bw \ 2
+    DIM by = 40
+    ROUNDED_RECT bx, by, bw, bh, 5, TRUE, 250, 244, 214
+    ROUNDED_RECT bx, by, bw, bh, 5, FALSE, 96, 64, 40
+    DIM title$ = IIF(buying, "Fenjas Laden - Kaufen", "Fenjas Laden - Verkaufen")
+    TEXT bx + 10, by + 6, title$, 96, 64, 40
+    ClientCoin(bx + bw - 90, by + 11, 5)
+    TEXT bx + bw - 80, by + 6, STR$((c{"purse"} ?? {}){"money"} ?? 0) + " Geld", 150, 110, 30
+    RECT bx + 8, by + 8 + high, bw - 16, 1, TRUE, 180, 150, 110
+    DIM y = by + 12 + high
+    IF LEN(rows) = 0 THEN
+        IF buying THEN
+            TEXT bx + 10, y, "...", 140, 130, 120
+        ELSE
+            TEXT bx + 10, y, "Fenja kauft Fische, Blumen und Flaeschchen. Du hast keine dabei.", 140, 130, 120
+        ENDIF
+        y = y + high
+    ENDIF
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row = rows[i]
+        DIM label$ = STR$(i + 1) + "  " + row[1]
+        IF buying THEN
+            IF row[4] THEN
+                TEXT bx + 10, y, label$, 150, 140, 130
+                TEXT bx + 170, y, row[3], 150, 140, 130
+                TEXT bx + bw - 70, y, "hast Du", 150, 140, 130
+            ELSE
+                TEXT bx + 10, y, label$, 40, 36, 32
+                TEXT bx + 170, y, row[3], 120, 110, 100
+                TEXT bx + bw - 70, y, STR$(row[2]) + " Geld", 150, 110, 30
+            ENDIF
+        ELSE
+            TEXT bx + 10, y, label$ + "  x" + STR$(row[3]), 40, 36, 32
+            TEXT bx + bw - 70, y, STR$(row[2]) + " Geld", 150, 110, 30
+        ENDIF
+        y = y + high
+    NEXT i
+    DIM hint$ = IIF(buying, "Zahl: kaufen   Tab: verkaufen   E oder Esc: schliessen", "Zahl: verkaufen   Tab: kaufen   E oder Esc: schliessen")
+    TEXT bx + 10, by + bh - high - 4, hint$, 120, 110, 100
+ENDSUB
+
+' Fenja wears the rabbit figure in her own colours.
+SUB ClientNpc(c, row, sx, sy)
+    IF row[0] = "fenja" ANDALSO MAP.EXISTS(c{"sheets"} ?? {}, "hasi") THEN
+        DIM img = ClientLookSheet(c, "hasi", {"clothes": [44, 150, 140], "scarf": [228, 186, 64]})
+        ClientSheet(img, sx, sy, 0, FALSE)
+        BuildLabel(sx, sy - 15, row[1])
+        RETURN
+    ENDIF
+    ClientFigure(sx, sy, 0, 0, row[1], TRUE)
+ENDSUB
+
+' The room of a house seen from above: planks, a rug, the back wall with a
+' window, the side walls as beams and the door left open.
+FUNC ClientRoomImage(house)
+    DIM pw = house{"w"} * 32
+    DIM ph = house{"h"} * 32
+    DIM img = GFX.NEWTARGET(pw, ph, FALSE)
+    GFX.TARGET img, TRUE
+    RECT 0, 0, pw, ph, TRUE, 52, 36, 24
+    DIM fy = 32
+    DO WHILE fy < ph - 32
+        DIM shade = IIF((fy \ 8) MOD 2 = 0, 0, 10)
+        RECT 32, fy, pw - 64, 8, TRUE, 150 + shade, 104 + shade, 62 + shade
+        RECT 32, fy + 7, pw - 64, 1, TRUE, 110, 74, 42
+        DIM sx = 32 + ((fy \ 8) * 37) MOD 48
+        DO WHILE sx < pw - 32
+            RECT sx, fy, 1, 7, TRUE, 112, 76, 44
+            sx = sx + 48
+        LOOP
+        fy = fy + 8
+    LOOP
+    ' a rug in the middle
+    DIM rw = MAX([64, (house{"w"} - 4) * 16])
+    DIM rh = MAX([40, (house{"h"} - 4) * 20])
+    DIM rx = (pw - rw) \ 2
+    DIM ry = (ph - rh) \ 2 + 8
+    RECT rx, ry, rw, rh, TRUE, 150, 50, 46
+    RECT rx + 4, ry + 4, rw - 8, rh - 8, FALSE, 228, 186, 64
+    RECT rx + 8, ry + 8, rw - 16, rh - 16, TRUE, 176, 66, 56
+    ' the back wall: plaster between beams, a window with light
+    RECT 0, 0, pw, 32, TRUE, 60, 40, 28
+    RECT 2, 4, pw - 4, 26, TRUE, 226, 210, 174
+    DIM bx = 30
+    DO WHILE bx < pw - 4
+        RECT bx, 4, 4, 26, TRUE, 104, 70, 44
+        bx = bx + 64
+    LOOP
+    DIM wx = pw \ 2 + 40
+    RECT wx, 8, 22, 16, TRUE, 70, 46, 30
+    RECT wx + 2, 10, 18, 12, TRUE, 246, 220, 140
+    LINE wx + 11, 10, wx + 11, 21, 70, 46, 30
+    RECT 0, 30, pw, 2, TRUE, 40, 26, 18
+    ' side walls and the front wall as beams seen from above
+    RECT 0, 32, 32, ph - 32, TRUE, 92, 62, 38
+    RECT pw - 32, 32, 32, ph - 32, TRUE, 92, 62, 38
+    RECT 0, ph - 32, pw, 32, TRUE, 92, 62, 38
+    RECT 26, 32, 6, ph - 64, TRUE, 70, 46, 28
+    RECT pw - 32, 32, 6, ph - 64, TRUE, 70, 46, 28
+    RECT 32, ph - 32, pw - 64, 5, TRUE, 70, 46, 28
+    ' the open door with a mat before it
+    DIM dx = house{"door"} * 32
+    RECT dx + 2, ph - 32, 28, 32, TRUE, 150, 104, 62
+    RECT dx + 6, ph - 26, 20, 16, TRUE, 120, 140, 70
+    RECT dx + 6, ph - 26, 20, 16, FALSE, 80, 96, 46
+    GFX.TARGET
+    RETURN img
+ENDFUNC
+
+SUB ClientInterior(c, house, sx, sy)
+    IF NOT MAP.EXISTS(c, "rooms") THEN c{"rooms"} = {}
+    DIM key$ = STR$(house{"x"}) + "," + STR$(house{"y"}) + "," + STR$(house{"w"}) + "," + STR$(house{"h"})
+    IF NOT MAP.EXISTS(c{"rooms"}, key$) THEN
+        IF MAP.SIZE(c{"rooms"}) >= 8 THEN
+            FOR EACH old$ IN MAP.KEYS(c{"rooms"})
+                GFX.FREEIMAGE(c{"rooms"}{old$})
+            NEXT
+            c{"rooms"} = {}
+        ENDIF
+        c{"rooms"}{key$} = ClientRoomImage(house)
+    ENDIF
+    GFX.DRAWIMAGE(c{"rooms"}{key$}, sx, sy)
+ENDSUB
+
+SUB ShopCounter(c, row, sx, sy)
+    RECT sx, sy + 8, 32, 22, TRUE, 110, 72, 40
+    RECT sx, sy + 6, 32, 6, TRUE, 176, 126, 76
+    RECT sx, sy + 12, 32, 1, TRUE, 80, 52, 30
+    RECT sx + 15, sy + 14, 2, 16, TRUE, 80, 52, 30
+    DIM n = VAL(SPLIT(row[0], "_")[2])
+    IF n = 1 THEN
+        RECT sx + 6, sy - 2, 8, 9, TRUE, 120, 170, 210
+        RECT sx + 7, sy - 4, 6, 2, TRUE, 150, 110, 70
+    ELSEIF n = 2 THEN
+        ClientCoin(sx + 12, sy + 4, 3)
+        ClientCoin(sx + 18, sy + 3, 3)
+    ELSE
+        RECT sx + 8, sy, 14, 7, TRUE, 196, 150, 90
+        LINE sx + 8, sy, sx + 22, sy + 6, 150, 110, 70
+    ENDIF
+ENDSUB
+
+SUB ShopShelf(c, row, sx, sy)
+    RECT sx + 1, sy - 14, 30, 44, TRUE, 96, 62, 36
+    RECT sx + 3, sy - 12, 26, 40, TRUE, 70, 46, 26
+    DIM colors = [[206, 72, 72], [72, 140, 206], [236, 196, 70], [110, 180, 90], [176, 110, 220]]
+    DIM n = VAL(SPLIT(row[0], "_")[2])
+    DIM k = 0
+    FOR k = 0 TO 2
+        DIM by = sy - 2 + k * 12
+        RECT sx + 3, by + 8, 26, 2, TRUE, 140, 96, 56
+        DIM j = 0
+        FOR j = 0 TO 3
+            DIM col = colors[(n + k * 2 + j) MOD 5]
+            RECT sx + 5 + j * 6, by + 1, 4, 7, TRUE, col[0], col[1], col[2]
+        NEXT j
+    NEXT k
+ENDSUB
+
+SUB ShopTable(c, row, sx, sy)
+    ELLIPSE sx + 16, sy + 26, 13, 4, TRUE, 112, 76, 44
+    RECT sx + 3, sy + 14, 6, 6, TRUE, 120, 80, 44
+    RECT sx + 23, sy + 14, 6, 6, TRUE, 120, 80, 44
+    RECT sx + 14, sy + 16, 4, 12, TRUE, 96, 62, 36
+    ELLIPSE sx + 16, sy + 14, 11, 7, TRUE, 166, 116, 68
+    ELLIPSE sx + 16, sy + 13, 9, 5, TRUE, 182, 132, 80
+    RECT sx + 13, sy + 8, 5, 6, TRUE, 230, 230, 220
+    RECT sx + 18, sy + 9, 2, 3, TRUE, 230, 230, 220
+ENDSUB
+
+ClientPainter("@counter", ShopCounter@)
+ClientPainter("@shelf", ShopShelf@)
+ClientPainter("@table", ShopTable@)

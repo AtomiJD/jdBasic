@@ -100,7 +100,7 @@ ENDSUB
 
 ' The things of the bag: name, what it is, and what using it does.
 FUNC RuleItemTable()
-    RETURN {"flower": {"name": "Blume", "desc": "Von der Wiese gepfl{u}ckt.", "use": ""}, "bottle": {"name": "Wunschtrank-Fl{a}schchen", "desc": "Trinken gibt Wunschtrank.", "use": "potion"}, "fish": {"name": "Fisch", "desc": "Frisch gefangen.", "use": ""}}
+    RETURN {"flower": {"name": "Blume", "desc": "Von der Wiese gepfl{u}ckt.", "use": ""}, "bottle": {"name": "Wunschtrank-Fl{a}schchen", "desc": "Trinken gibt Wunschtrank.", "use": "potion"}, "fish": {"name": "Fisch", "desc": "Frisch gefangen.", "use": ""}, "food": {"name": "Tierfutter", "desc": "Neben einem Tier benutzen: es mag Dich mehr.", "use": "food"}, "seeds": {"name": "Saatgut", "desc": "F{u}r einen Garten, den es bald gibt.", "use": ""}, "lantern": {"name": "Laterne", "desc": "Benutzen stellt sie vor Dir auf.", "use": "lantern"}}
 ENDFUNC
 
 FUNC RuleItemCount(prof, id$)
@@ -220,8 +220,12 @@ SUB RuleItemUse(w, p, id$)
     IF RuleItemCount(prof, id$) <= 0 THEN RETURN
     DIM item = RuleItemTable(){id$} ?? NONE
     IF NOT ISMAP(item) THEN RETURN
-    IF item{"use"} <> "potion" THEN
+    IF item{"use"} = "" THEN
         KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$(item{"name"} + ": das hebst Du besser auf.")})
+        RETURN
+    ENDIF
+    IF item{"use"} <> "potion" THEN
+        RuleShopUse(w, p, id$, item)
         RETURN
     ENDIF
     DIM eco = RuleEconomy(w)
@@ -363,6 +367,7 @@ ENDSUB
 
 ' I opens and closes the bag, a number uses that thing, Escape closes it.
 SUB ClientKey(c, tapped$)
+    IF ClientShopKey(c, tapped$) THEN RETURN
     IF ClientQuestKey(c, tapped$) THEN RETURN
     IF tapped$ = "I" THEN
         c{"bag"} = NOT (c{"bag"} ?? FALSE)
@@ -466,6 +471,7 @@ SUB ClientHud(c)
     ENDIF
     ClientQuestHud(c)
     IF c{"bag"} ?? FALSE THEN ClientBag(c, purse)
+    ClientShopHud(c)
 ENDSUB
 
 SUB ClientBag(c, purse)

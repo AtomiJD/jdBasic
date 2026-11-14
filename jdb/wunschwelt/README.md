@@ -355,6 +355,31 @@ The keeper: `quest_set` (`{"player", "quests": [{"kind", "goal"}]}`),
 `test_quests.jdb`: 28 checks. `test_slice.jdb` also parses the client part
 of every game file, which no other suite runs.
 
+## Houses and Fenja's shop (`game/080_shop.jdb`)
+
+- The floor and the door of every house are walked on, the builder's houses
+  too; walls stay blocked. The client draws the house the player stands in
+  without its roof (planks, a rug, the back wall with a window, the door
+  open) and darkens the world outside; figures under the roof of another
+  house are not drawn. Animals strolling near their home stay outside; a
+  follower goes in behind its player.
+- Furniture are things with ids `f_<sort>_<n>` (counter, shelf, table,
+  barrel), drawn by the painter `@<sort>` like the builder's things.
+- On every start `RuleShopWake` furnishes the tavern once (the house whose
+  door is nearest to Marta) and puts Fenja behind the counter.
+- E beside Fenja (two fields) opens the shop window: a number buys, Tab
+  turns to selling, E or Escape closes. The rules check the distance and
+  the Geld. Goods (`RuleShopGoods`): flinke Schuhe 120 (a step every 110
+  instead of 150 ms), Angel 60 (the bite comes sooner, 2 s to pull), Kescher
+  80 (two fish now and then), Tierfutter 5 (used beside an animal: +12
+  affection), Saatgut 4 (for the garden of a later stage), Laterne 40 (used
+  from the bag: stands on the free field in front of the player), and a
+  golden cap, a silver scarf or an eyepatch, put on at once as a look.
+  Gear is kept in `profile{"gear"}`. Fenja buys fish (6), flowers (2) and
+  bottles (12).
+
+`test_shop.jdb`: 22 checks.
+
 ## What survives a restart
 
 With `WW_STATE_DIR` set (on the box: `/var/lib/wunschwelt`, readable by the

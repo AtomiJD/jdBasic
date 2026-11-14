@@ -1,0 +1,244 @@
+' Test of the houses one walks into and Fenja's shop in the tavern: the
+' floor is walked on and the walls are not, the shop opens only beside
+' Fenja, a buy needs the Geld, shoes make the steps faster, a lantern is
+' set up, a cap is put on, a fish is sold and a rod brings the bite sooner.
+' A server without a model.
+'
+'   jdBasic jdb/wunschwelt/test_shop.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8150 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_shop_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "40"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
+SLEEP 1500
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM since AS INTEGER = -1
+DIM told = []
+
+' One sync and one after it, which brings what the first set off; the
+' answer of the second, with the map and the shop of the first.
+FUNC Sync(extra)
+    DIM msg = {"token": token$, "mapv": 1, "since": since, "findv": -1, "questv": -1, "wishv": -1}
+    FOR EACH field$ IN MAP.KEYS(extra)
+        msg{field$} = extra{field$}
+    NEXT
+    told = []
+    DIM r = {}
+    DIM first = {}
+    DIM k AS INTEGER
+    FOR k = 1 TO 2
+        IF k = 2 THEN msg = {"token": token$, "mapv": 1, "since": since, "findv": -1, "questv": -1, "wishv": -1, "shop_list": TRUE}
+        r = Post("/sync", msg)
+        IF k = 1 THEN first = r
+        since = r{"seq"}
+        FOR EACH ev IN r{"events"}
+            IF (ev{"to"} ?? "") = "Anna" THEN told = APPEND(told, ev{"text"})
+        NEXT
+    NEXT k
+    FOR EACH part$ IN ["map", "fishing"]
+        IF MAP.EXISTS(first, part$) ANDALSO NOT MAP.EXISTS(r, part$) THEN r{part$} = first{part$}
+    NEXT
+    RETURN r
+ENDFUNC
+
+FUNC ToldPart(part$ AS STRING) AS INTEGER
+    RETURN INSTR(JOIN(told, "|"), part$) >= 0
+ENDFUNC
+
+FUNC Put(x AS INTEGER, y AS INTEGER)
+    DIM moved = Admin("player_put", {"player": "Anna", "x": x, "y": y})
+    RETURN Sync({})
+ENDFUNC
+
+FUNC Npc(r, id$)
+    FOR EACH row IN r{"npcs"}
+        IF row[0] = id$ THEN RETURN row
+    NEXT
+    RETURN NONE
+ENDFUNC
+
+FUNC Good(r, id$)
+    FOR EACH row IN r{"shop"}{"goods"}
+        IF row[0] = id$ THEN RETURN row
+    NEXT
+    RETURN NONE
+ENDFUNC
+
+' Steps made in one second of walking to and fro on the road.
+FUNC Steps() AS INTEGER
+    DIM r = Put(10, 16)
+    DIM n AS INTEGER = 0
+    DIM way AS INTEGER = 1
+    DIM x AS INTEGER = r{"x"}
+    DIM t0 = TICK()
+    DO WHILE TICK() - t0 < 1000
+        DIM a = Post("/sync", {"token": token$, "mapv": 1, "since": since, "dx": way, "findv": -1, "questv": -1, "wishv": -1})
+        since = a{"seq"}
+        IF a{"x"} <> x THEN
+            n = n + 1
+            x = a{"x"}
+            way = -way
+        ENDIF
+        SLEEP 10
+    LOOP
+    RETURN n
+ENDFUNC
+
+DIM r = Sync({"mapv": 0})
+DIM m = r{"map"}
+FUNC TileAt(x AS INTEGER, y AS INTEGER) AS INTEGER
+    IF x < 0 ORELSE y < 0 ORELSE x >= m{"w"} ORELSE y >= m{"h"} THEN RETURN -1
+    RETURN m{"tiles"}[y * m{"w"} + x]
+ENDFUNC
+
+DIM fenja = Npc(r, "fenja")
+Check("Fenja stands in the tavern", ISARR(fenja) ANDALSO TileAt(fenja[2], fenja[3]) = 6)
+DIM pieces AS INTEGER = 0
+FOR EACH id$ IN ["f_counter_1", "f_counter_2", "f_counter_3", "f_shelf_1", "f_shelf_2", "f_shelf_3", "f_table_1", "f_table_2", "f_barrel_1", "f_barrel_2"]
+    IF ISARR(Npc(r, id$)) THEN pieces = pieces + 1
+NEXT
+Check("with counter, shelves, tables and barrels", pieces = 10)
+DIM fx AS INTEGER = fenja[2]
+DIM fy AS INTEGER = fenja[3]
+
+' the door is in the wall below the counter row
+DIM door_x AS INTEGER = -1
+DIM door_y AS INTEGER = -1
+DIM x AS INTEGER
+DIM y AS INTEGER
+FOR y = fy TO fy + 8
+    FOR x = fx - 3 TO fx + 9
+        IF door_x < 0 ANDALSO TileAt(x, y) = 7 THEN
+            door_x = x
+            door_y = y
+        ENDIF
+    NEXT x
+NEXT y
+r = Put(door_x, door_y + 1)
+r = Sync({"dy": -1})
+SLEEP 200
+r = Sync({"dy": -1})
+Check("through the door onto the floor", r{"y"} = door_y - 1 ANDALSO TileAt(r{"x"}, r{"y"}) = 6)
+r = Put(fx + 3, fy)
+SLEEP 200
+r = Sync({"dy": -1})
+SLEEP 200
+r = Sync({"dy": -1})
+Check("a wall stops", r{"y"} = fy - 1 ANDALSO TileAt(r{"x"}, r{"y"} - 1) = 5)
+
+' away from Fenja
+r = Put(door_x, door_y + 1)
+SLEEP 300
+r = Sync({"shop": {"buy": "food"}})
+Check("away from the counter nothing is sold", ToldPart("Komm zu mir an die Theke") ANDALSO LEN(r{"purse"}{"items"}) = 0)
+Check("and the shop says so", NOT r{"shop"}{"near"})
+
+r = Put(fx, fy + 2)
+Check("before the counter the shop is open", r{"shop"}{"near"} ANDALSO LEN(r{"shop"}{"goods"}) = 9)
+SLEEP 300
+r = Sync({"shop": {"buy": "shoes"}})
+Check("without Geld nothing is bought", ToldPart("fehlen Dir noch 120 Geld") ANDALSO NOT Good(r, "shoes")[4])
+
+DIM slow AS INTEGER = Steps()
+DIM rich = Admin("purse", {"player": "Anna", "money": 500})
+r = Put(fx, fy + 2)
+SLEEP 300
+r = Sync({"shop": {"buy": "shoes"}})
+Check("shoes are bought", ToldPart("Gekauft: Flinke Schuhe") ANDALSO r{"purse"}{"money"} = 380 ANDALSO Good(r, "shoes")[4])
+SLEEP 300
+r = Sync({"shop": {"buy": "shoes"}})
+Check("and only once", ToldPart("hast Du schon") ANDALSO r{"purse"}{"money"} = 380)
+DIM quick AS INTEGER = Steps()
+Check("shoes make the steps faster (" + STR$(slow) + " -> " + STR$(quick) + ")", quick > slow)
+
+r = Put(fx, fy + 2)
+SLEEP 300
+r = Sync({"shop": {"buy": "food"}})
+SLEEP 300
+r = Sync({"shop": {"buy": "lantern"}})
+Check("food and a lantern go into the bag", LEN(r{"purse"}{"items"}) = 2 ANDALSO r{"purse"}{"money"} = 335)
+SLEEP 350
+r = Sync({"use": "food"})
+Check("food needs an animal beside", ToldPart("Kein Tier neben Dir") ANDALSO LEN(r{"purse"}{"items"}) = 2)
+
+' a lantern on the field in front, on the open ground before the tavern
+r = Put(20, 17)
+SLEEP 200
+r = Sync({"dy": 1})
+SLEEP 350
+r = Sync({"use": "lantern"})
+DIM lamp = Npc(r, "b_lantern_1")
+Check("the lantern stands in front of the player", ISARR(lamp) ANDALSO lamp[2] = r{"x"} ANDALSO lamp[3] = r{"y"} + 1 ANDALSO lamp[1] = "Laterne von Anna")
+Check("and is gone from the bag", LEN(r{"purse"}{"items"}) = 1)
+
+r = Put(fx, fy + 2)
+SLEEP 300
+r = Sync({"shop": {"buy": "hat_gold"}})
+DIM worn = {}
+FOR EACH row IN r{"players"}
+    IF row[0] = "Anna" THEN worn = row[5]
+NEXT
+Check("a cap is put on at once", JSON.STRINGIFY$(worn{"hat"} ?? []) = "[228,186,64]" ANDALSO r{"purse"}{"money"} = 285)
+SLEEP 300
+r = Sync({"shop": {"buy": "hat_gold"}})
+Check("and not paid for twice", ToldPart("doch schon") ANDALSO r{"purse"}{"money"} = 285)
+
+DIM gave = Admin("purse", {"player": "Anna", "give": "fish", "n": 2})
+r = Sync({})
+Check("the fish can be sold", LEN(r{"shop"}{"sell"}) = 1 ANDALSO r{"shop"}{"sell"}[0][0] = "fish" ANDALSO r{"shop"}{"sell"}[0][3] = 2)
+SLEEP 300
+r = Sync({"shop": {"sell": "fish"}})
+Check("one fish is sold for 6 Geld", ToldPart("Verkauft: Fisch") ANDALSO r{"purse"}{"money"} = 291 ANDALSO r{"shop"}{"sell"}[0][3] = 1)
+
+SLEEP 300
+r = Sync({"shop": {"buy": "rod"}})
+Check("a rod is bought", Good(r, "rod")[4] ANDALSO r{"purse"}{"money"} = 231)
+DIM wx AS INTEGER = -1
+DIM wy AS INTEGER = -1
+FOR y = 1 TO m{"h"} - 2
+    FOR x = 1 TO m{"w"} - 2
+        IF wx < 0 ANDALSO (TileAt(x, y) = 1 ORELSE TileAt(x, y) = 8) ANDALSO TileAt(x + 1, y) = 4 THEN
+            wx = x
+            wy = y
+        ENDIF
+    NEXT x
+NEXT y
+r = Put(wx, wy)
+r = Sync({"fish": "cast"})
+Check("with a rod the fish bites sooner", MAP.EXISTS(r, "fishing") ANDALSO r{"fishing"}{"bite_in"} <= 2700)
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM w3 = OS.WAIT(server_pid, 40000)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1
