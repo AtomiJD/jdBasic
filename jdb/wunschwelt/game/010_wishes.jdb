@@ -300,6 +300,7 @@ SUB RuleExtra(w, p, msg, answer)
     RuleQuestSync(w, p, msg, answer)
     RuleShopSync(w, p, msg, answer)
     RuleBondSync(w, p, msg, answer)
+    RuleAlbumSync(w, p, msg, answer)
     IF INT(msg{"wishv"} ?? -1) = w{"wishv"} THEN RETURN
     DIM wishes = w{"wishes"}
     DIM rows = []
@@ -322,6 +323,7 @@ FUNC RuleAdmin(w, name$, args)
     IF name$ = "bond" ORELSE name$ = "tie" ORELSE name$ = "bond_set" THEN RETURN RuleBondAdmin(w, name$, args)
     IF name$ = "config" ORELSE name$ = "config_set" THEN RETURN RuleConfAdmin(w, name$, args)
     IF name$ = "basket" THEN RETURN RuleCardAdmin(w, name$, args)
+    IF name$ = "album" ORELSE name$ = "album_set" THEN RETURN RuleAlbumAdmin(w, name$, args)
     IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
     IF name$ = "wish_status" THEN
         DIM status$ = "" + (args{"status"} ?? "")
@@ -343,6 +345,7 @@ SUB ClientAsk(c, msg)
     ClientQuestAsk(c, msg)
     ClientShopAsk(c, msg)
     ClientBondAsk(c, msg)
+    ClientAlbumAsk(c, msg)
 ENDSUB
 
 SUB ClientExtra(c, r)
@@ -351,6 +354,7 @@ SUB ClientExtra(c, r)
     ClientQuestExtra(c, r)
     ClientShopExtra(c, r)
     ClientBondExtra(c, r)
+    ClientAlbumExtra(c, r)
     IF MAP.EXISTS(r, "plot") THEN
         c{"plot"} = r{"plot"}
         c{"plotv"} = r{"plotv"}

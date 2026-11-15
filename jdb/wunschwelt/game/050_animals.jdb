@@ -277,6 +277,7 @@ FUNC RuleFollowStart(w, p, id$)
     p{"fondv"} = (p{"fondv"} ?? 0) + 1
     KEmit(w, {"type": "build", "who": p{"name"}, "text": npc{"name"} + " hat " + p{"name"} + RuleDe$(" ins Herz geschlossen und folgt jetzt")})
     RuleCountAdd(w, p{"name"}, "followed", 1)
+    RuleAlbumFriend(w, p, id$)
     RETURN TRUE
 ENDFUNC
 
@@ -377,6 +378,7 @@ SUB RuleAnimalSync(w, p, msg, answer)
         IF id$ = "" THEN RuleQuestPick(w, p)
         IF id$ <> "" THEN
             RuleQuestPet(w, p, id$)
+            RuleAlbumMeet(w, p, id$)
             IF NOT MAP.EXISTS(p, "petted") THEN p{"petted"} = {}
             DIM up = 0
             IF now - (p{"petted"}{id$} ?? -99999) >= 20000 THEN

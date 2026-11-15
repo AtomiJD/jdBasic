@@ -1,0 +1,175 @@
+' Test of the album, with a model that answers from a script: a golden cat
+' in a scarf is petted, its page gets the fields of what it is, once a day,
+' a field met again stacks and earns a star, a cat that follows fills the
+' friendship, and the owner of the name reads the album from outside the
+' world with the PIN, a wrong PIN and an unknown name read nothing.
+'
+'   jdBasic jdb/wunschwelt/test_album.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8280 + OS.PID() MOD 10
+DIM model_port AS INTEGER = 8290 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_album_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+FUNC FakeModel(request)
+    DIM body = JSON.PARSE(request{"body"})
+    DIM messages = body{"messages"}
+    DIM system$ AS STRING = messages[0]{"content"}
+    DIM said$ AS STRING = messages[LEN(messages) - 1]{"content"}
+    DIM content$ AS STRING = "Gern."
+    IF INSTR(system$, "Du sortierst") >= 0 THEN
+        content$ = JSON.STRINGIFY$({"wish": FALSE})
+        IF INSTR(said$, "Katze") >= 0 THEN content$ = JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": said$})
+    ELSEIF INSTR(system$, "Du bist der Baumeister") >= 0 THEN
+        content$ = JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "cat", "name": "Goldi", "color": "gold", "wear": ["roter Schal"], "where": "tavern"}]})
+    ENDIF
+    RETURN JSON.STRINGIFY$({"choices": [{"message": {"role": "assistant", "content": content$}}]})
+ENDFUNC
+HTTP.SERVER.ON_POST "/v1/chat/completions", FakeModel@
+DIM model_up = HTTP.SERVER.START(model_port)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "200"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+SLEEP 1500
+DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
+DIM pace = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM r = Post("/sync", {"token": token$, "mapv": 1})
+DIM since AS INTEGER = r{"seq"}
+DIM told = []
+DIM album = NONE
+DIM albumv AS INTEGER = -1
+
+FUNC Sync(extra)
+    DIM msg = {"token": token$, "mapv": 1, "since": since, "albumv": albumv}
+    FOR EACH k$ IN MAP.KEYS(extra)
+        msg{k$} = extra{k$}
+    NEXT
+    DIM t = Post("/sync", msg)
+    since = t{"seq"}
+    FOR EACH ev IN t{"events"}
+        IF ev{"type"} = "purse" ANDALSO (ev{"to"} ?? "") = "Anna" THEN told = APPEND(told, ev{"text"})
+    NEXT
+    IF MAP.EXISTS(t, "album") THEN
+        album = t{"album"}
+        albumv = t{"albumv"}
+    ENDIF
+    RETURN t
+ENDFUNC
+
+SUB Wait(ms AS INTEGER)
+    DIM t0 = TICK()
+    DO WHILE TICK() - t0 < ms
+        DIM t = Sync({})
+        SLEEP 200
+    LOOP
+ENDSUB
+
+FUNC Told(part$ AS STRING)
+    RETURN INSTR(JOIN(told, "|"), part$) >= 0
+ENDFUNC
+
+FUNC Page(what$ AS STRING)
+    IF NOT ISMAP(album) THEN RETURN {}
+    RETURN album{"have"}{what$} ?? {}
+ENDFUNC
+
+DIM first = Sync({})
+Check("the album comes with the first sync", ISMAP(album) ANDALSO LEN(album{"fields"}) = 27 ANDALSO LEN(album{"sorts"}) >= 21)
+Check("its pages go by the German names", album{"sorts"}[0][1] = "Eichh" + CHR$(195) + CHR$(182) + "rnchen" ORELSE album{"sorts"}[0][0] = "squirrel")
+
+DIM marta = NONE
+FOR EACH row IN r{"npcs"}
+    IF row[0] = "marta" THEN marta = row
+NEXT
+DIM put = Admin("player_put", {"player": "Anna", "x": marta[2], "y": marta[3] + 1})
+DIM said = Sync({"say": "Ich wuensche mir eine goldene Katze"})
+DIM cat = NONE
+DIM k AS INTEGER
+FOR k = 1 TO 60
+    Wait(300)
+    FOR EACH row IN Sync({}){"npcs"}
+        IF row[1] = "Goldi" THEN cat = row
+    NEXT
+    IF ISARR(cat) THEN EXITFOR
+NEXT k
+Check("a golden cat in a scarf is made", ISARR(cat))
+Wait(1500)
+
+' petting, beside the cat
+SUB PetCat()
+    DIM spot = NONE
+    FOR EACH row IN Sync({}){"npcs"}
+        IF row[1] = "Goldi" THEN spot = row
+    NEXT
+    DIM moved = Admin("player_put", {"player": "Anna", "x": spot[2], "y": spot[3] + 1})
+    DIM t = Sync({})
+    t = Sync({"pet": TRUE})
+    Wait(500)
+ENDSUB
+
+PetCat()
+DIM pg = Page("cat")
+Check("petted, its page has met, the gold fur and the scarf", (pg{"meet"} ?? 0) = 1 ANDALSO (pg{"c_gold"} ?? 0) = 1 ANDALSO (pg{"chic"} ?? 0) = 1)
+DIM season_n = (pg{"spring"} ?? 0) + (pg{"summer"} ?? 0) + (pg{"autumn"} ?? 0) + (pg{"winter"} ?? 0)
+Check("and the season it was met in", season_n = 1)
+Check("Anna hears of the new card", Told("Neu im Album: Katze"))
+Wait(600)
+PetCat()
+Check("the same cat on the same day fills nothing more", (Page("cat"){"meet"} ?? 0) = 1)
+
+DIM d AS INTEGER
+FOR d = 1 TO 4
+    DIM shift = Admin("day_shift", {"days": d})
+    Wait(300)
+    PetCat()
+NEXT d
+Check("met again on other days, the field stacks", (Page("cat"){"meet"} ?? 0) = 5)
+Check("and at five it earns a star", Told("Ein Stern im Album"))
+
+DIM fond = Admin("fond", {"player": "Anna", "npc": cat[0], "v": 90})
+Wait(2600)
+Check("a cat that follows fills the friendship", (Page("cat"){"friend"} ?? 0) = 1)
+
+' the album from outside the world
+DIM view = Post("/view", {"name": "anna", "pin": "1234", "view": "album"})
+Check("the owner reads the album with the PIN", view{"ok"} ANDALSO view{"name"} = "Anna" ANDALSO (view{"have"}{"cat"}{"meet"} ?? 0) = 5)
+DIM wrong = Post("/view", {"name": "Anna", "pin": "9999", "view": "album"})
+Check("a wrong PIN reads nothing", NOT wrong{"ok"} ANDALSO NOT MAP.EXISTS(wrong, "have"))
+DIM nobody = Post("/view", {"name": "Niemand", "pin": "1234", "view": "album"})
+DIM claimed = Post("/view", {"name": "Niemand", "pin": "1234", "view": "album"})
+Check("an unknown name reads nothing and is not claimed", NOT nobody{"ok"} ANDALSO NOT claimed{"ok"})
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("reading it did not bring Anna in twice", stats{"players"} = 1)
+
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM gone = OS.KILL(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

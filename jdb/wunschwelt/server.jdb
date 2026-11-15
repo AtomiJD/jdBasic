@@ -25,6 +25,8 @@
 '   RuleAnswer(w, kind$, data, text$)    the answer to a question a rule put with KAsk$
 '   RuleAnswerFailed(w, kind$, data)     that question got no usable answer
 '   RuleAdmin(w, name$, args) -> map     a call of the keeper of the world
+'   RuleView(w, name$, msg) -> map       what an owner of a name may read without
+'                                    entering the world (msg{"view"} names it)
 '
 ' What rules may call here: KNow(), KEmit(w, event), KAskNpc(w, npc_id$, player$, text$),
 ' KAsk$(w, kind$, who$, data, messages, options).
@@ -48,6 +50,8 @@
 '   POST /rule  {"key","name": "pin_reset","args": {"name"}}  frees a name
 '   POST /sync  {"token", ...}              -> what RuleSync answers
 '   GET  /code?since=N                      -> {"version", "patches": [client code]}
+'   POST /view  {"name", "pin", "view"}     -> what RuleView answers, for a name that exists
+'                                              and its PIN; the player does not enter the world
 '   POST /patch {"key","title","server","client"} -> {"ok", "version"} or {"ok": false, "error"}
 '   POST /rule  {"key","name","args"}           -> what RuleAdmin answers (needs the patch key)
 '   GET  /stats
@@ -460,6 +464,29 @@ FUNC HANDLEJOIN(request)
     RETURN answer
 ENDFUNC
 
+' What the owner of a name reads without entering the world (the album on a
+' phone): only for a name that exists, with its PIN; the rules answer.
+FUNC HANDLEVIEW(request)
+    DIM b = BodyOf(request)
+    W{"served"} = W{"served"} + 1
+    DIM name$ AS STRING = TRIM$("" + (b{"name"} ?? ""))
+    DIM pin$ AS STRING = TRIM$("" + (b{"pin"} ?? ""))
+    IF NOT REGEX.MATCH("^[A-Za-z0-9_]{1,16}$", name$) THEN RETURN {"ok": FALSE, "error": "name"}
+    IF NOT REGEX.MATCH("^[0-9]{4,8}$", pin$) THEN RETURN {"ok": FALSE, "error": "pin"}
+    IF NOT MAP.EXISTS(accounts, LCASE$(name$)) THEN RETURN {"ok": FALSE, "error": "name"}
+    name$ = accounts{LCASE$(name$)}{"name"}
+    DIM owner = CheckPin(name$, pin$, SenderOf(request))
+    IF NOT owner{"ok"} THEN RETURN owner
+    DIM answer = {"ok": FALSE, "error": "view"}
+    TRY
+        answer = RuleView(W, name$, b)
+    CATCH
+        KFail("RuleView", ERRMSG$)
+    ENDTRY
+    RETURN answer
+ENDFUNC
+
+
 FUNC HANDLESYNC(request)
     DIM b = BodyOf(request)
     W{"served"} = W{"served"} + 1
@@ -567,6 +594,7 @@ ENDTRY
 HTTP.SERVER.ON_POST "/join", HANDLEJOIN@
 HTTP.SERVER.ON_POST "/sync", HANDLESYNC@
 HTTP.SERVER.ON_GET "/code", HANDLECODE@
+HTTP.SERVER.ON_POST "/view", HANDLEVIEW@
 HTTP.SERVER.ON_POST "/patch", HANDLEPATCH@
 HTTP.SERVER.ON_POST "/rule", HANDLERULE@
 HTTP.SERVER.ON_GET "/stats", HANDLESTATS@

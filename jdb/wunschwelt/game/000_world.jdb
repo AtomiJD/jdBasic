@@ -395,6 +395,25 @@ ENDSUB
 SUB RuleCardTick(w, now)
 ENDSUB
 
+' The album of the animal sorts; game/095_album.jdb gives them a body.
+SUB RuleAlbumMeet(w, p, id$)
+ENDSUB
+
+SUB RuleAlbumFriend(w, p, id$)
+ENDSUB
+
+SUB RuleAlbumSync(w, p, msg, answer)
+ENDSUB
+
+' What the owner of a name reads without entering the world (POST /view).
+FUNC RuleView(w, name$, msg)
+    RETURN {"ok": FALSE, "error": "view"}
+ENDFUNC
+
+FUNC RuleAlbumAdmin(w, name$, args)
+    RETURN {"ok": FALSE, "error": "no such call: " + name$}
+ENDFUNC
+
 FUNC RuleCardAdmin(w, name$, args)
     RETURN {"ok": FALSE, "error": "no such call: " + name$}
 ENDFUNC
@@ -827,6 +846,12 @@ SUB ClientInput(c)
         IF GFX.KEYSTATE("Up") ORELSE GFX.KEYSTATE("W") THEN c{"dy"} = -1
         IF GFX.KEYSTATE("Down") ORELSE GFX.KEYSTATE("S") THEN c{"dy"} = 1
     ENDIF
+    IF ClientHolds(c) THEN
+        c{"dx"} = 0
+        c{"dy"} = 0
+        c{"tap"} = [0, 0]
+        c{"pet"} = FALSE
+    ENDIF
 ENDSUB
 
 SUB ClientSync(c)
@@ -1025,6 +1050,24 @@ ENDSUB
 
 SUB ClientBondExtra(c, r)
 ENDSUB
+
+SUB ClientAlbumAsk(c, msg)
+ENDSUB
+
+SUB ClientAlbumExtra(c, r)
+ENDSUB
+
+FUNC ClientAlbumKey(c, tapped$)
+    RETURN FALSE
+ENDFUNC
+
+SUB ClientAlbumHud(c)
+ENDSUB
+
+' TRUE while a window is open that keeps the player standing.
+FUNC ClientHolds(c)
+    RETURN FALSE
+ENDFUNC
 
 ' What lies on the ground under everyone, what a player owns over the bottom
 ' line, and a key tapped while walking; game/060_purse.jdb gives them a body.
@@ -1292,11 +1335,12 @@ SUB ClientDraw(c)
         TEXT 4, 365, "> " + c{"entry"} + "_", 240, 240, 240
     ELSE
         RECT 0, 364, 640, 20, TRUE, 16, 18, 22
-        TEXT 4, 365, "Enter: sprechen  E: streicheln, pfl" + CHR$(195) + CHR$(188) + "cken, Laden  F: angeln  I: Tasche  Q: Aufgaben", 150, 160, 150
+        TEXT 4, 365, "Enter: sprechen  E: streicheln, pfl" + CHR$(195) + CHR$(188) + "cken, Laden  F: angeln  I: Tasche  Q: Aufgaben  K: Album", 150, 160, 150
         DIM tune$ = c{"music_label"} ?? ""
         IF tune$ <> "" THEN TEXT 636 - GFX.TEXTSIZE("Musik: " + tune$)[0], 365, "Musik: " + tune$, 150, 180, 220
     ENDIF
     ClientHud(c)
+    ClientAlbumHud(c)
 ENDSUB
 
 SUB ClientFrame(c)

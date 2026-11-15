@@ -5,5 +5,9 @@
     "basket_fond": 80,
     "leave_days": 3,
     "leave_hour": 18
+  },
+  "album": {
+    "star1": 5,
+    "star2": 10
   }
 }

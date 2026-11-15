@@ -1,5 +1,5 @@
 ' A local stand-in for the web server in front of the world: serves the page
-' and the browser runtime and hands the three API calls to the world server,
+' and the browser runtime and hands the four API calls to the world server,
 ' so the browser client runs against one origin as it does when deployed.
 '
 '   jdBasic jdb/wunschwelt/tools/devsite.jdb [port] [world]
@@ -29,6 +29,8 @@ FUNC HANDLEFILE(request)
     DIM file$ AS STRING = ""
     IF rest$ = "" THEN
         file$ = here$ + "/web/index.html"
+    ELSEIF rest$ = "album.html" THEN
+        file$ = here$ + "/web/album.html"
     ELSEIF rest$ = "play/" THEN
         file$ = runtime$ + "/index.html"
     ELSEIF rest$ = "play/client.jdb" THEN
@@ -42,7 +44,7 @@ FUNC HANDLEFILE(request)
         FOR i = 0 TO LEN(names) - 1
             listing$ = listing$ + "assets/" + names[i] + CHR$(10)
         NEXT i
-        RETURN Reply(200, listing$ + "melody.jdb" + CHR$(10), "text/plain")
+        RETURN Reply(200, listing$ + "assets/anchors.json" + CHR$(10) + "melody.jdb" + CHR$(10), "text/plain")
     ELSEIF STARTSWITH(rest$, "play/assets/") THEN
         file$ = here$ + "/assets/" + MID$(rest$, 12, LEN(rest$))
     ELSEIF STARTSWITH(rest$, "play/") THEN
@@ -60,12 +62,17 @@ FUNC HANDLESYNC(request)
     RETURN Reply(200, HTTP.POST$(world$ + "/sync", request{"body"}, "text/plain"), "application/json")
 ENDFUNC
 
+FUNC HANDLEVIEW(request)
+    RETURN Reply(200, HTTP.POST$(world$ + "/view", request{"body"}, "text/plain"), "application/json")
+ENDFUNC
+
 FUNC HANDLECODE(request)
     RETURN Reply(200, HTTP.GET$(world$ + "/code?since=" + ("" + (request{"params"}{"since"} ?? "0"))), "application/json")
 ENDFUNC
 
 HTTP.SERVER.ON_POST "/wunschwelt/api/join", HANDLEJOIN@
 HTTP.SERVER.ON_POST "/wunschwelt/api/sync", HANDLESYNC@
+HTTP.SERVER.ON_POST "/wunschwelt/api/view", HANDLEVIEW@
 HTTP.SERVER.ON_GET "/wunschwelt/api/code", HANDLECODE@
 HTTP.SERVER.ON_NOTFOUND HANDLEFILE@
 IF NOT HTTP.SERVER.START(port, "127.0.0.1") THEN

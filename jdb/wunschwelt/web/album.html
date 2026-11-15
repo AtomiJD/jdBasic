@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tieralbum</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; background: #12161a; color: #e8e6df; font-family: Georgia, serif; }
+  main { width: min(46rem, 100% - 2rem); margin: 0 auto; padding: 1.5rem 0 3rem; }
+  h1 { font-size: 2.2rem; margin: 0 0 .4rem; color: #fad66e; text-align: center; }
+  p { line-height: 1.5; color: #b9c2b4; text-align: center; }
+  form { margin: 1.2rem auto 0; display: flex; gap: .5rem; max-width: 30rem; }
+  input { flex: 1; min-width: 0; padding: .7rem .8rem; font: inherit; color: inherit;
+          background: #1c2228; border: 1px solid #3a4650; border-radius: 6px; }
+  #pin { flex: 0 0 6.5rem; }
+  button { padding: .7rem 1.1rem; font: inherit; font-weight: bold; cursor: pointer;
+           color: #281e0a; background: #fad66e; border: 0; border-radius: 6px; }
+  #why { min-height: 1.4em; margin: .6rem 0 0; color: #e8a090; }
+  a { color: #fad66e; }
+  nav { display: flex; flex-wrap: wrap; gap: .35rem; justify-content: center; margin: 1.2rem 0; }
+  nav button { padding: .35rem .6rem; font-weight: normal; font-size: .9rem; color: #e8e6df; background: #232b31; }
+  nav button.on { color: #281e0a; background: #fad66e; }
+  nav button span { opacity: .7; font-size: .8rem; }
+  section { background: #faf4d6; color: #3c2c1c; border-radius: 10px; padding: 1rem; }
+  section h2 { margin: 0; font-size: 1.5rem; }
+  .bar { height: 8px; background: #dcd0aa; border-radius: 4px; margin: .5rem 0 1rem; overflow: hidden; }
+  .bar div { height: 100%; background: #78b45a; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: .45rem; }
+  .card { position: relative; border-radius: 6px; padding: .45rem .5rem; min-height: 3.6rem;
+          background: #fffcf0; border: 1px solid #966e3c; }
+  .card.empty { background: #d6ccb0; border-color: #d6ccb0; color: #968c78; }
+  .card b { display: block; font-size: .85rem; }
+  .card i { font-style: normal; font-size: .85rem; color: #785a32; }
+  .card.empty i { color: #968c78; }
+  .dot { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; vertical-align: -1px; margin-right: .25rem; border: 1px solid #0003; }
+  .stars { position: absolute; right: .35rem; bottom: .2rem; color: #e0a820; letter-spacing: .05em; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tieralbum</h1>
+  <p>Jede Tierart hat eine Seite mit denselben Karten für alle. Eine Karte füllt sich, wenn du ein Tier streichelst oder fütterst, wenn eins dir folgt, in seiner Fellfarbe, mit Muster, angezogen und in jeder Jahreszeit. Fünf und zehn gleiche Karten geben einen Stern.</p>
+  <form id="enter">
+    <input id="name" maxlength="16" pattern="[A-Za-z0-9_]{1,16}" placeholder="Dein Name" required>
+    <input id="pin" type="password" inputmode="numeric" maxlength="8" pattern="[0-9]{4,8}" placeholder="PIN" autocomplete="current-password" required>
+    <button>Ansehen</button>
+  </form>
+  <p id="why" role="alert"></p>
+  <div id="album" hidden>
+    <p id="total"></p>
+    <nav id="pages"></nav>
+    <section id="page"></section>
+  </div>
+  <p><a href="./">Zurück ins Dorf</a></p>
+</main>
+<script>
+  const field = document.getElementById('name');
+  const pin = document.getElementById('pin');
+  const why = document.getElementById('why');
+  const reasons = {
+    name: 'Diesen Namen gibt es im Dorf nicht.',
+    pin: 'Die PIN hat 4 bis 8 Ziffern.',
+    wrong_pin: 'Die PIN passt nicht zu diesem Namen.',
+    locked: 'Zu viele falsche PINs: der Name ist eine Minute gesperrt.',
+    full: 'Gerade zu viele Anfragen. Versuch es gleich noch einmal.'
+  };
+  let album = null;
+  let current = 0;
+  try { field.value = localStorage.getItem('ww_name') || ''; } catch (err) {}
+  (field.value ? pin : field).focus();
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function filled(sort) {
+    const have = album.have[sort] || {};
+    return album.fields.filter(f => (have[f[0]] || 0) > 0).length;
+  }
+  function showPage(i) {
+    current = i;
+    const [sort, title] = album.sorts[i];
+    const have = album.have[sort] || {};
+    const n = filled(sort);
+    const page = document.getElementById('page');
+    page.replaceChildren();
+    page.append(el('h2', '', title));
+    page.append(el('div', '', n + ' von ' + album.fields.length + ' Karten'));
+    const bar = el('div', 'bar');
+    const fill = el('div');
+    fill.style.width = Math.round(100 * n / album.fields.length) + '%';
+    bar.append(fill);
+    page.append(bar);
+    const grid = el('div', 'grid');
+    for (const [key, label, rgb] of album.fields) {
+      const count = have[key] || 0;
+      const card = el('div', count > 0 ? 'card' : 'card empty');
+      const name = el('b');
+      if (rgb && rgb.length === 3 && count > 0) {
+        const dot = el('span', 'dot');
+        dot.style.background = 'rgb(' + rgb.join(',') + ')';
+        name.append(dot);
+      }
+      name.append(label);
+      card.append(name);
+      card.append(el('i', '', count > 0 ? '× ' + count : '?'));
+      const stars = (count >= album.stars[0] ? '★' : '') + (count >= album.stars[1] ? '★' : '');
+      if (stars) card.append(el('span', 'stars', stars));
+      grid.append(card);
+    }
+    page.append(grid);
+    document.querySelectorAll('#pages button').forEach((b, k) => b.classList.toggle('on', k === i));
+  }
+  function showAlbum() {
+    const nav = document.getElementById('pages');
+    nav.replaceChildren();
+    let all = 0;
+    album.sorts.forEach(([sort, title], i) => {
+      const b = el('button', '', title + ' ');
+      b.type = 'button';
+      const n = filled(sort);
+      all += n;
+      b.append(el('span', '', n + '/' + album.fields.length));
+      b.addEventListener('click', () => showPage(i));
+      nav.append(b);
+    });
+    document.getElementById('total').textContent = album.name + ': ' + all + ' von ' + album.sorts.length * album.fields.length + ' Karten gesammelt';
+    document.getElementById('album').hidden = false;
+    showPage(Math.min(current, album.sorts.length - 1));
+  }
+  document.getElementById('enter').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    why.textContent = '';
+    let answer = null;
+    try {
+      const r = await fetch('api/view', { method: 'POST', headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ name: field.value.trim(), pin: pin.value.trim(), view: 'album' }) });
+      answer = await r.json();
+    } catch (err) {
+      why.textContent = 'Das Dorf antwortet gerade nicht.';
+      return;
+    }
+    if (!answer.ok) {
+      why.textContent = reasons[answer.error] || 'Das Album lässt sich gerade nicht öffnen.';
+      return;
+    }
+    try { localStorage.setItem('ww_name', answer.name); } catch (err) {}
+    album = answer;
+    showAlbum();
+  });
+</script>
+</body>
+</html>

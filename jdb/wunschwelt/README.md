@@ -105,7 +105,7 @@ Locally, with the world server running:
 build/jdBasic.exe jdb/wunschwelt/tools/devsite.jdb
 ```
 
-serves the page, the runtime from `wasm/` and the three API calls on
+serves the start page, the album page, the runtime from `wasm/` and the four API calls on
 `http://127.0.0.1:8180/wunschwelt/`, one origin as on the box.
 
 
@@ -139,9 +139,9 @@ box as a sub-path of the site that already carries the other two games:
 `--setup` once, then plain for a new version, `--page` for the page and the
 client alone, `--patch <file> <title>` for a patch into the running world.
 The unit `wunschwelt` runs as its own user without sudo and with a read-only
-file system; nginx hands on `join`, `sync` and `code` and nothing else, so a
-patch can only be sent from the box itself. `tools/nginx_route.jdb` writes
-those routes into the site file.
+file system; nginx hands on `join`, `sync`, `code` and `view` and nothing else, so a
+patch can only be sent from the box itself. `tools/nginx_route.jdb` writes the
+routes that are missing into the site file; every deploy runs it.
 
 Before anything is published, `deploy.sh` runs a preflight on the box: the
 staged server starts twice on spare ports with the box's own jdBasic, and
@@ -449,7 +449,29 @@ of every game file, which no other suite runs.
   close to, and the hearts of a gift. Keeper calls: `bond` ({"player",
   "npc", "v"}), `tie` ({"a", "b", "v"}), `bond_set` ({"talk_ms", "tie_ms"}).
 
-`test_bonds.jdb`: 22 checks.
+`test_bonds.jdb`: 23 checks.
+
+## The album of the animal sorts (`game/095_album.jdb`)
+
+- One page per animal sort (in the order of the German names), the same 27
+  fields for everyone: Begegnung, Freundschaft, Schick, Streifen, Punkte,
+  the four seasons, Naturfarbe and one field per fur colour.
+- Petting or feeding an animal fills, once a day for each animal, met, the
+  season of the calendar, its fur colour, its pattern and Schick when it
+  wears something; an animal that starts to follow fills Freundschaft. A
+  field met again stacks; at `album.star1` (5) and `album.star2` (10) of
+  `game.json` it earns a star. The player hears of a new field and a star.
+- `profile{"album"}` is `{sort: {field: count}}`, `profile{"album_met"}`
+  the day each animal was last met. Keeper calls: `album` ({"player"}),
+  `album_set` ({"player", "sort", "field", "v"}).
+- K opens the album in the client, left and right turn the pages, the
+  player stands still while it is open.
+- `web/album.html` shows the album on a phone: name and PIN go to
+  `POST /view` (`{"view": "album"}`), which the kernel answers through
+  `RuleView` for a name that exists and its PIN, without the player entering
+  the world. The start page links to it.
+
+`test_album.jdb`: 15 checks.
 
 ## What survives a restart
 

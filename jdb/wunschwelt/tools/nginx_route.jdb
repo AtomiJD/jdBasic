@@ -3,9 +3,10 @@
 '   jdbasic nginx_route.jdb <site file> <result file> <port>
 '
 ' The routes go in front of the first "location /" block that proxies an API,
-' marked by the anchor line below. Only join, sync and code are reachable
-' from outside; the patch entry and the statistics stay on the machine.
-' Prints "added", "present" or "no anchor".
+' marked by the anchor line below; a route the file has already is left as
+' it is. Only join, sync, code and view are reachable from outside; the
+' patch entry and the statistics stay on the machine. Prints "added",
+' "present" or "no anchor".
 
 OPTION "EXPLICIT"
 
@@ -15,10 +16,6 @@ DIM site$ AS STRING = REPLACE$(TXTREADER$(cli[1]), CHR$(13), "")
 DIM port$ AS STRING = cli[3]
 DIM anchor$ AS STRING = "    location /tower/api/ {"
 
-IF INSTR(site$, "location = /wunschwelt/api/sync") >= 0 THEN
-    PRINT "present"
-    END 0
-ENDIF
 IF INSTR(site$, anchor$) < 0 THEN
     PRINT "no anchor"
     END 1
@@ -41,8 +38,16 @@ FUNC Route$(name$ AS STRING, throttle AS BOOLEAN)
     RETURN r$
 ENDFUNC
 
-DIM block$ AS STRING = "    # Wunschwelt: the three calls a player's client makes" + nl$
-block$ = block$ + Route$("join", TRUE) + Route$("sync", FALSE) + Route$("code", FALSE)
+' join and view check a PIN, so they are throttled
+DIM block$ AS STRING = ""
+FOR EACH route IN [["join", TRUE], ["sync", FALSE], ["code", FALSE], ["view", TRUE]]
+    IF INSTR(site$, "location = /wunschwelt/api/" + route[0] + " {") < 0 THEN block$ = block$ + Route$(route[0], route[1])
+NEXT
+IF block$ = "" THEN
+    PRINT "present"
+    END 0
+ENDIF
+block$ = "    # Wunschwelt: the calls a player's client and phone make" + nl$ + block$
 DIM at AS INTEGER = INSTR(site$, anchor$)
 TXTWRITER cli[2], LEFT$(site$, at) + block$ + MID$(site$, at, LEN(site$))
 PRINT "added"

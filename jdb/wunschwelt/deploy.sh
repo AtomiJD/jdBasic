@@ -33,7 +33,7 @@ push_files() {
     $SCP server.jdb client.jdb "$HOST:~/ww_stage/"
     $SCP game/*.jdb game/*.json "$HOST:~/ww_stage/game/"
     $SCP tools/patch.jdb tools/nginx_route.jdb tools/preflight.jdb tools/admin.jdb tools/box_preflight.sh "$HOST:~/ww_stage/tools/"
-    $SCP web/index.html "$HOST:~/ww_stage/web/"
+    $SCP web/index.html web/album.html "$HOST:~/ww_stage/web/"
     # the pictures of the client as raw pixels (the browser runtime reads no
     # PNG) and the list the page loads them by
     $SSH 'mkdir -p ~/ww_stage/assets'
@@ -70,7 +70,7 @@ preflight() {
 
 publish_page() {
     $SSH 'sudo -n mkdir -p /var/www/vvss/wunschwelt/play/assets \
-      && sudo -n cp ~/ww_stage/web/index.html /var/www/vvss/wunschwelt/ \
+      && sudo -n cp ~/ww_stage/web/index.html ~/ww_stage/web/album.html /var/www/vvss/wunschwelt/ \
       && sudo -n cp ~/ww_stage/client.jdb ~/ww_stage/melody.jdb ~/ww_stage/assets.txt /var/www/vvss/wunschwelt/play/ \
       && sudo -n cp ~/ww_stage/assets/*.rgba ~/ww_stage/assets/*.parts ~/ww_stage/assets/anchors.json /var/www/vvss/wunschwelt/play/assets/ \
       && sudo -n cp ~/ww_stage/playground.html /var/www/vvss/wunschwelt/play/index.html \
@@ -90,6 +90,20 @@ publish_server() {
 ship_runtime() {
     $SCP ../../wasm/jdbasic.js ../../wasm/jdbasic.wasm "$HOST:~/ww_stage/"
     $SSH 'sudo -n cp ~/ww_stage/jdbasic.js ~/ww_stage/jdbasic.wasm /var/www/vvss/wunschwelt/play/ && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
+}
+
+# The routes of the outside calls in the nginx site; a route that is there
+# stays, nginx is reloaded only when one was added and its test passes.
+nginx_routes() {
+    echo "== nginx routes =="
+    $SSH "F=/etc/nginx/sites-available/vvss
+R=\$(/opt/wunschwelt/jdBasic /opt/wunschwelt/tools/nginx_route.jdb \$F /home/deploy/ww_stage/vvss.new $PORT | tail -1)
+echo \"routes: \$R\"
+if [ \"\$R\" = added ]; then
+  B=\$F.bak-\$(date +%Y%m%d-%H%M%S)
+  sudo -n cp \$F \$B && sudo -n cp /home/deploy/ww_stage/vvss.new \$F
+  if sudo -n nginx -t 2>/dev/null; then sudo -n systemctl reload nginx; else sudo -n cp \$B \$F; echo 'nginx refused the routes, site file restored'; exit 1; fi
+fi"
 }
 
 check() {
@@ -165,15 +179,7 @@ MemoryMax=1G
 WantedBy=multi-user.target
 EOF
     $SSH 'sudo -n systemctl daemon-reload && sudo -n systemctl enable wunschwelt && sudo -n systemctl restart wunschwelt && sleep 2 && systemctl is-active wunschwelt'
-    echo "== nginx routes =="
-    $SSH "F=/etc/nginx/sites-available/vvss
-R=\$(/opt/wunschwelt/jdBasic /opt/wunschwelt/tools/nginx_route.jdb \$F /home/deploy/ww_stage/vvss.new $PORT | tail -1)
-echo \"routes: \$R\"
-if [ \"\$R\" = added ]; then
-  B=\$F.bak-\$(date +%Y%m%d-%H%M%S)
-  sudo -n cp \$F \$B && sudo -n cp /home/deploy/ww_stage/vvss.new \$F
-  if sudo -n nginx -t 2>/dev/null; then sudo -n systemctl reload nginx; else sudo -n cp \$B \$F; echo 'nginx refused the routes, site file restored'; exit 1; fi
-fi"
+    nginx_routes
     echo "== page =="
     publish_page
     # the editor's bundle is taken from the neighbouring page once; the runtime is this game's own
@@ -208,6 +214,7 @@ fi"
     push_files
     preflight
     publish_server
+    nginx_routes
     publish_page
     if [ "$1" = "--wasm" ]; then
         ship_runtime

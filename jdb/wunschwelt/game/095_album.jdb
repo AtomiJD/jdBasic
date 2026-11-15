@@ -1,0 +1,286 @@
+' The album of the animal sorts (stage 3): one page per sort, the same
+' fixed fields for everyone. A field fills from what the player lives with
+' an animal of the sort: met (petted or fed, once a day for each animal),
+' a friend (one starts to follow), dressed up, striped, spotted, the season
+' it was met in, and one field for each fur colour. A field met again
+' stacks; at album.star1 (5) and album.star2 (10) it earns a star.
+'
+' profile{"album"}: {sort: {field: count}}, profile{"album_met"}: {npc id:
+' the day it was last met}. The client opens the album with K; a phone reads
+' it through POST /view {"view": "album"} without entering the world.
+
+'@server
+
+' The fields of a page in order: [key, label, colour or []].
+FUNC RuleAlbumFields()
+    DIM rows = [["meet", "Begegnung", []], ["friend", "Freundschaft", []], ["chic", "Schick", []], ["stripes", "Streifen", []], ["spots", "Punkte", []], ["spring", RuleDe$("Fr{u}hling"), []], ["summer", "Sommer", []], ["autumn", "Herbst", []], ["winter", "Winter", []], ["c_natur", "Naturfarbe", []]]
+    DIM labels = {"gruen": RuleDe$("Gr{u}n"), "tuerkis": RuleDe$("T{u}rkis"), "weiss": RuleDe$("Wei{s}"), "hellblau": "Hellblau", "dunkelblau": "Dunkelblau"}
+    DIM colors = RuleLookColors()
+    FOR EACH name$ IN ["rot", "orange", "gelb", "gruen", "tuerkis", "hellblau", "blau", "dunkelblau", "lila", "rosa", "pink", "braun", "schwarz", "weiss", "grau", "silber", "gold"]
+        IF MAP.EXISTS(colors, name$) THEN
+            DIM label$ = labels{name$} ?? (UCASE$(LEFT$(name$, 1)) + MID$(name$, 1))
+            rows = APPEND(rows, [["c_" + name$, label$, colors{name$}]])
+        ENDIF
+    NEXT
+    RETURN rows
+ENDFUNC
+
+' The animal sorts in the order of their German names: [sort, name].
+FUNC RuleAlbumSorts()
+    DIM whats = RuleBuildWhats()
+    DIM keyed = []
+    FOR EACH what$ IN MAP.KEYS(whats)
+        IF whats{what$}[1] THEN keyed = APPEND(keyed, RuleLookColorKey$(whats{what$}[0]) + "|" + what$)
+    NEXT
+    DIM rows = []
+    FOR EACH k$ IN SORT(keyed)
+        DIM what$ = SPLIT(k$, "|")[1]
+        rows = APPEND(rows, [[what$, whats{what$}[0]]])
+    NEXT
+    RETURN rows
+ENDFUNC
+
+FUNC RuleSeason$(w)
+    DIM month_no = VAL(MID$(RuleToday$(w, 0), 5, 2))
+    IF month_no >= 3 ANDALSO month_no <= 5 THEN RETURN "spring"
+    IF month_no >= 6 ANDALSO month_no <= 8 THEN RETURN "summer"
+    IF month_no >= 9 ANDALSO month_no <= 11 THEN RETURN "autumn"
+    RETURN "winter"
+ENDFUNC
+
+' The fur colour of a look by its name, "natur" when it has none of the list.
+FUNC RuleFurName$(look)
+    IF NOT ISMAP(look) ORELSE NOT ISARR(look{"color"} ?? 0) THEN RETURN "natur"
+    DIM col = look{"color"}
+    DIM colors = RuleLookColors()
+    FOR EACH name$ IN MAP.KEYS(colors)
+        DIM c = colors{name$}
+        IF c[0] = col[0] ANDALSO c[1] = col[1] ANDALSO c[2] = col[2] THEN RETURN name$
+    NEXT
+    RETURN "natur"
+ENDFUNC
+
+' The sort of an npc when it is an animal, else "".
+FUNC RuleAlbumSortOf$(npc)
+    DIM whats = RuleBuildWhats()
+    DIM what$ = "" + (npc{"what"} ?? npc{"kind"} ?? "")
+    IF NOT MAP.EXISTS(whats, what$) THEN RETURN ""
+    IF NOT whats{what$}[1] THEN RETURN ""
+    RETURN what$
+ENDFUNC
+
+FUNC RuleAlbumLabel$(key$)
+    FOR EACH f IN RuleAlbumFields()
+        IF f[0] = key$ THEN RETURN f[1]
+    NEXT
+    RETURN key$
+ENDFUNC
+
+' One more of the field key$ on the page what$; the player hears of a new
+' field and of a star.
+SUB RuleAlbumAdd(w, p, what$, key$)
+    DIM prof = RuleProfile(w, p{"name"})
+    DIM album = prof{"album"}
+    IF NOT ISMAP(album{what$} ?? 0) THEN album{what$} = {}
+    DIM n = (album{what$}{key$} ?? 0) + 1
+    album{what$}{key$} = n
+    p{"albumv"} = (p{"albumv"} ?? 0) + 1
+    DIM page$ = (RuleBuildWhats(){what$} ?? [what$])[0]
+    DIM text$ = ""
+    IF n = 1 THEN text$ = "Neu im Album: " + page$ + ", " + RuleAlbumLabel$(key$) + "!"
+    IF n = RuleConf(w, "album.star1", 5) ORELSE n = RuleConf(w, "album.star2", 10) THEN text$ = "Ein Stern im Album: " + page$ + ", " + RuleAlbumLabel$(key$) + " (" + STR$(n) + ")!"
+    IF text$ <> "" THEN KEmit(w, {"type": "purse", "to": p{"name"}, "text": text$, "got": "album"})
+ENDSUB
+
+' p petted or fed the animal id$: once a day for each animal it fills
+' the fields of what the animal is.
+SUB RuleAlbumMeet(w, p, id$)
+    IF NOT MAP.EXISTS(w{"npcs"}, id$) THEN RETURN
+    DIM npc = w{"npcs"}{id$}
+    DIM what$ = RuleAlbumSortOf$(npc)
+    IF what$ = "" THEN RETURN
+    DIM prof = RuleProfile(w, p{"name"})
+    IF NOT ISMAP(prof{"album_met"} ?? 0) THEN prof{"album_met"} = {}
+    DIM today$ = RuleToday$(w, 0)
+    IF (prof{"album_met"}{id$} ?? "") = today$ THEN RETURN
+    prof{"album_met"}{id$} = today$
+    DIM look = npc{"look"} ?? {}
+    RuleAlbumAdd(w, p, what$, "meet")
+    RuleAlbumAdd(w, p, what$, RuleSeason$(w))
+    RuleAlbumAdd(w, p, what$, "c_" + RuleFurName$(look))
+    IF ISMAP(look) THEN
+        DIM pattern$ = "" + (look{"pattern"} ?? "")
+        IF pattern$ = "stripes" ORELSE pattern$ = "spots" THEN RuleAlbumAdd(w, p, what$, pattern$)
+        IF ISMAP(look{"wear"} ?? 0) THEN
+            IF MAP.SIZE(look{"wear"}) > 0 THEN RuleAlbumAdd(w, p, what$, "chic")
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB RuleAlbumFriend(w, p, id$)
+    IF NOT MAP.EXISTS(w{"npcs"}, id$) THEN RETURN
+    DIM what$ = RuleAlbumSortOf$(w{"npcs"}{id$})
+    IF what$ <> "" THEN RuleAlbumAdd(w, p, what$, "friend")
+ENDSUB
+
+' The album of a player as the client and the phone read it.
+FUNC RuleAlbumOf(w, name$)
+    RETURN {"have": RuleProfile(w, name$){"album"}, "fields": RuleAlbumFields(), "sorts": RuleAlbumSorts(), "stars": [RuleConf(w, "album.star1", 5), RuleConf(w, "album.star2", 10)]}
+ENDFUNC
+
+SUB RuleAlbumSync(w, p, msg, answer)
+    IF INT(msg{"albumv"} ?? -1) = (p{"albumv"} ?? 0) THEN RETURN
+    answer{"album"} = RuleAlbumOf(w, p{"name"})
+    answer{"albumv"} = p{"albumv"} ?? 0
+ENDSUB
+
+' The keeper reads the album of a player ("album" {"player"}) and sets the
+' count of one field ("album_set" {"player", "sort", "field", "v"}).
+FUNC RuleAlbumAdmin(w, name$, args)
+    DIM who$ = "" + (args{"player"} ?? "")
+    IF NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN {"ok": FALSE, "error": "no such player"}
+    DIM album = RuleProfile(w, who$){"album"}
+    IF name$ = "album" THEN RETURN {"ok": TRUE, "album": album}
+    DIM what$ = "" + (args{"sort"} ?? "")
+    DIM key$ = "" + (args{"field"} ?? "")
+    IF RuleAlbumSortOf$({"what": what$}) = "" THEN RETURN {"ok": FALSE, "error": "no such sort"}
+    DIM known = FALSE
+    FOR EACH f IN RuleAlbumFields()
+        IF f[0] = key$ THEN known = TRUE
+    NEXT
+    IF NOT known ORELSE NOT ISNUM(args{"v"} ?? "") THEN RETURN {"ok": FALSE, "error": "field and v"}
+    IF NOT ISMAP(album{what$} ?? 0) THEN album{what$} = {}
+    album{what$}{key$} = MAX([0, INT(args{"v"})])
+    IF MAP.EXISTS(w{"players"}, who$) THEN w{"players"}{who$}{"albumv"} = (w{"players"}{who$}{"albumv"} ?? 0) + 1
+    RETURN {"ok": TRUE, "v": album{what$}{key$}}
+ENDFUNC
+
+FUNC RuleView(w, name$, msg)
+    IF "" + (msg{"view"} ?? "") <> "album" THEN RETURN {"ok": FALSE, "error": "view"}
+    DIM out = RuleAlbumOf(w, name$)
+    out{"ok"} = TRUE
+    out{"name"} = name$
+    RETURN out
+ENDFUNC
+
+'@client
+
+SUB ClientAlbumAsk(c, msg)
+    msg{"albumv"} = c{"albumv"} ?? -1
+ENDSUB
+
+SUB ClientAlbumExtra(c, r)
+    IF MAP.EXISTS(r, "album") THEN
+        c{"album"} = r{"album"}
+        c{"albumv"} = r{"albumv"}
+    ENDIF
+ENDSUB
+
+FUNC ClientHolds(c)
+    RETURN c{"album_open"} ?? FALSE
+ENDFUNC
+
+' K opens and closes the album, left and right turn the pages.
+FUNC ClientAlbumKey(c, tapped$)
+    IF tapped$ = "K" THEN
+        c{"album_open"} = NOT (c{"album_open"} ?? FALSE)
+        IF c{"album_open"} THEN
+            c{"bag"} = FALSE
+            c{"questlog"} = FALSE
+        ENDIF
+        RETURN TRUE
+    ENDIF
+    IF NOT (c{"album_open"} ?? FALSE) THEN RETURN FALSE
+    DIM n_pages = LEN((c{"album"} ?? {}){"sorts"} ?? [])
+    IF tapped$ = "ESCAPE" ORELSE tapped$ = "I" ORELSE tapped$ = "Q" THEN
+        c{"album_open"} = FALSE
+        RETURN tapped$ = "ESCAPE"
+    ENDIF
+    IF n_pages = 0 THEN RETURN TRUE
+    IF tapped$ = "LEFT" ORELSE tapped$ = "A" THEN c{"album_page"} = ((c{"album_page"} ?? 0) - 1 + n_pages) MOD n_pages
+    IF tapped$ = "RIGHT" ORELSE tapped$ = "D" THEN c{"album_page"} = ((c{"album_page"} ?? 0) + 1) MOD n_pages
+    RETURN TRUE
+ENDFUNC
+
+SUB AlbumStar(x, y)
+    RECT x + 2, y, 1, 5, TRUE, 250, 204, 60
+    RECT x, y + 2, 5, 1, TRUE, 250, 204, 60
+    RECT x + 1, y + 1, 3, 3, TRUE, 250, 204, 60
+ENDSUB
+
+' The page of one sort: its picture, how many fields are filled, and a
+' card for each field, grey with a ? while it is empty.
+SUB ClientAlbumHud(c)
+    IF NOT (c{"album_open"} ?? FALSE) THEN RETURN
+    DIM album = c{"album"} ?? NONE
+    DIM px0 = 20
+    DIM py0 = 24
+    DIM pw = 600
+    DIM ph = 336
+    ROUNDED_RECT px0, py0, pw, ph, 6, TRUE, 250, 244, 214
+    ROUNDED_RECT px0, py0, pw, ph, 6, FALSE, 96, 64, 40
+    IF NOT ISMAP(album) THEN
+        TEXT px0 + 12, py0 + 10, "Das Album kommt gleich ...", 96, 64, 40
+        RETURN
+    ENDIF
+    DIM sorts = album{"sorts"}
+    DIM fields = album{"fields"}
+    IF LEN(sorts) = 0 THEN RETURN
+    DIM page = CLAMP(c{"album_page"} ?? 0, 0, LEN(sorts) - 1)
+    DIM what$ = sorts[page][0]
+    DIM have = album{"have"}{what$} ?? {}
+    IF NOT ISMAP(have) THEN have = {}
+    DIM stars = album{"stars"}
+    DIM filled = 0
+    FOR EACH f IN fields
+        IF (have{f[0]} ?? 0) > 0 THEN filled = filled + 1
+    NEXT
+    DIM high = GFX.TEXTSIZE("Ag")[1]
+    DIM kinds = AnimalKinds()
+    DIM img = AnimalSheet(c, what$, {}, kinds{what$} ?? {"base": [180, 180, 180]})
+    IF img > 0 THEN GFX.DRAWIMAGE_REGION(img, 48, 0, 48, 48, px0 + 10, py0 + 4, 48, 48)
+    TEXT px0 + 66, py0 + 8, "Album: " + sorts[page][1] + "   (Seite " + STR$(page + 1) + " von " + STR$(LEN(sorts)) + ")", 96, 64, 40
+    TEXT px0 + 66, py0 + 10 + high, STR$(filled) + " von " + STR$(LEN(fields)) + " Karten", 130, 100, 60
+    ' a bar of what is filled
+    DIM bar_x = px0 + 80 + GFX.TEXTSIZE(STR$(filled) + " von " + STR$(LEN(fields)) + " Karten")[0]
+    DIM bar_y = py0 + 10 + high + high \ 2 - 3
+    RECT bar_x, bar_y, 200, 6, TRUE, 220, 208, 170
+    RECT bar_x, bar_y, INT(200 * filled / MAX([1, LEN(fields)])), 6, TRUE, 120, 180, 90
+    ' three columns, a card is one row: colour, name, count and stars
+    DIM cols = 3
+    DIM cw = 190
+    DIM gy = py0 + 14 + 2 * high
+    DIM n_rows = (LEN(fields) + cols - 1) \ cols
+    DIM chh = (py0 + ph - high - 10 - gy) \ n_rows - 2
+    DIM ty = (chh - high) \ 2
+    DIM gx = px0 + 12
+    DIM i = 0
+    FOR i = 0 TO LEN(fields) - 1
+        DIM f = fields[i]
+        DIM n = have{f[0]} ?? 0
+        DIM cx = gx + (i MOD cols) * (cw + 4)
+        DIM cy = gy + (i \ cols) * (chh + 2)
+        DIM tx = cx + 6
+        IF n > 0 THEN
+            ROUNDED_RECT cx, cy, cw, chh, 3, TRUE, 255, 252, 240
+            ROUNDED_RECT cx, cy, cw, chh, 3, FALSE, 150, 110, 60
+            IF LEN(f[2]) = 3 THEN
+                CIRCLE cx + 9, cy + chh \ 2, 5, TRUE, f[2][0], f[2][1], f[2][2]
+                tx = cx + 18
+            ENDIF
+            TEXT tx, cy + ty, f[1], 60, 44, 28
+            DIM count_txt$ = "x" + STR$(n)
+            DIM right_x = cx + cw - 6 - GFX.TEXTSIZE(count_txt$)[0]
+            IF n >= stars[0] THEN right_x = right_x - 8
+            IF n >= stars[1] THEN right_x = right_x - 8
+            TEXT right_x, cy + ty, count_txt$, 120, 90, 50
+            IF n >= stars[0] THEN AlbumStar(cx + cw - 12, cy + chh \ 2 - 2)
+            IF n >= stars[1] THEN AlbumStar(cx + cw - 20, cy + chh \ 2 - 2)
+        ELSE
+            ROUNDED_RECT cx, cy, cw, chh, 3, TRUE, 214, 204, 176
+            TEXT tx, cy + ty, f[1], 150, 140, 120
+            TEXT cx + cw - 6 - GFX.TEXTSIZE("?")[0], cy + ty, "?", 150, 140, 120
+        ENDIF
+    NEXT i
+    TEXT px0 + 12, py0 + ph - high - 6, "Links / rechts: bl" + CHR$(195) + CHR$(164) + "ttern   K oder Esc: schlie" + CHR$(195) + CHR$(159) + "en", 120, 110, 100
+ENDSUB
