@@ -414,7 +414,7 @@ SUB RuleAnimalTick(w, now)
             DIM owner$ = npc{"follow"} ?? ""
             IF owner$ <> "" THEN
                 IF NOT MAP.EXISTS(players, owner$) THEN
-                    RuleFollowStop(w, npc)
+                    RuleFollowLost(w, npc, owner$)
                 ELSE
                     DIM k = order{owner$} ?? 0
                     order{owner$} = k + 1

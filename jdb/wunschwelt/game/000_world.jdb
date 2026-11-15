@@ -299,6 +299,7 @@ SUB RuleTick(w, now)
     RulePurseTick(w, now)
     RuleQuestTick(w, now)
     RuleBondTick(w, now)
+    RuleCardTick(w, now)
 ENDSUB
 
 ' The wishes' turn in a tick; game/010_wishes.jdb gives it a body.
@@ -380,6 +381,18 @@ FUNC RuleAnimalRoom(w, what$)
 ENDFUNC
 
 SUB RuleBasketPut(w, who$, npc)
+ENDSUB
+
+FUNC RuleBasketSaid(w, p, said$)
+    RETURN FALSE
+ENDFUNC
+
+' A follower whose player left the world.
+SUB RuleFollowLost(w, npc, owner$)
+    RuleFollowStop(w, npc)
+ENDSUB
+
+SUB RuleCardTick(w, now)
 ENDSUB
 
 FUNC RuleCardAdmin(w, name$, args)

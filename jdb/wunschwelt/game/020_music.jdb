@@ -66,6 +66,7 @@ SUB RuleHeard(w, p, said$)
     IF style$ <> "" THEN RuleApplyMusic(w, p{"name"}, {"music": style$})
     ' a name, something to wear or a call for an animal is done at once and is no wish
     DIM handled = RuleBuildRename(w, p, said$)
+    IF NOT handled THEN handled = RuleBasketSaid(w, p, said$)
     IF NOT handled THEN handled = RuleAnimalDress(w, p, said$)
     IF NOT handled THEN handled = RuleAnimalCall(w, p, said$)
     IF NOT handled THEN handled = RuleLookAsked(w, p, said$)

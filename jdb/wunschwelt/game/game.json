@@ -1,6 +1,9 @@
 {
   "animals": {
     "per_sort_max": 3,
-    "followers_count": false
+    "followers_count": false,
+    "basket_fond": 80,
+    "leave_days": 3,
+    "leave_hour": 18
   }
 }

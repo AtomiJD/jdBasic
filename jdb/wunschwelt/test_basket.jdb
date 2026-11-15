@@ -1,0 +1,176 @@
+' Test of the basket and of leaving, with a model that answers from a
+' script: a cat that loves Anna lies down in her basket when told and comes
+' out beside her when called, a cat she does not love enough stays, a cat
+' nobody loves walks into the forest when its days are over and Anna keeps
+' a memory card of it.
+'
+'   jdBasic jdb/wunschwelt/test_basket.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8260 + OS.PID() MOD 10
+DIM model_port AS INTEGER = 8270 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_basket_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+DIM cats AS INTEGER = 0
+FUNC FakeModel(request)
+    DIM body = JSON.PARSE(request{"body"})
+    DIM messages = body{"messages"}
+    DIM system$ AS STRING = messages[0]{"content"}
+    DIM said$ AS STRING = messages[LEN(messages) - 1]{"content"}
+    DIM content$ AS STRING = "Gern."
+    IF INSTR(system$, "Du sortierst") >= 0 THEN
+        content$ = JSON.STRINGIFY$({"wish": FALSE})
+        IF INSTR(said$, "Katze") >= 0 THEN content$ = JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": said$})
+    ELSEIF INSTR(system$, "Du bist der Baumeister") >= 0 THEN
+        cats = cats + 1
+        content$ = JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "cat", "name": "Mieze" + STR$(cats), "where": "tavern"}]})
+    ENDIF
+    RETURN JSON.STRINGIFY$({"choices": [{"message": {"role": "assistant", "content": content$}}]})
+ENDFUNC
+HTTP.SERVER.ON_POST "/v1/chat/completions", FakeModel@
+DIM model_up = HTTP.SERVER.START(model_port)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "200"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+SLEEP 1500
+DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
+DIM pace = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM r = Post("/sync", {"token": token$, "mapv": 1})
+DIM since AS INTEGER = r{"seq"}
+DIM heard = []
+DIM told = []
+
+SUB Wait(ms AS INTEGER)
+    DIM t0 = TICK()
+    DO WHILE TICK() - t0 < ms
+        DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+        since = t{"seq"}
+        FOR EACH ev IN t{"events"}
+            IF ev{"type"} = "build" THEN heard = APPEND(heard, ev{"text"})
+            IF ev{"type"} = "purse" ANDALSO (ev{"to"} ?? "") = "Anna" THEN told = APPEND(told, ev{"text"})
+        NEXT
+        SLEEP 200
+    LOOP
+ENDSUB
+
+SUB Say(text$ AS STRING)
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": text$})
+    Wait(800)
+ENDSUB
+
+FUNC Heard(part$ AS STRING)
+    RETURN INSTR(JOIN(heard, "|"), part$) >= 0
+ENDFUNC
+FUNC Told(part$ AS STRING)
+    RETURN INSTR(JOIN(told, "|"), part$) >= 0
+ENDFUNC
+
+' The npc row of the animal called name$, or an empty list.
+FUNC Row(name$ AS STRING)
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+    FOR EACH row IN t{"npcs"}
+        IF row[1] = name$ THEN RETURN row
+    NEXT
+    RETURN []
+ENDFUNC
+
+FUNC Follows(id$ AS STRING)
+    DIM fonds = Post("/sync", {"token": token$, "mapv": 1, "since": since, "fondv": -1}){"fond"} ?? {}
+    RETURN ISARR(fonds{id$} ?? 0) ANDALSO fonds{id$}[1] = TRUE
+ENDFUNC
+
+FUNC WishCat(n AS INTEGER)
+    DIM text$ AS STRING = "Ich wuensche mir eine Katze Nummer " + STR$(n)
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": text$})
+    DIM k AS INTEGER
+    FOR k = 1 TO 60
+        Wait(300)
+        FOR EACH wish IN Admin("wishes", {}){"wishes"}
+            IF wish{"text"} = text$ ANDALSO wish{"status"} = "done" THEN RETURN TRUE
+        NEXT
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+DIM marta = NONE
+FOR EACH row IN r{"npcs"}
+    IF row[0] = "marta" THEN marta = row
+NEXT
+DIM put = Admin("player_put", {"player": "Anna", "x": marta[2], "y": marta[3] + 1})
+
+Check("a cat is made", WishCat(1) ANDALSO LEN(Row("Mieze1")) > 0)
+DIM first$ AS STRING = Row("Mieze1")[0]
+DIM fond = Admin("fond", {"player": "Anna", "npc": first$, "v": 95})
+Wait(2600)
+Check("it follows Anna", Follows(first$))
+
+Say("Leg Dich hin, Mieze1!")
+Check("told, it lies down in the basket", LEN(Row("Mieze1")) = 0 ANDALSO Heard("kuschelt sich"))
+DIM basket = Admin("basket", {"player": "Anna"})
+Check("and sleeps there", LEN(basket{"basket"}) = 1 ANDALSO basket{"basket"}[0][1] = "Mieze1")
+
+Say("Komm raus, Mieze1")
+DIM back = Row("Mieze1")
+DIM now_at = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+Check("called, it comes out beside Anna", LEN(back) > 0 ANDALSO ABS(back[2] - now_at{"x"}) <= 1 ANDALSO ABS(back[3] - now_at{"y"}) <= 1)
+Check("and follows her again", Follows(first$) ANDALSO LEN(Admin("basket", {"player": "Anna"}){"basket"}) = 0)
+DIM fonds = Post("/sync", {"token": token$, "mapv": 1, "since": since, "fondv": -1}){"fond"}
+Check("with all its love", fonds{first$}[0] >= 94)
+
+Say("Komm raus")
+Check("an empty basket is said so", Told("leer"))
+
+DIM low = Admin("fond", {"player": "Anna", "npc": first$, "v": 60})
+Say("Leg Dich hin")
+Check("a cat that loves her too little stays", LEN(Row("Mieze1")) > 0 ANDALSO Told("nicht gut genug"))
+DIM high = Admin("fond", {"player": "Anna", "npc": first$, "v": 95})
+
+' a cat nobody loves leaves when its days are over
+Check("a second cat is made", WishCat(2))
+DIM second = Row("Mieze2")
+DIM away = Admin("player_put", {"player": "Anna", "x": second[2] + IIF(second[2] > 20, -9, 9), "y": second[3]})
+DIM knew = Admin("fond", {"player": "Anna", "npc": second[0], "v": 0})
+DIM days = Admin("config_set", {"key": "animals.leave_days", "v": 0})
+DIM hour_set = Admin("config_set", {"key": "animals.leave_hour", "v": 0})
+Say("Mieze2 schaut so verschlafen")
+Wait(23000)
+Check("the unloved cat walked into the forest", LEN(Row("Mieze2")) = 0 ANDALSO Heard("in den Wald"))
+Check("the loved one stayed", LEN(Row("Mieze1")) > 0)
+DIM memories = Admin("basket", {"player": "Anna"}){"memories"}
+Check("Anna keeps a memory card", LEN(memories) = 1 ANDALSO memories[0]{"name"} = "Mieze2" ANDALSO LEN(memories[0]{"day"}) = 10 ANDALSO memories[0]{"what"} = "cat")
+Check("with the last thing heard of it", INSTR(memories[0]{"line"}, "Mieze2") >= 0)
+Check("and is told so", Told("Erinnerungskarte"))
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM gone = OS.KILL(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

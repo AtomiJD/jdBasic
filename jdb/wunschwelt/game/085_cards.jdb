@@ -3,6 +3,13 @@
 ' player counts only when animals.followers_count is true. An animal wished
 ' beyond that is made all the same and sleeps in the basket of the one who
 ' wished it: profile{"basket"}, a list of the animals as they were made.
+'
+' A follower the player loves (animals.basket_fond) lies down in the basket
+' when told ("Leg Dich hin") and comes out beside the player when called
+' ("Komm raus, Muffin"), with all it was. An animal that nobody has loved
+' for animals.leave_days days walks into the forest in the evening (from
+' animals.leave_hour on) and is gone; everyone who knew it keeps a memory
+' card: profile{"memories"}, {"id", "name", "what", "day", "line"}.
 
 '@server
 
@@ -23,18 +30,189 @@ FUNC RuleAnimalRoom(w, what$)
     RETURN RuleAnimalsOfSort(w, what$) < RuleConf(w, "animals.per_sort_max", 3)
 ENDFUNC
 
-' The animal npc, made for who$, goes to sleep in their basket.
-SUB RuleBasketPut(w, who$, npc)
-    IF NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN
+FUNC RuleSortName$(what$)
+    RETURN (RuleBuildWhats(){what$} ?? [what$])[0]
+ENDFUNC
+
+' The npc goes to sleep in the basket of who$, out of the world.
+SUB RuleBasketKeep(w, who$, npc)
     DIM prof = RuleProfile(w, who$)
     IF NOT MAP.EXISTS(prof, "basket") THEN prof{"basket"} = []
     npc{"follow"} = ""
+    npc{"stays_by"} = ""
+    npc{"slept_at"} = KNow()
     prof{"basket"} = APPEND(prof{"basket"}, npc)
-    DIM kind_name$ = (RuleBuildWhats(){npc{"what"}} ?? [npc{"what"}])[0]
-    KEmit(w, {"type": "build", "who": "Baumeister", "text": RuleDe$("Von der Art " + kind_name$ + " leben schon " + STR$(RuleConf(w, "animals.per_sort_max", 3)) + " im Dorf. ") + npc{"name"} + RuleDe$(" schl{a}ft deshalb im K{o}rbchen von ") + who$ + "."})
+    IF MAP.EXISTS(w{"npcs"}, npc{"id"}) THEN MAP.DELETE(w{"npcs"}, npc{"id"})
 ENDSUB
 
-' The keeper reads the basket of a player ({"player"}): the names and sorts.
+' The animal npc, made for who$ beyond the cap, goes to sleep in their basket.
+SUB RuleBasketPut(w, who$, npc)
+    IF NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN
+    RuleBasketKeep(w, who$, npc)
+    KEmit(w, {"type": "build", "who": "Baumeister", "text": RuleDe$("Von der Art " + RuleSortName$(npc{"what"}) + " leben schon " + STR$(RuleConf(w, "animals.per_sort_max", 3)) + " im Dorf. ") + npc{"name"} + RuleDe$(" schl{a}ft deshalb im K{o}rbchen von ") + who$ + "."})
+ENDSUB
+
+' A follower whose player left the world stays where it stands, or, when
+' its sort has no room left, sleeps in that player's basket.
+SUB RuleFollowLost(w, npc, owner$)
+    RuleFollowStop(w, npc)
+    IF RuleAnimalsOfSort(w, npc{"what"} ?? "") > RuleConf(w, "animals.per_sort_max", 3) ANDALSO MAP.EXISTS(w{"profiles"} ?? {}, owner$) THEN RuleBasketKeep(w, owner$, npc)
+ENDSUB
+
+' The entry of list whose name the sentence low$ holds; -1 when none.
+FUNC RuleNamedIn(low$, names)
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        DIM key$ = RuleLookColorKey$(names[i])
+        IF LEN(key$) >= 3 ANDALSO INSTR(low$, key$) >= 0 THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+SUB RuleCardNote(w, who$, text$)
+    KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$(text$)})
+ENDSUB
+
+' "Leg Dich hin" sends a follower to the basket, "Komm raus" wakes one;
+' TRUE when the sentence was one of them.
+FUNC RuleBasketSaid(w, p, said$)
+    DIM low$ = " " + REGEX.REPLACE$(" +", RuleLookColorKey$(REGEX.REPLACE$("[.,!?;:]", said$, " ")), " ") + " "
+    DIM sleeps = INSTR(low$, " leg dich hin ") >= 0 ORELSE INSTR(low$, " leg dich schlafen ") >= 0 ORELSE INSTR(low$, " ins koerbchen ") >= 0
+    DIM wakes = INSTR(low$, " komm raus ") >= 0 ORELSE INSTR(low$, " komm heraus ") >= 0 ORELSE INSTR(low$, " wach auf ") >= 0
+    IF NOT sleeps ANDALSO NOT wakes THEN RETURN FALSE
+    DIM who$ = p{"name"}
+    DIM prof = RuleProfile(w, who$)
+    IF sleeps THEN
+        DIM followers = RuleFollowers(w, who$)
+        IF LEN(followers) = 0 THEN
+            RuleCardNote(w, who$, "Kein Tier folgt Dir, das sich hinlegen k{o}nnte.")
+            RETURN TRUE
+        ENDIF
+        DIM names = []
+        FOR EACH id$ IN followers
+            names = APPEND(names, w{"npcs"}{id$}{"name"} ?? "")
+        NEXT
+        DIM k = MAX([0, RuleNamedIn(low$, names)])
+        DIM npc = w{"npcs"}{followers[k]}
+        IF RuleFond(w, who$, npc{"id"}) < RuleConf(w, "animals.basket_fond", 80) THEN
+            RuleCardNote(w, who$, npc{"name"} + " kennt Dich noch nicht gut genug f{u}r Dein K{o}rbchen.")
+            RETURN TRUE
+        ENDIF
+        RuleBasketKeep(w, who$, npc)
+        p{"fondv"} = (p{"fondv"} ?? 0) + 1
+        KEmit(w, {"type": "build", "who": who$, "text": npc{"name"} + RuleDe$(" kuschelt sich ins K{o}rbchen von ") + who$ + RuleDe$(" und schl{a}ft ein.")})
+        RETURN TRUE
+    ENDIF
+    DIM basket = prof{"basket"} ?? []
+    IF LEN(basket) = 0 THEN
+        RuleCardNote(w, who$, "Dein K{o}rbchen ist leer.")
+        RETURN TRUE
+    ENDIF
+    DIM sleepers = []
+    FOR EACH one IN basket
+        sleepers = APPEND(sleepers, one{"name"} ?? "")
+    NEXT
+    DIM pick = RuleNamedIn(low$, sleepers)
+    IF pick < 0 ANDALSO LEN(basket) = 1 THEN pick = 0
+    IF pick < 0 THEN
+        RuleCardNote(w, who$, "In Deinem K{o}rbchen schlafen " + JOIN(sleepers, ", ") + ". Wen soll ich wecken? Sag: Komm raus und den Namen.")
+        RETURN TRUE
+    ENDIF
+    DIM out = basket[pick]
+    IF LEN(RuleFollowers(w, who$)) >= 2 THEN
+        RuleCardNote(w, who$, "Du hast schon zwei Tiere dabei. Leg erst eins hin.")
+        RETURN TRUE
+    ENDIF
+    IF RuleConf(w, "animals.followers_count", FALSE) ANDALSO NOT RuleAnimalRoom(w, out{"what"} ?? "") THEN
+        RuleCardNote(w, who$, "Im Dorf ist kein Platz mehr f{u}r noch ein Tier der Art " + RuleSortName$(out{"what"} ?? "") + ".")
+        RETURN TRUE
+    ENDIF
+    ' asleep, it did not miss the player
+    DIM loves = prof{"affection"}
+    IF ISMAP(loves{out{"id"}} ?? 0) THEN loves{out{"id"}}{"at"} = loves{out{"id"}}{"at"} + (KNow() - (out{"slept_at"} ?? KNow()))
+    DIM kept = []
+    DIM i = 0
+    FOR i = 0 TO LEN(basket) - 1
+        IF i <> pick THEN kept = APPEND(kept, basket[i])
+    NEXT i
+    prof{"basket"} = kept
+    MAP.DELETE(out, "slept_at")
+    out{"x"} = p{"x"}
+    out{"y"} = p{"y"}
+    out{"home"} = [p{"x"}, p{"y"}]
+    out{"follow"} = who$
+    out{"loved_at"} = KNow()
+    w{"npcs"}{out{"id"}} = out
+    p{"fondv"} = (p{"fondv"} ?? 0) + 1
+    KEmit(w, {"type": "build", "who": who$, "text": out{"name"} + RuleDe$(" kommt aus dem K{o}rbchen von ") + who$ + RuleDe$(", streckt sich und folgt wieder.")})
+    RETURN TRUE
+ENDFUNC
+
+' The last thing the village heard of the animal called name$, or the
+' chapter of the chronicle when nothing was said of it.
+FUNC RuleLastLine$(w, name$)
+    DIM events = w{"events"} ?? []
+    DIM i = 0
+    FOR i = LEN(events) - 1 TO 0 STEP -1
+        DIM kind$ = "" + (events[i]{"type"} ?? "")
+        DIM text$ = "" + (events[i]{"text"} ?? "")
+        IF (kind$ = "build" ORELSE kind$ = "say") ANDALSO INSTR(text$, name$) >= 0 THEN RETURN RuleCut$(text$, 120)
+    NEXT i
+    RulePlotStart(w)
+    RETURN "Kapitel " + STR$(w{"plot"}{"act"}) + ": " + w{"plot"}{"title"}
+ENDFUNC
+
+' The animal walks into the forest: gone for good, a memory card for all who knew it.
+SUB RuleAnimalLeave(w, npc)
+    DIM last_heard$ = RuleLastLine$(w, npc{"name"} ?? "")
+    DIM left_on$ = RuleToday$(w, 0)
+    FOR EACH name$ IN MAP.KEYS(w{"profiles"} ?? {})
+        DIM prof = RuleProfile(w, name$)
+        IF MAP.EXISTS(prof{"affection"}, npc{"id"}) THEN
+            MAP.DELETE(prof{"affection"}, npc{"id"})
+            IF NOT MAP.EXISTS(prof, "memories") THEN prof{"memories"} = []
+            DIM card = {"id": npc{"id"}, "name": npc{"name"} ?? "", "what": npc{"what"} ?? "", "day": left_on$, "line": last_heard$}
+            prof{"memories"} = APPEND(prof{"memories"}, card)
+            IF LEN(prof{"memories"}) > 60 THEN prof{"memories"} = DROP(LEN(prof{"memories"}) - 60, prof{"memories"})
+            IF MAP.EXISTS(w{"players"}, name$) THEN w{"players"}{name$}{"fondv"} = (w{"players"}{name$}{"fondv"} ?? 0) + 1
+            RuleCardNote(w, name$, "Du beh{a}ltst eine Erinnerungskarte an " + (npc{"name"} ?? "") + ".")
+        ENDIF
+    NEXT
+    MAP.DELETE(w{"npcs"}, npc{"id"})
+    KEmit(w, {"type": "build", "who": "Baumeister", "text": (npc{"name"} ?? "") +RuleDe$(" ist am Abend in den Wald gegangen und kommt nicht wieder. Es hat sich zu einsam gef{u}hlt.")})
+ENDSUB
+
+' Every ten seconds: an animal is loved while it follows or someone's
+' affection for it is above 0; one unloved for leave_days goes in the evening.
+SUB RuleCardTick(w, now)
+    IF now < (w{"leave_at"} ?? 0) THEN RETURN
+    w{"leave_at"} = now + 10000
+    DIM whats = RuleBuildWhats()
+    DIM days = RuleConf(w, "animals.leave_days", 3)
+    DIM evening = HOUR(NOW()) >= RuleConf(w, "animals.leave_hour", 18)
+    DIM gone = []
+    FOR EACH id$ IN MAP.KEYS(w{"npcs"})
+        DIM npc = w{"npcs"}{id$}
+        IF STARTSWITH(id$, "b_") ANDALSO MAP.EXISTS(whats, npc{"what"} ?? "") THEN
+            IF whats{npc{"what"}}[1] THEN
+                DIM loved = (npc{"follow"} ?? "") <> "" ORELSE NOT MAP.EXISTS(npc, "loved_at")
+                FOR EACH name$ IN MAP.KEYS(w{"profiles"} ?? {})
+                    IF NOT loved ANDALSO RuleFond(w, name$, id$) > 0 THEN loved = TRUE
+                NEXT
+                IF loved THEN
+                    npc{"loved_at"} = now
+                ELSEIF days >= 0 ANDALSO evening ANDALSO now - npc{"loved_at"} >= days * 86400000 THEN
+                    gone = APPEND(gone, id$)
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+    FOR EACH gone_id$ IN gone
+        RuleAnimalLeave(w, w{"npcs"}{gone_id$})
+    NEXT
+ENDSUB
+
+' The keeper reads the basket and the memory cards of a player ({"player"}).
 FUNC RuleCardAdmin(w, name$, args)
     DIM who$ = "" + (args{"player"} ?? "")
     IF NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN {"ok": FALSE, "error": "no such player"}
@@ -42,5 +220,5 @@ FUNC RuleCardAdmin(w, name$, args)
     FOR EACH npc IN RuleProfile(w, who$){"basket"} ?? []
         rows = APPEND(rows, [[npc{"id"}, npc{"name"}, npc{"what"}]])
     NEXT
-    RETURN {"ok": TRUE, "basket": rows}
+    RETURN {"ok": TRUE, "basket": rows, "memories": RuleProfile(w, who$){"memories"} ?? []}
 ENDFUNC

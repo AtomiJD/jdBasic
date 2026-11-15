@@ -397,8 +397,23 @@ of every game file, which no other suite runs.
   animal beyond that is made all the same and sleeps in the wisher's basket
   (`profile{"basket"}`, keeper call `basket` {"player"}); the village hears
   why.
+- A follower the player loves (`animals.basket_fond`, 80) lies down in the
+  basket when told ("Leg Dich hin", "ins Koerbchen"; with its name when two
+  follow) and leaves the world. "Komm raus, <Name>" wakes it beside the
+  player, following again, with its look and its affection (the affection
+  does not fade while it sleeps). At most two follow; with
+  `followers_count` true it comes out only when its sort has room.
+- A follower whose player left the world stays where it stands, or sleeps
+  in that player's basket when its sort has no room left.
+- An animal is loved while it follows or anyone's affection for it is above
+  0. One unloved for `animals.leave_days` (3) days walks into the forest in
+  the evening (local hour from `animals.leave_hour`, 18): gone for good, the
+  village and the chronicle hear it. Everyone who had an affection for it
+  keeps a memory card (`profile{"memories"}`: id, name, sort, day and the
+  last line the village heard of it, else the chapter of the chronicle);
+  the keeper call `basket` returns them too.
 
-`test_cap.jdb`: 12 checks.
+`test_cap.jdb`: 12 checks. `test_basket.jdb`: 16 checks.
 
 ## Bonds between players and people, and among the folk (`game/090_bonds.jdb`)
 
