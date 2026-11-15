@@ -1,0 +1,174 @@
+' Test of the bonds: a talk makes a person like a player once an hour, a
+' gift makes it like them more and most for what it likes best, three gifts
+' a day, a done task of the person, the feelings in its prompt, a rumour
+' and a discount from trust, and two of the folk who get to like each
+' other. A server without a model.
+'
+'   jdBasic jdb/wunschwelt/test_bonds.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8160 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_bonds_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "40"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
+SLEEP 1500
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM since AS INTEGER = -1
+DIM told = []
+DIM heard = []
+
+FUNC Sync(extra)
+    DIM msg = {"token": token$, "mapv": 1, "since": since, "findv": -1, "questv": -1, "wishv": -1, "bondv": -1}
+    FOR EACH field$ IN MAP.KEYS(extra)
+        msg{field$} = extra{field$}
+    NEXT
+    DIM r = Post("/sync", msg)
+    since = r{"seq"}
+    FOR EACH ev IN r{"events"}
+        IF (ev{"to"} ?? "") = "Anna" THEN told = APPEND(told, ev{"type"} + ":" + ev{"text"})
+        heard = APPEND(heard, ev)
+    NEXT
+    RETURN r
+ENDFUNC
+
+FUNC ToldPart(part$ AS STRING) AS INTEGER
+    RETURN INSTR(JOIN(told, "|"), part$) >= 0
+ENDFUNC
+
+FUNC Bond(id$ AS STRING)
+    RETURN Admin("bond", {"player": "Anna", "npc": id$})
+ENDFUNC
+
+SUB Fresh()
+    told = []
+    heard = []
+ENDSUB
+
+FUNC Say(text$ AS STRING)
+    Fresh()
+    SLEEP 350
+    DIM said = Sync({"say": text$})
+    RETURN Sync({})
+ENDFUNC
+
+DIM r = Sync({"mapv": 0})
+DIM marta = NONE
+FOR EACH row IN r{"npcs"}
+    IF row[0] = "marta" THEN marta = row
+NEXT
+DIM put = Admin("player_put", {"player": "Anna", "x": marta[2], "y": marta[3] + 1})
+r = Sync({})
+
+Check("a stranger at first", Bond("marta"){"v"} = 0 ANDALSO INSTR(Bond("marta"){"feels"}, "noch kaum") >= 0)
+r = Say("Hallo Marta, wie geht es Dir?")
+Check("a talk makes her like Anna", Bond("marta"){"v"} = 4)
+Check("and the sync brings it", ISMAP(r{"bond"} ?? 0) ANDALSO (r{"bond"}{"marta"} ?? 0) = 4)
+r = Say("Schoenes Wetter heute.")
+Check("but only once an hour", Bond("marta"){"v"} = 4)
+
+DIM gave = Admin("purse", {"player": "Anna", "give": "flower", "n": 5})
+gave = Admin("purse", {"player": "Anna", "give": "fish", "n": 1})
+r = Say("Ich schenke Dir eine Blume!")
+Check("a flower is her favourite", Bond("marta"){"v"} = 16 ANDALSO ToldPart("freut sich riesig"))
+DIM flowers AS INTEGER = 0
+FOR EACH row IN r{"purse"}{"items"}
+    IF row[0] = "flower" THEN flowers = row[3]
+NEXT
+Check("and the flower is gone from the bag", flowers = 4)
+r = Say("Hier ist ein Fisch fuer Dich.")
+Check("a fish pleases her less", Bond("marta"){"v"} = 22 ANDALSO ToldPart("freut sich."))
+r = Say("Ich schenk Dir noch eine Blume.")
+Check("a third gift", Bond("marta"){"v"} = 34)
+Check("and now she likes Anna", ToldPart("bond:Marta mag Dich."))
+r = Say("Nimm noch eine Blume.")
+Check("a fourth gift on one day is kept", Bond("marta"){"v"} = 34 ANDALSO ToldPart("heute schon so viel"))
+r = Say("Ich schenke Dir eine Laterne.")
+Check("what one has not cannot be given", ToldPart("gar nicht dabei"))
+Check("the prompt knows the gift", INSTR(Bond("marta"){"feels"}, "heute eine Blume geschenkt") >= 0 ANDALSO INSTR(Bond("marta"){"feels"}, "Du magst Anna.") >= 0)
+
+' trust: a rumour and Marta pays more
+DIM set = Admin("bond", {"player": "Anna", "npc": "marta", "v": 70})
+DIM feels$ = Bond("marta"){"feels"}
+Check("a trusted one hears a rumour", INSTR(feels$, "vertraust") >= 0 ANDALSO INSTR(feels$, "Man munkelt") >= 0)
+DIM q = Admin("quest_set", {"player": "Anna", "quests": [{"kind": "fish", "goal": 1}]})
+DIM money_before = r{"purse"}{"money"}
+Fresh()
+DIM fished = Admin("count_set", {"player": "Anna", "key": "fish", "v": 5})
+r = Sync({})
+r = Sync({})
+Check("a task of Marta pays 25 more", r{"purse"}{"money"} = money_before + 75 ANDALSO ToldPart("+50 Geld") ANDALSO ToldPart("aus Vertrauen"))
+Check("and she likes Anna more for it", Bond("marta"){"v"} = 75)
+
+' Fenja sells for less to one she trusts
+DIM fenja = NONE
+FOR EACH row IN r{"npcs"}
+    IF row[0] = "fenja" THEN fenja = row
+NEXT
+put = Admin("player_put", {"player": "Anna", "x": fenja[2], "y": fenja[3] + 2})
+r = Sync({"shop_list": TRUE})
+DIM shoes = 0
+FOR EACH row IN r{"shop"}{"goods"}
+    IF row[0] = "shoes" THEN shoes = row[2]
+NEXT
+Check("the full price for a stranger", shoes = 120)
+set = Admin("bond", {"player": "Anna", "npc": "fenja", "v": 65})
+r = Sync({"shop_list": TRUE})
+FOR EACH row IN r{"shop"}{"goods"}
+    IF row[0] = "shoes" THEN shoes = row[2]
+NEXT
+Check("a tenth less for one she trusts", shoes = 108)
+DIM rich = Admin("purse", {"player": "Anna", "money": 500})
+SLEEP 300
+r = Sync({"shop": {"buy": "shoes"}})
+r = Sync({})
+Check("and that is what is paid", r{"purse"}{"money"} = 392)
+
+' two of the folk
+Check("the keeper reads a tie", Admin("tie", {"a": "marta", "b": "fenja"}){"ok"})
+set = Admin("tie", {"a": "fenja", "b": "marta", "v": 29})
+set = Admin("bond_set", {"tie_ms": 100})
+Fresh()
+SLEEP 4000
+r = Sync({})
+DIM tie_told = FALSE
+FOR EACH ev IN heard
+    IF ev{"type"} = "build" ANDALSO INSTR(ev{"text"}, "Fenja und Marta m") >= 0 THEN tie_told = TRUE
+NEXT
+Check("two who get to like each other are heard of", tie_told ANDALSO Admin("tie", {"a": "marta", "b": "fenja"}){"v"} >= 30)
+Check("and she knows it", INSTR(Bond("marta"){"feels"}, "Du magst Fenja.") >= 0)
+set = Admin("bond_set", {"tie_ms": 30000})
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM w3 = OS.WAIT(server_pid, 40000)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

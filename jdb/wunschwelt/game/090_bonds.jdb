@@ -1,0 +1,375 @@
+' Bonds: how much the people of the village like each player, and how the
+' folk of the village get on with each other.
+'
+' A player's profile holds bonds{npc id} = {"v": 0 to 100, "talk_at",
+' "gift_day", "gifts", "gift"} for each person (kind "person"). A talk
+' raises it once an hour, a gift named in what is said (a flower given in
+' talk) up to three times a day and twice as much for what the
+' person likes best, a done task of the person a little. From 30 the person
+' likes the player, from 60 trusts them: it tells a rumour, Marta pays more
+' for her tasks and Fenja sells for less; from 90 they are close friends.
+' The person's prompt says how it feels about the one it talks to.
+'
+' w{"ties"}{"a|b"} (ids sorted) is how two of the folk get on, 0 to 100. It
+' grows by one each round (tie_ms) in which the two stand within three
+' fields, and every tenth round for any two people. At 30 and at 70 the
+' village hears of it, and so does the chronicle.
+
+'@server
+
+FUNC RuleBondTable(prof)
+    IF NOT MAP.EXISTS(prof, "bonds") THEN prof{"bonds"} = {}
+    RETURN prof{"bonds"}
+ENDFUNC
+
+FUNC RuleBond(w, name$, id$)
+    IF NOT MAP.EXISTS(w{"profiles"} ?? {}, name$) THEN RETURN 0
+    DIM entry = RuleBondTable(RuleProfile(w, name$)){id$} ?? NONE
+    IF NOT ISMAP(entry) THEN RETURN 0
+    RETURN entry{"v"}
+ENDFUNC
+
+FUNC RuleBondEntry(w, name$, id$)
+    DIM table = RuleBondTable(RuleProfile(w, name$))
+    IF NOT MAP.EXISTS(table, id$) THEN table{id$} = {"v": 0, "talk_at": -99999999, "gift_day": "", "gifts": 0, "gift": ""}
+    RETURN table{id$}
+ENDFUNC
+
+FUNC RuleBondStep(v)
+    IF v >= 90 THEN RETURN 3
+    IF v >= 60 THEN RETURN 2
+    IF v >= 30 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' Raises the bond of the player p with the person id$ by n and tells p
+' when it reached the next step; the new value.
+FUNC RuleBondAdd(w, p, id$, n)
+    DIM entry = RuleBondEntry(w, p{"name"}, id$)
+    DIM before = entry{"v"}
+    entry{"v"} = CLAMP(before + n, 0, 100)
+    p{"bondv"} = (p{"bondv"} ?? 0) + 1
+    DIM step_now = RuleBondStep(entry{"v"})
+    IF step_now > RuleBondStep(before) THEN
+        DIM who$ = w{"npcs"}{id$}{"name"}
+        DIM text$ = who$ + " mag Dich."
+        IF step_now = 2 THEN text$ = who$ + RuleDe$(" vertraut Dir jetzt und erz{a}hlt Dir auch mal ein Ger{u}cht.")
+        IF step_now = 3 THEN text$ = who$ + " und Du seid jetzt eng befreundet."
+        KEmit(w, {"type": "bond", "to": p{"name"}, "npc": id$, "text": text$, "v": entry{"v"}})
+    ENDIF
+    RETURN entry{"v"}
+ENDFUNC
+
+' What a person likes best as a gift.
+FUNC RuleBondLikes$(npc)
+    IF npc{"id"} = "marta" THEN RETURN "flower"
+    IF npc{"id"} = "fenja" THEN RETURN "fish"
+    DIM kinds = ["flower", "fish", "bottle"]
+    RETURN kinds[CODEC.CRC32(npc{"id"}) MOD 3]
+ENDFUNC
+
+' The things one can give, as they are named in a sentence and as a gift is spoken of.
+FUNC RuleBondGiftWords()
+    RETURN [["blume", "flower", "eine Blume"], ["fisch", "fish", "einen Fisch"], ["flaesch", "bottle", "ein Fl{a}schchen Wunschtrank"], ["trank", "bottle", "ein Fl{a}schchen Wunschtrank"], ["futter", "food", "Tierfutter"], ["saat", "seeds", "Saatgut"], ["samen", "seeds", "Saatgut"], ["laterne", "lantern", "eine Laterne"]]
+ENDFUNC
+
+FUNC RuleBondGiftName$(id$)
+    FOR EACH row IN RuleBondGiftWords()
+        IF row[1] = id$ THEN RETURN RuleDe$(row[2])
+    NEXT
+    RETURN id$
+ENDFUNC
+
+' The thing a sentence gives away, "" when it gives nothing.
+FUNC RuleBondGiftItem$(said$)
+    DIM low$ = " " + RuleLookColorKey$(REGEX.REPLACE$("[.,!?;:]", said$, " ")) + " "
+    DIM gives = FALSE
+    FOR EACH word$ IN ["schenk", "geschenk", "fuer dich", "fur dich", "nimm ", "hier ist ", "hier hast ", "bring dir", "mitgebracht"]
+        IF INSTR(low$, word$) >= 0 THEN gives = TRUE
+    NEXT
+    IF NOT gives THEN RETURN ""
+    FOR EACH row IN RuleBondGiftWords()
+        IF INSTR(low$, row[0]) >= 0 THEN RETURN row[1]
+    NEXT
+    RETURN ""
+ENDFUNC
+
+SUB RuleBondGift(w, p, id$, said$)
+    DIM item$ = RuleBondGiftItem$(said$)
+    IF item$ = "" THEN RETURN
+    DIM npc = w{"npcs"}{id$}
+    DIM who$ = p{"name"}
+    DIM prof = RuleProfile(w, who$)
+    IF RuleItemCount(prof, item$) <= 0 THEN
+        KEmit(w, {"type": "purse", "to": who$, "text": "Du hast " + RuleBondGiftName$(item$) + " gar nicht dabei."})
+        RETURN
+    ENDIF
+    DIM entry = RuleBondEntry(w, who$, id$)
+    DIM today$ = RuleToday$(w, 0)
+    IF entry{"gift_day"} <> today$ THEN
+        entry{"gift_day"} = today$
+        entry{"gifts"} = 0
+    ENDIF
+    IF entry{"gifts"} >= 3 THEN
+        KEmit(w, {"type": "purse", "to": who$, "text": npc{"name"} + RuleDe$(" hat heute schon so viel von Dir bekommen. Behalt es ruhig f{u}r morgen.")})
+        RETURN
+    ENDIF
+    DIM given = RuleItemAdd(prof, item$, -1)
+    entry{"gifts"} = entry{"gifts"} + 1
+    entry{"gift"} = item$
+    DIM loved = item$ = RuleBondLikes$(npc)
+    DIM n = IIF(loved, 12, 6)
+    RuleCountAdd(w, who$, "gifts", 1)
+    DIM text$ = "Du schenkst " + npc{"name"} + " " + RuleBondGiftName$(item$) + ". " + npc{"name"} + IIF(loved, RuleDe$(" freut sich riesig, genau das mag sie am liebsten!"), " freut sich.")
+    IF loved ANDALSO npc{"id"} <> "marta" ANDALSO npc{"id"} <> "fenja" THEN text$ = "Du schenkst " + npc{"name"} + " " + RuleBondGiftName$(item$) + ". " + npc{"name"} + " freut sich riesig, genau das mag " + npc{"name"} + " am liebsten!"
+    KEmit(w, {"type": "purse", "to": who$, "text": text$})
+    KEmit(w, {"type": "hearts", "npc": id$, "who": who$, "up": n, "word": IIF(loved, "Oh, wie lieb!", "Danke!")})
+    DIM v = RuleBondAdd(w, p, id$, n)
+ENDSUB
+
+' A talk with a person, before it answers: a gift in it, and once an hour
+' the person likes the player a little more.
+SUB RuleBondTalk(w, p, npc_id$, said$)
+    DIM npc = w{"npcs"}{npc_id$}
+    IF npc{"kind"} <> "person" THEN RETURN
+    RuleBondGift(w, p, npc_id$, said$)
+    DIM entry = RuleBondEntry(w, p{"name"}, npc_id$)
+    DIM now = KNow()
+    IF now - entry{"talk_at"} >= (w{"bond_talk_ms"} ?? 3600000) THEN
+        entry{"talk_at"} = now
+        DIM v = RuleBondAdd(w, p, npc_id$, 4)
+    ENDIF
+ENDSUB
+
+' A task of the person giver$ is done: it likes p more, and pays 25 more
+' when it trusts p.
+FUNC RuleBondQuest(w, p, giver$)
+    FOR EACH id$ IN MAP.KEYS(w{"npcs"})
+        DIM npc = w{"npcs"}{id$}
+        IF npc{"kind"} = "person" ANDALSO npc{"name"} = giver$ THEN
+            DIM trusted = RuleBond(w, p{"name"}, id$) >= 60
+            DIM v = RuleBondAdd(w, p, id$, 5)
+            RETURN IIF(trusted, 25, 0)
+        ENDIF
+    NEXT
+    RETURN 0
+ENDFUNC
+
+' Which way and how far something lies, seen from where one stands.
+FUNC RuleBondWay$(dx, dy)
+    DIM ns$ = ""
+    DIM ew$ = ""
+    IF dy < -2 THEN ns$ = "Nord"
+    IF dy > 2 THEN ns$ = RuleDe$("S{u}d")
+    IF dx > 2 THEN ew$ = "ost"
+    IF dx < -2 THEN ew$ = "west"
+    IF ns$ = "" ANDALSO ew$ = "" THEN RETURN "ganz in der N" + CHR$(195) + CHR$(164) + "he"
+    DIM way$ = ns$ + ew$ + "en"
+    IF ns$ = "" THEN way$ = UCASE$(LEFT$(ew$, 1)) + MID$(ew$, 1) + "en"
+    DIM far$ = IIF(ABS(dx) + ABS(dy) > 25, "ein gutes St" + CHR$(195) + CHR$(188) + "ck weit", "nicht weit")
+    RETURN "im " + way$ + ", " + far$
+ENDFUNC
+
+' A rumour a person tells one it trusts: where the nearest chest lies, or
+' the newest rumour of the chronicle.
+FUNC RuleBondRumour$(w, npc)
+    DIM best = NONE
+    DIM best_d = 99999
+    FOR EACH f IN w{"finds"} ?? []
+        DIM d = ABS(f{"x"} - npc{"x"}) + ABS(f{"y"} - npc{"y"})
+        IF d < best_d THEN
+            best_d = d
+            best = f
+        ENDIF
+    NEXT
+    IF ISMAP(best) THEN
+        DIM what$ = IIF(best{"kind"} = "golden", "etwas Goldenes", "eine Wunschkiste")
+        RETURN RuleDe$("Man munkelt, ") + RuleBondWay$(best{"x"} - npc{"x"}, best{"y"} - npc{"y"}) + ", liege " + what$ + "."
+    ENDIF
+    DIM news = (w{"plot"} ?? {}){"news"} ?? []
+    IF LEN(news) > 0 THEN RETURN news[LEN(news) - 1]
+    RETURN ""
+ENDFUNC
+
+FUNC RuleTieKey$(a$, b$)
+    IF a$ < b$ THEN RETURN a$ + "|" + b$
+    RETURN b$ + "|" + a$
+ENDFUNC
+
+FUNC RuleTie(w, a$, b$)
+    RETURN (w{"ties"} ?? {}){RuleTieKey$(a$, b$)} ?? 0
+ENDFUNC
+
+' Two of the folk get on n better; the village hears of it at 30 and 70.
+SUB RuleTieAdd(w, a$, b$, n)
+    IF NOT MAP.EXISTS(w, "ties") THEN w{"ties"} = {}
+    DIM key$ = RuleTieKey$(a$, b$)
+    DIM before = w{"ties"}{key$} ?? 0
+    DIM v = CLAMP(before + n, 0, 100)
+    w{"ties"}{key$} = v
+    DIM names$ = w{"npcs"}{a$}{"name"} + " und " + w{"npcs"}{b$}{"name"}
+    IF before < 30 ANDALSO v >= 30 THEN KEmit(w, {"type": "build", "text": names$ + RuleDe$(" m{o}gen sich.")})
+    IF before < 70 ANDALSO v >= 70 THEN KEmit(w, {"type": "build", "text": names$ + " sind jetzt unzertrennlich."})
+ENDSUB
+
+' The folk who can be talked to, sorted.
+FUNC RuleBondFolk(w)
+    DIM folk = []
+    FOR EACH id$ IN SORT(MAP.KEYS(w{"npcs"}))
+        IF MAP.EXISTS(w{"npcs"}{id$}, "persona") THEN folk = APPEND(folk, id$)
+    NEXT
+    RETURN folk
+ENDFUNC
+
+SUB RuleBondTick(w, now)
+    IF now < (w{"tie_at"} ?? 0) THEN RETURN
+    w{"tie_at"} = now + (w{"tie_ms"} ?? 30000)
+    w{"tie_round"} = (w{"tie_round"} ?? 0) + 1
+    DIM neighbours = w{"tie_round"} MOD 10 = 0
+    DIM npcs = w{"npcs"}
+    DIM folk = RuleBondFolk(w)
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO LEN(folk) - 2
+        DIM a = npcs{folk[i]}
+        FOR j = i + 1 TO LEN(folk) - 1
+            DIM b = npcs{folk[j]}
+            DIM near = MAX([ABS(a{"x"} - b{"x"}), ABS(a{"y"} - b{"y"})]) <= 3
+            IF near ORELSE (neighbours ANDALSO a{"kind"} = "person" ANDALSO b{"kind"} = "person") THEN RuleTieAdd(w, folk[i], folk[j], 1)
+        NEXT j
+    NEXT i
+ENDSUB
+
+' How npc feels about player$ and about the others of the village.
+FUNC RuleNpcFeels$(w, npc, player$)
+    DIM t$ = ""
+    IF npc{"kind"} = "person" THEN
+        DIM v = RuleBond(w, player$, npc{"id"})
+        IF v < 10 THEN
+            t$ = " Du kennst " + player$ + " noch kaum."
+        ELSEIF v < 30 THEN
+            t$ = " Du kennst " + player$ + " ein wenig."
+        ELSEIF v < 60 THEN
+            t$ = " Du magst " + player$ + "."
+        ELSEIF v < 90 THEN
+            t$ = " Du magst " + player$ + " sehr und vertraust " + player$ + "."
+        ELSE
+            t$ = " Du bist mit " + player$ + RuleDe$(" eng befreundet und freust dich jedes Mal, wenn ") + player$ + " kommt."
+        ENDIF
+        DIM entry = RuleBondTable(RuleProfile(w, player$)){npc{"id"}} ?? {}
+        IF (entry{"gift"} ?? "") <> "" THEN
+            IF (entry{"gift_day"} ?? "") = RuleToday$(w, 0) THEN
+                t$ = t$ + " " + player$ + " hat dir heute " + RuleBondGiftName$(entry{"gift"}) + RuleDe$(" geschenkt; bedanke dich herzlich daf{u}r.")
+            ELSE
+                t$ = t$ + " " + player$ + " hat dir schon einmal " + RuleBondGiftName$(entry{"gift"}) + " geschenkt."
+            ENDIF
+        ENDIF
+        IF v >= 60 THEN
+            DIM rumour$ = RuleBondRumour$(w, npc)
+            IF rumour$ <> "" THEN t$ = t$ + RuleDe$(" Weil du ") + player$ + RuleDe$(" vertraust, verr{a}tst du im Vertrauen ein Ger{u}cht, wenn es passt: ") + rumour$
+        ENDIF
+    ENDIF
+    FOR EACH other$ IN RuleBondFolk(w)
+        IF other$ <> npc{"id"} THEN
+            DIM tie = RuleTie(w, npc{"id"}, other$)
+            IF tie >= 70 THEN
+                t$ = t$ + " Mit " + w{"npcs"}{other$}{"name"} + " verstehst du dich bestens."
+            ELSEIF tie >= 30 THEN
+                t$ = t$ + " Du magst " + w{"npcs"}{other$}{"name"} + "."
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN t$
+ENDFUNC
+
+' The bonds of p travel with a sync when they changed: {npc id: v}.
+SUB RuleBondSync(w, p, msg, answer)
+    IF INT(msg{"bondv"} ?? -1) = (p{"bondv"} ?? 0) THEN RETURN
+    DIM rows = {}
+    DIM table = RuleBondTable(RuleProfile(w, p{"name"}))
+    FOR EACH id$ IN MAP.KEYS(table)
+        IF MAP.EXISTS(w{"npcs"}, id$) ANDALSO table{id$}{"v"} >= 1 THEN rows{id$} = INT(table{id$}{"v"})
+    NEXT
+    answer{"bond"} = rows
+    answer{"bondv"} = p{"bondv"} ?? 0
+ENDSUB
+
+' The keeper: bond reads and sets how much a person likes a player
+' ({"player", "npc", "v"}, v optional) and tells how it feels; tie reads
+' and sets how two of the folk get on ({"a", "b", "v"}); bond_set sets the
+' hour of a talk and the round of the ties in ms ({"talk_ms", "tie_ms"}).
+FUNC RuleBondAdmin(w, name$, args)
+    IF name$ = "bond_set" THEN
+        IF ISNUM(args{"talk_ms"} ?? "") THEN w{"bond_talk_ms"} = INT(args{"talk_ms"})
+        IF ISNUM(args{"tie_ms"} ?? "") THEN
+            w{"tie_ms"} = INT(args{"tie_ms"})
+            w{"tie_at"} = 0
+        ENDIF
+        RETURN {"ok": TRUE}
+    ENDIF
+    IF name$ = "tie" THEN
+        DIM a$ = "" + (args{"a"} ?? "")
+        DIM b$ = "" + (args{"b"} ?? "")
+        IF NOT MAP.EXISTS(w{"npcs"}, a$) ORELSE NOT MAP.EXISTS(w{"npcs"}, b$) ORELSE a$ = b$ THEN RETURN {"ok": FALSE, "error": "no such pair"}
+        IF ISNUM(args{"v"} ?? "") THEN
+            IF NOT MAP.EXISTS(w, "ties") THEN w{"ties"} = {}
+            w{"ties"}{RuleTieKey$(a$, b$)} = CLAMP(INT(args{"v"}), 0, 100)
+        ENDIF
+        RETURN {"ok": TRUE, "v": RuleTie(w, a$, b$)}
+    ENDIF
+    DIM who$ = "" + (args{"player"} ?? "")
+    DIM id$ = "" + (args{"npc"} ?? "")
+    IF NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN {"ok": FALSE, "error": "no such player"}
+    IF NOT MAP.EXISTS(w{"npcs"}, id$) THEN RETURN {"ok": FALSE, "error": "no such npc"}
+    IF w{"npcs"}{id$}{"kind"} <> "person" THEN RETURN {"ok": FALSE, "error": "not a person"}
+    IF ISNUM(args{"v"} ?? "") THEN
+        DIM entry = RuleBondEntry(w, who$, id$)
+        entry{"v"} = CLAMP(INT(args{"v"}), 0, 100)
+        IF MAP.EXISTS(w{"players"}, who$) THEN w{"players"}{who$}{"bondv"} = (w{"players"}{who$}{"bondv"} ?? 0) + 1
+    ENDIF
+    RETURN {"ok": TRUE, "v": RuleBond(w, who$, id$), "feels": RuleNpcFeels$(w, w{"npcs"}{id$}, who$)}
+ENDFUNC
+
+'@client
+
+SUB ClientBondAsk(c, msg)
+    msg{"bondv"} = c{"bondv"} ?? -1
+ENDSUB
+
+' Hearts float up over a person who liked a gift or a player more.
+SUB ClientBondExtra(c, r)
+    IF MAP.EXISTS(r, "bond") THEN
+        c{"bond"} = r{"bond"}
+        c{"bondv"} = r{"bondv"}
+    ENDIF
+    IF NOT MAP.EXISTS(c, "pet_fx") THEN c{"pet_fx"} = {}
+    FOR EACH ev IN r{"events"} ?? []
+        IF ev{"type"} = "hearts" THEN
+            c{"pet_fx"}{ev{"npc"}} = {"t": TICK(), "up": ev{"up"} ?? 0, "who": ev{"who"} ?? "", "food": FALSE, "word": ev{"word"} ?? "", "seed": INT(RND() * 1000)}
+            IF (ev{"who"} ?? "") = (c{"name"} ?? "") THEN c{"chime"} = [TICK(), [784, 988, 1319]]
+        ELSEIF ev{"type"} = "bond" ANDALSO (ev{"to"} ?? "") = (c{"name"} ?? "") THEN
+            c{"banner"} = ev{"text"}
+            c{"banner_until"} = TICK() + 6000
+            c{"chime"} = [TICK(), [523, 659, 784, 1047]]
+            c{"pet_fx"}{ev{"npc"}} = {"t": TICK(), "up": 0, "who": "", "food": FALSE, "word": "Hach!", "seed": INT(RND() * 1000)}
+        ENDIF
+    NEXT
+ENDSUB
+
+' Over a person the player stands close to, a heart for each 20 points it
+' likes them, and the hearts of a gift.
+SUB ClientNpcMark(c, row, sx, sy)
+    IF row[4] <> "person" THEN RETURN
+    DIM v = (c{"bond"} ?? {}){row[0]} ?? 0
+    DIM near = ABS(row[2] - (c{"x"} ?? -99)) <= 3 ANDALSO ABS(row[3] - (c{"y"} ?? -99)) <= 3
+    IF v >= 1 ANDALSO near THEN
+        DIM n = CLAMP(CEIL(v / 20), 1, 5)
+        DIM x0 = sx + 16 - (n * 6 - 1) \ 2
+        DIM y = sy - 15 - GFX.TEXTSIZE("Ag")[1] - 5
+        DIM i = 0
+        FOR i = 0 TO n - 1
+            AnimalPetHeart(x0 + i * 6 + 2, y, 1, [236, 70, 110])
+        NEXT i
+    ENDIF
+    AnimalPetFx(c, row, sx, sy)
+ENDSUB

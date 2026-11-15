@@ -854,7 +854,7 @@ SUB AnimalPetFx(c, row, sx, sy)
     DIM seed = fx{"seed"}
     DIM cx = sx + 16
     ' the hand, stroking to and fro over the fur
-    IF age < 1000 ANDALSO NOT fx{"food"} THEN
+    IF age < 1000 ANDALSO NOT fx{"food"} ANDALSO (fx{"word"} ?? "") = "" THEN
         DIM hx = cx - 5 + INT(7 * SIN(age / 1000 * 4 * MATH.PI))
         DIM hy = sy + 10 + INT(ABS(SIN(age / 1000 * 4 * MATH.PI)))
         RECT hx - 1, hy + 1, 10, 5, TRUE, 150, 96, 80
@@ -894,8 +894,8 @@ SUB AnimalPetFx(c, row, sx, sy)
     NEXT i
     ' the word of the animal in a little bubble
     IF age > 150 ANDALSO age < 1500 THEN
-        DIM word$ = AnimalPetWord$(SPLIT(row[0], "_")[1])
-        IF fx{"food"} THEN word$ = "Mampf!"
+        DIM word$ = fx{"word"} ?? ""
+        IF word$ = "" THEN word$ = IIF(fx{"food"}, "Mampf!", AnimalPetWord$(SPLIT(row[0] + "__", "_")[1]))
         DIM size = GFX.TEXTSIZE(word$)
         DIM bx = cx + 6
         DIM by = sy - 30 - INT(MIN([age - 150, 200]) / 40)

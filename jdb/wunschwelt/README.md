@@ -376,9 +376,35 @@ of every game file, which no other suite runs.
   from the bag: stands on the free field in front of the player), and a
   golden cap, a silver scarf or an eyepatch, put on at once as a look.
   Gear is kept in `profile{"gear"}`. Fenja buys fish (6), flowers (2) and
-  bottles (12).
+  bottles (12). Her prices come from `RuleShopPrice`: a tenth less for a
+  player she trusts (bond 60), a fifth less for a friend (90).
 
-`test_shop.jdb`: 22 checks.
+`test_shop.jdb`: 23 checks.
+
+## Bonds between players and people, and among the folk (`game/090_bonds.jdb`)
+
+- Each person (kind `person`: Marta, Fenja, the builder's villagers) likes
+  each player 0 to 100, kept in `profile{"bonds"}{npc id}`. A talk adds 4
+  once an hour; a gift named in what is said ("ich schenke Dir eine Blume",
+  "hier ist ein Fisch fuer Dich") takes the thing from the bag and adds 6,
+  12 for what the person likes best (Marta flowers, Fenja fish, villagers
+  one of flower, fish, bottle), up to three gifts a day; a done task of the
+  person adds 5.
+- At 30 the person likes the player, at 60 trusts them, at 90 they are close
+  friends; each step is told to the player with a banner and hearts. The
+  person's prompt (`RuleNpcFeels$`) says how it feels, what it was given,
+  and from 60 a rumour to tell: which way and how far the nearest wish chest
+  lies, or the newest rumour of the chronicle. A trusted player gets 25 Geld
+  more for Marta's tasks and Fenja's discount.
+- `w{"ties"}{"a|b"}` is how two of the folk get on: one more each round
+  (30 s) they stand within three fields, and every tenth round for any two
+  people. At 30 and 70 the village hears it as a build event, which the
+  chronicle picks up; the persons' prompts say whom they like.
+- The client shows a heart per 20 points over a person the player stands
+  close to, and the hearts of a gift. Keeper calls: `bond` ({"player",
+  "npc", "v"}), `tie` ({"a", "b", "v"}), `bond_set` ({"talk_ms", "tie_ms"}).
+
+`test_bonds.jdb`: 22 checks.
 
 ## What survives a restart
 

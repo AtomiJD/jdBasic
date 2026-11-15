@@ -129,6 +129,15 @@ FUNC RuleShopWears(p, g)
     RETURN JSON.STRINGIFY$(look{g{"part"}}) = JSON.STRINGIFY$(RuleLookColors(){g{"color"}})
 ENDFUNC
 
+' What who$ pays for the good g: a tenth less when Fenja trusts them, a
+' fifth less when she is their friend.
+FUNC RuleShopPrice(w, who$, g)
+    DIM bond = RuleBond(w, who$, "fenja")
+    IF bond >= 90 THEN RETURN g{"price"} - INT(g{"price"} / 5)
+    IF bond >= 60 THEN RETURN g{"price"} - INT(g{"price"} / 10)
+    RETURN g{"price"}
+ENDFUNC
+
 SUB RuleShopBuy(w, p, id$)
     DIM g = RuleShopGood(id$)
     IF NOT ISMAP(g) THEN RETURN
@@ -143,8 +152,9 @@ SUB RuleShopBuy(w, p, id$)
         RuleTellPlayer(w, "fenja", who$, RuleDe$("Das tr{a}gst Du doch schon."))
         RETURN
     ENDIF
-    IF prof{"money"} < g{"price"} THEN
-        RuleTellPlayer(w, "fenja", who$, RuleDe$("F{u}r " + g{"name"} + " fehlen Dir noch " + STR$(g{"price"} - prof{"money"}) + " Geld."))
+    DIM price = RuleShopPrice(w, who$, g)
+    IF prof{"money"} < price THEN
+        RuleTellPlayer(w, "fenja", who$, RuleDe$("F{u}r " + g{"name"} + " fehlen Dir noch " + STR$(price - prof{"money"}) + " Geld."))
         RETURN
     ENDIF
     IF g{"kind"} = "item" ANDALSO NOT RuleItemAdd(prof, id$, 1) THEN
@@ -153,9 +163,9 @@ SUB RuleShopBuy(w, p, id$)
     ENDIF
     IF g{"kind"} = "look" ANDALSO NOT RuleApplyLook(w, who$, {"part": g{"part"}, "color": g{"color"}}) THEN RETURN
     IF g{"kind"} = "gear" THEN prof{"gear"}{id$} = TRUE
-    prof{"money"} = prof{"money"} - g{"price"}
+    prof{"money"} = prof{"money"} - price
     RuleCountAdd(w, who$, "bought", 1)
-    KEmit(w, {"type": "purse", "to": who$, "text": "Gekauft: " + name$ + " " + STR$(g{"price"}) + " Geld.", "got": "coins"})
+    KEmit(w, {"type": "purse", "to": who$, "text": "Gekauft: " + name$ + " " + STR$(price) + " Geld.", "got": "coins"})
 ENDSUB
 
 SUB RuleShopSell(w, p, id$)
@@ -178,7 +188,7 @@ FUNC RuleShopList(w, p)
         DIM have = FALSE
         IF g{"kind"} = "gear" THEN have = RuleHasGear(prof, g{"id"})
         IF g{"kind"} = "look" THEN have = RuleShopWears(p, g)
-        rows = APPEND(rows, [[g{"id"}, RuleDe$(g{"name"}), g{"price"}, RuleDe$(g{"desc"}), have]])
+        rows = APPEND(rows, [[g{"id"}, RuleDe$(g{"name"}), RuleShopPrice(w, p{"name"}, g), RuleDe$(g{"desc"}), have]])
     NEXT
     DIM prices = RuleShopBuysBack()
     DIM table = RuleItemTable()

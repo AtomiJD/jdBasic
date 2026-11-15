@@ -157,7 +157,11 @@ SUB RuleQuestDone(w, p, prof, task)
     RulePotionAdd(w, prof, 30)
     RuleCountAdd(w, p{"name"}, "quests", 1)
     DIM spec = RuleQuestKinds(){task{"kind"}}
-    KEmit(w, {"type": "quest", "to": p{"name"}, "text": RuleDe$("Aufgabe erledigt: " + spec{"text"} + ". +25 Geld, +30 Wunschtrank")})
+    DIM extra = RuleBondQuest(w, p, spec{"giver"})
+    prof{"money"} = prof{"money"} + extra
+    DIM paid$ = ". +" + STR$(25 + extra) + " Geld, +30 Wunschtrank"
+    IF extra > 0 THEN paid$ = paid$ + RuleDe$(" (" + spec{"giver"} + " legt " + STR$(extra) + " drauf, aus Vertrauen)")
+    KEmit(w, {"type": "quest", "to": p{"name"}, "text": RuleDe$("Aufgabe erledigt: " + spec{"text"}) + paid$})
     DIM all_done = TRUE
     FOR EACH t IN prof{"quests"}{"list"}
         IF NOT t{"done"} THEN all_done = FALSE
