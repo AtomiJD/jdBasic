@@ -1,0 +1,25 @@
+{
+  "cow": {
+    "left": "mirror"
+  },
+  "fox": {
+    "front": {"hat": [21, 3], "eye": [21, 19], "gap": 5, "neck": [21, 30]},
+    "right": {"hat": [33, 5], "eye": [37, 17], "neck": [32, 28]}
+  },
+  "frog": {
+    "front": {"hat": [24, -1], "eye": [24, 9], "gap": 9, "neck": [24, 25]},
+    "right": {"hat": [25, 0], "eye": [26, 9], "neck": [31, 26]}
+  },
+  "hedgehog": {
+    "front": {"hat": [22, 3], "eye": [22, 25], "gap": 6, "neck": [22, 33]},
+    "right": {"hat": [33, 6], "eye": [40, 25], "neck": [36, 33]}
+  },
+  "rabbit": {
+    "front": {"hat": [23, 17], "eye": [23, 25], "gap": 5, "neck": [23, 32]},
+    "right": {"hat": [27, 16], "eye": [30, 24], "neck": [26, 31]}
+  },
+  "turtle": {
+    "front": {"hat": [23, 12], "eye": [23, 21], "gap": 6, "neck": [23, 28]},
+    "right": {"hat": [36, 15], "eye": [37, 21], "neck": [34, 27]}
+  }
+}

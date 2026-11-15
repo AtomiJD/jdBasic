@@ -274,9 +274,20 @@ can build goes back to the board with a note and is not taken up again.
   sitting left, front, right, happy), made by
   `tools/charactergen.jdb animal_<sort> "..." animal` with white fur. The client
   paints the fur (bright pixels without colour) in the animal's colour, with
-  stripes or spots, once per look. Where hat, glasses and scarf sit is
-  measured by `tools/anchors.jdb` (`SheetAnchorTable`). Without a sheet the
-  animal is drawn from parts as before.
+  stripes or spots, once per look. Without a sheet the animal is drawn from
+  parts as before.
+- Where hat, glasses and scarf sit is set for each of the 18 frames of a
+  sheet in `assets/anchors.json` (`{"frame": 48, "sorts": {sort: {"row,col":
+  {"view", "top", "hat", "eye", "gap", "neck"}}}}`, the pixels of the frame
+  as drawn; seen from behind there is no eye). `tools/anchors.jdb [folder]`
+  writes it: it measures every frame (the top of the head, the eyes as dark
+  spots inside the figure) and, given a folder, draws each sheet there with
+  its anchors marked. What the measure gets wrong is set by hand in
+  `assets/anchors_fix.json`: per sort and view (`front`, `left`, `right`,
+  `back`; `right` alone also sets `left`, mirrored) a correction of the
+  standing frame that every frame of the view takes over, or per frame
+  (`"row,col"`) as it is. Run the tool again after a new sheet or fix;
+  `deploy.sh` ships `anchors.json`.
 - An animal wears `look{"wear"}`: `{slot: [item, [r, g, b]]}`, slot head (hat, cap,
   crown, flower), eyes (sunglasses, glasses) or neck (scarf, bow, collar).
   Each sort has anchors for hat, eye and neck in `AnimalKinds`, so every

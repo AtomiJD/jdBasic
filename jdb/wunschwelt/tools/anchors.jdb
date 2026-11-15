@@ -1,18 +1,42 @@
-' Where a hat, glasses and a scarf sit on the animals of assets/animal_*.png:
-' from the frame standing toward the viewer (row 0) and the one facing right
-' (row 2) it finds the top of the head and the eyes (dark pixels inside the
-' figure in its upper part) and prints the table SheetAnchorTable of
-' game/050_animals.jdb, in the 48 pixels of a frame.
+' Where a hat, glasses and a scarf sit on the animals of assets/animal_*.png,
+' for each of the 18 frames of a sheet, written to assets/anchors.json.
 '
-'   build/jdBasic.exe jdb/wunschwelt/tools/anchors.jdb
+' Every frame is measured: the top of the head and the eyes (dark pixels
+' inside the figure in its upper part). assets/anchors_fix.json sets by hand
+' what the measure gets wrong, per sort and view ("front", "left", "right",
+' "back"; "right" alone also sets "left", mirrored; "left": "mirror" takes
+' the frames facing right, mirrored) or per frame ("row,col", taken as it
+' is). A fix of a view sets its standing frame; the other frames of the view
+' (steps, sitting, happy) take it, moved as far as the head moved. So does a
+' frame where no eyes were found.
+'
+' anchors.json: {"frame": 48, "sorts": {sort: {"row,col": {"top", "hat":
+' [x, y], "eye": [x, y] or absent from behind, "gap" seen from the front,
+' "neck": [x, y], "view"}}}}, in the pixels of the frame as drawn.
+'
+'   build/jdBasic.exe jdb/wunschwelt/tools/anchors.jdb [check folder]
+'
+' With a folder it also draws each sheet there with its anchors marked:
+' hat red, eyes blue, neck green, top magenta.
 
 IMPORT IMG
 
 DIM folder$ = PATH.DIRNAME$(OS.ARGS()[0]) + "/../assets"
-DIM q$ = CHR$(34)
+DIM check$ = ""
+IF LEN(OS.ARGS()) > 1 THEN check$ = OS.ARGS()[1]
 
-' [top, eye x, eye y, gap, found] of one frame; gap is half the distance of two eyes.
-FUNC Measure(px, sw, fx0, fy0, front)
+' The view of each frame and the standing frame it follows.
+FUNC Views()
+    RETURN {"0,0": "front", "0,1": "front", "0,2": "front", "1,0": "left", "1,1": "left", "1,2": "left", "2,0": "right", "2,1": "right", "2,2": "right", "3,0": "back", "3,1": "back", "3,2": "back", "4,0": "left", "4,1": "front", "4,2": "right", "5,0": "front", "5,1": "front", "5,2": "front"}
+ENDFUNC
+
+FUNC Stands()
+    RETURN {"front": "0,1", "left": "1,1", "right": "2,1", "back": "3,1"}
+ENDFUNC
+
+' [top, bottom, head x] of a frame: the head x is the middle of what is
+' opaque in the six rows under the top.
+FUNC Outline(px, sw, fx0, fy0)
     DIM top = -1
     DIM bottom = -1
     DIM y = 0
@@ -25,9 +49,22 @@ FUNC Measure(px, sw, fx0, fy0, front)
             ENDIF
         NEXT x
     NEXT y
-    IF top < 0 THEN RETURN [8, 24, 18, 5, FALSE]
+    IF top < 0 THEN RETURN [8, 40, 24]
+    DIM xs = []
+    FOR y = top TO MIN([47, top + 5])
+        FOR x = 0 TO 47
+            IF px[((fy0 + y) * sw + fx0 + x) * 4 + 3] > 60 THEN xs = APPEND(xs, x)
+        NEXT x
+    NEXT y
+    RETURN [top, bottom, INT((MIN(xs) + MAX(xs)) / 2)]
+ENDFUNC
+
+' The dark pixels inside the figure in the upper part of a frame: [xs, ys].
+FUNC DarkSpots(px, sw, fx0, fy0, top, bottom)
     DIM xs = []
     DIM ys = []
+    DIM y = 0
+    DIM x = 0
     FOR y = top + 1 TO top + INT((bottom - top) * 0.6)
         FOR x = 1 TO 46
             DIM at = ((fy0 + y) * sw + fx0 + x) * 4
@@ -44,8 +81,20 @@ FUNC Measure(px, sw, fx0, fy0, front)
             ENDIF
         NEXT x
     NEXT y
-    IF LEN(xs) = 0 THEN RETURN [top, 24, top + 10, 5, FALSE]
-    IF front THEN
+    RETURN [xs, ys]
+ENDFUNC
+
+' The anchors of a standing frame of the view.
+FUNC MeasureStand(px, sw, fx0, fy0, view$)
+    DIM o = Outline(px, sw, fx0, fy0)
+    DIM top = o[0]
+    DIM up = INT((o[1] - top) * 0.25)
+    IF view$ = "back" THEN RETURN {"top": top, "hat": [o[2], top + 3], "neck": [o[2], top + up + 8], "found": TRUE}
+    DIM spots = DarkSpots(px, sw, fx0, fy0, top, o[1])
+    DIM xs = spots[0]
+    DIM ys = spots[1]
+    IF LEN(xs) = 0 THEN RETURN {"top": top, "hat": [o[2], top + 3], "eye": [o[2], top + 10], "gap": 5, "neck": [o[2], top + 20], "found": FALSE}
+    IF view$ = "front" THEN
         DIM mid = (MIN(xs) + MAX(xs)) / 2
         DIM left = []
         DIM right = []
@@ -58,36 +107,154 @@ FUNC Measure(px, sw, fx0, fy0, front)
         NEXT
         DIM lx = IIF(LEN(left) > 0, MEAN(left), mid - 5)
         DIM rx = IIF(LEN(right) > 0, MEAN(right), mid + 5)
-        RETURN [top, INT((lx + rx) / 2), INT(MEAN(ys)), MAX([3, INT((rx - lx) / 2)]), TRUE]
+        DIM cx = INT((lx + rx) / 2)
+        DIM ey = INT(MEAN(ys))
+        RETURN {"top": top, "hat": [cx, top + 3], "eye": [cx, ey], "gap": MAX([3, INT((rx - lx) / 2)]), "neck": [cx, ey + INT((ey - top) * 0.5) + 2], "found": TRUE}
     ENDIF
-    ' facing right: the eye is the dark spot furthest right in the head
-    DIM far = MAX(xs)
+    ' seen from the side the eye is the dark spot furthest toward the nose
+    DIM far = IIF(view$ = "right", MAX(xs), MIN(xs))
     DIM ex = []
-    DIM ey = []
+    DIM ey_s = []
     DIM i = 0
     FOR i = 0 TO LEN(xs) - 1
-        IF xs[i] >= far - 4 THEN
+        IF ABS(xs[i] - far) <= 4 THEN
             ex = APPEND(ex, xs[i])
-            ey = APPEND(ey, ys[i])
+            ey_s = APPEND(ey_s, ys[i])
         ENDIF
     NEXT i
-    RETURN [top, INT(MEAN(ex)), INT(MEAN(ey)), 0, TRUE]
+    DIM sx = INT(MEAN(ex))
+    DIM sy = INT(MEAN(ey_s))
+    DIM back_way = IIF(view$ = "right", -1, 1)
+    RETURN {"top": top, "hat": [sx + 4 * back_way, top + 3], "eye": [sx, sy], "neck": [sx + 5 * back_way, sy + INT((sy - top) * 0.5) + 2], "found": TRUE}
 ENDFUNC
 
-DIM out$ = "FUNC SheetAnchorTable()" + CHR$(10) + "    DIM t = {}" + CHR$(10)
+FUNC Mirror(a)
+    DIM out = {}
+    FOR EACH k$ IN MAP.KEYS(a)
+        IF ISARR(a{k$}) THEN
+            out{k$} = [47 - a{k$}[0], a{k$}[1]]
+        ELSE
+            out{k$} = a{k$}
+        ENDIF
+    NEXT
+    RETURN out
+ENDFUNC
+
+' a with the fields of fix laid over it.
+FUNC Over(a, fix)
+    DIM out = {}
+    FOR EACH k$ IN MAP.KEYS(a)
+        out{k$} = a{k$}
+    NEXT
+    FOR EACH k$ IN MAP.KEYS(fix)
+        out{k$} = fix{k$}
+    NEXT
+    RETURN out
+ENDFUNC
+
+' The anchors a, moved by dx and dy.
+FUNC Moved(a, dx, dy)
+    DIM out = {}
+    FOR EACH k$ IN MAP.KEYS(a)
+        IF ISARR(a{k$}) THEN
+            out{k$} = [a{k$}[0] + dx, a{k$}[1] + dy]
+        ELSEIF k$ = "top" THEN
+            out{k$} = a{k$} + dy
+        ELSE
+            out{k$} = a{k$}
+        ENDIF
+    NEXT
+    RETURN out
+ENDFUNC
+
+FUNC Mark(img, x, y, col, scale)
+    IF x < 0 ORELSE y < 0 ORELSE x > 47 ORELSE y > 47 THEN RETURN img
+    DIM dot = IMG.FROMPIXELS(scale, scale, 4, FLATTEN(RESHAPE([col[0], col[1], col[2], 255], [scale * scale, 4])))
+    RETURN IMG.PASTE(img, dot, x * scale, y * scale)
+ENDFUNC
+
+' The sheet with each frame's anchors marked, three times as big.
+SUB DrawCheck(img, frames, path$)
+    DIM scale = 3
+    DIM out = IMG.BLANK(3 * 48 * scale, 6 * 48 * scale, 4, 255)
+    DIM fr_row = 0
+    DIM fr_col = 0
+    FOR fr_row = 0 TO 5
+        FOR fr_col = 0 TO 2
+            DIM a = frames{STR$(fr_row) + "," + STR$(fr_col)}
+            DIM fr = IMG.RESIZE(IMG.CROP(img, fr_col * 48, fr_row * 48, 48, 48), 48 * scale, 48 * scale, "nearest")
+            fr = Mark(fr, 0, a{"top"}, [255, 0, 255], scale)
+            fr = Mark(fr, a{"hat"}[0], a{"hat"}[1], [255, 0, 0], scale)
+            fr = Mark(fr, a{"neck"}[0], a{"neck"}[1], [0, 200, 0], scale)
+            IF MAP.EXISTS(a, "eye") THEN
+                IF a{"view"} = "front" THEN
+                    fr = Mark(fr, a{"eye"}[0] - a{"gap"}, a{"eye"}[1], [0, 0, 255], scale)
+                    fr = Mark(fr, a{"eye"}[0] + a{"gap"}, a{"eye"}[1], [0, 0, 255], scale)
+                ELSE
+                    fr = Mark(fr, a{"eye"}[0], a{"eye"}[1], [0, 0, 255], scale)
+                ENDIF
+            ENDIF
+            out = IMG.PASTE(out, IMG.COMPOSITE(IMG.BLANK(48 * scale, 48 * scale, 4, 200), fr, 0, 0), fr_col * 48 * scale, fr_row * 48 * scale)
+        NEXT fr_col
+    NEXT fr_row
+    IMG.WRITEPNG(out, path$)
+ENDSUB
+
+DIM fixes = {}
+IF FILE.EXISTS(folder$ + "/anchors_fix.json") THEN fixes = JSON.PARSE(TXTREADER$(folder$ + "/anchors_fix.json"))
+DIM views = Views()
+DIM stands = Stands()
+DIM sorts = {}
 FOR EACH file$ IN SORT(FILE.LIST(folder$ + "/animal_*.png"))
-    DIM what$ = MID$(PATH.BASENAME$(file$), 7, LEN(PATH.BASENAME$(file$)) - 11)
-    DIM img = IMG.TOCHANNELS(IMG.READPNG(folder$ + "/" + PATH.BASENAME$(file$)), 4)
+    DIM base$ = PATH.BASENAME$(file$)
+    DIM what$ = MID$(base$, 7, LEN(base$) - 11)
+    DIM img = IMG.TOCHANNELS(IMG.READPNG(folder$ + "/" + base$), 4)
     DIM px = IMG.PIXELS(img)
     DIM sw = IMG.WIDTH(img)
-    DIM f = Measure(px, sw, 48, 0, TRUE)
-    DIM s = Measure(px, sw, 48, 96, FALSE)
-    DIM f_up = f[2] - f[0]
-    DIM s_up = s[2] - s[0]
-    DIM front$ = "{" + q$ + "top" + q$ + ": " + STR$(f[0]) + ", " + q$ + "hat" + q$ + ": [" + STR$(f[1]) + ", " + STR$(f[0] + 3) + "], " + q$ + "eye" + q$ + ": [" + STR$(f[1]) + ", " + STR$(f[2]) + "], " + q$ + "gap" + q$ + ": " + STR$(f[3]) + ", " + q$ + "neck" + q$ + ": [" + STR$(f[1]) + ", " + STR$(f[2] + INT(f_up * 0.5) + 2) + "]}"
-    DIM side$ = "{" + q$ + "top" + q$ + ": " + STR$(s[0]) + ", " + q$ + "hat" + q$ + ": [" + STR$(s[1] - 4) + ", " + STR$(s[0] + 3) + "], " + q$ + "eye" + q$ + ": [" + STR$(s[1]) + ", " + STR$(s[2]) + "], " + q$ + "neck" + q$ + ": [" + STR$(s[1] - 5) + ", " + STR$(s[2] + INT(s_up * 0.5) + 2) + "]}"
-    out$ = out$ + "    t{" + q$ + what$ + q$ + "} = {" + q$ + "front" + q$ + ": " + front$ + ", " + q$ + "side" + q$ + ": " + side$ + "}" + CHR$(10)
-    IF NOT f[4] ORELSE NOT s[4] THEN PRINT "' no eyes found for "; what$; ", check by eye"
+    IF IMG.HEIGHT(img) >= 6 * 48 ANDALSO sw >= 3 * 48 THEN
+        DIM fix = fixes{what$} ?? {}
+        IF MAP.EXISTS(fix, "right") ANDALSO NOT MAP.EXISTS(fix, "left") THEN fix{"left"} = Mirror(fix{"right"})
+        DIM measured = {}
+        FOR EACH key$ IN MAP.KEYS(views)
+            DIM fr_rc = SPLIT(key$, ",")
+            measured{key$} = MeasureStand(px, sw, VAL(fr_rc[1]) * 48, VAL(fr_rc[0]) * 48, views{key$})
+        NEXT
+        DIM frames = {}
+        FOR EACH key$ IN MAP.KEYS(views)
+            DIM view_of$ = views{key$}
+            DIM stand_key$ = stands{view_of$}
+            DIM stand = Over(measured{stand_key$}, {})
+            DIM fixed = ISMAP(fix{view_of$} ?? 0)
+            IF fixed THEN stand = Over(stand, fix{view_of$})
+            IF key$ = stand_key$ ANDALSO NOT stand{"found"} ANDALSO NOT fixed THEN PRINT "no eyes found for "; what$; " "; view_of$; ", set it in anchors_fix.json"
+            ' a measured frame stands as it is; a frame of a fixed view, or one
+            ' without eyes, takes its standing frame, moved as far as the head moved
+            DIM f = Over(measured{key$}, {})
+            IF key$ = stand_key$ THEN
+                f = stand
+            ELSEIF fixed ORELSE NOT f{"found"} THEN
+                DIM fr_xy = SPLIT(key$, ",")
+                DIM st_xy = SPLIT(stand_key$, ",")
+                DIM here = Outline(px, sw, VAL(fr_xy[1]) * 48, VAL(fr_xy[0]) * 48)
+                DIM there = Outline(px, sw, VAL(st_xy[1]) * 48, VAL(st_xy[0]) * 48)
+                f = Moved(stand, here[2] - there[2], here[0] - there[0])
+            ENDIF
+            IF MAP.EXISTS(fix, key$) THEN f = Over(f, fix{key$})
+            MAP.DELETE(f, "found")
+            f{"view"} = view_of$
+            frames{key$} = f
+        NEXT
+        ' "left": "mirror" takes the frames facing right, mirrored
+        IF (fix{"left"} ?? "") = "mirror" THEN
+            FOR EACH pair IN [["1,0", "2,0"], ["1,1", "2,1"], ["1,2", "2,2"], ["4,0", "4,2"]]
+                DIM mirrored = Mirror(frames{pair[1]})
+                mirrored{"view"} = "left"
+                frames{pair[0]} = mirrored
+            NEXT
+        ENDIF
+        sorts{what$} = frames
+        IF check$ <> "" THEN DrawCheck(img, frames, check$ + "/anchors_" + what$ + ".png")
+    ENDIF
 NEXT
-out$ = out$ + "    RETURN t" + CHR$(10) + "ENDFUNC"
-PRINT out$
+TXTWRITER folder$ + "/anchors.json", JSON.STRINGIFY$({"frame": 48, "sorts": sorts})
+PRINT "anchors.json: "; MAP.SIZE(sorts); " sorts"

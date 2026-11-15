@@ -609,39 +609,25 @@ FUNC AnimalSheetSize(what$)
     RETURN sizes{what$} ?? 36
 ENDFUNC
 
-' Where things sit on a sort, in the 48 pixels of a frame, seen from the
-' front and from the side facing right.
-FUNC AnimalSheetAnchors(what$)
-    DIM all = SheetAnchorTable()
-    RETURN all{what$} ?? {"front": {"top": 4, "hat": [24, 8], "eye": [24, 18], "gap": 5, "neck": [24, 28]}, "side": {"top": 4, "hat": [26, 8], "eye": [32, 18], "neck": [26, 28]}}
-ENDFUNC
-
-' Measured on the sheets by tools/anchors.jdb; rabbit, hedgehog, fox, turtle and
-' frog set by eye where the measure took a nose or the feet.
-FUNC SheetAnchorTable()
-    DIM t = {}
-    t{"cat"} = {"front": {"top": 0, "hat": [22, 3], "eye": [22, 19], "gap": 6, "neck": [22, 30]}, "side": {"top": 0, "hat": [30, 3], "eye": [34, 18], "neck": [29, 29]}}
-    t{"chicken"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 17], "gap": 5, "neck": [23, 27]}, "side": {"top": 1, "hat": [26, 4], "eye": [30, 19], "neck": [25, 30]}}
-    t{"cow"} = {"front": {"top": 0, "hat": [24, 3], "eye": [24, 16], "gap": 7, "neck": [24, 26]}, "side": {"top": 3, "hat": [30, 6], "eye": [34, 15], "neck": [29, 23]}}
-    t{"deer"} = {"front": {"top": 1, "hat": [23, 4], "eye": [23, 18], "gap": 4, "neck": [23, 28]}, "side": {"top": 0, "hat": [25, 3], "eye": [29, 16], "neck": [24, 26]}}
-    t{"dog"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 16], "gap": 5, "neck": [23, 26]}, "side": {"top": 2, "hat": [30, 5], "eye": [34, 18], "neck": [29, 28]}}
-    t{"donkey"} = {"front": {"top": 0, "hat": [22, 3], "eye": [22, 19], "gap": 4, "neck": [22, 30]}, "side": {"top": 0, "hat": [21, 3], "eye": [25, 16], "neck": [20, 26]}}
-    t{"duck"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 17], "gap": 6, "neck": [23, 27]}, "side": {"top": 2, "hat": [25, 5], "eye": [29, 17], "neck": [24, 26]}}
-    t{"fox"} = {"front": {"top": 0, "hat": [21, 3], "eye": [21, 19], "gap": 5, "neck": [21, 30]}, "side": {"top": 2, "hat": [33, 5], "eye": [37, 17], "neck": [32, 28]}}
-    t{"frog"} = {"front": {"top": 0, "hat": [24, 3], "eye": [24, 9], "gap": 9, "neck": [24, 25]}, "side": {"top": 3, "hat": [32, 6], "eye": [35, 12], "neck": [31, 26]}}
-    t{"goat"} = {"front": {"top": 1, "hat": [23, 4], "eye": [23, 17], "gap": 5, "neck": [23, 27]}, "side": {"top": 1, "hat": [26, 4], "eye": [30, 17], "neck": [25, 27]}}
-    t{"hedgehog"} = {"front": {"top": 0, "hat": [22, 3], "eye": [22, 25], "gap": 6, "neck": [22, 33]}, "side": {"top": 2, "hat": [33, 6], "eye": [40, 25], "neck": [36, 33]}}
-    t{"mouse"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 21], "gap": 6, "neck": [23, 33]}, "side": {"top": 0, "hat": [28, 3], "eye": [32, 19], "neck": [27, 30]}}
-    t{"owl"} = {"front": {"top": 1, "hat": [23, 4], "eye": [23, 17], "gap": 6, "neck": [23, 27]}, "side": {"top": 0, "hat": [26, 3], "eye": [30, 16], "neck": [25, 26]}}
-    t{"penguin"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 18], "gap": 7, "neck": [23, 29]}, "side": {"top": 0, "hat": [26, 3], "eye": [30, 19], "neck": [25, 30]}}
-    t{"pig"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 17], "gap": 7, "neck": [23, 27]}, "side": {"top": 3, "hat": [26, 6], "eye": [30, 19], "neck": [25, 29]}}
-    t{"pony"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 16], "gap": 5, "neck": [23, 26]}, "side": {"top": 2, "hat": [27, 5], "eye": [31, 15], "neck": [26, 23]}}
-    t{"rabbit"} = {"front": {"top": 14, "hat": [23, 17], "eye": [23, 25], "gap": 5, "neck": [23, 32]}, "side": {"top": 14, "hat": [27, 16], "eye": [30, 24], "neck": [26, 31]}}
-    t{"raccoon"} = {"front": {"top": 0, "hat": [21, 3], "eye": [21, 17], "gap": 5, "neck": [21, 27]}, "side": {"top": 0, "hat": [25, 3], "eye": [29, 16], "neck": [24, 26]}}
-    t{"sheep"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 17], "gap": 10, "neck": [23, 27]}, "side": {"top": 2, "hat": [29, 5], "eye": [33, 18], "neck": [28, 28]}}
-    t{"squirrel"} = {"front": {"top": 0, "hat": [17, 3], "eye": [17, 19], "gap": 5, "neck": [17, 30]}, "side": {"top": 1, "hat": [28, 4], "eye": [32, 19], "neck": [27, 30]}}
-    t{"turtle"} = {"front": {"top": 10, "hat": [23, 12], "eye": [23, 21], "gap": 6, "neck": [23, 28]}, "side": {"top": 13, "hat": [36, 15], "eye": [37, 21], "neck": [34, 27]}}
-    RETURN t
+' Where things sit on a sort in one frame of its sheet ("row,col"), in the
+' 48 pixels of the frame as drawn: assets/anchors.json, made by
+' tools/anchors.jdb, read once.
+FUNC AnimalFrameAnchors(c, what$, frame$)
+    IF NOT MAP.EXISTS(c, "frame_anchors") THEN
+        c{"frame_anchors"} = {}
+        TRY
+            c{"frame_anchors"} = JSON.PARSE(TXTREADER$((c{"assets"} ?? "assets") + "/anchors.json")){"sorts"} ?? {}
+        CATCH
+        ENDTRY
+    ENDIF
+    DIM found = (c{"frame_anchors"}{what$} ?? {}){frame$} ?? NONE
+    IF ISMAP(found) THEN RETURN found
+    DIM view$ = "front"
+    IF STARTSWITH(frame$, "1,") ORELSE frame$ = "4,0" THEN view$ = "left"
+    IF STARTSWITH(frame$, "2,") ORELSE frame$ = "4,2" THEN view$ = "right"
+    IF STARTSWITH(frame$, "3,") THEN RETURN {"view": "back", "top": 4, "hat": [24, 8], "neck": [24, 28]}
+    IF view$ = "front" THEN RETURN {"view": view$, "top": 4, "hat": [24, 8], "eye": [24, 18], "gap": 5, "neck": [24, 28]}
+    RETURN {"view": view$, "top": 4, "hat": [IIF(view$ = "right", 26, 22), 8], "eye": [IIF(view$ = "right", 32, 16), 18], "neck": [IIF(view$ = "right", 26, 22), 28]}
 ENDFUNC
 
 ' The sheet of a sort in the colour and pattern of a look, made once and
@@ -745,26 +731,19 @@ FUNC AnimalSheetDraw(c, row, sx, sy, what$, kind)
     DIM sq_w = INT(size * (1 + 0.18 * squish))
     DIM sq_h = INT(size * (1 - 0.16 * squish))
     GFX.DRAWIMAGE_REGION(img, frame_col * 48, frame_row * 48, 48, 48, sx + 16 - sq_w \ 2, sy + 31 - sq_h + hop, sq_w, sq_h)
-    ' what it wears, from the anchors of the view, in the cell's pixels
-    DIM side = frame_row = 1 ORELSE frame_row = 2 ORELSE (frame_row = 4 ANDALSO frame_col <> 1)
-    DIM faces_left = frame_row = 1 ORELSE (frame_row = 4 ANDALSO frame_col = 0)
-    DIM spots = AnimalSheetAnchors(what$){IIF(side, "side", "front")}
-    DIM sink = IIF(frame_row = 4, spots{"sit"} ?? 4, 0)
-    DIM at = {"front": NOT side, "gap": INT((spots{"gap"} ?? 5) * size / 48)}
+    ' what it wears, from the anchors of this frame, in the cell's pixels;
+    ' AnimalWear mirrors x for an animal facing left, so x is given mirrored
+    DIM spots = AnimalFrameAnchors(c, what$, STR$(frame_row) + "," + STR$(frame_col))
+    DIM faces_left = spots{"view"} = "left"
+    DIM at = {"front": spots{"view"} = "front", "gap": INT((spots{"gap"} ?? 5) * size / 48)}
     FOR EACH part$ IN ["hat", "eye", "neck"]
-        DIM p = spots{part$}
-        at{part$} = [ox + INT(p[0] * size / 48), oy + INT((p[1] + sink) * size / 48)]
+        IF MAP.EXISTS(spots, part$) THEN
+            DIM p = spots{part$}
+            DIM cell_x = ox + INT(p[0] * size / 48)
+            at{part$} = [IIF(faces_left, 31 - cell_x, cell_x), oy + INT(p[1] * size / 48)]
+        ENDIF
     NEXT
-    DIM wear_look = look
-    IF frame_row = 3 ANDALSO MAP.EXISTS(look, "wear") THEN
-        ' seen from the back the eyes are hidden
-        DIM back = {}
-        FOR EACH slot$ IN MAP.KEYS(look{"wear"})
-            IF slot$ <> "eyes" THEN back{slot$} = look{"wear"}{slot$}
-        NEXT
-        wear_look = {"wear": back}
-    ENDIF
-    DIM top = AnimalWear(at, wear_look, sx, sy, faces_left, hop, 0)
+    DIM top = AnimalWear(at, look, sx, sy, faces_left, hop, 0)
     top = MIN([top, sy + oy + hop + INT(spots{"top"} * size / 48)])
     IF state[3] THEN
         AnimalHeart(sx + 16, top - 6)
