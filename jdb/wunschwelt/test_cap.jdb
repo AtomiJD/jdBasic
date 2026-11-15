@@ -1,0 +1,154 @@
+' Test of game.json and the cap per animal sort, with a model that answers
+' from a script: the keeper reads the tuning numbers of the file and sets
+' one, three cats live free in the village, a fourth wished one sleeps in
+' the wisher's basket, a cat that follows a player does not count, and it
+' does when the keeper says so.
+'
+'   jdBasic jdb/wunschwelt/test_cap.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8240 + OS.PID() MOD 10
+DIM model_port AS INTEGER = 8250 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_cap_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+DIM cats AS INTEGER = 0
+FUNC FakeModel(request)
+    DIM body = JSON.PARSE(request{"body"})
+    DIM messages = body{"messages"}
+    DIM system$ AS STRING = messages[0]{"content"}
+    DIM said$ AS STRING = messages[LEN(messages) - 1]{"content"}
+    DIM content$ AS STRING = "Gern."
+    IF INSTR(system$, "Du sortierst") >= 0 THEN
+        content$ = JSON.STRINGIFY$({"wish": FALSE})
+        IF INSTR(said$, "Katze") >= 0 THEN content$ = JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": said$})
+    ELSEIF INSTR(system$, "Du bist der Baumeister") >= 0 THEN
+        cats = cats + 1
+        content$ = JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "cat", "name": "Mieze" + STR$(cats), "where": "tavern"}]})
+    ENDIF
+    RETURN JSON.STRINGIFY$({"choices": [{"message": {"role": "assistant", "content": content$}}]})
+ENDFUNC
+HTTP.SERVER.ON_POST "/v1/chat/completions", FakeModel@
+DIM model_up = HTTP.SERVER.START(model_port)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "200"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+SLEEP 1500
+DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
+DIM pace = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
+
+DIM conf = Admin("config", {})
+Check("the keeper reads game.json", conf{"ok"} ANDALSO conf{"file"}{"animals"}{"per_sort_max"} = 3 ANDALSO conf{"file"}{"animals"}{"followers_count"} = FALSE)
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM r = Post("/sync", {"token": token$, "mapv": 1})
+DIM since AS INTEGER = r{"seq"}
+DIM builds = []
+
+SUB Wait(ms AS INTEGER)
+    DIM t0 = TICK()
+    DO WHILE TICK() - t0 < ms
+        DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+        since = t{"seq"}
+        FOR EACH ev IN t{"events"}
+            IF ev{"type"} = "build" THEN builds = APPEND(builds, ev{"text"})
+        NEXT
+        SLEEP 200
+    LOOP
+ENDSUB
+
+FUNC FreeCats()
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+    DIM n AS INTEGER = 0
+    FOR EACH row IN t{"npcs"}
+        IF STARTSWITH(row[0], "b_cat_") THEN n = n + 1
+    NEXT
+    RETURN n
+ENDFUNC
+
+' Says a wish for a cat to Marta and waits until the builder made it.
+FUNC WishCat(n AS INTEGER)
+    DIM text$ AS STRING = "Ich wuensche mir eine Katze Nummer " + STR$(n)
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": text$})
+    DIM k AS INTEGER
+    FOR k = 1 TO 60
+        Wait(300)
+        FOR EACH wish IN Admin("wishes", {}){"wishes"}
+            IF wish{"text"} = text$ ANDALSO wish{"status"} = "done" THEN RETURN TRUE
+        NEXT
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+DIM marta = NONE
+FOR EACH row IN r{"npcs"}
+    IF row[0] = "marta" THEN marta = row
+NEXT
+DIM put = Admin("player_put", {"player": "Anna", "x": marta[2], "y": marta[3] + 1})
+
+DIM made AS INTEGER = 0
+DIM n AS INTEGER
+FOR n = 1 TO 3
+    IF WishCat(n) THEN made = made + 1
+    Wait(2600)
+NEXT n
+Check("three cats are made", made = 3 ANDALSO FreeCats() = 3)
+
+Check("a fourth is made", WishCat(4))
+Check("but does not live free in the village", FreeCats() = 3)
+DIM basket = Admin("basket", {"player": "Anna"}){"basket"}
+Check("it sleeps in Anna's basket", LEN(basket) = 1 ANDALSO basket[0][2] = "cat")
+Check("and the village hears why", INSTR(JOIN(builds, "|"), "schon 3 im Dorf") >= 0)
+
+' a cat that follows Anna does not count
+DIM first$ AS STRING = ""
+DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+FOR EACH row IN t{"npcs"}
+    IF first$ = "" ANDALSO STARTSWITH(row[0], "b_cat_") THEN first$ = row[0]
+NEXT
+DIM fond = Admin("fond", {"player": "Anna", "npc": first$, "v": 90})
+Wait(2600)
+Wait(2600)
+DIM fonds = Post("/sync", {"token": token$, "mapv": 1, "since": since, "fondv": -1}){"fond"} ?? {}
+Check("a cat follows Anna", ISARR(fonds{first$} ?? 0) ANDALSO fonds{first$}[1] = TRUE)
+Wait(2600)
+Check("a fifth is made beside the follower", WishCat(5) ANDALSO FreeCats() = 4)
+Wait(2600)
+
+' the keeper counts the followers too
+DIM counted = Admin("config_set", {"key": "animals.followers_count", "v": TRUE})
+Check("the keeper sets a tuning number", counted{"ok"} ANDALSO counted{"v"} = TRUE)
+Check("now a sixth goes to the basket", WishCat(6) ANDALSO FreeCats() = 4 ANDALSO LEN(Admin("basket", {"player": "Anna"}){"basket"}) = 2)
+DIM back = Admin("config_set", {"key": "animals.followers_count", "v": NONE})
+Check("and takes it back", back{"ok"} ANDALSO back{"v"} = FALSE)
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM gone = OS.KILL(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

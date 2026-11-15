@@ -320,6 +320,8 @@ FUNC RuleAdmin(w, name$, args)
     IF name$ = "economy" ORELSE name$ = "purse" ORELSE name$ = "find_put" THEN RETURN RulePurseAdmin(w, name$, args)
     IF name$ = "quest_set" ORELSE name$ = "count_set" ORELSE name$ = "day_shift" ORELSE name$ = "player_put" THEN RETURN RuleQuestAdmin(w, name$, args)
     IF name$ = "bond" ORELSE name$ = "tie" ORELSE name$ = "bond_set" THEN RETURN RuleBondAdmin(w, name$, args)
+    IF name$ = "config" ORELSE name$ = "config_set" THEN RETURN RuleConfAdmin(w, name$, args)
+    IF name$ = "basket" THEN RETURN RuleCardAdmin(w, name$, args)
     IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
     IF name$ = "wish_status" THEN
         DIM status$ = "" + (args{"status"} ?? "")

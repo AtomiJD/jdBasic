@@ -38,6 +38,7 @@
 '   WW_PATCH_KEY   key a POST /patch must carry; empty = no patches over HTTP
 '   WW_LLM_URL     chat completions URL; empty = NPCs answer a fixed line
 '   WW_GAME_DIR    folder of the first patches (default: game/ beside this file)
+'                  and of game.json, the tuning numbers rules read from w{"config"}
 '   WW_STATE_DIR   folder that keeps the world and the patches that came over
 '                  HTTP across a restart; empty = every start is a fresh world
 '
@@ -225,6 +226,23 @@ SUB SavePatches()
         KFail("save", ERRMSG$)
     ENDTRY
 ENDSUB
+
+' The tuning numbers of the game from game.json beside the first patches,
+' read on every start into w{"config"}; no file is an empty one. FALSE when
+' the file is there but is no JSON object.
+FUNC LoadConfig()
+    W{"config"} = {}
+    DIM path$ AS STRING = game_dir$ + "/game.json"
+    IF NOT FILE.EXISTS(path$) THEN RETURN TRUE
+    TRY
+        DIM conf = JSON.PARSE(TXTREADER$(path$))
+        IF NOT ISMAP(conf) THEN RETURN FALSE
+        W{"config"} = conf
+    CATCH
+        RETURN FALSE
+    ENDTRY
+    RETURN TRUE
+ENDFUNC
 
 ' Brings back what an earlier run left: its patches run again in their order,
 ' then the saved world takes the place of the fresh one and its clock goes on.
@@ -535,6 +553,10 @@ IF LEN(files) = 0 THEN
 ENDIF
 RuleMakeWorld(W)
 LoadState()
+IF NOT LoadConfig() THEN
+    PRINT "game.json in "; game_dir$; " is not a JSON object"
+    END 1
+ENDIF
 LoadAccounts()
 TRY
     RuleWake(W)

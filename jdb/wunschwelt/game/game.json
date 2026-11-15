@@ -1,0 +1,6 @@
+{
+  "animals": {
+    "per_sort_max": 3,
+    "followers_count": false
+  }
+}

@@ -31,7 +31,7 @@ URL=https://vvss.jdbasic.tech/wunschwelt
 push_files() {
     $SSH 'rm -rf ~/ww_stage && mkdir -p ~/ww_stage/game ~/ww_stage/tools ~/ww_stage/web'
     $SCP server.jdb client.jdb "$HOST:~/ww_stage/"
-    $SCP game/*.jdb "$HOST:~/ww_stage/game/"
+    $SCP game/*.jdb game/*.json "$HOST:~/ww_stage/game/"
     $SCP tools/patch.jdb tools/nginx_route.jdb tools/preflight.jdb tools/admin.jdb tools/box_preflight.sh "$HOST:~/ww_stage/tools/"
     $SCP web/index.html "$HOST:~/ww_stage/web/"
     # the pictures of the client as raw pixels (the browser runtime reads no
@@ -80,8 +80,8 @@ publish_page() {
 publish_server() {
     $SSH 'sudo -n mkdir -p /opt/wunschwelt/game /opt/wunschwelt/tools \
       && sudo -n cp ~/ww_stage/server.jdb /opt/wunschwelt/ \
-      && sudo -n rm -f /opt/wunschwelt/game/*.jdb \
-      && sudo -n cp ~/ww_stage/game/*.jdb /opt/wunschwelt/game/ \
+      && sudo -n rm -f /opt/wunschwelt/game/*.jdb /opt/wunschwelt/game/*.json \
+      && sudo -n cp ~/ww_stage/game/*.jdb ~/ww_stage/game/*.json /opt/wunschwelt/game/ \
       && sudo -n cp ~/ww_stage/tools/*.jdb ~/ww_stage/tools/*.sh /opt/wunschwelt/tools/ \
       && sudo -n chown -R root:root /opt/wunschwelt/server.jdb /opt/wunschwelt/game /opt/wunschwelt/tools'
 }

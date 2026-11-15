@@ -382,6 +382,24 @@ of every game file, which no other suite runs.
 
 `test_shop.jdb`: 23 checks.
 
+## Tuning numbers (`game/game.json`) and the animal cap (`game/085_cards.jdb`)
+
+- `game/game.json` holds the tuning numbers of the game. The kernel reads it
+  on every start into `w{"config"}` (no file is an empty one; a file that is
+  no JSON object stops the start, as a broken patch does). `deploy.sh`
+  ships it beside the patches.
+- Rules read a number with `RuleConf(w, "animals.per_sort_max", 3)`: a
+  dotted path, the fallback when it is missing. The keeper reads all with
+  `config` and sets one with `config_set` ({"key", "v"}; `v` null takes it
+  back); what is set is kept with the world and wins over the file.
+- `animals.per_sort_max` (3) animals of one sort live free in the village;
+  followers count only with `animals.followers_count` (false). A wished
+  animal beyond that is made all the same and sleeps in the wisher's basket
+  (`profile{"basket"}`, keeper call `basket` {"player"}); the village hears
+  why.
+
+`test_cap.jdb`: 12 checks.
+
 ## Bonds between players and people, and among the folk (`game/090_bonds.jdb`)
 
 - Each person (kind `person`: Marta, Fenja, the builder's villagers) likes

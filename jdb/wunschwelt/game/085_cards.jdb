@@ -1,0 +1,46 @@
+' The animal cards (stage 3). At most animals.per_sort_max animals of one
+' sort live free in the village (game.json); an animal that follows a
+' player counts only when animals.followers_count is true. An animal wished
+' beyond that is made all the same and sleeps in the basket of the one who
+' wished it: profile{"basket"}, a list of the animals as they were made.
+
+'@server
+
+' How many animals of the sort what$ live free in the village now.
+FUNC RuleAnimalsOfSort(w, what$)
+    DIM counted = RuleConf(w, "animals.followers_count", FALSE)
+    DIM n = 0
+    FOR EACH id$ IN MAP.KEYS(w{"npcs"})
+        DIM npc = w{"npcs"}{id$}
+        IF STARTSWITH(id$, "b_") ANDALSO (npc{"what"} ?? "") = what$ THEN
+            IF counted ORELSE (npc{"follow"} ?? "") = "" THEN n = n + 1
+        ENDIF
+    NEXT
+    RETURN n
+ENDFUNC
+
+FUNC RuleAnimalRoom(w, what$)
+    RETURN RuleAnimalsOfSort(w, what$) < RuleConf(w, "animals.per_sort_max", 3)
+ENDFUNC
+
+' The animal npc, made for who$, goes to sleep in their basket.
+SUB RuleBasketPut(w, who$, npc)
+    IF NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN
+    DIM prof = RuleProfile(w, who$)
+    IF NOT MAP.EXISTS(prof, "basket") THEN prof{"basket"} = []
+    npc{"follow"} = ""
+    prof{"basket"} = APPEND(prof{"basket"}, npc)
+    DIM kind_name$ = (RuleBuildWhats(){npc{"what"}} ?? [npc{"what"}])[0]
+    KEmit(w, {"type": "build", "who": "Baumeister", "text": RuleDe$("Von der Art " + kind_name$ + " leben schon " + STR$(RuleConf(w, "animals.per_sort_max", 3)) + " im Dorf. ") + npc{"name"} + RuleDe$(" schl{a}ft deshalb im K{o}rbchen von ") + who$ + "."})
+ENDSUB
+
+' The keeper reads the basket of a player ({"player"}): the names and sorts.
+FUNC RuleCardAdmin(w, name$, args)
+    DIM who$ = "" + (args{"player"} ?? "")
+    IF NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN {"ok": FALSE, "error": "no such player"}
+    DIM rows = []
+    FOR EACH npc IN RuleProfile(w, who$){"basket"} ?? []
+        rows = APPEND(rows, [[npc{"id"}, npc{"name"}, npc{"what"}]])
+    NEXT
+    RETURN {"ok": TRUE, "basket": rows}
+ENDFUNC

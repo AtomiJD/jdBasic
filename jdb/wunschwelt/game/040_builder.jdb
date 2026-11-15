@@ -889,6 +889,11 @@ FUNC RuleBuildFolk(w, b, job, st)
         npc{"range"} = 4
         npc{"persona"} = "Du bist " + st{"name"} + ", " + st{"role"} + RuleDe$(" in einem kleinen Dorf mit der Taverne Zum Goldenen Kessel. Der Baumeister hat dich auf Wunsch von ") + job{"who"} + RuleDe$(" ins Dorf geholt, du bist neu hier. Antworte auf Deutsch in ein bis zwei kurzen S{a}tzen und bleib in der Rolle.")
     ENDIF
+    ' a sort with no room left in the village: the animal sleeps in the wisher's basket
+    IF st{"do"} = "animal" ANDALSO NOT RuleAnimalRoom(w, what$) THEN
+        RuleBasketPut(w, job{"who"}, npc)
+        RETURN TRUE
+    ENDIF
     w{"npcs"}{id$} = npc
     RETURN TRUE
 ENDFUNC
