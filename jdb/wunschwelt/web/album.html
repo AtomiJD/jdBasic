@@ -35,6 +35,10 @@
   .card.empty i { color: #968c78; }
   .dot { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; vertical-align: -1px; margin-right: .25rem; border: 1px solid #0003; }
   .stars { position: absolute; right: .35rem; bottom: .2rem; color: #e0a820; letter-spacing: .05em; }
+  section h3 { margin: 1.1rem 0 .5rem; font-size: 1.1rem; }
+  .grid.shine { grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
+  .card.lit { background: #fff6d8; border-color: #d6a028; box-shadow: 0 0 .6rem #f0c84088; }
+  .card.lit b::after { content: ' ✦'; color: #e0a820; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -113,6 +117,19 @@
       grid.append(card);
     }
     page.append(grid);
+    const shines = album.shines || [];
+    if (shines.length) {
+      page.append(el('h3', '', 'Glanzkarten'));
+      const list = el('div', 'grid shine');
+      for (const [key, label, how] of shines) {
+        const count = have[key] || 0;
+        const card = el('div', count > 0 ? 'card lit' : 'card empty');
+        card.append(el('b', '', label));
+        card.append(el('i', '', count > 0 ? '× ' + count : how));
+        list.append(card);
+      }
+      page.append(list);
+    }
     document.querySelectorAll('#pages button').forEach((b, k) => b.classList.toggle('on', k === i));
   }
   function showAlbum() {

@@ -1,0 +1,173 @@
+' Test of the shine cards, with a model that answers from a script: the
+' builder makes a misprint on a whim and the wisher gets the breeder's
+' shine; petting the misprint while others are in the village, with luck,
+' to an affection of 100 gives the misprint, live, clover and heart shines
+' and every player the clover's Geld; a chapter of the chronicle that closes
+' gives the chapter shine; the ladybug of the day is found once.
+'
+'   jdBasic jdb/wunschwelt/test_shine.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8300 + OS.PID() MOD 10
+DIM model_port AS INTEGER = 8310 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_shine_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+FUNC FakeModel(request)
+    DIM body = JSON.PARSE(request{"body"})
+    DIM messages = body{"messages"}
+    DIM system$ AS STRING = messages[0]{"content"}
+    DIM said$ AS STRING = messages[LEN(messages) - 1]{"content"}
+    DIM content$ AS STRING = "Gern."
+    IF INSTR(system$, "Du sortierst") >= 0 THEN
+        content$ = JSON.STRINGIFY$({"wish": FALSE})
+        IF INSTR(said$, "Katze") >= 0 THEN content$ = JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": said$})
+    ELSEIF INSTR(system$, "Du bist der Baumeister") >= 0 THEN
+        content$ = JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "cat", "name": "Glitzer", "where": "tavern"}]})
+    ELSEIF INSTR(system$, "Du bist die Chronik") >= 0 THEN
+        content$ = JSON.STRINGIFY$({"title": "Ein neues Kapitel", "narrative": "Im Dorf ist viel geschehen.", "threads": ["Was nun?"], "rumor": "Man munkelt.", "new_act": TRUE})
+    ENDIF
+    RETURN JSON.STRINGIFY$({"choices": [{"message": {"role": "assistant", "content": content$}}]})
+ENDFUNC
+HTTP.SERVER.ON_POST "/v1/chat/completions", FakeModel@
+DIM model_up = HTTP.SERVER.START(model_port)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "200"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+SLEEP 1500
+DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
+DIM pace = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
+FOR EACH conf IN [["album.whim_chance", 1], ["album.live_shine_viewers", 1], ["album.clover_chance", 1]]
+    DIM set = Admin("config_set", {"key": conf[0], "v": conf[1]})
+NEXT
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM r = Post("/sync", {"token": token$, "mapv": 1})
+DIM since AS INTEGER = r{"seq"}
+DIM heard = []
+DIM last_pet$ AS STRING = ""
+
+FUNC Sync(extra)
+    DIM msg = {"token": token$, "mapv": 1, "since": since}
+    FOR EACH k$ IN MAP.KEYS(extra)
+        msg{k$} = extra{k$}
+    NEXT
+    DIM t = Post("/sync", msg)
+    since = t{"seq"}
+    FOR EACH ev IN t{"events"}
+        IF ev{"type"} = "build" THEN heard = APPEND(heard, ev{"text"})
+        IF ev{"type"} = "pet" ANDALSO ev{"who"} = "Anna" THEN last_pet$ = ev{"npc"}
+    NEXT
+    RETURN t
+ENDFUNC
+
+SUB Wait(ms AS INTEGER)
+    DIM t0 = TICK()
+    DO WHILE TICK() - t0 < ms
+        DIM t = Sync({})
+        SLEEP 200
+    LOOP
+ENDSUB
+
+FUNC Heard(part$ AS STRING)
+    RETURN INSTR(JOIN(heard, "|"), part$) >= 0
+ENDFUNC
+
+FUNC Card(what$ AS STRING, key$ AS STRING)
+    RETURN (Admin("album", {"player": "Anna"}){"album"}{what$} ?? {}){key$} ?? 0
+ENDFUNC
+
+DIM marta = NONE
+FOR EACH row IN r{"npcs"}
+    IF row[0] = "marta" THEN marta = row
+NEXT
+DIM put = Admin("player_put", {"player": "Anna", "x": marta[2], "y": marta[3] + 1})
+DIM said = Sync({"say": "Ich wuensche mir eine Katze"})
+DIM cat = NONE
+DIM k AS INTEGER
+FOR k = 1 TO 60
+    Wait(300)
+    FOR EACH row IN Sync({}){"npcs"}
+        IF row[1] = "Glitzer" THEN cat = row
+    NEXT
+    IF ISARR(cat) THEN EXITFOR
+NEXT k
+Check("the cat is made", ISARR(cat))
+Check("the builder had a whim and the village hears of the misprint", Heard("hatte eine Laune") ANDALSO ISMAP(cat[5]))
+Check("the wisher gets the breeder's shine", Card("cat", "s_breeder") = 1)
+
+DIM before = Admin("purse", {"player": "Anna"}){"money"}
+DIM fond = Admin("fond", {"player": "Anna", "npc": cat[0], "v": 95})
+' pet the cat, from the side it is reached from
+DIM ways = [[0, 1], [0, -1], [1, 0], [-1, 0]]
+DIM tries AS INTEGER
+FOR tries = 1 TO 8
+    DIM spot = NONE
+    FOR EACH row IN Sync({}){"npcs"}
+        IF row[0] = cat[0] THEN spot = row
+    NEXT
+    DIM way = ways[(tries - 1) MOD 4]
+    DIM moved = Admin("player_put", {"player": "Anna", "x": spot[2] - way[0], "y": spot[3] - way[1]})
+    last_pet$ = ""
+    DIM t = Sync({"pet": TRUE})
+    Wait(500)
+    IF last_pet$ = cat[0] THEN EXITFOR
+NEXT tries
+Check("Anna pets the misprint", last_pet$ = cat[0])
+Check("the misprint shine", Card("cat", "s_whim") = 1)
+Check("the live shine, with enough players in the village", Card("cat", "s_live") = 1)
+Check("the clover shine", Card("cat", "s_clover") = 1)
+Check("and the clover gives every player Geld", Admin("purse", {"player": "Anna"}){"money"} >= before + 10 ANDALSO Heard("Kleeblatt"))
+Check("an affection of 100 gives the heart shine", Card("cat", "s_heart") = 1)
+
+' the chapter closes
+DIM act_before = Admin("plot", {}){"plot"}{"act"}
+DIM soon = Admin("plot_set", {"every_ms": 1000, "at": 0})
+FOR k = 1 TO 30
+    Wait(300)
+    IF Admin("plot", {}){"plot"}{"act"} > act_before THEN EXITFOR
+NEXT k
+Check("the chronicle opens a new chapter", Admin("plot", {}){"plot"}{"act"} = act_before + 1)
+Check("the sort met in the closed chapter shines", Card("cat", "s_chapter") = 1)
+
+' the ladybug of the day
+DIM bug$ AS STRING = Admin("album", {"player": "Anna"}){"detail"}
+Check("a ladybug hides on a page", bug$ <> "")
+DIM wrong$ AS STRING = IIF(bug$ = "cat", "dog", "cat")
+DIM miss = Sync({"album_detail": wrong$})
+Check("on the wrong page there is none", Card(wrong$, "s_detail") = 0)
+DIM hit = Sync({"album_detail": bug$})
+Check("found, it gives the detail shine", Card(bug$, "s_detail") = 1 ANDALSO Admin("album", {"player": "Anna"}){"detail"} = "")
+DIM again = Sync({"album_detail": bug$})
+Check("and only once a day", Card(bug$, "s_detail") = 1)
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM gone = OS.KILL(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

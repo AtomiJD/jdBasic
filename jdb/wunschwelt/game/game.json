@@ -8,6 +8,10 @@
   },
   "album": {
     "star1": 5,
-    "star2": 10
+    "star2": 10,
+    "live_shine_viewers": 3,
+    "whim_chance": 0.05,
+    "clover_chance": 0.02,
+    "clover_bonus": 10
   }
 }

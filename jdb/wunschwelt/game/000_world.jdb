@@ -407,6 +407,15 @@ ENDSUB
 SUB RuleAlbumFriend(w, p, id$)
 ENDSUB
 
+SUB RuleAlbumShine(w, who$, id$, key$)
+ENDSUB
+
+SUB RuleAlbumChapter(w, act)
+ENDSUB
+
+SUB RuleAlbumBorn(w, who$, npc)
+ENDSUB
+
 SUB RuleAlbumSync(w, p, msg, answer)
 ENDSUB
 

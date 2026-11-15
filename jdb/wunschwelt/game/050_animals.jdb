@@ -257,6 +257,7 @@ FUNC RuleFondAdd(w, p, id$, amount)
     IF before < 80 ANDALSO v >= 80 THEN
         DIM started = RuleFollowStart(w, p, id$)
     ENDIF
+    IF before < 100 ANDALSO v >= 100 THEN RuleAlbumShine(w, p{"name"}, id$, "s_heart")
     RETURN v
 ENDFUNC
 

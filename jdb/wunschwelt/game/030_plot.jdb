@@ -100,6 +100,7 @@ SUB RulePlotAnswer(w, data, text$)
     IF (got{"new_act"} ?? FALSE) = TRUE THEN
         plot{"past"} = APPEND(plot{"past"}, {"act": plot{"act"}, "title": plot{"title"}, "narrative": plot{"narrative"}})
         IF LEN(plot{"past"}) > 12 THEN plot{"past"} = DROP(LEN(plot{"past"}) - 12, plot{"past"})
+        RuleAlbumChapter(w, plot{"act"})
         plot{"act"} = plot{"act"} + 1
         KEmit(w, {"type": "chapter", "text": "Kapitel " + STR$(plot{"act"}) + ": " + title$})
     ENDIF

@@ -471,7 +471,22 @@ of every game file, which no other suite runs.
   `RuleView` for a name that exists and its PIN, without the player entering
   the world. The start page links to it.
 
-`test_album.jdb`: 17 checks.
+- Seven shine cards per page come from the story of an animal: Herzglanz
+  (an affection of 100), Zuechterglanz (the wisher of a new animal),
+  Liveglanz (met while `album.live_shine_viewers` (3) players are in the
+  village), Kapitelglanz (every sort met in a chapter of the chronicle when
+  that chapter closes), Fehldruck (met a misprint: with
+  `album.whim_chance` (0.05, 0 = never) the builder gives a new animal a fur
+  colour or pattern the wish did not ask for, flags it `whim` and the
+  village hears of the builder's whim), Kleeblatt (pure luck when meeting,
+  `album.clover_chance` 0.02; every player in the village gets
+  `album.clover_bonus` (10) Geld) and Detailglanz (a ladybug hides on one
+  page of each player's album a day; E on that page takes it, once a day).
+- In the client up and down switch between the cards and the shine cards;
+  a shine card that is won sparkles. The phone page shows them below the
+  cards.
+
+`test_album.jdb`: 17 checks. `test_shine.jdb`: 16 checks.
 
 ## What survives a restart
 

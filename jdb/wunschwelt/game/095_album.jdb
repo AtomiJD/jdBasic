@@ -5,9 +5,19 @@
 ' it was met in, and one field for each fur colour. A field met again
 ' stacks; at album.star1 (5) and album.star2 (10) it earns a star.
 '
+' Shine cards come from the story of an animal: Herzglanz (affection 100),
+' Zuechterglanz (wished for it), Liveglanz (met while live_shine_viewers
+' players were in the village), Kapitelglanz (met in a chapter of the
+' chronicle that closed), Fehldruck (a misprint the builder made on a whim,
+' whim_chance, flagged npc{"whim"}), Kleeblatt (pure luck, clover_chance;
+' every player in the village gets clover_bonus Geld) and Detailglanz (the
+' ladybug hidden on one page of the album each day, taken with E).
+'
 ' profile{"album"}: {sort: {field: count}}, profile{"album_met"}: {npc id:
-' the day it was last met}. The client opens the album with K; a phone reads
-' it through POST /view {"view": "album"} without entering the world.
+' the day it was last met}, profile{"album_act"}: {"act", "sorts"} met in
+' the chapter now, profile{"detail_day"}: the day the ladybug was found. The
+' client opens the album with K; a phone reads it through POST /view
+' {"view": "album"} without entering the world.
 
 '@server
 
@@ -69,86 +79,172 @@ FUNC RuleAlbumSortOf$(npc)
     RETURN what$
 ENDFUNC
 
+' The shine cards of a page, from the story of an animal: [key, label, how].
+FUNC RuleAlbumShines()
+    RETURN [["s_heart", "Herzglanz", "hat Dich ganz lieb (100)"], ["s_breeder", RuleDe$("Z{u}chterglanz"), RuleDe$("selbst gew{u}nscht")], ["s_live", "Liveglanz", "getroffen, als viele im Dorf waren"], ["s_chapter", "Kapitelglanz", "aus einem Kapitel, das zu Ende ging"], ["s_whim", "Fehldruck", "eine Laune des Baumeisters"], ["s_clover", "Kleeblatt", RuleDe$("pures Gl{u}ck, alle freuen sich")], ["s_detail", "Detailglanz", RuleDe$("Marienk{a}fer im Album gefunden (E)")]]
+ENDFUNC
+
 FUNC RuleAlbumLabel$(key$)
     FOR EACH f IN RuleAlbumFields()
+        IF f[0] = key$ THEN RETURN f[1]
+    NEXT
+    FOR EACH f IN RuleAlbumShines()
         IF f[0] = key$ THEN RETURN f[1]
     NEXT
     RETURN key$
 ENDFUNC
 
-' One more of the field key$ on the page what$; the player hears of a new
-' field and of a star.
-SUB RuleAlbumAdd(w, p, what$, key$)
-    DIM prof = RuleProfile(w, p{"name"})
+' One more of the field key$ on the page what$ of who$; the player hears of
+' a new field and of a star.
+SUB RuleAlbumAdd(w, who$, what$, key$)
+    IF NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN
+    DIM prof = RuleProfile(w, who$)
     DIM album = prof{"album"}
     IF NOT ISMAP(album{what$} ?? 0) THEN album{what$} = {}
     DIM n = (album{what$}{key$} ?? 0) + 1
     album{what$}{key$} = n
-    p{"albumv"} = (p{"albumv"} ?? 0) + 1
+    IF MAP.EXISTS(w{"players"}, who$) THEN w{"players"}{who$}{"albumv"} = (w{"players"}{who$}{"albumv"} ?? 0) + 1
     DIM page$ = (RuleBuildWhats(){what$} ?? [what$])[0]
     DIM text$ = ""
     IF n = 1 THEN text$ = "Neu im Album: " + page$ + ", " + RuleAlbumLabel$(key$) + "!"
     IF n = RuleConf(w, "album.star1", 5) ORELSE n = RuleConf(w, "album.star2", 10) THEN text$ = "Ein Stern im Album: " + page$ + ", " + RuleAlbumLabel$(key$) + " (" + STR$(n) + ")!"
-    IF text$ <> "" THEN KEmit(w, {"type": "purse", "to": p{"name"}, "text": text$, "got": "album"})
+    IF text$ <> "" THEN KEmit(w, {"type": "purse", "to": who$, "text": text$, "got": "album"})
+ENDSUB
+
+' A shine card for who$ on the page of the animal id$.
+SUB RuleAlbumShine(w, who$, id$, key$)
+    IF NOT MAP.EXISTS(w{"npcs"}, id$) THEN RETURN
+    DIM what$ = RuleAlbumSortOf$(w{"npcs"}{id$})
+    IF what$ <> "" THEN RuleAlbumAdd(w, who$, what$, key$)
 ENDSUB
 
 ' p petted or fed the animal id$: once a day for each animal it fills
-' the fields of what the animal is.
+' the fields of what the animal is, and the shine of the moment.
 SUB RuleAlbumMeet(w, p, id$)
     IF NOT MAP.EXISTS(w{"npcs"}, id$) THEN RETURN
     DIM npc = w{"npcs"}{id$}
     DIM what$ = RuleAlbumSortOf$(npc)
     IF what$ = "" THEN RETURN
-    DIM prof = RuleProfile(w, p{"name"})
+    DIM who$ = p{"name"}
+    DIM prof = RuleProfile(w, who$)
     IF NOT ISMAP(prof{"album_met"} ?? 0) THEN prof{"album_met"} = {}
     DIM today$ = RuleToday$(w, 0)
     IF (prof{"album_met"}{id$} ?? "") = today$ THEN RETURN
     prof{"album_met"}{id$} = today$
     DIM look = npc{"look"} ?? {}
-    RuleAlbumAdd(w, p, what$, "meet")
-    RuleAlbumAdd(w, p, what$, RuleSeason$(w))
-    RuleAlbumAdd(w, p, what$, "c_" + RuleFurName$(look))
+    RuleAlbumAdd(w, who$, what$, "meet")
+    RuleAlbumAdd(w, who$, what$, RuleSeason$(w))
+    RuleAlbumAdd(w, who$, what$, "c_" + RuleFurName$(look))
     IF ISMAP(look) THEN
         DIM pattern$ = "" + (look{"pattern"} ?? "")
-        IF pattern$ = "stripes" ORELSE pattern$ = "spots" THEN RuleAlbumAdd(w, p, what$, pattern$)
+        IF pattern$ = "stripes" ORELSE pattern$ = "spots" THEN RuleAlbumAdd(w, who$, what$, pattern$)
         IF ISMAP(look{"wear"} ?? 0) THEN
-            IF MAP.SIZE(look{"wear"}) > 0 THEN RuleAlbumAdd(w, p, what$, "chic")
+            IF MAP.SIZE(look{"wear"}) > 0 THEN RuleAlbumAdd(w, who$, what$, "chic")
         ENDIF
+    ENDIF
+    IF npc{"whim"} ?? FALSE THEN RuleAlbumAdd(w, who$, what$, "s_whim")
+    IF MAP.SIZE(w{"players"}) >= RuleConf(w, "album.live_shine_viewers", 3) THEN RuleAlbumAdd(w, who$, what$, "s_live")
+    ' the sorts met in this chapter shine when it closes
+    RulePlotStart(w)
+    DIM act = w{"plot"}{"act"}
+    IF NOT ISMAP(prof{"album_act"} ?? 0) THEN prof{"album_act"} = {"act": act, "sorts": {}}
+    IF (prof{"album_act"}{"act"} ?? -1) <> act THEN prof{"album_act"} = {"act": act, "sorts": {}}
+    prof{"album_act"}{"sorts"}{what$} = TRUE
+    IF RND() < RuleConf(w, "album.clover_chance", 0.02) THEN
+        RuleAlbumAdd(w, who$, what$, "s_clover")
+        DIM bonus = RuleConf(w, "album.clover_bonus", 10)
+        KEmit(w, {"type": "build", "who": who$, "text": who$ + " hat bei " + npc{"name"} + " ein Kleeblatt gefunden! Alle im Dorf bekommen " + STR$(bonus) + " Geld."})
+        FOR EACH name$ IN MAP.KEYS(w{"players"})
+            RuleMoneyAdd(w, name$, bonus)
+        NEXT
     ENDIF
 ENDSUB
 
 SUB RuleAlbumFriend(w, p, id$)
-    IF NOT MAP.EXISTS(w{"npcs"}, id$) THEN RETURN
-    DIM what$ = RuleAlbumSortOf$(w{"npcs"}{id$})
-    IF what$ <> "" THEN RuleAlbumAdd(w, p, what$, "friend")
+    RuleAlbumShine(w, p{"name"}, id$, "friend")
 ENDSUB
+
+' The chapter act closed: every sort a player met in it gets a chapter shine.
+SUB RuleAlbumChapter(w, act)
+    FOR EACH name$ IN MAP.KEYS(w{"profiles"} ?? {})
+        DIM prof = RuleProfile(w, name$)
+        IF ISMAP(prof{"album_act"} ?? 0) THEN
+            IF (prof{"album_act"}{"act"} ?? -1) = act THEN
+                FOR EACH what$ IN MAP.KEYS(prof{"album_act"}{"sorts"})
+                    RuleAlbumAdd(w, name$, what$, "s_chapter")
+                NEXT
+                prof{"album_act"} = {"act": act + 1, "sorts": {}}
+            ENDIF
+        ENDIF
+    NEXT
+ENDSUB
+
+' A new animal npc, wished by who$: the builder's whim may make it a
+' misprint (album.whim_chance, 0 = never), a fur colour or pattern the wish
+' did not ask for, flagged whim; the wisher gets the breeder's shine.
+SUB RuleAlbumBorn(w, who$, npc)
+    DIM what$ = RuleAlbumSortOf$(npc)
+    IF what$ = "" THEN RETURN
+    IF RND() < RuleConf(w, "album.whim_chance", 0.05) THEN
+        DIM look = npc{"look"} ?? {}
+        IF NOT ISMAP(look) THEN look = {}
+        DIM colors = RuleLookColors()
+        DIM names = MAP.KEYS(colors)
+        DIM col = colors{names[INT(RND() * LEN(names))]}
+        IF RND() < 0.5 ORELSE MAP.EXISTS(look, "pattern") THEN
+            look{"color"} = col
+        ELSE
+            look{"pattern"} = IIF(RND() < 0.5, "stripes", "spots")
+        ENDIF
+        npc{"look"} = look
+        npc{"whim"} = TRUE
+        KEmit(w, {"type": "build", "who": "Baumeister", "text": "Der Baumeister hatte eine Laune: " + npc{"name"} + RuleDe$(" ist ein Fehldruck und sieht anders aus als gew{u}nscht.")})
+    ENDIF
+    RuleAlbumAdd(w, who$, what$, "s_breeder")
+ENDSUB
+
+' The page where the ladybug of today hides for name$; "" once it was found.
+FUNC RuleAlbumDetail$(w, name$)
+    DIM today$ = RuleToday$(w, 0)
+    IF (RuleProfile(w, name$){"detail_day"} ?? "") = today$ THEN RETURN ""
+    DIM sorts = RuleAlbumSorts()
+    RETURN sorts[CODEC.CRC32(name$ + "|" + today$) MOD LEN(sorts)][0]
+ENDFUNC
 
 ' The album of a player as the client and the phone read it.
 FUNC RuleAlbumOf(w, name$)
-    RETURN {"have": RuleProfile(w, name$){"album"}, "fields": RuleAlbumFields(), "sorts": RuleAlbumSorts(), "stars": [RuleConf(w, "album.star1", 5), RuleConf(w, "album.star2", 10)]}
+    RETURN {"have": RuleProfile(w, name$){"album"}, "fields": RuleAlbumFields(), "shines": RuleAlbumShines(), "sorts": RuleAlbumSorts(), "stars": [RuleConf(w, "album.star1", 5), RuleConf(w, "album.star2", 10)], "detail": RuleAlbumDetail$(w, name$)}
 ENDFUNC
 
 SUB RuleAlbumSync(w, p, msg, answer)
+    DIM found$ = "" + (msg{"album_detail"} ?? "")
+    IF found$ <> "" ANDALSO found$ = RuleAlbumDetail$(w, p{"name"}) THEN
+        DIM prof = RuleProfile(w, p{"name"})
+        prof{"detail_day"} = RuleToday$(w, 0)
+        RuleAlbumAdd(w, p{"name"}, found$, "s_detail")
+    ENDIF
+    ' a new day hides a new ladybug
+    IF (p{"album_day"} ?? "") <> RuleToday$(w, 0) THEN
+        p{"album_day"} = RuleToday$(w, 0)
+        p{"albumv"} = (p{"albumv"} ?? 0) + 1
+    ENDIF
     IF INT(msg{"albumv"} ?? -1) = (p{"albumv"} ?? 0) THEN RETURN
     answer{"album"} = RuleAlbumOf(w, p{"name"})
     answer{"albumv"} = p{"albumv"} ?? 0
 ENDSUB
 
-' The keeper reads the album of a player ("album" {"player"}) and sets the
-' count of one field ("album_set" {"player", "sort", "field", "v"}).
+' The keeper reads the album of a player ("album" {"player"}: the cards and
+' where the ladybug hides) and sets the count of one field or shine
+' ("album_set" {"player", "sort", "field", "v"}).
 FUNC RuleAlbumAdmin(w, name$, args)
     DIM who$ = "" + (args{"player"} ?? "")
     IF NOT MAP.EXISTS(w{"profiles"} ?? {}, who$) THEN RETURN {"ok": FALSE, "error": "no such player"}
     DIM album = RuleProfile(w, who$){"album"}
-    IF name$ = "album" THEN RETURN {"ok": TRUE, "album": album}
+    IF name$ = "album" THEN RETURN {"ok": TRUE, "album": album, "detail": RuleAlbumDetail$(w, who$)}
     DIM what$ = "" + (args{"sort"} ?? "")
     DIM key$ = "" + (args{"field"} ?? "")
     IF RuleAlbumSortOf$({"what": what$}) = "" THEN RETURN {"ok": FALSE, "error": "no such sort"}
-    DIM known = FALSE
-    FOR EACH f IN RuleAlbumFields()
-        IF f[0] = key$ THEN known = TRUE
-    NEXT
-    IF NOT known ORELSE NOT ISNUM(args{"v"} ?? "") THEN RETURN {"ok": FALSE, "error": "field and v"}
+    IF RuleAlbumLabel$(key$) = key$ ORELSE NOT ISNUM(args{"v"} ?? "") THEN RETURN {"ok": FALSE, "error": "field and v"}
     IF NOT ISMAP(album{what$} ?? 0) THEN album{what$} = {}
     album{what$}{key$} = MAX([0, INT(args{"v"})])
     IF MAP.EXISTS(w{"players"}, who$) THEN w{"players"}{who$}{"albumv"} = (w{"players"}{who$}{"albumv"} ?? 0) + 1
@@ -167,6 +263,10 @@ ENDFUNC
 
 SUB ClientAlbumAsk(c, msg)
     msg{"albumv"} = c{"albumv"} ?? -1
+    IF (c{"album_found"} ?? "") <> "" THEN
+        msg{"album_detail"} = c{"album_found"}
+        c{"album_found"} = ""
+    ENDIF
 ENDSUB
 
 SUB ClientAlbumExtra(c, r)
@@ -180,7 +280,15 @@ FUNC ClientHolds(c)
     RETURN c{"album_open"} ?? FALSE
 ENDFUNC
 
-' K opens and closes the album, left and right turn the pages.
+' The sort on the page shown now, "" when there is none.
+FUNC AlbumPageSort$(c)
+    DIM sorts = (c{"album"} ?? {}){"sorts"} ?? []
+    IF LEN(sorts) = 0 THEN RETURN ""
+    RETURN sorts[CLAMP(c{"album_page"} ?? 0, 0, LEN(sorts) - 1)][0]
+ENDFUNC
+
+' K opens and closes the album, left and right turn the pages, up and down
+' switch between the cards and the shine cards, E takes the ladybug.
 FUNC ClientAlbumKey(c, tapped$)
     IF tapped$ = "K" THEN
         c{"album_open"} = NOT (c{"album_open"} ?? FALSE)
@@ -199,6 +307,14 @@ FUNC ClientAlbumKey(c, tapped$)
     IF n_pages = 0 THEN RETURN TRUE
     IF tapped$ = "LEFT" ORELSE tapped$ = "A" THEN c{"album_page"} = ((c{"album_page"} ?? 0) - 1 + n_pages) MOD n_pages
     IF tapped$ = "RIGHT" ORELSE tapped$ = "D" THEN c{"album_page"} = ((c{"album_page"} ?? 0) + 1) MOD n_pages
+    IF tapped$ = "UP" ORELSE tapped$ = "W" ORELSE tapped$ = "DOWN" ORELSE tapped$ = "S" THEN c{"album_shine"} = NOT (c{"album_shine"} ?? FALSE)
+    IF tapped$ = "E" ANDALSO NOT (c{"album_shine"} ?? FALSE) THEN
+        DIM what$ = AlbumPageSort$(c)
+        IF what$ <> "" ANDALSO ("" + (c{"album"}{"detail"} ?? "")) = what$ THEN
+            c{"album_found"} = what$
+            c{"album"}{"detail"} = ""
+        ENDIF
+    ENDIF
     RETURN TRUE
 ENDFUNC
 
@@ -208,8 +324,34 @@ SUB AlbumStar(x, y)
     RECT x + 1, y + 1, 3, 3, TRUE, 250, 204, 60
 ENDSUB
 
-' The page of one sort: its picture, how many fields are filled, and a
-' card for each field, grey with a ? while it is empty.
+' A ladybug, eight pixels wide.
+SUB AlbumLadybug(x, y)
+    CIRCLE x + 4, y + 4, 4, TRUE, 214, 40, 40
+    RECT x + 4, y, 1, 9, TRUE, 30, 20, 20
+    CIRCLE x + 4, y, 2, TRUE, 30, 20, 20
+    RECT x + 2, y + 3, 1, 1, TRUE, 30, 20, 20
+    RECT x + 6, y + 5, 1, 1, TRUE, 30, 20, 20
+    RECT x + 2, y + 6, 1, 1, TRUE, 30, 20, 20
+ENDSUB
+
+' Small sparkles that come and go over the card at x, y, w, h.
+SUB AlbumSparkle(x, y, w, h, seed)
+    DIM k = 0
+    FOR k = 0 TO 2
+        DIM phase = ((INT(TICK()) \ 90) + seed * 7 + k * 5) MOD 12
+        IF phase < 5 THEN
+            DIM spark_x = x + 4 + ((seed * 37 + k * 61 + (INT(TICK()) \ 1080) * 13) MOD MAX([1, w - 8]))
+            DIM spark_y = y + 2 + ((seed * 17 + k * 29) MOD MAX([1, h - 4]))
+            DIM arm = IIF(phase = 2, 2, 1)
+            RECT spark_x - arm, spark_y, 2 * arm + 1, 1, TRUE, 255, 236, 140
+            RECT spark_x, spark_y - arm, 1, 2 * arm + 1, TRUE, 255, 236, 140
+        ENDIF
+    NEXT k
+ENDSUB
+
+' The page of one sort: its picture, how many cards are filled, and a card
+' for each field, grey with a ? while it is empty; up and down show the
+' shine cards of the page instead.
 SUB ClientAlbumHud(c)
     IF NOT (c{"album_open"} ?? FALSE) THEN RETURN
     DIM album = c{"album"} ?? NONE
@@ -224,7 +366,8 @@ SUB ClientAlbumHud(c)
         RETURN
     ENDIF
     DIM sorts = album{"sorts"}
-    DIM fields = album{"fields"}
+    DIM shine_view = c{"album_shine"} ?? FALSE
+    DIM fields = IIF(shine_view, album{"shines"} ?? [], album{"fields"})
     IF LEN(sorts) = 0 THEN RETURN
     DIM page = CLAMP(c{"album_page"} ?? 0, 0, LEN(sorts) - 1)
     DIM what$ = sorts[page][0]
@@ -240,47 +383,74 @@ SUB ClientAlbumHud(c)
     DIM img = AnimalIcon(c, what$, kinds{what$} ?? {"base": [180, 180, 180]})
     IF img > 0 THEN GFX.DRAWIMAGE_REGION(img, 0, 0, 48, 48, px0 + 10, py0 + 4, 48, 48)
     TEXT px0 + 66, py0 + 8, "Album: " + sorts[page][1] + "   (Seite " + STR$(page + 1) + " von " + STR$(LEN(sorts)) + ")", 96, 64, 40
-    TEXT px0 + 66, py0 + 10 + high, STR$(filled) + " von " + STR$(LEN(fields)) + " Karten", 130, 100, 60
+    DIM count_line$ = STR$(filled) + " von " + STR$(LEN(fields)) + IIF(shine_view, " Glanzkarten", " Karten")
+    TEXT px0 + 66, py0 + 10 + high, count_line$, 130, 100, 60
     ' a bar of what is filled
-    DIM bar_x = px0 + 80 + GFX.TEXTSIZE(STR$(filled) + " von " + STR$(LEN(fields)) + " Karten")[0]
+    DIM bar_x = px0 + 80 + GFX.TEXTSIZE(count_line$)[0]
     DIM bar_y = py0 + 10 + high + high \ 2 - 3
     RECT bar_x, bar_y, 200, 6, TRUE, 220, 208, 170
-    RECT bar_x, bar_y, INT(200 * filled / MAX([1, LEN(fields)])), 6, TRUE, 120, 180, 90
-    ' three columns, a card is one row: colour, name, count and stars
-    DIM cols = 3
-    DIM cw = 190
+    RECT bar_x, bar_y, INT(200 * filled / MAX([1, LEN(fields)])), 6, TRUE, IIF(shine_view, 230, 120), IIF(shine_view, 180, 180), IIF(shine_view, 40, 90)
     DIM gy = py0 + 14 + 2 * high
-    DIM n_rows = (LEN(fields) + cols - 1) \ cols
-    DIM chh = (py0 + ph - high - 10 - gy) \ n_rows - 2
-    DIM ty = (chh - high) \ 2
     DIM gx = px0 + 12
     DIM i = 0
-    FOR i = 0 TO LEN(fields) - 1
-        DIM f = fields[i]
-        DIM n = have{f[0]} ?? 0
-        DIM cx = gx + (i MOD cols) * (cw + 4)
-        DIM cy = gy + (i \ cols) * (chh + 2)
-        DIM tx = cx + 6
-        IF n > 0 THEN
-            ROUNDED_RECT cx, cy, cw, chh, 3, TRUE, 255, 252, 240
-            ROUNDED_RECT cx, cy, cw, chh, 3, FALSE, 150, 110, 60
-            IF LEN(f[2]) = 3 THEN
-                CIRCLE cx + 9, cy + chh \ 2, 5, TRUE, f[2][0], f[2][1], f[2][2]
-                tx = cx + 18
+    IF shine_view THEN
+        ' one row for each shine card: its name, how it is won, the count
+        DIM rh = (py0 + ph - high - 10 - gy) \ MAX([1, LEN(fields)]) - 2
+        FOR i = 0 TO LEN(fields) - 1
+            DIM s = fields[i]
+            DIM n_shine = have{s[0]} ?? 0
+            DIM ry = gy + i * (rh + 2)
+            DIM rty = (rh - high) \ 2
+            IF n_shine > 0 THEN
+                ROUNDED_RECT gx, ry, pw - 24, rh, 3, TRUE, 255, 248, 222
+                ROUNDED_RECT gx, ry, pw - 24, rh, 3, FALSE, 214, 160, 40
+                TEXT gx + 8, ry + rty, s[1], 120, 80, 10
+                TEXT gx + 150, ry + rty, s[2], 110, 90, 60
+                TEXT gx + pw - 24 - 8 - GFX.TEXTSIZE("x" + STR$(n_shine))[0], ry + rty, "x" + STR$(n_shine), 120, 80, 10
+                AlbumSparkle(gx, ry, pw - 24, rh, i + 3)
+            ELSE
+                ROUNDED_RECT gx, ry, pw - 24, rh, 3, TRUE, 214, 204, 176
+                TEXT gx + 8, ry + rty, s[1], 150, 140, 120
+                TEXT gx + 150, ry + rty, s[2], 160, 150, 130
             ENDIF
-            TEXT tx, cy + ty, f[1], 60, 44, 28
-            DIM count_txt$ = "x" + STR$(n)
-            DIM right_x = cx + cw - 6 - GFX.TEXTSIZE(count_txt$)[0]
-            IF n >= stars[0] THEN right_x = right_x - 8
-            IF n >= stars[1] THEN right_x = right_x - 8
-            TEXT right_x, cy + ty, count_txt$, 120, 90, 50
-            IF n >= stars[0] THEN AlbumStar(cx + cw - 12, cy + chh \ 2 - 2)
-            IF n >= stars[1] THEN AlbumStar(cx + cw - 20, cy + chh \ 2 - 2)
-        ELSE
-            ROUNDED_RECT cx, cy, cw, chh, 3, TRUE, 214, 204, 176
-            TEXT tx, cy + ty, f[1], 150, 140, 120
-            TEXT cx + cw - 6 - GFX.TEXTSIZE("?")[0], cy + ty, "?", 150, 140, 120
-        ENDIF
-    NEXT i
-    TEXT px0 + 12, py0 + ph - high - 6, "Links / rechts: bl" + CHR$(195) + CHR$(164) + "ttern   K oder Esc: schlie" + CHR$(195) + CHR$(159) + "en", 120, 110, 100
+        NEXT i
+    ELSE
+        ' three columns, a card is one row: colour, name, count and stars
+        DIM cols = 3
+        DIM cw = 190
+        DIM n_rows = (LEN(fields) + cols - 1) \ cols
+        DIM chh = (py0 + ph - high - 10 - gy) \ n_rows - 2
+        DIM ty = (chh - high) \ 2
+        DIM bug = -1
+        IF ("" + (album{"detail"} ?? "")) = what$ THEN bug = CODEC.CRC32(what$) MOD LEN(fields)
+        FOR i = 0 TO LEN(fields) - 1
+            DIM f = fields[i]
+            DIM n = have{f[0]} ?? 0
+            DIM cx = gx + (i MOD cols) * (cw + 4)
+            DIM cy = gy + (i \ cols) * (chh + 2)
+            DIM tx = cx + 6
+            IF n > 0 THEN
+                ROUNDED_RECT cx, cy, cw, chh, 3, TRUE, 255, 252, 240
+                ROUNDED_RECT cx, cy, cw, chh, 3, FALSE, 150, 110, 60
+                IF LEN(f[2]) = 3 THEN
+                    CIRCLE cx + 9, cy + chh \ 2, 5, TRUE, f[2][0], f[2][1], f[2][2]
+                    tx = cx + 18
+                ENDIF
+                TEXT tx, cy + ty, f[1], 60, 44, 28
+                DIM count_txt$ = "x" + STR$(n)
+                DIM right_x = cx + cw - 6 - GFX.TEXTSIZE(count_txt$)[0]
+                IF n >= stars[0] THEN right_x = right_x - 8
+                IF n >= stars[1] THEN right_x = right_x - 8
+                TEXT right_x, cy + ty, count_txt$, 120, 90, 50
+                IF n >= stars[0] THEN AlbumStar(cx + cw - 12, cy + chh \ 2 - 2)
+                IF n >= stars[1] THEN AlbumStar(cx + cw - 20, cy + chh \ 2 - 2)
+            ELSE
+                ROUNDED_RECT cx, cy, cw, chh, 3, TRUE, 214, 204, 176
+                TEXT tx, cy + ty, f[1], 150, 140, 120
+                TEXT cx + cw - 6 - GFX.TEXTSIZE("?")[0], cy + ty, "?", 150, 140, 120
+            ENDIF
+            IF i = bug THEN AlbumLadybug(cx + cw \ 2 + 20, cy + chh \ 2 - 4)
+        NEXT i
+    ENDIF
+    TEXT px0 + 12, py0 + ph - high - 6, "Links/rechts: Seite   Hoch/runter: Glanz   K: zu", 120, 110, 100
 ENDSUB

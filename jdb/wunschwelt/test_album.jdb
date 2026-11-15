@@ -61,6 +61,8 @@ DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "200"],
 SLEEP 1500
 DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
 DIM pace = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
+DIM no_whim = Admin("config_set", {"key": "album.whim_chance", "v": 0})
+DIM no_clover = Admin("config_set", {"key": "album.clover_chance", "v": 0})
 
 DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
 DIM r = Post("/sync", {"token": token$, "mapv": 1})
