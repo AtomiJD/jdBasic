@@ -558,29 +558,26 @@ SUB ClientQuestHud(c)
     DIM high = GFX.TEXTSIZE("Ag")[1] + 1
     DIM rows = q{"list"}
     IF NOT (c{"questlog"} ?? FALSE) THEN
-        DIM n_open = 0
+        ' the corner shows only the open tasks, and nothing once all are done
+        DIM open_rows = []
         FOR EACH row IN rows
-            IF NOT row[4] THEN n_open = n_open + 1
+            IF NOT row[4] THEN open_rows = APPEND(open_rows, [row])
         NEXT
-        DIM bw = 0
-        FOR EACH row IN rows
-            bw = MAX([bw, GFX.TEXTSIZE(row[0] + "  " + STR$(row[2]) + "/" + STR$(row[3]))[0]])
+        IF LEN(open_rows) = 0 THEN RETURN
+        DIM bw = GFX.TEXTSIZE("Heute (Q)")[0]
+        FOR EACH row IN open_rows
+            bw = MAX([bw, GFX.TEXTSIZE("- " + row[0] + "  " + STR$(row[2]) + "/" + STR$(row[3]))[0]])
         NEXT
-        bw = bw + 24
+        bw = bw + 12
         DIM bx = 636 - bw
         DRAWCOLOR 16, 18, 22, 190
-        RECT bx, 46, bw, (LEN(rows) + 1) * high + 6, TRUE
+        RECT bx, 46, bw, (LEN(open_rows) + 1) * high + 6, TRUE
         DRAWCOLOR 255, 255, 255, 255
         TEXT bx + 6, 48, "Heute (Q)", 250, 214, 110
         DIM i = 0
-        FOR i = 0 TO LEN(rows) - 1
-            DIM r = rows[i]
-            DIM y = 48 + (i + 1) * high
-            IF r[4] THEN
-                TEXT bx + 6, y, "x " + r[0], 120, 180, 120
-            ELSE
-                TEXT bx + 6, y, "- " + r[0] + "  " + STR$(r[2]) + "/" + STR$(r[3]), 230, 230, 220
-            ENDIF
+        FOR i = 0 TO LEN(open_rows) - 1
+            DIM r = open_rows[i]
+            TEXT bx + 6, 48 + (i + 1) * high, "- " + r[0] + "  " + STR$(r[2]) + "/" + STR$(r[3]), 230, 230, 220
         NEXT i
         RETURN
     ENDIF
