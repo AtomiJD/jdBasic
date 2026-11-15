@@ -113,7 +113,7 @@ FUNC RuleWearPart$(t$, what$)
     FOR EACH part$ IN parts
         DIM which$ = ""
         FOR EACH stem IN stems
-            IF which$ = "" ANDALSO whats{stem[1]}[1] ANDALSO INSTR(part$, stem[0]) >= 0 THEN which$ = stem[1]
+            IF which$ = "" ANDALSO whats{stem[1]}[1] ANDALSO RuleBuildStemAt(part$, stem[0], "") >= 0 THEN which$ = stem[1]
         NEXT
         names_animal = APPEND(names_animal, which$)
         IF which$ <> "" THEN named = named + 1
@@ -151,7 +151,7 @@ FUNC RuleAnimalNear$(w, p, low$, reach)
     DIM whats = RuleBuildWhats()
     DIM what$ = ""
     FOR EACH stem IN RuleBuildStems()
-        IF what$ = "" ANDALSO INSTR(low$, stem[0]) >= 0 ANDALSO whats{stem[1]}[1] THEN what$ = stem[1]
+        IF what$ = "" ANDALSO RuleBuildStemAt(low$, stem[0], "") >= 0 ANDALSO whats{stem[1]}[1] THEN what$ = stem[1]
     NEXT
     DIM npcs = w{"npcs"}
     DIM pick$ = ""
@@ -605,7 +605,7 @@ ENDSUB
 
 ' How big a sort is drawn, of the 48 pixels of a frame.
 FUNC AnimalSheetSize(what$)
-    DIM sizes = {"chicken": 30, "duck": 30, "frog": 30, "hedgehog": 30, "rabbit": 32, "cat": 34, "dog": 36, "fox": 36, "pig": 36, "sheep": 40, "cow": 42}
+    DIM sizes = {"chicken": 30, "duck": 30, "frog": 30, "hedgehog": 30, "rabbit": 32, "cat": 34, "dog": 36, "fox": 36, "pig": 36, "sheep": 40, "cow": 42, "mouse": 26, "owl": 30, "squirrel": 30, "turtle": 32, "penguin": 32, "raccoon": 34, "goat": 36, "deer": 36, "pony": 40, "donkey": 40}
     RETURN sizes{what$} ?? 36
 ENDFUNC
 
@@ -616,7 +616,7 @@ FUNC AnimalSheetAnchors(what$)
     RETURN all{what$} ?? {"front": {"top": 4, "hat": [24, 8], "eye": [24, 18], "gap": 5, "neck": [24, 28]}, "side": {"top": 4, "hat": [26, 8], "eye": [32, 18], "neck": [26, 28]}}
 ENDFUNC
 
-' Measured on the sheets by tools/anchors.jdb; rabbit, hedgehog, fox and
+' Measured on the sheets by tools/anchors.jdb; rabbit, hedgehog, fox, turtle and
 ' frog set by eye where the measure took a nose or the feet.
 FUNC SheetAnchorTable()
     DIM t = {}
@@ -628,9 +628,11 @@ FUNC SheetAnchorTable()
     t{"fox"} = {"front": {"top": 0, "hat": [21, 3], "eye": [21, 19], "gap": 5, "neck": [21, 30]}, "side": {"top": 2, "hat": [33, 5], "eye": [37, 17], "neck": [32, 28]}}
     t{"frog"} = {"front": {"top": 0, "hat": [24, 3], "eye": [24, 9], "gap": 9, "neck": [24, 25]}, "side": {"top": 3, "hat": [32, 6], "eye": [35, 12], "neck": [31, 26]}}
     t{"hedgehog"} = {"front": {"top": 0, "hat": [22, 3], "eye": [22, 25], "gap": 6, "neck": [22, 33]}, "side": {"top": 2, "hat": [33, 6], "eye": [40, 25], "neck": [36, 33]}}
+    t{"penguin"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 18], "gap": 7, "neck": [23, 29]}, "side": {"top": 0, "hat": [26, 3], "eye": [30, 19], "neck": [25, 30]}}
     t{"pig"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 17], "gap": 7, "neck": [23, 27]}, "side": {"top": 3, "hat": [26, 6], "eye": [30, 19], "neck": [25, 29]}}
     t{"rabbit"} = {"front": {"top": 14, "hat": [23, 17], "eye": [23, 25], "gap": 5, "neck": [23, 32]}, "side": {"top": 14, "hat": [27, 16], "eye": [30, 24], "neck": [26, 31]}}
     t{"sheep"} = {"front": {"top": 0, "hat": [23, 3], "eye": [23, 17], "gap": 10, "neck": [23, 27]}, "side": {"top": 2, "hat": [29, 5], "eye": [33, 18], "neck": [28, 28]}}
+    t{"turtle"} = {"front": {"top": 10, "hat": [23, 12], "eye": [23, 21], "gap": 6, "neck": [23, 28]}, "side": {"top": 13, "hat": [36, 15], "eye": [37, 21], "neck": [34, 27]}}
     RETURN t
 ENDFUNC
 
@@ -794,7 +796,8 @@ ENDSUB
 FUNC AnimalPetWord$(what$)
     DIM ae$ = CHR$(195) + CHR$(164)
     DIM ue$ = CHR$(195) + CHR$(188)
-    DIM words = {"cat": "Schnurr!", "dog": "Wuff!", "chicken": "Gock!", "duck": "Quak!", "frog": "Quaak!", "cow": "Muuh!", "pig": "Oink!", "sheep": "M" + ae$ + "h!", "rabbit": "M" + ue$ + "mmel!", "hedgehog": "Schn" + ue$ + "ff!", "fox": "Jiep!"}
+    DIM oe$ = CHR$(195) + CHR$(182)
+    DIM words = {"cat": "Schnurr!", "dog": "Wuff!", "chicken": "Gock!", "duck": "Quak!", "frog": "Quaak!", "cow": "Muuh!", "pig": "Oink!", "sheep": "M" + ae$ + "h!", "rabbit": "M" + ue$ + "mmel!", "hedgehog": "Schn" + ue$ + "ff!", "fox": "Jiep!", "owl": "Huhu!", "squirrel": "Tschirp!", "mouse": "Piep!", "turtle": "Mmmh!", "goat": "M" + ae$ + "eh!", "deer": "Fiep!", "pony": "Wieher!", "donkey": "I-Aah!", "raccoon": "Hihi!", "penguin": "Tr" + oe$ + "t!"}
     RETURN words{what$} ?? "Hihi!"
 ENDFUNC
 

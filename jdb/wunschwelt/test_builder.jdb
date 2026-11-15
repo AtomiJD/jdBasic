@@ -40,6 +40,7 @@ FUNC Verdict$(said$ AS STRING)
     IF INSTR(said$, "Bank") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["thing"], "text": "Eine Bank vor der Taverne"})
     IF INSTR(said$, "Igel") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Ein Igel mit lila Muetze und roter Schleife"})
     IF INSTR(said$, "Hund") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Ein Hund mit gelbem Hut"})
+    IF INSTR(said$, "Eule") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Eine Eule, ein Pony und eine Schildkroete bei den Ziegeln"})
     IF INSTR(said$, "Drache") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Ein Drache"})
     RETURN JSON.STRINGIFY$({"wish": FALSE})
 ENDFUNC
@@ -267,6 +268,13 @@ DIM listed = Admin("things", {}){"things"}
 Check("the keeper lists what the builder built", LEN(listed) >= 4)
 DIM dropped = Admin("thing_remove", {"id": dog[0][0]})
 Check("and takes one away, only a built one", dropped{"ok"} ANDALSO LEN(Folk(World(), "b_dog_")) = 0 ANDALSO NOT Admin("thing_remove", {"id": "marta"}){"ok"})
+
+' no plan: the words name the new sorts, and a word that only holds a stem names none
+SLEEP 2600
+wish = WishAndWait("Ich wuensche mir eine Eule, ein Pony und eine Schildkroete", "Eine Eule, ein Pony und eine Schildkroete bei den Ziegeln")
+DIM w5 = World()
+Check("an owl, a pony and a turtle come from the words", wish{"status"} = "done" ANDALSO LEN(Folk(w5, "b_owl_")) = 1 ANDALSO LEN(Folk(w5, "b_pony_")) = 1 ANDALSO LEN(Folk(w5, "b_turtle_")) = 1)
+Check("a turtle is no sign and bricks are no goat", LEN(Folk(w5, "b_sign_")) = 1 ANDALSO LEN(Folk(w5, "b_goat_")) = 0)
 
 ' ---- affection and following ----
 ' Walks Anna until she stands beside the npc id$; TRUE when she does.

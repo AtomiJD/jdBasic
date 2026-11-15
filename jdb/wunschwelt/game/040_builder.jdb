@@ -21,12 +21,27 @@ ENDFUNC
 
 ' Animals and things the builder knows: key -> [German name, is an animal].
 FUNC RuleBuildWhats()
-    RETURN {"frog": ["Frosch", TRUE], "duck": ["Ente", TRUE], "chicken": ["Huhn", TRUE], "sheep": ["Schaf", TRUE], "rabbit": ["Hase", TRUE], "dog": ["Hund", TRUE], "cow": ["Kuh", TRUE], "cat": ["Katze", TRUE], "hedgehog": ["Igel", TRUE], "pig": ["Schwein", TRUE], "fox": ["Fuchs", TRUE], "bench": ["Bank", FALSE], "lantern": ["Laterne", FALSE], "sign": ["Schild", FALSE], "barrel": ["Fass", FALSE], "campfire": ["Lagerfeuer", FALSE], "scarecrow": ["Vogelscheuche", FALSE], "flowerbox": ["Blumenkasten", FALSE]}
+    RETURN {"frog": ["Frosch", TRUE], "duck": ["Ente", TRUE], "chicken": ["Huhn", TRUE], "sheep": ["Schaf", TRUE], "rabbit": ["Hase", TRUE], "dog": ["Hund", TRUE], "cow": ["Kuh", TRUE], "cat": ["Katze", TRUE], "hedgehog": ["Igel", TRUE], "pig": ["Schwein", TRUE], "fox": ["Fuchs", TRUE], "owl": ["Eule", TRUE], "squirrel": [RuleDe$("Eichh{o}rnchen"), TRUE], "mouse": ["Maus", TRUE], "turtle": [RuleDe$("Schildkr{o}te"), TRUE], "goat": ["Ziege", TRUE], "deer": ["Reh", TRUE], "pony": ["Pony", TRUE], "donkey": ["Esel", TRUE], "raccoon": [RuleDe$("Waschb{a}r"), TRUE], "penguin": ["Pinguin", TRUE], "bench": ["Bank", FALSE], "lantern": ["Laterne", FALSE], "sign": ["Schild", FALSE], "barrel": ["Fass", FALSE], "campfire": ["Lagerfeuer", FALSE], "scarecrow": ["Vogelscheuche", FALSE], "flowerbox": ["Blumenkasten", FALSE]}
 ENDFUNC
 
 ' Word stems of a wish (lower case, umlauts spelled out) and the key they name.
 FUNC RuleBuildStems()
-    RETURN [["frosch", "frog"], ["froesch", "frog"], ["ente", "duck"], ["huhn", "chicken"], ["huehn", "chicken"], ["henne", "chicken"], ["schaf", "sheep"], ["hase", "rabbit"], ["hasen", "rabbit"], ["kaninchen", "rabbit"], ["hund", "dog"], ["kuh", "cow"], ["kueh", "cow"], ["katze", "cat"], ["kater", "cat"], ["kaetzchen", "cat"], ["tiger", "cat"], ["igel", "hedgehog"], ["schwein", "pig"], ["ferkel", "pig"], ["fuchs", "fox"], ["fuechs", "fox"], ["welpe", "dog"], ["kueken", "chicken"], ["bank", "bench"], ["laterne", "lantern"], ["lampe", "lantern"], ["schild", "sign"], ["fass", "barrel"], ["faesser", "barrel"], ["lagerfeuer", "campfire"], ["feuerstelle", "campfire"], ["vogelscheuche", "scarecrow"], ["blumenkasten", "flowerbox"]]
+    RETURN [["frosch", "frog"], ["froesch", "frog"], ["ente", "duck"], ["huhn", "chicken"], ["huehn", "chicken"], ["henne", "chicken"], ["schaf", "sheep"], ["hase", "rabbit"], ["hasen", "rabbit"], ["kaninchen", "rabbit"], ["hund", "dog"], ["kuh", "cow"], ["kueh", "cow"], ["katze", "cat"], ["kater", "cat"], ["kaetzchen", "cat"], ["tiger", "cat"], ["igel", "hedgehog"], ["schwein", "pig"], ["ferkel", "pig"], ["fuchs", "fox"], ["fuechs", "fox"], ["welpe", "dog"], ["kueken", "chicken"], ["eule", "owl"], ["uhu", "owl"], ["eichhoern", "squirrel"], ["maus", "mouse"], ["maeus", "mouse"], ["schildkroet", "turtle"], ["ziege", "goat"], ["zicklein", "goat"], ["reh", "deer"], ["rehkitz", "deer"], ["pony", "pony"], ["ponys", "pony"], ["fohlen", "pony"], ["esel", "donkey"], ["waschbaer", "raccoon"], ["pinguin", "penguin"], ["bank", "bench"], ["laterne", "lantern"], ["lampe", "lantern"], ["schild", "sign"], ["fass", "barrel"], ["faesser", "barrel"], ["lagerfeuer", "campfire"], ["feuerstelle", "campfire"], ["vogelscheuche", "scarecrow"], ["blumenkasten", "flowerbox"]]
+ENDFUNC
+
+' Words that hold a stem but do not name its sort: [word, stem].
+FUNC RuleBuildStemFalse()
+    RETURN [["ziegel", "ziege"], ["gesell", "esel"], ["dreh", "reh"], ["verehr", "reh"], ["rehbraun", "reh"], ["reha", "reh"], ["mausgrau", "maus"], ["schmaus", "maus"], ["keule", "eule"], ["beule", "eule"], ["heule", "eule"], ["saeule", "eule"], ["efohlen", "fohlen"], ["pfohlen", "fohlen"], ["schildkroet", "schild"]]
+ENDFUNC
+
+' Where lead$ + stem$ stands in t$ (as INSTR), not counting the words that
+' only hold the stem.
+FUNC RuleBuildStemAt(t$, stem$, lead$)
+    DIM hay$ = t$
+    FOR EACH pair IN RuleBuildStemFalse()
+        IF pair[1] = stem$ THEN hay$ = REPLACE$(hay$, pair[0], "#")
+    NEXT
+    RETURN INSTR(hay$, lead$ + stem$)
 ENDFUNC
 
 FUNC RuleBuilder(w)
@@ -221,7 +236,7 @@ FUNC RuleBuildGuess(w, job)
     DIM seen = {}
     FOR i = 0 TO LEN(stems) - 1
         DIM what$ = stems[i][1]
-        IF INSTR(t$, " " + stems[i][0]) >= 0 ANDALSO NOT MAP.EXISTS(seen, what$) THEN
+        IF RuleBuildStemAt(t$, stems[i][0], " ") >= 0 ANDALSO NOT MAP.EXISTS(seen, what$) THEN
             seen{what$} = TRUE
             DIM near$ = where$
             IF (what$ = "frog" ORELSE what$ = "duck") ANDALSO LEN(points) = 0 THEN near$ = "pond"
@@ -344,7 +359,7 @@ FUNC RuleBuildAsk(w, job)
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "house" + q$ + ", " + q$ + "where" + q$ + ": W, " + q$ + "size" + q$ + ": S, " + q$ + "owner" + q$ + RuleDe$(": Name oder leer} ein Haus, ein Weg zur Stra{s}e kommt von selbst;")
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "road" + q$ + ", " + q$ + "where" + q$ + RuleDe$(": W} ein Weg von dort zur Stra{s}e, where house f{u}r das eben gebaute Haus;")
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "bridge" + q$ + ", " + q$ + "where" + q$ + RuleDe$(": W} eine Br{u}cke {u}ber das Wasser dort;")
-    task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "animal" + q$ + ", " + q$ + "what" + q$ + ": frog|duck|chicken|sheep|rabbit|dog|cow|cat|hedgehog|pig|fox, " + q$ + "name" + q$ + ": Name, " + q$ + "color" + q$ + ": Fellfarbe oder leer, " + q$ + "pattern" + q$ + ": stripes|spots|leer, " + q$ + "wear" + q$ + RuleDe$(": Liste dessen, was es tr{a}gt, etwa [" + q$ + "rote M{u}tze" + q$ + ", " + q$ + "Sonnenbrille" + q$ + "] (Hut, M{u}tze, Krone, Bl{u}te, Sonnenbrille, Brille, Schal, Schleife, Halsband) oder [], " + q$ + "where" + q$ + ": W}; Farben: rot, orange, gelb, gruen, tuerkis, blau, hellblau, dunkelblau, lila, rosa, pink, braun, schwarz, weiss, grau, gold, silber; eine Tigerkatze ist cat mit stripes;")
+    task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "animal" + q$ + ", " + q$ + "what" + q$ + ": frog|duck|chicken|sheep|rabbit|dog|cow|cat|hedgehog|pig|fox|owl|squirrel|mouse|turtle|goat|deer|pony|donkey|raccoon|penguin, " + q$ + "name" + q$ + ": Name, " + q$ + "color" + q$ + ": Fellfarbe oder leer, " + q$ + "pattern" + q$ + ": stripes|spots|leer, " + q$ + "wear" + q$ + RuleDe$(": Liste dessen, was es tr{a}gt, etwa [" + q$ + "rote M{u}tze" + q$ + ", " + q$ + "Sonnenbrille" + q$ + "] (Hut, M{u}tze, Krone, Bl{u}te, Sonnenbrille, Brille, Schal, Schleife, Halsband) oder [], " + q$ + "where" + q$ + ": W}; Farben: rot, orange, gelb, gruen, tuerkis, blau, hellblau, dunkelblau, lila, rosa, pink, braun, schwarz, weiss, grau, gold, silber; eine Tigerkatze ist cat mit stripes;")
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "thing" + q$ + ", " + q$ + "what" + q$ + ": bench|lantern|sign|barrel|campfire|scarecrow|flowerbox, " + q$ + "name" + q$ + ": Name, " + q$ + "where" + q$ + ": W};"
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "villager" + q$ + ", " + q$ + "name" + q$ + ": Name, " + q$ + "role" + q$ + ": Beruf, " + q$ + "where" + q$ + ": W} ein neuer Dorfbewohner."
     task$ = task$ + RuleDe$(" W ist north, south, east, west, center, tavern, pond, road, house") + places$ + RuleDe$(" oder eine Stelle der Karte als x,y wie 12,7, wenn der Wunsch eine nennt. S ist small, medium oder large. H{o}chstens sechs Schritte. Baue nur, was der Wunsch nennt; neues Land kommt zuerst, dann was darauf steht. Geht der Wunsch mit diesen Schritten nicht, antworte {" + q$ + "steps" + q$ + ": []}.")
@@ -957,7 +972,7 @@ FUNC RuleBuildRename(w, p, said$)
     DIM rest$ = REPLACE$(low$, new_key$, " ")
     DIM what$ = ""
     FOR EACH stem IN RuleBuildStems()
-        IF what$ = "" ANDALSO INSTR(rest$, stem[0]) >= 0 THEN what$ = stem[1]
+        IF what$ = "" ANDALSO RuleBuildStemAt(rest$, stem[0], "") >= 0 THEN what$ = stem[1]
     NEXT
     IF what$ = "" ANDALSO (INSTR(rest$, "bewohner") >= 0 ORELSE INSTR(rest$, "fischer") >= 0) THEN what$ = "villager"
     DIM npcs = w{"npcs"}
@@ -1062,6 +1077,16 @@ FUNC AnimalKinds()
     k{"cow"} = {"base": [240, 238, 232], "pattern": "spots", "hat": [27, 9], "eye": [26, 13], "neck": [23, 18], "parts": [["tail", "r", 2, 14, 2, 8, "dark"], ["legb", "r", 4, 24, 3, 7, "dark"], ["legf", "r", 20, 24, 3, 7, "dark"], ["body", "r", 3, 14, 22, 11, "body"], ["legb", "r", 8, 24, 3, 7, "body"], ["legf", "r", 16, 24, 3, 7, "body"], ["head", "r", 23, 10, 8, 9, "body"], ["head", "r", 25, 16, 6, 4, "pink"], ["head", "r", 23, 8, 2, 3, "light"], ["head", "r", 29, 8, 2, 3, "light"], ["head", "c", 26, 13, 1, 0, "eye"]]}
     k{"pig"} = {"base": [240, 170, 176], "hat": [23, 11], "eye": [24, 16], "neck": [20, 21], "parts": [["tail", "c", 6, 18, 2, 0, "dark"], ["legb", "r", 9, 25, 3, 5, "dark"], ["legf", "r", 19, 25, 3, 5, "dark"], ["body", "c", 14, 21, 8, 0, "body"], ["head", "c", 23, 18, 5, 0, "body"], ["head", "r", 20, 12, 3, 3, "dark"], ["head", "r", 27, 17, 4, 4, "light"], ["head", "c", 24, 16, 1, 0, "eye"]]}
     k{"hedgehog"} = {"base": [124, 92, 64], "hat": [17, 14], "eye": [23, 23], "neck": [20, 25], "parts": [["legb", "r", 9, 28, 3, 2, "skin"], ["legf", "r", 19, 28, 3, 2, "skin"], ["body", "c", 15, 23, 8, 0, "dark"], ["body", "c", 14, 22, 7, 0, "body"], ["body", "r", 8, 15, 2, 3, "dark"], ["body", "r", 12, 13, 2, 3, "dark"], ["body", "r", 16, 13, 2, 3, "dark"], ["body", "r", 20, 15, 2, 3, "dark"], ["body", "r", 6, 19, 2, 3, "dark"], ["head", "c", 23, 25, 4, 0, "skin"], ["head", "c", 27, 25, 1, 0, "black"], ["head", "c", 23, 23, 1, 0, "eye"]]}
+    k{"owl"} = {"base": [168, 132, 96], "hat": [17, 7], "eye": [20, 12], "neck": [17, 18], "parts": [["legb", "r", 13, 28, 2, 2, "orange"], ["legf", "r", 18, 28, 2, 2, "orange"], ["body", "c", 16, 21, 7, 0, "body"], ["body", "c", 17, 23, 4, 0, "light"], ["body", "r", 9, 17, 3, 8, "dark"], ["head", "c", 17, 12, 6, 0, "body"], ["head", "r", 12, 5, 2, 3, "dark"], ["head", "r", 21, 5, 2, 3, "dark"], ["head", "c", 20, 12, 2, 0, "white"], ["head", "c", 20, 12, 1, 0, "eye"], ["head", "r", 22, 14, 2, 2, "orange"]]}
+    k{"squirrel"} = {"base": [196, 104, 48], "hat": [21, 9], "eye": [23, 13], "neck": [19, 19], "parts": [["tail", "c", 7, 13, 5, 0, "body"], ["tail", "r", 5, 16, 5, 9, "body"], ["legb", "r", 11, 26, 3, 4, "dark"], ["legf", "r", 19, 26, 2, 4, "dark"], ["body", "c", 15, 22, 6, 0, "body"], ["body", "c", 17, 23, 3, 0, "light"], ["head", "c", 21, 14, 5, 0, "body"], ["head", "r", 18, 7, 2, 4, "body"], ["head", "r", 22, 7, 2, 4, "body"], ["head", "c", 23, 13, 1, 0, "eye"], ["head", "c", 26, 15, 1, 0, "nose"]]}
+    k{"mouse"} = {"base": [170, 166, 162], "hat": [20, 16], "eye": [22, 21], "neck": [19, 26], "parts": [["tail", "r", 2, 25, 7, 1, "pink"], ["legb", "r", 10, 28, 3, 2, "pink"], ["legf", "r", 18, 28, 3, 2, "pink"], ["body", "c", 14, 24, 6, 0, "body"], ["head", "c", 21, 22, 4, 0, "body"], ["head", "c", 19, 17, 3, 0, "body"], ["head", "c", 19, 17, 2, 0, "pink"], ["head", "c", 22, 21, 1, 0, "eye"], ["head", "c", 25, 23, 1, 0, "pink"]]}
+    k{"turtle"} = {"base": [150, 116, 70], "hat": [25, 17], "eye": [26, 21], "neck": [23, 25], "parts": [["tail", "r", 4, 24, 3, 2, "green"], ["legb", "r", 8, 26, 3, 4, "green"], ["legf", "r", 19, 26, 3, 4, "green"], ["body", "c", 14, 22, 8, 0, "body"], ["body", "r", 6, 24, 17, 3, "dark"], ["body", "c", 11, 19, 2, 0, "light"], ["body", "c", 17, 19, 2, 0, "light"], ["head", "c", 25, 22, 4, 0, "green"], ["head", "c", 26, 21, 1, 0, "eye"]]}
+    k{"goat"} = {"base": [236, 232, 222], "hat": [24, 9], "eye": [25, 12], "neck": [21, 18], "parts": [["tail", "r", 5, 15, 3, 2, "body"], ["legb", "r", 8, 23, 2, 7, "dark"], ["legf", "r", 19, 23, 2, 7, "dark"], ["body", "r", 7, 16, 15, 8, "body"], ["legb", "r", 11, 23, 2, 7, "body"], ["legf", "r", 21, 23, 2, 7, "body"], ["head", "c", 24, 13, 4, 0, "body"], ["head", "r", 22, 6, 2, 4, "skin"], ["head", "r", 25, 6, 2, 4, "skin"], ["head", "r", 26, 17, 2, 3, "light"], ["head", "c", 25, 12, 1, 0, "eye"], ["head", "c", 28, 14, 1, 0, "nose"]]}
+    k{"deer"} = {"base": [176, 118, 66], "hat": [23, 7], "eye": [25, 10], "neck": [21, 16], "parts": [["tail", "r", 6, 15, 2, 2, "white"], ["legb", "r", 9, 22, 2, 8, "dark"], ["legf", "r", 19, 22, 2, 8, "dark"], ["body", "r", 8, 15, 14, 8, "body"], ["body", "c", 11, 17, 1, 0, "white"], ["body", "c", 15, 18, 1, 0, "white"], ["body", "c", 19, 17, 1, 0, "white"], ["legb", "r", 11, 22, 2, 8, "body"], ["legf", "r", 21, 22, 2, 8, "body"], ["head", "c", 24, 11, 4, 0, "body"], ["head", "r", 20, 5, 2, 4, "body"], ["head", "r", 25, 4, 2, 4, "body"], ["head", "c", 25, 10, 1, 0, "eye"], ["head", "c", 28, 12, 1, 0, "nose"]]}
+    k{"pony"} = {"base": [160, 110, 70], "hat": [24, 6], "eye": [25, 10], "neck": [21, 16], "parts": [["tail", "r", 3, 14, 3, 9, "yellow"], ["legb", "r", 7, 22, 3, 8, "dark"], ["legf", "r", 19, 22, 3, 8, "dark"], ["body", "r", 6, 14, 17, 9, "body"], ["legb", "r", 10, 22, 3, 8, "body"], ["legf", "r", 22, 22, 3, 8, "body"], ["head", "r", 22, 7, 5, 10, "body"], ["head", "r", 25, 12, 5, 5, "body"], ["head", "r", 20, 6, 3, 9, "yellow"], ["head", "r", 23, 4, 2, 3, "body"], ["head", "c", 25, 10, 1, 0, "eye"], ["head", "c", 29, 14, 1, 0, "nose"]]}
+    k{"donkey"} = {"base": [150, 146, 140], "hat": [24, 8], "eye": [25, 10], "neck": [21, 16], "parts": [["tail", "r", 4, 14, 2, 8, "dark"], ["legb", "r", 7, 22, 3, 8, "dark"], ["legf", "r", 19, 22, 3, 8, "dark"], ["body", "r", 6, 14, 17, 9, "body"], ["legb", "r", 10, 22, 3, 8, "body"], ["legf", "r", 22, 22, 3, 8, "body"], ["head", "r", 22, 8, 5, 9, "body"], ["head", "r", 25, 12, 5, 5, "light"], ["head", "r", 21, 8, 2, 7, "dark"], ["head", "r", 22, 1, 2, 7, "body"], ["head", "r", 25, 1, 2, 7, "body"], ["head", "r", 22, 1, 2, 2, "black"], ["head", "r", 25, 1, 2, 2, "black"], ["head", "c", 25, 10, 1, 0, "eye"], ["head", "c", 29, 14, 1, 0, "nose"]]}
+    k{"raccoon"} = {"base": [140, 138, 134], "hat": [23, 9], "eye": [24, 14], "neck": [20, 19], "parts": [["tail", "r", 2, 16, 7, 4, "body"], ["tail", "r", 3, 16, 1, 4, "black"], ["tail", "r", 6, 16, 1, 4, "black"], ["legb", "r", 9, 24, 2, 6, "black"], ["legf", "r", 18, 24, 2, 6, "black"], ["body", "r", 8, 18, 13, 7, "body"], ["legb", "r", 11, 24, 2, 6, "dark"], ["legf", "r", 20, 24, 2, 6, "dark"], ["head", "r", 19, 9, 3, 3, "body"], ["head", "r", 25, 9, 3, 3, "body"], ["head", "c", 23, 15, 5, 0, "body"], ["head", "r", 21, 13, 6, 3, "black"], ["head", "r", 22, 17, 6, 2, "white"], ["head", "c", 24, 14, 1, 0, "white"], ["head", "c", 28, 17, 1, 0, "nose"]]}
+    k{"penguin"} = {"base": [52, 58, 74], "hat": [17, 7], "eye": [19, 12], "neck": [17, 18], "parts": [["legb", "r", 12, 29, 3, 2, "orange"], ["legf", "r", 17, 29, 3, 2, "orange"], ["body", "c", 15, 22, 7, 0, "body"], ["body", "c", 17, 23, 5, 0, "white"], ["body", "r", 8, 18, 2, 7, "dark"], ["head", "c", 17, 12, 5, 0, "body"], ["head", "c", 19, 13, 3, 0, "white"], ["head", "c", 19, 12, 1, 0, "eye"], ["head", "r", 22, 13, 3, 2, "orange"]]}
     RETURN k
 ENDFUNC
 
@@ -1069,7 +1094,7 @@ FUNC AnimalColor(name$, body)
     IF name$ = "body" THEN RETURN body
     IF name$ = "dark" THEN RETURN [INT(body[0] * 0.66), INT(body[1] * 0.66), INT(body[2] * 0.66)]
     IF name$ = "light" THEN RETURN [MIN([255, INT(body[0] * 0.6 + 100)]), MIN([255, INT(body[1] * 0.6 + 100)]), MIN([255, INT(body[2] * 0.6 + 100)])]
-    DIM fixed = {"eye": [24, 24, 28], "nose": [40, 30, 30], "black": [44, 42, 44], "white": [246, 244, 238], "pink": [236, 150, 160], "red": [220, 52, 52], "orange": [240, 160, 40], "green": [120, 200, 80], "skin": [232, 196, 160]}
+    DIM fixed = {"eye": [24, 24, 28], "nose": [40, 30, 30], "black": [44, 42, 44], "white": [246, 244, 238], "pink": [236, 150, 160], "red": [220, 52, 52], "orange": [240, 160, 40], "yellow": [236, 196, 72], "green": [120, 200, 80], "skin": [232, 196, 160]}
     RETURN fixed{name$} ?? body
 ENDFUNC
 

@@ -255,7 +255,8 @@ can build goes back to the board with a note and is not taken up again.
 - What it builds stands in `w{"npcs"}` as kind `thing` with the id
   `b_<what>_<n>` and a `look`; the client draws it with the painter
   `@<what>`. Animals (dog, cat, fox, chicken, duck, frog, rabbit, sheep, cow,
-  pig, hedgehog) are parts in one painter, with a fur colour, stripes or
+  pig, hedgehog, owl, squirrel, mouse, turtle, goat, deer, pony, donkey,
+  raccoon, penguin) are parts in one painter, with a fur colour, stripes or
   spots and what they wear; they walk, sit after a while and are cute now
   and then.
   Animals and villagers stroll near their home and can be talked to; the
@@ -294,7 +295,7 @@ can build goes back to the board with a note and is not taken up again.
 - The keeper sets an affection with the rule `fond`
   (`{"player", "npc", "v"}`).
 
-`test_builder.jdb`: 41 checks with a scripted model.
+`test_builder.jdb`: 44 checks with a scripted model.
 
 ## Geld, the wish potion and the bag (`game/060_purse.jdb`)
 

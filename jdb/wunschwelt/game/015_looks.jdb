@@ -82,7 +82,7 @@ FUNC RuleLookAsked(w, p, said$)
     IF NOT asks THEN RETURN FALSE
     ' "a dog with a yellow hat" is a wish for the village, not a look
     FOR EACH stem IN RuleBuildStems()
-        IF INSTR(low$, stem[0]) >= 0 THEN RETURN FALSE
+        IF RuleBuildStemAt(low$, stem[0], "") >= 0 THEN RETURN FALSE
     NEXT
     RETURN RuleApplyLook(w, p{"name"}, {"part": part$, "color": color$, "said": said$})
 ENDFUNC
