@@ -207,13 +207,18 @@ style; what it leaves out is looked for in the sentence.
   from hue, saturation, brightness and height rules per skin) and keeps the
   shading; it keeps at most 48 recoloured sheets.
 - `game/020_music.jdb`: the world plays one style for everyone, a wished
-  one for four minutes, as `style:seed`. Village, tavern, evening, fest and
-  techno are written out; hip-hop, 80s pop, synthwave, house, trance, disco,
-  lo-fi and rock are made in the client from the seed by the module MELODY
-  (`jdb/demos/sound/melody.jdb`: key, chords, hook and its variation, bass,
-  arp or stabs), so each wish is a new piece. Every piece walks through
-  scenes over 32 bars (intro, rising, main, chill, main with the varied
-  hook, outro) by muting tracks; the bottom line shows style and scene.
+  one for four minutes, as `style:seed`. Village, tavern, evening and fest
+  are written out; hip-hop, 80s pop, synthwave, house, trance, disco,
+  lo-fi, rock and techno are made in the client from the seed by the module
+  MELODY (`jdb/demos/sound/melody.jdb`), so each wish is a new piece: the
+  seed picks from the lists of `ClientGenre` the tempo, key, progression,
+  hook rhythm, bass figure, arp shape or chord stabs, lead and pad sound,
+  kick, snare and hats, the fill on every fourth bar, a euclidean
+  percussion and one of three forms (`ClientForm`). Every piece walks
+  through the scenes of its form by muting tracks; the second main part
+  plays the varied hook and MELODY's answer to it. The melody voice of all
+  styles sings (three detuned voices, a second oscillator, vibrato, a
+  dotted-eighth echo). The bottom line shows style and scene.
   `melody.jdb` reaches the browser beside `client.jdb` through the asset
   list (deploy and devsite take it from `jdb/demos/sound`); a window client
   without it plays the written style the genre falls back to. A sentence

@@ -5,10 +5,11 @@
 ' the sequencer: a soft village theme, tavern and fest in the chiptune
 ' manner of fluppi's themes, evening calm, techno in the manner of
 ' jdb/demos/sound/trance_live. Hip-hop, 80s pop, synthwave, house, trance,
-' disco, lo-fi and rock are made from a seed by the module MELODY of
-' jdb/demos/sound (key, chords, hook, bass, arp), so every wish brings a new
-' piece. Every piece walks through scenes: intro, rising, main, chill, a
-' second main part with the hook varied, outro.
+' disco, lo-fi, rock and techno are made from a seed by the module MELODY of
+' jdb/demos/sound, so every wish brings a new piece: the seed picks key,
+' chords, tempo, hook, bass, arp or chord stabs, the sounds, the groove of
+' the drums with a fill every fourth bar, a percussion rhythm and one of
+' three forms; the second main part plays the hook varied with an answer.
 ' M mutes and unmutes. A browser lets sound start only after a key press, so
 ' the music starts with the first key.
 
@@ -82,22 +83,31 @@ ENDFUNC
 
 '@client
 
-' The music a style has when MELODY makes it: tempo, keys and progressions
-' to pick from, the bass figure, the arp shape ("" none, "stabs" chord
-' stabs), the octave of the hook, the drums as patterns of one bar, the
-' sounds of lead and pad [wave, attack, decay, sustain, release, cutoff],
-' and the style played instead when MELODY is not there.
+' The music a style has when MELODY makes it; the seed picks one of each
+' list: the tempo between bpm[0] and bpm[1], key, progression, bass figure,
+' arp shape ("stabs:" and a rhythm mask for chord stabs, "" none), kick,
+' snare or clap and hats (one bar each), the fill that ends every fourth
+' bar, the sounds of lead and pad [wave, attack, decay, sustain, release,
+' cutoff], and keys [wave, cutoff] for arp and stabs. oct is the octave of
+' the hook, room leaves the end of each bar free for an answer. fallback is
+' the style played when MELODY is not there.
 FUNC ClientGenre(style$)
     DIM g = {}
-    g{"hiphop"} = {"bpm": 90, "keys": ["A minor", "D minor", "E minor"], "progs": ["dark", "deep"], "bass": "sub", "arp": "", "oct": 4, "kick": "bd ~ ~ ~ ~ ~ ~ bd ~ ~ bd ~ ~ ~ ~ ~", "snare": "~ ~ ~ ~ sd ~ ~ ~ ~ ~ ~ ~ sd ~ ~ ~", "hats": "swing(4, hh*8)", "lead": ["TRIANGLE", 0.005, 0.3, 0.3, 0.4, 1800], "pad": ["SINE", 0.6, 0.5, 0.7, 1.2, 1200], "fallback": "evening"}
-    g{"lofi"} = {"bpm": 78, "keys": ["D dorian", "A minor", "E dorian"], "progs": ["deep"], "bass": "sub", "arp": "", "oct": 4, "kick": "bd ~ ~ ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~ ~ ~", "snare": "~ ~ ~ ~ sd ~ ~ ~ ~ ~ ~ ~ sd ~ ~ ~", "hats": "swing(4, gain(0.5, hh*8))", "lead": ["TRIANGLE", 0.01, 0.4, 0.2, 0.6, 1400], "pad": ["SINE", 0.8, 0.5, 0.8, 1.6, 1000], "fallback": "evening"}
-    g{"pop80"} = {"bpm": 116, "keys": ["C major", "G major", "D major", "A major"], "progs": ["pop", "euphoric"], "bass": "drive", "arp": "up", "oct": 5, "kick": "bd ~ bd ~", "snare": "~ sd ~ sd", "hats": "hh*8", "lead": ["SQUARE", 0.01, 0.2, 0.5, 0.2, 3200], "pad": ["SAW", 0.3, 0.4, 0.7, 0.8, 1600], "fallback": "fest"}
-    g{"synthwave"} = {"bpm": 104, "keys": ["A minor", "F# minor", "E minor"], "progs": ["outrun", "epic"], "bass": "drive", "arp": "updown", "oct": 5, "kick": "bd ~ ~ ~ bd ~ ~ ~", "snare": "~ sd ~ sd", "hats": "[~ hh]*4", "lead": ["SAW", 0.02, 0.3, 0.6, 0.4, 2400], "pad": ["SAW", 0.6, 0.5, 0.8, 1.4, 1400], "fallback": "evening"}
-    g{"house"} = {"bpm": 124, "keys": ["A minor", "G minor", "C minor"], "progs": ["house", "deep"], "bass": "octave", "arp": "stabs", "oct": 5, "kick": "bd*4", "snare": "~ cp ~ cp", "hats": "[~ oh]*4", "lead": ["SQUARE", 0.01, 0.2, 0.4, 0.2, 2600], "pad": ["SAW", 0.4, 0.4, 0.7, 1.0, 1500], "fallback": "fest"}
-    g{"trance"} = {"bpm": 138, "keys": ["A minor", "F minor", "C# minor"], "progs": ["epic", "anthem"], "bass": "offbeat", "arp": "updown", "oct": 5, "kick": "bd*4", "snare": "~ cp ~ cp", "hats": "[~ oh]*4", "lead": ["SAW", 0.01, 0.3, 0.6, 0.3, 3800], "pad": ["SAW", 0.8, 0.5, 0.8, 1.6, 1800], "fallback": "techno"}
-    g{"disco"} = {"bpm": 118, "keys": ["A minor", "D minor", "E minor"], "progs": ["euphoric", "pop"], "bass": "octave", "arp": "octave", "oct": 5, "kick": "bd*4", "snare": "~ cp ~ cp", "hats": "[~ oh]*4", "lead": ["SQUARE", 0.01, 0.2, 0.5, 0.2, 3000], "pad": ["SAW", 0.3, 0.4, 0.8, 0.8, 2200], "fallback": "fest"}
-    g{"rock"} = {"bpm": 128, "keys": ["E minor", "A minor", "D minor"], "progs": ["anthem", "epic"], "bass": "drive", "arp": "", "oct": 5, "kick": "bd ~ ~ bd ~ ~ bd ~", "snare": "~ sd ~ sd", "hats": "hh*8", "lead": ["SAW", 0.005, 0.2, 0.7, 0.2, 3000], "pad": ["SQUARE", 0.01, 0.3, 0.7, 0.3, 1200], "fallback": "fest"}
+    g{"hiphop"} = {"bpm": [84, 94], "keys": ["A minor", "D minor", "E minor", "C minor", "G minor", "F minor"], "progs": ["deep", "dark", "epic"], "bass": ["sub"], "arps": ["stabs:x..x....x.x.....", "stabs:x.....x...x.x...", "stabs:x...x.....x....."], "oct": 4, "room": TRUE, "kicks": ["bd ~ ~ ~ ~ ~ ~ bd ~ ~ bd ~ ~ ~ ~ ~", "bd ~ ~ bd ~ ~ ~ ~ ~ ~ bd ~ ~ ~ ~ ~", "bd ~ ~ ~ ~ ~ bd ~ ~ bd ~ ~ ~ ~ bd ~"], "snares": ["~ ~ ~ ~ sd ~ ~ ~ ~ ~ ~ ~ sd ~ ~ ~", "~ ~ ~ ~ sd ~ ~ ~ ~ ~ ~ ~ sd ~ ~ sd"], "fills": ["~ ~ ~ ~ sd ~ ~ ~ ~ ~ sd ~ sd sd sd sd", "~ ~ ~ ~ sd ~ ~ sd ~ ~ ~ ~ sd ~ sd sd"], "hats": ["swing(4, hh*8)", "swing(4, gain([0.8 0.45]*4, hh*8))", "swing(4, gain([0.7 0.4 0.55 0.4]*4, hh*16))"], "leads": [["TRIANGLE", 0.02, 0.4, 0.6, 0.5, 1500], ["SINE", 0.03, 0.4, 0.7, 0.6, 1300], ["SAW", 0.02, 0.3, 0.6, 0.4, 900]], "pads": [["SINE", 0.6, 0.5, 0.7, 1.2, 1200]], "keys_voice": ["SQUARE", 850], "fallback": "evening"}
+    g{"lofi"} = {"bpm": [72, 82], "keys": ["D dorian", "A minor", "E dorian", "C major", "F major", "G dorian"], "progs": ["deep", "euphoric", "pop"], "bass": ["sub"], "arps": ["stabs:x.......x.......", "up", ""], "oct": 4, "room": TRUE, "kicks": ["bd ~ ~ ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~ ~ ~", "bd ~ ~ ~ ~ ~ ~ ~ bd ~ bd ~ ~ ~ ~ ~"], "snares": ["~ ~ ~ ~ sd ~ ~ ~ ~ ~ ~ ~ sd ~ ~ ~"], "fills": ["~ ~ ~ ~ sd ~ ~ ~ ~ ~ ~ ~ sd ~ sd sd"], "hats": ["swing(4, gain(0.5, hh*8))", "swing(4, gain([0.5 0.3]*4, hh*8))"], "leads": [["TRIANGLE", 0.02, 0.4, 0.6, 0.6, 1400], ["SINE", 0.03, 0.5, 0.7, 0.8, 1200]], "pads": [["SINE", 0.8, 0.5, 0.8, 1.6, 1000], ["TRIANGLE", 0.8, 0.5, 0.8, 1.6, 900]], "keys_voice": ["TRIANGLE", 1000], "fallback": "evening"}
+    g{"pop80"} = {"bpm": [112, 122], "keys": ["C major", "G major", "D major", "A major", "F major", "E major"], "progs": ["pop", "euphoric"], "bass": ["drive", "octave"], "arps": ["up", "updown", "octave"], "oct": 5, "room": FALSE, "kicks": ["bd ~ bd ~", "bd ~ [~ bd] ~", "bd ~ bd [~ bd]"], "snares": ["~ sd ~ sd"], "fills": ["~ sd [~ sd] [sd sd sd sd]", "~ sd [ht ht mt mt] [lt lt lt ~]"], "hats": ["hh*8", "[~ hh]*4", "gain([0.7 0.4]*4, hh*8)"], "leads": [["SQUARE", 0.01, 0.25, 0.6, 0.3, 3000], ["SAW", 0.02, 0.3, 0.6, 0.3, 2600]], "pads": [["SAW", 0.3, 0.4, 0.7, 0.8, 1600]], "keys_voice": ["SQUARE", 1800], "fallback": "fest"}
+    g{"synthwave"} = {"bpm": [100, 108], "keys": ["A minor", "F# minor", "E minor", "D minor", "C minor", "B minor"], "progs": ["outrun", "epic", "anthem"], "bass": ["drive"], "arps": ["updown", "up", "threes"], "oct": 5, "room": FALSE, "kicks": ["bd ~ ~ ~ bd ~ ~ ~", "bd ~ ~ bd bd ~ ~ ~", "bd*4"], "snares": ["~ sd ~ sd"], "fills": ["~ sd [ht ht mt mt] [lt lt lt ~]", "~ sd [~ sd] [sd sd sd sd]"], "hats": ["[~ hh]*4", "gain([0.7 0.45]*4, hh*8)", "hh*8"], "leads": [["SAW", 0.02, 0.3, 0.7, 0.4, 2400], ["SQUARE", 0.02, 0.3, 0.6, 0.4, 2000]], "pads": [["SAW", 0.6, 0.5, 0.8, 1.4, 1400]], "keys_voice": ["SQUARE", 1800], "fallback": "evening"}
+    g{"house"} = {"bpm": [120, 126], "keys": ["A minor", "G minor", "C minor", "D minor", "F minor", "E minor"], "progs": ["house", "deep"], "bass": ["octave", "offbeat"], "arps": ["stabs:x.x..x.x x.x.x...", "stabs:..x...x...x...x.", "stabs:x..x..x...x..x.."], "oct": 5, "room": FALSE, "kicks": ["bd*4"], "snares": ["~ cp ~ cp", "~ cp ~ [cp ~ ~ cp]"], "fills": ["~ cp [~ cp] [cp cp cp cp]"], "hats": ["[~ oh]*4", "[~ oh]*4, gain(0.35, hh*16)", "swing(4, [~ hh]*4), [~ oh]*4"], "leads": [["SQUARE", 0.01, 0.2, 0.6, 0.3, 2600], ["SAW", 0.01, 0.25, 0.6, 0.3, 2200]], "pads": [["SAW", 0.4, 0.4, 0.7, 1.0, 1500]], "keys_voice": ["SQUARE", 1600], "fallback": "fest"}
+    g{"trance"} = {"bpm": [134, 140], "keys": ["A minor", "F minor", "C# minor", "D minor", "G minor", "E minor"], "progs": ["epic", "anthem", "euphoric"], "bass": ["offbeat"], "arps": ["updown", "threes", "pedal"], "oct": 5, "room": FALSE, "kicks": ["bd*4"], "snares": ["~ cp ~ cp"], "fills": ["~ cp [~ cp] [cp cp cp cp]", "~ cp [cp cp] [cp cp cp cp]"], "hats": ["[~ oh]*4", "[~ oh]*4, gain([0.5 0.3]*8, hh*16)"], "leads": [["SAW", 0.01, 0.3, 0.7, 0.3, 3800], ["SQUARE", 0.01, 0.3, 0.6, 0.3, 3200]], "pads": [["SAW", 0.8, 0.5, 0.8, 1.6, 1800]], "keys_voice": ["SAW", 2200], "fallback": "techno"}
+    g{"disco"} = {"bpm": [114, 122], "keys": ["A minor", "D minor", "E minor", "G minor", "C major", "F major"], "progs": ["euphoric", "pop", "house"], "bass": ["octave"], "arps": ["octave", "stabs:x.x...x.x.x...x.", "up"], "oct": 5, "room": FALSE, "kicks": ["bd*4"], "snares": ["~ cp ~ cp", "~ [cp,sd] ~ [cp,sd]"], "fills": ["~ cp [~ cp] [cp cp cp cp]"], "hats": ["[~ oh]*4", "[~ oh]*4, gain(0.4, hh*16)"], "leads": [["SQUARE", 0.01, 0.25, 0.6, 0.3, 3000], ["SAW", 0.01, 0.25, 0.6, 0.3, 2600]], "pads": [["SAW", 0.3, 0.4, 0.8, 0.8, 2200]], "keys_voice": ["SQUARE", 2000], "fallback": "fest"}
+    g{"rock"} = {"bpm": [120, 136], "keys": ["E minor", "A minor", "D minor", "G major", "D major", "A major"], "progs": ["anthem", "epic", "pop"], "bass": ["drive"], "arps": ["", "stabs:x.x.x.x.x.x.x.x."], "oct": 5, "room": FALSE, "kicks": ["bd ~ ~ bd ~ ~ bd ~", "bd ~ bd ~ ~ ~ bd ~", "bd ~ ~ ~ bd bd ~ ~"], "snares": ["~ sd ~ sd"], "fills": ["~ sd [ht ht mt mt] [lt lt lt ~]", "~ sd [sd sd] [sd sd sd sd]"], "hats": ["hh*8", "[hh oh]*4"], "leads": [["SAW", 0.005, 0.2, 0.7, 0.2, 3000], ["SQUARE", 0.005, 0.2, 0.7, 0.2, 2600]], "pads": [["SQUARE", 0.01, 0.3, 0.7, 0.3, 1200]], "keys_voice": ["SAW", 1600], "fallback": "fest"}
+    g{"techno"} = {"bpm": [128, 134], "keys": ["A minor", "F minor", "D minor", "G minor", "C minor", "E minor"], "progs": ["dark", "deep", "epic"], "bass": ["offbeat", "acid"], "arps": ["up", "pedal", "threes"], "oct": 5, "room": TRUE, "kicks": ["bd*4"], "snares": ["~ cp ~ cp", "~ ~ cp ~"], "fills": ["~ cp [~ cp] [cp cp cp cp]"], "hats": ["[~ oh]*4, gain([0.35 0.6 0.45 0.8]*4, hh*16)", "[~ oh]*4", "gain([0.4 0.7]*8, hh*16)"], "leads": [["SAW", 0.01, 0.3, 0.6, 0.3, 2400], ["SQUARE", 0.01, 0.25, 0.6, 0.3, 1800]], "pads": [["SAW", 0.9, 0.5, 0.8, 1.6, 1100]], "keys_voice": ["SAW", 1400], "fallback": "techno"}
     RETURN g{style$} ?? {}
+ENDFUNC
+
+' The k-th choice of a seed among n, the same for the same seed and k.
+FUNC ClientPick(seed, k, n)
+    RETURN CODEC.CRC32(STR$(seed) + ":" + STR$(k)) MOD MAX([1, n])
 ENDFUNC
 
 ' TRUE once the module MELODY is loaded; it lies beside client.jdb.
@@ -135,54 +145,82 @@ SUB ClientLead(wave$, attack, decay, sustain, release, cutoff)
 ENDSUB
 
 ' A piece of a style from its seed: sets the sounds and returns the
-' patterns [lead, bass, pad, arp, kick, snare, hats, percussion] and the
-' varied hook for the second main part.
+' patterns [lead, bass, pad, arp, kick, snare, hats, percussion], the
+' varied hook and the answer for the second main part, and the form.
 FUNC ClientMusicMake(g, seed)
     DIM keys = g{"keys"}
+    DIM key$ = keys[ClientPick(seed, 1, LEN(keys))]
     DIM progs = g{"progs"}
-    DIM key$ = keys[seed MOD LEN(keys)]
-    DIM prog$ = MELODY.PROG$(progs[(seed \ 7) MOD LEN(progs)], key$)
-    DIM hook$ = MELODY.HOOK$(seed, prog$, key$, MELODY.RHYTHM$(seed, FALSE), g{"oct"})
-    DIM vary$ = MELODY.VARY$(hook$, prog$, key$, IIF(seed MOD 2 = 0, "octave", "dense"))
-    DIM bass$ = "legato(0.7, " + MELODY.BASS$(prog$, g{"bass"}, seed) + ")"
-    IF g{"bass"} = "sub" THEN bass$ = "legato(1, " + MELODY.BASS$(prog$, "sub", seed) + ")"
+    DIM prog$ = MELODY.PROG$(progs[ClientPick(seed, 2, LEN(progs))], key$)
+    DIM hook$ = MELODY.HOOK$(seed, prog$, key$, MELODY.RHYTHM$(seed, g{"room"}), g{"oct"})
+    DIM vary$ = MELODY.VARY$(hook$, prog$, key$, IIF(ClientPick(seed, 3, 2) = 0, "octave", "dense"))
+    DIM answer$ = MELODY.COUNTER$(seed, hook$, prog$, key$, g{"oct"})
+    DIM bass_kind$ = g{"bass"}[ClientPick(seed, 4, LEN(g{"bass"}))]
+    DIM bass$ = "legato(" + IIF(bass_kind$ = "sub", "1", "0.7") + ", " + MELODY.BASS$(prog$, bass_kind$, seed) + ")"
+    DIM arp_kind$ = g{"arps"}[ClientPick(seed, 5, LEN(g{"arps"}))]
     DIM arp$ = ""
-    IF g{"arp"} = "stabs" THEN
-        arp$ = MELODY.STABS$(prog$, "x.x..x.x x.x.x...")
-    ELSEIF g{"arp"} <> "" THEN
-        arp$ = "legato(0.5, " + MELODY.ARP$(prog$, g{"arp"}, 16, 1) + ")"
+    IF STARTSWITH(arp_kind$, "stabs:") THEN
+        arp$ = MELODY.STABS$(prog$, MID$(arp_kind$, 6))
+    ELSEIF arp_kind$ <> "" THEN
+        arp$ = "legato(0.5, " + MELODY.ARP$(prog$, arp_kind$, IIF(g{"room"}, 8, 16), 1) + ")"
     ENDIF
     DIM pad$ = "<" + prog$ + ">"
-    SOUND.BPM g{"bpm"} + (seed MOD 5) - 2
-    DIM lead = g{"lead"}
+    DIM bpm = g{"bpm"}[0] + ClientPick(seed, 6, g{"bpm"}[1] - g{"bpm"}[0] + 1)
+    SOUND.BPM bpm
+    DIM lead = g{"leads"}[ClientPick(seed, 7, LEN(g{"leads"}))]
     ClientLead(lead[0], lead[1], lead[2], lead[3], lead[4], lead[5])
-    SOUND.VOICE 1, IIF(g{"bass"} = "sub", "SINE", "SAW"), 0.005, 0.15, 0.6, 0.1
-    SOUND.FILTER 1, IIF(g{"bass"} = "sub", 400, 700)
-    DIM pad = g{"pad"}
+    SOUND.VOICE 1, IIF(bass_kind$ = "sub", "SINE", "SAW"), 0.005, 0.15, 0.6, 0.1
+    SOUND.FILTER 1, IIF(bass_kind$ = "sub", 400, IIF(bass_kind$ = "acid", 900, 700))
+    IF bass_kind$ = "sub" THEN SOUND.GLIDE 1, 50
+    IF bass_kind$ = "acid" THEN SOUND.GLIDE 1, 60, "SLIDE"
+    DIM pad = g{"pads"}[ClientPick(seed, 8, LEN(g{"pads"}))]
     SOUND.VOICE 2, pad[0], pad[1], pad[2], pad[3], pad[4]
     SOUND.FILTER 2, pad[5]
     SOUND.UNISON 2, 3, 0.2, 0.8
     SOUND.REVERBSEND 2, 0.5
-    SOUND.VOICE 3, IIF(g{"arp"} = "stabs", "SQUARE", "SAW"), 0.002, 0.12, 0.3, 0.1
-    SOUND.FILTER 3, 1800
+    DIM kv = g{"keys_voice"}
+    IF STARTSWITH(arp_kind$, "stabs:") THEN
+        SOUND.VOICE 3, kv[0], 0.005, 0.3, 0.35, 0.3
+        SOUND.UNISON 3, 2, 0.08, 0.5
+    ELSE
+        SOUND.VOICE 3, kv[0], 0.002, 0.12, 0.3, 0.1
+    ENDIF
+    SOUND.FILTER 3, kv[1]
     SOUND.REVERBSEND 3, 0.25
-    SOUND.REVERBSEND 5, IIF(g{"snare"} = "~ sd ~ sd", 0.45, 0.15)
-    RETURN [hook$, bass$, pad$, arp$, g{"kick"}, g{"snare"}, g{"hats"}, "", vary$]
+    SOUND.DELAYSEND 3, 0.15
+    ' drums: a groove for the piece, a fill at the end of every fourth bar
+    DIM kick$ = g{"kicks"}[ClientPick(seed, 9, LEN(g{"kicks"}))]
+    DIM snare_bar$ = g{"snares"}[ClientPick(seed, 10, LEN(g{"snares"}))]
+    DIM fill$ = g{"fills"}[ClientPick(seed, 11, LEN(g{"fills"}))]
+    DIM snare$ = "<[" + snare_bar$ + "] [" + snare_bar$ + "] [" + snare_bar$ + "] [" + fill$ + "]>"
+    DIM hats$ = g{"hats"}[ClientPick(seed, 12, LEN(g{"hats"}))]
+    DIM perc_sounds = ["rim", "cb", "sh", "cl"]
+    DIM perc_steps = ["3,8", "5,8", "5,16", "7,16", "3,16"]
+    DIM perc$ = "gain(0.45, " + perc_sounds[ClientPick(seed, 13, LEN(perc_sounds))] + "(" + perc_steps[ClientPick(seed, 14, LEN(perc_steps))] + "," + STR$(ClientPick(seed, 15, 8)) + "))"
+    SOUND.REVERBSEND 5, IIF(INSTR(snare_bar$, "sd") >= 0, 0.35, 0.15)
+    RETURN [hook$, bass$, pad$, arp$, kick$, snare$, hats$, perc$, vary$, "legato(0.9, " + answer$ + ")", ClientForm(ClientPick(seed, 16, 3))]
 ENDFUNC
 
-' The scenes every piece walks through, 32 bars around: the name, the bars
-' and the tracks that play (0 lead, 1 bass, 2 pad, 3 arp, 4 kick, 5 snare,
-' 6 hats, 7 percussion). The second main part plays the varied hook.
-FUNC ClientScenes()
-    RETURN [["intro", 4, [2, 6]], ["rising", 4, [1, 2, 3, 6]], ["main", 8, [0, 1, 2, 3, 4, 5, 6, 7]], ["chill", 4, [0, 1, 2]], ["main2", 8, [0, 1, 2, 3, 4, 5, 6, 7]], ["outro", 4, [1, 2, 4]]]
+' The forms a piece walks through: scenes of a name, bars and the tracks
+' that play (0 lead, 1 bass, 2 pad, 3 arp, 4 kick, 5 snare, 6 hats, 7
+' percussion); every form lasts a multiple of four bars, so the fills end
+' its phrases. The second main part plays the varied hook and its answer.
+FUNC ClientForm(n)
+    DIM forms = [[["intro", 4, [2, 6]], ["rising", 4, [1, 2, 3, 6]], ["main", 8, [0, 1, 2, 3, 4, 5, 6, 7]], ["chill", 4, [0, 1, 2]], ["main2", 8, [0, 1, 2, 3, 4, 5, 6, 7]], ["outro", 4, [1, 2, 4]]], [["intro", 8, [2, 3, 4]], ["main", 8, [0, 1, 2, 4, 5, 6]], ["break", 4, [2, 3]], ["rising", 4, [1, 2, 3, 4, 6]], ["main2", 8, [0, 1, 2, 3, 4, 5, 6, 7]]], [["intro", 4, [1, 4, 6]], ["rising", 4, [1, 2, 3, 4, 6, 7]], ["main", 8, [0, 1, 2, 3, 4, 5, 6, 7]], ["chill", 4, [0, 2, 3]], ["rising", 4, [1, 2, 3, 4, 6]], ["main2", 8, [0, 1, 2, 3, 4, 5, 6, 7]], ["outro", 4, [2, 3]]]]
+    RETURN forms[CLAMP(n, 0, LEN(forms) - 1)]
 ENDFUNC
 
-' Keeps the scene of the bar that plays: mutes the tracks it leaves out and
-' swaps the hook for the varied one in the second main part.
+' Keeps the scene of the bar that plays: mutes the tracks it leaves out,
+' swaps the hook for the varied one and the arp for the answer in the
+' second main part.
 SUB ClientMusicScene(c)
     IF (c{"music_on"} ?? "off") = "off" ORELSE NOT (c{"sound_up"} ?? FALSE) THEN RETURN
-    DIM bar = INT(SOUND.CYCLE()) MOD 32
-    DIM scenes = ClientScenes()
+    DIM scenes = c{"music_form"} ?? ClientForm(0)
+    DIM total = 0
+    FOR EACH sc IN scenes
+        total = total + sc[1]
+    NEXT
+    DIM bar = INT(SOUND.CYCLE()) MOD MAX([1, total])
     DIM at = 0
     DIM pick = 0
     DIM i = 0
@@ -193,8 +231,8 @@ SUB ClientMusicScene(c)
     IF pick = (c{"music_scene"} ?? -1) THEN RETURN
     c{"music_scene"} = pick
     DIM names = {"village": "Dorfmusik", "tavern": "Tavernenmusik", "evening": "Abendmusik", "fest": "Festmusik", "techno": "Techno", "hiphop": "Hip-Hop", "pop80": "80er-Pop", "synthwave": "Synthwave", "house": "House", "trance": "Trance", "disco": "Disco", "lofi": "Lo-Fi", "rock": "Rock"}
-    DIM parts_de = ["Intro", "Aufbau", "Refrain", "Chill", "Refrain 2", "Outro"]
-    c{"music_label"} = (names{c{"music_style"} ?? ""} ?? "") + " - " + parts_de[pick]
+    DIM parts_de = {"intro": "Intro", "rising": "Aufbau", "main": "Refrain", "chill": "Chill", "break": "Pause", "main2": "Refrain 2", "outro": "Outro"}
+    c{"music_label"} = (names{c{"music_style"} ?? ""} ?? "") + " - " + (parts_de{scenes[pick][0]} ?? "")
     DIM plays = scenes[pick][2] + 0
     ' a scene whose tones this piece does not have keeps the melody
     DIM has = c{"music_has"} ?? []
@@ -205,13 +243,15 @@ SUB ClientMusicScene(c)
     IF NOT tones THEN plays = APPEND(plays, 0)
     DIM t = 0
     FOR t = 0 TO 7
-        SOUND.MUTE t, INDEXOF(plays, t) < 0
+        SOUND.MUTE t, INDEXOF(plays, t) < 0 ORELSE INDEXOF(has, t) < 0
     NEXT t
     IF (c{"music_vary"} ?? "") <> "" THEN
         IF scenes[pick][0] = "main2" THEN
             SOUND.SEQ 0, c{"music_vary"}, "VOICE"
-        ELSEIF scenes[pick][0] = "main" THEN
+            IF (c{"music_answer"} ?? "") <> "" THEN SOUND.SEQ 3, c{"music_answer"}, "VOICE"
+        ELSE
             SOUND.SEQ 0, c{"music_hook"}, "VOICE"
+            IF (c{"music_arp"} ?? "") <> "" THEN SOUND.SEQ 3, c{"music_arp"}, "VOICE"
         ENDIF
     ENDIF
 ENDSUB
@@ -229,6 +269,9 @@ SUB ClientMusicPlay(want$)
         IF NOT ClientMelodyReady() THEN style$ = g{"fallback"}
     ENDIF
     cs{"music_vary"} = ""
+    cs{"music_answer"} = ""
+    cs{"music_arp"} = ""
+    cs{"music_form"} = ClientForm(0)
     cs{"music_scene"} = -1
     cs{"music_style"} = style$
     SOUND.RESET
@@ -251,6 +294,10 @@ SUB ClientMusicPlay(want$)
         kick$ = made[4]
         clap$ = made[5]
         hats$ = made[6]
+        perc$ = made[7]
+        cs{"music_answer"} = made[9]
+        cs{"music_arp"} = made[3]
+        cs{"music_form"} = made[10]
         cs{"music_hook"} = made[0]
         cs{"music_vary"} = made[8]
     ELSEIF style$ = "tavern" THEN
