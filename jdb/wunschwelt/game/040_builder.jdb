@@ -495,6 +495,34 @@ FUNC RuleBuildTaken(w)
 ENDFUNC
 
 ' The point a place word means: [x, y].
+' The house a wish of a later job means: the house whose sign names a
+' player of the wish's text, else the wisher's, else a door no way leads
+' to yet; the field in front of it, or [] when there is none.
+FUNC RuleBuildHouseOf(w, job)
+    DIM text$ = LCASE$("" + (job{"text"} ?? ""))
+    DIM who$ = LCASE$("" + (job{"who"} ?? ""))
+    DIM own = []
+    FOR EACH id$ IN MAP.KEYS(w{"npcs"})
+        DIM npc = w{"npcs"}{id$}
+        DIM name$ = "" + (npc{"name"} ?? "")
+        IF STARTSWITH(id$, "b_sign_") ANDALSO STARTSWITH(name$, "Haus von ") THEN
+            DIM owner$ = LCASE$(MID$(name$, 9))
+            IF INSTR(text$, owner$) >= 0 THEN RETURN [npc{"x"}, npc{"y"}]
+            IF owner$ = who$ THEN own = [npc{"x"}, npc{"y"}]
+        ENDIF
+    NEXT
+    IF LEN(own) = 2 THEN RETURN own
+    DIM m = w{"map"}
+    DIM x = 0
+    DIM y = 0
+    FOR y = 0 TO m{"h"} - 2
+        FOR x = 0 TO m{"w"} - 1
+            IF m{"tiles"}[y * m{"w"} + x] = 7 ANDALSO m{"tiles"}[(y + 1) * m{"w"} + x] <> 2 THEN RETURN [x, y + 1]
+        NEXT x
+    NEXT y
+    RETURN []
+ENDFUNC
+
 FUNC RuleBuildTarget(w, job, where$)
     DIM m = w{"map"}
     DIM mw = m{"w"}
@@ -508,6 +536,10 @@ FUNC RuleBuildTarget(w, job, where$)
         RETURN [CLAMP(VAL(xy[0]), 1, mw - 2), CLAMP(VAL(xy[1]), 1, mh - 2)]
     ENDIF
     IF where$ = "house" ANDALSO LEN(job{"house"}) = 2 THEN RETURN job{"house"}
+    IF where$ = "house" THEN
+        DIM door = RuleBuildHouseOf(w, job)
+        IF LEN(door) = 2 THEN RETURN door
+    ENDIF
     DIM npcs = w{"npcs"}
     IF where$ = "tavern" ORELSE where$ = "house" THEN where$ = "marta"
     IF MAP.EXISTS(npcs, where$) THEN RETURN [npcs{where$}{"x"}, npcs{where$}{"y"}]
@@ -784,7 +816,10 @@ FUNC RuleBuildRoad(w, fx, fy)
             pick = way
         ENDIF
     NEXT order
-    IF pick_cost >= 100000 THEN RETURN FALSE
+    ' both straight ways cross a house: a way around, over land if it can
+    IF pick_cost >= 100000 THEN pick = RuleBuildWayAround(w, fx, fy, FALSE)
+    IF LEN(pick) = 0 THEN pick = RuleBuildWayAround(w, fx, fy, TRUE)
+    IF LEN(pick) = 0 THEN RETURN FALSE
     DIM k = 0
     FOR k = 0 TO LEN(pick) - 1
         DIM at = pick[k][1] * mw + pick[k][0]
@@ -797,6 +832,53 @@ FUNC RuleBuildRoad(w, fx, fy)
     NEXT k
     RuleBuildSetMap(w, tiles)
     RETURN TRUE
+ENDFUNC
+
+' The shortest way from (fx, fy) to the nearest road that passes no house
+' (and no water unless over_water): the tiles in order, [] when none.
+FUNC RuleBuildWayAround(w, fx, fy, over_water)
+    DIM m = w{"map"}
+    DIM mw = m{"w"}
+    DIM mh = m{"h"}
+    DIM tiles = m{"tiles"}
+    DIM came = RESHAPE([-2], [mw * mh])
+    DIM queue = [fy * mw + fx]
+    came[fy * mw + fx] = -1
+    DIM head = 0
+    DIM found = -1
+    DIM steps = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    DO WHILE head < LEN(queue) ANDALSO found < 0
+        DIM at = queue[head]
+        head = head + 1
+        DIM ax = at MOD mw
+        DIM ay = at \ mw
+        IF at <> fy * mw + fx ANDALSO (tiles[at] = 2 ORELSE tiles[at] = 13) THEN
+            found = at
+        ELSE
+            FOR EACH s IN steps
+                DIM nx = ax + s[0]
+                DIM ny = ay + s[1]
+                IF nx >= 0 ANDALSO ny >= 0 ANDALSO nx < mw ANDALSO ny < mh THEN
+                    DIM nat = ny * mw + nx
+                    DIM kind = tiles[nat]
+                    DIM passable = kind <> 5 ANDALSO kind <> 6 ANDALSO kind <> 7
+                    IF (kind = 4 ORELSE kind = 10) ANDALSO NOT over_water THEN passable = FALSE
+                    IF passable ANDALSO came[nat] = -2 THEN
+                        came[nat] = at
+                        queue = APPEND(queue, nat)
+                    ENDIF
+                ENDIF
+            NEXT
+        ENDIF
+    LOOP
+    IF found < 0 THEN RETURN []
+    DIM way = []
+    DIM cur = found
+    DO WHILE cur >= 0
+        way = APPEND(way, [[cur MOD mw, cur \ mw]])
+        cur = came[cur]
+    LOOP
+    RETURN REVERSE(way)
 ENDFUNC
 
 ' The tiles from (ax, ay) to (bx, by): along y first when order is 0, along x first when 1.

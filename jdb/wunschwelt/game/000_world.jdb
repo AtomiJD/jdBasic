@@ -182,8 +182,9 @@ FUNC RuleSync(w, p, msg)
             FOR EACH pet_id$ IN MAP.KEYS(w{"npcs"})
                 DIM pet = w{"npcs"}{pet_id$}
                 DIM gives_way = (pet{"follow"} ?? "") = p{"name"}
-                IF STARTSWITH(pet_id$, "b_") ANDALSO MAP.EXISTS(whats, "" + (pet{"what"} ?? "")) THEN
-                    IF whats{pet{"what"}}[1] THEN gives_way = TRUE
+                DIM pet_kind$ = "" + (pet{"what"} ?? pet{"kind"} ?? "")
+                IF MAP.EXISTS(whats, pet_kind$) THEN
+                    IF whats{pet_kind$}[1] THEN gives_way = TRUE
                 ENDIF
                 IF gives_way ANDALSO pet{"x"} = p{"x"} + dx ANDALSO pet{"y"} = p{"y"} + dy THEN
                     pet{"x"} = p{"x"}
