@@ -237,8 +237,8 @@ SUB ClientAlbumHud(c)
     NEXT
     DIM high = GFX.TEXTSIZE("Ag")[1]
     DIM kinds = AnimalKinds()
-    DIM img = AnimalSheet(c, what$, {}, kinds{what$} ?? {"base": [180, 180, 180]})
-    IF img > 0 THEN GFX.DRAWIMAGE_REGION(img, 48, 0, 48, 48, px0 + 10, py0 + 4, 48, 48)
+    DIM img = AnimalIcon(c, what$, kinds{what$} ?? {"base": [180, 180, 180]})
+    IF img > 0 THEN GFX.DRAWIMAGE_REGION(img, 0, 0, 48, 48, px0 + 10, py0 + 4, 48, 48)
     TEXT px0 + 66, py0 + 8, "Album: " + sorts[page][1] + "   (Seite " + STR$(page + 1) + " von " + STR$(LEN(sorts)) + ")", 96, 64, 40
     TEXT px0 + 66, py0 + 10 + high, STR$(filled) + " von " + STR$(LEN(fields)) + " Karten", 130, 100, 60
     ' a bar of what is filled

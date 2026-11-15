@@ -320,15 +320,21 @@ FUNC RuleAnimalCall(w, p, said$)
     RETURN heard
 ENDFUNC
 
-' The built animal right beside p (at most one field away), "" when none.
+' The built animal right beside p (at most one field away), "" when none:
+' the one on the field p faces first, then any other, and an animal that
+' follows p only when no other stands there.
 FUNC RuleAnimalBeside$(w, p)
     DIM whats = RuleBuildWhats()
+    DIM steps = [[0, 1], [-1, 0], [1, 0], [0, -1]]
+    DIM ahead = steps[(p{"dir"} ?? 0) MOD 4]
     DIM pick$ = ""
     DIM best = 99
     FOR EACH id$ IN MAP.KEYS(w{"npcs"})
         DIM npc = w{"npcs"}{id$}
         IF STARTSWITH(id$, "b_") ANDALSO MAP.EXISTS(whats, npc{"what"} ?? "") THEN
             DIM dist = ABS(npc{"x"} - p{"x"}) + ABS(npc{"y"} - p{"y"})
+            IF npc{"x"} = p{"x"} + ahead[0] ANDALSO npc{"y"} = p{"y"} + ahead[1] THEN dist = 0
+            IF (npc{"follow"} ?? "") = p{"name"} THEN dist = dist + 10
             IF whats{npc{"what"}}[1] ANDALSO MAX([ABS(npc{"x"} - p{"x"}), ABS(npc{"y"} - p{"y"})]) <= 1 ANDALSO dist < best THEN
                 best = dist
                 pick$ = id$
@@ -660,8 +666,16 @@ FUNC AnimalSheet(c, what$, look, kind)
         NEXT
         c{"animal_imgs"} = {}
     ENDIF
-    DIM n = raw[0] * raw[1]
-    DIM q = RESHAPE(raw[2], [n, 4])
+    DIM img = AnimalPainted(raw[2], raw[0], raw[1], col, pattern$)
+    c{"animal_imgs"}{key$} = img
+    RETURN img
+ENDFUNC
+
+' An image of width x height from white-furred pixels (flat RGBA): the fur
+' (bright pixels without colour) in col, with stripes or spots.
+FUNC AnimalPainted(px, width, height, col, pattern$)
+    DIM n = width * height
+    DIM q = RESHAPE(px, [n, 4])
     DIM r = SLICE(q, 1, 0)
     DIM g = SLICE(q, 1, 1)
     DIM b = SLICE(q, 1, 2)
@@ -674,8 +688,8 @@ FUNC AnimalSheet(c, what$, look, kind)
     DIM fur = (a > 0) * (hi > 120) * ((hi - lo) < 0.18 * hi)
     DIM shade = (0.299 * r + 0.587 * g + 0.114 * b) / 235
     IF pattern$ <> "" THEN
-        DIM xs = IOTA(n, 0) MOD raw[0]
-        DIM ys = IOTA(n, 0) \ raw[0]
+        DIM xs = IOTA(n, 0) MOD width
+        DIM ys = IOTA(n, 0) \ width
         IF pattern$ = "stripes" THEN
             shade = shade * (1 - 0.42 * (((xs + (ys \ 4) MOD 2) MOD 6) < 2))
         ELSE
@@ -688,16 +702,37 @@ FUNC AnimalSheet(c, what$, look, kind)
     r = r * (1 - fur) + CLAMP(col[0] * shade, 0, 255) * fur
     g = g * (1 - fur) + CLAMP(col[1] * shade, 0, 255) * fur
     b = b * (1 - fur) + CLAMP(col[2] * shade, 0, 255) * fur
-    DIM spr = SPRITE.CREATE(raw[0], raw[1])
+    DIM spr = SPRITE.CREATE(width, height)
     SPRITE.SETBUFFER spr, FLATTEN(TRANSPOSE(STACK(0, r, g, b, a)))
-    DIM img = GFX.NEWTARGET(raw[0], raw[1], FALSE)
+    DIM img = GFX.NEWTARGET(width, height, FALSE)
     GFX.TARGET img, TRUE
     SPRITE.POS spr, 0, 0
     SPRITE.DRAW spr
     GFX.TARGET
     SPRITE.DELETE spr
-    c{"animal_imgs"}{key$} = img
     RETURN img
+ENDFUNC
+
+' The standing frame of a sort, looking at the viewer, in its own colour:
+' one frame of the sheet is painted, not all 18, so it is quick; kept in c.
+FUNC AnimalIcon(c, what$, kind)
+    IF NOT MAP.EXISTS(c, "animal_icons") THEN c{"animal_icons"} = {}
+    IF MAP.EXISTS(c{"animal_icons"}, what$) THEN RETURN c{"animal_icons"}{what$}
+    c{"animal_icons"}{what$} = -1
+    TRY
+        DIM data$ = BINREADER$((c{"assets"} ?? "assets") + "/animal_" + what$ + ".rgba")
+        DIM size = UNPACK("<II", data$)
+        IF size[0] >= 96 ANDALSO size[1] >= 48 ANDALSO LEN(data$) >= 8 + 4 * size[0] * size[1] THEN
+            DIM rows = []
+            DIM y = 0
+            FOR y = 0 TO 47
+                rows = APPEND(rows, UNPACK("192b", data$, 8 + (y * size[0] + 48) * 4))
+            NEXT y
+            c{"animal_icons"}{what$} = AnimalPainted(FLATTEN(rows), 48, 48, kind{"base"} ?? [180, 180, 180], "")
+        ENDIF
+    CATCH
+    ENDTRY
+    RETURN c{"animal_icons"}{what$}
 ENDFUNC
 
 ' Draws an animal of the builder from the sheet of its sort, with what it

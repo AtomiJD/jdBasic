@@ -858,6 +858,31 @@ FUNC RuleBuildBridge(w, target)
     RETURN TRUE
 ENDFUNC
 
+' The name of a new animal or villager: the model's, unless it is empty or the
+' name of a player or of someone or something in the village already; then the
+' German name of the sort, with a number when that is taken too.
+FUNC RuleFolkName$(w, name$, what$)
+    DIM taken = {}
+    FOR EACH who$ IN MAP.KEYS(w{"profiles"} ?? {})
+        taken{LCASE$(who$)} = TRUE
+    NEXT
+    FOR EACH who$ IN MAP.KEYS(w{"players"})
+        taken{LCASE$(who$)} = TRUE
+    NEXT
+    FOR EACH id$ IN MAP.KEYS(w{"npcs"})
+        taken{LCASE$("" + (w{"npcs"}{id$}{"name"} ?? ""))} = TRUE
+    NEXT
+    DIM given$ = TRIM$(name$)
+    IF given$ <> "" ANDALSO NOT MAP.EXISTS(taken, LCASE$(given$)) THEN RETURN given$
+    DIM base$ = IIF(what$ = "villager", "Bewohner", (RuleBuildWhats(){what$} ?? [what$])[0])
+    IF NOT MAP.EXISTS(taken, LCASE$(base$)) THEN RETURN base$
+    DIM k = 2
+    DO WHILE MAP.EXISTS(taken, LCASE$(base$ + " " + STR$(k)))
+        k = k + 1
+    LOOP
+    RETURN base$ + " " + STR$(k)
+ENDFUNC
+
 ' An animal, a thing or a villager on a free tile near its place.
 FUNC RuleBuildFolk(w, b, job, st)
     DIM made = 0
@@ -873,6 +898,7 @@ FUNC RuleBuildFolk(w, b, job, st)
     b{"n"} = (b{"n"} ?? 0) + 1
     DIM what$ = IIF(st{"do"} = "villager", "villager", st{"what"})
     DIM id$ = "b_" + what$ + "_" + STR$(b{"n"})
+    IF st{"do"} <> "thing" THEN st{"name"} = RuleFolkName$(w, "" + (st{"name"} ?? ""), what$)
     DIM npc = {"id": id$, "kind": "thing", "name": st{"name"}, "x": spot[0], "y": spot[1], "what": what$, "mem": {}}
     IF st{"do"} = "animal" THEN
         DIM whats = RuleBuildWhats()

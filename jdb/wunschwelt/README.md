@@ -471,7 +471,7 @@ of every game file, which no other suite runs.
   `RuleView` for a name that exists and its PIN, without the player entering
   the world. The start page links to it.
 
-`test_album.jdb`: 15 checks.
+`test_album.jdb`: 17 checks.
 
 ## What survives a restart
 

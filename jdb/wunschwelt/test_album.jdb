@@ -1,8 +1,10 @@
 ' Test of the album, with a model that answers from a script: a golden cat
 ' in a scarf is petted, its page gets the fields of what it is, once a day,
 ' a field met again stacks and earns a star, a cat that follows fills the
-' friendship, and the owner of the name reads the album from outside the
-' world with the PIN, a wrong PIN and an unknown name read nothing.
+' friendship, a cat the model names like a player gets the name of its sort,
+' with a follower behind her Anna pets the cat she faces, and the owner of
+' the name reads the album from outside the world with the PIN, a wrong PIN
+' and an unknown name read nothing.
 '
 '   jdBasic jdb/wunschwelt/test_album.jdb      (from the repository root)
 
@@ -29,6 +31,7 @@ MKDIR "tmp"
 MKDIR out$
 HTTP.SETTIMEOUT(5)
 
+DIM made AS INTEGER = 0
 FUNC FakeModel(request)
     DIM body = JSON.PARSE(request{"body"})
     DIM messages = body{"messages"}
@@ -39,7 +42,8 @@ FUNC FakeModel(request)
         content$ = JSON.STRINGIFY$({"wish": FALSE})
         IF INSTR(said$, "Katze") >= 0 THEN content$ = JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": said$})
     ELSEIF INSTR(system$, "Du bist der Baumeister") >= 0 THEN
-        content$ = JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "cat", "name": "Goldi", "color": "gold", "wear": ["roter Schal"], "where": "tavern"}]})
+        made = made + 1
+        content$ = JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "cat", "name": IIF(made = 1, "Goldi", "Anna"), "color": "gold", "wear": ["roter Schal"], "where": "tavern"}]})
     ENDIF
     RETURN JSON.STRINGIFY$({"choices": [{"message": {"role": "assistant", "content": content$}}]})
 ENDFUNC
@@ -62,6 +66,7 @@ DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
 DIM r = Post("/sync", {"token": token$, "mapv": 1})
 DIM since AS INTEGER = r{"seq"}
 DIM told = []
+DIM last_pet$ AS STRING = ""
 DIM album = NONE
 DIM albumv AS INTEGER = -1
 
@@ -74,6 +79,7 @@ FUNC Sync(extra)
     since = t{"seq"}
     FOR EACH ev IN t{"events"}
         IF ev{"type"} = "purse" ANDALSO (ev{"to"} ?? "") = "Anna" THEN told = APPEND(told, ev{"text"})
+        IF ev{"type"} = "pet" ANDALSO ev{"who"} = "Anna" THEN last_pet$ = ev{"npc"}
     NEXT
     IF MAP.EXISTS(t, "album") THEN
         album = t{"album"}
@@ -156,9 +162,43 @@ DIM fond = Admin("fond", {"player": "Anna", "npc": cat[0], "v": 90})
 Wait(2600)
 Check("a cat that follows fills the friendship", (Page("cat"){"friend"} ?? 0) = 1)
 
+' a new animal is not named like a player
+DIM again = Sync({"say": "Ich wuensche mir noch eine goldene Katze"})
+DIM second = NONE
+FOR k = 1 TO 60
+    Wait(300)
+    FOR EACH row IN Sync({}){"npcs"}
+        IF row[0] <> cat[0] ANDALSO STARTSWITH(row[0], "b_cat_") THEN second = row
+    NEXT
+    IF ISARR(second) THEN EXITFOR
+NEXT k
+Check("a cat the model calls Anna is called Katze", ISARR(second) ANDALSO second[1] = "Katze")
+
+' with a follower behind her, Anna pets the cat in front of her
+DIM petted$ AS STRING = ""
+DIM tries AS INTEGER
+FOR tries = 1 TO 8
+    DIM front = NONE
+    FOR EACH row IN Sync({}){"npcs"}
+        IF row[0] = second[0] THEN front = row
+    NEXT
+    DIM ways = [[0, 1], [0, -1], [1, 0], [-1, 0]]
+    DIM way = ways[(tries - 1) MOD 4]
+    DIM two_off = Admin("player_put", {"player": "Anna", "x": front[2] - 2 * way[0], "y": front[3] - 2 * way[1]})
+    DIM t0 = Sync({})
+    t0 = Sync({"dx": way[0], "dy": way[1]})
+    Wait(400)
+    last_pet$ = ""
+    DIM pet_t = Sync({"pet": TRUE})
+    Wait(400)
+    petted$ = last_pet$
+    IF petted$ = second[0] THEN EXITFOR
+NEXT tries
+Check("with a follower behind her Anna pets the cat she faces", petted$ = second[0])
+
 ' the album from outside the world
 DIM view = Post("/view", {"name": "anna", "pin": "1234", "view": "album"})
-Check("the owner reads the album with the PIN", view{"ok"} ANDALSO view{"name"} = "Anna" ANDALSO (view{"have"}{"cat"}{"meet"} ?? 0) = 5)
+Check("the owner reads the album with the PIN", view{"ok"} ANDALSO view{"name"} = "Anna" ANDALSO (view{"have"}{"cat"}{"meet"} ?? 0) >= 5)
 DIM wrong = Post("/view", {"name": "Anna", "pin": "9999", "view": "album"})
 Check("a wrong PIN reads nothing", NOT wrong{"ok"} ANDALSO NOT MAP.EXISTS(wrong, "have"))
 DIM nobody = Post("/view", {"name": "Niemand", "pin": "1234", "view": "album"})
