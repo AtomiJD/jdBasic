@@ -161,8 +161,11 @@ FUNC RuleAnimalNear$(w, p, low$, reach)
         DIM kind_of$ = "" + (npc{"what"} ?? npc{"kind"})
         IF MAP.EXISTS(whats, kind_of$) THEN
             IF whats{kind_of$}[1] THEN
+                ' the whole name, or its first word as a word of its own
                 DIM name_key$ = RuleLookColorKey$("" + (npc{"name"} ?? ""))
+                DIM first_key$ = SPLIT(name_key$ + " ", " ")[0]
                 DIM by_name = LEN(name_key$) >= 3 ANDALSO INSTR(low$, name_key$) >= 0
+                IF NOT by_name ANDALSO LEN(first_key$) >= 3 THEN by_name = INSTR(" " + REGEX.REPLACE$("[^a-z0-9]+", low$, " ") + " ", " " + first_key$ + " ") >= 0
                 DIM dist = MAX([ABS(npc{"x"} - p{"x"}), ABS(npc{"y"} - p{"y"})])
                 DIM rank = dist + IIF(by_name, 0, 100000)
                 IF (by_name ORELSE (kind_of$ = what$ ANDALSO dist <= reach)) ANDALSO rank < best THEN

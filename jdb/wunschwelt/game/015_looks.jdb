@@ -73,13 +73,23 @@ FUNC RuleLookAsked(w, p, said$)
     DIM low$ = RuleLookColorKey$(said$)
     DIM part$ = RuleLookGuessPart$(low$)
     IF part$ = "" ORELSE part$ = "skin" THEN RETURN FALSE
-    DIM color$ = RuleLookGuessColor$(low$)
-    IF color$ = "" THEN RETURN FALSE
     DIM asks = FALSE
-    FOR EACH word$ IN ["moecht", "will", "wuensch", "haett", "bitte", "gib", "mach", "trag", "anzieh", "soll", "lieber", "kann ich", "bekomm"]
+    FOR EACH word$ IN ["moecht", "will", "wuensch", "haett", "bitte", "gib", "mach", "trag", "zieh", "soll", "lieber", "kann ich", "bekomm"]
         IF INSTR(low$, word$) >= 0 THEN asks = TRUE
     NEXT
-    IF NOT asks THEN RETURN FALSE
+    IF NOT asks ORELSE INSTR(low$, "auszieh") >= 0 ORELSE INSTR(low$, " aus") >= 0 THEN RETURN FALSE
+    ' without a colour the part keeps the one it has, or takes its own
+    DIM color$ = RuleLookGuessColor$(low$)
+    IF color$ = "" THEN
+        DIM worn = (p{"look"} ?? {}){part$} ?? NONE
+        DIM colors = RuleLookColors()
+        IF ISARR(worn) THEN
+            FOR EACH name$ IN MAP.KEYS(colors)
+                IF colors{name$}[0] = worn[0] ANDALSO colors{name$}[1] = worn[1] ANDALSO colors{name$}[2] = worn[2] THEN color$ = name$
+            NEXT
+        ENDIF
+        IF color$ = "" THEN color$ = ({"patch": "schwarz", "hat": "rot", "scarf": "rot", "clothes": "blau"}){part$} ?? "rot"
+    ENDIF
     ' "a dog with a yellow hat" is a wish for the village, not a look
     FOR EACH stem IN RuleBuildStems()
         IF RuleBuildStemAt(low$, stem[0], "") >= 0 THEN RETURN FALSE
