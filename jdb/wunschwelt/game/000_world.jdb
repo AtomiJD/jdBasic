@@ -213,9 +213,9 @@ FUNC RuleSync(w, p, msg)
             ENDIF
         NEXT
         IF heard_by$ <> "" THEN
-            RuleBondTalk(w, p, heard_by$, said$)
+            DIM gift = RuleBondTalk(w, p, heard_by$, said$)
             KAskNpc(w, heard_by$, p{"name"}, said$)
-            RuleSaid(w, p, npcs{heard_by$}, said$)
+            IF NOT gift THEN RuleSaid(w, p, npcs{heard_by$}, said$)
         ENDIF
     ENDIF
 
@@ -333,9 +333,11 @@ FUNC RuleBond(w, name$, id$)
     RETURN 0
 ENDFUNC
 
-' p said said$ to the NPC npc_id$, before it answers.
-SUB RuleBondTalk(w, p, npc_id$, said$)
-ENDSUB
+' p said said$ to the NPC npc_id$, before it answers; TRUE when it was a
+' gift and not a wish.
+FUNC RuleBondTalk(w, p, npc_id$, said$)
+    RETURN FALSE
+ENDFUNC
 
 ' How npc feels about player$, for its prompt.
 FUNC RuleNpcFeels$(w, npc, player$)

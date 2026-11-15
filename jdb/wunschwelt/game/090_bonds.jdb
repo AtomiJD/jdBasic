@@ -128,10 +128,11 @@ SUB RuleBondGift(w, p, id$, said$)
 ENDSUB
 
 ' A talk with a person, before it answers: a gift in it, and once an hour
-' the person likes the player a little more.
-SUB RuleBondTalk(w, p, npc_id$, said$)
+' the person likes the player a little more. TRUE when it gave something,
+' so the sentence is no wish.
+FUNC RuleBondTalk(w, p, npc_id$, said$)
     DIM npc = w{"npcs"}{npc_id$}
-    IF npc{"kind"} <> "person" THEN RETURN
+    IF npc{"kind"} <> "person" THEN RETURN FALSE
     RuleBondGift(w, p, npc_id$, said$)
     DIM entry = RuleBondEntry(w, p{"name"}, npc_id$)
     DIM now = KNow()
@@ -139,7 +140,8 @@ SUB RuleBondTalk(w, p, npc_id$, said$)
         entry{"talk_at"} = now
         DIM v = RuleBondAdd(w, p, npc_id$, 4)
     ENDIF
-ENDSUB
+    RETURN RuleBondGiftItem$(said$) <> ""
+ENDFUNC
 
 ' A task of the person giver$ is done: it likes p more, and pays 25 more
 ' when it trusts p.
