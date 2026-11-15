@@ -376,13 +376,15 @@ SUB RuleAnimalSync(w, p, msg, answer)
         DIM id$ = RuleAnimalBeside$(w, p)
         IF id$ = "" THEN RuleQuestPick(w, p)
         IF id$ <> "" THEN
-            KEmit(w, {"type": "pet", "npc": id$, "who": p{"name"}})
             RuleQuestPet(w, p, id$)
             IF NOT MAP.EXISTS(p, "petted") THEN p{"petted"} = {}
+            DIM up = 0
             IF now - (p{"petted"}{id$} ?? -99999) >= 20000 THEN
                 p{"petted"}{id$} = now
                 DIM v = RuleFondAdd(w, p, id$, 8)
+                up = 8
             ENDIF
+            KEmit(w, {"type": "pet", "npc": id$, "who": p{"name"}, "up": up})
         ENDIF
     ENDIF
     IF INT(msg{"fondv"} ?? -1) <> (p{"fondv"} ?? 0) THEN
@@ -728,7 +730,11 @@ FUNC AnimalSheetDraw(c, row, sx, sy, what$, kind)
     DRAWCOLOR 10, 24, 10, 70
     ELLIPSE sx + 16, sy + 30, size \ 3, 3, TRUE
     DRAWCOLOR 255, 255, 255, 255
-    GFX.DRAWIMAGE_REGION(img, frame_col * 48, frame_row * 48, 48, 48, sx + ox, sy + oy + hop, size, size)
+    ' petted, it squeezes together with joy: wider and lower, on its feet
+    DIM squish = AnimalPetSquish(c, row[0])
+    DIM sq_w = INT(size * (1 + 0.18 * squish))
+    DIM sq_h = INT(size * (1 - 0.16 * squish))
+    GFX.DRAWIMAGE_REGION(img, frame_col * 48, frame_row * 48, 48, 48, sx + 16 - sq_w \ 2, sy + 31 - sq_h + hop, sq_w, sq_h)
     ' what it wears, from the anchors of the view, in the cell's pixels
     DIM side = frame_row = 1 ORELSE frame_row = 2 ORELSE (frame_row = 4 ANDALSO frame_col <> 1)
     DIM faces_left = frame_row = 1 ORELSE (frame_row = 4 ANDALSO frame_col = 0)
@@ -756,6 +762,7 @@ FUNC AnimalSheetDraw(c, row, sx, sy, what$, kind)
     ENDIF
     top = AnimalFondMark(c, row, sx, top)
     BuildLabel(sx, top, row[1])
+    AnimalPetFx(c, row, sx, sy)
     RETURN TRUE
 ENDFUNC
 
@@ -773,7 +780,139 @@ SUB ClientAnimalExtra(c, r)
         c{"fondv"} = r{"fondv"}
     ENDIF
     IF NOT MAP.EXISTS(c, "petted") THEN c{"petted"} = {}
+    IF NOT MAP.EXISTS(c, "pet_fx") THEN c{"pet_fx"} = {}
     FOR EACH ev IN r{"events"} ?? []
-        IF ev{"type"} = "pet" THEN c{"petted"}{ev{"npc"}} = TICK()
+        IF ev{"type"} = "pet" THEN
+            c{"petted"}{ev{"npc"}} = TICK()
+            c{"pet_fx"}{ev{"npc"}} = {"t": TICK(), "up": ev{"up"} ?? 0, "who": ev{"who"} ?? "", "food": ev{"food"} ?? FALSE, "seed": INT(RND() * 1000)}
+            IF (ev{"who"} ?? "") = (c{"name"} ?? "") THEN c{"chime"} = [TICK(), IIF((ev{"up"} ?? 0) > 0, [784, 988, 1319], [880, 1175])]
+        ENDIF
     NEXT
+ENDSUB
+
+' What a sort says when it is petted.
+FUNC AnimalPetWord$(what$)
+    DIM ae$ = CHR$(195) + CHR$(164)
+    DIM ue$ = CHR$(195) + CHR$(188)
+    DIM words = {"cat": "Schnurr!", "dog": "Wuff!", "chicken": "Gock!", "duck": "Quak!", "frog": "Quaak!", "cow": "Muuh!", "pig": "Oink!", "sheep": "M" + ae$ + "h!", "rabbit": "M" + ue$ + "mmel!", "hedgehog": "Schn" + ue$ + "ff!", "fox": "Jiep!"}
+    RETURN words{what$} ?? "Hihi!"
+ENDFUNC
+
+' A heart centred on x, y: size 1 is 5 x 5 pixels, size 2 is 7 x 6 and
+' size 3 the same drawn twice as big with a dark rim.
+SUB AnimalPetHeart(x, y, size, col)
+    IF size <= 1 THEN
+        RECT x - 2, y - 1, 2, 1, TRUE, col[0], col[1], col[2]
+        RECT x + 1, y - 1, 2, 1, TRUE, col[0], col[1], col[2]
+        RECT x - 2, y, 5, 1, TRUE, col[0], col[1], col[2]
+        RECT x - 1, y + 1, 3, 1, TRUE, col[0], col[1], col[2]
+        RECT x, y + 2, 1, 1, TRUE, col[0], col[1], col[2]
+        RETURN
+    ENDIF
+    DIM k = IIF(size >= 3, 2, 1)
+    ' each row of the 7 x 6 heart: [from, width]
+    DIM rows = [[0, 3, 4, 3], [0, 7], [0, 7], [1, 5], [2, 3], [3, 1]]
+    DIM x0 = x - (7 * k) \ 2
+    DIM y0 = y - (6 * k) \ 2
+    DIM j = 0
+    IF k = 2 THEN
+        FOR j = 0 TO 5
+            DIM rim = rows[j]
+            RECT x0 + rim[0] * k - 1, y0 + j * k - 1, rim[1] * k + 2, k + 2, TRUE, 120, 30, 60
+            IF LEN(rim) > 2 THEN RECT x0 + rim[2] * k - 1, y0 + j * k - 1, rim[3] * k + 2, k + 2, TRUE, 120, 30, 60
+        NEXT j
+    ENDIF
+    FOR j = 0 TO 5
+        DIM seg = rows[j]
+        RECT x0 + seg[0] * k, y0 + j * k, seg[1] * k, k, TRUE, col[0], col[1], col[2]
+        IF LEN(seg) > 2 THEN RECT x0 + seg[2] * k, y0 + j * k, seg[3] * k, k, TRUE, col[0], col[1], col[2]
+    NEXT j
+    RECT x0 + k, y0 + k, k, k, TRUE, 255, 236, 242
+ENDSUB
+
+' How much a petted animal is squeezed now, 0 to 1; 0 when it was not petted.
+FUNC AnimalPetSquish(c, id$)
+    DIM fx = (c{"pet_fx"} ?? {}){id$} ?? NONE
+    IF NOT ISMAP(fx) THEN RETURN 0
+    DIM age = TICK() - fx{"t"}
+    IF age < 0 ORELSE age > 420 THEN RETURN 0
+    RETURN SIN(age / 420 * MATH.PI)
+ENDFUNC
+
+' The petting of the animal of row drawn at sx, sy: a hand strokes its back,
+' hearts float up, sparkles twinkle, the animal says its word and, when it
+' liked the one who petted it more, a +n with a heart rises.
+SUB AnimalPetFx(c, row, sx, sy)
+    DIM all = c{"pet_fx"} ?? {}
+    IF NOT MAP.EXISTS(all, row[0]) THEN RETURN
+    DIM fx = all{row[0]}
+    DIM age = TICK() - fx{"t"}
+    IF age > 2000 THEN
+        MAP.DELETE(all, row[0])
+        RETURN
+    ENDIF
+    DIM seed = fx{"seed"}
+    DIM cx = sx + 16
+    ' the hand, stroking to and fro over the fur
+    IF age < 1000 ANDALSO NOT fx{"food"} THEN
+        DIM hx = cx - 5 + INT(7 * SIN(age / 1000 * 4 * MATH.PI))
+        DIM hy = sy + 10 + INT(ABS(SIN(age / 1000 * 4 * MATH.PI)))
+        RECT hx - 1, hy + 1, 10, 5, TRUE, 150, 96, 80
+        RECT hx, hy, 10, 5, TRUE, 246, 210, 178
+        RECT hx + 1, hy - 1, 2, 1, TRUE, 246, 210, 178
+        RECT hx + 4, hy - 1, 2, 1, TRUE, 246, 210, 178
+        RECT hx + 7, hy - 1, 2, 1, TRUE, 246, 210, 178
+        RECT hx + 9, hy + 2, 3, 2, TRUE, 246, 210, 178
+        RECT hx + 1, hy + 4, 8, 1, TRUE, 222, 176, 146
+    ENDIF
+    ' the hearts, one after the other, wobbling as they rise
+    DIM tints = [[236, 70, 110], [248, 120, 160], [220, 40, 80], [255, 160, 190]]
+    DIM n_hearts = IIF(fx{"up"} > 0, 6, 3)
+    DIM i = 0
+    FOR i = 0 TO n_hearts - 1
+        DIM h_age = age - i * 130
+        IF h_age >= 0 ANDALSO h_age < 1300 THEN
+            DIM rise = h_age / 1300
+            DIM lane = ((seed + i * 7) MOD 5) - 2
+            DIM hx2 = cx + lane * 6 + INT(3 * SIN(h_age / 160 + i))
+            DIM hy2 = sy + 4 - INT(54 * rise)
+            DIM big = IIF(rise < 0.3, 2, IIF(rise < 0.65, 3, IIF(rise < 0.88, 2, 1)))
+            AnimalPetHeart(hx2, hy2, big, tints[(i + seed) MOD 4])
+        ENDIF
+    NEXT i
+    ' sparkles around the animal, each a small plus that blinks
+    FOR i = 0 TO 3
+        DIM s_age = age - 80 - i * 190
+        IF s_age >= 0 ANDALSO s_age < 360 THEN
+            DIM px = sx + 2 + ((seed * 3 + i * 11) MOD 28)
+            DIM py = sy + 2 + ((seed + i * 13) MOD 22)
+            DIM arm = IIF(s_age < 120 ORELSE s_age > 240, 1, 2)
+            RECT px - arm, py, arm * 2 + 1, 1, TRUE, 255, 240, 150
+            RECT px, py - arm, 1, arm * 2 + 1, TRUE, 255, 240, 150
+            RECT px, py, 1, 1, TRUE, 255, 255, 255
+        ENDIF
+    NEXT i
+    ' the word of the animal in a little bubble
+    IF age > 150 ANDALSO age < 1500 THEN
+        DIM word$ = AnimalPetWord$(SPLIT(row[0], "_")[1])
+        IF fx{"food"} THEN word$ = "Mampf!"
+        DIM size = GFX.TEXTSIZE(word$)
+        DIM bx = cx + 6
+        DIM by = sy - 30 - INT(MIN([age - 150, 200]) / 40)
+        RECT bx - 3, by - 2, size[0] + 6, size[1] + 3, TRUE, 120, 60, 80
+        RECT bx - 2, by - 1, size[0] + 4, size[1] + 1, TRUE, 255, 246, 248
+        RECT bx - 1, by + size[1] + 1, 3, 2, TRUE, 255, 246, 248
+        RECT bx - 2, by + size[1] + 3, 2, 1, TRUE, 120, 60, 80
+        TEXT bx, by, word$, 200, 60, 110
+    ENDIF
+    ' the gain of affection, for the one who petted
+    IF fx{"up"} > 0 ANDALSO fx{"who"} = (c{"name"} ?? "") ANDALSO age > 300 THEN
+        DIM gain$ = "+" + STR$(fx{"up"})
+        DIM gsize = GFX.TEXTSIZE(gain$)
+        DIM gx = cx - 14 - gsize[0]
+        DIM gy = sy - 4 - INT((age - 300) / 50)
+        TEXT gx + 1, gy + 1, gain$, 90, 20, 40
+        TEXT gx, gy, gain$, 255, 120, 160
+        AnimalPetHeart(gx + gsize[0] + 5, gy + gsize[1] \ 2, 2, [236, 70, 110])
+    ENDIF
 ENDSUB

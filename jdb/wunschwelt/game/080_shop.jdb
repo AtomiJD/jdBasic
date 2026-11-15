@@ -202,7 +202,7 @@ SUB RuleShopUse(w, p, id$, item)
         ENDIF
         DIM eaten = RuleItemAdd(prof, id$, -1)
         DIM fed = RuleFondAdd(w, p, pet$, 12)
-        KEmit(w, {"type": "pet", "npc": pet$, "who": who$})
+        KEmit(w, {"type": "pet", "npc": pet$, "who": who$, "up": 12, "food": TRUE})
         KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$("Du f{u}tterst " + w{"npcs"}{pet$}{"name"} + ". Es mag Dich jetzt mehr."), "got": "food"})
         RETURN
     ENDIF

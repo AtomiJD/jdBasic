@@ -1214,6 +1214,7 @@ SUB BuildAnimal(c, row, sx, sy)
     top = top - IIF(state[3], 10, 0)
     top = AnimalFondMark(c, row, sx, top)
     BuildLabel(sx, top, row[1])
+    AnimalPetFx(c, row, sx, sy)
 ENDSUB
 
 SUB AnimalPainters()
