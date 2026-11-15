@@ -666,8 +666,17 @@ FUNC RuleBuildDo(w, b, job, st)
         RuleBuildSetMap(w, tiles)
         job{"house"} = [door_x, door_y + 1]
         DIM road_made = RuleBuildRoad(w, door_x, door_y + 1)
-        IF st{"owner"} <> "" THEN
-            DIM sign = {"do": "thing", "what": "sign", "name": "Haus von " + st{"owner"}, "where": "house"}
+        ' a house nobody named an owner for is the wisher's, when the
+        ' wisher has none yet
+        DIM owner$ = "" + (st{"owner"} ?? "")
+        IF owner$ = "" ANDALSO ("" + (job{"who"} ?? "")) <> "" THEN
+            owner$ = job{"who"}
+            FOR EACH sign_id$ IN MAP.KEYS(w{"npcs"})
+                IF (w{"npcs"}{sign_id$}{"name"} ?? "") = "Haus von " + owner$ THEN owner$ = ""
+            NEXT
+        ENDIF
+        IF owner$ <> "" THEN
+            DIM sign = {"do": "thing", "what": "sign", "name": "Haus von " + owner$, "where": "house"}
             DIM sign_made = RuleBuildFolk(w, b, job, sign)
         ENDIF
         RETURN TRUE

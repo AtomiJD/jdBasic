@@ -120,6 +120,18 @@ FUNC RuleApplyLook(w, who$, verdict)
         DIM colors = RuleLookColors()
         DIM key$ = RuleLookColorKey$("" + (verdict{"color"} ?? ""))
         IF NOT MAP.EXISTS(colors, key$) THEN RETURN FALSE
+        ' only Vally's picture has an eyepatch to colour; the figure of a
+        ' player without a skin of its own follows the tint, as in the client
+        IF part$ = "patch" THEN
+            DIM skins = RuleLookSkins()
+            DIM figure$ = "" + (look{"skin"} ?? skins[(p{"tint"} ?? 0) MOD LEN(skins)])
+            IF figure$ <> "vally" THEN
+                DIM figure_name$ = UCASE$(LEFT$(figure$, 1)) + MID$(figure$, 1)
+                IF figure$ = "moehrchen" THEN figure_name$ = RuleDe$("M{o}hrchen")
+                KEmit(w, {"type": "purse", "to": who$, "text": figure_name$ + RuleDe$(" hat keine Augenklappe. Vally hat eine: sag ") + CHR$(34) + RuleDe$("Ich m{o}chte aussehen wie Vally") + CHR$(34) + "."})
+                RETURN TRUE
+            ENDIF
+        ENDIF
         look{part$} = colors{key$}
         said$ = who$ + RuleDe$(" tr{a}gt jetzt ") + RuleLookPartName$(part$) + " in " + key$
     ELSE
