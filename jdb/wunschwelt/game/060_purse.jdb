@@ -183,7 +183,7 @@ SUB RuleFindTake(w, p)
     DIM kept = []
     DIM took = FALSE
     FOR EACH f IN finds
-        IF NOT took ANDALSO f{"x"} = p{"x"} ANDALSO f{"y"} = p{"y"} ANDALSO RuleFindGive(w, p{"name"}, f{"kind"}) THEN
+        IF NOT took ANDALSO f{"x"} = p{"x"} ANDALSO f{"y"} = p{"y"} ANDALSO (RuleAlbumFind(w, p{"name"}, f) ORELSE RuleFindGive(w, p{"name"}, f{"kind"})) THEN
             took = TRUE
         ELSE
             kept = APPEND(kept, f)
@@ -265,7 +265,7 @@ SUB RulePurseSync(w, p, msg, answer)
     IF INT(msg{"findv"} ?? -1) <> (w{"findv"} ?? 0) THEN
         DIM spots = []
         FOR EACH f IN w{"finds"}
-            spots = APPEND(spots, [[f{"id"}, f{"kind"}, f{"x"}, f{"y"}]])
+            spots = APPEND(spots, [[f{"id"}, f{"kind"}, f{"x"}, f{"y"}, "" + (f{"sort"} ?? "")]])
         NEXT
         answer{"finds"} = spots
         answer{"findv"} = w{"findv"} ?? 0
@@ -280,7 +280,7 @@ SUB RulePurseTick(w, now)
         w{"find_at"} = now + MAX([1, eco{"find_every_s"}]) * 1000
         DIM loose = 0
         FOR EACH f IN w{"finds"}
-            IF f{"kind"} <> "chest" ANDALSO f{"kind"} <> "golden" THEN loose = loose + 1
+            IF INDEXOF(["chest", "golden", "card", "trace"], f{"kind"}) < 0 THEN loose = loose + 1
         NEXT
         IF loose < eco{"finds"} THEN RuleFindSpawn(w)
     ENDIF
@@ -425,6 +425,7 @@ SUB ClientFloor(c, cam_x, cam_y)
                 ClientCoin(sx + 3, sy + bob, 4)
             ELSEIF f[1] = "bottle" THEN
                 ClientFlask(sx, sy + bob, 10)
+            ELSEIF ClientAlbumFind(f, sx, sy + bob) THEN
             ELSEIF f[1] = "chest" ORELSE f[1] = "golden" THEN
                 ClientChest(sx, sy + 2, f[1] = "golden")
             ELSE

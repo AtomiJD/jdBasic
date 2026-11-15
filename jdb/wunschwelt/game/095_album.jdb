@@ -50,7 +50,15 @@ FUNC RuleAlbumSorts()
     RETURN rows
 ENDFUNC
 
+' The season of the village: by the months of the calendar, or, with
+' album.season_weeks above 0, each season that many weeks in turn.
 FUNC RuleSeason$(w)
+    DIM weeks = RuleConf(w, "album.season_weeks", 0)
+    IF weeks > 0 THEN
+        DIM days = DATEDIFF("d", CVDATE("2026-01-05"), CVDATE(RuleToday$(w, 0)))
+        DIM seasons = ["spring", "summer", "autumn", "winter"]
+        RETURN seasons[((FLOOR(days / 7) \ weeks) MOD 4 + 4) MOD 4]
+    ENDIF
     DIM month_no = VAL(MID$(RuleToday$(w, 0), 5, 2))
     IF month_no >= 3 ANDALSO month_no <= 5 THEN RETURN "spring"
     IF month_no >= 6 ANDALSO month_no <= 8 THEN RETURN "summer"
@@ -211,9 +219,127 @@ FUNC RuleAlbumDetail$(w, name$)
     RETURN sorts[CODEC.CRC32(name$ + "|" + today$) MOD LEN(sorts)][0]
 ENDFUNC
 
+' ---- finds: cards along the paths, traces the animals leave ----
+
+' What an animal of a sort leaves behind.
+FUNC RuleTraceName$(what$)
+    DIM names = {"cat": "ein Schnurrhaar", "dog": "einen Knochen", "fox": "ein Fuchshaar", "chicken": "eine Feder", "duck": "eine Entenfeder", "frog": "ein Seerosenblatt", "rabbit": RuleDe$("ein M{o}hrenst{u}ck"), "sheep": RuleDe$("ein Wollkn{a}uel"), "cow": "einen Heuhalm", "pig": "eine Eichel", "hedgehog": "einen Stachel", "owl": "eine Eulenfeder", "squirrel": "eine Nussschale", "mouse": RuleDe$("einen K{a}sekr{u}mel"), "turtle": "ein Salatblatt", "goat": "ein Ziegenhaar", "deer": "ein Rehhaar", "pony": RuleDe$("ein M{a}hnenhaar"), "donkey": RuleDe$("ein Heub{u}schel"), "raccoon": "ein Ringelhaar", "penguin": "eine Pinguinfeder"}
+    RETURN names{what$} ?? "eine Spur"
+ENDFUNC
+
+' A find of the album on a free field of kind tiles, apart from the others.
+SUB RuleAlbumDrop(w, kind$, sort$, field$, tiles, near_x, near_y, reach)
+    DIM m = w{"map"}
+    DIM finds = w{"finds"}
+    DIM x0 = 1
+    DIM y0 = 1
+    DIM x1 = m{"w"} - 2
+    DIM y1 = m{"h"} - 2
+    IF reach > 0 THEN
+        x0 = MAX([1, near_x - reach])
+        y0 = MAX([1, near_y - reach])
+        x1 = MIN([m{"w"} - 2, near_x + reach])
+        y1 = MIN([m{"h"} - 2, near_y + reach])
+    ENDIF
+    DIM spots = []
+    DIM x = 0
+    DIM y = 0
+    FOR y = y0 TO y1
+        FOR x = x0 TO x1
+            IF INDEXOF(tiles, m{"tiles"}[y * m{"w"} + x]) >= 0 THEN
+                DIM apart = TRUE
+                FOR EACH f IN finds
+                    IF ABS(f{"x"} - x) + ABS(f{"y"} - y) < 2 THEN apart = FALSE
+                NEXT
+                IF apart ANDALSO NOT RuleBlocked(w, x, y) THEN spots = APPEND(spots, [[x, y]])
+            ENDIF
+        NEXT x
+    NEXT y
+    IF LEN(spots) = 0 THEN RETURN
+    DIM spot = spots[INT(RND() * LEN(spots))]
+    w{"find_seq"} = (w{"find_seq"} ?? 0) + 1
+    DIM dropped = {"id": w{"find_seq"}, "kind": kind$, "x": spot[0], "y": spot[1], "sort": sort$}
+    IF field$ <> "" THEN dropped{"field"} = field$
+    w{"finds"} = APPEND(finds, dropped)
+    w{"findv"} = (w{"findv"} ?? 0) + 1
+ENDSUB
+
+' Each day album.card_finds cards lie on the paths (those nobody took go
+' with the day, and the traces with them); now and then an animal leaves a
+' trace beside it, at most album.traces_max at a time.
+SUB RuleAlbumTick(w, now)
+    IF now < (w{"album_tick_at"} ?? 0) THEN RETURN
+    w{"album_tick_at"} = now + 15000
+    IF NOT MAP.EXISTS(w, "finds") THEN w{"finds"} = []
+    DIM today$ = RuleToday$(w, 0)
+    IF (w{"card_day"} ?? "") <> today$ THEN
+        w{"card_day"} = today$
+        DIM kept = []
+        FOR EACH f IN w{"finds"}
+            IF f{"kind"} <> "card" ANDALSO f{"kind"} <> "trace" THEN kept = APPEND(kept, f)
+        NEXT
+        w{"finds"} = kept
+        DIM sorts = RuleAlbumSorts()
+        DIM fields = []
+        FOR EACH fd IN RuleAlbumFields()
+            IF fd[0] <> "friend" THEN fields = APPEND(fields, fd[0])
+        NEXT
+        DIM k = 0
+        FOR k = 1 TO RuleConf(w, "album.card_finds", 3)
+            RuleAlbumDrop(w, "card", sorts[INT(RND() * LEN(sorts))][0], fields[INT(RND() * LEN(fields))], [2], 0, 0, 0)
+        NEXT k
+        w{"findv"} = (w{"findv"} ?? 0) + 1
+    ENDIF
+    DIM traces = 0
+    FOR EACH f IN w{"finds"}
+        IF f{"kind"} = "trace" THEN traces = traces + 1
+    NEXT
+    DIM most = RuleConf(w, "album.traces_max", 6)
+    DIM chance = RuleConf(w, "album.trace_chance", 0.05)
+    FOR EACH id$ IN MAP.KEYS(w{"npcs"})
+        DIM npc = w{"npcs"}{id$}
+        DIM what$ = RuleAlbumSortOf$(npc)
+        IF STARTSWITH(id$, "b_") ANDALSO what$ <> "" ANDALSO traces < most ANDALSO (npc{"follow"} ?? "") = "" THEN
+            IF RND() < chance THEN
+                RuleAlbumDrop(w, "trace", what$, "", [1, 2, 8, 9], npc{"x"}, npc{"y"}, 1)
+                traces = traces + 1
+            ENDIF
+        ENDIF
+    NEXT
+ENDSUB
+
+' who$ walks onto a card or a trace: the card goes into the album; a trace
+' counts towards its sort, and album.traces_per_meet traces are a meeting.
+FUNC RuleAlbumFind(w, who$, f)
+    DIM kind$ = "" + (f{"kind"} ?? "")
+    IF kind$ <> "card" ANDALSO kind$ <> "trace" THEN RETURN FALSE
+    DIM what$ = "" + (f{"sort"} ?? "")
+    IF RuleAlbumSortOf$({"what": what$}) = "" THEN RETURN TRUE
+    DIM page$ = (RuleBuildWhats(){what$} ?? [what$])[0]
+    IF kind$ = "card" THEN
+        DIM field$ = "" + (f{"field"} ?? "meet")
+        KEmit(w, {"type": "purse", "to": who$, "text": "Eine Sammelkarte am Weg: " + page$ + ", " + RuleAlbumLabel$(field$) + "!", "got": "album"})
+        RuleAlbumAdd(w, who$, what$, field$)
+        RETURN TRUE
+    ENDIF
+    DIM prof = RuleProfile(w, who$)
+    IF NOT ISMAP(prof{"traces"} ?? 0) THEN prof{"traces"} = {}
+    DIM need = RuleConf(w, "album.traces_per_meet", 5)
+    DIM n = (prof{"traces"}{what$} ?? 0) + 1
+    IF n >= need THEN
+        prof{"traces"}{what$} = 0
+        KEmit(w, {"type": "purse", "to": who$, "text": "Du hast " + RuleTraceName$(what$) + " gefunden. Genug Spuren: eine Begegnung mit " + page$ + "!", "got": "album"})
+        RuleAlbumAdd(w, who$, what$, "meet")
+    ELSE
+        prof{"traces"}{what$} = n
+        KEmit(w, {"type": "purse", "to": who$, "text": "Du hast " + RuleTraceName$(what$) + " gefunden (" + STR$(n) + " von " + STR$(need) + " Spuren: " + page$ + ").", "got": "album"})
+    ENDIF
+    RETURN TRUE
+ENDFUNC
+
 ' The album of a player as the client and the phone read it.
 FUNC RuleAlbumOf(w, name$)
-    RETURN {"have": RuleProfile(w, name$){"album"}, "fields": RuleAlbumFields(), "shines": RuleAlbumShines(), "sorts": RuleAlbumSorts(), "stars": [RuleConf(w, "album.star1", 5), RuleConf(w, "album.star2", 10)], "detail": RuleAlbumDetail$(w, name$)}
+    RETURN {"have": RuleProfile(w, name$){"album"}, "fields": RuleAlbumFields(), "shines": RuleAlbumShines(), "sorts": RuleAlbumSorts(), "stars": [RuleConf(w, "album.star1", 5), RuleConf(w, "album.star2", 10)], "detail": RuleAlbumDetail$(w, name$), "season": RuleSeason$(w)}
 ENDFUNC
 
 SUB RuleAlbumSync(w, p, msg, answer)
@@ -318,6 +444,30 @@ FUNC ClientAlbumKey(c, tapped$)
     RETURN TRUE
 ENDFUNC
 
+' A card of the album on the ground, or a trace an animal left: a feather
+' of a bird, else a tuft in the colour of the sort.
+FUNC ClientAlbumFind(f, sx, sy)
+    IF f[1] = "card" THEN
+        RECT sx - 4, sy - 5, 9, 12, TRUE, 255, 252, 240
+        RECT sx - 4, sy - 5, 9, 12, FALSE, 214, 160, 40
+        RECT sx - 2, sy - 2, 5, 4, TRUE, 230, 180, 60
+        RETURN TRUE
+    ENDIF
+    IF f[1] <> "trace" THEN RETURN FALSE
+    DIM what$ = IIF(LEN(f) > 4, "" + f[4], "")
+    IF INDEXOF(["chicken", "duck", "owl", "penguin"], what$) >= 0 THEN
+        LINE sx - 5, sy + 4, sx + 4, sy - 5, 120, 110, 100
+        ELLIPSE sx, sy, 3, 6, TRUE, 240, 236, 226
+        LINE sx - 3, sy + 3, sx + 3, sy - 3, 150, 140, 130
+        RETURN TRUE
+    ENDIF
+    DIM col = (AnimalKinds(){what$} ?? {}){"base"} ?? [200, 190, 170]
+    CIRCLE sx - 2, sy + 1, 3, TRUE, col[0], col[1], col[2]
+    CIRCLE sx + 2, sy, 3, TRUE, col[0], col[1], col[2]
+    CIRCLE sx, sy - 2, 2, TRUE, MIN([255, col[0] + 30]), MIN([255, col[1] + 30]), MIN([255, col[2] + 30])
+    RETURN TRUE
+ENDFUNC
+
 SUB AlbumStar(x, y)
     RECT x + 2, y, 1, 5, TRUE, 250, 204, 60
     RECT x, y + 2, 5, 1, TRUE, 250, 204, 60
@@ -383,6 +533,8 @@ SUB ClientAlbumHud(c)
     DIM img = AnimalIcon(c, what$, kinds{what$} ?? {"base": [180, 180, 180]})
     IF img > 0 THEN GFX.DRAWIMAGE_REGION(img, 0, 0, 48, 48, px0 + 10, py0 + 4, 48, 48)
     TEXT px0 + 66, py0 + 8, "Album: " + sorts[page][1] + "   (Seite " + STR$(page + 1) + " von " + STR$(LEN(sorts)) + ")", 96, 64, 40
+    DIM season_de$ = ({"spring": "Fr" + CHR$(195) + CHR$(188) + "hling", "summer": "Sommer", "autumn": "Herbst", "winter": "Winter"}){"" + (album{"season"} ?? "")} ?? ""
+    IF season_de$ <> "" THEN TEXT px0 + pw - 12 - GFX.TEXTSIZE("Jetzt: " + season_de$)[0], py0 + 8, "Jetzt: " + season_de$, 130, 100, 60
     DIM count_line$ = STR$(filled) + " von " + STR$(LEN(fields)) + IIF(shine_view, " Glanzkarten", " Karten")
     TEXT px0 + 66, py0 + 10 + high, count_line$, 130, 100, 60
     ' a bar of what is filled

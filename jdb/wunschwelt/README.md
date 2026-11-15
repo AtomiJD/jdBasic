@@ -491,7 +491,19 @@ of every game file, which no other suite runs.
   a shine card that is won sparkles. The phone page shows them below the
   cards.
 
-`test_album.jdb`: 17 checks. `test_shine.jdb`: 16 checks.
+- Finds of the album: each day `album.card_finds` (3) cards lie on the
+  paths, each a card of a sort and a field; walking onto one puts it into
+  the album, the ones nobody took go with the day. An animal that strolls
+  leaves a trace beside it now and then (`album.trace_chance` every 15 s,
+  at most `album.traces_max` (6) on the map): a feather, wool, a nutshell,
+  a spine; `album.traces_per_meet` (5) traces of a sort are a meeting.
+  `profile{"traces"}` counts them.
+- The season of the season cards follows the calendar's months, or with
+  `album.season_weeks` above 0 each season lasts that many weeks; the album
+  shows the season of now.
+
+`test_album.jdb`: 17 checks. `test_shine.jdb`: 16 checks. `test_finds.jdb`:
+10 checks.
 
 ## What survives a restart
 

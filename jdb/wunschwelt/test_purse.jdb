@@ -72,7 +72,7 @@ ENDFUNC
 FUNC Loose(finds) AS INTEGER
     DIM n AS INTEGER = 0
     FOR EACH f IN finds
-        IF f[1] <> "chest" ANDALSO f[1] <> "golden" THEN n = n + 1
+        IF INDEXOF(["chest", "golden", "card", "trace"], f[1]) < 0 THEN n = n + 1
     NEXT
     RETURN n
 ENDFUNC

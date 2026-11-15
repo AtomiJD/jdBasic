@@ -1,0 +1,180 @@
+' Test of the finds of the album, with a model that answers from a script:
+' each day cards lie on the paths and go with the day, walking onto one
+' puts it into the album; an animal leaves traces beside it, and enough
+' traces of a sort are a meeting; with season_weeks the season turns weekly.
+'
+'   jdBasic jdb/wunschwelt/test_finds.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8320 + OS.PID() MOD 10
+DIM model_port AS INTEGER = 8330 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_finds_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+FUNC FakeModel(request)
+    DIM body = JSON.PARSE(request{"body"})
+    DIM messages = body{"messages"}
+    DIM system$ AS STRING = messages[0]{"content"}
+    DIM said$ AS STRING = messages[LEN(messages) - 1]{"content"}
+    DIM content$ AS STRING = "Gern."
+    IF INSTR(system$, "Du sortierst") >= 0 THEN
+        content$ = JSON.STRINGIFY$({"wish": FALSE})
+        IF INSTR(said$, "Eule") >= 0 THEN content$ = JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": said$})
+    ELSEIF INSTR(system$, "Du bist der Baumeister") >= 0 THEN
+        content$ = JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "owl", "name": "Huhu", "where": "tavern"}]})
+    ENDIF
+    RETURN JSON.STRINGIFY$({"choices": [{"message": {"role": "assistant", "content": content$}}]})
+ENDFUNC
+HTTP.SERVER.ON_POST "/v1/chat/completions", FakeModel@
+DIM model_up = HTTP.SERVER.START(model_port)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "300"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+SLEEP 1500
+DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
+DIM pace = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
+FOR EACH conf IN [["album.whim_chance", 0], ["album.clover_chance", 0], ["album.trace_chance", 1], ["album.traces_per_meet", 2], ["album.season_weeks", 1]]
+    DIM set = Admin("config_set", {"key": conf[0], "v": conf[1]})
+NEXT
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM first = Post("/sync", {"token": token$, "mapv": 0})
+DIM m = first{"map"}
+DIM since AS INTEGER = first{"seq"}
+DIM told = []
+
+FUNC Sync(extra)
+    DIM msg = {"token": token$, "mapv": 1, "since": since}
+    FOR EACH k$ IN MAP.KEYS(extra)
+        msg{k$} = extra{k$}
+    NEXT
+    DIM t = Post("/sync", msg)
+    since = t{"seq"}
+    FOR EACH ev IN t{"events"}
+        IF ev{"type"} = "purse" ANDALSO (ev{"to"} ?? "") = "Anna" THEN told = APPEND(told, ev{"text"})
+    NEXT
+    RETURN t
+ENDFUNC
+
+SUB Wait(ms AS INTEGER)
+    DIM t0 = TICK()
+    DO WHILE TICK() - t0 < ms
+        DIM t = Sync({})
+        SLEEP 250
+    LOOP
+ENDSUB
+
+FUNC Told(part$ AS STRING)
+    RETURN INSTR(JOIN(told, "|"), part$) >= 0
+ENDFUNC
+
+' The finds of a kind on the map now: rows [id, kind, x, y, sort].
+FUNC Finds(kind$ AS STRING)
+    DIM rows = []
+    FOR EACH f IN Sync({"findv": -1}){"finds"} ?? []
+        IF f[1] = kind$ THEN rows = APPEND(rows, [f])
+    NEXT
+    RETURN rows
+ENDFUNC
+
+FUNC Page(what$ AS STRING)
+    RETURN Admin("album", {"player": "Anna"}){"album"}{what$} ?? {}
+ENDFUNC
+
+' the cards of the day
+Wait(16000)
+DIM cards = Finds("card")
+DIM on_path = LEN(cards) = 3
+FOR EACH cd IN cards
+    IF m{"tiles"}[cd[3] * m{"w"} + cd[2]] <> 2 THEN on_path = FALSE
+NEXT
+Check("three cards lie on the paths", on_path)
+DIM card = cards[0]
+DIM onto = Admin("player_put", {"player": "Anna", "x": card[2], "y": card[3]})
+Wait(800)
+Check("walking onto a card takes it", LEN(Finds("card")) = 2 ANDALSO Told("Sammelkarte"))
+DIM got = 0
+FOR EACH v IN MAP.VALUES(Page(card[4]))
+    got = got + v
+NEXT
+Check("and puts it into the album", got = 1)
+
+' an animal and its traces
+DIM marta = NONE
+FOR EACH row IN first{"npcs"}
+    IF row[0] = "marta" THEN marta = row
+NEXT
+DIM put = Admin("player_put", {"player": "Anna", "x": marta[2], "y": marta[3] + 1})
+DIM said = Sync({"say": "Ich wuensche mir eine Eule"})
+DIM owl$ AS STRING = ""
+DIM k AS INTEGER
+FOR k = 1 TO 60
+    Wait(300)
+    FOR EACH row IN Sync({}){"npcs"}
+        IF row[1] = "Huhu" THEN owl$ = row[0]
+    NEXT
+    IF owl$ <> "" THEN EXITFOR
+NEXT k
+Check("an owl is made", owl$ <> "")
+DIM traces = []
+FOR k = 1 TO 3
+    Wait(15500)
+    traces = Finds("trace")
+    IF LEN(traces) >= 2 THEN EXITFOR
+NEXT k
+Check("the owl leaves traces", LEN(traces) >= 2 ANDALSO traces[0][4] = "owl")
+DIM taken AS INTEGER = 0
+FOR EACH tr IN TAKE(2, traces)
+    DIM step_on = Admin("player_put", {"player": "Anna", "x": tr[2], "y": tr[3]})
+    Wait(700)
+NEXT
+Check("a trace is told with its count", Told("Eulenfeder gefunden (1 von 2"))
+Check("two traces of the owl are a meeting", (Page("owl"){"meet"} ?? 0) = 1 ANDALSO Told("Genug Spuren"))
+
+' the season turns weekly and the cards go with the day
+DIM before = Sync({"albumv": -1}){"album"}{"season"}
+DIM week = Admin("day_shift", {"days": 7})
+DIM after = Sync({"albumv": -1}){"album"}{"season"}
+Check("with season_weeks 1 the season turns after a week", before <> after ANDALSO INDEXOF(["spring", "summer", "autumn", "winter"], after) >= 0)
+DIM old_ids = []
+FOR EACH cd IN Finds("card")
+    old_ids = APPEND(old_ids, cd[0])
+NEXT
+Wait(16000)
+DIM fresh = Finds("card")
+DIM renewed = LEN(fresh) = 3
+FOR EACH cd IN fresh
+    IF INDEXOF(old_ids, cd[0]) >= 0 THEN renewed = FALSE
+NEXT
+Check("a new day brings new cards and takes the old ones", renewed)
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM gone = OS.KILL(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

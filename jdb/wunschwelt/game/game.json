@@ -12,6 +12,11 @@
     "live_shine_viewers": 3,
     "whim_chance": 0.05,
     "clover_chance": 0.02,
-    "clover_bonus": 10
+    "clover_bonus": 10,
+    "card_finds": 3,
+    "traces_max": 6,
+    "trace_chance": 0.05,
+    "traces_per_meet": 5,
+    "season_weeks": 0
   }
 }
