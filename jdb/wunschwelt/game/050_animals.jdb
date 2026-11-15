@@ -181,10 +181,15 @@ FUNC RuleAnimalDress(w, p, said$)
     DIM low$ = " " + RuleLookColorKey$(REGEX.REPLACE$("[.,!?;:]", said$, " ")) + " "
     DIM items = RuleWearScan(low$)
     IF LEN(items) = 0 THEN RETURN FALSE
-    ' a wish for a new animal goes to the board
-    FOR EACH word$ IN ["wuensch", " neue", " bau"]
-        IF INSTR(low$, word$) >= 0 THEN RETURN FALSE
-    NEXT
+    ' an animal of the village called by its name is dressed, even when the
+    ' sentence wishes it or has no verb (sunglasses for Berthold); else a wish
+    ' for a new animal goes to the board
+    DIM named$ = RuleAnimalNear$(w, p, low$, -1)
+    IF named$ = "" THEN
+        FOR EACH word$ IN ["wuensch", " neue", " bau"]
+            IF INSTR(low$, word$) >= 0 THEN RETURN FALSE
+        NEXT
+    ENDIF
     DIM off = INSTR(low$, " ohne ") >= 0 ORELSE INSTR(low$, "absetz") >= 0 ORELSE INSTR(low$, "auszieh") >= 0 ORELSE INSTR(low$, " weg ") >= 0
     IF (INSTR(low$, "nimm") >= 0 ORELSE INSTR(low$, "setz") >= 0) ANDALSO INSTR(low$, " ab ") >= 0 THEN off = TRUE
     IF INSTR(low$, "zieh") >= 0 ANDALSO INSTR(low$, " aus ") >= 0 THEN off = TRUE
@@ -192,6 +197,7 @@ FUNC RuleAnimalDress(w, p, said$)
     FOR EACH word$ IN ["trag", "setz", "zieh", "bind", "bekomm", "krieg", "gib", "soll", "steht", "anzieh"]
         IF INSTR(low$, word$) >= 0 THEN puts_on = TRUE
     NEXT
+    IF named$ <> "" THEN puts_on = TRUE
     IF NOT off ANDALSO NOT puts_on THEN RETURN FALSE
     DIM id$ = RuleAnimalNear$(w, p, low$, 15)
     IF id$ = "" THEN
