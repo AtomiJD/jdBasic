@@ -115,6 +115,25 @@ FUNC ClientMelodyReady()
     RETURN cs{"melody_ok"}
 ENDFUNC
 
+' The melody voice of track 0, full rather than plucked: the wave of the
+' style with three detuned voices, a second oscillator (a sine an octave
+' down under the soft waves, a saw a few cents off under the bright ones),
+' a gentle vibrato, notes that sing on, and a dotted-eighth echo.
+SUB ClientLead(wave$, attack, decay, sustain, release, cutoff)
+    SOUND.VOICE 0, wave$, MAX([attack, 0.015]), MAX([decay, 0.3]), MAX([sustain, 0.6]), MAX([release, 0.35])
+    SOUND.UNISON 0, 3, 0.12, 0.6
+    IF wave$ = "TRIANGLE" ORELSE wave$ = "SINE" THEN
+        SOUND.OSC2 0, "SINE", -12, 0.35
+    ELSE
+        SOUND.OSC2 0, "SAW", 0, 0.3, 7
+    ENDIF
+    SOUND.FILTER 0, cutoff
+    SOUND.LFO 0, 5.2, 0.12
+    SOUND.DELAY TRUE, "1/8.", 0.3, 0.22
+    SOUND.DELAYSEND 0, 0.22
+    SOUND.REVERBSEND 0, 0.3
+ENDSUB
+
 ' A piece of a style from its seed: sets the sounds and returns the
 ' patterns [lead, bass, pad, arp, kick, snare, hats, percussion] and the
 ' varied hook for the second main part.
@@ -136,9 +155,7 @@ FUNC ClientMusicMake(g, seed)
     DIM pad$ = "<" + prog$ + ">"
     SOUND.BPM g{"bpm"} + (seed MOD 5) - 2
     DIM lead = g{"lead"}
-    SOUND.VOICE 0, lead[0], lead[1], lead[2], lead[3], lead[4]
-    SOUND.FILTER 0, lead[5]
-    SOUND.REVERBSEND 0, 0.3
+    ClientLead(lead[0], lead[1], lead[2], lead[3], lead[4], lead[5])
     SOUND.VOICE 1, IIF(g{"bass"} = "sub", "SINE", "SAW"), 0.005, 0.15, 0.6, 0.1
     SOUND.FILTER 1, IIF(g{"bass"} = "sub", 400, 700)
     DIM pad = g{"pad"}
@@ -238,7 +255,7 @@ SUB ClientMusicPlay(want$)
         cs{"music_vary"} = made[8]
     ELSEIF style$ = "tavern" THEN
         SOUND.BPM 120
-        SOUND.VOICE 0, "TRIANGLE", 0.01, 0.12, 0.5, 0.15
+        ClientLead("TRIANGLE", 0.01, 0.2, 0.5, 0.2, 2600)
         SOUND.VOICE 1, "SQUARE", 0.005, 0.1, 0.4, 0.08
         SOUND.FILTER 1, 700
         mel$ = "<[d5 f5 a5 d6 a5 f5] [c5 e5 g5 c6 g5 e5] [bb4 d5 f5 bb5 f5 d5] [a4 c#5 e5 a5 g5 e5]>"
@@ -247,7 +264,7 @@ SUB ClientMusicPlay(want$)
         hats$ = "[~ ~ hh ~ ~ hh]"
     ELSEIF style$ = "evening" THEN
         SOUND.BPM 76
-        SOUND.VOICE 0, "TRIANGLE", 0.05, 0.4, 0.4, 0.8
+        ClientLead("TRIANGLE", 0.05, 0.4, 0.6, 0.8, 2000)
         SOUND.VOICE 2, "SINE", 0.8, 0.5, 0.8, 1.6
         SOUND.UNISON 2, 3, 0.2, 0.8
         SOUND.REVERBSEND 0, 0.5
@@ -258,8 +275,7 @@ SUB ClientMusicPlay(want$)
         SOUND.VOICE 1, "SINE", 0.05, 0.3, 0.7, 0.6
     ELSEIF style$ = "fest" THEN
         SOUND.BPM 128
-        SOUND.VOICE 0, "SQUARE", 0.01, 0.25, 0.4, 0.3
-        SOUND.FILTER 0, 2500
+        ClientLead("SQUARE", 0.01, 0.25, 0.55, 0.3, 2600)
         SOUND.VOICE 1, "SAW", 0.005, 0.1, 0.5, 0.1
         SOUND.FILTER 1, 600
         mel$ = "[[d5 [f5 a5] d6 ~] [c5 [e5 g5] c6 ~] [b4 [d5 g5] b5 [a5 g5]] [a4 ~ [d5 f5] ~] [g5 [f5 e5] d5 [e5 f5]] [a5 [g5 f5] e5 c5] [d5 [f5 a5] d6 [c6 b5]] [a5 ~ ~ ~]]/2"
@@ -289,16 +305,19 @@ SUB ClientMusicPlay(want$)
         clap$ = "~ cp ~ cp"
         hats$ = "[~ oh]*4, gain([0.35 0.6 0.45 0.8]*4, hh*16)"
     ELSE
-        SOUND.BPM 84
-        SOUND.VOICE 0, "TRIANGLE", 0.01, 0.35, 0.15, 0.7
-        SOUND.FILTER 0, 1600
-        SOUND.REVERBSEND 0, 0.45
-        SOUND.VOICE 1, "SINE", 0.02, 0.3, 0.6, 0.5
+        ' the village: a tune of sixteen bars in C major that walks through
+        ' the tones of its chords, a question of eight bars and its answer
+        SOUND.BPM 96
+        ClientLead("TRIANGLE", 0.02, 0.35, 0.6, 0.5, 2200)
+        SOUND.REVERBSEND 0, 0.4
+        SOUND.VOICE 1, "SINE", 0.01, 0.25, 0.5, 0.3
         SOUND.VOICE 2, "SINE", 1.2, 0.5, 0.8, 2.0
+        SOUND.UNISON 2, 3, 0.15, 0.8
         SOUND.REVERBSEND 2, 0.6
-        mel$ = "[[e5 ~ g5 ~] [a5 ~ g5 e5] [d5 ~ ~ ~] [~ ~ ~ ~] [c5 ~ d5 ~] [e5 ~ d5 c5] [a4 ~ ~ ~] [~ ~ ~ ~] [g4 ~ c5 ~] [d5 ~ e5 ~] [g5 ~ e5 ~] [~ ~ ~ ~] [d5 ~ c5 ~] [a4 ~ g4 ~] [c5 ~ ~ ~] [~ ~ ~ ~]]/8"
-        bass$ = "<c2 a1 f1 g1>"
-        pad$ = "<[c4,e4,g4] [a3,c4,e4] [f3,a3,c4] [g3,b3,d4]>"
+        mel$ = "[[e5 ~ [g5 e5] c5] [a4 ~ c5 e5] [f5 ~ [e5 d5] c5] [d5 ~ ~ [g4 b4]] [c5 ~ [e5 g5] c6] [b5 a5 ~ e5] [f5 [e5 d5] g5 b4] [c5 ~ ~ ~] [a5 ~ [g5 f5] a5] [g5 ~ e5 c5] [d5 [e5 f5] a5 f5] [g5 ~ ~ [d5 e5]] [c6 ~ [b5 a5] e5] [f5 ~ a5 c6] [b5 [a5 g5] d5 [e5 f5]] [e5 ~ c5 ~]]/8"
+        bass$ = "<[[c2 g2] [a1 e2]] [[f1 c2] [g1 d2]] [[c2 g2] [a1 e2]] [[f1 g1] [c2 g2]] [[f1 c2] [c2 g2]] [[d2 a2] [g1 d2]] [[a1 e2] [f1 c2]] [[g1 d2] [c2 g2]]>"
+        pad$ = "<[[c4,e4,g4] [a3,c4,e4]] [[f3,a3,c4] [g3,b3,d4]] [[c4,e4,g4] [a3,c4,e4]] [[f3,a3,c4] [c4,e4,g4]] [[f3,a3,c4] [c4,e4,g4]] [[d4,f4,a4] [g3,b3,d4]] [[a3,c4,e4] [f3,a3,c4]] [[g3,b3,d4] [c4,e4,g4]]>"
+        perc$ = "[~ ~ rim ~]*2"
     ENDIF
     SOUND.KIT 4, "SYNTH"
     SOUND.KIT 5, "SYNTH"
