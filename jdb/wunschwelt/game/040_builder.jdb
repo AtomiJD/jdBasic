@@ -984,6 +984,11 @@ FUNC RuleBuildFolk(w, b, job, st)
     DIM target = RuleBuildTarget(w, job, st{"where"})
     DIM ground = [1, 8, 9]
     IF st{"do"} = "thing" ANDALSO st{"what"} = "sign" THEN ground = [1, 2, 8, 9]
+    ' a house sign stands on the grass beside the way to the door, never in it
+    IF st{"do"} = "thing" ANDALSO st{"what"} = "sign" ANDALSO st{"where"} = "house" ANDALSO LEN(job{"house"} ?? []) = 2 THEN
+        ground = [1, 8, 9]
+        target = [job{"house"}[0] + 2, job{"house"}[1] - 1]
+    ENDIF
     DIM spot = RuleBuildRect(w, target[0], target[1], 1, 1, ground, [], 0)
     IF LEN(spot) = 0 THEN RETURN FALSE
     b{"n"} = (b{"n"} ?? 0) + 1

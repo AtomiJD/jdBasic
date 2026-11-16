@@ -207,6 +207,8 @@ FOR EACH s IN Folk(World(), "b_sign_")
     IF s[1] = "Haus von Ben" THEN ben_signs = ben_signs + 1
 NEXT
 Check("the keeper puts up Ben's sign beside the door", ben_sign{"ok"} ANDALSO ben_signs = 1 ANDALSO ABS(ben_sign{"x"} - door_at MOD mw) <= 3 ANDALSO ABS(ben_sign{"y"} - door_at \ mw) <= 3)
+DIM anna_sign = Folk(w2, "b_sign_")[0]
+Check("no sign stands in the way to a door or on it", NOT (ben_sign{"x"} = door_at MOD mw ANDALSO ben_sign{"y"} = door_at \ mw + 1) ANDALSO tiles[ben_sign{"y"} * mw + ben_sign{"x"}] <> 2 ANDALSO tiles[anna_sign[3] * mw + anna_sign[2]] <> 2)
 DIM sign_gone = Admin("thing_remove", {"id": ben_sign{"id"}})
 
 ' a bridge over the pond, walked on
