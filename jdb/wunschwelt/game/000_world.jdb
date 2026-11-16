@@ -577,6 +577,12 @@ FUNC RuleWholeSentences$(text$)
     RETURN text$ + " ..."
 ENDFUNC
 
+' What a figure says of the model's answer; game/010_wishes.jdb takes out
+' what did not happen.
+FUNC RuleNpcSays$(w, npc, text$)
+    RETURN text$
+ENDFUNC
+
 SUB RuleNpcReply(w, npc_id$, player$, text$)
     ' the one asked may have gone meanwhile
     IF NOT MAP.EXISTS(w{"npcs"}, npc_id$) THEN RETURN
@@ -584,7 +590,7 @@ SUB RuleNpcReply(w, npc_id$, player$, text$)
     DIM spoken$ = TRIM$(REPLACE$(REPLACE$(text$, CHR$(13), " "), CHR$(10), " "))
     DIM cut$ = RuleCut$(spoken$, 220)
     IF LEN(cut$) < LEN(spoken$) THEN cut$ = RuleWholeSentences$(cut$)
-    spoken$ = cut$
+    spoken$ = RuleNpcSays$(w, npc, cut$)
     IF spoken$ = "" THEN RETURN
     DIM mem = npc{"mem"}{player$} ?? []
     mem = APPEND(mem, {"role": "assistant", "content": spoken$})

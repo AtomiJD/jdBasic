@@ -80,17 +80,28 @@ FUNC RuleDe$(s$)
     RETURN t$
 ENDFUNC
 
-' What may be wished. A wish fits one kind or a few at once; the keeper
-' builds it as a patch. The start page shows the same list (web/index.html).
+' The German names of the builder's animals (TRUE) or things (FALSE), as a list.
+FUNC RuleWishWhats$(animals)
+    DIM whats = RuleBuildWhats()
+    DIM names = []
+    FOR EACH key$ IN MAP.KEYS(whats)
+        IF whats{key$}[1] = animals THEN names = APPEND(names, whats{key$}[0])
+    NEXT
+    RETURN JOIN(SORT(names), ", ")
+ENDFUNC
+
+' What may be wished: only what the rules grant at once or the builder
+' builds (game/040_builder.jdb); its animals and things come from there. A
+' wish fits one kind or a few at once. The start page shows the same list
+' (web/index.html); test_catalog.jdb holds the two together.
 FUNC RuleWishKinds()
     DIM kinds = []
-    kinds = APPEND(kinds, {"key": "land", "name": "Land und Wasser", "what": "ein Meer, ein See, ein Teich, ein Fluss, ein Strand, ein Wald, eine Blumenwiese, Felsen; neues Land am Rand des Dorfes in einer Himmelsrichtung, bis zu zehn Felder weit"})
-    kinds = APPEND(kinds, {"key": "way", "name": "Wege und Br{u}cken", "what": "ein Weg, eine Stra{s}e, eine Br{u}cke {u}ber Wasser, ein Steg, ein Zaun"})
-    kinds = APPEND(kinds, {"key": "house", "name": "H{a}user", "what": "eine kleine H{u}tte oder ein Haus, auch eines f{u}r den W{u}nschenden mit seinem Namen am Schild (eines pro Spieler); ein Laden, eine Scheune, ein Turm"})
-    kinds = APPEND(kinds, {"key": "thing", "name": "Dinge im Dorf", "what": "ein Brunnen, eine Bank, eine Laterne, ein Denkmal, ein Marktstand, ein Blumenbeet, ein Wegweiser, ein Gehege, ein Streichelzoo, den die Tiere des Dorfs besuchen, ein Zaun um den Garten"})
-    kinds = APPEND(kinds, {"key": "animal", "name": "Tiere", "what": "eine Katze, ein Hund, H{u}hner, Enten, ein Igel, eine Eule, ein Eichh{o}rnchen, eine Maus, eine Schildkr{o}te, eine Ziege, ein Reh, ein Pony, ein Esel, ein Waschb{a}r, ein Pinguin, Fische im Teich, Schmetterlinge; einem Tier, Ding oder Bewohner des Baumeisters einen neuen Namen geben, etwa: der Frosch soll Fr{o}schi hei{s}en; einem Tier etwas anziehen (Hut, M{u}tze, Krone, Bl{u}te, Sonnenbrille, Brille, Schal, Schleife, Halsband), etwa: Fr{o}schi soll eine Sonnenbrille tragen; das geht sofort. Ein Tier, das man oft streichelt (Taste E), folgt einem"})
+    kinds = APPEND(kinds, {"key": "land", "name": "Land und Wasser", "what": "ein Meer, ein See oder Teich, ein Strand, ein Wald, eine Blumenwiese, Felsen, B{u}sche; neues Land am Rand des Dorfes in einer Himmelsrichtung, bis zu zehn Felder weit"})
+    kinds = APPEND(kinds, {"key": "way", "name": "Wege und Br{u}cken", "what": "ein Weg, eine Stra{s}e, eine Br{u}cke oder ein Steg {u}ber Wasser, ein Zaun um den Garten"})
+    kinds = APPEND(kinds, {"key": "house", "name": "H{a}user", "what": "eine kleine H{u}tte, ein Haus oder eine Scheune, auch eines f{u}r den W{u}nschenden mit seinem Namen am Schild (eines pro Spieler)"})
+    kinds = APPEND(kinds, {"key": "thing", "name": "Dinge im Dorf", "what": RuleWishWhats$(FALSE) + ", ein Gehege, ein Streichelzoo, den die Tiere des Dorfs besuchen"})
+    kinds = APPEND(kinds, {"key": "animal", "name": "Tiere", "what": RuleWishWhats$(TRUE) + ", in jeder Farbe, gestreift oder gepunktet; einem Tier, Ding oder Bewohner des Baumeisters einen neuen Namen geben, etwa: der Frosch soll Fr{o}schi hei{s}en; einem Tier etwas anziehen (Hut, M{u}tze, Krone, Bl{u}te, Sonnenbrille, Brille, Schal, Schleife, Halsband), etwa: Fr{o}schi soll eine Sonnenbrille tragen; das geht sofort. Ein Tier, das man oft streichelt (Taste E), folgt einem"})
     kinds = APPEND(kinds, {"key": "villager", "name": "Bewohner", "what": "eine neue Figur mit Beruf und Charakter, etwa ein Schmied, eine B{a}ckerin, ein Fischer"})
-    kinds = APPEND(kinds, {"key": "event", "name": "Ereignisse", "what": "ein Dorffest, Regen oder Schnee, ein Feuerwerk"})
     kinds = APPEND(kinds, {"key": "look", "name": "Dein Aussehen", "what": "die Farbe deiner Kleidung, deiner M{u}tze, deines Schals oder deiner Augenklappe, oder aussehen wie Vally, M{o}hrchen oder Hasi; das geht sofort", "now": TRUE})
     kinds = APPEND(kinds, {"key": "music", "name": "Musik", "what": "Dorfmusik, Tavernenmusik, ruhige Abendmusik, Festmusik, Techno, Hip-Hop, 80er-Pop, Synthwave, House, Trance, Disco, Lo-Fi oder Rock; das geht sofort", "now": TRUE})
     RETURN kinds
@@ -121,6 +132,34 @@ FUNC RuleNpcKnows$(w, npc)
     IF npc{"kind"} <> "person" THEN RETURN ""
     RETURN " " + RuleWishList$() + RuleDe$(" Wenn sich jemand etwas w{u}nscht, das nicht erlaubt ist, sag freundlich, dass der Baumeister das nicht baut, und nenne ein, zwei Beispiele, die gehen. du selbst kannst nichts herbeizaubern, umbenennen, verlieben oder folgen lassen: behaupte nie, dass ein Tier oder ein Ding schon da ist, einen Namen bekommen hat, jemandem folgt oder jemanden liebt. Sag nur, dass du den Wunsch dem Baumeister weitergibst; ob er gebaut ist, sieht man im Dorf.") + RulePlotKnows$(w)
 ENDFUNC
+' A person of the village tells of nothing as done: the sentences of the
+' model's answer that say something stands in the village, was built, has a
+' new name, follows or is back are left out; the rules tell of what they
+' did themselves. Nothing left: the wish goes to the builder.
+FUNC RuleNpcSays$(w, npc, text$)
+    IF npc{"kind"} <> "person" THEN RETURN text$
+    DIM claim$ = "(ist|sind|steht|stehen|wohnt|wohnen|lebt|leben) (jetzt |nun |schon |bereits |wieder )*(im dorf|bei dir|da|fertig|gebaut)([^a-z]|$)|heisst (jetzt|nun|ab jetzt|ab sofort|wieder)|folgt dir|folgen dir|(habe|hab|hat) (ich |der baumeister )?.*(gebaut|gezaubert|umbenannt|aufgestellt)"
+    DIM kept$ = ""
+    DIM rest$ = text$
+    DO WHILE rest$ <> ""
+        DIM cut = -1
+        DIM k = 0
+        FOR k = 0 TO LEN(rest$) - 1
+            DIM ch$ = MID$(rest$, k, 1)
+            IF ch$ = "." ORELSE ch$ = "!" ORELSE ch$ = "?" THEN
+                cut = k
+                EXITFOR
+            ENDIF
+        NEXT k
+        DIM one$ = IIF(cut < 0, rest$, LEFT$(rest$, cut + 1))
+        rest$ = IIF(cut < 0, "", MID$(rest$, cut + 1))
+        IF LEN(REGEX.FINDALL(claim$, RuleLookColorKey$(one$))) = 0 THEN kept$ = kept$ + one$
+    LOOP
+    kept$ = TRIM$(kept$)
+    IF kept$ = "" THEN RETURN RuleDe$("Ich sage es dem Baumeister. Ob er es baut, siehst Du im Dorf.")
+    RETURN kept$
+ENDFUNC
+
 ' Without the model's judgement: a sentence that speaks of a wish is one.
 SUB RuleWishGuess(w, who$, said$)
     DIM low$ = LCASE$(said$)
@@ -325,7 +364,7 @@ SUB RuleExtra(w, p, msg, answer)
 ENDSUB
 
 ' The keeper reads the board ("wishes") and sets the state of a wish
-' ("wish_status" with {"id", "status", "note"}).
+' ("wish_status" with {"id", "status", "note"}); "catalog" is the list of what may be wished.
 FUNC RuleAdmin(w, name$, args)
     IF name$ = "plot" ORELSE name$ = "plot_set" THEN RETURN RulePlotAdmin(w, name$, args)
     IF name$ = "builder" ORELSE name$ = "builder_set" ORELSE name$ = "build_ok" ORELSE name$ = "things" ORELSE name$ = "thing_remove" ORELSE name$ = "sign_put" THEN RETURN RuleBuildAdmin(w, name$, args)
@@ -339,6 +378,7 @@ FUNC RuleAdmin(w, name$, args)
     IF name$ = "garden" ORELSE name$ = "garden_free" THEN RETURN RuleGardenAdmin(w, name$, args)
     IF name$ = "pens" ORELSE name$ = "pen_remove" THEN RETURN RulePenAdmin(w, name$, args)
     IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
+    IF name$ = "catalog" THEN RETURN {"ok": TRUE, "text": RuleWishList$()}
     IF name$ = "wish_status" THEN
         DIM status$ = "" + (args{"status"} ?? "")
         IF status$ <> "open" ANDALSO status$ <> "building" ANDALSO status$ <> "done" ANDALSO status$ <> "declined" THEN RETURN {"ok": FALSE, "error": "status is open, building, done or declined"}

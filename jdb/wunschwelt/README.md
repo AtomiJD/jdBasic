@@ -179,15 +179,21 @@ build/jdBasic.exe jdb/wunschwelt/tools/admin.jdb wishes      a local world
 
 
 **What may be wished** is a catalog in `RuleWishKinds()` (land and water,
-ways and bridges, houses, things in the village, animals, villagers,
-events) with a list of what is never built (`RuleWishBarred()`). The judge
+ways and bridges, houses, things in the village, animals, villagers, looks,
+music) with a list of what is never built (`RuleWishBarred()`). It names
+only what the rules grant at once or the builder builds; its animals and
+things come from `RuleBuildWhats()`. The judge
 gets both and answers with the keys of the kinds a wish fits; a wish lands
 on the board with them in `kinds`, a key the catalog does not know is
 dropped, and a wish with no known kind or one that is barred stays off the
 board: the person it was said to says why. People of the village know the
-catalog through `RuleNpcKnows$`. The start page shows the same list; a
-change to the catalog is made in both places. `test_catalog.jdb` checks
-this with a scripted model, 13 checks.
+catalog through `RuleNpcKnows$`; what they answer goes through
+`RuleNpcSays$`, which leaves out the sentences that tell of something as
+done (stands in the village, has a new name, follows), since only the
+rules know that. The start page shows the same list by hand; the keeper
+call `catalog` gives the catalog's text, and `test_catalog.jdb` checks that
+every animal and thing of it is on the page and that neither promises what
+nothing builds, with a scripted model, 36 checks.
 `test_wishes.jdb` checks the board with 19 checks on a server without a
 model. With the model on cortex, of eight sentences the four wishes were
 written, briefly worded, and greeting and small talk were not; a sentence
