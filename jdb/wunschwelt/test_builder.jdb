@@ -42,6 +42,7 @@ FUNC Verdict$(said$ AS STRING)
     IF INSTR(said$, "Hund") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Ein Hund mit gelbem Hut"})
     IF INSTR(said$, "Eule") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Eine Eule, ein Pony und eine Schildkroete bei den Ziegeln"})
     IF INSTR(said$, "Drache") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Ein Drache"})
+    IF INSTR(said$, "Katzen") >= 0 THEN RETURN JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": "Zwei Katzen"})
     RETURN JSON.STRINGIFY$({"wish": FALSE})
 ENDFUNC
 
@@ -57,6 +58,7 @@ FUNC Plan$(wish$ AS STRING)
     IF INSTR(wish$, "Bank") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "thing", "what": "bench", "name": "Bank", "where": "tavern"}]})
     IF INSTR(wish$, "Igel") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "hedgehog", "name": "Stachel", "wear": ["lila Muetze", "rote Schleife"], "where": "tavern"}]})
     IF INSTR(wish$, "Hund") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "dog", "name": "Bello", "hat": "gelb", "where": "tavern"}]})
+    IF INSTR(wish$, "Katzen") >= 0 THEN RETURN JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "cat", "name": "Katze", "where": "tavern"}, {"do": "animal", "what": "cat", "name": "Muffin", "where": "tavern"}]})
     RETURN JSON.STRINGIFY$({"steps": []})
 ENDFUNC
 
@@ -84,7 +86,7 @@ FUNC Admin(name$ AS STRING, args)
     RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
 ENDFUNC
 
-DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "180"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "300"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
 SLEEP 1500
 ' wishes are free here; test_purse.jdb tests what they cost
 DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
@@ -147,6 +149,13 @@ FUNC Folk(answer, prefix$ AS STRING)
         IF STARTSWITH(answer{"npcs"}[k][0], prefix$) THEN found = APPEND(found, [answer{"npcs"}[k]])
     NEXT k
     RETURN found
+ENDFUNC
+' The row [id, name, x, y, ...] of the built thing id$.
+FUNC Row(id$ AS STRING)
+    FOR EACH found IN Folk(World(), id$)
+        IF found[0] = id$ THEN RETURN found
+    NEXT
+    RETURN ["", "", 0, 0]
 ENDFUNC
 FUNC Tiles(answer, kind AS INTEGER) AS INTEGER
     RETURN SUM(answer{"map"}{"tiles"} = kind)
@@ -374,6 +383,47 @@ SLEEP 2600
 t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Komm mit, Hopser"})
 Wait(600)
 Check("called, it follows again", Fond(frog_id$)[1])
+
+' a cat whose name is its sort is the one named, not the nearer cat
+DIM at_marta = Marta(World())
+DIM put = Admin("player_put", {"player": "Anna", "x": at_marta[2], "y": at_marta[3] + 1})
+SLEEP 2600
+wish = WishAndWait("Ich wuensche mir zwei Katzen", "Zwei Katzen")
+DIM cat_named$ AS STRING = ""
+DIM cat_other$ AS STRING = ""
+FOR EACH cat IN Folk(World(), "b_cat_")
+    IF cat[1] = "Katze" THEN cat_named$ = cat[0]
+    IF cat[1] = "Muffin" THEN cat_other$ = cat[0]
+NEXT
+Check("two cats came, Katze and Muffin", cat_named$ <> "" ANDALSO cat_other$ <> "")
+DIM at_cat = Row(cat_other$)
+put = Admin("player_put", {"player": "Anna", "x": at_cat[2], "y": at_cat[3]})
+SLEEP 2600
+t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "nenn Katze brauni"})
+Wait(1500)
+Check("beside Muffin, Katze is named, with a capital letter", Row(cat_named$)[1] = "Brauni" ANDALSO Row(cat_other$)[1] = "Muffin")
+' the cat just petted before the nearer one
+DIM petted$ AS STRING = ""
+DIM tries AS INTEGER
+FOR tries = 1 TO 10
+    at_cat = Row(cat_other$)
+    put = Admin("player_put", {"player": "Anna", "x": at_cat[2], "y": at_cat[3]})
+    t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "pet": TRUE})
+    since = t{"seq"}
+    FOR EACH ev IN t{"events"}
+        IF ev{"type"} = "pet" ANDALSO ev{"who"} = "Anna" THEN petted$ = ev{"npc"}
+    NEXT
+    IF petted$ <> "" THEN EXITFOR
+    SLEEP 500
+NEXT tries
+DIM unpetted$ AS STRING = IIF(petted$ = cat_named$, cat_other$, cat_named$)
+DIM unpetted_name$ AS STRING = Row(unpetted$)[1]
+at_cat = Row(unpetted$)
+put = Admin("player_put", {"player": "Anna", "x": at_cat[2], "y": at_cat[3]})
+SLEEP 2600
+t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": "Die Katze soll Mimi heissen"})
+Wait(1500)
+Check("the cat she petted is named, though the other stands nearer", petted$ <> "" ANDALSO Row(petted$)[1] = "Mimi" ANDALSO Row(unpetted$)[1] = unpetted_name$)
 
 DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
 Check("the rules raised no error", stats{"errors"} = 0)

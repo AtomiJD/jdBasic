@@ -1109,18 +1109,25 @@ FUNC RuleBuildRename(w, p, said$)
         IF what$ = "" ANDALSO RuleBuildStemAt(rest$, stem[0], "") >= 0 THEN what$ = stem[1]
     NEXT
     IF what$ = "" ANDALSO (INSTR(rest$, "bewohner") >= 0 ORELSE INSTR(rest$, "fischer") >= 0) THEN what$ = "villager"
+    IF new_key$ = new$ ANDALSO LEN(new$) > 0 THEN new$ = UCASE$(LEFT$(new$, 1)) + MID$(new$, 1)
+    ' the one called by its name before one of the sort named, then the one
+    ' the player petted in the last two minutes, then the nearest
     DIM npcs = w{"npcs"}
     DIM pick$ = ""
-    DIM best = 9999
+    DIM best = 999999
+    DIM now = KNow()
+    DIM said_words = " " + TRIM$(REGEX.REPLACE$("[^a-z0-9]+", rest$, " ")) + " "
     FOR EACH id$ IN MAP.KEYS(npcs)
         IF STARTSWITH(id$, "b_") THEN
             DIM npc = npcs{id$}
             DIM old_key$ = RuleLookColorKey$("" + (npc{"name"} ?? ""))
-            DIM fits = (what$ <> "" ANDALSO (npc{"what"} ?? "") = what$)
-            IF NOT fits ANDALSO LEN(old_key$) >= 3 ANDALSO old_key$ <> new_key$ THEN fits = INSTR(rest$, old_key$) >= 0
+            DIM by_name = LEN(old_key$) >= 3 ANDALSO old_key$ <> new_key$ ANDALSO INSTR(said_words, " " + TRIM$(REGEX.REPLACE$("[^a-z0-9]+", old_key$, " ")) + " ") >= 0
+            DIM fits = by_name ORELSE (what$ <> "" ANDALSO (npc{"what"} ?? "") = what$)
             DIM dist = MAX([ABS(npc{"x"} - p{"x"}), ABS(npc{"y"} - p{"y"})])
-            IF fits ANDALSO dist <= 15 ANDALSO dist < best THEN
-                best = dist
+            DIM petted = (npc{"petted_by"} ?? "") = p{"name"} ANDALSO now - (npc{"petted_at"} ?? -999999) < 120000
+            DIM score = IIF(by_name, 0, 1000) + IIF(petted, 0, 100) + dist
+            IF fits ANDALSO dist <= 15 ANDALSO score < best THEN
+                best = score
                 pick$ = id$
             ENDIF
         ENDIF
