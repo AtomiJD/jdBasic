@@ -166,7 +166,7 @@ Check("away from the counter nothing is sold", ToldPart("Komm zu mir an die Thek
 Check("and the shop says so", NOT r{"shop"}{"near"})
 
 r = Put(fx, fy + 2)
-Check("before the counter the shop is open", r{"shop"}{"near"} ANDALSO LEN(r{"shop"}{"goods"}) = 9)
+Check("before the counter the shop is open", r{"shop"}{"near"} ANDALSO LEN(r{"shop"}{"goods"}) = 13)
 SLEEP 300
 r = Sync({"shop": {"buy": "shoes"}})
 Check("without Geld nothing is bought", ToldPart("fehlen Dir noch 120 Geld") ANDALSO NOT Good(r, "shoes")[4])

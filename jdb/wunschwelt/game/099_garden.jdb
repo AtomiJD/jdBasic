@@ -1,0 +1,515 @@
+' The village garden south of the tavern.
+'
+' The garden is a field of garden.w x garden.h fields of grass (smaller
+' where trees leave no room for it), chosen once near the tavern door and
+' kept free of anything the builder builds. It is cut into plots of 2 x 2;
+' a player who hoes a field of a free plot claims it, up to garden.plots
+' plots. E on the field one stands on does the next thing: grass is hoed
+' into soil, a dry bed is watered, a ripe one is harvested. A seed bag used
+' from the bag sows on one's own empty bed.
+'
+' A crop grows only while its bed is wet: watering keeps a bed wet for
+' garden.wet_min minutes, and a crop is ripe after its minutes of wet time,
+' in four stages (seeds, sprout, young, ripe). garden.speed makes the
+' garden's time run faster. Anyone may water a bed; only its owner harvests.
+'
+' w{"garden"} holds "field" [x, y, w, h] ([] while no place was found),
+' "plots" {"px,py": owner}, "beds" {"x,y": {"who", "crop", "grown", "wet",
+' "at", "stage"}} and "v", which counts the changes a client sees.
+
+'@server
+
+' The crops: German name for one and for many, minutes of wet time to grow,
+' how many a harvest gives, what Fenja pays for one and asks for the seeds.
+FUNC RuleGardenCrops()
+    DIM t = {}
+    t{"carrot"} = {"one": RuleDe$("M{o}hre"), "many": RuleDe$("M{o}hren"), "min": 20, "n": 2, "sell": 8, "seed": 4}
+    t{"turnip"} = {"one": RuleDe$("R{u}be"), "many": RuleDe$("R{u}ben"), "min": 24, "n": 2, "sell": 8, "seed": 4}
+    t{"cabbage"} = {"one": "Kohlkopf", "many": RuleDe$("Kohlk{o}pfe"), "min": 30, "n": 1, "sell": 14, "seed": 6}
+    t{"tomato"} = {"one": "Tomate", "many": "Tomaten", "min": 32, "n": 3, "sell": 6, "seed": 6}
+    t{"pumpkin"} = {"one": RuleDe$("K{u}rbis"), "many": RuleDe$("K{u}rbisse"), "min": 40, "n": 1, "sell": 25, "seed": 10}
+    t{"golden"} = {"one": RuleDe$("Goldk{u}rbis"), "many": RuleDe$("Goldk{u}rbisse"), "min": 60, "n": 1, "sell": 120, "seed": 0}
+    RETURN t
+ENDFUNC
+
+' The thing of the bag a crop gives at harvest.
+FUNC RuleGardenHarvestId$(crop$)
+    IF crop$ = "golden" THEN RETURN "golden_pumpkin"
+    RETURN crop$
+ENDFUNC
+
+' The crop a seed bag sows; "seeds" from before the garden is a mixed bag.
+FUNC RuleGardenSeedCrop$(id$)
+    DIM mixed = ["carrot", "turnip", "cabbage", "tomato"]
+    IF id$ = "seeds" THEN RETURN mixed[INT(RND() * 4)]
+    IF STARTSWITH(id$, "seed_") THEN RETURN MID$(id$, 5)
+    RETURN ""
+ENDFUNC
+
+SUB RuleGardenItems(table)
+    DIM crops = RuleGardenCrops()
+    FOR EACH crop$ IN MAP.KEYS(crops)
+        DIM spec = crops{crop$}
+        IF spec{"seed"} > 0 THEN table{"seed_" + crop$} = {"name": "Saat: " + spec{"many"}, "desc": RuleDe$("Im Garten auf Deinem Beet benutzen: s{a}en."), "use": "sow"}
+        table{RuleGardenHarvestId$(crop$)} = {"name": spec{"one"}, "desc": RuleDe$("Aus dem Garten. F{u}r Marta, f{u}r Fenja oder f{u}r ein Tier."), "use": "food"}
+    NEXT
+    table{"seed_golden"} = {"name": "Goldene Saat", "desc": RuleDe$("Aus einer goldenen Kiste. W{a}chst zu einem Goldk{u}rbis."), "use": "sow"}
+    table{"seeds"} = {"name": "Saatgut", "desc": RuleDe$("Gemischt. Im Garten auf Deinem Beet benutzen: s{a}en."), "use": "sow"}
+ENDSUB
+
+FUNC RuleGardenGoods(goods)
+    DIM crops = RuleGardenCrops()
+    FOR EACH crop$ IN ["carrot", "turnip", "cabbage", "tomato", "pumpkin"]
+        goods = APPEND(goods, {"id": "seed_" + crop$, "name": "Saat: " + crops{crop$}{"many"}, "price": crops{crop$}{"seed"}, "desc": RuleDe$("F{u}r ein Beet im Garten s{u}dlich der Taverne."), "kind": "item"})
+    NEXT
+    RETURN goods
+ENDFUNC
+
+SUB RuleGardenBuysBack(prices)
+    DIM crops = RuleGardenCrops()
+    FOR EACH crop$ IN MAP.KEYS(crops)
+        prices{RuleGardenHarvestId$(crop$)} = crops{crop$}{"sell"}
+    NEXT
+ENDSUB
+
+' How much more an animal likes a player who feeds it this: a rabbit or a
+' frog loves carrots, the golden pumpkin is a feast for anyone.
+FUNC RuleFeedUp(w, pet$, id$)
+    IF id$ = "golden_pumpkin" THEN RETURN 40
+    IF id$ = "carrot" ANDALSO INDEXOF(["rabbit", "frog"], w{"npcs"}{pet$}{"what"} ?? "") >= 0 THEN RETURN 24
+    RETURN 12
+ENDFUNC
+
+FUNC RuleGardenState(w)
+    IF NOT MAP.EXISTS(w, "garden") THEN w{"garden"} = {"field": [], "plots": {}, "beds": {}, "v": 1, "look_at": 0}
+    RETURN w{"garden"}
+ENDFUNC
+
+' The garden's field [x, y, w, h]: chosen once, on grass and flowers
+' near the field south of the tavern door; [] while there is no room.
+FUNC RuleGardenField(w)
+    DIM g = RuleGardenState(w)
+    IF LEN(g{"field"}) = 4 THEN RETURN g{"field"}
+    IF KNow() < (g{"look_at"} ?? 0) THEN RETURN []
+    g{"look_at"} = KNow() + 60000
+    DIM gw = INT(RuleConf(w, "garden.w", 10))
+    DIM gh = INT(RuleConf(w, "garden.h", 6))
+    DIM room = RuleShopRoom(w)
+    DIM tx = w{"map"}{"w"} \ 2
+    DIM ty = w{"map"}{"h"} \ 2
+    IF LEN(room) = 4 THEN
+        tx = (room[0] + room[2]) \ 2
+        ty = room[3] + 3 + gh \ 2
+    ELSEIF MAP.EXISTS(w{"npcs"}, "marta") THEN
+        tx = w{"npcs"}{"marta"}{"x"}
+        ty = w{"npcs"}{"marta"}{"y"} + 3 + gh \ 2
+    ENDIF
+    ' the largest size that fits within garden.near fields of the door, else
+    ' the nearest of all sizes; a size is two fields less at a time
+    DIM near = RuleConf(w, "garden.near", 8)
+    DIM best = []
+    DIM best_d = 1000000
+    FOR EACH size IN [[gw, gh], [gw - 2, gh], [gw - 2, gh - 2], [gw - 4, gh - 2], [gw - 4, gh - 4]]
+        IF size[0] >= 4 ANDALSO size[1] >= 2 THEN
+            DIM corner = RuleBuildRect(w, tx, ty, size[0], size[1], [1, 8], [], 0)
+            IF LEN(corner) = 2 THEN
+                DIM d = SQR((corner[0] + size[0] \ 2 - tx) ^ 2 + (corner[1] + size[1] \ 2 - ty) ^ 2)
+                IF d <= near THEN
+                    best = [corner[0], corner[1], size[0], size[1]]
+                    EXITFOR
+                ENDIF
+                IF d < best_d THEN
+                    best_d = d
+                    best = [corner[0], corner[1], size[0], size[1]]
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+    IF LEN(best) <> 4 THEN RETURN []
+    g{"field"} = best
+    g{"v"} = g{"v"} + 1
+    RETURN best
+ENDFUNC
+
+FUNC RuleGardenIn(field_rect, x, y)
+    RETURN LEN(field_rect) = 4 ANDALSO x >= field_rect[0] ANDALSO y >= field_rect[1] ANDALSO x < field_rect[0] + field_rect[2] ANDALSO y < field_rect[1] + field_rect[3]
+ENDFUNC
+
+' The fields of the garden are kept from the builder.
+SUB RuleGardenTaken(w, taken)
+    IF NOT MAP.EXISTS(w, "garden") THEN RETURN
+    DIM f = w{"garden"}{"field"}
+    IF LEN(f) <> 4 THEN RETURN
+    DIM x = 0
+    DIM y = 0
+    FOR y = f[1] TO f[1] + f[3] - 1
+        FOR x = f[0] TO f[0] + f[2] - 1
+            taken{STR$(x) + "," + STR$(y)} = TRUE
+        NEXT x
+    NEXT y
+ENDSUB
+
+FUNC RuleGardenPlot$(field_rect, x, y)
+    RETURN STR$((x - field_rect[0]) \ 2) + "," + STR$((y - field_rect[1]) \ 2)
+ENDFUNC
+
+FUNC RuleGardenSpeed(w)
+    RETURN MAX([0.001, RuleConf(w, "garden.speed", 1)])
+ENDFUNC
+
+FUNC RuleGardenStage(w, bed)
+    IF bed{"crop"} = "" THEN RETURN 0
+    DIM spec = RuleGardenCrops(){bed{"crop"}} ?? {"min": 30}
+    DIM total = spec{"min"} * 60000
+    IF bed{"grown"} >= total THEN RETURN 3
+    RETURN MIN([2, INT(3 * bed{"grown"} / total)])
+ENDFUNC
+
+' The bed after the time since it was last looked at; TRUE when what a
+' client draws of it changed (its stage, or wet to dry).
+FUNC RuleGardenGrow(w, bed, now)
+    DIM old_wet = bed{"wet"} > bed{"at"}
+    DIM old_stage = bed{"stage"}
+    IF bed{"crop"} <> "" ANDALSO bed{"stage"} < 3 ANDALSO now > bed{"at"} THEN
+        DIM wet_ms = MAX([0, MIN([now, bed{"wet"}]) - bed{"at"}])
+        bed{"grown"} = bed{"grown"} + wet_ms * RuleGardenSpeed(w)
+        bed{"stage"} = RuleGardenStage(w, bed)
+    ENDIF
+    bed{"at"} = MAX([bed{"at"}, now])
+    RETURN old_stage <> bed{"stage"} ORELSE old_wet <> (bed{"wet"} > now)
+ENDFUNC
+
+SUB RuleGardenTell(w, who$, text$, got$)
+    DIM ev = {"type": "purse", "to": who$, "text": text$}
+    IF got$ <> "" THEN ev{"got"} = got$
+    KEmit(w, ev)
+ENDSUB
+
+FUNC RuleGardenOwns(g, who$)
+    DIM n_plots = 0
+    FOR EACH plot$ IN MAP.KEYS(g{"plots"})
+        IF g{"plots"}{plot$} = who$ THEN n_plots = n_plots + 1
+    NEXT
+    RETURN n_plots
+ENDFUNC
+
+' E on the field p stands on in the garden.
+SUB RuleGardenAct(w, p, f)
+    DIM g = RuleGardenState(w)
+    DIM who$ = p{"name"}
+    DIM now = KNow()
+    DIM spot$ = STR$(p{"x"}) + "," + STR$(p{"y"})
+    DIM plot$ = RuleGardenPlot$(f, p{"x"}, p{"y"})
+    DIM owner$ = g{"plots"}{plot$} ?? ""
+    IF NOT MAP.EXISTS(g{"beds"}, spot$) THEN
+        IF owner$ <> "" ANDALSO owner$ <> who$ THEN
+            RuleGardenTell(w, who$, RuleDe$("Dieses Beet geh{o}rt " + owner$ + "."), "")
+            RETURN
+        ENDIF
+        IF owner$ = "" THEN
+            DIM most = INT(RuleConf(w, "garden.plots", 2))
+            IF RuleGardenOwns(g, who$) >= most THEN
+                RuleGardenTell(w, who$, RuleDe$("Du hast schon " + STR$(most) + " Beete. Pflege die, dann reicht es f{u}r alle."), "")
+                RETURN
+            ENDIF
+            g{"plots"}{plot$} = who$
+        ENDIF
+        g{"beds"}{spot$} = {"who": who$, "crop": "", "grown": 0, "wet": 0, "at": now, "stage": 0}
+        g{"v"} = g{"v"} + 1
+        RuleGardenTell(w, who$, RuleDe$("Du hackst die Erde auf. S{a}en: Taste I, dann die Zahl der Saat."), "")
+        RETURN
+    ENDIF
+    DIM bed = g{"beds"}{spot$}
+    DIM moved = RuleGardenGrow(w, bed, now)
+    DIM spec = RuleGardenCrops(){bed{"crop"}} ?? NONE
+    IF bed{"crop"} <> "" ANDALSO bed{"stage"} >= 3 THEN
+        IF bed{"who"} <> who$ THEN
+            RuleGardenTell(w, who$, "Das ist die Ernte von " + bed{"who"} + ".", "")
+            RETURN
+        ENDIF
+        DIM prof = RuleProfile(w, who$)
+        IF NOT RuleItemAdd(prof, RuleGardenHarvestId$(bed{"crop"}), spec{"n"}) THEN
+            RuleGardenTell(w, who$, "Deine Tasche ist voll.", "")
+            RETURN
+        ENDIF
+        DIM crop_name$ = spec{"one"}
+        IF spec{"n"} > 1 THEN crop_name$ = STR$(spec{"n"}) + " " + spec{"many"}
+        bed{"crop"} = ""
+        bed{"grown"} = 0
+        bed{"stage"} = 0
+        g{"v"} = g{"v"} + 1
+        RuleCountAdd(w, who$, "harvests", 1)
+        RuleGardenTell(w, who$, "Du erntest: " + crop_name$ + ".", "harvest")
+        RETURN
+    ENDIF
+    IF bed{"wet"} > now THEN
+        IF bed{"who"} <> who$ THEN
+            RuleGardenTell(w, who$, RuleDe$("Das Beet von " + bed{"who"} + " ist noch nass."), "")
+        ELSEIF bed{"crop"} = "" THEN
+            RuleGardenTell(w, who$, RuleDe$("Das Beet ist nass. S{a}en: Taste I, dann die Zahl der Saat."), "")
+        ELSE
+            RuleGardenTell(w, who$, RuleDe$("Das Beet ist noch nass, " + spec{"one"} + " w{a}chst."), "")
+        ENDIF
+        RETURN
+    ENDIF
+    bed{"wet"} = now + RuleConf(w, "garden.wet_min", 10) * 60000 / RuleGardenSpeed(w)
+    g{"v"} = g{"v"} + 1
+    RuleCountAdd(w, who$, "watered", 1)
+    IF bed{"who"} = who$ THEN
+        RuleGardenTell(w, who$, RuleDe$("Du gie{s}t Dein Beet."), "")
+        RETURN
+    ENDIF
+    RuleCountAdd(w, who$, "watered_friends", 1)
+    RuleGardenTell(w, who$, RuleDe$("Du gie{s}t das Beet von " + bed{"who"} + "."), "")
+    IF MAP.EXISTS(w{"players"}, bed{"who"}) THEN RuleGardenTell(w, bed{"who"}, who$ + RuleDe$(" hat Dein Beet gegossen."), "")
+ENDSUB
+
+' A seed bag of the bag used: sown on the empty bed p stands on, if it is p's.
+SUB RuleGardenSow(w, p, id$)
+    DIM who$ = p{"name"}
+    DIM f = RuleGardenField(w)
+    DIM spot$ = STR$(p{"x"}) + "," + STR$(p{"y"})
+    DIM g = RuleGardenState(w)
+    IF NOT RuleGardenIn(f, p{"x"}, p{"y"}) ORELSE NOT MAP.EXISTS(g{"beds"}, spot$) THEN
+        RuleGardenTell(w, who$, RuleDe$("S{a}en geht auf einem Beet im Garten s{u}dlich der Taverne. Erst mit E die Erde aufhacken."), "")
+        RETURN
+    ENDIF
+    DIM bed = g{"beds"}{spot$}
+    IF bed{"who"} <> who$ THEN
+        RuleGardenTell(w, who$, RuleDe$("Dieses Beet geh{o}rt " + bed{"who"} + "."), "")
+        RETURN
+    ENDIF
+    IF bed{"crop"} <> "" THEN
+        RuleGardenTell(w, who$, RuleDe$("Hier w{a}chst schon etwas."), "")
+        RETURN
+    ENDIF
+    DIM crop$ = RuleGardenSeedCrop$(id$)
+    IF NOT MAP.EXISTS(RuleGardenCrops(), crop$) THEN RETURN
+    DIM sown = RuleItemAdd(RuleProfile(w, who$), id$, -1)
+    IF NOT sown THEN RETURN
+    DIM moved = RuleGardenGrow(w, bed, KNow())
+    bed{"crop"} = crop$
+    bed{"grown"} = 0
+    bed{"stage"} = 0
+    g{"v"} = g{"v"} + 1
+    DIM hint$ = " Mit E gie{s}en, sonst w{a}chst nichts."
+    IF bed{"wet"} > KNow() THEN hint$ = " Das Beet ist nass, es w{a}chst schon."
+    RuleGardenTell(w, who$, RuleDe$("Du s{a}st " + RuleGardenCrops(){crop$}{"many"} + "." + hint$), "")
+ENDSUB
+
+' One sync: E on a field of the garden is the garden's (and no petting),
+' and the garden travels when it changed.
+SUB RuleGardenSync(w, p, msg, answer)
+    DIM f = RuleGardenField(w)
+    IF (msg{"pet"} ?? FALSE) = TRUE ANDALSO RuleGardenIn(f, p{"x"}, p{"y"}) THEN
+        msg{"pet"} = FALSE
+        IF KNow() >= (p{"garden_at"} ?? 0) THEN
+            p{"garden_at"} = KNow() + 300
+            RuleGardenAct(w, p, f)
+        ENDIF
+    ENDIF
+    DIM g = RuleGardenState(w)
+    IF INT(msg{"gardenv"} ?? -1) = g{"v"} THEN RETURN
+    DIM beds = []
+    FOR EACH spot$ IN MAP.KEYS(g{"beds"})
+        DIM bed = g{"beds"}{spot$}
+        DIM xy = SPLIT(spot$, ",")
+        beds = APPEND(beds, [[VAL(xy[0]), VAL(xy[1]), bed{"who"}, bed{"crop"}, bed{"stage"}, bed{"wet"} > KNow()]])
+    NEXT
+    DIM plots = []
+    FOR EACH plot$ IN MAP.KEYS(g{"plots"})
+        DIM pxy = SPLIT(plot$, ",")
+        plots = APPEND(plots, [[VAL(pxy[0]), VAL(pxy[1]), g{"plots"}{plot$}]])
+    NEXT
+    answer{"garden"} = {"v": g{"v"}, "field": f, "beds": beds, "plots": plots}
+ENDSUB
+
+' Every second the beds grow; an owner in the world hears when a crop is ripe.
+SUB RuleGardenTick(w, now)
+    IF NOT MAP.EXISTS(w, "garden") THEN RETURN
+    DIM g = w{"garden"}
+    IF now < (g{"tick_at"} ?? 0) THEN RETURN
+    g{"tick_at"} = now + 1000
+    DIM changed = FALSE
+    FOR EACH spot$ IN MAP.KEYS(g{"beds"})
+        DIM bed = g{"beds"}{spot$}
+        DIM was = bed{"stage"}
+        IF RuleGardenGrow(w, bed, now) THEN changed = TRUE
+        IF was < 3 ANDALSO bed{"stage"} = 3 ANDALSO MAP.EXISTS(w{"players"}, bed{"who"}) THEN
+            RuleGardenTell(w, bed{"who"}, RuleDe$("Im Garten ist etwas reif: " + RuleGardenCrops(){bed{"crop"}}{"many"} + ". Ernten mit E."), "")
+        ENDIF
+    NEXT
+    IF changed THEN g{"v"} = g{"v"} + 1
+ENDSUB
+
+' The keeper reads the garden ("garden") or frees the plots and beds of a
+' player ("garden_free" with {"player"}).
+FUNC RuleGardenAdmin(w, name$, args)
+    DIM g = RuleGardenState(w)
+    IF name$ = "garden_free" THEN
+        DIM who$ = "" + (args{"player"} ?? "")
+        DIM freed = 0
+        FOR EACH plot$ IN MAP.KEYS(g{"plots"})
+            IF g{"plots"}{plot$} = who$ THEN
+                MAP.DELETE(g{"plots"}, plot$)
+                freed = freed + 1
+            ENDIF
+        NEXT
+        FOR EACH spot$ IN MAP.KEYS(g{"beds"})
+            IF g{"beds"}{spot$}{"who"} = who$ THEN MAP.DELETE(g{"beds"}, spot$)
+        NEXT
+        g{"v"} = g{"v"} + 1
+        RETURN {"ok": TRUE, "plots": freed}
+    ENDIF
+    DIM f = RuleGardenField(w)
+    RETURN {"ok": TRUE, "field": f, "plots": g{"plots"}, "beds": g{"beds"}}
+ENDFUNC
+
+'@client
+
+SUB ClientGardenAsk(c, msg)
+    msg{"gardenv"} = c{"gardenv"} ?? -1
+ENDSUB
+
+SUB ClientGardenExtra(c, r)
+    IF NOT MAP.EXISTS(r, "garden") THEN RETURN
+    c{"garden"} = r{"garden"}
+    c{"gardenv"} = r{"garden"}{"v"}
+ENDSUB
+
+' The garden sheet (assets/garden.rgba and .parts, cut by tools/garden.jdb),
+' loaded once; FALSE when it is not there.
+FUNC GardenSheet(c)
+    IF MAP.EXISTS(c, "garden_img") THEN RETURN c{"garden_img"} > 0
+    c{"garden_img"} = -1
+    DIM folder$ = c{"assets"} ?? "assets"
+    TRY
+        IF FILE.EXISTS(folder$ + "/garden.parts") THEN
+            c{"garden_parts"} = JSON.PARSE(BINREADER$(folder$ + "/garden.parts"))
+            c{"garden_img"} = ClientRawImage(folder$ + "/garden.rgba")
+        ENDIF
+    CATCH
+        c{"garden_img"} = -1
+    ENDTRY
+    RETURN c{"garden_img"} > 0
+ENDFUNC
+
+SUB GardenPiece(c, name$, sx, sy)
+    DIM parts = c{"garden_parts"}
+    DIM i = parts{"names"}{name$} ?? -1
+    IF i < 0 THEN RETURN
+    DIM side = parts{"size"}
+    GFX.DRAWIMAGE_REGION(c{"garden_img"}, (i MOD parts{"cols"}) * side, (i \ parts{"cols"}) * side, side, side, sx, sy)
+ENDSUB
+
+FUNC GardenCropPiece$(crop$, stage)
+    DIM art$ = crop$
+    IF crop$ = "golden" THEN art$ = "pumpkin"
+    IF stage = 0 THEN
+        IF art$ = "pumpkin" THEN RETURN "tomato_seed"
+        RETURN art$ + "_seed"
+    ENDIF
+    DIM stages = ["", "sprout", "young", "grown"]
+    RETURN art$ + "_" + stages[MIN([3, stage])]
+ENDFUNC
+
+' The beds under everything else: soil dry, wet or freshly hoed, the crop on
+' it (a golden pumpkin with a golden shimmer), a crate on a plot whose four
+' beds are ripe, and a fence along the top of the garden with a gate in the
+' middle.
+SUB ClientGardenFloor(c, cam_x, cam_y)
+    DIM g = c{"garden"} ?? NONE
+    IF NOT ISMAP(g) THEN RETURN
+    DIM f = g{"field"}
+    IF LEN(f) <> 4 THEN RETURN
+    IF NOT GardenSheet(c) THEN RETURN
+    DIM ox = f[0] * 32 - cam_x
+    DIM oy = f[1] * 32 - cam_y
+    IF ox > 640 ORELSE oy > 384 ORELSE ox + f[2] * 32 < 0 ORELSE oy + f[3] * 32 < -32 THEN RETURN
+    DIM ripe = {}
+    FOR EACH bed IN g{"beds"}
+        DIM sx = bed[0] * 32 - cam_x
+        DIM sy = bed[1] * 32 - cam_y
+        DIM soil$ = "soil_dry"
+        IF bed[5] THEN
+            soil$ = "soil_wet"
+        ELSEIF bed[3] = "" THEN
+            soil$ = "soil_plough"
+        ENDIF
+        GardenPiece(c, soil$, sx, sy)
+        IF bed[3] <> "" THEN
+            GardenPiece(c, GardenCropPiece$(bed[3], bed[4]), sx, sy)
+            IF bed[3] = "golden" THEN
+                IF bed[4] >= 2 THEN ELLIPSE sx + 16, sy + 21, 13, 10, FALSE, 255, 214, 60
+                DIM glint = (INT(TICK()) \ 120) MOD 6
+                IF glint < 3 THEN RECT sx + 8 + glint * 7, sy + 12 + (glint MOD 2) * 9, 2, 2, TRUE, 255, 244, 160
+            ENDIF
+            IF bed[4] >= 3 THEN
+                DIM plot$ = STR$((bed[0] - f[0]) \ 2) + "," + STR$((bed[1] - f[1]) \ 2)
+                ripe{plot$} = (ripe{plot$} ?? 0) + 1
+            ENDIF
+        ENDIF
+    NEXT
+    FOR EACH plot$ IN MAP.KEYS(ripe)
+        IF ripe{plot$} >= 4 THEN
+            DIM pxy = SPLIT(plot$, ",")
+            GardenPiece(c, "crate_full", ox + VAL(pxy[0]) * 64 + 16, oy + VAL(pxy[1]) * 64 + 40)
+        ENDIF
+    NEXT
+    DIM gate = f[2] \ 2
+    DIM k = 0
+    FOR k = 0 TO f[2] - 1
+        IF k <> gate THEN
+            GardenPiece(c, "fence", ox + k * 32, oy - 26)
+        ELSE
+            GardenPiece(c, "gate", ox + k * 32, oy - 26)
+        ENDIF
+    NEXT k
+    ' the owners' names over the plots near the player
+    FOR EACH row IN g{"plots"}
+        DIM px = f[0] + row[0] * 2
+        DIM py = f[1] + row[1] * 2
+        IF ABS(px + 1 - (c{"x"} ?? -99)) <= 3 ANDALSO ABS(py + 1 - (c{"y"} ?? -99)) <= 3 THEN
+            DIM lx = px * 32 - cam_x + 2
+            DIM ly = py * 32 - cam_y + 1
+            DRAWCOLOR 20, 16, 10, 150
+            RECT lx - 1, ly - 1, GFX.TEXTSIZE(row[2])[0] + 4, 10, TRUE
+            DRAWCOLOR 255, 255, 255, 255
+            TEXT lx + 1, ly, row[2], 250, 240, 200
+        ENDIF
+    NEXT
+ENDSUB
+
+' What E does on the field the player stands on, over the purse.
+SUB ClientGardenHud(c)
+    DIM g = c{"garden"} ?? NONE
+    IF NOT ISMAP(g) ORELSE LEN(g{"field"}) <> 4 THEN RETURN
+    DIM f = g{"field"}
+    DIM x = c{"x"} ?? -1
+    DIM y = c{"y"} ?? -1
+    IF x < f[0] ORELSE y < f[1] ORELSE x >= f[0] + f[2] ORELSE y >= f[1] + f[3] THEN RETURN
+    DIM me$ = c{"name"}
+    DIM hint$ = "Garten  E: Erde aufhacken"
+    DIM plot$ = STR$((x - f[0]) \ 2) + "," + STR$((y - f[1]) \ 2)
+    FOR EACH row IN g{"plots"}
+        IF STR$(row[0]) + "," + STR$(row[1]) = plot$ ANDALSO row[2] <> me$ THEN hint$ = "Garten  Beet von " + row[2]
+    NEXT
+    FOR EACH bed IN g{"beds"}
+        IF bed[0] = x ANDALSO bed[1] = y THEN
+            IF bed[3] <> "" ANDALSO bed[4] >= 3 THEN
+                hint$ = IIF(bed[2] = me$, "Garten  E: ernten", "Garten  reif, von " + bed[2])
+            ELSEIF bed[5] THEN
+                hint$ = IIF(bed[3] = "" ANDALSO bed[2] = me$, "Garten  I + Zahl: Saat", "Garten  nass, " + IIF(bed[3] = "", "leer", "es waechst"))
+            ELSE
+                hint$ = "Garten  E: giessen"
+                IF bed[3] = "" ANDALSO bed[2] = me$ THEN hint$ = "Garten  I + Zahl: Saat   E: giessen"
+            ENDIF
+        ENDIF
+    NEXT
+    DIM tw = GFX.TEXTSIZE(hint$)[0] + 12
+    DRAWCOLOR 16, 18, 22, 220
+    RECT 4, 300, tw, 18, TRUE
+    DRAWCOLOR 255, 255, 255, 255
+    ROUNDED_RECT 4, 300, tw, 18, 4, FALSE, 110, 150, 80
+    TEXT 10, 303, hint$, 200, 236, 170
+ENDSUB

@@ -1,0 +1,180 @@
+' Test of the garden, on a server without a model: the garden lies on grass
+' near the tavern; Anna hoes a field and claims its plot, sows carrots from
+' the bag, a dry bed does not grow, a watered one grows by the garden's
+' clock in stages until it is ripe; Ben may water her bed but neither hoe
+' her plot nor harvest it; Anna harvests, brings the carrots to Marta for a
+' task and sells and buys at Fenja's; a player gets no more plots than
+' garden.plots.
+'
+'   jdBasic jdb/wunschwelt/test_garden.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8310 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_garden_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "80"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
+SLEEP 1500
+
+DIM anna$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM ben$ AS STRING = Post("/join", {"name": "Ben", "pin": "1234"}){"token"}
+DIM told = []
+DIM seen = {}
+
+' A sync of the player with token tok$; what was said to name$ is kept.
+FUNC Sync(tok$ AS STRING, name$ AS STRING, extra)
+    DIM msg = {"token": tok$, "mapv": 1, "since": seen{tok$} ?? -1}
+    FOR EACH field$ IN MAP.KEYS(extra)
+        msg{field$} = extra{field$}
+    NEXT
+    DIM r = Post("/sync", msg)
+    SLEEP 150
+    DIM r2 = Post("/sync", {"token": tok$, "mapv": 1, "since": seen{tok$} ?? -1})
+    seen{tok$} = r2{"seq"}
+    FOR EACH ev IN APPEND(r{"events"} ?? [], r2{"events"} ?? [])
+        IF (ev{"type"} = "purse" ORELSE ev{"type"} = "say") ANDALSO (ev{"to"} ?? "") = name$ THEN told = APPEND(told, name$ + ": " + ev{"text"})
+    NEXT
+    RETURN r2
+ENDFUNC
+
+FUNC Told(part$ AS STRING)
+    RETURN INSTR(JOIN(told, "|"), part$) >= 0
+ENDFUNC
+
+FUNC Held(name$ AS STRING, id$ AS STRING)
+    FOR EACH entry IN Admin("purse", {"player": name$}){"items"}
+        IF entry{"id"} = id$ THEN RETURN entry{"n"}
+    NEXT
+    RETURN 0
+ENDFUNC
+
+FUNC Bed(x, y)
+    RETURN Admin("garden", {}){"beds"}{STR$(x) + "," + STR$(y)} ?? NONE
+ENDFUNC
+
+SUB Put(name$ AS STRING, x, y)
+    DIM moved = Admin("player_put", {"player": name$, "x": x, "y": y})
+ENDSUB
+
+DIM r = Sync(anna$, "Anna", {})
+r = Sync(ben$, "Ben", {})
+DIM world_map = Post("/sync", {"token": anna$, "mapv": -1, "since": seen{anna$}}){"map"}
+DIM uml$ AS STRING = CHR$(195) + CHR$(188)
+
+' the place
+DIM g = Admin("garden", {})
+DIM f = g{"field"}
+Check("the garden has a place", LEN(f) = 4)
+DIM grassy = TRUE
+DIM y = 0
+DIM x = 0
+FOR y = f[1] TO f[1] + f[3] - 1
+    FOR x = f[0] TO f[0] + f[2] - 1
+        IF INDEXOF([1, 8], world_map{"tiles"}[y * world_map{"w"} + x]) < 0 THEN grassy = FALSE
+    NEXT x
+NEXT y
+Check("all of it on grass", grassy)
+r = Sync(anna$, "Anna", {"gardenv": -1})
+Check("the client gets the garden", ISMAP(r{"garden"} ?? 0) ANDALSO LEN(r{"garden"}{"field"}) = 4)
+
+' hoe and sow
+DIM bx = f[0]
+DIM by = f[1]
+Put("Anna", bx, by)
+r = Sync(anna$, "Anna", {"pet": TRUE})
+DIM bed = Bed(bx, by)
+Check("E on grass in the garden hoes a bed", ISMAP(bed) ANDALSO bed{"who"} = "Anna" ANDALSO bed{"crop"} = "")
+Check("and claims the plot", Admin("garden", {}){"plots"}{"0,0"} = "Anna")
+DIM gave = Admin("purse", {"player": "Anna", "give": "seed_carrot", "n": 1})
+r = Sync(anna$, "Anna", {"use": "seed_carrot"})
+bed = Bed(bx, by)
+Check("a seed bag sows on her bed", bed{"crop"} = "carrot" ANDALSO Held("Anna", "seed_carrot") = 0)
+
+' a dry bed does not grow; a watered one grows in stages
+DIM fast = Admin("config_set", {"key": "garden.speed", "v": 600})
+SLEEP 1300
+Check("a dry bed does not grow", Bed(bx, by){"stage"} = 0)
+r = Sync(anna$, "Anna", {"pet": TRUE})
+Check("E waters it", Bed(bx, by){"wet"} > 0 ANDALSO Told("gie"))
+SLEEP 2200
+bed = Bed(bx, by)
+Check("one watering lets it grow half way", bed{"stage"} = 1)
+SLEEP 1200
+Check("dry again, it stops", Bed(bx, by){"stage"} = 1)
+
+' Ben may water, not hoe her plot, not harvest
+Put("Ben", bx, by)
+r = Sync(ben$, "Ben", {"pet": TRUE})
+Check("Ben waters Anna's bed", Told("Ben: Du gie"))
+SLEEP 2200
+Check("ripe after the second watering", Bed(bx, by){"stage"} = 3)
+r = Sync(anna$, "Anna", {})
+Check("Anna hears Ben watered it and that it is ripe", Told("Anna: Ben hat Dein Beet gegossen") ANDALSO Told("Anna: Im Garten ist etwas reif"))
+r = Sync(ben$, "Ben", {"pet": TRUE})
+Check("Ben cannot harvest it", Held("Ben", "carrot") = 0 ANDALSO Told("Ben: Das ist die Ernte von Anna"))
+Put("Ben", bx + 1, by)
+SLEEP 400
+r = Sync(ben$, "Ben", {"pet": TRUE})
+Check("nor hoe in her plot", NOT ISMAP(Bed(bx + 1, by)) ANDALSO Told("Ben: Dieses Beet geh"))
+
+' harvest, Marta's task, Fenja's shop
+DIM task = Admin("quest_set", {"player": "Anna", "quests": [{"kind": "harvest", "goal": 2}]})
+r = Sync(anna$, "Anna", {"pet": TRUE})
+bed = Bed(bx, by)
+Check("Anna harvests two carrots", Held("Anna", "carrot") = 2 ANDALSO bed{"crop"} = "" ANDALSO Told("Du erntest: 2 M"))
+DIM marta = NONE
+DIM fenja = NONE
+FOR EACH row IN r{"npcs"}
+    IF row[0] = "marta" THEN marta = row
+    IF row[0] = "fenja" THEN fenja = row
+NEXT
+Put("Anna", marta[2], marta[3] + 1)
+r = Sync(anna$, "Anna", {})
+Check("she brings them to Marta for her task", Held("Anna", "carrot") = 0 ANDALSO Told("Frisch aus dem Garten"))
+gave = Admin("purse", {"player": "Anna", "give": "pumpkin", "n": 1, "money": 20})
+Put("Anna", fenja[2], fenja[3] + 1)
+r = Sync(anna$, "Anna", {"shop": {"sell": "pumpkin"}})
+SLEEP 300
+r = Sync(anna$, "Anna", {"shop": {"buy": "seed_tomato"}})
+DIM purse = Admin("purse", {"player": "Anna"})
+Check("Fenja buys the pumpkin and sells tomato seeds", Held("Anna", "pumpkin") = 0 ANDALSO Held("Anna", "seed_tomato") = 1 ANDALSO purse{"money"} = 20 + 25 - 6)
+
+' no more plots than garden.plots
+DIM one = Admin("config_set", {"key": "garden.plots", "v": 1})
+Put("Anna", bx + 2, by)
+r = Sync(anna$, "Anna", {"pet": TRUE})
+Check("a second plot is refused", NOT ISMAP(Bed(bx + 2, by)) ANDALSO Told("Du hast schon 1 Beete"))
+DIM free = Admin("garden_free", {"player": "Anna"})
+Check("the keeper frees her plot", free{"plots"} = 1 ANDALSO NOT ISMAP(Bed(bx, by)))
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM gone = OS.KILL(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

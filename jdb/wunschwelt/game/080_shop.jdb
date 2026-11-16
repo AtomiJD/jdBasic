@@ -20,7 +20,7 @@ FUNC RuleShopGoods()
     goods = APPEND(goods, {"id": "rod", "name": "Angel", "price": 60, "desc": "Fische bei{s}en schneller an.", "kind": "gear"})
     goods = APPEND(goods, {"id": "net", "name": "Kescher", "price": 80, "desc": "Manchmal zwei Fische auf einmal.", "kind": "gear"})
     goods = APPEND(goods, {"id": "food", "name": "Tierfutter", "price": 5, "desc": "Ein Tier mag Dich mehr.", "kind": "item"})
-    goods = APPEND(goods, {"id": "seeds", "name": "Saatgut", "price": 4, "desc": "F{u}r den Garten, den es bald gibt.", "kind": "item"})
+    goods = RuleGardenGoods(goods)
     goods = APPEND(goods, {"id": "lantern", "name": "Laterne", "price": 40, "desc": "Stell sie im Dorf auf.", "kind": "item"})
     goods = APPEND(goods, {"id": "hat_gold", "name": "Goldene M{u}tze", "price": 50, "desc": "Sofort auf dem Kopf.", "kind": "look", "part": "hat", "color": "gold"})
     goods = APPEND(goods, {"id": "scarf_silver", "name": "Silberner Schal", "price": 50, "desc": "Sofort um den Hals.", "kind": "look", "part": "scarf", "color": "silber"})
@@ -30,7 +30,9 @@ ENDFUNC
 
 ' What Fenja pays for one thing of the bag.
 FUNC RuleShopBuysBack()
-    RETURN {"fish": 6, "flower": 2, "bottle": 12}
+    DIM prices = {"fish": 6, "flower": 2, "bottle": 12}
+    RuleGardenBuysBack(prices)
+    RETURN prices
 ENDFUNC
 
 FUNC RuleStepMs(w, p)
@@ -105,7 +107,7 @@ SUB RuleShopWake(w)
     RuleShopPut(w, "f_table_2", x1 - 3, y1 - 2)
     RuleShopPut(w, "f_barrel_1", x1 - 1, y0 + 1)
     RuleShopPut(w, "f_barrel_2", x1 - 1, y1 - 1)
-    DIM persona$ = RuleDe$("Du bist Fenja, die Kr{a}merin im Laden der Taverne Zum Goldenen Kessel und Martas Nichte. Du verkaufst flinke Schuhe, Angeln, Kescher, Tierfutter, Saatgut, Laternen, M{u}tzen, Schals und Augenklappen und kaufst Fische, Blumen und Wunschtrank-Fl{a}schchen. Wer etwas kaufen will, dr{u}ckt neben dir die Taste E. Antworte auf Deutsch in ein bis zwei kurzen S{a}tzen und bleib in der Rolle.")
+    DIM persona$ = RuleDe$("Du bist Fenja, die Kr{a}merin im Laden der Taverne Zum Goldenen Kessel und Martas Nichte. Du verkaufst flinke Schuhe, Angeln, Kescher, Tierfutter, Saatgut, Laternen, M{u}tzen, Schals und Augenklappen und kaufst Fische, Blumen, Gem{u}se aus dem Garten und Wunschtrank-Fl{a}schchen. Wer etwas kaufen will, dr{u}ckt neben dir die Taste E. Antworte auf Deutsch in ein bis zwei kurzen S{a}tzen und bleib in der Rolle.")
     w{"npcs"}{"fenja"} = {"id": "fenja", "kind": "person", "name": "Fenja", "x": x0 + 2, "y": y0 + 2, "persona": persona$, "mem": {}}
 ENDSUB
 
@@ -211,10 +213,13 @@ SUB RuleShopUse(w, p, id$, item)
             RETURN
         ENDIF
         DIM eaten = RuleItemAdd(prof, id$, -1)
-        DIM fed = RuleFondAdd(w, p, pet$, 12)
+        DIM up = RuleFeedUp(w, pet$, id$)
+        DIM fed = RuleFondAdd(w, p, pet$, up)
         RuleAlbumMeet(w, p, pet$)
-        KEmit(w, {"type": "pet", "npc": pet$, "who": who$, "up": 12, "food": TRUE})
-        KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$("Du f{u}tterst " + w{"npcs"}{pet$}{"name"} + ". Es mag Dich jetzt mehr."), "got": "food"})
+        KEmit(w, {"type": "pet", "npc": pet$, "who": who$, "up": up, "food": TRUE})
+        DIM liked$ = ". Es mag Dich jetzt mehr."
+        IF up > 12 THEN liked$ = ". Das schmeckt! Es mag Dich jetzt viel mehr."
+        KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$("Du f{u}tterst " + w{"npcs"}{pet$}{"name"} + liked$), "got": "food"})
         RETURN
     ENDIF
     IF item{"use"} = "lantern" THEN

@@ -1,0 +1,152 @@
+' The garden sheet cut into 32 px pieces for the game.
+'
+'   build/jdBasic.exe jdb/wunschwelt/tools/garden.jdb in.jpg|in.png assets/garden.png
+'
+' The sheet is drawn on a dark backdrop. Each piece is named with a rough
+' box in the sheet; its pixels are those that differ from the backdrop,
+' shrunk by one pixel to drop the JPEG fringe, and the box is tightened to
+' them. A soil tile fills its 32 x 32 cell; anything else is scaled by a
+' quarter (smaller when it would not fit) and set on the bottom of its cell.
+'
+' Writes the atlas as PNG, the same pixels raw as .rgba (width and height as
+' two little-endian 32-bit numbers, then RGBA) and the names as .parts, a
+' JSON map {"size", "cols", "names": {name: cell index}}.
+
+IMPORT IMG
+
+DIM args = OS.ARGS()
+IF LEN(args) < 3 THEN
+    PRINT "usage: garden.jdb in.jpg|in.png out.png"
+    END 1
+ENDIF
+DIM src$ = args[LEN(args) - 2]
+DIM out$ = args[LEN(args) - 1]
+
+' A JPEG is read through the renderer, which knows the format, and passed on as PNG.
+IF LCASE$(PATH.EXT$(src$)) <> ".png" THEN
+    DIM via$ = PATH.ABS$("tmp") + "/garden_src_" + STR$(OS.PID()) + ".png"
+    MKDIR "tmp"
+    SCREEN 1024, 1024, "garden"
+    DIM pic = GFX.LOADIMAGE(src$)
+    CLS 0, 0, 0
+    GFX.DRAWIMAGE(pic, 0, 0)
+    GFX.SAVE_SCREENSHOT(via$)
+    SCREENFLIP
+    GFX.CLOSE
+    src$ = via$
+ENDIF
+
+DIM sheet = IMG.READPNG(src$)
+DIM sw = IMG.WIDTH(sheet)
+DIM sh = IMG.HEIGHT(sheet)
+DIM q = RESHAPE(IMG.PIXELS(sheet), [sw * sh, IMG.CHANNELS(sheet)])
+DIM cr = SLICE(q, 1, 0)
+DIM cg = SLICE(q, 1, 1)
+DIM cb = SLICE(q, 1, 2)
+DIM far = ABS(cr - cr[0]) + ABS(cg - cg[0]) + ABS(cb - cb[0])
+DIM mask = RESHAPE(far > 45, [sh, sw])
+' one pixel off every edge of the pieces
+FOR EACH pass_n IN [1]
+    mask = mask * SHIFT(mask, [1, 0], 0) * SHIFT(mask, [-1, 0], 0) * SHIFT(mask, [0, 1], 0) * SHIFT(mask, [0, -1], 0)
+NEXT
+DIM alpha = FLATTEN(mask) * 255
+sheet = IMG.FROMPIXELS(sw, sh, 4, FLATTEN(TRANSPOSE(STACK(0, cr, cg, cb, alpha))))
+DIM solid = IMG.FROMPIXELS(sw, sh, 4, FLATTEN(TRANSPOSE(STACK(0, cr, cg, cb, ZEROS([sw * sh]) + 255))))
+
+' name, rough box x0, y0, x1, y1 in the sheet, and whether it fills its cell
+DIM pieces = []
+pieces = APPEND(pieces, [["soil_dry", 0, 0, 125, 120, TRUE]])
+pieces = APPEND(pieces, [["soil_wet", 230, 0, 370, 120, TRUE]])
+pieces = APPEND(pieces, [["soil_plough", 430, 0, 590, 120, TRUE]])
+DIM crops = ["carrot", "tomato", "cabbage", "turnip", "pumpkin"]
+DIM bands = [[122, 222], [227, 340], [355, 458], [472, 582], [595, 715]]
+DIM cols = [[25, 175], [265, 390], [420, 600], [620, 770], [830, 990]]
+DIM stages = ["seed", "sprout", "young", "grown", "crop"]
+DIM k = 0
+DIM s = 0
+FOR k = 0 TO LEN(crops) - 1
+    FOR s = 0 TO 4
+        DIM label$ = crops[k] + "_" + stages[s]
+        ' the pumpkin row starts with the pumpkin itself and has no seeds
+        IF crops[k] = "pumpkin" ANDALSO s = 0 THEN label$ = "pumpkin_crop"
+        IF crops[k] = "pumpkin" ANDALSO s = 4 THEN label$ = "pumpkin_ripe"
+        pieces = APPEND(pieces, [[label$, cols[s][0], bands[k][0], cols[s][1], bands[k][1], FALSE]])
+    NEXT s
+NEXT k
+DIM tools = [["hoe", 5, 130], ["can", 131, 275], ["spade", 290, 440], ["trowel", 450, 600], ["bag_seeds", 630, 730], ["bag_carrot", 770, 870], ["bag_tomato", 890, 990]]
+FOR EACH t IN tools
+    pieces = APPEND(pieces, [[t[0], t[1], 725, t[2], 860, FALSE]])
+NEXT
+DIM things = [["post", 40, 100], ["fence", 125, 280], ["fence_end", 282, 425], ["gate", 440, 590], ["crate_full", 600, 750], ["crate", 760, 880], ["stone", 890, 990]]
+FOR EACH t IN things
+    pieces = APPEND(pieces, [[t[0], t[1], 865, t[2], 1000, FALSE]])
+NEXT
+
+' premultiplied alpha while scaling, so no colour of the backdrop bleeds in; a
+' pixel half covered or more is kept whole
+FUNC Premul(img, back)
+    DIM p = RESHAPE(IMG.PIXELS(img), [IMG.WIDTH(img) * IMG.HEIGHT(img), 4])
+    DIM a = SLICE(p, 1, 3) / 255
+    DIM r = SLICE(p, 1, 0)
+    DIM g = SLICE(p, 1, 1)
+    DIM b = SLICE(p, 1, 2)
+    IF back THEN
+        DIM safe = a + (a = 0)
+        r = CLAMP(ROUND(r / safe), 0, 255)
+        g = CLAMP(ROUND(g / safe), 0, 255)
+        b = CLAMP(ROUND(b / safe), 0, 255)
+        a = (a >= 0.5) * 255
+    ELSE
+        r = r * a
+        g = g * a
+        b = b * a
+        a = a * 255
+    ENDIF
+    RETURN IMG.FROMPIXELS(IMG.WIDTH(img), IMG.HEIGHT(img), 4, FLATTEN(TRANSPOSE(STACK(0, r, g, b, a))))
+ENDFUNC
+
+DIM side = 32
+DIM per_row = 8
+DIM n_rows = (LEN(pieces) + per_row - 1) \ per_row
+DIM atlas = IMG.BLANK(side * per_row, side * n_rows, 4, 0)
+DIM names = {}
+DIM i = 0
+FOR i = 0 TO LEN(pieces) - 1
+    DIM pc = pieces[i]
+    ' the box tightened to the pixels of the piece
+    DIM area = TAKE(pc[4] - pc[2], DROP(pc[2], mask))
+    area = TRANSPOSE(TAKE(pc[3] - pc[1], DROP(pc[1], TRANSPOSE(area))))
+    DIM on_rows = SUM(area, 1) > 0
+    DIM on_cols = SUM(area, 0) > 0
+    IF SUM(on_rows) = 0 THEN
+        PRINT "empty piece: "; pc[0]
+        END 1
+    ENDIF
+    DIM ys = FILTER(LAMBDA v -> v >= 0, on_rows * (IOTA(LEN(on_rows), 0) + 1) - 1)
+    DIM xs = FILTER(LAMBDA v -> v >= 0, on_cols * (IOTA(LEN(on_cols), 0) + 1) - 1)
+    DIM bx = pc[1] + xs[0]
+    DIM by = pc[2] + ys[0]
+    DIM bw = xs[LEN(xs) - 1] - xs[0] + 1
+    DIM bh = ys[LEN(ys) - 1] - ys[0] + 1
+    DIM part = IMG.CROP(IIF(pc[5], solid, sheet), bx, by, bw, bh)
+    DIM tw = side
+    DIM th = side
+    IF NOT pc[5] THEN
+        DIM f = MIN([0.25, (side - 2) / MAX([bw, bh])])
+        tw = MAX([1, ROUND(bw * f)])
+        th = MAX([1, ROUND(bh * f)])
+    ENDIF
+    DIM small = Premul(IMG.RESIZE(Premul(part, FALSE), tw, th, "bilinear"), TRUE)
+    DIM cx = (i MOD per_row) * side + (side - tw) \ 2
+    DIM cy = (i \ per_row) * side + side - th
+    atlas = IMG.PASTE(atlas, small, cx, cy)
+    names{pc[0]} = i
+    PRINT pc[0]; ": "; bx; ","; by; " "; bw; "x"; bh; " -> "; tw; "x"; th
+NEXT i
+
+IMG.WRITEPNG(atlas, out$)
+DIM stem$ = LEFT$(out$, LEN(out$) - LEN(PATH.EXT$(out$)))
+DIM raw$ = PACK$("<II", side * per_row, side * n_rows) + JOIN(SELECT(LAMBDA v -> CHR$(v), IMG.PIXELS(atlas)), "")
+BINWRITER stem$ + ".rgba", raw$
+TXTWRITER stem$ + ".parts", JSON.STRINGIFY$({"size": side, "cols": per_row, "names": names})
+PRINT out$; ": "; LEN(pieces); " pieces, "; side * per_row; " x "; side * n_rows

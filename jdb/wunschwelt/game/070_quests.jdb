@@ -44,15 +44,17 @@ SUB RulePotionAdd(w, prof, n)
 ENDSUB
 
 ' The tasks a day can hold: what it says, who gives it, the count it
-' follows ("" for the flowers, which are brought) and the goal.
+' follows and the goal; a task that brings things to Marta follows no count
+' ("") and names the things of the bag it takes (bring).
 FUNC RuleQuestKinds()
     DIM t = {}
-    t{"flowers"} = {"text": "Pfl{u}ck 10 Blumen und bring sie Marta", "giver": "Marta", "key": "", "goal": 10}
+    t{"flowers"} = {"text": "Pfl{u}ck 10 Blumen und bring sie Marta", "giver": "Marta", "key": "", "goal": 10, "bring": ["flower"]}
     t{"fish"} = {"text": "Fang einen Fisch (Taste F am Wasser)", "giver": "Marta", "key": "fish", "goal": 1}
     t{"pets"} = {"text": "Streichle drei verschiedene Tiere", "giver": "Wunschbrett", "key": "pet_kinds", "goal": 3}
     t{"beach"} = {"text": "Geh an den Strand", "giver": "Wunschbrett", "key": "beach", "goal": 1}
     t{"explore"} = {"text": "Erkunde 30 neue Felder", "giver": "Wunschbrett", "key": "visited", "goal": 30}
     t{"chest"} = {"text": "Finde eine Wunschkiste", "giver": "Wunschbrett", "key": "chests", "goal": 1}
+    t{"harvest"} = {"text": "Bring Marta 3 Sachen aus Deinem Garten", "giver": "Marta", "key": "", "goal": 3, "bring": ["carrot", "turnip", "cabbage", "tomato", "pumpkin", "golden_pumpkin"]}
     RETURN t
 ENDFUNC
 
@@ -65,6 +67,7 @@ FUNC RuleAchievements()
     a = APPEND(a, {"id": "flowers50", "name": "50 Blumen gepfl{u}ckt", "title": "Blumenhand", "key": "flowers", "goal": 50})
     a = APPEND(a, {"id": "quests10", "name": "10 Aufgaben erledigt", "title": "Flei{s}ig", "key": "quests", "goal": 10})
     a = APPEND(a, {"id": "golden", "name": "Eine goldene Kiste gefunden", "title": "Goldgl{u}ck", "key": "golden", "goal": 1})
+    a = APPEND(a, {"id": "harvest20", "name": "20 Ernten eingebracht", "title": "Gr{u}ner Daumen", "key": "harvests", "goal": 20})
     a = APPEND(a, {"id": "streak7", "name": "7 Tage hintereinander im Dorf", "title": "Treu", "key": "streak_best", "goal": 7})
     RETURN a
 ENDFUNC
@@ -102,10 +105,11 @@ ENDFUNC
 FUNC RuleQuestPickDay(w, name$, prof, today$)
     DIM has_sand = INDEXOF(w{"map"}{"tiles"}, 9) >= 0
     DIM animals = RuleAnimalCount(w)
+    DIM garden = LEN(RuleGardenField(w)) = 4
     DIM kinds = []
     DIM marks = []
     FOR EACH kind$ IN MAP.KEYS(RuleQuestKinds())
-        IF (kind$ <> "beach" ORELSE has_sand) ANDALSO (kind$ <> "pets" ORELSE animals > 0) THEN
+        IF (kind$ <> "beach" ORELSE has_sand) ANDALSO (kind$ <> "pets" ORELSE animals > 0) ANDALSO (kind$ <> "harvest" ORELSE garden) THEN
             kinds = APPEND(kinds, kind$)
             marks = APPEND(marks, CODEC.CRC32(name$ + "|" + today$ + "|" + kind$))
         ENDIF
@@ -147,7 +151,13 @@ ENDSUB
 ' How far a task is.
 FUNC RuleQuestHave(prof, task)
     DIM spec = RuleQuestKinds(){task{"kind"}}
-    IF spec{"key"} = "" THEN RETURN MIN([task{"goal"}, RuleItemCount(prof, "flower")])
+    IF spec{"key"} = "" THEN
+        DIM held = 0
+        FOR EACH id$ IN spec{"bring"}
+            held = held + RuleItemCount(prof, id$)
+        NEXT
+        RETURN MIN([task{"goal"}, held])
+    ENDIF
     RETURN CLAMP(RuleCountOf(prof, spec{"key"}) - task{"base"}, 0, task{"goal"})
 ENDFUNC
 
@@ -173,17 +183,24 @@ SUB RuleQuestDone(w, p, prof, task)
     ENDIF
 ENDSUB
 
-' Done tasks are paid; the flowers only beside Marta.
+' Done tasks are paid; what is brought only beside Marta.
 SUB RuleQuestCheck(w, p, prof)
     FOR EACH task IN prof{"quests"}{"list"} ?? []
         IF NOT task{"done"} ANDALSO RuleQuestHave(prof, task) >= task{"goal"} THEN
-            IF task{"kind"} <> "flowers" THEN
+            DIM spec = RuleQuestKinds(){task{"kind"}}
+            IF spec{"key"} <> "" THEN
                 RuleQuestDone(w, p, prof, task)
             ELSEIF MAP.EXISTS(w{"npcs"}, "marta") THEN
                 DIM marta = w{"npcs"}{"marta"}
                 IF MAX([ABS(marta{"x"} - p{"x"}), ABS(marta{"y"} - p{"y"})]) <= 2 THEN
-                    DIM given = RuleItemAdd(prof, "flower", -task{"goal"})
-                    RuleTellPlayer(w, "marta", p{"name"}, RuleDe$("Oh, wie sch{o}n! Die stelle ich in die Taverne. Danke Dir!"))
+                    DIM left = task{"goal"}
+                    FOR EACH id$ IN spec{"bring"}
+                        DIM part = MIN([left, RuleItemCount(prof, id$)])
+                        IF part > 0 ANDALSO RuleItemAdd(prof, id$, -part) THEN left = left - part
+                    NEXT
+                    DIM thanks$ = "Oh, wie sch{o}n! Die stelle ich in die Taverne. Danke Dir!"
+                    IF task{"kind"} = "harvest" THEN thanks$ = "Frisch aus dem Garten! Daraus koche ich heute die Suppe. Danke Dir!"
+                    RuleTellPlayer(w, "marta", p{"name"}, RuleDe$(thanks$))
                     RuleQuestDone(w, p, prof, task)
                 ENDIF
             ENDIF
@@ -249,7 +266,9 @@ SUB RuleChestOpen(w, who$, kind$)
         prof{"money"} = prof{"money"} + 60
         RulePotionAdd(w, prof, 40)
         DIM bottle = RuleItemAdd(prof, "bottle", 1)
-        KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$("Eine goldene Wunschkiste! +60 Geld, +40 Wunschtrank und ein Fl{a}schchen"), "got": "chest"})
+        DIM found$ = "Eine goldene Wunschkiste! +60 Geld, +40 Wunschtrank und ein Fl{a}schchen"
+        IF LEN(RuleGardenField(w)) = 4 ANDALSO RND() < RuleConf(w, "garden.golden_seed", 0.5) ANDALSO RuleItemAdd(prof, "seed_golden", 1) THEN found$ = found$ + ", dazu goldene Saat f{u}r den Garten"
+        KEmit(w, {"type": "purse", "to": who$, "text": RuleDe$(found$), "got": "chest"})
         RETURN
     ENDIF
     DIM amount = 10 + INT(RND() * 16)

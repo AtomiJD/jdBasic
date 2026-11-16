@@ -491,6 +491,7 @@ FUNC RuleBuildTaken(w)
             taken{STR$(sx) + "," + STR$(sy)} = TRUE
         NEXT sx
     NEXT sy
+    RuleGardenTaken(w, taken)
     RETURN taken
 ENDFUNC
 

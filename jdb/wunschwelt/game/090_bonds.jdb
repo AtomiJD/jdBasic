@@ -70,7 +70,7 @@ ENDFUNC
 
 ' The things one can give, as they are named in a sentence and as a gift is spoken of.
 FUNC RuleBondGiftWords()
-    RETURN [["blume", "flower", "eine Blume"], ["fisch", "fish", "einen Fisch"], ["flaesch", "bottle", "ein Fl{a}schchen Wunschtrank"], ["trank", "bottle", "ein Fl{a}schchen Wunschtrank"], ["futter", "food", "Tierfutter"], ["saat", "seeds", "Saatgut"], ["samen", "seeds", "Saatgut"], ["laterne", "lantern", "eine Laterne"]]
+    RETURN [["blume", "flower", "eine Blume"], ["fisch", "fish", "einen Fisch"], ["flaesch", "bottle", "ein Fl{a}schchen Wunschtrank"], ["trank", "bottle", "ein Fl{a}schchen Wunschtrank"], ["futter", "food", "Tierfutter"], ["saat", "seeds", "Saatgut"], ["samen", "seeds", "Saatgut"], ["laterne", "lantern", "eine Laterne"], ["goldkuerbis", "golden_pumpkin", "einen Goldk{u}rbis"], ["kuerbis", "pumpkin", "einen K{u}rbis"], ["moehre", "carrot", "eine M{o}hre"], ["karotte", "carrot", "eine M{o}hre"], ["tomate", "tomato", "eine Tomate"], ["kohl", "cabbage", "einen Kohlkopf"], ["ruebe", "turnip", "eine R{u}be"]]
 ENDFUNC
 
 FUNC RuleBondGiftName$(id$)

@@ -505,6 +505,31 @@ of every game file, which no other suite runs.
 `test_album.jdb`: 17 checks. `test_shine.jdb`: 16 checks. `test_finds.jdb`:
 10 checks.
 
+## The garden (`game/099_garden.jdb`)
+
+- A field of `garden.w` x `garden.h` (10 x 6) fields of grass near the
+  tavern door, chosen once; where trees leave no room within `garden.near`
+  (8) fields it is smaller, two fields less at a time. The builder builds
+  nothing on it. `w{"garden"}` holds `field`, `plots`, `beds` and `v`.
+- Plots of 2 x 2; hoeing a field of a free plot claims it, up to
+  `garden.plots` (2) per player. E on the field one stands on hoes grass,
+  waters a dry bed or harvests a ripe one (the owner only; anyone may
+  water, and the owner hears of it). A seed bag from the bag sows on one's
+  own empty bed.
+- Five crops (carrot, turnip, cabbage, tomato, pumpkin) grow only while the
+  bed is wet: a watering keeps it wet `garden.wet_min` (10) minutes, a crop
+  needs 20 to 40 minutes of wet time, in four stages. `garden.speed`
+  makes the garden's clock run faster. A golden chest holds golden seeds
+  with `garden.golden_seed` (0.5); they grow a golden pumpkin in 60.
+- Fenja sells the seeds and buys the harvest; Marta has a task "harvest"
+  (bring three things from the garden); a carrot fed to a rabbit or a
+  frog raises affection three times as much as petting; "Gruener Daumen"
+  for 20 harvests. Keeper calls: `garden`, `garden_free` ({"player"}).
+- The art is cut from a sheet by `tools/garden.jdb` into
+  `assets/garden.rgba` and `.parts`.
+
+`test_garden.jdb`: 21 checks.
+
 ## What survives a restart
 
 With `WW_STATE_DIR` set (on the box: `/var/lib/wunschwelt`, readable by the

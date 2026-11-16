@@ -307,6 +307,7 @@ SUB RuleTick(w, now)
     RuleBondTick(w, now)
     RuleCardTick(w, now)
     RuleAlbumTick(w, now)
+    RuleGardenTick(w, now)
 ENDSUB
 
 ' The wishes' turn in a tick; game/010_wishes.jdb gives it a body.
@@ -434,6 +435,41 @@ ENDFUNC
 
 SUB RuleCraftRefund(w, wish)
 ENDSUB
+
+' The garden; game/099_garden.jdb gives it a body.
+SUB RuleGardenItems(table)
+ENDSUB
+
+FUNC RuleGardenGoods(goods)
+    RETURN goods
+ENDFUNC
+
+SUB RuleGardenBuysBack(prices)
+ENDSUB
+
+FUNC RuleFeedUp(w, pet$, id$)
+    RETURN 12
+ENDFUNC
+
+SUB RuleGardenTaken(w, taken)
+ENDSUB
+
+FUNC RuleGardenField(w)
+    RETURN []
+ENDFUNC
+
+SUB RuleGardenSow(w, p, id$)
+ENDSUB
+
+SUB RuleGardenSync(w, p, msg, answer)
+ENDSUB
+
+SUB RuleGardenTick(w, now)
+ENDSUB
+
+FUNC RuleGardenAdmin(w, name$, args)
+    RETURN {"ok": FALSE, "error": "no garden"}
+ENDFUNC
 
 ' The album of the animal sorts; game/095_album.jdb gives them a body.
 SUB RuleAlbumMeet(w, p, id$)
@@ -1154,6 +1190,19 @@ SUB ClientFloor(c, cam_x, cam_y)
 ENDSUB
 
 SUB ClientHud(c)
+ENDSUB
+
+' The garden's part of a sync, of the floor and of the screen; game/099_garden.jdb.
+SUB ClientGardenAsk(c, msg)
+ENDSUB
+
+SUB ClientGardenExtra(c, r)
+ENDSUB
+
+SUB ClientGardenFloor(c, cam_x, cam_y)
+ENDSUB
+
+SUB ClientGardenHud(c)
 ENDSUB
 
 ' The title a player has earned, under the figure; game/070_quests.jdb gives it a body.

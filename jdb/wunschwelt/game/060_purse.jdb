@@ -103,7 +103,9 @@ ENDSUB
 
 ' The things of the bag: name, what it is, and what using it does.
 FUNC RuleItemTable()
-    RETURN {"flower": {"name": "Blume", "desc": "Von der Wiese gepfl{u}ckt.", "use": ""}, "bottle": {"name": "Wunschtrank-Fl{a}schchen", "desc": "Trinken gibt Wunschtrank.", "use": "potion"}, "fish": {"name": "Fisch", "desc": "Frisch gefangen.", "use": ""}, "food": {"name": "Tierfutter", "desc": "Neben einem Tier benutzen: es mag Dich mehr.", "use": "food"}, "seeds": {"name": "Saatgut", "desc": "F{u}r einen Garten, den es bald gibt.", "use": ""}, "lantern": {"name": "Laterne", "desc": "Benutzen stellt sie vor Dir auf.", "use": "lantern"}}
+    DIM table = {"flower": {"name": "Blume", "desc": "Von der Wiese gepfl{u}ckt.", "use": ""}, "bottle": {"name": "Wunschtrank-Fl{a}schchen", "desc": "Trinken gibt Wunschtrank.", "use": "potion"}, "fish": {"name": "Fisch", "desc": "Frisch gefangen.", "use": ""}, "food": {"name": "Tierfutter", "desc": "Neben einem Tier benutzen: es mag Dich mehr.", "use": "food"}, "seeds": {"name": "Saatgut", "desc": "F{u}r einen Garten, den es bald gibt.", "use": ""}, "lantern": {"name": "Laterne", "desc": "Benutzen stellt sie vor Dir auf.", "use": "lantern"}}
+    RuleGardenItems(table)
+    RETURN table
 ENDFUNC
 
 FUNC RuleItemCount(prof, id$)
@@ -225,6 +227,10 @@ SUB RuleItemUse(w, p, id$)
     IF NOT ISMAP(item) THEN RETURN
     IF item{"use"} = "" THEN
         KEmit(w, {"type": "purse", "to": p{"name"}, "text": RuleDe$(item{"name"} + ": das hebst Du besser auf.")})
+        RETURN
+    ENDIF
+    IF item{"use"} = "sow" THEN
+        RuleGardenSow(w, p, id$)
         RETURN
     ENDIF
     IF item{"use"} <> "potion" THEN
@@ -417,6 +423,7 @@ ENDSUB
 ' The finds on the ground, bobbing and glinting so they are seen.
 SUB ClientFloor(c, cam_x, cam_y)
     c{"cam"} = [cam_x, cam_y]
+    ClientGardenFloor(c, cam_x, cam_y)
     DIM t = TICK()
     FOR EACH f IN c{"finds"} ?? []
         DIM sx = f[2] * 32 - cam_x + 16
@@ -476,6 +483,7 @@ SUB ClientHud(c)
         NEXT k
     ENDIF
     ClientQuestHud(c)
+    ClientGardenHud(c)
     IF c{"bag"} ?? FALSE THEN ClientBag(c, purse)
     ClientShopHud(c)
 ENDSUB

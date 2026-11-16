@@ -96,7 +96,7 @@ FUNC TileAt(x AS INTEGER, y AS INTEGER) AS INTEGER
 ENDFUNC
 
 Check("a player gets three tasks for the day", MAP.EXISTS(r, "quests") ANDALSO LEN(r{"quests"}{"list"}) = 3)
-Check("and sees the achievements, none earned", LEN(r{"quests"}{"ach"}) = 8 ANDALSO r{"quests"}{"title"} = "")
+Check("and sees the achievements, none earned", LEN(r{"quests"}{"ach"}) = 9 ANDALSO r{"quests"}{"title"} = "")
 Check("the first day starts a run of one", r{"quests"}{"streak"} = 1)
 Check("three wish chests lie in the world", LEN(FILTER(LAMBDA f -> f[1] = "chest" ORELSE f[1] = "golden", r{"finds"})) = 3)
 

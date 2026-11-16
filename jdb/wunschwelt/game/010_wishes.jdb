@@ -296,6 +296,7 @@ ENDSUB
 ' The board travels with a sync when it changed: the newest wishes as rows [id, who, text, status].
 SUB RuleExtra(w, p, msg, answer)
     RulePlotExtra(w, msg, answer)
+    RuleGardenSync(w, p, msg, answer)
     RuleAnimalSync(w, p, msg, answer)
     RulePurseSync(w, p, msg, answer)
     RuleQuestSync(w, p, msg, answer)
@@ -326,6 +327,7 @@ FUNC RuleAdmin(w, name$, args)
     IF name$ = "config" ORELSE name$ = "config_set" THEN RETURN RuleConfAdmin(w, name$, args)
     IF name$ = "basket" THEN RETURN RuleCardAdmin(w, name$, args)
     IF name$ = "album" ORELSE name$ = "album_set" THEN RETURN RuleAlbumAdmin(w, name$, args)
+    IF name$ = "garden" ORELSE name$ = "garden_free" THEN RETURN RuleGardenAdmin(w, name$, args)
     IF name$ = "wishes" THEN RETURN {"ok": TRUE, "wishes": w{"wishes"}}
     IF name$ = "wish_status" THEN
         DIM status$ = "" + (args{"status"} ?? "")
@@ -349,6 +351,7 @@ SUB ClientAsk(c, msg)
     ClientBondAsk(c, msg)
     ClientAlbumAsk(c, msg)
     ClientLivingAsk(c, msg)
+    ClientGardenAsk(c, msg)
 ENDSUB
 
 SUB ClientExtra(c, r)
@@ -359,6 +362,7 @@ SUB ClientExtra(c, r)
     ClientBondExtra(c, r)
     ClientAlbumExtra(c, r)
     ClientLivingExtra(c, r)
+    ClientGardenExtra(c, r)
     IF MAP.EXISTS(r, "plot") THEN
         c{"plot"} = r{"plot"}
         c{"plotv"} = r{"plotv"}
