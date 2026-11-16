@@ -1128,7 +1128,7 @@ ENDFUNC
 ' step_ms between two steps, pause_ms between two wishes; skip=clear lets
 ' the builder try the wishes again it gave up on), build_ok (a waiting plan
 ' is built), things (what the builder built), thing_remove (one of them by its
-' id goes).
+' id goes), sign_put (the house sign of a player beside the door at x,y).
 FUNC RuleBuildAdmin(w, name$, args)
     DIM b = RuleBuilder(w)
     IF name$ = "things" THEN
@@ -1145,6 +1145,21 @@ FUNC RuleBuildAdmin(w, name$, args)
         DIM was$ = w{"npcs"}{gone$}{"name"}
         MAP.DELETE(w{"npcs"}, gone$)
         RETURN {"ok": TRUE, "removed": gone$, "name": was$}
+    ENDIF
+    IF name$ = "sign_put" THEN
+        DIM owner$ = "" + (args{"player"} ?? "")
+        IF owner$ = "" ORELSE NOT MAP.EXISTS(w{"profiles"} ?? {}, owner$) THEN RETURN {"ok": FALSE, "error": "no such player"}
+        DIM door_x = INT(args{"x"} ?? -1)
+        DIM door_y = INT(args{"y"} ?? -1)
+        IF RuleTileAt(w, door_x, door_y) <> 7 THEN RETURN {"ok": FALSE, "error": "x,y is no house door"}
+        FOR EACH sign_id$ IN MAP.KEYS(w{"npcs"})
+            IF (w{"npcs"}{sign_id$}{"name"} ?? "") = "Haus von " + owner$ THEN RETURN {"ok": FALSE, "error": "that player has a sign already", "id": sign_id$}
+        NEXT
+        DIM sign_job = {"who": owner$, "house": [door_x, door_y + 1]}
+        DIM sign_st = {"do": "thing", "what": "sign", "name": "Haus von " + owner$, "where": "house"}
+        IF NOT RuleBuildFolk(w, b, sign_job, sign_st) THEN RETURN {"ok": FALSE, "error": "no free field beside the door"}
+        DIM placed$ = "b_sign_" + STR$(b{"n"})
+        RETURN {"ok": TRUE, "id": placed$, "x": w{"npcs"}{placed$}{"x"}, "y": w{"npcs"}{placed$}{"y"}}
     ENDIF
     IF name$ = "builder_set" THEN
         DIM mode$ = "" + (args{"mode"} ?? b{"mode"})

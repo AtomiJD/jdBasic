@@ -189,11 +189,25 @@ Check("a newcomer arrives where the village moved", ben{"x"} >= 27 ANDALSO ben{"
 DIM mw = w2{"map"}{"w"}
 DIM tiles = w2{"map"}{"tiles"}
 DIM door_ok = FALSE
+DIM door_at AS INTEGER = -1
 DIM at AS INTEGER
 FOR at = 0 TO LEN(tiles) - 1
     IF tiles[at] = 7 ANDALSO at MOD mw < 12 ANDALSO tiles[at + mw] = 2 THEN door_ok = TRUE
+    IF door_ok ANDALSO door_at < 0 THEN door_at = at
 NEXT at
 Check("a way leads from its door", door_ok)
+
+' the keeper puts up a sign at a house built without one
+DIM sign_again = Admin("sign_put", {"player": "Anna", "x": door_at MOD mw, "y": door_at \ mw})
+Check("a player with a sign gets no second one", NOT sign_again{"ok"})
+Check("a sign goes only beside a door", NOT Admin("sign_put", {"player": "Ben", "x": 0, "y": 0}){"ok"})
+DIM ben_sign = Admin("sign_put", {"player": "Ben", "x": door_at MOD mw, "y": door_at \ mw})
+DIM ben_signs AS INTEGER = 0
+FOR EACH s IN Folk(World(), "b_sign_")
+    IF s[1] = "Haus von Ben" THEN ben_signs = ben_signs + 1
+NEXT
+Check("the keeper puts up Ben's sign beside the door", ben_sign{"ok"} ANDALSO ben_signs = 1 ANDALSO ABS(ben_sign{"x"} - door_at MOD mw) <= 3 ANDALSO ABS(ben_sign{"y"} - door_at \ mw) <= 3)
+DIM sign_gone = Admin("thing_remove", {"id": ben_sign{"id"}})
 
 ' a bridge over the pond, walked on
 wish = WishAndWait("Ich brauche eine Bruecke", "Eine Bruecke ueber den Teich")
