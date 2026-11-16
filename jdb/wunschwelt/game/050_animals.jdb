@@ -406,8 +406,8 @@ SUB RuleAnimalSync(w, p, msg, answer)
             w{"npcs"}{id$}{"petted_by"} = p{"name"}
             IF now - (p{"petted"}{id$} ?? -99999) >= 20000 THEN
                 p{"petted"}{id$} = now
-                DIM v = RuleFondAdd(w, p, id$, 8)
-                up = 8
+                up = 8 * RulePenPetFactor(w, p)
+                DIM v = RuleFondAdd(w, p, id$, up)
             ENDIF
             KEmit(w, {"type": "pet", "npc": id$, "who": p{"name"}, "up": up})
         ENDIF

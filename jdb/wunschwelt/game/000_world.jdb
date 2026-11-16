@@ -48,7 +48,7 @@ FUNC RuleBlocked(w, x, y)
     DIM m = w{"map"}
     IF x < 0 ORELSE y < 0 ORELSE x >= m{"w"} ORELSE y >= m{"h"} THEN RETURN TRUE
     DIM id = m{"tiles"}[y * m{"w"} + x]
-    IF id = 3 ORELSE id = 4 ORELSE id = 5 ORELSE id = 10 ORELSE id = 11 ORELSE id = 12 THEN RETURN TRUE
+    IF id = 3 ORELSE id = 4 ORELSE id = 5 ORELSE id = 10 ORELSE id = 11 ORELSE id = 12 ORELSE id = 14 THEN RETURN TRUE
     DIM npcs = w{"npcs"}
     FOR EACH npc_id$ IN MAP.KEYS(npcs)
         IF npcs{npc_id$}{"x"} = x ANDALSO npcs{npc_id$}{"y"} = y THEN RETURN TRUE
@@ -308,6 +308,7 @@ SUB RuleTick(w, now)
     RuleCardTick(w, now)
     RuleAlbumTick(w, now)
     RuleGardenTick(w, now)
+    RulePenTick(w, now)
 ENDSUB
 
 ' The wishes' turn in a tick; game/010_wishes.jdb gives it a body.
@@ -469,6 +470,25 @@ ENDSUB
 
 FUNC RuleGardenAdmin(w, name$, args)
     RETURN {"ok": FALSE, "error": "no garden"}
+ENDFUNC
+
+' Fences, enclosures and the petting zoo; game/099_pens.jdb gives them a body.
+FUNC RulePenBuild(w, job, st)
+    RETURN FALSE
+ENDFUNC
+
+SUB RulePenTaken(w, taken)
+ENDSUB
+
+FUNC RulePenPetFactor(w, p)
+    RETURN 1
+ENDFUNC
+
+SUB RulePenTick(w, now)
+ENDSUB
+
+FUNC RulePenAdmin(w, name$, args)
+    RETURN {"ok": FALSE, "error": "no pens"}
 ENDFUNC
 
 ' The album of the animal sorts; game/095_album.jdb gives them a body.
@@ -661,6 +681,7 @@ SUB ClientLayMap(c, m)
     NEXT y
     DIM p = c{"ter_params"}
     TerrainBuild(c{"ter_img"}, lv, mw, mh, LEN(p{"levels"}), p{"variants"})
+    ClientPenLay(c, m)
     c{"stand"} = [sx, sy, scell]
     c{"marks"} = [gx, gy, gcell]
 
@@ -1203,6 +1224,13 @@ SUB ClientGardenFloor(c, cam_x, cam_y)
 ENDSUB
 
 SUB ClientGardenHud(c)
+ENDSUB
+
+' The fences of the map; game/099_pens.jdb.
+SUB ClientPenLay(c, m)
+ENDSUB
+
+SUB ClientPenFloor(c, cam_x, cam_y)
 ENDSUB
 
 ' The title a player has earned, under the figure; game/070_quests.jdb gives it a body.

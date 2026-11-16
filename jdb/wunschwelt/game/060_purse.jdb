@@ -424,6 +424,7 @@ ENDSUB
 SUB ClientFloor(c, cam_x, cam_y)
     c{"cam"} = [cam_x, cam_y]
     ClientGardenFloor(c, cam_x, cam_y)
+    ClientPenFloor(c, cam_x, cam_y)
     DIM t = TICK()
     FOR EACH f IN c{"finds"} ?? []
         DIM sx = f[2] * 32 - cam_x + 16

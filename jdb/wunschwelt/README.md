@@ -530,6 +530,30 @@ of every game file, which no other suite runs.
 
 `test_garden.jdb`: 21 checks.
 
+## Fences and the petting zoo (`game/099_pens.jdb`)
+
+- The builder's step `pen` (`where`, `size`, `zoo`): `where` garden lays a
+  fence on the ring around the garden with a gate in the top row; any other
+  place gets an enclosure of grass (8 x 6, smaller where there is no room)
+  a field away from houses and other fences, with a gate on the first side
+  that opens to free ground. A wish of a fence, a Gatter, a Gehege, a
+  Koppel or a petting zoo becomes such a step, also without the model.
+- The fence lies in the map as tile 14 (blocked), the gate as tile 15 (open
+  ground); a field of road or water on the ring stays open. Roads go around
+  fences, and the builder builds nothing inside an enclosure.
+  `w{"pens"}` holds the pens.
+- A petting zoo has up to `pens.guests` (4) guests: every few seconds, with
+  `pens.chance` (0.3), an animal within `pens.reach` (25) fields that
+  follows nobody hops in and strolls there for `pens.visit_ms` (4 min),
+  then steps out by the gate and goes home; it is not asked again for as
+  long. A guest that starts to follow leaves at once. Petting inside a
+  petting zoo counts double.
+- Keeper calls: `pens`, `pen_remove` ({"id"}: fence and gate go back to
+  grass, the guests go home). The client draws the fence with the pieces
+  of the garden sheet.
+
+`test_pens.jdb`: 19 checks.
+
 ## What survives a restart
 
 With `WW_STATE_DIR` set (on the box: `/var/lib/wunschwelt`, readable by the

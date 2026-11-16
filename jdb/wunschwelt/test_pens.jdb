@@ -1,0 +1,301 @@
+' Test of fences and the petting zoo, on a server without a model: the
+' builder plans by the words of the wish. A fence around the garden lies on
+' the ring around it with a gate in the top row; the fence blocks, the gate
+' does not. A petting zoo is an enclosure with a gate; animals of the village
+' visit it and go home again, petting inside counts double, a player inside
+' walks out by the gate, and the keeper can take a pen away.
+'
+'   jdBasic jdb/wunschwelt/test_pens.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8320 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_pens_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "240"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
+SLEEP 1500
+DIM free_wishes = Admin("economy", {"wish": 0, "big": 0})
+DIM pace = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM r = Post("/sync", {"token": token$, "mapv": 1})
+DIM since AS INTEGER = r{"seq"}
+DIM pets = []
+
+' A sync that keeps Anna in the world; the pet events for her are kept.
+FUNC Sync(extra)
+    DIM msg = {"token": token$, "mapv": 1, "since": since}
+    FOR EACH field$ IN MAP.KEYS(extra)
+        msg{field$} = extra{field$}
+    NEXT
+    DIM t = Post("/sync", msg)
+    since = t{"seq"}
+    FOR EACH ev IN t{"events"}
+        IF ev{"type"} = "pet" ANDALSO ev{"who"} = "Anna" THEN pets = APPEND(pets, ev)
+    NEXT
+    RETURN t
+ENDFUNC
+SUB Wait(ms AS INTEGER)
+    DIM t0 = TICK()
+    DO WHILE TICK() - t0 < ms
+        DIM t = Sync({})
+        SLEEP 200
+    LOOP
+ENDSUB
+FUNC World()
+    RETURN Post("/sync", {"token": token$, "mapv": -1, "since": since})
+ENDFUNC
+FUNC TileAt(m, x, y)
+    RETURN m{"tiles"}[y * m{"w"} + x]
+ENDFUNC
+SUB Put(x, y)
+    DIM moved = Admin("player_put", {"player": "Anna", "x": x, "y": y})
+ENDSUB
+FUNC Marta(answer)
+    FOR EACH row IN answer{"npcs"}
+        IF row[0] = "marta" THEN RETURN row
+    NEXT
+    RETURN ["", "", 0, 0]
+ENDFUNC
+' Says a wish beside Marta and waits until the board says it is done.
+FUNC WishDone(said$ AS STRING)
+    DIM m = Marta(World())
+    Put(m[2], m[3] + 1)
+    SLEEP 600
+    DIM t = Sync({"say": said$})
+    DIM k AS INTEGER
+    FOR k = 1 TO 60
+        Wait(300)
+        FOR EACH wish IN Admin("wishes", {}){"wishes"}
+            IF wish{"text"} = said$ ANDALSO wish{"status"} = "done" THEN RETURN TRUE
+        NEXT
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+FUNC PenOf(zoo AS INTEGER)
+    FOR EACH pen IN Admin("pens", {}){"pens"}
+        IF pen{"zoo"} = zoo THEN RETURN pen
+    NEXT
+    RETURN NONE
+ENDFUNC
+FUNC Inside(pen, x, y)
+    RETURN x > pen{"x"} ANDALSO y > pen{"y"} ANDALSO x < pen{"x"} + pen{"w"} - 1 ANDALSO y < pen{"y"} + pen{"h"} - 1
+ENDFUNC
+
+' ---- a fence around the garden ----
+DIM f = Admin("garden", {}){"field"}
+Check("the garden has a place", LEN(f) = 4)
+Check("a fence around the garden is built", WishDone("Ich wuensche mir einen Zaun um den Garten"))
+DIM fence = PenOf(FALSE)
+DIM m = World(){"map"}
+Check("it stands on the ring around the garden, the gate in the top row", ISMAP(fence) ANDALSO fence{"garden"} ANDALSO fence{"x"} = f[0] - 1 ANDALSO fence{"y"} = f[1] - 1 ANDALSO TileAt(m, fence{"gate"}[0], fence{"gate"}[1]) = 15 ANDALSO fence{"gate"}[1] = f[1] - 1)
+DIM fence_n = 0
+DIM beds_kept = TRUE
+DIM x = 0
+DIM y = 0
+FOR y = f[1] - 1 TO f[1] + f[3]
+    FOR x = f[0] - 1 TO f[0] + f[2]
+        IF TileAt(m, x, y) = 14 THEN fence_n = fence_n + 1
+        IF x >= f[0] ANDALSO y >= f[1] ANDALSO x < f[0] + f[2] ANDALSO y < f[1] + f[3] ANDALSO TileAt(m, x, y) = 14 THEN beds_kept = FALSE
+    NEXT x
+NEXT y
+Check("fence fields around, none on the beds", fence_n >= f[2] ANDALSO beds_kept)
+DIM no_flowers = TRUE
+FOR y = f[1] TO f[1] + f[3] - 1
+    FOR x = f[0] TO f[0] + f[2] - 1
+        IF TileAt(m, x, y) <> 1 ANDALSO TileAt(m, x, y) <> 8 THEN no_flowers = FALSE
+    NEXT x
+NEXT y
+Check("a fence for the garden plants no flower field instead", no_flowers)
+
+' walking: the fence blocks, the gate lets through
+DIM gx = fence{"gate"}[0]
+DIM gy = fence{"gate"}[1]
+DIM side_x = -1
+FOR EACH dx IN [-1, 1, -2, 2]
+    IF side_x < 0 ANDALSO TileAt(m, gx + dx, gy) = 14 THEN side_x = gx + dx
+NEXT
+Put(side_x, gy - 1)
+SLEEP 300
+DIM t = Sync({"dy": 1})
+SLEEP 300
+t = Sync({})
+Check("the fence blocks", t{"y"} = gy - 1)
+Put(gx, gy - 1)
+SLEEP 300
+t = Sync({"dy": 1})
+SLEEP 300
+t = Sync({})
+Check("the gate lets through", t{"y"} = gy)
+SLEEP 300
+t = Sync({"dy": 1})
+SLEEP 300
+t = Sync({})
+Check("into the garden", t{"y"} = gy + 1)
+
+' ---- a petting zoo with guests ----
+Check("animals come", WishDone("Ich wuensche mir eine Katze, einen Hund und ein Schaf"))
+DIM visits = Admin("config_set", {"key": "pens.chance", "v": 1})
+visits = Admin("config_set", {"key": "pens.visit_ms", "v": 9000})
+visits = Admin("config_set", {"key": "pens.guests", "v": 1})
+Check("a petting zoo is built", WishDone("Ich wuensche mir einen Streichelzoo"))
+DIM zoo = PenOf(TRUE)
+IF NOT ISMAP(zoo) THEN
+    DIM no_zoo = OS.KILL(server_pid)
+    PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+    END 1
+ENDIF
+m = World(){"map"}
+' the way out of the gate
+DIM out_x = 0
+DIM out_y = 0
+IF zoo{"gate"}[1] = zoo{"y"} + zoo{"h"} - 1 THEN
+    out_y = 1
+ELSEIF zoo{"gate"}[1] = zoo{"y"} THEN
+    out_y = -1
+ELSEIF zoo{"gate"}[0] = zoo{"x"} THEN
+    out_x = -1
+ELSE
+    out_x = 1
+ENDIF
+DIM ring_ok = TileAt(m, zoo{"gate"}[0], zoo{"gate"}[1]) = 15 ANDALSO NOT Inside(zoo, zoo{"gate"}[0], zoo{"gate"}[1])
+FOR y = zoo{"y"} TO zoo{"y"} + zoo{"h"} - 1
+    FOR x = zoo{"x"} TO zoo{"x"} + zoo{"w"} - 1
+        IF NOT Inside(zoo, x, y) ANDALSO NOT (x = zoo{"gate"}[0] ANDALSO y = zoo{"gate"}[1]) ANDALSO TileAt(m, x, y) <> 14 THEN ring_ok = FALSE
+    NEXT x
+NEXT y
+Check("a fence all around it with one gate", ring_ok)
+
+DIM guest$ AS STRING = ""
+DIM k AS INTEGER
+FOR k = 1 TO 30
+    Wait(300)
+    FOR EACH row IN World(){"npcs"}
+        IF STARTSWITH(row[0], "b_") ANDALSO Inside(zoo, row[2], row[3]) THEN guest$ = row[0]
+    NEXT
+    IF guest$ <> "" THEN EXITFOR
+NEXT k
+Check("an animal visits the petting zoo", guest$ <> "")
+
+' petting inside counts double, outside once
+DIM g = ["", "", 0, 0]
+FOR EACH row IN World(){"npcs"}
+    IF row[0] = guest$ THEN g = row
+NEXT
+Put(g[2], g[3])
+SLEEP 500
+t = Sync({"pet": TRUE})
+Wait(400)
+DIM inside_up = 0
+FOR EACH ev IN pets
+    IF ev{"npc"} = guest$ THEN inside_up = ev{"up"}
+NEXT
+Check("petting in the petting zoo counts double", inside_up = 16)
+DIM other = ["", "", 0, 0]
+FOR EACH row IN World(){"npcs"}
+    IF STARTSWITH(row[0], "b_") ANDALSO row[0] <> guest$ ANDALSO NOT Inside(zoo, row[2], row[3]) THEN other = row
+NEXT
+pets = []
+Put(other[2], other[3])
+SLEEP 500
+t = Sync({"pet": TRUE})
+Wait(400)
+DIM outside_up = -1
+FOR EACH ev IN pets
+    outside_up = ev{"up"}
+NEXT
+Check("outside it counts once", outside_up = 8)
+
+' a player inside walks out by the gate
+Put(zoo{"gate"}[0] - out_x, zoo{"gate"}[1] - out_y)
+SLEEP 300
+FOR k = 1 TO 2
+    t = Sync({"dx": out_x, "dy": out_y})
+    SLEEP 350
+NEXT k
+t = Sync({})
+Check("a player inside walks out by the gate", t{"x"} = zoo{"gate"}[0] + out_x ANDALSO t{"y"} = zoo{"gate"}[1] + out_y)
+
+' the guest goes home when its time is over
+DIM gone = FALSE
+FOR k = 1 TO 40
+    Wait(300)
+    DIM still = FALSE
+    FOR EACH row IN World(){"npcs"}
+        IF row[0] = guest$ ANDALSO Inside(zoo, row[2], row[3]) THEN still = TRUE
+    NEXT
+    IF NOT still THEN
+        gone = TRUE
+        EXITFOR
+    ENDIF
+NEXT k
+Check("the guest leaves the petting zoo again", gone)
+
+' a guest that starts to follow walks out with its player
+DIM friend = ["", "", 0, 0]
+FOR k = 1 TO 30
+    Wait(300)
+    FOR EACH row IN World(){"npcs"}
+        IF STARTSWITH(row[0], "b_") ANDALSO Inside(zoo, row[2], row[3]) THEN friend = row
+    NEXT
+    IF friend[0] <> "" THEN EXITFOR
+NEXT k
+DIM loved = Admin("fond", {"player": "Anna", "npc": friend[0], "v": 90})
+Put(zoo{"gate"}[0] - out_x, zoo{"gate"}[1] - out_y)
+SLEEP 600
+t = Sync({"say": "Komm mit, " + friend[1]})
+Wait(600)
+FOR k = 1 TO 3
+    t = Sync({"dx": out_x, "dy": out_y})
+    SLEEP 350
+NEXT k
+Wait(4500)
+DIM out_with = FALSE
+FOR EACH row IN World(){"npcs"}
+    IF row[0] = friend[0] ANDALSO NOT Inside(zoo, row[2], row[3]) THEN out_with = TRUE
+NEXT
+Check("a guest that follows walks out with its player", friend[0] <> "" ANDALSO out_with)
+
+' the keeper takes the zoo away
+visits = Admin("config_set", {"key": "pens.chance", "v": 0})
+DIM taken = Admin("pen_remove", {"id": zoo{"id"}})
+m = World(){"map"}
+DIM cleared = TRUE
+FOR y = zoo{"y"} TO zoo{"y"} + zoo{"h"} - 1
+    FOR x = zoo{"x"} TO zoo{"x"} + zoo{"w"} - 1
+        IF TileAt(m, x, y) = 14 ORELSE TileAt(m, x, y) = 15 THEN cleared = FALSE
+    NEXT x
+NEXT y
+Check("the keeper takes a pen away, its fence goes", taken{"ok"} ANDALSO cleared ANDALSO NOT ISMAP(PenOf(TRUE)))
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM stopped = OS.KILL(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

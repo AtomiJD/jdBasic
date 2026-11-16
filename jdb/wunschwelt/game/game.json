@@ -39,5 +39,11 @@
     "speed": 1,
     "golden_seed": 0.5,
     "near": 8
+  },
+  "pens": {
+    "guests": 4,
+    "reach": 25,
+    "chance": 0.3,
+    "visit_ms": 240000
   }
 }

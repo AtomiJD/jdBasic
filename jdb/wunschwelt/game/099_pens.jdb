@@ -1,0 +1,295 @@
+' Fences the builder sets: a fence around the garden, and an enclosure of
+' grass with a gate. An enclosure wished as a petting zoo has guests:
+' now and then an animal of the village that follows nobody hops in and
+' strolls there for a while, then goes home; petting inside a petting zoo
+' counts double. Nobody is locked in: the gate is open ground, a follower
+' leaves its visit, and a guest steps out by the gate.
+'
+' The fence lies in the map as tile 14 (blocked), the gate as tile 15 (open
+' ground). w{"pens"}: [{"id", "x", "y", "w", "h" (the outer block with the
+' fence), "gate": [x, y], "zoo", "garden", "who", "name"}]. A guest carries
+' npc{"visit"} = {"pen", "until", "home", "range"}, its own home kept.
+
+'@server
+
+' The outer block of an enclosure with its fence: [width, height].
+FUNC RulePenSize(size$)
+    DIM sizes = {"small": [6, 5], "medium": [8, 6], "large": [10, 7]}
+    RETURN sizes{size$} ?? sizes{"medium"}
+ENDFUNC
+
+FUNC RulePens(w)
+    IF NOT MAP.EXISTS(w, "pens") THEN w{"pens"} = []
+    RETURN w{"pens"}
+ENDFUNC
+
+' TRUE inside the fence of the pen, the fence itself not counted.
+FUNC RulePenInside(pen, x, y)
+    RETURN x > pen{"x"} ANDALSO y > pen{"y"} ANDALSO x < pen{"x"} + pen{"w"} - 1 ANDALSO y < pen{"y"} + pen{"h"} - 1
+ENDFUNC
+
+' Lays the fence of a block: tile 14 where there is grass or flowers, the
+' gate as tile 15; a field of road, water or anything else stays open.
+' The number of fence fields laid.
+FUNC RulePenFence(w, x0, y0, bw, bh, gate)
+    DIM m = w{"map"}
+    DIM mw = m{"w"}
+    DIM tiles = m{"tiles"} + 0
+    DIM laid = 0
+    DIM x = 0
+    DIM y = 0
+    FOR y = y0 TO y0 + bh - 1
+        FOR x = x0 TO x0 + bw - 1
+            IF x = x0 ORELSE y = y0 ORELSE x = x0 + bw - 1 ORELSE y = y0 + bh - 1 THEN
+                IF x >= 0 ANDALSO y >= 0 ANDALSO x < mw ANDALSO y < m{"h"} THEN
+                    DIM at = y * mw + x
+                    IF (tiles[at] = 1 ORELSE tiles[at] = 8) ANDALSO NOT RuleBlocked(w, x, y) THEN
+                        IF x = gate[0] ANDALSO y = gate[1] THEN
+                            tiles[at] = 15
+                        ELSE
+                            tiles[at] = 14
+                            laid = laid + 1
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+        NEXT x
+    NEXT y
+    RuleBuildSetMap(w, tiles)
+    RETURN laid
+ENDFUNC
+
+' The builder's step pen: where garden fences the garden, any other place
+' gets an enclosure; zoo makes it a petting zoo. TRUE when it was built.
+FUNC RulePenBuild(w, job, st)
+    DIM pens = RulePens(w)
+    DIM pen = {}
+    IF st{"where"} = "garden" THEN
+        FOR EACH old IN pens
+            IF old{"garden"} ?? FALSE THEN RETURN FALSE
+        NEXT
+        DIM f = RuleGardenField(w)
+        IF LEN(f) <> 4 THEN RETURN FALSE
+        pen = {"x": f[0] - 1, "y": f[1] - 1, "w": f[2] + 2, "h": f[3] + 2, "gate": [f[0] + f[2] \ 2, f[1] - 1], "zoo": FALSE, "garden": TRUE, "name": "Gartenzaun"}
+    ELSE
+        DIM target = RuleBuildTarget(w, job, st{"where"})
+        DIM zoo = st{"zoo"} ?? FALSE
+        ' the size wished, else smaller, a field away from houses and other
+        ' fences; the gate on the first side open to the outside
+        DIM sizes = [RulePenSize("" + (st{"size"} ?? "medium")), RulePenSize("small"), [5, 4]]
+        FOR EACH bs IN sizes
+            DIM spot = RuleBuildRect(w, target[0], target[1], bs[0], bs[1], [1, 8], [1, 2, 3, 4, 8, 9, 10, 11, 12, 13], 1)
+            IF LEN(spot) = 2 THEN
+                DIM x0 = spot[0]
+                DIM y0 = spot[1]
+                DIM mid_x = x0 + bs[0] \ 2
+                DIM mid_y = y0 + bs[1] \ 2
+                FOR EACH side IN [[mid_x, y0 + bs[1] - 1, 0, 1], [mid_x, y0, 0, -1], [x0, mid_y, -1, 0], [x0 + bs[0] - 1, mid_y, 1, 0]]
+                    IF NOT RuleBlocked(w, side[0] + side[2], side[1] + side[3]) THEN
+                        pen = {"x": x0, "y": y0, "w": bs[0], "h": bs[1], "gate": [side[0], side[1]], "zoo": zoo, "garden": FALSE, "name": IIF(zoo, "Streichelzoo", "Gehege")}
+                        EXITFOR
+                    ENDIF
+                NEXT
+            ENDIF
+            IF MAP.SIZE(pen) > 0 THEN EXITFOR
+        NEXT
+        IF MAP.SIZE(pen) = 0 THEN RETURN FALSE
+    ENDIF
+    IF RulePenFence(w, pen{"x"}, pen{"y"}, pen{"w"}, pen{"h"}, pen{"gate"}) = 0 THEN RETURN FALSE
+    w{"pen_seq"} = (w{"pen_seq"} ?? 0) + 1
+    pen{"id"} = "pen_" + STR$(w{"pen_seq"})
+    pen{"who"} = "" + (job{"who"} ?? "")
+    w{"pens"} = APPEND(pens, pen)
+    RETURN TRUE
+ENDFUNC
+
+' Fence and inside of every enclosure stay free of what the builder builds.
+SUB RulePenTaken(w, taken)
+    FOR EACH pen IN RulePens(w)
+        IF NOT (pen{"garden"} ?? FALSE) THEN
+            DIM x = 0
+            DIM y = 0
+            FOR y = pen{"y"} TO pen{"y"} + pen{"h"} - 1
+                FOR x = pen{"x"} TO pen{"x"} + pen{"w"} - 1
+                    taken{STR$(x) + "," + STR$(y)} = TRUE
+                NEXT x
+            NEXT y
+        ENDIF
+    NEXT
+ENDSUB
+
+' Petting counts double inside a petting zoo.
+FUNC RulePenPetFactor(w, p)
+    FOR EACH pen IN RulePens(w)
+        IF (pen{"zoo"} ?? FALSE) ANDALSO RulePenInside(pen, p{"x"}, p{"y"}) THEN RETURN 2
+    NEXT
+    RETURN 1
+ENDFUNC
+
+' A free field inside the pen, or [].
+FUNC RulePenFreeInside(w, pen)
+    DIM free = []
+    DIM x = 0
+    DIM y = 0
+    FOR y = pen{"y"} + 1 TO pen{"y"} + pen{"h"} - 2
+        FOR x = pen{"x"} + 1 TO pen{"x"} + pen{"w"} - 2
+            IF NOT RuleBlocked(w, x, y) THEN free = APPEND(free, [[x, y]])
+        NEXT x
+    NEXT y
+    IF LEN(free) = 0 THEN RETURN []
+    RETURN free[INT(RND() * LEN(free))]
+ENDFUNC
+
+' The step out of the gate: [dx, dy].
+FUNC RulePenOut(pen)
+    DIM gx = pen{"gate"}[0]
+    DIM gy = pen{"gate"}[1]
+    IF gy = pen{"y"} + pen{"h"} - 1 THEN RETURN [0, 1]
+    IF gy = pen{"y"} THEN RETURN [0, -1]
+    IF gx = pen{"x"} THEN RETURN [-1, 0]
+    RETURN [1, 0]
+ENDFUNC
+
+' A guest goes home: its own home back; one still inside steps out by the gate.
+SUB RulePenLeave(w, npc, pen)
+    DIM visit = npc{"visit"}
+    npc{"home"} = visit{"home"}
+    npc{"range"} = visit{"range"}
+    MAP.DELETE(npc, "visit")
+    npc{"visited_at"} = KNow()
+    IF NOT ISMAP(pen) ORELSE (npc{"follow"} ?? "") <> "" ORELSE NOT RulePenInside(pen, npc{"x"}, npc{"y"}) THEN RETURN
+    DIM gx = pen{"gate"}[0]
+    DIM gy = pen{"gate"}[1]
+    DIM out = RulePenOut(pen)
+    ' sideways of the way out, for a field taken in front of the gate
+    DIM ax = out[1]
+    DIM ay = out[0]
+    FOR EACH spot IN [[gx + out[0], gy + out[1]], [gx + out[0] + ax, gy + out[1] + ay], [gx + out[0] - ax, gy + out[1] - ay], [gx + 2 * out[0], gy + 2 * out[1]], [gx, gy]]
+        IF NOT RuleBlocked(w, spot[0], spot[1]) THEN
+            npc{"x"} = spot[0]
+            npc{"y"} = spot[1]
+            RETURN
+        ENDIF
+    NEXT
+ENDSUB
+
+FUNC RulePenById(w, id$)
+    FOR EACH pen IN RulePens(w)
+        IF pen{"id"} = id$ THEN RETURN pen
+    NEXT
+    RETURN NONE
+ENDFUNC
+
+' Every few seconds a petting zoo lets a guest leave whose time is over, or
+' who started to follow someone, and may invite a new one, up to
+' pens.guests, from the animals within pens.reach fields.
+SUB RulePenTick(w, now)
+    IF LEN(RulePens(w)) = 0 ORELSE now < (w{"pen_at"} ?? 0) THEN RETURN
+    w{"pen_at"} = now + 4000
+    DIM npcs = w{"npcs"}
+    DIM whats = RuleBuildWhats()
+    DIM guests = {}
+    FOR EACH id$ IN MAP.KEYS(npcs)
+        DIM npc = npcs{id$}
+        IF ISMAP(npc{"visit"} ?? 0) THEN
+            DIM at = RulePenById(w, npc{"visit"}{"pen"})
+            IF NOT ISMAP(at) ORELSE now >= npc{"visit"}{"until"} ORELSE (npc{"follow"} ?? "") <> "" THEN
+                RulePenLeave(w, npc, at)
+            ELSE
+                guests{at{"id"}} = (guests{at{"id"}} ?? 0) + 1
+            ENDIF
+        ENDIF
+    NEXT
+    DIM most = INT(RuleConf(w, "pens.guests", 4))
+    DIM reach = RuleConf(w, "pens.reach", 25)
+    FOR EACH pen IN RulePens(w)
+        IF (pen{"zoo"} ?? FALSE) ANDALSO (guests{pen{"id"}} ?? 0) < most ANDALSO RND() < RuleConf(w, "pens.chance", 0.3) THEN
+            DIM cx = pen{"x"} + pen{"w"} \ 2
+            DIM cy = pen{"y"} + pen{"h"} \ 2
+            DIM can = []
+            FOR EACH id$ IN MAP.KEYS(npcs)
+                DIM one = npcs{id$}
+                DIM kind_of = whats{"" + (one{"what"} ?? "")} ?? ["", FALSE]
+                IF STARTSWITH(id$, "b_") ANDALSO MAP.EXISTS(one, "home") ANDALSO kind_of[1] ANDALSO (one{"follow"} ?? "") = "" ANDALSO NOT MAP.EXISTS(one, "visit") ANDALSO now - (one{"visited_at"} ?? -99999999) >= RuleConf(w, "pens.visit_ms", 240000) ANDALSO NOT RulePenInside(pen, one{"x"}, one{"y"}) ANDALSO MAX([ABS(one{"x"} - cx), ABS(one{"y"} - cy)]) <= reach THEN can = APPEND(can, id$)
+            NEXT
+            DIM spot = RulePenFreeInside(w, pen)
+            IF LEN(can) > 0 ANDALSO LEN(spot) = 2 THEN
+                DIM guest = npcs{can[INT(RND() * LEN(can))]}
+                guest{"visit"} = {"pen": pen{"id"}, "until": now + RuleConf(w, "pens.visit_ms", 240000), "home": guest{"home"}, "range": guest{"range"} ?? 3}
+                guest{"home"} = [cx, cy]
+                guest{"range"} = MAX([pen{"w"} - 2, pen{"h"} - 2]) \ 2
+                guest{"x"} = spot[0]
+                guest{"y"} = spot[1]
+            ENDIF
+        ENDIF
+    NEXT
+ENDSUB
+
+' The keeper: pens (the list), pen_remove {"id"} (fence and gate go back to
+' grass, its guests go home).
+FUNC RulePenAdmin(w, name$, args)
+    IF name$ = "pens" THEN RETURN {"ok": TRUE, "pens": RulePens(w)}
+    DIM id$ = "" + (args{"id"} ?? "")
+    DIM pen = RulePenById(w, id$)
+    IF NOT ISMAP(pen) THEN RETURN {"ok": FALSE, "error": "no pen with that id"}
+    FOR EACH npc_id$ IN MAP.KEYS(w{"npcs"})
+        DIM npc = w{"npcs"}{npc_id$}
+        IF ISMAP(npc{"visit"} ?? 0) ANDALSO npc{"visit"}{"pen"} = id$ THEN RulePenLeave(w, npc, pen)
+    NEXT
+    DIM m = w{"map"}
+    DIM tiles = m{"tiles"} + 0
+    DIM x = 0
+    DIM y = 0
+    FOR y = pen{"y"} TO pen{"y"} + pen{"h"} - 1
+        FOR x = pen{"x"} TO pen{"x"} + pen{"w"} - 1
+            DIM at = y * m{"w"} + x
+            IF tiles[at] = 14 ORELSE tiles[at] = 15 THEN tiles[at] = 1
+        NEXT x
+    NEXT y
+    RuleBuildSetMap(w, tiles)
+    DIM kept = []
+    FOR EACH old IN RulePens(w)
+        IF old{"id"} <> id$ THEN kept = APPEND(kept, old)
+    NEXT
+    w{"pens"} = kept
+    RETURN {"ok": TRUE, "removed": id$}
+ENDFUNC
+
+'@client
+
+' The fence fields of a new map, each with its piece of the garden sheet:
+' a gate, a rail where a fence runs sideways, a post elsewhere.
+SUB ClientPenLay(c, m)
+    DIM mw = m{"w"}
+    DIM tiles = m{"tiles"}
+    DIM rows = []
+    DIM x = 0
+    DIM y = 0
+    FOR y = 0 TO m{"h"} - 1
+        FOR x = 0 TO mw - 1
+            DIM kind = tiles[y * mw + x]
+            IF kind = 14 ORELSE kind = 15 THEN
+                DIM piece$ = "post"
+                IF kind = 15 THEN
+                    piece$ = "gate"
+                ELSEIF x + 1 < mw ANDALSO (tiles[y * mw + x + 1] = 14 ORELSE tiles[y * mw + x + 1] = 15) THEN
+                    piece$ = "fence"
+                ELSEIF x > 0 ANDALSO (tiles[y * mw + x - 1] = 14 ORELSE tiles[y * mw + x - 1] = 15) THEN
+                    piece$ = "fence"
+                ENDIF
+                rows = APPEND(rows, [[x, y, piece$]])
+            ENDIF
+        NEXT x
+    NEXT y
+    c{"fences"} = rows
+ENDSUB
+
+SUB ClientPenFloor(c, cam_x, cam_y)
+    DIM rows = c{"fences"} ?? []
+    IF LEN(rows) = 0 ORELSE (c{"inside"} ?? -1) >= 0 ORELSE NOT GardenSheet(c) THEN RETURN
+    FOR EACH row IN rows
+        DIM sx = row[0] * 32 - cam_x
+        DIM sy = row[1] * 32 - cam_y + 6
+        IF sx > -32 ANDALSO sy > -32 ANDALSO sx < 640 ANDALSO sy < 400 THEN GardenPiece(c, row[2], sx, sy)
+    NEXT
+ENDSUB

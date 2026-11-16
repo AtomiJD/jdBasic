@@ -53,7 +53,7 @@ ENDFUNC
 FUNC RuleBuildWord$(word)
     IF NOT ISSTR(word) THEN RETURN ""
     DIM k$ = RuleLookColorKey$(word)
-    DIM words = {"norden": "north", "sueden": "south", "osten": "east", "westen": "west", "mitte": "center", "taverne": "tavern", "teich": "pond", "strasse": "road", "haus": "house", "klein": "small", "mittel": "medium", "gross": "large", "blumen": "flowers", "gestreift": "stripes", "getigert": "stripes", "streifen": "stripes", "gefleckt": "spots", "gepunktet": "spots", "flecken": "spots", "punkte": "spots", "steine": "stone", "busch": "bush", "wiese": "grass"}
+    DIM words = {"norden": "north", "sueden": "south", "osten": "east", "westen": "west", "mitte": "center", "taverne": "tavern", "teich": "pond", "strasse": "road", "haus": "house", "klein": "small", "mittel": "medium", "gross": "large", "blumen": "flowers", "gestreift": "stripes", "getigert": "stripes", "streifen": "stripes", "gefleckt": "spots", "gepunktet": "spots", "flecken": "spots", "punkte": "spots", "steine": "stone", "busch": "bush", "wiese": "grass", "garten": "garden", "streichelzoo": "zoo"}
     IF MAP.EXISTS(words, k$) THEN RETURN words{k$}
     RETURN k$
 ENDFUNC
@@ -94,7 +94,7 @@ ENDFUNC
 FUNC RuleBuildCheck(w, st)
     IF NOT ISMAP(st) THEN RETURN NONE
     DIM do$ = RuleBuildWord$(st{"do"} ?? "")
-    IF INDEXOF(["grow", "sea", "lake", "forest", "field", "house", "road", "bridge", "animal", "thing", "villager"], do$) < 0 THEN RETURN NONE
+    IF INDEXOF(["grow", "sea", "lake", "forest", "field", "house", "road", "bridge", "animal", "thing", "villager", "pen"], do$) < 0 THEN RETURN NONE
     DIM out = {"do": do$}
     DIM where$ = ""
     IF ISARR(st{"where"} ?? "") ANDALSO LEN(st{"where"}) = 2 ANDALSO ISNUM(st{"where"}[0]) ANDALSO ISNUM(st{"where"}[1]) THEN
@@ -120,6 +120,8 @@ FUNC RuleBuildCheck(w, st)
         out{"kind"} = kind$
     ELSEIF do$ = "house" THEN
         out{"owner"} = RuleBuildName$(st{"owner"} ?? "", 20)
+    ELSEIF do$ = "pen" THEN
+        out{"zoo"} = (st{"zoo"} ?? FALSE) = TRUE ORELSE RuleBuildWord$(st{"kind"} ?? "") = "zoo"
     ELSEIF do$ = "animal" ORELSE do$ = "thing" THEN
         DIM whats = RuleBuildWhats()
         DIM what$ = RuleBuildWord$(st{"what"} ?? "")
@@ -218,7 +220,14 @@ FUNC RuleBuildGuess(w, job)
     ELSEIF INSTR(t$, "baum") >= 0 ORELSE INSTR(t$, "baeume") >= 0 THEN
         steps = APPEND(steps, {"do": "forest", "where": where$, "size": "small"})
     ENDIF
-    IF INSTR(t$, "blume") >= 0 ORELSE INSTR(t$, "wiese") >= 0 ORELSE INSTR(t$, "garten") >= 0 THEN steps = APPEND(steps, {"do": "field", "kind": "flowers", "where": where$, "size": "medium"})
+    DIM zoo = INSTR(t$, "streichel") >= 0 ORELSE INSTR(t$, " zoo") >= 0 ORELSE INSTR(t$, "tierpark") >= 0
+    DIM fenced = INSTR(t$, "zaun") >= 0 ORELSE INSTR(t$, "gatter") >= 0
+    IF zoo ORELSE INSTR(t$, "gehege") >= 0 ORELSE INSTR(t$, "koppel") >= 0 THEN
+        steps = APPEND(steps, {"do": "pen", "where": where$, "size": "medium", "zoo": zoo})
+    ELSEIF fenced THEN
+        steps = APPEND(steps, {"do": "pen", "where": IIF(INSTR(t$, "garten") >= 0, "garden", where$), "size": "medium", "zoo": FALSE})
+    ENDIF
+    IF INSTR(t$, "blume") >= 0 ORELSE INSTR(t$, "wiese") >= 0 ORELSE (INSTR(t$, "garten") >= 0 ANDALSO NOT fenced) THEN steps = APPEND(steps, {"do": "field", "kind": "flowers", "where": where$, "size": "medium"})
     IF INSTR(t$, "felsen") >= 0 ORELSE INSTR(t$, "steine") >= 0 THEN steps = APPEND(steps, {"do": "field", "kind": "stone", "where": where$, "size": "small"})
     DIM house = FALSE
     IF INSTR(t$, "huette") >= 0 ORELSE INSTR(t$, "haus") >= 0 ORELSE INSTR(t$, "hof") >= 0 ORELSE INSTR(t$, "scheune") >= 0 THEN
@@ -254,7 +263,7 @@ ENDFUNC
 
 ' The steps that answer a kind of wish.
 FUNC RuleBuildSteps(kind$)
-    DIM table = {"land": ["grow", "sea", "lake", "forest", "field"], "way": ["road", "bridge", "house"], "house": ["house"], "thing": ["thing"], "animal": ["animal"], "villager": ["villager"]}
+    DIM table = {"land": ["grow", "sea", "lake", "forest", "field"], "way": ["road", "bridge", "house", "pen"], "house": ["house"], "thing": ["thing", "pen"], "animal": ["animal"], "villager": ["villager"]}
     RETURN table{kind$} ?? []
 ENDFUNC
 
@@ -361,8 +370,9 @@ FUNC RuleBuildAsk(w, job)
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "bridge" + q$ + ", " + q$ + "where" + q$ + RuleDe$(": W} eine Br{u}cke {u}ber das Wasser dort;")
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "animal" + q$ + ", " + q$ + "what" + q$ + ": frog|duck|chicken|sheep|rabbit|dog|cow|cat|hedgehog|pig|fox|owl|squirrel|mouse|turtle|goat|deer|pony|donkey|raccoon|penguin, " + q$ + "name" + q$ + ": Name, " + q$ + "color" + q$ + ": Fellfarbe oder leer, " + q$ + "pattern" + q$ + ": stripes|spots|leer, " + q$ + "wear" + q$ + RuleDe$(": Liste dessen, was es tr{a}gt, etwa [" + q$ + "rote M{u}tze" + q$ + ", " + q$ + "Sonnenbrille" + q$ + "] (Hut, M{u}tze, Krone, Bl{u}te, Sonnenbrille, Brille, Schal, Schleife, Halsband) oder [], " + q$ + "where" + q$ + ": W}; Farben: rot, orange, gelb, gruen, tuerkis, blau, hellblau, dunkelblau, lila, rosa, pink, braun, schwarz, weiss, grau, gold, silber; eine Tigerkatze ist cat mit stripes;")
     task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "thing" + q$ + ", " + q$ + "what" + q$ + ": bench|lantern|sign|barrel|campfire|scarecrow|flowerbox, " + q$ + "name" + q$ + ": Name, " + q$ + "where" + q$ + ": W};"
-    task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "villager" + q$ + ", " + q$ + "name" + q$ + ": Name, " + q$ + "role" + q$ + ": Beruf, " + q$ + "where" + q$ + ": W} ein neuer Dorfbewohner."
-    task$ = task$ + RuleDe$(" W ist north, south, east, west, center, tavern, pond, road, house") + places$ + RuleDe$(" oder eine Stelle der Karte als x,y wie 12,7, wenn der Wunsch eine nennt. S ist small, medium oder large. H{o}chstens sechs Schritte. Baue nur, was der Wunsch nennt; neues Land kommt zuerst, dann was darauf steht. Geht der Wunsch mit diesen Schritten nicht, antworte {" + q$ + "steps" + q$ + ": []}.")
+    task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "villager" + q$ + ", " + q$ + "name" + q$ + ": Name, " + q$ + "role" + q$ + ": Beruf, " + q$ + "where" + q$ + ": W} ein neuer Dorfbewohner;"
+    task$ = task$ + " {" + q$ + "do" + q$ + ": " + q$ + "pen" + q$ + ", " + q$ + "where" + q$ + ": W, " + q$ + "size" + q$ + ": S, " + q$ + "zoo" + q$ + RuleDe$(": true|false} ein Gehege mit Zaun und Tor, mit zoo true ein Streichelzoo, den Tiere des Dorfs besuchen; where garden ist ein Zaun um den Garten.")
+    task$ = task$ + RuleDe$(" W ist north, south, east, west, center, tavern, pond, road, house, garden") + places$ + RuleDe$(" oder eine Stelle der Karte als x,y wie 12,7, wenn der Wunsch eine nennt. S ist small, medium oder large. H{o}chstens sechs Schritte. Baue nur, was der Wunsch nennt; neues Land kommt zuerst, dann was darauf steht. Geht der Wunsch mit diesen Schritten nicht, antworte {" + q$ + "steps" + q$ + ": []}.")
     DIM messages = [{"role": "system", "content": task$}, {"role": "user", "content": RuleDe$("Wunsch von ") + job{"who"} + ": " + job{"text"}}]
     RETURN KAsk$(w, "build", "builder", {"wish": job{"wish"}}, messages, {"max_tokens": 400, "temperature": 0.2, "response_format": {"type": "json_object"}})
 ENDFUNC
@@ -492,6 +502,7 @@ FUNC RuleBuildTaken(w)
         NEXT sx
     NEXT sy
     RuleGardenTaken(w, taken)
+    RulePenTaken(w, taken)
     RETURN taken
 ENDFUNC
 
@@ -537,6 +548,10 @@ FUNC RuleBuildTarget(w, job, where$)
         RETURN [CLAMP(VAL(xy[0]), 1, mw - 2), CLAMP(VAL(xy[1]), 1, mh - 2)]
     ENDIF
     IF where$ = "house" ANDALSO LEN(job{"house"}) = 2 THEN RETURN job{"house"}
+    IF where$ = "garden" THEN
+        DIM f = RuleGardenField(w)
+        IF LEN(f) = 4 THEN RETURN [f[0] + f[2] \ 2, f[1] + f[3] \ 2]
+    ENDIF
     IF where$ = "house" THEN
         DIM door = RuleBuildHouseOf(w, job)
         IF LEN(door) = 2 THEN RETURN door
@@ -634,6 +649,7 @@ FUNC RuleBuildDo(w, b, job, st)
         RETURN RuleBuildRoad(w, from[0], from[1])
     ENDIF
     IF do$ = "bridge" THEN RETURN RuleBuildBridge(w, RuleBuildTarget(w, job, st{"where"}))
+    IF do$ = "pen" THEN RETURN RulePenBuild(w, job, st)
     IF do$ = "animal" ORELSE do$ = "thing" ORELSE do$ = "villager" THEN RETURN RuleBuildFolk(w, b, job, st)
     DIM target = RuleBuildTarget(w, job, st{"where"})
     DIM bs = RuleBuildSize(do$, st{"size"})
@@ -809,7 +825,7 @@ FUNC RuleBuildRoad(w, fx, fy)
         DIM i = 0
         FOR i = 0 TO LEN(way) - 1
             DIM kind = tiles[way[i][1] * mw + way[i][0]]
-            IF kind = 5 ORELSE kind = 6 ORELSE kind = 7 THEN cost = cost + 100000
+            IF kind = 5 ORELSE kind = 6 ORELSE kind = 7 ORELSE kind = 14 ORELSE kind = 15 THEN cost = cost + 100000
             IF kind = 4 ORELSE kind = 10 THEN cost = cost + 1
         NEXT i
         IF cost < pick_cost THEN
@@ -862,7 +878,7 @@ FUNC RuleBuildWayAround(w, fx, fy, over_water)
                 IF nx >= 0 ANDALSO ny >= 0 ANDALSO nx < mw ANDALSO ny < mh THEN
                     DIM nat = ny * mw + nx
                     DIM kind = tiles[nat]
-                    DIM passable = kind <> 5 ANDALSO kind <> 6 ANDALSO kind <> 7
+                    DIM passable = kind <> 5 ANDALSO kind <> 6 ANDALSO kind <> 7 ANDALSO kind <> 14 ANDALSO kind <> 15
                     IF (kind = 4 ORELSE kind = 10) ANDALSO NOT over_water THEN passable = FALSE
                     IF passable ANDALSO came[nat] = -2 THEN
                         came[nat] = at
