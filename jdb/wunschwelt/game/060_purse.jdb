@@ -64,6 +64,7 @@ ENDSUB
 ' person it was said to tells how much is missing.
 FUNC RuleWishAfford(w, who$, cost, npc_id$)
     IF cost <= 0 THEN RETURN TRUE
+    IF RuleCraftWanted(w, who$) THEN RETURN RuleCraftAfford(w, who$, cost, npc_id$)
     DIM prof = RuleProfile(w, who$)
     DIM have = RulePotion(w, prof)
     IF have >= cost THEN RETURN TRUE
@@ -78,6 +79,7 @@ ENDFUNC
 ' The wish just written last on the board is paid by who$.
 SUB RuleWishPay(w, who$, cost)
     IF cost <= 0 THEN RETURN
+    IF RuleCraftPay(w, who$, cost) THEN RETURN
     DIM prof = RuleProfile(w, who$)
     DIM have = RulePotion(w, prof)
     prof{"potion"} = MAX([0, have - cost])
@@ -90,6 +92,7 @@ ENDSUB
 
 ' A wish that will not be built gives its potion back, once.
 SUB RuleWishRefund(w, wish)
+    RuleCraftRefund(w, wish)
     DIM cost = wish{"cost"} ?? 0
     IF cost <= 0 ORELSE (wish{"refunded"} ?? FALSE) THEN RETURN
     wish{"refunded"} = TRUE

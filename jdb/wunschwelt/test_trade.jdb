@@ -1,0 +1,146 @@
+' Test of the duplicates of the album, on a server without a model: Anna
+' gives a card she holds twice to Ben beside her and his album says who gave
+' it; a card held once or nobody beside is refused; Anna and Ben trade when
+' both offered and both said yes, and a no ends a trade; Anna pays a wish
+' with duplicates instead of the wish potion and gets them back when it is
+' declined; with too few cards she is told how many it takes.
+'
+'   jdBasic jdb/wunschwelt/test_trade.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8300 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_trade_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "80"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": ""}})
+SLEEP 1500
+
+DIM anna$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM ben$ AS STRING = Post("/join", {"name": "Ben", "pin": "1234"}){"token"}
+DIM told = []
+DIM heard = []
+DIM seen = {}
+
+' A sync of the player with token tok$; what was said to name$ is kept.
+FUNC Sync(tok$ AS STRING, name$ AS STRING, extra)
+    DIM msg = {"token": tok$, "mapv": 1, "since": seen{tok$} ?? -1, "albumv": -1}
+    FOR EACH field$ IN MAP.KEYS(extra)
+        msg{field$} = extra{field$}
+    NEXT
+    DIM r = Post("/sync", msg)
+    SLEEP 150
+    DIM r2 = Post("/sync", {"token": tok$, "mapv": 1, "since": seen{tok$} ?? -1, "albumv": -1})
+    seen{tok$} = r2{"seq"}
+    FOR EACH ev IN APPEND(r{"events"} ?? [], r2{"events"} ?? [])
+        IF (ev{"type"} = "purse" ORELSE ev{"type"} = "say") ANDALSO (ev{"to"} ?? "") = name$ THEN told = APPEND(told, name$ + ": " + ev{"text"})
+        IF ev{"type"} = "build" THEN heard = APPEND(heard, ev{"text"})
+    NEXT
+    RETURN r2
+ENDFUNC
+
+FUNC Told(part$ AS STRING)
+    RETURN INSTR(JOIN(told, "|"), part$) >= 0
+ENDFUNC
+
+FUNC Held(name$ AS STRING, what$ AS STRING, field$ AS STRING)
+    DIM album = Admin("album", {"player": name$}){"album"}
+    IF NOT ISMAP(album{what$} ?? 0) THEN RETURN 0
+    RETURN album{what$}{field$} ?? 0
+ENDFUNC
+
+DIM r = Sync(anna$, "Anna", {})
+DIM ax AS INTEGER = r{"x"}
+DIM ay AS INTEGER = r{"y"}
+DIM far = Admin("player_put", {"player": "Ben", "x": ax + 8, "y": ay})
+r = Sync(ben$, "Ben", {})
+FOR EACH setting IN [["squirrel", "meet", 3], ["squirrel", "c_rot", 2], ["squirrel", "friend", 1], ["squirrel", "s_heart", 3]]
+    DIM put = Admin("album_set", {"player": "Anna", "sort": setting[0], "field": setting[1], "v": setting[2]})
+NEXT
+DIM ben_card = Admin("album_set", {"player": "Ben", "sort": "duck", "field": "meet", "v": 2})
+
+' giving
+r = Sync(anna$, "Anna", {"album_give": ["squirrel", "meet"]})
+Check("nobody beside: the card stays", Held("Anna", "squirrel", "meet") = 3 ANDALSO Told("direkt neben Dir"))
+DIM near = Admin("player_put", {"player": "Ben", "x": ax + 1, "y": ay})
+r = Sync(ben$, "Ben", {})
+r = Sync(anna$, "Anna", {"album_give": ["squirrel", "meet"]})
+Check("a duplicate goes to Ben beside her", Held("Anna", "squirrel", "meet") = 2 ANDALSO Held("Ben", "squirrel", "meet") = 1)
+r = Sync(ben$, "Ben", {})
+Check("Ben's album says Anna gave it", r{"album"}{"from"}{"squirrel"}{"meet"} = "Anna" ANDALSO Told("Ben: Anna schenkt Dir eine Sammelkarte"))
+Check("and the village hears of it", INSTR(JOIN(heard, "|"), "Anna schenkt Ben eine Sammelkarte") >= 0)
+r = Sync(anna$, "Anna", {"album_give": ["squirrel", "friend"]})
+Check("a card held once is not given", Held("Anna", "squirrel", "friend") = 1 ANDALSO Told("doppelt"))
+r = Sync(anna$, "Anna", {"album_give": ["squirrel", "s_heart"]})
+Check("nor a shine card", Held("Anna", "squirrel", "s_heart") = 3)
+
+' trading
+r = Sync(anna$, "Anna", {"album_trade": ["squirrel", "c_rot"]})
+r = Sync(ben$, "Ben", {})
+Check("Ben sees what Anna offers", r{"album"}{"trade"}{"with"} = "Anna" ANDALSO INSTR(r{"album"}{"trade"}{"get"}, "Rot") >= 0 ANDALSO r{"album"}{"trade"}{"give"} = "")
+r = Sync(anna$, "Anna", {"album_trade_ok": TRUE})
+Check("no yes before both offered", Told("beide eine Karte"))
+r = Sync(ben$, "Ben", {"album_trade": ["duck", "meet"]})
+r = Sync(anna$, "Anna", {"album_trade_ok": TRUE})
+Check("one yes changes nothing", Held("Anna", "squirrel", "c_rot") = 2 ANDALSO Held("Ben", "duck", "meet") = 2)
+r = Sync(ben$, "Ben", {"album_trade_ok": TRUE})
+Check("both said yes: the cards change hands", Held("Anna", "squirrel", "c_rot") = 1 ANDALSO Held("Ben", "squirrel", "c_rot") = 1 ANDALSO Held("Ben", "duck", "meet") = 1 ANDALSO Held("Anna", "duck", "meet") = 1)
+r = Sync(anna$, "Anna", {})
+Check("the trade is done", MAP.SIZE(r{"album"}{"trade"}) = 0 ANDALSO r{"album"}{"from"}{"duck"}{"meet"} = "Ben")
+r = Sync(anna$, "Anna", {"album_trade": ["squirrel", "meet"]})
+r = Sync(ben$, "Ben", {"album_trade_ok": FALSE})
+r = Sync(anna$, "Anna", {})
+Check("a no ends a trade", MAP.SIZE(r{"album"}{"trade"}) = 0 ANDALSO Told("Anna: Ben m"))
+
+' crafting: up to Marta, as in test_wishes
+DIM marta = NONE
+FOR EACH row IN r{"npcs"}
+    IF row[0] = "marta" THEN marta = row
+NEXT
+DIM to_marta = Admin("player_put", {"player": "Anna", "x": marta[2], "y": marta[3] + 1})
+DIM many = Admin("album_set", {"player": "Anna", "sort": "squirrel", "field": "meet", "v": 6})
+DIM recipe = Admin("config_set", {"key": "craft.cards", "v": 3})
+DIM uml$ AS STRING = CHR$(195) + CHR$(188)
+DIM potion_before = Sync(anna$, "Anna", {}){"purse"}{"potion"}
+r = Sync(anna$, "Anna", {"say": "Ich w" + uml$ + "nsche mir mit Karten einen Brunnen"})
+DIM board = Admin("wishes", {}){"wishes"}
+Check("a wish paid with cards is written", LEN(board) = 1)
+Check("it took three duplicates and no potion", Held("Anna", "squirrel", "meet") = 3 ANDALSO r{"purse"}{"potion"} = potion_before ANDALSO Told("3 doppelte Sammelkarten"))
+DIM back = Admin("wish_status", {"id": board[0]{"id"}, "status": "declined"})
+r = Sync(anna$, "Anna", {})
+Check("declined, the cards come back", Held("Anna", "squirrel", "meet") = 6 ANDALSO r{"purse"}{"potion"} = potion_before ANDALSO Told("Sammelkarten zur"))
+DIM dear = Admin("config_set", {"key": "craft.cards", "v": 50})
+SLEEP 2100
+r = Sync(anna$, "Anna", {"say": "Ich w" + uml$ + "nsche mir mit Karten eine Bank"})
+Check("too few cards: no wish, and she is told how many", LEN(Admin("wishes", {}){"wishes"}) = 1 ANDALSO Told("50 doppelte Sammelkarten") ANDALSO r{"purse"}{"potion"} = potion_before)
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM gone = OS.KILL(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

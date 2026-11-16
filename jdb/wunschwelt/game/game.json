@@ -23,5 +23,12 @@
     "moments": 6,
     "busy_ms": 6000,
     "every_ms": 900
+  },
+  "trade": {
+    "ttl_ms": 300000
+  },
+  "craft": {
+    "cards": 5,
+    "big_cards": 10
   }
 }

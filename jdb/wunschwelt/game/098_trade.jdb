@@ -1,0 +1,303 @@
+' Duplicates of the album (stage 3): a card of a field held more than once
+' (not a shine card) can be given to the player beside one, traded with
+' them, or spent on a wish instead of the wish potion.
+'
+' Give: the card goes over at once; the receiver's album says who gave it,
+' profile{"album_from"}{sort}{field}. Trade: w{"trades"}{"a|b"} = {"offer":
+' {name: [sort, field]}, "ok": {name: TRUE}, "at"}; each offers one
+' duplicate, a new offer asks both again, and when both said yes the cards
+' change hands. A trade not finished in trade.ttl_ms is gone. Craft: a wish
+' that asks to be paid with cards is paid with craft.cards duplicates
+' (craft.big_cards for land and houses); a declined wish gives them back.
+
+'@server
+
+' The duplicates of who$: [[sort, field, count]], most first.
+FUNC RuleCardDupes(w, who$)
+    DIM album = RuleProfile(w, who$){"album"} ?? {}
+    DIM counts = []
+    DIM rows = []
+    FOR EACH what$ IN SORT(MAP.KEYS(album))
+        IF ISMAP(album{what$}) THEN
+            FOR EACH key$ IN SORT(MAP.KEYS(album{what$}))
+                IF NOT STARTSWITH(key$, "s_") ANDALSO album{what$}{key$} >= 2 THEN
+                    counts = APPEND(counts, -album{what$}{key$})
+                    rows = APPEND(rows, [[what$, key$, album{what$}{key$}]])
+                ENDIF
+            NEXT
+        ENDIF
+    NEXT
+    DIM sorted = []
+    IF LEN(rows) = 0 THEN RETURN sorted
+    FOR EACH k IN GRADE(counts)
+        sorted = APPEND(sorted, [rows[k]])
+    NEXT
+    RETURN sorted
+ENDFUNC
+
+FUNC RuleCardIsDupe(w, who$, what$, key$)
+    IF STARTSWITH(key$, "s_") THEN RETURN FALSE
+    DIM album = RuleProfile(w, who$){"album"} ?? {}
+    IF NOT ISMAP(album{what$} ?? 0) THEN RETURN FALSE
+    RETURN (album{what$}{key$} ?? 0) >= 2
+ENDFUNC
+
+' A card as it is named: the sort, then the field.
+FUNC RuleCardName$(what$, key$)
+    RETURN RuleSortName$(what$) + ", " + RuleAlbumLabel$(key$)
+ENDFUNC
+
+SUB RuleAlbumBump(w, who$)
+    IF MAP.EXISTS(w{"players"}, who$) THEN w{"players"}{who$}{"albumv"} = (w{"players"}{who$}{"albumv"} ?? 0) + 1
+ENDSUB
+
+' One card of a field goes from giver$ to taker$; the taker's album says who gave it.
+SUB RuleCardMove(w, giver$, taker$, what$, key$)
+    DIM album = RuleProfile(w, giver$){"album"}
+    album{what$}{key$} = album{what$}{key$} - 1
+    RuleAlbumBump(w, giver$)
+    RuleAlbumAdd(w, taker$, what$, key$)
+    DIM prof = RuleProfile(w, taker$)
+    IF NOT ISMAP(prof{"album_from"} ?? 0) THEN prof{"album_from"} = {}
+    IF NOT ISMAP(prof{"album_from"}{what$} ?? 0) THEN prof{"album_from"}{what$} = {}
+    prof{"album_from"}{what$}{key$} = giver$
+ENDSUB
+
+' The player nearest to p within three fields, "" when none.
+FUNC RuleNearPlayer$(w, p)
+    DIM best$ = ""
+    DIM best_d = 4
+    FOR EACH name$ IN MAP.KEYS(w{"players"})
+        IF name$ <> p{"name"} THEN
+            DIM q = w{"players"}{name$}
+            DIM d = MAX([ABS(q{"x"} - p{"x"}), ABS(q{"y"} - p{"y"})])
+            IF d < best_d THEN
+                best_d = d
+                best$ = name$
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN best$
+ENDFUNC
+
+' The open trade of name$, or NONE; one past its time is dropped.
+FUNC RuleTradeKey$(w, name$)
+    IF NOT ISMAP(w{"trades"} ?? 0) THEN w{"trades"} = {}
+    FOR EACH key$ IN MAP.KEYS(w{"trades"})
+        IF KNow() - w{"trades"}{key$}{"at"} > RuleConf(w, "trade.ttl_ms", 300000) THEN
+            MAP.DELETE(w{"trades"}, key$)
+        ELSE
+            DIM pair = SPLIT(key$, "|")
+            IF pair[0] = name$ ORELSE pair[1] = name$ THEN RETURN key$
+        ENDIF
+    NEXT
+    RETURN ""
+ENDFUNC
+
+FUNC RuleTradeOther$(key$, name$)
+    DIM pair = SPLIT(key$, "|")
+    RETURN IIF(pair[0] = name$, pair[1], pair[0])
+ENDFUNC
+
+SUB RuleTradeEnd(w, key$)
+    DIM pair = SPLIT(key$, "|")
+    MAP.DELETE(w{"trades"}, key$)
+    RuleAlbumBump(w, pair[0])
+    RuleAlbumBump(w, pair[1])
+ENDSUB
+
+' What the album of name$ shows of its trade: {"with", "give", "get",
+' "ok_me", "ok_them"}, or {} when there is none.
+FUNC RuleTradeView(w, name$)
+    DIM key$ = RuleTradeKey$(w, name$)
+    IF key$ = "" THEN RETURN {}
+    DIM t = w{"trades"}{key$}
+    DIM other$ = RuleTradeOther$(key$, name$)
+    DIM view = {"with": other$, "give": "", "get": "", "ok_me": t{"ok"}{name$} ?? FALSE, "ok_them": t{"ok"}{other$} ?? FALSE}
+    IF MAP.EXISTS(t{"offer"}, name$) THEN view{"give"} = RuleCardName$(t{"offer"}{name$}[0], t{"offer"}{name$}[1])
+    IF MAP.EXISTS(t{"offer"}, other$) THEN view{"get"} = RuleCardName$(t{"offer"}{other$}[0], t{"offer"}{other$}[1])
+    RETURN view
+ENDFUNC
+
+SUB RuleTradeSync(w, p, msg)
+    DIM who$ = p{"name"}
+    IF ISARR(msg{"album_give"} ?? 0) THEN RuleCardGive(w, p, "" + msg{"album_give"}[0], "" + msg{"album_give"}[1])
+    IF ISARR(msg{"album_trade"} ?? 0) THEN RuleTradeOffer(w, p, "" + msg{"album_trade"}[0], "" + msg{"album_trade"}[1])
+    IF ISBOOL(msg{"album_trade_ok"} ?? "") ORELSE ISNUM(msg{"album_trade_ok"} ?? "") THEN RuleTradeAnswer(w, p, msg{"album_trade_ok"})
+ENDSUB
+
+SUB RuleCardGive(w, p, what$, key$)
+    DIM who$ = p{"name"}
+    IF NOT RuleCardIsDupe(w, who$, what$, key$) THEN
+        RuleCardNote(w, who$, "Verschenken kannst Du nur Karten, die Du doppelt hast.")
+        RETURN
+    ENDIF
+    DIM taker$ = RuleNearPlayer$(w, p)
+    IF taker$ = "" THEN
+        RuleCardNote(w, who$, "Zum Verschenken muss jemand direkt neben Dir stehen.")
+        RETURN
+    ENDIF
+    RuleCardMove(w, who$, taker$, what$, key$)
+    RuleCardNote(w, taker$, who$ + " schenkt Dir eine Sammelkarte: " + RuleCardName$(what$, key$) + "!")
+    RuleCardNote(w, who$, "Du schenkst " + taker$ + " die Karte " + RuleCardName$(what$, key$) + ".")
+    KEmit(w, {"type": "build", "who": who$, "text": who$ + " schenkt " + taker$ + " eine Sammelkarte."})
+ENDSUB
+
+SUB RuleTradeOffer(w, p, what$, key$)
+    DIM who$ = p{"name"}
+    IF NOT RuleCardIsDupe(w, who$, what$, key$) THEN
+        RuleCardNote(w, who$, "Tauschen kannst Du nur Karten, die Du doppelt hast.")
+        RETURN
+    ENDIF
+    DIM key_now$ = RuleTradeKey$(w, who$)
+    DIM other$ = ""
+    IF key_now$ <> "" THEN
+        other$ = RuleTradeOther$(key_now$, who$)
+    ELSE
+        other$ = RuleNearPlayer$(w, p)
+        IF other$ = "" THEN
+            RuleCardNote(w, who$, "Zum Tauschen muss jemand direkt neben Dir stehen.")
+            RETURN
+        ENDIF
+        IF RuleTradeKey$(w, other$) <> "" THEN
+            RuleCardNote(w, who$, other$ + RuleDe$(" tauscht gerade mit jemand anderem."))
+            RETURN
+        ENDIF
+        key_now$ = RuleTieKey$(who$, other$)
+        w{"trades"}{key_now$} = {"offer": {}, "ok": {}, "at": KNow()}
+    ENDIF
+    DIM t = w{"trades"}{key_now$}
+    t{"offer"}{who$} = [what$, key$]
+    t{"ok"} = {}
+    t{"at"} = KNow()
+    RuleAlbumBump(w, who$)
+    RuleAlbumBump(w, other$)
+    IF MAP.EXISTS(t{"offer"}, other$) THEN
+        RuleCardNote(w, other$, who$ + " bietet " + RuleCardName$(what$, key$) + RuleDe$(" f{u}r Deine Karte. Im Album: J nimmt an, N lehnt ab."))
+        RuleCardNote(w, who$, "Im Album: J nimmt den Tausch an, N lehnt ab.")
+    ELSE
+        RuleCardNote(w, other$, who$ + " bietet Dir " + RuleCardName$(what$, key$) + RuleDe$(" zum Tausch. Such Dir im Album (K) mit G eine doppelte Karte aus und biete sie mit T an."))
+        RuleCardNote(w, who$, "Du bietest " + other$ + " die Karte " + RuleCardName$(what$, key$) + RuleDe$(" an. Jetzt ist ") + other$ + " dran.")
+    ENDIF
+ENDSUB
+
+SUB RuleTradeAnswer(w, p, yes)
+    DIM who$ = p{"name"}
+    DIM key$ = RuleTradeKey$(w, who$)
+    IF key$ = "" THEN RETURN
+    DIM other$ = RuleTradeOther$(key$, who$)
+    DIM t = w{"trades"}{key$}
+    IF NOT yes THEN
+        RuleTradeEnd(w, key$)
+        RuleCardNote(w, other$, who$ + RuleDe$(" m{o}chte nicht tauschen."))
+        RuleCardNote(w, who$, "Der Tausch ist abgesagt.")
+        RETURN
+    ENDIF
+    IF NOT MAP.EXISTS(t{"offer"}, who$) ORELSE NOT MAP.EXISTS(t{"offer"}, other$) THEN
+        RuleCardNote(w, who$, "Erst wenn ihr beide eine Karte anbietet, kann getauscht werden.")
+        RETURN
+    ENDIF
+    t{"ok"}{who$} = TRUE
+    RuleAlbumBump(w, who$)
+    RuleAlbumBump(w, other$)
+    IF NOT (t{"ok"}{other$} ?? FALSE) THEN
+        RuleCardNote(w, other$, who$ + " ist einverstanden. Im Album: J nimmt an, N lehnt ab.")
+        RETURN
+    ENDIF
+    DIM mine = t{"offer"}{who$}
+    DIM theirs = t{"offer"}{other$}
+    RuleTradeEnd(w, key$)
+    IF NOT RuleCardIsDupe(w, who$, mine[0], mine[1]) ORELSE NOT RuleCardIsDupe(w, other$, theirs[0], theirs[1]) THEN
+        RuleCardNote(w, who$, "Eine der Karten ist nicht mehr doppelt da. Der Tausch ist abgesagt.")
+        RuleCardNote(w, other$, "Eine der Karten ist nicht mehr doppelt da. Der Tausch ist abgesagt.")
+        RETURN
+    ENDIF
+    RuleCardMove(w, who$, other$, mine[0], mine[1])
+    RuleCardMove(w, other$, who$, theirs[0], theirs[1])
+    RuleCardNote(w, who$, "Getauscht! Du bekommst " + RuleCardName$(theirs[0], theirs[1]) + ".")
+    RuleCardNote(w, other$, "Getauscht! Du bekommst " + RuleCardName$(mine[0], mine[1]) + ".")
+    KEmit(w, {"type": "build", "who": who$, "text": who$ + " und " + other$ + " haben Sammelkarten getauscht."})
+ENDSUB
+
+' ---- craft: duplicates pay a wish ----
+
+' The sentence asks to pay with cards: the words for with cards, with my
+' collector cards or with duplicate cards.
+FUNC RuleCraftAsked(said$)
+    DIM low$ = " " + REGEX.REPLACE$("[^a-z ]+", RuleLookColorKey$(said$), " ") + " "
+    RETURN LEN(REGEX.FINDALL(" mit (den |meinen |deinen )?(doppelten )?(sammel)?karten ", low$)) > 0
+ENDFUNC
+
+' How many duplicates a wish of this potion cost takes.
+FUNC RuleCraftCards(w, cost)
+    IF cost > RuleEconomy(w){"wish"} THEN RETURN RuleConf(w, "craft.big_cards", 10)
+    RETURN RuleConf(w, "craft.cards", 5)
+ENDFUNC
+
+FUNC RuleCraftCount(w, who$)
+    DIM n = 0
+    FOR EACH row IN RuleCardDupes(w, who$)
+        n = n + row[2] - 1
+    NEXT
+    RETURN n
+ENDFUNC
+
+' who$ said a moment ago to pay with cards.
+FUNC RuleCraftWanted(w, who$)
+    RETURN KNow() - (RuleProfile(w, who$){"craft_at"} ?? -99999999) < 120000
+ENDFUNC
+
+SUB RuleCraftNote(w, p, said$)
+    IF NOT RuleCraftAsked(said$) THEN RETURN
+    DIM prof = RuleProfile(w, p{"name"})
+    prof{"craft_at"} = KNow()
+ENDSUB
+
+' Asked to pay with cards: TRUE when enough duplicates are there, else who$ is told how many it takes.
+FUNC RuleCraftAfford(w, who$, cost, npc_id$)
+    IF NOT RuleCraftWanted(w, who$) THEN RETURN FALSE
+    DIM need = RuleCraftCards(w, cost)
+    DIM have = RuleCraftCount(w, who$)
+    IF have >= need THEN RETURN TRUE
+    DIM prof = RuleProfile(w, who$)
+    prof{"craft_at"} = -99999999
+    RuleTellPlayer(w, npc_id$, who$, RuleDe$("Mit Karten kostet dieser Wunsch " + STR$(need) + " doppelte Sammelkarten, Du hast " + STR$(have) + "."))
+    RETURN FALSE
+ENDFUNC
+
+' The wish written last is paid with duplicates, the most held first; TRUE when it was.
+FUNC RuleCraftPay(w, who$, cost)
+    IF NOT RuleCraftWanted(w, who$) THEN RETURN FALSE
+    DIM prof = RuleProfile(w, who$)
+    prof{"craft_at"} = -99999999
+    DIM need = RuleCraftCards(w, cost)
+    DIM album = prof{"album"}
+    DIM taken = []
+    DO WHILE LEN(taken) < need
+        DIM dupes = RuleCardDupes(w, who$)
+        IF LEN(dupes) = 0 THEN EXITDO
+        album{dupes[0][0]}{dupes[0][1]} = dupes[0][2] - 1
+        taken = APPEND(taken, [[dupes[0][0], dupes[0][1]]])
+    LOOP
+    RuleAlbumBump(w, who$)
+    DIM wishes = w{"wishes"}
+    wishes[LEN(wishes) - 1]{"cards"} = taken
+    wishes[LEN(wishes) - 1]{"cost"} = 0
+    w{"wishes"} = wishes
+    KEmit(w, {"type": "purse", "to": who$, "text": "Der Wunsch kostet " + STR$(LEN(taken)) + " doppelte Sammelkarten statt Wunschtrank.", "got": "album"})
+    RETURN TRUE
+ENDFUNC
+
+' A declined wish paid with cards gives them back, once.
+SUB RuleCraftRefund(w, wish)
+    DIM cards = wish{"cards"} ?? []
+    IF NOT ISARR(cards) ORELSE LEN(cards) = 0 ORELSE (wish{"refunded"} ?? FALSE) THEN RETURN
+    wish{"refunded"} = TRUE
+    DIM album = RuleProfile(w, wish{"who"}){"album"}
+    FOR EACH card IN cards
+        IF NOT ISMAP(album{card[0]} ?? 0) THEN album{card[0]} = {}
+        album{card[0]}{card[1]} = (album{card[0]}{card[1]} ?? 0) + 1
+    NEXT
+    RuleAlbumBump(w, wish{"who"})
+    KEmit(w, {"type": "purse", "to": wish{"who"}, "text": RuleDe$("Dein Wunsch wird nicht gebaut. Du bekommst Deine " + STR$(LEN(cards)) + " Sammelkarten zur{u}ck."), "got": "album"})
+ENDSUB

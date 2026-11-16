@@ -409,6 +409,32 @@ ENDSUB
 SUB RuleLivingSync(w, p, msg, answer)
 ENDSUB
 
+' Giving, trading and crafting with duplicates; game/098_trade.jdb gives them a body.
+SUB RuleTradeSync(w, p, msg)
+ENDSUB
+
+FUNC RuleTradeView(w, name$)
+    RETURN {}
+ENDFUNC
+
+SUB RuleCraftNote(w, p, said$)
+ENDSUB
+
+FUNC RuleCraftWanted(w, who$)
+    RETURN FALSE
+ENDFUNC
+
+FUNC RuleCraftAfford(w, who$, cost, npc_id$)
+    RETURN FALSE
+ENDFUNC
+
+FUNC RuleCraftPay(w, who$, cost)
+    RETURN FALSE
+ENDFUNC
+
+SUB RuleCraftRefund(w, wish)
+ENDSUB
+
 ' The album of the animal sorts; game/095_album.jdb gives them a body.
 SUB RuleAlbumMeet(w, p, id$)
 ENDSUB

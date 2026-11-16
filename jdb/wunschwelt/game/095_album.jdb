@@ -339,7 +339,7 @@ ENDFUNC
 
 ' The album of a player as the client and the phone read it.
 FUNC RuleAlbumOf(w, name$)
-    RETURN {"have": RuleProfile(w, name$){"album"}, "fields": RuleAlbumFields(), "shines": RuleAlbumShines(), "sorts": RuleAlbumSorts(), "stars": [RuleConf(w, "album.star1", 5), RuleConf(w, "album.star2", 10)], "detail": RuleAlbumDetail$(w, name$), "season": RuleSeason$(w)}
+    RETURN {"have": RuleProfile(w, name$){"album"}, "from": RuleProfile(w, name$){"album_from"} ?? {}, "trade": RuleTradeView(w, name$), "fields": RuleAlbumFields(), "shines": RuleAlbumShines(), "sorts": RuleAlbumSorts(), "stars": [RuleConf(w, "album.star1", 5), RuleConf(w, "album.star2", 10)], "detail": RuleAlbumDetail$(w, name$), "season": RuleSeason$(w)}
 ENDFUNC
 
 SUB RuleAlbumSync(w, p, msg, answer)
@@ -349,6 +349,7 @@ SUB RuleAlbumSync(w, p, msg, answer)
         prof{"detail_day"} = RuleToday$(w, 0)
         RuleAlbumAdd(w, p{"name"}, found$, "s_detail")
     ENDIF
+    RuleTradeSync(w, p, msg)
     ' a new day hides a new ladybug
     IF (p{"album_day"} ?? "") <> RuleToday$(w, 0) THEN
         p{"album_day"} = RuleToday$(w, 0)
@@ -393,6 +394,42 @@ SUB ClientAlbumAsk(c, msg)
         msg{"album_detail"} = c{"album_found"}
         c{"album_found"} = ""
     ENDIF
+    IF ISMAP(c{"album_send"} ?? 0) THEN
+        FOR EACH field$ IN MAP.KEYS(c{"album_send"})
+            msg{field$} = c{"album_send"}{field$}
+        NEXT
+    ENDIF
+    c{"album_send"} = {}
+ENDSUB
+
+' The fields of the page shown now that are held twice or more, as indices
+' into the fields of the album.
+FUNC AlbumPageDupes(c)
+    DIM picks = []
+    DIM album = c{"album"} ?? {}
+    DIM what$ = AlbumPageSort$(c)
+    IF what$ = "" THEN RETURN picks
+    DIM have = album{"have"}{what$} ?? {}
+    IF NOT ISMAP(have) THEN RETURN picks
+    DIM fields = album{"fields"}
+    DIM i = 0
+    FOR i = 0 TO LEN(fields) - 1
+        IF (have{fields[i][0]} ?? 0) >= 2 THEN picks = APPEND(picks, i)
+    NEXT i
+    RETURN picks
+ENDFUNC
+
+' The field picked among the duplicates of the page, -1 when none is.
+FUNC AlbumPicked(c)
+    IF (c{"album_pick"} ?? -1) < 0 THEN RETURN -1
+    DIM picks = AlbumPageDupes(c)
+    IF LEN(picks) = 0 THEN RETURN -1
+    RETURN picks[CLAMP(c{"album_pick"}, 0, LEN(picks) - 1)]
+ENDFUNC
+
+SUB AlbumSend(c, field$, value)
+    IF NOT ISMAP(c{"album_send"} ?? 0) THEN c{"album_send"} = {}
+    c{"album_send"}{field$} = value
 ENDSUB
 
 SUB ClientAlbumExtra(c, r)
@@ -422,11 +459,49 @@ FUNC ClientAlbumKey(c, tapped$)
             c{"bag"} = FALSE
             c{"questlog"} = FALSE
             c{"living_open"} = FALSE
+            c{"album_pick"} = -1
         ENDIF
         RETURN TRUE
     ENDIF
     IF NOT (c{"album_open"} ?? FALSE) THEN RETURN FALSE
     DIM n_pages = LEN((c{"album"} ?? {}){"sorts"} ?? [])
+    ' a trade waiting: J says yes, N no
+    DIM trade = (c{"album"} ?? {}){"trade"} ?? {}
+    IF ISMAP(trade) ANDALSO MAP.SIZE(trade) > 0 THEN
+        IF tapped$ = "J" THEN
+            AlbumSend(c, "album_trade_ok", TRUE)
+            RETURN TRUE
+        ENDIF
+        IF tapped$ = "N" THEN
+            AlbumSend(c, "album_trade_ok", FALSE)
+            RETURN TRUE
+        ENDIF
+    ENDIF
+    ' G picks among the duplicates of the page: left and right walk them,
+    ' E gives the picked one to the player beside, T offers it to trade
+    IF tapped$ = "G" ANDALSO NOT (c{"album_shine"} ?? FALSE) THEN
+        IF (c{"album_pick"} ?? -1) >= 0 ORELSE LEN(AlbumPageDupes(c)) = 0 THEN
+            c{"album_pick"} = -1
+        ELSE
+            c{"album_pick"} = 0
+        ENDIF
+        RETURN TRUE
+    ENDIF
+    IF (c{"album_pick"} ?? -1) >= 0 THEN
+        DIM picks = AlbumPageDupes(c)
+        IF LEN(picks) = 0 ORELSE tapped$ = "ESCAPE" THEN
+            c{"album_pick"} = -1
+            RETURN TRUE
+        ENDIF
+        IF tapped$ = "LEFT" ORELSE tapped$ = "A" THEN c{"album_pick"} = (c{"album_pick"} - 1 + LEN(picks)) MOD LEN(picks)
+        IF tapped$ = "RIGHT" ORELSE tapped$ = "D" THEN c{"album_pick"} = (c{"album_pick"} + 1) MOD LEN(picks)
+        IF tapped$ = "E" ORELSE tapped$ = "T" THEN
+            DIM picked = c{"album"}{"fields"}[AlbumPicked(c)][0]
+            AlbumSend(c, IIF(tapped$ = "E", "album_give", "album_trade"), [AlbumPageSort$(c), picked])
+            c{"album_pick"} = -1
+        ENDIF
+        RETURN TRUE
+    ENDIF
     IF tapped$ = "ESCAPE" ORELSE tapped$ = "I" ORELSE tapped$ = "Q" THEN
         c{"album_open"} = FALSE
         RETURN tapped$ = "ESCAPE"
@@ -546,6 +621,9 @@ SUB ClientAlbumHud(c)
     DIM gy = py0 + 14 + 2 * high
     DIM gx = px0 + 12
     DIM i = 0
+    DIM picked = AlbumPicked(c)
+    DIM gifts = (album{"from"} ?? {}){what$} ?? {}
+    IF NOT ISMAP(gifts) THEN gifts = {}
     IF shine_view THEN
         ' one row for each shine card: its name, how it is won, the count
         DIM rh = (py0 + ph - high - 10 - gy) \ MAX([1, LEN(fields)]) - 2
@@ -590,6 +668,12 @@ SUB ClientAlbumHud(c)
                     tx = cx + 18
                 ENDIF
                 TEXT tx, cy + ty, f[1], 60, 44, 28
+                ' a card given by someone wears a small bow
+                IF MAP.EXISTS(gifts, f[0]) THEN AlbumBow(tx + GFX.TEXTSIZE(f[1])[0] + 6, cy + chh \ 2 - 3)
+                IF i = picked THEN
+                    ROUNDED_RECT cx - 1, cy - 1, cw + 2, chh + 2, 3, FALSE, 230, 160, 20
+                    ROUNDED_RECT cx - 2, cy - 2, cw + 4, chh + 4, 4, FALSE, 230, 160, 20
+                ENDIF
                 DIM count_txt$ = "x" + STR$(n)
                 DIM right_x = cx + cw - 6 - GFX.TEXTSIZE(count_txt$)[0]
                 IF n >= stars[0] THEN right_x = right_x - 8
@@ -605,5 +689,32 @@ SUB ClientAlbumHud(c)
             IF i = bug THEN AlbumLadybug(cx + cw \ 2 + 20, cy + chh \ 2 - 4)
         NEXT i
     ENDIF
-    TEXT px0 + 12, py0 + ph - high - 6, "Links/rechts: Seite   Hoch/runter: Glanz   K: zu", 120, 110, 100
+    DIM foot_y = py0 + ph - high - 6
+    DIM trade = album{"trade"} ?? {}
+    IF NOT ISMAP(trade) THEN trade = {}
+    IF NOT shine_view ANDALSO AlbumPicked(c) >= 0 THEN
+        DIM pf = fields[AlbumPicked(c)]
+        DIM about$ = pf[1] + " x" + STR$(have{pf[0]} ?? 0)
+        IF MAP.EXISTS(gifts, pf[0]) THEN about$ = about$ + ", von " + gifts{pf[0]}
+        TEXT px0 + 12, foot_y, about$ + "   E: schenken  T: tauschen  G: fertig", 160, 100, 10
+    ELSEIF MAP.SIZE(trade) > 0 THEN
+        DIM deal$ = "Tausch mit " + trade{"with"} + ": "
+        IF trade{"give"} = "" THEN
+            deal$ = deal$ + trade{"get"} + " gegen? G, T: anbieten  N: nein"
+        ELSEIF trade{"get"} = "" THEN
+            deal$ = deal$ + trade{"give"} + ", " + trade{"with"} + " sucht aus  N: nein"
+        ELSE
+            deal$ = deal$ + trade{"give"} + " gegen " + trade{"get"} + IIF(trade{"ok_me"}, "  (Du: ja)", "  J: ja  N: nein")
+        ENDIF
+        TEXT px0 + 12, foot_y, deal$, 40, 110, 60
+    ELSE
+        TEXT px0 + 12, foot_y, "Links/rechts: Seite   Hoch/runter: Glanz   G: doppelte   K: zu", 120, 110, 100
+    ENDIF
+ENDSUB
+
+' A small red bow, eight pixels wide.
+SUB AlbumBow(x, y)
+    RECT x, y, 3, 5, TRUE, 210, 50, 70
+    RECT x + 5, y, 3, 5, TRUE, 210, 50, 70
+    RECT x + 3, y + 1, 2, 3, TRUE, 160, 30, 50
 ENDSUB
