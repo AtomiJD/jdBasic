@@ -137,6 +137,7 @@ SLEEP 2100
 r = Sync(anna$, "Anna", {"say": "Ich w" + uml$ + "nsche mir mit Karten eine Bank"})
 Check("too few cards: no wish, and she is told how many", LEN(Admin("wishes", {}){"wishes"}) = 1 ANDALSO Told("50 doppelte Sammelkarten") ANDALSO r{"purse"}{"potion"} = potion_before)
 
+r = Sync(anna$, "Anna", {"album_give": [], "album_trade": ["squirrel"]})
 DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
 Check("the rules raised no error", stats{"errors"} = 0)
 IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}

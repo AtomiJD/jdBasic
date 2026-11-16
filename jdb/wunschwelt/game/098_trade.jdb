@@ -120,9 +120,12 @@ FUNC RuleTradeView(w, name$)
 ENDFUNC
 
 SUB RuleTradeSync(w, p, msg)
-    DIM who$ = p{"name"}
-    IF ISARR(msg{"album_give"} ?? 0) THEN RuleCardGive(w, p, "" + msg{"album_give"}[0], "" + msg{"album_give"}[1])
-    IF ISARR(msg{"album_trade"} ?? 0) THEN RuleTradeOffer(w, p, "" + msg{"album_trade"}[0], "" + msg{"album_trade"}[1])
+    IF ISARR(msg{"album_give"} ?? 0) THEN
+        IF LEN(msg{"album_give"}) = 2 THEN RuleCardGive(w, p, "" + msg{"album_give"}[0], "" + msg{"album_give"}[1])
+    ENDIF
+    IF ISARR(msg{"album_trade"} ?? 0) THEN
+        IF LEN(msg{"album_trade"}) = 2 THEN RuleTradeOffer(w, p, "" + msg{"album_trade"}[0], "" + msg{"album_trade"}[1])
+    ENDIF
     IF ISBOOL(msg{"album_trade_ok"} ?? "") ORELSE ISNUM(msg{"album_trade_ok"} ?? "") THEN RuleTradeAnswer(w, p, msg{"album_trade_ok"})
 ENDSUB
 
@@ -247,10 +250,14 @@ FUNC RuleCraftWanted(w, who$)
     RETURN KNow() - (RuleProfile(w, who$){"craft_at"} ?? -99999999) < 120000
 ENDFUNC
 
+' Each sentence to the folk that wishes says anew whether the wish is paid with cards.
 SUB RuleCraftNote(w, p, said$)
-    IF NOT RuleCraftAsked(said$) THEN RETURN
     DIM prof = RuleProfile(w, p{"name"})
-    prof{"craft_at"} = KNow()
+    IF RuleCraftAsked(said$) THEN
+        prof{"craft_at"} = KNow()
+    ELSEIF INSTR(RuleLookColorKey$(said$), "wuensch") >= 0 ORELSE INSTR(RuleLookColorKey$(said$), "wunsch") >= 0 THEN
+        prof{"craft_at"} = -99999999
+    ENDIF
 ENDSUB
 
 ' Asked to pay with cards: TRUE when enough duplicates are there, else who$ is told how many it takes.
