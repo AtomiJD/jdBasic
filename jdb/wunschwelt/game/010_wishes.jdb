@@ -233,7 +233,7 @@ SUB RuleAnswer(w, kind$, data, text$)
     ENDIF
     IF TRIM$("" + (verdict{"text"} ?? "")) = "" THEN RETURN
     IF RuleOnlyAsks(data{"said"}) THEN RETURN
-    IF RuleOnlyNames(data{"said"}) THEN
+    IF RuleOnlyNames(data{"said"}) ORELSE RuleAsksRename(verdict{"text"}) THEN
         RuleTellPlayer(w, "" + (data{"npc"} ?? ""), data{"who"}, RuleDe$("Ich finde niemanden, der so hei{s}en soll. Stell Dich neben das Tier und sag: Du sollst ... hei{s}en."))
         RETURN
     ENDIF
@@ -266,14 +266,23 @@ ENDFUNC
 FUNC RuleOnlyNames(said$)
     DIM low$ = RuleLookColorKey$("" + said$)
     DIM naming = FALSE
-    FOR EACH word$ IN ["namen ", "namen", "heissen", "heisst", "nennen", "nenn ", "taufen", "umbenenn"]
+    FOR EACH word$ IN ["namen", "heissen", "heisst", "nennen", "nenn ", "taufen", "umbenenn", "nannt"]
         IF INSTR(low$, word$) >= 0 THEN naming = TRUE
     NEXT
     IF NOT naming ORELSE INSTR(low$, "namens") >= 0 THEN RETURN FALSE
+    ' a new name is no new thing
+    low$ = REGEX.REPLACE$("neue[nrs]? namen?", low$, " namen")
     FOR EACH word$ IN ["wuensch", "wunsch", "moecht", "haett", "brauch", "bau", "pflanz", "hol ", "bring", "bekomm", "krieg", "neue", "neuen", "neuer"]
         IF INSTR(low$, word$) >= 0 THEN RETURN FALSE
     NEXT
     RETURN TRUE
+ENDFUNC
+
+' TRUE for the judge's wording of a wish that asks a new name for someone
+' already there (a new name for Muffin), whatever verb the player used.
+FUNC RuleAsksRename(text$)
+    DIM low$ = RuleLookColorKey$("" + text$)
+    RETURN LEN(REGEX.FINDALL("neue[nrs]? namen?|umbenenn|namen? aendern|anders heiss", low$)) > 0
 ENDFUNC
 
 ' A wish the board does not take: the person it was said to tells why.
