@@ -1,0 +1,183 @@
+' Test of the living cards, with a model that answers from a script: Anna
+' wishes two cats and gets a card for each, with its sort, its age, who
+' wished it and the moment it came; a petted cat's card says so right now; a
+' cat that follows her comes first and its story tells it; a friend among the
+' folk is shown; a cat in the basket sleeps on its card; the cards come only
+' while asked for and not with every sync.
+'
+'   jdBasic jdb/wunschwelt/test_living.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM port AS INTEGER = 8280 + OS.PID() MOD 10
+DIM model_port AS INTEGER = 8290 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_living_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+HTTP.SETTIMEOUT(5)
+
+DIM cats AS INTEGER = 0
+FUNC FakeModel(request)
+    DIM body = JSON.PARSE(request{"body"})
+    DIM messages = body{"messages"}
+    DIM system$ AS STRING = messages[0]{"content"}
+    DIM said$ AS STRING = messages[LEN(messages) - 1]{"content"}
+    DIM content$ AS STRING = "Gern."
+    IF INSTR(system$, "Du sortierst") >= 0 THEN
+        content$ = JSON.STRINGIFY$({"wish": FALSE})
+        IF INSTR(said$, "Katze") >= 0 THEN content$ = JSON.STRINGIFY$({"wish": TRUE, "ok": TRUE, "kinds": ["animal"], "text": said$})
+    ELSEIF INSTR(system$, "Du bist der Baumeister") >= 0 THEN
+        cats = cats + 1
+        content$ = JSON.STRINGIFY$({"steps": [{"do": "animal", "what": "cat", "name": "Mieze" + STR$(cats), "where": "tavern"}]})
+    ENDIF
+    RETURN JSON.STRINGIFY$({"choices": [{"message": {"role": "assistant", "content": content$}}]})
+ENDFUNC
+HTTP.SERVER.ON_POST "/v1/chat/completions", FakeModel@
+DIM model_up = HTTP.SERVER.START(model_port)
+
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Admin(name$ AS STRING, args)
+    RETURN Post("/rule", {"key": key$, "name": name$, "args": args})
+ENDFUNC
+
+DIM server_pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "150"], {"output": out$ + "/server.txt", "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "http://127.0.0.1:" + STR$(model_port) + "/v1/chat/completions"}})
+SLEEP 1500
+DIM no_cost = Admin("economy", {"wish": 0, "big": 0})
+DIM pace = Admin("builder_set", {"mode": "auto", "step_ms": 300, "pause_ms": 500})
+DIM no_whim = Admin("config_set", {"key": "album.whim_chance", "v": 0})
+
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM r = Post("/sync", {"token": token$, "mapv": 1})
+DIM since AS INTEGER = r{"seq"}
+
+SUB Wait(ms AS INTEGER)
+    DIM t0 = TICK()
+    DO WHILE TICK() - t0 < ms
+        DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+        since = t{"seq"}
+        SLEEP 200
+    LOOP
+ENDSUB
+
+SUB Say(text$ AS STRING)
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": text$})
+    Wait(800)
+ENDSUB
+
+FUNC Row(name$ AS STRING)
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+    FOR EACH row IN t{"npcs"}
+        IF row[1] = name$ THEN RETURN row
+    NEXT
+    RETURN []
+ENDFUNC
+
+FUNC WishCat(n AS INTEGER)
+    DIM text$ AS STRING = "Ich wuensche mir eine Katze Nummer " + STR$(n)
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "say": text$})
+    DIM k AS INTEGER
+    FOR k = 1 TO 60
+        Wait(300)
+        FOR EACH wish IN Admin("wishes", {}){"wishes"}
+            IF wish{"text"} = text$ ANDALSO wish{"status"} = "done" THEN RETURN TRUE
+        NEXT
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+' The living cards as the open window gets them; waits out the pause between two.
+FUNC Living()
+    SLEEP 1000
+    DIM t = Post("/sync", {"token": token$, "mapv": 1, "since": since, "living": TRUE})
+    since = t{"seq"}
+    RETURN t{"living"} ?? {}
+ENDFUNC
+
+FUNC CardOf(living, name$ AS STRING)
+    FOR EACH card IN living{"cards"} ?? []
+        IF card{"name"} = name$ THEN RETURN card
+    NEXT
+    RETURN {}
+ENDFUNC
+
+FUNC Said(card, part$ AS STRING)
+    FOR EACH moment IN card{"moments"} ?? []
+        IF INSTR(moment[1], part$) >= 0 THEN RETURN TRUE
+    NEXT
+    RETURN FALSE
+ENDFUNC
+
+DIM marta = NONE
+FOR EACH row IN r{"npcs"}
+    IF row[0] = "marta" THEN marta = row
+NEXT
+DIM put = Admin("player_put", {"player": "Anna", "x": marta[2], "y": marta[3] + 1})
+
+Check("two cats are made", WishCat(1) ANDALSO WishCat(2))
+DIM plain = Post("/sync", {"token": token$, "mapv": 1, "since": since})
+Check("no cards while the window is closed", NOT MAP.EXISTS(plain, "living"))
+
+DIM living = Living()
+DIM one = CardOf(living, "Mieze1")
+Check("a card for each cat Anna wished", MAP.SIZE(one) > 0 ANDALSO MAP.SIZE(CardOf(living, "Mieze2")) > 0 ANDALSO ISARR(living{"memories"}))
+Check("with its sort, its age and who wished it", MAP.SIZE(one) > 0 ANDALSO one{"what"} = "cat" ANDALSO one{"sort"} = "Katze" ANDALSO one{"age"} = 0 ANDALSO one{"wisher"} = "Anna")
+Check("the moment it came is on it", MAP.SIZE(one) > 0 ANDALSO Said(one, "kam auf Wunsch von Anna ins Dorf"))
+Check("a mood and a favourite place", MAP.SIZE(one) > 0 ANDALSO LEN(one{"mood"}) > 0 ANDALSO LEN(one{"place"}) > 0 ANDALSO one{"is"} = "lebt im Dorf")
+DIM again = Post("/sync", {"token": token$, "mapv": 1, "since": since, "living": TRUE})
+Check("not with every sync", NOT MAP.EXISTS(again, "living"))
+
+' petted, the card says so right now
+DIM busy$ AS STRING = ""
+DIM tries AS INTEGER
+FOR tries = 1 TO 6
+    DIM cat = Row("Mieze2")
+    DIM beside = Admin("player_put", {"player": "Anna", "x": cat[2] - 1, "y": cat[3]})
+    DIM pet = Post("/sync", {"token": token$, "mapv": 1, "since": since, "dx": 1, "dy": 0})
+    pet = Post("/sync", {"token": token$, "mapv": 1, "since": since, "pet": TRUE})
+    busy$ = CardOf(Living(), "Mieze2"){"busy"} ?? ""
+    IF busy$ <> "" THEN EXITFOR
+NEXT tries
+Check("a cat being petted blinks: its card says so", INSTR(busy$, "von Anna gestreichelt") >= 0)
+
+' a friend among the folk
+DIM tie = Admin("tie", {"a": one{"id"}, "b": "marta", "v": 40})
+Check("a friend among the folk is on the card", INDEXOF(CardOf(Living(), "Mieze1"){"friends"}, "Marta") >= 0)
+
+' a cat that follows comes first, and its story says why
+DIM near = Row("Mieze1")
+DIM by_cat = Admin("player_put", {"player": "Anna", "x": near[2], "y": near[3] + 1})
+DIM fond = Admin("fond", {"player": "Anna", "npc": one{"id"}, "v": 95})
+Wait(2600)
+living = Living()
+DIM first = living{"cards"}[0]
+Check("the cat that follows comes first", first{"name"} = "Mieze1" ANDALSO first{"is"} = "folgt Dir" ANDALSO first{"fond"} >= 90)
+Check("its story tells it took Anna to heart", Said(first, "hat Anna ins Herz geschlossen"))
+
+' asleep in the basket
+Say("Leg Dich hin, Mieze1!")
+DIM sleeper = CardOf(Living(), "Mieze1")
+Check("a cat in the basket sleeps on its card", MAP.SIZE(sleeper) > 0 ANDALSO INSTR(sleeper{"is"}, "Dein") >= 0 ANDALSO sleeper{"busy"} = "" ANDALSO sleeper{"mood"} = "verschlafen")
+
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+IF stats{"errors"} > 0 THEN PRINT "  "; stats{"last_error"}
+DIM gone = OS.KILL(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

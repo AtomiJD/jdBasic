@@ -210,8 +210,16 @@ SUB RuleTieAdd(w, a$, b$, n)
     DIM v = CLAMP(before + n, 0, 100)
     w{"ties"}{key$} = v
     DIM names$ = w{"npcs"}{a$}{"name"} + " und " + w{"npcs"}{b$}{"name"}
-    IF before < 30 ANDALSO v >= 30 THEN KEmit(w, {"type": "build", "text": names$ + RuleDe$(" m{o}gen sich.")})
-    IF before < 70 ANDALSO v >= 70 THEN KEmit(w, {"type": "build", "text": names$ + " sind jetzt unzertrennlich."})
+    IF before < 30 ANDALSO v >= 30 THEN
+        KEmit(w, {"type": "build", "text": names$ + RuleDe$(" m{o}gen sich.")})
+        RuleCardMoment(w, w{"npcs"}{a$}, "mag " + w{"npcs"}{b$}{"name"})
+        RuleCardMoment(w, w{"npcs"}{b$}, "mag " + w{"npcs"}{a$}{"name"})
+    ENDIF
+    IF before < 70 ANDALSO v >= 70 THEN
+        KEmit(w, {"type": "build", "text": names$ + " sind jetzt unzertrennlich."})
+        RuleCardMoment(w, w{"npcs"}{a$}, "ist unzertrennlich mit " + w{"npcs"}{b$}{"name"})
+        RuleCardMoment(w, w{"npcs"}{b$}, "ist unzertrennlich mit " + w{"npcs"}{a$}{"name"})
+    ENDIF
 ENDSUB
 
 ' The folk who can be talked to, sorted.

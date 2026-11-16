@@ -18,5 +18,10 @@
     "trace_chance": 0.05,
     "traces_per_meet": 5,
     "season_weeks": 0
+  },
+  "living": {
+    "moments": 6,
+    "busy_ms": 6000,
+    "every_ms": 900
   }
 }

@@ -421,6 +421,7 @@ FUNC ClientAlbumKey(c, tapped$)
         IF c{"album_open"} THEN
             c{"bag"} = FALSE
             c{"questlog"} = FALSE
+            c{"living_open"} = FALSE
         ENDIF
         RETURN TRUE
     ENDIF

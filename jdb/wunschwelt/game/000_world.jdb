@@ -402,6 +402,13 @@ ENDSUB
 SUB RuleCardTick(w, now)
 ENDSUB
 
+' The living cards of a player's animals; game/097_living.jdb gives them a body.
+SUB RuleCardMoment(w, npc, text$)
+ENDSUB
+
+SUB RuleLivingSync(w, p, msg, answer)
+ENDSUB
+
 ' The album of the animal sorts; game/095_album.jdb gives them a body.
 SUB RuleAlbumMeet(w, p, id$)
 ENDSUB
@@ -870,7 +877,7 @@ SUB ClientInput(c)
         IF GFX.KEYSTATE("Up") ORELSE GFX.KEYSTATE("W") THEN c{"dy"} = -1
         IF GFX.KEYSTATE("Down") ORELSE GFX.KEYSTATE("S") THEN c{"dy"} = 1
     ENDIF
-    IF ClientHolds(c) THEN
+    IF ClientHolds(c) ORELSE ClientLivingHolds(c) THEN
         c{"dx"} = 0
         c{"dy"} = 0
         c{"tap"} = [0, 0]
@@ -1095,6 +1102,23 @@ ENDFUNC
 
 ' TRUE while a window is open that keeps the player standing.
 FUNC ClientHolds(c)
+    RETURN FALSE
+ENDFUNC
+
+SUB ClientLivingAsk(c, msg)
+ENDSUB
+
+SUB ClientLivingExtra(c, r)
+ENDSUB
+
+FUNC ClientLivingKey(c, tapped$)
+    RETURN FALSE
+ENDFUNC
+
+SUB ClientLivingHud(c)
+ENDSUB
+
+FUNC ClientLivingHolds(c)
     RETURN FALSE
 ENDFUNC
 
@@ -1364,12 +1388,14 @@ SUB ClientDraw(c)
         TEXT 4, 365, "> " + c{"entry"} + "_", 240, 240, 240
     ELSE
         RECT 0, 364, 640, 20, TRUE, 16, 18, 22
-        TEXT 4, 365, "Enter: sprechen  E: streicheln, pfl" + CHR$(195) + CHR$(188) + "cken, Laden  F: angeln  I: Tasche  Q: Aufgaben  K: Album", 150, 160, 150
-        DIM tune$ = c{"music_label"} ?? ""
-        IF tune$ <> "" THEN TEXT 636 - GFX.TEXTSIZE("Musik: " + tune$)[0], 365, "Musik: " + tune$, 150, 180, 220
+        DIM hint$ = "Enter: sprechen  E: streicheln, pfl" + CHR$(195) + CHR$(188) + "cken, Laden  F: angeln  I: Tasche  Q: Aufgaben  K: Album  B: Tiere"
+        TEXT 4, 365, hint$, 150, 160, 150
     ENDIF
+    DIM tune$ = c{"music_label"} ?? ""
+    IF tune$ <> "" THEN TEXT 636 - GFX.TEXTSIZE("Musik: " + tune$)[0], 1, "Musik: " + tune$, 150, 180, 220
     ClientHud(c)
     ClientAlbumHud(c)
+    ClientLivingHud(c)
 ENDSUB
 
 SUB ClientFrame(c)

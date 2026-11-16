@@ -1,0 +1,401 @@
+' The living cards (stage 3): a card for each animal of a player, as it is
+' now. The animals of a player are those that follow them, those that sleep
+' in their basket, those they wished and those they are fond of; after them
+' come the memory cards of the animals that went into the forest.
+'
+' A card shows the look of now, the name, the sort and the age, where the
+' animal is, its friends among the folk (the ties of game/090_bonds.jdb), the
+' moments of its story, the mood of the day and its favourite place. It
+' blinks while the animal does something right now: being petted, or
+' playing with another animal beside it.
+'
+' npc{"born_at"} is the world time it came, npc{"wisher"} who wished it,
+' npc{"moments"} [[day, text]], the last living.moments of them. The client
+' opens the cards with B; while they are open it asks for them and the
+' server answers at most every living.every_ms.
+
+'@server
+
+' A moment of the story of an animal; for the folk who are no animal, none.
+SUB RuleCardMoment(w, npc, text$)
+    IF NOT ISMAP(npc) THEN RETURN
+    IF RuleAlbumSortOf$(npc) = "" THEN RETURN
+    DIM said$ = TRIM$(text$)
+    DIM name$ = "" + (npc{"name"} ?? "")
+    IF name$ <> "" ANDALSO STARTSWITH(said$, name$ + " ") THEN said$ = MID$(said$, LEN(name$) + 1)
+    IF NOT ISARR(npc{"moments"} ?? 0) THEN npc{"moments"} = []
+    FOR EACH had IN npc{"moments"}
+        IF had[1] = said$ THEN RETURN
+    NEXT
+    npc{"moments"} = APPEND(npc{"moments"}, [[RuleToday$(w, 0), said$]])
+    DIM most = RuleConf(w, "living.moments", 6)
+    IF LEN(npc{"moments"}) > most THEN npc{"moments"} = DROP(LEN(npc{"moments"}) - most, npc{"moments"})
+ENDSUB
+
+' When an animal came: born_at, or for one older than that, the time of the
+' done wish that named it; -1 when it is not known.
+FUNC RuleLivingBorn(w, npc)
+    IF ISNUM(npc{"born_at"} ?? "") THEN RETURN npc{"born_at"}
+    DIM key$ = RuleLookColorKey$("" + (npc{"name"} ?? ""))
+    IF LEN(key$) < 3 THEN RETURN -1
+    FOR EACH wish IN w{"wishes"} ?? []
+        IF (wish{"status"} ?? "") = "done" ANDALSO INSTR(RuleLookColorKey$("" + (wish{"text"} ?? "")), key$) >= 0 THEN
+            npc{"born_at"} = wish{"at"}
+            IF (npc{"wisher"} ?? "") = "" THEN npc{"wisher"} = wish{"who"}
+            RETURN npc{"born_at"}
+        ENDIF
+    NEXT
+    RETURN -1
+ENDFUNC
+
+' What the animal does right now, "" when nothing: petted a moment ago, or
+' playing with another animal of the village beside it.
+FUNC RuleLivingBusy$(w, npc, in_village)
+    IF NOT in_village THEN RETURN ""
+    IF KNow() - (npc{"petted_at"} ?? -999999) < RuleConf(w, "living.busy_ms", 6000) THEN RETURN "wird gerade von " + (npc{"petted_by"} ?? "jemandem") + " gestreichelt"
+    FOR EACH id$ IN MAP.KEYS(w{"npcs"})
+        DIM other = w{"npcs"}{id$}
+        IF id$ <> npc{"id"} ANDALSO RuleAlbumSortOf$(other) <> "" THEN
+            IF MAX([ABS(other{"x"} - npc{"x"}), ABS(other{"y"} - npc{"y"})]) <= 1 THEN RETURN "spielt mit " + (other{"name"} ?? "")
+        ENDIF
+    NEXT
+    RETURN ""
+ENDFUNC
+
+' The friends of the animal among the folk: up to three names, best first.
+FUNC RuleLivingFriends(w, id$)
+    DIM strengths = []
+    DIM found = []
+    FOR EACH key$ IN MAP.KEYS(w{"ties"} ?? {})
+        DIM pair = SPLIT(key$, "|")
+        IF LEN(pair) = 2 ANDALSO (pair[0] = id$ ORELSE pair[1] = id$) ANDALSO w{"ties"}{key$} >= 30 THEN
+            DIM other$ = IIF(pair[0] = id$, pair[1], pair[0])
+            IF MAP.EXISTS(w{"npcs"}, other$) THEN
+                strengths = APPEND(strengths, -w{"ties"}{key$})
+                found = APPEND(found, "" + w{"npcs"}{other$}{"name"})
+            ENDIF
+        ENDIF
+    NEXT
+    DIM names = []
+    IF LEN(found) = 0 THEN RETURN names
+    FOR EACH k IN GRADE(strengths)
+        IF LEN(names) < 3 THEN names = APPEND(names, found[k])
+    NEXT
+    RETURN names
+ENDFUNC
+
+' Where the animal likes to be: by the nearest of the folk or the things
+' that are no animal, near its home; else by the water or on the meadow.
+FUNC RuleLivingPlace$(w, npc)
+    DIM home = npc{"home"} ?? [npc{"x"}, npc{"y"}]
+    DIM best$ = ""
+    DIM best_d = 7
+    FOR EACH id$ IN MAP.KEYS(w{"npcs"})
+        DIM other = w{"npcs"}{id$}
+        IF id$ <> npc{"id"} ANDALSO RuleAlbumSortOf$(other) = "" ANDALSO ("" + (other{"name"} ?? "")) <> "" THEN
+            DIM d = MAX([ABS(other{"x"} - home[0]), ABS(other{"y"} - home[1])])
+            IF d < best_d THEN
+                best_d = d
+                best$ = other{"name"}
+            ENDIF
+        ENDIF
+    NEXT
+    IF best$ <> "" THEN RETURN "nahe " + best$
+    DIM dy = 0
+    DIM dx = 0
+    FOR dy = -3 TO 3
+        FOR dx = -3 TO 3
+            DIM t = RuleTileAt(w, home[0] + dx, home[1] + dy)
+            IF t = 4 ORELSE t = 10 THEN RETURN "am Wasser"
+        NEXT dx
+    NEXT dy
+    RETURN "auf der Wiese"
+ENDFUNC
+
+' The mood of the day of an animal.
+FUNC RuleLivingMood$(w, npc, where$)
+    IF where$ = "basket" THEN RETURN "verschlafen"
+    IF where$ = "follows" THEN RETURN "abenteuerlustig"
+    DIM today$ = RuleToday$(w, 0)
+    FOR EACH name$ IN MAP.KEYS(w{"profiles"} ?? {})
+        DIM met = RuleProfile(w, name$){"album_met"} ?? {}
+        IF ISMAP(met) THEN
+            IF (met{npc{"id"}} ?? "") = today$ THEN RETURN RuleDe$("fr{o}hlich")
+        ENDIF
+    NEXT
+    IF MAP.EXISTS(npc, "loved_at") ANDALSO KNow() - npc{"loved_at"} > 86400000 THEN RETURN "ein bisschen einsam"
+    DIM moods = ["neugierig", RuleDe$("gem{u}tlich"), RuleDe$("vertr{a}umt"), "munter", "hungrig", "verspielt"]
+    RETURN moods[CODEC.CRC32(npc{"id"} + "|" + today$) MOD LEN(moods)]
+ENDFUNC
+
+' The card of one animal; where$ is follows, basket or village.
+FUNC RuleLivingCard(w, who$, npc, where$)
+    DIM born = RuleLivingBorn(w, npc)
+    DIM age = -1
+    IF born >= 0 THEN age = MAX([0, (KNow() - born) \ 86400000])
+    DIM place$ = "im " + RuleDe$("K{o}rbchen")
+    IF where$ = "follows" THEN place$ = "immer bei " + who$
+    IF where$ = "village" THEN place$ = RuleLivingPlace$(w, npc)
+    DIM is$ = "lebt im Dorf"
+    IF where$ = "follows" THEN is$ = "folgt Dir"
+    IF where$ = "basket" THEN is$ = RuleDe$("schl{a}ft in Deinem K{o}rbchen")
+    RETURN {"id": npc{"id"}, "name": npc{"name"} ?? "", "what": npc{"what"} ?? "", "sort": RuleSortName$(npc{"what"} ?? ""), "look": npc{"look"} ?? {}, "is": is$, "age": age, "fond": INT(RuleFond(w, who$, npc{"id"})), "friends": RuleLivingFriends(w, npc{"id"}), "moments": npc{"moments"} ?? [], "mood": RuleLivingMood$(w, npc, where$), "place": place$, "busy": RuleLivingBusy$(w, npc, where$ <> "basket"), "wisher": npc{"wisher"} ?? ""}
+ENDFUNC
+
+' The cards of who$: followers, then the others by affection, then the
+' sleepers of the basket; and the memory cards.
+FUNC RuleLivingOf(w, who$)
+    DIM prof = RuleProfile(w, who$)
+    DIM cards = []
+    DIM seen = {}
+    FOR EACH id$ IN RuleFollowers(w, who$)
+        cards = APPEND(cards, RuleLivingCard(w, who$, w{"npcs"}{id$}, "follows"))
+        seen{id$} = TRUE
+    NEXT
+    DIM fonds = []
+    DIM rest = []
+    FOR EACH id$ IN SORT(MAP.KEYS(w{"npcs"}))
+        DIM npc = w{"npcs"}{id$}
+        IF NOT MAP.EXISTS(seen, id$) ANDALSO RuleAlbumSortOf$(npc) <> "" THEN
+            DIM born = RuleLivingBorn(w, npc)
+            DIM fond = RuleFond(w, who$, id$)
+            IF fond >= 1 ORELSE (npc{"wisher"} ?? "") = who$ THEN
+                fonds = APPEND(fonds, -fond)
+                rest = APPEND(rest, id$)
+            ENDIF
+        ENDIF
+    NEXT
+    IF LEN(rest) > 0 THEN
+        FOR EACH k IN GRADE(fonds)
+            cards = APPEND(cards, RuleLivingCard(w, who$, w{"npcs"}{rest[k]}, "village"))
+        NEXT
+    ENDIF
+    FOR EACH sleeper IN prof{"basket"} ?? []
+        cards = APPEND(cards, RuleLivingCard(w, who$, sleeper, "basket"))
+    NEXT
+    RETURN {"cards": cards, "memories": prof{"memories"} ?? []}
+ENDFUNC
+
+SUB RuleLivingSync(w, p, msg, answer)
+    IF NOT (msg{"living"} ?? FALSE) THEN RETURN
+    DIM now = KNow()
+    IF now < (p{"living_at"} ?? 0) THEN RETURN
+    p{"living_at"} = now + RuleConf(w, "living.every_ms", 900)
+    answer{"living"} = RuleLivingOf(w, p{"name"})
+ENDSUB
+
+'@client
+
+SUB ClientLivingAsk(c, msg)
+    IF c{"living_open"} ?? FALSE THEN msg{"living"} = TRUE
+ENDSUB
+
+SUB ClientLivingExtra(c, r)
+    IF MAP.EXISTS(r, "living") THEN c{"living"} = r{"living"}
+ENDSUB
+
+FUNC ClientLivingHolds(c)
+    RETURN c{"living_open"} ?? FALSE
+ENDFUNC
+
+' B opens and closes the cards, left and right turn them.
+FUNC ClientLivingKey(c, tapped$)
+    IF tapped$ = "B" THEN
+        c{"living_open"} = NOT (c{"living_open"} ?? FALSE)
+        IF c{"living_open"} THEN
+            c{"album_open"} = FALSE
+            c{"bag"} = FALSE
+            c{"questlog"} = FALSE
+        ENDIF
+        RETURN TRUE
+    ENDIF
+    IF NOT (c{"living_open"} ?? FALSE) THEN RETURN FALSE
+    IF tapped$ = "ESCAPE" ORELSE tapped$ = "I" ORELSE tapped$ = "Q" ORELSE tapped$ = "K" THEN
+        c{"living_open"} = FALSE
+        RETURN tapped$ = "ESCAPE"
+    ENDIF
+    DIM data = c{"living"} ?? {}
+    DIM n_cards = LEN(data{"cards"} ?? []) + LEN(data{"memories"} ?? [])
+    IF n_cards > 0 THEN
+        IF tapped$ = "LEFT" ORELSE tapped$ = "A" THEN c{"living_page"} = ((c{"living_page"} ?? 0) - 1 + n_cards) MOD n_cards
+        IF tapped$ = "RIGHT" ORELSE tapped$ = "D" THEN c{"living_page"} = ((c{"living_page"} ?? 0) + 1) MOD n_cards
+    ENDIF
+    RETURN TRUE
+ENDFUNC
+
+' The animal as it looks now, standing and facing the viewer, in a picture
+' of 48 x 48 kept for its look; -1 when its sort has no sheet.
+FUNC LivingPortrait(c, card)
+    DIM what$ = "" + card{"what"}
+    DIM look = card{"look"}
+    IF NOT ISMAP(look) THEN look = {}
+    DIM key$ = card{"id"} + JSON.STRINGIFY$(look)
+    IF NOT MAP.EXISTS(c, "living_imgs") THEN c{"living_imgs"} = {}
+    IF MAP.EXISTS(c{"living_imgs"}, key$) THEN RETURN c{"living_imgs"}{key$}
+    DIM kind = AnimalKinds(){what$} ?? {"base": [180, 180, 180]}
+    DIM sheet = AnimalSheet(c, what$, look, kind)
+    IF sheet <= 0 THEN RETURN -1
+    IF MAP.SIZE(c{"living_imgs"}) >= 16 THEN
+        FOR EACH old$ IN MAP.KEYS(c{"living_imgs"})
+            GFX.FREEIMAGE(c{"living_imgs"}{old$})
+        NEXT
+        c{"living_imgs"} = {}
+    ENDIF
+    DIM size = AnimalSheetSize(what$)
+    DIM ox = 16 - size \ 2
+    DIM oy = 31 - size
+    DIM spots = AnimalFrameAnchors(c, what$, "0,1")
+    DIM at = {"front": spots{"view"} = "front", "gap": INT((spots{"gap"} ?? 5) * size / 48)}
+    FOR EACH part$ IN ["hat", "eye", "neck"]
+        IF MAP.EXISTS(spots, part$) THEN at{part$} = [ox + INT(spots{part$}[0] * size / 48), oy + INT(spots{part$}[1] * size / 48)]
+    NEXT
+    DIM img = GFX.NEWTARGET(48, 48, FALSE)
+    GFX.TARGET img, TRUE
+    ' the screen is the target again whatever the drawing does
+    TRY
+        GFX.DRAWIMAGE_REGION(sheet, 48, 0, 48, 48, 8 + ox, 12 + oy, size, size)
+        DIM top = AnimalWear(at, look, 8, 12, FALSE, 0, 0)
+    CATCH
+    ENDTRY
+    GFX.TARGET
+    c{"living_imgs"}{key$} = img
+    RETURN img
+ENDFUNC
+
+' A date of the server (2026-11-16) as the card says it (16.11.).
+FUNC LivingDay$(day$)
+    IF LEN(day$) < 10 THEN RETURN day$
+    RETURN MID$(day$, 8, 2) + "." + MID$(day$, 5, 2) + "."
+ENDFUNC
+
+' The cards of the player's animals, one at a time, and a dot for each card
+' below; the card and the dot of an animal busy right now blink.
+SUB ClientLivingHud(c)
+    IF NOT (c{"living_open"} ?? FALSE) THEN RETURN
+    DIM ue$ = CHR$(195) + CHR$(188)
+    DIM px0 = 20
+    DIM py0 = 24
+    DIM pw = 600
+    DIM ph = 336
+    ROUNDED_RECT px0, py0, pw, ph, 6, TRUE, 246, 240, 222
+    ROUNDED_RECT px0, py0, pw, ph, 6, FALSE, 96, 64, 40
+    DIM high = GFX.TEXTSIZE("Ag")[1]
+    DIM data = c{"living"} ?? NONE
+    IF NOT ISMAP(data) THEN
+        TEXT px0 + 12, py0 + 10, "Die Karten kommen gleich ...", 96, 64, 40
+        RETURN
+    ENDIF
+    DIM cards = data{"cards"} ?? []
+    DIM memories = data{"memories"} ?? []
+    DIM n_cards = LEN(cards) + LEN(memories)
+    IF n_cards = 0 THEN
+        TEXT px0 + 12, py0 + 10, "Meine Tiere", 96, 64, 40
+        TEXT px0 + 12, py0 + 18 + high, "Noch keine Karten. Streichle ein Tier oder w" + ue$ + "nsch Dir eins.", 120, 100, 70
+        TEXT px0 + 12, py0 + ph - high - 6, "B: zu", 120, 110, 100
+        RETURN
+    ENDIF
+    DIM page = CLAMP(c{"living_page"} ?? 0, 0, n_cards - 1)
+    DIM blink = (INT(TICK()) \ 300) MOD 2 = 0
+    TEXT px0 + 12, py0 + 8, "Meine Tiere   (Karte " + STR$(page + 1) + " von " + STR$(n_cards) + ")", 96, 64, 40
+    DIM cx = px0 + 12
+    DIM cy = py0 + 14 + high
+    DIM cw = pw - 24
+    DIM chh = ph - 2 * high - 34
+    IF page >= LEN(cards) THEN
+        ' a memory card, in the colours of an old photograph
+        DIM mem = memories[page - LEN(cards)]
+        ROUNDED_RECT cx, cy, cw, chh, 4, TRUE, 226, 214, 190
+        ROUNDED_RECT cx, cy, cw, chh, 4, FALSE, 140, 120, 90
+        DIM kinds = AnimalKinds()
+        DIM icon = AnimalIcon(c, "" + mem{"what"}, kinds{"" + mem{"what"}} ?? {"base": [160, 150, 140]})
+        IF icon > 0 THEN GFX.DRAWIMAGE_REGION(icon, 0, 0, 48, 48, cx + 12, cy + 12, 96, 96)
+        DIM mx = cx + 124
+        TEXT mx, cy + 12, "Erinnerung an " + mem{"name"}, 90, 70, 50
+        TEXT mx, cy + 18 + high, "ging am " + LivingDay$("" + mem{"day"}) + " in den Wald und kam nicht wieder", 110, 90, 70
+        TEXT mx, cy + 30 + 2 * high, "Zuletzt:", 110, 90, 70
+        TEXT mx, cy + 34 + 3 * high, LEFT$("" + mem{"line"}, 60), 110, 90, 70
+    ELSE
+        DIM card = cards[page]
+        DIM busy$ = "" + (card{"busy"} ?? "")
+        ROUNDED_RECT cx, cy, cw, chh, 4, TRUE, 255, 252, 240
+        IF busy$ <> "" ANDALSO blink THEN
+            ROUNDED_RECT cx, cy, cw, chh, 4, FALSE, 236, 180, 30
+            ROUNDED_RECT cx + 1, cy + 1, cw - 2, chh - 2, 4, FALSE, 236, 180, 30
+        ELSE
+            ROUNDED_RECT cx, cy, cw, chh, 4, FALSE, 150, 110, 60
+        ENDIF
+        ' the picture
+        ROUNDED_RECT cx + 10, cy + 10, 104, 104, 4, TRUE, 214, 232, 196
+        DIM img = LivingPortrait(c, card)
+        IF img > 0 THEN
+            GFX.DRAWIMAGE_REGION(img, 0, 0, 48, 48, cx + 14, cy + 14, 96, 96)
+        ELSE
+            DIM kinds2 = AnimalKinds()
+            DIM icon2 = AnimalIcon(c, "" + card{"what"}, kinds2{"" + card{"what"}} ?? {"base": [180, 180, 180]})
+            IF icon2 > 0 THEN GFX.DRAWIMAGE_REGION(icon2, 0, 0, 48, 48, cx + 14, cy + 14, 96, 96)
+        ENDIF
+        ' the affection under the picture
+        DIM fond = card{"fond"} ?? 0
+        RECT cx + 10, cy + 120, 104, 6, TRUE, 230, 214, 200
+        RECT cx + 10, cy + 120, INT(104 * CLAMP(fond, 0, 100) / 100), 6, TRUE, 220, 80, 100
+        TEXT cx + 10, cy + 130, "Herz " + STR$(fond), 150, 90, 100
+        DIM tx = cx + 126
+        DIM ty = cy + 10
+        DIM age = card{"age"} ?? -1
+        DIM age$ = ""
+        IF age = 0 THEN age$ = ", seit heute da"
+        IF age = 1 THEN age$ = ", seit gestern da"
+        IF age > 1 THEN age$ = ", seit " + STR$(age) + " Tagen da"
+        TEXT tx, ty, card{"name"} + "  (" + card{"sort"} + age$ + ")", 60, 44, 28
+        ty = ty + high + 4
+        TEXT tx, ty, card{"is"} + "   Laune heute: " + card{"mood"}, 110, 90, 60
+        ty = ty + high + 2
+        TEXT tx, ty, "Lieblingsort: " + card{"place"}, 110, 90, 60
+        ty = ty + high + 2
+        DIM friends = card{"friends"} ?? []
+        DIM friends$ = "noch keine"
+        IF LEN(friends) > 0 THEN friends$ = JOIN(friends, ", ")
+        TEXT tx, ty, "Freunde: " + friends$, 110, 90, 60
+        ty = ty + high + 2
+        IF ("" + (card{"wisher"} ?? "")) <> "" THEN
+            TEXT tx, ty, "Gew" + ue$ + "nscht von " + card{"wisher"}, 110, 90, 60
+            ty = ty + high + 2
+        ENDIF
+        IF busy$ <> "" THEN
+            IF blink THEN TEXT tx, ty, "Jetzt: " + busy$, 200, 130, 10
+            ty = ty + high + 2
+        ENDIF
+        ty = ty + 6
+        TEXT tx, ty, "Erlebnisse:", 96, 64, 40
+        ty = ty + high + 2
+        DIM moments = card{"moments"} ?? []
+        IF LEN(moments) = 0 THEN TEXT tx + 8, ty, "noch keine", 150, 140, 120
+        DIM k = 0
+        FOR k = LEN(moments) - 1 TO 0 STEP -1
+            IF ty + high < cy + chh - 4 THEN
+                TEXT tx + 8, ty, LivingDay$("" + moments[k][0]) + "  " + LEFT$("" + moments[k][1], 52), 110, 90, 60
+                ty = ty + high + 1
+            ENDIF
+        NEXT k
+    ENDIF
+    ' a dot for each card; one of an animal busy now blinks
+    DIM dots_y = cy + chh + 8
+    DIM dot_x = px0 + pw \ 2 - n_cards * 6
+    DIM i = 0
+    FOR i = 0 TO n_cards - 1
+        DIM r = 150
+        DIM g = 130
+        DIM b = 100
+        IF i >= LEN(cards) THEN
+            r = 190
+            g = 180
+            b = 160
+        ELSEIF ("" + (cards[i]{"busy"} ?? "")) <> "" ANDALSO blink THEN
+            r = 236
+            g = 180
+            b = 30
+        ENDIF
+        CIRCLE dot_x + i * 12 + 4, dots_y + 3, IIF(i = page, 4, 2), TRUE, r, g, b
+    NEXT i
+    TEXT px0 + 12, py0 + ph - high - 6, "Links/rechts: Karte   B: zu", 120, 110, 100
+ENDSUB

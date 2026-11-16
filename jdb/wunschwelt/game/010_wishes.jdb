@@ -301,6 +301,7 @@ SUB RuleExtra(w, p, msg, answer)
     RuleShopSync(w, p, msg, answer)
     RuleBondSync(w, p, msg, answer)
     RuleAlbumSync(w, p, msg, answer)
+    RuleLivingSync(w, p, msg, answer)
     IF INT(msg{"wishv"} ?? -1) = w{"wishv"} THEN RETURN
     DIM wishes = w{"wishes"}
     DIM rows = []
@@ -346,6 +347,7 @@ SUB ClientAsk(c, msg)
     ClientShopAsk(c, msg)
     ClientBondAsk(c, msg)
     ClientAlbumAsk(c, msg)
+    ClientLivingAsk(c, msg)
 ENDSUB
 
 SUB ClientExtra(c, r)
@@ -355,6 +357,7 @@ SUB ClientExtra(c, r)
     ClientShopExtra(c, r)
     ClientBondExtra(c, r)
     ClientAlbumExtra(c, r)
+    ClientLivingExtra(c, r)
     IF MAP.EXISTS(r, "plot") THEN
         c{"plot"} = r{"plot"}
         c{"plotv"} = r{"plotv"}

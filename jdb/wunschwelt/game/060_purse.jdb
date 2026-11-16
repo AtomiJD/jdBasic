@@ -367,6 +367,7 @@ ENDSUB
 
 ' I opens and closes the bag, a number uses that thing, Escape closes it.
 SUB ClientKey(c, tapped$)
+    IF ClientLivingKey(c, tapped$) THEN RETURN
     IF ClientAlbumKey(c, tapped$) THEN RETURN
     IF ClientShopKey(c, tapped$) THEN RETURN
     IF ClientQuestKey(c, tapped$) THEN RETURN

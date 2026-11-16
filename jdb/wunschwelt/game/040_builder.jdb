@@ -1011,7 +1011,12 @@ FUNC RuleBuildFolk(w, b, job, st)
         npc{"range"} = 4
         npc{"persona"} = "Du bist " + st{"name"} + ", " + st{"role"} + RuleDe$(" in einem kleinen Dorf mit der Taverne Zum Goldenen Kessel. Der Baumeister hat dich auf Wunsch von ") + job{"who"} + RuleDe$(" ins Dorf geholt, du bist neu hier. Antworte auf Deutsch in ein bis zwei kurzen S{a}tzen und bleib in der Rolle.")
     ENDIF
-    IF st{"do"} = "animal" THEN RuleAlbumBorn(w, "" + (job{"who"} ?? ""), npc)
+    IF st{"do"} = "animal" THEN
+        npc{"born_at"} = KNow()
+        npc{"wisher"} = "" + (job{"who"} ?? "")
+        RuleCardMoment(w, npc, "kam auf Wunsch von " + npc{"wisher"} + " ins Dorf")
+        RuleAlbumBorn(w, npc{"wisher"}, npc)
+    ENDIF
     ' a sort with no room left in the village: the animal sleeps in the wisher's basket
     IF st{"do"} = "animal" ANDALSO NOT RuleAnimalRoom(w, what$) THEN
         RuleBasketPut(w, job{"who"}, npc)
@@ -1126,6 +1131,7 @@ FUNC RuleBuildRename(w, p, said$)
     named{"name"} = new$
     IF MAP.EXISTS(named, "persona") THEN named{"persona"} = REPLACE$(named{"persona"}, "Du bist " + old$ + ",", "Du bist " + new$ + ",")
     KEmit(w, {"type": "build", "who": p{"name"}, "text": old$ + RuleDe$(" hei{s}t jetzt ") + new$})
+    RuleCardMoment(w, named, RuleDe$("hie{s} fr{u}her ") + old$)
     RETURN TRUE
 ENDFUNC
 
