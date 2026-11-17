@@ -1,0 +1,33 @@
+' Writes the open CodeQL alerts of the repository to tmp/codeql_alerts.md,
+' the starting list of the security-reviewer agent. Needs the gh CLI,
+' logged in. Run from the repository root:
+'
+'   build/jdBasic.exe tools/codeql_alerts.jdb [owner/repo]
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM repo$ AS STRING = "AtomiJD/jdBasic"
+IF LEN(cli) > 1 THEN repo$ = cli[1]
+DIM out_file$ AS STRING = "tmp/codeql_alerts.md"
+
+DIM fields$ AS STRING = ".[] | [(.number|tostring), (.rule.security_severity_level // .rule.severity), .rule.id, .most_recent_instance.location.path, (.most_recent_instance.location.start_line|tostring), .most_recent_instance.message.text] | @tsv"
+DIM r = OS.EXEC("gh", ["api", "--paginate", "repos/" + repo$ + "/code-scanning/alerts?state=open&per_page=100", "--jq", fields$])
+IF r{"exit_code"} <> 0 THEN
+    PRINT "gh failed: "; r{"output"}
+    END 1
+ENDIF
+
+' gh's notices share the pipe with its output; an alert line has six fields
+DIM rows = FILTER(LAMBDA s -> LEN(SPLIT(s, CHR$(9))) >= 6, SPLIT(REPLACE$(r{"output"}, CHR$(13), ""), CHR$(10)))
+DIM text$ AS STRING = "# Open CodeQL alerts of " + repo$ + " (" + FORMAT_DATE$(NOW(), "%Y-%m-%d %H:%M") + ")" + CHR$(10) + CHR$(10)
+text$ = text$ + "One line each: alert, severity, rule, place, CodeQL's message. Dismissed alerts are not listed." + CHR$(10) + CHR$(10)
+DIM i AS INTEGER
+FOR i = 0 TO LEN(rows) - 1
+    DIM f = SPLIT(rows[i], CHR$(9))
+    text$ = text$ + "- #" + f[0] + " " + UCASE$(f[1]) + " `" + f[2] + "` " + f[3] + ":" + f[4] + " - " + f[5] + CHR$(10)
+NEXT i
+IF LEN(rows) = 0 THEN text$ = text$ + "None." + CHR$(10)
+IF NOT FILE.ISDIR("tmp") THEN MKDIR "tmp"
+TXTWRITER out_file$, text$
+PRINT LEN(rows); " open alerts -> "; out_file$
