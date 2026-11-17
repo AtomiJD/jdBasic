@@ -60,43 +60,49 @@ why$ = CompileError$("DIM wide_fn = LAMBDA " + JOIN(SELECT(LAMBDA k -> "q" + STR
 Check("a LAMBDA of 256 parameters is refused", INSTR(why$, "255 parameters") >= 0)
 
 ' ---- the p-code loader ----
+' It starts jdBasic on the probe files; a compiled program has no jdBasic to
+' start, and OS.SELF$() there is the test program itself.
 
-DIM exe$ AS STRING = OS.SELF$()
-DIM dir$ AS STRING = MKTEMP$("arglim")
-IF FILE.EXISTS(dir$) ANDALSO NOT FILE.ISDIR(dir$) THEN KILL dir$
-IF NOT FILE.ISDIR(dir$) THEN MKDIR dir$
-DIM src$ AS STRING = PATH.JOIN$(dir$, "probe.jdb")
-DIM pcode$ AS STRING = PATH.JOIN$(dir$, "probe.jdpb")
-TXTWRITER src$, "FUNC ZZPROBEFN(a, b = 7)" + CHR$(10) + "RETURN a + b" + CHR$(10) + "ENDFUNC" + CHR$(10) + "PRINT " + CHR$(34) + "probe " + CHR$(34) + "; ZZPROBEFN(1)" + CHR$(10)
+SUB PcodeLoaderChecks()
+    DIM exe$ AS STRING = OS.SELF$()
+    DIM dir$ AS STRING = MKTEMP$("arglim")
+    IF FILE.EXISTS(dir$) ANDALSO NOT FILE.ISDIR(dir$) THEN KILL dir$
+    IF NOT FILE.ISDIR(dir$) THEN MKDIR dir$
+    DIM src$ AS STRING = PATH.JOIN$(dir$, "probe.jdb")
+    DIM pcode$ AS STRING = PATH.JOIN$(dir$, "probe.jdpb")
+    TXTWRITER src$, "FUNC ZZPROBEFN(a, b = 7)" + CHR$(10) + "RETURN a + b" + CHR$(10) + "ENDFUNC" + CHR$(10) + "PRINT " + CHR$(34) + "probe " + CHR$(34) + "; ZZPROBEFN(1)" + CHR$(10)
 
-DIM made = OS.EXEC(exe$, ["--pcode", src$])
-Check("p-code written", FILE.EXISTS(pcode$))
-DIM ran = OS.EXEC(exe$, [pcode$])
-Check("the p-code runs as written", INSTR(ran{"output"}, "probe 8") >= 0)
+    DIM made = OS.EXEC(exe$, ["--pcode", src$])
+    Check("p-code written", FILE.EXISTS(pcode$))
+    DIM ran = OS.EXEC(exe$, [pcode$])
+    Check("the p-code runs as written", INSTR(ran{"output"}, "probe 8") >= 0)
 
-' arity and min_arity follow the function's name in the function table,
-' the name's last place in the file (the main chunk names it first)
-DIM bytes$ AS STRING = BINREADER$(pcode$)
-DIM at AS INTEGER = -1
-DIM next_at AS INTEGER = INSTR(bytes$, "ZZPROBEFN")
-DO WHILE next_at >= 0
-    at = next_at
-    next_at = INSTR(at + 1, bytes$, "ZZPROBEFN")
-LOOP
-Check("the function's name is in the p-code", at >= 0)
-IF at >= 0 THEN
-    DIM after AS INTEGER = at + LEN("ZZPROBEFN")
-    Check("arity 2, min_arity 1 after the name", MID$(bytes$, after, 8) = PACK$("<ii", 2, 1))
-    DIM bad_file$ AS STRING = PATH.JOIN$(dir$, "bad.jdpb")
-    ' 200 parameters claimed, two defaults carried
-    BINWRITER bad_file$, LEFT$(bytes$, after) + PACK$("<ii", 200, 1) + MID$(bytes$, after + 8)
-    DIM bad = OS.EXEC(exe$, [bad_file$])
-    Check("a function claiming 200 parameters with 2 defaults is refused", INSTR(bad{"output"}, "bad parameters") >= 0 ANDALSO bad{"exit_code"} <> 0)
-    ' 300 parameters do not fit the byte operand of a call
-    BINWRITER bad_file$, LEFT$(bytes$, after) + PACK$("<ii", 300, 300) + MID$(bytes$, after + 8)
-    bad = OS.EXEC(exe$, [bad_file$])
-    Check("a function claiming 300 parameters is refused", INSTR(bad{"output"}, "bad parameters") >= 0)
-ENDIF
+    ' arity and min_arity follow the function's name in the function table,
+    ' the name's last place in the file (the main chunk names it first)
+    DIM bytes$ AS STRING = BINREADER$(pcode$)
+    DIM at AS INTEGER = -1
+    DIM next_at AS INTEGER = INSTR(bytes$, "ZZPROBEFN")
+    DO WHILE next_at >= 0
+        at = next_at
+        next_at = INSTR(at + 1, bytes$, "ZZPROBEFN")
+    LOOP
+    Check("the function's name is in the p-code", at >= 0)
+    IF at >= 0 THEN
+        DIM after AS INTEGER = at + LEN("ZZPROBEFN")
+        Check("arity 2, min_arity 1 after the name", MID$(bytes$, after, 8) = PACK$("<ii", 2, 1))
+        DIM bad_file$ AS STRING = PATH.JOIN$(dir$, "bad.jdpb")
+        ' 200 parameters claimed, two defaults carried
+        BINWRITER bad_file$, LEFT$(bytes$, after) + PACK$("<ii", 200, 1) + MID$(bytes$, after + 8)
+        DIM bad = OS.EXEC(exe$, [bad_file$])
+        Check("a function claiming 200 parameters with 2 defaults is refused", INSTR(bad{"output"}, "bad parameters") >= 0 ANDALSO bad{"exit_code"} <> 0)
+        ' 300 parameters do not fit the byte operand of a call
+        BINWRITER bad_file$, LEFT$(bytes$, after) + PACK$("<ii", 300, 300) + MID$(bytes$, after + 8)
+        bad = OS.EXEC(exe$, [bad_file$])
+        Check("a function claiming 300 parameters is refused", INSTR(bad{"output"}, "bad parameters") >= 0)
+    ENDIF
+ENDSUB
+
+IF OS.FEATURE("INTERPRETER") THEN PcodeLoaderChecks()
 
 PRINT pass; " passed, "; fail; " failed"
 IF fail > 0 THEN END 1
