@@ -1,0 +1,56 @@
+name: CodeQL
+
+# A data-flow scan of the C++ core. Findings go to the Security tab and are
+# a starting list for the security-reviewer agent; they block nothing.
+on:
+  push:
+    branches: [main]
+    paths: ['src/**']
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: CodeQL C++ (Linux, HTTP NET MCPSERVER)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Eigen
+        id: cache-eigen
+        uses: actions/cache@v4
+        with:
+          path: libs/eigen
+          key: eigen-3.4.0-linux
+
+      - name: Fetch Eigen
+        if: steps.cache-eigen.outputs.cache-hit != 'true'
+        run: |
+          curl -sSL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz -o eigen.tar.gz
+          mkdir -p libs tmp_eigen
+          tar xzf eigen.tar.gz -C tmp_eigen
+          mv tmp_eigen/eigen-3.4.0 libs/eigen
+
+      - name: OpenSSL headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build (traced)
+        run: HTTP=1 NET=1 GFX=0 MCPSERVER=1 ./build.sh
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: c-cpp
