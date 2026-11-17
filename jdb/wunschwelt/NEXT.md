@@ -4,6 +4,59 @@ Written at the end of the session of 2026-11-11, for a start with a fresh
 context. `README.md` beside this file describes how the game is built; this
 file is the state of the work. Board: jdTrakr project `marketing`, epic #993.
 
+## State on 2026-11-17 (read this first; the sections below are older)
+
+Paused until the weekend of 2026-11-21. Next: the epic #1034, the village
+that patches itself.
+
+**Live** (deployed 2026-11-16, version 19): garden (#1021), rename fix
+(#1029), renames off the board (#1031), fences and petting zoo (#1032,
+`game/099_pens.jdb`), catalog only of what the builder builds, Marta tells
+of nothing as done (#1033). Board of the live world: Airxzi's wishes #24
+and #25 declined and refunded.
+
+**Committed, not deployed** (needs a full `./deploy.sh`, kernels and client
+change together): the patch contract #1035, `patchcheck.jdb`, see README
+"The patch contract". Allowlist checker; the server checks every patch,
+the client every piece of code incl. the game; client code reaches files
+and the server only through `KAsset$ KAssetImage KPost KFont KKit`; tokens,
+PIN, server address and name stay in the kernels; `deploy.sh --revoke`.
+Verified: all 20 suites, desktop client, browser client via
+`tools/devsite.jdb` (`play/?prog=client&fs=1&assets=assets.txt&name=X&pin=1234`),
+checker under the box's jdBasic 1.2, box preflight.
+
+**Epic #1034** (Atomi's design, 2026-11-16):
+- things (statue, fountain) are data with a generated picture, no code, no
+  release needed (#1036)
+- world changes go to the board for a vote of the villagers (names 3 days
+  old, 30 min in the village; 24 h; at least 3 yes and more yes than no;
+  a patch can be voted out again) (#1037)
+- Atomi is admin; an admin page promotes one to three co-admins; a co-admin
+  releases when the admin was away 24 h; only then the agent programs; one
+  world wish a day (#1038)
+- the patch agent runs on cortex, Claude Code headless on Atomi's
+  subscription, in its own worktree, no keys; contract check, test on a
+  copy of the live world, screenshots, a second agent that sees only the
+  code (#1039)
+- order: #1036, #1037, #1038 (all blocked by #1035), then #1039
+
+**Open on the board:** #1030 (recolour an animal without cheating the
+album: only wisher or followed player, costs potion, once a day, a recolour
+is no meeting). Review: #1019, #1021, #1029, #1031, #1032, #1033, #1035.
+Atomi asked to talk again about how the builder makes new things (folded
+into #1036). Events (fest, weather, fireworks) were taken out of the
+catalog; whether they come back as a rule is Atomi's call.
+
+**Not pushed:** be7b9bbf d59acf94 59fc55ee 5262065a 311c3078 698d9d14
+48c8bec1 f576ea92 81592156 0ce3399e b046fb55 d4d94455 7ddfda3d and the
+commit of this file. Push only on Atomi's word.
+
+**Traps of this stretch:** every commit goes through a review agent that
+attacks the patch contract; a red HIGH finding blocks it. Test servers
+spawned by a test that died keep their port: find them with
+`Get-CimInstance Win32_Process` and stop them. `sed` with `$` and quotes
+broke several edits; the Edit tool is safer for code.
+
 ## What runs
 
 Live at https://vvss.jdbasic.tech/wunschwelt/ (a sub-path of the games site
