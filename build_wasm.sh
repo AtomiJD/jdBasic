@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # WASM (Emscripten) build of jdBasic for the browser IDE.
-# Runtime: core interpreter + GFX (SDL3) + ImGui + SQLite + FX. No LLVM/FFI/
+# Runtime: core interpreter + GFX (SDL3, SDL3_image) + ImGui + SQLite + FX. No LLVM/FFI/
 # threads (browser is single-threaded; blocking is handled via Asyncify).
 # HTTP.GET$/POST$ come from wasm_net.cpp over fetch, not httplib.
 # FX is WAV.READ/WRITE/INFO plus the effects chain - audio_fx.cpp is plain
@@ -46,12 +46,38 @@ ENTRY="src/main.cpp"
 # SQLite amalgamation: plain C, compile once.
 [ -f "$OUT/sqlite3.o" ] || emcc -O2 -c bridges/sqlitebridge/sqlite3.c -o "$OUT/sqlite3.o"
 
-# Stubs for the satellite libs that have no Emscripten port yet (SDL3_image,
-# SDL3_mixer). Plain C, so compile separately (no -std=c++17). Replaced by real
-# emcc-built libs in the "nachziehen" phase.
+# SDL3_image has no Emscripten port, so its sources from libs/SDL3_image are
+# compiled here as plain C. USE_STBIMAGE decodes PNG and JPG through the
+# bundled stb_image.h (no libpng / libjpeg needed); PNG and JPG saving use the
+# bundled miniz.h and tiny_jpeg.h. The other LOAD_ formats are self-contained.
+# Every IMG_*.c is compiled because IMG.c references each format's IMG_is*
+# and IMG_Load*_IO; formats without a LOAD_ define compile to stubs. The
+# platform backends (IMG_WIC.c, IMG_ImageIO.m) are left out.
+IMG_SRC=libs/SDL3_image/src
+IMG_OBJ=""
+if [ -f "$IMG_SRC/IMG.c" ]; then
+    IMG_DEF="-DUSE_STBIMAGE -DLOAD_PNG -DLOAD_JPG -DLOAD_BMP -DLOAD_GIF \
+             -DLOAD_TGA -DLOAD_QOI -DLOAD_PNM -DLOAD_PCX -DLOAD_LBM \
+             -DLOAD_XPM -DLOAD_XV -DLOAD_XCF -DLOAD_SVG"
+    mkdir -p "$OUT/sdl3_image"
+    for f in IMG IMG_avif IMG_bmp IMG_gif IMG_jpg IMG_jxl IMG_lbm IMG_pcx \
+             IMG_png IMG_pnm IMG_qoi IMG_stb IMG_svg IMG_tga IMG_tif \
+             IMG_webp IMG_xcf IMG_xpm IMG_xv IMG_xxx; do
+        o="$OUT/sdl3_image/$f.o"
+        [ "$o" -nt "$IMG_SRC/$f.c" ] || \
+            emcc -O2 -Ilibs/SDL3_image/include $IMG_DEF $PORTS -c "$IMG_SRC/$f.c" -o "$o"
+        IMG_OBJ="$IMG_OBJ $o"
+    done
+fi
+
+# Stubs for SDL3_mixer, which has no Emscripten port yet, and for SDL3_image
+# when libs/SDL3_image is missing (then image loads fail with an error that
+# says so). Plain C, so compile separately (no -std=c++17).
 STUB_OBJ=""
 if [ -f src/wasm_av_stub.c ]; then
-    emcc -O2 $INC $PORTS -c src/wasm_av_stub.c -o "$OUT/wasm_av_stub.o"
+    STUB_DEF=""
+    [ -n "$IMG_OBJ" ] && STUB_DEF="-DJDB_WASM_SDL3_IMAGE"
+    emcc -O2 $INC $PORTS $STUB_DEF -c src/wasm_av_stub.c -o "$OUT/wasm_av_stub.o"
     STUB_OBJ="$OUT/wasm_av_stub.o"
 fi
 
@@ -114,6 +140,6 @@ BDATE=$(date +%Y-%m-%d)
 
 emcc $CXXFLAGS $EMFLAGS \
   -DJDBASIC_BUILD_NUM="\"$BNUM\"" -DJDBASIC_BUILD_DATE="\"$BDATE\"" \
-  $CORE $GFX $IMGUI $SQL $ENTRY "$OUT/sqlite3.o" $STUB_OBJ \
+  $CORE $GFX $IMGUI $SQL $ENTRY "$OUT/sqlite3.o" $IMG_OBJ $STUB_OBJ \
   -o "$OUT/jdbasic.js"
 echo "BUILD OK: $OUT/jdbasic.{js,wasm} (Build $BNUM, $BDATE, factory: createJdBasic)"

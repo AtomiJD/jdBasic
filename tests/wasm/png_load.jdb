@@ -1,0 +1,52 @@
+' PNG decoding and encoding through SDL3_image. Loads every PNG fixture of
+' tests/jdlibs/fixtures/img_png (all colour types and bit depths, interlaced
+' and with tRNS) with GFX.LOADIMAGE and SPRITE.LOAD and checks the decoded
+' size, then writes a PNG with SPRITE.SAVE and reads it back.
+' Written for the WASM runtime: tests/wasm/png_load.cjs copies the fixtures
+' to /assets in MEMFS and runs this file in headless Chromium. The last line
+' is "PNG RESULTS: <passed> passed, <failed> failed".
+DIM dir$ = "/assets/"
+DIM names = ["g1", "g2", "g2i", "g4", "g8", "g8t", "g16", "ga8", "ga8i", "ga16", _
+             "p1", "p2", "p4", "p4i", "p4t", "p8", "rgb8", "rgb8i", "rgb8t", _
+             "rgb16", "rgba8", "rgba16", "rgba16i", "src_rgba"]
+DIM passed = 0
+DIM failed = 0
+
+SUB check_size(label$, w, h, want_w, want_h)
+    IF w = want_w ANDALSO h = want_h THEN
+        passed = passed + 1
+        PRINT "ok   "; label$; " "; w; "x"; h
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL "; label$; " "; w; "x"; h; ", want "; want_w; "x"; want_h
+    ENDIF
+ENDSUB
+
+SCREEN 64, 64
+
+FOR EACH n$ IN names
+    DIM want_w = 11
+    IF n$ = "src_rgba" THEN want_w = 13
+    TRY
+        DIM img = GFX.LOADIMAGE(dir$ + n$ + ".png")
+        GFX.FREEIMAGE img
+        DIM spr = SPRITE.LOAD(dir$ + n$ + ".png")
+        check_size(n$ + ".png", SPRITE.WIDTH(spr), SPRITE.HEIGHT(spr), want_w, 9)
+    CATCH
+        failed = failed + 1
+        PRINT "FAIL "; n$; ".png: "; ERRMSG$
+    ENDTRY
+NEXT
+
+TRY
+    DIM made = SPRITE.CREATE(5, 3)
+    SPRITE.SETPIXEL(made, 2, 1, 255, 0, 0, 255)
+    SPRITE.SAVE(made, dir$ + "saved.png")
+    DIM back = SPRITE.LOAD(dir$ + "saved.png")
+    check_size("SPRITE.SAVE round trip", SPRITE.WIDTH(back), SPRITE.HEIGHT(back), 5, 3)
+CATCH
+    failed = failed + 1
+    PRINT "FAIL SPRITE.SAVE round trip: "; ERRMSG$
+ENDTRY
+
+PRINT "PNG RESULTS: "; passed; " passed, "; failed; " failed"

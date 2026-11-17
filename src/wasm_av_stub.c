@@ -1,15 +1,20 @@
-/* WASM stubs for SDL3_image and SDL3_mixer, which have no Emscripten port yet.
- * No-op bodies so the GFX / audio builtins link and degrade gracefully in the
- * browser: image loads return NULL (no texture), audio calls stay silent.
- * Compiled only by build_wasm.sh; replaced by real emcc-built libs later. */
+/* WASM stubs for SDL3_mixer, which has no Emscripten port yet, and for
+ * SDL3_image when build_wasm.sh finds no libs/SDL3_image to compile.
+ * No-op bodies so the GFX / audio builtins link: image loads fail with an
+ * error that names the missing library, audio calls stay silent.
+ * Compiled only by build_wasm.sh, which defines JDB_WASM_SDL3_IMAGE when it
+ * links the real SDL3_image. */
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
 #include <SDL_mixer.h>
 
-SDL_Surface *IMG_Load(const char *file) { (void)file; return NULL; }
-SDL_Texture *IMG_LoadTexture(SDL_Renderer *r, const char *file) { (void)r; (void)file; return NULL; }
-bool IMG_SavePNG(SDL_Surface *s, const char *file) { (void)s; (void)file; return false; }
-bool IMG_SaveJPG(SDL_Surface *s, const char *file, int quality) { (void)s; (void)file; (void)quality; return false; }
+#ifndef JDB_WASM_SDL3_IMAGE
+#define NO_IMAGE_MSG "SDL3_image is not built into this WASM runtime"
+SDL_Surface *IMG_Load(const char *file) { (void)file; SDL_SetError(NO_IMAGE_MSG); return NULL; }
+SDL_Texture *IMG_LoadTexture(SDL_Renderer *r, const char *file) { (void)r; (void)file; SDL_SetError(NO_IMAGE_MSG); return NULL; }
+bool IMG_SavePNG(SDL_Surface *s, const char *file) { (void)s; (void)file; return SDL_SetError(NO_IMAGE_MSG); }
+bool IMG_SaveJPG(SDL_Surface *s, const char *file, int quality) { (void)s; (void)file; (void)quality; return SDL_SetError(NO_IMAGE_MSG); }
+#endif
 
 bool MIX_Init(void) { return false; }
 void MIX_Quit(void) {}
