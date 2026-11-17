@@ -63,13 +63,16 @@ ENDTRY
 
 ' In the browser the page hands over its query parameters and its own origin:
 ' the name comes from ?name=, the world sits behind <origin>/wunschwelt/api.
-TRY
-    DIM page = JSON.PARSE(TXTREADER$("/url_params.json"))
-    IF MAP.EXISTS(page, "name") THEN C{"name"} = page{"name"}
-    IF MAP.EXISTS(page, "pin") THEN pin$ = "" + page{"pin"}
-    IF MAP.EXISTS(page, "__origin") THEN C{"srv"} = page{"__origin"} + "/wunschwelt/api"
-CATCH
-ENDTRY
+SUB ReadPage()
+    TRY
+        DIM page = JSON.PARSE(TXTREADER$("/url_params.json"))
+        IF MAP.EXISTS(page, "name") THEN C{"name"} = page{"name"}
+        IF MAP.EXISTS(page, "pin") THEN pin$ = "" + page{"pin"}
+        IF MAP.EXISTS(page, "__origin") THEN C{"srv"} = page{"__origin"} + "/wunschwelt/api"
+    CATCH
+    ENDTRY
+ENDSUB
+ReadPage()
 ' where the world is and who joins it, kept by the kernel: the client code
 ' sees c{"srv"} and c{"name"} but cannot send the kernel elsewhere
 DIM srv_url$ AS STRING = C{"srv"}

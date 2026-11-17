@@ -544,6 +544,43 @@ FUNC HANDLECODE(request)
     RETURN {"version": W{"version"}, "patches": fresh, "code_id": code_ids[W{"version"}], "since_id": code_ids[since]}
 ENDFUNC
 
+' The answers of the model that came in go to the rules; questions still
+' open wait, for half a minute at most.
+SUB CollectAnswers()
+    DIM waiting = []
+    DIM q AS INTEGER
+    FOR q = 0 TO LEN(pending) - 1
+        DIM ask = pending[q]
+        IF NOT THREAD.ISDONE(ask{"task"}) THEN
+            IF KNow() - ask{"asked"} < 30000 THEN waiting = APPEND(waiting, ask)
+            CONTINUEFOR
+        ENDIF
+        DIM said$ AS STRING = ""
+        DIM usable AS BOOLEAN = FALSE
+        TRY
+            DIM reply = JSON.PARSE(THREAD.GETRESULT(ask{"task"}))
+            said$ = TRIM$("" + reply{"choices"}[0]{"message"}{"content"})
+            usable = TRUE
+        CATCH
+            KFail("model", ERRMSG$)
+        ENDTRY
+        TRY
+            IF ask{"kind"} = "npc" ANDALSO usable THEN
+                RuleNpcReply(W, ask{"data"}{"npc"}, ask{"data"}{"player"}, said$)
+            ELSEIF ask{"kind"} = "npc" THEN
+                RuleNpcFailed(W, ask{"data"}{"npc"}, ask{"data"}{"player"})
+            ELSEIF usable THEN
+                RuleAnswer(W, ask{"kind"}, ask{"data"}, said$)
+            ELSE
+                RuleAnswerFailed(W, ask{"kind"}, ask{"data"})
+            ENDIF
+        CATCH
+            KFail("answer of kind " + ask{"kind"}, ERRMSG$)
+        ENDTRY
+    NEXT q
+    pending = waiting
+ENDSUB
+
 ' "" when both parts of a patch over HTTP keep the contract of patchcheck.jdb.
 FUNC PatchContract$(server_code$ AS STRING, client_code$ AS STRING) AS STRING
     DIM why$ AS STRING = PATCHCHECK.CHECK$(server_code$, patch_known)
@@ -666,38 +703,7 @@ DO WHILE run_seconds = 0 ORELSE TICK() - process_start < run_seconds * 1000
         CATCH
             KFail("RuleTick", ERRMSG$)
         ENDTRY
-        DIM waiting = []
-        DIM q AS INTEGER
-        FOR q = 0 TO LEN(pending) - 1
-            DIM ask = pending[q]
-            IF NOT THREAD.ISDONE(ask{"task"}) THEN
-                IF KNow() - ask{"asked"} < 30000 THEN waiting = APPEND(waiting, ask)
-                CONTINUEFOR
-            ENDIF
-            DIM said$ AS STRING = ""
-            DIM usable AS BOOLEAN = FALSE
-            TRY
-                DIM reply = JSON.PARSE(THREAD.GETRESULT(ask{"task"}))
-                said$ = TRIM$("" + reply{"choices"}[0]{"message"}{"content"})
-                usable = TRUE
-            CATCH
-                KFail("model", ERRMSG$)
-            ENDTRY
-            TRY
-                IF ask{"kind"} = "npc" ANDALSO usable THEN
-                    RuleNpcReply(W, ask{"data"}{"npc"}, ask{"data"}{"player"}, said$)
-                ELSEIF ask{"kind"} = "npc" THEN
-                    RuleNpcFailed(W, ask{"data"}{"npc"}, ask{"data"}{"player"})
-                ELSEIF usable THEN
-                    RuleAnswer(W, ask{"kind"}, ask{"data"}, said$)
-                ELSE
-                    RuleAnswerFailed(W, ask{"kind"}, ask{"data"})
-                ENDIF
-            CATCH
-                KFail("answer of kind " + ask{"kind"}, ERRMSG$)
-            ENDTRY
-        NEXT q
-        pending = waiting
+        CollectAnswers()
     ELSE
         SLEEP 5
     ENDIF

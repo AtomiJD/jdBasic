@@ -117,11 +117,18 @@ IF old_bad$ <> "" THEN PRINT " "; old_bad$
 ' every top-level name of the kernels is known to the checker
 DIM known = APPEND(APPEND(PATCHCHECK.KERNEL_NAMES(), PATCHCHECK.KERNEL_CALLS()), PATCHCHECK.KERNEL_FREE())
 DIM unknown$ AS STRING = ""
+' a DIM outside a SUB or FUNC is global, however deep it stands in a loop or a TRY
 FOR EACH kernel$ IN [here$ + "server.jdb", here$ + "client.jdb"]
+    DIM inside AS INTEGER = FALSE
     FOR EACH row$ IN SPLIT(REPLACE$(TXTREADER$(kernel$), CHR$(13), ""), nl$)
-        DIM found = REGEX.FINDALL("^(DIM|FUNC|SUB|ASYNC FUNC)[ ]+([A-Za-z_][A-Za-z0-9_]*[$]?)", row$)
+        DIM head$ AS STRING = UCASE$(TRIM$(row$))
+        IF STARTSWITH(head$, "ENDSUB") ORELSE STARTSWITH(head$, "ENDFUNC") THEN inside = FALSE
+        DIM found = REGEX.FINDALL("^[ \t]*(DIM|FUNC|SUB|ASYNC FUNC)[ ]+([A-Za-z_][A-Za-z0-9_]*[$]?)", row$)
         IF LEN(found) > 0 THEN
-            IF INDEXOF(known, UCASE$(found[0][1])) < 0 THEN unknown$ = unknown$ + " " + found[0][1]
+            IF found[0][0] <> "DIM" ORELSE NOT inside THEN
+                IF INDEXOF(known, UCASE$(found[0][1])) < 0 THEN unknown$ = unknown$ + " " + found[0][1]
+            ENDIF
+            IF found[0][0] <> "DIM" THEN inside = TRUE
         ENDIF
     NEXT
 NEXT
