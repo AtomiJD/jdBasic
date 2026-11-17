@@ -60,6 +60,13 @@ LLVMCodegen::VarInfo* LLVMCodegen::lookup_var(const std::string& name) {
     return nullptr;
 }
 
+const LLVMCodegen::StaticType* LLVMCodegen::global_type(const std::string& name) const {
+    for (size_t i = scopes.size(); i-- > 1;)
+        if (scopes[i].vars.count(name)) return nullptr;
+    auto it = type_env.find(name);
+    return it == type_env.end() ? nullptr : &it->second;
+}
+
 // Name of the function a funcref RHS points at, upper-cased to match the
 // interpreter's rendering. Empty for anything that is not a funcref.
 std::string LLVMCodegen::dim_funcref_name(const TypedValue& tv) {
@@ -4093,8 +4100,7 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
             // $-suffix is a string-by-convention hint even if not DIM'd.
             if (!e.str_val.empty() && e.str_val.back() == '$')
                 return make(K::STRING);
-            auto it = type_env.find(e.str_val);
-            if (it != type_env.end()) return it->second;
+            if (const StaticType* g = global_type(e.str_val)) return *g;
             return make(K::UNKNOWN);
         }
         case ExprKind::UNARY:
@@ -7073,18 +7079,18 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     }
 
     // Phase 4 STRICT: assignment to a declared global must have a
-    // compatible RHS. Only checked when the LHS is a known global -
-    // locals lack a StaticType table today (future phase extends).
+    // compatible RHS. Only checked when the LHS is a global no local or
+    // parameter shadows - locals lack a StaticType table.
     if (is_strict_here(stmt.source_file()) && stmt.kind != StmtKind::DIM &&
         stmt.expr && stmt.var_name.find('.') == std::string::npos) {
-        auto tit = type_env.find(stmt.var_name);
-        if (tit != type_env.end() && !tit->second.is_unknown()) {
+        const StaticType* declared = global_type(stmt.var_name);
+        if (declared && !declared->is_unknown()) {
             StaticType actual = infer_expr_type(*stmt.expr);
             if (!actual.is_unknown() &&
-                !types_compatible(actual, tit->second)) {
+                !types_compatible(actual, *declared)) {
                 report_error(stmt.source_file(), stmt.line,
                     "Type Mismatch in assignment to '" + stmt.var_name +
-                    "': expected " + tit->second.describe() +
+                    "': expected " + declared->describe() +
                     ", got " + actual.describe());
             }
         }

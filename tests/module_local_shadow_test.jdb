@@ -1,0 +1,50 @@
+' A local declared inside a FUNC shadows a global of the same name, in an
+' imported module as in the main program, on both backends.
+'
+'   jdbasic tests/module_local_shadow_test.jdb
+'   jdbasic -c tests/module_local_shadow_test.jdb
+'
+' The program declares the arrays head and seen; the module's FUNCs declare
+' locals of those names as INTEGER or STRING and assign to them. The module
+' is STRICT, so each assignment is type-checked against the local under -c.
+' A FUNC of the program reads its local head into the INTEGER global total.
+
+OPTION "EXPLICIT"
+
+IMPORT MODULE_LOCAL_SHADOW_MOD
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB Check(what$, ok)
+    IF ok THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$
+    ENDIF
+ENDSUB
+
+DIM head AS ARRAY = [7, 8, 9]
+DIM seen[10] AS INTEGER
+seen[3] = 5
+DIM total AS INTEGER = 0
+
+FUNC LocalHead(n AS INTEGER) AS INTEGER
+    DIM head AS INTEGER
+    head = 2
+    head = head * n
+    total = head
+    RETURN head
+ENDFUNC
+
+Check("module local INTEGER head shadows the global array", MODULE_LOCAL_SHADOW_MOD.CountUp(4) = 4)
+Check("module local INTEGER seen shadows the global array", MODULE_LOCAL_SHADOW_MOD.SeenTotal(4) = 10)
+Check("module local STRING head shadows the global array", MODULE_LOCAL_SHADOW_MOD.Label$(3) = "n=3")
+Check("main FUNC local INTEGER head shadows the global array", LocalHead(21) = 42)
+Check("main FUNC local head read into the INTEGER global total", total = 42)
+Check("global head keeps its elements", LEN(head) = 3 ANDALSO head[0] = 7 ANDALSO head[2] = 9)
+Check("global seen keeps its elements", LEN(seen) = 10 ANDALSO seen[3] = 5 ANDALSO seen[0] = 0)
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1

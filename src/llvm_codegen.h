@@ -84,6 +84,10 @@ public:
     // program's top-level DIMs. Phase 3/4 will extend to FUNC params/locals.
     std::unordered_map<std::string, StaticType> type_env;
     void populate_type_env(const std::vector<StmtPtr>& program);
+    // The declared type of the global `name`, or nullptr when no global of
+    // that name is declared or a local or parameter of the function being
+    // compiled shadows it.
+    const StaticType* global_type(const std::string& name) const;
 
     // Per-file OPTION scope: each imported .jdb file sets its own flags.
     // A strict program can IMPORT a loose module without cascading the

@@ -1,0 +1,28 @@
+' Helper module for module_local_shadow_test.jdb. Its FUNCs declare locals
+' whose names the importing program uses for global arrays.
+EXPORT MODULE MODULE_LOCAL_SHADOW_MOD
+OPTION "STRICT"
+
+EXPORT FUNC CountUp(n AS INTEGER) AS INTEGER
+    DIM head AS INTEGER
+    head = 0
+    FOR i = 1 TO n
+        head = head + 1
+    NEXT i
+    RETURN head
+ENDFUNC
+
+EXPORT FUNC SeenTotal(n AS INTEGER) AS INTEGER
+    DIM seen AS INTEGER
+    seen = 0
+    FOR i = 1 TO n
+        seen = seen + i
+    NEXT i
+    RETURN seen
+ENDFUNC
+
+EXPORT FUNC Label$(n AS INTEGER) AS STRING
+    DIM head AS STRING
+    head = "n=" + STR$(n)
+    RETURN head
+ENDFUNC
