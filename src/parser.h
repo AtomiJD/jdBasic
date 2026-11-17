@@ -119,6 +119,16 @@ private:
     // DRAWCOLOR(1, 2, 3). A single bracketed argument is a grouped
     // expression and stays legal.
     bool args_written_as_call();
+    // TRUE when the statement at the current NAME token reads
+    // NAME(args) followed by [..], {..} or .field steps and then `=`.
+    // Looks at tokens only and consumes none.
+    bool call_chain_assign_ahead();
+    // container[index] = val where the container is an expression: the
+    // container is held in a temp and written through it, the statements
+    // of `t = container` + `t[index] = val`. A map or an array is a
+    // reference, so the write lands in the value the expression produced.
+    StmtPtr make_expr_index_assign(ExprPtr container, ExprPtr index, ExprPtr val, int line);
+    int expr_target_seq = 0;
     bool is_type_token(TokenType t) const;
     VarType parse_type();
     // The user type the last parse_type() saw, empty for a builtin type.

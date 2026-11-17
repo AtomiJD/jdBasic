@@ -1,0 +1,107 @@
+' Assignment into the map or array a call returned.
+'
+'   jdbasic tests/call_result_assign_test.jdb
+'   jdbasic -c tests/call_result_assign_test.jdb
+'
+' Maps and arrays are references, so F(x){"k"} = v and F(x)[i] = v write
+' into the container the call handed back, the same as through a variable
+' that holds it. A target that cannot take a value, such as the result of a
+' method call, is a compile error.
+
+OPTION "EXPLICIT"
+
+IMPORT CALL_RESULT_ASSIGN_MOD
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB Check(what$, ok)
+    IF ok THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$
+    ENDIF
+ENDSUB
+
+DIM store = {"a": {}, "nest": {"inner": {}}}
+DIM rows = {"list": [10, 20, 30]}
+
+FUNC Get(m)
+    RETURN m{"a"}
+ENDFUNC
+
+FUNC Pick(m, k$)
+    RETURN m{k$}
+ENDFUNC
+
+FUNC Self(m)
+    RETURN m
+ENDFUNC
+
+FUNC ListOf(m)
+    RETURN m{"list"}
+ENDFUNC
+
+Get(store){"k"} = 5
+Check("F(x){k} = v adds the key", MAP.SIZE(store{"a"}) = 1)
+Check("F(x){k} = v stores the value", store{"a"}{"k"} = 5)
+
+Get(store){"k"} = 6
+Check("F(x){k} = v overwrites the key", store{"a"}{"k"} = 6)
+
+Pick(store, "a"){"s"} = "text"
+Check("F(x, y){k} = v with two arguments", MAP.SIZE(store{"a"}) = 2 ANDALSO store{"a"}{"s"} = "text")
+
+Self(store){"nest"}{"inner"}{"deep"} = 42
+Check("F(x){a}{b}{c} = v walks the chain", store{"nest"}{"inner"}{"deep"} = 42)
+
+Self(store){"top"} = 1
+Check("F(x){k} = v on the map passed in", store{"top"} = 1)
+
+ListOf(rows)[1] = 99
+Check("F(x)[i] = v writes the element", rows{"list"}[1] = 99)
+Check("F(x)[i] = v leaves the others", rows{"list"}[0] = 10 AND rows{"list"}[2] = 30)
+
+SUB FillKeys(m)
+    FOR i = 1 TO 3
+        Get(m){"loop" + STR$(i)} = i
+    NEXT i
+    IF TRUE THEN Get(m){"inline"} = 8
+ENDSUB
+FillKeys(store)
+Check("F(x){k} = v in a SUB loop", store{"a"}{"loop3"} = 3 ANDALSO MAP.SIZE(store{"a"}) = 6)
+Check("F(x){k} = v after THEN", store{"a"}{"inline"} = 8)
+
+Self(store){"lists"} = [{"x": 1}, {"x": 2}]
+Self(store){"lists"}[1]{"x"} = 20
+Check("F(x){a}[i]{b} = v", store{"lists"}[1]{"x"} = 20 ANDALSO store{"lists"}[0]{"x"} = 1)
+
+CALL_RESULT_ASSIGN_MOD.SAME(store){"mod"} = 11
+Check("MOD.F(x){k} = v", store{"mod"} = 11)
+CALL_RESULT_ASSIGN_MOD.SAME(store){"nest"}{"inner"}{"mod"} = 12
+Check("MOD.F(x){a}{b}{c} = v", store{"nest"}{"inner"}{"mod"} = 12)
+
+DIM ref = Get(store)
+ref{"r"} = 3
+Check("the variable path writes too", store{"a"}{"r"} = 3)
+
+IF OS.FEATURE("INTERPRETER") THEN
+    DIM why$ AS STRING = ""
+    TRY
+        EXECUTE "Self(store).KEYS() = 1"
+    CATCH
+        why$ = ERRMSG$
+    ENDTRY
+    Check("a method call result is refused as a target", INSTR(why$, "assign") >= 0)
+    why$ = ""
+    TRY
+        EXECUTE "Self(store).field = 1"
+    CATCH
+        why$ = ERRMSG$
+    ENDTRY
+    Check("F(x).field = v is refused", INSTR(why$, "assign") >= 0)
+ENDIF
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1

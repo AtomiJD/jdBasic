@@ -865,6 +865,8 @@ RESPONSE_JSON = JSON.PARSE(RESPONSE$)
 AI_MESSAGE$ = RESPONSE_JSON{"choices"}[0]{"message"}{"content"}
 ```
 
+A chain may also start at a call when it is assigned to: `F(x){"k"} = v`, `F(x)[i] = v` and `F(x){"a"}{"b"} = v` write into the map or array the call returned, since maps and arrays are references; `F(x).field = v` is a compile error.
+
 **COM Chaining**
 You can chain property accesses and method calls for COM objects.
 

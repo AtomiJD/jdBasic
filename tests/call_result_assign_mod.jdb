@@ -1,0 +1,7 @@
+' IMPORT helper of call_result_assign_test.jdb: a module function whose
+' result is assigned into as MOD.F(x){"k"} = v.
+EXPORT MODULE CALL_RESULT_ASSIGN_MOD
+
+EXPORT FUNC SAME(m)
+    RETURN m
+ENDFUNC

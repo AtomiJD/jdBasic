@@ -107,6 +107,65 @@ bool Parser::args_written_as_call() {
     }
 }
 
+bool Parser::call_chain_assign_ahead() {
+    // k indexes from the current NAME token; returns k past the group that
+    // opens at k, or 0 when the line ends inside it.
+    auto skip_group = [&](size_t k) -> size_t {
+        int depth = 0;
+        for (;; k++) {
+            TokenType t = peek_at(k).type;
+            if (t == TokenType::EOF_TOKEN || t == TokenType::NEWLINE) return 0;
+            if (t == TokenType::LPAREN || t == TokenType::LBRACKET || t == TokenType::LBRACE) {
+                depth++;
+            } else if (t == TokenType::RPAREN || t == TokenType::RBRACKET || t == TokenType::RBRACE) {
+                if (--depth == 0) return k + 1;
+            }
+        }
+    };
+    size_t k = skip_group(1);
+    if (k == 0) return false;
+    bool stepped = false;
+    while (true) {
+        TokenType t = peek_at(k).type;
+        if (t == TokenType::PLACEHOLDER) {
+            TokenType n = peek_at(k + 1).type;
+            if (n != TokenType::LBRACKET && n != TokenType::LBRACE && n != TokenType::DOT) break;
+            t = n;
+            k++;
+        }
+        if (t == TokenType::LBRACKET || t == TokenType::LBRACE) {
+            k = skip_group(k);
+            if (k == 0) return false;
+        } else if (t == TokenType::DOT) {
+            TokenType f = peek_at(k + 1).type;
+            if (f == TokenType::EOF_TOKEN || f == TokenType::NEWLINE) return false;
+            k += 2;
+            if (peek_at(k).type == TokenType::LPAREN) {
+                k = skip_group(k);
+                if (k == 0) return false;
+            }
+        } else {
+            break;
+        }
+        stepped = true;
+    }
+    return stepped && peek_at(k).type == TokenType::ASSIGN;
+}
+
+StmtPtr Parser::make_expr_index_assign(ExprPtr container, ExprPtr index, ExprPtr val, int line) {
+    // DESTRUCTURE with a body runs its statements in order on both backends,
+    // and the native pre-pass leaves `__destr_*` temps to the LET itself.
+    std::string tmp = "__destr_target_" + std::to_string(expr_target_seq++);
+    auto s = std::make_unique<Stmt>();
+    s->kind = StmtKind::DESTRUCTURE;
+    s->line = line;
+    s->body.push_back(make_let(tmp, VarType::NONE, std::move(container), line));
+    std::vector<ExprPtr> chain;
+    chain.push_back(std::move(index));
+    s->body.push_back(make_index_assign(tmp, std::move(chain), std::move(val), line));
+    return s;
+}
+
 void Parser::expect_newline() {
     if (!check(TokenType::NEWLINE) && !check(TokenType::EOF_TOKEN) &&
         !check(TokenType::COLON) && !check(TokenType::ELSE)) {
@@ -2028,6 +2087,14 @@ StmtPtr Parser::parse_ident_stmt() {
             }
             // If LHS ends with INDEX, compile as: eval container, idx, val, INDEX_SET
             if (lhs->kind == ExprKind::INDEX) {
+                // A container reached through a call (MOD.F(x){k},
+                // obj.m()[i]) is written through a temp, as NAME(args)[i] is.
+                bool through_call = false;
+                for (const Expr* e = lhs->left.get(); e; e = e->left.get())
+                    if (e->kind == ExprKind::CALL) { through_call = true; break; }
+                if (through_call)
+                    return make_expr_index_assign(std::move(lhs->left), std::move(lhs->right),
+                                                  std::move(val), ln);
                 auto s = std::make_unique<Stmt>();
                 s->kind = StmtKind::INDEX_ASSIGN;
                 s->line = ln;
@@ -2164,6 +2231,21 @@ StmtPtr Parser::parse_ident_stmt() {
 
     // Function call with parens: NAME(args)
     if (peek_at(1).type == TokenType::LPAREN) {
+        // NAME(args)[i] = v, NAME(args){k} = v: an assignment into the
+        // container the call returns; a target ending in .field or a method
+        // call is refused. Scanned ahead on tokens alone, so an ordinary
+        // call statement is parsed once.
+        if (call_chain_assign_ahead()) {
+            ExprPtr target = parse_primary();
+            expect(TokenType::ASSIGN, "'='");
+            ExprPtr val = parse_expr();
+            expect_newline();
+            if (target->kind != ExprKind::INDEX || target->optional)
+                throw std::runtime_error("Cannot assign to expression at line " + std::to_string(ln) +
+                    ": a target that starts with a call must end in [index] or {key}");
+            return make_expr_index_assign(std::move(target->left), std::move(target->right),
+                                          std::move(val), ln);
+        }
         // Fall through to parse_expr which handles Name(args)
         ExprPtr expr = parse_expr();
         expect_newline();
