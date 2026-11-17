@@ -309,6 +309,10 @@ struct StmtExtra {
     // TRY_CATCH: the statement's body is the TRY block
     std::vector<StmtPtr> catch_body;
     std::vector<StmtPtr> finally_body;
+    // SUB / FUNCTION of a module: names the body assigns without declaring
+    // them. They are locals of the function, never a global of the program
+    // that imports the module.
+    std::vector<std::string> implicit_locals;
 
     // One empty block for every statement that has none.
     static const StmtExtra& none() {
@@ -401,6 +405,7 @@ struct Stmt {
     const std::vector<ExprPtr>& ctor_args() const { return x ? x->ctor_args : StmtExtra::none().ctor_args; }
     const std::vector<StmtPtr>& catch_body() const { return x ? x->catch_body : StmtExtra::none().catch_body; }
     const std::vector<StmtPtr>& finally_body() const { return x ? x->finally_body : StmtExtra::none().finally_body; }
+    const std::vector<std::string>& implicit_locals() const { return x ? x->implicit_locals : StmtExtra::none().implicit_locals; }
 
     Stmt() : kind(StmtKind::LET) {}
 };

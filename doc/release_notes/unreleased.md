@@ -31,6 +31,17 @@ Range: `v1.3.0..HEAD`.
 
 ## Fixed
 
+- **A module FUNC or SUB keeps an undeclared assignment local** (#966): a
+  module function that assigns a name it never declared (`h = OPEN(...)`)
+  gets a local of that name and no longer writes the importing program's
+  global `h`. The importing program's `OPTION "EXPLICIT"` no longer refuses
+  such a module; the module's own `OPTION "EXPLICIT"`, or `-c`, does.
+- **Modules that import each other** (#983): a top-level read of the other
+  module's variable or CONST before that module has set it
+  (`DIM a[OTHER.SIZE]` in the module imported second) is refused when the
+  program loads, with the name and the line, instead of running on with an
+  array of the wrong size.
+
 - **Native compiler (`-c`), a variable declared AS INTEGER is an integer**
   (#979): `DIM n AS INTEGER = cells[i]` typed `n` as a double, so `n * n`
   lost its low bits above 2^53 and `DIM a[n]` could run out of memory; the

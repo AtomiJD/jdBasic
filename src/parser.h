@@ -43,12 +43,13 @@ public:
     // identifier.
     std::unordered_set<std::string> predeclared_types;
 
-    // A module FUNC or SUB that assigns a name it never declared writes the
-    // importing program's global of that name. That is refused when the
-    // program compiles with -c (the caller sets this) or carries
-    // OPTION "EXPLICIT" / "STRICT" (found in the token stream).
+    // A module FUNC or SUB that assigns a name it never declared gets a local
+    // of that name. Under -c (the caller sets this) that is refused, as it is
+    // in a module carrying OPTION "EXPLICIT" / "STRICT" of its own.
     bool strict_module_writes = false;
-    bool explicit_seen = false;
+    // Set on the parser of an IMPORTed module; the parser of the program
+    // checks the load order of the whole import tree.
+    bool is_module = false;
     // A restored workspace replays every input of a session, a FUNC
     // redefined later among them: there the later definition wins instead
     // of a second one being refused (the caller sets this).
@@ -100,6 +101,7 @@ private:
     void record_type_ref(const std::string& name, int line);
     void validate_type_refs(const std::vector<StmtPtr>& stmts);
     void validate_unique_procs(const std::vector<StmtPtr>& stmts);
+    static void validate_module_load_order(const std::vector<StmtPtr>& stmts);
 
     // Helpers
     const Token& current();

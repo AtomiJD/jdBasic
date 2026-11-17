@@ -1391,6 +1391,8 @@ void Compiler::compile_sub(const Stmt& stmt) {
         resolve_local(p.name);
         current_scope().params.insert(p.name);
     }
+    // A module SUB's undeclared assignments are its own locals.
+    for (auto& n : stmt.implicit_locals()) resolve_local(n);
 
     for (auto& s : stmt.body) compile_stmt(*s);
     current_chunk().emit(OpCode::RETURN_VOID, stmt.line);
@@ -1435,6 +1437,8 @@ void Compiler::compile_function(const Stmt& stmt) {
         resolve_local(p.name);
         current_scope().params.insert(p.name);
     }
+    // A module FUNC's undeclared assignments are its own locals.
+    for (auto& n : stmt.implicit_locals()) resolve_local(n);
 
     for (auto& s : stmt.body) compile_stmt(*s);
 

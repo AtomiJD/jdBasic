@@ -1093,7 +1093,7 @@ Description: Exits the innermost SWITCH...CASE block immediately, also from a lo
 
 [EXPORT]
 Syntax: EXPORT MODULE
-Description: Marks the current file as a module that can be imported by other files. A FUNC or SUB in a module that assigns a name it never declared writes the importing program's global of that name; with -c or OPTION "EXPLICIT" that is refused with the name and line. Declare it with DIM (or LET, or at module level).
+Description: Marks the current file as a module that can be imported by other files. A FUNC or SUB in a module that assigns a name it never declared gets a local of that name, never the importing program's global; a module with its own OPTION "EXPLICIT", or any module under -c, refuses it with the name and line. Of two modules that import each other, a top-level read of the other module's variable or CONST before that module has set it is refused at load.
 
 [EXPLICIT]
 Syntax: OPTION EXPLICIT

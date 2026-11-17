@@ -1,0 +1,104 @@
+' A FUNC or SUB of a module that assigns a name it never declared gets a
+' local of that name; it never writes the importing program's global.
+' The module's own OPTION "EXPLICIT" refuses such an assignment, the
+' importing program's option does not reach into the module.
+'
+'   jdbasic tests/module_local_write_test.jdb
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, ok)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+' The programs under test run in a jdBasic of their own; a compiled test
+' has no jdBasic to start, and OS.SELF$() there is the test program.
+IF NOT OS.FEATURE("INTERPRETER") THEN
+    PRINT "skipped: the module programs run interpreter-only"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    PRINT "ALL TESTS PASSED!"
+    END
+ENDIF
+
+DIM nl$ AS STRING = CHR$(10)
+DIM q$ AS STRING = CHR$(34)
+DIM dir$ AS STRING = PATH.JOIN$(GETENV$("TEMP"), "jdb_modlocal_" + STR$(TICK()))
+MKDIR dir$
+
+DIM loose_mod$ AS STRING = PATH.JOIN$(dir$, "modloose.jdb")
+DIM strict_mod$ AS STRING = PATH.JOIN$(dir$, "modstrict.jdb")
+DIM explicit_main$ AS STRING = PATH.JOIN$(dir$, "explicit_main.jdb")
+DIM loose_main$ AS STRING = PATH.JOIN$(dir$, "loose_main.jdb")
+DIM strict_main$ AS STRING = PATH.JOIN$(dir$, "strict_main.jdb")
+
+TXTWRITER loose_mod$, "EXPORT MODULE MODLOOSE" + nl$ + _
+    "DIM total = 0" + nl$ + _
+    "EXPORT FUNC OPEN(n)" + nl$ + _
+    "    h = n * 2" + nl$ + _
+    "    RETURN h" + nl$ + _
+    "ENDFUNC" + nl$ + _
+    "EXPORT SUB ADD(n)" + nl$ + _
+    "    h = n" + nl$ + _
+    "    total = total + h" + nl$ + _
+    "ENDSUB" + nl$ + _
+    "EXPORT FUNC TOTAL_OF()" + nl$ + _
+    "    RETURN total" + nl$ + _
+    "ENDFUNC" + nl$
+TXTWRITER strict_mod$, "EXPORT MODULE MODSTRICT" + nl$ + _
+    "OPTION " + q$ + "EXPLICIT" + q$ + nl$ + _
+    "EXPORT FUNC OPEN(n)" + nl$ + _
+    "    h = n * 2" + nl$ + _
+    "    RETURN h" + nl$ + _
+    "ENDFUNC" + nl$
+
+TXTWRITER explicit_main$, "OPTION " + q$ + "EXPLICIT" + q$ + nl$ + _
+    "IMPORT MODLOOSE" + nl$ + _
+    "DIM h AS INTEGER = 7" + nl$ + _
+    "PRINT " + q$ + "open=" + q$ + "; MODLOOSE.OPEN(21); " + q$ + " h=" + q$ + "; h" + nl$ + _
+    "MODLOOSE.ADD 5" + nl$ + _
+    "MODLOOSE.ADD 6" + nl$ + _
+    "PRINT " + q$ + "total=" + q$ + "; MODLOOSE.TOTAL_OF(); " + q$ + " h=" + q$ + "; h" + nl$
+TXTWRITER loose_main$, "IMPORT MODLOOSE" + nl$ + _
+    "h = 7" + nl$ + _
+    "PRINT " + q$ + "open=" + q$ + "; MODLOOSE.OPEN(21); " + q$ + " h=" + q$ + "; h" + nl$
+TXTWRITER strict_main$, "IMPORT MODSTRICT" + nl$ + _
+    "PRINT MODSTRICT.OPEN(1)" + nl$
+
+DIM r = OS.EXEC(OS.SELF$(), [explicit_main$])
+DIM out$ AS STRING = r{"output"}
+Check("a loose module runs under an EXPLICIT program", r{"exit_code"} = 0 ANDALSO INSTR(out$, "Parse error") < 0)
+Check("the FUNC returns its local", INSTR(out$, "open=42 h=7") >= 0)
+Check("a SUB local leaves the program's global alone", INSTR(out$, "total=11 h=7") >= 0)
+
+r = OS.EXEC(OS.SELF$(), [loose_main$])
+out$ = r{"output"}
+Check("a loose program's global is not written by the module", INSTR(out$, "open=42 h=7") >= 0)
+
+r = OS.EXEC(OS.SELF$(), [strict_main$])
+out$ = r{"output"}
+Check("a module with its own EXPLICIT refuses the undeclared write", r{"exit_code"} <> 0)
+Check("the refusal names module, function and name", INSTR(out$, "module MODSTRICT, OPEN assigns 'H'") >= 0)
+
+KILL loose_mod$
+KILL strict_mod$
+KILL explicit_main$
+KILL loose_main$
+KILL strict_main$
+RMDIR dir$
+
+PRINT ""
+PRINT "MODULE LOCAL WRITE TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    END 1
+ENDIF

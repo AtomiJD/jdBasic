@@ -1,0 +1,98 @@
+' Two modules that import each other: the one imported second runs its
+' top-level code first. When that code reads a variable or CONST of the
+' other module before the other module has set it, the program is refused
+' when it loads, naming the name and the line; it never runs on with a
+' value that is not there yet. Reads inside a FUNC, or of a value the other
+' module sets before its IMPORT line, are fine.
+'
+'   jdbasic tests/circular_import_order_test.jdb
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, ok)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+' The programs under test run in a jdBasic of their own; a compiled test
+' has no jdBasic to start, and OS.SELF$() there is the test program.
+IF NOT OS.FEATURE("INTERPRETER") THEN
+    PRINT "skipped: the module programs run interpreter-only"
+    PRINT "RESULTS: 0 passed, 0 failed"
+    PRINT "ALL TESTS PASSED!"
+    END
+ENDIF
+
+DIM nl$ AS STRING = CHR$(10)
+DIM q$ AS STRING = CHR$(34)
+
+' One folder per case: tick.jdb and lights.jdb import each other.
+FUNC RunCase$(name$, tick$, lights$, main$) AS STRING
+    DIM dir$ AS STRING = PATH.JOIN$(GETENV$("TEMP"), "jdb_circ_" + name$ + "_" + STR$(TICK()))
+    MKDIR dir$
+    TXTWRITER PATH.JOIN$(dir$, "ctick.jdb"), tick$
+    TXTWRITER PATH.JOIN$(dir$, "clights.jdb"), lights$
+    TXTWRITER PATH.JOIN$(dir$, "main.jdb"), main$
+    DIM r = OS.EXEC(OS.SELF$(), [PATH.JOIN$(dir$, "main.jdb")])
+    KILL PATH.JOIN$(dir$, "ctick.jdb")
+    KILL PATH.JOIN$(dir$, "clights.jdb")
+    KILL PATH.JOIN$(dir$, "main.jdb")
+    RMDIR dir$
+    RETURN "exit=" + STR$(r{"exit_code"}) + nl$ + r{"output"}
+ENDFUNC
+
+DIM lights_dim$ AS STRING = "EXPORT MODULE CLIGHTS" + nl$ + _
+    "IMPORT CTICK" + nl$ + _
+    "EXPORT DIM lmax[CTICK.MAXT] AS INTEGER" + nl$ + _
+    "EXPORT FUNC SIZE()" + nl$ + _
+    "    RETURN LEN(lmax)" + nl$ + _
+    "ENDFUNC" + nl$
+DIM tick_import_first$ AS STRING = "EXPORT MODULE CTICK" + nl$ + _
+    "IMPORT CLIGHTS" + nl$ + _
+    "EXPORT CONST MAXT = 200" + nl$
+DIM tick_const_first$ AS STRING = "EXPORT MODULE CTICK" + nl$ + _
+    "EXPORT CONST MAXT = 200" + nl$ + _
+    "IMPORT CLIGHTS" + nl$
+DIM print_size$ AS STRING = "PRINT " + q$ + "size=" + q$ + "; CLIGHTS.SIZE()" + nl$ + _
+    "CLIGHTS.lmax[150] = 1" + nl$ + _
+    "PRINT " + q$ + "done" + q$ + nl$
+
+' CTICK loads first, CLIGHTS inside it reads CTICK.MAXT before CTICK set it.
+DIM out$ AS STRING = RunCase$("bad", tick_import_first$, lights_dim$, "IMPORT CTICK" + nl$ + print_size$)
+Check("a read before the other module set it is refused at load", INSTR(out$, "exit=0") < 0 ANDALSO INSTR(out$, "done") < 0)
+Check("the refusal names the value", INSTR(out$, "CTICK.MAXT") >= 0)
+Check("the refusal names the reading line", INSTR(out$, "line 3") >= 0)
+Check("no silent wrong size at run time", INSTR(out$, "out of bounds") < 0)
+
+' The CONST stands before the IMPORT, so it is set when CLIGHTS reads it.
+out$ = RunCase$("constfirst", tick_const_first$, lights_dim$, "IMPORT CTICK" + nl$ + print_size$)
+Check("a value set before the IMPORT line is read", INSTR(out$, "size=200") >= 0 ANDALSO INSTR(out$, "done") >= 0)
+
+' CLIGHTS loads first, so CTICK inside it runs to the end before CLIGHTS reads.
+out$ = RunCase$("otherorder", tick_import_first$, lights_dim$, "IMPORT CLIGHTS" + nl$ + print_size$)
+Check("the other import order has the right size", INSTR(out$, "size=200") >= 0 ANDALSO INSTR(out$, "done") >= 0)
+
+' A read inside a FUNC runs only when it is called.
+DIM lights_func$ AS STRING = "EXPORT MODULE CLIGHTS" + nl$ + _
+    "IMPORT CTICK" + nl$ + _
+    "EXPORT FUNC SIZE()" + nl$ + _
+    "    RETURN CTICK.MAXT" + nl$ + _
+    "ENDFUNC" + nl$
+out$ = RunCase$("infunc", tick_import_first$, lights_func$, "IMPORT CTICK" + nl$ + "PRINT " + q$ + "size=" + q$ + "; CLIGHTS.SIZE()" + nl$)
+Check("a read inside a FUNC is not refused", INSTR(out$, "size=200") >= 0)
+
+PRINT ""
+PRINT "CIRCULAR IMPORT ORDER TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    END 1
+ENDIF

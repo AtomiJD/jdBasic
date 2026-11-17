@@ -11,19 +11,7 @@ static void check_parse_depth(int line) {
                                  ": the program nests too deeply");
 }
 
-Parser::Parser(std::vector<Token> t) : ring(std::move(t)), count(ring.size()) {
-    // OPTION "EXPLICIT" / "STRICT" anywhere in the program, whatever order the
-    // file puts it in: the module rules in import_module tighten with it.
-    auto upper_of = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-        return s;
-    };
-    for (size_t i = 0; i + 1 < ring.size(); i++) {
-        if (upper_of(ring[i].value) != "OPTION") continue;
-        std::string what = upper_of(ring[i + 1].value);
-        if (what == "EXPLICIT" || what == "STRICT") explicit_seen = true;
-    }
-}
+Parser::Parser(std::vector<Token> t) : ring(std::move(t)), count(ring.size()) {}
 Parser::Parser(Lexer& lx) : ring(128), lexer(&lx) {}
 
 // Token number i, fetched from the lexer if the window does not reach it
@@ -250,7 +238,94 @@ std::vector<StmtPtr> Parser::parse() {
     }
     validate_type_refs(stmts);
     validate_unique_procs(stmts);
+    if (!is_module) validate_module_load_order(stmts);
     return stmts;
+}
+
+// Modules run their top-level code in the order the IMPORTs reach them, so
+// of two modules that import each other the one imported second runs first.
+// A top-level read of a variable or CONST of another module, made before
+// any top-level statement has set it, would see nothing there yet; it is
+// refused when the program loads. Reads inside a FUNC, a SUB or a LAMBDA run
+// later and are not checked.
+void Parser::validate_module_load_order(const std::vector<StmtPtr>& stmts) {
+    struct FirstWrite { size_t at; const Stmt* stmt; };
+    std::unordered_map<std::string, FirstWrite> first_write;
+    auto is_proc = [](const Stmt& s) {
+        return s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB ||
+               s.kind == StmtKind::TYPE_DECL;
+    };
+    std::function<void(const Stmt&, size_t)> collect = [&](const Stmt& s, size_t at) {
+        if (is_proc(s)) return;
+        if ((s.kind == StmtKind::LET || s.kind == StmtKind::DIM ||
+             s.kind == StmtKind::ASSIGN) &&
+            s.var_name.find('.') != std::string::npos)
+            first_write.emplace(upper_copy(s.var_name), FirstWrite{at, &s});
+        for (auto& b : s.body) if (b) collect(*b, at);
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b) collect(*b, at);
+        for (auto& c : s.catch_body()) if (c) collect(*c, at);
+        for (auto& f : s.finally_body()) if (f) collect(*f, at);
+    };
+    for (size_t i = 0; i < stmts.size(); i++)
+        if (stmts[i]) collect(*stmts[i], i);
+    if (first_write.empty()) return;
+
+    auto base_name = [](const std::string& path) {
+        size_t sep = path.find_last_of("/\\");
+        return sep == std::string::npos ? path : path.substr(sep + 1);
+    };
+    auto check_name = [&](const std::string& name, const Stmt& reader, size_t at) {
+        auto it = first_write.find(upper_copy(name));
+        if (it == first_write.end() || it->second.at <= at) return;
+        // A module reading its own variable early is its own business.
+        const Stmt& writer = *it->second.stmt;
+        if (reader.source_file() == writer.source_file()) return;
+        std::string where = reader.source_file().empty()
+            ? std::string("the program") : base_name(reader.source_file());
+        throw std::runtime_error(
+            "Parse error at line " + std::to_string(reader.line) + ": " + where +
+            " reads " + name + " while it loads, but " + name + " is set only at line " +
+            std::to_string(writer.line) + " of " + base_name(writer.source_file()) +
+            ", which runs later (the modules import each other). Read it inside a FUNC"
+            " or SUB, or set it before that module's IMPORT line.");
+    };
+    std::function<void(const Expr&, const Stmt&, size_t)> walk_expr =
+        [&](const Expr& e, const Stmt& reader, size_t at) {
+            if (e.kind == ExprKind::LAMBDA_EXPR) return;
+            if (e.kind == ExprKind::VARIABLE && e.str_val.find('.') != std::string::npos)
+                check_name(e.str_val, reader, at);
+            if (e.kind == ExprKind::MEMBER_ACCESS && e.left &&
+                e.left->kind == ExprKind::VARIABLE &&
+                e.left->str_val.find('.') == std::string::npos)
+                check_name(e.left->str_val + "." + e.str_val, reader, at);
+            if (e.left) walk_expr(*e.left, reader, at);
+            if (e.right) walk_expr(*e.right, reader, at);
+            for (auto& a : e.args) if (a) walk_expr(*a, reader, at);
+        };
+    std::function<void(const Stmt&, size_t)> walk_stmt = [&](const Stmt& s, size_t at) {
+        if (is_proc(s)) return;
+        if (s.expr) walk_expr(*s.expr, s, at);
+        if (s.end_expr) walk_expr(*s.end_expr, s, at);
+        if (s.step_expr) walk_expr(*s.step_expr, s, at);
+        if (s.loop_cond) walk_expr(*s.loop_cond, s, at);
+        for (auto& e : s.print_exprs) if (e) walk_expr(*e, s, at);
+        for (auto& e : s.index_chain) if (e) walk_expr(*e, s, at);
+        for (auto& e : s.ctor_args()) if (e) walk_expr(*e, s, at);
+        for (auto& br : s.branches) {
+            if (br.condition) walk_expr(*br.condition, s, at);
+            for (auto& [lo, hi] : br.case_labels) {
+                if (lo) walk_expr(*lo, s, at);
+                if (hi) walk_expr(*hi, s, at);
+            }
+            for (auto& b : br.body) if (b) walk_stmt(*b, at);
+        }
+        for (auto& b : s.body) if (b) walk_stmt(*b, at);
+        for (auto& c : s.catch_body()) if (c) walk_stmt(*c, at);
+        for (auto& f : s.finally_body()) if (f) walk_stmt(*f, at);
+    };
+    for (size_t i = 0; i < stmts.size(); i++)
+        if (stmts[i]) walk_stmt(*stmts[i], i);
 }
 
 // Names ignore case, so a second FUNC or SUB of the same name in one file
@@ -2669,10 +2744,9 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
     Parser mod_parser(mod_lexer);
     mod_parser.file_reader = file_reader;
     mod_parser.imported_modules = imported_modules; // share import set
-    // A module of a module follows the same rules as the program that started
-    // the import chain.
+    // -c holds for a module of a module too.
     mod_parser.strict_module_writes = strict_module_writes;
-    mod_parser.explicit_seen = explicit_seen;
+    mod_parser.is_module = true;
     mod_parser.current_source_file = module_file_path; // propagate file path
     auto mod_file_ref = std::make_shared<const std::string>(module_file_path);
     auto mod_stmts = mod_parser.parse();
@@ -2735,13 +2809,25 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
         }
     }
 
-    // A FUNC or SUB in a module that assigns a name it never declared writes
-    // the importing program's global of that name. Inside one file that is
-    // classic BASIC and stays allowed; across a module boundary it lets a
-    // library clobber an application variable by accident. A program that
-    // compiles with -c or asks for OPTION "EXPLICIT" refuses it; a plain
-    // interpreted run keeps the old behaviour.
-    if (strict_module_writes || explicit_seen) {
+    // The module's own OPTION "EXPLICIT" / "STRICT", the last one in the file
+    // winning; the importing program's option does not reach into it.
+    bool module_explicit = false;
+    for (auto& s : mod_stmts) {
+        if (mod_parser.imported_stmts.count(s.get())) continue;
+        if (s->kind != StmtKind::OPTION_STMT || !s->expr ||
+            s->expr->kind != ExprKind::LITERAL_STRING) continue;
+        std::string opt = upper_copy(s->expr->str_val);
+        if (opt == "EXPLICIT" || opt == "STRICT") module_explicit = true;
+        else if (opt == "EXPLICITOFF" || opt == "NOEXPLICIT" ||
+                 opt == "STRICTOFF" || opt == "NOSTRICT") module_explicit = false;
+    }
+
+    // A FUNC or SUB in a module that assigns a name it never declared gets a
+    // local of that name, never the importing program's global. A module
+    // with OPTION "EXPLICIT" of its own, or any module under -c, refuses
+    // the assignment instead.
+    {
+        const bool refuse = strict_module_writes || module_explicit;
         std::function<void(const Stmt&, std::unordered_set<std::string>&)> collect_locals =
             [&](const Stmt& s, std::unordered_set<std::string>& locals) {
                 if ((s.kind == StmtKind::DIM || s.kind == StmtKind::LET) &&
@@ -2759,30 +2845,34 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
                 for (auto& f : s.finally_body()) if (f) collect_locals(*f, locals);
             };
         std::function<void(const Stmt&, const std::unordered_set<std::string>&,
-                           const std::string&)> check_writes =
+                           const std::string&, std::vector<std::string>&)> check_writes =
             [&](const Stmt& s, const std::unordered_set<std::string>& locals,
-                const std::string& fn_name) {
+                const std::string& fn_name, std::vector<std::string>& undeclared) {
                 // `LET name = value` reads as "let this be", the way module
                 // code here introduces a local; a bare `name = value` is the
-                // shape that silently reached into the caller.
+                // shape that would reach into the caller.
                 if (s.kind == StmtKind::ASSIGN && !s.var_name.empty() &&
                     s.var_name.find('.') == std::string::npos) {
                     const std::string& base = s.var_name;
                     if (base.substr(0, 2) != "__" &&
                         !locals.count(base) && !module_vars.count(base) &&
-                        !all_funcs.count(base))
-                        throw std::runtime_error(
-                            "Parse error at line " + std::to_string(s.line) +
-                            ": module " + module_name + ", " + fn_name +
-                            " assigns '" + base + "' without declaring it, which would write"
-                            " the importing program's global of that name. Add DIM " + base +
-                            " (or declare it at module level).");
+                        !all_funcs.count(base)) {
+                        if (refuse)
+                            throw std::runtime_error(
+                                "Parse error at line " + std::to_string(s.line) +
+                                ": module " + module_name + ", " + fn_name +
+                                " assigns '" + base + "' without declaring it. Add DIM " +
+                                base + " (or declare it at module level).");
+                        if (std::find(undeclared.begin(), undeclared.end(), base) ==
+                            undeclared.end())
+                            undeclared.push_back(base);
+                    }
                 }
-                for (auto& b : s.body) if (b) check_writes(*b, locals, fn_name);
+                for (auto& b : s.body) if (b) check_writes(*b, locals, fn_name, undeclared);
                 for (auto& br : s.branches)
-                    for (auto& b : br.body) if (b) check_writes(*b, locals, fn_name);
-                for (auto& c : s.catch_body()) if (c) check_writes(*c, locals, fn_name);
-                for (auto& f : s.finally_body()) if (f) check_writes(*f, locals, fn_name);
+                    for (auto& b : br.body) if (b) check_writes(*b, locals, fn_name, undeclared);
+                for (auto& c : s.catch_body()) if (c) check_writes(*c, locals, fn_name, undeclared);
+                for (auto& f : s.finally_body()) if (f) check_writes(*f, locals, fn_name, undeclared);
             };
         for (auto& s : mod_stmts) {
             if (mod_parser.imported_stmts.count(s.get())) continue;
@@ -2792,7 +2882,9 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
             std::unordered_set<std::string> locals;
             for (auto& p : s->params()) locals.insert(p.name);
             for (auto& b : s->body) if (b) collect_locals(*b, locals);
-            for (auto& b : s->body) if (b) check_writes(*b, locals, s->func_name);
+            std::vector<std::string> undeclared;
+            for (auto& b : s->body) if (b) check_writes(*b, locals, s->func_name, undeclared);
+            if (!undeclared.empty()) s->ext().implicit_locals = std::move(undeclared);
         }
     }
 
