@@ -825,13 +825,8 @@ SUB ClientInit(c)
     c{"ping"} = 0
     c{"banner"} = ""
     c{"banner_until"} = 0
-    ' a small font for a 640 x 384 view; the default one stays if the file is not there
-    TRY
-        DIM font$ = "/jdbasic_default.ttf"
-        IF NOT FILE.EXISTS(font$) THEN font$ = PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf"
-        SETFONT font$, 8
-    CATCH
-    ENDTRY
+    ' a small font for a 640 x 384 view
+    KFont(8)
     ClientMakeTiles(c)
     ClientLoadSheets(c)
     c{"ready"} = TRUE
@@ -864,28 +859,22 @@ SUB ClientLoadSheets(c)
     c{"sheet_raw"} = {}
     c{"sheets"} = {}
     c{"moving"} = {}
-    DIM folder$ = c{"assets"} ?? "assets"
     DIM wanted = APPEND(ClientSkins(), ClientNpcSheets())
     DIM i = 0
     FOR i = 0 TO LEN(wanted) - 1
-        DIM img = -1
-        TRY
-            DIM path$ = folder$ + "/" + wanted[i] + ".png"
-            IF FILE.EXISTS(path$) THEN img = GFX.LOADIMAGE(path$)
-        CATCH
-            img = -1
-        ENDTRY
-        IF img <= 0 THEN img = ClientRawImage(folder$ + "/" + wanted[i] + ".rgba")
+        DIM img = KAssetImage(wanted[i] + ".png")
+        IF img <= 0 THEN img = ClientRawImage(wanted[i] + ".rgba")
         IF img > 0 THEN c{"sheets"}{wanted[i]} = img
     NEXT i
 ENDSUB
 
-' A picture from raw pixels: width and height as two little-endian 32-bit
-' numbers, then RGBA. The browser runtime reads no PNG; this works anywhere.
-FUNC ClientRawImage(path$)
-    IF NOT FILE.EXISTS(path$) THEN RETURN -1
+' A picture of the asset folder from raw pixels: width and height as two
+' little-endian 32-bit numbers, then RGBA. The browser runtime reads no PNG;
+' this works anywhere. -1 when the file is not there.
+FUNC ClientRawImage(name$)
+    DIM data$ = KAsset$(name$)
+    IF LEN(data$) < 8 THEN RETURN -1
     TRY
-        DIM data$ = BINREADER$(path$)
         DIM size = UNPACK("<II", data$)
         DIM n = size[0] * size[1] * 4
         IF LEN(data$) < 8 + n THEN RETURN -1
@@ -978,7 +967,7 @@ SUB ClientSync(c)
     DIM tap = c{"tap"} ?? [0, 0]
     c{"tap"} = [0, 0]
     IF c{"dx"} <> 0 ORELSE c{"dy"} <> 0 THEN tap = [c{"dx"}, c{"dy"}]
-    DIM msg = {"token": c{"token"}, "dx": tap[0], "dy": tap[1], "since": c{"since"}, "mapv": c{"mapv"}}
+    DIM msg = {"dx": tap[0], "dy": tap[1], "since": c{"since"}, "mapv": c{"mapv"}}
     IF c{"say"} <> "" THEN
         msg{"say"} = c{"say"}
         c{"say"} = ""
@@ -987,7 +976,7 @@ SUB ClientSync(c)
     DIM t0 = TICK()
     DIM r = {}
     TRY
-        r = JSON.PARSE(HTTP.POST$(c{"srv"} + "/sync", JSON.STRINGIFY$(msg), "text/plain"))
+        r = KPost("/sync", msg)
     CATCH
         ' the world is away for a moment: keep what was to be said and ask again in a second
         IF MAP.EXISTS(msg, "say") THEN c{"say"} = msg{"say"}
@@ -1146,8 +1135,8 @@ SUB ClientThing(c, row, sx, sy)
     DIM key$ = row[0]
     IF NOT MAP.EXISTS(painters, key$) ANDALSO (STARTSWITH(key$, "b_") ORELSE STARTSWITH(key$, "f_")) THEN key$ = "@" + SPLIT(key$, "_")[1]
     IF NOT MAP.EXISTS(painters, key$) THEN RETURN
-    DIM paint = painters{key$}
-    paint(c, row, sx, sy)
+    DIM paint_fn = painters{key$}
+    paint_fn(c, row, sx, sy)
 ENDSUB
 
 SUB ClientPainter(id$, painter)

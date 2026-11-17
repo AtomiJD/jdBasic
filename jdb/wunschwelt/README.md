@@ -43,6 +43,61 @@ These come from what `EXECUTE` can and cannot do (measured in `spikes/`):
 - A FUNC of an imported module cannot be replaced: keep rules out of modules.
 - A patch that does not parse is refused and changes nothing.
 
+### The patch contract (`patchcheck.jdb`)
+
+All code that runs in the world only touches the game world: the game's
+own files and every patch alike. `PATCHCHECK.CHECK$(source$, known)` reads
+it before it runs. The server checks both parts of every patch, also a
+stored one after a restart; the game it runs from its own folder
+(`test_contract.jdb` holds the game to the contract). The client checks
+every piece of code it is handed, game and patches, whatever server it is
+pointed at, so a desktop client protects its machine by itself. The check
+reads the code as the lexer does: a string runs to the next quote across
+lines, `REM` and `'` start a comment, and an interpolated string `$"..."`
+is refused.
+
+The check works by what is allowed, so a builtin it does not know is
+refused:
+
+- Every call (`name(` or `name@`) and every statement (at a line start,
+  after `THEN`, `ELSE` or a colon) names a keyword, a builtin of
+  `SAFE_CALLS()` or `SAFE_STATEMENTS()` (computing, text, arrays, maps,
+  time, drawing), a kernel service, or a function the code itself or the
+  code before it defines (`known`, filled by `PATCHCHECK.LEARN`). A builtin's
+  name is never learned and never defined (jdBasic refuses that too); the
+  names of every builtin come from `STATIC_BUILTINS$()`, written by
+  `tools/builtins.jdb` from the full build, and from `HELP$()` where the
+  running jdBasic lists them. A variable holding a function is called only
+  by a name ending in `_fn`, since a builtin of the same name would win.
+- Namespaces open in full: `MAP JSON MATH REGEX RNG DATE MELODY`; single
+  members of `GFX`, `CODEC`, `SPRITE`, `TILEMAP` and `SOUND`, none that
+  reads or writes a path (`OPEN_MEMBERS()`; the drum kit through the
+  service `KKit(track)`); `JDB.GLOBAL_GET("W")` / `("C")`, written so.
+  Names starting with `__` (internal natives) are refused.
+- The kernels' own globals and functions may be neither used nor defined
+  (`KERNEL_NAMES()`). `test_contract.jdb` checks that every top-level name
+  of `server.jdb` and `client.jdb` is in the lists.
+- The word token, outside `max_tokens`, is refused: the session tokens stay
+  with the kernel (`sessions` in the server, apart from `W`, saved beside
+  the world in `world.json`; `my_token$` in the client).
+- At most 64 KB a piece.
+
+The client code reaches files and the server only through the client
+kernel's services: `KAsset$(name$)` and `KAssetImage(name$)` for a file of
+the asset folder (a bare name, no path), `KPost("/sync", msg)` for a
+message on the player's behalf (the kernel sends a copy with the token),
+`KFont(size)`, `KKit(track)`. The kernel loads `MELODY` itself
+(`c{"melody_ok"}`).
+
+What it does not stop: a patch that loops forever stalls the world, and
+anything the rules may do with the world, a patch may do too. That is for
+the review before a patch is sent. Checking the whole game takes about
+0.7 s on a desktop, once when a client starts.
+
+`./deploy.sh --revoke <title>` (`tools/patch.jdb --revoke`) drops the stored
+patches of a title and restarts the world, which comes back without them.
+`test_contract.jdb`: 20 checks.
+
 Entry points the server kernel calls: `RuleMakeWorld`, `RuleJoin`,
 `RuleSync`, `RuleTick`, `RuleNpcPrompt`, `RuleNpcReply`. Extension points of
 the first patch: `RuleNpcTick(w, npc, now)` (what one NPC does in a tick),

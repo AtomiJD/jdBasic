@@ -156,14 +156,14 @@ ENDFUNC
 ' The pixels and the part map of a sheet, kept for recolouring:
 ' c{"sheet_raw"}{skin} = [width, height, pixels, parts], or [] when the
 ' files are not there, so a missing sheet is not read again every frame.
-SUB ClientKeepRaw(c, skin$, folder$)
+SUB ClientKeepRaw(c, skin$)
     IF NOT MAP.EXISTS(c, "sheet_raw") THEN c{"sheet_raw"} = {}
     c{"sheet_raw"}{skin$} = []
     TRY
-        DIM data$ = BINREADER$(folder$ + "/" + skin$ + ".rgba")
+        DIM data$ = KAsset$(skin$ + ".rgba")
         DIM size = UNPACK("<II", data$)
         DIM n = size[0] * size[1]
-        DIM parts$ = BINREADER$(folder$ + "/" + skin$ + ".parts")
+        DIM parts$ = KAsset$(skin$ + ".parts")
         IF LEN(parts$) < n THEN RETURN
         c{"sheet_raw"}{skin$} = [size[0], size[1], UNPACK(STR$(n * 4) + "b", data$, 8), UNPACK(STR$(n) + "b", parts$, 0)]
     CATCH
@@ -184,7 +184,7 @@ FUNC ClientLookSheet(c, skin$, look)
         NEXT
         c{"look_imgs"} = {}
     ENDIF
-    IF NOT MAP.EXISTS(c, "sheet_raw") ORELSE NOT MAP.EXISTS(c{"sheet_raw"}, skin$) THEN ClientKeepRaw(c, skin$, c{"assets"} ?? "assets")
+    IF NOT MAP.EXISTS(c, "sheet_raw") ORELSE NOT MAP.EXISTS(c{"sheet_raw"}, skin$) THEN ClientKeepRaw(c, skin$)
     IF LEN(c{"sheet_raw"}{skin$}) = 0 THEN RETURN sheets{skin$} ?? -1
     DIM raw = c{"sheet_raw"}{skin$}
     DIM n = raw[0] * raw[1]

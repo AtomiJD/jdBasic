@@ -382,11 +382,11 @@ ENDSUB
 FUNC GardenSheet(c)
     IF MAP.EXISTS(c, "garden_img") THEN RETURN c{"garden_img"} > 0
     c{"garden_img"} = -1
-    DIM folder$ = c{"assets"} ?? "assets"
     TRY
-        IF FILE.EXISTS(folder$ + "/garden.parts") THEN
-            c{"garden_parts"} = JSON.PARSE(BINREADER$(folder$ + "/garden.parts"))
-            c{"garden_img"} = ClientRawImage(folder$ + "/garden.rgba")
+        DIM parts$ = KAsset$("garden.parts")
+        IF parts$ <> "" THEN
+            c{"garden_parts"} = JSON.PARSE(parts$)
+            c{"garden_img"} = ClientRawImage("garden.rgba")
         ENDIF
     CATCH
         c{"garden_img"} = -1

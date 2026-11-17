@@ -1,0 +1,197 @@
+' Test of the patch contract (patchcheck.jdb) and of the patch entry: code
+' that reaches files, the network or processes, runs text as code, calls a
+' builtin that is not on the list, defines a builtin's name, or touches the
+' kernel's names or a session token is refused, by the checker and by the
+' server; the game and the patches written so far keep the contract; the
+' kernels' names are all known to the checker; a stored patch can be revoked
+' and does not come back after a restart; the session tokens live apart from
+' the world the rules see and survive a restart.
+'
+'   jdBasic jdb/wunschwelt/test_contract.jdb      (from the repository root)
+
+OPTION "EXPLICIT"
+IMPORT PATCHCHECK
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+SUB Check(label$ AS STRING, ok AS INTEGER)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM here$ AS STRING = "jdb/wunschwelt/"
+DIM q$ AS STRING = CHR$(34)
+DIM nl$ AS STRING = CHR$(10)
+
+' ---- the checker ----
+' the names the game defines, as server and client know them before a patch
+DIM game_known = {}
+FOR EACH game_file$ IN FILE.LIST(here$ + "game/*.jdb")
+    PATCHCHECK.LEARN(TXTREADER$(here$ + "game/" + PATH.BASENAME$(game_file$)), game_known)
+NEXT
+DIM game_ok$ AS STRING = ""
+FOR EACH game_file$ IN FILE.LIST(here$ + "game/*.jdb")
+    DIM game_src$ AS STRING = TXTREADER$(here$ + "game/" + PATH.BASENAME$(game_file$))
+    DIM split_at AS INTEGER = INSTR(game_src$, "'@client")
+    DIM game_why$ AS STRING = PATCHCHECK.CHECK$(LEFT$(game_src$, split_at), game_known) + PATCHCHECK.CHECK$(MID$(game_src$, split_at), game_known)
+    IF game_why$ <> "" THEN game_ok$ = game_ok$ + " " + PATH.BASENAME$(game_file$) + ": " + game_why$
+NEXT
+Check("the game keeps the contract itself", game_ok$ = "")
+IF game_ok$ <> "" THEN PRINT " "; game_ok$
+Check("a builtin's name is never learned as the game's", NOT MAP.EXISTS(game_known, "UCASE$") ANDALSO MAP.EXISTS(game_known, "RULETICK"))
+
+DIM good$ AS STRING = "SUB RuleStatueTick(w, now)" + nl$ + "    DIM world = JDB.GLOBAL_GET(" + q$ + "W" + q$ + ")" + nl$ + "    world{" + q$ + "npcs" + q$ + "}{" + q$ + "s" + q$ + "} = {" + q$ + "x" + q$ + ": MAP.SIZE(w{" + q$ + "npcs" + q$ + "})}" + nl$ + "    ' a note on OS.EXEC and FILE.EXISTS" + nl$ + "    DIM said$ = " + q$ + "OS.EXEC is only a word here" + q$ + nl$ + "    DIM sent$ = KAsk$(w, " + q$ + "x" + q$ + ", " + q$ + "y" + q$ + ", {}, [], {" + q$ + "max_tokens" + q$ + ": 9})" + nl$ + "ENDSUB" + nl$ + "SUB ClientStatue(sx, sy)" + nl$ + "    RECT sx, sy, 4, 4, TRUE, 200, 180, 60" + nl$ + "    DIM size = GFX.TEXTSIZE(" + q$ + "a" + q$ + ")" + nl$ + "ENDSUB" + nl$
+Check("a patch of rules and drawing keeps the contract", PATCHCHECK.CHECK$(good$, {}) = "")
+IF PATCHCHECK.CHECK$(good$, {}) <> "" THEN PRINT "  "; PATCHCHECK.CHECK$(good$, {})
+
+DIM bad = []
+bad = APPEND(bad, "DIM r = OS.EXEC(" + q$ + "sh" + q$ + ")")
+bad = APPEND(bad, "IF FILE.EXISTS(" + q$ + "x" + q$ + ") THEN PRINT 1")
+bad = APPEND(bad, "DIM t$ = HTTP.GET$(" + q$ + "http://x" + q$ + ")")
+bad = APPEND(bad, "EXECUTE " + q$ + "PRINT 1" + q$)
+bad = APPEND(bad, "DIM v = EVAL(" + q$ + "1+1" + q$ + ")")
+bad = APPEND(bad, "TXTWRITER " + q$ + "x.txt" + q$ + ", " + q$ + "y" + q$)
+bad = APPEND(bad, "DECLARE FUNC Beep LIB " + q$ + "kernel32.dll" + q$ + " ALIAS " + q$ + "Beep" + q$ + " (a AS INTEGER, b AS INTEGER) AS INTEGER")
+bad = APPEND(bad, "IMPORT MELODY")
+bad = APPEND(bad, "SUB RuleX(w)" + nl$ + "    SLEEP 100000" + nl$ + "ENDSUB")
+bad = APPEND(bad, "DIM k$ = JDB.GLOBAL_GET(" + q$ + "patch_key$" + q$ + ")")
+bad = APPEND(bad, "JDB.GLOBAL_SET(" + q$ + "W" + q$ + ", {})")
+bad = APPEND(bad, "PRINT Patch_Key$")
+bad = APPEND(bad, "stored = []")
+bad = APPEND(bad, "FUNC HANDLEPATCH(request)" + nl$ + "    RETURN {}" + nl$ + "ENDFUNC")
+bad = APPEND(bad, "FUNC KNow()" + nl$ + "    RETURN 0" + nl$ + "ENDFUNC")
+bad = APPEND(bad, "SUB ClientAsk(c, msg)" + nl$ + "    msg{" + q$ + "say" + q$ + "} = c{" + q$ + "token" + q$ + "}" + nl$ + "ENDSUB")
+bad = APPEND(bad, "SUB ClientAsk(c, msg)" + nl$ + "    msg{" + q$ + "say" + q$ + "} = pin$" + nl$ + "ENDSUB")
+bad = APPEND(bad, "DIM s = sessions")
+bad = APPEND(bad, "DIM r = __FFI_DECLARE(" + q$ + "Sys" + q$ + ", " + q$ + "msvcrt.dll" + q$ + ", " + q$ + "system" + q$ + ", [" + q$ + "STRING" + q$ + "], [" + q$ + "s" + q$ + "], " + q$ + "INTEGER" + q$ + ")")
+bad = APPEND(bad, "DIM sh = CREATEOBJECT(" + q$ + "WScript.Shell" + q$ + ")")
+bad = APPEND(bad, "DIM r$ = PYTHON$(" + q$ + "import os" + q$ + ")")
+bad = APPEND(bad, "DIM f$ = FILEOPEN$(" + q$ + "*" + q$ + ")")
+bad = APPEND(bad, "MSGBOX " + q$ + "hi" + q$)
+bad = APPEND(bad, "DIM d$ = DIR$(" + q$ + "/" + q$ + ")")
+bad = APPEND(bad, "KILL " + q$ + "x" + q$)
+bad = APPEND(bad, "IF 1 THEN KILL " + q$ + "x" + q$)
+bad = APPEND(bad, "DIM a = 1 : CD " + q$ + "/" + q$)
+bad = APPEND(bad, "DIM CREATEOBJECT_FN = 1" + nl$ + "DIM sh = CREATEOBJECT(" + q$ + "x" + q$ + ")")
+bad = APPEND(bad, "FUNC CREATEOBJECT(x)" + nl$ + "    RETURN 0" + nl$ + "ENDFUNC")
+bad = APPEND(bad, "DIM r = NotDefinedAnywhere(1)")
+bad = APPEND(bad, "KILL " + q$ + "victim" + q$ + " + " + q$ + q$)
+bad = APPEND(bad, "TXTWRITER " + q$ + "melody.jdb" + q$ + " + " + q$ + q$ + ", " + q$ + "x" + q$)
+bad = APPEND(bad, "RMDIR [" + q$ + "d" + q$ + "][0]")
+bad = APPEND(bad, "CD " + q$ + "/" + q$ + " + " + q$ + q$)
+bad = APPEND(bad, "DIM k = SELECT(JDB.GLOBAL_GET@, [" + q$ + "PATCH_KEY$" + q$ + "])")
+bad = APPEND(bad, "DIM k = JDB.GLOBAL_GET(" + q$ + "W" + q$ + " + " + q$ + q$ + ")")
+bad = APPEND(bad, "DIM a$ = " + q$ + nl$ + q$ + " : DIM r = OS.EXEC(" + q$ + "id" + q$ + ") : DIM b$ = " + q$ + nl$ + q$)
+bad = APPEND(bad, "DIM a$ = " + q$ + "x" + nl$ + "OS.EXEC(1)" + nl$ + q$ + " + OS.EXEC(2)")
+bad = APPEND(bad, "' note " + q$ + nl$ + "DIM r = OS.EXEC(1)" + nl$ + "' " + q$)
+bad = APPEND(bad, "DIM x = 1 REM " + q$ + nl$ + "DIM r = OS.EXEC(1)" + nl$ + "' " + q$)
+bad = APPEND(bad, "DIM v$ = $" + q$ + "{OS.EXEC(1)}" + q$)
+bad = APPEND(bad, "SOUND.RECORD " + q$ + "melody.jdb" + q$)
+bad = APPEND(bad, "SPRITE.SAVE 1, " + q$ + "../../x" + q$)
+bad = APPEND(bad, "DIM s = SPRITE.LOAD(" + q$ + "x.png" + q$ + ")")
+bad = APPEND(bad, "SOUND.KIT 1, " + q$ + "/etc/passwd" + q$)
+bad = APPEND(bad, "DIM r = CREATEOBJECT _" + nl$ + "(" + q$ + "WScript.Shell" + q$ + ")")
+bad = APPEND(bad, "DIM r$ = TXTREADER$ _ ' the file" + nl$ + "(" + q$ + "/etc/passwd" + q$ + ")")
+bad = APPEND(bad, "SUB ClientAsk(c, msg)" + nl$ + "    c{" + q$ + "srv" + q$ + "} = " + q$ + "http://elsewhere" + q$ + nl$ + "    DIM r = HTTP.GET$(c{" + q$ + "srv" + q$ + "})" + nl$ + "ENDSUB")
+DIM let_through$ AS STRING = ""
+FOR EACH one$ IN bad
+    IF PATCHCHECK.CHECK$(one$, game_known) = "" THEN let_through$ = let_through$ + nl$ + "  " + one$
+NEXT
+Check("files, net, processes, code as text, the kernel's names and tokens are refused", let_through$ = "")
+IF let_through$ <> "" THEN PRINT "  let through:"; let_through$
+Check("a patch over 64 KB is refused", PATCHCHECK.CHECK$(REPEAT$("' long" + nl$, 12000), {}) <> "")
+
+' the game's patches of the board keep it
+DIM old_bad$ AS STRING = ""
+FOR EACH file$ IN FILE.LIST(here$ + "patches/*.jdb")
+    DIM why$ AS STRING = PATCHCHECK.CHECK$(TXTREADER$(here$ + "patches/" + PATH.BASENAME$(file$)), game_known)
+    IF why$ <> "" THEN old_bad$ = old_bad$ + " " + PATH.BASENAME$(file$) + ": " + why$
+NEXT
+Check("the patches written so far keep the contract", old_bad$ = "")
+IF old_bad$ <> "" THEN PRINT " "; old_bad$
+
+' every top-level name of the kernels is known to the checker
+DIM known = APPEND(APPEND(PATCHCHECK.KERNEL_NAMES(), PATCHCHECK.KERNEL_CALLS()), PATCHCHECK.KERNEL_FREE())
+DIM unknown$ AS STRING = ""
+FOR EACH kernel$ IN [here$ + "server.jdb", here$ + "client.jdb"]
+    FOR EACH row$ IN SPLIT(REPLACE$(TXTREADER$(kernel$), CHR$(13), ""), nl$)
+        DIM found = REGEX.FINDALL("^(DIM|FUNC|SUB|ASYNC FUNC)[ ]+([A-Za-z_][A-Za-z0-9_]*[$]?)", row$)
+        IF LEN(found) > 0 THEN
+            IF INDEXOF(known, UCASE$(found[0][1])) < 0 THEN unknown$ = unknown$ + " " + found[0][1]
+        ENDIF
+    NEXT
+NEXT
+Check("the checker knows every top-level name of server and client", unknown$ = "")
+IF unknown$ <> "" THEN PRINT "  unknown:"; unknown$
+
+' ---- the server ----
+DIM port AS INTEGER = 8340 + OS.PID() MOD 10
+DIM srv$ AS STRING = "http://127.0.0.1:" + STR$(port)
+DIM key$ AS STRING = CODEC.UUID$()
+DIM out$ AS STRING = PATH.ABS$("tmp") + "/ww_contract_" + STR$(OS.PID())
+MKDIR "tmp"
+MKDIR out$
+MKDIR out$ + "/state"
+HTTP.SETTIMEOUT(5)
+FUNC Post(path$ AS STRING, payload)
+    RETURN JSON.PARSE(HTTP.POST$(srv$ + path$, JSON.STRINGIFY$(payload), "text/plain"))
+ENDFUNC
+FUNC Start(log$ AS STRING)
+    DIM pid = OS.SPAWN(OS.SELF$(), [here$ + "server.jdb", STR$(port), "60"], {"output": out$ + "/" + log$, "hidden": TRUE, "env": {"WW_PATCH_KEY": key$, "WW_LLM_URL": "", "WW_STATE_DIR": out$ + "/state"}})
+    SLEEP 1800
+    RETURN pid
+ENDFUNC
+
+DIM server_pid = Start("server1.txt")
+DIM token$ AS STRING = Post("/join", {"name": "Anna", "pin": "1234"}){"token"}
+DIM stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+DIM game_n = stats{"version"}
+
+DIM refused = Post("/patch", {"key": key$, "title": "evil", "server": "DIM r = OS.EXEC(" + q$ + "id" + q$ + ")", "client": ""})
+Check("the server refuses a patch that breaks the contract, before it runs", NOT refused{"ok"} ANDALSO INSTR(refused{"error"}, "contract") >= 0 ANDALSO refused{"version"} = game_n)
+refused = Post("/patch", {"key": key$, "title": "evil client", "server": "", "client": "DIM t$ = HTTP.GET$(" + q$ + "http://x" + q$ + ")"})
+Check("and one whose client part breaks it", NOT refused{"ok"} ANDALSO INSTR(refused{"error"}, "client part") >= 0)
+DIM took = Post("/patch", {"key": key$, "title": "statue", "server": "SUB RulePatchedStatue(w)" + nl$ + "ENDSUB" + nl$, "client": "SUB ClientPatchedStatue(c)" + nl$ + "ENDSUB" + nl$})
+Check("it takes one that keeps it", took{"ok"} ANDALSO took{"version"} = game_n + 1)
+DIM code = JSON.PARSE(HTTP.GET$(srv$ + "/code?since=0"))
+Check("the client gets the game and the patch", LEN(code{"patches"}) = game_n + 1)
+
+DIM sync = Post("/sync", {"token": token$, "mapv": 1})
+Check("a token works", sync{"ok"} ANDALSO NOT MAP.EXISTS(sync, "error"))
+SLEEP 3500
+DIM saved = JSON.PARSE(TXTREADER$(out$ + "/state/world.json"))
+Check("the tokens are kept apart from the world the rules see", NOT MAP.EXISTS(saved{"world"}, "tokens") ANDALSO MAP.EXISTS(saved{"sessions"}, token$))
+
+DIM gone = Post("/patch", {"key": key$, "revoke": "statue"})
+Check("a stored patch is revoked", gone{"ok"} ANDALSO gone{"revoked"} = 1 ANDALSO gone{"stored"} = 0)
+Check("a title nobody sent revokes nothing", NOT Post("/patch", {"key": key$, "revoke": "nothing"}){"ok"})
+DIM wrong_key = HTTP.POST$(srv$ + "/patch", JSON.STRINGIFY$({"key": "x", "revoke": "statue"}), "text/plain")
+Check("revoking needs the key", HTTP.STATUSCODE() = 403)
+DIM stopped = OS.KILL(server_pid)
+SLEEP 500
+
+server_pid = Start("server2.txt")
+stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("after a restart the revoked patch is gone", INDEXOF(stats{"patches"}, "statue") < 0 ANDALSO stats{"version"} = game_n)
+sync = Post("/sync", {"token": token$, "mapv": 1})
+Check("and the token still works", sync{"ok"} ANDALSO NOT MAP.EXISTS(sync, "error"))
+
+' a stored patch that breaks the contract is not run again
+DIM kept = JSON.PARSE(TXTREADER$(out$ + "/state/patches.json"))
+stopped = OS.KILL(server_pid)
+SLEEP 500
+TXTWRITER out$ + "/state/patches.json", JSON.STRINGIFY$({"patches": [{"title": "slipped in", "server": "DIM r = OS.EXEC(" + q$ + "id" + q$ + ")", "client": ""}]})
+server_pid = Start("server3.txt")
+stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("a stored patch that breaks the contract does not run after a restart", INDEXOF(stats{"patches"}, "slipped in") < 0 ANDALSO stats{"errors"} = 0)
+
+stats = JSON.PARSE(HTTP.GET$(srv$ + "/stats"))
+Check("the rules raised no error", stats{"errors"} = 0)
+stopped = OS.KILL(server_pid)
+
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed > 0 THEN END 1

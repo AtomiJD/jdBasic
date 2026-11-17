@@ -110,19 +110,9 @@ FUNC ClientPick(seed, k, n)
     RETURN CODEC.CRC32(STR$(seed) + ":" + STR$(k)) MOD MAX([1, n])
 ENDFUNC
 
-' TRUE once the module MELODY is loaded; it lies beside client.jdb.
+' TRUE when the kernel loaded the module MELODY; it lies beside client.jdb.
 FUNC ClientMelodyReady()
-    DIM cs = JDB.GLOBAL_GET("C")
-    IF NOT MAP.EXISTS(cs, "melody_ok") THEN
-        cs{"melody_ok"} = FALSE
-        TRY
-            EXECUTE("IMPORT MELODY")
-            cs{"melody_ok"} = TRUE
-        CATCH
-            cs{"last_error"} = "music: no MELODY, " + ERRMSG$
-        ENDTRY
-    ENDIF
-    RETURN cs{"melody_ok"}
+    RETURN JDB.GLOBAL_GET("C"){"melody_ok"} ?? FALSE
 ENDFUNC
 
 ' The melody voice of track 0, full rather than plucked: the wave of the
@@ -366,10 +356,10 @@ SUB ClientMusicPlay(want$)
         pad$ = "<[[c4,e4,g4] [a3,c4,e4]] [[f3,a3,c4] [g3,b3,d4]] [[c4,e4,g4] [a3,c4,e4]] [[f3,a3,c4] [c4,e4,g4]] [[f3,a3,c4] [c4,e4,g4]] [[d4,f4,a4] [g3,b3,d4]] [[a3,c4,e4] [f3,a3,c4]] [[g3,b3,d4] [c4,e4,g4]]>"
         perc$ = "[~ ~ rim ~]*2"
     ENDIF
-    SOUND.KIT 4, "SYNTH"
-    SOUND.KIT 5, "SYNTH"
-    SOUND.KIT 6, "SYNTH"
-    SOUND.KIT 7, "SYNTH"
+    KKit(4)
+    KKit(5)
+    KKit(6)
+    KKit(7)
     SOUND.GAIN 0, 0.3
     SOUND.GAIN 1, 0.4
     SOUND.GAIN 2, 0.18

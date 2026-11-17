@@ -12,9 +12,16 @@
 ' fetches what is new and runs it; the window, the frame counter and the
 ' state in c live on.
 '
+' Every piece of code is checked against the patch contract (patchcheck.jdb)
+' before it runs, game and patches alike. The code reaches files and the
+' server only through the kernel's services: KAsset$(name$) and
+' KAssetImage(name$) for a file of the asset folder, KPost("/sync", msg)
+' for a message on the player's behalf, KFont(size) for the font.
+'
 ' c is the client's whole state. The kernel keeps in it:
-'   name, srv, token   who we are and where the world is
+'   name, srv          who we are and where the world is
 '   assets             the folder of the pictures
+'   melody_ok          TRUE when the music module MELODY is loaded
 '   version            the last patch that was run here
 '   code_id            the server's name for the code of the versions 1 to version
 '   frames             frames drawn since the start
@@ -28,9 +35,10 @@
 '   quit               ends the program
 
 OPTION "EXPLICIT"
+IMPORT PATCHCHECK
 
 DIM cli = OS.ARGS()
-DIM C = {"name": "Gast", "srv": "http://127.0.0.1:8100", "token": "", "version": 0, "code_id": "", "error_at": 0,"frames": 0, "keyq": [], "textq": "", "has_text": FALSE,"need_code": FALSE, "need_join": FALSE, "errors": 0, "last_error": "", "quit": FALSE}
+DIM C = {"name": "Gast", "srv": "http://127.0.0.1:8100", "version": 0, "code_id": "", "error_at": 0,"frames": 0, "keyq": [], "textq": "", "has_text": FALSE,"need_code": FALSE, "need_join": FALSE, "errors": 0, "last_error": "", "quit": FALSE}
 DIM run_seconds AS INTEGER = 0
 DIM pin$ AS STRING = GETENV$("WW_PIN")
 IF LEN(cli) > 1 THEN C{"name"} = cli[1]
@@ -40,6 +48,18 @@ IF LEN(cli) > 3 THEN run_seconds = VAL(cli[3])
 C{"assets"} = "assets"
 IF LEN(cli) > 0 THEN C{"assets"} = PATH.JOIN$(PATH.DIRNAME$(cli[0]), "assets")
 IF FILE.ISDIR("/assets") THEN C{"assets"} = "/assets"
+DIM asset_dir$ AS STRING = C{"assets"}
+' the session token stays with the kernel; KPost hands it to the server
+DIM my_token$ AS STRING = ""
+' the names the code run so far defines, for the patch contract
+DIM patch_known = {}
+' the music module beside this file, for the game's music
+C{"melody_ok"} = FALSE
+TRY
+    EXECUTE("IMPORT MELODY")
+    C{"melody_ok"} = TRUE
+CATCH
+ENDTRY
 
 ' In the browser the page hands over its query parameters and its own origin:
 ' the name comes from ?name=, the world sits behind <origin>/wunschwelt/api.
@@ -50,6 +70,62 @@ TRY
     IF MAP.EXISTS(page, "__origin") THEN C{"srv"} = page{"__origin"} + "/wunschwelt/api"
 CATCH
 ENDTRY
+' where the world is and who joins it, kept by the kernel: the client code
+' sees c{"srv"} and c{"name"} but cannot send the kernel elsewhere
+DIM srv_url$ AS STRING = C{"srv"}
+DIM my_name$ AS STRING = C{"name"}
+
+' ---- services for the client code, the one way to files and the server ----
+
+' A file name of the asset folder: letters, digits, _ . and -, no path.
+FUNC AssetName$(name$) AS STRING
+    IF NOT REGEX.MATCH("^[A-Za-z0-9_][A-Za-z0-9_.-]*$", "" + name$) ORELSE INSTR("" + name$, "..") >= 0 THEN RETURN ""
+    RETURN asset_dir$ + "/" + name$
+ENDFUNC
+
+' The bytes of a file of the asset folder, "" when it is not there.
+FUNC KAsset$(name$) AS STRING
+    DIM path$ AS STRING = AssetName$(name$)
+    IF path$ = "" THEN RETURN ""
+    IF NOT FILE.EXISTS(path$) THEN RETURN ""
+    RETURN BINREADER$(path$)
+ENDFUNC
+
+' A picture file (PNG) of the asset folder as an image, -1 when it is not there.
+FUNC KAssetImage(name$)
+    DIM path$ AS STRING = AssetName$(name$)
+    IF path$ = "" THEN RETURN -1
+    IF NOT FILE.EXISTS(path$) THEN RETURN -1
+    TRY
+        RETURN GFX.LOADIMAGE(path$)
+    CATCH
+        RETURN -1
+    ENDTRY
+ENDFUNC
+
+' A message to the world on the player's behalf (path /sync); the answer as a map.
+FUNC KPost(path$, msg)
+    IF path$ <> "/sync" THEN THROW "KPost: no such path"
+    ' a copy goes out with the token; the caller's map never holds it
+    DIM sent = JSON.PARSE(JSON.STRINGIFY$(msg))
+    sent{"token"} = my_token$
+    RETURN JSON.PARSE(HTTP.POST$(srv_url$ + path$, JSON.STRINGIFY$(sent), "text/plain"))
+ENDFUNC
+
+' The built-in drum kit SYNTH on a track of the sequencer.
+SUB KKit(track)
+    SOUND.KIT INT(track), "SYNTH"
+ENDSUB
+
+' The small font of the game in the given size; the default stays when it is not there.
+SUB KFont(size)
+    TRY
+        DIM font$ AS STRING = "/jdbasic_default.ttf"
+        IF NOT FILE.EXISTS(font$) THEN font$ = PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf"
+        SETFONT font$, CLAMP(INT(size), 6, 48)
+    CATCH
+    ENDTRY
+ENDSUB
 
 SUB OnKeyDown(info)
     C{"keyq"} = APPEND(C{"keyq"}, {"key": info[0]{"key"}, "keycode": info[0]{"keycode"}})
@@ -66,21 +142,33 @@ ENDSUB
 
 ' Fetches and runs the client code after the version we have.
 SUB PullCode()
-    DIM code = JSON.PARSE(HTTP.GET$(C{"srv"} + "/code?since=" + STR$(C{"version"})))
+    DIM code = JSON.PARSE(HTTP.GET$(srv_url$ + "/code?since=" + STR$(C{"version"})))
     ' The server names the code it expects us to have. When that is not what
     ' ran here (the game changed under a restart), everything is fetched anew
     ' and the client code starts over.
     IF C{"version"} > 0 ANDALSO "" + (code{"since_id"} ?? "") <> C{"code_id"} THEN
         C{"version"} = 0
         C{"ready"} = FALSE
-        code = JSON.PARSE(HTTP.GET$(C{"srv"} + "/code?since=0"))
+        code = JSON.PARSE(HTTP.GET$(srv_url$ + "/code?since=0"))
     ENDIF
     DIM patches = code{"patches"}
+    IF C{"version"} = 0 THEN patch_known = {}
+    ' the pieces call each other in any order: their names are known first,
+    ' never a builtin's; then every piece is checked, whatever the server says of it
     DIM i AS INTEGER
     FOR i = 0 TO LEN(patches) - 1
-        IF TRIM$(patches[i]) <> "" THEN
+        PATCHCHECK.LEARN(patches[i], patch_known)
+    NEXT i
+    FOR i = 0 TO LEN(patches) - 1
+        DIM why$ AS STRING = PATCHCHECK.CHECK$(patches[i], patch_known)
+        IF why$ <> "" THEN
+            C{"errors"} = C{"errors"} + 1
+            C{"last_error"} = "patch " + STR$(C{"version"} + i + 1) + " refused: " + why$
+            C{"error_at"} = TICK()
+        ELSEIF TRIM$(patches[i]) <> "" THEN
             TRY
                 EXECUTE patches[i]
+                PATCHCHECK.LEARN(patches[i], patch_known)
             CATCH
                 C{"errors"} = C{"errors"} + 1
                 C{"last_error"} = "patch " + STR$(C{"version"} + i + 1) + ": " + ERRMSG$
@@ -96,9 +184,9 @@ ENDSUB
 SUB JoinWorld()
     C{"need_join"} = FALSE
     IF (C{"join_error"} ?? "") <> "" THEN RETURN
-    DIM r = JSON.PARSE(HTTP.POST$(C{"srv"} + "/join", JSON.STRINGIFY$({"name": C{"name"}, "pin": pin$}), "text/plain"))
+    DIM r = JSON.PARSE(HTTP.POST$(srv_url$ + "/join", JSON.STRINGIFY$({"name": my_name$, "pin": pin$}), "text/plain"))
     IF r{"ok"} THEN
-        C{"token"} = r{"token"}
+        my_token$ = r{"token"}
         C{"name"} = r{"name"} ?? C{"name"}
     ELSEIF INDEXOF(["name", "pin", "wrong_pin", "locked"], "" + (r{"error"} ?? "")) >= 0 THEN
         C{"join_error"} = r{"error"}

@@ -1,0 +1,34 @@
+' Writes the names of every builtin of this jdBasic into patchcheck.jdb, as
+' the body of STATIC_BUILTINS$(), so the patch contract knows them on a
+' runtime that does not list its own (HELP$() empty). Run it with the full
+' build after a builtin was added to jdBasic.
+'
+'   build/jdBasic.exe jdb/wunschwelt/tools/builtins.jdb
+
+OPTION "EXPLICIT"
+
+DIM here$ AS STRING = PATH.DIRNAME$(OS.ARGS()[0])
+DIM target$ AS STRING = here$ + "/../patchcheck.jdb"
+DIM names = []
+FOR EACH one$ IN UNIQUE(SELECT(UCASE$@, HELP$()))
+    IF REGEX.MATCH("^[A-Z_][A-Z0-9_]*(?:\.[A-Z_][A-Z0-9_]*)*[$]?$", one$) THEN names = APPEND(names, one$)
+NEXT
+names = SORT(names)
+IF LEN(names) < 500 THEN
+    PRINT "this jdBasic lists only "; LEN(names); " builtins; run it with the full build"
+    END 1
+ENDIF
+DIM text$ AS STRING = REPLACE$(TXTREADER$(target$), CHR$(13), "")
+DIM rows = SPLIT(text$, CHR$(10))
+DIM at AS INTEGER = -1
+DIM i AS INTEGER
+FOR i = 0 TO LEN(rows) - 1
+    IF STARTSWITH(rows[i], "EXPORT FUNC STATIC_BUILTINS$()") THEN at = i + 1
+NEXT i
+IF at < 0 THEN
+    PRINT "no STATIC_BUILTINS$() in "; target$
+    END 1
+ENDIF
+rows[at] = "    RETURN " + CHR$(34) + "," + JOIN(names, ",") + "," + CHR$(34)
+TXTWRITER target$, JOIN(rows, CHR$(10))
+PRINT LEN(names); " builtins written into "; target$

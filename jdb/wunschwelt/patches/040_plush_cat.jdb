@@ -49,12 +49,12 @@ SUB ClientCat(sx, sy, name$)
     IF NOT MAP.EXISTS(cs, "cat_steps") THEN cs{"cat_steps"} = {}
     DIM last = cs{"cat_steps"}{key$} ?? [here[0], here[1], 0, 0]
     IF here[0] <> last[0] ORELSE here[1] <> last[1] THEN
-        DIM dir = last[2]
-        IF here[0] > last[0] THEN dir = 2
-        IF here[0] < last[0] THEN dir = 1
-        IF here[1] > last[1] THEN dir = 0
-        IF here[1] < last[1] THEN dir = 3
-        last = [here[0], here[1], dir, TICK()]
+        DIM facing = last[2]
+        IF here[0] > last[0] THEN facing = 2
+        IF here[0] < last[0] THEN facing = 1
+        IF here[1] > last[1] THEN facing = 0
+        IF here[1] < last[1] THEN facing = 3
+        last = [here[0], here[1], facing, TICK()]
         cs{"cat_steps"}{key$} = last
     ENDIF
     ' a cat is smaller than a person: 36 of the sheet's 48 pixels

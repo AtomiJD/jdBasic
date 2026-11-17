@@ -52,11 +52,15 @@
 '   GET  /code?since=N                      -> {"version", "patches": [client code]}
 '   POST /view  {"name", "pin", "view"}     -> what RuleView answers, for a name that exists
 '                                              and its PIN; the player does not enter the world
-'   POST /patch {"key","title","server","client"} -> {"ok", "version"} or {"ok": false, "error"}
+'   POST /patch {"key","title","server","client"} -> {"ok", "version"} or {"ok": false, "error"};
+'               both parts must keep the contract of patchcheck.jdb
+'   POST /patch {"key","revoke": title}           -> {"ok", "revoked", "stored", "restart"}: the stored
+'               patches of that title do not run again from the next start on
 '   POST /rule  {"key","name","args"}           -> what RuleAdmin answers (needs the patch key)
 '   GET  /stats
 
 OPTION "EXPLICIT"
+IMPORT PATCHCHECK
 
 DIM TICK_MS AS INTEGER = 50
 DIM MAX_EVENTS AS INTEGER = 200
@@ -83,8 +87,13 @@ DIM nl$ AS STRING = CHR$(10)
 DIM started_ms AS DOUBLE = TICK()
 
 ' The world. Everything a rule reads or writes is in here.
-DIM W = {"players": {}, "tokens": {}, "npcs": {}, "map": {}, "events": [], "seq": 0, "version": 0, "patch_titles": [], "errors": 0, "last_error": "", "served": 0, "restarts": 0}
+DIM W = {"players": {}, "npcs": {}, "map": {}, "events": [], "seq": 0, "version": 0, "patch_titles": [], "errors": 0, "last_error": "", "served": 0, "restarts": 0}
+' the session tokens of the joined players (token -> name), apart from the world the rules see
+DIM sessions = {}
 DIM client_patches = []
+' the names the code run so far defines, server and client part, for the patch contract
+DIM patch_known = {}
+DIM patch_known_client = {}
 ' code_ids[v] names the client code of the versions 1 to v, so a client can
 ' tell whether what it runs is what the server would hand out
 DIM code_ids = [""]
@@ -199,6 +208,8 @@ FUNC ApplyPatch$(title$ AS STRING, server_code$ AS STRING, client_code$ AS STRIN
             RETURN ERRMSG$
         ENDTRY
     ENDIF
+    PATCHCHECK.LEARN(server_code$, patch_known)
+    PATCHCHECK.LEARN(client_code$, patch_known_client)
     client_patches = APPEND(client_patches, client_code$)
     W{"version"} = W{"version"} + 1
     W{"patch_titles"} = APPEND(W{"patch_titles"}, title$)
@@ -216,7 +227,7 @@ ENDSUB
 SUB SaveWorld()
     IF state_dir$ = "" THEN RETURN
     TRY
-        WriteState("world.json", JSON.STRINGIFY$({"clock": KNow(), "world": W}))
+        WriteState("world.json", JSON.STRINGIFY$({"clock": KNow(), "world": W, "sessions": sessions}))
     CATCH
         KFail("save", ERRMSG$)
     ENDTRY
@@ -264,7 +275,8 @@ SUB LoadState()
         ENDTRY
         DIM i AS INTEGER
         FOR i = 0 TO LEN(kept) - 1
-            DIM failed$ AS STRING = ApplyPatch$(kept[i]{"title"}, kept[i]{"server"}, kept[i]{"client"})
+            DIM failed$ AS STRING = PatchContract$(kept[i]{"server"}, kept[i]{"client"})
+            IF failed$ = "" THEN failed$ = ApplyPatch$(kept[i]{"title"}, kept[i]{"server"}, kept[i]{"client"})
             IF failed$ = "" THEN
                 stored = APPEND(stored, kept[i])
             ELSE
@@ -279,8 +291,14 @@ SUB LoadState()
         DIM old = snap{"world"}
         IF NOT ISMAP(old) ORELSE NOT MAP.EXISTS(old, "map") THEN THROW "not a saved world"
         FOR EACH part$ IN MAP.KEYS(old)
-            IF part$ <> "version" ANDALSO part$ <> "patch_titles" ANDALSO part$ <> "errors" ANDALSO part$ <> "last_error" THEN W{part$} = old{part$}
+            IF part$ <> "version" ANDALSO part$ <> "patch_titles" ANDALSO part$ <> "errors" ANDALSO part$ <> "last_error" ANDALSO part$ <> "tokens" THEN W{part$} = old{part$}
         NEXT
+        ' a world saved before the sessions lived apart kept them inside
+        IF ISMAP(snap{"sessions"} ?? 0) THEN
+            sessions = snap{"sessions"}
+        ELSEIF ISMAP(old{"tokens"} ?? 0) THEN
+            sessions = old{"tokens"}
+        ENDIF
         started_ms = TICK() - snap{"clock"}
         W{"restarts"} = W{"restarts"} + 1
         ' whoever was playing gets the time of a fresh arrival to come back
@@ -308,7 +326,7 @@ ENDFUNC
 
 ' Forgets the tokens of one player, and those of players who left once the list grows long.
 SUB DropTokens(name$ AS STRING)
-    DIM tokens = W{"tokens"}
+    DIM tokens = sessions
     DIM sweep AS BOOLEAN = MAP.SIZE(tokens) > 4 * MAX_PLAYERS
     FOR EACH held$ IN MAP.KEYS(tokens)
         IF tokens{held$} = name$ ORELSE (sweep ANDALSO NOT MAP.EXISTS(W{"players"}, tokens{held$})) THEN MAP.DELETE(tokens, held$)
@@ -449,7 +467,7 @@ FUNC HANDLEJOIN(request)
         DIM p = RuleJoin(W, name$)
         DIM token$ AS STRING = CODEC.UUID$()
         DropTokens(name$)
-        W{"tokens"}{token$} = name$
+        sessions{token$} = name$
         answer = {"ok": TRUE, "token": token$, "version": W{"version"}, "name": name$}
     CATCH
         KFail("RuleJoin", ERRMSG$)
@@ -478,6 +496,8 @@ FUNC HANDLEVIEW(request)
     DIM owner = CheckPin(name$, pin$, SenderOf(request))
     IF NOT owner{"ok"} THEN RETURN owner
     DIM answer = {"ok": FALSE, "error": "view"}
+    ' the rules get the request without the PIN
+    MAP.DELETE(b, "pin")
     TRY
         answer = RuleView(W, name$, b)
     CATCH
@@ -491,11 +511,13 @@ FUNC HANDLESYNC(request)
     DIM b = BodyOf(request)
     W{"served"} = W{"served"} + 1
     DIM token$ AS STRING = "" + (b{"token"} ?? "")
-    DIM tokens = W{"tokens"}
+    DIM tokens = sessions
     IF NOT MAP.EXISTS(tokens, token$) THEN RETURN {"ok": FALSE, "error": "join"}
     DIM players = W{"players"}
     DIM name$ AS STRING = tokens{token$}
     IF NOT MAP.EXISTS(players, name$) THEN RETURN {"ok": FALSE, "error": "join"}
+    ' the rules get the message without the token
+    MAP.DELETE(b, "token")
     DIM answer = {"ok": FALSE}
     TRY
         answer = RuleSync(W, players{name$}, b)
@@ -522,11 +544,33 @@ FUNC HANDLECODE(request)
     RETURN {"version": W{"version"}, "patches": fresh, "code_id": code_ids[W{"version"}], "since_id": code_ids[since]}
 ENDFUNC
 
+' "" when both parts of a patch over HTTP keep the contract of patchcheck.jdb.
+FUNC PatchContract$(server_code$ AS STRING, client_code$ AS STRING) AS STRING
+    DIM why$ AS STRING = PATCHCHECK.CHECK$(server_code$, patch_known)
+    IF why$ <> "" THEN RETURN "contract, server part: " + why$
+    why$ = PATCHCHECK.CHECK$(client_code$, patch_known_client)
+    IF why$ <> "" THEN RETURN "contract, client part: " + why$
+    RETURN ""
+ENDFUNC
+
+' A patch, or {"key", "revoke": title}: the stored patches of that title are
+' dropped and run no more from the next start on.
 FUNC HANDLEPATCH(request)
     DIM b = BodyOf(request)
     IF patch_key$ = "" ORELSE "" + (b{"key"} ?? "") <> patch_key$ THEN RETURN {"__http_status": 403}
+    IF MAP.EXISTS(b, "revoke") THEN
+        DIM kept = []
+        FOR EACH one IN stored
+            IF one{"title"} <> "" + b{"revoke"} THEN kept = APPEND(kept, one)
+        NEXT
+        DIM dropped AS INTEGER = LEN(stored) - LEN(kept)
+        stored = kept
+        SavePatches()
+        RETURN {"ok": dropped > 0, "revoked": dropped, "stored": LEN(stored), "restart": dropped > 0}
+    ENDIF
     DIM title$ AS STRING = "" + (b{"title"} ?? "patch")
-    DIM failed$ AS STRING = ApplyPatch$(title$, "" + (b{"server"} ?? ""), "" + (b{"client"} ?? ""))
+    DIM failed$ AS STRING = PatchContract$("" + (b{"server"} ?? ""), "" + (b{"client"} ?? ""))
+    IF failed$ = "" THEN failed$ = ApplyPatch$(title$, "" + (b{"server"} ?? ""), "" + (b{"client"} ?? ""))
     IF failed$ <> "" THEN RETURN {"ok": FALSE, "error": failed$, "version": W{"version"}}
     stored = APPEND(stored, {"title": title$, "server": "" + (b{"server"} ?? ""), "client": "" + (b{"client"} ?? "")})
     SavePatches()
@@ -563,6 +607,9 @@ ENDFUNC
 
 ' ---- start ----
 
+' The game comes from the repository and runs unchecked here (test_contract.jdb
+' holds it to the contract, and every client checks it); its names are known
+' for the patches that come after it.
 DIM files = SORT(FILE.LIST(game_dir$ + "/*.jdb"))
 DIM f AS INTEGER
 FOR f = 0 TO LEN(files) - 1

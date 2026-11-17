@@ -641,7 +641,7 @@ FUNC AnimalFrameAnchors(c, what$, frame$)
     IF NOT MAP.EXISTS(c, "frame_anchors") THEN
         c{"frame_anchors"} = {}
         TRY
-            c{"frame_anchors"} = JSON.PARSE(TXTREADER$((c{"assets"} ?? "assets") + "/anchors.json")){"sorts"} ?? {}
+            c{"frame_anchors"} = JSON.PARSE(KAsset$("anchors.json")){"sorts"} ?? {}
         CATCH
         ENDTRY
     ENDIF
@@ -667,7 +667,7 @@ FUNC AnimalSheet(c, what$, look, kind)
     IF NOT MAP.EXISTS(c{"animal_raw"}, what$) THEN
         c{"animal_raw"}{what$} = []
         TRY
-            DIM data$ = BINREADER$((c{"assets"} ?? "assets") + "/animal_" + what$ + ".rgba")
+            DIM data$ = KAsset$("animal_" + what$ + ".rgba")
             DIM size = UNPACK("<II", data$)
             DIM n_px = size[0] * size[1]
             IF LEN(data$) >= 8 + 4 * n_px THEN c{"animal_raw"}{what$} = [size[0], size[1], UNPACK(STR$(n_px * 4) + "b", data$, 8)]
@@ -737,7 +737,7 @@ FUNC AnimalIcon(c, what$, kind)
     IF MAP.EXISTS(c{"animal_icons"}, what$) THEN RETURN c{"animal_icons"}{what$}
     c{"animal_icons"}{what$} = -1
     TRY
-        DIM data$ = BINREADER$((c{"assets"} ?? "assets") + "/animal_" + what$ + ".rgba")
+        DIM data$ = KAsset$("animal_" + what$ + ".rgba")
         DIM size = UNPACK("<II", data$)
         IF size[0] >= 96 ANDALSO size[1] >= 48 ANDALSO LEN(data$) >= 8 + 4 * size[0] * size[1] THEN
             DIM rows = []

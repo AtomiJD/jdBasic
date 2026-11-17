@@ -1523,12 +1523,12 @@ SUB BuildVillager(c, row, sx, sy)
     IF NOT MAP.EXISTS(c, "b_steps") THEN c{"b_steps"} = {}
     DIM last = c{"b_steps"}{row[0]} ?? [row[2], row[3], 0, 0]
     IF row[2] <> last[0] ORELSE row[3] <> last[1] THEN
-        DIM dir = last[2]
-        IF row[2] > last[0] THEN dir = 2
-        IF row[2] < last[0] THEN dir = 1
-        IF row[3] > last[1] THEN dir = 0
-        IF row[3] < last[1] THEN dir = 3
-        last = [row[2], row[3], dir, TICK()]
+        DIM facing = last[2]
+        IF row[2] > last[0] THEN facing = 2
+        IF row[2] < last[0] THEN facing = 1
+        IF row[3] > last[1] THEN facing = 0
+        IF row[3] < last[1] THEN facing = 3
+        last = [row[2], row[3], facing, TICK()]
         c{"b_steps"}{row[0]} = last
     ENDIF
     ClientSheet(img, sx, sy, last[2], TICK() - last[3] < 450)

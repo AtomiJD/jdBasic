@@ -6,6 +6,7 @@
 #   ./deploy.sh --wasm     also ship the browser runtime from wasm/ (this game's copy only)
 #   ./deploy.sh --setup    once: user, systemd unit "wunschwelt", nginx routes
 #   ./deploy.sh --patch <file> <title>   send one patch to the running world
+#   ./deploy.sh --revoke <title>   take the stored patches of a title back and restart the world
 #   ./deploy.sh --wishes   print the wish board of the live world
 #   ./deploy.sh --wish <id> <open|building|done|declined>   move a wish along
 #   ./deploy.sh --reset-world   forget the saved world and its patches, start fresh
@@ -30,7 +31,7 @@ URL=https://vvss.jdbasic.tech/wunschwelt
 
 push_files() {
     $SSH 'rm -rf ~/ww_stage && mkdir -p ~/ww_stage/game ~/ww_stage/tools ~/ww_stage/web'
-    $SCP server.jdb client.jdb "$HOST:~/ww_stage/"
+    $SCP server.jdb client.jdb patchcheck.jdb "$HOST:~/ww_stage/"
     $SCP game/*.jdb game/*.json "$HOST:~/ww_stage/game/"
     $SCP tools/patch.jdb tools/nginx_route.jdb tools/preflight.jdb tools/admin.jdb tools/box_preflight.sh "$HOST:~/ww_stage/tools/"
     $SCP web/index.html web/album.html "$HOST:~/ww_stage/web/"
@@ -43,6 +44,8 @@ push_files() {
     (cd assets && ls *.rgba *.parts anchors.json) | sed 's|^|assets/|' > "$listing"
     # the music module of the client, beside client.jdb
     echo melody.jdb >> "$listing"
+    # the patch contract the client checks a patch with
+    echo patchcheck.jdb >> "$listing"
     $SCP ../demos/sound/melody.jdb "$HOST:~/ww_stage/"
     $SCP "$listing" "$HOST:~/ww_stage/assets.txt"
     rm -f "$listing"
@@ -71,7 +74,7 @@ preflight() {
 publish_page() {
     $SSH 'sudo -n mkdir -p /var/www/vvss/wunschwelt/play/assets \
       && sudo -n cp ~/ww_stage/web/index.html ~/ww_stage/web/album.html /var/www/vvss/wunschwelt/ \
-      && sudo -n cp ~/ww_stage/client.jdb ~/ww_stage/melody.jdb ~/ww_stage/assets.txt /var/www/vvss/wunschwelt/play/ \
+      && sudo -n cp ~/ww_stage/client.jdb ~/ww_stage/melody.jdb ~/ww_stage/patchcheck.jdb ~/ww_stage/assets.txt /var/www/vvss/wunschwelt/play/ \
       && sudo -n cp ~/ww_stage/assets/*.rgba ~/ww_stage/assets/*.parts ~/ww_stage/assets/anchors.json /var/www/vvss/wunschwelt/play/assets/ \
       && sudo -n cp ~/ww_stage/playground.html /var/www/vvss/wunschwelt/play/index.html \
       && sudo -n chown -R www-data:www-data /var/www/vvss/wunschwelt'
@@ -79,11 +82,11 @@ publish_page() {
 
 publish_server() {
     $SSH 'sudo -n mkdir -p /opt/wunschwelt/game /opt/wunschwelt/tools \
-      && sudo -n cp ~/ww_stage/server.jdb /opt/wunschwelt/ \
+      && sudo -n cp ~/ww_stage/server.jdb ~/ww_stage/patchcheck.jdb /opt/wunschwelt/ \
       && sudo -n rm -f /opt/wunschwelt/game/*.jdb /opt/wunschwelt/game/*.json \
       && sudo -n cp ~/ww_stage/game/*.jdb ~/ww_stage/game/*.json /opt/wunschwelt/game/ \
       && sudo -n cp ~/ww_stage/tools/*.jdb ~/ww_stage/tools/*.sh /opt/wunschwelt/tools/ \
-      && sudo -n chown -R root:root /opt/wunschwelt/server.jdb /opt/wunschwelt/game /opt/wunschwelt/tools'
+      && sudo -n chown -R root:root /opt/wunschwelt/server.jdb /opt/wunschwelt/patchcheck.jdb /opt/wunschwelt/game /opt/wunschwelt/tools'
 }
 
 # The browser runtime of this game, from wasm/ in the repository.
@@ -134,6 +137,18 @@ case "$1" in
     # the key is read on the box by root and never leaves it
     $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/patch.jdb /home/deploy/$RUN.jdb \"\$(cat /home/deploy/$RUN.title)\" http://127.0.0.1:$PORT'; rc=\$?; rm -f ~/$RUN.jdb ~/$RUN.title; exit \$rc"
     exit 0
+    ;;
+--revoke)
+    [ -n "$2" ] || { echo "usage: ./deploy.sh --revoke <title>"; exit 1; }
+    RUN=ww_revoke_$$_$(date +%s)
+    TITLE_FILE=$(mktemp)
+    trap 'rm -f "$TITLE_FILE"' EXIT
+    printf '%s' "$2" > "$TITLE_FILE"
+    $SCP "$TITLE_FILE" "$HOST:~/$RUN.title"
+    $SSH "sudo -n sh -c 'set -a; . /opt/wunschwelt/env; /opt/wunschwelt/jdBasic /opt/wunschwelt/tools/patch.jdb --revoke \"\$(cat /home/deploy/$RUN.title)\" http://127.0.0.1:$PORT'; rc=\$?; rm -f ~/$RUN.title; exit \$rc" || exit 1
+    # the world saves itself while it runs; a restart brings it back without the patch
+    $SSH 'sudo -n systemctl restart wunschwelt && sleep 3 && systemctl is-active wunschwelt'
+    exit $?
     ;;
 --setup)
     echo "== files =="
