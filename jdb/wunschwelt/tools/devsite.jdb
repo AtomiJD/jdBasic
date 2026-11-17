@@ -37,6 +37,8 @@ FUNC HANDLEFILE(request)
         file$ = here$ + "/client.jdb"
     ELSEIF rest$ = "play/melody.jdb" THEN
         file$ = here$ + "/../demos/sound/melody.jdb"
+    ELSEIF rest$ = "play/patchcheck.jdb" THEN
+        file$ = here$ + "/patchcheck.jdb"
     ELSEIF rest$ = "play/assets.txt" THEN
         DIM names = SORT(APPEND(FILE.LIST(here$ + "/assets/*.rgba"), FILE.LIST(here$ + "/assets/*.parts")))
         DIM listing$ AS STRING = ""
@@ -44,7 +46,7 @@ FUNC HANDLEFILE(request)
         FOR i = 0 TO LEN(names) - 1
             listing$ = listing$ + "assets/" + names[i] + CHR$(10)
         NEXT i
-        RETURN Reply(200, listing$ + "assets/anchors.json" + CHR$(10) + "melody.jdb" + CHR$(10), "text/plain")
+        RETURN Reply(200, listing$ + "assets/anchors.json" + CHR$(10) + "melody.jdb" + CHR$(10) + "patchcheck.jdb" + CHR$(10), "text/plain")
     ELSEIF STARTSWITH(rest$, "play/assets/") THEN
         file$ = here$ + "/assets/" + MID$(rest$, 12, LEN(rest$))
     ELSEIF STARTSWITH(rest$, "play/") THEN
