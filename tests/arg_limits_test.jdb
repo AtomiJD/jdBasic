@@ -1,0 +1,99 @@
+' Argument and parameter counts at the edge of the byte operand of CALL,
+' and a p-code file whose function claims more parameters than it carries.
+'
+'   jdbasic tests/arg_limits_test.jdb
+'
+' A call passes at most 255 arguments and a FUNC or SUB takes at most 255
+' parameters; more is refused when the code is compiled. A function of 255
+' parameters with defaults, called with one argument, gets the other 254
+' from its defaults. The p-code loader refuses a function whose parameter
+' count does not fit its defaults.
+
+OPTION "EXPLICIT"
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB Check(what$, ok)
+    IF ok THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$
+    ENDIF
+ENDSUB
+
+FUNC CompileError$(code$) AS STRING
+    TRY
+        EXECUTE code$
+    CATCH
+        RETURN ERRMSG$
+    ENDTRY
+    RETURN ""
+ENDFUNC
+
+FUNC Ones$(n) AS STRING
+    RETURN JOIN(SELECT(LAMBDA k -> "1", IOTA(n)), ", ")
+ENDFUNC
+
+FUNC Params$(n) AS STRING
+    RETURN JOIN(SELECT(LAMBDA k -> "p" + STR$(k) + " = " + STR$(k), IOTA(n)), ", ")
+ENDFUNC
+
+' ---- the compiler ----
+
+DIM why$ AS STRING = CompileError$("IF 1 = 0 THEN PRINT NOSUCHFN(" + Ones$(256) + ")")
+Check("a call of 256 arguments is refused", INSTR(why$, "255 arguments") >= 0)
+
+why$ = CompileError$("IF 1 = 0 THEN PRINT NOSUCHFN(" + Ones$(255) + ")")
+Check("a call of 255 arguments compiles", INSTR(why$, "255 arguments") < 0)
+
+why$ = CompileError$("FUNC Wide256(" + Params$(256) + ")" + CHR$(10) + "RETURN 0" + CHR$(10) + "ENDFUNC")
+Check("a FUNC of 256 parameters is refused", INSTR(why$, "255 parameters") >= 0)
+
+DIM wide_out = 0
+why$ = CompileError$("FUNC Wide255(" + Params$(255) + ")" + CHR$(10) + "RETURN p255 + p1" + CHR$(10) + "ENDFUNC" + CHR$(10) + "JDB.GLOBAL_SET(" + CHR$(34) + "wide_out" + CHR$(34) + ", Wide255(1000))")
+Check("a FUNC of 255 parameters compiles", why$ = "")
+Check("254 parameters filled from their defaults", wide_out = 1255)
+
+' ---- the p-code loader ----
+
+DIM exe$ AS STRING = OS.SELF$()
+DIM dir$ AS STRING = MKTEMP$("arglim")
+IF FILE.EXISTS(dir$) ANDALSO NOT FILE.ISDIR(dir$) THEN KILL dir$
+IF NOT FILE.ISDIR(dir$) THEN MKDIR dir$
+DIM src$ AS STRING = PATH.JOIN$(dir$, "probe.jdb")
+DIM pcode$ AS STRING = PATH.JOIN$(dir$, "probe.jdpb")
+TXTWRITER src$, "FUNC ZZPROBEFN(a, b = 7)" + CHR$(10) + "RETURN a + b" + CHR$(10) + "ENDFUNC" + CHR$(10) + "PRINT " + CHR$(34) + "probe " + CHR$(34) + "; ZZPROBEFN(1)" + CHR$(10)
+
+DIM made = OS.EXEC(exe$, ["--pcode", src$])
+Check("p-code written", FILE.EXISTS(pcode$))
+DIM ran = OS.EXEC(exe$, [pcode$])
+Check("the p-code runs as written", INSTR(ran{"output"}, "probe 8") >= 0)
+
+' arity and min_arity follow the function's name in the function table,
+' the name's last place in the file (the main chunk names it first)
+DIM bytes$ AS STRING = BINREADER$(pcode$)
+DIM at AS INTEGER = -1
+DIM next_at AS INTEGER = INSTR(bytes$, "ZZPROBEFN")
+DO WHILE next_at >= 0
+    at = next_at
+    next_at = INSTR(at + 1, bytes$, "ZZPROBEFN")
+LOOP
+Check("the function's name is in the p-code", at >= 0)
+IF at >= 0 THEN
+    DIM after AS INTEGER = at + LEN("ZZPROBEFN")
+    Check("arity 2, min_arity 1 after the name", MID$(bytes$, after, 8) = PACK$("<ii", 2, 1))
+    DIM bad_file$ AS STRING = PATH.JOIN$(dir$, "bad.jdpb")
+    ' 200 parameters claimed, two defaults carried
+    BINWRITER bad_file$, LEFT$(bytes$, after) + PACK$("<ii", 200, 1) + MID$(bytes$, after + 8)
+    DIM bad = OS.EXEC(exe$, [bad_file$])
+    Check("a function claiming 200 parameters with 2 defaults is refused", INSTR(bad{"output"}, "bad parameters") >= 0 ANDALSO bad{"exit_code"} <> 0)
+    ' 300 parameters do not fit the byte operand of a call
+    BINWRITER bad_file$, LEFT$(bytes$, after) + PACK$("<ii", 300, 300) + MID$(bytes$, after + 8)
+    bad = OS.EXEC(exe$, [bad_file$])
+    Check("a function claiming 300 parameters is refused", INSTR(bad{"output"}, "bad parameters") >= 0)
+ENDIF
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1

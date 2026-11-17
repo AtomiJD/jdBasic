@@ -110,6 +110,15 @@ inline double local_to_epoch(const Civil& c) {
     return local_to_epoch(c.y, c.mo, c.d, c.h, c.mi, c.se);
 }
 
+// The local broken-down time of t, safe to call from several threads.
+inline bool local_tm(std::time_t t, std::tm& out) {
+#ifdef _WIN32
+    return localtime_s(&out, &t) == 0;
+#else
+    return localtime_r(&t, &out) != nullptr;
+#endif
+}
+
 // The local wall clock of an instant.
 inline Civil civil_local(double epoch) {
     // Within the CRT's range its own conversion knows every switch.

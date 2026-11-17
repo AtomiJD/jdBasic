@@ -44,6 +44,7 @@
 #include "jdb_crypto.h"
 #include "jdv.h"
 #include "vm.h"
+#include "jdb_calendar.h"
 
 #include <algorithm>
 #include <cctype>
@@ -2465,7 +2466,8 @@ std::string node_bus_report() {
     for (const DirEntry& e : dir) {
         char since[32] = "";
         std::time_t t = (std::time_t)e.started;
-        if (std::tm* tm = std::localtime(&t)) std::strftime(since, sizeof(since), "%Y-%m-%d %H:%M:%S", tm);
+        std::tm tm{};
+        if (jdb_cal::local_tm(t, tm)) std::strftime(since, sizeof(since), "%Y-%m-%d %H:%M:%S", &tm);
         std::string topics;
         for (size_t i = 0; i < e.topics.size(); ++i) topics += (i ? ", " : "") + e.topics[i];
         std::snprintf(line, sizeof(line), "%-24s %8lld  %-6s  %-19s  ", e.display.c_str(), (long long)e.pid,

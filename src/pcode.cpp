@@ -400,6 +400,16 @@ bool pcode_read(std::istream& in, Chunk& main_chunk,
         for (uint32_t j = 0; j < p; j++)
             if (!get_str(in, f.param_names[j], 4096)) { err = "bad parameter"; return false; }
 
+        // The VM fills a missed parameter from defaults[argc] up to arity,
+        // with argc a byte operand; a lambda has no defaults and no optional
+        // parameters.
+        if (f.arity < 0 || f.arity > 255 || f.min_arity < 0 || f.min_arity > f.arity
+            || (f.min_arity < f.arity && f.defaults.size() < (size_t)f.arity)
+            || f.param_names.size() > (size_t)f.arity) {
+            err = "bad parameters of function " + f.name;
+            return false;
+        }
+
         if (!read_chunk(in, f.chunk, err)) return false;
     }
     return true;

@@ -3,6 +3,7 @@
 #include "vm_internal.h"
 #include <cstring>
 #include "jdb_path.h"
+#include "jdb_calendar.h"
 #if !defined(_WIN32)
 #include <utime.h>
 #if !defined(JDB_MCU)
@@ -467,7 +468,8 @@ void VM::register_file_builtins() {
                         if (S_ISDIR(st.st_mode)) type = "DIR";
                         else if (S_ISLNK(st.st_mode)) type = "LINK";
                         if ((st.st_mode & S_IWUSR) == 0) attr = "R";
-                        struct tm* tmv = localtime(&st.st_mtime);
+                        struct tm tmbuf{};
+                        struct tm* tmv = jdb_cal::local_tm(st.st_mtime, tmbuf) ? &tmbuf : nullptr;
                         if (tmv) snprintf(dt, sizeof(dt), "%04d-%02d-%02d %02d:%02d:%02d",
                             tmv->tm_year + 1900, tmv->tm_mon + 1, tmv->tm_mday,
                             tmv->tm_hour, tmv->tm_min, tmv->tm_sec);
@@ -800,7 +802,8 @@ void VM::register_file_builtins() {
         o->set("is_dir", Value::make_bool(S_ISDIR(st.st_mode)));
         o->set("readonly", Value::make_bool((st.st_mode & S_IWUSR) == 0));
         o->set("hidden", Value::make_bool(false));
-        char dt[32]; struct tm* tmv = localtime(&st.st_mtime);
+        char dt[32]; struct tm tmbuf{};
+        struct tm* tmv = jdb_cal::local_tm(st.st_mtime, tmbuf) ? &tmbuf : nullptr;
         if (tmv) {
             snprintf(dt, sizeof(dt), "%04d-%02d-%02d %02d:%02d:%02d",
                 tmv->tm_year + 1900, tmv->tm_mon + 1, tmv->tm_mday,

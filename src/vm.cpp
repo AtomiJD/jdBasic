@@ -244,7 +244,7 @@ void VM::load(Chunk& main_chunk, std::vector<FuncProto>& funcs) {
     // `global_names["A"]` point at slot 0 (held by PI). User code that
     // referenced an undefined `A` then read PI's value (3.14159) and
     // `obj.x` for any name `obj` whose slot collided returned junk.
-    for (uint16_t i = 0; i < main_chunk.name_count(); i++) {
+    for (size_t i = 0; i < main_chunk.name_count(); i++) {
         const std::string& name = main_chunk.name_at(i);
         if (global_names.count(name)) continue;
         global_names[name] = static_cast<uint16_t>(globals.size());
@@ -1778,7 +1778,7 @@ void VM::run() {
         case OpCode::CALL: {
             uint16_t name_idx = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
             cf.ip += 2;
-            uint8_t argc = cf.chunk->code[cf.ip++];
+            int argc = cf.chunk->code[cf.ip++];
 
             // ── Inline cache fast path for user functions ──────────
             {
@@ -1907,7 +1907,7 @@ void VM::run() {
                     // Check local
                     if (!ref_val && frames.size() > 1) {
                         size_t base = frame().stack_base;
-                        for (uint16_t vi = 0; vi < frame().chunk->name_count(); vi++) {
+                        for (size_t vi = 0; vi < frame().chunk->name_count(); vi++) {
                             if (frame().chunk->name_at(vi) == func_name) {
                                 ref_val = &stack[base + vi]; break;
                             }
@@ -3687,7 +3687,7 @@ bool VM::debug_reload_main(Chunk& new_main, std::vector<FuncProto>& new_funcs, i
     // Register top-level globals the recompiled chunk introduces (mirrors
     // load()), so a freshly added variable resolves to a real slot rather
     // than tripping LOAD_GLOBAL's NONE-name-as-native fallback.
-    for (uint16_t i = 0; i < new_main.name_count(); i++) {
+    for (size_t i = 0; i < new_main.name_count(); i++) {
         std::string name = new_main.name_at(i);
         if (global_names.count(name)) continue;
         global_names[name] = static_cast<uint16_t>(globals.size());
@@ -3771,7 +3771,7 @@ std::vector<std::pair<std::string, std::string>> VM::debug_get_locals_at(int lev
     // (or sp for the innermost) - bound by that so deeper frames don't
     // pick up the slots of the frames above them.
     size_t upper = (idx + 1 < (int)frames.size()) ? frames[idx + 1].stack_base : sp;
-    for (uint16_t i = 0; i < f.chunk->name_count(); i++) {
+    for (size_t i = 0; i < f.chunk->name_count(); i++) {
         size_t abs = f.stack_base + i;
         if (abs < upper) {
             std::string name = func_name.empty()
@@ -3821,7 +3821,7 @@ std::vector<VM::DebugVar> VM::debug_vars_local(int frame_index) {
     // for the innermost), so deeper frames don't bleed their slots in.
     size_t upper = (frame_index + 1 < (int)frames.size())
                    ? frames[frame_index + 1].stack_base : sp;
-    for (uint16_t i = 0; i < f.chunk->name_count(); i++) {
+    for (size_t i = 0; i < f.chunk->name_count(); i++) {
         size_t abs = f.stack_base + i;
         if (abs >= upper) continue;
         const std::string& name = f.chunk->name_at(i);
@@ -3869,7 +3869,7 @@ bool VM::debug_eval_value(const std::string& expr, Value& result_out) {
         std::transform(name.begin(), name.end(), name.begin(), ::toupper);
         if (frames.size() > 1) {
             auto& f = frames.back();
-            for (uint16_t i = 0; i < f.chunk->name_count(); i++) {
+            for (size_t i = 0; i < f.chunk->name_count(); i++) {
                 size_t abs = f.stack_base + i;
                 if (abs < sp && f.chunk->name_at(i) == name) { out = stack[abs]; return true; }
             }
@@ -3951,7 +3951,7 @@ bool VM::debug_eval_value(const std::string& expr, Value& result_out) {
         std::vector<std::pair<uint16_t, std::string>> created;  // slots/names we added
         if (frames.size() > 1) {
             auto& f = frames.back();
-            for (uint16_t i = 0; i < f.chunk->name_count(); i++) {
+            for (size_t i = 0; i < f.chunk->name_count(); i++) {
                 size_t abs = f.stack_base + i;
                 if (abs >= sp) continue;
                 const std::string& nm = f.chunk->name_at(i);

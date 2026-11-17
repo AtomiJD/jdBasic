@@ -204,6 +204,14 @@ static uint16_t operand_u16(size_t n, const char* what) {
     return static_cast<uint16_t>(n);
 }
 
+// An argument count, a byte operand of CALL and CALL_METHOD.
+static uint8_t operand_argc(size_t n, int line) {
+    if (n > 255)
+        throw std::runtime_error("Line " + std::to_string(line) +
+                                 ": more than 255 arguments in one call");
+    return static_cast<uint8_t>(n);
+}
+
 void Compiler::resolve_labels() {
     // Resolve all pending GOTOs against collected label positions.
     // IMPORTANT: labels and GOTOs are per‑chunk (each SUB/FUNC has its own
@@ -534,7 +542,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             uint16_t fi = current_chunk().add_constant(Value::make_string("CLS"));
             current_chunk().emit(OpCode::CALL, stmt.line);
             current_chunk().emit_u16(fi, stmt.line);
-            current_chunk().emit_u8(static_cast<uint8_t>(stmt.print_exprs.size()), stmt.line);
+            current_chunk().emit_u8(operand_argc(stmt.print_exprs.size(), stmt.line), stmt.line);
             current_chunk().emit(OpCode::POP, stmt.line);
             break;
         }
@@ -982,7 +990,7 @@ void Compiler::compile_dim(const Stmt& stmt) {
             uint16_t init_idx = current_chunk().add_constant(Value::make_string(init_name));
             current_chunk().emit(OpCode::CALL, stmt.line);
             current_chunk().emit_u16(init_idx, stmt.line);
-            current_chunk().emit_u8(static_cast<uint8_t>(stmt.ctor_args().size() + 1), stmt.line);
+            current_chunk().emit_u8(operand_argc(stmt.ctor_args().size() + 1, stmt.line), stmt.line);
             current_chunk().emit(OpCode::POP, stmt.line);
         }
     } else {
@@ -1329,6 +1337,8 @@ void Compiler::compile_return(const Stmt& stmt) {
 // A default has to be a literal. Anything else would need a scope to be
 // evaluated in, and a function is declared before any scope exists.
 static void fill_param_defaults(FuncProto& proto, const std::vector<Param>& params) {
+    if (params.size() > 255)
+        throw std::runtime_error("more than 255 parameters in FUNC or SUB " + proto.name);
     proto.min_arity = 0;
     proto.defaults.assign(params.size(), Value::make_none());
     bool optional_from_here = false;
@@ -1756,7 +1766,7 @@ void Compiler::compile_call(const Expr& expr) {
             Value::make_string(expr.left->str_val));
         current_chunk().emit(OpCode::CALL_METHOD, expr.line);
         current_chunk().emit_u16(name_idx, expr.line);
-        current_chunk().emit_u8(static_cast<uint8_t>(expr.args.size()), expr.line);
+        current_chunk().emit_u8(operand_argc(expr.args.size(), expr.line), expr.line);
         return;
     }
 
@@ -1768,5 +1778,5 @@ void Compiler::compile_call(const Expr& expr) {
     uint16_t func_idx = current_chunk().add_constant(Value::make_string(expr.func_name));
     current_chunk().emit(OpCode::CALL, expr.line);
     current_chunk().emit_u16(func_idx, expr.line);
-    current_chunk().emit_u8(static_cast<uint8_t>(expr.args.size()), expr.line);
+    current_chunk().emit_u8(operand_argc(expr.args.size(), expr.line), expr.line);
 }
