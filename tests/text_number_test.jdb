@@ -76,6 +76,9 @@ Check("UCASE$ of a date", UCASE$(when), STR$(when))
 ' ---- arrays stay cell by cell ----
 Check("UCASE$ of an array", JOIN(UCASE$(["a", "b"]), ","), "A,B")
 Check("TRIM$ of an array", JOIN(TRIM$([" x ", "y "]), ","), "x,y")
+DIM k AS INTEGER = 5
+Check("INSTR over an array with a number as needle", JOIN(INSTR(["a5", "b6", "c55"], k), ","), "1,-1,1")
+Check("STARTSWITH over an array with a number", JOIN(STARTSWITH(["12", "21"], 1), ","), STR$(TRUE) + "," + STR$(FALSE))
 
 PRINT pass; " passed, "; fail; " failed"
 IF fail > 0 THEN END 1

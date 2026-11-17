@@ -18526,6 +18526,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMConstInt(i32_type, nargs, 0) };
             TypedValue out{ LLVMBuildCall2(builder, vfn.fn_type, vfn.fn, call_args, 5, "vec"),
                             JD_TAG_ARR };
+            // The bridge copies each text into a VM value; a text this call
+            // made from a number goes after it.
+            auto& drop = runtime_funcs["__str_drop"];
+            for (auto& v : vals)
+                if (v.tag == JD_TAG_STR && v.owned) {
+                    LLVMValueRef d[] = { v.val };
+                    LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+                }
             // A builtin applied cell by cell answers a new array; a DECLAREd
             // function's answer may hold raw pointers and stays unregistered.
             out.fresh_container = builtin_sig(upper) != nullptr;
