@@ -33,6 +33,7 @@ extern std::string g_base_dir;
 // Defined in vm_builtins_system.cpp.
 extern bool g_exec_stdin_null;
 
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <sstream>
