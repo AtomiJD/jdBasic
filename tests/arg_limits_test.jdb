@@ -56,6 +56,9 @@ why$ = CompileError$("FUNC Wide255(" + Params$(255) + ")" + CHR$(10) + "RETURN p
 Check("a FUNC of 255 parameters compiles", why$ = "")
 Check("254 parameters filled from their defaults", wide_out = 1255)
 
+why$ = CompileError$("DIM wide_fn = LAMBDA " + JOIN(SELECT(LAMBDA k -> "q" + STR$(k), IOTA(256)), ", ") + " -> q1")
+Check("a LAMBDA of 256 parameters is refused", INSTR(why$, "255 parameters") >= 0)
+
 ' ---- the p-code loader ----
 
 DIM exe$ AS STRING = OS.SELF$()

@@ -1644,6 +1644,9 @@ void Compiler::compile_expr(const Expr& expr) {
             for (auto& c : expr.lambda_captures) proto.param_names.push_back(c);
             for (auto& p : expr.lambda_params) proto.param_names.push_back(p);
             proto.arity = (int)proto.param_names.size();
+            if (proto.arity > 255)
+                throw std::runtime_error("Line " + std::to_string(expr.line) +
+                                         ": more than 255 parameters and captures in one LAMBDA");
             // Lambdas take no defaults: their parameter list is a bare name
             // list with no room to write one.
             proto.min_arity = proto.arity;
