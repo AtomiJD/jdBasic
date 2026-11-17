@@ -169,6 +169,46 @@ design_verdict() {
     esac
 }
 
+# Runs a program in DIR with a deadline and answers 124 when the deadline
+# ended it, as timeout does.
+#   run_capped SECONDS DIR PROGRAM [ARGS...]
+# timeout ends only the process it started. A test that starts processes of
+# its own (OS.EXEC, OS.SPAWN) leaves them running, and a compiled test that
+# starts OS.SELF$() starts itself again without end. On Windows the deadline
+# therefore ends the whole process tree through taskkill /T while the tree
+# is still connected; elsewhere timeout does the job.
+run_capped() {
+    local secs="$1" dir="$2"; shift 2
+    if [ ! -r /proc/self/winpid ] || ! command -v taskkill >/dev/null 2>&1; then
+        ( cd "$dir" && exec timeout -k 2 "$secs" "$@" )
+        return
+    fi
+    ( cd "$dir" && exec "$@" ) &
+    local pid=$! winpid="" rc watch
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        [ -r "/proc/$pid/winpid" ] && { winpid=$(cat "/proc/$pid/winpid" 2>/dev/null); break; }
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.05
+    done
+    (
+        n=0
+        while kill -0 "$pid" 2>/dev/null; do
+            if [ "$n" -ge "$secs" ]; then
+                [ -n "$winpid" ] && taskkill //F //T //PID "$winpid" >/dev/null 2>&1
+                kill -9 "$pid" 2>/dev/null
+                exit 1
+            fi
+            sleep 1
+            n=$((n + 1))
+        done
+        exit 0
+    ) </dev/null >/dev/null 2>&1 &
+    watch=$!
+    wait "$pid"; rc=$?
+    wait "$watch" || rc=124
+    return "$rc"
+}
+
 run_one() {
     local rel="$1"
     local id="${rel//\//_}"; id="${id%.jdb}"
@@ -195,7 +235,7 @@ run_one() {
     # Run from the repo root, the way the gate does - tests reference their
     # fixtures repo-relative ("tests/foo.json"), so a per-test cwd breaks
     # working tests and makes them look like parity failures.
-    ( cd "$REPO" && timeout -k 2 "$tmo" "$JDB" "$rel" ) >"$ilog" 2>&1 </dev/null
+    run_capped "$tmo" "$REPO" "$JDB" "$rel" >"$ilog" 2>&1 </dev/null
     irc=$?
     istat=$(classify "$irc" "$ilog")
 
@@ -205,7 +245,7 @@ run_one() {
         nstat="CFAIL"
         : >"$nlog"
     else
-        ( cd "$REPO" && timeout -k 2 "$tmo" "$exe" ) >"$nlog" 2>&1 </dev/null
+        run_capped "$tmo" "$REPO" "$exe" >"$nlog" 2>&1 </dev/null
         nrc=$?
         nstat=$(classify "$nrc" "$nlog")
     fi
@@ -227,7 +267,7 @@ run_one() {
         # numbers, addresses), which is NONDET and says nothing either way.
         if ! same_output "$ilog" "$nlog"; then
             local ilog2="$WORK/log/$id.interp2.txt"
-            ( cd "$REPO" && timeout -k 2 "$tmo" "$JDB" "$rel" ) >"$ilog2" 2>&1 </dev/null
+            run_capped "$tmo" "$REPO" "$JDB" "$rel" >"$ilog2" 2>&1 </dev/null
             if same_output "$ilog" "$ilog2"; then verdict="DIVERGE"; else verdict="NONDET"; fi
         fi
         # A test that skipped its native half says so; green on both sides
@@ -243,7 +283,7 @@ run_one() {
     printf '%s\t%s\t%s\t%s\n' "$rel" "$istat" "$nstat" "$verdict"
 }
 
-export -f run_one classify green same_output design_verdict
+export -f run_one run_capped classify green same_output design_verdict
 export REPO JDB WORK TIMEOUT COM_TIMEOUT
 
 cd "$REPO" || exit 1
