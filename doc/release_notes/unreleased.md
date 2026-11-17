@@ -41,6 +41,11 @@ Range: `v1.3.0..HEAD`.
   (`DIM a[OTHER.SIZE]` in the module imported second) is refused when the
   program loads, with the name and the line, instead of running on with an
   array of the wrong size.
+- **`HTTP.SERVER.START` on a port in use answers FALSE on Linux and macOS**
+  (#1001): the listening socket took SO_REUSEPORT, so a second program
+  bound the same port, START answered TRUE and the two shared the
+  connections. START now binds before it returns, a refused START leaves
+  no server behind, and `NET.UDP` refuses a port in use as on Windows.
 
 - **Native compiler (`-c`), a variable declared AS INTEGER is an integer**
   (#979): `DIM n AS INTEGER = cells[i]` typed `n` as a double, so `n * n`

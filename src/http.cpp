@@ -661,14 +661,21 @@ void register_http_builtins(VM& vm) {
         // reads an incomplete response (ngrok 3004). One request per connection
         // emits a clean `Connection: close` with no Keep-Alive header.
         g_server->set_keep_alive_max_count(1);
-#ifdef _WIN32
         // A port another process listens on makes START answer FALSE.
+        // httplib's default options set SO_REUSEPORT on POSIX, which lets a
+        // second process bind the same port and share its connections;
+        // SO_REUSEADDR alone still allows a restart over TIME_WAIT sockets
+        // but refuses a port that is being listened on.
         g_server->set_socket_options([](socket_t sock) {
             int on = 1;
+#ifdef _WIN32
             setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
                        reinterpret_cast<const char*>(&on), sizeof(on));
-        });
+#else
+            setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+                       reinterpret_cast<const char*>(&on), sizeof(on));
 #endif
+        });
 
         // Register all GET handlers
         for (auto& [path, func_name] : g_get_handlers) {
@@ -743,17 +750,24 @@ void register_http_builtins(VM& vm) {
             });
         }
 
-        // Start server in background thread. The thread stays joinable:
+        // Bind and listen on the calling thread, so a port that is taken
+        // answers FALSE here and leaves no server behind.
+        if (!g_server->bind_to_port(host, port)) {
+            g_server.reset();
+            return Value::make_bool(false);
+        }
+
+        // Accept in a background thread. The thread stays joinable:
         // stop() returns while listen() is still unwinding inside the
         // Server, so the object may only go away after the join.
+        // wait_until_ready() returns once the accept loop runs, so a STOP
+        // right after START closes the socket the loop waits on.
         auto* srv = g_server.get();
-        g_server_thread = std::thread([srv, port, host]() {
-            srv->listen(host.c_str(), port);
+        g_server_thread = std::thread([srv]() {
+            srv->listen_after_bind();
         });
         g_server_owner = std::this_thread::get_id();
-
-        // Wait a moment for the server to start
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        g_server->wait_until_ready();
         return Value::make_bool(g_server->is_running());
     });
 

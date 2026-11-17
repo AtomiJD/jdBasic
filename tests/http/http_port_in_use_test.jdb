@@ -1,0 +1,144 @@
+' HTTP.SERVER.START answers FALSE for a port another process listens on, and
+' the server that holds the port keeps answering. With NET, NET.LISTEN and
+' NET.UDP on a port in use fail as well. The test starts itself again with
+' --child as the second process, so it runs the same in both backends.
+
+OPTION "EXPLICIT"
+
+DIM argv = OS.ARGS()
+DIM interp AS INTEGER = OS.FEATURE("INTERPRETER")
+
+FUNC ARG_AT$(i AS INTEGER) AS STRING
+    IF i < LEN(argv) THEN RETURN argv[i]
+    RETURN ""
+ENDFUNC
+
+' ── the child side: exit 0 when the port is refused ──────────
+IF ARG_AT$(1) = "--child" THEN
+    DIM what$ AS STRING = ARG_AT$(2)
+    DIM child_port AS INTEGER = VAL(ARG_AT$(3))
+    IF what$ = "http" THEN
+        IF HTTP.SERVER.START(child_port, "127.0.0.1") THEN
+            PRINT "START answered TRUE on a port in use"
+            HTTP.SERVER.STOP
+            END 1
+        ENDIF
+        ' A refused START leaves no server behind, so the next one starts.
+        DIM again = FALSE
+        TRY
+            again = HTTP.SERVER.START(0, "127.0.0.1")
+        CATCH
+            PRINT "START after a refused START: "; ERRMSG$
+        ENDTRY
+        IF NOT again THEN END 2
+        HTTP.SERVER.STOP
+        END 0
+    ENDIF
+    IF what$ = "tcp" THEN
+        DIM lsock = NET.LISTEN(child_port, "127.0.0.1")
+        IF lsock <> 0 THEN
+            PRINT "NET.LISTEN opened a port in use"
+            NET.CLOSE(lsock)
+            END 1
+        ENDIF
+        END 0
+    ENDIF
+    IF what$ = "udp" THEN
+        DIM usock = NET.UDP(child_port, "127.0.0.1")
+        IF usock <> 0 THEN
+            PRINT "NET.UDP bound a port in use"
+            NET.CLOSE(usock)
+            END 1
+        ENDIF
+        END 0
+    ENDIF
+    END 99
+ENDIF
+
+' ── the parent side ───────────────────────────────────────────
+IF NOT OS.FEATURE("HTTP") THEN
+    PRINT "SKIP: built without HTTP"
+    END 0
+ENDIF
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+DIM self$ AS STRING = OS.SELF$()
+FUNC CHILD_ARGS(what$, child_port)
+    DIM a = ["--child", what$, STR$(child_port)]
+    IF interp THEN a = [PATH.ABS$(argv[0]), "--child", what$, STR$(child_port)]
+    RETURN a
+ENDFUNC
+
+FUNC RUN_CHILD(what$, child_port)
+    DIM pid = OS.SPAWN(self$, CHILD_ARGS(what$, child_port), {"HIDDEN": TRUE})
+    IF pid <= 0 THEN RETURN -1
+    DIM code = OS.WAIT(pid, 30000)
+    IF TYPEOF(code) = "NONE" THEN
+        OS.KILL(pid)
+        RETURN -2
+    ENDIF
+    RETURN code
+ENDFUNC
+
+FUNC PING(request)
+    RETURN "pong"
+ENDFUNC
+
+HTTP.SERVER.ON_GET("/ping", PING@)
+
+' The first port of the range that this process can listen on.
+DIM port AS INTEGER = 0
+DIM candidate AS INTEGER
+FOR candidate = 9811 TO 9890
+    IF HTTP.SERVER.START(candidate, "127.0.0.1") THEN
+        port = candidate
+        EXITFOR
+    ENDIF
+NEXT candidate
+IF port = 0 THEN
+    PRINT "FAIL no free port in 9811..9890"
+    END 1
+ENDIF
+
+DIM code = RUN_CHILD("http", port)
+Ok("a second process gets FALSE from START on the port (child exit " + STR$(code) + ")", code = 0)
+
+DIM r = HTTP.REQUEST("GET", "http://127.0.0.1:" + STR$(port) + "/ping")
+DIM body$ = r{"body"}
+Ok("the first server still answers", r{"status"} = 200 ANDALSO body$ = "pong")
+
+IF OS.FEATURE("NET") THEN
+    code = RUN_CHILD("tcp", port)
+    Ok("NET.LISTEN in a second process fails on the port (child exit " + STR$(code) + ")", code = 0)
+ENDIF
+
+HTTP.SERVER.STOP
+
+' The same process starts again on the port it just released.
+Ok("START again on the released port", HTTP.SERVER.START(port, "127.0.0.1"))
+HTTP.SERVER.STOP
+
+IF OS.FEATURE("NET") THEN
+    DIM udp_sock = NET.UDP(0, "127.0.0.1")
+    Ok("NET.UDP opens a socket", udp_sock <> 0)
+    IF udp_sock <> 0 THEN
+        code = RUN_CHILD("udp", NET.PORT(udp_sock))
+        Ok("NET.UDP in a second process fails on the port (child exit " + STR$(code) + ")", code = 0)
+        NET.CLOSE(udp_sock)
+    ENDIF
+ENDIF
+
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+IF failed > 0 THEN END 1
+PRINT "OK"

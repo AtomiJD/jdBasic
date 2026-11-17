@@ -301,8 +301,13 @@ sock_t bound_socket(const std::string& host, int64_t port, int socktype, const c
             continue;
         }
 #if !defined(_WIN32)
-        int on = 1;
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&on, sizeof(on));
+        // A listener may bind over TIME_WAIT sockets of an earlier run but
+        // not a port that is listened on. On UDP the option would let two
+        // sockets share the port, so a UDP port in use fails as on Windows.
+        if (socktype == SOCK_STREAM) {
+            int on = 1;
+            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&on, sizeof(on));
+        }
 #endif
         if (bind(fd, ai->ai_addr, (addr_len_t)ai->ai_addrlen) != 0 ||
             (socktype == SOCK_STREAM && listen(fd, SOMAXCONN) != 0)) {
